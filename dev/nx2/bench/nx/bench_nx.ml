@@ -607,10 +607,9 @@ let contract_rows =
    conv_transpose, and its weight gradient, a contraction over
    the padded image's windows; the depthwise convolution, one channel a
    group; a 3 × 3 max-pool at stride 2 of the image channels first,
-   padded by -∞, as pad and maximum_filter; and the channels-last
-   max-pool's gradient, as pad, two window views and max: the windows
-   holding the maximum take the output's gradient, folded back onto the
-   image. *)
+   padded by -∞, as pad and maximum_filter; and its gradient, as pad, two
+   window views and max: the windows holding the maximum take the output's
+   gradient, folded back onto the image. *)
 
 let image dt = filled dt [| 8; 56; 56; 64 |] 1.
 let pad1 = [| (1, 1); (1, 1) |]
@@ -634,21 +633,25 @@ let max_pool x =
   let x = Nx.pad [| (0, 0); (0, 0); (1, 1); (1, 1) |] Float.neg_infinity x in
   Nx.Repr.array (Nx.maximum_filter ~kernel_size:[| 3; 3 |] ~stride:[| 2; 2 |] x)
 
-(* [[n; 28; 28; c; 3; 3]] windows to [[n; c; 9; 784]] patches. *)
+(* [[n; c; 28; 28; 3; 3]] windows to [[n; c; 9; 784]] patches. *)
 let max_pool_grad (x, dy) =
-  let v = windows ~step:2 (Nx.pad around Float.neg_infinity x) in
+  let x = Nx.pad [| (0, 0); (0, 0); (1, 1); (1, 1) |] Float.neg_infinity x in
+  let v =
+    Nx.sliding_window ~axis:3 ~window:3 ~step:2
+      (Nx.sliding_window ~axis:2 ~window:3 ~step:2 x)
+  in
   let m = Nx.max ~axes:[ 4; 5 ] ~keepdims:true v in
-  let dy = Nx.reshape [| 8; 28; 28; 64; 1; 1 |] dy in
-  let g = Nx.where (Nx.equal v m) (Nx.broadcast_to (Nx.shape v) dy) (Nx.zeros_like v) in
+  let dy = Nx.reshape [| 8; 64; 28; 28; 1; 1 |] dy in
+  let g =
+    Nx.where (Nx.equal v m) (Nx.broadcast_to (Nx.shape v) dy) (Nx.zeros_like v)
+  in
   let p =
     Nx.reshape [| 8; 64; 9; 28 * 28 |]
-      (Nx.transpose ~axes:[ 0; 3; 4; 5; 1; 2 ] g)
+      (Nx.transpose ~axes:[ 0; 1; 4; 5; 2; 3 ] g)
   in
-  let dx =
-    Nx.combine_patches ~output_size:[| 56; 56 |] ~kernel_size:[| 3; 3 |]
-      ~stride:[| 2; 2 |] ~dilation:[| 1; 1 |] ~padding:pad1 p
-  in
-  Nx.Repr.array (Nx.copy (Nx.transpose ~axes:[ 0; 2; 3; 1 ] dx))
+  Nx.Repr.array
+    (Nx.combine_patches ~output_size:[| 56; 56 |] ~kernel_size:[| 3; 3 |]
+       ~stride:[| 2; 2 |] ~dilation:[| 1; 1 |] ~padding:pad1 p)
 
 let conv_rows =
   Thumper.group "conv"
@@ -678,8 +681,10 @@ let conv_rows =
       Thumper.bench_with_setup "max-pool-f32-8x64x56x56-3x3s2"
         ~setup:(fun () -> filled D.Float32 [| 8; 64; 56; 56 |] 1.)
         max_pool;
-      Thumper.bench_with_setup "max-pool-grad-f32-8x56x56x64-3x3s2"
-        ~setup:(fun () -> (image D.Float32, filled D.Float32 [| 8; 28; 28; 64 |] 1.))
+      Thumper.bench_with_setup "max-pool-grad-f32-8x64x56x56-3x3s2"
+        ~setup:(fun () ->
+          (filled D.Float32 [| 8; 64; 56; 56 |] 1.,
+           filled D.Float32 [| 8; 64; 28; 28 |] 1.))
         max_pool_grad;
     ]
 
