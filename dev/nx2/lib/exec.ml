@@ -620,9 +620,9 @@ let rec run : type r. by:string -> r Value.prim -> r =
     donated ~by op hs
 
 (* [op] over donated operands [hs]: a movement that maps elements one to one
-   passes a new handle on; any other operation reads the handles' memory, writes
-   its first result into a handle's memory where it may, and ends the
-   handles. *)
+   passes a new handle on; any other operation checks its rule, then claims the
+   handles, reads their memory, writes its first result into a handle's memory
+   where it may, and ends the handles. *)
 and donated : type r. by:string -> r Value.prim -> Donate.handle list -> r =
  fun ~by op hs ->
   match op with
@@ -656,6 +656,9 @@ and donated : type r. by:string -> r Value.prim -> Donate.handle list -> r =
   | Value.Scatter _ | Value.Sort _ | Value.Fft _ | Value.Linalg _
   | Value.Fold _ | Value.Assemble _ | Value.Contract _ | Value.Copy _
   | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ -> (
+      (* Checked before the claim: an operation its rule refuses neither takes
+         a handle's memory nor shows another domain a handle dead. *)
+      let r = Prim.route ~by op in
       Donate.claim ~by hs;
       let op = Donate.unhandled hs op in
       match Donate.reuse ~by op hs with
@@ -675,49 +678,68 @@ and donated : type r. by:string -> r Value.prim -> Donate.handle list -> r =
           let op = Prim.map over op in
           let (Prim.Operands xs) = Prim.operands op in
           let (Value.Any target) = List.nth xs i in
-          match plain ~by ~into:(A.Any (one target)) op with
-          | r ->
+          match routed ~by ~into:(A.Any (one target)) r op with
+          | y ->
               Donate.consumed ~by ~reused:[ b ] hs;
-              r
+              y
           | exception (Invalid_argument _ as e) -> rechecked ~by op e)
       | None ->
-          let r = unclaimed hs (fun () -> run ~by op) in
+          let y =
+            unclaimed hs (fun () ->
+                match routed ~by r op with
+                | y -> y
+                | exception (Invalid_argument _ as e) -> rechecked ~by op e)
+          in
           Donate.consumed ~by ~reused:[] hs;
-          r)
-
-and plain : type r. by:string -> ?into:A.any -> r Value.prim -> r =
- fun ~by ?into op ->
-  match op with
-  | Value.Place (p, x) -> (
-      match x with
-      | Value.Deferred _ -> Place.value ~by p (own (Devices.rebrand p) x)
-      | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ ->
-          if on_host_set p && not (on_host_set (Prim.placement x)) then
-            wait ~by x;
-          let y = Place.value ~by p x in
-          (* A value over [x]'s memory, kept or borrowed, shares it. *)
-          let xs = Prim.arrays x in
-          Iarray.iter
-            (fun b ->
-              if
-                Iarray.exists
-                  (fun a -> Rig.Buffer.overlaps (A.buffer a) (A.buffer b))
-                  xs
-              then Rig.Claim.share (A.buffer b))
-            (Prim.arrays y);
           y)
+
+and plain : type r. by:string -> r Value.prim -> r =
+ fun ~by op ->
+  match op with
+  | Value.Place (p, x) -> placed ~by p x
   | Value.Check { ok; data; fail } ->
       ignore (Prim.layouts ~by op);
       check ~by ok data fail
   | _ ->
       if not (Prim.exists is_concrete op) then defer ~by op
-      else
-        (* A concrete operand has a placement, so the operation has a
-           route. *)
-        let { Prim.route; layouts } = Prim.route ~by op in
-        let route = Option.get route in
-        let place i x = placer ~by (Devices.rebrand route.operands.(i)) x in
-        compute ~by ?into route layouts (Prim.mapi place op)
+      else routed ~by (Prim.route ~by op) op
+
+(* [op], a placement, a check, or an operation of a concrete operand, computed
+   as its rule decided [r] ({!Prim.route}): its first result into [into] where
+   it is given. *)
+and routed : type r.
+    by:string -> ?into:A.any -> Prim.routed -> r Value.prim -> r =
+ fun ~by ?into r op ->
+  match op with
+  | Value.Place (p, x) -> placed ~by p x
+  | Value.Check { ok; data; fail } -> check ~by ok data fail
+  | _ ->
+      (* A concrete operand has a placement, so the operation has a route. *)
+      let route = Option.get r.Prim.route in
+      let place i x = placer ~by (Devices.rebrand route.operands.(i)) x in
+      compute ~by ?into route r.layouts (Prim.mapi place op)
+
+(* [x] placed at [p]. *)
+and placed : type v s d e.
+    by:string -> e Devices.placement -> (v, s, d) Value.t -> (v, s, e) Value.t
+    =
+ fun ~by p x ->
+  match x with
+  | Value.Deferred _ -> Place.value ~by p (own (Devices.rebrand p) x)
+  | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ ->
+      if on_host_set p && not (on_host_set (Prim.placement x)) then wait ~by x;
+      let y = Place.value ~by p x in
+      (* A value over [x]'s memory, kept or borrowed, shares it. *)
+      let xs = Prim.arrays x in
+      Iarray.iter
+        (fun b ->
+          if
+            Iarray.exists
+              (fun a -> Rig.Buffer.overlaps (A.buffer a) (A.buffer b))
+              xs
+          then Rig.Claim.share (A.buffer b))
+        (Prim.arrays y);
+      y
 
 (* [x] readable at [p]. *)
 and placer : type v s d.
