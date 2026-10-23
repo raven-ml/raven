@@ -1022,6 +1022,45 @@ let test_several_free () =
   let y = Nx.slice [ A; A ] (Nx.donate c) in
   equal ~msg:"the operand itself" (array float_exact) original (elements y)
 
+(* A Values rule may keep the arrays it receives, as a tape keeps a
+   derivative's primals. An eager call that reads a donation in several
+   operations, one of which the rule receives beside a traced value, leaves
+   the donor's memory to the arrays the rule kept. *)
+type ('v, 's, 'd) Nx.Prim.payload +=
+  | Held : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.Prim.payload
+
+let test_kept_by_rule () =
+  let p = Nx.Pattern.v "i j, j k, k l -> i l | j k" in
+  let ones = on_mem [| width; 1 |] (Array.make width 1.) in
+  let two = on_mem [| 1; 1 |] [| 2. |] in
+  let kept = ref [] in
+  let rule i ~by op =
+    let held (type v s d) (x : (v, s, d) Nx.t) : (v, s, d) Nx.t =
+      match Nx.Prim.payload i x with Some (Held y) -> y | _ -> x
+    in
+    let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
+    List.iter
+      (fun (Nx.Prim.Any x) ->
+        if Nx.Prim.owner x = None && Nx.shape x = [| rows; width |] then
+          kept := (fun () -> elements (Nx.cast f32 x)) :: !kept)
+      xs;
+    Nx.Prim.eval ~by (Nx.Prim.map held op)
+  in
+  let c = cache () in
+  let y =
+    Nx.Prim.interpret ~name:"test.tape" Values rule (fun i ->
+        let ones = Nx.Prim.traced i (Nx.Prim.form ones) (Held ones) in
+        Nx.einsum p [ Nx.donate c; ones; two ])
+  in
+  equal ~msg:"the einsum" (array float_exact)
+    (Array.init rows (fun r -> Float.of_int (2 * r * width)))
+    (elements (Nx.reshape [| rows |] y));
+  invalid ~sub:"donated to Nx.einsum" (fun () -> Nx.copy c);
+  equal ~msg:"the arrays the rule received" int 1 (List.length !kept);
+  List.iter
+    (fun read -> equal ~msg:"a kept array" (array float_exact) original (read ()))
+    !kept
+
 (* A donated call gives the bits of the same call undonated: a scatter of
    every combine with repeated positions, positions outside the axis, NaN,
    -0. and infinities, and a bfloat16 init summed in float32 over a drawn
@@ -2518,6 +2557,8 @@ let () =
                 donor" test_extent_elsewhere;
              test "an eager call of several operations frees its donor"
                test_several_free;
+             test "an eager call leaves the arrays a rule kept"
+               test_kept_by_rule;
              law_scatter_bits;
              law_init_bits;
            ];
