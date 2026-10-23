@@ -682,12 +682,13 @@ module type S = sig
       of [segments] as {!type-segments} states. Without [init] the sum starts
       from [+0]. Integers wrap in [acc]. A float or complex [acc] errs by at
       most twice its unit roundoff, its parts' for a complex one, per
-      addition, barring underflow. A scale multiplies each product, or its
-      block's partial sum where a block of the contracted extent is whole,
-      inside the stated bound; a library states which, a function of the
-      dtypes and the contracted extent alone, so that windows of [K] aligned
-      to blocks compose. A [Value] or code that is NaN makes its block's
-      terms NaN.
+      addition, barring underflow. A scale multiplies each element, rounded
+      once into [acc], each product, or its block's partial sum where a
+      block of the contracted extent is whole; a library states which, a
+      function of the dtypes and the contracted extent alone, so that
+      windows of [K] aligned to blocks compose, and the roundings its
+      scaling adds to the bound, barring overflow of a scaled term. A
+      [Value] or code that is NaN makes its block's terms NaN.
 
       A float sum's association, which fixes its bits, is a function of
       [order], the dtypes and the contracted extent alone: the batch, row and
