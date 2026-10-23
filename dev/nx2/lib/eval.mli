@@ -105,9 +105,10 @@ val once :
     [k]'s operations and keep the handles' arrays they read. Elsewhere it is
     {!Donate.resolve_value}: [k]'s operations compute into fresh memory, and
     the handles' memory is freed when [k] returns, as an operation frees
-    what it does not reuse, unless [k]'s value holds it or it is shared
-    ({!Donate.resolve_value}). Memory left unfreed returns to its device
-    once no value holds it. *)
+    what it does not reuse, unless [k]'s value holds it or a value made
+    before or during [k] shares it ({!Donate.resolve_value}). A view [k]
+    makes shares it: that memory waits for a collection, and returns to its
+    device once no value holds it. *)
 
 val eval : by:string -> 'r prim -> 'r
 (** [eval ~by op] is [op]'s meaning under the rule. Errors name [by]. *)

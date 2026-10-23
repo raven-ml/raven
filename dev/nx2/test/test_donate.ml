@@ -1022,45 +1022,44 @@ let test_several_free () =
   let y = Nx.slice [ A; A ] (Nx.donate c) in
   equal ~msg:"the operand itself" (array float_exact) original (elements y)
 
-(* An eager call that moves a donation before its operations read it frees
-   the donor's memory once it returns, as one operation does: the views it
-   made of that memory die with the call. A complex value's real part,
-   reshaped to its assembly; an einsum's grouped operand, reshaped to its
-   names; a key a permutation bitcasts to its words. Each leaves at least
-   half its donor's bytes less held than the same call undonated. *)
-let test_views_free () =
-  let left make f =
-    let run () =
-      let xs = make () in
-      let before = settled () in
-      let y = f xs in
-      Rig.free_cache device;
-      (xs, y, Rig.allocated device - before)
-    in
-    ignore (run ());
-    let _, _, grew = run () in
-    grew
+(* An eager call that moves a donation before its operations read it
+   consumes the donor once and computes into fresh memory: the views it makes
+   share the donor's memory, which waits for a collection. A complex value's
+   real part, reshaped to its assembly; an einsum's grouped operand, reshaped
+   to its names; a key a permutation bitcasts to its words. The donor's
+   buffer is read unshared, and kept only to compare where it lies. *)
+let test_moved_consumed () =
+  let consumed ~msg ~by make f elems =
+    let expected = elems (f (make ())) in
+    let x = make () in
+    let donor = Nx.Repr.read x A.buffer in
+    let y = f (Nx.donate x) in
+    equal ~msg (array float_exact) expected (elems y);
+    invalid ~sub:("donated to " ^ by) (fun () -> Nx.copy x);
+    let result = A.buffer (Option.get (Nx.Repr.array y)) in
+    equal ~msg:(msg ^ ": fresh memory") bool false
+      (Rig.Buffer.overlaps donor result)
   in
-  let freed ~msg ~bytes make f =
-    let kept = left make (f Fun.id) in
-    let given = left make (f Nx.donate) in
-    less ~msg int ~than:(kept - (bytes / 2)) given
-  in
-  let n = rows * width in
-  freed ~msg:"the complex value's real part" ~bytes:(4 * n)
-    (fun () -> (cache (), cache ()))
-    (fun d (re, im) -> Nx.complex Nx.complex64 ~re:(d re) ~im);
+  let im = cache () in
+  consumed ~msg:"the complex value's real part" ~by:"Nx.complex" cache
+    (fun re -> Nx.complex Nx.complex64 ~re ~im)
+    (fun z ->
+      Array.append
+        (elements (Nx.real Nx.float32 z))
+        (elements (Nx.imag Nx.float32 z)));
   let p = Nx.Pattern.v "(i j) k, k l, l m -> i j m | k l" in
   let ones = on_mem [| width; 1 |] (Array.make width 1.) in
   let two = on_mem [| 1; 1 |] [| 2. |] in
-  freed ~msg:"the einsum's grouped operand" ~bytes:size cache (fun d c ->
-      Nx.einsum ~sizes:[ ("i", 2) ] p [ d c; ones; two ]);
+  consumed ~msg:"the einsum's grouped operand" ~by:"Nx.einsum" cache
+    (fun c -> Nx.einsum ~sizes:[ ("i", 2) ] p [ c; ones; two ])
+    elements;
   let keys = 16384 in
   let words () =
     Nx.cast Nx.int32 (on_mem [| keys; 2 |] (Array.init (2 * keys) Float.of_int))
   in
-  freed ~msg:"the permutation's key" ~bytes:(8 * keys) words (fun d t ->
-      Nx.Rng.permutation ~key:(Nx.Rng.of_tensor (d t)) 1)
+  consumed ~msg:"the permutation's key" ~by:"Nx.Rng.permutation" words
+    (fun t -> Nx.Rng.permutation ~key:(Nx.Rng.of_tensor t) 1)
+    (fun y -> elements (Nx.cast f32 y))
 
 (* A Values rule may keep the arrays it receives, as a tape keeps a
    derivative's primals. An eager call that reads a donation in several
@@ -2677,7 +2676,7 @@ let () =
                 donor" test_extent_elsewhere;
              test "an eager call of several operations frees its donor"
                test_several_free;
-             test "an eager call frees a donor it moved" test_views_free;
+             test "an eager call consumes a donor it moved" test_moved_consumed;
              test "an eager call leaves the arrays a rule kept"
                test_kept_by_rule;
              law_scatter_bits;

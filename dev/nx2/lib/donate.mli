@@ -76,18 +76,12 @@ val resolve_value :
 (** [resolve_value ~by xs k] is {!resolve}[ ~by xs k], [k]'s value [y] an
     array, shards or a constant, whose operations no interpretation
     received; once the donors die, the handles' memory is consumed and freed
-    as {!consumed} does, unless [y] holds it or it is shared: by a value made
-    before the call, or by a placement's borrow or a {!Repr} crossing inside
-    [k]. Such memory returns to its device once no value holds it. A view
-    [k] makes by a movement or a bitcast shares nothing ({!freed_view}). For
-    a traced [y] it is {!resolve}: an interpretation may keep the handles'
-    arrays. *)
-
-val freed_view : Rig.Buffer.t -> bool
-(** [freed_view b] is [true] iff [b] is the memory of a handle that the
-    innermost {!resolve_value} running on the calling domain frees once its
-    call returns: a view the call makes of [b] then dies with the call,
-    unless the call's value holds it, so the engine leaves [b] unshared. *)
+    as {!consumed} does, unless [y] holds it or a value made before or
+    during the call shares it. A view [k] makes by a movement or a bitcast
+    shares it, as do a placement's borrow and a {!Repr} crossing inside [k]:
+    that memory waits for a collection, and returns to its device once no
+    value holds it. For a traced [y] it is {!resolve}: an interpretation may
+    keep the handles' arrays. *)
 
 val consume_list : by:string -> 'd Value.any list -> 'd Value.any list
 (** [consume_list ~by xs] is [xs] read by a consumer [by] that is no
