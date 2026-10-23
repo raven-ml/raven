@@ -452,8 +452,8 @@ static inline void put64(double *y, __m256 v, scales64 s) {
     for (; dl == 1 && l + 8 <= lines; l += 8)                                \
       for (int64_t r = 0; r < runs; r++) {                                   \
         S sc = LOADS(s + r * lines + l);                                     \
-        const uint8_t *b = codes + l * sl + r * 16;                          \
-        for (int q = 0; q < 4; q++) {                                        \
+        const uint8_t *b = codes + l * sl + r * (NX_CPU_F4_RUN / 2);         \
+        for (int q = 0; q < NX_CPU_F4_RUN / 8; q++) {                        \
           __m256i x = _mm256_setr_epi32(                                     \
               (int)word_at(b + 4 * q), (int)word_at(b + sl + 4 * q),         \
               (int)word_at(b + 2 * sl + 4 * q),                              \
@@ -463,7 +463,8 @@ static inline void put64(double *y, __m256 v, scales64 s) {
               (int)word_at(b + 6 * sl + 4 * q),                              \
               (int)word_at(b + 7 * sl + 4 * q));                             \
           for (int t = 0; t < 8; t++) {                                      \
-            PUT(y + (r * 32 + q * 8 + t) * du + l, e2m1x8(x), sc);           \
+            PUT(y + (r * NX_CPU_F4_RUN + q * 8 + t) * du + l, e2m1x8(x),     \
+                sc);                                                         \
             x = _mm256_srli_epi32(x, 4);                                     \
           }                                                                  \
         }                                                                    \
@@ -473,11 +474,11 @@ static inline void put64(double *y, __m256 v, scales64 s) {
     for (; l < lines; l++)                                                   \
       for (int64_t r = 0; r < runs; r++) {                                   \
         S sc = BCAST(s + r * lines + l);                                     \
-        const uint8_t *b = codes + l * sl + r * 16;                          \
-        for (int q = 0; q < 4; q++) {                                        \
+        const uint8_t *b = codes + l * sl + r * (NX_CPU_F4_RUN / 2);         \
+        for (int q = 0; q < NX_CPU_F4_RUN / 8; q++) {                        \
           __m256i x = _mm256_srlv_epi32(                                     \
               _mm256_set1_epi32((int)word_at(b + 4 * q)), shifts);           \
-          T *d = y + (r * 32 + q * 8) * du + l * dl;                         \
+          T *d = y + (r * NX_CPU_F4_RUN + q * 8) * du + l * dl;              \
           if (du == 1) {                                                     \
             PUT(d, e2m1x8(x), sc);                                           \
             continue;                                                        \
