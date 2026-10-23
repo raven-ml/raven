@@ -1045,6 +1045,71 @@ let law_threads (b : Support.backend) c =
   | Some y, Some y' -> equal (array string) (elements y) (elements y')
   | _ -> failf "%s declined a scatter" b.name
 
+(* Sub-byte scatters *)
+
+let sub_byte_dtypes = List.filter (fun (D.Any dt) -> D.bits dt < 8) all_dtypes
+
+(* Shapes whose threads store elements of one byte: an axis of 9 split
+   into parts, rows of 1001 slices cut into pieces at 512 and starting at
+   odd elements, and 20 units of 33 elements. Each is [(into, axis,
+   updates along it, broadcast axes of the positions)]. *)
+let shared_bytes =
+  [
+    ([| 9 |], 0, 70_000, []);
+    ([| 9; 1001 |], 0, 64, [ 1 ]);
+    ([| 20; 11; 3 |], 1, 2000, []);
+  ]
+
+let sub_byte_examples =
+  List.concat_map
+    (fun d ->
+      List.concat_map
+        (fun (ts, axis, m, broadcast) ->
+          let ps = Array.init ts.(axis) Int64.of_int in
+          List.map
+            (fun combine ->
+              scatter_example d combine ~ts ~axis ~m ~broadcast ps)
+            (if takes_add d then Nx_kernel.[ Set; Add; Max; Min ]
+             else Nx_kernel.[ Set; Max; Min ]))
+        shared_bytes)
+    sub_byte_dtypes
+
+let sub_byte_scatters =
+  let open Gen in
+  let* d = of_list ~pp:pp_dtype sub_byte_dtypes in
+  let* combine = combine_gen d in
+  let* ts, axis, m, broadcast = of_list shared_bytes in
+  let+ seed = int in
+  let rs = Random.State.make [| seed |] in
+  let r = Array.length ts in
+  let us = Array.mapi (fun i e -> if i = axis then m else e) ts in
+  {
+    combine;
+    saxis = axis;
+    into = operand d ts (plain r) (fun _ -> element d rs);
+    sidx =
+      int64s us { (plain r) with broadcast } (fun () -> position rs ts.(axis));
+    updates = operand d us (plain r) (fun _ -> element d rs);
+    sviews = [];
+  }
+
+let sub_byte_scatters = Gen.with_pp pp_scatter sub_byte_scatters
+
+(* A sub-byte scatter's bits are one thread's where threads store elements
+   of one byte. A lost store needs two threads to meet at the byte, which a
+   run may not show; the shapes pin where they would. *)
+let law_sub_byte (b : Support.backend) c =
+  let d = dtype_of c.into in
+  List.iter
+    (fun e -> cover (Format.asprintf "%a" pp_dtype e) (e = d))
+    sub_byte_dtypes;
+  let ts = shape_of c.into in
+  cover "an axis split into parts" (Array.length ts = 1);
+  cover "a row cut into pieces"
+    (Array.length ts = 2 && c.combine = Nx_kernel.Add && is_narrow d);
+  cover "several units" (Array.length ts = 3);
+  law_threads b c
+
 let int_gathers =
   Gen.with_pp pp_gather (gather_gen ~dtypes:[ D.Any D.Int64 ] ())
 
@@ -1150,6 +1215,9 @@ let cpu (b : Support.backend) =
       prop ~count:10 "an embedding gradient's bits are one thread's"
         row_scatters
         (run (law_threads b));
+      prop ~count:10 ~examples:sub_byte_examples
+        "a sub-byte scatter's bits are one thread's" sub_byte_scatters
+        (run (law_sub_byte b));
       test "a sorted run's last piece of one slice" (fun () ->
           b.around (test_last_piece b));
       test "boolean extremes are of truths" (fun () ->
