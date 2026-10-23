@@ -1901,35 +1901,6 @@ let padded ?view ~scan d monoid s pad fill axes seed =
   in
   { x; view; fill; pad; loaded }
 
-(* Whether nx.cpu reads a reduction's padded load of an operand of shape
-   [s] in place (nx_cpu.mli): a loop of no empty axis, its padding filling
-   along kept axes alone and at their ends there. *)
-let in_place ~scan s (pad : Nx_kernel.pad) axes =
-  let between i d = Iarray.get pad.interior i > 0 && d > 1 in
-  let fills i d =
-    Iarray.get pad.lo i > 0 || Iarray.get pad.hi i > 0 || between i d
-  in
-  let kept i d = not (fills i d && (Array.mem i axes || between i d)) in
-  (not scan)
-  && Array.for_all (fun e -> e > 0) (unchecked s pad)
-  && Array.for_all Fun.id (Array.mapi kept s)
-
-(* The window along axis [i] of [pad] as its size, step and dilation: 1, 1
-   and 1 for an axis no window takes. *)
-let window_along (pad : Nx_kernel.pad) i =
-  List.fold_left
-    (fun acc (w : M.window) ->
-      if w.axis = i then (w.size, w.step, w.dilation) else acc)
-    (1, 1, 1) (Iarray.to_list pad.windows)
-
-(* Along axis [i] of an operand of shape [s] loaded as [pad], each output's
-   window as the first and last operand index it reaches. *)
-let reaches s pad i =
-  let k, st, d = window_along pad i in
-  let lo = Iarray.get pad.lo i in
-  List.init (unchecked s pad).(i) (fun o ->
-      (o * st - lo, (o * st) + ((k - 1) * d) - lo))
-
 (* The dtypes whose elements are no byte of their own, but float4_e2m1fn,
    which the reference does not compute in. *)
 let sub_bytes = D.[ Any Int4; Any Uint4; Any Bit ]
@@ -1996,12 +1967,12 @@ let padded_examples =
     reduce Max [| 0; 2 |] (pad [| 0; 0 |] [| 0; 0 |] [| 0; 0 |]) [| 0 |];
     (* Fill along a reduced axis. *)
     reduce Sum [| 4 |] (pad [| 1 |] [| 1 |] [| 0 |]) [| 0 |];
-    (* Read in place: fill before axis 0 and after axis 1, axis 1 cropped
-       before and windowed, its taps reduced. *)
+    (* Fill before axis 0 and after axis 1, axis 1 cropped before and
+       windowed, its taps reduced. *)
     reduce Max [| 5; 6 |]
       (pad [| 1; -1 |] [| 0; 2 |] [| 0; 0 |] ~windows:[| w 1 3 2 |])
       [| 2 |];
-    (* Read in place, broadcast along an axis the padding leaves alone. *)
+    (* Broadcast along an axis the padding leaves alone. *)
     padded
       ~view:
         { perm = [| 0; 1 |]; stepped = false; reversed = None;
@@ -2009,7 +1980,7 @@ let padded_examples =
       ~scan:false f32 Sum [| 4; 5 |]
       (pad [| 0; 1 |] [| 0; 1 |] [| 0; 0 |] ~windows:[| w 1 3 1 |])
       one [| 2 |] 7;
-    (* Read in place: int4, a NaN and a -0 fill. *)
+    (* Int4, a NaN and a -0 fill. *)
     padded ~scan:false (D.Any D.Int4) Sum [| 3; 5 |]
       (pad [| 0; 2 |] [| 0; 1 |] [| 0; 0 |] ~windows:[| w 1 2 1 |])
       "\136" [| 2 |] 7;
@@ -2019,20 +1990,19 @@ let padded_examples =
     padded ~scan:false f32 Sum [| 6 |]
       (pad [| 2 |] [| 1 |] [| 0 |] ~windows:[| w 0 2 1 |])
       "\000\000\000\128" [| 1 |] 7;
-    (* Read in place: windows of one stepping 2, the first two or the last
-       two in the fill alone. *)
+    (* Windows of one stepping 2, the first two or the last two in the fill
+       alone. *)
     reduce Sum [| 4 |]
       (pad [| 3 |] [| 0 |] [| 0 |] ~windows:[| w 0 1 2 |])
       [| 1 |];
     reduce Sum [| 4 |]
       (pad [| 0 |] [| 3 |] [| 0 |] ~windows:[| w 0 1 2 |])
       [| 1 |];
-    (* Read in place: each window of 3 over 2 elements padded by 1 reads
-       the fill. *)
+    (* Each window of 3 over 2 elements padded by 1 reads the fill. *)
     reduce Sum [| 2 |]
       (pad [| 1 |] [| 1 |] [| 0 |] ~windows:[| w 0 3 1 |])
       [| 1 |];
-    (* Read in place through a reversed and a stepped view. *)
+    (* Through a reversed and a stepped view. *)
     padded
       ~view:
         { perm = [| 0; 1 |]; stepped = false; reversed = Some 1;
@@ -2071,52 +2041,21 @@ let law_padded (b : Support.backend) p =
   | Reads c ->
       let dst = A.Any (A.create Rig.host (A.dtype x) (result_shape c)) in
       cover "computed" true;
-      (* Read in place: the fill's sides, a crop, the axes it fills along,
-         the dtypes and the fills. *)
+      (* The dtypes and the fills. *)
       let lo i = Iarray.get pad.lo i and hi i = Iarray.get pad.hi i in
       let axes = List.init (Array.length s) Fun.id in
       let filled = List.filter (fun i -> lo i > 0 || hi i > 0) axes in
-      let read = in_place ~scan:c.scan s pad c.axes && filled <> [] in
       let nan, neg_zero =
         match float_fill p.x p.fill with
         | Some f -> (Float.is_nan f, f = 0. && Float.sign_bit f)
         | None -> (false, false)
       in
-      cover "read in place" read;
-      cover "read in place, one side unfilled"
-        (read && List.exists (fun i -> lo i <= 0 || hi i <= 0) filled);
-      cover "read in place, lo and hi differ"
-        (read && List.exists (fun i -> lo i <> hi i) filled);
-      cover "read in place, cropped"
-        (read && List.exists (fun i -> lo i < 0 || hi i < 0) axes);
-      cover "read in place along two axes" (read && List.length filled >= 2);
-      cover "read in place, windows" (read && pad.windows <> [||]);
-      cover "read in place, a broadcast axis held once" (read && alone);
-      cover "read in place, sub-byte" (read && D.bits (A.dtype x) < 8);
-      cover "read in place, a NaN fill" (read && nan);
-      cover "read in place, a -0 fill" (read && neg_zero);
-      cover "read in place, a reversed or stepped view"
-        (read && (p.view.stepped || p.view.reversed <> None));
-      (* Along a padded axis, no output whose window reads the operand
-         alone; or a stepped window's outputs that start in the fill before
-         or end in the fill after it all lying in that fill. *)
-      let interior i =
-        List.exists (fun (a, z) -> a >= 0 && z < s.(i)) (reaches s pad i)
-      in
-      let in_fill i =
-        let _, st, _ = window_along pad i in
-        let o = reaches s pad i in
-        let before = List.filter (fun (a, _) -> a < 0) o in
-        let after = List.filter (fun (_, z) -> z >= s.(i)) o in
-        st > 1
-        && ((before <> [] && List.for_all (fun (_, z) -> z < 0) before)
-           || (after <> [] && List.for_all (fun (a, _) -> a >= s.(i)) after))
-      in
-      cover "read in place, no interior along an axis"
-        (read && List.exists (fun i -> not (interior i)) filled);
-      cover "read in place, a stepped window's band in the fill alone"
-        (read && List.exists in_fill filled);
-      cover "copied: a fill along a reduced axis"
+      cover "sub-byte" (D.bits (A.dtype x) < 8);
+      cover "a NaN fill" nan;
+      cover "a -0 fill" neg_zero;
+      cover "a fill along a kept axis"
+        (List.exists (fun i -> not (Array.mem i c.axes)) filled);
+      cover "a fill along a reduced axis"
         ((not c.scan) && List.exists (fun i -> Array.mem i c.axes) filled);
       (* It gives no window along that axis. *)
       let e = extents s pad in
@@ -4651,11 +4590,10 @@ let test_zero_products (b : Support.backend) () =
     (sum_products (module One) b c prog c.loads)
 
 (* A Sum of a program's output over padded loads gives the bits of the Sum
-   over the arrays the loads read, where nx_cpu.mli keeps a load's whole
-   copy and where it reads loads in place: a destination aliasing the
-   operand, a coordinate read, two loads padded at different ends, a
-   windowed load whose taps lie along an axis another load fills along,
-   and an empty loop. *)
+   over the arrays the loads read: a destination aliasing the operand, a
+   coordinate read, two loads padded at different ends, a windowed load
+   whose taps lie along an axis another load fills along, and an empty
+   loop. *)
 let test_padded_programs (b : Support.backend) () =
   let module K = (val b.kernels) in
   let one = "\000\000\128\063" in

@@ -4399,60 +4399,12 @@ static int identity_of(value vp) {
   return Tag_val(node) == NX_NODE_IN ? Int_val(Field(ins, 0)) : -1;
 }
 
-/* Padded loads in place */
-
-/* [a], of the loop's rank, over the box from [start] by [count]. */
-static void box_of(nx_array *a, const int64_t *start, const int64_t *count) {
-  int r = a->rank;
-  for (int i = 0; i < r; i++) {
-    a->offset += start[i] * a->dim[r + i];
-    a->dim[i] = count[i];
-  }
-}
-
-/* A reduction's destination [y] over the box from [start] by [count] of
-   its loop of [rank] axes, the axes [reduced] flags dropped. */
-static void dst_box(nx_array *y, int rank, const int *reduced,
-                    const int64_t *start, const int64_t *count) {
-  int64_t s[NX_MAX_RANK], n[NX_MAX_RANK];
-  for (int i = 0, k = 0; i < rank; i++)
-    if (!reduced[i]) {
-      s[k] = start[i];
-      n[k++] = count[i];
-    }
-  box_of(y, s, n);
-}
-
-/* Reduces, as [c] says, the load [p] of [x] read in place, box by box of
-   [b] (nx_cpu_boxes_of), into [y] and [y1], each box's outputs from its
-   view or rim copy: NX_OK, or -1 if host memory runs out. */
-static int reduce_boxes(const call *c, const nx_array *y, const nx_array *y1,
-                        const nx_array *x, const nx_cpu_pad *p,
-                        const uint8_t *fill, const nx_cpu_boxes *b,
-                        const int *reduced) {
-  int e = NX_OK;
-  for (int k = 0; k <= 2 * b->nsplit && e == NX_OK; k++) {
-    int64_t start[NX_MAX_RANK], count[NX_MAX_RANK];
-    if (!nx_cpu_box(b, k, start, count)) continue;
-    nx_array yb = *y, yb1 = *y1, xb;
-    dst_box(&yb, b->rank, reduced, start, count);
-    dst_box(&yb1, b->rank, reduced, start, count);
-    int copied;
-    if (nx_cpu_load_box(x, p, fill, start, count, &xb, &copied)) return -1;
-    e = reduce_into(c->op, c->r, c->axes, c->naxes, &yb, y1 == y ? &yb : &yb1,
-                    &xb, NULL, NULL);
-    if (copied) free(xb.base);
-  }
-  return e;
-}
-
 /* Computes [c] of [vx], a program's one load that is its identity, of
    the program's dtype [dt], read in place, into the destinations [d0] and
    [d1] (Val_unit where [c] has one), from the carries [vcarry] where it is
    Some; [vpad] holds the load's pad and fill where it is padded. Nothing
    is copied before the door: a call of a few elements allocates nothing.
-   A padded load is read from its padded copy, or a reduction's box by box
-   in place where it can be (reduce_boxes); one a destination aliases,
+   A padded load is read from its padded copy; one a destination aliases,
    from a copy too, since a scan reads its terms again after it writes
    their results: for its chunks' totals, and in a Moments scan's exact
    pass. */
@@ -4496,15 +4448,7 @@ static value run(const call *c, int dt, value d0, value d1, value vx,
      Min's scan reads it again after it writes the results (settle). */
   nx_array kept_carry = {0};
   int failed = cy != NULL && cy->alias && own_copy(cy, &kept_carry, HEAP);
-  /* A reduction's padded load is read in place where it can be. */
-  int reduced[NX_MAX_RANK] = {0};
-  int flag = padded && c->op == REDUCE && !x->alias;
-  for (int i = 0; i < c->naxes; i++) reduced[c->axes[i]] = 1;
-  nx_cpu_boxes boxes;
-  int in_place =
-      flag && nx_cpu_boxes_of(&boxes, r, ys, reduced, 1, x, &pad, &flag);
-  if (in_place) copy = 0;
-  if (!failed && !in_place)
+  if (!failed)
     failed = padded     ? nx_cpu_unpad(x, &pad, bits, &loaded)
              : x->alias ? own_copy(x, &loaded, KEPT_SCRATCH)
                         : 0;
@@ -4516,14 +4460,11 @@ static value run(const call *c, int dt, value d0, value d1, value vx,
   }
   if (copy) x = &loaded;
   if (kept_carry.base != NULL) cy = &kept_carry;
-  if (in_place)
-    e = reduce_boxes(c, &a[0], &a[nd - 1], x, &pad, bits, &boxes, reduced);
-  else
-    e = c->op == NETWORK
-            ? network_into(c->r, c->axes[0], &a[0], &a[nd - 1], x, NULL)
-            : reduce_into(c->op, c->r, c->axes, c->naxes, &a[0], &a[nd - 1],
-                          x, cy, NULL);
-  if (copy && padded) free(loaded.base);
+  e = c->op == NETWORK
+          ? network_into(c->r, c->axes[0], &a[0], &a[nd - 1], x, NULL)
+          : reduce_into(c->op, c->r, c->axes, c->naxes, &a[0], &a[nd - 1],
+                        x, cy, NULL);
+  if (padded) free(loaded.base);
   else if (copy) nx_cpu_give(loaded.base);
   free(kept_carry.base);
   nx_cpu_reacquire(released);
@@ -4543,61 +4484,6 @@ static int axis_of(value v, int *a) {
 /* Whether [r] has two destinations: Arg's and Moments'. */
 static int two(int r) {
   return r == NX_CPU_ARG_MAX || r == NX_CPU_ARG_MIN || r == NX_CPU_MOMENTS;
-}
-
-/* Reduces the program [g]'s outputs, as [c] says, by the [nr] reductions
-   [rs] of the outputs [ks] into the destinations from [first] of [a], over
-   the loads [loads], those [in_place] flags padded by [p] with [fill] and
-   read in place, box by box of [b] (nx_cpu_boxes_of): each box's loads in
-   [bl], [g] bound to them over the box, through [z]. NX_OK, a refusal of
-   nx_cpu_prog_bind's, or -1 if host memory runs out. */
-static int fused_boxes(const call *c, nx_cpu_prog *g, fused *z,
-                       const int *rs, const int *ks, const int *first, int nr,
-                       const nx_array *a, const nx_array *loads, nx_array *bl,
-                       const nx_cpu_pad *p, uint8_t (*fill)[16],
-                       const int *in_place, const nx_cpu_boxes *b,
-                       const int *reduced) {
-  int nl = nx_cpu_prog_ins(g), r = b->rank, e = NX_OK;
-  for (int k = 0; k <= 2 * b->nsplit && e == NX_OK; k++) {
-    int64_t start[NX_MAX_RANK], count[NX_MAX_RANK];
-    if (!nx_cpu_box(b, k, start, count)) continue;
-    int copied[NX_MAX_OPERANDS] = {0}, oom = 0, l = 0;
-    for (; l < nl && !oom; l++) {
-      bl[l] = loads[l];
-      if (in_place[l])
-        oom = nx_cpu_load_box(&loads[l], &p[l], fill[l], start, count, &bl[l],
-                              &copied[l]);
-      else box_of(&bl[l], start, count);
-    }
-    int index = 0;
-    if (!oom) e = nx_cpu_prog_bind(g, bl, r, count, &index);
-    nx_array x = {.rank = r};
-    if (!oom && !e) {
-      int64_t past = 1;
-      for (int d = r - 1; d >= 0; d--) {
-        x.dim[d] = count[d];
-        x.dim[r + d] = past;
-        past *= count[d];
-      }
-      *z = (fused){.prog = g, .nloads = nl, .index = index};
-      fuse(z, &x, bl);
-    }
-    for (int i = 0; !oom && !e && i < nr; i++) {
-      int dt = nx_cpu_prog_held(g, ks[i]);
-      nx_array y = a[first[i]], y1 = two(rs[i]) ? a[first[i] + 1] : y;
-      dst_box(&y, r, reduced, start, count);
-      dst_box(&y1, r, reduced, start, count);
-      x.dtype = dt;
-      x.bits = nx_dtype_row_of(dt).bits;
-      z->k = ks[i];
-      e = reduce_into(c->op, rs[i], c->axes, c->naxes, &y,
-                      two(rs[i]) ? &y1 : &y, &x, NULL, z);
-    }
-    for (int i = 0; i < l; i++)
-      if (copied[i]) free(bl[i].base);
-    if (oom) e = -1;
-  }
-  return e;
 }
 
 /* What run_fused holds on the C heap: the program's copy, past
@@ -4833,29 +4719,17 @@ static value run_fused(const call *c, value vp, value vrs, int single,
      thread's kept scratch, taken after the door and given back before its
      end, since nothing raises in between: with a reduction's two carrier
      copies and its work, four kept buffers at most. */
-  /* A reduction's padded loads are read in place where they can be, each
-     box's loads in a second table of them. */
-  int reduced[NX_MAX_RANK] = {0}, in_place[NX_MAX_OPERANDS] = {0}, boxed = 0;
-  nx_cpu_boxes boxes;
-  if (c->op == REDUCE && pad != NULL && !nx_cpu_prog_coords(g)) {
-    for (int i = 0; i < c->naxes; i++) reduced[c->axes[i]] = 1;
-    for (int i = 0; i < nl; i++) in_place[i] = padded[i] && !a[nd + i].alias;
-    boxed = nx_cpu_boxes_of(&boxes, rank, shape, reduced, nl, &a[nd], pad,
-                            in_place);
-  }
-  uint8_t *held = nx_cpu_take((int64_t)sizeof(fused) +
-                              (1 + boxed) * nl * (int64_t)sizeof(nx_array));
+  uint8_t *held = nx_cpu_take((int64_t)sizeof(fused) + nl * sizeof(nx_array));
   int copied = 0, oom = held == NULL;
   fused *z = (fused *)held;
   nx_array *loads = oom ? NULL : (nx_array *)(held + sizeof(fused));
-  /* A padded load not read in place is read from its padded copy; one a
-     destination aliases, from a copy too, as run reads such an operand:
-     on the heap, as many as the loads, so that the thread's kept buffers
-     hold no more than the reductions' copies and work. */
+  /* A padded load is read from its padded copy; one a destination
+     aliases, from a copy too, as run reads such an operand: on the heap,
+     as many as the loads, so that the thread's kept buffers hold no more
+     than the reductions' copies and work. */
   for (; copied < nl && !oom; copied++) {
     nx_array *l = &a[nd + copied];
     loads[copied] = *l;
-    if (in_place[copied]) continue;
     if (padded[copied])
       oom = nx_cpu_unpad(l, &pad[copied], fill[copied], &loads[copied]);
     else if (l->alias) oom = own_copy(l, &loads[copied], HEAP);
@@ -4867,13 +4741,10 @@ static value run_fused(const call *c, value vp, value vrs, int single,
   /* The virtual operand is C-contiguous over the loop's shape, the
      loads'. */
   int index = 0;
-  if (!oom && boxed)
-    e = fused_boxes(c, g, z, rs, ks, first, nr, a, loads, loads + nl, pad, fill,
-                    in_place, &boxes, reduced);
-  else if (!oom) e = nx_cpu_prog_bind(g, loads, rank, shape, &index);
+  if (!oom) e = nx_cpu_prog_bind(g, loads, rank, shape, &index);
   nx_array x = {.rank = rank};
-  if (!oom && !boxed) *z = (fused){.prog = g, .nloads = nl, .index = index};
-  if (!oom && !boxed && !e) {
+  if (!oom) *z = (fused){.prog = g, .nloads = nl, .index = index};
+  if (!oom && !e) {
     int64_t past = 1;
     for (int d = rank - 1; d >= 0; d--) {
       x.dim[d] = shape[d];
@@ -4882,7 +4753,7 @@ static value run_fused(const call *c, value vp, value vrs, int single,
     }
     fuse(z, &x, loads);
   }
-  for (int i = 0; !oom && !boxed && !e && i < nr; i++) {
+  for (int i = 0; !oom && !e && i < nr; i++) {
     int dt = nx_cpu_prog_held(g, ks[i]);
     const nx_array *y = &a[first[i]], *y1 = two(rs[i]) ? y + 1 : y;
     x.dtype = dt;
@@ -4896,7 +4767,7 @@ static value run_fused(const call *c, value vp, value vrs, int single,
   if (!oom && !e && nx_cpu_prog_failed(g)) e = -1;
   /* A copy that failed left its base NULL: free skips it. */
   for (int i = 0; i < copied; i++)
-    if ((padded[i] && !in_place[i]) || a[nd + i].alias) free(loads[i].base);
+    if (padded[i] || a[nd + i].alias) free(loads[i].base);
   free(kept_carry.base);
   nx_cpu_give(held);
   nx_cpu_reacquire(released);
