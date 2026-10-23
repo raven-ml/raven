@@ -4419,8 +4419,8 @@ module Prim : sig
 
       An operation [rule] receives is the final consumer of the donated
       handles among its operands ({!Nx.donate}), a movement too, since its
-      results hold no handle to pass on: their donors die when it is
-      received. [rule] reads the operation as it was called: the handles'
+      results hold no handle to pass on: their donors die when [rule] returns,
+      and live on if it raises. [rule] reads the operation as it was called: the handles'
       arrays, and a donor beside its handle as a live value. A function that
       broadcasts its operands for one operation, as {!Nx.add} of two shapes
       does, is their handles' one consumer instead, as a function of several

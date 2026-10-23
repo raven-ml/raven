@@ -199,15 +199,8 @@ let as_called : type v s d.
 
 let unhandled hs op = Prim.map (fun y -> as_called hs y) op
 
-let consume ~by op =
-  let (Prim.Operands xs) = Prim.operands op in
-  let hs = if Prim.exists is_handle op then handles ~by xs else [] in
-  Prim.iteri (fun i x -> Prim.alive ~by i x) op;
-  claim ~by hs;
-  unhandled hs op
-
 let resolve (type d a) ~by (xs : d Value.any list)
-    (k : ('v 's. ('v, 's, d) Value.t -> ('v, 's, d) Value.t) -> a) : a =
+    (k : ('v 's 'e. ('v, 's, 'e) Value.t -> ('v, 's, 'e) Value.t) -> a) : a =
   let hs =
     if List.exists (fun (Value.Any x) -> is_handle x) xs then handles ~by xs
     else []
