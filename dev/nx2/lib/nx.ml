@@ -1749,25 +1749,22 @@ let elementwise (type v s) ~by (dt : (v, s) D.t) xs (out : (v, s) E.t) =
   let ins = Iarray.of_list (List.map (fun (Value.Any x) -> D.Any (dtype x)) xs) in
   let prog = P.of_exprs ~ins [| E.any out |] in
   let layout = contiguous ~by s in
-  let map xs =
+  (* Read [once] inside an [Extent], as [binary]'s operands are. *)
+  if not (Eval.inside ()) then
     let load (Value.Any x) = Value.Plain (broadcast ~by s x) in
+    let loads = Iarray.of_list (List.map load xs) in
     let y, () =
-      Eval.eval ~by
-        (Value.Map
-           {
-             layout;
-             prog;
-             outs = Value.[ dt ];
-             loads = Iarray.of_list (List.map load xs);
-           })
+      Eval.eval ~by (Value.Map { layout; prog; outs = Value.[ dt ]; loads })
     in
     y
-  in
-  (* Read [once] inside an [Extent], as [binary]'s operands are. *)
-  if not (Eval.inside ()) then map xs
   else
     Donate.resolve ~by xs @@ fun read ->
-    map (List.map (fun (Value.Any x) -> Value.Any (read x)) xs)
+    let load (Value.Any x) = Value.Plain (broadcast ~by s (read x)) in
+    let loads = Iarray.of_list (List.map load xs) in
+    let y, () =
+      Eval.eval ~by (Value.Map { layout; prog; outs = Value.[ dt ]; loads })
+    in
+    y
 
 (* [x <> 0] for [x] of [dt], [0 / 1] for booleans. *)
 let not_zero dt x = E.(x <> const dt (D.zero dt))
