@@ -750,6 +750,10 @@ let round () =
    and its memory found in the caches or not. *)
 let result () = B.fill (host (4 * mib)) '\001'
 
+(* A 16 MiB result, past a quarter of the last level of every host rig is
+   tested on: a major cycle per result or one per two. *)
+let large_result () = B.fill (host (16 * mib)) '\001'
+
 let heap_rows =
   Thumper.group "heap"
     [
@@ -760,6 +764,7 @@ let heap_rows =
       row "take-64K-cached-100" caching take;
       Thumper.bench "reuse-8M-x8" round;
       Thumper.bench "fill-4M-dropped" result;
+      Thumper.bench "fill-16M-dropped" large_result;
     ]
 
 let memory_floor_rows =

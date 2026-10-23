@@ -51,6 +51,10 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- A host buffer larger than half the collector's pacing bound counts as half
+  of it, so dropped large buffers bring a major cycle every two buffers rather
+  than every one. Beside a large heap a dropped 16 MiB result takes up to 46%
+  less time, for up to twice the peak memory such results hold.
 - Add `rig`, which runs work on GPUs from OCaml through Metal, CUDA, NVIDIA's
   and AMD's kernel drivers, or no kernel driver on Linux, and orders the work
   of every device by the memory it uses (`Rig.submit`, `Rig.Buffer.copy`).
