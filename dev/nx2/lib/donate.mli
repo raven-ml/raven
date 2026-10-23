@@ -6,17 +6,17 @@
 (** Donation: handles over a value's memory that one operation reads, and their
     consumption.
 
-    A donor is offered under a key of its own, which it keeps when a claim is
-    given back and which every handle of every donation of it reads. A consumer
-    claims its handles in their donors' key order, each handle's own word before
-    its donor's, without a lock: of consumers racing for the same handles, at
-    least one succeeds, and each loser raises naming the consumer it lost a word
-    to. The eager engine ({!Exec}) claims an operation's handles before it reads
-    them, writes the operation's first result into a handle's memory where
-    {!reuse} allows, and ends the handles once it has read them ({!consumed}).
-    An operation that raises before it writes or consumes their memory gives
-    them back ({!unclaim}); one that raises once it consumed a handle's memory
-    for its result leaves its donors dead: rig's consumption is one-way. *)
+    A donor is offered under a key of its own, which it keeps for life and
+    every handle of every donation of it holds. A consumer claims its handles
+    in their donors' key order, each handle's own word before its donor's,
+    without a lock: of consumers racing for the same handles, at least one
+    succeeds, and each loser raises naming the consumer it lost a word to. The
+    eager engine ({!Exec}) claims an operation's handles before it reads them,
+    writes the operation's first result into a handle's memory where {!reuse}
+    allows, and ends the handles once it has read them ({!consumed}). An
+    operation that raises before it writes or consumes their memory gives them
+    back ({!unclaim}); one that raises once it consumed a handle's memory for
+    its result leaves its donors dead: rig's consumption is one-way. *)
 
 val donate : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [donate ~by x] is a handle over [x]'s memory that one operation reads
@@ -85,31 +85,28 @@ val handles : by:string -> 'd Value.any list -> handle list
 (** [handles ~by xs] is the handles among [xs]. Raises [Invalid_argument]
     naming [Nx.donate] and [by] for two handles of one donor or over one
     memory: the same handle twice, two donations of one value, or one handle
-    and a value a movement passed on. While another consumer holds a donor,
-    its handles over different memory pass, and {!claim} raises for them. *)
+    and a value a movement passed on. *)
 
-val unhandled : handle list -> 'r Value.prim -> 'r Value.prim
-(** [unhandled hs op] is [op] as it is when called, before claiming [hs] kills
-    their donors: each handle as its arrays, and each of their donors among
-    [op]'s operands as a live value. *)
+type claim
+(** The type for a consumer's claim of its handles. *)
 
-type claims
-(** The type for the claims a consumer made, which {!unclaim} gives back. *)
-
-val claim : by:string -> handle list -> claims
+val claim : by:string -> handle list -> claim
 (** [claim ~by hs] claims [hs], from {!handles}, for their consumer [by], in
     their donors' key order: each handle and its donor die, naming [by].
-    Raises [Invalid_argument] naming [Nx.donate] and [by], before any claim,
-    for two handles of one donor, which {!handles} lets pass while another
-    consumer holds the donor; or naming [by] and the earlier consumer for a
+    Raises [Invalid_argument] naming [by] and the earlier consumer for a
     handle or donor that died first, on any domain. *)
 
-val unclaim : claims -> unit
-(** [unclaim c] gives back the claims [c], for a consumer that raised before
-    it wrote or consumed their memory: each handle and its donor live again,
-    the donor offered under the key it had. *)
+val unhandled : claim -> 'r Value.prim -> 'r Value.prim
+(** [unhandled c op] is [op] as it was when called, read after [c] claimed
+    its handles: each handle as its arrays, and each donor [c] killed among
+    [op]'s operands as a live value. *)
 
-val claim_handle : by:string -> int -> ('v, 's, 'd) Value.t -> claims
+val unclaim : handle list -> unit
+(** [unclaim hs] gives back the claimed handles [hs], for a consumer that
+    raised before it wrote or consumed their memory: each handle and its
+    donor live again, the donor offered under its key. *)
+
+val claim_handle : by:string -> int -> ('v, 's, 'd) Value.t -> unit
 (** [claim_handle ~by i x] is {!claim} of the one handle [x], operand [i];
     nothing where [x] is no handle. *)
 

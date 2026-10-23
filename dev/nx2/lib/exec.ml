@@ -565,14 +565,15 @@ let call : type r.
   | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       invalid_arg "Exec.call: an operation no kernel computes"
 
-(* [f ()], the claims [c] given back where it raises: [f] neither writes their
-   memory nor consumes it, so their donors live on, as before the call. *)
-let unclaimed c f =
+(* [f ()], the claimed handles [hs] given back where it raises: [f] neither
+   writes their memory nor consumes it, so their donors live on, as before the
+   call. *)
+let unclaimed hs f =
   match f () with
   | r -> r
   | exception e ->
       let bt = Printexc.get_raw_backtrace () in
-      Donate.unclaim c;
+      Donate.unclaim hs;
       Printexc.raise_with_backtrace e bt
 
 (* Raises for [op], whose kernels on [d] declined it. A routine is named by
@@ -650,13 +651,13 @@ and donated : type r. by:string -> r Value.prim -> Donate.handle list -> r =
         end
       in
       Donate.spend ~by 0 x;
-      Value.Donated { at; shape; arrays; donor = d.donor; spent = Value.Live }
+      Value.Donated
+        { key = d.key; at; shape; arrays; donor = d.donor; spent = Value.Live }
   | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
   | Value.Scatter _ | Value.Sort _ | Value.Fft _ | Value.Linalg _
   | Value.Fold _ | Value.Assemble _ | Value.Contract _ | Value.Copy _
   | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ -> (
-      let op = Donate.unhandled hs op in
-      let c = Donate.claim ~by hs in
+      let op = Donate.unhandled (Donate.claim ~by hs) op in
       match Donate.reuse ~by op hs with
       | Some (i, b, b') -> (
           (* Operand [i]'s memory is the result's, now over [b']: the kernel
@@ -680,7 +681,7 @@ and donated : type r. by:string -> r Value.prim -> Donate.handle list -> r =
               r
           | exception (Invalid_argument _ as e) -> rechecked ~by op e)
       | None ->
-          let r = unclaimed c (fun () -> run ~by op) in
+          let r = unclaimed hs (fun () -> run ~by op) in
           Donate.consumed ~by ~reused:[] hs;
           r)
 
@@ -1269,6 +1270,11 @@ let destination (type v s w r) (dt : (w, r) D.t) (x : (v, s) A.t) : (w, r) A.t =
   then A.v dt l (Rig.Buffer.create (A.device x) (D.bytes dt (L.numel l)))
   else A.create (A.device x) dt (L.shape l)
 
+(* [run] into fresh memory over the claimed handle [h], operand [i], whose
+   array is [a], [h] given back where it raises. *)
+let into_fresh i dt h a run =
+  unclaimed [ Donate.Handle (i, h) ] (fun () -> run (destination dt a) a)
+
 (* The one-node map over the handle [h], operand [i], whose array is [a], its
    result of [dt]: [h] is claimed, then its memory takes the result where rig
    holds it exclusive and it {!Donate.holds} the result, as {!Donate.reuse}
@@ -1284,19 +1290,18 @@ let donated (type v s w r d) ~by i (dt : (w, r) D.t) (h : (v, s, d) Value.t)
     (w, r, d) Value.t =
   let l = A.layout a in
   let reusable = Donate.holds (D.Any dt) (L.contiguous (L.shape l)) a in
-  (* Checked first, as any operation's operands are: a claim that loses at
-     the donor's word keeps the handle's. *)
+  (* Checked first, as any operation's operands are. *)
   Prim.alive ~by i h;
-  let c = Donate.claim_handle ~by i h in
+  Donate.claim_handle ~by i h;
   match D.equal_witness (A.dtype a) dt with
   | Some Type.Equal when reusable -> (
       match Donate.take ~by (A.buffer a) with
       | Some b' ->
           let a' = A.v (A.dtype a) l b' in
           run a' a'
-      | None -> unclaimed c (fun () -> run (destination dt a) a))
+      | None -> into_fresh i dt h a run)
   | Some _ | None ->
-      let r = unclaimed c (fun () -> run (destination dt a) a) in
+      let r = into_fresh i dt h a run in
       ignore (Rig.Buffer.free (A.buffer a) : bool);
       r
 

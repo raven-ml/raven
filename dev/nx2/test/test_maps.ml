@@ -629,11 +629,9 @@ let test_given_back_keeps_key () =
            (Prim.op2 ~by:"t" (Binary Add) D.Float32 h (dec [| 1.; 1. |]))))
 
 (* Two handles of one donor, one a copy a movement passed on, reach a
-   consumer while another consumer holds the donor's word, so [handles] cannot
-   tell their donors apart; the other gives the word back before the claim,
-   which then finds one key twice. It raises naming [Nx.donate] and kills
-   nothing. *)
-let test_one_donor_twice_given_back () =
+   consumer while another consumer holds the donor's word: their keys tell one
+   donor's, and [handles] raises naming [Nx.donate], killing nothing. *)
+let test_one_donor_twice_held () =
   let x =
     Value.Array
       {
@@ -651,15 +649,31 @@ let test_one_donor_twice_given_back () =
     moved (Reshape [| 4 |])
       (moved (Permute [| 1; 0 |]) (Donate.donate ~by:"t" x))
   in
-  let other = Donate.claim_handle ~by:"other" 0 (Donate.donate ~by:"t" x) in
-  let hs = Donate.handles ~by:"t" [ Value.Any h1; Value.Any h2 ] in
-  Donate.unclaim other;
+  let other = Donate.donate ~by:"t" x in
+  Donate.claim_handle ~by:"other" 0 other;
   raises_match
     (Exn.invalid_arg ~substring:"Nx.donate: t reads one donation twice")
-    (fun () -> ignore (Donate.claim ~by:"t" hs));
+    (fun () -> ignore (Donate.handles ~by:"t" [ Value.Any h1; Value.Any h2 ]));
+  Donate.unclaim [ Donate.Handle (0, other) ];
   Prim.alive ~by:"t" 0 x;
   Prim.alive ~by:"t" 0 h1;
   Prim.alive ~by:"t" 1 h2
+
+(* A consumer of a handle beside its donor reads the donor live once it has
+   claimed it, though another consumer held the donor after the first checked
+   its operands and gave it back before the first claimed: the read tells the
+   call's own donors by its claim. *)
+let test_read_after_claim () =
+  let x = f32 [| 1.; 2. |] in
+  let h = Donate.donate ~by:"t" x and other = Donate.donate ~by:"t" x in
+  let op = Prim.op2 ~by:"t" (Binary Mul) D.Float32 h x in
+  let (Prim.Operands xs) = Prim.operands op in
+  let hs = Donate.handles ~by:"t" xs in
+  Prim.iteri (fun i y -> Prim.alive ~by:"t" i y) op;
+  Donate.claim_handle ~by:"other" 0 other;
+  Donate.unclaim [ Donate.Handle (0, other) ];
+  let read = Donate.unhandled (Donate.claim ~by:"t" hs) op in
+  equal (array bits) [| 1.; 4. |] (elements (first (Exec.run ~by:"t" read)))
 
 let donation =
   group "donation"
@@ -675,8 +689,10 @@ let donation =
       test "shared memory is not written" test_no_reuse_shared;
       test "a strided operand is not written" test_no_reuse_strided;
       test "a donor given back keeps its key" test_given_back_keeps_key;
-      test "one donor claimed twice after a give-back raises first"
-        test_one_donor_twice_given_back;
+      test "one donor twice while another consumer holds it raises"
+        test_one_donor_twice_held;
+      test "a read after a claim takes the call's donors live"
+        test_read_after_claim;
     ]
 
 (* Expansions return values of their own: an output that is an operand, and a
