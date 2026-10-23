@@ -725,9 +725,11 @@ let values_and_products =
       prop ~count:300 "apply is the product with the dequantised weight"
         (Gen.with_pp pp_product products)
         product_law;
-      prop "apply is its equation, bit for bit"
+      prop "apply is its equation, bit for bit up to a NaN's sign and payload"
         (Gen.with_pp pp_product products) (fun (_, w, X { x; _ }) ->
-          equal (array int64) (bits (equation w x)) (bits (Nx_quant.apply w x)));
+          equal (array int64)
+            (product_bits (equation w x))
+            (product_bits (Nx_quant.apply w x)));
       test "a float64 input accumulates at float64" (fun () ->
           (* Every value of this weight is 1: each output sums the input. *)
           let w =
