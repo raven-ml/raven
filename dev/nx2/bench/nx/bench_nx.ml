@@ -715,6 +715,15 @@ let m1024x4096 () =
   let four = Nx.concatenate ~axis:0 [ f; f; f; f ] in
   on_host (Nx.reshape [| 1024; 4096 |] four)
 
+(* A norm's batch: 8192 rows of 4096, 128 MiB of float32, past the
+   caches. *)
+let m8192x4096 () =
+  let f = f1m () in
+  let rows = Nx.concatenate ~axis:0 (List.init 32 (fun _ -> f)) in
+  on_host (Nx.reshape [| 8192; 4096 |] rows)
+
+let h8192x4096 () = on_host (Nx.cast D.Bfloat16 (m8192x4096 ()))
+
 let m48 () = Nx.reshape [| 48; 1024 |] (Nx.slice [ R (0, 48 * 1024) ] (f1m ()))
 
 (* Logits: 32 rows of a 32000-word vocabulary, and 8 rows of 64. *)
@@ -792,6 +801,10 @@ let statistics_rows =
       Thumper.bench_with_setup "var-f32-1M" ~setup:f1m Nx.var;
       Thumper.bench_with_setup "std-f32-1024x1024-rows" ~setup:m1024
         (Nx.std ~axes:[ 1 ]);
+      Thumper.bench_with_setup "var-f32-8192x4096-rows" ~setup:m8192x4096
+        (Nx.var ~axes:[ 1 ]);
+      Thumper.bench_with_setup "var-bf16-8192x4096-rows" ~setup:h8192x4096
+        (Nx.var ~axes:[ 1 ]);
       Thumper.bench_with_setup "logsumexp-f32-1M" ~setup:f1m Nx.logsumexp;
       (* Down columns, a reduced axis whose terms are far apart. *)
       Thumper.bench_with_setup "argmax-f32-1024x1024-cols" ~setup:m1024
