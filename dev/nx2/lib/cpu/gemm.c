@@ -1160,8 +1160,12 @@ static void dots_a(int64_t lo, int64_t hi, int worker, void *ctx) {
 }
 
 /* Columns [j0, j0 + c) of element [e], each over blocks [x0, x1) in turn,
-   so that a column of b streams: b in place, or each block staged into
-   [bp]. Each block's lanes are summed by the lanes' tree into its sum. */
+   so that a column of b streams. In place, a column of b is the dot's
+   vector, against NX_CPU_DOT_ROWS rows of a at a time. Staged, the block
+   of NX_CPU_DOT_ROWS columns at once into [bp] is the dot's rows,
+   against each row of a, so that a product of one row keeps as many
+   chains in flight: a product's bits do not depend on which factor is
+   which. Each block's lanes are summed by the lanes' tree into its sum. */
 static void dots_columns(const dots_job *f, uint8_t *bp, uint8_t *mine,
                          int64_t e, int64_t j0, int64_t c, int64_t x0,
                          int64_t x1) {
@@ -1169,26 +1173,31 @@ static void dots_columns(const dots_job *f, uint8_t *bp, uint8_t *mine,
   int64_t m = p->ext[ROW], k = p->ext[CON], w = p->w;
   const uint8_t *a = f->a + e * f->a_batch * w;
   int in_place = adjacent(p, B, CON);
+  int64_t cs = in_place ? 1 : NX_CPU_DOT_ROWS; /* columns at once */
+  int64_t rs = in_place ? NX_CPU_DOT_ROWS : 1; /* rows at once */
   nx_cpu_dot dot = nx_cpu_table->dot[p->acc];
   _Alignas(64) uint8_t l[NX_CPU_DOT_ROWS * NX_CPU_LANES * 8];
-  for (int64_t j = 0; j < c; j++)
+  for (int64_t j = 0; j < c; j += cs)
     for (int64_t x = x0; x < x1; x++) {
       int64_t k0 = x * NX_CPU_LANE_BLOCK;
-      int64_t len = min64(NX_CPU_LANE_BLOCK, k - k0);
-      int64_t at = pos(p, B, e, 0, j0 + j, k0);
+      int64_t len = min64(NX_CPU_LANE_BLOCK, k - k0), nc = min64(cs, c - j);
       const uint8_t *b = bp;
-      if (in_place) b = p->op[B].x->base + at * w;
-      else stage_at(p, B, e, 0, j0 + j, k0, CON, COL, len, 1, bp, len);
-      for (int64_t i0 = 0; i0 < m; i0 += NX_CPU_DOT_ROWS) {
-        int r = (int)min64(NX_CPU_DOT_ROWS, m - i0);
+      if (in_place) b = p->op[B].x->base + pos(p, B, e, 0, j0 + j, k0) * w;
+      else stage_at(p, B, e, 0, j0 + j, k0, CON, COL, len, nc, bp, len);
+      for (int64_t i0 = 0; i0 < m; i0 += rs) {
+        int64_t nr = min64(rs, m - i0);
+        const uint8_t *ai = a + (i0 * f->lda + k0) * w;
         memset(l, 0, sizeof l);
-        dot(a + (i0 * f->lda + k0) * w, f->lda, r, b, len, l);
-        for (int i = 0; i < r; i++) {
-          uint8_t *li = l + i * NX_CPU_LANES * w;
-          lane_sums(p->acc, li, 1, 1);
-          memcpy(sums_of(f, mine, e, i0 + i, j0, c, j) + x * w, li,
-                 (size_t)w);
-        }
+        if (in_place) dot(ai, f->lda, (int)nr, b, len, l);
+        else dot(b, len, (int)nc, ai, len, l);
+        /* The dot's row i + q: output (i0 + i, j + q), one of i and q 0. */
+        for (int64_t i = 0; i < nr; i++)
+          for (int64_t q = 0; q < nc; q++) {
+            uint8_t *lq = l + (i + q) * NX_CPU_LANES * w;
+            lane_sums(p->acc, lq, 1, 1);
+            memcpy(sums_of(f, mine, e, i0 + i, j0, c, j + q) + x * w, lq,
+                   (size_t)w);
+          }
       }
     }
 }
@@ -1198,7 +1207,7 @@ static void dots_unit(int64_t lo, int64_t hi, int worker, void *ctx) {
   const dots_job *f = ctx;
   problem *p = f->p;
   int64_t m = p->ext[ROW], n = p->ext[COL], w = p->w;
-  int64_t b_bytes = NX_CPU_LANE_BLOCK * w;
+  int64_t b_bytes = NX_CPU_DOT_ROWS * NX_CPU_LANE_BLOCK * w;
   int64_t own = f->ranges == 1 ? m * DOT_COLUMNS * f->blocks * w : 0;
   uint8_t *bp = scratch(p, b_bytes + own);
   if (bp == NULL) return;
