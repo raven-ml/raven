@@ -343,6 +343,16 @@ static _Atomic uintnat cycles_seen;
    quarter of the last level still rotate past it: four 8 MiB results
    rotate through fudge's 24 MiB L3 where three did before.
 
+   A result larger than half a cycle's memory still brings most of a cycle,
+   a whole one past it, and each cycle marks the whole heap. Such a result
+   is past a quarter of the last level, so it rotates past it whatever the
+   pace, and the cycles it brings buy memory only: no buffer counts for more
+   than half a cycle ([heap_bound]). A cycle then comes after two such
+   results rather than each, and holds one more of them dropped. On the M5
+   Pro (16 MiB last level), a dropped 16 MiB result took 766 us at a heap of
+   645k words and 452 with the half, 2037 and 1105 at 1.8M words, and 168
+   and 152 at 104k.
+
    The bytes held live are those held at the end of a major cycle that the
    next cycle did not collect. A cycle frees the garbage the previous cycle
    found, and the blocks it allocates survive it. Minor collections also free
@@ -459,6 +469,14 @@ static mlsize_t heap_cycle_bytes(void) {
       live / 150 *
           atomic_load_explicit(&caml_custom_major_ratio, memory_order_relaxed);
   return share > heap_cycle_floor ? share : heap_cycle_floor;
+}
+
+/* The bound a buffer of [f] bytes paces the collector against: a cycle's
+   memory ([heap_cycle_bytes]), and at least twice the buffer, so that it
+   counts for half a cycle at most. */
+static mlsize_t heap_bound(size_t f) {
+  mlsize_t cycle = heap_cycle_bytes(), twice = 2 * (mlsize_t)f;
+  return twice > cycle ? twice : cycle;
 }
 
 /* Reusing freed buffers
@@ -749,7 +767,7 @@ value caml_rig_heap_init(value v_kept_from) {
 }
 
 /* Buffers from this size pace major cycles by the program's memory
-   ([heap_cycle_bytes]); smaller ones pace the collector as any bigarray
+   ([heap_bound]); smaller ones pace the collector as any bigarray
    does, so that dead small buffers bring minor collections. */
 #define HEAP_PACED_FROM ((size_t)64 << 10)
 
@@ -759,7 +777,7 @@ static value heap_bigarray(void *base, void *data, size_t n) {
   value ba = n < HEAP_PACED_FROM
                  ? caml_alloc_custom_mem(&heap_ops, HEAP_BLOCK_BYTES, f)
                  : caml_alloc_custom(&heap_ops, HEAP_BLOCK_BYTES, f,
-                                     heap_cycle_bytes());
+                                     heap_bound(f));
   struct caml_ba_array *b = Caml_ba_array_val(ba);
   b->data = data;
   b->num_dims = 1;
