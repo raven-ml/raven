@@ -1,5 +1,6 @@
-; The program that runs a comgr compile in a process of its own, compiled by the
-; target's C compiler and embedded in the library as a string.
+; The programs that run comgr's and NVRTC's compiles in processes of their own,
+; compiled with what they share (compiler_worker.c) by the target's C compiler
+; and embedded in the library as strings.
 
 (rule
  (target comgr_worker.ml)
@@ -7,6 +8,13 @@
   (with-stdout-to
    %{target}
    (run %{exe:../../../tools/embed.exe} %{dep:compiler_amd_worker.exe}))))
+
+(rule
+ (target nvrtc_worker.ml)
+ (action
+  (with-stdout-to
+   %{target}
+   (run %{exe:../../../tools/embed.exe} %{dep:compiler_cuda_worker.exe}))))
 
 ; dlopen is a library of its own on Linux; elsewhere it is part of the C
 ; library (macOS) or of kernel32 (Windows).
@@ -17,7 +25,14 @@
   (= %{system} linux))
  (deps compiler_worker.h)
  (action
-  (run %{cc} -Wall -o %{target} %{dep:compiler_amd_worker.c} -ldl)))
+  (run
+   %{cc}
+   -Wall
+   -o
+   %{target}
+   %{dep:compiler_amd_worker.c}
+   %{dep:compiler_worker.c}
+   -ldl)))
 
 (rule
  (target compiler_amd_worker.exe)
@@ -25,4 +40,39 @@
   (<> %{system} linux))
  (deps compiler_worker.h)
  (action
-  (run %{cc} -Wall -o %{target} %{dep:compiler_amd_worker.c})))
+  (run
+   %{cc}
+   -Wall
+   -o
+   %{target}
+   %{dep:compiler_amd_worker.c}
+   %{dep:compiler_worker.c})))
+
+(rule
+ (target compiler_cuda_worker.exe)
+ (enabled_if
+  (= %{system} linux))
+ (deps compiler_worker.h)
+ (action
+  (run
+   %{cc}
+   -Wall
+   -o
+   %{target}
+   %{dep:compiler_cuda_worker.c}
+   %{dep:compiler_worker.c}
+   -ldl)))
+
+(rule
+ (target compiler_cuda_worker.exe)
+ (enabled_if
+  (<> %{system} linux))
+ (deps compiler_worker.h)
+ (action
+  (run
+   %{cc}
+   -Wall
+   -o
+   %{target}
+   %{dep:compiler_cuda_worker.c}
+   %{dep:compiler_worker.c})))

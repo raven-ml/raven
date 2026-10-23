@@ -5,13 +5,6 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-external nvrtc_load : string -> (int * int, string) result
-  = "caml_tolk_nvrtc_load"
-
-external nvrtc_compile :
-  string -> string array -> bool -> (string, string) result
-  = "caml_tolk_nvrtc_compile"
-
 let cuda_targets =
   let machine = List.hd (String.split_on_char '-' C.multiarch) in
   List.concat_map
@@ -24,25 +17,23 @@ let cuda_targets =
 (* NVRTC's library. *)
 let library () = C.findlib ~extra_paths:cuda_targets "nvrtc" [ "nvrtc" ]
 
-(* The library is loaded once, by whichever domain first compiles. *)
-let nvrtc_version =
-  let lock = Mutex.create () and version = ref None in
-  fun () ->
-    Mutex.protect lock @@ fun () ->
-    match !version with
-    | Some v -> v
-    | None ->
-        let v =
-          match library () with
-          | None ->
-              Error "failed to load library nvrtc: try setting NVRTC_PATH?"
-          | Some path ->
-              Result.map_error
-                (fun e -> "failed to load library nvrtc: " ^ e)
-                (nvrtc_load path)
-        in
-        version := Some v;
-        v
+(* NVRTC's assembler crashes on some valid sources, so compiles run in
+   processes of their own: workers, a C program embedded in the library
+   ([compiler_cuda_worker.c]), each serving compiles in turn. *)
+let worker = Compiler_worker.v ~name:"nvrtc" Nvrtc_worker.program
+let worker_digest = Digest.to_hex (Digest.string Nvrtc_worker.program)
+
+(* The worker's request: whether to make PTX, the count then the options, the
+   version from which NVRTC is given the next options, the count then those,
+   NUL-terminated, then the source. From version 12.4, NVRTC compiles faster
+   without textures, surfaces and the device runtime API. *)
+let request src ~ptx options =
+  let list o = string_of_int (List.length o) :: o in
+  let fields =
+    ((if ptx then "1" else "0") :: list options)
+    @ ("12" :: "4" :: list [ "--minimal" ])
+  in
+  String.concat "" (List.map (fun f -> f ^ "\000") fields) ^ src
 
 let cuda_disassemble ~ptx arch lib =
   try
@@ -79,22 +70,24 @@ let nvrtc ?(ptx = true) ?(cache_key = "cuda") arch =
   in
   let options = ("--gpu-architecture=" ^ arch) :: "--fmad=false" :: includes in
   let compile src =
-    match nvrtc_version () with
-    | Error e -> raise (Renderer.Compiler.Compile_error e)
-    | Ok version -> (
-        let options =
-          options @ if version >= (12, 4) then [ "--minimal" ] else []
-        in
-        match nvrtc_compile src (Array.of_list options) ptx with
+    match library () with
+    | None ->
+        raise
+          (Renderer.Compiler.Compile_error
+             "failed to load library nvrtc: try setting NVRTC_PATH?")
+    | Some nvrtc -> (
+        match Compiler_worker.call worker nvrtc (request src ~ptx options) with
         | Ok lib -> lib
         | Error e -> raise (Renderer.Compiler.Compile_error e))
   in
   (* NVRTC's library, whose version picks the options it is given beyond
-     [options], and whether it makes PTX, name a binary with its source. *)
+     [options], the worker that runs it, and whether it makes PTX, name a binary
+     with its source. *)
   let table () =
     let identity =
       String.concat "\n"
-        (C.identity (library ()) :: string_of_bool ptx :: options)
+        (C.identity (library ()) :: worker_digest :: string_of_bool ptx
+       :: options)
     in
     Printf.sprintf "compile_%s_%s_%s" cache_key arch
       (Digest.to_hex (Digest.string identity))

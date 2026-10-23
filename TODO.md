@@ -139,7 +139,7 @@ raven / llama.cpp (Vulkan; ROCm):
   ops.ml on operation lists (1549, 2208, 2220, 2231, 2319) and dtype lists
   (1503, 1609, 1719, 2189, 2244), until a profile clears them; parallel
   compile saturates at ~4 domains (a shard lock per node, domains spawned
-  per `Worker.map`); Metal builds run one at a time and NVRTC in-process;
+  per `Worker.map`); Metal builds run one at a time;
   a 5 KB r_32_32 kernel, max |x| over `where (i >= j) x xᵀ` at 32x32,
   renders as 32-lane float selects of transposed loads that clang -O2
   takes over 2 min on
@@ -162,6 +162,13 @@ raven / llama.cpp (Vulkan; ROCm):
   10.7 -> 18.9 ms (loads stride across 16 threads)
 - AMD beam search times 16-21% of candidates below 2 GHz: hold rig's stable
   power state around a search, or ties within noise
+- comgr's per-process setup is paid on every compile: each HIP compile
+  starts a process (D5) that loads comgr and compiles once. NVRTC's
+  processes serve compiles in turn (`Compiler_worker.call`), which took
+  fudge's search/nv from 1.90 s to 1.34 s, its time in the process with
+  NVRTC's cache disabled. Move comgr to
+  serving workers once nonnormal times search/amd and a first call both
+  ways
 - a link reloads images an earlier link loaded: measure on fudge the load
   cost a search pays, and if it matters, design how rig.program takes loaded
   images (a description entry naming a Rig.Image.t)

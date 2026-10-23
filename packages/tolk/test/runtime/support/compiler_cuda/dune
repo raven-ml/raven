@@ -1,12 +1,17 @@
-; Settings are read when the program starts, and NVRTC is loaded once per
-; process, so CACHEDB is set here, to a directory of the sandbox, and the tests
-; tagged no-library run in a second process, where NVRTC_PATH names a file that
-; is no library.
+; Settings are read when the program starts, so CACHEDB is set here, to a
+; directory of the sandbox, as is NVRTC's cache of binaries, CUDA_CACHE_PATH.
+; The tests tagged no-library run in a second process, where NVRTC_PATH names a
+; file that is no library, and those tagged no-spawn in a third, which they
+; forbid to start any process.
 
 (test
  (name test_compiler_cuda)
+ (modules test_compiler_cuda)
  (package tolk)
- (libraries windtrap tolk)
+ (libraries windtrap tolk unix)
+ (foreign_stubs
+  (language c)
+  (names forbid_spawn_stubs))
  (deps
   (sandbox always)
   not_a_library)
@@ -14,12 +19,44 @@
   (setenv
    CACHEDB
    cache
-   (progn
-    (run %{test} --exclude-tag no-library)
-    (setenv
-     NVRTC_PATH
-     ./not_a_library
-     (run %{test} --tag no-library))))))
+   (setenv
+    CUDA_CACHE_PATH
+    nvrtc_cache
+    (progn
+     (run %{test} --exclude-tag no-library --exclude-tag no-spawn)
+     (setenv
+      NVRTC_PATH
+      ./not_a_library
+      (progn
+       (run %{test} --tag no-library)
+       (run %{test} --tag no-spawn))))))))
+
+; A fork needs a process that never spawned a domain: the fork tests run in
+; programs of their own, with NVRTC and with a file that is no library.
+
+(test
+ (name test_fork)
+ (modules test_fork)
+ (package tolk)
+ (libraries windtrap tolk unix)
+ (deps
+  (sandbox always)
+  not_a_library)
+ (action
+  (setenv
+   CACHEDB
+   cache
+   (setenv
+    CUDA_CACHE_PATH
+    nvrtc_cache
+    (progn
+     (run %{test})
+     (setenv
+      NVRTC_PATH
+      ./not_a_library
+      (run %{test})))))))
+
+(copy_files# ../compiler_amd/forbid_spawn_stubs.c)
 
 (rule
  (target not_a_library)

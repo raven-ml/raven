@@ -1141,10 +1141,12 @@ an object the installed objdump cannot read, skips.
 ## Compiler_cuda
 
 The suite is `Tolk.Compiler_cuda` (`runtime/support/compiler_cuda/`),
-written `CUDA` below. NVRTC is loaded once per process, so the tests tagged
-`no-library` run in a second process, where `NVRTC_PATH` names a file that is
-no library. The tests of NVRTC itself are slow and skip without it; they pass
-against NVRTC 12.8 on Linux arm64.
+written `CUDA` below. Settings are read when the program starts, so the tests
+tagged `no-library` run in a second process, where `NVRTC_PATH` names a file
+that is no library, and those tagged `no-spawn` in a third; the fork tests,
+`Tolk.Compiler_cuda (fork)`, run in a program that spawns no domain. The tests of NVRTC
+itself are slow and skip without it; they pass against NVRTC 12.8 on Linux
+arm64 and 13.4 on Linux x86_64.
 
 | Source | Behaviour | Outcome |
 |---|---|---|
@@ -1153,6 +1155,7 @@ against NVRTC 12.8 on Linux arm64.
 | tinygrad: `runtime/support/compiler_cuda.py` `NVRTCCompiler.__init__` cache key | `compile_<cache_key>_<arch>` | `CUDA › cache` (4 tests); `CUDA › a library that does not load › a cached binary is served without loading NVRTC` |
 | tinygrad: `runtime/support/compiler_cuda.py` `cuda_disassemble` | `ptxas` then `nvdisasm`, or why they failed | `CUDA › disassembly › a PTX that ptxas cannot assemble prints why`, `a cubin that nvdisasm cannot read prints why` |
 | D15 | making the compiler loads nothing; the first compile raises | `CUDA › without NVRTC on the machine › a compile raises Compile_error naming nvrtc and NVRTC_PATH`; `CUDA › a library that does not load` (4 tests) |
+| D5 | compiles in processes of their own, which serve in turn: a crash is a `Compile_error` naming the signal and fails that compile only, a killed idle process is replaced, NVRTC's cache of binaries stays empty, a process that cannot start is `Failure` | slow: `CUDA › compiles in processes of their own` (6 tests); `CUDA › a library that does not load › a compile in turn is served by an idle worker`, `a compile after its idle workers are killed raises the same error`; `CUDA › a process that cannot start`; `Tolk.Compiler_cuda (fork) › a forked process` (2 tests) |
 | tinygrad: `device/nv/test_renderer_failures.py`, `runtime/test_renderer_failures.py` | kernels that once failed to render | dropped here: rendering is `Cstyle`'s section; slow: `Tolk.Cstyle › every GPU kernel compiles with its target's toolchain` compiles every CUDA kernel |
 
 ## Compiler_amd
