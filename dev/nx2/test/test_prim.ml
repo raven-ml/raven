@@ -774,6 +774,7 @@ let partials =
         [
           ("unscaled", [| 64 |], None, Route.Partials);
           ("blocks of 32", [| 64 |], Some [| 2; 3 |], Partials);
+          ("blocks of 3 in one of 4096", [| 96 |], Some [| 32; 3 |], Partials);
           ("a block of 64, all its terms", [| 64 |], Some [| 1; 3 |], Partials);
           ("blocks of 4096", [| 8192 |], Some [| 2; 3 |], Partials);
           ("blocks of 8192", [| 16384 |], Some [| 2; 3 |], Windows);
