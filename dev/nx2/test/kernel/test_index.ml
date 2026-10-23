@@ -1149,6 +1149,14 @@ let shaped d combine (ts, axis, m, broadcast) ~tv ~uv rs =
 
 let narrow_dtypes = List.filter is_narrow all_dtypes
 
+(* Positions a parted narrow Add counts at once in a run: past them, its
+   count cuts the run into pieces. *)
+let count_piece = 1 lsl 18
+
+(* A bfloat16 Add of 3 slices, 300 000 updates along an axis of 1000:
+   threads part each slice's targets and count its positions in pieces. *)
+let counted = ([| 1000; 3 |], 0, 300_000)
+
 (* A narrow float's Adds, a shape for each way its sums group the
    updates: an axis of more updates than targets, one of fewer, 3 slices
    of positions of their own, and rows of 600 slices cut into pieces of
@@ -1175,6 +1183,8 @@ let narrow_examples =
       scatter_example (D.Any D.Bfloat16) Nx_kernel.Add ~ts:[| 500; 3 |]
         ~axis:0 ~m:70_000
         (Array.init 1009 (fun i -> Int64.of_int ((i * i mod 38) - 1)));
+      (let ts, axis, m = counted in
+       scatter_example (D.Any D.Bfloat16) Nx_kernel.Add ~ts ~axis ~m cycled);
     ]
   @ blocked_examples
 
@@ -1203,6 +1213,9 @@ let law_narrow_threads (b : Support.backend) c =
       cover name (ts = ts' && c.saxis = axis && m = m'))
     narrow_shapes;
   cover "sums carried from block to block" (m > 1 lsl 19);
+  (let ts', axis, m' = counted in
+   cover "parted positions counted in pieces"
+     (ts = ts' && c.saxis = axis && m = m' && m > count_piece));
   cover_blocks c;
   law_threads b c
 
