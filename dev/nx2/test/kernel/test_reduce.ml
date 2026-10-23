@@ -4562,8 +4562,9 @@ let test_zero_products (b : Support.backend) () =
 (* A Sum of a program's output over padded loads gives the bits of the Sum
    over the arrays the loads read, where nx_cpu.mli keeps a load's whole
    copy and where it reads loads in place: a destination aliasing the
-   operand, a coordinate read, two loads padded at different ends, and a
-   windowed load whose taps lie along an axis another load fills along. *)
+   operand, a coordinate read, two loads padded at different ends, a
+   windowed load whose taps lie along an axis another load fills along,
+   and an empty loop. *)
 let test_padded_programs (b : Support.backend) () =
   let module K = (val b.kernels) in
   let one = "\000\000\128\063" in
@@ -4625,7 +4626,21 @@ let test_padded_programs (b : Support.backend) () =
   check "taps along another load's fill" product
     [| operand [| 5 |] 3; operand [| 3; 2 |] 4 |]
     [| pad [| 0 |] [| 0 |] ~windows:[| w 0 3 |]; pad [| 0; 0 |] [| 0; 1 |] |]
-    [| 0 |]
+    [| 0 |];
+  (* A window of 5 over 3 elements: a loop of [0; 5], whose Sum along its
+     taps has no output, and along its windows five of no term, +0. *)
+  let loads =
+    [| padded_load (operand [| 3 |] 7) one
+         (pad [| 0 |] [| 0 |] ~windows:[| w 0 5 |]) |]
+  in
+  let none = A.create Rig.host D.Float32 [| 0 |] in
+  equal ~msg:"an empty loop" Elements.answer A.Done
+    (sum neg ~shape:[| 0; 5 |] [| 1 |] (A.Any none) loads);
+  let zeros = A.create Rig.host D.Float32 [| 5 |] in
+  equal ~msg:"an empty loop, its taps kept" Elements.answer A.Done
+    (sum neg ~shape:[| 0; 5 |] [| 0 |] (A.Any zeros) loads);
+  equal ~msg:"an empty loop, its taps kept" (array float_exact)
+    (Array.make 5 0.) (A.to_array zeros)
 
 (* Carries *)
 

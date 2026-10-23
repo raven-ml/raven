@@ -943,12 +943,13 @@ typedef struct {
   int64_t shape[NX_MAX_RANK], first[NX_MAX_RANK], past[NX_MAX_RANK];
 } nx_cpu_boxes;
 
-/* Fills [b] for the loop of [rank] axes of extents [shape], none of them
-   0, whose axes [reduced] flags, over the [nl] loads [a], each padded by
-   [p] where [in_place] flags it, and answers whether one is read in
-   place. Clears the flag of each load that is not: one that fills along
-   a reduced axis or pads between elements, or whose taps lie along an
-   axis another splits. Reads [p] only where flagged. */
+/* Fills [b] for the loop of [rank] axes of extents [shape], whose axes
+   [reduced] flags, over the [nl] loads [a], each padded by [p] where
+   [in_place] flags it, and answers whether one is read in place. Clears
+   the flag of each load that is not: every load of a loop with an empty
+   axis, and one that fills along a reduced axis or pads between
+   elements, or whose taps lie along an axis another splits. Reads [p]
+   only where flagged. */
 int nx_cpu_boxes_of(nx_cpu_boxes *b, int rank, const int64_t *shape,
                     const int *reduced, int nl, const nx_array *a,
                     const nx_cpu_pad *p, int *in_place);
