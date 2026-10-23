@@ -21,21 +21,22 @@
    index along the axis, which is C order of the updates for each target.
    A unit is a run of at most UNIT_ROW slices along the innermost axis off
    the scattered one, of one where a narrow float sums positions that
-   differ along it (Narrow sums), and walks the scattered axis once, the whole run at
-   each step: where the positions step 0 along the run, as an embedding
-   gradient's do, the step is one row of the kind. Where runs are fewer
-   than the job's threads and the axis long, as a 1-d scatter's is, each
-   run's updates are sorted into bins of their targets (Sorted scatters
-   below), or, where a run has several slices whose positions differ
-   along it, each thread also takes a part of the targets along the axis
-   and walks every update of its run, applying those that land in its
-   part: the order per target stays C order.
+   differ along it (Narrow sums), and walks the scattered axis once, the
+   whole run at each step: where the positions step 0 along the run, as an
+   embedding gradient's do, the step is one row of the kind. Where runs are
+   fewer than the job's threads and the axis long, as a 1-d scatter's is,
+   each run's updates are sorted into bins of their targets (Sorted
+   scatters below), or each thread also takes a part of the targets along
+   the axis and walks every update of its run, applying those that land in
+   its part: the order per target stays C order.
 
    Add adds left to right from +0 + x. nx_add keeps the first NaN operand,
    and a zero sum is stored as +0: a sum that starts from +0 is never -0,
    and (+0 + x) + u differs from x + u only in that sign. A narrow float
-   sums in float32 and rounds once (Narrow sums below), in scratch of the
-   size of the updates, never of into. Max and Min keep the first NaN, the
+   sums in float32 and rounds once (Narrow sums below), in the scratch
+   nx_cpu.mli states: a few words per update along the axis and a bin's
+   sums on each thread, or every target's sums where they carry from one
+   sorted block to the next. Max and Min keep the first NaN, the
    target's value first, quieted as IEEE 754 returns a NaN operand: its
    quiet bit, the top of its fraction, set, its sign and the rest of its
    payload kept. Quieting is idempotent, so a NaN target stays the first
