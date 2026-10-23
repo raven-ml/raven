@@ -978,6 +978,62 @@ let fft_rows =
         (fun x -> fft (R2c { dtype = D.Complex64; axes = [| 1 |]; x }));
     ]
 
+(* Products with MXFP4 weights as a checkpoint stores them, codes apart from
+   their scales, each copy in memory of its own: a decode step's 4096 × 4096
+   projection of one token, cycling 16 copies (142 MB, past fudge's caches)
+   so that each call reads its weight from memory, and a mixture of experts'
+   layer, 64 tokens each through 8 of 32 experts of 4096 inputs to 1024
+   outputs, token [i]'s experts [(5i + 4j) mod 32] for [j] below 8, over 2
+   copies (71 MB each). *)
+
+(* [copies] weights of shape [[| lead…; n; k |]], their rows alike: a fixed
+   pattern of codes and scales near 1. *)
+let mxfp4_weights ~copies lead n k =
+  let bytes count f =
+    on_host (Nx.cast D.Uint8 (f (Nx.arange D.Int32 0 count 1)))
+  in
+  let codes = bytes (n * k / 2) (fun i -> Nx.mod_s (Nx.mul_s i 37l) 256l) in
+  let scales = bytes (n * k / 32) (fun i -> Nx.add_s (Nx.mod_s i 19l) 118l) in
+  let rows last t =
+    Nx.copy
+      (Nx.broadcast_to
+         (Array.append lead [| n; last |])
+         (Nx.reshape [| n; last |] t))
+  in
+  Array.init copies (fun _ ->
+      Nx_quant.mxfp4 ~scales:(rows (k / 32) scales) (rows (k / 2) codes))
+
+(* [next ws turn] is the weight after the last call's. *)
+let next ws turn =
+  turn := (!turn + 1) mod Array.length ws;
+  ws.(!turn)
+
+let experts () =
+  let ids =
+    Nx.init D.Int64 [| 64; 8 |] (fun i ->
+        Int64.of_int (((5 * i.(0)) + (4 * i.(1))) mod 32))
+  in
+  let ws = mxfp4_weights ~copies:2 [| 32 |] 1024 4096 in
+  (ids, filled D.Float32 [| 64; 1; 4096 |] 1., ws, ref 0)
+
+let quant_rows =
+  Thumper.group "quant"
+    [
+      Thumper.bench_with_setup "mxfp4-gemv-4096"
+        ~setup:(fun () ->
+          let ws = mxfp4_weights ~copies:16 [||] 4096 4096 in
+          (filled D.Float32 [| 1; 4096 |] 1., ws, ref 0))
+        (fun (x, ws, turn) -> Nx.Repr.array (Nx_quant.apply (next ws turn) x));
+      Thumper.bench_with_setup "mxfp4-moe-64x8of32" ~setup:experts
+        (fun (ids, x, ws, turn) ->
+          let w = next ws turn in
+          Nx.Repr.array
+            (Nx.map_segments ~segments:32 ids
+               (fun owners rows ->
+                 Nx_quant.apply (Nx_quant.take ~axis:0 owners w) rows)
+               x));
+    ]
+
 let () =
   exit
   @@ Thumper.run "nx"
@@ -996,4 +1052,5 @@ let () =
          scan_rows;
          order_rows;
          fft_rows;
+         quant_rows;
        ]

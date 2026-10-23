@@ -480,6 +480,10 @@ placed/matmul-f32-256x4096x256-k-split4	alloc_words	exact	17536
 placed/matmul-f32-256x4096x256-k-split4	wall_time	batch=1	n=20	8.094e-04	7.085e-04 7.938e-04 7.992e-04 8.012e-04 8.021e-04 8.025e-04 8.031e-04 8.035e-04 8.039e-04 8.069e-04 8.120e-04 8.129e-04 8.212e-04 8.233e-04 8.491e-04 8.781e-04 8.787e-04 8.791e-04 1.142e-03 1.145e-03
 placed/matmul-f32-64-rows-two-memory-devices	alloc_words	exact	5032
 placed/matmul-f32-64-rows-two-memory-devices	wall_time	batch=1	n=20	7.614e-06	7.278e-06 7.325e-06 7.337e-06 7.422e-06 7.432e-06 7.497e-06 7.499e-06 7.505e-06 7.525e-06 7.605e-06 7.622e-06 8.276e-06 8.317e-06 8.319e-06 8.375e-06 8.397e-06 8.440e-06 8.443e-06 8.772e-06 1.684e-05
+quant/mxfp4-gemv-4096	alloc_words	exact	4676
+quant/mxfp4-gemv-4096	wall_time	batch=1	n=20	6.882e-03	5.227e-03 5.376e-03 5.659e-03 5.799e-03 5.823e-03 5.868e-03 5.981e-03 6.527e-03 6.751e-03 6.759e-03 7.006e-03 7.020e-03 7.032e-03 7.056e-03 7.110e-03 7.659e-03 7.662e-03 7.678e-03 8.681e-03 1.005e-02
+quant/mxfp4-moe-64x8of32	alloc_words	exact	24823
+quant/mxfp4-moe-64x8of32	wall_time	batch=1	n=20	1.455e-01	1.429e-01 1.430e-01 1.432e-01 1.432e-01 1.432e-01 1.441e-01 1.446e-01 1.447e-01 1.450e-01 1.451e-01 1.458e-01 1.459e-01 1.460e-01 1.463e-01 1.497e-01 1.540e-01 1.546e-01 1.877e-01 1.927e-01 2.031e-01
 rng/bernoulli-f32-1Kx1K	alloc_words	exact	1904
 rng/bernoulli-f32-1Kx1K	wall_time	batch=8	n=20	6.829e-04	6.763e-04 6.764e-04 6.796e-04 6.818e-04 6.820e-04 6.821e-04 6.823e-04 6.823e-04 6.828e-04 6.829e-04 6.829e-04 6.831e-04 6.832e-04 6.832e-04 6.842e-04 6.844e-04 6.848e-04 6.864e-04 6.870e-04 7.105e-04
 rng/bernoulli-f32-1M	alloc_words	exact	1793
