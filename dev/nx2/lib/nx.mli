@@ -240,12 +240,12 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     [x] stays usable until an operation consumes a handle of [x]. Then [x] and
     every handle of [x] die: a later operation on any of them raises
     [Invalid_argument] naming the consumer, and its shape, dtype and placement
-    still answer. Unless it lost a race between domains (below), an operation
-    that raises before it takes a handle's memory kills nothing: one refused
-    by its checks, or declined by its set's kernels where its result goes to
-    fresh memory. One that writes its result into a handle's memory (below)
-    takes the memory before its kernels answer, so if they decline, or it
-    raises otherwise, [x] and its handles may be dead.
+    still answer. An operation that raises before it takes a handle's memory
+    kills nothing: one refused by its checks, one that lost a race between
+    domains (below), or one declined by its set's kernels where its result
+    goes to fresh memory. One that writes its result into a handle's memory
+    (below) takes the memory before its kernels answer, so if they decline, or
+    it raises otherwise, [x] and its handles may be dead.
 
     A movement, which rearranges elements without computing them ({!reshape},
     {!transpose}, {!flip}, {!broadcast_to}, slicing by ranges,
@@ -269,10 +269,10 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     consumer's result. When operations on several domains race to consume the
     same handles, at least one claims all it reads. A loser raises naming an
     operation that claimed one of its operands, which may itself have lost or
-    raised, and the loser's donated operands may be dead. No consumer
-    overwrites elements another call is reading: one that claims a handle
-    while a call reads its memory computes into fresh memory, and a function
-    of several operations reading it then raises as a loser.
+    raised, and kills nothing. No consumer overwrites elements another call is
+    reading: one that claims a handle while a call reads its memory computes
+    into fresh memory, and a function of several operations reading it then
+    raises as a loser.
 
     The consumer may write its result into the donated memory when it reads
     that memory only at the result's own index, through the handle or through

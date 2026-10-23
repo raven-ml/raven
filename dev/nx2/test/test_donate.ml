@@ -737,9 +737,9 @@ let commands =
 (* On two domains: handles given to consumers and movements. A handle's state
    is the set of what it may be: free, or taken by a named function. In
    sequence it is known; an operation of two handles that loses one to another
-   domain may have taken the other. Every run is explained by some order, every
+   domain gives back the other. Every run is explained by some order, every
    result is computed from the elements, and a refusal names a function that
-   took one of the operation's handles. *)
+   held one of the operation's handles. *)
 type handle = { ys : float array; mutable states : string option list }
 
 let handle = abstract "h"
@@ -770,15 +770,21 @@ let refused f =
 let free h = List.mem None h.states
 let union a b = List.sort_uniq compare (a @ b)
 
-(* Whether [h] may have gone to [e]. An [add2] claims its handles one at a time
-   and keeps those it took when it loses another, so a handle it took can be
-   seen dead before the order reaches it: [add2 h2 h3] takes [h2] on one
-   domain, [add2 h3 h2] on the other loses [h2] to it, and the first loses [h3]
-   to a later [add2 h1 h3] there. A free handle may then have gone to an
-   [Nx.add] in flight, and is dead from then on. *)
-let lost_to e h =
-  List.mem (Some e) h.states
-  || ((e = "Nx.add" || e = "test.call") && free h)
+(* Whether [e], a consumer of two handles, may hold a handle in flight: it
+   claims them one at a time and gives back those it took when it loses
+   another, so a free handle can be seen held by it. *)
+let in_flight e = e = "Nx.add" || e = "test.call"
+
+(* Whether [h] may have gone to [e]: taken by it, or free and held by it in
+   flight. *)
+let lost_to e h = List.mem (Some e) h.states || (in_flight e && free h)
+
+(* The states of [h] once a call lost it to [e]: taken by [e], or, held in
+   flight, free again. *)
+let lost h e =
+  let held = if free h then [ Some e ] else [] in
+  let back = if free h && in_flight e then [ None ] else [] in
+  union (List.filter (( = ) (Some e)) h.states) (union held back)
 
 (* A one-handle operation [by] whose result's elements are [f]'s. *)
 let judge1 by f h = function
@@ -789,7 +795,7 @@ let judge1 by f h = function
   | Ok (Error e) ->
       cover "a later operation raises naming the first" true;
       if not (lost_to e h) then fail (by ^ " raised naming " ^ e);
-      h.states <- [ Some e ]
+      h.states <- lost h e
   | Error exn -> raise exn
 
 (* Twos beside [h]: its shape answers whether it lives or not. *)
@@ -808,8 +814,7 @@ let reshape_sys h =
       [||])
 
 (* [add h1 h2] checks both handles, then takes them in an order the promise
-   leaves open: a loser lost one handle, and may have taken the other if it was
-   free. *)
+   leaves open: a loser lost one handle, and gave back the other. *)
 let pair_ref by h1 h2 out =
   if h1 == h2 then
     match out with
@@ -824,17 +829,17 @@ let pair_ref by h1 h2 out =
         h1.states <- [ Some by ];
         h2.states <- [ Some by ]
     | Ok (Error e) ->
-        let lost = lost_to e in
-        let taken h =
-          if free h then union h.states [ Some by ] else h.states
-        in
-        if not (lost h1 || lost h2) then fail (by ^ " raised naming " ^ e);
+        let to_e = lost_to e in
+        if not (to_e h1 || to_e h2) then fail (by ^ " raised naming " ^ e);
         cover "one handle refused, the other free"
-          ((lost h1 && free h2) || (lost h2 && free h1));
-        let s1 = if lost h1 then [ Some e ] else [] in
-        let s1 = if lost h2 then union s1 (taken h1) else s1 in
-        let s2 = if lost h2 then [ Some e ] else [] in
-        let s2 = if lost h1 then union s2 (taken h2) else s2 in
+          ((to_e h1 && free h2) || (to_e h2 && free h1));
+        (* Either may be the one lost; the other keeps its state. *)
+        let after h other =
+          union
+            (if to_e h then lost h e else [])
+            (if to_e other then h.states else [])
+        in
+        let s1 = after h1 h2 and s2 = after h2 h1 in
         h1.states <- s1;
         h2.states <- s2
     | Error exn -> raise exn

@@ -458,19 +458,15 @@ let seen x = function
       if not (List.mem (Some f) x.dead) then fail ("a donor died to " ^ f);
       x.dead <- [ Some f ]
 
-(* A call [by] on [h] that raised naming [e]. On two domains ([raced]) a call
-   that checked [h] live may lose the donor's word to another domain, keeping
-   [h]'s own, spent by itself; the word may be a decline's in flight, which
-   then gives it back. *)
+(* A call [by] on [h] that raised naming [e], killing nothing. On two domains
+   ([raced]) the word it lost may be held by a consumer in flight that then
+   gives it back: a decline, or a consumer that lost a later word. *)
 let lost ~raced by e h =
   let ds = deaths h in
-  if raced && List.mem None ds && (e = "Nx.add" || e = "Nx.less") then
-    h.spent <- union h.spent [ Some by ]
-  else begin
+  let gives_back = List.mem e [ "Nx.add"; "Nx.less"; "Nx.mul"; "Nx.sum" ] in
+  if not (raced && List.mem None ds && gives_back) then begin
     if not (List.mem (Some e) ds) then fail (by ^ " raised naming " ^ e);
-    let free = List.mem None h.spent && List.mem (Some e) h.x.dead in
-    died_to e h;
-    if raced && free then h.spent <- union h.spent [ Some by ]
+    died_to e h
   end
 
 let donate_ref x =
@@ -682,13 +678,17 @@ let raced_decline ~sum by h = function
 
 let raced_sys f h = outcome (fun () -> elements (f h))
 
-(* A movement on two domains: it spends [h], or loses it. *)
+(* A movement on two domains: it spends [h], or loses it. A chain's first
+   movement may spend [h] before a later one loses. *)
 let raced_moved h = function
   | Error e -> raise e
   | Ok (Ok _) ->
       lives h;
       h.spent <- [ Some "Nx.reshape" ]
-  | Ok (Error e) -> lost ~raced:true "Nx.reshape" e h
+  | Ok (Error e) ->
+      let free = List.mem None h.spent in
+      lost ~raced:true "Nx.reshape" e h;
+      if free then h.spent <- union h.spent [ Some "Nx.reshape" ]
 
 (* The movement's handle, which no command reads. *)
 let moved_sys f h =
