@@ -1119,6 +1119,65 @@ let test_last_piece (b : Support.backend) () =
         (Array.init (2 * len) (fun t -> row.(t mod len)))
         (elements y)
 
+(* Parted scratch *)
+
+(* The address space a forked child gives a parted bfloat16 Add past its
+   own: the Add's sort takes 32 bytes for each of its 4Mi updates, and the
+   pool's threads their stacks. *)
+let parted_cap = 512 lsl 20
+
+(* A bfloat16 array of shape [s], each element +0. *)
+let bf16_zeros s =
+  let n = Array.fold_left ( * ) 1 s in
+  let z = Bigarray.Array1.create Bigarray.int16_signed Bigarray.c_layout n in
+  Bigarray.Array1.fill z 0;
+  let z = Bigarray.reshape (Bigarray.genarray_of_array1 z) s in
+  Option.get (A.bitcast D.Bfloat16 (A.of_bigarray D.Int16 z))
+
+(* A bfloat16 Add along axis 0 of [2Mi, 2], each update at a position of
+   its own, so that threads part each column's targets, fits [parted_cap]:
+   the child that runs it exits 0 where it is done, 1 where it raised
+   Out_of_memory. Linux only. *)
+let test_parted_memory (b : Support.backend) () =
+  if not (Sys.file_exists "/proc/self/statm") then
+    skip ~reason:"limits the address space through Linux's /proc" ();
+  let module K = (val b.kernels) in
+  let rows = 1 lsl 21 in
+  let s = [| rows; 2 |] in
+  let ps =
+    Bigarray.Array1.init Bigarray.int64 Bigarray.c_layout (2 * rows) (fun k ->
+        Int64.of_int (k * 7919 mod rows))
+  in
+  let idx =
+    A.of_bigarray D.Int64 (Bigarray.reshape (Bigarray.genarray_of_array1 ps) s)
+  in
+  let into = bf16_zeros s and updates = bf16_zeros s in
+  let dst = A.create Rig.host D.Bfloat16 s in
+  let run () =
+    if not (Support.cap_memory parted_cap) then 3
+    else
+      match
+        K.scatter Nx_kernel.Add ~unique:false ~axis:0 ~dst ~into idx updates
+      with
+      | A.Done -> 0
+      | _ -> 2
+      | exception Out_of_memory -> 1
+  in
+  match Unix.fork () with
+  | 0 -> Unix._exit (try run () with _ -> 4)
+  | pid -> (
+      match snd (Unix.waitpid [] pid) with
+      | Unix.WEXITED 3 -> skip ~reason:"no address-space limit" ()
+      | Unix.WEXITED code ->
+          equal string "done"
+            (match code with
+            | 0 -> "done"
+            | 1 -> "Out_of_memory"
+            | 2 -> "not done"
+            | _ -> "raised")
+      | Unix.WSIGNALED n | Unix.WSTOPPED n ->
+          failf "the child ended by signal %d" n)
+
 let gathers = Gen.with_pp pp_gather (gather_gen ())
 let large_gathers = Gen.with_pp pp_gather (gather_gen ~shapes:large_shapes ())
 let scatters = Gen.with_pp pp_scatter (scatter_gen ())
@@ -1452,6 +1511,8 @@ let cpu (b : Support.backend) =
           b.around (test_bool_extremes b));
       test "a float16 sum runs in float32 and rounds once" (fun () ->
           b.around (test_float16_sum b));
+      test "a parted bfloat16 Add of 4Mi updates fits 512 MiB" (fun () ->
+          b.around (test_parted_memory b));
       prop "a gather refuses what Nx_kernel.Shape refuses and other shapes"
         gather_misfits
         (run (law_gather_refuses b));

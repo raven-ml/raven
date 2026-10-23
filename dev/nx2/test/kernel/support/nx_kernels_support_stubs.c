@@ -175,3 +175,33 @@ value nx_kernels_support_unguard(value vbase, value vtotal) {
 #endif
   return Val_unit;
 }
+
+/* Address space */
+
+#if defined(__linux__)
+#include <stdio.h>
+#include <sys/resource.h>
+#endif
+
+/* Sets the process's address-space limit [vextra] bytes above the size of
+   its address space, read from /proc/self/statm: true iff set. Linux
+   only. */
+value nx_kernels_support_cap_memory(value vextra) {
+#if defined(__linux__)
+  FILE *f = fopen("/proc/self/statm", "r");
+  if (f == NULL) return Val_false;
+  unsigned long pages;
+  int got = fscanf(f, "%lu", &pages);
+  fclose(f);
+  if (got != 1) return Val_false;
+  struct rlimit l;
+  if (getrlimit(RLIMIT_AS, &l) != 0) return Val_false;
+  rlim_t cap = (rlim_t)pages * (rlim_t)page_bytes() + (rlim_t)Long_val(vextra);
+  if (l.rlim_max != RLIM_INFINITY && cap > l.rlim_max) return Val_false;
+  l.rlim_cur = cap;
+  return Val_bool(setrlimit(RLIMIT_AS, &l) == 0);
+#else
+  (void)vextra;
+  return Val_false;
+#endif
+}

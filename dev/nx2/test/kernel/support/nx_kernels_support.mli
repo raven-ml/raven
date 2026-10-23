@@ -107,3 +107,11 @@ val map3 :
   Nx_array.answer
 (** [map3 k op ~dst c x y] stores [op] of each element of [c], [x] and [y]
     into [dst]. *)
+
+(** {1:memory Address space} *)
+
+val cap_memory : int -> bool
+(** [cap_memory n] limits the calling process's address space to [n] bytes
+    above its size, so that an allocation past them fails. It is [true] iff
+    the limit is set, which only Linux does. The limit stays for the
+    process's life: only a forked child calls it. *)

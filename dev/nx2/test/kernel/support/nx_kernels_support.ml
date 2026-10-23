@@ -112,3 +112,7 @@ let map3 k op ~dst c x y =
   map k
     ~ins:[| Nx_array.Dtype.Any (Nx_array.dtype c); d; d |]
     (Op3 (op, 0, 1, 2)) ~dst [| Nx_kernel.Plain c; Plain x; Plain y |]
+
+(* Address space *)
+
+external cap_memory : int -> bool = "nx_kernels_support_cap_memory"
