@@ -453,9 +453,9 @@ val host_held : unit -> int
 val heap_bytes : unit -> int option
 (** [heap_bytes ()] is the bytes the C heap holds allocated, as its allocator
     counts them, or [None] where it does not say. On glibc it first fills the
-    calling thread's cache of freed chunks, which glibc counts as allocated, so
-    two counts on one thread differ by what was allocated and not freed
-    between them. *)
+    calling thread's cache of freed chunks, which glibc counts as allocated,
+    until a further fill leaves the count as it was, so two counts on one
+    thread differ by what was allocated and not freed between them. *)
 
 val descriptors : unit -> int option
 (** [descriptors ()] is the number of file descriptors the process holds open,
