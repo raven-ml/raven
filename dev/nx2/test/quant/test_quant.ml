@@ -434,13 +434,19 @@ let agrees ~at ~k expected bound actual =
     (Nx.to_array expected);
   at_most ~msg:"worst error over its bound" float_exact ~than:1. !worst
 
-(* The product of [x] with each matrix of [w'], transposed, at float32, and the
-   same product of magnitudes. A float32 sum may overflow where a wider one
-   would not, so the reference sums at float32 too. *)
-let product x w' =
-  let x = Nx.cast Nx.float32 x in
-  let t = Nx.matrix_transpose in
-  (Nx.matmul x (t w'), Nx.matmul (Nx.abs x) (t (Nx.abs w')))
+(* The product of [x] with each matrix of [w], transposed, and the same
+   product of magnitudes, at float64, summed where [apply] sums: at float64 for
+   a float64 [x], else at float32. A narrower sum may overflow where a wider
+   one would not, so the reference sums at the same width. *)
+let product (type b) w (x : (float, b, Nx.host) Nx.t) =
+  let t = Nx.matrix_transpose and f64 x = Nx.cast Nx.float64 x in
+  let at dt x =
+    let w' = Nx_quant.dequant dt w and x = Nx.cast dt x in
+    (f64 (Nx.matmul x (t w')), f64 (Nx.matmul (Nx.abs x) (t (Nx.abs w'))))
+  in
+  match Nx.dtype x with
+  | D.Float64 -> at Nx.float64 x
+  | _ -> at Nx.float32 x
 
 (* An input at one of the float dtypes. *)
 type input = X : { at : fdt; x : (float, 'b, Nx.host) Nx.t } -> input
@@ -508,7 +514,7 @@ let pp_product ppf (view, w, X { x; _ }) =
 
 let product_law (_, w, X { at; x }) =
   let _, _, k = dims w in
-  let expected, bound = product x (Nx_quant.dequant Nx.float32 w) in
+  let expected, bound = product w x in
   List.iter
     (fun f -> cover ("a " ^ format_name f ^ " weight") (format_of w = f))
     formats;
