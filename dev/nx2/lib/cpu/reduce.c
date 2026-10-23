@@ -2106,7 +2106,8 @@ typedef struct {
    plan's frames: the deepest chain from an entry of this file, through the
    other files of nx.cpu, took at most 31 KiB, and 40 KiB from a program's
    reduction, 12 KiB of it the door's descriptors (gcc's -O3 call graphs,
-   arm64 and x86-64). Each buffer is named for the paths that use it: no
+   arm64 and x86-64); a Moments unit's passes in turn (center_units) add
+   2.4 KiB to either. Each buffer is named for the paths that use it: no
    path writes a buffer while a caller's data in it is live. */
 typedef struct {
   /* The counter's values: the blocks' (blocks) or the groups'
@@ -2895,16 +2896,15 @@ static void finish_units(const plan *q, work *wk, int64_t lo, int64_t hi) {
    terms from the caches: its centers by [q->center], then its values by
    [q->r]. A unit's terms are one output's, or a row's of 16 outputs: 16
    KiB for rows of 4096 float32 terms, 512 KiB for columns of 8192. One
-   output's that a pass would stage, converted or gathered, and that fit
-   the work's terms, are staged once for both, block by block as a pass
-   stages them. */
+   output's that a pass would stage, converted, gathered or computed, and
+   that fit the work's terms, are staged once for both, block by block as
+   a pass stages them. Both passes run on one copy of the plan. */
 static void center_units(const plan *q, work *wk, int64_t lo, int64_t hi) {
-  plan c = *q, v = *q;
-  c.r = q->center;
-  c.centering = 1;
+  plan p = *q;
   int contiguous = q->nr == 1 && q->rs[0] == 1;
   int once = q->row == 1 && (sourced(q) || !contiguous) &&
              q->terms * q->w <= (int64_t)sizeof wk->terms;
+  if (once) p.staged_unit = wk->terms;
   for (int64_t u = lo; u < hi; u++) {
     if (once) {
       unit x = unit_of(q, u);
@@ -2912,10 +2912,13 @@ static void center_units(const plan *q, work *wk, int64_t lo, int64_t hi) {
         int64_t n = q->terms - t < BLOCK ? q->terms - t : BLOCK;
         stage_terms(q, wk, x.p, 0, 1, t, n, wk->terms + t * q->w);
       }
-      c.staged_unit = v.staged_unit = wk->terms;
     }
-    reduce_units(&c, wk, u, u + 1);
-    reduce_units(&v, wk, u, u + 1);
+    p.r = q->center;
+    p.centering = 1;
+    reduce_units(&p, wk, u, u + 1);
+    p.r = q->r;
+    p.centering = 0;
+    reduce_units(&p, wk, u, u + 1);
   }
 }
 
