@@ -25,10 +25,12 @@ val op :
     [Arg]. A [Map] evaluates its program at once; a padded load reads its
     operand padded as {!Nx_kernel.load} states, the fill where it reads no
     element. A [Reduce] and a [Scan] fold their program's outputs; a [Contract]
-    sums its products in its accumulator; a [Copy] is its operand, a [Move] its
-    operand moved, and a [Bitcast] of one width its operand's bits.
+    of no scale and no segments sums its products in its accumulator; a
+    [Copy] is its operand, a [Move] its operand moved, and a [Bitcast] of one
+    width its operand's bits.
 
     Raises [Invalid_argument] naming the operation for one not lowered yet:
     [Gather], [Scatter], [Sort], [Fold], [Assemble], [Fft], [Linalg], [Place]
-    and [Check], a [Bitcast] that changes width, a reduction or a scan of a
-    complex [Prod], and a scan of a [complex128] [Max] or [Min]. *)
+    and [Check], a scaled or segmented [Contract], a [Bitcast] that changes
+    width, a reduction or a scan of a complex [Prod], and a scan of a
+    [complex128] [Max] or [Min]. *)
