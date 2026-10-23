@@ -1802,10 +1802,12 @@ int nx_cpu_contract_on(int acc, int order, const nx_contract_view *v,
 
 /* Rows 2k and 2k + 1 of the block of [n] complex numbers at [x], [sx]
    parts apart: (x, y) into [even] and (−y, x) into [odd]. Adjacent
-   numbers take a loop of their own, which vectorises. */
+   numbers take a loop of their own, which vectorises. [even] may be [x]
+   at [sx] 2, as a staged row is: each number is read before its place is
+   written. */
 #define BLOCK_ROWS(T, name)                                                \
-  static void name(const T *x, int64_t sx, T *restrict even,               \
-                   T *restrict odd, int64_t n) {                           \
+  static void name(const T *x, int64_t sx, T *even, T *restrict odd,       \
+                   int64_t n) {                                            \
     if (sx == 2) {                                                         \
       for (int64_t j = 0; j < 2 * n; j += 2) {                             \
         T re = x[j], im = x[j + 1];                                        \
