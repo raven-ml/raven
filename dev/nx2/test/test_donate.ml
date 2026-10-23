@@ -1480,6 +1480,7 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
       c "unsqueeze" 1 (fun d ->
           show (Nx.unsqueeze ~axes:[ 0 ] (d 0 (x [| 3 |]))));
       c "flatten" 1 (fun d -> show (Nx.flatten (d 0 (x [| 2; 3 |]))));
+      c "flatten" 1 (fun d -> show (Nx.flatten (d 0 (x [||]))));
       c "transpose" 1 (fun d -> show (Nx.transpose (d 0 (x [| 2; 3 |]))));
       c "moveaxis" 1 (fun d -> show (Nx.moveaxis 0 1 (d 0 (x [| 2; 3 |]))));
       c "swapaxes" 1 (fun d -> show (Nx.swapaxes 0 1 (d 0 (x [| 2; 3 |]))));
