@@ -1288,9 +1288,14 @@ let placements =
           let id i = Int64.of_int (i * 3 mod 5) in
           let ids = Nx.create Nx.int64 [| 16 |] (Array.init 16 id) in
           let x = random_floats [| 16; 64 |] in
-          equal (array int64)
-            (product_bits (Nx_quant.apply_experts ~ids w x))
-            (experts_at c w ids x));
+          let host = product_bits (Nx_quant.apply_experts ~ids w x) in
+          not_equal
+            ~msg:
+              "the premise: the routed product's bits differ from the \
+               grouped contraction's, or this case proves nothing"
+            (array int64) host
+            (product_bits (routed w ids x));
+          equal (array int64) host (experts_at c w ids x));
       cases ~name:format_name
         "experts split over four devices give the host's routed product" formats
         (fun format ->
