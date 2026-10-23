@@ -974,13 +974,52 @@ let stated (b : Support.backend) =
 (* Positions past the axis on both sides, cycling over 1003 targets. *)
 let cycled = Array.init 1009 (fun i -> Int64.of_int ((i * 7 mod 1003) - 1))
 
-(* Past a block of a sorted scatter: shared targets, a narrow float's
-   sum. *)
+(* Updates a sorted scatter sorts at once into an axis of 1000: past them,
+   a narrow float's sums carry to the next block. *)
+let first_block = 1 lsl 19
+
+(* Positions that miss targets 900 to 999 over the first block, then
+   [cycled]'s. *)
+let late =
+  Array.init 600_000 (fun i ->
+      if i < first_block then Int64.of_int (i * 7 mod 900) else cycled.(i mod 1009))
+
+(* Whether a target of [c] is first reached past the first block. *)
+let reached_late c =
+  let ps = positions c.sidx and d = (shape_of c.into).(c.saxis) in
+  let first = Array.make d max_int in
+  Array.iteri
+    (fun i p ->
+      let p = Int64.to_int p in
+      if p >= 0 && p < d && first.(p) = max_int then first.(p) <- i)
+    ps;
+  Array.exists (fun i -> i <> max_int && i >= first_block) first
+
+(* Past a block of a sorted scatter: shared targets, a narrow float's sum;
+   targets first reached past the first block, into reversed; sums carried
+   through stepped and reversed updates. *)
 let blocked_examples =
+  let ex d = scatter_example (D.Any d) Nx_kernel.Add ~ts:[| 1000 |] ~axis:0 in
   [
-    scatter_example (D.Any D.Float16) Nx_kernel.Add ~ts:[| 1000 |] ~axis:0
-      ~m:600_000 cycled;
+    ex D.Float16 ~m:600_000 cycled;
+    ex D.Bfloat16 ~m:600_000 ~tv:{ (plain 1) with reversed = Some 0 } late;
+    ex D.Float8_e4m3fn ~m:600_000
+      ~uv:{ (plain 1) with stepped = true; reversed = Some 0 }
+      cycled;
   ]
+
+(* A narrow Add's sums past the first block, through views. *)
+let cover_blocks c =
+  let views side = List.exists (String.starts_with ~prefix:side) c.sviews in
+  let carried =
+    c.combine = Nx_kernel.Add
+    && is_narrow (dtype_of c.into)
+    && (shape_of c.updates).(c.saxis) > first_block
+  in
+  cover "a narrow sum first reached past a block, into through a view"
+    (carried && views "into" && reached_late c);
+  cover "a narrow sum carried through a view of the updates"
+    (carried && views "updates")
 
 (* An embedding gradient's rows, sorted: into transposed and the updates
    stepped and reversed; a narrow float's sum past a block. *)
@@ -1130,6 +1169,13 @@ let narrow_examples =
       shaped d Nx_kernel.Add s ~tv:(plain r) ~uv:(plain r)
         (Random.State.make [| 1 |]))
     narrow_shapes
+  @ [
+      (* Positions crowding the first of the parts the targets split into,
+         and one outside the axis. *)
+      scatter_example (D.Any D.Bfloat16) Nx_kernel.Add ~ts:[| 500; 3 |]
+        ~axis:0 ~m:70_000
+        (Array.init 1009 (fun i -> Int64.of_int ((i * i mod 38) - 1)));
+    ]
   @ blocked_examples
 
 let narrow_adds =
@@ -1157,6 +1203,7 @@ let law_narrow_threads (b : Support.backend) c =
       cover name (ts = ts' && c.saxis = axis && m = m'))
     narrow_shapes;
   cover "sums carried from block to block" (m > 1 lsl 19);
+  cover_blocks c;
   law_threads b c
 
 (* Sub-byte scatters *)
@@ -1309,7 +1356,9 @@ let cpu (b : Support.backend) =
         (run (scatter_agrees b));
       prop ~count:4 ~examples:blocked_examples
         "longer scatters split them block by block" blocked_scatters
-        (run (law_scatter_reference b));
+        (run (fun c ->
+             cover_blocks c;
+             law_scatter_reference b c));
       prop ~count:10 ~examples:row_examples
         "an embedding gradient's rows combine in C order, in place too"
         row_scatters
