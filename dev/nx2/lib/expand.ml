@@ -470,9 +470,9 @@ let finite v =
   let dt = E.dtype v in
   E.(abs v < const dt (D.of_float dt Float.infinity))
 
-(* {!Nx_kernel.reduction}'s Logsumexp scan by {!Pairwise.scan}, over states
-   [(m, s)] of a maximum and a sum of [e (x - c)], [c] being [m] where finite
-   and [0] elsewhere, [e] an [exp] cut as the reduction cuts it.
+(* The Logsumexp scan of {!Nx_kernel.section-scans} by {!Pairwise.scan}, over
+   states [(m, s)] of a maximum and a sum of [e (x - c)], [c] being [m] where
+   finite and [0] elsewhere, [e] an [exp] cut as the reduction cuts it.
 
    The derivation of its bound, to first order, at index [i] of [N = i + 1]
    terms through [D = D_i] combinations, with [M] the terms' maximum, finite,
@@ -521,9 +521,9 @@ let running_logsumexp (type s d)
   in
   quieted apply ~by y
 
-(* {!Nx_kernel.reduction}'s Moments scan by {!Pairwise.scan}, over Chan, Golub
-   and LeVeque's combination, their (1.5b), of states [(μ, S, n, z)], [z]
-   whether a term is a NaN.
+(* The Moments scan of {!Nx_kernel.section-scans} by {!Pairwise.scan}, over
+   Chan, Golub and LeVeque's combination, their (1.5b), of states
+   [(μ, S, n, z)], [z] whether a term is a NaN.
 
    The derivation of its bounds, to first order, at index [i] of [N = i + 1]
    terms through [D = D_i] combinations, with [R] the terms' range and [V]

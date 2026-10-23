@@ -33,8 +33,8 @@
     the [Max] or [Min] [m], then a [Min] of the positions, numbered in C order
     of the reduced indices, whose term has [m]'s bits or, where [m] is a NaN, is
     a NaN. Where a float sum of [n] terms is within [γ(n - 1) Σ|x|] of the exact
-    sum ({!Nx_kernel.reduction}), and barring overflow and underflow, a
-    [Logsumexp] [r] of [n] terms whose maximum is finite is within
+    sum ({!Nx_kernel.section-reductions}), and barring overflow and
+    underflow, a [Logsumexp] [r] of [n] terms whose maximum is finite is within
     [γ(2n) + u|r| + ε] of the exact one, [ε] the error [Exp] and [Log] add; the
     mean within [γ(n) M], [M = Σ|x| / n], and the variance [V] within
     [(γ(n + 4) + 2γ(n)²) V + 2γ(n + 6) γ(n) M √V + 4γ(n + 4) γ(n)² M²], for
@@ -43,7 +43,7 @@
     {!Pairwise.scan}: output [i] through at most
     [D_i = max(0, 2⌈log₂(i+1)⌉ - 1)] combinations, the earlier state first,
     O(n) along an axis of [n]. [Logsumexp] and [Moments] scan as
-    {!Nx_kernel.reduction} states. [Arg] combines pairs of an extreme and
+    {!Nx_kernel.section-scans} states. [Arg] combines pairs of an extreme and
     its position, keeping the earlier pair unless the later extreme is past
     it in [Max]'s or [Min]'s order: exact. A NaN result of these scans,
     carried through the combinations with its bits, is then quieted, as the

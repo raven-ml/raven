@@ -1454,7 +1454,7 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     A scan's bits do not depend on where [x] lies either. Along an axis cut
     across devices, each device scans its own window from the state of the
     terms before it. {!cumsum} and {!cumprod} of floats and complex numbers
-    continue the scan's chunks ({!Nx_kernel.type-reduction}): the totals of
+    continue the scan's chunks ({!Nx_kernel.section-scans}): the totals of
     the chunks before a window move to it as rows of partial results, and
     a window whose edge falls inside a chunk adds at most one chunk's work,
     4096 terms per slice. Over integers and booleans, and for {!cummax} and
@@ -1715,16 +1715,16 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
     ones.
 
     Each output's products fall into blocks of 4096 consecutive ones in its
-    order of summation ({!Nx_kernel.S.contract}). Where both operands'
-    paired summed axes are cut alike across devices, each device reads its
-    own windows of them, and the devices that hold one window of the result
-    compute it together, cutting the sum only at the edges of blocks. A
-    block that window edges split is gathered first. The device holding
-    most of its products, the earliest along the summed axes of those
-    holding as many, takes the block's parts of both operands that it lacks
-    and sums the block alone. A summed extent of 4096 cut over four devices
-    is one block, so three quarters of both operands' windows along it move
-    to the first device, and the others sum none of it.
+    order of summation ({!Nx_kernel.S.section-contraction}). Where both
+    operands' paired summed axes are cut alike across devices, each device
+    reads its own windows of them, and the devices that hold one window of
+    the result compute it together, cutting the sum only at the edges of
+    blocks. A block that window edges split is gathered first. The device
+    holding most of its products, the earliest along the summed axes of
+    those holding as many, takes the block's parts of both operands that it
+    lacks and sums the block alone. A summed extent of 4096 cut over four
+    devices is one block, so three quarters of both operands' windows along
+    it move to the first device, and the others sum none of it.
 
     In lane order ({!Nx_kernel.section-orders}), each device sums from [+0]
     each largest node of lane order's tree of blocks that its windows hold,

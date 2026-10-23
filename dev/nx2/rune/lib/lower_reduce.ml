@@ -201,8 +201,8 @@ let fold m f axes xs =
   | Max | Min -> extreme f axes ~greatest:(m = Max) ~nan:(any Bits.is_nan xs) xs
 
 (* [with_nans m f axes xs ys] is the fold [ys] of the parts [xs] with NaNs as
-   {!Nx_kernel.reduction} states: a sum or a product takes each part's NaNs
-   alone, an extreme a complex number with a NaN part as a NaN. *)
+   {!Nx_kernel.section-reductions} states: a sum or a product takes each
+   part's NaNs alone, an extreme a complex number with a NaN part as a NaN. *)
 let with_nans m f axes xs ys =
   if not (Dtype.is_float (Ops.dtype (List.hd xs))) then ys
   else

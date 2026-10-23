@@ -48,7 +48,7 @@ let binary : Nx_kernel.monoid -> P.binary = function
   | Min -> Minimum
 
 (* The quiet NaN of a clear sign bit, the NaN Prog's kinds make from numbers
-   ({!Nx_kernel.type-reduction}). *)
+   ({!Nx_kernel.section-reductions}). *)
 let made_nan = Int64.float_of_bits 0x7FF8_0000_0000_0000L
 
 (* Operand [0], of [c], rounded into [qt]. *)
@@ -58,8 +58,8 @@ let rounded (type v s w r) (c : (v, s) D.t) (qt : (w, r) D.t) : (w, r) E.t =
   | None -> E.cast qt (E.input 0 c)
 
 (* The terms of a block of lane order ({!Nx_kernel.section-orders}), the
-   products of a contraction's block ({!Nx_kernel.S.contract}), and the
-   terms of a scan's chunk ({!Nx_kernel.type-reduction}). *)
+   products of a contraction block ({!Nx_kernel.S.section-contraction}), and
+   the terms of a scan's chunk ({!Nx_kernel.section-scans}). *)
 let block = 1024
 let contract_block = Prim.contract_block
 let chunk = 4096

@@ -69,15 +69,15 @@
     whole's, and it lays its windows out as [[batch; rows; products]] and
     [[batch; products; columns]], in their number's order. It reads [init] over
     its window of the result, from wherever [init] lies. The products fall into
-    the contraction's blocks of 4096 ({!Nx_kernel.S.section-contraction}). A
-    node of lane order's tree of those blocks whose products one tile holds is a
-    {e unit} there, as is a block that window edges split, on the device that
-    holds most of its products, the others' parts of [a] and [b] moved there
-    first. A scale is read whole along the contracting pairs, laid out as its
-    operand, and each unit takes the scale's blocks its products span: the route
-    computes by partials only where a block of the products lies in one of the
-    contraction's blocks ({!Prim.rule}). A segmented contraction never computes
-    so.
+    the contraction blocks ({!Nx_kernel.S.section-contraction}). A node of
+    lane order's tree of contraction blocks whose products one tile holds is a
+    {e unit} there, as is a contraction block that window edges split, on the
+    device that holds most of its products, the others' parts of [a] and [b]
+    moved there first. A scale is read whole along the contracting pairs, laid
+    out as its operand, and each unit takes the scale blocks its products span.
+    The route computes by partials only where each scale block along the
+    products lies in one contraction block ({!Prim.rule}). A segmented
+    contraction never computes so.
 
     - In lane order, each unit is one contraction of exactly its products
       into the accumulator from no [init]. Each device of the group takes
@@ -116,7 +116,7 @@
       combines each result with the carry into the first extreme, as a
       reduction's partials combine.
     - A float or complex [Sum] or [Prod], a complex sum part by part as
-      floats: a unit is a chunk of the scan ({!Nx_kernel.type-reduction}).
+      floats: a unit is a chunk of the scan ({!Nx_kernel.section-scans}).
       A tile first takes the terms before it back to its first chunk's
       start from the tiles holding them, so that the device holding a
       chunk's end holds the chunk whole. A unit's partial is a reduction of
