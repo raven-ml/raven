@@ -1162,8 +1162,8 @@ let experts_law (_, w, ids, X { at; x }) =
     (Array.append (Nx.shape ids) [| n |])
     (Nx.shape y);
   (* Each row is zeros where its id is out of range, else within the bound of
-     its product; a row whose finite terms reach [2^127] may overflow at float32
-     in one order and not another, and is not compared. *)
+     its product; a row whose finite terms reach {!overflows} may overflow at
+     float32 in one order and not another, and is not compared. *)
   let row a = Array.init (Array.length id * n) (fun j -> a.(j / n)) in
   let outside = row (Array.map (fun i -> not (inside i)) id) in
   let got = bits y in
@@ -1176,11 +1176,9 @@ let experts_law (_, w, ids, X { at; x }) =
       (product_bits y)
   else
     let expected, bound, finite = expert_product w ids x in
-    let skip j = outside.(j) || finite.(j) >= Float.ldexp 1. 127 in
-    let kept a = Array.mapi (fun j v -> if skip j then 0. else v) a in
-    let v a = Nx.create Nx.float64 [| Array.length a |] (kept a) in
-    agrees ~at ~k (v expected) (v bound)
-      (v (Nx.to_array (Nx.reshape [| -1 |] (Nx.cast Nx.float64 y))))
+    let skip j = outside.(j) || finite.(j) >= overflows k in
+    agrees_but ~at ~k skip expected bound
+      (Nx.to_array (Nx.reshape [| -1 |] (Nx.cast Nx.float64 y)))
 
 let expert_products =
   group "experts"
