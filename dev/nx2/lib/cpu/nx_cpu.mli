@@ -33,11 +33,11 @@
     a pad that fits no operand of its load's shape is refused with
     [Shape_mismatch].
 
-    [contract] computes every contraction without segments in [float32],
-    [float64], [complex64], [complex128] or an integer of 4 to 64 bits, of
-    [a], [b] and [init] of any dtype, into a [dst] of any dtype, at any
-    layout, scaled in [float32] and [float64] alone, and declines the
-    others. Each
+    [contract] computes every contraction in [float32], [float64],
+    [complex64], [complex128] or an integer of 4 to 64 bits, of [a], [b]
+    and [init] of any dtype, into a [dst] of any dtype, at any layout, with
+    or without segments, scaled in [float32] and [float64] alone, and
+    declines the others. Each
     element of [a], [b] and [init] enters [acc] as {!apply1}'s [Cast] casts
     it. That is exact where [acc] holds its value: [float32] holds [bool],
     [bit], the integers of at most 16 bits and the floats of at most 32;
@@ -67,7 +67,10 @@
     is [Chain] where [rows] and [columns] are both above 4 and multiply to
     at least 64, and [depth] is below 128 times their product; [Lane]
     otherwise, so that the threads share the depth of a contraction of few
-    outputs.
+    outputs. A segmented contraction has, in each group, the bits of the
+    unsegmented contraction of its views in the order given: [Rows]'
+    group's rows of [a] with its index of [b], [Contracting]'s group's
+    window of the pair; a row of [Rows] in no group has no products.
     With no products, an output is [init] as [acc] holds it, rounded into
     [dst], or [+0]: [init]'s bits where the three share a dtype. Otherwise
     a NaN result's sign and payload are unspecified.
