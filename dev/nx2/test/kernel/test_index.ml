@@ -583,6 +583,29 @@ let exact xs =
     xs;
   (!hi +. !lo, !mag)
 
+(* float32's largest finite value. *)
+let most_float32 = 0x1.FFFFFEp127
+
+(* γ(n) of the unit roundoff [u]. *)
+let gamma u n =
+  let n = Float.of_int n in
+  n *. u /. (1. -. (n *. u))
+
+(* Whether a float32 sum of [xs] left to right from +0 may pass float32's
+   largest finite value: a prefix [P_j] of [j] terms with
+   [|P_j| + γ(j) Σ_{i ≤ j} |x_i|] past it. *)
+let partial_overflows xs =
+  let rec go j hi lo mag = function
+    | [] -> false
+    | x :: rest ->
+        let s, t = two_sum hi x in
+        let lo = lo +. t and mag = mag +. Float.abs x in
+        Float.abs (s +. lo) +. ((gamma 0x1p-24 j +. 0x1p-100) *. mag)
+        > most_float32
+        || go (j + 1) s lo mag rest
+  in
+  go 1 0. 0. 0. xs
+
 (* The largest finite value of a narrow float. *)
 let most_finite (D.Any dt) =
   match dt with
@@ -627,6 +650,14 @@ let parts (D.Any dt as d) e =
   else if w = 4 then [ get32 e 0 ]
   else [ get64 e 0 ]
 
+(* Whether a narrow float's sum of [xs], [x] and its updates in C order,
+   cannot overflow: no partial float32 sum passes float32's largest finite
+   value, nor the sum and its bound the dtype's. *)
+let narrow_checked d xs =
+  let want, mag = exact xs in
+  let bound = (gamma 0x1p-24 (List.length xs) +. 0x1p-100) *. mag in
+  not (partial_overflows xs || Float.abs want +. bound > most_finite d)
+
 (* Why a target's Add [got] of [x] and [us] is past
    [γ(n + 1) (|x| + Σ |ui|)] of the exact sum, part by part, [u] the unit
    roundoff of float32 for float32, narrow floats and complex64 and of
@@ -636,21 +667,19 @@ let parts (D.Any dt as d) e =
    overflow, a partial float32 sum past float32's largest finite value or
    the sum rounding past the dtype's, is not checked: [None]. *)
 let past (D.Any dt as d) x us got =
-  let n = Float.of_int (List.length us + 1) in
   let part = if D.is D.Complex dt then D.bits dt / 2 else D.bits dt in
   let u = if part = 64 then 0x1p-53 else 0x1p-24 in
-  let g = n *. u /. (1. -. (n *. u)) in
+  let g = gamma u (List.length us + 1) in
   let terms = List.map (parts d) (x :: us) in
   let wrong =
     List.concat
       (List.mapi
          (fun k got ->
-           let want, mag = exact (List.map (fun t -> List.nth t k) terms) in
+           let xs = List.map (fun t -> List.nth t k) terms in
+           let want, mag = exact xs in
            let bound = (g *. mag) +. (0x1p-100 *. mag) in
            if is_narrow d then
-             if mag +. bound > 0x1.FFFFFEp127
-                || Float.abs want +. bound > most_finite d
-             then []
+             if not (narrow_checked d xs) then []
              else
                let lo = decode d (encode d (want -. bound))
                and hi = decode d (encode d (want +. bound)) in
@@ -679,6 +708,15 @@ let law_add_bound (b : Support.backend) c =
   let reached = Array.exists (fun l -> l <> []) ls in
   cover "a target several updates reach" (Array.exists (fun l -> List.length l > 1) ls);
   cover "a narrow float" (is_narrow d);
+  (let xs = elements c.into in
+   cover "a checked bfloat16 sum of magnitudes past float32's largest"
+     (d = D.Any D.Bfloat16
+     && Array.exists Fun.id
+          (Array.mapi
+             (fun t us ->
+               let ts = List.map (decode d) (xs.(t) :: us) in
+               us <> [] && snd (exact ts) > most_float32 && narrow_checked d ts)
+             ls)));
   match scatter_on b c with
   | None -> ()
   | Some y ->
@@ -904,8 +942,25 @@ let set_examples =
     ex (D.Any D.Complex128) ~ts:[| 5; 4 |] ~axis:0 ~m:1 ~broadcast:[ 1 ] [| 3L |];
   ]
 
+(* A bfloat16 Add into +0 of 40 updates alternating 1.5 · 2^127 and its
+   negation: their magnitudes sum past float32's largest finite value, and
+   their partial sums stay at or below 1.5 · 2^127. *)
+let wide_sum =
+  let d = D.Any D.Bfloat16 and m = 40 in
+  {
+    combine = Nx_kernel.Add;
+    saxis = 0;
+    into = operand d [| 1 |] (plain 1) (fun _ -> encode d 0.);
+    sidx = int64s [| m |] (plain 1) (fun () -> 0L);
+    updates =
+      operand d [| m |] (plain 1) (fun k ->
+          encode d (if k mod 2 = 0 then 0x1.8p127 else -0x1.8p127));
+    sviews = [];
+  }
+
 (* Add's bound: many updates on few targets, an embedding gradient's rows,
-   every update on one target, no update. *)
+   every update on one target, no update, and magnitudes past float32's
+   largest. *)
 let bound_examples =
   let ex d = scatter_example d Nx_kernel.Add ~draw:finite in
   [
@@ -915,6 +970,7 @@ let bound_examples =
     ex (D.Any D.Float16) ~ts:[| 1 |] ~axis:0 ~m:60 [| 0L |];
     ex (D.Any D.Complex64) ~ts:[| 4 |] ~axis:0 ~m:30 [| 3L; 0L; 3L |];
     ex (D.Any D.Float64) ~ts:[| 3 |] ~axis:0 ~m:0 [| 0L |];
+    wide_sum;
   ]
 
 (* Values the contract states: [run c dt into idx u] is the scatter's
