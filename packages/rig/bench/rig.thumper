@@ -194,9 +194,9 @@ drain/allocate-4K/pending-kept-1024	wall_time	batch=16384	n=20	3.534e-07	3.402e-
 drain/allocate-4K/pending-kept-64	alloc_words	exact	42
 drain/allocate-4K/pending-kept-64	wall_time	batch=16384	n=20	3.410e-07	3.277e-07 3.336e-07 3.340e-07 3.344e-07 3.347e-07 3.353e-07 3.354e-07 3.382e-07 3.402e-07 3.406e-07 3.415e-07 3.422e-07 3.438e-07 3.439e-07 3.446e-07 3.451e-07 3.479e-07 3.503e-07 3.504e-07 3.521e-07
 drain/dropped-1000	alloc_words	exact	42042
-drain/dropped-1000	wall_time	batch=16	n=20	4.976e-04	4.917e-04 4.934e-04 4.943e-04 4.950e-04 4.951e-04 4.953e-04 4.954e-04 4.957e-04 4.970e-04 4.971e-04 4.981e-04 4.983e-04 4.988e-04 4.989e-04 4.993e-04 5.008e-04 5.025e-04 5.033e-04 5.034e-04 5.050e-04
-drain/free-cache-1000	alloc_words	exact	75861
-drain/free-cache-1000	wall_time	batch=16	n=20	6.295e-04	6.245e-04 6.249e-04 6.251e-04 6.262e-04 6.264e-04 6.271e-04 6.272e-04 6.277e-04 6.288e-04 6.293e-04 6.298e-04 6.301e-04 6.313e-04 6.316e-04 6.336e-04 6.347e-04 6.351e-04 6.352e-04 6.354e-04 6.390e-04
+drain/dropped-1000	wall_time	batch=16	n=20	5.172e-04	5.080e-04 5.111e-04 5.122e-04 5.128e-04 5.146e-04 5.147e-04 5.152e-04 5.156e-04 5.166e-04 5.170e-04 5.174e-04 5.175e-04 5.177e-04 5.180e-04 5.182e-04 5.183e-04 5.186e-04 5.201e-04 5.202e-04 5.221e-04
+drain/free-cache-1000	alloc_words	exact	76373
+drain/free-cache-1000	wall_time	batch=8	n=20	6.530e-04	6.410e-04 6.499e-04 6.509e-04 6.514e-04 6.515e-04 6.516e-04 6.519e-04 6.520e-04 6.525e-04 6.526e-04 6.533e-04 6.544e-04 6.545e-04 6.553e-04 6.558e-04 6.564e-04 6.565e-04 6.582e-04 6.603e-04 6.612e-04
 floor/atomic-cas-2	alloc_words	exact	0
 floor/atomic-cas-2	wall_time	batch=2097152	n=20	3.010e-09	3.007e-09 3.007e-09 3.007e-09 3.007e-09 3.007e-09 3.008e-09 3.008e-09 3.008e-09 3.008e-09 3.008e-09 3.013e-09 3.016e-09 3.017e-09 3.018e-09 3.020e-09 3.020e-09 3.021e-09 3.029e-09 3.034e-09 3.035e-09
 floor/bigarray-collected-64M	alloc_words	exact	9
@@ -246,7 +246,7 @@ submit/polled/make-4096	wall_time	batch=2	n=20	2.400e-03	2.180e-03 2.186e-03 2.1
 submit/polled/make-copies-64K	alloc_words	exact	4866407
 submit/polled/make-copies-64K	wall_time	batch=1	n=20	6.776e-02	6.511e-02 6.545e-02 6.553e-02 6.583e-02 6.663e-02 6.701e-02 6.740e-02 6.746e-02 6.759e-02 6.768e-02 6.784e-02 6.812e-02 6.856e-02 6.859e-02 6.947e-02 6.983e-02 7.003e-02 7.035e-02 7.058e-02 7.083e-02
 submit/polled/pool-two-domains	alloc_words	exact	0
-submit/polled/pool-two-domains	wall_time	batch=8192	n=20	8.292e-07	8.037e-07 8.068e-07 8.135e-07 8.142e-07 8.145e-07 8.174e-07 8.237e-07 8.254e-07 8.284e-07 8.291e-07 8.292e-07 8.310e-07 8.312e-07 8.328e-07 8.356e-07 8.357e-07 8.376e-07 8.402e-07 8.442e-07 8.486e-07
+submit/polled/pool-two-domains	wall_time	batch=8192	n=20	8.940e-07	8.037e-07 8.225e-07 8.287e-07 8.328e-07 8.346e-07 8.437e-07 8.653e-07 8.759e-07 8.759e-07 8.916e-07 8.964e-07 9.006e-07 9.045e-07 9.150e-07 9.198e-07 9.233e-07 9.471e-07 9.548e-07 1.113e-06 1.149e-06
 submit/polled/slots-24	alloc_words	exact	0
 submit/polled/slots-24	wall_time	batch=16384	n=20	4.345e-07	4.332e-07 4.333e-07 4.336e-07 4.336e-07 4.338e-07 4.340e-07 4.342e-07 4.342e-07 4.343e-07 4.345e-07 4.346e-07 4.346e-07 4.348e-07 4.348e-07 4.349e-07 4.349e-07 4.350e-07 4.351e-07 4.354e-07 4.365e-07
 submit/polled/stores-30	alloc_words	exact	0

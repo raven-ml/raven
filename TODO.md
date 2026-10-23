@@ -68,12 +68,10 @@ raven / llama.cpp (Vulkan; ROCm):
   device's memory raises "released"; its dma child is refused behind
   fudge's translating IOMMU; a heap-edge test and six conformance
   properties time out on its 5.7 s opens
-- explain fudge's rows that went the wrong way and stay at their old
-  baselines: `submit/polled/pool-two-domains` +9%, `drain/*` +5-8%,
-  `take/submits-100` 599 words more, `buffer/nv/create-drop-64MiB`
-  0.17 -> 0.86 us, `wait/nv/reached` 4.02 -> 4.63 ns, NV `alloc/64KiB`
-  +3-12%, `file/nv/from-device-256M` +0-10%, and the comparison's CUDA
-  start at 172 ms against 134 on 2026-10-11
+- fudge's `take/submits-100` allocates 599 words more than its baseline:
+  493536d46's closure over a submit's profile entry, 200, and 4984d6e95's
+  point on each copy event, 500; land the closure-free hand-over and
+  re-record the row
 
 ### perf
 

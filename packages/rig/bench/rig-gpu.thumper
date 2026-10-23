@@ -142,10 +142,10 @@ buffer/nv/create-drop-64KiB	alloc_words	batch=1024	n=20	4.004e+01	4.004e+01 4.00
 buffer/nv/create-drop-64KiB	major_collections	exact	0
 buffer/nv/create-drop-64KiB	minor_collections	batch=1024	n=20	0.000e+00	0.000e+00 0.000e+00 0.000e+00 0.000e+00 0.000e+00 0.000e+00 0.000e+00 0.000e+00 0.000e+00 0.000e+00 0.000e+00 0.000e+00 0.000e+00 0.000e+00 0.000e+00 0.000e+00 9.766e-04 9.766e-04 9.766e-04 9.766e-04
 buffer/nv/create-drop-64KiB	wall_time	batch=1024	n=20	2.170e-07	1.841e-07 1.846e-07 1.945e-07 1.976e-07 2.015e-07 2.022e-07 2.067e-07 2.108e-07 2.148e-07 2.162e-07 2.178e-07 2.182e-07 2.227e-07 2.248e-07 2.261e-07 3.151e-06 4.777e-06 7.653e-06 7.706e-06 7.821e-06
-buffer/nv/create-drop-64MiB	alloc_words	batch=8	n=20	4.512e+01	4.512e+01 4.512e+01 4.512e+01 4.512e+01 4.512e+01 4.512e+01 4.512e+01 4.512e+01 4.512e+01 4.512e+01 4.512e+01 4.512e+01 4.512e+01 4.512e+01 4.512e+01 4.512e+01 4.512e+01 4.512e+01 4.512e+01 1.142e+02
-buffer/nv/create-drop-64MiB	major_collections	exact	0
-buffer/nv/create-drop-64MiB	minor_collections	exact	0
-buffer/nv/create-drop-64MiB	wall_time	batch=8	n=20	1.668e-07	1.507e-07 1.535e-07 1.553e-07 1.573e-07 1.576e-07 1.580e-07 1.594e-07 1.611e-07 1.613e-07 1.646e-07 1.690e-07 1.720e-07 1.721e-07 1.721e-07 1.753e-07 1.761e-07 1.780e-07 2.063e-07 6.780e-07 2.782e-06
+buffer/nv/create-drop-64MiB	alloc_words	exact	40
+buffer/nv/create-drop-64MiB	major_collections	batch=8192	n=20	5.981e-03	5.981e-03 5.981e-03 5.981e-03 5.981e-03 5.981e-03 5.981e-03 5.981e-03 5.981e-03 5.981e-03 5.981e-03 5.981e-03 5.981e-03 5.981e-03 5.981e-03 5.981e-03 5.981e-03 5.981e-03 5.981e-03 5.981e-03 6.104e-03
+buffer/nv/create-drop-64MiB	minor_collections	batch=8192	n=20	1.196e-02	1.196e-02 1.196e-02 1.196e-02 1.196e-02 1.196e-02 1.196e-02 1.196e-02 1.196e-02 1.196e-02 1.196e-02 1.196e-02 1.196e-02 1.196e-02 1.196e-02 1.196e-02 1.196e-02 1.196e-02 1.196e-02 1.208e-02 1.208e-02
+buffer/nv/create-drop-64MiB	wall_time	batch=8192	n=20	7.573e-07	7.410e-07 7.456e-07 7.473e-07 7.476e-07 7.502e-07 7.525e-07 7.543e-07 7.544e-07 7.569e-07 7.570e-07 7.575e-07 7.577e-07 7.579e-07 7.601e-07 7.603e-07 7.607e-07 7.648e-07 7.657e-07 7.672e-07 7.710e-07
 copy/cuda/blit-from-string-4K	alloc_words	exact	84
 copy/cuda/blit-from-string-4K	wall_time	batch=1024	n=20	6.038e-06	6.025e-06 6.025e-06 6.033e-06 6.035e-06 6.036e-06 6.036e-06 6.036e-06 6.037e-06 6.037e-06 6.038e-06 6.038e-06 6.041e-06 6.043e-06 6.043e-06 6.046e-06 6.050e-06 6.053e-06 6.054e-06 6.060e-06 6.061e-06
 copy/cuda/borrow-to-host-4M	alloc_words	exact	0
@@ -194,8 +194,8 @@ file/cuda/load-cold-256M	alloc_words	exact	612
 file/cuda/load-cold-256M	wall_time	batch=1	n=20	6.799e-02	6.047e-02 6.131e-02 6.454e-02 6.511e-02 6.519e-02 6.627e-02 6.668e-02 6.778e-02 6.785e-02 6.786e-02 6.813e-02 6.912e-02 6.973e-02 6.999e-02 7.025e-02 7.059e-02 7.076e-02 7.125e-02 7.181e-02 7.237e-02
 file/cuda/to-device-256M	alloc_words	exact	489
 file/cuda/to-device-256M	wall_time	batch=1	n=20	1.291e-02	1.282e-02 1.282e-02 1.287e-02 1.287e-02 1.288e-02 1.288e-02 1.288e-02 1.289e-02 1.290e-02 1.291e-02 1.291e-02 1.291e-02 1.293e-02 1.294e-02 1.294e-02 1.294e-02 1.296e-02 1.297e-02 1.298e-02 1.299e-02
-file/nv/from-device-256M	alloc_words	exact	671
-file/nv/from-device-256M	wall_time	batch=1	n=20	4.429e-02	4.422e-02 4.423e-02 4.423e-02 4.423e-02 4.423e-02 4.424e-02 4.426e-02 4.428e-02 4.428e-02 4.428e-02 4.430e-02 4.430e-02 4.431e-02 4.431e-02 4.432e-02 4.432e-02 4.432e-02 4.434e-02 4.437e-02 4.443e-02
+file/nv/from-device-256M	alloc_words	exact	489
+file/nv/from-device-256M	wall_time	batch=1	n=20	4.881e-02	4.848e-02 4.854e-02 4.857e-02 4.864e-02 4.867e-02 4.875e-02 4.877e-02 4.877e-02 4.880e-02 4.880e-02 4.883e-02 4.885e-02 4.886e-02 4.890e-02 4.891e-02 4.895e-02 4.909e-02 4.915e-02 4.917e-02 4.917e-02
 file/nv/load-256M	alloc_words	exact	612
 file/nv/load-256M	wall_time	batch=1	n=20	1.334e-02	1.324e-02 1.325e-02 1.326e-02 1.327e-02 1.329e-02 1.330e-02 1.333e-02 1.333e-02 1.334e-02 1.334e-02 1.334e-02 1.335e-02 1.336e-02 1.336e-02 1.338e-02 1.339e-02 1.341e-02 1.343e-02 1.353e-02 1.364e-02
 file/nv/load-cold-256M	alloc_words	exact	612
@@ -281,7 +281,7 @@ submit/nv/kernel	wall_time	batch=4096	n=40	1.633e-06	1.626e-06 1.631e-06 1.632e-
 wait/cuda/reached	alloc_words	exact	0
 wait/cuda/reached	wall_time	batch=2097152	n=20	4.626e-09	4.623e-09 4.624e-09 4.624e-09 4.624e-09 4.625e-09 4.625e-09 4.625e-09 4.625e-09 4.626e-09 4.626e-09 4.626e-09 4.626e-09 4.627e-09 4.627e-09 4.628e-09 4.630e-09 4.633e-09 4.636e-09 4.637e-09 4.644e-09
 wait/nv/reached	alloc_words	exact	0
-wait/nv/reached	wall_time	batch=2097152	n=20	4.020e-09	4.019e-09 4.019e-09 4.019e-09 4.019e-09 4.020e-09 4.020e-09 4.020e-09 4.020e-09 4.020e-09 4.020e-09 4.020e-09 4.020e-09 4.020e-09 4.020e-09 4.020e-09 4.020e-09 4.022e-09 4.023e-09 4.024e-09 4.026e-09
+wait/nv/reached	wall_time	batch=2097152	n=20	4.633e-09	4.628e-09 4.629e-09 4.629e-09 4.630e-09 4.631e-09 4.631e-09 4.631e-09 4.632e-09 4.632e-09 4.633e-09 4.633e-09 4.634e-09 4.635e-09 4.636e-09 4.637e-09 4.638e-09 4.638e-09 4.639e-09 4.639e-09 4.641e-09
 
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
