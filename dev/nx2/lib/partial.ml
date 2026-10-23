@@ -61,7 +61,7 @@ let rounded (type v s w r) (c : (v, s) D.t) (qt : (w, r) D.t) : (w, r) E.t =
    products of a contraction's block ({!Nx_kernel.S.contract}), and the
    terms of a scan's chunk ({!Nx_kernel.type-reduction}). *)
 let block = 1024
-let contract_block = 4096
+let contract_block = Prim.contract_block
 let chunk = 4096
 
 (* The position of device [k] among [p]'s. *)
@@ -1014,11 +1014,12 @@ struct
 
   let contract (type v s d a b c e) (route : unit Route.t) rule ~order ~batch
       ~contracting ~acc (out : (v, s) D.t) (a : (a, b, d) Value.t)
-      (b : (c, e, d) Value.t) (init : (v, s, d) Value.t option) :
+      (b : (c, e, d) Value.t) (init : (v, s, d) Value.t option)
+      (a_scale : d Value.scale option) (b_scale : d Value.scale option) :
       (v, s, d) Value.t =
     let shape =
       Prim.contract_shape ~by ~batch ~contracting ~segments:None ~acc a b init
-        None None
+        a_scale b_scale
     in
     let sides f ps =
       Array.init (Iarray.length ps) (fun i -> f (Iarray.get ps i))
@@ -1054,11 +1055,40 @@ struct
         (Value.Any (grouped b_axes (read j 1 b)), 1);
       ]
     in
+    (* A scaled operand's scale, operand [i] read whole along the terms, laid
+       out as its operand's slab on each device, its terms along [axis], each
+       of its blocks a run of [run] terms. A unit of terms [lo, hi), at the
+       edges of the contraction's blocks, takes the blocks they span. *)
+    let scaled i axes axis x (sc : d Value.scale option) =
+      let laid j : d Value.scale =
+        match sc with
+        | Some (Exponent v) -> Exponent (grouped axes (read j i v))
+        | Some (Value v) -> Value (grouped axes (read j i v))
+        | None -> invalid_arg "Partial.contract: no scale"
+      in
+      let blocks run (lo, hi) : d Value.scale -> d Value.scale = function
+        | Exponent v -> Exponent (slice axis (lo / run) ((hi - lo) / run) v)
+        | Value v -> Value (slice axis (lo / run) ((hi - lo) / run) v)
+      in
+      Option.map
+        (fun s ->
+          let shape = Prim.scale_shape s and k = axes.(axis) in
+          let run = Option.get (Prim.block_run (Prim.shape x) shape k) in
+          let per = Array.init (Array.length ks) (fun j -> lazy (laid j)) in
+          fun j terms -> blocks run terms (Lazy.force per.(j)))
+        sc
+    in
+    let first = if Option.is_some init then 3 else 2 in
+    let a_unit = scaled first a_axes 2 a a_scale in
+    let b_unit =
+      scaled (first + Bool.to_int (Option.is_some a_scale)) b_axes 1 b b_scale
+    in
     let (D.Any ad) = acc in
-    let contracted (sl : d slab) init =
+    let contracted j terms (sl : d slab) init =
       match sl with
       | [ (Value.Any la, _); (Value.Any lb, _) ] ->
           let init = Option.map (Prim.expect ad) init in
+          let on f = Option.map (fun f -> f j terms) f in
           Value.Any
             (apply
                (Value.Contract
@@ -1071,8 +1101,8 @@ struct
                     a = la;
                     b = lb;
                     init;
-                    a_scale = None;
-                    b_scale = None;
+                    a_scale = on a_unit;
+                    b_scale = on b_unit;
                     segments = None;
                   }))
       | _ -> invalid_arg "Partial.contract: two operands"
@@ -1105,7 +1135,10 @@ struct
       let block = contract_block and n = numel whole in
       match (order : Nx_kernel.order) with
       | Lane ->
-          let value lf = [ contracted (snd (terms lf)) None ] in
+          let value lf =
+            let j, sl = terms lf in
+            [ contracted j (lf.lo, lf.hi) sl None ]
+          in
           let settle j s =
             let s = match init_on j with None -> s | Some x -> exact Add s [ x ] in
             per.(j) <- [ rounded j (List.hd s) ]
@@ -1120,7 +1153,7 @@ struct
               | None -> init_on j
               | Some (Value.Any v) -> Some (Value.Any (move (here j) v))
             in
-            Some (contracted sl from)
+            Some (contracted j (lf.lo, lf.hi) sl from)
           in
           let units = chain_units ~block n (Array.length g.tiles) g.held in
           let sum = Option.get (List.fold_left step None units) in
@@ -1153,13 +1186,14 @@ let run (type r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by route
         a;
         b;
         init;
-        a_scale = None;
-        b_scale = None;
+        a_scale;
+        b_scale;
         segments = None;
       } ->
-      F.contract route rule ~order ~batch ~contracting ~acc out a b init
-  | Value.Contract _ ->
-      invalid_arg "Partial.run: a scaled or segmented contraction by partials"
+      F.contract route rule ~order ~batch ~contracting ~acc out a b init a_scale
+        b_scale
+  | Value.Contract { segments = Some _; _ } ->
+      invalid_arg "Partial.run: a segmented contraction by partials"
   | Value.Scan { carry = Some _; _ }
   | Value.Map _ | Value.Gather _ | Value.Scatter _ | Value.Sort _
   | Value.Fft _ | Value.Linalg _ | Value.Fold _ | Value.Assemble _

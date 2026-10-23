@@ -1986,6 +1986,42 @@ module Scaled = struct
             let c = mx ~segs ~g:3 ~m:6 ~k:32 ~n:4 ~per:2 () in
             ignore (placed S2.on (a_cut ~scale:false (S2.split ~axis:0)) c));
       ]
+
+  (* Contractions cut along [k]: [a] [[m; k]] and [b], stored [[…; n; k]],
+     along their last stored axis, the scales and offsets on every device. *)
+  let partials =
+    let k_cut ?(b = 1) (module S : Nx.Devices) = function
+      | A -> Some (S.split ~axis:1)
+      | B -> Some (S.split ~axis:b)
+      | A_scale | B_scale | Offsets | Init -> None
+    in
+    let along ?b (module S : Nx.Devices) c =
+      ignore (placed S.on (k_cut ?b (module S)) c)
+    in
+    (* [a] scaled in two blocks of [k / 2] per row. *)
+    let halves c =
+      let scale = Some ([| c.m; 2 |], Values (F32, some (2 * c.m))) in
+      { c with a = { c.a with scale } }
+    in
+    group "partials"
+      [
+        test "a cut at blocks of 4096 products gives one device's bits"
+          (fun () -> along (module S2) (mx ~m:1 ~k:8256 ~n:2 ~per:1 ()));
+        test "a cut inside a block of 4096 products gives one device's bits"
+          (fun () -> along (module S2) (mx ~m:8 ~k:6144 ~n:8 ~per:2 ()));
+        test "a cut inside the scale's blocks gives one device's bits"
+          (fun () -> along (module S4) (mx ~m:2 ~k:96 ~n:2 ~per:1 ()));
+        test "scale blocks past 4096 products give one device's bits"
+          (fun () ->
+            along (module S2) (halves (mx ~m:2 ~k:16384 ~n:2 ~per:1 ())));
+        test "groups of a cut contracted axis give one device's bits" (fun () ->
+            let segs = Contracting [| 0L; 40L; 96L |] in
+            along (module S2) (mx ~segs ~g:2 ~m:2 ~k:96 ~n:2 ~per:1 ()));
+        test "rows by groups over a cut contracted axis give one device's bits"
+          (fun () ->
+            let segs = Rows [| 0L; 1L; 4L |] in
+            along ~b:2 (module S2) (mx ~segs ~g:2 ~m:4 ~k:64 ~n:2 ~per:2 ()));
+      ]
 end
 
 (* Convolution: Nx.conv against its sum over the taps computed in OCaml, on
@@ -2322,6 +2358,7 @@ let () =
          dot_is_einsum;
          placements;
          errors;
-         group "scales and segments" [ Scaled.within_bound; Scaled.placements ];
+         group "scales and segments"
+           [ Scaled.within_bound; Scaled.placements; Scaled.partials ];
          Conv.group;
        ])

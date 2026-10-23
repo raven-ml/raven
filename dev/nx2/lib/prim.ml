@@ -1167,14 +1167,63 @@ let linalg_rule l =
   let r = List.hd ranks in
   Route.Axes (Array.of_list (List.map (reading [| r - 2; r - 1 |]) ranks))
 
+let contract_block = 4096
+
+let block_run s ss axes =
+  let n = Array.length axes in
+  let rec first i =
+    if i = n || ss.(axes.(i)) <> s.(axes.(i)) then i else first (i + 1)
+  in
+  let p = first 0 in
+  if p = n || Array.exists (fun d -> s.(d) = 0) axes then Some 1
+  else
+    let run = ref (s.(axes.(p)) / ss.(axes.(p))) and whole = ref true in
+    for i = p + 1 to n - 1 do
+      whole := !whole && ss.(axes.(i)) = 1;
+      run := !run * s.(axes.(i))
+    done;
+    if !whole then Some !run else None
+
+(* Whether partials can take a contraction's operand of shape [s] scaled by
+   one of [ss], or none, laid out by [groups] of its axes, the last its
+   contracting ones: each group's blocks merge with it ({!block_run}), and a
+   block of the contracted extent lies in one of the contraction's blocks,
+   at whose edges partials cut it. *)
+let partials_take s ss groups =
+  match ss with
+  | None -> true
+  | Some ss ->
+      let runs = Array.map (block_run s ss) groups in
+      let k = groups.(Array.length groups - 1) in
+      let depth = Array.fold_left (fun n d -> n * s.(d)) 1 k in
+      Array.for_all Option.is_some runs
+      &&
+      match runs.(Array.length runs - 1) with
+      | Some r -> depth <= contract_block || contract_block mod r = 0
+      | None -> false
+
 (* A contraction's result has the batch pairs' axes, then [a]'s other axes, then
    [b]'s; [init] has its shape. A contracting pair's two axes share its index as
    their factor. Segments are computed uncut: [Rows]' two axes and the result's
    axis of rows are read whole, as is the result's leading axis of
-   [Contracting]'s groups. A segmented or scaled contraction is read whole
-   along its contracting pairs. *)
+   [Contracting]'s groups. A segmented contraction is read whole along its
+   contracting pairs, as is a scaled one whose scales partials cannot take
+   ({!partials_take}). *)
 let contract_rule ~batch ~contracting ~segments sa sb init sca scb =
   let nb = Iarray.length batch and nc = Iarray.length contracting in
+  let groups pick s =
+    let named ps x = Iarray.exists (fun p -> pick p = x) ps in
+    let free =
+      List.filter
+        (fun x -> not (named batch x || named contracting x))
+        (List.init (Array.length s) Fun.id)
+    in
+    [|
+      Iarray.to_array (Iarray.map pick batch);
+      Array.of_list free;
+      Iarray.to_array (Iarray.map pick contracting);
+    |]
+  in
   let lead, whole_a, whole_b =
     match (segments : _ Nx_kernel.segments option) with
     | Some (Rows { a_axis; b_axis; _ }) -> (0, a_axis, b_axis)
@@ -1182,7 +1231,9 @@ let contract_rule ~batch ~contracting ~segments sa sb init sca scb =
     | None -> (0, -1, -1)
   in
   let reduced =
-    Option.is_none segments && Option.is_none sca && Option.is_none scb
+    Option.is_none segments
+    && partials_take sa sca (groups fst sa)
+    && partials_take sb scb (groups snd sb)
   in
   let kept = ref (if lead = 1 then 0 else -1) in
   let operand pick r first segmented =
@@ -1213,19 +1264,20 @@ let contract_rule ~batch ~contracting ~segments sa sb init sca scb =
   let ra = Array.length sa in
   let a = operand fst ra (lead + nb) free_a in
   let b = operand snd (Array.length sb) (lead + ra - nc) free_b in
-  (* A scale's axis of the operand's extent reads as the operand's; one of a
-     ratio above one regroups into the result's axis, so that a cut keeps
-     whole blocks, and is read whole along a contracting pair; one of one
-     block is read whole. *)
+  (* A scale's axis that becomes the result's reads as the operand's where
+     its extent is the operand's, and regroups into it where a block holds
+     more elements, so that a cut keeps whole blocks; one of one block, and
+     every other, is read whole: partials take a contracting pair's blocks
+     by unit. *)
   let scaled row s ss =
     Array.mapi
       (fun d e ->
-        if e = s.(d) then row.(d)
-        else if e <= 1 then Route.Whole
-        else
-          match (row.(d) : Route.axis) with
-          | Becomes j -> Regroups { axis = j; extent = s.(d) }
-          | Whole | Reduced _ | Scanned _ | Regroups _ -> Whole)
+        match (row.(d) : Route.axis) with
+        | Becomes j ->
+            if e = s.(d) then row.(d)
+            else if e <= 1 then Whole
+            else Regroups { axis = j; extent = s.(d) }
+        | Whole | Reduced _ | Scanned _ | Regroups _ -> Whole)
       ss
   in
   let some f o = match o with Some x -> [| f x |] | None -> [||] in

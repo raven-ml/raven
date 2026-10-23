@@ -73,7 +73,12 @@
     of 4096 ({!Nx_kernel.S.contract}). A node of lane order's tree of those
     blocks whose products one tile holds is a {e unit} there, as is a block
     that window edges split, on the device that holds most of its products,
-    the others' parts of [a] and [b] moved there first.
+    the others' parts of [a] and [b] moved there first. A scale is read
+    whole along the contracting pairs, laid out as its operand, and each
+    unit takes the scale's blocks its products span: the route computes by
+    partials only where a block of the products lies in one of the
+    contraction's blocks ({!Prim.rule}). A segmented contraction never
+    computes so.
 
     - In lane order, each unit is one contraction of exactly its products
       into the accumulator from no [init]. Each device of the group takes
