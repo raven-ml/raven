@@ -237,22 +237,24 @@ type operand = { array : Nx_array.any; scale : scale option }
 
 (** The type for a contraction cut into groups by [offsets]: an {!index}
     for {!S.contract}, its shape for {!Shape.contract}. [offsets] has the
-    batch extents, then [g + 1] entries. At each batch index, the segmented
-    axis's index [r] is in the largest group [e < g] with
-    [offsets.(e) <= r] when [offsets.(0) <= r < offsets.(g)], else in
-    none. *)
+    batch extents, then [g + 1] entries. At each batch index, with [o] its
+    entries, group [e < g] holds the segmented axis's indices [r] with
+    [max o.(0) o.(e) <= r] and [r] below each of [o.(e + 1)] to [o.(g)];
+    the other indices are in no group. Any values name groups, out of
+    order or outside the axis. *)
 type 'i segments =
   | Rows of { offsets : 'i; a_axis : int; b_axis : int }
       (** [a]'s free axis [a_axis] is segmented; [b]'s free axis [b_axis] has
           extent [g] and leaves the result; row [r] multiplies [b]'s group
-          [e] of [r], its index [e] along [b_axis]. A row in no group is
-          [init]'s element, or [+0]. *)
+          [e] of [r], its index [e] along [b_axis]. A row in no group has
+          no products: [init] as [acc] holds it, rounded into [dst], or
+          [+0]. *)
   | Contracting of { offsets : 'i; pair : int }
       (** Contracting pair [pair] is segmented on both sides; the result
-          gains a leading axis of [g], slice [e] summing group [e]'s rows
-          alone: its products are numbered from its group's first and its
-          contracted extent is the group's count. The transpose of [Rows]
-          with respect to [b]. *)
+          gains a leading axis of [g], slice [e] summing group [e]'s indices
+          alone: its products are numbered from its group's first and the
+          pair's extent is the group's count. The transpose of [Rows] with
+          respect to [b]. *)
 
 (** {1:fft Fourier transforms} *)
 

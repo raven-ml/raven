@@ -2455,9 +2455,9 @@ let seg_shape s =
   | Ok y -> y
   | Error e -> failf "the segments do not fit: %s" e
 
-(* The group of index [r] under the offsets [o] of [g] groups, as
-   Nx_kernel.segments states it: the largest [e < g] with [o.(e) <= r]
-   when [o.(0) <= r < o.(g)]. *)
+(* The group of index [r] under the offsets [o] of [g] groups: the
+   largest [e < g] with [o.(e) <= r] when [o.(0) <= r < o.(g)], the groups
+   Nx_kernel.segments states by another rule. *)
 let group_of o g r =
   if g = 0 || r < o.(0) || r >= o.(g) then None
   else
