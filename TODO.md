@@ -55,12 +55,8 @@ raven / llama.cpp (Vulkan; ROCm):
   "two domains allocate and free at once" times out at its 10 s bound in
   60 of 64 copies run 32 at once at load ~65 with windtrap's spinning
   barrier, and in none of 96 with it
-- hardware runs: AMD over PCI on nonnormal at c226d0a09 or later (the held
-  sleep, the two-domain growth law, test_amd and test_conformance -f AMD),
-  whose last PCI run was on an earlier form of the wake-up fix and before
-  rig.pci's 64-byte BAR stores, its release after an exception, its kept
-  memory after a refused stop and the AMD path's dropped machines; the
-  box and fill laws on SDMA 4 to 6; two GPUs (peers); mlx5 and bnxt NICs
+- hardware runs: the box and fill laws on SDMA 4 to 6; two GPUs (peers);
+  mlx5 and bnxt NICs
 
 ### perf
 
