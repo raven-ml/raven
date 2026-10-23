@@ -816,10 +816,12 @@ static void narrow_run(const scatter *c, int worker, int64_t u, int64_t pd,
                       : (uint64_t *)(next + UNIT_ROW);
   uint64_t *p2 = p + most;
   int64_t *r = (int64_t *)(p2 + most), *r2 = r + most;
+  /* The count gave the unit [most] positions; one another thread changed
+     since stops at the region's end rather than past it. */
   int64_t k = 0;
   for (int64_t t = 0; t < m; t++) {
     uint64_t q = (uint64_t)x[pi + t * ia];
-    if (q - lo >= span) continue;
+    if (q - lo >= span || k == most) continue;
     p[k] = q;
     r[k++] = t;
   }
