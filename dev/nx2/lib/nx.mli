@@ -1890,9 +1890,9 @@ val conv_transpose :
     of [kernel_size]: along each of them, windows of [k] consecutive
     elements, [k] that axis's [kernel_size] entry, one every [s], its
     [stride] entry ([stride] defaults to [kernel_size]). An axis of extent
-    [d] becomes the [(d - k) / s + 1] windows, or none where [k] exceeds
-    [d], as {!sliding_window} counts them; the other axes stay. Nothing pads
-    [x]: elements past the last whole window are not read. Each window is
+    [d] takes extent [(d - k) / s + 1], or [0] where [k] exceeds [d], as
+    {!sliding_window} counts windows; the other axes stay. Nothing pads
+    [x]. Elements past the last whole window are not read. Each window is
     reduced as the reduction the filter names, over a view of the windows
     that is never stored, its terms in C order of their positions in the
     window.
@@ -1903,8 +1903,8 @@ val conv_transpose :
 
 val maximum_filter :
   kernel_size:int array -> ?stride:int array -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [maximum_filter ~kernel_size ~stride x] is each window's {!max}: a max
-    pool. Every dtype. *)
+(** [maximum_filter ~kernel_size ~stride x] is each window's {!max}, as a
+    max pool computes it. Every dtype. *)
 
 val minimum_filter :
   kernel_size:int array -> ?stride:int array -> ('v, 's, 'd) t -> ('v, 's, 'd) t
@@ -1916,8 +1916,8 @@ val uniform_filter :
   ?stride:int array ->
   (float, 's, 'd) t ->
   (float, 's, 'd) t
-(** [uniform_filter ~kernel_size ~stride x] is each window's {!mean}: an
-    average pool. Floats. *)
+(** [uniform_filter ~kernel_size ~stride x] is each window's {!mean}, as an
+    average pool computes it. Floats. *)
 
 (** {2:attention Attention}
 
