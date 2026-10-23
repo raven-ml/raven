@@ -1987,6 +1987,47 @@ module Scaled = struct
             ignore (placed S2.on (a_cut ~scale:false (S2.split ~axis:0)) c));
       ]
 
+  (* An output of no products is [init]'s bits: the result of [k = 0], and
+     [Contracting]'s group whose offsets leave it empty, here its first of
+     two, its slice the first [m n] outputs. *)
+  let no_products =
+    let plain view =
+      { dt = F32; view; swap = false; xs = some (numel view); scale = None }
+    in
+    let c ?segs ?(g = 0) ~k () =
+      let m = 2 and n = 3 in
+      let lead = match segs with Some (Rows _) -> [| g |] | _ -> [||] in
+      let b = plain (Array.append lead [| k; n |]) in
+      let a = plain [| m; k |] in
+      let c =
+        { batch = None; m; n; k; g; a; b; f64 = false; init = None; segs }
+      in
+      { c with init = Some (Array.make (numel (result_shape c)) (-0.)) }
+    in
+    let empty c =
+      let all = numel (result_shape c) in
+      match c.segs with
+      | Some (Contracting _) when c.k > 0 -> c.m * c.n
+      | _ -> all
+    in
+    let outputs c y = Array.sub (Nx.to_array y) 0 (empty c) in
+    cases "an output of no products is init's bits"
+      ~name:(fun (n, _) -> n)
+      [
+        ("k = 0", c ~k:0 ());
+        ("k = 0, rows by groups", c ~segs:(Rows [| 0L; 1L; 2L |]) ~g:2 ~k:0 ());
+        ( "k = 0, groups of k",
+          c ~segs:(Contracting [| 0L; 0L; 0L |]) ~g:2 ~k:0 () );
+        ( "an empty group of k",
+          c ~segs:(Contracting [| 0L; 0L; 4L |]) ~g:2 ~k:4 () );
+      ]
+      (fun (_, c) ->
+        let want = Array.make (empty c) (-0.) in
+        let y = P.eval ~by:"t" (op on_host Nx.float32 c) in
+        equal (array float_exact) ~msg:"nx.cpu" want (outputs c y);
+        let y = expanded (op on_host Nx.float32 c) in
+        equal (array float_exact) ~msg:"the expansion" want (outputs c y))
+
   (* Contractions cut along [k]: [a] [[m; k]] and [b], stored [[…; n; k]],
      along their last stored axis, the scales and offsets on every device. *)
   let partials =
@@ -2359,6 +2400,11 @@ let () =
          placements;
          errors;
          group "scales and segments"
-           [ Scaled.within_bound; Scaled.placements; Scaled.partials ];
+           [
+             Scaled.within_bound;
+             Scaled.no_products;
+             Scaled.placements;
+             Scaled.partials;
+           ];
          Conv.group;
        ])

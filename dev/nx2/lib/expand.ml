@@ -1630,13 +1630,29 @@ let group_ids (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     in
     map1 apply ~by rows member D.Int64 [| Plain id; edge 0; edge g |]
 
+(* Whether each group [e < g] of [ids] ({!group_ids}) holds an index: [1]
+   or [0] at [g] then [ids]' batch extents. *)
+let held (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    (ids : d Value.index) g : d Value.index =
+  let s = Prim.shape ids in
+  let nb = Array.length s - 1 in
+  let each = Array.append [| g |] s in
+  let v = spread apply ~by ids (Array.init (nb + 1) (fun i -> i + 1)) each in
+  let k x = E.const D.Int64 x in
+  let mine =
+    P.of_exprs ~ins:[| D.Any D.Int64 |]
+      [| E.(any (where (input 0 D.Int64 = coord 0) (k 1L) (k 0L))) |]
+  in
+  reduce1 apply ~by each [| nb + 1 |] Max mine D.Int64 [| Plain v |]
+
 (* The contraction of [a] and [b], each cast to [acc], by the pairs [batch]
    and [contracting], from [init]: the products in [acc] at every index of
    the result's axes then the contracted ones, each rounded, a sum over the
    contracted ones, and [init] added. With [groups] [(ids, pair, g)], the
    result gains a leading axis of [g], and slice [e] keeps the products
    whose index along [pair] has the group id [e] in [ids], at [batch]'s
-   extents then that pair's, and [+0] for the others. *)
+   extents then that pair's, and [+0] for the others; a group of no index
+   is [init] alone, whose [-0] the [+0] of its empty sum would turn. *)
 let summed (type w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     ~batch ~contracting ?groups (acc : (w, r) D.t) (Value.Any a : d Value.any)
     (Value.Any b : d Value.any) (init : (w, r, d) Value.t option) :
@@ -1705,9 +1721,19 @@ let summed (type w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
         (Iarray.init (Iarray.length contracting) (fun c -> nr + c))
         Sum prog acc loads
   in
-  match init with
-  | None -> sum
-  | Some i -> fst (apply ~by (Prim.op2 ~by (Binary Add) acc sum i))
+  match (init, groups) with
+  | None, _ -> sum
+  | Some i, None -> fst (apply ~by (Prim.op2 ~by (Binary Add) acc sum i))
+  | Some i, Some (ids, _, g) ->
+      let has = held apply ~by ids g in
+      let vh = spread apply ~by has (Array.init (nb + 1) Fun.id) rshape in
+      let s = E.input 1 acc and i' = E.input 2 acc in
+      let prog =
+        P.of_exprs
+          ~ins:[| D.Any D.Int64; D.Any acc; D.Any acc |]
+          [| E.(any (where (input 0 D.Int64 = const D.Int64 1L) (s + i') i')) |]
+      in
+      map1 apply ~by rshape prog acc [| Plain vh; Plain sum; Plain i |]
 
 (* [Rows]: each row's group of [b] gathered along [b_axis] into an axis of
    [a]'s rows, contracted with it as a batch pair, its axis moved to
@@ -1770,7 +1796,8 @@ let rows (type w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
    accumulator, which kernels compute in [order], rounded once. Any other
    scales each scaled operand first ({!scaled}), then sums its products
    ({!summed}): by group of the contracted pair for [Contracting], and over
-   each row's group of [b] for [Rows] ({!rows}). That sum is a reduction's,
+   each row's group of [b] for [Rows] ({!rows}). A contraction of no
+   products is [init] alone, or [+0]. That sum is a reduction's,
    in the reduction's order whatever [order]: no kernel's bits, and the same
    for any window of the result only where that order depends on the count
    of terms alone, as nx.cpu's reduction order does. *)
@@ -1799,15 +1826,19 @@ let contract (type v s a b c e d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
     in
     cast_to apply ~by out y
   else
+    let depth =
+      Iarray.fold_left (fun n (i, _) -> n * Prim.dim a i) 1 contracting
+    in
     let a = scaled apply ~by acc (Any a) a_scale in
     let b = scaled apply ~by acc (Any b) b_scale in
     let y =
-      match (segments : d Value.index Nx_kernel.segments option) with
-      | None -> summed apply ~by ~batch ~contracting acc a b init
-      | Some (Rows { offsets; a_axis; b_axis }) ->
+      match (init, (segments : d Value.index Nx_kernel.segments option)) with
+      | Some i, _ when depth = 0 -> i
+      | _, None -> summed apply ~by ~batch ~contracting acc a b init
+      | _, Some (Rows { offsets; a_axis; b_axis }) ->
           rows apply ~by ~batch ~contracting ~a_axis ~b_axis acc a b offsets
             init
-      | Some (Contracting { offsets; pair }) ->
+      | _, Some (Contracting { offsets; pair }) ->
           let (Value.Any x) = a in
           let p = Iarray.get contracting pair in
           let ids = group_ids apply ~by offsets (Prim.dim x (fst p)) in
