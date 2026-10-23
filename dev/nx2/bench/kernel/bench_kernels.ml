@@ -425,6 +425,48 @@ let mxfp4 ~order name m =
   in
   { bench; work = [ F.Fma (acc, 2 * m * n * k); F.Read (n * k / 2) ] }
 
+(* [t] float32 tokens, each routed to 8 of [g] MXFP4 experts' weights of
+   [n × k] stored as [mxfp4]'s: the [8t] routed rows, sorted by expert,
+   cut into the experts' groups by Rows segments. Token [i]'s experts are
+   [(5i + 4j) mod g] for [j] below 8, fixed so the groups' sizes are. *)
+let mxfp4_experts name t g =
+  let acc = D.Any D.Float32 and contracting : _ iarray = [| (1, 2) |] in
+  let n = 1024 and k = 4096 and m = 8 * t in
+  let bench (module K : Nx_kernel.S) =
+    row name
+      (fun () ->
+        let counts = Array.make g 0 in
+        for i = 0 to t - 1 do
+          for j = 0 to 7 do
+            let e = ((5 * i) + (4 * j)) mod g in
+            counts.(e) <- counts.(e) + 1
+          done
+        done;
+        let offsets = Array.make (g + 1) 0L in
+        Array.iteri
+          (fun e c -> offsets.(e + 1) <- Int64.add offsets.(e) (Int64.of_int c))
+          counts;
+        let codes =
+          A.of_array D.Uint8 [| g; n; k / 32 |]
+            (Array.init (g * n * k / 32) (fun i -> 120 + (i mod 15)))
+        in
+        let a : Nx_kernel.operand =
+          { array = A.Any (filled D.Float32 [| m; k |]); scale = None }
+        in
+        let b : Nx_kernel.operand =
+          { array = A.Any (filled D.Float4_e2m1fn [| g; n; k |]);
+            scale = Some (Exponent codes) }
+        in
+        let offsets = A.of_array D.Int64 [| g + 1 |] offsets in
+        let segments = Some (Nx_kernel.Rows { offsets; a_axis = 0; b_axis = 0 }) in
+        (A.create Rig.host D.Float32 [| m; n |], a, b, segments))
+      (fun (dst, a, b, segments) ->
+        ok
+          (K.contract ~order:Chain ~batch:[||] ~contracting
+             ~segments ~acc ~dst ~init:None a b))
+  in
+  { bench; work = [ F.Fma (acc, 2 * m * n * k); F.Read (g * n * k / 2) ] }
+
 (* The product of [m × k] and [k × n] C-contiguous matrices in [order]. *)
 let gemm ?init ~acc ~order name m n k =
   contract ?init ~acc ~order name ~sa:[| m; k |] ~sb:[| k; n |] ~layout:plain
@@ -536,6 +578,8 @@ let contract_rows =
          stages the codes along k, chain order's few rows pack them. *)
       mxfp4 ~order:lane "contract-mxfp4-m1x4096x4096" 1;
       mxfp4 ~order:chain "contract-mxfp4-m8x4096x4096" 8;
+      (* 64 tokens through 8 of 32 experts, a mixture of experts' layer. *)
+      mxfp4_experts "contract-mxfp4-experts-64x8of32" 64 32;
     ]
 
 (* Reductions and scans of one operand by a monoid, its extreme with its
