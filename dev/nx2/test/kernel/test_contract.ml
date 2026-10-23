@@ -2053,6 +2053,10 @@ let law_scaled b x =
   scaled_covers x;
   scaled_bits b x
 
+let plain_view r =
+  let axes = Array.init r Fun.id in
+  { stepped = false; broadcast = false; stored = axes; perm = axes }
+
 (* Block-scaled float4
 
    A [m × k] by float4 [k × n] product, b scaled in blocks of [mx_ratio]
@@ -2075,16 +2079,32 @@ type mx = {
   mx_seed : int;
 }
 
+(* float4's values by code, e2m1: sign, two exponent bits, one of
+   significand. *)
+let e2m1 =
+  [| 0.; 0.5; 1.; 1.5; 2.; 3.; 4.; 6.; -0.; -0.5; -1.; -1.5; -2.; -3.; -4.; -6. |]
+
+(* A float4 array of shape [made], its codes drawn uniformly from
+   [seed]. *)
+let float4 made seed =
+  let r = Random.State.make [| seed |] in
+  let xs = Array.init (total made) (fun _ -> e2m1.(Random.State.int r 16)) in
+  A.expect D.Float4_e2m1fn
+    (cast_to (D.Any D.Float4_e2m1fn) (A.Any (A.of_array D.Float64 made xs)))
+
+(* The distinct float4 codes of [x]. *)
+let f4_codes x =
+  let v = A.to_array (to64 x) in
+  List.length
+    (List.sort_uniq compare
+       (Array.to_list (Array.map (fun f -> (f, Float.sign_bit f)) v)))
+
 (* A float4 [k × n] array drawn from [seed]: made [n; k + odd] and
    permuted where [along], else [k; n + odd], then sliced from [odd] along
    the axis whose codes are adjacent. *)
 let float4_b ~along ~odd k n seed =
-  let r = Random.State.make [| seed |] in
   let made = if along then [| n; k + odd |] else [| k; n + odd |] in
-  let xs = Array.init (total made) (fun _ -> value (D.Any D.Float4_e2m1fn) r) in
-  let (A.Any x) =
-    cast_to (D.Any D.Float4_e2m1fn) (A.Any (A.of_array D.Float64 made xs))
-  in
+  let x = float4 made seed in
   let move m x = Option.get (A.move m x) in
   let window = Iarray.of_list
       [ { M.start = 0; count = made.(0); step = 1 };
@@ -2166,7 +2186,8 @@ let mx_examples =
   @ [ mx_of ~order:Chain ~acc:(D.Any D.Float32) 260 264 1056;
       mx_of ~order:Chain ~acc:(D.Any D.Float64) ~along:false 260 264 1056 ]
 
-let mx_covers x =
+let mx_covers x (c, _, _) =
+  cover "every float4 code" (f4_codes c.b = 16);
   let lane = x.mx_order = Lane and products = x.mx_m * x.mx_n > 0 && x.mx_k > 0 in
   cover "float32" (x.mx_acc = D.Any D.Float32);
   cover "float64" (x.mx_acc = D.Any D.Float64);
@@ -2188,8 +2209,58 @@ let mx_covers x =
   cover "no product" (x.mx_k = 0 && x.mx_m * x.mx_n > 0)
 
 let law_mx b x =
-  mx_covers x;
-  scaled_bits b (mx_case x)
+  let c = mx_case x in
+  mx_covers x c;
+  scaled_bits b c
+
+(* Block-scaled float4 weights through other layouts, in both orders and
+   accs: two contracting pairs that merge, one apart, and pairs in
+   another order than b's axes; b stepped along k, broadcast across its
+   columns; a batch axis. *)
+let mx_layouts =
+  let move m x = A.Any (Option.get (A.move m x)) in
+  let bf16 s seed = operand (D.Any D.Bfloat16) s 0 (plain_view (Array.length s)) seed in
+  let codes extents = Some { kind = None; extents; lies = Contiguous; specials = true; seed = 5 } in
+  let range start count step = { M.start; count; step } in
+  let layouts =
+    [
+      ("two pairs that merge", [||], [| (1, 0); (2, 1) |], bf16 [| 3; 2; 64 |] 1,
+       move (M.Permute [| 1; 2; 0 |]) (float4 [| 5; 2; 64 |] 2), [| 2; 2; 5 |]);
+      ("two pairs apart, k1 adjacent", [||], [| (1, 0); (2, 1) |], bf16 [| 3; 2; 64 |] 1,
+       move (M.Permute [| 2; 1; 0 |]) (float4 [| 5; 64; 2 |] 2), [| 2; 2; 5 |]);
+      ("pairs in the reverse of b's axes", [||], [| (2, 1); (1, 0) |],
+       bf16 [| 3; 2; 64 |] 1, move (M.Permute [| 1; 2; 0 |]) (float4 [| 5; 2; 64 |] 2),
+       [| 2; 2; 5 |]);
+      ("b stepped along k", [||], [| (1, 0) |], bf16 [| 2; 1056 |] 1,
+       move (M.Permute [| 1; 0 |])
+         (Option.get
+            (A.move (M.Slice [| range 0 7 1; range 1 1056 2 |]) (float4 [| 7; 2112 |] 2))),
+       [| 33; 7 |]);
+      ("b broadcast across its columns", [||], [| (1, 0) |], bf16 [| 3; 1056 |] 1,
+       move (M.Broadcast [| 1056; 9 |]) (float4 [| 1056; 1 |] 2), [| 33; 9 |]);
+      ("a batch axis", [| (0, 0) |], [| (2, 1) |], bf16 [| 2; 3; 128 |] 1,
+       move (M.Permute [| 0; 2; 1 |]) (float4 [| 2; 6; 128 |] 2), [| 2; 4; 6 |]);
+    ]
+  in
+  List.concat_map
+    (fun (name, batch, contracting, a, b, extents) ->
+      List.map
+        (fun (order, acc) ->
+          ( { order; batch; contracting; acc; a; b; init = None; out = acc;
+              views = [ name ] },
+            None, codes extents ))
+        Nx_kernel.[ (Lane, D.Any D.Float32); (Chain, D.Any D.Float64) ])
+    layouts
+
+let law_mx_layouts b ((c, _, _) as x) =
+  let (A.Any w) = c.b in
+  let st = L.strides (A.layout w) in
+  cover "two contracting pairs" (Array.length c.contracting = 2);
+  cover "b stepped along k" (st.(snd c.contracting.(0)) = 2);
+  cover "b broadcast across its columns"
+    (Array.length st = 2 && st.(1) = 0);
+  cover "a batch axis" (c.batch <> [||]);
+  scaled_bits b x
 
 (* Integer and complex cases with scales. *)
 let unscalable =
@@ -2433,6 +2504,11 @@ let cpu (b : Support.backend) =
         "a block-scaled float4 operand has the bits of its elements scaled \
          on the host"
         mx_draws (run (law_mx b));
+      prop ~count:0 ~examples:mx_layouts
+        "block-scaled float4 weights through other layouts have their \
+         elements' bits scaled on the host"
+        (Gen.with_pp pp_scaled (Gen.constant (List.hd mx_layouts)))
+        (run (law_mx_layouts b));
       test "refuses a scale that does not fit its operand" (fun () ->
           b.around (test_scale_misfits b));
       prop ~count:500
