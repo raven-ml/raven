@@ -369,6 +369,22 @@ let refusal root =
   | Ok _ -> fail "a GPU opened"
   | Error why -> why
 
+(* An open on a machine, refused or not, keeps nothing of the machine once
+   the process drops it: the GC takes it. The open of its unbound GPU boots
+   the GPU as far as the fixture lets it. *)
+let[@inline never] open_dropped w =
+  let machine = Rig_pci.Machine.at (unbound ()) in
+  Weak.set w 0 (Some machine);
+  ignore (Rig_gpu_support.opened (Rig_amd_pci.gpu ~machine 0))
+
+let test_dropped () =
+  if not Rig_pci_support.on_linux then
+    skip ~reason:"flock on a function's file needs Linux" ();
+  let w = Weak.create 1 in
+  open_dropped w;
+  Gc.full_major ();
+  equal ~msg:"the machine still alive" bool false (Weak.check w 0)
+
 let letting_go =
   group "letting go"
     [
@@ -391,6 +407,8 @@ let letting_go =
           let why = refusal root in
           if contains ~sub:"not let go" why then
             failf "refused as held by amdgpu: %s" why);
+      test "a machine the process dropped is collected after an open on it"
+        test_dropped;
     ]
 
 let () = exit (run "rig_amd_pci" [ reports; refused; numbering; letting_go ])

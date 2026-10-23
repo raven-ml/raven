@@ -184,16 +184,27 @@ type known = {
   mutable kept : (string * Boot.kept) list;
 }
 
-let machines : (Machine.t * known) list ref = ref []
+(* By machine, through ephemerons, so that the table keeps no machine the
+   process dropped: the GC frees an entry once its machine goes, and the table
+   drops the entry's cell as it grows. Machines that no transport names hash
+   alike. *)
+module Machines = Ephemeron.K1.Make (struct
+  type t = Machine.t
+
+  let equal = ( == )
+  let hash m = Hashtbl.hash (Machine.name m)
+end)
+
+let machines = Machines.create 1
 let machines_lock = Amd.Lock.create ()
 
 let known m =
   Amd.Lock.protect machines_lock @@ fun () ->
-  match List.assq_opt m !machines with
+  match Machines.find_opt machines m with
   | Some on -> on
   | None ->
       let on = { key = Type.Id.make (); reached = []; kept = [] } in
-      machines := (m, on) :: !machines;
+      Machines.add machines m on;
       on
 
 let learn on index reach =

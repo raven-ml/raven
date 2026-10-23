@@ -38,6 +38,19 @@ let machine () =
       fn "0000:01:00.0" 0x1002 0x030000;
     ]
 
+(* An open on a machine, refused or not, keeps nothing of the machine once
+   the process drops it: the GC takes it. *)
+let[@inline never] open_dropped w =
+  let machine = Rig_pci.Machine.at (Tree.make []) in
+  Weak.set w 0 (Some machine);
+  ignore (Rig_gpu_support.opened (Rig_nv_pci.gpu ~machine 0))
+
+let test_dropped () =
+  let w = Weak.create 1 in
+  open_dropped w;
+  Gc.full_major ();
+  equal ~msg:"the machine still alive" bool false (Weak.check w 0)
+
 let numbering =
   group "numbering"
     [
@@ -69,6 +82,8 @@ let numbering =
         ]
         (fun (_, (i, name)) ->
           equal string name (Rig_nv_pci.gpu i).name);
+      test "a machine the process dropped is collected after an open on it"
+        test_dropped;
     ]
 
 let opening =

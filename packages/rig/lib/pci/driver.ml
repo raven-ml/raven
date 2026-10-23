@@ -16,6 +16,17 @@ let ( let* ) = Result.bind
    A function is named by its machine and bus address. *)
 type siblings = Remove | Keep
 
+(* The buses lost on each machine, by an ephemeron on the machine, so that a
+   driver keeps no machine the process dropped: the GC frees an entry once
+   its machine goes, and the table drops the entry's cell as it grows.
+   Machines that no transport names hash alike. *)
+module Spent = Ephemeron.K1.Make (struct
+  type t = Machine.t
+
+  let equal = ( == )
+  let hash m = Hashtbl.hash (Machine.name m)
+end)
+
 type t = {
   name : string;
   memory_bar : int option;
@@ -30,7 +41,7 @@ type t = {
   mutable exits : bool;
   holds : Lock.t;
   mutable held : hold list;
-  mutable spent : (Machine.t * string) list;
+  spent : string list Spent.t;
 }
 
 (* [pid] is the process that opened it: a child of fork inherits the hold, and
@@ -69,7 +80,7 @@ let make ~name ~memory_bar ~siblings ~nodes ~unreleased ~teardown_ms ~reset
     exits = false;
     holds = Lock.create ();
     held = [];
-    spent = [];
+    spent = Spent.create 1;
   }
 
 (* Work no kernel driver bounds is hung once it has not advanced for 30 s. *)
@@ -120,14 +131,13 @@ let nth g m i =
 
 (* Renewals *)
 
-let lost g m bus =
-  Lock.protect g.holds (fun () ->
-      List.exists (fun (m', b) -> m' == m && b = bus) g.spent)
+let spent g m = Option.value (Spent.find_opt g.spent m) ~default:[]
+let lost g m bus = Lock.protect g.holds (fun () -> List.mem bus (spent g m))
 
 (* Records whether the function at [bus] of [m] is lost, under [holds]. *)
 let mark g m bus ~lost =
-  let others = List.filter (fun (m', b) -> not (m' == m && b = bus)) g.spent in
-  g.spent <- (if lost then (m, bus) :: others else others)
+  let others = List.filter (( <> ) bus) (spent g m) in
+  Spent.replace g.spent m (if lost then bus :: others else others)
 
 (* Resets the taken function [fn] as its vendor does: it reaches none of the
    memory processes that died left then, which goes before the driver asks

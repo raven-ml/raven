@@ -361,6 +361,22 @@ let test_take_refused () =
   contains ~msg:"the take's" ~sub:"0000:03:00.0 is bound to the driver amdgpu"
     why
 
+(* A machine on which a GPU was lost, once the process drops it, leaves
+   nothing of it with the driver: the GC takes it. *)
+let[@inline never] lose_dropped g w =
+  let m = Machine.at (Tree.make [ Tree.gpu gpu_bus ]) in
+  Weak.set w 0 (Some m);
+  stop (stopping g m 0 `Lost)
+
+let test_lost_dropped () =
+  needs_flock ();
+  let g = gpus () in
+  let w = Weak.create 1 in
+  lose_dropped g w;
+  Gc.full_major ();
+  equal ~msg:"the machine still alive" bool false (Weak.check w 0);
+  ignore (Sys.opaque_identity g)
+
 (* The GPU lost on one machine is renewed there alone. *)
 let test_per_machine () =
   needs_flock ();
@@ -392,6 +408,8 @@ let opening =
       test "a function that cannot be taken is refused with the take's reason"
         test_take_refused;
       test "the same bus on two machines is two GPUs" test_per_machine;
+      test "a machine dropped after a GPU was lost there is collected"
+        test_lost_dropped;
     ]
 
 (* Stopping *)

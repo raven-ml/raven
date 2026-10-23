@@ -164,16 +164,27 @@ type known = {
   reached : (int * Memory.reach) list Atomic.t;
 }
 
-let machines : (Machine.t * known) list ref = ref []
+(* By machine, through ephemerons, so that the table keeps no machine the
+   process dropped: the GC frees an entry once its machine goes, and the table
+   drops the entry's cell as it grows. Machines that no transport names hash
+   alike. *)
+module Machines = Ephemeron.K1.Make (struct
+  type t = Machine.t
+
+  let equal = ( == )
+  let hash m = Hashtbl.hash (Machine.name m)
+end)
+
+let machines = Machines.create 1
 let machines_lock = Rig_nv.Lock.create ()
 
 let known m =
   Rig_nv.Lock.protect machines_lock @@ fun () ->
-  match List.assq_opt m !machines with
+  match Machines.find_opt machines m with
   | Some on -> on
   | None ->
       let on = { key = Type.Id.make (); reached = Atomic.make [] } in
-      machines := (m, on) :: !machines;
+      Machines.add machines m on;
       on
 
 let rec learn on index reach =
