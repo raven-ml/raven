@@ -2400,6 +2400,42 @@ module Conv = struct
     let z = Nx.conv_transpose ~stride ~padding (ones [| 1; 1; 1 |]) (ones [| 1; 1; 1 |]) in
     equal (array int) [| 1; 0; 1 |] (Nx.shape z)
 
+  (* The process's resident bytes, then their peak since the last reset,
+     read where Linux states them, after resetting the peak to the
+     resident bytes; elsewhere the test skips. *)
+  let status_kb key =
+    In_channel.with_open_text "/proc/self/status" (fun ic ->
+        let rec go () =
+          match In_channel.input_line ic with
+          | None -> failwith ("no " ^ key ^ " in /proc/self/status")
+          | Some l when String.starts_with ~prefix:key l ->
+              Scanf.sscanf (String.sub l (String.length key) (String.length l - String.length key))
+                " %d kB" Fun.id
+          | Some _ -> go ()
+        in
+        go ())
+
+  let peak_of f =
+    match Out_channel.with_open_text "/proc/self/clear_refs" (fun oc -> output_string oc "5") with
+    | exception Sys_error _ -> skip ~reason:"no resettable peak of resident memory" ()
+    | () ->
+        let before = status_kb "VmRSS:" in
+        f ();
+        1024 * (status_kb "VmHWM:" - before)
+
+  (* A convolution of 64 output channels over a 1 MB input: it holds the
+     input padded and its result, never a copy per output channel, 75 MB
+     here. *)
+  let test_memory () =
+    let x = Nx.init Nx.float32 [| 4; 32; 32; 64 |] (fun i -> Float.of_int (i.(1) mod 3)) in
+    let w = Nx.init Nx.float32 [| 64; 3; 3; 64 |] (fun i -> Float.of_int (i.(3) mod 2)) in
+    let conv () = Nx.sync (Nx.conv ~padding:[| (1, 1); (1, 1) |] x w) in
+    conv ();
+    let padded = 4 * 34 * 34 * 64 * 4 and result = 4 * 32 * 32 * 64 * 4 in
+    less ~msg:"peak bytes above the resident ones" int
+      ~than:(4 * (padded + result))
+      (peak_of conv)
+
   let group =
     group "convolution"
       [
@@ -2412,6 +2448,7 @@ module Conv = struct
         test "each refusal names its function" test_refusals;
         test "a kernel of no tap sums no term" test_no_taps;
         test "a dead operand names the function called" test_dead_names;
+        test "holds its input padded once" test_memory;
       ]
 end
 

@@ -470,35 +470,42 @@ int nx_cpu_padding_of(value v, value x, nx_cpu_pad *p, uint8_t *fill) {
 
 /* Padded loads, staged as an assembly of one piece: the fill, then the
    operand's elements that land inside the padded array, lo + t·(interior
-   + 1) along each axis, then the windows as a layout over the copy. */
+   + 1) along each axis, then the windows as a layout over the copy. An
+   axis the operand broadcasts and the pad leaves alone is copied once and
+   read at stride 0: a value broadcast over many channels costs the copy
+   of one. */
 
 int nx_cpu_unpad(const nx_array *a, const nx_cpu_pad *p,
                  const uint8_t *fill, nx_array *out) {
   int r = a->rank, nw = p->nwindows, bits = a->bits;
   const int64_t *lo = p->lo, *hi = p->hi, *inner = p->interior;
-  int64_t shape[NX_MAX_RANK], stride[NX_MAX_RANK], total = 1, size;
+  int64_t shape[NX_MAX_RANK], held[NX_MAX_RANK], stride[NX_MAX_RANK];
+  int64_t total = 1, size;
   for (int i = 0; i < r; i++) {
     int64_t d = a->dim[i];
     shape[i] = lo[i] + hi[i] + d + (d > 0 ? inner[i] * (d - 1) : 0);
+    int kept = d > 1 && a->dim[r + i] == 0 && lo[i] == 0 && hi[i] == 0 &&
+               inner[i] == 0;
+    held[i] = kept ? 1 : shape[i];
   }
   /* A copy whose bits int64 cannot count has no memory to hold it. */
   int huge = 0;
   for (int i = r - 1; i >= 0; i--) {
-    stride[i] = total;
-    huge |= __builtin_mul_overflow(total, shape[i], &total);
+    stride[i] = held[i] == shape[i] ? total : 0;
+    huge |= __builtin_mul_overflow(total, held[i], &total);
   }
   *out = (nx_array){.dtype = a->dtype, .bits = bits, .rank = r + nw};
   if (total > 0) {
     if (huge || __builtin_mul_overflow(total, (int64_t)bits, &size)) return 1;
     out->base = malloc((size_t)((size + 7) / 8));
     if (out->base == NULL) return 1;
-    fill_box(out, fill, r, shape, stride, 0);
-    /* The operand's indices t that land inside: lo + t·s in [0, shape). */
+    fill_box(out, fill, r, held, stride, 0);
+    /* The operand's indices t that land inside: lo + t·s in [0, held). */
     nx_loop l = {.rank = r, .first = {0, a->offset}};
     int64_t n = 1;
     for (int i = 0; i < r; i++) {
       int64_t s = inner[i] + 1, t0 = lo[i] >= 0 ? 0 : (-lo[i] + s - 1) / s;
-      int64_t last = shape[i] - 1 - lo[i] < 0 ? -1 : (shape[i] - 1 - lo[i]) / s;
+      int64_t last = held[i] - 1 - lo[i] < 0 ? -1 : (held[i] - 1 - lo[i]) / s;
       if (last > a->dim[i] - 1) last = a->dim[i] - 1;
       l.extent[i] = last < t0 ? 0 : last - t0 + 1;
       l.first[0] += (lo[i] + t0 * s) * stride[i];
@@ -528,7 +535,8 @@ int nx_cpu_unpad(const nx_array *a, const nx_cpu_pad *p,
   }
   int64_t elements = 1;
   for (int i = 0; i < r + nw; i++) elements *= out->dim[i];
-  out->flags = elements == 0 ? NX_EMPTY : nw == 0 ? NX_CONTIGUOUS | NX_DISTINCT : 0;
+  int whole = nw == 0 && total == elements;
+  out->flags = elements == 0 ? NX_EMPTY : whole ? NX_CONTIGUOUS | NX_DISTINCT : 0;
   return 0;
 }
 

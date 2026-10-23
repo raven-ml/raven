@@ -27,7 +27,8 @@
     call.
 
     [map] computes every program. A padded load is first
-    copied padded into host memory, which the call holds until it returns;
+    copied padded into host memory, which the call holds until it returns,
+    once along an axis its operand broadcasts and the pad leaves alone;
     a pad that fits no operand of its load's shape is refused with
     [Shape_mismatch].
 
