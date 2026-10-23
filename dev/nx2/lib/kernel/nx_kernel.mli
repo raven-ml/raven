@@ -253,8 +253,8 @@ type 'i segments =
       (** Contracting pair [pair] is segmented on both sides; the result
           gains a leading axis of [g], slice [e] summing group [e]'s indices
           alone: its products are numbered from its group's first and the
-          pair's extent is the group's count. The transpose of [Rows] with
-          respect to [b]. *)
+          pair's extent is the group's count; a group of no index has no
+          products. The transpose of [Rows] with respect to [b]. *)
 
 (** {1:fft Fourier transforms} *)
 
@@ -673,9 +673,13 @@ module type S = sig
       computed in [acc], a dtype {!accumulates} takes, and rounded once to
       [dst]'s dtype, each operand's elements times their scales, each group
       of [segments] as {!type-segments} states. Without [init] the sum starts
-      from [+0]. Integers wrap in [acc]. A float or complex [acc] errs by at
-      most twice its unit roundoff, its parts' for a complex one, per
-      addition, barring underflow. A scale multiplies each element, rounded
+      from [+0]. An output with no products, where the contracted extent is
+      [0], so that it has no block, or its group of [segments] holds no
+      index, is [init] as [acc] holds it, rounded into [dst], or [+0]
+      without [init]: no addition touches it, so an [init] of [-0] stays
+      [-0]. Integers wrap in [acc]. A float or complex [acc] errs by at most
+      twice its unit roundoff, its parts' for a complex one, per addition,
+      barring underflow. A scale multiplies each element, rounded
       once into [acc], each product, or its block's partial sum where a
       block of the contracted extent is whole; a library states which, a
       function of the dtypes and the contracted extent alone, so that
@@ -704,7 +708,8 @@ module type S = sig
       library has the bits of that library's one call. Cut over devices of
       several libraries, each block sums as the library that computes it
       states, and the blocks compose by the order's rule. A NaN result's
-      sign and payload are unspecified. *)
+      sign and payload are unspecified, but for an output of no products,
+      whose bits are [init]'s as stated above. *)
 
   (** {1:fft Fourier transforms}
 
