@@ -19,7 +19,9 @@
       and the kernel driver has let go of it. A process can then take it.
     - A function is {e held} by this process while a driver drives it
       ({!type-hold}). No other open of the function succeeds, and no change to
-      the machine touches it.
+      the machine touches it. Once an exception ended its stop as it gave the
+      function back ({!stop}), the process holds it until it exits, and none
+      of its opens or changes of the function succeeds.
     - A function is {e lost} once a hold has ended without a clean stop, or a
       reset of it has failed. Its next open renews it ({!renew}).
 
@@ -178,11 +180,14 @@ val stop : hold -> [ `Stopped | `Unknown ]
     driver's stop returned [`Lost] or [`Unknown]. [stop h] is [`Unknown] iff the
     driver's stop returned [`Unknown], and [`Stopped] otherwise. Later calls
     return what the first returned and call no driver's stop, and a call while
-    another runs waits for it and returns the same. Where the first raised as it
-    released the function, as one from a callback inside a lock of this
-    library's on the same thread does, the next call releases it. An exception
-    raised by the driver's stop passes through, and the function is lost. A
-    device calls [stop] once its work is done or lost. *)
+    another runs waits for it and returns the same. Where the first raised
+    before it released the function, as one from a callback inside a lock of
+    this library's on the same thread does, the next call releases it. Where an
+    exception, such as an asynchronous one ({!Sys.Break}), ended the release
+    ({!Function.release}), the process holds the function until it exits, and
+    {!open_}, {!reset}, {!detach} and {!attach} of it fail, saying so. An
+    exception raised by the driver's stop passes through, and the function is
+    lost. A device calls [stop] once its work is done or lost. *)
 
 val renew : hold -> (unit, string) result
 (** [renew h] resets the function [h] holds as its vendor does ([reset] of

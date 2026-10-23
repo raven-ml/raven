@@ -2226,9 +2226,114 @@ let test_interrupted_held () =
   equal ~msg:"the pin's refusal" bool true reached;
   releases f
 
+(* The test's executable, run with [interrupting], is [interrupted_release]'s
+   process. *)
+let interrupting = "--interrupted-release"
+
+(* The files [interrupted_release] opens once its release raised, more than a
+   take holds descriptors, so that they take the numbers of those the release
+   closed; and what each holds. *)
+let canaries = 8
+let canary = String.make 16 '\xff'
+let canary_file root i = Filename.concat root (strf "canary-%d" i)
+
+(* Takes the fixture's function at [bus] with its bus mastering on, maps three
+   of its BARs, allocates and frees memory at [va] and allocates more 2 MiB
+   above, whose frames the tree's page map gives, and releases it with an
+   exception at the [n]-th allocation of the release. It then opens the
+   canaries, frees the memory left, releases the function again and exits:
+   with 0 if the [n]-th allocation was reached, 4 if it was not, 5 if the
+   second release closed a canary, 6 if the free gave back memory while the
+   function still mastered the bus, and 7 if the function could be taken
+   again meanwhile. *)
+let interrupted_release root bus va n =
+  let ok = function Ok x -> x | Error _ -> exit refused_code in
+  let f = take_mastering (Machine.at root) bus in
+  ok (Machine.reserve (Function.machine f) ~base:free_base (8 * mib));
+  List.iter
+    (fun i -> ignore (ok (Function.map ~length:4096 f i) : Window.t))
+    [ 0; 2; 5 ];
+  let alloc va =
+    match ok (Function.alloc_dma ~va f mib) with
+    | Some (w, _) -> w
+    | None -> exit refused_code
+  in
+  Function.free_dma f (alloc va);
+  let kept = alloc (va + (2 * mib)) in
+  let reached = Rig_support.interrupted n (fun () -> Function.release f) in
+  let open_canary i =
+    let fd =
+      Unix.openfile (canary_file root i) [ O_RDWR; O_CREAT; O_CLOEXEC ] 0o600
+    in
+    ignore (Unix.write_substring fd canary 0 (String.length canary) : int);
+    fd
+  in
+  let fds = List.init canaries open_canary in
+  let mastering = command_in root bus land bus_master <> 0 in
+  if mastering && Result.is_ok (Function.take (Machine.at root) bus) then
+    exit 7;
+  Function.free_dma f kept;
+  let stored f = Tree.stored (Filename.concat root ("dev/hugepages/" ^ f)) in
+  if mastering && List.for_all (fun f -> stored f = 0) (memory_files root) then
+    exit 6;
+  Function.release f;
+  let is_open fd =
+    match Unix.fstat fd with _ -> true | exception Unix.Unix_error _ -> false
+  in
+  if not (List.for_all is_open fds) then exit 5;
+  exit (if reached then 0 else 4)
+
+(* An exception at any allocation of a release, with windows mapped and
+   system memory taken, leaves what the release had not given back to the
+   process's exit. Releasing again gives nothing back twice: the files the
+   process opened since stay open and unwritten, through its exit too. While
+   the function may still master the bus, no take gets it and memory freed
+   stays. Once the process exits, the function is taken again, and its reset
+   leaves no memory file or marker. *)
+let test_interrupted_release () =
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
+  let rec from n =
+    let fn = Tree.gpu "0000:03:00.0" in
+    let root = Tree.make [ fn ] in
+    let va = free_base + (2 * mib) in
+    ignore (frames root va (3 * mib));
+    let exe = Sys.executable_name in
+    let pid =
+      Unix.create_process exe
+        [| exe; interrupting; root; fn.bus; string_of_int va; string_of_int n |]
+        Unix.stdin Unix.stdout Unix.stderr
+    in
+    let at what = strf "%s, interrupted at %d" what n in
+    let reached =
+      match wait_exit pid with
+      | WEXITED 0 -> true
+      | WEXITED 4 -> false
+      | WEXITED 5 -> failf "%s" (at "the second release closed a file")
+      | WEXITED 6 ->
+          failf "%s" (at "a free gave back memory the function reached")
+      | WEXITED 7 ->
+          failf "%s" (at "a take while the function mastered the bus")
+      | _ -> failf "%s" (at "the process did not exit")
+    in
+    for i = 0 to canaries - 1 do
+      equal ~msg:(at "a file opened after the release") string canary
+        (In_channel.with_open_bin (canary_file root i) In_channel.input_all)
+    done;
+    require_ok ~msg:(at "the reset after the exit")
+      (Driver.reset (fixture_gpus ()) (Machine.at root) 0);
+    equal ~msg:(at "the memory files and markers left") (list string) []
+      (hugepages root);
+    if reached then from (n + 1)
+  in
+  from 1
+
 let interrupts =
   group ~timeout:patience "interrupts"
     [
+      test
+        "an exception at any allocation of a release leaves the rest to the \
+         exit, giving nothing back twice"
+        test_interrupted_release;
       test "an exception at any allocation of a wait ends its use"
         test_interrupted_wait;
       test
@@ -2268,6 +2373,8 @@ let () =
   | [| _; arg; root; bus |] when arg = exiting -> exit_mastering root bus
   | [| _; arg; how; root; bus; va |] when arg = holding ->
       hold_memory how root bus (int_of_string va)
+  | [| _; arg; root; bus; va; n |] when arg = interrupting ->
+      interrupted_release root bus (int_of_string va) (int_of_string n)
   | _ ->
       exit
       @@ run "rig_pci.function"

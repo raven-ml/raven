@@ -1925,6 +1925,19 @@ let test_stop_in_stop () =
   in
   from 1
 
+(* Whether [a] is an allocation of a function's release. *)
+let in_release (a : Gc.Memprof.allocation) =
+  let release = "Rig_pci__Function.release" in
+  match Printexc.backtrace_slots a.callstack with
+  | Some slots ->
+      Array.exists
+        (fun s ->
+          match Printexc.Slot.name s with
+          | Some name -> String.starts_with ~prefix:release name
+          | None -> false)
+        slots
+  | None -> false
+
 type failure = Answers_error | Raises_exit
 
 let failures = [ ("answers Error", Answers_error); ("raises", Raises_exit) ]
@@ -2203,14 +2216,17 @@ let exit_inside_lock root =
   ignore (Result.get_ok (Driver.open_ g m 1 start));
   ignore (Driver.open_ g m 2 (fun _ _ -> exit 0))
 
-(* The lines the suite's executable run with [mode] on the tree [root] printed
-   on standard output, and what it printed on standard error. *)
-let exiting ?(mode = exit_holding) root =
+(* The lines the suite's executable run with [mode] on the tree [root], and
+   [args] after it, printed on standard output, and what it printed on
+   standard error. *)
+let exiting ?(mode = exit_holding) ?(args = [||]) root =
   let exe = Sys.executable_name in
   let out_r, out_w = Unix.pipe ~cloexec:true () in
   let err_r, err_w = Unix.pipe ~cloexec:true () in
   let pid =
-    Unix.create_process exe [| exe; mode; root |] Unix.stdin out_w err_w
+    Unix.create_process exe
+      (Array.append [| exe; mode; root |] args)
+      Unix.stdin out_w err_w
   in
   Unix.close out_w;
   Unix.close err_w;
@@ -2251,6 +2267,109 @@ let test_exit_inside () =
   equal ~msg:"stops that raised at exit" (list string) []
     (List.filter at_exit (String.split_on_char '\n' err))
 
+(* Opens GPU 0 of the tree [root] and stops it with an exception at the
+   [n]-th allocation of the stop, or of its release where [where] is
+   ["release"]; stops it again, then opens it again and stops it. It prints
+   whether the [n]-th was reached, the calls of the vendor's stop, whether the
+   function is released and the second open's answer. *)
+let interrupted = "--interrupted-stop"
+
+let interrupted_stop root where n =
+  let g = gpus () and m = Machine.at root in
+  let stops = Atomic.make 0 in
+  let start h fn =
+    Driver.set_stop h (fun () ->
+        Atomic.incr stops;
+        `Clean);
+    Ok (h, fn)
+  in
+  let h, fn = Result.get_ok (Driver.open_ g m 0 start) in
+  let from = if where = "release" then Some in_release else None in
+  let reached = Rig_support.interrupted ?from n (fun () -> stop h) in
+  stop h;
+  let opened =
+    match Driver.open_ g m 0 (fun h _ -> kept h) with
+    | Ok h ->
+        stop h;
+        "opened"
+    | Error why -> why
+  in
+  List.iter print_endline
+    [
+      (if reached then "reached" else "unreached");
+      string_of_int (Atomic.get stops);
+      string_of_bool (Function.released fn);
+      opened;
+    ];
+  exit 0
+
+(* What [interrupted_stop] printed on a new tree, as whether the [n]-th
+   allocation was reached, the vendor's stops, whether the function was
+   released and the second open's answer, once the tree's GPU opened again
+   after the process exited. *)
+let interrupting where n =
+  needs_flock ();
+  let root = Tree.make [ Tree.gpu gpu_bus ] in
+  let at what = strf "%s, interrupted at %d" what n in
+  let out, err =
+    exiting ~mode:interrupted ~args:[| where; string_of_int n |] root
+  in
+  (match Driver.open_ (gpus ()) (Machine.at root) 0 (fun h _ -> kept h) with
+  | Ok h -> stop h
+  | Error why -> failf "%s: %s" (at "the open after the exit") why);
+  match out with
+  | [ reached; stops; released; opened ] ->
+      ( reached = "reached",
+        int_of_string stops,
+        bool_of_string released,
+        opened )
+  | _ ->
+      failf "%s: %S %S" (at "the process printed") (String.concat "|" out) err
+
+let until_exit = "is held by this process until it exits"
+
+(* A stop whose release an exception ends at any allocation leaves the GPU
+   held until the process exits: the next stop returns, the vendor's stop
+   called once, and an open is refused, saying so. Once the process exits,
+   the GPU opens. *)
+let test_interrupted_release () =
+  let rec from n =
+    let reached, stops, released, opened = interrupting "release" n in
+    let at what = strf "%s, interrupted at %d" what n in
+    equal ~msg:(at "the vendor's stops") int 1 stops;
+    equal ~msg:(at "the function released") bool true released;
+    if n = 1 then equal ~msg:"the release allocates" bool true reached;
+    if reached then begin
+      contains ~msg:(at "the open after") ~sub:until_exit opened;
+      from (n + 1)
+    end
+    else equal ~msg:(at "the open after") string "opened" opened
+  in
+  from 1
+
+(* A stop that an exception ends at any allocation is ended by the next stop,
+   the vendor's stop called at most once. The GPU opens again, or, where the
+   exception came once the release began, the process holds it until it
+   exits, and an open says so. Both happen. *)
+let test_interrupted_stop () =
+  let rec from n (opens, holds) =
+    let reached, stops, released, opened = interrupting "stop" n in
+    let at what = strf "%s, interrupted at %d" what n in
+    less ~msg:(at "the vendor's stops") int ~than:2 stops;
+    let counts =
+      if opened = "opened" then (opens + 1, holds)
+      else begin
+        contains ~msg:(at "the open after") ~sub:until_exit opened;
+        equal ~msg:(at "the function released") bool true released;
+        (opens, holds + 1)
+      end
+    in
+    if reached then from (n + 1) counts else counts
+  in
+  let opens, holds = from 1 (0, 0) in
+  greater ~msg:"stops after which the GPU opened" int ~than:0 opens;
+  greater ~msg:"stops after which the process held the GPU" int ~than:0 holds
+
 let exits =
   group ~timeout:patience "exit"
     [
@@ -2263,12 +2382,22 @@ let exits =
         "a process that exits inside a lock that no stop takes stops every \
          GPU"
         test_exit_inside;
+      test
+        "a stop whose release an exception ends at any allocation leaves its \
+         GPU held until the process exits"
+        test_interrupted_release;
+      test
+        "a stop an exception ends at any allocation is ended by the next \
+         stop, the vendor's stop called at most once"
+        test_interrupted_stop;
     ]
 
 let () =
   match Sys.argv with
   | [| _; arg; root |] when arg = exit_holding -> exit_holding_gpus root
   | [| _; arg; root |] when arg = exit_inside -> exit_inside_lock root
+  | [| _; arg; root; where; n |] when arg = interrupted ->
+      interrupted_stop root where (int_of_string n)
   | _ ->
       exit
       @@ run "rig_pci.driver"

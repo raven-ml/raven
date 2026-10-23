@@ -104,7 +104,12 @@ val release : t -> unit
     its DMA, and restores the legacy interrupts {!take} turned off. It unmaps
     [f]'s BAR windows, closes the process's files for [f] and unlocks it.
     Memory from {!alloc_dma} stays until {!free_dma}. Releasing again does
-    nothing.
+    nothing. An exception that ends a release part-way, such as an
+    asynchronous one ({!Sys.Break}), leaves what the release had not given back
+    to the process's exit, which leaves [f] at worst as a killed process leaves
+    a function it holds. Until a release returns, {!free_dma} and {!unpin} give
+    no memory back: [f] may still reach it, and it stays the process's until
+    the process exits.
 
     Behind an IOMMU, Linux turns bus mastering off when the last descriptor of
     the function's files closes. A child of [fork] that has not run [exec]
@@ -121,7 +126,7 @@ val addressing : t -> Machine.addressing
 (** [addressing f] is how [f] reaches system memory. *)
 
 val released : t -> bool
-(** [released f] is [true] iff {!release} gave [f] back. *)
+(** [released f] is [true] iff {!release} began giving [f] back. *)
 
 val failed : t -> string option
 (** [failed f] is why [f] can no longer be reached, if it cannot: its machine
@@ -355,7 +360,9 @@ val alloc_dma :
     than a page on a function taken physically. *)
 
 val free_dma : t -> Window.t -> unit
-(** [free_dma f w] frees [w], and [f] reaches it no more.
+(** [free_dma f w] frees [w], and [f] reaches it no more. Once a release of
+    [f] began and until it returned, [w] stays the process's until it exits
+    instead ({!release}).
 
     Raises [Invalid_argument] if [w] is not a live window {!alloc_dma} returned
     for [f]. *)
@@ -385,7 +392,9 @@ val pin : t -> int -> int -> ((int * int) list option, string) result
     Raises [Invalid_argument] if [a] is not on a page or [n <= 0]. *)
 
 val unpin : t -> int -> int -> unit
-(** [unpin f a n] releases one pin of the [n] bytes at [a].
+(** [unpin f a n] releases one pin of the [n] bytes at [a]. Once a release of
+    [f] began and until it returned, the memory stays locked until the process
+    exits instead ({!release}).
 
     Raises [Invalid_argument] if [(a, n)] is not pinned for [f]. *)
 

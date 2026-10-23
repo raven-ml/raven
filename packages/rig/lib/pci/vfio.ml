@@ -351,13 +351,15 @@ let join files bus file group =
   c
 
 (* Drops a count of [c]'s functions, closing it with the last, which removes
-   every mapping it holds. *)
+   every mapping it holds. It leaves the list before it is marked closed, so
+   that no take joins a closed container, whose descriptor's number another
+   file may have taken: an exception between leaves its descriptor open. *)
 let leave c =
   Lock.protect containers_lock @@ fun () ->
   c.users <- c.users - 1;
   if c.users = 0 then begin
-    Lock.protect c.mutex (fun () -> c.closed <- true);
     containers := List.filter (fun (_, c') -> c' != c) !containers;
+    Lock.protect c.mutex (fun () -> c.closed <- true);
     Unix.close c.fd
   end
 

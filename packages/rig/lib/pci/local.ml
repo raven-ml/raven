@@ -277,14 +277,21 @@ let forget t =
   | Physical_take s -> Sysmem.forget ~root:(Sysmem.root s) ~bus:t.bus
   | Iommu_take _ -> ()
 
-(* A take's descriptors close whatever happens before. *)
+(* Behind an IOMMU a take's descriptors close whatever happens before: Linux
+   then stops the function's DMA. A physical take's close only once it is
+   given back and has left the exit's list, so that an exception before
+   leaves the take, files open and the function locked, for the exit to give
+   back, and the exit gives back no take through descriptors closed, whose
+   numbers files opened since may hold. *)
 let release t =
-  Fun.protect ~finally:(fun () -> List.iter Unix.close t.fds) @@ fun () ->
   match t.way with
-  | Iommu_take c -> Vfio.close c
+  | Iommu_take c ->
+      Fun.protect ~finally:(fun () -> List.iter Unix.close t.fds) @@ fun () ->
+      Vfio.close c
   | Physical_take s ->
+      give_back t s;
       unhold t;
-      give_back t s
+      List.iter Unix.close t.fds
 
 let fn t =
   {

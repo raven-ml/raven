@@ -23,6 +23,7 @@ type t = {
          from any domain *)
   users : int Atomic.t;
   kept : bool Atomic.t; (* [keep] *)
+  given_back : bool Atomic.t; (* once [release] returned *)
   lock : Lock.t;
   maps : (int * bool) Tables.Window.t; (* to its BAR and [combine] *)
   dmas : unit Tables.Window.t;
@@ -44,6 +45,7 @@ let make machine bus taken =
         dma_end = Atomic.make max_int;
         users = Atomic.make 0;
         kept = Atomic.make false;
+        given_back = Atomic.make false;
         lock = Lock.create ();
         maps = Tables.Window.create 16;
         dmas = Tables.Window.create 16;
@@ -122,7 +124,10 @@ external reraise : exn -> 'a = "%reraise"
 let nap_s = 0.0001
 
 (* A kept function's release stops its DMA and gives back nothing more: its
-   take stays the process's until the exit gives it back. *)
+   take stays the process's until the exit gives it back. [released] is set
+   first and once, so an exception that ends the release part-way leaves what
+   it had not given back to the exit, and no later release gives anything
+   back twice. *)
 let release f =
   if not (Atomic.exchange f.released true) then begin
     while Atomic.get f.users > 0 do
@@ -138,8 +143,13 @@ let release f =
     if Atomic.get f.kept then
       f.fn.set_config Local.command 2
         (f.fn.config Local.command 2 land lnot Local.bus_master)
-    else f.fn.release ()
+    else f.fn.release ();
+    Atomic.set f.given_back true
   end
+
+(* Whether [f] may still master the bus although released: its release began
+   and has not returned, as when an exception ended it part-way. *)
+let may_reach f = released f && not (Atomic.get f.given_back)
 
 let keep f =
   live f "keep";
@@ -399,7 +409,7 @@ let alloc_dma ?(contiguous = false) ?va f n =
 
 let free_dma f w =
   unlist f f.dmas "free_dma" w;
-  f.fn.free_dma w
+  if not (may_reach f) then f.fn.free_dma w
 
 let pin_entered f a n =
   on_page f "pin" a;
@@ -434,4 +444,4 @@ let unpin f a n =
       if not (Tables.Range.mem f.pins (a, n)) then
         invalid_argf "Function.unpin: 0x%x is not pinned for %s" a f.bus;
       Tables.Range.remove f.pins (a, n));
-  f.fn.unpin a n
+  if not (may_reach f) then f.fn.unpin a n
