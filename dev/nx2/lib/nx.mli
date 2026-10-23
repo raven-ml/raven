@@ -259,7 +259,13 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     function that computes through others, as {!trace} sums a diagonal, is the
     consumer the deaths name. One that makes several operations, as {!lstsq},
     reads its handles as they were when called and consumes them when it
-    returns, and none if it raises; it reuses none of their memory. Two handles
+    returns, and none if it raises; it reuses none of their memory. Eagerly,
+    with no operand traced, {!einsum} of more than two operands, {!complex},
+    {!slice} and {!set} reading a donated position in several operations,
+    and {!Rng.dirichlet}, {!Rng.categorical} and {!Rng.permutation} free
+    that memory when they return, unless their result holds it or another
+    value shares it; any other such function leaves it to return to its
+    device once no value holds it. Two handles
     of one donor or over one memory reaching one operation raise naming
     [Nx.donate]: the same handle twice, two donations of one value, or a handle
     and one a movement passed on. The donor itself beside one of its handles is

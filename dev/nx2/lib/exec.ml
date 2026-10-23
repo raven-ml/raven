@@ -100,8 +100,11 @@ let is_concrete x = not (Prim.is_constant x)
 
 (* A view made over [a]'s memory, outside any handle chain: the memory is shared
    from then on, so that no donation of [a]'s value writes what the view
-   reads. *)
-let view_of a = Rig.Claim.share (A.buffer a)
+   reads. Memory a call frees once it returns stays unshared, so that the
+   free happens ({!Donate.freed_view}). *)
+let view_of a =
+  let b = A.buffer a in
+  if not (Donate.freed_view b) then Rig.Claim.share b
 
 let extents (w : M.range array) = Array.map (fun (r : M.range) -> r.count) w
 
