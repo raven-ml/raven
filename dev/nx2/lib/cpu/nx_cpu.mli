@@ -150,17 +150,26 @@
     scatter's [Add] adds a target's updates left to right,
     [(… ((+0 + x) + u1) + …) + un]. A narrow float's keeps its float32 sums
     and the positions it sorts by target in host memory the call holds
-    until it returns. Over [m] updates along the scattered axis, it takes
-    12 KiB and [32 m] bytes on each of its threads; in place of the
-    [32 m], 32 bytes for each update in all where its slices are fewer
-    than its threads, and [40 m + 8] bytes once where its positions step
-    0 along each of fewer rows of slices than threads. A scatter of one
-    slice, of a dtype of a byte or more, takes instead on each thread a
-    bin of the axis's targets, a byte of flag and a float32 sum for each,
+    until it returns. A {e slice} is the updates at one index off the
+    scattered axis, with their positions and targets; a {e row of slices}
+    is the slices at successive indices of the last axis off it, joined
+    with the axes before it where every operand steps through them as
+    one. Over [m] updates along the scattered axis, the Add takes 12 KiB
+    and [32 m] bytes on each of its threads; in place of the [32 m], 32
+    bytes for each update in all where its slices are fewer than its
+    threads, and [40 m + 8] bytes once where its positions step 0 along
+    each of fewer rows of slices than threads. Where its rows are of one
+    slice, fewer than its threads, and its dtype of [w] bytes, [w ≥ 1], it
+    sorts a slice's updates by {e bin}, a run of [2{^k}] successive
+    targets along the axis, at most 1024 bins in all, a block of updates
+    at a time: all [m] where the axis has [m] targets or more, else at
+    most 2{^22}. It takes instead [8 + w] bytes for each update of a
+    block, and on each thread [16 (8 + w) + 8] bytes for each bin and a
+    bin's sums, a byte of flag and a float32 sum for each of its targets,
     the flags padded to 64 bytes: at most half a core's L2 of sums, or
     those of a 512th of the axis's targets. Along an axis of more than
-    2{^19} updates and more updates than targets, every bin keeps its
-    own, about five bytes for each target of its bins, the last counted
+    2{^19} updates and more updates than targets, every bin keeps its own
+    sums, about five bytes for each target of its bins, the last counted
     whole.
 
     [sort] and [assemble] compute every dtype, and [fold] every dtype
