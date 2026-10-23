@@ -151,8 +151,10 @@ BEST static void stream_slice(int64_t lo, int64_t hi, int worker,
   }
   switch (f->inb * 100 + f->outb) {
     case 101: STREAM(uint8_t, uint8_t); return;
+    case 202: STREAM(uint16_t, uint16_t); return;
     case 401: STREAM(uint32_t, uint8_t); return;
     case 404: STREAM(uint32_t, uint32_t); return;
+    case 1616: n *= 2; STREAM(uint64_t, uint64_t); return; /* two words */
     default: STREAM(uint64_t, uint64_t); return; /* 8 to 8 */
   }
 }
