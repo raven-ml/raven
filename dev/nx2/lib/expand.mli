@@ -84,9 +84,14 @@
     selects [init] or [+0] for a row in no group. [Contracting] sums each
     group's slice over the products whose id is its own, selecting [+0] for
     the others, so that no NaN or infinity of another group enters it, and
-    selects [init] for a group of no index. A contraction of no products is
-    its [init], or [+0] without one: adding the [+0] of an empty sum would
-    turn an [init] of [-0] into [+0].
+    selects [init] for a group of no index. An output of no products is its
+    [init], or [+0] without one: adding the [+0] of an empty sum would turn
+    an [init] of [-0] into [+0]. Only there is a zero's sign the kernels'.
+    Where an output has products, their sum starts from [+0] and [init] is
+    added last, so a zero result's sign may differ from a kernel's, within
+    the bound {!Nx_kernel.S.contract} states: from an [init] of [-0] over
+    products all [-0], nx.cpu's [Chain] order gives [-0] and the expansion
+    [+0].
 
     A sort of another dtype sorts positions by its order
     keys, int64 values of [b = 63 - ⌈log₂ n⌉] bits along an axis of [n]

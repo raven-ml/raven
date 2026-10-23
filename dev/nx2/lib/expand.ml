@@ -1770,11 +1770,12 @@ let rows (type w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
    accumulator, which kernels compute in [order], rounded once. Any other
    scales each scaled operand first ({!scaled}), then sums its products
    ({!summed}): by group of the contracted pair for [Contracting], and over
-   each row's group of [b] for [Rows] ({!rows}). A contraction of no
-   products is [init] alone, or [+0]. That sum is a reduction's,
-   in the reduction's order whatever [order]: no kernel's bits, and the same
-   for any window of the result only where that order depends on the count
-   of terms alone, as nx.cpu's reduction order does. *)
+   each row's group of [b] for [Rows] ({!rows}). An output of no products
+   is [init] alone, or [+0]; one with products adds [init] after a sum from
+   [+0], so its zero's sign may differ from a kernel's. That sum is a
+   reduction's, in the reduction's order whatever [order]: no kernel's bits,
+   and the same for any window of the result only where that order depends
+   on the count of terms alone, as nx.cpu's reduction order does. *)
 let contract (type v s a b c e d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
     ~by ~order ~batch ~contracting ~segments ~acc:(D.Any acc) (out : (v, s) D.t)
     (a : (a, b, d) Value.t) (b : (c, e, d) Value.t)
