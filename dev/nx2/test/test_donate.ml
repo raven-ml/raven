@@ -1864,6 +1864,26 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
             (Nx.conv_transpose (d 0 (x [| 1; 4; 1 |])) (d 1 (x [| 1; 2; 1 |]))));
       c "correlate" 2 (fun d ->
           show (Nx.correlate (d 0 (x [| 4 |])) (d 1 (x [| 2 |]))));
+      c "conv" 2 (fun d ->
+          show
+            (Nx.conv
+               ~padding:[| (1, 1) |]
+               (d 0 (x [| 1; 4; 2 |]))
+               (d 1 (x [| 3; 2; 2 |]))));
+      c "conv_transpose" 2 (fun d ->
+          show
+            (Nx.conv_transpose ~stride:[| 2 |]
+               (d 0 (x [| 1; 3; 2 |]))
+               (d 1 (x [| 2; 2; 2 |]))));
+      c "maximum_filter" 1 (fun d ->
+          show (Nx.maximum_filter ~kernel_size:[| 2 |] (d 0 (x [| 2; 4 |]))));
+      c "minimum_filter" 1 (fun d ->
+          show
+            (Nx.minimum_filter ~kernel_size:[| 2 |] ~stride:[| 1 |]
+               (d 0 (x [| 2; 4 |]))));
+      c "uniform_filter" 1 (fun d ->
+          show (Nx.uniform_filter ~kernel_size:[| 2 |] (d 0 (x [| 2; 4 |]))));
+      c "rms_norm" 1 (fun d -> show (Nx.rms_norm (d 0 (x [| 2; 3 |]))));
       c "correlate" 2 (fun d ->
           show (Nx.correlate ~padding:`Full (d 0 (x [| 4 |])) (d 1 (x [| 2 |]))));
       c "extract_patches" 1 (fun d ->
