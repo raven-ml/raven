@@ -110,14 +110,16 @@ let test_fail_first =
 
 (* An exception other than a fault escaping a driver's counted call loses the
    device with the exception's constructor's name, and is the process's
-   failure; the call raises it, and the device stops once. [prepare]
-   readies the call, and is the call: the exception comes at its [call]. *)
+   failure; the call raises it, and the device stops once, at its close.
+   [prepare] readies the call, and is the call: the exception comes at its
+   [call]. *)
 let escaping call prepare =
   let name = "fail:escaping-" ^ call in
   child_case
     [
       "raised Stdlib.Exit";
       "Stdlib.Exit";
+      "stops: 0";
       "stops: 1";
       name ^ " lost: Stdlib.Exit";
     ]
@@ -130,12 +132,10 @@ let escaping call prepare =
     | () -> "returned"
     | exception e -> "raised " ^ Printexc.to_string e
   in
-  [
-    raised;
-    Option.value ~default:"not lost" (Rig.lost d);
-    Printf.sprintf "stops: %d" (P.stops p);
-    failure ();
-  ]
+  let why = Option.value ~default:"not lost" (Rig.lost d) in
+  let before = Printf.sprintf "stops: %d" (P.stops p) in
+  Rig.close d;
+  [ raised; why; before; Printf.sprintf "stops: %d" (P.stops p); failure () ]
 
 (* What collected memory gives back to [d]'s driver, from a buffer or an image
    made here and dropped. *)
@@ -191,14 +191,16 @@ module Nothing = struct
   let stop () = ()
 end
 
-(* A fail loses every device but the host, each stopped once; a device already
-   lost keeps its reason; the host's memory goes on; an open afterwards answers
-   the reason without calling its opener, also of a name that was open, an io
-   open too, and a memory device's; and a second fail changes nothing. *)
+(* A fail loses every device but the host, and runs no stop: each device's
+   runs once, at its close; a device already lost keeps its reason; the
+   host's memory goes on; an open afterwards answers the reason without
+   calling its opener, also of a name that was open, an io open too, and a
+   memory device's; and a second fail changes nothing. *)
 let test_fail =
   child_case
     [
       "the world failed";
+      "stops: 0";
       "stops: 1";
       "the submission failed";
       "the world failed";
@@ -246,8 +248,12 @@ let test_fail =
     | Ok _ -> "Ok"
     | Error why -> "Error " ^ why
   in
+  let why = Option.value ~default:"not lost" (Rig.lost d) in
+  let before = Printf.sprintf "stops: %d" (count "stop" p) in
+  Rig.close d;
   [
-    Option.value ~default:"not lost" (Rig.lost d);
+    why;
+    before;
     Printf.sprintf "stops: %d" (count "stop" p);
     Option.value ~default:"not lost" (Rig.lost e);
     Option.value ~default:"not lost" (Rig.lost io);
@@ -275,8 +281,8 @@ let test_fail_spread =
   List.map (fun d -> Option.value ~default:"not lost" (Rig.lost d)) [ a; b; c ]
 
 (* Opens race a fail on another domain: every device that opened is lost with
-   its reason and stopped once, and every open that answered after the fail
-   returned is an error. *)
+   its reason and stopped once, at its close, and every open that answered
+   after the fail returned is an error. *)
 let test_fail_beside_opens () =
   let opened = Atomic.make [] and failed = Atomic.make false in
   let late = Atomic.make 0 in
@@ -307,6 +313,8 @@ let test_fail_beside_opens () =
   List.iter
     (fun (d, p) ->
       equal (option string) (Some "the world failed") (Rig.lost d);
+      equal ~msg:"stops before the close" int 0 (count "stop" p);
+      Rig.close d;
       equal int 1 (count "stop" p))
     (Atomic.get opened)
 

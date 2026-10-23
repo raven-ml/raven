@@ -9,8 +9,9 @@
    allocate meet it again. It then runs so again from the first allocation at
    the same call stack. After that, rig is consistent: no profile is left
    taken, and the device is either lost, by an exception that escaped a call
-   of its driver, with the exception's text and stopped once, or live, its
-   name answering it, and it runs the operation again and closes. Either way
+   of its driver, with the exception's text, its stop not run until its
+   close runs it once, or live, its name answering it, and it runs the
+   operation again and closes. Either way
    its name then opens a device that runs the operation. rig promises no
    return of memory after an asynchronous exception, so the walk checks
    none. *)
@@ -184,7 +185,8 @@ let interrupt start op n =
       (match Rig.lost d with
       | Some why ->
           equal ~msg:"the loss" string (Printexc.to_string Injected) why;
-          (* The close runs the stop if the interrupt left it owed. *)
+          (* The close runs the stop, which the interrupted call left owed. *)
+          equal ~msg:"stops before the close" int 0 (P.stops p);
           Rig.close d;
           equal ~msg:"stops" int 1 (P.stops p)
       | None ->
@@ -636,10 +638,9 @@ let test_reentry f () =
   greater ~msg:"landings outside every lock" int ~than:0 outside
 
 (* Fails the process from a [Gc.Memprof] callback at the [n]-th allocation of
-   an open. [fail] never raises: inside a lock it fails the process and leaves
-   the owed stops to later calls, and outside every lock it runs them. Is
-   whether the allocation was reached, and whether the callback ran inside a
-   lock. *)
+   an open. [fail] never raises, inside a lock or outside every lock, and runs
+   no stop: each device's runs at its close. Is whether the allocation was
+   reached, and whether the callback ran inside a lock. *)
 let fail_in n =
   let at = Printf.sprintf ", failed at allocation %d" n in
   in_child at (fun () ->
@@ -655,13 +656,13 @@ let fail_in n =
       if reached then begin
         equal ~msg:"the failure" (option string) (Some "failed in a callback")
           (Rig.failure ());
-        equal ~msg:"stops as the fail returned" int
-          (if !held then 0 else 1)
-          !stops;
+        equal ~msg:"stops as the fail returned" int 0 !stops;
         raises_match
           (function Rig.Lost _ -> true | _ -> false)
           (fun () -> B.create d 8);
-        equal ~msg:"stops after a later call" int 1 (P.stops p)
+        equal ~msg:"stops after a later call" int 0 (P.stops p);
+        Rig.close d;
+        equal ~msg:"stops after the close" int 1 (P.stops p)
       end;
       (reached, !held))
 

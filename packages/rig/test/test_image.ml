@@ -161,6 +161,7 @@ let test_upload_frees_after_stop () =
   let d, p = P.open_ ~answer:`Unknown "image:upload-unknown" in
   P.fail p;
   raises_match (lost d) (fun () -> Image.load d "code:64");
+  Rig.close d;
   collect d;
   equal ~msg:"before the word drained" int 64 (P.allocated p Device);
   P.set_word p (Rig.submitted d);
@@ -172,8 +173,8 @@ let rec after_stop = function
   | _ :: rest -> after_stop rest
   | [] -> []
 
-(* An image still loaded when its device stops is unloaded after the stop, once
-   unreachable: the stop releases nothing this library made. *)
+(* An image still loaded when its device stops, at its close, is unloaded after
+   the stop, once unreachable: the stop releases nothing this library made. *)
 let test_unload_after_stop () =
   let d, p = P.open_ "image:unload-after-stop" in
   let i = ref (Some (load d "code:64")) in
@@ -182,8 +183,9 @@ let test_unload_after_stop () =
   in
   P.fail p;
   raises_match (lost d) (fun () -> submit (Sub.make d [||]));
-  equal ~msg:"by the stop" int 0 (count "unload" p);
   raises_match (lost d) (fun () -> Image.resolve (Option.get !i) "main");
+  Rig.close d;
+  equal ~msg:"by the stop" int 0 (count "unload" p);
   i := None;
   collect d;
   equal ~msg:"after the stop" (list string) [ "unload" ]
@@ -199,6 +201,7 @@ let test_unload_after_unknown () =
   ignore (submit (Sub.make d [||]));
   P.fail p;
   raises_match (lost d) (fun () -> submit (Sub.make d [||]));
+  Rig.close d;
   i := None;
   collect d;
   equal ~msg:"with the word short" int 0 (count "unload" p);
@@ -277,6 +280,7 @@ let test_unloads_beside_loss () =
   equal ~msg:"the fault is recorded" (option string) (Some "the engine hung")
     (Rig.lost d);
   equal ~msg:"later unloads wait" int 1 (count "unload" p);
+  Rig.close d;
   collect d;
   equal ~msg:"the unknown stop keeps them" int 1 (count "unload" p);
   P.set_word p (Rig.submitted d);

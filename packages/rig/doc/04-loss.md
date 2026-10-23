@@ -18,9 +18,14 @@ section lists what each use depends on. The
 that stays usable and one that raises for the rest of the process.
 
 Other devices go on, unless their queues wait for a value the lost device
-never reached. A lost device's memory and the values its submissions keep
-return only once the device has stopped, as the Stops section of `rig.mli`
-defines it, which may be never.
+never reached. A lost device's stop runs only when the program closes the
+device or opens its name again, never inside the call that met the loss,
+so a program that catches `Rig.Lost` closes the device. Until its stop the
+device keeps its memory and the values its submissions keep, and a GPU
+driven over PCI may go on running the work it took. Once the device has
+stopped, as the Stops section of `rig.mli` defines it, which may be never,
+its memory returns, and memory it only read is ordinary again. Memory whose
+last write it never reached raises `Rig.Lost` for the rest of the process.
 
 ## What a program sees
 

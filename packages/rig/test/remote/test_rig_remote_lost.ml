@@ -11,17 +11,23 @@ open Remote_job
 
 let root = "FAULTY:0 lost: the agent's device faulted"
 
+let[@inline never] dropped d =
+  ignore (Sys.opaque_identity (Rig.Buffer.create d 4096))
+
 (* The FAULTY device's first allocation faults in the agent. The job fails
    with that loss as the agent's root cause, which this process records from
    the agent's abort, marked as the agent's. devices answers that cause for a
    kind opened before or not, every device of the job is lost with it, a rail
-   is its Error, close leaves it failed, and the agent ends with the job. *)
+   is its Error, close leaves it failed and stops its devices, whose memory
+   then returns, and the agent ends with the job. *)
 let agent_device_lost () =
   with_agents @@ fun agents ->
   let agent = List.hd agents in
   let j = connect agents in
   let hs = Rig_remote.hosts j in
   let others = List.concat_map mem hs in
+  let m = List.hd others in
+  dropped m;
   let faulty =
     match Rig_remote.devices (List.hd hs) "FAULTY" with
     | Ok [ d ] -> d
@@ -50,9 +56,17 @@ let agent_device_lost () =
       equal ~msg:"a rail after the failure" (result pass string) (Error cause)
         (r.rail None ~send:[| t |] ~receive:[||])
   | _ -> fail "a host's record is Host");
+  let collected () =
+    Gc.full_major ();
+    Rig.free_cache m;
+    Rig.allocated m
+  in
+  at_least ~msg:"the dropped memory before the close" int ~than:4096
+    (collected ());
   (* close on a failed job returns at once, and leaves it failed. *)
   Rig_remote.close j;
   equal ~msg:"after close" (option string) (Some cause) (Rig_remote.failed j);
+  equal ~msg:"the dropped memory after the close" int 0 (collected ());
   equal ~msg:"the agent" exit_w (2, [ "failed: " ^ root ]) (finish agent)
 
 let () =

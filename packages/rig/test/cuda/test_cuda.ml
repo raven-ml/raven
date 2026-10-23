@@ -611,11 +611,12 @@ let spin (t : S.t) flag =
   equal int ~msg:"the value" (base + 1) (Rig.Point.value p);
   p
 
-(* [lose t flag] submits {!spinning}, then a fill that fails: the loss stops [t]
-   while the kernel runs. *)
+(* [lose t flag] submits {!spinning}, then a fill that fails, and closes the
+   lost [t]: its stop runs while the kernel runs. *)
 let lose (t : S.t) flag =
   let fails = S.part t.d (S.failing 1) in
-  ignore (lost (fun () -> S.submit_work t [ spinning t flag; fails ]))
+  ignore (lost (fun () -> S.submit_work t [ spinning t flag; fails ]));
+  Rig.close t.d
 
 (* GPU 0, opened once the work a stop left running ended, within 10 s of the
    host's monotonic clock: the bound of that work's kernel. *)

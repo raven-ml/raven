@@ -118,12 +118,13 @@ static _Atomic uint64_t *own_word(struct rig_stamps *s, int index,
      stores to the word again;
    - an earlier device's point of its slot that is done;
    - one a loss dropped: a keep word, whose point is settled, or a use word
-     once its point, and its write word's if a loss dropped it too, are
-     folded into [s]'s head. The fold comes before the take, so a walk that
-     misses the point in the word finds it in the head. The first use word
-     is not folded while the second is empty, so that a folded point
-     implies a second use word: memory whose first word is its device's and
-     second is empty has nothing folded.
+     once its write word's point, if a loss dropped it too, is folded into
+     [s]'s head. A dropped read of an earlier device, which stopped before
+     its slot passed on, counts as done ([rig_use_followed]). The fold comes
+     before the take, so a walk that misses the point in the word finds it
+     in the head. The first use word is not taken while the second is
+     empty, so that a folded point implies a second use word: memory whose
+     first word is its device's and second is empty has nothing folded.
    A reservation that holds no point is never taken: only the next device
    of its slot adopts it, under that device's turn. */
 static int takeable(struct rig_stamps *s, _Atomic uint64_t *w, uint64_t p,
@@ -139,10 +140,7 @@ static int takeable(struct rig_stamps *s, _Atomic uint64_t *w, uint64_t p,
   if (w == &s->use[0] &&
       atomic_load_explicit(&s->use[1], memory_order_acquire) == 0)
     return 0;
-  uint64_t none = 0;
-  atomic_compare_exchange_strong(&s->lost_use, &none, p);
-  uint64_t wp = atomic_load(write_word(w));
-  none = 0;
+  uint64_t wp = atomic_load(write_word(w)), none = 0;
   if (below(wp, rig_line_base(RIG_INDEX(wp))) && rig_point_lost(wp))
     atomic_compare_exchange_strong(&s->lost_write, &none, wp);
   return 1;
@@ -233,7 +231,6 @@ value caml_rig_stamps_next(value v_c) {
    points of this use or the next, and only waits longer. */
 value caml_rig_stamps_clear(value v_s) {
   struct rig_stamps *s = Stamps_val(v_s);
-  atomic_store(&s->lost_use, 0);
   atomic_store(&s->lost_write, 0);
   for (; s != NULL; s = atomic_load(&s->next))
     for (int i = 0; i < RIG_USES; i++) {
@@ -858,15 +855,14 @@ static _Atomic uint64_t *add_memory(struct rig_call *r, int own,
       else if (is_own(w, own, base)) {
         if (mine == NULL) mine = &c->use[i];
       } else {
-        uint64_t p = every ? w
-                           : atomic_load_explicit(&c->write[i],
-                                                  memory_order_acquire);
+        uint64_t p = atomic_load_explicit(&c->write[i], memory_order_acquire);
+        if (every) p = rig_use_followed(w, p);
         if (RIG_VALUE(p) != 0) add_point(r, own, base, p);
       }
     }
     if (end) break;
   }
-  uint64_t folded = rig_stamps_folded(st, every);
+  uint64_t folded = rig_stamps_folded(st);
   if (folded != 0) add_point(r, own, base, folded);
   if (host) return NULL;
   return mine != NULL ? mine : reserve_any(st, own, base, 0);

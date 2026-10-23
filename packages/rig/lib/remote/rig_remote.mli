@@ -293,13 +293,16 @@ val close : t -> unit
     devices it opened, which frees their memory, and lets go of the job's
     objects on its host, whose memory returns once they are collected. It
     then stops listening and returns from {!serve}. [close] returns once
-    every agent has stopped listening, or immediately if [j] has failed or
-    closed. After a close, {!failed} of [j] is [None], and the process may
-    start another job. A job that fails during [close] ends as a failed job
-    does ({!section-failure}): [close] returns once every connection has
-    closed, up to about 11 seconds after the failure, and does not return
-    to OCaml meanwhile, so a [Sys.Break] from Ctrl-C raises only then. The
-    process's exit waits the same way for its last job.
+    every agent has stopped listening, or immediately if [j] has closed. On
+    a failed [j] it only closes each machine's host, which stops the
+    machine's lost devices, so their memory returns ({!Rig.section-stops}),
+    and returns without waiting for their work. After a close, {!failed} of
+    [j] is [None], and the process may start another job. A job that fails
+    during [close] ends as a failed job does ({!section-failure}): [close]
+    returns once every connection has closed, up to about 11 seconds after
+    the failure, and does not return to OCaml meanwhile, so a [Sys.Break]
+    from Ctrl-C raises only then. The process's exit waits the same way
+    for its last job.
 
     Raises [Invalid_argument] as {!Rig.close} does, such as from a callback
     inside a call of rig's on the same thread. *)

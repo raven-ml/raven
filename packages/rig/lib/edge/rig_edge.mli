@@ -589,6 +589,8 @@ module type Driver = sig
 
   val stop : t -> fault:string option -> unit
   (** [stop d ~fault] stops the lost [d] and must not wait for its work.
+      rig calls it only at [d]'s close or at an open of its name, with no
+      counted call of [d] in flight.
       [fault] is [Some why] if rig lost [d] for a {!Fault} of a counted call
       or for its hang bound ([hang_ms]), and [None] otherwise.
       {ul
@@ -702,7 +704,8 @@ module type Io = sig
       {!pages}. It is a hint, and must raise nothing. *)
 
   val stop : t -> unit
-  (** [stop d] ends [d]. rig calls it once [d] is lost or closed. *)
+  (** [stop d] ends [d]. rig calls it at [d]'s close, or at an open of its
+      name once [d] is lost. *)
 end
 
 (** {1:opening Opening} *)
@@ -723,8 +726,8 @@ type 'a opener = {
     values start after the value the word holds. [make] may raise that
     value, never lower it, and an [Error] leaves no work that writes the
     word, which rig then gives to a later device. A success hands the handle
-    to rig, which stops it ({!Driver.stop}) once the device is lost or
-    closed. A caller that calls
+    to rig, which stops it ({!Driver.stop}) at the device's close, or at an
+    open of its name once it is lost. A caller that calls
     [make] itself owns the handle and must stop it, and gives it 8 bytes of
     host memory, aligned to 8, that live as long as the handle. Each
     driver's opener states whether [make] opens another handle while an

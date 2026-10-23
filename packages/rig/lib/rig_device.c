@@ -286,7 +286,10 @@ int rig_point_done(uint64_t p) {
 }
 
 /* The reached value is stored before the state leaves RIG_LIVE, and never
-   after, and a range is never removed: a point found lost stays lost. */
+   after, and a range is never removed: a point found lost stays lost. A
+   use that depends on every point of a memory still gets past a lost
+   device's read once the device has stopped ([rig_use_followed]): the lost
+   point is not done, but the read it stands for no longer runs. */
 int rig_point_lost(uint64_t p) {
   struct rig_line *l = line_of(RIG_INDEX(p));
   uint64_t v = RIG_VALUE(p);
@@ -296,6 +299,28 @@ int rig_point_lost(uint64_t p) {
                  ? v > atomic_load_explicit(&l->base, memory_order_acquire)
                  : atomic_load_explicit(&l->reached, memory_order_acquire) < v;
   return lost || range_of(l, v) != NULL;
+}
+
+/* Whether the device of the lost point [p] has stopped: an earlier device of
+   its slot, whose slot passed on only once it had stopped ([free_locked]),
+   or the slot's device once its stop returned and its word reads its last
+   submitted value. A device a forked child inherited never stops there. */
+static int point_stopped(uint64_t p) {
+  struct rig_line *l = line_of(RIG_INDEX(p));
+  if (RIG_VALUE(p) <= atomic_load_explicit(&l->base, memory_order_acquire))
+    return 1;
+  return line_state(l) == RIG_ENDED &&
+         line_word(l) >= atomic_load_explicit(&l->submitted,
+                                              memory_order_acquire);
+}
+
+/* A write raises its device's use word too, so a lost [u] above [w] is a
+   read, and a lost [u] at [w] is a write, which stays lost through [w]. A
+   stopped device's read no longer runs and changed no memory, so the work
+   that follows it needs only its last write. */
+uint64_t rig_use_followed(uint64_t u, uint64_t w) {
+  if (!rig_point_lost(u) || !point_stopped(u)) return u;
+  return w;
 }
 
 /* The device whose range of its slot holds the point [v_p]: [Some d] if
@@ -865,12 +890,14 @@ static int claim_locked(struct rig_device *d) {
   return 1;
 }
 
-/* Ends [d]'s spreading: its stop is owed, and a call that acts for [d]
-   claims it ([claim_locked]). The state moves under the mutex, so a
-   counted call that leaves after it sees it. */
+/* Ends [d]'s spreading: its stop is owed, and a close or an open of its
+   name claims it ([claim_locked]). The state moves under the mutex, so a
+   counted call that leaves after it sees it, and a close waiting for the
+   stop wakes to claim it. */
 static void finish(struct rig_device *d) {
   mu_lock(d);
   atomic_store(&d->line->state, RIG_OWED);
+  cv_broadcast(d);
   mu_unlock(d);
 }
 
@@ -929,6 +956,7 @@ static int lose_ending(struct rig_device *d, char *why, int own, int counts,
   int won = lose_locked(d, why, own, counts);
   if (won) d->faulted = fault;
   d->inside -= ending;
+  if (ending && d->inside == 0 && state(d) == RIG_OWED) cv_broadcast(d);
   mu_unlock(d);
   if (won) {
     mutex_lock(&table_mu);
@@ -941,10 +969,11 @@ static int lose_ending(struct rig_device *d, char *why, int own, int counts,
   return won;
 }
 
-/* Ends a counted call on [d] that loses nothing. */
+/* Ends a counted call on [d] that loses nothing. The last one out of an
+   owed device wakes a close waiting to claim its stop. */
 static void leave_count(struct rig_device *d) {
   int released = take(d);
-  d->inside--;
+  if (--d->inside == 0 && state(d) == RIG_OWED) cv_broadcast(d);
   give(d, released);
 }
 
@@ -1101,15 +1130,18 @@ value caml_rig_stopped(value v_d) {
   CAMLreturn(Val_unit);
 }
 
-/* Waits with the domain lock released until [d]'s stop returned, or
-   [v_ms] milliseconds passed: whether it returned. */
+/* Waits with the domain lock released until [d]'s stop returned, its stop
+   can be claimed ([claim_locked]), or [v_ms] milliseconds passed: whether
+   it returned. */
 value caml_rig_await_stop(value v_d, value v_ms) {
   CAMLparam1(v_d);
   struct rig_device *d = Device_val(v_d);
   int64_t until = now_ms() + Long_val(v_ms), left;
   caml_enter_blocking_section_no_pending();
   mu_lock(d);
-  while (stopping(d) && (left = until - now_ms()) > 0) cv_wait_ms(d, (int)left);
+  while (stopping(d) && !(state(d) == RIG_OWED && d->inside == 0) &&
+         (left = until - now_ms()) > 0)
+    cv_wait_ms(d, (int)left);
   int returned = !stopping(d);
   mu_unlock(d);
   caml_leave_blocking_section();

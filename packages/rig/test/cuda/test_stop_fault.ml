@@ -40,7 +40,7 @@ let reopen () =
    device's word to its last value and answers the fault's error, as every
    CUDA call does after it. Value 1 runs a kernel until
    [flag] is set, then a store to address 0; a fill that fails in its submit
-   loses the device, whose stop finds the kernel running. *)
+   loses the device, whose stop, at its close, finds the kernel running. *)
 let fault_after_stop () =
   let t = S.open_ () in
   if S.attribute watchdog <> 0 then begin
@@ -56,6 +56,7 @@ let fault_after_stop () =
   (match S.submit_work t [ spin; fault; fails ] with
   | _ -> fail "the failed fill lost no device"
   | exception Rig.Lost _ -> ());
+  Rig.close t.d;
   equal ~msg:"the word at the stop" int base (C.signaled t.g);
   H.set64 (host flag) 1;
   let reopened = reopen () in

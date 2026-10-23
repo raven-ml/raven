@@ -190,9 +190,11 @@ struct rig_device {
    empty or spent word of its kind, and a use word never empties, so every
    use word after an empty one is empty: a walk ends at the first empty use
    word. A word whose point a loss dropped stays until a later device takes
-   its slot: its point is then folded into the first chunk's [lost_use] or
-   [lost_write], which keep the first such point, and the word can be taken.
-   A walk reads them after the words. [refs] counts the memories that share
+   its slot, once the lost device has stopped: a dropped write point is then
+   folded into the first chunk's [lost_write], which keeps the first such
+   point, and the word can be taken. A dropped read of a stopped device
+   counts as done ([rig_use_followed]), so none is folded. A walk reads
+   [lost_write] after the words. [refs] counts the memories that share
    it. */
 #define RIG_USES 4
 
@@ -204,35 +206,39 @@ struct rig_stamps {
   _Atomic uint64_t keep[RIG_USES];
   _Atomic(struct rig_stamps *) next;
   _Atomic int refs; /* in the first chunk only */
-  /* In the first chunk only: a lost point of an earlier device of a slot,
-     folded from a use word, and from a write word. */
-  _Atomic uint64_t lost_use, lost_write;
+  /* In the first chunk only: a lost write point of an earlier device of a
+     slot, folded from a write word. */
+  _Atomic uint64_t lost_write;
 };
 
-/* The point folded into the stamps [s] that an access follows: [lost_write],
-   or, if [every], [lost_use] when [lost_write] holds none; 0 for none, and
-   for no stamps. Every reader reads the head after a word, with acquire
-   order, and a fold comes before the take that changes the word: a reader
-   that saw the change sees the fold, so the head's loads are relaxed. */
-static inline uint64_t rig_stamps_folded(struct rig_stamps *s, int every) {
+/* The point folded into the stamps [s] that every access follows:
+   [lost_write]; 0 for none, and for no stamps. Every reader reads the head
+   after a word, with acquire order, and a fold comes before the take that
+   changes the word: a reader that saw the change sees the fold, so the
+   head's load is relaxed. */
+static inline uint64_t rig_stamps_folded(struct rig_stamps *s) {
   if (s == NULL) return 0;
-  uint64_t p = atomic_load_explicit(&s->lost_write, memory_order_relaxed);
-  if (p != 0 || !every) return p;
-  return atomic_load_explicit(&s->lost_use, memory_order_relaxed);
+  return atomic_load_explicit(&s->lost_write, memory_order_relaxed);
 }
 
+/* The point an access that depends on every use follows for one device's
+   last use [u] and last write [w] of a memory: [u], or [w] where [u] is a
+   point that a lost device did not reach and the device has stopped, so
+   that its read counts as done ([rig_device.c]). */
+uint64_t rig_use_followed(uint64_t u, uint64_t w);
+
 /* The point of the chunk [s]'s [i]th words that an access follows: its use
-   word's if [every], its write word's otherwise, 0 for none; or -1 from
-   the chunk's first empty use word on, where a walk of the stamps ends. A
-   write raises its device's use word too, so the use words cover every
-   write. A use word that a submission reserved holds no value until its
-   first raise. */
+   word's if [every] ([rig_use_followed]), its write word's otherwise, 0 for
+   none; or -1 from the chunk's first empty use word on, where a walk of the
+   stamps ends. A write raises its device's use word too, so the use words
+   cover every write. A use word that a submission reserved holds no value
+   until its first raise. */
 static inline int64_t rig_stamps_followed(struct rig_stamps *s, int i,
                                           int every) {
   uint64_t u = atomic_load_explicit(&s->use[i], memory_order_acquire);
   if (u == 0) return -1;
-  uint64_t p =
-      every ? u : atomic_load_explicit(&s->write[i], memory_order_acquire);
+  uint64_t p = atomic_load_explicit(&s->write[i], memory_order_acquire);
+  if (every) p = rig_use_followed(u, p);
   return RIG_VALUE(p) == 0 ? 0 : (int64_t)p;
 }
 

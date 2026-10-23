@@ -278,6 +278,55 @@ let test_entry_in_entry_rig () =
       reached);
   Rig_support.covered seen
 
+(* [another bin n] checks that a new device of the first GPU opens through rig
+   after the attempt from allocation [n], and resolves a function of [bin]. *)
+let another bin n =
+  match Rig.open_ (Rig_nv_support.opener 0) with
+  | Error why -> fail (strf "from allocation %d, a new device: %s" n why)
+  | Ok d ->
+      Fun.protect ~finally:(fun () -> Rig.close d) @@ fun () ->
+      let i =
+        match Rig.Image.load d bin with Ok i -> i | Error why -> fail why
+      in
+      is_some
+        ~msg:(strf "from allocation %d, a function of a new device" n)
+        (Rig.Image.resolve i last)
+
+(* A resolve through rig with every allocation from the [n]-th on raising
+   until it returns, from the first allocation on until one loses the device.
+   The lost device's stop runs at its close, after the call, so a new device
+   of the GPU opens after each attempt. *)
+let test_resolve_lost_rig () =
+  if not (Rig_nv_support.present ()) then
+    skip ~reason:"the machine has no NVIDIA GPU either path opens" ();
+  let bin = Rig_nv_support.fixture "locals_sm89.cubin" in
+  let rec from n =
+    let d =
+      match Rig.open_ (Rig_nv_support.opener 0) with
+      | Ok d -> d
+      | Error why -> fail (strf "from allocation %d, the open: %s" n why)
+    in
+    let reached, lost =
+      Fun.protect ~finally:(fun () -> Rig.close d) @@ fun () ->
+      let i =
+        match Rig.Image.load d bin with Ok i -> i | Error why -> fail why
+      in
+      List.iter (fun f -> ignore (Rig.Image.resolve i f)) made;
+      let reached =
+        Rig_support.interrupted n (fun () -> ignore (Rig.Image.resolve i last))
+      in
+      (reached, Rig.lost d)
+    in
+    another bin n;
+    match lost with
+    | Some why ->
+        equal ~msg:(strf "from allocation %d, the loss" n) string
+          (Printexc.to_string Exit) why
+    | None when reached -> from (n + 1)
+    | None -> fail "no allocation of the resolve lost the device"
+  in
+  from 1
+
 (* Inside a lock *)
 
 (* The capability's growth of local memory, from inside a lock: it raises
@@ -304,6 +353,8 @@ let () =
                "of an image's entry leaves its unload to free every launch"
                test_entries;
              test "of an image's unload leaves no launch held" test_unload;
+             test "of a resolve through rig leaves the GPU to open again"
+               test_resolve_lost_rig;
            ];
          group ~timeout
            "a call from a callback at any allocation raises inside the lock \

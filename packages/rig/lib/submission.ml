@@ -1329,7 +1329,6 @@ let rec wait_points s c n i =
 let rec hand_over s c run round lacked =
   let d = s.dev in
   let r = c_submit s.c c run in
-  Dev.run_own d;
   if r = Dev.Answer.ok then Point.make d.index (call_value c)
   else if r = Dev.Answer.busy then hand_over s c run round lacked
   else if r = Dev.Answer.no_room then begin

@@ -96,6 +96,7 @@ let test_release_lost () =
   ignore (submit_kept d runs);
   P.fail p;
   raises_match (lost d) (fun () -> submit (empty d));
+  Rig.close d;
   equal int 1 (count "stop" p);
   Gc.full_major ();
   released d;
@@ -179,7 +180,8 @@ let test_slot_lost () =
   raises_match (lost first) (fun () -> submit (empty first));
   slot_passes "keep:slot-lost" ~end_:(fun d p ->
       P.fail p;
-      raises_match (lost d) (fun () -> submit (empty d)))
+      raises_match (lost d) (fun () -> submit (empty d));
+      Rig.close d)
 
 (* A closed device runs no more work, so a value its submission keeps is let
    go once the submission is unreachable, by a call on any device: a program

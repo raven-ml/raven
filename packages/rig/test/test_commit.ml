@@ -223,6 +223,7 @@ let test_lost_uncommitted () =
   raises_match (lost d) (fun () -> Rig.Point.wait second);
   raises_match (lost d) (fun () -> Rig.Point.wait first);
   raises_match ~msg:"reached" (lost d) (fun () -> Rig.Point.reached second);
+  Rig.close d;
   equal ~msg:"the word after the stop" int (base + 2) (Rig.signaled d)
 
 (* A submit that blocks in its driver holds the turn: a wait for an earlier

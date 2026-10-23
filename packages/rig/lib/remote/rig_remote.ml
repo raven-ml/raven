@@ -222,9 +222,13 @@ let devices h kind =
 let hosts j = List.filter_map (fun m -> m.host) j.machines
 let failed j = Link.failed j.job
 
+(* A failed job's hosts are closed too: a lost device's stop runs only at its
+   close, and until then its memory and slot stay held. Their stops wait for
+   nothing once the job failed. *)
 let close j =
   (match Link.wait j.job ~ms:0 with
-  | Link.Closed | Link.Failed _ -> ()
+  | Link.Closed -> ()
+  | Link.Failed _ -> List.iter Rig.close (hosts j)
   | Link.Open ->
       List.iter Rig.close (hosts j);
       Link.close j.job);

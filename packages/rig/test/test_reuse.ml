@@ -552,8 +552,8 @@ let test_stale_decision () =
   no_violations ()
 
 (* A consumer lost while its queue waits on another device's word keeps the
-   word until it has stopped: its stop leaves its work, which may still read
-   it. *)
+   word until it has stopped: its stop, at its close, leaves its work, which
+   may still read it. *)
 let test_lost_consumer () =
   let consumer, c =
     P.open_ ~waits_on:[ `Host ] ~answer:`Unknown "reuse:lost-consumer"
@@ -565,6 +565,7 @@ let test_lost_consumer () =
   raises_match
     (function Rig.Lost (d', _) -> Rig.equal d' consumer | _ -> false)
     (fun () -> B.create consumer 64);
+  Rig.close consumer;
   Rig.close d;
   Rig.free_cache d;
   Rig.free_cache consumer;
@@ -575,7 +576,6 @@ let test_lost_consumer () =
     (Rig.signaled consumer);
   Rig.free_cache consumer;
   equal ~msg:"the word's frees once the consumer stopped" int 1 (P.word_frees p);
-  Rig.close consumer;
   no_violations ()
 
 (* An exception while a consumer maps a producer's word leaves the word to go

@@ -993,7 +993,7 @@ let test_close_ends_interrupted_open () =
   equal ~msg:"the host" (option string) (Some "closed") (Rig.lost far)
 
 (* A lost device's name opens again only once its stop returned: before, the
-   open is an [Error]. *)
+   open is an [Error]. The stop runs in a close. *)
 let test_reopen_early () =
   let d, p = P.open_ "open:early" in
   P.gate p;
@@ -1001,7 +1001,9 @@ let test_reopen_early () =
   let loser =
     Thread.create
       (fun () ->
-        try ignore (submit (Rig.Submission.make d [||])) with Rig.Lost _ -> ())
+        (try ignore (submit (Rig.Submission.make d [||]))
+         with Rig.Lost _ -> ());
+        Rig.close d)
       ()
   in
   Support.await "a stop at the gate" (fun () -> P.sleepers p = 1);
@@ -1017,19 +1019,23 @@ let test_reopen_early () =
   let d', _ = P.open_ "open:early" in
   not_equal device d d'
 
+(* An open of a lost device's name runs the device's stop, then opens the
+   name anew. *)
 let test_reopen () =
   let d, p = P.open_ "open:reopen" in
   let s = Rig.Submission.make d [||] in
   P.fail p;
   raises_match (function Rig.Lost _ -> true | _ -> false) (fun () -> submit s);
-  equal (list string) [ "stop" ] (P.log p);
+  equal ~msg:"the calls before the open" (list string) [] (P.log p);
   let d', _ = P.open_ "open:reopen" in
+  equal ~msg:"the calls after the open" (list string) [ "stop" ] (P.log p);
   not_equal device d d';
   equal (option string) None (Rig.lost d')
 
 (* An open of a lost device's name runs the device's owed stop, then opens the
    name anew. [x1] and [x2], lost together, [x2] by spread, owe their stops;
-   the first stop to run raises, and leaves the other owed. *)
+   an open whose stop raises raises it, and the next open of the name opens
+   it anew, the stop having returned. *)
 let test_reopen_owed () =
   let x1, p1 = P.open_ "open:owed-1" in
   let x2, p2 = P.open_ ~waits_on:[ `Host ] "open:owed-2" in
@@ -1042,17 +1048,23 @@ let test_reopen_owed () =
   let first = submit (Rig.Submission.make x1 [||]) in
   ignore (submit (Rig.Submission.make x2 [||]) ~waits:[| first |]);
   P.fail p1;
-  (match submit (Rig.Submission.make x1 [||]) with
-  | _ -> fail "the failed submit returned"
-  | exception (Failure _ | Rig.Lost _) -> ());
+  raises_match
+    (function Rig.Lost _ -> true | _ -> false)
+    (fun () -> submit (Rig.Submission.make x1 [||]));
+  equal ~msg:"the spread" (option string) (Some "open:owed-1 lost")
+    (Rig.lost x2);
+  equal ~msg:"stops before the opens" (pair int int) (0, 0)
+    (P.stops p1, P.stops p2);
   let reopen name =
     match Rig.open_ (P.opener name (P.make ())) with
     | Ok d -> d
     | Error e -> failf "%s: %s" name e
   in
-  let owed, ran = if P.stops p1 = 0 then ("1", "2") else ("2", "1") in
-  let y = reopen ("open:owed-" ^ owed) in
-  let y' = reopen ("open:owed-" ^ ran) in
+  raises_match
+    (function Failure _ -> true | _ -> false)
+    (fun () -> reopen "open:owed-1");
+  let y = reopen "open:owed-1" in
+  let y' = reopen "open:owed-2" in
   equal ~msg:"stops" (pair int int) (1, 1) (P.stops p1, P.stops p2);
   List.iter
     (fun (x, y) -> not_equal device x y)

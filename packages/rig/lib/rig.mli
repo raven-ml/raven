@@ -180,7 +180,7 @@ val close : t -> unit
        closes every device of that machine, including those still opening,
        and opens on that machine are [Error] from then on.}
     {- On any other lost [d], [close] only runs its owed stop, or waits for
-       the call that runs it ({!section-stops}). An io device ends
+       the close or open that runs it ({!section-stops}). An io device ends
        immediately.}
     {- A close that [Sys.Break] interrupted finishes when [close] is called
        again.}}
@@ -377,11 +377,10 @@ val signaled : t -> int
     [d] has reached it, and the writes of the work up to it are visible to
     the host. On a lost [d] it may move on to dropped values
     ({!section-loss}). Where [d]'s driver keeps a word of its own
-    ({!Rig_edge.type-facts}), [signaled] on a lost [d] runs its owed stop
-    if it can ({!section-stops}), and reads that word once the stop has
-    returned. Otherwise, and inside a lock ({!section-domains}), it answers
-    the last value read. It commits no work and waits for no work
-    ({!section-timeline}).
+    ({!Rig_edge.type-facts}), [signaled] on a lost [d] reads that word once
+    [d]'s stop has returned ({!section-stops}). Otherwise, and inside a lock
+    ({!section-domains}), it answers the last value read. It commits no work
+    and waits for no work ({!section-timeline}).
 
     Raises {!Lost} if reading the value through [d]'s driver loses [d], as
     for a device of another machine ({!Rig_edge.Driver.signaled}), or if
@@ -556,9 +555,11 @@ val signaled : t -> int
     at such a point raises {!Lost} at every use through rig's calls but an
     {!Submission.unordered} one, for the rest of the process. Memory that
     the lost device only read raises it only for the uses that depend on
-    every point. An array {!Buffer.export} made over such memory before the
-    loss reads and writes it with no check of loss, and its bytes may be the
-    old ones, the lost work's, or a mix.
+    every point, and only until the device has stopped ({!section-stops}):
+    from then on its unreached reads count as done, since they no longer
+    run and changed no memory. An array {!Buffer.export} made over such
+    memory before the loss reads and writes it with no check of loss, and
+    its bytes may be the old ones, the lost work's, or a mix.
 
     These rules hold for work that writes only the memory its submission
     names. A kernel that writes outside it may have changed any memory its
@@ -587,24 +588,28 @@ val signaled : t -> int
     has stopped by then, and otherwise at the first {!free_cache} of it,
     {!Buffer.create} or {!Buffer.borrow} on it, or round of reclamation
     ({!section-reclaim}) after it has stopped. A device that never reports
-    that value keeps them for the life of the process.
+    that value keeps them for the life of the process. A device whose driver
+    keeps its word of its own ({!Rig_edge.type-facts}) reports a value only
+    when rig reads that word: at its stop, at {!signaled}, and at the calls
+    that move its collected memory. Until such a read, rig counts it as not
+    stopped.
 
-    From its loss on, a device's stop is {e owed} until a call runs it,
-    which happens once none of the device's driver calls is in flight.
-    {!close} runs it, after waiting for those calls. An open of the
-    device's name runs it ({!section-opening}). {!fail}, every round of
-    reclamation and an open that finds every device slot held run each
-    owed stop whose device has no driver call in flight. Another call that
-    uses the device may run it sooner, except while it waits
-    ({!section-domains}). A lost device that no such call reaches keeps its
-    stop owed, and with it its memory, its slot and the values its
-    submissions keep. So a program that has no more use for a lost device
-    closes it, and the device's memory returns once it has stopped.
+    From its loss on, a device's stop is {e owed} until a call runs it.
+    Only {!close}, after waiting for the device's driver calls in flight,
+    and an open of the device's name ({!section-opening}), once none is in
+    flight, run it. No other call does: neither the call that lost the
+    device, nor a use of it, nor {!fail}, nor reclamation. A lost device
+    that is never closed keeps its stop owed, and with it its memory, its
+    slot and the values its submissions keep. Until its stop, the work its
+    driver took may go on running: a GPU driven over PCI, with no kernel
+    driver to end its work, may keep running it, reading and writing the
+    memory it addresses. So a program that has no more use for a lost
+    device closes it, and the device's memory returns once it has stopped.
 
     A call that runs a stop takes the time of the driver's stop, and raises
-    again any exception other than a fault that escapes it. An
-    interrupt during a wait leaves no stop half run, since no call runs one
-    while it waits.
+    again any exception other than a fault that escapes it. Since no call
+    runs a stop but a close and an open, an exception that ends the call
+    that lost a device, such as Ctrl-C's, never lands in its stop.
 
     In a child of [fork], every driver's device inherited from the parent is
     lost, with the reason ["forked"] unless it was lost before, and its
@@ -684,11 +689,8 @@ val fail : string -> unit
     is lost with [why], as a fault loses a device, and devices already lost
     keep their reason. Every {!open_} and {!open_io} that starts afterwards
     returns [Error why] without calling its opener, and one that races
-    [fail] makes a lost device. [fail] runs each owed stop it can
-    ({!section-stops}), and returns without waiting for any device to have
-    stopped. Only the first call acts. Called inside a lock
-    ({!section-domains}), it fails the process and leaves the owed stops to
-    later calls. *)
+    [fail] makes a lost device. [fail] runs no stop: each device's runs at
+    its close ({!section-stops}). Only the first call acts. *)
 
 val failure : unit -> string option
 (** [failure ()] is the process's first failure, if any: the first loss of a

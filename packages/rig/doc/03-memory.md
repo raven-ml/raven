@@ -144,4 +144,5 @@ may be the values the host wrote, the doubled ones, or a mix.
 
 Neither case shows memory that the lost device only read while its use was
 unreached. Such memory still serves reads, and raises `Lost` for the uses that
-depend on every point, which the Loss section of `rig.mli` lists.
+depend on every point until the device has stopped, which the Loss section of
+`rig.mli` lists.

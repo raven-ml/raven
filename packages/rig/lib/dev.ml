@@ -532,7 +532,9 @@ let run_stop d =
   ()
 
 (* Runs [d]'s stop if it is owed and no counted call runs on [d]: whether
-   this call ran it. *)
+   this call ran it. Only a close and an open of [d]'s name call it, outside
+   the calls that lost [d], so an exception that cut such a call short, and
+   may land again in its handlers, never lands in the stop. *)
 let own_stop d =
   state d = owed_state
   && c_claim_own d.live.c
@@ -541,26 +543,19 @@ let own_stop d =
     true
   end
 
-let run_own d = if state d = owed_state then ignore (own_stop d : bool)
-
-(* A wait's hang loss runs no stop: a wait does no device's work. *)
+(* A hang a wait found: loses [d] for [why] and raises its loss. *)
 let lose d why =
   ignore (c_lose d.live.c why true);
   raise_lost d
-
-let leave d =
-  c_exit d.live.c;
-  run_own d
 
 (* Ends the counted call on [d] that raised [e]. Its first step is one C call
    that loses [d] for a fault or an exception in [scope] and ends the count,
    and nothing allocates or polls before it: a second exception landing in
    this handler finds both done. It returns for a fault, and raises another
-   exception again. A wait's call runs no stop ([wait_raised]). *)
+   exception again. *)
 let raised d scope e =
   let fault = c_raised d.live.c e d.live.fault scope in
   let bt = Printexc.get_raw_backtrace () in
-  run_own d;
   if not fault then Printexc.raise_with_backtrace e bt
 
 (* A wait's fault loses [d], and another exception passes through. *)
@@ -569,31 +564,26 @@ let wait_raised d e =
   let bt = Printexc.get_raw_backtrace () in
   if fault then raise_lost d else Printexc.raise_with_backtrace e bt
 
-let refused d =
-  run_own d;
-  raise_lost d
-
 let counted d scope f =
   match c_enter d.live.c with
   | 0 -> (
       match f () with
       | r ->
-          leave d;
+          c_exit d.live.c;
           r
       | exception e ->
           raised d scope e;
           raise_lost d)
-  | _ -> refused d
+  | _ -> raise_lost d
 
 type given = Given | Later
 
 (* On a stopped device a failure of the call, its fault or its memory's, gives
    back nothing more. On a live one a fault loses the device, which its caller
    never sees: a give is no use of the device. An object that did not go back
-   is still in the caller's hand, so [d]'s owed stop is the caller's to run
-   once the object is back in its place: the stop's drain would otherwise
-   give back what waits behind it first, such as an image's code memory
-   behind its unload. *)
+   is still in the caller's hand, which puts it back where the drain after
+   [d]'s stop finds it, ahead of what waits behind it, such as an image's
+   code memory behind its unload. *)
 let give d scope f =
   if orphaned d then Given
   else if stopped d then
@@ -606,15 +596,14 @@ let give d scope f =
   else
     match f () with
     | () ->
-        leave d;
+        c_exit d.live.c;
         Given
     | exception e ->
         raised d scope e;
         Given
 
-(* A [fail] from a callback inside a lock fails the process and leaves the
-   owed stops, which take locks, to later calls. *)
-let fail why = if c_fail why && holds () = 0 then iter run_own
+(* A fail runs no stop: each device's runs at its close. *)
+let fail why = ignore (c_fail why : bool)
 
 let failure () =
   match c_first () with
@@ -700,32 +689,25 @@ end
 
 (* Commits [d]'s submitted work if [d]'s turn frees within the still interval:
    whether it did, or found [d] lost. A commit that fails has lost [d], whose
-   stop is then owed: a wait's commit leaves it so. *)
+   stop is then owed. *)
 let commit_once d = c_commit d.live.c <> Answer.busy
 
 let rec commit d v =
-  if committed d < v then
-    let r = c_commit d.live.c in
-    if r = Answer.failed then run_own d
-    else if r = Answer.busy then commit d v
+  if committed d < v && c_commit d.live.c = Answer.busy then commit d v
 
 let rec settle d v =
   let r = c_settle d.live.c v in
-  if r = Answer.failed then run_own d;
   if r = Answer.busy then settle d v else r = Answer.ok
 
 (* A lost device's word of its driver's own moves only where rig reads it
    through the driver: its stop raises it, or the work the stop left running
-   writes it. A read there is a driver call refused as lost, so it runs the
-   owed stop first, and reads the word once the stop returned. Inside a lock it
-   takes neither lock and answers the slot's word. A word in rig's array moves
-   by itself. *)
+   writes it. A read there is a driver call refused as lost, so it reads the
+   word once the stop returned, under [d]'s lock: inside a lock it answers
+   the slot's word. A word in rig's array moves by itself. *)
 let signaled d =
   if d.live.word <> 0 || not (is_lost d) then word d
-  else if holds () <> 0 then slot_word d
   else begin
-    run_own d;
-    if state d = ended_state then refresh d;
+    if holds () = 0 && state d = ended_state then refresh d;
     slot_word d
   end
 
@@ -1040,8 +1022,8 @@ let open_named ~fn ~machine ~name ~key make =
           match c_take r.index with
           | 0 ->
               (* Every slot is held: a collection may return the last
-                 memory of lost devices, whose drains then run their stops
-                 and free their slots. *)
+                 memory of stopped devices, whose drains then free their
+                 slots. *)
               Gc.full_major ();
               !drain_all ();
               c_take r.index
@@ -1071,10 +1053,8 @@ let open_named ~fn ~machine ~name ~key make =
 
 (* Publishes the C record of [d], which is in the tables: spreads, failures and
    the fork handler walk it for good. A device lost at birth by a failure of the
-   process is stopped here. *)
-let publish d slot =
-  c_publish d.live.c slot;
-  run_own d
+   process owes its stop, which its close runs. *)
+let publish d slot = c_publish d.live.c slot
 
 (* The device of the driver's handle [h], in the tables and not published.
    Every fact is read before the C record is published: a fault reading one

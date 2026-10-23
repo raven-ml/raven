@@ -18,6 +18,7 @@ let submit ?(buffers = [||]) ?waits s =
 let lost d = function Rig.Lost (d', _) -> Rig.equal d d' | _ -> false
 let count call p = List.length (List.filter (( = ) call) (P.log p))
 
+(* A failed hand-over loses the device, whose stop its close runs. *)
 let test_failed_submit () =
   let d, p = P.open_ "loss:failed" in
   let s = empty d in
@@ -27,10 +28,11 @@ let test_failed_submit () =
   equal (option string) (Some "the submission failed") (Rig.lost d);
   raises_match (lost d) (fun () -> submit s);
   raises_match (lost d) (fun () -> B.create d 8);
+  equal ~msg:"stops before the close" int 0 (count "stop" p);
+  Rig.close d;
   equal int 1 (count "stop" p)
 
-(* A fault a wait finds loses the device, whose stop the next call that
-   uses it runs: an allocation. *)
+(* A fault a wait finds loses the device, whose stop its close runs. *)
 let test_fault () =
   let d, p = P.open_ "loss:fault" in
   let pt = submit (empty d) in
@@ -38,6 +40,8 @@ let test_fault () =
   raises_match (lost d) (fun () -> Rig.Point.wait pt);
   equal (option string) (Some "the engine hung") (Rig.lost d);
   raises_match (lost d) (fun () -> B.create d 8);
+  equal ~msg:"stops before the close" int 0 (count "stop" p);
+  Rig.close d;
   equal int 1 (count "stop" p)
 
 (* After the stop answered, only frees reach the driver: of memory and of
@@ -47,6 +51,7 @@ let test_after_stop () =
   let b = B.create d 64 in
   P.fail p;
   (try ignore (submit (empty d)) with Rig.Lost _ -> ());
+  Rig.close d;
   ignore (Sys.opaque_identity b);
   Gc.full_major ();
   ignore (B.create Rig.host 8);
@@ -112,6 +117,7 @@ let test_free_after_stop () =
   let d, p = P.open_ "loss:free-after-stop" in
   let b = ref (Some (B.create d 64)) in
   lose d p;
+  Rig.close d;
   b := None;
   collect d;
   equal int 1 (count "free" p)
@@ -126,6 +132,7 @@ let test_faulted_frees () =
   let mapped = ref (Some (require_some (B.borrow d h))) in
   P.fault p "the device fell off the bus";
   raises_match (lost d) (fun () -> B.create d 8);
+  Rig.close d;
   ignore (Sys.opaque_identity (!kept, !mapped));
   kept := [];
   mapped := None;
@@ -144,6 +151,7 @@ let test_unmap_after_stop () =
   ignore (require_some (B.borrow d (Option.get !h)));
   equal ~msg:"mapped" (list int) [ 1 lsl 16 ] (P.host_maps p);
   lose d p;
+  Rig.close d;
   h := None;
   collect d;
   equal int 1 (count "unmap" p)
@@ -155,6 +163,7 @@ let test_free_after_unknown () =
   let b = ref (Some (B.create d 64)) in
   ignore (submit (empty d));
   lose d p;
+  Rig.close d;
   P.set_word p (Rig.submitted d);
   ignore (B.create Rig.host 8);
   b := None;
@@ -205,8 +214,8 @@ let test_unknown () =
   let d, p = P.open_ ~answer:`Unknown "loss:unknown" in
   let b = B.create d 64 in
   ignore (submit (empty d));
-  P.fail p;
-  (try ignore (submit (empty d)) with Rig.Lost _ -> ());
+  lose d p;
+  Rig.close d;
   ignore (Sys.opaque_identity b);
   collect d;
   equal int 0 (count "free" p);
@@ -273,30 +282,34 @@ let test_facts transport () =
   equal int (base + 2) (Rig.signaled d);
   equal (option string) (Some "the engine hung") (Rig.lost d)
 
-(* A lost device whose word is its driver's own reports the last value its stop
-   wrote there, before any close: the stop that a wait's fault left owed. *)
+(* A lost device whose word is its driver's own reports the value it read at
+   the loss until its close runs its stop, then the last value its stop wrote
+   there. *)
 let test_own_word_stop () =
   let d, p = P.open_ ~transport:true "loss:own-word-stop" in
+  let base = Rig.submitted d in
   let pt = submit (empty d) in
   P.fault p "the engine hung";
   raises_match (lost d) (fun () -> Rig.Point.wait pt);
+  equal ~msg:"the word before the close" int base (Rig.signaled d);
+  Rig.close d;
   equal ~msg:"the word" int (Rig.Point.value pt) (Rig.signaled d);
-  equal ~msg:"stops" int 1 (count "stop" p);
-  Rig.close d
+  equal ~msg:"stops" int 1 (count "stop" p)
 
 (* A lost device whose word is its driver's own, and whose stop left its work
-   running, reports the values that work writes there, before any close. *)
+   running, reports the values that work writes there once its stop
+   returned. *)
 let test_own_word_work () =
   let d, p = P.open_ ~transport:true ~answer:`Unknown "loss:own-word-work" in
   let base = Rig.submitted d in
   let pt = submit (empty d) in
   P.fault p "the engine hung";
   raises_match (lost d) (fun () -> Rig.Point.wait pt);
+  Rig.close d;
   equal ~msg:"the word at the loss" int base (Rig.signaled d);
   P.set_word p (Rig.Point.value pt);
   equal ~msg:"the word the work wrote" int (Rig.Point.value pt)
-    (Rig.signaled d);
-  Rig.close d
+    (Rig.signaled d)
 
 (* A loss reaches the lost device; memory of other devices whose points it
    reached is ordinary memory again, and other devices go on. *)
@@ -333,9 +346,9 @@ let test_unreached () =
   raises_match ~msg:"a claim" (lost d) (fun () ->
       Rig.Claim.with_ ~read:[ h ] ~donate:[] ignore)
 
-(* A use a loss dropped stays in its memory for good: devices that read the
-   memory after it, through borrows taken before it, and end, take nothing of
-   it. *)
+(* A use a loss dropped stays in its memory until its device has stopped:
+   devices that read the memory after it, through borrows taken before it,
+   and end, take nothing of it. *)
 let test_unreached_kept () =
   let d, p = P.open_ "loss:unreached-kept" in
   let h = B.create Rig.host (1 lsl 16) in
@@ -355,6 +368,45 @@ let test_unreached_kept () =
     readers;
   raises_match (lost d) (fun () -> B.wait h Rig.Read_write)
 
+(* A read a loss dropped counts as done once its device has stopped: it no
+   longer runs and changed no memory. Until then a use that depends on every
+   point raises the loss; from then on a write follows it, on the host and on
+   another device, also once a later device took the lost device's slot. A
+   write the loss dropped raises the loss for good. *)
+let test_read_after_stop () =
+  let d, p = P.open_ "loss:read-after-stop" in
+  let e, _ = P.open_ "loss:read-after-stop-other" in
+  let read = B.create Rig.host (1 lsl 16)
+  and written = B.create Rig.host (1 lsl 16) in
+  let s = Sub.make d [| Support.touching [| Sub.read; Sub.write |] |] in
+  let borrow d b = require_some (B.borrow d b) in
+  let pt = submit s ~buffers:[| borrow d read; borrow d written |] in
+  lose d p;
+  let write e b =
+    let s = Sub.make e [| Support.touching [| Sub.write |] |] in
+    Rig.Point.wait (submit s ~buffers:[| borrow e b |])
+  in
+  let check what e =
+    B.fill read 'x';
+    write e read;
+    equal ~msg:(what ^ ", the bytes the host wrote") char 'x'
+      (B.read read Bigarray.char (fun a -> a.{0}));
+    raises_match ~msg:(what ^ ", a read of a dropped write") (lost d)
+      (fun () -> B.wait written Rig.Read);
+    raises_match ~msg:(what ^ ", a write after a dropped write") (lost d)
+      (fun () -> write e written)
+  in
+  raises_match ~msg:"a host write before the stop" (lost d) (fun () ->
+      B.fill read 'x');
+  raises_match ~msg:"a device's write before the stop" (lost d) (fun () ->
+      write e read);
+  Rig.close d;
+  check "stopped" e;
+  collect d;
+  let later, _ = P.open_ "loss:read-after-stop-later" in
+  is_none ~msg:"the lost device's slot, taken" (Rig.Point.device pt);
+  check "its slot taken" later
+
 (* A stop raises the word to the last value whatever ran: work the device did
    not reach before its loss stays unreached. *)
 let test_stop_reaches_nothing () =
@@ -366,6 +418,7 @@ let test_stop_reaches_nothing () =
   let v = Rig.Point.value (submit writes ~buffers:[| b |]) in
   P.fail p;
   raises_match (lost d) (fun () -> submit (empty d));
+  Rig.close d;
   equal ~msg:"the word after the stop" bool true (Rig.signaled d >= v);
   raises_match (lost d) (fun () -> B.wait m Rig.Read)
 
@@ -550,7 +603,10 @@ let outlived name ends =
   equal ~msg:"the other device's, then" int 1 (count "unmap" pe)
 
 let test_closed_unmaps () = outlived "loss:closed-unmaps" (fun d _ -> Rig.close d)
-let test_lost_unmaps () = outlived "loss:lost-unmaps" (fun d p -> lose d p)
+let test_lost_unmaps () =
+  outlived "loss:lost-unmaps" (fun d p ->
+      lose d p;
+      Rig.close d)
 
 (* A mapping of memory that dies before its device ends is released once, with
    the memory. *)
@@ -626,6 +682,43 @@ let test_close_lost () =
   equal (option string) (Some "the submission failed") (Rig.lost d);
   equal int 1 (count "stop" p)
 
+(* A lost device's stop runs at its close and at an open of its name, and at
+   no other call: neither at a use that raises its loss, nor at a drain of
+   its memory, nor at a read of its word. Its memory returns once it has
+   stopped. *)
+let test_stop_at_close () =
+  let d, p = P.open_ "loss:stop-at-close" in
+  let b = ref (Some (B.create d 64)) in
+  lose d p;
+  let uses =
+    [
+      (fun () -> ignore (B.create d 8));
+      (fun () -> B.fill (Option.get !b) 'x');
+      (fun () -> ignore (B.borrow d (B.create Rig.host 8)));
+      (fun () -> ignore (Rig.Image.load d "functions"));
+      (fun () -> ignore (submit (empty d)));
+      (fun () -> ignore (Rig.signaled d));
+      (fun () -> Rig.free_cache d);
+    ]
+  in
+  List.iter (fun use -> try use () with Rig.Lost _ -> ()) uses;
+  b := None;
+  collect d;
+  equal ~msg:"stops before the close" int 0 (count "stop" p);
+  equal ~msg:"held before the close" (list int) [ 64 ] (P.outstanding p);
+  Rig.close d;
+  equal ~msg:"stops after the close" int 1 (count "stop" p);
+  collect d;
+  equal ~msg:"held once stopped" (list int) [] (P.outstanding p)
+
+let test_stop_at_open () =
+  let d, p = P.open_ "loss:stop-at-open" in
+  lose d p;
+  equal ~msg:"stops before the open" int 0 (count "stop" p);
+  let d', _ = P.open_ "loss:stop-at-open" in
+  equal ~msg:"stops after the open" int 1 (count "stop" p);
+  equal ~msg:"a new device" bool false (Rig.equal d d')
+
 (* A close whose device faults while its work runs ends the device lost with
    the fault's reason. *)
 let test_close_fault () =
@@ -690,6 +783,7 @@ let[@inline never] make_stopped () =
   ignore (require_some (B.borrow d (Option.get !h)));
   ignore (submit (empty d));
   lose d p;
+  Rig.close d;
   P.set_word p (Rig.submitted d);
   { p; d; h }
 
@@ -861,6 +955,11 @@ let tests =
           "a Stopped device's free and drain, in either order, unmap once"
           test_stopped_unmaps;
         test "a close of a lost device waits for its stop" test_close_lost;
+        test "a lost device's stop runs at its close alone" test_stop_at_close;
+        test "a read a loss dropped counts as done once its device has stopped"
+          test_read_after_stop;
+        test "a lost device's stop runs at an open of its name"
+          test_stop_at_open;
         test "a fault during a close's wait is the device's loss"
           test_close_fault;
         test "the host is never closed" test_close_host;

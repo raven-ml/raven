@@ -20,10 +20,10 @@ external stamps_followed : int -> int -> bool -> int
 external stamps_keep : int -> int -> int = "caml_rig_stamps_keep" [@@noalloc]
 external stamps_next : int -> int = "caml_rig_stamps_next" [@@noalloc]
 
-(* The point folded into the stamps' head that an access follows, its uses'
-   if [every], 0 for none: a lost point of an earlier device of a slot, which
-   a walk reads after the words. *)
-external stamps_folded : int -> bool -> int = "caml_rig_stamps_folded"
+(* The point folded into the stamps' head that every access follows, 0 for
+   none: a lost write point of an earlier device of a slot, which a walk
+   reads after the words. *)
+external stamps_folded : int -> int = "caml_rig_stamps_folded"
 [@@noalloc]
 external stamps_clear : int -> unit = "caml_rig_stamps_clear" [@@noalloc]
 external stamps_uses : unit -> int = "caml_rig_stamps_uses"
@@ -49,7 +49,7 @@ let rec iter_from f c i =
 
 let iter_points f st =
   iter_from f st 0;
-  let p = stamps_folded st true in
+  let p = stamps_folded st in
   if p <> 0 then f p
 
 (* Waits for the use points of [a]'s stamps if [every], their write points
@@ -70,7 +70,7 @@ let rec wait_from (a : alloc) every c i =
 let wait_all (a : alloc) every =
   let st = a.entry.stamps in
   wait_from a every st 0;
-  let p = stamps_folded st every in
+  let p = stamps_folded st in
   if p <> 0 then Dev.wait_point a.entry.stamps every p;
   ignore (Sys.opaque_identity a)
 
@@ -94,7 +94,7 @@ let rec reached_from (a : alloc) every c i ok =
 let reached_all (a : alloc) every =
   let st = a.entry.stamps in
   let ok = reached_from a every st 0 true in
-  let p = stamps_folded st every in
+  let p = stamps_folded st in
   let ok = (p = 0 || Dev.reached_point p) && ok in
   ignore (Sys.opaque_identity a);
   ok
@@ -114,7 +114,7 @@ let rec done_from c i =
 
 let uses_done m =
   let st = m.alloc.entry.stamps in
-  let p = stamps_folded st true in
+  let p = stamps_folded st in
   done_from st 0 && (p = 0 || Dev.seen_done p)
 
 (* Visit every point even after a refusal: reading a later transport word may
@@ -459,15 +459,10 @@ let retire d e = defer d (Free e)
 
 (* [waits d p given] is [given], [d]'s release [p] having gone back. One that
    did not waits among [d]'s pending releases, after the others, until [d]
-   stopped. [d]'s owed stop runs once it waits there ([Dev.give]). A caller
-   that makes [p] makes it only for a release that did not go back, so a
-   free allocates none. *)
+   stopped ([Dev.give]). A caller that makes [p] makes it only for a release
+   that did not go back, so a free allocates none. *)
 let waits d p (given : Dev.given) =
-  (match given with
-  | Given -> ()
-  | Later ->
-      defer d p;
-      Dev.run_own d);
+  (match given with Given -> () | Later -> defer d p);
   given
 
 (* Gives back [d]'s mapping [r] now, or later ([waits]). *)
@@ -1326,19 +1321,18 @@ let kept_locked l =
    releases. *)
 let kept d = Dev.protect d kept_locked d.live
 
-(* A lost device's memory returns once it has stopped, so its drain runs its
-   owed stop first. A device whose stop returned frees its slot once its last
-   memory and mapping went back and its last kept value went, then lets go
-   of its word. Every drain gives back the words that lost their last
-   mapping, and first releases the holds collected and drains the devices
-   whose stop returned and whose list took records: no call on them is due,
-   as a program makes none on a device it closed. *)
+(* A lost device's memory returns once it has stopped. A device whose stop
+   returned frees its slot once its last memory and mapping went back and
+   its last kept value went, then lets go of its word. Every drain gives
+   back the words that lost their last mapping, and first releases the holds
+   collected and drains the devices whose stop returned and whose list took
+   records: no call on them is due, as a program makes none on a device it
+   closed. *)
 let rec drain d =
   if released_any hold_list then release_holds ();
   if ended_linked () then drain_every_ended ();
   if Dev.orphaned d then forget d
   else begin
-    if Dev.is_lost d then Dev.run_own d;
     if Dev.is_lost d && Dev.stopped d then release_staging d;
     if (not (idle d.live)) || (Dev.is_lost d && kept d) then drain_own d;
     if Dev.stop_returned d && (not (kept d)) && Dev.free_slot d then
@@ -1422,9 +1416,9 @@ let () = Dev.drain_all := drain_all
    waited for; for the host, its kept buffers too. A device whose handed
    work holds back the return of memory that counts in it is waited for
    too, so that memory returns and a loss shows as one. Then every device
-   drains, which runs a lost device's owed stop, returns collected memory
-   and runs the unmaps that hold it; from the second round a collection
-   finds the memory unreachable since, and every device drains again. *)
+   drains, which returns collected memory and runs the unmaps that hold it;
+   from the second round a collection finds the memory unreachable since,
+   and every device drains again. *)
 let reclaim_round pool round =
   if Dev.is_host pool then heap_drop ();
   Dev.iter (fun d ->
@@ -1439,9 +1433,13 @@ let reclaim_round pool round =
     drain_all ()
   end
 
+(* A round may find [d] lost, such as by a fault its wait finds. Its memory
+   returns only once its close has stopped it, so the allocation raises the
+   loss. *)
 let rec reclaim_from d pool n f round =
   if round >= rounds then raise (Dev.Out_of_memory (d, n));
   reclaim_round pool round;
+  if Dev.is_lost d then Dev.raise_lost d;
   match f () with Some x -> x | None -> reclaim_from d pool n f (round + 1)
 
 let reclaiming d ~pool n f = reclaim_from d pool n f 1

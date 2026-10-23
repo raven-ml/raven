@@ -430,7 +430,7 @@ static __attribute__((noinline)) enum rig_claim follow_stamps(struct rig_stamps 
       if (p < 0) end = 1;
       else if (p != 0) a = follow(a, (uint64_t)p);
     }
-  uint64_t folded = rig_stamps_folded(head, every);
+  uint64_t folded = rig_stamps_folded(head);
   return folded != 0 ? follow(a, folded) : a;
 }
 
@@ -450,15 +450,15 @@ value caml_rig_stamps_lost(value v_st, value v_every) {
       else if (p != 0 && rig_point_lost((uint64_t)p))
         return Val_long((intnat)p);
     }
-  uint64_t p = rig_stamps_folded(head, every);
+  uint64_t p = rig_stamps_folded(head);
   return Val_long(p != 0 && rig_point_lost(p) ? (intnat)p : 0);
 }
 
-/* The point folded into the head of the stamps [v_st] that an access
-   follows, its uses' if [v_every], its writes' otherwise; 0 for none. */
-value caml_rig_stamps_folded(value v_st, value v_every) {
-  return Val_long((intnat)rig_stamps_folded(
-      (struct rig_stamps *)Long_val(v_st), Bool_val(v_every)));
+/* The point folded into the head of the stamps [v_st] that every access
+   follows; 0 for none. */
+value caml_rig_stamps_folded(value v_st) {
+  return Val_long(
+      (intnat)rig_stamps_folded((struct rig_stamps *)Long_val(v_st)));
 }
 
 /* Claims first, then checks [b] under the claim: the compare-and-set

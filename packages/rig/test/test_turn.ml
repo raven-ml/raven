@@ -130,8 +130,8 @@ let test_two_threads () =
     [ a (); b () ];
   equal int (base + 3) (Rig.submitted d)
 
-(* A device lost while a submit blocks in its driver is stopped once that submit
-   returned, and the submit raises Lost. *)
+(* A device lost while a submit blocks in its driver: the submit raises Lost
+   once it returned, and the device's stop runs at its close. *)
 let test_loss_while_blocked () =
   let d, p = P.open_ ~capacity:1 ~may_block:true "turn:loss" in
   let base = Rig.submitted d in
@@ -147,6 +147,8 @@ let test_loss_while_blocked () =
   (match blocked () with
   | Error e -> equal bool true (lost d e)
   | Ok v -> failf "the blocked submit returned %d" v);
+  equal ~msg:"stops before the close" int 0 (count "stop" p);
+  Rig.close d;
   equal int 1 (count "stop" p)
 
 (* Runs on a memory device *)
@@ -253,8 +255,9 @@ let breaks f =
     ~finally:(fun () -> Sys.catch_break false)
     (fun () -> match f () with _ -> false | exception Sys.Break -> true)
 
-(* After [Sys.Break] the device is used as before, and its stop still runs once
-   at its loss: the interrupted call left nothing counted in flight. *)
+(* After [Sys.Break] the device is used as before, and once lost its stop
+   runs once at its close: the interrupted call left nothing counted in
+   flight. *)
 let still_works d p ~last =
   equal (option string) None (Rig.lost d);
   equal int (Rig.Point.value last) (Rig.submitted d);
@@ -262,6 +265,7 @@ let still_works d p ~last =
   equal int (Rig.Point.value last + 1) (value (empty_run d));
   P.fail p;
   raises_match (lost d) (fun () -> submit (empty d));
+  Rig.close d;
   equal int 1 (count "stop" p)
 
 let test_break_in_wait () =
@@ -274,8 +278,8 @@ let test_break_in_wait () =
   still_works d p ~last:first
 
 (* A wait that loses its device to the hang bound, with an exception at any
-   allocation from the loss on, leaves the device's stop to run once: by the
-   wait, or by the close. *)
+   allocation from the loss on, leaves the device's stop to run once, by the
+   close. *)
 let test_hang_interrupted () =
   let rec from n =
     let name = Printf.sprintf "turn:hang-interrupted-%d" n in
@@ -301,10 +305,10 @@ let test_hang_interrupted () =
   from 1
 
 (* A Ctrl-C landing at any poll point after an exception escaped a driver
-   leaves the stop the loss owes to run once, by the device's next call of
-   its own, here its close. Backtraces are recorded, as
-   OCAMLRUNPARAM=b records them: the handler's fetch of one allocates in C,
-   whose sample's callback, and so the signal, comes at a later poll point. *)
+   leaves the stop the loss owes to run once, by the device's close.
+   Backtraces are recorded, as OCAMLRUNPARAM=b records them: the handler's
+   fetch of one allocates in C, whose sample's callback, and so the signal,
+   comes at a later poll point. *)
 let test_break_after_escape () =
   let recording = Printexc.backtrace_status () in
   Printexc.record_backtrace true;
@@ -345,7 +349,7 @@ let test_break_in_signaled () =
 
 (* A fault of a counted call loses its device, whatever exception lands at any
    allocation after it: the device is never left live, and its stop runs
-   once, by the close if the exception came before it. *)
+   once, by the close. *)
 let test_fault_interrupted () =
   let rec from n =
     let d, p = P.open_ (Printf.sprintf "turn:fault-interrupted-%d" n) in
@@ -438,10 +442,11 @@ let test_break_in_close () =
   equal int 1 (count "stop" p)
 
 (* A close waiting for another thread's stop returns to OCaml at least every
-   200 ms. The losing thread's stop parks outside OCaml for up to 5 s, and a
-   thread of no OCaml code raises SIGINT once the close blocks in its wait for
-   the stop. The handler raises Sys.Break on the closing thread during the
-   close, so the close takes Sys.Break with the stop still parked. A close
+   200 ms. The losing thread closes the device, whose stop parks outside
+   OCaml for up to 5 s, and a thread of no OCaml code raises SIGINT once the
+   close blocks in its wait for the stop. The handler raises Sys.Break on the
+   closing thread during the close, so the close takes Sys.Break with the
+   stop still parked. A close
    whose wait never returns to OCaml could break only once the park ended,
    which the check that the stop is still parked catches. The next close
    finishes: the device keeps its loss's reason, stopped once. *)
@@ -453,7 +458,11 @@ let test_break_waiting_stop () =
   P.fail p;
   let loser =
     spawn (fun () ->
-        match submit (empty d) with _ -> 0 | exception Rig.Lost _ -> 1)
+        match submit (empty d) with
+        | _ -> 0
+        | exception Rig.Lost _ ->
+            Rig.close d;
+            1)
   in
   Support.await "a parked stop" Support.parked;
   let closer = Thread.id (Thread.self ()) and closing = Atomic.make true in
@@ -488,11 +497,11 @@ let test_break_waiting_stop () =
 
 (* Stops *)
 
-(* A wait does no other device's work. [x2], lost by spread from [x1], owes
-   its stop once [x1]'s, the first to run, raised. A wait on another device
-   [z] that sleeps returns while [x2]'s stop stays owed, and the stop runs at
-   [x2]'s close. A stop run later blocks until the test releases it, so one
-   run inside the wait shows. *)
+(* A wait does no other device's work. [x1] and [x2], lost together, [x2] by
+   spread, owe their stops. A wait on another device [z] that sleeps returns
+   while both stay owed, and the stops run at the closes, [x1]'s raising. A
+   stop run after the first blocks until the test releases it, so one run
+   inside the wait shows. *)
 let test_wait_runs_no_stop () =
   let x1, p1 = P.open_ "turn:owed-1" in
   let x2, p2 = P.open_ ~waits_on:[ `Host ] "turn:owed-2" in
@@ -511,9 +520,7 @@ let test_wait_runs_no_stop () =
   let p = point (empty_run z) and returned = Atomic.make false in
   ignore (submit (empty x2) ~waits:[| submit (empty x1) |]);
   P.fail p1;
-  (match submit (empty x1) with
-  | _ -> fail "the failed submit returned"
-  | exception (Failure _ | Rig.Lost _) -> ());
+  raises_match (lost x1) (fun () -> submit (empty x1));
   let join =
     spawn (fun () ->
         Rig.Point.wait p;
@@ -526,7 +533,9 @@ let test_wait_runs_no_stop () =
   Atomic.set go true;
   equal ~msg:"the wait" outcome (Ok 0) (join ());
   equal ~msg:"another device's stop ran in the wait" bool false held_in_wait;
-  Rig.close x1;
+  raises_match
+    (function Failure _ -> true | _ -> false)
+    (fun () -> Rig.close x1);
   Rig.close x2;
   equal ~msg:"stops" (pair int int) (1, 1) (P.stops p1, P.stops p2)
 

@@ -123,8 +123,9 @@ let test_set_budget () =
   raises_match Exn.invalid_arg (fun () -> Rig.set_budget d (-1))
 
 (* A budget set while another domain loses the device raises nothing, and the
-   cache it took returns once the device stopped, each memory once. The first
-   free of the cache waits at Polled's free gate while the loss runs. *)
+   cache it took returns once the device's close stopped it, each memory once.
+   The first free of the cache waits at Polled's free gate while the loss
+   runs. *)
 let test_budget_beside_loss () =
   let d, p = P.open_ "memory:budget-loss" in
   let ats = List.map (fun _ -> dropped d (4 * kib)) [ 1; 2; 3 ] in
@@ -142,6 +143,7 @@ let test_budget_beside_loss () =
   (try ignore (submit (Sub.make d [||])) with Rig.Lost _ -> ());
   P.open_frees p;
   equal ~msg:"the budget" string "returned" (Domain.join setter);
+  Rig.close d;
   Gc.full_major ();
   ignore (B.create Rig.host 8);
   equal ~msg:"the cached memory, freed once"
@@ -220,9 +222,9 @@ let test_closed_drain_raises () =
 
 (* Memory goes back to its driver once, when its last mapping goes after its
    device was lost and before its stop returned. The mapper's work keeps the
-   mapping until the memory is freed; then, while a free of other memory holds
-   the owner's stop at Polled's free gate in another domain, the owner is lost
-   and the mapper's drain gives the mapping back. *)
+   mapping until the memory is freed; then, while a free of other memory waits
+   at Polled's free gate in another domain, the owner is lost and the
+   mapper's drain gives the mapping back. The owner's close then stops it. *)
 let test_give_beside_stop () =
   let o, po = P.open_ "memory:give-owner" in
   let c, pc = P.open_ "memory:give-mapper" in
@@ -251,6 +253,7 @@ let test_give_beside_stop () =
   collect c;
   P.open_frees po;
   Domain.join freer;
+  Rig.close o;
   settle [ o; c ];
   let frees at = List.length (List.filter (fun (a, _) -> a = at) (P.frees po)) in
   equal ~msg:"the other memory's frees" int 1 (frees other);
@@ -392,8 +395,8 @@ let test_mapper_beside_free () =
 
 (* A drain that returns collected memory to the driver of a device another
    domain loses meanwhile: its first free waits at Polled's free gate while the
-   loss is recorded, and the device stops once that free returned. The drain's
-   allocation raises the loss, and each memory is freed once. *)
+   loss is recorded. The drain's allocation raises the loss, the device stops
+   at its close, and each memory is freed once. *)
 let test_drain_beside_loss () =
   let d, p = P.open_ "memory:drain-loss" in
   let ats = List.map (fun _ -> dropped d (4 * kib)) [ 1; 2; 3 ] in
@@ -416,6 +419,8 @@ let test_drain_beside_loss () =
   P.open_frees p;
   equal ~msg:"the drain's allocation" string "lost: the submission failed"
     (Domain.join drainer);
+  equal ~msg:"stops before the close" int 0 (stops ());
+  Rig.close d;
   Gc.full_major ();
   ignore (B.create Rig.host 8);
   equal ~msg:"stops" int 1 (stops ());

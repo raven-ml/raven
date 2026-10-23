@@ -35,7 +35,7 @@
 
     Any domain may call any function. A device's lock guards its cache and
     lists. No driver call and no read of a word runs under it. A word with
-    no host address is read through its driver, a fault there stops the
+    no host address is read through its driver, a fault there loses the
     device, and a stop drains.
 
     Every object goes back to its driver through {!Dev.give}. What a device
