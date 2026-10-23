@@ -210,6 +210,120 @@ let test_broadcast_one_consumer () =
   invalid ~sub:"Nx.add: operand 1 was donated to Nx.copy" (fun () ->
       Nx.add x x)
 
+(* Inside an interpretation that receives every operation, a call that moves
+   a handle before the operation that reads it is the one consumer of its
+   handles, as it is eagerly: a check only the operation makes, as one
+   donation read twice, or a rule refusing the operation, kills no donor; a
+   call that returns kills its donor once, naming the call. *)
+let test_moved_one_consumer () =
+  let is (type r) kind (op : r Nx.Prim.t) =
+    match (kind, op) with
+    | `Assemble, Assemble _ | `Gather, Gather _ | `Contract, Contract _ -> true
+    | _ -> false
+  in
+  let received ?refuse f =
+    Nx.Prim.interpret ~name:"test.extent" Extent
+      (fun _ ~by op ->
+        (match refuse with
+        | Some kind when is kind op -> invalid_arg "test.extent: refused"
+        | _ -> ());
+        Nx.Prim.eval ~by op)
+      (fun _ -> f ())
+  in
+  let twice by f =
+    let sub = "Nx.donate: " ^ by ^ " reads one donation twice" in
+    invalid ~sub f;
+    invalid ~sub (fun () -> received f)
+  in
+  let refused kind f =
+    invalid ~sub:"test.extent: refused" (fun () -> received ~refuse:kind f)
+  in
+  let lives msg x xs =
+    equal ~msg (array float_exact) xs (elements (Nx.add x (Nx.zeros_like x)))
+  in
+  let dies by x =
+    invalid ~sub:("operand 1 was donated to " ^ by) (fun () -> Nx.add x x)
+  in
+  let ints s xs =
+    let a = Nx.create Nx.int64 s xs in
+    Nx.add a (Nx.zeros_like a)
+  in
+  (* A stack lifts each operand to the result's rank. *)
+  let x = fresh [| 1.; 2. |] and y = fresh [| 3.; 4. |] in
+  let h = Nx.donate x in
+  twice "Nx.stack" (fun () -> Nx.stack [ h; h ]);
+  refused `Assemble (fun () -> Nx.stack [ h; y ]);
+  lives "the stack's donor" x [| 1.; 2. |];
+  equal ~msg:"the stack" (array float_exact) [| 1.; 2.; 3.; 4. |]
+    (elements (Nx.reshape [| 4 |] (received (fun () -> Nx.stack [ h; y ]))));
+  dies "Nx.stack" x;
+  (* Positions [2; 1] broadcast a [1; 3] operand along its other axis. *)
+  let x = fresh_at [| 1; 3 |] [| 1.; 2.; 3. |] in
+  let h = Nx.donate x and p = ints [| 2; 1 |] [| 2L; 0L |] in
+  let q = Nx.donate (ints [| 1; 3 |] [| 0L; 1L; 2L |]) in
+  let q' = Nx.reshape [| 3; 1 |] q in
+  twice "Nx.take_along_axis" (fun () -> Nx.take_along_axis ~axis:1 q' q);
+  refused `Gather (fun () -> Nx.take_along_axis ~axis:1 p h);
+  lives "the gather's donor" x [| 1.; 2.; 3. |];
+  equal ~msg:"the gather" (array float_exact) [| 3.; 1. |]
+    (elements
+       (Nx.reshape [| 2 |]
+          (received (fun () -> Nx.take_along_axis ~axis:1 p h))));
+  dies "Nx.take_along_axis" x;
+  (* A [1; 2; 2] operand against a [2; 2; 2] one drops its unit axis. *)
+  let x = fresh_at [| 1; 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let y = fresh_at [| 2; 2; 2 |] [| 1.; 0.; 0.; 1.; 2.; 0.; 0.; 2. |] in
+  let h = Nx.donate x in
+  let h' = Nx.broadcast_to [| 2; 2; 2 |] h in
+  twice "Nx.matmul" (fun () -> Nx.matmul h h');
+  refused `Contract (fun () -> Nx.matmul h y);
+  lives "the product's donor" x [| 1.; 2.; 3.; 4. |];
+  equal ~msg:"the product" (array float_exact)
+    [| 1.; 2.; 3.; 4.; 2.; 4.; 6.; 8. |]
+    (elements (Nx.reshape [| 8 |] (received (fun () -> Nx.matmul h y))));
+  dies "Nx.matmul" x;
+  (* Three operands make two contractions. *)
+  let chain = Nx.Pattern.v "i j, j k, k l -> i l | j k" in
+  let id = fresh_at [| 2; 2 |] [| 1.; 0.; 0.; 1. |] in
+  let two = fresh_at [| 2; 2 |] [| 2.; 0.; 0.; 2. |] in
+  let x = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let h = Nx.donate x in
+  twice "Nx.einsum" (fun () -> Nx.einsum chain [ h; id; h ]);
+  refused `Contract (fun () -> Nx.einsum chain [ h; id; two ]);
+  lives "the einsum's donor" x [| 1.; 2.; 3.; 4. |];
+  let product = [| 2.; 4.; 6.; 8. |] in
+  equal ~msg:"the einsum" (array float_exact) product
+    (elements
+       (Nx.reshape [| 4 |]
+          (received (fun () -> Nx.einsum chain [ h; id; two ]))));
+  dies "Nx.einsum" x;
+  let x = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  equal ~msg:"the eager einsum" (array float_exact) product
+    (elements (Nx.reshape [| 4 |] (Nx.einsum chain [ Nx.donate x; id; two ])));
+  dies "Nx.einsum" x
+
+(* As [test_moved_one_consumer], for selections: a set that reshapes its
+   target to scatter into it, and a slice that slices its operand before it
+   gathers along positions held in data. *)
+let test_selected_one_consumer () =
+  let refusing f =
+    Nx.Prim.interpret ~name:"test.extent" Extent
+      (fun (type r) _ ~by (op : r Nx.Prim.t) : r ->
+        match op with
+        | Scatter _ | Gather _ -> invalid_arg "test.extent: refused"
+        | _ -> Nx.Prim.eval ~by op)
+      (fun _ -> f ())
+  in
+  let x = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let v = fresh [| 5.; 6. |] in
+  let p = Nx.create Nx.int64 [| 1 |] [| 1L |] in
+  invalid ~sub:"test.extent: refused" (fun () ->
+      refusing (fun () -> Nx.set [ L [ 1; 0 ]; I 0 ] v (Nx.donate x)));
+  invalid ~sub:"test.extent: refused" (fun () ->
+      refusing (fun () -> Nx.slice [ I 0; T p ] (Nx.donate x)));
+  equal ~msg:"the donor lives" (array float_exact) [| 2.; 4.; 6.; 8. |]
+    (elements (Nx.reshape [| 4 |] (Nx.add x x)))
+
 (* Inside an interpretation that receives every operation, a call that
    broadcasts a handle consumes it once, when it returns: the donor lives
    while the call's operations run, and dies naming the call. *)
@@ -2185,6 +2299,12 @@ let () =
              test
                "a call an interpretation receives is its broadcasts' one \
                 consumer" test_broadcast_one_consumer;
+             test
+               "a call an interpretation receives is its movements' one \
+                consumer" test_moved_one_consumer;
+             test
+               "a selection an interpretation receives is its movements' one \
+                consumer" test_selected_one_consumer;
              test
                "a broadcast handle an interpretation receives dies when the \
                 call returns" test_broadcast_consumed_once;

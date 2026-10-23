@@ -980,7 +980,8 @@ let stack ?axis:(a = 0) xs =
       let s' = Array.copy unit in
       s'.(a) <- List.length xs;
       let lifted = Iarray.of_array unit in
-      let lift x = move ~by (Reshape lifted) x in
+      Eval.call ~by (List.map (fun x -> Value.Any x) xs) @@ fun read ->
+      let lift x = move ~by (Reshape lifted) (read x) in
       let pieces = List.mapi (fun k x -> (region unit a k 1, lift x)) xs in
       assemble ~by (dtype x0) s' (D.zero (dtype x0)) pieces
 
@@ -1281,9 +1282,49 @@ let index_alive ~by idx =
       | I _ | L _ | R _ | Rs _ | A | N -> i)
     0 idx
 
+(* The values [idx] holds, then [xs]: a selection's operands. *)
+let index_operands idx xs =
+  List.filter_map
+    (function
+      | T p | D (p, _) -> Some (Value.Any p) | I _ | L _ | R _ | Rs _ | A | N ->
+          None)
+    idx
+  @ xs
+
+(* Whether a position [idx] holds in data is donated. *)
+let held_donated idx =
+  List.exists
+    (function
+      | T p | D (p, _) -> Donate.is_handle p | I _ | L _ | R _ | Rs _ | A | N ->
+          false)
+    idx
+
+(* A pick's positions held in data as [read] gives them. *)
+let read_pick read = function
+  | Held p -> Held (read p)
+  | From (start, n, d) -> From (read start, n, d)
+  | (At _ | Span _ | Rows _ | New) as p -> p
+
+(* Whether more than one operation of a slice reads its operands: a gather
+   per list of positions, and a window's own map. Where one of them reads a
+   donated position, the call consumes it once, eagerly too. *)
+let several picks =
+  let reads n = function
+    | (Held _ | Rows _), _ -> n + 1
+    | From _, _ -> n + 2
+    | (At _ | Span _ | New), _ -> n
+  in
+  List.fold_left reads 0 picks > 1
+
 let slice_by ~by idx x =
   let picks = picks ~by idx x in
   Prim.alive ~by (index_alive ~by idx) x;
+  let consume =
+    if several picks && held_donated idx then Donate.resolve else Eval.call
+  in
+  consume ~by (index_operands idx [ Value.Any x ]) @@ fun read ->
+  let picks = List.map (fun (p, a) -> (read_pick read p, a)) picks in
+  let x = read x in
   let s = shape x in
   let ranges = Array.map whole s in
   List.iter
@@ -1342,6 +1383,8 @@ let get p x =
     (sliced ~by ranges x)
 
 let take_by ~by ?axis:along p x =
+  Eval.call ~by [ Value.Any p; Value.Any x ] @@ fun read ->
+  let p = read p and x = read x in
   match along with
   | None -> take_axis ~by 0 p (move ~by (Reshape [| numel x |]) x)
   | Some a -> take_axis ~by (axis ~by x a) p x
@@ -1360,12 +1403,13 @@ let take_along ~by a p x =
   let off s = Array.mapi (fun i d -> if i = a then 1 else d) s in
   let b = Prim.broadcast_shape ~by (off sp) (off sx) in
   let at d = Array.mapi (fun i e -> if i = a then d else e) b in
+  Eval.call ~by [ Value.Any p; Value.Any x ] @@ fun read ->
   Eval.eval ~by
     (Value.Gather
        {
          axis = a;
-         idx = broadcast ~by (at sp.(a)) p;
-         x = broadcast ~by (at sx.(a)) x;
+         idx = broadcast ~by (at sp.(a)) (read p);
+         x = broadcast ~by (at sx.(a)) (read x);
        })
 
 let take_along_axis ~axis p x = take_along ~by:"Nx.take_along_axis" axis p x
@@ -1555,7 +1599,6 @@ let set idx v x =
     invalid_argf "%s: %a does not broadcast to the selection %a" by pp_value v
       pp_shape sel;
   let s = shape x in
-  let v = broadcast ~by sel v in
   let whole_axis (p, a) =
     match (p, a) with
     | Span r, Some a -> r.count = s.(a) && r.step = 1
@@ -1567,6 +1610,26 @@ let set idx v x =
     | At _ | Span _ | New -> true
     | Rows _ | Held _ | From _ -> false
   in
+  (* A scatter or an assembly reads the operands. Positions held in data
+     take a map of their own first, but along the one axis of a scatter
+     whose other axes are whole, which reads them itself; a window's start
+     always does. A map that reads a donated position would consume it
+     before the scatter checks: the call consumes it once, eagerly too. *)
+  let ranges, data = List.partition in_program picks in
+  let along = List.length data = 1 && List.for_all whole_axis ranges in
+  let mapped (p, _) =
+    match p with
+    | From _ -> true
+    | Held _ -> not along
+    | At _ | Span _ | Rows _ | New -> false
+  in
+  let consume =
+    if List.exists mapped data && held_donated idx then Donate.resolve
+    else Eval.call
+  in
+  consume ~by (index_operands idx [ Value.Any v; Value.Any x ]) @@ fun read ->
+  let picks = List.map (fun (p, a) -> (read_pick read p, a)) picks in
+  let v = broadcast ~by sel (read v) and x = read x in
   match List.partition in_program picks with
   | ranges, [] ->
       (* Positions written in the program alone: one assembly, [x] then [v] at
@@ -1704,7 +1767,8 @@ let scan ~by m ?axis:along x =
   match along with
   | None ->
       let s = shape x in
-      reshaped ~by s (scan_along ~by m 0 (reshaped ~by [| numel x |] x))
+      Eval.call ~by [ Value.Any x ] @@ fun read ->
+      reshaped ~by s (scan_along ~by m 0 (reshaped ~by [| numel x |] (read x)))
   | Some a -> scan_along ~by m (axis ~by x a) x
 
 let cumsum ?axis x = scan ~by:"Nx.cumsum" Sum ?axis x
@@ -2146,6 +2210,8 @@ let count ?axes ?keepdims m = count_by ~by:"Nx.count" ?axes ?keepdims m
    in C order. *)
 let arg ~by e ?axis:along ?(keepdims = false) x =
   let s = shape x in
+  Eval.call ~by [ Value.Any x ] @@ fun read ->
+  let x = read x in
   let x, a =
     match along with
     | None -> (reshaped ~by [| numel x |] x, 0)
@@ -3532,7 +3598,8 @@ let one_hot ~num_classes x =
   if num_classes < 0 then invalid_argf "%s: %d classes" by num_classes;
   let s = shape x in
   let r = Array.length s in
-  let column = reshaped ~by (Array.append s [| 1 |]) x in
+  Eval.call ~by [ Value.Any x ] @@ fun read ->
+  let column = reshaped ~by (Array.append s [| 1 |]) (read x) in
   let x = broadcast ~by (Array.append s [| num_classes |]) column in
   elementwise ~by D.Uint8 [ Any x ]
     (indicator D.Uint8 E.(cast D.Int64 (operand 0 x) = coord r))
