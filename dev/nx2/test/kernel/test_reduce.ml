@@ -2345,6 +2345,14 @@ let stat_of r s axes v values make =
   in
   { r; axes; x = operand_with make s v; views = view_names v; values }
 
+(* Many outputs of several blocks each, beside a short axis or none. *)
+let many_long =
+  let open Gen in
+  let* outer = int_range 64 66 in
+  let* n = int_range 1025 1100 in
+  let+ inner = array ~size:(int_range 0 1) (int_range 2 3) in
+  Array.append [| outer; n |] inner
+
 let stat_case =
   Gen.with_pp pp_stat
     (let open Gen in
@@ -2357,7 +2365,7 @@ let stat_case =
          (if is_float d then Nx_kernel.[ Arg Max; Arg Min; Logsumexp; Moments ]
           else Nx_kernel.[ Arg Max; Arg Min ])
      in
-     let* s = shape_gen in
+     let* s = frequency [ (6, shape_gen); (1, many_long) ] in
      let rank = Array.length s in
      let* keep = array ~size:(constant rank) bool in
      let axes =
@@ -2526,6 +2534,9 @@ let law_stateful (b : Support.backend) c =
   cover "one term" (per = 1);
   cover "several blocks" (per > 1024);
   cover "many outputs" (outs >= 64);
+  cover "many outputs of several blocks" (outs >= 64 && per > 1024);
+  cover "many outputs of several blocks, through a view"
+    (outs >= 64 && per > 1024 && c.views <> []);
   List.iter (fun (k : values) -> cover k.name (c.values = k.name)) value_kinds;
   List.iter
     (fun v -> cover v (List.mem v c.views))
@@ -2881,58 +2892,89 @@ let spreads =
   ]
 
 
+(* [r] of [outer] times [inner] outputs of [n] terms each: output [(o, i)]'s
+   terms at [(o, t, i)] of an array of shape [[outer; n; inner]], [inner]
+   apart beside their neighbours' where [inner > 1]. *)
 type spread_case = {
   r : Nx_kernel.reduction;
   dt : D.any;
   spread : string;
   n : int;
+  outer : int;
+  inner : int;
   seed : int;
 }
 
 (* Long ramps, whose blocks' maxima differ: a sum rescaled block by block
-   loses their bits. *)
+   loses their bits. Many outputs of several blocks, along rows and
+   strided. *)
 let spread_examples =
   List.concat_map
     (fun dt ->
       List.map
-        (fun seed -> { r = Nx_kernel.Logsumexp; dt; spread = "ramp"; n = 70_000; seed })
+        (fun seed ->
+          { r = Nx_kernel.Logsumexp; dt; spread = "ramp"; n = 70_000; outer = 1;
+            inner = 1; seed })
         [ 0; 1; 2; 3 ])
     floats
+  @ List.concat_map
+      (fun inner ->
+        List.map
+          (fun r ->
+            { r; dt = f32; spread = "offset"; n = 1025; outer = 64; inner; seed = 5 })
+          Nx_kernel.[ Logsumexp; Moments ])
+      [ 1; 2 ]
 
 let spread_case =
   Gen.with_pp
     (fun ppf c ->
-      Format.fprintf ppf "%s of %d %a terms, %s (seed %d)" (reduction_name c.r)
-        c.n pp_dtype c.dt c.spread c.seed)
+      Format.fprintf ppf "%s of %dx%d outputs of %d %a terms, %s (seed %d)"
+        (reduction_name c.r) c.outer c.inner c.n pp_dtype c.dt c.spread c.seed)
     (let open Gen in
      let* r = of_list Nx_kernel.[ Logsumexp; Moments ] in
      let* dt = of_list floats in
      let* spread = of_list (List.map fst spreads) in
-     let* n = of_list [ 1; 2; 17; 1023; 1025; 4097; 70_000 ] in
+     let* outer, inner, n =
+       frequency
+         [
+           ( 3,
+             map
+               (fun n -> (1, 1, n))
+               (of_list [ 1; 2; 17; 1023; 1025; 4097; 70_000 ]) );
+           ( 1,
+             let* outer = int_range 64 66 in
+             let* inner = int_range 1 2 in
+             let+ n = of_list [ 17; 1025; 2100 ] in
+             (outer, inner, n) );
+         ]
+     in
      let+ seed = int in
-     { r; dt; spread; n; seed })
+     { r; dt; spread; n; outer; inner; seed })
 
-(* The float32 or float64 [dt], of [bits], array of [xs]. *)
-let vector_bits (type a b) (dt : (a, b) D.t) bits xs =
+(* The float32 or float64 [dt], of [bits], array of shape [s] of [xs]. *)
+let array_bits (type a b) (dt : (a, b) D.t) bits s xs =
   let b = Bytes.create (D.bytes dt (Array.length xs)) in
   Array.iteri
     (fun i x ->
       if bits = 32 then Bytes.set_int32_le b (4 * i) (Int32.bits_of_float x)
       else Bytes.set_int64_le b (8 * i) (Int64.bits_of_float x))
     xs;
-  A.Any
-    (A.v dt (L.contiguous [| Array.length xs |]) (Rig.Buffer.of_string (Bytes.to_string b)))
+  A.Any (A.v dt (L.contiguous s) (Rig.Buffer.of_string (Bytes.to_string b)))
 
-(* [r] of the terms [xs] by [k], each destination's terms. *)
-let reduce_terms k (D.Any dt) r xs =
-  let x = vector_bits dt (D.bits dt) xs in
-  match run_stat k { r; axes = [| 0 |]; x; views = []; values = "" } with
+(* [r] along [axes] of the array of shape [s] of [xs] by [k], each
+   destination's terms. *)
+let reduce_terms k (D.Any dt) r s axes xs =
+  let x = array_bits dt (D.bits dt) s xs in
+  match run_stat k { r; axes; x; views = []; values = "" } with
   | None -> failf "nx.cpu declined %s" (reduction_name r)
   | Some got -> got
 
+(* [r] of the vector [xs] by [k]. *)
+let reduce_vector k d r xs = reduce_terms k d r [| Array.length xs |] [| 0 |] xs
+
 (* The kind [k] of each of [xs] at the float [dt], by the kernels. *)
 let kind (D.Any dt) k xs =
-  let (A.Any x) = vector_bits dt (D.bits dt) xs in
+  let (A.Any x) = array_bits dt (D.bits dt) [| Array.length xs |] xs in
   let d = A.create Rig.host (A.dtype x) [| Array.length xs |] in
   match Nx_cpu.apply1 (P.Unary k) ~dst:d x with
   | A.Done -> Array.map value (terms (A.Any d))
@@ -2943,47 +2985,73 @@ let kind (D.Any dt) k xs =
    [0]. Moments: the sum over the count, the mean, then the sums [s1] of
    the deviations [d] from it and [s2] of their squares, and [(s2 - s1 (s1
    / n)) / n], +0 where that is negative, or [s2] where that is +inf. Each
-   operation rounds to the dtype. *)
+   operation rounds to the dtype, and each output's sums are reductions of
+   its terms alone. *)
 let law_record (b : Support.backend) c =
   let (D.Any dt) = c.dt in
   let bits = D.bits dt in
   let gen = List.assoc c.spread spreads in
   let r = Random.State.make [| c.seed |] in
   let round x = if bits = 32 then Int32.float_of_bits (Int32.bits_of_float x) else x in
-  let xs = Array.init c.n (fun i -> round (gen r i c.n)) in
+  let xs =
+    Array.init (c.outer * c.n * c.inner) (fun k ->
+        round (gen r (k / c.inner mod c.n) c.n))
+  in
   cover "several blocks" (c.n > 1024);
   cover "groups of blocks" (c.n >= 70_000);
-  let got = reduce_terms b.kernels c.dt c.r xs in
-  let sum ys = value (reduce_terms b.kernels c.dt (Monoid Sum) ys).(0).(0) in
+  cover "many outputs of several blocks" (c.outer >= 64 && c.n > 1024);
+  cover "many outputs of several blocks, strided"
+    (c.outer >= 64 && c.n > 1024 && c.inner > 1);
+  let got =
+    reduce_terms b.kernels c.dt c.r [| c.outer; c.n; c.inner |] [| 1 |] xs
+  in
+  let sum ys = value (reduce_vector b.kernels c.dt (Monoid Sum) ys).(0).(0) in
   let bits_at x =
     if bits = 32 then Int64.of_int32 (Int32.bits_of_float x) else Int64.bits_of_float x
   in
-  match c.r with
-  | Logsumexp ->
-      let m = value (reduce_terms b.kernels c.dt (Monoid Max) xs).(0).(0) in
-      let c0 = if Float.is_finite m then m else 0. in
-      let cut = if bits = 32 then -87. else -708. in
-      let ys = Array.map (fun x -> round (x -. c0)) xs in
-      let es = kind c.dt Exp (Array.map (Float.max cut) ys) in
-      let es = Array.mapi (fun i e -> if ys.(i) < cut then 0. else e) es in
-      let r = round (c0 +. (kind c.dt Log [| sum es |]).(0)) in
-      equal ~msg:"logsumexp" int64 (bits_at r) (bits_of got.(0).(0))
-  | _ ->
-      let n = round (Float.of_int c.n) in
-      let mean = round (sum xs /. n) in
-      let d x = round (x -. mean) in
-      let s1 = sum (Array.map d xs) in
-      let s2 = sum (Array.map (fun x -> round (d x *. d x)) xs) in
-      let q = round (round (s2 -. round (s1 *. round (s1 /. n))) /. n) in
-      let var = if s2 = Float.infinity then s2 else if q < 0. then 0. else q in
-      equal ~msg:"mean" int64 (bits_at mean) (bits_of got.(0).(0));
-      equal ~msg:"variance" int64 (bits_at var) (bits_of got.(1).(0))
+  let output o i =
+    let at = (o * c.inner) + i in
+    let xs = Array.init c.n (fun t -> xs.((((o * c.n) + t) * c.inner) + i)) in
+    let msg s = Printf.sprintf "%s of output (%d, %d)" s o i in
+    match c.r with
+    | Logsumexp ->
+        let m = value (reduce_vector b.kernels c.dt (Monoid Max) xs).(0).(0) in
+        let c0 = if Float.is_finite m then m else 0. in
+        let cut = if bits = 32 then -87. else -708. in
+        let ys = Array.map (fun x -> round (x -. c0)) xs in
+        let es = kind c.dt Exp (Array.map (Float.max cut) ys) in
+        let es = Array.mapi (fun i e -> if ys.(i) < cut then 0. else e) es in
+        let r = round (c0 +. (kind c.dt Log [| sum es |]).(0)) in
+        equal ~msg:(msg "logsumexp") int64 (bits_at r) (bits_of got.(0).(at))
+    | _ ->
+        let n = round (Float.of_int c.n) in
+        let mean = round (sum xs /. n) in
+        let d x = round (x -. mean) in
+        let s1 = sum (Array.map d xs) in
+        let s2 = sum (Array.map (fun x -> round (d x *. d x)) xs) in
+        let q = round (round (s2 -. round (s1 *. round (s1 /. n))) /. n) in
+        let var = if s2 = Float.infinity then s2 else if q < 0. then 0. else q in
+        equal ~msg:(msg "mean") int64 (bits_at mean) (bits_of got.(0).(at));
+        equal ~msg:(msg "variance") int64 (bits_at var) (bits_of got.(1).(at))
+  in
+  for o = 0 to c.outer - 1 do
+    for i = 0 to c.inner - 1 do
+      output o i
+    done
+  done
 
 let stat_examples =
   Nx_kernel.
     [
       (* Groups of blocks on several threads, an outlier among offset terms. *)
       stat_example Moments f32 [| 70_000 |] [| 0 |] ~outliers:5000 "offset";
+      (* Many outputs of several blocks: along stepped rows with NaNs and
+         infinities, and strided down a reversed axis. *)
+      stat_example Moments f64 [| 65; 1100 |] [| 1 |] ~specials:2000 "small"
+        ~view:{ perm = [| 0; 1 |]; stepped = true; reversed = None; broadcast = false };
+      stat_example Moments f32 [| 64; 1025; 2 |] [| 1 |] "offset"
+        ~view:{ perm = [| 0; 1; 2 |]; stepped = false; reversed = Some 1; broadcast = false };
+      stat_example Logsumexp f32 [| 64; 1030 |] [| 1 |] ~specials:2000 "wide";
       stat_example Logsumexp f32 [| 3000 |] [| 0 |] ~specials:20 "wide";
       stat_example Logsumexp f64 [| 300; 9 |] [| 1 |] ~specials:20 "small";
       stat_example Moments f64 [| 300; 9 |] [| 1 |] ~specials:20 "small";
@@ -4365,7 +4433,11 @@ let stat_into_case =
      let* scan = bool in
      let* s =
        frequency
-         [ (3, shape_gen); (1, map (fun n -> [| n |]) (int_range 1025 5000)) ]
+         [
+           (3, shape_gen);
+           (1, map (fun n -> [| n |]) (int_range 1025 5000));
+           (1, many_long);
+         ]
      in
      let s = if scan && Array.length s = 0 then [| 3 |] else s in
      let rank = Array.length s in
@@ -4398,15 +4470,27 @@ let stat_into_case =
      in
      { st = stat_of r s axes v values.name make; scan; into })
 
-(* A boolean's Arg, which the generator draws once in 18 cases. *)
+(* A boolean's Arg, which the generator draws once in 18 cases, and the
+   Moments of many bfloat16 outputs of several blocks, stepped. *)
 let stat_into_examples =
   let v = { perm = [| 0 |]; stepped = false; reversed = None; broadcast = false } in
   let make n = A.Any (elements D.Bool n ~specials:0 1) in
+  let offset = List.find (fun (k : values) -> k.name = "offset") value_kinds in
+  let narrow n =
+    cast_into (D.Any D.Bfloat16)
+      (float_elements D.Float32 n offset ~outliers:0 ~specials:2000 3)
+  in
+  let stepped = { perm = [| 0; 1 |]; stepped = true; reversed = None; broadcast = false } in
   [
     {
       st = stat_of (Arg Max) [| 9 |] [| 0 |] v "small" make;
       scan = false;
       into = D.Any D.Bool;
+    };
+    {
+      st = stat_of Moments [| 64; 1025 |] [| 1 |] stepped "offset" narrow;
+      scan = false;
+      into = D.Any D.Bfloat16;
     };
   ]
 
@@ -4445,7 +4529,10 @@ let law_stat_into (b : Support.backend) { st = c; scan; into } =
   cover "bool" (same x (D.Any D.Bool));
   cover "into another dtype" (not (same into x));
   cover "a scan" scan;
-  cover "several blocks" (Array.fold_left (fun n a -> n * s.(a)) 1 c.axes > 1024);
+  let per = Array.fold_left (fun n a -> n * s.(a)) 1 c.axes in
+  cover "several blocks" (per > 1024);
+  cover "many outputs of several blocks"
+    ((not scan) && per > 1024 && total (stat_shape c) >= 64);
   List.iter
     (fun v -> cover v (List.mem v c.views))
     [ "permuted"; "stepped"; "reversed"; "broadcast" ];
