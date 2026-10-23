@@ -1035,17 +1035,8 @@ struct
         (reads rule i (Prim.shape x) (resw j) (Array.get tiles.(j)))
         x
     in
-    let free side rank =
-      let named pairs x = Iarray.exists (fun pr -> side pr = x) pairs in
-      Array.of_list
-        (List.filter
-           (fun x -> not (named batch x || named contracting x))
-           (List.init rank Fun.id))
-    in
-    let a_axes =
-      [| sides fst batch; free fst (Prim.rank a); sides fst contracting |]
-    and b_axes =
-      [| sides snd batch; sides snd contracting; free snd (Prim.rank b) |]
+    let a_axes, b_axes =
+      Prim.contract_groups ~batch ~contracting (Prim.rank a) (Prim.rank b)
     in
     (* A device's [a] as [[batch; rows; terms]] and [b] as
        [[batch; terms; columns]], the terms in their number's order. *)

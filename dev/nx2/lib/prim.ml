@@ -1184,23 +1184,34 @@ let block_run s ss axes =
     done;
     if !whole then Some !run else None
 
+let contract_groups ~batch ~contracting ra rb =
+  let side pick ps = Iarray.to_array (Iarray.map pick ps) in
+  let free pick r =
+    let named x =
+      Iarray.exists (fun p -> pick p = x) batch
+      || Iarray.exists (fun p -> pick p = x) contracting
+    in
+    Array.of_list (List.filter (fun x -> not (named x)) (List.init r Fun.id))
+  in
+  ( [| side fst batch; free fst ra; side fst contracting |],
+    [| side snd batch; side snd contracting; free snd rb |] )
+
 (* Whether partials can take a contraction's operand of shape [s] scaled by
-   one of [ss], or none, laid out by [groups] of its axes, the last its
+   one of [ss], or none, laid out by [groups] of its axes, group [t] its
    contracting ones: each group's blocks merge with it ({!block_run}), and a
    block of the contracted extent lies in one of the contraction's blocks,
    at whose edges partials cut it. *)
-let partials_take s ss groups =
+let partials_take s ss groups t =
   match ss with
   | None -> true
-  | Some ss ->
+  | Some ss -> (
       let runs = Array.map (block_run s ss) groups in
-      let k = groups.(Array.length groups - 1) in
-      let depth = Array.fold_left (fun n d -> n * s.(d)) 1 k in
+      let depth = Array.fold_left (fun n d -> n * s.(d)) 1 groups.(t) in
       Array.for_all Option.is_some runs
       &&
-      match runs.(Array.length runs - 1) with
+      match runs.(t) with
       | Some r -> depth <= contract_block || contract_block mod r = 0
-      | None -> false
+      | None -> false)
 
 (* A contraction's result has the batch pairs' axes, then [a]'s other axes, then
    [b]'s; [init] has its shape. A contracting pair's two axes share its index as
@@ -1211,18 +1222,8 @@ let partials_take s ss groups =
    ({!partials_take}). *)
 let contract_rule ~batch ~contracting ~segments sa sb init sca scb =
   let nb = Iarray.length batch and nc = Iarray.length contracting in
-  let groups pick s =
-    let named ps x = Iarray.exists (fun p -> pick p = x) ps in
-    let free =
-      List.filter
-        (fun x -> not (named batch x || named contracting x))
-        (List.init (Array.length s) Fun.id)
-    in
-    [|
-      Iarray.to_array (Iarray.map pick batch);
-      Array.of_list free;
-      Iarray.to_array (Iarray.map pick contracting);
-    |]
+  let ga, gb =
+    contract_groups ~batch ~contracting (Array.length sa) (Array.length sb)
   in
   let lead, whole_a, whole_b =
     match (segments : _ Nx_kernel.segments option) with
@@ -1232,8 +1233,8 @@ let contract_rule ~batch ~contracting ~segments sa sb init sca scb =
   in
   let reduced =
     Option.is_none segments
-    && partials_take sa sca (groups fst sa)
-    && partials_take sb scb (groups snd sb)
+    && partials_take sa sca ga 2
+    && partials_take sb scb gb 1
   in
   let kept = ref (if lead = 1 then 0 else -1) in
   let operand pick r first segmented =
