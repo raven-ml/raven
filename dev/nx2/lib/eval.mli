@@ -70,6 +70,14 @@ val inside : unit -> bool
 (** [inside ()] is [true] iff an [Extent] interpretation's handler is around
     the caller. With none live ({!quiet}) it performs nothing. *)
 
+val mix : ('v, 's, 'd) t -> int
+(** [mix x] is [1] for a handle, [2] for a traced value and [0] otherwise:
+    operands whose [mix]es give [3] under [lor] hold a handle beside a
+    traced value. It allocates nothing. *)
+
+val mixed : 'd any list -> bool
+(** [mixed xs] is [true] iff [xs] hold a handle beside a traced value. *)
+
 val call :
   by:string ->
   'd any list ->
@@ -78,11 +86,12 @@ val call :
 (** [call ~by xs k] is [k read], the call [by] the one consumer of the
     donated handles among its operands [xs], though [k] moves them before
     the operation that reads them, moves that operation's result, or only
-    moves them. Inside an [Extent] ({!inside}), whose rule
-    consumes the handles of each operation it receives, a movement's too, it
-    is {!Donate.resolve}: a refusal by [k]'s checks or by the rule kills no
-    donor. Elsewhere [read] is the identity: a movement passes a handle on
-    and [k]'s operation consumes it. *)
+    moves them. Inside an [Extent] ({!inside}), whose rule consumes the
+    handles of each operation it receives, a movement's too, or where [xs]
+    are {!mixed}, so that an operation reading a handle beside a traced
+    value reaches a rule, it is {!Donate.resolve}: a refusal by [k]'s checks
+    or by a rule kills no donor. Elsewhere [read] is the identity: a
+    movement passes a handle on and [k]'s operation consumes it. *)
 
 val once :
   by:string ->

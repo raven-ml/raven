@@ -196,8 +196,9 @@ let laid_out (type v s a b c e d) ~by ~acc (dt : (v, s) D.t) pl
   let y = if identity pl.order then y else permute ~by pl.order y in
   if pl.y_whole then y else reshape ~by pl.shape y
 
-(* Inside an [Extent] the call reads its operands once, through the
-   movements before and after the contraction ({!Eval.call}). *)
+(* Inside an [Extent], or beside a traced value, the call reads its operands
+   once, through the movements before and after the contraction
+   ({!Eval.call}). *)
 let run (type v s a b c e d) ~by ?acc ?init (dt : (v, s) D.t) pl
     (a : (a, b, d) Value.t) (b : (c, e, d) Value.t) : (v, s, d) Value.t =
   if D.is D.Boolean dt then invalid_argf "%s: the result's dtype is bool" by;
@@ -209,7 +210,9 @@ let run (type v s a b c e d) ~by ?acc ?init (dt : (v, s) D.t) pl
       invalid_argf "%s: ~init is %a where the result is %a" by pp_shape
         (Prim.shape i) pp_shape pl.shape
   | Some _ | None -> ());
-  if not (Eval.inside ()) then laid_out ~by ~acc dt pl a b init
+  let mix = Option.fold ~none:0 ~some:Eval.mix init in
+  if not (Eval.inside () || Eval.mix a lor Eval.mix b lor mix = 3) then
+    laid_out ~by ~acc dt pl a b init
   else
     let operands =
       Value.Any a :: Value.Any b

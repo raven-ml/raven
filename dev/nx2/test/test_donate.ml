@@ -2471,6 +2471,85 @@ let test_refused_received =
       done;
       equal ~msg:name (list string) [] (List.rev !killed))
 
+(* A traced value of a Values interpretation, which its rule keeps nothing
+   for. *)
+type ('v, 's, 'd) Nx.Prim.payload += Mark : ('v, 's, 'd) Nx.Prim.payload
+
+(* Case [c] under a Values interpretation that traces operand 0 and refuses
+   the [k]th operation it receives, none for [k = 0], donating the operands
+   in [mask]: as {!refused_at}. The rule's results are traced, so every
+   operation that reads one reaches the rule. *)
+let refused_traced k c mask =
+  let n = ref 0 and donors = ref [] in
+  let rule i ~by op =
+    incr n;
+    if !n = k then invalid_arg "test.values: refused";
+    Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form Mark) op
+  in
+  let raised =
+    match
+      Nx.Prim.interpret ~name:"test.values" Values rule (fun i ->
+          let pass :
+              'v 's. int -> ('v, 's, Nx.host) Nx.t -> ('v, 's, Nx.host) Nx.t =
+           fun j x ->
+            if j = 0 then Nx.Prim.traced i (Nx.Prim.form x) Mark
+            else if mask land (1 lsl j) = 0 then x
+            else begin
+              let dead () =
+                match Nx.copy x with
+                | _ -> None
+                | exception Invalid_argument _ -> Some j
+              in
+              donors := dead :: !donors;
+              Nx.donate x
+            end
+          in
+          c.run pass)
+    with
+    | _ -> false
+    | exception _ -> true
+  in
+  (!n, raised, List.filter_map (fun dead -> dead ()) !donors)
+
+(* Each case of several operands, operand 0 traced, with every donation mask
+   of the others up to three operands; past three, each other operand alone,
+   then all. *)
+let traced_seeds =
+  List.concat
+    (List.mapi
+       (fun k (_, c) ->
+         let n = c.operands in
+         if n < 2 then []
+         else if n <= 3 then
+           List.init ((1 lsl (n - 1)) - 1) (fun m -> (k, 2 * (m + 1)))
+         else
+           List.init (n - 1) (fun i -> (k, 1 lsl (i + 1)))
+           @ [ (k, (1 lsl n) - 2) ])
+       named_cases)
+
+let test_refused_traced =
+  cases
+    ~name:(fun (k, mask) ->
+      Printf.sprintf "%s, donating mask %d" (fst case_at.(k)) mask)
+    "a call refused beside a traced operand kills no donor" traced_seeds
+    (fun (k, mask) ->
+      let name, c = case_at.(k) in
+      let total, _, _ = refused_traced 0 c mask in
+      let killed = ref [] in
+      for j = 1 to total do
+        match refused_traced j c mask with
+        | _, true, (_ :: _ as dead) ->
+            List.iter
+              (fun i ->
+                killed :=
+                  Printf.sprintf "operation %d of %d, operand %d" j total
+                    (i + 1)
+                  :: !killed)
+              dead
+        | _ -> ()
+      done;
+      equal ~msg:name (list string) [] (List.rev !killed))
+
 let () =
   exit
     (run "nx donate"
@@ -2518,6 +2597,7 @@ let () =
              test_dead_names;
              test_donated;
              test_refused_received;
+             test_refused_traced;
              test "a captured array dies at the call that reads it"
                test_captured;
              stateful ~domains:2 "reads and consumers on two domains" commands;
