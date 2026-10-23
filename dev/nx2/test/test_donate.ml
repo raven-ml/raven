@@ -1500,6 +1500,11 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
       c "repeat" 1 (fun d -> show (Nx.repeat ~axis:0 2 (d 0 (x [| 2; 3 |]))));
       c "rearrange" 1 (fun d ->
           show (Nx.rearrange (Nx.Pattern.v "a b -> b a") (d 0 (x [| 2; 3 |]))));
+      c "rearrange" 1 (fun d ->
+          show
+            (Nx.rearrange ~sizes:[ ("b", 3) ]
+               (Nx.Pattern.v "a (b c) -> c a b")
+               (d 0 (x [| 2; 6 |]))));
       c "slice" 1 (fun d ->
           show
             (Nx.slice [ Nx.R (0, 1); Nx.Rs (2, -4, -1) ] (d 0 (x [| 2; 3 |]))));
@@ -1568,6 +1573,8 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
           show (Nx.sum ~axes:[ 1 ] ~keepdims:true (d 0 (x [| 2; 3 |]))));
       c "prod" 1 (fun d -> show (Nx.prod ~axes:[ 0 ] (d 0 (x [| 2; 3 |]))));
       c "mean" 1 (fun d -> show (Nx.mean (d 0 (x [| 2; 3 |]))));
+      c "mean" 1 (fun d ->
+          show (Nx.mean ~axes:[ 0 ] ~keepdims:true (d 0 (x [| 2; 3 |]))));
       c "cumsum" 1 (fun d -> show (Nx.cumsum (d 0 (x [| 2; 3 |]))));
       c "cumsum" 1 (fun d -> show (Nx.cumsum ~axis:1 (d 0 (x [| 2; 3 |]))));
       c "cumprod" 1 (fun d -> show (Nx.cumprod ~axis:0 (d 0 (x [| 2; 3 |]))));
@@ -1586,6 +1593,12 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
           show (Nx.einsum ij_jk [ d 0 (x [| 2; 3 |]); d 1 (x [| 3; 2 |]) ]));
       c "matmul" 2 (fun d ->
           show (Nx.matmul (d 0 (x [| 2; 3 |])) (d 1 (x [| 3; 2 |]))));
+      c "contract" 2 (fun d ->
+          show
+            (Nx.contract dt
+               (Nx.Pattern.v "i j, j k -> k i | j")
+               (d 0 (x [| 2; 3 |]))
+               (d 1 (x [| 3; 2 |]))));
       c "dot" 2 (fun d -> show (Nx.dot (d 0 (x [| 3 |])) (d 1 (x [| 3 |]))));
       c "vdot" 2 (fun d -> show (Nx.vdot (d 0 (x [| 3 |])) (d 1 (x [| 3 |]))));
       c "matrix_transpose" 1 (fun d ->
@@ -1734,14 +1747,22 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
       c "min" 1 (fun d -> show (Nx.min ~axes:[ 1 ] (d 0 (x [| 2; 3 |]))));
       c "all" 1 (fun d -> show (Nx.all (d 0 (x [| 2; 3 |]))));
       c "any" 1 (fun d -> show (Nx.any ~axes:[ 0 ] (d 0 (x [| 2; 3 |]))));
+      c "any" 1 (fun d ->
+          show (Nx.any ~axes:[ 0 ] ~keepdims:true (d 0 (x [| 2; 3 |]))));
       c "argmax" 1 (fun d -> show (Nx.argmax (d 0 (x [| 2; 3 |]))));
       c "argmax" 1 (fun d -> show (Nx.argmax ~axis:0 (d 0 (x [| 2; 3 |]))));
       c "argmin" 1 (fun d -> show (Nx.argmin ~axis:1 (d 0 (x [| 2; 3 |]))));
+      c "argmin" 1 (fun d ->
+          show (Nx.argmin ~axis:1 ~keepdims:true (d 0 (x [| 2; 3 |]))));
       c "var" 1 (fun d -> show (Nx.var (d 0 (x [| 2; 3 |]))));
       c "std" 1 (fun d -> show (Nx.std ~ddof:1 (d 0 (x [| 5 |]))));
       c "logsumexp" 1 (fun d -> show (Nx.logsumexp (d 0 (x [| 2; 3 |]))));
+      c "logsumexp" 1 (fun d ->
+          show (Nx.logsumexp ~axes:[ 1 ] ~keepdims:true (d 0 (x [| 2; 3 |]))));
       c "logmeanexp" 1 (fun d ->
           show (Nx.logmeanexp ~axes:[ 1 ] (d 0 (x [| 2; 3 |]))));
+      c "logmeanexp" 1 (fun d ->
+          show (Nx.logmeanexp ~keepdims:true (d 0 (x [| 2; 3 |]))));
       c "cummax" 1 (fun d -> show (Nx.cummax ~axis:0 (d 0 (x [| 2; 3 |]))));
       c "cummin" 1 (fun d -> show (Nx.cummin (d 0 (x [| 2; 3 |]))));
       c "ewma" 1 (fun d -> show (Nx.ewma ~alpha:0.5 (d 0 (x [| 2; 3 |]))));
@@ -1992,6 +2013,8 @@ let booleans =
       c "logical_not" 1 (fun d -> show (Nx.logical_not (d 0 (b [| 4 |]))));
       c "count" 1 (fun d -> show (Nx.count (d 0 (b [| 2; 3 |]))));
       c "count" 1 (fun d -> show (Nx.count ~axes:[ 1 ] (d 0 (b [| 2; 3 |]))));
+      c "count" 1 (fun d ->
+          show (Nx.count ~axes:[ 1 ] ~keepdims:true (d 0 (b [| 2; 3 |]))));
       c "all" 1 (fun d -> show (Nx.all (d 0 (b [| 4 |]))));
       c "Infix.( && )" ~by:"logical_and" 2 (fun d ->
           show Nx.Infix.(d 0 (b [| 4 |]) && d 1 (Nx.flip (b [| 4 |]))));
@@ -2342,27 +2365,30 @@ let test_donated =
     "a donated operand gives the undonated result, received too" donations
     law_donated
 
-(* Case [c] inside an Extent whose rule refuses the [k]th operation other
-   than a movement it receives, none for [k = 0]: the operations it received
-   then, whether the call raised, and the donors it left dead. *)
-let refused_at k c =
+(* Case [c] inside an Extent whose rule refuses the [k]th operation it
+   receives, a movement too, none for [k = 0], donating the operands in
+   [mask]: the operations it received then, whether the call raised, and the
+   donors it left dead. *)
+let refused_at k c mask =
   let n = ref 0 and donors = ref [] in
-  let rule (type r) _ ~by (op : r Nx.Prim.t) : r =
-    (match op with
-    | Move _ -> ()
-    | _ ->
-        incr n;
-        if !n = k then invalid_arg "test.extent: refused");
+  let rule _ ~by op =
+    incr n;
+    if !n = k then invalid_arg "test.extent: refused";
     Nx.Prim.eval ~by op
   in
   let donate : 'v 's. int -> ('v, 's, Nx.host) Nx.t -> ('v, 's, Nx.host) Nx.t
       =
    fun i x ->
-    let dead () =
-      match Nx.copy x with _ -> None | exception Invalid_argument _ -> Some i
-    in
-    donors := dead :: !donors;
-    Nx.donate x
+    if mask land (1 lsl i) = 0 then x
+    else begin
+      let dead () =
+        match Nx.copy x with
+        | _ -> None
+        | exception Invalid_argument _ -> Some i
+      in
+      donors := dead :: !donors;
+      Nx.donate x
+    end
   in
   let raised =
     match
@@ -2373,21 +2399,24 @@ let refused_at k c =
   in
   (!n, raised, List.filter_map (fun dead -> dead ()) !donors)
 
-(* The rule refusing each operation of a case in turn, but movements: a
-   function of movements alone, or one that moves its results, consumes its
-   handles at the first one. *)
+(* The rule refusing each operation of a case in turn, with each of the
+   case's donation masks of [seeds]. *)
 let test_refused_received =
-  cases ~name:fst "a call refused inside an Extent kills no donor" named_cases
-    (fun (name, c) ->
-      let total, _, _ = refused_at 0 c in
+  cases
+    ~name:(fun (k, mask) ->
+      Printf.sprintf "%s, donating mask %d" (fst case_at.(k)) mask)
+    "a call refused inside an Extent kills no donor" seeds
+    (fun (k, mask) ->
+      let name, c = case_at.(k) in
+      let total, _, _ = refused_at 0 c mask in
       let killed = ref [] in
-      for k = 1 to total do
-        match refused_at k c with
+      for j = 1 to total do
+        match refused_at j c mask with
         | _, true, (_ :: _ as dead) ->
             List.iter
               (fun i ->
                 killed :=
-                  Printf.sprintf "operation %d of %d, operand %d" k total
+                  Printf.sprintf "operation %d of %d, operand %d" j total
                     (i + 1)
                   :: !killed)
               dead

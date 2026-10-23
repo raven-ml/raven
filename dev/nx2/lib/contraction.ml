@@ -175,8 +175,29 @@ let inverse order =
 
 let operand x = (D.name (Prim.dtype x), Prim.shape x)
 
+(* [init] moved into the kernel's order. *)
+let laid ~by pl init =
+  match init with
+  | None -> None
+  | Some i ->
+      let i = reshape ~by pl.names i in
+      Some (if identity pl.order then i else permute ~by (inverse pl.order) i)
+
 (* [pl] applied to [a] and [b]: each reshaped to its names, contracted, and
    moved into the result's layout. *)
+let laid_out (type v s a b c e d) ~by ~acc (dt : (v, s) D.t) pl
+    (a : (a, b, d) Value.t) (b : (c, e, d) Value.t) init : (v, s, d) Value.t =
+  let y =
+    Eval.contract ~by ~batch:pl.batch ~contracting:pl.contracting ~acc dt
+      (if pl.a_whole then a else reshape ~by pl.a a)
+      (if pl.b_whole then b else reshape ~by pl.b b)
+      (laid ~by pl init)
+  in
+  let y = if identity pl.order then y else permute ~by pl.order y in
+  if pl.y_whole then y else reshape ~by pl.shape y
+
+(* Inside an [Extent] the call reads its operands once, through the
+   movements before and after the contraction ({!Eval.call}). *)
 let run (type v s a b c e d) ~by ?acc ?init (dt : (v, s) D.t) pl
     (a : (a, b, d) Value.t) (b : (c, e, d) Value.t) : (v, s, d) Value.t =
   if D.is D.Boolean dt then invalid_argf "%s: the result's dtype is bool" by;
@@ -188,27 +209,14 @@ let run (type v s a b c e d) ~by ?acc ?init (dt : (v, s) D.t) pl
       invalid_argf "%s: ~init is %a where the result is %a" by pp_shape
         (Prim.shape i) pp_shape pl.shape
   | Some _ | None -> ());
-  let batch = pl.batch and contracting = pl.contracting in
-  let y =
-    if pl.a_whole && pl.b_whole && Option.is_none init then
-      Eval.contract ~by ~batch ~contracting ~acc dt a b None
-    else
-      let operands =
-        Value.Any a :: Value.Any b
-        :: Option.fold ~none:[] ~some:(fun i -> [ Value.Any i ]) init
-      in
-      Eval.call ~by operands @@ fun read ->
-      let laid i =
-        let i = reshape ~by pl.names (read i) in
-        if identity pl.order then i else permute ~by (inverse pl.order) i
-      in
-      Eval.contract ~by ~batch ~contracting ~acc dt
-        (if pl.a_whole then read a else reshape ~by pl.a (read a))
-        (if pl.b_whole then read b else reshape ~by pl.b (read b))
-        (Option.map laid init)
-  in
-  let y = if identity pl.order then y else permute ~by pl.order y in
-  if pl.y_whole then y else reshape ~by pl.shape y
+  if not (Eval.inside ()) then laid_out ~by ~acc dt pl a b init
+  else
+    let operands =
+      Value.Any a :: Value.Any b
+      :: Option.fold ~none:[] ~some:(fun i -> [ Value.Any i ]) init
+    in
+    Eval.call ~by operands @@ fun read ->
+    laid_out ~by ~acc dt pl (read a) (read b) (Option.map read init)
 
 let contract ~by ?(sizes = []) ?acc ?init dt p a b =
   run ~by ?acc ?init dt (plan ~by ~sizes p (operand a) (operand b)) a b
