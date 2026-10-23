@@ -143,30 +143,9 @@ let map_on ~by (module K : Nx_kernel.S) (prog : P.t) loads dsts =
 (* [K]'s map of the one node [k] over the plain operands that follow [dst];
    [Wrong_dtype] where [k] does not take their dtypes, as no program does. *)
 let map1 (module K : Nx_kernel.S) k ~dst a =
-  let x = A.dtype a and y = A.dtype dst in
-  if not (P.accepts1 k x y) then A.Wrong_dtype
-  else
-    K.map
-      (P.of_node ~ins:[| D.Any x |] (Op1 (k, D.Any y, 0)))
-      ~dsts:[| A.Any dst |] [| Nx_kernel.Plain a |]
-
-let map2 (module K : Nx_kernel.S) k ~dst a b =
-  let x = D.Any (A.dtype a) in
-  if not (P.accepts2 k (A.dtype a)) then A.Wrong_dtype
-  else
-    K.map
-      (P.of_node ~ins:[| x; x |] (Op2 (k, 0, 1)))
-      ~dsts:[| A.Any dst |]
-      [| Nx_kernel.Plain a; Nx_kernel.Plain b |]
-
-let map3 (module K : Nx_kernel.S) k ~dst c a b =
-  let x = D.Any (A.dtype a) in
-  if not (P.accepts3 k (A.dtype c) (A.dtype a)) then A.Wrong_dtype
-  else
-    K.map
-      (P.of_node ~ins:[| D.Any (A.dtype c); x; x |] (Op3 (k, 0, 1, 2)))
-      ~dsts:[| A.Any dst |]
-      [| Nx_kernel.Plain c; Nx_kernel.Plain a; Nx_kernel.Plain b |]
+  match Prim.prog1 k (A.dtype a) (A.dtype dst) with
+  | None -> A.Wrong_dtype
+  | Some p -> K.map p ~dsts:[| A.Any dst |] [| Nx_kernel.Plain a |]
 
 (* [a] stored afresh, C-contiguous, on its device. *)
 let copy_array ~by kernels a =
@@ -1344,64 +1323,6 @@ let destination (type v s w r) (dt : (w, r) D.t) (x : (v, s) A.t) : (w, r) A.t =
   then A.v dt l (Rig.Buffer.create (A.device x) (D.bytes dt (L.numel l)))
   else A.create (A.device x) dt (L.shape l)
 
-(* [run] into fresh memory over the claimed handle [h], operand [i], whose
-   array is [a], [h] given back where it raises. *)
-let into_fresh i dt h a run =
-  unclaimed [ Donate.Handle (i, h) ] (fun () -> run (destination dt a) a)
-
-(* The one-node map over the handle [h], operand [i], whose array is [a], its
-   result of [dt]: [h] is claimed, then its memory takes the result where rig
-   holds it exclusive and it {!Donate.holds} the result, as {!Donate.reuse}
-   decides for any operation, and [h] stays dead if [run] raises; otherwise
-   the result is fresh, the memory, where no other value reads it, is freed
-   after the kernel, and [h] is given back where [run] raises. Its other
-   operands are live arrays, so none is the donor, whose word is offered, and
-   each is read at the result's own index. The kind's rule holds over them:
-   an operation it refuses goes off the fast path, which checks it before any
-   claim. [run dst a'] is the kernel into [dst] with [a'] for [h]. *)
-let donated (type v s w r d) ~by i (dt : (w, r) D.t) (h : (v, s, d) Value.t)
-    (a : (v, s) A.t) (run : (w, r) A.t -> (v, s) A.t -> (w, r, d) Value.t) :
-    (w, r, d) Value.t =
-  let l = A.layout a in
-  let reusable = Donate.holds (D.Any dt) (L.contiguous (L.shape l)) a in
-  (* Checked first, as any operation's operands are. *)
-  Prim.alive ~by i h;
-  Donate.claim_handle ~by i h;
-  match D.equal_witness (A.dtype a) dt with
-  | Some Type.Equal when reusable -> (
-      match Donate.take ~by (A.buffer a) with
-      | Some b' ->
-          let a' = A.v (A.dtype a) l b' in
-          run a' a'
-      | None -> into_fresh i dt h a run)
-  | Some _ | None ->
-      let r = into_fresh i dt h a run in
-      ignore (Rig.Buffer.free (A.buffer a) : bool);
-      r
-
-(* Whether [x] is a live array at [at]. *)
-let live_at (type v s d) (at : d Devices.placement) (x : (v, s, d) Value.t) =
-  match x with
-  | Value.Array r -> r.at == at && r.dead == Value.Live
-  | Value.Shards _ | Value.Donated _ | Value.Deferred _ | Value.Traced _ ->
-      false
-
-(* Whether [h] is a handle over one array at [at], whose set has kernels: the
-   donated fast paths'. *)
-let handle_at (type v s d) (at : d Devices.placement) (h : (v, s, d) Value.t) =
-  match h with
-  | Value.Donated d ->
-      d.at == at
-      && Iarray.length d.arrays = 1
-      && Devices.kernels (Devices.set at) <> None
-  | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> false
-
-(* [a] as a live value at [at]. *)
-let value_of at a = Value.Array { at; a; dead = Value.Live }
-
-(* [at]'s kernels, where [handle_at] holds. *)
-let kernels_at at = Option.get (Devices.kernels (Devices.set at))
-
 (* The one-node maps, built and run: the paths off the fast one. *)
 let run1 ~by k dt x =
   let v, () = run ~by (Prim.op1 ~by k dt x) in
@@ -1415,209 +1336,77 @@ let run3 ~by k c x y =
   let v, () = run ~by (Prim.op3 ~by k c x y) in
   v
 
-(* Raises for [node], which [K] declined into the first of [arrays] over the
-   rest, as {!refused} names a one-node map. *)
-let refused_node ~by (module K : Nx_kernel.S) node arrays =
+(* Raises for the one-node program [p], which [K] declined into the first of
+   [arrays] over the rest, as {!refused} names a one-node map. *)
+let refused_node ~by (module K : Nx_kernel.S) p arrays =
   let (A.Any dst) = List.hd arrays in
   let dts = List.map (fun (A.Any a) -> D.Any (A.dtype a)) arrays in
-  declined ~by ~kernels:K.name node (A.device dst) dts
+  declined ~by ~kernels:K.name (Option.get (P.single p)) (A.device dst) dts
 
-let apply1 (type v s w r d) ~by k (dt : (w, r) D.t)
-    (x : (v, s, d) Value.t) : (w, r, d) Value.t =
+(* Whether [x] and [y] are live arrays at one placement. *)
+let beside (type v s w r d) (x : (v, s, d) Value.t) (y : (w, r, d) Value.t) =
+  match (x, y) with
+  | Value.Array rx, Value.Array ry ->
+      rx.at == ry.at && rx.dead == Value.Live && ry.dead == Value.Live
+  | _ -> false
+
+let apply1 (type v s w r d) ~by k (dt : (w, r) D.t) (x : (v, s, d) Value.t) :
+    (w, r, d) Value.t =
   match x with
-  | Value.Array rx when rx.dead == Value.Live -> (
-      let at = rx.at and a = rx.a in
-      match Devices.kernels (Devices.set at) with
-      | None -> run1 ~by k dt x
-      | Some (module K) -> (
+  | Value.Array ({ at; a; _ } as rx) when rx.dead == Value.Live -> (
+      match (Devices.kernels (Devices.set at), Prim.prog1 k (A.dtype a) dt) with
+      | Some (module K), Some p -> (
           let dst = destination dt a in
-          match map1 (module K) k ~dst a with
+          match K.map p ~dsts:[| A.Any dst |] [| Plain a |] with
           | Done -> Value.Array { at; a = dst; dead = Value.Live }
-          | Declined ->
-              refused_node ~by (module K)
-                (Op1 (k, D.Any dt, 0))
-                [ A.Any dst; A.Any a ]
-          | Wrong_dtype -> run1 ~by k dt x
+          | Declined -> refused_node ~by (module K) p [ A.Any dst; A.Any a ]
           | refusal ->
               recheck ~by 0 x;
-              A.refused by refusal [ A.Any dst; A.Any a ]))
-  | Value.Donated dx when handle_at dx.at x && P.accepts1 k (Prim.dtype x) dt
-    ->
-      let (module K) = kernels_at dx.at in
-      donated ~by 0 dt x (Iarray.get dx.arrays 0) (fun dst a ->
-          match map1 (module K) k ~dst a with
-          | Done -> value_of dx.at dst
-          | Declined ->
-              refused_node ~by (module K)
-                (Op1 (k, D.Any dt, 0))
-                [ A.Any dst; A.Any a ]
-          | Wrong_dtype -> run1 ~by k dt (value_of dx.at a)
-          | refusal -> A.refused by refusal [ A.Any dst; A.Any a ])
-  | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Deferred _
-  | Value.Traced _ ->
-      run1 ~by k dt x
+              A.refused by refusal [ A.Any dst; A.Any a ])
+      | _ -> run1 ~by k dt x)
+  | _ -> run1 ~by k dt x
 
-(* [k] into [dst] over the arrays [a] and [b] at [at]: [Done] is the result, a
-   decline raises, and a dtype or shape refusal is the operation run over them
-   as live values. *)
-let kernel2 (type v s w r d) ~by (module K : Nx_kernel.S) k
-    (dt : (w, r) D.t) (at : d Devices.placement) (x : (v, s, d) Value.t)
-    (y : (v, s, d) Value.t) (dst : (w, r) A.t) (a : (v, s) A.t)
-    (b : (v, s) A.t) : (w, r, d) Value.t =
-  match map2 (module K) k ~dst a b with
-  | Done -> value_of at dst
-  | Declined ->
-      refused_node ~by (module K) (Op2 (k, 0, 1))
-        [ A.Any dst; A.Any a; A.Any b ]
-  | Wrong_dtype | Shape_mismatch ->
-      run2 ~by k dt (value_of at a) (value_of at b)
-  | refusal ->
-      recheck ~by 0 x;
-      recheck ~by 1 y;
-      A.refused by refusal [ A.Any dst; A.Any a; A.Any b ]
-
-(* As [kernel2], for three operands. *)
-let kernel3 (type a b v s d) ~by (module K : Nx_kernel.S) k
-    (at : d Devices.placement) (vc : (a, b, d) Value.t) (vx : (v, s, d) Value.t)
-    (vy : (v, s, d) Value.t) (dst : (v, s) A.t) (c : (a, b) A.t)
-    (x : (v, s) A.t) (y : (v, s) A.t) : (v, s, d) Value.t =
-  match map3 (module K) k ~dst c x y with
-  | Done -> value_of at dst
-  | Declined ->
-      refused_node ~by (module K) (Op3 (k, 0, 1, 2))
-        [ A.Any dst; A.Any c; A.Any x; A.Any y ]
-  | Wrong_dtype | Shape_mismatch ->
-      run3 ~by k (value_of at c) (value_of at x) (value_of at y)
-  | refusal ->
-      recheck ~by 0 vc;
-      recheck ~by 1 vx;
-      recheck ~by 2 vy;
-      A.refused by refusal [ A.Any dst; A.Any c; A.Any x; A.Any y ]
-
-(* Whether the one-node map [k] over [x] and [y] is well formed. A constant is
-   read for an operation only once its rule holds, so that a refused operation
-   computes nothing. *)
-let well_formed2 k x y = P.accepts2 k (Prim.dtype x) && Prim.same_shape x y
-
-let well_formed3 k c x y =
-  P.accepts3 k (Prim.dtype c) (Prim.dtype x)
-  && Prim.same_shape c x && Prim.same_shape x y
-
-let rec apply2 : type v s w r d.
-    by:string ->
-    P.op2 ->
-    (w, r) D.t ->
-    (v, s, d) Value.t ->
-    (v, s, d) Value.t ->
-    (w, r, d) Value.t =
- fun ~by k dt x y ->
+let apply2 (type v s w r d) ~by k (dt : (w, r) D.t) (x : (v, s, d) Value.t)
+    (y : (v, s, d) Value.t) : (w, r, d) Value.t =
   match (x, y) with
-  | Value.Array rx, Value.Array ry
-    when rx.at == ry.at && rx.dead == Value.Live && ry.dead == Value.Live -> (
-      let at = rx.at and a = rx.a and b = ry.a in
-      match Devices.kernels (Devices.set at) with
-      | None -> run2 ~by k dt x y
-      | Some (module K) -> (
+  | Value.Array { at; a; _ }, Value.Array { a = b; _ } when beside x y -> (
+      match (Devices.kernels (Devices.set at), Prim.prog2 k (A.dtype a)) with
+      | Some (module K), Some p -> (
           let dst = destination dt a in
-          match map2 (module K) k ~dst a b with
+          match K.map p ~dsts:[| A.Any dst |] [| Plain a; Plain b |] with
           | Done -> Value.Array { at; a = dst; dead = Value.Live }
           | Declined ->
-              refused_node ~by (module K) (Op2 (k, 0, 1))
-                [ A.Any dst; A.Any a; A.Any b ]
-          | Wrong_dtype | Shape_mismatch -> run2 ~by k dt x y
+              refused_node ~by (module K) p [ A.Any dst; A.Any a; A.Any b ]
           | refusal ->
               recheck ~by 0 x;
               recheck ~by 1 y;
-              A.refused by refusal [ A.Any dst; A.Any a; A.Any b ]))
-  | Value.Donated dx, Value.Array ry
-    when handle_at ry.at x && live_at ry.at y
-         && P.accepts2 k (Prim.dtype x) ->
-      let (module K) = kernels_at ry.at in
-      donated ~by 0 dt x (Iarray.get dx.arrays 0) (fun dst a ->
-          kernel2 ~by (module K) k dt ry.at x y dst a ry.a)
-  | Value.Array rx, Value.Donated dy
-    when handle_at rx.at y && live_at rx.at x
-         && P.accepts2 k (Prim.dtype x) ->
-      let (module K) = kernels_at rx.at in
-      donated ~by 1 dt y (Iarray.get dy.arrays 0) (fun dst b ->
-          kernel2 ~by (module K) k dt rx.at x y dst rx.a b)
-  | Value.Array rx, Value.Deferred _
-    when rx.dead == Value.Live && well_formed2 k x y ->
-      (* A constant beside a value is read where the value lies. *)
-      apply2 ~by k dt x (at rx.at y)
-  | Value.Deferred _, Value.Array ry
-    when ry.dead == Value.Live && well_formed2 k x y ->
-      apply2 ~by k dt (at ry.at x) y
+              A.refused by refusal [ A.Any dst; A.Any a; A.Any b ])
+      | _ -> run2 ~by k dt x y)
   | _ -> run2 ~by k dt x y
 
-(* Where the constants among [c], [x] and [y] are read: the one placement of the
-   live arrays among them, where every other is a constant. *)
-let beside3 (type a b v s d) (c : (a, b, d) Value.t) (x : (v, s, d) Value.t)
-    (y : (v, s, d) Value.t) : d Devices.placement option =
-  let place : type v s. (v, s, d) Value.t -> d Devices.placement option option =
-    function
-    | Value.Deferred _ -> Some None
-    | Value.Array r when r.dead == Value.Live -> Some (Some r.at)
-    | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> None
-  in
-  match (place c, place x, place y) with
-  | Some pc, Some px, Some py -> (
-      match List.filter_map Fun.id [ pc; px; py ] with
-      | p :: rest when List.for_all (( == ) p) rest -> Some p
-      | _ -> None)
-  | _ -> None
-
-let rec apply3 : type a b v s d.
-    by:string ->
-    P.op3 ->
-    (a, b, d) Value.t ->
-    (v, s, d) Value.t ->
-    (v, s, d) Value.t ->
-    (v, s, d) Value.t =
- fun ~by k c x y ->
+let apply3 (type a b v s d) ~by k (c : (a, b, d) Value.t)
+    (x : (v, s, d) Value.t) (y : (v, s, d) Value.t) : (v, s, d) Value.t =
   match (c, x, y) with
-  | Value.Array rc, Value.Array rx, Value.Array ry
-    when rc.at == rx.at && rc.at == ry.at && rc.dead == Value.Live
-         && rx.dead == Value.Live && ry.dead == Value.Live -> (
-      let at = rc.at and ca = rc.a and a = rx.a and b = ry.a in
-      match Devices.kernels (Devices.set at) with
-      | None -> run3 ~by k c x y
-      | Some (module K) -> (
+  | ( Value.Array { at; a = ca; _ },
+      Value.Array { a; _ },
+      Value.Array { a = b; _ } )
+    when beside c x && beside x y -> (
+      let prog = Prim.prog3 k (A.dtype ca) (A.dtype a) in
+      match (Devices.kernels (Devices.set at), prog) with
+      | Some (module K), Some p -> (
           let dst = destination (A.dtype a) a in
-          match map3 (module K) k ~dst ca a b with
+          let loads = [| Nx_kernel.Plain ca; Plain a; Plain b |] in
+          match K.map p ~dsts:[| A.Any dst |] loads with
           | Done -> Value.Array { at; a = dst; dead = Value.Live }
           | Declined ->
-              refused_node ~by (module K) (Op3 (k, 0, 1, 2))
+              refused_node ~by (module K) p
                 [ A.Any dst; A.Any ca; A.Any a; A.Any b ]
-          | Wrong_dtype | Shape_mismatch -> run3 ~by k c x y
           | refusal ->
               recheck ~by 0 c;
               recheck ~by 1 x;
               recheck ~by 2 y;
-              A.refused by refusal [ A.Any dst; A.Any ca; A.Any a; A.Any b ]))
-  | Value.Donated dc, Value.Array rx, Value.Array ry
-    when handle_at rx.at c && live_at rx.at x && live_at rx.at y
-         && P.accepts3 k (Prim.dtype c) (Prim.dtype x) ->
-      let (module K) = kernels_at rx.at in
-      donated ~by 0 (A.dtype rx.a) c (Iarray.get dc.arrays 0)
-        (fun dst c' -> kernel3 ~by (module K) k rx.at c x y dst c' rx.a ry.a)
-  | Value.Array rc, Value.Donated dx, Value.Array ry
-    when handle_at rc.at x && live_at rc.at c && live_at rc.at y
-         && P.accepts3 k (Prim.dtype c) (Prim.dtype x) ->
-      let (module K) = kernels_at rc.at in
-      donated ~by 1 (A.dtype ry.a) x (Iarray.get dx.arrays 0)
-        (fun dst x' -> kernel3 ~by (module K) k rc.at c x y dst rc.a x' ry.a)
-  | Value.Array rc, Value.Array rx, Value.Donated dy
-    when handle_at rc.at y && live_at rc.at c && live_at rc.at x
-         && P.accepts3 k (Prim.dtype c) (Prim.dtype x) ->
-      let (module K) = kernels_at rc.at in
-      donated ~by 2 (A.dtype rx.a) y (Iarray.get dy.arrays 0)
-        (fun dst y' -> kernel3 ~by (module K) k rc.at c x y dst rc.a rx.a y')
-  | (Value.Deferred _, _, _ | _, Value.Deferred _, _ | _, _, Value.Deferred _)
-    when well_formed3 k c x y -> (
-      match beside3 c x y with
-      | Some p -> apply3 ~by k (at p c) (at p x) (at p y)
-      | None -> run3 ~by k c x y)
+              A.refused by refusal [ A.Any dst; A.Any ca; A.Any a; A.Any b ])
+      | _ -> run3 ~by k c x y)
   | _ -> run3 ~by k c x y
 
 (* The contraction of live arrays on one device, at physically one placement

@@ -1912,22 +1912,123 @@ let refused ~by node ins =
     (String.concat ", "
        (List.map (fun (D.Any dt) -> D.name dt) (Iarray.to_list ins)))
 
-let one_node node dt ins loads =
+(* Each kind's code: its index among its arity's kinds. *)
+let unary_code : P.unary -> int = function
+  | Neg -> 0
+  | Recip -> 1
+  | Abs -> 2
+  | Sign -> 3
+  | Sqrt -> 4
+  | Exp -> 5
+  | Exp2 -> 6
+  | Log -> 7
+  | Log2 -> 8
+  | Log1p -> 9
+  | Expm1 -> 10
+  | Sin -> 11
+  | Cos -> 12
+  | Tan -> 13
+  | Asin -> 14
+  | Acos -> 15
+  | Atan -> 16
+  | Sinh -> 17
+  | Cosh -> 18
+  | Tanh -> 19
+  | Asinh -> 20
+  | Acosh -> 21
+  | Atanh -> 22
+  | Erf -> 23
+  | Floor -> 24
+  | Ceil -> 25
+  | Round -> 26
+  | Trunc -> 27
+
+let op1_code : P.op1 -> int = function
+  | Copy -> 0
+  | Cast -> 1
+  | Bitcast -> 2
+  | Unary u -> 3 + unary_code u
+
+let binary_code : P.binary -> int = function
+  | Add -> 0
+  | Sub -> 1
+  | Mul -> 2
+  | Fdiv -> 3
+  | Idiv -> 4
+  | Mod -> 5
+  | Pow -> 6
+  | Atan2 -> 7
+  | Maximum -> 8
+  | Minimum -> 9
+  | And -> 10
+  | Or -> 11
+  | Xor -> 12
+  | Threefry -> 13
+
+let op2_code : P.op2 -> int = function
+  | Binary b -> binary_code b
+  | Compare Equal -> 14
+  | Compare Not_equal -> 15
+  | Compare Less -> 16
+  | Compare Less_equal -> 17
+
+let op3_code : P.op3 -> int = function Where -> 0 | Fma -> 1
+let dtypes = List.length D.all
+
+(* The one-node programs made so far, by kind and dtypes, each made once: a
+   map that finds its program builds none. A slot that two domains fill at
+   once keeps either's program; they are equal. *)
+let progs1 : P.t option array = Array.make (31 * dtypes * dtypes) None
+let progs2 : P.t option array = Array.make (18 * dtypes) None
+let progs3 : P.t option array = Array.make (2 * dtypes * dtypes) None
+
+(* [make ()] kept at [table.(i)]; [None] where its kind does not take its
+   dtypes. *)
+let made table i make =
+  match make () with
+  | p ->
+      let p = Some p in
+      table.(i) <- p;
+      p
+  | exception Invalid_argument _ -> None
+
+(* The program of the one node [k] over operands of [x] into [y]. *)
+let prog1 (type v s w r) k (x : (v, s) D.t) (y : (w, r) D.t) =
+  let i = (((op1_code k * dtypes) + D.code x) * dtypes) + D.code y in
+  match progs1.(i) with
+  | Some _ as p -> p
+  | None ->
+      made progs1 i (fun () ->
+          P.of_node ~ins:[| D.Any x |] (Op1 (k, D.Any y, 0)))
+
+(* The program of the one node [k] over two operands of [x]. *)
+let prog2 (type v s) k (x : (v, s) D.t) =
+  let i = (op2_code k * dtypes) + D.code x in
+  match progs2.(i) with
+  | Some _ as p -> p
+  | None ->
+      made progs2 i (fun () ->
+          P.of_node ~ins:[| D.Any x; D.Any x |] (Op2 (k, 0, 1)))
+
+(* The program of the one node [k] over an operand of [c], then two of
+   [x]. *)
+let prog3 (type a b v s) k (c : (a, b) D.t) (x : (v, s) D.t) =
+  let i = (((op3_code k * dtypes) + D.code c) * dtypes) + D.code x in
+  match progs3.(i) with
+  | Some _ as p -> p
+  | None ->
+      made progs3 i (fun () ->
+          P.of_node ~ins:[| D.Any c; D.Any x; D.Any x |] (Op3 (k, 0, 1, 2)))
+
+(* The map of [prog] over [loads], into [dt]. *)
+let one_node prog dt loads =
   let (Any x) = load_any (Iarray.get loads 0) in
-  let shape = shape x in
-  Map
-    {
-      layout = L.contiguous shape;
-      prog = P.of_node ~ins node;
-      outs = Value.[ dt ];
-      loads;
-    }
+  Map { layout = L.contiguous (shape x); prog; outs = Value.[ dt ]; loads }
 
 let op1 ~by k dt x =
-  let node = P.Op1 (k, D.Any dt, 0) in
-  let ins : D.any iarray = [| D.Any (dtype x) |] in
-  if not (P.accepts1 k (dtype x) dt) then refused ~by node ins;
-  one_node node dt ins [| Plain x |]
+  match prog1 k (dtype x) dt with
+  | Some prog -> one_node prog dt [| Plain x |]
+  | None -> refused ~by (P.Op1 (k, D.Any dt, 0)) [| D.Any (dtype x) |]
 
 let ins2 x : D.any iarray =
   let i = D.Any (dtype x) in
@@ -1945,13 +2046,14 @@ let accepted3 ~by k c x =
     refused ~by (P.Op3 (k, 0, 1, 2)) (ins3 c x)
 
 let op2 ~by k dt x y =
-  accepted2 ~by k x;
-  one_node (P.Op2 (k, 0, 1)) dt (ins2 x) [| Plain x; Plain y |]
+  match prog2 k (dtype x) with
+  | Some prog -> one_node prog dt [| Plain x; Plain y |]
+  | None -> refused ~by (P.Op2 (k, 0, 1)) (ins2 x)
 
 let op3 ~by k c x y =
-  accepted3 ~by k c x;
-  one_node (P.Op3 (k, 0, 1, 2)) (dtype x) (ins3 c x)
-    [| Plain c; Plain x; Plain y |]
+  match prog3 k (dtype c) (dtype x) with
+  | Some prog -> one_node prog (dtype x) [| Plain c; Plain x; Plain y |]
+  | None -> refused ~by (P.Op3 (k, 0, 1, 2)) (ins3 c x)
 
 let rec iter_outs : type d q.
     ('v 's. ('v, 's, d) t -> unit) -> (d, q) outs -> q -> unit =
