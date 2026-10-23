@@ -73,7 +73,12 @@
    paths, an output's value a state of its terms in place of a monoid's
    element: a kernel makes a block's state from its terms, contiguous in
    the operand or copied so, and merges two states as the tree combines
-   values. A float result that is NaN is replaced as a monoid's is, but
+   values. Logsumexp's and Moments' first pass finds each output's center,
+   which the second takes. A Moments unit runs both in turn, the second
+   over terms the first left in the caches, but where an output's blocks
+   fall into groups on several threads, whose first passes all end before
+   any second starts. Logsumexp's passes, whose time is their exp's,
+   always run so. A float result that is NaN is replaced as a monoid's is, but
    Arg's, whose state holds its first NaN term, quieted as it is stored.
    Arg reads a staged operand in the carrier too; its extreme into the
    operand's dtype is the term at its position, copied and quieted.
@@ -2042,6 +2047,7 @@ typedef struct {
 typedef struct {
   const nx_cpu_monoid *f;   /* a monoid's kernels, or NULL */
   const nx_cpu_pass *r;     /* a stateful reduction's pass, or NULL */
+  const nx_cpu_pass *center; /* the pass each unit runs before [r], or NULL */
   const nx_cpu_scan_pass *z; /* an Arg scan's kernels, or NULL */
   double *centers;          /* its outputs' centers, a row of them a unit */
   int centering;            /* the pass stores the centers */
@@ -2087,6 +2093,7 @@ typedef struct {
   int64_t group;  /* blocks per group, a power of two */
   int64_t groups;
   uint8_t *scratch; /* each unit's group's values, where groups > 1 */
+  const uint8_t *staged_unit; /* a unit's terms in the carrier, or NULL */
   int64_t off[LANES]; /* a lane or fewer terms: their positions from the
                          output's first */
   _Atomic int *failed; /* set where a thread's work could not be taken */
@@ -2112,7 +2119,8 @@ typedef struct {
      (few). */
   _Alignas(64) uint8_t lanes[NX_CPU_FEW_BYTES];
   /* Terms in the carrier: a block's (states, staged_block), a unit's
-     (few), a piece's (run_states, quad), or one output's (nan_term). */
+     (few, center_units), a piece's (run_states, quad), or one output's
+     (nan_term). */
   _Alignas(64) uint8_t terms[2 * BLOCK * WIDEST];
   /* Arg's extremes in the carrier, before their terms (run_states). */
   _Alignas(64) uint8_t extremes[LANES * ROW];
@@ -2568,7 +2576,8 @@ static void states(const plan *q, work *wk, int64_t p, int64_t s, int64_t W,
   for (int64_t j = 0; j < W; j++) {
     int64_t o = p + j * s;
     const uint8_t *x = buf;
-    if (sourced(q) || !contiguous) stage_terms(q, wk, o, 0, 1, t0, n, buf);
+    if (q->staged_unit != NULL) x = q->staged_unit + t0 * q->w;
+    else if (sourced(q) || !contiguous) stage_terms(q, wk, o, 0, 1, t0, n, buf);
     else x = at(q, o + t0);
     q->r->block(x, n, t0, c != NULL ? c[j] : 0, &v[j]);
   }
@@ -2877,6 +2886,34 @@ static void finish_units(const plan *q, work *wk, int64_t lo, int64_t hi) {
     }
     for (; top > 1; top--) join(q, stack[top - 2], stack[top - 1], x.W);
     store(q, wk, &x, q->centers ? q->centers + u * q->row : NULL, stack[0]);
+  }
+}
+
+/* Each unit's two passes in turn, so that the second reads the unit's
+   terms from the caches: its centers by [q->center], then its values by
+   [q->r]. A unit's terms are one output's, or a row's of 16 outputs: 16
+   KiB for rows of 4096 float32 terms, 512 KiB for columns of 8192. One
+   output's that a pass would stage, converted or gathered, and that fit
+   the work's terms, are staged once for both, block by block as a pass
+   stages them. */
+static void center_units(const plan *q, work *wk, int64_t lo, int64_t hi) {
+  plan c = *q, v = *q;
+  c.r = q->center;
+  c.centering = 1;
+  int contiguous = q->nr == 1 && q->rs[0] == 1;
+  int once = q->row == 1 && (sourced(q) || !contiguous) &&
+             q->terms * q->w <= (int64_t)sizeof wk->terms;
+  for (int64_t u = lo; u < hi; u++) {
+    if (once) {
+      unit x = unit_of(q, u);
+      for (int64_t t = 0; t < q->terms; t += BLOCK) {
+        int64_t n = q->terms - t < BLOCK ? q->terms - t : BLOCK;
+        stage_terms(q, wk, x.p, 0, 1, t, n, wk->terms + t * q->w);
+      }
+      c.staged_unit = v.staged_unit = wk->terms;
+    }
+    reduce_units(&c, wk, u, u + 1);
+    reduce_units(&v, wk, u, u + 1);
   }
 }
 
@@ -3581,14 +3618,19 @@ static __attribute__((noinline)) int reduce_in(
     free(q.centers);
     return -1;
   }
-  if (center) {
+  if (center && r == NX_CPU_MOMENTS && q.groups == 1) {
+    q.center = &st->center;
+    units_job(units, bytes, 2 * cost, center_units, &q);
+  } else if (center) {
+    /* Logsumexp's passes, or an output's groups on several threads, whose
+       center needs them all before its value's pass. */
     q.r = &st->center;
     q.centering = 1;
     reduce_jobs(&q, units, bytes, cost);
     q.r = &st->value;
     q.centering = 0;
-  }
-  if (op == REDUCE) reduce_jobs(&q, units, bytes, cost);
+    reduce_jobs(&q, units, bytes, cost);
+  } else if (op == REDUCE) reduce_jobs(&q, units, bytes, cost);
   else if (q.groups == 1) units_job(units, bytes, cost, scan_units, &q);
   else {
     units_job(units * q.groups, bytes, cost, total_units, &q);
