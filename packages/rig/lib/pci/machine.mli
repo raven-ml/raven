@@ -175,8 +175,11 @@ type fn = Ops.fn = {
   pin : below:int -> int -> int -> ((int * int) list option, string) result;
       (** {!Function.pin}, as [alloc_dma] places its runs. *)
   unpin : int -> int -> unit;  (** {!Function.unpin}. *)
-  release : unit -> unit;
-      (** {!Function.release}, which turns the function's bus mastering off. *)
+  release : unit -> bool;
+      (** {!Function.release}, which turns the function's bus mastering off:
+          [false] if the memory the function reached may still be written once
+          given back, as when the system refused the write that turns its bus
+          mastering off. *)
 }
 (** The type for the operations on a function that a transport took. *)
 

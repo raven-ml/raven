@@ -298,7 +298,10 @@ let recorder () =
           log "pin 0x%x %d%s" a n (bound below);
           Ok (Some [ (a, n) ]));
       unpin = (fun a n -> log "unpin 0x%x %d" a n);
-      release = (fun () -> log "release");
+      release =
+        (fun () ->
+          log "release";
+          true);
     }
   in
   let id bus =

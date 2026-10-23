@@ -298,6 +298,8 @@ external flocked : string -> bool = "rig_pci_test_flocked"
 external flocked_fd : Unix.file_descr -> bool = "rig_pci_test_flocked_fd"
 external ofd_hold : string -> Unix.file_descr = "rig_pci_test_ofd_hold"
 external ofd_held : string -> bool = "rig_pci_test_ofd_held"
+external memfd : unit -> Unix.file_descr * string = "rig_pci_test_memfd"
+external refuse_writes : Unix.file_descr -> unit = "rig_pci_test_seal_writes"
 
 module Tree = struct
   type bar = Mem32 of int * int | Mem64 of int * int | Io of int * int
@@ -590,6 +592,20 @@ module Tree = struct
   let link root file target =
     mkdir_p (Filename.dirname (root / file));
     Unix.symlink target (root / file)
+
+  (* An open of [/proc/self/fd/N] opens the memfd itself, so a machine's open
+     of [file] reaches the copy. *)
+  let in_memory root file =
+    let path = root / file in
+    let s = In_channel.with_open_bin path In_channel.input_all in
+    let fd, opens = memfd () in
+    let n = Unix.write_substring fd s 0 (String.length s) in
+    if n <> String.length s then failwith "in_memory: a short write";
+    Unix.unlink path;
+    Unix.symlink opens path;
+    fd
+
+  let refuse_writes = refuse_writes
 
   (* Kernels *)
 

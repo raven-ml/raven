@@ -404,3 +404,47 @@ value rig_pci_test_clone(value v_src, value v_dst) {
   return Val_false;
 #endif
 }
+
+/* A file in memory whose writes can be refused, a memfd that takes seals,
+   on Linux alone: its descriptor and the path that opens it. Raises
+   Unix_error elsewhere, or if the system refuses. */
+#ifdef __linux__
+#include <sys/mman.h>
+#endif
+
+value rig_pci_test_memfd(value unit) {
+  (void)unit;
+#if defined(__linux__) && defined(MFD_ALLOW_SEALING)
+  CAMLparam0();
+  CAMLlocal2(path, pair);
+  int fd = memfd_create("rig-pci-test", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+  if (fd < 0) caml_uerror("memfd_create", Nothing);
+  char b[32];
+  snprintf(b, sizeof b, "/proc/self/fd/%d", fd);
+  path = caml_copy_string(b);
+  pair = caml_alloc_tuple(2);
+  Store_field(pair, 0, Val_int(fd));
+  Store_field(pair, 1, path);
+  CAMLreturn(pair);
+#elif defined(_WIN32)
+  caml_failwith("rig_pci_test_memfd: Windows has no memfd");
+#else
+  caml_unix_error(ENOSYS, "memfd_create", Nothing);
+#endif
+}
+
+/* Seals the memfd [v_fd] against writes: Linux refuses each later write
+   with EPERM, and keeps its reads. */
+value rig_pci_test_seal_writes(value v_fd) {
+#if defined(__linux__) && defined(F_SEAL_WRITE)
+  if (fcntl(Int_val(v_fd), F_ADD_SEALS, F_SEAL_WRITE) != 0)
+    caml_uerror("fcntl", Nothing);
+  return Val_unit;
+#elif defined(_WIN32)
+  (void)v_fd;
+  caml_failwith("rig_pci_test_seal_writes: Windows has no memfd");
+#else
+  (void)v_fd;
+  caml_unix_error(ENOSYS, "fcntl", Nothing);
+#endif
+}

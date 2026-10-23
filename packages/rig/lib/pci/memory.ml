@@ -548,7 +548,9 @@ let bus m r ~client =
    is live: once the function is released the GPU may be another instance's, so
    a free gives back system memory, pins and addresses only. The addresses go
    back last: the vendor's GPUs share the space, and another GPU's system memory
-   there would be mapped over this one's. *)
+   there would be mapped over this one's. A released function that may still
+   reach its memory ([Function.reaching]) keeps the memory, and so its
+   addresses. *)
 let give_back m h tables r =
   let map = r.mapping in
   (match (r.source, map.target, r.host, tables) with
@@ -561,8 +563,9 @@ let give_back m h tables r =
       List.iter (fun (pa, _) -> Page_table.pfree tables pa) map.pages
   | _ -> ());
   match r.source with
-  | Allocated | Borrowed _ -> Space.free m.reach.space map.va
-  | Peer _ -> ()
+  | (Allocated | Borrowed _) when not (Function.reaching h.fn) ->
+      Space.free m.reach.space map.va
+  | Allocated | Borrowed _ | Peer _ -> ()
 
 (* The last region out over a mapping unmaps it and gives back its holder's. *)
 let free m r =

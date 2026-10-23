@@ -959,7 +959,7 @@ let test_map_host_transport () =
       free_dma = (fun _ -> unused ());
       pin = (fun ~below:_ a n -> Ok (Some [ (a, n) ]));
       unpin = (fun _ _ -> ());
-      release = (fun () -> ());
+      release = (fun () -> true);
     }
   in
   let m =
@@ -1007,7 +1007,7 @@ let far_gpu ?(reserved = true) () =
       free_dma = (fun _ -> unused ());
       pin = (fun ~below:_ a n -> Ok (Some [ (a, n) ]));
       unpin = (fun _ _ -> ());
-      release = (fun () -> ());
+      release = (fun () -> true);
     }
   in
   let m =
@@ -1856,6 +1856,45 @@ let test_bus_misuse () =
   Memory.free x.t_memory borrowed;
   Function.free_dma x.t_fn lent
 
+(* A GPU whose bus mastering a release could not turn off
+
+   A kernel locked down while the process holds the GPU refuses every write
+   to its configuration space, the one that turns its bus mastering off
+   included. The GPU may then go on writing its memory, so no free gives it
+   back: neither the free after the release, nor one after a release that
+   keeps the GPU taken because another function was given its memory. *)
+
+type stop = Released | Kept
+
+let stops = [ ("released", Released); ("kept for another function", Kept) ]
+
+let test_refused_stop (_, stop) =
+  incr given_spaces;
+  let base = (1 lsl 42) + (!given_spaces * space_length) in
+  let root, m, buses = tree_machine ~others:[ nic () ] ~space:base 1 in
+  let bus = List.hd buses in
+  let config =
+    Tree.in_memory root (strf "sys/bus/pci/devices/%s/config" bus)
+  in
+  Fun.protect ~finally:(fun () -> Unix.close config) @@ fun () ->
+  let x = take_gpu ~space:(Space.create ~base space_length) m bus in
+  let host = given (Memory.alloc x.t_memory Host (64 * kib)) in
+  (match stop with
+  | Released -> ()
+  | Kept ->
+      let r = given (Memory.alloc x.t_memory Gpu (64 * kib)) in
+      ignore (require_ok (Memory.bus x.t_memory r ~client:nic_bus)));
+  Function.set_bus_master x.t_fn true;
+  Tree.refuse_writes config;
+  let bytes = held_bytes root and addresses = snd (tree_capacity x) in
+  Memory.release x.t_memory;
+  equal ~msg:"bus mastering after the release" int 0x4
+    (command_of root bus land 0x4);
+  Memory.free x.t_memory host;
+  equal ~msg:"system memory kept through the free" int bytes
+    (held_bytes root);
+  equal ~msg:"its addresses kept" int addresses (snd (tree_capacity x))
+
 let others =
   group ~timeout:patience "memory given to another function"
     [
@@ -1869,6 +1908,10 @@ let others =
       cases "a refusal names its cause and reserves nothing"
         ~name:(fun (n, _, _, _, _) -> n)
         refusals test_bus_refused;
+      cases
+        "a GPU whose bus mastering a release could not turn off keeps its \
+         memory through every free"
+        ~name:fst stops test_refused_stop;
       test "system memory needs no BAR and no route" test_bus_host_small;
       test "a GPU a transport reaches gives no memory" test_bus_far;
       test "bus of memory alloc did not give raises" test_bus_misuse;

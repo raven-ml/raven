@@ -96,14 +96,16 @@ let bus_master = 0x4
 let intx_disable = 0x400
 let stop_dma t = set_config t command 2 (config t command 2 land lnot bus_master)
 
-(* Whether the function masters the bus no more: its bit reads 0, or the
-   function left the bus and reads all ones. A write the system refused leaves
-   it on, and its memory then stays, which leaks safely. *)
-let stopped t =
-  let c = config t command 2 in
-  c land bus_master = 0 || c = 0xffff
+let masters c = c land bus_master <> 0 && c <> 0xffff
 
-let close_memory t s = if stopped t then Sysmem.close s
+(* Whether the function masters the bus no more. A write the system refused
+   leaves it on, and its memory then stays, which leaks safely. *)
+let stopped t = not (masters (config t command 2))
+
+let close_memory t s =
+  let stopped = stopped t in
+  if stopped then Sysmem.close s;
+  stopped
 
 (* Turns INTx off: the bit as it was. *)
 let intx_off t =
@@ -113,7 +115,7 @@ let intx_off t =
 
 (* Leaves a physical take's function as the take found it: its DMA stopped, its
    INTx as it was, and, once its bus mastering reads off, its memory files
-   gone. *)
+   gone. Is whether its bus mastering reads off. *)
 let give_back t s =
   stop_dma t;
   Option.iter
@@ -151,7 +153,9 @@ let () =
               (strf "releasing %s at exit: %s" t.bus (Printexc.to_string e))
       in
       let give_back t =
-        match t.way with Physical_take s -> give_back t s | Iommu_take _ -> ()
+        match t.way with
+        | Physical_take s -> ignore (give_back t s : bool)
+        | Iommu_take _ -> ()
       in
       let held = Atomic.get physical in
       List.iter (each stop_dma) held;
@@ -278,20 +282,23 @@ let forget t =
   | Iommu_take _ -> ()
 
 (* Behind an IOMMU a take's descriptors close whatever happens before: Linux
-   then stops the function's DMA. A physical take's close only once it is
-   given back and has left the exit's list, so that an exception before
-   leaves the take, files open and the function locked, for the exit to give
-   back, and the exit gives back no take through descriptors closed, whose
-   numbers files opened since may hold. *)
+   then stops the function's DMA, and the function reaches only what the
+   IOMMU maps for it, whose pages VFIO keeps until it unmaps them. A physical
+   take's close only once it is given back and has left the exit's list, so
+   that an exception before leaves the take, files open and the function
+   locked, for the exit to give back, and the exit gives back no take through
+   descriptors closed, whose numbers files opened since may hold. *)
 let release t =
   match t.way with
   | Iommu_take c ->
       Fun.protect ~finally:(fun () -> List.iter Unix.close t.fds) @@ fun () ->
-      Vfio.close c
+      Vfio.close c;
+      true
   | Physical_take s ->
-      give_back t s;
+      let stopped = give_back t s in
       unhold t;
-      List.iter Unix.close t.fds
+      List.iter Unix.close t.fds;
+      stopped
 
 let fn t =
   {

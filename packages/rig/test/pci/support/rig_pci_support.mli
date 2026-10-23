@@ -311,6 +311,17 @@ module Tree : sig
   (** [link root file target] makes [file], a path from the tree [root], a link
       to [target], making its directories. *)
 
+  val in_memory : string -> string -> Unix.file_descr
+  (** [in_memory root file] replaces [file], a path from the tree [root], with
+      a link to a copy of its bytes in memory, and is the descriptor that holds
+      the copy until its close. Raises [Unix.Unix_error] off Linux. *)
+
+  val refuse_writes : Unix.file_descr -> unit
+  (** [refuse_writes fd] makes Linux refuse every later write to the copy [fd]
+      holds ({!in_memory}) with [EPERM], as it refuses a write to
+      configuration space once the kernel is locked down, and keeps its
+      reads. *)
+
   val driver : string -> string -> string option
   (** [driver root bus] is the driver the tree [root] binds to the function at
       [bus]. *)

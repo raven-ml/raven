@@ -22,3 +22,8 @@ val command : int
 val bus_master : int
 (** [bus_master] is the command register's bit that lets the function master the
     bus, reaching system memory by DMA. *)
+
+val masters : int -> bool
+(** [masters c] is [true] iff a function whose command register reads [c] may
+    master the bus: its {!bus_master} bit is set and [c] is not all ones, as a
+    function that left the bus reads. *)

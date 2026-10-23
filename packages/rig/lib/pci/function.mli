@@ -107,9 +107,12 @@ val release : t -> unit
     nothing. An exception that ends a release part-way, such as an
     asynchronous one ({!Sys.Break}), leaves what the release had not given back
     to the process's exit, which leaves [f] at worst as a killed process leaves
-    a function it holds. Until a release returns, {!free_dma} and {!unpin} give
-    no memory back: [f] may still reach it, and it stays the process's until
-    the process exits.
+    a function it holds. Until a release returns, and after one that could not
+    turn [f]'s bus mastering off because the system refused the write, as a
+    kernel locked down meanwhile refuses every write to configuration space,
+    {!free_dma} and {!unpin} give no memory back: [f] may still reach it. The
+    memory stays the process's until the process exits, and taken physically,
+    past its exit ({{!dma}system memory}).
 
     Behind an IOMMU, Linux turns bus mastering off when the last descriptor of
     the function's files closes. A child of [fork] that has not run [exec]
@@ -361,8 +364,8 @@ val alloc_dma :
 
 val free_dma : t -> Window.t -> unit
 (** [free_dma f w] frees [w], and [f] reaches it no more. Once a release of
-    [f] began and until it returned, [w] stays the process's until it exits
-    instead ({!release}).
+    [f] began and until it returned, or after a release that could not turn
+    [f]'s bus mastering off, [w] stays instead, as {!release} states.
 
     Raises [Invalid_argument] if [w] is not a live window {!alloc_dma} returned
     for [f]. *)
@@ -393,8 +396,9 @@ val pin : t -> int -> int -> ((int * int) list option, string) result
 
 val unpin : t -> int -> int -> unit
 (** [unpin f a n] releases one pin of the [n] bytes at [a]. Once a release of
-    [f] began and until it returned, the memory stays locked until the process
-    exits instead ({!release}).
+    [f] began and until it returned, or after a release that could not turn
+    [f]'s bus mastering off, the memory stays locked instead, as {!release}
+    states.
 
     Raises [Invalid_argument] if [(a, n)] is not pinned for [f]. *)
 
@@ -411,6 +415,12 @@ val take_locked : Machine.t -> 's Sysfs.lock -> (t, string) result
    the length it replaces. A test shrinks it to pass a range with little
    memory. *)
 val set_own_length : int -> int
+
+(* [reaching f] is [true] iff [f] was released and may still reach the
+   memory it was given: its release has not returned, or it could not turn
+   [f]'s bus mastering off. {!free_dma} and {!unpin} give nothing back
+   then. *)
+val reaching : t -> bool
 
 (* [inherited f] is the [inherited] of [f]'s take ({!Machine.fn}) until
    {!forget} returns [Ok ()], and [false] after. *)

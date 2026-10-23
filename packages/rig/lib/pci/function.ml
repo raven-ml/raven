@@ -23,7 +23,8 @@ type t = {
          from any domain *)
   users : int Atomic.t;
   kept : bool Atomic.t; (* [keep] *)
-  given_back : bool Atomic.t; (* once [release] returned *)
+  quiet : bool Atomic.t;
+      (* once [release] returned with the bus mastering off *)
   lock : Lock.t;
   maps : (int * bool) Tables.Window.t; (* to its BAR and [combine] *)
   dmas : unit Tables.Window.t;
@@ -45,7 +46,7 @@ let make machine bus taken =
         dma_end = Atomic.make max_int;
         users = Atomic.make 0;
         kept = Atomic.make false;
-        given_back = Atomic.make false;
+        quiet = Atomic.make false;
         lock = Lock.create ();
         maps = Tables.Window.create 16;
         dmas = Tables.Window.create 16;
@@ -127,7 +128,8 @@ let nap_s = 0.0001
    take stays the process's until the exit gives it back. [released] is set
    first and once, so an exception that ends the release part-way leaves what
    it had not given back to the exit, and no later release gives anything
-   back twice. *)
+   back twice. The function is quiet once its bus mastering reads off: a
+   write the function refused leaves it writing the memory it reached. *)
 let release f =
   if not (Atomic.exchange f.released true) then begin
     while Atomic.get f.users > 0 do
@@ -140,16 +142,18 @@ let release f =
           ws)
     in
     List.iter f.fn.unmap maps;
-    if Atomic.get f.kept then
-      f.fn.set_config Local.command 2
-        (f.fn.config Local.command 2 land lnot Local.bus_master)
-    else f.fn.release ();
-    Atomic.set f.given_back true
+    let quiet =
+      if Atomic.get f.kept then begin
+        f.fn.set_config Local.command 2
+          (f.fn.config Local.command 2 land lnot Local.bus_master);
+        not (Local.masters (f.fn.config Local.command 2))
+      end
+      else f.fn.release ()
+    in
+    if quiet then Atomic.set f.quiet true
   end
 
-(* Whether [f] may still master the bus although released: its release began
-   and has not returned, as when an exception ended it part-way. *)
-let may_reach f = released f && not (Atomic.get f.given_back)
+let reaching f = released f && not (Atomic.get f.quiet)
 
 let keep f =
   live f "keep";
@@ -409,7 +413,7 @@ let alloc_dma ?(contiguous = false) ?va f n =
 
 let free_dma f w =
   unlist f f.dmas "free_dma" w;
-  if not (may_reach f) then f.fn.free_dma w
+  if not (reaching f) then f.fn.free_dma w
 
 let pin_entered f a n =
   on_page f "pin" a;
@@ -444,4 +448,4 @@ let unpin f a n =
       if not (Tables.Range.mem f.pins (a, n)) then
         invalid_argf "Function.unpin: 0x%x is not pinned for %s" a f.bus;
       Tables.Range.remove f.pins (a, n));
-  if not (may_reach f) then f.fn.unpin a n
+  if not (reaching f) then f.fn.unpin a n
