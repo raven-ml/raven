@@ -30,7 +30,12 @@
     copied padded into host memory, which the call holds until it returns,
     once along an axis its operand broadcasts and the pad leaves alone;
     a pad that fits no operand of its load's shape is refused with
-    [Shape_mismatch].
+    [Shape_mismatch]. A [reduce] reads a padded load in place where the
+    pad fills along kept axes alone, at their ends, the loop has no empty
+    axis, no destination aliases the load and the program reads no
+    coordinate: the outputs whose windows reach only the operand read it
+    where it lies, and each band of the others along a padded axis reads
+    a copy of the elements its windows reach.
 
     [contract] computes every contraction in [float32], [float64],
     [complex64], [complex128] or an integer of 4 to 64 bits, of [a], [b]
