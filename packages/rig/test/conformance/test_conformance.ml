@@ -307,7 +307,7 @@ let trips =
 (* host -> a -> b -> host, three copies of one submission that follow each
    other by their memory, is the identity. *)
 let copies (module G : Gpu) (ka, kb, n, (oa, ob)) =
-  G.with_ @@ fun t ->
+  G.with_shared @@ fun t ->
   if (G.D.facts t.g).copy_engine = None then
     skip ~reason:"the device has no copy engine" ();
   let at memory o = B.view (B.create ~memory t.d (n + o)) ~first:o ~length:n in
@@ -439,7 +439,7 @@ let chains (module G : Gpu) (kinds, links) =
   cover "an empty copy between two others"
     (List.exists Fun.id
        (List.mapi (fun i l -> i > 0 && i < last && l.n = 0) links));
-  G.with_ @@ fun t ->
+  G.with_shared @@ fun t ->
   if (G.D.facts t.g).copy_engine = None then
     skip ~reason:"the device has no copy engine" ();
   let capacity k =
@@ -506,7 +506,7 @@ let accesses =
    round over one memory. The host writes and reads through rig; a copy runs
    where a queue runs one, work otherwise. *)
 let readers (module G : Gpu) (place, writer, reader, same) =
-  G.with_ @@ fun t ->
+  G.with_shared @@ fun t ->
   let n = 16384 in
   let mem =
     match place with
@@ -575,7 +575,7 @@ let blit_cases =
 (* Blits and a fill of memory beside work on it that starts 50 ms late: each
    follows the work before it, and the work after it reads what it wrote. *)
 let blits (module G : Gpu) (memory, n) =
-  G.with_ @@ fun t ->
+  G.with_shared @@ fun t ->
   let late = 50_000_000 in
   let mem = B.create ~memory t.d n in
   let read_late o =
@@ -694,7 +694,7 @@ let edge_boxes (module G : Gpu) b =
     (b.slack = 0 && rows > 0 && width > 0);
   cover "Device memory on both sides, rows apart"
     (sm = Device && dm = Device && rows > 1 && (sp > 0 || dp > 0));
-  G.with_driver @@ fun g ->
+  G.with_shared_driver @@ fun g ->
   if (G.D.facts g).copy_engine = None then
     skip ~reason:"the device has no copy engine" ();
   let module E = Rig_gpu_support.Edge (G.D) in
@@ -775,7 +775,7 @@ let edge_fills (module G : Gpu) f =
   cover "an unaligned end" (f.n > 0 && (f.offset + f.n) land 3 <> 0);
   cover "a body of words" (f.n >= 8);
   cover "the fill ends its memory" (f.slack = 0 && f.n > 0);
-  G.with_driver @@ fun g ->
+  G.with_shared_driver @@ fun g ->
   if (G.D.facts g).copy_engine = None then
     skip ~reason:"the device has no copy engine" ();
   let module E = Rig_gpu_support.Edge (G.D) in
@@ -807,7 +807,7 @@ let buffer_fills (module G : Gpu) ((memory : B.kind), f) =
   cover "an unaligned view" (f.n > 0 && f.offset land 3 <> 0);
   cover "Device memory" (memory = Device && f.n > 0);
   cover "a byte with its high bit set" (f.n > 0 && Char.code f.byte >= 0x80);
-  G.with_ @@ fun t ->
+  G.with_shared @@ fun t ->
   let size = f.offset + f.n + f.slack in
   let b = filled ~memory t.d (pattern size 4) in
   B.fill (B.view b ~first:f.offset ~length:f.n) f.byte;
@@ -1145,7 +1145,7 @@ let launches_conform (module G : Gpu) =
     cover "threads along y or z" (ty > 1 || tz > 1);
     cover "a view at an offset" (g.first > 0);
     cover "a ref at an offset" (g.offset > 0);
-    G.with_ @@ fun t ->
+    G.with_shared @@ fun t ->
     let l = launches_on launcher t in
     let n = gx * gy * gz * tx * ty * tz in
     let bytes = g.offset + (4 * n) in
@@ -1391,7 +1391,7 @@ let launch_order (module G : Gpu) =
 let launches = Gen.list ~size:(Gen.int_range 1 12) (Gen.int_range 1 4)
 
 let workspace (module G : Gpu) sizes =
-  G.with_ @@ fun t ->
+  G.with_shared @@ fun t ->
   let s = B.create t.d (4 * 1024) in
   let f = G.D.facts t.g in
   let into ~dst ~src =
@@ -1446,8 +1446,11 @@ let idle_close (module G : Gpu) () =
    once it is Stopped. The law bounds the heaps, which a mapping a kernel
    driver holds is not in. A warm run of as many opens fills the caches and
    tables the opens grow to, and each closed device's memory returns at its
-   [free_cache]. *)
-let opens = 32
+   [free_cache]. The bound is per open, so a leak past it fails at any
+   count; the count sets the room left to a cache the warm run did not fill,
+   eight times what each open keeps below its bound. Over PCI each open boots
+   the GPU's GSP, in about 3.6 s: the 16 opens take a minute. *)
+let opens = 8
 
 (* What an open keeps of the C heap past its close, per device, a baseline
    measured on each driver's machine: rig's records, about 1 KiB, the

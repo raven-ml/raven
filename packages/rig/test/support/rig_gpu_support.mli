@@ -232,6 +232,17 @@ module type S = sig
   (** [with_driver f] is [f g], [g] {!driver}[ ()], stopped after [f] returns or
       raises. *)
 
+  val with_shared : (t -> 'a) -> 'a
+  (** [with_shared f] is [f t], [t] the GPU the last [with_shared] opened if
+      nothing opened since, else a new {!open_}. [t] stays open after [f]
+      returns, until the next open or {!release}, and is closed if [f]
+      raises. A property's cases share one open this way, which a GPU whose
+      open boots its firmware for seconds needs. *)
+
+  val with_shared_driver : (gpu -> 'a) -> 'a
+  (** [with_shared_driver f] is {!with_shared} for the GPU opened by its driver
+      alone, as {!with_driver} opens it. *)
+
   val release : unit -> unit
   (** [release ()] ends what the last {!open_} or {!driver} made, if a failed
       test left it: it closes a device in rig, and stops one opened alone. *)

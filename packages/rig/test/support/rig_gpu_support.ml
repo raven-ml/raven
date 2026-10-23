@@ -253,6 +253,8 @@ module type S = sig
   val stop_driver : gpu -> unit
   val handed : string -> t
   val with_driver : (gpu -> 'a) -> 'a
+  val with_shared : (t -> 'a) -> 'a
+  val with_shared_driver : (gpu -> 'a) -> 'a
   val release : unit -> unit
   val submit : t -> Rig.Submission.part array -> Rig.Point.t
   val submit_work : t -> work list -> Rig.Point.t
@@ -371,6 +373,43 @@ module Make (G : Gpu) = struct
   let with_driver f =
     let g = driver () in
     Fun.protect ~finally:(fun () -> stop_driver g) (fun () -> f g)
+
+  (* The last shared open, alive while it is what the last open made: any other
+     open or release ends it first. A case that raises ends it, so that the
+     next case, a shrink's included, starts on a device the failure did not
+     leave behind. *)
+  let shared_rig = ref None
+  let shared_alone = ref None
+
+  let sharing f t =
+    match f t with
+    | v -> v
+    | exception e ->
+        let bt = Printexc.get_raw_backtrace () in
+        release ();
+        Printexc.raise_with_backtrace e bt
+
+  let with_shared f =
+    let t =
+      match (!shared_rig, !opened) with
+      | Some t, In_rig d when d == t.d -> t
+      | _ ->
+          let t = open_ () in
+          shared_rig := Some t;
+          t
+    in
+    sharing f t
+
+  let with_shared_driver f =
+    let g =
+      match (!shared_alone, !opened) with
+      | Some g, Alone a when a == g -> g
+      | _ ->
+          let g = driver () in
+          shared_alone := Some g;
+          g
+    in
+    sharing f g
 
   let submit t ps =
     let s = Rig.Submission.make t.d ps in

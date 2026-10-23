@@ -1913,9 +1913,14 @@ let stop_running () =
 (* Opens and closes keep, of the C heap, each device's edge alone: 80 bytes,
    which glibc's allocator holds in a chunk of 96. Warm opens first make the
    process's client and the GPU's objects, which stay. The runtime's own
-   tables may grow by a few hundred bytes over the run. *)
+   tables may grow by a few hundred bytes over the run, so a leak of more
+   than 64 bytes an open fails it. Each open boots the GPU's GSP over PCI,
+   in about 3.5 s: the 20 opens take 70 s. *)
 let edge_chunk = 96
 let runtime_slack = 1024
+let warm_opens = 4
+let opens = 16
+let opens_timeout = 120.
 
 let opens_keep_edges () =
   let heap () =
@@ -1931,8 +1936,7 @@ let opens_keep_edges () =
     Gc.full_major ();
     Rig.free_cache t.d
   in
-  let opens = 32 in
-  for _ = 1 to 4 do
+  for _ = 1 to warm_opens do
     cycle ()
   done;
   let c = heap () in
@@ -1948,7 +1952,8 @@ let timeline =
     [
       test "a close of an idle device leaves the word at the last value"
         stop_idle;
-      test "opens and closes keep each device's edge alone of the C heap"
+      test ~timeout:opens_timeout
+        "opens and closes keep each device's edge alone of the C heap"
         opens_keep_edges;
       test
         "stop of a device waiting on a word that never moves leaves the word \
