@@ -183,17 +183,21 @@ let position ~rank s =
 
 (* A draw of [dt] and shape [s] per key of [k], by the sampler program [prog]:
    one map over the key's batch then [s], each element reading its key, its
-   position in [s], and [params], each stretched to the draw's shape. *)
+   position in [s], and [params], each stretched to the draw's shape. The
+   key's bitcast and the stretches come before the map: the call consumes
+   its operands once ({!Eval.call}). *)
 let draw ~by ?(params = [||]) (k : 'd key) dt s prog =
   let batch = batch k in
   let shape = Array.append batch s in
   Prim.check_shape ~by shape;
-  let w = pack ~by k in
+  Eval.call ~by (Value.Any k :: Array.to_list params) @@ fun read ->
+  let w = pack ~by (read k) in
   let w = reshape ~by (Array.append batch (Array.make (Array.length s) 1)) w in
+  let stretched (Value.Any x) = Value.Any (stretch ~by shape (read x)) in
   let loads =
     Array.append
       [| Value.Any (stretch ~by shape w) |]
-      (Array.map (fun (Value.Any x) -> Value.Any (stretch ~by shape x)) params)
+      (Array.map stretched params)
   in
   let position = position ~rank:(Array.length shape) s in
   let prog = P.bind prog position_operand (E.any position) in
@@ -226,7 +230,8 @@ let walk c k = of_tensor (Ptree.Walk.tensor c k)
 (* The keys [f ~key] gives at each element of [shape], whose last axes follow
    [k]'s batch. *)
 let keys ~by (k : 'd key) shape f : 'd key =
-  let w = pack ~by k in
+  Eval.call ~by [ Value.Any k ] @@ fun read ->
+  let w = pack ~by (read k) in
   let ins : D.any iarray = [| D.Any D.Uint64 |] in
   let out = f ~key:(E.input 0 D.Uint64) in
   let w = stretch ~by shape w in
@@ -275,8 +280,9 @@ let fold_in k data = fold_in_by ~by:"Nx.Rng.fold_in" k data
 let fold_in_tensor (k : 'd key) (i : (int32, D.int32_elt, 'd) Value.t) : 'd key
     =
   let by = "Nx.Rng.fold_in_tensor" in
-  let w = pack ~by k in
   let shape = Prim.broadcast_shape ~by (batch k) (Prim.shape i) in
+  Eval.call ~by [ Value.Any k; Value.Any i ] @@ fun read ->
+  let w = pack ~by (read k) and i = read i in
   let ins : D.any iarray = [| D.Any D.Uint64; D.Any D.Int32 |] in
   let v = E.(bitcast D.Uint64 (cast D.Int64 (input 1 D.Int32))) in
   let w32 = u64 two32 in
@@ -527,6 +533,11 @@ let once ~by p f = Donate.resolve ~by [ Value.Any p ] (fun read -> f (read p))
 let once2 ~by a b f =
   Donate.resolve ~by [ Value.Any a; Value.Any b ] (fun read ->
       f (read a) (read b))
+
+(* A sampler that computes on its draw reads its key once too: its operands
+   then, [key] last. *)
+let with_operands xs key =
+  match key with None -> xs | Some k -> xs @ [ Value.Any k ]
 
 (* [p 2^53] is exact at the compute dtype, [p] being at most 1: the draw is 53
    bits of block [j] below it, rounded up, at every dtype. *)
@@ -1224,7 +1235,8 @@ let dirichlet_by ~by ?key a =
 
 let dirichlet ?key a =
   let by = "Nx.Rng.dirichlet" in
-  once ~by a (dirichlet_by ~by ?key)
+  Donate.resolve ~by (with_operands [ Value.Any a ] key) @@ fun read ->
+  dirichlet_by ~by ?key:(Option.map read key) (read a)
 
 (* Categorical *)
 
@@ -1265,7 +1277,9 @@ let categorical ?key ?(axis = -1) logits =
     invalid_argf "%s: axis %d of %s %a has no category" by axis (D.name dt)
       pp_shape s;
   Prim.alive ~by 0 logits;
-  let key = resolve ~by ~after:1 key in
+  Donate.resolve ~by (with_operands [ Value.Any logits ] key) @@ fun read ->
+  let logits = read logits in
+  let key = resolve ~by ~after:1 (Option.map read key) in
   let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
   let prog =
     lowered categorical_programs dt [| D.Any dt |] (fun ~key ~j ->
@@ -1309,7 +1323,9 @@ let permutation ?key n =
   let prog =
     lowered permutation_programs D.Uint64 [||] (fun ~key ~j -> block ~key j)
   in
-  let words = draw ~by (resolve ~by ~after:0 key) D.Uint64 [| n |] prog in
+  Donate.resolve ~by (with_operands [] key) @@ fun read ->
+  let key = resolve ~by ~after:0 (Option.map read key) in
+  let words = draw ~by key D.Uint64 [| n |] prog in
   let axis = Array.length (Prim.shape words) - 1 in
   let _, positions =
     Eval.eval ~by
