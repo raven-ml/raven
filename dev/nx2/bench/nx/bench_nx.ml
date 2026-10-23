@@ -687,12 +687,14 @@ let embedding_rows =
       ])
     [ ("uniform", uniform_ids); ("zipf", zipf_ids) ]
 
-(* The gradient of a take along axis 0 of a bfloat16 table of 256K rows of
-   64, a position drawn uniformly for each element: its updates added each
-   into its own column, each call into the last call's table, donated. *)
-let take_along_grad () =
-  let s = [| 1 lsl 18; 64 |] in
-  let p = Nx.Rng.randint ~key:(Nx.Rng.key 12) ~high:(1 lsl 18) s in
+(* The gradient of a take along axis 0 of a bfloat16 table of [rows] rows
+   of [cols], a position drawn uniformly for each element: its updates
+   added each into its own column, each call into the last call's table,
+   donated. Of 256K rows of 64, the columns are more than the threads; of
+   1M rows of 3, fewer, so that threads split each column's targets. *)
+let take_along_grad rows cols () =
+  let s = [| rows; cols |] in
+  let p = Nx.Rng.randint ~key:(Nx.Rng.key 12) ~high:rows s in
   let g = on_host (Nx.Rng.uniform ~key:(Nx.Rng.key 11) D.Bfloat16 s) in
   let table = Nx.copy (on_host (Nx.zeros D.Bfloat16 s)) in
   (on_host (Nx.cast D.Int64 p), g, ref table)
@@ -711,7 +713,11 @@ let index_rows =
         ~setup:(fun () -> host (1 lsl 19))
         (fun x -> Nx.concatenate ~axis:0 [ x; x ]);
       Thumper.bench_with_setup "take-along-grad-bf16-256K-by-64"
-        ~setup:take_along_grad add_rows;
+        ~setup:(take_along_grad (1 lsl 18) 64)
+        add_rows;
+      Thumper.bench_with_setup "take-along-grad-bf16-1M-by-3"
+        ~setup:(take_along_grad (1 lsl 20) 3)
+        add_rows;
     ]
     @ embedding_rows)
 
