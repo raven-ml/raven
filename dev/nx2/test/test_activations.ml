@@ -687,6 +687,57 @@ let lanes s =
   let total = Array.fold_left ( * ) 1 s in
   List.init (if n = 0 then 0 else total / n) (fun l -> Array.init n (fun j -> (l * n) + j))
 
+(* The full blocks of 1024 terms of one of [outputs] lanes of [n] that the
+   CPU kernels reduce in one call, before its cap of 32 KiB of terms:
+   below 64 outputs, a lane's blocks fall into groups of a power of two,
+   about 64 groups in all, and a call takes one group's full blocks. *)
+let blocks_a_call ~outputs n =
+  let blocks = (n + 1023) / 1024 in
+  let group =
+    if outputs >= 64 || blocks <= 1 then blocks
+    else
+      let want = (64 + outputs - 1) / outputs in
+      let each = (blocks + want - 1) / want in
+      let rec up g = if g < each then up (2 * g) else g in
+      up 1
+  in
+  min group (n / 1024)
+
+(* Covers the CPU kernels' calls of several full blocks of a lane of [n]
+   in [s] at [dt], and of more than the 32 KiB a call holds. *)
+let covers_blocks (type s) (dt : (float, s) D.t) s n =
+  let outputs = Array.fold_left ( * ) 1 s / n in
+  let b = blocks_a_call ~outputs n in
+  cover "several full blocks a call" (b >= 2);
+  cover "more full blocks than a call holds" (b > 256 / D.bits dt)
+
+(* As many lanes as the CPU kernels aim their calls at, each of a few
+   more full blocks than a call of float32 holds: some of every lane's
+   calls take several blocks, and some reach the cap. *)
+let wide_rows =
+  let open Gen in
+  let* r = int_range 64 66 in
+  let+ k = int_range 9217 9300 in
+  [| r; k |]
+
+(* [n] values within [bound], zeros of either sign among them. Past a few
+   blocks, from a drawn seed: drawing each value takes seconds there. *)
+let values_within bound n =
+  let open Gen in
+  let value =
+    frequency
+      [ (8, float_range (-.bound) bound); (1, constant 0.); (1, constant (-0.)) ]
+  in
+  if n <= 16384 then array ~size:(constant n) value
+  else
+    let+ seed = int in
+    let st = Random.State.make [| seed |] in
+    Array.init n (fun _ ->
+        match Random.State.int st 10 with
+        | 0 -> 0.
+        | 1 -> -0.
+        | _ -> Random.State.float st (2. *. bound) -. bound)
+
 let softmax_case =
   let open Gen in
   let* s =
@@ -697,14 +748,11 @@ let softmax_case =
           let* r = int_range 1 3 in
           let+ k = of_list ~pp:Format.pp_print_int [ 1025; 2048; 3000 ] in
           [| r; k |] );
+        (1, wide_rows);
       ]
   in
   let n = Array.fold_left ( * ) 1 s in
-  let* xs =
-    array ~size:(constant n)
-      (frequency
-         [ (8, float_range (-60.) 60.); (1, constant 0.); (1, constant (-0.)) ])
-  in
+  let* xs = values_within 60. n in
   let+ scale = of_list [ 1.; -0.5; 3. ] in
   (s, xs, scale)
 
@@ -715,7 +763,7 @@ let law_softmax (type s) (dt : (float, s) D.t) u tiny (s, xs, scale) =
   let sm = Nx.to_array (Nx.softmax ~scale x)
   and lsm = Nx.to_array (Nx.log_softmax ~scale x) in
   let n = s.(Array.length s - 1) in
-  cover "several full blocks a lane" (n >= 2048);
+  covers_blocks dt s n;
   List.iter
     (fun lane ->
       let lane_xs = Array.map (fun i -> xs.(i)) lane in
@@ -821,30 +869,25 @@ let rms_case =
               [ 1; 16; 17; 1024; 1025; 2048; 3000; 5000 ]
           in
           [| r; k |] );
+        (1, wide_rows);
       ]
   in
   let n = Array.fold_left ( * ) 1 s in
-  let* xs =
-    array ~size:(constant n)
-      (frequency
-         [
-           (8, float_range (-100.) 100.); (1, constant 0.); (1, constant (-0.));
-         ])
-  in
+  let* xs = values_within 100. n in
   let+ eps = of_list [ 1e-6; 0.; 0.5 ] in
   (s, xs, eps)
 
-let covers_rms (s, _, eps) =
+let covers_rms dt (s, _, eps) =
   let k = s.(Array.length s - 1) in
   cover "one term a lane" (k = 1);
-  cover "several full blocks a lane" (k >= 2048);
+  covers_blocks dt s k;
   cover "no eps" (eps = 0.)
 
 (* Within [k u / (1 - 4 k u)] of the definition, relatively, for
    [k = (n + 8) / 2], as its doc states; NaN exactly where the definition
    is. *)
 let law_rms (type s) (dt : (float, s) D.t) u tiny ((s, xs, eps) as c) =
-  covers_rms c;
+  covers_rms dt c;
   let xs = Array.map (D.of_float dt) xs in
   let y = Nx.to_array (Nx.rms_norm ~eps (value dt s xs)) in
   let n = s.(Array.length s - 1) in
@@ -867,7 +910,7 @@ let law_rms (type s) (dt : (float, s) D.t) u tiny ((s, xs, eps) as c) =
 
 (* At float32 and float64, the bits of the composition its doc names. *)
 let law_rms_composed (type s) (dt : (float, s) D.t) ((s, xs, eps) as c) =
-  covers_rms c;
+  covers_rms dt c;
   let x = value dt s (Array.map (D.of_float dt) xs) in
   let ms = Nx.mean ~axes:[ -1 ] ~keepdims:true (Nx.square x) in
   let want = Nx.mul x (Nx.rsqrt (Nx.add_s ms eps)) in

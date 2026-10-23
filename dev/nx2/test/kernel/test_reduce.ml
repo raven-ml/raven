@@ -1195,6 +1195,43 @@ let carrier (D.Any dt as d) =
 let same (D.Any a) (D.Any b) = D.equal a b
 let staged d = not (same (carrier d) d)
 
+(* The full blocks of 1024 terms of one of [outputs] outputs of [per]
+   terms each that nx.cpu reduces in one call, before its cap of 32 KiB of
+   terms in the carrier: below 64 outputs, an output's blocks fall into
+   groups of a power of two, about 64 groups in all, and a call takes one
+   group's full blocks. *)
+let blocks_a_call ~outputs per =
+  let blocks = (per + 1023) / 1024 in
+  let group =
+    if outputs >= 64 || blocks <= 1 then blocks
+    else
+      let want = (64 + outputs - 1) / outputs in
+      let each = (blocks + want - 1) / want in
+      let rec up g = if g < each then up (2 * g) else g in
+      up 1
+  in
+  min group (per / 1024)
+
+(* Covers nx.cpu's calls of several full blocks of one of [outputs]
+   outputs of [per] terms in [path], and of more than a call holds of
+   them in the carrier [c]. *)
+let covers_blocks path (D.Any c) ~outputs per =
+  let b = if path then blocks_a_call ~outputs per else 0 in
+  cover "several full blocks of an output's terms a call" (b >= 2);
+  cover "more full blocks of an output's terms than a call holds"
+    (b > 256 / D.bits c)
+
+(* As many rows as nx.cpu aims its calls at, each a few more full blocks
+   than a call of float32 terms holds. *)
+let wide_rows =
+  let open Gen in
+  let* r = int_range 64 66 in
+  let+ k = int_range 9217 9300 in
+  [| r; k |]
+
+let plain2 =
+  { perm = [| 0; 1 |]; stepped = false; reversed = None; broadcast = false }
+
 let law_order (b : Support.backend) c =
   covers c;
   cover "a NaN made from numbers" (makes_nan c);
@@ -1238,28 +1275,45 @@ let narrow_dtypes =
 
 (* A case of a narrow dtype, or of a byte-wide one, and a destination's
    dtype: mostly the operand's, else another. A vector past a scan's chunk
-   is drawn often, so that a scan runs its chunks side by side. *)
+   is drawn often, so that a scan runs its chunks side by side, and so are
+   [wide_rows], so that every run reaches their calls. *)
 let into_case =
-  Gen.with_pp
+  let open Gen in
+  let any =
+    let shapes =
+      frequency
+        [ (3, shape_gen); (1, map (fun n -> [| n |]) (int_range 4097 20000)) ]
+    in
+    let* c =
+      case_of ~shapes (narrow_dtypes @ narrow_dtypes @ floats @ D.[ Any Int32 ])
+    in
+    let+ d =
+      frequency
+        [
+          (3, constant (dtype_of c.x));
+          ( 1,
+            of_list ~pp:pp_dtype
+              D.[ Any Float32; Any Float64; Any Float16; Any Int64; Any Int8 ] );
+        ]
+    in
+    (c, d)
+  in
+  (* A narrow float's reduction along [wide_rows], into its own dtype:
+     some of each row's calls stage several blocks, and some reach the
+     cap. *)
+  let rows =
+    let* d =
+      of_list ~pp:pp_dtype D.[ Any Float16; Any Bfloat16; Any Float8_e5m2 ]
+    in
+    let* monoid = of_list (List.filter (fun m -> accepts m d) monoids) in
+    let* s = wide_rows in
+    let+ seed = int in
+    let x = operand d s plain2 ~specials:20 seed in
+    ({ scan = false; monoid; axes = [| 1 |]; x; views = [] }, d)
+  in
+  with_pp
     (fun ppf (c, d) -> Format.fprintf ppf "%a into %a" pp_case c pp_dtype d)
-    (let open Gen in
-     let shapes =
-       frequency
-         [ (3, shape_gen); (1, map (fun n -> [| n |]) (int_range 4097 20000)) ]
-     in
-     let* c =
-       case_of ~shapes (narrow_dtypes @ narrow_dtypes @ floats @ D.[ Any Int32 ])
-     in
-     let+ d =
-       frequency
-         [
-           (3, constant (dtype_of c.x));
-           ( 1,
-             of_list ~pp:pp_dtype
-               D.[ Any Float32; Any Float64; Any Float16; Any Int64; Any Int8 ] );
-         ]
-     in
-     (c, d))
+    (frequency [ (5, any); (1, rows) ])
 
 (* For each result of [c] in C order, its first NaN term's bits, quieted, a
    scan's up to it, if one is a NaN. *)
@@ -1280,9 +1334,6 @@ let first_nans c =
    own dtype and float32. *)
 let into_examples =
   let inf = Float.infinity and ninf = Float.neg_infinity in
-  let plain2 =
-    { perm = [| 0; 1 |]; stepped = false; reversed = None; broadcast = false }
-  in
   let case scan monoid x = { scan; monoid; axes = [| 0 |]; x; views = [] } in
   let bf16 = vector_of D.Bfloat16 [| inf; ninf; 1. |] in
   [
@@ -1314,11 +1365,15 @@ let law_into (b : Support.backend) (c, d) =
   let per = Array.fold_left (fun n a -> n * s.(a)) 1 c.axes in
   cover "several blocks" (per > 1024);
   cover "a scan of several chunks" (c.scan && per > 4096);
-  (* An output's full blocks staged several at once. *)
+  (* One output's terms a unit, staged by blocks: the last axis reduced,
+     no kept axis stepping less than it. *)
   let r = Array.length s in
-  cover "several full blocks of a narrow output's terms in a row"
-    (staged x && (not c.scan) && r > 0 && Array.mem (r - 1) c.axes
-     && per >= 2048);
+  let lanes =
+    staged x && (not c.scan) && r > 0 && Array.mem (r - 1) c.axes
+    && not (List.mem "permuted" c.views || List.mem "broadcast" c.views)
+  in
+  let outputs = if per = 0 then 0 else total s / per in
+  covers_blocks lanes (carrier x) ~outputs per;
   List.iter
     (fun v -> cover v (List.mem v c.views))
     [ "permuted"; "stepped"; "reversed"; "broadcast" ];
@@ -3805,7 +3860,7 @@ let fused_shapes =
     [ (3, small); (3, rows); (2, columns); (1, long); (5, apart);
       (4, constant ~pp:pp_ints [||]); (4, empty) ]
 
-let fused_case =
+let fused_any =
   let open Gen in
   with_pp pp_fused
   @@ let* d =
@@ -3940,6 +3995,29 @@ let fused_examples =
     fused_example ~stepped:true 1 Moments [| 64; 1100 |] [| 1 |];
   ]
 
+(* A case of [fused_any], or a float32 program's monoid along
+   [wide_rows] often enough that every run reaches their calls. *)
+let fused_case =
+  let open Gen in
+  let rows =
+    let ts = templates (D.Any D.Float32) 2 in
+    let* i = int_range 0 (List.length ts - 1) in
+    let _, ins, _, nodes, outs, k = List.nth ts i in
+    let prog =
+      P.v ~ins:(Iarray.of_array ins) (Iarray.of_array nodes)
+        ~outs:(Iarray.of_array outs)
+    in
+    let monoids =
+      List.filter
+        (function Nx_kernel.Monoid _ -> true | _ -> false)
+        (reductions_of ~scan:false (P.dtype prog outs.(k)))
+    in
+    let* red = of_list monoids in
+    let+ s = wide_rows in
+    fused_example i red s [| 1 |]
+  in
+  with_pp pp_fused (frequency [ (6, fused_any); (1, rows) ])
+
 (* The destinations of [c]'s reduction, fresh, of output [c.k]'s dtype. *)
 let fused_dsts (b : Support.backend) c =
   let s = c.shape in
@@ -3993,10 +4071,13 @@ let law_fused (b : Support.backend) c =
   let r = Array.length s in
   let side = r > 1 && not (Array.mem (r - 1) c.axes) in
   (* A monoid's full blocks of one output's computed terms, several
-     computed at once. *)
+     computed at once: one output's terms a unit, none side by side. *)
   let monoid = match c.red with Monoid _ -> true | _ -> false in
-  cover "several full blocks of an output's terms in a row"
-    (monoid && (not complex) && (not c.scan) && (not side) && terms >= 2048);
+  let outputs = if terms = 0 then 0 else total s / terms in
+  covers_blocks
+    (monoid && (not complex) && (not c.scan) && not side)
+    (carrier (P.dtype c.prog (Iarray.get c.prog.outs c.k)))
+    ~outputs terms;
   let split =
     Array.exists (fun a -> a + 1 < r && not (Array.mem (a + 1) c.axes)
                            && Array.exists (fun b -> b > a + 1) c.axes) c.axes
