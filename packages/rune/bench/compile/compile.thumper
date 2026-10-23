@@ -30,6 +30,15 @@ special/ndtr-grad	wall_time	batch=1	n=5	4.200e-01	4.176e-01 4.195e-01 4.200e-01 
 special/ndtri	wall_time	batch=1	n=5	5.506e-01	5.494e-01 5.502e-01 5.506e-01 5.514e-01 5.517e-01
 special/ndtri-grad	wall_time	batch=1	n=5	8.948e-01	8.931e-01 8.946e-01 8.948e-01 8.953e-01 8.982e-01
 
+# machine: 83e4f30ba5340e6b
+# host: fudge · Intel(R) Core(TM) Ultra 5 235 · x86_64 · linux
+# ocaml: 5.5.1 · 64-bit · release
+
+first-call/cuda	wall_time	batch=1	n=3	4.609e-01	4.584e-01 4.609e-01 4.709e-01
+first-call/nv	wall_time	batch=1	n=3	3.515e-01	3.417e-01 3.515e-01 3.605e-01
+search/cuda	wall_time	batch=1	n=3	1.416e+00	1.409e+00 1.416e+00 1.446e+00
+search/nv	wall_time	batch=1	n=3	1.344e+00	1.310e+00 1.344e+00 1.351e+00
+
 # machine: 943935ae6b4f79ac
 # host: Thibauts-MacBook-2.local · Apple M1 Max · arm64 · macos
 # ocaml: 5.5.1 · 64-bit · release

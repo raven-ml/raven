@@ -23,6 +23,11 @@
    search compiles, loads and times each candidate; the calls run the kernel it
    chose, and take longer if its timings misled it.
 
+   [first-call/<device>] is the first call, without a search, of the gradient
+   of a log-softmax over float32 rows, on each NVIDIA GPU the machine has: its
+   kernels are compiled one at a time, by one NVRTC worker process that serves
+   them in turn, so the row holds what starting that process costs.
+
    [--cold ID] runs one case's first call, of a row or of [once], and prints its
    milliseconds: run with [CACHEDB] at an empty path and [PARALLEL=1]. The cases
    [once] lists are not rows, since a compile of several seconds, repeated three
@@ -197,6 +202,26 @@ let search_cases =
     (fun (name, search, d) -> ("search/" ^ name, search_case search d))
     devices
 
+(* First calls *)
+
+(* The gradient of a log-softmax over 1,024 rows of 1,024 float32 entries. *)
+let first_call_rows = 1024
+
+let first_call open_device () =
+  let d = Option.get (open_device ()) in
+  let n = first_call_rows in
+  let x = Nx.place (Nx.Placement.on d) (Nx.rand Nx.float32 [| n; n |]) in
+  let f = Rune.jit' (grad (Nx.log_softmax ~axes:[ 1 ])) in
+  List.iter (fun b -> Rig.Buffer.wait b Rig.Read) (fst (Nx.shards (f x)))
+
+let first_call_cases =
+  List.filter_map
+    (fun (name, _, d) ->
+      if name = "cuda" || name = "nv" then
+        Some ("first-call/" ^ name, first_call d)
+      else None)
+    devices
+
 (* The sine, its derivative, [nested] sines of sines, and [pendulum_steps]
    classical Runge-Kutta steps of a pendulum, q'' = -sin q, from a float64
    scalar state. Each sine of an unbounded float64 reduces its angle by the bits
@@ -290,7 +315,7 @@ let cases =
       (fun m -> (Printf.sprintf "linalg/solve-%d" m, solve m))
       [ 32; 128; 512 ]
   @ [ ("sinkhorn-64", sinkhorn_case 64) ]
-  @ search_cases
+  @ search_cases @ first_call_cases
   @ [ ("special/gammainc", binary Nx.gammainc shape variable) ]
 
 let rec remove path =
@@ -346,7 +371,7 @@ let () =
          driver must not be initialized in this one. *)
       let opens id =
         match String.split_on_char '/' id with
-        | [ "search"; name ] ->
+        | [ ("search" | "first-call"); name ] ->
             Sys.command
               (Filename.quote_command Sys.executable_name [ "--opens"; name ])
             = 0
