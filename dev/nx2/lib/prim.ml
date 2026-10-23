@@ -1517,7 +1517,8 @@ let contract_shape ~by ~batch ~contracting ~acc a b init =
   (let (D.Any dt) = acc in
    if not (Nx_kernel.accumulates dt) then
      invalid_argf "%s: an accumulator of %s" by (D.name dt));
-  let s = shaped ~by (Shape.contract ~batch ~contracting (shape a) (shape b)) in
+  let s = shaped ~by (Shape.contract ~batch ~contracting ~segments:None (shape a, None)
+       (shape b, None)) in
   (match init with
   | Some i when not (has_shape i s) ->
       invalid_argf "%s: init of shape %a, not %a" by pp_shape (shape i) pp_shape

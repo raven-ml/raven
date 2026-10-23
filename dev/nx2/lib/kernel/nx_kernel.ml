@@ -53,6 +53,17 @@ let carrier (D.Any dt as d) =
       | _ -> d)
 
 type order = Chain | Lane
+
+type scale =
+  | Exponent of (int, D.int8_unsigned_elt) Nx_array.t
+  | Value : ('v, 's) Nx_array.t -> scale
+
+type operand = { array : Nx_array.any; scale : scale option }
+
+type 'i segments =
+  | Rows of { offsets : 'i; a_axis : int; b_axis : int }
+  | Contracting of { offsets : 'i; pair : int }
+
 type combine = Set | Add | Max | Min
 
 let accumulates (type v s) (dt : (v, s) D.t) =
@@ -271,9 +282,54 @@ module Shape = struct
     let n = Iarray.length batch + Iarray.length contracting in
     not (first_on side batch contracting n i)
 
-  (* Plain loops: a contraction is checked on the eager path, which allocates
-     nothing here beyond the result. *)
-  let contract ~batch ~contracting a b =
+  (* Whether a scale of shape [s] fits an operand of shape [x]: of its rank,
+     each extent dividing the operand's, 0 only along an empty axis. *)
+  let scale_fits x s =
+    Array.length s = Array.length x
+    && Array.for_all2
+         (fun d e -> if e = 0 then d = 0 else e > 0 && d mod e = 0)
+         x s
+
+  let check_scale name x = function
+    | Some s when not (scale_fits x s) ->
+        errorf "a scale of shape %a for %s of shape %a" pp s name pp x
+    | Some _ | None -> Ok ()
+
+  (* [Some g] if offsets of shape [o] have [a]'s batch extents, then [g + 1]
+     entries. *)
+  let groups batch a o =
+    let nb = Iarray.length batch in
+    let fit = ref (Array.length o = nb + 1) in
+    for k = 0 to nb - 1 do
+      if !fit && o.(k) <> a.(fst (Iarray.get batch k)) then fit := false
+    done;
+    if !fit && o.(nb) >= 1 then Some (o.(nb) - 1) else None
+
+  let check_free name side r batch contracting ax =
+    if ax < 0 || ax >= r then errorf "no axis %d of %s to segment" ax name
+    else if paired side batch contracting ax then
+      errorf "axis %d of %s is in a pair and segmented" ax name
+    else Ok ()
+
+  (* The groups' count of [segments], checked against the pairs. *)
+  let check_segments ~batch ~contracting a b = function
+    | None -> Ok 0
+    | Some (Rows { offsets; a_axis; b_axis }) -> (
+        let* () = check_free "a" fst (Array.length a) batch contracting a_axis in
+        let* () = check_free "b" snd (Array.length b) batch contracting b_axis in
+        match groups batch a offsets with
+        | Some g when g = b.(b_axis) -> Ok g
+        | _ ->
+            errorf "offsets of shape %a for %d groups" pp offsets b.(b_axis))
+    | Some (Contracting { offsets; pair }) -> (
+        if pair < 0 || pair >= Iarray.length contracting then
+          errorf "no contracting pair %d to segment" pair
+        else
+          match groups batch a offsets with
+          | Some g -> Ok g
+          | None -> errorf "offsets of shape %a" pp offsets)
+
+  let check_pairs ~batch ~contracting a b =
     let ra = Array.length a and rb = Array.length b in
     let nb = Iarray.length batch in
     let n = nb + Iarray.length contracting in
@@ -296,30 +352,54 @@ module Shape = struct
             (Printf.sprintf "%s pair %d: extents %d and %d" what p a.(i) b.(j));
       incr k
     done;
-    match !error with
-    | Some e -> Error e
-    | None ->
-        (* The batch extents, then the free ones: [a]'s, then [b]'s. *)
-        let y = Array.make (nb + ra + rb - (2 * n)) 0 in
-        for k = 0 to nb - 1 do
-          y.(k) <- a.(fst (Iarray.get batch k))
-        done;
-        let k = ref nb in
-        for ax = 0 to ra - 1 do
-          if not (paired fst batch contracting ax) then begin
-            y.(!k) <- a.(ax);
-            incr k
-          end
-        done;
-        for ax = 0 to rb - 1 do
-          if not (paired snd batch contracting ax) then begin
-            y.(!k) <- b.(ax);
-            incr k
-          end
-        done;
-        if Array.length y > L.max_rank then
-          errorf "a result of rank %d" (Array.length y)
-        else admit "a contraction" y
+    match !error with Some e -> Error e | None -> Ok ()
+
+  (* The groups' axis of [Contracting], the batch extents, then the free ones:
+     [a]'s, then [b]'s but [Rows]' [b_axis]. *)
+  let result ~batch ~contracting ~segments g a b =
+    let ra = Array.length a and rb = Array.length b in
+    let nb = Iarray.length batch in
+    let n = nb + Iarray.length contracting in
+    let lead, drop =
+      match segments with
+      | Some (Contracting _) -> (1, -1)
+      | Some (Rows { b_axis; _ }) -> (0, b_axis)
+      | None -> (0, -1)
+    in
+    let y = Array.make (lead + nb + ra + rb - (2 * n) - Bool.to_int (drop >= 0)) 0 in
+    if lead = 1 then y.(0) <- g;
+    for k = 0 to nb - 1 do
+      y.(lead + k) <- a.(fst (Iarray.get batch k))
+    done;
+    let k = ref (lead + nb) in
+    for ax = 0 to ra - 1 do
+      if not (paired fst batch contracting ax) then begin
+        y.(!k) <- a.(ax);
+        incr k
+      end
+    done;
+    for ax = 0 to rb - 1 do
+      if ax <> drop && not (paired snd batch contracting ax) then begin
+        y.(!k) <- b.(ax);
+        incr k
+      end
+    done;
+    if Array.length y > L.max_rank then
+      errorf "a result of rank %d" (Array.length y)
+    else admit "a contraction" y
+
+  (* Plain matches and loops: the eager path allocates nothing here beyond the
+     result. *)
+  let contract ~batch ~contracting ~segments (a, sa) (b, sb) =
+    match check_pairs ~batch ~contracting a b with
+    | Error _ as e -> e
+    | Ok () -> (
+        match (check_scale "a" a sa, check_scale "b" b sb) with
+        | (Error _ as e), _ | _, (Error _ as e) -> e
+        | Ok (), Ok () -> (
+            match check_segments ~batch ~contracting a b segments with
+            | Error _ as e -> e
+            | Ok g -> result ~batch ~contracting ~segments g a b))
 
   let c2c ~axes x =
     if Iarray.length axes = 0 then Error "a transform along no axis"
@@ -483,11 +563,12 @@ module type S = sig
     order:order ->
     batch:(int * int) iarray ->
     contracting:(int * int) iarray ->
+    segments:index segments option ->
     acc:Nx_array.Dtype.any ->
     dst:('v, 's) a ->
     init:('v, 's) a option ->
-    ('a, 'b) a ->
-    ('c, 'e) a ->
+    operand ->
+    operand ->
     answer
 
   val c2c :

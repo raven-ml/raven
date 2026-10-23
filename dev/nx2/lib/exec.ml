@@ -480,7 +480,9 @@ let call : type r.
         | Some i -> [| A.Any a; A.Any b; A.Any i |]
       in
       ran ~by
-        (K.contract ~order ~batch ~contracting ~acc ~dst ~init a b)
+        (K.contract ~order ~batch ~contracting ~segments:None ~acc ~dst ~init
+           { array = A.Any a; scale = None }
+           { array = A.Any b; scale = None })
         [| A.Any dst |] ops
   | Value.Gather { axis; idx; x } ->
       let dst = nth j r and i = one idx and x = one x in
@@ -1588,16 +1590,18 @@ let contract (type v s a b c e d) ~by ~order ~batch ~contracting ~acc
         | Some _ -> None
       in
       let shape =
-        Nx_kernel.Shape.contract ~batch ~contracting
-          (L.shape (A.layout rx.a))
-          (L.shape (A.layout ry.a))
+        Nx_kernel.Shape.contract ~batch ~contracting ~segments:None
+          (L.shape (A.layout rx.a), None)
+          (L.shape (A.layout ry.a), None)
       in
       match (array, shape, Grid.one (Devices.grid at), Devices.kernels set) with
       | Some array, Ok shape, Some k, Some (module K) -> (
           let dst = A.create (Devices.rig set k) dt shape in
           match
-            K.contract ~order ~batch ~contracting ~acc ~dst ~init:array rx.a
-              ry.a
+            K.contract ~order ~batch ~contracting ~segments:None ~acc ~dst
+              ~init:array
+              { array = A.Any rx.a; scale = None }
+              { array = A.Any ry.a; scale = None }
           with
           | Done -> Some (Value.Array { at; a = dst; dead = Value.Live })
           | Declined ->

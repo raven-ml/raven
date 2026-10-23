@@ -156,13 +156,15 @@ let canonical_case = Gen.with_pp pp_case (case ~canonical:true)
 let law_contract c =
   let batch, contracting = pairs_of c in
   fits ~msg:"fits" (Array.to_list (L.shape c.ly))
-    (Shape.contract ~batch ~contracting (L.shape c.la) (L.shape c.lb))
+    (Shape.contract ~batch ~contracting ~segments:None
+       (L.shape c.la, None)
+       (L.shape c.lb, None))
 
 let test_contract_refuses () =
   let a = [| 2; 3; 4 |] and b = [| 2; 4; 5 |] in
   let contract ?(batch : _ iarray = [| (0, 0) |])
         ?(contracting : _ iarray = [| (2, 1) |]) a b =
-    Shape.contract ~batch ~contracting a b
+    Shape.contract ~batch ~contracting ~segments:None (a, None) (b, None)
   in
   fits ~msg:"fits" [ 2; 3; 5 ] (contract a b);
   refuses ~msg:"a contracting extent" (contract a [| 2; 3; 5 |]);
@@ -185,6 +187,79 @@ let test_contract_refuses () =
     (contract ~batch:[||] ~contracting:[||] ones [||]);
   refuses ~msg:"a result past the most rank"
     (contract ~batch:[||] ~contracting:[||] ones [| 1 |])
+
+(* A scale has its operand's rank, each extent dividing the operand's, 0 only
+   along an empty axis. *)
+let test_contract_scales () =
+  let mm ?sa ?sb a b =
+    Shape.contract ~batch:[||] ~contracting:[| (1, 0) |] ~segments:None
+      (a, sa) (b, sb)
+  in
+  let a = [| 4; 8 |] and b = [| 8; 6 |] in
+  fits ~msg:"blocks of 4 by 2" [ 4; 6 ] (mm ~sb:[| 2; 3 |] a b);
+  fits ~msg:"a block of a whole axis" [ 4; 6 ] (mm ~sb:[| 8; 1 |] a b);
+  fits ~msg:"a ratio of 1" [ 4; 6 ] (mm ~sa:a ~sb:b a b);
+  refuses ~msg:"an extent that does not divide" (mm ~sb:[| 3; 6 |] a b);
+  refuses ~msg:"an extent past the operand's" (mm ~sa:[| 8; 8 |] a b);
+  refuses ~msg:"a lower rank" (mm ~sa:[| 4 |] a b);
+  refuses ~msg:"a higher rank" (mm ~sa:[| 4; 8; 1 |] a b);
+  let e = [| 0; 8 |] in
+  fits ~msg:"0 along an empty axis" [ 0; 6 ] (mm ~sa:[| 0; 2 |] e b);
+  fits ~msg:"1 along an empty axis" [ 0; 6 ] (mm ~sa:[| 1; 2 |] e b);
+  refuses ~msg:"0 along a full axis" (mm ~sa:[| 0; 2 |] a b);
+  refuses ~msg:"a negative extent" (mm ~sa:[| -4; 2 |] a b)
+
+(* Rows drops b's group axis from the result; Contracting puts the group axis
+   first; offsets have the batch extents, then one more than the groups. *)
+let test_contract_segments () =
+  let contract ?(batch : _ iarray = [||])
+      ?(contracting : _ iarray = [| (1, 1) |]) segments a b =
+    Shape.contract ~batch ~contracting ~segments:(Some segments) (a, None)
+      (b, None)
+  in
+  let rows ?(a_axis = 0) ?(b_axis = 0) offsets =
+    Nx_kernel.Rows { offsets; a_axis; b_axis }
+  in
+  let a = [| 10; 8 |] and b = [| 3; 8; 6 |] in
+  fits ~msg:"rows" [ 10; 6 ] (contract (rows [| 4 |]) a b);
+  fits ~msg:"rows of no group" [ 10; 6 ]
+    (contract (rows [| 1 |]) a [| 0; 8; 6 |]);
+  refuses ~msg:"offsets of another extent" (contract (rows [| 3 |]) a b);
+  refuses ~msg:"offsets of another rank" (contract (rows [| 4; 1 |]) a b);
+  refuses ~msg:"no offsets" (contract (rows [||]) a b);
+  refuses ~msg:"an a_axis in a pair" (contract (rows ~a_axis:1 [| 4 |]) a b);
+  refuses ~msg:"a b_axis in a pair" (contract (rows ~b_axis:1 [| 9 |]) a b);
+  refuses ~msg:"an a_axis past a's rank" (contract (rows ~a_axis:2 [| 4 |]) a b);
+  refuses ~msg:"a negative b_axis" (contract (rows ~b_axis:(-1) [| 4 |]) a b);
+  let a2 = [| 2; 10; 8 |] and b2 = [| 2; 3; 8; 6 |] in
+  let batched offsets =
+    contract ~batch:[| (0, 0) |] ~contracting:[| (2, 2) |]
+      (rows ~a_axis:1 ~b_axis:1 offsets) a2 b2
+  in
+  fits ~msg:"rows per batch" [ 2; 10; 6 ] (batched [| 2; 4 |]);
+  refuses ~msg:"offsets without the batch" (batched [| 4 |]);
+  refuses ~msg:"offsets of another batch" (batched [| 3; 4 |]);
+  let k offsets pair =
+    contract ~contracting:[| (1, 0) |]
+      (Nx_kernel.Contracting { offsets; pair })
+      [| 4; 8 |] [| 8; 6 |]
+  in
+  fits ~msg:"contracting" [ 4; 4; 6 ] (k [| 5 |] 0);
+  fits ~msg:"contracting into no group" [ 0; 4; 6 ] (k [| 1 |] 0);
+  refuses ~msg:"no offsets" (k [| 0 |] 0);
+  refuses ~msg:"offsets of another rank" (k [| 2; 5 |] 0);
+  refuses ~msg:"a pair past the contracting ones" (k [| 5 |] 1);
+  refuses ~msg:"a negative pair" (k [| 5 |] (-1));
+  let ones = Array.make (L.max_rank - 1) 1 in
+  let deep b =
+    contract ~contracting:[| (0, 0) |]
+      (Nx_kernel.Contracting { offsets = [| 2 |]; pair = 0 })
+      ones b
+  in
+  fits ~msg:"a result of the most rank"
+    (Array.to_list (Array.make L.max_rank 1))
+    (deep [| 1; 1 |]);
+  refuses ~msg:"a result past the most rank" (deep [| 1; 1; 1 |])
 
 (* The doc's table: a contraction computes in every dtype but booleans and
    floats narrower than float32. *)
@@ -227,7 +302,10 @@ let test_admits () =
   refuses ~msg:"no element, other extents past max_numel"
     (Shape.padded (pad2 [| 0; 0 |] [| 0; big |]) [| 0; 1 |]);
   let k = 1 lsl 27 in
-  let mm a b = Shape.contract ~batch:[||] ~contracting:[| (1, 0) |] a b in
+  let mm a b =
+    Shape.contract ~batch:[||] ~contracting:[| (1, 0) |] ~segments:None
+      (a, None) (b, None)
+  in
   fits ~msg:"a contraction to max_numel" [ k / 2; k ]
     (mm [| k / 2; 0 |] [| 0; k |]);
   refuses ~msg:"a contraction past max_numel" (mm [| k; 0 |] [| 0; k |]);
@@ -1227,6 +1305,13 @@ let tests =
           "refuses extents that differ, axes past a rank or in two pairs, \
            and results past the most rank"
           test_contract_refuses;
+        test
+          "refuses a scale of another rank, or extents that do not divide"
+          test_contract_scales;
+        test
+          "shapes segments' results and refuses their offsets of other \
+           shapes or axes in pairs"
+          test_contract_segments;
         test "admits every shape it derives by max_numel" test_admits;
         test "accumulates states the accumulators" test_accumulates;
       ];

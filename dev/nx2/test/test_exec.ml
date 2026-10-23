@@ -49,7 +49,8 @@ module Refusing = struct
 
   let sort ~axis:_ ~descending:_ ~values:_ ~positions:_ _ = decline ()
 
-  let contract ~order:_ ~batch:_ ~contracting:_ ~acc:_ ~dst:_ ~init:_ _ _ =
+  let contract ~order:_ ~batch:_ ~contracting:_ ~segments:_ ~acc:_ ~dst:_
+      ~init:_ _ _ =
     decline ()
 end
 
@@ -349,9 +350,9 @@ module Gated = struct
     first ();
     C.apply3 k ~dst c x y
 
-  let contract ~order ~batch ~contracting ~acc ~dst ~init a b =
+  let contract ~order ~batch ~contracting ~segments ~acc ~dst ~init a b =
     first ();
-    C.contract ~order ~batch ~contracting ~acc ~dst ~init a b
+    C.contract ~order ~batch ~contracting ~segments ~acc ~dst ~init a b
 
   let map (prog : Nx_kernel.Prog.t) ~dsts loads =
     first ();
@@ -1336,7 +1337,7 @@ let allocation =
       test "a matmul of 4x4 float32 host values allocates its budget"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
-          at_most (float 0.5) ~than:167. (words (fun () -> Nx.matmul a a)));
+          at_most (float 0.5) ~than:179. (words (fun () -> Nx.matmul a a)));
     ]
 
 (* Placements *)

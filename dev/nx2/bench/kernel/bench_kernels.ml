@@ -378,16 +378,20 @@ let contract ?streams ?(init = false) ?operands ?out ~acc ~order name ~sa ~sb
         let a, b = layout (A.Any (filled ot sa)) (A.Any (filled ot sb)) in
         let y =
           match
-            Nx_kernel.Shape.contract ~batch:[||] ~contracting (shape a)
-              (shape b)
+            Nx_kernel.Shape.contract ~batch:[||] ~contracting ~segments:None
+              (shape a, None) (shape b, None)
           with
           | Ok y -> y
           | Error _ -> failwith "a contraction row's shapes do not fit"
         in
         let init = if init then Some (filled yt y) else None in
+        let a : Nx_kernel.operand = { array = a; scale = None } in
+        let b : Nx_kernel.operand = { array = b; scale = None } in
         (A.create Rig.host yt y, init, a, b))
-      (fun (dst, init, A.Any a, A.Any b) ->
-        ok (K.contract ~order ~batch:[||] ~contracting ~acc ~dst ~init a b))
+      (fun (dst, init, a, b) ->
+        ok
+          (K.contract ~order ~batch:[||] ~contracting ~segments:None ~acc ~dst
+             ~init a b))
   in
   let read = Option.to_list (Option.map (fun n -> F.Read n) streams) in
   { bench; work = F.Fma (acc, flops) :: read }
@@ -415,8 +419,10 @@ let after_subnormals =
   let bench (module K : Nx_kernel.S) =
     let product dst a b =
       ok
-        (K.contract ~order:Nx_kernel.Chain ~batch:[||] ~contracting ~acc ~dst
-           ~init:None a b)
+        (K.contract ~order:Nx_kernel.Chain ~batch:[||] ~contracting
+           ~segments:None ~acc ~dst ~init:None
+           { array = A.Any a; scale = None }
+           { array = A.Any b; scale = None })
     in
     row "contract-f32-100-after-subnormals"
       (fun () ->

@@ -11,9 +11,10 @@
     claims every operand through the door of [nx_array.h] for the extent of its
     call. It answers [Done] once its work is done, or, before any write, a
     refusal: the door's, or [Shape_mismatch] if the operands' shapes differ.
-    It never answers [Declined]: nx.cpu computes every case its contract
-    offers, and a kernel that would decline one, a bug in nx.cpu, raises
-    [Failure] naming itself and its operands' dtypes and shapes.
+    It answers [Declined] only where its doc says: otherwise nx.cpu computes
+    every case its contract offers, and a kernel that would decline one, a
+    bug in nx.cpu, raises [Failure] naming itself and its operands' dtypes
+    and shapes.
 
     A call keeps other domains waiting to collect for no longer than about
     one unloaded core's copy of 1 MiB at a time, however many operands,
@@ -32,9 +33,10 @@
     a pad that fits no operand of its load's shape is refused with
     [Shape_mismatch].
 
-    [contract] computes every contraction in [float32], [float64],
-    [complex64], [complex128] or an integer of 4 to 64 bits, of [a], [b]
-    and [init] of any dtype, into a [dst] of any dtype, at any layout. Each
+    [contract] computes every contraction without scales or segments in
+    [float32], [float64], [complex64], [complex128] or an integer of 4 to 64
+    bits, of [a], [b] and [init] of any dtype, into a [dst] of any dtype, at
+    any layout, and declines the others. Each
     element of [a], [b] and [init] enters [acc] as {!apply1}'s [Cast] casts
     it. That is exact where [acc] holds its value: [float32] holds [bool],
     [bit], the integers of at most 16 bits and the floats of at most 32;
