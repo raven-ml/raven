@@ -2145,7 +2145,8 @@ module Conv = struct
 
   let windows c i = count c i c.spatial.(i)
 
-  let case =
+  (* Cases whose [m] values [values] draws. *)
+  let case_of values =
     Gen.with_pp pp_case
       (let open Gen in
        let* k = int_range 1 2 in
@@ -2182,13 +2183,27 @@ module Conv = struct
        in
        let spatial = cut 1 spatial in
        let los = cut (-1) los and his = cut (-1) his in
+       (* One case in eight has no padding, about one in thirty drawn
+          freely. *)
+       let* unpadded = int_range 0 7 in
+       let none a = if unpadded = 0 then Array.map (fun _ -> 0) a else a in
+       let los = none los and his = none his in
        let c0 =
          { n; spatial; groups; cg; og; taps; stride; dilation;
            padding = Array.map2 (fun a b -> (a, b)) los his; xs = [||]; ws = [||] }
        in
-       let small m = array ~size:(constant m) (map Float.of_int (int_range (-3) 3)) in
-       let+ xs = small (numel (x_shape c0)) and+ ws = small (numel (w_shape c0)) in
+       let+ xs = values (numel (x_shape c0)) and+ ws = values (numel (w_shape c0)) in
        { c0 with xs; ws })
+
+  (* Small integers, whose sums every dtype holds exactly. *)
+  let case =
+    case_of (fun m ->
+        Gen.(array ~size:(constant m) (map Float.of_int (int_range (-3) 3))))
+
+  (* Values of 53 significant bits in (-2, 2), each rounded to a case's
+     dtype when it runs. *)
+  let float_case =
+    case_of (fun m -> Gen.(array ~size:(constant m) (float_range (-2.) 2.)))
 
   let unravel s j =
     let i = Array.make (Array.length s) 0 and j = ref j in
@@ -2203,8 +2218,9 @@ module Conv = struct
     Array.iteri (fun a e -> j := (!j * s.(a)) + e) i;
     !j
 
-  (* The sum over the taps and the group's channels, at each output index. *)
-  let reference c =
+  (* The sum over the taps and the group's channels, at each output index,
+     of [plus] of each product's operands from [zero]. *)
+  let fold_terms ~zero ~plus c =
     let k = Array.length c.spatial in
     let t = Array.init k (windows c) in
     let o = c.groups * c.og in
@@ -2214,7 +2230,7 @@ module Conv = struct
         let idx = unravel out flat in
         let b = idx.(0) and j = idx.(k + 1) in
         let g = j / c.og in
-        let sum = ref 0. in
+        let sum = ref zero in
         for tap = 0 to numel c.taps - 1 do
           let q = unravel c.taps tap in
           let pos = Array.init k (fun i -> (idx.(1 + i) * c.stride.(i)) + (q.(i) * c.dilation.(i)) - fst c.padding.(i)) in
@@ -2222,10 +2238,30 @@ module Conv = struct
             for i = 0 to c.cg - 1 do
               let xv = c.xs.(ravel xs_shape (Array.concat [ [| b |]; pos; [| (g * c.cg) + i |] ])) in
               let wv = c.ws.(ravel ws_shape (Array.concat [ [| j |]; q; [| i |] ])) in
-              sum := !sum +. (xv *. wv)
+              sum := plus !sum xv wv
             done
         done;
         !sum)
+
+  let reference c = fold_terms ~zero:0. ~plus:(fun s x w -> s +. (x *. w)) c
+
+  (* [s + x w] in two floats, each sum and product split exactly (Ogita,
+     Rump and Oishi, "Accurate Sum and Dot Product", 2005): within a few
+     units of 2^-106 of the exact value for the sums here, with the sum of
+     the terms' magnitudes. *)
+  let exact_terms c =
+    let two_sum a b =
+      let s = a +. b in
+      let bb = s -. a in
+      (s, (a -. (s -. bb)) +. (b -. bb))
+    in
+    fold_terms ~zero:(0., 0., 0.)
+      ~plus:(fun (hi, lo, mag) x w ->
+        let p = x *. w in
+        let e = Float.fma x w (-.p) in
+        let s, t = two_sum hi p in
+        (s, lo +. t +. e, mag +. Float.abs p))
+      c
 
   let run (type v s) (dt : (v, s) D.t) c =
     let x = Nx.cast dt (Nx.create Nx.float64 (x_shape c) c.xs) in
@@ -2251,6 +2287,64 @@ module Conv = struct
         equal ~msg:"float32" (array float_exact) want (run D.Float32 c);
         equal ~msg:"float16, summed at float32" (array float_exact) want (run D.Float16 c);
         equal ~msg:"int32" (array float_exact) want (run D.Int32 c))
+
+  (* [c]'s values rounded to [dt] and read back, the convolution of those,
+     in float64. *)
+  let rounded (type v s) (dt : (v, s) D.t) c =
+    let at xs = Nx.to_array (Nx.cast Nx.float64 (Nx.cast dt (Nx.create Nx.float64 [| Array.length xs |] xs))) in
+    { c with xs = at c.xs; ws = at c.ws }
+
+  (* Each output of [dt], from a sum in [acc] of unit roundoff [u], is
+     within γ(K + 1, 2u) Σ|x||w| of the exact sum over its [K] products,
+     and, where [dt] is narrower, within half its unit of the sum in acc:
+     [u_out] times its magnitude, or [eta] below the normals. *)
+  let law_bound =
+    let dtypes =
+      [ ("float64", D.Any D.Float64, 0x1p-53, 0x1p-53, 0.);
+        ("float32", D.Any D.Float32, 0x1p-24, 0x1p-24, 0x1p-150);
+        ("bfloat16", D.Any D.Bfloat16, 0x1p-24, 0x1p-8, 0x1p-134);
+        ("float16", D.Any D.Float16, 0x1p-24, 0x1p-11, 0x1p-25) ]
+    in
+    prop "conv is within its bound of the exact sum, at every float" float_case
+      (fun c ->
+        let rank = Array.length c.spatial in
+        let axes f = Array.exists Fun.id (Array.init rank f) in
+        let outputs = Array.length (reference c) > 0 in
+        cover "no batch element" (c.n = 0);
+        cover "no input channel, under an output" (c.cg = 0 && outputs);
+        cover "one input channel a group, two groups, under an output"
+          (c.cg = 1 && c.groups = 2 && outputs);
+        cover "two input channels a group, two groups, under an output"
+          (c.cg = 2 && c.groups = 2 && outputs);
+        cover "no padding" (Array.for_all (( = ) (0, 0)) c.padding);
+        cover "a padding asymmetric" (axes (fun i -> fst c.padding.(i) <> snd c.padding.(i)));
+        cover "a negative padding" (axes (fun i -> fst c.padding.(i) < 0 || snd c.padding.(i) < 0));
+        cover "a stride above 1" (axes (fun i -> c.stride.(i) > 1));
+        cover "a dilation above 1" (axes (fun i -> c.dilation.(i) > 1));
+        cover "a 1×1 kernel, two channels a group"
+          (Array.for_all (( = ) 1) c.taps && c.cg = 2);
+        cover "a kernel wider than its input, under an output"
+          (axes (fun i -> dilated c i > c.spatial.(i)) && outputs);
+        List.iter
+          (fun (name, D.Any dt, u, u_out, eta) ->
+            let r = rounded dt c in
+            let got = run dt r in
+            let k = c.cg * numel c.taps in
+            let g = gamma (k + 1) (2. *. u) in
+            let bad =
+              List.filteri (fun i _ -> i < 8)
+                (List.concat
+                   (List.mapi
+                      (fun i (hi, lo, mag) ->
+                        let want = hi +. lo and y = got.(i) in
+                        let within = g *. mag in
+                        let bound = within +. (u_out *. (Float.abs want +. within)) +. eta in
+                        if Float.abs (y -. want) <= bound then []
+                        else [ Printf.sprintf "%d: %h, %h past %h" i y want bound ])
+                      (Array.to_list (exact_terms r))))
+            in
+            equal ~msg:name (list string) [] bad)
+          dtypes)
 
   (* The least input extent along axis [i] whose convolution has [t]
      windows, searched from the count, or [None] where no extent has. The
@@ -2440,6 +2534,7 @@ module Conv = struct
     group "convolution"
       [
         law_conv;
+        law_bound;
         law_transpose;
         test "float16 sums at float32" test_narrow;
         test "integers wrap" test_wrap;
