@@ -33,9 +33,8 @@
    Add adds left to right from +0 + x. nx_add keeps the first NaN operand,
    and a zero sum is stored as +0: a sum that starts from +0 is never -0,
    and (+0 + x) + u differs from x + u only in that sign. A narrow float
-   accumulates in float32 in scratch, beside a flag per target that an
-   update reached, and encodes those targets once at the end, so that an
-   untouched element keeps its bits. Max and Min keep the first NaN, the
+   sums in float32 and rounds once (Narrow sums below), in scratch of the
+   size of the updates, never of into. Max and Min keep the first NaN, the
    target's value first, quieted as IEEE 754 returns a NaN operand: its
    quiet bit, the top of its fraction, set, its sign and the rest of its
    payload kept. Quieting is idempotent, so a NaN target stays the first
@@ -206,11 +205,9 @@ static int same_shape(const int64_t *x, int r, const int64_t *y, int ry) {
 
 /* What a call takes (cpu.h, Calls, scalar): a gathered element, 51 read
    at random over 2^24 elements (M1); a scatter's update, 325 (a float16
-   Max, fudge); a target its copy from into, and for a narrow float sum,
-   kept in float32 then encoded (encode_sums), 40 more (fudge). */
+   Max, fudge); a target its copy from into. */
 #define GATHER_COST 128
 #define UPDATE_COST 512
-#define NARROW_SUM_COST 64
 
 value nx_cpu_gather(value vaxis, value vd, value vi, value vx) {
   CAMLparam4(vaxis, vd, vi, vx);
@@ -273,10 +270,11 @@ struct scatter {
      destination's extent. */
   int64_t m, ia, ua, da, ta;
   uint64_t dim;
-  /* A narrow float's sums, by the destination's element, and whether an
-     update reached each. */
-  float *acc;
-  uint8_t *touched;
+  /* Whether this is a narrow float's Add, and its scratch (Narrow sums):
+     [each] bytes a worker at [sums]. */
+  int narrow;
+  uint8_t *sums;
+  int64_t each;
   /* A sorted scatter (Sorted scatters): the run's [n] slices, at [pd],
      [pi], [pu] and [pt] in the destination, the positions, the updates and
      into; the block's first step [b0], its [steps] and [chunks], of at most
@@ -286,6 +284,11 @@ struct scatter {
      start at the end of bin q - 1, or at the chunk's first. Each chunk
      gathers [gather_bytes] at [gather]. */
   int64_t pd, pi, pu, pt, n, b0, steps, chunks, bins, block, w, gather_bytes;
+  /* A row's sorted positions and steps (narrow_rows): [order] holds them,
+     their sort's scratch and where each target's run starts. */
+  int64_t *order;
+  const uint64_t *rp;
+  const int64_t *rr, *runs;
   int shift;
   int64_t *pos, *seg;
   uint8_t *vals, *gather;
@@ -501,17 +504,9 @@ static void combine_one(const scatter *c, int64_t pd, int64_t pu) {
     return;
   }
   if (is_narrow(dt)) {
-    if (c->combine == NX_COMBINE_ADD) {
-      int64_t k = pd - d->offset;
-      if (!c->touched[k]) {
-        c->acc[k] = add_f32(0.0f, nx_bits_to_float(dt, a));
-        c->touched[k] = 1;
-      }
-      c->acc[k] = add_f32(c->acc[k], nx_bits_to_float(dt, b));
-      return;
-    }
     /* The update's code where the extreme is not the element's own value,
-       else the element's, quieted where a NaN. */
+       else the element's, quieted where a NaN; Add sums apart (Narrow
+       sums). */
     float x = nx_bits_to_float(dt, a), y = nx_bits_to_float(dt, b);
     float g = c->combine == NX_COMBINE_MAX ? nx_maximum_f32(x, y)
                                         : nx_minimum_f32(x, y);
@@ -590,8 +585,229 @@ static int64_t run_at(const scatter *c, int64_t v, int64_t *p) {
   return len - i0 < UNIT_ROW ? len - i0 : UNIT_ROW;
 }
 
+/* Narrow sums
+
+   A narrow float's Add sums each target's updates in float32 from +0 plus
+   its element, left to right in C order, and rounds the sum once into the
+   destination. Its updates are grouped by target first, by one of three
+   ways that each keep scratch of the order of the updates, never of into:
+
+   - A row of slices whose positions step 0 along it, an embedding
+     gradient's, few such rows (narrow_rows): its positions are sorted by
+     target, stably, once, and a job sums the targets' runs, each cut into
+     pieces of RUN_PIECE slices. A piece's sums are a row of floats: the
+     targets' row read into float32, each update's row added in turn, the
+     row encoded. On fudge (Core Ultra 5 235) the embedding gradient's row
+     of 8192 tokens of 4096 into 128256 rows of bfloat16 took 3.6 ms so,
+     against 7 ms with each unit of UNIT_ROW slices summing its own runs,
+     whose updates' rows, read out of order, are short.
+   - A row of one slice, few such rows, as a 1-d scatter's: the sorted
+     scatter's bins (narrow_bins) keep their targets' sums in float32,
+     a flag beside each that an update reached, then encode the reached
+     targets in the updates' order. Such a scatter sorts the whole axis as
+     one block, so that each sum spans its target's updates.
+   - Otherwise a unit (narrow_run) sorts the positions its run applies by
+     target, stably, and sums one target after another, as a row's pieces
+     do: one sort serves a run whose positions step 0 along it, else each
+     slice sorts its own, in its worker's scratch of four words per update
+     along the axis. */
+
+/* The bytes of a bin's flags, padded to a line. */
+static int64_t flag_bytes(int shift) { return (((int64_t)1 << shift) + 63) & -64; }
+
+/* Slices of a piece of a row's run (narrow_rows): a run's updates on
+   2 KiB of float32 sums at a time, enough pieces for the threads to share
+   the runs evenly where a few targets take most updates. */
+#define RUN_PIECE 512
+
+/* Positions below which a unit's sort is by insertion. */
+#define FEW_STEPS 64
+
+/* Row [n] elements of [a] from [at], stepping [s], into float32 at [f]. */
+static void load_row(int dt, const nx_array *a, int64_t at, int64_t s,
+                     int64_t n, float *f) {
+  if (s == 1 && n > 1 && a->bits >= 8) {
+    nx_cpu_table->convert[dt][NX_FLOAT32](a->base + at * (a->bits / 8), f, n);
+    return;
+  }
+  for (int64_t i = 0; i < n; i++)
+    f[i] = nx_bits_to_float(dt, code_at(a, at + i * s));
+}
+
+/* Stores the [n] float32 at [f] into the row of load_row, each rounded
+   once. */
+static void store_row(int dt, const nx_array *a, int64_t at, int64_t s,
+                      int64_t n, const float *f) {
+  if (s == 1 && n > 1 && a->bits >= 8) {
+    nx_cpu_table->convert[NX_FLOAT32][dt](f, a->base + at * (a->bits / 8), n);
+    return;
+  }
+  for (int64_t i = 0; i < n; i++)
+    code_put(a, at + i * s, narrow_of_float(dt, f[i]));
+}
+
+/* Starts [n] sums from +0 plus the elements [x] hold. */
+static void start_sums(float *x, int64_t n) {
+  for (int64_t i = 0; i < n; i++) x[i] = add_f32(0.0f, x[i]);
+}
+
+/* [y] is [x] plus [u], [n] sums by Prog.Add: a plain add, and where it
+   makes a NaN, Prog.Add's selects of the NaN again, so that a NaN's bits
+   do not depend on the compiler's order of operands. A sum started from
+   +0 is never -0, so needs no more. */
+static void add_sums(const float *x, const float *u, float *y, int64_t n) {
+  int nan = 0;
+  for (int64_t i = 0; i < n; i++) {
+    y[i] = x[i] + u[i];
+    nan |= y[i] != y[i];
+  }
+  if (!nan) return;
+  for (int64_t i = 0; i < n; i++) y[i] = nx_add_f32(x[i], u[i]);
+}
+
+/* Sorts the [k] positions [p] and their steps [r] by position, stably,
+   through [p2] and [r2] of k entries: by insertion below FEW_STEPS, else
+   by LSD radix of 8-bit digits of each position less the least, over the
+   digits their span takes, skipping a digit they share. Answers whether
+   the sorted entries ended in p2 and r2. */
+static int sort_steps(uint64_t *p, int64_t *r, uint64_t *p2, int64_t *r2,
+                      int64_t k) {
+  if (k < FEW_STEPS) {
+    for (int64_t j = 1; j < k; j++) {
+      uint64_t q = p[j];
+      int64_t t = r[j], i = j;
+      for (; i > 0 && p[i - 1] > q; i--) {
+        p[i] = p[i - 1];
+        r[i] = r[i - 1];
+      }
+      p[i] = q;
+      r[i] = t;
+    }
+    return 0;
+  }
+  uint64_t lo = p[0], hi = p[0];
+  for (int64_t j = 1; j < k; j++) {
+    lo = p[j] < lo ? p[j] : lo;
+    hi = p[j] > hi ? p[j] : hi;
+  }
+  int moved = 0;
+  for (int d = 0; d < 64 && (hi - lo) >> d != 0; d += 8) {
+    int64_t at[257] = {0};
+    for (int64_t j = 0; j < k; j++) at[((p[j] - lo) >> d & 255) + 1]++;
+    if (at[((p[0] - lo) >> d & 255) + 1] == k) continue;
+    for (int b = 0; b < 256; b++) at[b + 1] += at[b];
+    for (int64_t j = 0; j < k; j++) {
+      int64_t g = at[(p[j] - lo) >> d & 255]++;
+      p2[g] = p[j];
+      r2[g] = r[j];
+    }
+    uint64_t *tp = p;
+    int64_t *tr = r;
+    p = p2, r = r2, p2 = tp, r2 = tr;
+    moved = !moved;
+  }
+  return moved;
+}
+
+/* Sums the [k] updates at steps [r] along the axis, sorted by their
+   positions [p], into their targets, rows of [n] slices from [pd] and
+   [pu], through [sum] and [row] of n floats. */
+static void sum_sorted(const scatter *c, int64_t pd, int64_t pu, int64_t n,
+                       const uint64_t *p, const int64_t *r, int64_t k,
+                       float *sum, float *row, float *next) {
+  const nx_array *d = &c->a[0], *u = &c->a[3];
+  int64_t w = d->bits / 8;
+  int64_t db = c->sd == 1 ? n * w : 0, ub = c->su == 1 ? n * w : 0;
+  for (int64_t j = 0, e; j < k; j = e) {
+    int64_t at = pd + (int64_t)p[j] * c->da;
+    load_row(c->dt, d, at, c->sd, n, sum);
+    start_sums(sum, n);
+    for (e = j; e < k && p[e] == p[j]; e++) {
+      if (e + 1 < k) {
+        const uint8_t *nu = u->base + (pu + r[e + 1] * c->ua) * w;
+        const uint8_t *nd = d->base + (pd + (int64_t)p[e + 1] * c->da) * w;
+        for (int64_t b = 0; b < ub; b += 64) __builtin_prefetch(nu + b);
+        for (int64_t b = 0; b < db && p[e + 1] != p[j]; b += 64)
+          __builtin_prefetch(nd + b);
+      }
+      load_row(c->dt, u, pu + r[e] * c->ua, c->su, n, row);
+      add_sums(sum, row, next, n);
+      float *t = sum;
+      sum = next, next = t;
+    }
+    store_row(c->dt, d, at, c->sd, n, sum);
+  }
+}
+
+/* Sums a row's targets' runs, a piece of RUN_PIECE slices of one run at a
+   time. */
+static void run_pieces(int64_t lo, int64_t hi, int worker, void *ctx) {
+  const scatter *c = ctx;
+  float *sum = (float *)(c->sums + worker * c->each), *row = sum + UNIT_ROW;
+  float *next = row + UNIT_ROW;
+  int64_t pieces = (c->len + RUN_PIECE - 1) / RUN_PIECE;
+  for (int64_t v = lo; v < hi; v++) {
+    int64_t q = v / pieces, i0 = v % pieces * RUN_PIECE;
+    int64_t n = c->len - i0 < RUN_PIECE ? c->len - i0 : RUN_PIECE;
+    int64_t j = c->runs[q], e = c->runs[q + 1];
+    sum_sorted(c, c->pd + i0 * c->sd, c->pu + i0 * c->su, n, c->rp + j,
+               c->rr + j, e - j, sum, row, next);
+  }
+}
+
+/* Sums the row of slices from unit [v], whose positions step 0 along it:
+   its positions sorted once, then a job over its targets' runs, each cut
+   into pieces. */
+static void narrow_rows(scatter *c, int64_t v, int64_t bytes) {
+  int64_t p[4], m = c->m;
+  run_at(c, v, p);
+  c->pd = p[0];
+  c->pu = p[2];
+  const int64_t *x = (const int64_t *)c->a[2].base;
+  uint64_t *rp = (uint64_t *)c->order, *rp2 = rp + m;
+  int64_t *rr = c->order + 2 * m, *rr2 = rr + m, *runs = rr2 + m, k = 0;
+  for (int64_t t = 0; t < m; t++) {
+    uint64_t q = (uint64_t)x[p[1] + t * c->ia];
+    if (q >= c->dim) continue;
+    rp[k] = q;
+    rr[k++] = t;
+  }
+  int moved = sort_steps(rp, rr, rp2, rr2, k);
+  c->rp = moved ? rp2 : rp;
+  c->rr = moved ? rr2 : rr;
+  int64_t n = 0;
+  for (int64_t j = 0; j < k; j++)
+    if (j == 0 || c->rp[j] != c->rp[j - 1]) runs[n++] = j;
+  runs[n] = k;
+  c->runs = runs;
+  nx_cpu_job(n * ((c->len + RUN_PIECE - 1) / RUN_PIECE), bytes, (double)bytes,
+             run_pieces, c);
+}
+
+static void narrow_run(const scatter *c, int worker, int64_t pd, int64_t pi,
+                       int64_t pu, int64_t n, uint64_t lo, uint64_t span) {
+  const int64_t *x = (const int64_t *)c->a[2].base;
+  int64_t m = c->m, ia = c->ia;
+  uint64_t *p = (uint64_t *)(c->sums + worker * c->each), *p2 = p + m;
+  int64_t *r = (int64_t *)(p2 + m), *r2 = r + m;
+  float *sum = (float *)(r2 + m), *row = sum + UNIT_ROW, *next = row + UNIT_ROW;
+  int shared = n == 1 || c->si == 0;
+  int64_t width = shared ? n : 1;
+  for (int64_t i = 0; i < (shared ? 1 : n); i++) {
+    int64_t k = 0;
+    for (int64_t t = 0; t < m; t++) {
+      uint64_t q = (uint64_t)x[pi + i * c->si + t * ia];
+      if (q - lo >= span) continue;
+      p[k] = q;
+      r[k++] = t;
+    }
+    int moved = sort_steps(p, r, p2, r2, k);
+    sum_sorted(c, pd + i * c->sd, pu + i * c->su, width, moved ? p2 : p,
+               moved ? r2 : r, k, sum, row, next);
+  }
+}
+
 static void scatter_units(int64_t lo, int64_t hi, int worker, void *ctx) {
-  (void)worker;
   const scatter *c = ctx;
   for (int64_t u = lo; u < hi; u++) {
     /* The unit's part of the axis's targets, then its run of slices. */
@@ -599,7 +815,9 @@ static void scatter_units(int64_t lo, int64_t hi, int worker, void *ctx) {
     uint64_t first = c->dim * (uint64_t)part / (uint64_t)c->parts;
     uint64_t next = c->dim * (uint64_t)(part + 1) / (uint64_t)c->parts;
     int64_t n = run_at(c, u / c->parts, p);
-    c->run(c, p[0], p[1], p[2], n, first, next - first);
+    if (c->narrow)
+      narrow_run(c, worker, p[0], p[1], p[2], n, first, next - first);
+    else c->run(c, p[0], p[1], p[2], n, first, next - first);
   }
 }
 
@@ -762,6 +980,47 @@ static void apply_bins(int64_t lo, int64_t hi, int worker, void *ctx) {
   }
 }
 
+/* Sums a narrow float's bins (Narrow sums), whose rows are of one slice:
+   a bin's targets' float32 sums in its worker's scratch, after a flag for
+   each target, padded to a line. */
+static void narrow_bins(int64_t lo, int64_t hi, int worker, void *ctx) {
+  const scatter *c = ctx;
+  const nx_array *d = &c->a[0];
+  uint8_t *reached = c->sums + worker * c->each;
+  float *sums = (float *)(reached + flag_bytes(c->shift));
+  for (int64_t q = lo; q < hi; q++) {
+    uint64_t first = (uint64_t)q << c->shift;
+    copy_bin(c, first);
+    for (int pass = 0; pass < 2; pass++)
+      for (int64_t k = 0; k < c->chunks; k++) {
+        const int64_t *seg = c->seg + k * c->bins;
+        for (int64_t j = q == 0 ? chunk_first(c, k) : seg[q - 1]; j < seg[q];
+             j++) {
+          int64_t t = c->pos[j] - (int64_t)first;
+          int64_t at = c->pd + c->pos[j] * c->da;
+          /* The second pass encodes each reached target once. */
+          if (pass == 1) {
+            if (reached[t]) code_put(d, at, narrow_of_float(c->dt, sums[t]));
+            reached[t] = 0;
+            continue;
+          }
+          uint32_t u = c->w == 1 ? c->vals[j] : ((const uint16_t *)c->vals)[j];
+          if (!reached[t]) {
+            sums[t] = add_f32(0.0f, nx_bits_to_float(c->dt, code_at(d, at)));
+            reached[t] = 1;
+          }
+          sums[t] = nx_add_f32(sums[t], nx_bits_to_float(c->dt, u));
+        }
+      }
+  }
+}
+
+/* The bytes a sorted block of [steps] steps of rows of [n] slices takes to
+   apply. */
+static int64_t apply_bytes(const scatter *c, int64_t steps, int64_t n) {
+  return steps * (8 + entry_bytes(c) + 3 * n * c->w);
+}
+
 /* The shift of the bins: as many targets as fit half a core's L2, the
    share the contraction's blocks take, fewer while the threads would have
    under BINS_PER_THREAD bins each, more past MOST_BINS bins. */
@@ -789,17 +1048,10 @@ static void sorted(scatter *c, int64_t v, int threads) {
     int64_t e = entry_bytes(c);
     int64_t bytes = c->steps * 2 * (8 + e);
     nx_cpu_job(c->chunks, bytes, (double)bytes, sort_chunks, c);
-    bytes = c->steps * (8 + e + 3 * c->n * c->w);
-    nx_cpu_job(c->bins, bytes, (double)bytes, apply_bins, c);
+    bytes = apply_bytes(c, c->steps, c->n);
+    nx_cpu_job(c->bins, bytes, (double)bytes,
+               c->narrow ? narrow_bins : apply_bins, c);
   }
-}
-
-/* Stores each narrow float sum into its target. */
-static void encode_sums(const scatter *c, int64_t total) {
-  const nx_array *d = &c->a[0];
-  for (int64_t k = 0; k < total; k++)
-    if (c->touched[k])
-      code_put(d, d->offset + k, narrow_of_float(c->dt, c->acc[k]));
 }
 
 /* Fills the loop of slices from the shape [us] of rank [r], off [axis],
@@ -868,9 +1120,7 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
     total *= ys[i];
     updates *= us[i];
   }
-  int narrow_add = combine == NX_COMBINE_ADD && is_narrow(dt);
-  double target = 2 * NX_CPU_STRIDED_COST * nx_cpu_width(dt) +
-                  (narrow_add ? NARROW_SUM_COST : 0);
+  double target = 2 * NX_CPU_STRIDED_COST * nx_cpu_width(dt);
   int released = nx_cpu_release((double)total * target +
                                 (double)updates * UPDATE_COST);
   if (total == 0 || updates == 0) {
@@ -888,37 +1138,55 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
                .ua = a[3].dim[r + axis],
                .da = a[0].dim[r + axis],
                .ta = a[1].dim[r + axis],
-               .dim = (uint64_t)ys[axis]};
+               .dim = (uint64_t)ys[axis],
+               .narrow = combine == NX_COMBINE_ADD && is_narrow(dt)};
   static const int64_t unread[NX_MAX_RANK];
   int64_t units = slices(&c, us, r, axis, unread);
   int64_t bytes = updates * (8 + a[3].bits / 8 + a[0].bits / 8);
   int threads = nx_cpu_threads(bytes, bytes);
-  /* Fewer units than threads, over many updates. Rows of one slice, or of
-     slices whose positions step 0 along them, as a 1-d scatter's or an
-     embedding gradient's, sort their updates; a dtype of under a byte
-     shares its bytes across bins, so doesn't. Otherwise each thread takes
-     a part of the targets and walks every update of its run. */
+  /* Fewer units than threads, over many updates, or any for a narrow
+     float's sums. Rows of one slice, or of slices whose positions step 0
+     along them, as a 1-d scatter's or an embedding gradient's, sort their
+     updates; a dtype of under a byte shares its bytes across bins, so
+     doesn't; a narrow float's rows of several slices sort them by target
+     once a row (narrow_rows). Otherwise each thread takes a part of the
+     targets and walks every update of its run, but for a narrow float's
+     sums, whose scratch would grow with the parts. */
   c.parts = 1;
-  int few = units < threads && c.m >= PART_UPDATES;
-  int sort = few && (c.len == 1 || c.si == 0) && a[0].bits >= 8;
-  if (few && !sort) c.parts = (threads + units - 1) / units;
+  int few = units < threads && (c.m >= PART_UPDATES || c.narrow);
+  int rows = few && c.narrow && c.len > 1 && c.si == 0;
+  int sort = few && !rows && (c.len == 1 || c.si == 0) && a[0].bits >= 8;
+  if (few && !sort && !c.narrow) c.parts = (threads + units - 1) / units;
   /* Into's steps may part the loop's axes further; a row of one slice, or
      of positions stepping 0, stays one. */
   if (sort) units = slices(&c, us, r, axis, a[1].dim + r);
   if ((uint64_t)c.parts > c.dim) c.parts = (int64_t)c.dim;
   if (!sort) copy_into(a, total);
-  if (narrow_add) {
-    c.acc = malloc((size_t)total * sizeof(float));
-    c.touched = calloc((size_t)total, 1);
+  /* A unit's scratch for a narrow float's sums: two words for each of its
+     positions and two for their sort, and three rows of floats; a row's
+     sort keeps those words once, and a word more for each run. */
+  int workers = units < threads ? (int)units : threads;
+  if (c.narrow && !sort) c.each = (rows ? 0 : 32 * c.m) + 12 * UNIT_ROW;
+  if (rows) {
+    workers = threads;
+    c.order = malloc((size_t)(5 * c.m + 1) * sizeof(int64_t));
   }
   if (sort) {
     c.w = a[0].bits / 8;
     int64_t width = c.len < UNIT_ROW ? c.len : UNIT_ROW;
-    c.shift = bin_shift(c.dim, width * c.w, threads);
+    c.shift = bin_shift(c.dim, c.narrow ? 4 : width * c.w, threads);
     c.bins = (int64_t)((c.dim - 1) >> c.shift) + 1;
-    c.block = (int64_t)c.dim < FEWEST_BLOCK ? FEWEST_BLOCK
-              : (int64_t)c.dim > MOST_BLOCK ? MOST_BLOCK
-                                            : (int64_t)c.dim;
+    c.block = c.narrow                     ? c.m
+              : (int64_t)c.dim < FEWEST_BLOCK ? FEWEST_BLOCK
+              : (int64_t)c.dim > MOST_BLOCK   ? MOST_BLOCK
+                                              : (int64_t)c.dim;
+    /* A bin's scratch for a narrow float's sums (narrow_bins), on the
+       threads of its block's job. */
+    if (c.narrow) {
+      int64_t apply = apply_bytes(&c, c.m, 1);
+      c.each = flag_bytes(c.shift) + ((int64_t)4 << c.shift);
+      workers = nx_cpu_threads(apply, (double)apply);
+    }
     int64_t most = c.m < c.block ? c.m : c.block, e = entry_bytes(&c);
     c.gather_bytes = c.bins * GATHER * (8 + e);
     c.pos = malloc((size_t)most * sizeof(int64_t));
@@ -926,11 +1194,12 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
     c.seg = malloc((size_t)(threads * c.bins) * sizeof(int64_t));
     c.gather = malloc((size_t)(threads * c.gather_bytes));
   }
-  if ((narrow_add && (c.acc == NULL || c.touched == NULL)) ||
+  if (c.narrow) c.sums = calloc((size_t)workers, (size_t)c.each);
+  if ((c.narrow && c.sums == NULL) || (rows && c.order == NULL) ||
       (sort && (c.pos == NULL || c.vals == NULL || c.seg == NULL ||
                 c.gather == NULL))) {
-    free(c.acc);
-    free(c.touched);
+    free(c.sums);
+    free(c.order);
     free(c.pos);
     free(c.vals);
     free(c.seg);
@@ -939,13 +1208,14 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
     nx_done(4, a);
     caml_raise_out_of_memory();
   }
-  if (sort)
+  if (rows)
+    for (int64_t v = 0; v < units; v += c.pieces) narrow_rows(&c, v, bytes);
+  else if (sort)
     for (int64_t v = 0; v < units; v++) sorted(&c, v, threads);
   else
     nx_cpu_job(units * c.parts, bytes, bytes, scatter_units, &c);
-  if (narrow_add) encode_sums(&c, total);
-  free(c.acc);
-  free(c.touched);
+  free(c.sums);
+  free(c.order);
   free(c.pos);
   free(c.vals);
   free(c.seg);
