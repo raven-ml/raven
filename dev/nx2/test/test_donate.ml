@@ -97,6 +97,36 @@ let test_refused_kills_none () =
   equal ~msg:"the broadcast operand's handle lives" (array float_exact)
     [| 7.; 8. |] (elements (Nx.copy b))
 
+(* A kind refusing its operands' dtypes kills nothing, though its result would
+   fit a handle's memory: an operation checks before it takes the memory. *)
+let test_dtype_refused () =
+  let ints xs =
+    let a = Nx.Repr.of_array Nx.Host.v (A.of_array D.Int32 [| 2 |] xs) in
+    Nx.add a (Nx.zeros_like a)
+  in
+  let y = ints [| 1l; 2l |] and x = ints [| 3l; 4l |] in
+  let refused sub f = invalid ~sub f in
+  refused "Nx.atan2: Atan2 does not take int32" (fun () ->
+      Nx.atan2 (Nx.donate y) x);
+  refused "Nx.atan2: Atan2 does not take int32" (fun () ->
+      Nx.atan2 x (Nx.donate y));
+  refused "Nx.sin: Sin does not take int32" (fun () -> Nx.sin (Nx.donate y));
+  equal ~msg:"the integers live" (array int32) [| 2l; 4l |]
+    (elements (Nx.add y y));
+  let f = fresh [| 1.; 2. |] and g = fresh [| 3.; 4. |] in
+  refused "Nx.bitwise_and: And does not take float32" (fun () ->
+      Nx.bitwise_and (Nx.donate f) g);
+  equal ~msg:"the floats live" (array float_exact) [| 2.; 4. |]
+    (elements (Nx.add f f));
+  let truths () = Nx.less (fresh [| 0.; 2. |]) (fresh [| 1.; 1. |]) in
+  let p = truths () and q = truths () and r = truths () in
+  let fma = "Nx.fma: Fma does not take bool" in
+  refused fma (fun () -> Nx.fma (Nx.donate p) q r);
+  refused fma (fun () -> Nx.fma q (Nx.donate p) r);
+  refused fma (fun () -> Nx.fma q r (Nx.donate p));
+  equal ~msg:"the booleans live" (array bool) [| true; false |]
+    (elements (Nx.copy p))
+
 (* A function that computes through several operations kills its donors only
    when it returns: refused, from its own checks or from an operation inside,
    it leaves each donor and its handle usable. *)
@@ -1886,6 +1916,7 @@ let () =
              test "a value sharing the memory keeps its elements"
                test_sharer_keeps;
              test "a refused consumer kills no donor" test_refused_kills_none;
+             test "a dtype refusal kills no donor" test_dtype_refused;
              test "a refused composite kills no donor" test_refused_composite;
              test "an aligning consumer checks before it consumes"
                test_aligned_refusal;
