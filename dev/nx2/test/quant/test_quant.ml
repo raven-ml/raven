@@ -434,19 +434,29 @@ let agrees ~at ~k expected bound actual =
     (Nx.to_array expected);
   at_most ~msg:"worst error over its bound" float_exact ~than:1. !worst
 
-(* The product of [x] with each matrix of [w], transposed, and the same
-   product of magnitudes, at float64, summed where [apply] sums: at float64 for
-   a float64 [x], else at float32. A narrower sum may overflow where a wider
-   one would not, so the reference sums at the same width. *)
-let product (type b) w (x : (float, b, Nx.host) Nx.t) =
+(* [agrees] over the outputs, flattened, that [skip] leaves. *)
+let agrees_but ~at ~k skip expected bound actual =
+  let kept a = Array.mapi (fun j v -> if skip j then 0. else v) a in
+  let v a = Nx.create Nx.float64 [| Array.length a |] (kept a) in
+  agrees ~at ~k (v expected) (v bound) (v actual)
+
+(* The magnitude from which a float32 sum of [k] terms may overflow in one
+   order and not another: float32's threshold of overflow, [2^128 - 2^103],
+   over the growth [1 + 2k 2^-24] of the sum's rounding. *)
+let overflows k =
+  (Float.ldexp 1. 128 -. Float.ldexp 1. 103)
+  /. (1. +. (2. *. float_of_int k *. Float.ldexp 1. (-24)))
+
+(* The product of [x] with each matrix of [w], transposed, summed at float64,
+   the same product of magnitudes, and that of the finite magnitudes. *)
+let product w x =
   let t = Nx.matrix_transpose and f64 x = Nx.cast Nx.float64 x in
-  let at dt x =
-    let w' = Nx_quant.dequant dt w and x = Nx.cast dt x in
-    (f64 (Nx.matmul x (t w')), f64 (Nx.matmul (Nx.abs x) (t (Nx.abs w'))))
-  in
-  match Nx.dtype x with
-  | D.Float64 -> at Nx.float64 x
-  | _ -> at Nx.float32 x
+  let w' = Nx_quant.dequant Nx.float64 w and x = f64 x in
+  let finite t = Nx.where (Nx.isfinite t) t (Nx.zeros_like t) in
+  let x' = Nx.abs x and w'' = Nx.abs w' in
+  ( Nx.matmul x (t w'),
+    Nx.matmul x' (t w''),
+    Nx.matmul (finite x') (t (finite w'')) )
 
 (* An input at one of the float dtypes. *)
 type input = X : { at : fdt; x : (float, 'b, Nx.host) Nx.t } -> input
@@ -513,9 +523,12 @@ let products =
 let pp_product ppf (view, w, X { x; _ }) =
   Format.fprintf ppf "@[<v>%a@,x %a@]" pp_weight (view, w) Nx.pp x
 
+(* Each output is within the bound of its product summed at float64, but
+   where [apply] sums at float32 and the output's finite terms reach
+   {!overflows}. *)
 let product_law (_, w, X { at; x }) =
   let _, _, k = dims w in
-  let expected, bound = product w x in
+  let expected, bound, finite = product w x in
   List.iter
     (fun f -> cover ("a " ^ format_name f ^ " weight") (format_of w = f))
     formats;
@@ -524,7 +537,14 @@ let product_law (_, w, X { at; x }) =
   cover "no input" (k = 0);
   let y = Nx_quant.apply w x in
   equal ~msg:"dtype" string (D.name (Nx.dtype x)) (D.name (Nx.dtype y));
-  agrees ~at ~k expected bound y
+  equal ~msg:"shape" (array int) (Nx.shape expected) (Nx.shape y);
+  let flat t =
+    Nx.to_array (Nx.reshape [| Nx.numel t |] (Nx.cast Nx.float64 t))
+  in
+  let wide = match Nx.dtype x with D.Float64 -> true | _ -> false in
+  let finite = flat finite in
+  let skip j = (not wide) && finite.(j) >= overflows k in
+  agrees_but ~at ~k skip (flat expected) (flat bound) (flat y)
 
 (* [apply]'s stated equation, at [x]'s dtype where the format's values are exact
    there, else at float32. *)
