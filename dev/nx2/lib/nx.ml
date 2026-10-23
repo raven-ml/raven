@@ -5668,6 +5668,10 @@ module Prim = struct
       }
         -> ('d, ('v, 's, 'd) Value.t) linalg
 
+  type 'd scale = 'd Value.scale =
+    | Exponent of (int, Dtype.int8_unsigned_elt, 'd) Value.t
+    | Value : ('v, 's, 'd) Value.t -> 'd scale
+
   type 'r t = 'r Value.prim =
     | Map : {
         layout : Nx_array.Layout.t;
@@ -5737,6 +5741,9 @@ module Prim = struct
         a : ('a, 'b, 'd) Value.t;
         b : ('c, 'e, 'd) Value.t;
         init : ('v, 's, 'd) Value.t option;
+        a_scale : 'd scale option;
+        b_scale : 'd scale option;
+        segments : 'd index Nx_kernel.segments option;
       }
         -> ('v, 's, 'd) Value.t t
     | Fft : ('d, 'r) fft -> 'r t

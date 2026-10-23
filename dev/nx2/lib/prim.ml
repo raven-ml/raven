@@ -75,6 +75,9 @@ let shape (type v s d) (x : (v, s, d) t) =
   | Array _ | Deferred _ | Traced _ -> L.shape (own_layout x)
   | Shards { shape; _ } | Donated { shape; _ } -> Array.copy shape
 
+let scale_shape (type d) (sc : d scale) =
+  match sc with Exponent x -> shape x | Value x -> shape x
+
 let has_shape x s =
   let rec go i = i = Array.length s || (dim x i = s.(i) && go (i + 1)) in
   rank x = Array.length s && go 0
@@ -322,6 +325,25 @@ let rec map_data : type d e.
       let rest' = map_data m (i + 1) rest in
       if x' == x && rest' == rest then data else x' :: rest'
 
+(* A scale's array, and segments' offsets. *)
+let scale_any : type d. d scale -> d any = function
+  | Exponent x -> Any x
+  | Value x -> Any x
+
+let offsets : 'i Nx_kernel.segments -> 'i = function
+  | Rows { offsets; _ } | Contracting { offsets; _ } -> offsets
+
+(* A contraction's operands after [a] and [b], each it has, in order. *)
+let contract_rest (type v s d) (init : (v, s, d) t option) a_scale b_scale
+    (segments : d index Nx_kernel.segments option) : d any list =
+  let some f o : d any list =
+    match o with Some x -> List.cons (f x) List.[] | None -> List.[]
+  in
+  some (fun i -> Any i) init
+  @ some scale_any a_scale
+  @ some scale_any b_scale
+  @ some (fun g -> Any (offsets g)) segments
+
 let operands : type r. r prim -> operands = function
   | Map { loads; _ } -> Operands (Iarray.to_list (Iarray.map load_any loads))
   | Reduce { loads; _ } -> Operands (Iarray.to_list (Iarray.map load_any loads))
@@ -336,9 +358,8 @@ let operands : type r. r prim -> operands = function
   | Fft f -> Operands [ fft_operand f ]
   | Linalg l -> Operands (linalg_operands l)
   | Assemble { pieces; _ } -> Operands (List.map (fun (_, x) -> Any x) pieces)
-  | Contract { a; b; init; _ } ->
-      Operands
-        (Any a :: Any b :: Option.to_list (Option.map (fun i -> Any i) init))
+  | Contract { a; b; init; a_scale; b_scale; segments; _ } ->
+      Operands (Any a :: Any b :: contract_rest init a_scale b_scale segments)
   | Copy x -> Operands [ Any x ]
   | Move (_, x) -> Operands [ Any x ]
   | Bitcast (_, x) -> Operands [ Any x ]
@@ -410,10 +431,12 @@ let iteri : type r. ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> r prim -> unit
       f 0 x
   | Linalg l -> List.iteri (fun i (Any x) -> f i x) (linalg_operands l)
   | Assemble { pieces; _ } -> List.iteri (fun i (_, x) -> f i x) pieces
-  | Contract { a; b; init; _ } ->
+  | Contract { a; b; init; a_scale; b_scale; segments; _ } ->
       f 0 a;
       f 1 b;
-      Option.iter (f 2) init
+      List.iteri
+        (fun i (Any x) -> f (i + 2) x)
+        (contract_rest init a_scale b_scale segments)
   | Copy x -> f 0 x
   | Move (_, x) -> f 0 x
   | Bitcast (_, x) -> f 0 x
@@ -447,8 +470,11 @@ let exists : type r. ('v 's 'd. ('v, 's, 'd) t -> bool) -> r prim -> bool =
       f x
   | Linalg l -> List.exists (fun (Any x) -> f x) (linalg_operands l)
   | Assemble { pieces; _ } -> List.exists (fun (_, x) -> f x) pieces
-  | Contract { a; b; init; _ } ->
-      f a || f b || Option.fold ~none:false ~some:f init
+  | Contract { a; b; init; a_scale; b_scale; segments; _ } ->
+      f a || f b
+      || List.exists
+           (fun (Any x) -> f x)
+           (contract_rest init a_scale b_scale segments)
   | Copy x -> f x
   | Move (_, x) -> f x
   | Bitcast (_, x) -> f x
@@ -518,9 +544,16 @@ let fold : type a r. ('v 's 'd. a -> ('v, 's, 'd) t -> a) -> a -> r prim -> a
       List.fold_left (fun acc (Any x) -> f acc x) acc (linalg_operands l)
   | Assemble { pieces; _ } ->
       List.fold_left (fun acc (_, x) -> f acc x) acc pieces
-  | Contract { a; b; init; _ } -> (
+  | Contract { a; b; init; a_scale; b_scale; segments; _ } -> (
       let acc = f (f acc a) b in
-      match init with Some i -> f acc i | None -> acc)
+      let acc = match init with Some i -> f acc i | None -> acc in
+      let scaled acc = function
+        | None -> acc
+        | Some (Exponent x) -> f acc x
+        | Some (Value x) -> f acc x
+      in
+      let acc = scaled (scaled acc a_scale) b_scale in
+      match segments with Some g -> f acc (offsets g) | None -> acc)
   | Copy x -> f acc x
   | Move (_, x) -> f acc x
   | Bitcast (_, x) -> f acc x
@@ -579,15 +612,45 @@ let mapi : type r.
       in
       if List.for_all2 ( == ) pieces a.pieces then op
       else Assemble { a with pieces }
-  | Contract c -> (
+  | Contract c ->
       let a = m 0 c.a in
       let b = m 1 c.b in
-      match c.init with
-      | Some i ->
-          let i' = m 2 i in
-          if a == c.a && b == c.b && i' == i then op
-          else Contract { c with a; b; init = Some i' }
-      | None -> if a == c.a && b == c.b then op else Contract { c with a; b })
+      let k = ref 2 in
+      let next f = function
+        | None -> None
+        | Some x as o ->
+            let y = f !k x in
+            incr k;
+            if y == x then o else Some y
+      in
+      let init = next m c.init in
+      let scale i = function
+        | Exponent x as e ->
+            let y = m i x in
+            if y == x then e else Exponent y
+        | Value x as v ->
+            let y = m i x in
+            if y == x then v else Value y
+      in
+      let a_scale = next scale c.a_scale in
+      let b_scale = next scale c.b_scale in
+      let segments =
+        next
+          (fun i (g : _ Nx_kernel.segments) ->
+            let o = offsets g in
+            let o' = m i o in
+            if o' == o then g
+            else
+              match g with
+              | Rows r -> Rows { r with offsets = o' }
+              | Contracting r -> Contracting { r with offsets = o' })
+          c.segments
+      in
+      if
+        a == c.a && b == c.b && init == c.init && a_scale == c.a_scale
+        && b_scale == c.b_scale && segments == c.segments
+      then op
+      else Contract { c with a; b; init; a_scale; b_scale; segments }
   | Copy x ->
       let y = m 0 x in
       if y == x then op else Copy y
@@ -1106,25 +1169,83 @@ let linalg_rule l =
 
 (* A contraction's result has the batch pairs' axes, then [a]'s other axes, then
    [b]'s; [init] has its shape. A contracting pair's two axes share its index as
-   their factor. *)
-let contract_rule batch contracting ra rb init =
-  let operand side r first =
-    let next = ref first in
-    Array.init r (fun a ->
-        match Iarray.find_index (fun p -> side p = a) batch with
-        | Some j -> Route.Becomes j
-        | None -> (
-            match Iarray.find_index (fun p -> side p = a) contracting with
-            | Some p -> Reduced p
-            | None ->
-                incr next;
-                Becomes (!next - 1)))
-  in
+   their factor. Segments are computed uncut: [Rows]' two axes and the result's
+   axis of rows are read whole, as is the result's leading axis of
+   [Contracting]'s groups. A segmented or scaled contraction is read whole
+   along its contracting pairs. *)
+let contract_rule ~batch ~contracting ~segments sa sb init sca scb =
   let nb = Iarray.length batch and nc = Iarray.length contracting in
-  let a = operand fst ra nb and b = operand snd rb (ra - nc) in
-  match init with
-  | None -> Route.Axes [| a; b |]
-  | Some r -> Route.Axes [| a; b; reading [||] r |]
+  let lead, whole_a, whole_b =
+    match (segments : _ Nx_kernel.segments option) with
+    | Some (Rows { a_axis; b_axis; _ }) -> (0, a_axis, b_axis)
+    | Some (Contracting _) -> (1, -1, -1)
+    | None -> (0, -1, -1)
+  in
+  let reduced =
+    Option.is_none segments && Option.is_none sca && Option.is_none scb
+  in
+  let kept = ref (if lead = 1 then 0 else -1) in
+  let operand pick r first segmented =
+    let next = ref first in
+    Array.init r (fun x ->
+        match Iarray.find_index (fun p -> pick p = x) batch with
+        | Some j -> Route.Becomes (lead + j)
+        | None -> (
+            match Iarray.find_index (fun p -> pick p = x) contracting with
+            | Some p -> if reduced then Route.Reduced p else Whole
+            | None -> segmented next x))
+  in
+  let free_a next x =
+    incr next;
+    if x <> whole_a then Route.Becomes (!next - 1)
+    else begin
+      kept := !next - 1;
+      Whole
+    end
+  in
+  let free_b next x =
+    if x = whole_b then Route.Whole
+    else begin
+      incr next;
+      Becomes (!next - 1)
+    end
+  in
+  let ra = Array.length sa in
+  let a = operand fst ra (lead + nb) free_a in
+  let b = operand snd (Array.length sb) (lead + ra - nc) free_b in
+  (* A scale's axis of the operand's extent reads as the operand's; one of a
+     ratio above one regroups into the result's axis, so that a cut keeps
+     whole blocks, and is read whole along a contracting pair; one of one
+     block is read whole. *)
+  let scaled row s ss =
+    Array.mapi
+      (fun d e ->
+        if e = s.(d) then row.(d)
+        else if e <= 1 then Route.Whole
+        else
+          match (row.(d) : Route.axis) with
+          | Becomes j -> Regroups { axis = j; extent = s.(d) }
+          | Whole | Reduced _ | Scanned _ | Regroups _ -> Whole)
+      ss
+  in
+  let some f o = match o with Some x -> [| f x |] | None -> [||] in
+  let reads_init r =
+    Array.init r (fun i -> if i = !kept then Route.Whole else Becomes i)
+  in
+  let offsets _ =
+    Array.init (nb + 1) (fun i ->
+        if i < nb then Route.Becomes (lead + i) else Whole)
+  in
+  let rows : Route.axis array array list =
+    [
+      [| a; b |];
+      some reads_init init;
+      some (scaled a sa) sca;
+      some (scaled b sb) scb;
+      some offsets segments;
+    ]
+  in
+  Route.Axes (Array.concat rows)
 
 let move_rule m x =
   let s = shape x in
@@ -1168,8 +1289,12 @@ let rule : type r. r prim -> Route.rule =
       Axes
         (Array.of_list
            (List.map (fun (_, x) -> Array.make (rank x) Route.Whole) pieces))
-  | Contract { batch; contracting; a; b; init; _ } ->
-      contract_rule batch contracting (rank a) (rank b) (Option.map rank init)
+  | Contract
+      { batch; contracting; a; b; init; a_scale; b_scale; segments; _ } ->
+      contract_rule ~batch ~contracting ~segments (shape a) (shape b)
+        (Option.map rank init)
+        (Option.map scale_shape a_scale)
+        (Option.map scale_shape b_scale)
   | Copy _ -> Elementwise
   | Move (m, x) -> move_rule m x
   | Bitcast (dt, x) -> bitcast_rule dt x
@@ -1513,12 +1638,25 @@ let check_assemble (type v s d) ~by (dt : (v, s) dtype) whole (fill : v)
           (shape x) pp_shape shapes.(i))
     pieces
 
-let contract_shape ~by ~batch ~contracting ~acc a b init =
+let contract_shape ~by ~batch ~contracting ~segments ~acc a b init a_scale
+    b_scale =
   (let (D.Any dt) = acc in
    if not (Nx_kernel.accumulates dt) then
      invalid_argf "%s: an accumulator of %s" by (D.name dt));
-  let s = shaped ~by (Shape.contract ~batch ~contracting ~segments:None (shape a, None)
-       (shape b, None)) in
+  let segments =
+    Option.map
+      (fun (g : _ Nx_kernel.segments) : Shape.t Nx_kernel.segments ->
+        match g with
+        | Rows r -> Rows { r with offsets = shape r.offsets }
+        | Contracting r -> Contracting { r with offsets = shape r.offsets })
+      segments
+  in
+  let s =
+    shaped ~by
+      (Shape.contract ~batch ~contracting ~segments
+         (shape a, Option.map scale_shape a_scale)
+         (shape b, Option.map scale_shape b_scale))
+  in
   (match init with
   | Some i when not (has_shape i s) ->
       invalid_argf "%s: init of shape %a, not %a" by pp_shape (shape i) pp_shape
@@ -1625,8 +1763,13 @@ let layouts : type r. by:string -> r prim -> L.t array =
       let shape = Iarray.to_array shape in
       check_assemble ~by dtype shape fill pieces;
       [| L.contiguous shape |]
-  | Contract { batch; contracting; acc; a; b; init; _ } ->
-      [| L.contiguous (contract_shape ~by ~batch ~contracting ~acc a b init) |]
+  | Contract
+      { batch; contracting; acc; a; b; init; a_scale; b_scale; segments; _ } ->
+      [|
+        L.contiguous
+          (contract_shape ~by ~batch ~contracting ~segments ~acc a b init
+             a_scale b_scale);
+      |]
   | Copy x -> [| L.contiguous (shape x) |]
   | Move (mv, x) -> (
       let s' = moved_shape ~by mv x in

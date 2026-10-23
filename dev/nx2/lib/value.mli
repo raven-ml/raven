@@ -159,6 +159,11 @@ and ('d, _) outs =
 and 'd index = (int64, Nx_array.Dtype.int64_elt, 'd) t
 (** Positions held in data. *)
 
+and 'd scale =
+  | Exponent of (int, Nx_array.Dtype.int8_unsigned_elt, 'd) t
+  | Value : ('v, 's, 'd) t -> 'd scale
+(** A contraction operand's block scale ({!Nx_kernel.type-scale}). *)
+
 and _ prim =
   | Map : {
       layout : Nx_array.Layout.t;
@@ -228,6 +233,9 @@ and _ prim =
       a : ('a, 'b, 'd) t;
       b : ('c, 'e, 'd) t;
       init : ('v, 's, 'd) t option;
+      a_scale : 'd scale option;
+      b_scale : 'd scale option;
+      segments : 'd index Nx_kernel.segments option;
     }
       -> ('v, 's, 'd) t prim
   | Fft : ('d, 'r) fft -> 'r prim

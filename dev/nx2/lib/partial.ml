@@ -1016,7 +1016,10 @@ struct
       ~contracting ~acc (out : (v, s) D.t) (a : (a, b, d) Value.t)
       (b : (c, e, d) Value.t) (init : (v, s, d) Value.t option) :
       (v, s, d) Value.t =
-    let shape = Prim.contract_shape ~by ~batch ~contracting ~acc a b init in
+    let shape =
+      Prim.contract_shape ~by ~batch ~contracting ~segments:None ~acc a b init
+        None None
+    in
     let sides f ps =
       Array.init (Iarray.length ps) (fun i -> f (Iarray.get ps i))
     in
@@ -1068,6 +1071,9 @@ struct
                     a = la;
                     b = lb;
                     init;
+                    a_scale = None;
+                    b_scale = None;
+                    segments = None;
                   }))
       | _ -> invalid_arg "Partial.contract: two operands"
     in
@@ -1137,8 +1143,23 @@ let run (type r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by route
       F.reduce route rule layout axes prog reductions loads
   | Value.Scan { layout; axis; prog; reduction; loads; carry = None } ->
       F.scan route rule layout axis prog reduction loads
-  | Value.Contract { order; batch; contracting; acc; out; a; b; init } ->
+  | Value.Contract
+      {
+        order;
+        batch;
+        contracting;
+        acc;
+        out;
+        a;
+        b;
+        init;
+        a_scale = None;
+        b_scale = None;
+        segments = None;
+      } ->
       F.contract route rule ~order ~batch ~contracting ~acc out a b init
+  | Value.Contract _ ->
+      invalid_arg "Partial.run: a scaled or segmented contraction by partials"
   | Value.Scan { carry = Some _; _ }
   | Value.Map _ | Value.Gather _ | Value.Scatter _ | Value.Sort _
   | Value.Fft _ | Value.Linalg _ | Value.Fold _ | Value.Assemble _

@@ -441,6 +441,9 @@ let contract_of extents =
          a;
          b;
          init;
+         a_scale = None;
+         b_scale = None;
+         segments = None;
        })
 
 let contract_op = contract_of [ 0; 1; 3; 5; 8; 9 ]
@@ -713,6 +716,9 @@ let test_contract_rows () =
         a;
         b;
         init = None;
+        a_scale = None;
+        b_scale = None;
+        segments = None;
       }
   in
   let w = [| { M.start = 0; count = 4; step = 1 }; full 8 |] in
@@ -755,6 +761,9 @@ let test_contract_nans () =
         a;
         b;
         init = None;
+        a_scale = None;
+        b_scale = None;
+        segments = None;
       }
   in
   agrees (Op op, [| range 3 4; range 1 5 |])

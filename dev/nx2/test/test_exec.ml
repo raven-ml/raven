@@ -2375,6 +2375,9 @@ let ccontract (type v s d) (cshow : v -> string) c acc batch contracting
            a;
            b;
            init = (if c.init then Some init else None);
+           a_scale = None;
+           b_scale = None;
+           segments = None;
          })
   in
   Array.map cshow (elements y)

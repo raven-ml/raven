@@ -471,18 +471,65 @@ let call : type r.
       let reads = Option.to_list carry in
       ran_loads ~by ~reads (K.scan ?carry prog ~axis reduction ~dsts loads) dsts
         loads
-  | Value.Contract { order; batch; contracting; acc; a; b; init; _ } ->
+  | Value.Contract
+      {
+        order;
+        batch;
+        contracting;
+        acc;
+        a;
+        b;
+        init;
+        a_scale;
+        b_scale;
+        segments;
+        _;
+      } ->
       let dst = nth j r and a = one a and b = one b in
       let init = Option.map one init in
+      let scale : _ Value.scale -> Nx_kernel.scale = function
+        | Exponent x -> Exponent (one x)
+        | Value x -> Value (one x)
+      in
+      let a_scale = Option.map scale a_scale in
+      let b_scale = Option.map scale b_scale in
+      let segments =
+        Option.map
+          (fun (g : _ Nx_kernel.segments) : _ Nx_kernel.segments ->
+            match g with
+            | Rows r -> Rows { r with offsets = one r.offsets }
+            | Contracting r -> Contracting { r with offsets = one r.offsets })
+          segments
+      in
+      let array : Nx_kernel.scale -> A.any = function
+        | Exponent x -> A.Any x
+        | Value x -> A.Any x
+      in
+      (* The arrays a refusal names, in the operation's operand order. *)
       let ops =
-        match init with
-        | None -> [| A.Any a; A.Any b |]
-        | Some i -> [| A.Any a; A.Any b; A.Any i |]
+        match (init, a_scale, b_scale, segments) with
+        | None, None, None, None -> [| A.Any a; A.Any b |]
+        | Some i, None, None, None -> [| A.Any a; A.Any b; A.Any i |]
+        | _ ->
+            let opt f o = Option.to_list (Option.map f o) in
+            let offsets = function
+              | Nx_kernel.Rows { offsets; _ } | Contracting { offsets; _ } ->
+                  A.Any offsets
+            in
+            Array.of_list
+              (List.concat
+                 [
+                   [ A.Any a; A.Any b ];
+                   opt (fun i -> A.Any i) init;
+                   opt array a_scale;
+                   opt array b_scale;
+                   opt offsets segments;
+                 ])
       in
       ran ~by
-        (K.contract ~order ~batch ~contracting ~segments:None ~acc ~dst ~init
-           { array = A.Any a; scale = None }
-           { array = A.Any b; scale = None })
+        (K.contract ~order ~batch ~contracting ~segments ~acc ~dst ~init
+           { array = A.Any a; scale = a_scale }
+           { array = A.Any b; scale = b_scale })
         [| A.Any dst |] ops
   | Value.Gather { axis; idx; x } ->
       let dst = nth j r and i = one idx and x = one x in
