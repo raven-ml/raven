@@ -2148,11 +2148,16 @@ module Conv = struct
   (* The rows of conv's contraction, an output position each. *)
   let rows c = c.n * numel (Array.mapi (fun i _ -> windows c i) c.spatial)
 
-  (* A contraction of more than four rows and columns takes chain order:
-     conv's columns are its output channels a group, conv_transpose's its
-     input channels, over its input's positions. *)
-  let chained c = c.og > 4 && c.cg > 1 && rows c > 4
-  let chained_transpose c = c.cg > 4 && c.og > 1 && c.n * numel c.spatial > 4
+  (* A contraction of more than four rows and columns and at least 64
+     outputs takes chain order. conv's rows are its output positions and
+     its columns its output channels a group; conv_transpose's rows are
+     its result's positions, [n] times those of [d], and its columns its
+     result's channels a group. *)
+  let chain_order ~rows ~columns = rows > 4 && columns > 4 && rows * columns >= 64
+  let chained c = c.cg > 1 && chain_order ~rows:(rows c) ~columns:c.og
+
+  let chained_transpose c d =
+    c.og > 1 && chain_order ~rows:(c.n * numel d) ~columns:c.cg
 
   (* Cases whose [m] values [values] draws. *)
   let case_of values =
@@ -2207,12 +2212,22 @@ module Conv = struct
        let* shaped = int_range 0 9 in
        let groups, cg = match shaped with 0 -> (2, 1) | 1 | 2 -> (2, 2) | _ -> (groups, cg) in
        let taps = if shaped = 2 then Array.map (fun _ -> 1) taps else taps in
-       let n = if shaped <= 2 then Int.max 1 n else n in
+       (* One case in ten of nine input and output channels a group, a tap
+          or more along each axis and eight windows or more along axis 0,
+          under an output, which conv and conv_transpose take in chain
+          order: drawn freely it is rare enough that some seeds never
+          reach it. *)
+       let cg, og = if shaped = 3 then (9, 9) else (cg, og) in
+       let taps = if shaped = 3 then Array.map (Int.max 1) taps else taps in
+       let n = if shaped <= 3 then Int.max 1 n else n in
        let spatial =
-         if shaped > 2 then spatial
+         if shaped > 3 then spatial
          else
            Array.mapi
-             (fun i d -> Int.max d ((dilation.(i) * (taps.(i) - 1)) + 3))
+             (fun i d ->
+               let least = (dilation.(i) * (taps.(i) - 1)) + 3 in
+               let windows = if shaped = 3 && i = 0 then 8 else 1 in
+               Int.max d (least + ((windows - 1) * stride.(i))))
              spatial
        in
        let c0 =
@@ -2333,8 +2348,24 @@ module Conv = struct
         ("bfloat16", D.Any D.Bfloat16, 0x1p-24, 0x1p-8, 0x1p-134);
         ("float16", D.Any D.Float16, 0x1p-24, 0x1p-11, 0x1p-25) ]
     in
-    prop "conv is within its bound of the exact sum, at every float" float_case
-      (fun c ->
+    (* No input channel, and a kernel of three taps over an input of two
+       padded by one each side, each under an output: drawn, each is a few
+       cases in a hundred, which some seeds never reach. *)
+    let examples =
+      let one ~cg ~spatial ~taps ~padding =
+        let c0 =
+          { n = 1; spatial = [| spatial |]; groups = 1; cg; og = 2; taps = [| taps |];
+            stride = [| 1 |]; dilation = [| 1 |]; padding = [| padding |]; xs = [||];
+            ws = [||] }
+        in
+        let v m = Array.init m (fun i -> Float.of_int ((i mod 7) - 3) /. 3.) in
+        { c0 with xs = v (numel (x_shape c0)); ws = v (numel (w_shape c0)) }
+      in
+      [ one ~cg:0 ~spatial:3 ~taps:2 ~padding:(0, 0);
+        one ~cg:2 ~spatial:2 ~taps:3 ~padding:(1, 1) ]
+    in
+    prop ~examples "conv is within its bound of the exact sum, at every float"
+      float_case (fun c ->
         let rank = Array.length c.spatial in
         let axes f = Array.exists Fun.id (Array.init rank f) in
         let outputs = Array.length (reference c) > 0 in
@@ -2392,7 +2423,8 @@ module Conv = struct
         let t = c.spatial in
         let least = Array.mapi (least c) t in
         cover "no input has the count" (Array.exists Option.is_none least);
-        cover "input channels past 4, over rows past 4" (chained_transpose c);
+        cover "input channels past 4, over rows past 4"
+          (chained_transpose c (Array.map (Option.value ~default:0) least));
         cover "a kernel axis of no element" (Array.mem 0 c.taps);
         cover "a padding past the span, cut in the transpose"
           (Array.exists Fun.id

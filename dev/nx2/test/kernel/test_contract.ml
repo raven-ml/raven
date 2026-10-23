@@ -558,13 +558,15 @@ let regimes acc =
   (* Many rows by few columns, b's windows streamed; few rows by more
      columns, a's packed whole; dilated taps; the chain path over two
      blocks of the contraction (float32's alone, for its cost); lane
-     order; and a of a dtype acc does not hold. *)
+     order, in one pass and in two over 9 rows of several runs; and a of a
+     dtype acc does not hold. *)
   let convs =
     [
       conv chain ~taps_first:true (2, 10, 10, 3, 8) (3, 3) (1, 1);
       conv chain ~init:true ~taps_first:false (1, 4, 4, 5, 40) (3, 3) (2, 1);
       conv chain ~taps_first:true (1, 4, 5, 4, 30) (2, 3) (1, 2);
       conv lane ~init:true ~taps_first:true (1, 3, 3, 4, 3) (3, 3) (1, 1);
+      conv lane ~taps_first:true (1, 3, 3, 4, 16) (3, 3) (1, 1);
     ]
     @ (match acc with
       | D.Any D.Float32 ->
@@ -1123,6 +1125,10 @@ let covers c =
     (windowed && rk > 1 && c.order = Lane);
   cover "windows with rows of several runs, in lane order"
     (windowed && rr > 1 && c.order = Lane);
+  (* Lane order's rows are the fewer of rows and columns, a pass at most 8
+     of them. *)
+  cover "lane order in passes over rows of several runs"
+    (lanes && m > 8 && n > 8 && if n < m then rc > 1 else rr > 1);
   cover "reversed windows" (windowed && List.mem "reversed" c.views);
   cover "the chain path over windows of several contracted runs"
     (windowed && rk > 1 && chain && k > kc_least);
