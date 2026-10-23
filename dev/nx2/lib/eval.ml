@@ -260,16 +260,25 @@ let refuse ~by o =
    inside it, with the extent suspended until the rule returns. The cell is
    emptied once no handler answered: [Effect.Unhandled] holds the effect, and
    the runtime keeps the last exception raised reachable while backtraces are
-   recorded. [Around i] is answered by [i]'s handler alone. *)
+   recorded. [Around i] is answered by [i]'s handler alone, [Within] by an
+   [Extent]'s. *)
 type _ Effect.t +=
   | Receive : { by : string; mutable op : 'r prim option } -> 'r Effect.t
   | Around : interpretation -> unit Effect.t
+  | Within : unit Effect.t
 
 (* Whether [o]'s handler is around the caller. *)
 let around o =
   match Effect.perform (Around o) with
   | () -> true
   | exception Effect.Unhandled (Around _) -> false
+
+let inside () =
+  (not (quiet ()))
+  &&
+  match Effect.perform Within with
+  | () -> true
+  | exception Effect.Unhandled Within -> false
 
 (* [i]'s rule on [op], in [i]'s clause. Another interpretation's traced operand
    is refused unless its interpretation is around [i], which is asked once per
@@ -353,6 +362,13 @@ let handler i =
               (fun (k : (a, _) Effect.Deep.continuation) ->
                 if present i here then Effect.Deep.continue k ()
                 else Effect.Deep.discontinue k (Effect.Unhandled e))
+        | Within -> (
+            match i.reach with
+            | Extent ->
+                Some
+                  (fun (k : (a, _) Effect.Deep.continuation) ->
+                    Effect.Deep.continue k ())
+            | Values | Adopting _ -> None)
         | _ -> None);
   }
 

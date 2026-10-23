@@ -502,7 +502,7 @@ let binary ~by k a b =
     let s = Prim.broadcast_shape ~by (shape a) (shape b) in
     alive2 ~by a b;
     Prim.accepted2 ~by k a;
-    if Eval.quiet () then
+    if not (Eval.inside ()) then
       Eval.apply2 ~by k (dtype a) (broadcast ~by s a) (broadcast ~by s b)
     else
       once2 ~by a b @@ fun a b ->
@@ -534,7 +534,7 @@ let comparison ~by k a b =
   else
     let s = Prim.broadcast_shape ~by (shape a) (shape b) in
     alive2 ~by a b;
-    if Eval.quiet () then
+    if not (Eval.inside ()) then
       Eval.apply2 ~by k D.Bool (broadcast ~by s a) (broadcast ~by s b)
     else
       once2 ~by a b @@ fun a b ->
@@ -596,7 +596,7 @@ let ternary ~by k c x y =
     alive2 ~by c x;
     Prim.alive ~by 2 y;
     Prim.accepted3 ~by k c x;
-    if Eval.quiet () then
+    if not (Eval.inside ()) then
       Eval.apply3 ~by k (broadcast ~by s c) (broadcast ~by s x)
         (broadcast ~by s y)
     else
@@ -1764,7 +1764,7 @@ let elementwise (type v s) ~by (dt : (v, s) D.t) xs (out : (v, s) E.t) =
     y
   in
   (* Read [once] inside an [Extent], as [binary]'s operands are. *)
-  if Eval.quiet () then map xs
+  if not (Eval.inside ()) then map xs
   else
     Donate.resolve ~by xs @@ fun read ->
     map (List.map (fun (Value.Any x) -> Value.Any (read x)) xs)

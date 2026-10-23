@@ -33,7 +33,8 @@
     that is never low. While any [Extent] lives, on any domain, every operation
     of every domain performs the dispatch effect, which costs it a perform and
     changes no result; a continuation dropped inside an extent keeps the count
-    high for the life of the process. *)
+    high for the life of the process. Whether an [Extent] is around the caller,
+    which the count cannot tell, is {!inside}'s. *)
 
 open Value
 
@@ -64,6 +65,10 @@ val owner : ('v, 's, 'd) t -> interpretation option
 val quiet : unit -> bool
 (** [quiet ()] is [true] iff the count of live [Extent] interpretations is
     zero: none is live, on any domain. *)
+
+val inside : unit -> bool
+(** [inside ()] is [true] iff an [Extent] interpretation's handler is around
+    the caller. With none live ({!quiet}) it performs nothing. *)
 
 val eval : by:string -> 'r prim -> 'r
 (** [eval ~by op] is [op]'s meaning under the rule. Errors name [by]. *)
