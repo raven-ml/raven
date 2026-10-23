@@ -342,7 +342,7 @@ let decode (D.Any dt) e =
 let encode (D.Any dt) x =
   let src = A.of_array D.Float32 [| 1 |] [| x |] in
   let dst = A.create Rig.host dt [| 1 |] in
-  (match Nx_cpu.apply1 Nx_kernel.Prog.Cast ~dst src with
+  (match Nx_kernels_support.map1 (module Nx_cpu) Cast ~dst src with
   | A.Done -> ()
   | r -> failf "a cast answered %a" Nx_array_support.pp_answer r);
   (elements (A.Any dst)).(0)

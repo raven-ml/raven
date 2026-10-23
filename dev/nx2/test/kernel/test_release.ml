@@ -18,6 +18,9 @@ module A = Nx_array
 module D = Nx_array.Dtype
 module P = Nx_kernel.Prog
 
+(* nx.cpu, whose one-node maps the tests call. *)
+let cpu = (module Nx_cpu : Nx_kernel.S)
+
 (* The probe *)
 
 (* What the bound allows a held stretch: NX_CPU_HOLD_BYTES (cpu.h), 1 MiB,
@@ -232,10 +235,11 @@ let indexing =
               done_
                 (Nx_cpu.sort ~axis:0 ~descending:false ~values ~positions x)));
       test "an iota of a strided destination" (fun () ->
-          let base = A.create Rig.host D.Uint8 [| n; 2 |] in
+          let base = A.create Rig.host D.Int64 [| n; 2 |] in
           let layout = Nx_array.Layout.v ~strides:[| 2; 1 |] [| n; 1 |] in
-          let dst = A.v D.Uint8 layout (A.buffer base) in
-          releases (fun () -> done_ (Nx_cpu.apply0 (P.Iota 0) ~dst)));
+          let dst = A.v D.Int64 layout (A.buffer base) in
+          releases (fun () ->
+              done_ (Nx_kernels_support.map0 cpu (Iota 0) ~dst)));
     ]
 
 (* Assemblies and folds *)
@@ -354,7 +358,8 @@ let elementwise =
               (A.buffer one)
           in
           let dst = A.create Rig.host D.Float8_e4m3fn [| m |] in
-          releases (fun () -> done_ (Nx_cpu.apply2 (Binary Pow) ~dst x x)));
+          releases (fun () ->
+              done_ (Nx_kernels_support.map2 cpu (Binary Pow) ~dst x x)));
       test "a map of powers" (fun () ->
           let x = halves n and dst = f64 [| n |] in
           let prog = powers 16 and loads = exponents n (Plain x) in
@@ -404,7 +409,9 @@ let domains =
           let k = 16384 in
           let a = A.of_array D.Float64 [| k |] (Array.make k 1.) in
           let sum = f64 [| k |] in
-          let small () = done_ (Nx_cpu.apply2 (Binary Add) ~dst:sum a a) in
+          let small () =
+            done_ (Nx_kernels_support.map2 cpu (Binary Add) ~dst:sum a a)
+          in
           small ();
           let other = Domain.spawn Nx_release_support.occupy in
           while not (Nx_release_support.occupied ()) do

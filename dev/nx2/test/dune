@@ -83,6 +83,7 @@
   nx_array_support
   nx_kernel
   nx_cpu
+  nx_kernels_support
   nx_support
   rig
   threads.posix
@@ -119,7 +120,14 @@
   exec
   repr)
  (modules_without_implementation value)
- (libraries nx_array nx_kernel nx_cpu nx_support rig windtrap)
+ (libraries
+  nx_array
+  nx_kernel
+  nx_cpu
+  nx_kernels_support
+  nx_support
+  rig
+  windtrap)
  ; A stack of 2 MiB: a walk that recurses once per node overflows on a long
  ; chain of constants.
  (action

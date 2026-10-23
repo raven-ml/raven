@@ -29,6 +29,11 @@ let declined kernel operands =
        kernel
        (String.concat ", " (List.map operand_name operands)))
 
+(* Elementwise kernels (copy.c, convert.c, apply.c, iota.c), which [map]
+   runs for a program of one node: the kind passes as its value. Each reads
+   its operands through the door at the dtypes its kind takes, so their
+   types here are any. *)
+
 external copy :
   dst:('v, 's) Nx_array.t -> ('a, 'b) Nx_array.t -> Nx_array.answer
   = "nx_cpu_copy"
@@ -47,26 +52,6 @@ external apply1_c :
   ('a, 'b) Nx_array.t ->
   Nx_array.answer = "nx_cpu_apply1"
 
-let apply1_answer (k : Nx_kernel.Prog.op1) ~dst x =
-  match k with
-  | Copy -> copy ~dst x
-  | Cast -> cast ~dst x
-  | (Unary _ | Bitcast)
-    when not
-           (Nx_kernel.Prog.accepts1 k (Nx_array.dtype x) (Nx_array.dtype dst))
-    ->
-      Nx_array.Wrong_dtype
-  | Bitcast -> bitcast ~dst x
-  | Unary u -> apply1_c u dst x
-
-let apply1 k ~dst x =
-  match apply1_answer k ~dst x with
-  | Nx_array.Declined -> declined "apply1" [ Any dst; Any x ]
-  | answer -> answer
-
-(* Kinds of no, two and three operands (apply.c, iota.c): the kind passes
-   as its value. *)
-
 external fill : string -> ('v, 's) Nx_array.t -> Nx_array.answer
   = "nx_cpu_fill"
 
@@ -76,7 +61,7 @@ external apply2_c :
   Nx_kernel.Prog.op2 ->
   ('v, 's) Nx_array.t ->
   ('a, 'b) Nx_array.t ->
-  ('a, 'b) Nx_array.t ->
+  ('c, 'e) Nx_array.t ->
   Nx_array.answer = "nx_cpu_apply2"
 
 external apply3_c :
@@ -84,32 +69,8 @@ external apply3_c :
   ('v, 's) Nx_array.t ->
   ('c, 'e) Nx_array.t ->
   ('a, 'b) Nx_array.t ->
-  ('a, 'b) Nx_array.t ->
+  ('w, 'r) Nx_array.t ->
   Nx_array.answer = "nx_cpu_apply3"
-
-let apply0 (k : Nx_kernel.Prog.op0) ~dst =
-  if not (Nx_kernel.Prog.accepts0 k (Nx_array.dtype dst)) then
-    Nx_array.Wrong_dtype
-  else
-    match match k with Fill b -> fill b dst | Iota i -> iota i dst with
-    | Nx_array.Declined -> declined "apply0" [ Any dst ]
-    | answer -> answer
-
-let apply2 k ~dst x y =
-  if not (Nx_kernel.Prog.accepts2 k (Nx_array.dtype x)) then
-    Nx_array.Wrong_dtype
-  else
-    match apply2_c k dst x y with
-    | Nx_array.Declined -> declined "apply2" [ Any dst; Any x; Any y ]
-    | answer -> answer
-
-let apply3 k ~dst c x y =
-  if not (Nx_kernel.Prog.accepts3 k (Nx_array.dtype c) (Nx_array.dtype x))
-  then Nx_array.Wrong_dtype
-  else
-    match apply3_c k dst c x y with
-    | Nx_array.Declined -> declined "apply3" [ Any dst; Any c; Any x; Any y ]
-    | answer -> answer
 
 (* Loads: a load's operand, and a padded one's pad and its fill's bits. *)
 
@@ -164,12 +125,51 @@ let padded : Nx_kernel.load -> bool = function
   | Plain _ -> false
   | Padded _ -> true
 
+(* Whether loads [i] on of [loads] are plain, one per operand from [i] on,
+   each of the dtype [ins] names. *)
+let rec plain_of ins (loads : Nx_kernel.load array) i =
+  if i = Array.length loads then i = Iarray.length ins
+  else
+    i < Iarray.length ins
+    && (match loads.(i) with
+       | Plain x ->
+           let (D.Any dt) = Iarray.get ins i in
+           D.equal (Nx_array.dtype x) dt
+       | Padded _ -> false)
+    && plain_of ins loads (i + 1)
+
+(* [n], the one node of [p], into [dst] over plain loads of [p]'s operands'
+   dtypes, by its kind's kernel, allocating nothing. The program has
+   checked the kind against its operands' dtypes. *)
+let single (p : Nx_kernel.Prog.t) n (Nx_array.Any dst) loads =
+  let (D.Any out) = Nx_kernel.Prog.dtype p (Iarray.length p.nodes - 1) in
+  if not (D.equal (Nx_array.dtype dst) out) then Nx_array.Wrong_dtype
+  else
+    match ((n : Nx_kernel.Prog.node), loads) with
+    | Const (_, b), _ -> fill b dst
+    | Coord axis, _ -> iota axis dst
+    | Op1 (Copy, _, _), [| Nx_kernel.Plain x |] -> copy ~dst x
+    | Op1 (Cast, _, _), [| Plain x |] -> cast ~dst x
+    | Op1 (Bitcast, _, _), [| Plain x |] -> bitcast ~dst x
+    | Op1 (Unary u, _, _), [| Plain x |] -> apply1_c u dst x
+    | Op2 (k, _, _), [| Plain x; Plain y |] -> apply2_c k dst x y
+    | Op3 (k, _, _, _), [| Plain c; Plain x; Plain y |] ->
+        apply3_c k dst c x y
+    | (In _ | Op1 _ | Op2 _ | Op3 _), _ -> Nx_array.Declined
+
+(* A program of one node over plain loads, into one destination, runs by
+   its kind's kernel, which reads its operands' layouts directly; any
+   other through map.c. *)
 let map p ~dsts loads =
   let answer =
-    if not (Array.exists padded loads) then map_c p dsts loads [||]
-    else if Array.length dsts > 0 && not (fits (loop_of dsts.(0)) loads 0)
-    then Nx_array.Shape_mismatch
-    else map_c p dsts loads (Array.map padding loads)
+    match Nx_kernel.Prog.single p with
+    | Some n when Array.length dsts = 1 && plain_of p.ins loads 0 ->
+        single p n dsts.(0) loads
+    | Some _ | None ->
+        if not (Array.exists padded loads) then map_c p dsts loads [||]
+        else if Array.length dsts > 0 && not (fits (loop_of dsts.(0)) loads 0)
+        then Nx_array.Shape_mismatch
+        else map_c p dsts loads (Array.map padding loads)
   in
   match answer with
   | Nx_array.Declined ->

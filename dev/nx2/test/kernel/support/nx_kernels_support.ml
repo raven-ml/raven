@@ -3,8 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+module P = Nx_kernel.Prog
+
+type op0 = Fill of string | Iota of int
+
 type kind =
-  | K0 of Nx_kernel.Prog.op0
+  | K0 of op0
   | K1 of Nx_kernel.Prog.op1
   | K2 of Nx_kernel.Prog.op2
   | K3 of Nx_kernel.Prog.op3
@@ -82,3 +86,29 @@ let guard side x =
   in
   Nx_array.blit ~src:(bytes x) ~dst:(bytes g);
   (g, free)
+
+(* One-node maps *)
+
+let map (module K : Nx_kernel.S) ~ins n ~dst loads =
+  K.map (P.of_node ~ins n) ~dsts:[| Nx_array.Any dst |] loads
+
+let map0 k op ~dst =
+  let dt = Nx_array.Dtype.Any (Nx_array.dtype dst) in
+  let n = match op with Fill b -> P.Const (dt, b) | Iota i -> P.Coord i in
+  map k ~ins:[||] n ~dst [||]
+
+let map1 k op ~dst x =
+  let y = Nx_array.Dtype.Any (Nx_array.dtype dst) in
+  map k
+    ~ins:[| Nx_array.Dtype.Any (Nx_array.dtype x) |]
+    (Op1 (op, y, 0)) ~dst [| Nx_kernel.Plain x |]
+
+let map2 k op ~dst x y =
+  let d = Nx_array.Dtype.Any (Nx_array.dtype x) in
+  map k ~ins:[| d; d |] (Op2 (op, 0, 1)) ~dst [| Nx_kernel.Plain x; Plain y |]
+
+let map3 k op ~dst c x y =
+  let d = Nx_array.Dtype.Any (Nx_array.dtype x) in
+  map k
+    ~ins:[| Nx_array.Dtype.Any (Nx_array.dtype c); d; d |]
+    (Op3 (op, 0, 1, 2)) ~dst [| Nx_kernel.Plain c; Plain x; Plain y |]

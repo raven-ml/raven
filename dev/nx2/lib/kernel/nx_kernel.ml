@@ -503,13 +503,6 @@ module type S = sig
 
   val name : string
   val computes_on : Rig.t -> bool
-  val apply0 : Prog.op0 -> dst:('v, 's) a -> answer
-  val apply1 : Prog.op1 -> dst:('v, 's) a -> ('a, 'b) a -> answer
-  val apply2 : Prog.op2 -> dst:('v, 's) a -> ('a, 'b) a -> ('a, 'b) a -> answer
-
-  val apply3 :
-    Prog.op3 -> dst:('v, 's) a -> ('c, 'e) a -> ('v, 's) a -> ('v, 's) a -> answer
-
   val map : Prog.t -> dsts:any array -> load array -> answer
 
   val reduce :

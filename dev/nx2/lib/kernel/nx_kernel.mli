@@ -439,9 +439,8 @@ end
 
     A destination shares no byte with an operand, except one it is identical
     to ({!Nx_array.door}) that the kernel reads only at the result's own index:
-    an operand of [apply1] to [apply3], a [Plain] load of [map], [contract]'s
-    [init], [scatter]'s [into], or [assemble]'s first piece where its region
-    is the whole result. A kernel reads such an operand at an index before it
+    a [Plain] load of [map], [contract]'s [init], [scatter]'s [into], or
+    [assemble]'s first piece where its region is the whole result. A kernel reads such an operand at an index before it
     writes there, so the result is the one a fresh destination receives. The
     door refuses an operand that shares a byte with a destination without
     being identical to it; an identical operand the kernel reads at other
@@ -488,23 +487,6 @@ module type S = sig
   val computes_on : Rig.t -> bool
   (** [computes_on d] is [true] iff these kernels compute on [d]'s memory. *)
 
-  (** {1:elementwise Elementwise} *)
-
-  val apply0 : Prog.op0 -> dst:('v, 's) a -> answer
-  (** [apply0 k ~dst] stores [k] at each index of [dst]. *)
-
-  val apply1 : Prog.op1 -> dst:('v, 's) a -> ('a, 'b) a -> answer
-  (** [apply1 k ~dst x] stores [k] of each element of [x] into [dst]. *)
-
-  val apply2 : Prog.op2 -> dst:('v, 's) a -> ('a, 'b) a -> ('a, 'b) a -> answer
-  (** [apply2 k ~dst x y] stores [k] of each element of [x] and [y] into
-      [dst]. *)
-
-  val apply3 :
-    Prog.op3 -> dst:('v, 's) a -> ('c, 'e) a -> ('v, 's) a -> ('v, 's) a -> answer
-  (** [apply3 k ~dst c x y] stores [k] of each element of [c], [x] and [y] into
-      [dst], of [x]'s and [y]'s dtype, as [Where] and [Fma] give. *)
-
   (** {1:loops Loops}
 
       A loop runs a program at every index of one shape, its destinations'
@@ -519,7 +501,9 @@ module type S = sig
 
   val map : Prog.t -> dsts:any array -> load array -> answer
   (** [map p ~dsts loads] stores [p]'s output [k] at each index into
-      [dsts.(k)], of that output's dtype. *)
+      [dsts.(k)], of that output's dtype. It is the one elementwise kernel:
+      one kind over operands is the program {!Prog.of_node} makes, which a
+      library recognises by {!Prog.single}. *)
 
   val reduce :
     Prog.t ->

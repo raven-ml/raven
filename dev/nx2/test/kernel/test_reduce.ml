@@ -524,7 +524,7 @@ let terms (A.Any x) =
         (A.to_array (Option.get (A.bitcast D.Int64 c)))
   | _ ->
       let d = A.create Rig.host D.Int64 (L.shape (A.layout c)) in
-      (match Nx_cpu.apply1 P.Cast ~dst:d c with
+      (match Support.map1 (module Nx_cpu) Cast ~dst:d c with
       | A.Done -> ()
       | r -> failf "a cast answered %a" Nx_array_support.pp_answer r);
       Array.map (fun v -> I v) (A.to_array d)
@@ -1211,7 +1211,7 @@ let law_computes b c =
 (* [x] cast into [d] by nx.cpu, C-contiguous. *)
 let cast_into (D.Any d) (A.Any x) =
   let dst = A.create Rig.host d (L.shape (A.layout x)) in
-  match Nx_cpu.apply1 P.Cast ~dst x with
+  match Support.map1 (module Nx_cpu) Cast ~dst x with
   | A.Done -> A.Any dst
   | r -> failf "a cast answered %a" Nx_array_support.pp_answer r
 
@@ -2984,7 +2984,7 @@ let reduce_vector k d r xs = reduce_terms k d r [| Array.length xs |] [| 0 |] xs
 let kind (D.Any dt) k xs =
   let (A.Any x) = array_bits dt (D.bits dt) [| Array.length xs |] xs in
   let d = A.create Rig.host (A.dtype x) [| Array.length xs |] in
-  match Nx_cpu.apply1 (P.Unary k) ~dst:d x with
+  match Support.map1 (module Nx_cpu) (Unary k) ~dst:d x with
   | A.Done -> Array.map value (terms (A.Any d))
   | a -> failf "a kind answered %a" Nx_array_support.pp_answer a
 

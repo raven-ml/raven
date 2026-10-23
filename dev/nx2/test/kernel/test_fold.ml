@@ -165,7 +165,7 @@ let target c xi =
 
 (* Prog.Add on two elements of [d]: floats of 32 and 64 bits by
    {!Elements.add_bits}, integers wrapping, and narrow floats and complex
-   numbers as nx.cpu's [apply2] adds two elements. *)
+   numbers as nx.cpu's map of one [Add] adds two elements. *)
 let add (D.Any dt as d) a b =
   if D.Any D.Float32 = d || D.Any D.Float64 = d then
     add_bits ~w:(String.length a) a b
@@ -175,7 +175,7 @@ let add (D.Any dt as d) a b =
     let (A.Any x) = of_elements d [| 1 |] [| a |] in
     let y = A.expect (A.dtype x) (of_elements d [| 1 |] [| b |]) in
     let dst = A.create Rig.host (A.dtype x) [| 1 |] in
-    match Nx_cpu.apply2 (Binary Add) ~dst x y with
+    match Support.map2 (module Nx_cpu) (Binary Add) ~dst x y with
     | A.Done -> (elements (A.Any dst)).(0)
     | r -> failf "an add answered %a" Nx_array_support.pp_answer r
 

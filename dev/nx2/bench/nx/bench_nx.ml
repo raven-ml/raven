@@ -27,6 +27,11 @@ let host n = filled D.Float32 [| n |] 1.
 let one () = host 1
 let on_host x = Nx.place Nx.Host.on x
 
+(* A float32 add's program. *)
+let add_f32 =
+  let f = D.Any D.Float32 in
+  Nx_kernel.Prog.of_node ~ins:[| f; f |] (Op2 (Binary Add, 0, 1))
+
 (* K1's steps over nx.array and nx.cpu, the kernel called statically: the floor
    [dispatch/add-1]'s indirect call is judged against. *)
 let add_direct a =
@@ -34,7 +39,8 @@ let add_direct a =
   let dst =
     A.v D.Float32 l (Rig.Buffer.create (A.device a) (D.bytes D.Float32 1))
   in
-  match Nx_cpu.apply2 (Binary Add) ~dst a a with
+  let loads = [| Nx_kernel.Plain a; Plain a |] in
+  match Nx_cpu.map add_f32 ~dsts:[| A.Any dst |] loads with
   | Done -> Nx.Repr.of_array Nx.Host.v dst
   | refusal -> A.refused "add-1-direct" refusal [ A.Any dst; A.Any a ]
 
@@ -263,9 +269,14 @@ let threefry_operands () =
   in
   (counters, one_key)
 
+let threefry =
+  let u = D.Any D.Uint64 in
+  Nx_kernel.Prog.of_node ~ins:[| u; u |] (Op2 (Binary Threefry, 0, 1))
+
 let threefry_direct (c, one_key) =
   let dst = A.create (A.device c) D.Uint64 [| mib |] in
-  match Nx_cpu.apply2 (Binary Threefry) ~dst c one_key with
+  let loads = [| Nx_kernel.Plain c; Plain one_key |] in
+  match Nx_cpu.map threefry ~dsts:[| A.Any dst |] loads with
   | Done -> dst
   | refusal -> A.refused "threefry-1M-direct" refusal [ A.Any dst; A.Any c ]
 

@@ -30,26 +30,6 @@ module Counting = struct
   let loop (Nx_array.Any dst) =
     size (Nx_array.Layout.shape (Nx_array.layout dst))
 
-  let apply0 k ~dst =
-    Atomic.incr count;
-    ignore (Atomic.fetch_and_add computed (loop (Nx_array.Any dst)));
-    Nx_cpu.apply0 k ~dst
-
-  let apply1 k ~dst x =
-    Atomic.incr count;
-    ignore (Atomic.fetch_and_add computed (loop (Nx_array.Any dst)));
-    Nx_cpu.apply1 k ~dst x
-
-  let apply2 k ~dst x y =
-    Atomic.incr count;
-    ignore (Atomic.fetch_and_add computed (loop (Nx_array.Any dst)));
-    Nx_cpu.apply2 k ~dst x y
-
-  let apply3 k ~dst c x y =
-    Atomic.incr count;
-    ignore (Atomic.fetch_and_add computed (loop (Nx_array.Any dst)));
-    Nx_cpu.apply3 k ~dst c x y
-
   let map p ~dsts loads =
     Atomic.incr count;
     ignore (Atomic.fetch_and_add computed (loop dsts.(0)));
@@ -100,14 +80,17 @@ module Declining = struct
 
   let name = "nx.test"
 
-  let apply0 (k : Nx_kernel.Prog.op0) ~dst =
-    match k with Fill _ -> Nx_array.Declined | Iota _ -> Nx_cpu.apply0 k ~dst
-
-  let apply2 (k : Nx_kernel.Prog.op2) ~dst x y =
-    match k with
-    | Binary Add -> Nx_array.Declined
-    | _ -> Nx_cpu.apply2 k ~dst x y
+  let map p ~dsts loads =
+    match Nx_kernel.Prog.single p with
+    | Some (Const _ | Op2 (Binary Add, _, _)) -> Nx_array.Declined
+    | Some _ | None -> Nx_cpu.map p ~dsts loads
 end
+
+(* nx.cpu's one-node maps of a cast and of a sum. *)
+let cast ~dst x = Nx_kernels_support.map1 (module Nx_cpu) Cast ~dst x
+
+let sum ~dst x y =
+  Nx_kernels_support.map2 (module Nx_cpu) (Binary Add) ~dst x y
 
 module Blocked = struct
   include Nx_cpu
@@ -175,7 +158,7 @@ module Blocked = struct
       in
       let add x y =
         let z = fresh () in
-        ok "sum" (Nx_cpu.apply2 (Binary Add) ~dst:z x y);
+        ok "sum" (sum ~dst:z x y);
         z
       in
       let parts = Array.init (((k - 1) / block) + 1) part in
@@ -184,7 +167,7 @@ module Blocked = struct
         Option.map
           (fun i ->
             let z = fresh () in
-            ok "cast" (Nx_cpu.apply1 Cast ~dst:z i);
+            ok "cast" (cast ~dst:z i);
             z)
           init
       in
@@ -201,7 +184,7 @@ module Blocked = struct
             done;
             !s
       in
-      Nx_cpu.apply1 Cast ~dst sum
+      cast ~dst sum
     end
 end
 

@@ -22,6 +22,20 @@ let ok = function
   | A.Done -> ()
   | _ -> failwith "the kernels refused a bench operand"
 
+(* A call of [map] on the one node [n] over [loads], read plain, into
+   [dst]: the program and the arrays built once, as a caller holds them. *)
+let one ins n dst loads =
+  ( Nx_kernel.Prog.of_node ~ins:(Iarray.of_array ins) n,
+    [| A.Any dst |],
+    Array.map (fun (A.Any x) -> Nx_kernel.Plain x) loads )
+
+let call (module K : Nx_kernel.S) (p, dsts, loads) = ok (K.map p ~dsts loads)
+
+(* [src] cast into [dst] by nx.cpu. *)
+let cast_into ~dst src =
+  let s = D.Any (A.dtype src) and d = D.Any (A.dtype dst) in
+  call (module Nx_cpu) (one [| s |] (Op1 (Cast, d, 0)) dst [| A.Any src |])
+
 let kib = 1024
 let mib = 1024 * kib
 
@@ -65,7 +79,7 @@ let filled (type v s) (dt : (v, s) D.t) s : (v, s) A.t =
   let x i = float_of_int ((i * 7919 mod 251) - 125) *. 0.37 in
   let src = A.of_array D.Float64 s (Array.init n x) in
   let a = A.create Rig.host dt s in
-  ok (Nx_cpu.apply1 Nx_kernel.Prog.Cast ~dst:a src);
+  cast_into ~dst:a src;
   a
 
 (* A row of a backend's kernels and the work its floors bound. *)
@@ -77,8 +91,10 @@ let copy ?bytes name a =
     row name
       (fun () ->
         let a = a () in
-        (a, A.create Rig.host (A.dtype a) (A.Layout.shape (A.layout a))))
-      (fun (a, dst) -> ok (K.apply1 Nx_kernel.Prog.Copy ~dst a))
+        let d = D.Any (A.dtype a) in
+        let dst = A.create Rig.host (A.dtype a) (A.Layout.shape (A.layout a)) in
+        one [| d |] (Op1 (Copy, d, 0)) dst [| A.Any a |])
+      (call (module K))
   in
   { bench; work = Option.to_list (Option.map (fun n -> F.Copy n) bytes) }
 
@@ -87,8 +103,12 @@ let cast (type v s w r) (s : (v, s) D.t) (d : (w, r) D.t) n =
   let bench (module K : Nx_kernel.S) =
     row
       (strf "cast-%s-%s-%s" (short s) (short d) (count n))
-      (fun () -> (filled s [| n |], A.create Rig.host d [| n |]))
-      (fun (a, dst) -> ok (K.apply1 Nx_kernel.Prog.Cast ~dst a))
+      (fun () ->
+        one [| D.Any s |]
+          (Op1 (Cast, D.Any d, 0))
+          (A.create Rig.host d [| n |])
+          [| A.Any (filled s [| n |]) |])
+      (call (module K))
   in
   { bench; work = [ F.Cast (D.Any s, D.Any d, n) ] }
 
@@ -102,8 +122,11 @@ let transposed_cast (type v s w r) (s : (v, s) D.t) (d : (w, r) D.t) n =
         let a =
           Option.get (A.move (M.Permute [| 1; 0 |]) (filled s [| n; n |]))
         in
-        (a, A.create Rig.host d [| n; n |]))
-      (fun (a, dst) -> ok (K.apply1 Nx_kernel.Prog.Cast ~dst a))
+        one [| D.Any s |]
+          (Op1 (Cast, D.Any d, 0))
+          (A.create Rig.host d [| n; n |])
+          [| A.Any a |])
+      (call (module K))
   in
   { bench; work = [ F.Cast (D.Any s, D.Any d, n * n) ] }
 
@@ -195,34 +218,40 @@ let cast_rows =
       cast D.Bool f32 m;
     ]
 
-(* Kinds of no, two and three operands into a fresh C-contiguous array. *)
-let apply ?work name dst run =
-  let bench (module K : Nx_kernel.S) =
-    row name (fun () -> dst ()) (fun x -> ok (run (module K : Nx_kernel.S) x))
-  in
+(* One-node maps into a fresh C-contiguous array, the call built by
+   [setup]. *)
+let apply ?work name setup =
+  let bench (module K : Nx_kernel.S) = row name setup (call (module K)) in
   { bench; work = Option.to_list work }
 
 (* The floor of an elementwise kind over [n] elements. *)
 let stream ins inb outb n = F.Stream { ins; inb; outb; n }
 
 let fill n =
-  let k = Nx_kernel.Prog.Fill (Nx_kernel.Prog.bits f32 1.5) in
-  apply ~work:(stream 0 4 4 n) ("fill-f32-" ^ count n)
-    (fun () -> A.create Rig.host f32 [| n |])
-    (fun (module K) dst -> K.apply0 k ~dst)
+  let f = D.Any f32 in
+  apply ~work:(stream 0 4 4 n) ("fill-f32-" ^ count n) (fun () ->
+      one [||]
+        (Const (f, Nx_kernel.Prog.bits f32 1.5))
+        (A.create Rig.host f32 [| n |])
+        [||])
 
 let binary name k dt n rd =
   apply
     ~work:(stream 2 (D.bits dt / 8) (D.bits rd / 8) n)
     name
-    (fun () -> (filled dt [| n |], filled dt [| n |], A.create Rig.host rd [| n |]))
-    (fun (module K) (x, y, dst) -> K.apply2 k ~dst x y)
+    (fun () ->
+      one [| D.Any dt; D.Any dt |]
+        (Op2 (k, 0, 1))
+        (A.create Rig.host rd [| n |])
+        [| A.Any (filled dt [| n |]); A.Any (filled dt [| n |]) |])
 
 (* An add of [n] elements of a dtype whose stream has no floor row. *)
 let narrow name dt n =
-  apply name
-    (fun () -> (filled dt [| n |], filled dt [| n |], A.create Rig.host dt [| n |]))
-    (fun (module K) (x, y, dst) -> K.apply2 (Binary Add) ~dst x y)
+  apply name (fun () ->
+      one [| D.Any dt; D.Any dt |]
+        (Op2 (Binary Add, 0, 1))
+        (A.create Rig.host dt [| n |])
+        [| A.Any (filled dt [| n |]); A.Any (filled dt [| n |]) |])
 
 (* An array of [dt] and shape [s] drawn from N(0, 1), as activations are:
    Box-Muller over a fixed sequence. *)
@@ -235,7 +264,7 @@ let normal (type v s) (dt : (v, s) D.t) s : (v, s) A.t =
   in
   let src = A.of_array D.Float64 s (Array.init n x) in
   let a = A.create Rig.host dt s in
-  ok (Nx_cpu.apply1 Nx_kernel.Prog.Cast ~dst:a src);
+  cast_into ~dst:a src;
   a
 
 (* A kind of one operand over [n] elements of [dt]: [filled]'s, or with
@@ -250,32 +279,32 @@ let unary ?(values = `Filled) name u dt n =
   let suffix = match values with `Filled -> "" | `Normal -> "-normal" in
   apply ~work:(stream 1 w w n)
     (strf "%s-%s-%s%s" name (short dt) (count n) suffix)
-    (fun () -> (x (), A.create Rig.host dt [| n |]))
-    (fun (module K) (x, dst) -> K.apply1 (Unary u) ~dst x)
+    (fun () ->
+      one [| D.Any dt |]
+        (Op1 (Unary u, D.Any dt, 0))
+        (A.create Rig.host dt [| n |])
+        [| A.Any (x ()) |])
 
 (* A map of the program [p] over [n] elements of its loads, into fresh
    arrays of its outputs' dtypes. *)
 let map ?work name (p : Nx_kernel.Prog.t) n =
-  apply ?work name
-    (fun () ->
-      ( Array.map
-          (fun (D.Any d) -> Nx_kernel.Plain (filled d [| n |]))
-          (Iarray.to_array p.ins),
+  apply ?work name (fun () ->
+      ( p,
         Array.map
           (fun o ->
             let (D.Any d) = Nx_kernel.Prog.dtype p o in
             A.Any (A.create Rig.host d [| n |]))
-          (Iarray.to_array p.outs) ))
-    (fun (module K) (loads, dsts) -> K.map p ~dsts loads)
+          (Iarray.to_array p.outs),
+        Array.map
+          (fun (D.Any d) -> Nx_kernel.Plain (filled d [| n |]))
+          (Iarray.to_array p.ins) ))
 
-(* Maps: one Add, as apply2 runs it; six float32 nodes over one load, a
-   program the interpreter runs block by block in L1; a Mul by a constant,
-   a repeated element to its row; and a bfloat16 Add, decoded and encoded
-   in its slots. *)
+(* Maps of several nodes: six float32 nodes over one load, a program the
+   interpreter runs block by block in L1; and a Mul by a constant, a
+   repeated element to its row. *)
 let map_rows =
   let module P = Nx_kernel.Prog in
   let m = mib and f = D.Any f32 in
-  let add dt = P.v ~ins:[| dt; dt |] [| P.In 0; In 1; Op2 (Binary Add, 0, 1) |] ~outs:[| 2 |] in
   let six =
     P.v ~ins:[| f |]
       P.
@@ -296,10 +325,8 @@ let map_rows =
       ~outs:[| 2 |]
   in
   [
-    map ~work:(stream 2 4 4 m) "map-add-f32-1M" (add f) m;
     map ~work:(stream 1 4 4 m) "map-6-f32-1M" six m;
     map ~work:(stream 1 4 4 m) "map-scale-f32-1M" scale m;
-    map "map-add-bf16-1M" (add (D.Any D.Bfloat16)) m;
   ]
 
 let apply_rows =
@@ -307,21 +334,22 @@ let apply_rows =
   [
     fill 1;
     fill m;
-    apply ~work:(stream 0 8 8 m) "iota-i64-1M"
-      (fun () -> A.create Rig.host D.Int64 [| m |])
-      (fun (module K) dst -> K.apply0 (Iota 0) ~dst);
+    apply ~work:(stream 0 8 8 m) "iota-i64-1M" (fun () ->
+        one [||] (Coord 0) (A.create Rig.host D.Int64 [| m |]) [||]);
   ]
   @ List.map
       (fun n -> binary ("add-f32-" ^ count n) (Binary Add) f32 n f32)
       [ 1; kib; m ]
   @ [
-      apply ~work:(stream 2 4 4 m) "add-f32-1M-transposed"
-        (fun () ->
+      apply ~work:(stream 2 4 4 m) "add-f32-1M-transposed" (fun () ->
           let x = filled f32 [| 1024; 1024 |] in
-          ( Option.get (A.move (M.Permute [| 1; 0 |]) x),
-            filled f32 [| 1024; 1024 |],
-            A.create Rig.host f32 [| 1024; 1024 |] ))
-        (fun (module K) (x, y, dst) -> K.apply2 (Binary Add) ~dst x y);
+          one [| D.Any f32; D.Any f32 |]
+            (Op2 (Binary Add, 0, 1))
+            (A.create Rig.host f32 [| 1024; 1024 |])
+            [|
+              A.Any (Option.get (A.move (M.Permute [| 1; 0 |]) x));
+              A.Any (filled f32 [| 1024; 1024 |]);
+            |]);
       binary "add-i8-1M" (Binary Add) D.Int8 m D.Int8;
       (* Narrow dtypes through their carriers, bound by add-f32-1M's and
          add-i8-1M's element rates rather than a floor of their own. *)
@@ -332,21 +360,24 @@ let apply_rows =
       binary "mul-c64-1M" (Binary Mul) D.Complex64 m D.Complex64;
       binary "mul-c128-1M" (Binary Mul) D.Complex128 m D.Complex128;
       binary "maximum-f32-1M" (Binary Maximum) f32 m f32;
-      apply ~work:(F.Select { inb = 4; n = m }) "where-f32-1M"
-        (fun () ->
+      apply ~work:(F.Select { inb = 4; n = m }) "where-f32-1M" (fun () ->
           let c = A.create Rig.host D.Bool [| m |] in
-          ok
-            (Nx_cpu.apply2 (Compare Less) ~dst:c (filled f32 [| m |])
-               (filled f32 [| m |]));
-          (c, filled f32 [| m |], filled f32 [| m |], A.create Rig.host f32 [| m |]))
-        (fun (module K) (c, x, y, dst) -> K.apply3 Where ~dst c x y);
-      apply ~work:(stream 3 4 4 m) "fma-f32-1M"
-        (fun () ->
-          ( filled f32 [| m |],
-            filled f32 [| m |],
-            filled f32 [| m |],
-            A.create Rig.host f32 [| m |] ))
-        (fun (module K) (x, y, z, dst) -> K.apply3 Fma ~dst x y z);
+          let f = D.Any f32 in
+          call (module Nx_cpu)
+            (one [| f; f |]
+               (Op2 (Compare Less, 0, 1))
+               c
+               [| A.Any (filled f32 [| m |]); A.Any (filled f32 [| m |]) |]);
+          one [| D.Any D.Bool; f; f |]
+            (Op3 (Where, 0, 1, 2))
+            (A.create Rig.host f32 [| m |])
+            [| A.Any c; A.Any (filled f32 [| m |]); A.Any (filled f32 [| m |]) |]);
+      apply ~work:(stream 3 4 4 m) "fma-f32-1M" (fun () ->
+          let f = D.Any f32 in
+          one [| f; f; f |]
+            (Op3 (Fma, 0, 1, 2))
+            (A.create Rig.host f32 [| m |])
+            (Array.init 3 (fun _ -> A.Any (filled f32 [| m |]))));
     ]
   (* A unary kind that moves bits, then the transcendental kinds. *)
   @ [ unary "neg" Neg f32 m ]
@@ -999,7 +1030,7 @@ let operand (type v s) ?(dominant = true) ~symmetric (dt : (v, s) D.t) ~batch n
   let one = A.of_array D.Float64 [| 1; n; n |] a in
   let src = Option.get (A.move (M.Broadcast [| batch; n; n |]) one) in
   let x = A.create Rig.host dt [| batch; n; n |] in
-  ok (Nx_cpu.apply1 Nx_kernel.Prog.Cast ~dst:x src);
+  cast_into ~dst:x src;
   x
 
 let definite dt ~batch n = operand ~symmetric:true dt ~batch n

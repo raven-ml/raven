@@ -26,9 +26,7 @@
     235. Other threads of the calling domain may run OCaml code during a
     call.
 
-    [apply0] to [apply3] compute every kind at every dtype of its domain. A
-    [Copy] whose operand's dtype is not [dst]'s is refused with
-    [Wrong_dtype]. [map] computes every program. A padded load is first
+    [map] computes every program. A padded load is first
     copied padded into host memory, which the call holds until it returns;
     a pad that fits no operand of its load's shape is refused with
     [Shape_mismatch].
@@ -38,7 +36,7 @@
     and [init] of any dtype, into a [dst] of any dtype, at any layout, with
     or without segments, scaled in [float32] and [float64] alone, and
     declines the others. Each
-    element of [a], [b] and [init] enters [acc] as {!apply1}'s [Cast] casts
+    element of [a], [b] and [init] enters [acc] as [Cast] casts
     it. That is exact where [acc] holds its value: [float32] holds [bool],
     [bit], the integers of at most 16 bits and the floats of at most 32;
     [float64] also [int32], [uint32] and [float64]; a complex dtype what its

@@ -90,15 +90,6 @@ type compare = Equal | Not_equal | Less | Less_equal
 
 (** {1:arities Kinds by arity} *)
 
-(** The type for kinds of no operand. *)
-type op0 =
-  | Fill of string
-      (** [Fill b] is the element whose bits are [b], in the result's dtype and
-          the host's byte order. *)
-  | Iota of int
-      (** [Iota i] is each element's index along the result's axis [i], in the
-          result's dtype. *)
-
 (** The type for kinds of one operand. *)
 type op1 =
   | Copy  (** The operand's bits, NaN payloads included, into its own dtype. *)
@@ -153,11 +144,7 @@ type op3 =
     - [Maximum], [Minimum] and the comparisons: every dtype.
     - [Copy]: every dtype, into itself. [Cast]: every pair. [Bitcast]: every
       pair of one width.
-    - [Where]: a boolean, then two operands of any one dtype.
-    - [Fill]: every dtype. [Iota]: floats and integers. *)
-
-val accepts0 : op0 -> ('v, 's) Nx_array.Dtype.t -> bool
-(** [accepts0 k dt] is [true] iff [k] makes elements of [dt]. *)
+    - [Where]: a boolean, then two operands of any one dtype. *)
 
 val accepts1 :
   op1 -> ('a, 'b) Nx_array.Dtype.t -> ('v, 's) Nx_array.Dtype.t -> bool
@@ -178,7 +165,7 @@ val accepts3 :
 val bits : ('v, 's) Nx_array.Dtype.t -> 'v -> string
 (** [bits dt x] is the bits of [x], an element of [dt], in the host's byte
     order: {!Nx_array.Dtype.bytes}[ dt 1] bytes, a sub-byte element in the low
-    bits of one byte. It is the payload of [Fill] and [Const]. A float is
+    bits of one byte. It is the payload of [Const]. A float is
     stored as {!Nx_array.Dtype.of_float} says.
 
     Raises [Invalid_argument] for an [int] outside [dt]'s range. *)
@@ -192,7 +179,9 @@ type node =
       (** [Coord i] is the iteration index along axis [i], as an [int64]. *)
   | Const of Nx_array.Dtype.any * string
       (** [Const (dt, b)] is the element of [dt] whose bits are [b]
-          ({!bits}). *)
+          ({!bits}), stored as they are: any bits of [dt]'s width, NaN
+          payloads included, and for a boolean any byte, [true] iff it is
+          not zero. *)
   | Op1 of op1 * Nx_array.Dtype.any * int
       (** [Op1 (k, dt, i)] is [k] of node [i] into [dt]. *)
   | Op2 of op2 * int * int  (** [Op2 (k, i, j)] is [k] of nodes [i] and [j]. *)
@@ -250,6 +239,13 @@ val dtype : t -> int -> Nx_array.Dtype.any
 val is_identity : t -> bool
 (** [is_identity p] is [true] iff [p] has one operand and one output, and its
     output is that operand's [In] node: [p] gives its operand back. *)
+
+val single : t -> node option
+(** [single p] is [Some n] iff [p] is {!of_node}[ ~ins n] where [n] reads
+    each of [p]'s operands in order: a [Const] or a [Coord] of no operand,
+    or a kind of [m] operands reading nodes [0] to [m - 1] over [m]
+    operands. [None] otherwise. A library may run such a program by a
+    kernel of [n]'s kind alone. *)
 
 (** {1:exprs Expressions} *)
 
