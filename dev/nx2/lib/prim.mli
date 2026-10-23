@@ -316,6 +316,19 @@ val block_run : int array -> int array -> int array -> int option
     It is [Some 1] where one of [axes] has no element, and [None] where
     blocks do not merge so. *)
 
+val contract_groups :
+  batch:(int * int) iarray ->
+  contracting:(int * int) iarray ->
+  int ->
+  int ->
+  int array array * int array array
+(** [contract_groups ~batch ~contracting ra rb] groups the axes of a
+    contraction's operands of ranks [ra] and [rb]: [a]'s as
+    [[|batch; rows; terms|]] and [b]'s as [[|batch; terms; columns|]], the
+    batch and term axes in their pairs' order and the others increasing.
+    Partials lay each operand and its scale out by these groups, and
+    {!rule} lets them take a scale by the same groups. *)
+
 val contract_order :
   batch:(int * int) iarray ->
   contracting:(int * int) iarray ->
