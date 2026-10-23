@@ -2721,10 +2721,12 @@ static double call_cost(int acc, int order, const double *x) {
    the fill answers where it does not fit, declines what it does not
    compute, then reads the operands through the door. [vorder] is the
    order, [vacc] acc's dtype code, [vi] the init and [vsa] and [vsb] a's
-   and b's scales, options of Nx_kernel.scale. */
-value nx_cpu_contract(value vorder, value vbatch, value vcontracting,
-                      value vacc, value vdst, value vi, value va, value vb,
-                      value vsa, value vsb) {
+   and b's scales, options of Nx_kernel.scale. Its body is inlined into
+   two copies, [scaled] a constant in each, so that an unscaled call runs
+   none of the scales' setup. */
+static inline __attribute__((always_inline)) value contract_body(
+    value vorder, value vbatch, value vcontracting, value vacc, value vdst,
+    value vi, value va, value vb, value vsa, value vsb, int scaled) {
   int acc = Int_val(vacc), init = Is_block(vi);
   value vinit = init ? Field(vi, 0) : va;
   nx_contract_view v;
@@ -2738,17 +2740,17 @@ value nx_cpu_contract(value vorder, value vbatch, value vcontracting,
   if (acc < 0 || acc >= NX_DTYPE_COUNT || !computes(acc))
     return Val_int(NX_DECLINED);
   value vs[2] = {vsa, vsb};
-  int scaled = Is_block(vsa) || Is_block(vsb);
   if (scaled && acc != NX_FLOAT32 && acc != NX_FLOAT64)
     return Val_int(NX_DECLINED);
   if (scaled && !scales_fit(va, vb, vs)) return Val_int(NX_SHAPE);
-  nx_operand in[6] = {{va, dts[0], 0},
-                      {vb, dts[1], 0},
-                      {vdst, out, 1},
-                      {vinit, dts[2], 0}};
+  nx_operand in[6];
+  in[0] = (nx_operand){va, dts[0], 0};
+  in[1] = (nx_operand){vb, dts[1], 0};
+  in[2] = (nx_operand){vdst, out, 1};
+  in[3] = (nx_operand){vinit, dts[2], 0};
   nx_array a[6];
   int n = 3 + init, at[2] = {-1, -1};
-  for (int o = A; o <= B; o++)
+  for (int o = A; scaled && o <= B; o++)
     if (Is_block(vs[o])) {
       value sv = Field(Field(vs[o], 0), 0);
       at[o] = n;
@@ -2773,7 +2775,7 @@ value nx_cpu_contract(value vorder, value vbatch, value vcontracting,
   uint8_t *mem[2] = {NULL, NULL};
   done = 1;
   if (scaled) memset(s, 0, sizeof s);
-  for (int o = A; o <= B && done; o++)
+  for (int o = A; scaled && o <= B && done; o++)
     if (at[o] >= 0)
       done = scale_of(acc, Tag_val(Field(vs[o], 0)) == 0, op[o], &a[at[o]],
                       vbatch, vcontracting, o, &s[o], &mem[o]);
@@ -2792,6 +2794,23 @@ value nx_cpu_contract(value vorder, value vbatch, value vcontracting,
   nx_done(n, a);
   if (!done) caml_raise_out_of_memory();
   return Val_int(NX_OK);
+}
+
+static __attribute__((noinline)) value contract_scaled(
+    value vorder, value vbatch, value vcontracting, value vacc, value vdst,
+    value vi, value va, value vb, value vsa, value vsb) {
+  return contract_body(vorder, vbatch, vcontracting, vacc, vdst, vi, va, vb,
+                       vsa, vsb, 1);
+}
+
+value nx_cpu_contract(value vorder, value vbatch, value vcontracting,
+                      value vacc, value vdst, value vi, value va, value vb,
+                      value vsa, value vsb) {
+  if (Is_block(vsa) || Is_block(vsb))
+    return contract_scaled(vorder, vbatch, vcontracting, vacc, vdst, vi, va,
+                           vb, vsa, vsb);
+  return contract_body(vorder, vbatch, vcontracting, vacc, vdst, vi, va, vb,
+                       vsa, vsb, 0);
 }
 
 value nx_cpu_contract_byte(value *argv, int argn) {
