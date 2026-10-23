@@ -1641,6 +1641,21 @@ val log_softmax :
     an entry far below [m] keeps its digits where [log (softmax x)] would be
     [-∞]. As {!softmax} otherwise. *)
 
+val rms_norm :
+  ?axes:int list -> ?eps:float -> (float, 's, 'd) t -> (float, 's, 'd) t
+(** [rms_norm ~axes ~eps x] is [x / sqrt (mean x² + eps)], the mean along
+    [axes], [[-1]] by default; [eps] defaults to [1e-6]. It computes
+    [x · (1 / sqrt (Σ x² / n + eps))] for the [n] elements of each lane, in
+    [x]'s compute dtype: the squares summed as {!sum} sums them, each later
+    step rounded once there, and the product rounded once to [x]'s dtype.
+    At [float32] and [float64] these are the bits of
+    [mul x (rsqrt (add_s (mean ~axes ~keepdims:true (square x)) eps))]. A
+    lane whose sum of squares overflows is [x · 0]: zeros, NaN at an
+    infinity. A lane holding a NaN is NaN.
+
+    Raises [Invalid_argument] naming itself for an axis outside [x]'s rank
+    or repeated, or if [eps] is negative or NaN. *)
+
 (** {2:conversion Conversion} *)
 
 val cast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t

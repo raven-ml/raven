@@ -4,8 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* Nx's activations and its moving average: sigmoid and softplus within their
-   stated ulps of mpmath's values, softmax and log_softmax against their
-   definitions computed in float64, ewma against its recurrence and its
+   stated ulps of mpmath's values, softmax, log_softmax and rms_norm against
+   their definitions computed in float64, rms_norm against the composition
+   its doc names, ewma against its recurrence and its
    prefix law, and the narrow floats at float32, rounded once. *)
 
 open Windtrap
@@ -758,6 +759,99 @@ let test_softmax_cases () =
   invalid ~by:"Nx.log_softmax" (fun () ->
       Nx.log_softmax ~axes:[ 0; 0 ] (f64 [| 1. |]))
 
+(* RMS norm *)
+
+(* A lane of [n] values in float64, by the definition. *)
+let lane_rms eps xs =
+  let n = Float.of_int (Array.length xs) in
+  let ms = Array.fold_left (fun s x -> s +. (x *. x)) 0. xs /. n in
+  Array.map (fun x -> x /. Float.sqrt (ms +. eps)) xs
+
+(* Lanes along the last axis of a few to several blocks of terms, each
+   drawn often; values of either sign, zeros of both. *)
+let rms_case =
+  let open Gen in
+  let* s =
+    frequency
+      [
+        (2, array ~size:(int_range 1 3) (int_range 1 5));
+        ( 3,
+          let* r = int_range 1 3 in
+          let+ k =
+            of_list ~pp:Format.pp_print_int
+              [ 1; 16; 17; 1024; 1025; 2048; 3000; 5000 ]
+          in
+          [| r; k |] );
+      ]
+  in
+  let n = Array.fold_left ( * ) 1 s in
+  let* xs =
+    array ~size:(constant n)
+      (frequency
+         [
+           (8, float_range (-100.) 100.); (1, constant 0.); (1, constant (-0.));
+         ])
+  in
+  let+ eps = of_list [ 1e-6; 0.; 0.5 ] in
+  (s, xs, eps)
+
+let covers_rms (s, _, eps) =
+  let k = s.(Array.length s - 1) in
+  cover "one term a lane" (k = 1);
+  cover "several full blocks a lane" (k >= 2048);
+  cover "no eps" (eps = 0.)
+
+(* Within [((n + 7) / 2) u] of the definition, relatively: the squares'
+   sum within [(n - 1) u], halved by the root, and four roundings after
+   it. *)
+let law_rms (type s) (dt : (float, s) D.t) u tiny ((s, xs, eps) as c) =
+  covers_rms c;
+  let xs = Array.map (D.of_float dt) xs in
+  let y = Nx.to_array (Nx.rms_norm ~eps (value dt s xs)) in
+  let n = s.(Array.length s - 1) in
+  let tol = (Float.of_int (n + 7) /. 2.) *. u in
+  List.iter
+    (fun lane ->
+      let want = lane_rms eps (Array.map (fun i -> xs.(i)) lane) in
+      Array.iteri
+        (fun j i ->
+          if Float.abs (y.(i) -. want.(j)) > (tol *. Float.abs want.(j)) +. tiny
+          then failf "rms_norm at %d: %h, by definition %h" i y.(i) want.(j))
+        lane)
+    (lanes s)
+
+(* At float32 and float64, the bits of the composition its doc names. *)
+let law_rms_composed (type s) (dt : (float, s) D.t) ((s, xs, eps) as c) =
+  covers_rms c;
+  let x = value dt s (Array.map (D.of_float dt) xs) in
+  let ms = Nx.mean ~axes:[ -1 ] ~keepdims:true (Nx.square x) in
+  let want = Nx.mul x (Nx.rsqrt (Nx.add_s ms eps)) in
+  equal same_bits (Nx.to_array want) (Nx.to_array (Nx.rms_norm ~eps x))
+
+let test_rms_cases () =
+  let f32 xs = Nx.create Nx.float32 [| Array.length xs |] xs in
+  equal same_bits [| nan; nan; nan |]
+    (Nx.to_array (Nx.rms_norm (f32 [| 1.; nan; 2. |])));
+  equal same_bits [| 0.; -0.; nan |]
+    (Nx.to_array (Nx.rms_norm (f32 [| 1e30; -1.; infinity |])));
+  equal same_bits [| 0.; 0. |] (Nx.to_array (Nx.rms_norm (f32 [| 0.; 0. |])));
+  equal same_bits [| 1.; -1. |]
+    (Nx.to_array (Nx.rms_norm ~eps:0. (f32 [| 3.; -3. |])));
+  equal (array int) [| 0; 3 |]
+    (Nx.shape (Nx.rms_norm (Nx.zeros Nx.float32 [| 0; 3 |])));
+  let x =
+    Nx.create Nx.float64 [| 2; 3; 2 |]
+      (Array.init 12 (fun i -> Float.of_int ((i * 7) mod 5)))
+  in
+  let moved = Nx.reshape [| 3; 4 |] (Nx.transpose ~axes:[ 1; 0; 2 ] x) in
+  let back y = Nx.transpose ~axes:[ 1; 0; 2 ] (Nx.reshape [| 3; 2; 2 |] y) in
+  equal same_bits
+    (Nx.to_array (back (Nx.rms_norm moved)))
+    (Nx.to_array (Nx.rms_norm ~axes:[ 0; 2 ] x));
+  invalid ~by:"Nx.rms_norm" (fun () -> Nx.rms_norm ~axes:[ 1 ] (f32 [| 1. |]));
+  invalid ~by:"Nx.rms_norm" (fun () -> Nx.rms_norm ~eps:(-1.) (f32 [| 1. |]));
+  invalid ~by:"Nx.rms_norm" (fun () -> Nx.rms_norm ~eps:nan (f32 [| 1. |]))
+
 (* Moving average *)
 
 (* The recurrence, in float64. *)
@@ -858,6 +952,19 @@ let () =
              test "cases" test_softmax_cases;
              narrow "softmax" (fun x -> Nx.softmax (in_rows x));
              narrow "log_softmax" (fun x -> Nx.log_softmax (in_rows x));
+           ];
+         group "rms_norm"
+           [
+             prop "float64 by its definition" rms_case
+               (law_rms D.Float64 0x1p-53 0x1p-1074);
+             prop "float32 by its definition" rms_case
+               (law_rms D.Float32 0x1p-24 0x1p-149);
+             prop "float32's bits are its composition's" rms_case
+               (law_rms_composed D.Float32);
+             prop "float64's bits are its composition's" rms_case
+               (law_rms_composed D.Float64);
+             test "cases" test_rms_cases;
+             narrow "rms_norm" (fun x -> Nx.rms_norm (in_rows x));
            ];
          group "ewma"
            [

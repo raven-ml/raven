@@ -2384,6 +2384,33 @@ let log_softmax ?axes ?scale x =
   let by = "Nx.log_softmax" in
   once ~by x (normalised ~by (fun _ d sum -> E.(d - log sum)) ?axes ?scale)
 
+(* One reduction of the squares, a map of each lane's scale, then one map
+   of [x] by its lane's scale: no array of [x]'s size but the result. *)
+let rms_norm (type s d) ?(axes = [ -1 ]) ?(eps = 1e-6) (x : (float, s, d) t) :
+    (float, s, d) t =
+  let by = "Nx.rms_norm" in
+  once ~by x @@ fun x ->
+  let s = shape x and dt = dtype x in
+  let axes = reduced_axes ~by x (Some axes) in
+  if Float.is_nan eps || eps < 0. then
+    invalid_argf "%s: eps %g is negative or NaN" by eps;
+  if numel x = 0 then x
+  else
+    let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
+    let n = Float.of_int (reduced_count s axes) in
+    let wide = at w (operand 0 x) in
+    let sum, () =
+      reduce_by ~by s axes [ Any x ] Value.[ Monoid (Sum, 0, w) ]
+        E.(wide * wide)
+    in
+    let lit = E.const w in
+    let scale =
+      elementwise ~by w [ Any sum ]
+        E.(recip (sqrt ((operand 0 sum / lit n) + lit eps)))
+    in
+    let scale = broadcast ~by s (kept ~by ~keepdims:true s axes scale) in
+    elementwise ~by dt [ Any x; Any scale ] (at dt E.(wide * operand 1 scale))
+
 (* Complex parts *)
 
 let real_by ~by dt z =

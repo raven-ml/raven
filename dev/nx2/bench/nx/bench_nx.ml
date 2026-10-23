@@ -1017,8 +1017,8 @@ let frontend_rows =
 (* Reductions and activations, each against its NumPy, SciPy or pandas
    counterpart at the same size: 1M float32 elements, rows of 1024; softmax
    also over a vocabulary's logits and a few short rows; softmax over a
-   batch of 128256-word logits, against PyTorch and llama.cpp, measured
-   outside the repo. *)
+   batch of 128256-word logits and RMS norm over a norm's batch, against
+   PyTorch and llama.cpp, measured outside the repo. *)
 let statistics_rows =
   Thumper.group "statistics"
     [
@@ -1069,6 +1069,8 @@ let statistics_rows =
       Thumper.bench_with_setup "softmax-f32-8x64" ~setup:small_logits
         Nx.softmax;
       Thumper.bench_with_setup "softmax-f32-64x128256" ~setup:vocab Nx.softmax;
+      Thumper.bench_with_setup "rms_norm-f32-8192x4096" ~setup:m8192x4096
+        Nx.rms_norm;
       Thumper.bench_with_setup "log_softmax-f32-8x64" ~setup:small_logits
         Nx.log_softmax;
       Thumper.bench_with_setup "ewma-f32-1M" ~setup:f1m (Nx.ewma ~alpha:0.1);
