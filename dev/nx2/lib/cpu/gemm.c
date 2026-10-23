@@ -2676,17 +2676,37 @@ typedef struct {
   int64_t n0, rows, per, chunks;
 } decoding;
 
+/* The E8M0 scale of OCP's Microscaling Formats (MX) v1.0: code e is
+   2^(e - E8M0_BIAS), and E8M0_NAN is NaN. */
+#define E8M0_BIAS 127
+#define E8M0_NAN 255
+
+/* IEEE 754's quiet NaNs, binary32's and binary64's; binary32's 2^-127, a
+   subnormal, the significand's top bit; and the exponents' biases and the
+   significands' widths. */
+#define F32_QNAN 0x7FC00000u
+#define F64_QNAN 0x7FF8000000000000u
+#define F32_TINY 0x00400000u
+#define F32_BIAS 127
+#define F32_MANT 23
+#define F64_BIAS 1023
+#define F64_MANT 52
+
 /* The scale of code [e], 2^(e - 127), NaN for 255, by its bits: 0 is
    float32's subnormal 2^-127. */
 static float code32(int e) {
-  uint32_t b = e == 255 ? 0x7FC00000u : e == 0 ? 0x00400000u : (uint32_t)e << 23;
+  uint32_t b = e == E8M0_NAN ? F32_QNAN
+               : e == 0      ? F32_TINY
+                             : (uint32_t)(e - E8M0_BIAS + F32_BIAS) << F32_MANT;
   float f;
   memcpy(&f, &b, sizeof f);
   return f;
 }
 
 static double code64(int e) {
-  uint64_t b = e == 255 ? 0x7FF8000000000000u : (uint64_t)(e + 1023 - 127) << 52;
+  uint64_t b = e == E8M0_NAN
+                   ? F64_QNAN
+                   : (uint64_t)(e + F64_BIAS - E8M0_BIAS) << F64_MANT;
   double f;
   memcpy(&f, &b, sizeof f);
   return f;
