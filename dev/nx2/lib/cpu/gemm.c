@@ -2641,13 +2641,33 @@ static void table(int n, const int *ax, const int64_t *x, const int64_t *ratio,
   }
 }
 
-/* The scales [sc] of operand [x], side [o], into [s], its memory, to free,
-   at [*mem]: 0 if it could not be allocated. Out of line, as scales_fit. */
-static __attribute__((noinline)) int scale_of(int acc, int exponent, const nx_array *x,
-                    const nx_array *sc, value vbatch, value vcon, int o,
-                    scale *s, uint8_t **mem) {
-  static const int groups[2][3] = {{BATCH, ROW, CON}, {BATCH, COL, CON}};
-  int r = x->rank, w = nx_cpu_width(acc), ax[3][NX_MAX_RANK], na[3];
+/* A scaled side's facts held in OCaml values, read before the call
+   releases the domain lock: whether its scale is codes, and its groups'
+   axes, batch, rows or columns, contraction (group_axes). */
+typedef struct {
+  int exponent, n[3], ax[3][NX_MAX_RANK];
+} scale_axes;
+
+static const int groups[2][3] = {{BATCH, ROW, CON}, {BATCH, COL, CON}};
+
+/* Side [o]'s [scale_axes], its scale [vs] an Nx_kernel.scale and its
+   operand of [rank]. */
+static __attribute__((noinline)) void axes_of(value vs, value vbatch,
+                                              value vcon, int o, int rank,
+                                              scale_axes *g) {
+  g->exponent = Tag_val(vs) == 0;
+  for (int t = 0; t < 3; t++)
+    g->n[t] = group_axes(vbatch, vcon, o, rank, groups[o][t], g->ax[t]);
+}
+
+/* The scales [sc] of operand [x], side [o], its axes [g], into [s], its
+   memory, to free, at [*mem]: 0 if it could not be allocated. Out of
+   line, as scales_fit. */
+static __attribute__((noinline)) int scale_of(int acc, const nx_array *x,
+                                              const nx_array *sc,
+                                              const scale_axes *g, int o,
+                                              scale *s, uint8_t **mem) {
+  int r = x->rank, w = nx_cpu_width(acc);
   int64_t count = 1, step[NX_MAX_RANK], ratio[NX_MAX_RANK], len[3];
   for (int d = r - 1; d >= 0; d--) {
     step[d] = count;
@@ -2656,21 +2676,20 @@ static __attribute__((noinline)) int scale_of(int acc, int exponent, const nx_ar
   }
   int64_t values = ceil_div(count * w, 8), positions = 0;
   for (int t = 0; t < 3; t++) {
-    na[t] = group_axes(vbatch, vcon, o, r, groups[o][t], ax[t]);
     len[t] = 1;
-    for (int k = 0; k < na[t]; k++) len[t] *= x->dim[ax[t][k]];
+    for (int k = 0; k < g->n[t]; k++) len[t] *= x->dim[g->ax[t][k]];
     positions += len[t] > 0 ? len[t] : 1;
   }
   int64_t *m = alloc((values + positions) * 8);
   if (m == NULL) return 0;
   *mem = (uint8_t *)m;
   *s = (scale){.v = (const uint8_t *)m};
-  decode(sc, exponent, acc, (uint8_t *)m);
+  decode(sc, g->exponent, acc, (uint8_t *)m);
   int64_t *t = m + values;
-  for (int g = 0; g < 3; g++) {
-    table(na[g], ax[g], x->dim, ratio, step, t);
-    s->t[groups[o][g]] = t;
-    t += len[g] > 0 ? len[g] : 1;
+  for (int k = 0; k < 3; k++) {
+    table(g->n[k], g->ax[k], x->dim, ratio, step, t);
+    s->t[groups[o][k]] = t;
+    t += len[k] > 0 ? len[k] : 1;
   }
   return 1;
 }
@@ -2714,6 +2733,12 @@ static double call_cost(int acc, int order, const double *x) {
      own: gemm_generic.c's C library fma, 0.01 flops a byte. */
   if (flops * 100 + bytes < NX_CPU_RELEASE_BYTES) return flops * 100 + bytes;
   return flops / nx_cpu_core_speed(r) + bytes;
+}
+
+/* The price of decoding the scales [sc] into [acc] (decode), a strided
+   copy. */
+static double decode_cost(int acc, const nx_array *sc) {
+  return nx_cpu_elements(sc) * nx_cpu_width(acc) * NX_CPU_STRIDED_COST;
 }
 
 /* The external: groups the view of the pairs [vbatch] and [vcontracting]
@@ -2769,7 +2794,14 @@ static inline __attribute__((always_inline)) value contract_body(
     for (int k = 0; runs && k < r.runs[g]; k++)
       x[g] *= (double)r.extent[g][k];
   }
-  int released = nx_cpu_release(call_cost(acc, order, x));
+  double cost = call_cost(acc, order, x);
+  scale_axes sx[2];
+  for (int o = A; scaled && o <= B; o++)
+    if (at[o] >= 0) {
+      axes_of(Field(vs[o], 0), vbatch, vcontracting, o, op[o]->rank, &sx[o]);
+      cost += decode_cost(acc, &a[at[o]]);
+    }
+  int released = nx_cpu_release(cost);
   int sum = summed_in(acc);
   scale s[2];
   uint8_t *mem[2] = {NULL, NULL};
@@ -2777,8 +2809,7 @@ static inline __attribute__((always_inline)) value contract_body(
   if (scaled) memset(s, 0, sizeof s);
   for (int o = A; scaled && o <= B && done; o++)
     if (at[o] >= 0)
-      done = scale_of(acc, Tag_val(Field(vs[o], 0)) == 0, op[o], &a[at[o]],
-                      vbatch, vcontracting, o, &s[o], &mem[o]);
+      done = scale_of(acc, op[o], &a[at[o]], &sx[o], o, &s[o], &mem[o]);
   const scale *sp = scaled ? s : NULL;
   if (done && (out != acc || sum != acc)) {
     if (!runs) runs_of_view(&r, &v);
