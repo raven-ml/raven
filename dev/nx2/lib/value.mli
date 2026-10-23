@@ -26,13 +26,13 @@ type ('v, 's, +'d) payload = ..
 type death =
   | Live
   | Offered of int
-      (** Live and donated: the key that orders the claims of its handles,
-          one per donor. *)
+      (** Live and donated: the donor's key, which a later donation of it
+          gives its handle. *)
   | Died of string  (** The function the value was given to. *)
 (** Whether a value lives. Values are made [Live], a donor is [Offered] when
     first donated, and its consumer sets [Died]. A consumer that raises before
     it computes into its donors' memory undoes it, each donor [Offered] under
-    the key it had ({!Donate.unclaim}). *)
+    its key again ({!Donate.unclaim}). *)
 
 type ('v, 's, 'd) t =
   | Array of {
@@ -52,6 +52,9 @@ type ('v, 's, 'd) t =
           [Grid.devices (Devices.grid at)]'s order, its window of the value
           ({!Grid.window}). *)
   | Donated of {
+      key : int;
+          (** The donor's, which orders the claims of its handles: one per
+              donor, for life. *)
       at : 'd Devices.placement;
       shape : int array;  (** The whole's. *)
       arrays : ('v, 's) Nx_array.t iarray;
