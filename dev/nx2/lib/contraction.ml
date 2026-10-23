@@ -459,6 +459,48 @@ let order ~ext ~result ops =
   done;
   split
 
+(* Two parts' contraction into [into], of names [names] and shape [shape]:
+   the names both hold and [names] lacks are summed, in [w]. *)
+let pair (type x y d) ~by ~ext w (into : (x, y) D.t) names shape (na, l) (nb, r)
+    : (x, y, d) Value.t =
+  match (l, r) with
+  | Value.Any a, Value.Any b ->
+      run ~by ~acc:(D.Any w) into (lower ~ext na nb names shape) a b
+
+(* The einsum of [xs], of names [ns], into the result's names [nr] and
+   [shape], through the tree of fewest multiply-adds. *)
+let tree (type v s d) ~by ~ext p w (dt : (v, s) D.t) ns nr shape
+    (xs : (v, s, d) Value.t array) : (v, s, d) Value.t =
+  let n = Array.length xs in
+  let leaf i = (ns.(i), Value.Any xs.(i)) in
+  let split = order ~ext ~result:nr ns in
+  let full = (1 lsl n) - 1 in
+  if split.(full) = 0 then
+    invalid_argf "%s: %a: every order holds a value of more than %d axes" by
+      Pattern.pp p Nx_array.Layout.max_rank;
+  (* The names of the set [s]'s value, in the kernel's order so that no
+     intermediate moves, and the value, in [w]. *)
+  let rec value s =
+    if s land (s - 1) = 0 then leaf (popcount (s - 1))
+    else
+      let t = split.(s) in
+      let ((na, _) as l) = value t and ((nb, _) as r) = value (s lxor t) in
+      let rec outside nm i =
+        i < n
+        && (((1 lsl i) land s = 0 && mem nm ns.(i)) || outside nm (i + 1))
+      in
+      let needed nm = mem nm nr || outside nm 0 in
+      let names =
+        List.filter (fun nm -> mem nm nb && needed nm) na
+        @ List.filter (fun nm -> not (mem nm nb)) na
+        @ List.filter (fun nm -> not (mem nm na)) nb
+      in
+      let shape = Array.of_list (List.map (Array.get ext) names) in
+      (names, Value.Any (pair ~by ~ext w w names shape l r))
+  in
+  let t = split.(full) in
+  pair ~by ~ext w dt nr shape (value t) (value (full lxor t))
+
 let einsum (type v s d) ~by ?(sizes = []) ?acc (p : Pattern.t)
     (xs : (v, s, d) Value.t list) : (v, s, d) Value.t =
   let k = List.length p.operands and n = List.length xs in
@@ -480,48 +522,20 @@ let einsum (type v s d) ~by ?(sizes = []) ?acc (p : Pattern.t)
       (List.map (fun x -> (D.name dt, Prim.shape x)) xs)
   in
   let xs = Array.of_list xs in
+  for i = 0 to n - 1 do
+    Prim.alive ~by i xs.(i)
+  done;
   let ns = Array.of_list (List.map Array.to_list operands) in
   let nr = Array.to_list result in
   let (D.Any w) = accumulator ~by ?acc dt (D.Any dt) (D.Any dt) in
-  (* Two parts' contraction into [into], of names [names] and shape [shape]:
-     the names both hold and [names] lacks are summed. *)
-  let pair (type x y) (into : (x, y) D.t) names shape (na, l) (nb, r) :
-      (x, y, d) Value.t =
-    match (l, r) with
-    | Value.Any a, Value.Any b ->
-        run ~by ~acc:(D.Any w) into (lower ~ext na nb names shape) a b
-  in
-  let leaf i = (ns.(i), Value.Any xs.(i)) in
-  if n = 2 then pair dt nr shape (leaf 0) (leaf 1)
+  if n = 2 then
+    pair ~by ~ext w dt nr shape
+      (ns.(0), Value.Any xs.(0))
+      (ns.(1), Value.Any xs.(1))
+  else if not (Array.exists Donate.is_handle xs) then
+    tree ~by ~ext p w dt ns nr shape xs
   else
-    (* Several contractions read the operands: the call consumes them once. *)
+    (* Several contractions read the operands: the call consumes them once,
+       eagerly too. *)
     Eval.once ~by (Array.to_list (Array.map (fun x -> Value.Any x) xs))
-    @@ fun read ->
-    let leaf i = (ns.(i), Value.Any (read xs.(i))) in
-    let split = order ~ext ~result:nr ns in
-    let full = (1 lsl n) - 1 in
-    if split.(full) = 0 then
-      invalid_argf "%s: %a: every order holds a value of more than %d axes" by
-        Pattern.pp p Nx_array.Layout.max_rank;
-    (* The names of the set [s]'s value, in the kernel's order so that no
-       intermediate moves, and the value, in [w]. *)
-    let rec value s =
-      if s land (s - 1) = 0 then leaf (popcount (s - 1))
-      else
-        let t = split.(s) in
-        let ((na, _) as l) = value t and ((nb, _) as r) = value (s lxor t) in
-        let rec outside nm i =
-          i < n
-          && (((1 lsl i) land s = 0 && mem nm ns.(i)) || outside nm (i + 1))
-        in
-        let needed nm = mem nm nr || outside nm 0 in
-        let names =
-          List.filter (fun nm -> mem nm nb && needed nm) na
-          @ List.filter (fun nm -> not (mem nm nb)) na
-          @ List.filter (fun nm -> not (mem nm na)) nb
-        in
-        let shape = Array.of_list (List.map (Array.get ext) names) in
-        (names, Value.Any (pair w names shape l r))
-    in
-    let t = split.(full) in
-    pair dt nr shape (value t) (value (full lxor t))
+    @@ fun read -> tree ~by ~ext p w dt ns nr shape (Array.map read xs)

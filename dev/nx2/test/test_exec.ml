@@ -1405,6 +1405,17 @@ let allocation =
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
           at_most (float 0.5) ~than:179. (words (fun () -> Nx.matmul a a)));
+      test "a slice of a 4x4 host value by ranges allocates its budget"
+        (fun () ->
+          let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
+          at_most (float 0.5) ~than:294.
+            (words (fun () -> Nx.slice Nx.[ R (1, 3); A ] a)));
+      test "a set of a row of a 4x4 host value allocates its budget"
+        (fun () ->
+          let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
+          let v = on_host Plain D.Float32 [| 4 |] (Array.make 4 2.) in
+          at_most (float 0.5) ~than:599.
+            (words (fun () -> Nx.set Nx.[ I 1 ] v a)));
     ]
 
 (* Placements *)

@@ -960,6 +960,14 @@ let concatenate_by ~by ~axis:a xs =
 
 let concatenate ~axis xs = concatenate_by ~by:"Nx.concatenate" ~axis xs
 
+(* [xs], each of shape [unit] but for its unit axis [a], assembled along
+   [a] into [s']. *)
+let stacked ~by unit a s' x0 xs =
+  let lifted = Iarray.of_array unit in
+  let lift x = move ~by (Reshape lifted) x in
+  let pieces = List.mapi (fun k x -> (region unit a k 1, lift x)) xs in
+  assemble ~by (dtype x0) s' (D.zero (dtype x0)) pieces
+
 let stack ?axis:(a = 0) xs =
   let by = "Nx.stack" in
   match xs with
@@ -982,11 +990,10 @@ let stack ?axis:(a = 0) xs =
       in
       let s' = Array.copy unit in
       s'.(a) <- List.length xs;
-      let lifted = Iarray.of_array unit in
-      Eval.call ~by (List.map (fun x -> Value.Any x) xs) @@ fun read ->
-      let lift x = move ~by (Reshape lifted) (read x) in
-      let pieces = List.mapi (fun k x -> (region unit a k 1, lift x)) xs in
-      assemble ~by (dtype x0) s' (D.zero (dtype x0)) pieces
+      if not (Eval.inside ()) then stacked ~by unit a s' x0 xs
+      else
+        Eval.call ~by (List.map (fun x -> Value.Any x) xs) @@ fun read ->
+        stacked ~by unit a s' (read x0) (List.map read xs)
 
 let pad widths v x =
   let by = "Nx.pad" in
@@ -1097,7 +1104,8 @@ end
 
 let rearrange_by ~by ?(sizes = []) p x =
   let moves = Pattern.moves ~by ~sizes p (D.name (dtype x), shape x) in
-  if not (Eval.inside ()) then List.fold_left (fun x mv -> move ~by mv x) x moves
+  if not (Eval.inside ()) then
+    List.fold_left (fun x mv -> move ~by mv x) x moves
   else
     Eval.call ~by [ Value.Any x ] @@ fun read ->
     List.fold_left (fun x mv -> move ~by mv x) (read x) moves
@@ -1316,11 +1324,14 @@ let held_donated idx =
           false)
     idx
 
-(* A pick's positions held in data as [read] gives them. *)
-let read_pick read = function
-  | Held p -> Held (read p)
-  | From (start, n, d) -> From (read start, n, d)
-  | (At _ | Span _ | Rows _ | New) as p -> p
+(* Picks' positions held in data as [read] gives them. *)
+let read_picks read picks =
+  let pick = function
+    | Held p -> Held (read p)
+    | From (start, n, d) -> From (read start, n, d)
+    | (At _ | Span _ | Rows _ | New) as p -> p
+  in
+  List.map (fun (p, a) -> (pick p, a)) picks
 
 (* Whether more than one operation of a slice reads its operands: a gather
    per list of positions, and a window's own map. Where one of them reads a
@@ -1333,15 +1344,8 @@ let several picks =
   in
   List.fold_left reads 0 picks > 1
 
-let slice_by ~by idx x =
-  let picks = picks ~by idx x in
-  Prim.alive ~by (index_alive ~by idx) x;
-  let consume =
-    if several picks && held_donated idx then Eval.once else Eval.call
-  in
-  consume ~by (index_operands idx [ Value.Any x ]) @@ fun read ->
-  let picks = List.map (fun (p, a) -> (read_pick read p, a)) picks in
-  let x = read x in
+(* [x] at the selection [picks]. *)
+let selected ~by picks x =
   let s = shape x in
   let ranges = Array.map whole s in
   List.iter
@@ -1378,6 +1382,17 @@ let slice_by ~by idx x =
   let s' = selection x picks in
   if Prim.has_shape y s' then y else reshaped ~by s' y
 
+let slice_by ~by idx x =
+  let picks = picks ~by idx x in
+  Prim.alive ~by (index_alive ~by idx) x;
+  if held_donated idx && several picks then
+    Eval.once ~by (index_operands idx [ Value.Any x ]) @@ fun read ->
+    selected ~by (read_picks read picks) (read x)
+  else if not (Eval.inside ()) then selected ~by picks x
+  else
+    Eval.call ~by (index_operands idx [ Value.Any x ]) @@ fun read ->
+    selected ~by (read_picks read picks) (read x)
+
 let slice idx x = slice_by ~by:"Nx.slice" idx x
 
 let get p x =
@@ -1401,15 +1416,26 @@ let get p x =
     Eval.call ~by [ Value.Any x ] @@ fun read ->
     move ~by (Reshape rest) (sliced ~by ranges (read x))
 
-let take_by ~by ?axis:along p x =
-  Eval.call ~by [ Value.Any p; Value.Any x ] @@ fun read ->
-  let p = read p and x = read x in
+let taken ~by along p x =
   match along with
   | None -> take_axis ~by 0 p (move ~by (Reshape [| numel x |]) x)
   | Some a -> take_axis ~by (axis ~by x a) p x
 
+let take_by ~by ?axis:along p x =
+  if not (Eval.inside ()) then taken ~by along p x
+  else
+    Eval.call ~by [ Value.Any p; Value.Any x ] @@ fun read ->
+    taken ~by along (read p) (read x)
+
 let take ?axis p x = take_by ~by:"Nx.take" ?axis p x
 
+
+(* [x] read along [a] at the positions [p], broadcast to [sp] and [x] to
+   [sx]. *)
+let gathered ~by a sp sx p x =
+  Eval.eval ~by
+    (Value.Gather
+       { axis = a; idx = broadcast ~by sp p; x = broadcast ~by sx x })
 
 (* [x] read along [a] at the positions [p] of [x]'s rank, for the function
    [by]. *)
@@ -1422,14 +1448,10 @@ let take_along ~by a p x =
   let off s = Array.mapi (fun i d -> if i = a then 1 else d) s in
   let b = Prim.broadcast_shape ~by (off sp) (off sx) in
   let at d = Array.mapi (fun i e -> if i = a then d else e) b in
-  Eval.call ~by [ Value.Any p; Value.Any x ] @@ fun read ->
-  Eval.eval ~by
-    (Value.Gather
-       {
-         axis = a;
-         idx = broadcast ~by (at sp.(a)) (read p);
-         x = broadcast ~by (at sx.(a)) (read x);
-       })
+  if not (Eval.inside ()) then gathered ~by a (at sp.(a)) (at sx.(a)) p x
+  else
+    Eval.call ~by [ Value.Any p; Value.Any x ] @@ fun read ->
+    gathered ~by a (at sp.(a)) (at sx.(a)) (read p) (read x)
 
 let take_along_axis ~axis p x = take_along ~by:"Nx.take_along_axis" axis p x
 
@@ -1594,61 +1616,39 @@ let positions ~by = function
   | From (start, n, d) -> Some (window ~by start n d)
   | At _ | Span _ | New -> None
 
-let set idx v x =
-  let by = "Nx.set" in
-  let picks = picks ~by idx x in
-  let n = index_alive ~by idx in
-  Prim.alive ~by n v;
-  Prim.alive ~by (n + 1) x;
-  List.iter
+(* Whether the pick [(p, a)] keeps all of axis [a] of [s], or is a new
+   axis. *)
+let whole_axis s (p, a) =
+  match (p, a) with
+  | Span r, Some a -> r.count = s.(a) && r.step = 1
+  | New, None -> true
+  | (At _ | Span _ | Rows _ | Held _ | From _ | New), _ -> false
+
+(* Whether a pick's positions are written in the program. *)
+let in_program (p, _) =
+  match p with
+  | At _ | Span _ | New -> true
+  | Rows _ | Held _ | From _ -> false
+
+(* Whether a map reads positions held in data before the scatter or the
+   assembly that reads the operands: a window's start always does; other
+   positions do but along the one axis of a scatter whose other axes are
+   whole, which reads them itself. *)
+let maps_held s picks =
+  let ranges, data = List.partition in_program picks in
+  let along = List.length data = 1 && List.for_all (whole_axis s) ranges in
+  List.exists
     (fun (p, _) ->
       match p with
-      | Rows ps ->
-          if List.length (List.sort_uniq compare ps) <> List.length ps then
-            invalid_argf "%s: a list of positions repeats one" by
-      | At _ | Span _ | Held _ | From _ | New -> ())
-    picks;
-  let sel = selection x picks in
-  let fits =
-    match Prim.broadcast_shape ~by (shape v) sel with
-    | s -> s = sel
-    | exception Invalid_argument _ -> false
-  in
-  if not fits then
-    invalid_argf "%s: %a does not broadcast to the selection %a" by pp_value v
-      pp_shape sel;
+      | From _ -> true
+      | Held _ -> not along
+      | At _ | Span _ | Rows _ | New -> false)
+    data
+
+(* [x] with the selection [picks], of shape [sel], replaced by [v]. *)
+let replaced ~by sel picks v x =
   let s = shape x in
-  let whole_axis (p, a) =
-    match (p, a) with
-    | Span r, Some a -> r.count = s.(a) && r.step = 1
-    | New, None -> true
-    | (At _ | Span _ | Rows _ | Held _ | From _ | New), _ -> false
-  in
-  let in_program (p, _) =
-    match p with
-    | At _ | Span _ | New -> true
-    | Rows _ | Held _ | From _ -> false
-  in
-  (* A scatter or an assembly reads the operands. Positions held in data
-     take a map of their own first, but along the one axis of a scatter
-     whose other axes are whole, which reads them itself; a window's start
-     always does. A map that reads a donated position would consume it
-     before the scatter checks: the call consumes it once, eagerly too. *)
-  let ranges, data = List.partition in_program picks in
-  let along = List.length data = 1 && List.for_all whole_axis ranges in
-  let mapped (p, _) =
-    match p with
-    | From _ -> true
-    | Held _ -> not along
-    | At _ | Span _ | Rows _ | New -> false
-  in
-  let consume =
-    if List.exists mapped data && held_donated idx then Eval.once
-    else Eval.call
-  in
-  consume ~by (index_operands idx [ Value.Any v; Value.Any x ]) @@ fun read ->
-  let picks = List.map (fun (p, a) -> (read_pick read p, a)) picks in
-  let v = broadcast ~by sel (read v) and x = read x in
+  let v = broadcast ~by sel v in
   match List.partition in_program picks with
   | ranges, [] ->
       (* Positions written in the program alone: one assembly, [x] then [v] at
@@ -1670,7 +1670,8 @@ let set idx v x =
           (all_of s, x);
           (Iarray.of_array region, reshaped ~by counts v);
         ]
-  | ranges, [ ((data, Some a) as pick) ] when List.for_all whole_axis ranges ->
+  | ranges, [ ((data, Some a) as pick) ]
+    when List.for_all (whole_axis s) ranges ->
       (* One axis selected by positions, every other whole: a scatter along it,
          the positions broadcast across the others. *)
       let p = Option.get (positions ~by data) in
@@ -1711,6 +1712,39 @@ let set idx v x =
              })
       in
       reshaped ~by s updated
+
+let set idx v x =
+  let by = "Nx.set" in
+  let picks = picks ~by idx x in
+  let n = index_alive ~by idx in
+  Prim.alive ~by n v;
+  Prim.alive ~by (n + 1) x;
+  List.iter
+    (fun (p, _) ->
+      match p with
+      | Rows ps ->
+          if List.length (List.sort_uniq compare ps) <> List.length ps then
+            invalid_argf "%s: a list of positions repeats one" by
+      | At _ | Span _ | Held _ | From _ | New -> ())
+    picks;
+  let sel = selection x picks in
+  let fits =
+    match Prim.broadcast_shape ~by (shape v) sel with
+    | s -> s = sel
+    | exception Invalid_argument _ -> false
+  in
+  if not fits then
+    invalid_argf "%s: %a does not broadcast to the selection %a" by pp_value v
+      pp_shape sel;
+  (* A map that reads a donated position would consume it before the
+     scatter checks: the call consumes it once, eagerly too. *)
+  if held_donated idx && maps_held (shape x) picks then
+    Eval.once ~by (index_operands idx [ Value.Any v; Value.Any x ])
+    @@ fun read -> replaced ~by sel (read_picks read picks) (read v) (read x)
+  else if not (Eval.inside ()) then replaced ~by sel picks v x
+  else
+    Eval.call ~by (index_operands idx [ Value.Any v; Value.Any x ])
+    @@ fun read -> replaced ~by sel (read_picks read picks) (read v) (read x)
 
 type combine = Nx_kernel.combine = Set | Add | Max | Min
 
@@ -1787,13 +1821,16 @@ let scan_along ~by m axis x =
          carry = None;
        })
 
+(* Over the elements in C order, keeping [x]'s shape. *)
+let scan_flat ~by m x =
+  reshaped ~by (shape x) (scan_along ~by m 0 (reshaped ~by [| numel x |] x))
+
 (* Along [axis], or over the elements in C order, keeping [x]'s shape. *)
 let scan ~by m ?axis:along x =
   match along with
   | None ->
-      let s = shape x in
-      Eval.call ~by [ Value.Any x ] @@ fun read ->
-      reshaped ~by s (scan_along ~by m 0 (reshaped ~by [| numel x |] (read x)))
+      if not (Eval.inside ()) then scan_flat ~by m x
+      else Eval.call ~by [ Value.Any x ] @@ fun read -> scan_flat ~by m (read x)
   | Some a -> scan_along ~by m (axis ~by x a) x
 
 let cumsum ?axis x = scan ~by:"Nx.cumsum" Sum ?axis x
@@ -1975,6 +2012,15 @@ let finite (type s) (dt : (float, s) D.t) x =
   if not (D.float_format dt).infinities then E.(x = x)
   else E.(abs x < const dt Float.infinity)
 
+(* The float predicate [p] of a complex [x]'s parts, joined by [k]. *)
+let parts_hold (type s d) ~by
+    (p : 'r. (float, 'r) D.t -> (float, 'r) E.t -> (bool, D.bool_elt) E.t) k
+    (x : (Complex.t, s, d) t) : d bool_t =
+  let (Parts (f, part)) = parts ~by x in
+  let re = part 0 and im = part 1 in
+  elementwise ~by D.Bool [ Any re; Any im ]
+    (E.binary k (p f (operand 0 re)) (p f (operand 1 im)))
+
 (* [x]'s float predicate [p], each part's joined by [k] for a complex [x], and
    [other] for the other dtypes, where [x] lies. *)
 let predicate (type v s d) ~by
@@ -1983,11 +2029,10 @@ let predicate (type v s d) ~by
   match D.kind (dtype x) with
   | D.Float -> elementwise ~by D.Bool [ Any x ] (p (dtype x) (operand 0 x))
   | D.Complex ->
-      Eval.call ~by [ Value.Any x ] @@ fun read ->
-      let (Parts (f, part)) = parts ~by (read x) in
-      let re = part 0 and im = part 1 in
-      elementwise ~by D.Bool [ Any re; Any im ]
-        (E.binary k (p f (operand 0 re)) (p f (operand 1 im)))
+      if not (Eval.inside ()) then parts_hold ~by p k x
+      else
+        Eval.call ~by [ Value.Any x ] @@ fun read ->
+        parts_hold ~by p k (read x)
   | D.Signed | D.Unsigned | D.Boolean ->
       beside ~by x (fill ~by D.Bool (shape x) other)
 
@@ -2245,10 +2290,7 @@ let count ?axes ?keepdims m = count_by ~by:"Nx.count" ?axes ?keepdims m
 
 (* The first position of the extreme [e] along [axis], or among all the elements
    in C order. *)
-let arg ~by e ?axis:along ?(keepdims = false) x =
-  let s = shape x in
-  Eval.call ~by [ Value.Any x ] @@ fun read ->
-  let x = read x in
+let extreme ~by e along keepdims s x =
   let x, a =
     match along with
     | None -> (reshaped ~by [| numel x |] x, 0)
@@ -2263,6 +2305,13 @@ let arg ~by e ?axis:along ?(keepdims = false) x =
   | None ->
       reshaped ~by (if keepdims then Array.map (fun _ -> 1) s else [||]) i
   | Some _ -> kept ~by ~keepdims s [| a |] i
+
+let arg ~by e ?axis:along ?(keepdims = false) x =
+  let s = shape x in
+  if not (Eval.inside ()) then extreme ~by e along keepdims s x
+  else
+    Eval.call ~by [ Value.Any x ] @@ fun read ->
+    extreme ~by e along keepdims s (read x)
 
 let argmax ?axis ?keepdims x = arg ~by:"Nx.argmax" Max ?axis ?keepdims x
 let argmin ?axis ?keepdims x = arg ~by:"Nx.argmin" Min ?axis ?keepdims x
@@ -2550,25 +2599,25 @@ let rms_norm (type s d) ?(axes = [ -1 ]) ?(eps = 1e-6) (x : (float, s, d) t) :
 (* A function of a complex value's parts bitcasts it, then reads the bitcast
    in one operation: inside an [Extent] the bitcast would consume its
    handle before that operation's checks. *)
-let real_by ~by dt z =
-  Eval.call ~by [ Value.Any z ] @@ fun read ->
-  let (Parts (_, part)) = parts ~by (read z) in
-  cast_by ~by dt (part 0)
+let part_of ~by dt i z =
+  let (Parts (_, part)) = parts ~by z in
+  cast_by ~by dt (part i)
 
-let imag_by ~by dt z =
-  Eval.call ~by [ Value.Any z ] @@ fun read ->
-  let (Parts (_, part)) = parts ~by (read z) in
-  cast_by ~by dt (part 1)
+let part_by ~by dt i z =
+  if not (Eval.inside ()) then part_of ~by dt i z
+  else Eval.call ~by [ Value.Any z ] @@ fun read -> part_of ~by dt i (read z)
+
+let real_by ~by dt z = part_by ~by dt 0 z
+let imag_by ~by dt z = part_by ~by dt 1 z
 
 let real dt z = real_by ~by:"Nx.real" dt z
 let imag dt z = imag_by ~by:"Nx.imag" dt z
 
 (* [body w re im] of [z]'s parts, computed in the wider of [dt] and the
    parts' format, then stored in [dt]. *)
-let of_parts (type r s d) ~by (dt : (float, r) D.t) (z : (Complex.t, s, d) t)
+let parts_map (type r s d) ~by (dt : (float, r) D.t) (z : (Complex.t, s, d) t)
     (body : 'w. (float, 'w) D.t -> (float, 'w) E.t -> (float, 'w) E.t -> (float, 'w) E.t) : (float, r, d) t =
-  Eval.call ~by [ Value.Any z ] @@ fun read ->
-  let (Parts (f, part)) = parts ~by (read z) in
+  let (Parts (f, part)) = parts ~by z in
   let (Nx_kernel.Any_float w) =
     if D.bits dt > D.bits f then Nx_kernel.Any_float dt
     else Nx_kernel.Any_float f
@@ -2577,6 +2626,12 @@ let of_parts (type r s d) ~by (dt : (float, r) D.t) (z : (Complex.t, s, d) t)
   let v = body w (at w (operand 0 re)) (at w (operand 1 im)) in
   elementwise ~by dt [ Any re; Any im ] (at dt v)
 
+let of_parts (type r s d) ~by (dt : (float, r) D.t) (z : (Complex.t, s, d) t)
+    (body : 'w. (float, 'w) D.t -> (float, 'w) E.t -> (float, 'w) E.t -> (float, 'w) E.t) : (float, r, d) t =
+  if not (Eval.inside ()) then parts_map ~by dt z body
+  else
+    Eval.call ~by [ Value.Any z ] @@ fun read -> parts_map ~by dt (read z) body
+
 let magnitude_by ~by dt z =
   of_parts ~by dt z (fun w re im -> hypotenuse w re im)
 
@@ -2584,14 +2639,10 @@ let magnitude dt z = magnitude_by ~by:"Nx.magnitude" dt z
 
 let angle dt z = of_parts ~by:"Nx.angle" dt z (fun _ re im -> E.atan2 im re)
 
-let complex_of (type c a d) ~by (dt : (Complex.t, c) D.t)
+(* The parts [re] and [im] cast to [dt]'s parts, broadcast to [s] and
+   assembled as pairs. *)
+let paired (type c a d) ~by (dt : (Complex.t, c) D.t) s
     ~(re : (float, a, d) t) ~(im : (float, a, d) t) : (Complex.t, c, d) t =
-  let s = Prim.broadcast_shape ~by (shape re) (shape im) in
-  alive2 ~by re im;
-  (* Each part's cast and the assembly read the operands: once, eagerly
-     too. *)
-  Eval.once ~by [ Value.Any re; Value.Any im ] @@ fun read ->
-  let re = read re and im = read im in
   let r = Array.length s in
   let pairs (type p) (f : (float, p) D.t) =
     let unit = Array.append s [| 1 |] and both = Array.append s [| 2 |] in
@@ -2601,23 +2652,33 @@ let complex_of (type c a d) ~by (dt : (Complex.t, c) D.t)
   in
   match dt with D.Complex64 -> pairs D.Float32 | D.Complex128 -> pairs D.Float64
 
+let complex_of (type c a d) ~by (dt : (Complex.t, c) D.t)
+    ~(re : (float, a, d) t) ~(im : (float, a, d) t) : (Complex.t, c, d) t =
+  let s = Prim.broadcast_shape ~by (shape re) (shape im) in
+  alive2 ~by re im;
+  (* Each part's cast and the assembly read the operands: once, eagerly
+     too. *)
+  if not (Donate.is_handle re || Donate.is_handle im) then
+    paired ~by dt s ~re ~im
+  else
+    Eval.once ~by [ Value.Any re; Value.Any im ] @@ fun read ->
+    paired ~by dt s ~re:(read re) ~im:(read im)
+
 let complex dt ~re ~im = complex_of ~by:"Nx.complex" dt ~re ~im
 
 (* A complex value's imaginary parts negated: for complex64, its imaginary
    part's sign bit flipped in the value read as uint64, in the host's byte
    order; for complex128, the odd elements of its pairs of parts negated, in
    one map. Any other value is itself. *)
-let conjugate_by (type v s d) ~by (x : (v, s, d) t) : (v, s, d) t =
+let conjugated (type v s d) ~by (x : (v, s, d) t) : (v, s, d) t =
   match dtype x with
   | D.Complex64 ->
-      Eval.call ~by [ Value.Any x ] @@ fun read ->
       let sign = if Sys.big_endian then 0x8000_0000L else Int64.min_int in
-      let u = Eval.eval ~by (Value.Bitcast (D.Uint64, read x)) in
+      let u = Eval.eval ~by (Value.Bitcast (D.Uint64, x)) in
       let flipped = binary ~by (Binary Xor) u (fill ~by D.Uint64 [||] sign) in
       Eval.eval ~by (Value.Bitcast (D.Complex64, flipped))
   | D.Complex128 ->
-      Eval.call ~by [ Value.Any x ] @@ fun read ->
-      let pairs = Eval.eval ~by (Value.Bitcast (D.Float64, read x)) in
+      let pairs = Eval.eval ~by (Value.Bitcast (D.Float64, x)) in
       let last = ndim pairs - 1 in
       let y =
         let e = operand 0 pairs in
@@ -2625,6 +2686,13 @@ let conjugate_by (type v s d) ~by (x : (v, s, d) t) : (v, s, d) t =
           E.(where (coord last = const D.Int64 1L) (-e) e)
       in
       Eval.eval ~by (Value.Bitcast (D.Complex128, y))
+  | _ -> x
+
+let conjugate_by (type v s d) ~by (x : (v, s, d) t) : (v, s, d) t =
+  match dtype x with
+  | D.Complex64 | D.Complex128 ->
+      if not (Eval.inside ()) then conjugated ~by x
+      else Eval.call ~by [ Value.Any x ] @@ fun read -> conjugated ~by (read x)
   | _ -> x
 
 let conjugate x = conjugate_by ~by:"Nx.conjugate" x
@@ -2700,8 +2768,11 @@ let diagonal ?offset ?axis1 ?axis2 x =
 
 let trace ?(offset = 0) x =
   let by = "Nx.trace" in
-  Eval.call ~by [ Value.Any x ] @@ fun read ->
-  reduction ~by Sum ~axes:[ -1 ] (diagonal_by ~by ~offset (read x))
+  if not (Eval.inside ()) then
+    reduction ~by Sum ~axes:[ -1 ] (diagonal_by ~by ~offset x)
+  else
+    Eval.call ~by [ Value.Any x ] @@ fun read ->
+    reduction ~by Sum ~axes:[ -1 ] (diagonal_by ~by ~offset (read x))
 
 (* A vector [v] of [n] elements on the [k]th diagonal of an [n + |k|] square:
    [v] padded to the square's extent and read along the rows for [k >= 0],
@@ -3658,17 +3729,20 @@ let map_item f x =
 
 (* Windows and segments *)
 
+let hot ~by num_classes x =
+  let s = shape x in
+  let r = Array.length s in
+  let column = reshaped ~by (Array.append s [| 1 |]) x in
+  let x = broadcast ~by (Array.append s [| num_classes |]) column in
+  elementwise ~by D.Uint8 [ Any x ]
+    (indicator D.Uint8 E.(cast D.Int64 (operand 0 x) = coord r))
+
 let one_hot ~num_classes x =
   let by = "Nx.one_hot" in
   integer ~by (dtype x);
   if num_classes < 0 then invalid_argf "%s: %d classes" by num_classes;
-  let s = shape x in
-  let r = Array.length s in
-  Eval.call ~by [ Value.Any x ] @@ fun read ->
-  let column = reshaped ~by (Array.append s [| 1 |]) (read x) in
-  let x = broadcast ~by (Array.append s [| num_classes |]) column in
-  elementwise ~by D.Uint8 [ Any x ]
-    (indicator D.Uint8 E.(cast D.Int64 (operand 0 x) = coord r))
+  if not (Eval.inside ()) then hot ~by num_classes x
+  else Eval.call ~by [ Value.Any x ] @@ fun read -> hot ~by num_classes (read x)
 
 (* The dtype a window's sum adds in: a float's compute dtype
    ({!Nx_kernel.float_carrier}), the dtype itself otherwise. *)
@@ -4029,6 +4103,18 @@ let run_of padding n k =
   | `Valid -> (m - 1, longest - m + 1)
   | `Same -> ((if k <= n then (m - 1) / 2 else m / 2), longest)
 
+(* [x] of [batch] windows convolved by [kernel] of shape [ks], padded by
+   [lo] and [hi], of shape [out]. *)
+let correlated ~by ks ~lo ~hi batch out x kernel =
+  let kr = Array.length ks in
+  let w = reshaped ~by (Array.append [| 1; 1; 1 |] ks) kernel in
+  let y =
+    windows_of ~by ~stride:(Array.make kr 1) ~lo ~hi
+      ~interior:(Array.make kr 0) ~dilation:(Array.make kr 1)
+      (reshaped ~by batch x) w
+  in
+  reshaped ~by out y
+
 (* [x]'s batch axes merged into one, with one channel, convolved by the
    kernel as one output and one input channel: value [i] of a kept run from
    [start] reads [x] from [start + i - (k - 1)], which a padding of
@@ -4053,15 +4139,11 @@ let correlate ?(padding = `Valid) x kernel =
     Array.init kr (fun i -> snd runs.(i) + ks.(i) - 1 - spatial.(i) - lo.(i))
   in
   let batch = Array.concat [ [| product lead |]; spatial; [| 1 |] ] in
-  Eval.call ~by [ Value.Any x; Value.Any kernel ] @@ fun read ->
-  let x = read x in
-  let w = reshaped ~by (Array.append [| 1; 1; 1 |] ks) (read kernel) in
-  let y =
-    windows_of ~by ~stride:(Array.make kr 1) ~lo ~hi
-      ~interior:(Array.make kr 0) ~dilation:(Array.make kr 1)
-      (reshaped ~by batch x) w
-  in
-  reshaped ~by (Array.append lead (Array.map snd runs)) y
+  let out = Array.append lead (Array.map snd runs) in
+  if not (Eval.inside ()) then correlated ~by ks ~lo ~hi batch out x kernel
+  else
+    Eval.call ~by [ Value.Any x; Value.Any kernel ] @@ fun read ->
+    correlated ~by ks ~lo ~hi batch out (read x) (read kernel)
 
 (* Segments and ranges *)
 
@@ -4080,6 +4162,13 @@ let identity (type v s) ~by (c : combine) (dt : (v, s) D.t) : v =
 let rows_of ~by x =
   if ndim x = 0 then invalid_argf "%s: %a has no rows" by pp_value x
 
+(* [x]'s rows combined by [c] into [into]'s, row [i] into row [ids.(i)]. *)
+let segmented ~by c along into ids x =
+  let idx = broadcast ~by (shape x) (reshaped ~by along ids) in
+  Eval.eval ~by
+    (Value.Scatter
+       { combine = c; unique = false; axis = 0; idx; updates = x; into })
+
 let reduce_segments c ~segments ids x =
   let by = "Nx.reduce_segments" in
   if segments < 0 then invalid_argf "%s: %d segments" by segments;
@@ -4090,18 +4179,11 @@ let reduce_segments c ~segments ids x =
   let start = identity ~by c dt in
   let into = Array.mapi (fun a d -> if a = 0 then segments else d) s in
   let along = Array.mapi (fun a d -> if a = 0 then d else 1) s in
-  Eval.call ~by [ Value.Any ids; Value.Any x ] @@ fun read ->
-  let idx = broadcast ~by s (reshaped ~by along (read ids)) in
-  Eval.eval ~by
-    (Value.Scatter
-       {
-         combine = c;
-         unique = false;
-         axis = 0;
-         idx;
-         updates = read x;
-         into = fill ~by dt into start;
-       })
+  let into = fill ~by dt into start in
+  if not (Eval.inside ()) then segmented ~by c along into ids x
+  else
+    Eval.call ~by [ Value.Any ids; Value.Any x ] @@ fun read ->
+    segmented ~by c along into (read ids) (read x)
 
 (* [a] then [b] combined by [c], [a]'s rows before [b]'s: [Add] adds; [Max]
    and [Min] keep the first NaN, else {!maximum}'s or {!minimum}'s, so that
@@ -4609,6 +4691,11 @@ let by_groups ~by groups w =
   let lead = [| groups; s.(0) / groups |] in
   reshaped ~by (Array.concat [ lead; Array.sub s 1 k; [| s.(k + 1) |] ]) w
 
+(* [x] convolved by [w] of [groups] groups, [w]'s axes moved by [p]. *)
+let convolved ~by ~stride ~lo ~hi ~interior ~dilation groups p x w =
+  windows_of ~by ~stride ~lo ~hi ~interior ~dilation x
+    (permute ~by p (by_groups ~by groups w))
+
 let conv ?stride ?padding ?dilation ?groups x w =
   let by = "Nx.conv" in
   let stride, padding, dilation, groups =
@@ -4621,11 +4708,22 @@ let conv ?stride ?padding ?dilation ?groups x w =
   let k = ndim x - 2 in
   (* [[g; og; k…; cg]] to [[g; og; cg; k…]]. *)
   let p = Array.concat [ [| 0; 1; k + 2 |]; Array.init k (fun i -> 2 + i) ] in
-  Eval.call ~by [ Value.Any x; Value.Any w ] @@ fun read ->
-  let x = read x and w = read w in
-  windows_of ~by ~stride ~lo:(Array.map fst padding)
-    ~hi:(Array.map snd padding) ~interior:(Array.make k 0) ~dilation x
-    (permute ~by p (by_groups ~by groups w))
+  let lo = Array.map fst padding and hi = Array.map snd padding in
+  let interior = Array.make k 0 in
+  if not (Eval.inside ()) then
+    convolved ~by ~stride ~lo ~hi ~interior ~dilation groups p x w
+  else
+    Eval.call ~by [ Value.Any x; Value.Any w ] @@ fun read ->
+    convolved ~by ~stride ~lo ~hi ~interior ~dilation groups p (read x) (read w)
+
+(* [x] convolved at stride one by [w] of [groups] groups, its axes moved by
+   [p] and its taps reversed. *)
+let transposed ~by ~lo ~hi ~interior ~dilation groups p x w =
+  let k = Array.length lo in
+  let w = permute ~by p (by_groups ~by groups w) in
+  let taps_axes = List.init k (fun i -> 3 + i) in
+  let w = flip_by ~by ~axes:taps_axes w in
+  windows_of ~by ~stride:(Array.make k 1) ~lo ~hi ~interior ~dilation x w
 
 (* The transpose is the convolution at stride one of [x] with [stride - 1]
    zeros between its elements, padded by [e - 1 - lo] before, [e] the dilated
@@ -4665,14 +4763,12 @@ let conv_transpose ?stride ?padding ?dilation ?groups x w =
   let hi = Array.init k (fun i -> target.(i) + span i - spread i - lo.(i)) in
   (* [[g; og; k…; cg]] to [[g; cg; og; k…]], the taps reversed. *)
   let p = Array.concat [ [| 0; k + 2; 1 |]; Array.init k (fun i -> 2 + i) ] in
-  Eval.call ~by [ Value.Any x; Value.Any w ] @@ fun read ->
-  let x = read x in
-  let w = permute ~by p (by_groups ~by groups (read w)) in
-  let taps_axes = List.init k (fun i -> 3 + i) in
-  let w = flip_by ~by ~axes:taps_axes w in
-  windows_of ~by ~stride:(Array.make k 1) ~lo ~hi
-    ~interior:(Array.map (fun st -> st - 1) stride)
-    ~dilation x w
+  let interior = Array.map (fun st -> st - 1) stride in
+  if not (Eval.inside ()) then
+    transposed ~by ~lo ~hi ~interior ~dilation groups p x w
+  else
+    Eval.call ~by [ Value.Any x; Value.Any w ] @@ fun read ->
+    transposed ~by ~lo ~hi ~interior ~dilation groups p (read x) (read w)
 
 (* Filters *)
 
@@ -5792,6 +5888,23 @@ end
 type 'd datum =
   | Datum : ('d, 'e) Value.data * ('e -> 'd packed list) -> 'd datum
 
+(* The check of [ok] over [leaves], [data]'s arrays, each read by [live] and
+   broadcast to [target]; [fail] receives [s]'s structure rebuilt from the
+   failing elements. *)
+let checked ~by s data fail target ok leaves
+    (live : 'v 's 'e. ('v, 's, 'e) t -> ('v, 's, 'e) t) =
+  let rec datum = function
+    | [] -> Datum (Value.[], fun () -> [])
+    | P x :: rest ->
+        let (Datum (d, read)) = datum rest in
+        let x = broadcast ~by target (live x) in
+        let read (v, e) = P (fill ~by (dtype x) [||] v) :: read e in
+        Datum (Value.( :: ) (x, d), read)
+  in
+  let (Datum (d, read)) = datum leaves in
+  let fail i e = fail i (Ptree.rebuild s ~like:data (read e)) in
+  Eval.eval ~by (Value.Check { ok = live ok; data = d; fail })
+
 let check s ok data fail =
   let by = "Nx.check" in
   let target = shape ok in
@@ -5818,19 +5931,10 @@ let check s ok data fail =
      [ok] then [data]'s arrays in walk order. *)
   Prim.alive ~by 0 ok;
   List.iteri (fun i (P x) -> Prim.alive ~by (i + 1) x) leaves;
-  Eval.call ~by (Value.Any ok :: List.map (fun (P x) -> Value.Any x) leaves)
-  @@ fun live ->
-  let rec datum = function
-    | [] -> Datum (Value.[], fun () -> [])
-    | P x :: rest ->
-        let (Datum (d, read)) = datum rest in
-        let x = broadcast ~by target (live x) in
-        let read (v, e) = P (fill ~by (dtype x) [||] v) :: read e in
-        Datum (Value.( :: ) (x, d), read)
-  in
-  let (Datum (d, read)) = datum leaves in
-  let fail i e = fail i (Ptree.rebuild s ~like:data (read e)) in
-  Eval.eval ~by (Value.Check { ok = live ok; data = d; fail })
+  if not (Eval.inside ()) then checked ~by s data fail target ok leaves Fun.id
+  else
+    Eval.call ~by (Value.Any ok :: List.map (fun (P x) -> Value.Any x) leaves)
+    @@ fun live -> checked ~by s data fail target ok leaves live
 
 (* The scan by [Pairwise.circuit], whose states are the structure's arrays: each
    combination rebuilds two runs as structures for [f] and flattens its
