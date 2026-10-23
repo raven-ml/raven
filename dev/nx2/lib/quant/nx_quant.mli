@@ -31,8 +31,8 @@
     then moves its weight between devices at every step.
 
     {!take} gathers before decoding, so a caller reads a large table's rows
-    without decoding the table. Routing positions to a stack of weights is
-    {!Nx.map_segments}:
+    without decoding the table. Routing positions to a stack of weights, as a
+    mixture of experts does, is {!apply_experts}:
 
     {[
     let gate_up =
@@ -40,9 +40,7 @@
         (Nx.reshape [| experts; outputs; inputs / 2 |] codes)
     in
     (* ids : [| tokens; k |], x : [| tokens; inputs |] *)
-    Nx.map_segments ~segments:experts ids
-      (fun e rows -> Nx_quant.apply (Nx_quant.take ~axis:0 e gate_up) rows)
-      (Nx.unsqueeze ~axes:[ -2 ] x)
+    Nx_quant.apply_experts ~ids gate_up (Nx.unsqueeze ~axes:[ -2 ] x)
     ]} *)
 
 (** {1:weights Weights} *)
@@ -178,6 +176,32 @@ val apply : 'd t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 
     Raises [Invalid_argument] if [x] is 0-d, if [x]'s last axis is not [k], or
     if the batch axes do not broadcast. *)
+
+val apply_experts :
+  ids:'d Nx.int64_t -> 'd t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
+(** [apply_experts ~ids w x] is each row of [x] through the expert its id
+    names: at each position [p] of [ids], [p]'s row is {!apply} of [w]'s
+    matrix [ids.{p}] to [p]'s row of [x], or zeros where [ids.{p}] is not in
+    [\[0, e)], whatever [x] holds there. It is this {!Nx.map_segments}, up to
+    how rows computed together round:
+
+    {[
+    Nx.map_segments ~segments:e ids
+      (fun owners rows -> apply (take ~axis:0 owners w) rows)
+      x
+    ]}
+
+    [w] is [[| e; n; k |]], [ids] is [[| s… |]], [x] is [[| s'…; k |]] with
+    [s'…] broadcasting to [s…], and the result is [[| s…; n |]].
+
+    Where {!apply} reads an [Mxfp4] [w] where it lies and [ids] lies whole on
+    each device, every position is summed in one contraction grouped by
+    expert, which decodes each block as it sums it and stores no decoded
+    weight. Any other product is that map.
+
+    Raises [Invalid_argument] if [w] is not 3-d, if [x] does not have one axis
+    more than [ids], if [x]'s last axis is not [k], or if [x]'s leading axes
+    do not broadcast to [ids]'. *)
 
 val take : axis:int -> 'd Nx.int64_t -> 'd t -> 'd t
 (** [take ~axis p w] is the rows or matrices of [w] at the positions [p] along

@@ -455,6 +455,16 @@ let usually =
   Gen.frequency
     [ (3, Gen.constant ~pp:Format.pp_print_bool true); (1, Gen.bool) ]
 
+(* An input's entry: in [[-1, 1]] most often, else NaN, an infinity or [-0.]. *)
+let entry =
+  Gen.frequency
+    [
+      (30, Gen.float_range (-1.) 1.);
+      ( 1,
+        Gen.of_list ~pp:Format.pp_print_float
+          [ Float.nan; Float.infinity; Float.neg_infinity; -0. ] );
+    ]
+
 (* An input whose last axis is [inputs] and whose batch axes broadcast against
    [batch]: a vector, or rows behind [batch]'s last axes, each whole or of one,
    or behind all of them and an axis of its own in front. *)
@@ -473,15 +483,6 @@ let input ~batch ~inputs =
         ((if drop = 0 then front else [])
         @ List.filteri (fun i _ -> i >= drop) own
         @ [ m; inputs ])
-  in
-  let entry =
-    frequency
-      [
-        (30, float_range (-1.) 1.);
-        ( 1,
-          of_list ~pp:Format.pp_print_float
-            [ Float.nan; Float.infinity; Float.neg_infinity; -0. ] );
-      ]
   in
   let+ at = fdt
   and+ xs = array ~size:(constant (Array.fold_left ( * ) 1 shape)) entry
@@ -829,6 +830,9 @@ let errors =
   in
   let apply w x () = ignore (Nx_quant.apply w x) in
   let take axis () = ignore (Nx_quant.take ~axis (positions [ 0 ]) w) in
+  let experts w ids xs () =
+    ignore (Nx_quant.apply_experts ~ids:(Nx.zeros Nx.int64 ids) w (x xs))
+  in
   cases "refuse, naming what is wrong"
     ~name:(fun (n, _, _) -> n)
     [
@@ -866,6 +870,18 @@ let errors =
       ( "apply over batch axes that do not broadcast",
         "broadcast",
         apply w (x [| 3; 1; 64 |]) );
+      ( "experts of two axes",
+        "[e; n; k]",
+        experts (random_weight [| 5; 64 |]) [| 3 |] [| 3; 64 |] );
+      ( "experts' input without its row axis",
+        "one axis",
+        experts w [| 3 |] [| 64 |] );
+      ( "experts' input of other inputs",
+        "last axis",
+        experts w [| 3 |] [| 3; 32 |] );
+      ( "experts' input whose positions do not broadcast to the ids'",
+        "broadcast",
+        experts w [| 3 |] [| 2; 64 |] );
       ("take along the last axis", "last axis", take 2);
       ("take along the last axis, counted from the end", "last axis", take (-1));
       ("take along an axis past the weight's", "out of bounds", take 3);
@@ -1028,6 +1044,134 @@ let routed w ids x =
     (fun owners rows -> Nx_quant.apply (Nx_quant.take ~axis:0 owners w) rows)
     x
 
+(* Experts *)
+
+(* A stack of experts [[| e; n; k |]], MXFP4 most often; ids of shape [[| p |]]
+   or [[| p; t |]], in range, at and past both bounds, or all one expert; and an
+   input of a row per position, or one row for all of them. *)
+let experts =
+  let open Gen in
+  let* view, w =
+    weight
+      ~lead:(map (fun e -> [ e ]) (extent 4))
+      ~format:(frequency [ (3, constant ~pp:pp_format Mxfp4); (1, format) ])
+      ()
+  in
+  let lead, _, k = dims w in
+  let e = lead.(0) in
+  let in_range = map Int64.of_int (int_range 0 (max 0 (e - 1))) in
+  let past =
+    of_list
+      ~pp:(fun ppf -> Format.fprintf ppf "%Ld")
+      [ -1L; Int64.of_int e; Int64.min_int; Int64.max_int ]
+  in
+  let* shape =
+    let+ p = int_range 0 5
+    and+ t = frequency [ (1, constant 0); (2, int_range 1 3) ] in
+    if t = 0 then [| p |] else [| p; t |]
+  in
+  let count = Array.fold_left ( * ) 1 shape in
+  let rows one = Array.mapi (fun i d -> if i > 0 || one then 1 else d) shape in
+  let+ ids =
+    frequency
+      [
+        ( 3,
+          array ~size:(constant count) (frequency [ (8, in_range); (1, past) ])
+        );
+        (1, map (Array.make count) in_range);
+      ]
+  and+ one = frequency [ (4, constant false); (1, constant true) ]
+  and+ at = fdt
+  and+ xs = array ~size:(constant (max count 1 * k)) entry in
+  let (F d) = at in
+  let xs' = Array.append (rows one) [| k |] in
+  let x =
+    Nx.cast d.dtype
+      (Nx.create Nx.float64 xs' (Array.sub xs 0 (Array.fold_left ( * ) 1 xs')))
+  in
+  (view, w, Nx.create Nx.int64 shape ids, X { at; x })
+
+let pp_experts ppf (view, w, ids, X { x; _ }) =
+  Format.fprintf ppf "@[<v>%a@,ids %a@,x %a@]" pp_weight (view, w) Nx.pp ids
+    Nx.pp x
+
+(* [x]'s rows by the experts of [w] that [ids] names, summed at float64, the
+   same product of magnitudes, and that of the finite magnitudes. *)
+let expert_product w ids x =
+  let s = Nx.shape ids and k = Nx.dim (-1) x in
+  let p = Array.fold_left ( * ) 1 s in
+  let rows =
+    Nx.reshape [| p; 1; k |]
+      (Nx.broadcast_to (Array.append s [| k |]) (Nx.cast Nx.float64 x))
+  in
+  let picked =
+    Nx.take ~axis:0 (Nx.reshape [| p |] ids) (Nx_quant.dequant Nx.float64 w)
+  in
+  let finite t = Nx.where (Nx.isfinite t) t (Nx.zeros_like t) in
+  let by a b =
+    Nx.to_array (Nx.reshape [| -1 |] (Nx.matmul a (Nx.matrix_transpose b)))
+  in
+  let rows' = Nx.abs rows and picked' = Nx.abs picked in
+  (by rows picked, by rows' picked', by (finite rows') (finite picked'))
+
+let experts_law (_, w, ids, X { at; x }) =
+  let lead, n, k = dims w in
+  let e = lead.(0) and id = Nx.to_array ids in
+  let inside i = i >= 0L && i < Int64.of_int e in
+  let names g = Array.mem (Int64.of_int g) id in
+  let grouped =
+    format_of w = Mxfp4
+    && match Nx.dtype x with D.Float64 -> false | _ -> true
+  in
+  cover "the grouped product" grouped;
+  cover "an expert no id names"
+    (List.exists (fun g -> not (names g)) (List.init e Fun.id));
+  cover "every id one expert"
+    (Array.length id >= 2
+    && inside id.(0)
+    && Array.for_all (Int64.equal id.(0)) id);
+  cover "an id below the range" (Array.exists (fun i -> i < 0L) id);
+  cover "an id past the range" (Array.exists (fun i -> i >= Int64.of_int e) id);
+  cover "ids at both bounds" (e >= 2 && names 0 && names (e - 1));
+  cover "one position" (Array.length id = 1);
+  cover "no position" (Array.length id = 0);
+  cover "one row for every position" (Array.length id >= 2 && Nx.dim 0 x = 1);
+  let y = Nx_quant.apply_experts ~ids w x in
+  equal ~msg:"dtype" string (D.name (Nx.dtype x)) (D.name (Nx.dtype y));
+  equal ~msg:"shape" (array int)
+    (Array.append (Nx.shape ids) [| n |])
+    (Nx.shape y);
+  (* Each row is zeros where its id is out of range, else within the bound of
+     its product; a row whose finite terms reach [2^127] may overflow at float32
+     in one order and not another, and is not compared. *)
+  let row a = Array.init (Array.length id * n) (fun j -> a.(j / n)) in
+  let outside = row (Array.map (fun i -> not (inside i)) id) in
+  let got = bits y in
+  equal ~msg:"the rows of ids out of range" (array int64)
+    (Array.make (Array.length got) 0L)
+    (Array.mapi (fun j b -> if outside.(j) then b else 0L) got);
+  if not grouped then
+    equal ~msg:"the routed product" (array int64)
+      (product_bits (routed w ids x))
+      (product_bits y)
+  else
+    let expected, bound, finite = expert_product w ids x in
+    let skip j = outside.(j) || finite.(j) >= Float.ldexp 1. 127 in
+    let kept a = Array.mapi (fun j v -> if skip j then 0. else v) a in
+    let v a = Nx.create Nx.float64 [| Array.length a |] (kept a) in
+    agrees ~at ~k (v expected) (v bound)
+      (v (Nx.to_array (Nx.reshape [| -1 |] (Nx.cast Nx.float64 y))))
+
+let expert_products =
+  group "experts"
+    [
+      prop ~count:300
+        "apply_experts is the routed product within the error of a float32 \
+         sum, and zeros for ids out of range"
+        (Gen.with_pp pp_experts experts)
+        experts_law;
+    ]
+
 let placements =
   group "placement"
     [
@@ -1093,5 +1237,6 @@ let () =
          file_layouts;
          errors;
          placements;
+         expert_products;
          structure;
        ])

@@ -470,6 +470,93 @@ let take ~axis p w =
          axis);
   map (Nx.take ~axis:a p) w
 
+(* Experts *)
+
+(* [check_experts ws ids xs] checks the shapes of the experts [ws], the ids
+   [ids] and the input [xs] of an expert product. *)
+let check_experts ws ids xs =
+  let fn = "Nx_quant.apply_experts" in
+  let wr = Array.length ws and l = Array.length ids in
+  if wr <> 3 then
+    invalid_arg
+      (strf "%s: the weight must have shape [e; n; k], got %s" fn (pp_shape ws));
+  if Array.length xs <> l + 1 then
+    invalid_arg
+      (strf "%s: x must have shape [...; k] with one axis per id's, got %s" fn
+         (pp_shape xs));
+  if xs.(l) <> ws.(2) then
+    invalid_arg
+      (strf "%s: x's last axis is %d, the weight's inputs are %d" fn xs.(l)
+         ws.(2));
+  Array.iteri
+    (fun i d ->
+      if d <> 1 && d <> ids.(i) then
+        invalid_arg
+          (strf "%s: x's leading axes %s do not broadcast to the ids' %s" fn
+             (pp_shape (Array.sub xs 0 l))
+             (pp_shape ids)))
+    (Array.sub xs 0 l)
+
+(* [grouped ~ids x codes scales] is the expert product of the MXFP4 experts of
+   [codes] and [scales], [[| e; n; k |]], in one contraction whose rows are
+   segmented by expert: the ids, flattened, are sorted stably, [x]'s rows
+   gathered in their order, and the offsets of expert [g] count the ids below
+   [g], so that an id out of range falls in no group and its row has no
+   products, [+0]. The result's rows are gathered back to the ids' order. *)
+let grouped ~ids x codes scales =
+  let ws = shape (Mxfp4 { codes; scales }) in
+  let e = ws.(0) and n = ws.(1) and k = ws.(2) in
+  let lead = Nx.shape ids in
+  let p = Array.fold_left ( * ) 1 lead in
+  let sorted, order = Nx.sort (Nx.reshape [| p |] ids) in
+  (* Each position's row of [x], whose leading axes broadcast to the ids'. *)
+  let xs = Array.sub (Nx.shape x) 0 (Array.length lead) in
+  let m = Array.fold_left ( * ) 1 xs in
+  let source =
+    Nx.reshape [| p |]
+      (Nx.broadcast_to lead (Nx.reshape xs (Nx.arange Nx.int64 0 m 1)))
+  in
+  let rows = Nx.take ~axis:0 (Nx.take order source) (Nx.reshape [| m; k |] x) in
+  let offsets =
+    Nx.searchsorted ~side:`Left sorted (Nx.arange Nx.int64 0 (e + 1) 1)
+  in
+  let b = Nx.reshape ws (Nx.bitcast Nx.float4_e2m1fn codes) in
+  let batch = Iarray.of_list [] and contracting = Iarray.of_list [ (1, 2) ] in
+  let y =
+    Nx.Prim.eval ~by:"Nx_quant.apply_experts"
+      (Contract
+         {
+           order = Nx.Prim.contract_order ~batch ~contracting rows b;
+           batch;
+           contracting;
+           acc = Nx.Dtype.Any Nx.float32;
+           out = Nx.dtype x;
+           a = rows;
+           b;
+           init = None;
+           a_scale = None;
+           b_scale = Some (Exponent scales);
+           segments = Some (Rows { offsets; a_axis = 0; b_axis = 0 });
+         })
+  in
+  let back = Nx.argsort order in
+  Nx.reshape (Array.append lead [| n |]) (Nx.take ~axis:0 back y)
+
+let apply_experts ~ids w x =
+  check_experts (shape w) (Nx.shape ids) (Nx.shape x);
+  let dt = Nx.dtype x in
+  match w with
+  | Mxfp4 { codes; scales }
+    when at_float32 x && whole ids && whole x && whole codes && whole scales ->
+      if exact dt w then grouped ~ids x codes scales
+      else Nx.cast dt (grouped ~ids (Nx.cast Nx.float32 x) codes scales)
+  | _ ->
+      Nx.map_segments
+        ~segments:(shape w).(0)
+        ids
+        (fun owners rows -> apply (take ~axis:0 owners w) rows)
+        x
+
 (* Structure *)
 
 let walk c w =
