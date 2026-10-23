@@ -592,7 +592,7 @@ static int64_t run_at(const scatter *c, int64_t v, int64_t *p) {
    A narrow float's Add sums each target's updates in float32 from +0 plus
    its element, left to right in C order, and rounds the sum once into the
    destination. Its updates are grouped by target first, by one of three
-   ways that each keep scratch of the order of the updates, never of into:
+   ways that each keep scratch of at most the order of the updates:
 
    - A row of slices whose positions step 0 along it, an embedding
      gradient's, few such rows (narrow_rows): its positions are sorted by
@@ -606,8 +606,12 @@ static int64_t run_at(const scatter *c, int64_t v, int64_t *p) {
    - A row of one slice, few such rows, as a 1-d scatter's: the sorted
      scatter's bins (narrow_bins) keep their targets' sums in float32,
      a flag beside each that an update reached, then encode the reached
-     targets in the updates' order. Such a scatter sorts the whole axis as
-     one block, so that each sum spans its target's updates.
+     targets once. Where the axis has fewer targets than updates, the sums
+     carry from block to block in every bin's scratch, of the order of the
+     targets; otherwise the axis is one block, so that each sum spans its
+     target's updates. On fudge 16M float16 updates into 1M targets took
+     25 ms as one block, 14 ms in blocks of 1M, whose sorted entries stay
+     in the cache.
    - Otherwise a unit (narrow_run), of a part of the targets where units
      are fewer than the threads, sorts the positions its run applies by
      target, stably, and sums one target after another, as a row's pieces
@@ -981,24 +985,41 @@ static void apply_bins(int64_t lo, int64_t hi, int worker, void *ctx) {
 }
 
 /* Sums a narrow float's bins (Narrow sums), whose rows are of one slice:
-   a bin's targets' float32 sums in its worker's scratch, after a flag for
-   each target, padded to a line. */
+   a bin's targets' float32 sums after a flag for each target, padded to a
+   line, in its worker's scratch, or in the bin's own where the sums carry
+   from block to block. The last block encodes each reached target once,
+   walking the bin's targets where they are fewer than its entries or
+   carried, else its entries. */
 static void narrow_bins(int64_t lo, int64_t hi, int worker, void *ctx) {
   const scatter *c = ctx;
   const nx_array *d = &c->a[0];
-  uint8_t *reached = c->sums + worker * c->each;
-  float *sums = (float *)(reached + flag_bytes(c->shift));
+  int carry = c->block < c->m, last = c->b0 + c->steps == c->m;
+  int64_t span = (int64_t)1 << c->shift;
   for (int64_t q = lo; q < hi; q++) {
+    uint8_t *reached = c->sums + (carry ? q : worker) * c->each;
+    float *sums = (float *)(reached + flag_bytes(c->shift));
     uint64_t first = (uint64_t)q << c->shift;
-    copy_bin(c, first);
-    for (int pass = 0; pass < 2; pass++)
+    int64_t targets = (int64_t)(c->dim - first) < span
+                          ? (int64_t)(c->dim - first) : span;
+    int64_t entries = 0;
+    if (c->b0 == 0) copy_bin(c, first);
+    for (int pass = 0; pass < 1 + last; pass++) {
+      if (pass == 1 && (carry || entries > targets)) {
+        for (int64_t t = 0; t < targets; t++) {
+          if (!reached[t]) continue;
+          int64_t at = c->pd + ((int64_t)first + t) * c->da;
+          code_put(d, at, narrow_of_float(c->dt, sums[t]));
+          reached[t] = 0;
+        }
+        break;
+      }
       for (int64_t k = 0; k < c->chunks; k++) {
         const int64_t *seg = c->seg + k * c->bins;
-        for (int64_t j = q == 0 ? chunk_first(c, k) : seg[q - 1]; j < seg[q];
-             j++) {
+        int64_t from = q == 0 ? chunk_first(c, k) : seg[q - 1];
+        entries += seg[q] - from;
+        for (int64_t j = from; j < seg[q]; j++) {
           int64_t t = c->pos[j] - (int64_t)first;
           int64_t at = c->pd + c->pos[j] * c->da;
-          /* The second pass encodes each reached target once. */
           if (pass == 1) {
             if (reached[t]) code_put(d, at, narrow_of_float(c->dt, sums[t]));
             reached[t] = 0;
@@ -1012,6 +1033,7 @@ static void narrow_bins(int64_t lo, int64_t hi, int worker, void *ctx) {
           sums[t] = nx_add_f32(sums[t], nx_bits_to_float(c->dt, u));
         }
       }
+    }
   }
 }
 
@@ -1179,16 +1201,20 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
     int64_t width = c.len < UNIT_ROW ? c.len : UNIT_ROW;
     c.shift = bin_shift(c.dim, c.narrow ? 4 : width * c.w, threads);
     c.bins = (int64_t)((c.dim - 1) >> c.shift) + 1;
-    c.block = c.narrow                     ? c.m
-              : (int64_t)c.dim < FEWEST_BLOCK ? FEWEST_BLOCK
-              : (int64_t)c.dim > MOST_BLOCK   ? MOST_BLOCK
-                                              : (int64_t)c.dim;
-    /* A bin's scratch for a narrow float's sums (narrow_bins), on the
-       threads of its block's job. */
+    /* A narrow float's sums carry from block to block in every bin's
+       scratch (narrow_bins), of the order of the targets; over as many
+       targets as updates or more, one block takes the axis. */
+    c.block = c.narrow && (int64_t)c.dim >= c.m ? c.m
+              : (int64_t)c.dim < FEWEST_BLOCK  ? FEWEST_BLOCK
+              : (int64_t)c.dim > MOST_BLOCK    ? MOST_BLOCK
+                                               : (int64_t)c.dim;
+    /* A bin's scratch for a narrow float's sums, on the threads of its
+       block's job, or each bin's own. */
     if (c.narrow) {
       int64_t apply = apply_bytes(&c, c.m, 1);
       c.each = flag_bytes(c.shift) + ((int64_t)4 << c.shift);
-      workers = nx_cpu_threads(apply, (double)apply);
+      workers = c.block < c.m ? (int)c.bins
+                              : nx_cpu_threads(apply, (double)apply);
     }
     int64_t most = c.m < c.block ? c.m : c.block, e = entry_bytes(&c);
     c.gather_bytes = c.bins * GATHER * (8 + e);
