@@ -398,6 +398,33 @@ let contract ?streams ?(init = false) ?operands ?out ~acc ~order name ~sa ~sb
 
 let plain a b = (a, b)
 
+(* [m] float32 rows against an MXFP4 weight: float4 codes stored
+   [4096 × 4096] as [n × k], a code of 2^(e - 127) per 32 along k. *)
+let mxfp4 ~order name m =
+  let acc = D.Any D.Float32 and contracting : _ iarray = [| (1, 1) |] in
+  let n = 4096 and k = 4096 in
+  let bench (module K : Nx_kernel.S) =
+    row name
+      (fun () ->
+        let codes =
+          A.of_array D.Uint8 [| n; k / 32 |]
+            (Array.init (n * k / 32) (fun i -> 120 + (i mod 15)))
+        in
+        let a : Nx_kernel.operand =
+          { array = A.Any (filled D.Float32 [| m; k |]); scale = None }
+        in
+        let b : Nx_kernel.operand =
+          { array = A.Any (filled D.Float4_e2m1fn [| n; k |]);
+            scale = Some (Exponent codes) }
+        in
+        (A.create Rig.host D.Float32 [| m; n |], a, b))
+      (fun (dst, a, b) ->
+        ok
+          (K.contract ~order ~batch:[||] ~contracting ~segments:None ~acc ~dst
+             ~init:None a b))
+  in
+  { bench; work = [ F.Fma (acc, 2 * m * n * k); F.Read (n * k / 2) ] }
+
 (* The product of [m × k] and [k × n] C-contiguous matrices in [order]. *)
 let gemm ?init ~acc ~order name m n k =
   contract ?init ~acc ~order name ~sa:[| m; k |] ~sb:[| k; n |] ~layout:plain
@@ -505,6 +532,10 @@ let contract_rows =
         ~sa:[| 1; 4096 |]
         ~sb:[| 4096; 4096 |] ~layout:plain ~contracting:[| (1, 0) |]
         ~flops:(2 * 4096 * 4096) ~streams:(4 * 4096 * 4096);
+      (* A token, and 8 tokens, through an MXFP4 weight: lane order's dot
+         stages the codes along k, chain order's few rows pack them. *)
+      mxfp4 ~order:lane "contract-mxfp4-m1x4096x4096" 1;
+      mxfp4 ~order:chain "contract-mxfp4-m8x4096x4096" 8;
     ]
 
 (* Reductions and scans of one operand by a monoid, its extreme with its
