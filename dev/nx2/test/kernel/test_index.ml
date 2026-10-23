@@ -361,15 +361,21 @@ let scatter_agrees (b : Support.backend) c =
   | None -> failf "%s declined a scatter" b.name
   | Some y -> check_scatter c y
 
-let law_scatter_reference (b : Support.backend) c =
+(* Whether two of [c]'s updates share a target, and whether one lands outside
+   the axis. *)
+let sharing c =
   let ps = positions c.sidx in
   let d = (shape_of c.into).(c.saxis) in
   let inside =
     List.filter (fun p -> p >= 0L && p < Int64.of_int d) (Array.to_list ps)
   in
-  cover "shared targets"
-    (List.length (List.sort_uniq compare inside) < List.length inside);
-  cover "dropped updates" (List.length inside < Array.length ps);
+  ( List.length (List.sort_uniq compare inside) < List.length inside,
+    List.length inside < Array.length ps )
+
+let law_scatter_reference (b : Support.backend) c =
+  let shared, dropped = sharing c in
+  cover "shared targets" shared;
+  cover "dropped updates" dropped;
   cover "narrow float add" (c.combine = Nx_kernel.Add && is_narrow (dtype_of c.into));
   scatter_agrees b c
 
@@ -493,6 +499,150 @@ let law_in_place (b : Support.backend) c =
   | Some fresh, Some own -> equal (array string) (elements fresh) (elements own)
   | None, None -> ()
   | _ -> failf "%s declined one of the two" b.name
+
+(* Set keeps each target's last update in C order: its bits. *)
+let law_set_last (b : Support.backend) c =
+  let shared, dropped = sharing c in
+  cover "shared targets" shared;
+  cover "dropped updates" dropped;
+  match scatter_on b c with None -> () | Some y -> check_scatter c y
+
+(* Each operand as a C-contiguous copy of its view gives the same bits, on
+   a second run too. *)
+let law_add_bits (b : Support.backend) c =
+  let plain (A.Any x) = A.Any (A.copy x) in
+  let c' =
+    { c with into = plain c.into; sidx = plain c.sidx; updates = plain c.updates }
+  in
+  cover "shared targets" (fst (sharing c));
+  cover "through views" (c.sviews <> []);
+  match (scatter_on b c, scatter_on b c, scatter_on b c') with
+  | Some y, Some y', Some y'' ->
+      equal ~msg:"again" (array string) (elements y) (elements y');
+      equal ~msg:"contiguous" (array string) (elements y) (elements y'')
+  | None, None, None -> ()
+  | _ -> failf "%s declined some of three" b.name
+
+(* Bounds of Add *)
+
+(* [x + y] and its rounding error. *)
+let two_sum x y =
+  let s = x +. y in
+  let z = s -. x in
+  (s, x -. (s -. z) +. (y -. z))
+
+(* The sum of [xs] within 2^-100 of the sum of their magnitudes, and that
+   sum: the running sum held in two parts. *)
+let exact xs =
+  let hi = ref 0. and lo = ref 0. and mag = ref 0. in
+  List.iter
+    (fun x ->
+      let s, t = two_sum !hi x in
+      hi := s;
+      lo := !lo +. t;
+      mag := !mag +. Float.abs x)
+    xs;
+  (!hi +. !lo, !mag)
+
+(* The largest finite value of a narrow float. *)
+let most_finite (D.Any dt) =
+  match dt with
+  | D.Float16 -> 65504.
+  | D.Bfloat16 -> 0x1.FEp127
+  | D.Float8_e4m3fn -> 448.
+  | D.Float8_e5m2 -> 57344.
+  | _ -> 6.
+
+(* A finite element of a float or complex dtype: a small odd integer times
+   a power of two, so that sums cancel and carry past a narrow float's
+   steps, a narrow float's rounded to its nearest code. *)
+let finite (D.Any dt as d) r =
+  let v () =
+    Float.ldexp
+      (Float.of_int (Random.State.int r 31 - 15))
+      (Random.State.int r 13 - 10)
+  in
+  match dt with
+  | D.Float32 -> f32 (round32 (v ()))
+  | D.Float64 -> f64 (v ())
+  | D.Complex64 -> f32 (round32 (v ())) ^ f32 (round32 (v ()))
+  | D.Complex128 -> f64 (v ()) ^ f64 (v ())
+  | _ -> encode d (v ())
+
+let float_dtypes =
+  List.filter
+    (fun (D.Any dt) -> D.is D.Float dt || D.is D.Complex dt)
+    all_dtypes
+
+(* The parts of an element of [d] as values: one, or a complex number's
+   two. *)
+let parts (D.Any dt as d) e =
+  let w = String.length e in
+  if is_narrow d then [ decode d e ]
+  else if D.is D.Complex dt then
+    let h = w / 2 in
+    let get = if h = 4 then get32 else get64 in
+    [ get e 0; get e h ]
+  else if w = 4 then [ get32 e 0 ]
+  else [ get64 e 0 ]
+
+(* Why a target's Add [got] of [x] and [us] is past
+   [γ(n + 1) (|x| + Σ |ui|)] of the exact sum, part by part, [u] the unit
+   roundoff of float32 for float32, narrow floats and complex64 and of
+   float64 otherwise; a narrow float's sum is rounded once from a float32
+   within it, so [got] lies between the roundings of its ends. Each part's
+   magnitudes bound the complex number's moduli. A narrow sum that may round
+   past the dtype's largest finite value is not checked: [None]. *)
+let past (D.Any dt as d) x us got =
+  let n = Float.of_int (List.length us + 1) in
+  let u = if D.bits dt = 64 || D.bits dt = 128 then 0x1p-53 else 0x1p-24 in
+  let g = n *. u /. (1. -. (n *. u)) in
+  let terms = List.map (parts d) (x :: us) in
+  let wrong =
+    List.concat
+      (List.mapi
+         (fun k got ->
+           let want, mag = exact (List.map (fun t -> List.nth t k) terms) in
+           let bound = (g *. mag) +. (0x1p-100 *. mag) in
+           if is_narrow d then
+             if Float.abs want +. bound > most_finite d then []
+             else
+               let lo = decode d (encode d (want -. bound))
+               and hi = decode d (encode d (want +. bound)) in
+               if lo <= got && got <= hi then []
+               else [ Printf.sprintf "%h is not in [%h, %h]" got lo hi ]
+           else if Float.abs (got -. want) <= bound then []
+           else
+             [ Printf.sprintf "%h is %h from %h, past %h" got (got -. want) want bound ])
+         (parts d got))
+  in
+  match wrong with [] -> None | w -> Some (String.concat "; " w)
+
+(* A float Add is within its bound of the exact sum at each target an
+   update reaches. *)
+let law_add_bound (b : Support.backend) c =
+  let d = dtype_of c.into in
+  let ls = lands c in
+  let reached = Array.exists (fun l -> l <> []) ls in
+  cover "a target several updates reach" (Array.exists (fun l -> List.length l > 1) ls);
+  cover "a narrow float" (is_narrow d);
+  match scatter_on b c with
+  | None -> ()
+  | Some y ->
+      cover "reached" reached;
+      let got = elements y and xs = elements c.into in
+      let wrong =
+        List.filter_map Fun.id
+          (Array.to_list
+             (Array.mapi
+                (fun t us ->
+                  if us = [] then None
+                  else
+                    Option.map (Printf.sprintf "%d: %s" t)
+                      (past d xs.(t) us got.(t)))
+                ls))
+      in
+      equal (list string) [] (List.filteri (fun i _ -> i < 5) wrong)
 
 (* Refusals *)
 
@@ -645,7 +795,8 @@ let gather_example d ~xs ~axis ~n ?(broadcast = []) ps =
     gviews = List.map (( ^ ) "idx ") (view_names iv);
   }
 
-let scatter_example d combine ~ts ~axis ~m ?(broadcast = []) ?tv ?uv ps =
+let scatter_example d combine ~ts ~axis ~m ?(broadcast = []) ?tv ?uv
+    ?(draw = element) ps =
   let r = Array.length ts in
   let rs = Random.State.make [| 1 |] in
   let us = Array.mapi (fun i e -> if i = axis then m else e) ts in
@@ -655,9 +806,9 @@ let scatter_example d combine ~ts ~axis ~m ?(broadcast = []) ?tv ?uv ps =
   {
     combine;
     saxis = axis;
-    into = operand d ts tv (fun _ -> element d rs);
+    into = operand d ts tv (fun _ -> draw d rs);
     sidx = int64s us iv (positions_of ps);
-    updates = operand d us uv (fun _ -> element d rs);
+    updates = operand d us uv (fun _ -> draw d rs);
     sviews =
       List.map (( ^ ) "into ") (view_names tv)
       @ List.map (( ^ ) "updates ") (view_names uv);
@@ -681,6 +832,84 @@ let scatter_examples =
     (* A narrow float's sum. *)
     scatter_example (D.Any D.Float16) Nx_kernel.Add ~ts:[| 3 |] ~axis:0 ~m:6
       [| 0L; 0L; 2L; 5L; 0L; 1L |];
+  ]
+
+(* Set: shared targets and positions past both ends, every update on one
+   target, no update, and one row. *)
+let set_examples =
+  let ex d = scatter_example d Nx_kernel.Set in
+  [
+    ex (D.Any D.Float32) ~ts:[| 4 |] ~axis:0 ~m:6 [| 1L; 3L; 1L; -1L; 4L; 1L |];
+    ex (D.Any D.Int8) ~ts:[| 3; 2 |] ~axis:1 ~m:5 [| 0L |];
+    ex (D.Any D.Bfloat16) ~ts:[| 3 |] ~axis:0 ~m:0 [| 0L |];
+    ex (D.Any D.Complex128) ~ts:[| 5; 4 |] ~axis:0 ~m:1 ~broadcast:[ 1 ] [| 3L |];
+  ]
+
+(* Add's bound: many updates on few targets, an embedding gradient's rows,
+   every update on one target, no update. *)
+let bound_examples =
+  let ex d = scatter_example d Nx_kernel.Add ~draw:finite in
+  [
+    ex (D.Any D.Float32) ~ts:[| 2 |] ~axis:0 ~m:40 [| 0L; 1L |];
+    ex (D.Any D.Bfloat16) ~ts:[| 3; 8 |] ~axis:0 ~m:50 ~broadcast:[ 1 ]
+      [| 2L; 0L; 2L; 1L |];
+    ex (D.Any D.Float16) ~ts:[| 1 |] ~axis:0 ~m:60 [| 0L |];
+    ex (D.Any D.Complex64) ~ts:[| 4 |] ~axis:0 ~m:30 [| 3L; 0L; 3L |];
+    ex (D.Any D.Float64) ~ts:[| 3 |] ~axis:0 ~m:0 [| 0L |];
+  ]
+
+(* Values the contract states: [run c dt into idx u] is the scatter's
+   result into a fresh destination. *)
+let scatter1 (b : Support.backend) c dt into idx u =
+  let module K = (val b.kernels) in
+  let n = Array.length into and m = Array.length idx in
+  let dst = A.create Rig.host dt [| n |] in
+  match
+    K.scatter c ~unique:false ~axis:0 ~dst
+      ~into:(A.of_array dt [| n |] into)
+      (A.of_array D.Int64 [| m |] idx)
+      (A.of_array dt [| m |] u)
+  with
+  | A.Done -> Some (A.to_array dst)
+  | A.Declined -> None
+  | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
+
+let stated (b : Support.backend) =
+  let f32 = D.Float32 in
+  let snan = Int32.float_of_bits 0x7FA00001l in
+  let floats name c dt into idx u want =
+    ( name,
+      fun () ->
+        match scatter1 b c dt into idx u with
+        | None -> ()
+        | Some y -> equal (array float_exact) want y )
+  in
+  let bits32 a = Array.map Int32.bits_of_float a in
+  [
+    floats "Set keeps a target's last update" Set f32 [| 10.; 20.; 30.; 40. |]
+      [| 1L; 3L; 1L; 1L |] [| 1.; 2.; 3.; 4. |] [| 10.; 4.; 30.; 2. |];
+    floats "Set drops positions outside the axis" Set f32 [| 10.; 20.; 30.; 40. |]
+      [| -1L; 4L; Int64.min_int; Int64.max_int; 0L |]
+      [| 1.; 2.; 3.; 4.; 5. |] [| 5.; 20.; 30.; 40. |];
+    floats "Add starts from +0: -0 and -0 updates sum to +0" Add f32 [| -0. |]
+      [| 0L; 0L |] [| -0.; -0. |] [| 0. |];
+    floats "Add of opposite infinities is a NaN" Add f32 [| infinity; 1. |]
+      [| 0L; 1L |] [| neg_infinity; infinity |] [| nan; infinity |];
+    floats "Add rounds a bfloat16 sum once, from float32" Add D.Bfloat16
+      [| 1. |] (Array.make 256 0L) (Array.make 256 0x1p-8) [| 2. |];
+    ( "a target no update reaches keeps its bits, -0 and a signalling NaN's",
+      fun () ->
+        match
+          scatter1 b Add f32 [| -0.; snan |] [| 2L; -1L |] [| 1.; 1. |]
+        with
+        | None -> ()
+        | Some y ->
+            equal (array int32) (bits32 [| -0.; snan |]) (bits32 y) );
+    ( "Add of int8 wraps",
+      fun () ->
+        match scatter1 b Add D.Int8 [| 127; -128 |] [| 0L; 1L |] [| 1; -1 |] with
+        | None -> ()
+        | Some y -> equal (array int) [| -128; 127 |] y );
   ]
 
 (* Positions past the axis on both sides, cycling over 1003 targets. *)
@@ -740,6 +969,18 @@ let gathers = Gen.with_pp pp_gather (gather_gen ())
 let large_gathers = Gen.with_pp pp_gather (gather_gen ~shapes:large_shapes ())
 let scatters = Gen.with_pp pp_scatter (scatter_gen ())
 
+let sets =
+  Gen.with_pp pp_scatter (scatter_gen ~combines:Nx_kernel.[ Set ] ())
+
+let float_adds =
+  Gen.with_pp pp_scatter
+    (scatter_gen ~dtypes:float_dtypes ~combines:Nx_kernel.[ Add ] ())
+
+let finite_adds =
+  Gen.with_pp pp_scatter
+    (scatter_gen ~dtypes:float_dtypes ~combines:Nx_kernel.[ Add ]
+       ~draw:finite ())
+
 let large_scatters =
   Gen.with_pp pp_scatter (scatter_gen ~shapes:large_shapes ())
 
@@ -789,6 +1030,20 @@ let row_scatters =
   }
 
 let row_scatters = Gen.with_pp pp_scatter row_scatters
+
+(* Float Adds of many updates along the axis of few slices. *)
+let long_adds =
+  Gen.with_pp pp_scatter
+    (scatter_gen ~dtypes:float_dtypes ~combines:Nx_kernel.[ Add ]
+       ~shapes:(Gen.of_list [ [| 1000 |]; [| 3; 7 |]; [| 5 |] ])
+       ~ms:(Gen.int_range 70_000 100_000)
+       ())
+
+(* A scatter's bits are one thread's. *)
+let law_threads (b : Support.backend) c =
+  match (scatter_on b c, Nx_cpu.one_thread (fun () -> scatter_on b c)) with
+  | Some y, Some y' -> equal (array string) (elements y) (elements y')
+  | _ -> failf "%s declined a scatter" b.name
 
 let int_gathers =
   Gen.with_pp pp_gather (gather_gen ~dtypes:[ D.Any D.Int64 ] ())
@@ -848,6 +1103,18 @@ let laws (b : Support.backend) =
         (run (law_adjoint b));
       prop "a scatter into its own operand gives the fresh result" scatters
         (run (law_in_place b));
+      prop ~examples:set_examples
+        "a Set scatter keeps each target's last update in C order" sets
+        (run (law_set_last b));
+      prop "a float Add gives the same bits again and through any views"
+        float_adds
+        (run (law_add_bits b));
+      prop ~examples:bound_examples
+        "a float Add is within γ(n + 1) (|x| + Σ|ui|) of the exact sum"
+        finite_adds
+        (run (law_add_bound b));
+      cases ~name:fst "a scatter's stated values" (stated b) (fun (_, f) ->
+          b.around f);
     ]
 
 let cpu (b : Support.backend) =
@@ -878,6 +1145,11 @@ let cpu (b : Support.backend) =
         (run (fun c ->
              law_scatter_reference b c;
              law_in_place b c));
+      prop ~count:10 "a float Add's bits are one thread's" long_adds
+        (run (law_threads b));
+      prop ~count:10 "an embedding gradient's bits are one thread's"
+        row_scatters
+        (run (law_threads b));
       test "a sorted run's last piece of one slice" (fun () ->
           b.around (test_last_piece b));
       test "boolean extremes are of truths" (fun () ->
