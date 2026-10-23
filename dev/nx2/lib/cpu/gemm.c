@@ -2759,8 +2759,8 @@ static void table(int n, const int *ax, const int64_t *x, const int64_t *ratio,
   }
 }
 
-/* A scaled side's facts held in OCaml values, read before the call
-   releases the domain lock: whether its scale is codes, and its groups'
+/* A scaled side's facts held in OCaml values, read before nx_read,
+   which may run the collector: whether its scale is codes, and its groups'
    axes, batch, rows or columns, contraction (group_axes). */
 typedef struct {
   int exponent, n[3], ax[3][NX_MAX_RANK];
@@ -2769,10 +2769,12 @@ typedef struct {
 static const int groups[2][3] = {{BATCH, ROW, CON}, {BATCH, COL, CON}};
 
 /* Side [o]'s [scale_axes], its scale [vs] an Nx_kernel.scale and its
-   operand of [rank]. */
-static __attribute__((noinline)) void axes_of(value vs, value vbatch,
-                                              value vcon, int o, int rank,
+   operand [vx]. Out of line, as scales_fit. */
+static __attribute__((noinline)) void axes_of(value vs, value vx,
+                                              value vbatch, value vcon, int o,
                                               scale_axes *g) {
+  int64_t dim[2 * NX_MAX_RANK], off;
+  int rank = nx_array_layout(vx, dim, &off);
   g->exponent = Tag_val(vs) == 0;
   for (int t = 0; t < 3; t++)
     g->n[t] = group_axes(vbatch, vcon, o, rank, groups[o][t], g->ax[t]);
@@ -2888,6 +2890,12 @@ static inline __attribute__((always_inline)) value contract_body(
   if (scaled && acc != NX_FLOAT32 && acc != NX_FLOAT64)
     return Val_int(NX_DECLINED);
   if (scaled && !scales_fit(va, vb, vs)) return Val_int(NX_SHAPE);
+  /* Read before nx_read, which may run the collector. */
+  scale_axes sx[2];
+  for (int o = A; scaled && o <= B; o++)
+    if (Is_block(vs[o]))
+      axes_of(Field(vs[o], 0), o == A ? va : vb, vbatch, vcontracting, o,
+              &sx[o]);
   nx_operand in[6];
   in[0] = (nx_operand){va, dts[0], 0};
   in[1] = (nx_operand){vb, dts[1], 0};
@@ -2915,12 +2923,8 @@ static inline __attribute__((always_inline)) value contract_body(
       x[g] *= (double)r.extent[g][k];
   }
   double cost = call_cost(acc, order, x);
-  scale_axes sx[2];
   for (int o = A; scaled && o <= B; o++)
-    if (at[o] >= 0) {
-      axes_of(Field(vs[o], 0), vbatch, vcontracting, o, op[o]->rank, &sx[o]);
-      cost += decode_cost(acc, &a[at[o]]);
-    }
+    if (at[o] >= 0) cost += decode_cost(acc, &a[at[o]]);
   int released = nx_cpu_release(cost);
   int sum = summed_in(acc);
   scale s[2];
