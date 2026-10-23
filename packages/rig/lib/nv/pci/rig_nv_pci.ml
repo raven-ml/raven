@@ -313,52 +313,63 @@ let device ~word ~on g ~gsp ~hold ~tables (c : Chip.t) =
   let* rm = Gsp.rm gsp ~locate:(locate g) in
   let* device, subdevice, vaspace = Gsp.objects rm in
   let* gpu = Gsp.gpu gsp rm ~subdevice in
-  (* The flush word's page lives with the GPU's memory until the stop. A GPU
-     whose BAR has no room for it opens without Mapped memory. *)
-  let* flush =
-    match protect g (fun () -> Memory.alloc g.memory Memory.Bar 0x1000) with
-    | Ok (Some r) -> Ok (host r)
-    | Ok None -> Ok None
-    | Error _ as e -> e
+  (* The flush word's page lives with the GPU's memory until the stop, which
+     gives back its addresses, as a device that fails to make does at once. A
+     GPU whose BAR has no room for it opens without Mapped memory. *)
+  let* page = protect g (fun () -> Memory.alloc g.memory Memory.Bar 0x1000) in
+  let free_page () =
+    Option.iter (fun r -> protect g (fun () -> Memory.free g.memory r)) page
   in
-  Rig_nv.make ~word
-    {
-      key = on.key;
-      index = g.index;
-      rm;
-      device;
-      subdevice;
-      vaspace;
-      gpu;
-      budget = Page_table.main_pool tables;
-      doorbell = Window.address c.regs + doorbell_at;
-      clock = Registers (Window.address c.regs);
-      flush;
-      alloc = alloc g;
-      (* A GPU taken physically would keep writing the process's pages after its
-         death: it maps no host memory. *)
-      map_host =
-        (match Function.addressing g.fn with
-        | Machine.Physical -> None
-        | Iommu -> Some (map_host g));
-      reaches = reaches on ~index:g.index;
-      map_peer = map_peer g;
-      free = free g;
-      bus = Some (Function.bus g.fn);
-      dma = dma g;
-      register = (fun _ -> Ok ());
-      unregister = (fun _ -> Ok ());
-      check = check g gsp;
-      hang_ms = Some Driver.hang_ms;
-      stop =
-        (fun () ->
-          Fun.protect
-            (fun () -> Driver.stop hold)
-            ~finally:(fun () ->
-              protect g (fun () ->
-                  g.names <- None;
-                  Memory.release g.memory)));
-    }
+  let flush = Option.bind page host in
+  match
+    Rig_nv.make ~word
+      {
+        key = on.key;
+        index = g.index;
+        rm;
+        device;
+        subdevice;
+        vaspace;
+        gpu;
+        budget = Page_table.main_pool tables;
+        doorbell = Window.address c.regs + doorbell_at;
+        clock = Registers (Window.address c.regs);
+        flush;
+        alloc = alloc g;
+        (* A GPU taken physically would keep writing the process's pages after
+           its death: it maps no host memory. *)
+        map_host =
+          (match Function.addressing g.fn with
+          | Machine.Physical -> None
+          | Iommu -> Some (map_host g));
+        reaches = reaches on ~index:g.index;
+        map_peer = map_peer g;
+        free = free g;
+        bus = Some (Function.bus g.fn);
+        dma = dma g;
+        register = (fun _ -> Ok ());
+        unregister = (fun _ -> Ok ());
+        check = check g gsp;
+        hang_ms = Some Driver.hang_ms;
+        stop =
+          (fun () ->
+            Fun.protect
+              (fun () -> Driver.stop hold)
+              ~finally:(fun () ->
+                protect g (fun () ->
+                    g.names <- None;
+                    Memory.release g.memory);
+                free_page ()));
+      }
+  with
+  | Ok _ as d -> d
+  | Error _ as e ->
+      free_page ();
+      e
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      free_page ();
+      Printexc.raise_with_backtrace e bt
 
 (* [start] places the GSP's memory and boots it. Before the GSP's memory is
    taken, the start only reads the GPU's registers and writes its page tables in
