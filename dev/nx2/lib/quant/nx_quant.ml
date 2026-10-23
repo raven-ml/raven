@@ -360,6 +360,16 @@ let whole x =
            (fun d -> Nx.Placement.equal p (Nx.Placement.device s d))
            (Nx.rigs s)
 
+(* Whether [x] is whole, or split along [axis] over its set as
+   [Nx.Placement.split] cuts it. *)
+let whole_or_split ~axis x =
+  whole x
+  ||
+  match Nx.placement x with
+  | None -> false
+  | Some p ->
+      Nx.Placement.equal p (Nx.Placement.split ~axis (Nx.Placement.devices p))
+
 (* Whether [x]'s dtype sums at float32 with float32 operands. *)
 let at_float32 (type b d) (x : (float, b, d) Nx.t) =
   match Nx.dtype x with
@@ -542,12 +552,16 @@ let grouped ~ids x codes scales =
   let back = Nx.argsort order in
   Nx.reshape (Array.append lead [| n |]) (Nx.take ~axis:0 back y)
 
+(* A weight split along [n], its result's free columns, is computed by each
+   device for its columns over every row, in the whole's order. *)
 let apply_experts ~ids w x =
   check_experts (shape w) (Nx.shape ids) (Nx.shape x);
   let dt = Nx.dtype x in
+  let along_n = whole_or_split ~axis:1 in
   match w with
   | Mxfp4 { codes; scales }
-    when at_float32 x && whole ids && whole x && whole codes && whole scales ->
+    when at_float32 x && whole ids && whole x && along_n codes
+         && along_n scales ->
       if exact dt w then grouped ~ids x codes scales
       else Nx.cast dt (grouped ~ids (Nx.cast Nx.float32 x) codes scales)
   | _ ->

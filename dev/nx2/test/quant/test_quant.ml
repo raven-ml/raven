@@ -1200,6 +1200,63 @@ let experts_of format =
   in
   (w, ids, random_floats [| 12; 256 |])
 
+module Mem_two = (val Nx.devices (List.init 2 Nx_support.memory))
+
+(* Where an expert product's weight lies: split along an axis over the four
+   devices or two of them, or cut along [n] over a mesh axis of two with
+   copies along the other. *)
+type expert_cut = Split of { axis : int; over : int } | Mesh_n
+
+let pp_expert_cut ppf = function
+  | Split { axis; over } -> Format.fprintf ppf "axis %d over %d" axis over
+  | Mesh_n -> Format.pp_print_string ppf "n over a mesh axis"
+
+let cut_experts =
+  let open Gen in
+  let cut =
+    let+ axis = int_range 0 2 and+ over = of_list [ 2; 4 ] in
+    Split { axis; over }
+  in
+  let* c = frequency [ (6, cut); (1, constant Mesh_n) ] in
+  let+ e = experts in
+  (c, e)
+
+(* [apply_experts] with [w] at [c] and [ids] and [x] whole on every device. *)
+let experts_at c w ids x =
+  let at (module S : Nx.Devices) p =
+    let on t = Nx.place S.on t in
+    product_bits
+      (Nx_quant.apply_experts ~ids:(on ids) (Nx_quant.place p w) (on x))
+  in
+  match c with
+  | Split { axis; over = 4 } -> at (module Mem) (Mem.split ~axis)
+  | Split { axis; _ } -> at (module Mem_two) (Mem_two.split ~axis)
+  | Mesh_n -> at (module Mem) (Nx.Placement.mesh mesh [ (1, [ "b" ]) ])
+
+(* A weight split along [n] over a set gives the host's bits; cut along
+   [k], along experts or over a mesh, the routed product's. *)
+let cut_experts_law (c, (_, w, ids, X { x; _ })) =
+  let _, n, _ = dims w in
+  let grouped =
+    format_of w = Mxfp4
+    && match Nx.dtype x with D.Float64 -> false | _ -> true
+  in
+  let along_n = match c with Split { axis = 1; _ } -> true | _ -> false in
+  cover "a grouped product split along n" (grouped && along_n);
+  cover "a grouped product split along n with an empty window"
+    (grouped && along_n
+    && match c with Split { over; _ } -> n < over | Mesh_n -> false);
+  cover "a grouped product split along k"
+    (grouped && c = Split { axis = 2; over = 4 });
+  cover "a grouped product split along experts"
+    (grouped && c = Split { axis = 0; over = 4 });
+  cover "a grouped product cut along n over a mesh" (grouped && c = Mesh_n);
+  let want =
+    if along_n then product_bits (Nx_quant.apply_experts ~ids w x)
+    else product_bits (routed w ids x)
+  in
+  equal (array int64) want (experts_at c w ids x)
+
 let placements =
   group "placement"
     [
@@ -1211,6 +1268,29 @@ let placements =
         "a cut along k decodes each block once where its tiles divide the \
          blocks, and all of k on each device otherwise"
         work work_law;
+      prop ~count:200
+        "experts split along n give the host's bits, cut otherwise the \
+         routed product's"
+        (Gen.with_pp
+           (fun ppf (c, e) ->
+             Format.fprintf ppf "@[<v>%a@,at %a@]" pp_experts e pp_expert_cut c)
+           cut_experts)
+        cut_experts_law;
+      cases
+        ~name:(fun c -> Format.asprintf "%a" pp_expert_cut c)
+        "experts split along n give the host's bits where its order is not \
+         the routed product's"
+        [ Split { axis = 1; over = 4 }; Split { axis = 1; over = 2 } ]
+        (fun c ->
+          (* Sixteen rows by eight columns sum in another order than an
+             expert's few rows do. *)
+          let w = random_weight [| 4; 8; 64 |] in
+          let id i = Int64.of_int (i * 3 mod 5) in
+          let ids = Nx.create Nx.int64 [| 16 |] (Array.init 16 id) in
+          let x = random_floats [| 16; 64 |] in
+          equal (array int64)
+            (product_bits (Nx_quant.apply_experts ~ids w x))
+            (experts_at c w ids x));
       cases ~name:format_name
         "experts split over four devices give the host's routed product" formats
         (fun format ->
