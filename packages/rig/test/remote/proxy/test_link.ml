@@ -252,12 +252,18 @@ let account = Testable.structural ~pp:pp_account
 
 (* Jobs *)
 
+(* Fails [j] if it is open, then closes it. [close] returns once each link
+   has settled its abort and read its peer's stream to the end, so no thread
+   of [j] reaches a probe's point during a later test, where the probe would
+   hold it. A test closes its raw peers first, or [close] waits for their
+   silence. *)
 let ended j =
-  match Link.wait j ~ms:0 with
+  (match Link.wait j ~ms:0 with
   | Link.Open -> Link.fail j "the test ended"
-  | _ -> ()
+  | _ -> ());
+  Link.close j
 
-(* A job for [f], failed once [f] returns if it is still open. *)
+(* A job for [f], ended once [f] returns. *)
 let with_job f =
   let j = Link.job () in
   Fun.protect ~finally:(fun () -> ended j) (fun () -> f j)

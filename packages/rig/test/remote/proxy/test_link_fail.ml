@@ -259,7 +259,9 @@ let sever s =
   s.severed <- true
 
 (* Runs [f] on a new job of the two links, [l] the end of a [role] process's
-   peer. *)
+   peer. The job is closed once its peers' ends are: [close] returns once each
+   link has settled its abort, so no thread of the job reaches a probe's point
+   during a later test, where the probe would hold it. *)
 let with_scene ?(role = Wire.Agent 1) f =
   let d, p = connected () and e, q = connected () in
   let stop = beating q in
@@ -273,7 +275,8 @@ let with_scene ?(role = Wire.Agent 1) f =
       stop ();
       if Link.wait job ~ms:0 = Link.Open then Link.fail job "the test ended";
       if not s.severed then Unix.close p;
-      Unix.close q)
+      Unix.close q;
+      Link.close job)
     (fun () -> f s)
 
 (* Starts the waiters of [s]'s failure: a wait on the job, a request to [h]'s
@@ -340,7 +343,8 @@ let handled_in_next () =
   Fun.protect
     ~finally:(fun () ->
       Sys.set_signal Sys.sigint previous;
-      Unix.close p)
+      Unix.close p;
+      Link.close job)
   @@ fun () ->
   let r, raised = Rig_support.interrupt_in_wait (fun () -> Link.next l) in
   equal ~msg:"the signal raised in the wait" bool true raised;
