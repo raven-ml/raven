@@ -3025,7 +3025,8 @@ let partners (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by n =
    rotation moves [2 |g_pq|²] of [off(A)²] to the diagonal (LAWN 169, §1), and
    the rounds share [off(A)² / 2] out, so a trip takes at least [off(A)² / R]. A
    matrix with an infinity or a NaN where it is read is NaN. The values come
-   with the function that gives [V] where [vectors] carried it. *)
+   with the function that gives [V] where [~vectors] is true; the function
+   raises otherwise. *)
 let eigh (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     ~(loop : d loop) ~vectors (a : (v, s, d) Value.t) :
     (v, s, d) Value.t * (unit -> (v, s, d) Value.t) =
@@ -3085,7 +3086,7 @@ let eigh (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
       (f.of_real (E.input 0 f.re))
   in
   let w = batched apply ~by lead (failing apply ~by bad w) in
-  let vectors () =
+  let vectors_of () =
     match vs with
     | [ v ] ->
         let idx = fit apply ~by shape (reshape apply ~by [| b; 1; n |] order) in
@@ -3093,7 +3094,7 @@ let eigh (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
         batched apply ~by lead (failing apply ~by bad v)
     | _ -> invalid_arg "Expand: eigh's loop gives its vectors"
   in
-  (w, vectors)
+  (w, vectors_of)
 
 (* The sweeps of one-sided Jacobi, dgesvj's NSWEEP. *)
 let sweeps = 30
@@ -3111,7 +3112,7 @@ let sweeps = 30
    right ones the columns over their norms completed by {!householder} of [k ×
    k] to an orthonormal basis, each column of its [Q] by the sign of its [R]'s
    diagonal. The values come with the function that gives [u] and [vh] of
-   given factors where [vectors] carried the rotations. *)
+   given factors where [~vectors] is true; the function raises otherwise. *)
 let svd (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     ~(loop : d loop) ~vectors (a : (v, s, d) Value.t) :
     (v, s, d) Value.t
@@ -3312,7 +3313,7 @@ let svd (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
       (mapx apply ~by [| b; k |] dt [ Value.Any sorted ]
          (f.of_real (E.input 0 f.re)))
   in
-  let vectors (factors : Nx_kernel.factors) =
+  let vectors_of (factors : Nx_kernel.factors) =
     match vs with
     | [ v ] ->
         let ordered x =
@@ -3367,7 +3368,7 @@ let svd (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
         if tall then (out u, out (adjoint w)) else (out w, out (adjoint u))
     | _ -> invalid_arg "Expand: svd's loop gives its vectors"
   in
-  (s, vectors)
+  (s, vectors_of)
 
 (* A routine's expansion; [Eig] and [Eig_values] have none. *)
 let linalg : type d r.
@@ -3383,13 +3384,13 @@ let linalg : type d r.
   | Qr { factors; a } -> Some (qr apply ~by ~loop factors a)
   | Svd_values a -> Some (fst (svd apply ~by ~loop ~vectors:false a))
   | Svd { factors; a } ->
-      let s, vectors = svd apply ~by ~loop ~vectors:true a in
-      let u, vh = vectors factors in
+      let s, vectors_of = svd apply ~by ~loop ~vectors:true a in
+      let u, vh = vectors_of factors in
       Some (s, u, vh)
   | Eigh_values a -> Some (fst (eigh apply ~by ~loop ~vectors:false a))
   | Eigh a ->
-      let w, vectors = eigh apply ~by ~loop ~vectors:true a in
-      Some (w, vectors ())
+      let w, vectors_of = eigh apply ~by ~loop ~vectors:true a in
+      Some (w, vectors_of ())
   | Eig_values _ | Eig _ -> None
   | Solve_triangular { triangle; adjoint; unit_diagonal; a; b } ->
       Some (solve apply ~by ~loop triangle ~adjoint ~unit_diagonal a b)
