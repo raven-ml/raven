@@ -28,7 +28,9 @@ type death =
   | Offered of int
       (** Live and donated: the donor's key, which a later donation of it
           gives its handle. *)
-  | Died of string  (** The function the value was given to. *)
+  | Died of { by : string; key : int }
+      (** Given to the function [by]. The donor's key stays, so that a
+          consumer tells its own donors by key. *)
 (** Whether a value lives. Values are made [Live], a donor is [Offered] when
     first donated, and its consumer sets [Died]. A consumer that raises before
     it computes into its donors' memory undoes it, each donor [Offered] under
@@ -40,8 +42,8 @@ type ('v, 's, 'd) t =
       a : ('v, 's) Nx_array.t;
       mutable dead : death; [@atomic]
     }
-      (** On [at]'s one device. [dead] is [Died f] once the value was donated
-          to [f] ({!Donate.donate}). *)
+      (** On [at]'s one device. [dead] is [Died] once the value was donated
+          to a function that consumed it ({!Donate.donate}). *)
   | Shards of {
       at : 'd Devices.placement;
       shape : int array;  (** The whole's. *)

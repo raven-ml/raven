@@ -5272,7 +5272,8 @@ let pp ppf x =
         fun ppf -> Format.fprintf ppf " of every set,@ %a" Prim.pp n.op
     | Value.Array _ | Value.Shards _ | Value.Donated _ -> (
         match Prim.death x with
-        | Value.Died f -> fun ppf -> Format.fprintf ppf ", donated to %s" f
+        | Value.Died { by = f; _ } ->
+            fun ppf -> Format.fprintf ppf ", donated to %s" f
         | Value.Live | Value.Offered _ -> (
             let lost d why ppf =
               Format.fprintf ppf ", lost with %s: %s" (Rig.name d) why
@@ -5281,7 +5282,8 @@ let pp ppf x =
                memory meanwhile names that consumer. *)
             let unread why ppf =
               match Prim.death x with
-              | Value.Died f -> Format.fprintf ppf ", donated to %s" f
+              | Value.Died { by = f; _ } ->
+                  Format.fprintf ppf ", donated to %s" f
               | Value.Live | Value.Offered _ ->
                   Format.fprintf ppf ", unread: %s" why
             in

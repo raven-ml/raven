@@ -657,7 +657,8 @@ and donated : type r. by:string -> r Value.prim -> Donate.handle list -> r =
   | Value.Scatter _ | Value.Sort _ | Value.Fft _ | Value.Linalg _
   | Value.Fold _ | Value.Assemble _ | Value.Contract _ | Value.Copy _
   | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ -> (
-      let op = Donate.unhandled (Donate.claim ~by hs) op in
+      Donate.claim ~by hs;
+      let op = Donate.unhandled hs op in
       match Donate.reuse ~by op hs with
       | Some (i, b, b') -> (
           (* Operand [i]'s memory is the result's, now over [b']: the kernel
