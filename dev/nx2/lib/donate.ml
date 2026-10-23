@@ -113,15 +113,17 @@ let buffers (Handle (_, x)) = Iarray.to_list (Iarray.map A.buffer (Prim.arrays x
 (* Claims
 
    A consumer claims its handles in their donors' key order, each handle's own
-   word before its donor's, setting each word to its death; it gives none back
-   when it loses one. Each word has one place in the order, since every handle
-   of a donor holds the donor's one key, and a consumer's words rise strictly,
-   since [handles] refuses two handles of one donor. So of consumers racing
-   for the same handles, at least one succeeds: a consumer that loses at a
-   word lost it to one that claimed that word, which, if it lost too, lost at
-   a word above it. Following who each loser lost to climbs the order, so it
-   ends at a consumer that claimed all its words. One that then raises before
-   it writes or consumes their memory gives them all back ([unclaim]).
+   word before its donor's, setting each word to its death. Each word has one
+   place in the order, since every handle of a donor holds the donor's one
+   key, and a consumer's words rise strictly, since [handles] refuses two
+   handles of one donor. So of consumers racing for the same handles, at least
+   one succeeds: a consumer that loses at a word lost it to one that held that
+   word, which had claimed it, and which, if it lost too, lost at a word above
+   it. Following who each loser lost to climbs the order, so it ends at a
+   consumer that claimed all its words. A loser gives back the words it took,
+   as does a consumer that raises before it writes or consumes their memory
+   ([unclaim]): a word given back was never consumed, and each loss is still
+   to the consumer that held the word then.
 
    Claimed in operand order, [add h1 h2] and [add h2 h1] on two domains could
    each take its first handle and lose its second to the other. In key order a
@@ -175,12 +177,17 @@ let unclaim hs =
 
 (* Claims the handle [x], operand [i], setting its words to [died]: its own
    word, then its donor's, which orders the consumers of all the donor's
-   handles. *)
+   handles. Losing the donor's word gives its own back. *)
 let claim_one (type v s d) ~by died i (x : (v, s, d) Value.t) =
   match x with
-  | Value.Donated d ->
+  | Value.Donated d -> (
       spend_word ~by i died x;
-      claim_word ~by i d.donor died
+      match claim_word ~by i d.donor died with
+      | () -> ()
+      | exception e ->
+          let bt = Printexc.get_raw_backtrace () in
+          Atomic.Loc.set [%atomic.loc d.spent] Value.Live;
+          Printexc.raise_with_backtrace e bt)
   | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ()
 
 let claim_handle ~by i x = claim_one ~by (Value.Died by) i x
@@ -189,13 +196,21 @@ let claim_handle ~by i x = claim_one ~by (Value.Died by) i x
    so that a word holding it is one of that claim's donors. *)
 type claim = Value.death
 
-(* Claims the handles [hs] for their consumer [by], in key order. *)
+(* Claims the handles [hs] for their consumer [by], in key order. A loss gives
+   back the handles taken before it. *)
 let claim ~by hs =
   let died = Value.Died by in
-  List.iter
-    (fun (Handle (i, x)) -> claim_one ~by died i x)
-    (List.sort (fun h h' -> Int.compare (key h) (key h')) hs);
-  died
+  let rec take taken = function
+    | [] -> died
+    | (Handle (i, x) as h) :: rest -> (
+        match claim_one ~by died i x with
+        | () -> take (h :: taken) rest
+        | exception e ->
+            let bt = Printexc.get_raw_backtrace () in
+            unclaim taken;
+            Printexc.raise_with_backtrace e bt)
+  in
+  take [] (List.sort (fun h h' -> Int.compare (key h) (key h')) hs)
 
 (* [y] read as it was when its call was made, [ours] telling the deaths of the
    donors of its handles: a handle as its arrays, and one of those donors as a

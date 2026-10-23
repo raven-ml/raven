@@ -10,13 +10,14 @@
     every handle of every donation of it holds. A consumer claims its handles
     in their donors' key order, each handle's own word before its donor's,
     without a lock: of consumers racing for the same handles, at least one
-    succeeds, and each loser raises naming the consumer it lost a word to. The
-    eager engine ({!Exec}) claims an operation's handles before it reads them,
-    writes the operation's first result into a handle's memory where {!reuse}
-    allows, and ends the handles once it has read them ({!consumed}). An
-    operation that raises before it writes or consumes their memory gives them
-    back ({!unclaim}); one that raises once it consumed a handle's memory for
-    its result leaves its donors dead: rig's consumption is one-way. *)
+    succeeds, and each loser gives back what it claimed and raises naming the
+    consumer it lost a word to. The eager engine ({!Exec}) claims an
+    operation's handles before it reads them, writes the operation's first
+    result into a handle's memory where {!reuse} allows, and ends the handles
+    once it has read them ({!consumed}). An operation that raises before it
+    writes or consumes their memory gives them back ({!unclaim}); one that
+    raises once it consumed a handle's memory for its result leaves its donors
+    dead: rig's consumption is one-way. *)
 
 val donate : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [donate ~by x] is a handle over [x]'s memory that one operation reads
@@ -94,7 +95,8 @@ val claim : by:string -> handle list -> claim
 (** [claim ~by hs] claims [hs], from {!handles}, for their consumer [by], in
     their donors' key order: each handle and its donor die, naming [by].
     Raises [Invalid_argument] naming [by] and the earlier consumer for a
-    handle or donor that died first, on any domain. *)
+    handle or donor that died first, on any domain, having given back the
+    handles it claimed. *)
 
 val unhandled : claim -> 'r Value.prim -> 'r Value.prim
 (** [unhandled c op] is [op] as it was when called, read after [c] claimed
