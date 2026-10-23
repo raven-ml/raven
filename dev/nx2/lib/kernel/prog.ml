@@ -226,10 +226,11 @@ let refused i =
 let before i k = k >= 0 && k < i
 
 (* Why node [i], [nd], is no node of a program over [ins] whose earlier
-   node [k] has the dtype [ty k], if it is not: an operand, axis or node out
-   of reach, bits of no element, or a kind that does not take its operands'
-   dtypes. *)
-let node_problem ins ty i nd =
+   node [k] has the dtype [ty env k], if it is not: an operand, axis or node
+   out of reach, bits of no element, or a kind that does not take its
+   operands' dtypes. The lookup takes its environment apart, as
+   [node_dtype]'s does, so that no closure is made per call. *)
+let node_problem ins ty env i nd =
   match nd with
   | In k when k < 0 || k >= Iarray.length ins ->
       Some (strf "node %d reads operand %d" i k)
@@ -240,18 +241,18 @@ let node_problem ins ty i nd =
   | In _ | Coord _ | Const _ -> None
   | Op1 (_, _, a) ->
       if not (before i a) then refers i a
-      else if takes nd (ty a) (ty a) (ty a) then None
+      else if takes nd (ty env a) (ty env a) (ty env a) then None
       else refused i
   | Op2 (_, a, b) ->
       if not (before i a) then refers i a
       else if not (before i b) then refers i b
-      else if takes nd (ty a) (ty b) (ty b) then None
+      else if takes nd (ty env a) (ty env b) (ty env b) then None
       else refused i
   | Op3 (_, a, b, c) ->
       if not (before i a) then refers i a
       else if not (before i b) then refers i b
       else if not (before i c) then refers i c
-      else if takes nd (ty a) (ty b) (ty c) then None
+      else if takes nd (ty env a) (ty env b) (ty env c) then None
       else refused i
 
 (* [nd]'s dtype over operands of dtypes [ins], [ty env k] being an earlier
@@ -274,12 +275,11 @@ let problem ~ins nodes ~outs =
   let nins = Iarray.length ins and n = Iarray.length nodes in
   let nouts = Iarray.length outs in
   let types = Array.make n (D.Any D.Bool) in
-  let ty = Array.get types in
   let rec from i =
     if i = n then None
     else
       let nd = Iarray.get nodes i in
-      match node_problem ins ty i nd with
+      match node_problem ins Array.get types i nd with
       | Some _ as why -> why
       | None ->
           types.(i) <- node_dtype ins Array.get types nd;
@@ -303,9 +303,12 @@ let v ~ins nodes ~outs =
   | Some why -> invalid why
   | None -> { ins; nodes; outs }
 
-(* of_node's operand nodes and its outputs, by operand count, made once: a
-   one-node program allocates its nodes array and itself. *)
+(* of_node's operand nodes, its runs of them and its outputs, by operand
+   count, made once: a one-node program allocates its node alone in an
+   array, its nodes array and itself, and no closure. *)
 let operand_nodes = Array.init max_operands (fun k -> In k)
+let operand_runs =
+  Array.init max_operands (fun k -> Iarray.init k (Array.get operand_nodes))
 let output = Array.init max_operands (fun k -> Iarray.init 1 (fun _ -> k))
 
 (* Its operands' nodes being valid by construction, a one-node program is
@@ -314,13 +317,12 @@ let of_node ~ins n =
   let k = Iarray.length ins in
   let why =
     if k + 1 > max_operands then too_many (k + 1)
-    else node_problem ins (Iarray.get ins) k n
+    else node_problem ins Iarray.get ins k n
   in
   match why with
   | Some why -> invalid why
   | None ->
-      let node i = if i < k then operand_nodes.(i) else n in
-      let nodes = Iarray.init (k + 1) node in
+      let nodes = Iarray.append operand_runs.(k) [| n |] in
       { ins; nodes; outs = output.(k) }
 
 let rec dtype_of p i = node_dtype p.ins dtype_of p (Iarray.get p.nodes i)
@@ -343,19 +345,34 @@ let rec operands_first p i last =
   || (match Iarray.get p.nodes i with In j -> j = i | _ -> false)
      && operands_first p (i + 1) last
 
-let single p =
+(* The last node of [p] where it is one node over its operands, read in
+   order ([single]), and [In 0] otherwise, which ends no such program. *)
+let last_single p =
   let m = Iarray.length p.nodes - 1 in
-  if Iarray.length p.ins <> m || Iarray.length p.outs <> 1
-     || Iarray.get p.outs 0 <> m
-     || not (operands_first p 0 m)
-  then None
+  let no = operand_nodes.(0) in
+  if
+    Iarray.length p.ins <> m
+    || Iarray.length p.outs <> 1
+    || Iarray.get p.outs 0 <> m
+    || not (operands_first p 0 m)
+  then no
   else
     match Iarray.get p.nodes m with
-    | (Const _ | Coord _) as n when m = 0 -> Some n
-    | Op1 (_, _, 0) as n when m = 1 -> Some n
-    | Op2 (_, 0, 1) as n when m = 2 -> Some n
-    | Op3 (_, 0, 1, 2) as n when m = 3 -> Some n
-    | In _ | Coord _ | Const _ | Op1 _ | Op2 _ | Op3 _ -> None
+    | (Const _ | Coord _) as n when m = 0 -> n
+    | Op1 (_, _, 0) as n when m = 1 -> n
+    | Op2 (_, 0, 1) as n when m = 2 -> n
+    | Op3 (_, 0, 1, 2) as n when m = 3 -> n
+    | In _ | Coord _ | Const _ | Op1 _ | Op2 _ | Op3 _ -> no
+
+let is_single p =
+  match last_single p with
+  | In _ -> false
+  | Coord _ | Const _ | Op1 _ | Op2 _ | Op3 _ -> true
+
+let single p =
+  match last_single p with
+  | In _ -> None
+  | (Coord _ | Const _ | Op1 _ | Op2 _ | Op3 _) as n -> Some n
 
 (* Expressions *)
 
