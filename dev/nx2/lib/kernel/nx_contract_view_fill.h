@@ -37,10 +37,27 @@ typedef struct {
   int64_t offset[4];
 } nx_contract_runs;
 
+/* An array's layout as nx_array_layout reads it: its rank, its extents
+   then its strides, and its first element. */
+typedef struct {
+  int rank;
+  int64_t dim[2 * NX_MAX_RANK];
+  int64_t offset;
+} nx_layout;
+
 /* Groups as nx_contract_view_fill does, reading each pair once: NX_OK
    with [w] filled, NX_DECLINED with [r] filled where a group makes
    several runs, or NX_SHAPE. It allocates nothing and raises nothing. */
 int nx_contract_fill(nx_contract_view *w, nx_contract_runs *r, value batch,
                      value contracting, value y, value a, value b, value i);
+
+/* Groups as nx_contract_fill does, the layouts read already: [y], [a],
+   [b] and the init [i], NULL for none, over the [nb] batch pairs then the
+   [nc] contracting pairs [pairs], each a's axis then b's. It reads no
+   OCaml value. */
+int nx_contract_fill_layouts(nx_contract_view *w, nx_contract_runs *r,
+                             int nb, int nc, const int (*pairs)[2],
+                             const nx_layout *y, const nx_layout *a,
+                             const nx_layout *b, const nx_layout *i);
 
 #endif

@@ -48,11 +48,7 @@ enum {
   CONTRACTED = NX_VIEW_CONTRACTED
 };
 
-typedef struct {
-  int rank;
-  int64_t dim[2 * NX_MAX_RANK];
-  int64_t offset;
-} layout;
+typedef nx_layout layout;
 
 /* Groups the [count] axes of group [g] over the [n] operands [ops], whose
    axes are [axes][op][g], into its runs in [r] (nx_contract_view_fill.h):
@@ -148,34 +144,26 @@ typedef struct {
   int init;
 } pairs;
 
-/* Reads the pairs [vbatch] and [vcontracting] and the layouts of [y], [a],
-   [b] and the init [i] into [q]: NX_OK, or NX_SHAPE where they do not fit
-   the pairs' ranks or an axis is in two pairs. */
-static int read_pairs(pairs *q, value vbatch, value vcontracting, value y,
-                      value a, value b, value i) {
-  int nb = (int)Wosize_val(vbatch), nc = (int)Wosize_val(vcontracting);
+/* Checks the [nb] batch pairs then the [nc] contracting pairs [ps], a's
+   axis then b's, against the layouts in [q], and gathers each operand's
+   axes by group: NX_OK, or NX_SHAPE where they do not fit the layouts'
+   ranks or an axis is in two pairs. */
+static int pairs_of(pairs *q, int nb, int nc, const int (*ps)[2]) {
   layout *l = q->l;
-  q->init = Is_block(i);
-  l[A].rank = nx_array_layout(a, l[A].dim, &l[A].offset);
-  l[B].rank = nx_array_layout(b, l[B].dim, &l[B].offset);
-  l[Y].rank = nx_array_layout(y, l[Y].dim, &l[Y].offset);
-  l[I].rank =
-      q->init ? nx_array_layout(Field(i, 0), l[I].dim, &l[I].offset) : 0;
   if (nb + nc > l[A].rank || nb + nc > l[B].rank) return NX_SHAPE;
   int fa = l[A].rank - nb - nc, fb = l[B].rank - nb - nc;
   int ry = nb + fa + fb;
   uint64_t na = 0, nbm = 0;
   for (int k = 0; k < nb + nc; k++) {
-    value p = Field(k < nb ? vbatch : vcontracting, k < nb ? k : k - nb);
-    intnat ia = Long_val(Field(p, 0)), ib = Long_val(Field(p, 1));
+    int ia = ps[k][0], ib = ps[k][1];
     if (ia < 0 || ia >= l[A].rank || ib < 0 || ib >= l[B].rank ||
         na >> ia & 1 || nbm >> ib & 1)
       return NX_SHAPE;
     na |= (uint64_t)1 << ia;
     nbm |= (uint64_t)1 << ib;
     int g = k < nb ? BATCH : CONTRACTED, at = k < nb ? k : k - nb;
-    q->axes[A][g][at] = (int)ia;
-    q->axes[B][g][at] = (int)ib;
+    q->axes[A][g][at] = (int8_t)ia;
+    q->axes[B][g][at] = (int8_t)ib;
   }
   if (l[Y].rank != ry || (q->init && l[I].rank != ry)) return NX_SHAPE;
   for (int ax = 0, n = 0; ax < l[A].rank; ax++)
@@ -192,6 +180,30 @@ static int read_pairs(pairs *q, value vbatch, value vcontracting, value y,
   q->count[COLUMN] = fb;
   q->count[CONTRACTED] = nc;
   return NX_OK;
+}
+
+/* Reads the pairs [vbatch] and [vcontracting] and the layouts of [y], [a],
+   [b] and the init [i] into [q] (pairs_of). */
+static int read_pairs(pairs *q, value vbatch, value vcontracting, value y,
+                      value a, value b, value i) {
+  int nb = (int)Wosize_val(vbatch), nc = (int)Wosize_val(vcontracting);
+  layout *l = q->l;
+  q->init = Is_block(i);
+  l[A].rank = nx_array_layout(a, l[A].dim, &l[A].offset);
+  l[B].rank = nx_array_layout(b, l[B].dim, &l[B].offset);
+  l[Y].rank = nx_array_layout(y, l[Y].dim, &l[Y].offset);
+  l[I].rank =
+      q->init ? nx_array_layout(Field(i, 0), l[I].dim, &l[I].offset) : 0;
+  if (nb + nc > l[A].rank || nb + nc > l[B].rank) return NX_SHAPE;
+  int ps[NX_MAX_RANK][2];
+  for (int k = 0; k < nb + nc; k++) {
+    value p = Field(k < nb ? vbatch : vcontracting, k < nb ? k : k - nb);
+    intnat ia = Long_val(Field(p, 0)), ib = Long_val(Field(p, 1));
+    /* Out of an int's range is out of the ranks'. */
+    ps[k][0] = ia < 0 || ia > NX_MAX_RANK ? -1 : (int)ia;
+    ps[k][1] = ib < 0 || ib > NX_MAX_RANK ? -1 : (int)ib;
+  }
+  return pairs_of(q, nb, nc, ps);
 }
 
 /* Groups [q] into [r]: NX_OK, or NX_SHAPE where the operands' extents
@@ -219,16 +231,13 @@ static int runs_of(nx_contract_runs *r, pairs *q) {
   return NX_OK;
 }
 
-int nx_contract_fill(nx_contract_view *w, nx_contract_runs *r, value vbatch,
-                     value vcontracting, value y, value a, value b,
-                     value i) {
-  pairs q;
-  int e = read_pairs(&q, vbatch, vcontracting, y, a, b, i);
-  if (e) return e;
-  const int *c = q.count;
+/* The view or the runs of the pairs read into [q] (nx_contract_fill). */
+static int fill_of(nx_contract_view *w, nx_contract_runs *r, pairs *q) {
+  const int *c = q->count;
   if (c[BATCH] <= 1 && c[ROW] <= 1 && c[COLUMN] <= 1 && c[CONTRACTED] <= 1)
-    return single(w, q.l, q.init, c, q.axes);
-  if ((e = runs_of(r, &q))) return e;
+    return single(w, q->l, q->init, c, q->axes);
+  int e;
+  if ((e = runs_of(r, q))) return e;
   for (int g = BATCH; g <= CONTRACTED; g++)
     if (r->runs[g] != 1) return NX_DECLINED;
   memset(w, 0, sizeof *w);
@@ -239,6 +248,31 @@ int nx_contract_fill(nx_contract_view *w, nx_contract_runs *r, value vbatch,
   }
   for (int g = BATCH; g <= CONTRACTED; g++) w->extent[g] = r->extent[g][0];
   return NX_OK;
+}
+
+int nx_contract_fill(nx_contract_view *w, nx_contract_runs *r, value vbatch,
+                     value vcontracting, value y, value a, value b,
+                     value i) {
+  pairs q;
+  int e = read_pairs(&q, vbatch, vcontracting, y, a, b, i);
+  if (e) return e;
+  return fill_of(w, r, &q);
+}
+
+int nx_contract_fill_layouts(nx_contract_view *w, nx_contract_runs *r,
+                             int nb, int nc, const int (*ps)[2],
+                             const nx_layout *y, const nx_layout *a,
+                             const nx_layout *b, const nx_layout *i) {
+  pairs q;
+  q.l[A] = *a;
+  q.l[B] = *b;
+  q.l[Y] = *y;
+  q.init = i != NULL;
+  q.l[I].rank = 0;
+  if (i) q.l[I] = *i;
+  int e = pairs_of(&q, nb, nc, ps);
+  if (e) return e;
+  return fill_of(w, r, &q);
 }
 
 int nx_contract_view_fill(nx_contract_view *w, value vbatch,

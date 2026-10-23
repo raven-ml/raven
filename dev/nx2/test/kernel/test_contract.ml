@@ -2331,6 +2331,540 @@ let test_scale_misfits (b : Support.backend) () =
   refused ~msg:"a fitting scale beside a misfit" ~sa:(codes [| 2; 1 |])
     ~sb:(codes [| 3; 3 |]) ()
 
+(* Segments
+
+   A contraction cut into groups by offsets (Nx_kernel.segments): [Rows]
+   cuts a free axis of a, each row taking b's group along a free axis of
+   b; [Contracting] cuts a contracting pair, each group's window summed
+   alone into its slice of a leading axis. Each is checked against
+   unsegmented contractions of views, one a row or a group, whose bits
+   nx.cpu states: a group sums as the call of its extents does. *)
+
+(* What a segmented contraction cuts: a's free axis and b's, or a
+   contracting pair. *)
+type cut = Cut_rows of { a_axis : int; b_axis : int } | Cut_pair of int
+
+(* A segmented contraction: [sg]'s order, pairs, dtypes and operands, its
+   init of the segmented result's shape; [g] groups cut as [cut] says by
+   the offsets [offs], [g + 1] for each batch element in C order, read
+   through a stepped view where [stepped]; its operands' scales. *)
+type seg = {
+  sg : case;
+  cut : cut;
+  g : int;
+  offs : int array array;
+  stepped : bool;
+  sa : spec option;
+  sb : spec option;
+}
+
+let pp_seg ppf s =
+  let cut ppf = function
+    | Cut_rows { a_axis; b_axis } ->
+        Format.fprintf ppf "rows of a's axis %d by b's axis %d" a_axis b_axis
+    | Cut_pair p -> Format.fprintf ppf "contracting pair %d" p
+  in
+  let sep ppf () = Format.pp_print_string ppf " " in
+  Format.fprintf ppf "%a@ %a, %d groups, offsets %a%s" pp_scaled
+    (s.sg, s.sa, s.sb) cut s.cut s.g
+    (Format.pp_print_list ~pp_sep:sep pp_ints)
+    (Array.to_list s.offs)
+    (if s.stepped then " stepped" else "")
+
+(* The batch extents: a's along the batch pairs. *)
+let batch_extents c = Array.map (fun (i, _) -> (shape_of c.a).(i)) c.batch
+
+(* The extent of the axis [s] cuts. *)
+let cut_extent s =
+  let a = shape_of s.sg.a in
+  match s.cut with
+  | Cut_rows { a_axis; _ } -> a.(a_axis)
+  | Cut_pair p -> a.(fst s.sg.contracting.(p))
+
+let segments_of s offsets : _ Nx_kernel.segments =
+  match s.cut with
+  | Cut_rows { a_axis; b_axis } -> Rows { offsets; a_axis; b_axis }
+  | Cut_pair pair -> Contracting { offsets; pair }
+
+(* [s]'s offsets, int64 of the batch extents then [g + 1]: where
+   [stepped], every other element of an array twice as long along its
+   last axis. *)
+let offsets_of s =
+  let shape = Array.append (batch_extents s.sg) [| s.g + 1 |] in
+  let xs = Array.concat (Array.to_list s.offs) in
+  if not s.stepped then A.of_array D.Int64 shape (Array.map Int64.of_int xs)
+  else
+    let r = Array.length shape and w = s.g + 1 in
+    let made = Array.mapi (fun i e -> if i = r - 1 then 2 * e else e) shape in
+    let at q = if q mod 2 = 0 then 999L else Int64.of_int xs.((q / (2 * w) * w) + (q mod (2 * w) / 2)) in
+    let x = A.of_array D.Int64 made (Array.init (total made) at) in
+    let step i e =
+      if i = r - 1 then { M.start = 1; count = e; step = 2 }
+      else { M.start = 0; count = e; step = 1 }
+    in
+    Option.get (A.move (M.Slice (Iarray.of_array (Array.mapi step shape))) x)
+
+let seg_shape s =
+  let c = s.sg in
+  let o = Array.append (batch_extents c) [| s.g + 1 |] in
+  match
+    Nx_kernel.Shape.contract ~batch:(Iarray.of_array c.batch)
+      ~contracting:(Iarray.of_array c.contracting)
+      ~segments:(Some (segments_of s o)) (shape_of c.a, None)
+      (shape_of c.b, None)
+  with
+  | Ok y -> y
+  | Error e -> failf "the segments do not fit: %s" e
+
+(* The group of index [r] under the offsets [o] of [g] groups, as
+   Nx_kernel.segments states it: the largest [e < g] with [o.(e) <= r]
+   when [o.(0) <= r < o.(g)]. *)
+let group_of o g r =
+  if g = 0 || r < o.(0) || r >= o.(g) then None
+  else
+    let e = ref (g - 1) in
+    while o.(!e) > r do
+      decr e
+    done;
+    Some !e
+
+(* The indices of the cut axis in group [e] under [o]. *)
+let members s o e =
+  List.filter (fun r -> group_of o s.g r = Some e) (List.init (cut_extent s) Fun.id)
+
+(* [x] cut along each axis [i] of [cuts] to [count] indices from
+   [start]. *)
+let restrict (A.Any x as a) cuts =
+  let r = Array.map (fun e -> { M.start = 0; count = e; step = 1 }) (shape_of a) in
+  List.iter (fun (i, start, count) -> r.(i) <- { M.start; count; step = 1 }) cuts;
+  A.Any (Option.get (A.move (M.Slice (Iarray.of_array r)) x))
+
+let reshaped (A.Any x) s =
+  A.Any (Option.get (A.move (M.Reshape (Iarray.of_array s)) x))
+
+(* The axes of a side of rank [rank] that no pair of [c] names. *)
+let free side c rank =
+  let paired i =
+    Array.exists (fun p -> side p = i) c.batch
+    || Array.exists (fun p -> side p = i) c.contracting
+  in
+  List.filter (fun i -> not (paired i)) (List.init rank Fun.id)
+
+let before l x = List.length (List.filter (fun i -> i < x) l)
+
+(* [s]'s result by unsegmented contractions of views: each row in a group
+   alone with its group of b, or each group's window alone, of the
+   operands scaled on the host; init as acc holds it, or +0, at every
+   other output. *)
+let seg_reference (b : Support.backend) s sa sb =
+  let module K = (val b.kernels) in
+  let c = s.sg in
+  let scaled x = function None -> x | Some sc -> fst (host_scaled c.acc x sc) in
+  let a = scaled c.a sa and b' = scaled c.b sb in
+  let y = seg_shape s in
+  let start =
+    match c.init with
+    | Some i -> cast_to c.acc i
+    | None -> A.Any (A.of_array D.Float64 y (Array.make (total y) 0.))
+  in
+  let dst = cast_to c.out start in
+  let nb = Array.length c.batch in
+  let call (A.Any d) a b init =
+    let init = Option.map (A.expect (A.dtype d)) init in
+    match
+      K.contract ~order:c.order ~batch:(Iarray.of_array c.batch)
+        ~contracting:(Iarray.of_array c.contracting) ~segments:None ~acc:c.acc
+        ~dst:d ~init
+        { array = a; scale = None }
+        { array = b; scale = None }
+    with
+    | A.Done -> ()
+    | r -> failf "an unsegmented contraction answered %a" Nx_array_support.pp_answer r
+  in
+  let along side beta = List.init nb (fun k -> (side c.batch.(k), beta.(k), 1)) in
+  let at shift beta = List.init nb (fun k -> (k + shift, beta.(k), 1)) in
+  let row beta o =
+    match s.cut with
+    | Cut_rows { a_axis; b_axis } ->
+        let fa = free fst c (Array.length (shape_of c.a)) in
+        let fb = free snd c (Array.length (shape_of c.b)) in
+        let ya = nb + before fa a_axis in
+        let yb = nb + List.length fa + before fb b_axis in
+        (* dst's row [r], with an axis of 1 where b's group was. *)
+        let lift r x =
+          let x = restrict x ((ya, r, 1) :: at 0 beta) in
+          let sh = shape_of x in
+          reshaped x
+            (Array.concat
+               [ Array.sub sh 0 yb; [| 1 |]; Array.sub sh yb (Array.length sh - yb) ])
+        in
+        for r = 0 to cut_extent s - 1 do
+          match group_of o s.g r with
+          | None -> ()
+          | Some e ->
+              call (lift r dst)
+                (restrict a ((a_axis, r, 1) :: along fst beta))
+                (restrict b' ((b_axis, e, 1) :: along snd beta))
+                (Option.map (lift r) c.init)
+        done
+    | Cut_pair p ->
+        let ia, ib = c.contracting.(p) in
+        (* dst's slice [e], without the groups' axis. *)
+        let lift e x =
+          let x = restrict x ((0, e, 1) :: at 1 beta) in
+          let sh = shape_of x in
+          reshaped x (Array.sub sh 1 (Array.length sh - 1))
+        in
+        for e = 0 to s.g - 1 do
+          let lo, count =
+            match members s o e with [] -> (0, 0) | r :: _ as l -> (r, List.length l)
+          in
+          call (lift e dst)
+            (restrict a ((ia, lo, count) :: along fst beta))
+            (restrict b' ((ib, lo, count) :: along snd beta))
+            (Option.map (lift e) c.init)
+        done
+  in
+  List.iteri (fun q beta -> row beta s.offs.(q)) (indices (batch_extents c));
+  dst
+
+(* Offsets of [g] groups along [n] indices, from [r]: a partition of the
+   axis; increasing within it; every index in one group; or any values
+   from -2 to [n + 2], unordered. *)
+let draw_offsets r g n =
+  let sorted () =
+    let o = Array.init (g + 1) (fun _ -> Random.State.int r (n + 1)) in
+    Array.sort compare o;
+    o
+  in
+  match Random.State.int r 4 with
+  | 0 ->
+      let o = sorted () in
+      o.(0) <- 0;
+      o.(g) <- n;
+      o
+  | 1 -> sorted ()
+  | 2 ->
+      let e = Random.State.int r (max g 1) in
+      Array.init (g + 1) (fun i -> if i <= e then 0 else n)
+  | _ -> Array.init (g + 1) (fun _ -> Random.State.int r (n + 5) - 2)
+
+(* The segmented contraction of the extents [e] as [make] makes it, cut by
+   [cut], positions among [e]'s rows and columns or its contracted axes,
+   with an init of the segmented result's shape through [vi]. *)
+let seg_make ~order ~acc ~out ((batch, _, _, con) as e) (da, va) (db, vb) vi
+    ~cut ~g ?(stepped = false) offs seed =
+  let c = make ~order ~acc ~out e (da, va) (db, vb) None seed in
+  let nb = Array.length batch and nk = Array.length con in
+  let ia = inverse va.perm and ib = inverse vb.perm in
+  let cut =
+    match cut with
+    | `Rows (ri, ci) -> Cut_rows { a_axis = ia.(nb + ri); b_axis = ib.(nb + nk + ci) }
+    | `Pair p -> Cut_pair p
+  in
+  let s = { sg = c; cut; g; offs; stepped; sa = None; sb = None } in
+  match vi with
+  | None -> s
+  | Some vi ->
+      let y = seg_shape s in
+      let init = operand c.out (Array.map (fun i -> y.(i)) (inverse vi.perm)) 0 vi (seed + 2) in
+      { s with sg = { c with init = Some init; views = c.views @ names vi } }
+
+(* Draws: rows or a pair cut into up to 6 groups along up to 40 indices,
+   or a pair of 4090 to 4200 products, over a batch of up to two axes
+   whose elements draw their own offsets, of float accs mostly, with
+   scales where acc is a float. *)
+let seg_draws =
+  let open Gen in
+  let axes most lo hi = array ~size:(int_range 0 most) (int_range lo hi) in
+  let put x i v =
+    Array.concat [ Array.sub x 0 i; [| v |]; Array.sub x i (Array.length x - i) ]
+  in
+  with_pp pp_seg
+    (let* order = of_list Nx_kernel.[ Chain; Lane ] in
+     let* acc =
+       frequency
+         [ (4, of_list ~pp:pp_dtype D.[ Any Float32; Any Float64 ]);
+           (1, of_list ~pp:pp_dtype D.[ Any Complex64; Any Int32 ]) ]
+     in
+     let float = not (is_integer acc || is_complex acc) in
+     let dts = if is_integer acc then integers else held acc in
+     let pick = frequency [ (3, constant ~pp:pp_dtype acc); (1, of_list ~pp:pp_dtype dts) ] in
+     let* da = pick and+ db = pick in
+     let* out =
+       if float then frequency [ (3, constant ~pp:pp_dtype acc); (1, of_list ~pp:pp_dtype narrow) ]
+       else constant ~pp:pp_dtype acc
+     in
+     let* g = frequency [ (1, constant 0); (2, constant 1); (6, int_range 2 6) ] in
+     let* n = frequency [ (5, int_range 0 12); (2, int_range 13 40) ] in
+     let* batch = axes 2 1 3 and+ rows_cut = bool in
+     let* rows, cols, con, cut =
+       if rows_cut then
+         let* rows = axes 1 1 3 and+ cols = axes 1 0 4 in
+         let* con =
+           frequency [ (4, axes 2 0 5); (1, map (fun k -> [| k |]) (int_range 1000 1100)) ]
+         in
+         let+ ri = int_range 0 (Array.length rows)
+         and+ ci = int_range 0 (Array.length cols) in
+         (put rows ri n, put cols ci g, con, `Rows (ri, ci))
+       else
+         let* rows = axes 2 1 4 and+ cols = axes 2 1 4 and+ con = axes 1 1 3 in
+         let* k = frequency [ (5, constant n); (1, int_range 4090 4200) ] in
+         let+ p = int_range 0 (Array.length con) in
+         (rows, cols, put con p k, `Pair p)
+     in
+     let e = (batch, rows, cols, con) in
+     let nb = Array.length batch in
+     let ra, rb, ry = ranks e in
+     let ry = match cut with `Rows _ -> ry - 1 | `Pair _ -> ry + 1 in
+     let* va = view ra nb and+ vb = view rb nb and+ vi = view ry 0 in
+     let* with_init = bool and+ stepped = bool and+ seed = int and+ oseed = int in
+     let r = Random.State.make [| oseed |] in
+     let along = match cut with `Rows (ri, _) -> rows.(ri) | `Pair p -> con.(p) in
+     let offs = Array.init (total batch) (fun _ -> draw_offsets r g along) in
+     let s =
+       seg_make ~order ~acc ~out e (da, va) (db, vb)
+         (if with_init then Some vi else None)
+         ~cut ~g ~stepped offs seed
+     in
+     if not float then constant s
+     else
+       let* sa = spec_for (shape_of s.sg.a) and+ sb = spec_for (shape_of s.sg.b) in
+       let+ which = of_list [ `None; `None; `A; `B; `Both ] in
+       match which with
+       | `None -> s
+       | `A -> { s with sa = Some sa }
+       | `B -> { s with sb = Some sb }
+       | `Both -> { s with sa = Some sa; sb = Some sb })
+
+(* A scale of codes of [extents]. *)
+let codes_of extents seed =
+  Some { kind = None; extents; lies = Contiguous; specials = true; seed }
+
+(* Experts: [t] bfloat16 tokens of [k] by float4 weights [g; n; k] of [g]
+   experts, stored along k, scaled in blocks of 32 along it as MXFP4's
+   are, the tokens cut into the experts' groups by [o]. *)
+let experts ?(order = Nx_kernel.Lane) ?(acc = D.Any D.Float32) t g n k o =
+  let a = operand (D.Any D.Bfloat16) [| t; k |] 0 (plain_view 2) 7 in
+  let b = operand (D.Any D.Float4_e2m1fn) [| g; n; k |] 0 (plain_view 3) 8 in
+  let c =
+    { order; batch = [||]; contracting = [| (1, 2) |]; acc; a; b; init = None;
+      out = acc; views = [] }
+  in
+  { sg = c; cut = Cut_rows { a_axis = 0; b_axis = 0 }; g; offs = [| o |];
+    stepped = false; sa = None; sb = codes_of [| g; n; k / 32 |] 9 }
+
+(* [m] bfloat16 rows of [k] by float4 [k; n] stored along k, scaled in
+   blocks of 32 along it, k cut into windows by [o]. *)
+let windows ?(order = Nx_kernel.Lane) ?(acc = D.Any D.Float32) m n k o =
+  let a = operand (D.Any D.Bfloat16) [| m; k |] 0 (plain_view 2) 3 in
+  let along = { (plain_view 2) with stored = [| 1; 0 |] } in
+  let b = operand (D.Any D.Float4_e2m1fn) [| k; n |] 0 along 4 in
+  let c =
+    { order; batch = [||]; contracting = [| (1, 0) |]; acc; a; b; init = None;
+      out = acc; views = [] }
+  in
+  { sg = c; cut = Cut_pair 0; g = Array.length o - 1; offs = [| o |];
+    stepped = false; sa = None; sb = codes_of [| k / 32; n |] 5 }
+
+(* Cases each cover names, in both orders and accs, with the MXFP4 weights
+   of experts and windows of k either side of nx's block, within and on
+   the scales' blocks. *)
+let seg_examples =
+  let open Nx_kernel in
+  let f32 = D.Any D.Float32 and f64 = D.Any D.Float64 in
+  let ex ?(order = Lane) ?(acc = f32) ?out ?(da = acc) ?(db = acc) ?(view = false)
+      ?(init = false) ?stepped ?sa ?sb ~cut ~g e offs =
+    let (batch, _, _, _) = e in
+    let nb = Array.length batch in
+    let ra, rb, ry = ranks e in
+    let ry = match cut with `Rows _ -> ry - 1 | `Pair _ -> ry + 1 in
+    let v r =
+      if not view then plain_view r
+      else
+        let p = Array.init r (fun i -> r - 1 - i) in
+        { stepped = true; broadcast = nb > 0; stored = Array.init r Fun.id; perm = p }
+    in
+    let out = Option.value out ~default:acc in
+    let s =
+      seg_make ~order ~acc ~out e (da, v ra) (db, v rb)
+        (if init then Some (v ry) else None)
+        ~cut ~g ?stepped offs 11
+    in
+    let blocks x d = Array.map (fun e -> if e mod d = 0 then e / d else e) (shape_of x) in
+    let spec x = function
+      | None -> None
+      | Some d -> Some { kind = Some (D.Any D.Float16); extents = blocks x d; lies = Stepped; specials = true; seed = d }
+    in
+    { s with sa = spec s.sg.a sa; sb = spec s.sg.b sb }
+  in
+  [
+    ex ~init:true ~cut:(`Rows (0, 0)) ~g:3 ([||], [| 20 |], [| 3; 4 |], [| 7 |])
+      [| [| 2; 5; 5; 18 |] |];
+    ex ~order:Chain ~acc:f64 ~view:true ~stepped:true ~cut:(`Rows (0, 0)) ~g:2
+      ([| 2 |], [| 40 |], [| 2 |], [| 5; 3 |])
+      [| [| 0; 3; 40 |]; [| 0; 40; 40 |] |];
+    ex ~order:Chain ~out:(D.Any D.Float16) ~init:true ~sa:2 ~cut:(`Rows (1, 0)) ~g:4
+      ([||], [| 2; 9 |], [| 4 |], [| 1030 |])
+      [| [| 5; 2; 9; 7; 3 |] |];
+    ex ~acc:f64 ~sb:2 ~cut:(`Rows (0, 1)) ~g:5 ([||], [| 6 |], [| 2; 5 |], [| 4 |])
+      [| [| -2; 4; 11; 4; 12; 3 |] |];
+    ex ~init:true ~cut:(`Rows (0, 0)) ~g:0 ([||], [| 3 |], [| 0 |], [| 2 |]) [| [| 1 |] |];
+    ex ~acc:(D.Any D.Complex64) ~init:true ~cut:(`Rows (0, 0)) ~g:2
+      ([| 2 |], [| 5 |], [| 2 |], [| 3 |])
+      [| [| 1; 1; 4 |]; [| 0; 2; 5 |] |];
+    ex ~cut:(`Pair 0) ~g:3 ([||], [| 2 |], [| 3 |], [| 4200 |])
+      [| [| 10; 1000; 4097; 4200 |] |];
+    ex ~order:Chain ~acc:f64 ~init:true ~view:true ~sa:3 ~sb:3 ~cut:(`Pair 1) ~g:2
+      ([| 3 |], [| 2 |], [| 2; 2 |], [| 3; 30 |])
+      [| [| 0; 0; 30 |]; [| 0; 1; 30 |]; [| 31; -1; 2 |] |];
+    ex ~order:Chain ~out:(D.Any D.Bfloat16) ~init:true ~cut:(`Pair 0) ~g:0
+      ([||], [| 2 |], [| 2 |], [| 5 |]) [| [| 5 |] |];
+    ex ~acc:(D.Any D.Int32) ~da:(D.Any D.Int8) ~init:true ~cut:(`Pair 0) ~g:3
+      ([||], [| 3 |], [| 2 |], [| 9 |])
+      [| [| 0; 4; 4; 9 |] |];
+    experts 37 5 9 1056 [| 0; 7; 7; 20; 36; 37 |];
+    experts ~order:Chain ~acc:f64 60 4 6 64 [| 0; 3; 43; 43; 50 |];
+    experts ~order:Chain 1 4 300 4096 [| 0; 0; 1; 1; 1 |];
+    windows 3 5 4160 [| 0; 16; 1040; 4100; 4160 |];
+    windows ~order:Chain ~acc:f64 3 5 4160 [| 0; 32; 1056; 4128; 4160 |];
+    windows ~order:Chain 2 4 4160 [| 0; 16; 1040; 4100; 4160 |];
+    windows ~acc:f64 2 4 4160 [| 0; 32; 1056; 4128; 4160 |];
+  ]
+
+let seg_covers s =
+  let c = s.sg and n = cut_extent s in
+  let rows = match s.cut with Cut_rows _ -> true | Cut_pair _ -> false in
+  cover "rows" rows;
+  cover "a contracting pair" (not rows);
+  cover "float32" (c.acc = D.Any D.Float32);
+  cover "float64" (c.acc = D.Any D.Float64);
+  cover "a complex accumulator" (is_complex c.acc);
+  cover "an integer accumulator" (is_integer c.acc);
+  cover "chain order" (c.order = Chain);
+  cover "lane order" (c.order = Lane);
+  let some f = Array.exists f s.offs in
+  let groups o f = List.exists (fun e -> f e (members s o e)) (List.init s.g Fun.id) in
+  cover "no group" (s.g = 0);
+  cover "an empty group" (some (fun o -> groups o (fun _ m -> m = [])));
+  cover "a group of one" (some (fun o -> groups o (fun _ m -> List.length m = 1)));
+  cover "every index in one group"
+    (n > 1 && some (fun o -> groups o (fun _ m -> List.length m = n)));
+  cover "offsets at the axis's bounds" (s.g > 0 && some (fun o -> o.(0) = 0 && o.(s.g) = n));
+  cover "indices before the first group" (n > 0 && some (fun o -> o.(0) > 0));
+  cover "indices past the last group" (some (fun o -> o.(s.g) < n && o.(s.g) > 0));
+  cover "offsets that decrease"
+    (some (fun o -> Array.exists Fun.id (Array.init s.g (fun e -> o.(e + 1) < o.(e)))));
+  cover "offsets outside the axis" (some (Array.exists (fun x -> x < 0 || x > n)));
+  cover "offsets differing across the batch"
+    (Array.exists (fun o -> o <> s.offs.(0)) s.offs);
+  cover "stepped offsets" s.stepped;
+  cover "an init" (c.init <> None);
+  cover "a result of another dtype" (c.out <> c.acc);
+  cover "an operand through a view" (c.views <> []);
+  cover "a scaled operand" (s.sa <> None || s.sb <> None);
+  let float4 = function
+    | A.Any x -> D.Any (A.dtype x) = D.Any D.Float4_e2m1fn
+  in
+  cover "a block-scaled float4 operand" (s.sb <> None && float4 c.b);
+  let starts f = some (fun o -> groups o (fun _ m -> match m with [] -> false | lo :: _ -> f lo (List.length m))) in
+  cover "a group past a tile of 16 rows" (rows && starts (fun lo k -> lo mod 16 <> 0 && k > 16));
+  cover "a window across nx's block of 4096 products"
+    ((not rows) && starts (fun lo k -> lo < 4096 && lo + k > 4096));
+  cover "a window across lane order's block of 1024"
+    ((not rows) && starts (fun lo k -> lo < 1024 && lo + k > 1024));
+  let ratio = match s.sb with
+    | Some sp when not rows -> (
+        let ib = snd c.contracting.(match s.cut with Cut_pair p -> p | _ -> 0) in
+        let e = (shape_of c.b).(ib) and d = sp.extents.(ib) in
+        if d = 0 then 1 else e / d)
+    | _ -> 1
+  in
+  cover "a window from within a scale's block"
+    (ratio > 1 && starts (fun lo _ -> lo mod ratio <> 0));
+  cover "windows on a scale's blocks" (ratio >= 32 && starts (fun lo _ -> lo > 0 && lo mod ratio = 0))
+
+(* A segmented contraction has the bits of its unsegmented contractions of
+   views, a row or a group at a time (seg_reference). *)
+let law_segments (b : Support.backend) s =
+  seg_covers s;
+  let c = s.sg in
+  let sa = Option.map scale_of s.sa and sb = Option.map scale_of s.sb in
+  let (D.Any out) = c.out in
+  let dst = A.create b.device out (seg_shape s) in
+  let module K = (val b.kernels) in
+  let init = Option.map (fun i -> A.expect out (on b i)) c.init in
+  let offsets = A.expect D.Int64 (on b (A.Any (offsets_of s))) in
+  let sa' = Option.map (scale_on b) sa and sb' = Option.map (scale_on b) sb in
+  match
+    K.contract ~order:c.order ~batch:(Iarray.of_array c.batch)
+      ~contracting:(Iarray.of_array c.contracting)
+      ~segments:(Some (segments_of s offsets)) ~acc:c.acc ~dst ~init
+      { array = on b c.a; scale = sa' }
+      { array = on b c.b; scale = sb' }
+  with
+  | A.Done ->
+      equal (list string) []
+        (differ_bits c.acc ~other:"unsegmented" (host (A.Any dst))
+           (seg_reference b s sa sb))
+  | r -> failf "a segmented contraction answered %a" Nx_array_support.pp_answer r
+
+(* nx.cpu answers Shape_mismatch for segments that do not fit, and writes
+   nothing: offsets of another shape than the batch extents then [g + 1],
+   a cut axis in a pair or past its operand's rank, a pair past the pairs,
+   a result of another shape than the segmented one. No offsets' values
+   are refused: any values name their groups. *)
+let test_segment_misfits (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let arr s =
+    A.expect D.Float32
+      (on b (A.Any (A.of_array D.Float32 s (Array.make (total s) 1.))))
+  in
+  let offs s =
+    A.expect D.Int64
+      (on b (A.Any (A.of_array D.Int64 s (Array.init (total s) Int64.of_int))))
+  in
+  let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = ) in
+  let refused ~msg ?(batch : _ iarray = [||])
+      ?(contracting : _ iarray = [| (1, 0) |]) segments dst a b' =
+    let before = A.to_array (to64 (host (A.Any dst))) in
+    equal ~msg answer A.Shape_mismatch
+      (K.contract ~order:Chain ~batch ~contracting ~segments:(Some segments)
+         ~acc:(D.Any D.Float32) ~dst ~init:None (plain a) (plain b'));
+    equal ~msg:(msg ^ ": untouched") (array float_exact) before
+      (A.to_array (to64 (host (A.Any dst))))
+  in
+  let rows ?(a_axis = 0) ?(b_axis = 1) offsets =
+    Nx_kernel.Rows { offsets; a_axis; b_axis }
+  in
+  let pair ?(pair = 0) offsets = Nx_kernel.Contracting { offsets; pair } in
+  (* [2; 4] by [4; 3; 3] cut along b's axis 1 into 3 groups: [2; 3]. *)
+  let a = arr [| 2; 4 |] and b3 = arr [| 4; 3; 3 |] and y = arr [| 2; 3 |] in
+  refused ~msg:"offsets of rank 2" (rows (offs [| 1; 4 |])) y a b3;
+  refused ~msg:"3 offsets for 3 groups" (rows (offs [| 3 |])) y a b3;
+  refused ~msg:"a's axis in a pair" (rows ~a_axis:1 (offs [| 4 |])) y a b3;
+  refused ~msg:"a's axis past its rank" (rows ~a_axis:2 (offs [| 4 |])) y a b3;
+  refused ~msg:"a's axis -1" (rows ~a_axis:(-1) (offs [| 4 |])) y a b3;
+  refused ~msg:"b's axis in a pair" (rows ~b_axis:0 (offs [| 4 |])) y a b3;
+  refused ~msg:"b's axis past its rank" (rows ~b_axis:3 (offs [| 4 |])) y a b3;
+  refused ~msg:"a result keeping b's cut axis" (rows (offs [| 4 |]))
+    (arr [| 2; 3; 3 |]) a b3;
+  (* [2; 4] by [4; 3] cut along the pair into 2 groups: [2; 2; 3]. *)
+  let b2 = arr [| 4; 3 |] in
+  refused ~msg:"no offset" (pair (offs [| 0 |])) (arr [| 0; 2; 3 |]) a b2;
+  refused ~msg:"a pair past the pairs" (pair ~pair:1 (offs [| 3 |]))
+    (arr [| 2; 2; 3 |]) a b2;
+  refused ~msg:"pair -1" (pair ~pair:(-1) (offs [| 3 |])) (arr [| 2; 2; 3 |]) a b2;
+  refused ~msg:"a result without the groups' axis" (pair (offs [| 3 |])) y a b2;
+  refused ~msg:"a groups' axis of 3 for 2 groups" (pair (offs [| 3 |]))
+    (arr [| 3; 2; 3 |]) a b2;
+  (* [2; 2; 4] by [2; 4; 3] over a batch of 2: [2; 2; 2; 3]. *)
+  let batch : _ iarray = [| (0, 0) |] and contracting : _ iarray = [| (2, 1) |] in
+  refused ~msg:"offsets without the batch's extents" ~batch ~contracting
+    (pair (offs [| 3 |])) (arr [| 2; 2; 2; 3 |]) (arr [| 2; 2; 4 |]) (arr [| 2; 4; 3 |]);
+  refused ~msg:"offsets of another batch extent" ~batch ~contracting
+    (pair (offs [| 3; 3 |])) (arr [| 2; 2; 2; 3 |]) (arr [| 2; 2; 4 |]) (arr [| 2; 4; 3 |])
+
 (* Guard pages *)
 
 (* A [m × k] by [k × n] product whose operands and dst each lie against an
@@ -2511,6 +3045,12 @@ let cpu (b : Support.backend) =
         (run (law_mx_layouts b));
       test "refuses a scale that does not fit its operand" (fun () ->
           b.around (test_scale_misfits b));
+      prop ~examples:seg_examples
+        "each group of a segmented contraction has the bits of its \
+         unsegmented contraction"
+        seg_draws (run (law_segments b));
+      test "refuses segments that do not fit" (fun () ->
+          b.around (test_segment_misfits b));
       prop ~count:500
         "reads and writes no byte past its operands and dst, whatever pages lie \
          beside them"
