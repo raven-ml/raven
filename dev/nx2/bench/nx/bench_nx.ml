@@ -104,6 +104,49 @@ let dispatch_rows =
         (fun (cache, row, at) -> cache := Nx.set at row !cache);
     ]
 
+(* Elementwise operations of one element to past the caches: an add at
+   float32, float16 and bfloat16, a where, constants placed on the host (a
+   fill and two ranges), and adds of a transposed and of a broadcast
+   operand. *)
+let elementwise_rows =
+  let m = 1 lsl 20 in
+  let sizes = [ (1, "1"); (4096, "4K"); (m, "1M") ] in
+  let add name dt =
+    List.map
+      (fun (n, size) ->
+        Thumper.bench_with_setup
+          (Printf.sprintf "add-%s-%s" name size)
+          ~setup:(fun () -> filled dt [| n |] 1.)
+          (fun x -> Nx.add x x))
+      sizes
+  in
+  let where (n, size) =
+    Thumper.bench_with_setup
+      (Printf.sprintf "where-f32-%s" size)
+      ~setup:(fun () ->
+        let x = host n in
+        (Nx.less x x, x))
+      (fun (c, x) -> Nx.where c x x)
+  in
+  let square () = filled D.Float32 [| 1024; 1024 |] 1. in
+  Thumper.group "elementwise"
+    (add "f32" D.Float32 @ add "f16" D.Float16 @ add "bf16" D.Bfloat16
+    @ List.map where sizes
+    @ [
+        Thumper.bench "full-f32-1M" (fun () ->
+            on_host (Nx.full D.Float32 [| m |] 1.5));
+        Thumper.bench "arange-i64-1M" (fun () ->
+            on_host (Nx.arange D.Int64 0 m 1));
+        Thumper.bench "arange-f32-1M" (fun () ->
+            on_host (Nx.arange D.Float32 0 m 1));
+        Thumper.bench_with_setup "add-f32-1M-transposed"
+          ~setup:(fun () -> (Nx.transpose (square ()), square ()))
+          (fun (t, y) -> Nx.add t y);
+        Thumper.bench_with_setup "add-f32-1M-broadcast"
+          ~setup:(fun () -> (square (), filled D.Float32 [| 1024 |] 1.))
+          (fun (x, row) -> Nx.add x row);
+      ])
+
 let constant_rows =
   Thumper.group "constant"
     [
@@ -1046,6 +1089,7 @@ let () =
   @@ Thumper.run "nx"
        [
          dispatch_rows;
+         elementwise_rows;
          constant_rows;
          placed_rows;
          place_rows;
