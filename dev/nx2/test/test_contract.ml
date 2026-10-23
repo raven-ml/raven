@@ -1426,7 +1426,8 @@ module Scaled = struct
 
   (* [a], [[batch; m; k]], by [b], [[batch; g; k; n]], the batch axis where
      [batch] gives its extent and [g] for [Rows] alone, from [init], summed
-     in float64 or float32. Offsets have the shape [[batch; g + 1]]. *)
+     in float64 or float32 and rounded into float16 where [half], [init]
+     too. Offsets have the shape [[batch; g + 1]]. *)
   type case = {
     batch : int option;
     m : int;
@@ -1436,6 +1437,7 @@ module Scaled = struct
     a : side;
     b : side;
     f64 : bool;
+    half : bool;
     init : float array option;
     segs : segs option;
   }
@@ -1462,8 +1464,9 @@ module Scaled = struct
     let offsets ppf os =
       pp_shape ppf (Array.map Int64.to_int os)
     in
-    Format.fprintf ppf "@[<v>%s, g %d@,a %a@,b %a@,init %s@,%s@]"
+    Format.fprintf ppf "@[<v>%s%s, g %d@,a %a@,b %a@,init %s@,%s@]"
       (if c.f64 then "float64" else "float32")
+      (if c.half then " into float16" else "")
       c.g pp_side c.a pp_side c.b
       (match c.init with
       | None -> "none"
@@ -1527,8 +1530,8 @@ module Scaled = struct
         let (P.Any v) = made p role dt (stored s sv) s.swap vs in
         Some (Value v)
 
-  let op (type r e) (p : e put) (acc : (float, r) Nx.dtype) c :
-      (float, r, e) Nx.t P.t =
+  let op (type r o e) (p : e put) (acc : (float, r) Nx.dtype)
+      (out : (float, o) Nx.dtype) c : (float, o, e) Nx.t P.t =
     let (P.Any a) = operand p A c.a in
     let (P.Any b) = operand p B c.b in
     let nb = List.length (lead c) in
@@ -1547,7 +1550,7 @@ module Scaled = struct
     let init =
       Option.map
         (fun xs ->
-          p.put Init (Nx.cast acc (Nx.create Nx.float64 (result_shape c) xs)))
+          p.put Init (Nx.cast out (Nx.create Nx.float64 (result_shape c) xs)))
         c.init
     in
     Contract
@@ -1556,7 +1559,7 @@ module Scaled = struct
         batch;
         contracting;
         acc = D.Any acc;
-        out = acc;
+        out;
         a;
         b;
         init;
@@ -1608,26 +1611,35 @@ module Scaled = struct
      either: [2k + 8] roundings of [u] relative to the magnitudes' sum, and
      one least subnormal per term for what underflows. A NaN magnitude is a
      NaN term, which makes both NaNs; an infinite one is an overflow, which
-     the bound bars. *)
+     the bound bars. Rounded into float16, each sum takes one more rounding
+     of float16's [2^-11] relative and half its least subnormal, [2^-25],
+     an output near float16's largest, [65504], overflowing in either. *)
   let check (type r) (acc : (float, r) Nx.dtype) c =
     let read y = Nx.to_array (Nx.cast Nx.float64 y) in
-    let y = read (P.eval ~by:"t" (op on_host acc c)) in
-    let want = read (expanded (op on_host acc c)) in
-    let mag = read (expanded (op on_host acc (magnitudes c))) in
+    let run out =
+      ( read (P.eval ~by:"t" (op on_host acc out c)),
+        read (expanded (op on_host acc out c)) )
+    in
+    let y, want = if c.half then run Nx.float16 else run acc in
+    let mag = read (expanded (op on_host acc acc (magnitudes c))) in
     let u, eta =
       if c.f64 then (epsilon_float /. 2., Float.of_string "0x1p-1074")
       else (Float.of_string "0x1p-24", Float.of_string "0x1p-149")
     in
     let n = (2 * c.k) + 8 in
     let gamma = Float.of_int n *. u /. (1. -. (Float.of_int n *. u)) in
+    let u16 = Float.of_string "0x1p-11" and eta16 = Float.of_string "0x1p-25" in
     Array.iteri
       (fun i m ->
         let msg = Printf.sprintf "output %d of magnitude %g" i m in
+        let tol = (2. *. gamma *. m) +. (Float.of_int (c.k + 2) *. eta) in
+        let tol =
+          if c.half then tol +. (2. *. ((u16 *. (m +. tol)) +. eta16)) else tol
+        in
         if Float.is_nan m then
           equal (pair bool bool) ~msg (true, true)
             (Float.is_nan want.(i), Float.is_nan y.(i))
-        else if Float.is_finite m then
-          let tol = (2. *. gamma *. m) +. (Float.of_int (c.k + 2) *. eta) in
+        else if Float.is_finite m && not (c.half && m +. tol >= 65504.) then
           equal (float tol) ~msg want.(i) y.(i))
       mag;
     (y, mag)
@@ -1792,7 +1804,8 @@ module Scaled = struct
           map (fun o -> Some (Contracting o)) (offsets ~batch:nb ~g k)
     in
     let* plant = frequency [ (1, constant false); (2, constant true) ] in
-    let c = { batch; m; n; k; g; a; b; f64; init = None; segs } in
+    let* half = bool in
+    let c = { batch; m; n; k; g; a; b; f64; half; init = None; segs } in
     let c = if plant then planted c else c in
     let+ init =
       frequency
@@ -1875,6 +1888,9 @@ module Scaled = struct
       (match c.segs with Some (Contracting _) -> c.g > 0 | _ -> false);
     cover "scaled and segmented" (scaled && c.segs <> None);
     cover "a row in no group" (row_alone c);
+    cover "a result rounded into float16" c.half;
+    cover "an init cast into the accumulator" (c.half && c.init <> None);
+    cover "a row in no group rounded into float16" (c.half && row_alone c);
     let y, mag = if c.f64 then check Nx.float64 c else check Nx.float32 c in
     cover "a NaN output" (Array.exists Float.is_nan y);
     cover "a NaN in no group kept out"
@@ -1918,6 +1934,7 @@ module Scaled = struct
       b =
         { dt = F4; view = bv; swap = true; xs = some (numel bv); scale = b_scale };
       f64 = false;
+      half = false;
       init = None;
       segs;
     }
@@ -1928,19 +1945,24 @@ module Scaled = struct
   let placed (type e) (on : e Nx.Placement.t) where c =
     let at role = Option.value ~default:on (where role) in
     let p = { put = (fun role x -> Nx.place (at role) x) } in
-    let y = P.eval ~by:"t" (op p Nx.float32 c) in
-    let one = P.eval ~by:"t" (op on_host Nx.float32 c) in
+    let y = P.eval ~by:"t" (op p Nx.float32 Nx.float32 c) in
+    let one = P.eval ~by:"t" (op on_host Nx.float32 Nx.float32 c) in
     equal (array float_exact) (read one) (read y);
     Option.get (Nx.placement y)
 
   (* A long MXFP4 product of more than one block of 4096, rows in no group,
-     and a NaN outside every group of the contracted axis. *)
+     alone and rounded into float16 from [init], and a NaN outside every
+     group of the contracted axis. *)
   let examples =
     let rows = Rows [| 1L; 2L; 2L; 3L |] in
     let groups = Contracting [| 0L; 4L; 4L |] in
     [
       mx ~m:1 ~k:4160 ~n:2 ~per:1 ();
       mx ~segs:rows ~g:3 ~m:4 ~k:32 ~n:2 ~per:1 ();
+      { (mx ~segs:rows ~g:3 ~m:4 ~k:32 ~n:2 ~per:1 ()) with
+        half = true;
+        init = Some (some 8);
+      };
       planted
         { (mx ~segs:groups ~g:2 ~m:2 ~k:32 ~n:2 ~per:2 ()) with
           init = Some (some 8);
@@ -2000,7 +2022,8 @@ module Scaled = struct
       let b = plain (Array.append lead [| k; n |]) in
       let a = plain [| m; k |] in
       let c =
-        { batch = None; m; n; k; g; a; b; f64 = false; init = None; segs }
+        { batch = None; m; n; k; g; a; b; f64 = false; half = false;
+          init = None; segs }
       in
       { c with init = Some (Array.make (numel (result_shape c)) (-0.)) }
     in
@@ -2023,26 +2046,34 @@ module Scaled = struct
       ]
       (fun (_, c) ->
         let want = Array.make (empty c) (-0.) in
-        let y = P.eval ~by:"t" (op on_host Nx.float32 c) in
+        let y = P.eval ~by:"t" (op on_host Nx.float32 Nx.float32 c) in
         equal (array float_exact) ~msg:"nx.cpu" want (outputs c y);
-        let y = expanded (op on_host Nx.float32 c) in
+        let y = expanded (op on_host Nx.float32 Nx.float32 c) in
         equal (array float_exact) ~msg:"the expansion" want (outputs c y))
 
   (* Contractions cut along [k]: [a] [[m; k]] and [b], stored [[…; n; k]],
-     along their last stored axis, the scales and offsets on every device. *)
+     along their last stored axis, the offsets and [init] on every device,
+     and the scales too unless [scales] cuts [b]'s as its weight. *)
   let partials =
-    let k_cut ?(b = 1) (module S : Nx.Devices) = function
+    let k_cut ?(b = 1) ?(scales = false) (module S : Nx.Devices) = function
       | A -> Some (S.split ~axis:1)
       | B -> Some (S.split ~axis:b)
+      | B_scale when scales -> Some (S.split ~axis:b)
       | A_scale | B_scale | Offsets | Init -> None
     in
-    let along ?b (module S : Nx.Devices) c =
-      ignore (placed S.on (k_cut ?b (module S)) c)
+    let along ?b ?scales (module S : Nx.Devices) c =
+      ignore (placed S.on (k_cut ?b ?scales (module S)) c)
     in
     (* [a] scaled in two blocks of [k / 2] per row. *)
     let halves c =
       let scale = Some ([| c.m; 2 |], Values (F32, some (2 * c.m))) in
       { c with a = { c.a with scale } }
+    in
+    (* [a] scaled by a code per 32 along [k], from [init]. *)
+    let coded c =
+      let sv = [| c.m; c.k / 32 |] in
+      let scale = Some (sv, Codes (codes (numel sv))) in
+      { c with a = { c.a with scale }; init = Some (some (c.m * c.n)) }
     in
     group "partials"
       [
@@ -2055,6 +2086,12 @@ module Scaled = struct
         test "scale blocks past 4096 products give one device's bits"
           (fun () ->
             along (module S2) (halves (mx ~m:2 ~k:16384 ~n:2 ~per:1 ())));
+        test "both operands scaled, from init, give one device's bits"
+          (fun () ->
+            along (module S2) (coded (mx ~m:2 ~k:8256 ~n:2 ~per:1 ())));
+        test "b's scale cut along k as its weight gives one device's bits"
+          (fun () ->
+            along ~scales:true (module S2) (mx ~m:2 ~k:8256 ~n:2 ~per:1 ()));
         test "groups of a cut contracted axis give one device's bits" (fun () ->
             let segs = Contracting [| 0L; 40L; 96L |] in
             along (module S2) (mx ~segs ~g:2 ~m:2 ~k:96 ~n:2 ~per:1 ()));
