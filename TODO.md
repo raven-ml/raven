@@ -61,13 +61,19 @@ raven / llama.cpp (Vulkan; ROCm):
   "two domains allocate and free at once" times out at its 10 s bound in
   60 of 64 copies run 32 at once at load ~65 with windtrap's spinning
   barrier, and in none of 96 with it
-- hardware runs: AMD over PCI on nonnormal at ad5a46369 (the held sleep,
-  the two-domain growth law, test_amd and test_conformance -f AMD), whose
-  last PCI run was on an earlier form of the wake-up fix; the box and fill
-  laws on SDMA 4 to 6; two GPUs (peers); mlx5 and bnxt NICs
+- hardware runs: AMD over PCI on nonnormal at 8822544ce or later (the held
+  sleep, the two-domain growth law, test_amd and test_conformance -f AMD),
+  whose last PCI run was on an earlier form of the wake-up fix and before
+  rig.pci's 64-byte BAR stores and its release after an exception;
+  test_conformance's 8-open law on Metal; the box and fill laws on SDMA 4
+  to 6; two GPUs (peers); mlx5 and bnxt NICs
 
 ### perf
 
+- fudge's `launch/empty-performance-cores` reads 18% slower since
+  8865d6be7 (rounds +8, +18, +27 against a spread of 19% between runs of
+  one build), where the compute path only gained a job kind and an inlined
+  lock: time it alone over more rounds, then explain it or re-record it
 - AMD boxes as one COPY_LINEAR_SUB_WIND packet per 2^14 rows on SDMA 4-6,
   where they run as a COPY_LINEAR per row: measured on an AMD host against
   rows; it also lifts the row limit of a box on SDMA 4 over PCI, about
