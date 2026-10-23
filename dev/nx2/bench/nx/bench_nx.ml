@@ -601,7 +601,8 @@ let contract_rows =
 
 (* Convolution and pooling over images of [8; 56; 56; 64]
    float32 channels last, as a user writes each today: a 3 × 3 convolution
-   of 64 channels padded by one, in float32 and bfloat16; its input
+   of 64 channels padded by one, in float32 and bfloat16, and into 3
+   channels, as an image's last layer, which sums in lane order; its input
    gradient, conv_transpose, and its weight gradient, a contraction over
    the padded image's windows; the depthwise convolution, one channel a
    group; and a 3 × 3 max-pool at stride 2, padded by -∞, as pad, two
@@ -651,6 +652,8 @@ let conv_rows =
     [
       Thumper.bench_with_setup "conv-f32-8x56x56x64-3x3"
         ~setup:(conv_by D.Float32 [| 64; 3; 3; 64 |]) conv;
+      Thumper.bench_with_setup "conv-f32-8x56x56x64-3x3-to-3"
+        ~setup:(conv_by D.Float32 [| 3; 3; 3; 64 |]) conv;
       Thumper.bench_with_setup "conv-bf16-8x56x56x64-3x3"
         ~setup:(conv_by D.Bfloat16 [| 64; 3; 3; 64 |]) conv;
       Thumper.bench_with_setup "conv-input-grad-f32-8x56x56x64-3x3"
