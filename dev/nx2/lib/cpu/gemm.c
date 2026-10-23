@@ -177,12 +177,14 @@ typedef struct {
 /* An operand as the view lays it out: its element (e, i, j, k) lies at
    position first + e·st[BATCH] + i·st[ROW] + j·st[COL] + k·st[CON], and
    an axis it lacks has step 0; along an axis of several runs, sp[x] not
-   NULL, the index's runs step instead (along). */
+   NULL, the runs of index skip[x] + i step instead (along), so that lane
+   order's passes move on by rows as [first] moves the others. */
 typedef struct {
   const nx_array *x; /* NULL for an absent init */
   int64_t first;
   int64_t st[4];
   const spans *sp[4];
+  int64_t skip[4];
   scale *s; /* NULL for an unscaled operand */
 } operand;
 
@@ -210,6 +212,7 @@ static int64_t along(const operand *q, int x, int64_t i) {
   const spans *s = q->sp[x];
   if (s == NULL) return i * q->st[x];
   int64_t at = 0;
+  i += q->skip[x];
   for (int r = s->n - 1; r >= 0; r--) {
     at += i % s->extent[r] * s->stride[r];
     i /= s->extent[r];
@@ -377,16 +380,26 @@ static int stage_f4(const problem *p, int o, const int64_t *c, int x0,
   return 1;
 }
 
+static void pack_at(const problem *p, nx_cpu_pack move, int o,
+                    const int64_t *c, int x0, int x1, int64_t n0, int64_t n1,
+                    uint8_t *d, int64_t pitch);
+
 /* Stages operand [o]'s block as stage_acc does, from its element
-   (e, i, j, k), [n0] along axis [x0] in a row and [n1] rows along [x1];
-   then, where it is scaled, multiplies each element by its block's scale,
-   rounded once in acc, a float32 or float64. */
+   (e, i, j, k), [n0] along axis [x0] in a row and [n1] rows along [x1]:
+   unscaled, piece by piece as pack_at reads it, so that an axis of
+   several runs is read where it lies; scaled, of one run each, with each
+   element times its block's scale, rounded once in acc, a float32 or
+   float64. */
 static void stage_at(const problem *p, int o, int64_t e, int64_t i,
                      int64_t j, int64_t k, int x0, int x1, int64_t n0,
                      int64_t n1, uint8_t *dst, int64_t pitch) {
   const operand *q = &p->op[o];
   const int64_t c[4] = {e, i, j, k};
-  if (q->s && stage_f4(p, o, c, x0, x1, n0, n1, dst, pitch)) return;
+  if (q->s == NULL) {
+    pack_at(p, NULL, o, c, x0, x1, n0, n1, dst, pitch);
+    return;
+  }
+  if (stage_f4(p, o, c, x0, x1, n0, n1, dst, pitch)) return;
   stage_acc(p, o, pos(p, o, e, i, j, k), q->st[x0], q->st[x1], n0, n1, dst,
             pitch);
   if (q->s == NULL) return;
@@ -587,7 +600,7 @@ static int64_t piece(const operand *q, int x, int64_t i, int64_t n,
   }
   int64_t last = s->extent[s->n - 1];
   *st = s->stride[s->n - 1];
-  return min64(n, last - i % last);
+  return min64(n, last - (q->skip[x] + i) % last);
 }
 
 /* Packs operand [o]'s block from its element [c], (e, i, j, k), as pack
@@ -975,6 +988,9 @@ static void transpose(problem *p) {
     const spans *sp = q->sp[ROW];
     q->sp[ROW] = q->sp[COL];
     q->sp[COL] = sp;
+    r = q->skip[ROW];
+    q->skip[ROW] = q->skip[COL];
+    q->skip[COL] = r;
     if (q->s == NULL) continue;
     const int64_t *t = q->s->t[ROW];
     q->s->t[ROW] = q->s->t[COL];
@@ -1614,6 +1630,7 @@ static void lanes(problem *p) {
     for (int o = 0; o < 4; o++) {
       operand *q = &p->op[o];
       q->first += p->ext[ROW] * q->st[ROW];
+      if (q->sp[ROW]) q->skip[ROW] += p->ext[ROW];
       if (q->s && q->s->t[ROW]) q->s->t[ROW] += p->ext[ROW];
     }
   }
@@ -2419,11 +2436,11 @@ static int contract_view(int acc, int order, int da, int db,
   return contract_with(g, acc, order, v, op, NULL, sp);
 }
 
-/* Whether contract_view reads a and b along spans: chain order's packs do,
-   where the contraction is real and unscaled and no quads take it. */
-static int spanned(int acc, int order, int da, int db, const scale *s) {
-  return s == NULL && order == NX_CPU_CHAIN && part_of(acc) == acc &&
-         quads_for(acc, da, db) == NULL;
+/* Whether contract_view reads a and b along spans: chain order's packs
+   and lane order's stages do, where the contraction is real and unscaled
+   and no quads take it. */
+static int spanned(int acc, int da, int db, const scale *s) {
+  return s == NULL && part_of(acc) == acc && quads_for(acc, da, db) == NULL;
 }
 
 /* Groups of several runs
@@ -2608,7 +2625,7 @@ static int runs_on(int acc, int order, int da, int db, nx_contract_runs *r,
   scale kept[2] = {{0}};
   if (s) memcpy(kept, s, sizeof kept);
   reads sp = {0};
-  int packs = spanned(acc, order, da, db, s);
+  int packs = spanned(acc, da, db, s);
   int staged = r->runs[CON] > 1 && !merges(r), done = 0;
   if (packs) {
     if (staged) spread(r, CON, 1 << A | 1 << B, &sp);

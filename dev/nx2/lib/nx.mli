@@ -1844,12 +1844,16 @@ val conv :
     wrap. Before rounding it is within [γ(K + 1, 2u) Σ|x||w|] of the exact
     sum, [γ] and [u] as {!contract} states. Its order of summation depends
     on the shapes alone:
-    - With other than one input channel a group, it is one {!contract} of
-      [x]'s windows with [w], batched over the groups, summing the taps then
-      the channels as {!contract} sums: the padded [x] is a copy, read once,
-      and its windows a view of it.
-    - With one, as a depthwise convolution has, it is one reduction over
-      [x]'s padded windows, never stored, summing the taps as {!sum} does.
+    - With other than one input channel a group and a real dtype, it is one
+      {!contract} of [x]'s windows with [w], batched over the groups: an
+      output's products are numbered [q · c' + i], [q] the tap's place in C
+      order of the taps' indices and [i] the channel among the [c'] its
+      group reads, and summed as {!contract} sums them. [x] padded is a copy
+      of [x], or [x] itself where nothing pads it, and its windows a view
+      of it.
+    - Otherwise, as a depthwise or a complex convolution has, it is one
+      reduction over [x]'s padded windows, never stored, of the products
+      numbered [i · Q + q], [Q] the taps, summed as {!sum} does.
 
     Raises [Invalid_argument] if [x] has fewer than three axes; [w] has
     another rank; [stride], [padding] or [dilation] do not have [K] entries;
@@ -1874,8 +1878,9 @@ val conv_transpose :
     one of [x] with [stride - 1] zeros between its elements, by [w] reversed
     along its spatial axes and with its channels exchanged, and sums as
     {!conv} states with [o / groups] channels a group: one {!contract} over
-    a copy of [x] spread and padded, or, with one, one reduction that never
-    stores it.
+    [x] spread and padded, a copy where zeros spread or pad it, or, with
+    one channel a group or a complex dtype, one reduction that never stores
+    it.
 
     Raises [Invalid_argument] as {!conv}, reading [o] from [x]'s last axis, or
     if no input has a [conv] of [x]'s shape. *)

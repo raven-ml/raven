@@ -2145,6 +2145,15 @@ module Conv = struct
 
   let windows c i = count c i c.spatial.(i)
 
+  (* The rows of conv's contraction, an output position each. *)
+  let rows c = c.n * numel (Array.mapi (fun i _ -> windows c i) c.spatial)
+
+  (* A contraction of more than four rows and columns takes chain order:
+     conv's columns are its output channels a group, conv_transpose's its
+     input channels, over its input's positions. *)
+  let chained c = c.og > 4 && c.cg > 1 && rows c > 4
+  let chained_transpose c = c.cg > 4 && c.og > 1 && c.n * numel c.spatial > 4
+
   (* Cases whose [m] values [values] draws. *)
   let case_of values =
     Gen.with_pp pp_case
@@ -2154,8 +2163,11 @@ module Conv = struct
        let* n = int_range 0 2 in
        let* spatial = ints k 0 6 in
        let* groups = int_range 1 2 in
-       let* cg = int_range 0 2 in
-       let* og = int_range 1 2 in
+       let* cg = of_list [ 0; 1; 2; 9 ] in
+       (* Nine output channels a group take chain order over rows past
+          four, one or two lane order; nine input channels do so in
+          conv_transpose, whose outputs they are. *)
+       let* og = of_list [ 1; 2; 9 ] in
        let* taps = ints k 0 3 in
        let* stride = ints k 1 3 in
        let* dilation = ints k 1 2 in
@@ -2188,6 +2200,21 @@ module Conv = struct
        let* unpadded = int_range 0 7 in
        let none a = if unpadded = 0 then Array.map (fun _ -> 0) a else a in
        let los = none los and his = none his in
+       (* One case in ten each of one and of two input channels a group
+          over two groups, and of a 1x1 kernel of two channels a group,
+          each with an output: drawn freely each is about one case in
+          fifteen, which some seeds never reach. *)
+       let* shaped = int_range 0 9 in
+       let groups, cg = match shaped with 0 -> (2, 1) | 1 | 2 -> (2, 2) | _ -> (groups, cg) in
+       let taps = if shaped = 2 then Array.map (fun _ -> 1) taps else taps in
+       let n = if shaped <= 2 then Int.max 1 n else n in
+       let spatial =
+         if shaped > 2 then spatial
+         else
+           Array.mapi
+             (fun i d -> Int.max d ((dilation.(i) * (taps.(i) - 1)) + 3))
+             spatial
+       in
        let c0 =
          { n; spatial; groups; cg; og; taps; stride; dilation;
            padding = Array.map2 (fun a b -> (a, b)) los his; xs = [||]; ws = [||] }
@@ -2274,6 +2301,7 @@ module Conv = struct
         let want = reference c in
         let axes f = Array.exists Fun.id (Array.init (Array.length c.spatial) f) in
         cover "an output" (Array.length want > 0);
+        cover "output channels past 4, over rows past 4" (chained c);
         cover "two groups" (c.groups = 2);
         cover "no input channel" (c.cg = 0);
         cover "a negative padding" (axes (fun i -> fst c.padding.(i) < 0 || snd c.padding.(i) < 0));
@@ -2311,6 +2339,7 @@ module Conv = struct
         let axes f = Array.exists Fun.id (Array.init rank f) in
         let outputs = Array.length (reference c) > 0 in
         cover "no batch element" (c.n = 0);
+        cover "output channels past 4, over rows past 4" (chained c);
         cover "no input channel, under an output" (c.cg = 0 && outputs);
         cover "one input channel a group, two groups, under an output"
           (c.cg = 1 && c.groups = 2 && outputs);
@@ -2363,6 +2392,7 @@ module Conv = struct
         let t = c.spatial in
         let least = Array.mapi (least c) t in
         cover "no input has the count" (Array.exists Option.is_none least);
+        cover "input channels past 4, over rows past 4" (chained_transpose c);
         cover "a kernel axis of no element" (Array.mem 0 c.taps);
         cover "a padding past the span, cut in the transpose"
           (Array.exists Fun.id
@@ -2501,7 +2531,7 @@ module Conv = struct
     In_channel.with_open_text "/proc/self/status" (fun ic ->
         let rec go () =
           match In_channel.input_line ic with
-          | None -> failwith ("no " ^ key ^ " in /proc/self/status")
+          | None -> skip ~reason:("no " ^ key ^ " in /proc/self/status") ()
           | Some l when String.starts_with ~prefix:key l ->
               Scanf.sscanf (String.sub l (String.length key) (String.length l - String.length key))
                 " %d kB" Fun.id
@@ -2517,18 +2547,27 @@ module Conv = struct
         f ();
         1024 * (status_kb "VmHWM:" - before)
 
-  (* A convolution of 64 output channels over a 1 MB input: it holds the
-     input padded and its result, never a copy per output channel, 75 MB
-     here. *)
+  (* Convolutions over a 1 MB input, of 64 output channels, which take
+     chain order, of 4, which take lane order, and in complex64: each holds
+     the input padded and its result, never a copy per output channel or
+     per tap, 75 and 9.4 MB here. *)
   let test_memory () =
-    let x = Nx.init Nx.float32 [| 4; 32; 32; 64 |] (fun i -> Float.of_int (i.(1) mod 3)) in
-    let w = Nx.init Nx.float32 [| 64; 3; 3; 64 |] (fun i -> Float.of_int (i.(3) mod 2)) in
-    let conv () = Nx.sync (Nx.conv ~padding:[| (1, 1); (1, 1) |] x w) in
-    conv ();
-    let padded = 4 * 34 * 34 * 64 * 4 and result = 4 * 32 * 32 * 64 * 4 in
-    less ~msg:"peak bytes above the resident ones" int
-      ~than:(4 * (padded + result))
-      (peak_of conv)
+    let peak (type v s) (dt : (v, s) Nx.dtype) oc =
+      let x = Nx.init Nx.float32 [| 4; 32; 32; 64 |] (fun i -> Float.of_int (i.(1) mod 3))
+      and w = Nx.init Nx.float32 [| oc; 3; 3; 64 |] (fun i -> Float.of_int (i.(3) mod 2)) in
+      let x = Nx.cast dt x and w = Nx.cast dt w in
+      let conv () = Nx.sync (Nx.conv ~padding:[| (1, 1); (1, 1) |] x w) in
+      conv ();
+      let e = D.bytes dt 1 in
+      let padded = 4 * 34 * 34 * 64 * e and result = 4 * 32 * 32 * oc * e in
+      less
+        ~msg:(Printf.sprintf "peak bytes above the resident ones, %s, %d channels"
+                (D.name dt) oc)
+        int ~than:(4 * (padded + result)) (peak_of conv)
+    in
+    peak Nx.float32 64;
+    peak Nx.float32 4;
+    peak Nx.complex64 4
 
   let group =
     group "convolution"
