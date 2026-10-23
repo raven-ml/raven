@@ -964,7 +964,9 @@ static int64_t chunk_first(const scatter *c, int64_t k) {
     for (int64_t t = t0; t < t1; t++) {                                      \
       uint64_t p = (uint64_t)x[t * ia];                                      \
       if (p >= dim) continue;                                                \
-      int64_t q = (int64_t)(p >> shift), g = fill[q]++;                      \
+      int64_t q = (int64_t)(p >> shift), g = fill[q];                        \
+      if (seg[q] + g == end[q]) continue;                                    \
+      fill[q] = g + 1;                                                       \
       gp[q * GATHER + g] = (int64_t)p;                                       \
       gv[q * GATHER + g] = V;                                                \
       if (g + 1 < GATHER) continue;                                          \
@@ -991,10 +993,11 @@ static void sort_chunks(int64_t lo, int64_t hi, int worker, void *ctx) {
   const int64_t *x = (const int64_t *)c->a[2].base + c->pi + c->b0 * ia;
   const uint8_t *u = c->a[3].base + (c->pu + c->b0 * ua) * c->w;
   /* Counts of bin q at seg[q + 1], made the bins' firsts, then their
-     cursors: once laid out, seg[q] is bin q's end. They stay on this
-     thread's stack: chunks' counters sharing a cache line made the sort
-     several times slower. */
-  int64_t seg[MOST_BINS + 1], fill[MOST_BINS];
+     cursors, and end[q] its counted end. They stay on this thread's
+     stack: chunks' counters sharing a cache line made the sort several
+     times slower. */
+  int64_t seg[MOST_BINS + 1], fill[MOST_BINS], end[MOST_BINS];
+  int64_t e = entry_bytes(c);
   for (int64_t k = lo; k < hi; k++) {
     int64_t t0 = chunk_first(c, k), t1 = chunk_first(c, k + 1);
     int64_t *gp = (int64_t *)(c->gather + k * c->gather_bytes);
@@ -1005,7 +1008,10 @@ static void sort_chunks(int64_t lo, int64_t hi, int worker, void *ctx) {
       if (p < dim) seg[(p >> shift) + 1]++;
     }
     seg[0] = t0;
-    for (int64_t q = 0; q < bins; q++) seg[q + 1] += seg[q];
+    for (int64_t q = 0; q < bins; q++) {
+      seg[q + 1] += seg[q];
+      end[q] = seg[q + 1];
+    }
 #define AT(T) ((const T *)u)[t * ua]
     if (!one_slice(c)) PLACE(int64_t, b0 + t)
     else switch (c->w) {
@@ -1016,7 +1022,18 @@ static void sort_chunks(int64_t lo, int64_t hi, int worker, void *ctx) {
         default: PLACE(u128, AT(u128))
       }
 #undef AT
-    memcpy(c->seg + k * bins, seg, (size_t)bins * sizeof *seg);
+    /* The positions are read twice; another thread writing them between
+       the reads, which the caller must not do, could give a bin more
+       positions than counted or fewer. A full bin drops the rest and a
+       short one ends in entries no run applies, so such a call's result
+       is wrong rather than memory written outside the bins. */
+    for (int64_t q = 0; q < bins; q++) {
+      int64_t gap = end[q] - seg[q];
+      if (gap == 0) continue;
+      for (int64_t j = seg[q]; j < end[q]; j++) pos[j] = -1;
+      memset(vals + seg[q] * e, 0, (size_t)(gap * e));
+    }
+    memcpy(c->seg + k * bins, end, (size_t)bins * sizeof *end);
   }
 }
 
@@ -1122,6 +1139,9 @@ static void narrow_bins(int64_t lo, int64_t hi, int worker, void *ctx) {
         entries += seg[q] - from;
         for (int64_t j = from; j < seg[q]; j++) {
           int64_t t = c->pos[j] - (int64_t)first;
+          /* An entry outside the bin, left by a racing write of the
+             positions (sort_chunks). */
+          if ((uint64_t)t >= (uint64_t)span) continue;
           int64_t at = c->pd + c->pos[j] * c->da;
           if (pass == 1) {
             if (reached[t]) code_put(d, at, narrow_of_float(c->dt, sums[t]));
