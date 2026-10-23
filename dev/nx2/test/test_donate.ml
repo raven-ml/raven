@@ -824,6 +824,34 @@ let test_inside_composite () =
     (Array.map (fun x -> x +. 9.) original)
     y
 
+(* An eager broadcasting call on one domain, while an [Extent] lives on
+   another, frees its donor's memory at once: the extent is not around it.
+   The donor stays reachable, so no collection explains the bytes. *)
+let test_extent_elsewhere () =
+  let n = 4096 in
+  let wide = on_mem [| 2; n |] (Array.make (2 * n) 1.) in
+  let run () =
+    let x = on_mem [| n |] (Array.make n 2.) in
+    let eager () =
+      let before = settled () in
+      let y = Nx.add (Nx.donate x) wide in
+      Rig.free_cache device;
+      (y, Rig.allocated device - before)
+    in
+    let y, grew =
+      Nx.Prim.interpret ~name:"test.extent" Extent
+        (fun _ ~by op -> Nx.Prim.eval ~by op)
+        (fun _ -> Domain.join (Domain.spawn eager))
+    in
+    (x, y, grew)
+  in
+  ignore (run ());
+  let x, y, grew = run () in
+  less ~msg:"the donor freed" int ~than:(4 * 2 * n) grew;
+  equal ~msg:"the sum" (array float_exact) (Array.make (2 * n) 3.)
+    (elements (Nx.reshape [| 2 * n |] y));
+  invalid ~sub:"donated to Nx.add" (fun () -> Nx.copy x)
+
 (* A donated call gives the bits of the same call undonated: a scatter of
    every combine with repeated positions, positions outside the axis, NaN,
    -0. and infinities, and a bfloat16 init summed in float32 over a drawn
@@ -2208,6 +2236,9 @@ let () =
                test_donor_beside;
              test "a consumer inside a composite computes beside its donor"
                test_inside_composite;
+             test
+               "an eager call beside an Extent on another domain frees its \
+                donor" test_extent_elsewhere;
              law_scatter_bits;
              law_init_bits;
            ];
