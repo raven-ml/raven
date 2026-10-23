@@ -655,6 +655,27 @@ let reduce name (r : Nx_kernel.reduction) ~axes a (module K : Nx_kernel.S) =
     (fun (p, shape, rs, loads, dsts) ->
       ok (K.reduce p ~shape ~axes:(Iarray.of_array axes) rs ~dsts loads))
 
+(* A max-pool's reduction: 3 × 3 windows at stride 2 over [8; 56; 56; 64]
+   float32 channels last, through a padded load of one -∞ each side of the
+   spatial axes, its windows' taps reduced. *)
+let padded_max name (module K : Nx_kernel.S) =
+  row name
+    (fun () ->
+      let x = filled f32 [| 8; 56; 56; 64 |] in
+      let spatial v = Iarray.init 4 (fun a -> if a = 1 || a = 2 then v else 0) in
+      let w axis : M.window = { axis; size = 3; step = 2; dilation = 1 } in
+      let pad : Nx_kernel.pad =
+        { lo = spatial 1; hi = spatial 1; interior = spatial 0;
+          windows = Iarray.of_list [ w 1; w 2 ] }
+      in
+      let load = Nx_kernel.Padded { x; fill = Float.neg_infinity; pad } in
+      let dst = A.Any (A.create Rig.host f32 [| 8; 28; 28; 64 |]) in
+      (identity (D.Any f32), [| (Nx_kernel.Monoid Max, 0) |], [| load |], [| dst |]))
+    (fun (p, rs, loads, dsts) ->
+      ok
+        (K.reduce p ~shape:[| 8; 28; 28; 64; 3; 3 |]
+           ~axes:(Iarray.of_list [ 4; 5 ]) rs ~dsts loads))
+
 let scan name r ~axis a (module K : Nx_kernel.S) =
   row name
     (fun () ->
@@ -756,6 +777,11 @@ let reduce_rows =
             let a = filled f32 [| 32; 16; 26; 26 |] in
             A.Any (Option.get (A.move (M.Window [| w 2; w 3 |]) a)));
       work = [ F.Read (bytes f32 [| 32; 16; 26; 26 |]) ];
+    };
+    (* The same through a padded load, as a max-pool reads its image. *)
+    {
+      bench = padded_max "reduce-max-f32-3x3s2-padded-8x56x56x64";
+      work = [ F.Read (bytes f32 [| 8; 56; 56; 64 |]) ];
     };
     running "scan-sum-f64-5M" f64 [| 5 * m |] 0;
     running "scan-sum-f32-4096x1024-axis1" f32 [| 4096; 1024 |] 1;
