@@ -1921,8 +1921,9 @@ let ratio_of k =
 
 (* Products either side of lane order's blocks of 1024 and nx's cut at
    4096, in both orders and accs: a float32 [2; k] times bfloat16 [k; 3],
-   each scaled in blocks along k; and the cases whose groups make several
-   runs, scaled in 2-D blocks, stepped or broadcast. *)
+   each scaled in blocks along k; and every regime of both accs, which
+   reaches each of gemm.c's paths, its operands scaled in turn in 2-D
+   blocks, stepped, broadcast or contiguous: a and b, a alone, b alone. *)
 let scaled_examples =
   let plain r =
     let axes = Array.init r Fun.id in
@@ -1944,10 +1945,6 @@ let scaled_examples =
     Nx_kernel.[ (Chain, D.Any D.Float32); (Lane, D.Any D.Float64);
                 (Lane, D.Any D.Float32); (Chain, D.Any D.Float64) ]
   in
-  let several c =
-    let rb, rr, rc, rk = runs c in
-    rb > 1 || rr > 1 || rc > 1 || rk > 1
-  in
   let blocks x =
     Array.map
       (fun e ->
@@ -1956,14 +1953,17 @@ let scaled_examples =
         | None -> e)
       (shape_of x)
   in
-  let runs_of i c =
-    let lies = if i mod 2 = 0 then Stepped else Broadcast in
-    (c, spec ~lies None (blocks c.a) i, spec ~lies (Some c.acc) (blocks c.b) i)
+  let regime i c =
+    let lies = [| Stepped; Broadcast; Contiguous |].(i / 3 mod 3) in
+    let sa = spec ~lies None (blocks c.a) i in
+    let sb = spec ~lies (Some c.acc) (blocks c.b) i in
+    match i mod 3 with
+    | 0 -> (c, sa, sb)
+    | 1 -> (c, sa, None)
+    | _ -> (c, None, sb)
   in
   List.concat_map (fun p -> List.map (along p) ks) pairs
-  @ List.mapi runs_of
-      (List.filter several
-         (regimes (D.Any D.Float32) @ regimes (D.Any D.Float64)))
+  @ List.mapi regime (regimes (D.Any D.Float32) @ regimes (D.Any D.Float64))
 
 let scaled_covers (c, sa, sb) =
   cover "float32" (c.acc = D.Any D.Float32);
@@ -1988,6 +1988,33 @@ let scaled_covers (c, sa, sb) =
   cover "a broadcast operand" (List.mem "broadcast" c.views);
   let rb, rr, rc, rk = runs c in
   cover "groups of several runs" (rb > 1 || rr > 1 || rc > 1 || rk > 1);
+  let m, n = rows_cols c in
+  cover "lane order in passes: more than 8 rows and columns"
+    (per_batch c > 0 && c.order = Lane && m > 8 && n > 8);
+  (* gemm.c reads an operand of acc's dtype in place along a's last
+     contracted axis or b's last column or contracted axis where it steps
+     by 1 there, unless it is scaled. *)
+  let unit (A.Any x) i = (L.strides (A.layout x)).(i) = 1 in
+  let last l = Array.length l > 0 in
+  let of_acc (A.Any x) = D.Any (A.dtype x) = c.acc in
+  let con side = Array.map side c.contracting in
+  let a_streams =
+    let ks = con fst in
+    of_acc c.a && last ks && unit c.a ks.(Array.length ks - 1)
+  in
+  let b_streams =
+    let ks = con snd and rank = Array.length (shape_of c.b) in
+    let paired j =
+      Array.exists (fun (_, x) -> x = j) c.batch
+      || Array.exists (fun (_, x) -> x = j) c.contracting
+    in
+    let free = List.filter (fun j -> not (paired j)) (List.init rank Fun.id) in
+    of_acc c.b
+    && ((free <> [] && unit c.b (List.nth free (List.length free - 1)))
+       || (last ks && unit c.b ks.(Array.length ks - 1)))
+  in
+  cover "a scaled operand of acc's dtype adjacent along its streamed axis"
+    ((sa <> None && a_streams) || (sb <> None && b_streams));
   let _, k, _ = sizes c in
   List.iter
     (fun n -> cover (Printf.sprintf "%d products" n) (k = n))
@@ -2051,6 +2078,46 @@ let law_unscalable b (c, sa, sb) =
   | A.Declined ->
       equal (array (array float_exact)) before (planes c.out (host dst))
   | r -> failf "contract answered %a" Nx_array_support.pp_answer r
+
+(* nx.cpu answers Shape_mismatch for a scale that does not fit its
+   operand, a [2 × 4] by [4 × 3] product's, and writes nothing: of
+   another rank, with an extent that does not divide the operand's, or of
+   0 along an axis with elements. *)
+let test_scale_misfits (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let arr s =
+    A.expect D.Float32
+      (on b (A.Any (A.of_array D.Float32 s (Array.make (total s) 1.))))
+  in
+  let codes s =
+    Nx_kernel.Exponent
+      (A.expect D.Uint8
+         (on b (A.Any (A.of_array D.Uint8 s (Array.make (total s) 127)))))
+  in
+  let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = ) in
+  let refused ~msg ?sa ?sb () =
+    let dst = arr [| 2; 3 |] in
+    let before = A.to_array (to64 (host (A.Any dst))) in
+    let op x scale : Nx_kernel.operand = { array = A.Any x; scale } in
+    List.iter
+      (fun acc ->
+        equal ~msg answer A.Shape_mismatch
+          (K.contract ~order:Chain ~batch:[||] ~contracting:[| (1, 0) |]
+             ~segments:None ~acc ~dst ~init:None
+             (op (arr [| 2; 4 |]) sa)
+             (op (arr [| 4; 3 |]) sb));
+        equal ~msg:(msg ^ ": untouched") (array float_exact) before
+          (A.to_array (to64 (host (A.Any dst)))))
+      D.[ Any Float32; Any Float64 ]
+  in
+  refused ~msg:"a's scale of rank 1" ~sa:(codes [| 2 |]) ();
+  refused ~msg:"b's scale of rank 3" ~sb:(codes [| 1; 1; 1 |]) ();
+  refused ~msg:"a's 3 blocks along 4" ~sa:(codes [| 2; 3 |]) ();
+  refused ~msg:"b's 2 blocks along 3" ~sb:(codes [| 4; 2 |]) ();
+  refused ~msg:"a's 4 blocks along 2" ~sa:(codes [| 4; 4 |]) ();
+  refused ~msg:"b's 0 blocks along 4" ~sb:(codes [| 0; 3 |]) ();
+  refused ~msg:"a fitting scale beside a misfit" ~sa:(codes [| 2; 1 |])
+    ~sb:(codes [| 3; 3 |]) ()
 
 (* Guard pages *)
 
@@ -2221,6 +2288,8 @@ let cpu (b : Support.backend) =
         scaled_cases (run (law_scaled b));
       prop "declines scales in an integer or complex accumulator" unscalable
         (run (law_unscalable b));
+      test "refuses a scale that does not fit its operand" (fun () ->
+          b.around (test_scale_misfits b));
       prop ~count:500
         "reads and writes no byte past its operands and dst, whatever pages lie \
          beside them"
