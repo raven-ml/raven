@@ -235,7 +235,7 @@ let bits_of (type v s) (a : (v, s) A.t) =
 (* [a] at [dt], as nx.cpu casts. *)
 let cast (type v s w r) (dt : (w, r) D.t) (a : (v, s) A.t) : (w, r) A.t =
   let dst = A.create Rig.host dt (L.shape (A.layout a)) in
-  match Nx_cpu.apply1 Cast ~dst a with
+  match Nx_kernels_support.map1 (module Nx_cpu) Cast ~dst a with
   | A.Done -> dst
   | _ -> failwith "the host's kernel declined a cast"
 

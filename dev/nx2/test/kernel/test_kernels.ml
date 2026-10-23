@@ -21,13 +21,8 @@ module Support = Nx_kernels_support
 (* The kernels a law calls. *)
 type kernels = (module Nx_kernel.S)
 
-let copy (k : kernels) ~dst a =
-  let module K = (val k) in
-  K.apply1 Nx_kernel.Prog.Copy ~dst a
-
-let cast (k : kernels) ~dst a =
-  let module K = (val k) in
-  K.apply1 Nx_kernel.Prog.Cast ~dst a
+let copy (k : kernels) ~dst a = Support.map1 k Nx_kernel.Prog.Copy ~dst a
+let cast (k : kernels) ~dst a = Support.map1 k Nx_kernel.Prog.Cast ~dst a
 
 let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = )
 
@@ -51,7 +46,7 @@ let run_op (b : Support.backend) op dt a =
   let module K = (val b.kernels) in
   let a = on b a in
   let dst = A.create b.device dt (L.shape (A.layout a)) in
-  match K.apply1 op ~dst a with
+  match Support.map1 (module K) op ~dst a with
   | A.Done -> Some (host dst)
   | A.Declined ->
       check_declined b (K1 op) (D.Any (A.dtype a));
@@ -702,25 +697,25 @@ let unaries =
       (Trunc, "trunc");
     ]
 
-(* Every kind of one operand, to every kernel's [apply1]. *)
+(* Every kind of one operand. *)
 let op1s =
   Nx_kernel.Prog.[ Copy; Cast; Bitcast ]
   @ List.map (fun (u, _) -> Nx_kernel.Prog.Unary u) unaries
 
 (* A kernel that declines writes nothing: [dst] keeps its drawn bytes. *)
-let law_declined_apply1 (b : Support.backend) (Case a, D.Any d) =
+let law_declined_map1 (b : Support.backend) (Case a, D.Any d) =
   let module K = (val b.kernels) in
   let a = on b a and dst = on b (seeded d (L.shape (A.layout a)) 99) in
   List.iter
     (fun op ->
       let before = bits_of (host dst) in
-      match K.apply1 op ~dst a with
+      match Support.map1 (module K) op ~dst a with
       | A.Declined ->
           cover "declined" true;
           check_declined b (K1 op) (D.Any (A.dtype a));
           equal (array int) before (bits_of (host dst))
       | _ -> cover "computed" true)
-    op1s
+    (List.filter (fun op -> Nx_kernel.Prog.accepts1 op (A.dtype a) d) op1s)
 
 let test_declined_contract (b : Support.backend) () =
   let module K = (val b.kernels) in
@@ -747,16 +742,25 @@ let refuses r dst call =
   equal (array int) before (bits_of dst)
 
 let test_refusals k () =
+  let module K = (val k : Nx_kernel.S) in
   let f32 = D.Float32 in
+  (* A program's copy of a float32, over a load or into a destination of
+     another dtype. *)
+  let copy_f32 ~dst x =
+    let f = D.Any f32 in
+    K.map
+      (Nx_kernel.Prog.of_node ~ins:[| f |] (Op1 (Copy, f, 0)))
+      ~dsts:[| A.Any dst |] [| Nx_kernel.Plain x |]
+  in
   let x = A.of_array f32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let i32 = A.of_array D.Int32 [| 2; 3 |] (Array.make 6 7l) in
   let t = Option.get (A.move (M.Permute [| 1; 0 |]) x) in
   let d = A.of_array f32 [| 2; 3 |] (Array.make 6 9.) in
-  refuses A.Wrong_dtype d (fun () -> copy k ~dst:d i32);
+  refuses A.Wrong_dtype d (fun () -> copy_f32 ~dst:d i32);
   refuses A.Shape_mismatch d (fun () -> copy k ~dst:d t);
   refuses A.Shape_mismatch d (fun () -> cast k ~dst:d t);
   let d = A.of_array D.Int32 [| 2; 3 |] (Array.make 6 9l) in
-  refuses A.Wrong_dtype d (fun () -> copy k ~dst:d x);
+  refuses A.Wrong_dtype d (fun () -> copy_f32 ~dst:d x);
   (* Into bytes the source reads, and into a broadcast. *)
   let flat = A.of_array f32 [| 6 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let part start =
@@ -945,7 +949,8 @@ let large_bfloat16_pair =
 
 (* The answer of [run] into a seeded destination of [dt] and [shape], checked:
    [Done] with the bytes [want ()], a decline only of a case [b] does not
-   claim, and nothing written but on [Done]. *)
+   claim, and nothing written but on [Done]. A kind outside its domain makes
+   no program, or one whose result is not of [dt]. *)
 let answers (b : Support.backend) kind (D.Any at) (D.Any dt) shape ~accepted
     ~want (into : 'v 's. ('v, 's) A.t -> A.answer) =
   let dst = on b (seeded dt shape 99) in
@@ -960,13 +965,15 @@ let answers (b : Support.backend) kind (D.Any at) (D.Any dt) shape ~accepted
       check_declined b kind (D.Any at);
       equal ~msg:"declined writes nothing" (array int) before
         (bits_of (host dst))
+  | exception Invalid_argument _ when not accepted ->
+      cover "outside its domain" true
   | A.Wrong_dtype when not accepted ->
       cover "outside its domain" true;
       equal ~msg:"refused writes nothing" (array int) before
         (bits_of (host dst))
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
-let law_apply1 ?(kinds = unaries) (b : Support.backend) (Case x) =
+let law_map1 ?(kinds = unaries) (b : Support.backend) (Case x) =
   let module K = (val b.kernels) in
   let dt = A.dtype x and shape = L.shape (A.layout x) in
   let x' = on b x in
@@ -976,7 +983,7 @@ let law_apply1 ?(kinds = unaries) (b : Support.backend) (Case x) =
       answers b (K1 k) (D.Any dt) (D.Any dt) shape
         ~accepted:(P.accepts1 k dt dt)
         ~want:(fun () -> expected name dt ~compare:false [| x |])
-        (fun dst -> K.apply1 k ~dst x'))
+        (fun dst -> Support.map1 (module K) k ~dst x'))
     kinds
 
 (* A bitcast keeps every element's bits, sub-byte codes and NaN payloads
@@ -990,7 +997,7 @@ let law_bitcast (b : Support.backend) (Case x, D.Any d) =
     (L.shape (A.layout x))
     ~accepted:(P.accepts1 Bitcast dt d)
     ~want:(fun () -> bits_of (host x))
-    (fun dst -> K.apply1 Bitcast ~dst x)
+    (fun dst -> Support.map1 (module K) Bitcast ~dst x)
 
 (* A case and a dtype of its width, or any dtype one time in five. *)
 let same_width c =
@@ -1003,7 +1010,7 @@ let same_width c =
   in
   (c, d)
 
-let law_apply2 ?(kinds = op2s) (b : Support.backend) (Pair (x, y)) =
+let law_map2 ?(kinds = op2s) (b : Support.backend) (Pair (x, y)) =
   let module K = (val b.kernels) in
   let dt = A.dtype x and shape = L.shape (A.layout x) in
   let x' = on b x and y' = on b y in
@@ -1013,7 +1020,7 @@ let law_apply2 ?(kinds = op2s) (b : Support.backend) (Pair (x, y)) =
       let rd = if compare then D.Any D.Bool else D.Any dt in
       answers b (K2 k) (D.Any dt) rd shape ~accepted:(P.accepts2 k dt)
         ~want:(fun () -> expected (name2 k) dt ~compare [| x; y |])
-        (fun dst -> K.apply2 k ~dst x' y'))
+        (fun dst -> Support.map2 (module K) k ~dst x' y'))
     kinds
 
 (* Idiv and Mod by a divisor repeated along the rows, each power of two the
@@ -1028,14 +1035,14 @@ let law_power_of_two_divisors (b : Support.backend) seed =
     for k = 0 to D.bits dt - if signed then 2 else 1 do
       let one = A.create Rig.host dt [| 1 |] in
       let p = A.of_array D.Float64 [| 1 |] [| Float.ldexp 1. k |] in
-      ignore (Nx_cpu.apply1 Cast ~dst:one p);
+      ignore (Support.map1 (module Nx_cpu) Cast ~dst:one p);
       let y = A.v dt (L.v ~strides:[| 0 |] [| n |]) (A.buffer one) in
       let x' = on b x and y' = on b y in
       List.iter
         (fun kind ->
           answers b (K2 kind) (D.Any dt) (D.Any dt) [| n |] ~accepted:true
             ~want:(fun () -> expected (name2 kind) dt ~compare:false [| x; y |])
-            (fun dst -> K.apply2 kind ~dst x' y'))
+            (fun dst -> Support.map2 (module K) kind ~dst x' y'))
         P.[ Binary Idiv; Binary Mod ]
     done
   in
@@ -1065,10 +1072,10 @@ let law_threefry_rows (b : Support.backend) (n, repeated, seed) =
   let x' = on b x and y' = on b y in
   answers b (K2 (Binary Threefry)) (D.Any dt) (D.Any dt) [| n |] ~accepted:true
     ~want:(fun () -> expected "threefry" dt ~compare:false [| x; y |])
-    (fun dst -> K.apply2 (Binary Threefry) ~dst x' y')
+    (fun dst -> Support.map2 (module K) (Binary Threefry) ~dst x' y')
 
 (* Where picks each element's bytes; Fma is nx_kinds.h's. *)
-let law_apply3 (b : Support.backend) (Pair (x, y), seed) =
+let law_map3 (b : Support.backend) (Pair (x, y), seed) =
   let module K = (val b.kernels) in
   let dt = A.dtype x and shape = L.shape (A.layout x) in
   let x = on b x and y = on b y in
@@ -1084,7 +1091,7 @@ let law_apply3 (b : Support.backend) (Pair (x, y), seed) =
           (List.mapi
              (fun i c -> Array.sub (if c then xs else ys) (i * w) w)
              (Array.to_list cs)))
-      (fun dst -> K.apply3 Where ~dst:(A.expect dt (A.Any dst)) c x y)
+      (fun dst -> Support.map3 (module K) Where ~dst:(A.expect dt (A.Any dst)) c x y)
   in
   if seed mod 2 = 0 then where (seeded D.Bool shape seed)
   else where (seeded D.Bit shape seed);
@@ -1092,58 +1099,62 @@ let law_apply3 (b : Support.backend) (Pair (x, y), seed) =
   answers b (K3 Fma) (D.Any dt) (D.Any dt) shape
     ~accepted:(P.accepts3 Fma dt dt)
     ~want:(fun () -> expected "fma" dt ~compare:false [| host x; host y; host z |])
-    (fun dst -> K.apply3 Fma ~dst:(A.expect dt (A.Any dst)) x y z)
+    (fun dst -> Support.map3 (module K) Fma ~dst:(A.expect dt (A.Any dst)) x y z)
 
-let law_apply0 (b : Support.backend) (D.Any dt, shape, seed) =
+let law_map0 (b : Support.backend) (D.Any dt, shape, seed) =
   let module K = (val b.kernels) in
   let w = max 1 (D.bits dt / 8) in
   let n = Array.fold_left ( * ) 1 shape in
   let e = bits_of (seeded dt [| 1 |] seed) in
   let fill = String.init (Array.length e) (fun i -> Char.chr e.(i)) in
-  answers b (K0 (Fill fill)) (D.Any dt) (D.Any dt) shape
-    ~accepted:(P.accepts0 (Fill fill) dt)
+  answers b (K0 (Fill fill)) (D.Any dt) (D.Any dt) shape ~accepted:true
     ~want:(fun () -> Array.concat (List.init n (fun _ -> Array.sub e 0 w)))
-    (fun dst -> K.apply0 (Fill fill) ~dst);
+    (fun dst -> Support.map0 (module K) (Fill fill) ~dst);
   if Array.length shape > 0 then begin
     let axis = seed mod Array.length shape in
-    (* Each index along [axis] stored as a cast from int64 stores it. *)
-    answers b (K0 (Iota axis)) (D.Any dt) (D.Any dt) shape
-      ~accepted:(P.accepts0 (Iota axis) dt)
-      ~want:(fun () ->
-        let i = List.map (fun idx -> Int64.of_int idx.(axis)) (indices shape) in
-        bits_of (reference (A.of_array D.Int64 shape (Array.of_list i)) dt))
-      (fun dst -> K.apply0 (Iota axis) ~dst)
+    (* Each index along [axis], an int64; a destination of another dtype is
+       not the program's. *)
+    let iota (D.Any d) =
+      answers b (K0 (Iota axis)) (D.Any d) (D.Any d) shape
+        ~accepted:(D.equal d D.Int64)
+        ~want:(fun () ->
+          let i = List.map (fun idx -> Int64.of_int idx.(axis)) (indices shape) in
+          bits_of (A.of_array D.Int64 shape (Array.of_list i)))
+        (fun dst -> Support.map0 (module K) (Iota axis) ~dst)
+    in
+    iota (D.Any D.Int64);
+    if not (D.equal dt D.Int64) then iota (D.Any dt)
   end
 
 (* Fill, and Iota along each axis, into a C-contiguous destination at an
    offset into a larger buffer, mid-byte for a sub-byte dtype, store what
    they store into a fresh array and leave the elements around it; a
    library that declines one there declines it inside too, writing
-   nothing. *)
-let law_apply0_inside (b : Support.backend) (D.Any dt, s, (lead, trail), seed)
+   nothing. Iota's destination is an int64. *)
+let law_map0_inside (b : Support.backend) (D.Any dt, s, (lead, trail), seed)
     =
   let module K = (val b.kernels) in
   let n = Array.fold_left ( * ) 1 s in
   let strides = L.strides (L.contiguous s) in
-  let w = max 1 (D.bits dt / 8) in
   cover "sub-byte, mid-byte" (D.bits dt < 8 && lead mod (8 / D.bits dt) <> 0);
   if Rig.equal b.device Rig.host then
     cover "on the job's threads" (n >= 1_000_000);
-  let inside k =
+  let inside (type v s) (dt : (v, s) D.t) k =
+    let w = max 1 (D.bits dt / 8) in
     let whole = on b (seeded dt [| lead + n + trail |] seed) in
     let dst = A.v dt (L.v ~offset:lead ~strides s) (A.buffer whole) in
     let fresh = A.create b.device dt s in
     let before = bits_of (host whole) in
-    match K.apply0 k ~dst:fresh with
+    match Support.map0 (module K) k ~dst:fresh with
     | A.Declined ->
         check_declined b (K0 k) (D.Any dt);
-        equal ~msg:"inside" answer A.Declined (K.apply0 k ~dst);
+        equal ~msg:"inside" answer A.Declined (Support.map0 (module K) k ~dst);
         equal ~msg:"declined writes nothing" (array int) before
           (bits_of (host whole))
     | r ->
         equal ~msg:"fresh" answer A.Done r;
         let e = bits_of (host fresh) in
-        equal ~msg:"inside" answer A.Done (K.apply0 k ~dst);
+        equal ~msg:"inside" answer A.Done (Support.map0 (module K) k ~dst);
         let want =
           Array.mapi
             (fun i x ->
@@ -1154,11 +1165,10 @@ let law_apply0_inside (b : Support.backend) (D.Any dt, s, (lead, trail), seed)
         equal (array int) want (bits_of (host whole))
   in
   let e = bits_of (seeded dt [| 1 |] (seed + 1)) in
-  inside (P.Fill (String.init (Array.length e) (fun i -> Char.chr e.(i))));
-  if P.accepts0 (Iota 0) dt then
-    for axis = 0 to Array.length s - 1 do
-      inside (P.Iota axis)
-    done
+  inside dt (Support.Fill (String.init (Array.length e) (fun i -> Char.chr e.(i))));
+  for axis = 0 to Array.length s - 1 do
+    inside D.Int64 (Support.Iota axis)
+  done
 
 let fill_insides =
   Gen.with_pp
@@ -1210,16 +1220,16 @@ let law_nan_bits (D.Any dt, seed) =
           (fun (u, name) ->
             if not (P.accepts1 (Unary u) dt dt) then None
             else
-              Some (name, fun (module K : Nx_kernel.S) dst x -> K.apply1 (Unary u) ~dst x))
+              Some (name, fun (module K : Nx_kernel.S) dst x -> Support.map1 (module K) (Unary u) ~dst x))
           unaries
         @ List.filter_map
             (fun k ->
               match k with
               | P.Binary b when P.accepts2 k dt ->
-                  Some (name2 k, fun (module K : Nx_kernel.S) dst x -> K.apply2 (Binary b) ~dst x y)
+                  Some (name2 k, fun (module K : Nx_kernel.S) dst x -> Support.map2 (module K) (Binary b) ~dst x y)
               | _ -> None)
             op2s
-        @ [ ("fma", fun (module K : Nx_kernel.S) dst x -> K.apply3 Fma ~dst x y z) ]
+        @ [ ("fma", fun (module K : Nx_kernel.S) dst x -> Support.map3 (module K) Fma ~dst x y z) ]
       in
       List.iter
         (fun (name, run) ->
@@ -1242,67 +1252,85 @@ let law_nan_bits (D.Any dt, seed) =
   | _ -> ()
 
 (* Values the kinds' documentation states, through nx.cpu. *)
-let test_apply_values () =
+let test_kind_values () =
   let k = (module Nx_cpu : Nx_kernel.S) in
-  let module K = (val k) in
+  let map0 op ~dst = Support.map0 k op ~dst in
+  let map1 op ~dst x = Support.map1 k op ~dst x in
+  let map2 op ~dst x y = Support.map2 k op ~dst x y in
+  let map3 op ~dst c x y = Support.map3 k op ~dst c x y in
   let done_ ~msg a = equal ~msg answer A.Done a in
   let f32 xs = A.of_array D.Float32 [| Array.length xs |] xs in
   let d = A.create Rig.host D.Float32 [| 2 |] in
-  done_ ~msg:"add" (K.apply2 (Binary Add) ~dst:d (f32 [| 1.; 2. |]) (f32 [| 3.; 0.5 |]));
+  done_ ~msg:"add" (map2 (Binary Add) ~dst:d (f32 [| 1.; 2. |]) (f32 [| 3.; 0.5 |]));
   equal ~msg:"add" (array float_exact) [| 4.; 2.5 |] (A.to_array d);
   let i8 xs = A.of_array D.Int8 [| Array.length xs |] xs in
   let d = A.create Rig.host D.Int8 [| 3 |] in
   done_ ~msg:"idiv"
-    (K.apply2 (Binary Idiv) ~dst:d (i8 [| -128; 7; 5 |]) (i8 [| -1; 0; -2 |]));
+    (map2 (Binary Idiv) ~dst:d (i8 [| -128; 7; 5 |]) (i8 [| -1; 0; -2 |]));
   equal ~msg:"idiv: the least value by -1, by zero, toward zero" (array int)
     [| -128; 0; -2 |] (A.to_array d);
   let u8 xs = A.of_array D.Uint8 [| Array.length xs |] xs in
   let b = A.create Rig.host D.Bool [| 2 |] in
-  done_ ~msg:"less" (K.apply2 (Compare Less) ~dst:b (u8 [| 200; 1 |]) (u8 [| 100; 2 |]));
+  done_ ~msg:"less" (map2 (Compare Less) ~dst:b (u8 [| 200; 1 |]) (u8 [| 100; 2 |]));
   equal ~msg:"less: unsigned order" (array bool) [| false; true |] (A.to_array b);
   let b2 = A.create Rig.host D.Bool [| 1 |] in
   done_ ~msg:"less"
-    (K.apply2 (Compare Less) ~dst:b2 (f32 [| -0. |]) (f32 [| 0. |]));
+    (map2 (Compare Less) ~dst:b2 (f32 [| -0. |]) (f32 [| 0. |]));
   equal ~msg:"less: -0 equals +0" (array bool) [| false |] (A.to_array b2);
   let m = A.create Rig.host D.Float32 [| 1 |] in
   done_ ~msg:"maximum"
-    (K.apply2 (Binary Maximum) ~dst:m (f32 [| -0. |]) (f32 [| 0. |]));
+    (map2 (Binary Maximum) ~dst:m (f32 [| -0. |]) (f32 [| 0. |]));
   equal ~msg:"maximum: -0 orders below +0" bool false
     (Float.sign_bit (A.get m [| 0 |]));
   let d = A.create Rig.host D.Float32 [| 2 |] in
-  done_ ~msg:"where" (K.apply3 Where ~dst:d b (f32 [| 1.; 2. |]) (f32 [| 3.; 4. |]));
+  done_ ~msg:"where" (map3 Where ~dst:d b (f32 [| 1.; 2. |]) (f32 [| 3.; 4. |]));
   equal ~msg:"where" (array float_exact) [| 3.; 2. |] (A.to_array d);
-  let d = A.create Rig.host D.Int32 [| 2; 3 |] in
-  done_ ~msg:"iota" (K.apply0 (Iota 1) ~dst:d);
-  equal ~msg:"iota along axis 1" (array int32) [| 0l; 1l; 2l; 0l; 1l; 2l |]
+  let d = A.create Rig.host D.Int64 [| 2; 3 |] in
+  done_ ~msg:"iota" (map0 (Iota 1) ~dst:d);
+  equal ~msg:"iota along axis 1" (array int64) [| 0L; 1L; 2L; 0L; 1L; 2L |]
     (A.to_array d);
+  equal ~msg:"an iota is an int64" answer A.Wrong_dtype
+    (map0 (Iota 0) ~dst:(A.create Rig.host D.Int32 [| 2 |]));
   (* Large enough for a job of several units, each starting inside a run. *)
-  let big = A.create Rig.host D.Int32 [| 3; 70001 |] in
+  let big = A.create Rig.host D.Int64 [| 3; 70001 |] in
   List.iter
     (fun axis ->
-      done_ ~msg:"iota" (K.apply0 (Iota axis) ~dst:big);
+      done_ ~msg:"iota" (map0 (Iota axis) ~dst:big);
       let want =
         Array.init (3 * 70001) (fun p ->
-            Int32.of_int (if axis = 0 then p / 70001 else p mod 70001))
+            Int64.of_int (if axis = 0 then p / 70001 else p mod 70001))
       in
-      equal ~msg:(strf "iota along axis %d of 3x70001" axis) (array int32) want
+      equal ~msg:(strf "iota along axis %d of 3x70001" axis) (array int64) want
         (A.to_array big))
     [ 0; 1 ];
-  done_ ~msg:"fill" (K.apply0 (Fill (P.bits D.Int32 7l)) ~dst:d);
+  let d = A.create Rig.host D.Int32 [| 2; 3 |] in
+  done_ ~msg:"fill" (map0 (Fill (P.bits D.Int32 7l)) ~dst:d);
   equal ~msg:"fill" (array int32) (Array.make 6 7l) (A.to_array d);
+  (* A signalling NaN with a payload, stored as its bits. *)
+  let nan = Bytes.create 4 in
+  Bytes.set_int32_le nan 0 0x7f800021l;
+  let d = A.create Rig.host D.Float32 [| 3 |] in
+  done_ ~msg:"fill" (map0 (Fill (Bytes.to_string nan)) ~dst:d);
+  equal ~msg:"fill: a NaN's bits" (array int32) (Array.make 3 0x7f800021l)
+    (A.to_array (Option.get (A.bitcast D.Int32 d)));
+  (* A boolean byte of 2, true, stored as it is. *)
+  let d = A.create Rig.host D.Bool [| 3 |] in
+  done_ ~msg:"fill" (map0 (Fill "\002") ~dst:d);
+  equal ~msg:"fill: a boolean's byte" (array int) [| 2; 2; 2 |]
+    (A.to_array (Option.get (A.bitcast D.Uint8 d)));
   let i4 xs = A.of_array D.Int4 [| Array.length xs |] xs in
   let d = A.create Rig.host D.Int4 [| 2 |] in
-  done_ ~msg:"add" (K.apply2 (Binary Add) ~dst:d (i4 [| 7; -8 |]) (i4 [| 1; -1 |]));
+  done_ ~msg:"add" (map2 (Binary Add) ~dst:d (i4 [| 7; -8 |]) (i4 [| 1; -1 |]));
   equal ~msg:"add: int4 wraps" (array int) [| -8; 7 |] (A.to_array d);
   let bf16 xs = A.of_array D.Bfloat16 [| Array.length xs |] xs in
   let d = A.create Rig.host D.Bfloat16 [| 1 |] in
   done_ ~msg:"add"
-    (K.apply2 (Binary Add) ~dst:d (bf16 [| 256. |]) (bf16 [| 1. |]));
+    (map2 (Binary Add) ~dst:d (bf16 [| 256. |]) (bf16 [| 1. |]));
   equal ~msg:"add: bfloat16 rounds once, ties to even" (array float_exact)
     [| 256. |] (A.to_array d);
   let unary ~msg u xs want =
     let d = A.create Rig.host D.Float32 [| Array.length xs |] in
-    done_ ~msg (K.apply1 (Unary u) ~dst:d (f32 xs));
+    done_ ~msg (map1 (Unary u) ~dst:d (f32 xs));
     equal ~msg (array float_exact) want (A.to_array d)
   in
   unary ~msg:"round: half away from zero" Round [| 2.5; -2.5; 0.49999997 |]
@@ -1312,24 +1340,34 @@ let test_apply_values () =
   unary ~msg:"log2: exact at powers of two" Log2 [| 8.; 0.5; 0x1p-149 |]
     [| 3.; -1.; -149. |];
   let d = A.create Rig.host D.Float32 [| 1 |] in
-  done_ ~msg:"sign" (K.apply1 (Unary Sign) ~dst:d (f32 [| Float.nan |]));
+  done_ ~msg:"sign" (map1 (Unary Sign) ~dst:d (f32 [| Float.nan |]));
   equal ~msg:"sign: NaN for a NaN" bool true (Float.is_nan (A.get d [| 0 |]));
   let d = A.create Rig.host D.Int8 [| 4 |] in
-  done_ ~msg:"recip" (K.apply1 (Unary Recip) ~dst:d (i8 [| 1; -1; 2; 0 |]));
+  done_ ~msg:"recip" (map1 (Unary Recip) ~dst:d (i8 [| 1; -1; 2; 0 |]));
   equal ~msg:"recip: x for 1 and -1, 0 otherwise" (array int) [| 1; -1; 0; 0 |]
     (A.to_array d);
   let d = A.create Rig.host D.Uint32 [| 1 |] in
-  done_ ~msg:"bitcast" (K.apply1 Bitcast ~dst:d (f32 [| 1. |]));
+  done_ ~msg:"bitcast" (map1 Bitcast ~dst:d (f32 [| 1. |]));
   equal ~msg:"bitcast: 1.0's bits" (array int32) [| 0x3f800000l |]
     (A.to_array d);
-  equal ~msg:"bitcast across widths is refused" answer A.Wrong_dtype
-    (K.apply1 Bitcast ~dst:(A.create Rig.host D.Float64 [| 1 |]) (f32 [| 1. |]));
-  equal ~msg:"exp on int32 is refused" answer A.Wrong_dtype
-    (K.apply1 (Unary Exp) ~dst:(A.create Rig.host D.Int32 [| 1 |])
-       (A.of_array D.Int32 [| 1 |] [| 1l |]));
-  equal ~msg:"idiv on float32 is refused" answer A.Wrong_dtype
-    (K.apply2 (Binary Idiv) ~dst:(A.create Rig.host D.Float32 [| 2 |])
-       (f32 [| 1.; 2. |]) (f32 [| 1.; 2. |]))
+  (* A kind off its domain makes no program. *)
+  raises_match ~msg:"bitcast across widths" Exn.invalid_arg (fun () ->
+      map1 Bitcast ~dst:(A.create Rig.host D.Float64 [| 1 |]) (f32 [| 1. |]));
+  raises_match ~msg:"exp on int32" Exn.invalid_arg (fun () ->
+      map1 (Unary Exp)
+        ~dst:(A.create Rig.host D.Int32 [| 1 |])
+        (A.of_array D.Int32 [| 1 |] [| 1l |]));
+  raises_match ~msg:"idiv on float32" Exn.invalid_arg (fun () ->
+      map2 (Binary Idiv)
+        ~dst:(A.create Rig.host D.Float32 [| 2 |])
+        (f32 [| 1.; 2. |]) (f32 [| 1.; 2. |]));
+  let module K = (val k) in
+  let f32' = D.Any D.Float32 in
+  equal ~msg:"a destination of another dtype is refused" answer A.Wrong_dtype
+    (K.map
+       (P.of_node ~ins:[| f32' |] (Op1 (Unary Neg, f32', 0)))
+       ~dsts:[| A.Any (A.create Rig.host D.Float64 [| 1 |]) |]
+       [| Plain (f32 [| 1. |]) |])
 
 (* A map the kernels decline writes nothing. *)
 let test_declined_map (b : Support.backend) () =
@@ -1589,27 +1627,27 @@ let split (b : Support.backend) (p : P.t) (types : D.any array) shape
       | In k -> ops.(k)
       | Coord a ->
           let dst = A.create b.device D.Int64 shape in
-          run (K.apply0 (Iota a) ~dst);
+          run (Support.map0 (module K) (Iota a) ~dst);
           A.Any dst
       | Const (_, bits) ->
           let (A.Any dst) = fresh i in
-          run (K.apply0 (Fill bits) ~dst);
+          run (Support.map0 (module K) (Fill bits) ~dst);
           A.Any dst
       | Op1 (k, _, j) ->
           let (A.Any dst) = fresh i in
           let (A.Any x) = values.(j) in
-          run (K.apply1 k ~dst x);
+          run (Support.map1 (module K) k ~dst x);
           A.Any dst
       | Op2 (k, j, l) ->
           let (A.Any dst) = fresh i in
           let (A.Any x) = values.(j) in
-          run (K.apply2 k ~dst x (A.expect (A.dtype x) values.(l)));
+          run (Support.map2 (module K) k ~dst x (A.expect (A.dtype x) values.(l)));
           A.Any dst
       | Op3 (k, c, j, l) ->
           let (A.Any c) = values.(c) in
           let (A.Any x) = values.(j) in
           let dst = A.expect (A.dtype x) (fresh i) in
-          run (K.apply3 k ~dst c x (A.expect (A.dtype x) values.(l)));
+          run (Support.map3 (module K) k ~dst c x (A.expect (A.dtype x) values.(l)));
           A.Any dst)
   done;
   values
@@ -1871,8 +1909,8 @@ let in_place ~msg (b : Support.backend) a k =
 
 let binaries = List.filter (function P.Binary _ -> true | _ -> false) op2s
 
-(* An operand of [apply1] to [apply3], or a [Plain] load of [map], may be the
-   destination itself: the kernels read each index before they write it. *)
+(* A [Plain] load of [map], of one node or more, may be the destination
+   itself: the kernels read each index before they write it. *)
 let law_in_place ?(ones = op1s) ?(kinds = binaries) (b : Support.backend)
     (Pair (x, y), seed) =
   let module K = (val b.kernels) in
@@ -1880,24 +1918,26 @@ let law_in_place ?(ones = op1s) ?(kinds = binaries) (b : Support.backend)
   let x = on b x and y = on b y in
   List.iter
     (fun op ->
-      in_place ~msg:"apply1 into its operand" b x (fun dst x ->
-          K.apply1 op ~dst x))
-    ones;
+      in_place ~msg:"one operand into itself" b x (fun dst x ->
+          Support.map1 (module K) op ~dst x))
+    (List.filter (fun op -> P.accepts1 op dt dt) ones);
+  let map2 k ~dst x y = Support.map2 (module K) k ~dst x y in
   List.iter
     (fun k ->
       let msg into = strf "%s into %s" (name2 k) into in
-      in_place ~msg:(msg "the first") b x (fun dst x -> K.apply2 k ~dst x y);
-      in_place ~msg:(msg "the second") b y (fun dst y -> K.apply2 k ~dst x y);
-      in_place ~msg:(msg "both") b x (fun dst x -> K.apply2 k ~dst x x))
-    kinds;
+      in_place ~msg:(msg "the first") b x (fun dst x -> map2 k ~dst x y);
+      in_place ~msg:(msg "the second") b y (fun dst y -> map2 k ~dst x y);
+      in_place ~msg:(msg "both") b x (fun dst x -> map2 k ~dst x x))
+    (List.filter (fun k -> P.accepts2 k dt) kinds);
   let c = on b (seeded D.Bool shape seed) in
   let z = on b (seeded dt shape (seed + 1)) in
   in_place ~msg:"where into the second" b x (fun dst x ->
-      K.apply3 Where ~dst c x y);
+      Support.map3 (module K) Where ~dst c x y);
   in_place ~msg:"where into the third" b y (fun dst y ->
-      K.apply3 Where ~dst c x y);
-  in_place ~msg:"fma into the addend" b z (fun dst z ->
-      K.apply3 Fma ~dst x y z);
+      Support.map3 (module K) Where ~dst c x y);
+  if P.accepts3 Fma dt dt then
+    in_place ~msg:"fma into the addend" b z (fun dst z ->
+        Support.map3 (module K) Fma ~dst x y z);
   if P.accepts2 (Binary Add) dt then begin
     let p =
       P.v ~ins:[| D.Any dt; D.Any dt |]
@@ -1972,7 +2012,7 @@ let test_real_transforms (b : Support.backend) () =
 
 (* What an elementwise kernel computes, with its result's dtype. *)
 type elementwise =
-  | K0 of P.op0
+  | K0 of Support.op0
   | K1 of P.op1 * D.any
   | K2 of P.op2
   | K3 of P.op3
@@ -2052,7 +2092,8 @@ let guard_case =
      let* axis = int_range 0 (Array.length shape - 1) in
      let rs = Random.State.make [| fill |] in
      let accepts = function
-       | K0 k -> P.accepts0 k dt
+       | K0 (Fill _) -> true
+       | K0 (Iota _) -> D.equal dt D.Int64
        | K1 (k, D.Any y) -> P.accepts1 k dt y
        | K2 k -> P.accepts2 k dt
        | K3 Where ->
@@ -2145,17 +2186,17 @@ let law_guards (b : Support.backend) (g, side) =
   let call xs ds =
     let (A.Any dst) = ds.(0) in
     match g.kind with
-    | K0 k -> K.apply0 k ~dst
+    | K0 k -> Support.map0 (module K) k ~dst
     | K1 (k, _) ->
         let (A.Any x) = xs.(0) in
-        K.apply1 k ~dst x
+        Support.map1 (module K) k ~dst x
     | K2 k ->
         let (A.Any x) = xs.(0) in
-        K.apply2 k ~dst x (A.expect (A.dtype x) xs.(1))
+        Support.map2 (module K) k ~dst x (A.expect (A.dtype x) xs.(1))
     | K3 k ->
         let (A.Any c) = xs.(0) in
         let (A.Any x) = xs.(1) in
-        K.apply3 k ~dst:(A.expect (A.dtype x) ds.(0)) c x
+        Support.map3 (module K) k ~dst:(A.expect (A.dtype x) ds.(0)) c x
           (A.expect (A.dtype x) xs.(2))
   in
   match
@@ -2175,7 +2216,7 @@ let law_large_guards (b : Support.backend) ((Case a as c), d, side) =
       let call xs ds =
         let (A.Any x) = xs.(0) in
         let (A.Any dst) = ds.(0) in
-        K.apply1 k ~dst x
+        Support.map1 (module K) k ~dst x
       in
       equal answer A.Done
         (Elements.same_guarded side ~call [| A.Any a |]
@@ -2254,16 +2295,16 @@ let laws (b : Support.backend) =
       test "a cast past the caches is the reference"
         (unit (test_past_the_caches b));
       prop "a declined kind of one operand writes nothing" (pair case)
-        (run (law_declined_apply1 b));
+        (run (law_declined_map1 b));
       test "a declined contraction writes nothing"
         (unit (test_declined_contract b));
       prop "kinds of one operand are nx_kinds.h's at each index" case
         (run (fun c ->
              covers c;
-             law_apply1 b c));
+             law_map1 b c));
       prop ~count:8 "kinds of one operand over large views" large
         (run
-           (law_apply1
+           (law_map1
               ~kinds:P.[ (Exp, "exp"); (Sin, "sin"); (Neg, "neg") ]
               b));
       prop "bitcast keeps every element's bits" (same_width case)
@@ -2289,10 +2330,10 @@ let laws (b : Support.backend) =
              cover "operands of one run in their own dtype" one_run;
              cover "operands of one run, of one element"
                (one_run && L.numel lx = 1);
-             law_apply2 b p));
+             law_map2 b p));
       prop ~count:8 ~examples:[ large_bfloat16_pair ]
         "kinds of two operands over large views" large_pairs
-        (run (law_apply2 ~kinds:P.[ Binary Add; Compare Less ] b));
+        (run (law_map2 ~kinds:P.[ Binary Add; Compare Less ] b));
       prop ~count:4 "idiv and mod by a repeated power of two are nx_kinds.h's"
         Gen.nat
         (run (law_power_of_two_divisors b));
@@ -2301,15 +2342,15 @@ let laws (b : Support.backend) =
         (run (law_threefry_rows b));
       prop "where picks bytes and fma is nx_kinds.h's"
         (Gen.pair pairs Gen.nat)
-        (run (law_apply3 b));
+        (run (law_map3 b));
       prop "fill stores its element and iota each index"
         (Gen.triple dtypes shape Gen.nat)
-        (run (law_apply0 b));
+        (run (law_map0 b));
       prop
         ~examples:(if Rig.equal b.device Rig.host then large_fills else [])
         "fill and iota store inside a buffer and nothing around it"
         fill_insides
-        (run (law_apply0_inside b));
+        (run (law_map0_inside b));
       test "a declined map writes nothing" (unit (test_declined_map b));
       test "a map reads a load identical to a destination before writing it"
         (unit (test_map_identical_view b));
@@ -2356,9 +2397,9 @@ let law_erf_ranges (near, seed) =
   let want = Array.map (fun v -> Int64.bits_of_float (Nx_kinds_support.f64 "erf" [| v |])) xs in
   let x = A.of_array D.Float64 [| n |] xs in
   let fresh = A.create Rig.host D.Float64 [| n |] in
-  equal answer A.Done (Nx_cpu.apply1 (Unary Erf) ~dst:fresh x);
+  equal answer A.Done (Support.map1 (module Nx_cpu) (Unary Erf) ~dst:fresh x);
   equal ~msg:"fresh" (array int64) want (Array.map Int64.bits_of_float (A.to_array fresh));
-  equal answer A.Done (Nx_cpu.apply1 (Unary Erf) ~dst:x x);
+  equal answer A.Done (Support.map1 (module Nx_cpu) (Unary Erf) ~dst:x x);
   equal ~msg:"in place" (array int64) want (Array.map Int64.bits_of_float (A.to_array x))
 
 (* A job begun from a job's body runs to its end and adds what it is given,
@@ -2494,7 +2535,7 @@ let law_map_held ?(small = false) (b : Support.backend)
                 | Some _ ->
                     let g = guard (A.dtype x) (L.contiguous shape) in
                     equal ~msg:"copy" answer A.Done
-                      (Nx_cpu.apply1 P.Copy ~dst:g x);
+                      (Support.map1 (module Nx_cpu) P.Copy ~dst:g x);
                     g
               in
               let dsts =
@@ -2640,7 +2681,7 @@ let cpu =
         law_nan_bits;
       test "refuses before any write"
         (test_refusals (module Nx_cpu : Nx_kernel.S));
-      test "kinds give the values their documentation states" test_apply_values;
+      test "kinds give the values their documentation states" test_kind_values;
       test "a job begun from a job's body runs to its end" test_nested_jobs;
       test "a map of constants alone fills its destination" test_constant_map;
       test "a map's coordinate past its rank is refused" test_coord_past_rank;

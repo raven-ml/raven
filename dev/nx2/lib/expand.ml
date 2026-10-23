@@ -9,32 +9,6 @@ module P = Nx_kernel.Prog
 module M = Nx_array.Move
 module E = P.E
 
-(* The node a one-node program computes from its operands in order, which a
-   kernel computes alone, if it is one: every node before its output reads
-   operand [i] at index [i]. *)
-let single (prog : P.t) =
-  let n = Iarray.length prog.nodes in
-  let ins_first =
-    let ok = ref true in
-    for i = 0 to n - 2 do
-      match Iarray.get prog.nodes i with
-      | P.In j when j = i -> ()
-      | _ -> ok := false
-    done;
-    !ok
-  in
-  if Iarray.length prog.outs <> 1 || Iarray.get prog.outs 0 <> n - 1
-     || not ins_first
-  then None
-  else
-    let m = n - 1 in
-    match Iarray.get prog.nodes m with
-    | (Const _ | Coord _) as nd -> Some nd
-    | Op1 (_, _, 0) as nd when m = 1 -> Some nd
-    | Op2 (_, 0, 1) as nd when m = 2 -> Some nd
-    | Op3 (_, 0, 1, 2) as nd when m = 3 -> Some nd
-    | _ -> None
-
 (* Node [i] of [prog] over [loads], as a one-node map of [shape] over [value j]
    for each node [j] it reads. *)
 (* [xs] as plain loads. *)
@@ -3439,7 +3413,8 @@ let run : type r.
     when Iarray.exists Prim.is_padded loads ->
       let loads = Iarray.map (unpadded apply ~by) loads in
       Some (apply ~by (Value.Map { layout; prog; outs; loads }))
-  | Value.Map { layout; prog; outs; loads } when Option.is_none (single prog) ->
+  | Value.Map { layout; prog; outs; loads }
+    when Option.is_none (P.single prog) ->
       let loads =
         Array.init (Iarray.length loads) (fun i ->
             Prim.load_any (Iarray.get loads i))

@@ -19,8 +19,7 @@ module Counting : sig
 
   val positions : unit -> int
   (** [positions ()] is the number of loop positions that the [map],
-      [reduce], [scan] and [apply0] to [apply3] calls since the last {!reset}
-      computed. *)
+      [reduce] and [scan] calls since the last {!reset} computed. *)
 
   val products : unit -> int
   (** [products ()] is the number of products that the [contract] calls
@@ -31,7 +30,8 @@ module Counting : sig
 end
 
 module Declining : Nx_kernel.S
-(** nx.cpu, declining [Add] and [Fill], named ["nx.test"]. *)
+(** nx.cpu, declining the one-node maps of [Add] and of a constant, named
+    ["nx.test"]. *)
 
 module Blocked : Nx_kernel.S
 (** nx.cpu with a contraction association of its own, as

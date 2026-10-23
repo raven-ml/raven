@@ -29,7 +29,7 @@ let total s = Array.fold_left ( * ) 1 s
 
 (* [x] cast into [d], by nx.cpu. *)
 let cast_into d (A.Any x) =
-  match Nx_cpu.apply1 Nx_kernel.Prog.Cast ~dst:d x with
+  match Support.map1 (module Nx_cpu) Cast ~dst:d x with
   | A.Done -> ()
   | r -> failf "a cast answered %a" Nx_array_support.pp_answer r
 

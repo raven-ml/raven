@@ -135,42 +135,45 @@ let alloc (type v s d) ~by ?into k (f : (v, s, d) Value.form) :
 
 (* Programs on one device *)
 
-(* [node]'s kernel into [dst], over [ops]. *)
-let apply_node (module K : Nx_kernel.S) node (A.Any dst) (ops : A.any array) =
-  match (node : P.node) with
-  | Const (_, bits) -> K.apply0 (Fill bits) ~dst
-  | Coord c -> K.apply0 (Iota c) ~dst
-  | Op1 (k, _, _) ->
-      let (A.Any x) = ops.(0) in
-      K.apply1 k ~dst x
-  | Op2 (k, _, _) ->
-      let (A.Any x) = ops.(0) in
-      K.apply2 k ~dst x (A.expect (A.dtype x) ops.(1))
-  | Op3 (k, _, _, _) ->
-      (* Where and Fma give their second and third operands' dtype. *)
-      let (A.Any c) = ops.(0) in
-      let dt = A.dtype dst in
-      K.apply3 k ~dst c (A.expect dt ops.(1)) (A.expect dt ops.(2))
-  | In _ -> Declined
-
-(* [prog] over [loads] into [dsts]: its kernel where it is one node over plain
-   loads, else the kernels' map. [false] where the kernels decline. *)
+(* [prog] over [loads] into [dsts], by the kernels' map. [false] where the
+   kernels decline. *)
 let map_on ~by (module K : Nx_kernel.S) (prog : P.t) loads dsts =
-  let plain = function
-    | Nx_kernel.Plain _ -> true
-    | Nx_kernel.Padded _ -> false
-  in
-  match Expand.single prog with
-  | Some node when Array.for_all plain loads ->
-      let ops = Array.map load_array loads in
-      ran ~by (apply_node (module K) node dsts.(0) ops) dsts ops
-  | Some _ | None -> ran_loads ~by (K.map prog ~dsts loads) dsts loads
+  ran_loads ~by (K.map prog ~dsts loads) dsts loads
+
+(* [K]'s map of the one node [k] over the plain operands that follow [dst];
+   [Wrong_dtype] where [k] does not take their dtypes, as no program does. *)
+let map1 (module K : Nx_kernel.S) k ~dst a =
+  let x = A.dtype a and y = A.dtype dst in
+  if not (P.accepts1 k x y) then A.Wrong_dtype
+  else
+    K.map
+      (P.of_node ~ins:[| D.Any x |] (Op1 (k, D.Any y, 0)))
+      ~dsts:[| A.Any dst |] [| Nx_kernel.Plain a |]
+
+let map2 (module K : Nx_kernel.S) k ~dst a b =
+  let x = D.Any (A.dtype a) in
+  if not (P.accepts2 k (A.dtype a)) then A.Wrong_dtype
+  else
+    K.map
+      (P.of_node ~ins:[| x; x |] (Op2 (k, 0, 1)))
+      ~dsts:[| A.Any dst |]
+      [| Nx_kernel.Plain a; Nx_kernel.Plain b |]
+
+let map3 (module K : Nx_kernel.S) k ~dst c a b =
+  let x = D.Any (A.dtype a) in
+  if not (P.accepts3 k (A.dtype c) (A.dtype a)) then A.Wrong_dtype
+  else
+    K.map
+      (P.of_node ~ins:[| D.Any (A.dtype c); x; x |] (Op3 (k, 0, 1, 2)))
+      ~dsts:[| A.Any dst |]
+      [| Nx_kernel.Plain c; Nx_kernel.Plain a; Nx_kernel.Plain b |]
 
 (* [a] stored afresh, C-contiguous, on its device. *)
 let copy_array ~by kernels a =
   let (module K : Nx_kernel.S) = kernels in
   let dst = A.create (A.device a) (A.dtype a) (L.shape (A.layout a)) in
-  if not (done_or_declined ~by (K.apply1 Copy ~dst a) [ A.Any dst; A.Any a ])
+  let copied = map1 kernels Copy ~dst a in
+  if not (done_or_declined ~by copied [ A.Any dst; A.Any a ])
   then
     declined ~by ~kernels:K.name
       (Op1 (Copy, D.Any (A.dtype a), 0))
@@ -610,7 +613,7 @@ let call : type r.
         (Array.map (fun (_, v) -> A.Any v) pieces)
   | Value.Copy x ->
       let dst = nth j r and x = one x in
-      ran ~by (K.apply1 Copy ~dst x) [| A.Any dst |] [| A.Any x |]
+      ran ~by (map1 (module K) Copy ~dst x) [| A.Any dst |] [| A.Any x |]
   | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       invalid_arg "Exec.call: an operation no kernel computes"
 
@@ -645,7 +648,7 @@ let refused : type r. by:string -> kernels:string -> Rig.t -> r Value.prim -> 'a
       let r, _ = Prim.reduction reduction in
       refuses ~by ~kernels ("Scan " ^ Prim.reduction_name r) d dts
   | Value.Map { prog; _ } -> (
-      match Expand.single prog with
+      match P.single prog with
       | Some node ->
           let out = P.dtype prog (Iarray.get prog.outs 0) in
           refuses ~by ~kernels (Prim.kind node) d (out :: dts)
@@ -1428,7 +1431,7 @@ let apply1 (type v s w r d) ~by k (dt : (w, r) D.t)
       | None -> run1 ~by k dt x
       | Some (module K) -> (
           let dst = destination dt a in
-          match K.apply1 k ~dst a with
+          match map1 (module K) k ~dst a with
           | Done -> Value.Array { at; a = dst; dead = Value.Live }
           | Declined ->
               refused_node ~by (module K)
@@ -1442,7 +1445,7 @@ let apply1 (type v s w r d) ~by k (dt : (w, r) D.t)
     ->
       let (module K) = kernels_at dx.at in
       donated ~by 0 dt x (Iarray.get dx.arrays 0) (fun dst a ->
-          match K.apply1 k ~dst a with
+          match map1 (module K) k ~dst a with
           | Done -> value_of dx.at dst
           | Declined ->
               refused_node ~by (module K)
@@ -1461,7 +1464,7 @@ let kernel2 (type v s w r d) ~by (module K : Nx_kernel.S) k
     (dt : (w, r) D.t) (at : d Devices.placement) (x : (v, s, d) Value.t)
     (y : (v, s, d) Value.t) (dst : (w, r) A.t) (a : (v, s) A.t)
     (b : (v, s) A.t) : (w, r, d) Value.t =
-  match K.apply2 k ~dst a b with
+  match map2 (module K) k ~dst a b with
   | Done -> value_of at dst
   | Declined ->
       refused_node ~by (module K) (Op2 (k, 0, 1))
@@ -1473,12 +1476,12 @@ let kernel2 (type v s w r d) ~by (module K : Nx_kernel.S) k
       recheck ~by 1 y;
       A.refused by refusal [ A.Any dst; A.Any a; A.Any b ]
 
-(* As [kernel2], for [apply3]. *)
+(* As [kernel2], for three operands. *)
 let kernel3 (type a b v s d) ~by (module K : Nx_kernel.S) k
     (at : d Devices.placement) (vc : (a, b, d) Value.t) (vx : (v, s, d) Value.t)
     (vy : (v, s, d) Value.t) (dst : (v, s) A.t) (c : (a, b) A.t)
     (x : (v, s) A.t) (y : (v, s) A.t) : (v, s, d) Value.t =
-  match K.apply3 k ~dst c x y with
+  match map3 (module K) k ~dst c x y with
   | Done -> value_of at dst
   | Declined ->
       refused_node ~by (module K) (Op3 (k, 0, 1, 2))
@@ -1516,7 +1519,7 @@ let rec apply2 : type v s w r d.
       | None -> run2 ~by k dt x y
       | Some (module K) -> (
           let dst = destination dt a in
-          match K.apply2 k ~dst a b with
+          match map2 (module K) k ~dst a b with
           | Done -> Value.Array { at; a = dst; dead = Value.Live }
           | Declined ->
               refused_node ~by (module K) (Op2 (k, 0, 1))
@@ -1581,7 +1584,7 @@ let rec apply3 : type a b v s d.
       | None -> run3 ~by k c x y
       | Some (module K) -> (
           let dst = destination (A.dtype a) a in
-          match K.apply3 k ~dst ca a b with
+          match map3 (module K) k ~dst ca a b with
           | Done -> Value.Array { at; a = dst; dead = Value.Live }
           | Declined ->
               refused_node ~by (module K) (Op3 (k, 0, 1, 2))

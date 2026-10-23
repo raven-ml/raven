@@ -19,9 +19,9 @@ module Count = (val Nx.devices ~kernels:(module C) [ m 0 ])
 module Count2 = (val Nx.devices ~kernels:(module C) [ m 0; m 1 ])
 module Dec = (val Nx.devices ~kernels:(module Nx_support.Declining) [ m 1 ])
 
-(* Counting nx.cpu, declining every copy, [Add], [Less], [Logsumexp] and
-   [Arg] reduction, sort and contraction, as a library may, and counting those
-   declines. *)
+(* Counting nx.cpu, declining the one-node maps of a copy, [Add] and [Less],
+   every [Logsumexp] and [Arg] reduction, sort and contraction, as a library
+   may, and counting those declines. *)
 module Refusing = struct
   include C
 
@@ -32,13 +32,11 @@ module Refusing = struct
     Atomic.incr declines;
     A.Declined
 
-  let apply1 (k : Nx_kernel.Prog.op1) ~dst x =
-    match k with Copy -> decline () | _ -> C.apply1 k ~dst x
-
-  let apply2 (k : Nx_kernel.Prog.op2) ~dst x y =
-    match k with
-    | Binary Add | Compare Less -> decline ()
-    | _ -> C.apply2 k ~dst x y
+  let map p ~dsts loads =
+    match Nx_kernel.Prog.single p with
+    | Some (Op1 (Copy, _, _) | Op2 ((Binary Add | Compare Less), _, _)) ->
+        decline ()
+    | Some _ | None -> C.map p ~dsts loads
 
   let reduce p ~shape ~axes rs ~dsts loads =
     let declined ((r : Nx_kernel.reduction), _) =
@@ -335,20 +333,6 @@ module Gated = struct
   let declined : Nx_kernel.Prog.node -> bool = function
     | Op2 ((Binary Add | Compare Less), _, _) -> true
     | _ -> false
-
-  let apply1 k ~dst x =
-    first ();
-    C.apply1 k ~dst x
-
-  let apply2 (k : Nx_kernel.Prog.op2) ~dst x y =
-    first ();
-    match k with
-    | Binary Add | Compare Less -> A.Declined
-    | _ -> C.apply2 k ~dst x y
-
-  let apply3 k ~dst c x y =
-    first ();
-    C.apply3 k ~dst c x y
 
   let contract ~order ~batch ~contracting ~segments ~acc ~dst ~init a b =
     first ();
@@ -1329,11 +1313,11 @@ let allocation =
         test_sub_byte_tail;
       test "an add of one-element host values allocates its budget" (fun () ->
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
-          at_most (float 0.5) ~than:42. (words (fun () -> Nx.add a a)));
+          at_most (float 0.5) ~than:78. (words (fun () -> Nx.add a a)));
       test "a copy of a one-element host value allocates its budget"
         (fun () ->
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
-          at_most (float 0.5) ~than:124. (words (fun () -> Nx.copy a)));
+          at_most (float 0.5) ~than:155. (words (fun () -> Nx.copy a)));
       test "a matmul of 4x4 float32 host values allocates its budget"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in

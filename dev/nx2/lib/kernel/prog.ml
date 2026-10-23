@@ -50,7 +50,6 @@ type binary =
   | Threefry
 
 type compare = Equal | Not_equal | Less | Less_equal
-type op0 = Fill of string | Iota of int
 type op1 = Copy | Unary of unary | Cast | Bitcast
 type op2 = Binary of binary | Compare of compare
 type op3 = Where | Fma
@@ -99,9 +98,6 @@ let binary_takes = function
   | Threefry -> 0
 
 let takes mask dt = mask land class_of dt <> 0
-
-let accepts0 k dt =
-  match k with Fill _ -> true | Iota _ -> takes real dt
 
 let accepts1 k x y =
   match k with
@@ -211,14 +207,15 @@ let takes n d0 d1 d2 =
 
 let strf = Printf.sprintf
 
-(* Whether [b] is the bits of an element of [dt]. *)
+(* Whether [b] is the bits of an element of [dt]: any bits of its width, a
+   sub-byte element's in the low bits of its byte. A boolean byte is
+   [true] iff it is not zero. *)
 let is_element (D.Any dt) b =
   String.length b = D.bytes dt 1
   &&
   match D.bits dt with
   | 1 -> Char.code b.[0] <= 1
   | 4 -> Char.code b.[0] < 16
-  | 8 when D.equal dt D.Bool -> Char.code b.[0] <= 1
   | _ -> true
 
 let refers i k = Some (strf "node %d refers to node %d" i k)
@@ -339,6 +336,26 @@ let is_identity p =
   && match Iarray.get p.nodes (Iarray.get p.outs 0) with
      | In _ -> true
      | Coord _ | Const _ | Op1 _ | Op2 _ | Op3 _ -> false
+
+(* Whether nodes [i] to [last - 1] of [p] are each [In] of its own index. *)
+let rec operands_first p i last =
+  i = last
+  || (match Iarray.get p.nodes i with In j -> j = i | _ -> false)
+     && operands_first p (i + 1) last
+
+let single p =
+  let m = Iarray.length p.nodes - 1 in
+  if Iarray.length p.ins <> m || Iarray.length p.outs <> 1
+     || Iarray.get p.outs 0 <> m
+     || not (operands_first p 0 m)
+  then None
+  else
+    match Iarray.get p.nodes m with
+    | (Const _ | Coord _) as n when m = 0 -> Some n
+    | Op1 (_, _, 0) as n when m = 1 -> Some n
+    | Op2 (_, 0, 1) as n when m = 2 -> Some n
+    | Op3 (_, 0, 1, 2) as n when m = 3 -> Some n
+    | In _ | Coord _ | Const _ | Op1 _ | Op2 _ | Op3 _ -> None
 
 (* Expressions *)
 

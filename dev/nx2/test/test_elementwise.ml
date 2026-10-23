@@ -14,6 +14,7 @@ module D = Nx_array.Dtype
 module L = Nx_array.Layout
 module M = Nx_array.Move
 module P = Nx_kernel.Prog
+module Support = Nx_kernels_support
 
 type host = Nx.host
 
@@ -100,25 +101,28 @@ let stretched s a =
   if L.shape (A.layout a) = s then a
   else Option.get (A.move (M.Broadcast (Iarray.of_array s)) a)
 
+(* nx.cpu, whose one-node maps are the references. *)
+let cpu = (module Nx_cpu : Nx_kernel.S)
+
 let reference1 k dt s a =
   let dst = A.create Rig.host dt s in
-  match Nx_cpu.apply1 k ~dst (stretched s a) with
+  match Support.map1 cpu k ~dst (stretched s a) with
   | A.Done -> Some (bits_of dst)
-  | _ -> None
+  | _ | (exception Invalid_argument _) -> None
 
 let reference2 k dt s a b =
   let dst = A.create Rig.host dt s in
-  match Nx_cpu.apply2 k ~dst (stretched s a) (stretched s b) with
+  match Support.map2 cpu k ~dst (stretched s a) (stretched s b) with
   | A.Done -> Some (bits_of dst)
-  | _ -> None
+  | _ | (exception Invalid_argument _) -> None
 
 let reference3 k s c a b =
   let dst = A.create Rig.host (A.dtype a) s in
   match
-    Nx_cpu.apply3 k ~dst (stretched s c) (stretched s a) (stretched s b)
+    Support.map3 cpu k ~dst (stretched s c) (stretched s a) (stretched s b)
   with
   | A.Done -> Some (bits_of dst)
-  | _ -> None
+  | _ | (exception Invalid_argument _) -> None
 
 let names name f =
   raises_match (Exn.invalid_arg ~substring:("Nx." ^ name ^ ": ")) f

@@ -192,13 +192,6 @@
     A routine fails as {!Nx_kernel.S} states, in the matrices that fail
     alone. Every other operation has no expansion. *)
 
-val single : Nx_kernel.Prog.t -> Nx_kernel.Prog.node option
-(** [single p] is [Some n] where [p] is the one node [n] over its operands in
-    order, which a kernel computes alone: [p]'s one output is its last node
-    [n], every node before it is [In i] at index [i], and [n] is a [Const], a
-    [Coord], or a kind of [m] operands reading nodes [0] to [m - 1] in order,
-    [m] nodes before it. [None] otherwise: a map of [p] expands. *)
-
 val quieted :
   ('q. by:string -> 'q Value.prim -> 'q) ->
   by:string ->

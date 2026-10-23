@@ -42,10 +42,8 @@ module Filling = struct
     List.iteri
       (fun k (A.Any d) ->
         let dt = A.dtype d in
-        ignore
-          (Nx_cpu.apply0
-             (Fill (P.bits dt (D.of_float dt (Float.of_int (k + 1)))))
-             ~dst:d))
+        let bits = P.bits dt (D.of_float dt (Float.of_int (k + 1))) in
+        ignore (Nx_kernels_support.map0 (module Nx_cpu) (Fill bits) ~dst:d))
       dsts;
     A.Done
 

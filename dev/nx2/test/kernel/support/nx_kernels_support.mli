@@ -5,9 +5,14 @@
 
 (** Kernel libraries as nx.kernel's suite runs them. *)
 
+(** The type for kinds of no operand. *)
+type op0 =
+  | Fill of string  (** A [Const] node of the result's dtype and these bits. *)
+  | Iota of int  (** A [Coord] node of this axis. *)
+
 (** The type for a kind of any arity. *)
 type kind =
-  | K0 of Nx_kernel.Prog.op0
+  | K0 of op0
   | K1 of Nx_kernel.Prog.op1
   | K2 of Nx_kernel.Prog.op2
   | K3 of Nx_kernel.Prog.op3
@@ -61,3 +66,44 @@ val guard : side -> ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t * (unit -> unit)
     [x]'s span: [x]'s elements, bit for bit, against the page, strided,
     reversed or broadcast as [x] is. With the function that frees it. [x] is
     on host memory. *)
+
+(** {1:single One-node maps}
+
+    A kind of the elementwise kernel, {!Nx_kernel.S.map} of the program
+    {!Nx_kernel.Prog.of_node} makes of its one node, each operand read
+    plain, into one destination. Each raises [Invalid_argument] where the
+    kind does not take the operands' dtypes and the result's, as
+    {!Nx_kernel.Prog.v} does. *)
+
+val map0 :
+  (module Nx_kernel.S) -> op0 -> dst:('v, 's) Nx_array.t -> Nx_array.answer
+(** [map0 k op ~dst] stores [op] at each index of [dst]. *)
+
+val map1 :
+  (module Nx_kernel.S) ->
+  Nx_kernel.Prog.op1 ->
+  dst:('v, 's) Nx_array.t ->
+  ('a, 'b) Nx_array.t ->
+  Nx_array.answer
+(** [map1 k op ~dst x] stores [op] of each element of [x] into [dst]. *)
+
+val map2 :
+  (module Nx_kernel.S) ->
+  Nx_kernel.Prog.op2 ->
+  dst:('v, 's) Nx_array.t ->
+  ('a, 'b) Nx_array.t ->
+  ('a, 'b) Nx_array.t ->
+  Nx_array.answer
+(** [map2 k op ~dst x y] stores [op] of each element of [x] and [y] into
+    [dst]. *)
+
+val map3 :
+  (module Nx_kernel.S) ->
+  Nx_kernel.Prog.op3 ->
+  dst:('v, 's) Nx_array.t ->
+  ('c, 'e) Nx_array.t ->
+  ('a, 'b) Nx_array.t ->
+  ('a, 'b) Nx_array.t ->
+  Nx_array.answer
+(** [map3 k op ~dst c x y] stores [op] of each element of [c], [x] and [y]
+    into [dst]. *)

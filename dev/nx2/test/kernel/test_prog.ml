@@ -174,15 +174,6 @@ let test_domains () =
   let dts = D.all in
   List.iter
     (fun (D.Any x as ax) ->
-      equal
-        ~msg:(strf "fill %s" (name ax))
-        bool true
-        (P.accepts0 (Fill "") x);
-      equal
-        ~msg:(strf "iota %s" (name ax))
-        bool
-        (List.mem (cls ax) reals)
-        (P.accepts0 (Iota 0) x);
       List.iter
         (fun k ->
           equal
@@ -517,6 +508,62 @@ let law_of_node (ins, n) =
   | Ok _, Error () -> fail "of_node refused what v builds"
   | Error (), Ok _ -> fail "of_node built what v refuses"
 
+(* Whether [n] reads [k] operands, each once, in order. *)
+let reads_in_order k (n : P.node) =
+  match n with
+  | Const _ | Coord _ -> k = 0
+  | Op1 (_, _, 0) -> k = 1
+  | Op2 (_, 0, 1) -> k = 2
+  | Op3 (_, 0, 1, 2) -> k = 3
+  | In _ | Op1 _ | Op2 _ | Op3 _ -> false
+
+let law_single_of_node (ins, n) =
+  match P.of_node ~ins:(Iarray.of_array ins) n with
+  | exception Invalid_argument _ -> ()
+  | p ->
+      let want = if reads_in_order (Array.length ins) n then Some n else None in
+      cover "one node" (Option.is_some want);
+      cover "not one node" (Option.is_none want);
+      equal (option node) want (P.single p)
+
+(* A program [single] recognises is the one [of_node] makes of its node. *)
+let law_single d =
+  let p = program d in
+  match P.single p with
+  | None -> ()
+  | Some n -> equal ~msg:"of_node" bool true (p = P.of_node ~ins:p.ins n)
+
+let test_single () =
+  let f32 = D.Any D.Float32 and b = D.Any D.Bool in
+  let one ins n = P.of_node ~ins:(Iarray.of_array ins) n in
+  let prog ins nodes outs =
+    P.v ~ins:(Iarray.of_array ins) (Iarray.of_array nodes)
+      ~outs:(Iarray.of_array outs)
+  in
+  let c = P.Const (f32, P.bits D.Float32 1.5) in
+  let is ~msg p n = equal ~msg (option node) (Some n) (P.single p) in
+  let none ~msg p = equal ~msg (option node) None (P.single p) in
+  is ~msg:"a constant" (one [||] c) c;
+  is ~msg:"a coordinate" (one [||] (Coord 1)) (Coord 1);
+  is ~msg:"one operand" (one [| f32 |] (Op1 (Unary Neg, f32, 0)))
+    (Op1 (Unary Neg, f32, 0));
+  is ~msg:"two operands" (one [| f32; f32 |] (Op2 (Compare Less, 0, 1)))
+    (Op2 (Compare Less, 0, 1));
+  is ~msg:"three operands" (one [| b; f32; f32 |] (Op3 (Where, 0, 1, 2)))
+    (Op3 (Where, 0, 1, 2));
+  none ~msg:"an operand alone" (one [| f32 |] (In 0));
+  none ~msg:"operands out of order"
+    (one [| f32; f32 |] (Op2 (Binary Sub, 1, 0)));
+  none ~msg:"an operand read twice" (one [| f32 |] (Op2 (Binary Add, 0, 0)));
+  none ~msg:"an operand unread" (one [| f32; f32 |] (Op1 (Unary Neg, f32, 0)));
+  none ~msg:"a constant beside an operand" (one [| f32 |] c);
+  none ~msg:"two outputs"
+    (prog [| f32 |] [| In 0; Op1 (Unary Neg, f32, 0) |] [| 1; 1 |]);
+  none ~msg:"two nodes"
+    (prog [| f32 |]
+       [| In 0; Op1 (Unary Neg, f32, 0); Op1 (Unary Neg, f32, 1) |]
+       [| 2 |])
+
 let test_program_refuses () =
   let f32 = D.Any D.Float32 in
   let refuses ~msg ?(ins = [| f32 |]) nodes outs =
@@ -534,7 +581,10 @@ let test_program_refuses () =
     [| P.In 0; In 1; Op2 (Binary Add, 0, 1) |]
     [| 2 |];
   refuses ~msg:"bits of the wrong width" [| P.Const (f32, "\000\000") |] [| 0 |];
-  refuses ~msg:"a bool of 2" [| P.Const (D.Any D.Bool, "\002") |] [| 0 |];
+  refuses ~msg:"a bit of 2" [| P.Const (D.Any D.Bit, "\002") |] [| 0 |];
+  refuses ~msg:"an int4 of 16" [| P.Const (D.Any D.Int4, "\016") |] [| 0 |];
+  (* A boolean byte is true iff it is not zero: each is an element. *)
+  ignore (P.v ~ins:[||] [| P.Const (D.Any D.Bool, "\002") |] ~outs:[| 0 |]);
   refuses ~msg:"no output" [| P.In 0 |] [||];
   refuses ~msg:"an output past the nodes" [| P.In 0 |] [| 1 |];
   refuses ~msg:"seventeen operands and outputs"
@@ -1284,6 +1334,10 @@ let tests =
           law_program;
         test "v refuses ill-formed programs" test_program_refuses;
         prop "of_node is v over the operands' nodes" one_node law_of_node;
+        prop "single is of_node's node where it reads its operands in order"
+          one_node law_single_of_node;
+        prop "single's program is of_node's" drawn law_single;
+        test "single is one node over its operands in order" test_single;
         test "dtype refuses a node past the program" test_dtype_refuses;
         test "each tag, field and kind is nx_prog.h's code" test_codes;
         prop "bind is p over x's value, its nodes x's then p's" binding
