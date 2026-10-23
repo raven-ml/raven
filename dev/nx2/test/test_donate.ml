@@ -133,6 +133,40 @@ let test_broadcast_refused () =
     [| 1.; 2. |]
     (elements (Nx.copy h))
 
+(* Inside an interpretation that receives every operation, movements
+   included, an operation that broadcasts a handle and refuses its dtype
+   kills nothing either: it refuses before it broadcasts. *)
+let test_broadcast_refused_received () =
+  let received f =
+    Nx.Prim.interpret ~name:"test.extent" Extent
+      (fun _ ~by op -> Nx.Prim.eval ~by op)
+      (fun _ -> f ())
+  in
+  let ints s xs =
+    let a = Nx.Repr.of_array Nx.Host.v (A.of_array D.Int32 s xs) in
+    Nx.add a (Nx.zeros_like a)
+  in
+  let y = ints [| 2 |] [| 1l; 2l |] in
+  let z = ints [| 2; 2 |] [| 3l; 4l; 5l; 6l |] in
+  let h = Nx.donate y in
+  invalid ~sub:"Nx.atan2: Atan2 does not take int32" (fun () ->
+      received (fun () -> Nx.atan2 h z));
+  invalid ~sub:"Nx.atan2: Atan2 does not take int32" (fun () ->
+      received (fun () -> Nx.atan2 z h));
+  equal ~msg:"the integers' handle reaches a later consumer" (array int32)
+    [| 1l; 2l |]
+    (elements (Nx.copy h));
+  let truths s =
+    Nx.less (fresh_at s (Array.make (Array.fold_left ( * ) 1 s) 0.))
+      (fresh_at s (Array.make (Array.fold_left ( * ) 1 s) 1.))
+  in
+  let p = Nx.donate (truths [| 2 |]) and q = truths [| 2; 2 |] in
+  invalid ~sub:"Nx.fma: Fma does not take bool" (fun () ->
+      received (fun () -> Nx.fma p q q));
+  equal ~msg:"the booleans' handle reaches a later consumer" (array bool)
+    [| true; true |]
+    (elements (Nx.copy p))
+
 (* A kind refusing its operands' dtypes kills nothing, though its result would
    fit a handle's memory: an operation checks before it takes the memory. *)
 let test_dtype_refused () =
@@ -2023,6 +2057,8 @@ let () =
              test "a dtype refusal kills no donor" test_dtype_refused;
              test "a rule's refusal kills no donor" test_rule_refused;
              test "a refused broadcast kills no donor" test_broadcast_refused;
+             test "a refused broadcast an interpretation receives kills no donor"
+               test_broadcast_refused_received;
              test "a refused composite kills no donor" test_refused_composite;
              test "an aligning consumer checks before it consumes"
                test_aligned_refusal;

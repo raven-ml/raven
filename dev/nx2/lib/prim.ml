@@ -1732,19 +1732,29 @@ let op1 ~by k dt x =
   if not (P.accepts1 k (dtype x) dt) then refused ~by node ins;
   one_node node dt ins [| Plain x |]
 
-let op2 ~by k dt x y =
+let ins2 x : D.any iarray =
   let i = D.Any (dtype x) in
-  let node = P.Op2 (k, 0, 1) in
-  let ins : D.any iarray = [| i; i |] in
-  if not (P.accepts2 k (dtype x)) then refused ~by node ins;
-  one_node node dt ins [| Plain x; Plain y |]
+  [| i; i |]
+
+let ins3 c x : D.any iarray =
+  let i = D.Any (dtype x) in
+  [| D.Any (dtype c); i; i |]
+
+let accepted2 ~by k x =
+  if not (P.accepts2 k (dtype x)) then refused ~by (P.Op2 (k, 0, 1)) (ins2 x)
+
+let accepted3 ~by k c x =
+  if not (P.accepts3 k (dtype c) (dtype x)) then
+    refused ~by (P.Op3 (k, 0, 1, 2)) (ins3 c x)
+
+let op2 ~by k dt x y =
+  accepted2 ~by k x;
+  one_node (P.Op2 (k, 0, 1)) dt (ins2 x) [| Plain x; Plain y |]
 
 let op3 ~by k c x y =
-  let i = D.Any (dtype x) in
-  let node = P.Op3 (k, 0, 1, 2) in
-  let ins : D.any iarray = [| D.Any (dtype c); i; i |] in
-  if not (P.accepts3 k (dtype c) (dtype x)) then refused ~by node ins;
-  one_node node (dtype x) ins [| Plain c; Plain x; Plain y |]
+  accepted3 ~by k c x;
+  one_node (P.Op3 (k, 0, 1, 2)) (dtype x) (ins3 c x)
+    [| Plain c; Plain x; Plain y |]
 
 let rec iter_outs : type d q.
     ('v 's. ('v, 's, d) t -> unit) -> (d, q) outs -> q -> unit =

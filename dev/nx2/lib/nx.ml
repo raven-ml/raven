@@ -475,11 +475,16 @@ let alive2 ~by a b =
   Prim.alive ~by 0 a;
   Prim.alive ~by 1 b
 
+(* [binary] and [ternary] check the kind's dtype rule before they broadcast:
+   an interpretation that receives every operation consumes a handle it
+   receives in a movement, so a refusal after the broadcast would kill it. A
+   comparison takes every dtype. *)
 let binary ~by k a b =
   if same_shape a b then Eval.apply2 ~by k (dtype a) a b
   else
     let s = Prim.broadcast_shape ~by (shape a) (shape b) in
     alive2 ~by a b;
+    Prim.accepted2 ~by k a;
     Eval.apply2 ~by k (dtype a) (broadcast ~by s a) (broadcast ~by s b)
 
 let add a b = binary ~by:"Nx.add" (Binary Add) a b
@@ -565,6 +570,7 @@ let ternary ~by k c x y =
     in
     alive2 ~by c x;
     Prim.alive ~by 2 y;
+    Prim.accepted3 ~by k c x;
     Eval.apply3 ~by k (broadcast ~by s c) (broadcast ~by s x)
       (broadcast ~by s y)
 
