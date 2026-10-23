@@ -22,9 +22,9 @@
     An [Extent] receiver first receives the operations of each formula operand
     its rule did not return, rebuilt at the operand's brand, in dependency
     order, each node once per operand; the operation reads its results. The
-    operation is the final consumer of its donated handles, a movement too: it
-    kills their donors ({!Donate.consume}), and each handle reaches the rule as
-    its arrays. Other operands reach the rule as they are.
+    operation is the final consumer of its donated handles, a movement too:
+    their donors die once the rule returns, and live on if it raises
+    ({!Donate.resolve}); each handle reaches the rule as its arrays. Other operands reach the rule as they are.
 
     One atomic counts the live [Extent] interpretations of the process, on
     every domain: a continuation may resume on any domain, so no domain's own

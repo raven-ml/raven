@@ -44,25 +44,18 @@ val is_handle : ('v, 's, 'd) Value.t -> bool
 (** [is_handle x] is [true] iff [x] is a handle ({!Value.Donated}), live or
     not. *)
 
-val consume : by:string -> 'r Value.prim -> 'r Value.prim
-(** [consume ~by op] checks [op]'s operands and kills the donor of each handle
-    among them, naming [by], as {!Exec.run} does before it reads them, a
-    movement's too. It is [op] as it was when called: each handle as its
-    arrays, and each of their donors that is an operand itself as a live value.
-    Raises [Invalid_argument] naming [Nx.donate] for two handles of one donor,
-    then naming [by] for an operand that died. *)
-
 val resolve :
   by:string ->
   'd Value.any list ->
-  (('v 's. ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t) -> 'a) ->
+  (('v 's 'e. ('v, 's, 'e) Value.t -> ('v, 's, 'e) Value.t) -> 'a) ->
   'a
 (** [resolve ~by xs k] is [k read], the call [by] consuming the donated
-    handles among its operands [xs] once, for a call that reads an operand
-    in more than one operation. [read] gives each handle's arrays, and each
-    of their donors among [xs], as live values; any other value as it is.
-    {!consume}'s checks run before [k], operand [i] being [xs]' element [i].
-    The donors die, naming [by], once [k] returns; if [k] raises, they and
+    handles among its operands [xs] once, in however many operations it
+    reads them. [read] gives each handle's arrays, and each of their donors
+    among [xs], as live values; any other value as it is. Before [k] it
+    raises [Invalid_argument] naming [Nx.donate] for two handles of one donor
+    or over one memory ({!handles}), then naming [by] for an operand that
+    died, operand [i] being [xs]' element [i]. The donors die, naming [by], once [k] returns; if [k] raises, they and
     their handles live on. [k]'s operations reuse none of their memory,
     which is freed once no value holds it.
 
@@ -75,9 +68,10 @@ val resolve :
     returns or raises. *)
 
 val consume_list : by:string -> 'd Value.any list -> 'd Value.any list
-(** [consume_list ~by xs] is {!consume} of a consumer [by] of the operands
-    [xs], which is no operation: [xs] as they were when it was called, the
-    donors of their handles dead. *)
+(** [consume_list ~by xs] is [xs] read by a consumer [by] that is no
+    operation, with {!resolve}'s checks: [xs] as they were when it was called,
+    each handle as its arrays and each of their donors among [xs] as a live
+    value, the donors of their handles dead. *)
 
 (** {1:engine The engine's steps} *)
 

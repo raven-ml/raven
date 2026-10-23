@@ -232,6 +232,33 @@ let test_broadcast_consumed_once () =
     !during;
   invalid ~sub:"Nx.add: operand 1 was donated to Nx.add" (fun () -> Nx.add x x)
 
+(* Inside an interpretation that receives every operation, an operation
+   consumes its handles once the rule returns: one the rule refuses, or whose
+   own checks refuse it while the rule computes it, kills no donor. *)
+let test_received_refused () =
+  let refusing f =
+    Nx.Prim.interpret ~name:"test.extent" Extent
+      (fun _ ~by _ -> invalid_arg (by ^ ": refused by test.extent"))
+      (fun _ -> f ())
+  in
+  let forwarding f =
+    Nx.Prim.interpret ~name:"test.extent" Extent
+      (fun _ ~by op -> Nx.Prim.eval ~by op)
+      (fun _ -> f ())
+  in
+  let x = fresh [| 1.; 2. |] and y = fresh [| 3.; 4. |] in
+  invalid ~sub:"Nx.add: refused by test.extent" (fun () ->
+      refusing (fun () -> Nx.add (Nx.donate x) y));
+  equal ~msg:"the sum's donor lives" (array float_exact) [| 2.; 4. |]
+    (elements (Nx.add x x));
+  let truths () = Nx.less (fresh [| 0.; 2. |]) (fresh [| 1.; 1. |]) in
+  let b = truths () and u = truths () in
+  let p = Nx.create Nx.int64 [| 2 |] [| 1L; 0L |] in
+  invalid ~sub:"Nx.scatter: Add does not take bool" (fun () ->
+      forwarding (fun () -> Nx.scatter ~combine:Add ~axis:0 p u (Nx.donate b)));
+  equal ~msg:"the scatter's target lives" (array bool) [| true; false |]
+    (elements (Nx.copy b))
+
 (* A kind refusing its operands' dtypes kills nothing, though its result would
    fit a handle's memory: an operation checks before it takes the memory. *)
 let test_dtype_refused () =
@@ -2133,6 +2160,8 @@ let () =
              test
                "a broadcast handle an interpretation receives dies when the \
                 call returns" test_broadcast_consumed_once;
+             test "an operation an interpretation refuses kills no donor"
+               test_received_refused;
              test "a refused composite kills no donor" test_refused_composite;
              test "an aligning consumer checks before it consumes"
                test_aligned_refusal;

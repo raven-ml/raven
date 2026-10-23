@@ -274,9 +274,10 @@ let around o =
 (* [i]'s rule on [op], in [i]'s clause. Another interpretation's traced operand
    is refused unless its interpretation is around [i], which is asked once per
    interpretation; one [i] adopts is around by construction ({!interpret}). An
-   operation the rule receives consumes its handles, a movement too: the rule's
-   results hold none to pass on. The rule reads it as it was called
-   ({!Donate.consume}). *)
+   operation the rule receives consumes its handles once the rule returns, a
+   movement too: the rule's results hold none to pass on. The rule reads it as
+   it was called, and if it raises, by its own checks or by the operation's
+   that it computes, the donors live on ({!Donate.resolve}). *)
 let deliver i ~by op =
   let checked = ref ([] : interpretation list) in
   Prim.iteri
@@ -288,13 +289,21 @@ let deliver i ~by op =
           checked := List.cons owner !checked
       | Traced _ | Array _ | Shards _ | Donated _ | Deferred _ -> ())
     op;
-  let op = Donate.consume ~by op in
-  let op =
-    if Prim.exists (fun x -> changes i x) op then
-      Prim.map (fun x -> received i x) op
-    else op
+  let rule op =
+    let op =
+      if Prim.exists (fun x -> changes i x) op then
+        Prim.map (fun x -> received i x) op
+      else op
+    in
+    applied i ~by op
   in
-  applied i ~by op
+  if Prim.exists Donate.is_handle op then
+    let (Prim.Operands xs) = Prim.operands op in
+    Donate.resolve ~by xs (fun read -> rule (Prim.map read op))
+  else begin
+    Prim.iteri (fun k x -> Prim.alive ~by k x) op;
+    rule op
+  end
 
 let reaches i op =
   match i.reach with
