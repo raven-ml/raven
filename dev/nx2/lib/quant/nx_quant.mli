@@ -173,10 +173,12 @@ val apply : 'd t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
     every device of each placement holds all of its value, is read where it
     lies: the product decodes each block as it sums it and stores no decoded
     weight. Any other product first decodes [w] as {!dequant} does, at [x]'s
-    dtype or at float32.
+    dtype or at float32. Read where it lies, the product needs kernels that
+    compute a block-scaled contraction, as nx.cpu's do.
 
-    Raises [Invalid_argument] if [x] is 0-d, if [x]'s last axis is not [k], or
-    if the batch axes do not broadcast. *)
+    Raises [Invalid_argument] if [w] is read where it lies on a set whose
+    kernels decline that contraction, if [x] is 0-d, if [x]'s last axis is
+    not [k], or if the batch axes do not broadcast. *)
 
 val apply_experts :
   ids:'d Nx.int64_t -> 'd t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
@@ -188,7 +190,8 @@ val apply_experts :
 
     Where {!apply} reads an [Mxfp4] [w] where it lies and [ids] lies whole on
     each device, every position is summed in one contraction grouped by
-    expert. Any other product, a cut [w]'s among them, is
+    expert, which needs kernels that compute a segmented block-scaled
+    contraction, as nx.cpu's do. Any other product, a cut [w]'s among them, is
 
     {[
     Nx.map_segments ~segments:e ids
@@ -199,7 +202,8 @@ val apply_experts :
     So its bits depend on whether [w], [ids] and [x] lie whole: the two sums
     round differently, each within {!Nx.contract}'s bound.
 
-    Raises [Invalid_argument] if [w] is not 3-d, if [x] does not have one axis
+    Raises [Invalid_argument] if the grouped sum lies on a set whose kernels
+    decline it, if [w] is not 3-d, if [x] does not have one axis
     more than [ids], if [x]'s last axis is not [k], or if [x]'s leading axes
     do not broadcast to [ids]'. *)
 
