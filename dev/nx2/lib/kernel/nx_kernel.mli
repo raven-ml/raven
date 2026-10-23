@@ -240,8 +240,8 @@ type operand = { array : Nx_array.any; scale : scale option }
     batch extents, then [g + 1] entries. At each batch index, with [o] its
     entries, group [e < g] holds the segmented axis's indices [r] with
     [max o.(0) o.(e) <= r] and [r] below each of [o.(e + 1)] to [o.(g)];
-    the other indices are in no group. Any values name groups, out of
-    order or outside the axis. *)
+    the other indices are in no group. Offsets may take any values,
+    decreasing, negative or past the axis. *)
 type 'i segments =
   | Rows of { offsets : 'i; a_axis : int; b_axis : int }
       (** [a]'s free axis [a_axis] is segmented; [b]'s free axis [b_axis] has

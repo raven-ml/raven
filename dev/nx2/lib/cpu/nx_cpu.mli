@@ -70,8 +70,9 @@
     outputs. A segmented contraction has, in each group, the bits of the
     unsegmented contraction of its views in the order given: [Rows]'
     group's rows of [a] with its index of [b], [Contracting]'s group's
-    window of the pair; a row of [Rows] in no group has no products. It
-    reads the offsets whole before any write, so they may be [dst] itself.
+    window of the pair; a row of [Rows] in no group has no products. A
+    segmented contraction reads the offsets whole before any write, so
+    they may be [dst] itself.
     With no products, an output is [init] as [acc] holds it, rounded into
     [dst], or [+0]: [init]'s bits where the three share a dtype. Otherwise
     a NaN result's sign and payload are unspecified.
