@@ -722,13 +722,6 @@ let logits () =
   Nx.reshape [| 32; 32000 |] (Nx.slice [ R (0, 32 * 32000) ] (f1m ()))
 
 let small_logits () = Nx.reshape [| 8; 64 |] (Nx.slice [ R (0, 512) ] (f1m ()))
-
-(* Five sequences of 768 steps of five features: a scan along the steps
-   has 25 slices of three 256-term tiles, five side by side in each of five
-   rows, few enough that their tiles could be shared among threads. *)
-let m5x768x5 () =
-  Nx.reshape [| 5; 768; 5 |] (Nx.slice [ R (0, 5 * 768 * 5) ] (f1m ()))
-
 let v1024 () = Nx.reshape [| 1024 |] (Nx.slice [ R (0, 1024) ] (f1m ()))
 let p1000 () = Nx.slice [ R (0, 1000) ] (f1m ())
 
@@ -865,9 +858,6 @@ let scan_rows =
         (scan ~axis:0 (Logsumexp (0, D.Float32)));
       Thumper.bench_with_setup "host-logsumexp-f32-1M" ~setup:f1m
         (scan ~axis:0 (Logsumexp (0, D.Float32)));
-      Thumper.bench_with_setup "host-logsumexp-f32-5x768x5-axis1"
-        ~setup:m5x768x5
-        (scan (Logsumexp (0, D.Float32)));
       Thumper.bench_with_setup "host-argmax-f32-1024x1024-rows" ~setup:m1024
         (fun x -> fst (scan (Arg (Max, 0, D.Float32)) x));
       Thumper.bench_with_setup "host-argmax-f32-1M" ~setup:f1m (fun x ->
