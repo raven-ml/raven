@@ -19,7 +19,8 @@
     with its last axis in bytes.
 
     {b Placement.} A weight's parts may lie at any placement of their set; its
-    values, and {!apply}'s bits, do not depend on where they lie. Cut along [n]
+    values, and {!apply}'s bits except a NaN's sign and payload, do not depend
+    on where they lie. Cut along [n]
     or a leading axis, each device decodes its own rows. Cut along [k] over [t]
     devices, a weight with values and [b] blocks along [k] decodes on its own
     devices where [t] divides [b]: {!dequant}'s result is cut along [k] as the
@@ -180,10 +181,14 @@ val apply : 'd t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 val apply_experts :
   ids:'d Nx.int64_t -> 'd t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [apply_experts ~ids w x] is each row of [x] through the expert its id
-    names: at each position [p] of [ids], [p]'s row is {!apply} of [w]'s
-    matrix [ids.{p}] to [p]'s row of [x], or zeros where [ids.{p}] is not in
-    [\[0, e)], whatever [x] holds there. It is this {!Nx.map_segments}, up to
-    how rows computed together round:
+    names: at each position [p] of [ids], {!apply} of [w]'s matrix [ids.{p}]
+    to [p]'s row of [x], or zeros where [ids.{p}] is not in [\[0, e)],
+    whatever that row holds. [w] is [[| e; n; k |]], [ids] [[| s… |]] and [x]
+    [[| s'…; k |]], [s'…] broadcasting to [s…]; the result is [[| s…; n |]].
+
+    Where {!apply} reads an [Mxfp4] [w] where it lies and [ids] lies whole on
+    each device, every position is summed in one contraction grouped by
+    expert. Any other product, a cut [w]'s among them, is
 
     {[
     Nx.map_segments ~segments:e ids
@@ -191,13 +196,8 @@ val apply_experts :
       x
     ]}
 
-    [w] is [[| e; n; k |]], [ids] is [[| s… |]], [x] is [[| s'…; k |]] with
-    [s'…] broadcasting to [s…], and the result is [[| s…; n |]].
-
-    Where {!apply} reads an [Mxfp4] [w] where it lies and [ids] lies whole on
-    each device, every position is summed in one contraction grouped by
-    expert, which decodes each block as it sums it and stores no decoded
-    weight. Any other product is that map.
+    So its bits depend on whether [w], [ids] and [x] lie whole: the two sums
+    round differently, each within {!Nx.contract}'s bound.
 
     Raises [Invalid_argument] if [w] is not 3-d, if [x] does not have one axis
     more than [ids], if [x]'s last axis is not [k], or if [x]'s leading axes
