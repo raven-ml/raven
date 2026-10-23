@@ -343,13 +343,11 @@ type answer =
       (** A written operand shares a byte with another written operand, or
           with a read operand not identical to it ({!door}). *)
   | Shape_mismatch
-      (** The operands' shapes do not fit the operation: operands of one loop
-          of different shapes, or shapes its descriptor refuses. *)
-  | Bad_arity
-      (** No operand, more than {!max_operands} to a loop, or other
-          destinations than an operation names, as a reduction given other
-          than its one or two: a guard for C callers, which a call within a
-          kernel library's contract never meets. *)
+      (** The operands do not fit the operation: their number, or their
+          shapes. Operands of one loop of different shapes, shapes its
+          descriptor refuses, no operand or more than {!max_operands} to a
+          loop, or other destinations than an operation names, as a reduction
+          given other than its one or two. *)
 
 val door :
   written:any array -> read:any array -> ('a -> unit) -> 'a -> answer

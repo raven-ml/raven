@@ -22,7 +22,6 @@ let answers =
       ("Repeated_elements", Repeated_elements);
       ("Overlapping", Overlapping);
       ("Shape_mismatch", Shape_mismatch);
-      ("Bad_arity", Bad_arity);
     ]
 
 let pp_answer ppf a =

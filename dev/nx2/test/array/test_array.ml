@@ -1257,7 +1257,7 @@ let test_transfer_refusals () =
   let fails what substring f =
     raises_match ~msg:what (Exn.invalid_arg ~substring) f
   in
-  fails "another shape" "shapes differ" (fun () ->
+  fails "another shape" "do not fit" (fun () ->
       A.transfer ~src:a ~dst:(A.create (S.io_device ()) f32 [| 3 |]));
   fails "a broadcast destination" "twice" (fun () ->
       let one = A.create (S.io_device ()) f32 [| 1 |] in
@@ -1598,7 +1598,7 @@ let test_door_reasons () =
   let b = A.buffer (zeros [| 3 |]) in
   let at offset = A.v f32 (L.v ~offset ~strides:[| 1 |] [| 2 |]) b in
   reason ~sub:"shares bytes" (S.add (at 0) (at 1) x);
-  reason ~sub:"shapes differ" (S.add (zeros [| 2 |]) x (zeros [| 3 |]))
+  reason ~sub:"do not fit" (S.add (zeros [| 2 |]) x (zeros [| 3 |]))
 
 (* An operand with no element passes the door wherever its memory lies. *)
 let test_door_empty () =
