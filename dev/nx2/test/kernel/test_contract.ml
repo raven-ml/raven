@@ -2201,6 +2201,25 @@ let mx_covers x (c, _, _) =
   cover "k past nx's block" (x.mx_k > 4096);
   cover "blocks of 64 or more" (x.mx_k > 0 && x.mx_ratio > 32);
   cover "codes from inside a byte" (products && x.mx_odd);
+  (* The float4 stage's paths: chain order's slivers stage 8 columns' codes
+     a lane, then one column at a time; lane order dots several columns
+     against each row. *)
+  let from_byte = products && x.mx_along && not x.mx_odd in
+  List.iter
+    (fun (acc, name) ->
+      let on = x.mx_acc = acc in
+      let chain = on && (not lane) && from_byte in
+      cover (name ^ ", chain order, b along k from a byte's first, 8 columns or more")
+        (chain && x.mx_n >= 8);
+      cover
+        (name ^ ", chain order, b along k from a byte's first, columns not a \
+                 multiple of 8")
+        (chain && x.mx_n mod 8 <> 0);
+      cover
+        (name ^ ", lane order, b along k, columns not a multiple of 4, two \
+                 rows or more")
+        (on && lane && products && x.mx_along && x.mx_n mod 4 <> 0 && x.mx_m >= 2))
+    D.[ (Any Float32, "float32"); (Any Float64, "float64") ];
   cover "a float4 a" (products && x.mx_a);
   cover "a Value scale" (products && x.mx_kind <> None);
   cover "a scale per column" (products && x.mx_n > 1 && not x.mx_whole);
