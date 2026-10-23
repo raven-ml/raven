@@ -602,8 +602,9 @@ let contract_rows =
 (* Convolution and pooling over images of [8; 56; 56; 64]
    float32 channels last, as a user writes each today: a 3 × 3 convolution
    of 64 channels padded by one, in float32 and bfloat16, and into 3
-   channels, as an image's last layer, which sums in lane order; its input
-   gradient, conv_transpose, and its weight gradient, a contraction over
+   channels, as an image's last layer, which sums in lane order, as do an
+   RGB image's into 3 and a complex64 one's into 4; its input gradient,
+   conv_transpose, and its weight gradient, a contraction over
    the padded image's windows; the depthwise convolution, one channel a
    group; and a 3 × 3 max-pool at stride 2, padded by -∞, as pad, two
    window views and max, with its gradient: the windows holding the
@@ -654,6 +655,15 @@ let conv_rows =
         ~setup:(conv_by D.Float32 [| 64; 3; 3; 64 |]) conv;
       Thumper.bench_with_setup "conv-f32-8x56x56x64-3x3-to-3"
         ~setup:(conv_by D.Float32 [| 3; 3; 3; 64 |]) conv;
+      Thumper.bench_with_setup "conv-f32-8x112x112x3-3x3-to-3"
+        ~setup:(fun () ->
+          (filled D.Float32 [| 8; 112; 112; 3 |] 1., filled D.Float32 [| 3; 3; 3; 3 |] 1.))
+        conv;
+      Thumper.bench_with_setup "conv-c64-4x32x32x64-3x3-to-4"
+        ~setup:(fun () ->
+          (filled D.Complex64 [| 4; 32; 32; 64 |] Complex.one,
+           filled D.Complex64 [| 4; 3; 3; 64 |] Complex.one))
+        conv;
       Thumper.bench_with_setup "conv-bf16-8x56x56x64-3x3"
         ~setup:(conv_by D.Bfloat16 [| 64; 3; 3; 64 |]) conv;
       Thumper.bench_with_setup "conv-input-grad-f32-8x56x56x64-3x3"
