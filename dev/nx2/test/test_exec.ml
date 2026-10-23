@@ -1414,7 +1414,7 @@ let allocation =
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
           let v = on_host Plain D.Float32 [| 4 |] (Array.make 4 2.) in
-          at_most (float 0.5) ~than:599.
+          at_most (float 0.5) ~than:594.
             (words (fun () -> Nx.set Nx.[ I 1 ] v a)));
     ]
 
