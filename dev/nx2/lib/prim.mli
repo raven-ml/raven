@@ -260,7 +260,7 @@ val prog3 :
     one node [k] over operands of [x …] ([prog3]'s: one of [c], then two of
     [x]), into [y] for [prog1], and [None] where [k] does not take them. Each
     program is made once and kept: a call that finds it allocates nothing.
-    Domains may call it at once. *)
+    Domains may call it concurrently. *)
 
 val op1 :
   by:string ->
@@ -325,7 +325,7 @@ val scale_shape : 'd scale -> int array
 
 val contract_block : int
 (** [contract_block] is [4096], the products of a contraction's block
-    ({!Nx_kernel.S.contract}). *)
+    ({!Nx_kernel.S.section-contraction}). *)
 
 val block_run : int array -> int array -> int array -> int option
 (** [block_run s ss axes] is [Some r] where the axes [axes] of an operand of

@@ -62,23 +62,22 @@
     after a map where the program is not its operand. A [Reduce] of [k]
     reductions runs [k] loops over each device's loads.
 
-    A [Contract] computes per group of its result's devices that hold one
-    window of it, in its order of summation, the whole contraction's. A
-    device's windows of [a] and [b] along the contracting pairs, alike, are
-    its {e tile}; its products are numbered as {!Nx_kernel.section-orders}
-    numbers the whole's, and it lays its windows out as
-    [[batch; rows; products]] and [[batch; products; columns]], in their
-    number's order. It reads [init] over its window of the result, from
-    wherever [init] lies. The products fall into the contraction's blocks
-    of 4096 ({!Nx_kernel.S.contract}). A node of lane order's tree of those
-    blocks whose products one tile holds is a {e unit} there, as is a block
-    that window edges split, on the device that holds most of its products,
-    the others' parts of [a] and [b] moved there first. A scale is read
-    whole along the contracting pairs, laid out as its operand, and each
-    unit takes the scale's blocks its products span: the route computes by
-    partials only where a block of the products lies in one of the
-    contraction's blocks ({!Prim.rule}). A segmented contraction never
-    computes so.
+    A [Contract] computes per group of its result's devices that hold one window
+    of it, in its order of summation, the whole contraction's. A device's
+    windows of [a] and [b] along the contracting pairs, alike, are its {e tile};
+    its products are numbered as {!Nx_kernel.section-contraction} numbers the
+    whole's, and it lays its windows out as [[batch; rows; products]] and
+    [[batch; products; columns]], in their number's order. It reads [init] over
+    its window of the result, from wherever [init] lies. The products fall into
+    the contraction's blocks of 4096 ({!Nx_kernel.S.section-contraction}). A
+    node of lane order's tree of those blocks whose products one tile holds is a
+    {e unit} there, as is a block that window edges split, on the device that
+    holds most of its products, the others' parts of [a] and [b] moved there
+    first. A scale is read whole along the contracting pairs, laid out as its
+    operand, and each unit takes the scale's blocks its products span: the route
+    computes by partials only where a block of the products lies in one of the
+    contraction's blocks ({!Prim.rule}). A segmented contraction never computes
+    so.
 
     - In lane order, each unit is one contraction of exactly its products
       into the accumulator from no [init]. Each device of the group takes

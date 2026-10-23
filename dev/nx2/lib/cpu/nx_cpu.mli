@@ -7,14 +7,14 @@
 
     [computes_on d] is {!Rig.reaches}[ Rig.host d]: the host addresses [d]'s
     memory, which the kernels compute on. Each kernel computes from
-    operands of [dst]'s shape and any layouts, on memory the host addresses. It
-    claims every operand through the door of [nx_array.h] for the extent of its
-    call. It answers [Done] once its work is done, or, before any write, a
-    refusal: the door's, or [Shape_mismatch] if the operands do not fit the
+    operands of any layouts, on memory the host addresses. It claims every
+    operand through the door of [nx_array.h] for the extent of its call. It
+    answers [Done] once its work is done, or, before any write, a refusal:
+    the door's, or [Shape_mismatch] if the operands do not fit the
     operation, by their number or their shapes. It answers [Declined] only
-    where its doc says: otherwise nx.cpu computes every case its contract
-    offers, and a kernel that would decline one, a bug in nx.cpu, raises
-    [Failure] naming itself and its operands' dtypes and shapes.
+    where its doc says. It computes every other case its contract offers,
+    and a kernel that would decline one, a bug in nx.cpu, raises [Failure]
+    naming itself and its operands' dtypes and shapes.
 
     A call keeps other domains waiting to collect for no longer than about
     one unloaded core's copy of 1 MiB at a time, however many operands,
@@ -55,32 +55,28 @@
     sum is exact modulo [2^w] whatever the order. A [dst] of another dtype
     than [acc] takes the sum in [acc] rounded once, as [Cast] rounds it.
     An element of a scaled operand enters [acc] as its [Cast] times its
-    block's scale, the scale read into [acc] ([Cast] of a [Value], [2^(e -
-    127)] of a code [e], NaN of [255]), the product rounded once: a scale
-    multiplies each element, rounded once into [acc], at any contracted
+    scale block's scale, the scale read into [acc] ([Cast] of a [Value],
+    [2^(e - 127)] of a code [e], NaN of [255]), the product rounded once. So
+    a scale multiplies each element, rounded once into [acc], at any contracted
     extent. Each scaled operand adds one unit roundoff of [acc] per term
     to the bound, barring overflow of an element times its scale, which
     gives an infinite term where the exact one is finite.
 
     A float or complex contraction adds in the order it is given
-    ({!Nx_kernel.section-orders}), at any shape, a block of 4096 products
-    as the whole: in lane order, a block's sum is lane order's tree of its
-    blocks of 1024 terms, so the tree of blocks {!Nx_kernel.S.contract}
-    states is lane order's own; in chain order, its association is one
-    chain from [init] or [+0], which a part given the sum of the products
-    before it as [init] continues. [contract_order ~rows ~columns ~depth]
-    is [Chain] where [rows] and [columns] are both above 4 and multiply to
-    at least 64, and [depth] is below 128 times their product; [Lane]
-    otherwise, so that the threads share the depth of a contraction of few
-    outputs. A segmented contraction has, in each group, the bits of the
-    unsegmented contraction of its views in the order given: [Rows]'
-    group's rows of [a] with its index of [b], [Contracting]'s group's
-    window of the pair; a row of [Rows] in no group has no products. A
-    segmented contraction reads the offsets whole before any write, so
-    they may be [dst] itself.
-    With no products, an output is [init] as [acc] holds it, rounded into
-    [dst], or [+0]: [init]'s bits where the three share a dtype. Otherwise
-    a NaN result's sign and payload are unspecified.
+    ({!Nx_kernel.section-orders}), at any shape, a block of 4096 products as the
+    whole. In lane order, a block's sum is lane order's tree of its blocks of
+    1024 terms, so the tree of blocks {!Nx_kernel.S.section-contraction} states
+    is lane order's own. In chain order, its association is one chain from
+    [init] or [+0], which a part given the sum of the products before it as
+    [init] continues. [contract_order ~rows ~columns ~depth] is [Chain] where
+    [rows] and [columns] are both above 4 and multiply to at least 64, and
+    [depth] is below 128 times their product; [Lane] otherwise, so that the
+    threads share the depth of a contraction of few outputs. A segmented
+    contraction has, in each group, the bits of the unsegmented contraction of
+    its views in the order given: [Rows]' group's rows of [a] with its index of
+    [b], [Contracting]'s group's window of the pair; a row of [Rows] in no group
+    has no products. A segmented contraction reads the offsets whole before any
+    write, so they may be [dst] itself.
 
     A complex output of [K] products is within
     [γ(2K + 2) (|init| + Σ|a||b|)] of the exact sum of [a], [b] and [init]
@@ -126,25 +122,16 @@
     for, a reduction's loads whose shape once loaded is not its [shape],
     and destinations whose shapes are not the ones they give.
 
-    A float sum or product adds each output's terms in lane order
-    ({!Nx_kernel.section-orders}), a complex sum each part's as a float
-    sum, and a complex product multiplies them so by
-    {!Nx_kernel.Prog.Mul}. Each complex multiplication errs by at most
-    twice the parts' unit roundoff [u], so a product of [n] terms is within
-    a normwise relative [γ(2n - 2)] of the exact one, barring overflow and
-    underflow. Every monoid's scan cuts its chunks and carries as
-    {!Nx_kernel.type-reduction} states a float sum's, from a carry where
-    one is given.
+    Each complex multiplication of a [Prod] errs by at most twice the
+    parts' unit roundoff [u], so a complex product of [n] terms is within a
+    normwise relative [γ(2n - 2)] of the exact one, barring overflow and
+    underflow.
 
-    [Logsumexp] and [Moments] reduce an output's terms in the two passes
-    {!Nx_kernel.reduction} states, each summing in lane order: the bits of
-    Nx's own expansion of each. They scan them as
-    {!Nx_kernel.type-reduction} states.
-
-    For [n] terms, let [L = ⌈min (n, 1024) / 16⌉ + 3], the most roundings
-    of a block's sum a term takes, [D = ⌈log₂ ⌈n / 1024⌉⌉], the depth of the
-    blocks' tree, and [u] the carrier's unit roundoff; the rounding into a
-    narrower destination adds its own. Barring overflow and underflow, to
+    For a [Logsumexp] or a [Moments] reduction of [n] terms, let
+    [L = ⌈min (n, 1024) / 16⌉ + 3], the most roundings of a block's sum a
+    term takes, [D = ⌈log₂ ⌈n / 1024⌉⌉], the depth of the blocks' tree, and
+    [u] the carrier's unit roundoff; the rounding into a narrower
+    destination adds its own. Barring overflow and underflow, to
     first order in [u], a [Logsumexp] [r] is within
     [(L + D + 5 + 6 ln n) u + u|r|] of the exact one. A [Moments] mean is
     within [E = (L + D) u M + u|μ|] of the exact [μ], [M] the mean of the
@@ -217,10 +204,11 @@
     matrix's results are a function of its values alone, whatever its
     batch, its layout or the threads. A destination of [solve_triangular]
     identical to [a] or [b] is accepted: they are then read from copies the
-    call holds, and the results are those of a fresh destination. With [γ(k) = k u / (1 - k u)] and
-    [ε(k) = k η], [u] the dtype's unit roundoff and [η] its least positive
-    subnormal (2{^-149} or 2{^-1074}), [k] doubled on complex dtypes, and
-    [|·|] taken elementwise, the bounds below hold. Their [ε] terms bound
+    call holds, and the results are those of a fresh destination. With
+    [γ(k) = k u / (1 - k u)] and [ε(k) = k η], [u] the dtype's unit
+    roundoff and [η] its least positive subnormal (2{^-149} or 2{^-1074}),
+    [k] doubled on complex dtypes, and [|·|] taken elementwise, the bounds
+    below hold. Their [ε] terms bound
     what rounding below the least normal number adds:
     - [cholesky]: [L Lᴴ = a + Δ] with
       [|Δ_ij| <= γ(n + 1) (|L| |Lᴴ|)_ij + ε(n + 1) (1 + L_jj)]. The
