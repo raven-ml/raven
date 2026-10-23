@@ -317,17 +317,16 @@ let matmul (a, b) = Nx.Repr.array (Nx.matmul a b)
    product of those into a new [s] float32 array by nx.cpu's kernel. *)
 let direct_operands ~contracting make () =
   let a, b = make () in
-  ( Nx.Prim.contract_order ~batch:[||] ~contracting a b,
-    Option.get (Nx.Repr.array a),
-    Option.get (Nx.Repr.array b) )
+  let plain x : Nx_kernel.operand =
+    { array = A.Any (Option.get (Nx.Repr.array x)); scale = None }
+  in
+  (Nx.Prim.contract_order ~batch:[||] ~contracting a b, plain a, plain b)
 
 let contract_direct ~contracting s (order, a, b) =
   let dst = A.create Rig.host D.Float32 s in
   match
     Nx_cpu.contract ~order ~batch:[||] ~contracting ~segments:None
-      ~acc:(D.Any D.Float32) ~dst ~init:None
-      { array = A.Any a; scale = None }
-      { array = A.Any b; scale = None }
+      ~acc:(D.Any D.Float32) ~dst ~init:None a b
   with
   | Done -> dst
   | refusal -> A.refused "contract-direct" refusal [ A.Any dst ]

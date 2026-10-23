@@ -33,10 +33,11 @@
     a pad that fits no operand of its load's shape is refused with
     [Shape_mismatch].
 
-    [contract] computes every contraction without scales or segments in
-    [float32], [float64], [complex64], [complex128] or an integer of 4 to 64
-    bits, of [a], [b] and [init] of any dtype, into a [dst] of any dtype, at
-    any layout, and declines the others. Each
+    [contract] computes every contraction without segments in [float32],
+    [float64], [complex64], [complex128] or an integer of 4 to 64 bits, of
+    [a], [b] and [init] of any dtype, into a [dst] of any dtype, at any
+    layout, scaled in [float32] and [float64] alone, and declines the
+    others. Each
     element of [a], [b] and [init] enters [acc] as {!apply1}'s [Cast] casts
     it. That is exact where [acc] holds its value: [float32] holds [bool],
     [bit], the integers of at most 16 bits and the floats of at most 32;
@@ -48,6 +49,10 @@
     one, a float toward zero and saturated into an integer one. An integer
     sum is exact modulo [2^w] whatever the order. A [dst] of another dtype
     than [acc] takes the sum in [acc] rounded once, as [Cast] rounds it.
+    An element of a scaled operand enters [acc] as its [Cast] times its
+    block's scale, the scale read into [acc] ([Cast] of a [Value], [2^(e -
+    127)] of a code [e], NaN of [255]), the product rounded once: a scale
+    multiplies each product, at any contracted extent.
 
     A float or complex contraction adds in the order it is given
     ({!Nx_kernel.section-orders}), at any shape, a block of 4096 products

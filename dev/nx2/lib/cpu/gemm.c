@@ -12,7 +12,9 @@
    (Groups of several runs). An operand is read
    through the stage, which takes any strides and dtype into its carrier, and
    the target's conversion takes the carrier into acc: each element as a
-   cast to acc gives it, exact where acc holds its values. An integer acc
+   cast to acc gives it, exact where acc holds its values. A scaled
+   operand is staged wherever it is read, each element then multiplied by
+   its block's scale in acc (stage_at, Scales). An integer acc
    computes on chain order's paths whatever the order asked. Lane order
    reads b in place where it is acc and adjacent along the axis it streams.
 
@@ -146,6 +148,16 @@ enum {
   CON = NX_VIEW_CONTRACTED
 };
 
+/* An operand's block scales: [v] holds them in acc, C-contiguous, and
+   t[x][i] is the position in [v] of the block of index i along axis x, the
+   sum over the axes of x's group of each index's block times the scales'
+   step. t[x] is NULL along an axis the operand lacks, [v] NULL for an
+   unscaled operand. */
+typedef struct {
+  const uint8_t *v;
+  const int64_t *t[4];
+} scale;
+
 /* An operand as the view lays it out: its element (e, i, j, k) lies at
    position first + e·st[BATCH] + i·st[ROW] + j·st[COL] + k·st[CON], and
    an axis it lacks has step 0. */
@@ -153,6 +165,7 @@ typedef struct {
   const nx_array *x; /* NULL for an absent init */
   int64_t first;
   int64_t st[4];
+  scale *s; /* NULL for an unscaled operand */
 } operand;
 
 typedef struct {
@@ -235,6 +248,35 @@ static void stage_acc(const problem *p, int o, int64_t at, int64_t s0,
   nx_cpu_stage_as(p->op[o].x, at, s0, s1, n0, n1, p->acc, dst, pitch);
 }
 
+/* Stages operand [o]'s block as stage_acc does, from its element
+   (e, i, j, k), [n0] along axis [x0] in a row and [n1] rows along [x1];
+   then, where it is scaled, multiplies each element by its block's scale,
+   rounded once in acc, a float32 or float64. */
+static void stage_at(const problem *p, int o, int64_t e, int64_t i,
+                     int64_t j, int64_t k, int x0, int x1, int64_t n0,
+                     int64_t n1, uint8_t *dst, int64_t pitch) {
+  const operand *q = &p->op[o];
+  stage_acc(p, o, pos(p, o, e, i, j, k), q->st[x0], q->st[x1], n0, n1, dst,
+            pitch);
+  if (q->s == NULL) return;
+  const scale *s = q->s;
+  const int64_t c[4] = {e, i, j, k}, *t0 = s->t[x0] + c[x0];
+  for (int64_t r = 0; r < n1; r++) {
+    int64_t at = 0;
+    for (int x = BATCH; x <= CON; x++)
+      if (x != x0 && s->t[x]) at += s->t[x][c[x] + (x == x1 ? r : 0)];
+    if (p->acc == NX_FLOAT32) {
+      float *d = (float *)dst + r * pitch;
+      const float *v = (const float *)s->v + at;
+      for (int64_t u = 0; u < n0; u++) d[u] *= v[t0[u]];
+    } else {
+      double *d = (double *)dst + r * pitch;
+      const double *v = (const double *)s->v + at;
+      for (int64_t u = 0; u < n0; u++) d[u] *= v[t0[u]];
+    }
+  }
+}
+
 /* R's element (e, i, j): dst's, in acc. */
 static uint8_t *at_r(const problem *p, int64_t e, int64_t i, int64_t j) {
   return p->op[DST].x->base + pos(p, DST, e, i, j, 0) * p->w;
@@ -281,9 +323,14 @@ typedef struct {
   int64_t row, k;
 } src;
 
-/* Whether operand [o] is read in place along [ax]: acc, adjacent there. */
+/* Whether operand [o] may be read in place: in acc and unscaled. */
+static int raw(const problem *p, int o) {
+  return p->op[o].x->dtype == p->acc && p->op[o].s == NULL;
+}
+
+/* Whether operand [o] is read in place along [ax]: raw, adjacent there. */
 static int adjacent(const problem *p, int o, int ax) {
-  return p->op[o].x->dtype == p->acc && p->op[o].st[ax] == 1;
+  return raw(p, o) && p->op[o].st[ax] == 1;
 }
 
 /* a's rows from [i] of element [e], from the block of k at [pc], in
@@ -405,11 +452,12 @@ static void pack_a(const problem *p, nx_cpu_pack move, int64_t e, int64_t i,
                    uint8_t *d) {
   const int64_t *s = p->op[A].st;
   int64_t at = pos(p, A, e, i, 0, pc);
-  if (p->g->kernel.a == NX_CPU_A_ELEMENTS) {
-    pack(p, move, A, at, s[CON], s[ROW], kc, m, d, kc);
-    return;
-  }
-  pack(p, move, A, at, s[ROW], s[CON], m, kc, d, lda);
+  int elements = p->g->kernel.a == NX_CPU_A_ELEMENTS;
+  if (p->op[A].s && elements)
+    stage_at(p, A, e, i, 0, pc, CON, ROW, kc, m, d, kc);
+  else if (p->op[A].s) stage_at(p, A, e, i, 0, pc, ROW, CON, m, kc, d, lda);
+  else if (elements) pack(p, move, A, at, s[CON], s[ROW], kc, m, d, kc);
+  else pack(p, move, A, at, s[ROW], s[CON], m, kc, d, lda);
 }
 
 /* A block of a packed at [d] for [kc] steps of [lda] elements: a kernel
@@ -430,7 +478,8 @@ static src packed_a(const problem *p, const uint8_t *d, int64_t lda,
 static void pack_b(const problem *p, nx_cpu_pack move, int64_t e, int64_t j,
                    int64_t n, int nr, int64_t pc, int64_t kc, uint8_t *d) {
   const int64_t *s = p->op[B].st;
-  pack(p, move, B, pos(p, B, e, 0, j, pc), s[COL], s[CON], n, kc, d, nr);
+  if (p->op[B].s) stage_at(p, B, e, 0, j, pc, COL, CON, n, kc, d, nr);
+  else pack(p, move, B, pos(p, B, e, 0, j, pc), s[COL], s[CON], n, kc, d, nr);
 }
 
 /* Whether a sliver of [n] columns of b is packed: unless b is read in
@@ -747,9 +796,14 @@ static void transpose(problem *p) {
   p->op[A] = p->op[B];
   p->op[B] = a;
   for (int o = 0; o < 4; o++) {
-    int64_t r = p->op[o].st[ROW];
-    p->op[o].st[ROW] = p->op[o].st[COL];
-    p->op[o].st[COL] = r;
+    operand *q = &p->op[o];
+    int64_t r = q->st[ROW];
+    q->st[ROW] = q->st[COL];
+    q->st[COL] = r;
+    if (q->s == NULL) continue;
+    const int64_t *t = q->s->t[ROW];
+    q->s->t[ROW] = q->s->t[COL];
+    q->s->t[COL] = t;
   }
   int64_t m = p->ext[ROW];
   p->ext[ROW] = p->ext[COL];
@@ -994,11 +1048,10 @@ static void dots_a(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)worker;
   const dots_job *f = ctx;
   const problem *p = f->p;
-  const int64_t *sa = p->op[A].st;
   int64_t m = p->ext[ROW], k = p->ext[CON];
   for (int64_t e = lo; e < hi; e++)
-    stage_acc(p, A, pos(p, A, e, 0, 0, 0), sa[CON], sa[ROW], k, m,
-              f->a + e * f->a_batch * p->w, k);
+    stage_at(p, A, e, 0, 0, 0, CON, ROW, k, m, f->a + e * f->a_batch * p->w,
+             k);
 }
 
 /* Columns [j0, j0 + c) of element [e], each over blocks [x0, x1) in turn,
@@ -1020,7 +1073,7 @@ static void dots_columns(const dots_job *f, uint8_t *bp, uint8_t *mine,
       int64_t at = pos(p, B, e, 0, j0 + j, k0);
       const uint8_t *b = bp;
       if (in_place) b = p->op[B].x->base + at * w;
-      else stage_acc(p, B, at, 1, 0, len, 1, bp, len);
+      else stage_at(p, B, e, 0, j0 + j, k0, CON, COL, len, 1, bp, len);
       for (int64_t i0 = 0; i0 < m; i0 += NX_CPU_DOT_ROWS) {
         int r = (int)min64(NX_CPU_DOT_ROWS, m - i0);
         memset(l, 0, sizeof l);
@@ -1142,13 +1195,13 @@ static void rows_block(const rows_job *f, uint8_t *ap, int64_t e, int64_t x,
                        int64_t q0, int64_t q1, int64_t j0, int64_t c,
                        uint8_t *l, int64_t ls, int64_t ldy) {
   const problem *p = f->p;
-  const int64_t *sa = p->op[A].st, *sb = p->op[B].st;
+  const int64_t *sb = p->op[B].st;
   int64_t m = p->ext[ROW], w = p->w, k0 = x * NX_CPU_LANE_BLOCK;
   int64_t len = min64(NX_CPU_LANE_BLOCK, p->ext[CON] - k0);
   for (int64_t q = q0; q < q1; q++)
     for (int64_t i = 0; i < m; i++)
       memset(l + (q * ls + i * ldy) * w, 0, (size_t)(c * w));
-  stage_acc(p, A, pos(p, A, e, 0, 0, k0), sa[ROW], sa[CON], m, len, ap, m);
+  stage_at(p, A, e, 0, 0, k0, ROW, CON, m, len, ap, m);
   uint8_t *bp = ap + m * NX_CPU_LANE_BLOCK * w;
   nx_cpu_axpy axpy = nx_cpu_table->axpy[p->acc];
   for (int64_t t = 0; t + q0 < len; t += NX_CPU_LANES) {
@@ -1164,7 +1217,7 @@ static void rows_block(const rows_job *f, uint8_t *ap, int64_t e, int64_t x,
       wrap = NX_CPU_LANES;
       last = len - t - q0 - 1;
     } else {
-      stage_acc(p, B, at, sb[COL], sb[CON], c, r - q0, bp, c);
+      stage_at(p, B, e, 0, j0, k0 + t + q0, COL, CON, c, r - q0, bp, c);
     }
     for (int64_t q = q0; q < r; q++) {
       const uint8_t *row = vb + (q - q0) * ldb * w, *aq = ap + (t + q) * m * w;
@@ -1328,8 +1381,8 @@ static void lane_pass(problem *p) {
 static int tiled(const problem *p) {
   int64_t k = p->ext[CON], bytes;
   double cost = lane_cost(p, &bytes);
-  return k > 0 && k <= NX_CPU_LANE_BLOCK && p->op[A].x->dtype == p->acc &&
-         adjacent(p, B, COL) && nx_cpu_threads(bytes, cost) <= 1;
+  return k > 0 && k <= NX_CPU_LANE_BLOCK && raw(p, A) && adjacent(p, B, COL) &&
+         nx_cpu_threads(bytes, cost) <= 1;
 }
 
 /* Each row's outputs NX_CPU_LANES columns at a time by the target's tile,
@@ -1374,8 +1427,11 @@ static void lanes(problem *p) {
   for (int64_t i = 0; i < m && !atomic_load(&p->failed); i += LANE_ROWS) {
     p->ext[ROW] = min64(LANE_ROWS, m - i);
     lane_pass(p);
-    for (int o = 0; o < 4; o++)
-      p->op[o].first += p->ext[ROW] * p->op[o].st[ROW];
+    for (int o = 0; o < 4; o++) {
+      operand *q = &p->op[o];
+      q->first += p->ext[ROW] * q->st[ROW];
+      if (q->s && q->s->t[ROW]) q->s->t[ROW] += p->ext[ROW];
+    }
   }
 }
 
@@ -1458,12 +1514,19 @@ static void lay_out(problem *p, const nx_contract_view *v,
   for (int x = 0; x < 4; x++) p->ext[x] = v->extent[x];
 }
 
-/* nx_cpu_contract_on on the kernels [g]. */
+/* nx_cpu_contract_on on the kernels [g], a and b scaled by [s] where it is
+   not NULL. */
 static int contract_with(const nx_cpu_gemm *g, int acc, int order,
-                         const nx_contract_view *v,
-                         const nx_array *const *op) {
+                         const nx_contract_view *v, const nx_array *const *op,
+                         const scale *s) {
   problem p = {.acc = acc, .w = nx_cpu_width(acc), .g = g};
   lay_out(&p, v, op);
+  scale own[2]; /* the problem's, which its passes move on */
+  for (int o = A; s && o <= B; o++)
+    if (s[o].v) {
+      own[o] = s[o];
+      p.op[o].s = &own[o];
+    }
   if (p.ext[BATCH] == 0 || p.ext[ROW] == 0 || p.ext[COL] == 0) return 1;
   p.init_is_dst = init_is_dst(&p);
   atomic_init(&p.failed, 0);
@@ -1490,7 +1553,7 @@ static int contract_with(const nx_cpu_gemm *g, int acc, int order,
 
 int nx_cpu_contract_on(int acc, int order, const nx_contract_view *v,
                        const nx_array *const *op) {
-  return contract_with(&nx_cpu_table->gemm[acc], acc, order, v, op);
+  return contract_with(&nx_cpu_table->gemm[acc], acc, order, v, op, NULL);
 }
 
 /* Complex */
@@ -2138,7 +2201,7 @@ static int quads_on(const nx_cpu_gemm *g, int acc, const nx_contract_view *v,
   if (dot && u.stride[B][CON] == 1 && min64(m, n) <= QUAD_ROWS) {
     quad_dots_on(dot, g, acc, &u, ops);
     done = 1;
-  } else done = contract_with(g, acc, NX_CPU_CHAIN, &u, ops);
+  } else done = contract_with(g, acc, NX_CPU_CHAIN, &u, ops, NULL);
 out:
   free(ab);
   free(bb);
@@ -2153,9 +2216,12 @@ double nx_cpu_core_speed(int acc) {
 
 /* The contraction of the view [v] of [op], in [acc] and [order], [da] and
    [db] a's and b's dtypes: 0 if an allocation failed. */
+/* A scaled contraction, [s] not NULL, is a float one: it runs on the float
+   kernels. */
 static int contract_view(int acc, int order, int da, int db,
-                         const nx_contract_view *v,
-                         const nx_array *const *op) {
+                         const nx_contract_view *v, const nx_array *const *op,
+                         const scale *s) {
+  if (s) return contract_with(&nx_cpu_table->gemm[acc], acc, order, v, op, s);
   const nx_cpu_gemm *quads = quads_for(acc, da, db);
   if (quads) return quads_on(quads, acc, v, op);
   if (part_of(acc) != acc) return complex_on(acc, order, v, op);
@@ -2184,7 +2250,11 @@ typedef struct {
   nx_contract_view v;      /* the view at the outer loop's first position */
   int n;                   /* outer runs */
   int64_t extent[NX_MAX_RANK], stride[4][NX_MAX_RANK];
+  int group[NX_MAX_RANK];  /* each outer run's */
+  int64_t weight[NX_MAX_RANK]; /* the indices of its group one of its
+                                  steps moves on */
   const nx_array *const *op;
+  const scale *s;          /* a and b's at the first position, or NULL */
   atomic_int failed;
 } outer;
 
@@ -2194,30 +2264,61 @@ static void outer_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   outer *q = ctx;
   for (int64_t u = lo; u < hi; u++) {
     nx_contract_view v = q->v;
+    scale s[2];
+    if (q->s) memcpy(s, q->s, sizeof s);
     for (int64_t r = q->n - 1, x = u; r >= 0; r--) {
       int64_t i = x % q->extent[r];
       x /= q->extent[r];
       for (int o = A; o <= DST; o++) v.offset[o] += i * q->stride[o][r];
+      for (int o = A; q->s && o <= B; o++)
+        if (s[o].t[q->group[r]]) s[o].t[q->group[r]] += i * q->weight[r];
     }
-    if (!contract_view(q->acc, q->order, q->da, q->db, &v, q->op))
+    if (!contract_view(q->acc, q->order, q->da, q->db, &v, q->op,
+                       q->s ? s : NULL))
       atomic_store(&q->failed, 1);
   }
+}
+
+/* Multiplies the copy at [y] of a scaled operand, of acc [dt], laid out as
+   stage_runs lays it, its groups [gs] whole, by its scales [s]. */
+static void scale_runs(const nx_contract_runs *r, const int *gs, int dt,
+                       const scale *s, uint8_t *y) {
+  int64_t n[3] = {1, 1, 1};
+  for (int t = 0; t < 3; t++)
+    for (int k = 0; k < r->runs[gs[t]]; k++) n[t] *= r->extent[gs[t]][k];
+  const int64_t *t0 = s->t[gs[0]], *t1 = s->t[gs[1]], *t2 = s->t[gs[2]];
+  for (int64_t e = 0; e < n[0]; e++)
+    for (int64_t i = 0; i < n[1]; i++) {
+      int64_t at = t0[e] + t1[i], row = (e * n[1] + i) * n[2];
+      if (dt == NX_FLOAT32) {
+        float *d = (float *)y + row;
+        const float *v = (const float *)s->v + at;
+        for (int64_t k = 0; k < n[2]; k++) d[k] *= v[t2[k]];
+      } else {
+        double *d = (double *)y + row;
+        const double *v = (const double *)s->v + at;
+        for (int64_t k = 0; k < n[2]; k++) d[k] *= v[t2[k]];
+      }
+    }
 }
 
 /* Copies operand [o] of [r] into scratch (nx_cpu_take) of the dtype [dt],
    cast where it is not [src]'s, where its runs lie in C order, groups [gs]
    in turn, skipping runs it steps 0 along but the contracted ones, and
    lays [r] out over it in [x]: 0 if the scratch could not be allocated.
-   The copies hold the operand's elements, O(a + b) for a and b. */
+   The copies hold the operand's elements, O(a + b) for a and b. A scaled
+   operand, [s] not NULL, is copied into acc, [dt], with each element times
+   its scale (stage_at), skipping no run: its scales may differ where its
+   elements do not. */
 static int stage_runs(nx_contract_runs *r, int o, const int *gs, int dt,
-                      const nx_array *src, nx_array *x) {
+                      const nx_array *src, const scale *s, nx_array *x) {
   nx_loop l = {.first = {0, r->offset[o]}};
   int64_t *at[NX_MAX_RANK], n = 1;
   int rank = 0;
   for (int t = 0; t < 3; t++) {
     int g = gs[t];
     for (int k = 0; k < r->runs[g]; k++) {
-      if (r->stride[o][g][k] == 0 && g != CON) continue;
+      if (r->stride[o][g][k] == 0 && g != CON && s == NULL) continue;
       l.extent[rank] = r->extent[g][k];
       l.step[1][rank] = r->stride[o][g][k];
       at[rank++] = &r->stride[o][g][k];
@@ -2241,6 +2342,7 @@ static int stage_runs(nx_contract_runs *r, int o, const int *gs, int dt,
   if (dt == src->dtype) nx_cpu_copy_loop(base, src->base, bits, &l);
   else nx_cpu_cast_loop(x, src, &l);
   r->offset[o] = 0;
+  if (s) scale_runs(r, gs, dt, s, base);
   return 1;
 }
 
@@ -2261,34 +2363,50 @@ static int merges(nx_contract_runs *r) {
   return 1;
 }
 
-/* The contraction of [r]'s groups over [op], as contract_view's: 0 if an
-   allocation failed. */
+/* The contraction of [r]'s groups over [op], as contract_view's, a and b
+   scaled by [s] where it is not NULL: 0 if an allocation failed. A scaled
+   operand copied (stage_runs) is copied scaled, and read unscaled. */
 static int runs_on(int acc, int order, int da, int db, nx_contract_runs *r,
-                   const nx_array *const *op) {
+                   const nx_array *const *op, const scale *s) {
   for (int g = BATCH; g <= COL; g++)
     for (int k = 0; k < r->runs[g]; k++)
       if (r->extent[g][k] == 0) return 1;
   nx_array x[2];
   const nx_array *ops[4] = {op[A], op[B], op[INIT], op[DST]};
+  scale kept[2] = {{0}};
+  if (s) memcpy(kept, s, sizeof kept);
   int staged = r->runs[CON] > 1 && !merges(r), done = 0;
   if (staged) {
-    static const int ga[3] = {BATCH, ROW, CON}, gb[3] = {BATCH, COL, CON};
-    if (!stage_runs(r, A, ga, op[A]->dtype, op[A], &x[A])) return 0;
-    if (!stage_runs(r, B, gb, op[B]->dtype, op[B], &x[B])) {
-      nx_cpu_give(x[A].base);
-      return 0;
+    static const int gs[2][3] = {{BATCH, ROW, CON}, {BATCH, COL, CON}};
+    for (int o = A; o <= B; o++) {
+      const scale *so = kept[o].v ? &kept[o] : NULL;
+      int dt = so ? acc : op[o]->dtype;
+      if (!stage_runs(r, o, gs[o], dt, op[o], so, &x[o])) {
+        if (o == B) nx_cpu_give(x[A].base);
+        return 0;
+      }
+      ops[o] = &x[o];
+      kept[o] = (scale){0};
     }
-    ops[A] = &x[A];
-    ops[B] = &x[B];
+    da = ops[A]->dtype;
+    db = ops[B]->dtype;
     merges(r);
   }
-  outer q = {.acc = acc, .order = order, .da = da, .db = db, .op = ops};
+  int scaled = kept[A].v || kept[B].v;
+  outer q = {.acc = acc, .order = order, .da = da, .db = db, .op = ops,
+             .s = scaled ? kept : NULL};
   atomic_init(&q.failed, 0);
   int64_t units = 1;
   for (int g = BATCH; g <= CON; g++) {
     int last = r->runs[g] - 1;
     q.v.extent[g] = r->extent[g][last];
     for (int o = A; o <= DST; o++) q.v.stride[o][g] = r->stride[o][g][last];
+    int64_t weight = r->extent[g][last];
+    for (int k = last - 1; k >= 0; k--) {
+      q.group[q.n + k] = g;
+      q.weight[q.n + k] = weight;
+      weight *= r->extent[g][k];
+    }
     for (int k = 0; k < last; k++) {
       q.extent[q.n] = r->extent[g][k];
       for (int o = A; o <= DST; o++) q.stride[o][q.n] = r->stride[o][g][k];
@@ -2382,7 +2500,7 @@ static __attribute__((noinline)) int store_rounded(
    into op[DST] of another dtype than [sum], through scratch R: 0 if an
    allocation failed. */
 static int rounded_on(int acc, int sum, int order, nx_contract_runs *r,
-                      const nx_array *const *op) {
+                      const nx_array *const *op, const scale *s) {
   /* The loop the cast walks, over the runs of more than one element:
      their extents and dst's steps; R's steps C-contiguous over them. */
   int64_t extent[NX_MAX_RANK], step[NX_MAX_RANK], first = r->offset[DST];
@@ -2428,10 +2546,11 @@ static int rounded_on(int acc, int sum, int order, nx_contract_runs *r,
     if (acc == sum ||
         (!split && kind != NX_KIND_FLOAT && kind != NX_KIND_COMPLEX))
       continue;
-    done = stage_runs(r, o, gs[o], acc, op[o], &z[o]);
+    done = stage_runs(r, o, gs[o], acc, op[o], NULL, &z[o]);
     if (done) ops[o] = &z[o];
   }
-  if (done) done = runs_on(sum, order, ops[A]->dtype, ops[B]->dtype, r, ops);
+  if (done)
+    done = runs_on(sum, order, ops[A]->dtype, ops[B]->dtype, r, ops, s);
   for (int o = A; o <= INIT; o++)
     if (ops[o] == &z[o]) nx_cpu_give(z[o].base);
   int narrows = acc != sum && op[DST]->dtype != acc;
@@ -2439,6 +2558,139 @@ static int rounded_on(int acc, int sum, int order, nx_contract_runs *r,
     done = store_rounded(op[DST], &y, acc, narrows, first, rank, extent, step);
   nx_cpu_give(y.base);
   return done;
+}
+
+/* Scales
+
+   A scaled operand's scales are decoded into acc once a call, C-contiguous,
+   and each of its groups of axes takes a table from an index to its block's
+   position among them (scale): the scales' count in acc, and O(B + M + K)
+   or O(B + N + K) positions. */
+
+/* Whether axis [d] of side [o], 0 for a and 1 for b, is in a pair of
+   [ps]. */
+static int in_pairs(value ps, int o, int d) {
+  for (mlsize_t k = 0; k < Wosize_val(ps); k++)
+    if (Long_val(Field(Field(ps, k), o)) == d) return 1;
+  return 0;
+}
+
+/* The axes of side [o], of rank [rank], in group [g] into [ax], and their
+   count: the pairs' in pair order for the batch and the contraction, the
+   free ones in axis order for the rows or the columns. */
+static int group_axes(value vbatch, value vcon, int o, int rank, int g,
+                      int *ax) {
+  if (g == BATCH || g == CON) {
+    value ps = g == BATCH ? vbatch : vcon;
+    int n = (int)Wosize_val(ps);
+    for (int k = 0; k < n; k++) ax[k] = (int)Long_val(Field(Field(ps, k), o));
+    return n;
+  }
+  int n = 0;
+  for (int d = 0; d < rank; d++)
+    if (!in_pairs(vbatch, o, d) && !in_pairs(vcon, o, d)) ax[n++] = d;
+  return n;
+}
+
+/* The scales [sc] into [v], C-contiguous in [acc]: a code e, where
+   [exponent], as 2^(e - 127) and 255 as NaN; a value as a cast into acc
+   gives it. */
+static void decode(const nx_array *sc, int exponent, int acc, uint8_t *v) {
+  int r = sc->rank, w = nx_cpu_width(acc);
+  const int64_t *x = sc->dim, *st = sc->dim + r;
+  int64_t n0 = r ? x[r - 1] : 1, s0 = r ? st[r - 1] : 0, rows = 1;
+  for (int d = 0; d + 1 < r; d++) rows *= x[d];
+  if (rows == 0 || n0 == 0) return;
+  int64_t idx[NX_MAX_RANK] = {0};
+  for (int64_t q = 0; q < rows; q++) {
+    int64_t at = sc->offset;
+    for (int d = 0; d + 1 < r; d++) at += idx[d] * st[d];
+    nx_cpu_stage_as(sc, at, s0, 0, n0, 1, acc, v + q * n0 * w, 0);
+    for (int d = r - 2; d >= 0 && ++idx[d] == x[d]; d--) idx[d] = 0;
+  }
+  if (!exponent) return;
+  int64_t n = rows * n0;
+  if (acc == NX_FLOAT32) {
+    float *f = (float *)v;
+    for (int64_t i = 0; i < n; i++)
+      f[i] = f[i] == 255.f ? NAN : ldexpf(1.f, (int)f[i] - 127);
+  } else {
+    double *f = (double *)v;
+    for (int64_t i = 0; i < n; i++)
+      f[i] = f[i] == 255. ? NAN : ldexp(1., (int)f[i] - 127);
+  }
+}
+
+/* Fills [t] with a group's table over its [n] axes [ax]: each index of the
+   group, in C order of the axes' extents [x], to the sum along each axis
+   of the index's block, its index divided by [ratio], times the scales'
+   [step]. */
+static void table(int n, const int *ax, const int64_t *x, const int64_t *ratio,
+                  const int64_t *step, int64_t *t) {
+  int64_t len = 1;
+  t[0] = 0;
+  for (int a = 0; a < n; a++) {
+    int d = ax[a];
+    int64_t e = x[d];
+    for (int64_t q = len - 1; q >= 0; q--) {
+      int64_t first = t[q];
+      for (int64_t i = e - 1; i >= 0; i--)
+        t[q * e + i] = first + i / ratio[d] * step[d];
+    }
+    len *= e;
+  }
+}
+
+/* The scales [sc] of operand [x], side [o], into [s], its memory, to free,
+   at [*mem]: 0 if it could not be allocated. Out of line, as scales_fit. */
+static __attribute__((noinline)) int scale_of(int acc, int exponent, const nx_array *x,
+                    const nx_array *sc, value vbatch, value vcon, int o,
+                    scale *s, uint8_t **mem) {
+  static const int groups[2][3] = {{BATCH, ROW, CON}, {BATCH, COL, CON}};
+  int r = x->rank, w = nx_cpu_width(acc), ax[3][NX_MAX_RANK], na[3];
+  int64_t count = 1, step[NX_MAX_RANK], ratio[NX_MAX_RANK], len[3];
+  for (int d = r - 1; d >= 0; d--) {
+    step[d] = count;
+    count *= sc->dim[d];
+    ratio[d] = sc->dim[d] ? x->dim[d] / sc->dim[d] : 1;
+  }
+  int64_t values = ceil_div(count * w, 8), positions = 0;
+  for (int t = 0; t < 3; t++) {
+    na[t] = group_axes(vbatch, vcon, o, r, groups[o][t], ax[t]);
+    len[t] = 1;
+    for (int k = 0; k < na[t]; k++) len[t] *= x->dim[ax[t][k]];
+    positions += len[t] > 0 ? len[t] : 1;
+  }
+  int64_t *m = alloc((values + positions) * 8);
+  if (m == NULL) return 0;
+  *mem = (uint8_t *)m;
+  *s = (scale){.v = (const uint8_t *)m};
+  decode(sc, exponent, acc, (uint8_t *)m);
+  int64_t *t = m + values;
+  for (int g = 0; g < 3; g++) {
+    table(na[g], ax[g], x->dim, ratio, step, t);
+    s->t[groups[o][g]] = t;
+    t += len[g] > 0 ? len[g] : 1;
+  }
+  return 1;
+}
+
+/* Whether each scale of [vs], options of Nx_kernel.scale, fits its
+   operand of [va] and [vb]: of its rank, each extent dividing the
+   operand's, 0 only along an empty axis. Out of line: its layouts stay off
+   the external's frame. */
+static __attribute__((noinline)) int scales_fit(value va, value vb,
+                                                const value *vs) {
+  int64_t x[2 * NX_MAX_RANK], dim[2 * NX_MAX_RANK], off;
+  for (int o = A; o <= B; o++) {
+    if (!Is_block(vs[o])) continue;
+    /* Exponent and Value hold their array in field 0. */
+    int r = nx_array_layout(o == A ? va : vb, x, &off);
+    if (nx_array_layout(Field(Field(vs[o], 0), 0), dim, &off) != r) return 0;
+    for (int d = 0; d < r; d++)
+      if (dim[d] == 0 ? x[d] != 0 : x[d] % dim[d] != 0) return 0;
+  }
+  return 1;
 }
 
 /* The price (cpu.h, Calls) of a contraction in [acc] in [order] whose
@@ -2468,9 +2720,11 @@ static double call_cost(int acc, int order, const double *x) {
    on the stack, or their runs where a group makes several, answering what
    the fill answers where it does not fit, declines what it does not
    compute, then reads the operands through the door. [vorder] is the
-   order, [vacc] acc's dtype code and [vi] the init, an option. */
+   order, [vacc] acc's dtype code, [vi] the init and [vsa] and [vsb] a's
+   and b's scales, options of Nx_kernel.scale. */
 value nx_cpu_contract(value vorder, value vbatch, value vcontracting,
-                      value vacc, value vdst, value vi, value va, value vb) {
+                      value vacc, value vdst, value vi, value va, value vb,
+                      value vsa, value vsb) {
   int acc = Int_val(vacc), init = Is_block(vi);
   value vinit = init ? Field(vi, 0) : va;
   nx_contract_view v;
@@ -2483,12 +2737,23 @@ value nx_cpu_contract(value vorder, value vbatch, value vcontracting,
   int out = nx_array_dtype(vdst);
   if (acc < 0 || acc >= NX_DTYPE_COUNT || !computes(acc))
     return Val_int(NX_DECLINED);
-  nx_operand in[4] = {{va, dts[0], 0},
+  value vs[2] = {vsa, vsb};
+  int scaled = Is_block(vsa) || Is_block(vsb);
+  if (scaled && acc != NX_FLOAT32 && acc != NX_FLOAT64)
+    return Val_int(NX_DECLINED);
+  if (scaled && !scales_fit(va, vb, vs)) return Val_int(NX_SHAPE);
+  nx_operand in[6] = {{va, dts[0], 0},
                       {vb, dts[1], 0},
                       {vdst, out, 1},
                       {vinit, dts[2], 0}};
-  nx_array a[4];
-  int n = 3 + init;
+  nx_array a[6];
+  int n = 3 + init, at[2] = {-1, -1};
+  for (int o = A; o <= B; o++)
+    if (Is_block(vs[o])) {
+      value sv = Field(Field(vs[o], 0), 0);
+      at[o] = n;
+      in[n++] = (nx_operand){sv, nx_array_dtype(sv), 0};
+    }
   int e = nx_read(n, in, a);
   if (e) return Val_int(e);
   const nx_array *op[4] = {&a[0], &a[1], init ? &a[3] : NULL, &a[2]};
@@ -2504,11 +2769,25 @@ value nx_cpu_contract(value vorder, value vbatch, value vcontracting,
   }
   int released = nx_cpu_release(call_cost(acc, order, x));
   int sum = summed_in(acc);
-  if (out != acc || sum != acc) {
+  scale s[2];
+  uint8_t *mem[2] = {NULL, NULL};
+  done = 1;
+  if (scaled) memset(s, 0, sizeof s);
+  for (int o = A; o <= B && done; o++)
+    if (at[o] >= 0)
+      done = scale_of(acc, Tag_val(Field(vs[o], 0)) == 0, op[o], &a[at[o]],
+                      vbatch, vcontracting, o, &s[o], &mem[o]);
+  const scale *sp = scaled ? s : NULL;
+  if (done && (out != acc || sum != acc)) {
     if (!runs) runs_of_view(&r, &v);
-    done = rounded_on(acc, sum, order, &r, op);
-  } else if (runs) done = runs_on(acc, order, dts[0], dts[1], &r, op);
-  else done = contract_view(acc, order, dts[0], dts[1], &v, op);
+    done = rounded_on(acc, sum, order, &r, op, sp);
+  } else if (done && runs)
+    done = runs_on(acc, order, dts[0], dts[1], &r, op, sp);
+  else if (done) done = contract_view(acc, order, dts[0], dts[1], &v, op, sp);
+  if (scaled) {
+    free(mem[A]);
+    free(mem[B]);
+  }
   nx_cpu_reacquire(released);
   nx_done(n, a);
   if (!done) caml_raise_out_of_memory();
@@ -2518,5 +2797,5 @@ value nx_cpu_contract(value vorder, value vbatch, value vcontracting,
 value nx_cpu_contract_byte(value *argv, int argn) {
   (void)argn;
   return nx_cpu_contract(argv[0], argv[1], argv[2], argv[3], argv[4],
-                         argv[5], argv[6], argv[7]);
+                         argv[5], argv[6], argv[7], argv[8], argv[9]);
 }

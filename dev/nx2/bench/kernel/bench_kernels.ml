@@ -417,19 +417,20 @@ let f64 = D.Float64
 let after_subnormals =
   let acc = D.Any f32 and contracting : _ iarray = [| (1, 0) |] in
   let bench (module K : Nx_kernel.S) =
+    let plain a : Nx_kernel.operand = { array = A.Any a; scale = None } in
     let product dst a b =
       ok
         (K.contract ~order:Nx_kernel.Chain ~batch:[||] ~contracting
-           ~segments:None ~acc ~dst ~init:None
-           { array = A.Any a; scale = None }
-           { array = A.Any b; scale = None })
+           ~segments:None ~acc ~dst ~init:None a b)
     in
     row "contract-f32-100-after-subnormals"
       (fun () ->
         let a = filled f32 [| 100; 100 |] in
         let tiny = A.of_array f32 [| 100; 111 |] (Array.make 11100 1e-40) in
-        product (A.create Rig.host f32 [| 100; 111 |]) a tiny;
-        (A.create Rig.host f32 [| 100; 100 |], a, filled f32 [| 100; 100 |]))
+        product (A.create Rig.host f32 [| 100; 111 |]) (plain a) (plain tiny);
+        ( A.create Rig.host f32 [| 100; 100 |],
+          plain a,
+          plain (filled f32 [| 100; 100 |]) ))
       (fun (dst, a, b) -> product dst a b)
   in
   { bench; work = [ F.Fma (acc, 2 * 100 * 100 * 100) ] }
