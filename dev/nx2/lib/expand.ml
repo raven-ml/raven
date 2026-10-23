@@ -3024,10 +3024,11 @@ let partners (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by n =
    then [A]'s diagonal ascending, scaled back, and [V]'s columns in its order. A
    rotation moves [2 |g_pq|²] of [off(A)²] to the diagonal (LAWN 169, §1), and
    the rounds share [off(A)² / 2] out, so a trip takes at least [off(A)² / R]. A
-   matrix with an infinity or a NaN where it is read is NaN. *)
-let eigh (type v s d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
-    ~(loop : d loop) (vectors : (unit, (v, s, d) Value.t, r) Nx_kernel.vectors)
-    (a : (v, s, d) Value.t) : (v, s, d) Value.t * r =
+   matrix with an infinity or a NaN where it is read is NaN. The values come
+   with the function that gives [V] where [vectors] carried it. *)
+let eigh (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    ~(loop : d loop) ~vectors (a : (v, s, d) Value.t) :
+    (v, s, d) Value.t * (unit -> (v, s, d) Value.t) =
   let dt = Prim.dtype a in
   let (Field f) = field dt in
   let lead, a = matrices apply ~by a in
@@ -3056,9 +3057,8 @@ let eigh (type v s d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
     | [] -> invalid_arg "Expand: eigh's loop carries its matrix"
   in
   let init =
-    match vectors with
-    | No_vectors -> [ Value.Any a ]
-    | Vectors () -> [ Value.Any a; Value.Any (identity apply ~by dt b n) ]
+    if vectors then [ Value.Any a; Value.Any (identity apply ~by dt b n) ]
+    else [ Value.Any a ]
   in
   let w, vs =
     match loop (jacobi_trips n (digits dt)) step init with
@@ -3085,13 +3085,15 @@ let eigh (type v s d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
       (f.of_real (E.input 0 f.re))
   in
   let w = batched apply ~by lead (failing apply ~by bad w) in
-  match (vectors, vs) with
-  | No_vectors, _ -> (w, ())
-  | Vectors (), [ v ] ->
-      let idx = fit apply ~by shape (reshape apply ~by [| b; 1; n |] order) in
-      let v = apply ~by (Value.Gather { axis = 2; idx; x = v }) in
-      (w, batched apply ~by lead (failing apply ~by bad v))
-  | Vectors (), _ -> invalid_arg "Expand: eigh's loop gives its vectors"
+  let vectors () =
+    match vs with
+    | [ v ] ->
+        let idx = fit apply ~by shape (reshape apply ~by [| b; 1; n |] order) in
+        let v = apply ~by (Value.Gather { axis = 2; idx; x = v }) in
+        batched apply ~by lead (failing apply ~by bad v)
+    | _ -> invalid_arg "Expand: eigh's loop gives its vectors"
+  in
+  (w, vectors)
 
 (* The sweeps of one-sided Jacobi, dgesvj's NSWEEP. *)
 let sweeps = 30
@@ -3108,14 +3110,12 @@ let sweeps = 30
    left vectors are [Q] of the first reduction times the rotations, and the
    right ones the columns over their norms completed by {!householder} of [k ×
    k] to an orthonormal basis, each column of its [Q] by the sign of its [R]'s
-   diagonal. *)
-let svd (type v s d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
-    ~(loop : d loop)
-    (vectors :
-      ( Nx_kernel.factors,
-        (v, s, d) Value.t * (v, s, d) Value.t,
-        r )
-      Nx_kernel.vectors) (a : (v, s, d) Value.t) : (v, s, d) Value.t * r =
+   diagonal. The values come with the function that gives [u] and [vh] of
+   given factors where [vectors] carried the rotations. *)
+let svd (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    ~(loop : d loop) ~vectors (a : (v, s, d) Value.t) :
+    (v, s, d) Value.t
+    * (Nx_kernel.factors -> (v, s, d) Value.t * (v, s, d) Value.t) =
   let dt = Prim.dtype a in
   let (Field f) = field dt in
   let lead, a = matrices apply ~by a in
@@ -3127,9 +3127,6 @@ let svd (type v s d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   and re i = E.input i f.re
   and j i = E.input i D.Int64 in
   let zero = E.const dt (D.zero dt) and fl v = E.const f.re v in
-  let with_vectors =
-    match vectors with No_vectors -> false | Vectors _ -> true
-  in
   (* dgesvj's tolerance, plus the floor a pair's cosine reaches here: each
      column of a rotated pair within [ρ] of exact (LAWN 169, Fact 1) and the
      cosine computed within [γ(k + 2)]. *)
@@ -3142,7 +3139,7 @@ let svd (type v s d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
       Float.of_int (k + 2) *. nu /. (1. -. (Float.of_int (k + 2) *. nu))
     in
     let ctol =
-      if with_vectors then Float.sqrt (Float.of_int k) else Float.of_int k
+      if vectors then Float.sqrt (Float.of_int k) else Float.of_int k
     in
     (ctol *. unit) +. (2. *. rho) +. g
   in
@@ -3276,10 +3273,9 @@ let svd (type v s d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   in
   let init =
     let count = zeros apply ~by D.Int64 [| b; 1; 1 |] in
-    match vectors with
-    | No_vectors -> [ Value.Any x0; Value.Any count ]
-    | Vectors _ ->
-        [ Value.Any x0; Value.Any count; Value.Any (identity apply ~by dt b k) ]
+    if vectors then
+      [ Value.Any x0; Value.Any count; Value.Any (identity apply ~by dt b k) ]
+    else [ Value.Any x0; Value.Any count ]
   in
   let trips = if k <= 1 then 0 else sweeps * rounds k in
   let y, count, vs =
@@ -3316,62 +3312,64 @@ let svd (type v s d r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
       (mapx apply ~by [| b; k |] dt [ Value.Any sorted ]
          (f.of_real (E.input 0 f.re)))
   in
-  match (vectors, vs) with
-  | No_vectors, _ -> (s, ())
-  | Vectors factors, [ v ] ->
-      let ordered x =
-        let idx =
-          fit apply ~by (Prim.shape x) (reshape apply ~by across order)
+  let vectors (factors : Nx_kernel.factors) =
+    match vs with
+    | [ v ] ->
+        let ordered x =
+          let idx =
+            fit apply ~by (Prim.shape x) (reshape apply ~by across order)
+          in
+          apply ~by (Value.Gather { axis = 2; idx; x })
         in
-        apply ~by (Value.Gather { axis = 2; idx; x })
-      in
-      let units = ordered units and v = ordered v in
-      let rr, cvs, ctaus = householder apply ~by ~loop units in
-      let completed = accumulate apply ~by ~loop cvs ctaus k in
-      let signs =
-        let idx = mapx apply ~by across D.Int64 [] cols in
-        apply ~by (Value.Gather { axis = 1; idx; x = rr })
-      in
-      let w =
-        mapx apply ~by square dt
-          [ Value.Any completed; Value.Any signs ]
-          E.(where (f.real (x 1) < fl 0.) (neg (x 0)) (x 0))
-      in
-      let width = match factors with Reduced -> k | Complete -> mm in
-      let q = accumulate apply ~by ~loop reflectors taus width in
-      let rest = { M.start = k; count = width - k; step = 1 } in
-      let u =
-        let main = product apply ~by (2, 1) (corner apply ~by mm k q) v in
-        if width = k then main
-        else
-          apply ~by
-            (Value.Assemble
-               {
-                 dtype = dt;
-                 shape = [| b; mm; width |];
-                 fill = D.zero dt;
-                 pieces =
-                   [
-                     ([| whole b; whole mm; whole k |], main);
-                     ( [| whole b; whole mm; rest |],
-                       move apply ~by (M.Slice [| whole b; whole mm; rest |]) q
-                     );
-                   ];
-               })
-      in
-      let adjoint z =
-        let s = Prim.shape z in
-        mapx apply ~by
-          [| b; s.(2); s.(1) |]
-          dt
-          [ Value.Any (transposed apply ~by z) ]
-          (f.conj (x 0))
-      in
-      if tall then (s, (out u, out (adjoint w)))
-      else (s, (out w, out (adjoint u)))
-  | Vectors _, _ -> invalid_arg "Expand: svd's loop gives its vectors"
+        let units = ordered units and v = ordered v in
+        let rr, cvs, ctaus = householder apply ~by ~loop units in
+        let completed = accumulate apply ~by ~loop cvs ctaus k in
+        let signs =
+          let idx = mapx apply ~by across D.Int64 [] cols in
+          apply ~by (Value.Gather { axis = 1; idx; x = rr })
+        in
+        let w =
+          mapx apply ~by square dt
+            [ Value.Any completed; Value.Any signs ]
+            E.(where (f.real (x 1) < fl 0.) (neg (x 0)) (x 0))
+        in
+        let width = match factors with Reduced -> k | Complete -> mm in
+        let q = accumulate apply ~by ~loop reflectors taus width in
+        let rest = { M.start = k; count = width - k; step = 1 } in
+        let u =
+          let main = product apply ~by (2, 1) (corner apply ~by mm k q) v in
+          if width = k then main
+          else
+            apply ~by
+              (Value.Assemble
+                 {
+                   dtype = dt;
+                   shape = [| b; mm; width |];
+                   fill = D.zero dt;
+                   pieces =
+                     [
+                       ([| whole b; whole mm; whole k |], main);
+                       ( [| whole b; whole mm; rest |],
+                         move apply ~by
+                           (M.Slice [| whole b; whole mm; rest |])
+                           q );
+                     ];
+                 })
+        in
+        let adjoint z =
+          let s = Prim.shape z in
+          mapx apply ~by
+            [| b; s.(2); s.(1) |]
+            dt
+            [ Value.Any (transposed apply ~by z) ]
+            (f.conj (x 0))
+        in
+        if tall then (out u, out (adjoint w)) else (out w, out (adjoint u))
+    | _ -> invalid_arg "Expand: svd's loop gives its vectors"
+  in
+  (s, vectors)
 
-(* A routine's expansion; [Eig] has none. *)
+(* A routine's expansion; [Eig] and [Eig_values] have none. *)
 let linalg : type d r.
     ('q. by:string -> 'q Value.prim -> 'q) ->
     by:string ->
@@ -3383,9 +3381,16 @@ let linalg : type d r.
   | Cholesky { triangle; a } -> Some (cholesky apply ~by ~loop triangle a)
   | Lu a -> Some (lu apply ~by ~loop a)
   | Qr { factors; a } -> Some (qr apply ~by ~loop factors a)
-  | Svd { vectors; a } -> Some (svd apply ~by ~loop vectors a)
-  | Eigh { vectors; a } -> Some (eigh apply ~by ~loop vectors a)
-  | Eig _ -> None
+  | Svd_values a -> Some (fst (svd apply ~by ~loop ~vectors:false a))
+  | Svd { factors; a } ->
+      let s, vectors = svd apply ~by ~loop ~vectors:true a in
+      let u, vh = vectors factors in
+      Some (s, u, vh)
+  | Eigh_values a -> Some (fst (eigh apply ~by ~loop ~vectors:false a))
+  | Eigh a ->
+      let w, vectors = eigh apply ~by ~loop ~vectors:true a in
+      Some (w, vectors ())
+  | Eig_values _ | Eig _ -> None
   | Solve_triangular { triangle; adjoint; unit_diagonal; a; b } ->
       Some (solve apply ~by ~loop triangle ~adjoint ~unit_diagonal a b)
 

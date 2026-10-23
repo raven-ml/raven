@@ -284,26 +284,24 @@ and ('d, _) linalg =
       a : ('v, 's, 'd) t;
     }
       -> ('d, ('v, 's, 'd) t * ('v, 's, 'd) t) linalg
+  | Svd_values : ('v, 's, 'd) t -> ('d, ('v, 's, 'd) t) linalg
   | Svd : {
-      vectors :
-        ( Nx_kernel.factors,
-          ('v, 's, 'd) t * ('v, 's, 'd) t,
-          'r )
-        Nx_kernel.vectors;
+      factors : Nx_kernel.factors;
       a : ('v, 's, 'd) t;
     }
-      -> ('d, ('v, 's, 'd) t * 'r) linalg
-  | Eigh : {
-      vectors : (unit, ('v, 's, 'd) t, 'r) Nx_kernel.vectors;
-      a : ('v, 's, 'd) t;
-    }
-      -> ('d, ('v, 's, 'd) t * 'r) linalg
-  | Eig : {
-      vectors : (unit, (Complex.t, 'c, 'd) t, 'r) Nx_kernel.vectors;
+      -> ('d, ('v, 's, 'd) t * ('v, 's, 'd) t * ('v, 's, 'd) t) linalg
+  | Eigh_values : ('v, 's, 'd) t -> ('d, ('v, 's, 'd) t) linalg
+  | Eigh : ('v, 's, 'd) t -> ('d, ('v, 's, 'd) t * ('v, 's, 'd) t) linalg
+  | Eig_values : {
       dtype : (Complex.t, 'c) dtype;
       a : ('v, 's, 'd) t;
     }
-      -> ('d, (Complex.t, 'c, 'd) t * 'r) linalg
+      -> ('d, (Complex.t, 'c, 'd) t) linalg
+  | Eig : {
+      dtype : (Complex.t, 'c) dtype;
+      a : ('v, 's, 'd) t;
+    }
+      -> ('d, (Complex.t, 'c, 'd) t * (Complex.t, 'c, 'd) t) linalg
   | Solve_triangular : {
       triangle : Nx_kernel.triangle;
       adjoint : bool;

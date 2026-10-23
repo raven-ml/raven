@@ -83,10 +83,6 @@ let same_precision (type v s c) (x : (v, s) D.t) (c : (Complex.t, c) D.t) =
 type triangle = Lower | Upper
 type factors = Reduced | Complete
 
-type ('p, 'x, _) vectors =
-  | No_vectors : ('p, 'x, unit) vectors
-  | Vectors : 'p -> ('p, 'x, 'x) vectors
-
 let full_precision (type v s) (dt : (v, s) D.t) =
   match dt with
   | Float32 | Float64 | Complex64 | Complex128 -> true
@@ -458,35 +454,33 @@ module Shape = struct
     let* r = admit "r" r in
     Ok (q, r)
 
-  let svd : type r.
-      (factors, t * t, r) vectors -> t -> (t * r, string) Stdlib.result =
-   fun vs a ->
+  let svd_values a =
+    let* batch, m, n = matrix a in
+    admit "singular values" (Array.append batch [| min m n |])
+
+  let svd f a =
     let* batch, m, n = matrix a in
     let y tail = Array.append batch tail in
     let k = min m n in
     let* s = admit "singular values" (y [| k |]) in
-    (* The annotation lets each case refine [r] inside [let*]'s function. *)
-    (match vs with
-     | No_vectors -> Ok (s, ())
-     | Vectors f ->
-         let u, vh =
-           match f with
-           | Reduced -> (y [| m; k |], y [| k; n |])
-           | Complete -> (y [| m; m |], y [| n; n |])
-         in
-         let* u = admit "u" u in
-         let* vh = admit "vh" vh in
-         Ok (s, (u, vh))
-      : (t * r, string) Stdlib.result)
+    let u, vh =
+      match f with
+      | Reduced -> (y [| m; k |], y [| k; n |])
+      | Complete -> (y [| m; m |], y [| n; n |])
+    in
+    let* u = admit "u" u in
+    let* vh = admit "vh" vh in
+    Ok (s, u, vh)
 
-  let eigh : type r.
-      (unit, t, r) vectors -> t -> (t * r, string) Stdlib.result =
-   fun vs a ->
+  let eigh_values a =
     let* batch, _, n = square a in
-    let w = Array.append batch [| n |] in
-    (match vs with No_vectors -> Ok (w, ()) | Vectors () -> Ok (w, a)
-      : (t * r, string) Stdlib.result)
+    Ok (Array.append batch [| n |])
 
+  let eigh a =
+    let* w = eigh_values a in
+    Ok (w, a)
+
+  let eig_values = eigh_values
   let eig = eigh
 
   let solve_triangular a b =

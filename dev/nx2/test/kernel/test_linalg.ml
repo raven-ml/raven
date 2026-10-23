@@ -392,21 +392,21 @@ let run ?(alloc = fresh) (b : Support.backend) r ops =
         let q = make sq and r = make sr in
         ([| A.Any q; A.Any r |], K.qr ~q ~r a)
     | Eigh vectors ->
-        let sw, sv = ok (Shape.eigh (Vectors ()) (shape ops.(0))) in
+        let sw, sv = ok (Shape.eigh (shape ops.(0))) in
         let w = make sw in
         if vectors then
           let v = make sv in
           ([| A.Any w; A.Any v |], K.eigh ~w ~v a)
         else ([| A.Any w |], K.eigh ~w a)
     | Svd None ->
-        let s = make (fst (ok (Shape.svd No_vectors (shape ops.(0))))) in
+        let s = make (ok (Shape.svd_values (shape ops.(0)))) in
         ([| A.Any s |], K.svd ~s a)
     | Svd (Some f) ->
-        let ss, (su, sv) = ok (Shape.svd (Vectors f) (shape ops.(0))) in
+        let ss, su, sv = ok (Shape.svd f (shape ops.(0))) in
         let s = make ss and u = make su and vh = make sv in
         ([| A.Any s; A.Any u; A.Any vh |], K.svd ~s ~vectors:(~u, ~vh) a)
     | Eig vectors -> (
-        let sw, sv = ok (Shape.eig (Vectors ()) (shape ops.(0))) in
+        let sw, sv = ok (Shape.eig (shape ops.(0))) in
         let eig (type c) (cdt : (Complex.t, c) D.t) =
           let w = A.expect cdt (alloc (D.Any cdt) sw) in
           if vectors then
@@ -2440,15 +2440,12 @@ let shapes c =
   | Cholesky _ -> Result.map (fun y -> [| y |]) (S.cholesky c.a)
   | Lu -> Result.map (fun (l, p, q) -> [| l; p; q |]) (S.lu c.a)
   | Qr f -> Result.map (fun (q, r) -> [| q; r |]) (S.qr f c.a)
-  | Eigh v ->
-      Result.map (fun (w, x) -> if v then [| w; x |] else [| w |]) (S.eigh (Vectors ()) c.a)
-  | Svd None -> Result.map (fun (s, ()) -> [| s |]) (S.svd No_vectors c.a)
-  | Svd (Some f) ->
-      Result.map (fun (s, (u, vh)) -> [| s; u; vh |]) (S.svd (Vectors f) c.a)
-  | Eig v ->
-      Result.map
-        (fun (w, x) -> if v then [| w; x |] else [| w |])
-        (S.eig (Vectors ()) c.a)
+  | Eigh true -> Result.map (fun (w, x) -> [| w; x |]) (S.eigh c.a)
+  | Eigh false -> Result.map (fun w -> [| w |]) (S.eigh_values c.a)
+  | Svd None -> Result.map (fun s -> [| s |]) (S.svd_values c.a)
+  | Svd (Some f) -> Result.map (fun (s, u, vh) -> [| s; u; vh |]) (S.svd f c.a)
+  | Eig true -> Result.map (fun (w, x) -> [| w; x |]) (S.eig c.a)
+  | Eig false -> Result.map (fun w -> [| w |]) (S.eig_values c.a)
   | Solve _ -> Result.map (fun y -> [| y |]) (S.solve_triangular c.a c.b)
 
 let arity = function

@@ -145,37 +145,32 @@ let test_forms () =
       (1, "float32", [| 3; 3 |]);
       (2, "float32", [| 3; 5 |]);
     ]
-    (Svd { vectors = Vectors Reduced; a = f32 [| 3; 5 |] });
+    (Svd { factors = Reduced; a = f32 [| 3; 5 |] });
   check "svd complete"
     [
       (0, "float32", [| 3 |]);
       (1, "float32", [| 3; 3 |]);
       (2, "float32", [| 5; 5 |]);
     ]
-    (Svd { vectors = Vectors Complete; a = f32 [| 3; 5 |] });
+    (Svd { factors = Complete; a = f32 [| 3; 5 |] });
   check "singular values"
     [ (0, "float32", [| 3 |]) ]
-    (Svd { vectors = No_vectors; a = f32 [| 3; 5 |] });
+    (Svd_values (f32 [| 3; 5 |]));
   check "eigh"
     [ (0, "complex64", [| 4 |]); (1, "complex64", [| 4; 4 |]) ]
-    (Eigh { vectors = Vectors (); a = c64 [| 4; 4 |] });
+    (Eigh (c64 [| 4; 4 |]));
   check "eigh's values"
     [ (0, "float32", [| 4 |]) ]
-    (Eigh { vectors = No_vectors; a = f32 [| 4; 4 |] });
+    (Eigh_values (f32 [| 4; 4 |]));
   check "eig"
     [ (0, "complex64", [| 4 |]); (1, "complex64", [| 4; 4 |]) ]
-    (Eig { vectors = Vectors (); dtype = Complex64; a = c64 [| 4; 4 |] });
+    (Eig { dtype = Complex64; a = c64 [| 4; 4 |] });
   check "eig of a real matrix"
     [ (0, "complex128", [| 4 |]); (1, "complex128", [| 4; 4 |]) ]
-    (Eig
-       {
-         vectors = Vectors ();
-         dtype = Complex128;
-         a = zeros D.Float64 [| 4; 4 |];
-       });
+    (Eig { dtype = Complex128; a = zeros D.Float64 [| 4; 4 |] });
   check "eig's values"
     [ (0, "complex64", [| 4 |]) ]
-    (Eig { vectors = No_vectors; dtype = Complex64; a = f32 [| 4; 4 |] });
+    (Eig_values { dtype = Complex64; a = f32 [| 4; 4 |] });
   check "solve"
     [ (0, "float32", [| 2; 3; 4 |]) ]
     (Solve_triangular
@@ -194,17 +189,12 @@ let test_rules () =
       linalg (Cholesky { triangle = Lower; a = zeros D.Float32 [| 2; 3 |] }));
   raises (fun () -> linalg (Lu (zeros D.Int32 [| 2; 2 |])));
   raises (fun () ->
-      linalg (Eigh { vectors = Vectors (); a = zeros D.Float16 [| 2; 2 |] }));
+      linalg (Eigh (zeros D.Float16 [| 2; 2 |])));
   raises (fun () ->
-      linalg (Svd { vectors = No_vectors; a = zeros D.Float64 [| 3 |] }));
+      linalg (Svd_values (zeros D.Float64 [| 3 |])));
   raises (fun () ->
       linalg
-        (Eig
-           {
-             vectors = No_vectors;
-             dtype = Complex64;
-             a = zeros D.Float64 [| 2; 2 |];
-           }));
+        (Eig_values { dtype = Complex64; a = zeros D.Float64 [| 2; 2 |] }));
   raises (fun () ->
       linalg
         (Solve_triangular
@@ -224,7 +214,7 @@ let test_dispatch () =
   equal ~msg:"lu" (array float_exact) (Array.make 18 1.) (read lu);
   equal ~msg:"pivots" (array int64) (Array.make 6 2L) (read pivots);
   equal ~msg:"perm" (array int64) (Array.make 6 3L) (read perm);
-  let s, (u, vh) = linalg (Svd { vectors = Vectors Reduced; a }) in
+  let s, u, vh = linalg (Svd { factors = Reduced; a }) in
   equal ~msg:"s, u, vh in the constructor's order"
     (list (array float_exact))
     [ Array.make 6 1.; Array.make 18 2.; Array.make 18 3. ]
@@ -235,12 +225,12 @@ let test_dispatch () =
     (list (array float_exact))
     [ Array.make 16 1.; Array.make 8 2. ]
     [ read q; read r ];
-  ignore (linalg (Svd { vectors = No_vectors; a = tall }));
+  ignore (linalg (Svd_values tall));
   let sq = zeros D.Complex64 [| 3; 3 |] in
-  ignore (linalg (Eigh { vectors = Vectors (); a = sq }));
-  ignore (linalg (Eigh { vectors = No_vectors; a = sq }));
-  ignore (linalg (Eig { vectors = Vectors (); dtype = Complex64; a = sq }));
-  ignore (linalg (Eig { vectors = No_vectors; dtype = Complex64; a = sq }));
+  ignore (linalg (Eigh sq));
+  ignore (linalg (Eigh_values sq));
+  ignore (linalg (Eig { dtype = Complex64; a = sq }));
+  ignore (linalg (Eig_values { dtype = Complex64; a = sq }));
   let x =
     linalg
       (Solve_triangular
@@ -282,7 +272,7 @@ let test_split () =
     Nx.place (Two.split ~axis:0)
       (Nx.Repr.of_array Nx.Host.v (A.create Rig.host D.Float32 [| 2; 3; 3 |]))
   in
-  let w, v = linalg (Eigh { vectors = Vectors (); a }) in
+  let w, v = linalg (Eigh a) in
   equal ~msg:"each device its matrices"
     (list (list (list int)))
     [ [ [ 1; 3; 3 ] ]; [ [ 1; 3; 3 ] ] ]
@@ -296,7 +286,7 @@ let test_declined () =
     Nx.place Declines.on
       (Nx.Repr.of_array Nx.Host.v (A.create Rig.host D.Complex64 [| 2; 2 |]))
   in
-  match linalg (Eig { vectors = No_vectors; dtype = D.Complex64; a }) with
+  match linalg (Eig_values { dtype = D.Complex64; a }) with
   | _ -> fail "a declined factorisation computed"
   | exception Invalid_argument e ->
       List.iter

@@ -4074,28 +4074,30 @@ module Prim : sig
         a : ('v, 's, 'd) nx;
       }
         -> ('d, ('v, 's, 'd) nx * ('v, 's, 'd) nx) linalg  (** [q], [r]. *)
+    | Svd_values : ('v, 's, 'd) nx -> ('d, ('v, 's, 'd) nx) linalg
+        (** [s] alone. *)
     | Svd : {
-        vectors :
-          ( Nx_kernel.factors,
-            ('v, 's, 'd) nx * ('v, 's, 'd) nx,
-            'r )
-          Nx_kernel.vectors;
+        factors : Nx_kernel.factors;
         a : ('v, 's, 'd) nx;
       }
-        -> ('d, ('v, 's, 'd) nx * 'r) linalg
-        (** [s], then [u] and [vh]. *)
-    | Eigh : {
-        vectors : (unit, ('v, 's, 'd) nx, 'r) Nx_kernel.vectors;
-        a : ('v, 's, 'd) nx;
-      }
-        -> ('d, ('v, 's, 'd) nx * 'r) linalg  (** [w], then [v]. *)
-    | Eig : {
-        vectors : (unit, (Complex.t, 'c, 'd) nx, 'r) Nx_kernel.vectors;
+        -> ('d, ('v, 's, 'd) nx * ('v, 's, 'd) nx * ('v, 's, 'd) nx) linalg
+        (** [s], [u], [vh]. *)
+    | Eigh_values : ('v, 's, 'd) nx -> ('d, ('v, 's, 'd) nx) linalg
+        (** [w] alone. *)
+    | Eigh : ('v, 's, 'd) nx -> ('d, ('v, 's, 'd) nx * ('v, 's, 'd) nx) linalg
+        (** [w], [v]. *)
+    | Eig_values : {
         dtype : (Complex.t, 'c) dtype;
         a : ('v, 's, 'd) nx;
       }
-        -> ('d, (Complex.t, 'c, 'd) nx * 'r) linalg
-        (** [w], then [v], of [dtype], [a]'s {!Nx_kernel.same_precision}. *)
+        -> ('d, (Complex.t, 'c, 'd) nx) linalg
+        (** [w] alone, of [dtype], [a]'s {!Nx_kernel.same_precision}. *)
+    | Eig : {
+        dtype : (Complex.t, 'c) dtype;
+        a : ('v, 's, 'd) nx;
+      }
+        -> ('d, (Complex.t, 'c, 'd) nx * (Complex.t, 'c, 'd) nx) linalg
+        (** [w], [v], of [dtype], [a]'s {!Nx_kernel.same_precision}. *)
     | Solve_triangular : {
         triangle : Nx_kernel.triangle;
         adjoint : bool;
@@ -4455,9 +4457,10 @@ module Prim : sig
       ]}
       A scatter whose targets may repeat loops once per position along its
       axis. A matrix routine loops once per step of its factorisation or
-      solve, [Eigh] for as many trips as its dtype's precision and its size
-      bound, and [Svd] for 30 sweeps, a matrix not converged by then NaN;
-      [Eig] has no expansion.
+      solve, [Eigh] and [Eigh_values] for as many trips as its dtype's
+      precision and its size bound, and [Svd] and [Svd_values] for 30 sweeps,
+      a matrix not converged by then NaN; [Eig] and [Eig_values] have no
+      expansion.
 
       Raises [Invalid_argument] naming [by] and [i] if [i] returned. *)
 end

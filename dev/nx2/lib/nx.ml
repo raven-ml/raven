@@ -2695,10 +2695,10 @@ let lu a =
 let svd_by ~by ?(vectors = true) ?(factors = Reduced) a =
   matrices ~by a;
   if vectors then
-    let s, (u, vh) = routine ~by (Svd { vectors = Vectors factors; a }) in
+    let s, u, vh = routine ~by (Svd { factors; a }) in
     (u, s, vh)
   else
-    let s, () = routine ~by (Svd { vectors = No_vectors; a }) in
+    let s = routine ~by (Svd_values a) in
     let lead = batch a in
     let u = uncomputed ~by a (Array.append lead [| dim (-2) a; 0 |]) in
     let vh = uncomputed ~by a (Array.append lead [| 0; dim (-1) a |]) in
@@ -2714,17 +2714,17 @@ let eig ?(vectors = true) a =
   let by = "Nx.eig" in
   square_matrices ~by a;
   let dtype = dtype a in
-  if vectors then routine ~by (Eig { vectors = Vectors (); dtype; a })
+  if vectors then routine ~by (Eig { dtype; a })
   else
-    let w, () = routine ~by (Eig { vectors = No_vectors; dtype; a }) in
+    let w = routine ~by (Eig_values { dtype; a }) in
     (w, no_vectors ~by a)
 
 let eigh_by ~by ?(vectors = true) ?(triangle = Lower) a =
   square_matrices ~by a;
   let a' = lower_of ~by triangle a in
-  if vectors then routine ~by (Eigh { vectors = Vectors (); a = a' })
+  if vectors then routine ~by (Eigh a')
   else
-    let w, () = routine ~by (Eigh { vectors = No_vectors; a = a' }) in
+    let w = routine ~by (Eigh_values a') in
     (w, no_vectors ~by a)
 
 let eigh ?vectors ?triangle a =
@@ -5639,26 +5639,31 @@ module Prim = struct
         a : ('v, 's, 'd) Value.t;
       }
         -> ('d, ('v, 's, 'd) Value.t * ('v, 's, 'd) Value.t) linalg
+    | Svd_values : ('v, 's, 'd) Value.t -> ('d, ('v, 's, 'd) Value.t) linalg
     | Svd : {
-        vectors :
-          ( Nx_kernel.factors,
-            ('v, 's, 'd) Value.t * ('v, 's, 'd) Value.t,
-            'r )
-          Nx_kernel.vectors;
+        factors : Nx_kernel.factors;
         a : ('v, 's, 'd) Value.t;
       }
-        -> ('d, ('v, 's, 'd) Value.t * 'r) linalg
-    | Eigh : {
-        vectors : (unit, ('v, 's, 'd) Value.t, 'r) Nx_kernel.vectors;
-        a : ('v, 's, 'd) Value.t;
-      }
-        -> ('d, ('v, 's, 'd) Value.t * 'r) linalg
-    | Eig : {
-        vectors : (unit, (Complex.t, 'c, 'd) Value.t, 'r) Nx_kernel.vectors;
+        -> ( 'd,
+             ('v, 's, 'd) Value.t * ('v, 's, 'd) Value.t * ('v, 's, 'd) Value.t
+           )
+           linalg
+    | Eigh_values : ('v, 's, 'd) Value.t -> ('d, ('v, 's, 'd) Value.t) linalg
+    | Eigh :
+        ('v, 's, 'd) Value.t
+        -> ('d, ('v, 's, 'd) Value.t * ('v, 's, 'd) Value.t) linalg
+    | Eig_values : {
         dtype : (Complex.t, 'c) dtype;
         a : ('v, 's, 'd) Value.t;
       }
-        -> ('d, (Complex.t, 'c, 'd) Value.t * 'r) linalg
+        -> ('d, (Complex.t, 'c, 'd) Value.t) linalg
+    | Eig : {
+        dtype : (Complex.t, 'c) dtype;
+        a : ('v, 's, 'd) Value.t;
+      }
+        -> ( 'd,
+             (Complex.t, 'c, 'd) Value.t * (Complex.t, 'c, 'd) Value.t )
+           linalg
     | Solve_triangular : {
         triangle : Nx_kernel.triangle;
         adjoint : bool;
