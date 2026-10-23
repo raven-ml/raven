@@ -688,7 +688,14 @@ let lanes s =
 let softmax_case =
   let open Gen in
   let* s =
-    array ~size:(int_range 1 3) (int_range 1 5)
+    frequency
+      [
+        (3, array ~size:(int_range 1 3) (int_range 1 5));
+        ( 1,
+          let* r = int_range 1 3 in
+          let+ k = of_list ~pp:Format.pp_print_int [ 1025; 2048; 3000 ] in
+          [| r; k |] );
+      ]
   in
   let n = Array.fold_left ( * ) 1 s in
   let* xs =
@@ -706,6 +713,7 @@ let law_softmax (type s) (dt : (float, s) D.t) u tiny (s, xs, scale) =
   let sm = Nx.to_array (Nx.softmax ~scale x)
   and lsm = Nx.to_array (Nx.log_softmax ~scale x) in
   let n = s.(Array.length s - 1) in
+  cover "several full blocks a lane" (n >= 2048);
   List.iter
     (fun lane ->
       let lane_xs = Array.map (fun i -> xs.(i)) lane in

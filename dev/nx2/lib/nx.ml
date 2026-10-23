@@ -2357,7 +2357,7 @@ let normalised (type s d) ~by
   else
     let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
     let scaled =
-      let x = E.cast w (operand 0 x) in
+      let x = at w (operand 0 x) in
       if scale = 1. then x else E.(x * const w scale)
     in
     let lanes y = broadcast ~by s (kept ~by ~keepdims:true s axes y) in

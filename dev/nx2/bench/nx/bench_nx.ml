@@ -951,6 +951,13 @@ let logits () =
   Nx.reshape [| 32; 32000 |] (Nx.slice [ R (0, 32 * 32000) ] (f1m ()))
 
 let small_logits () = Nx.reshape [| 8; 64 |] (Nx.slice [ R (0, 512) ] (f1m ()))
+
+(* A batch of 64 rows of a 128256-word vocabulary's logits, 32.8 MB of
+   float32. *)
+let vocab () =
+  let f = f1m () in
+  let eight = Nx.concatenate ~axis:0 (List.init 8 (fun _ -> f)) in
+  on_host (Nx.reshape [| 64; 128256 |] (Nx.slice [ R (0, 64 * 128256) ] eight))
 let v1024 () = Nx.reshape [| 1024 |] (Nx.slice [ R (0, 1024) ] (f1m ()))
 let p1000 () = Nx.slice [ R (0, 1000) ] (f1m ())
 
@@ -1009,7 +1016,9 @@ let frontend_rows =
 
 (* Reductions and activations, each against its NumPy, SciPy or pandas
    counterpart at the same size: 1M float32 elements, rows of 1024; softmax
-   also over a vocabulary's logits and a few short rows. *)
+   also over a vocabulary's logits and a few short rows; softmax over a
+   batch of 128256-word logits, against PyTorch and llama.cpp, measured
+   outside the repo. *)
 let statistics_rows =
   Thumper.group "statistics"
     [
@@ -1059,6 +1068,7 @@ let statistics_rows =
         Nx.log_softmax;
       Thumper.bench_with_setup "softmax-f32-8x64" ~setup:small_logits
         Nx.softmax;
+      Thumper.bench_with_setup "softmax-f32-64x128256" ~setup:vocab Nx.softmax;
       Thumper.bench_with_setup "log_softmax-f32-8x64" ~setup:small_logits
         Nx.log_softmax;
       Thumper.bench_with_setup "ewma-f32-1M" ~setup:f1m (Nx.ewma ~alpha:0.1);
