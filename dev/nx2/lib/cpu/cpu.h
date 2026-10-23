@@ -134,6 +134,15 @@ typedef void (*nx_cpu_lane_tile)(const void *a, int64_t a_k, const void *b,
 typedef void (*nx_cpu_gemv)(int64_t m, int64_t k, const void *a, int64_t lda,
                             const void *x, void *y);
 
+/* A float4 stage sets, for each of [lines] lines of 32·[runs] float4
+   codes, two a byte from its low bits, line l's first at codes + l·sl,
+   element u of line l at y + (u·du + l·dl)·w to the code's value times
+   its run of 32's scale, rounded once in acc: run r of line l's at
+   s + (r·lines + l)·w. */
+typedef void (*nx_cpu_f4)(const uint8_t *codes, int64_t sl, int64_t lines,
+                          int64_t runs, const void *s, void *y, int64_t du,
+                          int64_t dl);
+
 /* A quads dot sets y[i·ldy + c], for each of 2 rows i of a, at a + i·lda,
    and 4 columns c of b, at b + c·ldb, to the sum of the products of the
    [n] words of the row and of the column: each word four elements of
@@ -422,6 +431,9 @@ typedef struct {
   nx_cpu_axpy axpy[NX_DTYPE_COUNT];
   nx_cpu_lane_tile tile[NX_DTYPE_COUNT];
   nx_cpu_gemv gemv[NX_DTYPE_COUNT];
+  /* f4[acc] stages a scaled operand's float4 codes adjacent along k
+     (gemm.c, stage_f4), in acc float32 or float64. */
+  nx_cpu_f4 f4[NX_DTYPE_COUNT];
   /* op1[k][dt] and op2[k][dt] compute the kind of one or two operands k
      (nx_prog.h's code) at dt, fma[dt] fma: NULL where the table declines
      (rows.c). */
