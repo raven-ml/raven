@@ -554,9 +554,9 @@ module type S = sig
       NaN carry counts as made from numbers: results before the slice's first
       NaN term are the made NaN, and from it on that term quieted. A [Max]'s
       or [Min]'s carry is a term before the slice's first: where it is a NaN,
-      every result is it, quieted. It answers [Bad_arity] for a carry of any
-      other reduction, [Shape_mismatch] for a carry of another shape and
-      [Wrong_dtype] for one of another dtype. *)
+      every result is it, quieted. It answers [Shape_mismatch] for a carry of
+      any other reduction or of another shape, and [Wrong_dtype] for one of
+      another dtype. *)
 
   (** {1:index Gathers and scatters} *)
 

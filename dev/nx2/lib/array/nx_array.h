@@ -62,8 +62,8 @@ enum {
   NX_NOT_DISTINCT, /* a written operand reaches a position twice */
   NX_OVERLAP,      /* a written operand shares a byte with another written
                       operand, or a read one not identical to it */
-  NX_SHAPE,        /* the operands' shapes do not fit the operation */
-  NX_ARITY         /* no operand, or more than NX_MAX_OPERANDS, to a loop */
+  NX_SHAPE         /* the operands do not fit the operation: their number,
+                      or their shapes */
 };
 
 /* The door
@@ -211,9 +211,9 @@ typedef struct {
 } nx_loop;
 
 /* Fills [l] for the [n] operands [a] and answers NX_OK, or answers
-   NX_ARITY if [n] is not in [1, NX_MAX_OPERANDS], and NX_SHAPE if their
-   shapes differ. The loop keeps the C order of indices: axes are dropped
-   and merged, never reordered. */
+   NX_SHAPE if [n] is not in [1, NX_MAX_OPERANDS] or their shapes differ.
+   The loop keeps the C order of indices: axes are dropped and merged,
+   never reordered. */
 int nx_coalesce(int n, const nx_array *a, nx_loop *l);
 
 /* Coalesces in place the loop of [n] operands over [rank] axes, [rank] 0

@@ -41,7 +41,6 @@ type answer =
   | Repeated_elements
   | Overlapping
   | Shape_mismatch
-  | Bad_arity
 
 let reason = function
   | Done | Declined -> invalid_arg "Nx_array.refused: not a refusal"
@@ -52,8 +51,7 @@ let reason = function
   | Read_only -> "a written operand's memory is read-only"
   | Repeated_elements -> "a written operand reaches an element twice"
   | Overlapping -> "a written operand shares bytes with another operand"
-  | Shape_mismatch -> "the operands' shapes differ"
-  | Bad_arity -> "no operand, or too many"
+  | Shape_mismatch -> "the operands' number or shapes do not fit the operation"
 
 let pp_operand ppf (Any a) =
   Format.fprintf ppf "%a %a" Dtype.pp a.dtype Shape.pp (Layout.shape a.layout)

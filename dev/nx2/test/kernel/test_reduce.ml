@@ -4299,11 +4299,11 @@ let test_carry_refusals (b : Support.backend) () =
   let f32 s = make D.Float32 s in
   let refuses msg want got = equal ~msg Elements.answer want got in
   let carry = f32 [| 2; 1 |] in
-  refuses "a Logsumexp's carry" A.Bad_arity
+  refuses "a Logsumexp's carry" A.Shape_mismatch
     (scan D.Float32 ~carry Logsumexp [| f32 [| 2; 3 |] |]);
-  refuses "a Moments' carry" A.Bad_arity
+  refuses "a Moments' carry" A.Shape_mismatch
     (scan D.Float32 ~carry Moments [| f32 [| 2; 3 |]; f32 [| 2; 3 |] |]);
-  refuses "an Arg's carry" A.Bad_arity
+  refuses "an Arg's carry" A.Shape_mismatch
     (scan D.Float32 ~carry (Arg Max)
        [| f32 [| 2; 3 |]; make D.Int64 [| 2; 3 |] |]);
   refuses "a carry of the destination's shape" A.Shape_mismatch
@@ -4781,13 +4781,13 @@ let test_malformed (b : Support.backend) () =
   let reduce r dsts =
     K.reduce p ~shape ~axes:[| 1 |] [| (r, 0) |] ~dsts [| plain_of (A.Any x) |]
   in
-  equal ~msg:"a sum into two destinations" Elements.answer A.Bad_arity
+  equal ~msg:"a sum into two destinations" Elements.answer A.Shape_mismatch
     (reduce (Monoid Sum) [| f32 [| 2 |]; f32 [| 2 |] |]);
-  equal ~msg:"Moments into one destination" Elements.answer A.Bad_arity
+  equal ~msg:"Moments into one destination" Elements.answer A.Shape_mismatch
     (reduce Moments [| f32 [| 2 |] |]);
   equal ~msg:"Arg's positions in int32" Elements.answer A.Wrong_dtype
     (reduce (Arg Max) [| f32 [| 2 |]; A.Any (A.create Rig.host D.Int32 [| 2 |]) |]);
-  equal ~msg:"a scan into no destination" Elements.answer A.Bad_arity
+  equal ~msg:"a scan into no destination" Elements.answer A.Shape_mismatch
     (K.scan p ~axis:1 (Monoid Sum, 0) ~dsts:[||] [| plain_of (A.Any x) |])
 
 (* A reduction and a scan of a program that is its one load's identity, of

@@ -255,8 +255,8 @@ let reduce_answer p ~shape ~axes rs ~dsts loads =
 
 let scan_answer ?carry p ~axis rk ~dsts loads =
   if not (accepted p rk) then Nx_array.Wrong_dtype
-  else if Array.length dsts = 0 then Nx_array.Bad_arity
-  else if not (fits_dst dsts.(0) loads 0) then Nx_array.Shape_mismatch
+  else if Array.length dsts = 0 || not (fits_dst dsts.(0) loads 0) then
+    Nx_array.Shape_mismatch
   else scan_c p rk axis dsts loads (pads loads) carry
 
 let reduce p ~shape ~axes rs ~dsts loads =

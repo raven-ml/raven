@@ -4137,11 +4137,11 @@ static double call_cost(const call *c, const nx_array *x, const int64_t *s,
 }
 
 /* Whether the carries [cy], where not NULL, fit [c], a monoid's scan into
-   [y]: NX_OK; NX_ARITY for another call's; NX_SHAPE unless they have [y]'s
+   [y]: NX_OK, or NX_SHAPE for another call's or unless they have [y]'s
    shape but one along the scan's axis. */
 static int carried(const call *c, const nx_array *cy, const nx_array *y) {
   if (cy == NULL) return NX_OK;
-  if (c->op != SCAN || c->r > NX_MONOID_MIN) return NX_ARITY;
+  if (c->op != SCAN || c->r > NX_MONOID_MIN) return NX_SHAPE;
   if (cy->rank != y->rank) return NX_SHAPE;
   for (int i = 0; i < y->rank; i++)
     if (cy->dim[i] != (i == c->axes[0] ? 1 : y->dim[i])) return NX_SHAPE;
@@ -4378,7 +4378,7 @@ static value run_fused(const call *c, value vp, value vrs, int single,
   int many = nt > NX_MAX_OPERANDS || no > NX_MAX_OPERANDS ||
              nx_cpu_prog_nodes(g) > NX_CPU_ITEMS;
   if (nr < 1 || (c->op != REDUCE && nr != 1) || (int)Wosize_val(vloads) != nl)
-    e = NX_ARITY;
+    e = NX_SHAPE;
   /* The reductions are read from the root, letting other domains collect
      every NX_CPU_ITEMS of them. */
   for (int i = 0, next = NX_CPU_ITEMS; !e && i < nr; i++) {
@@ -4395,12 +4395,12 @@ static value run_fused(const call *c, value vp, value vrs, int single,
       dts[want + 1] =
           rs[i] == NX_CPU_ARG_MAX || rs[i] == NX_CPU_ARG_MIN ? NX_INT64 : -1;
     want += 1 + two(rs[i]);
-    if (ks[i] < 0 || ks[i] >= nx_cpu_prog_outs(g)) e = NX_ARITY;
+    if (ks[i] < 0 || ks[i] >= nx_cpu_prog_outs(g)) e = NX_SHAPE;
   }
-  if (!e && want != nd) e = NX_ARITY;
+  if (!e && want != nd) e = NX_SHAPE;
   /* A reduction's loop holds its destinations, the virtual operand and the
      loads: a program's loads leave room for them (Prog.max_operands). */
-  if (!e && 3 + nl > NX_MAX_OPERANDS) e = NX_ARITY;
+  if (!e && 3 + nl > NX_MAX_OPERANDS) e = NX_SHAPE;
   /* The pads on the heap, where a load is padded, as its copy will be. */
   int padded[NX_MAX_OPERANDS] = {0};
   nx_cpu_pad *pad = NULL;
@@ -4547,7 +4547,7 @@ static value run_fused(const call *c, value vp, value vrs, int single,
 }
 
 /* Computes [c] by the one pair [vr] of a reduction and an output of [vp]
-   into [vdsts], where [vp] is its one load's identity: NX_ARITY unless
+   into [vdsts], where [vp] is its one load's identity: NX_SHAPE unless
    the destinations are the reduction's. Sets [*done] to 0, and computes
    nothing, where [vp] is not. */
 static value in_place(call *c, value vp, value vr, value vdsts,
@@ -4557,7 +4557,7 @@ static value in_place(call *c, value vp, value vr, value vdsts,
   if (!*done) return Val_unit;
   c->r = code_of(Field(vr, 0));
   int nd = 1 + two(c->r);
-  if (Wosize_val(vdsts) != (mlsize_t)nd) return Val_int(NX_ARITY);
+  if (Wosize_val(vdsts) != (mlsize_t)nd) return Val_int(NX_SHAPE);
   value pad = Wosize_val(vpads) > 0 ? Field(vpads, 0) : Val_none;
   return run(c, dt, Field(vdsts, 0), nd == 2 ? Field(vdsts, 1) : Val_unit,
              Field(Field(vloads, 0), 0), pad, vcarry);

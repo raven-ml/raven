@@ -719,7 +719,7 @@ static inline __attribute__((always_inline)) int coalesce(
 }
 
 int nx_coalesce(int n, const nx_array *a, nx_loop *l) {
-  if (n < 1 || n > NX_MAX_OPERANDS) return NX_ARITY;
+  if (n < 1 || n > NX_MAX_OPERANDS) return NX_SHAPE;
   int r = a[0].rank;
   for (int k = 1; k < n; k++) {
     if (a[k].rank != r) return NX_SHAPE;
@@ -787,7 +787,7 @@ value nx_array_coalesce(value ls, value out) {
   int n = (int)Wosize_val(ls);
   nx_array a[NX_MAX_OPERANDS];
   nx_loop l;
-  if (n < 1 || n > NX_MAX_OPERANDS) return Val_int(NX_ARITY);
+  if (n < 1 || n > NX_MAX_OPERANDS) return Val_int(NX_SHAPE);
   for (int k = 0; k < n; k++) read_layout(Field(ls, k), &a[k]);
   int e = nx_coalesce(n, a, &l);
   if (e) return Val_int(e);

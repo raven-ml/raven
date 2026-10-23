@@ -108,7 +108,7 @@
     loop, each one's bits alone, every destination checked before any is
     written, any number of them. They answer [Wrong_dtype] where
     {!Nx_kernel.accepts} is [false] of a reduction and its output's dtype
-    or an [Arg]'s positions are not [int64], and [Bad_arity] for
+    or an [Arg]'s positions are not [int64], and [Shape_mismatch] for
     destinations other than a reduction's one or two. A padded operand is
     first copied padded into host memory, which the call holds until it
     returns. A destination identical to the operand, or to a program's
