@@ -579,8 +579,13 @@ int nx_cpu_boxes_of(nx_cpu_boxes *b, int rank, const int64_t *shape,
                     const int *reduced, int nl, const nx_array *a,
                     const nx_cpu_pad *p, int *in_place) {
   int split[NX_MAX_RANK] = {0}, n = 0;
+  /* An empty loop reads no load in place: each keeps its padded copy, of
+     the loop's rank, which the caller binds to the loop. */
   for (int d = 0; d < rank; d++)
-    if (shape[d] == 0) return 0;
+    if (shape[d] == 0) {
+      memset(in_place, 0, sizeof(int) * (size_t)nl);
+      return 0;
+    }
   /* A load reads in place where each axis it fills along is kept and
      padded at its ends alone. */
   for (int l = 0; l < nl; l++) {
