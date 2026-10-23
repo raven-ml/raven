@@ -2148,16 +2148,25 @@ module Conv = struct
   (* The rows of conv's contraction, an output position each. *)
   let rows c = c.n * numel (Array.mapi (fun i _ -> windows c i) c.spatial)
 
-  (* A contraction of more than four rows and columns and at least 64
-     outputs takes chain order. conv's rows are its output positions and
-     its columns its output channels a group; conv_transpose's rows are
-     its result's positions, [n] times those of [d], and its columns its
-     result's channels a group. *)
-  let chain_order ~rows ~columns = rows > 4 && columns > 4 && rows * columns >= 64
-  let chained c = c.cg > 1 && chain_order ~rows:(rows c) ~columns:c.og
+  (* A contraction of more than four rows and columns, at least 64
+     outputs and a depth below 128 times them takes chain order. conv's
+     rows are its output positions, its columns its output channels a
+     group and its depth its taps times its input channels a group;
+     conv_transpose's rows are its result's positions, [n] times those of
+     [d], its columns its result's channels a group and its depth its
+     taps times [x]'s channels a group. *)
+  let chain_order ~rows ~columns ~depth =
+    rows > 4 && columns > 4 && rows * columns >= 64
+    && depth < 128 * rows * columns
+
+  let chained c =
+    c.cg > 1
+    && chain_order ~rows:(rows c) ~columns:c.og ~depth:(numel c.taps * c.cg)
 
   let chained_transpose c d =
-    c.og > 1 && chain_order ~rows:(c.n * numel d) ~columns:c.cg
+    c.og > 1
+    && chain_order ~rows:(c.n * numel d) ~columns:c.cg
+         ~depth:(numel c.taps * c.og)
 
   (* Cases whose [m] values [values] draws. *)
   let case_of values =
