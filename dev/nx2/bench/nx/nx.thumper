@@ -420,10 +420,20 @@ frontend/vdot-f32-1M	alloc_words	exact	1317
 frontend/vdot-f32-1M	wall_time	batch=512	n=20	1.351e-05	1.348e-05 1.349e-05 1.349e-05 1.349e-05 1.349e-05 1.349e-05 1.349e-05 1.349e-05 1.350e-05 1.350e-05 1.351e-05 1.351e-05 1.351e-05 1.351e-05 1.352e-05 1.352e-05 1.353e-05 1.353e-05 1.356e-05 1.364e-05
 index/concatenate-2x512K	alloc_words	exact	476
 index/concatenate-2x512K	wall_time	batch=128	n=20	4.689e-05	4.594e-05 4.596e-05 4.599e-05 4.605e-05 4.618e-05 4.669e-05 4.670e-05 4.673e-05 4.677e-05 4.686e-05 4.691e-05 4.694e-05 4.699e-05 4.703e-05 4.709e-05 4.711e-05 4.748e-05 4.755e-05 4.783e-05 4.841e-05
+index/embedding-grad-bf16-uniform	alloc_words	exact	410
+index/embedding-grad-bf16-uniform	wall_time	batch=2	n=20	2.931e-03	2.811e-03 2.833e-03 2.849e-03 2.868e-03 2.874e-03 2.901e-03 2.902e-03 2.904e-03 2.919e-03 2.929e-03 2.933e-03 2.996e-03 3.006e-03 3.018e-03 3.028e-03 3.030e-03 3.032e-03 3.033e-03 3.035e-03 3.043e-03
+index/embedding-grad-bf16-zipf	alloc_words	exact	410
+index/embedding-grad-bf16-zipf	wall_time	batch=2	n=20	2.586e-03	2.550e-03 2.560e-03 2.567e-03 2.569e-03 2.570e-03 2.572e-03 2.577e-03 2.579e-03 2.579e-03 2.582e-03 2.590e-03 2.590e-03 2.592e-03 2.593e-03 2.598e-03 2.602e-03 2.614e-03 2.634e-03 2.652e-03 2.775e-03
+index/embedding-grad-f32-uniform	alloc_words	exact	410
+index/embedding-grad-f32-uniform	wall_time	batch=1	n=20	6.497e-03	6.463e-03 6.466e-03 6.467e-03 6.470e-03 6.476e-03 6.480e-03 6.481e-03 6.485e-03 6.487e-03 6.493e-03 6.502e-03 6.508e-03 6.515e-03 6.527e-03 6.529e-03 6.551e-03 6.618e-03 6.645e-03 6.714e-03 6.737e-03
+index/embedding-grad-f32-zipf	alloc_words	exact	410
+index/embedding-grad-f32-zipf	wall_time	batch=1	n=20	5.733e-03	5.704e-03 5.711e-03 5.716e-03 5.723e-03 5.725e-03 5.725e-03 5.726e-03 5.728e-03 5.730e-03 5.731e-03 5.736e-03 5.741e-03 5.745e-03 5.758e-03 5.763e-03 5.765e-03 5.774e-03 5.787e-03 5.823e-03 5.883e-03
 index/scatter-add-64K-into-1K	alloc_words	exact	288
 index/scatter-add-64K-into-1K	wall_time	batch=128	n=20	4.846e-05	4.687e-05 4.699e-05 4.704e-05 4.704e-05 4.706e-05 4.714e-05 4.731e-05 4.796e-05 4.810e-05 4.829e-05 4.863e-05 4.886e-05 4.896e-05 4.930e-05 4.930e-05 4.960e-05 4.999e-05 5.020e-05 5.035e-05 5.052e-05
 index/set-row-8M	alloc_words	exact	1316
 index/set-row-8M	wall_time	batch=64	n=20	9.065e-05	8.894e-05 8.897e-05 8.910e-05 8.921e-05 8.999e-05 9.016e-05 9.032e-05 9.038e-05 9.058e-05 9.061e-05 9.069e-05 9.083e-05 9.098e-05 9.105e-05 9.147e-05 9.148e-05 9.182e-05 9.184e-05 9.296e-05 9.305e-05
+index/take-along-grad-bf16-256K-by-64	alloc_words	exact	410
+index/take-along-grad-bf16-256K-by-64	wall_time	batch=1	n=20	1.116e-01	1.086e-01 1.104e-01 1.106e-01 1.106e-01 1.108e-01 1.108e-01 1.109e-01 1.110e-01 1.111e-01 1.113e-01 1.119e-01 1.119e-01 1.123e-01 1.123e-01 1.126e-01 1.131e-01 1.135e-01 1.138e-01 1.139e-01 1.139e-01
 index/take-rows-1K-of-8K	alloc_words	exact	634
 index/take-rows-1K-of-8K	wall_time	batch=512	n=20	1.759e-05	1.725e-05 1.735e-05 1.736e-05 1.739e-05 1.741e-05 1.745e-05 1.752e-05 1.752e-05 1.755e-05 1.756e-05 1.762e-05 1.764e-05 1.764e-05 1.766e-05 1.768e-05 1.772e-05 1.773e-05 1.788e-05 1.788e-05 1.809e-05
 interp/add-1-100-beside-extent-on-another-domain	alloc_words	exact	4200

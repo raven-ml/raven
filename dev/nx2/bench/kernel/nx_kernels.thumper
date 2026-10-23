@@ -1483,7 +1483,7 @@ cpu/scan-sum-f64-5M	wall_time	batch=4	n=20	1.425e-03	1.422e-03 1.422e-03 1.422e-
 cpu/scan-sum-log-f32-1M-late-nan	alloc_words	exact	17
 cpu/scan-sum-log-f32-1M-late-nan	wall_time	batch=2	n=20	3.096e-03	3.076e-03 3.086e-03 3.087e-03 3.088e-03 3.091e-03 3.091e-03 3.091e-03 3.092e-03 3.094e-03 3.096e-03 3.097e-03 3.098e-03 3.098e-03 3.099e-03 3.100e-03 3.104e-03 3.104e-03 3.105e-03 3.111e-03 3.137e-03
 cpu/scatter-add-f16-16M-into-1M	alloc_words	exact	0
-cpu/scatter-add-f16-16M-into-1M	wall_time	batch=1	n=20	2.498e-02	2.443e-02 2.444e-02 2.444e-02 2.446e-02 2.448e-02 2.449e-02 2.450e-02 2.458e-02 2.480e-02 2.495e-02 2.500e-02 2.511e-02 2.519e-02 2.520e-02 2.521e-02 2.534e-02 2.537e-02 2.542e-02 2.546e-02 2.564e-02
+cpu/scatter-add-f16-16M-into-1M	wall_time	batch=1	n=20	1.181e-02	1.087e-02 1.095e-02 1.095e-02 1.108e-02 1.121e-02 1.128e-02 1.142e-02 1.144e-02 1.170e-02 1.179e-02 1.184e-02 1.187e-02 1.252e-02 1.264e-02 1.308e-02 1.309e-02 1.354e-02 1.355e-02 1.365e-02 1.506e-02
 cpu/scatter-add-f32-rows-64Kx512	alloc_words	exact	0
 cpu/scatter-add-f32-rows-64Kx512	wall_time	batch=1	n=20	5.827e-03	5.763e-03 5.769e-03 5.770e-03 5.788e-03 5.791e-03 5.800e-03 5.800e-03 5.814e-03 5.818e-03 5.825e-03 5.829e-03 5.846e-03 5.852e-03 5.874e-03 5.876e-03 5.883e-03 5.901e-03 5.992e-03 5.993e-03 6.040e-03
 cpu/scatter-add-f64-16M-into-128	alloc_words	exact	0
