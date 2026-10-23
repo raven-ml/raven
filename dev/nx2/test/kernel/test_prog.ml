@@ -1258,24 +1258,29 @@ let test_codes () =
   let code = Nx_kernel_support.code and tag = Nx_kernel_support.tag in
   List.iter
     (fun k ->
-      equal ~msg:(op1_name k) int
-        (code (header 1 (op1_name k)))
-        (Nx_kernel_support.op1 k))
+      let c = code (header 1 (op1_name k)) in
+      equal ~msg:(op1_name k) int c (Nx_kernel_support.op1 k);
+      equal ~msg:(op1_name k) int c (P.code1 k))
     op1s;
   List.iter
     (fun k ->
-      equal ~msg:(op2_name k) int
-        (code (header 2 (op2_name k)))
-        (Nx_kernel_support.op2 k))
+      let c = code (header 2 (op2_name k)) in
+      equal ~msg:(op2_name k) int c (Nx_kernel_support.op2 k);
+      equal ~msg:(op2_name k) int c (P.code2 k))
     op2s;
   List.iter
     (fun k ->
-      equal ~msg:(op3_name k) int (code (header 3 (op3_name k))) (tag k))
+      let c = code (header 3 (op3_name k)) in
+      equal ~msg:(op3_name k) int c (tag k);
+      equal ~msg:(op3_name k) int c (P.code3 k))
     P.[ Where; Fma ];
   (* No code past the kinds named above. *)
   equal ~msg:"NX_OP1_COUNT" int (code "NX_OP1_COUNT") (List.length op1s);
   equal ~msg:"NX_OP2_COUNT" int (code "NX_OP2_COUNT") (List.length op2s);
   equal ~msg:"NX_OP3_COUNT" int (code "NX_OP3_COUNT") (List.length P.[ Where; Fma ]);
+  equal ~msg:"kinds1" int (code "NX_OP1_COUNT") P.kinds1;
+  equal ~msg:"kinds2" int (code "NX_OP2_COUNT") P.kinds2;
+  equal ~msg:"kinds3" int (code "NX_OP3_COUNT") P.kinds3;
   let f64 = D.Any D.Float64 and one = P.bits D.Float64 1. in
   let exp = P.Unary Exp and add = P.Binary Add in
   List.iter
