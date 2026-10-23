@@ -52,7 +52,10 @@
     An element of a scaled operand enters [acc] as its [Cast] times its
     block's scale, the scale read into [acc] ([Cast] of a [Value], [2^(e -
     127)] of a code [e], NaN of [255]), the product rounded once: a scale
-    multiplies each product, at any contracted extent.
+    multiplies each element, rounded once into [acc], at any contracted
+    extent. Each scaled operand adds one unit roundoff of [acc] per term
+    to the bound, barring overflow of an element times its scale, which
+    gives an infinite term where the exact one is finite.
 
     A float or complex contraction adds in the order it is given
     ({!Nx_kernel.section-orders}), at any shape, a block of 4096 products
