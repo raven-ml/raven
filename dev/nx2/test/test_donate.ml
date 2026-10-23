@@ -167,6 +167,71 @@ let test_broadcast_refused_received () =
     [| true; true |]
     (elements (Nx.copy p))
 
+(* Inside an interpretation that receives every operation, a call that
+   broadcasts its operands is the one consumer of their handles, as it is
+   eagerly: a check only the call's last operation makes, as one donation
+   read twice, or a rule refusing that operation's dtype, kills no donor. *)
+let test_broadcast_one_consumer () =
+  (* A float32 map, which [received ~refuse:true] refuses. *)
+  let map (type r) (op : r Nx.Prim.t) =
+    match op with
+    | Map { outs = [ dt ]; _ } -> Option.is_some (D.equal_witness dt f32)
+    | _ -> false
+  in
+  let received ?(refuse = false) f =
+    Nx.Prim.interpret ~name:"test.extent" Extent
+      (fun _ ~by op ->
+        if refuse && map op then invalid_arg "test.extent: no float32 map";
+        Nx.Prim.eval ~by op)
+      (fun _ -> f ())
+  in
+  let x = fresh [| 1.; 2. |] in
+  let h = Nx.donate x in
+  let h' = Nx.reshape [| 1; 2 |] h in
+  let wide = fresh_at [| 2; 2 |] [| 1.; 0.; 1.; 0. |] in
+  let c = Nx.less wide (fresh_at [| 2; 2 |] (Array.make 4 0.5)) in
+  let twice by = "Nx.donate: " ^ by ^ " reads one donation twice" in
+  let both by f =
+    invalid ~sub:(twice by) f;
+    invalid ~sub:(twice by) (fun () -> received f)
+  in
+  both "Nx.where" (fun () -> Nx.where c h h);
+  both "Nx.add" (fun () -> Nx.add h' h);
+  both "Nx.less" (fun () -> Nx.less h' h);
+  both "Nx.logical_and" (fun () -> Nx.logical_and h' h);
+  equal ~msg:"the donor lives" (array float_exact) [| 2.; 4. |]
+    (elements (Nx.add x x));
+  invalid ~sub:"test.extent: no float32 map" (fun () ->
+      received ~refuse:true (fun () -> Nx.add h wide));
+  invalid ~sub:"test.extent: no float32 map" (fun () ->
+      received ~refuse:true (fun () -> Nx.where c wide h'));
+  equal ~msg:"the handle passed on lives" (array float_exact) [| 1.; 2. |]
+    (elements (Nx.copy h'));
+  invalid ~sub:"Nx.add: operand 1 was donated to Nx.copy" (fun () ->
+      Nx.add x x)
+
+(* Inside an interpretation that receives every operation, a call that
+   broadcasts a handle consumes it once, when it returns: the donor lives
+   while the call's operations run, and dies naming the call. *)
+let test_broadcast_consumed_once () =
+  let x = fresh [| 1.; 2. |] in
+  let wide = fresh_at [| 2; 2 |] [| 10.; 20.; 30.; 40. |] in
+  let during = ref [] in
+  let y =
+    Nx.Prim.interpret ~name:"test.extent" Extent
+      (fun _ ~by op ->
+        let r = Nx.Prim.eval ~by op in
+        during := elements (Nx.copy x) :: !during;
+        r)
+      (fun _ -> Nx.add (Nx.donate x) wide)
+  in
+  equal ~msg:"the sum" (array float_exact) [| 11.; 22.; 31.; 42. |]
+    (elements (Nx.reshape [| 4 |] y));
+  equal ~msg:"the donor during the call's operations" (list (array float_exact))
+    [ [| 1.; 2. |]; [| 1.; 2. |] ]
+    !during;
+  invalid ~sub:"Nx.add: operand 1 was donated to Nx.add" (fun () -> Nx.add x x)
+
 (* A kind refusing its operands' dtypes kills nothing, though its result would
    fit a handle's memory: an operation checks before it takes the memory. *)
 let test_dtype_refused () =
@@ -429,9 +494,9 @@ let test_dies_when_received () =
       let t = Nx.Prim.traced i (Nx.Prim.form t) Tag in
       ignore (Nx.mul (Nx.donate x) t));
   invalid ~sub:"Nx.add: operand 1 was donated to Nx.mul" (fun () -> Nx.add x x);
-  (* A consumer that broadcasts its handle gives the rule a movement, which
-     is then the final consumer: under the observer, and under an Extent
-     rule that keeps its operands and computes nothing. *)
+  (* A consumer that broadcasts its handle consumes it when it returns:
+     under the observer, and under an Extent rule that keeps its operands
+     and computes nothing. *)
   let wide = Nx.reshape [| 3; 2 |] (fresh (Array.make 6 10.)) in
   let x = fresh [| 1.; 2. |] in
   let y =
@@ -2062,6 +2127,12 @@ let () =
              test "a refused broadcast kills no donor" test_broadcast_refused;
              test "a refused broadcast an interpretation receives kills no donor"
                test_broadcast_refused_received;
+             test
+               "a call an interpretation receives is its broadcasts' one \
+                consumer" test_broadcast_one_consumer;
+             test
+               "a broadcast handle an interpretation receives dies when the \
+                call returns" test_broadcast_consumed_once;
              test "a refused composite kills no donor" test_refused_composite;
              test "an aligning consumer checks before it consumes"
                test_aligned_refusal;

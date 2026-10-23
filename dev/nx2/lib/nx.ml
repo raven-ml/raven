@@ -475,9 +475,26 @@ let alive2 ~by a b =
   Prim.alive ~by 0 a;
   Prim.alive ~by 1 b
 
-(* [binary] and [ternary] check the kind's dtype rule before they broadcast:
-   an interpretation that receives every operation consumes a handle it
-   receives in a movement, so a refusal after the broadcast would kill it. A
+(* A function that makes more than one operation reads each donated operand
+   once: [once ~by x f] is [f] of [x] read as a plain value, its donation
+   consumed by the call [by] when [f] returns ({!Donate.resolve}). *)
+let once ~by x f = Donate.resolve ~by [ Value.Any x ] (fun read -> f (read x))
+
+let once2 ~by a b f =
+  Donate.resolve ~by [ Value.Any a; Value.Any b ] (fun read ->
+      f (read a) (read b))
+
+let once3 ~by a b c f =
+  Donate.resolve ~by [ Value.Any a; Value.Any b; Value.Any c ] (fun read ->
+      f (read a) (read b) (read c))
+
+(* A call that broadcasts its operands, then reads the broadcasts in one
+   operation. Eagerly a broadcast passes a handle on, and the operation
+   consumes it. Inside an [Extent], whose rule consumes the handles of each
+   operation it receives, a movement's too, the call reads its operands
+   [once] instead, so that a check only the operation makes, or the rule
+   refusing it, kills no donor. [binary] and [ternary] check the kind's
+   dtype rule before they broadcast, so that a refusal makes no movement. A
    comparison takes every dtype. *)
 let binary ~by k a b =
   if same_shape a b then Eval.apply2 ~by k (dtype a) a b
@@ -485,7 +502,11 @@ let binary ~by k a b =
     let s = Prim.broadcast_shape ~by (shape a) (shape b) in
     alive2 ~by a b;
     Prim.accepted2 ~by k a;
-    Eval.apply2 ~by k (dtype a) (broadcast ~by s a) (broadcast ~by s b)
+    if Eval.quiet () then
+      Eval.apply2 ~by k (dtype a) (broadcast ~by s a) (broadcast ~by s b)
+    else
+      once2 ~by a b @@ fun a b ->
+      Eval.apply2 ~by k (dtype a) (broadcast ~by s a) (broadcast ~by s b)
 
 let add a b = binary ~by:"Nx.add" (Binary Add) a b
 let sub a b = binary ~by:"Nx.sub" (Binary Sub) a b
@@ -513,7 +534,11 @@ let comparison ~by k a b =
   else
     let s = Prim.broadcast_shape ~by (shape a) (shape b) in
     alive2 ~by a b;
-    Eval.apply2 ~by k D.Bool (broadcast ~by s a) (broadcast ~by s b)
+    if Eval.quiet () then
+      Eval.apply2 ~by k D.Bool (broadcast ~by s a) (broadcast ~by s b)
+    else
+      once2 ~by a b @@ fun a b ->
+      Eval.apply2 ~by k D.Bool (broadcast ~by s a) (broadcast ~by s b)
 
 let equal a b = comparison ~by:"Nx.equal" (Compare Equal) a b
 let not_equal a b = comparison ~by:"Nx.not_equal" (Compare Not_equal) a b
@@ -571,8 +596,13 @@ let ternary ~by k c x y =
     alive2 ~by c x;
     Prim.alive ~by 2 y;
     Prim.accepted3 ~by k c x;
-    Eval.apply3 ~by k (broadcast ~by s c) (broadcast ~by s x)
-      (broadcast ~by s y)
+    if Eval.quiet () then
+      Eval.apply3 ~by k (broadcast ~by s c) (broadcast ~by s x)
+        (broadcast ~by s y)
+    else
+      once3 ~by c x y @@ fun c x y ->
+      Eval.apply3 ~by k (broadcast ~by s c) (broadcast ~by s x)
+        (broadcast ~by s y)
 
 let where c x y = ternary ~by:"Nx.where" Where c x y
 let fma a b c = ternary ~by:"Nx.fma" Fma a b c
@@ -629,15 +659,6 @@ let bitcast (type v s w r d) (dt : (w, r) D.t) (x : (v, s, d) t) : (w, r, d) t =
 let copy_by ~by x = Eval.eval ~by (Value.Copy x)
 let copy x = copy_by ~by:"Nx.copy" x
 let donate x = Donate.donate ~by:"Nx.donate" x
-
-(* A function that makes more than one operation reads each donated operand
-   once: [once ~by x f] is [f] of [x] read as a plain value, its donation
-   consumed by the call [by] when [f] returns ({!Donate.resolve}). *)
-let once ~by x f = Donate.resolve ~by [ Value.Any x ] (fun read -> f (read x))
-
-let once2 ~by a b f =
-  Donate.resolve ~by [ Value.Any a; Value.Any b ] (fun read ->
-      f (read a) (read b))
 
 (* Shapes, broadcasting and movements *)
 
@@ -1725,21 +1746,28 @@ let elementwise (type v s) ~by (dt : (v, s) D.t) xs (out : (v, s) E.t) =
   in
   (* Checked before the broadcasts, which read one operand each. *)
   List.iteri (fun i (Value.Any x) -> Prim.alive ~by i x) xs;
-  let load (Value.Any x) = Value.Plain (broadcast ~by s x) in
   let ins = Iarray.of_list (List.map (fun (Value.Any x) -> D.Any (dtype x)) xs) in
   let prog = P.of_exprs ~ins [| E.any out |] in
   let layout = contiguous ~by s in
-  let y, () =
-    Eval.eval ~by
-      (Value.Map
-         {
-           layout;
-           prog;
-           outs = Value.[ dt ];
-           loads = Iarray.of_list (List.map load xs);
-         })
+  let map xs =
+    let load (Value.Any x) = Value.Plain (broadcast ~by s x) in
+    let y, () =
+      Eval.eval ~by
+        (Value.Map
+           {
+             layout;
+             prog;
+             outs = Value.[ dt ];
+             loads = Iarray.of_list (List.map load xs);
+           })
+    in
+    y
   in
-  y
+  (* Read [once] inside an [Extent], as [binary]'s operands are. *)
+  if Eval.quiet () then map xs
+  else
+    Donate.resolve ~by xs @@ fun read ->
+    map (List.map (fun (Value.Any x) -> Value.Any (read x)) xs)
 
 (* [x <> 0] for [x] of [dt], [0 / 1] for booleans. *)
 let not_zero dt x = E.(x <> const dt (D.zero dt))

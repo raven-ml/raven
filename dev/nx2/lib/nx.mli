@@ -4421,7 +4421,13 @@ module Prim : sig
       handles among its operands ({!Nx.donate}), a movement too, since its
       results hold no handle to pass on: their donors die when it is
       received. [rule] reads the operation as it was called: the handles'
-      arrays, and a donor beside its handle as a live value.
+      arrays, and a donor beside its handle as a live value. A function that
+      broadcasts its operands for one operation, as {!Nx.add} of two shapes
+      does, is their handles' one consumer instead, as a function of several
+      operations is: [rule] receives its broadcasts and its operation over
+      the handles' arrays, and the donors die when it returns. Refused, by
+      its own checks or by [rule], it kills no donor, as when no interpretation
+      receives it.
 
       With [Adopting p], [i] receives the operations on [p]'s values as on its
       own, without asking whether [p] is around them: [p] is around [i]'s
