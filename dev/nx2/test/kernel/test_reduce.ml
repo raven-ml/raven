@@ -2894,7 +2894,9 @@ let spreads =
 
 (* [r] of [outer] times [inner] outputs of [n] terms each: output [(o, i)]'s
    terms at [(o, t, i)] of an array of shape [[outer; n; inner]], [inner]
-   apart beside their neighbours' where [inner > 1]. *)
+   apart beside their neighbours' where [inner > 1]. With [alone], [inner]
+   is 1 and the array is the first column of one of shape [[outer; n; 2]]:
+   each output's terms two apart, beside no output's. *)
 type spread_case = {
   r : Nx_kernel.reduction;
   dt : D.any;
@@ -2902,54 +2904,58 @@ type spread_case = {
   n : int;
   outer : int;
   inner : int;
+  alone : bool;
   seed : int;
 }
 
 (* Long ramps, whose blocks' maxima differ: a sum rescaled block by block
-   loses their bits. Many outputs of several blocks, along rows and
-   strided. *)
+   loses their bits. Many outputs of several blocks: along rows, side by
+   side, and alone with their terms two apart. *)
 let spread_examples =
   List.concat_map
     (fun dt ->
       List.map
         (fun seed ->
           { r = Nx_kernel.Logsumexp; dt; spread = "ramp"; n = 70_000; outer = 1;
-            inner = 1; seed })
+            inner = 1; alone = false; seed })
         [ 0; 1; 2; 3 ])
     floats
   @ List.concat_map
-      (fun inner ->
+      (fun (inner, alone) ->
         List.map
           (fun r ->
-            { r; dt = f32; spread = "offset"; n = 1025; outer = 64; inner; seed = 5 })
+            { r; dt = f32; spread = "offset"; n = 1025; outer = 64; inner;
+              alone; seed = 5 })
           Nx_kernel.[ Logsumexp; Moments ])
-      [ 1; 2 ]
+      [ (1, false); (2, false); (1, true) ]
 
 let spread_case =
   Gen.with_pp
     (fun ppf c ->
-      Format.fprintf ppf "%s of %dx%d outputs of %d %a terms, %s (seed %d)"
-        (reduction_name c.r) c.outer c.inner c.n pp_dtype c.dt c.spread c.seed)
+      Format.fprintf ppf "%s of %dx%d outputs of %d %a terms, %s%s (seed %d)"
+        (reduction_name c.r) c.outer c.inner c.n pp_dtype c.dt c.spread
+        (if c.alone then ", alone" else "")
+        c.seed)
     (let open Gen in
      let* r = of_list Nx_kernel.[ Logsumexp; Moments ] in
      let* dt = of_list floats in
      let* spread = of_list (List.map fst spreads) in
-     let* outer, inner, n =
+     let* outer, inner, alone, n =
        frequency
          [
            ( 3,
              map
-               (fun n -> (1, 1, n))
+               (fun n -> (1, 1, false, n))
                (of_list [ 1; 2; 17; 1023; 1025; 4097; 70_000 ]) );
            ( 1,
              let* outer = int_range 64 66 in
-             let* inner = int_range 1 2 in
+             let* inner, alone = of_list [ (1, false); (2, false); (1, true) ] in
              let+ n = of_list [ 17; 1025; 2100 ] in
-             (outer, inner, n) );
+             (outer, inner, alone, n) );
          ]
      in
      let+ seed = int in
-     { r; dt; spread; n; outer; inner; seed })
+     { r; dt; spread; n; outer; inner; alone; seed })
 
 (* The float32 or float64 [dt], of [bits], array of shape [s] of [xs]. *)
 let array_bits (type a b) (dt : (a, b) D.t) bits s xs =
@@ -3000,10 +3006,30 @@ let law_record (b : Support.backend) c =
   cover "several blocks" (c.n > 1024);
   cover "groups of blocks" (c.n >= 70_000);
   cover "many outputs of several blocks" (c.outer >= 64 && c.n > 1024);
-  cover "many outputs of several blocks, strided"
+  cover "many outputs of several blocks, side by side"
     (c.outer >= 64 && c.n > 1024 && c.inner > 1);
+  cover "many outputs of several blocks, each alone"
+    (c.outer >= 64 && c.n > 1024 && c.alone);
   let got =
-    reduce_terms b.kernels c.dt c.r [| c.outer; c.n; c.inner |] [| 1 |] xs
+    if not c.alone then
+      reduce_terms b.kernels c.dt c.r [| c.outer; c.n; c.inner |] [| 1 |] xs
+    else
+      (* Each term beside a NaN that no output reads. *)
+      let ys =
+        Array.init (2 * Array.length xs) (fun k ->
+            if k mod 2 = 0 then xs.(k / 2) else Float.nan)
+      in
+      let (A.Any x) = array_bits dt bits [| c.outer; c.n; 2 |] ys in
+      let whole e = { M.start = 0; count = e; step = 1 } in
+      let first = { M.start = 0; count = 1; step = 1 } in
+      let slice = M.Slice [| whole c.outer; whole c.n; first |] in
+      let x = Option.get (A.move slice x) in
+      match
+        run_stat b.kernels
+          { r = c.r; axes = [| 1 |]; x = A.Any x; views = []; values = "" }
+      with
+      | None -> failf "nx.cpu declined %s" (reduction_name c.r)
+      | Some got -> got
   in
   let sum ys = value (reduce_vector b.kernels c.dt (Monoid Sum) ys).(0).(0) in
   let bits_at x =
@@ -3632,10 +3658,11 @@ let fused_case =
   }
 
 (* The case of template [i] over [d] of shape [s], plain or with
-   [broadcast] its first load broadcast along its first axis, by [red]
-   along [axes], or with [scan] scanned. *)
+   [broadcast] its first load broadcast along its first axis, or with
+   [stepped] read with a step of two along its last, by [red] along
+   [axes], or with [scan] scanned. *)
 let fused_example ?(d = D.Any D.Float32) ?(scan = false) ?(broadcast = false)
-    i red s axes =
+    ?(stepped = false) i red s axes =
   let r = Array.length s in
   let name, ins, lanes, nodes, outs, k = List.nth (templates d r) i in
   let plain =
@@ -3647,11 +3674,14 @@ let fused_example ?(d = D.Any D.Float32) ?(scan = false) ?(broadcast = false)
       let row = Array.mapi (fun a e -> if Array.mem a axes then 1 else e) s in
       let (A.Any x) = operand d row plain ~specials:0 (7 + j) in
       A.Any (Option.get (A.move (M.Broadcast (Iarray.of_array s)) x))
-    else operand d s { plain with broadcast = broadcast && j = 0 } ~specials:0
-        (7 + j)
+    else
+      operand d s
+        { plain with broadcast = broadcast && j = 0; stepped = stepped && j = 0 }
+        ~specials:0 (7 + j)
   in
   {
-    name; shape = s; scan; k; red; axes; lanes; guard = None; fviews = [];
+    name; shape = s; scan; k; red; axes; lanes; guard = None;
+    fviews = (if stepped then [ "stepped" ] else []);
     prog =
       P.v ~ins:(Iarray.of_array ins) (Iarray.of_array nodes)
         ~outs:(Iarray.of_array outs);
@@ -3669,7 +3699,9 @@ let fused_example ?(d = D.Any D.Float32) ?(scan = false) ?(broadcast = false)
    narrower than their carrier: bfloat16's Arg, Moments scan and scan in
    quads of chunks, and int4's scan so; Logsumexp scans by tiles, of one
    slice and of three side by side, an Arg scan past a chunk, and
-   bfloat16's Arg scan, its extreme the program's term. *)
+   bfloat16's Arg scan, its extreme the program's term; Moments of many
+   outputs of several blocks, each staged once for both passes, plain and
+   stepped. *)
 let fused_examples =
   let c = D.Any D.Complex64 in
   [
@@ -3697,6 +3729,8 @@ let fused_examples =
     fused_example ~scan:true 1 Logsumexp [| 9000; 3 |] [| 0 |];
     fused_example ~scan:true 3 (Arg Min) [| 20000 |] [| 0 |];
     fused_example ~scan:true 9 (Arg Max) [| 3; 40 |] [| 1 |];
+    fused_example 1 Moments [| 64; 1100 |] [| 1 |];
+    fused_example ~stepped:true 1 Moments [| 64; 1100 |] [| 1 |];
   ]
 
 (* The destinations of [c]'s reduction, fresh, of output [c.k]'s dtype. *)
