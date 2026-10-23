@@ -1591,6 +1591,11 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
                (d 1 (x [| 3; 2 |]))));
       c "einsum" 2 (fun d ->
           show (Nx.einsum ij_jk [ d 0 (x [| 2; 3 |]); d 1 (x [| 3; 2 |]) ]));
+      c "einsum" 3 (fun d ->
+          show
+            (Nx.einsum
+               (Nx.Pattern.v "i j, j k, k l -> l i | j k")
+               [ d 0 (x [| 2; 3 |]); d 1 (x [| 3; 2 |]); d 2 (x [| 2; 2 |]) ]));
       c "matmul" 2 (fun d ->
           show (Nx.matmul (d 0 (x [| 2; 3 |])) (d 1 (x [| 3; 2 |]))));
       c "contract" 2 (fun d ->
@@ -2336,13 +2341,15 @@ let donations =
      let+ mask = int_range 1 ((1 lsl c.operands) - 1) in
      (k, mask))
 
-(* Each case with each operand donated alone, then with all. *)
+(* Each case with every donation mask, up to three operands; past three, each
+   operand donated alone, then all. *)
 let seeds =
   List.concat
     (List.mapi
        (fun k (_, c) ->
-         List.init c.operands (fun i -> (k, 1 lsl i))
-         @ if c.operands > 1 then [ (k, (1 lsl c.operands) - 1) ] else [])
+         let n = c.operands in
+         if n <= 3 then List.init ((1 lsl n) - 1) (fun m -> (k, m + 1))
+         else List.init n (fun i -> (k, 1 lsl i)) @ [ (k, (1 lsl n) - 1) ])
        named_cases)
 
 let law_donated (k, mask) =
