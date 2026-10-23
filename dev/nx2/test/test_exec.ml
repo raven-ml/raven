@@ -345,6 +345,14 @@ module Gated = struct
     | Binary Add | Compare Less -> A.Declined
     | _ -> C.apply2 k ~dst x y
 
+  let apply3 k ~dst c x y =
+    first ();
+    C.apply3 k ~dst c x y
+
+  let contract ~order ~batch ~contracting ~acc ~dst ~init a b =
+    first ();
+    C.contract ~order ~batch ~contracting ~acc ~dst ~init a b
+
   let map (prog : Nx_kernel.Prog.t) ~dsts loads =
     first ();
     if Iarray.exists declined prog.nodes then A.Declined
@@ -761,11 +769,40 @@ let test_raced_read_names () =
     (fun () ->
       meanwhile (fun () -> consume (Nx.donate x)) (fun () -> ignore (Nx.neg x)))
 
+(* A call on live values, one of which an operation on another domain donates
+   and consumes after the call checked it and before its kernel reads it,
+   raises naming that operation: on each fast path, beside a handle, and in a
+   contraction. *)
+let raced_live =
+  let consume x = ignore (Nx.mul (Nx.donate x) (twos ())) in
+  let fresh () = make_sys [| 1.; 2.; 3.; 4. |] in
+  (* [f c h t x]: a mask [c], a handle [h], twos [t], made before the call. *)
+  let case name by i f =
+    test name (fun () ->
+        let c = Nx.equal (twos ()) (on_gate [| 2.; 0.; 2.; 0. |]) in
+        let h = Nx.donate (fresh ()) and t = twos () and x = fresh () in
+        raises
+          (Invalid_argument
+             (Printf.sprintf "%s: operand %d was donated to Nx.mul" by i))
+          (fun () ->
+            meanwhile (fun () -> consume x) (fun () -> ignore (f c h t x))))
+  in
+  [
+    case "a product" "Nx.mul" 1 (fun _ _ t x -> Nx.mul x t);
+    case "a product beside a handle" "Nx.mul" 2 (fun _ h _ x -> Nx.mul h x);
+    case "a selection" "Nx.where" 2 (fun c _ t x -> Nx.where c x t);
+    case "a selection beside a handle" "Nx.where" 3 (fun c h _ x ->
+        Nx.where c h x);
+    case "a contraction" "Nx.contract" 1 (fun _ _ t x ->
+        Nx.contract Nx.float32 (Nx.Pattern.v "i, i -> | i") x t);
+  ]
+
 let donation =
   group "donation"
     [
       stateful "a value lives until a handle of it is consumed" donations;
       test "a read racing a consumer names it" test_raced_read_names;
+      group "a live operand racing its consumer names it" raced_live;
       stateful ~domains:2
         "handles of one value declined and consumed on two domains" raced;
     ]
