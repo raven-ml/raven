@@ -37,6 +37,9 @@ raven / llama.cpp (Vulkan; ROCm):
   drops a machine and collects
 - NV over PCI: a refused allocation keeps its memory until its parent is
   freed
+- rig.pci: when the write that turns a function's bus mastering off is
+  refused, a later `Memory.free` still gives back pages the device may
+  still write
 
 ### limits and size
 
@@ -60,18 +63,8 @@ raven / llama.cpp (Vulkan; ROCm):
   barrier, and in none of 96 with it
 - hardware runs: AMD over PCI on nonnormal at ad5a46369 (the held sleep,
   the two-domain growth law, test_amd and test_conformance -f AMD), whose
-  last PCI run was on an earlier form of the wake-up fix; NV through nvidia
-  on fudge at ad5a46369 (test_nv, test_cuda), after `Rig_nv.rm`'s typed
-  commands; the box and fill laws on SDMA 4 to 6; two GPUs (peers); mlx5
-  and bnxt NICs
-- NV over PCI's suites on fudge: test_nv's `map_peer` of a stopped
-  device's memory raises "released"; its dma child is refused behind
-  fudge's translating IOMMU; a heap-edge test and six conformance
-  properties time out on its 5.7 s opens
-- fudge's `take/submits-100` allocates 599 words more than its baseline:
-  493536d46's closure over a submit's profile entry, 200, and 4984d6e95's
-  point on each copy event, 500; land the closure-free hand-over and
-  re-record the row
+  last PCI run was on an earlier form of the wake-up fix; the box and fill
+  laws on SDMA 4 to 6; two GPUs (peers); mlx5 and bnxt NICs
 
 ### perf
 
