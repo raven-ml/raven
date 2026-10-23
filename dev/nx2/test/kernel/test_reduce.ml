@@ -1854,6 +1854,22 @@ let in_place ~scan s (pad : Nx_kernel.pad) axes =
   && Array.for_all (fun e -> e > 0) (unchecked s pad)
   && Array.for_all Fun.id (Array.mapi kept s)
 
+(* The window along axis [i] of [pad] as its size, step and dilation: 1, 1
+   and 1 for an axis no window takes. *)
+let window_along (pad : Nx_kernel.pad) i =
+  List.fold_left
+    (fun acc (w : M.window) ->
+      if w.axis = i then (w.size, w.step, w.dilation) else acc)
+    (1, 1, 1) (Iarray.to_list pad.windows)
+
+(* Along axis [i] of an operand of shape [s] loaded as [pad], each output's
+   window as the first and last operand index it reaches. *)
+let reaches s pad i =
+  let k, st, d = window_along pad i in
+  let lo = Iarray.get pad.lo i in
+  List.init (unchecked s pad).(i) (fun o ->
+      (o * st - lo, (o * st) + ((k - 1) * d) - lo))
+
 (* The dtypes whose elements are no byte of their own, but float4_e2m1fn,
    which the reference does not compute in. *)
 let sub_bytes = D.[ Any Int4; Any Uint4; Any Bit ]
@@ -1943,6 +1959,34 @@ let padded_examples =
     padded ~scan:false f32 Sum [| 6 |]
       (pad [| 2 |] [| 1 |] [| 0 |] ~windows:[| w 0 2 1 |])
       "\000\000\000\128" [| 1 |] 7;
+    (* Read in place: windows of one stepping 2, the first two or the last
+       two in the fill alone. *)
+    reduce Sum [| 4 |]
+      (pad [| 3 |] [| 0 |] [| 0 |] ~windows:[| w 0 1 2 |])
+      [| 1 |];
+    reduce Sum [| 4 |]
+      (pad [| 0 |] [| 3 |] [| 0 |] ~windows:[| w 0 1 2 |])
+      [| 1 |];
+    (* Read in place: each window of 3 over 2 elements padded by 1 reads
+       the fill. *)
+    reduce Sum [| 2 |]
+      (pad [| 1 |] [| 1 |] [| 0 |] ~windows:[| w 0 3 1 |])
+      [| 1 |];
+    (* Read in place through a reversed and a stepped view. *)
+    padded
+      ~view:
+        { perm = [| 0; 1 |]; stepped = false; reversed = Some 1;
+          broadcast = false }
+      ~scan:false f32 Max [| 4; 5 |]
+      (pad [| 1; 0 |] [| 2; 0 |] [| 0; 0 |])
+      one [| 1 |] 7;
+    padded
+      ~view:
+        { perm = [| 0; 1 |]; stepped = true; reversed = None;
+          broadcast = false }
+      ~scan:false f32 Sum [| 4; 5 |]
+      (pad [| 1; 0 |] [| 2; 0 |] [| 0; 0 |])
+      one [| 1 |] 7;
   ]
 
 (* nx.cpu reduces and scans a padded load as the array it reads: the
@@ -1991,6 +2035,27 @@ let law_padded (b : Support.backend) p =
       cover "read in place, sub-byte" (read && D.bits (A.dtype x) < 8);
       cover "read in place, a NaN fill" (read && nan);
       cover "read in place, a -0 fill" (read && neg_zero);
+      cover "read in place, a reversed or stepped view"
+        (read && (p.view.stepped || p.view.reversed <> None));
+      (* Along a padded axis, no output whose window reads the operand
+         alone; or a stepped window's outputs that start in the fill before
+         or end in the fill after it all lying in that fill. *)
+      let interior i =
+        List.exists (fun (a, z) -> a >= 0 && z < s.(i)) (reaches s pad i)
+      in
+      let in_fill i =
+        let _, st, _ = window_along pad i in
+        let o = reaches s pad i in
+        let before = List.filter (fun (a, _) -> a < 0) o in
+        let after = List.filter (fun (_, z) -> z >= s.(i)) o in
+        st > 1
+        && ((before <> [] && List.for_all (fun (_, z) -> z < 0) before)
+           || (after <> [] && List.for_all (fun (a, _) -> a >= s.(i)) after))
+      in
+      cover "read in place, no interior along an axis"
+        (read && List.exists (fun i -> not (interior i)) filled);
+      cover "read in place, a stepped window's band in the fill alone"
+        (read && List.exists in_fill filled);
       cover "copied: a fill along a reduced axis"
         ((not c.scan) && List.exists (fun i -> Array.mem i c.axes) filled);
       (* It gives no window along that axis. *)
@@ -4494,6 +4559,74 @@ let test_zero_products (b : Support.backend) () =
   equal ~msg:"one thread" (list int) zero
     (sum_products (module One) b c prog c.loads)
 
+(* A Sum of a program's output over padded loads gives the bits of the Sum
+   over the arrays the loads read, where nx_cpu.mli keeps a load's whole
+   copy and where it reads loads in place: a destination aliasing the
+   operand, a coordinate read, two loads padded at different ends, and a
+   windowed load whose taps lie along an axis another load fills along. *)
+let test_padded_programs (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let one = "\000\000\128\063" in
+  let pad ?(windows = [||]) lo hi =
+    let lo = Iarray.of_array lo and hi = Iarray.of_array hi in
+    let interior = Iarray.map (fun _ -> 0) lo in
+    { Nx_kernel.lo; hi; interior; windows = Iarray.of_array windows }
+  in
+  let w axis size = { M.axis; size; step = 1; dilation = 1 } in
+  let operand s seed =
+    operand f32 s (plain_view (Array.length s)) ~specials:0 seed
+  in
+  let neg =
+    P.v ~ins:[| f32 |] P.[| In 0; Op1 (Unary Neg, f32, 0) |] ~outs:[| 1 |]
+  in
+  let coord =
+    P.v ~ins:[| f32 |]
+      P.[| In 0; Coord 0; Op1 (Cast, f32, 1); Op2 (Binary Add, 0, 2) |]
+      ~outs:[| 3 |]
+  in
+  let product = product_prog ~same:false f32 f32 in
+  let sum p ~shape axes dst loads =
+    K.reduce p ~shape ~axes:(Iarray.of_array axes) [| (Monoid Sum, 0) |]
+      ~dsts:[| dst |] loads
+  in
+  (* [p] summed along [axes] of the loads of [xs] padded by [pads] with
+     one, into [into] where given, else a fresh array. *)
+  let check ?into what p xs pads axes =
+    let loads = Array.map2 (fun x pad -> padded_load x one pad) xs pads in
+    let shape = loop_shape loads in
+    let kept =
+      Array.of_list
+        (List.filteri (fun i _ -> not (Array.mem i axes)) (Array.to_list shape))
+    in
+    let fresh () = A.Any (A.create Rig.host D.Float32 kept) in
+    let reads =
+      Array.map2 (fun x pad -> plain_of (pad_array x one pad)) xs pads
+    in
+    let want = fresh () in
+    equal ~msg:(what ^ ", from copies") Elements.answer A.Done
+      (sum p ~shape axes want reads);
+    let got = Option.value into ~default:(fresh ()) in
+    equal ~msg:what Elements.answer A.Done (sum p ~shape axes got loads);
+    equal ~msg:what (list int) (bytes_of want) (bytes_of got)
+  in
+  let x = operand [| 3 |] 1 in
+  let y = operand [| 3 |] 1 in
+  check "an aliased load" ~into:x (identity f32) [| x |]
+    [| pad [| 1 |] [| 1 |] ~windows:[| w 0 3 |] |] [| 1 |];
+  check "an aliased load of a program" ~into:y neg [| y |]
+    [| pad [| 1 |] [| 1 |] ~windows:[| w 0 3 |] |] [| 1 |];
+  check "a coordinate" coord [| operand [| 5; 2 |] 2 |]
+    [| pad [| 1; 0 |] [| 1; 0 |] |] [| 1 |];
+  check "two loads padded at different ends" product
+    [| operand [| 5; 3 |] 5; operand [| 3; 3 |] 6 |]
+    [| pad [| 1; 0 |] [| 0; 0 |] ~windows:[| w 0 2 |];
+       pad [| 0; 0 |] [| 3; 0 |] ~windows:[| w 0 2 |] |]
+    [| 1; 2 |];
+  check "taps along another load's fill" product
+    [| operand [| 5 |] 3; operand [| 3; 2 |] 4 |]
+    [| pad [| 0 |] [| 0 |] ~windows:[| w 0 3 |]; pad [| 0; 0 |] [| 0; 1 |] |]
+    [| 0 |]
+
 (* Carries *)
 
 (* A dtype a carried scan draws: its finite elements, near one for a
@@ -5355,6 +5488,8 @@ let cpu (b : Support.backend) =
         product_case (run (law_products b));
       test "a sum of products of -0 by positive factors is +0"
         (test_zero_products b);
+      test "a program over padded loads sums as over the arrays they read"
+        (fun () -> b.around (test_padded_programs b));
       test "a destination aliasing a load computes as a fresh one" (fun () ->
           b.around (test_program_in_place b));
       prop
