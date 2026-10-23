@@ -2039,8 +2039,7 @@ let scaled_covers (c, sa, sb) =
 
 (* A scaled contraction has the bits of the contraction of its operands
    scaled on the host, each element rounded once into acc. *)
-let law_scaled b (c, sa, sb) =
-  scaled_covers (c, sa, sb);
+let scaled_bits b (c, sa, sb) =
   let sa = Option.map scale_of sa and sb = Option.map scale_of sb in
   let scaled x = function None -> (x, false) | Some s -> host_scaled c.acc x s in
   let a, oa = scaled c.a sa and b', ob = scaled c.b sb in
@@ -2049,6 +2048,148 @@ let law_scaled b (c, sa, sb) =
   | Some y, Some y' ->
       equal (list string) [] (differ_bits c.acc ~other:"host-scaled" y y')
   | _ -> failf "nx.cpu declined a float contraction"
+
+let law_scaled b x =
+  scaled_covers x;
+  scaled_bits b x
+
+(* Block-scaled float4
+
+   A [m × k] by float4 [k × n] product, b scaled in blocks of [mx_ratio]
+   along k and of each column or all of them ([mx_whole]), as MXFP4's
+   weights are: b stored [n; k] and read along k ([mx_along]), as a
+   weight is, or stored [k; n]; its codes from the second of a byte where
+   [mx_odd]; a float4 too where [mx_a], scaled likewise along k. *)
+type mx = {
+  mx_order : Nx_kernel.order;
+  mx_acc : D.any;
+  mx_m : int;
+  mx_n : int;
+  mx_k : int;
+  mx_ratio : int;
+  mx_whole : bool;
+  mx_along : bool;
+  mx_odd : bool;
+  mx_a : bool;
+  mx_kind : D.any option;
+  mx_seed : int;
+}
+
+(* A float4 [k × n] array drawn from [seed]: made [n; k + odd] and
+   permuted where [along], else [k; n + odd], then sliced from [odd] along
+   the axis whose codes are adjacent. *)
+let float4_b ~along ~odd k n seed =
+  let r = Random.State.make [| seed |] in
+  let made = if along then [| n; k + odd |] else [| k; n + odd |] in
+  let xs = Array.init (total made) (fun _ -> value (D.Any D.Float4_e2m1fn) r) in
+  let (A.Any x) =
+    cast_to (D.Any D.Float4_e2m1fn) (A.Any (A.of_array D.Float64 made xs))
+  in
+  let move m x = Option.get (A.move m x) in
+  let window = Iarray.of_list
+      [ { M.start = 0; count = made.(0); step = 1 };
+        { M.start = odd; count = made.(1) - odd; step = 1 } ]
+  in
+  let x = move (M.Slice window) x in
+  A.Any (if along then move (M.Permute [| 1; 0 |]) x else x)
+
+let mx_case x =
+  let k = x.mx_k and n = x.mx_n and m = x.mx_m in
+  let plain2 = { stepped = false; broadcast = false; stored = [| 0; 1 |]; perm = [| 0; 1 |] } in
+  let da = if x.mx_a then D.Any D.Float4_e2m1fn else D.Any D.Bfloat16 in
+  let a = operand da [| m; k |] 0 plain2 x.mx_seed in
+  let odd = if x.mx_odd then 1 else 0 in
+  let b = float4_b ~along:x.mx_along ~odd k n (x.mx_seed + 1) in
+  let c =
+    { order = x.mx_order; batch = [||]; contracting = [| (1, 0) |];
+      acc = x.mx_acc; a; b; init = None; out = x.mx_acc; views = [] }
+  in
+  let blocks = if k = 0 then 0 else k / x.mx_ratio in
+  let spec extents i =
+    { kind = x.mx_kind; extents; lies = Contiguous; specials = true;
+      seed = x.mx_seed + i }
+  in
+  let cols = if x.mx_whole && n > 0 then 1 else n in
+  let sa = if x.mx_a then Some (spec [| m; blocks |] 2) else None in
+  (c, sa, Some (spec [| blocks; cols |] 3))
+
+let pp_mx ppf x = pp_scaled ppf (mx_case x)
+
+let mx_of ?(order = Nx_kernel.Lane) ?(acc = D.Any D.Float32) ?(ratio = 32)
+    ?(whole = false) ?(along = true) ?(odd = false) ?(f4_a = false) ?kind
+    ?(seed = 1) m n k =
+  { mx_order = order; mx_acc = acc; mx_m = m; mx_n = n; mx_k = k;
+    mx_ratio = ratio; mx_whole = whole; mx_along = along; mx_odd = odd;
+    mx_a = f4_a; mx_kind = kind; mx_seed = seed }
+
+let mx_draws =
+  let open Gen in
+  with_pp pp_mx
+    (let* order = of_list Nx_kernel.[ Chain; Lane ] in
+     let* acc = of_list ~pp:pp_dtype D.[ Any Float32; Any Float64 ] in
+     let* k = of_list [ 0; 32; 64; 96; 1024; 1056; 2048; 4096; 4128 ] in
+     let* ratio =
+       if k = 0 then constant 32
+       else of_list (List.filter (fun r -> k mod r = 0) [ 32; 64; 96 ])
+     in
+     let* m = frequency [ (3, int_range 1 5); (2, int_range 6 40); (1, constant 0) ] in
+     let* n = frequency [ (3, int_range 1 40); (1, of_list [ 0; 1; 300 ]) ] in
+     let* whole = bool and+ along = frequency [ (3, constant true); (1, constant false) ] in
+     let* odd = bool and+ f4_a = frequency [ (4, constant false); (1, constant true) ] in
+     let* kind =
+       frequency
+         [ (3, constant None);
+           (1, map Option.some (of_list ~pp:pp_dtype D.[ Any Float16; Any Float32 ])) ]
+     in
+     let+ seed = int in
+     mx_of ~order ~acc ~ratio ~whole ~along ~odd ~f4_a ?kind ~seed m n k)
+
+(* The product of a token by a weight, either side of lane order's blocks
+   and nx's cut, in both orders and accs; a weight read along its columns;
+   codes from inside a byte; float4 a; Value scales; the chain path, past
+   the few rows; and the empty and one-element products. *)
+let mx_examples =
+  let both =
+    Nx_kernel.[ (Lane, D.Any D.Float32); (Chain, D.Any D.Float64);
+                (Chain, D.Any D.Float32); (Lane, D.Any D.Float64) ]
+  in
+  List.concat_map
+    (fun (order, acc) ->
+      List.map (fun k -> mx_of ~order ~acc 1 24 k) [ 32; 1024; 1056; 4096; 4128 ]
+      @ [ mx_of ~order ~acc ~along:false ~odd:true 3 17 1056;
+          mx_of ~order ~acc ~odd:true ~ratio:64 2 9 4096;
+          mx_of ~order ~acc ~f4_a:true ~whole:true 5 7 2048;
+          mx_of ~order ~acc ~kind:(D.Any D.Float16) 4 33 1024;
+          mx_of ~order ~acc 1 1 32; mx_of ~order ~acc 0 5 64;
+          mx_of ~order ~acc 3 0 64; mx_of ~order ~acc 2 3 0 ])
+    both
+  @ [ mx_of ~order:Chain ~acc:(D.Any D.Float32) 260 264 1056;
+      mx_of ~order:Chain ~acc:(D.Any D.Float64) ~along:false 260 264 1056 ]
+
+let mx_covers x =
+  let lane = x.mx_order = Lane and products = x.mx_m * x.mx_n > 0 && x.mx_k > 0 in
+  cover "float32" (x.mx_acc = D.Any D.Float32);
+  cover "float64" (x.mx_acc = D.Any D.Float64);
+  cover "lane order, b read along k" (lane && products && x.mx_along);
+  cover "lane order, b read along its columns" (lane && products && not x.mx_along);
+  cover "chain order, b read along k" ((not lane) && products && x.mx_along);
+  cover "chain order, b read along its columns"
+    ((not lane) && products && not x.mx_along);
+  cover "the chain path" ((not lane) && x.mx_m > few_rows_most && x.mx_n > few_rows_most);
+  cover "k past a block of lanes" (x.mx_k > 1024);
+  cover "k past nx's block" (x.mx_k > 4096);
+  cover "blocks of 64 or more" (x.mx_k > 0 && x.mx_ratio > 32);
+  cover "codes from inside a byte" (products && x.mx_odd);
+  cover "a float4 a" (products && x.mx_a);
+  cover "a Value scale" (products && x.mx_kind <> None);
+  cover "a scale per column" (products && x.mx_n > 1 && not x.mx_whole);
+  cover "no output" (x.mx_m * x.mx_n = 0);
+  cover "one output" (x.mx_m * x.mx_n = 1);
+  cover "no product" (x.mx_k = 0 && x.mx_m * x.mx_n > 0)
+
+let law_mx b x =
+  mx_covers x;
+  scaled_bits b (mx_case x)
 
 (* Integer and complex cases with scales. *)
 let unscalable =
@@ -2288,6 +2429,10 @@ let cpu (b : Support.backend) =
         scaled_cases (run (law_scaled b));
       prop "declines scales in an integer or complex accumulator" unscalable
         (run (law_unscalable b));
+      prop ~examples:mx_examples
+        "a block-scaled float4 operand has the bits of its elements scaled \
+         on the host"
+        mx_draws (run (law_mx b));
       test "refuses a scale that does not fit its operand" (fun () ->
           b.around (test_scale_misfits b));
       prop ~count:500
