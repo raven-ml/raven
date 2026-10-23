@@ -3714,13 +3714,15 @@ let padded_by ~by ~lo ~hi ~interior x =
    than an axis holds leaves it empty, with no window. A kernel axis of no
    tap sums no term.
 
-   With other than one input channel a group, it is one contraction of the
-   windows of [x] padded, a copy, as a view [[n; t…; g; k…; ic]], with [w]
-   as [[g; oc; k…; ic]], batched over the groups, summing the taps then the
-   channels, as the kernel sums its pairs. With one, it is one reduction over
-   the loop [[n; t…; g; oc; ic; k…]] that reads [x], its channels split into
-   groups and broadcast over [oc], through a padded load whose windows
-   append the taps, and sums [ic] and the taps. *)
+   With other than one input channel a group and a real dtype, it is one
+   contraction of the windows of [x] padded, a copy, as a view
+   [[n; t…; g; k…; ic]], with [w] as [[g; oc; k…; ic]], batched over the
+   groups, summing the taps then the channels, as the kernel sums its
+   pairs. Otherwise it is one reduction over the loop
+   [[n; t…; g; oc; ic; k…]] that reads [x], its channels split into groups
+   and broadcast over [oc], through a padded load whose windows append the
+   taps, and sums [ic] and the taps: a complex contraction's kernels may
+   copy a windowed operand whole, as many bytes as the windows hold. *)
 let windows_of ~by ~stride ~lo ~hi ~interior ~dilation x w =
   let dt = dtype x in
   let r = ndim x and kw = shape w in
@@ -3754,7 +3756,7 @@ let windows_of ~by ~stride ~lo ~hi ~interior ~dilation x w =
           })
     in
     let (D.Any acc) = summed dt in
-    if ic <> 1 then
+    if ic <> 1 && not (D.is D.Complex dt) then
       let grouped = Array.concat [ [| n |]; spatial; [| g; ic |] ] in
       let x' = reshaped ~by grouped x in
       let xp = padded_by ~by ~lo ~hi ~interior x' in
