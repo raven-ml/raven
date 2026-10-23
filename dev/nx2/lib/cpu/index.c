@@ -288,8 +288,10 @@ struct scatter {
      gathers [gather_bytes] at [gather]. */
   int64_t pd, pi, pu, pt, n, b0, steps, chunks, bins, block, w, gather_bytes;
   /* A row's sorted positions and steps (narrow_rows): [order] holds them,
-     their sort's scratch and where each target's run starts. */
-  int64_t *order;
+     their sort's scratch and where each target's run starts. Where the
+     targets are parted (narrow_run), unit u's sort takes [order]'s words
+     from 4·at[u] to 4·at[u + 1]. */
+  int64_t *order, *at;
   const uint64_t *rp;
   const int64_t *rr, *runs;
   int shift;
@@ -616,7 +618,12 @@ static int64_t run_at(const scatter *c, int64_t v, int64_t *p) {
    - Otherwise a unit (narrow_run), of a part of the targets where units
      are fewer than the threads, sorts the positions its run applies by
      target, stably, and sums one target after another, as a row's pieces
-     do, in its worker's scratch of four words per update along the axis.
+     do, in four words for each position it sorts: its worker's for every
+     update along the axis, or where the targets are parted, its own for
+     its part's positions, counted first (part_order), so that the parts
+     take four words per update in all: a bfloat16 [16M, 2] take along
+     axis 0's gradient, 7 parts of each slice on 14 threads, holds 1 GiB
+     so, against 7 GiB with each worker's sized by the axis.
      A run whose positions differ along it is one slice, so that one sort
      serves each run and the threads share the slices: [1M, 64] bfloat16
      updates with a position each took 3.8 s on one thread, each run of 64
@@ -794,13 +801,21 @@ static void narrow_rows(scatter *c, int64_t v, int64_t bytes) {
              run_pieces, c);
 }
 
-static void narrow_run(const scatter *c, int worker, int64_t pd, int64_t pi,
-                       int64_t pu, int64_t n, uint64_t lo, uint64_t span) {
+/* Sums unit [u]'s run of [n] slices, its positions in [lo, lo + span):
+   its worker's rows of floats, then its sort's words, the unit's own where
+   the targets are parted, else after the rows. */
+static void narrow_run(const scatter *c, int worker, int64_t u, int64_t pd,
+                       int64_t pi, int64_t pu, int64_t n, uint64_t lo,
+                       uint64_t span) {
   const int64_t *x = (const int64_t *)c->a[2].base;
   int64_t m = c->m, ia = c->ia;
-  uint64_t *p = (uint64_t *)(c->sums + worker * c->each), *p2 = p + m;
-  int64_t *r = (int64_t *)(p2 + m), *r2 = r + m;
-  float *sum = (float *)(r2 + m), *row = sum + UNIT_ROW, *next = row + UNIT_ROW;
+  float *sum = (float *)(c->sums + worker * c->each), *row = sum + UNIT_ROW;
+  float *next = row + UNIT_ROW;
+  int64_t most = c->at ? c->at[u + 1] - c->at[u] : m;
+  uint64_t *p = c->at ? (uint64_t *)(c->order + 4 * c->at[u])
+                      : (uint64_t *)(next + UNIT_ROW);
+  uint64_t *p2 = p + most;
+  int64_t *r = (int64_t *)(p2 + most), *r2 = r + most;
   int64_t k = 0;
   for (int64_t t = 0; t < m; t++) {
     uint64_t q = (uint64_t)x[pi + t * ia];
@@ -812,18 +827,85 @@ static void narrow_run(const scatter *c, int worker, int64_t pd, int64_t pi,
   sum_sorted(c, pd, pu, n, moved ? p2 : p, moved ? r2 : r, k, sum, row, next);
 }
 
+/* The first target of part [k] of the axis's targets. */
+static uint64_t part_first(const scatter *c, int64_t k) {
+  return c->dim * (uint64_t)k / (uint64_t)c->parts;
+}
+
 static void scatter_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   const scatter *c = ctx;
   for (int64_t u = lo; u < hi; u++) {
     /* The unit's part of the axis's targets, then its run of slices. */
     int64_t part = u % c->parts, p[4];
-    uint64_t first = c->dim * (uint64_t)part / (uint64_t)c->parts;
-    uint64_t next = c->dim * (uint64_t)(part + 1) / (uint64_t)c->parts;
+    uint64_t first = part_first(c, part), next = part_first(c, part + 1);
     int64_t n = run_at(c, u / c->parts, p);
     if (c->narrow)
-      narrow_run(c, worker, p[0], p[1], p[2], n, first, next - first);
+      narrow_run(c, worker, u, p[0], p[1], p[2], n, first, next - first);
     else c->run(c, p[0], p[1], p[2], n, first, next - first);
   }
+}
+
+/* Positions of a run that a job's piece counts by part (part_order). */
+#define COUNT_PIECE (256 * 1024)
+
+typedef struct {
+  const scatter *c;
+  int64_t pieces;  /* pieces of each run's positions */
+  uint64_t *first; /* each part's first target, then the axis's extent */
+  int64_t *counts; /* each piece's positions in each part, a row a piece */
+} counting;
+
+/* Counts each piece's positions by part: a position's part is first
+   guessed from its share of the axis, then moved to the part whose targets
+   hold it. */
+static void count_parts(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  const counting *k = ctx;
+  const scatter *c = k->c;
+  const int64_t *x = (const int64_t *)c->a[2].base;
+  double share = (double)c->parts / (double)c->dim;
+  for (int64_t v = lo; v < hi; v++) {
+    int64_t p[4], j = v % k->pieces, *n = k->counts + v * c->parts;
+    run_at(c, v / k->pieces, p);
+    int64_t t1 = c->m * (j + 1) / k->pieces;
+    for (int64_t t = c->m * j / k->pieces; t < t1; t++) {
+      uint64_t q = (uint64_t)x[p[1] + t * c->ia];
+      if (q >= c->dim) continue;
+      int64_t g = (int64_t)((double)q * share);
+      if (g >= c->parts) g = c->parts - 1;
+      while (q < k->first[g]) g--;
+      while (q >= k->first[g + 1]) g++;
+      n[g]++;
+    }
+  }
+}
+
+/* Gives each unit of the [units] runs' parts its sort's words (narrow_run),
+   four for each of its run's positions in its part: answers 0 where memory
+   runs out. */
+static int part_order(scatter *c, int64_t units, int64_t bytes) {
+  int64_t jobs = units * c->parts;
+  int64_t pieces = (c->m + COUNT_PIECE - 1) / COUNT_PIECE;
+  counting k = {.c = c, .pieces = pieces};
+  k.first = malloc((size_t)(c->parts + 1) * sizeof(uint64_t));
+  k.counts = calloc((size_t)(units * pieces * c->parts), sizeof(int64_t));
+  c->at = malloc((size_t)(jobs + 1) * sizeof(int64_t));
+  int ok = k.first != NULL && k.counts != NULL && c->at != NULL;
+  if (ok) {
+    for (int64_t g = 0; g <= c->parts; g++) k.first[g] = part_first(c, g);
+    nx_cpu_job(units * pieces, bytes, (double)bytes, count_parts, &k);
+    c->at[0] = 0;
+    for (int64_t u = 0; u < jobs; u++) {
+      int64_t v = u / c->parts * pieces, g = u % c->parts, n = 0;
+      for (int64_t j = 0; j < pieces; j++) n += k.counts[(v + j) * c->parts + g];
+      c->at[u + 1] = c->at[u] + n;
+    }
+    c->order = malloc((size_t)(4 * c->at[jobs] + 1) * sizeof(int64_t));
+    ok = c->order != NULL;
+  }
+  free(k.first);
+  free(k.counts);
+  return ok;
 }
 
 /* Sorted scatters
@@ -1187,12 +1269,16 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
   if (sort) units = slices(&c, us, r, axis, a[1].dim + r);
   if ((uint64_t)c.parts > c.dim) c.parts = (int64_t)c.dim;
   if (!sort) copy_into(a, total);
-  /* A worker's scratch for a narrow float's sums: two words for each of
-     its unit's positions and two for their sort, and three rows of floats;
-     a row's sort keeps those words once, and a word more for each run. */
+  /* A worker's scratch for a narrow float's sums: three rows of floats,
+     then two words for each of its unit's positions and two for their
+     sort; a row's sort keeps those words once, and a word more for each
+     run, and parted targets' units each for their part's positions. */
   int64_t jobs = units * c.parts;
   int workers = jobs < threads ? (int)jobs : threads;
-  if (c.narrow && !sort) c.each = (rows ? 0 : 32 * c.m) + 12 * UNIT_ROW;
+  int parted = c.narrow && c.parts > 1;
+  if (c.narrow && !sort)
+    c.each = (rows || parted ? 0 : 32 * c.m) + 12 * UNIT_ROW;
+  int laid = !parted || part_order(&c, units, units * c.m * 8);
   if (rows) {
     workers = threads;
     c.order = malloc((size_t)(5 * c.m + 1) * sizeof(int64_t));
@@ -1225,11 +1311,12 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
     c.gather = malloc((size_t)(threads * c.gather_bytes));
   }
   if (c.narrow) c.sums = calloc((size_t)workers, (size_t)c.each);
-  if ((c.narrow && c.sums == NULL) || (rows && c.order == NULL) ||
+  if ((c.narrow && c.sums == NULL) || (rows && c.order == NULL) || !laid ||
       (sort && (c.pos == NULL || c.vals == NULL || c.seg == NULL ||
                 c.gather == NULL))) {
     free(c.sums);
     free(c.order);
+    free(c.at);
     free(c.pos);
     free(c.vals);
     free(c.seg);
@@ -1246,6 +1333,7 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
     nx_cpu_job(jobs, bytes, bytes, scatter_units, &c);
   free(c.sums);
   free(c.order);
+  free(c.at);
   free(c.pos);
   free(c.vals);
   free(c.seg);

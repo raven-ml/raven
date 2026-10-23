@@ -149,12 +149,19 @@
     [Shape_mismatch] operands and destinations whose shapes do not fit. A
     scatter's [Add] adds a target's updates left to right,
     [(… ((+0 + x) + u1) + …) + un]. A narrow float's keeps its float32 sums
-    in host memory the call holds until it returns: on each of its threads
-    at most a few words for each update along the scattered axis and the
-    sums of a bin of the axis's targets, half a core's L2 or a 1024th of
-    [into]. Along an axis of more than 2{^19} updates and more updates than
-    targets, five bytes for each target, in all, take the place of the
-    bins' sums.
+    and the positions it sorts by target in host memory the call holds
+    until it returns. Over [m] updates along the scattered axis, it takes
+    12 KiB and [32 m] bytes on each of its threads; in place of the
+    [32 m], 32 bytes for each update in all where its slices are fewer
+    than its threads, and [40 m + 8] bytes once where its positions step
+    0 along each of fewer rows of slices than threads. A scatter of one
+    slice, of a dtype of a byte or more, takes instead on each thread a
+    bin of the axis's targets, a byte of flag and a float32 sum for each,
+    the flags padded to 64 bytes: at most half a core's L2 of sums, or
+    those of a 512th of the axis's targets. Along an axis of more than
+    2{^19} updates and more updates than targets, every bin keeps its
+    own, about five bytes for each target of its bins, the last counted
+    whole.
 
     [sort] and [assemble] compute every dtype, and [fold] every dtype
     {!Nx_kernel.Prog.Add} takes. The three refuse with [Shape_mismatch]
