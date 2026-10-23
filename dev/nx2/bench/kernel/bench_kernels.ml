@@ -300,8 +300,9 @@ let map ?work name (p : Nx_kernel.Prog.t) n =
           (Iarray.to_array p.ins) ))
 
 (* Maps of several nodes: six float32 nodes over one load, a program the
-   interpreter runs block by block in L1; and a Mul by a constant, a
-   repeated element to its row. *)
+   interpreter runs block by block in L1; a Mul by a constant, a repeated
+   element to its row; and a bfloat16 Add then Mul by a constant, which
+   decodes and encodes a narrow float. *)
 let map_rows =
   let module P = Nx_kernel.Prog in
   let m = mib and f = D.Any f32 in
@@ -324,9 +325,22 @@ let map_rows =
       [| P.In 0; Const (f, P.bits f32 0.5); Op2 (Binary Mul, 0, 1) |]
       ~outs:[| 2 |]
   in
+  let bf = D.Any D.Bfloat16 in
+  let add_scale =
+    P.v ~ins:[| bf; bf |]
+      [|
+        P.In 0;
+        In 1;
+        Op2 (Binary Add, 0, 1);
+        Const (bf, P.bits D.Bfloat16 0.5);
+        Op2 (Binary Mul, 2, 3);
+      |]
+      ~outs:[| 4 |]
+  in
   [
     map ~work:(stream 1 4 4 m) "map-6-f32-1M" six m;
     map ~work:(stream 1 4 4 m) "map-scale-f32-1M" scale m;
+    map ~work:(stream 2 2 2 m) "map-add-scale-bf16-1M" add_scale m;
   ]
 
 let apply_rows =
