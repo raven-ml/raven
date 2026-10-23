@@ -4475,6 +4475,43 @@ let conv_transpose ?stride ?padding ?dilation ?groups x w =
     ~interior:(Array.map (fun st -> st - 1) stride)
     ~dilation x w
 
+(* Filters *)
+
+(* [x]'s windows of [kernel_size] along its last axes, one every [stride],
+   as a view [[lead…; t…; k…]], and its window axes. *)
+let filter_windows ~by ~kernel_size ?stride x =
+  let k = Array.length kernel_size and r = ndim x in
+  let stride = Option.value stride ~default:kernel_size in
+  if k > r then invalid_argf "%s: %d kernel extents over %a" by k pp_value x;
+  if Array.length stride <> k then
+    invalid_argf "%s: %d strides for %d kernel extents" by
+      (Array.length stride) k;
+  let below_one a = Array.exists (fun e -> e < 1) a in
+  if below_one kernel_size || below_one stride then
+    invalid_argf "%s: kernel %a and stride %a; give at least 1" by pp_shape
+      kernel_size pp_shape stride;
+  let window i : Nx_array.Move.window =
+    { axis = r - k + i; size = kernel_size.(i); step = stride.(i); dilation = 1 }
+  in
+  (move ~by (Window (Iarray.init k window)) x, List.init k (fun i -> r + i))
+
+let filter ~by m ~kernel_size ?stride x =
+  once ~by x @@ fun x ->
+  let v, axes = filter_windows ~by ~kernel_size ?stride x in
+  reduction ~by m ~axes v
+
+let maximum_filter ~kernel_size ?stride x =
+  filter ~by:"Nx.maximum_filter" Max ~kernel_size ?stride x
+
+let minimum_filter ~kernel_size ?stride x =
+  filter ~by:"Nx.minimum_filter" Min ~kernel_size ?stride x
+
+let uniform_filter ~kernel_size ?stride x =
+  let by = "Nx.uniform_filter" in
+  once ~by x @@ fun x ->
+  let v, axes = filter_windows ~by ~kernel_size ?stride x in
+  mean ~axes v
+
 (* Attention *)
 
 type ('v, 's, 'd) kv =

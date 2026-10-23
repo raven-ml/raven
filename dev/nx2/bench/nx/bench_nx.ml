@@ -606,9 +606,11 @@ let contract_rows =
    RGB image's into 3 and a complex64 one's into 4; its input gradient,
    conv_transpose, and its weight gradient, a contraction over
    the padded image's windows; the depthwise convolution, one channel a
-   group; and a 3 × 3 max-pool at stride 2, padded by -∞, as pad, two
-   window views and max, with its gradient: the windows holding the
-   maximum take the output's gradient, folded back onto the image. *)
+   group; a 3 × 3 max-pool at stride 2 of the image channels first,
+   padded by -∞, as pad and maximum_filter; and the channels-last
+   max-pool's gradient, as pad, two window views and max: the windows
+   holding the maximum take the output's gradient, folded back onto the
+   image. *)
 
 let image dt = filled dt [| 8; 56; 56; 64 |] 1.
 let pad1 = [| (1, 1); (1, 1) |]
@@ -629,8 +631,8 @@ let weight_grad =
     Nx.Repr.array (Nx.contract D.Float32 p v dy)
 
 let max_pool x =
-  let v = windows ~step:2 (Nx.pad around Float.neg_infinity x) in
-  Nx.Repr.array (Nx.max ~axes:[ 4; 5 ] v)
+  let x = Nx.pad [| (0, 0); (0, 0); (1, 1); (1, 1) |] Float.neg_infinity x in
+  Nx.Repr.array (Nx.maximum_filter ~kernel_size:[| 3; 3 |] ~stride:[| 2; 2 |] x)
 
 (* [[n; 28; 28; c; 3; 3]] windows to [[n; c; 9; 784]] patches. *)
 let max_pool_grad (x, dy) =
@@ -673,8 +675,9 @@ let conv_rows =
         ~setup:(fun () -> (image D.Float32, image D.Float32)) weight_grad;
       Thumper.bench_with_setup "depthwise-f32-8x56x56x64-3x3"
         ~setup:(conv_by D.Float32 [| 64; 3; 3; 1 |]) (conv ~groups:64);
-      Thumper.bench_with_setup "max-pool-f32-8x56x56x64-3x3s2"
-        ~setup:(fun () -> image D.Float32) max_pool;
+      Thumper.bench_with_setup "max-pool-f32-8x64x56x56-3x3s2"
+        ~setup:(fun () -> filled D.Float32 [| 8; 64; 56; 56 |] 1.)
+        max_pool;
       Thumper.bench_with_setup "max-pool-grad-f32-8x56x56x64-3x3s2"
         ~setup:(fun () -> (image D.Float32, filled D.Float32 [| 8; 28; 28; 64 |] 1.))
         max_pool_grad;
