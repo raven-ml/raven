@@ -1074,7 +1074,9 @@ let golden g =
       ]
   in
   (* Each buffer's memory, mapped in the process's tables, and what the GSP is
-     told of it. *)
+     told of it. The memory is zeroed: NVIDIA's RM takes these buffers from an
+     allocator that scrubs memory as it is freed (pmaFreePages), and nothing
+     states that the engine writes them before it reads them. *)
   let given (id, b) =
     let* m = object_memory g ~client:priv_root priv_root b.size in
     let phys = if b.phys then Some (paddr m, b.size) else None in
