@@ -1425,6 +1425,35 @@ let test_constant_map () =
   | A.Done -> equal (array float_exact) (Array.make 15 2.5) (A.to_array y)
   | r -> failf "map answered %a" Nx_array_support.pp_answer r
 
+(* A boolean constant of any byte is true iff the byte is not zero, inside a
+   program of several nodes as alone: a [Where] it selects by and its [Cast]
+   to int32, two outputs, which nx.cpu's general map computes. *)
+let test_bool_bytes () =
+  let f32 = D.Any D.Float32 in
+  let xs = [| 1.; 2. |] and ys = [| -1.; -2. |] in
+  for b = 0 to 255 do
+    let flag = P.Const (D.Any D.Bool, String.make 1 (Char.chr b)) in
+    let p =
+      P.v ~ins:[| f32; f32 |]
+        [|
+          In 0; In 1; flag; Op3 (Where, 2, 0, 1); Op1 (Cast, D.Any D.Int32, 2);
+        |]
+        ~outs:[| 3; 4 |]
+    in
+    let x = A.of_array D.Float32 [| 2 |] xs
+    and y = A.of_array D.Float32 [| 2 |] ys in
+    let sel = A.create Rig.host D.Float32 [| 2 |]
+    and int = A.create Rig.host D.Int32 [| 2 |] in
+    let msg = Printf.sprintf "byte %d" b in
+    equal ~msg answer A.Done
+      (Nx_cpu.map p ~dsts:[| A.Any sel; A.Any int |]
+         [| Nx_kernel.Plain x; Plain y |]);
+    equal ~msg (array float_exact) (if b <> 0 then xs else ys) (A.to_array sel);
+    equal ~msg (array int32)
+      (Array.make 2 (if b <> 0 then 1l else 0l))
+      (A.to_array int)
+  done
+
 (* A map whose coordinate names an axis past its rank answers
    [Shape_mismatch] and writes nothing. *)
 let test_coord_past_rank () =
@@ -2684,6 +2713,8 @@ let cpu =
       test "kinds give the values their documentation states" test_kind_values;
       test "a job begun from a job's body runs to its end" test_nested_jobs;
       test "a map of constants alone fills its destination" test_constant_map;
+      test "a boolean constant is true iff its byte is not zero"
+        test_bool_bytes;
       test "a map's coordinate past its rank is refused" test_coord_past_rank;
       test "a map refuses a padded load that does not fit before copying it"
         test_padded_misfits;
