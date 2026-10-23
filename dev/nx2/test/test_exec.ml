@@ -540,6 +540,22 @@ let add_off_sys = then_seen (fun h -> Nx.add h (Nx.scalar Nx.float32 2.))
 let less_off_sys =
   then_seen (fun h -> Nx.cast D.Float32 (Nx.less h (Nx.scalar Nx.float32 2.)))
 
+(* A kind refusing [h]'s dtype, on the fast path, where its result would fit
+   [h]'s memory: it kills nothing. *)
+let and_ref h = function
+  | Error e -> raise e
+  | Ok (Ok _, _) -> fail "Nx.bitwise_and computed floats"
+  | Ok (Error e, after) -> (
+      equal string "refused: Nx.bitwise_and: And does not take float32, float32"
+        e;
+      cover "a live handle refused by dtype" (deaths h = [ None ]);
+      match (deaths h, after) with
+      | [ None ], None -> ()
+      | [ Some f ], Some f' when f = f' -> ()
+      | _ -> fail "Nx.bitwise_and: a refusal changed a handle's fate")
+
+let and_sys = then_seen (fun h -> Nx.bitwise_and h (twos ()))
+
 (* A consumer [by] of [h] whose result's elements are [f]'s. *)
 let consumer ~raced by f h = function
   | Error e -> raise e
@@ -643,6 +659,7 @@ let donations =
       (handle ^-> judges seen_outcomes)
       (declined ~sum:false "Nx.less")
       less_off_sys;
+    command "bitwise_and" (handle ^-> judges seen_outcomes) and_ref and_sys;
     command "mul" (handle ^-> judges outcomes) (mul_ref ~raced:false) mul_sys;
     command "sum" (handle ^-> judges outcomes) (sum_ref ~raced:false) sum_sys;
     command "read" (donor ^-> judges outcomes) read_ref read_sys;

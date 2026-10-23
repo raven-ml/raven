@@ -1276,8 +1276,9 @@ let destination (type v s w r) (dt : (w, r) D.t) (x : (v, s) A.t) : (w, r) A.t =
    the result is fresh, the memory, where no other value reads it, is freed
    after the kernel, and [h] is given back where [run] raises. Its other
    operands are live arrays, so none is the donor, whose word is offered, and
-   each is read at the result's own index. [run dst a'] is the kernel into
-   [dst] with [a'] for [h]. *)
+   each is read at the result's own index. The kind's rule holds over them:
+   an operation it refuses goes off the fast path, which checks it before any
+   claim. [run dst a'] is the kernel into [dst] with [a'] for [h]. *)
 let donated (type v s w r d) ~by i (dt : (w, r) D.t) (h : (v, s, d) Value.t)
     (a : (v, s) A.t) (run : (w, r) A.t -> (v, s) A.t -> (w, r, d) Value.t) :
     (w, r, d) Value.t =
@@ -1361,7 +1362,8 @@ let apply1 (type v s w r d) ~by k (dt : (w, r) D.t)
           | refusal ->
               recheck ~by 0 x;
               A.refused by refusal [ A.Any dst; A.Any a ]))
-  | Value.Donated dx when handle_at dx.at x ->
+  | Value.Donated dx when handle_at dx.at x && P.accepts1 k (Prim.dtype x) dt
+    ->
       let (module K) = kernels_at dx.at in
       donated ~by 0 dt x (Iarray.get dx.arrays 0) (fun dst a ->
           match K.apply1 k ~dst a with
@@ -1448,13 +1450,15 @@ let rec apply2 : type v s w r d.
               recheck ~by 0 x;
               recheck ~by 1 y;
               A.refused by refusal [ A.Any dst; A.Any a; A.Any b ]))
-  | Value.Donated dx, Value.Array ry when handle_at ry.at x && live_at ry.at y
-    ->
+  | Value.Donated dx, Value.Array ry
+    when handle_at ry.at x && live_at ry.at y
+         && P.accepts2 k (Prim.dtype x) ->
       let (module K) = kernels_at ry.at in
       donated ~by 0 dt x (Iarray.get dx.arrays 0) (fun dst a ->
           kernel2 ~by (module K) k dt ry.at x y dst a ry.a)
-  | Value.Array rx, Value.Donated dy when handle_at rx.at y && live_at rx.at x
-    ->
+  | Value.Array rx, Value.Donated dy
+    when handle_at rx.at y && live_at rx.at x
+         && P.accepts2 k (Prim.dtype x) ->
       let (module K) = kernels_at rx.at in
       donated ~by 1 dt y (Iarray.get dy.arrays 0) (fun dst b ->
           kernel2 ~by (module K) k dt rx.at x y dst rx.a b)
@@ -1513,17 +1517,20 @@ let rec apply3 : type a b v s d.
               recheck ~by 2 y;
               A.refused by refusal [ A.Any dst; A.Any ca; A.Any a; A.Any b ]))
   | Value.Donated dc, Value.Array rx, Value.Array ry
-    when handle_at rx.at c && live_at rx.at x && live_at rx.at y ->
+    when handle_at rx.at c && live_at rx.at x && live_at rx.at y
+         && P.accepts3 k (Prim.dtype c) (Prim.dtype x) ->
       let (module K) = kernels_at rx.at in
       donated ~by 0 (A.dtype rx.a) c (Iarray.get dc.arrays 0)
         (fun dst c' -> kernel3 ~by (module K) k rx.at c x y dst c' rx.a ry.a)
   | Value.Array rc, Value.Donated dx, Value.Array ry
-    when handle_at rc.at x && live_at rc.at c && live_at rc.at y ->
+    when handle_at rc.at x && live_at rc.at c && live_at rc.at y
+         && P.accepts3 k (Prim.dtype c) (Prim.dtype x) ->
       let (module K) = kernels_at rc.at in
       donated ~by 1 (A.dtype ry.a) x (Iarray.get dx.arrays 0)
         (fun dst x' -> kernel3 ~by (module K) k rc.at c x y dst rc.a x' ry.a)
   | Value.Array rc, Value.Array rx, Value.Donated dy
-    when handle_at rc.at y && live_at rc.at c && live_at rc.at x ->
+    when handle_at rc.at y && live_at rc.at c && live_at rc.at x
+         && P.accepts3 k (Prim.dtype c) (Prim.dtype x) ->
       let (module K) = kernels_at rc.at in
       donated ~by 2 (A.dtype rx.a) y (Iarray.get dy.arrays 0)
         (fun dst y' -> kernel3 ~by (module K) k rc.at c x y dst rc.a rx.a y')
