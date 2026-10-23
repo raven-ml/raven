@@ -115,6 +115,27 @@
     }                                                                       \
   }
 
+/* cpu.h's float4 stage: each run through a table of its 16 values times
+   its scale, a byte's two codes at once. */
+#define F4(name, T)                                                          \
+  static void name(const uint8_t *codes, int64_t sl, int64_t lines,         \
+                   int64_t runs, const void *vs, void *vy, int64_t du,      \
+                   int64_t dl) {                                            \
+    const T *s = vs;                                                        \
+    T base[16], tab[16];                                                    \
+    for (int u = 0; u < 16; u++) base[u] = (T)nx_e2m1fn_to_float((uint8_t)u); \
+    for (int64_t l = 0; l < lines; l++)                                     \
+      for (int64_t r = 0; r < runs; r++) {                                  \
+        const uint8_t *b = codes + l * sl + r * 16;                         \
+        T *y = (T *)vy + r * 32 * du + l * dl;                              \
+        for (int u = 0; u < 16; u++) tab[u] = base[u] * s[r * lines + l];  \
+        for (int h = 0; h < 16; h++) {                                      \
+          y[2 * h * du] = tab[b[h] & 15];                                   \
+          y[(2 * h + 1) * du] = tab[b[h] >> 4];                             \
+        }                                                                   \
+      }                                                                     \
+  }
+
 KERNEL(kernel_f32, float, fmaf)
 DOT(dot_f32, float, fmaf)
 AXPY(axpy_f32, float, fmaf)
@@ -125,6 +146,8 @@ DOT(dot_f64, double, fma)
 AXPY(axpy_f64, double, fma)
 TILE(tile_f64, double, fma)
 GEMV(gemv_f64, double, fma)
+F4(f4_f32, float)
+F4(f4_f64, double)
 
 /* z + x·y modulo the width of the [T] it is stored in: computed in an
    unsigned type no narrower than int, which C does not promote to int. */
@@ -168,6 +191,8 @@ static void set(nx_cpu_target *t) {
   t->tile[NX_FLOAT64] = tile_f64;
   t->gemv[NX_FLOAT32] = gemv_f32;
   t->gemv[NX_FLOAT64] = gemv_f64;
+  t->f4[NX_FLOAT32] = f4_f32;
+  t->f4[NX_FLOAT64] = f4_f64;
 }
 
 #if defined(NX_CPU_V3)
