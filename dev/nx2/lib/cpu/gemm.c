@@ -152,10 +152,13 @@ enum {
    t[x][i] is the position in [v] of the block of index i along axis x, the
    sum over the axes of x's group of each index's block times the scales'
    step. t[x] is NULL along an axis the operand lacks, [v] NULL for an
-   unscaled operand. */
+   unscaled operand. The scale is one along k over each run of [run]
+   indices from a multiple of it: the ratio along the operand's last
+   contracted axis. No pass moves t[CON], so the runs stay aligned. */
 typedef struct {
   const uint8_t *v;
   const int64_t *t[4];
+  int64_t run;
 } scale;
 
 /* An operand as the view lays it out: its element (e, i, j, k) lies at
@@ -248,6 +251,76 @@ static void stage_acc(const problem *p, int o, int64_t at, int64_t s0,
   nx_cpu_stage_as(p->op[o].x, at, s0, s1, n0, n1, p->acc, dst, pitch);
 }
 
+/* The codes along k that MXFP4 scales as one block: a run of them is
+   staged through one table. */
+#define F4_RUN 32
+
+/* stage_f4's lines in acc's type [T]: each of [lines] lines of [len]
+   codes, [sl] apart from [first] and [sk] apart along k, into dst [du]
+   apart along k and [dl] apart across lines, each run of F4_RUN codes
+   through its 16 values times the run's scale. */
+#define F4_LINES(T)                                                        \
+  do {                                                                     \
+    const T *v = (const T *)s->v;                                          \
+    T *d = (T *)dst, base[16], tab[16];                                    \
+    for (int u = 0; u < 16; u++)                                           \
+      base[u] = (T)nx_e2m1fn_to_float((uint8_t)u);                         \
+    for (int64_t l = 0; l < lines; l++) {                                  \
+      int64_t at = 0, line = first + l * sl;                               \
+      for (int x = BATCH; x <= COL; x++)                                   \
+        if (s->t[x]) at += s->t[x][c[x] + (x == across ? l : 0)];          \
+      for (int64_t u0 = 0; u0 < len; u0 += F4_RUN) {                       \
+        T sv = v[at + tk[u0]];                                             \
+        for (int u = 0; u < 16; u++) tab[u] = base[u] * sv;                \
+        int64_t un = min64(F4_RUN, len - u0);                              \
+        if (pairs && un == F4_RUN) {                                       \
+          const uint8_t *b = codes + ((line + u0) >> 1);                   \
+          T *y = d + u0 * du + l * dl;                                     \
+          for (int h = 0; du == 1 && h < F4_RUN / 2; h++) {                \
+            y[2 * h] = tab[b[h] & 15];                                     \
+            y[2 * h + 1] = tab[b[h] >> 4];                                 \
+          }                                                                \
+          for (int h = 0; du != 1 && h < F4_RUN / 2; h++) {                \
+            y[2 * h * du] = tab[b[h] & 15];                                \
+            y[(2 * h + 1) * du] = tab[b[h] >> 4];                          \
+          }                                                                \
+          continue;                                                        \
+        }                                                                  \
+        for (int64_t u = u0; u < u0 + un; u++) {                           \
+          int64_t xi = line + u * sk;                                      \
+          d[u * du + l * dl] = tab[(codes[xi >> 1] >> ((xi & 1) * 4)) & 15]; \
+        }                                                                  \
+      }                                                                    \
+    }                                                                      \
+  } while (0)
+
+/* Stages operand [o]'s block as stage_at does where it is float4 and its
+   block along k starts a run of its scale's, [run] a multiple of
+   F4_RUN, so each run of F4_RUN codes takes one scale: 1 if it did. The
+   bits are stage_at's: each code's value times its scale, rounded once. */
+static int stage_f4(const problem *p, int o, const int64_t *c, int x0,
+                    int x1, int64_t n0, int64_t n1, uint8_t *dst,
+                    int64_t pitch) {
+  const operand *q = &p->op[o];
+  const scale *s = q->s;
+  if (q->x->dtype != NX_FLOAT4_E2M1FN || (x0 != CON && x1 != CON) ||
+      s->run % F4_RUN || c[CON] % F4_RUN)
+    return 0;
+  int along = x0 == CON, across = along ? x1 : x0;
+  int64_t len = along ? n0 : n1, lines = along ? n1 : n0;
+  int64_t du = along ? 1 : pitch, dl = along ? pitch : 1;
+  int64_t first = pos(p, o, c[BATCH], c[ROW], c[COL], c[CON]);
+  int64_t sk = q->st[CON], sl = q->st[across];
+  const uint8_t *codes = q->x->base;
+  const int64_t *tk = s->t[CON] + c[CON];
+  /* Codes adjacent along k, each line from a byte's first: a byte's two
+     codes at once. */
+  int pairs = sk == 1 && first % 2 == 0 && sl % 2 == 0;
+  if (p->acc == NX_FLOAT32) F4_LINES(float);
+  else F4_LINES(double);
+  return 1;
+}
+
 /* Stages operand [o]'s block as stage_acc does, from its element
    (e, i, j, k), [n0] along axis [x0] in a row and [n1] rows along [x1];
    then, where it is scaled, multiplies each element by its block's scale,
@@ -256,11 +329,13 @@ static void stage_at(const problem *p, int o, int64_t e, int64_t i,
                      int64_t j, int64_t k, int x0, int x1, int64_t n0,
                      int64_t n1, uint8_t *dst, int64_t pitch) {
   const operand *q = &p->op[o];
+  const int64_t c[4] = {e, i, j, k};
+  if (q->s && stage_f4(p, o, c, x0, x1, n0, n1, dst, pitch)) return;
   stage_acc(p, o, pos(p, o, e, i, j, k), q->st[x0], q->st[x1], n0, n1, dst,
             pitch);
   if (q->s == NULL) return;
   const scale *s = q->s;
-  const int64_t c[4] = {e, i, j, k}, *t0 = s->t[x0] + c[x0];
+  const int64_t *t0 = s->t[x0] + c[x0];
   for (int64_t r = 0; r < n1; r++) {
     int64_t at = 0;
     for (int x = BATCH; x <= CON; x++)
@@ -2592,33 +2667,76 @@ static int group_axes(value vbatch, value vcon, int o, int rank, int g,
   return n;
 }
 
+/* A decode of scales (decode): [sc] into [v] in [acc], [rows] rows of
+   [n0] a plane, [per] rows a unit. */
+typedef struct {
+  const nx_array *sc;
+  int exponent, acc;
+  uint8_t *v;
+  int64_t n0, rows, per, chunks;
+} decoding;
+
+/* The scale of code [e], 2^(e - 127), NaN for 255, by its bits: 0 is
+   float32's subnormal 2^-127. */
+static float code32(int e) {
+  uint32_t b = e == 255 ? 0x7FC00000u : e == 0 ? 0x00400000u : (uint32_t)e << 23;
+  float f;
+  memcpy(&f, &b, sizeof f);
+  return f;
+}
+
+static double code64(int e) {
+  uint64_t b = e == 255 ? 0x7FF8000000000000u : (uint64_t)(e + 1023 - 127) << 52;
+  double f;
+  memcpy(&f, &b, sizeof f);
+  return f;
+}
+
+/* A unit is [per] rows of a plane, staged at once. */
+static void decode_rows(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  const decoding *f = ctx;
+  const nx_array *sc = f->sc;
+  int r = sc->rank, w = nx_cpu_width(f->acc);
+  const int64_t *x = sc->dim, *st = sc->dim + r;
+  int64_t s0 = r ? st[r - 1] : 0, s1 = r > 1 ? st[r - 2] : 0;
+  for (int64_t u = lo; u < hi; u++) {
+    int64_t plane = u / f->chunks, i0 = u % f->chunks * f->per;
+    int64_t n1 = min64(f->per, f->rows - i0), at = sc->offset + i0 * s1;
+    for (int64_t d = r - 3, q = plane; d >= 0; d--) {
+      at += q % x[d] * st[d];
+      q /= x[d];
+    }
+    int64_t first = (plane * f->rows + i0) * f->n0, n = n1 * f->n0;
+    nx_cpu_stage_as(sc, at, s0, s1, f->n0, n1, f->acc, f->v + first * w,
+                    f->n0);
+    if (!f->exponent) continue;
+    if (f->acc == NX_FLOAT32) {
+      float *y = (float *)f->v + first;
+      for (int64_t k = 0; k < n; k++) y[k] = code32((int)y[k]);
+    } else {
+      double *y = (double *)f->v + first;
+      for (int64_t k = 0; k < n; k++) y[k] = code64((int)y[k]);
+    }
+  }
+}
+
 /* The scales [sc] into [v], C-contiguous in [acc]: a code e, where
    [exponent], as 2^(e - 127) and 255 as NaN; a value as a cast into acc
-   gives it. */
+   gives it. Units of DECODE_ROW elements or more, each staged at once. */
+#define DECODE_ROW 4096
+
 static void decode(const nx_array *sc, int exponent, int acc, uint8_t *v) {
-  int r = sc->rank, w = nx_cpu_width(acc);
-  const int64_t *x = sc->dim, *st = sc->dim + r;
-  int64_t n0 = r ? x[r - 1] : 1, s0 = r ? st[r - 1] : 0, rows = 1;
-  for (int d = 0; d + 1 < r; d++) rows *= x[d];
-  if (rows == 0 || n0 == 0) return;
-  int64_t idx[NX_MAX_RANK] = {0};
-  for (int64_t q = 0; q < rows; q++) {
-    int64_t at = sc->offset;
-    for (int d = 0; d + 1 < r; d++) at += idx[d] * st[d];
-    nx_cpu_stage_as(sc, at, s0, 0, n0, 1, acc, v + q * n0 * w, 0);
-    for (int d = r - 2; d >= 0 && ++idx[d] == x[d]; d--) idx[d] = 0;
-  }
-  if (!exponent) return;
-  int64_t n = rows * n0;
-  if (acc == NX_FLOAT32) {
-    float *f = (float *)v;
-    for (int64_t i = 0; i < n; i++)
-      f[i] = f[i] == 255.f ? NAN : ldexpf(1.f, (int)f[i] - 127);
-  } else {
-    double *f = (double *)v;
-    for (int64_t i = 0; i < n; i++)
-      f[i] = f[i] == 255. ? NAN : ldexp(1., (int)f[i] - 127);
-  }
+  int r = sc->rank;
+  const int64_t *x = sc->dim;
+  int64_t n0 = r ? x[r - 1] : 1, rows = r > 1 ? x[r - 2] : 1, planes = 1;
+  for (int d = 0; d + 2 < r; d++) planes *= x[d];
+  if (planes == 0 || rows == 0 || n0 == 0) return;
+  int64_t per = min64(rows, ceil_div(DECODE_ROW, n0));
+  decoding f = {sc, exponent, acc, v, n0, rows, per, ceil_div(rows, per)};
+  int64_t bytes = planes * rows * n0 * nx_cpu_width(acc);
+  nx_cpu_job(planes * f.chunks, bytes, bytes * NX_CPU_STRIDED_COST,
+             decode_rows, &f);
 }
 
 /* Fills [t] with a group's table over its [n] axes [ax]: each index of the
@@ -2685,6 +2803,8 @@ static __attribute__((noinline)) int scale_of(int acc, const nx_array *x,
   *mem = (uint8_t *)m;
   *s = (scale){.v = (const uint8_t *)m};
   decode(sc, g->exponent, acc, (uint8_t *)m);
+  int nk = g->n[2];
+  s->run = nk ? ratio[g->ax[2][nk - 1]] : 1;
   int64_t *t = m + values;
   for (int k = 0; k < 3; k++) {
     table(g->n[k], g->ax[k], x->dim, ratio, step, t);
