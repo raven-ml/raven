@@ -66,11 +66,12 @@ val resolve :
     their handles live on. [k]'s operations reuse none of their memory,
     which is freed once no value holds it.
 
-    While [k] runs, a hold on the handles' memory ({!Rig.Claim.hold}) shares
-    it, so that a consumer that claims one of the handles meanwhile, on any
-    domain, computes into fresh memory and overwrites nothing [k] reads; the
-    claim after [k] then raises naming that consumer. The hold ends when [k]
-    returns or raises. *)
+    While [k] runs, a hold on the memory of the handles and of their donors
+    among [xs] ({!Rig.Claim.hold}), apart where a movement copied a handle,
+    shares it, so that a consumer that claims one of the handles meanwhile,
+    on any domain, computes into fresh memory and overwrites nothing [k]
+    reads; the claim after [k] then raises naming that consumer. The hold
+    ends when [k] returns or raises. *)
 
 val consume_list : by:string -> 'd Value.any list -> 'd Value.any list
 (** [consume_list ~by xs] is {!consume} of a consumer [by] of the operands

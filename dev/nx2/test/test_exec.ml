@@ -864,6 +864,30 @@ let lost_kills_none =
           (Some (Ok [| 2.; 4.; 6.; 8. |]))
           !met;
         lives "after the loss" x hx);
+    test "a composite reading the donor beside a copy of its handle"
+      (fun () ->
+        (* [h2], [h] copied by a movement, holds [x]'s key, and
+           [Nx.array_equal] reads [x] beside it. A consumer of [h] on the
+           other domain inside the comparison's kernel computes into fresh
+           memory, so the comparison reads [x]'s elements, and the composite
+           then raises as a loser. *)
+        let xs = [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+        let x = computed [| 2; 3 |] xs in
+        let h = Nx.donate x in
+        let h2 = Nx.reshape [| 2; 3 |] (Nx.transpose h) in
+        let met = ref None in
+        raises
+          (Invalid_argument "Nx.array_equal: operand 1 was donated to Nx.neg")
+          (fun () ->
+            meanwhile
+              (fun () -> met := Some (outcome (fun () -> elements (Nx.neg h))))
+              (fun () -> Nx.array_equal h2 x));
+        equal ~msg:"the consumer" (option outcomes)
+          (Some (Ok (Array.map Float.neg xs)))
+          !met;
+        raises
+          (Invalid_argument "Nx.copy: operand 1 was donated to Nx.neg")
+          (fun () -> Nx.copy x));
   ]
 
 let donation =

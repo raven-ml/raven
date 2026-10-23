@@ -217,12 +217,19 @@ let resolve (type d a) ~by (xs : d Value.any list)
   match hs with
   | [] -> k (fun y -> y)
   | hs ->
-      (* The hold shares the donors' memory while [k] runs, so that a consumer
-         that claims a handle meanwhile computes into fresh memory and frees
-         none. A buffer already dead was consumed by a consumer that claimed
-         its handle first, which [alive] names. *)
+      (* The hold shares the memory [k] reads through the handles and the
+         donors beside them while [k] runs, so that a consumer that claims a
+         handle meanwhile computes into fresh memory and frees none: a donor
+         beside a handle that a movement copied lies in other memory than
+         the handle. A buffer already dead was consumed by a consumer that
+         claimed its handle first, which [alive] names. *)
+      let read (Value.Any x) =
+        if ours hs (Prim.death x) then
+          Iarray.to_list (Iarray.map A.buffer (Prim.arrays x))
+        else []
+      in
       let held =
-        match Rig.Claim.hold (List.concat_map buffers hs) with
+        match Rig.Claim.hold (List.concat_map read xs) with
         | h -> h
         | exception (Invalid_argument _ as e) ->
             alive ();
