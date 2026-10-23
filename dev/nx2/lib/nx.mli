@@ -1656,13 +1656,22 @@ val rms_norm :
   ?axes:int list -> ?eps:float -> (float, 's, 'd) t -> (float, 's, 'd) t
 (** [rms_norm ~axes ~eps x] is [x / sqrt (mean x² + eps)], the mean along
     [axes], [[-1]] by default; [eps] defaults to [1e-6]. It computes
-    [x · (1 / sqrt (Σ x² / n + eps))] for the [n] elements of each lane, in
-    [x]'s compute dtype: the squares summed as {!sum} sums them, each later
-    step rounded once there, and the product rounded once to [x]'s dtype.
+    [x · (1 / sqrt (Σ x² / n + eps))] for the [n] elements of each lane:
+    the squares summed as {!sum} sums them, each later step rounded once.
     At [float32] and [float64] these are the bits of
-    [mul x (rsqrt (add_s (mean ~axes ~keepdims:true (square x)) eps))]. A
-    lane whose sum of squares overflows is [x · 0]: zeros, NaN at an
-    infinity. A lane holding a NaN is NaN.
+    [mul x (rsqrt (add_s (mean ~axes ~keepdims:true (square x)) eps))].
+
+    Barring overflow and underflow, and for [k u < 1/4], it is within
+    [k u / (1 - 4 k u)] of the exact value, relatively, where
+    [k = (n + 8) / 2] and [u] is the unit roundoff of the format it computes
+    in, before a narrow float's rounding: the squares and their sum take [n]
+    roundings, the mean and [eps] two more, which the root halves, and the
+    root, the reciprocal and the product one each.
+
+    A lane whose sum of squares overflows is [x · 0]: zeros, NaN at an
+    infinity. With [~eps:0.], a lane whose squares sum to [0] is [x · ∞]:
+    [[nan; nan]] of [[0.; 0.]], and [[inf]] of a [float32] [[1e-30]], whose
+    square underflows. A lane holding a NaN is NaN.
 
     Raises [Invalid_argument] naming itself for an axis outside [x]'s rank
     or repeated, or if [eps] is negative or NaN. *)
