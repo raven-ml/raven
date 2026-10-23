@@ -1384,6 +1384,33 @@ let test_declined_map (b : Support.backend) () =
   | A.Done -> equal (array float_exact) [| 2.; 4.; 6. |] (A.to_array (host y))
   | r -> failf "map answered %a" Nx_array_support.pp_answer r
 
+(* A map given other destinations or loads than its program's outputs and
+   operands is refused with [Shape_mismatch] and writes nothing. *)
+let test_map_arity (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let p =
+    P.v ~ins:[| D.Any D.Float32 |] [| P.In 0; Op2 (Binary Add, 0, 0) |]
+      ~outs:[| 1 |]
+  in
+  let x = on b (A.of_array D.Float32 [| 3 |] [| 1.; 2.; 3. |]) in
+  let dst () = on b (A.of_array D.Float32 [| 3 |] [| 9.; 9.; 9. |]) in
+  let load = Nx_kernel.Plain x in
+  List.iter
+    (fun (msg, ys, loads) ->
+      let dsts = Array.map (fun y -> A.Any y) ys in
+      equal ~msg answer A.Shape_mismatch (K.map p ~dsts loads);
+      Array.iter
+        (fun y ->
+          equal ~msg:(msg ^ ": untouched") (array float_exact) [| 9.; 9.; 9. |]
+            (A.to_array (host y)))
+        ys)
+    [
+      ("no destination", [||], [| load |]);
+      ("two destinations", [| dst (); dst () |], [| load |]);
+      ("no load", [| dst () |], [||]);
+      ("two loads", [| dst () |], [| load; load |]);
+    ]
+
 (* A load identical to a destination through another view of its buffer is
    read before the destination is written: float32 offset 1 over a buffer
    and offset 0 over the view of the buffer from its fourth byte are one
@@ -2381,6 +2408,8 @@ let laws (b : Support.backend) =
         fill_insides
         (run (law_map0_inside b));
       test "a declined map writes nothing" (unit (test_declined_map b));
+      test "a map of other destinations or loads than its program's is refused"
+        (unit (test_map_arity b));
       test "a map reads a load identical to a destination before writing it"
         (unit (test_map_identical_view b));
       test "a map of a padded load reads its coordinates"
