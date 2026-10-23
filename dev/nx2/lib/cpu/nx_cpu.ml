@@ -162,14 +162,17 @@ let single (p : Nx_kernel.Prog.t) n (Nx_array.Any dst) loads =
    other through map.c. *)
 let map p ~dsts loads =
   let answer =
-    match Nx_kernel.Prog.single p with
-    | Some n when Array.length dsts = 1 && plain_of p.ins loads 0 ->
-        single p n dsts.(0) loads
-    | Some _ | None ->
-        if not (Array.exists padded loads) then map_c p dsts loads [||]
-        else if Array.length dsts > 0 && not (fits (loop_of dsts.(0)) loads 0)
-        then Nx_array.Shape_mismatch
-        else map_c p dsts loads (Array.map padding loads)
+    if
+      Array.length dsts = 1
+      && Nx_kernel.Prog.is_single p
+      && plain_of p.ins loads 0
+    then
+      let last = Iarray.get p.nodes (Iarray.length p.nodes - 1) in
+      single p last dsts.(0) loads
+    else if not (Array.exists padded loads) then map_c p dsts loads [||]
+    else if Array.length dsts > 0 && not (fits (loop_of dsts.(0)) loads 0) then
+      Nx_array.Shape_mismatch
+    else map_c p dsts loads (Array.map padding loads)
   in
   match answer with
   | Nx_array.Declined ->

@@ -524,14 +524,8 @@ let law_single_of_node (ins, n) =
       let want = if reads_in_order (Array.length ins) n then Some n else None in
       cover "one node" (Option.is_some want);
       cover "not one node" (Option.is_none want);
-      equal (option node) want (P.single p)
-
-(* A program [single] recognises is the one [of_node] makes of its node. *)
-let law_single d =
-  let p = program d in
-  match P.single p with
-  | None -> ()
-  | Some n -> equal ~msg:"of_node" bool true (p = P.of_node ~ins:p.ins n)
+      equal (option node) want (P.single p);
+      equal ~msg:"is_single" bool (Option.is_some want) (P.is_single p)
 
 let test_single () =
   let f32 = D.Any D.Float32 and b = D.Any D.Bool in
@@ -541,8 +535,14 @@ let test_single () =
       ~outs:(Iarray.of_array outs)
   in
   let c = P.Const (f32, P.bits D.Float32 1.5) in
-  let is ~msg p n = equal ~msg (option node) (Some n) (P.single p) in
-  let none ~msg p = equal ~msg (option node) None (P.single p) in
+  let is ~msg p n =
+    equal ~msg (option node) (Some n) (P.single p);
+    equal ~msg bool true (P.is_single p)
+  in
+  let none ~msg p =
+    equal ~msg (option node) None (P.single p);
+    equal ~msg bool false (P.is_single p)
+  in
   is ~msg:"a constant" (one [||] c) c;
   is ~msg:"a coordinate" (one [||] (Coord 1)) (Coord 1);
   is ~msg:"one operand" (one [| f32 |] (Op1 (Unary Neg, f32, 0)))
@@ -563,6 +563,17 @@ let test_single () =
     (prog [| f32 |]
        [| In 0; Op1 (Unary Neg, f32, 0); Op1 (Unary Neg, f32, 1) |]
        [| 2 |])
+
+let test_is_single_allocates_nothing () =
+  let f32 = D.Any D.Float32 in
+  let p = P.of_node ~ins:[| f32; f32 |] (Op2 (Binary Add, 0, 1)) in
+  let q = P.of_node ~ins:[| f32 |] (Op2 (Binary Add, 0, 0)) in
+  let before = Gc.minor_words () in
+  for _ = 1 to 1000 do
+    ignore (Sys.opaque_identity (P.is_single p));
+    ignore (Sys.opaque_identity (P.is_single q))
+  done;
+  equal ~msg:"words" (float 0.5) 0. (Gc.minor_words () -. before)
 
 let test_program_refuses () =
   let f32 = D.Any D.Float32 in
@@ -1336,8 +1347,8 @@ let tests =
         prop "of_node is v over the operands' nodes" one_node law_of_node;
         prop "single is of_node's node where it reads its operands in order"
           one_node law_single_of_node;
-        prop "single's program is of_node's" drawn law_single;
         test "single is one node over its operands in order" test_single;
+        test "is_single allocates nothing" test_is_single_allocates_nothing;
         test "dtype refuses a node past the program" test_dtype_refuses;
         test "each tag, field and kind is nx_prog.h's code" test_codes;
         prop "bind is p over x's value, its nodes x's then p's" binding

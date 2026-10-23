@@ -247,6 +247,10 @@ val single : t -> node option
     operands. [None] otherwise. A library may run such a program by a
     kernel of [n]'s kind alone. *)
 
+val is_single : t -> bool
+(** [is_single p] is [true] iff {!single}[ p] is [Some n], [n] being then
+    [p]'s last node. It allocates nothing. *)
+
 (** {1:exprs Expressions} *)
 
 (** Programs written as values.
