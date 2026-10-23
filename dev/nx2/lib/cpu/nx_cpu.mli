@@ -152,7 +152,9 @@
     in host memory the call holds until it returns: on each of its threads
     at most a few words for each update along the scattered axis and the
     sums of a bin of the axis's targets, half a core's L2 or a 1024th of
-    [into].
+    [into]. Along an axis of more than 2{^19} updates and more updates than
+    targets, five bytes for each target, in all, take the place of the
+    bins' sums.
 
     [sort] and [assemble] compute every dtype, and [fold] every dtype
     {!Nx_kernel.Prog.Add} takes. The three refuse with [Shape_mismatch]
