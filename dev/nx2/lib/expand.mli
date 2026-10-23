@@ -145,12 +145,13 @@
       [Qᴴ Q - I]'s elements are at most [2ε + ε²] and the computed
       product's column [j] is within [(1 + √w (1 + ε)) ε ‖a_j‖₂] of [a_j],
       on wide and complex matrices too.
-    - [Eigh] is two-sided Jacobi on the Hermitian matrix that [a]'s lower
-      triangle and its diagonal's real parts name, scaled first by the
-      power of two nearest the reciprocal of its greatest magnitude. A trip
-      rotates the pairs of one round of a 1-factorisation of the [n] indices
-      into [R] rounds, [R = n - 1] for an even [n] and [n] for an odd one: the
-      round of greatest weight [Σ |a_pq|²]. A rotation moves [2 |a_pq|²] of
+    - [Eigh] and [Eigh_values] are two-sided Jacobi on the Hermitian
+      matrix that [a]'s lower triangle and its diagonal's real parts name,
+      scaled first by the power of two nearest the reciprocal of its
+      greatest magnitude. A trip rotates the pairs of one round of a
+      1-factorisation of the [n] indices into [R] rounds, [R = n - 1] for an
+      even [n] and [n] for an odd one: the round of greatest weight
+      [Σ |a_pq|²]. A rotation moves [2 |a_pq|²] of
       [off(A)²], the squared Frobenius norm of [A]'s off-diagonal part, to
       the diagonal and the rounds share [off(A)² / 2] out, so a trip takes
       at least [off(A)² / R]. [T] trips, the least with
@@ -162,13 +163,14 @@
       [(u + (3T + 6R) ρ) ‖A‖_F] of the exact one, [V]'s columns within
       [(1 + ρ){^T} - 1] of orthonormal ones and
       [‖A V - V diag w‖_F <= (u + (3T + 6R + 2√n T) ρ) ‖A‖_F].
-    - [Svd] is one-sided Jacobi as dgesvj computes it, on [a], or [aᴴ] where
-      [a] is wide, of [m'] rows and [k] columns, scaled as [Eigh]'s: [Qr]'s
-      reflectors reduce it to its triangle [R], then 30 sweeps of [R] rounds,
-      dgesvj's, rotate the columns of [Rᴴ], as LAWN 169's Corollary 2.5 and
-      dgejsv take it, round [t mod R] at trip [t], each trip O(k²). A pair
+    - [Svd] and [Svd_values] are one-sided Jacobi as dgesvj computes it, on
+      [a], or [aᴴ] where [a] is wide, of [m'] rows and [k] columns, scaled
+      as [Eigh]'s: [Qr]'s reflectors reduce it to its triangle [R], then 30
+      sweeps of [R] rounds, dgesvj's, rotate the columns of [Rᴴ], as LAWN
+      169's Corollary 2.5 and dgejsv take it, round [t mod R] at trip [t],
+      each trip O(k²). A pair
       rotates where its columns' cosine [|y_pᴴ y_q| / (‖y_p‖ ‖y_q‖)] exceeds
-      [tol]: dgesvj's, [√k u] with the vectors and [k u] without, plus
+      [tol]: dgesvj's, [√k u] for [Svd] and [k u] for [Svd_values], plus
       [2ρ + γ(k + 2)], the floor a rotated pair's computed cosine reaches
       here, [ρ] as for [Eigh]. Each column's norm is [Qr]'s; a column of a
       norm below the least normal number counts as zero and never rotates.
@@ -186,8 +188,9 @@
       reduction's [Q] times [V], the right ones [W], each within
       [ε_qr + ε_J] of orthonormal ones. To first order
       [‖u diag s vh - A‖_F <= √k (2k tol + 3ε_qr + ε_J + γ(k + 4)) ‖A‖_F].
-    - [Eig] has no expansion: shifted QR has no bound on its iterations for
-      a matrix that is not normal that a loop of static trips could afford.
+    - [Eig] and [Eig_values] have no expansion: shifted QR has no bound on
+      its iterations for a matrix that is not normal that a loop of static
+      trips could afford.
 
     A routine fails as {!Nx_kernel.S} states, in the matrices that fail
     alone. Every other operation has no expansion. *)
@@ -241,9 +244,9 @@ val run :
   'r option
 (** [run apply ~by ~repeat op] is [Some r], [r] [op]'s expansion applied
     through [apply], or [None] for an operation that has no expansion, [Eig]
-    among them. A loop of [n] trips runs as [repeat n step init], whose law
-    {!Nx.Prim.expand} states. No result of [r]
-    is one of [op]'s operands: one that would be is its copy. *)
+    and [Eig_values] among them. A loop of [n] trips runs as
+    [repeat n step init], whose law {!Nx.Prim.expand} states. No result of
+    [r] is one of [op]'s operands: one that would be is its copy. *)
 
 val reduced :
   ('q. by:string -> 'q Value.prim -> 'q) ->

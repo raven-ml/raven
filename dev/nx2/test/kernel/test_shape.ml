@@ -315,9 +315,7 @@ let test_admits () =
     (Shape.c2r ~axes:[| 0 |] ~n:(big + 2) [| (big / 2) + 2 |]);
   let svd a =
     of_shapes
-      (Result.map
-         (fun (s, (u, vh)) -> [ s; u; vh ])
-         (Shape.svd (Vectors Complete) a))
+      (Result.map (fun (s, u, vh) -> [ s; u; vh ]) (Shape.svd Complete a))
   in
   equal ~msg:"square vectors within max_numel" shapes_t
     (Ok [ [ 0 ]; [ k / 2; k / 2 ]; [ 0; 0 ] ])
@@ -921,13 +919,13 @@ let routine r a b =
   | Cholesky -> Result.map one (Shape.cholesky a)
   | Lu -> Result.map (fun (l, p, q) -> [ l; p; q ]) (Shape.lu a)
   | Qr f -> Result.map (fun (q, r) -> [ q; r ]) (Shape.qr f a)
-  | Svd None -> Result.map (fun (s, ()) -> [ s ]) (Shape.svd No_vectors a)
+  | Svd None -> Result.map one (Shape.svd_values a)
   | Svd (Some f) ->
-      Result.map (fun (s, (u, vh)) -> [ s; u; vh ]) (Shape.svd (Vectors f) a)
-  | Eigh false -> Result.map (fun (w, ()) -> [ w ]) (Shape.eigh No_vectors a)
-  | Eigh true -> Result.map (fun (w, v) -> [ w; v ]) (Shape.eigh (Vectors ()) a)
-  | Eig false -> Result.map (fun (w, ()) -> [ w ]) (Shape.eig No_vectors a)
-  | Eig true -> Result.map (fun (w, v) -> [ w; v ]) (Shape.eig (Vectors ()) a)
+      Result.map (fun (s, u, vh) -> [ s; u; vh ]) (Shape.svd f a)
+  | Eigh false -> Result.map one (Shape.eigh_values a)
+  | Eigh true -> Result.map (fun (w, v) -> [ w; v ]) (Shape.eigh a)
+  | Eig false -> Result.map one (Shape.eig_values a)
+  | Eig true -> Result.map (fun (w, v) -> [ w; v ]) (Shape.eig a)
   | Solve -> Result.map one (Shape.solve_triangular a b)
 
 (* The destinations by each routine's rule, for [a] of [batch; m; n]. *)

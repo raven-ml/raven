@@ -371,9 +371,8 @@ let svd_op =
   let* cols = int_range 1 4 in
   let* vectors = bool in
   let+ a = matrix [| batch; rows; cols |] in
-  if vectors then
-    Op (Value.Linalg (Svd { vectors = Vectors Nx_kernel.Reduced; a }))
-  else Op (Value.Linalg (Svd { vectors = No_vectors; a }))
+  if vectors then Op (Value.Linalg (Svd { factors = Nx_kernel.Reduced; a }))
+  else Op (Value.Linalg (Svd_values a))
 
 (* Eigenvalues of the symmetric matrix each lower triangle names, with or
    without their vectors. *)
@@ -383,8 +382,8 @@ let eigh_op =
   let* n = int_range 1 4 in
   let* vectors = bool in
   let+ a = matrix [| batch; n; n |] in
-  if vectors then Op (Value.Linalg (Eigh { vectors = Vectors (); a }))
-  else Op (Value.Linalg (Eigh { vectors = No_vectors; a }))
+  if vectors then Op (Value.Linalg (Eigh a))
+  else Op (Value.Linalg (Eigh_values a))
 
 let copy_op =
   let open Gen in

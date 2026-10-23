@@ -555,25 +555,25 @@ let call : type r.
       | Value.Qr { a; _ }, (q, r) ->
           let q = nth j q and r = nth j r and a = one a in
           ran ~by (K.qr ~q ~r a) [| A.Any q; A.Any r |] [| A.Any a |]
-      | Value.Svd { vectors = No_vectors; a }, (s, ()) ->
+      | Value.Svd_values a, s ->
           let s = nth j s and a = one a in
           ran ~by (K.svd ~s a) [| A.Any s |] [| A.Any a |]
-      | Value.Svd { vectors = Vectors _; a }, (s, (u, vh)) ->
+      | Value.Svd { a; _ }, (s, u, vh) ->
           let s = nth j s and u = nth j u and vh = nth j vh and a = one a in
           ran ~by
             (K.svd ~s ~vectors:(~u, ~vh) a)
             [| A.Any s; A.Any u; A.Any vh |]
             [| A.Any a |]
-      | Value.Eigh { vectors = No_vectors; a }, (w, ()) ->
+      | Value.Eigh_values a, w ->
           let w = nth j w and a = one a in
           ran ~by (K.eigh ~w a) [| A.Any w |] [| A.Any a |]
-      | Value.Eigh { vectors = Vectors (); a }, (w, v) ->
+      | Value.Eigh a, (w, v) ->
           let w = nth j w and v = nth j v and a = one a in
           ran ~by (K.eigh ~w ~v a) [| A.Any w; A.Any v |] [| A.Any a |]
-      | Value.Eig { vectors = No_vectors; a; _ }, (w, ()) ->
+      | Value.Eig_values { a; _ }, w ->
           let w = nth j w and a = one a in
           ran ~by (K.eig ~w a) [| A.Any w |] [| A.Any a |]
-      | Value.Eig { vectors = Vectors (); a; _ }, (w, v) ->
+      | Value.Eig { a; _ }, (w, v) ->
           let w = nth j w and v = nth j v and a = one a in
           ran ~by (K.eig ~w ~v a) [| A.Any w; A.Any v |] [| A.Any a |]
       | Value.Solve_triangular { triangle; adjoint; unit_diagonal; a; b }, y ->

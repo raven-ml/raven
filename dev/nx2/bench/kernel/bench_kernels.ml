@@ -1101,7 +1101,7 @@ let linalg_rows =
   let eigh dt ?batch n =
     routine "eigh"
       (fun (module K : Nx_kernel.S) a ->
-        let w, v = Result.get_ok (Nx_kernel.Shape.eigh (Vectors ()) (shape a)) in
+        let w, v = Result.get_ok (Nx_kernel.Shape.eigh (shape a)) in
         let w = like a w and v = like a v in
         fun () -> K.eigh ~w ~v a)
       dt ?batch n ~count:(10 * n * n * n / 3)
@@ -1109,7 +1109,7 @@ let linalg_rows =
   let eigvalsh dt ?batch n =
     routine "eigvalsh"
       (fun (module K : Nx_kernel.S) a ->
-        let w, () = Result.get_ok (Nx_kernel.Shape.eigh No_vectors (shape a)) in
+        let w = Result.get_ok (Nx_kernel.Shape.eigh_values (shape a)) in
         let w = like a w in
         fun () -> K.eigh ~w a)
       dt ?batch n ~count:(4 * n * n * n / 3)
@@ -1117,9 +1117,7 @@ let linalg_rows =
   let svd dt ?batch n =
     routine "svd"
       (fun (module K : Nx_kernel.S) a ->
-        let s, (u, vh) =
-          Result.get_ok (Nx_kernel.Shape.svd (Vectors Reduced) (shape a))
-        in
+        let s, u, vh = Result.get_ok (Nx_kernel.Shape.svd Reduced (shape a)) in
         let s = like a s and u = like a u and vh = like a vh in
         fun () -> K.svd ~s ~vectors:(~u, ~vh) a)
       dt ?batch n ~count:(20 * n * n * n / 3)
@@ -1127,7 +1125,7 @@ let linalg_rows =
   let svdvals dt ?batch n =
     routine "svdvals"
       (fun (module K : Nx_kernel.S) a ->
-        let s, () = Result.get_ok (Nx_kernel.Shape.svd No_vectors (shape a)) in
+        let s = Result.get_ok (Nx_kernel.Shape.svd_values (shape a)) in
         let s = like a s in
         fun () -> K.svd ~s a)
       dt ?batch n ~count:(8 * n * n * n / 3)
@@ -1136,7 +1134,7 @@ let linalg_rows =
   let eig ?batch n =
     routine ~symmetric:false "eig"
       (fun (module K : Nx_kernel.S) a ->
-        let w, v = Result.get_ok (Nx_kernel.Shape.eig (Vectors ()) (shape a)) in
+        let w, v = Result.get_ok (Nx_kernel.Shape.eig (shape a)) in
         let make s = A.create Rig.host D.Complex128 s in
         let w = make w and v = make v in
         fun () -> K.eig ~w ~v a)

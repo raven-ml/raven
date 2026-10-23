@@ -152,31 +152,13 @@ let replayed : type r d.
       one (Linalg (Cholesky { triangle; a = sub a }))
   | Linalg (Lu a) -> three (Linalg (Lu (sub a)))
   | Linalg (Qr { factors; a }) -> two (Linalg (Qr { factors; a = sub a }))
-  | Linalg (Svd { vectors = No_vectors; a }) ->
-      let s, () =
-        applied i ~by (Linalg (Svd { vectors = No_vectors; a = sub a }))
-      in
-      [ Any s ]
-  | Linalg (Svd { vectors = Vectors f; a }) ->
-      let s, (u, vh) =
-        applied i ~by (Linalg (Svd { vectors = Vectors f; a = sub a }))
-      in
-      [ Any s; Any u; Any vh ]
-  | Linalg (Eigh { vectors = No_vectors; a }) ->
-      let w, () =
-        applied i ~by (Linalg (Eigh { vectors = No_vectors; a = sub a }))
-      in
-      [ Any w ]
-  | Linalg (Eigh { vectors = Vectors (); a }) ->
-      two (Linalg (Eigh { vectors = Vectors (); a = sub a }))
-  | Linalg (Eig { vectors = No_vectors; dtype; a }) ->
-      let w, () =
-        applied i ~by
-          (Linalg (Eig { vectors = No_vectors; dtype; a = sub a }))
-      in
-      [ Any w ]
-  | Linalg (Eig { vectors = Vectors (); dtype; a }) ->
-      two (Linalg (Eig { vectors = Vectors (); dtype; a = sub a }))
+  | Linalg (Svd_values a) -> one (Linalg (Svd_values (sub a)))
+  | Linalg (Svd { factors; a }) -> three (Linalg (Svd { factors; a = sub a }))
+  | Linalg (Eigh_values a) -> one (Linalg (Eigh_values (sub a)))
+  | Linalg (Eigh a) -> two (Linalg (Eigh (sub a)))
+  | Linalg (Eig_values { dtype; a }) ->
+      one (Linalg (Eig_values { dtype; a = sub a }))
+  | Linalg (Eig { dtype; a }) -> two (Linalg (Eig { dtype; a = sub a }))
   | Linalg (Solve_triangular { triangle; adjoint; unit_diagonal; a; b }) ->
       let a = sub a and b = sub b in
       one

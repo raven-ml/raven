@@ -280,13 +280,6 @@ type triangle = Lower | Upper
     of [m] and [n]. A kernel reads which from its destinations' shapes. *)
 type factors = Reduced | Complete
 
-(** The type for the vectors a routine computes beside its values, ['x] their
-    results: none, or [Vectors p], [p] how much of them where the routine
-    has a choice. *)
-type ('p, 'x, _) vectors =
-  | No_vectors : ('p, 'x, unit) vectors
-  | Vectors : 'p -> ('p, 'x, 'x) vectors
-
 val full_precision : ('v, 's) Nx_array.Dtype.t -> bool
 (** [full_precision dt] is [true] iff [dt] is [float32], [float64],
     [complex64] or [complex128], the dtypes the matrix routines,
@@ -410,17 +403,26 @@ module Shape : sig
   (** [qr f a] is the shapes of [q] and [r]: [[…; m; k]] and [[…; k; n]]
       under [Reduced], [[…; m; m]] and [[…; m; n]] under [Complete]. *)
 
-  val svd : (factors, t * t, 'r) vectors -> t -> (t * 'r) result
-  (** [svd vs a] is the shape of [s], [[…; k]], then with [Vectors f] those
-      of [u] and [vh]: [[…; m; k]] and [[…; k; n]] under [Reduced],
-      [[…; m; m]] and [[…; n; n]] under [Complete]. *)
+  val svd_values : t -> t result
+  (** [svd_values a] is the shape of [s]: [[…; k]]. *)
 
-  val eigh : (unit, t, 'r) vectors -> t -> (t * 'r) result
-  (** [eigh vs a] is the shape of [w] of [a], square, [[…; n]], then with
-      [Vectors ()] that of [v]: [a]. *)
+  val svd : factors -> t -> (t * t * t) result
+  (** [svd f a] is the shapes of [s], [u] and [vh]: [[…; k]], then
+      [[…; m; k]] and [[…; k; n]] under [Reduced], [[…; m; m]] and
+      [[…; n; n]] under [Complete]. *)
 
-  val eig : (unit, t, 'r) vectors -> t -> (t * 'r) result
-  (** [eig vs a] is the shapes {!eigh} gives. *)
+  val eigh_values : t -> t result
+  (** [eigh_values a] is the shape of [w] of [a], square: [[…; n]]. *)
+
+  val eigh : t -> (t * t) result
+  (** [eigh a] is the shapes of [w] and [v] of [a], square: [[…; n]] and
+      [a]. *)
+
+  val eig_values : t -> t result
+  (** [eig_values a] is the shape {!eigh_values} gives. *)
+
+  val eig : t -> (t * t) result
+  (** [eig a] is the shapes {!eigh} gives. *)
 
   val solve_triangular : t -> t -> t result
   (** [solve_triangular a b] is [b], [[…; n; r]], for [a] square of [n] and
