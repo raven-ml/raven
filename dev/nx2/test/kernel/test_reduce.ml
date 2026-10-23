@@ -1681,29 +1681,58 @@ let pad_array (A.Any x) fill (pad : Nx_kernel.pad) =
         Iarray.get pad.lo i + Iarray.get pad.hi i + d
         + if d > 0 then Iarray.get pad.interior i * (d - 1) else 0)
   in
-  let bytes = A.to_array (Option.get (A.bitcast D.Uint8 (A.copy x))) in
-  let b = Bytes.create (max 1 (w * total padded)) in
-  List.iteri
-    (fun k idx ->
-      let src = ref 0 and inside = ref true in
-      Array.iteri
-        (fun i j ->
-          let c = j - Iarray.get pad.lo i
-          and step = Iarray.get pad.interior i + 1 in
-          if c < 0 || c mod step <> 0 || c / step >= s.(i) then inside := false
-          else src := (!src * s.(i)) + (c / step))
-        idx;
-      for q = 0 to w - 1 do
-        Bytes.set b ((k * w) + q)
-          (if !inside then Char.chr bytes.((!src * w) + q) else fill.[q])
-      done)
-    (indices padded);
-  let a = A.v dt (L.contiguous padded) (Rig.Buffer.of_string (Bytes.to_string b)) in
+  (* The operand's index at padded index [idx], if it lands on one. *)
+  let source idx =
+    let src = Array.make r 0 and inside = ref true in
+    Array.iteri
+      (fun i j ->
+        let c = j - Iarray.get pad.lo i
+        and step = Iarray.get pad.interior i + 1 in
+        if c < 0 || c mod step <> 0 || c / step >= s.(i) then inside := false
+        else src.(i) <- c / step)
+      idx;
+    if !inside then Some src else None
+  in
+  let a =
+    if w = 0 then begin
+      (* A sub-byte element is no byte of its own: element by element. *)
+      let one = A.v dt (L.contiguous [||]) (Rig.Buffer.of_string fill) in
+      let f = A.get one [||] in
+      let a = A.create Rig.host dt padded in
+      List.iter
+        (fun idx ->
+          A.set a idx
+            (match source idx with Some src -> A.get x src | None -> f))
+        (indices padded);
+      a
+    end
+    else begin
+      let bytes = A.to_array (Option.get (A.bitcast D.Uint8 (A.copy x))) in
+      let b = Bytes.create (max 1 (w * total padded)) in
+      List.iteri
+        (fun k idx ->
+          let flat src =
+            let n = ref 0 in
+            Array.iteri (fun i c -> n := (!n * s.(i)) + c) src;
+            !n
+          in
+          let at = Option.map flat (source idx) in
+          for q = 0 to w - 1 do
+            Bytes.set b ((k * w) + q)
+              (match at with
+              | Some at -> Char.chr bytes.((at * w) + q)
+              | None -> fill.[q])
+          done)
+        (indices padded);
+      A.v dt (L.contiguous padded) (Rig.Buffer.of_string (Bytes.to_string b))
+    end
+  in
   if Iarray.length pad.windows = 0 then A.Any a
   else A.Any (Option.get (A.move (M.Window pad.windows) a))
 
-(* The fills a law draws: zero, one, the extremes and a NaN of floats, the
-   least integer. *)
+(* The fills a law draws: zero, one, the extremes, a NaN and -0 of floats,
+   the least integer; a sub-byte dtype's codes 0, 7 and 8 in both halves
+   of their byte. *)
 let fills (D.Any dt) =
   let le w v =
     String.init w (fun i ->
@@ -1713,11 +1742,14 @@ let fills (D.Any dt) =
   match dt with
   | D.Float32 ->
       List.map (fun v -> le 4 (Int64.of_int32 v))
-        [ 0l; 0x3F800000l; 0xFF800000l; 0x7FC01234l ]
+        [ 0l; 0x3F800000l; 0xFF800000l; 0x7FC01234l; 0x80000000l ]
   | D.Float64 ->
       List.map (le 8)
-        [ 0L; Int64.bits_of_float 1.; Int64.bits_of_float neg_infinity; 0x7FF8000000000123L ]
+        [ 0L; Int64.bits_of_float 1.; Int64.bits_of_float neg_infinity;
+          0x7FF8000000000123L; Int64.min_int ]
   | D.Bool -> [ "\000"; "\001" ]
+  | D.Bit -> [ "\000"; "\255" ]
+  | _ when w = 0 -> [ "\000"; "\119"; "\136" ]
   | _ -> [ le w 0L; le w 7L; le w (Int64.shift_left 1L ((8 * w) - 1)) ]
 
 (* A padding of an operand of shape [s]: low and high padding from -2 to 3
@@ -1774,6 +1806,16 @@ let padded_load (A.Any x) fill pad =
   let fill = A.get (A.v dt (L.contiguous [||]) (Rig.Buffer.of_string fill)) [||] in
   Nx_kernel.Padded { x; fill; pad }
 
+(* The fill of bits [fill] of a float operand like [x], else None. *)
+let float_fill (A.Any x) fill =
+  let value (type s) (dt : (float, s) D.t) =
+    Some (A.get (A.v dt (L.contiguous [||]) (Rig.Buffer.of_string fill)) [||])
+  in
+  match A.dtype x with
+  | D.Float32 -> value D.Float32
+  | D.Float64 -> value D.Float64
+  | _ -> None
+
 (* Whether Nx_kernel.Shape refuses the reduction or scan of [load]. *)
 let refuses ~scan monoid axes load =
   let module Shape = Nx_kernel.Shape in
@@ -1799,11 +1841,28 @@ let padded ?view ~scan d monoid s pad fill axes seed =
   in
   { x; view; fill; pad; loaded }
 
+(* Whether nx.cpu reads a reduction's padded load of an operand of shape
+   [s] in place (nx_cpu.mli): a loop of no empty axis, its padding filling
+   along kept axes alone and at their ends there. *)
+let in_place ~scan s (pad : Nx_kernel.pad) axes =
+  let between i d = Iarray.get pad.interior i > 0 && d > 1 in
+  let fills i d =
+    Iarray.get pad.lo i > 0 || Iarray.get pad.hi i > 0 || between i d
+  in
+  let kept i d = not (fills i d && (Array.mem i axes || between i d)) in
+  (not scan)
+  && Array.for_all (fun e -> e > 0) (unchecked s pad)
+  && Array.for_all Fun.id (Array.mapi kept s)
+
+(* The dtypes whose elements are no byte of their own, but float4_e2m1fn,
+   which the reference does not compute in. *)
+let sub_bytes = D.[ Any Int4; Any Uint4; Any Bit ]
+
 let padded_case =
   Gen.with_pp pp_padded
     (let open Gen in
      let* scan = bool in
-     let* d = of_list ~pp:pp_dtype base in
+     let* d = of_list ~pp:pp_dtype (base @ sub_bytes) in
      let* monoid = of_list (List.filter (fun m -> accepts m d) monoids)
      in
      let* s = array ~size:(int_range 1 3) (int_range 0 6) in
@@ -1859,6 +1918,31 @@ let padded_examples =
           ~windows:(Array.init r (fun a -> w a 1 1)))
        [| 0 |]);
     reduce Max [| 0; 2 |] (pad [| 0; 0 |] [| 0; 0 |] [| 0; 0 |]) [| 0 |];
+    (* Fill along a reduced axis. *)
+    reduce Sum [| 4 |] (pad [| 1 |] [| 1 |] [| 0 |]) [| 0 |];
+    (* Read in place: fill before axis 0 and after axis 1, axis 1 cropped
+       before and windowed, its taps reduced. *)
+    reduce Max [| 5; 6 |]
+      (pad [| 1; -1 |] [| 0; 2 |] [| 0; 0 |] ~windows:[| w 1 3 2 |])
+      [| 2 |];
+    (* Read in place, broadcast along an axis the padding leaves alone. *)
+    padded
+      ~view:
+        { perm = [| 0; 1 |]; stepped = false; reversed = None;
+          broadcast = true }
+      ~scan:false f32 Sum [| 4; 5 |]
+      (pad [| 0; 1 |] [| 0; 1 |] [| 0; 0 |] ~windows:[| w 1 3 1 |])
+      one [| 2 |] 7;
+    (* Read in place: int4, a NaN and a -0 fill. *)
+    padded ~scan:false (D.Any D.Int4) Sum [| 3; 5 |]
+      (pad [| 0; 2 |] [| 0; 1 |] [| 0; 0 |] ~windows:[| w 1 2 1 |])
+      "\136" [| 2 |] 7;
+    padded ~scan:false f32 Max [| 3; 5 |]
+      (pad [| 1; 0 |] [| 1; 0 |] [| 0; 0 |])
+      "\052\018\192\127" [||] 7;
+    padded ~scan:false f32 Sum [| 6 |]
+      (pad [| 2 |] [| 1 |] [| 0 |] ~windows:[| w 0 2 1 |])
+      "\000\000\000\128" [| 1 |] 7;
   ]
 
 (* nx.cpu reduces and scans a padded load as the array it reads: the
@@ -1874,13 +1958,41 @@ let law_padded (b : Support.backend) p =
   cover "windows" (pad.windows <> [||]);
   cover "cropped" (Iarray.exists (fun l -> l < 0) pad.lo);
   cover "interior" (Iarray.exists (fun i -> i > 0) pad.interior);
-  cover "a broadcast axis the padding leaves alone"
-    (p.view.broadcast && s.(0) > 1 && Iarray.get pad.lo 0 = 0
-    && Iarray.get pad.hi 0 = 0 && Iarray.get pad.interior 0 = 0);
+  let alone =
+    p.view.broadcast && s.(0) > 1 && Iarray.get pad.lo 0 = 0
+    && Iarray.get pad.hi 0 = 0 && Iarray.get pad.interior 0 = 0
+  in
+  cover "a broadcast axis the padding leaves alone" alone;
   match p.loaded with
   | Reads c ->
       let dst = A.Any (A.create Rig.host (A.dtype x) (result_shape c)) in
       cover "computed" true;
+      (* Read in place: the fill's sides, a crop, the axes it fills along,
+         the dtypes and the fills. *)
+      let lo i = Iarray.get pad.lo i and hi i = Iarray.get pad.hi i in
+      let axes = List.init (Array.length s) Fun.id in
+      let filled = List.filter (fun i -> lo i > 0 || hi i > 0) axes in
+      let read = in_place ~scan:c.scan s pad c.axes && filled <> [] in
+      let nan, neg_zero =
+        match float_fill p.x p.fill with
+        | Some f -> (Float.is_nan f, f = 0. && Float.sign_bit f)
+        | None -> (false, false)
+      in
+      cover "read in place" read;
+      cover "read in place, one side unfilled"
+        (read && List.exists (fun i -> lo i <= 0 || hi i <= 0) filled);
+      cover "read in place, lo and hi differ"
+        (read && List.exists (fun i -> lo i <> hi i) filled);
+      cover "read in place, cropped"
+        (read && List.exists (fun i -> lo i < 0 || hi i < 0) axes);
+      cover "read in place along two axes" (read && List.length filled >= 2);
+      cover "read in place, windows" (read && pad.windows <> [||]);
+      cover "read in place, a broadcast axis held once" (read && alone);
+      cover "read in place, sub-byte" (read && D.bits (A.dtype x) < 8);
+      cover "read in place, a NaN fill" (read && nan);
+      cover "read in place, a -0 fill" (read && neg_zero);
+      cover "copied: a fill along a reduced axis"
+        ((not c.scan) && List.exists (fun i -> Array.mem i c.axes) filled);
       (* It gives no window along that axis. *)
       let e = extents s pad in
       cover "a window wider than its axis"
@@ -4196,16 +4308,25 @@ let depthwise ldt pdt ~b ~h ~w ~c ~lo ~hi ~k1 ~k2 ~step ~dilation ~fill ~special
     ldt; pdt; pshape = loaded; paxes = axes; same = false; pad = Some pad;
     loads = [| Nx_kernel.Padded { x = xa; fill = fill_value; pad }; plain_of y |];
     reads = [| pad_array x fill pad; y |];
-    pnames = [ "padded" ] @ (if specials > 0 then [ "specials" ] else []);
+    pnames =
+      [ "padded" ]
+      @ (if lo <> hi then [ "padded unevenly" ] else [])
+      @ (if (lo = 0) <> (hi = 0) then [ "a side unpadded" ] else [])
+      @ (match float_fill x fill with
+        | Some f when Float.is_nan f -> [ "a NaN fill" ]
+        | Some f when f = 0. && Float.sign_bit f -> [ "a -0 fill" ]
+        | _ -> [])
+      @ if specials > 0 then [ "specials" ] else [];
   }
 
-(* Zero's bits, and a NaN's for float32 and float64. *)
+(* Zero's bits, and a NaN's and -0's for float32 and float64. *)
 let product_fills (D.Any dt) =
   let w = D.bits dt / 8 in
-  let zero = String.make w '\000' in
+  let zero = String.make (max 1 w) '\000' in
+  let neg_zero = String.make (max 0 (w - 1)) '\000' ^ "\128" in
   match dt with
-  | D.Float32 -> [ zero; "\052\018\192\127" ]
-  | D.Float64 -> [ zero; "\035\001\000\000\000\000\248\127" ]
+  | D.Float32 -> [ zero; "\052\018\192\127"; neg_zero ]
+  | D.Float64 -> [ zero; "\035\001\000\000\000\000\248\127"; neg_zero ]
   | _ -> [ zero ]
 
 let product_case =
@@ -4215,9 +4336,7 @@ let product_case =
      let* specials = frequency [ (3, constant 0); (1, constant 8) ] in
      let* seed = int in
      let* padded = frequency [ (3, constant false); (1, constant true) ] in
-     (* pad_array pads whole bytes: float4_e2m1fn's loads are plain. *)
-     let (D.Any l) = ldt in
-     if padded && D.bits l >= 8 then
+     if padded then
        let* b = int_range 1 2 in
        let* c = frequency [ (3, int_range 1 20); (1, constant 64) ] in
        let* lo = int_range 0 2 in
@@ -4253,9 +4372,10 @@ let product_examples =
     product_of ~same ~broadcast d p shape axes v (plain (Array.length shape))
       ~specials 11
   in
-  let dw ?(d = f32) ?(p = f32) ?(c = 64) ?fill ?(specials = 0) k1 k2 =
+  let dw ?(d = f32) ?(p = f32) ?(c = 64) ?(lo = 1) ?(hi = 1) ?fill
+      ?(specials = 0) k1 k2 =
     let fill = Option.value fill ~default:(List.hd (product_fills d)) in
-    depthwise d p ~b:2 ~h:5 ~w:6 ~c ~lo:1 ~hi:1 ~k1 ~k2 ~step:1 ~dilation:1
+    depthwise d p ~b:2 ~h:5 ~w:6 ~c ~lo ~hi ~k1 ~k2 ~step:1 ~dilation:1
       ~fill ~specials 13
   in
   List.init 17 (fun i -> flat ~broadcast:true [| 64; i + 1 |] [| 1 |])
@@ -4283,6 +4403,8 @@ let product_examples =
       dw ~d:(D.Any D.Bfloat16) 3 3;
       dw ~c:5 ~specials:4 2 3;
       dw ~fill:"\052\018\192\127" 4 4;
+      dw ~fill:"\000\000\000\128" ~lo:2 ~hi:0 3 3;
+      dw ~d:(D.Any D.Float4_e2m1fn) ~c:5 ~lo:0 ~hi:2 2 2;
       dw 4 5;
     ]
 
@@ -4319,6 +4441,9 @@ let law_products (b : Support.backend) c =
   cover "float4_e2m1fn factors" (same c.ldt (D.Any D.Float4_e2m1fn));
   cover "a load by itself" c.same;
   cover "a padded load" (c.pad <> None);
+  cover "a padded load of few products" (c.pad <> None && terms <= 16);
+  cover "a padded float4_e2m1fn load"
+    (c.pad <> None && same c.ldt (D.Any D.Float4_e2m1fn));
   for n = 1 to 16 do
     cover (Printf.sprintf "%d terms" n) (terms = n)
   done;
@@ -4327,7 +4452,8 @@ let law_products (b : Support.backend) c =
   cover "two reduced axes" (Array.length c.paxes = 2);
   List.iter (fun name -> cover name (List.mem name c.pnames))
     [ "a broadcast factor"; "a broadcast first factor"; "stepped"; "reversed";
-      "permuted"; "broadcast"; "specials" ];
+      "permuted"; "broadcast"; "specials"; "padded unevenly";
+      "a side unpadded"; "a NaN fill"; "a -0 fill" ];
   let prog = product_prog ~same:c.same c.ldt c.pdt in
   let (D.Any pt) = c.pdt in
   let y = A.create b.device pt s in

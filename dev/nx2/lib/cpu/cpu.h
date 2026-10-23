@@ -933,6 +933,40 @@ int nx_cpu_padding_of(value v, value x, nx_cpu_pad *p, uint8_t *fill);
 int nx_cpu_unpad(const nx_array *a, const nx_cpu_pad *p,
                  const uint8_t *fill, nx_array *out);
 
+/* A reduction's loop split into boxes along the axes its padded loads read
+   in place fill along (assemble.c): the loop's [rank] and [shape], and
+   for each of the [nsplit] split axes [axis], ascending, the outputs
+   [first] to [past] whose windows read the operands alone. */
+typedef struct {
+  int rank, nsplit;
+  int axis[NX_MAX_RANK];
+  int64_t shape[NX_MAX_RANK], first[NX_MAX_RANK], past[NX_MAX_RANK];
+} nx_cpu_boxes;
+
+/* Fills [b] for the loop of [rank] axes of extents [shape], none of them
+   0, whose axes [reduced] flags, over the [nl] loads [a], each padded by
+   [p] where [in_place] flags it, and answers whether one is read in
+   place. Clears the flag of each load that is not: one that fills along
+   a reduced axis or pads between elements, or whose taps lie along an
+   axis another splits. Reads [p] only where flagged. */
+int nx_cpu_boxes_of(nx_cpu_boxes *b, int rank, const int64_t *shape,
+                    const int *reduced, int nl, const nx_array *a,
+                    const nx_cpu_pad *p, int *in_place);
+
+/* Fills [start] and [count] with box [k] of [b], from 0 to 2·nsplit, the
+   last the interior, and answers whether it holds an output. The boxes
+   tile the loop. */
+int nx_cpu_box(const nx_cpu_boxes *b, int k, int64_t *start, int64_t *count);
+
+/* Fills [out] with the load [p] of [a], read in place (nx_cpu_boxes_of),
+   over the box of the loop from [start] by [count]: a view of [a] where
+   the box's windows read [a] alone, else, with [copied] set, nx_cpu_unpad's
+   copy of the elements they reach, padded with [fill], whose base the
+   caller frees. Answers 0, or 1 if host memory runs out. */
+int nx_cpu_load_box(const nx_array *a, const nx_cpu_pad *p,
+                    const uint8_t *fill, const int64_t *start,
+                    const int64_t *count, nx_array *out, int *copied);
+
 /* Programs
 
    A map's program as map.c runs it, block by block, for a kernel that
@@ -995,6 +1029,10 @@ double nx_cpu_prog_cost(const nx_cpu_prog *j);
 /* Whether a run of [j] could not have an arena on the heap, as a program
    of many values needs: its outputs are then unspecified. */
 int nx_cpu_prog_failed(const nx_cpu_prog *j);
+
+/* Whether a node of [j] reads a coordinate, which a block reads from the
+   index. */
+int nx_cpu_prog_coords(const nx_cpu_prog *j);
 
 /* The stage */
 

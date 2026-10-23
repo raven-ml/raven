@@ -540,6 +540,157 @@ int nx_cpu_unpad(const nx_array *a, const nx_cpu_pad *p,
   return 0;
 }
 
+/* Padded loads in place
+
+   A reduction reads a padded load in place where its fill lies along kept
+   axes alone, with no interior padding there: its loop splits along those
+   axes into boxes. Along the first split axis, the outputs whose windows
+   reach the fill before the operand form one box, those past it another;
+   the outputs between split the same way along the next axis, and so on,
+   down to the interior, whose windows read the operand alone. The interior
+   is a view of the operand; each rim box is read from a copy of the
+   elements its windows reach, padded. An output's terms lie in its box, so
+   each box computes its outputs as the whole loop would.
+
+     axis 1 ->   rim 0: outputs whose windows start in the fill
+                 rim 1: outputs whose windows end in it
+                 between: along axis 2, rims 2 and 3, then the interior */
+
+/* The window along axis [i] of [p] as its size, step and dilation: 1, 1, 1
+   for an axis no window takes. */
+static void window_on(const nx_cpu_pad *p, int i, int64_t *k, int64_t *s,
+                      int64_t *d) {
+  *k = *s = *d = 1;
+  for (int w = 0; w < p->nwindows; w++)
+    if (p->window[w][0] == i) {
+      *k = p->window[w][1];
+      *s = p->window[w][2];
+      *d = p->window[w][3];
+    }
+}
+
+/* Whether the load [p] of [a] reads its fill along axis [i]: padding before
+   or after it, or between two of its elements. */
+static int fills_along(const nx_cpu_pad *p, const nx_array *a, int i) {
+  return p->lo[i] > 0 || p->hi[i] > 0 || (p->interior[i] > 0 && a->dim[i] > 1);
+}
+
+int nx_cpu_boxes_of(nx_cpu_boxes *b, int rank, const int64_t *shape,
+                    const int *reduced, int nl, const nx_array *a,
+                    const nx_cpu_pad *p, int *in_place) {
+  int split[NX_MAX_RANK] = {0}, n = 0;
+  for (int d = 0; d < rank; d++)
+    if (shape[d] == 0) return 0;
+  /* A load reads in place where each axis it fills along is kept and
+     padded at its ends alone. */
+  for (int l = 0; l < nl; l++) {
+    for (int i = 0; in_place[l] && i < a[l].rank; i++)
+      if (fills_along(&p[l], &a[l], i) &&
+          (reduced[i] || (p[l].interior[i] > 0 && a[l].dim[i] > 1)))
+        in_place[l] = 0;
+    for (int i = 0; in_place[l] && i < a[l].rank; i++)
+      split[i] |= fills_along(&p[l], &a[l], i);
+  }
+  /* A load whose taps lie along a split axis is copied whole. */
+  for (int l = 0; l < nl; l++)
+    for (int i = a[l].rank; in_place[l] && i < rank; i++)
+      if (split[i]) in_place[l] = 0;
+  *b = (nx_cpu_boxes){.rank = rank};
+  memcpy(b->shape, shape, sizeof(int64_t) * (size_t)rank);
+  for (int i = 0; i < rank; i++) {
+    if (!split[i]) continue;
+    /* The outputs o whose windows read the operand alone, along axis i of
+       every load read in place: lo <= o·s and o·s + (k - 1)·d - lo < its
+       extent. */
+    int64_t first = 0, past = shape[i];
+    for (int l = 0; l < nl; l++) {
+      if (!in_place[l]) continue;
+      int64_t k, s, d, lo = p[l].lo[i];
+      window_on(&p[l], i, &k, &s, &d);
+      int64_t f = lo > 0 ? (lo + s - 1) / s : 0;
+      int64_t top = a[l].dim[i] - 1 + lo - (k - 1) * d;
+      int64_t e = top < 0 ? 0 : top / s + 1;
+      if (f > first) first = f;
+      if (e < past) past = e;
+    }
+    if (first > shape[i]) first = shape[i];
+    if (past < first) past = first;
+    b->axis[n] = i;
+    b->first[n] = first;
+    b->past[n] = past;
+    n++;
+  }
+  b->nsplit = n;
+  for (int l = 0; l < nl; l++)
+    if (in_place[l]) return 1;
+  return 0;
+}
+
+int nx_cpu_box(const nx_cpu_boxes *b, int k, int64_t *start, int64_t *count) {
+  for (int i = 0; i < b->rank; i++) {
+    start[i] = 0;
+    count[i] = b->shape[i];
+  }
+  /* Box 2j and 2j + 1 are split axis j's rims, inside the interior along
+     the axes split before it; box 2·nsplit is the interior. */
+  int level = k / 2;
+  for (int j = 0; j < level && j < b->nsplit; j++) {
+    start[b->axis[j]] = b->first[j];
+    count[b->axis[j]] = b->past[j] - b->first[j];
+  }
+  if (level < b->nsplit) {
+    int i = b->axis[level];
+    start[i] = k % 2 ? b->past[level] : 0;
+    count[i] = k % 2 ? b->shape[i] - b->past[level] : b->first[level];
+  }
+  for (int i = 0; i < b->rank; i++)
+    if (count[i] == 0) return 0;
+  return 1;
+}
+
+int nx_cpu_load_box(const nx_array *a, const nx_cpu_pad *p,
+                    const uint8_t *fill, const int64_t *start,
+                    const int64_t *count, nx_array *out, int *copied) {
+  int r = a->rank, nw = p->nwindows, fills = 0;
+  nx_array s = *a;
+  nx_cpu_pad q = *p;
+  /* Along each axis, the padded positions the box's windows reach, from
+     start·step to (start + count - 1)·step + (size - 1)·dilation, and the
+     operand's elements among them, with the padding left on each side. */
+  for (int i = 0; i < r; i++) {
+    int64_t k, st, d, lo = p->lo[i], n = a->dim[i];
+    window_on(p, i, &k, &st, &d);
+    int64_t from = start[i] * st - lo;
+    int64_t to = (start[i] + count[i] - 1) * st + (k - 1) * d + 1 - lo;
+    int64_t c0 = from < 0 ? 0 : from > n ? n : from;
+    int64_t c1 = to < 0 ? 0 : to > n ? n : to;
+    s.offset += c0 * a->dim[r + i];
+    s.dim[i] = c1 - c0;
+    q.lo[i] = c0 - from;
+    q.hi[i] = to - c1;
+    q.interior[i] = 0;
+    fills |= q.lo[i] > 0 || q.hi[i] > 0;
+  }
+  *copied = fills;
+  if (fills) return nx_cpu_unpad(&s, &q, fill, out);
+  /* The interior: the windows as a layout over the operand's elements. */
+  *out = (nx_array){.base = a->base, .dtype = a->dtype, .bits = a->bits,
+                    .rank = r + nw, .offset = s.offset};
+  for (int i = 0; i < r; i++) {
+    out->dim[i] = s.dim[i];
+    out->dim[r + nw + i] = a->dim[r + i];
+  }
+  for (int w = 0; w < nw; w++) {
+    const int64_t *v = p->window[w]; /* axis, size, step, dilation */
+    int64_t ax = v[0], step = a->dim[r + ax];
+    out->dim[ax] = count[ax];
+    out->dim[r + nw + ax] = v[2] * step;
+    out->dim[r + w] = v[1];
+    out->dim[r + nw + r + w] = v[3] * step;
+  }
+  return 0;
+}
+
 /* Folds */
 
 /* Zeroes the [n] elements of [a] from position [p], contiguous: a
