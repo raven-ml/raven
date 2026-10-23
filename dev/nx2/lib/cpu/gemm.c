@@ -8,8 +8,8 @@
 
    nx_contract_view_fill groups the axes, as Nx_kernel.Contract_view does,
    into one batch, row (M), column (N) and contracted (K) axis per
-   operand; a group that makes several runs takes an outer loop or a copy
-   (Groups of several runs). An operand is read
+   operand; a group that makes several runs takes an outer loop, a's or
+   b's packs, or a copy (Groups of several runs). An operand is read
    through the stage, which takes any strides and dtype into its carrier, and
    the target's conversion takes the carrier into acc: each element as a
    cast to acc gives it, exact where acc holds its values. A scaled
@@ -161,13 +161,28 @@ typedef struct {
   int64_t run;
 } scale;
 
+/* An operand's group of several runs, which its packs read (pack_at):
+   [n] runs in C order, run r of extent[r] indices stepping stride[r]. */
+typedef struct {
+  int n;
+  int64_t extent[NX_MAX_RANK], stride[NX_MAX_RANK];
+} spans;
+
+/* a's and b's spans by group: of[o][x].n is at most 1 along a group of one
+   run. */
+typedef struct {
+  spans of[2][4];
+} reads;
+
 /* An operand as the view lays it out: its element (e, i, j, k) lies at
    position first + e·st[BATCH] + i·st[ROW] + j·st[COL] + k·st[CON], and
-   an axis it lacks has step 0. */
+   an axis it lacks has step 0; along an axis of several runs, sp[x] not
+   NULL, the index's runs step instead (along). */
 typedef struct {
   const nx_array *x; /* NULL for an absent init */
   int64_t first;
   int64_t st[4];
+  const spans *sp[4];
   scale *s; /* NULL for an unscaled operand */
 } operand;
 
@@ -189,12 +204,25 @@ static int64_t ceil_div(int64_t a, int64_t b) { return (a + b - 1) / b; }
 static int64_t gcd(int64_t a, int64_t b) { return b == 0 ? a : gcd(b, a % b); }
 static int64_t min64(int64_t a, int64_t b) { return a < b ? a : b; }
 
+/* The position from operand [q]'s first element of index [i] along its
+   axis [x]. */
+static int64_t along(const operand *q, int x, int64_t i) {
+  const spans *s = q->sp[x];
+  if (s == NULL) return i * q->st[x];
+  int64_t at = 0;
+  for (int r = s->n - 1; r >= 0; r--) {
+    at += i % s->extent[r] * s->stride[r];
+    i /= s->extent[r];
+  }
+  return at;
+}
+
 /* The position of operand [o]'s element (e, i, j, k). */
 static int64_t pos(const problem *p, int o, int64_t e, int64_t i, int64_t j,
                    int64_t k) {
-  const int64_t *s = p->op[o].st;
-  return p->op[o].first + e * s[BATCH] + i * s[ROW] + j * s[COL] +
-         k * s[CON];
+  const operand *q = &p->op[o];
+  return q->first + along(q, BATCH, e) + along(q, ROW, i) +
+         along(q, COL, j) + along(q, CON, k);
 }
 
 /* Packed operands start on 128 bytes: the matrix unit loads 128 at once. */
@@ -426,9 +454,12 @@ typedef struct {
   int64_t row, k;
 } src;
 
-/* Whether operand [o] may be read in place: in acc and unscaled. */
+/* Whether operand [o] may be read in place: in acc, unscaled, of one run
+   along each axis. */
 static int raw(const problem *p, int o) {
-  return p->op[o].x->dtype == p->acc && p->op[o].s == NULL;
+  const operand *q = &p->op[o];
+  return q->x->dtype == p->acc && q->s == NULL && q->sp[ROW] == NULL &&
+         q->sp[COL] == NULL && q->sp[CON] == NULL;
 }
 
 /* Whether operand [o] is read in place along [ax]: raw, adjacent there. */
@@ -545,6 +576,45 @@ static void pack(const problem *p, nx_cpu_pack move, int o, int64_t at,
   stage_acc(p, o, at, s0, s1, n0, n1, d, pitch);
 }
 
+/* The indices from [i] along operand [q]'s axis [x], at most [n], that one
+   step reaches, the step into [*st]: the rest of its last run. */
+static int64_t piece(const operand *q, int x, int64_t i, int64_t n,
+                     int64_t *st) {
+  const spans *s = q->sp[x];
+  if (s == NULL) {
+    *st = q->st[x];
+    return n;
+  }
+  int64_t last = s->extent[s->n - 1];
+  *st = s->stride[s->n - 1];
+  return min64(n, last - i % last);
+}
+
+/* Packs operand [o]'s block from its element [c], (e, i, j, k), as pack
+   does: [n0] along axis [x0] in a row and [n1] rows along [x1], into [d]
+   [pitch] apart. Along an axis of several runs, as a window's taps make,
+   a pack per piece of the block that lies in one run of each axis, so
+   that the operand is read where it lies, never copied whole: a
+   convolution's a packs a block of its windows as an explicit copy of
+   them would hold it, the products numbered as they are there. */
+static void pack_at(const problem *p, nx_cpu_pack move, int o,
+                    const int64_t *c, int x0, int x1, int64_t n0, int64_t n1,
+                    uint8_t *d, int64_t pitch) {
+  const operand *q = &p->op[o];
+  for (int64_t u1 = 0, m1; u1 < n1; u1 += m1) {
+    int64_t s0, s1;
+    m1 = piece(q, x1, c[x1] + u1, n1 - u1, &s1);
+    for (int64_t u0 = 0, m0; u0 < n0; u0 += m0) {
+      m0 = piece(q, x0, c[x0] + u0, n0 - u0, &s0);
+      int64_t t[4] = {c[0], c[1], c[2], c[3]};
+      t[x0] += u0;
+      t[x1] += u1;
+      pack(p, move, o, pos(p, o, t[BATCH], t[ROW], t[COL], t[CON]), s0, s1,
+           m0, m1, d + (u1 * pitch + u0) * p->w, pitch);
+    }
+  }
+}
+
 /* Packs [a]'s rows [i, i + m) of element [e], along k from [pc] for
    [kc], into [d], as the kernel reads them (packed_a). A block of rows is
    one pack: where it transposes, it does so in square blocks, where a
@@ -553,14 +623,13 @@ static void pack(const problem *p, nx_cpu_pack move, int o, int64_t at,
 static void pack_a(const problem *p, nx_cpu_pack move, int64_t e, int64_t i,
                    int64_t m, int64_t lda, int64_t pc, int64_t kc,
                    uint8_t *d) {
-  const int64_t *s = p->op[A].st;
-  int64_t at = pos(p, A, e, i, 0, pc);
+  const int64_t c[4] = {e, i, 0, pc};
   int elements = p->g->kernel.a == NX_CPU_A_ELEMENTS;
   if (p->op[A].s && elements)
     stage_at(p, A, e, i, 0, pc, CON, ROW, kc, m, d, kc);
   else if (p->op[A].s) stage_at(p, A, e, i, 0, pc, ROW, CON, m, kc, d, lda);
-  else if (elements) pack(p, move, A, at, s[CON], s[ROW], kc, m, d, kc);
-  else pack(p, move, A, at, s[ROW], s[CON], m, kc, d, lda);
+  else if (elements) pack_at(p, move, A, c, CON, ROW, kc, m, d, kc);
+  else pack_at(p, move, A, c, ROW, CON, m, kc, d, lda);
 }
 
 /* A block of a packed at [d] for [kc] steps of [lda] elements: a kernel
@@ -580,9 +649,9 @@ static src packed_a(const problem *p, const uint8_t *d, int64_t lda,
    [nr], padding past n. */
 static void pack_b(const problem *p, nx_cpu_pack move, int64_t e, int64_t j,
                    int64_t n, int nr, int64_t pc, int64_t kc, uint8_t *d) {
-  const int64_t *s = p->op[B].st;
+  const int64_t c[4] = {e, 0, j, pc};
   if (p->op[B].s) stage_at(p, B, e, 0, j, pc, COL, CON, n, kc, d, nr);
-  else pack(p, move, B, pos(p, B, e, 0, j, pc), s[COL], s[CON], n, kc, d, nr);
+  else pack_at(p, move, B, c, COL, CON, n, kc, d, nr);
 }
 
 /* Whether a sliver of [n] columns of b is packed: unless b is read in
@@ -903,6 +972,9 @@ static void transpose(problem *p) {
     int64_t r = q->st[ROW];
     q->st[ROW] = q->st[COL];
     q->st[COL] = r;
+    const spans *sp = q->sp[ROW];
+    q->sp[ROW] = q->sp[COL];
+    q->sp[COL] = sp;
     if (q->s == NULL) continue;
     const int64_t *t = q->s->t[ROW];
     q->s->t[ROW] = q->s->t[COL];
@@ -1627,12 +1699,16 @@ static void lay_out(problem *p, const nx_contract_view *v,
 }
 
 /* nx_cpu_contract_on on the kernels [g], a and b scaled by [s] where it is
-   not NULL. */
+   not NULL, and read along a group of several runs where [sp], a's and
+   b's by group, is not NULL and the group's spans hold more than one. */
 static int contract_with(const nx_cpu_gemm *g, int acc, int order,
                          const nx_contract_view *v, const nx_array *const *op,
-                         const scale *s) {
+                         const scale *s, const reads *sp) {
   problem p = {.acc = acc, .w = nx_cpu_width(acc), .g = g};
   lay_out(&p, v, op);
+  for (int o = A; sp && o <= B; o++)
+    for (int x = ROW; x <= CON; x++)
+      if (sp->of[o][x].n > 1) p.op[o].sp[x] = &sp->of[o][x];
   scale own[2]; /* the problem's, which its passes move on */
   for (int o = A; s && o <= B; o++)
     if (s[o].v) {
@@ -1665,7 +1741,8 @@ static int contract_with(const nx_cpu_gemm *g, int acc, int order,
 
 int nx_cpu_contract_on(int acc, int order, const nx_contract_view *v,
                        const nx_array *const *op) {
-  return contract_with(&nx_cpu_table->gemm[acc], acc, order, v, op, NULL);
+  return contract_with(&nx_cpu_table->gemm[acc], acc, order, v, op, NULL,
+                       NULL);
 }
 
 /* Complex */
@@ -2313,7 +2390,7 @@ static int quads_on(const nx_cpu_gemm *g, int acc, const nx_contract_view *v,
   if (dot && u.stride[B][CON] == 1 && min64(m, n) <= QUAD_ROWS) {
     quad_dots_on(dot, g, acc, &u, ops);
     done = 1;
-  } else done = contract_with(g, acc, NX_CPU_CHAIN, &u, ops, NULL);
+  } else done = contract_with(g, acc, NX_CPU_CHAIN, &u, ops, NULL, NULL);
 out:
   free(ab);
   free(bb);
@@ -2327,17 +2404,26 @@ double nx_cpu_core_speed(int acc) {
 }
 
 /* The contraction of the view [v] of [op], in [acc] and [order], [da] and
-   [db] a's and b's dtypes: 0 if an allocation failed. */
-/* A scaled contraction, [s] not NULL, is a float one: it runs on the float
-   kernels. */
+   [db] a's and b's dtypes: 0 if an allocation failed. A scaled
+   contraction, [s] not NULL, is a float one: it runs on the float
+   kernels. a and b are read along their spans [sp] where it is not NULL,
+   which only the paths spanned names are given. */
 static int contract_view(int acc, int order, int da, int db,
                          const nx_contract_view *v, const nx_array *const *op,
-                         const scale *s) {
-  if (s) return contract_with(&nx_cpu_table->gemm[acc], acc, order, v, op, s);
+                         const scale *s, const reads *sp) {
+  const nx_cpu_gemm *g = &nx_cpu_table->gemm[acc];
+  if (s) return contract_with(g, acc, order, v, op, s, NULL);
   const nx_cpu_gemm *quads = quads_for(acc, da, db);
   if (quads) return quads_on(quads, acc, v, op);
   if (part_of(acc) != acc) return complex_on(acc, order, v, op);
-  return nx_cpu_contract_on(acc, order, v, op);
+  return contract_with(g, acc, order, v, op, NULL, sp);
+}
+
+/* Whether contract_view reads a and b along spans: chain order's packs do,
+   where the contraction is real and unscaled and no quads take it. */
+static int spanned(int acc, int order, int da, int db, const scale *s) {
+  return s == NULL && order == NX_CPU_CHAIN && part_of(acc) == acc &&
+         quads_for(acc, da, db) == NULL;
 }
 
 /* Groups of several runs
@@ -2350,12 +2436,17 @@ static int contract_view(int acc, int order, int da, int db,
    heads, a [b; s; h; d] array read as [b; h; s; d], are so a batch of h
    with b outside, read in place.
 
-   The contracted runs instead make one: a and b are copied, every element
-   of them, into buffers where their runs lie in C order, the contracted
-   ones last, and those then coalesce. The copy keeps the products'
-   numbering, so every order gives its bits; a loop over the outer
-   contracted runs, each from the last's sums, would keep chain order's
-   bits alone. */
+   The contracted runs instead make one. Where chain order's packs read a
+   and b (spanned), each packs its blocks run by run (pack_at), and the
+   runs of the rows that a alone makes, or of the columns b alone does,
+   are read so too: a convolution over windows of its padded input is one
+   product of all its windows, as an explicit copy of them would be, and
+   reads the input where it lies. Elsewhere a and b are copied, every
+   element of them, into buffers where their runs lie in C order, the
+   contracted ones last, and those then coalesce. Either keeps the
+   products' numbering, so every order gives its bits; a loop over the
+   outer contracted runs, each from the last's sums, would keep chain
+   order's bits alone. */
 
 typedef struct {
   int acc, order, da, db;
@@ -2367,6 +2458,7 @@ typedef struct {
                                   steps moves on */
   const nx_array *const *op;
   const scale *s;          /* a and b's at the first position, or NULL */
+  const reads *sp;         /* a's and b's spans, or NULL */
   atomic_int failed;
 } outer;
 
@@ -2386,7 +2478,7 @@ static void outer_units(int64_t lo, int64_t hi, int worker, void *ctx) {
         if (s[o].t[q->group[r]]) s[o].t[q->group[r]] += i * q->weight[r];
     }
     if (!contract_view(q->acc, q->order, q->da, q->db, &v, q->op,
-                       q->s ? s : NULL))
+                       q->s ? s : NULL, q->sp))
       atomic_store(&q->failed, 1);
   }
 }
@@ -2475,6 +2567,34 @@ static int merges(nx_contract_runs *r) {
   return 1;
 }
 
+/* Makes [r]'s group [x] one run, which a, where bit A of [read] is set,
+   and b, where bit B is, read along their own runs coalesced into [sp],
+   each other operand along its one; leaves [r] as it was where another
+   makes several. */
+static void spread(nx_contract_runs *r, int x, int read, reads *sp) {
+  int n = r->runs[x];
+  int64_t one[4], whole = 1;
+  spans own[2];
+  for (int o = A; o <= DST; o++) {
+    int64_t ext[NX_MAX_RANK], st[1][NX_MAX_RANK];
+    memcpy(ext, r->extent[x], (size_t)n * sizeof *ext);
+    memcpy(st[0], r->stride[o][x], (size_t)n * sizeof *ext);
+    int k = nx_coalesce_dims(1, n, ext, st);
+    one[o] = k == 1 ? st[0][0] : 0;
+    if (o <= B && (read >> o & 1)) {
+      own[o].n = k;
+      memcpy(own[o].extent, ext, (size_t)k * sizeof *ext);
+      memcpy(own[o].stride, st[0], (size_t)k * sizeof *ext);
+    } else if (k > 1) return;
+  }
+  for (int o = A; o <= B; o++)
+    if (read >> o & 1) sp->of[o][x] = own[o];
+  for (int k = 0; k < n; k++) whole *= r->extent[x][k];
+  r->runs[x] = 1;
+  r->extent[x][0] = whole;
+  for (int o = A; o <= DST; o++) r->stride[o][x][0] = one[o];
+}
+
 /* The contraction of [r]'s groups over [op], as contract_view's, a and b
    scaled by [s] where it is not NULL: 0 if an allocation failed. A scaled
    operand copied (stage_runs) is copied scaled, and read unscaled. */
@@ -2487,7 +2607,15 @@ static int runs_on(int acc, int order, int da, int db, nx_contract_runs *r,
   const nx_array *ops[4] = {op[A], op[B], op[INIT], op[DST]};
   scale kept[2] = {{0}};
   if (s) memcpy(kept, s, sizeof kept);
+  reads sp = {0};
+  int packs = spanned(acc, order, da, db, s);
   int staged = r->runs[CON] > 1 && !merges(r), done = 0;
+  if (packs) {
+    if (staged) spread(r, CON, 1 << A | 1 << B, &sp);
+    if (r->runs[ROW] > 1) spread(r, ROW, 1 << A, &sp);
+    if (r->runs[COL] > 1) spread(r, COL, 1 << B, &sp);
+    staged = 0;
+  }
   if (staged) {
     static const int gs[2][3] = {{BATCH, ROW, CON}, {BATCH, COL, CON}};
     for (int o = A; o <= B; o++) {
@@ -2506,7 +2634,7 @@ static int runs_on(int acc, int order, int da, int db, nx_contract_runs *r,
   }
   int scaled = kept[A].v || kept[B].v;
   outer q = {.acc = acc, .order = order, .da = da, .db = db, .op = ops,
-             .s = scaled ? kept : NULL};
+             .s = scaled ? kept : NULL, .sp = packs ? &sp : NULL};
   atomic_init(&q.failed, 0);
   int64_t units = 1;
   for (int g = BATCH; g <= CON; g++) {
@@ -2971,7 +3099,7 @@ static inline __attribute__((always_inline)) int computed(
     return rounded_on(acc, sum, order, r, op, s);
   }
   if (runs) return runs_on(acc, order, dts[0], dts[1], r, op, s);
-  return contract_view(acc, order, dts[0], dts[1], v, op, s);
+  return contract_view(acc, order, dts[0], dts[1], v, op, s, NULL);
 }
 
 /* The external: groups the view of the pairs [vbatch] and [vcontracting]
