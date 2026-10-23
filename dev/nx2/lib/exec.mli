@@ -88,13 +88,13 @@ val apply3 :
   ('v, 's, 'd) Value.t
 (** [applyN ~by k dt x …] is the one-node map [k] over [x …], of one shape,
     with result dtype [dt] (the second operand's for [apply3]), where no
-    interpretation reaches it. For operands on one device at physically one
-    placement, and constants beside them, read there once [k] takes the
-    operands' dtypes and shapes, it builds no operation: it allocates the
-    result, sharing the first operand's layout when that is C-contiguous at
-    offset 0 and of the result's dtype, and calls the set's kernel, which checks
-    the dtypes and shapes; a decline raises as in {!run}, at that one call.
-    Otherwise, and where the kernel refuses them, it is {!run} of the operation
+    interpretation reaches it. For live arrays at physically one placement
+    whose set has kernels, where [k] takes their dtypes, it builds no
+    operation: it allocates the result, sharing the first operand's layout
+    when that is C-contiguous at offset 0 and of the result's dtype, and calls
+    the kernels' [map] once, with the program {!Nx_kernel.Prog.of_node} makes
+    of [k], made once per kind and dtypes. A decline raises as in {!run}, and
+    a refusal naming [by]. Otherwise it is {!run} of the operation
     ({!Prim.op1} to {!Prim.op3}), whose rule raises on operands it does not
     take; a traced operand raises as in {!run}. *)
 

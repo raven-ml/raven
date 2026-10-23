@@ -19,9 +19,9 @@ module Count = (val Nx.devices ~kernels:(module C) [ m 0 ])
 module Count2 = (val Nx.devices ~kernels:(module C) [ m 0; m 1 ])
 module Dec = (val Nx.devices ~kernels:(module Nx_support.Declining) [ m 1 ])
 
-(* Counting nx.cpu, declining the one-node maps of a copy, [Add] and [Less],
-   every [Logsumexp] and [Arg] reduction, sort and contraction, as a library
-   may, and counting those declines. *)
+(* Counting nx.cpu, declining the one-node maps of a copy, [Neg], [Add],
+   [Less] and [Where], every [Logsumexp] and [Arg] reduction, sort and
+   contraction, as a library may, and counting those declines. *)
 module Refusing = struct
   include C
 
@@ -34,7 +34,10 @@ module Refusing = struct
 
   let map p ~dsts loads =
     match Nx_kernel.Prog.single p with
-    | Some (Op1 (Copy, _, _) | Op2 ((Binary Add | Compare Less), _, _)) ->
+    | Some
+        ( Op1 ((Copy | Unary Neg), _, _)
+        | Op2 ((Binary Add | Compare Less), _, _)
+        | Op3 (Where, _, _, _) ) ->
         decline ()
     | Some _ | None -> C.map p ~dsts loads
 
@@ -163,9 +166,85 @@ let bits =
       Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)
       || (Float.is_nan a && Float.is_nan b))
 
+(* [x]'s bytes in C order, read on the host. *)
+let bytes (type v s d) (x : (v, s, d) Nx.t) =
+  let a = Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)) in
+  let flat = A.move (M.Reshape [| A.Layout.numel (A.layout a) |]) (A.copy a) in
+  A.to_array (Option.get (A.bitcast D.Uint8 (Option.get flat)))
+
+(* The one-node map of [node] over [loads], of [shape], into [dt], run as an
+   operation: the general path, which no fast path takes. *)
+let run_map (type w r) node ins (dt : (w, r) D.t) shape loads =
+  let prog = Nx_kernel.Prog.of_node ~ins node in
+  let op : ((w, r, Nx.host) Nx.t * unit) Nx.Prim.t =
+    Map { layout = A.Layout.contiguous shape; prog; outs = [ dt ]; loads }
+  in
+  fst (Nx.Prim.eval ~by:"test" op)
+
+(* Kinds of each arity over float32 operands [x], [y] and a flag [c]: the
+   bytes of each through its Nx function, which takes the fast path, and
+   through its operation run. *)
+let one_node_maps =
+  let f = D.Any D.Float32 and b = D.Any D.Bool in
+  let maps name arity slim general =
+    (name, arity, fun xyc -> (bytes (slim xyc), bytes (general xyc)))
+  in
+  [
+    maps "neg" 1
+      (fun (x, _, _) -> Nx.neg x)
+      (fun (x, _, _) ->
+        run_map (Op1 (Unary Neg, f, 0)) [| f |] D.Float32 (Nx.shape x)
+          [| Plain x |]);
+    maps "cast to float16" 1
+      (fun (x, _, _) -> Nx.cast D.Float16 x)
+      (fun (x, _, _) ->
+        run_map
+          (Op1 (Cast, D.Any D.Float16, 0))
+          [| f |] D.Float16 (Nx.shape x) [| Plain x |]);
+    maps "add" 2
+      (fun (x, y, _) -> Nx.add x y)
+      (fun (x, y, _) ->
+        run_map (Op2 (Binary Add, 0, 1)) [| f; f |] D.Float32 (Nx.shape x)
+          [| Plain x; Plain y |]);
+    maps "less" 2
+      (fun (x, y, _) -> Nx.less x y)
+      (fun (x, y, _) ->
+        run_map (Op2 (Compare Less, 0, 1)) [| f; f |] D.Bool (Nx.shape x)
+          [| Plain x; Plain y |]);
+    maps "where" 3
+      (fun (x, y, c) -> Nx.where c x y)
+      (fun (x, y, c) ->
+        run_map (Op3 (Where, 0, 1, 2)) [| b; f; f |] D.Float32 (Nx.shape x)
+          [| Plain c; Plain x; Plain y |]);
+    maps "fma" 3
+      (fun (x, y, _) -> Nx.fma x y x)
+      (fun (x, y, _) ->
+        run_map (Op3 (Fma, 0, 1, 2)) [| f; f; f |] D.Float32 (Nx.shape x)
+          [| Plain x; Plain y; Plain x |]);
+  ]
+
+let one_node_case =
+  Gen.pair
+    (Gen.of_list
+       ~pp:(fun ppf (name, _, _) -> Format.pp_print_string ppf name)
+       one_node_maps)
+    case
+
 let laws =
   group "laws"
     [
+      prop "a one-node map gives the bits of its operation run" one_node_case
+        (fun ((_, arity, maps), (s, la, lb, xs, ys)) ->
+          cover "one operand" (arity = 1);
+          cover "two operands" (arity = 2);
+          cover "three operands" (arity = 3);
+          cover "no element" (Array.exists (( = ) 0) s);
+          cover "a strided operand" (la = Transposed || lb = Transposed);
+          let x = on_host la D.Float32 s (Array.map f32 xs)
+          and y = on_host lb D.Float32 s (Array.map f32 ys) in
+          let c = on_host Plain D.Bool s (Array.map (fun x -> x > 0.) xs) in
+          let fast, general = maps (x, y, c) in
+          equal (array int) general fast);
       prop "add is float32 addition, each element rounded once" case
         (fun (s, la, lb, xs, ys) ->
           cover "no element" (Array.exists (( = ) 0) s);
@@ -932,8 +1011,12 @@ let kernels =
             refused_once by kind dts f;
             equal ~msg:(kind ^ ": kernel calls") int 0 (C.calls ())
           in
+          declined "Nx.neg" "Neg" "float32, float32" (fun () -> Nx.neg x);
           declined "Nx.add" "Add" "float32, float32, float32" (fun () ->
               Nx.add x x);
+          let flag = Nx.equal x x in
+          declined "Nx.where" "Where" "float32, bool, float32, float32"
+            (fun () -> Nx.where flag x x);
           declined "Nx.sort" "Sort" "float32" (fun () -> fst (Nx.sort x));
           declined "Nx.matmul" "Contract" "float32, float32" (fun () ->
               Nx.matmul x x));
@@ -1313,11 +1396,11 @@ let allocation =
         test_sub_byte_tail;
       test "an add of one-element host values allocates its budget" (fun () ->
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
-          at_most (float 0.5) ~than:78. (words (fun () -> Nx.add a a)));
+          at_most (float 0.5) ~than:51. (words (fun () -> Nx.add a a)));
       test "a copy of a one-element host value allocates its budget"
         (fun () ->
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
-          at_most (float 0.5) ~than:155. (words (fun () -> Nx.copy a)));
+          at_most (float 0.5) ~than:130. (words (fun () -> Nx.copy a)));
       test "a matmul of 4x4 float32 host values allocates its budget"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
