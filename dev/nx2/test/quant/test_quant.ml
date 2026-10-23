@@ -1192,6 +1192,16 @@ let expert_products =
         experts_law;
     ]
 
+(* Four experts of [format], twelve positions' ids in range and past both
+   bounds, and their rows. *)
+let experts_of format =
+  let w = random_weight ~format [| 4; 3; 256 |] in
+  let ids =
+    Nx.create Nx.int64 [| 12 |]
+      (Array.init 12 (fun i -> Int64.of_int ((i * 5 mod 6) - 1)))
+  in
+  (w, ids, random_floats [| 12; 256 |])
+
 let placements =
   group "placement"
     [
@@ -1206,17 +1216,21 @@ let placements =
       cases ~name:format_name
         "experts split over four devices give the host's routed product" formats
         (fun format ->
-          let w = random_weight ~format [| 4; 3; 256 |] in
-          let ids =
-            Nx.create Nx.int64 [| 12 |]
-              (Array.init 12 (fun i -> Int64.of_int ((i * 5 mod 6) - 1)))
-          in
-          let x = random_floats [| 12; 256 |] in
+          let w, ids, x = experts_of format in
           let on t = Nx.place Mem.on t in
+          let w' = Nx_quant.place (Mem.split ~axis:0) w in
           equal (array int64)
-            (bits (routed w ids x))
-            (bits
-               (routed (Nx_quant.place (Mem.split ~axis:0) w) (on ids) (on x))));
+            (product_bits (routed w ids x))
+            (product_bits (Nx_quant.apply_experts ~ids:(on ids) w' (on x))));
+      cases ~name:format_name
+        "experts whole on each device give the host's bits" formats
+        (fun format ->
+          let w, ids, x = experts_of format in
+          let on t = Nx.place Mem.on t in
+          let w' = Nx_quant.place Mem.on w in
+          equal (array int64)
+            (product_bits (Nx_quant.apply_experts ~ids w x))
+            (product_bits (Nx_quant.apply_experts ~ids:(on ids) w' (on x))));
     ]
 
 (* Structure *)
