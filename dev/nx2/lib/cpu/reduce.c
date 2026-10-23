@@ -59,10 +59,11 @@
 
    Stage. A monoid's terms reduce in their carrier (cpu.h): a narrow
    float's in float32, int4's and uint4's in int8 and uint8, bit's in bool.
-   A narrow operand's terms are converted into it as the paths read them, a
-   block of one output's or 16 terms of a row's outputs at a time, each a
-   few KiB, so that they stay in L1; a network scan's operand is converted
-   whole first. Arg, Logsumexp and Moments reduce in the carrier too.
+   A narrow operand's terms are converted into it as the paths read them,
+   at most 32 KiB at a time, which fits an L1 data cache of 32 KiB or more:
+   as many of one output's full blocks as that holds, a block of it, or 16
+   terms of a row's outputs; a network scan's operand is converted whole
+   first. Arg, Logsumexp and Moments reduce in the carrier too.
    Results go into the destination where it is of the carrier, else into a
    carrier copy of it, rounded into it once at the end, as a cast does. A
    NaN keeps its sign and payload through the carrier, quieted
@@ -2225,9 +2226,10 @@ typedef struct {
   /* A block's lanes (block, staged_block), or a few-term reduction's
      (few). */
   _Alignas(64) uint8_t lanes[NX_CPU_FEW_BYTES];
-  /* Terms in the carrier: a block's (states, staged_block), a unit's
-     (few, center_units), a sum of products' factors (products), or a
-     piece's (run_states, quad). */
+  /* Terms in the carrier, 32 KiB: as many of one output's full blocks as
+     it holds (blocks), a block's or several outputs' blocks (states,
+     staged_block), a unit's (few, center_units), a sum of products'
+     factors (products), or a piece's (run_states, quad). */
   _Alignas(64) uint8_t terms[2 * BLOCK * WIDEST];
   /* Arg's extremes in the carrier, before their terms (run_states), or
      one output's terms (nan_term), which no Arg reads. */
