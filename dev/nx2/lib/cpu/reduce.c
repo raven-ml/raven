@@ -2226,10 +2226,11 @@ typedef struct {
      (few). */
   _Alignas(64) uint8_t lanes[NX_CPU_FEW_BYTES];
   /* Terms in the carrier: a block's (states, staged_block), a unit's
-     (few, center_units), a sum of products' factors (products), a piece's
-     (run_states, quad), or one output's (nan_term). */
+     (few, center_units), a sum of products' factors (products), or a
+     piece's (run_states, quad). */
   _Alignas(64) uint8_t terms[2 * BLOCK * WIDEST];
-  /* Arg's extremes in the carrier, before their terms (run_states). */
+  /* Arg's extremes in the carrier, before their terms (run_states), or
+     one output's terms (nan_term), which no Arg reads. */
   _Alignas(64) uint8_t extremes[LANES * ROW];
   /* A program's terms in their held dtype (eval_in). */
   _Alignas(64) uint8_t held[2 * LANES * ROW];
@@ -2591,7 +2592,7 @@ static int64_t nan_term(const plan *q, work *wk, int64_t p, int k,
     }
     return q->terms;
   }
-  uint8_t *buf = wk->terms;
+  uint8_t *buf = wk->extremes;
   int64_t most = LANES * ROW / q->w;
   for (int64_t t = 0; t < q->terms; t += most) {
     int64_t m = q->terms - t < most ? q->terms - t : most;
@@ -2991,8 +2992,6 @@ static void few(const plan *q, work *wk, const unit *x, staged *kept) {
   int64_t n = q->terms;
   if (q->factor[0] >= 0) {
     if (!products(q, wk, x, kept)) return;
-    /* first_nan stages its terms over factor 0's. */
-    kept->at[0] = -1;
   } else if (!sourced(q)) {
     q->f->few(at(q, x->p), q->off, (int)n, x->s, x->W, x->s2, x->H, q->id,
               q->dst->base + x->d * q->w, x->sd, x->sd2, wk->lanes);
