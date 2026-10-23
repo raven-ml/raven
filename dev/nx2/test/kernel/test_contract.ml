@@ -455,9 +455,9 @@ let case_of ?same ~acc ~out ~dts () =
    their own are few, each order over several blocks of products, no
    product, a batch, and the few rows' case stored transposed; an integer's
    also the chain path over several blocks of the contraction. Every
-   kind's contracted axes stored apart, and the floats' attention heads,
-   whose groups make several runs; every kind's a of a dtype it does not
-   hold. *)
+   kind's contracted axes stored apart and b's columns, and the floats'
+   attention heads, whose groups make several runs; every kind's a of a
+   dtype it does not hold. *)
 let regimes acc =
   let plain r =
     let axes = Array.init r Fun.id in
@@ -506,6 +506,17 @@ let regimes acc =
          [| 0; 1; 2 |]);
         (lane, false, ([||], [| 3 |], [| 4 |], [| 5; 6 |]), [| 0; 2; 1 |],
          [| 0; 1; 2 |]);
+      ]
+  in
+  (* b's two axes of columns stored in the other order, in either order:
+     several runs that b alone makes. *)
+  let columns =
+    List.map stored
+      [
+        (chain, true, ([||], [| 3 |], [| 4; 5 |], [| 6 |]), [| 0; 1 |],
+         [| 0; 2; 1 |]);
+        (lane, false, ([||], [| 3 |], [| 4; 5 |], [| 6 |]), [| 0; 1 |],
+         [| 0; 2; 1 |]);
       ]
   in
   (* Attention's scores, q and k of [b; s; h; d] read as [b; h; s; d]: a
@@ -558,8 +569,8 @@ let regimes acc =
   (* Many rows by few columns, b's windows streamed; few rows by more
      columns, a's packed whole; dilated taps; the chain path over two
      blocks of the contraction (float32's alone, for its cost); lane
-     order, in one pass and in two over 9 rows of several runs; and a of a
-     dtype acc does not hold. *)
+     order, in one pass and in two over 9 rows of several runs; a of a
+     dtype acc does not hold; and a complex one's a real. *)
   let convs =
     [
       conv chain ~taps_first:true (2, 10, 10, 3, 8) (3, 3) (1, 1);
@@ -574,6 +585,11 @@ let regimes acc =
             conv chain ~taps_first:true (1, 13, 20, 29, 257) (3, 3) (1, 1);
             conv chain ~da:(D.Any D.Bfloat16) ~taps_first:false
               (2, 6, 6, 3, 16) (3, 3) (1, 1);
+          ]
+      | D.Any (D.Complex64 | D.Complex128) ->
+          [
+            conv chain ~da:(part_of acc) ~taps_first:true (1, 4, 4, 3, 8)
+              (3, 3) (1, 1);
           ]
       | _ -> [])
   in
@@ -603,13 +619,13 @@ let regimes acc =
   in
   let integer = (chain, true, ([||], [| 130 |], [| 130 |], [| 520 |])) :: complex in
   if is_complex acc then
-    (apart few :: unheld :: split) @ convs @ List.map case complex
+    (apart few :: unheld :: split) @ columns @ convs @ List.map case complex
   else if is_integer acc then
-    (apart few :: unheld :: split) @ convs @ List.map case integer
+    (apart few :: unheld :: split) @ columns @ convs @ List.map case integer
   else
     [ apart few; heads; unheld;
       a_apart (chain, false, ([| 2 |], [| 20 |], [| 20 |], [| 500 |])) ]
-    @ split @ convs @ groups
+    @ split @ columns @ convs @ groups
     @ List.map case
       ([
          (lane, true, ([||], [| 0 |], [| 3 |], [| 2 |]));
@@ -1125,6 +1141,13 @@ let covers c =
     (windowed && rk > 1 && c.order = Lane);
   cover "windows with rows of several runs, in lane order"
     (windowed && rr > 1 && c.order = Lane);
+  let complex = is_complex c.acc in
+  let real (A.Any x) = not (is_complex (D.Any (A.dtype x))) in
+  cover "complex over rows of several runs" (complex && rr > 1);
+  cover "complex over columns of several runs" (complex && rc > 1);
+  cover "complex over contracted axes of several runs" (complex && rk > 1);
+  cover "complex windows of several contracted runs, a real"
+    (complex && windowed && rk > 1 && real c.a);
   (* Lane order's rows are the fewer of rows and columns, a pass at most 8
      of them. *)
   cover "lane order in passes over rows of several runs"
