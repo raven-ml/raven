@@ -651,9 +651,10 @@ let reduce name (r : Nx_kernel.reduction) ~axes a (module K : Nx_kernel.S) =
         | Moments -> [| like (); like () |]
         | Arg _ -> [| like (); A.Any (A.create Rig.host D.Int64 y) |]
       in
-      (identity dt, s, [| (r, 0) |], [| Nx_kernel.Plain x |], dsts))
-    (fun (p, shape, rs, loads, dsts) ->
-      ok (K.reduce p ~shape ~axes:(Iarray.of_array axes) rs ~dsts loads))
+      (identity dt, s, Iarray.of_array axes, [| (r, 0) |],
+       [| Nx_kernel.Plain x |], dsts))
+    (fun (p, shape, axes, rs, loads, dsts) ->
+      ok (K.reduce p ~shape ~axes rs ~dsts loads))
 
 (* A max-pool's reduction: 3 × 3 windows at stride 2 over [8; 56; 56; 64]
    float32 channels last, through a padded load of one -∞ each side of the
@@ -670,11 +671,14 @@ let padded_max name (module K : Nx_kernel.S) =
       in
       let load = Nx_kernel.Padded { x; fill = Float.neg_infinity; pad } in
       let dst = A.Any (A.create Rig.host f32 [| 8; 28; 28; 64 |]) in
-      (identity (D.Any f32), [| (Nx_kernel.Monoid Max, 0) |], [| load |], [| dst |]))
-    (fun (p, rs, loads, dsts) ->
-      ok
-        (K.reduce p ~shape:[| 8; 28; 28; 64; 3; 3 |]
-           ~axes:(Iarray.of_list [ 4; 5 ]) rs ~dsts loads))
+      ( identity (D.Any f32),
+        [| 8; 28; 28; 64; 3; 3 |],
+        Iarray.of_list [ 4; 5 ],
+        [| (Nx_kernel.Monoid Max, 0) |],
+        [| load |],
+        [| dst |] ))
+    (fun (p, shape, axes, rs, loads, dsts) ->
+      ok (K.reduce p ~shape ~axes rs ~dsts loads))
 
 let scan name r ~axis a (module K : Nx_kernel.S) =
   row name
