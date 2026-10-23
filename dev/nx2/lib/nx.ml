@@ -3663,14 +3663,64 @@ let no_term ~by x w shape =
   | Some _ -> beside ~by x zeros
   | None -> beside ~by w zeros
 
+(* [x], [[n; s…; c…]], padded along its [k] axes [s…] by [lo] and [hi]
+   zeros, a negative width cutting, with [interior] zeros between its
+   elements: a copy, or [x] itself where nothing pads. Along each axis it
+   keeps the elements whose padded positions fall in [0, lo + e + hi), [e]
+   the axis spread by its interior, which [hi] keeps non-negative. *)
+let padded_by ~by ~lo ~hi ~interior x =
+  let k = Array.length lo and s = shape x in
+  let none a = Array.for_all (( = ) 0) a in
+  if none lo && none hi && none interior then x
+  else
+    let spread i =
+      let d = s.(1 + i) in
+      if d = 0 then 0 else d + (interior.(i) * (d - 1))
+    in
+    let size i = lo.(i) + spread i + hi.(i) in
+    (* The first element axis [i] keeps and their count. *)
+    let kept i =
+      let st = interior.(i) + 1 and before = -lo.(i) in
+      let first = if before <= 0 then 0 else (before + st - 1) / st in
+      let room = size i - 1 - lo.(i) in
+      let last =
+        if room < 0 then -1 else Stdlib.min (s.(1 + i) - 1) (room / st)
+      in
+      (first, Stdlib.max 0 (last - first + 1))
+    in
+    let spatial a = a >= 1 && a <= k in
+    let out = Array.mapi (fun a d -> if spatial a then size (a - 1) else d) s in
+    let ks = Array.init k kept in
+    let zero = D.zero (dtype x) in
+    if Array.exists (fun (_, n) -> n = 0) ks then fill ~by (dtype x) out zero
+    else
+      let part a d : Nx_array.Move.range =
+        if not (spatial a) then whole d
+        else { start = fst ks.(a - 1); count = snd ks.(a - 1); step = 1 }
+      in
+      let region =
+        Iarray.init (Array.length s) (fun a : Nx_array.Move.range ->
+            if not (spatial a) then whole s.(a)
+            else
+              let first, count = ks.(a - 1) and st = interior.(a - 1) + 1 in
+              { start = lo.(a - 1) + (first * st); count; step = st })
+      in
+      let kept = sliced ~by (Array.mapi part s) x in
+      assemble ~by (dtype x) out zero [ (region, kept) ]
+
 (* The windows of each output channel over [x], [[n; s…; c]], for [w] laid out
-   as [[g; oc; ic; k…]] ([g] groups of [oc] output and [ic] input channels):
-   one reduction over the loop [[n; t…; g; oc; ic; k…]] that reads [x], its
-   channels split into groups and broadcast over [oc], through a padded load
-   whose windows append the taps, and sums the taps and [ic]. [interior]
-   zeros go between [x]'s elements. A padding that cuts more than an axis
-   holds leaves it empty, with no window. A kernel axis of no tap sums no
-   term. *)
+   as [[g; oc; ic; k…]] ([g] groups of [oc] output and [ic] input channels),
+   [interior] zeros going between [x]'s elements. A padding that cuts more
+   than an axis holds leaves it empty, with no window. A kernel axis of no
+   tap sums no term.
+
+   With other than one input channel a group, it is one contraction of the
+   windows of [x] padded, a copy, as a view [[n; t…; g; k…; ic]], with [w]
+   as [[g; oc; k…; ic]], batched over the groups, summing the taps then the
+   channels, as the kernel sums its pairs. With one, it is one reduction over
+   the loop [[n; t…; g; oc; ic; k…]] that reads [x], its channels split into
+   groups and broadcast over [oc], through a padded load whose windows
+   append the taps, and sums [ic] and the taps. *)
 let windows_of ~by ~stride ~lo ~hi ~interior ~dilation x w =
   let dt = dtype x in
   let r = ndim x and kw = shape w in
@@ -3694,52 +3744,89 @@ let windows_of ~by ~stride ~lo ~hi ~interior ~dilation x w =
     let hi =
       Array.init k (fun i -> Stdlib.max hi.(i) (-(extent i + lo.(i))))
     in
-    let grouped = Array.concat [ [| n |]; spatial; [| g; 1; ic |] ] in
-    let x' = reshaped ~by grouped x in
-    let wide = Array.concat [ [| n |]; spatial; [| g; oc; ic |] ] in
-    let x' = broadcast ~by wide x' in
-    (* [a.(i)] along spatial axis [i], zero along the others of [x']. *)
-    let spatially a =
-      Iarray.init (k + 4) (fun i -> if i >= 1 && i <= k then a.(i - 1) else 0)
-    in
-    let windows =
+    let windows axis =
       Iarray.init k (fun i : Nx_array.Move.window ->
           {
-            axis = 1 + i;
+            axis = axis + i;
             size = taps.(i);
             step = stride.(i);
             dilation = dilation.(i);
           })
     in
-    let pad : Nx_kernel.pad =
-      {
-        lo = spatially lo;
-        hi = spatially hi;
-        interior = spatially interior;
-        windows;
-      }
-    in
-    let loop = Array.concat [ [| n |]; counts; [| g; oc; ic |]; taps ] in
     let (D.Any acc) = summed dt in
-    let term = E.(at acc (E.input 0 dt) * at acc (E.input 1 dt)) in
-    let ins = Iarray.of_list [ D.Any dt; D.Any dt ] in
-    let prog = P.of_exprs ~ins [| E.any term |] in
-    let y, () =
-      Eval.eval ~by
-        (Value.Reduce
-           {
-             layout = contiguous ~by loop;
-             axes = Iarray.init (k + 1) (fun i -> k + 3 + i);
-             prog;
-             reductions = Value.[ Monoid (Sum, 0, dt) ];
-             loads =
-               [|
-                 Padded { x = x'; fill = D.zero dt; pad };
-                 Plain (broadcast ~by loop w);
-               |];
-           })
-    in
-    reshaped ~by out y
+    if ic <> 1 then
+      let grouped = Array.concat [ [| n |]; spatial; [| g; ic |] ] in
+      let x' = reshaped ~by grouped x in
+      let xp = padded_by ~by ~lo ~hi ~interior x' in
+      (* [[n; t…; g; ic; k…]] to [[n; t…; g; k…; ic]]. *)
+      let v = move ~by (Window (windows 1)) xp in
+      let a =
+        permute ~by
+          (Array.concat
+             [
+               Array.init (k + 2) Fun.id;
+               Array.init k (fun i -> k + 3 + i);
+               [| k + 2 |];
+             ])
+          v
+      in
+      (* [[g; oc; ic; k…]] to [[g; oc; k…; ic]]. *)
+      let b =
+        permute ~by
+          (Array.concat [ [| 0; 1 |]; Array.init k (fun i -> 3 + i); [| 2 |] ])
+          w
+      in
+      let contracting =
+        Iarray.init (k + 1) (fun i -> (k + 2 + i, 2 + i))
+      in
+      let y =
+        Eval.contract ~by ~batch:[| (k + 1, 0) |] ~contracting
+          ~acc:(D.Any acc) dt a b None
+      in
+      (* [[g; n; t…; oc]] to [[n; t…; g; oc]]. *)
+      let y =
+        permute ~by
+          (Array.concat [ Array.init (k + 1) (fun i -> 1 + i); [| 0; k + 2 |] ])
+          y
+      in
+      reshaped ~by out y
+    else
+      let grouped = Array.concat [ [| n |]; spatial; [| g; 1; ic |] ] in
+      let x' = reshaped ~by grouped x in
+      let wide = Array.concat [ [| n |]; spatial; [| g; oc; ic |] ] in
+      let x' = broadcast ~by wide x' in
+      (* [a.(i)] along spatial axis [i], zero along the others of [x']. *)
+      let spatially a =
+        Iarray.init (k + 4) (fun i -> if i >= 1 && i <= k then a.(i - 1) else 0)
+      in
+      let pad : Nx_kernel.pad =
+        {
+          lo = spatially lo;
+          hi = spatially hi;
+          interior = spatially interior;
+          windows = windows 1;
+        }
+      in
+      let loop = Array.concat [ [| n |]; counts; [| g; oc; ic |]; taps ] in
+      let term = E.(at acc (E.input 0 dt) * at acc (E.input 1 dt)) in
+      let ins = Iarray.of_list [ D.Any dt; D.Any dt ] in
+      let prog = P.of_exprs ~ins [| E.any term |] in
+      let y, () =
+        Eval.eval ~by
+          (Value.Reduce
+             {
+               layout = contiguous ~by loop;
+               axes = Iarray.init (k + 1) (fun i -> k + 3 + i);
+               prog;
+               reductions = Value.[ Monoid (Sum, 0, dt) ];
+               loads =
+                 [|
+                   Padded { x = x'; fill = D.zero dt; pad };
+                   Plain (broadcast ~by loop w);
+                 |];
+             })
+      in
+      reshaped ~by out y
 
 (* For each spatial axis, the run of values that [padding] keeps: its first
    value and its count, as the interface states them. *)

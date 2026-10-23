@@ -1838,9 +1838,18 @@ val conv :
     [g · o / groups] to [(g + 1) · o / groups - 1] reading input run [g]
     alone.
 
-    It is one reduction over the padded windows of [x], which are never
-    stored, accumulated as {!contract} does by default and rounded once:
-    the float formats narrower than 32 bits sum at [float32]. Integers wrap.
+    Each output sums its [K] products, one per tap and channel of its group,
+    from [+0], in the accumulator {!contract} takes by default, and rounds
+    once: the float formats narrower than 32 bits sum at [float32]. Integers
+    wrap. Before rounding it is within [γ(K + 1, 2u) Σ|x||w|] of the exact
+    sum, [γ] and [u] as {!contract} states. Its order of summation depends
+    on the shapes alone:
+    - With other than one input channel a group, it is one {!contract} of
+      [x]'s windows with [w], batched over the groups, summing the taps then
+      the channels as {!contract} sums: the padded [x] is a copy, read once,
+      and its windows a view of it.
+    - With one, as a depthwise convolution has, it is one reduction over
+      [x]'s padded windows, never stored, summing the taps as {!sum} does.
 
     Raises [Invalid_argument] if [x] has fewer than three axes; [w] has
     another rank; [stride], [padding] or [dilation] do not have [K] entries;
@@ -1861,9 +1870,12 @@ val conv_transpose :
     arguments, has [x]'s shape [[n; t…; o]], it is the [[n; s…; c]] value
     with [sum (mul (conv z w) x) = sum (mul z (conv_transpose x w))] for
     every such [z]: [s = (t - 1) stride + e - lo - hi], [e] as {!conv}
-    states, or [0] where that is negative or [t = 0]. It is one reduction over [x] with
-    [stride - 1] zeros between its elements, windowed by [w] reversed along
-    its spatial axes, never stored.
+    states, or [0] where that is negative or [t = 0]. It is {!conv} at stride
+    one of [x] with [stride - 1] zeros between its elements, by [w] reversed
+    along its spatial axes and with its channels exchanged, and sums as
+    {!conv} states with [o / groups] channels a group: one {!contract} over
+    a copy of [x] spread and padded, or, with one, one reduction that never
+    stores it.
 
     Raises [Invalid_argument] as {!conv}, reading [o] from [x]'s last axis, or
     if no input has a [conv] of [x]'s shape. *)
