@@ -4418,13 +4418,13 @@ module Prim : sig
       named by the functions it calls, and what it raises reaches the caller
       as raised.
 
-      A function the user calls is the one consumer of the donated handles
-      among its operands ({!Nx.donate}): [rule] receives the movements and
-      operations it makes over the handles' arrays, and a donor beside its
-      handle as a live value, and the donors die, naming the function, when
-      it returns. Refused, by its own checks or by [rule], it kills no donor,
-      as when no interpretation receives it. A movement the user calls is
-      such a function: its result holds no handle to pass on.
+      Every function the user calls, a movement too, is the one consumer of
+      the donated handles among its operands ({!Nx.donate}): [rule] receives
+      the movements and operations it makes over the handles' arrays, and a
+      donor beside its handle as a live value, and the donors die, naming
+      the function, when it returns; its result holds no handle to pass on.
+      Refused, by its own checks or by [rule] at any operation it makes, it
+      kills no donor, as when no interpretation receives it.
 
       With [Adopting p], [i] receives the operations on [p]'s values as on its
       own, without asking whether [p] is around them: [p] is around [i]'s

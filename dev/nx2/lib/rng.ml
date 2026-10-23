@@ -253,8 +253,7 @@ let blocks ~by n k =
 
 let split_batch ~n k = blocks ~by:"Nx.Rng.split_batch" n k
 
-let split ?(n = 2) k =
-  let by = "Nx.Rng.split" in
+let rows ~by n k =
   let all = blocks ~by n k in
   Array.init n (fun i ->
       let row =
@@ -265,6 +264,13 @@ let split ?(n = 2) k =
           |]
       in
       reshape ~by [| 2 |] (move ~by row all))
+
+(* The rows move the keys' map's result: inside an [Extent] the call reads
+   [k] once ({!Eval.call}). *)
+let split ?(n = 2) k =
+  let by = "Nx.Rng.split" in
+  if not (Eval.inside ()) then rows ~by n k
+  else Eval.call ~by [ Value.Any k ] @@ fun read -> rows ~by n (read k)
 
 (* The counter [data] folds in: the words [(data asr 32, data)]. *)
 let fold_in_by ~by (k : 'd key) data : 'd key =

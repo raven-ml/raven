@@ -77,7 +77,8 @@ val call :
   'a
 (** [call ~by xs k] is [k read], the call [by] the one consumer of the
     donated handles among its operands [xs], though [k] moves them before
-    the operation that reads them. Inside an [Extent] ({!inside}), whose rule
+    the operation that reads them, moves that operation's result, or only
+    moves them. Inside an [Extent] ({!inside}), whose rule
     consumes the handles of each operation it receives, a movement's too, it
     is {!Donate.resolve}: a refusal by [k]'s checks or by the rule kills no
     donor. Elsewhere [read] is the identity: a movement passes a handle on

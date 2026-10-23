@@ -772,7 +772,10 @@ let broadcast_arrays xs =
   let by = "Nx.broadcast_arrays" in
   let s = broadcast_all ~by (List.map shape xs) in
   List.iteri (Prim.alive ~by) xs;
-  List.map (broadcast ~by s) xs
+  if not (Eval.inside ()) then List.map (broadcast ~by s) xs
+  else
+    Eval.call ~by (List.map (fun x -> Value.Any x) xs) @@ fun read ->
+    List.map (fun x -> broadcast ~by s (read x)) xs
 
 let squeeze ?axes:l x =
   let by = "Nx.squeeze" in
@@ -1047,8 +1050,7 @@ let stretch ~by ~outer n x =
     reshaped ~by merged
       (move ~by (Broadcast (Iarray.of_array wide)) (reshaped ~by unit x))
 
-let tile reps x =
-  let by = "Nx.tile" in
+let tiled ~by reps x =
   let s = shape x in
   let r = Array.length reps and k = Array.length s in
   if r < k then
@@ -1060,8 +1062,14 @@ let tile reps x =
   let x = if r = k then x else reshaped ~by lead x in
   stretch ~by ~outer:true reps x
 
-let repeat ?axis:a n x =
-  let by = "Nx.repeat" in
+(* A movement of several steps reads its operand once inside an [Extent]
+   ({!Eval.call}). *)
+let tile reps x =
+  let by = "Nx.tile" in
+  if not (Eval.inside ()) then tiled ~by reps x
+  else Eval.call ~by [ Value.Any x ] @@ fun read -> tiled ~by reps (read x)
+
+let repeated ~by a n x =
   if n < 0 then invalid_argf "%s: count %d is negative" by n;
   let x, a =
     match a with
@@ -1071,6 +1079,12 @@ let repeat ?axis:a n x =
   stretch ~by ~outer:false
     (Array.init (ndim x) (fun i -> if i = a then n else 1))
     x
+
+let repeat ?axis n x =
+  let by = "Nx.repeat" in
+  if not (Eval.inside ()) then repeated ~by axis n x
+  else
+    Eval.call ~by [ Value.Any x ] @@ fun read -> repeated ~by axis n (read x)
 
 (* Axis patterns *)
 
@@ -1083,7 +1097,10 @@ end
 
 let rearrange_by ~by ?(sizes = []) p x =
   let moves = Pattern.moves ~by ~sizes p (D.name (dtype x), shape x) in
-  List.fold_left (fun x mv -> move ~by mv x) x moves
+  if not (Eval.inside ()) then List.fold_left (fun x mv -> move ~by mv x) x moves
+  else
+    Eval.call ~by [ Value.Any x ] @@ fun read ->
+    List.fold_left (fun x mv -> move ~by mv x) (read x) moves
 
 let rearrange ?sizes p x = rearrange_by ~by:"Nx.rearrange" ?sizes p x
 
@@ -1378,9 +1395,11 @@ let get p x =
       ranges.(a) <- { start = i'; count = 1; step = 1 })
     p;
   let k = List.length p in
-  move ~by
-    (Reshape (Iarray.of_array (Array.sub s k (Array.length s - k))))
-    (sliced ~by ranges x)
+  let rest = Iarray.of_array (Array.sub s k (Array.length s - k)) in
+  if not (Eval.inside ()) then move ~by (Reshape rest) (sliced ~by ranges x)
+  else
+    Eval.call ~by [ Value.Any x ] @@ fun read ->
+    move ~by (Reshape rest) (sliced ~by ranges (read x))
 
 let take_by ~by ?axis:along p x =
   Eval.call ~by [ Value.Any p; Value.Any x ] @@ fun read ->
@@ -1738,10 +1757,16 @@ let kept ~by ~keepdims s axes y =
     let unit a n = if Iarray.mem a axes then 1 else n in
     reshaped ~by (Array.mapi unit s) y
 
+(* A reduction that keeps its axes moves its result: inside an [Extent] it
+   reads its operand once ({!Eval.call}). *)
 let reduction ~by m ?axes ?(keepdims = false) x =
   let s = shape x in
   let axes = reduced_axes ~by x axes in
-  kept ~by ~keepdims s axes (reduce ~by m (dtype x) axes x)
+  if not (keepdims && Eval.inside ()) then
+    kept ~by ~keepdims s axes (reduce ~by m (dtype x) axes x)
+  else
+    Eval.call ~by [ Value.Any x ] @@ fun read ->
+    kept ~by ~keepdims s axes (reduce ~by m (dtype x) axes (read x))
 
 let sum ?axes ?keepdims x = reduction ~by:"Nx.sum" Sum ?axes ?keepdims x
 let prod ?axes ?keepdims x = reduction ~by:"Nx.prod" Prod ?axes ?keepdims x
@@ -2168,42 +2193,53 @@ let reduced_count s axes = Iarray.fold_left (fun n a -> n * s.(a)) 1 axes
    as they are, a plain loop. An extreme of no term has no kernel: there,
    whether the count of [true]s is not zero, [Max]'s [false], or whether the
    count of [false]s is zero, [Min]'s [true]. *)
-let truth (type v s d) ~by m ?axes ?(keepdims = false) (x : (v, s, d) t) =
+let truths (type v s d) ~by m s axes (x : (v, s, d) t) =
+  if reduced_count s axes > 0 then
+    match D.equal_witness (dtype x) D.Bool with
+    | Some Type.Equal -> reduce ~by m D.Bool axes x
+    | None ->
+        fst
+          (reduce_by ~by s axes [ Any x ]
+             Value.[ Monoid (m, 0, D.Bool) ]
+             (E.cast D.Bool (operand 0 x)))
+  else
+    let n, () =
+      reduce_by ~by s axes [ Any x ]
+        Value.[ Monoid (Sum, 0, D.Int64) ]
+        E.(cast D.Int64 (cast D.Bool (operand 0 x)))
+    in
+    match (m : Nx_kernel.monoid) with
+    | Max -> compared ~by (Compare Not_equal) n 0L
+    | _ -> compared ~by (Compare Equal) n 0L
+
+let truth ~by m ?axes ?(keepdims = false) x =
   let s = shape x in
   let axes = reduced_axes ~by x axes in
-  let y =
-    if reduced_count s axes > 0 then
-      match D.equal_witness (dtype x) D.Bool with
-      | Some Type.Equal -> reduce ~by m D.Bool axes x
-      | None ->
-          fst
-            (reduce_by ~by s axes [ Any x ]
-               Value.[ Monoid (m, 0, D.Bool) ]
-               (E.cast D.Bool (operand 0 x)))
-    else
-      let n, () =
-        reduce_by ~by s axes [ Any x ]
-          Value.[ Monoid (Sum, 0, D.Int64) ]
-          E.(cast D.Int64 (cast D.Bool (operand 0 x)))
-      in
-      match (m : Nx_kernel.monoid) with
-      | Max -> compared ~by (Compare Not_equal) n 0L
-      | _ -> compared ~by (Compare Equal) n 0L
-  in
-  kept ~by ~keepdims s axes y
+  if not (keepdims && Eval.inside ()) then
+    kept ~by ~keepdims s axes (truths ~by m s axes x)
+  else
+    Eval.call ~by [ Value.Any x ] @@ fun read ->
+    kept ~by ~keepdims s axes (truths ~by m s axes (read x))
 
 let all ?axes ?keepdims x = truth ~by:"Nx.all" Min ?axes ?keepdims x
 let any ?axes ?keepdims x = truth ~by:"Nx.any" Max ?axes ?keepdims x
 
-let count_by ~by ?axes ?(keepdims = false) m =
-  let s = shape m in
-  let axes = reduced_axes ~by m axes in
+let counted ~by s axes m =
   let y, () =
     reduce_by ~by s axes [ Any m ]
       Value.[ Monoid (Sum, 0, D.Int64) ]
       (E.cast D.Int64 (operand 0 m))
   in
-  kept ~by ~keepdims s axes y
+  y
+
+let count_by ~by ?axes ?(keepdims = false) m =
+  let s = shape m in
+  let axes = reduced_axes ~by m axes in
+  if not (keepdims && Eval.inside ()) then
+    kept ~by ~keepdims s axes (counted ~by s axes m)
+  else
+    Eval.call ~by [ Value.Any m ] @@ fun read ->
+    kept ~by ~keepdims s axes (counted ~by s axes (read m))
 
 let count ?axes ?keepdims m = count_by ~by:"Nx.count" ?axes ?keepdims m
 
@@ -2355,8 +2391,14 @@ let logsumexp ?axes ?(keepdims = false) x =
   let by = "Nx.logsumexp" in
   let s = shape x in
   let axes = reduced_axes ~by x axes in
-  kept ~by ~keepdims s axes
-    (reduce_by_one ~by (Logsumexp (0, dtype x)) axes x)
+  if not (keepdims && Eval.inside ()) then
+    kept ~by ~keepdims s axes
+      (reduce_by_one ~by (Logsumexp (0, dtype x)) axes x)
+  else
+    Eval.call ~by [ Value.Any x ] @@ fun read ->
+    let x = read x in
+    kept ~by ~keepdims s axes
+      (reduce_by_one ~by (Logsumexp (0, dtype x)) axes x)
 
 let logmeanexp (type s d) ?axes ?(keepdims = false) (x : (float, s, d) t) :
     (float, s, d) t =
@@ -2643,8 +2685,15 @@ let diagonal_by ~by ?(offset = 0) ?(axis1 = -2) ?(axis2 = -1) x =
   if a = b then invalid_argf "%s: axis1 and axis2 are both %d" by a;
   let rest = List.filter (fun i -> i <> a && i <> b) (List.init (ndim x) Fun.id) in
   let p = Array.of_list (rest @ [ a; b ]) in
-  let last_two = Array.for_all2 ( = ) p (Array.init (ndim x) Fun.id) in
-  last_diagonal ~by offset (if last_two then x else permute ~by p x)
+  if Array.for_all2 ( = ) p (Array.init (ndim x) Fun.id) then
+    if not (Eval.inside ()) then last_diagonal ~by offset x
+    else
+      Eval.call ~by [ Value.Any x ] @@ fun read ->
+      last_diagonal ~by offset (read x)
+  else if not (Eval.inside ()) then last_diagonal ~by offset (permute ~by p x)
+  else
+    Eval.call ~by [ Value.Any x ] @@ fun read ->
+    last_diagonal ~by offset (permute ~by p (read x))
 
 let diagonal ?offset ?axis1 ?axis2 x =
   diagonal_by ~by:"Nx.diagonal" ?offset ?axis1 ?axis2 x
@@ -2684,7 +2733,10 @@ let diag ?(k = 0) v =
   | 2 -> diagonal_by ~by ~offset:k v
   | 1 ->
       let n = dim 0 v + Stdlib.abs k in
-      on_diagonal ~by (dtype v) n n k v
+      if not (Eval.inside ()) then on_diagonal ~by (dtype v) n n k v
+      else
+        Eval.call ~by [ Value.Any v ] @@ fun read ->
+        on_diagonal ~by (dtype v) n n k (read v)
   | _ -> invalid_argf "%s: %a is neither a vector nor a matrix" by pp_value v
 
 let dot a b = Contraction.dot ~by:"Nx.dot" a b
@@ -3702,11 +3754,8 @@ let windowed ~by ~kernel_size ~stride ~dilation ~padding x =
 
 let product = Array.fold_left ( * ) 1
 
-let extract_patches ~kernel_size ~stride ~dilation ~padding x =
-  let by = "Nx.extract_patches" in
-  geometry ~by ~kernel_size ~stride ~dilation ~padding;
+let patches ~by ~kernel_size ~stride ~dilation ~padding x =
   let k = Array.length kernel_size in
-  spatial ~by k x;
   let y, counts = windowed ~by ~kernel_size ~stride ~dilation ~padding x in
   let lead = ndim x - k in
   let taps_first =
@@ -3718,6 +3767,16 @@ let extract_patches ~kernel_size ~stride ~dilation ~padding x =
       [| product kernel_size; product counts |]
   in
   reshaped ~by s' (permute ~by taps_first y)
+
+let extract_patches ~kernel_size ~stride ~dilation ~padding x =
+  let by = "Nx.extract_patches" in
+  geometry ~by ~kernel_size ~stride ~dilation ~padding;
+  spatial ~by (Array.length kernel_size) x;
+  if not (Eval.inside ()) then
+    patches ~by ~kernel_size ~stride ~dilation ~padding x
+  else
+    Eval.call ~by [ Value.Any x ] @@ fun read ->
+    patches ~by ~kernel_size ~stride ~dilation ~padding (read x)
 
 let combine_patches_by ~by ~output_size ~kernel_size ~stride ~dilation ~padding
     p =
