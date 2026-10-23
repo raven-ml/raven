@@ -2009,47 +2009,107 @@ module Scaled = struct
             ignore (placed S2.on (a_cut ~scale:false (S2.split ~axis:0)) c));
       ]
 
-  (* An output of no products is [init]'s bits: the result of [k = 0], and
-     [Contracting]'s group whose offsets leave it empty, here its first of
-     two, its slice the first [m n] outputs. *)
+  (* An output of no products is [init] as the accumulator holds it, rounded
+     into the result, bit for bit: at [k = 0], in a row of no group of
+     [Rows], and in [Contracting]'s slice of a group its offsets leave
+     empty, by batch index, decreasing or past the axis. Each output's init
+     differs from its neighbours': zeros of both signs, NaNs, infinities and
+     numbers. Outputs with products are not compared. *)
   let no_products =
+    let inits =
+      [|
+        -0.; Float.nan; Float.infinity; 0.; Float.neg_infinity; 1.5;
+        Float.neg Float.nan; -2.25;
+      |]
+    in
     let plain view =
       { dt = F32; view; swap = false; xs = some (numel view); scale = None }
     in
-    let c ?segs ?(g = 0) ~k () =
-      let m = 2 and n = 3 in
-      let lead = match segs with Some (Rows _) -> [| g |] | _ -> [||] in
-      let b = plain (Array.append lead [| k; n |]) in
-      let a = plain [| m; k |] in
+    let c ?batch ?segs ?(g = 0) ?(half = false) ~m ~k () =
+      let n = 3 and bs = Option.to_list batch in
+      let gs = match segs with Some (Rows _) -> [ g ] | _ -> [] in
+      let a = plain (Array.of_list (bs @ [ m; k ])) in
+      let b = plain (Array.of_list (bs @ gs @ [ k; n ])) in
       let c =
-        { batch = None; m; n; k; g; a; b; f64 = false; half = false;
-          init = None; segs }
+        { batch; m; n; k; g; a; b; f64 = false; half; init = None; segs }
       in
-      { c with init = Some (Array.make (numel (result_shape c)) (-0.)) }
-    in
-    let empty c =
       let all = numel (result_shape c) in
-      match c.segs with
-      | Some (Contracting _) when c.k > 0 -> c.m * c.n
-      | _ -> all
+      let init = Array.init all (fun i -> inits.(i mod Array.length inits)) in
+      { c with init = Some init }
     in
-    let outputs c y = Array.sub (Nx.to_array y) 0 (empty c) in
-    cases "an output of no products is init's bits"
+    (* Whether output [i], in C order of the result, has no products. *)
+    let alone c i =
+      let mn = c.m * c.n and w = c.g + 1 in
+      let batches = Option.value c.batch ~default:1 in
+      let offsets os bi = Array.sub os (bi * w) w in
+      c.k = 0
+      ||
+      match c.segs with
+      | None -> false
+      | Some (Rows os) ->
+          group_of (offsets os (i / mn)) (i / c.n mod c.m) = None
+      | Some (Contracting os) ->
+          let e = i / (batches * mn) and bi = i / mn mod batches in
+          let o = offsets os bi in
+          let mine r = group_of o r = Some e in
+          not (List.exists mine (List.init c.k Fun.id))
+    in
+    (* Widening to float64 keeps every float32 and float16 apart, NaNs'
+       signs and payloads too. *)
+    let bits y =
+      Array.map Int64.bits_of_float (Nx.to_array (Nx.cast Nx.float64 y))
+    in
+    let run (type o) (out : (float, o) Nx.dtype) c =
+      let xs = Option.get c.init in
+      let init = Nx.cast out (Nx.create Nx.float64 (result_shape c) xs) in
+      let pick y =
+        let y = bits y in
+        List.filter_map
+          (fun i -> if alone c i then Some y.(i) else None)
+          (List.init (Array.length y) Fun.id)
+      in
+      let want = pick init in
+      equal bool ~msg:"some output has no products" true (want <> []);
+      let op = op on_host Nx.float32 out c in
+      equal (list int64) ~msg:"nx.cpu" want (pick (P.eval ~by:"t" op));
+      equal (list int64) ~msg:"the expansion" want (pick (expanded op))
+    in
+    cases "an output of no products is its init's bits"
       ~name:(fun (n, _) -> n)
       [
-        ("k = 0", c ~k:0 ());
-        ("k = 0, rows by groups", c ~segs:(Rows [| 0L; 1L; 2L |]) ~g:2 ~k:0 ());
+        ("k = 0", c ~m:2 ~k:0 ());
+        ("k = 0, into float16", c ~half:true ~m:2 ~k:0 ());
+        ("k = 0, batched", c ~batch:2 ~m:2 ~k:0 ());
+        ( "k = 0, rows by groups",
+          c ~segs:(Rows [| 0L; 1L; 2L |]) ~g:2 ~m:2 ~k:0 () );
         ( "k = 0, groups of k",
-          c ~segs:(Contracting [| 0L; 0L; 0L |]) ~g:2 ~k:0 () );
+          c ~segs:(Contracting [| 0L; 0L; 0L |]) ~g:2 ~m:2 ~k:0 () );
+        ( "k = 0, groups of k into float16",
+          c ~half:true ~segs:(Contracting [| 0L; 1L; 0L |]) ~g:2 ~m:2 ~k:0 ()
+        );
+        ( "rows in no group",
+          c ~segs:(Rows [| 1L; 2L; 2L |]) ~g:2 ~m:3 ~k:4 () );
+        ( "rows in no group by batch index",
+          c ~batch:2
+            ~segs:(Rows [| 0L; 1L; 1L; 1L; 1L; 2L |])
+            ~g:2 ~m:2 ~k:4 () );
+        ( "rows in no group into float16",
+          c ~half:true ~segs:(Rows [| 1L; 2L; 2L |]) ~g:2 ~m:3 ~k:4 () );
         ( "an empty group of k",
-          c ~segs:(Contracting [| 0L; 0L; 4L |]) ~g:2 ~k:4 () );
+          c ~segs:(Contracting [| 0L; 0L; 4L |]) ~g:2 ~m:2 ~k:4 () );
+        ( "an empty group of k by batch index",
+          c ~batch:2
+            ~segs:(Contracting [| 0L; 0L; 4L; 0L; 4L; 4L |])
+            ~g:2 ~m:2 ~k:4 () );
+        ( "an empty group of decreasing offsets",
+          c ~segs:(Contracting [| 0L; 3L; 1L; 4L |]) ~g:3 ~m:2 ~k:4 () );
+        ( "an empty group of offsets past the axis",
+          c ~segs:(Contracting [| -1L; 5L; 5L |]) ~g:2 ~m:2 ~k:4 () );
+        ( "an empty group of k into float16",
+          c ~half:true ~segs:(Contracting [| 0L; 3L; 1L; 4L |]) ~g:3 ~m:2
+            ~k:4 () );
       ]
-      (fun (_, c) ->
-        let want = Array.make (empty c) (-0.) in
-        let y = P.eval ~by:"t" (op on_host Nx.float32 Nx.float32 c) in
-        equal (array float_exact) ~msg:"nx.cpu" want (outputs c y);
-        let y = expanded (op on_host Nx.float32 Nx.float32 c) in
-        equal (array float_exact) ~msg:"the expansion" want (outputs c y))
+      (fun (_, c) -> if c.half then run Nx.float16 c else run Nx.float32 c)
 
   (* Contractions cut along [k]: [a] [[m; k]] and [b], stored [[…; n; k]],
      along their last stored axis, the offsets and [init] on every device,
