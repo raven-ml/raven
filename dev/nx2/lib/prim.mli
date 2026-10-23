@@ -324,7 +324,7 @@ val scale_shape : 'd scale -> int array
 (** [scale_shape s] is the shape of [s]'s array. *)
 
 val contract_block : int
-(** [contract_block] is [4096], the products of a contraction's block
+(** [contract_block] is [4096], the products of a contraction block
     ({!Nx_kernel.S.section-contraction}). *)
 
 val block_run : int array -> int array -> int array -> int option

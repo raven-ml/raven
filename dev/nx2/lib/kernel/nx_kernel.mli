@@ -8,10 +8,10 @@
     A {e kernel} computes one of nx's operations on arrays of one device. It
     reads its {e operands}, writes its results into its {e destinations},
     arrays its caller allocates, and takes its other arguments as
-    {e attributes}, such as the axes it reduces. A {e kernel library}
-    computes kernels on the memory of some devices. Its [.mli] states what it
-    computes on and which cases it declines, then includes {!S}, so that its
-    build checks it against the contract:
+    {e attributes}, such as the axes it reduces. A {e kernel library} holds
+    kernels that compute on the memory of some devices. Its [.mli] states
+    what it computes on and which cases it declines, then includes {!S}, so
+    that its build checks it against the contract:
     {[
     (** Kernels for host memory. … *)
 
@@ -19,8 +19,9 @@
     ]}
     A kernel takes its attributes, then its destinations, then its operands.
     Destinations of a fixed number are labelled; where its arguments decide
-    their number, they come as an array. {!Prog} names what a loop computes
-    at each index and {!Shape} the shapes of every kernel's destinations.
+    their number, they come as an array. {!Prog} names what a loop
+    ({!S.section-loops}) computes at each index and {!Shape} the shapes of
+    every kernel's destinations.
     In C, [nx_kinds.h] computes each kind, [nx_prog.h] and [nx_kernel.h] hold
     the codes by which C reads a program and the other constructors, and
     [nx_contract_view.h] a contraction view's struct, with no OCaml header, so
@@ -36,8 +37,11 @@ type index := (int64, Nx_array.Dtype.int64_elt) Nx_array.t
 (** {1:orders Orders of summation}
 
     A float sum's bits depend on the order of its additions. A sum adds
-    {e terms} numbered from [0], as a reduction ({!type-reduction}) and a
+    {e terms} numbered from [0], as a reduction ({!section-reductions}) and a
     contraction ({!section-contraction}) number theirs, in one of two orders.
+    A contraction sums across its contraction blocks
+    ({!S.section-contraction}) in the order it is asked for, and within a
+    contraction block as its library states.
 
     {e Chain order} adds the terms in increasing number, from a
     contraction's [init] or from [+0].
@@ -56,7 +60,7 @@ type order =
   | Chain  (** {e Chain order}. *)
   | Lane  (** {e Lane order}. *)
 (** The type for the order of summation a contraction is asked for
-    ({!S.contract}). *)
+    ({!S.section-contraction}). *)
 
 (** {1:loops Loops} *)
 
@@ -70,8 +74,8 @@ type pad = {
     and [interior] of length [r]. Along axis [i] it puts [lo.(i)] elements
     before the operand's, [hi.(i)] after and [interior.(i)] between
     neighbours; a negative [lo] or [hi] crops instead. Then it takes the
-    windows [windows] of the padded operand, as {!Nx_array.Move.Window} does.
-    {!Shape.padded} states which paddings an operand takes. *)
+    windows of the padded operand that {!Nx_array.Move.Window}[ windows]
+    takes. {!Shape.padded} states which paddings an operand takes. *)
 
 (** The type for an operand of a loop and how the loop reads it. *)
 type load =
@@ -79,6 +83,30 @@ type load =
   | Padded : { x : ('v, 's) a; fill : 'v; pad : pad } -> load
       (** [x] padded with [fill] as [pad] says. The loop's shape is the padded
           one. *)
+
+(** {1:reductions Reductions and scans}
+
+    A reduction computes from the values of one program output along the
+    reduced axes, its {e terms}, numbered from [0] in C order of the reduced
+    axes' indices.
+
+    A NaN is {e quieted} as IEEE 754 returns a NaN operand, with its quiet
+    bit, the top bit of its fraction, set and its sign and the rest of its
+    payload kept; [float8_e4m3fn]'s NaNs are quiet already. A NaN result,
+    where a term it reduces is a NaN, is the first such term quieted. With
+    no NaN term it is the quiet NaN of a clear sign bit, the NaN {!Prog}'s
+    kinds make from numbers on every target. To every reduction but [Sum], a
+    complex number with a NaN part is a NaN, quieted part by part, and the
+    NaN made from numbers is that quiet NaN in each part; a complex [Sum]
+    adds each part as a float sum.
+
+    In every library, a float [Sum] or [Prod] reduction adds or multiplies
+    each output's terms in lane order ({!section-orders}), a float narrower
+    than [float32] in [float32], and a complex [Prod] multiplies them so by
+    {!Prog.Mul}. A float sum of [n] terms, a reduction's or a scan's result,
+    is within [γ(n - 1) Σ|x|] of the exact sum, and a float product within a
+    relative [γ(n - 1)], barring overflow and underflow, where
+    [γ(k) = k u / (1 - k u)] and [u] is the dtype's unit roundoff. *)
 
 type monoid = Sum | Prod | Max | Min
 (** The type for monoids a reduction folds with. *)
@@ -96,72 +124,69 @@ type any_float = Any_float : (float, 's) Nx_array.Dtype.t -> any_float
 [@@unboxed]
 
 val float_carrier : (float, 's) Nx_array.Dtype.t -> any_float
-(** [float_carrier dt] is {!carrier} of the float [dt]: the dtype a float
-    function of [dt] computes in before it rounds once to [dt]. *)
+(** [float_carrier dt] is {!carrier} of the float [dt]. It is the dtype a
+    float function of [dt] computes in before it rounds once to [dt]. *)
 
-(** The type for what a reduction computes from the values of one program
-    output along the reduced axes, its terms, numbered from [0] in C order of
-    the reduced axes' indices.
+(** The type for what a reduction computes from its terms. *)
+type reduction =
+  | Monoid of monoid
+      (** [Monoid Sum] adds the terms from [+0], as {!Prog.Add} does, so a
+          sum of [-0] terms is [+0]. [Monoid Prod] multiplies them from the
+          first, never by [1], which would change a complex term's signed
+          zeros or make NaN parts from its infinite ones; the product of no
+          term is [1]. Integers wrap. [Monoid Max] and [Monoid Min] are
+          {!Prog.Maximum} and {!Prog.Minimum} of the terms, which put [-0]
+          below [+0] and are any and all on booleans. *)
+  | Logsumexp
+      (** [Logsumexp] is [m + log Σ exp (x - m)], [m] the terms' maximum. It
+          is [-∞] for no term or terms all [-∞], and [+∞] where a term is
+          [+∞] and none is NaN. It reduces in two passes, each summing in
+          lane order, which a kernel may run on one read of terms that fit
+          on chip. The first finds the terms' maximum [m]. The second
+          computes [c + log s], [c] being [m] where finite and [0] elsewhere
+          and [s] the sum of [exp (x - c)], an [exp] of less than [-87]
+          ([float32]) or [-708] ([float64]), the least integers whose [exp]
+          is normal, taken as [0]. These thresholds are the {e cut}. The
+          result is [m] where it is a NaN. Each kernel library states its
+          bound. *)
+  | Moments
+      (** [Moments] is the terms' population mean, then their variance; NaN
+          for no term. With an infinite term and no NaN term, the mean is the
+          sum of the infinities, a NaN where both signs occur, and the
+          variance a NaN. It reduces in two passes, each summing in lane
+          order, which a kernel may run on one read of terms that fit on
+          chip. The first computes the mean [c], the terms' sum over their
+          count. The second computes the variance
+          [(Σ d² - Σ d (Σ d / n)) / n], [d = x - c], [+0] where that is
+          negative or [Σ d²] where that is [+∞]. Both are [c] where it is a
+          NaN. Each kernel library states their bounds. *)
+  | Arg of extreme
+      (** [Arg e] is the extreme [e] of the terms, as [Monoid Max] or
+          [Monoid Min] finds it, then its position as an [int64], that of the
+          first term with its bits, or of the first NaN term where it is a
+          NaN. *)
 
-    - [Monoid Sum] adds the terms from [+0], as {!Prog.Add} does, so a sum of
-      [-0] terms is [+0]. [Monoid Prod] multiplies them from the first, never
-      by [1], which would change a complex term's signed zeros or make NaN
-      parts from its infinite ones; the product of no term is [1]. Integers
-      wrap.
-    - [Monoid Max] and [Monoid Min] are {!Prog.Maximum} and {!Prog.Minimum} of
-      the terms, which put [-0] below [+0] and are any and all on booleans.
-    - [Logsumexp] is [m + log Σ exp (x - m)], [m] the terms' maximum. It is
-      [-∞] for no term or terms all [-∞], and [+∞] where a term is [+∞] and
-      none is NaN.
-    - [Moments] is the terms' population mean, then their variance; NaN for no
-      term. With an infinite term and no NaN term, the mean is the sum of the
-      infinities, a NaN where both signs occur, and the variance a NaN.
-    - [Arg e] is the extreme [e] of the terms, as [Monoid Max] or [Monoid Min]
-      finds it, then its position as an [int64], that of the first term with
-      its bits, or of the first NaN term where it is a NaN.
+val accepts : reduction -> ('v, 's) Nx_array.Dtype.t -> bool
+(** [accepts r dt] is [true] iff [r] reduces terms of [dt]: [Sum] and [Prod]
+    every dtype but booleans; [Max], [Min] and [Arg] every dtype; [Logsumexp]
+    and [Moments] floats. *)
 
-    A NaN is {e quieted} as IEEE 754 returns a NaN operand, with its quiet
-    bit, the top bit of its fraction, set and its sign and the rest of its
-    payload kept; [float8_e4m3fn]'s NaNs are quiet already. A NaN result,
-    where a term it reduces is a NaN, is the first such term quieted. With
-    no NaN term it is the quiet NaN of a clear sign bit, the NaN {!Prog}'s
-    kinds make from numbers on every target. To every reduction but [Sum], a
-    complex number with a NaN part is a NaN, quieted part by part, and the
-    NaN made from numbers is that quiet NaN in each part; a complex [Sum]
-    adds each part as a float sum.
-
-    In every library, a float [Sum] or [Prod] reduction adds or multiplies
-    each output's terms in lane order ({!section-orders}), a float narrower
-    than [float32] in [float32], and a complex [Prod] multiplies them so by
-    {!Prog.Mul}. A float sum of [n] terms, a reduction's or a scan's result,
-    is within [γ(n - 1) Σ|x|] of the exact sum, and a product within a
-    relative [γ(n - 1)], barring overflow and underflow, where
-    [γ(k) = k u / (1 - k u)] and [u] is the dtype's unit roundoff.
-    [Logsumexp] and [Moments] reduce in two passes, which a kernel may run on
-    one read of terms that fit on chip, each summing in lane order:
-    - [Logsumexp]: the terms' maximum [m], then [c + log s], [c] being [m]
-      where finite and [0] elsewhere and [s] the sum of [exp (x - c)], an
-      [exp] of less than [-87] ([float32]) or [-708] ([float64]), the least
-      integers whose [exp] is normal, taken as [0]. These thresholds are the
-      {e cut}. The result is [m] where it is a NaN.
-    - [Moments]: the mean [c], the terms' sum over their count, then the
-      variance [(Σ d² - Σ d (Σ d / n)) / n], [d = x - c], [+0] where that is
-      negative or [Σ d²] where that is [+∞]; both are [c] where it is a NaN.
-    Each kernel library states the bounds of these two.
+(** {2:scans Scans}
 
     In every library, a float or complex [Sum] or [Prod] scan cuts each
     slice along its axis into {e chunks} of 4096 terms from its start. A
     chunk's total is its terms reduced in lane order, as a reduction of
     exactly them. The carry into chunk 0 is the identity, but a product's
-    chunk 0 has none: its first result is its first term. The carry into
-    chunk [c + 1] is the carry into chunk [c] combined with [c]'s total,
-    and each result of a chunk is its carry combined with the chunk's terms
-    up to it, left to right. Combining is {!Prog.Add} or {!Prog.Mul} in the
-    carrier ({!carrier}), and each result rounds once into its destination.
+    chunk 0 has none, and its first result is its first term. The carry
+    into chunk [c + 1] is the carry into chunk [c] combined with [c]'s
+    total, and each result of a chunk is its carry combined with the
+    chunk's terms up to it, left to right. Combining is {!Prog.Add} or
+    {!Prog.Mul} in the carrier ({!carrier}), and each result rounds once
+    into its destination.
 
     A [Logsumexp] or [Moments] scan gives the same bits in every library
     that computes one. On each slice, each term is a state, and the states
-    combine by the odd/even network: neighbours [2j] and [2j + 1] combine
+    combine by the odd/even network. Neighbours [2j] and [2j + 1] combine
     into pairs, the pairs scan by the same network, result [0] is state
     [0], result [2j + 1] is the pairs' result [j], and result [2j], for
     [j > 0], is the pairs' result [j - 1] combined with state [2j]. The
@@ -173,16 +198,17 @@ val float_carrier : (float, 's) Nx_array.Dtype.t -> any_float
     its own; they are to first order in the carrier's unit roundoff [u],
     barring overflow.
     - [Logsumexp]: a state is a maximum [m] and a sum [s], and [e z] is
-      [exp z], or [0] for [z] below the reduction's cut. A term [x] is the
-      state [(x, e (x - c))], [c] being [x] where finite and [0] elsewhere,
-      and a state [a] then a state [b] combine as [m = Maximum (ma, mb)]
-      and [s = sa e (ma - c) + sb e (mb - c)], [c] being [m] where finite
-      and [0] elsewhere. Result [i] is [m + log s], or [m] where [m] is not
-      finite. So from the first NaN term on, every result is its bits,
-      quieted; with no NaN, from a [+∞] term on every result is [+∞], and
-      while every term is [-∞] it is [-∞]. Where the terms up to [i] have a
-      finite maximum, the result is within [(7 D + 6 ln (i + 1)) u + u|r|]
-      of the exact [r], with {!Prog.Exp} and {!Prog.Log} within 2 ulps.
+      [exp z], or [0] for [z] below the reduction's cut ({!type-reduction}).
+      A term [x] is the state [(x, e (x - c))], [c] being [x] where finite
+      and [0] elsewhere, and a state [a] then a state [b] combine as
+      [m = Maximum (ma, mb)] and [s = sa e (ma - c) + sb e (mb - c)], [c]
+      being [m] where finite and [0] elsewhere. Result [i] is [m + log s],
+      or [m] where [m] is not finite. So from the first NaN term on, every
+      result is its bits, quieted; with no NaN, from a [+∞] term on every
+      result is [+∞], and while every term is [-∞] it is [-∞]. Where the
+      terms up to [i] have a finite maximum, the result is within
+      [(7 D + 6 ln (i + 1)) u + u|r|] of the exact [r], with {!Prog.Exp}
+      and {!Prog.Log} within 2 ulps.
     - [Moments]: a term [t] is the state [(t - c, +0, 1)] of a mean [μ], a
       sum [S] of squared deviations and a count [n], [c] the slice's first
       term, or [0] where that term is not finite. A state [a] then a state
@@ -197,12 +223,6 @@ val float_carrier : (float, 's) Nx_array.Dtype.t -> any_float
       carrier, [R] the range of the terms up to [i] and [V] their variance,
       the mean [μ] is within [(4 D + 1) u R + u|μ|] of the exact one and
       the variance within [(7 D + 1) u V + (4 D² - 2 D) u R √V]. *)
-type reduction = Monoid of monoid | Logsumexp | Moments | Arg of extreme
-
-val accepts : reduction -> ('v, 's) Nx_array.Dtype.t -> bool
-(** [accepts r dt] is [true] iff [r] reduces terms of [dt]: [Sum] and [Prod]
-    every dtype but booleans; [Max], [Min] and [Arg] every dtype; [Logsumexp]
-    and [Moments] floats. *)
 
 (** {1:scatters Scatters} *)
 
@@ -216,13 +236,15 @@ type combine = Set | Add | Max | Min
     {e contracting} pairs. An operand's other axes are its {e free} axes,
     [a]'s the result's {e rows} and [b]'s its {e columns}. An output's
     {e products} are those of [a]'s and [b]'s elements at its batch, row and
-    column indices, one per index of the contracting pairs. They are its
-    terms ({!section-orders}), numbered in C order of the contracting pairs'
-    indices. A product is fused into the addition that takes it. A complex
-    contraction sums each part of an output as a float sum of products of
-    parts. With [a = ar + i·ai] and [b = br + i·bi], its product [p]'s terms
-    are numbered [2p] and [2p + 1], [ar·br] and [ai·(-bi)] in the real part,
-    [ar·bi] and [ai·br] in the imaginary part. *)
+    column indices, one per index of the contracting pairs. The
+    {e contracted extent} is the contracting pairs' extents multiplied. The
+    products are the output's terms ({!section-orders}), numbered in C order
+    of the contracting pairs' indices. A product is fused into the addition
+    that takes it. A complex contraction sums each part of an output as a
+    float sum of products of parts. With [a = ar + i·ai] and
+    [b = br + i·bi], its product [p]'s terms are numbered [2p] and [2p + 1],
+    [ar·br] and [ai·(-bi)] in the real part, [ar·bi] and [ai·br] in the
+    imaginary part. *)
 
 val accumulates : ('v, 's) Nx_array.Dtype.t -> bool
 (** [accumulates dt] is [true] iff a contraction computes in [dt]: every
@@ -485,7 +507,7 @@ end
     the window reads. Every element keeps the bits the whole operation gives
     it. An element's association, its algorithm and whether the kernel
     declines depend on the extents the element reads whole (a reduction's, a
-    scan's, a sort's or a transform's axes, the contracted extents, a
+    scan's, a sort's or a transform's axes, the contracted extent, a
     routine's matrices, a gather's or a scatter's axis, the axes a padded
     load or a fold pads or windows), the dtypes, the attributes and the
     device's architecture, never on the result's other extents. Neither rule
@@ -517,16 +539,14 @@ module type S = sig
       dtype, and each has the loop's shape once loaded ({!Shape.loaded}); a
       loop of no load runs over its shape alone. Its [Coord] nodes read axes
       of that shape. A loop answers [Shape_mismatch] for a program with a
-      [Coord] past that shape's rank, for loads of another number or shape,
-      and for destinations other than those its doc names. *)
+      [Coord] past that shape's rank. *)
 
   val map : Prog.t -> dsts:any array -> load array -> answer
   (** [map p ~dsts loads] stores [p]'s output [k] at each index into
       [dsts.(k)], of that output's dtype. It is the one elementwise kernel.
       One kind over operands comes as the program of one node that
       {!Prog.of_node} makes, which {!Prog.single} and {!Prog.is_single}
-      recognise, so that a library may compute it by a kernel of that kind
-      alone. *)
+      recognise. *)
 
   val reduce :
     Prog.t ->
@@ -556,31 +576,31 @@ module type S = sig
   (** [scan ?carry p ~axis (r, k) ~dsts loads] stores at each index the
       reduction [r] of output [k] of [p] over the indices along [axis] up to
       that index's, inclusive, in that output's carrier ({!carrier}), rounded
-      once to its destination's: a running sum for [Monoid Sum], the running
-      population mean and variance for [Moments]. The result at an index is
-      a function of the terms up to it alone, in the sense that the scan of a
-      prefix of the axis is the prefix of the scan, bit for bit. A scan's
-      last result need not equal the reduction of the same terms.
-      Destinations are as {!reduce}'s, each of the loop's shape
+      once to its destination's. It is a running sum for [Monoid Sum], and
+      the running population mean and variance for [Moments]. The result at
+      an index is a function of the terms up to it alone, in the sense that
+      the scan of a prefix of the axis is the prefix of the scan, bit for
+      bit. A scan's last result need not equal the reduction of the same
+      terms. Destinations are as {!reduce}'s, each of the loop's shape
       ({!Shape.scan}). It answers [Wrong_dtype] where {!accepts} is [false]
       of [r] and output [k]'s dtype.
 
       With [carry], of a [Monoid Sum], [Prod], [Max] or [Min], the scan of
       each slice continues from its element of [carry], an array of the
       destinations' shape with extent [1] along [axis], of the output's
-      carrier ({!carrier}). Chunk 0 of each slice ({!type-reduction}) starts
+      carrier ({!carrier}). Chunk 0 of each slice ({!section-scans}) starts
       from that element in place of the identity, and a product's chunk 0
       then has one. So the scan of the terms of a slice from a chunk's start,
       with the carry into that chunk, has the bits of the scan of the whole
       slice from that chunk on. An integer's or a boolean's scan, and a
       [Max]'s or a [Min]'s, is exact, so this holds from any term, with the
       result before it, in the carrier, as the carry. A [Sum]'s or [Prod]'s
-      NaN carry counts as made from numbers: results before the slice's first
-      NaN term are the made NaN, and from it on that term quieted. A [Max]'s
-      or [Min]'s carry is a term before the slice's first: where it is a NaN,
-      every result is it, quieted. It answers [Shape_mismatch] for a carry of
-      any other reduction or of another shape, and [Wrong_dtype] for one of
-      another dtype. *)
+      NaN carry counts as made from numbers. Results before the slice's
+      first NaN term are the made NaN, and from it on that term quieted. A
+      [Max]'s or [Min]'s carry is a term before the slice's first. Where it
+      is a NaN, every result is it, quieted. It answers [Shape_mismatch] for
+      a carry of any other reduction or of another shape, and [Wrong_dtype]
+      for one of another dtype. *)
 
   (** {1:index Gathers and scatters} *)
 
@@ -614,11 +634,12 @@ module type S = sig
         function of [n] alone; libraries may associate differently. For
         finite operands, barring overflow, a float sum is within
         [γ(n + 1) (|x| + Σ |ui|)] of the exact one before a narrow float's
-        rounding, with [γ] as {!type-reduction} defines it and [u] the unit
-        roundoff of float32 for a narrow float, else of the dtype's parts;
+        rounding, with [γ] as {!section-reductions} defines it and [u] the
+        unit roundoff of float32 for a narrow float, else of the dtype's
+        parts;
       - for [Max] and [Min], {!Prog.Maximum} and {!Prog.Minimum} of [x], [u1],
         …, [un]; a NaN result is the first NaN among them quieted
-        ({!type-reduction}), a complex number's NaN parts each so.
+        ({!section-reductions}), a complex number's NaN parts each so.
 
       Under [unique], the caller must give each target at most one update;
       where two share one, the result there is unspecified. It answers
@@ -670,28 +691,31 @@ module type S = sig
       enter it, so a window of [dst] computed alone has the whole's bits.
       The kernels of one order never compute a call given the other.
 
-      Each output's products fall into {e blocks} of 4096 consecutive ones,
-      by number, and nx cuts a contraction's contracted extent only at the
-      edges of its blocks. In [Lane] order, each library states the order in
-      which it sums a block from [+0], and the blocks' sums are combined by
-      lane order's tree of blocks, two nodes by {!Prog.Add} in [acc], and
-      then [init] is added as [acc] holds it. In [Chain] order, each library
-      states an association that composes by passing a part's result, in
-      [acc], as the next part's [init]. It is one chain from [init] or [+0],
-      which each block continues, or each block summed from [+0] in an order
-      the library states and the blocks' sums added in turn to [init], or
-      without one to the first block's. So a contraction cut over devices of
-      one library has the bits of that library's one call. Cut over devices
-      of several libraries, each block sums as the library that computes it
-      states, and the blocks compose by the order's rule. *)
+      Each output's products fall into {e contraction blocks} of 4096
+      consecutive ones, by number, and nx cuts a contraction's contracted
+      extent only at their edges. In [Lane] order, each library states the
+      order in which it sums a contraction block from [+0], and the
+      contraction blocks' sums are combined by the tree lane order combines
+      its blocks by, two nodes by {!Prog.Add} in [acc], and then [init] is
+      added as [acc] holds it. In [Chain] order, each library states an
+      association that composes by passing a part's result, in [acc], as the
+      next part's [init]. It is one chain from [init] or [+0], which each
+      contraction block continues, or each contraction block summed from
+      [+0] in an order the library states and their sums added in turn to
+      [init], or without one to the first contraction block's. So a
+      contraction cut over
+      devices of one library has the bits of that library's one call. Cut
+      over devices of several libraries, each contraction block sums as the
+      library that computes it states, and the contraction blocks compose
+      by the order's rule. *)
 
   val contract_order : rows:int -> columns:int -> depth:int -> order
   (** [contract_order ~rows ~columns ~depth] is the order these kernels
       choose for a contraction of [rows] rows, [a]'s free extents
       multiplied, by [columns] columns, [b]'s, over [depth] products, the
-      contracting pairs' extents multiplied. nx asks it once of the whole
-      contraction, whatever part of it each call computes, so that every
-      part sums in the whole's order. *)
+      contracted extent. nx asks it once of the whole contraction, whatever
+      part of it each call computes, so that every part sums in the whole's
+      order. *)
 
   val contract :
     order:order ->
@@ -714,20 +738,20 @@ module type S = sig
       rounded once to [dst]'s dtype, each operand's elements times their
       scales, each group of [segments] as {!type-segments} states. Without
       [init] the sum starts from [+0]. An output with no products, where the
-      contracted extent is [0], so that it has no block, or, under
-      [segments], where it is in no group or in a group of no index, is
-      [init] as [acc] holds it, rounded into [dst], or [+0] without [init].
-      No addition touches it, so an [init] of [-0] stays [-0]. Integers wrap
-      in [acc]. A float or complex [acc] errs by at most twice its unit
-      roundoff, its parts' for a complex one, per addition, barring
+      contracted extent is [0], so that it has no contraction block, or,
+      under [segments], where it is in no group or in a group of no index,
+      is [init] as [acc] holds it, rounded into [dst], or [+0] without
+      [init]. No addition touches it, so an [init] of [-0] stays [-0].
+      Integers wrap in [acc]. A float or complex [acc] errs by at most twice
+      its unit roundoff, its parts' for a complex one, per addition, barring
       underflow. A NaN result's sign and payload are unspecified, but for an
       output of no products.
 
       A scale multiplies, as the library states, each element, rounded once
       into [acc], or each product, or, where a scale block along the
       contracted extent is whole, its partial sum. Which one is a function
-      of the dtypes and the contracted extent alone, so that windows of [K]
-      aligned to scale blocks compose. The library also states the roundings
+      of the dtypes and the contracted extent alone, so that parts of [K] cut
+      at scale blocks' edges compose. The library also states the roundings
       its scaling adds to the bound, barring overflow of what it scales. A
       [Value] or code that is NaN makes its scale block's terms NaN. *)
 
@@ -744,8 +768,8 @@ module type S = sig
 
   val r2c : axes:int iarray -> dst:(Complex.t, 'c) a -> (float, 'r) a -> answer
   (** [r2c ~axes ~dst x] stores the [Forward] transform of [x], bins [0] to
-      [n/2] along the last of [axes], [n] [x]'s extent there: one bin of [+0]
-      for [n = 0]. [x] and [dst] are of the {!same_precision}. *)
+      [n/2] along the last of [axes], [n] [x]'s extent there. For [n = 0] it
+      is one bin of [+0]. [x] and [dst] are of the {!same_precision}. *)
 
   val c2r : axes:int iarray -> dst:(float, 'r) a -> (Complex.t, 'c) a -> answer
   (** [c2r ~axes ~dst x] reads [n/2 + 1] bins [X] along the last of [axes], [n]
@@ -778,7 +802,7 @@ module type S = sig
       destinations' shapes state, those {!Shape.qr} or {!Shape.svd} gives
       for one {!factors}. Where a destination's two shapes coincide, as
       [q]'s, [r]'s and [u]'s do for [m <= n] and [vh]'s for [m >= n], they
-      name one result: [qr]'s factors are then the same either way, and
+      name one result. [qr]'s factors are then the same either way, and
       [svd] reads the choice from its other factor. *)
 
   val cholesky : triangle -> dst:('v, 's) a -> ('v, 's) a -> answer

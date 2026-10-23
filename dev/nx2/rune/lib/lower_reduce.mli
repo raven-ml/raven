@@ -20,11 +20,12 @@
       the sum of no term is [+0] and the product [1]. A complex sum adds each
       part as a float sum.
     - {b NaN results} give nx's bits in every fold, on every target, as
-      {!Nx_kernel.reduction} states: where a term is a NaN, the first such term
-      in C order of the reduced indices, quieted; with none, the quiet NaN of a
-      clear sign bit. To an extreme, a complex number with a NaN part is a NaN,
-      quieted part by part, and a scan's carry is a term before the slice's
-      first. To a sum or a product, a NaN carry counts as made from numbers. *)
+      {!Nx_kernel.section-reductions} states: where a term is a NaN, the
+      first such term in C order of the reduced indices, quieted; with none,
+      the quiet NaN of a clear sign bit. To an extreme, a complex number with
+      a NaN part is a NaN, quieted part by part, and a scan's carry is a term
+      before the slice's first. To a sum or a product, a NaN carry counts as
+      made from numbers. *)
 
 open Tolk
 
