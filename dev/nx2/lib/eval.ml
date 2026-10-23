@@ -288,10 +288,12 @@ let mix (type v s d) (x : (v, s, d) t) =
 
 let mixed xs = List.fold_left (fun m (Any x) -> m lor mix x) 0 xs = 3
 
-let call ~by xs k = if inside () then Donate.resolve ~by xs k else k Fun.id
+(* Inside an [Extent], or beside a traced value, an operation of [k] reading
+   a handle may reach a rule, which would consume it there and may keep the
+   arrays it reads: [k] reads the handles' arrays, and no memory is freed. *)
+let call ~by xs k =
+  if inside () || mixed xs then Donate.resolve ~by xs k else k Fun.id
 
-(* Beside a traced value, an operation of [k] reading a handle's arrays may
-   reach a rule, which may keep them: no memory is freed. *)
 let once ~by xs k =
   if inside () || mixed xs then Donate.resolve ~by xs k
   else Donate.resolve_value ~by xs k

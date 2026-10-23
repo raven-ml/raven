@@ -197,12 +197,15 @@ let drawn ~by params (k : 'd key) batch shape dt s prog =
   map ~by shape prog dt loads
 
 (* The key's bitcast and the stretches come before the map: inside an
-   [Extent] the call reads its operands once ({!Eval.call}). *)
+   [Extent], or beside a traced value, the call reads its operands once
+   ({!Eval.call}). *)
 let draw ~by ?(params = [||]) (k : 'd key) dt s prog =
   let batch = batch k in
   let shape = Array.append batch s in
   Prim.check_shape ~by shape;
-  if not (Eval.inside ()) then drawn ~by params k batch shape dt s prog
+  let mix m (Value.Any x) = m lor Eval.mix x in
+  if not (Eval.inside () || Array.fold_left mix (Eval.mix k) params = 3) then
+    drawn ~by params k batch shape dt s prog
   else
     Eval.call ~by (Value.Any k :: Array.to_list params) @@ fun read ->
     let params = Array.map (fun (Value.Any x) -> Value.Any (read x)) params in
@@ -310,7 +313,8 @@ let fold_in_tensor (k : 'd key) (i : (int32, D.int32_elt, 'd) Value.t) : 'd key
     =
   let by = "Nx.Rng.fold_in_tensor" in
   let shape = Prim.broadcast_shape ~by (batch k) (Prim.shape i) in
-  if not (Eval.inside ()) then folded ~by shape k i
+  if not (Eval.inside () || Eval.mix k lor Eval.mix i = 3) then
+    folded ~by shape k i
   else
     Eval.call ~by [ Value.Any k; Value.Any i ] @@ fun read ->
     folded ~by shape (read k) (read i)

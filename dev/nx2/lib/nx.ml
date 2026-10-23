@@ -488,6 +488,13 @@ let once3 ~by a b c f =
   Donate.resolve ~by [ Value.Any a; Value.Any b; Value.Any c ] (fun read ->
       f (read a) (read b) (read c))
 
+(* Whether a call's operands hold a handle beside a traced value, where an
+   operation reading the handle reaches a rule, so that the call reads its
+   operands once ({!Eval.call}): [mixed2 x y] for two, [mixed_list xs] for
+   values of one type. *)
+let mixed2 x y = Eval.mix x lor Eval.mix y = 3
+let mixed_list xs = List.fold_left (fun m x -> m lor Eval.mix x) 0 xs = 3
+
 (* A call that broadcasts its operands, then reads the broadcasts in one
    operation. Eagerly a broadcast passes a handle on, and the operation
    consumes it. Inside an [Extent], whose rule consumes the handles of each
@@ -772,7 +779,7 @@ let broadcast_arrays xs =
   let by = "Nx.broadcast_arrays" in
   let s = broadcast_all ~by (List.map shape xs) in
   List.iteri (Prim.alive ~by) xs;
-  if not (Eval.inside ()) then List.map (broadcast ~by s) xs
+  if not (Eval.inside () || mixed_list xs) then List.map (broadcast ~by s) xs
   else
     Eval.call ~by (List.map (fun x -> Value.Any x) xs) @@ fun read ->
     List.map (fun x -> broadcast ~by s (read x)) xs
@@ -992,7 +999,7 @@ let stack ?axis:(a = 0) xs =
       in
       let s' = Array.copy unit in
       s'.(a) <- List.length xs;
-      if not (Eval.inside ()) then stacked ~by unit a s' x0 xs
+      if not (Eval.inside () || mixed_list xs) then stacked ~by unit a s' x0 xs
       else
         Eval.call ~by (List.map (fun x -> Value.Any x) xs) @@ fun read ->
         stacked ~by unit a s' (read x0) (List.map read xs)
@@ -1326,6 +1333,14 @@ let held_donated idx =
           false)
     idx
 
+(* The {!Eval.mix} of the positions [idx] holds in data. *)
+let held_mix idx =
+  List.fold_left
+    (fun m -> function
+      | T p | D (p, _) -> m lor Eval.mix p
+      | I _ | L _ | R _ | Rs _ | A | N -> m)
+    0 idx
+
 (* Picks' positions held in data as [read] gives them. *)
 let read_picks read picks =
   let pick = function
@@ -1390,7 +1405,8 @@ let slice_by ~by idx x =
   if held_donated idx && several picks then
     Eval.once ~by (index_operands idx [ Value.Any x ]) @@ fun read ->
     selected ~by (read_picks read picks) (read x)
-  else if not (Eval.inside ()) then selected ~by picks x
+  else if not (Eval.inside () || held_mix idx lor Eval.mix x = 3) then
+    selected ~by picks x
   else
     Eval.call ~by (index_operands idx [ Value.Any x ]) @@ fun read ->
     selected ~by (read_picks read picks) (read x)
@@ -1424,7 +1440,7 @@ let taken ~by along p x =
   | Some a -> take_axis ~by (axis ~by x a) p x
 
 let take_by ~by ?axis:along p x =
-  if not (Eval.inside ()) then taken ~by along p x
+  if not (Eval.inside () || mixed2 p x) then taken ~by along p x
   else
     Eval.call ~by [ Value.Any p; Value.Any x ] @@ fun read ->
     taken ~by along (read p) (read x)
@@ -1450,7 +1466,8 @@ let take_along ~by a p x =
   let off s = Array.mapi (fun i d -> if i = a then 1 else d) s in
   let b = Prim.broadcast_shape ~by (off sp) (off sx) in
   let at d = Array.mapi (fun i e -> if i = a then d else e) b in
-  if not (Eval.inside ()) then gathered ~by a (at sp.(a)) (at sx.(a)) p x
+  if not (Eval.inside () || mixed2 p x) then
+    gathered ~by a (at sp.(a)) (at sx.(a)) p x
   else
     Eval.call ~by [ Value.Any p; Value.Any x ] @@ fun read ->
     gathered ~by a (at sp.(a)) (at sx.(a)) (read p) (read x)
@@ -1743,7 +1760,10 @@ let set idx v x =
   if held_donated idx && maps_held (shape x) picks then
     Eval.once ~by (index_operands idx [ Value.Any v; Value.Any x ])
     @@ fun read -> replaced ~by sel (read_picks read picks) (read v) (read x)
-  else if not (Eval.inside ()) then replaced ~by sel picks v x
+  else if
+    not (Eval.inside () || held_mix idx lor Eval.mix v lor Eval.mix x = 3)
+  then
+    replaced ~by sel picks v x
   else
     Eval.call ~by (index_operands idx [ Value.Any v; Value.Any x ])
     @@ fun read -> replaced ~by sel (read_picks read picks) (read v) (read x)
@@ -4142,7 +4162,8 @@ let correlate ?(padding = `Valid) x kernel =
   in
   let batch = Array.concat [ [| product lead |]; spatial; [| 1 |] ] in
   let out = Array.append lead (Array.map snd runs) in
-  if not (Eval.inside ()) then correlated ~by ks ~lo ~hi batch out x kernel
+  if not (Eval.inside () || mixed2 x kernel) then
+    correlated ~by ks ~lo ~hi batch out x kernel
   else
     Eval.call ~by [ Value.Any x; Value.Any kernel ] @@ fun read ->
     correlated ~by ks ~lo ~hi batch out (read x) (read kernel)
@@ -4182,7 +4203,7 @@ let reduce_segments c ~segments ids x =
   let into = Array.mapi (fun a d -> if a = 0 then segments else d) s in
   let along = Array.mapi (fun a d -> if a = 0 then d else 1) s in
   let into = fill ~by dt into start in
-  if not (Eval.inside ()) then segmented ~by c along into ids x
+  if not (Eval.inside () || mixed2 ids x) then segmented ~by c along into ids x
   else
     Eval.call ~by [ Value.Any ids; Value.Any x ] @@ fun read ->
     segmented ~by c along into (read ids) (read x)
@@ -4712,7 +4733,7 @@ let conv ?stride ?padding ?dilation ?groups x w =
   let p = Array.concat [ [| 0; 1; k + 2 |]; Array.init k (fun i -> 2 + i) ] in
   let lo = Array.map fst padding and hi = Array.map snd padding in
   let interior = Array.make k 0 in
-  if not (Eval.inside ()) then
+  if not (Eval.inside () || mixed2 x w) then
     convolved ~by ~stride ~lo ~hi ~interior ~dilation groups p x w
   else
     Eval.call ~by [ Value.Any x; Value.Any w ] @@ fun read ->
@@ -4766,7 +4787,7 @@ let conv_transpose ?stride ?padding ?dilation ?groups x w =
   (* [[g; og; k…; cg]] to [[g; cg; og; k…]], the taps reversed. *)
   let p = Array.concat [ [| 0; k + 2; 1 |]; Array.init k (fun i -> 2 + i) ] in
   let interior = Array.map (fun st -> st - 1) stride in
-  if not (Eval.inside ()) then
+  if not (Eval.inside () || mixed2 x w) then
     transposed ~by ~lo ~hi ~interior ~dilation groups p x w
   else
     Eval.call ~by [ Value.Any x; Value.Any w ] @@ fun read ->
@@ -5933,7 +5954,9 @@ let check s ok data fail =
      [ok] then [data]'s arrays in walk order. *)
   Prim.alive ~by 0 ok;
   List.iteri (fun i (P x) -> Prim.alive ~by (i + 1) x) leaves;
-  if not (Eval.inside ()) then checked ~by s data fail target ok leaves Fun.id
+  let mix m (P x) = m lor Eval.mix x in
+  if not (Eval.inside () || List.fold_left mix (Eval.mix ok) leaves = 3) then
+    checked ~by s data fail target ok leaves Fun.id
   else
     Eval.call ~by (Value.Any ok :: List.map (fun (P x) -> Value.Any x) leaves)
     @@ fun live -> checked ~by s data fail target ok leaves live
