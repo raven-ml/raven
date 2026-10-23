@@ -148,11 +148,14 @@ let inverse p =
 
 (* How an operand of rank [r] is viewed: made with extent 1 along its [nb]
    batch axes and broadcast, made with its last axis twice as long and
-   stepped by two, its elements stored in the order of the made axes
-   [stored] names, outermost first, then permuted, [perm.(i)] being the
-   made axis of axis [i]. *)
+   stepped by two, or its last two axes [p; q] the windows of [q] taps of
+   one axis, the windows [step] apart and the taps [dilation], as a
+   convolution's input reads them (an axis's runs then overlap), its
+   elements stored in the order of the made axes [stored] names, outermost
+   first, then permuted, [perm.(i)] being the made axis of axis [i]. *)
 type view = {
   stepped : bool;
+  windowed : (int * int) option; (* step and dilation *)
   broadcast : bool;
   stored : int array;
   perm : int array;
@@ -162,19 +165,34 @@ let view r nb =
   let open Gen in
   let axes = List.init r Fun.id in
   let* broadcast = if nb > 0 then bool else constant false in
+  let* windowed =
+    if r - 2 < nb then constant None
+    else
+      frequency
+        [
+          (3, constant None);
+          (1, map Option.some (pair (int_range 1 2) (int_range 1 2)));
+        ]
+  in
   let* stepped = bool in
-  let stepped = stepped && r > 0 && (r > nb || not broadcast) in
+  let stepped =
+    stepped && windowed = None && r > 0 && (r > nb || not broadcast)
+  in
   let* stored =
-    frequency
-      [ (2, constant axes); (1, permutation ~pp:Format.pp_print_int axes) ]
+    if windowed <> None then constant axes
+    else
+      frequency
+        [ (2, constant axes); (1, permutation ~pp:Format.pp_print_int axes) ]
   in
   let+ p = permutation ~pp:Format.pp_print_int axes in
-  { stepped; broadcast; stored = Array.of_list stored; perm = Array.of_list p }
+  { stepped; windowed; broadcast; stored = Array.of_list stored;
+    perm = Array.of_list p }
 
 let identity p = p = Array.init (Array.length p) Fun.id
 
 let names v =
   (if v.stepped then [ "stepped" ] else [])
+  @ (if v.windowed <> None then [ "windowed" ] else [])
   @ (if v.broadcast then [ "broadcast" ] else [])
   @ (if identity v.stored then [] else [ "stored apart" ])
   @ if identity v.perm then [] else [ "permuted" ]
@@ -197,6 +215,13 @@ let wide r =
 let operand ?(wide_ints = false) dt s nb v seed =
   let r = Random.State.make [| seed |] in
   let last = Array.length s - 1 in
+  (* The windows' step and dilation, where the last two extents hold one
+     window and one tap or more. *)
+  let windowed =
+    match v.windowed with
+    | Some w when s.(last - 1) > 0 && s.(last) > 0 -> Some w
+    | _ -> None
+  in
   let made =
     Array.mapi
       (fun i e ->
@@ -204,6 +229,16 @@ let operand ?(wide_ints = false) dt s nb v seed =
         else if v.stepped && i = last then 2 * e
         else e)
       s
+  in
+  (* The axis the windows read in place of the last two. *)
+  let made =
+    match windowed with
+    | None -> made
+    | Some (step, dilation) ->
+        let p = s.(last - 1) and q = s.(last) in
+        Array.append
+          (Array.sub made 0 (last - 1))
+          [| ((p - 1) * step) + (dilation * (q - 1)) + 1 |]
   in
   let draw () = value dt r in
   let xs =
@@ -236,6 +271,13 @@ let operand ?(wide_ints = false) dt s nb v seed =
   let x =
     if v.stepped then move (M.Slice (Iarray.of_array (Array.mapi step made))) x
     else x
+  in
+  let x =
+    match windowed with
+    | None -> x
+    | Some (step, dilation) ->
+        let w : M.window = { axis = last - 1; size = s.(last); step; dilation } in
+        move (M.Window [| w |]) x
   in
   let x = if v.broadcast then move (M.Broadcast (Iarray.of_array s)) x else x in
   A.Any (move (M.Permute (Iarray.of_array v.perm)) x)
@@ -405,7 +447,7 @@ let case_of ?same ~acc ~out ~dts () =
 let regimes acc =
   let plain r =
     let axes = Array.init r Fun.id in
-    { stepped = false; broadcast = false; stored = axes; perm = axes }
+    { stepped = false; windowed = None; broadcast = false; stored = axes; perm = axes }
   in
   let case (order, init, e) =
     let ra, rb, ry = ranks e in
@@ -474,6 +516,51 @@ let regimes acc =
     let e = ([||], [| 3 |], [| 4 |], [| 5 |]) in
     make ~order:chain ~acc ~out:acc e (wide, plain 2) (acc, plain 2) None 1
   in
+  (* A convolution's product: a the windows of an image [n; h; w; c] by
+     [kh × kw] taps at [stride] and [dilation], [n; oh; ow; c; kh; kw],
+     contracted with b, [kh; kw; c; o], over the taps and channels, in the
+     order (kh, kw, c) where [taps_first], whose last two make one run of a
+     at dilation 1, else (c, kh, kw), each its own run of a and of b. *)
+  let conv ?(da = acc) ?(init = false) order ~taps_first (n, oh, ow, c, o)
+      (kh, kw) (stride, dilation) =
+    let extent t k = ((t - 1) * stride) + (dilation * (k - 1)) + 1 in
+    let (A.Any x) =
+      operand da [| n; extent oh kh; extent ow kw; c |] 0 (plain 4) 3
+    in
+    let win axis size : M.window = { axis; size; step = stride; dilation } in
+    let a = A.Any (Option.get (A.move (M.Window [| win 1 kh; win 2 kw |]) x)) in
+    let b = operand acc [| kh; kw; c; o |] 0 (plain 4) 4 in
+    let contracting =
+      if taps_first then [| (4, 0); (5, 1); (3, 2) |]
+      else [| (3, 2); (4, 0); (5, 1) |]
+    in
+    let init =
+      if init then Some (operand acc [| n; oh; ow; o |] 0 (plain 4) 5)
+      else None
+    in
+    { order; batch = [||]; contracting; acc; a; b; init; out = acc;
+      views = [ "windowed" ] }
+  in
+  (* Many rows by few columns, b's windows streamed; few rows by more
+     columns, a's packed whole; dilated taps; the chain path over two
+     blocks of the contraction (float32's alone, for its cost); lane
+     order; and a of a dtype acc does not hold. *)
+  let convs =
+    [
+      conv chain ~taps_first:true (2, 10, 10, 3, 8) (3, 3) (1, 1);
+      conv chain ~init:true ~taps_first:false (1, 4, 4, 5, 40) (3, 3) (2, 1);
+      conv chain ~taps_first:true (1, 4, 5, 4, 30) (2, 3) (1, 2);
+      conv lane ~init:true ~taps_first:true (1, 3, 3, 4, 3) (3, 3) (1, 1);
+    ]
+    @ (match acc with
+      | D.Any D.Float32 ->
+          [
+            conv chain ~taps_first:true (1, 13, 20, 29, 257) (3, 3) (1, 1);
+            conv chain ~da:(D.Any D.Bfloat16) ~taps_first:false
+              (2, 6, 6, 3, 16) (3, 3) (1, 1);
+          ]
+      | _ -> [])
+  in
   let rows = few_rows_most + 1 in
   let few =
     (chain, true, ([||], [| few_rows_most |], [| few_rows_most + 3 |], [| 3 |]))
@@ -499,13 +586,14 @@ let regimes acc =
     ]
   in
   let integer = (chain, true, ([||], [| 130 |], [| 130 |], [| 520 |])) :: complex in
-  if is_complex acc then (apart few :: unheld :: split) @ List.map case complex
+  if is_complex acc then
+    (apart few :: unheld :: split) @ convs @ List.map case complex
   else if is_integer acc then
-    (apart few :: unheld :: split) @ List.map case integer
+    (apart few :: unheld :: split) @ convs @ List.map case integer
   else
     [ apart few; heads; unheld;
       a_apart (chain, false, ([| 2 |], [| 20 |], [| 20 |], [| 500 |])) ]
-    @ split @ groups
+    @ split @ convs @ groups
     @ List.map case
       ([
          (lane, true, ([||], [| 0 |], [| 3 |], [| 2 |]));
@@ -1006,12 +1094,19 @@ let covers c =
     (chain && batch * (m + min n nc_least) * min k kc_least * w > panels);
   List.iter
     (fun v -> cover v (List.mem v c.views))
-    [ "stepped"; "broadcast"; "stored apart"; "permuted" ];
+    [ "stepped"; "windowed"; "broadcast"; "stored apart"; "permuted" ];
   let rb, rr, rc, rk = runs c in
   cover "a batch of several runs" (rb > 1);
   cover "rows of several runs" (rr > 1);
   cover "columns of several runs" (rc > 1);
   cover "contracted axes of several runs" (rk > 1);
+  let windowed = List.mem "windowed" c.views in
+  cover "windows with contracted axes of several runs, in chain order"
+    (windowed && rk > 1 && c.order = Chain);
+  cover "windows with rows of several runs, in chain order"
+    (windowed && rr > 1 && c.order = Chain);
+  cover "the chain path over windows of several contracted runs"
+    (windowed && rk > 1 && chain && k > kc_least);
   let ib, ir, ic, _ = runs ~init_alone:true c in
   cover "an init whose group makes several runs" (ib > 1 || ir > 1 || ic > 1);
   cover "a batch of several runs over 512 KiB of operands or more"
@@ -1345,7 +1440,7 @@ let shifted (A.Any x as a) =
 let quad_examples =
   let plain r =
     let axes = Array.init r Fun.id in
-    { stepped = false; broadcast = false; stored = axes; perm = axes }
+    { stepped = false; windowed = None; broadcast = false; stored = axes; perm = axes }
   in
   let by_rows r =
     { (plain r) with perm = Array.init r (fun i -> if i < r - 2 then i else (2 * r) - 3 - i) }
@@ -1927,7 +2022,7 @@ let ratio_of k =
 let scaled_examples =
   let plain r =
     let axes = Array.init r Fun.id in
-    { stepped = false; broadcast = false; stored = axes; perm = axes }
+    { stepped = false; windowed = None; broadcast = false; stored = axes; perm = axes }
   in
   let spec ?(lies = Contiguous) kind extents seed =
     Some { kind; extents; lies; specials = true; seed }
@@ -2055,7 +2150,7 @@ let law_scaled b x =
 
 let plain_view r =
   let axes = Array.init r Fun.id in
-  { stepped = false; broadcast = false; stored = axes; perm = axes }
+  { stepped = false; windowed = None; broadcast = false; stored = axes; perm = axes }
 
 (* Block-scaled float4
 
@@ -2115,7 +2210,7 @@ let float4_b ~along ~odd k n seed =
 
 let mx_case x =
   let k = x.mx_k and n = x.mx_n and m = x.mx_m in
-  let plain2 = { stepped = false; broadcast = false; stored = [| 0; 1 |]; perm = [| 0; 1 |] } in
+  let plain2 = { stepped = false; windowed = None; broadcast = false; stored = [| 0; 1 |]; perm = [| 0; 1 |] } in
   let da = if x.mx_a then D.Any D.Float4_e2m1fn else D.Any D.Bfloat16 in
   let a = operand da [| m; k |] 0 plain2 x.mx_seed in
   let odd = if x.mx_odd then 1 else 0 in
@@ -2748,7 +2843,7 @@ let seg_examples =
       if not view then plain_view r
       else
         let p = Array.init r (fun i -> r - 1 - i) in
-        { stepped = true; broadcast = nb > 0; stored = Array.init r Fun.id; perm = p }
+        { stepped = true; windowed = None; broadcast = nb > 0; stored = Array.init r Fun.id; perm = p }
     in
     let out = Option.value out ~default:acc in
     let s =
