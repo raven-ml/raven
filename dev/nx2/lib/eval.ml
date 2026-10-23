@@ -280,10 +280,21 @@ let inside () =
   | () -> true
   | exception Effect.Unhandled Within -> false
 
+let mix (type v s d) (x : (v, s, d) t) =
+  match x with
+  | Donated _ -> 1
+  | Traced _ -> 2
+  | Array _ | Shards _ | Deferred _ -> 0
+
+let mixed xs = List.fold_left (fun m (Any x) -> m lor mix x) 0 xs = 3
+
 let call ~by xs k = if inside () then Donate.resolve ~by xs k else k Fun.id
 
+(* Beside a traced value, an operation of [k] reading a handle's arrays may
+   reach a rule, which may keep them: no memory is freed. *)
 let once ~by xs k =
-  if inside () then Donate.resolve ~by xs k else Donate.resolve_value ~by xs k
+  if inside () || mixed xs then Donate.resolve ~by xs k
+  else Donate.resolve_value ~by xs k
 
 (* [i]'s rule on [op], in [i]'s clause. Another interpretation's traced operand
    is refused unless its interpretation is around [i], which is asked once per

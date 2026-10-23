@@ -91,7 +91,9 @@ val once :
   ('w, 'q, 'd) t
 (** [once ~by xs k] is [k read], the call [by] the one consumer of the
     donated handles among [xs] in however many operations [k] reads them,
-    eagerly too. Inside an [Extent] it is {!Donate.resolve}. Elsewhere it is
+    eagerly too. Inside an [Extent], or where [xs] hold a handle beside a
+    traced value, it is {!Donate.resolve}: an interpretation may receive
+    [k]'s operations and keep the handles' arrays they read. Elsewhere it is
     {!Donate.resolve_value}: [k]'s operations compute into fresh memory, and
     the handles' memory that [k]'s value does not hold is freed when it
     returns, as an operation frees what it does not reuse. *)
