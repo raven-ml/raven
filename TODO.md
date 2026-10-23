@@ -31,15 +31,9 @@ raven / llama.cpp (Vulkan; ROCm):
 - rig.amd over PCI on SDMA 4: program the page queue (regSDMA_PAGE_*,
   doorbell sdma_engine0 + 1, as sdma_v4_4_2 does) as the copy queue's
   second slot once an AMD host runs it, and drop its 16 MiB ring
-- `Rig_amd_pci.machines` and `Rig_nv_pci.machines` grow with each
-  `Machine.t` a process opens on and never shrink: key them by an
-  ephemeron on the machine (about 15 lines a driver), with a test that
-  drops a machine and collects
-- NV over PCI: a refused allocation keeps its memory until its parent is
-  freed
-- rig.pci: when the write that turns a function's bus mastering off is
-  refused, a later `Memory.free` still gives back pages the device may
-  still write
+- rig.pci: a peer GPU's memory mapped through its BAR is given back by
+  its owner's free while a peer that may still master can write it; a
+  fix needs the two GPUs' locks taken together
 
 ### limits and size
 
@@ -61,12 +55,12 @@ raven / llama.cpp (Vulkan; ROCm):
   "two domains allocate and free at once" times out at its 10 s bound in
   60 of 64 copies run 32 at once at load ~65 with windtrap's spinning
   barrier, and in none of 96 with it
-- hardware runs: AMD over PCI on nonnormal at 8822544ce or later (the held
+- hardware runs: AMD over PCI on nonnormal at c226d0a09 or later (the held
   sleep, the two-domain growth law, test_amd and test_conformance -f AMD),
   whose last PCI run was on an earlier form of the wake-up fix and before
-  rig.pci's 64-byte BAR stores and its release after an exception;
-  test_conformance's 8-open law on Metal; the box and fill laws on SDMA 4
-  to 6; two GPUs (peers); mlx5 and bnxt NICs
+  rig.pci's 64-byte BAR stores, its release after an exception, its kept
+  memory after a refused stop and the AMD path's dropped machines; the
+  box and fill laws on SDMA 4 to 6; two GPUs (peers); mlx5 and bnxt NICs
 
 ### perf
 
