@@ -606,24 +606,29 @@ static int64_t run_at(const scatter *c, int64_t v, int64_t *p) {
      of 8192 tokens of 4096 into 128256 rows of bfloat16 took 3.6 ms so,
      against 7 ms with each unit of UNIT_ROW slices summing its own runs,
      whose updates' rows, read out of order, are short.
-   - A row of one slice, few such rows, as a 1-d scatter's: the sorted
-     scatter's bins (narrow_bins) keep their targets' sums in float32,
-     a flag beside each that an update reached, then encode the reached
-     targets once. Where the axis has fewer targets than updates, the sums
-     carry from block to block in every bin's scratch, of the order of the
-     targets; otherwise the axis is one block, so that each sum spans its
-     target's updates. On fudge 16M float16 updates into 1M targets took
-     25 ms as one block, 14 ms in blocks of 1M, whose sorted entries stay
-     in the cache.
+   - A unit of one slice, few such units, as a 1-d scatter's or a take
+     along axis 0's gradient over fewer columns than threads, whose
+     positions differ along its rows: the sorted scatter's bins
+     (narrow_bins) keep their targets' sums in float32, a flag beside each
+     that an update reached, then encode the reached targets once. Where
+     the axis has fewer targets than updates, the sums carry from block to
+     block in every bin's scratch, of the order of the targets; otherwise
+     the axis is one block, so that each sum spans its target's updates.
+     On fudge 16M float16 updates into 1M targets took 25 ms as one block,
+     14 ms in blocks of 1M, whose sorted entries stay in the cache; a
+     bfloat16 [1M, 3] take along axis 0's gradient 5.6 ms, against 21 ms
+     with 5 parts of each column's targets sorting their positions, a unit
+     each (narrow_run).
    - Otherwise a unit (narrow_run), of a part of the targets where units
      are fewer than the threads, sorts the positions its run applies by
      target, stably, and sums one target after another, as a row's pieces
      do, in four words for each position it sorts: its worker's for every
      update along the axis, or where the targets are parted, its own for
      its part's positions, counted first (part_order), so that the parts
-     take four words per update in all: a bfloat16 [16M, 2] take along
-     axis 0's gradient, 7 parts of each slice on 14 threads, holds 1 GiB
-     so, against 7 GiB with each worker's sized by the axis.
+     take four words per update in all: a float4_e2m1fn [16M, 2] take
+     along axis 0's gradient, whose elements share bytes across bins, 7
+     parts of each slice on 14 threads, holds 1 GiB so, against 7 GiB with
+     each worker's sized by the axis.
      A run whose positions differ along it is one slice, so that one sort
      serves each run and the threads share the slices: [1M, 64] bfloat16
      updates with a position each took 3.8 s on one thread, each run of 64
@@ -933,9 +938,17 @@ static int part_order(scatter *c, int64_t units, int64_t bytes,
    scatters of 16 Mi updates ran 1.2 to 1.7 times slower so on an x86-64
    of six cores, and the embedding gradient's row 1.3 times. */
 
-/* The bytes of a sorted entry: the update where a row of slices is one
-   slice, else its row's step. */
-static int64_t entry_bytes(const scatter *c) { return c->len > 1 ? 8 : c->w; }
+/* Whether each unit is one slice: a row of one slice, or a narrow
+   float's slice whose positions differ along its row (slices). */
+static int one_slice(const scatter *c) {
+  return c->len == 1 || c->run_len == 1;
+}
+
+/* The bytes of a sorted entry: the update where a unit is one slice, else
+   its row's step. */
+static int64_t entry_bytes(const scatter *c) {
+  return one_slice(c) ? c->w : 8;
+}
 
 /* The first step of chunk [k] of the block. */
 static int64_t chunk_first(const scatter *c, int64_t k) {
@@ -994,7 +1007,7 @@ static void sort_chunks(int64_t lo, int64_t hi, int worker, void *ctx) {
     seg[0] = t0;
     for (int64_t q = 0; q < bins; q++) seg[q + 1] += seg[q];
 #define AT(T) ((const T *)u)[t * ua]
-    if (c->len > 1) PLACE(int64_t, b0 + t)
+    if (!one_slice(c)) PLACE(int64_t, b0 + t)
     else switch (c->w) {
         case 1: PLACE(uint8_t, AT(uint8_t)) break;
         case 2: PLACE(uint16_t, AT(uint16_t)) break;
@@ -1052,7 +1065,7 @@ static void apply_bins(int64_t lo, int64_t hi, int worker, void *ctx) {
       s.m = seg[q] - from;
       if (s.m == 0) continue;
       a[2].base = (uint8_t *)(c->pos + from);
-      if (c->len == 1) {
+      if (one_slice(c)) {
         a[3].base = c->vals + from * c->w;
         s.run(&s, c->pd, 0, 0, 1, first, span);
         continue;
@@ -1260,16 +1273,17 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
   int64_t bytes = updates * (8 + a[3].bits / 8 + a[0].bits / 8);
   int threads = nx_cpu_threads(bytes, bytes);
   /* Fewer units than threads, over many updates, or any for a narrow
-     float's sums. Rows of one slice, or of slices whose positions step 0
-     along them, as a 1-d scatter's or an embedding gradient's, sort their
-     updates; a dtype of under a byte shares its bytes across bins, so
-     doesn't; a narrow float's rows of several slices sort them by target
-     once a row (narrow_rows). Otherwise each thread takes a part of the
-     targets and walks every update of its run. */
+     float's sums. Units of one slice, as a 1-d scatter's or a narrow
+     float's whose positions differ along its rows, and rows of slices
+     whose positions step 0 along them, as an embedding gradient's, sort
+     their updates; a dtype of under a byte shares its bytes across bins,
+     so doesn't; a narrow float's rows of several slices sort them by
+     target once a row (narrow_rows). Otherwise each thread takes a part
+     of the targets and walks every update of its run. */
   c.parts = 1;
   int few = units < threads && (c.m >= PART_UPDATES || c.narrow);
   int rows = few && c.narrow && c.len > 1 && c.si == 0;
-  int sort = few && !rows && (c.len == 1 || c.si == 0) && a[0].bits >= 8;
+  int sort = few && !rows && (one_slice(&c) || c.si == 0) && a[0].bits >= 8;
   if (few && !sort && !rows) c.parts = (threads + units - 1) / units;
   /* Into's steps may part the loop's axes further; a row of one slice, or
      of positions stepping 0, stays one. */

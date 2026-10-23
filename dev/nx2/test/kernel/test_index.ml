@@ -1121,23 +1121,20 @@ let test_last_piece (b : Support.backend) () =
 
 (* Parted scratch *)
 
-(* The address space a forked child gives a parted bfloat16 Add past its
-   own: the Add's sort takes 32 bytes for each of its 4Mi updates, and the
-   pool's threads their stacks. *)
+(* The address space a forked child gives a parted float4_e2m1fn Add past
+   its own: the Add's sort takes 32 bytes for each of its 4Mi updates, and
+   the pool's threads their stacks. *)
 let parted_cap = 512 lsl 20
 
-(* A bfloat16 array of shape [s], each element +0. *)
-let bf16_zeros s =
+(* A float4_e2m1fn array of shape [s], each element +0. *)
+let f4_zeros s =
   let n = Array.fold_left ( * ) 1 s in
-  let z = Bigarray.Array1.create Bigarray.int16_signed Bigarray.c_layout n in
-  Bigarray.Array1.fill z 0;
-  let z = Bigarray.reshape (Bigarray.genarray_of_array1 z) s in
-  Option.get (A.bitcast D.Bfloat16 (A.of_bigarray D.Int16 z))
+  A.of_array D.Float4_e2m1fn s (Array.make n 0.)
 
-(* A bfloat16 Add along axis 0 of [2Mi, 2], each update at a position of
-   its own, so that threads part each column's targets, fits [parted_cap]:
-   the child that runs it exits 0 where it is done, 1 where it raised
-   Out_of_memory. Linux only. *)
+(* A float4_e2m1fn Add along axis 0 of [2Mi, 2], each update at a position
+   of its own, so that threads part each column's targets, its elements
+   sharing bytes, fits [parted_cap]: the child that runs it exits 0 where
+   it is done, 1 where it raised Out_of_memory. Linux only. *)
 let test_parted_memory (b : Support.backend) () =
   if not (Sys.file_exists "/proc/self/statm") then
     skip ~reason:"limits the address space through Linux's /proc" ();
@@ -1151,8 +1148,8 @@ let test_parted_memory (b : Support.backend) () =
   let idx =
     A.of_bigarray D.Int64 (Bigarray.reshape (Bigarray.genarray_of_array1 ps) s)
   in
-  let into = bf16_zeros s and updates = bf16_zeros s in
-  let dst = A.create Rig.host D.Bfloat16 s in
+  let into = f4_zeros s and updates = f4_zeros s in
+  let dst = A.create Rig.host D.Float4_e2m1fn s in
   let run () =
     if not (Support.cap_memory parted_cap) then 3
     else
@@ -1268,8 +1265,9 @@ let narrow_dtypes = List.filter is_narrow all_dtypes
    count cuts the run into pieces. *)
 let count_piece = 1 lsl 18
 
-(* A bfloat16 Add of 3 slices, 300 000 updates along an axis of 1000:
-   threads part each slice's targets and count its positions in pieces. *)
+(* A float4_e2m1fn Add of 3 slices, 300 000 updates along an axis of 1000:
+   threads part each slice's targets, its elements sharing bytes, and count
+   its positions in pieces. *)
 let counted = ([| 1000; 3 |], 0, 300_000)
 
 (* A narrow float's Adds, a shape for each way its sums group the
@@ -1294,12 +1292,17 @@ let narrow_examples =
     narrow_shapes
   @ [
       (* Positions crowding the first of the parts the targets split into,
-         and one outside the axis. *)
+         and one outside the axis: sorted by bins at bfloat16, parted at
+         float4_e2m1fn, whose elements share bytes. *)
       scatter_example (D.Any D.Bfloat16) Nx_kernel.Add ~ts:[| 500; 3 |]
         ~axis:0 ~m:70_000
         (Array.init 1009 (fun i -> Int64.of_int ((i * i mod 38) - 1)));
+      scatter_example (D.Any D.Float4_e2m1fn) Nx_kernel.Add ~ts:[| 500; 3 |]
+        ~axis:0 ~m:70_000
+        (Array.init 1009 (fun i -> Int64.of_int ((i * i mod 38) - 1)));
       (let ts, axis, m = counted in
-       scatter_example (D.Any D.Bfloat16) Nx_kernel.Add ~ts ~axis ~m cycled);
+       scatter_example (D.Any D.Float4_e2m1fn) Nx_kernel.Add ~ts ~axis ~m
+         cycled);
     ]
   @ blocked_examples
 
@@ -1330,7 +1333,8 @@ let law_narrow_threads (b : Support.backend) c =
   cover "sums carried from block to block" (m > 1 lsl 19);
   (let ts', axis, m' = counted in
    cover "parted positions counted in pieces"
-     (ts = ts' && c.saxis = axis && m = m' && m > count_piece));
+     (ts = ts' && c.saxis = axis && m = m' && m > count_piece
+     && dtype_of c.into = D.Any D.Float4_e2m1fn));
   cover_blocks c;
   law_threads b c
 
@@ -1511,7 +1515,7 @@ let cpu (b : Support.backend) =
           b.around (test_bool_extremes b));
       test "a float16 sum runs in float32 and rounds once" (fun () ->
           b.around (test_float16_sum b));
-      test "a parted bfloat16 Add of 4Mi updates fits 512 MiB" (fun () ->
+      test "a parted float4_e2m1fn Add of 4Mi updates fits 512 MiB" (fun () ->
           b.around (test_parted_memory b));
       prop "a gather refuses what Nx_kernel.Shape refuses and other shapes"
         gather_misfits
