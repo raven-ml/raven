@@ -83,6 +83,18 @@ val call :
     donor. Elsewhere [read] is the identity: a movement passes a handle on
     and [k]'s operation consumes it. *)
 
+val once :
+  by:string ->
+  'd any list ->
+  (('v 's 'e. ('v, 's, 'e) t -> ('v, 's, 'e) t) -> ('w, 'q, 'd) t) ->
+  ('w, 'q, 'd) t
+(** [once ~by xs k] is [k read], the call [by] the one consumer of the
+    donated handles among [xs] in however many operations [k] reads them,
+    eagerly too. Inside an [Extent] it is {!Donate.resolve}. Elsewhere it is
+    {!Donate.resolve_value}: [k]'s operations compute into fresh memory, and
+    the handles' memory that [k]'s value does not hold is freed when it
+    returns, as an operation frees what it does not reuse. *)
+
 val eval : by:string -> 'r prim -> 'r
 (** [eval ~by op] is [op]'s meaning under the rule. Errors name [by]. *)
 

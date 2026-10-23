@@ -982,6 +982,46 @@ let test_extent_elsewhere () =
     (elements (Nx.reshape [| 2 * n |] y));
   invalid ~sub:"donated to Nx.add" (fun () -> Nx.copy x)
 
+(* An eager call that reads a donation in several operations, as an einsum
+   of three operands or a slice at two lists of positions held in data,
+   frees the donor's memory once it returns, as one operation does. The
+   donors stay reachable, so no collection explains the bytes. A slice that
+   gives its operand itself keeps its elements. *)
+let test_several_free () =
+  let p = Nx.Pattern.v "i j, j k, k l -> i l | j k" in
+  let ones = on_mem [| width; 1 |] (Array.make width 1.) in
+  let two = on_mem [| 1; 1 |] [| 2. |] in
+  let freed f =
+    let run () =
+      let c = cache () in
+      let before = settled () in
+      let y = f c in
+      Rig.free_cache device;
+      (c, y, Rig.allocated device - before)
+    in
+    ignore (run ());
+    run ()
+  in
+  let c, y, grew = freed (fun c -> Nx.einsum p [ Nx.donate c; ones; two ]) in
+  less ~msg:"the einsum's donor freed" int ~than:(-size / 2) grew;
+  equal ~msg:"the einsum" (array float_exact)
+    (Array.init rows (fun r -> Float.of_int (2 * r * width)))
+    (elements (Nx.reshape [| rows |] y));
+  invalid ~sub:"donated to Nx.einsum" (fun () -> Nx.copy c);
+  let cols_at = positions [| 1 |] [| 7L |] in
+  let c, y, grew =
+    freed (fun c ->
+        let rows_at = positions [| 1 |] [| 3L |] in
+        Nx.slice [ T (Nx.donate rows_at); T cols_at ] (Nx.donate c))
+  in
+  less ~msg:"the slice's donor freed" int ~than:(-size / 2) grew;
+  equal ~msg:"the slice" (array float_exact) [| 3. |]
+    (elements (Nx.reshape [| 1 |] y));
+  invalid ~sub:"donated to Nx.slice" (fun () -> Nx.copy c);
+  let c = cache () in
+  let y = Nx.slice [ A; A ] (Nx.donate c) in
+  equal ~msg:"the operand itself" (array float_exact) original (elements y)
+
 (* A donated call gives the bits of the same call undonated: a scatter of
    every combine with repeated positions, positions outside the axis, NaN,
    -0. and infinities, and a bfloat16 init summed in float32 over a drawn
@@ -2439,6 +2479,8 @@ let () =
              test
                "an eager call beside an Extent on another domain frees its \
                 donor" test_extent_elsewhere;
+             test "an eager call of several operations frees its donor"
+               test_several_free;
              law_scatter_bits;
              law_init_bits;
            ];

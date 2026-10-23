@@ -487,7 +487,7 @@ let einsum (type v s d) ~by ?(sizes = []) ?acc (p : Pattern.t)
   if n = 2 then pair dt nr shape (leaf 0) (leaf 1)
   else
     (* Several contractions read the operands: the call consumes them once. *)
-    Donate.resolve ~by (Array.to_list (Array.map (fun x -> Value.Any x) xs))
+    Eval.once ~by (Array.to_list (Array.map (fun x -> Value.Any x) xs))
     @@ fun read ->
     let leaf i = (ns.(i), Value.Any (read xs.(i))) in
     let split = order ~ext ~result:nr ns in
