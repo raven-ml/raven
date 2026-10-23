@@ -632,8 +632,9 @@ let parts (D.Any dt as d) e =
    roundoff of float32 for float32, narrow floats and complex64 and of
    float64 otherwise; a narrow float's sum is rounded once from a float32
    within it, so [got] lies between the roundings of its ends. Each part's
-   magnitudes bound the complex number's moduli. A narrow sum that may round
-   past the dtype's largest finite value is not checked: [None]. *)
+   magnitudes bound the complex number's moduli. A narrow sum that may
+   overflow, a partial float32 sum past float32's largest finite value or
+   the sum rounding past the dtype's, is not checked: [None]. *)
 let past (D.Any dt as d) x us got =
   let n = Float.of_int (List.length us + 1) in
   let part = if D.is D.Complex dt then D.bits dt / 2 else D.bits dt in
@@ -647,7 +648,9 @@ let past (D.Any dt as d) x us got =
            let want, mag = exact (List.map (fun t -> List.nth t k) terms) in
            let bound = (g *. mag) +. (0x1p-100 *. mag) in
            if is_narrow d then
-             if Float.abs want +. bound > most_finite d then []
+             if mag +. bound > 0x1.FFFFFEp127
+                || Float.abs want +. bound > most_finite d
+             then []
              else
                let lo = decode d (encode d (want -. bound))
                and hi = decode d (encode d (want +. bound)) in
