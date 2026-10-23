@@ -1027,11 +1027,7 @@ let quant_rows =
       Thumper.bench_with_setup "mxfp4-moe-64x8of32" ~setup:experts
         (fun (ids, x, ws, turn) ->
           let w = next ws turn in
-          Nx.Repr.array
-            (Nx.map_segments ~segments:32 ids
-               (fun owners rows ->
-                 Nx_quant.apply (Nx_quant.take ~axis:0 owners w) rows)
-               x));
+          Nx.Repr.array (Nx_quant.apply_experts ~ids w x));
     ]
 
 let () =
