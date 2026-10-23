@@ -263,9 +263,12 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     with no operand traced, {!einsum} of more than two operands, {!complex},
     {!slice} and {!set} reading a donated position in several operations,
     and {!Rng.dirichlet}, {!Rng.categorical} and {!Rng.permutation} free
-    that memory when they return, unless their result holds it or another
-    value shares it; any other such function leaves it to return to its
-    device once no value holds it. Two handles
+    that memory when they return, unless their result holds it or a value
+    made before or during the call shares it. A view the call makes of it
+    shares it, as when {!complex} reshapes a part it need not cast or
+    {!Rng.permutation} bitcasts a key: that memory waits for a collection,
+    as it does for any other such function, and returns to its device once
+    no value holds it. Two handles
     of one donor or over one memory reaching one operation raise naming
     [Nx.donate]: the same handle twice, two donations of one value, or a handle
     and one a movement passed on. The donor itself beside one of its handles is
