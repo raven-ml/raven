@@ -587,7 +587,14 @@ let job_examples =
     (1, 1000L, 7L);
   ]
 
-let test_bounds ((threads, total, chunks) as job) =
+(* Every law of a job holds of both kinds. *)
+let kinds = [ P.Compute; P.Blocking ]
+let kind_name = function P.Compute -> "compute" | P.Blocking -> "blocking"
+
+(* [for_kinds f] is [f kind] for each kind, its name prefixed by the kind's. *)
+let for_kinds f = List.map (fun kind -> f kind (kind_name kind ^ ": ")) kinds
+
+let test_bounds kind ((threads, total, chunks) as job) =
   assume_recordable job;
   let c = chunk_count ~total ~chunks
   and t = thread_bound ~threads ~total ~chunks in
@@ -603,7 +610,7 @@ let test_bounds ((threads, total, chunks) as job) =
   if cores > 1 then
     cover "a job on several threads that may claim runs of several chunks"
       (t > 1 && not (single_runs ~t c));
-  let ran = P.record ~threads ~total ~chunks in
+  let ran = P.record ~kind ~threads ~total ~chunks () in
   let ranges = chunks_ran ran in
   at_most ~msg:"calls" int ~than:(Int64.to_int c) ran.count;
   equal ~msg:"the calls' ranges cut at the chunk bounds"
@@ -652,8 +659,8 @@ let wide_jobs =
     (3L, top, [ (0L, 1L); (1L, 2L); (2L, 3L) ]);
   ]
 
-let test_wide_job (total, chunks, expected) =
-  let ran = chunks_ran (P.record ~threads:cores ~total ~chunks) in
+let test_wide_job kind (total, chunks, expected) =
+  let ran = chunks_ran (P.record ~kind ~threads:cores ~total ~chunks ()) in
   equal ~msg:"the calls' ranges cut at the stated bounds"
     (list (pair int64 int64))
     expected
@@ -661,29 +668,34 @@ let test_wide_job (total, chunks, expected) =
 
 let chunk_tests =
   group ~timeout:P.timeout "chunks"
-    [
-      prop ~count:300 ~examples:job_examples
-        "a job calls ranges of whole chunks of the stated bounds that cover \
-         its units once, one range on one thread, and nothing for no unit"
-        job_gen test_bounds;
-      cases
-        ~name:(fun (total, chunks, _) ->
-          strf "total %Ld, chunks %Ld" total chunks)
-        "a job whose total times its chunks passes 64 bits, or of more chunks \
-         than units, calls ranges of the stated chunks"
-        wide_jobs test_wide_job;
+    (for_kinds (fun kind name ->
+         prop ~count:300 ~examples:job_examples
+           (name
+          ^ "a job calls ranges of whole chunks of the stated bounds that \
+             cover its units once, one range on one thread, and nothing for \
+             no unit")
+           job_gen (test_bounds kind))
+    @ for_kinds (fun kind name ->
+        cases
+          ~name:(fun (total, chunks, _) ->
+            strf "total %Ld, chunks %Ld" total chunks)
+          (name
+         ^ "a job whose total times its chunks passes 64 bits, or of more \
+            chunks than units, calls ranges of the stated chunks")
+          wide_jobs (test_wide_job kind))
+    @ [
       cases ~name:(strf "%d chunks")
         "a thread that finishes early runs the chunks a slower one would have, \
          one at a time or in runs"
         [ 16; 4096 ] test_balance;
-    ]
+    ])
 
 (* Workers *)
 
-let test_workers ((threads, total, chunks) as job) =
+let test_workers kind ((threads, total, chunks) as job) =
   assume_recordable job;
   let t = thread_bound ~threads ~total ~chunks in
-  let ran = P.record ~threads ~total ~chunks in
+  let ran = P.record ~kind ~threads ~total ~chunks () in
   let pairs =
     distinct (List.map (fun (c : P.call) -> (c.worker, c.thread)) ran.calls)
   in
@@ -706,32 +718,33 @@ let test_workers ((threads, total, chunks) as job) =
     (List.sort compare (List.map snd pairs));
   equal ~msg:"calls begun while another of their worker ran" int 0 ran.overlaps
 
-let test_visibility () =
-  let bodies, caller = P.visibility ~jobs:2000 ~threads:cores in
+let test_visibility kind =
+  let bodies, caller = P.visibility ~kind ~jobs:2000 ~threads:cores () in
   equal ~msg:"values bodies read stale" int 0 bodies;
   equal ~msg:"values the caller read stale" int 0 caller
 
 let worker_tests =
   group ~timeout:P.timeout "workers"
-    [
-      prop ~examples:job_examples
-        "a call's worker is below the job's threads, the caller's 0, one per \
-         thread, and its calls never overlap"
-        job_gen test_workers;
-      test
-        "bodies see the caller's writes made before the job, and the caller \
-         the bodies' once it returns"
-        test_visibility;
-    ]
+    (for_kinds (fun kind name ->
+         prop ~examples:job_examples
+           (name
+          ^ "a call's worker is below the job's threads, the caller's 0, one \
+             per thread, and its calls never overlap")
+           job_gen (test_workers kind))
+    @ [
+        cases ~name:kind_name
+          "bodies see the caller's writes made before the job, and the caller \
+           the bodies' once it returns"
+          kinds test_visibility;
+      ])
 
 (* Scheduling *)
 
-let test_one_thread_at_once () =
-  P.needs_two_cores ();
-  P.while_held (fun () ->
+let test_alone held ~threads =
+  P.while_held ~kind:held (fun () ->
       let ran =
-        P.finishes "a job of one thread" (fun () ->
-            P.record ~threads:1 ~total:100L ~chunks:10L)
+        P.finishes "the job" (fun () ->
+            P.record ~kind:held ~threads ~total:100L ~chunks:10L ())
       in
       equal ~msg:"(lo, hi, worker, thread) of each call"
         (list (quad int64 int64 int int))
@@ -740,7 +753,22 @@ let test_one_thread_at_once () =
            (fun (c : P.call) -> (c.lo, c.hi, c.worker, c.thread))
            ran.calls))
 
-let test_nested () =
+let test_one_thread_at_once kind =
+  P.needs_two_cores ();
+  test_alone kind ~threads:1
+
+let test_blocking_alone () =
+  P.needs_two_cores ();
+  test_alone P.Blocking ~threads:2
+
+(* Each kind's job runs on two threads while the other kind's is held. *)
+let test_beside (held, kind) =
+  P.needs_two_cores ();
+  P.while_held ~kind:held (fun () ->
+      equal ~msg:"its two chunks ran at once" bool true
+        (P.finishes "the job" (fun () -> P.meet kind)))
+
+let test_nested kinds =
   let outer = 16 and inner = 8 in
   equal
     ~msg:
@@ -748,7 +776,7 @@ let test_nested () =
        calls, inner units not run once)"
     (quad int int int int) (outer, 0, 0, 0)
     (P.finishes "a job whose bodies begin jobs" (fun () ->
-         P.nested ~threads:cores ~outer ~inner))
+         P.nested ~kinds ~threads:cores ~outer ~inner ()))
 
 (* Nothing signals that a job waits, so the test samples: once the domain is
    about to begin its job, none of its chunks has run 50 ms later. *)
@@ -760,7 +788,7 @@ let test_waits () =
         let d =
           Domain.spawn (fun () ->
               Atomic.set beginning true;
-              P.counted ~threads:2 ~total:4L ~chunks:4L)
+              P.counted ~threads:2 ~total:4L ~chunks:4L ())
         in
         P.within 10. "the domain did not begin its job" (fun () ->
             Atomic.get beginning);
@@ -783,36 +811,55 @@ let job_commands =
          (Gen.int64_range (-1L) 2000L)
          (Gen.int64_range (-1L) 96L))
   in
-  [
-    command "job"
-      (small_job @-> returns (list (pair int64 int64)))
-      (fun (threads, total, chunks) ->
-        let t = thread_bound ~threads ~total ~chunks
-        and c = chunk_count ~total ~chunks in
-        if cores > 1 then
-          cover "a job on several threads in runs of several chunks"
-            (t > 1 && not (single_runs ~t c));
-        partition ~total ~chunks)
-      (fun (threads, total, chunks) ->
-        let ran = P.record ~threads ~total ~chunks in
-        cut (chunk_bounds ~total ~chunks) (chunks_ran ran));
-  ]
+  List.map
+    (fun kind ->
+      command (kind_name kind)
+        (small_job @-> returns (list (pair int64 int64)))
+        (fun (threads, total, chunks) ->
+          let t = thread_bound ~threads ~total ~chunks
+          and c = chunk_count ~total ~chunks in
+          if cores > 1 then
+            cover
+              (kind_name kind
+             ^ " job on several threads in runs of several chunks")
+              (t > 1 && not (single_runs ~t c));
+          partition ~total ~chunks)
+        (fun (threads, total, chunks) ->
+          let ran = P.record ~kind ~threads ~total ~chunks () in
+          cut (chunk_bounds ~total ~chunks) (chunks_ran ran)))
+    kinds
 
 let scheduling_tests =
   group ~timeout:P.timeout "scheduling"
     [
-      test "a job of one thread runs at once while another thread's job runs"
-        test_one_thread_at_once;
+      cases ~name:kind_name
+        "a job of one thread runs at once while another thread's job of its \
+         kind runs"
+        kinds test_one_thread_at_once;
       test
+        "a blocking job of more than one thread runs at once on the calling \
+         thread alone, in one call, while another thread's blocking job runs"
+        test_blocking_alone;
+      cases
+        ~name:(fun (held, kind) ->
+          strf "%s beside %s" (kind_name kind) (kind_name held))
+        "a job of either kind runs on two threads while another thread's job \
+         of the other kind runs"
+        [ (P.Compute, P.Blocking); (P.Blocking, P.Compute) ]
+        test_beside;
+      cases
+        ~name:(fun (o, i) -> strf "%s in %s" (kind_name i) (kind_name o))
         "a job begun from a body of a job of more than one thread runs at once \
          on the body's thread as worker 0, in one call"
+        (List.concat_map (fun o -> List.map (fun i -> (o, i)) kinds) kinds)
         test_nested;
       test
-        "a job of more than one thread waits for another thread's job to end, \
-         sampled for 50 ms"
+        "a compute job of more than one thread waits for another thread's \
+         compute job to end, sampled for 50 ms"
         test_waits;
       stateful ~domains:2 ~count:30
-        "jobs from two domains each call their chunks once" job_commands;
+        "jobs of both kinds from two domains each call their chunks once"
+        job_commands;
     ]
 
 let () =

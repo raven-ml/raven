@@ -10,6 +10,13 @@
     body, gives up after 10 s, so a pool that breaks a promise fails the test
     instead of hanging it. *)
 
+(** {1:kinds Kinds of job} *)
+
+(** The kind of a job ([rig_pool.h]): a compute job runs through
+    [rig_pool_run], a blocking job through [rig_pool_run_blocking]. A probe's
+    [?kind] defaults to [Compute]. *)
+type kind = Compute | Blocking
+
 (** {1:recorded Recorded jobs} *)
 
 type call = { lo : int64; hi : int64; worker : int; thread : int }
@@ -20,19 +27,28 @@ type job = { calls : call list; count : int; overlaps : int }
 (** A job's calls in the order they began, the number of calls, and the calls
     that began while another call of their worker ran. *)
 
-val record : threads:int -> total:int64 -> chunks:int64 -> job
-(** [record ~threads ~total ~chunks] runs that job and is its calls. Each call
-    lasts 1 us, so that several threads take part and an overlap shows. *)
+val record :
+  ?kind:kind -> threads:int -> total:int64 -> chunks:int64 -> unit -> job
+(** [record ~kind ~threads ~total ~chunks ()] runs that job and is its calls.
+    Each call lasts 1 us, so that several threads take part and an overlap
+    shows. *)
 
-val visibility : jobs:int -> threads:int -> int * int
-(** [visibility ~jobs ~threads] runs [jobs] jobs of [threads] threads, each
+val visibility : ?kind:kind -> jobs:int -> threads:int -> unit -> int * int
+(** [visibility ~kind ~jobs ~threads ()] runs [jobs] jobs of [threads] threads, each
     reading what the caller wrote before it and writing what the caller reads
     after it, and is (values the bodies read stale, values the caller read
     stale). *)
 
-val nested : threads:int -> outer:int -> inner:int -> int * int * int * int
-(** [nested ~threads ~outer ~inner] runs a job of [outer] units whose every call
-    runs a job of [inner] units, and is (outer units run, inner jobs not run in
+val nested :
+  ?kinds:kind * kind ->
+  threads:int ->
+  outer:int ->
+  inner:int ->
+  unit ->
+  int * int * int * int
+(** [nested ~kinds ~threads ~outer ~inner ()] runs a job of [outer] units whose
+    every call runs a job of [inner] units, of the kinds [kinds] names in that
+    order, and is (outer units run, inner jobs not run in
     one call, inner calls off their body's thread or not worker 0, inner units
     not run once). *)
 
@@ -45,8 +61,8 @@ val balance : int -> bool
 val reset : unit -> unit
 (** [reset ()] clears what {!hold} and {!counted} recorded. *)
 
-val hold : only_worker:bool -> bool
-(** [hold ~only_worker] runs a job of two chunks on two threads whose chunks, or
+val hold : ?kind:kind -> only_worker:bool -> unit -> bool
+(** [hold ~kind ~only_worker ()] runs a job of two chunks on two threads whose chunks, or
     with [only_worker] the worker's once both began, wait for {!hold_release}.
     It is whether they were released before 10 s. *)
 
@@ -56,8 +72,15 @@ val hold_arrived : unit -> int
 val hold_release : unit -> unit
 (** [hold_release ()] releases {!hold}'s chunks. *)
 
-val counted : threads:int -> total:int64 -> chunks:int64 -> unit
-(** [counted ~threads ~total ~chunks] runs that job, counting its calls. *)
+val counted :
+  ?kind:kind -> threads:int -> total:int64 -> chunks:int64 -> unit -> unit
+(** [counted ~kind ~threads ~total ~chunks ()] runs that job, counting its
+    calls. *)
+
+val meet : kind -> bool
+(** [meet kind] runs a job of [kind] of two chunks on two threads whose chunks
+    wait for each other, and is whether they met: whether two threads ran
+    them at once. A chunk gives up waiting after 10 s. *)
 
 val counted_calls : unit -> int
 (** [counted_calls ()] is the calls {!counted} made since {!reset}. *)
@@ -124,6 +147,6 @@ val finishes : string -> (unit -> 'a) -> 'a
     with [what] if it has not returned after 10 s: a job that waits forever
     fails the test instead of hanging it. *)
 
-val while_held : (unit -> 'a) -> 'a
-(** [while_held f] is [f ()], run while another domain's job of two threads
-    runs: every chunk of it waits until [f] has returned. *)
+val while_held : ?kind:kind -> (unit -> 'a) -> 'a
+(** [while_held ~kind f] is [f ()], run while another domain's job of [kind]
+    of two threads runs: every chunk of it waits until [f] has returned. *)

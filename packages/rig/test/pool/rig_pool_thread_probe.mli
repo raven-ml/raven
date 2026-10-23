@@ -8,9 +8,9 @@
 
 (** {1:bodies Bodies on a worker} *)
 
-val worker_mask : unit -> bool * (string * bool) list
-(** [worker_mask ()] is whether a worker ran a chunk, and the signals of a table
-    with whether that worker blocks them. *)
+val worker_mask : Rig_pool_probe.kind -> bool * (string * bool) list
+(** [worker_mask kind] is whether a worker of a job of [kind] ran a chunk, and
+    the signals of a table with whether that worker blocks them. *)
 
 val faults : string list
 (** [faults] are the signals a body may raise itself, in the order of the bits
@@ -36,9 +36,15 @@ type scenario =
           the limit and by one after it; the calls of both on a worker; the
           threads after them. *)
 
-val in_child : scenario -> string * int array
-(** [in_child s] is how the child ended, ["exit 0"] once it answered, and its
-    values. *)
+val in_child : Rig_pool_probe.kind -> scenario -> string * int array
+(** [in_child kind s] is how the child ended, ["exit 0"] once it answered, and
+    its values, every job of the parent's and the child's of [kind]. *)
+
+val fork_beside_blocking : unit -> bool * string
+(** [fork_beside_blocking ()] forks while another thread's blocking job of two
+    threads runs, its chunks held until fork returns. It is whether fork
+    returned while that job still ran, and how the child ended: ["exit 0"]
+    once a worker of the child's own ran a chunk of a blocking job. *)
 
 val limits_threads : unit -> bool
 (** [limits_threads ()] is whether the system can limit a process's own threads:

@@ -51,6 +51,7 @@ static void hook(point at);
 #define rig_pool_cores rig_pool_hooked_cores
 #define rig_pool_performance_cores rig_pool_hooked_performance_cores
 #define rig_pool_run rig_pool_hooked_run
+#define rig_pool_run_blocking rig_pool_hooked_run_blocking
 #define rig_pool_cgroup_cpus rig_pool_hooked_cgroup_cpus
 #define rig_pool_performance_cpus rig_pool_hooked_performance_cpus
 /* rig_pool.c's clock is static; renamed, it leaves now_ns to the probes'. */
@@ -221,7 +222,7 @@ static void hook(point at) {
     break;
   case stale_next:
     if (at == point_closed && caller) {
-      inside_at_close = atomic_load(&g_pool->inside);
+      inside_at_close = atomic_load(&g_pools[COMPUTE]->inside);
       sig(n1_closed);
     } else if (at == point_entered && mine)
       atomic_store(&entered, 1);
@@ -393,7 +394,7 @@ static void map_body(int64_t lo, int64_t hi, int w, void *ctx) {
 
 static void map_workers(void) {
   if (atomic_load(&mapped) > 0) return;
-  pool *p = get();
+  pool *p = get(COMPUTE);
   int threads = p ? p->threads : 1;
   rig_pool_run(threads, threads, threads, map_body, &threads);
   atomic_store(&mapped, threads < max_mapped ? threads : max_mapped);
@@ -442,9 +443,10 @@ static void await_asleep(void) {
   int64_t deadline = now_ns() + patience;
   for (;;) {
     if (atomic_load(&slept) == both) {
-      pthread_mutex_lock(&g_pool->mtx);
-      int asleep_now = (atomic_load(&g_pool->parked[0]) & bits) == bits;
-      pthread_mutex_unlock(&g_pool->mtx);
+      pthread_mutex_lock(&g_pools[COMPUTE]->mtx);
+      int asleep_now =
+          (atomic_load(&g_pools[COMPUTE]->parked[0]) & bits) == bits;
+      pthread_mutex_unlock(&g_pools[COMPUTE]->mtx);
       if (asleep_now) return;
     }
     if (now_ns() > deadline) {
@@ -508,7 +510,7 @@ value rig_pool_test_stale_add(value unit) {
   v[0] = (int)(inside_at_close & ~closed);
   v[1] = (inside_at_close & closed) != 0;
   v[2] = order[w_undoing] > 0 && order[w_undoing] < order[n1_returned];
-  v[3] = atomic_load(&g_pool->inside) == closed;
+  v[3] = atomic_load(&g_pools[COMPUTE]->inside) == closed;
   v[4] = not_once(&n);
   v[5] = not_once(&n1);
   v[6] = off(&n1, 1);

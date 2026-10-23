@@ -1,6 +1,6 @@
 (tests
  (names test_rig_disk test_interrupt)
- (libraries rig_disk rig rig_support unix windtrap)
+ (libraries rig_disk rig rig_pool rig_support unix windtrap)
  (foreign_stubs
   (language c)
   (names rig_disk_support_stubs)))

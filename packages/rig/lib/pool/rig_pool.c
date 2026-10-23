@@ -5,8 +5,11 @@
 
 /* The host's worker threads (rig_pool.h).
 
-   One pool per process: rig_pool_cores () - 1 persistent workers, made at
-   the first job of more than one thread. A job is published behind a
+   One pool per process and kind of job, compute or blocking, each of
+   rig_pool_cores () - 1 persistent workers, made at the first job of its
+   kind on more than one thread. The two share only the lock that makes
+   them and the fork handlers (see Fork); everything else below holds of
+   each alone. A job is published behind a
    generation counter; its threads claim runs of chunk indices from a
    counter per strip, their own first (see claim). A worker enters the job
    before it claims, while the caller has not closed it. The caller closes the job
@@ -696,16 +699,20 @@ fail_pool:
 
 /* Fork
 
-   The pool is heap-owned so that a fork child can abandon the inherited one
-   and lazily build its own: only the forking thread survives in the child, so
-   the copied workers, mutexes and condition waiters are unusable, and
-   reinitialising live pthread objects in place is undefined.
+   The pools are heap-owned so that a fork child can abandon the inherited
+   ones and lazily build its own: only the forking thread survives in the
+   child, so the copied workers, mutexes and condition waiters are unusable,
+   and reinitialising live pthread objects in place is undefined.
 
    init_mtx serialises lazy creation. The prepare handler holds it and the
-   current pool's drive mutex, so fork waits for a running job of more than
-   one thread; the parent releases both, and the child clears the pointer
-   and releases only the still-valid init_mtx. */
-static _Atomic(pool *) g_pool;
+   compute pool's drive mutex, so fork waits for a running compute job of
+   more than one thread; the parent releases both, and the child clears the
+   pointers and releases only the still-valid init_mtx. fork does not wait
+   for a blocking job, whose end the system decides: the child abandons its
+   pool as it abandons the other. */
+typedef enum { COMPUTE, BLOCKING, KINDS } kind;
+
+static _Atomic(pool *) g_pools[KINDS];
 static pthread_mutex_t init_mtx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_once_t atfork_once = PTHREAD_ONCE_INIT;
 static int atfork_ok;
@@ -715,18 +722,19 @@ static void register_atfork(void) { atfork_ok = 1; }
 #else
 static void atfork_prepare(void) {
   pthread_mutex_lock(&init_mtx);
-  pool *p = atomic_load_explicit(&g_pool, memory_order_acquire);
+  pool *p = atomic_load_explicit(&g_pools[COMPUTE], memory_order_acquire);
   if (p) pthread_mutex_lock(&p->drive);
 }
 
 static void atfork_parent(void) {
-  pool *p = atomic_load_explicit(&g_pool, memory_order_acquire);
+  pool *p = atomic_load_explicit(&g_pools[COMPUTE], memory_order_acquire);
   if (p) pthread_mutex_unlock(&p->drive);
   pthread_mutex_unlock(&init_mtx);
 }
 
 static void atfork_child(void) {
-  atomic_store_explicit(&g_pool, NULL, memory_order_release);
+  for (int k = 0; k < KINDS; k++)
+    atomic_store_explicit(&g_pools[k], NULL, memory_order_release);
   pthread_mutex_unlock(&init_mtx);
 }
 
@@ -735,19 +743,20 @@ static void register_atfork(void) {
 }
 #endif
 
-/* The pool, made at first use; NULL if it cannot be made, or if a later
-   fork could not be made safe, which leaves the caller computing alone. It
-   exists only once the fork handlers do, so finding it skips the once. */
-static pool *get(void) {
-  pool *p = atomic_load_explicit(&g_pool, memory_order_acquire);
+/* The pool of kind [k], made at first use; NULL if it cannot be made, or if
+   a later fork could not be made safe, which leaves the caller computing
+   alone. It exists only once the fork handlers do, so finding it skips the
+   once. */
+static pool *get(kind k) {
+  pool *p = atomic_load_explicit(&g_pools[k], memory_order_acquire);
   if (p) return p;
   pthread_once(&atfork_once, register_atfork);
   if (!atfork_ok) return NULL;
   pthread_mutex_lock(&init_mtx);
-  p = atomic_load_explicit(&g_pool, memory_order_relaxed);
+  p = atomic_load_explicit(&g_pools[k], memory_order_relaxed);
   if (!p) {
     p = create();
-    atomic_store_explicit(&g_pool, p, memory_order_release);
+    atomic_store_explicit(&g_pools[k], p, memory_order_release);
   }
   pthread_mutex_unlock(&init_mtx);
   return p;
@@ -773,21 +782,31 @@ static void open_strips(pool *p, uint64_t c, int t) {
   }
 }
 
-/* Runs a job of [t] > 1 threads and [c] chunks: alone if begun from a body
-   or without a pool, else on at most p->threads (<= rig_pool_cores ()). Once
-   it returns, no thread touches the job or the claim counter until the next
-   job opens. Out of line, so a serial rig_pool_run saves no registers. */
-__attribute__((noinline)) static void run(int t, int64_t total, int64_t c,
-                                          rig_pool_body body, void *ctx) {
-  pool *p = in_body ? NULL : get();
+/* Takes [p] for a job of kind [k], whether it did. A compute job waits for
+   another thread's to end. A blocking job does not: the system decides
+   when that one ends. */
+static int take(pool *p, kind k) {
+  if (k == BLOCKING) return pthread_mutex_trylock(&p->drive) == 0;
+  pthread_mutex_lock(&p->drive);
+  return 1;
+}
+
+/* Runs a job of kind [k] on [t] > 1 threads and [c] chunks: alone if begun
+   from a body, without a pool, or without taking it, else on at most
+   p->threads (<= rig_pool_cores ()). Once it returns, no thread touches the
+   job or the claim counter until the next job opens. Out of line, so a
+   serial rig_pool_run saves no registers. */
+__attribute__((noinline)) static void run(kind k, int t, int64_t total,
+                                          int64_t c, rig_pool_body body,
+                                          void *ctx) {
+  pool *p = in_body ? NULL : get(k);
   if (p && t > p->threads) t = p->threads;
-  if (p == NULL || t == 1) {
+  if (p == NULL || t == 1 || !take(p, k)) {
     body(0, total, 0, ctx);
     return;
   }
   job j = {body, ctx, total, c, t, total > INT64_MAX / c};
 
-  pthread_mutex_lock(&p->drive);
   p->job = j;
   open_strips(p, (uint64_t)c, t);
   atomic_fetch_and_explicit(&p->inside, ~closed, memory_order_release);
@@ -818,13 +837,23 @@ __attribute__((noinline)) static void run(int t, int64_t total, int64_t c,
 }
 
 /* A serial job is one call, before any thread-local read or division. */
-void rig_pool_run(int threads, int64_t total, int64_t chunks, rig_pool_body body,
-                 void *ctx) {
+static inline void start(kind k, int threads, int64_t total, int64_t chunks,
+                         rig_pool_body body, void *ctx) {
   if (total <= 0) return;
   int64_t c = clamp(chunks, 1, total);
   int t = (int)clamp(threads, 1, c);
   if (t == 1)
     body(0, total, 0, ctx);
   else
-    run(t, total, c, body, ctx);
+    run(k, t, total, c, body, ctx);
+}
+
+void rig_pool_run(int threads, int64_t total, int64_t chunks, rig_pool_body body,
+                 void *ctx) {
+  start(COMPUTE, threads, total, chunks, body, ctx);
+}
+
+void rig_pool_run_blocking(int threads, int64_t total, int64_t chunks,
+                           rig_pool_body body, void *ctx) {
+  start(BLOCKING, threads, total, chunks, body, ctx);
 }

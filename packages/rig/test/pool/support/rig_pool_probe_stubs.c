@@ -37,6 +37,15 @@
 #include "rig_pool_host.h"
 #include "rig_pool_probe.h"
 
+/* Runs a job, a blocking one where [blocking] (rig_pool.h). */
+static void run_job(int blocking, int threads, int64_t total, int64_t chunks,
+                    rig_pool_body body, void *ctx) {
+  if (blocking)
+    rig_pool_run_blocking(threads, total, chunks, body, ctx);
+  else
+    rig_pool_run(threads, total, chunks, body, ctx);
+}
+
 /* Time */
 
 static void spin_ns(int64_t ns) {
@@ -78,12 +87,14 @@ static void record(int64_t lo, int64_t hi, int worker, void *ctx) {
 
 static const int64_t max_recorded = INT64_C(1) << 20;
 
-/* [rig_pool_test_record threads total chunks] is (calls, count, overlaps): the
+/* [rig_pool_test_record blocking threads total chunks] is (calls, count,
+   overlaps) of that job, a blocking one where [blocking]: the
    calls as (lo, hi, worker, thread) in the order they began, [thread]
    numbering the threads in order of their first call, the caller's 0; the
    number of calls; the calls that began while another of their worker ran. */
-value rig_pool_test_record(value v_threads, value v_total, value v_chunks) {
-  CAMLparam3(v_threads, v_total, v_chunks);
+value rig_pool_test_record(value v_blocking, value v_threads, value v_total,
+                           value v_chunks) {
+  CAMLparam4(v_blocking, v_threads, v_total, v_chunks);
   CAMLlocal4(result, calls, entry, bound);
   int threads = Int_val(v_threads);
   int64_t total = Int64_val(v_total), chunks = Int64_val(v_chunks);
@@ -107,7 +118,7 @@ value rig_pool_test_record(value v_threads, value v_total, value v_chunks) {
   }
   seen[0] = pthread_self();
   caml_enter_blocking_section();
-  rig_pool_run(threads, total, chunks, record, &j);
+  run_job(Bool_val(v_blocking), threads, total, chunks, record, &j);
   caml_leave_blocking_section();
   int64_t n = atomic_load(&j.n), kept = n < cap ? n : cap;
   int nseen = 1;
@@ -164,11 +175,14 @@ static void copy(int64_t lo, int64_t hi, int worker, void *ctx) {
     atomic_fetch_add(j->misses, misses);
 }
 
-/* [rig_pool_test_visibility jobs threads] runs [jobs] jobs, each over values the
-   caller writes just before it, and is (the values bodies read stale, the
-   values the caller read stale after a job). */
-value rig_pool_test_visibility(value v_jobs, value v_threads) {
-  CAMLparam2(v_jobs, v_threads);
+/* [rig_pool_test_visibility blocking jobs threads] runs [jobs] jobs, blocking
+   ones where [blocking], each over values the caller writes just before it,
+   and is (the values bodies read stale, the values the caller read stale
+   after a job). */
+value rig_pool_test_visibility(value v_blocking, value v_jobs,
+                               value v_threads) {
+  CAMLparam3(v_blocking, v_jobs, v_threads);
+  int blocking = Bool_val(v_blocking);
   CAMLlocal1(result);
   int64_t jobs = Long_val(v_jobs);
   int threads = Int_val(v_threads);
@@ -186,7 +200,7 @@ value rig_pool_test_visibility(value v_jobs, value v_threads) {
     for (int64_t i = 0; i < COPY_UNITS; i++)
       in[i] = k + i;
     copy_job j = {in, out, k, &body_misses};
-    rig_pool_run(threads, COPY_UNITS, COPY_CHUNKS, copy, &j);
+    run_job(blocking, threads, COPY_UNITS, COPY_CHUNKS, copy, &j);
     for (int64_t i = 0; i < COPY_UNITS; i++)
       if (out[i] != k + i + 1)
         caller_misses++;
@@ -220,7 +234,7 @@ static void inner(int64_t lo, int64_t hi, int worker, void *ctx) {
 }
 
 typedef struct {
-  int threads;
+  int threads, inner_blocking;
   int64_t inner_units;
   _Atomic int64_t outer_units, split, misplaced, unit_errors;
 } outer_job;
@@ -233,7 +247,8 @@ static void outer(int64_t lo, int64_t hi, int worker, void *ctx) {
   atomic_fetch_add(&j->outer_units, hi - lo);
   _Atomic int units[MAX_INNER] = {0};
   inner_job ij = {pthread_self(), units, 0, &j->misplaced};
-  rig_pool_run(j->threads, j->inner_units, j->inner_units, inner, &ij);
+  run_job(j->inner_blocking, j->threads, j->inner_units, j->inner_units, inner,
+          &ij);
   if (atomic_load(&ij.calls) != 1)
     atomic_fetch_add(&j->split, 1);
   for (int64_t i = 0; i < j->inner_units; i++)
@@ -241,21 +256,25 @@ static void outer(int64_t lo, int64_t hi, int worker, void *ctx) {
       atomic_fetch_add(&j->unit_errors, 1);
 }
 
-/* [rig_pool_test_nested threads outer inner] runs a job of [outer] chunks of
-   one unit on [threads] threads, whose every body begins a job of [inner]
-   chunks of one unit on [threads] threads. It is (outer units run, inner jobs
+/* [rig_pool_test_nested outer_blocking inner_blocking threads outer inner]
+   runs a job of [outer] chunks of one unit on [threads] threads, whose every
+   body begins a job of [inner] chunks of one unit on [threads] threads, each
+   job a blocking one where its flag says. It is (outer units run, inner jobs
    not run in one call, inner calls off their outer body's thread or not
    worker 0, inner units not run once). */
-value rig_pool_test_nested(value v_threads, value v_outer, value v_inner) {
-  CAMLparam3(v_threads, v_outer, v_inner);
+value rig_pool_test_nested(value v_outer_blocking, value v_inner_blocking,
+                           value v_threads, value v_outer, value v_inner) {
+  CAMLparam5(v_outer_blocking, v_inner_blocking, v_threads, v_outer, v_inner);
   CAMLlocal1(result);
   int64_t inner_units = Long_val(v_inner);
   if (inner_units < 0 || inner_units > MAX_INNER)
     caml_invalid_argument("rig_pool_test_nested: inner");
-  outer_job j = {Int_val(v_threads), inner_units, 0, 0, 0, 0};
+  outer_job j = {Int_val(v_threads), Bool_val(v_inner_blocking), inner_units,
+                 0, 0, 0, 0};
   int64_t outer_units = Long_val(v_outer);
   caml_enter_blocking_section();
-  rig_pool_run(j.threads, outer_units, outer_units, outer, &j);
+  run_job(Bool_val(v_outer_blocking), j.threads, outer_units, outer_units,
+          outer, &j);
   caml_leave_blocking_section();
   result = caml_alloc_tuple(4);
   Store_field(result, 0, Val_long(atomic_load(&j.outer_units)));
@@ -330,12 +349,14 @@ value rig_pool_test_reset(value unit) {
   return Val_unit;
 }
 
-/* [rig_pool_test_hold only_worker] runs a job of two chunks on two threads that
-   [hold]s, and is whether it was released before patience ran out. */
-value rig_pool_test_hold(value v_only_worker) {
+/* [rig_pool_test_hold blocking only_worker] runs a job of two chunks on two
+   threads that [hold]s, a blocking one where [blocking], and is whether it
+   was released before patience ran out. */
+value rig_pool_test_hold(value v_blocking, value v_only_worker) {
   int only_worker = Bool_val(v_only_worker);
+  int blocking = Bool_val(v_blocking);
   caml_enter_blocking_section();
-  rig_pool_run(2, 2, 2, hold, &only_worker);
+  run_job(blocking, 2, 2, 2, hold, &only_worker);
   caml_leave_blocking_section();
   return Val_bool(atomic_load(&hold_released));
 }
@@ -359,13 +380,38 @@ static void counted(int64_t lo, int64_t hi, int worker, void *ctx) {
   atomic_fetch_add(&counted_calls, 1);
 }
 
-value rig_pool_test_counted(value v_threads, value v_total, value v_chunks) {
-  int threads = Int_val(v_threads);
+value rig_pool_test_counted(value v_blocking, value v_threads, value v_total,
+                            value v_chunks) {
+  int blocking = Bool_val(v_blocking), threads = Int_val(v_threads);
   int64_t total = Int64_val(v_total), chunks = Int64_val(v_chunks);
   caml_enter_blocking_section();
-  rig_pool_run(threads, total, chunks, counted, NULL);
+  run_job(blocking, threads, total, chunks, counted, NULL);
   caml_leave_blocking_section();
   return Val_unit;
+}
+
+/* The two chunks wait for each other: they meet only if two threads run
+   them at once. */
+static void meet(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)lo;
+  (void)hi;
+  (void)worker;
+  _Atomic int *arrived = ctx;
+  atomic_fetch_add(arrived, 1);
+  int64_t deadline = now_ns() + patience;
+  while (atomic_load(arrived) < 2 && now_ns() < deadline) {
+  }
+}
+
+/* [rig_pool_test_meet blocking] runs a job of two chunks on two threads that
+   [meet], a blocking one where [blocking], and is whether they met. */
+value rig_pool_test_meet(value v_blocking) {
+  int blocking = Bool_val(v_blocking);
+  _Atomic int arrived = 0;
+  caml_enter_blocking_section();
+  run_job(blocking, 2, 2, 2, meet, (void *)&arrived);
+  caml_leave_blocking_section();
+  return Val_bool(atomic_load(&arrived) == 2);
 }
 
 value rig_pool_test_counted_calls(value unit) {

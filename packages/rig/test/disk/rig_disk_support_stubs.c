@@ -5,13 +5,18 @@
 
 /* What the disk's suites ask of the system that OCaml's Unix does not give:
    limits on this process's open files and file sizes, and dropping a file's
-   cached pages. */
+   cached pages; and a compute job of the host's pool that runs until
+   released. */
 
 #define _GNU_SOURCE
 
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
+#include <caml/signals.h>
 #include <errno.h>
+#include <stdatomic.h>
+
+#include "rig_pool.h"
 
 #ifndef _WIN32
 #include <fcntl.h>
@@ -68,4 +73,43 @@ value rig_disk_test_drop_pages(value v_path) {
   (void)v_path;
   return Val_int(-1);
 #endif
+}
+
+/* A held compute job */
+
+static _Atomic int held_began, held_released;
+
+static void held(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)lo;
+  (void)hi;
+  (void)worker;
+  (void)ctx;
+  atomic_store(&held_began, 1);
+  while (!atomic_load(&held_released)) {
+  }
+}
+
+/* [hold_pool ()] runs a compute job of two chunks on two threads of the
+   host's pool, whose every chunk lasts until [release_pool ()]. Releases the
+   runtime. */
+value rig_disk_test_hold_pool(value unit) {
+  (void)unit;
+  atomic_store(&held_began, 0);
+  atomic_store(&held_released, 0);
+  caml_enter_blocking_section();
+  rig_pool_run(2, 2, 2, held, NULL);
+  caml_leave_blocking_section();
+  return Val_unit;
+}
+
+/* [pool_held ()] is whether a chunk of [hold_pool]'s job began. */
+value rig_disk_test_pool_held(value unit) {
+  (void)unit;
+  return Val_bool(atomic_load(&held_began));
+}
+
+value rig_disk_test_release_pool(value unit) {
+  (void)unit;
+  atomic_store(&held_released, 1);
+  return Val_unit;
 }

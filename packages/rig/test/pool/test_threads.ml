@@ -12,33 +12,36 @@ module P = Rig_pool_probe
 module T = Rig_pool_thread_probe
 
 let cores = P.cores ()
+let kinds = [ P.Compute; P.Blocking ]
+let kind_name = function P.Compute -> "compute" | P.Blocking -> "blocking"
 
 (* Bodies on a worker *)
 
-let test_worker_mask () =
+let test_worker_mask kind =
   P.needs_two_cores ();
-  let worked, mask = T.worker_mask () in
+  let worked, mask = T.worker_mask kind in
   equal ~msg:"a worker ran a chunk" bool true worked;
   equal ~msg:"(signal, blocked)"
     (list (pair string bool))
     (List.map (fun (s, _) -> (s, not (List.mem s T.faults))) mask)
     mask
 
-(* [in_child s] is the values of scenario [s], once its child answered. *)
-let in_child scenario =
+(* [in_child kind s] is the values of scenario [s] with jobs of [kind], once its
+   child answered. *)
+let in_child ?(kind = P.Compute) scenario =
   P.needs_fork ();
-  let status, values = T.in_child scenario in
+  let status, values = T.in_child kind scenario in
   equal ~msg:"how the child ended" string "exit 0" status;
   values
 
-let test_stack () =
+let test_stack kind =
   P.needs_two_cores ();
-  let v = in_child T.Stack in
+  let v = in_child ~kind T.Stack in
   equal ~msg:"a worker ran the chunk" int 1 v.(0)
 
-let test_faults () =
+let test_faults kind =
   P.needs_two_cores ();
-  let v = in_child T.Faults in
+  let v = in_child ~kind T.Faults in
   equal ~msg:"a worker ran the chunk" int 1 v.(0);
   equal ~msg:"(signal, its handler ran on the worker)"
     (list (pair string bool))
@@ -48,10 +51,13 @@ let test_faults () =
 let worker_tests =
   group ~timeout:P.timeout "workers"
     [
-      test "a body on a worker has 8 MiB of stack" test_stack;
-      test "workers block every signal but those a body raises itself"
+      cases ~name:kind_name "a body on a worker has 8 MiB of stack" kinds
+        test_stack;
+      cases ~name:kind_name
+        "workers block every signal but those a body raises itself" kinds
         test_worker_mask;
-      test "a fault signal a body raises on a worker runs its handler there"
+      cases ~name:kind_name
+        "a fault signal a body raises on a worker runs its handler there" kinds
         test_faults;
     ]
 
@@ -65,9 +71,9 @@ let needs_thread_states () =
    most 5 s, and is the last count. *)
 let settle_to n = P.settle 5. T.running_threads (fun k -> k <= n)
 
-let test_made_once () =
+let test_made_once kind =
   P.needs_two_cores ();
-  let v = in_child T.Threads in
+  let v = in_child ~kind T.Threads in
   if v.(0) < 0 then skip ~reason:"the system does not count its threads" ();
   equal ~msg:"threads after a job of one thread, as before any" int v.(0) v.(1);
   greater ~msg:"threads after the first job of two" int ~than:v.(0) v.(2);
@@ -76,10 +82,10 @@ let test_made_once () =
 
 (* An idle pool's threads park. A job then wakes a parked worker, and a caller
    whose job a worker holds parks until the job ends. *)
-let test_parks () =
+let test_parks kind =
   needs_thread_states ();
   P.needs_two_cores ();
-  ignore (P.record ~threads:cores ~total:64L ~chunks:8L);
+  ignore (P.record ~kind ~threads:cores ~total:64L ~chunks:8L ());
   equal ~msg:"threads running once the pool is idle" int 0 (settle_to 0);
   P.reset ();
   let finished = Atomic.make false in
@@ -87,7 +93,7 @@ let test_parks () =
     Domain.spawn (fun () ->
         Fun.protect
           ~finally:(fun () -> Atomic.set finished true)
-          (fun () -> P.hold ~only_worker:true))
+          (fun () -> P.hold ~kind ~only_worker:true ()))
   in
   P.within 10. "a parked worker was not woken for the job" (fun () ->
       P.hold_arrived () = 2);
@@ -100,15 +106,22 @@ let test_parks () =
 
 (* The child answers after a job of the parent's on every core; the parent's
    pool then runs a job that needs a worker. *)
-let test_fork_child () =
+let test_fork_child kind =
   P.needs_two_cores ();
-  let v = in_child T.Job in
+  let v = in_child ~kind T.Job in
   equal ~msg:"(a worker ran a chunk, units not run once)" (pair int int) (1, 0)
     (v.(0), v.(1));
-  equal
-    ~msg:"in the parent, the other chunks ran on a worker while chunk 0 lasted"
-    bool true
-    (P.finishes "the parent's job after the fork" (fun () -> P.balance 16))
+  equal ~msg:"in the parent, a job's two chunks ran at once" bool true
+    (P.finishes "the parent's job after the fork" (fun () -> P.meet kind))
+
+(* fork returns while another thread's blocking job runs, and the child runs a
+   blocking job of its own on its own workers. *)
+let test_fork_beside_blocking () =
+  P.needs_two_cores ();
+  P.needs_fork ();
+  let during, status = T.fork_beside_blocking () in
+  equal ~msg:"how the child ended" string "exit 0" status;
+  equal ~msg:"fork returned while the blocking job ran" bool true during
 
 (* The child limits its own threads to none, so the pool makes no worker. Its
    jobs run on the calling thread, and the pool makes none once the limit is
@@ -126,15 +139,21 @@ let test_unmade () =
 let thread_tests =
   group ~timeout:P.timeout "threads"
     [
-      test
-        "the workers are made at the first job of more than one thread and \
-         live until the process exits"
-        test_made_once;
-      test "the pool's threads park when idle, and a job wakes them" test_parks;
-      test
+      cases ~name:kind_name
+        "a kind's workers are made at its first job of more than one thread \
+         and live until the process exits"
+        kinds test_made_once;
+      cases ~name:kind_name
+        "the pool's threads park when idle, and a job wakes them" kinds
+        test_parks;
+      cases ~name:kind_name
         "a child made by fork runs its jobs on workers of its own, and the \
          parent on its own"
-        test_fork_child;
+        kinds test_fork_child;
+      test
+        "fork returns while another thread's blocking job runs, and the child \
+         runs its blocking jobs on workers of its own"
+        test_fork_beside_blocking;
       test
         "workers that cannot be made are missing from every job; with none, \
          the calling thread runs every chunk"

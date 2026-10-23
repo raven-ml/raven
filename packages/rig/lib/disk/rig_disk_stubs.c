@@ -37,7 +37,6 @@
 #else
 #include <fcntl.h>
 #include <pthread.h>
-#include <signal.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -376,8 +375,9 @@ static intnat transfer_calls(int write, intnat h, int64_t pos, char *buf,
 
 /* Long reads
 
-   A read of more than [SEGMENT] bytes is cut into segments that the calling
-   thread and the disk's readers claim in turn, each read by system calls. A
+   A read of more than [SEGMENT] bytes is a blocking job of the host's pool
+   (rig_pool.h), one chunk a segment, on as many threads as the performance
+   cores the process may occupy; each segment is read by system calls. A
    read copies the file's cached pages on the thread that makes it, so one
    thread moves them at the speed of one core's copy, and storage serves
    several reads at once. A 32 MiB piece of a file took, on fudge (Core
@@ -387,65 +387,32 @@ static intnat transfer_calls(int write, intnat h, int64_t pos, char *buf,
    pread, 3.0 and 10.5 ms: it copies cached pages on the submitting thread
    too.
 
-   The readers are threads of the disk's own, one fewer than the
-   performance cores the process may occupy (rig_pool_performance_cores),
-   made at the first long read and asleep between reads; a read wakes as
-   many as it has segments past its first. They are not the host's pool,
-   whose one job at a time would make a read and a kernel on another domain
-   wait for each other, however long the storage takes. One read at a time
-   holds them; a read that finds them held reads alone. They block every
-   signal but those a fault raises, as the pool's workers do. A forked child
-   has none: it leaves the parent's state, whose lock and condition
-   variables the parent's readers may hold or wait on, and makes its own at
-   its first long read.
-
    A read that finds the end of the file reads up to it: the bytes read are
    those before the first segment that came short. Segments past that end,
    or after an error, are not read. */
 
 #define SEGMENT ((intnat)2 << 20)
 
-/* A read's segments: [n] bytes of [h] from [pos] into [buf]. [next] is the
-   next segment to claim, [end] where a segment found the end of the file,
-   else [n], [error] the first system error, else 0, [inside] the readers
-   reading it, under the readers' lock, and [number] the read's, which
-   tells a reader a read it has not worked on. */
+/* A read: [n] bytes of [h] from [pos] into [buf]. [end] is where a segment
+   found the end of the file, else [n], and [error] the first system error,
+   else 0. */
 struct reading {
-  uint64_t number;
   intnat h;
   int64_t pos;
   char *buf;
   intnat n;
-  int64_t segments;
-  _Atomic int64_t next;
   _Atomic intnat end;
   _Atomic int error;
-  int inside;
 };
 
-/* The readers' state, on the heap so that a forked child can leave it.
-   [mu] guards [current], the read the readers work on or NULL, and each
-   reading's [inside]. */
-struct readers {
-  pthread_mutex_t mu;
-  pthread_cond_t work, out;
-  struct reading *current;
-  uint64_t reads; /* the long reads begun */
-  int made;
-};
-
-/* Made by the holder of [readers_held], which alone reads it; NULL before
-   the first long read, and in a forked child. */
-static struct readers *readers;
-static atomic_int readers_held;
-
-/* Reads the segments of [r] this thread claims, until none is left, an
-   error came, or the claimed segment starts past the end of the file. */
-static void read_claimed(struct reading *r) {
-  while (atomic_load(&r->error) == 0) {
-    int64_t s = atomic_fetch_add(&r->next, 1);
+/* Reads segments [lo, hi) of [ctx]'s read, until an error came or a
+   segment starts past the end of the file. */
+static void read_segments(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)worker;
+  struct reading *r = ctx;
+  for (int64_t s = lo; s < hi; s++) {
     intnat at = (intnat)s * SEGMENT;
-    if (s >= r->segments || at >= atomic_load(&r->end)) return;
+    if (atomic_load(&r->error) != 0 || at >= atomic_load(&r->end)) return;
     intnat len = r->n - at < SEGMENT ? r->n - at : SEGMENT;
     intnat got = transfer_calls(0, r->h, r->pos + at, r->buf + at, len);
     if (got < 0) {
@@ -460,73 +427,11 @@ static void read_claimed(struct reading *r) {
   }
 }
 
-static void *reader(void *arg) {
-  struct readers *rs = arg;
-  uint64_t last = 0;
-  pthread_mutex_lock(&rs->mu);
-  for (;;) {
-    while (rs->current == NULL || rs->current->number == last)
-      pthread_cond_wait(&rs->work, &rs->mu);
-    struct reading *r = rs->current;
-    last = r->number;
-    r->inside++;
-    pthread_mutex_unlock(&rs->mu);
-    read_claimed(r);
-    pthread_mutex_lock(&rs->mu);
-    if (--r->inside == 0) pthread_cond_signal(&rs->out);
-  }
-  return NULL;
-}
-
-/* The readers, made with every signal but a fault's blocked, or NULL if
-   their state cannot be. */
-static struct readers *make_readers(void) {
-  struct readers *rs = calloc(1, sizeof *rs);
-  if (rs == NULL || pthread_mutex_init(&rs->mu, NULL) != 0 ||
-      pthread_cond_init(&rs->work, NULL) != 0 ||
-      pthread_cond_init(&rs->out, NULL) != 0) {
-    free(rs);
-    return NULL;
-  }
-  sigset_t all, old;
-  sigfillset(&all);
-  int faults[] = {SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGTRAP, SIGABRT, SIGSYS};
-  for (size_t i = 0; i < sizeof faults / sizeof *faults; i++)
-    sigdelset(&all, faults[i]);
-  pthread_sigmask(SIG_SETMASK, &all, &old);
-  for (int i = 1; i < rig_pool_performance_cores(); i++) {
-    pthread_t t;
-    if (pthread_create(&t, NULL, reader, rs) != 0) break;
-    pthread_detach(t);
-    rs->made++;
-  }
-  pthread_sigmask(SIG_SETMASK, &old, NULL);
-  return rs;
-}
-
 static intnat read_long(intnat h, int64_t pos, char *buf, intnat n) {
-  if (atomic_exchange(&readers_held, 1) != 0)
-    return transfer_calls(0, h, pos, buf, n);
-  if (readers == NULL) readers = make_readers();
-  struct readers *rs = readers;
-  if (rs == NULL) {
-    atomic_store(&readers_held, 0);
-    return transfer_calls(0, h, pos, buf, n);
-  }
-  struct reading r = {0, h, pos, buf, n, (n + SEGMENT - 1) / SEGMENT,
-                      0, n, 0, 0};
-  pthread_mutex_lock(&rs->mu);
-  r.number = ++rs->reads;
-  rs->current = &r;
-  int64_t wake = r.segments - 1 < rs->made ? r.segments - 1 : rs->made;
-  for (int64_t i = 0; i < wake; i++) pthread_cond_signal(&rs->work);
-  pthread_mutex_unlock(&rs->mu);
-  read_claimed(&r);
-  pthread_mutex_lock(&rs->mu);
-  rs->current = NULL;
-  while (r.inside > 0) pthread_cond_wait(&rs->out, &rs->mu);
-  pthread_mutex_unlock(&rs->mu);
-  atomic_store(&readers_held, 0);
+  struct reading r = {h, pos, buf, n, n, 0};
+  int64_t segments = (n + SEGMENT - 1) / SEGMENT;
+  rig_pool_run_blocking(rig_pool_performance_cores(), segments, segments,
+                        read_segments, &r);
   return r.error != 0 ? -(intnat)r.error : atomic_load(&r.end);
 }
 
@@ -540,16 +445,11 @@ static intnat transfer(int write, intnat h, int64_t pos, char *buf,
 
    A forked child makes anew what a thread of its parent may have held at the
    fork: the descriptor table's lock and the files' sync locks, which the
-   OCaml side makes anew once [forks] has moved, and the readers of long
-   reads. */
+   OCaml side makes anew once [forks] has moved. */
 
 static atomic_int forks;
 
-static void forked_child(void) {
-  atomic_fetch_add(&forks, 1);
-  readers = NULL;
-  atomic_store(&readers_held, 0);
-}
+static void forked_child(void) { atomic_fetch_add(&forks, 1); }
 
 static pthread_once_t watch_once = PTHREAD_ONCE_INIT;
 static void watch(void) { pthread_atfork(NULL, NULL, forked_child); }

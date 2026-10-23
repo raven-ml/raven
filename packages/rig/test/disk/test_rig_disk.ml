@@ -1014,7 +1014,8 @@ let test_inherited () =
   ignore (Sys.opaque_identity file)
 
 (* A forked child reads and writes files with the disk, its parent's opens and
-   its own, with a read long enough to run on the disk's readers. OCaml
+   its own, with a read long enough to run on the host pool's blocking
+   workers, which the parent's read made before the fork. OCaml
    forks only a process that started no domain: a child process of the suite's
    own forks. *)
 let test_forked () =
@@ -1655,9 +1656,48 @@ let domain_commands =
       (fun () -> use_others others_count);
   ]
 
+(* A long read neither waits for the host pool's compute jobs nor needs their
+   workers: it ends while another domain's compute job holds them until
+   released. If it waited, it would end only at the release. *)
+let test_beside_compute () =
+  if Sys.win32 then skip ~reason:"long reads run on the calling thread" ();
+  let s = pattern 5 (8 * segment) in
+  let path = make_file s in
+  removing [ path ] @@ fun () ->
+  let file = of_file path in
+  let job = Domain.spawn Support.hold_pool in
+  let read_ended, got =
+    Fun.protect
+      ~finally:(fun () ->
+        Support.release_pool ();
+        Domain.join job)
+      (fun () ->
+        let until = Unix.gettimeofday () +. 10. in
+        while (not (Support.pool_held ())) && Unix.gettimeofday () < until do
+          Unix.sleepf 0.001
+        done;
+        if not (Support.pool_held ()) then failf "the compute job did not begin";
+        let got = Atomic.make None in
+        let reader = Domain.spawn (fun () -> Atomic.set got (Some (read file))) in
+        let until = Unix.gettimeofday () +. 10. in
+        while Option.is_none (Atomic.get got) && Unix.gettimeofday () < until do
+          Unix.sleepf 0.001
+        done;
+        let ended = Option.is_some (Atomic.get got) in
+        Support.release_pool ();
+        Domain.join reader;
+        (ended, Atomic.get got))
+  in
+  equal bool ~msg:"the read ended while the compute job ran" true read_ended;
+  same ~msg:"the bytes read" s (Option.get got)
+
 let domains =
   group ~timeout "domains"
     [
+      test
+        "a long copy ends while another domain's compute job holds the host \
+         pool's workers"
+        test_beside_compute;
       stateful ~domains:2 ~count:10 ~steps:4
         "copies from two domains at once read and write each file's own bytes, \
          through closed and reopened descriptors"

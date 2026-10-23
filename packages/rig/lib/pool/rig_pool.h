@@ -5,18 +5,21 @@
 
 /* The host's worker threads.
 
-   The pool is the set of threads that compute on the host for one process.
-   nx's CPU kernels and the host's launches in rig share its workers. A
-   caller hands the pool a job with rig_pool_run, which runs it on the
-   calling thread and on the pool's workers.
+   The pool is the set of threads that run work on the host for one
+   process. It holds two sets of workers: compute workers, which nx's CPU
+   kernels and the host's launches in rig share, and blocking workers, for
+   jobs whose bodies wait on the system, such as rig.disk's long reads. A
+   caller hands the pool a job with rig_pool_run, or rig_pool_run_blocking
+   for a blocking job, which runs it on the calling thread and on the
+   workers of its kind.
 
    A job is a range of units [0, total) cut into contiguous chunks, run on
    at most a given number of threads, which call the job's body on the
    chunks they claim. The calling thread is worker 0, and the pool's
    workers take the other indices. Threads claim chunks as they go, so a
-   thread that finishes early runs chunks another would have run.
-   rig_pool_run returns once every chunk has run. Only one job runs on
-   several threads at a time (see Jobs).
+   thread that finishes early runs chunks another would have run. A job
+   returns once every chunk has run. Only one job of each kind runs on
+   several threads at a time (see Jobs and Blocking jobs).
 
    Workers block every signal except those a body raises itself (SIGSEGV,
    SIGBUS, SIGFPE, SIGILL, SIGTRAP, SIGABRT, SIGSYS). A signal sent to the
@@ -26,12 +29,14 @@
 
    The life of the pool goes like this:
 
-     1. The first job on several threads makes the workers.
+     1. The first job of a kind on several threads makes that kind's
+        workers.
      2. Each job calls on the workers it needs. A worker that waits for a
         job spins for a moment before it sleeps (see Jobs).
      3. The workers live until the process exits. fork waits for a running
-        job on several threads to end, and the child makes a pool of
-        its own at its first job on several threads.
+        compute job on several threads to end, but not for a blocking job
+        (see Blocking jobs), and the child makes workers of its own at its
+        first job of each kind on several threads.
 
    No function fails. A pool that cannot make every worker runs its jobs on
    those it made, down to the calling thread alone. Every function may be
@@ -116,10 +121,11 @@ int rig_pool_performance_cores(void);
    of the job by about the call it is in. Which thread runs which chunks,
    and in which order, is unspecified.
 
-   Only one job runs on several threads at a time. A job of t = 1, or a job
-   begun from a body of a job on several threads, runs immediately on the
-   calling thread alone, in one call as worker 0. Any other job first waits
-   for another thread's job to end.
+   Only one compute job runs on several threads at a time. A job of t = 1,
+   or a job of either kind begun from a body of a job on several threads,
+   runs immediately on the calling thread alone, in one call as worker 0.
+   Any other compute job first waits for another thread's compute job to
+   end.
 
    A thread that waits, for a job or for the end of its own, spins for a
    moment before it sleeps, and keeps its core while it spins. Jobs that
@@ -163,5 +169,30 @@ typedef void (*rig_pool_body)(int64_t lo, int64_t hi, int worker, void *ctx);
    including the time the job waits for another thread's job. */
 void rig_pool_run(int threads, int64_t total, int64_t chunks, rig_pool_body body,
                  void *ctx);
+
+/* Blocking jobs
+
+   A blocking job is one whose bodies spend their time waiting on the
+   system, such as reads of a file that storage serves. Its length is the
+   system's, not the cores': a compute job that waited for it, or that had
+   to do without the workers it holds, would wait on the system too. So
+   blocking jobs run on workers of their own, apart from the compute
+   workers and as many, and a blocking job and a compute job never wait for
+   each other. Their threads share the cores: a blocking job whose bodies
+   copy memory, such as reads of a file the system holds in memory, slows a
+   compute job that runs at the same time, as a program's other threads do.
+
+   A blocking job follows the rules of Jobs, with one difference. A blocking
+   job begun while another thread's blocking job runs on several threads
+   runs immediately on the calling thread alone, in one call as worker 0,
+   since waiting for a job whose end the system decides could take any
+   time. For the same reason fork does not wait for a running blocking
+   job. */
+
+/* rig_pool_run_blocking (threads, total, chunks, body, ctx) is
+   rig_pool_run (threads, total, chunks, body, ctx) for a blocking job (see
+   Blocking jobs). */
+void rig_pool_run_blocking(int threads, int64_t total, int64_t chunks,
+                           rig_pool_body body, void *ctx);
 
 #endif

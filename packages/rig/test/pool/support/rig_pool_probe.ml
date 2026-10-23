@@ -3,37 +3,59 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+type kind = Compute | Blocking
+
+let blocking = function Compute -> false | Blocking -> true
+
 (* Recorded jobs *)
 
 type call = { lo : int64; hi : int64; worker : int; thread : int }
 type job = { calls : call list; count : int; overlaps : int }
 
 external record_raw :
-  int -> int64 -> int64 -> (int64 * int64 * int * int) array * int * int
+  bool -> int -> int64 -> int64 -> (int64 * int64 * int * int) array * int * int
   = "rig_pool_test_record"
 
-let record ~threads ~total ~chunks =
-  let calls, count, overlaps = record_raw threads total chunks in
+let record ?(kind = Compute) ~threads ~total ~chunks () =
+  let calls, count, overlaps = record_raw (blocking kind) threads total chunks in
   let call (lo, hi, worker, thread) = { lo; hi; worker; thread } in
   { calls = List.map call (Array.to_list calls); count; overlaps }
 
-external visibility : jobs:int -> threads:int -> int * int
+external visibility_raw : bool -> jobs:int -> threads:int -> int * int
   = "rig_pool_test_visibility"
 
-external nested : threads:int -> outer:int -> inner:int -> int * int * int * int
+let visibility ?(kind = Compute) ~jobs ~threads () =
+  visibility_raw (blocking kind) ~jobs ~threads
+
+external nested_raw :
+  bool -> bool -> threads:int -> outer:int -> inner:int -> int * int * int * int
   = "rig_pool_test_nested"
+
+let nested ?(kinds = (Compute, Compute)) ~threads ~outer ~inner () =
+  nested_raw (blocking (fst kinds)) (blocking (snd kinds)) ~threads ~outer
+    ~inner
 
 external balance : int -> bool = "rig_pool_test_balance"
 
 (* Jobs observed from another domain *)
 
 external reset : unit -> unit = "rig_pool_test_reset"
-external hold : only_worker:bool -> bool = "rig_pool_test_hold"
+external hold_raw : bool -> only_worker:bool -> bool = "rig_pool_test_hold"
+
+let hold ?(kind = Compute) ~only_worker () = hold_raw (blocking kind) ~only_worker
+
 external hold_arrived : unit -> int = "rig_pool_test_hold_arrived"
 external hold_release : unit -> unit = "rig_pool_test_hold_release"
 
-external counted : threads:int -> total:int64 -> chunks:int64 -> unit
+external counted_raw : bool -> threads:int -> total:int64 -> chunks:int64 -> unit
   = "rig_pool_test_counted"
+
+let counted ?(kind = Compute) ~threads ~total ~chunks () =
+  counted_raw (blocking kind) ~threads ~total ~chunks
+
+external meet_raw : bool -> bool = "rig_pool_test_meet"
+
+let meet kind = meet_raw (blocking kind)
 
 external counted_calls : unit -> int = "rig_pool_test_counted_calls"
 
@@ -100,9 +122,9 @@ let finishes what f =
   Domain.join d;
   match Option.get (Atomic.get result) with Ok v -> v | Error e -> raise e
 
-let while_held f =
+let while_held ?kind f =
   reset ();
-  let held = Domain.spawn (fun () -> hold ~only_worker:false) in
+  let held = Domain.spawn (fun () -> hold ?kind ~only_worker:false ()) in
   match
     within 10. "the held job did not begin" (fun () -> hold_arrived () >= 1);
     f ()

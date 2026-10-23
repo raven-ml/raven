@@ -42,6 +42,18 @@
 #include "rig_pool.h"
 #include "rig_pool_probe.h"
 
+/* Whether the probe's jobs are blocking ones (rig_pool.h), as its caller
+   chose before it ran them. */
+static int blocking;
+
+static void run_job(int threads, int64_t total, int64_t chunks,
+                    rig_pool_body body, void *ctx) {
+  if (blocking)
+    rig_pool_run_blocking(threads, total, chunks, body, ctx);
+  else
+    rig_pool_run(threads, total, chunks, body, ctx);
+}
+
 static void nothing(int64_t lo, int64_t hi, int worker, void *ctx) {
   (void)lo;
   (void)hi;
@@ -77,7 +89,7 @@ static void meet(int64_t lo, int64_t hi, int worker, void *ctx) {
 /* Whether a worker ran a chunk, and so [on_worker]. */
 static int on_a_worker(void (*on_worker)(void)) {
   meet_job j = {0, 0, on_worker};
-  rig_pool_run(2, 2, 2, meet, &j);
+  run_job(2, 2, 2, meet, &j);
   return j.worked;
 }
 
@@ -102,11 +114,13 @@ static sigset_t worker_mask;
 
 static void read_mask(void) { pthread_sigmask(SIG_BLOCK, NULL, &worker_mask); }
 
-/* [rig_pool_test_worker_mask ()] is (whether a worker ran, the signals of the
-   table with whether a worker blocks them). */
-value rig_pool_test_worker_mask(value unit) {
-  CAMLparam1(unit);
+/* [rig_pool_test_worker_mask blocking] is (whether a worker ran, the signals
+   of the table with whether a worker blocks them), a blocking job's worker
+   where [blocking]. */
+value rig_pool_test_worker_mask(value v_blocking) {
+  CAMLparam1(v_blocking);
   CAMLlocal5(result, list, pair, name, cell);
+  blocking = Bool_val(v_blocking);
   caml_enter_blocking_section();
   int worked = on_a_worker(read_mask);
   caml_leave_blocking_section();
@@ -213,12 +227,12 @@ static int64_t thread_count(void) { return -1; }
 static void child_threads(int64_t *v) {
   int cores = rig_pool_cores();
   v[0] = thread_count();
-  rig_pool_run(1, 1000, 10, nothing, NULL);
+  run_job(1, 1000, 10, nothing, NULL);
   v[1] = thread_count();
-  rig_pool_run(2, 1000, 10, nothing, NULL);
+  run_job(2, 1000, 10, nothing, NULL);
   v[2] = thread_count();
-  rig_pool_run(cores, 1000, 100, nothing, NULL);
-  rig_pool_run(cores, 1000, 100, nothing, NULL);
+  run_job(cores, 1000, 100, nothing, NULL);
+  run_job(cores, 1000, 100, nothing, NULL);
   v[3] = thread_count();
 }
 
@@ -237,7 +251,7 @@ static void count_units(int64_t lo, int64_t hi, int worker, void *ctx) {
    once. */
 static void child_job(int64_t *v) {
   v[0] = on_a_worker(NULL);
-  rig_pool_run(rig_pool_cores(), CHILD_UNITS, 37, count_units, NULL);
+  run_job(rig_pool_cores(), CHILD_UNITS, 37, count_units, NULL);
   for (int i = 0; i < CHILD_UNITS; i++)
     if (atomic_load(&child_units[i]) != 1)
       v[1]++;
@@ -259,7 +273,7 @@ static void count_alone(int64_t lo, int64_t hi, int worker, void *ctx) {
 /* [units_not_once ()] runs a job on every core and is the units it did not
    run once, which it then clears. */
 static int64_t units_not_once(void) {
-  rig_pool_run(rig_pool_cores(), CHILD_UNITS, 37, count_alone, NULL);
+  run_job(rig_pool_cores(), CHILD_UNITS, 37, count_alone, NULL);
   int64_t n = 0;
   for (int i = 0; i < CHILD_UNITS; i++)
     if (atomic_exchange(&child_units[i], 0) != 1)
@@ -308,7 +322,7 @@ static void child_faults(int64_t *v) {
 static void in_child(void (*f)(int64_t *), int64_t *values, char *status,
                      size_t len) {
   int fds[2];
-  rig_pool_run(rig_pool_cores(), 1000, 100, nothing, NULL);
+  run_job(rig_pool_cores(), 1000, 100, nothing, NULL);
   if (pipe(fds) != 0) {
     snprintf(status, len, "pipe: %s", strerror(errno));
     return;
@@ -363,15 +377,18 @@ static void in_child(void (*f)(int64_t *), int64_t *values, char *status,
     snprintf(status, len, "exit 0");
 }
 
-/* [rig_pool_test_in_child scenario] is (status, values) of [in_child] for the
-   scenario of that index: threads, job, stack, faults, limited. */
-value rig_pool_test_in_child(value v_scenario) {
-  CAMLparam1(v_scenario);
+/* [rig_pool_test_in_child blocking scenario] is (status, values) of
+   [in_child] for the scenario of that index: threads, job, stack, faults,
+   limited; its jobs, the parent's before the fork included, are blocking
+   ones where [blocking]. */
+value rig_pool_test_in_child(value v_blocking, value v_scenario) {
+  CAMLparam2(v_blocking, v_scenario);
   CAMLlocal3(result, values, s);
   static void (*const scenarios[])(int64_t *) = {
       child_threads, child_job, child_stack, child_faults, child_limited};
   int64_t v[CHILD_VALUES] = {0};
   char status[128];
+  blocking = Bool_val(v_blocking);
   caml_enter_blocking_section();
   in_child(scenarios[Int_val(v_scenario)], v, status, sizeof status);
   caml_leave_blocking_section();
@@ -382,6 +399,90 @@ value rig_pool_test_in_child(value v_scenario) {
   result = caml_alloc_tuple(2);
   Store_field(result, 0, s);
   Store_field(result, 1, values);
+  CAMLreturn(result);
+}
+
+/* Fork beside a running blocking job */
+
+static _Atomic int beside_began, beside_released, beside_ended;
+
+/* Every chunk waits for the release, up to [patience]. */
+static void beside_hold(int64_t lo, int64_t hi, int worker, void *ctx) {
+  (void)lo;
+  (void)hi;
+  (void)worker;
+  (void)ctx;
+  atomic_fetch_add(&beside_began, 1);
+  int64_t deadline = now_ns() + patience;
+  while (!atomic_load(&beside_released) && now_ns() < deadline) {
+  }
+}
+
+static void *beside_caller(void *arg) {
+  rig_pool_run_blocking(2, 2, 2, beside_hold, NULL);
+  atomic_store(&beside_ended, 1);
+  return arg;
+}
+
+/* How the child [pid] ended, waited for up to [patience]: "exit 0" once it
+   exited with 0. */
+static void child_status(pid_t pid, char *status, size_t len) {
+  int64_t deadline = now_ns() + patience;
+  int st;
+  pid_t r;
+  while ((r = waitpid(pid, &st, WNOHANG)) == 0 && now_ns() < deadline) {
+    struct timespec ms = {0, 1000000};
+    nanosleep(&ms, NULL);
+  }
+  if (r == 0) {
+    kill(pid, SIGKILL);
+    waitpid(pid, &st, 0);
+    snprintf(status, len, "no answer within %llds",
+             (long long)(patience / 1000000000));
+  } else if (r < 0)
+    snprintf(status, len, "waitpid: %s", strerror(errno));
+  else if (WIFSIGNALED(st))
+    snprintf(status, len, "killed by %s", strsignal(WTERMSIG(st)));
+  else
+    snprintf(status, len, "exit %d", WEXITSTATUS(st));
+}
+
+/* [rig_pool_test_fork_beside_blocking ()] forks while another thread's
+   blocking job of two threads runs, its chunks held. It is (whether fork
+   returned while the job still ran, how the child ended): the child exits
+   0 once a worker of its own ran a chunk of a blocking job. */
+value rig_pool_test_fork_beside_blocking(value unit) {
+  CAMLparam1(unit);
+  CAMLlocal2(result, s);
+  char status[128] = "not forked";
+  int during = 0;
+  atomic_store(&beside_began, 0);
+  atomic_store(&beside_released, 0);
+  atomic_store(&beside_ended, 0);
+  caml_enter_blocking_section();
+  pthread_t thread;
+  if (pthread_create(&thread, NULL, beside_caller, NULL) == 0) {
+    int64_t deadline = now_ns() + patience;
+    while (atomic_load(&beside_began) < 2 && now_ns() < deadline) {
+    }
+    pid_t pid = fork();
+    if (pid == 0) {
+      blocking = 1;
+      _exit(on_a_worker(NULL) ? 0 : 3);
+    }
+    during = !atomic_load(&beside_ended);
+    atomic_store(&beside_released, 1);
+    pthread_join(thread, NULL);
+    if (pid < 0)
+      snprintf(status, sizeof status, "fork: %s", strerror(errno));
+    else
+      child_status(pid, status, sizeof status);
+  }
+  caml_leave_blocking_section();
+  s = caml_copy_string(status);
+  result = caml_alloc_tuple(2);
+  Store_field(result, 0, Val_bool(during));
+  Store_field(result, 1, s);
   CAMLreturn(result);
 }
 

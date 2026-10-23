@@ -10,8 +10,8 @@
     the bytes of one file. Its buffers and their views ({!Rig.Buffer.view})
     are ranges of those bytes, at any offset. The disk runs no work and has
     no timeline. A program reaches a file's bytes through
-    {!Rig.Buffer.copy} and {!Rig.Buffer.borrow}, which run in the calling
-    domain and return when done.
+    {!Rig.Buffer.copy} and {!Rig.Buffer.borrow}, which return when done
+    ({!copies}).
 
     The life of a file's buffer goes like this:
     {ol
@@ -102,6 +102,17 @@ val create_file : string -> int -> (Rig.Buffer.t, string) result
     into or out of memory the host addresses, and through the host's staging
     memory otherwise ({!Rig.Buffer.copy}). A copy returns once its bytes are
     in the file, where the system may still hold them in memory.
+
+    A copy runs on the calling thread, except, outside Windows, a read of
+    more than 2 MiB. That one is cut into segments of 2 MiB that several
+    threads read at once: the calling thread and blocking workers of the
+    host's pool, at most one a segment and as many in all as the performance
+    cores the process may occupy ([rig_pool_run_blocking] in [rig_pool.h]).
+    It neither waits for the host's computations, such as CPU kernels on
+    another domain, nor makes them wait, and its threads share the cores
+    with them. A long read begun while another thread's long read, or
+    another blocking job of the pool, runs reads on the calling thread
+    alone.
 
     {!barrier} orders the bytes written before it before every later change
     to the file system. After a crash, a change made after {!barrier}
