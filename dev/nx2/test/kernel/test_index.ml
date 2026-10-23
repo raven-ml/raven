@@ -523,6 +523,45 @@ let law_add_bits (b : Support.backend) c =
   | None, None, None -> ()
   | _ -> failf "%s declined some of three" b.name
 
+(* A target's bits are those of a scatter of only its updates, in C order,
+   into its element: the association is a function of their count. Checks
+   the first 20 targets reached. *)
+let law_add_alone (b : Support.backend) c =
+  let d = dtype_of c.into in
+  let ls = lands c in
+  cover "a target several updates reach"
+    (Array.exists (fun l -> List.length l > 1) ls);
+  cover "a narrow float" (is_narrow d);
+  cover "through views" (c.sviews <> []);
+  let alone x us =
+    let us = Array.of_list us and one = plain 1 in
+    let n = Array.length us in
+    let c =
+      {
+        combine = Nx_kernel.Add;
+        saxis = 0;
+        into = operand d [| 1 |] one (fun _ -> x);
+        sidx = int64s [| n |] one (fun () -> 0L);
+        updates = operand d [| n |] one (fun k -> us.(k));
+        sviews = [];
+      }
+    in
+    match scatter_on b c with
+    | Some y -> (elements y).(0)
+    | None -> failf "%s declined a scatter of one target" b.name
+  in
+  match scatter_on b c with
+  | None -> ()
+  | Some y ->
+      let got = elements y and xs = elements c.into in
+      let reached =
+        List.filter (fun t -> ls.(t) <> []) (List.init (Array.length ls) Fun.id)
+      in
+      let first = List.filteri (fun i _ -> i < 20) reached in
+      equal (list string)
+        (List.map (fun t -> alone xs.(t) ls.(t)) first)
+        (List.map (fun t -> got.(t)) first)
+
 (* Bounds of Add *)
 
 (* [x + y] and its rounding error. *)
@@ -553,14 +592,16 @@ let most_finite (D.Any dt) =
   | D.Float8_e5m2 -> 57344.
   | _ -> 6.
 
-(* A finite element of a float or complex dtype: a small odd integer times
-   a power of two, so that sums cancel and carry past a narrow float's
-   steps, a narrow float's rounded to its nearest code. *)
+(* A finite element of a float or complex dtype: a draw of (-1, 1) times
+   2^e, e over 31 binades below 2^30 or a narrow float's largest, so that
+   sums of a few round at every width; float32's and a narrow float's
+   rounded to their nearest. *)
 let finite (D.Any dt as d) r =
+  let top =
+    if is_narrow d then Float.to_int (Float.log2 (most_finite d)) else 30
+  in
   let v () =
-    Float.ldexp
-      (Float.of_int (Random.State.int r 31 - 15))
-      (Random.State.int r 13 - 10)
+    Float.ldexp (Random.State.float r 2. -. 1.) (top - Random.State.int r 31)
   in
   match dt with
   | D.Float32 -> f32 (round32 (v ()))
@@ -595,7 +636,8 @@ let parts (D.Any dt as d) e =
    past the dtype's largest finite value is not checked: [None]. *)
 let past (D.Any dt as d) x us got =
   let n = Float.of_int (List.length us + 1) in
-  let u = if D.bits dt = 64 || D.bits dt = 128 then 0x1p-53 else 0x1p-24 in
+  let part = if D.is D.Complex dt then D.bits dt / 2 else D.bits dt in
+  let u = if part = 64 then 0x1p-53 else 0x1p-24 in
   let g = n *. u /. (1. -. (n *. u)) in
   let terms = List.map (parts d) (x :: us) in
   let wrong =
@@ -618,6 +660,14 @@ let past (D.Any dt as d) x us got =
   in
   match wrong with [] -> None | w -> Some (String.concat "; " w)
 
+(* Whether [got] differs from the exact sum of [x] and [us] in a part. *)
+let rounds d x us got =
+  let terms = List.map (parts d) (x :: us) in
+  List.exists Fun.id
+    (List.mapi
+       (fun k g -> fst (exact (List.map (fun t -> List.nth t k) terms)) <> g)
+       (parts d got))
+
 (* A float Add is within its bound of the exact sum at each target an
    update reaches. *)
 let law_add_bound (b : Support.backend) c =
@@ -631,6 +681,12 @@ let law_add_bound (b : Support.backend) c =
   | Some y ->
       cover "reached" reached;
       let got = elements y and xs = elements c.into in
+      cover "a wide sum that rounds"
+        (not (is_narrow d)
+        && Array.exists Fun.id
+             (Array.mapi
+                (fun t us -> us <> [] && rounds d xs.(t) us got.(t))
+                ls));
       let wrong =
         List.filter_map Fun.id
           (Array.to_list
@@ -1031,19 +1087,74 @@ let row_scatters =
 
 let row_scatters = Gen.with_pp pp_scatter row_scatters
 
-(* Float Adds of many updates along the axis of few slices. *)
-let long_adds =
-  Gen.with_pp pp_scatter
-    (scatter_gen ~dtypes:float_dtypes ~combines:Nx_kernel.[ Add ]
-       ~shapes:(Gen.of_list [ [| 1000 |]; [| 3; 7 |]; [| 5 |] ])
-       ~ms:(Gen.int_range 70_000 100_000)
-       ())
+(* A scatter of [d] along [axis] into [ts], [m] updates along it, its
+   positions broadcast along [broadcast], into and the updates through
+   [tv] and [uv], its elements drawn from [rs]. *)
+let shaped d combine (ts, axis, m, broadcast) ~tv ~uv rs =
+  let r = Array.length ts in
+  let us = Array.mapi (fun i e -> if i = axis then m else e) ts in
+  {
+    combine;
+    saxis = axis;
+    into = operand d ts tv (fun _ -> element d rs);
+    sidx =
+      int64s us { (plain r) with broadcast } (fun () -> position rs ts.(axis));
+    updates = operand d us uv (fun _ -> element d rs);
+    sviews =
+      List.map (( ^ ) "into ") (view_names tv)
+      @ List.map (( ^ ) "updates ") (view_names uv);
+  }
+
+let narrow_dtypes = List.filter is_narrow all_dtypes
+
+(* A narrow float's Adds, a shape for each way its sums group the
+   updates: an axis of more updates than targets, one of fewer, 3 slices
+   of positions of their own, and rows of 600 slices cut into pieces of
+   512, the positions broadcast along them. *)
+let narrow_shapes =
+  [
+    ("more updates than targets", ([| 1000 |], 0, 70_000, []));
+    ("more targets than updates", ([| 200_000 |], 0, 70_000, []));
+    ("positions of each slice", ([| 3; 7 |], 1, 70_000, []));
+    ("rows cut into pieces", ([| 40; 600 |], 0, 600, [ 1 ]));
+  ]
+
+let narrow_examples =
+  List.mapi
+    (fun i (_, ((ts, _, _, _) as s)) ->
+      let d = List.nth narrow_dtypes (i mod List.length narrow_dtypes) in
+      let r = Array.length ts in
+      shaped d Nx_kernel.Add s ~tv:(plain r) ~uv:(plain r)
+        (Random.State.make [| 1 |]))
+    narrow_shapes
+  @ blocked_examples
+
+let narrow_adds =
+  let open Gen in
+  let* d = of_list ~pp:pp_dtype narrow_dtypes in
+  let* _, ((ts, _, _, _) as s) = of_list narrow_shapes in
+  let r = Array.length ts in
+  let* tv = view_of r in
+  let* uv = view_of r in
+  let+ seed = int in
+  shaped d Nx_kernel.Add s ~tv ~uv (Random.State.make [| seed |])
+
+let narrow_adds = Gen.with_pp pp_scatter narrow_adds
 
 (* A scatter's bits are one thread's. *)
 let law_threads (b : Support.backend) c =
   match (scatter_on b c, Nx_cpu.one_thread (fun () -> scatter_on b c)) with
   | Some y, Some y' -> equal (array string) (elements y) (elements y')
   | _ -> failf "%s declined a scatter" b.name
+
+let law_narrow_threads (b : Support.backend) c =
+  let ts = shape_of c.into and m = (shape_of c.updates).(c.saxis) in
+  List.iter
+    (fun (name, (ts', axis, m', _)) ->
+      cover name (ts = ts' && c.saxis = axis && m = m'))
+    narrow_shapes;
+  cover "sums carried from block to block" (m > 1 lsl 19);
+  law_threads b c
 
 (* Sub-byte scatters *)
 
@@ -1078,20 +1189,10 @@ let sub_byte_scatters =
   let open Gen in
   let* d = of_list ~pp:pp_dtype sub_byte_dtypes in
   let* combine = combine_gen d in
-  let* ts, axis, m, broadcast = of_list shared_bytes in
+  let* ((ts, _, _, _) as s) = of_list shared_bytes in
   let+ seed = int in
-  let rs = Random.State.make [| seed |] in
   let r = Array.length ts in
-  let us = Array.mapi (fun i e -> if i = axis then m else e) ts in
-  {
-    combine;
-    saxis = axis;
-    into = operand d ts (plain r) (fun _ -> element d rs);
-    sidx =
-      int64s us { (plain r) with broadcast } (fun () -> position rs ts.(axis));
-    updates = operand d us (plain r) (fun _ -> element d rs);
-    sviews = [];
-  }
+  shaped d combine s ~tv:(plain r) ~uv:(plain r) (Random.State.make [| seed |])
 
 let sub_byte_scatters = Gen.with_pp pp_scatter sub_byte_scatters
 
@@ -1174,6 +1275,8 @@ let laws (b : Support.backend) =
       prop "a float Add gives the same bits again and through any views"
         float_adds
         (run (law_add_bits b));
+      prop "a float Add's target has the bits of its updates alone" float_adds
+        (run (law_add_alone b));
       prop ~examples:bound_examples
         "a float Add is within γ(n + 1) (|x| + Σ|ui|) of the exact sum"
         finite_adds
@@ -1210,11 +1313,15 @@ let cpu (b : Support.backend) =
         (run (fun c ->
              law_scatter_reference b c;
              law_in_place b c));
-      prop ~count:10 "a float Add's bits are one thread's" long_adds
-        (run (law_threads b));
-      prop ~count:10 "an embedding gradient's bits are one thread's"
-        row_scatters
-        (run (law_threads b));
+      prop ~count:6 ~examples:narrow_examples
+        "a narrow float Add's bits are one thread's" narrow_adds
+        (run (law_narrow_threads b));
+      prop ~count:10 ~examples:row_examples
+        "an embedding gradient's bits are one thread's" row_scatters
+        (run (fun c ->
+             cover "a narrow float's Add"
+               (c.combine = Nx_kernel.Add && is_narrow (dtype_of c.into));
+             law_threads b c));
       prop ~count:10 ~examples:sub_byte_examples
         "a sub-byte scatter's bits are one thread's" sub_byte_scatters
         (run (law_sub_byte b));
