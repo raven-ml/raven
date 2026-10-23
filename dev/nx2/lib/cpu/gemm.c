@@ -251,10 +251,6 @@ static void stage_acc(const problem *p, int o, int64_t at, int64_t s0,
   nx_cpu_stage_as(p->op[o].x, at, s0, s1, n0, n1, p->acc, dst, pitch);
 }
 
-/* The codes along k that MXFP4 scales as one block: a run of them is
-   staged through one table. */
-#define F4_RUN 32
-
 /* The lines and the scales a call of the target's float4 stage takes at
    most. */
 #define F4_LINES 16
@@ -273,8 +269,8 @@ static int64_t line_at(const scale *s, const int64_t *c, int across,
 /* stage_f4's lines in acc's type [T], each code from [from] along k:
    each of [lines] lines of [len] codes, [sl] apart from [first] and [sk]
    apart along k, into dst [du] apart along k and [dl] apart across
-   lines, each run of F4_RUN codes through its 16 values times the run's
-   scale. */
+   lines, each run of NX_CPU_F4_RUN codes through its 16 values times
+   the run's scale. */
 #define F4_EACH(T)                                                         \
   do {                                                                     \
     const T *v = (const T *)s->v;                                          \
@@ -283,10 +279,11 @@ static int64_t line_at(const scale *s, const int64_t *c, int across,
       base[u] = (T)nx_e2m1fn_to_float((uint8_t)u);                         \
     for (int64_t l = 0; l < lines; l++) {                                  \
       int64_t at = line_at(s, c, across, l), line = first + l * sl;        \
-      for (int64_t u0 = from; u0 < len; u0 += F4_RUN) {                    \
+      for (int64_t u0 = from; u0 < len; u0 += NX_CPU_F4_RUN) {             \
         T sv = v[at + tk[u0]];                                             \
         for (int u = 0; u < 16; u++) tab[u] = base[u] * sv;                \
-        for (int64_t u = u0; u < u0 + min64(F4_RUN, len - u0); u++) {      \
+        for (int64_t u = u0; u < u0 + min64(NX_CPU_F4_RUN, len - u0);      \
+             u++) {                                                        \
           int64_t xi = line + u * sk;                                      \
           d[u * du + l * dl] = tab[(codes[xi >> 1] >> ((xi & 1) * 4)) & 15]; \
         }                                                                  \
@@ -303,24 +300,24 @@ static int64_t line_at(const scale *s, const int64_t *c, int across,
     for (int64_t l = 0; l < nl; l++) {                                     \
       int64_t at = line_at(s, c, across, l0 + l);                          \
       for (int64_t r = 0; r < nr; r++)                                     \
-        g[r * nl + l] = v[at + tk[(r0 + r) * F4_RUN]];                     \
+        g[r * nl + l] = v[at + tk[(r0 + r) * NX_CPU_F4_RUN]];              \
     }                                                                      \
   } while (0)
 
 /* Stages operand [o]'s block as stage_at does where it is float4 and its
    block along k starts a run of its scale's, [run] a multiple of
-   F4_RUN, so each run of F4_RUN codes takes one scale: 1 if it did. The
-   bits are stage_at's: each code's value times its scale, rounded once.
-   Codes adjacent along k, each line from a byte's first, go a whole run
-   at a time through the target's float4 stage; others, and a last run
-   of fewer codes, one at a time. */
+   NX_CPU_F4_RUN, so each run of NX_CPU_F4_RUN codes takes one scale: 1
+   if it did. The bits are stage_at's: each code's value times its scale,
+   rounded once. Codes adjacent along k, each line from a byte's first, go
+   a whole run at a time through the target's float4 stage; others, and a
+   last run of fewer codes, one at a time. */
 static int stage_f4(const problem *p, int o, const int64_t *c, int x0,
                     int x1, int64_t n0, int64_t n1, uint8_t *dst,
                     int64_t pitch) {
   const operand *q = &p->op[o];
   const scale *s = q->s;
   if (q->x->dtype != NX_FLOAT4_E2M1FN || (x0 != CON && x1 != CON) ||
-      s->run % F4_RUN || c[CON] % F4_RUN)
+      s->run % NX_CPU_F4_RUN || c[CON] % NX_CPU_F4_RUN)
     return 0;
   int along = x0 == CON, across = along ? x1 : x0;
   int64_t len = along ? n0 : n1, lines = along ? n1 : n0;
@@ -331,7 +328,7 @@ static int stage_f4(const problem *p, int o, const int64_t *c, int x0,
   const int64_t *tk = s->t[CON] + c[CON];
   if (sk == 1 && first % 2 == 0 && sl % 2 == 0) {
     nx_cpu_f4 f4 = nx_cpu_table->f4[p->acc];
-    int64_t runs = len / F4_RUN;
+    int64_t runs = len / NX_CPU_F4_RUN;
     _Alignas(32) uint8_t sv[F4_SCALES * sizeof(double)];
     for (int64_t l0 = 0, nl; l0 < lines; l0 += nl) {
       nl = min64(F4_LINES, lines - l0);
@@ -339,11 +336,12 @@ static int stage_f4(const problem *p, int o, const int64_t *c, int x0,
         nr = min64(F4_SCALES / nl, runs - r0);
         if (p->acc == NX_FLOAT32) F4_GATHER(float);
         else F4_GATHER(double);
-        f4(codes + (first + l0 * sl) / 2 + r0 * F4_RUN / 2, sl / 2, nl, nr,
-           sv, dst + (r0 * F4_RUN * du + l0 * dl) * w, du, dl);
+        f4(codes + (first + l0 * sl) / 2 + r0 * NX_CPU_F4_RUN / 2, sl / 2,
+           nl, nr, sv, dst + (r0 * NX_CPU_F4_RUN * du + l0 * dl) * w, du,
+           dl);
       }
     }
-    from = runs * F4_RUN;
+    from = runs * NX_CPU_F4_RUN;
   }
   if (from == len) return 1;
   if (p->acc == NX_FLOAT32) F4_EACH(float);

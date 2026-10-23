@@ -126,10 +126,10 @@
     for (int u = 0; u < 16; u++) base[u] = (T)nx_e2m1fn_to_float((uint8_t)u); \
     for (int64_t l = 0; l < lines; l++)                                     \
       for (int64_t r = 0; r < runs; r++) {                                  \
-        const uint8_t *b = codes + l * sl + r * 16;                         \
-        T *y = (T *)vy + r * 32 * du + l * dl;                              \
+        const uint8_t *b = codes + l * sl + r * (NX_CPU_F4_RUN / 2);        \
+        T *y = (T *)vy + r * NX_CPU_F4_RUN * du + l * dl;                   \
         for (int u = 0; u < 16; u++) tab[u] = base[u] * s[r * lines + l];  \
-        for (int h = 0; h < 16; h++) {                                      \
+        for (int h = 0; h < NX_CPU_F4_RUN / 2; h++) {                       \
           y[2 * h * du] = tab[b[h] & 15];                                   \
           y[(2 * h + 1) * du] = tab[b[h] >> 4];                             \
         }                                                                   \
