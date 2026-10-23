@@ -820,10 +820,12 @@ let unsqueeze ~axes x = unsqueeze_by ~by:"Nx.unsqueeze" ~axes x
 
 let flatten ?(start_dim = 0) ?(end_dim = -1) x =
   let by = "Nx.flatten" in
-  (* A 0-d value flattens as the [[1]] it holds. *)
-  let x = if ndim x = 0 then move ~by (Reshape [| 1 |]) x else x in
-  let s = shape x in
-  let a = axis ~by x start_dim and b = axis ~by x end_dim in
+  (* A 0-d value flattens as the [[1]] it holds, in one movement. *)
+  let s = if ndim x = 0 then [| 1 |] else shape x in
+  let axis d =
+    Prim.axis ~by (Array.length s) d (fun ppf -> pp_value ppf x)
+  in
+  let a = axis start_dim and b = axis end_dim in
   if a > b then
     invalid_argf "%s: start_dim %d comes after end_dim %d in %a" by start_dim
       end_dim pp_value x;
