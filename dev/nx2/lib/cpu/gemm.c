@@ -2801,11 +2801,15 @@ static void decode(const nx_array *sc, int exponent, int acc, uint8_t *v) {
 /* Fills [t] with a group's table over its [n] axes [ax]: each index of the
    group, in C order of the axes' extents [x], to the sum along each axis
    of the index's block, the index plus the axis's [start] divided by
-   [ratio], times the scales' [step]. */
+   [ratio], times the scales' [step]. A group with an empty axis has no
+   index and its table one entry, [0]: the axes before the empty one would
+   write past it. */
 static void table(int n, const int *ax, const int64_t *x, const int64_t *start,
                   const int64_t *ratio, const int64_t *step, int64_t *t) {
   int64_t len = 1;
   t[0] = 0;
+  for (int a = 0; a < n; a++)
+    if (x[ax[a]] == 0) return;
   for (int a = 0; a < n; a++) {
     int d = ax[a];
     int64_t e = x[d], s0 = start[d];

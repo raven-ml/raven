@@ -2331,6 +2331,34 @@ let test_scale_misfits (b : Support.backend) () =
   refused ~msg:"a fitting scale beside a misfit" ~sa:(codes [| 2; 1 |])
     ~sb:(codes [| 3; 3 |]) ()
 
+(* A scaled contraction whose contracting extents multiply to 0 has no
+   products, whatever the extents before the empty one: a [2; 2^28; 0] by
+   [2^28; 0; 3], scaled along a, is [+0], or init, at every output. *)
+let test_scaled_empty (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let big = 1 lsl 28 in
+  let arr s x =
+    A.expect D.Float64 (on b (A.Any (A.of_array D.Float64 s (Array.make (total s) x))))
+  in
+  let codes =
+    A.expect D.Uint8 (on b (A.Any (A.of_array D.Uint8 [| 2; 1; 1 |] [| 127; 127 |])))
+  in
+  let at order init =
+    let dst = arr [| 2; 3 |] 7. in
+    (match
+       K.contract ~order ~batch:[||] ~contracting:[| (1, 0); (2, 1) |]
+         ~segments:None ~acc:(D.Any D.Float64) ~dst
+         ~init:(Option.map (arr [| 2; 3 |]) init)
+         { array = A.Any (arr [| 2; big; 0 |] 1.); scale = Some (Exponent codes) }
+         (plain (arr [| big; 0; 3 |] 1.))
+     with
+    | A.Done -> ()
+    | r -> failf "contract answered %a" Nx_array_support.pp_answer r);
+    equal (array float_exact) (Array.make 6 (Option.value init ~default:0.))
+      (A.to_array (to64 (host (A.Any dst))))
+  in
+  List.iter (fun o -> at o None; at o (Some (-2.5))) Nx_kernel.[ Chain; Lane ]
+
 (* Segments
 
    A contraction cut into groups by offsets (Nx_kernel.segments): [Rows]
@@ -3045,6 +3073,8 @@ let cpu (b : Support.backend) =
         (run (law_mx_layouts b));
       test "refuses a scale that does not fit its operand" (fun () ->
           b.around (test_scale_misfits b));
+      test "a scaled contraction over an empty extent has no products"
+        (fun () -> b.around (test_scaled_empty b));
       prop ~examples:seg_examples
         "each group of a segmented contraction has the bits of its \
          unsegmented contraction"
