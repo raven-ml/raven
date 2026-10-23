@@ -945,9 +945,9 @@ int nx_cpu_prog_outs(const nx_cpu_prog *j);
 int nx_cpu_prog_out(const nx_cpu_prog *j, int o);
 
 /* Binds [j] to its loads [a], read by the door, over a loop of [rank] axes
-   of extents [shape]: NX_OK, NX_SHAPE for a coordinate past the rank, or
-   NX_DECLINED for a program map.c declines. Sets [index] to whether the
-   program reads the index. */
+   of extents [shape]: NX_OK, NX_SHAPE for a coordinate past the rank or
+   more operands than a loop holds, or NX_DECLINED for a program map.c
+   declines. Sets [index] to whether the program reads the index. */
 int nx_cpu_prog_bind(nx_cpu_prog *j, const nx_array *a, int rank,
                      const int64_t *shape, int *index);
 
