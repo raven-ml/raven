@@ -884,10 +884,15 @@ static void count_parts(int64_t lo, int64_t hi, int worker, void *ctx) {
 
 /* Gives each unit of the [units] runs' parts its sort's words (narrow_run),
    four for each of its run's positions in its part: answers 0 where memory
-   runs out. */
-static int part_order(scatter *c, int64_t units, int64_t bytes) {
+   runs out. A run is cut into pieces of at most COUNT_PIECE positions, and
+   into enough for the [threads] where the runs are few: a 1-d Add of 200K
+   updates would count on one thread. */
+static int part_order(scatter *c, int64_t units, int64_t bytes,
+                      int threads) {
   int64_t jobs = units * c->parts;
   int64_t pieces = (c->m + COUNT_PIECE - 1) / COUNT_PIECE;
+  int64_t least = (threads + units - 1) / units;
+  if (pieces < least) pieces = least;
   counting k = {.c = c, .pieces = pieces};
   k.first = malloc((size_t)(c->parts + 1) * sizeof(uint64_t));
   k.counts = calloc((size_t)(units * pieces * c->parts), sizeof(int64_t));
@@ -1280,7 +1285,7 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
   int parted = c.narrow && c.parts > 1;
   if (c.narrow && !sort)
     c.each = (rows || parted ? 0 : 32 * c.m) + 12 * UNIT_ROW;
-  int laid = !parted || part_order(&c, units, units * c.m * 8);
+  int laid = !parted || part_order(&c, units, units * c.m * 8, threads);
   if (rows) {
     workers = threads;
     c.order = malloc((size_t)(5 * c.m + 1) * sizeof(int64_t));
