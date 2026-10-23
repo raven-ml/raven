@@ -71,8 +71,19 @@
 
     A contraction whose accumulator is not its output's dtype first runs as a
     contraction into the accumulator, then casts to the output. Any other
-    expands into a map of each pair of elements multiplied in the accumulator,
-    a sum over the contracted axes, and the [init] added.
+    first maps each scaled operand's elements, cast to the accumulator, times
+    their block's scale read into it, rounded once: each axis split into its
+    blocks, the scale broadcast within them, a code [e] read as float32's
+    [2^(e - 127)] built from its bits and NaN at [255]. It then expands into
+    a map of each pair of elements multiplied in the accumulator, a sum over
+    the contracted axes, and the [init] added. Each index of a segmented
+    axis takes its group id, a [Max] over the groups of [e] where
+    [offsets.(e)] is at most the index, or [-1] outside [offsets.(0)] to
+    [offsets.(g)]. [Rows] gathers each row's group of [b] by id into an
+    axis of the rows, contracts it with [a]'s rows as a batch pair, and
+    selects [init] or [+0] for a row in no group. [Contracting] sums each
+    group's slice over the products whose id is its own, selecting [+0] for
+    the others, so that no NaN or infinity of another group enters it.
     A sort of another dtype sorts positions by its order
     keys, int64 values of [b = 63 - ⌈log₂ n⌉] bits along an axis of [n]
     elements, [⌈w / b⌉] for an integer or a float of [w] bits and per part for

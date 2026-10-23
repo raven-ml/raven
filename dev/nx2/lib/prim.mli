@@ -153,7 +153,10 @@ val rule : 'r prim -> Route.rule
 (** [rule op] is how [op]'s results depend on its operands: its route and each
     device's windows of its operands ({!Route.window}) come from it alone. A
     loop of no load has the rule of one load of its shape: each device of its
-    placement computes its window of the loop. *)
+    placement computes its window of the loop. A contraction's scale is read
+    at its operand's windows where a cut keeps its blocks whole, and whole
+    elsewhere; its segmented axes are read whole, and a scaled or segmented
+    contraction's contracting pairs too. *)
 
 val local : 'r prim -> Nx_array.Move.range array -> 'r prim
 (** [local op w] is [op] computing the window [w] of its first result, over
@@ -278,18 +281,22 @@ val contract_shape :
   by:string ->
   batch:(int * int) iarray ->
   contracting:(int * int) iarray ->
+  segments:'d index Nx_kernel.segments option ->
   acc:Nx_array.Dtype.any ->
   ('a, 'b, 'd) t ->
   ('c, 'e, 'd) t ->
   ('v, 's, 'd) t option ->
+  'd scale option ->
+  'd scale option ->
   int array
-(** [contract_shape ~by ~batch ~contracting ~acc a b init] is the shape of the
-    contraction's result, as {!Nx_kernel.Shape.contract} gives it: the
-    contraction's rule, which {!results} applies to [Contract].
+(** [contract_shape ~by ~batch ~contracting ~segments ~acc a b init sa sb] is
+    the shape of the contraction's result, [sa] and [sb] [a]'s and [b]'s
+    scales, as {!Nx_kernel.Shape.contract} gives it: the contraction's rule,
+    which {!results} applies to [Contract].
 
-    Raises [Invalid_argument] naming [by] where the pairs do not fit [a] and
-    [b], [init] has another shape, or [acc] is a boolean or a float narrower
-    than float32. *)
+    Raises [Invalid_argument] naming [by] where the pairs, the scales or the
+    segments do not fit [a] and [b], [init] has another shape, or [acc] is a
+    boolean or a float narrower than float32. *)
 
 val contract_order :
   batch:(int * int) iarray ->

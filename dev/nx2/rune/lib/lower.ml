@@ -250,13 +250,27 @@ let op (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r) (o : r P.t) =
       reduce node layout axes prog rs loads
   | Scan { layout; axis; prog; reduction = r; loads; carry } ->
       scan node layout axis prog r loads carry
-  | Contract { batch; contracting; acc; out; a; b; init; order = _ } ->
+  | Contract
+      {
+        batch;
+        contracting;
+        acc;
+        out;
+        a;
+        b;
+        init;
+        a_scale = None;
+        b_scale = None;
+        segments = None;
+        order = _;
+      } ->
       let operand x = (D.Any (Nx.dtype x), node x) in
       Some
         [|
           Reduce.contract ~batch ~contracting ~acc ~out:(D.Any out) (operand a)
             (operand b) (Option.map node init);
         |]
+  | Contract _ -> unlowered "a scaled or segmented Contract"
   | Copy x -> Some [| node x |]
   | Move (m, x) -> Some [| move m x (node x) |]
   | Bitcast (dt, x) -> Some [| bitcast dt x (node x) |]

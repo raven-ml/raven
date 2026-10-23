@@ -229,6 +229,9 @@ let test_rule_refused () =
              a;
              b = a;
              init = Some (Nx.donate g);
+             a_scale = None;
+             b_scale = None;
+             segments = None;
            }));
   equal ~msg:"the init lives" (array float_exact) (Array.make 6 2.)
     (elements (Nx.copy g));

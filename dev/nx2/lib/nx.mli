@@ -4100,6 +4100,14 @@ module Prim : sig
       }
         -> ('d, ('v, 's, 'd) nx) linalg
 
+  (** A contraction operand's block scale, an array of its rank whose
+      extents divide its own ({!Nx_kernel.type-scale}). *)
+  type 'd scale =
+    | Exponent of (int, Dtype.int8_unsigned_elt, 'd) nx
+        (** Code [e] scales its block by [2^(e - 127)]; [255] makes it NaN. *)
+    | Value : ('v, 's, 'd) nx -> 'd scale
+        (** Each scale read in its own dtype into the accumulator. *)
+
   (** The operations. Their arrays are immutable, so an operation once built
       never changes, whoever keeps it. A loop's loads have exactly its
       iteration shape: no operation broadcasts or promotes. *)
@@ -4212,12 +4220,17 @@ module Prim : sig
         a : ('a, 'b, 'd) nx;
         b : ('c, 'e, 'd) nx;
         init : ('v, 's, 'd) nx option;  (** Of the result's shape. *)
+        a_scale : 'd scale option;
+        b_scale : 'd scale option;
+        segments : (int64, Dtype.int64_elt, 'd) nx Nx_kernel.segments option;
       }
         -> ('v, 's, 'd) nx t
         (** The contraction of [a] with [b] by the pairs [batch] and
-            [contracting], from [init], computed in [acc] and rounded once to
-            [out] ({!Nx_kernel.S.contract}): its result C-contiguous, of the
-            shape {!Nx_kernel.Shape.contract} gives. *)
+            [contracting], from [init], each operand's elements times its
+            scale's, each group of [segments] as {!Nx_kernel.type-segments}
+            states, computed in [acc] and rounded once to [out]
+            ({!Nx_kernel.S.contract}): its result C-contiguous, of the shape
+            {!Nx_kernel.Shape.contract} gives. *)
     | Fft : ('d, 'r) fft -> 'r t
         (** A Fourier transform ({!Nx_kernel.S.c2c} and its siblings). *)
     | Linalg : ('d, 'r) linalg -> 'r t
@@ -4262,9 +4275,10 @@ module Prim : sig
   val operands : 'r t -> operands
   (** [operands op] is [op]'s operands in order: a loop's loads, then a scan's
       carry; a gather's [idx] then [x]; a scatter's [idx], [updates] then
-      [into]; an assembly's pieces; a contraction's [a], [b] then [init]; a
-      triangular solve's [a] then [b]; [Check]'s [ok] then its data; the one
-      operand of the others. *)
+      [into]; an assembly's pieces; a contraction's [a], [b], then those it
+      has of [init], [a_scale]'s array, [b_scale]'s and [segments]'
+      offsets; a triangular solve's [a] then [b]; [Check]'s [ok] then its
+      data; the one operand of the others. *)
 
   val map : ('v 's 'd. ('v, 's, 'd) nx -> ('v, 's, 'd) nx) -> 'r t -> 'r t
   (** [map m op] is [op] with each operand [x] replaced by [m x]. *)

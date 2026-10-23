@@ -526,7 +526,7 @@ let ops () =
 let contractions =
   let a = f32 [| 2; 3 |] and b = f32 [| 3; 2 |] in
   let contract ?(contracting : _ iarray = [| (1, 0) |]) ?(acc = D.Any D.Float32)
-      init : op =
+      ?a_scale ?b_scale ?segments init : op =
     Op
       (Contract
          {
@@ -538,7 +538,23 @@ let contractions =
            a;
            b;
            init;
+           a_scale;
+           b_scale;
+           segments;
          })
+  in
+  let index shape xs = value 0 (A.of_array D.Int64 shape xs) in
+  let codes shape =
+    let n = Array.fold_left ( * ) 1 shape in
+    value 0 (A.of_array D.Uint8 shape (Array.make n 127))
+  in
+  (* [a]'s scale a block per row, [b]'s one per column, [b]'s two columns
+     the groups of [a]'s rows by [offsets]. *)
+  let sa : b Value.scale = Value (f32 [| 2; 1 |])
+  and sb : b Value.scale = Exponent (codes [| 1; 2 |])
+  and offsets = index [| 3 |] [| 0L; 1L; 2L |] in
+  let rows offsets : b Value.index Nx_kernel.segments =
+    Rows { offsets; a_axis = 0; b_axis = 1 }
   in
   group "contractions"
     [
@@ -546,12 +562,57 @@ let contractions =
           let dt, l, _ = one_form (contract None) in
           equal bool true (dt = D.Any D.Float32);
           equal layout (L.contiguous [| 2; 2 |]) l);
+      test "a scaled, segmented contraction's operands are a, b, init, the \
+            scales and the offsets"
+        (fun () ->
+          let init = f32 [| 2 |] in
+          let (Op op) =
+            contract ~a_scale:sa ~b_scale:sb ~segments:(rows offsets)
+              (Some init)
+          in
+          let arrays (Value.Any x) = A.buffer (array_of x) in
+          let scale : b Value.scale -> b Value.any = function
+            | Exponent x -> Any x
+            | Value x -> Any x
+          in
+          let want =
+            List.map arrays
+              ([ Any a; Any b; Any init; scale sa; scale sb; Any offsets ]
+                : b Value.any list)
+          in
+          let (Operands xs) = Prim.operands op in
+          let buffer (Value.Any x) = A.buffer (Iarray.get (Prim.arrays x) 0) in
+          equal (list bool) (List.map (fun _ -> true) want)
+            (List.map2 (fun x w -> buffer x == w) xs want);
+          let seen = ref [] in
+          ignore
+            (Prim.mapi
+               (fun i x ->
+                 seen := (i, A.buffer (Iarray.get (Prim.arrays x) 0)) :: !seen;
+                 x)
+               op);
+          equal (list int) [ 0; 1; 2; 3; 4; 5 ] (List.rev_map fst !seen);
+          equal (list bool) (List.map (fun _ -> true) want)
+            (List.map2 (fun (_, x) w -> x == w) (List.rev !seen) want);
+          let dt, l, _ = one_form (Op op) in
+          equal bool true (dt = D.Any D.Float32);
+          equal layout (L.contiguous [| 2 |]) l);
       cases "a contraction refuses" ~name:fst
         [
           ("an init of another shape", contract (Some (f32 [| 2; 3 |])));
           ("a float16 accumulator", contract ~acc:(D.Any D.Float16) None);
           ("a bool accumulator", contract ~acc:(D.Any D.Bool) None);
           ("pairs of other extents", contract ~contracting:[| (0, 0) |] None);
+          ( "a scale whose extents do not divide",
+            contract ~a_scale:(Value (f32 [| 2; 2 |])) None );
+          ( "a scale of another rank",
+            contract ~b_scale:(Exponent (codes [| 2 |])) None );
+          ( "offsets of another shape",
+            contract ~segments:(rows (index [| 2 |] [| 0L; 1L |])) None );
+          ( "rows of a contracting axis",
+            contract
+              ~segments:(Rows { offsets; a_axis = 1; b_axis = 1 })
+              None );
         ]
         (fun (_, op) ->
           refuses op;

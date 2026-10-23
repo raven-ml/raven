@@ -1399,6 +1399,595 @@ let init =
             (fun () -> Nx.copy c));
     ]
 
+(* Scales and segments
+
+   [Nx.Prim.Contract] with block scales and segments: on the host, nx.cpu
+   against the operation's expansion within the bound; over devices, a cut
+   placement against one device's bits. *)
+
+module Scaled = struct
+  module P = Nx.Prim
+
+  type dt = F32 | F16 | F4
+  type scale = Codes of int array | Values of dt * float array
+
+  (* An operand: its view's shape, stored with its last two axes swapped
+     where [swap], its values in stored order, and its scale's view shape and
+     values, stored alike. *)
+  type side = {
+    dt : dt;
+    view : int array;
+    swap : bool;
+    xs : float array;
+    scale : (int array * scale) option;
+  }
+
+  type segs = Rows of int64 array | Contracting of int64 array
+
+  (* [a], [[batch; m; k]], by [b], [[batch; g; k; n]], the batch axis where
+     [batch] gives its extent and [g] for [Rows] alone, from [init], summed
+     in float64 or float32. Offsets have the shape [[batch; g + 1]]. *)
+  type case = {
+    batch : int option;
+    m : int;
+    n : int;
+    k : int;
+    g : int;
+    a : side;
+    b : side;
+    f64 : bool;
+    init : float array option;
+    segs : segs option;
+  }
+
+  let dt_name = function F32 -> "f32" | F16 -> "f16" | F4 -> "f4"
+
+  let pp_floats ppf xs =
+    Format.fprintf ppf "[%s]"
+      (String.concat "; " (Array.to_list (Array.map (Printf.sprintf "%g") xs)))
+
+  let pp_side ppf s =
+    Format.fprintf ppf "%s %a%s %a" (dt_name s.dt) pp_shape s.view
+      (if s.swap then " swapped" else "")
+      pp_floats s.xs;
+    match s.scale with
+    | None -> ()
+    | Some (sv, Codes cs) ->
+        Format.fprintf ppf " codes %a %a" pp_shape sv pp_shape cs
+    | Some (sv, Values (dt, vs)) ->
+        Format.fprintf ppf " %s scale %a %a" (dt_name dt) pp_shape sv pp_floats
+          vs
+
+  let pp_case ppf c =
+    let offsets ppf os =
+      pp_shape ppf (Array.map Int64.to_int os)
+    in
+    Format.fprintf ppf "@[<v>%s, g %d@,a %a@,b %a@,init %s@,%s@]"
+      (if c.f64 then "float64" else "float32")
+      c.g pp_side c.a pp_side c.b
+      (match c.init with
+      | None -> "none"
+      | Some xs -> Format.asprintf "%a" pp_floats xs)
+      (match c.segs with
+      | None -> "unsegmented"
+      | Some (Rows os) -> Format.asprintf "rows %a" offsets os
+      | Some (Contracting os) -> Format.asprintf "contracting %a" offsets os)
+
+  let swapped s =
+    let s = Array.copy s and r = Array.length s in
+    if r >= 2 then begin
+      let t = s.(r - 1) in
+      s.(r - 1) <- s.(r - 2);
+      s.(r - 2) <- t
+    end;
+    s
+
+  let stored s v = if s.swap then swapped v else v
+  let lead c = Option.to_list c.batch
+
+  let result_shape c =
+    let groups = match c.segs with Some (Contracting _) -> [ c.g ] | _ -> [] in
+    Array.of_list (groups @ lead c @ [ c.m; c.n ])
+
+  let offsets_shape c = Array.of_list (lead c @ [ c.g + 1 ])
+
+  (* Values *)
+
+  (* Where each operand lies: [put role x] places the host value [x], stored
+     as made, for [role]. *)
+  type role = A | B | A_scale | B_scale | Offsets | Init
+  type 'e put = {
+    put : 'v 's. role -> ('v, 's, Nx.host) Nx.t -> ('v, 's, 'e) Nx.t;
+  }
+
+  let on_host = { put = (fun _ x -> x) }
+
+  (* An array of [dt] of the stored shape [shape] holding [xs], placed by
+     [p] for [role], through its view. *)
+  let made (type e) (p : e put) role dt shape swap xs : e P.any =
+    let x = Nx.create Nx.float32 shape xs in
+    let view x =
+      let x = p.put role x in
+      if swap then Nx.swapaxes (-1) (-2) x else x
+    in
+    match dt with
+    | F32 -> Any (view x)
+    | F16 -> Any (view (Nx.cast Nx.float16 x))
+    | F4 -> Any (view (Nx.cast Nx.float4_e2m1fn x))
+
+  let operand p role s = made p role s.dt (stored s s.view) s.swap s.xs
+
+  let scale (type e) (p : e put) role s : e P.scale option =
+    match s.scale with
+    | None -> None
+    | Some (sv, Codes cs) ->
+        let x = p.put role (Nx.create Nx.uint8 (stored s sv) cs) in
+        Some (Exponent (if s.swap then Nx.swapaxes (-1) (-2) x else x))
+    | Some (sv, Values (dt, vs)) ->
+        let (P.Any v) = made p role dt (stored s sv) s.swap vs in
+        Some (Value v)
+
+  let op (type r e) (p : e put) (acc : (float, r) Nx.dtype) c :
+      (float, r, e) Nx.t P.t =
+    let (P.Any a) = operand p A c.a in
+    let (P.Any b) = operand p B c.b in
+    let nb = List.length (lead c) in
+    let batch : (int * int) iarray = if nb = 1 then [| (0, 0) |] else [||] in
+    let bk = match c.segs with Some (Rows _) -> nb + 1 | _ -> nb in
+    let contracting : (int * int) iarray = [| (nb + 1, bk) |] in
+    let offsets os = p.put Offsets (Nx.create Nx.int64 (offsets_shape c) os) in
+    let segments : _ Nx_kernel.segments option =
+      match c.segs with
+      | None -> None
+      | Some (Rows os) ->
+          Some (Rows { offsets = offsets os; a_axis = nb; b_axis = nb })
+      | Some (Contracting os) ->
+          Some (Contracting { offsets = offsets os; pair = 0 })
+    in
+    let init =
+      Option.map
+        (fun xs ->
+          p.put Init (Nx.cast acc (Nx.create Nx.float64 (result_shape c) xs)))
+        c.init
+    in
+    Contract
+      {
+        order = P.contract_order ~batch ~contracting a b;
+        batch;
+        contracting;
+        acc = D.Any acc;
+        out = acc;
+        a;
+        b;
+        init;
+        a_scale = scale p A_scale c.a;
+        b_scale = scale p B_scale c.b;
+        segments;
+      }
+
+  (* [c] with each value and scale its magnitude: its sums bound the
+     roundings of [c]'s. *)
+  let magnitudes c =
+    let side s =
+      let scale =
+        match s.scale with
+        | Some (sv, Values (dt, vs)) ->
+            Some (sv, Values (dt, Array.map Float.abs vs))
+        | sc -> sc
+      in
+      { s with xs = Array.map Float.abs s.xs; scale }
+    in
+    let init = Option.map (Array.map Float.abs) c.init in
+    { c with a = side c.a; b = side c.b; init }
+
+  (* [op] by its expansion, each other operation eagerly. *)
+  let expanded op =
+    let rule : type q. P.interpretation -> by:string -> q P.t -> q =
+     fun i ~by op ->
+      match op with
+      | Contract _ -> (
+          match P.expand i ~by ~repeat:Nx_support.folding op with
+          | Some r -> r
+          | None -> fail "a contraction without an expansion")
+      | _ -> P.eval ~by op
+    in
+    P.interpret ~name:"test.expand" Extent rule (fun _ -> P.eval ~by:"t" op)
+
+  (* The index [r] of the segmented axis is in group [e] of the offsets [o],
+     as Nx_kernel.segments states. *)
+  let group_of (o : int64 array) r =
+    let g = Array.length o - 1 and r = Int64.of_int r in
+    let rec find e =
+      if e < 0 then None
+      else if o.(e) <= r then Some e
+      else find (e - 1)
+    in
+    if g > 0 && o.(0) <= r && r < o.(g) then find (g - 1) else None
+
+  (* Each output's bits are within twice the bound of the exact sum of
+     either: [2k + 8] roundings of [u] relative to the magnitudes' sum, and
+     one least subnormal per term for what underflows. A NaN magnitude is a
+     NaN term, which makes both NaNs; an infinite one is an overflow, which
+     the bound bars. *)
+  let check (type r) (acc : (float, r) Nx.dtype) c =
+    let read y = Nx.to_array (Nx.cast Nx.float64 y) in
+    let y = read (P.eval ~by:"t" (op on_host acc c)) in
+    let want = read (expanded (op on_host acc c)) in
+    let mag = read (expanded (op on_host acc (magnitudes c))) in
+    let u, eta =
+      if c.f64 then (epsilon_float /. 2., Float.of_string "0x1p-1074")
+      else (Float.of_string "0x1p-24", Float.of_string "0x1p-149")
+    in
+    let n = (2 * c.k) + 8 in
+    let gamma = Float.of_int n *. u /. (1. -. (Float.of_int n *. u)) in
+    Array.iteri
+      (fun i m ->
+        let msg = Printf.sprintf "output %d of magnitude %g" i m in
+        if Float.is_nan m then
+          equal (pair bool bool) ~msg (true, true)
+            (Float.is_nan want.(i), Float.is_nan y.(i))
+        else if Float.is_finite m then
+          let tol = (2. *. gamma *. m) +. (Float.of_int (c.k + 2) *. eta) in
+          equal (float tol) ~msg want.(i) y.(i))
+      mag;
+    (y, mag)
+
+  (* Generators *)
+
+  let e2m1 =
+    [ 0.; 0.5; 1.; 1.5; 2.; 3.; 4.; 6. ]
+    @ [ -0.; -0.5; -1.; -1.5; -2.; -3.; -4.; -6. ]
+
+  let finite = [ 0.; -0.; 0.5; -1.; 1.5; 3.; -3.; 1. ]
+
+  let element dt =
+    let open Gen in
+    match dt with
+    | F4 -> of_list e2m1
+    | F32 | F16 -> frequency [ (12, of_list finite); (1, constant Float.nan) ]
+
+  (* Codes of every kind: the neutral 127 and its neighbours most often, the
+     subnormal 2^-127 of 0, the largest finite 254 and the NaN 255. *)
+  let code =
+    let open Gen in
+    frequency
+      [
+        (10, of_list [ 126; 127; 128; 131 ]);
+        (3, of_list [ 0; 1; 120; 253 ]);
+        (1, of_list [ 254; 255 ]);
+      ]
+
+  let scale_value =
+    let open Gen in
+    frequency
+      [ (10, of_list [ 0.5; 2.; -1.; 0.25; 3.; 0. ]); (1, constant Float.nan) ]
+
+  (* Each element of [gs] drawn in order. *)
+  let all gs =
+    let open Gen in
+    let rec go i =
+      if i = Array.length gs then constant []
+      else
+        let* x = gs.(i) in
+        let+ rest = go (i + 1) in
+        x :: rest
+    in
+    map Array.of_list (go 0)
+
+  (* The block counts an axis of [e] elements takes: [e] itself, one block,
+     or blocks of 2, 3 or 32; none for an empty axis. *)
+  let blocks e =
+    if e = 0 then Gen.constant 0
+    else
+      Gen.of_list
+        (List.sort_uniq compare
+           (List.filter_map
+              (fun r -> if e mod r = 0 then Some (e / r) else None)
+              [ 1; 2; 3; 32; e ]))
+
+  let scale_of sv =
+    let open Gen in
+    let size = constant (numel sv) in
+    let* codes = bool in
+    let+ sc =
+      if codes then map (fun cs -> Codes cs) (array ~size code)
+      else
+        let* dt = of_list [ F32; F16 ] in
+        let+ vs = array ~size scale_value in
+        Values (dt, vs)
+    in
+    Some (sv, sc)
+
+  let side dt view =
+    let open Gen in
+    let* swap = bool in
+    let size = constant (numel view) in
+    let* xs = array ~size (element dt) in
+    let* scaled = frequency [ (1, constant false); (2, constant true) ] in
+    let+ scale =
+      if not scaled then constant None
+      else
+        let* sv = all (Array.map blocks view) in
+        scale_of sv
+    in
+    { dt; view; swap; xs; scale }
+
+  (* MXFP4: float4 stored [[…; n; k]], a code per 32 along [k]. *)
+  let mxfp4 view =
+    let open Gen in
+    let r = Array.length view in
+    let* xs = array ~size:(constant (numel view)) (element F4) in
+    let sv = Array.mapi (fun i e -> if i = r - 2 then e / 32 else e) view in
+    let+ cs = array ~size:(constant (numel sv)) code in
+    { dt = F4; view; swap = true; xs; scale = Some (sv, Codes cs) }
+
+  (* The offsets of each batch index, [g + 1] of them over an axis of [len]:
+     increasing half the time, any values from [-1] to [len + 1] else. *)
+  let offsets ~batch ~g len =
+    let open Gen in
+    let row =
+      let* sorted = bool in
+      let+ o = array ~size:(constant (g + 1)) (int_range (-1) (len + 1)) in
+      if sorted then Array.sort compare o;
+      Array.to_list (Array.map Int64.of_int o)
+    in
+    let+ rows = list ~size:(constant (max 1 batch)) row in
+    let rows = if batch = 0 then [] else rows in
+    Array.of_list (List.concat rows)
+
+  (* [c] with a NaN in [a] at index 0 of the contracted axis, which
+     [Contracting]'s groups leave out: one group from 1, the others empty. *)
+  let planted c =
+    match c.segs with
+    | Some (Contracting os) when c.k > 1 && c.g > 0 ->
+        let w = c.g + 1 in
+        let os =
+          Array.mapi
+            (fun i _ -> if i mod w = 0 then 1L else Int64.of_int c.k)
+            os
+        in
+        (* [k]'s index is the last of the view, before the last stored. *)
+        let inner = if c.a.swap then c.m else 1 in
+        let xs =
+          Array.mapi
+            (fun i x -> if i / inner mod c.k = 0 then Float.nan else x)
+            c.a.xs
+        in
+        { c with a = { c.a with xs }; segs = Some (Contracting os) }
+    | _ -> c
+
+  let case =
+    let open Gen in
+    let* batch =
+      frequency [ (3, constant None); (1, map Option.some (int_range 0 2)) ]
+    in
+    let* mx = frequency [ (3, constant false); (1, constant true) ] in
+    let* m = of_list [ 0; 1; 2; 3; 5 ] in
+    let* n = of_list [ 0; 1; 2; 4 ] in
+    let* k =
+      if mx then of_list [ 32; 64; 96 ]
+      else of_list [ 0; 1; 2; 3; 4; 6; 32; 64 ]
+    in
+    let* kind = of_list [ `None; `Rows; `Contracting ] in
+    let* g = int_range 0 3 in
+    let lead = Option.to_list batch in
+    let groups = if kind = `Rows then [ g ] else [] in
+    let av = Array.of_list (lead @ [ m; k ]) in
+    let bv = Array.of_list (lead @ groups @ [ k; n ]) in
+    let* adt = of_list [ F32; F16 ] in
+    let* a = side adt av in
+    let* b =
+      if mx then mxfp4 bv
+      else
+        let* bdt = of_list [ F32; F16; F4 ] in
+        side bdt bv
+    in
+    let* f64 = bool in
+    let nb = Option.value ~default:1 batch in
+    let* segs =
+      match kind with
+      | `None -> constant None
+      | `Rows -> map (fun o -> Some (Rows o)) (offsets ~batch:nb ~g m)
+      | `Contracting ->
+          map (fun o -> Some (Contracting o)) (offsets ~batch:nb ~g k)
+    in
+    let* plant = frequency [ (1, constant false); (2, constant true) ] in
+    let c = { batch; m; n; k; g; a; b; f64; init = None; segs } in
+    let c = if plant then planted c else c in
+    let+ init =
+      frequency
+        [
+          (1, constant None);
+          ( 1,
+            let size = constant (numel (result_shape c)) in
+            map Option.some (array ~size (of_list finite)) );
+        ]
+    in
+    { c with init }
+
+  let case = Gen.with_pp pp_case case
+
+  (* The element of [s] at the view's index [idx]. *)
+  let value_at s idx =
+    let idx = stored s idx and shape = stored s s.view in
+    let flat = ref 0 in
+    Array.iteri (fun i x -> flat := (!flat * shape.(i)) + x) idx;
+    s.xs.(!flat)
+
+  let offsets_at c os b =
+    let w = c.g + 1 in
+    Array.sub os (b * w) w
+
+  let batches c =
+    match c.batch with None -> [ None ] | Some e -> List.init e Option.some
+
+  let with_batch bt rest = Array.of_list (Option.to_list bt @ rest)
+  let range n = List.init n Fun.id
+
+  (* Whether [Rows] leaves a row in no group that has outputs. *)
+  let row_alone c =
+    match c.segs with
+    | Some (Rows os) ->
+        c.n > 0
+        && List.exists
+             (fun bt ->
+               let o = offsets_at c os (Option.value ~default:0 bt) in
+               List.exists (fun r -> group_of o r = None) (range c.m))
+             (batches c)
+    | _ -> false
+
+  let nan_at s bt idx = Float.is_nan (value_at s (with_batch bt idx))
+
+  (* Whether a NaN of [a] or [b] lies at an index of the contracted axis in
+     no group. *)
+  let nan_alone c =
+    match c.segs with
+    | Some (Contracting os) ->
+        List.exists
+          (fun bt ->
+            let o = offsets_at c os (Option.value ~default:0 bt) in
+            List.exists
+              (fun r ->
+                group_of o r = None
+                && (List.exists (fun i -> nan_at c.a bt [ i; r ]) (range c.m)
+                   || List.exists (fun j -> nan_at c.b bt [ r; j ]) (range c.n)
+                   ))
+              (range c.k))
+          (batches c)
+    | _ -> false
+
+  let law c =
+    let codes s = match s.scale with Some (_, Codes _) -> true | _ -> false in
+    let values s = match s.scale with Some (_, Values _) -> true | _ -> false in
+    let cut s =
+      match s.scale with
+      | Some (sv, _) -> Array.exists2 (fun e d -> e > 1 && e < d) sv s.view
+      | None -> false
+    in
+    cover "a scale of codes" (codes c.a || codes c.b);
+    cover "a scale of values" (values c.a || values c.b);
+    cover "a scale cutting an axis into blocks" (cut c.a || cut c.b);
+    cover "an MXFP4 operand" (c.b.dt = F4 && codes c.b && c.k >= 32);
+    let rows = match c.segs with Some (Rows _) -> true | _ -> false in
+    let scaled = c.a.scale <> None || c.b.scale <> None in
+    cover "rows by groups" rows;
+    cover "groups of the contracted axis"
+      (match c.segs with Some (Contracting _) -> c.g > 0 | _ -> false);
+    cover "scaled and segmented" (scaled && c.segs <> None);
+    cover "a row in no group" (row_alone c);
+    let y, mag = if c.f64 then check Nx.float64 c else check Nx.float32 c in
+    cover "a NaN output" (Array.exists Float.is_nan y);
+    cover "a NaN in no group kept out"
+      (nan_alone c && Array.exists Float.is_finite mag)
+
+  (* Placements *)
+
+  module S4 = (val Nx.devices (List.init 4 Nx_support.memory))
+
+  (* [n] finite values, by position. *)
+  let some n = Array.init n (fun i -> List.nth finite (i * 7 mod 8))
+  let codes n = Array.init n (fun i -> [| 126; 127; 128; 131 |].(i * 5 mod 4))
+
+  (* [a] [[m; k]] by MXFP4 [b] [[k; n]], stored [[n; k]], a code per 32 along
+     [k] and per [per] along [n]; [a] scaled per two rows where [rows]. *)
+  let mx ?(rows = false) ?segs ?(g = 0) ~m ~k ~n ~per () =
+    let lead = match segs with Some (Rows _) -> [| g |] | _ -> [||] in
+    let bv = Array.append lead [| k; n |] in
+    let sv = Array.append lead [| k / 32; n / per |] in
+    let a_scale =
+      if not rows then None
+      else
+        let per_row i = [| 0.5; 2. |].(i mod 2) in
+        Some ([| m / 2; 1 |], Values (F32, Array.init (m / 2) per_row))
+    in
+    let b_scale = Some (sv, Codes (codes (numel sv))) in
+    {
+      batch = None;
+      m;
+      n;
+      k;
+      g;
+      a =
+        {
+          dt = F32;
+          view = [| m; k |];
+          swap = false;
+          xs = some (m * k);
+          scale = a_scale;
+        };
+      b =
+        { dt = F4; view = bv; swap = true; xs = some (numel bv); scale = b_scale };
+      f64 = false;
+      init = None;
+      segs;
+    }
+
+  (* [c] with [a]'s or [b]'s arrays placed by [where], the others on every
+     device of the set of [on]: the result's placement, and its bits against
+     one device's. *)
+  let placed (type e) (on : e Nx.Placement.t) where c =
+    let at role = Option.value ~default:on (where role) in
+    let p = { put = (fun role x -> Nx.place (at role) x) } in
+    let y = P.eval ~by:"t" (op p Nx.float32 c) in
+    let one = P.eval ~by:"t" (op on_host Nx.float32 c) in
+    equal (array float_exact) (read one) (read y);
+    Option.get (Nx.placement y)
+
+  (* A long MXFP4 product of more than one block of 4096, rows in no group,
+     and a NaN outside every group of the contracted axis. *)
+  let examples =
+    let rows = Rows [| 1L; 2L; 2L; 3L |] in
+    let groups = Contracting [| 0L; 4L; 4L |] in
+    [
+      mx ~m:1 ~k:4160 ~n:2 ~per:1 ();
+      mx ~segs:rows ~g:3 ~m:4 ~k:32 ~n:2 ~per:1 ();
+      planted
+        { (mx ~segs:groups ~g:2 ~m:2 ~k:32 ~n:2 ~per:2 ()) with
+          init = Some (some 8);
+        };
+    ]
+
+  let within_bound =
+    prop ~examples
+      "a scaled or segmented contraction is within the bound of its expansion"
+      case law
+
+  let placements =
+    let b_cut q = function
+      | B | B_scale -> Some q
+      | A | A_scale | Offsets | Init -> None
+    in
+    let a_cut ?(scale = true) q = function
+      | A -> Some q
+      | A_scale when scale -> Some q
+      | A_scale | B | B_scale | Offsets | Init -> None
+    in
+    group "placements"
+      [
+        test "a cut over b's columns at its blocks gives one device's bits"
+          (fun () ->
+            let c = mx ~m:3 ~k:64 ~n:8 ~per:2 () in
+            let y = placed S2.on (b_cut (S2.split ~axis:0)) c in
+            equal bool ~msg:"the result's columns are cut" true
+              (Nx.Placement.equal (S2.split ~axis:1) y));
+        test "a cut inside b's blocks of columns is undone" (fun () ->
+            let c = mx ~m:3 ~k:64 ~n:8 ~per:4 () in
+            let y = placed S4.on (b_cut (S4.split ~axis:0)) c in
+            equal bool ~msg:"the result's columns are cut" false
+              (Nx.Placement.equal (S4.split ~axis:1) y));
+        test "a cut over a's rows at its blocks gives one device's bits"
+          (fun () ->
+            let c = mx ~rows:true ~m:4 ~k:32 ~n:2 ~per:1 () in
+            let y = placed S2.on (a_cut (S2.split ~axis:0)) c in
+            equal bool ~msg:"the result's rows are cut" true
+              (Nx.Placement.equal (S2.split ~axis:0) y));
+        test "segmented rows cut over devices give one device's bits" (fun () ->
+            let segs = Rows [| 0L; 3L; 3L; 6L |] in
+            let c = mx ~segs ~g:3 ~m:6 ~k:32 ~n:4 ~per:2 () in
+            ignore (placed S2.on (a_cut ~scale:false (S2.split ~axis:0)) c));
+      ]
+end
+
 (* Convolution: Nx.conv against its sum over the taps computed in OCaml, on
    small integers whose sums every dtype holds exactly, and conv_transpose as
    its adjoint. *)
@@ -1733,5 +2322,6 @@ let () =
          dot_is_einsum;
          placements;
          errors;
+         group "scales and segments" [ Scaled.within_bound; Scaled.placements ];
          Conv.group;
        ])

@@ -1529,102 +1529,293 @@ let spread (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
   in
   if units = full then x else move (M.Broadcast (Iarray.of_array full)) x
 
+(* [x] moved by [mv], where it changes [x]. *)
+let moved (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by mv
+    (x : (v, s, d) Value.t) : (v, s, d) Value.t =
+  match (mv : M.t) with
+  | Reshape s | Broadcast s when Prim.has_shape x (Iarray.to_array s) -> x
+  | _ -> apply ~by (Value.Move (mv, x))
+
+(* [x] times its scale, each element cast to [acc] and multiplied by its
+   block's scale read into [acc], rounded once: each axis split into its
+   blocks and the elements within one, the scale given a unit axis for the
+   latter and broadcast along it. A code [e] reads as float32's bits of
+   [2^(e - 127)], [2^-127] a subnormal at [0] and a NaN at [255], then casts
+   to [acc]. An operand of no element is cast alone. *)
+let scaled (type w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    (acc : (w, r) D.t) (Value.Any x : d Value.any)
+    (scale : d Value.scale option) : d Value.any =
+  match scale with
+  | None -> Value.Any x
+  | Some _ when Array.exists (( = ) 0) (Prim.shape x) ->
+      Value.Any (cast_to apply ~by acc x)
+  | Some sc ->
+      let factor, Value.Any v =
+        match sc with
+        | Exponent c ->
+            let k v = E.const D.Int32 v in
+            let e = E.cast D.Int32 (E.input 1 D.Uint8) in
+            let bits =
+              E.(
+                where (e = k 0l) (k 0x00400000l)
+                  (where (e = k 255l) (k 0x7FC00000l) (e * k 0x00800000l)))
+            in
+            (E.cast acc (E.bitcast D.Float32 bits), Value.Any c)
+        | Value v -> (E.cast acc (E.input 1 (Prim.dtype v)), Value.Any v)
+      in
+      let s = Prim.shape x and ss = Prim.shape v in
+      let r = Array.length s in
+      let split =
+        Array.init (2 * r) (fun i ->
+            if i mod 2 = 0 then ss.(i / 2) else s.(i / 2) / ss.(i / 2))
+      in
+      let units = Array.mapi (fun i e -> if i mod 2 = 0 then e else 1) split in
+      let x' = moved apply ~by (Reshape (Iarray.of_array split)) x in
+      let v' =
+        moved apply ~by
+          (Broadcast (Iarray.of_array split))
+          (moved apply ~by (Reshape (Iarray.of_array units)) v)
+      in
+      let xt = Prim.dtype x and vt = Prim.dtype v in
+      let prog =
+        P.of_exprs
+          ~ins:[| D.Any xt; D.Any vt |]
+          [| E.any E.(cast acc (input 0 xt) * factor) |]
+      in
+      let y = map1 apply ~by split prog acc [| Plain x'; Plain v' |] in
+      Value.Any (moved apply ~by (Reshape (Iarray.of_array s)) y)
+
+(* The group of each index [r] of an axis of [len] by [offsets], of the
+   batch extents then [g + 1] ({!Nx_kernel.type-segments}), at the batch
+   extents then [len]: the largest [e < g] with [offsets.(e) <= r], a
+   [Max] over the groups, where [offsets.(0) <= r < offsets.(g)], and [-1]
+   elsewhere, as for no group. *)
+let group_ids (type d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    (offsets : d Value.index) len : d Value.index =
+  let os = Prim.shape offsets in
+  let nb = Array.length os - 1 in
+  let g = os.(nb) - 1 and lead = Array.sub os 0 nb in
+  let at start count =
+    let r = Array.map (fun d -> { M.start = 0; count = d; step = 1 }) os in
+    r.(nb) <- { M.start; count; step = 1 };
+    apply ~by (Value.Move (Slice (Iarray.of_array r), offsets))
+  in
+  let lifted shape x =
+    let units = Array.append lead (Array.make (Array.length shape - nb) 1) in
+    units.(Array.length shape - 1) <- (Prim.shape x).(nb);
+    moved apply ~by
+      (Broadcast (Iarray.of_array shape))
+      (moved apply ~by (Reshape (Iarray.of_array units)) x)
+  in
+  let o i = E.input i D.Int64 and k v = E.const D.Int64 v in
+  let rows = Array.append lead [| len |] in
+  let none = P.of_exprs ~ins:[||] [| E.any (k (-1L)) |] in
+  if g = 0 then map1 apply ~by rows none D.Int64 [||]
+  else
+    let each = Array.concat [ lead; [| len; g |] ] in
+    let r = E.coord nb and e = E.coord (nb + 1) in
+    let below =
+      P.of_exprs ~ins:[| D.Any D.Int64 |]
+        [| E.(any (where (o 0 <= r) e (k (-1L)))) |]
+    in
+    let id =
+      reduce1 apply ~by each [| nb + 1 |] Max below D.Int64
+        [| Plain (lifted each (at 0 g)) |]
+    in
+    let edge i = Value.Plain (lifted rows (at i 1)) in
+    let member =
+      P.of_exprs
+        ~ins:[| D.Any D.Int64; D.Any D.Int64; D.Any D.Int64 |]
+        [| E.(any (where (o 1 <= r && r < o 2) (o 0) (k (-1L)))) |]
+    in
+    map1 apply ~by rows member D.Int64 [| Plain id; edge 0; edge g |]
+
+(* The contraction of [a] and [b], each cast to [acc], by the pairs [batch]
+   and [contracting], from [init]: the products in [acc] at every index of
+   the result's axes then the contracted ones, each rounded, a sum over the
+   contracted ones, and [init] added. With [groups] [(ids, pair, g)], the
+   result gains a leading axis of [g], and slice [e] keeps the products
+   whose index along [pair] has the group id [e] in [ids], at [batch]'s
+   extents then that pair's, and [+0] for the others. *)
+let summed (type w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    ~batch ~contracting ?groups (acc : (w, r) D.t) (Value.Any a : d Value.any)
+    (Value.Any b : d Value.any) (init : (w, r, d) Value.t option) :
+    (w, r, d) Value.t =
+  let sa = Prim.shape a and sb = Prim.shape b in
+  let free s side =
+    List.filter
+      (fun i ->
+        not
+          (Iarray.exists (fun p -> side p = i) batch
+          || Iarray.exists (fun p -> side p = i) contracting))
+      (List.init (Array.length s) Fun.id)
+  in
+  let fa = free sa fst and fb = free sb snd in
+  let nb = Iarray.length batch and nfa = List.length fa in
+  let lead = match groups with Some (_, _, g) -> [| g |] | None -> [||] in
+  let nl = Array.length lead in
+  let rshape =
+    Array.concat
+      [
+        lead;
+        Iarray.to_array (Iarray.map (fun (i, _) -> sa.(i)) batch);
+        Array.of_list (List.map (fun i -> sa.(i)) fa);
+        Array.of_list (List.map (fun i -> sb.(i)) fb);
+      ]
+  in
+  let nr = Array.length rshape in
+  let full =
+    Array.append rshape
+      (Iarray.to_array (Iarray.map (fun (i, _) -> sa.(i)) contracting))
+  in
+  let positions s side frees offset =
+    let at = Array.make (Array.length s) 0 in
+    Iarray.iteri (fun k p -> at.(side p) <- nl + k) batch;
+    List.iteri (fun j i -> at.(i) <- nl + nb + offset + j) frees;
+    Iarray.iteri (fun c p -> at.(side p) <- nr + c) contracting;
+    at
+  in
+  let va = spread apply ~by a (positions sa fst fa 0) full in
+  let vb = spread apply ~by b (positions sb snd fb nfa) full in
+  let at = Prim.dtype a and bt = Prim.dtype b in
+  let product = E.(cast acc (input 0 at) * cast acc (input 1 bt)) in
+  let prog, (loads : d Value.load iarray) =
+    match groups with
+    | None ->
+        ( P.of_exprs ~ins:[| D.Any at; D.Any bt |] [| E.any product |],
+          [| Value.Plain va; Value.Plain vb |] )
+    | Some (ids, pair, _) ->
+        (* Selecting the products, where a mask would multiply them, keeps
+           the NaNs and infinities of other groups out. *)
+        let into =
+          Array.init (nb + 1) (fun i -> if i < nb then nl + i else nr + pair)
+        in
+        let vi = spread apply ~by ids into full in
+        let zero = E.const acc (D.zero acc) in
+        let kept = E.(where (input 2 D.Int64 = coord 0) product zero) in
+        ( P.of_exprs
+            ~ins:[| D.Any at; D.Any bt; D.Any D.Int64 |]
+            [| E.any kept |],
+          [| Value.Plain va; Value.Plain vb; Value.Plain vi |] )
+  in
+  let sum =
+    if Iarray.length contracting = 0 then map1 apply ~by full prog acc loads
+    else
+      reduce1 apply ~by full
+        (Iarray.init (Iarray.length contracting) (fun c -> nr + c))
+        Sum prog acc loads
+  in
+  match init with
+  | None -> sum
+  | Some i -> fst (apply ~by (Prim.op2 ~by (Binary Add) acc sum i))
+
+(* [Rows]: each row's group of [b] gathered along [b_axis] into an axis of
+   [a]'s rows, contracted with it as a batch pair, its axis moved to
+   [a_axis]'s place; a row in no group is [init] or [+0]. *)
+let rows (type w r d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
+    ~batch ~contracting ~a_axis ~b_axis (acc : (w, r) D.t)
+    (Value.Any a : d Value.any) (Value.Any b : d Value.any) offsets
+    (init : (w, r, d) Value.t option) : (w, r, d) Value.t =
+  let nb = Iarray.length batch and len = Prim.dim a a_axis in
+  let ids = group_ids apply ~by offsets len in
+  let into = Array.copy (Prim.shape b) in
+  into.(b_axis) <- len;
+  let at =
+    Array.init (nb + 1) (fun i ->
+        if i < nb then snd (Iarray.get batch i) else b_axis)
+  in
+  let idx = spread apply ~by ids at into in
+  let b = apply ~by (Value.Gather { axis = b_axis; idx; x = b }) in
+  let batch' = Iarray.append batch [| (a_axis, b_axis) |] in
+  let y =
+    summed apply ~by ~batch:batch' ~contracting acc (Any a) (Any b) None
+  in
+  (* [a_axis]'s place among [a]'s free axes, after the batch. *)
+  let named ps i = Iarray.exists (fun p -> fst p = i) ps in
+  let q = ref 0 in
+  for i = 0 to a_axis - 1 do
+    if not (named batch i || named contracting i) then incr q
+  done;
+  let q = !q in
+  let perm =
+    Array.init (Prim.rank y) (fun t ->
+        if t < nb || t > nb + q then t else if t = nb + q then nb else t + 1)
+  in
+  let y =
+    if q = 0 then y
+    else apply ~by (Value.Move (Permute (Iarray.of_array perm), y))
+  in
+  let shape = Prim.shape y in
+  let rows = Array.init (nb + 1) (fun i -> if i < nb then i else nb + q) in
+  let vi = spread apply ~by ids rows shape in
+  let member = E.(input 0 D.Int64 >= const D.Int64 0L) in
+  let sum = E.input 1 acc in
+  let prog, (loads : d Value.load iarray) =
+    match init with
+    | None ->
+        ( P.of_exprs ~ins:[| D.Any D.Int64; D.Any acc |]
+            [| E.(any (where member sum (const acc (D.zero acc)))) |],
+          [| Value.Plain vi; Value.Plain y |] )
+    | Some i ->
+        let i' = E.input 2 acc in
+        ( P.of_exprs ~ins:[| D.Any D.Int64; D.Any acc; D.Any acc |]
+            [| E.(any (where member (sum + i') i')) |],
+          [| Value.Plain vi; Value.Plain y; Value.Plain i |] )
+  in
+  map1 apply ~by shape prog acc loads
+
 (* The contraction of [a] and [b] by the pairs [batch] and [contracting] from
    [init], computed in [acc] into [out], as other operations. A result of
    another dtype than its accumulator is the contraction into the
-   accumulator, which kernels compute in [order], rounded once. Any other is
-   the products in the accumulator at every index of the result's axes then
-   the contracted ones, each rounded, a sum over the contracted ones, and
-   [init] added. That sum is a reduction's, in the reduction's order
-   whatever [order]: no kernel's bits, and the same for any window of the
-   result only where that order depends on the count of terms alone, as
-   nx.cpu's reduction order does. *)
+   accumulator, which kernels compute in [order], rounded once. Any other
+   scales each scaled operand first ({!scaled}), then sums its products
+   ({!summed}): by group of the contracted pair for [Contracting], and over
+   each row's group of [b] for [Rows] ({!rows}). That sum is a reduction's,
+   in the reduction's order whatever [order]: no kernel's bits, and the same
+   for any window of the result only where that order depends on the count
+   of terms alone, as nx.cpu's reduction order does. *)
 let contract (type v s a b c e d) (apply : 'q. by:string -> 'q Value.prim -> 'q)
-    ~by ~order ~batch ~contracting ~acc:(D.Any acc) (out : (v, s) D.t)
+    ~by ~order ~batch ~contracting ~segments ~acc:(D.Any acc) (out : (v, s) D.t)
     (a : (a, b, d) Value.t) (b : (c, e, d) Value.t)
-    (init : (v, s, d) Value.t option) : (v, s, d) Value.t =
+    (init : (v, s, d) Value.t option) a_scale b_scale : (v, s, d) Value.t =
+  let init = Option.map (cast_to apply ~by acc) init in
   if not (D.equal acc out) then
-    let init = Option.map (cast_to apply ~by acc) init in
     let y =
       apply ~by
         (Value.Contract
-           { order; batch; contracting; acc = D.Any acc; out = acc; a; b; init })
+           {
+             order;
+             batch;
+             contracting;
+             acc = D.Any acc;
+             out = acc;
+             a;
+             b;
+             init;
+             a_scale;
+             b_scale;
+             segments;
+           })
     in
     cast_to apply ~by out y
   else
-    let sa = Prim.shape a and sb = Prim.shape b in
-    let free s side =
-      List.filter
-        (fun i ->
-          not
-            (Iarray.exists (fun p -> side p = i) batch
-            || Iarray.exists (fun p -> side p = i) contracting))
-        (List.init (Array.length s) Fun.id)
+    let a = scaled apply ~by acc (Any a) a_scale in
+    let b = scaled apply ~by acc (Any b) b_scale in
+    let y =
+      match (segments : d Value.index Nx_kernel.segments option) with
+      | None -> summed apply ~by ~batch ~contracting acc a b init
+      | Some (Rows { offsets; a_axis; b_axis }) ->
+          rows apply ~by ~batch ~contracting ~a_axis ~b_axis acc a b offsets
+            init
+      | Some (Contracting { offsets; pair }) ->
+          let (Value.Any x) = a in
+          let p = Iarray.get contracting pair in
+          let ids = group_ids apply ~by offsets (Prim.dim x (fst p)) in
+          let g = Prim.dim offsets (Prim.rank offsets - 1) - 1 in
+          let groups = (ids, pair, g) in
+          summed apply ~by ~batch ~contracting ~groups acc a b init
     in
-    let fa = free sa fst and fb = free sb snd in
-    let nb = Iarray.length batch and nfa = List.length fa in
-    let rshape =
-      Array.concat
-        [
-          Iarray.to_array (Iarray.map (fun (i, _) -> sa.(i)) batch);
-          Array.of_list (List.map (fun i -> sa.(i)) fa);
-          Array.of_list (List.map (fun i -> sb.(i)) fb);
-        ]
-    in
-    let nr = Array.length rshape in
-    let full =
-      Array.append rshape
-        (Iarray.to_array (Iarray.map (fun (i, _) -> sa.(i)) contracting))
-    in
-    let positions s side frees offset =
-      let at = Array.make (Array.length s) 0 in
-      Iarray.iteri (fun k p -> at.(side p) <- k) batch;
-      List.iteri (fun j i -> at.(i) <- nb + offset + j) frees;
-      Iarray.iteri (fun c p -> at.(side p) <- nr + c) contracting;
-      at
-    in
-    let va = spread apply ~by a (positions sa fst fa 0) full in
-    let vb = spread apply ~by b (positions sb snd fb nfa) full in
-    let prog =
-      P.v
-        ~ins:[| D.Any (Prim.dtype a); D.Any (Prim.dtype b) |]
-        [|
-          In 0;
-          In 1;
-          Op1 (Cast, D.Any acc, 0);
-          Op1 (Cast, D.Any acc, 1);
-          Op2 (Binary Mul, 2, 3);
-        |]
-        ~outs:[| 4 |]
-    in
-    let layout = Nx_array.Layout.contiguous full in
-    let loads : _ Value.load iarray = [| Value.Plain va; Value.Plain vb |] in
-    let sum =
-      if Iarray.length contracting = 0 then
-        fst
-          (apply ~by (Value.Map { layout; prog; outs = Value.[ acc ]; loads }))
-      else
-        fst
-          (apply ~by
-             (Value.Reduce
-                {
-                  layout;
-                  axes =
-                    Iarray.init (Iarray.length contracting) (fun c -> nr + c);
-                  prog;
-                  reductions = Value.[ Monoid (Sum, 0, acc) ];
-                  loads;
-                }))
-    in
-    let sum =
-      match init with
-      | None -> sum
-      | Some i ->
-          fst
-            (apply ~by
-               (Prim.op2 ~by (Binary Add) acc sum (cast_to apply ~by acc i)))
-    in
-    cast_to apply ~by out sum
+    cast_to apply ~by out y
 
 (* Gathers and scatters *)
 
@@ -2126,6 +2317,9 @@ let product (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
          a = x;
          b = y;
          init = None;
+         a_scale = None;
+         b_scale = None;
+         segments = None;
        })
 
 let conjugate (type v s d) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by
@@ -3239,8 +3433,23 @@ let run : type r.
   | Value.Scan { layout; axis; prog; reduction = r; loads; carry }
     when Iarray.exists Prim.is_padded loads || not (simple_scan prog r) ->
       scan apply ~by layout axis prog r loads carry
-  | Value.Contract { order; batch; contracting; acc; out; a; b; init } ->
-      Some (contract apply ~by ~order ~batch ~contracting ~acc out a b init)
+  | Value.Contract
+      {
+        order;
+        batch;
+        contracting;
+        acc;
+        out;
+        a;
+        b;
+        init;
+        a_scale;
+        b_scale;
+        segments;
+      } ->
+      Some
+        (contract apply ~by ~order ~batch ~contracting ~segments ~acc out a b
+           init a_scale b_scale)
   | Value.Map { layout; prog; outs; loads } ->
       widened apply ~by layout prog outs loads
   | Value.Assemble { dtype; shape; fill; pieces } ->

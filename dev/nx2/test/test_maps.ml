@@ -580,6 +580,9 @@ let test_contract_consumes () =
            a = f32 [| 1.; 2. |];
            b = f32 [| 3.; 4. |];
            init = Some d;
+           a_scale = None;
+           b_scale = None;
+           segments = None;
          })
   in
   equal ~msg:"the result" (array bits) [| 13.; 28. |] (elements y);

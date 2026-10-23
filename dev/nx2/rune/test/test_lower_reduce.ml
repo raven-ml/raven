@@ -921,6 +921,9 @@ let contraction_op c ~acc dt a b init =
       a;
       b;
       init;
+      a_scale = None;
+      b_scale = None;
+      segments = None;
     }
 
 let contract_results (type v s) (dt : (v, s) D.t) c =
@@ -1125,9 +1128,47 @@ let int16_contraction () =
            a;
            b;
            init = None;
+           a_scale = None;
+           b_scale = None;
+           segments = None;
          })
   in
   equal (array int) (Nx.to_array (op ())) (Lowered.run op)
+
+(* A contraction with a scale or segments is not lowered. *)
+let scaled_contraction ~segmented () =
+  let a = Nx.create D.Float32 [| 2; 4 |] (Array.init 8 Float.of_int) in
+  let b = Nx.create D.Float32 [| 4; 2 |] (Array.init 8 Float.of_int) in
+  let batch = Iarray.of_list [] and contracting = Iarray.of_list [ (1, 0) ] in
+  let codes = Nx.create D.Uint8 [| 2; 2 |] [| 127; 128; 126; 127 |] in
+  let b_scale, segments =
+    if segmented then
+      ( None,
+        Some
+          (Nx_kernel.Contracting
+             { offsets = Nx.create D.Int64 [| 2 |] [| 0L; 4L |]; pair = 0 }) )
+    else (Some (P.Exponent codes), None)
+  in
+  let op () =
+    P.eval ~by:"t"
+      (P.Contract
+         {
+           order = P.contract_order ~batch ~contracting a b;
+           batch;
+           contracting;
+           acc = D.Any D.Float32;
+           out = D.Float32;
+           a;
+           b;
+           init = None;
+           a_scale = None;
+           b_scale;
+           segments;
+         })
+  in
+  raises_match
+    (Exn.invalid_arg ~substring:"a scaled or segmented Contract is not lowered")
+    (fun () -> Lowered.run op)
 
 (* A complex product, and a complex128 extreme's scan, are not lowered. *)
 let refused_complex ~scan m () =
@@ -1246,6 +1287,10 @@ let cases =
       test "a uint16 running product wraps past int"
         (uint16_products ~scan:true);
       test "an int16 contraction wraps at the extremes" int16_contraction;
+      test "a scaled contraction is not lowered"
+        (scaled_contraction ~segmented:false);
+      test "a segmented contraction is not lowered"
+        (scaled_contraction ~segmented:true);
       test "a complex product is refused" (refused_complex ~scan:false Prod);
       test "a complex running product is refused"
         (refused_complex ~scan:true Prod);

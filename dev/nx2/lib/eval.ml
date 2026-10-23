@@ -121,9 +121,28 @@ let replayed : type r d.
   | Assemble { dtype; shape; fill; pieces } ->
       let pieces = List.map (fun (r, x) -> (r, sub x)) pieces in
       one (Assemble { dtype; shape; fill; pieces })
-  | Contract { order; batch; contracting; acc; out; a; b; init } ->
+  | Contract
+      { order; batch; contracting; acc; out; a; b; init; a_scale; b_scale;
+        segments } ->
       let a = sub a and b = sub b and init = Option.map sub init in
-      one (Contract { order; batch; contracting; acc; out; a; b; init })
+      let scale : type e. e scale -> d scale = function
+        | Exponent x -> Exponent (sub x)
+        | Value x -> Value (sub x)
+      in
+      let a_scale = Option.map scale a_scale in
+      let b_scale = Option.map scale b_scale in
+      let segments =
+        Option.map
+          (fun (g : _ Nx_kernel.segments) : _ Nx_kernel.segments ->
+            match g with
+            | Rows r -> Rows { r with offsets = sub r.offsets }
+            | Contracting r -> Contracting { r with offsets = sub r.offsets })
+          segments
+      in
+      one
+        (Contract
+           { order; batch; contracting; acc; out; a; b; init; a_scale; b_scale;
+             segments })
   | Fft (C2c { direction; axes; x }) ->
       one (Fft (C2c { direction; axes; x = sub x }))
   | Fft (R2c { dtype; axes; x }) -> one (Fft (R2c { dtype; axes; x = sub x }))
@@ -459,7 +478,20 @@ let contract ~by ~batch ~contracting ~acc dt a b init =
   | Some y -> y
   | None ->
       eval ~by
-        (Contract { order; batch; contracting; acc; out = dt; a; b; init })
+        (Contract
+           {
+             order;
+             batch;
+             contracting;
+             acc;
+             out = dt;
+             a;
+             b;
+             init;
+             a_scale = None;
+             b_scale = None;
+             segments = None;
+           })
 
 let place ~by p x =
   match x with
