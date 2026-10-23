@@ -172,8 +172,8 @@ the Exclusions of `README.md`.
   `lib/setting.ml:151` (`t`) and `:201` (`context`);
   `lib/codegen/codegen.ml:1008` (`to_program`'s cache);
   `lib/runtime/support/compiler_metal.ml:38` (`build`);
-  `lib/runtime/support/compiler_amd.ml` (`run`) and
-  `compiler_amd_worker.c`.
+  `lib/runtime/support/compiler_worker.ml` (`run`), `compiler_worker.h`
+  and `compiler_amd_worker.c`.
 - **Differs:** compilation runs on domains, not processes. `Worker.map`
   spawns its domains for the call and joins them before it returns, where
   tinygrad keeps a pool: an idle domain still takes part in every minor

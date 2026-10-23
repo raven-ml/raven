@@ -15,6 +15,7 @@
  (target compiler_amd_worker.exe)
  (enabled_if
   (= %{system} linux))
+ (deps compiler_worker.h)
  (action
   (run %{cc} -Wall -o %{target} %{dep:compiler_amd_worker.c} -ldl)))
 
@@ -22,5 +23,6 @@
  (target compiler_amd_worker.exe)
  (enabled_if
   (<> %{system} linux))
+ (deps compiler_worker.h)
  (action
   (run %{cc} -Wall -o %{target} %{dep:compiler_amd_worker.c})))

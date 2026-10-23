@@ -3,7 +3,7 @@
 (library
  (name tolk)
  (public_name tolk)
- (private_modules host_config source_digest comgr_worker)
+ (private_modules host_config source_digest compiler_worker comgr_worker)
  (libraries unix)
  ; The compilers that run in the process find their vendor's library at run
  ; time, so that the library builds and runs without CUDA, ROCm or Metal.
@@ -13,7 +13,7 @@
    helpers_stubs
    compiler_cpu_stubs
    compiler_cuda_stubs
-   compiler_amd_stubs
+   compiler_worker_stubs
    compiler_metal_stubs))
  (c_library_flags
   (:include dl_flags.sexp))

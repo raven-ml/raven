@@ -4,8 +4,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The comgr worker's program in memory, on Linux: a file of no file system,
-   so that it runs where the home directory is mounted noexec. */
+/* A worker's program in memory, on Linux: a file of no file system, so that
+   it runs where the home directory is mounted noexec. */
 
 /* memfd_create and file seals are GNU extensions of the C library. */
 #ifdef __linux__
@@ -34,16 +34,16 @@ static void refused(const char *call, int fd) {
   caml_failwith_value(message);
 }
 
-/* A sealed memory file holding [v_program], open close-on-exec: the
-   descriptor of the program the path /proc/self/fd/N runs. Raises Failure
-   naming the call the kernel refused. */
-value caml_tolk_comgr_worker_memfd(value v_program) {
-  CAMLparam1(v_program);
+/* A sealed memory file named [v_name] holding [v_program], open
+   close-on-exec: the descriptor of the program the path /proc/self/fd/N runs.
+   Raises Failure naming the call the kernel refused. */
+value caml_tolk_worker_memfd(value v_name, value v_program) {
+  CAMLparam2(v_name, v_program);
   unsigned flags = MFD_CLOEXEC | MFD_ALLOW_SEALING;
   /* Kernels from 6.3 on make memory files executable only on request, and
      older ones reject the request. */
-  int fd = memfd_create("tolk-comgr-worker", flags | MFD_EXEC);
-  if (fd < 0 && errno == EINVAL) fd = memfd_create("tolk-comgr-worker", flags);
+  int fd = memfd_create(String_val(v_name), flags | MFD_EXEC);
+  if (fd < 0 && errno == EINVAL) fd = memfd_create(String_val(v_name), flags);
   if (fd < 0) refused("memfd_create", -1);
   size_t size = caml_string_length(v_program), done = 0;
   while (done < size) {
@@ -58,7 +58,8 @@ value caml_tolk_comgr_worker_memfd(value v_program) {
   CAMLreturn(Val_int(fd));
 }
 #else
-value caml_tolk_comgr_worker_memfd(value v_program) {
+value caml_tolk_worker_memfd(value v_name, value v_program) {
+  (void)v_name;
   (void)v_program;
   caml_failwith("memfd_create: Linux only");
 }
