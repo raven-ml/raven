@@ -41,3 +41,10 @@ val free : t -> int -> unit
 (** [free s a] frees the range {!alloc} returned at [a].
 
     Raises [Invalid_argument] if no allocated range of [s] starts at [a]. *)
+
+(**/**)
+
+val taken : t -> int
+(* [taken s] is the number of ranges of [s] allocated and not freed, for the
+   suites that check that a driver gives back what it takes, in a time that
+   grows with the ranges [s] holds. *)

@@ -53,3 +53,7 @@ val free : t -> int -> bool
 (** [free a x] frees the block {!alloc} returned at [x], and is [true] iff there
     was one. It is [false], changing nothing, if no block of [a] starts at [x]
     or that block is free already. *)
+
+val taken : t -> int
+(** [taken a] is the number of blocks {!alloc} returned that are not free, in
+    a time that grows with the blocks [a] holds. *)

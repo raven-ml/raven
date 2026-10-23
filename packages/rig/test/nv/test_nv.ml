@@ -1914,8 +1914,10 @@ let stop_running () =
    which glibc's allocator holds in a chunk of 96. Warm opens first make the
    process's client and the GPU's objects, which stay. The runtime's own
    tables may grow by a few hundred bytes over the run, so a leak of more
-   than 64 bytes an open fails it. Each open boots the GPU's GSP over PCI,
-   in about 3.5 s: the 20 opens take 70 s. *)
+   than 64 bytes an open fails it. Over PCI each open also gives back every
+   range of the GPUs' addresses it took, which a leak there shows at once
+   where the heap shows it only as its allocator's table doubles. Each open
+   boots the GPU's GSP over PCI, in about 3.6 s: the 20 opens take 75 s. *)
 let edge_chunk = 96
 let runtime_slack = 1024
 let warm_opens = 4
@@ -1928,6 +1930,7 @@ let opens_keep_edges () =
     | Some n -> n
     | None -> skip ~reason:"the system counts no C heap" ()
   in
+  let ranges = Rig_nv_pci.taken in
   let cycle () =
     let t = S.open_ () in
     ignore (B.create t.d 1 : B.t);
@@ -1939,10 +1942,11 @@ let opens_keep_edges () =
   for _ = 1 to warm_opens do
     cycle ()
   done;
-  let c = heap () in
+  let taken = ranges () and c = heap () in
   for _ = 1 to opens do
     cycle ()
   done;
+  equal ~msg:"the ranges of the GPUs' addresses taken" int taken (ranges ());
   at_most int ~msg:"the C heap's growth over the opens"
     ~than:((opens * edge_chunk) + runtime_slack)
     (heap () - c)

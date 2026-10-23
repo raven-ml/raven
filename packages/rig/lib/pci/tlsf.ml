@@ -306,3 +306,8 @@ let free t x =
       if join_n then Tables.Address.remove t.blocks n.start;
       true
   | _ -> false
+
+let taken t =
+  Tables.Address.fold
+    (fun _ b n -> if b.state = Taken then n + 1 else n)
+    t.blocks 0

@@ -83,7 +83,8 @@ let free m x =
 let space =
   abstract "s" ~invariant:(fun m s ->
       equal ~msg:"base" hex m.base (Space.base s);
-      equal ~msg:"length" int m.length (Space.length s))
+      equal ~msg:"length" int m.length (Space.length s);
+      equal ~msg:"ranges taken" int (List.length m.live) (Space.taken s))
 
 let live = among hex space (fun m -> List.map fst m.live)
 

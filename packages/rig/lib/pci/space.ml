@@ -56,3 +56,7 @@ let alloc ?(align = 0x1000) s n =
 let free s a =
   let freed = Lock.protect s.lock (fun () -> Tlsf.free (tlsf s) a) in
   if not freed then invalid_argf "Space.free: no range at 0x%x" a
+
+let taken s =
+  Lock.protect s.lock (fun () ->
+      match s.tlsf with None -> 0 | Some t -> Tlsf.taken t)

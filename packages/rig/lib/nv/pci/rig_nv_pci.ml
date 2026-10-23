@@ -131,6 +131,7 @@ let report ~firmware ~chip ~vbios =
    memory maps at its owner's address. It lies above the GSP's addresses
    ({!Rpc.reserved}), which the GPU's tables must leave unmapped. *)
 let space = Space.create ~base:(64 * gib) (Rig_nv.windows - (64 * gib))
+let taken () = Space.taken space
 
 module Handles = Map.Make (Int)
 

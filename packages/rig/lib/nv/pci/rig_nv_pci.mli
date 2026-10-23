@@ -68,7 +68,10 @@
     ({!Rig_pci.Function.alloc_dma}). The GPUs' addresses and the process's
     addresses of system memory coincide, from 64 GiB to {!Rig_nv.windows},
     which the process reserves at its first open; every GPU it opens takes
-    its addresses from that range.
+    its addresses from that range. A device's stop gives back every address
+    its open took, once the GPU's memory regions are freed, unless the GPU
+    stopped answering ({!Rig_nv.val-stop}), which keeps the addresses the
+    GPU may still reach.
     - Behind an IOMMU, system memory counts against the process's limit on
       locked memory ([RLIMIT_MEMLOCK]), and {!Rig_nv.val-alloc} returns
       [None] once it is reached. Raise the limit to allocate more. Such a
@@ -254,6 +257,11 @@ val reset : ?machine:Rig_pci.Machine.t -> int -> (unit, string) result
     Raises [Invalid_argument] if [i < 0]. *)
 
 (**/**)
+
+val taken : unit -> int
+(* [taken ()] is the number of ranges of the GPUs' addresses that this
+   library's opens hold, for the suites that check that a stop gives back
+   every range its open took. *)
 
 (* Boot reports, for the suites that check, without a GPU, what an open
    loads to boot a GPU and whether it refuses the GPU for its chip, its VBIOS
