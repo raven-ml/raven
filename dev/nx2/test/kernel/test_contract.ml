@@ -569,8 +569,10 @@ let regimes acc =
   (* Many rows by few columns, b's windows streamed; few rows by more
      columns, a's packed whole; dilated taps; the chain path over two
      blocks of the contraction (float32's alone, for its cost); lane
-     order, in one pass and in two over 9 rows of several runs; a of a
-     dtype acc does not hold; and a complex one's a real. *)
+     order, in one pass and in two over 9 rows of several runs, and over
+     windows whose last contracted run is shorter than the lanes and as
+     long as 48; a of a dtype acc does not hold; and a complex one's a
+     real. *)
   let convs =
     [
       conv chain ~taps_first:true (2, 10, 10, 3, 8) (3, 3) (1, 1);
@@ -578,6 +580,7 @@ let regimes acc =
       conv chain ~taps_first:true (1, 4, 5, 4, 30) (2, 3) (1, 2);
       conv lane ~init:true ~taps_first:true (1, 3, 3, 4, 3) (3, 3) (1, 1);
       conv lane ~taps_first:true (1, 3, 3, 4, 16) (3, 3) (1, 1);
+      conv lane ~taps_first:true (1, 3, 3, 16, 3) (3, 3) (1, 1);
     ]
     @ (match acc with
       | D.Any D.Float32 ->

@@ -386,20 +386,20 @@ static void pack_at(const problem *p, nx_cpu_pack move, int o,
 
 /* Stages operand [o]'s block as stage_acc does, from its element
    (e, i, j, k), [n0] along axis [x0] in a row and [n1] rows along [x1]:
-   unscaled, piece by piece as pack_at reads it, so that an axis of
-   several runs is read where it lies; scaled, of one run each, with each
-   element times its block's scale, rounded once in acc, a float32 or
-   float64. */
+   along an axis of several runs, piece by piece as pack_at reads it, so
+   that the operand is read where it lies; otherwise in one stage, each
+   element of a scaled operand, whose axes are one run each, times its
+   block's scale, rounded once in acc, a float32 or float64. */
 static void stage_at(const problem *p, int o, int64_t e, int64_t i,
                      int64_t j, int64_t k, int x0, int x1, int64_t n0,
                      int64_t n1, uint8_t *dst, int64_t pitch) {
   const operand *q = &p->op[o];
   const int64_t c[4] = {e, i, j, k};
-  if (q->s == NULL) {
+  if (q->sp[x0] || q->sp[x1]) {
     pack_at(p, NULL, o, c, x0, x1, n0, n1, dst, pitch);
     return;
   }
-  if (stage_f4(p, o, c, x0, x1, n0, n1, dst, pitch)) return;
+  if (q->s && stage_f4(p, o, c, x0, x1, n0, n1, dst, pitch)) return;
   stage_acc(p, o, pos(p, o, e, i, j, k), q->st[x0], q->st[x1], n0, n1, dst,
             pitch);
   if (q->s == NULL) return;
@@ -1143,12 +1143,13 @@ done:
    transposes the product), at most LANE_ROWS a pass. b, the large
    operand, is read once a pass, in the order it lies:
 
-   - Dots, where b is adjacent along k, as a weight stored [n × k] is: a
-     unit is (element, DOT_COLUMNS columns, range of blocks), and each
-     output's block a dot along k, a column of b against every row of a. A
-     product of few outputs over a long k, a dot's, splits its blocks into
-     ranges, whose sums meet in a second job; otherwise a unit takes every
-     block and totals its outputs itself.
+   - Dots, where b is adjacent along k or along each run of it, as a
+     weight stored [n × k] is, or a convolution's windows: a unit is
+     (element, DOT_COLUMNS columns, range of blocks), and each output's
+     block a dot along k, a column of b against every row of a. A product
+     of few outputs over a long k, a dot's, splits its blocks into ranges,
+     whose sums meet in a second job; otherwise a unit takes every block
+     and totals its outputs itself.
    - Rows, otherwise, as for a weight stored [k × n]: a block of ROW_BYTES
      of columns adds the block's rows of b in turn, row k0 + t times its
      row's element of a into lane t modulo 16's accumulators, one per
@@ -1568,6 +1569,18 @@ static double lane_cost(const problem *p, int64_t *bytes) {
   return 2.0 * batch * m * n * k + *bytes;
 }
 
+/* Whether [p] takes dots: b steps one along k, within runs of at least
+   NX_CPU_LANES where k is several runs. Dots stage a run of b a column
+   at a time, rows a row of k across the columns: on fudge a 3 × 3
+   convolution of an [8; 112; 112; 3] image into 3 channels, runs of 9,
+   took twice as long in dots as in rows, 0.79 ms against 0.40; one of
+   [8; 56; 56; 64], runs of 192, 0.35 ms in dots against 1.26 in rows. */
+static int dotted(const problem *p) {
+  const spans *s = p->op[B].sp[CON];
+  if (step_of(&p->op[B], CON) != 1) return 0;
+  return s == NULL || s->extent[s->n - 1] >= NX_CPU_LANES;
+}
+
 static void lane_pass(problem *p) {
   int64_t batch = p->ext[BATCH], m = p->ext[ROW], n = p->ext[COL];
   int64_t w = p->w, bytes;
@@ -1576,7 +1589,7 @@ static void lane_pass(problem *p) {
     return;
   }
   double cost = lane_cost(p, &bytes);
-  if (p->op[B].st[CON] == 1) dots(p, bytes, cost);
+  if (dotted(p)) dots(p, bytes, cost);
   else rows(p, bytes, cost);
 }
 
