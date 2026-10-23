@@ -183,25 +183,30 @@ let position ~rank s =
 
 (* A draw of [dt] and shape [s] per key of [k], by the sampler program [prog]:
    one map over the key's batch then [s], each element reading its key, its
-   position in [s], and [params], each stretched to the draw's shape. The
-   key's bitcast and the stretches come before the map: the call consumes
-   its operands once ({!Eval.call}). *)
-let draw ~by ?(params = [||]) (k : 'd key) dt s prog =
-  let batch = batch k in
-  let shape = Array.append batch s in
-  Prim.check_shape ~by shape;
-  Eval.call ~by (Value.Any k :: Array.to_list params) @@ fun read ->
-  let w = pack ~by (read k) in
+   position in [s], and [params], each stretched to the draw's shape. *)
+let drawn ~by params (k : 'd key) batch shape dt s prog =
+  let w = pack ~by k in
   let w = reshape ~by (Array.append batch (Array.make (Array.length s) 1)) w in
-  let stretched (Value.Any x) = Value.Any (stretch ~by shape (read x)) in
   let loads =
     Array.append
       [| Value.Any (stretch ~by shape w) |]
-      (Array.map stretched params)
+      (Array.map (fun (Value.Any x) -> Value.Any (stretch ~by shape x)) params)
   in
   let position = position ~rank:(Array.length shape) s in
   let prog = P.bind prog position_operand (E.any position) in
   map ~by shape prog dt loads
+
+(* The key's bitcast and the stretches come before the map: inside an
+   [Extent] the call reads its operands once ({!Eval.call}). *)
+let draw ~by ?(params = [||]) (k : 'd key) dt s prog =
+  let batch = batch k in
+  let shape = Array.append batch s in
+  Prim.check_shape ~by shape;
+  if not (Eval.inside ()) then drawn ~by params k batch shape dt s prog
+  else
+    Eval.call ~by (Value.Any k :: Array.to_list params) @@ fun read ->
+    let params = Array.map (fun (Value.Any x) -> Value.Any (read x)) params in
+    drawn ~by params (read k) batch shape dt s prog
 
 (* Parameter [i] of a draw, of dtype [dt], as a node of its program. *)
 let operand i dt = E.input (first_param + i) dt
@@ -229,9 +234,8 @@ let walk c k = of_tensor (Ptree.Walk.tensor c k)
 
 (* The keys [f ~key] gives at each element of [shape], whose last axes follow
    [k]'s batch. *)
-let keys ~by (k : 'd key) shape f : 'd key =
-  Eval.call ~by [ Value.Any k ] @@ fun read ->
-  let w = pack ~by (read k) in
+let keyed ~by (k : 'd key) shape f : 'd key =
+  let w = pack ~by k in
   let ins : D.any iarray = [| D.Any D.Uint64 |] in
   let out = f ~key:(E.input 0 D.Uint64) in
   let w = stretch ~by shape w in
@@ -239,6 +243,10 @@ let keys ~by (k : 'd key) shape f : 'd key =
     map ~by shape (P.of_exprs ~ins [| E.any out |]) D.Uint64 [| Value.Any w |]
   in
   Eval.eval ~by (Value.Bitcast (D.Int32, u))
+
+let keys ~by (k : 'd key) shape f : 'd key =
+  if not (Eval.inside ()) then keyed ~by k shape f
+  else Eval.call ~by [ Value.Any k ] @@ fun read -> keyed ~by (read k) shape f
 
 let one ~by k =
   if batch k <> [||] then
@@ -283,12 +291,9 @@ let fold_in k data = fold_in_by ~by:"Nx.Rng.fold_in" k data
 
 (* [fold_in] of an index held in data: [i]'s words [(i asr 32, i)] as the
    sign-extended [i] gives them. A batch of indices gives a batch of keys. *)
-let fold_in_tensor (k : 'd key) (i : (int32, D.int32_elt, 'd) Value.t) : 'd key
-    =
-  let by = "Nx.Rng.fold_in_tensor" in
-  let shape = Prim.broadcast_shape ~by (batch k) (Prim.shape i) in
-  Eval.call ~by [ Value.Any k; Value.Any i ] @@ fun read ->
-  let w = pack ~by (read k) and i = read i in
+let folded ~by shape (k : 'd key) (i : (int32, D.int32_elt, 'd) Value.t) :
+    'd key =
+  let w = pack ~by k in
   let ins : D.any iarray = [| D.Any D.Uint64; D.Any D.Int32 |] in
   let v = E.(bitcast D.Uint64 (cast D.Int64 (input 1 D.Int32))) in
   let w32 = u64 two32 in
@@ -300,6 +305,15 @@ let fold_in_tensor (k : 'd key) (i : (int32, D.int32_elt, 'd) Value.t) : 'd key
     map ~by shape (P.of_exprs ~ins [| E.any out |]) D.Uint64 loads
   in
   Eval.eval ~by (Value.Bitcast (D.Int32, u))
+
+let fold_in_tensor (k : 'd key) (i : (int32, D.int32_elt, 'd) Value.t) : 'd key
+    =
+  let by = "Nx.Rng.fold_in_tensor" in
+  let shape = Prim.broadcast_shape ~by (batch k) (Prim.shape i) in
+  if not (Eval.inside ()) then folded ~by shape k i
+  else
+    Eval.call ~by [ Value.Any k; Value.Any i ] @@ fun read ->
+    folded ~by shape (read k) (read i)
 
 (* The scope *)
 
@@ -544,6 +558,11 @@ let once2 ~by a b f =
    then, [key] last. *)
 let with_operands xs key =
   match key with None -> xs | Some k -> xs @ [ Value.Any k ]
+
+(* Whether [x] or [key] is donated: else the sampler reads no handle. *)
+let donated x key =
+  Donate.is_handle x
+  || match key with Some k -> Donate.is_handle k | None -> false
 
 (* [p 2^53] is exact at the compute dtype, [p] being at most 1: the draw is 53
    bits of block [j] below it, rounded up, at every dtype. *)
@@ -1241,8 +1260,10 @@ let dirichlet_by ~by ?key a =
 
 let dirichlet ?key a =
   let by = "Nx.Rng.dirichlet" in
-  Eval.once ~by (with_operands [ Value.Any a ] key) @@ fun read ->
-  dirichlet_by ~by ?key:(Option.map read key) (read a)
+  if not (donated a key) then dirichlet_by ~by ?key a
+  else
+    Eval.once ~by (with_operands [ Value.Any a ] key) @@ fun read ->
+    dirichlet_by ~by ?key:(Option.map read key) (read a)
 
 (* Categorical *)
 
@@ -1271,21 +1292,8 @@ let gumbel (type s) ~key (c : (float, s) D.t) j : (float, s) E.t =
 
 let categorical_programs = programs ()
 
-let categorical ?key ?(axis = -1) logits =
-  let by = "Nx.Rng.categorical" in
-  let s = Prim.shape logits in
-  let dt = Prim.dtype logits in
-  let a =
-    Prim.axis ~by (Array.length s) axis (fun ppf ->
-        Format.fprintf ppf "%s %a" (D.name dt) pp_shape s)
-  in
-  if s.(a) = 0 then
-    invalid_argf "%s: axis %d of %s %a has no category" by axis (D.name dt)
-      pp_shape s;
-  Prim.alive ~by 0 logits;
-  Eval.once ~by (with_operands [ Value.Any logits ] key) @@ fun read ->
-  let logits = read logits in
-  let key = resolve ~by ~after:1 (Option.map read key) in
+let categorical_by ~by s dt a key logits =
+  let key = resolve ~by ~after:1 key in
   let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
   let prog =
     lowered categorical_programs dt [| D.Any dt |] (fun ~key ~j ->
@@ -1317,20 +1325,31 @@ let categorical ?key ?(axis = -1) logits =
     largest ok;
   at
 
+let categorical ?key ?(axis = -1) logits =
+  let by = "Nx.Rng.categorical" in
+  let s = Prim.shape logits in
+  let dt = Prim.dtype logits in
+  let a =
+    Prim.axis ~by (Array.length s) axis (fun ppf ->
+        Format.fprintf ppf "%s %a" (D.name dt) pp_shape s)
+  in
+  if s.(a) = 0 then
+    invalid_argf "%s: axis %d of %s %a has no category" by axis (D.name dt)
+      pp_shape s;
+  Prim.alive ~by 0 logits;
+  if not (donated logits key) then categorical_by ~by s dt a key logits
+  else
+    Eval.once ~by (with_operands [ Value.Any logits ] key) @@ fun read ->
+    categorical_by ~by s dt a (Option.map read key) (read logits)
+
 (* Permutation *)
 
 (* The positions that sort one Threefry block per element: 64-bit words, so
    that collisions, which the stable sort leaves in order, are rare. *)
 let permutation_programs = programs ()
 
-let permutation ?key n =
-  let by = "Nx.Rng.permutation" in
-  if n < 0 then invalid_argf "%s: n is %d, not at least 0" by n;
-  let prog =
-    lowered permutation_programs D.Uint64 [||] (fun ~key ~j -> block ~key j)
-  in
-  Eval.once ~by (with_operands [] key) @@ fun read ->
-  let key = resolve ~by ~after:0 (Option.map read key) in
+let permuted ~by prog n key =
+  let key = resolve ~by ~after:0 key in
   let words = draw ~by key D.Uint64 [| n |] prog in
   let axis = Array.length (Prim.shape words) - 1 in
   let _, positions =
@@ -1338,3 +1357,15 @@ let permutation ?key n =
       (Value.Sort { axis; descending = false; k = None; x = words })
   in
   positions
+
+let permutation ?key n =
+  let by = "Nx.Rng.permutation" in
+  if n < 0 then invalid_argf "%s: n is %d, not at least 0" by n;
+  let prog =
+    lowered permutation_programs D.Uint64 [||] (fun ~key ~j -> block ~key j)
+  in
+  match key with
+  | Some k when Donate.is_handle k ->
+      Eval.once ~by [ Value.Any k ] @@ fun read ->
+      permuted ~by prog n (Some (read k))
+  | Some _ | None -> permuted ~by prog n key
