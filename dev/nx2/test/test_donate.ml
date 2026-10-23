@@ -68,7 +68,19 @@ let test_passed_on () =
   equal ~msg:"the consumer's result" (array float_exact) [| 1.; 2.; 3.; 4. |]
     (elements y);
   invalid ~sub:"Nx.add: operand 1 was donated to Nx.copy" (fun () -> Nx.add x x);
-  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.copy" (fun () -> Nx.copy d)
+  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.copy" (fun () -> Nx.copy d);
+  (* The handle a movement read and the one it passed on are handles of one
+     donor: whichever is consumed first, the other raises naming that
+     consumer. *)
+  let h = Nx.donate (fresh [| 1.; 2. |]) in
+  let v = Nx.reshape [| 1; 2 |] h in
+  equal ~msg:"the handle read" (array float_exact) [| 1.; 2. |]
+    (elements (Nx.copy h));
+  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.copy" (fun () -> Nx.copy v);
+  let h = Nx.donate (fresh [| 1.; 2. |]) in
+  let v = Nx.reshape [| 1; 2 |] h in
+  ignore (Nx.neg v);
+  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.neg" (fun () -> Nx.copy h)
 
 let test_sharer_keeps () =
   let x = fresh [| 1.; 2. |] in
@@ -87,7 +99,7 @@ let test_refused_kills_none () =
       Nx.add (Nx.donate x2) d1);
   equal ~msg:"the other donor lives" (array float_exact) [| 10.; 12. |]
     (elements (Nx.add x2 x2));
-  (* Refused on its first operand, an add spends no handle of its second,
+  (* Refused on its first operand, an add kills no handle of its second,
      which it would broadcast. *)
   let dead = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
   ignore (Nx.copy (Nx.donate dead));
@@ -96,6 +108,30 @@ let test_refused_kills_none () =
       Nx.add dead b);
   equal ~msg:"the broadcast operand's handle lives" (array float_exact)
     [| 7.; 8. |] (elements (Nx.copy b))
+
+(* An operation that broadcasts a handle, refused by its dtype or by a dead
+   operand, kills nothing and names the operand that died by its place in the
+   call. *)
+let test_broadcast_refused () =
+  let ints s xs =
+    let a = Nx.Repr.of_array Nx.Host.v (A.of_array D.Int32 s xs) in
+    Nx.add a (Nx.zeros_like a)
+  in
+  let y = ints [| 2 |] [| 1l; 2l |] in
+  let z = ints [| 2; 2 |] [| 3l; 4l; 5l; 6l |] in
+  let h = Nx.donate y in
+  invalid ~sub:"Nx.atan2: Atan2 does not take int32" (fun () -> Nx.atan2 h z);
+  equal ~msg:"the integers' handle reaches a later consumer" (array int32)
+    [| 1l; 2l |]
+    (elements (Nx.copy h));
+  let dead = fresh_at [| 2; 2 |] [| 1.; 0.; 1.; 0. |] in
+  ignore (Nx.copy (Nx.donate dead));
+  let h = Nx.donate (fresh [| 1.; 2. |]) in
+  invalid ~sub:"Nx.logical_and: operand 2 was donated to Nx.copy" (fun () ->
+      Nx.logical_and h dead);
+  equal ~msg:"the floats' handle reaches a later consumer" (array float_exact)
+    [| 1.; 2. |]
+    (elements (Nx.copy h))
 
 (* A kind refusing its operands' dtypes kills nothing, though its result would
    fit a handle's memory: an operation checks before it takes the memory. *)
@@ -759,7 +795,7 @@ let taker msg =
     match
       List.find_opt
         (fun f -> has ("donated to " ^ f))
-        [ "Nx.add"; "Nx.mul"; "Nx.reshape"; "test.call" ]
+        [ "Nx.add"; "Nx.mul"; "Nx.sub"; "test.call" ]
     with
     | Some f -> f
     | None -> msg
@@ -772,8 +808,9 @@ let union a b = List.sort_uniq compare (a @ b)
 
 (* Whether [e], a consumer of two handles, may hold a handle in flight: it
    claims them one at a time and gives back those it took when it loses
-   another, so a free handle can be seen held by it. *)
-let in_flight e = e = "Nx.add" || e = "test.call"
+   another, so a free handle can be seen held by it. A consumer of one handle
+   claims nothing more once it holds it. *)
+let in_flight e = e = "Nx.sub" || e = "test.call"
 
 (* Whether [h] may have gone to [e]: taken by it, or free and held by it in
    flight. *)
@@ -805,17 +842,26 @@ let mul_ref = judge1 "Nx.mul" (Array.map (fun v -> v *. 2.))
 let add_sys h = refused (fun () -> elements (Nx.add h (twos h)))
 let mul_sys h = refused (fun () -> elements (Nx.mul h (twos h)))
 
-(* The movement's result is a handle no command reads. *)
-let reshape_ref = judge1 "Nx.reshape" (fun _ -> [||])
+(* A movement reads a free handle and kills nothing. Its result is a handle no
+   command reads. *)
+let reshape_ref h = function
+  | Ok (Ok _) ->
+      if not (free h) then fail "Nx.reshape read a taken handle";
+      h.states <- [ None ]
+  | Ok (Error e) ->
+      if not (lost_to e h) then fail ("Nx.reshape raised naming " ^ e);
+      h.states <- lost h e
+  | Error exn -> raise exn
 
 let reshape_sys h =
   refused (fun () ->
       ignore (Nx.reshape [| 1; (Nx.shape h).(0) |] h);
       [||])
 
-(* [add h1 h2] checks both handles, then takes them in an order the promise
-   leaves open: a loser lost one handle, and gave back the other. *)
-let pair_ref by h1 h2 out =
+(* [sub h1 h2] checks both handles, then takes them in an order the promise
+   leaves open: a loser lost one handle, and gave back the other. The result's
+   elements are [f]'s. *)
+let pair_ref f by h1 h2 out =
   if h1 == h2 then
     match out with
     | Ok r -> equal taken (Error "twice") r
@@ -825,7 +871,7 @@ let pair_ref by h1 h2 out =
     | Ok (Ok ys) ->
         if not (free h1 && free h2) then fail (by ^ " took a taken handle");
         cover "two handles consumed" true;
-        equal (array float_exact) (Array.map2 ( +. ) h1.ys h2.ys) ys;
+        equal (array float_exact) (Array.map2 f h1.ys h2.ys) ys;
         h1.states <- [ Some by ];
         h2.states <- [ Some by ]
     | Ok (Error e) ->
@@ -844,11 +890,11 @@ let pair_ref by h1 h2 out =
         h2.states <- s2
     | Error exn -> raise exn
 
-let add2_ref = pair_ref "Nx.add"
-let add2_sys h1 h2 = refused (fun () -> elements (Nx.add h1 h2))
+let sub2_ref = pair_ref ( -. ) "Nx.sub"
+let sub2_sys h1 h2 = refused (fun () -> elements (Nx.sub h1 h2))
 
 (* A call of two handles, which consumes them as an operation does. *)
-let call2_ref = pair_ref "test.call"
+let call2_ref = pair_ref ( +. ) "test.call"
 
 let call2_sys h1 h2 =
   refused (fun () ->
@@ -907,7 +953,7 @@ let handles =
     command "add" (handle ^-> judges taken) add_ref add_sys;
     command "mul" (handle ^-> judges taken) mul_ref mul_sys;
     command "reshape" (handle ^-> judges taken) reshape_ref reshape_sys;
-    command "add2" (handle ^-> handle ^-> judges taken) add2_ref add2_sys;
+    command "sub2" (handle ^-> handle ^-> judges taken) sub2_ref sub2_sys;
   ]
 
 (* Consumers of two handles alone, so that two domains often take one pair in
@@ -915,7 +961,7 @@ let handles =
 let crossed =
   [
     command "make" (pair @-> makes handle) make_handle make_handle_sys;
-    command "add2" (handle ^-> handle ^-> judges taken) add2_ref add2_sys;
+    command "sub2" (handle ^-> handle ^-> judges taken) sub2_ref sub2_sys;
     command "call2" (handle ^-> handle ^-> judges taken) call2_ref call2_sys;
   ]
 
@@ -1922,6 +1968,7 @@ let () =
                test_sharer_keeps;
              test "a refused consumer kills no donor" test_refused_kills_none;
              test "a dtype refusal kills no donor" test_dtype_refused;
+             test "a refused broadcast kills no donor" test_broadcast_refused;
              test "a refused composite kills no donor" test_refused_composite;
              test "an aligning consumer checks before it consumes"
                test_aligned_refusal;

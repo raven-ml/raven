@@ -628,10 +628,11 @@ and donated : type r. by:string -> r Value.prim -> Donate.handle list -> r =
   match op with
   | Value.Move (mv, (Value.Donated d as x)) ->
       (* A view of a handle leaves the memory unshared: the handle it passes on
-         has the same donor, so its consumer may still write into it. The
-         deaths wait for that consumer, which checks every operand first, so
-         an operation that aligns its operands by movements kills nothing when
-         it is refused. *)
+         has the same donor and key, so its consumer may still write into it.
+         The movement claims nothing: the deaths wait for that consumer, which
+         checks every operand first, so an operation that aligns its operands
+         by movements kills nothing when it is refused, declined into fresh
+         memory, or loses a race. *)
       let moved () =
         match run ~by (Value.Move (mv, Donate.live x)) with
         | r -> (Prim.placement r, Prim.shape r, Prim.arrays r)
@@ -650,9 +651,7 @@ and donated : type r. by:string -> r Value.prim -> Donate.handle list -> r =
           | None -> moved ()
         end
       in
-      Donate.spend ~by 0 x;
-      Value.Donated
-        { key = d.key; at; shape; arrays; donor = d.donor; spent = Value.Live }
+      Value.Donated { key = d.key; at; shape; arrays; donor = d.donor }
   | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
   | Value.Scatter _ | Value.Sort _ | Value.Fft _ | Value.Linalg _
   | Value.Fold _ | Value.Assemble _ | Value.Contract _ | Value.Copy _

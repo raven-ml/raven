@@ -240,39 +240,39 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     [x] stays usable until an operation consumes a handle of [x]. Then [x] and
     every handle of [x] die: a later operation on any of them raises
     [Invalid_argument] naming the consumer, and its shape, dtype and placement
-    still answer. An operation that raises before it takes a handle's memory
-    kills nothing: one refused by its checks, one that lost a race between
-    domains (below), or one declined by its set's kernels where its result
-    goes to fresh memory. One that writes its result into a handle's memory
-    (below) takes the memory before its kernels answer, so if they decline, or
-    it raises otherwise, [x] and its handles may be dead.
+    still answer. An operation checks every operand before it consumes any, and
+    one that raises before it takes a handle's memory kills nothing: one refused
+    by its checks, one that lost a race between domains (below), or one declined
+    by its set's kernels where its result goes to fresh memory. One that writes
+    its result into a handle's memory (below) takes the memory before its
+    kernels answer, so if they decline, or it raises otherwise, [x] and its
+    handles may be dead.
 
     A movement, which rearranges elements without computing them ({!reshape},
     {!transpose}, {!flip}, {!broadcast_to}, slicing by ranges,
-    {!sliding_window}), spends its handle and passes a new one to its result,
-    whether it makes a view or a copy; the deaths wait for the final
-    consumer. A spent handle raises naming the movement that spent it. Any
-    other operation consumes its handles. A function that computes through
-    others, as {!trace} sums a diagonal, is the consumer the deaths name. One
-    that makes several operations, as {!lstsq}, reads its handles as they
-    were when called and consumes them when it returns; it reuses none of
-    their memory. Two handles of one donor or over one memory reaching one
-    operation raise naming [Nx.donate]: the same handle twice, two donations
-    of one value, or a handle and one a movement passed on. The donor itself
-    beside one of its handles is not a second handle: the consumer reads it as
-    it was when called, so [add (donate x) x] is [x + x].
+    {!sliding_window}), passes a new handle of [x] to its result, whether it
+    makes a view or a copy, and kills nothing; the deaths wait for the final
+    consumer. The handle it read stays a handle of [x]: once an operation
+    consumes either, the other raises naming that consumer. Any other operation
+    consumes its handles. A function that computes through others, as {!trace}
+    sums a diagonal, is the consumer the deaths name. One that makes several
+    operations, as {!lstsq}, reads its handles as they were when called and
+    consumes them when it returns; it reuses none of their memory. Two handles
+    of one donor or over one memory reaching one operation raise naming
+    [Nx.donate]: the same handle twice, two donations of one value, or a handle
+    and one a movement passed on. The donor itself beside one of its handles is
+    not a second handle: the consumer reads it as it was when called, so
+    [add (donate x) x] is [x + x].
 
-    An operation checks every operand before it consumes any. On any number of
-    domains, no value is consumed twice, and a call on another domain that
-    overlaps the consumer of [x] either reads [x]'s elements as they were or
-    raises [Invalid_argument] naming that consumer; it never reads the
+    On any number of domains, no value is consumed twice, and a call on another
+    domain that overlaps the consumer of [x] either reads [x]'s elements as they
+    were or raises [Invalid_argument] naming that consumer; it never reads the
     consumer's result. When operations on several domains race to consume the
     same handles, at least one claims all it reads. A loser raises naming an
     operation that claimed one of its operands, which may itself have lost or
-    raised, and kills nothing. No consumer overwrites elements another call is
-    reading: one that claims a handle while a call reads its memory computes
-    into fresh memory, and a function of several operations reading it then
-    raises as a loser.
+    raised. No consumer overwrites elements another call is reading: one that
+    claims a handle while a call reads its memory computes into fresh memory,
+    and a function of several operations reading it then raises as a loser.
 
     The consumer may write its result into the donated memory when it reads
     that memory only at the result's own index, through the handle or through

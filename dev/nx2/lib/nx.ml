@@ -470,8 +470,7 @@ let same_shape = Prim.same_shape
 
 (* A function whose operations read its operands one at a time, as a
    broadcast does, or in another order than the call's checks them first, in
-   the call's order: a dead one raises named by its place in the call, before
-   any handle is spent. *)
+   the call's order: a dead one raises named by its place in the call. *)
 let alive2 ~by a b =
   Prim.alive ~by 0 a;
   Prim.alive ~by 1 b
@@ -1718,6 +1717,8 @@ let elementwise (type v s) ~by (dt : (v, s) D.t) xs (out : (v, s) E.t) =
       (fun s (Value.Any x) -> Prim.broadcast_shape ~by s (shape x))
       [||] xs
   in
+  (* Checked before the broadcasts, which read one operand each. *)
+  List.iteri (fun i (Value.Any x) -> Prim.alive ~by i x) xs;
   let load (Value.Any x) = Value.Plain (broadcast ~by s x) in
   let ins = Iarray.of_list (List.map (fun (Value.Any x) -> D.Any (dtype x)) xs) in
   let prog = P.of_exprs ~ins [| E.any out |] in

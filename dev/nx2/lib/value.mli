@@ -61,13 +61,12 @@ type ('v, 's, 'd) t =
       shape : int array;  (** The whole's. *)
       arrays : ('v, 's) Nx_array.t iarray;
       donor : death Atomic.Loc.t;  (** The donor's [dead]. *)
-      mutable spent : death; [@atomic]
     }
       (** A handle one operation reads: [arrays] over its donor's memory, one
           per device of [at], each its window, or a copy of it a movement made.
-          [spent] is [Live] until an operation reads it: the one that consumed
-          it, killing the donor, or a movement that passed a new handle of the
-          donor on. *)
+          It has no word of its own: it lives while its donor does, as does
+          every other handle of the donor, those a movement passed on
+          included. *)
   | Deferred of { form : ('v, 's, 'd) form; node : node; k : int }
       (** Result [k] of the constant operation [node]. *)
   | Traced of {
