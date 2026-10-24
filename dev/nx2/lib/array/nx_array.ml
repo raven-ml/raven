@@ -56,9 +56,10 @@ let reason = function
 let pp_operand ppf (Any a) =
   Format.fprintf ppf "%a %a" Dtype.pp a.dtype Shape.pp (Layout.shape a.layout)
 
-(* The reason a [Dead_buffer] gives: each dead operand, numbered from 1 in
-   [operands]' order, with the reason its consumer gave. *)
-let dead operands =
+(* The reason a [Dead_buffer] or [Held_exclusive] gives: each operand dead by
+   now, numbered from 1 in [operands]' order, with the reason its consumer
+   gave. A holder of exclusive memory consumes it, or releases it unread. *)
+let dead answer operands =
   let ds =
     List.filter_map Fun.id
       (List.mapi
@@ -67,7 +68,7 @@ let dead operands =
          operands)
   in
   match List.rev ds with
-  | [] -> reason Dead_buffer
+  | [] -> reason answer
   | [ (i, why) ] -> Printf.sprintf "operand %d was consumed, %s" i why
   | (last, _) :: before ->
       Printf.sprintf "operands %s and %d were consumed: %s"
@@ -79,7 +80,9 @@ let dead operands =
 
 let refused name answer operands =
   let why =
-    match answer with Dead_buffer -> dead operands | _ -> reason answer
+    match answer with
+    | Dead_buffer | Held_exclusive -> dead answer operands
+    | _ -> reason answer
   in
   invalid_argf "%s: %s (%a)" name why
     (Format.pp_print_list

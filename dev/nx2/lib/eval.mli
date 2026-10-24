@@ -65,28 +65,6 @@ val quiet : unit -> bool
 (** [quiet ()] is [true] iff the count of live [Extent] interpretations is
     zero: none is live, on any domain. *)
 
-val once :
-  by:string ->
-  'd any list ->
-  holds:('a -> 'e any list) ->
-  (('v 's 'f. ('v, 's, 'f) t -> ('v, 's, 'f) t) -> 'a) ->
-  'a
-(** [once ~by xs ~holds k] is [k read], [k] the function [by] that reads its
-    operands [xs] in several operations, and [holds y] the values its result
-    [y] is made of. [by] consumes the handles among [xs] when called
-    ({!Donate.consume}), and [read] gives [xs] as they were then, each handle
-    and each of their donors claimed for the call ({!Donate.read}): the donors
-    are dead from the start, whatever [k] does, [k]'s operations write into
-    none of their memory, and an interpretation that receives one of them
-    reads its arrays lent. Two reads of one donor share its memory, so [k] may
-    return both. Once [k] returns or raises, the claimed values are live. When
-    [k] returns, the handles' memory that no value of [holds y] holds and no
-    other value shares is freed, as {!Exec} frees what an operation does not
-    reuse ({!Donate.consumed}); a view [k] makes of it shares it, as does an
-    interpretation's read, and that memory returns to its device once no value
-    holds it. Raises [Invalid_argument] before [k] as {!Donate.consume} does,
-    naming [by]. *)
-
 val eval : by:string -> 'r prim -> 'r
 (** [eval ~by op] is [op]'s meaning under the rule. Errors name [by]. *)
 

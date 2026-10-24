@@ -45,8 +45,8 @@ let death : type v s d. (v, s, d) t -> death = function
 
 let alive ~by i x =
   match death x with
-  | Live | Offered _ | Claimed -> ()
-  | Died { by = why; _ } ->
+  | Live | Offered _ -> ()
+  | Died why ->
       invalid_argf "%s: operand %d was donated to %s" by (i + 1) why
 
 let arrays : type v s d. (v, s, d) t -> (v, s) Nx_array.t iarray = function

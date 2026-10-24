@@ -515,11 +515,9 @@ let einsum (type v s d) ~by ?(sizes = []) ?acc (p : Pattern.t)
     pair ~by ~ext w dt nr shape
       (ns.(0), Value.Any xs.(0))
       (ns.(1), Value.Any xs.(1))
-  else if not (Array.exists Donate.is_handle xs) then
-    tree ~by ~ext p w dt ns nr shape xs
   else
-    (* Several contractions read the operands: the call claims them once. *)
-    Eval.once ~by
-      (Array.to_list (Array.map (fun x -> Value.Any x) xs))
-      ~holds:(fun y -> [ Value.Any y ])
-    @@ fun read -> tree ~by ~ext p w dt ns nr shape (Array.map read xs)
+    (* Several contractions read the operands. *)
+    let xs =
+      if Array.exists Donate.is_handle xs then Array.map Donate.lent xs else xs
+    in
+    tree ~by ~ext p w dt ns nr shape xs

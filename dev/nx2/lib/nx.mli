@@ -241,46 +241,42 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     every handle of [x] die: a later operation on any of them raises
     [Invalid_argument] naming the consumer, and its shape, dtype and placement
     still answer. An operation checks every operand before it consumes any:
-    one refused by its checks kills nothing, and so does one its set's
-    kernels decline where its result goes to fresh memory. One that writes its
-    result into a handle's memory (below) takes the memory before its kernels
-    answer, so if they decline, or it raises otherwise, [x] and its handles
-    may be dead.
+    one refused by its checks kills nothing. Once its checks pass, [x] and its
+    handles are dead, whatever its set's kernels then answer: one that
+    declines raises with them dead.
 
-    A movement, which rearranges elements without computing them ({!reshape},
-    {!transpose}, {!flip}, {!broadcast_to}, slicing by ranges,
+    A movement, which rearranges elements without computing them
+    ({!reshape}, {!transpose}, {!flip}, {!broadcast_to}, slicing by ranges,
     {!sliding_window}), passes a new handle of [x] to its result, whether it
     makes a view or a copy, and kills nothing; the deaths wait for the final
     consumer. The handle it read stays a handle of [x]: once an operation
-    consumes either, the other raises naming that consumer. Any other
-    operation consumes its handles. A function that computes through others,
-    as {!trace} sums a diagonal, is the consumer the deaths name. One that
-    reads an operand in several operations, as {!lstsq}, consumes its handles
-    when it is called, after its operands' checks, and reads them as they were
-    then, inside an interpretation too; they stay dead if it raises. It
-    writes into none of their memory. That memory, unless its result holds it
-    or another value shares it (a view the function made does, as does an
-    interpretation's read), returns to its device when the function returns;
-    otherwise once no value holds it. Two handles of one donor or over one
-    memory reaching one operation raise naming [Nx.donate]: the
-    same handle twice, two donations of one value, or a handle and one a
-    movement passed on. The donor itself beside one of its handles is not a
-    second handle: the consumer reads it as it was when called, so
-    [add (donate x) x] is [x + x].
+    consumes either, the other raises naming that consumer.
+
+    A call consumes each operand that reaches one operation, through
+    movements: the call is the consumer the deaths name, as {!trace} is for
+    the diagonal it sums. An operand that several operations read is lent:
+    the call reads it as a value over [x]'s memory, which is shared from then
+    on, and [x] and its handles live on, as [a] does in [lstsq (donate a) b].
+    That memory returns to its device once no value holds it. A sampler's key
+    is lent ({!Rng}). Two handles of one donor reaching one operation, the
+    same handle twice, two donations of one value or a handle and one a
+    movement passed on, are read as the donor beside its handle is: as [x]
+    was when called, and [x] dies once. So [add (donate x) x] is [x + x], and
+    [mul h h] is [x * x] for [h = donate x].
 
     An interpretation that receives an operation ({!Prim.interpret}) reads
     each handle as its arrays and kills nothing: [x] lives on, and its memory
-    is shared from then on. Two handles of one donor reaching it raise as
-    above.
+    is shared from then on.
 
     On any number of domains, no value is consumed twice, and a call on
     another domain that overlaps the consumer of [x] either reads [x]'s
-    elements as they were or raises [Invalid_argument] naming that consumer;
-    it never reads the consumer's result. No consumer overwrites elements
-    another call is reading: one that claims a handle while a call reads its
-    memory computes into fresh memory. Racing consumers on several domains
-    for the handles of one donor is a misuse: any of them may raise, naming
-    another, and leave dead the other donors it claimed.
+    elements as they were or raises [Invalid_argument]; it never reads the
+    consumer's result. No
+    consumer overwrites elements another call is reading: one that claims a
+    handle while a call reads its memory computes into fresh memory. Racing
+    consumers on several domains for the handles of one donor is a misuse:
+    any of them may raise, naming another, and leave dead the other donors it
+    claimed.
 
     The consumer may write its result into the donated memory when it reads
     that memory only at the result's own index, through the handle or through
@@ -288,14 +284,13 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     {!contract}'s [init]), the memory is C-contiguous with the result's shape
     and dtype, and the memory is not shared. Memory is shared once a value
     outside the donor's handles has been made over it (a view, a borrow by
-    {!place}, a {!Repr} crossing, an interpretation's read, the donor and its
-    handle read by one function of several operations, which may return
-    both), and stays shared.
+    {!place}, a {!Repr} crossing, an interpretation's read, a read by a
+    function of several operations), and stays shared.
     Otherwise the consumer computes into fresh memory, and a value that shares
     the memory keeps it. Its result is the same either way.
 
     A traced value and a value of every set are returned unchanged: nothing
-    dies, and passing such a value twice raises nothing.
+    dies.
 
     Raises [Invalid_argument] if [x] is dead. *)
 
@@ -3666,6 +3661,9 @@ module Rng : sig
       float64 for float64 and at float32 for the other floats, and round once to
       their dtype.
 
+      A sampler reads its key and consumes no donation of it
+      ({!Nx.donate}): the key lives on.
+
       A sampler's parameters are arrays, and the draw has their broadcast
       shape. Each parameter is checked against its domain: an element outside
       raises [Invalid_argument] naming the sampler, the parameter, the element's
@@ -4469,21 +4467,6 @@ module Prim : sig
   val donated : ('v, 's, 'd) nx -> bool
   (** [donated x] is [true] iff [x] is a handle {!Nx.donate} made, live or
       not. It allocates nothing. *)
-
-  val consume : by:string -> 'd any list -> 'd any list
-  (** [consume ~by xs] is [xs] read by one consumer named [by] that is no
-      operation, as a compiled call: as an operation reads its operands
-      ({!Nx.donate}), each handle as a live value over its arrays, a donor
-      beside its handle as it was, their memory then shared, and any other
-      value as it is. Each
-      handle's donor is then dead, naming [by]. It checks every value before
-      it kills any. The handles' memory is not consumed: a consumer that
-      writes into it takes it from rig, which says whether it is exclusive
-      ({!Rig.Claim.with_}).
-
-      Raises [Invalid_argument] as an operation's operands do: naming
-      [Nx.donate] for two handles of one donor or over one memory, then
-      naming [by] for a value that died. It then kills nothing. *)
 
   val eval : by:string -> 'r t -> 'r
   (** [eval ~by op] is [op]'s meaning under the rule, as the vocabulary's

@@ -38,25 +38,37 @@ let test_dies_at_its_consumer () =
   invalid ~sub:"Nx.copy: operand 1 was donated to Nx.mul" (fun () -> Nx.copy d);
   equal ~msg:"its shape answers" (array int) [| 2 |] (Nx.shape x)
 
-let test_one_read () =
+(* Two handles of one donor reaching one operation, the same handle twice, two
+   donations of one value, or a handle and one a movement passed on, view or
+   copy, are read as the donor beside its handle is: as the donor was, and the
+   donor dies once, naming the operation. *)
+let test_one_donor_twice () =
+  let dies by x =
+    invalid ~sub:("Nx.copy: operand 1 was donated to " ^ by) (fun () ->
+        Nx.copy x)
+  in
   let x = fresh [| 1.; 2. |] in
   let d = Nx.donate x in
-  invalid ~sub:"Nx.donate: Nx.mul reads one donation twice" (fun () ->
-      Nx.mul d d);
+  equal ~msg:"the same handle" (array float_exact) [| 1.; 4. |]
+    (elements (Nx.mul d d));
+  dies "Nx.mul" x;
+  dies "Nx.mul" d;
   let x = fresh [| 1.; 2. |] in
-  invalid ~sub:"Nx.donate: Nx.add reads one donation twice" (fun () ->
-      Nx.add (Nx.donate x) (Nx.donate x));
+  equal ~msg:"two donations" (array float_exact) [| 2.; 4. |]
+    (elements (Nx.add (Nx.donate x) (Nx.donate x)));
+  dies "Nx.add" x;
   let x = fresh [| 1.; 2. |] in
   let d = Nx.donate x in
-  invalid ~sub:"Nx.donate: Nx.mul reads one donation twice" (fun () ->
-      Nx.mul d (Nx.reshape [| 2 |] d));
+  equal ~msg:"a view passed on" (array float_exact) [| 1.; 4. |]
+    (elements (Nx.mul d (Nx.reshape [| 2 |] d)));
+  dies "Nx.mul" x;
   (* A reshape of a transpose copies: the two handles share no memory. *)
-  let x = Nx.reshape [| 2; 2 |] (fresh [| 1.; 2.; 3.; 4. |]) in
+  let x = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
   let c = Nx.reshape [| 4 |] (Nx.transpose (Nx.donate x)) in
-  invalid ~sub:"Nx.donate: Nx.add reads one donation twice" (fun () ->
-      Nx.add (Nx.reshape [| 4 |] (Nx.donate x)) c);
-  equal ~msg:"and kills nothing" (array float_exact) [| 2.; 4.; 6.; 8. |]
-    (elements (Nx.add x x))
+  equal ~msg:"a copy passed on" (array float_exact) [| 2.; 5.; 5.; 8. |]
+    (elements (Nx.add (Nx.reshape [| 4 |] (Nx.donate x)) c));
+  dies "Nx.add" x;
+  dies "Nx.add" c
 
 let test_passed_on () =
   let x = fresh [| 1.; 2.; 3.; 4. |] in
@@ -81,6 +93,26 @@ let test_passed_on () =
   let v = Nx.reshape [| 1; 2 |] h in
   ignore (Nx.neg v);
   invalid ~sub:"Nx.copy: operand 1 was donated to Nx.neg" (fun () -> Nx.copy h)
+  (* A slice of every element is the operand itself. *)
+  let x = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  equal ~msg:"a slice of every element" (array float_exact)
+    [| 1.; 2.; 3.; 4. |]
+    (elements (Nx.reshape [| 4 |] (Nx.slice [ A; A ] (Nx.donate x))))
+
+(* A sampler reads its key and kills no donation of it, though its draw reads
+   the key in one bitcast: the key lives, and draws the same again. *)
+let test_key_lent () =
+  let words () = Nx.cast Nx.int32 (fresh [| 1.; 2. |]) in
+  let draw f t = elements (Nx.cast f32 (f (Nx.Rng.of_tensor t))) in
+  let lent ~msg f =
+    let expected = draw f (words ()) in
+    let t = words () in
+    equal ~msg (array float_exact) expected (draw f (Nx.donate t));
+    equal ~msg:(msg ^ ": the key lives") (array float_exact) expected
+      (draw f t)
+  in
+  lent ~msg:"Nx.Rng.permutation" (fun key -> Nx.Rng.permutation ~key 5);
+  lent ~msg:"Nx.Rng.uniform" (fun key -> Nx.Rng.uniform ~key f32 [| 3 |])
 
 let test_sharer_keeps () =
   let x = fresh [| 1.; 2. |] in
@@ -133,75 +165,36 @@ let test_broadcast_refused () =
     [| 1.; 2. |]
     (elements (Nx.copy h))
 
-(* A call that moves its operands before the one operation that reads them,
-   as a broadcast or a stack's lift, passes each handle on: that operation
-   finds one donation read twice, and kills nothing. *)
-let test_moved_twice () =
-  let x = fresh [| 1.; 2. |] in
-  let h = Nx.donate x in
-  let h' = Nx.reshape [| 1; 2 |] h in
-  let wide = fresh_at [| 2; 2 |] [| 1.; 0.; 1.; 0. |] in
-  let c = Nx.less wide (fresh_at [| 2; 2 |] (Array.make 4 0.5)) in
-  let twice by f =
-    invalid ~sub:("Nx.donate: " ^ by ^ " reads one donation twice") f
-  in
-  twice "Nx.where" (fun () -> Nx.where c h h);
-  twice "Nx.add" (fun () -> Nx.add h' h);
-  twice "Nx.less" (fun () -> Nx.less h' h);
-  twice "Nx.logical_and" (fun () -> Nx.logical_and h' h);
-  twice "Nx.stack" (fun () -> Nx.stack [ h; h ]);
-  let chain = Nx.Pattern.v "i j, j k, k l -> i l | j k" in
-  let a = Nx.reshape [| 2; 2 |] (fresh [| 1.; 2.; 3.; 4. |]) in
-  let ha = Nx.donate a in
-  twice "Nx.einsum" (fun () -> Nx.einsum chain [ ha; a; ha ]);
-  equal ~msg:"the donor lives" (array float_exact) [| 2.; 4. |]
-    (elements (Nx.add x x));
-  equal ~msg:"the einsum's donor lives" (array float_exact)
-    [| 1.; 2.; 3.; 4. |]
-    (elements (Nx.reshape [| 4 |] a))
-
-(* A function that reads an operand in several operations consumes its
-   handles when it is called, once it has checked its operands: it reads the
-   donor beside its handle as it was, and a refusal inside it leaves the donor
-   dead, naming the function. *)
+(* A function of several operations reads its handles as live values over
+   their memory, shared, and kills nothing: the donor beside its handle, one
+   donation twice, an einsum of three operands, a complex value of float32
+   parts at complex128, a slice and a set at positions held in data. The
+   donor keeps its elements, and its handle reaches a later consumer. *)
 let test_several_reads () =
   let x = fresh [| 1.; 2. |] in
+  let h = Nx.donate x in
   equal ~msg:"the donor beside its handle" (array float_exact) [| 5. |]
-    (elements (Nx.vdot (Nx.donate x) x));
-  invalid ~sub:"Nx.add: operand 1 was donated to Nx.vdot" (fun () ->
-      Nx.add x x);
-  let x = fresh [| 1.; 2. |] in
-  invalid ~sub:"Nx.donate: Nx.vdot reads one donation twice" (fun () ->
-      Nx.vdot (Nx.donate x) (Nx.donate x));
-  equal ~msg:"two handles of one donor kill nothing" (array float_exact)
-    [| 2.; 4. |]
-    (elements (Nx.add x x));
-  (* An einsum of three operands, a complex value of float32 parts at
-     complex128, a slice and a set at positions held in data: operations that
-     read one operand each, and the donor beside its handle in another. *)
+    (elements (Nx.vdot h x));
+  equal ~msg:"one donation twice" (array float_exact) [| 5. |]
+    (elements (Nx.vdot h h));
+  let z = Nx.complex Nx.complex128 ~re:h ~im:h in
+  equal ~msg:"two parts of one donation" (array float_exact)
+    [| 1.; 2.; 1.; 2. |]
+    (Array.append
+       (elements (Nx.real Nx.float32 z))
+       (elements (Nx.imag Nx.float32 z)));
+  equal ~msg:"the donor" (array float_exact) [| 1.; 2. |] (elements x);
+  equal ~msg:"its handle's consumer" (array float_exact) [| 2.; 4. |]
+    (elements (Nx.add h x));
+  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.add" (fun () ->
+      Nx.copy x);
   let id = fresh_at [| 2; 2 |] [| 1.; 0.; 0.; 1. |] in
   let a = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
   let chain = Nx.Pattern.v "i j, j k, k l -> i l | j k" in
   equal ~msg:"the einsum" (array float_exact) [| 7.; 10.; 15.; 22. |]
     (elements (Nx.reshape [| 4 |] (Nx.einsum chain [ Nx.donate a; id; a ])));
-  invalid ~sub:"Nx.add: operand 1 was donated to Nx.einsum" (fun () ->
-      Nx.add a a);
-  let x = fresh [| 1.; 2. |] in
-  let z = Nx.complex Nx.complex128 ~re:x ~im:(Nx.donate x) in
-  equal ~msg:"the complex value's parts" (array float_exact)
-    [| 1.; 2.; 1.; 2. |]
-    (Array.append
-       (elements (Nx.real Nx.float32 z))
-       (elements (Nx.imag Nx.float32 z)));
-  invalid ~sub:"Nx.add: operand 1 was donated to Nx.complex" (fun () ->
-      Nx.add x x);
-  let x = fresh [| 1.; 2. |] in
-  let h = Nx.donate x in
-  invalid ~sub:"Nx.donate: Nx.complex reads one donation twice" (fun () ->
-      Nx.complex Nx.complex128 ~re:h ~im:h);
-  equal ~msg:"two parts of one donor kill nothing" (array float_exact)
-    [| 2.; 4. |]
-    (elements (Nx.add x x));
+  equal ~msg:"the einsum's donor" (array float_exact) [| 1.; 2.; 3.; 4. |]
+    (elements (Nx.reshape [| 4 |] a));
   let positions () =
     let p = Nx.create Nx.int64 [| 2 |] [| 1L; 0L |] in
     Nx.add p (Nx.zeros_like p)
@@ -211,20 +204,19 @@ let test_several_reads () =
   equal ~msg:"the slice" (array float_exact)
     (elements (Nx.slice [ T (positions ()); T (positions ()) ] m))
     (elements (Nx.slice [ T p; T (Nx.donate p) ] m));
-  invalid ~sub:"Nx.add: operand 1 was donated to Nx.slice" (fun () ->
-      Nx.add p p);
+  equal ~msg:"the slice's donor" (array int64) [| 1L; 0L |] (elements p);
   let p = positions () and v = Nx.create Nx.int64 [| 2 |] [| 10L; 20L |] in
   equal ~msg:"the set" (array int64) [| 20L; 10L |]
     (elements (Nx.set [ T (Nx.donate p) ] v p));
-  invalid ~sub:"Nx.add: operand 1 was donated to Nx.set" (fun () -> Nx.add p p);
   let x = fresh_at [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   invalid ~sub:"Nx.softmax" (fun () -> Nx.softmax ~axes:[ 5 ] (Nx.donate x));
-  invalid ~sub:"Nx.add: operand 1 was donated to Nx.softmax" (fun () ->
-      Nx.add x x)
+  equal ~msg:"a refused function's donor" (array float_exact)
+    [| 1.; 2.; 3.; 4.; 5.; 6. |]
+    (elements (Nx.reshape [| 6 |] x))
 
 (* An interpretation reads a handle as its arrays and kills nothing: an
    observer of every operation, which receives the broadcasts too, and a
-   tracer beside a traced operand. Two handles of one donor still raise. The
+   tracer beside a traced operand, and two handles of one donor. The
    donor's memory is shared from then on, so that its next donation computes
    into fresh memory, where without an interpretation it writes in place. *)
 type ('v, 's, 'd) Nx.Prim.payload += Tag : ('v, 's, 'd) Nx.Prim.payload
@@ -254,8 +246,9 @@ let test_lent () =
     (elements
        (Nx.reshape [| 4 |] (observed (fun () -> Nx.add (Nx.donate x) wide))));
   equal ~msg:"the broadcast donor" (array float_exact) [| 1.; 2. |] (peek x);
-  invalid ~sub:"Nx.donate: Nx.add reads one donation twice" (fun () ->
-      observed (fun () -> Nx.add (Nx.donate x) (Nx.donate x)));
+  equal ~msg:"two donations of one value" (array float_exact) [| 2.; 4. |]
+    (elements (observed (fun () -> Nx.add (Nx.donate x) (Nx.donate x))));
+  equal ~msg:"their donor" (array float_exact) [| 1.; 2. |] (peek x);
   let x = fresh [| 1.; 2. |] and t = fresh [| 3.; 4. |] in
   Nx.Prim.interpret ~name:"test.tracer" Values
     (fun i ~by op ->
@@ -395,13 +388,6 @@ let test_shards_of_one_allocation () =
   donated [| 4; 2 |] 0;
   donated [| 4; 2 |] 1
 
-(* A consumer that is no operation, such as a compiled call, consumes its
-   handles as an operation does: it reads each handle as its arrays and the
-   donor beside it as it was, kills the donors naming itself, and kills none
-   where it refuses one. *)
-let consume xs = Nx.Prim.consume ~by:"test.call" xs
-let read_f32 (Nx.Prim.Any v) = elements (Nx.cast f32 v)
-
 let test_is_handle () =
   let x = fresh [| 1.; 2. |] in
   let d = Nx.donate x in
@@ -411,64 +397,14 @@ let test_is_handle () =
     (Nx.Prim.donated (Nx.reshape [| 1; 2 |] (Nx.donate (fresh [| 1.; 2. |]))));
   equal ~msg:"a value of every set" bool false
     (Nx.Prim.donated (Nx.donate (Nx.zeros f32 [| 2 |])));
-  ignore (consume [ Any d ]);
+  ignore (Nx.copy d);
   equal ~msg:"a consumed handle" bool true (Nx.Prim.donated d)
 
-let test_consume () =
-  let x = fresh [| 1.; 2. |] and y = fresh [| 3.; 4. |] in
-  let read = consume [ Any (Nx.donate x); Any x; Any y ] in
-  equal ~msg:"read as called"
-    (list (array float_exact))
-    [ [| 1.; 2. |]; [| 1.; 2. |]; [| 3.; 4. |] ]
-    (List.map read_f32 read);
-  equal ~msg:"no handle read" (list bool) [ false; false; false ]
-    (List.map (fun (Nx.Prim.Any v) -> Nx.Prim.donated v) read);
-  invalid ~sub:"Nx.add: operand 1 was donated to test.call" (fun () ->
-      Nx.add x x);
-  equal ~msg:"another operand lives" (array float_exact) [| 6.; 8. |]
-    (elements (Nx.add y y))
-
-let test_consume_refused () =
-  let x1 = fresh [| 1.; 2. |] in
-  let d1 = Nx.donate x1 in
-  ignore (Nx.mul (Nx.donate x1) (fresh [| 3.; 4. |]));
-  let x2 = fresh [| 5.; 6. |] in
-  invalid ~sub:"test.call: operand 2 was donated to Nx.mul" (fun () ->
-      consume [ Any (Nx.donate x2); Any d1 ]);
-  equal ~msg:"the other donor lives" (array float_exact) [| 10.; 12. |]
-    (elements (Nx.add x2 x2));
-  let x = fresh [| 1.; 2. |] in
-  invalid ~sub:"Nx.donate: test.call reads one donation twice" (fun () ->
-      consume [ Any (Nx.donate x); Any (Nx.donate x) ]);
-  equal ~msg:"two handles of one donor kill nothing" (array float_exact)
-    [| 2.; 4. |]
-    (elements (Nx.add x x));
-  let d = Nx.donate (fresh [| 1.; 2. |]) in
-  ignore (consume [ Any d ]);
-  invalid ~sub:"test.call: operand 1 was donated to test.call" (fun () ->
-      consume [ Any d ])
-
-(* Of an operation and a call over the same two handles, in either order, the
-   first consumes them and the second raises naming it. *)
-let test_call_order () =
-  let pair () =
-    (Nx.donate (fresh [| 1.; 2. |]), Nx.donate (fresh [| 10.; 20. |]))
-  in
-  let h1, h2 = pair () in
-  equal ~msg:"the operation" (array float_exact) [| 11.; 22. |]
-    (elements (Nx.add h1 h2));
-  invalid ~sub:"test.call: operand 1 was donated to Nx.add" (fun () ->
-      consume [ Any h2; Any h1 ]);
-  let h1, h2 = pair () in
-  ignore (consume [ Any h2; Any h1 ]);
-  invalid ~sub:"Nx.add: operand 1 was donated to test.call" (fun () ->
-      Nx.add h1 h2)
-
 (* A call may give back what it read of a donor: an array outside the
-   vector, which Ptree.scale and axpy keep, one Ptree.cast keeps at its dtype,
-   or what a consumer that is no operation read. Given the donor beside its
-   handle, or beside one a movement passed on, it gives two values over one
-   memory, and a donation of one leaves the other's elements as they were. *)
+   vector, which Ptree.scale and axpy keep, or one Ptree.cast keeps at its
+   dtype. Given the donor beside its handle, or beside one a movement passed
+   on, it gives two values over one memory, and a donation of one leaves the
+   other's elements as they were. *)
 module Both = struct
   type ('a, _) t = 'a * 'a
 
@@ -499,14 +435,7 @@ let test_given_back_twice () =
     (Nx.Ptree.cast (module Both) Nx.int32 (Nx.donate x, x));
   let x = ints [| 1; 2 |] in
   let w, v = Nx.Ptree.scale two k (Nx.reshape [| 2 |] (Nx.donate x), x) in
-  apart ~msg:"Ptree.scale, a handle passed on" (w, Nx.reshape [| 2 |] v);
-  let x = ints [| 2 |] in
-  match consume [ Any (Nx.donate x); Any x ] with
-  | [ Any w; Any v ] ->
-      ignore (Nx.neg (Nx.donate w));
-      equal ~msg:"Prim.consume" (array float_exact) [| 1.; 2. |]
-        (read_f32 (Any v))
-  | _ -> fail "Prim.consume: not two values"
+  apart ~msg:"Ptree.scale, a handle passed on" (w, Nx.reshape [| 2 |] v)
 
 (* Reuse: a consumer that writes its result into donated memory takes no
    memory of the result's size, counted on a memory device of these tests'
@@ -762,10 +691,10 @@ let test_donor_beside () =
   equal ~msg:"doubled, shared" (array float_exact) doubled (elements y);
   equal ~msg:"the view" (array float_exact) original (elements flat)
 
-(* A function of several operations claims its handles when called: a
+(* A function of several operations reads its handles as shared memory: a
    consumer of its donor inside it, here a rule at [softmax]'s first
-   operation, finds the donor dead naming [softmax], whose operations read
-   its elements. *)
+   operation, computes into fresh memory and leaves the elements [softmax]
+   reads as they were. *)
 let test_inside_composite () =
   let expected = elements (Nx.softmax ~axes:[ 1 ] (cache ())) in
   let c = cache () and taken = ref None in
@@ -782,9 +711,7 @@ let test_inside_composite () =
     Nx.Prim.interpret ~name:"test.taker" Extent rule (fun _ ->
         Nx.softmax ~axes:[ 1 ] (Nx.donate c))
   in
-  equal ~msg:"the consumer" (option string)
-    (Some "Nx.donate: operand 1 was donated to Nx.softmax")
-    !taken;
+  equal ~msg:"the consumer" (option string) (Some "consumed") !taken;
   equal ~msg:"the softmax" (array float_exact) expected (elements y)
 
 (* An eager broadcasting call on one domain, while an [Extent] lives on
@@ -814,113 +741,6 @@ let test_extent_elsewhere () =
   equal ~msg:"the sum" (array float_exact) (Array.make (2 * n) 3.)
     (elements (Nx.reshape [| 2 * n |] y));
   invalid ~sub:"donated to Nx.add" (fun () -> Nx.copy x)
-
-(* An eager call that reads a donation in several operations, as an einsum
-   of three operands, a slice at two lists of positions held in data, an LU
-   factorisation or a structure's scaling, frees the donor's memory once it
-   returns, as one operation does. The
-   donors stay reachable, so no collection explains the bytes. A slice that
-   gives its operand itself keeps its elements. *)
-let test_several_free () =
-  let p = Nx.Pattern.v "i j, j k, k l -> i l | j k" in
-  let ones = on_mem [| width; 1 |] (Array.make width 1.) in
-  let two = on_mem [| 1; 1 |] [| 2. |] in
-  let freed f =
-    let run () =
-      let c = cache () in
-      let before = settled () in
-      let y = f c in
-      Rig.free_cache device;
-      (c, y, Rig.allocated device - before)
-    in
-    ignore (run ());
-    run ()
-  in
-  let c, y, grew = freed (fun c -> Nx.einsum p [ Nx.donate c; ones; two ]) in
-  less ~msg:"the einsum's donor freed" int ~than:(-size / 2) grew;
-  equal ~msg:"the einsum" (array float_exact)
-    (Array.init rows (fun r -> Float.of_int (2 * r * width)))
-    (elements (Nx.reshape [| rows |] y));
-  invalid ~sub:"donated to Nx.einsum" (fun () -> Nx.copy c);
-  let cols_at = positions [| 1 |] [| 7L |] in
-  let c, y, grew =
-    freed (fun c ->
-        let rows_at = positions [| 1 |] [| 3L |] in
-        Nx.slice [ T (Nx.donate rows_at); T cols_at ] (Nx.donate c))
-  in
-  less ~msg:"the slice's donor freed" int ~than:(-size / 2) grew;
-  equal ~msg:"the slice" (array float_exact) [| 3. |]
-    (elements (Nx.reshape [| 1 |] y));
-  invalid ~sub:"donated to Nx.slice" (fun () -> Nx.copy c);
-  (* A result of several values, and a structure, of the donor's size: the
-     count is read settled, once the intermediates are collected. *)
-  let freed_settled f =
-    let run () =
-      let c = cache () in
-      let before = settled () in
-      let y = f c in
-      (c, y, settled () - before)
-    in
-    ignore (run ());
-    run ()
-  in
-  let c, (_, l, u), grew = freed_settled (fun c -> Nx.lu (Nx.donate c)) in
-  less ~msg:"the factors' donor freed" int ~than:(size / 2) grew;
-  equal ~msg:"the factors" (list (array int))
-    [ [| rows; rows |]; [| rows; width |] ]
-    [ Nx.shape l; Nx.shape u ];
-  invalid ~sub:"donated to Nx.lu" (fun () -> Nx.copy c);
-  let k = Nx.place Mem.on (Nx.scalar f32 2.) in
-  let c, y, grew =
-    freed_settled (fun c -> Nx.Ptree.scale Nx.Ptree.tensor k (Nx.donate c))
-  in
-  less ~msg:"the structure's donor freed" int ~than:(size / 2) grew;
-  equal ~msg:"the structure" (array float_exact)
-    (Array.map (fun x -> 2. *. x) original)
-    (elements (Nx.reshape [| rows * width |] y));
-  invalid ~sub:"donated to Nx.Ptree.scale" (fun () -> Nx.copy c);
-  let c = cache () in
-  let y = Nx.slice [ A; A ] (Nx.donate c) in
-  equal ~msg:"the operand itself" (array float_exact) original (elements y)
-
-(* An eager call that moves a donation before its operations read it
-   consumes the donor once and computes into fresh memory: the views it makes
-   share the donor's memory, which waits for a collection. A complex value's
-   real part, reshaped to its assembly; an einsum's grouped operand, reshaped
-   to its names; a key a permutation bitcasts to its words. The donor's
-   buffer is read unshared, and kept only to compare where it lies. *)
-let test_moved_consumed () =
-  let consumed ~msg ~by make f elems =
-    let expected = elems (f (make ())) in
-    let x = make () in
-    let donor = Nx.Repr.read x A.buffer in
-    let y = f (Nx.donate x) in
-    equal ~msg (array float_exact) expected (elems y);
-    invalid ~sub:("donated to " ^ by) (fun () -> Nx.copy x);
-    let result = A.buffer (Option.get (Nx.Repr.array y)) in
-    equal ~msg:(msg ^ ": fresh memory") bool false
-      (Rig.Buffer.overlaps donor result)
-  in
-  let im = cache () in
-  consumed ~msg:"the complex value's real part" ~by:"Nx.complex" cache
-    (fun re -> Nx.complex Nx.complex64 ~re ~im)
-    (fun z ->
-      Array.append
-        (elements (Nx.real Nx.float32 z))
-        (elements (Nx.imag Nx.float32 z)));
-  let p = Nx.Pattern.v "(i j) k, k l, l m -> i j m | k l" in
-  let ones = on_mem [| width; 1 |] (Array.make width 1.) in
-  let two = on_mem [| 1; 1 |] [| 2. |] in
-  consumed ~msg:"the einsum's grouped operand" ~by:"Nx.einsum" cache
-    (fun c -> Nx.einsum ~sizes:[ ("i", 2) ] p [ c; ones; two ])
-    elements;
-  let keys = 16384 in
-  let words () =
-    Nx.cast Nx.int32 (on_mem [| keys; 2 |] (Array.init (2 * keys) Float.of_int))
-  in
-  consumed ~msg:"the permutation's key" ~by:"Nx.Rng.permutation" words
-    (fun t -> Nx.Rng.permutation ~key:(Nx.Rng.of_tensor t) 1)
-    (fun y -> elements (Nx.cast f32 y))
 
 (* A Values rule may keep the arrays it receives, as a tape keeps a
    derivative's primals. The donor lives, and its next donation computes into
@@ -1020,6 +840,48 @@ let law_scatter_bits =
       let given = Nx.scatter ~combine ~axis:0 p u (Nx.donate (fresh c.target)) in
       equal (array int32) (bits32 kept) (bits32 given))
 
+(* Two handles of one donor in one operation give what the operation gives
+   two undonated copies, and kill the donor naming it: a product, which may
+   write into the memory, a sum beside the transpose, which reads it in
+   another layout, a matrix product, which reads it at other indices than the
+   result's own, and a scatter of a matrix into itself. *)
+let square =
+  Gen.with_pp
+    (fun ppf (n, xs) ->
+      Format.fprintf ppf "%dx%d [%s]" n n
+        (String.concat "; " (Array.to_list (Array.map Float.to_string xs))))
+    (let open Gen in
+     let* n = int_range 0 4 in
+     let+ xs = array ~size:(constant (n * n)) (of_list specials) in
+     (n, xs))
+
+let law_one_donor_twice =
+  prop "two handles of one donor give the undonated result" square
+    (fun (n, xs) ->
+      cover "no element" (n = 0);
+      cover "one element" (n = 1);
+      cover "a matrix" (n >= 2);
+      let s = [| n; n |] in
+      let rows = Array.init (n * n) (fun i -> Int64.of_int (n - 1 - (i / n))) in
+      let p = Nx.create Nx.int64 s rows in
+      let ops =
+        [
+          ("Nx.mul", fun a b -> Nx.mul a b);
+          ("Nx.add", fun a b -> Nx.add a (Nx.transpose b));
+          ("Nx.matmul", fun a b -> Nx.matmul a b);
+          ("Nx.scatter", fun a b -> Nx.scatter ~axis:0 p a b);
+        ]
+      in
+      List.iter
+        (fun (by, f) ->
+          let kept = f (fresh_at s xs) (fresh_at s xs) in
+          let x = fresh_at s xs in
+          let h = Nx.donate x in
+          equal ~msg:by (array int32) (bits32 kept) (bits32 (f h h));
+          invalid ~sub:("Nx.copy: operand 1 was donated to " ^ by) (fun () ->
+              Nx.copy x))
+        ops)
+
 let terms = Gen.int_range 1 2100
 
 let law_init_bits =
@@ -1072,14 +934,11 @@ let consume_sys x =
   | exception Invalid_argument _ -> Error ()
 
 (* A function of several operations reading its donor beside its handle:
-   it consumes the value when called, so a read or a consumer overlapping it
-   reads the elements as they were or raises. *)
+   it kills nothing, and reads the elements as they were or raises where a
+   consumer overlaps it. *)
 let composite_ref m =
   if m.dead then Error ()
-  else begin
-    m.dead <- true;
-    Ok [| Array.fold_left (fun s v -> s +. (v *. v)) 0. m.xs |]
-  end
+  else Ok [| Array.fold_left (fun s v -> s +. (v *. v)) 0. m.xs |]
 
 let composite_sys x =
   match elements (Nx.vdot (Nx.donate x) x) with
@@ -1116,22 +975,20 @@ let make_handle ys = { ys; states = [ None ] }
 let make_handle_sys ys = Nx.donate (fresh ys)
 let taken = result (array float_exact) string
 
-(* What a refusal names: the function the handle went to, or [twice]. *)
+(* What a refusal names: the function the handle went to. *)
 let taker msg =
   let has s =
     let n = String.length s and m = String.length msg in
     let rec go i = i + n <= m && (String.sub msg i n = s || go (i + 1)) in
     go 0
   in
-  if has "reads one donation twice" then "twice"
-  else
-    match
-      List.find_opt
-        (fun f -> has ("donated to " ^ f))
-        [ "Nx.add"; "Nx.mul"; "Nx.sub"; "test.call" ]
-    with
-    | Some f -> f
-    | None -> msg
+  match
+    List.find_opt
+      (fun f -> has ("donated to " ^ f))
+      [ "Nx.add"; "Nx.mul"; "Nx.sub" ]
+  with
+  | Some f -> f
+  | None -> msg
 
 let refused f =
   match f () with ys -> Ok ys | exception Invalid_argument m -> Error (taker m)
@@ -1144,7 +1001,7 @@ let union a b = List.sort_uniq compare (a @ b)
    those it took when it loses another, so a free handle may then have gone
    to one in flight, and is dead from then on. *)
 let lost_to e h =
-  List.mem (Some e) h.states || ((e = "Nx.sub" || e = "test.call") && free h)
+  List.mem (Some e) h.states || (e = "Nx.sub" && free h)
 
 (* A one-handle operation [by] whose result's elements are [f]'s. *)
 let judge1 by f h = function
@@ -1183,12 +1040,9 @@ let reshape_sys h =
 
 (* [sub h1 h2] checks both handles, then takes them in an order the promise
    leaves open: a loser lost one handle, and may have taken the other if it was
-   free. The result's elements are [f]'s. *)
+   free. [sub h h] reads one handle. The result's elements are [f]'s. *)
 let pair_ref f by h1 h2 out =
-  if h1 == h2 then
-    match out with
-    | Ok r -> equal taken (Error "twice") r
-    | Error exn -> raise exn
+  if h1 == h2 then judge1 by (Array.map (fun v -> f v v)) h1 out
   else
     match out with
     | Ok (Ok ys) ->
@@ -1214,15 +1068,6 @@ let pair_ref f by h1 h2 out =
 let sub2_ref = pair_ref ( -. ) "Nx.sub"
 let sub2_sys h1 h2 = refused (fun () -> elements (Nx.sub h1 h2))
 
-(* A call of two handles, which consumes them as an operation does. *)
-let call2_ref = pair_ref ( +. ) "test.call"
-
-let call2_sys h1 h2 =
-  refused (fun () ->
-      match consume [ Any h1; Any h2 ] with
-      | [ a; b ] -> Array.map2 ( +. ) (read_f32 a) (read_f32 b)
-      | _ -> fail "a call's reads, one per operand")
-
 let pair =
   Gen.with_pp
     (fun ppf a ->
@@ -1239,25 +1084,21 @@ let handles =
     command "sub2" (handle ^-> handle ^-> judges taken) sub2_ref sub2_sys;
   ]
 
-(* Consumers of two handles alone, so that two domains often take one pair in
+(* A consumer of two handles alone, so that two domains often take one pair in
    opposite orders. *)
 let crossed =
   [
     command "make" (pair @-> makes handle) make_handle make_handle_sys;
     command "sub2" (handle ^-> handle ^-> judges taken) sub2_ref sub2_sys;
-    command "call2" (handle ^-> handle ^-> judges taken) call2_ref call2_sys;
   ]
 
-(* Naming: a function consumes a donated operand for the user, so the donor
-   and the handle the user holds die naming the function the user called,
-   whatever functions that one computes through. *)
+(* Naming: a function of one operation consumes a donated operand for the
+   user, so the donor and the handle the user holds die naming the function
+   the user called, whatever functions that one computes through. *)
 let test_dies_at_the_call () =
   let square () = fresh_at [| 2; 2 |] [| 2.; 0.; 0.; 2. |] in
-  let pair () = fresh [| 1.; 2. |] in
-  let lo = Nx.create Nx.int64 [| 1 |] [| 0L |] in
-  let hi = Nx.create Nx.int64 [| 1 |] [| 2L |] in
-  let dies name make f =
-    let x = make () in
+  let dies name f =
+    let x = square () in
     let d = Nx.donate x in
     ignore (f d);
     let sub = "Nx.copy: operand 1 was donated to " ^ name in
@@ -1266,15 +1107,9 @@ let test_dies_at_the_call () =
     raises_match ~msg:(name ^ "'s handle") (Exn.invalid_arg ~substring:sub)
       (fun () -> Nx.copy d)
   in
-  dies "Nx.trace" square (fun d -> Nx.trace d);
-  dies "Nx.inv" square Nx.inv;
-  dies "Nx.cholesky" square (fun d -> Nx.cholesky ~triangle:Upper d);
-  dies "Nx.mean" pair (fun d -> Nx.mean d);
-  dies "Nx.rfft" square (fun d -> Nx.rfft Nx.complex64 d);
-  dies "Nx.complex" pair (fun d -> Nx.complex Nx.complex64 ~re:d ~im:(pair ()));
-  dies "Nx.reduce_ranges"
-    (fun () -> Nx.cast Nx.float16 (pair ()))
-    (Nx.reduce_ranges Nx.Add ~lo ~hi)
+  dies "Nx.trace" (fun d -> Nx.trace d);
+  dies "Nx.qr" (fun d -> fst (Nx.qr d));
+  dies "Nx.matmul" (fun d -> Nx.matmul d (square ()))
 
 (* Every public function that takes a value, called by one table of cases. A
    case makes fresh operands, passes its operand [i] as [d i x], and prints the
@@ -2066,11 +1901,10 @@ let attention =
       c "causal" 3 (fun d -> show (Nx.causal (pair d)));
     ]
 
-(* An array a score returns is an operand after the call's own: a donated one
-   gives the undonated result and dies naming [Nx.attention]. One that a
-   function reads in the score reaches the interpretation that records the
-   score, which reads it as its arrays: it gives the undonated result and
-   lives. *)
+(* An array a score returns or reads is an operand after the call's own, or
+   reaches the interpretation that records the score: a donated one gives the
+   undonated result and lives, since attention computes in several
+   operations. *)
 let test_captured () =
   let run score =
     let q = data f32 [| 1; 2; 2 |] in
@@ -2084,8 +1918,9 @@ let test_captured () =
   let bias = data f32 [| 1; 1; 3 |] in
   let plain = run (returned bias) in
   equal ~msg:"returned" string plain (run (returned (Nx.donate bias)));
-  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.attention" (fun () ->
-      Nx.copy bias);
+  equal ~msg:"returned: the donor lives" string
+    (show (data f32 [| 1; 1; 3 |]))
+    (show bias);
   let bias = data f32 [| 1; 1; 3 |] in
   let plain = run (added bias) in
   equal ~msg:"read" string plain (run (added (Nx.donate bias)));
@@ -2305,7 +2140,9 @@ let () =
            [
              test "a donor and its handle die at the consumer, naming it"
                test_dies_at_its_consumer;
-             test "one donation reaches an operation once" test_one_read;
+             test "two handles of one donor are read as one"
+               test_one_donor_twice;
+             law_one_donor_twice;
              test "a one-to-one movement passes the handle on" test_passed_on;
              test "a value sharing the memory keeps its elements"
                test_sharer_keeps;
@@ -2318,28 +2155,20 @@ let () =
              test "a value of every set is not donated" test_left_alone;
              test "a value whose shards lie in one allocation is donated"
                test_shards_of_one_allocation;
-             test "a call that moves its operands reads one donation twice"
-               test_moved_twice;
-             test "a function of several reads consumes its handles at once"
+             test "a function of several operations kills nothing"
                test_several_reads;
+             test "a sampler lends its key" test_key_lent;
              test "an interpretation reads a handle and kills nothing"
                test_lent;
              test "a donor dies naming the function the user called"
                test_dies_at_the_call;
              test_dead_names;
              test_donated;
-             test "a captured array dies where a call consumes it"
-               test_captured;
+             test "a captured array lives" test_captured;
              stateful ~domains:2 "reads and consumers on two domains" commands;
              stateful ~domains:2 "handles taken on two domains" handles;
              stateful ~domains:2 "two-handle consumers on two domains" crossed;
-             test "a consumer that is no operation consumes as one"
-               test_consume;
-             test "a refused consumer that is no operation kills no donor"
-               test_consume_refused;
              test "donated tells a handle, live or not" test_is_handle;
-             test "an operation and a call, in either order, one consumes"
-               test_call_order;
              test "two values a call gives back over one donor stay apart"
                test_given_back_twice;
            ];
@@ -2360,14 +2189,11 @@ let () =
              test "an undonated or shared operand keeps its elements" test_kept;
              test "an operation may read the donor beside its handle"
                test_donor_beside;
-             test "a consumer inside a composite finds its donor claimed"
+             test "a consumer inside a composite leaves its reads alone"
                test_inside_composite;
              test
                "an eager call beside an Extent on another domain frees its \
                 donor" test_extent_elsewhere;
-             test "an eager call of several operations frees its donor"
-               test_several_free;
-             test "an eager call consumes a donor it moved" test_moved_consumed;
              test "a donation leaves the arrays a rule kept"
                test_kept_by_rule;
              law_scatter_bits;

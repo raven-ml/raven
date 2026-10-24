@@ -375,33 +375,20 @@ let of_bigarray b =
   let dt = dtype_of_kind (Bigarray.Genarray.kind b) in
   owned (Nx_array.copy (Nx_array.of_bigarray dt b))
 
-(* Raises [e], which a read [by] of [x] raised, unless [x] died since the read
-   checked it: memory that a consumer on another domain took meanwhile is
-   refused naming no one, and [x] names that consumer. *)
-let unread ~by x e =
-  let bt = Printexc.get_raw_backtrace () in
-  Prim.alive ~by 0 x;
-  Printexc.raise_with_backtrace e bt
-
 (* [x], waited for, for the read [by]. A read is not an operation: no
    interpretation receives it. *)
 let readable ~by x =
   Prim.alive ~by 0 x;
   match Eval.owner x with
   | Some i -> invalid_argf "%s: the value is traced by %s" by i.name
-  | None -> (
+  | None ->
       let live = Donate.live x in
-      match Exec.wait ~by live with
-      | () -> live
-      | exception (Invalid_argument _ as e) -> unread ~by x e)
+      Exec.wait ~by live;
+      live
 
 let sync x = ignore (readable ~by:"Nx.sync" x)
 
-let read ~by x =
-  let live = readable ~by x in
-  match Exec.on_host ~by live with
-  | a -> a
-  | exception (Invalid_argument _ as e) -> unread ~by x e
+let read ~by x = Exec.on_host ~by (readable ~by x)
 
 module Repr = struct
   let of_array s a = Repr.of_array ~by:"Nx.Repr.of_array" s a
@@ -464,9 +451,7 @@ let item i x =
         let v = Exec.run ~by (Value.Move (Slice (Iarray.of_list one), live)) in
         Nx_array.get (Exec.on_host ~by v) (Array.make r 0)
   in
-  match get (readable ~by x) with
-  | v -> v
-  | exception (Invalid_argument _ as e) -> unread ~by x e
+  get (readable ~by x)
 
 let broadcast ~by s x =
   if Prim.has_shape x s then x
@@ -481,19 +466,9 @@ let alive2 ~by a b =
   Prim.alive ~by 0 a;
   Prim.alive ~by 1 b
 
-(* The values a result of one value or of two is made of, for
-   {!Eval.once}. *)
-let value y = [ Value.Any y ]
-let pair (a, b) = [ Value.Any a; Value.Any b ]
-
-(* A function that reads its operands in several operations consumes them
-   once ({!Eval.once}): [once ~by x f] is [f] of [x] as called. *)
-let once ~by x f =
-  Eval.once ~by [ Value.Any x ] ~holds:value (fun read -> f (read x))
-
-let once2 ~by a b f =
-  Eval.once ~by [ Value.Any a; Value.Any b ] ~holds:value (fun read ->
-      f (read a) (read b))
+(* As [alive2], for the operands [xs] of a function of several operations,
+   which then reads each handle among them as {!Donate.lent}. *)
+let alive_all ~by xs = List.iteri (fun i (Value.Any x) -> Prim.alive ~by i x) xs
 
 (* A call that broadcasts its operands, then reads the broadcasts in one
    operation, which consumes the handles the broadcasts passed on. *)
@@ -891,9 +866,7 @@ let sliding_window ?axis ~window ?step x =
 
 let split ~axis:a n x =
   let by = "Nx.split" in
-  Eval.once ~by [ Value.Any x ] ~holds:(List.map (fun y -> Value.Any y))
-  @@ fun read ->
-  let x = read x in
+  let x = Donate.read ~by 0 x in
   let a = axis ~by x a in
   if n < 1 then
     invalid_argf "%s: %d runs of %a; give at least 1" by n pp_value x;
@@ -992,7 +965,7 @@ let pad widths v x =
 
 let roll ?axis:along k x =
   let by = "Nx.roll" in
-  once ~by x @@ fun x ->
+  let x = Donate.read ~by 0 x in
   let y, a =
     match along with
     | None -> (move ~by (Reshape [| numel x |]) x, 0)
@@ -1271,15 +1244,6 @@ let index_alive ~by idx =
       | I _ | L _ | R _ | Rs _ | A | N -> i)
     0 idx
 
-(* The values [idx] holds, then [xs]: a selection's operands. *)
-let index_operands idx xs =
-  List.filter_map
-    (function
-      | T p | D (p, _) -> Some (Value.Any p) | I _ | L _ | R _ | Rs _ | A | N ->
-          None)
-    idx
-  @ xs
-
 (* Whether a position [idx] holds in data is donated. *)
 let held_donated idx =
   List.exists
@@ -1338,12 +1302,8 @@ let selected ~by picks x =
 let slice_by ~by idx x =
   let picks = picks ~by idx x in
   Prim.alive ~by (index_alive ~by idx) x;
-  (* Positions held in data are read in operations of their own: where one
-     is donated, the call claims its operands once. *)
-  if held_donated idx then
-    Eval.once ~by (index_operands idx [ Value.Any x ]) ~holds:value
-    @@ fun read ->
-    selected ~by (read_picks read picks) (read x)
+  (* Positions held in data are read in operations of their own. *)
+  if held_donated idx then selected ~by (read_picks Donate.lent picks) x
   else selected ~by picks x
 
 let slice idx x = slice_by ~by:"Nx.slice" idx x
@@ -1662,12 +1622,8 @@ let set idx v x =
   if not fits then
     invalid_argf "%s: %a does not broadcast to the selection %a" by pp_value v
       pp_shape sel;
-  (* Positions held in data may be read in operations of their own: where
-     one is donated, the call claims its operands once. *)
-  if held_donated idx then
-    Eval.once ~by (index_operands idx [ Value.Any v; Value.Any x ])
-      ~holds:value
-    @@ fun read -> replaced ~by sel (read_picks read picks) (read v) (read x)
+  (* Positions held in data may be read in operations of their own. *)
+  if held_donated idx then replaced ~by sel (read_picks Donate.lent picks) v x
   else replaced ~by sel picks v x
 
 type combine = Nx_kernel.combine = Set | Add | Max | Min
@@ -1944,7 +1900,7 @@ let isnan_by ~by x = comparison ~by (Compare Not_equal) x x
 
 let isnan x =
   let by = "Nx.isnan" in
-  once ~by x (isnan_by ~by)
+  isnan_by ~by (Donate.read ~by 0 x)
 
 let isinf x = predicate ~by:"Nx.isinf" (fun dt x -> infinite dt x) Or false x
 let isfinite x = predicate ~by:"Nx.isfinite" (fun dt x -> finite dt x) And true x
@@ -1969,7 +1925,8 @@ let float_map (type v s d) ~by (xs : (v, s, d) t list)
 
 let square x =
   let by = "Nx.square" in
-  once ~by x (fun x -> binary ~by (Binary Mul) x x)
+  let x = Donate.read ~by 0 x in
+  binary ~by (Binary Mul) x x
 
 let rsqrt (type v s d) (x : (v, s, d) t) : (v, s, d) t =
   let by = "Nx.rsqrt" in
@@ -2256,7 +2213,7 @@ let int_mean (type v s r d) ~by (acc : (int64, r) D.t) s axes n
 let mean (type v s d) ?axes ?(keepdims = false) (x : (v, s, d) t) :
     (v, s, d) t =
   let by = "Nx.mean" in
-  once ~by x @@ fun x ->
+  let x = Donate.read ~by 0 x in
   let s = shape x and dt = dtype x in
   let axes = reduced_axes ~by x axes in
   let n = reduced_count s axes in
@@ -2316,11 +2273,11 @@ let spread (type s d) ~by ~root ?axes ?(keepdims = false) ?(ddof = 0)
 
 let var ?axes ?keepdims ?ddof x =
   let by = "Nx.var" in
-  once ~by x (spread ~by ~root:false ?axes ?keepdims ?ddof)
+  spread ~by ~root:false ?axes ?keepdims ?ddof (Donate.read ~by 0 x)
 
 let std ?axes ?keepdims ?ddof x =
   let by = "Nx.std" in
-  once ~by x (spread ~by ~root:true ?axes ?keepdims ?ddof)
+  spread ~by ~root:true ?axes ?keepdims ?ddof (Donate.read ~by 0 x)
 
 let logsumexp ?axes ?(keepdims = false) x =
   let by = "Nx.logsumexp" in
@@ -2332,7 +2289,7 @@ let logsumexp ?axes ?(keepdims = false) x =
 let logmeanexp (type s d) ?axes ?(keepdims = false) (x : (float, s, d) t) :
     (float, s, d) t =
   let by = "Nx.logmeanexp" in
-  once ~by x @@ fun x ->
+  let x = Donate.read ~by 0 x in
   let s = shape x and dt = dtype x in
   let axes = reduced_axes ~by x axes in
   let n = Float.of_int (reduced_count s axes) in
@@ -2377,7 +2334,7 @@ let average (type s d) ~by ~alpha axis (x : (float, s, d) t) : (float, s, d) t =
 
 let ewma ?axis:along ~alpha x =
   let by = "Nx.ewma" in
-  once ~by x @@ fun x ->
+  let x = Donate.read ~by 0 x in
   if not (alpha > 0. && alpha <= 1.) then
     invalid_argf "%s: alpha %g is outside (0, 1]" by alpha;
   match along with
@@ -2441,18 +2398,20 @@ let normalised (type s d) ~by
 
 let softmax ?axes ?scale x =
   let by = "Nx.softmax" in
-  once ~by x (normalised ~by (fun _ d sum -> E.(exp d / sum)) ?axes ?scale)
+  normalised ~by (fun _ d sum -> E.(exp d / sum)) ?axes ?scale
+    (Donate.read ~by 0 x)
 
 let log_softmax ?axes ?scale x =
   let by = "Nx.log_softmax" in
-  once ~by x (normalised ~by (fun _ d sum -> E.(d - log sum)) ?axes ?scale)
+  normalised ~by (fun _ d sum -> E.(d - log sum)) ?axes ?scale
+    (Donate.read ~by 0 x)
 
 (* One reduction of the squares, a map of each lane's scale, then one map
    of [x] by its lane's scale: no array of [x]'s size but the result. *)
 let rms_norm (type s d) ?(axes = [ -1 ]) ?(eps = 1e-6) (x : (float, s, d) t) :
     (float, s, d) t =
   let by = "Nx.rms_norm" in
-  once ~by x @@ fun x ->
+  let x = Donate.read ~by 0 x in
   let s = shape x and dt = dtype x in
   let axes = reduced_axes ~by x (Some axes) in
   if Float.is_nan eps || eps < 0. then
@@ -2524,13 +2483,8 @@ let complex_of (type c a d) ~by (dt : (Complex.t, c) D.t)
     ~(re : (float, a, d) t) ~(im : (float, a, d) t) : (Complex.t, c, d) t =
   let s = Prim.broadcast_shape ~by (shape re) (shape im) in
   alive2 ~by re im;
-  (* Each part's cast and the assembly read the operands: the call claims
-     them once. *)
-  if not (Donate.is_handle re || Donate.is_handle im) then
-    paired ~by dt s ~re ~im
-  else
-    Eval.once ~by [ Value.Any re; Value.Any im ] ~holds:value @@ fun read ->
-    paired ~by dt s ~re:(read re) ~im:(read im)
+  (* Each part's cast and the assembly read the operands. *)
+  paired ~by dt s ~re:(Donate.lent re) ~im:(Donate.lent im)
 
 let complex dt ~re ~im = complex_of ~by:"Nx.complex" dt ~re ~im
 
@@ -2669,7 +2623,9 @@ let vdot_by ~by a b =
 
 let vdot a b =
   let by = "Nx.vdot" in
-  once2 ~by a b @@ fun a b -> vdot_by ~by a b
+  let a = Donate.read ~by 0 a in
+  let b = Donate.read ~by 1 b in
+  vdot_by ~by a b
 
 (* Linear algebra *)
 
@@ -2773,7 +2729,7 @@ let lower_of ~by triangle a =
 
 let cholesky ?(triangle = Lower) a =
   let by = "Nx.cholesky" in
-  once ~by a @@ fun a ->
+  let a = Donate.read ~by 0 a in
   square_matrices ~by a;
   let a = lower_of ~by triangle a in
   routine ~by (Cholesky { triangle; a })
@@ -2785,9 +2741,7 @@ let qr ?(factors = Reduced) a =
 
 let lu a =
   let by = "Nx.lu" in
-  let holds (p, l, u) = [ Value.Any p; Value.Any l; Value.Any u ] in
-  Eval.once ~by [ Value.Any a ] ~holds @@ fun read ->
-  let a = read a in
+  let a = Donate.read ~by 0 a in
   matrices ~by a;
   let f, _, perm = routine ~by (Lu a) in
   let m = dim (-2) a and n = dim (-1) a in
@@ -2833,8 +2787,7 @@ let eigh_by ~by ?(vectors = true) ?(triangle = Lower) a =
 
 let eigh ?vectors ?triangle a =
   let by = "Nx.eigh" in
-  Eval.once ~by [ Value.Any a ] ~holds:pair (fun read ->
-      eigh_by ~by ?vectors ?triangle (read a))
+  eigh_by ~by ?vectors ?triangle (Donate.read ~by 0 a)
 
 (* The diagonal of [lu]'s factors, and the function that negates [x] where
    each matrix's rows were interchanged an odd number of times and makes a
@@ -2857,7 +2810,7 @@ let pivots ~by a =
 
 let det a =
   let by = "Nx.det" in
-  once ~by a @@ fun a ->
+  let a = Donate.read ~by 0 a in
   square_matrices ~by a;
   let d, signed = pivots ~by a in
   signed (reduction ~by Prod ~axes:[ -1 ] d)
@@ -2878,8 +2831,7 @@ let phase (type v s d) ~by (z : (v, s, d) t) : (v, s, d) t =
 
 let slogdet a =
   let by = "Nx.slogdet" in
-  Eval.once ~by [ Value.Any a ] ~holds:pair @@ fun read ->
-  let a = read a in
+  let a = Donate.read ~by 0 a in
   square_matrices ~by a;
   let d, signed = pivots ~by a in
   let sign = signed (reduction ~by Prod ~axes:[ -1 ] (phase ~by d)) in
@@ -2906,7 +2858,8 @@ let is_complex (type v s d) (x : (v, s, d) t) =
 
 let solve_triangular ?(triangle = Lower) ?transpose ?(unit_diag = false) a b =
   let by = "Nx.solve_triangular" in
-  once2 ~by a b @@ fun a b ->
+  let a = Donate.read ~by 0 a in
+  let b = Donate.read ~by 1 b in
   square_matrices ~by a;
   let a, b, back = columns ~by ~rows:(dim (-1) a) a b in
   let solved adjoint b =
@@ -2937,11 +2890,13 @@ let solve_by ~by a b =
 
 let solve a b =
   let by = "Nx.solve" in
-  once2 ~by a b (solve_by ~by)
+  let a = Donate.read ~by 0 a in
+  let b = Donate.read ~by 1 b in
+  solve_by ~by a b
 
 let inv a =
   let by = "Nx.inv" in
-  once ~by a @@ fun a ->
+  let a = Donate.read ~by 0 a in
   square_matrices ~by a;
   let n = dim (-1) a in
   solve_by ~by a (broadcast ~by (shape a) (eye_by ~by (dtype a) n))
@@ -2971,11 +2926,8 @@ let resynthesise ~by u d vh =
 
 let lstsq ?rtol a b =
   let by = "Nx.lstsq" in
-  let holds (x, r, rank, s) =
-    [ Value.Any x; Value.Any r; Value.Any rank; Value.Any s ]
-  in
-  Eval.once ~by [ Value.Any a; Value.Any b ] ~holds @@ fun read ->
-  let a = read a and b = read b in
+  let a = Donate.read ~by 0 a in
+  let b = Donate.read ~by 1 b in
   matrices ~by a;
   let m = dim (-2) a and n = dim (-1) a in
   let tol = cutoff ~by rtol a in
@@ -3009,7 +2961,7 @@ let lstsq ?rtol a b =
 
 let pinv ?rtol ?(hermitian = false) a =
   let by = "Nx.pinv" in
-  once ~by a @@ fun a ->
+  let a = Donate.read ~by 0 a in
   if hermitian then square_matrices ~by a else matrices ~by a;
   let m = dim (-2) a and n = dim (-1) a in
   let tol = cutoff ~by rtol a in
@@ -3085,7 +3037,7 @@ let carried (type v s d) ~by (x : (v, s, d) t)
 
 let vector_norm ?(ord = 2.) ?axes:l ?(keepdims = false) x =
   let by = "Nx.vector_norm" in
-  once ~by x @@ fun x ->
+  let x = Donate.read ~by 0 x in
   let along =
     match l with None -> List.init (ndim x) Fun.id | Some l -> axes ~by x l
   in
@@ -3099,7 +3051,7 @@ let vector_norm ?(ord = 2.) ?axes:l ?(keepdims = false) x =
 
 let matrix_norm ?(ord = `Fro) ?(keepdims = false) x =
   let by = "Nx.matrix_norm" in
-  once ~by x @@ fun x ->
+  let x = Donate.read ~by 0 x in
   matrix ~by x;
   let r = ndim x - 2 and c = ndim x - 1 in
   (* The greatest or least sum of a line's magnitudes, [summed] along it. *)
@@ -3255,7 +3207,7 @@ let rows_order ~by keys =
 
 let lexsort keys =
   let by = "Nx.lexsort" in
-  once ~by keys @@ fun keys ->
+  let keys = Donate.read ~by 0 keys in
   keyed ~by keys;
   rows_order ~by keys
 
@@ -3315,7 +3267,8 @@ let search ~by side s v =
 
 let searchsorted ~side s v =
   let by = "Nx.searchsorted" in
-  once2 ~by s v @@ fun s v ->
+  let s = Donate.read ~by 0 s in
+  let v = Donate.read ~by 1 v in
   keyed ~by s;
   if ndim s = 2 && (ndim v <> 2 || Prim.dim v 1 <> Prim.dim s 1) then
     invalid_argf "%s: rows %a sought among rows %a" by pp_value v pp_value s;
@@ -3356,11 +3309,7 @@ let scattered ~by ?(unique = false) combine idx updates into =
    has [n] entries, padded by construction, until the count cuts them. *)
 let unique ?size keys =
   let by = "Nx.unique" in
-  let holds { ids; first; counts; count } =
-    [ Value.Any ids; Value.Any first; Value.Any counts; Value.Any count ]
-  in
-  Eval.once ~by [ Value.Any keys ] ~holds @@ fun read ->
-  let keys = read keys in
+  let keys = Donate.read ~by 0 keys in
   keyed ~by keys;
   sized ~by size;
   let n = Prim.dim keys 0 in
@@ -3412,7 +3361,7 @@ let unique ?size keys =
    the total. A negative count counts zero. *)
 let positions ?size c =
   let by = "Nx.positions" in
-  once ~by c @@ fun c ->
+  let c = Donate.read ~by 0 c in
   if ndim c <> 1 then invalid_argf "%s: %a is not 1-d" by pp_value c;
   integer_or_boolean ~by (dtype c);
   sized ~by size;
@@ -3454,7 +3403,7 @@ let vector ~by dt vs =
    map interpolating between them in the compute dtype. *)
 let quantile (type s d) ?axis:along qs (x : (float, s, d) t) : (float, s, d) t =
   let by = "Nx.quantile" in
-  once ~by x @@ fun x ->
+  let x = Donate.read ~by 0 x in
   Array.iter
     (fun q ->
       if not (q >= 0. && q <= 1.) then
@@ -3506,9 +3455,9 @@ let histogram (type s d) ?weights
     List.concat_map (fun (e, x) -> [ Value.Any e; Value.Any x ]) dims
     @ List.map (fun w -> Value.Any w) (Option.to_list weights)
   in
-  Eval.once ~by operands ~holds:value @@ fun read ->
-  let dims = List.map (fun (e, x) -> (read e, read x)) dims in
-  let weights = Option.map read weights in
+  alive_all ~by operands;
+  let dims = List.map (fun (e, x) -> (Donate.lent e, Donate.lent x)) dims in
+  let weights = Option.map Donate.lent weights in
   let points =
     match dims with
     | [] -> invalid_argf "%s: no dimension" by
@@ -3577,7 +3526,8 @@ let histogram (type s d) ?weights
 
 let array_equal a b =
   let by = "Nx.array_equal" in
-  once2 ~by a b @@ fun a b ->
+  let a = Donate.read ~by 0 a in
+  let b = Donate.read ~by 1 b in
   if not (same_shape a b) then scalar_beside ~by a D.Bool false
   else truth ~by Min (comparison ~by (Compare Equal) a b)
 
@@ -3763,9 +3713,8 @@ let combine_patches_by ~by ~output_size ~kernel_size ~stride ~dilation ~padding
 
 let combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding p =
   let by = "Nx.combine_patches" in
-  once ~by p
-    (combine_patches_by ~by ~output_size ~kernel_size ~stride ~dilation
-       ~padding)
+  combine_patches_by ~by ~output_size ~kernel_size ~stride ~dilation ~padding
+    (Donate.read ~by 0 p)
 
 
 
@@ -4128,9 +4077,9 @@ let ranges (type v s d) ~by c ~l ~r (x : (v, s, d) t) (none : (v, s, d) t) =
 
 let reduce_ranges c ~lo ~hi x =
   let by = "Nx.reduce_ranges" in
-  Eval.once ~by [ Value.Any lo; Value.Any hi; Value.Any x ] ~holds:value
-  @@ fun read ->
-  let lo = read lo and hi = read hi and x = read x in
+  let lo = Donate.read ~by 0 lo in
+  let hi = Donate.read ~by 1 hi in
+  let x = Donate.read ~by 2 x in
   rows_of ~by x;
   if ndim lo <> 1 || not (same_shape lo hi) then
     invalid_argf "%s: bounds %a and %a, not one of each per range" by pp_value
@@ -4421,8 +4370,8 @@ let grouped ~by ~segments ~c ~call ~named ids x =
 
 let map_segments ~segments ids f x =
   let by = "Nx.map_segments" in
-  Eval.once ~by [ Value.Any ids; Value.Any x ] ~holds:value @@ fun read ->
-  let ids = read ids and x = read x in
+  let ids = Donate.read ~by 0 ids in
+  let x = Donate.read ~by 1 x in
   if segments < 0 then invalid_argf "%s: %d segments" by segments;
   let s = shape ids and xs = shape x in
   let ns = Array.length s in
@@ -4443,8 +4392,6 @@ let map_segments ~segments ids f x =
     | a, b when a = b -> a
     | a, b -> invalid_argf "%s: ids are split in %d windows and x in %d" by a b
   in
-  (* [f] receives fresh rows, never a read: a read it kept would die when the
-     call returns. *)
   let call ~g ~c owners rows =
     let y = f owners rows in
     let ys = shape y in
@@ -4603,12 +4550,12 @@ type 'd pair = { q : 'd int64_t; k : 'd int64_t; len : 'd int64_t; tq : int }
 
 let causal p =
   let by = "Nx.causal" in
-  Eval.once ~by [ Value.Any p.q; Value.Any p.k; Value.Any p.len ]
-    ~holds:value
-  @@ fun read ->
-  let last = scalar_binary ~by (Binary Sub) (read p.len) (Int64.of_int p.tq) in
-  let seen = binary ~by (Binary Add) (read p.q) last in
-  comparison ~by (Compare Less_equal) (read p.k) seen
+  let q = Donate.read ~by 0 p.q in
+  let k = Donate.read ~by 1 p.k in
+  let len = Donate.read ~by 2 p.len in
+  let last = scalar_binary ~by (Binary Sub) len (Int64.of_int p.tq) in
+  let seen = binary ~by (Binary Add) q last in
+  comparison ~by (Compare Less_equal) k seen
 
 (* A mask or a score runs once on stand-ins for a pair's values, under an
    interpretation that records each map it receives as cells of one list, so
@@ -4956,7 +4903,8 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
     @ Option.to_list (Option.map (fun l -> Value.Any l) lengths)
     @ List.map (fun (Captured (_, x)) -> Value.Any x) captures
   in
-  Eval.once ~by operands ~holds:pair @@ fun read ->
+  alive_all ~by operands;
+  let read = Donate.lent in
   let k, v, positions =
     match kv with
     | Dense { k; v } -> (read k, read v, None)
@@ -5121,11 +5069,11 @@ let complex_by ~by direction ?axes ?s ?(norm = Backward) x =
 
 let fft ?axes ?s ?norm x =
   let by = "Nx.fft" in
-  once ~by x (complex_by ~by Nx_kernel.Forward ?axes ?s ?norm)
+  complex_by ~by Nx_kernel.Forward ?axes ?s ?norm (Donate.read ~by 0 x)
 
 let ifft ?axes ?s ?norm x =
   let by = "Nx.ifft" in
-  once ~by x (complex_by ~by Nx_kernel.Inverse ?axes ?s ?norm)
+  complex_by ~by Nx_kernel.Inverse ?axes ?s ?norm (Donate.read ~by 0 x)
 
 let rfft_by ~by dt ?axes ?s ?(norm = Backward) x =
   let axes, sizes = transform_axes ~by x axes s in
@@ -5149,7 +5097,7 @@ let rfft_by ~by dt ?axes ?s ?(norm = Backward) x =
 
 let rfft dt ?axes ?s ?norm x =
   let by = "Nx.rfft" in
-  once ~by x (rfft_by ~by dt ?axes ?s ?norm)
+  rfft_by ~by dt ?axes ?s ?norm (Donate.read ~by 0 x)
 
 let irfft_by ~by dt ?axes ?s ?(norm = Backward) z =
   let default last d =
@@ -5185,7 +5133,7 @@ let irfft_by ~by dt ?axes ?s ?(norm = Backward) z =
 
 let irfft dt ?axes ?s ?norm z =
   let by = "Nx.irfft" in
-  once ~by z (irfft_by ~by dt ?axes ?s ?norm)
+  irfft_by ~by dt ?axes ?s ?norm (Donate.read ~by 0 z)
 
 
 (* Cosine and sine transforms, each from one complex transform along the last
@@ -5342,19 +5290,21 @@ let trigonometric (type s d) ~by family ~inverse ?(type_ = Type_2) ?axes
 
 let dct ?type_ ?axes ?norm x =
   let by = "Nx.dct" in
-  once ~by x (trigonometric ~by Cosine ~inverse:false ?type_ ?axes ?norm)
+  trigonometric ~by Cosine ~inverse:false ?type_ ?axes ?norm
+    (Donate.read ~by 0 x)
 
 let idct ?type_ ?axes ?norm x =
   let by = "Nx.idct" in
-  once ~by x (trigonometric ~by Cosine ~inverse:true ?type_ ?axes ?norm)
+  trigonometric ~by Cosine ~inverse:true ?type_ ?axes ?norm
+    (Donate.read ~by 0 x)
 
 let dst ?type_ ?axes ?norm x =
   let by = "Nx.dst" in
-  once ~by x (trigonometric ~by Sine ~inverse:false ?type_ ?axes ?norm)
+  trigonometric ~by Sine ~inverse:false ?type_ ?axes ?norm (Donate.read ~by 0 x)
 
 let idst ?type_ ?axes ?norm x =
   let by = "Nx.idst" in
-  once ~by x (trigonometric ~by Sine ~inverse:true ?type_ ?axes ?norm)
+  trigonometric ~by Sine ~inverse:true ?type_ ?axes ?norm (Donate.read ~by 0 x)
 
 (* Short-time transforms *)
 
@@ -5384,8 +5334,8 @@ let stft dt ~window ?step ?win x =
   let operands =
     Value.Any x :: List.map (fun w -> Value.Any w) (Option.to_list win)
   in
-  Eval.once ~by operands ~holds:value @@ fun read ->
-  let x = read x and win = Option.map read win in
+  alive_all ~by operands;
+  let x = Donate.lent x and win = Option.map Donate.lent win in
   let step = frame_step ~window step in
   if ndim x = 0 then invalid_argf "%s: %a has no axis" by pp_value x;
   if window < 1 || step < 1 then
@@ -5402,8 +5352,8 @@ let istft dt ~window ?step ?win ?length z =
   let operands =
     Value.Any z :: List.map (fun w -> Value.Any w) (Option.to_list win)
   in
-  Eval.once ~by operands ~holds:value @@ fun read ->
-  let z = read z and win = Option.map read win in
+  alive_all ~by operands;
+  let z = Donate.lent z and win = Option.map Donate.lent win in
   let step = frame_step ~window step in
   let r = ndim z in
   if r < 2 then invalid_argf "%s: %a has fewer than two axes" by pp_value z;
@@ -5485,21 +5435,12 @@ let pp ppf x =
         fun ppf -> Format.fprintf ppf " of every set,@ %a" Prim.pp n.op
     | Value.Array _ | Value.Shards _ | Value.Donated _ -> (
         match Prim.death x with
-        | Value.Died { by = f; _ } ->
-            fun ppf -> Format.fprintf ppf ", donated to %s" f
-        | Value.Live | Value.Offered _ | Value.Claimed -> (
+        | Value.Died f -> fun ppf -> Format.fprintf ppf ", donated to %s" f
+        | Value.Live | Value.Offered _ -> (
             let lost d why ppf =
               Format.fprintf ppf ", lost with %s: %s" (Rig.name d) why
             in
-            (* A read refused because a consumer on another domain took the
-               memory meanwhile names that consumer. *)
-            let unread why ppf =
-              match Prim.death x with
-              | Value.Died { by = f; _ } ->
-                  Format.fprintf ppf ", donated to %s" f
-              | Value.Live | Value.Offered _ | Value.Claimed ->
-                  Format.fprintf ppf ", unread: %s" why
-            in
+            let unread why ppf = Format.fprintf ppf ", unread: %s" why in
             let live = Donate.live x in
             match Exec.wait ~by:"Nx.pp" live with
             | exception Rig.Lost (d, why) -> lost d why
@@ -5563,7 +5504,8 @@ module Ptree = struct
 
   let dot (type c d) s (dt : (float, c) dtype) x y : (float, c, d) tensor =
     let by = "Nx.Ptree.dot" in
-    Eval.once ~by (operands s x @ operands s y) ~holds:value @@ fun read ->
+    alive_all ~by (operands s x @ operands s y);
+    let read = Donate.lent in
     let acc = ref (fill ~by dt [||] 0.) in
     let term : type v r.
         Path.t -> (v, r, d) tensor -> (v, r, d) tensor -> (v, r, d) tensor =
@@ -5583,7 +5525,8 @@ module Ptree = struct
      representable, computed at [dt]'s carrier, float32 for a narrower float. *)
   let norm (type c d) s (dt : (float, c) dtype) x : (float, c, d) tensor =
     let by = "Nx.Ptree.norm" in
-    Eval.once ~by (operands s x) ~holds:value @@ fun read ->
+    alive_all ~by (operands s x);
+    let read = Donate.lent in
     let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
     let add_components _ a acc =
       List.rev_append (components ~by w (read a)) acc
@@ -5614,8 +5557,8 @@ module Ptree = struct
   let scale (type d) s (k : (float, _, d) tensor) x =
     let by = "Nx.Ptree.scale" in
     factor ~by k;
-    Eval.once ~by (Value.Any k :: operands s x) ~holds:(operands s)
-    @@ fun read ->
+    alive_all ~by (Value.Any k :: operands s x);
+    let read = Donate.lent in
     let k = read k in
     let f : type v r. Path.t -> (v, r, d) tensor -> (v, r, d) tensor =
      fun _ a ->
@@ -5627,9 +5570,8 @@ module Ptree = struct
   let axpy (type d) s (k : (float, _, d) tensor) x y =
     let by = "Nx.Ptree.axpy" in
     factor ~by k;
-    Eval.once ~by ((Value.Any k :: operands s x) @ operands s y)
-      ~holds:(operands s)
-    @@ fun read ->
+    alive_all ~by ((Value.Any k :: operands s x) @ operands s y);
+    let read = Donate.lent in
     let k = read k in
     let f : type v r.
         Path.t -> (v, r, d) tensor -> (v, r, d) tensor -> (v, r, d) tensor =
@@ -5661,11 +5603,8 @@ module Ptree = struct
   let place (type v s d e) (module U : S) (p : e Placement.t)
       (x : ((v, s, d) tensor, d) U.t) : ((v, s, e) tensor, e) U.t =
     let by = "Nx.Ptree.place" in
-    Eval.once ~by
-      (arrays (module U) ~fixed:true x)
-      ~holds:(arrays (module U) ~fixed:true)
-    @@ fun read ->
-    let placed a = Eval.place ~by p (read a) in
+    alive_all ~by (arrays (module U) ~fixed:true x);
+    let placed a = Eval.place ~by p (Donate.lent a) in
     let visitor =
       { tensor = (fun _ a -> placed a); report = (fun _ _ -> ()) }
     in
@@ -5674,11 +5613,8 @@ module Ptree = struct
   let cast (type v s w r d) (module U : S) (dt : (w, r) dtype)
       (x : ((v, s, d) tensor, d) U.t) : ((w, r, d) tensor, d) U.t =
     let by = "Nx.Ptree.cast" in
-    Eval.once ~by
-      (arrays (module U) ~fixed:false x)
-      ~holds:(arrays (module U) ~fixed:false)
-    @@ fun read ->
-    walk (module U) (fun a -> cast_by ~by dt (read a)) keep x
+    alive_all ~by (arrays (module U) ~fixed:false x);
+    walk (module U) (fun a -> cast_by ~by dt (Donate.lent a)) keep x
 end
 
 (* Each datum of a check, and how to read its elements as 0-d values. *)
@@ -5767,12 +5703,10 @@ let associative_scan ?axis:(a = 0) s f x =
   if Array.length states = 0 then x
   else
     structure
-      ( Eval.once ~by (Array.to_list states) ~holds:Array.to_list
-      @@ fun read ->
-        let states =
-          Array.map (fun (Value.Any t) -> Value.Any (read t)) states
-        in
-        Pairwise.circuit ~by axes combine states )
+      (Pairwise.circuit ~by axes combine
+         (Array.mapi
+            (fun i (Value.Any t) -> Value.Any (Donate.read ~by i t))
+            states))
 
 (* Operations as data *)
 
@@ -6008,7 +5942,6 @@ module Prim = struct
   let owner = Eval.owner
   let quiet = Eval.quiet
   let donated = Donate.is_handle
-  let consume = Donate.consume_list
   let eval = Eval.eval
   let expand = Eval.expand
 end

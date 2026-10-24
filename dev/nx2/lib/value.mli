@@ -28,18 +28,10 @@ type death =
   | Offered of int
       (** Live and donated: the donor's key, which a later donation of it
           gives its handle. *)
-  | Died of { by : string; key : int }
-      (** Given to the function [by]. The donor's key stays, so that a
-          consumer tells its own donors by key. *)
-  | Claimed
-      (** Live over the memory of donors a call consumed, while that call
-          reads them ({!Donate.read}): its operations read it as live, an
-          interpretation receives it lent ({!Donate.lent}), and it is not
-          donated again. *)
+  | Died of string  (** Given to the function named. *)
 (** Whether a value lives. Values are made [Live], a donor is [Offered] when
-    first donated, and its consumer sets [Died]. A consumer that raises before
-    it computes into its donors' memory undoes it, each donor [Offered] under
-    its key again ({!Donate.unclaim}). *)
+    first donated, and the operation that consumes it sets [Died], for
+    good. *)
 
 type ('v, 's, 'd) t =
   | Array of {
@@ -60,8 +52,8 @@ type ('v, 's, 'd) t =
           ({!Grid.window}). *)
   | Donated of {
       key : int;
-          (** The donor's, which orders the claims of its handles: one per
-              donor, for life. *)
+          (** The donor's, one per donor, for life: an operation tells two
+              handles of one donor, and the donor beside its handle, by it. *)
       at : 'd Devices.placement;
       shape : int array;  (** The whole's. *)
       arrays : ('v, 's) Nx_array.t iarray;

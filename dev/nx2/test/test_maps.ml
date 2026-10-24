@@ -595,49 +595,10 @@ let test_contract_consumes () =
   raises_match (Exn.invalid_arg ~substring:"t: operand 1 was donated to t")
     (fun () -> Exec.run ~by:"t" (Value.Copy init))
 
-(* Values on a set whose kernels decline a sum. *)
-let declining : b Devices.t =
-  Devices.mint ~by:"t" ~kernels:(module Nx_support.Declining) [ m 0 ]
-
-let dec data : (float, D.float32_elt, b) Value.t =
-  Value.Array
-    {
-      at = Devices.one declining 0;
-      a = A.to_device (m 0) (A.of_array D.Float32 [| Array.length data |] data);
-      dead = Value.Live;
-    }
-
-let key x =
-  match Prim.death x with
-  | Value.Offered k -> k
-  | Value.Live | Value.Died _ | Value.Claimed -> fail "a donor not offered"
-
-(* A decline into fresh memory gives a donor back under the key it had, on the
-   fast path and off it: every handle of the donor holds that key, by which a
-   consumer tells two handles of one donor and its own donors. *)
-let test_given_back_keeps_key () =
-  let declined path f =
-    let x = dec [| 1.; 2. |] in
-    (* Shared, so the sum computes into fresh memory. *)
-    Rig.Claim.share (A.buffer (array_of x));
-    let h = Donate.donate ~by:"t" x in
-    let k = key x in
-    raises_match
-      (Exn.invalid_arg ~substring:"t: nx.test does not compute Add")
-      (fun () -> ignore (f h));
-    equal ~msg:path int k (key x)
-  in
-  declined "the fast path" (fun h ->
-      Exec.apply2 ~by:"t" (Binary Add) D.Float32 h (dec [| 1.; 1. |]));
-  declined "off it" (fun h ->
-      first
-        (Exec.run ~by:"t"
-           (Prim.op2 ~by:"t" (Binary Add) D.Float32 h (dec [| 1.; 1. |]))))
-
-(* Two handles of one donor, one a copy a movement passed on, reach a
-   consumer while another consumer holds the donor's word: their keys tell one
-   donor's, and [handles] raises naming [Nx.donate], killing nothing. *)
-let test_one_donor_twice_held () =
+(* Two handles of one donor, one a copy a movement passed on, are one handle
+   to their consumer: their keys tell one donor's, and [handles] keeps the
+   first. *)
+let test_one_donor_twice () =
   let x =
     Value.Array
       {
@@ -655,32 +616,9 @@ let test_one_donor_twice_held () =
     moved (Reshape [| 4 |])
       (moved (Permute [| 1; 0 |]) (Donate.donate ~by:"t" x))
   in
-  let other = Donate.donate ~by:"t" x in
-  Donate.claim ~by:"other" [ Donate.Handle (0, other) ];
-  raises_match
-    (Exn.invalid_arg ~substring:"Nx.donate: t reads one donation twice")
-    (fun () -> ignore (Donate.handles ~by:"t" [ Value.Any h1; Value.Any h2 ]));
-  Donate.unclaim [ Donate.Handle (0, other) ];
-  Prim.alive ~by:"t" 0 x;
-  Prim.alive ~by:"t" 0 h1;
-  Prim.alive ~by:"t" 1 h2
-
-(* A consumer of a handle beside its donor reads the donor live once it has
-   claimed it, though another consumer held the donor after the first checked
-   its operands and gave it back before the first claimed: the read tells the
-   call's own donors by their keys. *)
-let test_read_after_claim () =
-  let x = f32 [| 1.; 2. |] in
-  let h = Donate.donate ~by:"t" x and other = Donate.donate ~by:"t" x in
-  let op = Prim.op2 ~by:"t" (Binary Mul) D.Float32 h x in
-  let (Prim.Operands xs) = Prim.operands op in
-  let hs = Donate.handles ~by:"t" xs in
-  Prim.iteri (fun i y -> Prim.alive ~by:"t" i y) op;
-  Donate.claim ~by:"other" [ Donate.Handle (0, other) ];
-  Donate.unclaim [ Donate.Handle (0, other) ];
-  Donate.claim ~by:"t" hs;
-  let read = Donate.unhandled hs op in
-  equal (array bits) [| 1.; 4. |] (elements (first (Exec.run ~by:"t" read)))
+  let positions = List.map (fun (Donate.Handle (i, _)) -> i) in
+  equal (list int) [ 1 ]
+    (positions (Donate.handles [ Value.Any x; Value.Any h1; Value.Any h2 ]))
 
 let donation =
   group "donation"
@@ -695,11 +633,8 @@ let donation =
         test_reuse_fast3;
       test "shared memory is not written" test_no_reuse_shared;
       test "a strided operand is not written" test_no_reuse_strided;
-      test "a donor given back keeps its key" test_given_back_keeps_key;
-      test "one donor twice while another consumer holds it raises"
-        test_one_donor_twice_held;
-      test "a read after a claim takes the call's donors live"
-        test_read_after_claim;
+      test "two handles of one donor are one to their consumer"
+        test_one_donor_twice;
     ]
 
 (* Expansions return values of their own: an output that is an operand, and a

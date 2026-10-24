@@ -336,13 +336,12 @@ let next_key_by ~by : 'd key =
 
 let next_key () = next_key_by ~by:"Nx.Rng.next_key"
 
-(* The key a sampler [by] draws from: [key], or the next one. A dead [key]
-   raises numbered as its operand after the sampler's [after] values: its
-   draw reads the key first. *)
+(* The key a sampler [by] draws from: [key], lent so that the draw kills no
+   donation of it ({!Donate.read}), or the next one. A dead [key] raises
+   numbered as its operand after the sampler's [after] values: its draw reads
+   the key first. *)
 let resolve ~by ~after = function
-  | Some k ->
-      Prim.alive ~by after k;
-      k
+  | Some k -> Donate.read ~by after k
   | None -> next_key_by ~by
 
 let place p k = Eval.place ~by:"Nx.Rng.place" p k
@@ -517,19 +516,12 @@ let require_counts ~by name (n : (int32, D.int32_elt, 'd) Value.t) =
   refuse ~by name "[0, inf)" ~show:Int32.to_string n ok
 
 (* A sampler checks its parameters before it draws from them, so it reads
-   them in several operations: [once ~by ?key p f] is [f ?key p] with [p] and
-   [key] as called ({!Eval.once}). *)
-let keyed key xs = match key with Some k -> xs @ [ Value.Any k ] | None -> xs
+   them in several operations ({!Donate.read}). *)
+let reading ~by ?key p f = f ?key (Donate.read ~by 0 p)
 
-let value y = [ Value.Any y ]
-
-let once ~by ?key p f =
-  Eval.once ~by (keyed key [ Value.Any p ]) ~holds:value (fun read ->
-      f ?key:(Option.map read key) (read p))
-
-let once2 ~by ?key a b f =
-  Eval.once ~by (keyed key [ Value.Any a; Value.Any b ]) ~holds:value
-    (fun read -> f ?key:(Option.map read key) (read a) (read b))
+let reading2 ~by ?key a b f =
+  let a = Donate.read ~by 0 a in
+  f ?key a (Donate.read ~by 1 b)
 
 (* [p 2^53] is exact at the compute dtype, [p] being at most 1: the draw is 53
    bits of block [j] below it, rounded up, at every dtype. *)
@@ -549,7 +541,7 @@ let bernoulli_by ~by ?key p =
 
 let bernoulli ?key p =
   let by = "Nx.Rng.bernoulli" in
-  once ~by ?key p (bernoulli_by ~by)
+  reading ~by ?key p (bernoulli_by ~by)
 
 (* Rejection *)
 
@@ -648,7 +640,7 @@ let gamma_by ~by ?key a =
 
 let gamma ?key a =
   let by = "Nx.Rng.gamma" in
-  once ~by ?key a (gamma_by ~by)
+  reading ~by ?key a (gamma_by ~by)
 
 (* Beta(a, b) = G(a) / (G(a) + G(b)) for independent gammas, element [j]'s
    being the {!gamma} draws [2j] and [2j + 1] of its key, formed as [1 / (1 +
@@ -686,7 +678,7 @@ let beta_by ~by ?key a b =
 
 let beta ?key a b =
   let by = "Nx.Rng.beta" in
-  once2 ~by ?key a b (beta_by ~by)
+  reading2 ~by ?key a b (beta_by ~by)
 
 (* Von Mises *)
 
@@ -772,7 +764,7 @@ let von_mises_by ~by ?key kappa =
 
 let von_mises ?key kappa =
   let by = "Nx.Rng.von_mises" in
-  once ~by ?key kappa (von_mises_by ~by)
+  reading ~by ?key kappa (von_mises_by ~by)
 
 (* Counts *)
 
@@ -920,7 +912,7 @@ let poisson_by ~by ?key rate =
 
 let poisson ?key rate =
   let by = "Nx.Rng.poisson" in
-  once ~by ?key rate (poisson_by ~by)
+  reading ~by ?key rate (poisson_by ~by)
 
 (* Binomial(n, p) counts the failures of [1 - p] where [p] exceeds one half, so
    the regimes see [p <= 1/2], chosen per element by the mean [n p]. Below 10,
@@ -1016,7 +1008,7 @@ let binomial_by ~by ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
 
 let binomial ?key count prob =
   let by = "Nx.Rng.binomial" in
-  once2 ~by ?key count prob (binomial_by ~by)
+  reading2 ~by ?key count prob (binomial_by ~by)
 
 (* Truncated normal *)
 
@@ -1139,7 +1131,7 @@ let truncated_normal_by ~by ?key lower upper =
 
 let truncated_normal ?key lower upper =
   let by = "Nx.Rng.truncated_normal" in
-  once2 ~by ?key lower upper (truncated_normal_by ~by)
+  reading2 ~by ?key lower upper (truncated_normal_by ~by)
 
 (* Reductions along a draw's last axis *)
 
@@ -1227,7 +1219,7 @@ let dirichlet_by ~by ?key a =
 
 let dirichlet ?key a =
   let by = "Nx.Rng.dirichlet" in
-  once ~by ?key a (dirichlet_by ~by)
+  reading ~by ?key a (dirichlet_by ~by)
 
 (* Categorical *)
 

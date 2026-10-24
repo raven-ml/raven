@@ -271,43 +271,10 @@ let around o =
   | () -> true
   | exception Effect.Unhandled (Around _) -> false
 
-let has_handle xs = List.exists (fun (Any x) -> Donate.is_handle x) xs
-let alive ~by xs = List.iteri (fun i (Any x) -> Prim.alive ~by i x) xs
-
-(* The memory of [ys], which [Donate.consumed] keeps: a constant holds none of
-   the handles'. *)
-let held ys =
-  List.concat_map
-    (fun (Any y) ->
-      match y with
-      | Array _ | Shards _ | Donated _ ->
-          Iarray.to_list (Iarray.map Nx_array.buffer (Prim.arrays y))
-      | Deferred _ | Traced _ -> [])
-    ys
-
-let once (type d a) ~by (xs : d any list) ~holds
-    (k : ('v 's 'e. ('v, 's, 'e) t -> ('v, 's, 'e) t) -> a) : a =
-  if not (has_handle xs) then begin
-    alive ~by xs;
-    k Fun.id
-  end
-  else
-    let hs = Donate.consume ~by xs in
-    let r = Donate.reads hs in
-    let read : 'v 's 'e. ('v, 's, 'e) t -> ('v, 's, 'e) t =
-     fun x -> Donate.read r x
-    in
-    let y =
-      Fun.protect ~finally:(fun () -> Donate.release r) (fun () -> k read)
-    in
-    Donate.consumed ~by ~reused:(held (holds y)) hs;
-    y
-
 (* [i]'s rule on [op], in [i]'s clause. Another interpretation's traced operand
    is refused unless its interpretation is around [i], which is asked once per
    interpretation; one [i] adopts is around by construction ({!interpret}). The
-   rule reads each handle, and each value a call claimed, as its arrays, lent,
-   and kills nothing; two handles of one donor raise as in {!Exec}. *)
+   rule reads each handle as its arrays, lent, and kills nothing. *)
 let deliver i ~by op =
   let checked = ref ([] : interpretation list) in
   Prim.iteri
@@ -319,13 +286,9 @@ let deliver i ~by op =
           checked := List.cons owner !checked
       | Traced _ | Array _ | Shards _ | Donated _ | Deferred _ -> ())
     op;
-  if Prim.exists Donate.is_handle op then begin
-    let (Prim.Operands xs) = Prim.operands op in
-    ignore (Donate.handles ~by xs)
-  end;
   Prim.iteri (fun k x -> Prim.alive ~by k x) op;
   let op =
-    if Prim.exists (fun x -> changes i x || Donate.lends x) op then
+    if Prim.exists (fun x -> changes i x || Donate.is_handle x) op then
       Prim.map (fun x -> Donate.lent (received i x)) op
     else op
   in

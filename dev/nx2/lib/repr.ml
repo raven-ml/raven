@@ -84,16 +84,10 @@ let crossing (type v s d) ~by (x : (v, s, d) Value.t) :
   | Value.Deferred _ -> None
   | Value.Traced { owner; _ } ->
       invalid_argf "%s: a value traced by %s has no bytes" by owner.name
-  | Value.Array _ | Value.Shards _ | Value.Donated _ -> (
+  | Value.Array _ | Value.Shards _ | Value.Donated _ ->
       let arrays = Prim.arrays x in
-      match Iarray.iter (fun a -> Rig.Claim.share (A.buffer a)) arrays with
-      | () -> Some arrays
-      | exception (Invalid_argument _ as e) ->
-          (* rig refuses memory that a consumer on another domain took since
-             the check, naming no one; [x] names that consumer. *)
-          let bt = Printexc.get_raw_backtrace () in
-          Prim.alive ~by 0 x;
-          Printexc.raise_with_backtrace e bt)
+      Iarray.iter (fun a -> Rig.Claim.share (A.buffer a)) arrays;
+      Some arrays
 
 let array x =
   match crossing ~by:"Nx.Repr.array" x with

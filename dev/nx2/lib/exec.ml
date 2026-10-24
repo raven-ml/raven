@@ -36,19 +36,6 @@ let kernels_of ~by ~op set : (module Nx_kernel.S) =
          compiler stages it"
         by Devices.pp set op
 
-(* Raises naming its consumer where operand [i], [x], died since it was
-   checked: a kernel's door refuses memory that a consumer on another domain
-   took meanwhile, and its refusal names no one. A handle is the call's own,
-   claimed, and named by its claim. *)
-let recheck ~by i x = if not (Donate.is_handle x) then Prim.alive ~by i x
-
-(* Raises [e], which [op]'s run raised, unless an operand died since it was
-   checked ({!recheck}). *)
-let rechecked ~by op e =
-  let bt = Printexc.get_raw_backtrace () in
-  Prim.iteri (fun i x -> recheck ~by i x) op;
-  Printexc.raise_with_backtrace e bt
-
 (* A kernel's answer: [Done], a refusal raised, or [Declined] passed on. *)
 let done_or_declined ~by answer operands =
   match (answer : A.answer) with
@@ -596,17 +583,6 @@ let call : type r.
   | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ ->
       invalid_arg "Exec.call: an operation no kernel computes"
 
-(* [f ()], the claimed handles [hs] given back where it raises: [f] neither
-   writes their memory nor consumes it, so their donors live on, as before the
-   call. *)
-let unclaimed hs f =
-  match f () with
-  | r -> r
-  | exception e ->
-      let bt = Printexc.get_raw_backtrace () in
-      Donate.unclaim hs;
-      Printexc.raise_with_backtrace e bt
-
 (* Raises for [op], whose kernels on [d] declined it. A routine is named by
    its routine, a reduction and a scan by what they compute, as
    ["Reduce Sum and Moments"], and a one-node map by its node, its result's
@@ -634,21 +610,16 @@ let refused : type r. by:string -> kernels:string -> Rig.t -> r Value.prim -> 'a
       | None -> refuses ~by ~kernels (Prim.name op) d dts)
   | _ -> refuses ~by ~kernels (Prim.name op) d dts
 
-(* Two handles of one donor in [op] raise before any operand's death does: the
-   operation is malformed whatever has died. *)
 let rec run : type r. by:string -> r Value.prim -> r =
  fun ~by op ->
   if not (Prim.exists Donate.is_handle op) then begin
     Prim.iteri (fun i x -> checked ~by i x) op;
-    match plain ~by op with
-    | r -> r
-    | exception (Invalid_argument _ as e) -> rechecked ~by op e
+    plain ~by op
   end
   else
     let (Prim.Operands xs) = Prim.operands op in
-    let hs = Donate.handles ~by xs in
     Prim.iteri (fun i x -> checked ~by i x) op;
-    donated ~by op hs
+    donated ~by op (Donate.handles xs)
 
 (* [op] over donated operands [hs]: a movement that maps elements one to one
    passes a new handle on; any other operation checks its rule, then claims the
@@ -662,16 +633,10 @@ and donated : type r. by:string -> r Value.prim -> Donate.handle list -> r =
          has the same donor and key, so its consumer may still write into it.
          The movement claims nothing: the deaths wait for that consumer, which
          checks every operand first, so an operation that aligns its operands
-         by movements kills nothing when it is refused or declined into fresh
-         memory. *)
+         by movements kills nothing when its checks refuse it. *)
       let moved () =
-        match run ~by (Value.Move (mv, Donate.live x)) with
-        | r -> (Prim.placement r, Prim.shape r, Prim.arrays r)
-        | exception (Invalid_argument _ as e) ->
-            (* The copy read the memory without a claim. *)
-            let bt = Printexc.get_raw_backtrace () in
-            Prim.alive ~by 0 x;
-            Printexc.raise_with_backtrace e bt
+        let r = run ~by (Value.Move (mv, Donate.live x)) in
+        (Prim.placement r, Prim.shape r, Prim.arrays r)
       in
       let at, shape, arrays =
         if Iarray.length d.arrays <> 1 then moved ()
@@ -688,16 +653,15 @@ and donated : type r. by:string -> r Value.prim -> Donate.handle list -> r =
   | Value.Fold _ | Value.Assemble _ | Value.Contract _ | Value.Copy _
   | Value.Move _ | Value.Bitcast _ | Value.Place _ | Value.Check _ -> (
       (* Checked before the claim: an operation its rule refuses neither takes
-         a handle's memory nor shows another domain a handle dead. *)
+         a handle's memory nor shows another domain a handle dead. Once
+         claimed, the donors stay dead whatever the kernels answer. *)
       let r = Prim.route ~by op in
-      Donate.claim ~by hs;
       let op = Donate.unhandled hs op in
+      Donate.claim ~by hs;
       match Donate.reuse ~by op hs with
-      | Some (i, b, b') -> (
+      | Some (i, b, b') ->
           (* Operand [i]'s memory is the result's, now over [b']: the kernel
-             reads each index of it before it writes the result there. rig
-             consumed the memory before the kernel answers, for good, so the
-             donors stay dead if it raises. *)
+             reads each index of it before it writes the result there. *)
           let over (type v s d) (y : (v, s, d) Value.t) : (v, s, d) Value.t =
             match y with
             | Value.Array r when A.buffer r.a == b ->
@@ -709,18 +673,11 @@ and donated : type r. by:string -> r Value.prim -> Donate.handle list -> r =
           let op = Prim.map over op in
           let (Prim.Operands xs) = Prim.operands op in
           let (Value.Any target) = List.nth xs i in
-          match routed ~by ~into:(A.Any (one target)) r op with
-          | y ->
-              Donate.consumed ~by ~reused:[ b ] hs;
-              y
-          | exception (Invalid_argument _ as e) -> rechecked ~by op e)
+          let y = routed ~by ~into:(A.Any (one target)) r op in
+          Donate.consumed ~by ~reused:[ b ] hs;
+          y
       | None ->
-          let y =
-            unclaimed hs (fun () ->
-                match routed ~by r op with
-                | y -> y
-                | exception (Invalid_argument _ as e) -> rechecked ~by op e)
-          in
+          let y = routed ~by r op in
           Donate.consumed ~by ~reused:[] hs;
           y)
 
@@ -1340,34 +1297,30 @@ let beside (type v s w r d) (x : (v, s, d) Value.t) (y : (w, r, d) Value.t) =
 let any (load : Nx_kernel.load) =
   match load with Plain a -> A.Any a | Padded { x; _ } -> A.Any x
 
-(* The one-node map [p] computed by [K] into [dst] at [at], over [loads], the
-   arrays of [x], [y] and [z] or of the first one or two of them. A decline
-   raises as {!refused} names a one-node map, and a refusal naming [by]. *)
+(* The one-node map [p] computed by [K] into [dst] at [at], over [loads]. A
+   decline raises as {!refused} names a one-node map, and a refusal naming
+   [by]. *)
 let mapped (type w r d) ~by (module K : Nx_kernel.S) (at : d Devices.placement)
-    p (dst : (w, r) A.t) loads x y z : (w, r, d) Value.t =
+    p (dst : (w, r) A.t) loads : (w, r, d) Value.t =
   match K.map p ~dsts:[| A.Any dst |] loads with
   | Done -> Value.Array { at; a = dst; dead = Value.Live }
   | Declined ->
       declined ~by ~kernels:K.name (Option.get (P.single p)) (A.device dst)
         (D.Any (A.dtype dst) :: Iarray.to_list p.ins)
   | refusal ->
-      let n = Array.length loads in
-      recheck ~by 0 x;
-      if n > 1 then recheck ~by 1 y;
-      if n > 2 then recheck ~by 2 z;
       A.refused by refusal (A.Any dst :: List.map any (Array.to_list loads))
 
 let apply1 ~by k dt x =
   match (x, live_kernels x, P.node1 k (Prim.dtype x) dt) with
   | Value.Array { at; a; _ }, Some kernels, Some p ->
-      mapped ~by kernels at p (destination dt a) [| Plain a |] x x x
+      mapped ~by kernels at p (destination dt a) [| Plain a |]
   | _ -> fst (run ~by (Prim.op1 ~by k dt x))
 
 let apply2 ~by k dt x y =
   match (x, y, live_kernels x, P.node2 k (Prim.dtype x)) with
   | Value.Array { at; a; _ }, Value.Array { a = b; _ }, Some kernels, Some p
     when beside x y ->
-      mapped ~by kernels at p (destination dt a) [| Plain a; Plain b |] x y y
+      mapped ~by kernels at p (destination dt a) [| Plain a; Plain b |]
   | _ -> fst (run ~by (Prim.op2 ~by k dt x y))
 
 let apply3 ~by k c x y =
@@ -1379,7 +1332,7 @@ let apply3 ~by k c x y =
       Some p )
     when beside c x && beside c y ->
       let loads = [| Nx_kernel.Plain ca; Plain a; Plain b |] in
-      mapped ~by kernels at p (destination (A.dtype a) a) loads c x y
+      mapped ~by kernels at p (destination (A.dtype a) a) loads
   | _ -> fst (run ~by (Prim.op3 ~by k c x y))
 
 (* The contraction of live arrays on one device, at physically one placement
@@ -1422,9 +1375,6 @@ let contract (type v s a b c e d) ~by ~order ~batch ~contracting ~acc
               refuses ~by ~kernels:K.name "Contract" (A.device dst)
                 (dtype rx.a :: dtype ry.a :: init)
           | refusal ->
-              recheck ~by 0 x;
-              recheck ~by 1 y;
-              Option.iter (recheck ~by 2) init;
               let init = Option.to_list (Option.map (fun i -> A.Any i) array) in
               A.refused by refusal
                 (A.Any dst :: A.Any rx.a :: A.Any ry.a :: init))
