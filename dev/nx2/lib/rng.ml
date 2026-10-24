@@ -23,9 +23,7 @@ type 'd key = (int32, D.int32_elt, 'd) Value.t
 
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
-let pp_shape ppf s =
-  Format.fprintf ppf "[%s]"
-    (String.concat "; " (Array.to_list (Array.map string_of_int s)))
+let pp_shape = Prim.pp_shape
 
 (* Programs *)
 

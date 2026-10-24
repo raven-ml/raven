@@ -41,6 +41,9 @@ module Make (A : Value.Apply) = struct
 
   module Pairwise = Pairwise.Make (A)
 
+  let move ~by mv x = apply ~by (Value.Move (mv, x))
+  let reshape ~by s x = move ~by (M.Reshape (Iarray.of_array s)) x
+
   (* Node [i] of [prog] over [loads], as a one-node map of [shape] over [value
      j] for each node [j] it reads. *)
   (* [xs] as plain loads. *)
@@ -211,12 +214,12 @@ module Make (A : Value.Apply) = struct
     let units =
       Array.mapi (fun a e -> if Iarray.mem a axes then 1 else e) shape
     in
-    let move mv x = apply ~by (Value.Move (mv, x)) in
     let x =
       if Prim.has_shape x units then x
-      else move (M.Reshape (Iarray.of_array units)) x
+      else move ~by (M.Reshape (Iarray.of_array units)) x
     in
-    if units = shape then x else move (M.Broadcast (Iarray.of_array shape)) x
+    if units = shape then x
+    else move ~by (M.Broadcast (Iarray.of_array shape)) x
 
   (* The map of [prog] over [loads], of [shape], into [dt]. *)
   let map1 (type w r d) ~by shape prog (dt : (w, r) D.t)
@@ -1214,14 +1217,13 @@ module Make (A : Value.Apply) = struct
       (float, r, d) Value.t =
     let dt = Prim.dtype pairs and s0 = Prim.shape pairs in
     let batch = s0.(1) and n = s0.(2) in
-    let move mv x = apply ~by (Value.Move (mv, x)) in
     (* [x] holds [nl]-point transforms at stride [s]: [2; b; nl; s]. *)
     let rec level x nl s =
       if nl <= 1 then x
       else
         let m = nl / 2 in
         let out = [| 2; batch; m; 2; s |] in
-        let v = move (Reshape [| 2; batch; nl; s |]) x in
+        let v = move ~by (Reshape [| 2; batch; nl; s |]) x in
         let part first c =
           let ranges : M.range iarray =
             [|
@@ -1232,9 +1234,11 @@ module Make (A : Value.Apply) = struct
             |]
           in
           let y =
-            move (Reshape [| 1; batch; m; 1; s |]) (move (Slice ranges) v)
+            move ~by
+              (Reshape [| 1; batch; m; 1; s |])
+              (move ~by (Slice ranges) v)
           in
-          Value.Plain (move (Broadcast (Iarray.of_array out)) y)
+          Value.Plain (move ~by (Broadcast (Iarray.of_array out)) y)
         in
         let ins = Iarray.init 4 (fun _ -> D.Any dt) in
         let x k = E.input k dt in
@@ -1256,7 +1260,7 @@ module Make (A : Value.Apply) = struct
         in
         level y m (2 * s)
     in
-    move (Reshape [| 2; batch; n |]) (level pairs n 1)
+    move ~by (Reshape [| 2; batch; n |]) (level pairs n 1)
 
   (* The transform of exponent sign [sign] of [pairs], of shape [2; b; n], along
      its last axis, by Bluestein's chirp: [jk = (j² + k² - (k - j)²) / 2] makes
@@ -1328,22 +1332,21 @@ module Make (A : Value.Apply) = struct
     let n = s.(a) in
     if n <= 1 then pairs
     else
-      let move mv x = apply ~by (Value.Move (mv, x)) in
       let order =
         Array.of_list (List.filter (( <> ) a) (List.init r Fun.id) @ [ a ])
       in
-      let moved = move (Permute (Iarray.of_array order)) pairs in
+      let moved = move ~by (Permute (Iarray.of_array order)) pairs in
       let ms = Prim.shape moved in
       let batch = Array.fold_left ( * ) 1 (Array.sub ms 1 (r - 2)) in
-      let lines = move (Reshape [| 2; batch; n |]) moved in
+      let lines = move ~by (Reshape [| 2; batch; n |]) moved in
       let y =
         if n land (n - 1) = 0 then stockham ~by sign lines
         else bluestein ~by sign lines
       in
       let back = Array.make r 0 in
       Array.iteri (fun i o -> back.(o) <- i) order;
-      let y = move (Reshape (Iarray.of_array ms)) y in
-      move (Permute (Iarray.of_array back)) y
+      let y = move ~by (Reshape (Iarray.of_array ms)) y in
+      move ~by (Permute (Iarray.of_array back)) y
 
   let sign_of : Nx_kernel.direction -> float = function
     | Forward -> -1.
@@ -1482,17 +1485,16 @@ module Make (A : Value.Apply) = struct
     let r = Array.length at in
     let order = Array.init r Fun.id in
     Array.sort (fun i j -> compare at.(i) at.(j)) order;
-    let move mv x = apply ~by (Value.Move (mv, x)) in
     let x =
       if order = Array.init r Fun.id then x
-      else move (M.Permute (Iarray.of_array order)) x
+      else move ~by (M.Permute (Iarray.of_array order)) x
     in
     let units = Array.mapi (fun k e -> if Array.mem k at then e else 1) full in
     let x =
       if Prim.has_shape x units then x
-      else move (M.Reshape (Iarray.of_array units)) x
+      else move ~by (M.Reshape (Iarray.of_array units)) x
     in
-    if units = full then x else move (M.Broadcast (Iarray.of_array full)) x
+    if units = full then x else move ~by (M.Broadcast (Iarray.of_array full)) x
 
   (* [x] moved by [mv], where it changes [x]. *)
   let moved (type v s d) ~by mv (x : (v, s, d) Value.t) : (v, s, d) Value.t =
@@ -2240,8 +2242,6 @@ module Make (A : Value.Apply) = struct
   let not_ e = E.(e = const D.Bool false)
   let rows = E.coord 1
   let cols = E.coord 2
-  let move ~by mv x = apply ~by (Value.Move (mv, x))
-  let reshape ~by s x = move ~by (M.Reshape (Iarray.of_array s)) x
 
   (* [x] broadcast to [shape], unit axes put before its own. *)
   let fit (type v s d) ~by shape (x : (v, s, d) Value.t) : (v, s, d) Value.t =

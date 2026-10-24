@@ -9,9 +9,7 @@ module M = Nx_array.Move
 
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
-let pp_shape ppf s =
-  Format.fprintf ppf "[%s]"
-    (String.concat "; " (Array.to_list (Array.map string_of_int s)))
+let pp_shape = Prim.pp_shape
 
 let unsafe_of_array ~by s a =
   match Devices.position s (A.device a) with

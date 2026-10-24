@@ -81,6 +81,9 @@ val merge : int array -> int array -> (int array, int * int * int) result
     that shape where [s] has [e] and [s'] has [e'], neither [1] nor the other.
 *)
 
+val pp_shape : Format.formatter -> int array -> unit
+(** [pp_shape ppf s] prints [s] as nx's messages do: [[2; 3]]. *)
+
 val check_shape : by:string -> int array -> unit
 (** [check_shape ~by s] raises [Invalid_argument] naming [by] and [s] unless
     [s] is a layout's shape ({!Nx_array.Layout.fits}): where an extent is

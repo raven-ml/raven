@@ -152,9 +152,7 @@ end
 module Expand = Expand.Make (Evaluated)
 module Pairwise = Pairwise.Make (Evaluated)
 
-let pp_shape ppf s =
-  Format.fprintf ppf "[%s]"
-    (String.concat "; " (Array.to_list (Array.map string_of_int s)))
+let pp_shape = Prim.pp_shape
 
 (* [v] as an expression of [dt], naming [by] where [dt] does not hold it. *)
 let const ~by dt v =
