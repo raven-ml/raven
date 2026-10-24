@@ -497,31 +497,68 @@ let check_experts ws ids xs =
              (pp_shape ids)))
     (Array.sub xs 0 l)
 
-(* [grouped ~ids x b scale] is the expert product of [x] with the experts
-   [b], [[| e; n; k |]], scaled by [scale], in one contraction whose rows are
-   segmented by expert, summed at [x]'s dtype or at float32 where that dtype
-   does not accumulate: the ids, flattened, are sorted stably, [x]'s rows
-   gathered in their order, and the offsets of expert [g] count the ids below
-   [g], so that an id out of range falls in no group and its row has no
-   products, [+0]. The result's rows are gathered back to the ids' order. A
-   weight split along [n], the result's free columns, is computed by each
-   device for its columns over every row, in the whole's order. *)
-let grouped (type b) ~ids (x : (float, b, _) Nx.t) b scale =
-  let ws = Nx.shape b in
-  let e = ws.(0) and n = ws.(1) and k = ws.(2) in
+(* An expert product is one contraction whose rows are segmented by expert:
+   the ids, flattened, are sorted stably, [x]'s rows gathered in their order,
+   and each row multiplies the matrix of [b] its group names, so that an id
+   out of range falls in no group and its row has no products, [+0]. The
+   result's rows are gathered back to the ids' order. A weight split along
+   [n], the result's free columns, is computed by each device for its columns
+   over every row, in the whole's order. *)
+
+(* The positions sorted by id, the permutation that sorts them, their count
+   and the ids' shape. *)
+type 'd routed = {
+  sorted : 'd Nx.int64_t;
+  order : 'd Nx.int64_t;
+  p : int;
+  lead : int array;
+}
+
+let route ids =
   let lead = Nx.shape ids in
   let p = Array.fold_left ( * ) 1 lead in
   let sorted, order = Nx.sort (Nx.reshape [| p |] ids) in
+  { sorted; order; p; lead }
+
+(* Group [g] of the experts [[| e; n; k |]] is expert [g]'s rows: the ids
+   below [g] counted. *)
+let by_expert r e =
+  Nx.searchsorted ~side:`Left r.sorted (Nx.arange Nx.int64 0 (e + 1) 1)
+
+(* Group [j] of the matrices gathered by sorted position is position [j]'s
+   row, where its id is in range: offset [j] is [j] clamped to the rows of
+   ids in range. *)
+let by_position r e =
+  let bounds =
+    Nx.searchsorted ~side:`Left r.sorted
+      (Nx.mul_s (Nx.arange Nx.int64 0 2 1) (Int64.of_int e))
+  in
+  let lo = Nx.slice [ Nx.R (0, 1) ] bounds
+  and hi = Nx.slice [ Nx.R (1, 2) ] bounds in
+  Nx.minimum (Nx.maximum (Nx.arange Nx.int64 0 (r.p + 1) 1) lo) hi
+
+(* [segmented ~e r x b scale offsets] is the product of [x]'s rows with the
+   matrices [b], [[| g; n; k |]], scaled by [scale], cut by [offsets], summed
+   at [x]'s dtype or at float32 where that dtype does not accumulate. Its
+   order is that of [e] matrices whatever [g]: an output's bits are a
+   function of the order, the dtypes and its products alone, so a row has
+   the same bits whichever matrices are gathered beside its own. *)
+let segmented (type b) ~e r (x : (float, b, _) Nx.t) b scale offsets =
+  let ws = Nx.shape b in
+  let n = ws.(1) and k = ws.(2) in
   (* Each position's row of [x], whose leading axes broadcast to the ids'. *)
-  let xs = Array.sub (Nx.shape x) 0 (Array.length lead) in
+  let xs = Array.sub (Nx.shape x) 0 (Array.length r.lead) in
   let m = Array.fold_left ( * ) 1 xs in
   let source =
-    Nx.reshape [| p |]
-      (Nx.broadcast_to lead (Nx.reshape xs (Nx.arange Nx.int64 0 m 1)))
+    Nx.reshape [| r.p |]
+      (Nx.broadcast_to r.lead (Nx.reshape xs (Nx.arange Nx.int64 0 m 1)))
   in
-  let rows = Nx.take ~axis:0 (Nx.take order source) (Nx.reshape [| m; k |] x) in
-  let offsets =
-    Nx.searchsorted ~side:`Left sorted (Nx.arange Nx.int64 0 (e + 1) 1)
+  let rows =
+    Nx.take ~axis:0 (Nx.take r.order source) (Nx.reshape [| m; k |] x)
+  in
+  let whole =
+    if ws.(0) = e || ws.(0) = 0 then b
+    else Nx.broadcast_to [| e; n; k |] (Nx.slice [ Nx.R (0, 1); Nx.A; Nx.A ] b)
   in
   let acc : Nx.Dtype.any =
     match Nx.dtype x with
@@ -533,7 +570,7 @@ let grouped (type b) ~ids (x : (float, b, _) Nx.t) b scale =
     Nx.Prim.eval ~by:"Nx_quant.apply_experts"
       (Contract
          {
-           order = Nx.Prim.contract_order ~batch ~contracting rows b;
+           order = Nx.Prim.contract_order ~batch ~contracting rows whole;
            batch;
            contracting;
            acc;
@@ -546,19 +583,25 @@ let grouped (type b) ~ids (x : (float, b, _) Nx.t) b scale =
            segments = Some (Rows { offsets; a_axis = 0; b_axis = 0 });
          })
   in
-  let back = Nx.argsort order in
-  Nx.reshape (Array.append lead [| n |]) (Nx.take ~axis:0 back y)
+  let back = Nx.argsort r.order in
+  Nx.reshape (Array.append r.lead [| n |]) (Nx.take ~axis:0 back y)
 
 (* An MXFP4 weight summed at float32 enters as its codes read as float4 values
-   and its scales as their blocks' exponents, each element exact at float32;
-   any other weight, and one summed at float64, where a value past float32's
-   range would be finite, as its values at [x]'s dtype. *)
+   and its scales as their blocks' exponents, each element exact at float32,
+   read where it lies. Any other weight, and one summed at float64, where a
+   value past float32's range would be finite, enters as its values at [x]'s
+   dtype: of the experts that sorted position gathers, one per position, where
+   positions are fewer than experts, else of every expert. *)
 let experts ~ids w x =
+  let r = route ids and e = (shape w).(0) and dt = Nx.dtype x in
   match w with
   | Mxfp4 { codes; scales } when at_float32 x ->
       let b = Nx.reshape (shape w) (Nx.bitcast Nx.float4_e2m1fn codes) in
-      grouped ~ids x b (Some (Nx.Prim.Exponent scales))
-  | _ -> grouped ~ids x (dequant (Nx.dtype x) w) None
+      segmented ~e r x b (Some (Nx.Prim.Exponent scales)) (by_expert r e)
+  | _ when r.p < e ->
+      let b = dequant dt (take ~axis:0 r.sorted w) in
+      segmented ~e r x b None (by_position r e)
+  | _ -> segmented ~e r x (dequant dt w) None (by_expert r e)
 
 let apply_experts ~ids w x =
   check_experts (shape w) (Nx.shape ids) (Nx.shape x);
