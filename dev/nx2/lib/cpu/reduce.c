@@ -4117,23 +4117,6 @@ static void network_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   nx_cpu_give(scratch);
 }
 
-/* Whether [units] slices, or units of them side by side, of [terms] terms
-   run faster by tiles on [threads] threads: a tile's state takes about a
-   third of the time of its results, so the tiles' states and their
-   results, each job's items shared by the threads, take less than a
-   unit's tiles one after the other. On fudge, along axis 1 of float32
-   [u; n; 5], u units on up to 6 threads, tiles took 1.3 to 1.4 times as
-   long at u = 3 to 5 and n = 768, where this keeps the units whole. From
-   n = 1536 the two took the same time; pinned to the 6 performance
-   cores, tiles took 0.88 to 0.95 of the time at u = 4, which this tiles,
-   and 1.11 to 1.15 at u = 5, which it does not. */
-static int tiles_pay(int64_t units, int64_t terms, int threads) {
-  int64_t full = terms / PT, spans = (terms + PT - 1) / PT;
-  int64_t states = (units * full + threads - 1) / threads;
-  int64_t results = (units * spans + threads - 1) / threads;
-  return states + 3 * results < 3 * spans;
-}
-
 /* Scans [x] along [axis], [outputs] slices of [terms] terms, by
    Logsumexp or Moments [r] into [y] and Moments' variance [y1], [y1]
    being [y] for Logsumexp, float32 or float64 of [x]'s dtype, all of
@@ -4142,9 +4125,11 @@ static int tiles_pay(int64_t units, int64_t terms, int threads) {
    outer axes coalesced with its loads. Apart, so that the casts around
    it run on a small frame.
 
-   Slices run by tiles where that pays, in three jobs: every full tile's
-   state, the network over each unit's tiles' states, every tile's
-   results, each tile's states made twice: on fudge,
+   Units at most half the job's threads and slices of two tiles or more
+   run by tiles, in three jobs: every full tile's state, the network over
+   each unit's tiles' states, every tile's results, each tile's states
+   made twice. With more units, the threads the tiles add do not pay for
+   the jobs' rounds and the states made twice. On fudge,
    scan/host-logsumexp-f32-1M took 3.39 ms on one thread, 0.57 by
    tiles. */
 static __attribute__((noinline)) int network_in(
@@ -4184,8 +4169,7 @@ static __attribute__((noinline)) int network_in(
   int64_t bytes = 3 * terms * outputs * w8, spans = (terms + PT - 1) / PT;
   double cost = 4.0 * bytes;
   if (z != NULL) cost += (double)nx_cpu_prog_kinds(z->prog) * bytes / 3;
-  int threads = nx_cpu_threads(bytes, cost);
-  if (!tiles_pay(units, terms, threads)) {
+  if (spans < 2 || 2 * units > nx_cpu_threads(bytes, cost)) {
     nx_cpu_job(units, bytes, cost, network_units, &q);
     return q.failed ? -1 : NX_OK;
   }
