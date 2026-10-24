@@ -302,13 +302,13 @@ let consume c ~why b =
    bit of the word kept it, 2 if [b] is dead. *)
 external freed : buffer -> string -> int = "caml_rig_buffer_free"
 
-let free b =
+let free ?(why = "freed") b =
   let fn = "Buffer.free" in
   Dev.check_held fn;
   Buffer.check_live fn b;
   Buffer.spans b
   &&
-  match freed b "freed" with
+  match freed b why with
   | 0 -> false
   | 1 ->
       Memory.release_early b.mem.alloc;

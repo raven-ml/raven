@@ -1157,6 +1157,16 @@ let test_free () =
   equal ~msg:"once its work ran" int at (Support.at (B.create d (4 * kib)));
   ignore (Sys.opaque_identity (b, other))
 
+(* A free given a reason kills the buffer with it, and every buffer over its
+   memory. *)
+let test_free_why () =
+  let d, _ = P.open_ "memory:free-why" in
+  let b = B.create d 64 in
+  let v = B.view b ~first:0 ~length:8 in
+  equal ~msg:"freed" bool true (B.free ~why:"donated to f" b);
+  equal ~msg:"its death" (option string) (Some "donated to f") (B.dead b);
+  equal ~msg:"a view's death" (option string) (Some "donated to f") (B.dead v)
+
 (* Freed host memory that a device borrowed returns once the device's work on
    it ran and the collector has run, while the buffer is still reachable. *)
 let test_free_host () =
@@ -1216,6 +1226,7 @@ let tests =
     group ~timeout "early release"
       [
         test "a freed buffer's memory returns once its work is done" test_free;
+        test "a free given a reason kills with it" test_free_why;
         test "freed host memory returns once a device's work on it ran"
           test_free_host;
         test "a free that cannot take the memory exclusive changes nothing"

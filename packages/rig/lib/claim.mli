@@ -122,8 +122,8 @@ val exclusive : t -> Def.buffer -> bool
 val consume : t -> why:string -> Def.buffer -> Def.buffer
 (** [consume c ~why b] is {!Rig.Claim.consume}[ c ~why b]. *)
 
-val free : Def.buffer -> bool
-(** [free b] is {!Rig.Buffer.free}[ b]. One C step takes a read claim,
+val free : ?why:string -> Def.buffer -> bool
+(** [free ~why b] is {!Rig.Buffer.free}[ ~why b]. One C step takes a read claim,
     holds the memory exclusive if that claim is its only one, and consumes
     it, so a claim that follows finds [b] dead. A borrow maps under a read
     claim, so no free returns memory that a borrow maps meanwhile. *)

@@ -942,14 +942,17 @@ module Buffer : sig
       an io device for [b]'s pages fails transiently
       ({!Rig_edge.Io.pages}). *)
 
-  val free : t -> bool
-  (** [free b] tries to return [b]'s memory early, and is [false], changing
-      nothing, if [b] does not span its memory ({!spans}), another claim
-      holds it, or it is outside the claims ({!Rig.section-claims}). Otherwise
-      it takes the memory exclusive and consumes it with the reason
-      ["freed"], so every buffer over it is dead, the memory returns once the
-      work using it is done, as collected memory does
-      ({!Rig.section-reclaim}), and it is [true].
+  val free : ?why:string -> t -> bool
+  (** [free ~why b] tries to return [b]'s memory early, and is [false],
+      changing nothing, if [b] does not span its memory ({!spans}), another
+      claim holds it, or it is outside the claims ({!Rig.section-claims}).
+      Otherwise it takes the memory exclusive and consumes it with the reason
+      [why] (["freed"] by default), which {!dead} then answers, so every
+      buffer over it is dead, the memory returns once the work using it is
+      done, as collected memory does ({!Rig.section-reclaim}), and it is
+      [true]. A library that consumed [b] for an operation passes the reason
+      it consumed with, so that a later refusal of the memory names that
+      operation.
 
       Raises [Invalid_argument] if [b] is dead. *)
 

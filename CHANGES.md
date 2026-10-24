@@ -51,6 +51,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rig (new)
 
+- `Rig.Buffer.free` takes `?why`, the reason `Rig.Buffer.dead` then answers,
+  so a library that frees memory it consumed for an operation keeps that
+  operation's name in later refusals.
 - Add `rig`, which runs work on GPUs from OCaml through Metal, CUDA, NVIDIA's
   and AMD's kernel drivers, or no kernel driver on Linux, and orders the work
   of every device by the memory it uses (`Rig.submit`, `Rig.Buffer.copy`).
