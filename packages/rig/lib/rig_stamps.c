@@ -855,8 +855,9 @@ static _Atomic uint64_t *add_memory(struct rig_call *r, int own,
       else if (is_own(w, own, base)) {
         if (mine == NULL) mine = &c->use[i];
       } else {
-        uint64_t p = atomic_load_explicit(&c->write[i], memory_order_acquire);
-        if (every) p = rig_use_followed(w, p);
+        uint64_t p =
+            every ? rig_use_followed(w, &c->write[i])
+                  : atomic_load_explicit(&c->write[i], memory_order_acquire);
         if (RIG_VALUE(p) != 0) add_point(r, own, base, p);
       }
     }

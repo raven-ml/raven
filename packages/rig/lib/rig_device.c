@@ -290,7 +290,7 @@ int rig_point_done(uint64_t p) {
    use that depends on every point of a memory still gets past a lost
    device's read once the device has stopped ([rig_use_followed]): the lost
    point is not done, but the read it stands for no longer runs. */
-int rig_point_lost(uint64_t p) {
+int rig_point_lost_rest(uint64_t p) {
   struct rig_line *l = line_of(RIG_INDEX(p));
   uint64_t v = RIG_VALUE(p);
   int s = line_state(l);
@@ -314,13 +314,16 @@ static int point_stopped(uint64_t p) {
                                               memory_order_acquire);
 }
 
-/* A write raises its device's use word too, so a lost [u] above [w] is a
-   read, and a lost [u] at [w] is a write, which stays lost through [w]. A
+/* A write raises its device's use word too, so a lost [u] above [*w] is a
+   read, and a lost [u] at [*w] is a write, which stays lost through [*w]. A
    stopped device's read no longer runs and changed no memory, so the work
-   that follows it needs only its last write. */
-uint64_t rig_use_followed(uint64_t u, uint64_t w) {
-  if (!rig_point_lost(u) || !point_stopped(u)) return u;
-  return w;
+   that follows it needs only its last write. [*w] is read after the line:
+   a stopped device raises its words no more, so [*w] is still its last
+   write, or the write of a later device that took the word, which comes
+   after the take folded a lost write into the head ([takeable]). */
+uint64_t rig_use_stopped(uint64_t u, _Atomic uint64_t *w) {
+  if (!rig_point_lost_rest(u) || !point_stopped(u)) return u;
+  return atomic_load_explicit(w, memory_order_acquire);
 }
 
 /* The device whose range of its slot holds the point [v_p]: [Some d] if

@@ -118,6 +118,26 @@ static inline uint64_t rig_line_base(int index) {
   return atomic_load_explicit(&rig_lines[index].base, memory_order_acquire);
 }
 
+/* [rig_point_lost] past [rig_point_live] ([rig_device.c]). */
+int rig_point_lost_rest(uint64_t p);
+
+/* Whether the point [p] is of a live line and above the line's lost
+   ranges, so not lost: the case of almost every word a walk asks about,
+   answered from the line's state and [lost_top]. */
+static inline int rig_point_live(uint64_t p) {
+  struct rig_line *l = &rig_lines[RIG_INDEX(p)];
+  return atomic_load_explicit(&l->state, memory_order_acquire) == RIG_LIVE &&
+         RIG_VALUE(p) >
+             atomic_load_explicit(&l->lost_top, memory_order_acquire);
+}
+
+/* Whether the point [p] is a lost device's and was not reached when the
+   device was lost, or lies in a range of its slot: no wait gets past it. A
+   point of a device a forked child inherited is lost. */
+static inline int rig_point_lost(uint64_t p) {
+  return !rig_point_live(p) && rig_point_lost_rest(p);
+}
+
 /* A list of release records ([rig_heap.c]): those of a device lie in its
    record. [head] takes the records of collected tokens; [hand] holds those
    a drain took from it and has not routed, which only a holder of the
@@ -221,11 +241,17 @@ static inline uint64_t rig_stamps_folded(struct rig_stamps *s) {
   return atomic_load_explicit(&s->lost_write, memory_order_relaxed);
 }
 
+/* [rig_use_followed] past [rig_point_live] ([rig_device.c]). */
+uint64_t rig_use_stopped(uint64_t u, _Atomic uint64_t *w);
+
 /* The point an access that depends on every use follows for one device's
-   last use [u] and last write [w] of a memory: [u], or [w] where [u] is a
-   point that a lost device did not reach and the device has stopped, so
-   that its read counts as done ([rig_device.c]). */
-uint64_t rig_use_followed(uint64_t u, uint64_t w);
+   last use [u] and its write word [w] of a memory: [u], or [*w] where [u]
+   is a point that a lost device did not reach and the device has stopped,
+   so that its read counts as done. A live [u] reads no more than its
+   line, and its walk makes no call. */
+static inline uint64_t rig_use_followed(uint64_t u, _Atomic uint64_t *w) {
+  return rig_point_live(u) ? u : rig_use_stopped(u, w);
+}
 
 /* The point of the chunk [s]'s [i]th words that an access follows: its use
    word's if [every] ([rig_use_followed]), its write word's otherwise, 0 for
@@ -237,8 +263,9 @@ static inline int64_t rig_stamps_followed(struct rig_stamps *s, int i,
                                           int every) {
   uint64_t u = atomic_load_explicit(&s->use[i], memory_order_acquire);
   if (u == 0) return -1;
-  uint64_t p = atomic_load_explicit(&s->write[i], memory_order_acquire);
-  if (every) p = rig_use_followed(u, p);
+  uint64_t p =
+      every ? rig_use_followed(u, &s->write[i])
+            : atomic_load_explicit(&s->write[i], memory_order_acquire);
   return RIG_VALUE(p) == 0 ? 0 : (int64_t)p;
 }
 
@@ -400,11 +427,6 @@ struct rig_call {
    it. A point of a device a forked child inherited is not done: its work
    is the parent's. */
 int rig_point_done(uint64_t p);
-
-/* Whether the point [p] is a lost device's and was not reached when the
-   device was lost, or lies in a range of its slot: no wait gets past it. A
-   point of a device a forked child inherited is lost. */
-int rig_point_lost(uint64_t p);
 
 /* The host's page size in bytes. */
 size_t rig_page_bytes(void);
