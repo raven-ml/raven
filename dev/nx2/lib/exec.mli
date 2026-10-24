@@ -91,12 +91,12 @@ val apply3 :
     interpretation reaches it. For live arrays at physically one placement
     whose set has kernels, where [k] takes their dtypes, it builds no
     operation: it allocates the result, sharing the first operand's layout
-    when that is C-contiguous at offset 0 and of the result's dtype, and calls
-    the kernels' [map] once, with the program {!Nx_kernel.Prog.of_node} makes
-    of [k], made once per kind and dtypes. A decline raises as in {!run}, and
-    a refusal naming [by]. Otherwise it is {!run} of the operation
-    ({!Prim.op1} to {!Prim.op3}), whose rule raises on operands it does not
-    take; a traced operand raises as in {!run}. *)
+    ([apply3]'s second) when that is C-contiguous at offset 0 and of the
+    result's dtype, and calls the kernels' [map] once, with the program of
+    [k] that {!Nx_kernel.Prog.node1} to {!Nx_kernel.Prog.node3} keep. A
+    decline raises as in {!run}, and a refusal naming [by]. Otherwise it is
+    {!run} of the operation ({!Prim.op1} to {!Prim.op3}), whose rule raises on
+    operands it does not take; a traced operand raises as in {!run}. *)
 
 val at : 'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [at p c] is the constant [c] computed at [p] for an operation that reads it:
