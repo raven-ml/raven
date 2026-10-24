@@ -520,16 +520,18 @@ let require_counts ~by name (n : (int32, D.int32_elt, 'd) Value.t) =
 
 (* A sampler checks its parameters before it draws from them, so it reads
    them in several operations: [once ~by ?key p f] is [f ?key p] with [p] and
-   [key] as called ({!Eval.once_value}). *)
+   [key] as called ({!Eval.once}). *)
 let keyed key xs = match key with Some k -> xs @ [ Value.Any k ] | None -> xs
 
+let value y = [ Value.Any y ]
+
 let once ~by ?key p f =
-  Eval.once_value ~by (keyed key [ Value.Any p ]) (fun read ->
+  Eval.once ~by (keyed key [ Value.Any p ]) ~holds:value (fun read ->
       f ?key:(Option.map read key) (read p))
 
 let once2 ~by ?key a b f =
-  Eval.once_value ~by (keyed key [ Value.Any a; Value.Any b ]) (fun read ->
-      f ?key:(Option.map read key) (read a) (read b))
+  Eval.once ~by (keyed key [ Value.Any a; Value.Any b ]) ~holds:value
+    (fun read -> f ?key:(Option.map read key) (read a) (read b))
 
 (* [p 2^53] is exact at the compute dtype, [p] being at most 1: the draw is 53
    bits of block [j] below it, rounded up, at every dtype. *)

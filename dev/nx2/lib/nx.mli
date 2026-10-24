@@ -258,12 +258,11 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     reads an operand in several operations, as {!lstsq}, consumes its handles
     when it is called, after its operands' checks, and reads them as they were
     then, inside an interpretation too; they stay dead if it raises. It
-    writes into none of their memory. Where its result is one value, that
-    memory, unless the value holds it or another value shares it (a view the
-    function made does, as does an interpretation's read), returns to its
-    device when the function returns; otherwise once no value holds it. Two
-    handles of one donor
-    or over one memory reaching one operation raise naming [Nx.donate]: the
+    writes into none of their memory. That memory, unless its result holds it
+    or another value shares it (a view the function made does, as does an
+    interpretation's read), returns to its device when the function returns;
+    otherwise once no value holds it. Two handles of one donor or over one
+    memory reaching one operation raise naming [Nx.donate]: the
     same handle twice, two donations of one value, or a handle and one a
     movement passed on. The donor itself beside one of its handles is not a
     second handle: the consumer reads it as it was when called, so

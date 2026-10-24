@@ -274,14 +274,19 @@ let around o =
 let has_handle xs = List.exists (fun (Any x) -> Donate.is_handle x) xs
 let alive ~by xs = List.iteri (fun i (Any x) -> Prim.alive ~by i x) xs
 
-(* [k read] of the call [by] of [xs], then [ended hs y] of the handles [hs] it
-   claimed and [k]'s value [y]. [read] gives each handle, and each of their
-   donors among [xs], claimed for the call ({!Donate.read}), which an
-   operation reads as live and an interpretation receives lent; once [k]
-   returns or raises, those values are live. *)
-let reading (type d a) ~by (xs : d any list)
-    (k : ('v 's 'e. ('v, 's, 'e) t -> ('v, 's, 'e) t) -> a)
-    (ended : Donate.handle list -> a -> unit) : a =
+(* The memory of [ys], which [Donate.consumed] keeps: a constant holds none of
+   the handles'. *)
+let held ys =
+  List.concat_map
+    (fun (Any y) ->
+      match y with
+      | Array _ | Shards _ | Donated _ ->
+          Iarray.to_list (Iarray.map Nx_array.buffer (Prim.arrays y))
+      | Deferred _ | Traced _ -> [])
+    ys
+
+let once (type d a) ~by (xs : d any list) ~holds
+    (k : ('v 's 'e. ('v, 's, 'e) t -> ('v, 's, 'e) t) -> a) : a =
   if not (has_handle xs) then begin
     alive ~by xs;
     k Fun.id
@@ -295,21 +300,8 @@ let reading (type d a) ~by (xs : d any list)
     let y =
       Fun.protect ~finally:(fun () -> Donate.release r) (fun () -> k read)
     in
-    ended hs y;
+    Donate.consumed ~by ~reused:(held (holds y)) hs;
     y
-
-let once ~by xs k = reading ~by xs k (fun _ _ -> ())
-
-(* The value's memory, which [Donate.consumed] keeps: a constant holds none of
-   the handles'. *)
-let held (type v s d) (y : (v, s, d) t) =
-  match y with
-  | Array _ | Shards _ | Donated _ ->
-      Iarray.to_list (Iarray.map Nx_array.buffer (Prim.arrays y))
-  | Deferred _ | Traced _ -> []
-
-let once_value ~by xs k =
-  reading ~by xs k (fun hs y -> Donate.consumed ~by ~reused:(held y) hs)
 
 (* [i]'s rule on [op], in [i]'s clause. Another interpretation's traced operand
    is refused unless its interpretation is around [i], which is asked once per

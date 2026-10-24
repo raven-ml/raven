@@ -521,5 +521,7 @@ let einsum (type v s d) ~by ?(sizes = []) ?acc (p : Pattern.t)
     tree ~by ~ext p w dt ns nr shape xs
   else
     (* Several contractions read the operands: the call claims them once. *)
-    Eval.once_value ~by (Array.to_list (Array.map (fun x -> Value.Any x) xs))
+    Eval.once ~by
+      (Array.to_list (Array.map (fun x -> Value.Any x) xs))
+      ~holds:(fun y -> [ Value.Any y ])
     @@ fun read -> tree ~by ~ext p w dt ns nr shape (Array.map read xs)
