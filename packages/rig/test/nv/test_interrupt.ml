@@ -28,6 +28,18 @@ let functions = List.init 40 (fun k -> strf "local%d" k)
 let made = List.filteri (fun k _ -> k < 32) functions
 let last = List.nth functions 32
 
+(* What a failed walk left GPU 0 held by, which every later test needs. *)
+let left_held : string option Atomic.t = Atomic.make None
+
+(* Skips without an NVIDIA GPU either path opens, and fails at once where an
+   earlier walk left the GPU held. *)
+let needs_gpu () =
+  if not (Rig_nv_support.present ()) then
+    skip ~reason:"the machine has no NVIDIA GPU either path opens" ();
+  Option.iter
+    (fun why -> fail ("an earlier walk left GPU 0 held: " ^ why))
+    (Atomic.get left_held)
+
 (* The C heap's bytes, once the collector freed what it holds there. *)
 let heap () =
   Gc.full_major ();
@@ -60,8 +72,7 @@ let loaded g bin f =
 (* [opened f] is [f g bin] for a device [g] of the first GPU and the fixture
    [bin], once the local memory serves each of [bin]'s functions. *)
 let opened f =
-  if not (Rig_nv_support.present ()) then
-    skip ~reason:"the machine has no NVIDIA GPU either path opens" ();
+  needs_gpu ();
   let bin = Rig_nv_support.fixture "locals_sm89.cubin" in
   let g = Result.get_ok (Rig_gpu_support.opened (Rig_nv_support.opener 0)) in
   Fun.protect ~finally:(fun () -> N.stop g ~fault:None) @@ fun () ->
@@ -164,8 +175,7 @@ let local_bytes = 32
    answers [Error]. The growth is the capability's, the one an entry makes;
    an entry's other allocations hold no local memory lock. *)
 let test_stop_in_local () =
-  if not (Rig_nv_support.present ()) then
-    skip ~reason:"the machine has no NVIDIA GPU either path opens" ();
+  needs_gpu ();
   let seen = Rig_support.seen () in
   walk_calls (fun n ->
       let g =
@@ -326,8 +336,7 @@ let open_walk ~from ~step =
    of the make's, which gives back what it took on any exception; over PCI,
    [spread] allocations of the open. *)
 let test_open () =
-  if not (Rig_nv_support.present ()) then
-    skip ~reason:"the machine has no NVIDIA GPU either path opens" ();
+  needs_gpu ();
   if over_pci () then begin
     let opened = ref (Error "not opened") in
     let n =
@@ -352,8 +361,7 @@ let test_open () =
    lands apart to stay within the RM's channels; over PCI, at [spread]
    allocations of the stop. *)
 let test_stop () =
-  if not (Rig_nv_support.present ()) then
-    skip ~reason:"the machine has no NVIDIA GPU either path opens" ();
+  needs_gpu ();
   let stride =
     if not (over_pci ()) then stride
     else
@@ -374,6 +382,21 @@ let test_stop () =
     ~than:(if over_pci () then spread else 1)
     (walk 0 1)
 
+(* [guarded what f] is [f], run by a test that opens GPU 0 a device at a
+   time. Where [f] fails and leaves the GPU held, so that no later test opens
+   it, the later tests fail at once naming [what] and why ([needs_gpu]). *)
+let guarded what f () =
+  match f () with
+  | () -> ()
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      (if Rig_nv_support.present () then
+         match Rig_gpu_support.opened (Rig_nv_support.opener 0) with
+         | Ok g -> N.stop g ~fault:None
+         | Error why -> Atomic.set left_held (Some (what ^ ": " ^ why))
+         | exception _ -> ());
+      Printexc.raise_with_backtrace e bt
+
 (* Through rig *)
 
 (* A function of an image asked for through rig from a callback while
@@ -381,8 +404,7 @@ let test_stop () =
    driver's, the call raises as it starts; outside every lock, it answers.
    The function is made when asked for again, and the device is not lost. *)
 let test_entry_in_entry_rig () =
-  if not (Rig_nv_support.present ()) then
-    skip ~reason:"the machine has no NVIDIA GPU either path opens" ();
+  needs_gpu ();
   let t = Rig_nv_support.open_ () in
   Fun.protect ~finally:(fun () -> Rig_nv_support.close t) @@ fun () ->
   let d = t.d in
@@ -429,8 +451,7 @@ let another bin n =
    The lost device's stop runs at its close, after the call, so a new device
    of the GPU opens after each attempt. *)
 let test_resolve_lost_rig () =
-  if not (Rig_nv_support.present ()) then
-    skip ~reason:"the machine has no NVIDIA GPU either path opens" ();
+  needs_gpu ();
   let bin = Rig_nv_support.fixture "locals_sm89.cubin" in
   let rec from n =
     let d =
@@ -464,8 +485,7 @@ let test_resolve_lost_rig () =
 (* The capability's growth of local memory, from inside a lock: it raises
    naming the call, and grows once the lock is given back. *)
 let test_local_inside () =
-  if not (Rig_nv_support.present ()) then
-    skip ~reason:"the machine has no NVIDIA GPU either path opens" ();
+  needs_gpu ();
   let g = Result.get_ok (Rig_gpu_support.opened (Rig_nv_support.opener 0)) in
   Fun.protect ~finally:(fun () -> N.stop g ~fault:None) @@ fun () ->
   let local = (N.capability g).local in
@@ -485,10 +505,12 @@ let () =
                "of an image's entry leaves its unload to free every launch"
                test_entries;
              test "of an image's unload leaves no launch held" test_unload;
-             test "of an open leaves the GPU to open again" test_open;
-             test "of a stop leaves the GPU to open again" test_stop;
+             test "of an open leaves the GPU to open again"
+               (guarded "the open walk" test_open);
+             test "of a stop leaves the GPU to open again"
+               (guarded "the stop walk" test_stop);
              test "of a resolve through rig leaves the GPU to open again"
-               test_resolve_lost_rig;
+               (guarded "the resolve walk" test_resolve_lost_rig);
            ];
          group ~timeout
            "a call from a callback at any allocation raises inside the lock \
