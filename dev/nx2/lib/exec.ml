@@ -662,8 +662,8 @@ and donated : type r. by:string -> r Value.prim -> Donate.handle list -> r =
          has the same donor and key, so its consumer may still write into it.
          The movement claims nothing: the deaths wait for that consumer, which
          checks every operand first, so an operation that aligns its operands
-         by movements kills nothing when it is refused, declined into fresh
-         memory, or loses a race. *)
+         by movements kills nothing when it is refused or declined into fresh
+         memory. *)
       let moved () =
         match run ~by (Value.Move (mv, Donate.live x)) with
         | r -> (Prim.placement r, Prim.shape r, Prim.arrays r)

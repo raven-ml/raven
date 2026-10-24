@@ -609,9 +609,8 @@ let key x =
   | Value.Live | Value.Died _ -> fail "a donor not offered"
 
 (* A decline into fresh memory gives a donor back under the key it had, on the
-   fast path and off it. The key orders every claim of the donor's handles: a
-   new one would let two consumers, one ordering by the old key and one by the
-   new, each take one of two donors and lose the other. *)
+   fast path and off it: every handle of the donor holds that key, by which a
+   consumer tells two handles of one donor and its own donors. *)
 let test_given_back_keeps_key () =
   let declined path f =
     let x = dec [| 1.; 2. |] in
@@ -653,7 +652,7 @@ let test_one_donor_twice_held () =
       (moved (Permute [| 1; 0 |]) (Donate.donate ~by:"t" x))
   in
   let other = Donate.donate ~by:"t" x in
-  Donate.claim_handle ~by:"other" 0 other;
+  Donate.claim ~by:"other" [ Donate.Handle (0, other) ];
   raises_match
     (Exn.invalid_arg ~substring:"Nx.donate: t reads one donation twice")
     (fun () -> ignore (Donate.handles ~by:"t" [ Value.Any h1; Value.Any h2 ]));
@@ -661,28 +660,6 @@ let test_one_donor_twice_held () =
   Prim.alive ~by:"t" 0 x;
   Prim.alive ~by:"t" 0 h1;
   Prim.alive ~by:"t" 1 h2
-
-(* A consumer that loses one donor's word gives back the words it took, so
-   that it kills nothing: [t] takes [x]'s, whose key is lower, then loses
-   [y]'s to [other], which holds it; once [other] gives [y] back, [t]'s claim
-   succeeds. *)
-let test_loser_gives_back () =
-  let x = f32 [| 1.; 2. |] and y = f32 [| 3.; 4. |] in
-  let hx = Donate.donate ~by:"t" x in
-  let hy = Donate.donate ~by:"t" y and held = Donate.donate ~by:"t" y in
-  let hs = Donate.handles ~by:"t" [ Value.Any hx; Value.Any hy ] in
-  Donate.claim_handle ~by:"other" 0 held;
-  raises
-    (Invalid_argument "t: operand 2 was donated to other")
-    (fun () -> Donate.claim ~by:"t" hs);
-  Prim.alive ~by:"t" 0 x;
-  Prim.alive ~by:"t" 0 hx;
-  Donate.unclaim [ Donate.Handle (0, held) ];
-  Prim.alive ~by:"t" 1 hy;
-  Donate.claim ~by:"t" hs;
-  raises
-    (Invalid_argument "u: operand 1 was donated to t")
-    (fun () -> Prim.alive ~by:"u" 0 x)
 
 (* A consumer of a handle beside its donor reads the donor live once it has
    claimed it, though another consumer held the donor after the first checked
@@ -695,7 +672,7 @@ let test_read_after_claim () =
   let (Prim.Operands xs) = Prim.operands op in
   let hs = Donate.handles ~by:"t" xs in
   Prim.iteri (fun i y -> Prim.alive ~by:"t" i y) op;
-  Donate.claim_handle ~by:"other" 0 other;
+  Donate.claim ~by:"other" [ Donate.Handle (0, other) ];
   Donate.unclaim [ Donate.Handle (0, other) ];
   Donate.claim ~by:"t" hs;
   let read = Donate.unhandled hs op in
@@ -717,7 +694,6 @@ let donation =
       test "a donor given back keeps its key" test_given_back_keeps_key;
       test "one donor twice while another consumer holds it raises"
         test_one_donor_twice_held;
-      test "a loser gives back what it claimed" test_loser_gives_back;
       test "a read after a claim takes the call's donors live"
         test_read_after_claim;
     ]

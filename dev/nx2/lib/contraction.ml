@@ -175,51 +175,33 @@ let inverse order =
 
 let operand x = (D.name (Prim.dtype x), Prim.shape x)
 
-(* [init] moved into the kernel's order. *)
-let laid ~by pl init =
-  match init with
-  | None -> None
-  | Some i ->
-      let i = reshape ~by pl.names i in
-      Some (if identity pl.order then i else permute ~by (inverse pl.order) i)
-
 (* [pl] applied to [a] and [b]: each reshaped to its names, contracted, and
    moved into the result's layout. *)
-let laid_out (type v s a b c e d) ~by ~acc (dt : (v, s) D.t) pl
-    (a : (a, b, d) Value.t) (b : (c, e, d) Value.t) init : (v, s, d) Value.t =
-  let y =
-    Eval.contract ~by ~batch:pl.batch ~contracting:pl.contracting ~acc dt
-      (if pl.a_whole then a else reshape ~by pl.a a)
-      (if pl.b_whole then b else reshape ~by pl.b b)
-      (laid ~by pl init)
-  in
-  let y = if identity pl.order then y else permute ~by pl.order y in
-  if pl.y_whole then y else reshape ~by pl.shape y
-
-(* Inside an [Extent], or beside a traced value, the call reads its operands
-   once, through the movements before and after the contraction
-   ({!Eval.call}). *)
 let run (type v s a b c e d) ~by ?acc ?init (dt : (v, s) D.t) pl
     (a : (a, b, d) Value.t) (b : (c, e, d) Value.t) : (v, s, d) Value.t =
   if D.is D.Boolean dt then invalid_argf "%s: the result's dtype is bool" by;
   let acc =
     accumulator ~by ?acc dt (D.Any (Prim.dtype a)) (D.Any (Prim.dtype b))
   in
-  (match init with
-  | Some i when not (Prim.has_shape i pl.shape) ->
-      invalid_argf "%s: ~init is %a where the result is %a" by pp_shape
-        (Prim.shape i) pp_shape pl.shape
-  | Some _ | None -> ());
-  let mix = Option.fold ~none:0 ~some:Eval.mix init in
-  if not (Eval.inside () || Eval.mix a lor Eval.mix b lor mix = 3) then
-    laid_out ~by ~acc dt pl a b init
-  else
-    let operands =
-      Value.Any a :: Value.Any b
-      :: Option.fold ~none:[] ~some:(fun i -> [ Value.Any i ]) init
-    in
-    Eval.call ~by operands @@ fun read ->
-    laid_out ~by ~acc dt pl (read a) (read b) (Option.map read init)
+  let init =
+    Option.map
+      (fun i ->
+        if not (Prim.has_shape i pl.shape) then
+          invalid_argf "%s: ~init is %a where the result is %a" by pp_shape
+            (Prim.shape i) pp_shape pl.shape;
+        let i = reshape ~by pl.names i in
+        if identity pl.order then i else permute ~by (inverse pl.order) i)
+      init
+  in
+  let batch = pl.batch and contracting = pl.contracting in
+  let y =
+    Eval.contract ~by ~batch ~contracting ~acc dt
+      (if pl.a_whole then a else reshape ~by pl.a a)
+      (if pl.b_whole then b else reshape ~by pl.b b)
+      init
+  in
+  let y = if identity pl.order then y else permute ~by pl.order y in
+  if pl.y_whole then y else reshape ~by pl.shape y
 
 let contract ~by ?(sizes = []) ?acc ?init dt p a b =
   run ~by ?acc ?init dt (plan ~by ~sizes p (operand a) (operand b)) a b
@@ -462,48 +444,6 @@ let order ~ext ~result ops =
   done;
   split
 
-(* Two parts' contraction into [into], of names [names] and shape [shape]:
-   the names both hold and [names] lacks are summed, in [w]. *)
-let pair (type x y d) ~by ~ext w (into : (x, y) D.t) names shape (na, l) (nb, r)
-    : (x, y, d) Value.t =
-  match (l, r) with
-  | Value.Any a, Value.Any b ->
-      run ~by ~acc:(D.Any w) into (lower ~ext na nb names shape) a b
-
-(* The einsum of [xs], of names [ns], into the result's names [nr] and
-   [shape], through the tree of fewest multiply-adds. *)
-let tree (type v s d) ~by ~ext p w (dt : (v, s) D.t) ns nr shape
-    (xs : (v, s, d) Value.t array) : (v, s, d) Value.t =
-  let n = Array.length xs in
-  let leaf i = (ns.(i), Value.Any xs.(i)) in
-  let split = order ~ext ~result:nr ns in
-  let full = (1 lsl n) - 1 in
-  if split.(full) = 0 then
-    invalid_argf "%s: %a: every order holds a value of more than %d axes" by
-      Pattern.pp p Nx_array.Layout.max_rank;
-  (* The names of the set [s]'s value, in the kernel's order so that no
-     intermediate moves, and the value, in [w]. *)
-  let rec value s =
-    if s land (s - 1) = 0 then leaf (popcount (s - 1))
-    else
-      let t = split.(s) in
-      let ((na, _) as l) = value t and ((nb, _) as r) = value (s lxor t) in
-      let rec outside nm i =
-        i < n
-        && (((1 lsl i) land s = 0 && mem nm ns.(i)) || outside nm (i + 1))
-      in
-      let needed nm = mem nm nr || outside nm 0 in
-      let names =
-        List.filter (fun nm -> mem nm nb && needed nm) na
-        @ List.filter (fun nm -> not (mem nm nb)) na
-        @ List.filter (fun nm -> not (mem nm na)) nb
-      in
-      let shape = Array.of_list (List.map (Array.get ext) names) in
-      (names, Value.Any (pair ~by ~ext w w names shape l r))
-  in
-  let t = split.(full) in
-  pair ~by ~ext w dt nr shape (value t) (value (full lxor t))
-
 let einsum (type v s d) ~by ?(sizes = []) ?acc (p : Pattern.t)
     (xs : (v, s, d) Value.t list) : (v, s, d) Value.t =
   let k = List.length p.operands and n = List.length xs in
@@ -525,20 +465,47 @@ let einsum (type v s d) ~by ?(sizes = []) ?acc (p : Pattern.t)
       (List.map (fun x -> (D.name dt, Prim.shape x)) xs)
   in
   let xs = Array.of_list xs in
-  for i = 0 to n - 1 do
-    Prim.alive ~by i xs.(i)
-  done;
+  (* Checked before the contractions, which read some operands each: a dead
+     one raises named by its place in the call. *)
+  Array.iteri (fun i x -> Prim.alive ~by i x) xs;
   let ns = Array.of_list (List.map Array.to_list operands) in
   let nr = Array.to_list result in
   let (D.Any w) = accumulator ~by ?acc dt (D.Any dt) (D.Any dt) in
-  if n = 2 then
-    pair ~by ~ext w dt nr shape
-      (ns.(0), Value.Any xs.(0))
-      (ns.(1), Value.Any xs.(1))
-  else if not (Array.exists Donate.is_handle xs) then
-    tree ~by ~ext p w dt ns nr shape xs
+  (* Two parts' contraction into [into], of names [names] and shape [shape]:
+     the names both hold and [names] lacks are summed. *)
+  let pair (type x y) (into : (x, y) D.t) names shape (na, l) (nb, r) :
+      (x, y, d) Value.t =
+    match (l, r) with
+    | Value.Any a, Value.Any b ->
+        run ~by ~acc:(D.Any w) into (lower ~ext na nb names shape) a b
+  in
+  let leaf i = (ns.(i), Value.Any xs.(i)) in
+  if n = 2 then pair dt nr shape (leaf 0) (leaf 1)
   else
-    (* Several contractions read the operands: the call consumes them once,
-       eagerly too. *)
-    Eval.once ~by (Array.to_list (Array.map (fun x -> Value.Any x) xs))
-    @@ fun read -> tree ~by ~ext p w dt ns nr shape (Array.map read xs)
+    let split = order ~ext ~result:nr ns in
+    let full = (1 lsl n) - 1 in
+    if split.(full) = 0 then
+      invalid_argf "%s: %a: every order holds a value of more than %d axes" by
+        Pattern.pp p Nx_array.Layout.max_rank;
+    (* The names of the set [s]'s value, in the kernel's order so that no
+       intermediate moves, and the value, in [w]. *)
+    let rec value s =
+      if s land (s - 1) = 0 then leaf (popcount (s - 1))
+      else
+        let t = split.(s) in
+        let ((na, _) as l) = value t and ((nb, _) as r) = value (s lxor t) in
+        let rec outside nm i =
+          i < n
+          && (((1 lsl i) land s = 0 && mem nm ns.(i)) || outside nm (i + 1))
+        in
+        let needed nm = mem nm nr || outside nm 0 in
+        let names =
+          List.filter (fun nm -> mem nm nb && needed nm) na
+          @ List.filter (fun nm -> not (mem nm nb)) na
+          @ List.filter (fun nm -> not (mem nm na)) nb
+        in
+        let shape = Array.of_list (List.map (Array.get ext) names) in
+        (names, Value.Any (pair w names shape l r))
+    in
+    let t = split.(full) in
+    pair dt nr shape (value t) (value (full lxor t))

@@ -126,7 +126,7 @@ let test_running () =
 
 (* A rule reads an operation as it was called: the donor beside its own
    handle, as in [add (donate x) x], is read as eager execution reads it, and
-   dies once the operation is received. *)
+   lives: an interpretation kills nothing. *)
 let test_donor_beside () =
   let x = x3 () in
   let y =
@@ -135,7 +135,8 @@ let test_donor_beside () =
       (fun _ -> Nx.add (Nx.donate x) x)
   in
   equal (array float_exact) [| 2.; 4.; 6. |] (elements y);
-  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.add" (fun () -> Nx.copy x)
+  equal ~msg:"the donor lives" (array float_exact) [| 1.; 2.; 3. |]
+    (elements (Nx.copy x))
 
 (* The [by]s a rule receives while [f] runs under it, each once, in order. *)
 let observed_names f =
@@ -213,8 +214,8 @@ let test_rule_donates () =
 
 (* A rule inside [trace] performs an effect whose handler resumes the rest of
    the call on a second domain, as a work-stealing scheduler does. A plain
-   operation on the first domain afterwards is named by its own function: its
-   death, and the [by] a rule receives. *)
+   operation on the first domain afterwards is named by its own function: the
+   [by] a rule receives, and its donor's death where it computes now. *)
 type _ Effect.t += Hop : unit Effect.t
 
 let test_names_after_hop () =
@@ -248,11 +249,12 @@ let test_names_after_hop () =
   let x = vec f64 [| 1.; 2. |] in
   equal ~msg:"a rule's by" names [ "Nx.neg" ]
     (observed_names (fun () -> Nx.neg (Nx.donate x)));
+  ignore (Nx.neg (Nx.donate x));
   invalid ~sub:"Nx.copy: operand 1 was donated to Nx.neg" (fun () -> Nx.copy x)
 
 (* One systhread holds a composite, blocked in its rule, while another of the
-   same domain runs a plain operation: each operation's death and the [by] its
-   rule receives name its own function. *)
+   same domain runs a plain operation: the [by] each operation's rule receives
+   names its own function. *)
 let test_names_two_threads () =
   let m = Mutex.create () and c = Condition.create () in
   let inside = ref false and plain_done = ref false in
@@ -292,10 +294,7 @@ let test_names_two_threads () =
   set plain_done;
   Thread.join held;
   equal ~msg:"the plain operation's by" names [ "Nx.neg" ] plain;
-  equal ~msg:"the composite's by" names [ "Nx.trace" ] !composite;
-  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.neg" (fun () -> Nx.copy x);
-  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.trace" (fun () ->
-      Nx.copy a)
+  equal ~msg:"the composite's by" names [ "Nx.trace" ] !composite
 
 let test_after_return () =
   let x = x3 () in
