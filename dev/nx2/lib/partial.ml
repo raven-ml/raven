@@ -246,7 +246,8 @@ type gives = Extreme | Extreme_and_position
 
 module Make (A : sig
   val by : string
-  val apply : by:string -> 'q Value.prim -> 'q
+
+  include Value.Apply
 end) =
 struct
   let by = A.by
@@ -760,9 +761,10 @@ struct
       | Monoid ((Sum | Prod), _, _) | Logsumexp _ | Moments _ ->
           (* Each has an expansion, whose own reductions compute as
              above. *)
+          let module Expand = Expand.Make (A) in
           fst
             (Option.get
-               (Expand.reduced A.apply ~by layout axes prog Value.[ r ] loads))
+               (Expand.reduced ~by layout axes prog Value.[ r ] loads))
     in
     let rec each : type q. (d, q) Value.reductions -> q = function
       | [] -> ()

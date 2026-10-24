@@ -14,6 +14,10 @@ module D = Nx_array.Dtype
 module M = Nx_array.Move
 module C = Nx_support.Counting
 
+module Expanded = Expand.Make (struct
+  let apply = Exec.run
+end)
+
 type b
 
 let m = Nx_support.memory
@@ -168,8 +172,7 @@ let donation =
 
 (* [op] by its expansion, which runs no loop. *)
 let expanded op =
-  Option.get
-    (Expand.run Exec.run ~by:"t" ~repeat:(fun _ _ _ -> fail "a loop") op)
+  Option.get (Expanded.run ~by:"t" ~repeat:(fun _ _ _ -> fail "a loop") op)
 
 let expansions =
   group "expansions"

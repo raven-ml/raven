@@ -144,6 +144,14 @@ module Rng = Rng
 module D = Nx_array.Dtype
 module P = Nx_kernel.Prog
 
+(* Expansions and scans, applied by {!Eval.eval}. *)
+module Evaluated = struct
+  let apply = Eval.eval
+end
+
+module Expand = Expand.Make (Evaluated)
+module Pairwise = Pairwise.Make (Evaluated)
+
 let pp_shape ppf s =
   Format.fprintf ppf "[%s]"
     (String.concat "; " (Array.to_list (Array.map string_of_int s)))
@@ -2363,7 +2371,7 @@ let average (type s d) ~by ~alpha axis (x : (float, s, d) t) : (float, s, d) t =
       let infinite = E.(abs b1 = const w Float.infinity) in
       E.[| any (a1 * a2); any (where infinite (b1 + b2) (fma a2 b1 b2)) |]
     in
-    let y = Pairwise.scan Eval.eval ~by s axis combine terms in
+    let y = Pairwise.scan ~by s axis combine terms in
     cast_by ~by dt (Prim.expect w y.(1))
   in
   let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
@@ -4155,7 +4163,7 @@ let reduce_ranges c ~lo ~hi x =
       let y = ranges ~by c ~l ~r x (empty dt start) in
       let s = shape y in
       let flat = move ~by (Reshape [| Array.fold_left ( * ) 1 s |]) y in
-      reshaped ~by s (Expand.quieted Eval.eval ~by flat)
+      reshaped ~by s (Expand.quieted ~by flat)
   | Add ->
       (* Narrow floats sum at float32; [+0] then makes a sum of [-0.] terms
          [+0.], as {!sum}'s is. *)
@@ -5766,7 +5774,7 @@ let associative_scan ?axis:(a = 0) s f x =
         let states =
           Array.map (fun (Value.Any t) -> Value.Any (read t)) states
         in
-        Pairwise.circuit Eval.eval ~by axes combine states )
+        Pairwise.circuit ~by axes combine states )
 
 (* Operations as data *)
 

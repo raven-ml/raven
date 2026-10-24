@@ -522,6 +522,10 @@ let place ~by p x =
   | Array _ | Shards _ | Donated _ | Deferred _ | Traced _ ->
       eval ~by (Place (p, x))
 
+module Expand = Expand.Make (struct
+  let apply = eval
+end)
+
 let expand i ~by
     ~(repeat :
        'd.
@@ -531,5 +535,5 @@ let expand i ~by
     Format.kasprintf invalid_arg "%s: an expansion for %s after it returned" by
       i.name;
   Effect.Deep.try_with
-    (fun () -> Expand.run eval ~by ~repeat op)
+    (fun () -> Expand.run ~by ~repeat op)
     () (handler i)

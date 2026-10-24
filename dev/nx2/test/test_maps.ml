@@ -13,6 +13,10 @@ module D = Nx_array.Dtype
 module P = Nx_kernel.Prog
 module C = Nx_support.Counting
 
+module Expanded = Expand.Make (struct
+  let apply = Exec.run
+end)
+
 type b
 
 let m = Nx_support.memory
@@ -45,7 +49,7 @@ let first (x, ()) = x
 
 (* [op]'s expansion computed now, which runs no loop. *)
 let expand op =
-  Expand.run Exec.run ~by:"t" ~repeat:(fun _ _ _ -> fail "a loop") op
+  Expanded.run ~by:"t" ~repeat:(fun _ _ _ -> fail "a loop") op
 
 let maps =
   group "maps"
@@ -878,7 +882,7 @@ let law_sort_keys (Keyed (dt, n, xs, bits, descending)) =
     Exec.run ~by:"t" (Value.Sort { axis = 1; descending; k = None; x })
   in
   let _, got =
-    Option.get (Expand.sort Exec.run ~by:"t" ~bits 1 descending None x)
+    Option.get (Expanded.sort ~by:"t" ~bits 1 descending None x)
   in
   equal ~msg:"positions" (array int64) (elements want) (elements got)
 

@@ -3,11 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Expansions: nx operations as simpler nx operations, applied through
-    [apply]. An interpretation without a direct form for an operation
-    computes it by its expansion ({!Eval.expand}, {!Nx.Prim.expand}), and
-    {!Partial} composes the parts of a reduction split over devices from
-    them.
+(** Expansions: nx operations as simpler nx operations, applied through the
+    [apply] {!Make} takes. An interpretation without a direct form for an
+    operation computes it by its expansion ({!Eval.expand},
+    {!Nx.Prim.expand}), and {!Partial} composes the parts of a reduction split
+    over devices from them.
 
     A map of several nodes expands into one-node maps, one per node in order,
     each over the values of the nodes it reads; a constant or a coordinate is a
@@ -200,32 +200,6 @@
     A routine fails as {!Nx_kernel.S} states, in the matrices that fail
     alone. Every other operation has no expansion. *)
 
-val quieted :
-  ('q. by:string -> 'q Value.prim -> 'q) ->
-  by:string ->
-  ('v, 's, 'd) Value.t ->
-  ('v, 's, 'd) Value.t
-(** [quieted apply ~by x] is [x] with each NaN of a float, or NaN part of a
-    complex number, quieted, as the kernels return a NaN term: its quiet bit,
-    the top bit of its fraction, set, its sign and the rest of its payload
-    kept. Other dtypes are [x]. One map; a complex [x] is read as its parts,
-    so it needs an axis below the greatest rank. *)
-
-val sort :
-  ('q. by:string -> 'q Value.prim -> 'q) ->
-  by:string ->
-  bits:int ->
-  int ->
-  bool ->
-  int option ->
-  ('v, 's, 'd) Value.t ->
-  (('v, 's, 'd) Value.t * 'd Value.index) option
-(** [sort apply ~by ~bits axis descending k x] is the expansion of
-    [Sort { axis; descending; k; x }] by order keys of [bits] bits, for [bits]
-    in \[[1], [63 - ⌈log₂ n⌉]\] along an axis of [n] elements, so that a key
-    packed above its position fits an int64. {!run} sorts at the width [b]
-    stated above. *)
-
 val square_mod :
   int ->
   (int64, Nx_array.Dtype.int64_elt) Nx_kernel.Prog.E.t ->
@@ -236,33 +210,55 @@ val square_mod :
     is [(t mod m)² mod m]; past it, a product by Horner's rule over digits of
     [t mod m] small enough that no step leaves int64. *)
 
-val run :
-  ('q. by:string -> 'q Value.prim -> 'q) ->
-  by:string ->
-  repeat:
-    ('d.
+(** {1:expansions Expansions} *)
+
+module Make : Value.Apply -> sig
+  val quieted : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
+  (** [quieted ~by x] is [x] with each NaN of a float, or NaN part of a
+      complex number, quieted, as the kernels return a NaN term: its quiet bit,
+      the top bit of its fraction, set, its sign and the rest of its payload
+      kept. Other dtypes are [x]. One map; a complex [x] is read as its parts,
+      so it needs an axis below the greatest rank. *)
+
+  val sort :
+    by:string ->
+    bits:int ->
     int ->
-    ('d Value.index -> 'd Value.any list -> 'd Value.any list) ->
-    'd Value.any list ->
-    'd Value.any list) ->
-  'r Value.prim ->
-  'r option
-(** [run apply ~by ~repeat op] is [Some r], [r] [op]'s expansion applied
-    through [apply], or [None] for an operation that has no expansion, [Eig]
-    and [Eig_values] among them. A loop of [n] trips runs as
-    [repeat n step init], whose law {!Nx.Prim.expand} states. No result of
-    [r] is one of [op]'s operands: one that would be is its copy. *)
+    bool ->
+    int option ->
+    ('v, 's, 'd) Value.t ->
+    (('v, 's, 'd) Value.t * 'd Value.index) option
+  (** [sort ~by ~bits axis descending k x] is the expansion of
+      [Sort { axis; descending; k; x }] by order keys of [bits] bits, for [bits]
+      in \[[1], [63 - ⌈log₂ n⌉]\] along an axis of [n] elements, so that a key
+      packed above its position fits an int64. {!run} sorts at the width [b]
+      stated above. *)
 
-val reduced :
-  ('q. by:string -> 'q Value.prim -> 'q) ->
-  by:string ->
-  Nx_array.Layout.t ->
-  int iarray ->
-  Nx_kernel.Prog.t ->
-  ('d, 'r) Value.reductions ->
-  'd Value.load iarray ->
-  'r option
-(** [reduced apply ~by layout axes prog rs loads] is {!run} of
-    [Value.Reduce { layout; axes; prog; reductions = rs; loads }], whose
-    expansion has no loop. *)
+  val run :
+    by:string ->
+    repeat:
+      ('d.
+      int ->
+      ('d Value.index -> 'd Value.any list -> 'd Value.any list) ->
+      'd Value.any list ->
+      'd Value.any list) ->
+    'r Value.prim ->
+    'r option
+  (** [run ~by ~repeat op] is [Some r], [r] [op]'s expansion applied through
+      [apply], or [None] for an operation that has no expansion, [Eig] and
+      [Eig_values] among them. A loop of [n] trips runs as
+      [repeat n step init], whose law {!Nx.Prim.expand} states. No result of
+      [r] is one of [op]'s operands: one that would be is its copy. *)
 
+  val reduced :
+    by:string ->
+    Nx_array.Layout.t ->
+    int iarray ->
+    Nx_kernel.Prog.t ->
+    ('d, 'r) Value.reductions ->
+    'd Value.load iarray ->
+    'r option
+  (** [reduced ~by layout axes prog rs loads] is {!run} of
+      [Value.Reduce { layout; axes; prog; reductions = rs; loads }], whose
+      expansion has no loop. *)
+end
