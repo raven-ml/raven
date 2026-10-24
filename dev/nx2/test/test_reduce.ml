@@ -2726,6 +2726,191 @@ let test_carried_cut () =
   let cut = Nx.place (Cpu3.split ~axis:0) x and on = Nx.place Cpu3.on c in
   equal (array int32) want (A.to_array (host_array (carried cut on)))
 
+(* Nx.logcumsumexp: within nx_kernel.mli's bound of a float64
+   [log (cumsum (exp x))] over each prefix, specials and prefixes bit for bit,
+   and the host's bits wherever the value lies. *)
+
+type lcse_case =
+  | Lcse_case :
+      (float, 's) D.t * int array * int option * bool * float array
+      -> lcse_case
+
+(* A float dtype and moderate terms, at times infinite, [-0.] or a NaN, or in
+   a quarter of the cases mostly those, along an axis or over the elements,
+   read through a transposed view or not. *)
+let lcse_case =
+  let open Gen in
+  let floats (type s) (dt : (float, s) D.t) =
+    let element moderate =
+      frequency
+        [
+          (moderate, float_range (-5.) 5.);
+          (1, constant (-0.));
+          (1, constant Float.neg_infinity);
+          (1, constant Float.infinity);
+          (1, map (fun k -> nan_with (Int64.of_int k)) (int_range 1 1000));
+        ]
+    in
+    let* moderate = frequency [ (3, constant 40); (1, constant 1) ] in
+    let element = element moderate in
+    let* s, axis = along in
+    let* flat = frequency [ (3, constant false); (1, constant true) ] in
+    let* strided = bool in
+    let+ xs = array ~size:(constant (Array.fold_left ( * ) 1 s)) element in
+    Lcse_case (dt, s, (if flat then None else Some axis), strided, xs)
+  in
+  with_pp
+    (fun ppf (Lcse_case (dt, s, axis, strided, _)) ->
+      Format.fprintf ppf "%a %a %s%s" D.pp dt pp_ints s
+        (match axis with
+        | Some a -> Printf.sprintf "along %d" a
+        | None -> "in C order")
+        (if strided then ", transposed" else ""))
+    (one_of
+       [
+         floats D.Float64;
+         floats D.Float32;
+         floats D.Float16;
+         floats D.Bfloat16;
+         floats D.Float8_e4m3fn;
+         floats D.Float8_e5m2;
+         floats D.Float4_e2m1fn;
+       ])
+
+let law_lcse (Lcse_case (dt, s, axis, strided, xs)) =
+  let u = match dt with D.Float64 -> ldexp 1. (-53) | _ -> ldexp 1. (-24) in
+  let x = transposed value strided (A.of_array dt s xs) in
+  let n = Array.length xs in
+  cover "float64" (D.name dt = "float64");
+  cover "a float narrower than float32" (D.bits dt < 32);
+  cover "over the elements" (axis = None && Array.length s > 1);
+  cover "transposed" (strided && Array.length s > 1);
+  cover "an axis of more than 4"
+    (match axis with Some a -> s.(a) > 4 | None -> false);
+  let y = Nx.logcumsumexp ?axis x in
+  equal ~msg:"shape" (array int) s (Nx.shape y);
+  let ts = read x and tb = element_bits (host_array x) in
+  let got = read y and gb = element_bits (host_array y) in
+  let ps =
+    match axis with Some a -> prefixes s a | None -> prefixes [| n |] 0
+  in
+  List.iter
+    (fun ps ->
+      let at = List.nth ps (List.length ps - 1) in
+      let terms = List.map (fun p -> ts.(p)) ps in
+      let g = got.(at) in
+      let want = log (List.fold_left (fun a t -> a +. exp t) 0. terms) in
+      match List.find_opt (fun p -> Float.is_nan ts.(p)) ps with
+      | Some p ->
+          cover "a NaN term" true;
+          equal ~msg:"the first NaN, its bits" (array int) tb.(p) gb.(at)
+      | None when not (Float.is_finite want) ->
+          cover "+inf" (want > 0.);
+          cover "every term -inf" (want < 0.);
+          equal ~msg:"an infinity" float_exact want g
+      | None ->
+          cover "finite" true;
+          cover "a -inf term among finite ones"
+            (List.exists (fun t -> t = Float.neg_infinity) terms);
+          let k = List.length terms in
+          let bound =
+            lse_bound u k want
+            +. (2. *. Float.of_int k *. epsilon_float *. (Float.abs want +. 1.))
+          in
+          let msg = Printf.sprintf "%h against %h" g want in
+          at_least ~msg float_exact ~than:(rounded dt (want -. bound)) g;
+          at_most ~msg float_exact ~than:(rounded dt (want +. bound)) g)
+    ps
+
+(* The logcumsumexp of a prefix of the axis is the prefix of the
+   logcumsumexp, bit for bit; over the elements, it is the logcumsumexp of
+   the elements in C order. Cut over three devices along any axis, it has the
+   host's bits. *)
+let law_lcse_bits ((Lcse_case (dt, s, axis, strided, xs)), cut, keep) =
+  let x = transposed value strided (A.of_array dt s xs) in
+  let r = Array.length s in
+  let y = Nx.logcumsumexp ?axis x in
+  let bits_of y = element_bits (host_array y) in
+  (match axis with
+  | Some a ->
+      let k = keep mod (s.(a) + 1) in
+      cover "a proper prefix" (k < s.(a));
+      cover "an empty prefix" (k = 0 && s.(a) > 0);
+      let prefix t =
+        Nx.slice (List.init r (fun i -> if i = a then Nx.R (0, k) else Nx.A)) t
+      in
+      equal ~msg:"the prefix" (array (array int))
+        (bits_of (prefix y))
+        (bits_of (Nx.logcumsumexp ~axis:a (prefix x)))
+  | None ->
+      let flat = Nx.reshape [| Array.length xs |] x in
+      equal ~msg:"C order" (array (array int))
+        (bits_of (Nx.reshape [| Array.length xs |] y))
+        (bits_of (Nx.logcumsumexp ~axis:0 flat)));
+  let c = cut mod r in
+  cover "cut along the scanned axis" (axis = Some c);
+  cover "cut along another axis" (axis <> None && axis <> Some c);
+  let placed = Nx.place (Cpu3.split ~axis:c) x in
+  equal ~msg:"cut over three devices" (array (array int)) (bits_of y)
+    (bits_of (Nx.logcumsumexp ?axis placed))
+
+let lcse_bits_case =
+  Gen.(triple lcse_case (int_range 0 7) (int_range 0 40))
+
+let test_lcse_cases () =
+  let f64 xs = value (A.of_array D.Float64 [| Array.length xs |] xs) in
+  let f32 xs = value (A.of_array D.Float32 [| Array.length xs |] xs) in
+  let lcse x = read (Nx.logcumsumexp x) in
+  let inf = Float.infinity and ninf = Float.neg_infinity in
+  let ln2 = Float.log 2. in
+  let big = [| 1000.; 1000.; 999. |] in
+  equal ~msg:"the premise: log (cumsum (exp x)) overflows at 1000"
+    (array float_exact) [| inf; inf; inf |]
+    (read (Nx.log (Nx.cumsum (Nx.exp (f64 big)))));
+  equal ~msg:"float64 terms of 1000" (array (float 1e-12))
+    [| 1000.; 1000. +. ln2; 1000. +. Float.log (2. +. exp (-1.)) |]
+    (lcse (f64 big));
+  equal ~msg:"float32 terms of 100, whose exp overflows" (array (float 1e-4))
+    [| 100.; 100. +. ln2 |]
+    (lcse (f32 [| 100.; 100. |]));
+  let empty s axis =
+    let x = value (A.of_array D.Float32 s [||]) in
+    equal ~msg:"an empty value's shape" (array int) s
+      (Nx.shape (Nx.logcumsumexp ?axis x))
+  in
+  empty [| 2; 0 |] (Some 1);
+  empty [| 0; 3 |] (Some 1);
+  empty [| 0 |] None;
+  equal ~msg:"one element along the axis: itself, -0 as +0" (array int64)
+    (Array.map bits [| 2.5; 0.; ninf |])
+    (Array.map bits
+       (read
+          (Nx.logcumsumexp ~axis:1
+             (value (A.of_array D.Float64 [| 3; 1 |] [| 2.5; -0.; ninf |])))));
+  equal ~msg:"-inf terms" (array float_exact) [| ninf; ninf; 0.; 0. |]
+    (lcse (f64 [| ninf; ninf; 0.; ninf |]));
+  equal ~msg:"+inf from it on" (array float_exact) [| 1.; inf; inf; inf |]
+    (lcse (f64 [| 1.; inf; 2.; ninf |]));
+  let a = nan_with 7L in
+  equal ~msg:"the first NaN, its bits, from it on" (array int64)
+    [| bits 1.; bits a; bits a; bits a |]
+    (Array.map bits (lcse (f64 [| 1.; a; nan_with 9L; inf |])));
+  let x = value (A.of_array D.Float32 [| 2; 3 |] (Array.make 6 1.)) in
+  names "logcumsumexp" (fun () -> Nx.logcumsumexp ~axis:2 x)
+
+let lcse_group =
+  group "logcumsumexp"
+    [
+      prop
+        "logcumsumexp is log (cumsum (exp x)) within its stated bound at \
+         every float dtype, specials exact"
+        lcse_case law_lcse;
+      prop
+        "logcumsumexp's prefixes, C order and cuts over devices keep its bits"
+        lcse_bits_case law_lcse_bits;
+      test "logcumsumexp's cases" test_lcse_cases;
+    ]
+
 let reductions_group =
   group "reductions"
     [
@@ -2757,4 +2942,6 @@ let reductions_group =
     ]
 
 let () =
-  exit (run "nx reduce" [ reductions_group; complex_group; optional_group ])
+  exit
+    (run "nx reduce"
+       [ reductions_group; complex_group; optional_group; lcse_group ])
