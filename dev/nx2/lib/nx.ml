@@ -4437,6 +4437,8 @@ let map_segments ~segments ids f x =
     | a, b when a = b -> a
     | a, b -> invalid_argf "%s: ids are split in %d windows and x in %d" by a b
   in
+  (* [f] receives fresh rows, never a read: a read it kept would die when the
+     call returns. *)
   let call ~g ~c owners rows =
     let y = f owners rows in
     let ys = shape y in
@@ -5738,7 +5740,8 @@ let associative_scan ?axis:(a = 0) s f x =
           pp_value t a)
     states;
   (* [f] of two runs, checked to keep its operands' visits, dtypes and
-     shapes. *)
+     shapes. The runs are slices, views that share the reads' memory, so a run
+     [f] keeps stays readable after the call. *)
   let combine earlier later =
     let ys, k = flat (f (structure earlier) (structure later)) in
     (match
