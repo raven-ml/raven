@@ -1056,6 +1056,64 @@ let work_law (f, n, b, t) =
     ((if b mod t = 0 then 1 else t), 0)
     (cut / one, cut mod one)
 
+(* An expert product's format, input dtype, experts, rows and ids, in range,
+   repeated or not, and out of range. *)
+let decodes =
+  let open Gen in
+  with_pp
+    (fun ppf (f, f64, e, n, ids) ->
+      Format.fprintf ppf "%a, %s, %d experts of %d rows, ids [%s]" pp_format f
+        (if f64 then "float64" else "float32")
+        e n
+        (String.concat "; " (Array.to_list (Array.map Int64.to_string ids))))
+    (let* f = format in
+     let* f64 = bool in
+     let* e = int_range 1 6 in
+     let+ n = int_range 1 2
+     and+ ids =
+       array ~size:(int_range 0 8) (map Int64.of_int (int_range (-1) e))
+     in
+     (f, f64, e, n, ids))
+
+(* A product decodes [min p e] matrices for [p] positions and [e] experts,
+   whatever the ids; an MXFP4 weight summed at float32 decodes none. The
+   positions of [2 n] rows less those of [n] are the decoding's alone. *)
+let decodes_law (f, f64, e, n, ids) =
+  let p = Array.length ids in
+  let k = block_values f in
+  let in_place = f = Mxfp4 && not f64 in
+  cover "an MXFP4 weight read where it lies" in_place;
+  cover "fewer positions than experts" ((not in_place) && p < e);
+  cover "more positions than experts" ((not in_place) && p > e);
+  let named = List.sort_uniq compare (Array.to_list ids) in
+  cover "a repeated id" (List.length named < p);
+  let on t = Nx.place Counted_one.on t in
+  let x = Nx.cast Nx.float64 (random_floats [| p; k |]) in
+  let counted n' =
+    let w = random_weight ~format:f [| e; n'; k |] in
+    let w = Nx_quant.place Counted_one.on w in
+    let ids = on (Nx.create Nx.int64 [| p |] ids) in
+    C.reset ();
+    (if f64 then ignore (Nx.to_array (Nx_quant.apply_experts ~ids w (on x)))
+     else
+       ignore
+         (Nx.to_array
+            (Nx_quant.apply_experts ~ids w (on (Nx.cast Nx.float32 x)))));
+    C.positions ()
+  in
+  let one n' =
+    let w = random_weight ~format:f [| 1; n'; k |] in
+    let w = Nx_quant.place Counted_one.on w in
+    C.reset ();
+    (if f64 then ignore (Nx.to_array (Nx_quant.dequant Nx.float64 w))
+     else ignore (Nx.to_array (Nx_quant.dequant Nx.float32 w)));
+    C.positions ()
+  in
+  let per = one (2 * n) - one n and got = counted (2 * n) - counted n in
+  let want = if in_place then 0 else min p e in
+  equal ~msg:"matrices decoded" (pair int int) (want, 0)
+    (got / per, got mod per)
+
 (* [routed w ids x] routes each row of [x] [[| p; k |]] through the expert of
    [w] [[| e; n; k |]] its id names. *)
 let routed w ids x =
@@ -1175,12 +1233,27 @@ let experts_law (_, w, ids, X { at; x }) =
 
 (* An expert product and, for each position, whether its id is kept, and the
    id that replaces it otherwise. *)
+(* An expert product and, for each position, whether its id is kept, and the
+   id that replaces it otherwise. Half the products, of three experts or more,
+   take two positions or more but fewer than the experts, one input row for
+   all, so that a product gathers matrices beside a kept row's. *)
 let rerouted =
   let open Gen in
-  let* ((_, w, ids, _) as c) = experts in
-  let lead, _, _ = dims w in
+  let* ((view, w, _, X { at; x }) as c) = experts in
+  let lead, _, k = dims w in
+  let e = lead.(0) in
+  let in_range = map Int64.of_int (int_range 0 (e - 1)) in
+  let* few = bool in
+  let* c =
+    if few && e >= 3 then
+      let+ ids = array ~size:(int_range 2 (e - 1)) in_range in
+      let x = Nx.cast (Nx.dtype x) (random_floats [| 1; k |]) in
+      (view, w, Nx.create Nx.int64 [| Array.length ids |] ids, X { at; x })
+    else constant c
+  in
+  let _, _, ids, _ = c in
   let count = Array.length (Nx.to_array ids) in
-  let id = map Int64.of_int (int_range (-1) lead.(0)) in
+  let id = map Int64.of_int (int_range (-1) e) in
   let+ fresh = array ~size:(constant count) (pair bool id) in
   (c, fresh)
 
@@ -1205,8 +1278,15 @@ let rerouted_law ((_, w, ids, X { x; _ }), fresh) =
     (Array.mem true changed && Array.mem false changed);
   cover "fewer positions than experts" (Array.length id < lead.(0));
   cover "no fewer positions than experts" (Array.length id >= lead.(0));
-  cover "a GGUF weight, fewer positions than experts"
-    (format_of w <> Mxfp4 && Array.length id < lead.(0));
+  let gathers =
+    Array.mem true changed && Array.mem false changed && lead.(0) >= 3
+    && Array.length id >= 2
+    && Array.length id < lead.(0)
+  in
+  cover "a kept id beside a changed one, 2 <= p < e" gathers;
+  cover "the same, a GGUF weight" (gathers && format_of w <> Mxfp4);
+  cover "the same, an MXFP4 weight at float64"
+    (gathers && format_of w = Mxfp4 && D.name (Nx.dtype x) = "float64");
   let ids' = Nx.create Nx.int64 (Nx.shape ids) id' in
   let y = product_bits (Nx_quant.apply_experts ~ids w x)
   and y' = product_bits (Nx_quant.apply_experts ~ids:ids' w x) in
@@ -1216,7 +1296,7 @@ let rerouted_law ((_, w, ids, X { x; _ }), fresh) =
 let expert_products =
   group "experts"
     [
-      prop ~count:300
+      prop ~count:500
         "a row's bits do not depend on the other positions' experts"
         (Gen.with_pp pp_rerouted rerouted)
         rerouted_law;
@@ -1308,6 +1388,9 @@ let placements =
         "a cut along k decodes each block once where its tiles divide the \
          blocks, and all of k on each device otherwise"
         work work_law;
+      prop "an expert product decodes a matrix per slot, min (positions, \
+         experts), or none read where it lies"
+        decodes decodes_law;
       prop ~count:400
         "experts at any placement give the host's bits"
         (Gen.with_pp
