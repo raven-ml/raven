@@ -119,30 +119,6 @@ type op3 =
       (** The product of the first two plus the third, rounded once; wrapping
           on integers. *)
 
-(** {1:codes Codes}
-
-    Each kind has a {e code}, the number [nx_prog.h] gives it among the kinds
-    of its arity. The codes of an arity's [n] kinds are [0] to [n - 1], one
-    per kind. *)
-
-val code1 : op1 -> int
-(** [code1 k] is [k]'s code, below {!kinds1}. *)
-
-val code2 : op2 -> int
-(** [code2 k] is [k]'s code, below {!kinds2}. *)
-
-val code3 : op3 -> int
-(** [code3 k] is [k]'s code, below {!kinds3}. *)
-
-val kinds1 : int
-(** [kinds1] is the number of kinds of one operand. *)
-
-val kinds2 : int
-(** [kinds2] is the number of kinds of two operands. *)
-
-val kinds3 : int
-(** [kinds3] is the number of kinds of three operands. *)
-
 (** {1:domains Domains}
 
     Where each kind is defined. Every dtype has one order: [false < true];
@@ -251,6 +227,20 @@ val of_node : ins:Nx_array.Dtype.any iarray -> node -> t
     [j] is operand [j].
 
     Raises [Invalid_argument] as {!v} does. *)
+
+val node1 :
+  op1 -> ('a, 'b) Nx_array.Dtype.t -> ('v, 's) Nx_array.Dtype.t -> t option
+
+val node2 : op2 -> ('a, 'b) Nx_array.Dtype.t -> t option
+
+val node3 :
+  op3 -> ('c, 'e) Nx_array.Dtype.t -> ('a, 'b) Nx_array.Dtype.t -> t option
+(** [nodeN k x …] is [Some] the program {!of_node} makes of the one node [k]
+    reading its operands in order, over an operand of [x] into [y] for
+    [node1 k x y], two of [x] for [node2 k x], and one of [c] then two of [x]
+    for [node3 k c x]. It is [None] where [k] does not take them
+    ({!accepts1} and its siblings). Each program is made once and kept: a
+    call that finds it allocates nothing. Domains may call it concurrently. *)
 
 val dtype : t -> int -> Nx_array.Dtype.any
 (** [dtype p i] is the dtype of [p]'s node [i]: its operand's for [In], [int64]

@@ -622,9 +622,50 @@ let code2 = function
   | Compare Less_equal -> 17
 
 let code3 = function Where -> 0 | Fma -> 1
-let kinds1 = Array.length op1s
-let kinds2 = Array.length op2s
-let kinds3 = Array.length op3s
+
+(* One-node programs *)
+
+let dtypes = List.length D.all
+
+(* The one-node programs made so far, by kind and dtypes, each made once: a
+   map that finds its program builds none. A slot that two domains fill at
+   once keeps either's program; they are equal. *)
+let nodes1 : t option array =
+  Array.make (Array.length op1s * dtypes * dtypes) None
+
+let nodes2 : t option array = Array.make (Array.length op2s * dtypes) None
+
+let nodes3 : t option array =
+  Array.make (Array.length op3s * dtypes * dtypes) None
+
+(* [p] kept at [table.(i)]. *)
+let kept table i p =
+  let p = Some p in
+  table.(i) <- p;
+  p
+
+let node1 k x y =
+  let i = (((code1 k * dtypes) + D.code x) * dtypes) + D.code y in
+  match nodes1.(i) with
+  | Some _ as p -> p
+  | None when not (accepts1 k x y) -> None
+  | None -> kept nodes1 i (of_node ~ins:[| D.Any x |] (Op1 (k, D.Any y, 0)))
+
+let node2 k x =
+  let i = (code2 k * dtypes) + D.code x in
+  match nodes2.(i) with
+  | Some _ as p -> p
+  | None when not (accepts2 k x) -> None
+  | None -> kept nodes2 i (of_node ~ins:[| D.Any x; D.Any x |] (Op2 (k, 0, 1)))
+
+let node3 k c x =
+  let i = (((code3 k * dtypes) + D.code c) * dtypes) + D.code x in
+  match nodes3.(i) with
+  | Some _ as p -> p
+  | None when not (accepts3 k c x) -> None
+  | None ->
+      kept nodes3 i
+        (of_node ~ins:[| D.Any c; D.Any x; D.Any x |] (Op3 (k, 0, 1, 2)))
 
 (* The dtype of code [c], which the walk read from a dtype. *)
 let dtype_of_code c = Option.get (D.of_code c)
