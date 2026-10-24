@@ -239,8 +239,9 @@ val node3 :
     reading its operands in order, over an operand of [x] into [y] for
     [node1 k x y], two of [x] for [node2 k x], and one of [c] then two of [x]
     for [node3 k c x]. It is [None] where [k] does not take them
-    ({!accepts1} and its siblings). Each program is made once and kept: a
-    call that finds it allocates nothing. Domains may call it concurrently. *)
+    ({!accepts1} and its siblings). A program is kept once made: a call that
+    finds it allocates nothing. Domains may call it concurrently; two that
+    find its slot empty at once each make an equal program. *)
 
 val dtype : t -> int -> Nx_array.Dtype.any
 (** [dtype p i] is the dtype of [p]'s node [i]: its operand's for [In], [int64]
