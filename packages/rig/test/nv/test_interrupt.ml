@@ -169,6 +169,40 @@ let test_entry_in_entry () =
    new device's, which keeps the growth's GPU memory small. *)
 let local_bytes = 32
 
+(* Over PCI an open boots the GSP, for seconds: a walk there lands at
+   [spread] allocations or one more, apart over the call, so the suite keeps
+   within its two minutes. *)
+let spread = 3
+let over_pci () = Rig_nv_support.path () = Some Rig_nv_support.Pci
+
+(* The allocations [f ()] makes, on every thread: a walk counts those of the
+   calling thread, the only one an open or a stop allocates on. *)
+let allocations f =
+  let n = ref 0 in
+  let count _ =
+    incr n;
+    None
+  in
+  let tracker =
+    { Gc.Memprof.null_tracker with alloc_minor = count; alloc_major = count }
+  in
+  let profile = Gc.Memprof.start ~sampling_rate:1. tracker in
+  Fun.protect
+    ~finally:(fun () ->
+      Gc.Memprof.stop ();
+      Gc.Memprof.discard profile)
+    f;
+  !n
+
+(* The step that lands [spread] times over a call of [n] allocations. *)
+let spread_over n = max 1 (n / spread)
+
+(* [walk_by step attempt] runs [attempt n] from [n = 1], [step] apart, until
+   an attempt no longer reaches its [n]-th allocation. *)
+let walk_by step attempt =
+  let rec from n = if attempt n then from (n + step) in
+  from 1
+
 (* A stop from a callback in the first growth of a new device's local
    memory: inside the device's local memory lock the stop raises, and the
    growth completes; outside it, the device stops, after which a growth
@@ -177,7 +211,20 @@ let local_bytes = 32
 let test_stop_in_local () =
   needs_gpu ();
   let seen = Rig_support.seen () in
-  walk_calls (fun n ->
+  (* Over PCI each attempt opens a device for seconds: the walk lands
+     [spread] times over a growth. *)
+  let step =
+    if not (over_pci ()) then 1
+    else
+      let g =
+        Result.get_ok (Rig_gpu_support.opened (Rig_nv_support.opener 0))
+      in
+      let local = (N.capability g).local in
+      let n = allocations (fun () -> ignore (local local_bytes)) in
+      N.stop g ~fault:None;
+      spread_over n
+  in
+  walk_by step (fun n ->
       let g =
         Result.get_ok (Rig_gpu_support.opened (Rig_nv_support.opener 0))
       in
@@ -233,19 +280,28 @@ let test_free_in_free () =
   and after () = if not !freed then N.free g r' in
   (during, call, after)
 
-(* An allocation from a callback in another allocation: the path takes
-   the GPU's addresses with no lock, so both are made, apart. *)
+(* An allocation from a callback in another allocation: on NVIDIA's kernel
+   driver the path takes the GPU's addresses with no lock, so both are made,
+   apart; over PCI it takes them under its lock of the GPU's memory, inside
+   which the inner allocation raises, having changed nothing. *)
 let test_alloc_in_alloc () =
   opened @@ fun g _ ->
   walk_calls @@ fun n ->
-  let made = ref [] in
+  let made = ref [] and refused = ref false in
   let keep () =
-    let r = alloc g in
-    made := r :: !made
+    match alloc g with
+    | r -> made := r :: !made
+    | exception Invalid_argument why when String.starts_with ~prefix:retaken why
+      ->
+        refused := true
   in
   let reached = Rig_support.interrupted ~landing:(Call keep) n keep in
+  (* Over PCI the path allocates under its lock of the GPU's memory, inside
+     which the inner allocation raises, having taken nothing. *)
+  if !refused then
+    equal ~msg:(strf "from allocation %d, the path" n) bool true (over_pci ());
   equal ~msg:(strf "from allocation %d, the regions made" n) int
-    (if reached then 2 else 1)
+    (if reached && not !refused then 2 else 1)
     (List.length !made);
   (match List.map Rig_nv_support.address !made with
   | [ a; b ] ->
@@ -286,33 +342,6 @@ let outside_device (a : Gc.Memprof.allocation) =
    makes thousands: one in [stride] of them. *)
 let stride = 64
 
-(* Over PCI an open boots the GSP, for seconds: a walk there lands at
-   [spread] allocations or one more, apart over the call, so the suite keeps
-   within its two minutes. *)
-let spread = 3
-let over_pci () = Rig_nv_support.path () = Some Rig_nv_support.Pci
-
-(* The allocations [f ()] makes, on every thread: a walk counts those of the
-   calling thread, the only one an open or a stop allocates on. *)
-let allocations f =
-  let n = ref 0 in
-  let count _ =
-    incr n;
-    None
-  in
-  let tracker =
-    { Gc.Memprof.null_tracker with alloc_minor = count; alloc_major = count }
-  in
-  let profile = Gc.Memprof.start ~sampling_rate:1. tracker in
-  Fun.protect
-    ~finally:(fun () ->
-      Gc.Memprof.stop ();
-      Gc.Memprof.discard profile)
-    f;
-  !n
-
-(* The step that lands [spread] times over a call of [n] allocations. *)
-let spread_over n = max 1 (n / spread)
 
 (* [open_walk ~from ~step] walks an open, once the process's first open made
    what it keeps: the [(k step + 1)]-th allocation [from] holds for, with every
