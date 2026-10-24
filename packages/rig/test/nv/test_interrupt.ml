@@ -83,7 +83,8 @@ let walk attempt =
   in
   from 1
 
-(* An image's 33rd entry, where a table of 32 entries would grow. *)
+(* An image's 33rd entry, where a table of 32 entries would grow. The image
+   and the device stay whole: the entry is made when asked for again. *)
 let test_entries () =
   opened @@ fun g bin ->
   walk @@ fun n ->
@@ -91,7 +92,11 @@ let test_entries () =
   let reached =
     loaded g bin (fun i ->
         entries i made;
-        Rig_support.interrupted n (fun () -> entries i [ last ]))
+        let reached =
+          Rig_support.interrupted n (fun () -> entries i [ last ])
+        in
+        entries i [ last ];
+        reached)
   in
   (heap () - before, reached)
 
@@ -242,6 +247,79 @@ let test_alloc_in_alloc () =
   List.iter (N.free g) !made;
   reached
 
+(* Opens and stops *)
+
+(* [fresh what] is a new device of the first GPU, through the driver alone. *)
+let fresh what =
+  match Rig_gpu_support.opened (Rig_nv_support.opener 0) with
+  | Ok g -> g
+  | Error why -> fail (strf "%s, the GPU does not open: %s" what why)
+
+(* [works g] allocates and frees a region of [g], then stops it. *)
+let works g =
+  N.free g (alloc g);
+  N.stop g ~fault:None
+
+(* Whether the allocation [a] is made outside the device's own code, [Rig_nv]'s:
+   by the path as it opens the GPU, or by its caller. *)
+let outside_device (a : Gc.Memprof.allocation) =
+  let in_device s =
+    match Printexc.Slot.location s with
+    | Some l -> Filename.basename l.filename = "rig_nv.ml"
+    | None -> false
+  in
+  match Printexc.backtrace_slots a.callstack with
+  | Some slots -> not (Array.exists in_device slots)
+  | None -> true
+
+(* The allocations of an open apart in a walk of the device's make, which
+   makes thousands: one in [stride] of them. *)
+let stride = 64
+
+(* [open_walk ~from ~step] walks an open, once the process's first open made
+   what it keeps: the [(k step + 1)]-th allocation [from] holds for, with every
+   one from it on raising until the open returns, for [k] from 0 on. The GPU
+   opens again after each. *)
+let open_walk ~from ~step =
+  works (fresh "before the walk");
+  let rec walk n =
+    let opened = ref (Error "not reached") in
+    let reached =
+      Rig_support.interrupted ~from n (fun () ->
+          opened := Rig_gpu_support.opened (Rig_nv_support.opener 0))
+    in
+    Result.iter (fun g -> N.stop g ~fault:None) !opened;
+    works (fresh (strf "from allocation %d" n));
+    if reached then walk (n + step)
+  in
+  walk 1
+
+(* An open's every allocation outside the device's make, and one in [stride]
+   of the make's, which gives back what it took on any exception. *)
+let test_open () =
+  if not (Rig_nv_support.present ()) then
+    skip ~reason:"the machine has no NVIDIA GPU either path opens" ();
+  open_walk ~from:outside_device ~step:1;
+  open_walk ~from:(fun _ -> true) ~step:stride
+
+(* A stop with every allocation from the [(k stride + 1)]-th on raising until
+   it returns, for [k] from 0 on: a region of the device is freed after it,
+   and the GPU opens again. A landing before the RM freed the channels leaves
+   them, as one the RM refuses does, for the life of the process, so the walk
+   lands apart to stay within the RM's channels. *)
+let test_stop () =
+  if not (Rig_nv_support.present ()) then
+    skip ~reason:"the machine has no NVIDIA GPU either path opens" ();
+  let rec walk n =
+    let g = fresh (strf "for allocation %d" n) in
+    let r = alloc g in
+    let reached = Rig_support.interrupted n (fun () -> N.stop g ~fault:None) in
+    N.free g r;
+    works (fresh (strf "from allocation %d" n));
+    if reached then walk (n + stride)
+  in
+  walk 1
+
 (* Through rig *)
 
 (* A function of an image asked for through rig from a callback while
@@ -353,6 +431,8 @@ let () =
                "of an image's entry leaves its unload to free every launch"
                test_entries;
              test "of an image's unload leaves no launch held" test_unload;
+             test "of an open leaves the GPU to open again" test_open;
+             test "of a stop leaves the GPU to open again" test_stop;
              test "of a resolve through rig leaves the GPU to open again"
                test_resolve_lost_rig;
            ];

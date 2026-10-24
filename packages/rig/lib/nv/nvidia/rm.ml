@@ -24,6 +24,8 @@ external reserve_any_raw : int -> int -> int = "caml_rig_nv_nvidia_reserve_any"
 external address : Rig_nv.params -> int = "caml_rig_nv_nvidia_address"
 external host_page : unit -> int = "caml_rig_nv_nvidia_page_size" [@@noalloc]
 
+external reraise : exn -> 'a = "%reraise"
+
 let failed what e = Error (strf "%s: %s" what (Unix.error_message e))
 
 (* [guard what f] is [f ()], or [Error] saying that [what] failed and why. *)
@@ -48,9 +50,6 @@ let open_spare path =
   | exception Unix.Unix_error (e, _, _) -> failed path e
 
 let map fd at n = guard "mapping memory for the GPU" (fun () -> map_raw fd at n)
-
-let reserve at n =
-  guard "reserving the GPU's addresses" (fun () -> reserve_raw at n)
 
 (* Returning addresses to the reservation cannot fail but for a bad argument,
    which is this library's: its error is dropped. *)
@@ -274,11 +273,13 @@ let driver_version ctl root =
 let client_lock = Rig_nv.Lock.create ()
 let opened = ref None
 
+(* The process's client, or [Error]: a failed make, and one an exception ends,
+   gives back what it took, last first. *)
 let make_client ~dev =
   let undo = ref [] in
   let taken f = undo := f :: !undo in
   let uvm_path = Filename.concat dev "nvidia-uvm" in
-  let opened_client =
+  let opened_client () =
     let* ctl = open_file (Filename.concat dev "nvidiactl") in
     taken (fun () -> close ctl);
     let* s, root =
@@ -308,8 +309,19 @@ let make_client ~dev =
     taken (fun () -> close uvm_fd);
     let* mm = open_file uvm_path in
     taken (fun () -> close mm);
-    let* () = reserve low_base (top - low_base) in
-    taken (fun () -> unreserve low_base (top - low_base));
+    (* Recorded before it is taken, and marked taken with nothing allocated
+       after the call: a later reserve of a range this process still held
+       would fail for good. *)
+    let reserved = ref false in
+    taken (fun () -> if !reserved then unreserve low_base (top - low_base));
+    let* () =
+      match reserve_raw low_base (top - low_base) with
+      | () ->
+          reserved := true;
+          Ok ()
+      | exception Unix.Unix_error (e, _, _) ->
+          failed "reserving the GPU's addresses" e
+    in
     let c =
       {
         ctl;
@@ -333,21 +345,29 @@ let make_client ~dev =
     let m = params M.sizeof in
     set m M.uvm_fd uvm_fd;
     (try ioctl mm D.uvm_mm_initialize m with Unix.Unix_error _ -> ());
-    Ok c
+    Ok (c, Some c)
   in
-  (match opened_client with
-  | Ok _ -> ()
-  | Error _ -> List.iter (fun f -> f ()) !undo);
-  opened_client
+  match opened_client () with
+  | Ok _ as c -> c
+  | Error _ as e ->
+      List.iter (fun f -> f ()) !undo;
+      e
+  | exception e ->
+      List.iter (fun f -> f ()) !undo;
+      reraise e
 
 let client ~dev =
   Rig_nv.Lock.protect client_lock @@ fun () ->
   match !opened with
   | Some c -> Ok c
   | None ->
-      let* c = make_client ~dev in
-      opened := Some c;
-      Ok c
+      (* [Some c] is made inside the make, whose handler gives the client
+         back, and nothing allocates from its return to the store. *)
+      match make_client ~dev with
+      | Error _ as e -> e
+      | Ok (c, kept) ->
+          opened := kept;
+          Ok c
 
 (* The handles the process names objects by. A freed one is taken again
    before a new one, so the highest stays [first_handle] plus the most objects

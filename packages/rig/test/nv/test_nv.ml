@@ -2160,6 +2160,83 @@ let stateful =
         registry_commands;
     ]
 
+(* A path's faults *)
+
+(* The fault the path's [free] raises in these tests, once it gave the memory
+   back. *)
+let free_fault = "the free faulted"
+
+(* [faulty frees armed] is GPU 0's opener on NVIDIA's kernel driver, whose
+   path's [free] counts itself in [frees] and, after its work, raises
+   [Fault free_fault] while [!armed]. *)
+let faulty frees armed =
+  Rig_nv_nvidia.gpu_with 0 ~wrap:(fun p ->
+      {
+        p with
+        free =
+          (fun m ->
+            incr frees;
+            p.free m;
+            if !armed then raise (N.Fault free_fault));
+      })
+
+(* Skips off NVIDIA's kernel driver, and ends the GPU's device a test before
+   left open. *)
+let on_kernel () =
+  if S.path () <> Some S.Kernel then
+    skip ~reason:"the fault is injected into NVIDIA's kernel driver's path" ();
+  S.release ()
+
+(* A free the path fails, through rig, loses the device with the path's fault:
+   memory the path keeps is never dropped in silence. *)
+let free_faulted_rig () =
+  on_kernel ();
+  let armed = ref false in
+  let d = require_ok (Rig.open_ (faulty (ref 0) armed)) in
+  Fun.protect ~finally:(fun () -> Rig.close d) @@ fun () ->
+  let b = B.create d 4096 in
+  armed := true;
+  equal bool ~msg:"the early free" true (B.free b);
+  Rig.free_cache d;
+  armed := false;
+  equal (option string) ~msg:"the loss" (Some free_fault) (Rig.lost d)
+
+(* [stopped ~fail] stops a new device of GPU 0, its path's frees raising if
+   [fail]: what the stop answered, and the frees it made. *)
+let stopped ~fail =
+  let frees = ref 0 and armed = ref false in
+  let g = require_ok (Rig_gpu_support.opened (faulty frees armed)) in
+  let before = !frees in
+  armed := fail;
+  let answer =
+    match N.stop g ~fault:None with
+    | () -> "returned"
+    | exception N.Fault why -> why
+  in
+  armed := false;
+  (answer, !frees - before)
+
+(* A stop whose frees the path fails gives back all the device's memory, as a
+   stop nothing fails does, then raises the path's fault, and the GPU opens
+   again. *)
+let stop_faulted () =
+  on_kernel ();
+  let answer, frees = stopped ~fail:false in
+  equal string ~msg:"a stop nothing fails" "returned" answer;
+  let answer, frees' = stopped ~fail:true in
+  equal string ~msg:"a stop whose frees fail" free_fault answer;
+  equal int ~msg:"the frees of each" frees frees';
+  N.stop (require_ok (Rig_gpu_support.opened (S.opener 0))) ~fault:None
+
+let faults =
+  group ~timeout:60. "a path's faults"
+    [
+      test "a free the path fails loses the device through rig"
+        free_faulted_rig;
+      test "a stop gives back every memory, then raises a free's fault"
+        stop_faulted;
+    ]
+
 let () =
   if Array.length Sys.argv = 2 && Sys.argv.(1) = dma_child then
     exit
@@ -2185,4 +2262,5 @@ let () =
          images;
          timeline;
          stateful;
+         faults;
        ])

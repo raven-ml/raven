@@ -48,6 +48,9 @@ type t = {
           does nothing if the memory already does, else replaces it with a
           larger one ({!Local_memory.make}) and keeps the old one until the work
           placed before the call completes. The result is [Error msg] if the
-          device cannot allocate it. Any domain may call it. *)
+          device cannot allocate it. It raises the driver's fault where the
+          free of a memory it gives back fails, once the new memory serves;
+          the driver keeps the memory it failed to free. Any domain may call
+          it. *)
 }
 (** The type for GPUs. Every count is positive. *)

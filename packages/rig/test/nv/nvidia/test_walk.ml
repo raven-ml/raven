@@ -274,6 +274,60 @@ let alloc_starved op () =
   need_gpu ();
   equal string "None" (starved op)
 
+(* Exceptions *)
+
+(* Whether the allocation [a] is made by the code that makes the process's
+   client of the kernel driver or a GPU's objects, which the process keeps for
+   good, or keeps them: between the objects it takes, around the records that
+   give them back, and as it publishes them. *)
+let making (a : Gc.Memprof.allocation) =
+  let makes s =
+    match Printexc.Slot.name s with
+    | Some n ->
+        let has sub =
+          let k = String.length sub in
+          let rec at i =
+            i + k <= String.length n && (String.sub n i k = sub || at (i + 1))
+          in
+          at 0
+        in
+        has ".make_client" || has ".make_gpu" || has "Rm.client"
+        || has "Rig_nv_nvidia.gpu"
+    | None -> false
+  in
+  match Printexc.backtrace_slots a.callstack with
+  | Some slots -> Array.length slots > 0 && makes slots.(0)
+  | None -> false
+
+(* In a child: a process's first open with an exception at the [n]-th
+   allocation [making] holds for, as an asynchronous one or a raise of a call
+   there lands, whether it reached it, and what an open after it answers. *)
+let first_open n =
+  let opened = ref (Error "not reached") in
+  let reached =
+    Rig_support.interrupted ~from:making
+      ~landing:(Call (fun () -> raise Exit))
+      n
+      (fun () -> opened := Rig_gpu_support.opened (P.gpu 0))
+  in
+  Result.iter (fun g -> N.stop g ~fault:None) !opened;
+  let again = run_once { g = None; host = 0; want = 0 } Open in
+  (reached, again)
+
+(* A process's first open, interrupted at each allocation that makes what the
+   process keeps: the next open answers [Ok], having made it whole. *)
+let interrupted_first () =
+  need_gpu ();
+  let rec walk n =
+    let reached, again =
+      require_ok ~pp:Format.pp_print_string (in_child (fun () -> first_open n))
+    in
+    equal string ~msg:(strf "from allocation %d, an open after" n) "Ok" again;
+    if reached then walk (n + 1) else n - 1
+  in
+  (* The makes allocate around each of the dozen objects they take. *)
+  at_least ~msg:"the allocations walked" int ~than:12 (walk 1)
+
 let ops = [ Open; Alloc Device; Alloc Pinned; Alloc Mapped; Map_host; Grow ]
 
 let () =
@@ -291,6 +345,11 @@ let () =
                test "an allocation of twice the GPU's memory is refused"
                  too_large;
              ]);
+         group ~timeout "an exception at any allocation"
+           [
+             test "of a process's first open leaves the next to open"
+               interrupted_first;
+           ];
          group ~timeout "a process out of files"
            (test "fails an open naming the cause, not the machine's GPUs"
               open_starved

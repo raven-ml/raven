@@ -74,9 +74,11 @@ type gpu = {
   hang_ms : int option; (* [None] while the RM's watchdog bounds its work *)
   clock : int; (* its timer's reader, for the process *)
   index : int; (* its number, in bus order *)
-  mutable refused : int list; (* the GPUs peer access was refused with *)
   mutable channels : (int * int) list; (* registered, with their ranges *)
-  mutable opened : bool; (* whether a device of it is open and not stopped *)
+  mutable left : (int * int) list;
+      (* unregistered, with their ranges, kept while a channel stays
+         registered *)
+  opened : bool Atomic.t; (* whether a device of it is open and not stopped *)
 }
 
 (* GPU memory *)
@@ -120,8 +122,15 @@ and range = {
   mutable users : (gpu * int) list;
 }
 
+external reraise : exn -> 'a = "%reraise"
+
 let key : mem Type.Id.t = Type.Id.make ()
 let gpus_lock = Rig_nv.Lock.create ()
+
+(* The pairs of GPUs, by number, that refused each other peer access, both
+   ways, for the life of the process: one value, so that a GPU's refusals
+   are stored with one store as it joins [gpus]. *)
+let peer_refusals : (int * int) list Atomic.t = Atomic.make []
 
 (* [f] over a file of [g]'s the RM maps memory through: each mapping has its
    own, as the driver keeps one mapping context per file. [Ok None] if the
@@ -496,7 +505,10 @@ let map_host g a n =
    memory needs none. A view counts in the range of the region it views. *)
 let map_peer g (m : mem Rig_nv.memory) =
   let viewed = m.data in
-  let refused = function Some u -> List.mem u g.refused | None -> false in
+  let refused = function
+    | Some u -> List.mem (g.index, u) (Atomic.get peer_refusals)
+    | None -> false
+  in
   if refused viewed.video then None
   else
     Rig_nv.Lock.protect ranges_lock @@ fun () ->
@@ -585,6 +597,13 @@ let register g ch =
           g.channels <- (ch, base) :: g.channels);
       Ok ()
 
+(* Ends [ch]'s registration. Unified memory maps a resource that channels of
+   one group share once, in the range of the first channel that registers it,
+   and destroys it with the last channel's unregistration
+   (uvm_user_channel.c's create_va_range, destroy_va_ranges): a channel's
+   range may hold a resource another registered channel still maps. So the
+   ranges go back once no channel of the GPU stays registered; a range given
+   back earlier would be refused to the next memory placed there. *)
 let unregister g ch =
   let (module R : D.RELEASE) = g.c.layouts in
   let module U = R.Uvm_unregister_channel in
@@ -596,13 +615,21 @@ let unregister g ch =
     Rm.uvm_call g.c D.uvm_unregister_channel u U.rm_status
       "unregistering a GPU channel"
   in
-  let gone =
+  let free =
     Rig_nv.Lock.protect gpus_lock @@ fun () ->
     let gone, kept = List.partition (fun (c, _) -> c = ch) g.channels in
+    let left = gone @ g.left in
     g.channels <- kept;
-    gone
+    if kept = [] then begin
+      g.left <- [];
+      left
+    end
+    else begin
+      g.left <- left;
+      []
+    end
   in
-  List.iter (fun (_, base) -> Va.free g.c.low base channel_range) gone;
+  List.iter (fun (_, base) -> Va.free g.c.low base channel_range) free;
   Ok ()
 
 (* Opening a GPU *)
@@ -709,13 +736,32 @@ let hang_bound c subdevice =
 (* The GPUs made, by bus address, under [gpus_lock]. *)
 let gpus : (string * gpu) list ref = ref []
 
-(* GPU [bus]'s objects, made at its first open and kept for the process; a
-   failed open gives back what it took, last first. *)
-let make_gpu c ~dev ~index bus =
+(* Enables peer access between [g] and each of [others], the GPUs opened
+   before it: the numbers of those that refuse it. *)
+let refused_by g others =
+  List.filter_map
+    (fun g' ->
+      let module E = D.Uvm_enable_peer_access in
+      let e = params E.sizeof in
+      set_uuid e E.gpu_uuid_a g.uuid;
+      set_uuid e E.gpu_uuid_b g'.uuid;
+      match
+        Rm.uvm_call g.c D.uvm_enable_peer_access e E.rm_status
+          "enabling peer access"
+      with
+      | Ok () -> None
+      | Error _ -> Some g'.index)
+    others
+
+(* GPU [bus]'s objects, made at its first open and kept for the process,
+   under [gpus_lock], with the values [gpus] and [peer_refusals] take as it
+   joins them: the refusals of [others], the GPUs opened before it. A failed
+   open, and one an exception ends, gives back what it took, last first. *)
+let make_gpu c ~dev ~index ~others bus =
   let undo = ref [] in
   let taken f = undo := f :: !undo in
   let rm = Rm.rm c in
-  let made =
+  let made () =
     let* cards = cards c in
     let* gpu_id, minor =
       match List.find_opt (fun (b, _, _) -> b = bus) cards with
@@ -830,9 +876,9 @@ let make_gpu c ~dev ~index bus =
         hang_ms;
         clock = clock c.ctl Rm.control_request c.root subdevice;
         index;
-        refused = [];
         channels = [];
-        opened = false;
+        left = [];
+        opened = Atomic.make false;
       }
     in
     let* mapped = map_to_cpu g usermode usermode_bytes doorbell in
@@ -844,9 +890,6 @@ let make_gpu c ~dev ~index bus =
     let u = params U.sizeof in
     set_uuid u U.gpu_uuid uuid;
     set u U.rm_ctrl_fd (-1);
-    let* () =
-      Rm.uvm_call c D.uvm_register_gpu u U.rm_status "registering the GPU"
-    in
     let unregister_gpu () =
       let module U = D.Uvm_unregister_gpu in
       let u = params U.sizeof in
@@ -856,7 +899,14 @@ let make_gpu c ~dev ~index bus =
            "unregistering the GPU"
           : (unit, string) result)
     in
+    (* Recorded before the registration, which unified memory makes once per
+       process: an exception between the two would refuse the GPU for good.
+       Unregistering a GPU never registered is refused, and the refusal
+       dropped. *)
     taken unregister_gpu;
+    let* () =
+      Rm.uvm_call c D.uvm_register_gpu u U.rm_status "registering the GPU"
+    in
     let module V = D.Uvm_register_gpu_vaspace in
     let v = params V.sizeof in
     set_uuid v V.gpu_uuid uuid;
@@ -870,44 +920,41 @@ let make_gpu c ~dev ~index bus =
     (* The flush word's page, kept with the GPU's objects. A GPU whose BAR
        has no room for it has none, and its devices no Mapped memory. *)
     let* bar = alloc_video g ~cpu:true page in
-    match bar with
-    | Some (_, va, _, _) -> Ok { g with flush = Some va }
-    | None -> Ok g
+    let g =
+      match bar with
+      | Some (_, va, _, _) -> { g with flush = Some va }
+      | None -> g
+    in
+    let refused = refused_by g others in
+    let pairs =
+      List.concat_map (fun i -> [ (index, i); (i, index) ]) refused
+      @ Atomic.get peer_refusals
+    in
+    Ok (g, (bus, g) :: !gpus, pairs)
   in
-  match made with
-  | Ok g -> Ok g
+  match made () with
+  | Ok _ as made -> made
   | Error _ as e ->
       List.iter (fun f -> f ()) !undo;
       e
-
-(* Enables peer access between [g] and every GPU opened before it, recording
-   those that refuse it, both ways. *)
-let enable_peers g others =
-  List.iter
-    (fun g' ->
-      let module E = D.Uvm_enable_peer_access in
-      let e = params E.sizeof in
-      set_uuid e E.gpu_uuid_a g.uuid;
-      set_uuid e E.gpu_uuid_b g'.uuid;
-      match
-        Rm.uvm_call g.c D.uvm_enable_peer_access e E.rm_status
-          "enabling peer access"
-      with
-      | Ok () -> ()
-      | Error _ ->
-          g.refused <- g'.index :: g.refused;
-          g'.refused <- g.index :: g'.refused)
-    others
+  | exception e ->
+      List.iter (fun f -> f ()) !undo;
+      reraise e
 
 let gpu c ~dev ~index bus =
   Rig_nv.Lock.protect gpus_lock @@ fun () ->
   match List.assoc_opt bus !gpus with
   | Some g -> Ok g
   | None ->
-      let* g = make_gpu c ~dev ~index bus in
-      enable_peers g (List.map snd !gpus);
-      gpus := (bus, g) :: !gpus;
-      Ok g
+      let others = List.map snd !gpus in
+      (* What the GPU joins is made inside the make, whose handler gives the
+         GPU back, and nothing allocates from its return to the stores. *)
+      match make_gpu c ~dev ~index ~others bus with
+      | Error _ as e -> e
+      | Ok (g, gpus', pairs) ->
+          gpus := gpus';
+          Atomic.set peer_refusals pairs;
+          Ok g
 
 let path g =
   {
@@ -923,7 +970,7 @@ let path g =
     alloc = alloc g;
     map_host = Some (map_host g);
     index = g.index;
-    reaches = (fun i -> not (List.mem i g.refused));
+    reaches = (fun i -> not (List.mem (g.index, i) (Atomic.get peer_refusals)));
     map_peer = map_peer g;
     free = free g;
     bus = Some g.bus;
@@ -935,9 +982,11 @@ let path g =
     check = ignore;
     hang_ms = g.hang_ms;
     clock = Rig_nv.Source g.clock;
+    (* Allocates nothing, so that an exception that ended the device's stop
+       before it still lets the GPU open again. *)
     stop =
       (fun () ->
-        Rig_nv.Lock.protect gpus_lock (fun () -> g.opened <- false);
+        Atomic.set g.opened false;
         `Unknown);
   }
 
@@ -952,7 +1001,7 @@ let device_name i =
   if i < 0 then invalid_argf "Rig_nv_nvidia.gpu: GPU %d < 0" i;
   if i = 0 then "NV" else strf "NV:%d" i
 
-let open_ ~root ~word i =
+let open_ ?(wrap = Fun.id) ~root ~word i =
   Rig_nv.Lock.check "Rig_nv_nvidia.gpu";
   if i < 0 then invalid_argf "Rig_nv_nvidia.gpu: GPU %d < 0" i;
   let* buses =
@@ -968,19 +1017,20 @@ let open_ ~root ~word i =
       let dev = Filename.concat root "dev" in
       let* c = Rm.client ~dev in
       let* g = gpu c ~dev ~index:i bus in
-      let claimed =
-        Rig_nv.Lock.protect gpus_lock @@ fun () ->
-        let free = not g.opened in
-        g.opened <- true;
-        free
-      in
-      if not claimed then Error (strf "%s has a device open" bus)
+      let p = wrap (path g) in
+      (* The claim is given back on any end of the make but its [Ok], and
+         nothing allocates between the claim and the make. *)
+      if not (Atomic.compare_and_set g.opened false true) then
+        Error (strf "%s has a device open" bus)
       else
-        match Rig_nv.make ~word (path g) with
-        | Ok d -> Ok d
+        match Rig_nv.make ~word p with
+        | Ok _ as d -> d
         | Error _ as e ->
-            Rig_nv.Lock.protect gpus_lock (fun () -> g.opened <- false);
-            e)
+            Atomic.set g.opened false;
+            e
+        | exception e ->
+            Atomic.set g.opened false;
+            reraise e)
 
 let gpu_under ~root i : Rig_nv.t Rig_edge.opener =
   {
@@ -990,3 +1040,6 @@ let gpu_under ~root i : Rig_nv.t Rig_edge.opener =
   }
 
 let gpu i = gpu_under ~root:"/" i
+
+let gpu_with ~wrap i =
+  { (gpu i) with make = (fun ~word -> open_ ~wrap ~root:"/" ~word i) }

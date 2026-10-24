@@ -120,3 +120,12 @@ val gpu : int -> Rig_nv.t Rig_edge.opener
 val buses_under : root:string -> (string list, string) result
 val count_under : root:string -> (int, string) result
 val gpu_under : root:string -> int -> Rig_nv.t Rig_edge.opener
+
+type mem
+(* The type for the memory of this library's paths. *)
+
+val gpu_with :
+  wrap:(mem Rig_nv.path -> mem Rig_nv.path) -> int -> Rig_nv.t Rig_edge.opener
+(* [gpu_with ~wrap i] is {!gpu}[ i], whose make hands {!Rig_nv.make} the path
+   [wrap p] in place of the path [p] it made, for the suites that fail a call
+   of a path on a GPU. *)

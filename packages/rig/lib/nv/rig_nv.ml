@@ -620,9 +620,21 @@ let facts (T d) =
     edge = Nativeint.of_int d.self;
   }
 
-(* Gives [m] back through [free], its path's. The device holds [m] no more
-   whatever the path answers: a path that fails to take it back keeps it. *)
-let give free m = try free m with Fault _ -> ()
+(* [each f xs] is [f x] for each of [xs] in turn, whatever one raises: the
+   first exception passes on once the last has run. A path that fails to take
+   back memory keeps it, and its [Fault] so reaches rig, which loses the
+   device for it. *)
+let each f xs =
+  let first = ref None in
+  List.iter
+    (fun x ->
+      match f x with
+      | () -> ()
+      | exception e ->
+          if Option.is_none !first then
+            first := Some (e, Printexc.get_raw_backtrace ()))
+    xs;
+  Option.iter (fun (e, bt) -> Printexc.raise_with_backtrace e bt) !first
 
 (* [d]'s live state. rig calls nothing that uses it after stop. *)
 let live d =
@@ -675,12 +687,12 @@ let rec retire d l =
   | None -> ()
   | Some r ->
       l.local_retired <- List.filter (fun r' -> r' != r) l.local_retired;
-      give l.path.free r.mem;
+      l.path.free r.mem;
       retire d l
 
-(* Makes [m], whose word is [packed], the pending local memory, freeing a
-   pending one that no submission took. The exchange hands [m] to the
-   submissions, so what it decides is allocated before it. *)
+(* Makes [m], whose word is [packed], the pending local memory: the pending
+   one that no submission took, for the caller to free, if any. The exchange
+   hands [m] to the submissions, so what it decides is allocated before it. *)
 let publish d l m packed =
   let pending = Some m and current = l.local_pending in
   let ahead = retiring l in
@@ -688,17 +700,21 @@ let publish d l m packed =
   match current with
   | Some _ when taken x ->
       succeed l ahead current (taker x);
-      l.local_pending <- pending
-  | Some p ->
       l.local_pending <- pending;
-      give l.path.free p
-  | None -> l.local_pending <- pending
+      None
+  | Some _ ->
+      l.local_pending <- pending;
+      current
+  | None ->
+      l.local_pending <- pending;
+      None
 
-type served = Served | Stopped | Short of int
+type served = Served | Stopped | Short of int | Failed of string
 
 (* Makes the local memory serve kernels whose threads need [n] bytes each:
-   [Short bytes] if the GPU has no memory for the [bytes] that takes. Raises
-   [Fault] if the path does. *)
+   [Short bytes] if the GPU has no memory for the [bytes] that takes, [Failed
+   why] if the path fails to allocate it. A free's [Fault] passes on, once the
+   local memory is whole. *)
 let grow_local d n =
   protect d.local_lock @@ fun () ->
   match d.live with
@@ -710,10 +726,14 @@ let grow_local d n =
       if need.per_thread <= l.per_thread then Served
       else
         match path_alloc l.path Device need.bytes with
+        | exception Fault why -> Failed why
         | None -> Short need.bytes
         | Some m ->
-            publish d l m (local_word m.address ~per_tpc:need.per_tpc);
+            let untaken =
+              publish d l m (local_word m.address ~per_tpc:need.per_tpc)
+            in
             l.per_thread <- need.per_thread;
+            Option.iter l.path.free untaken;
             Served)
 
 (* Retired rings *)
@@ -725,7 +745,7 @@ let drop_ring l a =
   match List.find_opt at l.rings with
   | Some ({ ring = Some m; _ } as r) ->
       l.rings <- List.filter (fun r' -> r' != r) l.rings;
-      give l.path.free m
+      l.path.free m
   | Some { ring = None; _ } | None -> ()
 
 (* Gives back the rings the device retired whose work its word passed. *)
@@ -750,9 +770,9 @@ let freed (p : _ path) ~parent h =
       | Ok () -> true
       | Error _ | (exception Fault _) -> false)
 
-(* Gives back the set [s]: its channels, then their memory, which the GPU no
-   longer reads once the RM freed them; a set the RM did not free keeps its
-   memory. *)
+(* Gives back the set [s]: its channels, their C record, then their memory,
+   which the GPU no longer reads once the RM freed them; a set the RM did not
+   free keeps its memory. *)
 let drop_channels l s =
   let unregistered =
     Array.for_all Fun.id
@@ -768,11 +788,9 @@ let drop_channels l s =
     freed l.path ~parent:device s.debugger
     && freed l.path ~parent:device s.group
   in
-  if unregistered && freed then begin
-    give l.path.free s.block;
-    Array.iter (give l.path.free) s.notifiers
-  end;
-  if s.record <> 0 then free_channels s.record
+  if s.record <> 0 then free_channels s.record;
+  if unregistered && freed then
+    each l.path.free (s.block :: Array.to_list s.notifiers)
 
 (* Gives back the sets of channels neither installed nor handed. No work
    uses them: a room installs a set once the device reached every value
@@ -785,8 +803,9 @@ let retire_channels d l =
   | sets ->
       let installed, handed = channels_state d.self in
       let kept s = s.id = installed || s.id = handed in
-      l.sets <- List.filter kept sets;
-      List.iter (drop_channels l) (List.filter (fun s -> not (kept s)) sets)
+      let left, dropped = List.partition kept sets in
+      l.sets <- left;
+      each (drop_channels l) dropped
 
 let local d n =
   check_held "Rig_nv_abi.Gpu.local";
@@ -795,7 +814,7 @@ let local d n =
   | Stopped -> Error "the device is stopped"
   | Short bytes ->
       Error (strf "no GPU memory for %d bytes of local memory" bytes)
-  | exception Fault why -> Error why
+  | Failed why -> Error why
 
 (* Templates *)
 
@@ -1323,10 +1342,14 @@ let alloc (T d) (memory : Rig_edge.memory) n =
               ignore (count d d.self 1 : bool);
               Some (region d p (Some d.self) n m)))
 
-(* A region holds its device: rig frees it on that device. *)
+(* A region holds its device: rig frees it on that device. Its flush entry
+   goes first, with nothing allocated before it, so that a free the path fails
+   leaves the count right. *)
 let free (T _) (R r) =
-  give r.free r.mem;
-  Option.iter (fun src -> ignore (count r.dev src (-1) : bool)) r.flush
+  (match r.flush with
+  | Some src -> ignore (count r.dev src (-1) : bool)
+  | None -> ());
+  r.free r.mem
 
 let address (R r) = r.mem.address
 
@@ -1359,7 +1382,7 @@ let map_peer (T d) (T _) (R r) =
           | Some src when count d src 1 ->
               Some (region d l.path (Some src) r.bytes m)
           | Some _ ->
-              give l.path.free m;
+              l.path.free m;
               None))
 
 let map_host (T d) a n =
@@ -1568,6 +1591,7 @@ let set_up c name (k : Cubin.kernel) =
   match c.grow_local bytes with
   | Short n -> Rig_edge.No_memory n
   | Stopped -> raise (Fault "the device is stopped")
+  | Failed why -> raise (Fault why)
   | Served -> (
       let code = c.base + k.code in
       let local = Abi.Local_memory.make c.gpu bytes in
@@ -1716,8 +1740,10 @@ let sleep (T d) ~seen ~still_ms =
 
 (* Loss *)
 
-(* Stops [d], whose live state was [l]. *)
-let halt d l =
+(* Whether the path unregistered every channel of [l] and the RM freed every
+   set. The first set the RM does not free ends the frees: a GPU that cannot
+   free one frees none of the others either. *)
+let end_channels l =
   let ok f =
     match f () with Ok () -> true | Error _ | (exception Fault _) -> false
   in
@@ -1729,8 +1755,6 @@ let halt d l =
          l.sets)
   in
   let device = l.path.device in
-  (* The first set the RM does not free ends the frees: a GPU that cannot
-     free one frees none of the others either. *)
   let freed =
     List.for_all
       (fun s ->
@@ -1738,45 +1762,82 @@ let halt d l =
         && freed l.path ~parent:device s.group)
       l.sets
   in
+  unregistered && freed
+
+(* Gives back the memory [l]'s work used, all of it whatever a free raises. *)
+let give_owned l =
+  let sets =
+    List.concat_map (fun s -> s.block :: Array.to_list s.notifiers) l.sets
+  and rings = List.filter_map (fun r -> r.ring) l.rings
+  and retired = List.map (fun (r : _ retired) -> r.mem) l.local_retired in
+  each l.path.free
+    (List.concat
+       [
+         l.owned;
+         sets;
+         rings;
+         Option.to_list l.local_current;
+         Option.to_list l.local_pending;
+         retired;
+       ])
+
+(* Never raised: [halt]'s mark that nothing raised. *)
+exception Unraised
+
+(* Stops [d], whose live state was [l]. Each step runs whatever the one before
+   raised, and the first exception passes on at the end, a path's [Fault]
+   from a free included: the path's stop, which lets the GPU open again, and
+   the C state's end follow the channels' end with nothing allocated between,
+   so an exception that lands in the channels' end, an asynchronous one too,
+   leaves the device stopped as one whose channels the RM kept. *)
+let halt d l =
+  let first = ref Unraised in
+  let ended =
+    match end_channels l with
+    | ended -> ended
+    | exception e ->
+        first := e;
+        false
+  in
   (* No work on another device uses this GPU's memory once it is lost
      ([Rig]'s loss section), so their submissions stop reading its flush word
      before the path may unmap it. *)
   drop_flush d.self;
-  let path = try l.path.stop () with Fault _ -> `Unknown in
-  let stopped = (unregistered && freed) || path = `Stopped in
-  if stopped then begin
-    raise_word d.self;
-    (* The work no longer runs: what it used goes back, and a failure to give
-       some back leaves the device stopped. *)
-    List.iter (give l.path.free) l.owned;
-    List.iter
-      (fun s ->
-        give l.path.free s.block;
-        Array.iter (give l.path.free) s.notifiers)
-      l.sets;
-    List.iter (fun r -> Option.iter (give l.path.free) r.ring) l.rings;
-    Option.iter (give l.path.free) l.local_current;
-    Option.iter (give l.path.free) l.local_pending;
-    List.iter (fun (r : _ retired) -> give l.path.free r.mem) l.local_retired
-  end
-    (* The RM stopped both channels on a fault: nothing runs, though their
-       objects stay. Otherwise their own releases bring the word up as their
-       work ends. A word raised here could be lowered by a late release: a
-       channel the RM did not stop would find its waits on the word met and
-       release its own values. *)
-  else if notification d.self 0 <> 0 && notification d.self 1 <> 0 then
+  let path =
+    match l.path.stop () with
+    | path -> path
+    | exception Fault _ -> `Unknown
+    | exception e ->
+        if !first == Unraised then first := e;
+        `Unknown
+  in
+  let stopped = ended || path = `Stopped in
+  (* The RM stopped both channels on a fault: nothing runs, though their
+     objects stay. Otherwise their own releases bring the word up as their work
+     ends. A word raised here could be lowered by a late release: a channel the
+     RM did not stop would find its waits on the word met and release its own
+     values. *)
+  if stopped || (notification d.self 0 <> 0 && notification d.self 1 <> 0) then
     raise_word d.self;
   end_state d.self stopped;
-  List.iter (fun s -> if s.record <> 0 then free_channels s.record) l.sets
+  List.iter (fun s -> if s.record <> 0 then free_channels s.record) l.sets;
+  (* The work no longer runs: what it used goes back. *)
+  (if stopped then
+     match give_owned l with
+     | () -> ()
+     | exception e -> if !first == Unraised then first := e);
+  if !first != Unraised then raise !first
 
+(* The live state leaves [d] with nothing allocated between the take and the
+   give, so that an exception after the take leaves the halt to run. One
+   that ends a contended take, from a signal handler, leaves [d] unstopped
+   and its GPU held. *)
 let stop (T d) ~fault:_ =
-  let l =
-    protect d.local_lock @@ fun () ->
-    let l = d.live in
-    d.live <- None;
-    l
-  in
-  Option.iter (halt d) l
+  take_lock d.local_lock;
+  let l = d.live in
+  d.live <- None;
+  give_lock d.local_lock;
+  match l with Some l -> halt d l | None -> ()
 
 let rm (T d) =
   let p = (live d).path in

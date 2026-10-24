@@ -46,8 +46,10 @@
     no other call of either on the device between them. A function that
     calls the RM returns the RM's refusal of its arguments as its result,
     [None] or [Error], and raises {!Fault} for any other failure;
-    {!signaled}, {!val-free} and {!val-stop} never raise it, and {!make}
-    returns it as [Error].
+    {!signaled} never raises it, and {!make} returns it as [Error]. A
+    path's [free] that fails keeps the memory it was given, and its {!Fault}
+    passes on: from {!val-free}, and from {!val-stop} once it has stopped the
+    device and given back every other memory.
 
     The capability's [local] and the paths' openers, called from a callback
     inside a lock ([Rig]'s domains section), raise [Invalid_argument],
@@ -380,9 +382,8 @@ val capability : t -> Rig_nv_abi.Gpu.t
     virtual address space for the GPU, reads what the device needs, and
     gives it all to {!make} as a {!type-path}. {!make} allocates everything
     else the device holds, its channels and their memory, through the
-    path. What the driver does when a path or the RM refuses or fails a
-    call, such as a [stop] that answers [`Unknown] or a [free] that raises,
-    is untested. *)
+    path. What the driver does when a path or the RM refuses a call, such
+    as a [stop] that answers [`Unknown], is untested. *)
 
 type params =
   (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
