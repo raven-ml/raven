@@ -101,16 +101,13 @@ val apply3 :
 val at : 'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [at p c] is the constant [c] computed at [p] for an operation that reads it:
     each device computes its window, whole along each axis [c]'s operation keeps
-    whole ({!Route.keeps}), and keeps its window in memory of its own. [c] keeps its results at [p]: it computes once per
-    placement within a domain; across domains, at most once per domain whose
-    first use races, every result equal bit for bit and the first one stored
-    kept. It takes no lock. A movement or a bitcast of a constant keeps nothing:
-    it is its operand read at [p], viewed. The constants [c] is computed from
-    are taken from their own results where an operation read them at the
-    placement [c] reads them, and are otherwise computed for this alone, once
-    each, and dropped. A kernel's refusal or decline raises here, naming the
-    function that made the constant. A value that is not a constant is returned
-    as it is. *)
+    whole ({!Route.keeps}), and keeps its window in memory of its own. A
+    movement or a bitcast of a constant is its operand read at [p], viewed.
+    The constants [c] is computed from each compute once at each placement an
+    operation reads them at, before that operation, and are dropped when [at]
+    returns. [c] keeps nothing: a second call computes it again. A kernel's
+    refusal or decline raises here, naming the function that made the constant.
+    A value that is not a constant is returned as it is. *)
 
 val wait : by:string -> ('v, 's, 'd) Value.t -> unit
 (** [wait ~by x] waits for the work [x]'s arrays depend on, then drains the

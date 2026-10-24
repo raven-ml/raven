@@ -2006,3 +2006,28 @@ let result_arrays op r =
   let acc = ref ([] : Nx_array.any array list) in
   iter_results (fun x -> acc := List.cons (any_arrays x) !acc) op r;
   Array.of_list (List.rev !acc)
+
+(* Constants *)
+
+let evaluate ~same ~reads f root p =
+  let computed = Hashtbl.create 16 in
+  let find (Node n) q =
+    List.find_map
+      (fun (q', r) -> if same q' q then Some r else None)
+      (Hashtbl.find_all computed n.id)
+  in
+  let missing (node, q) = Option.is_none (find node q) in
+  let result node q = Option.get (find node q) in
+  let stack = Stack.create () in
+  Stack.push (root, p) stack;
+  while not (Stack.is_empty stack) do
+    let ((Node n as node), q) as top = Stack.top stack in
+    if not (missing top) then ignore (Stack.pop stack)
+    else
+      match List.filter missing (reads node q) with
+      | [] ->
+          ignore (Stack.pop stack);
+          Hashtbl.add computed n.id (q, f result node q)
+      | deps -> List.iter (fun d -> Stack.push d stack) deps
+  done;
+  result root p

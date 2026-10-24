@@ -387,3 +387,20 @@ val result_arrays : 'r prim -> 'r -> Nx_array.any array array
 (** [result_arrays op r] is, per result of [op] in position order, the arrays
     of [r]'s value there: one per device of its placement. Raises
     [Invalid_argument] if a result is a constant. *)
+
+(** {1:constants Constants} *)
+
+val evaluate :
+  same:('p -> 'p -> bool) ->
+  reads:(node -> 'p -> (node * 'p) list) ->
+  ((node -> 'p -> 'a) -> node -> 'p -> 'a) ->
+  node ->
+  'p ->
+  'a
+(** [evaluate ~same ~reads f root p] is [f result root p], the results of the
+    constant [root] at [p]. [reads m q] is the constant operands [m] reads at
+    [q], each with where it reads them. Each node read from [(root, p)],
+    transitively, computes once at each place [same] tells apart, as
+    [f result m q], after the nodes it reads, whose results [result] gives. A
+    chain of any length takes no stack depth, and no result outlives the
+    call. *)

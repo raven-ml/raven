@@ -237,6 +237,33 @@ let keys_group =
           let y = Rng.fold_in_tensor batch i in
           equal (array int) [| 2; 3; 2 |] (Nx.shape (Rng.to_tensor y));
           equal (array int32) each (words y));
+      test "a key carried through splits costs a draw what one split does"
+        (fun () ->
+          let x =
+            Nx.place Count.on (host_of Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |])
+          in
+          let draw k = Nx.mul x (Rng.uniform ~key:k Nx.float32 [| 4 |]) in
+          let rec carried n k =
+            if n = 0 then k else carried (n - 1) (Rng.split k).(0)
+          in
+          let calls n =
+            let k = carried n (Rng.key 3) in
+            Nx_support.Counting.reset ();
+            ignore (draw k);
+            Nx_support.Counting.calls ()
+          in
+          equal ~msg:"kernel calls" int (calls 1) (calls 1000);
+          (* The same keys, each placed before it is split. *)
+          let rec placed n k =
+            if n = 0 then k
+            else placed (n - 1) (Rng.split (Rng.place Count.on k)).(0)
+          in
+          equal ~msg:"bits" (array int32)
+            (words (placed 1000 (Rng.key 3)))
+            (words (carried 1000 (Rng.key 3)));
+          equal ~msg:"draws" (array float_exact)
+            (read (draw (placed 1000 (Rng.key 3))))
+            (read (draw (carried 1000 (Rng.key 3)))));
       test "of_tensor computes nothing, from reversed words too" (fun () ->
           let t = Nx.place Count.on (host_of Nx.int32 [| 2 |] [| 1l; 2l |]) in
           let reversed = Nx.flip t in
@@ -1737,26 +1764,23 @@ let calls =
           fun key -> ignore (Rng.categorical ?key logits) ) );
   ]
 
-(* Keyless, unscoped and in a scope, and with a key: each as [name, (made,
-   under)], [made] the functions that made its key, which a rule receives when
-   the key, a value of every set, is computed under it. *)
+(* Keyless, unscoped and in a scope, and with a key: each as [name, under].
+   A scope's key is read on the host, which no rule receives. *)
 let keyings =
   let k = Rng.key 301 in
   let placed = Rng.place Nx.Host.on k in
   [
-    ("unscoped", ([], fun draw -> draw None));
-    ( "scoped",
-      ([ "Nx.Rng.key" ], fun draw -> Rng.with_key k (fun () -> draw None)) );
-    ("keyed", ([], fun draw -> draw (Some placed)));
+    ("unscoped", fun draw -> draw None);
+    ("scoped", fun draw -> Rng.with_key k (fun () -> draw None));
+    ("keyed", fun draw -> draw (Some placed));
   ]
 
-(* [f by keying made operands make under] for each sampler [by] and keying. *)
+(* [f by keying operands make under] for each sampler [by] and keying. *)
 let each_sampler f =
   List.iter
     (fun (name, (operands, make)) ->
       List.iter
-        (fun (keying, (made, under)) ->
-          f ("Nx.Rng." ^ name) keying made operands make under)
+        (fun (keying, under) -> f ("Nx.Rng." ^ name) keying operands make under)
         keyings)
     calls
 
@@ -1765,13 +1789,12 @@ let names =
     [
       test "every operation a sampler makes reaches a rule as the sampler"
         (fun () ->
-          each_sampler (fun by keying made _ make under ->
+          each_sampler (fun by keying _ make under ->
               let draw = make ~dead:false in
-              equal ~msg:(by ^ ", " ^ keying) (list string)
-                (List.sort String.compare (by :: made))
+              equal ~msg:(by ^ ", " ^ keying) (list string) [ by ]
                 (observed_names (fun () -> under draw))));
       test "a dead first operand names the sampler and the operand" (fun () ->
-          each_sampler (fun by keying _ operands make under ->
+          each_sampler (fun by keying operands make under ->
               if operands > 0 then
                 let draw = make ~dead:true in
                 let want = by ^ ": operand 1 was donated to Nx.copy" in

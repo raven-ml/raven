@@ -84,15 +84,12 @@ and node =
       by : string;
       op : 'r prim;
       layouts : Nx_array.Layout.t array;
-      memo : (unit Devices.placement * Nx_array.any array array) list Atomic.t;
     }
       -> node
       (** An operation whose every operand is a constant, applied by [by].
           [layouts] are its results', which its rule gave once
-          ({!Prim.layouts}). [memo] holds its results computed so far at the
-          placements an operation read it at: per result, one array per
-          device, of the device's window. A movement or a bitcast keeps none:
-          an operation reads it as a view of its operand's results. *)
+          ({!Prim.layouts}). It holds no results: each evaluation computes
+          them ({!Prim.evaluate}). *)
 
 and 'd any = Any : ('v, 's, 'd) t -> 'd any
 

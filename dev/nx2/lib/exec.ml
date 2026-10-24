@@ -227,42 +227,30 @@ let route_at : type r.
     | Route.Elementwise -> at_p ()
     | rule -> Route.at ~by rule shapes p
 
-(* How a constant's results are read: from its memo, where they are kept, or
-   computed into memory of their own. *)
-type policy = Memo | Fresh
-
-let find memo p =
-  List.find_map
-    (fun (q, a) -> if Devices.equal q p then Some a else None)
-    (Atomic.get memo)
-
-(* Keeps [a] as [p]'s results unless another domain stored first. *)
-let rec remember memo p a =
-  let old = Atomic.get memo in
-  match
-    List.find_map
-      (fun (q, _) -> if Devices.equal q p then Some () else None)
-      old
-  with
-  | Some () -> ()
-  | None ->
-      if not (Atomic.compare_and_set memo old ((p, a) :: old)) then
-        remember memo p a
-
-(* The constant operands of [node] at [p] not yet computed where it reads
-   them. *)
-let pending (Value.Node n) p =
+(* The constant operands of [node] at [p], each with where it reads them. *)
+let reads (Value.Node n) p =
   let r = route_at ~by:n.by n.op p in
   let found = ref [] in
   Prim.iteri
     (fun i x ->
       match x with
-      | Value.Deferred { node = Value.Node m as node; _ } ->
-          let q = r.operands.(i) in
-          if find m.memo q = None then found := (node, q) :: !found
+      | Value.Deferred { node; _ } -> found := (node, r.operands.(i)) :: !found
       | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> ())
     n.op;
   List.rev !found
+
+(* [x] at [q], a constant read from its computed results, [result]. *)
+let resolved : type v s d.
+    (Value.node -> unit Devices.placement -> A.any array array) ->
+    d Devices.placement ->
+    (v, s, d) Value.t ->
+    (v, s, d) Value.t =
+ fun result q x ->
+  match x with
+  | Value.Deferred { form; node; k } ->
+      let arrays = result node (Devices.rebrand q) in
+      make q ~shape:(L.shape form.layout) (typed form.dtype arrays.(k))
+  | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> x
 
 (* The host's device, at the brand of a value this library reads there: a
    check's flag, a value read out ({!on_host}). No value at it reaches a
@@ -713,7 +701,7 @@ and placed : type v s d e.
     =
  fun ~by p x ->
   match x with
-  | Value.Deferred _ -> Place.value ~by p (own (Devices.rebrand p) x)
+  | Value.Deferred _ -> Place.value ~by p (at (Devices.rebrand p) x)
   | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ ->
       if on_host_set p && not (on_host_set (Prim.placement x)) then wait ~by x;
       let y = Place.value ~by p x in
@@ -743,7 +731,7 @@ and defer : type r. by:string -> r Value.prim -> r =
  fun ~by op ->
   let layouts = Prim.layouts ~by op in
   let id = Atomic.fetch_and_add nodes 1 in
-  let node = Value.Node { id; by; op; layouts; memo = Atomic.make [] } in
+  let node = Value.Node { id; by; op; layouts } in
   (* Its operands are of every set, so its results are too. *)
   Prim.results_at None layouts
     (fun k form -> Value.Deferred { form; node; k })
@@ -997,12 +985,19 @@ and data_at : type d e.
       let v = A.get (on_host ~by x) idx in
       (v, data_at ~by idx rest)
 
-(* A constant read at [p] by an operation: a view of a constant is its operand's
-   results read at [p] and viewed; any other its results there, kept in its
-   memo, which every later read at [p] finds. *)
+(* The constant [x] computed at [p], each constant it reads computed once,
+   where it is read. *)
 and at : type v s d.
     d Devices.placement -> (v, s, d) Value.t -> (v, s, d) Value.t =
- fun p x -> through_views Memo p x
+ fun p x ->
+  match x with
+  | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> x
+  | Value.Deferred { form; node; k } ->
+      let arrays =
+        Prim.evaluate ~same:Devices.equal ~reads compute_node node
+          (Devices.rebrand p)
+      in
+      make p ~shape:(L.shape form.layout) (typed form.dtype arrays.(k))
 
 (* [x]'s elements in an array on the host: a constant computed there, any other
    value placed there. *)
@@ -1096,141 +1091,10 @@ and outcome : type d e. by:string -> (d, e) issued -> exn option =
     in
     Some (failed ~by first c.shape c.data c.fail)
 
-(* The constant [c] computed at [p] into memory of its own, its operands taken
-   from their memos or computed for this alone: a value given to a caller shares
-   no memory with a memo. A view of a constant views its operand computed into
-   memory of its own. *)
-and own : type v s d.
-    d Devices.placement -> (v, s, d) Value.t -> (v, s, d) Value.t =
- fun p x -> through_views Fresh p x
-
-(* The constant [x] at [p]: the chain of views it reads descended to the first
-   operation that is not one, whose results [policy] gives at the placement the
-   chain reads it at, then each view replayed outward over its operand's. A
-   chain of any length takes no stack depth. *)
-and through_views : type v s d.
-    policy -> d Devices.placement -> (v, s, d) Value.t -> (v, s, d) Value.t =
- fun policy p x ->
-  match x with
-  | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> x
-  | Value.Deferred { form; node; k } ->
-      (* Each view and where it is read, the innermost first. A view, a Move
-         or a Bitcast, keeps no results of its own: it is read through to its
-         operand's. *)
-      let views = ref [] and node = ref node in
-      let key = ref (Devices.rebrand p) in
-      let continue = ref true in
-      while !continue do
-        let (Value.Node n) = !node in
-        match n.op with
-        | Value.Move (_, Value.Deferred { node = m; _ })
-        | Value.Bitcast (_, Value.Deferred { node = m; _ }) ->
-            views := (!node, !key) :: !views;
-            key := (route_at ~by:n.by n.op !key).operands.(0);
-            node := m
-        | Value.Move _ | Value.Bitcast _ | Value.Map _ | Value.Reduce _
-        | Value.Scan _ | Value.Gather _ | Value.Scatter _ | Value.Sort _
-        | Value.Fft _ | Value.Linalg _ | Value.Fold _ | Value.Assemble _
-        | Value.Contract _ | Value.Copy _ | Value.Place _ | Value.Check _ ->
-            continue := false
-      done;
-      let (Value.Node n) = !node in
-      let base =
-        match policy with
-        | Fresh -> evaluate !node !key
-        | Memo -> (
-            match find n.memo !key with
-            | Some a -> a
-            | None ->
-                remember n.memo !key (evaluate !node !key);
-                Option.get (find n.memo !key))
-      in
-      (* A view's one operand is the constant read just before it. *)
-      let replay arrays (view, key) =
-        let operand (type w r e) (q : e Devices.placement)
-            (y : (w, r, e) Value.t) : (w, r, e) Value.t =
-          match y with
-          | Value.Deferred { form; k; _ } ->
-              make q ~shape:(L.shape form.layout) (typed form.dtype arrays.(k))
-          | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ ->
-              y
-        in
-        compute_node ~resolve:operand view key
-      in
-      let arrays = List.fold_left replay base !views in
-      make p ~shape:(L.shape form.layout) (typed form.dtype arrays.(k))
-
-(* [root]'s results at [p], fresh: the constants it reads are taken from their
-   memos where an operation read them at the placement it reads them, and
-   computed otherwise in a table of this evaluation's alone, dropped after. Each
-   node computes once in an evaluation, in dependency order, with a stack of its
-   own: a chain of any length takes no stack depth. *)
-and evaluate root p =
-  match pending root p with
-  | [] -> compute_node ~resolve:memoised root p
-  | _ -> evaluate_all root p
-
-(* A constant operand at [q], from its memo: every one an operation reads is
-   there. *)
-and memoised : type v s d.
-    d Devices.placement -> (v, s, d) Value.t -> (v, s, d) Value.t =
- fun q x ->
-  match x with
-  | Value.Deferred { form; node = Value.Node n; k } ->
-      let arrays = Option.get (find n.memo (Devices.rebrand q)) in
-      make q ~shape:(L.shape form.layout) (typed form.dtype arrays.(k))
-  | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> x
-
-(* [evaluate] where some constant [root] reads is in no memo. *)
-and evaluate_all root p =
-  let local = Hashtbl.create 16 in
-  let lookup (Value.Node n) q =
-    match find n.memo q with
-    | Some a -> Some a
-    | None ->
-        List.find_map
-          (fun (q', a) -> if Devices.equal q' q then Some a else None)
-          (Option.value ~default:[] (Hashtbl.find_opt local n.id))
-  in
-  (* How this evaluation reads a constant operand at [q]: from its memo or from
-     the evaluation's own table. *)
-  let resolve (type v s d) (q : d Devices.placement) (x : (v, s, d) Value.t) :
-      (v, s, d) Value.t =
-    match x with
-    | Value.Deferred { form; node; k } ->
-        let arrays = Option.get (lookup node (Devices.rebrand q)) in
-        make q ~shape:(L.shape form.layout) (typed form.dtype arrays.(k))
-    | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> x
-  in
-  let missing node q =
-    List.filter (fun (dep, q) -> lookup dep q = None) (pending node q)
-  in
-  let stack = Stack.create () in
-  List.iter (fun d -> Stack.push d stack) (missing root p);
-  while not (Stack.is_empty stack) do
-    let (Value.Node n as top), q = Stack.top stack in
-    if lookup top q <> None then ignore (Stack.pop stack)
-    else
-      match missing top q with
-      | [] ->
-          ignore (Stack.pop stack);
-          let a = compute_node ~resolve top q in
-          let kept = Option.value ~default:[] (Hashtbl.find_opt local n.id) in
-          Hashtbl.replace local n.id ((q, a) :: kept)
-      | deps -> List.iter (fun d -> Stack.push d stack) deps
-  done;
-  compute_node ~resolve root p
-
 (* [node]'s results at [p], its constant operands already computed where it
-   reads them. *)
-and compute_node :
-    resolve:
-      ('v 's 'd.
-       'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t) ->
-    Value.node ->
-    unit Devices.placement ->
-    A.any array array =
- fun ~resolve (Value.Node n) p ->
+   reads them, as [result] gives them. *)
+and compute_node result (Value.Node n) p =
+  let resolve q x = resolved result q x in
   let by = n.by in
   match n.op with
   | Value.Move (mv, x) when uncut p ->
@@ -1256,7 +1120,7 @@ and compute_node :
       if Devices.equal q p then Prim.result_arrays op' r
       else
         (* Each device of [p] keeps its window, cut from its window at [q], in
-           memory of its own, so that no memo holds more. *)
+           memory of its own, so that it holds no more. *)
         let per = ref [] in
         Prim.iter_results
           (fun y ->

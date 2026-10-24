@@ -159,9 +159,8 @@ let coords axis =
 let constants =
   group "constants"
     [
-      test
-        "a constant read computes once per placement, its intermediates once \
-         per read" (fun () ->
+      test "a constant read computes each node it reads once, at each read"
+        (fun () ->
           let one = fresh_one () in
           let c = Exec.apply2 ~by:"t" (Binary Add) D.Float32 one one in
           let d = Exec.apply2 ~by:"t" (Binary Mul) D.Float32 c c in
@@ -172,30 +171,38 @@ let constants =
           equal ~msg:"reading e" int 4 (C.calls ());
           C.reset ();
           ignore (Exec.at at1 e);
-          equal ~msg:"reading e again" int 0 (C.calls ());
-          ignore (Exec.at at1 d);
-          (* e's intermediates were its read's alone: one, c and d again. *)
-          equal ~msg:"reading d" int 3 (C.calls ());
+          equal ~msg:"reading e again" int 4 (C.calls ());
           C.reset ();
           ignore (Exec.at at1 d);
-          equal ~msg:"reading d again" int 0 (C.calls ()));
-      test "a read keeps the read constant's results, and no intermediate's"
+          equal ~msg:"reading d" int 3 (C.calls ()));
+      test "a constant read at two placements in one read computes at each"
         (fun () ->
-          let one = fresh_one () in
-          let c = Exec.apply2 ~by:"t" (Binary Add) D.Float32 one one in
-          let d = Exec.apply2 ~by:"t" (Binary Mul) D.Float32 c c in
-          let kept (type v s) (x : (v, s, b) Value.t) =
-            match x with
-            | Value.Deferred { node = Value.Node n; _ } ->
-                List.length (Atomic.get n.memo)
-            | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _
-              ->
-                -1
+          let c =
+            first
+              (Exec.run ~by:"t"
+                 (Value.Map
+                    {
+                      layout = Nx_array.Layout.contiguous [| 4 |];
+                      prog = coords 0;
+                      outs = Value.[ D.Float32 ];
+                      loads = [||];
+                    }))
           in
-          ignore (Exec.at at1 d);
-          equal ~msg:"d" int 1 (kept d);
-          equal ~msg:"c" int 0 (kept c);
-          equal ~msg:"one" int 0 (kept one));
+          let sorted, _ =
+            Exec.run ~by:"t"
+              (Value.Sort { axis = 0; descending = true; k = None; x = c })
+          in
+          let e = Exec.apply2 ~by:"t" (Binary Add) D.Float32 sorted c in
+          C.reset ();
+          let y = Exec.at split e in
+          (* The add reads [c] split, a window on each device; the sort reads
+             it whole on each device and cuts its results to the windows: [c]
+             twice on each device, then the sort and the add once on each. *)
+          equal ~msg:"split" int 8 (C.calls ());
+          equal (array bits) [| 3.; 3.; 3.; 3. |] (elements y);
+          C.reset ();
+          ignore (Exec.at at1 e);
+          equal ~msg:"on one device" int 3 (C.calls ()));
       test "a chain of constants computes in one pass per node, at any length"
         (fun () ->
           let n = 100_000 in

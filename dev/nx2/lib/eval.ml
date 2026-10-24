@@ -172,46 +172,36 @@ let replayed : type r d.
 
 (* [x], a formula [i]'s rule did not return, as [i]'s results on its nodes:
    each node's operation rebuilt at [x]'s brand and given to [i]'s rule in
-   dependency order, each once, with a stack of its own: a chain of any length
-   takes no stack depth. A node of a formula [i]'s rule returned is read as it
-   is. *)
+   dependency order, each once. A node of a formula [i]'s rule returned is read
+   as it is. *)
 let replay (type v s d) i (x : (v, s, d) t) : (v, s, d) t =
-  let results : (int, d any array) Hashtbl.t = Hashtbl.create 8 in
-  let known id = is_formula i id || Hashtbl.mem results id in
-  let sub : type w q e. (w, q, e) t -> (w, q, d) t = function
+  let sub result (type w q e) (y : (w, q, e) t) : (w, q, d) t =
+    match y with
     | Deferred { form; node = Node n as node; k } ->
         if is_formula i n.id then
           Deferred { form = { form with placement = None }; node; k }
-        else Prim.expect form.dtype (Hashtbl.find results n.id).(k)
+        else Prim.expect form.dtype (result node ()).(k)
     | Array _ | Shards _ | Donated _ | Traced _ ->
         invalid_arg "Eval: a formula's operand is a formula"
   in
-  let missing (Node n) =
+  let reads (Node n) () =
     let (Prim.Operands xs) = Prim.operands n.op in
     List.filter_map
       (fun (Any y) ->
         match y with
-        | Deferred { node = Node m as node; _ } when not (known m.id) ->
-            Some node
+        | Deferred { node = Node m as node; _ } when not (is_formula i m.id) ->
+            Some (node, ())
         | Deferred _ | Array _ | Shards _ | Donated _ | Traced _ -> None)
       xs
   in
-  let stack = Stack.create () in
-  (match x with
-  | Deferred { node; _ } -> Stack.push node stack
-  | Array _ | Shards _ | Donated _ | Traced _ -> ());
-  while not (Stack.is_empty stack) do
-    let (Node n as top) = Stack.top stack in
-    if known n.id then ignore (Stack.pop stack)
-    else
-      match missing top with
-      | [] ->
-          ignore (Stack.pop stack);
-          let rs = replayed i ~by:n.by sub n.op in
-          Hashtbl.replace results n.id (Array.of_list rs)
-      | deps -> List.iter (fun d -> Stack.push d stack) deps
-  done;
-  sub x
+  let rebuilt result (Node n) () =
+    Array.of_list (replayed i ~by:n.by (fun y -> sub result y) n.op)
+  in
+  match x with
+  | Deferred { form; node; k } ->
+      let same () () = true in
+      Prim.expect form.dtype (Prim.evaluate ~same ~reads rebuilt node ()).(k)
+  | Array _ | Shards _ | Donated _ | Traced _ -> x
 
 (* Whether [i]'s rule receives [x] changed: for an [Extent], a formula its
    rule did not return replayed. *)

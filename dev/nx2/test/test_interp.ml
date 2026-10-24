@@ -1442,6 +1442,117 @@ let test_jvp_cast () =
   equal ~msg:"primal" (array float_exact) [| 1.5; -2. |] (elements y);
   equal ~msg:"tangent" (array float_exact) [| 0.25; 3. |] (elements t)
 
+(* (e) Constants with shared nodes: a DAG of creations and operations on them,
+   read on the host or replayed into an Extent whose rule computes as eager,
+   gives the bits of the same expression over placed creations. *)
+
+type dag_node =
+  | Fill of float
+  | Coords
+  | Flip of int
+  | Binary of int * int * int  (* A kind of [binary], then two nodes. *)
+
+let binary = function
+  | 0 -> Nx.add
+  | 1 -> Nx.sub
+  | 2 -> Nx.mul
+  | 3 -> Nx.div
+  | _ -> Nx.maximum
+
+let fills = [| 0.; -0.; 1.5; -2.; Float.infinity; Float.neg_infinity; nan |]
+let chain_length = 1000
+
+let pp_dag_node ppf = function
+  | Fill v -> Format.fprintf ppf "Fill %h" v
+  | Coords -> Format.fprintf ppf "Coords"
+  | Flip a -> Format.fprintf ppf "Flip %d" a
+  | Binary (k, a, b) -> Format.fprintf ppf "Binary (%d, %d, %d)" k a b
+
+let pp_dag ppf (shape, nodes) =
+  Format.fprintf ppf "%a: %a" pp_shape shape
+    (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_dag_node)
+    (Array.to_list nodes)
+
+(* Node [i] from its draws: a creation, or an operation of earlier nodes. In a
+   chain, each node past the first is an operation whose first operand is node
+   [i - 1]. *)
+let dag_node ~chain i (kind, v, (a, b)) =
+  let first = if chain then i - 1 else a mod max i 1 in
+  if i = 0 then if kind mod 2 = 0 then Coords else Fill fills.(v)
+  else
+    match kind with
+    | 0 when not chain -> Fill fills.(v)
+    | 1 when not chain -> Coords
+    | 0 | 1 | 2 -> Flip first
+    | k -> Binary (k - 3, first, b mod i)
+
+let dag_case =
+  let open Gen in
+  let* chain = frequency [ (3, constant false); (1, constant true) ] in
+  let* n = if chain then constant chain_length else int_range 1 8 in
+  let* shape =
+    of_list [ [||]; [| 0 |]; [| 1 |]; [| 3 |]; [| 2; 0 |]; [| 2; 3 |] ]
+  in
+  let draw = triple (int_range 0 7) (int_range 0 6) (pair nat nat) in
+  with_pp pp_dag
+    (map
+       (fun draws -> (shape, Array.mapi (dag_node ~chain) draws))
+       (array ~size:(constant n) draw))
+
+let dag_operands = function
+  | Fill _ | Coords -> []
+  | Flip a -> [ a ]
+  | Binary (_, a, b) -> List.sort_uniq compare [ a; b ]
+
+(* Whether a node the root reaches is read by two nodes it reaches. *)
+let diamond nodes =
+  let n = Array.length nodes in
+  let reached = Array.make n false and readers = Array.make n 0 in
+  reached.(n - 1) <- true;
+  for i = n - 1 downto 0 do
+    if reached.(i) then
+      List.iter
+        (fun a ->
+          reached.(a) <- true;
+          readers.(a) <- readers.(a) + 1)
+        (dag_operands nodes.(i))
+  done;
+  Array.exists (fun r -> r >= 2) readers
+
+(* The DAG's root, each creation passed through [leaf]. *)
+let dag leaf shape nodes =
+  let numel = Array.fold_left ( * ) 1 shape in
+  let coords () =
+    Nx.reshape shape (Nx.arange_f f32 0. (Float.of_int numel) 1.)
+  in
+  let vs = Array.make (Array.length nodes) (Nx.zeros f32 shape) in
+  Array.iteri
+    (fun i node ->
+      vs.(i) <-
+        (match node with
+        | Fill v -> leaf (Nx.full f32 shape v)
+        | Coords -> leaf (coords ())
+        | Flip a -> Nx.flip vs.(a)
+        | Binary (k, a, b) -> binary k vs.(a) vs.(b)))
+    nodes;
+  vs.(Array.length nodes - 1)
+
+let law_dag (shape, nodes) =
+  cover "a zero-size shape" (Array.mem 0 shape);
+  cover "a node read by two others" (diamond nodes);
+  cover "a chain of a thousand" (Array.length nodes = chain_length);
+  let bits x = Array.map Int64.bits_of_float (elements x) in
+  let eager = bits (dag (Nx.place Nx.Host.on) shape nodes) in
+  let c = dag Fun.id shape nodes in
+  equal ~msg:"of every set" bool true (Option.is_none (Nx.placement c));
+  equal ~msg:"read" (array int64) eager (bits c);
+  let replayed =
+    Nx.Prim.interpret ~name:"test.dag" Extent
+      (fun _ ~by op -> Nx.Prim.eval ~by op)
+      (fun _ -> Nx.place Nx.Host.on c)
+  in
+  equal ~msg:"replayed" (array int64) eager (bits replayed)
+
 let interpreters =
   group "interpreters"
     [
@@ -1463,6 +1574,8 @@ let interpreters =
         test_every;
       prop ~count:100 "a staged function over captured formulas equals eager"
         staged_case law_staged;
+      prop "a constant with shared nodes, read or replayed, computes as eager"
+        dag_case law_dag;
       test "a capture takes literals from creations" test_capture;
       test "staging hands a call on a derivative's values to it" test_hand_off;
     ]
@@ -2042,6 +2155,17 @@ let memory =
       test "an operation a rule applies keeps no bytes" (fun () ->
           let within () = evaluating "test.extent" (fun _ -> moved ()) in
           equal int 0 (held_after within));
+      test "a constant keeps no bytes once a use of it returns" (fun () ->
+          let kept = ref [] in
+          let use () =
+            let z () = Nx.zeros f32 [| 1024 |] in
+            let c = Nx.add (z ()) (z ()) in
+            let x = Nx.place Mem.on (Nx.zeros f32 [| 1024 |]) in
+            ignore (Sys.opaque_identity (Nx.add x c));
+            kept := c :: !kept
+          in
+          equal int 0 (held_after use);
+          ignore (Sys.opaque_identity !kept));
     ]
 
 (* The rule on two domains: each domain's operations go where the rule says,

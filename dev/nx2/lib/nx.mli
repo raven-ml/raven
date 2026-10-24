@@ -132,10 +132,10 @@ val unpack : ('v, 's) dtype -> 'd packed -> ('v, 's, 'd) t
     values alone, is a value of every set: its type is polymorphic in ['d]. It
     is a formula and holds no bytes. Each operation that needs its elements
     computes it on that operation's set, {!place} computes it at a placement,
-    and a read computes it on the host. Its {!placement} is [None]. An operation
-    that reads such a value keeps the elements it computed, once per placement,
-    for as long as the value lives; the values it was computed from keep none
-    for it. {!place} gives a value memory of its own. {!zeros_like} and {!copy}
+    and a read computes it on the host. Its {!placement} is [None]. It keeps no
+    elements: each use computes it again, each value it is made from once at
+    each placement that use reads it at. {!place} gives a value memory of its
+    own, which later uses read without computing it. {!zeros_like} and {!copy}
     make a value from another, where it lies, and of every set from a value of
     every set. *)
 
@@ -3600,7 +3600,14 @@ module Rng : sig
   type +'d key = private 'd int32_t
   (** The type for keys, of shape [[|2|]], and batches of keys, of shape
       [[|…; 2|]]: two 32-bit words per key. Arithmetic on a key gives an array,
-      which no sampler takes. *)
+      which no sampler takes.
+
+      {!key}'s key is a value of every set, which each draw computes again
+      ({!Nx.section-creation}). {!split} and {!fold_in} of one key of every set
+      compute their keys' words on the host, as a read does, and give keys of
+      every set that hold them as numbers: a draw from one costs the same
+      however many keys it came from, so a key carried through a loop needs no
+      {!place}. *)
 
   (** {1:keys Keys} *)
 

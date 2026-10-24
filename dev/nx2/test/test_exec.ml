@@ -55,6 +55,24 @@ module Refusing = struct
     decline ()
 end
 
+(* Counting nx.cpu, and counting its LU and SVD factorizations apart. *)
+module Factoring = struct
+  include C
+
+  let name = "nx.factoring"
+  let factored = Atomic.make 0
+
+  let lu ~lu ~pivots ~perm a =
+    Atomic.incr factored;
+    C.lu ~lu ~pivots ~perm a
+
+  let svd ~s ?vectors a =
+    Atomic.incr factored;
+    C.svd ~s ?vectors a
+end
+
+module Factor = (val Nx.devices ~kernels:(module Factoring) [ m 3 ])
+module Factor2 = (val Nx.devices ~kernels:(module Factoring) [ m 2; m 3 ])
 module Refuse = (val Nx.devices ~kernels:(module Refusing) [ m 2 ])
 module Refuse2 = (val Nx.devices ~kernels:(module Refusing) [ m 2; m 3 ])
 
@@ -959,31 +977,64 @@ let constants =
           let h = on_host Plain D.Float32 [| 2 |] [| 1.; 2. |] in
           equal (array bits) [| 3.; 4. |] (elements (Nx.add a c));
           equal (array bits) [| 2.; 4. |] (elements (Nx.mul h c)));
-      test "a constant computes on its set once, at its first use there"
-        (fun () ->
+      test "a constant computes on its set at each use" (fun () ->
           let c = Nx.zeros D.Float32 [| 2 |] in
           let a = to_count (on_host Plain D.Float32 [| 2 |] [| 1.; 2. |]) in
           C.reset ();
           ignore (Nx.add a c);
-          let first = C.calls () in
+          equal ~msg:"kernel calls: the zeros, then the add" int 2 (C.calls ());
           C.reset ();
           ignore (Nx.add a c);
-          equal int 2 first;
-          equal int 1 (C.calls ()));
-      test "a constant read through a movement computes once, at its first use"
-        (fun () ->
+          equal ~msg:"kernel calls: both again" int 2 (C.calls ()));
+      test "a movement of a constant costs no kernel of its own" (fun () ->
           let c = Nx.scalar D.Float32 2. in
           let a = to_count (on_host Plain D.Float32 [| 2 |] [| 1.; 2. |]) in
-          ignore (Nx.add a c);
           C.reset ();
           let y = Nx.add a c in
-          equal ~msg:"kernel calls: the add alone" int 1 (C.calls ());
+          equal ~msg:"kernel calls: the fill, then the add" int 2 (C.calls ());
           equal (array bits) [| 3.; 4. |] (elements y);
-          let b = Nx.less a c in
-          C.reset ();
-          let w = Nx.where b c a in
-          equal ~msg:"kernel calls: the where alone" int 1 (C.calls ());
+          let w = Nx.where (Nx.less a c) c a in
           equal (array bits) [| 2.; 2. |] (elements w));
+      test "solve and lstsq of a constant beside a placed value factor it once"
+        (fun () ->
+          let a () =
+            Nx.add (Nx.eye D.Float64 3) (Nx.full D.Float64 [| 3; 3 |] 0.5)
+          in
+          let data =
+            on_host Plain D.Float64 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
+          in
+          let solve a b = Array.concat [ elements (Nx.solve a b) ] in
+          let lstsq a b =
+            let x, residuals, rank, s = Nx.lstsq a b in
+            Array.concat
+              [
+                elements x;
+                elements residuals;
+                Array.map Int64.to_float (elements rank);
+                elements s;
+              ]
+          in
+          let placed f =
+            f (Nx.place Factor.on (a ())) (Nx.place Factor.on data)
+          in
+          let one = Nx.place Factor.on data in
+          let check name ~factored want f b =
+            Atomic.set Factoring.factored 0;
+            let y = f (a ()) b in
+            equal ~msg:(name ^ ": factorizations") int factored
+              (Atomic.get Factoring.factored);
+            equal ~msg:(name ^ ": bits") (array bits) want y
+          in
+          (* Beside a cut [b], [a] lies whole on each device, which factors
+             it. *)
+          let rows = Nx.place (Factor2.split ~axis:0) data in
+          let columns = Nx.place (Factor2.split ~axis:1) data in
+          check "solve" ~factored:1 (placed solve) solve one;
+          check "solve, rows cut" ~factored:2 (placed solve) solve rows;
+          check "solve, columns cut" ~factored:2 (placed solve) solve columns;
+          check "lstsq" ~factored:1 (placed lstsq) lstsq one;
+          check "lstsq, rows cut" ~factored:2 (placed lstsq) lstsq rows;
+          check "lstsq, columns cut" ~factored:2 (placed lstsq) lstsq columns);
       test "placing a constant computes it at the placement, each time"
         (fun () ->
           let z = Nx.zeros D.Float32 [| 2 |] in

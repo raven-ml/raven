@@ -17,10 +17,10 @@
     Brands are phantom: nothing at run time reads ['d], and a value's arrays lie
     on its placement's devices whatever its brand. Two values can carry the same
     set at two brands only through {!rebrand}, which nx's engine alone calls: to
-    hold placements at [unit], in routes and constants' operands and memo keys,
-    and to bring one back to an operation's brand where it computes, reads a
-    value out on the host, or compares two placements. This module is nx's one
-    site that names nx.cpu.
+    hold placements at [unit], in routes and constants' evaluations, and to
+    bring one back to an operation's brand where it computes, reads a value out
+    on the host, or compares two placements. This module is nx's one site that
+    names nx.cpu.
 
     Errors are [Invalid_argument] naming the [by] the caller passes. *)
 
@@ -125,6 +125,10 @@ val with_leading_axis : 'd placement -> 'd placement
 val without_leading_axis : 'd placement -> 'd placement
 (** [without_leading_axis p] is [p] for a value that loses its axis 0: a grid
     axis that cut it holds copies, and each other cut axis moves down by one. *)
+
+val uncut : 'd placement -> 'd placement
+(** [uncut p] is [p] with every axis whole on each of its devices: a grid axis
+    that cut one holds copies. It is [p] itself if [p] cuts no axis. *)
 
 val rebrand : 'd placement -> 'e placement
 (** [rebrand p] is [p] at another brand. *)

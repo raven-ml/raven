@@ -191,19 +191,18 @@ let full_like x v = like ~by:"Nx.full_like" x v
 let zeros_like x = like ~by:"Nx.zeros_like" x (D.zero (dtype x))
 let ones_like x = like ~by:"Nx.ones_like" x (D.one (dtype x))
 
+(* The constant [c] placed beside [x], for a function that reads [c], or what
+   it computes from [c] alone, in several operations with [x]: each would
+   compute it again. Whole on each device, it serves [x] however [x] is cut,
+   whatever [c]'s rank. [c] itself where it is not a constant or [x] is. *)
+let held_beside ~by x c =
+  match Prim.at x with
+  | Some p when Prim.is_constant c -> Eval.place ~by (Devices.uncut p) c
+  | Some _ | None -> c
+
 (* The 0-d [v] of [dt] beside [x]. A 0-d value has no axis to cut: beside a
    cut [x] it is whole on each of [x]'s devices. *)
-let scalar_beside ~by x dt v =
-  let c = fill ~by dt [||] v in
-  match Prim.at x with
-  | None -> c
-  | Some p ->
-      let g = Devices.grid p in
-      let whole =
-        Array.fold_left (fun g (axis, _) -> Grid.uncut g ~axis) g (Grid.cuts g)
-      in
-      let p = if whole == g then p else Devices.v ~by (Devices.set p) whole in
-      Eval.eval ~by (Value.Place (p, c))
+let scalar_beside ~by x dt v = held_beside ~by x (fill ~by dt [||] v)
 
 let scalar_like x v = scalar_beside ~by:"Nx.scalar_like" x (dtype x) v
 
@@ -2878,6 +2877,7 @@ let solve_triangular ?(triangle = Lower) ?transpose ?(unit_diag = false) a b =
    factors' two triangles, read from the one matrix. *)
 let solve_by ~by a b =
   square_matrices ~by a;
+  let a = held_beside ~by b a in
   let f, _, perm = routine ~by (Lu a) in
   let perm = reshaped ~by (Array.append (shape perm) [| 1 |]) perm in
   let f, b, back = columns ~by ~rows:(dim (-1) a) f b in
@@ -2929,6 +2929,7 @@ let lstsq ?rtol a b =
   let a = Donate.read ~by 0 a in
   let b = Donate.read ~by 1 b in
   matrices ~by a;
+  let a = held_beside ~by b a and b = held_beside ~by a b in
   let m = dim (-2) a and n = dim (-1) a in
   let tol = cutoff ~by rtol a in
   let a', b', back = columns ~by ~rows:m a b in
@@ -3272,6 +3273,8 @@ let searchsorted ~side s v =
   keyed ~by s;
   if ndim s = 2 && (ndim v <> 2 || Prim.dim v 1 <> Prim.dim s 1) then
     invalid_argf "%s: rows %a sought among rows %a" by pp_value v pp_value s;
+  (* Each round of the search reads both. *)
+  let s = held_beside ~by v s and v = held_beside ~by s v in
   search ~by side s v
 
 (* Counted lengths *)
@@ -3478,6 +3481,7 @@ let histogram (type s d) ?weights
           points)
     weights;
   let bin (e, x) =
+    let e = held_beside ~by x e and x = held_beside ~by e x in
     let m = Prim.dim e 0 in
     let last =
       move ~by (Reshape [||])
@@ -4084,6 +4088,9 @@ let reduce_ranges c ~lo ~hi x =
   if ndim lo <> 1 || not (same_shape lo hi) then
     invalid_argf "%s: bounds %a and %a, not one of each per range" by pp_value
       lo pp_value hi;
+  (* Each level of the ranges reads the bounds and [x]'s table. *)
+  let x = held_beside ~by lo (held_beside ~by hi x) in
+  let lo = held_beside ~by x lo and hi = held_beside ~by x hi in
   let dt = dtype x and n = Prim.dim x 0 and m = Prim.dim lo 0 in
   let rows = Array.sub (shape x) 1 (ndim x - 1) in
   let start = identity ~by c dt in
@@ -4381,6 +4388,8 @@ let map_segments ~segments ids f x =
   then
     invalid_argf "%s: %a does not broadcast to the ids %a" by pp_value x
       pp_value ids;
+  (* The groups of [ids] are read by every operation of [f] over them. *)
+  let ids = held_beside ~by x ids in
   let row = Array.sub xs ns (Array.length xs - ns) in
   let positional = ns > 0 in
   let r =
@@ -4949,6 +4958,9 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
     let outs = Value.[ D.Float32 ] in
     Eval.eval ~by (Value.Map { layout; prog; outs; loads })
   in
+  (* Constant queries and keys give constant scores, which the contraction
+     with the values and the last select both read. *)
+  let m = held_beside ~by v m in
   let lse = reduce_by_one ~by (Logsumexp (0, D.Float32)) [| r - 1 |] m in
   (* A row whose [lse] is [-∞] has no visible key, or only [-∞] scores: its
      weights and [o] are zero, whatever its values hold. *)
@@ -5673,6 +5685,16 @@ let associative_scan ?axis:(a = 0) s f x =
       (Array.to_list (Array.map (fun (Value.Any t) -> P t) states))
   in
   let states, skeleton = flat x in
+  (* A constant state is placed beside a placed one: each level reads its
+     scan so far. *)
+  let states =
+    match
+      Array.find_opt (fun (Value.Any t) -> not (Prim.is_constant t)) states
+    with
+    | None -> states
+    | Some (Value.Any p) ->
+        Array.map (fun (Value.Any t) -> Value.Any (held_beside ~by p t)) states
+  in
   let axes = Array.map (fun (Value.Any t) -> axis ~by t a) states in
   Array.iteri
     (fun k (Value.Any t) ->

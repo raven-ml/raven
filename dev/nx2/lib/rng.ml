@@ -222,14 +222,24 @@ let to_tensor (k : 'd key) : (int32, D.int32_elt, 'd) Value.t = k
 let walk c k = of_tensor (Ptree.Walk.tensor c k)
 
 (* The keys [f ~key] gives at each element of [shape], whose last axes follow
-   [k]'s batch. *)
+   [k]'s batch. One key that is a constant is read on the host, as a read
+   computes a constant, and its words are written into the map, which then
+   reads nothing: a key made so is one map deep, however many keys it was made
+   from, so a key carried through a loop costs each draw the same. *)
 let keys ~by (k : 'd key) shape f : 'd key =
-  let w = pack ~by k in
-  let ins : D.any iarray = [| D.Any D.Uint64 |] in
-  let out = f ~key:(E.input 0 D.Uint64) in
-  let w = stretch ~by shape w in
   let u : (int64, D.uint64_elt, 'd) Value.t =
-    map ~by shape (P.of_exprs ~ins [| E.any out |]) D.Uint64 [| Value.Any w |]
+    if Prim.is_constant k && batch k = [||] then
+      let a = Exec.on_host ~by k in
+      let half i =
+        Int64.logand (Int64.of_int32 (Nx_array.get a [| i |])) 0xFFFF_FFFFL
+      in
+      let key = u64 (Int64.logor (half 0) (Int64.shift_left (half 1) 32)) in
+      map ~by shape (P.of_exprs ~ins:[||] [| E.any (f ~key) |]) D.Uint64 [||]
+    else
+      let ins : D.any iarray = [| D.Any D.Uint64 |] in
+      let out = f ~key:(E.input 0 D.Uint64) in
+      let w = stretch ~by shape (pack ~by k) in
+      map ~by shape (P.of_exprs ~ins [| E.any out |]) D.Uint64 [| Value.Any w |]
   in
   Eval.eval ~by (Value.Bitcast (D.Int32, u))
 
@@ -1174,6 +1184,12 @@ let dirichlet_by ~by ?key a =
   if r = 0 then invalid_argf "%s: concentrations of shape [] have no axis" by;
   require ~by "a" positive a;
   let key = resolve ~by ~after:1 key in
+  (* Three operations read [a]'s least element beside a placed key. *)
+  let a =
+    match Prim.at key with
+    | Some p when Prim.is_constant a -> Eval.place ~by (Devices.uncut p) a
+    | Some _ | None -> a
+  in
   let dt = Prim.dtype a in
   let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
   let shape = Array.append (batch key) s in
