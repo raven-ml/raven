@@ -18,7 +18,7 @@
     it consumed a handle's memory for its result leaves its donors dead: rig's
     consumption is one-way. A function that reads its operands in several
     operations claims them once, before the first ({!consume}), and reads
-    them as {!claimed} values.
+    them through {!read}.
 
     An interpretation reads a handle, or a claimed value, as its arrays
     ({!lent}) and kills nothing. Claims follow no order: racing consumers on
@@ -55,8 +55,8 @@ val is_handle : ('v, 's, 'd) Value.t -> bool
     not. *)
 
 val lent : ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
-(** [lent x] is a handle's or a {!claimed} value's arrays as a live value,
-    for an interpretation, which may keep it: their memory is shared
+(** [lent x] is the arrays of a handle, or of a value {!read} gave, as a live
+    value, for an interpretation, which may keep it: their memory is shared
     ({!Rig.Claim.share}), so no later donation writes there. A handle's donor
     lives on. Any other value is itself. *)
 
@@ -65,14 +65,35 @@ val lends : ('v, 's, 'd) Value.t -> bool
 
 val consume : by:string -> 'd Value.any list -> handle list
 (** [consume ~by xs] is the handles among [xs], claimed for the consumer [by]
-    of the operands [xs], which reads them through {!called}. It raises before
+    of the operands [xs], which reads them through {!read}. It raises before
     it claims any, as {!handles} does, then naming [by] for an operand that
     died, operand [i] being [xs]' element [i]. *)
 
 val consume_list : by:string -> 'd Value.any list -> 'd Value.any list
 (** [consume_list ~by xs] is [xs] as they were when [by], which is no
-    operation, consumed them ({!consume}): each handle as its arrays and each
-    of their donors among [xs] as a live value. *)
+    operation, consumed them ({!consume}): each handle and each of their donors
+    among [xs] {!read} as a live value. *)
+
+(** {1:reads A consumer's reads} *)
+
+type reads
+(** The type for the reads of a consumer of several operations. *)
+
+val reads : handle list -> reads
+(** [reads hs] reads for the consumer of the claimed handles [hs], none read
+    yet. *)
+
+val read : reads -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
+(** [read r x] is {!called}[ hs x], [hs] [r]'s handles, each handle and donor
+    of [hs] as a new {!Value.Claimed} value: an operation reads it as live and
+    claims nothing, {!donate} gives it back as it is, and an interpretation
+    receives it {!lent}. A second read of one donor shares its memory
+    ({!Rig.Claim.share}): the consumer may give back both values, which no
+    donation then writes under the other. *)
+
+val release : reads -> unit
+(** [release r] makes [r]'s reads live, once their consumer returned or
+    raised. *)
 
 (** {1:engine The engine's steps} *)
 
@@ -92,17 +113,6 @@ val called : handle list -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [called hs x] is [x] as it was when the consumer of the claimed handles
     [hs] was called: a handle as its arrays, a donor of one of [hs] as a live
     value, and any other value as it is. *)
-
-val claimed : handle list -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
-(** [claimed hs x] is {!called}[ hs x], each handle and donor of [hs] as a
-    {!Value.Claimed} value: an operation reads it as live and claims nothing,
-    {!donate} gives it back as it is, and an interpretation receives it
-    {!lent}. It is the read of a function that consumed [hs] for several
-    operations, until {!release}. *)
-
-val release : ('v, 's, 'd) Value.t -> unit
-(** [release x] makes the {!claimed} value [x] live, once the function that
-    claimed it returned. *)
 
 val unhandled : handle list -> 'r Value.prim -> 'r Value.prim
 (** [unhandled hs op] is [op] with each operand {!called}[ hs]. *)

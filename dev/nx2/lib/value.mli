@@ -33,7 +33,7 @@ type death =
           consumer tells its own donors by key. *)
   | Claimed
       (** Live over the memory of donors a call consumed, while that call
-          reads them ({!Donate.called}): its operations read it as live, an
+          reads them ({!Donate.read}): its operations read it as live, an
           interpretation receives it lent ({!Donate.lent}), and it is not
           donated again. *)
 (** Whether a value lives. Values are made [Live], a donor is [Offered] when

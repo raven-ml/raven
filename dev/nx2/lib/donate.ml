@@ -154,31 +154,38 @@ let unclaim hs =
       | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> ())
     hs
 
-(* Whether the word [w] is a donor's of one of the handles [hs]: offered, or
-   dead, under one of their keys. Every handle among [hs] was checked live, so
-   a word dead under one of their keys died to [hs]' claim. *)
-let ours hs (w : Value.death) =
-  match w with
-  | Value.Offered k | Value.Died { key = k; _ } ->
-      List.exists (fun h -> key h = k) hs
-  | Value.Live | Value.Claimed -> false
+(* The key of [y]'s donor where [y] is a handle, or a donor of one of the
+   handles [hs]: offered, or dead, under one of their keys. Every handle among
+   [hs] was checked live, so a word dead under one of their keys died to [hs]'
+   claim. *)
+let read_key (type v s d) hs (y : (v, s, d) Value.t) =
+  let ours (w : Value.death) =
+    match w with
+    | Value.Offered k | Value.Died { key = k; _ } ->
+        if List.exists (fun h -> key h = k) hs then Some k else None
+    | Value.Live | Value.Claimed -> None
+  in
+  match y with
+  | Value.Donated d -> Some d.key
+  | Value.Array r -> ours r.dead
+  | Value.Shards r -> ours r.dead
+  | Value.Deferred _ | Value.Traced _ -> None
 
-(* [y] as the consumer of the claimed handles [hs] reads it, each handle and
-   donor of one of [hs] as a value of death [dead] over its arrays. *)
-let read_as : type v s d.
-    Value.death -> handle list -> (v, s, d) Value.t -> (v, s, d) Value.t =
- fun dead hs y ->
+(* [y], a handle or a donor, as a value of death [dead] over its arrays. *)
+let renewed : type v s d.
+    Value.death -> (v, s, d) Value.t -> (v, s, d) Value.t =
+ fun dead y ->
   match y with
   | Value.Donated { at; shape; arrays; _ } ->
       if Iarray.length arrays = 1 then
         Value.Array { at; a = Iarray.get arrays 0; dead }
       else Value.Shards { at; shape; arrays; dead }
-  | Value.Array r when ours hs r.dead -> Value.Array { r with dead }
-  | Value.Shards r when ours hs r.dead -> Value.Shards { r with dead }
-  | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> y
+  | Value.Array r -> Value.Array { r with dead }
+  | Value.Shards r -> Value.Shards { r with dead }
+  | Value.Deferred _ | Value.Traced _ -> y
 
-let called hs y = read_as Value.Live hs y
-let claimed hs y = read_as Value.Claimed hs y
+let called hs y =
+  match read_key hs y with None -> y | Some _ -> renewed Value.Live y
 
 let unhandled hs op = Prim.map (fun y -> called hs y) op
 
@@ -191,30 +198,59 @@ let consume ~by xs =
   claim ~by hs;
   hs
 
+(* [y] with its arrays' memory shared: no later donation writes there. *)
+let shared y =
+  Iarray.iter (fun a -> Rig.Claim.share (A.buffer a)) (Prim.arrays y);
+  y
+
+(* Reads
+
+   A consumer of several operations reads each handle and donor among its
+   operands as a new value over the donor's arrays, which it may give back. A
+   second read of one donor is a second value over its memory, so it shares
+   the memory, as a view does: neither value is written in place, and a
+   donation of one leaves the other as it was. *)
+type reads = {
+  hs : handle list;
+  mutable keys : int list;  (* The donors read so far. *)
+  mutable words : Value.death Atomic.Loc.t list;  (* The reads' deaths. *)
+}
+
+let reads hs = { hs; keys = []; words = [] }
+
+let read (type v s d) r (y : (v, s, d) Value.t) : (v, s, d) Value.t =
+  match read_key r.hs y with
+  | None -> y
+  | Some k -> (
+      let z = renewed Value.Claimed y in
+      if List.mem k r.keys then ignore (shared z) else r.keys <- k :: r.keys;
+      match z with
+      | Value.Array s ->
+          r.words <- [%atomic.loc s.dead] :: r.words;
+          z
+      | Value.Shards s ->
+          r.words <- [%atomic.loc s.dead] :: r.words;
+          z
+      | Value.Donated _ | Value.Deferred _ | Value.Traced _ -> z)
+
+let release r = List.iter (fun w -> Atomic.Loc.set w Value.Live) r.words
+
 let consume_list ~by xs =
-  let hs = consume ~by xs in
-  List.map (fun (Value.Any x) -> Value.Any (called hs x)) xs
+  let r = reads (consume ~by xs) in
+  let ys = List.map (fun (Value.Any x) -> Value.Any (read r x)) xs in
+  release r;
+  ys
 
 (* A handle's arrays, or a claimed value's, which an interpretation may keep:
    shared, so that no later donation writes where they read. *)
 let lent (type v s d) (x : (v, s, d) Value.t) : (v, s, d) Value.t =
-  let share y =
-    Iarray.iter (fun a -> Rig.Claim.share (A.buffer a)) (Prim.arrays y);
-    y
-  in
   match x with
-  | Value.Donated _ -> share (live x)
+  | Value.Donated _ -> shared (live x)
   | Value.Array r when r.dead == Value.Claimed ->
-      share (Value.Array { r with dead = Value.Live })
+      shared (Value.Array { r with dead = Value.Live })
   | Value.Shards r when r.dead == Value.Claimed ->
-      share (Value.Shards { r with dead = Value.Live })
+      shared (Value.Shards { r with dead = Value.Live })
   | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> x
-
-let release (type v s d) (x : (v, s, d) Value.t) =
-  match x with
-  | Value.Array r -> Atomic.Loc.set [%atomic.loc r.dead] Value.Live
-  | Value.Shards r -> Atomic.Loc.set [%atomic.loc r.dead] Value.Live
-  | Value.Donated _ | Value.Deferred _ | Value.Traced _ -> ()
 
 let lends (type v s d) (x : (v, s, d) Value.t) =
   match x with

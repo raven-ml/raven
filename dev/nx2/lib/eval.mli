@@ -74,10 +74,11 @@ val once :
     operands [xs] in several operations. [by] consumes the handles among [xs]
     when called ({!Donate.consume}), and [read] gives [xs] as they were then,
     each handle and each of their donors claimed for the call
-    ({!Donate.claimed}): the donors are dead from the start, whatever [k]
+    ({!Donate.read}): the donors are dead from the start, whatever [k]
     does, [k]'s operations write into none of their memory, and an
-    interpretation that receives one of them reads its arrays lent. Once [k]
-    returns, the claimed values are live, and the memory returns to its device
+    interpretation that receives one of them reads its arrays lent. Two reads
+    of one donor share its memory, so [k] may return both. Once [k] returns or
+    raises, the claimed values are live, and the memory returns to its device
     once no value holds it. Raises [Invalid_argument] before [k] as
     {!Donate.consume} does, naming [by]. *)
 

@@ -276,9 +276,9 @@ let alive ~by xs = List.iteri (fun i (Any x) -> Prim.alive ~by i x) xs
 
 (* [k read] of the call [by] of [xs], then [ended hs y] of the handles [hs] it
    claimed and [k]'s value [y]. [read] gives each handle, and each of their
-   donors among [xs], claimed for the call ({!Donate.claimed}), which an
+   donors among [xs], claimed for the call ({!Donate.read}), which an
    operation reads as live and an interpretation receives lent; once [k]
-   returns, those values are live. *)
+   returns or raises, those values are live. *)
 let reading (type d a) ~by (xs : d any list)
     (k : ('v 's 'e. ('v, 's, 'e) t -> ('v, 's, 'e) t) -> a)
     (ended : Donate.handle list -> a -> unit) : a =
@@ -288,17 +288,12 @@ let reading (type d a) ~by (xs : d any list)
   end
   else
     let hs = Donate.consume ~by xs in
-    let reads = ref ([] : (unit -> unit) list) in
+    let r = Donate.reads hs in
     let read : 'v 's 'e. ('v, 's, 'e) t -> ('v, 's, 'e) t =
-     fun x ->
-      let y = Donate.claimed hs x in
-      if y != x then reads := List.cons (fun () -> Donate.release y) !reads;
-      y
+     fun x -> Donate.read r x
     in
     let y =
-      Fun.protect
-        ~finally:(fun () -> List.iter (fun release -> release ()) !reads)
-        (fun () -> k read)
+      Fun.protect ~finally:(fun () -> Donate.release r) (fun () -> k read)
     in
     ended hs y;
     y

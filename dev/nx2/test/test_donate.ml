@@ -464,6 +464,50 @@ let test_call_order () =
   invalid ~sub:"Nx.add: operand 1 was donated to test.call" (fun () ->
       Nx.add h1 h2)
 
+(* A call may give back what it read of a donor: an array outside the
+   vector, which Ptree.scale and axpy keep, one Ptree.cast keeps at its dtype,
+   or what a consumer that is no operation read. Given the donor beside its
+   handle, or beside one a movement passed on, it gives two values over one
+   memory, and a donation of one leaves the other's elements as they were. *)
+module Both = struct
+  type ('a, _) t = 'a * 'a
+
+  let walk c (w, v) =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" leaf w in
+    let v = field c "v" leaf v in
+    (w, v)
+end
+
+let test_given_back_twice () =
+  let ints s =
+    let x = Nx.create Nx.int32 s [| 1l; 2l |] in
+    Nx.add x (Nx.zeros_like x)
+  in
+  let two = Nx.Ptree.(pair tensor tensor) and k = Nx.scalar f32 2. in
+  let apart ~msg (w, v) =
+    ignore (Nx.neg (Nx.donate w));
+    equal ~msg (array int32) [| 1l; 2l |] (elements v)
+  in
+  let x = ints [| 2 |] in
+  apart ~msg:"Ptree.scale" (Nx.Ptree.scale two k (Nx.donate x, x));
+  let x = ints [| 2 |] in
+  apart ~msg:"Ptree.axpy"
+    (Nx.Ptree.axpy two k (ints [| 2 |], ints [| 2 |]) (Nx.donate x, x));
+  let x = ints [| 2 |] in
+  apart ~msg:"Ptree.cast"
+    (Nx.Ptree.cast (module Both) Nx.int32 (Nx.donate x, x));
+  let x = ints [| 1; 2 |] in
+  let w, v = Nx.Ptree.scale two k (Nx.reshape [| 2 |] (Nx.donate x), x) in
+  apart ~msg:"Ptree.scale, a handle passed on" (w, Nx.reshape [| 2 |] v);
+  let x = ints [| 2 |] in
+  match consume [ Any (Nx.donate x); Any x ] with
+  | [ Any w; Any v ] ->
+      ignore (Nx.neg (Nx.donate w));
+      equal ~msg:"Prim.consume" (array float_exact) [| 1.; 2. |]
+        (read_f32 (Any v))
+  | _ -> fail "Prim.consume: not two values"
+
 (* Reuse: a consumer that writes its result into donated memory takes no
    memory of the result's size, counted on a memory device of these tests'
    own. *)
@@ -2268,6 +2312,8 @@ let () =
              test "donated tells a handle, live or not" test_is_handle;
              test "an operation and a call, in either order, one consumes"
                test_call_order;
+             test "two values a call gives back over one donor stay apart"
+               test_given_back_twice;
            ];
          group "reuse"
            [
