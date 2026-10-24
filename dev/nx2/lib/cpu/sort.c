@@ -136,13 +136,6 @@ static uint64_t real_key(const double *c) {
   return c[0] != c[0] || c[1] != c[1] ? ~0ull : key64(c[0]);
 }
 
-/* The bytes a span of keys [r] takes, at least one. */
-static int span_bytes(uint64_t r) {
-  int b = 1;
-  while (b < 8 && r >> (8 * b) != 0) b++;
-  return b;
-}
-
 /* The bytes of [dt]'s keys. */
 static int key_bytes(int dt) {
   switch (dt) {
@@ -157,20 +150,6 @@ static int key_bytes(int dt) {
 }
 
 /* Orders */
-
-/* Sorts the [n] keys [k] with their positions [p] by insertion, stably. */
-static void insertion(uint64_t *k, int64_t *p, int64_t n) {
-  for (int64_t i = 1; i < n; i++) {
-    uint64_t x = k[i];
-    int64_t y = p[i], j = i;
-    for (; j > 0 && k[j - 1] > x; j--) {
-      k[j] = k[j - 1];
-      p[j] = p[j - 1];
-    }
-    k[j] = x;
-    p[j] = y;
-  }
-}
 
 /* Keeps in [k] and [p] the [keep] least of the [n] keys [in], in order,
    the earlier position first among equal ones. */
@@ -190,41 +169,14 @@ static void slots(const uint64_t *in, int64_t n, int64_t keep, uint64_t *k,
   }
 }
 
-/* Sorts the [n] keys [k] of [kb] bytes with their positions [p] by LSD
-   radix, stably, through the buffers [k2] and [p2]; the result lands back
+/* Sorts the [n] keys [k] of [kb] bytes with their positions [p] by
+   nx_cpu_radix through the buffers [k2] and [p2]; the result lands back
    in [k] and [p]. */
 static void radix(uint64_t *k, int64_t *p, uint64_t *k2, int64_t *p2,
                   int64_t n, int kb) {
-  int64_t count[8][256];
-  memset(count, 0, (size_t)kb * sizeof count[0]);
-  for (int64_t i = 0; i < n; i++)
-    for (int d = 0; d < kb; d++) count[d][(k[i] >> (8 * d)) & 255]++;
-  uint64_t *ks = k, *kd = k2;
-  int64_t *ps = p, *pd = p2;
-  for (int d = 0; d < kb; d++) {
-    int64_t *c = count[d], at = 0;
-    if (c[(ks[0] >> (8 * d)) & 255] == n) continue;
-    for (int b = 0; b < 256; b++) {
-      int64_t x = c[b];
-      c[b] = at;
-      at += x;
-    }
-    for (int64_t i = 0; i < n; i++) {
-      int64_t j = c[(ks[i] >> (8 * d)) & 255]++;
-      kd[j] = ks[i];
-      pd[j] = ps[i];
-    }
-    uint64_t *kt = ks;
-    ks = kd;
-    kd = kt;
-    int64_t *pt = ps;
-    ps = pd;
-    pd = pt;
-  }
-  if (ks != k) {
-    memcpy(k, ks, (size_t)n * sizeof *k);
-    memcpy(p, ps, (size_t)n * sizeof *p);
-  }
+  if (!nx_cpu_radix(k, p, k2, p2, n, kb, 0)) return;
+  memcpy(k, k2, (size_t)n * sizeof *k);
+  memcpy(p, p2, (size_t)n * sizeof *p);
 }
 
 /* Sorts the [n] items [t], each a key of [kb] bytes, at most 4, above its
@@ -479,7 +431,7 @@ static int sort_long(const sorter *s, int64_t blocks, int64_t bytes) {
       most = p.span[b][1] > most ? p.span[b][1] : most;
     }
     p.least = least;
-    int kb = span_bytes(most - least);
+    int kb = nx_cpu_span_bytes(most - least);
     int whole = s->keep == n;
     uint64_t *in_pos = whole && s->sp == 1 ? (uint64_t *)p.pos : NULL;
     uint64_t *in_v = whole && s->sv == 1 && s->w == 8 ? (uint64_t *)p.v : NULL;
@@ -548,7 +500,7 @@ static void by_span(const sorter *s, const uint64_t span[2], uint64_t *k,
                     int64_t *p, uint64_t *k2, int64_t *p2) {
   int64_t n = s->n, keep = s->keep;
   uint64_t least = span[0];
-  int kb = span_bytes(span[1] - least);
+  int kb = nx_cpu_span_bytes(span[1] - least);
   if (kb > 4 || n > UINT32_MAX) {
     for (int64_t i = 0; i < n; i++) {
       k[i] -= least;
@@ -595,7 +547,7 @@ static void sort_slice(const sorter *s, int64_t pv, int64_t pp, int64_t px,
         k[i] = real_key((const double *)(x + p[i] * s->sx * s->w)) ^ flip;
       radix(k, p, k2, p2, n, 8);
     } else if (n < SMALL)
-      insertion(k, p, n);
+      nx_cpu_insertion(k, p, n);
     else {
       memcpy(k2, k, (size_t)n * sizeof *k);
       slots(k2, n, keep, k, p);

@@ -689,22 +689,12 @@ static void add_sums(const float *x, const float *u, float *y, int64_t n) {
 
 /* Sorts the [k] positions [p] and their steps [r] by position, stably,
    through [p2] and [r2] of k entries: by insertion below FEW_STEPS, else
-   by LSD radix of 8-bit digits of each position less the least, over the
-   digits their span takes, skipping a digit they share. Answers whether
-   the sorted entries ended in p2 and r2. */
+   by radix over the bytes their span takes of each position less the
+   least. Answers whether the sorted entries ended in p2 and r2. */
 static int sort_steps(uint64_t *p, int64_t *r, uint64_t *p2, int64_t *r2,
                       int64_t k) {
   if (k < FEW_STEPS) {
-    for (int64_t j = 1; j < k; j++) {
-      uint64_t q = p[j];
-      int64_t t = r[j], i = j;
-      for (; i > 0 && p[i - 1] > q; i--) {
-        p[i] = p[i - 1];
-        r[i] = r[i - 1];
-      }
-      p[i] = q;
-      r[i] = t;
-    }
+    nx_cpu_insertion(p, r, k);
     return 0;
   }
   uint64_t lo = p[0], hi = p[0];
@@ -712,23 +702,7 @@ static int sort_steps(uint64_t *p, int64_t *r, uint64_t *p2, int64_t *r2,
     lo = p[j] < lo ? p[j] : lo;
     hi = p[j] > hi ? p[j] : hi;
   }
-  int moved = 0;
-  for (int d = 0; d < 64 && (hi - lo) >> d != 0; d += 8) {
-    int64_t at[257] = {0};
-    for (int64_t j = 0; j < k; j++) at[((p[j] - lo) >> d & 255) + 1]++;
-    if (at[((p[0] - lo) >> d & 255) + 1] == k) continue;
-    for (int b = 0; b < 256; b++) at[b + 1] += at[b];
-    for (int64_t j = 0; j < k; j++) {
-      int64_t g = at[(p[j] - lo) >> d & 255]++;
-      p2[g] = p[j];
-      r2[g] = r[j];
-    }
-    uint64_t *tp = p;
-    int64_t *tr = r;
-    p = p2, r = r2, p2 = tp, r2 = tr;
-    moved = !moved;
-  }
-  return moved;
+  return nx_cpu_radix(p, r, p2, r2, k, nx_cpu_span_bytes(hi - lo), lo);
 }
 
 /* Sums the [k] updates at steps [r] along the axis, sorted by their

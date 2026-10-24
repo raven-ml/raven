@@ -22,6 +22,7 @@
 #define NX_CPU_H
 
 #include <stdint.h>
+#include <string.h>
 
 #if defined(__aarch64__)
 #include <arm_neon.h>
@@ -1024,6 +1025,64 @@ double nx_cpu_prog_cost(const nx_cpu_prog *j);
 /* Whether a run of [j] could not have an arena on the heap, as a program
    of many values needs: its outputs are then unspecified. */
 int nx_cpu_prog_failed(const nx_cpu_prog *j);
+
+/* Sorts of 64-bit keys with their positions (sort.c, index.c) */
+
+/* The bytes of the span [r] of keys, at least 1. */
+static inline int nx_cpu_span_bytes(uint64_t r) {
+  int b = 1;
+  while (b < 8 && r >> (8 * b) != 0) b++;
+  return b;
+}
+
+/* Sorts the [n] keys [k] with their positions [p] by insertion, stably. */
+static inline void nx_cpu_insertion(uint64_t *k, int64_t *p, int64_t n) {
+  for (int64_t i = 1; i < n; i++) {
+    uint64_t x = k[i];
+    int64_t y = p[i], j = i;
+    for (; j > 0 && k[j - 1] > x; j--) {
+      k[j] = k[j - 1];
+      p[j] = p[j - 1];
+    }
+    k[j] = x;
+    p[j] = y;
+  }
+}
+
+/* Sorts the [n] >= 1 keys [k] with their positions [p] by LSD radix,
+   stably, through [k2] and [p2] of n entries: by the [kb] low bytes of
+   each key less [lo], a digit of 8 bits a pass, skipping a digit every
+   key shares. Answers whether the sorted entries ended in k2 and p2. */
+static inline int nx_cpu_radix(uint64_t *k, int64_t *p, uint64_t *k2,
+                               int64_t *p2, int64_t n, int kb, uint64_t lo) {
+  int64_t count[8][256];
+  memset(count, 0, (size_t)kb * sizeof count[0]);
+  for (int64_t i = 0; i < n; i++)
+    for (int d = 0; d < kb; d++) count[d][((k[i] - lo) >> (8 * d)) & 255]++;
+  int moved = 0;
+  for (int d = 0; d < kb; d++) {
+    int64_t *c = count[d], at = 0;
+    if (c[((k[0] - lo) >> (8 * d)) & 255] == n) continue;
+    for (int b = 0; b < 256; b++) {
+      int64_t x = c[b];
+      c[b] = at;
+      at += x;
+    }
+    for (int64_t i = 0; i < n; i++) {
+      int64_t j = c[((k[i] - lo) >> (8 * d)) & 255]++;
+      k2[j] = k[i];
+      p2[j] = p[i];
+    }
+    uint64_t *kt = k;
+    k = k2;
+    k2 = kt;
+    int64_t *pt = p;
+    p = p2;
+    p2 = pt;
+    moved = !moved;
+  }
+  return moved;
+}
 
 /* The stage */
 
