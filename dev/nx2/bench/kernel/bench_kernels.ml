@@ -72,12 +72,35 @@ let short (type v s) (dt : (v, s) D.t) =
   | D.Bool -> "bool"
   | D.Bit -> "bit"
 
+(* Arrays of shape [s] whose element [i] in C order is [x i], written through
+   a Bigarray: Array.init holds every element in OCaml's heap, an int64 boxed,
+   which cost a row of 16 Mi elements 0.4 s of setup. [float64s]'s array lies
+   over the Bigarray, a source to cast from; [int64s] copies into an array of
+   the host's, as a row's operands are. *)
+let float64s s x =
+  let n = Array.fold_left ( * ) 1 s in
+  let b = Bigarray.Array1.create Bigarray.float64 Bigarray.c_layout n in
+  for i = 0 to n - 1 do
+    Bigarray.Array1.unsafe_set b i (x i)
+  done;
+  A.of_bigarray D.Float64 (Bigarray.reshape (Bigarray.genarray_of_array1 b) s)
+
+let int64s s x =
+  let n = Array.fold_left ( * ) 1 s in
+  let b = Bigarray.Array1.create Bigarray.int64 Bigarray.c_layout n in
+  for i = 0 to n - 1 do
+    Bigarray.Array1.unsafe_set b i (x i)
+  done;
+  let src = Bigarray.reshape (Bigarray.genarray_of_array1 b) s in
+  let a = A.create Rig.host D.Int64 s in
+  A.blit ~src:(A.of_bigarray D.Int64 src) ~dst:a;
+  a
+
 (* An array of [dt] and shape [s] holding stores of 251 values in [-46.25,
    46.25], as data a kernel meets. *)
 let filled (type v s) (dt : (v, s) D.t) s : (v, s) A.t =
-  let n = Array.fold_left ( * ) 1 s in
   let x i = float_of_int ((i * 7919 mod 251) - 125) *. 0.37 in
-  let src = A.of_array D.Float64 s (Array.init n x) in
+  let src = float64s s x in
   let a = A.create Rig.host dt s in
   cast_into ~dst:a src;
   a
@@ -256,13 +279,12 @@ let narrow name dt n =
 (* An array of [dt] and shape [s] drawn from N(0, 1), as activations are:
    Box-Muller over a fixed sequence. *)
 let normal (type v s) (dt : (v, s) D.t) s : (v, s) A.t =
-  let n = Array.fold_left ( * ) 1 s in
   let u i = (float_of_int ((i * 7919 mod 65521) + 1)) /. 65522. in
   let x i =
     let r = sqrt (-2. *. log (u (2 * i))) in
     r *. cos (2. *. Float.pi *. u ((2 * i) + 1))
   in
-  let src = A.of_array D.Float64 s (Array.init n x) in
+  let src = float64s s x in
   let a = A.create Rig.host dt s in
   cast_into ~dst:a src;
   a
@@ -829,9 +851,7 @@ let reduce_rows =
    its positions'; a scatter's reads its positions and updates and copies
    [into]. Positions are random unless monotone. *)
 
-let positions n bound f =
-  A.of_array D.Int64 [| n |]
-    (Array.init n (fun i -> Int64.of_int (f i mod bound)))
+let positions n bound f = int64s [| n |] (fun i -> Int64.of_int (f i mod bound))
 
 let random i = (i * 2654435761) lsr 7
 
@@ -877,8 +897,7 @@ let index_rows =
     }
   in
   let along n () =
-    A.of_array D.Int64 [| n; n |]
-      (Array.init (n * n) (fun i -> Int64.of_int (random i mod n)))
+    int64s [| n; n |] (fun i -> Int64.of_int (random i mod n))
   in
   [
     (* A row take, an embedding's lookup: rows of 8 float32. *)
