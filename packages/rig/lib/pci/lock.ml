@@ -30,6 +30,19 @@ let take m =
              signal handler, finaliser or Gc.Memprof callback"
       | e -> reraise e)
 
+(* [try_take m] takes [m] as [take] does if it is free, and is whether it
+   took it. *)
+let try_take m =
+  hold ();
+  match Mutex.try_lock m with
+  | true -> true
+  | false ->
+      unhold ();
+      false
+  | exception e ->
+      unhold ();
+      reraise e
+
 (* Gives [m] back, then its count, with nothing between that allocates or
    polls. *)
 let give m =

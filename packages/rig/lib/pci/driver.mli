@@ -187,7 +187,12 @@ val stop : hold -> [ `Stopped | `Unknown ]
     ({!Function.release}), the process holds the function until it exits, and
     {!open_}, {!reset}, {!detach} and {!attach} of it fail, saying so. An
     exception raised by the driver's stop passes through, and the function is
-    lost. A device calls [stop] once its work is done or lost. *)
+    lost. A stop that an exception cut before it released the function, and
+    an open that one cut before it returned, are ended as a failed open is by
+    the next {!open_}, {!reset}, {!detach} or {!attach} of any function of the
+    driver in this process, which leaves a stop running on another thread;
+    the function is lost where no stop recorded an answer. A device calls
+    [stop] once its work is done or lost. *)
 
 val renew : hold -> (unit, string) result
 (** [renew h] resets the function [h] holds as its vendor does ([reset] of

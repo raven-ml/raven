@@ -420,6 +420,53 @@ let walk_open ~after =
   in
   walk 1
 
+(* A stop with every allocation from the [n]-th on raising until it returns,
+   for [n] from 1 until one returns: the function opens again after each, its
+   vendor's stop run once, by the stop or by the next open that ends the stop
+   an exception cut, until a landing ends the function's release, after
+   which the process holds it until it exits, as {!Driver.stop} states. The
+   release makes thousands of allocations of its own, rig.pci's function's,
+   which the walk leaves. *)
+let held_till_exit = "is held by this process until it exits"
+
+let contains_sub s sub =
+  let k = String.length sub in
+  let rec at i =
+    i + k <= String.length s && (String.sub s i k = sub || at (i + 1))
+  in
+  at 0
+
+let test_stop_interrupted () =
+  needs_flock ();
+  let rec walk (g, m) held n =
+    let calls = ref 0 in
+    let h =
+      require_ok
+        (Driver.open_ g m 0 (fun h _ ->
+             Driver.set_stop h (fun () ->
+                 incr calls;
+                 `Clean);
+             Ok h))
+    in
+    let reached = Rig_support.interrupted n (fun () -> stop h) in
+    let gm, held =
+      match Driver.open_ g m 0 (fun h _ -> kept h) with
+      | Ok h ->
+          stop h;
+          equal int ~msg:(strf "from allocation %d, the vendor's stops" n) 1
+            !calls;
+          ((g, m), held)
+      | Error why when contains_sub why held_till_exit -> ((g, m), held + 1)
+      | Error why -> failf "from allocation %d, the open after: %s" n why
+    in
+    if reached && held = 0 then walk gm held (n + 1) else n - 1
+  in
+  let g, m, _ = three () in
+  (* The stop's take of the hold's lock, its marks and its vendor's stop
+     come before the release. *)
+  at_least ~msg:"the allocations walked to the release" int ~than:1
+    (walk (g, m) 0 1)
+
 (* An exception at any allocation of an open once its driver started: an
    open the exception ended is no open of the process's, and the next open
    ends it as the open's bracket would have. *)
@@ -436,6 +483,8 @@ let opening =
     [
       test "an exception at any allocation of an open leaves it to open again"
         test_open_interrupted;
+      test "an exception at any allocation of a stop leaves it to open again"
+        test_stop_interrupted;
       xfail
         ~reason:"the take holds the function across allocations before the \
                  open lists its hold"

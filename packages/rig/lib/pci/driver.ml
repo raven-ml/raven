@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+external reraise : exn -> 'a = "%reraise"
+
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 let ( let* ) = Result.bind
@@ -66,6 +68,10 @@ and hold = {
       (* whether its open returned it: one listed in [held] with this unset
          while no open runs is a failed open's, whose bracket an exception
          ended *)
+  mutable leaving : bool;
+      (* whether its stop began, under [lock]: a hold leaving, still listed,
+         whose lock is free is one whose stop an exception cut, and the next
+         open, reset or change ends it *)
 }
 
 let make ~name ~memory_bar ~siblings ~nodes ~unreleased ~teardown_ms ~reset
@@ -202,8 +208,8 @@ let give_once h =
    function lost. The answer is recorded with no allocation between the
    driver's stop and its store, so no asynchronous exception has a later stop
    call it again. *)
-let finish h ~failed =
-  Lock.protect h.lock @@ fun () ->
+(* Under [h.lock]. *)
+let finish_locked h ~failed =
   match h.stopped with
   | Some s ->
       give_once h;
@@ -231,6 +237,20 @@ let finish h ~failed =
          match s with `Unknown -> Some `Unknown | `Stopped -> Some `Stopped);
       give_once h;
       s
+
+(* The stop's first step under [h.lock] marks the hold leaving, with nothing
+   allocated between the take and the store: a hold found leaving and not
+   returned under the lock is one whose stop an exception cut. *)
+let finish h ~failed =
+  Lock.take h.lock;
+  h.leaving <- true;
+  match finish_locked h ~failed with
+  | s ->
+      Lock.give h.lock;
+      s
+  | exception e ->
+      Lock.give h.lock;
+      reraise e
 
 let stop h = finish h ~failed:false
 
@@ -296,34 +316,37 @@ let take g m bus =
   | None -> Function.take m bus
   | Some files -> Sysfs.locked files bus (fun l -> take_locked g m l)
 
-(* Ends the holds of this process's opens of [g] that an exception ended
-   before their bracket ran, as that bracket would have, before an open, a
-   reset or a change: under [g.mutex] no open runs, so a hold listed but
-   never returned is one. An exception that lands again in
-   the bracket, as one an allocating handler meets, would otherwise leave the
-   function claimed, and every later open refused, for the process. *)
+(* Ends the holds of this process's opens of [g] that are no longer live, as
+   their bracket would have, before an open, a reset or a change: a hold
+   listed but never returned, which under [g.mutex], where no open runs, is
+   one an exception ended before its bracket ran, and one found under its
+   lock leaving and not returned, whose stop an exception cut. The function is
+   renewed where no stop recorded an answer, since the open may have written
+   to it before it recorded its stop. A stop that raises here is printed, as
+   at exit, and reaches no unrelated open. A hold whose lock another thread
+   holds is live, a stop or a [set_stop] running: it is left, never waited
+   for, so that an open never waits for a stop, which may itself wait for
+   that open. *)
 let ended g =
   let me = Unix.getpid () in
-  let stale =
+  let listed =
     Lock.protect g.holds (fun () ->
-        List.filter
-          (fun h -> h.pid = me && (not h.opened) && not h.returned)
-          g.held)
+        List.filter (fun h -> h.pid = me && not h.returned) g.held)
   in
-  (* The open may have written to the function before it recorded its stop,
-     whose own handler an exception may have cut too: it is renewed. A stop
-     that raises leaves the function lost and given back, as at exit, and
-     reaches no unrelated open. *)
   List.iter
     (fun h ->
-      h.unrenewed <- true;
-      match finish h ~failed:true with
-      | _ -> ()
-      | exception e ->
-          prerr_endline
-            (strf "ending an open of %s that an exception cut: %s" h.bus
-               (Printexc.to_string e)))
-    stale
+      if Lock.try_take h.lock then begin
+        let dead = (not h.returned) && ((not h.opened) || h.leaving) in
+        if dead && Option.is_none h.stopped then h.unrenewed <- true;
+        match if dead then ignore (finish_locked h ~failed:true) with
+        | () -> Lock.give h.lock
+        | exception e ->
+            Lock.give h.lock;
+            prerr_endline
+              (strf "ending a hold of %s that an exception cut: %s" h.bus
+                 (Printexc.to_string e))
+      end)
+    listed
 
 (* A function this process lost, or one a process that died left reaching
    memory, is renewed before the driver starts; one whose renewal fails is
@@ -349,6 +372,7 @@ let open_ g m i f =
       lost = false;
       returned = false;
       opened = false;
+      leaving = false;
     }
   in
   Lock.protect g.holds (fun () -> g.held <- h :: g.held);

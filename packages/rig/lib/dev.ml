@@ -13,6 +13,7 @@ exception Out_of_memory of device * int
 
 (* The C record *)
 
+external reraise : exn -> 'a = "%reraise"
 external c_new : int -> string -> bool -> nativeint -> int -> c
   = "caml_rig_device_new"
 
@@ -1112,12 +1113,24 @@ let open_driver (type a) ?(memory_device = false)
   let fn = if memory_device then "memory_device" else "open_" in
   open_named ~fn ~machine ~name ~key:(Type.Id.uid D.key)
   @@ fun ~index ~slot ~opened ~name:full ->
+  (* Stops the handle once, marking it first: made before the handle, so that
+     no allocation comes between the handle's return and a handler's stop
+     but the fault's own, which a second handler covers. *)
+  let stopped = ref false in
+  let stop_once h fault =
+    if not !stopped then begin
+      stopped := true;
+      match D.stop h ~fault with () -> () | exception D.Fault _ -> ()
+    end
+  in
   match make ~word:(c_slot_word index) with
   | Error e -> Error e
   | Ok h -> (
       (* Until the device is published, a failure stops the handle: a fault is
          a loss, and any other exception, such as facts that break the
-         contract, is raised again. *)
+         contract, is raised again. An exception that lands again in a handler
+         before its stop began stops the handle there, with nothing allocated
+         first. *)
       match
         driver_device (module D) h ~index ~opened ~name:full ~machine
           ~memory_device
@@ -1126,12 +1139,17 @@ let open_driver (type a) ?(memory_device = false)
           publish d slot;
           Ok d
       | exception D.Fault why ->
-          (try D.stop h ~fault:(Some why) with D.Fault _ -> ());
+          (match stop_once h (Some why) with
+          | () -> ()
+          | exception e ->
+              stop_once h None;
+              reraise e);
           Error (strf "%s: %s" full why)
       | exception e ->
-          let bt = Printexc.get_raw_backtrace () in
-          (try D.stop h ~fault:None with D.Fault _ -> ());
-          Printexc.raise_with_backtrace e bt)
+          (* [reraise] keeps the backtrace only where the stop raised
+             nothing: keeping it always would allocate before the stop. *)
+          stop_once h None;
+          reraise e)
 
 let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
     make =

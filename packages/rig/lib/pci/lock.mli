@@ -35,3 +35,16 @@ val protect : t -> (unit -> 'a) -> 'a
 
     Raises [Invalid_argument], having taken nothing, if the calling thread holds
     [l]. *)
+
+val take : t -> unit
+(** [take m] takes [m] as {!protect} does, for a caller whose first step
+    under it must allocate nothing, such as a store that marks what the
+    section began. *)
+
+val try_take : t -> bool
+(** [try_take m] is [true] having taken [m] as {!take} does, or [false],
+    having taken nothing, if a holder has it, the calling thread included. *)
+
+val give : t -> unit
+(** [give m] gives back [m], which {!take} took, with nothing that allocates
+    or polls. *)
