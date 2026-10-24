@@ -62,6 +62,10 @@ and hold = {
   mutable stopped : [ `Stopped | `Unknown ] option;
   mutable lost : bool;
   mutable returned : bool;
+  mutable opened : bool;
+      (* whether its open returned it: one listed in [held] with this unset
+         while no open runs is a failed open's, whose bracket an exception
+         ended *)
 }
 
 let make ~name ~memory_bar ~siblings ~nodes ~unreleased ~teardown_ms ~reset
@@ -92,7 +96,11 @@ let name g i =
   index "name" i;
   if i = 0 then g.name else strf "%s:%d" g.name i
 
-let named g i r = Result.map_error (fun why -> strf "%s: %s" (name g i) why) r
+(* Allocates nothing for [Ok], so that an open marked returned reaches its
+   caller with nothing that polls between. *)
+let named g i = function
+  | Ok _ as r -> r
+  | Error why -> Error (strf "%s: %s" (name g i) why)
 
 let buses g m =
   Result.map
@@ -255,8 +263,8 @@ let stop_held g =
 
 let register_exit g =
   if not g.exits then begin
-    g.exits <- true;
-    Stdlib.at_exit (fun () -> stop_held g)
+    Stdlib.at_exit (fun () -> stop_held g);
+    g.exits <- true
   end
 
 (* Opening *)
@@ -288,6 +296,35 @@ let take g m bus =
   | None -> Function.take m bus
   | Some files -> Sysfs.locked files bus (fun l -> take_locked g m l)
 
+(* Ends the holds of this process's opens of [g] that an exception ended
+   before their bracket ran, as that bracket would have, before an open, a
+   reset or a change: under [g.mutex] no open runs, so a hold listed but
+   never returned is one. An exception that lands again in
+   the bracket, as one an allocating handler meets, would otherwise leave the
+   function claimed, and every later open refused, for the process. *)
+let ended g =
+  let me = Unix.getpid () in
+  let stale =
+    Lock.protect g.holds (fun () ->
+        List.filter
+          (fun h -> h.pid = me && (not h.opened) && not h.returned)
+          g.held)
+  in
+  (* The open may have written to the function before it recorded its stop,
+     whose own handler an exception may have cut too: it is renewed. A stop
+     that raises leaves the function lost and given back, as at exit, and
+     reaches no unrelated open. *)
+  List.iter
+    (fun h ->
+      h.unrenewed <- true;
+      match finish h ~failed:true with
+      | _ -> ()
+      | exception e ->
+          prerr_endline
+            (strf "ending an open of %s that an exception cut: %s" h.bus
+               (Printexc.to_string e)))
+    stale
+
 (* A function this process lost, or one a process that died left reaching
    memory, is renewed before the driver starts; one whose renewal fails is
    lost. *)
@@ -295,6 +332,7 @@ let open_ g m i f =
   index "open_" i;
   named g i @@ Lock.protect g.mutex
   @@ fun () ->
+  ended g;
   let* bus = nth g m i in
   let* fn = take g m bus in
   let h =
@@ -310,6 +348,7 @@ let open_ g m i f =
       stopped = None;
       lost = false;
       returned = false;
+      opened = false;
     }
   in
   Lock.protect g.holds (fun () -> g.held <- h :: g.held);
@@ -327,6 +366,9 @@ let open_ g m i f =
       invalid_argf "Driver.open_: the driver of %s answered Ok with no stop" bus
   | Ok _ as r ->
       register_exit g;
+      (* The last store before the open returns: nothing allocates after it,
+         in [Lock.protect]'s give or in [named]. *)
+      h.opened <- true;
       r
   | Error _ as e ->
       failed ();
@@ -344,6 +386,7 @@ let change g fn m i (f : 's. 's Sysfs.lock -> 'a) =
   index fn i;
   named g i @@ Lock.protect g.mutex
   @@ fun () ->
+  ended g;
   match Machine.files m with
   | None ->
       Error
@@ -474,6 +517,7 @@ let reset g m i =
   index "reset" i;
   named g i @@ Lock.protect g.mutex
   @@ fun () ->
+  ended g;
   let* bus = nth g m i in
   reset_taken g m (take g m bus)
 

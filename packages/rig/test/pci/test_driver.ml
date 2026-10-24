@@ -393,9 +393,56 @@ let test_per_machine () =
   equal ~msg:"resets of the GPU lost" int (before + 1)
     (Atomic.get vendor_resets)
 
+(* [walk_open ~after] opens GPU 0 with every allocation from the [n]-th on
+   raising until the open returns, for [n] from 1 until one returns, counting
+   those the open makes once its driver started if [after], else those
+   before: the function opens again after each. *)
+let walk_open ~after =
+  needs_flock ();
+  let g, m, _ = three () in
+  let started = ref false in
+  let from _ = !started = after in
+  let rec walk n =
+    let opened = ref (Error "not reached") in
+    started := false;
+    let reached =
+      Rig_support.interrupted ~from n (fun () ->
+          opened :=
+            Driver.open_ g m 0 (fun h _ ->
+                started := true;
+                kept h))
+    in
+    Result.iter stop !opened;
+    (match Driver.open_ g m 0 (fun h _ -> kept h) with
+    | Ok h -> stop h
+    | Error why -> failf "from allocation %d, the open after: %s" n why);
+    if reached then walk (n + 1)
+  in
+  walk 1
+
+(* An exception at any allocation of an open once its driver started: an
+   open the exception ended is no open of the process's, and the next open
+   ends it as the open's bracket would have. *)
+let test_open_interrupted () = walk_open ~after:true
+
+(* An exception before the driver starts, in the take, which holds the
+   function from the descriptor it opens to the hold the open lists, with
+   allocations between, leaves the function taken: the next open is refused
+   for the process. *)
+let test_take_interrupted () = walk_open ~after:false
+
 let opening =
   group ~timeout:patience "opening"
     [
+      test "an exception at any allocation of an open leaves it to open again"
+        test_open_interrupted;
+      xfail
+        ~reason:"the take holds the function across allocations before the \
+                 open lists its hold"
+        (test
+           "an exception at any allocation before the driver starts leaves it \
+            to open again"
+           test_take_interrupted);
       test "an open is the driver's result" test_result;
       test "an open the driver refuses gives the GPU and its function back"
         test_error_gives_back;
