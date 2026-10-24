@@ -848,14 +848,17 @@ let test_paced () =
   done;
   equal int 0 (forced () - before)
 
-(* Major cycles per dropped host buffer of a MiB, over [k] of them. *)
-let cycles_per_mib k =
+(* Major cycles per dropped host buffer of [n] bytes, over [k] of them. *)
+let cycles_per n k =
   Gc.full_major ();
   let before = (Gc.quick_stat ()).major_collections in
   for _ = 1 to k do
-    ignore (Sys.opaque_identity (B.create Rig.host (kib * kib)))
+    ignore (Sys.opaque_identity (B.create Rig.host n))
   done;
   Float.of_int ((Gc.quick_stat ()).major_collections - before) /. Float.of_int k
+
+(* Major cycles per dropped host buffer of a MiB, over [k] of them. *)
+let cycles_per_mib k = cycles_per (kib * kib) k
 
 (* The margin a cycle-per-bound assertion allows: a count over 256 buffers
    includes the cycles already under way at either end. *)
@@ -895,6 +898,25 @@ let test_paced_host_heap () =
   ignore (Sys.opaque_identity heap);
   at_most ~msg:"cycles per MiB" float_exact
     ~than:(margin *. Float.of_int (kib * kib) /. share)
+    rate
+
+(* A dropped host buffer larger than half the bound counts as half of it.
+   Beside a heap whose share is about 37 MiB, a dropped 64 MiB buffer brings
+   a cycle at most as often as half that share of MiB buffers does; counted
+   whole, it would bring twice as many. The MiB buffers count the cycles a
+   share's worth of dropped bytes brings at this heap, which the way the
+   collector spreads a cycle's work over its slices sets, not the bound
+   alone. *)
+let test_paced_host_large () =
+  let heap = Array.make (16 * kib * kib) 0. in
+  let per_mib = cycles_per_mib 1024 in
+  let rate = cycles_per (64 * kib * kib) 256 in
+  let words = (Gc.quick_stat ()).heap_words in
+  let bytes = Float.of_int (words * (Sys.word_size / 8)) in
+  let share = bytes *. Float.of_int (Gc.get ()).custom_major_ratio /. 150. in
+  ignore (Sys.opaque_identity heap);
+  at_most ~msg:"cycles per 64 MiB buffer" float_exact
+    ~than:(margin *. per_mib *. share /. 2. /. Float.of_int (kib * kib))
     rate
 
 (* Memory another device used enters its owner's cache once that use is
@@ -1315,6 +1337,8 @@ let tests =
           test_paced_host_live;
         test "a large heap's cycles come once per its share at most"
           test_paced_host_heap;
+        test "a host buffer counts for half a cycle at most"
+          test_paced_host_large;
         test "memory another device used is cached once that use is reached"
           test_foreign_use;
         test "the host keeps a collected buffer's memory for its size"
