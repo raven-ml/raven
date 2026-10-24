@@ -19,8 +19,8 @@
     with its last axis in bytes.
 
     {b Placement.} A weight's parts may lie at any placement of their set; its
-    values, and {!apply}'s bits except a NaN's sign and payload, do not depend
-    on where they lie. Cut along [n]
+    values, and {!apply}'s and {!apply_experts}' bits except a NaN's sign and
+    payload, do not depend on where they lie. Cut along [n]
     or a leading axis, each device decodes its own rows. Cut along [k] over [t]
     devices, a weight with values and [b] blocks along [k] decodes on its own
     devices where [t] divides [b]: {!dequant}'s result is cut along [k] as the
@@ -183,34 +183,28 @@ val apply : 'd t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 val apply_experts :
   ids:'d Nx.int64_t -> 'd t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [apply_experts ~ids w x] is each row of [x] through the expert its id
-    names: at each position [p] of [ids], {!apply} of [w]'s matrix [ids.{p}]
-    to [p]'s row of [x], or zeros where [ids.{p}] is not in [\[0, e)],
-    whatever that row holds. [w] is [[| e; n; k |]], [ids] [[| s… |]] and [x]
-    [[| s'…; k |]], [s'…] broadcasting to [s…]; the result is [[| s…; n |]].
+    names: at each position [p] of [ids], the product {!apply} defines of
+    [w]'s matrix [ids.{p}] with [p]'s row of [x], or zeros where [ids.{p}]
+    is not in [\[0, e)], whatever that row holds. [w] is [[| e; n; k |]],
+    [ids] [[| s… |]] and [x] [[| s'…; k |]], [s'…] broadcasting to [s…]; the
+    result is [[| s…; n |]].
 
-    Where [w] is [Mxfp4], [x] is float32, bfloat16 or float16, [ids] and
-    [x] lie whole on each device, and each part of [w] lies whole on each
-    device or split along [n] ({!Nx.Placement.split} [~axis:1]), every
-    position is summed in one contraction grouped by expert, which needs
-    kernels that compute a segmented block-scaled contraction, as nx.cpu's
-    do. Split along [n], each device sums its own columns over every
-    position, in the order of the whole, so the bits are those of [w] whole
-    on one device. Any other product, of a [w] cut along [k], along its
-    experts, or along [n] with copies, among them, is
+    Every position is summed in one contraction grouped by expert, at the
+    dtype {!apply} sums in, within {!Nx.contract}'s bound: an [Mxfp4]
+    weight with a float32, bfloat16 or float16 [x] read where it lies, each
+    block decoded as it is summed, any other decoded as {!dequant} does. The kernels choose one order for the whole
+    contraction, so a row's bits depend on the other positions' experts and
+    may differ from {!apply}'s; they do not depend on where [w], [ids] and
+    [x] lie. Split along [n] ({!Nx.Placement.split} [~axis:1]), each device
+    sums its own columns over every position. Cut along [k] or its experts,
+    [w] is read whole on each device: an [Mxfp4] weight's packed bytes
+    move, any other's decoded values. The sum needs kernels that compute a
+    segmented contraction, block-scaled for [Mxfp4], as nx.cpu's do.
 
-    {[
-    Nx.map_segments ~segments:e ids
-      (fun owners rows -> apply (take ~axis:0 owners w) rows)
-      x
-    ]}
-
-    So its bits depend on where [w], [ids] and [x] lie: the two sums may
-    round differently, each within {!Nx.contract}'s bound.
-
-    Raises [Invalid_argument] if the grouped sum lies on a set whose kernels
-    decline it, if [w] is not 3-d, if [x] does not have one axis
-    more than [ids], if [x]'s last axis is not [k], if [x]'s leading axes
-    do not broadcast to [ids]', or as {!apply} raises in the map. *)
+    Raises [Invalid_argument] if the sum lies on a set whose kernels decline
+    it, if [w] is not 3-d, if [x] does not have one axis more than [ids], if
+    [x]'s last axis is not [k], or if [x]'s leading axes do not broadcast to
+    [ids]'. *)
 
 val take : axis:int -> 'd Nx.int64_t -> 'd t -> 'd t
 (** [take ~axis p w] is the rows or matrices of [w] at the positions [p] along

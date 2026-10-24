@@ -360,16 +360,6 @@ let whole x =
            (fun d -> Nx.Placement.equal p (Nx.Placement.device s d))
            (Nx.rigs s)
 
-(* Whether [x] is whole, or split along [axis] over its set as
-   [Nx.Placement.split] cuts it. *)
-let whole_or_split ~axis x =
-  whole x
-  ||
-  match Nx.placement x with
-  | None -> false
-  | Some p ->
-      Nx.Placement.equal p (Nx.Placement.split ~axis (Nx.Placement.devices p))
-
 (* Whether [x]'s dtype sums at float32 with float32 operands. *)
 let at_float32 (type b d) (x : (float, b, d) Nx.t) =
   match Nx.dtype x with
@@ -507,14 +497,17 @@ let check_experts ws ids xs =
              (pp_shape ids)))
     (Array.sub xs 0 l)
 
-(* [grouped ~ids x codes scales] is the expert product of the MXFP4 experts of
-   [codes] and [scales], [[| e; n; k |]], in one contraction whose rows are
-   segmented by expert: the ids, flattened, are sorted stably, [x]'s rows
+(* [grouped ~ids x b scale] is the expert product of [x] with the experts
+   [b], [[| e; n; k |]], scaled by [scale], in one contraction whose rows are
+   segmented by expert, summed at [x]'s dtype or at float32 where that dtype
+   does not accumulate: the ids, flattened, are sorted stably, [x]'s rows
    gathered in their order, and the offsets of expert [g] count the ids below
    [g], so that an id out of range falls in no group and its row has no
-   products, [+0]. The result's rows are gathered back to the ids' order. *)
-let grouped ~ids x codes scales =
-  let ws = shape (Mxfp4 { codes; scales }) in
+   products, [+0]. The result's rows are gathered back to the ids' order. A
+   weight split along [n], the result's free columns, is computed by each
+   device for its columns over every row, in the whole's order. *)
+let grouped (type b) ~ids (x : (float, b, _) Nx.t) b scale =
+  let ws = Nx.shape b in
   let e = ws.(0) and n = ws.(1) and k = ws.(2) in
   let lead = Nx.shape ids in
   let p = Array.fold_left ( * ) 1 lead in
@@ -530,7 +523,11 @@ let grouped ~ids x codes scales =
   let offsets =
     Nx.searchsorted ~side:`Left sorted (Nx.arange Nx.int64 0 (e + 1) 1)
   in
-  let b = Nx.reshape ws (Nx.bitcast Nx.float4_e2m1fn codes) in
+  let acc : Nx.Dtype.any =
+    match Nx.dtype x with
+    | Nx.Dtype.Float64 -> Any Nx.float64
+    | _ -> Any Nx.float32
+  in
   let batch = Iarray.of_list [] and contracting = Iarray.of_list [ (1, 2) ] in
   let y =
     Nx.Prim.eval ~by:"Nx_quant.apply_experts"
@@ -539,37 +536,35 @@ let grouped ~ids x codes scales =
            order = Nx.Prim.contract_order ~batch ~contracting rows b;
            batch;
            contracting;
-           acc = Nx.Dtype.Any Nx.float32;
+           acc;
            out = Nx.dtype x;
            a = rows;
            b;
            init = None;
            a_scale = None;
-           b_scale = Some (Exponent scales);
+           b_scale = scale;
            segments = Some (Rows { offsets; a_axis = 0; b_axis = 0 });
          })
   in
   let back = Nx.argsort order in
   Nx.reshape (Array.append lead [| n |]) (Nx.take ~axis:0 back y)
 
-(* A weight split along [n], its result's free columns, is computed by each
-   device for its columns over every row, in the whole's order. *)
+(* An MXFP4 weight summed at float32 enters as its codes read as float4 values
+   and its scales as their blocks' exponents, each element exact at float32;
+   any other weight, and one summed at float64, where a value past float32's
+   range would be finite, as its values at [x]'s dtype. *)
+let experts ~ids w x =
+  match w with
+  | Mxfp4 { codes; scales } when at_float32 x ->
+      let b = Nx.reshape (shape w) (Nx.bitcast Nx.float4_e2m1fn codes) in
+      grouped ~ids x b (Some (Nx.Prim.Exponent scales))
+  | _ -> grouped ~ids x (dequant (Nx.dtype x) w) None
+
 let apply_experts ~ids w x =
   check_experts (shape w) (Nx.shape ids) (Nx.shape x);
   let dt = Nx.dtype x in
-  let along_n = whole_or_split ~axis:1 in
-  match w with
-  | Mxfp4 { codes; scales }
-    when at_float32 x && whole ids && whole x && along_n codes
-         && along_n scales ->
-      if exact dt w then grouped ~ids x codes scales
-      else Nx.cast dt (grouped ~ids (Nx.cast Nx.float32 x) codes scales)
-  | _ ->
-      Nx.map_segments
-        ~segments:(shape w).(0)
-        ids
-        (fun owners rows -> apply (take ~axis:0 owners w) rows)
-        x
+  if exact dt w then experts ~ids w x
+  else Nx.cast dt (experts ~ids w (Nx.cast Nx.float32 x))
 
 (* Structure *)
 
