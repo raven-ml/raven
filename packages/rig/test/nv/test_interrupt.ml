@@ -382,6 +382,73 @@ let test_stop () =
     ~than:(if over_pci () then spread else 1)
     (walk 0 1)
 
+(* Whether the allocation [a] is made as rig makes a device of a handle its
+   driver opened, before it publishes the device. *)
+let in_rig_make (a : Gc.Memprof.allocation) =
+  let make s =
+    match Printexc.Slot.name s with
+    | Some n -> String.ends_with ~suffix:"Dev.driver_device" n
+    | None -> false
+  in
+  match Printexc.backtrace_slots a.callstack with
+  | Some slots -> Array.exists make slots
+  | None -> false
+
+(* An open through rig with every allocation from the [n]-th on raising
+   until it returns, counting those from the first rig makes as it makes the
+   device of the driver's handle, its handlers' included, for [n] from 1 on,
+   or [spread] of them over PCI: rig stops the handle, and the GPU opens
+   again through rig. *)
+let test_rig_open () =
+  needs_gpu ();
+  (* With backtraces recorded, as under OCAMLRUNPARAM=b, a handler's
+     backtrace is an allocation the walk reaches. *)
+  let recorded = Printexc.backtrace_status () in
+  Printexc.record_backtrace true;
+  Fun.protect ~finally:(fun () -> Printexc.record_backtrace recorded)
+  @@ fun () ->
+  let reopen what =
+    match Rig.open_ (Rig_nv_support.opener 0) with
+    | Ok d -> Rig.close d
+    | Error why -> fail (strf "%s, a new device: %s" what why)
+  in
+  reopen "before the walk";
+  let step =
+    if not (over_pci ()) then 1
+    else
+      let n = ref 0 in
+      let count a =
+        if in_rig_make a then incr n;
+        None
+      in
+      let tracker =
+        { Gc.Memprof.null_tracker with alloc_minor = count; alloc_major = count }
+      in
+      let profile = Gc.Memprof.start ~sampling_rate:1. tracker in
+      Fun.protect
+        ~finally:(fun () ->
+          Gc.Memprof.stop ();
+          Gc.Memprof.discard profile)
+        (fun () -> reopen "for the count");
+      spread_over !n
+  in
+  let rec walk landed n =
+    let opened = ref (Error "not reached") and made = ref false in
+    let from a =
+      if in_rig_make a then made := true;
+      !made
+    in
+    let reached =
+      Rig_support.interrupted ~from n (fun () ->
+          opened := Rig.open_ (Rig_nv_support.opener 0))
+    in
+    Result.iter Rig.close !opened;
+    reopen (strf "from allocation %d" n);
+    if reached then walk (landed + 1) (n + step) else landed
+  in
+  at_least ~msg:"the landings" int ~than:(if over_pci () then spread else 2)
+    (walk 0 1)
+
 (* [guarded what f] is [f], run by a test that opens GPU 0 a device at a
    time. Where [f] fails and leaves the GPU held, so that no later test opens
    it, the later tests fail at once naming [what] and why ([needs_gpu]). *)
@@ -509,6 +576,8 @@ let () =
                (guarded "the open walk" test_open);
              test "of a stop leaves the GPU to open again"
                (guarded "the stop walk" test_stop);
+             test "of rig's open leaves the GPU to open again"
+               (guarded "the walk of rig's open" test_rig_open);
              test "of a resolve through rig leaves the GPU to open again"
                (guarded "the resolve walk" test_resolve_lost_rig);
            ];
