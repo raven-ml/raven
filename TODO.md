@@ -34,6 +34,17 @@ raven / llama.cpp (Vulkan; ROCm):
 - rig.pci: a peer GPU's memory mapped through its BAR is given back by
   its owner's free while a peer that may still master can write it; a
   fix needs the two GPUs' locks taken together
+- rig.nv: from the 22nd loss in one process, each lost device keeps
+  568 MiB of GPU memory (RTX 5000, kernel path); cause not isolated
+- rig.nv: `Rig_nv.give` and `halt` swallow `Fault`, so a failed free
+  leaks silently
+- rig.amd, rig.pci: `peer`, promised to take no lock, takes AMD over
+  PCI's `machines_lock` and, without an IOMMU, rig.pci's `routes` lock; a
+  callback inside those sections gets `Invalid_argument`
+- every library below rig keeps its state whole under an exception: about
+  200 sections take a resource and record it after an allocation, or raise
+  with a change half made; each allocates its record, takes the resource,
+  then publishes with one store
 
 ### limits and size
 
@@ -60,10 +71,6 @@ raven / llama.cpp (Vulkan; ROCm):
 
 ### perf
 
-- fudge's `launch/empty-performance-cores` reads 18% slower since
-  8865d6be7 (rounds +8, +18, +27 against a spread of 19% between runs of
-  one build), where the compute path only gained a job kind and an inlined
-  lock: time it alone over more rounds, then explain it or re-record it
 - AMD boxes as one COPY_LINEAR_SUB_WIND packet per 2^14 rows on SDMA 4-6,
   where they run as a COPY_LINEAR per row: measured on an AMD host against
   rows; it also lifts the row limit of a box on SDMA 4 over PCI, about
