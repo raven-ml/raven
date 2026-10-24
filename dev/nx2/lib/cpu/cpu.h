@@ -562,7 +562,9 @@ static inline double nx_cpu_bytes(const nx_array *a) {
    raises nothing, held or released, so every call that passes
    nx_cpu_release reaches nx_cpu_reacquire. A call reads many operands
    through nx_read_each, and a long program or many reductions as
-   NX_CPU_ITEM says, so that no count of them lengthens a held stretch.
+   NX_CPU_ITEM says, so that no count of them lengthens a held stretch;
+   a table sized by such a count is allocated and freed with the lock
+   released (nx_alloc_released, nx_free_released).
 
    NX_CPU_HOLD_BYTES is 1 MiB: one core copies it in 12 to 15 us (M1 Max,
    fudge's Core Ultra 5 235), and a release and reacquisition cost 9 to

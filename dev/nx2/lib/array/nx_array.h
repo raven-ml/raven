@@ -30,6 +30,7 @@
 #ifndef NX_ARRAY_H
 #define NX_ARRAY_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <caml/memory.h>
@@ -189,6 +190,14 @@ void nx_let_collect(void);
    sized by a count of operands or items, whose pages the system takes
    time in proportion to return. */
 void nx_free_released(void *p);
+
+/* Allocates [n] bytes, at least one, as malloc does, NULL if host memory
+   runs out, and writes a byte of each of their pages with the domain lock
+   released: a table sized by a count of operands or items, whose pages
+   the system maps on their first write, zeroing each, and 2 MiB at once
+   where it maps huge pages (Linux's transparent huge pages), longer than
+   the copy a held stretch allows. */
+void *nx_alloc_released(size_t n);
 
 /* Releases the claims of the [n] operands a successful nx_read or
    nx_read_each filled and unlinks their roots. Past NX_MAX_OPERANDS, it

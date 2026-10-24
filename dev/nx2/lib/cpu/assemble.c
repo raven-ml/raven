@@ -228,13 +228,15 @@ static struct custom_operations scratch_ops = {
     custom_compare_ext_default, custom_fixed_length_default};
 
 /* Carves [p] for [np] pieces of rank [r] out of a block that [owner] then
-   owns; 0 if host memory runs out. Each part is a multiple of 8 bytes, so
-   each starts aligned. */
-static int pieces_of(value owner, int np, int r, pieces *p) {
+   owns, allocated with the domain lock released for [many] pieces
+   (nx_alloc_released); 0 if host memory runs out. Each part is a multiple
+   of 8 bytes, so each starts aligned. */
+static int pieces_of(value owner, int np, int r, int many, pieces *p) {
   size_t n = (size_t)np + 1;
   size_t sa = n * sizeof *p->a, sb = n * sizeof *p->lo,
          sr = (3 * (size_t)r * (size_t)np + 1) * sizeof *p->ranges;
-  uint8_t *b = malloc(sa + 2 * sb + sr);
+  size_t bytes = sa + 2 * sb + sr;
+  uint8_t *b = many ? nx_alloc_released(bytes) : malloc(bytes);
   if (b == NULL) return 0;
   *(void **)Data_custom_val(owner) = b;
   p->a = (nx_array *)b;
@@ -301,8 +303,9 @@ value nx_cpu_assemble(value vfill, value vd, value vpieces) {
   int r = nx_array_layout(vd, shape, &off);
   owner = caml_alloc_custom(&scratch_ops, sizeof(void *), 0, 1);
   *(void **)Data_custom_val(owner) = NULL;
+  int n = 1 + np, many = n > NX_MAX_OPERANDS;
   pieces p;
-  if (!pieces_of(owner, np, r, &p)) caml_raise_out_of_memory();
+  if (!pieces_of(owner, np, r, many, &p)) caml_raise_out_of_memory();
   uint8_t fill[16] = {0};
   size_t nfill = caml_string_length(vfill);
   memcpy(fill, String_val(vfill), nfill < sizeof fill ? nfill : sizeof fill);
@@ -310,7 +313,6 @@ value nx_cpu_assemble(value vfill, value vd, value vpieces) {
   int64_t *ranges = p.ranges;
   nx_array *a = p.a;
   reading c = {&vd, &vpieces, r, dt, shape, ranges, 0};
-  int n = 1 + np, many = n > NX_MAX_OPERANDS;
   if (many) e = nx_read_each(n, operand, &c, a);
   else {
     nx_operand in[NX_MAX_OPERANDS];

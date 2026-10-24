@@ -246,6 +246,20 @@ void nx_free_released(void *p) {
   caml_leave_blocking_section();
 }
 
+/* The least page size of the hosts nx runs on: a write every this many
+   bytes reaches each page. */
+#define PAGE_BYTES 4096
+
+void *nx_alloc_released(size_t n) {
+  uint8_t *p = malloc(n);
+  if (p == NULL) return NULL;
+  caml_enter_blocking_section_no_pending();
+  for (size_t i = 0; i < n; i += PAGE_BYTES) p[i] = 0;
+  p[n - 1] = 0;
+  caml_leave_blocking_section();
+  return p;
+}
+
 /* The end of the run of operands from [at], of [n]. */
 static int run_end(int at, int n) {
   return n - at < NX_MAX_OPERANDS ? n : at + NX_MAX_OPERANDS;
@@ -459,7 +473,7 @@ int nx_read_each(int n, int (*operand)(void *ctx, int k, nx_operand *in),
   /* The operands, their byte ranges and the spans of the overlap check, on
      the heap, allocated before any claim. */
   size_t one = sizeof(nx_operand) + sizeof(where) + sizeof(span);
-  uint8_t *b = malloc((size_t)n * one);
+  uint8_t *b = nx_alloc_released((size_t)n * one);
   if (b == NULL) caml_raise_out_of_memory();
   nx_operand *in = (nx_operand *)b;
   where *w = (where *)(in + n);
@@ -590,8 +604,8 @@ static value admit_many(value written, value read) {
   CAMLparam2(written, read);
   CAMLlocal1(exn);
   int n = (int)(Wosize_val(written) + Wosize_val(read));
-  uint8_t *b = malloc((size_t)n * (sizeof(nx_operand) + sizeof(nx_array) +
-                                   sizeof(where)));
+  uint8_t *b = nx_alloc_released(
+      (size_t)n * (sizeof(nx_operand) + sizeof(nx_array) + sizeof(where)));
   if (b == NULL) caml_raise_out_of_memory();
   nx_array *out = (nx_array *)b;
   where *w = (where *)(out + n);

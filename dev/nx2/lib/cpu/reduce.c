@@ -4578,8 +4578,8 @@ static value run_fused(const call *c, value vp, value vrs, int single,
   nx_array a_stack[NX_MAX_OPERANDS], *a = a_stack;
   int tables[4 * NX_MAX_OPERANDS], *dts = tables;
   if (nt > NX_MAX_OPERANDS || no > NX_MAX_OPERANDS) {
-    uint8_t *b = malloc((size_t)no * (sizeof *a + sizeof *dts) +
-                        3 * (size_t)nt * sizeof *dts);
+    uint8_t *b = nx_alloc_released((size_t)no * (sizeof *a + sizeof *dts) +
+                                   3 * (size_t)nt * sizeof *dts);
     if (b == NULL) {
       release(owner);
       caml_raise_out_of_memory();

@@ -799,12 +799,20 @@ struct nx_cpu_prog {
   int64_t most;
 };
 
+/* The steps of a program of [nn] nodes, past STEPS, on the heap: a long
+   program's allocated with the domain lock released, as they are freed
+   (nx_alloc_released); NULL if host memory runs out. */
+static step *steps_of(int nn) {
+  size_t bytes = sizeof(step) * (size_t)nn;
+  return nn > NX_CPU_ITEMS ? nx_alloc_released(bytes) : malloc(bytes);
+}
+
 nx_cpu_prog *nx_cpu_prog_copy(const value *vp) {
   int nn = (int)Wosize_val(Field(*vp, NX_PROG_NODES));
   nx_cpu_prog *g = calloc(1, sizeof *g);
   if (g == NULL) return NULL;
   g->s = g->local;
-  if (nn > STEPS && (g->s = malloc(sizeof(step) * (size_t)nn)) == NULL) {
+  if (nn > STEPS && (g->s = steps_of(nn)) == NULL) {
     free(g);
     return NULL;
   }
@@ -1045,7 +1053,7 @@ value nx_cpu_map(value vp, value vdsts, value vloads, value vpads) {
   }
   step local[STEPS], *s = local;
   if (nn > STEPS) {
-    s = malloc(sizeof(step) * (size_t)nn);
+    s = steps_of(nn);
     if (s == NULL) caml_raise_out_of_memory();
     ((map_held *)Data_custom_val(owner))->s = s;
   }
