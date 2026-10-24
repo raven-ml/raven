@@ -51,6 +51,15 @@ value nx_kernels_support_targets(value unit) {
   CAMLreturn(l);
 }
 
+value nx_kernels_support_x86_64(value unit) {
+  (void)unit;
+#if defined(__x86_64__)
+  return Val_true;
+#else
+  return Val_false;
+#endif
+}
+
 value nx_kernels_support_current(value unit) {
   (void)unit;
   best();

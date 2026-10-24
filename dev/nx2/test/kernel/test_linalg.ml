@@ -1055,12 +1055,13 @@ let agree_bits (b : Support.backend) r x =
    and one fewer than the band. On x86-64 values alone and real vectors
    take the two stages from 128; on arm64 values alone from 512, complex
    vectors from 1024 and real ones from 2048, where the vectors'
-   relations are checked on sampled elements. Each order meets a
+   relations are checked on sampled elements. Arm64's orders of vectors,
+   past every crossover of x86-64, run on arm64 alone. Each order meets a
    spectrum of repeats, of a cluster 2^-30 apart that divide and conquer
-   barely separates in float64, or graded over 60 binades. On both
-   architectures, the chase and Q2 give their bits whatever the threads
-   and layout (agree_bits) at order 512 without the vectors and 1024 with
-   them. *)
+   barely separates in float64, or graded over 60 binades. The chase and
+   Q2 give their bits whatever the threads and layout (agree_bits) at
+   order 512 without the vectors, and with them at 159 on x86-64 and 1024
+   on arm64. *)
 let test_eigh_two_stages (b : Support.backend) () =
   let r = Random.State.make [| 7 |] in
   let repeated _ = Float.round (8. *. uniform r) /. 8. in
@@ -1068,13 +1069,7 @@ let test_eigh_two_stages (b : Support.backend) () =
     if j mod 2 = 0 then 1. +. (float_of_int j *. 0x1p-30) else uniform r
   in
   let graded j = Float.copy_sign (Float.ldexp 1. (-(j mod 61))) (uniform r) in
-  List.iter
-    (fun (n, dt, lambda, vectors, threads) ->
-      let l = Array.init n lambda and u = reflector_draws r dt n in
-      check_spectrum b ~vectors dt ~k:(n / 3) ~u l;
-      Option.iter
-        (fun routine -> agree_bits b routine (spectral dt ~k:(n / 3) ~u l))
-        threads)
+  let orders =
     D.
       [
         (127, Any Float64, graded, Checked, None);
@@ -1084,15 +1079,28 @@ let test_eigh_two_stages (b : Support.backend) () =
         (129, Any Float32, repeated, Checked, None);
         (130, Any Float32, graded, Checked, None);
         (143, Any Float64, repeated, Unchecked, None);
-        (159, Any Float64, graded, Checked, None);
+        (159, Any Float64, graded, Checked, Some (Eigh true));
         (511, Any Float64, graded, Unchecked, None);
         (512, Any Complex128, repeated, Unchecked, Some (Eigh false));
         (513, Any Float32, clustered, Unchecked, None);
         (514, Any Complex64, graded, Unchecked, None);
         (527, Any Float64, repeated, Unchecked, None);
+      ]
+  and arm64 =
+    D.
+      [
         (1024, Any Complex64, clustered, Sampled 256, Some (Eigh true));
         (2048, Any Float64, repeated, Sampled 256, None);
       ]
+  in
+  List.iter
+    (fun (n, dt, lambda, vectors, threads) ->
+      let l = Array.init n lambda and u = reflector_draws r dt n in
+      check_spectrum b ~vectors dt ~k:(n / 3) ~u l;
+      Option.iter
+        (fun routine -> agree_bits b routine (spectral dt ~k:(n / 3) ~u l))
+        threads)
+    (if Support.x86_64 then orders else orders @ arm64)
 
 (* svd's bound: γ(16 max (m, n) + 100), the 100 for the bidiagonal
    iteration's test of convergence, which drops an e below
@@ -1380,13 +1388,15 @@ let check_singular (b : Support.backend) ?(vectors = Checked) dt ~m ~n xa
    the band's columns, 1, 2, and one fewer than the band; square, tall,
    tall enough for a QR first, and wide. On x86-64 values alone take the
    two stages from 128 and real vectors from 256; on arm64 values alone
-   from 256, complex vectors from 512 and real ones from 1024. Vectors'
-   relations are checked on sampled elements from 255. Each meets values
-   that repeat, cluster 2^-30 apart or grade over 60 binades. On both
-   architectures, the two stages give their bits whatever the threads and
-   layout (agree_bits) at 512 without the vectors and 1024 with them, and
-   the one-stage reduction's panels, whose chunks the shape cuts, at 159
-   on reals and 256 on complex numbers with them. *)
+   from 256, complex vectors from 512 and real ones from 1024. Arm64's
+   real vectors, past every crossover of x86-64, run on arm64 alone.
+   Vectors' relations are checked on sampled elements from 255. Each
+   meets values that repeat, cluster 2^-30 apart or grade over 60
+   binades. The two stages give their bits whatever the threads and
+   layout (agree_bits) at 512 without the vectors, and with them at 287
+   on x86-64 and 1024 on arm64, and the one-stage reduction's panels,
+   whose chunks the shape cuts, at 159 on reals and 256 on complex numbers
+   with them. *)
 let test_svd_two_stages (b : Support.backend) () =
   let r = Random.State.make [| 11 |] in
   let repeated _ = Float.round (8. *. uniform r) /. 8. in
@@ -1394,12 +1404,7 @@ let test_svd_two_stages (b : Support.backend) () =
     if j mod 2 = 0 then 1. +. (float_of_int j *. 0x1p-30) else uniform r
   in
   let graded j = Float.copy_sign (Float.ldexp 1. (-(j mod 61))) (uniform r) in
-  List.iter
-    (fun (m, n, dt, sigma, vectors, threads) ->
-      let sigma = Array.init (min m n) sigma in
-      let x = singular dt ~m ~n r sigma in
-      check_singular b ~vectors dt ~m ~n x sigma;
-      Option.iter (fun routine -> agree_bits b routine x) threads)
+  let shapes =
     D.
       [
         (127, 127, Any Float64, graded, Checked, None);
@@ -1414,15 +1419,28 @@ let test_svd_two_stages (b : Support.backend) () =
         (257, 600, Any Float32, clustered, Sampled 256, None);
         (300, 258, Any Complex64, graded, Unchecked, None);
         (271, 271, Any Float64, repeated, Unchecked, None);
-        (287, 290, Any Float64, graded, Sampled 256, None);
+        (287, 290, Any Float64, graded, Sampled 256,
+         Some (Svd (Some Reduced)));
         (511, 511, Any Complex128, clustered, Unchecked, None);
         (512, 512, Any Complex64, graded, Sampled 256, Some (Svd None));
         (520, 513, Any Complex128, repeated, Sampled 256, None);
         (543, 543, Any Complex64, clustered, Sampled 256, None);
+      ]
+  and arm64 =
+    D.
+      [
         (1024, 1024, Any Float64, repeated, Sampled 256,
          Some (Svd (Some Reduced)));
         (1025, 1100, Any Float32, graded, Sampled 256, None);
       ]
+  in
+  List.iter
+    (fun (m, n, dt, sigma, vectors, threads) ->
+      let sigma = Array.init (min m n) sigma in
+      let x = singular dt ~m ~n r sigma in
+      check_singular b ~vectors dt ~m ~n x sigma;
+      Option.iter (fun routine -> agree_bits b routine x) threads)
+    (if Support.x86_64 then shapes else shapes @ arm64)
 
 (* eig's bound γ(16n), and its absolute term ε(16n) times 2^e. *)
 let eig_bound dt n = gamma dt (16 * n)

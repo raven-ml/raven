@@ -47,6 +47,10 @@ let cpus = List.map cpu (targets ())
 
 let backends = cpus
 
+external x86_64 : unit -> bool = "nx_kernels_support_x86_64" [@@noalloc]
+
+let x86_64 = x86_64 ()
+
 (* Jobs begun from jobs' bodies. *)
 external nested : int -> int -> int = "nx_kernels_support_nested"
 

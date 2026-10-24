@@ -38,6 +38,11 @@ val cpus : backend list
 val backends : backend list
 (** [backends] is {!cpus}. *)
 
+val x86_64 : bool
+(** [x86_64] is [true] iff nx.cpu is compiled for x86-64, whose
+    crossovers, as linear algebra's two-stage reductions', differ from
+    arm64's. *)
+
 val nested : int -> int -> int
 (** [nested n cost] runs, through nx.cpu's jobs, a job of [n] units of
     [cost] bytes whose every unit begins a job of [n] units of [cost] bytes
