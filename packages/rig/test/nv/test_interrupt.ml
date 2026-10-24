@@ -276,13 +276,41 @@ let outside_device (a : Gc.Memprof.allocation) =
    makes thousands: one in [stride] of them. *)
 let stride = 64
 
+(* Over PCI an open boots the GSP, for seconds: a walk there lands at
+   [spread] allocations or one more, apart over the call, so the suite keeps
+   within its two minutes. *)
+let spread = 3
+let over_pci () = Rig_nv_support.path () = Some Rig_nv_support.Pci
+
+(* The allocations [f ()] makes, on every thread: a walk counts those of the
+   calling thread, the only one an open or a stop allocates on. *)
+let allocations f =
+  let n = ref 0 in
+  let count _ =
+    incr n;
+    None
+  in
+  let tracker =
+    { Gc.Memprof.null_tracker with alloc_minor = count; alloc_major = count }
+  in
+  let profile = Gc.Memprof.start ~sampling_rate:1. tracker in
+  Fun.protect
+    ~finally:(fun () ->
+      Gc.Memprof.stop ();
+      Gc.Memprof.discard profile)
+    f;
+  !n
+
+(* The step that lands [spread] times over a call of [n] allocations. *)
+let spread_over n = max 1 (n / spread)
+
 (* [open_walk ~from ~step] walks an open, once the process's first open made
    what it keeps: the [(k step + 1)]-th allocation [from] holds for, with every
    one from it on raising until the open returns, for [k] from 0 on. The GPU
-   opens again after each. *)
+   opens again after each. It is the number of landings. *)
 let open_walk ~from ~step =
   works (fresh "before the walk");
-  let rec walk n =
+  let rec walk landed n =
     let opened = ref (Error "not reached") in
     let reached =
       Rig_support.interrupted ~from n (fun () ->
@@ -290,35 +318,61 @@ let open_walk ~from ~step =
     in
     Result.iter (fun g -> N.stop g ~fault:None) !opened;
     works (fresh (strf "from allocation %d" n));
-    if reached then walk (n + step)
+    if reached then walk (landed + 1) (n + step) else landed
   in
-  walk 1
+  walk 0 1
 
 (* An open's every allocation outside the device's make, and one in [stride]
-   of the make's, which gives back what it took on any exception. *)
+   of the make's, which gives back what it took on any exception; over PCI,
+   [spread] allocations of the open. *)
 let test_open () =
   if not (Rig_nv_support.present ()) then
     skip ~reason:"the machine has no NVIDIA GPU either path opens" ();
-  open_walk ~from:outside_device ~step:1;
-  open_walk ~from:(fun _ -> true) ~step:stride
+  if over_pci () then begin
+    let opened = ref (Error "not opened") in
+    let n =
+      allocations (fun () ->
+          opened := Rig_gpu_support.opened (Rig_nv_support.opener 0))
+    in
+    (match !opened with
+    | Ok g -> N.stop g ~fault:None
+    | Error why -> fail ("the GPU does not open: " ^ why));
+    at_least ~msg:"the landings" int ~than:spread
+      (open_walk ~from:(fun _ -> true) ~step:(spread_over n))
+  end
+  else begin
+    ignore (open_walk ~from:outside_device ~step:1 : int);
+    ignore (open_walk ~from:(fun _ -> true) ~step:stride : int)
+  end
 
 (* A stop with every allocation from the [(k stride + 1)]-th on raising until
    it returns, for [k] from 0 on: a region of the device is freed after it,
    and the GPU opens again. A landing before the RM freed the channels leaves
    them, as one the RM refuses does, for the life of the process, so the walk
-   lands apart to stay within the RM's channels. *)
+   lands apart to stay within the RM's channels; over PCI, at [spread]
+   allocations of the stop. *)
 let test_stop () =
   if not (Rig_nv_support.present ()) then
     skip ~reason:"the machine has no NVIDIA GPU either path opens" ();
-  let rec walk n =
+  let stride =
+    if not (over_pci ()) then stride
+    else
+      let g = fresh "for the count" in
+      spread_over (allocations (fun () -> N.stop g ~fault:None))
+  in
+  let rec walk landed n =
     let g = fresh (strf "for allocation %d" n) in
     let r = alloc g in
     let reached = Rig_support.interrupted n (fun () -> N.stop g ~fault:None) in
     N.free g r;
     works (fresh (strf "from allocation %d" n));
-    if reached then walk (n + stride)
+    if reached then walk (landed + 1) (n + stride) else landed
   in
-  walk 1
+  (* The count's stop holds no region, so it allocates no more than the
+     walk's. *)
+  at_least ~msg:"the landings" int
+    ~than:(if over_pci () then spread else 1)
+    (walk 0 1)
 
 (* Through rig *)
 
