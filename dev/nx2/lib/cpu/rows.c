@@ -591,7 +591,8 @@ FILL(4, uint32_t)
 FILL(8, uint64_t)
 FILL(16, w16)
 
-/* The tables, by kind then dtype: NULL where the case is declined. */
+/* The tables, by kind then dtype: NULL where Nx_kernel.Prog refuses the
+   kind at the dtype. */
 
 #define CMP_ROWS(DT, D)                                                      \
   t->op2[NX_OP2_EQUAL][DT] = equal_##D;                                      \

@@ -744,7 +744,6 @@ value nx_cpu_fold_pad(value vpad, value vd, value vx) {
   if (nx_dtype_row_of(dt).kind == NX_KIND_BOOLEAN)
     CAMLreturn(Val_int(NX_DTYPE));
   nx_cpu_row2 add = nx_cpu_table->op2[NX_OP2_ADD][nx_cpu_carrier(dt)];
-  if (add == NULL) CAMLreturn(Val_int(NX_DECLINED));
   /* The operand's shape: the padded extents, each window's axis by its
      count, then the windows' sizes. */
   nx_cpu_pad pad;

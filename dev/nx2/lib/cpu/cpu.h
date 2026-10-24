@@ -477,8 +477,8 @@ typedef struct {
      (gemm.c, stage_f4), in acc float32 or float64. */
   nx_cpu_f4 f4[NX_DTYPE_COUNT];
   /* op1[k][dt] and op2[k][dt] compute the kind of one or two operands k
-     (nx_prog.h's code) at dt, fma[dt] fma: NULL where the table declines
-     (rows.c). */
+     (nx_prog.h's code) at dt, fma[dt] fma: NULL where Nx_kernel.Prog
+     refuses the kind at dt (rows.c). */
   nx_cpu_row1 op1[NX_OP1_COUNT][NX_DTYPE_COUNT];
   nx_cpu_row2 op2[NX_OP2_COUNT][NX_DTYPE_COUNT];
   nx_cpu_row3 fma[NX_DTYPE_COUNT];
@@ -996,9 +996,9 @@ int nx_cpu_prog_out(const nx_cpu_prog *j, int o);
 int nx_cpu_prog_product(const nx_cpu_prog *j, int o, int *k);
 
 /* Binds [j] to its loads [a], read by the door, over a loop of [rank] axes
-   of extents [shape]: NX_OK, NX_SHAPE for a coordinate past the rank or
-   more operands than a loop holds, or NX_DECLINED for a program map.c
-   declines. Sets [index] to whether the program reads the index. */
+   of extents [shape]: NX_OK, or NX_SHAPE for a coordinate past the rank
+   or more operands than a loop holds. Sets [index] to whether the program
+   reads the index. */
 int nx_cpu_prog_bind(nx_cpu_prog *j, const nx_array *a, int rank,
                      const int64_t *shape, int *index);
 

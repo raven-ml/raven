@@ -265,11 +265,7 @@ static int summed_in(int acc) {
   return acc == NX_UINT4 ? NX_UINT8 : acc;
 }
 
-/* Whether nx.cpu computes a contraction in [acc]: one its kernels sum
-   in, of operands of any dtype, into a dst of any dtype. */
-static int computes(int acc) {
-  return nx_cpu_table->gemm[part_of(summed_in(acc))].kernel.f != NULL;
-}
+
 
 /* Staging */
 
@@ -3177,12 +3173,13 @@ static inline __attribute__((always_inline)) int computed(
 
 /* The external: groups the view of the pairs [vbatch] and [vcontracting]
    on the stack, or their runs where a group makes several, answering what
-   the fill answers where it does not fit, declines what it does not
-   compute, then reads the operands through the door. [vorder] is the
-   order, [vacc] acc's dtype code, [vi] the init and [vsa] and [vsb] a's
-   and b's scales, options of Nx_kernel.scale. Its body is inlined into
-   two copies, [scaled] a constant in each, so that an unscaled call runs
-   none of the scales' setup. */
+   the fill answers where it does not fit, then reads the operands through
+   the door. [vorder] is the order, [vacc] acc's dtype code, one
+   Nx_kernel.accumulates takes, float where a scale is given, [vi] the
+   init and [vsa] and [vsb] a's and b's scales, options of
+   Nx_kernel.scale. Its body is inlined into two copies, [scaled] a
+   constant in each, so that an unscaled call runs none of the scales'
+   setup. */
 static inline __attribute__((always_inline)) value contract_body(
     value vorder, value vbatch, value vcontracting, value vacc, value vdst,
     value vi, value va, value vb, value vsa, value vsb, int scaled) {
@@ -3196,11 +3193,7 @@ static inline __attribute__((always_inline)) value contract_body(
   int dts[3] = {nx_array_dtype(va), nx_array_dtype(vb),
                 nx_array_dtype(vinit)};
   int out = nx_array_dtype(vdst);
-  if (acc < 0 || acc >= NX_DTYPE_COUNT || !computes(acc))
-    return Val_int(NX_DECLINED);
   value vs[2] = {vsa, vsb};
-  if (scaled && acc != NX_FLOAT32 && acc != NX_FLOAT64)
-    return Val_int(NX_DECLINED);
   if (scaled && !scales_fit(va, vb, vs)) return Val_int(NX_SHAPE);
   /* Read before nx_read, which may run the collector. */
   scale_axes sx[2];
@@ -3525,8 +3518,8 @@ static int groups_on(segmented *j, const nx_array *off) {
 }
 
 /* The external for a call with segments [vseg], an option: frames the
-   call (frame_of), answering what it answers, declines and refuses as
-   contract_body does, then reads the operands and the offsets through
+   call (frame_of), answering what it answers, refuses as contract_body
+   does, then reads the operands and the offsets through
    the door and computes each group (groups_on). Out of line, as
    contract_scaled. */
 static __attribute__((noinline)) value contract_segmented(
@@ -3539,12 +3532,8 @@ static __attribute__((noinline)) value contract_segmented(
   nx_layout offl;
   int fit = frame_of(&f, vbatch, vcontracting, vs, vdst, va, vb, vi, &offl);
   if (fit != NX_OK) return Val_int(fit);
-  if (acc < 0 || acc >= NX_DTYPE_COUNT || !computes(acc))
-    return Val_int(NX_DECLINED);
   value vsc[2] = {vsa, vsb};
   int scaled = Is_block(vsa) || Is_block(vsb);
-  if (scaled && acc != NX_FLOAT32 && acc != NX_FLOAT64)
-    return Val_int(NX_DECLINED);
   if (scaled && !scales_fit(va, vb, vsc)) return Val_int(NX_SHAPE);
   scale_axes sx[2];
   for (int o = A; o <= B; o++)

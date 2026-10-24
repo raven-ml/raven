@@ -10,10 +10,8 @@
     computes from operands of any layouts, on memory the host addresses. It
     claims every operand through the door of [nx_array.h] for the extent of
     its call. It answers [Done] once its work is done, or a refusal before
-    any write. It answers [Declined] only where its doc says. It computes
-    every other case its contract offers, and a kernel that would decline
-    one, a bug in nx.cpu, raises [Failure] naming itself and its operands'
-    dtypes and shapes.
+    any write. It answers [Declined] only where its doc says, and computes
+    every other case its contract offers.
 
     A call keeps other domains waiting to collect for no longer than about
     one unloaded core's copy of 1 MiB at a time, however many operands,

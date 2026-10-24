@@ -251,21 +251,17 @@ static value walk_operands(int n, const nx_operand *in, nx_cpu_block_fn f,
 value nx_cpu_apply1(value k, value vd, value vx) {
   int x = nx_array_dtype(vx), c = nx_cpu_carrier(x);
   int code = NX_OP1_NEG + Int_val(k);
-  row1 f = nx_cpu_table->op1[code][c];
-  if (f == NULL) return Val_int(NX_DECLINED);
   nx_operand in[2] = {{vd, x, 1}, {vx, x, 0}};
-  op j = {.as = {c, c}, .f1 = f};
+  op j = {.as = {c, c}, .f1 = nx_cpu_table->op1[code][c]};
   return walk_operands(2, in, block, &j, nx_cpu_kind_cost(1, code, x));
 }
 
 value nx_cpu_apply2(value k, value vd, value vx, value vy) {
   int x = nx_array_dtype(vx), c = nx_cpu_carrier(x);
   int code = NX_OP2_CODE(k);
-  row2 f = nx_cpu_table->op2[code][c];
-  if (f == NULL) return Val_int(NX_DECLINED);
   int d = code >= NX_OP2_EQUAL ? NX_BOOL : x;
   nx_operand in[3] = {{vd, d, 1}, {vx, x, 0}, {vy, x, 0}};
-  op j = {.as = {nx_cpu_carrier(d), c, c}, .f2 = f};
+  op j = {.as = {nx_cpu_carrier(d), c, c}, .f2 = nx_cpu_table->op2[code][c]};
   return walk_operands(3, in, block, &j, nx_cpu_kind_cost(2, code, x));
 }
 
@@ -282,7 +278,6 @@ value nx_cpu_apply3(value k, value vd, value vc, value vx, value vy) {
     int s = nx_cpu_carrier(x);
     j = (op){.as = {s, s, s, s}, .f3 = nx_cpu_table->fma[s]};
   }
-  if (j.f3 == NULL) return Val_int(NX_DECLINED);
   nx_operand in[4] = {{vd, x, 1}, {vc, c, 0}, {vx, x, 0}, {vy, x, 0}};
   return walk_operands(4, in, block, &j, nx_cpu_kind_cost(3, Int_val(k), x));
 }

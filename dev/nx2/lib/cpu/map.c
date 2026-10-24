@@ -478,9 +478,10 @@ static void block(const nx_cpu_block *b, void *ctx) { planes(b, ctx, NULL); }
 
 /* Decoding */
 
-/* The row of the kind [s], over operands of the dtype [xt] after a first
-   one of [ct], or NULL where the table has none. */
-static void *row_of(const step *s, int ct, int xt) {
+/* The row of the kind [s] over operands of the dtype [xt], after a
+   boolean first one for a Where: the program has checked the kind
+   against its operands' dtypes, and the table has a row for each. */
+static void *row_of(const step *s, int xt) {
   const nx_cpu_target *t = nx_cpu_table;
   int c = nx_cpu_carrier(xt);
   switch (s->tag) {
@@ -489,7 +490,6 @@ static void *row_of(const step *s, int ct, int xt) {
     default: break;
   }
   if (s->kind == NX_OP3_FMA) return (void *)t->fma[c];
-  if (ct != NX_BOOL && ct != NX_BIT) return NULL;
   switch (width(held(xt))) {
     case 1: return (void *)t->where[0];
     case 2: return (void *)t->where[1];
@@ -513,9 +513,9 @@ static void const_of(step *s) {
 
 /* Fills the steps [s], copied from a program of [nn] nodes and outputs
    [outs] over a loop of rank [rank], and answers NX_OK, NX_SHAPE for a
-   coordinate past the rank, NX_DECLINED, or -1 where memory runs out; on
-   NX_OK [index] says whether a coordinate reads the index and [slots]
-   counts the values held at once. */
+   coordinate past the rank, or -1 where memory runs out; on NX_OK
+   [index] says whether a coordinate reads the index and [slots] counts
+   the values held at once. */
 static int decode(step *s, int nn, int nouts, const int32_t *outs, int rank,
                   int *index, int *slots) {
   *index = 0;
@@ -541,19 +541,17 @@ static int decode(step *s, int nn, int nouts, const int32_t *outs, int rank,
         else if (t->kind == NX_OP1_BITCAST) {
           /* A sub-byte bitcast into another dtype computes its codes. */
           if (nx_dtype_row_of(xt).bits >= 8 || xt == t->dt) t->alias = a;
-        } else if (t->kind != NX_OP1_CAST &&
-                   (t->f = row_of(t, xt, xt)) == NULL)
-          return NX_DECLINED;
+        } else if (t->kind != NX_OP1_CAST)
+          t->f = row_of(t, xt);
         break;
       }
       case NX_NODE_OP2:
         t->arity = 2;
-        if ((t->f = row_of(t, s[a].dt, s[a].dt)) == NULL) return NX_DECLINED;
+        t->f = row_of(t, s[a].dt);
         break;
       default:
         t->arity = 3;
-        if ((t->f = row_of(t, s[a].dt, s[t->x[1]].dt)) == NULL)
-          return NX_DECLINED;
+        t->f = row_of(t, s[t->x[1]].dt);
     }
     if (t->alias >= 0 && s[t->alias].alias >= 0) t->alias = s[t->alias].alias;
   }

@@ -8,27 +8,6 @@ module D = Nx_array.Dtype
 let name = "nx.cpu"
 let computes_on d = Rig.reaches Rig.host d
 
-(* Declines
-
-   nx.cpu computes every case its contract offers it, so a kernel never
-   answers [Declined]: one that would, a bug in nx.cpu, raises [Failure] at
-   the call instead, naming the kernel and its operands. Each entry that
-   could decline matches its answer itself, so that a call that computes
-   builds no description. *)
-
-let operand_name (Nx_array.Any a) =
-  let s = Nx_array.Layout.shape (Nx_array.layout a) in
-  Printf.sprintf "%s [%s]"
-    (Nx_array.Dtype.name (Nx_array.dtype a))
-    (String.concat "; " (Array.to_list (Array.map string_of_int s)))
-
-let declined kernel operands =
-  failwith
-    (Printf.sprintf
-       "nx.cpu: %s declined a case of its contract, over %s: a bug in nx.cpu"
-       kernel
-       (String.concat ", " (List.map operand_name operands)))
-
 (* Elementwise kernels (copy.c, convert.c, apply.c, iota.c), which [map]
    runs for a program of one node: the kind passes as its value. Each reads
    its operands through the door at the dtypes its kind takes, so their
@@ -72,11 +51,7 @@ external apply3_c :
   ('w, 'r) Nx_array.t ->
   Nx_array.answer = "nx_cpu_apply3"
 
-(* Loads: a load's operand, and a padded one's pad and its fill's bits. *)
-
-let operand : Nx_kernel.load -> Nx_array.any = function
-  | Plain x -> Any x
-  | Padded { x; _ } -> Any x
+(* Loads: a padded one's pad and its fill's bits. *)
 
 let padding : Nx_kernel.load -> _ = function
   | Plain _ -> None
@@ -140,7 +115,8 @@ let rec plain_of ins (loads : Nx_kernel.load array) i =
 
 (* [n], the one node of [p], into [dst] over plain loads of [p]'s operands'
    dtypes, by its kind's kernel, allocating nothing. The program has
-   checked the kind against its operands' dtypes. *)
+   checked the kind against its operands' dtypes, so each kind's table
+   has its row. A node no kernel matches runs through map.c. *)
 let single (p : Nx_kernel.Prog.t) n (Nx_array.Any dst) loads =
   let (D.Any out) = Nx_kernel.Prog.dtype p (Iarray.length p.nodes - 1) in
   if not (D.equal (Nx_array.dtype dst) out) then Nx_array.Wrong_dtype
@@ -155,30 +131,23 @@ let single (p : Nx_kernel.Prog.t) n (Nx_array.Any dst) loads =
     | Op2 (k, _, _), [| Plain x; Plain y |] -> apply2_c k dst x y
     | Op3 (k, _, _, _), [| Plain c; Plain x; Plain y |] ->
         apply3_c k dst c x y
-    | (In _ | Op1 _ | Op2 _ | Op3 _), _ -> Nx_array.Declined
+    | (In _ | Op1 _ | Op2 _ | Op3 _), _ -> map_c p [| Any dst |] loads [||]
 
 (* A program of one node over plain loads, into one destination, runs by
    its kind's kernel, which reads its operands' layouts directly; any
    other through map.c. *)
 let map p ~dsts loads =
-  let answer =
-    if
-      Array.length dsts = 1
-      && Nx_kernel.Prog.is_single p
-      && plain_of p.ins loads 0
-    then
-      let last = Iarray.get p.nodes (Iarray.length p.nodes - 1) in
-      single p last dsts.(0) loads
-    else if not (Array.exists padded loads) then map_c p dsts loads [||]
-    else if Array.length dsts > 0 && not (fits (loop_of dsts.(0)) loads 0) then
-      Nx_array.Shape_mismatch
-    else map_c p dsts loads (Array.map padding loads)
-  in
-  match answer with
-  | Nx_array.Declined ->
-      declined "map"
-        (Array.to_list dsts @ Array.to_list (Array.map operand loads))
-  | answer -> answer
+  if
+    Array.length dsts = 1
+    && Nx_kernel.Prog.is_single p
+    && plain_of p.ins loads 0
+  then
+    let last = Iarray.get p.nodes (Iarray.length p.nodes - 1) in
+    single p last dsts.(0) loads
+  else if not (Array.exists padded loads) then map_c p dsts loads [||]
+  else if Array.length dsts > 0 && not (fits (loop_of dsts.(0)) loads 0) then
+    Nx_array.Shape_mismatch
+  else map_c p dsts loads (Array.map padding loads)
 
 (* Reductions and scans (reduce.c), of a program's outputs through it,
    each load passing its padding: an external each, which reads the terms
@@ -244,30 +213,16 @@ let rec fits_dst (Nx_array.Any d as any) (loads : Nx_kernel.load array) i =
      | Padded _ -> fits (loop_of any) loads i)
      && fits_dst any loads (i + 1)
 
-(* The operands of a reduction or scan, to name a decline. *)
-let loop_operands dsts loads =
-  Array.to_list dsts @ Array.to_list (Array.map operand loads)
-
-let reduce_answer p ~shape ~axes rs ~dsts loads =
+let reduce p ~shape ~axes rs ~dsts loads =
   if not (all_accepted p rs 0) then Nx_array.Wrong_dtype
   else if not (fits shape loads 0) then Nx_array.Shape_mismatch
   else reduce_c p rs shape axes dsts loads (pads loads)
 
-let scan_answer ?carry p ~axis rk ~dsts loads =
+let scan ?carry p ~axis rk ~dsts loads =
   if not (accepted p rk) then Nx_array.Wrong_dtype
   else if Array.length dsts = 0 || not (fits_dst dsts.(0) loads 0) then
     Nx_array.Shape_mismatch
   else scan_c p rk axis dsts loads (pads loads) carry
-
-let reduce p ~shape ~axes rs ~dsts loads =
-  match reduce_answer p ~shape ~axes rs ~dsts loads with
-  | Nx_array.Declined -> declined "reduce" (loop_operands dsts loads)
-  | answer -> answer
-
-let scan ?carry p ~axis rk ~dsts loads =
-  match scan_answer ?carry p ~axis rk ~dsts loads with
-  | Nx_array.Declined -> declined "scan" (loop_operands dsts loads)
-  | answer -> answer
 
 (* Gathers and scatters (index.c) *)
 
@@ -316,16 +271,11 @@ external assemble_c :
 let assemble ~fill ~dst pieces =
   assemble_c (Nx_kernel.Prog.bits (Nx_array.dtype dst) fill) dst pieces
 
-external fold_c :
+external fold :
   Nx_kernel.pad ->
   dst:('v, 's) Nx_array.t ->
   ('v, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_fold_pad"
-
-let fold p ~dst x =
-  match fold_c p ~dst x with
-  | Nx_array.Declined -> declined "fold" [ Any dst; Any x ]
-  | answer -> answer
 
 (* Contractions (gemm.c) *)
 
@@ -388,16 +338,8 @@ let contract ~order ~batch ~contracting ~segments ~acc ~dst ~init
   if not (Nx_kernel.accumulates dt) then Nx_array.Wrong_dtype
   else if scaled && not float then Nx_array.Declined
   else
-    match
-      contract_c order ~batch ~contracting (Nx_array.Dtype.code dt) ~dst
-        ~init a b oa.scale ob.scale segments
-    with
-    | Nx_array.Declined ->
-        let init =
-          Option.fold ~none:[] ~some:(fun i -> [ Nx_array.Any i ]) init
-        in
-        declined "contract" ([ Nx_array.Any dst; Any a; Any b ] @ init)
-    | answer -> answer
+    contract_c order ~batch ~contracting (Nx_array.Dtype.code dt) ~dst ~init
+      a b oa.scale ob.scale segments
 
 (* Fourier transforms (fft.c). The shapes are checked here; the externals take
    the direction as its int. *)
