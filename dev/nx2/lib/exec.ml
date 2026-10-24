@@ -143,7 +143,7 @@ let map_on ~by (module K : Nx_kernel.S) (prog : P.t) loads dsts =
 (* [K]'s map of the one node [k] over the plain operands that follow [dst];
    [Wrong_dtype] where [k] does not take their dtypes, as no program does. *)
 let map1 (module K : Nx_kernel.S) k ~dst a =
-  match Prim.prog1 k (A.dtype a) (A.dtype dst) with
+  match P.node1 k (A.dtype a) (A.dtype dst) with
   | None -> A.Wrong_dtype
   | Some p -> K.map p ~dsts:[| A.Any dst |] [| Nx_kernel.Plain a |]
 
@@ -1354,7 +1354,7 @@ let apply1 (type v s w r d) ~by k (dt : (w, r) D.t) (x : (v, s, d) Value.t) :
     (w, r, d) Value.t =
   match x with
   | Value.Array ({ at; a; _ } as rx) when rx.dead == Value.Live -> (
-      match (Devices.kernels (Devices.set at), Prim.prog1 k (A.dtype a) dt) with
+      match (Devices.kernels (Devices.set at), P.node1 k (A.dtype a) dt) with
       | Some (module K), Some p -> (
           let dst = destination dt a in
           match K.map p ~dsts:[| A.Any dst |] [| Plain a |] with
@@ -1370,7 +1370,7 @@ let apply2 (type v s w r d) ~by k (dt : (w, r) D.t) (x : (v, s, d) Value.t)
     (y : (v, s, d) Value.t) : (w, r, d) Value.t =
   match (x, y) with
   | Value.Array { at; a; _ }, Value.Array { a = b; _ } when beside x y -> (
-      match (Devices.kernels (Devices.set at), Prim.prog2 k (A.dtype a)) with
+      match (Devices.kernels (Devices.set at), P.node2 k (A.dtype a)) with
       | Some (module K), Some p -> (
           let dst = destination dt a in
           match K.map p ~dsts:[| A.Any dst |] [| Plain a; Plain b |] with
@@ -1391,7 +1391,7 @@ let apply3 (type a b v s d) ~by k (c : (a, b, d) Value.t)
       Value.Array { a; _ },
       Value.Array { a = b; _ } )
     when beside c x && beside x y -> (
-      let prog = Prim.prog3 k (A.dtype ca) (A.dtype a) in
+      let prog = P.node3 k (A.dtype ca) (A.dtype a) in
       match (Devices.kernels (Devices.set at), prog) with
       | Some (module K), Some p -> (
           let dst = destination (A.dtype a) a in

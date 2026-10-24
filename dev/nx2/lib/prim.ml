@@ -1918,60 +1918,13 @@ let refused ~by node ins =
     (String.concat ", "
        (List.map (fun (D.Any dt) -> D.name dt) (Iarray.to_list ins)))
 
-let dtypes = List.length D.all
-
-(* The one-node programs made so far, by kind and dtypes, each made once: a
-   map that finds its program builds none. A slot that two domains fill at
-   once keeps either's program; they are equal. *)
-let progs1 : P.t option array = Array.make (P.kinds1 * dtypes * dtypes) None
-let progs2 : P.t option array = Array.make (P.kinds2 * dtypes) None
-let progs3 : P.t option array = Array.make (P.kinds3 * dtypes * dtypes) None
-
-(* [make ()] kept at [table.(i)]; [None] where its kind does not take its
-   dtypes. *)
-let made table i make =
-  match make () with
-  | p ->
-      let p = Some p in
-      table.(i) <- p;
-      p
-  | exception Invalid_argument _ -> None
-
-(* The program of the one node [k] over operands of [x] into [y]. *)
-let prog1 (type v s w r) k (x : (v, s) D.t) (y : (w, r) D.t) =
-  let i = (((P.code1 k * dtypes) + D.code x) * dtypes) + D.code y in
-  match progs1.(i) with
-  | Some _ as p -> p
-  | None ->
-      made progs1 i (fun () ->
-          P.of_node ~ins:[| D.Any x |] (Op1 (k, D.Any y, 0)))
-
-(* The program of the one node [k] over two operands of [x]. *)
-let prog2 (type v s) k (x : (v, s) D.t) =
-  let i = (P.code2 k * dtypes) + D.code x in
-  match progs2.(i) with
-  | Some _ as p -> p
-  | None ->
-      made progs2 i (fun () ->
-          P.of_node ~ins:[| D.Any x; D.Any x |] (Op2 (k, 0, 1)))
-
-(* The program of the one node [k] over an operand of [c], then two of
-   [x]. *)
-let prog3 (type a b v s) k (c : (a, b) D.t) (x : (v, s) D.t) =
-  let i = (((P.code3 k * dtypes) + D.code c) * dtypes) + D.code x in
-  match progs3.(i) with
-  | Some _ as p -> p
-  | None ->
-      made progs3 i (fun () ->
-          P.of_node ~ins:[| D.Any c; D.Any x; D.Any x |] (Op3 (k, 0, 1, 2)))
-
 (* The map of [prog] over [loads], into [dt]. *)
 let one_node prog dt loads =
   let (Any x) = load_any (Iarray.get loads 0) in
   Map { layout = L.contiguous (shape x); prog; outs = Value.[ dt ]; loads }
 
 let op1 ~by k dt x =
-  match prog1 k (dtype x) dt with
+  match P.node1 k (dtype x) dt with
   | Some prog -> one_node prog dt [| Plain x |]
   | None -> refused ~by (P.Op1 (k, D.Any dt, 0)) [| D.Any (dtype x) |]
 
@@ -1991,12 +1944,12 @@ let accepted3 ~by k c x =
     refused ~by (P.Op3 (k, 0, 1, 2)) (ins3 c x)
 
 let op2 ~by k dt x y =
-  match prog2 k (dtype x) with
+  match P.node2 k (dtype x) with
   | Some prog -> one_node prog dt [| Plain x; Plain y |]
   | None -> refused ~by (P.Op2 (k, 0, 1)) (ins2 x)
 
 let op3 ~by k c x y =
-  match prog3 k (dtype c) (dtype x) with
+  match P.node3 k (dtype c) (dtype x) with
   | Some prog -> one_node prog (dtype x) [| Plain c; Plain x; Plain y |]
   | None -> refused ~by (P.Op3 (k, 0, 1, 2)) (ins3 c x)
 

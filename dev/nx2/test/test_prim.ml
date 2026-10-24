@@ -788,101 +788,6 @@ let partials =
         (fun (_, g) -> equal compute Windows (route ~segments:g [| 64 |] None));
     ]
 
-(* One-node programs *)
-
-let unaries =
-  P.
-    [
-      Neg; Recip; Abs; Sign; Sqrt; Exp; Exp2; Log; Log2; Log1p; Expm1; Sin;
-      Cos; Tan; Asin; Acos; Atan; Sinh; Cosh; Tanh; Asinh; Acosh; Atanh; Erf;
-      Floor; Ceil; Round; Trunc;
-    ]
-
-let op1s = P.[ Copy; Cast; Bitcast ] @ List.map (fun u -> P.Unary u) unaries
-
-let op2s =
-  P.
-    [
-      Binary Add; Binary Sub; Binary Mul; Binary Fdiv; Binary Idiv; Binary Mod;
-      Binary Pow; Binary Atan2; Binary Maximum; Binary Minimum; Binary And;
-      Binary Or; Binary Xor; Binary Threefry; Compare Equal; Compare Not_equal;
-      Compare Less; Compare Less_equal;
-    ]
-
-let op3s = P.[ Where; Fma ]
-let dname (D.Any dt) = D.name dt
-
-let pp_node ppf (n : P.node) =
-  match n with
-  | In i -> Format.fprintf ppf "In %d" i
-  | Op1 (_, d, i) -> Format.fprintf ppf "%s %s %d" (Prim.kind n) (dname d) i
-  | Op2 (_, i, j) -> Format.fprintf ppf "%s %d %d" (Prim.kind n) i j
-  | Op3 (_, i, j, l) -> Format.fprintf ppf "%s %d %d %d" (Prim.kind n) i j l
-  | Coord _ | Const _ -> Format.pp_print_string ppf (Prim.kind n)
-
-let pp_prog ppf (p : P.t) =
-  let list pp ppf xs =
-    let sep ppf () = Format.fprintf ppf "; " in
-    Format.pp_print_list ~pp_sep:sep pp ppf (Iarray.to_list xs)
-  in
-  let dtype ppf d = Format.pp_print_string ppf (dname d) in
-  Format.fprintf ppf "{ ins = [%a]; nodes = [%a]; outs = [%a] }" (list dtype)
-    p.ins (list pp_node) p.nodes (list Format.pp_print_int) p.outs
-
-let prog = option (Testable.structural ~pp:pp_prog)
-let pairs f = List.concat_map (fun x -> List.map (f x) D.all) D.all
-
-(* Every key of each arity's programs: a kind and its operands' and result's
-   dtypes. *)
-let keys1 = List.concat_map (fun k -> pairs (fun x y -> (k, x, y))) op1s
-let keys2 = List.concat_map (fun k -> List.map (fun x -> (k, x)) D.all) op2s
-let keys3 = List.concat_map (fun k -> pairs (fun c x -> (k, c, x))) op3s
-
-let name1 (k, x, y) =
-  Printf.sprintf "%s %s to %s" (Prim.kind (Op1 (k, y, 0))) (dname x) (dname y)
-
-let name2 (k, x) = Printf.sprintf "%s %s" (Prim.kind (Op2 (k, 0, 1))) (dname x)
-
-let name3 (k, c, x) =
-  Printf.sprintf "%s %s %s" (Prim.kind (Op3 (k, 0, 1, 2))) (dname c) (dname x)
-
-let test_prog1 (k, D.Any x, D.Any y) =
-  let want =
-    if not (P.accepts1 k x y) then None
-    else Some (P.of_node ~ins:[| D.Any x |] (Op1 (k, D.Any y, 0)))
-  in
-  equal prog want (Prim.prog1 k x y)
-
-let test_prog2 (k, D.Any x) =
-  let want =
-    if not (P.accepts2 k x) then None
-    else Some (P.of_node ~ins:[| D.Any x; D.Any x |] (Op2 (k, 0, 1)))
-  in
-  equal prog want (Prim.prog2 k x)
-
-let test_prog3 (k, D.Any c, D.Any x) =
-  let want =
-    if not (P.accepts3 k c x) then None
-    else
-      Some (P.of_node ~ins:[| D.Any c; D.Any x; D.Any x |] (Op3 (k, 0, 1, 2)))
-  in
-  equal prog want (Prim.prog3 k c x)
-
-let one_node =
-  group "one-node programs"
-    [
-      test "the kinds below are every kind" (fun () ->
-          equal int P.kinds1 (List.length op1s);
-          equal int P.kinds2 (List.length op2s);
-          equal int P.kinds3 (List.length op3s));
-      cases "prog1 is of_node's program where its kind takes its dtypes"
-        ~name:name1 keys1 test_prog1;
-      cases "prog2 is of_node's program where its kind takes its dtype"
-        ~name:name2 keys2 test_prog2;
-      cases "prog3 is of_node's program where its kind takes its dtypes"
-        ~name:name3 keys3 test_prog3;
-    ]
-
 let operations =
   group "operations"
     [
@@ -939,6 +844,5 @@ let () =
          contractions;
          partials;
          orders;
-         one_node;
          operations;
        ])
