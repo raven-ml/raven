@@ -209,31 +209,40 @@ let shared y =
    operands as a new value over the donor's arrays, which it may give back. A
    second read of one donor is a second value over its memory, so it shares
    the memory, as a view does: neither value is written in place, and a
-   donation of one leaves the other as it was. *)
+   donation of one leaves the other as it was. A structure's walk may read
+   from several domains at once, so a lock orders the reads. *)
 type reads = {
   hs : handle list;
+  lock : Mutex.t;
   mutable keys : int list;  (* The donors read so far. *)
   mutable words : Value.death Atomic.Loc.t list;  (* The reads' deaths. *)
 }
 
-let reads hs = { hs; keys = []; words = [] }
+let reads hs = { hs; lock = Mutex.create (); keys = []; words = [] }
 
 let read (type v s d) r (y : (v, s, d) Value.t) : (v, s, d) Value.t =
   match read_key r.hs y with
   | None -> y
   | Some k -> (
       let z = renewed Value.Claimed y in
-      if List.mem k r.keys then ignore (shared z) else r.keys <- k :: r.keys;
-      match z with
-      | Value.Array s ->
-          r.words <- [%atomic.loc s.dead] :: r.words;
-          z
-      | Value.Shards s ->
-          r.words <- [%atomic.loc s.dead] :: r.words;
-          z
-      | Value.Donated _ | Value.Deferred _ | Value.Traced _ -> z)
+      let word =
+        match z with
+        | Value.Array s -> Some [%atomic.loc s.dead]
+        | Value.Shards s -> Some [%atomic.loc s.dead]
+        | Value.Donated _ | Value.Deferred _ | Value.Traced _ -> None
+      in
+      let again =
+        Mutex.protect r.lock @@ fun () ->
+        let again = List.mem k r.keys in
+        if not again then r.keys <- k :: r.keys;
+        Option.iter (fun w -> r.words <- w :: r.words) word;
+        again
+      in
+      if again then shared z else z)
 
-let release r = List.iter (fun w -> Atomic.Loc.set w Value.Live) r.words
+let release r =
+  Mutex.protect r.lock @@ fun () ->
+  List.iter (fun w -> Atomic.Loc.set w Value.Live) r.words
 
 let consume_list ~by xs =
   let r = reads (consume ~by xs) in

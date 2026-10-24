@@ -89,7 +89,8 @@ val read : reads -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
     claims nothing, {!donate} gives it back as it is, and an interpretation
     receives it {!lent}. A second read of one donor shares its memory
     ({!Rig.Claim.share}): the consumer may give back both values, which no
-    donation then writes under the other. *)
+    donation then writes under the other. Domains may read through one [r]
+    at once. *)
 
 val release : reads -> unit
 (** [release r] makes [r]'s reads live, once their consumer returned or
