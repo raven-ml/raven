@@ -20,10 +20,11 @@ val ready : t -> bool
 (** [ready q] is [true] once the GSP has written the status queue's header,
     which it does once it runs. *)
 
-val send : t -> int -> string -> bool
-(** [send q fn body] writes the records of [fn] with [body] and writes the
-    doorbell after each, or is [false], writing nothing, if the command queue
-    has no room for them. *)
+val send : ?call:bool -> t -> int -> string -> bool
+(** [send ~call q fn body] writes the records of [fn] with [body] and writes
+    the doorbell after each, or is [false], writing nothing, if the command
+    queue has no room for them. If [call] (defaults to [false]), [fn] is
+    {!owed} from the write that publishes the last record. *)
 
 val next : t -> (Rpc.message, string) result option
 (** [next q] is the next message of the status queue, if the GSP wrote one:
@@ -36,6 +37,15 @@ val next : t -> (Rpc.message, string) result option
 val consume : t -> unit
 (** [consume q] gives the GSP back the elements of the message the last
     {!next} read: the whole message, or one element when its count is out of
-    range. It does nothing if [next] read none since the last [consume].
+    range. It does nothing if [next] read none since the last [consume]. A
+    message of the {!owed} function ends it, from the write that gives it
+    back.
 
     Raises [Invalid_argument] if [q] is not {!ready}. *)
+
+val owed : t -> int
+(** [owed q] is the function of the last [~call:true] {!send} until a
+    {!consume} gives back a readable message of that function, or [-1]. With
+    one call outstanding at a time, as the GSP's caller keeps, and the GSP
+    answering calls in order, the first message of that function is its
+    answer. An answer {!next} cannot read leaves the function owed. *)

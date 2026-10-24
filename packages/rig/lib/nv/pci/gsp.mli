@@ -68,8 +68,10 @@ val stop : t -> [> `Clean | `Lost | `Unknown ]
 (** [stop g] stops the GPU [g] booted, or began to. If the GPU responds
     ({!Rig_pci.Function.failed}):
     - it unloads the GSP if the GSP set its queue up and answered every call
-      within its bound ({!check}), waiting at most 10 seconds for room in its
-      queue and 10 more for its reply, then up to 30 seconds for the GSP's
+      within its bound ({!check}), waiting at most 10 seconds for an answer
+      still owed, to a call an exception cut or whose answer could not be
+      read, 10 for room in its queue and 10 more for its reply, then up to 30
+      seconds for the GSP's
       firmware to suspend ({!Falcon.suspended});
     - on Ampere and Ada, if the boot set the GPU's protected memory (WPR2)
       up, it runs FWSEC's SB command and the unloading booter, which take

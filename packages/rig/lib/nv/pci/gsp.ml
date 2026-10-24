@@ -160,13 +160,26 @@ let sys p ~taken ?(contiguous = false) n =
           taken := s :: !taken;
           Ok s)
 
+(* Gives back the system memory in [taken], all of it whatever a free
+   raises: each leaves [taken] before its free, and the first exception passes
+   on once the last ran. Memory whose free raised keeps its addresses, which
+   the GPU may still reach. *)
 let give_back p taken =
-  List.iter
-    (fun s ->
-      Function.free_dma p.chip.fn s.w;
-      Space.free p.space s.va)
-    !taken;
-  taken := []
+  let first = ref None in
+  let rec go () =
+    match !taken with
+    | [] -> ()
+    | s :: rest ->
+        taken := rest;
+        (match Function.free_dma p.chip.fn s.w with
+        | () -> Space.free p.space s.va
+        | exception e ->
+            if Option.is_none !first then
+              first := Some (e, Printexc.get_raw_backtrace ()));
+        go ()
+  in
+  go ();
+  Option.iter (fun (e, bt) -> Printexc.raise_with_backtrace e bt) !first
 
 let first s = List.hd s.pages
 
@@ -396,15 +409,35 @@ let wait_for g ?(what = "") fn =
   in
   !found
 
-let send g fn body =
+(* Sends [fn] with [body]: a call's function is owed from its publication
+   until a drain gives its answer back ([Msgq.owed]). *)
+let send ?(call = false) g fn body =
   g.reports <- [];
   unanswered g
     (Function.wait g.p.chip.fn ~us:(answer_ms * 1000)
-       "room in the GSP's command queue" (fun () -> Msgq.send g.q fn body))
+       "room in the GSP's command queue" (fun () ->
+         Msgq.send ~call g.q fn body))
 
+(* A call takes first the answer an exception kept from the last call, cut
+   between its send and its answer, such as by a Ctrl-C: the GSP answers in
+   order, so the first answer of that function is the cut call's; an answer
+   the drain could not read stays owed and is waited for in vain. A call
+   after one left unanswered past its bound answers the fault at once. *)
 let call g ?what fn body =
   Rig_nv.Lock.protect g.lock (fun () ->
-      let* () = send g fn body in
+      let* () =
+        if g.unanswered then
+          Error (Option.value g.fault ~default:"the GSP left a call unanswered")
+        else
+          let owed = Msgq.owed g.q in
+          if owed < 0 then Ok ()
+          else
+            match wait_for g owed with
+            | Ok _ -> Ok ()
+            | Error _ when Msgq.owed g.q < 0 -> Ok ()
+            | Error why -> Error why
+      in
+      let* () = send ~call:true g fn body in
       wait_for g ?what fn)
 
 (* Every error of a drain is recorded as the GPU's fault inside it. *)
@@ -779,8 +812,10 @@ let free g ~client obj =
   Ok ()
 
 (* Makes [obj] of [client], named [h], under [parent]: [Error (`Unmade, e)]
-   if the GSP did not make it, [Error (`Made, e)] if a step after failed. *)
-let construct g ~client ~locate ~objects ~parent ~h ~obj cls p =
+   if the GSP did not make it, [Error (`Made, e)] if a step after failed.
+   [asked] is set just before the call that makes it, which may then end
+   before it sends. *)
+let construct g ~asked ~client ~locate ~objects ~parent ~h ~obj cls p =
   let channel_class, compute_class, _ = classes g.p.chip.family in
   let compute = cls = compute_class && client <> priv_root in
   let made =
@@ -798,6 +833,7 @@ let construct g ~client ~locate ~objects ~parent ~h ~obj cls p =
         context g ~client ~subdevice:objects.subdevice ~obj parent
       else Ok (fun () -> Ok ())
     in
+    asked := true;
     let* _ = alloc_object g ~client ~parent ~obj:h cls p in
     Ok bind
   in
@@ -830,17 +866,28 @@ let construct g ~client ~locate ~objects ~parent ~h ~obj cls p =
    object, as CPU-RM's constructors free theirs when they fail
    (kchannelConstruct_IMPL, kchangrpapiConstruct_IMPL), and an object the GSP
    made is freed first, as CPU-RM frees it (NV_RM_RPC_FREE_ON_ERROR). After a
-   fault the memory stays with the records: the GSP may hold it. *)
+   fault the memory stays with the records: the GSP may hold it. An exception
+   is taken as an [Error]: one raised before the call that makes the object
+   was sent leaves it unmade, and one after leaves it perhaps made. *)
 let alloc g ~client ~locate ~objects ~parent cls p =
   let h, obj, fresh = made g ~client ~parent cls in
-  match construct g ~client ~locate ~objects ~parent ~h ~obj cls p with
+  let unmade () =
+    if fresh && Option.is_none g.fault then drop_objects g ~client obj
+  in
+  let asked = ref false in
+  match construct g ~asked ~client ~locate ~objects ~parent ~h ~obj cls p with
   | Ok () -> Ok obj
   | Error (`Made, e) ->
       ignore (free g ~client obj : (unit, Rig_nv.refusal) result);
       Error e
   | Error (`Unmade, e) ->
-      if fresh && Option.is_none g.fault then drop_objects g ~client obj;
+      unmade ();
       Error e
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      if !asked then ignore (free g ~client obj : (unit, Rig_nv.refusal) result)
+      else unmade ();
+      Printexc.raise_with_backtrace e bt
 
 (* The work submit token of the channel [obj]. Beside a GSP, NVIDIA's RM
    makes it from the channel's runlist and hardware id and asks the GSP
@@ -1420,8 +1467,13 @@ let stop g =
   Function.set_bus_master c.fn false;
   if not (answers ()) then `Unknown
   else begin
-    give_back g.p g.taken;
+    let back =
+      match give_back g.p g.taken with
+      | () -> None
+      | exception e -> Some (e, Printexc.get_raw_backtrace ())
+    in
     give_addresses g;
+    Option.iter (fun (e, bt) -> Printexc.raise_with_backtrace e bt) back;
     match down with
     | Ok () when unloaded || not ran -> `Clean
     | Ok () | Error _ -> `Lost

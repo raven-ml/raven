@@ -32,6 +32,8 @@ type t = {
   mutable stat_read : Window.t option; (* the process's position in [stat] *)
   mutable seq : int;
   mutable taken : int; (* the elements of the message [next] last read *)
+  mutable read_fn : int; (* its function, or [-1] *)
+  mutable owed : int; (* the function of the call whose answer is owed, or [-1] *)
 }
 
 (* The elements start after a page of header. *)
@@ -58,6 +60,8 @@ let create w ~doorbell =
     stat_read = None;
     seq = 0;
     taken = 0;
+    read_fn = -1;
+    owed = -1;
   }
 
 let header w f = Window.get32 w (fst f)
@@ -95,19 +99,23 @@ let ring_read q e n =
 let pending q read =
   (header q.w H.write_ptr - Window.get32 read 0 + q.count) mod q.count
 
-let send q fn body =
+(* A call's function is owed from the store that publishes its last record,
+   with no poll between them. *)
+let send ?(call = false) q fn body =
   let records = Rpc.records ~seq:q.seq fn body in
+  let last = List.length records - 1 in
   let counts = List.map (fun e -> String.length e / element_size) records in
   let used = match q.cmd_read with None -> 0 | Some r -> pending q.cmd r in
   if used + List.fold_left ( + ) 0 counts >= q.cmd.count then false
   else begin
-    List.iter
-      (fun e ->
+    List.iteri
+      (fun i e ->
         let wp = header q.cmd.w H.write_ptr in
         ring_write q.cmd wp e;
         Window.barrier ();
         Window.set32 q.cmd.w (fst H.write_ptr)
           ((wp + (String.length e / element_size)) mod q.cmd.count);
+        if call && i = last then q.owed <- fn;
         Window.barrier ();
         q.seq <- q.seq + 1;
         Window.set32 q.doorbell 0 0)
@@ -135,17 +143,24 @@ let next q =
         (* A message the process cannot read is consumed whole, or the queue's
            one element when its count is out of range. *)
         q.taken <- (if count < 1 || count >= stat.count then 1 else count);
+        q.read_fn <- (match r with Ok m -> m.fn | Error _ -> -1);
         Some r
       end
   | _ -> invalid_arg "Msgq.next: the GSP has not started its queue"
 
-(* Nothing allocates from the read of the position to its write. *)
+(* Nothing allocates from the read of the position to its write, nor polls
+   between the write and the owed function's clear, when the message is the
+   owed call's answer. *)
 let consume q =
   match (q.stat, q.stat_read) with
   | Some stat, Some read ->
       let rp = Window.get32 read 0 in
       Window.barrier ();
       Window.set32 read 0 ((rp + q.taken) mod stat.count);
+      if q.read_fn = q.owed then q.owed <- -1;
       Window.barrier ();
-      q.taken <- 0
+      q.taken <- 0;
+      q.read_fn <- -1
   | _ -> invalid_arg "Msgq.consume: the GSP has not started its queue"
+
+let owed q = q.owed

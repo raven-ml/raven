@@ -167,7 +167,9 @@ type known = {
 (* By machine, through ephemerons, so that the table keeps no machine the
    process dropped: the GC frees an entry once its machine goes, and the table
    drops the entry's cell as it grows. Machines that no transport names hash
-   alike. *)
+   alike. A new machine joins a copy, which replaces the table by one store:
+   an exception in the copy's growth, which moves its entries, leaves the
+   table whole. *)
 module Machines = Ephemeron.K1.Make (struct
   type t = Machine.t
 
@@ -175,16 +177,19 @@ module Machines = Ephemeron.K1.Make (struct
   let hash m = Hashtbl.hash (Machine.name m)
 end)
 
-let machines = Machines.create 1
+let machines = ref (Machines.create 1)
 let machines_lock = Rig_nv.Lock.create ()
 
 let known m =
   Rig_nv.Lock.protect machines_lock @@ fun () ->
-  match Machines.find_opt machines m with
+  match Machines.find_opt !machines m with
   | Some on -> on
   | None ->
       let on = { key = Type.Id.make (); reached = Atomic.make [] } in
-      Machines.add machines m on;
+      let t = Machines.copy !machines in
+      Machines.clean t;
+      Machines.add t m on;
+      machines := t;
       on
 
 let rec learn on index reach =
@@ -270,10 +275,17 @@ let map_host g a n =
 let map_peer g (m : Memory.region Rig_nv.memory) =
   mapped g (protect g (fun () -> Memory.map_peer g.memory m.data))
 
+(* A free once the stop began finds no names. It gives the region back only
+   once the stop released the GPU's function, which drops the page tables:
+   before then the stop may not have run, and the GPU may still read them.
+   A stop an exception cut short so keeps its regions, which leak. *)
 let free g (m : Memory.region Rig_nv.memory) =
   protect g @@ fun () ->
-  Option.iter (fun n -> n.regions <- Handles.remove m.handle n.regions) g.names;
-  Memory.free g.memory m.data
+  match g.names with
+  | Some n ->
+      n.regions <- Handles.remove m.handle n.regions;
+      Memory.free g.memory m.data
+  | None -> if Function.released g.fn then Memory.free g.memory m.data
 
 (* Another function reaches the memory as a peer GPU does, at its runs through
    the memory BAR, and rig.pci keeps them and the GPU's function for it until
@@ -363,14 +375,16 @@ let device ~word ~on g ~gsp ~hold ~tables (c : Chip.t) =
         unregister = (fun _ -> Ok ());
         check = check g gsp;
         hang_ms = Some Driver.hang_ms;
+        (* The names go before the GPU stops: rig frees nothing during the
+           stop, and a free after it gives back only once the memory is
+           released. *)
         stop =
           (fun () ->
+            protect g (fun () -> g.names <- None);
             Fun.protect
               (fun () -> Driver.stop hold)
               ~finally:(fun () ->
-                protect g (fun () ->
-                    g.names <- None;
-                    Memory.release g.memory);
+                protect g (fun () -> Memory.release g.memory);
                 free_page ()));
       }
   with
