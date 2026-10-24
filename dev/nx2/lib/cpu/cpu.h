@@ -64,6 +64,33 @@ typedef void (*nx_cpu_run)(const void *src, void *dst, int64_t n);
 #define NX_CPU_LANES 16
 #define NX_CPU_LANE_BLOCK 1024
 
+/* The lanes' tree: lane i takes lane i + 8 for i < 8, then i + 4, i + 2
+   and i + 1, lane 0 then holding the block's value. [FOLD] is a statement
+   folding lane [j] into lane [i]. */
+#define NX_CPU_LANE_TREE(i, j, FOLD)               \
+  for (int h_ = NX_CPU_LANES / 2; h_ > 0; h_ /= 2) \
+    for (int i = 0, j = h_; i < h_; i++, j++) {    \
+      FOLD;                                        \
+    }
+
+/* The blocks' tree: the binary tree whose left part holds the largest
+   power of two of blocks below their count. A binary counter computes it
+   in one pass over a stack of [top] values: after the [k]th value (from
+   1) is pushed, NX_CPU_TREE_STEP folds the newest into the one below it
+   once per trailing zero of k; after the last, NX_CPU_TREE_END folds what
+   remains, newest first. [JOIN] is a statement folding stack entry
+   top - 1 into top - 2. A stack of NX_CPU_TREE_DEPTH holds any count:
+   2^48 blocks exceed any array. */
+#define NX_CPU_TREE_DEPTH 48
+#define NX_CPU_TREE_STEP(k, top, JOIN)                         \
+  for (int64_t k_ = (k); (k_ & 1) == 0; k_ >>= 1, (top)--) { \
+    JOIN;                                                      \
+  }
+#define NX_CPU_TREE_END(top, JOIN) \
+  for (; (top) > 1; (top)--) {     \
+    JOIN;                          \
+  }
+
 /* The scratch a few-term reduction's lanes take: 1 KiB of outputs in each
    lane. */
 #define NX_CPU_FEW_BYTES (NX_CPU_LANES * 1024)

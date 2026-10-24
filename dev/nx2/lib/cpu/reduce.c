@@ -478,12 +478,11 @@
           y[j * ys + i * sy] = a[j] = F(a[j], x[j * xs + i * s]);            \
     memcpy(a_, a, k * sizeof(T));                                            \
   }                                                                          \
-  /* The lanes' tree: lane i takes lane i + 8, then i + 4, i + 2, i + 1. */  \
+  /* The lanes' tree. */                                                     \
   static inline T fold_##NAME(D##_l v) {                                     \
     T l[16];                                                                 \
     store_##D(l, v);                                                         \
-    for (int h = 8; h >= 1; h /= 2)                                          \
-      for (int k = 0; k < h; k++) l[k] = F(l[k], l[k + h]);                  \
+    NX_CPU_LANE_TREE(i, j, l[i] = F(l[i], l[j]));                            \
     return l[0];                                                             \
   }                                                                          \
   /* GROUP(D) blocks' lanes at once, so that more additions are in           \
@@ -1658,8 +1657,7 @@ ARG_COMPLEX(min_c128, c128, nx_minimum_c128)
       UNROLL(16) for (int k = 0; k < 16; k++)                                \
         l[k] += ex_##S(x[i + k] - c);                                        \
     for (; i < n; i++) l[i & 15] += ex_##S(x[i] - c);                        \
-    for (int h = 8; h >= 1; h /= 2)                                          \
-      for (int k = 0; k < h; k++) l[k] += l[k + h];                          \
+    NX_CPU_LANE_TREE(i, j, l[i] += l[j]);                                    \
     *st = (nx_cpu_state){.s = l[0]};                                         \
   }                                                                          \
   static void lse_merge_##S(nx_cpu_state *a, const nx_cpu_state *b) {        \
@@ -1672,11 +1670,12 @@ ARG_COMPLEX(min_c128, c128, nx_minimum_c128)
     memcpy(d0, &r, sizeof r);                                                \
   }                                                                          \
   /* The lanes' tree over lanes 0 to 7 [a] and 8 to 15 [b]. */               \
-  static inline T halves_##S(T *a, const T *b) {                             \
-    for (int k = 0; k < 8; k++) a[k] += b[k];                                \
-    for (int h = 4; h >= 1; h /= 2)                                          \
-      for (int k = 0; k < h; k++) a[k] += a[k + h];                          \
-    return a[0];                                                             \
+  static inline T halves_##S(const T *a, const T *b) {                       \
+    T l[16];                                                                 \
+    memcpy(l, a, 8 * sizeof(T));                                             \
+    memcpy(l + 8, b, 8 * sizeof(T));                                         \
+    NX_CPU_LANE_TREE(i, j, l[i] += l[j]);                                    \
+    return l[0];                                                             \
   }                                                                          \
   /* Moments' loops over the lanes unroll by 8, under a bound, i <= n - 16,  \
      that cannot overflow. Without the pragma gcc keeps the lanes in         \
@@ -2094,8 +2093,7 @@ void nx_cpu_set_reduce_base(nx_cpu_target *t) { set(t); }
 /* The bytes of the widest element, a complex128. */
 #define WIDEST 16
 
-/* The depth of the blocks' tree: 2^48 blocks exceed any array. */
-#define LEVELS 48
+
 
 /* Fewer terms per output take the streaming path. */
 #define FEW 16
@@ -2222,7 +2220,7 @@ typedef struct {
      reduction takes come first, so that a short one touches the work's
      first pages alone. */
   _Alignas(64) uint8_t run[RUN * WIDEST];
-  _Alignas(64) uint8_t tree[LEVELS][ROW];
+  _Alignas(64) uint8_t tree[NX_CPU_TREE_DEPTH][ROW];
   /* A block's lanes (block, staged_block), or a few-term reduction's
      (few). */
   _Alignas(64) uint8_t lanes[NX_CPU_FEW_BYTES];
@@ -2654,9 +2652,8 @@ static void seed(const plan *q, int64_t p, int64_t s, int64_t W, int64_t t0,
    holding terms, which alone take part. */
 static void lane_tree(const plan *q, uint8_t *l, int64_t W, int used) {
   int64_t row = W * q->w;
-  for (int h = LANES / 2; h >= 1; h /= 2)
-    for (int i = 0; i < h && i + h < used; i++)
-      q->f->combine(l + i * row, l + (i + h) * row, 1, W);
+  NX_CPU_LANE_TREE(
+      i, j, if (j < used) q->f->combine(l + i * row, l + j * row, 1, W));
 }
 
 /* Block [b]'s states of the unit's [W] outputs, the first at [p] and each
@@ -2820,11 +2817,11 @@ static void blocks(const plan *q, work *wk, int64_t p, int64_t s, int64_t W,
     for (int64_t i = 0; i < n; i++, b++) {
       if (b < full) memcpy(stack[top++], run + i * q->w, q->w);
       else block(q, wk, p, s, W, c, b, stack[top++]);
-      for (int64_t k = b - b0 + 1; (k & 1) == 0; k >>= 1, top--)
-        join(q, stack[top - 2], stack[top - 1], W);
+      NX_CPU_TREE_STEP(b - b0 + 1, top,
+                       join(q, stack[top - 2], stack[top - 1], W));
     }
   }
-  for (; top > 1; top--) join(q, stack[top - 2], stack[top - 1], W);
+  NX_CPU_TREE_END(top, join(q, stack[top - 2], stack[top - 1], W));
   if (top == 0) fill(q, v, W);
   else memcpy(v, stack[0], row);
 }
@@ -3071,10 +3068,10 @@ static void finish_units(const plan *q, work *wk, int64_t lo, int64_t hi) {
     int top = 0;
     for (int64_t g = 0; g < q->groups; g++) {
       memcpy(stack[top++], q->scratch + (u * q->groups + g) * row, row);
-      for (int64_t k = g + 1; (k & 1) == 0; k >>= 1, top--)
-        join(q, stack[top - 2], stack[top - 1], x.W);
+      NX_CPU_TREE_STEP(g + 1, top,
+                       join(q, stack[top - 2], stack[top - 1], x.W));
     }
-    for (; top > 1; top--) join(q, stack[top - 2], stack[top - 1], x.W);
+    NX_CPU_TREE_END(top, join(q, stack[top - 2], stack[top - 1], x.W));
     store(q, wk, &x, q->centers ? q->centers + u * q->row : NULL, stack[0]);
   }
 }

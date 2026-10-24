@@ -1159,21 +1159,23 @@ done:
      the lanes of one block of one group, and a second job sums and totals
      them. */
 
-/* The left-complete binary tree's sum of the [n] >= 1 values at [s]; the
-   lanes' tree of [c] outputs, lane q of output j at l[q·ls + j], into lane
-   0's. */
-#define TREE(T, name)                                          \
-  static T name(const T *s, int64_t n) {                       \
-    if (n == 1) return s[0];                                   \
-    int64_t h = 1;                                             \
-    while (2 * h < n) h *= 2;                                  \
-    return name(s, h) + name(s + h, n - h);                    \
-  }                                                            \
-  static void name##_lanes(T *l, int64_t ls, int64_t c) {      \
-    for (int w = NX_CPU_LANES / 2; w > 0; w /= 2)              \
-      for (int i = 0; i < w; i++)                              \
-        for (int64_t j = 0; j < c; j++)                        \
-          l[i * ls + j] = l[i * ls + j] + l[(i + w) * ls + j]; \
+/* The blocks' tree's sum of the [n] >= 1 values at [s]; the lanes' tree
+   of [c] outputs, lane q of output j at l[q·ls + j], into lane 0's. */
+#define TREE(T, name)                                                        \
+  static T name(const T *s, int64_t n) {                                     \
+    T v[NX_CPU_TREE_DEPTH];                                                  \
+    int top = 0;                                                             \
+    for (int64_t b = 0; b < n; b++) {                                        \
+      v[top++] = s[b];                                                       \
+      NX_CPU_TREE_STEP(b + 1, top, v[top - 2] = v[top - 2] + v[top - 1]);    \
+    }                                                                        \
+    NX_CPU_TREE_END(top, v[top - 2] = v[top - 2] + v[top - 1]);              \
+    return v[0];                                                             \
+  }                                                                          \
+  static void name##_lanes(T *l, int64_t ls, int64_t c) {                    \
+    NX_CPU_LANE_TREE(i, q,                                                   \
+                     for (int64_t j = 0; j < c; j++)                         \
+                         l[i * ls + j] += l[q * ls + j]);                    \
   }
 TREE(float, tree_f32)
 TREE(double, tree_f64)

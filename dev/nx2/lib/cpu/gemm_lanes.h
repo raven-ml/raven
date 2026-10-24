@@ -164,8 +164,7 @@
     for (int64_t t = 0; t < k; t++)                                      \
       s[t % NX_CPU_LANES] =                                              \
           SFMA(a[t * a_k], b[t * b_k], s[t % NX_CPU_LANES]);             \
-    for (int w = NX_CPU_LANES / 2; w > 0; w /= 2)                        \
-      for (int q = 0; q < w; q++) s[q] = s[q] + s[q + w];                \
+    NX_CPU_LANE_TREE(q, r, s[q] = s[q] + s[r]);                          \
     y[j] = s[0];                                                         \
   }
 
