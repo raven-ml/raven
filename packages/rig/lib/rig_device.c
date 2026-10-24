@@ -301,17 +301,26 @@ int rig_point_lost_rest(uint64_t p) {
   return lost || range_of(l, v) != NULL;
 }
 
-/* Whether the device of the lost point [p] has stopped: an earlier device of
-   its slot, whose slot passed on only once it had stopped ([free_locked]),
-   or the slot's device once its stop returned and its word reads its last
-   submitted value. A device a forked child inherited never stops there. */
+/* Whether the device of the lost point [p] has stopped: the slot's device
+   once its stop returned and its word reads its last submitted value, or an
+   earlier device of its slot, whose slot passed on only once it had stopped
+   ([free_locked]). A device a forked child inherited never stops there.
+
+   The base is read last. A later device's record stores its base before its
+   submitted value, and its [put] stores RIG_LIVE after both, each with
+   release order ([record]). A reader that sees either with acquire order
+   then sees the later base, which is at least [p]'s value. Read
+   first, the base could be the stopped device's, and the state the later
+   device's RIG_LIVE: the stopped device's read would count as not stopped,
+   and a write after it would raise Lost. The word is read after the
+   submitted value, which it reaches once the device has stopped. */
 static int point_stopped(uint64_t p) {
   struct rig_line *l = line_of(RIG_INDEX(p));
-  if (RIG_VALUE(p) <= atomic_load_explicit(&l->base, memory_order_acquire))
-    return 1;
-  return line_state(l) == RIG_ENDED &&
-         line_word(l) >= atomic_load_explicit(&l->submitted,
-                                              memory_order_acquire);
+  int ended = line_state(l) == RIG_ENDED;
+  uint64_t submitted =
+      atomic_load_explicit(&l->submitted, memory_order_acquire);
+  if (ended && line_word(l) >= submitted) return 1;
+  return RIG_VALUE(p) <= atomic_load_explicit(&l->base, memory_order_acquire);
 }
 
 /* A write raises its device's use word too, so a lost [u] above [*w] is a
