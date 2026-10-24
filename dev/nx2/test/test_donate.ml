@@ -92,7 +92,7 @@ let test_passed_on () =
   let h = Nx.donate (fresh [| 1.; 2. |]) in
   let v = Nx.reshape [| 1; 2 |] h in
   ignore (Nx.neg v);
-  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.neg" (fun () -> Nx.copy h)
+  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.neg" (fun () -> Nx.copy h);
   (* A slice of every element is the operand itself. *)
   let x = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
   equal ~msg:"a slice of every element" (array float_exact)
