@@ -366,7 +366,7 @@ external c2r_c :
 let shape a = Nx_array.Layout.shape (Nx_array.layout a)
 
 (* Whether [dst] has the shape [Nx_kernel.Shape] gives, if it gives one. *)
-let fits want dst =
+let has_shape want dst =
   match want with
   | Error _ -> false
   | Ok s ->
@@ -376,14 +376,14 @@ let fits want dst =
       Array.length s = Nx_array.Layout.rank l && same 0
 
 let c2c d ~axes ~dst x =
-  if not (fits (Nx_kernel.Shape.c2c ~axes (shape x)) dst) then
+  if not (has_shape (Nx_kernel.Shape.c2c ~axes (shape x)) dst) then
     Nx_array.Shape_mismatch
   else c2c_c d axes dst x
 
 let r2c ~axes ~dst x =
   if not (Nx_kernel.same_precision (Nx_array.dtype x) (Nx_array.dtype dst)) then
     Nx_array.Wrong_dtype
-  else if not (fits (Nx_kernel.Shape.r2c ~axes (shape x)) dst) then
+  else if not (has_shape (Nx_kernel.Shape.r2c ~axes (shape x)) dst) then
     Nx_array.Shape_mismatch
   else r2c_c axes dst x
 
@@ -396,8 +396,8 @@ let c2r ~axes ~dst x =
       let a = if k >= 0 then Iarray.get axes k else -1 in
       if a >= 0 && a < Array.length s then s.(a) else -1
     in
-    if n < 0 || not (fits (Nx_kernel.Shape.c2r ~axes ~n (shape x)) dst) then
-      Nx_array.Shape_mismatch
+    if n < 0 || not (has_shape (Nx_kernel.Shape.c2r ~axes ~n (shape x)) dst)
+    then Nx_array.Shape_mismatch
     else c2r_c axes dst x
 
 (* Matrices (linalg.c) *)
@@ -455,10 +455,10 @@ external eig_c :
 
 let eig ~w ?v a =
   let dt = Nx_array.dtype a in
-  let fits (x : (Complex.t, _) Nx_array.t) =
+  let paired (x : (Complex.t, _) Nx_array.t) =
     Nx_kernel.same_precision dt (Nx_array.dtype x)
   in
-  let fit = fits w && Option.fold ~none:true ~some:fits v in
+  let fit = paired w && Option.fold ~none:true ~some:paired v in
   if not (Nx_kernel.full_precision dt && fit) then Nx_array.Wrong_dtype
   else eig_c ~w v a
 
