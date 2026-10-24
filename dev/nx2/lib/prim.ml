@@ -470,7 +470,8 @@ let rec fold_pieces : type e a r w q b.
 
 (* [f e] folded over [op]'s operands in {!operands}' order. [e] carries what
    [f] needs, so that [f] can be closed: where it is, the fold allocates
-   nothing for an operation other than a factorisation or a check. *)
+   nothing for an operation other than a factorisation, a contraction or a
+   check. *)
 let fold : type e a r.
     ('v 's 'd. e -> a -> ('v, 's, 'd) t -> a) -> e -> a -> r prim -> a =
  fun f e acc op ->

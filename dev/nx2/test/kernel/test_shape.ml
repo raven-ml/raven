@@ -1084,7 +1084,6 @@ let check_view c v =
   zero ~msg:"b's row stride" (V.stride v V.B V.Row);
   zero ~msg:"dst's contracted stride" (V.stride v V.Dst V.Contracted);
   zero ~msg:"init's contracted stride" (V.stride v V.Init V.Contracted);
-  cover "without init" (Option.is_none c.li);
   if Option.is_none c.li then begin
     zero ~msg:"an absent init's offset" (V.offset v V.Init);
     List.iter
@@ -1127,6 +1126,7 @@ let law_view c =
 let law_canonical c =
   let v = view c in
   equal ~msg:"groups" string "grouped" (outcome v);
+  cover "without init" (Option.is_none c.li);
   Result.iter (check_view c) v
 
 (* [l] with two axes of extent 1 and stride [s] after its last. *)

@@ -1060,8 +1060,8 @@ let agree_bits (b : Support.backend) r x =
    spectrum of repeats, of a cluster 2^-30 apart that divide and conquer
    barely separates in float64, or graded over 60 binades. The chase and
    Q2 give their bits whatever the threads and layout (agree_bits) at
-   order 512 without the vectors, and with them at 159 on x86-64 and 1024
-   on arm64. *)
+   order 512 without the vectors, and with them at 159 and 576 on x86-64
+   and 1024 on arm64. *)
 let test_eigh_two_stages (b : Support.backend) () =
   let r = Random.State.make [| 7 |] in
   let repeated _ = Float.round (8. *. uniform r) /. 8. in
@@ -1086,6 +1086,8 @@ let test_eigh_two_stages (b : Support.backend) () =
         (514, Any Complex64, graded, Unchecked, None);
         (527, Any Float64, repeated, Unchecked, None);
       ]
+  and x86_64 =
+    D.[ (576, Any Complex64, clustered, Sampled 256, Some (Eigh true)) ]
   and arm64 =
     D.
       [
@@ -1100,7 +1102,7 @@ let test_eigh_two_stages (b : Support.backend) () =
       Option.iter
         (fun routine -> agree_bits b routine (spectral dt ~k:(n / 3) ~u l))
         threads)
-    (if Support.x86_64 then orders else orders @ arm64)
+    (if Support.x86_64 then orders @ x86_64 else orders @ arm64)
 
 (* svd's bound: γ(16 max (m, n) + 100), the 100 for the bidiagonal
    iteration's test of convergence, which drops an e below

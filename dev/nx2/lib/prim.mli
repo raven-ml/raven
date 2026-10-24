@@ -144,8 +144,8 @@ val iteri : ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> 'r prim -> unit
 
 val exists : ('v 's 'd. ('v, 's, 'd) t -> bool) -> 'r prim -> bool
 (** [exists f op] is whether [f x] for some operand [x] of [op]. Neither
-    allocates for an operation other than a factorisation, an assembly or a
-    check. *)
+    allocates for an operation other than a factorisation, a contraction or
+    a check. *)
 
 val map : ('v 's 'd. ('v, 's, 'd) t -> ('v, 's, 'd) t) -> 'r prim -> 'r prim
 (** [map m op] is [op] with each operand [x] replaced by [m x]. *)
