@@ -1183,7 +1183,7 @@ let linalg_rows =
   let eig ?batch n =
     routine ~symmetric:false "eig"
       (fun (module K : Nx_kernel.S) a ->
-        let w, v = Result.get_ok (Nx_kernel.Shape.eig (shape a)) in
+        let w, v = Result.get_ok (Nx_kernel.Shape.eigh (shape a)) in
         let make s = A.create Rig.host D.Complex128 s in
         let w = make w and v = make v in
         fun () -> K.eig ~w ~v a)

@@ -22,11 +22,12 @@
     their number, they come as an array. {!Prog} names what a loop
     ({!S.section-loops}) computes at each index and {!Shape} the shapes of
     every kernel's destinations.
-    In C, [nx_kinds.h] computes each kind, [nx_prog.h] and [nx_kernel.h] hold
-    the codes by which C reads a program and the other constructors, and
-    [nx_contract_view.h] a contraction view's struct, with no OCaml header, so
-    device sources include them; [nx_contract_view_fill.h] fills a view on
-    the host. *)
+    In C, [nx_kinds.h] computes each kind, [nx_kinds_real.h] and
+    [nx_kinds_complex.h] holding its float and complex kinds' bodies,
+    [nx_prog.h] and [nx_kernel.h] hold the codes by which C reads a program
+    and the other constructors, and [nx_contract_view.h] a contraction view's
+    struct, with no OCaml header, so that C, CUDA, HIP and Metal sources
+    include them; [nx_contract_view_fill.h] fills a view on the host. *)
 
 module Prog = Prog
 (** Scalar kinds. *)
@@ -446,17 +447,12 @@ module Shape : sig
       [[…; n; n]] under [Complete]. *)
 
   val eigh_values : t -> t result
-  (** [eigh_values a] is the shape of [w] of [a], square: [[…; n]]. *)
+  (** [eigh_values a] is the shape of [w] of [a], square: [[…; n]], for
+      {!S.eigh} and {!S.eig} alike. *)
 
   val eigh : t -> (t * t) result
   (** [eigh a] is the shapes of [w] and [v] of [a], square: [[…; n]] and
-      [a]. *)
-
-  val eig_values : t -> t result
-  (** [eig_values a] is the shape {!eigh_values} gives. *)
-
-  val eig : t -> (t * t) result
-  (** [eig a] is the shapes {!eigh} gives. *)
+      [a], for {!S.eigh} and {!S.eig} alike. *)
 
   val solve_triangular : t -> t -> t result
   (** [solve_triangular a b] is [b], [[…; n; r]], for [a] square of [n] and
@@ -478,22 +474,19 @@ end
     a [Plain] load of [map], [contract]'s [init], [scatter]'s [into], or
     [assemble]'s first piece where its region is the whole result. A kernel
     reads such an operand at an index before it writes there, so the result
-    is the one a fresh destination receives. The door refuses an operand that
-    shares a byte with a destination without being identical to it. The
-    caller must not pass a destination identical to an operand the kernel
-    reads at other indices, as it reads a gather's source or a contraction's
-    [a] and [b]. The door accepts such a destination, and the result is
-    unspecified unless the library's doc states it.
+    is the one a fresh destination receives. The caller must not pass a
+    destination identical to an operand the kernel reads at other indices, as
+    it reads a gather's source or a contraction's [a] and [b]: the door
+    accepts it, and the result is unspecified unless the library's doc
+    states it.
 
     A kernel claims its destinations and operands for the extent of its call
     through a door, [nx_read] of [nx_array.h] for host kernels and
     {!Nx_array.door} for kernels that submit device work. [nx_read] waits,
     under its claims, for earlier device work on the operands;
     {!Nx_array.door} holds its claims until the work is submitted. A kernel
-    answers [Done] once its work is done on the host or queued on the
-    device's timeline, a refusal ({!Nx_array.type-answer}) before any write,
-    and [Declined], before any write or queued work, where the library does
-    not compute the case. Any case may be declined. On a decline nx raises
+    answers as {!Nx_array.type-answer} states, and [Declined] before any
+    write or queued work. Any case may be declined. On a decline nx raises
     [Invalid_argument] naming the library, the operation and its dtypes,
     with the move that computes it, [Nx.place] onto a set whose kernels do,
     and computes no case in the library's place. Value-dependent failures

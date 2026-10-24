@@ -8,7 +8,7 @@ module D = Nx_array.Dtype
 module Arith = Lower_arith
 module Bits = Lower_bits
 
-type monoid = Sum | Prod | Max | Min
+type monoid = Nx_kernel.monoid = Sum | Prod | Max | Min
 
 let refuse m ~scan (D.Any dt) =
   match (m, dt) with

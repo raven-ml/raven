@@ -1623,8 +1623,8 @@ let linalg_shapes (type d r) ~by (l : (d, r) linalg) =
     | Svd { factors; a } -> three (Shape.svd factors (shape a))
     | Eigh_values a -> one (Shape.eigh_values (shape a))
     | Eigh a -> two (Shape.eigh (shape a))
-    | Eig_values { a; _ } -> one (Shape.eig_values (shape a))
-    | Eig { a; _ } -> two (Shape.eig (shape a))
+    | Eig_values { a; _ } -> one (Shape.eigh_values (shape a))
+    | Eig { a; _ } -> two (Shape.eigh (shape a))
     | Solve_triangular { a; b; _ } ->
         one (Shape.solve_triangular (shape a) (shape b)))
 

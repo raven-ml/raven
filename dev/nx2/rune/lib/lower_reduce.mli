@@ -20,21 +20,13 @@
       the sum of no term is [+0] and the product [1]. A complex sum adds each
       part as a float sum.
     - {b NaN results} give nx's bits in every fold, on every target, as
-      {!Nx_kernel.section-reductions} states: where a term is a NaN, the
-      first such term in C order of the reduced indices, quieted; with none,
-      the quiet NaN of a clear sign bit. To an extreme, a complex number with
-      a NaN part is a NaN, quieted part by part, and a scan's carry is a term
-      before the slice's first. To a sum or a product, a NaN carry counts as
-      made from numbers. *)
+      {!Nx_kernel.section-reductions} and {!Nx_kernel.S.scan}'s carry
+      state. *)
 
 open Tolk
 
-(** The type for the monoids a graph folds with directly. nx's others,
-    [Logsumexp], [Moments] and [Arg], lower through their expansions. *)
-type monoid = Sum | Prod | Max | Min
-
 val reduce :
-  monoid ->
+  Nx_kernel.monoid ->
   int list ->
   src:Nx_array.Dtype.any ->
   Nx_array.Dtype.any ->
@@ -42,12 +34,13 @@ val reduce :
   Ops.t
 (** [reduce m axes ~src dt x] is the node [x], a value of [src], folded by [m]
     along [axes] in [src]'s carrier ({!Nx_kernel.carrier}) and rounded once to
-    [dt]. The result drops [axes].
+    [dt]. The result drops [axes]. nx's other reductions, [Logsumexp],
+    [Moments] and [Arg], lower through their expansions.
 
     Raises [Invalid_argument] for a complex [Prod]. *)
 
 val scan :
-  monoid ->
+  Nx_kernel.monoid ->
   int ->
   carry:Ops.t option ->
   src:Nx_array.Dtype.any ->

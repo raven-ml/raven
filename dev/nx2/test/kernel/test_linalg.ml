@@ -406,7 +406,7 @@ let run ?(alloc = fresh) (b : Support.backend) r ops =
         let s = make ss and u = make su and vh = make sv in
         ([| A.Any s; A.Any u; A.Any vh |], K.svd ~s ~vectors:(~u, ~vh) a)
     | Eig vectors -> (
-        let sw, sv = ok (Shape.eig (shape ops.(0))) in
+        let sw, sv = ok (Shape.eigh (shape ops.(0))) in
         let eig (type c) (cdt : (Complex.t, c) D.t) =
           let w = A.expect cdt (alloc (D.Any cdt) sw) in
           if vectors then
@@ -2458,12 +2458,10 @@ let shapes c =
   | Cholesky _ -> Result.map (fun y -> [| y |]) (S.cholesky c.a)
   | Lu -> Result.map (fun (l, p, q) -> [| l; p; q |]) (S.lu c.a)
   | Qr f -> Result.map (fun (q, r) -> [| q; r |]) (S.qr f c.a)
-  | Eigh true -> Result.map (fun (w, x) -> [| w; x |]) (S.eigh c.a)
-  | Eigh false -> Result.map (fun w -> [| w |]) (S.eigh_values c.a)
+  | Eigh true | Eig true -> Result.map (fun (w, x) -> [| w; x |]) (S.eigh c.a)
+  | Eigh false | Eig false -> Result.map (fun w -> [| w |]) (S.eigh_values c.a)
   | Svd None -> Result.map (fun s -> [| s |]) (S.svd_values c.a)
   | Svd (Some f) -> Result.map (fun (s, u, vh) -> [| s; u; vh |]) (S.svd f c.a)
-  | Eig true -> Result.map (fun (w, x) -> [| w; x |]) (S.eig c.a)
-  | Eig false -> Result.map (fun w -> [| w |]) (S.eig_values c.a)
   | Solve _ -> Result.map (fun y -> [| y |]) (S.solve_triangular c.a c.b)
 
 let arity = function

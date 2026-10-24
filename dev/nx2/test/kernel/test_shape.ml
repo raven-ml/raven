@@ -922,10 +922,8 @@ let routine r a b =
   | Svd None -> Result.map one (Shape.svd_values a)
   | Svd (Some f) ->
       Result.map (fun (s, u, vh) -> [ s; u; vh ]) (Shape.svd f a)
-  | Eigh false -> Result.map one (Shape.eigh_values a)
-  | Eigh true -> Result.map (fun (w, v) -> [ w; v ]) (Shape.eigh a)
-  | Eig false -> Result.map one (Shape.eig_values a)
-  | Eig true -> Result.map (fun (w, v) -> [ w; v ]) (Shape.eig a)
+  | Eigh false | Eig false -> Result.map one (Shape.eigh_values a)
+  | Eigh true | Eig true -> Result.map (fun (w, v) -> [ w; v ]) (Shape.eigh a)
   | Solve -> Result.map one (Shape.solve_triangular a b)
 
 (* The destinations by each routine's rule, for [a] of [batch; m; n]. *)

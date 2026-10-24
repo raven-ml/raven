@@ -480,9 +480,6 @@ module Shape = struct
     let* w = eigh_values a in
     Ok (w, a)
 
-  let eig_values = eigh_values
-  let eig = eigh
-
   let solve_triangular a b =
     let* batch, _, n = square a in
     if Array.length b <> Array.length a
