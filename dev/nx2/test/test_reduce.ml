@@ -1255,10 +1255,45 @@ let rounded (type s) (dt : (float, s) D.t) v =
    [D] combinations, [D] the result's {!depth}, within
    [(7 D + 6 ln n) u + u |r|] in the accumulator; then rounded once, so
    between the roundings of the bound's ends. The reference, float64 over
-   each prefix from its maximum, adds its own [2n] units. *)
+   each prefix from its maximum ({!lse_ref}), adds its own error. *)
 let lse_bound u n r =
   (((7. *. depth n) +. (6. *. log (Float.of_int n))) *. u)
   +. (u *. Float.abs r)
+
+(* [lse_ref m terms] is [m + log Σ exp (t - m)] over [terms] of the finite
+   maximum [m], at float64, and a bound on its error: each [t - m] split
+   exactly into its rounding and a remainder (two-sum), each [exp] taken of
+   the rounding and corrected by the remainder, and the exps summed
+   compensated (Neumaier), so the sum's relative error is a few units
+   whatever the count. The bound adds a unit for each [exp], two for the sum,
+   one for the [log] and its own [ulp], and half one for the last addition,
+   libm's [exp] and [log] within one [ulp]. *)
+let lse_ref m terms =
+  let sum = ref 0. and c = ref 0. in
+  let add e =
+    let s = !sum +. e in
+    let lost =
+      if Float.abs !sum >= Float.abs e then !sum -. s +. e else e -. s +. !sum
+    in
+    c := !c +. lost;
+    sum := s
+  in
+  List.iter
+    (fun t ->
+      let d = t -. m in
+      if Float.is_finite d then begin
+        let back = d -. t in
+        let rest = t -. (d -. back) +. (-.m -. back) in
+        add (exp d *. (1. +. rest))
+      end)
+    terms;
+  let s = !sum +. !c in
+  let ls = log s in
+  let r = m +. ls in
+  let err =
+    (epsilon_float *. (4. +. Float.abs ls)) +. (ldexp 1. (-53) *. Float.abs r)
+  in
+  (r, err)
 
 let law_logsumexp_scan (Float_case (dt, s, axis, strided, xs)) =
   let u = match dt with D.Float64 -> ldexp 1. (-53) | _ -> ldexp 1. (-24) in
@@ -1290,15 +1325,8 @@ let law_logsumexp_scan (Float_case (dt, s, axis, strided, xs)) =
                 cover "finite" true;
                 cover "a term far below the maximum"
                   (List.exists (fun t -> t < m -. 100.) terms);
-                let n = Float.of_int (List.length terms) in
-                let sum =
-                  List.fold_left (fun a t -> a +. exp (t -. m)) 0. terms
-                in
-                let want = m +. log sum in
-                let own = lse_bound u (List.length terms) want in
-                let bound =
-                  own +. (2. *. n *. epsilon_float *. (Float.abs want +. 1.))
-                in
+                let want, err = lse_ref m terms in
+                let bound = lse_bound u (List.length terms) want +. err in
                 let msg = Printf.sprintf "%s: %h against %h" by g want in
                 at_least ~msg float_exact ~than:(rounded dt (want -. bound)) g;
                 at_most ~msg float_exact ~than:(rounded dt (want +. bound)) g
@@ -2727,7 +2755,7 @@ let test_carried_cut () =
   equal (array int32) want (A.to_array (host_array (carried cut on)))
 
 (* Nx.logcumsumexp: within nx_kernel.mli's bound of a float64
-   [log (cumsum (exp x))] over each prefix, specials and prefixes bit for bit,
+   log-sum-exp over each prefix, specials and prefixes bit for bit,
    and the host's bits wherever the value lies. *)
 
 type lcse_case =
@@ -2799,24 +2827,21 @@ let law_lcse (Lcse_case (dt, s, axis, strided, xs)) =
       let at = List.nth ps (List.length ps - 1) in
       let terms = List.map (fun p -> ts.(p)) ps in
       let g = got.(at) in
-      let want = log (List.fold_left (fun a t -> a +. exp t) 0. terms) in
+      let m = List.fold_left Float.max Float.neg_infinity terms in
       match List.find_opt (fun p -> Float.is_nan ts.(p)) ps with
       | Some p ->
           cover "a NaN term" true;
           equal ~msg:"the first NaN, its bits" (array int) tb.(p) gb.(at)
-      | None when not (Float.is_finite want) ->
-          cover "+inf" (want > 0.);
-          cover "every term -inf" (want < 0.);
-          equal ~msg:"an infinity" float_exact want g
+      | None when not (Float.is_finite m) ->
+          cover "+inf" (m > 0.);
+          cover "every term -inf" (m < 0.);
+          equal ~msg:"an infinity" float_exact m g
       | None ->
           cover "finite" true;
           cover "a -inf term among finite ones"
             (List.exists (fun t -> t = Float.neg_infinity) terms);
-          let k = List.length terms in
-          let bound =
-            lse_bound u k want
-            +. (2. *. Float.of_int k *. epsilon_float *. (Float.abs want +. 1.))
-          in
+          let want, err = lse_ref m terms in
+          let bound = lse_bound u (List.length terms) want +. err in
           let msg = Printf.sprintf "%h against %h" g want in
           at_least ~msg float_exact ~than:(rounded dt (want -. bound)) g;
           at_most ~msg float_exact ~than:(rounded dt (want +. bound)) g)
