@@ -16,9 +16,11 @@
 
     Brands are phantom: nothing at run time reads ['d], and a value's arrays lie
     on its placement's devices whatever its brand. Two values can carry the same
-    set at two brands only through {!rebrand}, whose one caller is the engine's
-    computation of constants: a constant's operands, and its memo's keys at
-    [unit]. This module is nx's one site that names nx.cpu.
+    set at two brands only through {!rebrand}, which nx's engine alone calls: to
+    hold placements at [unit], in routes and constants' operands and memo keys,
+    and to bring one back to an operation's brand where it computes, reads a
+    value out on the host, or compares two placements. This module is nx's one
+    site that names nx.cpu.
 
     Errors are [Invalid_argument] naming the [by] the caller passes. *)
 
