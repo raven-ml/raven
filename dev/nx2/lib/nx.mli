@@ -257,23 +257,22 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     as {!trace} sums a diagonal, is the consumer the deaths name. One that
     reads an operand in several operations, as {!lstsq}, consumes its handles
     when it is called, after its operands' checks, and reads them as they were
-    then; they stay dead if it raises. It writes into none of their memory.
-    Where its result is one value, that memory, unless the value holds it or
-    another value shares it (a view the function made does), returns to its
-    device when the function returns, but for a function that calls one of
-    the caller's or draws random numbers; otherwise it returns once no value
-    holds it. Two handles of one donor
+    then, inside an interpretation too; they stay dead if it raises. It
+    writes into none of their memory. Where its result is one value, that
+    memory, unless the value holds it or another value shares it (a view the
+    function made does, as does an interpretation's read), returns to its
+    device when the function returns; otherwise once no value holds it. Two
+    handles of one donor
     or over one memory reaching one operation raise naming [Nx.donate]: the
     same handle twice, two donations of one value, or a handle and one a
     movement passed on. The donor itself beside one of its handles is not a
     second handle: the consumer reads it as it was when called, so
     [add (donate x) x] is [x + x].
 
-    Only computation consumes handles. An interpretation that receives an
-    operation ({!Prim.interpret}) reads each handle as its arrays and kills
-    nothing, as does a function that reads an operand in several operations
-    where an [Extent] interpretation is live on any domain or an operand is
-    traced: [x] lives on, and its memory is shared from then on.
+    An interpretation that receives an operation ({!Prim.interpret}) reads
+    each handle as its arrays and kills nothing: [x] lives on, and its memory
+    is shared from then on. Two handles of one donor reaching it raise as
+    above.
 
     On any number of domains, no value is consumed twice, and a call on
     another domain that overlaps the consumer of [x] either reads [x]'s

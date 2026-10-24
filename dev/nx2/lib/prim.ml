@@ -45,7 +45,7 @@ let death : type v s d. (v, s, d) t -> death = function
 
 let alive ~by i x =
   match death x with
-  | Live | Offered _ -> ()
+  | Live | Offered _ | Claimed -> ()
   | Died { by = why; _ } ->
       invalid_argf "%s: operand %d was donated to %s" by (i + 1) why
 

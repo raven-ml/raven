@@ -275,9 +275,10 @@ let has_handle xs = List.exists (fun (Any x) -> Donate.is_handle x) xs
 let alive ~by xs = List.iteri (fun i (Any x) -> Prim.alive ~by i x) xs
 
 (* [k read] of the call [by] of [xs], then [ended hs y] of the handles [hs] it
-   claimed and [k]'s value [y]. An interpretation may receive [k]'s operations
-   where an [Extent] lives or an operand is traced: [k] reads the handles as
-   they are lent to one. *)
+   claimed and [k]'s value [y]. [read] gives each handle, and each of their
+   donors among [xs], claimed for the call ({!Donate.claimed}), which an
+   operation reads as live and an interpretation receives lent; once [k]
+   returns, those values are live. *)
 let reading (type d a) ~by (xs : d any list)
     (k : ('v 's 'e. ('v, 's, 'e) t -> ('v, 's, 'e) t) -> a)
     (ended : Donate.handle list -> a -> unit) : a =
@@ -285,14 +286,20 @@ let reading (type d a) ~by (xs : d any list)
     alive ~by xs;
     k Fun.id
   end
-  else if (not (quiet ())) || List.exists (fun (Any x) -> is_traced x) xs
-  then begin
-    alive ~by xs;
-    k Donate.lent
-  end
   else
     let hs = Donate.consume ~by xs in
-    let y = k (fun x -> Donate.called hs x) in
+    let reads = ref ([] : (unit -> unit) list) in
+    let read : 'v 's 'e. ('v, 's, 'e) t -> ('v, 's, 'e) t =
+     fun x ->
+      let y = Donate.claimed hs x in
+      if y != x then reads := List.cons (fun () -> Donate.release y) !reads;
+      y
+    in
+    let y =
+      Fun.protect
+        ~finally:(fun () -> List.iter (fun release -> release ()) !reads)
+        (fun () -> k read)
+    in
     ended hs y;
     y
 
@@ -312,7 +319,8 @@ let once_value ~by xs k =
 (* [i]'s rule on [op], in [i]'s clause. Another interpretation's traced operand
    is refused unless its interpretation is around [i], which is asked once per
    interpretation; one [i] adopts is around by construction ({!interpret}). The
-   rule reads each handle as its arrays, lent, and kills nothing. *)
+   rule reads each handle, and each value a call claimed, as its arrays, lent,
+   and kills nothing; two handles of one donor raise as in {!Exec}. *)
 let deliver i ~by op =
   let checked = ref ([] : interpretation list) in
   Prim.iteri
@@ -324,9 +332,13 @@ let deliver i ~by op =
           checked := List.cons owner !checked
       | Traced _ | Array _ | Shards _ | Donated _ | Deferred _ -> ())
     op;
+  if Prim.exists Donate.is_handle op then begin
+    let (Prim.Operands xs) = Prim.operands op in
+    ignore (Donate.handles ~by xs)
+  end;
   Prim.iteri (fun k x -> Prim.alive ~by k x) op;
   let op =
-    if Prim.exists (fun x -> changes i x || Donate.is_handle x) op then
+    if Prim.exists (fun x -> changes i x || Donate.lends x) op then
       Prim.map (fun x -> Donate.lent (received i x)) op
     else op
   in

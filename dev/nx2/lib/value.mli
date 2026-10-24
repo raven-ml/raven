@@ -31,6 +31,11 @@ type death =
   | Died of { by : string; key : int }
       (** Given to the function [by]. The donor's key stays, so that a
           consumer tells its own donors by key. *)
+  | Claimed
+      (** Live over the memory of donors a call consumed, while that call
+          reads them ({!Donate.called}): its operations read it as live, an
+          interpretation receives it lent ({!Donate.lent}), and it is not
+          donated again. *)
 (** Whether a value lives. Values are made [Live], a donor is [Offered] when
     first donated, and its consumer sets [Died]. A consumer that raises before
     it computes into its donors' memory undoes it, each donor [Offered] under

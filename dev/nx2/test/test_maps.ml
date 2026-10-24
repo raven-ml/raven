@@ -606,7 +606,7 @@ let dec data : (float, D.float32_elt, b) Value.t =
 let key x =
   match Prim.death x with
   | Value.Offered k -> k
-  | Value.Live | Value.Died _ -> fail "a donor not offered"
+  | Value.Live | Value.Died _ | Value.Claimed -> fail "a donor not offered"
 
 (* A decline into fresh memory gives a donor back under the key it had, on the
    fast path and off it: every handle of the donor holds that key, by which a
