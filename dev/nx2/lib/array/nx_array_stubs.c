@@ -642,18 +642,11 @@ value nx_array_admit(value written, value read) {
     return admit_many(written, read);
   CAMLparam2(written, read);
   mlsize_t n = Wosize_val(written) + Wosize_val(read);
-  /* The operands, their descriptors and their byte ranges, on the stack
-     up to NX_MAX_OPERANDS, past it in one block of the heap. */
-  nx_operand local_in[NX_MAX_OPERANDS], *in = local_in;
-  nx_array local_out[NX_MAX_OPERANDS], *out = local_out;
-  where local_w[NX_MAX_OPERANDS], *w = local_w;
-  if (n > NX_MAX_OPERANDS) {
-    uint8_t *b = malloc(n * (sizeof *in + sizeof *out + sizeof *w));
-    if (b == NULL) caml_raise_out_of_memory();
-    out = (nx_array *)b;
-    w = (where *)(b + n * sizeof *out);
-    in = (nx_operand *)(b + n * (sizeof *out + sizeof *w));
-  }
+  /* The operands, their descriptors and their byte ranges, on the stack:
+     admit_many takes more than NX_MAX_OPERANDS. */
+  nx_operand in[NX_MAX_OPERANDS];
+  nx_array out[NX_MAX_OPERANDS];
+  where w[NX_MAX_OPERANDS];
   for (mlsize_t k = 0; k < n; k++) {
     value v = nth_array(written, read, k);
     in[k] = (nx_operand){v, nx_array_dtype(v), k < Wosize_val(written)};
@@ -662,7 +655,6 @@ value nx_array_admit(value written, value read) {
   mlsize_t lost = n;
   for (mlsize_t k = 0; !e && k < n && lost == n; k++)
     if (out[k].wait == RIG_LOST) lost = k;
-  if (out != local_out) free(out);
   if (e || lost == n) CAMLreturn(Val_int(e));
   value a = nth_array(written, read, lost);
   caml_result r = rig_buffer_wait(Field(a, ARRAY_BUFFER),
