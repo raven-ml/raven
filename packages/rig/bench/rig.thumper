@@ -140,13 +140,13 @@ buffer/read-64M	wall_time	batch=131072	n=20	7.210e-08	7.042e-08 7.173e-08 7.188e
 buffer/wait-reached-24	alloc_words	exact	0
 buffer/wait-reached-24	wall_time	batch=32768	n=20	2.717e-07	2.678e-07 2.679e-07 2.681e-07 2.683e-07 2.684e-07 2.684e-07 2.686e-07 2.686e-07 2.686e-07 2.687e-07 2.747e-07 2.760e-07 2.760e-07 2.760e-07 2.761e-07 2.761e-07 2.762e-07 2.762e-07 2.763e-07 2.765e-07
 buffer/wait-written-2-devices	alloc_words	exact	0
-buffer/wait-written-2-devices	wall_time	batch=524288	n=20	1.615e-08	1.615e-08 1.615e-08 1.615e-08 1.615e-08 1.615e-08 1.615e-08 1.615e-08 1.615e-08 1.615e-08 1.615e-08 1.615e-08 1.615e-08 1.615e-08 1.615e-08 1.615e-08 1.615e-08 1.615e-08 1.615e-08 1.616e-08 1.616e-08
+buffer/wait-written-2-devices	wall_time	batch=524288	n=20	1.538e-08	1.537e-08 1.537e-08 1.537e-08 1.537e-08 1.537e-08 1.537e-08 1.537e-08 1.537e-08 1.538e-08 1.538e-08 1.538e-08 1.538e-08 1.538e-08 1.538e-08 1.538e-08 1.538e-08 1.538e-08 1.539e-08 1.540e-08 1.546e-08
 claim/c-read-release-3	alloc_words	exact	0
 claim/c-read-release-3	wall_time	batch=262144	n=20	2.812e-08	2.808e-08 2.810e-08 2.810e-08 2.810e-08 2.811e-08 2.811e-08 2.811e-08 2.811e-08 2.811e-08 2.811e-08 2.812e-08 2.812e-08 2.812e-08 2.812e-08 2.812e-08 2.814e-08 2.814e-08 2.814e-08 2.816e-08 2.820e-08
 claim/exclusive-1000	alloc_words	exact	11
 claim/exclusive-1000	wall_time	batch=8192	n=20	1.043e-06	1.039e-06 1.039e-06 1.039e-06 1.040e-06 1.040e-06 1.040e-06 1.040e-06 1.040e-06 1.040e-06 1.042e-06 1.044e-06 1.046e-06 1.047e-06 1.148e-06 1.435e-06 1.500e-06 1.556e-06 1.781e-06 1.806e-06 1.835e-06
 claim/share-shared	alloc_words	exact	0
-claim/share-shared	wall_time	batch=8388608	n=20	8.159e-10	8.152e-10 8.152e-10 8.152e-10 8.153e-10 8.154e-10 8.154e-10 8.155e-10 8.156e-10 8.157e-10 8.158e-10 8.159e-10 8.159e-10 8.160e-10 8.161e-10 8.161e-10 8.162e-10 8.163e-10 8.164e-10 8.165e-10 8.258e-10
+claim/share-shared	wall_time	batch=8388608	n=20	8.416e-10	8.407e-10 8.408e-10 8.408e-10 8.408e-10 8.409e-10 8.411e-10 8.411e-10 8.413e-10 8.414e-10 8.415e-10 8.416e-10 8.416e-10 8.417e-10 8.417e-10 8.418e-10 8.419e-10 8.421e-10 8.423e-10 8.424e-10 8.433e-10
 claim/with-24	alloc_words	exact	4
 claim/with-24	wall_time	batch=16384	n=20	3.023e-07	3.000e-07 3.003e-07 3.004e-07 3.017e-07 3.018e-07 3.019e-07 3.020e-07 3.020e-07 3.020e-07 3.022e-07 3.024e-07 3.026e-07 3.026e-07 3.026e-07 3.027e-07 3.030e-07 3.030e-07 3.031e-07 3.032e-07 3.035e-07
 claim/with-donate-1	alloc_words	exact	4
@@ -166,7 +166,7 @@ copy/queued/host-to-device-8x4K	wall_time	batch=2048	n=20	4.182e-06	4.176e-06 4.
 copy/staged-4K	alloc_words	exact	79
 copy/staged-4K	wall_time	batch=16384	n=20	5.311e-07	5.305e-07 5.307e-07 5.307e-07 5.307e-07 5.308e-07 5.309e-07 5.309e-07 5.310e-07 5.311e-07 5.311e-07 5.311e-07 5.313e-07 5.314e-07 5.314e-07 5.315e-07 5.317e-07 5.318e-07 5.318e-07 5.318e-07 5.338e-07
 copy/staged-4K/after-1024-closed	alloc_words	exact	79
-copy/staged-4K/after-1024-closed	wall_time	batch=16384	n=20	5.322e-07	5.312e-07 5.315e-07 5.316e-07 5.317e-07 5.318e-07 5.318e-07 5.318e-07 5.318e-07 5.321e-07 5.322e-07 5.323e-07 5.323e-07 5.323e-07 5.323e-07 5.324e-07 5.325e-07 5.326e-07 5.327e-07 5.331e-07 5.338e-07
+copy/staged-4K/after-1024-closed	wall_time	batch=16384	n=20	5.305e-07	5.296e-07 5.296e-07 5.298e-07 5.299e-07 5.299e-07 5.299e-07 5.300e-07 5.303e-07 5.304e-07 5.304e-07 5.307e-07 5.307e-07 5.309e-07 5.313e-07 5.314e-07 5.314e-07 5.321e-07 5.329e-07 5.342e-07 5.345e-07
 device/open-close-memory	alloc_words	exact	812
 device/open-close-memory	wall_time	batch=4096	n=20	1.434e-06	1.422e-06 1.424e-06 1.425e-06 1.427e-06 1.427e-06 1.428e-06 1.428e-06 1.431e-06 1.431e-06 1.433e-06 1.436e-06 1.438e-06 1.438e-06 1.439e-06 1.440e-06 1.442e-06 1.442e-06 1.446e-06 1.464e-06 1.465e-06
 drain/allocate-4K/closed-devices-1024	alloc_words	exact	42
@@ -174,7 +174,7 @@ drain/allocate-4K/closed-devices-1024	wall_time	batch=16384	n=20	3.348e-07	3.259
 drain/allocate-4K/closed-devices-64	alloc_words	exact	42
 drain/allocate-4K/closed-devices-64	wall_time	batch=16384	n=20	3.314e-07	3.239e-07 3.258e-07 3.259e-07 3.264e-07 3.285e-07 3.285e-07 3.286e-07 3.298e-07 3.304e-07 3.313e-07 3.315e-07 3.328e-07 3.359e-07 3.361e-07 3.384e-07 3.393e-07 3.406e-07 3.414e-07 3.416e-07 3.484e-07
 drain/allocate-4K/completed-buffers-1024	alloc_words	exact	42
-drain/allocate-4K/completed-buffers-1024	wall_time	batch=16384	n=20	3.426e-07	3.331e-07 3.336e-07 3.337e-07 3.348e-07 3.370e-07 3.370e-07 3.384e-07 3.388e-07 3.390e-07 3.415e-07 3.437e-07 3.458e-07 3.462e-07 3.464e-07 3.467e-07 3.468e-07 3.480e-07 3.499e-07 3.506e-07 3.528e-07
+drain/allocate-4K/completed-buffers-1024	wall_time	batch=16384	n=20	3.376e-07	3.250e-07 3.279e-07 3.282e-07 3.286e-07 3.298e-07 3.312e-07 3.315e-07 3.322e-07 3.324e-07 3.364e-07 3.387e-07 3.399e-07 3.414e-07 3.415e-07 3.439e-07 3.441e-07 3.459e-07 3.469e-07 3.484e-07 3.500e-07
 drain/allocate-4K/completed-images-1024	alloc_words	exact	42
 drain/allocate-4K/completed-images-1024	wall_time	batch=16384	n=20	3.346e-07	3.241e-07 3.297e-07 3.298e-07 3.298e-07 3.309e-07 3.312e-07 3.315e-07 3.319e-07 3.333e-07 3.341e-07 3.352e-07 3.363e-07 3.364e-07 3.367e-07 3.373e-07 3.410e-07 3.437e-07 3.450e-07 3.457e-07 3.478e-07
 drain/allocate-4K/completed-kept-1024	alloc_words	exact	42
@@ -182,7 +182,7 @@ drain/allocate-4K/completed-kept-1024	wall_time	batch=16384	n=20	3.360e-07	3.239
 drain/allocate-4K/pending-0	alloc_words	exact	42
 drain/allocate-4K/pending-0	wall_time	batch=16384	n=20	3.329e-07	3.263e-07 3.269e-07 3.271e-07 3.277e-07 3.291e-07 3.297e-07 3.304e-07 3.318e-07 3.319e-07 3.326e-07 3.332e-07 3.362e-07 3.373e-07 3.376e-07 3.381e-07 3.385e-07 3.394e-07 3.421e-07 3.432e-07 3.451e-07
 drain/allocate-4K/pending-buffers-1024	alloc_words	batch=512	n=20	4.208e+01	4.208e+01 4.208e+01 4.208e+01 4.208e+01 4.208e+01 4.208e+01 4.208e+01 4.208e+01 4.208e+01 4.208e+01 4.208e+01 4.208e+01 4.208e+01 4.208e+01 4.208e+01 4.208e+01 4.208e+01 4.208e+01 4.229e+01 4.408e+01
-drain/allocate-4K/pending-buffers-1024	wall_time	batch=512	n=20	1.159e-05	1.157e-05 1.158e-05 1.158e-05 1.158e-05 1.158e-05 1.158e-05 1.159e-05 1.159e-05 1.159e-05 1.159e-05 1.159e-05 1.159e-05 1.159e-05 1.159e-05 1.160e-05 1.160e-05 1.160e-05 1.161e-05 1.162e-05 1.188e-05
+drain/allocate-4K/pending-buffers-1024	wall_time	batch=512	n=20	1.203e-05	1.201e-05 1.201e-05 1.201e-05 1.202e-05 1.202e-05 1.202e-05 1.202e-05 1.202e-05 1.202e-05 1.203e-05 1.203e-05 1.203e-05 1.203e-05 1.203e-05 1.204e-05 1.204e-05 1.207e-05 1.210e-05 1.212e-05 1.220e-05
 drain/allocate-4K/pending-buffers-64	alloc_words	exact	42
 drain/allocate-4K/pending-buffers-64	wall_time	batch=8192	n=20	1.066e-06	1.043e-06 1.049e-06 1.049e-06 1.052e-06 1.062e-06 1.062e-06 1.063e-06 1.063e-06 1.063e-06 1.065e-06 1.068e-06 1.068e-06 1.069e-06 1.070e-06 1.071e-06 1.073e-06 1.075e-06 1.076e-06 1.077e-06 1.080e-06
 drain/allocate-4K/pending-images-1024	alloc_words	exact	42
@@ -190,7 +190,7 @@ drain/allocate-4K/pending-images-1024	wall_time	batch=16384	n=20	3.394e-07	3.284
 drain/allocate-4K/pending-images-64	alloc_words	exact	42
 drain/allocate-4K/pending-images-64	wall_time	batch=16384	n=20	3.370e-07	3.289e-07 3.319e-07 3.322e-07 3.323e-07 3.329e-07 3.331e-07 3.332e-07 3.355e-07 3.365e-07 3.369e-07 3.370e-07 3.399e-07 3.418e-07 3.421e-07 3.421e-07 3.421e-07 3.425e-07 3.438e-07 3.456e-07 3.501e-07
 drain/allocate-4K/pending-kept-1024	alloc_words	exact	42
-drain/allocate-4K/pending-kept-1024	wall_time	batch=16384	n=20	3.534e-07	3.402e-07 3.447e-07 3.452e-07 3.454e-07 3.459e-07 3.462e-07 3.469e-07 3.483e-07 3.508e-07 3.520e-07 3.549e-07 3.556e-07 3.563e-07 3.591e-07 3.600e-07 3.604e-07 3.607e-07 3.620e-07 3.655e-07 3.661e-07
+drain/allocate-4K/pending-kept-1024	wall_time	batch=16384	n=20	3.498e-07	3.406e-07 3.419e-07 3.440e-07 3.442e-07 3.447e-07 3.450e-07 3.454e-07 3.455e-07 3.478e-07 3.482e-07 3.514e-07 3.521e-07 3.543e-07 3.560e-07 3.588e-07 3.590e-07 3.598e-07 3.598e-07 3.620e-07 3.629e-07
 drain/allocate-4K/pending-kept-64	alloc_words	exact	42
 drain/allocate-4K/pending-kept-64	wall_time	batch=16384	n=20	3.410e-07	3.277e-07 3.336e-07 3.340e-07 3.344e-07 3.347e-07 3.353e-07 3.354e-07 3.382e-07 3.402e-07 3.406e-07 3.415e-07 3.422e-07 3.438e-07 3.439e-07 3.446e-07 3.451e-07 3.479e-07 3.503e-07 3.504e-07 3.521e-07
 drain/dropped-1000	alloc_words	exact	42042
@@ -232,9 +232,9 @@ replay/polled/params-24	wall_time	batch=16384	n=20	4.475e-07	4.464e-07 4.465e-07
 replay/polled/pipelined-100	alloc_words	exact	0
 replay/polled/pipelined-100	wall_time	batch=128	n=20	4.513e-05	4.479e-05 4.492e-05 4.498e-05 4.504e-05 4.505e-05 4.505e-05 4.507e-05 4.511e-05 4.511e-05 4.513e-05 4.513e-05 4.516e-05 4.528e-05 4.529e-05 4.529e-05 4.540e-05 4.540e-05 4.559e-05 4.560e-05 4.580e-05
 submit/polled/cost	alloc_words	exact	0
-submit/polled/cost	wall_time	batch=131072	n=20	6.944e-08	6.922e-08 6.926e-08 6.930e-08 6.931e-08 6.936e-08 6.937e-08 6.938e-08 6.941e-08 6.943e-08 6.943e-08 6.945e-08 6.949e-08 6.953e-08 6.957e-08 6.958e-08 6.958e-08 6.960e-08 6.962e-08 6.964e-08 6.976e-08
+submit/polled/cost	wall_time	batch=131072	n=20	7.115e-08	7.100e-08 7.101e-08 7.106e-08 7.107e-08 7.108e-08 7.112e-08 7.114e-08 7.115e-08 7.115e-08 7.115e-08 7.115e-08 7.115e-08 7.119e-08 7.148e-08 7.155e-08 7.162e-08 7.176e-08 7.188e-08 7.194e-08 7.221e-08
 submit/polled/empty	alloc_words	exact	0
-submit/polled/empty	wall_time	batch=131072	n=20	5.951e-08	5.876e-08 5.878e-08 5.878e-08 5.879e-08 5.880e-08 5.881e-08 5.885e-08 5.894e-08 5.895e-08 5.946e-08 5.956e-08 5.976e-08 5.981e-08 5.983e-08 5.985e-08 5.988e-08 5.990e-08 5.992e-08 5.993e-08 5.993e-08
+submit/polled/empty	wall_time	batch=131072	n=20	6.073e-08	6.066e-08 6.068e-08 6.069e-08 6.069e-08 6.071e-08 6.071e-08 6.071e-08 6.072e-08 6.073e-08 6.073e-08 6.074e-08 6.075e-08 6.076e-08 6.077e-08 6.078e-08 6.079e-08 6.088e-08 6.100e-08 6.119e-08 6.132e-08
 submit/polled/fixed-200	alloc_words	exact	0
 submit/polled/fixed-200	wall_time	batch=8192	n=20	7.472e-07	7.454e-07 7.457e-07 7.458e-07 7.462e-07 7.462e-07 7.463e-07 7.464e-07 7.467e-07 7.469e-07 7.471e-07 7.472e-07 7.473e-07 7.478e-07 7.482e-07 7.483e-07 7.500e-07 7.510e-07 7.516e-07 7.573e-07 7.642e-07
 submit/polled/foreign-24	alloc_words	exact	0
