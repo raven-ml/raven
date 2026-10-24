@@ -393,7 +393,11 @@ let device ~word ~on g ~gsp ~hold ~tables (c : Chip.t) =
            it, so that an exception later leaves the hold to the next open of
            the GPU. The names and the memory go after it: rig frees nothing
            during the stop, and a free gives back only once the function is
-           released. *)
+           released. A stop that raised before the release leaves it to the
+           hold, which the next open, reset or change of any of the driver's
+           functions, or the exit, ends, so that no open finds it part-way;
+           one that raised after it gives back the memory as one that
+           returned does, the release's own a no-op once begun. *)
         stop =
           (fun () ->
             match Driver.stop hold with
@@ -401,7 +405,8 @@ let device ~word ~on g ~gsp ~hold ~tables (c : Chip.t) =
                 after_stop ();
                 s
             | exception e ->
-                after_stop ();
+                if Function.released g.fn then after_stop ()
+                else protect g (fun () -> g.names <- None);
                 reraise e);
       }
   with
