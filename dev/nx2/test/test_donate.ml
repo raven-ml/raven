@@ -816,8 +816,9 @@ let test_extent_elsewhere () =
   invalid ~sub:"donated to Nx.add" (fun () -> Nx.copy x)
 
 (* An eager call that reads a donation in several operations, as an einsum
-   of three operands or a slice at two lists of positions held in data,
-   frees the donor's memory once it returns, as one operation does. The
+   of three operands, a slice at two lists of positions held in data, an LU
+   factorisation or a structure's scaling, frees the donor's memory once it
+   returns, as one operation does. The
    donors stay reachable, so no collection explains the bytes. A slice that
    gives its operand itself keeps its elements. *)
 let test_several_free () =
@@ -851,6 +852,33 @@ let test_several_free () =
   equal ~msg:"the slice" (array float_exact) [| 3. |]
     (elements (Nx.reshape [| 1 |] y));
   invalid ~sub:"donated to Nx.slice" (fun () -> Nx.copy c);
+  (* A result of several values, and a structure, of the donor's size: the
+     count is read settled, once the intermediates are collected. *)
+  let freed_settled f =
+    let run () =
+      let c = cache () in
+      let before = settled () in
+      let y = f c in
+      (c, y, settled () - before)
+    in
+    ignore (run ());
+    run ()
+  in
+  let c, (_, l, u), grew = freed_settled (fun c -> Nx.lu (Nx.donate c)) in
+  less ~msg:"the factors' donor freed" int ~than:(size / 2) grew;
+  equal ~msg:"the factors" (list (array int))
+    [ [| rows; rows |]; [| rows; width |] ]
+    [ Nx.shape l; Nx.shape u ];
+  invalid ~sub:"donated to Nx.lu" (fun () -> Nx.copy c);
+  let k = Nx.place Mem.on (Nx.scalar f32 2.) in
+  let c, y, grew =
+    freed_settled (fun c -> Nx.Ptree.scale Nx.Ptree.tensor k (Nx.donate c))
+  in
+  less ~msg:"the structure's donor freed" int ~than:(size / 2) grew;
+  equal ~msg:"the structure" (array float_exact)
+    (Array.map (fun x -> 2. *. x) original)
+    (elements (Nx.reshape [| rows * width |] y));
+  invalid ~sub:"donated to Nx.Ptree.scale" (fun () -> Nx.copy c);
   let c = cache () in
   let y = Nx.slice [ A; A ] (Nx.donate c) in
   equal ~msg:"the operand itself" (array float_exact) original (elements y)

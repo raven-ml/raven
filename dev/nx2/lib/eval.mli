@@ -68,31 +68,24 @@ val quiet : unit -> bool
 val once :
   by:string ->
   'd any list ->
-  (('v 's 'e. ('v, 's, 'e) t -> ('v, 's, 'e) t) -> 'a) ->
+  holds:('a -> 'e any list) ->
+  (('v 's 'f. ('v, 's, 'f) t -> ('v, 's, 'f) t) -> 'a) ->
   'a
-(** [once ~by xs k] is [k read], [k] the function [by] that reads its
-    operands [xs] in several operations. [by] consumes the handles among [xs]
-    when called ({!Donate.consume}), and [read] gives [xs] as they were then,
-    each handle and each of their donors claimed for the call
-    ({!Donate.read}): the donors are dead from the start, whatever [k]
-    does, [k]'s operations write into none of their memory, and an
-    interpretation that receives one of them reads its arrays lent. Two reads
-    of one donor share its memory, so [k] may return both. Once [k] returns or
-    raises, the claimed values are live, and the memory returns to its device
-    once no value holds it. Raises [Invalid_argument] before [k] as
-    {!Donate.consume} does, naming [by]. *)
-
-val once_value :
-  by:string ->
-  'd any list ->
-  (('v 's 'e. ('v, 's, 'e) t -> ('v, 's, 'e) t) -> ('w, 'q, 'd) t) ->
-  ('w, 'q, 'd) t
-(** [once_value ~by xs k] is {!once}[ ~by xs k], whose value [y] tells which
-    memory is still held: where [by] consumed the handles, their memory that
-    [y] does not hold and no other value shares is freed when [k] returns, as
-    {!Exec} frees what an operation does not reuse ({!Donate.consumed}). A
-    view [k] makes of it shares it, as does an interpretation's read: that
-    memory waits for a collection. *)
+(** [once ~by xs ~holds k] is [k read], [k] the function [by] that reads its
+    operands [xs] in several operations, and [holds y] the values its result
+    [y] is made of. [by] consumes the handles among [xs] when called
+    ({!Donate.consume}), and [read] gives [xs] as they were then, each handle
+    and each of their donors claimed for the call ({!Donate.read}): the donors
+    are dead from the start, whatever [k] does, [k]'s operations write into
+    none of their memory, and an interpretation that receives one of them
+    reads its arrays lent. Two reads of one donor share its memory, so [k] may
+    return both. Once [k] returns or raises, the claimed values are live. When
+    [k] returns, the handles' memory that no value of [holds y] holds and no
+    other value shares is freed, as {!Exec} frees what an operation does not
+    reuse ({!Donate.consumed}); a view [k] makes of it shares it, as does an
+    interpretation's read, and that memory returns to its device once no value
+    holds it. Raises [Invalid_argument] before [k] as {!Donate.consume} does,
+    naming [by]. *)
 
 val eval : by:string -> 'r prim -> 'r
 (** [eval ~by op] is [op]'s meaning under the rule. Errors name [by]. *)
