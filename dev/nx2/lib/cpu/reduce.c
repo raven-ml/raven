@@ -3312,7 +3312,7 @@ static void fill_dst(const nx_array *d, const uint8_t *e, int w) {
   int r = rows_of(d, extent, step);
   int64_t n = extent[r - 1], s = step[0][r - 1], rows = 1;
   for (int i = 0; i < r - 1; i++) rows *= extent[i];
-  nx_cpu_row0 row = nx_cpu_table->fill[__builtin_ctz((unsigned)w)];
+  nx_cpu_row0 row = nx_cpu_table->fill[nx_cpu_width_index(w)];
   int64_t at[NX_MAX_RANK] = {0}, p = d->offset;
   for (int64_t k = 0; k < rows && n > 0; k++) {
     row(n, d->base + p * w, s, e);

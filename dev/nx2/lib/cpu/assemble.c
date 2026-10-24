@@ -58,24 +58,10 @@ typedef struct {
   const uint8_t *fill;
 } filling;
 
-/* Stores the fill into a block's elements: rows by the target table's fill,
-   a sub-byte dtype's rows of unit step as runs (nx_array.h). */
+/* A fill's block. */
 static void fill_block(const nx_cpu_block *b, void *ctx) {
   const filling *f = ctx;
-  int bits = f->dst->bits, w = bits / 8;
-  int lg = w == 1 ? 0 : w == 2 ? 1 : w == 4 ? 2 : w == 8 ? 3 : 4;
-  for (int64_t q = 0; q < b->n2; q++)
-    for (int64_t r = 0; r < b->n1; r++) {
-      int64_t p = b->at[0] + q * b->s2[0] + r * b->s1[0];
-      if (bits < 8 && b->s0[0] == 1)
-        nx_sub_fill_run(f->dst->base, bits, p, b->n0, f->fill[0]);
-      else if (bits < 8)
-        for (int64_t j = 0; j < b->n0; j++)
-          nx_sub_store(f->dst->base, bits, p + j * b->s0[0], f->fill[0]);
-      else
-        nx_cpu_table->fill[lg](b->n0, f->dst->base + p * w, b->s0[0],
-                               f->fill);
-    }
+  nx_cpu_fill_block(f->dst, b, f->fill);
 }
 
 /* Stores the element of bits [fill] into the box of [dst] from [first],
@@ -127,7 +113,7 @@ static void fill_run(const padding *p, int64_t pd, int64_t n) {
   if (n <= 0) return;
   nx_cpu_block b = {.n0 = n, .n1 = 1, .n2 = 1, .at = {pd},
                     .s0 = {p->sd[p->r - 1]}};
-  fill_block(&b, (void *)&p->f);
+  nx_cpu_fill_block(p->f.dst, &b, p->f.fill);
 }
 
 static void pad_units(int64_t lo, int64_t hi, int worker, void *ctx) {

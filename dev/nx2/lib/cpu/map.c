@@ -490,13 +490,7 @@ static void *row_of(const step *s, int xt) {
     default: break;
   }
   if (s->kind == NX_OP3_FMA) return (void *)t->fma[c];
-  switch (width(held(xt))) {
-    case 1: return (void *)t->where[0];
-    case 2: return (void *)t->where[1];
-    case 4: return (void *)t->where[2];
-    case 8: return (void *)t->where[3];
-    default: return (void *)t->where[4];
-  }
+  return (void *)t->where[nx_cpu_width_index(width(held(xt)))];
 }
 
 /* A constant's element held, from the bits of its dtype's element in

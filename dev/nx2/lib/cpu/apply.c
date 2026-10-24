@@ -60,19 +60,6 @@ typedef nx_cpu_row1 row1;
 typedef nx_cpu_row2 row2;
 typedef nx_cpu_row3 row3;
 
-/* The index of a width of 1, 2, 4, 8 or 16 bytes in the target table's
-   rows by width, or -1. */
-static int width_index(int bytes) {
-  switch (bytes) {
-    case 1: return 0;
-    case 2: return 1;
-    case 4: return 2;
-    case 8: return 3;
-    case 16: return 4;
-    default: return -1;
-  }
-}
-
 /* Blocks */
 
 typedef struct {
@@ -184,22 +171,26 @@ static void block(const nx_cpu_block *b, void *ctx) {
   }
 }
 
-/* A fill stores its element through the target table's row of its width,
-   a sub-byte one's rows of unit step as runs (nx_array.h). */
-static void fill_block(const nx_cpu_block *b, void *ctx) {
-  const op *j = ctx;
-  const nx_array *d = &j->a[0];
-  nx_cpu_row0 f = nx_cpu_table->fill[width_index(nx_cpu_width(d->dtype))];
+void nx_cpu_fill_block(const nx_array *d, const nx_cpu_block *b,
+                       const uint8_t *bits) {
+  int w = nx_cpu_width(d->dtype);
+  nx_cpu_row0 f = nx_cpu_table->fill[nx_cpu_width_index(w)];
   for (int64_t q = 0; q < b->n2; q++)
     for (int64_t r = 0; r < b->n1; r++) {
       int64_t p = b->at[0] + q * b->s2[0] + r * b->s1[0];
-      if (d->bits >= 8) f(b->n0, at(j->a, 0, p), b->s0[0], j->bits);
+      if (d->bits >= 8) f(b->n0, d->base + p * w, b->s0[0], bits);
       else if (b->s0[0] == 1)
-        nx_sub_fill_run(d->base, d->bits, p, b->n0, j->bits[0]);
+        nx_sub_fill_run(d->base, d->bits, p, b->n0, bits[0]);
       else
         for (int64_t i = 0; i < b->n0; i++)
-          nx_sub_store(d->base, d->bits, p + i * b->s0[0], j->bits[0]);
+          nx_sub_store(d->base, d->bits, p + i * b->s0[0], bits[0]);
     }
+}
+
+/* A fill's block. */
+static void fill_block(const nx_cpu_block *b, void *ctx) {
+  const op *j = ctx;
+  nx_cpu_fill_block(&j->a[0], b, j->bits);
 }
 
 /* Reads the [n] operands [in] through the door and walks them with [f],
@@ -273,7 +264,7 @@ value nx_cpu_apply3(value k, value vd, value vc, value vx, value vy) {
     /* A sub-byte dtype selects among its codes, one per byte. */
     int s = nx_dtype_row_of(x).bits < 8 ? nx_cpu_carrier(x) : x;
     j = (op){.as = {s, NX_BOOL, s, s},
-             .f3 = nx_cpu_table->where[width_index(nx_cpu_width(s))]};
+             .f3 = nx_cpu_table->where[nx_cpu_width_index(nx_cpu_width(s))]};
   } else {
     int s = nx_cpu_carrier(x);
     j = (op){.as = {s, s, s, s}, .f3 = nx_cpu_table->fma[s]};

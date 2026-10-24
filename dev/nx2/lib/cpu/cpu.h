@@ -565,6 +565,12 @@ static inline int nx_cpu_width(int dt) {
   return bits < 8 ? 1 : bits / 8;
 }
 
+/* The index of a width of 1, 2, 4, 8 or 16 bytes in the table's rows by
+   width (where, fill): its log2. */
+static inline int nx_cpu_width_index(int bytes) {
+  return __builtin_ctz((unsigned)bytes);
+}
+
 /* The elements of [a]. */
 static inline double nx_cpu_elements(const nx_array *a) {
   double n = 1;
@@ -847,6 +853,12 @@ typedef void (*nx_cpu_block_fn)(const nx_cpu_block *b, void *ctx);
 static inline void nx_cpu_walk(int n, const nx_array *a, const nx_loop *l,
                                int64_t most, int64_t weight,
                                nx_cpu_block_fn f, void *ctx);
+
+/* Stores the element of bits [bits] into the elements of block [b] of the
+   array [d], its operand 0: rows by the table's fill of their width, a
+   sub-byte dtype's rows of unit step as runs (nx_array.h) (apply.c). */
+void nx_cpu_fill_block(const nx_array *d, const nx_cpu_block *b,
+                       const uint8_t *bits);
 
 /* A walk that moves elements one by one, through tiles or along strides,
    costs as much time as this many times its bytes moved by memcpy: a
