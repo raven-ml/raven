@@ -4,7 +4,14 @@
 (executable
  (name bench_kernels)
  (modules bench_kernels)
- (libraries nx_array nx_kernel nx_cpu nx_cpu_floors rig thumper))
+ (libraries
+  nx_array
+  nx_kernel
+  nx_kernel_support
+  nx_cpu
+  nx_cpu_floors
+  rig
+  thumper))
 
 (rule
  (alias bench)

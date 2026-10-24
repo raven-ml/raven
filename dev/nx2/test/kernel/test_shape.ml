@@ -16,7 +16,20 @@ module D = Nx_array.Dtype
 module L = Nx_array.Layout
 module M = Nx_array.Move
 module Shape = Nx_kernel.Shape
-module V = Nx_kernel.Contract_view
+
+(* The view nx_contract_view_fill groups, read from its fields
+   ({!Nx_kernel_support.view_fields}) by nx_contract_view.h's indices. *)
+module V = struct
+  type operand = A | B | Init | Dst
+  type axis = Batch | Row | Column | Contracted
+
+  let operand = function A -> 0 | B -> 1 | Init -> 2 | Dst -> 3
+  let axis = function Batch -> 0 | Row -> 1 | Column -> 2 | Contracted -> 3
+  let v = Nx_kernel_support.view_fields
+  let extent f x = f.(axis x)
+  let offset f o = f.(4 + operand o)
+  let stride f o x = f.(8 + (4 * operand o) + axis x)
+end
 
 let pp_dtype ppf (D.Any dt) = D.pp ppf dt
 
@@ -1063,8 +1076,21 @@ let pp_operand ppf o =
     (match o with V.A -> "a" | V.B -> "b" | V.Init -> "init" | V.Dst -> "dst")
 
 (* Every element of every operand lies where the view places it: its group's
-   index, flat in C order over the group's axes, times the group's stride. *)
+   index, flat in C order over the group's axes, times the group's stride. An
+   axis an operand lacks, and an absent init, read 0. *)
 let check_view c v =
+  let zero ~msg n = equal ~msg int 0 n in
+  zero ~msg:"a's column stride" (V.stride v V.A V.Column);
+  zero ~msg:"b's row stride" (V.stride v V.B V.Row);
+  zero ~msg:"dst's contracted stride" (V.stride v V.Dst V.Contracted);
+  zero ~msg:"init's contracted stride" (V.stride v V.Init V.Contracted);
+  cover "without init" (Option.is_none c.li);
+  if Option.is_none c.li then begin
+    zero ~msg:"an absent init's offset" (V.offset v V.Init);
+    List.iter
+      (fun x -> zero ~msg:"an absent init's stride" (V.stride v V.Init x))
+      V.[ Batch; Row; Column; Contracted ]
+  end;
   List.iter
     (fun (o, l, gs) ->
       let s = L.shape l in
@@ -1102,43 +1128,6 @@ let law_canonical c =
   let v = view c in
   equal ~msg:"groups" string "grouped" (outcome v);
   Result.iter (check_view c) v
-
-(* [v]'s extents, offsets and strides in C's order, 0 for an axis an
-   operand lacks and for an absent init. *)
-let fields ~init v =
-  let present o = o <> V.Init || init in
-  let has o x =
-    present o
-    &&
-    match (o, x) with
-    | V.A, V.Column | V.B, V.Row | (V.Init | V.Dst), V.Contracted -> false
-    | _ -> true
-  in
-  let axes = V.[| Batch; Row; Column; Contracted |] in
-  let operands = V.[| A; B; Init; Dst |] in
-  Array.concat
-    [
-      Array.map (V.extent v) axes;
-      Array.map (fun o -> if present o then V.offset v o else 0) operands;
-      Array.concat
-        (Array.to_list
-           (Array.map
-              (fun o ->
-                Array.map (fun x -> if has o x then V.stride v o x else 0) axes)
-              operands));
-    ]
-
-(* C's nx_contract_view_fill groups what the view gives, and 0 for an axis
-   an operand lacks and for an absent init. *)
-let law_view_in_c c =
-  let batch, contracting = pairs_of c in
-  let a, b, init, dst = operands c in
-  let f = Nx_kernel_support.view_fields ~batch ~contracting ~dst ~init a b in
-  cover "without init" (Option.is_none c.li);
-  equal ~msg:"answers as the view" string (outcome (view c)) (outcome f);
-  match (view c, f) with
-  | Error _, _ | _, Error _ -> ()
-  | Ok v, Ok f -> equal (array int) (fields ~init:(Option.is_some c.li) v) f
 
 (* [l] with two axes of extent 1 and stride [s] after its last. *)
 let with_unit_axes s l =
@@ -1194,9 +1183,7 @@ let law_one_axis (c, (misfit, s)) =
   cover "one-axis groups, a batch axis" (one && Array.length c.batch = 1);
   equal ~msg:"answers" string (outcome v') (outcome v);
   match (v, v') with
-  | Ok v, Ok v' ->
-      let init = Option.is_some li in
-      equal (array int) (fields ~init v') (fields ~init v)
+  | Ok v, Ok v' -> equal (array int) v' v
   | _ -> ()
 
 (* A view refuses operands that do not fit its pairs, and declines a call
@@ -1264,10 +1251,7 @@ let test_view_declines () =
   let v = view ~dst:(arr [| 2; 3 |]) a (arr [| 4; 3 |]) in
   equal ~msg:"strided contraction" string "grouped" (outcome v);
   let v = Result.get_ok v in
-  equal int 8 (V.stride v V.A V.Contracted);
-  raises_match Exn.invalid_arg (fun () -> V.stride v V.A V.Column);
-  raises_match Exn.invalid_arg (fun () -> V.stride v V.Dst V.Contracted);
-  raises_match Exn.invalid_arg (fun () -> V.offset v V.Init)
+  equal int 8 (V.stride v V.A V.Contracted)
 
 let minor_words f =
   let before = Gc.minor_words () in
@@ -1359,12 +1343,8 @@ let tests =
         prop "places every element where its layout does" any_case law_view;
         prop "groups C-contiguous operands of any axis order" canonical_case
           law_canonical;
-        test
-          "refuses what does not fit, declines an unmerged group and names \
-           only an operand's axes"
+        test "refuses what does not fit and declines an unmerged group"
           test_view_declines;
-        prop "C groups what the accessors give, and 0 where they raise"
-          any_case law_view_in_c;
         (* One-axis groups are about 1 draw in 5, a batch misfit among
            them 1 in 10: 1000 draws reach it about 20 times. *)
         prop ~count:1000 "a view of one-axis groups is the general grouping's"

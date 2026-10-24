@@ -14,10 +14,10 @@ val view_fields :
   ('c, 'e) Nx_array.t ->
   (int array, Nx_array.answer) result
 (** [view_fields ~batch ~contracting ~dst ~init a b] is the view
-    [nx_contract_view_fill.h]'s [nx_contract_view_fill] groups on C's stack,
-    as {!Nx_kernel.Contract_view.v} takes its arguments: its four extents and
-    four offsets, then each operand's four strides, by operand then axis; or
-    [Error] of what the fill answers. *)
+    [nx_contract_view_fill.h]'s [nx_contract_view_fill] groups on C's stack:
+    its four extents and four offsets, then each operand's four strides, by
+    operand then axis, in [nx_contract_view.h]'s order; or [Error] of what
+    the fill answers. *)
 
 val view_groups :
   batch:(int * int) iarray ->

@@ -1051,8 +1051,8 @@ let per_batch c =
   let y, _, batch = sizes c in
   if batch = 0 then 0 else total y / batch
 
-(* The extents of [c]'s rows and columns per batch element, as
-   Contract_view's [Row] and [Column] give them. *)
+(* The extents of [c]'s rows and columns per batch element, as a
+   contraction view's row and column axes give them. *)
 let rows_cols c =
   let y, _, _ = sizes c in
   let nb = Array.length c.batch in

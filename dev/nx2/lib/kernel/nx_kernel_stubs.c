@@ -282,45 +282,6 @@ int nx_contract_view_fill(nx_contract_view *w, value vbatch,
   return nx_contract_fill(w, &r, vbatch, vcontracting, y, a, b, i);
 }
 
-/* Contract_view.v: Ok of the view of the pairs [vbatch] and
-   [vcontracting], the result [y], the init [i], an option, and [a] and [b],
-   as an int array in nx_kernel.ml's order (the extents, the offsets, the
-   strides by operand then axis, then whether it has an init), or Error of
-   the answer nx_contract_view_fill gives. */
-enum { VIEW_FIELDS = 25, AT_OFFSET = 4, AT_STRIDE = 8, AT_HAS_INIT = 24 };
-enum { OK_TAG, ERROR_TAG };
-
-value nx_kernel_view(value vbatch, value vcontracting, value y, value i,
-                     value a, value b) {
-  CAMLparam5(vbatch, vcontracting, y, i, a);
-  CAMLxparam1(b);
-  CAMLlocal2(v, r);
-  nx_contract_view w;
-  int answer = nx_contract_view_fill(&w, vbatch, vcontracting, y, a, b, i);
-  if (answer != NX_OK) {
-    r = caml_alloc_small(1, ERROR_TAG);
-    Field(r, 0) = Val_int(answer);
-    CAMLreturn(r);
-  }
-  v = caml_alloc_small(VIEW_FIELDS, 0);
-  for (int k = 0; k < 4; k++) {
-    Field(v, k) = Val_long(w.extent[k]);
-    Field(v, AT_OFFSET + k) = Val_long(w.offset[k]);
-    for (int x = 0; x < 4; x++)
-      Field(v, AT_STRIDE + 4 * k + x) = Val_long(w.stride[k][x]);
-  }
-  Field(v, AT_HAS_INIT) = Val_bool(Is_block(i));
-  r = caml_alloc_small(1, OK_TAG);
-  Field(r, 0) = v;
-  CAMLreturn(r);
-}
-
-value nx_kernel_view_byte(value *argv, int argn) {
-  (void)argn;
-  return nx_kernel_view(argv[0], argv[1], argv[2], argv[3], argv[4],
-                        argv[5]);
-}
-
 /* Expressions */
 
 /* Prog.E.t's layout (prog.ml): In of operand and dtype, Coord of axis,
