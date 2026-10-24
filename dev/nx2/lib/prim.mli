@@ -119,9 +119,12 @@ val kind : Nx_kernel.Prog.node -> string
 (** [kind n] names [n]'s kind in messages, as ["Exp"] or ["Less"]. *)
 
 val operands : 'r prim -> operands
-(** [operands op] is [op]'s operands in order: a map's loads, a contraction's
-    [a], [b] then [init], [Check]'s [ok] then its data, the one operand of the
-    others. *)
+(** [operands op] is [op]'s operands in order: a map's or a reduction's loads;
+    a scan's loads then its carry; a gather's [idx] then [x]; a scatter's
+    [idx], [updates] then [into]; a contraction's [a], [b], then each it has of
+    [init], [a_scale], [b_scale] and [segments]' offsets; an assembly's pieces;
+    a triangular solve's [a] then [b]; [Check]'s [ok] then its data; the one
+    operand of the others. Every position below is one in this order. *)
 
 val own_index :
   'r prim -> (int list * Nx_array.Layout.t * Nx_array.Dtype.any) option
@@ -138,7 +141,8 @@ val iteri : ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> 'r prim -> unit
 
 val exists : ('v 's 'd. ('v, 's, 'd) t -> bool) -> 'r prim -> bool
 (** [exists f op] is whether [f x] for some operand [x] of [op]. Neither
-    allocates for an operation other than [Check]. *)
+    allocates for an operation other than a factorisation, an assembly or a
+    check. *)
 
 val map : ('v 's 'd. ('v, 's, 'd) t -> ('v, 's, 'd) t) -> 'r prim -> 'r prim
 (** [map m op] is [op] with each operand [x] replaced by [m x]. *)

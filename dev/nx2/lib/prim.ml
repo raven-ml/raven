@@ -412,88 +412,6 @@ let own_index : type r. r prim -> (int list * L.t * D.any) option =
   | Check _ ->
       None
 
-let iteri_loads : type d.
-    ('v 's. int -> ('v, 's, d) t -> unit) -> d load iarray -> unit =
- fun f loads ->
-  for i = 0 to Iarray.length loads - 1 do
-    let (Any x) = load_any (Iarray.get loads i) in
-    f i x
-  done
-
-let iteri : type r. ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> r prim -> unit
-    =
- fun f op ->
-  match op with
-  | Map { loads; _ } -> iteri_loads f loads
-  | Reduce { loads; _ } -> iteri_loads f loads
-  | Scan { loads; carry; _ } -> (
-      iteri_loads f loads;
-      match carry with Some (Any c) -> f (Iarray.length loads) c | None -> ())
-  | Gather { idx; x; _ } ->
-      f 0 idx;
-      f 1 x
-  | Scatter { idx; updates; into; _ } ->
-      f 0 idx;
-      f 1 updates;
-      f 2 into
-  | Sort { x; _ } -> f 0 x
-  | Fold { x; _ } -> f 0 x
-  | Fft fft ->
-      let (Any x) = fft_operand fft in
-      f 0 x
-  | Linalg l -> List.iteri (fun i (Any x) -> f i x) (linalg_operands l)
-  | Assemble { pieces; _ } -> List.iteri (fun i (_, x) -> f i x) pieces
-  | Contract { a; b; init; a_scale; b_scale; segments; _ } ->
-      f 0 a;
-      f 1 b;
-      List.iteri
-        (fun i (Any x) -> f (i + 2) x)
-        (contract_rest init a_scale b_scale segments)
-  | Copy x -> f 0 x
-  | Move (_, x) -> f 0 x
-  | Bitcast (_, x) -> f 0 x
-  | Place (_, x) -> f 0 x
-  | Check { ok; data; _ } ->
-      f 0 ok;
-      List.iteri (fun i (Any x) -> f (i + 1) x) (data_any data)
-
-let rec loads_exist : type d.
-    ('v 's. ('v, 's, d) t -> bool) -> d load iarray -> int -> bool =
- fun f loads i ->
-  i < Iarray.length loads
-  &&
-  let (Any x) = load_any (Iarray.get loads i) in
-  f x || loads_exist f loads (i + 1)
-
-let exists : type r. ('v 's 'd. ('v, 's, 'd) t -> bool) -> r prim -> bool =
- fun f op ->
-  match op with
-  | Map { loads; _ } -> loads_exist f loads 0
-  | Reduce { loads; _ } -> loads_exist f loads 0
-  | Scan { loads; carry; _ } -> (
-      loads_exist f loads 0
-      || match carry with Some (Any c) -> f c | None -> false)
-  | Gather { idx; x; _ } -> f idx || f x
-  | Scatter { idx; updates; into; _ } -> f idx || f updates || f into
-  | Sort { x; _ } -> f x
-  | Fold { x; _ } -> f x
-  | Fft fft ->
-      let (Any x) = fft_operand fft in
-      f x
-  | Linalg l -> List.exists (fun (Any x) -> f x) (linalg_operands l)
-  | Assemble { pieces; _ } -> List.exists (fun (_, x) -> f x) pieces
-  | Contract { a; b; init; a_scale; b_scale; segments; _ } ->
-      f a || f b
-      || List.exists
-           (fun (Any x) -> f x)
-           (contract_rest init a_scale b_scale segments)
-  | Copy x -> f x
-  | Move (_, x) -> f x
-  | Bitcast (_, x) -> f x
-  | Place (_, x) -> f x
-  | Check { ok; data; _ } ->
-      f ok || List.exists (fun (Any x) -> f x) (data_any data)
-
 (* [l] with its operand mapped by [m i]. *)
 let map_load (type d) (m : 'v 's 'e. int -> ('v, 's, 'e) t -> ('v, 's, 'e) t) i
     (l : d load) : d load =
@@ -524,54 +442,89 @@ let rec map_loads : type d.
           else if j = i then l'
           else map_load m j (Iarray.get loads j))
 
-(* [f] folded over [loads] from the [i]th on. *)
-let rec fold_loads : type a d.
-    ('v 's 'e. a -> ('v, 's, 'e) t -> a) -> a -> d load iarray -> int -> a =
- fun f acc loads i ->
+(* [f e] folded over [loads] from the [i]th on. *)
+let rec fold_loads : type e a d.
+    ('v 's 'c. e -> a -> ('v, 's, 'c) t -> a) ->
+    e ->
+    a ->
+    d load iarray ->
+    int ->
+    a =
+ fun f e acc loads i ->
   if i = Iarray.length loads then acc
   else
     let (Any x) = load_any (Iarray.get loads i) in
-    fold_loads f (f acc x) loads (i + 1)
+    fold_loads f e (f e acc x) loads (i + 1)
 
-(* [f] folded over [op]'s operands in {!operands}' order. Where [f] is closed,
-   it allocates nothing for an operation other than a factorisation, an
-   assembly or a check. *)
-let fold : type a r. ('v 's 'd. a -> ('v, 's, 'd) t -> a) -> a -> r prim -> a
-    =
- fun f acc op ->
+(* [f e] folded over [pieces]' values. *)
+let rec fold_pieces : type e a r w q b.
+    ('v 's 'c. e -> a -> ('v, 's, 'c) t -> a) ->
+    e ->
+    a ->
+    (r * (w, q, b) t) list ->
+    a =
+ fun f e acc pieces ->
+  match pieces with
+  | [] -> acc
+  | (_, x) :: rest -> fold_pieces f e (f e acc x) rest
+
+(* [f e] folded over [op]'s operands in {!operands}' order. [e] carries what
+   [f] needs, so that [f] can be closed: where it is, the fold allocates
+   nothing for an operation other than a factorisation or a check. *)
+let fold : type e a r.
+    ('v 's 'd. e -> a -> ('v, 's, 'd) t -> a) -> e -> a -> r prim -> a =
+ fun f e acc op ->
   match op with
-  | Map { loads; _ } -> fold_loads f acc loads 0
-  | Reduce { loads; _ } -> fold_loads f acc loads 0
+  | Map { loads; _ } -> fold_loads f e acc loads 0
+  | Reduce { loads; _ } -> fold_loads f e acc loads 0
   | Scan { loads; carry; _ } -> (
-      let acc = fold_loads f acc loads 0 in
-      match carry with Some (Any c) -> f acc c | None -> acc)
-  | Gather { idx; x; _ } -> f (f acc idx) x
-  | Scatter { idx; updates; into; _ } -> f (f (f acc idx) updates) into
-  | Sort { x; _ } -> f acc x
-  | Fold { x; _ } -> f acc x
+      let acc = fold_loads f e acc loads 0 in
+      match carry with Some (Any c) -> f e acc c | None -> acc)
+  | Gather { idx; x; _ } -> f e (f e acc idx) x
+  | Scatter { idx; updates; into; _ } -> f e (f e (f e acc idx) updates) into
+  | Sort { x; _ } -> f e acc x
+  | Fold { x; _ } -> f e acc x
   | Fft fft ->
       let (Any x) = fft_operand fft in
-      f acc x
+      f e acc x
   | Linalg l ->
-      List.fold_left (fun acc (Any x) -> f acc x) acc (linalg_operands l)
-  | Assemble { pieces; _ } ->
-      List.fold_left (fun acc (_, x) -> f acc x) acc pieces
+      List.fold_left (fun acc (Any x) -> f e acc x) acc (linalg_operands l)
+  | Assemble { pieces; _ } -> fold_pieces f e acc pieces
   | Contract { a; b; init; a_scale; b_scale; segments; _ } -> (
-      let acc = f (f acc a) b in
-      let acc = match init with Some i -> f acc i | None -> acc in
+      let acc = f e (f e acc a) b in
+      let acc = match init with Some i -> f e acc i | None -> acc in
       let scaled acc = function
         | None -> acc
-        | Some (Exponent x) -> f acc x
-        | Some (Value x) -> f acc x
+        | Some (Exponent x) -> f e acc x
+        | Some (Value x) -> f e acc x
       in
       let acc = scaled (scaled acc a_scale) b_scale in
-      match segments with Some g -> f acc (offsets g) | None -> acc)
-  | Copy x -> f acc x
-  | Move (_, x) -> f acc x
-  | Bitcast (_, x) -> f acc x
-  | Place (_, x) -> f acc x
+      match segments with Some g -> f e acc (offsets g) | None -> acc)
+  | Copy x -> f e acc x
+  | Move (_, x) -> f e acc x
+  | Bitcast (_, x) -> f e acc x
+  | Place (_, x) -> f e acc x
   | Check { ok; data; _ } ->
-      List.fold_left (fun acc (Any x) -> f acc x) (f acc ok) (data_any data)
+      List.fold_left
+        (fun acc (Any x) -> f e acc x)
+        (f e acc ok) (data_any data)
+
+(* An operand function as [fold]'s [e], unboxed so passing it allocates
+   nothing. *)
+type iter = { iter : 'v 's 'd. int -> ('v, 's, 'd) t -> unit } [@@unboxed]
+type test = { test : 'v 's 'd. ('v, 's, 'd) t -> bool } [@@unboxed]
+
+let iteri : type r. ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> r prim -> unit
+    =
+ fun f op ->
+  let step e i x =
+    e.iter i x;
+    i + 1
+  in
+  ignore (fold step { iter = f } 0 op)
+
+let exists : type r. ('v 's 'd. ('v, 's, 'd) t -> bool) -> r prim -> bool =
+ fun f op -> fold (fun e found x -> found || e.test x) { test = f } false op
 
 let mapi : type r.
     ('v 's 'd. int -> ('v, 's, 'd) t -> ('v, 's, 'd) t) -> r prim -> r prim =
@@ -1401,13 +1354,13 @@ let joined (type v s d) acc (x : (v, s, d) t) =
    the results lie there whatever the rule, so neither [op]'s rule nor its
    operands' shapes are computed. *)
 let route_of (type r) ~by (op : r prim) : unit Route.t option =
-  match fold joined Route.Every_set op with
+  match fold (fun () acc x -> joined acc x) () Route.Every_set op with
   | Route.Every_set -> None
   | Route.One p when uncut p ->
-      let n = fold (fun n _ -> n + 1) 0 op in
+      let n = fold (fun () n _ -> n + 1) () 0 op in
       Some { Route.operands = Array.make n p; result = p; compute = Windows }
   | Route.One _ | Route.Other ->
-      let n = fold (fun n _ -> n + 1) 0 op in
+      let n = fold (fun () n _ -> n + 1) () 0 op in
       let ps = Array.make n None and shapes = Array.make n [||] in
       iteri
         (fun i x ->
