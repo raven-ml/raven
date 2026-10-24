@@ -289,7 +289,9 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     {!contract}'s [init]), the memory is C-contiguous with the result's shape
     and dtype, and the memory is not shared. Memory is shared once a value
     outside the donor's handles has been made over it (a view, a borrow by
-    {!place}, a {!Repr} crossing, an interpretation's read), and stays shared.
+    {!place}, a {!Repr} crossing, an interpretation's read, the donor and its
+    handle read by one function of several operations, which may return
+    both), and stays shared.
     Otherwise the consumer computes into fresh memory, and a value that shares
     the memory keeps it. Its result is the same either way.
 
@@ -4473,7 +4475,8 @@ module Prim : sig
   (** [consume ~by xs] is [xs] read by one consumer named [by] that is no
       operation, as a compiled call: as an operation reads its operands
       ({!Nx.donate}), each handle as a live value over its arrays, a donor
-      beside its handle as it was, and any other value as it is. Each
+      beside its handle as it was, their memory then shared, and any other
+      value as it is. Each
       handle's donor is then dead, naming [by]. It checks every value before
       it kills any. The handles' memory is not consumed: a consumer that
       writes into it takes it from rig, which says whether it is exclusive
