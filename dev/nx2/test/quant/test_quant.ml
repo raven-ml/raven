@@ -1139,11 +1139,9 @@ let experts_law (_, w, ids, X { at; x }) =
   let e = lead.(0) and id = Nx.to_array ids in
   let inside i = i >= 0L && i < Int64.of_int e in
   let names g = Array.mem (Int64.of_int g) id in
-  let grouped =
-    format_of w = Mxfp4
-    && match Nx.dtype x with D.Float64 -> false | _ -> true
-  in
-  cover "the grouped product" grouped;
+  cover "an MXFP4 weight" (format_of w = Mxfp4);
+  cover "a GGUF weight" (format_of w <> Mxfp4);
+  cover "float64" (D.name (Nx.dtype x) = D.name Nx.float64);
   cover "an expert no id names"
     (List.exists (fun g -> not (names g)) (List.init e Fun.id));
   cover "every id one expert"
@@ -1170,22 +1168,17 @@ let experts_law (_, w, ids, X { at; x }) =
   equal ~msg:"the rows of ids out of range" (array int64)
     (Array.make (Array.length got) 0L)
     (Array.mapi (fun j b -> if outside.(j) then b else 0L) got);
-  if not grouped then
-    equal ~msg:"the routed product" (array int64)
-      (product_bits (routed w ids x))
-      (product_bits y)
-  else
-    let expected, bound, finite = expert_product w ids x in
-    let skip j = outside.(j) || finite.(j) >= overflows k in
-    agrees_but ~at ~k skip expected bound
-      (Nx.to_array (Nx.reshape [| -1 |] (Nx.cast Nx.float64 y)))
+  let expected, bound, finite = expert_product w ids x in
+  let skip j = outside.(j) || finite.(j) >= overflows k in
+  agrees_but ~at ~k skip expected bound
+    (Nx.to_array (Nx.reshape [| -1 |] (Nx.cast Nx.float64 y)))
 
 let expert_products =
   group "experts"
     [
       prop ~count:300
         "apply_experts is the routed product within the error of a float32 \
-         sum, and zeros for ids out of range"
+         sum at every format and dtype, and zeros for ids out of range"
         (Gen.with_pp pp_experts experts)
         experts_law;
     ]
@@ -1233,29 +1226,24 @@ let experts_at c w ids x =
   | Split { axis; _ } -> at (module Mem_two) (Mem_two.split ~axis)
   | Mesh_n -> at (module Mem) (Nx.Placement.mesh mesh [ (1, [ "b" ]) ])
 
-(* A weight split along [n] over a set gives the host's bits; cut along
-   [k], along experts or over a mesh, the routed product's. *)
+(* A weight at any placement gives the host's bits. *)
 let cut_experts_law (c, (_, w, ids, X { x; _ })) =
   let _, n, _ = dims w in
-  let grouped =
-    format_of w = Mxfp4
-    && match Nx.dtype x with D.Float64 -> false | _ -> true
-  in
+  let mxfp4 = format_of w = Mxfp4 in
   let along_n = match c with Split { axis = 1; _ } -> true | _ -> false in
-  cover "a grouped product split along n" (grouped && along_n);
-  cover "a grouped product split along n with an empty window"
-    (grouped && along_n
-    && match c with Split { over; _ } -> n < over | Mesh_n -> false);
-  cover "a grouped product split along k"
-    (grouped && c = Split { axis = 2; over = 4 });
-  cover "a grouped product split along experts"
-    (grouped && c = Split { axis = 0; over = 4 });
-  cover "a grouped product cut along n over a mesh" (grouped && c = Mesh_n);
-  let want =
-    if along_n then product_bits (Nx_quant.apply_experts ~ids w x)
-    else product_bits (routed w ids x)
-  in
-  equal (array int64) want (experts_at c w ids x)
+  cover "an MXFP4 weight split along n" (mxfp4 && along_n);
+  cover "a GGUF weight split along n" ((not mxfp4) && along_n);
+  cover "a weight split along n with an empty window"
+    (along_n && match c with Split { over; _ } -> n < over | Mesh_n -> false);
+  cover "an MXFP4 weight split along k"
+    (mxfp4 && c = Split { axis = 2; over = 4 });
+  cover "a GGUF weight split along k"
+    ((not mxfp4) && c = Split { axis = 2; over = 4 });
+  cover "a weight split along experts" (c = Split { axis = 0; over = 4 });
+  cover "a weight cut along n over a mesh" (c = Mesh_n);
+  equal (array int64)
+    (product_bits (Nx_quant.apply_experts ~ids w x))
+    (experts_at c w ids x)
 
 let placements =
   group "placement"
@@ -1269,8 +1257,7 @@ let placements =
          blocks, and all of k on each device otherwise"
         work work_law;
       prop ~count:200
-        "experts split along n give the host's bits, cut otherwise the \
-         routed product's"
+        "experts at any placement give the host's bits"
         (Gen.with_pp
            (fun ppf (c, e) ->
              Format.fprintf ppf "@[<v>%a@,at %a@]" pp_experts e pp_expert_cut c)
@@ -1297,13 +1284,13 @@ let placements =
             (product_bits (routed w ids x));
           equal (array int64) host (experts_at c w ids x));
       cases ~name:format_name
-        "experts split over four devices give the host's routed product" formats
+        "experts split over four devices give the host's bits" formats
         (fun format ->
           let w, ids, x = experts_of format in
           let on t = Nx.place Mem.on t in
           let w' = Nx_quant.place (Mem.split ~axis:0) w in
           equal (array int64)
-            (product_bits (routed w ids x))
+            (product_bits (Nx_quant.apply_experts ~ids w x))
             (product_bits (Nx_quant.apply_experts ~ids:(on ids) w' (on x))));
       cases ~name:format_name
         "experts whole on each device give the host's bits" formats
