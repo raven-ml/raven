@@ -1232,8 +1232,6 @@ let experts_law (_, w, ids, X { at; x }) =
     (Nx.to_array (Nx.reshape [| -1 |] (Nx.cast Nx.float64 y)))
 
 (* An expert product and, for each position, whether its id is kept, and the
-   id that replaces it otherwise. *)
-(* An expert product and, for each position, whether its id is kept, and the
    id that replaces it otherwise. Half the products, of three experts or more,
    take two positions or more but fewer than the experts, one input row for
    all, so that a product gathers matrices beside a kept row's. *)
@@ -1296,7 +1294,7 @@ let rerouted_law ((_, w, ids, X { x; _ }), fresh) =
 let expert_products =
   group "experts"
     [
-      prop ~count:500
+      prop ~count:1000
         "a row's bits do not depend on the other positions' experts"
         (Gen.with_pp pp_rerouted rerouted)
         rerouted_law;
