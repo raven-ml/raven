@@ -1829,36 +1829,42 @@ let prod ?axes ?keepdims x = reduction ~by:"Nx.prod" Prod ?axes ?keepdims x
 let max ?axes ?keepdims x = reduction ~by:"Nx.max" Max ?axes ?keepdims x
 let min ?axes ?keepdims x = reduction ~by:"Nx.min" Min ?axes ?keepdims x
 
-(* The inclusive prefix of [m] along [axis] of [x]. *)
-let scan_along ~by m axis x =
-  let dt = dtype x in
+(* The inclusive scan [r] along [axis] of [x]. *)
+let scan_by ~by r axis x =
   Eval.eval ~by
     (Value.Scan
        {
          layout = Nx_array.Layout.contiguous (shape x);
          axis;
-         prog = P.of_node ~ins:[| D.Any dt |] (In 0);
-         reduction = Monoid (m, 0, dt);
+         prog = P.of_node ~ins:[| D.Any (dtype x) |] (In 0);
+         reduction = r;
          loads = [| Plain x |];
          carry = None;
        })
 
+(* The inclusive prefix of [m] along [axis] of [x]. *)
+let scan_along ~by m axis x = scan_by ~by (Monoid (m, 0, dtype x)) axis x
+
 (* Over the elements in C order, keeping [x]'s shape. *)
-let scan_flat ~by m x =
-  reshaped ~by (shape x) (scan_along ~by m 0 (reshaped ~by [| numel x |] x))
+let scan_flat ~by r x =
+  reshaped ~by (shape x) (scan_by ~by r 0 (reshaped ~by [| numel x |] x))
 
 (* Along [axis], or over the elements in C order, keeping [x]'s shape. *)
-let scan ~by m ?axis:along x =
+let scan ~by r ?axis:along x =
   match along with
   | None ->
-      if not (Eval.inside ()) then scan_flat ~by m x
-      else Eval.call ~by [ Value.Any x ] @@ fun read -> scan_flat ~by m (read x)
-  | Some a -> scan_along ~by m (axis ~by x a) x
+      if not (Eval.inside ()) then scan_flat ~by r x
+      else Eval.call ~by [ Value.Any x ] @@ fun read -> scan_flat ~by r (read x)
+  | Some a -> scan_by ~by r (axis ~by x a) x
 
-let cumsum ?axis x = scan ~by:"Nx.cumsum" Sum ?axis x
-let cumprod ?axis x = scan ~by:"Nx.cumprod" Prod ?axis x
-let cummax ?axis x = scan ~by:"Nx.cummax" Max ?axis x
-let cummin ?axis x = scan ~by:"Nx.cummin" Min ?axis x
+let monoid_scan ~by m ?axis x = scan ~by (Monoid (m, 0, dtype x)) ?axis x
+let cumsum ?axis x = monoid_scan ~by:"Nx.cumsum" Sum ?axis x
+let cumprod ?axis x = monoid_scan ~by:"Nx.cumprod" Prod ?axis x
+let cummax ?axis x = monoid_scan ~by:"Nx.cummax" Max ?axis x
+let cummin ?axis x = monoid_scan ~by:"Nx.cummin" Min ?axis x
+
+let logcumsumexp ?axis x =
+  scan ~by:"Nx.logcumsumexp" (Logsumexp (0, dtype x)) ?axis x
 
 (* Contraction *)
 

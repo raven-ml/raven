@@ -1459,8 +1459,8 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     a window whose edge falls inside a chunk adds at most one chunk's work,
     4096 terms per slice. Over integers and booleans, and for {!cummax} and
     {!cummin}, each device's total moves as one row to the devices after
-    it, which scan from those rows. {!ewma} reads its axis whole on each
-    device.
+    it, which scan from those rows. {!ewma} and {!logcumsumexp} read their
+    axis whole on each device.
 
     A float result that a NaN reaches is a quiet NaN with the first NaN's
     sign and payload, the first in C order: a signalling NaN comes out with
@@ -1602,6 +1602,30 @@ val cummax : ?axis:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 
 val cummin : ?axis:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [cummin ~axis x] is the running {!min}, as {!cummax}. *)
+
+val logcumsumexp : ?axis:int -> (float, 's, 'd) t -> (float, 's, 'd) t
+(** [logcumsumexp ~axis x] is, at each index [i] along [axis],
+    [log Σ_{k ≤ i} exp x_k]; without [axis], over its elements in C order up
+    to that one, in [x]'s shape. It carries the elements' running maximum
+    [m] and the sum of [exp (x_k - m)], at most [i + 1], so it stays finite
+    where [log (cumsum (exp x))] overflows once an [exp x_k] does. Floats.
+
+    From the first NaN element on, every result is that NaN, quieted. With
+    no NaN, a result is [+∞] from a [+∞] element on, and [-∞] while every
+    element is [-∞].
+
+    Its bits are the [Logsumexp] scan's ({!Nx_kernel.section-scans}), the
+    same in every kernel library that computes one. The result at an index
+    is a function of the elements up to it alone: the logcumsumexp of a
+    prefix of the axis is the prefix of the logcumsumexp, bit for bit.
+    Where the elements up to [i] have a finite maximum, the result before
+    its rounding to the dtype is within [(7 D + 6 ln (i + 1)) u + u|r|] of
+    the exact [r], to first order, with
+    [D = max 0 (2⌈log₂ (i + 1)⌉ - 1)] and [u] the unit roundoff of
+    [float32] for the floats narrower than it, else of the dtype.
+
+    Raises [Invalid_argument] naming itself for an axis outside [x]'s
+    rank. *)
 
 val ewma : ?axis:int -> alpha:float -> (float, 's, 'd) t -> (float, 's, 'd) t
 (** [ewma ~alpha x] is the exponentially weighted moving average of [x]
