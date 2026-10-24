@@ -1323,91 +1323,64 @@ let destination (type v s w r) (dt : (w, r) D.t) (x : (v, s) A.t) : (w, r) A.t =
   then A.v dt l (Rig.Buffer.create (A.device x) (D.bytes dt (L.numel l)))
   else A.create (A.device x) dt (L.shape l)
 
-(* The one-node maps, built and run: the paths off the fast one. *)
-let run1 ~by k dt x =
-  let v, () = run ~by (Prim.op1 ~by k dt x) in
-  v
+(* The kernels of [x]'s set where [x] is a live array. *)
+let live_kernels (type v s d) (x : (v, s, d) Value.t) =
+  match x with
+  | Value.Array r when r.dead == Value.Live ->
+      Devices.kernels (Devices.set r.at)
+  | _ -> None
 
-let run2 ~by k dt x y =
-  let v, () = run ~by (Prim.op2 ~by k dt x y) in
-  v
-
-let run3 ~by k c x y =
-  let v, () = run ~by (Prim.op3 ~by k c x y) in
-  v
-
-(* Raises for the one-node program [p], which [K] declined into the first of
-   [arrays] over the rest, as {!refused} names a one-node map. *)
-let refused_node ~by (module K : Nx_kernel.S) p arrays =
-  let (A.Any dst) = List.hd arrays in
-  let dts = List.map (fun (A.Any a) -> D.Any (A.dtype a)) arrays in
-  declined ~by ~kernels:K.name (Option.get (P.single p)) (A.device dst) dts
-
-(* Whether [x] and [y] are live arrays at one placement. *)
+(* Whether [y] is a live array at [x]'s placement, [x] an array. *)
 let beside (type v s w r d) (x : (v, s, d) Value.t) (y : (w, r, d) Value.t) =
   match (x, y) with
-  | Value.Array rx, Value.Array ry ->
-      rx.at == ry.at && rx.dead == Value.Live && ry.dead == Value.Live
+  | Value.Array rx, Value.Array ry -> rx.at == ry.at && ry.dead == Value.Live
   | _ -> false
 
-let apply1 (type v s w r d) ~by k (dt : (w, r) D.t) (x : (v, s, d) Value.t) :
-    (w, r, d) Value.t =
-  match x with
-  | Value.Array ({ at; a; _ } as rx) when rx.dead == Value.Live -> (
-      match (Devices.kernels (Devices.set at), P.node1 k (A.dtype a) dt) with
-      | Some (module K), Some p -> (
-          let dst = destination dt a in
-          match K.map p ~dsts:[| A.Any dst |] [| Plain a |] with
-          | Done -> Value.Array { at; a = dst; dead = Value.Live }
-          | Declined -> refused_node ~by (module K) p [ A.Any dst; A.Any a ]
-          | refusal ->
-              recheck ~by 0 x;
-              A.refused by refusal [ A.Any dst; A.Any a ])
-      | _ -> run1 ~by k dt x)
-  | _ -> run1 ~by k dt x
+(* The array [load] reads. *)
+let any (load : Nx_kernel.load) =
+  match load with Plain a -> A.Any a | Padded { x; _ } -> A.Any x
 
-let apply2 (type v s w r d) ~by k (dt : (w, r) D.t) (x : (v, s, d) Value.t)
-    (y : (v, s, d) Value.t) : (w, r, d) Value.t =
-  match (x, y) with
-  | Value.Array { at; a; _ }, Value.Array { a = b; _ } when beside x y -> (
-      match (Devices.kernels (Devices.set at), P.node2 k (A.dtype a)) with
-      | Some (module K), Some p -> (
-          let dst = destination dt a in
-          match K.map p ~dsts:[| A.Any dst |] [| Plain a; Plain b |] with
-          | Done -> Value.Array { at; a = dst; dead = Value.Live }
-          | Declined ->
-              refused_node ~by (module K) p [ A.Any dst; A.Any a; A.Any b ]
-          | refusal ->
-              recheck ~by 0 x;
-              recheck ~by 1 y;
-              A.refused by refusal [ A.Any dst; A.Any a; A.Any b ])
-      | _ -> run2 ~by k dt x y)
-  | _ -> run2 ~by k dt x y
+(* The one-node map [p] computed by [K] into [dst] at [at], over [loads], the
+   arrays of [x], [y] and [z] or of the first one or two of them. A decline
+   raises as {!refused} names a one-node map, and a refusal naming [by]. *)
+let mapped (type w r d) ~by (module K : Nx_kernel.S) (at : d Devices.placement)
+    p (dst : (w, r) A.t) loads x y z : (w, r, d) Value.t =
+  match K.map p ~dsts:[| A.Any dst |] loads with
+  | Done -> Value.Array { at; a = dst; dead = Value.Live }
+  | Declined ->
+      declined ~by ~kernels:K.name (Option.get (P.single p)) (A.device dst)
+        (D.Any (A.dtype dst) :: Iarray.to_list p.ins)
+  | refusal ->
+      let n = Array.length loads in
+      recheck ~by 0 x;
+      if n > 1 then recheck ~by 1 y;
+      if n > 2 then recheck ~by 2 z;
+      A.refused by refusal (A.Any dst :: List.map any (Array.to_list loads))
 
-let apply3 (type a b v s d) ~by k (c : (a, b, d) Value.t)
-    (x : (v, s, d) Value.t) (y : (v, s, d) Value.t) : (v, s, d) Value.t =
-  match (c, x, y) with
+let apply1 ~by k dt x =
+  match (x, live_kernels x, P.node1 k (Prim.dtype x) dt) with
+  | Value.Array { at; a; _ }, Some kernels, Some p ->
+      mapped ~by kernels at p (destination dt a) [| Plain a |] x x x
+  | _ -> fst (run ~by (Prim.op1 ~by k dt x))
+
+let apply2 ~by k dt x y =
+  match (x, y, live_kernels x, P.node2 k (Prim.dtype x)) with
+  | Value.Array { at; a; _ }, Value.Array { a = b; _ }, Some kernels, Some p
+    when beside x y ->
+      mapped ~by kernels at p (destination dt a) [| Plain a; Plain b |] x y y
+  | _ -> fst (run ~by (Prim.op2 ~by k dt x y))
+
+let apply3 ~by k c x y =
+  match (c, x, y, live_kernels c, P.node3 k (Prim.dtype c) (Prim.dtype x)) with
   | ( Value.Array { at; a = ca; _ },
       Value.Array { a; _ },
-      Value.Array { a = b; _ } )
-    when beside c x && beside x y -> (
-      let prog = P.node3 k (A.dtype ca) (A.dtype a) in
-      match (Devices.kernels (Devices.set at), prog) with
-      | Some (module K), Some p -> (
-          let dst = destination (A.dtype a) a in
-          let loads = [| Nx_kernel.Plain ca; Plain a; Plain b |] in
-          match K.map p ~dsts:[| A.Any dst |] loads with
-          | Done -> Value.Array { at; a = dst; dead = Value.Live }
-          | Declined ->
-              refused_node ~by (module K) p
-                [ A.Any dst; A.Any ca; A.Any a; A.Any b ]
-          | refusal ->
-              recheck ~by 0 c;
-              recheck ~by 1 x;
-              recheck ~by 2 y;
-              A.refused by refusal [ A.Any dst; A.Any ca; A.Any a; A.Any b ])
-      | _ -> run3 ~by k c x y)
-  | _ -> run3 ~by k c x y
+      Value.Array { a = b; _ },
+      Some kernels,
+      Some p )
+    when beside c x && beside c y ->
+      let loads = [| Nx_kernel.Plain ca; Plain a; Plain b |] in
+      mapped ~by kernels at p (destination (A.dtype a) a) loads c x y
+  | _ -> fst (run ~by (Prim.op3 ~by k c x y))
 
 (* The contraction of live arrays on one device, at physically one placement
    whose set has kernels, computed by them without building the operation into
