@@ -1919,41 +1919,6 @@ val conv_transpose :
     Raises [Invalid_argument] as {!conv}, reading [o] from [x]'s last axis, or
     if no input has a [conv] of [x]'s shape. *)
 
-(** {2:filters Filters}
-
-    A filter reduces [x]'s windows over its last [K] axes, [K] the length
-    of [kernel_size]: along each of them, windows of [k] consecutive
-    elements, [k] that axis's [kernel_size] entry, one every [s], its
-    [stride] entry ([stride] defaults to [kernel_size]). An axis of extent
-    [d] takes extent [(d - k) / s + 1], or [0] where [k] exceeds [d], as
-    {!sliding_window} counts windows; the other axes stay. Nothing pads
-    [x]. Elements past the last whole window are not read. Each window is
-    reduced as the reduction the filter names, over a view of the windows
-    that is never stored, its terms in C order of their positions in the
-    window.
-
-    Each raises [Invalid_argument] naming itself if [x] has fewer than [K]
-    axes, [stride] does not have [K] entries, or a kernel extent or a
-    stride is below [1]. *)
-
-val maximum_filter :
-  kernel_size:int array -> ?stride:int array -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [maximum_filter ~kernel_size ~stride x] is each window's {!max}, as a
-    max pool computes it. Every dtype. *)
-
-val minimum_filter :
-  kernel_size:int array -> ?stride:int array -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [minimum_filter ~kernel_size ~stride x] is each window's {!min}. Every
-    dtype. *)
-
-val uniform_filter :
-  kernel_size:int array ->
-  ?stride:int array ->
-  (float, 's, 'd) t ->
-  (float, 's, 'd) t
-(** [uniform_filter ~kernel_size ~stride x] is each window's {!mean}, as an
-    average pool computes it. Floats. *)
-
 (** {2:attention Attention}
 
     Attention weighs values by how well their keys match a query: for each

@@ -607,8 +607,8 @@ let contract_rows =
    conv_transpose, and its weight gradient, a contraction over
    the padded image's windows; the depthwise convolution, one channel a
    group; a 3 × 3 max-pool at stride 2 of the image channels first,
-   padded by -∞, as pad and maximum_filter; and its gradient, as pad, two
-   window views and max: the windows holding the maximum take the output's
+   padded by -∞, as pad, two window views and max; and its gradient, as
+   those and where: the windows holding the maximum take the output's
    gradient, folded back onto the image. *)
 
 let image dt = filled dt [| 8; 56; 56; 64 |] 1.
@@ -631,7 +631,11 @@ let weight_grad =
 
 let max_pool x =
   let x = Nx.pad [| (0, 0); (0, 0); (1, 1); (1, 1) |] Float.neg_infinity x in
-  Nx.Repr.array (Nx.maximum_filter ~kernel_size:[| 3; 3 |] ~stride:[| 2; 2 |] x)
+  let v =
+    Nx.sliding_window ~axis:3 ~window:3 ~step:2
+      (Nx.sliding_window ~axis:2 ~window:3 ~step:2 x)
+  in
+  Nx.Repr.array (Nx.max ~axes:[ 4; 5 ] v)
 
 (* [[n; c; 28; 28; 3; 3]] windows to [[n; c; 9; 784]] patches. *)
 let max_pool_grad (x, dy) =
