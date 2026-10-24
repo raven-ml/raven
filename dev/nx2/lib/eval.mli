@@ -71,14 +71,14 @@ val once :
   (('v 's 'e. ('v, 's, 'e) t -> ('v, 's, 'e) t) -> 'a) ->
   'a
 (** [once ~by xs k] is [k read], [k] the function [by] that reads its
-    operands [xs] in several operations. Where an interpretation may receive
-    them, a live [Extent] (not {!quiet}) or a traced operand, [read] gives
-    each handle as its arrays, lent ({!Donate.lent}), and nothing dies.
-    Elsewhere [by] consumes the handles among [xs] when called
-    ({!Donate.consume}), and [read] gives [xs] as they were then: their
-    donors are dead from the start, whatever [k] does, and [k]'s operations
-    write into none of their memory, which returns to its device once no
-    value holds it. Raises [Invalid_argument] before [k] as
+    operands [xs] in several operations. [by] consumes the handles among [xs]
+    when called ({!Donate.consume}), and [read] gives [xs] as they were then,
+    each handle and each of their donors claimed for the call
+    ({!Donate.claimed}): the donors are dead from the start, whatever [k]
+    does, [k]'s operations write into none of their memory, and an
+    interpretation that receives one of them reads its arrays lent. Once [k]
+    returns, the claimed values are live, and the memory returns to its device
+    once no value holds it. Raises [Invalid_argument] before [k] as
     {!Donate.consume} does, naming [by]. *)
 
 val once_value :
@@ -90,9 +90,8 @@ val once_value :
     memory is still held: where [by] consumed the handles, their memory that
     [y] does not hold and no other value shares is freed when [k] returns, as
     {!Exec} frees what an operation does not reuse ({!Donate.consumed}). A
-    view [k] makes of it shares it: that memory waits for a collection. [k]
-    calls no function its caller gave, which could reach a rule through a
-    traced value it captures and leave the memory to that rule. *)
+    view [k] makes of it shares it, as does an interpretation's read: that
+    memory waits for a collection. *)
 
 val eval : by:string -> 'r prim -> 'r
 (** [eval ~by op] is [op]'s meaning under the rule. Errors name [by]. *)

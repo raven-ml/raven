@@ -22,6 +22,7 @@ let rec offer ~by (w : Value.death Atomic.Loc.t) =
   match Atomic.Loc.get w with
   | Value.Offered k -> k
   | Value.Died { by = earlier; _ } -> died_to ~by 0 earlier
+  | Value.Claimed -> invalid_arg "Donate.offer: a claimed value"
   | Value.Live ->
       (* Fails only where another donation offered it first. *)
       let k = Atomic.fetch_and_add offers 1 in
@@ -34,6 +35,8 @@ let donate (type v s d) ~by (x : (v, s, d) Value.t) : (v, s, d) Value.t =
     Value.Donated { key; at; shape; arrays; donor }
   in
   match x with
+  | Value.Array r when r.dead == Value.Claimed -> x
+  | Value.Shards r when r.dead == Value.Claimed -> x
   | Value.Array r ->
       handle r.at
         (L.shape (A.layout r.a))
@@ -124,7 +127,8 @@ let buffers (Handle (_, x)) = Iarray.to_list (Iarray.map A.buffer (Prim.arrays x
 let rec claim_word ~by i (w : Value.death Atomic.Loc.t) died =
   match Atomic.Loc.get w with
   | Value.Died { by = earlier; _ } -> died_to ~by i earlier
-  | Value.Live -> invalid_arg "Donate.claim: a handle's donor was not offered"
+  | Value.Live | Value.Claimed ->
+      invalid_arg "Donate.claim: a handle's donor was not offered"
   | Value.Offered _ as seen ->
       if not (Atomic.Loc.compare_and_set w seen died) then
         claim_word ~by i w died
@@ -157,17 +161,24 @@ let ours hs (w : Value.death) =
   match w with
   | Value.Offered k | Value.Died { key = k; _ } ->
       List.exists (fun h -> key h = k) hs
-  | Value.Live -> false
+  | Value.Live | Value.Claimed -> false
 
-let called : type v s d.
-    handle list -> (v, s, d) Value.t -> (v, s, d) Value.t =
- fun hs y ->
+(* [y] as the consumer of the claimed handles [hs] reads it, each handle and
+   donor of one of [hs] as a value of death [dead] over its arrays. *)
+let read_as : type v s d.
+    Value.death -> handle list -> (v, s, d) Value.t -> (v, s, d) Value.t =
+ fun dead hs y ->
   match y with
-  | Value.Donated _ -> live y
-  | Value.Array r when ours hs r.dead -> Value.Array { r with dead = Value.Live }
-  | Value.Shards r when ours hs r.dead ->
-      Value.Shards { r with dead = Value.Live }
+  | Value.Donated { at; shape; arrays; _ } ->
+      if Iarray.length arrays = 1 then
+        Value.Array { at; a = Iarray.get arrays 0; dead }
+      else Value.Shards { at; shape; arrays; dead }
+  | Value.Array r when ours hs r.dead -> Value.Array { r with dead }
+  | Value.Shards r when ours hs r.dead -> Value.Shards { r with dead }
   | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> y
+
+let called hs y = read_as Value.Live hs y
+let claimed hs y = read_as Value.Claimed hs y
 
 let unhandled hs op = Prim.map (fun y -> called hs y) op
 
@@ -184,15 +195,33 @@ let consume_list ~by xs =
   let hs = consume ~by xs in
   List.map (fun (Value.Any x) -> Value.Any (called hs x)) xs
 
-(* A handle's arrays, which an interpretation may keep: shared, so that no
-   later donation of the donor writes where they read. *)
+(* A handle's arrays, or a claimed value's, which an interpretation may keep:
+   shared, so that no later donation writes where they read. *)
 let lent (type v s d) (x : (v, s, d) Value.t) : (v, s, d) Value.t =
+  let share y =
+    Iarray.iter (fun a -> Rig.Claim.share (A.buffer a)) (Prim.arrays y);
+    y
+  in
   match x with
-  | Value.Donated _ ->
-      let y = live x in
-      Iarray.iter (fun a -> Rig.Claim.share (A.buffer a)) (Prim.arrays y);
-      y
+  | Value.Donated _ -> share (live x)
+  | Value.Array r when r.dead == Value.Claimed ->
+      share (Value.Array { r with dead = Value.Live })
+  | Value.Shards r when r.dead == Value.Claimed ->
+      share (Value.Shards { r with dead = Value.Live })
   | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> x
+
+let release (type v s d) (x : (v, s, d) Value.t) =
+  match x with
+  | Value.Array r -> Atomic.Loc.set [%atomic.loc r.dead] Value.Live
+  | Value.Shards r -> Atomic.Loc.set [%atomic.loc r.dead] Value.Live
+  | Value.Donated _ | Value.Deferred _ | Value.Traced _ -> ()
+
+let lends (type v s d) (x : (v, s, d) Value.t) =
+  match x with
+  | Value.Donated _ -> true
+  | Value.Array r -> r.dead == Value.Claimed
+  | Value.Shards r -> r.dead == Value.Claimed
+  | Value.Deferred _ | Value.Traced _ -> false
 
 (* [b]'s memory consumed for [by], where rig holds it exclusive: no other value
    reads it. The live buffer over it, if so. *)

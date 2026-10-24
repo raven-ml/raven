@@ -150,8 +150,15 @@ let test_moved_twice () =
   twice "Nx.less" (fun () -> Nx.less h' h);
   twice "Nx.logical_and" (fun () -> Nx.logical_and h' h);
   twice "Nx.stack" (fun () -> Nx.stack [ h; h ]);
+  let chain = Nx.Pattern.v "i j, j k, k l -> i l | j k" in
+  let a = Nx.reshape [| 2; 2 |] (fresh [| 1.; 2.; 3.; 4. |]) in
+  let ha = Nx.donate a in
+  twice "Nx.einsum" (fun () -> Nx.einsum chain [ ha; a; ha ]);
   equal ~msg:"the donor lives" (array float_exact) [| 2.; 4. |]
-    (elements (Nx.add x x))
+    (elements (Nx.add x x));
+  equal ~msg:"the einsum's donor lives" (array float_exact)
+    [| 1.; 2.; 3.; 4. |]
+    (elements (Nx.reshape [| 4 |] a))
 
 (* A function that reads an operand in several operations consumes its
    handles when it is called, once it has checked its operands: it reads the
@@ -169,6 +176,47 @@ let test_several_reads () =
   equal ~msg:"two handles of one donor kill nothing" (array float_exact)
     [| 2.; 4. |]
     (elements (Nx.add x x));
+  (* An einsum of three operands, a complex value of float32 parts at
+     complex128, a slice and a set at positions held in data: operations that
+     read one operand each, and the donor beside its handle in another. *)
+  let id = fresh_at [| 2; 2 |] [| 1.; 0.; 0.; 1. |] in
+  let a = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let chain = Nx.Pattern.v "i j, j k, k l -> i l | j k" in
+  equal ~msg:"the einsum" (array float_exact) [| 7.; 10.; 15.; 22. |]
+    (elements (Nx.reshape [| 4 |] (Nx.einsum chain [ Nx.donate a; id; a ])));
+  invalid ~sub:"Nx.add: operand 1 was donated to Nx.einsum" (fun () ->
+      Nx.add a a);
+  let x = fresh [| 1.; 2. |] in
+  let z = Nx.complex Nx.complex128 ~re:x ~im:(Nx.donate x) in
+  equal ~msg:"the complex value's parts" (array float_exact)
+    [| 1.; 2.; 1.; 2. |]
+    (Array.append
+       (elements (Nx.real Nx.float32 z))
+       (elements (Nx.imag Nx.float32 z)));
+  invalid ~sub:"Nx.add: operand 1 was donated to Nx.complex" (fun () ->
+      Nx.add x x);
+  let x = fresh [| 1.; 2. |] in
+  let h = Nx.donate x in
+  invalid ~sub:"Nx.donate: Nx.complex reads one donation twice" (fun () ->
+      Nx.complex Nx.complex128 ~re:h ~im:h);
+  equal ~msg:"two parts of one donor kill nothing" (array float_exact)
+    [| 2.; 4. |]
+    (elements (Nx.add x x));
+  let positions () =
+    let p = Nx.create Nx.int64 [| 2 |] [| 1L; 0L |] in
+    Nx.add p (Nx.zeros_like p)
+  in
+  let m = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let p = positions () in
+  equal ~msg:"the slice" (array float_exact)
+    (elements (Nx.slice [ T (positions ()); T (positions ()) ] m))
+    (elements (Nx.slice [ T p; T (Nx.donate p) ] m));
+  invalid ~sub:"Nx.add: operand 1 was donated to Nx.slice" (fun () ->
+      Nx.add p p);
+  let p = positions () and v = Nx.create Nx.int64 [| 2 |] [| 10L; 20L |] in
+  equal ~msg:"the set" (array int64) [| 20L; 10L |]
+    (elements (Nx.set [ T (Nx.donate p) ] v p));
+  invalid ~sub:"Nx.add: operand 1 was donated to Nx.set" (fun () -> Nx.add p p);
   let x = fresh_at [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   invalid ~sub:"Nx.softmax" (fun () -> Nx.softmax ~axes:[ 5 ] (Nx.donate x));
   invalid ~sub:"Nx.add: operand 1 was donated to Nx.softmax" (fun () ->
@@ -176,9 +224,9 @@ let test_several_reads () =
 
 (* An interpretation reads a handle as its arrays and kills nothing: an
    observer of every operation, which receives the broadcasts too, and a
-   tracer beside a traced operand. The donor's memory is shared from then on,
-   so that its next donation computes into fresh memory, where without an
-   interpretation it writes in place. *)
+   tracer beside a traced operand. Two handles of one donor still raise. The
+   donor's memory is shared from then on, so that its next donation computes
+   into fresh memory, where without an interpretation it writes in place. *)
 type ('v, 's, 'd) Nx.Prim.payload += Tag : ('v, 's, 'd) Nx.Prim.payload
 
 let test_lent () =
@@ -206,6 +254,8 @@ let test_lent () =
     (elements
        (Nx.reshape [| 4 |] (observed (fun () -> Nx.add (Nx.donate x) wide))));
   equal ~msg:"the broadcast donor" (array float_exact) [| 1.; 2. |] (peek x);
+  invalid ~sub:"Nx.donate: Nx.add reads one donation twice" (fun () ->
+      observed (fun () -> Nx.add (Nx.donate x) (Nx.donate x)));
   let x = fresh [| 1.; 2. |] and t = fresh [| 3.; 4. |] in
   Nx.Prim.interpret ~name:"test.tracer" Values
     (fun i ~by op ->
@@ -668,35 +718,30 @@ let test_donor_beside () =
   equal ~msg:"doubled, shared" (array float_exact) doubled (elements y);
   equal ~msg:"the view" (array float_exact) original (elements flat)
 
-(* A consumer that takes a donor while an interpretation reads its handle,
-   here a rule at [softmax]'s first operation, computes into fresh memory, so
-   that [softmax]'s later operations read the donor's elements. *)
+(* A function of several operations claims its handles when called: a
+   consumer of its donor inside it, here a rule at [softmax]'s first
+   operation, finds the donor dead naming [softmax], whose operations read
+   its elements. *)
 let test_inside_composite () =
   let expected = elements (Nx.softmax ~axes:[ 1 ] (cache ())) in
-  let run () =
-    let c = cache () and taken = ref None in
-    let rule _ ~by op =
-      if Option.is_none !taken then begin
-        taken := Some (0, [||]);
-        let before = settled () in
-        let y = Nx.add (Nx.donate c) (nines [| width |]) in
-        taken := Some (Rig.allocated device - before, elements y)
-      end;
-      Nx.Prim.eval ~by op
-    in
-    let y =
-      Nx.Prim.interpret ~name:"test.taker" Extent rule (fun _ ->
-          Nx.softmax ~axes:[ 1 ] (Nx.donate c))
-    in
-    (Option.get !taken, elements y)
+  let c = cache () and taken = ref None in
+  let rule _ ~by op =
+    if Option.is_none !taken then
+      taken :=
+        Some
+          (match Nx.add (Nx.donate c) (nines [| width |]) with
+          | _ -> "consumed"
+          | exception Invalid_argument m -> m);
+    Nx.Prim.eval ~by op
   in
-  ignore (run ());
-  let (grew, y), softmax = run () in
-  copied ~msg:"the consumer" ~bytes:size grew;
-  equal ~msg:"the consumer's result" (array float_exact)
-    (Array.map (fun x -> x +. 9.) original)
-    y;
-  equal ~msg:"the softmax" (array float_exact) expected softmax
+  let y =
+    Nx.Prim.interpret ~name:"test.taker" Extent rule (fun _ ->
+        Nx.softmax ~axes:[ 1 ] (Nx.donate c))
+  in
+  equal ~msg:"the consumer" (option string)
+    (Some "Nx.donate: operand 1 was donated to Nx.softmax")
+    !taken;
+  equal ~msg:"the softmax" (array float_exact) expected (elements y)
 
 (* An eager broadcasting call on one domain, while an [Extent] lives on
    another, frees its donor's memory at once: the extent is not around it.
@@ -921,9 +966,10 @@ let law_init_bits =
       let given = Nx.contract Nx.bfloat16 ~init:(Nx.donate (init ())) p a b in
       equal (array int) (bits kept) (bits given))
 
-(* On two domains: reading a value and consuming it in an addition. Each run is
-   explained by some order: a read before the consumer gives the elements, after
-   it raises; one consumer of a value wins and any other raises. *)
+(* On two domains: reading a value and consuming it in an addition or in a
+   function of several operations. Each run is explained by some order: a read
+   before the consumer gives the elements, after it raises; one consumer of a
+   value wins and any other raises. *)
 type model = { xs : float array; mutable dead : bool }
 
 let value = abstract "x"
@@ -953,6 +999,21 @@ let consume_sys x =
   | ys -> Ok ys
   | exception Invalid_argument _ -> Error ()
 
+(* A function of several operations reading its donor beside its handle:
+   it consumes the value when called, so a read or a consumer overlapping it
+   reads the elements as they were or raises. *)
+let composite_ref m =
+  if m.dead then Error ()
+  else begin
+    m.dead <- true;
+    Ok [| Array.fold_left (fun s v -> s +. (v *. v)) 0. m.xs |]
+  end
+
+let composite_sys x =
+  match elements (Nx.vdot (Nx.donate x) x) with
+  | ys -> Ok ys
+  | exception Invalid_argument _ -> Error ()
+
 let outcome = result (array float_exact) unit
 
 let floats2 =
@@ -967,6 +1028,7 @@ let commands =
     command "make" (floats2 @-> makes value) make_ref make_sys;
     command "read" (value ^-> returns outcome) read_ref read_sys;
     command "consume" (value ^-> returns outcome) consume_ref consume_sys;
+    command "composite" (value ^-> returns outcome) composite_ref composite_sys;
   ]
 
 (* On two domains: handles given to consumers and movements. A handle's state
@@ -2136,7 +2198,12 @@ let law_donated (k, mask) =
     if mask land (1 lsl i) = 0 then x
     else begin
       let dead () =
-        match Nx.copy x with _ -> [] | exception Invalid_argument _ -> [ i + 1 ]
+        match Nx.copy x with
+        | _ -> []
+        | exception Invalid_argument m ->
+            let by = "donated to " ^ c.by in
+            let n = String.length by and l = String.length m in
+            if l >= n && String.sub m (l - n) n = by then [] else [ m ]
       in
       donors := dead :: !donors;
       Nx.donate x
@@ -2150,12 +2217,12 @@ let law_donated (k, mask) =
       (fun _ -> c.run donating)
   in
   equal ~msg:(name ^ ", received") string plain received;
-  equal ~msg:(name ^ ", the donors received") (list int) []
+  equal ~msg:(name ^ ", deaths received") (list string) []
     (List.concat_map (fun dead -> dead ()) !donors)
 
 let test_donated =
   prop ~examples:seeds
-    "a donated operand gives the undonated result, received alive" donations
+    "a donated operand gives the undonated result, received too" donations
     law_donated
 
 let () =
@@ -2219,7 +2286,7 @@ let () =
              test "an undonated or shared operand keeps its elements" test_kept;
              test "an operation may read the donor beside its handle"
                test_donor_beside;
-             test "a consumer beside an interpretation's read computes apart"
+             test "a consumer inside a composite finds its donor claimed"
                test_inside_composite;
              test
                "an eager call beside an Extent on another domain frees its \

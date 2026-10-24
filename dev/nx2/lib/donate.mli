@@ -8,20 +8,22 @@
 
     A donor is offered under a key of its own, which it keeps for life and
     every handle of every donation of it holds. A handle has no state of its
-    own: it lives while its donor does. Only eager computation consumes
-    handles. The engine ({!Exec}) checks an operation's operands, claims its
-    handles, which kills their donors, writes the operation's first result into
-    a handle's memory where {!reuse} allows, and ends the handles once it has
+    own: it lives while its donor does. Only computation consumes handles: an
+    operation the engine ({!Exec}) runs, and a function of several
+    operations. The engine checks an operation's operands, claims its handles,
+    which kills their donors, writes the operation's first result into a
+    handle's memory where {!reuse} allows, and ends the handles once it has
     read them ({!consumed}). An operation that raises before it writes or
-    consumes their memory gives them back ({!unclaim}); one that raises once it
-    consumed a handle's memory for its result leaves its donors dead: rig's
+    consumes their memory gives them back ({!unclaim}); one that raises once
+    it consumed a handle's memory for its result leaves its donors dead: rig's
     consumption is one-way. A function that reads its operands in several
-    operations claims them once, before the first ({!consume}).
+    operations claims them once, before the first ({!consume}), and reads
+    them as {!claimed} values.
 
-    An interpretation reads a handle as its arrays ({!lent}) and kills
-    nothing. Claims follow no order: racing consumers on several domains for
-    one donor is a misuse, after which any of them may have raised and any of
-    the donors they claimed may be dead. *)
+    An interpretation reads a handle, or a claimed value, as its arrays
+    ({!lent}) and kills nothing. Claims follow no order: racing consumers on
+    several domains for one donor is a misuse, after which any of them may
+    have raised and any of the donors they claimed may be dead. *)
 
 (** The type for a donated operand and its position among an operation's
     operands. *)
@@ -53,9 +55,13 @@ val is_handle : ('v, 's, 'd) Value.t -> bool
     not. *)
 
 val lent : ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
-(** [lent x] is {!live}[ x], for an interpretation, which may keep it: the
-    memory of a handle's arrays is shared ({!Rig.Claim.share}), so no later
-    donation of its donor writes there. Its donor lives on. *)
+(** [lent x] is a handle's or a {!claimed} value's arrays as a live value,
+    for an interpretation, which may keep it: their memory is shared
+    ({!Rig.Claim.share}), so no later donation writes there. A handle's donor
+    lives on. Any other value is itself. *)
+
+val lends : ('v, 's, 'd) Value.t -> bool
+(** [lends x] is whether {!lent}[ x] is not [x]. *)
 
 val consume : by:string -> 'd Value.any list -> handle list
 (** [consume ~by xs] is the handles among [xs], claimed for the consumer [by]
@@ -86,6 +92,17 @@ val called : handle list -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [called hs x] is [x] as it was when the consumer of the claimed handles
     [hs] was called: a handle as its arrays, a donor of one of [hs] as a live
     value, and any other value as it is. *)
+
+val claimed : handle list -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
+(** [claimed hs x] is {!called}[ hs x], each handle and donor of [hs] as a
+    {!Value.Claimed} value: an operation reads it as live and claims nothing,
+    {!donate} gives it back as it is, and an interpretation receives it
+    {!lent}. It is the read of a function that consumed [hs] for several
+    operations, until {!release}. *)
+
+val release : ('v, 's, 'd) Value.t -> unit
+(** [release x] makes the {!claimed} value [x] live, once the function that
+    claimed it returned. *)
 
 val unhandled : handle list -> 'r Value.prim -> 'r Value.prim
 (** [unhandled hs op] is [op] with each operand {!called}[ hs]. *)

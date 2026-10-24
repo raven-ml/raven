@@ -1258,9 +1258,34 @@ let index_alive ~by idx =
       | I _ | L _ | R _ | Rs _ | A | N -> i)
     0 idx
 
-let slice_by ~by idx x =
-  let picks = picks ~by idx x in
-  Prim.alive ~by (index_alive ~by idx) x;
+(* The values [idx] holds, then [xs]: a selection's operands. *)
+let index_operands idx xs =
+  List.filter_map
+    (function
+      | T p | D (p, _) -> Some (Value.Any p) | I _ | L _ | R _ | Rs _ | A | N ->
+          None)
+    idx
+  @ xs
+
+(* Whether a position [idx] holds in data is donated. *)
+let held_donated idx =
+  List.exists
+    (function
+      | T p | D (p, _) -> Donate.is_handle p | I _ | L _ | R _ | Rs _ | A | N ->
+          false)
+    idx
+
+(* Picks' positions held in data as [read] gives them. *)
+let read_picks read picks =
+  let pick = function
+    | Held p -> Held (read p)
+    | From (start, n, d) -> From (read start, n, d)
+    | (At _ | Span _ | Rows _ | New) as p -> p
+  in
+  List.map (fun (p, a) -> (pick p, a)) picks
+
+(* [x] at the selection [picks]. *)
+let selected ~by picks x =
   let s = shape x in
   let ranges = Array.map whole s in
   List.iter
@@ -1296,6 +1321,16 @@ let slice_by ~by idx x =
      held axis takes its positions' shape. *)
   let s' = selection x picks in
   if Prim.has_shape y s' then y else reshaped ~by s' y
+
+let slice_by ~by idx x =
+  let picks = picks ~by idx x in
+  Prim.alive ~by (index_alive ~by idx) x;
+  (* Positions held in data are read in operations of their own: where one
+     is donated, the call claims its operands once. *)
+  if held_donated idx then
+    Eval.once_value ~by (index_operands idx [ Value.Any x ]) @@ fun read ->
+    selected ~by (read_picks read picks) (read x)
+  else selected ~by picks x
 
 let slice idx x = slice_by ~by:"Nx.slice" idx x
 
@@ -1522,29 +1557,8 @@ let in_program (p, _) =
   | At _ | Span _ | New -> true
   | Rows _ | Held _ | From _ -> false
 
-let set idx v x =
-  let by = "Nx.set" in
-  let picks = picks ~by idx x in
-  let n = index_alive ~by idx in
-  Prim.alive ~by n v;
-  Prim.alive ~by (n + 1) x;
-  List.iter
-    (fun (p, _) ->
-      match p with
-      | Rows ps ->
-          if List.length (List.sort_uniq compare ps) <> List.length ps then
-            invalid_argf "%s: a list of positions repeats one" by
-      | At _ | Span _ | Held _ | From _ | New -> ())
-    picks;
-  let sel = selection x picks in
-  let fits =
-    match Prim.broadcast_shape ~by (shape v) sel with
-    | s -> s = sel
-    | exception Invalid_argument _ -> false
-  in
-  if not fits then
-    invalid_argf "%s: %a does not broadcast to the selection %a" by pp_value v
-      pp_shape sel;
+(* [x] with the selection [picks], of shape [sel], replaced by [v]. *)
+let replaced ~by sel picks v x =
   let s = shape x in
   let v = broadcast ~by sel v in
   match List.partition in_program picks with
@@ -1610,6 +1624,36 @@ let set idx v x =
              })
       in
       reshaped ~by s updated
+
+let set idx v x =
+  let by = "Nx.set" in
+  let picks = picks ~by idx x in
+  let n = index_alive ~by idx in
+  Prim.alive ~by n v;
+  Prim.alive ~by (n + 1) x;
+  List.iter
+    (fun (p, _) ->
+      match p with
+      | Rows ps ->
+          if List.length (List.sort_uniq compare ps) <> List.length ps then
+            invalid_argf "%s: a list of positions repeats one" by
+      | At _ | Span _ | Held _ | From _ | New -> ())
+    picks;
+  let sel = selection x picks in
+  let fits =
+    match Prim.broadcast_shape ~by (shape v) sel with
+    | s -> s = sel
+    | exception Invalid_argument _ -> false
+  in
+  if not fits then
+    invalid_argf "%s: %a does not broadcast to the selection %a" by pp_value v
+      pp_shape sel;
+  (* Positions held in data may be read in operations of their own: where
+     one is donated, the call claims its operands once. *)
+  if held_donated idx then
+    Eval.once_value ~by (index_operands idx [ Value.Any v; Value.Any x ])
+    @@ fun read -> replaced ~by sel (read_picks read picks) (read v) (read x)
+  else replaced ~by sel picks v x
 
 type combine = Nx_kernel.combine = Set | Add | Max | Min
 
@@ -2448,10 +2492,10 @@ let magnitude dt z = magnitude_by ~by:"Nx.magnitude" dt z
 
 let angle dt z = of_parts ~by:"Nx.angle" dt z (fun _ re im -> E.atan2 im re)
 
-let complex_of (type c a d) ~by (dt : (Complex.t, c) D.t)
+(* The parts [re] and [im] cast to [dt]'s parts, broadcast to [s] and
+   assembled as pairs. *)
+let paired (type c a d) ~by (dt : (Complex.t, c) D.t) s
     ~(re : (float, a, d) t) ~(im : (float, a, d) t) : (Complex.t, c, d) t =
-  let s = Prim.broadcast_shape ~by (shape re) (shape im) in
-  alive2 ~by re im;
   let r = Array.length s in
   let pairs (type p) (f : (float, p) D.t) =
     let unit = Array.append s [| 1 |] and both = Array.append s [| 2 |] in
@@ -2460,6 +2504,18 @@ let complex_of (type c a d) ~by (dt : (Complex.t, c) D.t)
     Eval.eval ~by (Value.Bitcast (dt, assemble ~by f both 0. pieces))
   in
   match dt with D.Complex64 -> pairs D.Float32 | D.Complex128 -> pairs D.Float64
+
+let complex_of (type c a d) ~by (dt : (Complex.t, c) D.t)
+    ~(re : (float, a, d) t) ~(im : (float, a, d) t) : (Complex.t, c, d) t =
+  let s = Prim.broadcast_shape ~by (shape re) (shape im) in
+  alive2 ~by re im;
+  (* Each part's cast and the assembly read the operands: the call claims
+     them once. *)
+  if not (Donate.is_handle re || Donate.is_handle im) then
+    paired ~by dt s ~re ~im
+  else
+    Eval.once_value ~by [ Value.Any re; Value.Any im ] @@ fun read ->
+    paired ~by dt s ~re:(read re) ~im:(read im)
 
 let complex dt ~re ~im = complex_of ~by:"Nx.complex" dt ~re ~im
 
@@ -4342,9 +4398,7 @@ let grouped ~by ~segments ~c ~call ~named ids x =
 
 let map_segments ~segments ids f x =
   let by = "Nx.map_segments" in
-  (* [f] may read a traced value it captures: [once], which frees no memory a
-     rule may keep. *)
-  Eval.once ~by [ Value.Any ids; Value.Any x ] @@ fun read ->
+  Eval.once_value ~by [ Value.Any ids; Value.Any x ] @@ fun read ->
   let ids = read ids and x = read x in
   if segments < 0 then invalid_argf "%s: %d segments" by segments;
   let s = shape ids and xs = shape x in
@@ -5407,7 +5461,7 @@ let pp ppf x =
         match Prim.death x with
         | Value.Died { by = f; _ } ->
             fun ppf -> Format.fprintf ppf ", donated to %s" f
-        | Value.Live | Value.Offered _ -> (
+        | Value.Live | Value.Offered _ | Value.Claimed -> (
             let lost d why ppf =
               Format.fprintf ppf ", lost with %s: %s" (Rig.name d) why
             in
@@ -5417,7 +5471,7 @@ let pp ppf x =
               match Prim.death x with
               | Value.Died { by = f; _ } ->
                   Format.fprintf ppf ", donated to %s" f
-              | Value.Live | Value.Offered _ ->
+              | Value.Live | Value.Offered _ | Value.Claimed ->
                   Format.fprintf ppf ", unread: %s" why
             in
             let live = Donate.live x in
@@ -5675,8 +5729,6 @@ let associative_scan ?axis:(a = 0) s f x =
   in
   if Array.length states = 0 then x
   else
-    (* [f] may read a traced value it captures: [once], which frees no memory
-       a rule may keep. *)
     Eval.once ~by (Array.to_list states) @@ fun read ->
     let states = Array.map (fun (Value.Any t) -> Value.Any (read t)) states in
     structure (Pairwise.circuit Eval.eval ~by axes combine states)
