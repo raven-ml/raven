@@ -190,15 +190,19 @@ val apply_experts :
     result is [[| s…; n |]].
 
     Every position is summed in one contraction grouped by expert, at the
-    dtype {!apply} sums in, within {!Nx.contract}'s bound: an [Mxfp4]
-    weight with a float32, bfloat16 or float16 [x] read where it lies, each
-    block decoded as it is summed, any other decoded as {!dequant} does. The kernels choose one order for the whole
-    contraction, so a row's bits depend on the other positions' experts and
-    may differ from {!apply}'s; they do not depend on where [w], [ids] and
-    [x] lie. Split along [n] ({!Nx.Placement.split} [~axis:1]), each device
-    sums its own columns over every position. Cut along [k] or its experts,
-    [w] is read whole on each device: an [Mxfp4] weight's packed bytes
-    move, any other's decoded values. The sum needs kernels that compute a
+    dtype {!apply} sums in, within {!Nx.contract}'s bound. An [Mxfp4]
+    weight with a float32, bfloat16 or float16 [x] is read where it lies,
+    each block decoded as it is summed. Any other is decoded as {!dequant}
+    does: where positions are fewer than [e], only the experts the
+    positions name, one matrix per position, else all [e]. The kernels
+    choose one order from the shapes alone, so a row's bits are a function
+    of the shapes, its row and its expert: they do not depend on the other
+    positions' experts nor on where [w], [ids] and [x] lie, and may differ
+    from {!apply}'s. Split along [n] ({!Nx.Placement.split} [~axis:1]),
+    each device sums its own columns over every position. Cut along [k] or
+    its experts, the sum reads its weight operand whole on each device: an
+    [Mxfp4] weight read where it lies moves its packed bytes, a decoded one
+    may move its decoded values. The sum needs kernels that compute a
     segmented contraction, block-scaled for [Mxfp4], as nx.cpu's do.
 
     Raises [Invalid_argument] if the sum lies on a set whose kernels decline

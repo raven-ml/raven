@@ -1173,9 +1173,53 @@ let experts_law (_, w, ids, X { at; x }) =
   agrees_but ~at ~k skip expected bound
     (Nx.to_array (Nx.reshape [| -1 |] (Nx.cast Nx.float64 y)))
 
+(* An expert product and, for each position, whether its id is kept, and the
+   id that replaces it otherwise. *)
+let rerouted =
+  let open Gen in
+  let* ((_, w, ids, _) as c) = experts in
+  let lead, _, _ = dims w in
+  let count = Array.length (Nx.to_array ids) in
+  let id = map Int64.of_int (int_range (-1) lead.(0)) in
+  let+ fresh = array ~size:(constant count) (pair bool id) in
+  (c, fresh)
+
+let pp_rerouted ppf (c, fresh) =
+  Format.fprintf ppf "@[<v>%a@,rerouted [%s]@]" pp_experts c
+    (String.concat "; "
+       (Array.to_list
+          (Array.map
+             (fun (keep, f) -> if keep then "kept" else Int64.to_string f)
+             fresh)))
+
+(* A row's bits are a function of the shapes, its row and its expert: a
+   position whose id is kept keeps its bits whichever experts the others
+   name, and so whichever experts the product gathers beside its own. *)
+let rerouted_law ((_, w, ids, X { x; _ }), fresh) =
+  let lead, n, _ = dims w in
+  let id = Nx.to_array ids in
+  let pick i v = match fresh.(i) with true, _ -> v | false, f -> f in
+  let id' = Array.mapi pick id in
+  let changed = Array.mapi (fun i v -> v <> id'.(i)) id in
+  cover "a kept id beside a changed one"
+    (Array.mem true changed && Array.mem false changed);
+  cover "fewer positions than experts" (Array.length id < lead.(0));
+  cover "no fewer positions than experts" (Array.length id >= lead.(0));
+  cover "a GGUF weight, fewer positions than experts"
+    (format_of w <> Mxfp4 && Array.length id < lead.(0));
+  let ids' = Nx.create Nx.int64 (Nx.shape ids) id' in
+  let y = product_bits (Nx_quant.apply_experts ~ids w x)
+  and y' = product_bits (Nx_quant.apply_experts ~ids:ids' w x) in
+  let kept a = Array.mapi (fun j b -> if changed.(j / n) then 0L else b) a in
+  equal ~msg:"the kept rows" (array int64) (kept y) (kept y')
+
 let expert_products =
   group "experts"
     [
+      prop ~count:300
+        "a row's bits do not depend on the other positions' experts"
+        (Gen.with_pp pp_rerouted rerouted)
+        rerouted_law;
       prop ~count:300
         "apply_experts is the routed product within the error of a float32 \
          sum at every format and dtype, and zeros for ids out of range"
@@ -1211,13 +1255,17 @@ let cut_experts =
     Split { axis; over }
   in
   let* c = frequency [ (6, cut); (1, constant Mesh_n) ] in
+  let* split = bool in
   let+ e = experts in
-  (c, e)
+  (c, split, e)
 
-(* [apply_experts] with [w] at [c] and [ids] and [x] whole on every device. *)
-let experts_at c w ids x =
+(* [apply_experts] with [w] at [c] and [ids] and [x] whole on every device, or
+   split along their first axis where [split]. *)
+let experts_at ?(split = false) c w ids x =
   let at (module S : Nx.Devices) p =
-    let on t = Nx.place S.on t in
+    let on t =
+      Nx.place (if split && Nx.ndim t > 0 then S.split ~axis:0 else S.on) t
+    in
     product_bits
       (Nx_quant.apply_experts ~ids:(on ids) (Nx_quant.place p w) (on x))
   in
@@ -1226,9 +1274,13 @@ let experts_at c w ids x =
   | Split { axis; _ } -> at (module Mem_two) (Mem_two.split ~axis)
   | Mesh_n -> at (module Mem) (Nx.Placement.mesh mesh [ (1, [ "b" ]) ])
 
-(* A weight at any placement gives the host's bits. *)
-let cut_experts_law (c, (_, w, ids, X { x; _ })) =
+(* A weight at any placement, with ids and input whole or split along their
+   first axis, gives the host's bits. *)
+let cut_experts_law (c, split, (_, w, ids, X { x; _ })) =
   let _, n, _ = dims w in
+  cover "ids and input split" (split && Nx.dim 0 ids > 1);
+  cover "ids split, one input row for every position"
+    (split && Nx.dim 0 ids > 1 && Nx.dim 0 x = 1);
   let mxfp4 = format_of w = Mxfp4 in
   let along_n = match c with Split { axis = 1; _ } -> true | _ -> false in
   cover "an MXFP4 weight split along n" (mxfp4 && along_n);
@@ -1243,7 +1295,7 @@ let cut_experts_law (c, (_, w, ids, X { x; _ })) =
   cover "a weight cut along n over a mesh" (c = Mesh_n);
   equal (array int64)
     (product_bits (Nx_quant.apply_experts ~ids w x))
-    (experts_at c w ids x)
+    (experts_at ~split c w ids x)
 
 let placements =
   group "placement"
@@ -1256,11 +1308,13 @@ let placements =
         "a cut along k decodes each block once where its tiles divide the \
          blocks, and all of k on each device otherwise"
         work work_law;
-      prop ~count:200
+      prop ~count:400
         "experts at any placement give the host's bits"
         (Gen.with_pp
-           (fun ppf (c, e) ->
-             Format.fprintf ppf "@[<v>%a@,at %a@]" pp_experts e pp_expert_cut c)
+           (fun ppf (c, split, e) ->
+             Format.fprintf ppf "@[<v>%a@,at %a%s@]" pp_experts e pp_expert_cut
+               c
+               (if split then ", ids and x split" else ""))
            cut_experts)
         cut_experts_law;
       cases
