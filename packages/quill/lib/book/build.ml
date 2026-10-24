@@ -82,7 +82,7 @@ let build_notebook ~create_kernel ~skip_eval ~output_dir ~live_reload_script
   let nb_path = Filename.concat project.root nb.path in
   let nb_dir = notebook_dir project nb in
   let md = read_file nb_path in
-  let doc = Quill_markdown.of_string md in
+  let doc = Quill_markdown.of_string ~base_dir:nb_dir md in
   let doc =
     if skip_eval then doc
     else
@@ -261,7 +261,7 @@ let build_file ~create_kernel ?(skip_eval = false) ?output
   let basename = Filename.basename abs_path in
   let title = Quill_project.title_of_filename basename in
   let md = read_file abs_path in
-  let doc = Quill_markdown.of_string md in
+  let doc = Quill_markdown.of_string ~base_dir:nb_dir md in
   let doc =
     if skip_eval then doc
     else
