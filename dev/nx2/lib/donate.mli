@@ -4,96 +4,71 @@
   ---------------------------------------------------------------------------*)
 
 (** Donation: handles over a value's memory that one operation reads, and their
-    consumption.
+    consumption by the eager engine.
 
     A donor is offered under a key of its own, which it keeps for life and
     every handle of every donation of it holds. A handle has no state of its
-    own: it lives while its donor does. A consumer claims its handles' donors
-    in key order, without a lock: of consumers racing for the same handles, at
-    least one succeeds, and each loser gives back what it claimed and raises
-    naming the consumer it lost a donor to. The eager engine ({!Exec}) claims an
-    operation's handles before it reads them, writes the operation's first
-    result into a handle's memory where {!reuse} allows, and ends the handles
-    once it has read them ({!consumed}). An operation that raises before it
-    writes or consumes their memory gives them back ({!unclaim}); one that
-    raises once it consumed a handle's memory for its result leaves its donors
-    dead: rig's consumption is one-way. *)
+    own: it lives while its donor does. Only eager computation consumes
+    handles. The engine ({!Exec}) checks an operation's operands, claims its
+    handles, which kills their donors, writes the operation's first result into
+    a handle's memory where {!reuse} allows, and ends the handles once it has
+    read them ({!consumed}). An operation that raises before it writes or
+    consumes their memory gives them back ({!unclaim}); one that raises once it
+    consumed a handle's memory for its result leaves its donors dead: rig's
+    consumption is one-way. A function that reads its operands in several
+    operations claims them once, before the first ({!consume}).
+
+    An interpretation reads a handle as its arrays ({!lent}) and kills
+    nothing. Claims follow no order: racing consumers on several domains for
+    one donor is a misuse, after which any of them may have raised and any of
+    the donors they claimed may be dead. *)
+
+(** The type for a donated operand and its position among an operation's
+    operands. *)
+type handle = Handle : int * ('v, 's, 'd) Value.t -> handle
 
 val donate : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [donate ~by x] is a handle over [x]'s memory that one operation reads
-    ({!Value.Donated}): [x] lives until that operation is called, then dies with
-    the handle, naming the operation, unless the operation gives it back
-    ({!unclaim}); the operation reads [x] as it was when called. An operation
-    that reads the handle only at its first result's own index (a map's plain
-    load, a scatter's target, a contraction's [init], an assembly's first piece
-    over the whole result) writes that result into the memory, where rig holds
-    it exclusive (no other value reads it), it has the result's dtype and
-    C-contiguous layout, and the operation reads none of it at other indices
-    through another operand; the memory is consumed either way where no other
-    value reads it. A movement passes a new handle of [x] on instead and kills
+    ({!Value.Donated}): [x] lives until an eager operation consumes the
+    handle, then dies with it, naming the operation, unless the operation
+    gives it back ({!unclaim}); the operation reads [x] as it was when called.
+    An operation that reads the handle only at its first result's own index (a
+    map's plain load, a scatter's target, a contraction's [init], an
+    assembly's first piece over the whole result) writes that result into the
+    memory, where rig holds it exclusive (no other value reads it), it has the
+    result's dtype and C-contiguous layout, and the operation reads none of it
+    at other indices through another operand; the memory is consumed either
+    way where no other value reads it. A movement passes a new handle of [x] on instead and kills
     nothing: the handle it read and the one it passed on die with [x]. A
     constant or a traced [x] is [x].
 
     Raises [Invalid_argument] naming [by] if [x] is dead. *)
 
 val live : ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
-(** [live x] is a handle's arrays as a live value, for an interpretation that
-    reads them; any other value as it is. *)
+(** [live x] is a handle's arrays as a live value; any other value as it
+    is. *)
 
 val is_handle : ('v, 's, 'd) Value.t -> bool
 (** [is_handle x] is [true] iff [x] is a handle ({!Value.Donated}), live or
     not. *)
 
-val resolve :
-  by:string ->
-  'd Value.any list ->
-  (('v 's 'e. ('v, 's, 'e) Value.t -> ('v, 's, 'e) Value.t) -> 'a) ->
-  'a
-(** [resolve ~by xs k] is [k read], the call [by] consuming the donated
-    handles among its operands [xs] once, in however many operations it
-    reads them. [read] gives each handle's arrays, and each of their donors
-    among [xs], as live values; any other value as it is. Before [k] it
-    raises [Invalid_argument] naming [Nx.donate] for two handles of one donor
-    or over one memory ({!handles}), then naming [by] for an operand that
-    died, operand [i] being [xs]' element [i]. The donors die, naming [by], once [k] returns; if [k] raises, they and
-    their handles live on. [k]'s operations reuse none of their memory,
-    which returns to its device once no value holds it.
+val lent : ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
+(** [lent x] is {!live}[ x], for an interpretation, which may keep it: the
+    memory of a handle's arrays is shared ({!Rig.Claim.share}), so no later
+    donation of its donor writes there. Its donor lives on. *)
 
-    While [k] runs, a hold on the memory of the handles and of their donors
-    among [xs] ({!Rig.Claim.hold}) shares it, so that a consumer that claims
-    one of the handles meanwhile, on any domain, computes into fresh memory
-    and overwrites nothing [k] reads; the claim after [k] then raises naming
-    that consumer. Where a movement copied a handle, the donor's memory lies
-    apart from the handle's, and both are held. The hold ends when [k]
-    returns or raises. *)
-
-val resolve_value :
-  by:string ->
-  'd Value.any list ->
-  (('v 's 'e. ('v, 's, 'e) Value.t -> ('v, 's, 'e) Value.t) ->
-  ('w, 'q, 'd) Value.t) ->
-  ('w, 'q, 'd) Value.t
-(** [resolve_value ~by xs k] is {!resolve}[ ~by xs k], [k]'s value [y] an
-    array, shards or a constant, whose operations no interpretation
-    received; once the donors die, the handles' memory is consumed and freed
-    as {!consumed} does, unless [y] holds it or a value made before or
-    during the call shares it. A view [k] makes by a movement or a bitcast
-    shares it, as do a placement's borrow and a {!Repr} crossing inside [k]:
-    that memory waits for a collection, and returns to its device once no
-    value holds it. For a traced [y] it is {!resolve}: an interpretation may
-    keep the handles' arrays. *)
+val consume : by:string -> 'd Value.any list -> handle list
+(** [consume ~by xs] is the handles among [xs], claimed for the consumer [by]
+    of the operands [xs], which reads them through {!called}. It raises before
+    it claims any, as {!handles} does, then naming [by] for an operand that
+    died, operand [i] being [xs]' element [i]. *)
 
 val consume_list : by:string -> 'd Value.any list -> 'd Value.any list
-(** [consume_list ~by xs] is [xs] read by a consumer [by] that is no
-    operation, with {!resolve}'s checks: [xs] as they were when it was called,
-    each handle as its arrays and each of their donors among [xs] as a live
-    value, the donors of their handles dead. *)
+(** [consume_list ~by xs] is [xs] as they were when [by], which is no
+    operation, consumed them ({!consume}): each handle as its arrays and each
+    of their donors among [xs] as a live value. *)
 
 (** {1:engine The engine's steps} *)
-
-(** The type for a donated operand and its position among an operation's
-    operands. *)
-type handle = Handle : int * ('v, 's, 'd) Value.t -> handle
 
 val handles : by:string -> 'd Value.any list -> handle list
 (** [handles ~by xs] is the handles among [xs]. Raises [Invalid_argument]
@@ -102,25 +77,23 @@ val handles : by:string -> 'd Value.any list -> handle list
     and a value a movement passed on. *)
 
 val claim : by:string -> handle list -> unit
-(** [claim ~by hs] claims [hs], from {!handles}, for their consumer [by], in
-    their donors' key order: each donor, and with it each of its handles, dies
-    naming [by]. Raises [Invalid_argument] naming [by] and the earlier
-    consumer for a donor that died first, on any domain, having given back the
-    handles it claimed. *)
+(** [claim ~by hs] claims [hs], from {!handles}, for their consumer [by]: each
+    donor, and with it each of its handles, dies naming [by]. Raises
+    [Invalid_argument] naming [by] and the earlier consumer for a donor that
+    died first, on any domain; the donors claimed before it stay dead. *)
+
+val called : handle list -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
+(** [called hs x] is [x] as it was when the consumer of the claimed handles
+    [hs] was called: a handle as its arrays, a donor of one of [hs] as a live
+    value, and any other value as it is. *)
 
 val unhandled : handle list -> 'r Value.prim -> 'r Value.prim
-(** [unhandled hs op] is [op] as it was when called, read after {!claim}
-    claimed its handles [hs]: each handle as its arrays, and each donor of
-    [hs] among [op]'s operands as a live value. *)
+(** [unhandled hs op] is [op] with each operand {!called}[ hs]. *)
 
 val unclaim : handle list -> unit
 (** [unclaim hs] gives back the claimed handles [hs], for a consumer that
     raised before it wrote or consumed their memory: each donor, and with it
     each of its handles, lives again, offered under its key. *)
-
-val claim_handle : by:string -> int -> ('v, 's, 'd) Value.t -> unit
-(** [claim_handle ~by i x] is {!claim} of the one handle [x], operand [i];
-    nothing where [x] is no handle. *)
 
 val holds :
   Nx_array.Dtype.any -> Nx_array.Layout.t -> ('v, 's) Nx_array.t -> bool

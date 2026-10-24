@@ -871,9 +871,10 @@ let raced_live =
         Nx.contract Nx.float32 (Nx.Pattern.v "i, i -> | i") x t);
   ]
 
-(* A call that broadcasts a handle, or loses another to a consumer on another
-   domain, kills nothing: the broadcast passed on a new handle of the donor,
-   and the loser gave back what it claimed. *)
+(* A call that broadcasts a handle and declines, or that its checks refuse
+   for a handle another domain's consumer holds, kills nothing: the broadcast
+   passed on a new handle of the donor, and the checks come before any
+   claim. *)
 let lost_kills_none =
   let at s xs = Nx.place Gate.on (on_host Plain D.Float32 s xs) in
   let computed s xs = Nx.mul (at s xs) (at s (Array.make (Array.length xs) 1.)) in
@@ -898,60 +899,16 @@ let lost_kills_none =
         let h = Nx.donate x and t = at [| 2; 4 |] (Array.make 8 2.) in
         invalid ~by:"Nx.less" (fun () -> Nx.less h t);
         lives "after the decline" x h);
-    test "a product losing its second handle" (fun () ->
-        (* [x] is donated first: its key comes first, so the product claims
-           [hx] before it meets [y] held. *)
+    test "a product refused for its second handle" (fun () ->
+        (* The product checks [hy'] dead, its donor held by the sum, before
+           it claims [hx]. *)
         let x = computed [| 4 |] xs in
         let hx = Nx.donate x in
         let y = computed [| 4 |] xs in
         let hy = Nx.donate y and hy' = Nx.donate y in
         equal outcomes (Error "Nx.add")
           (during_add hy (fun () -> elements (Nx.mul hx hy')));
-        lives "after the loss" x hx);
-    test "a composite losing its second handle at its claim" (fun () ->
-        (* [Nx.vdot] claims after its operations, the first of which runs the
-           product consuming [y] on the other domain: the claim takes [hx],
-           then loses [hy'] and gives [hx] back. *)
-        let x = computed [| 4 |] xs in
-        let hx = Nx.donate x in
-        let y = computed [| 4 |] xs in
-        let hy = Nx.donate y and hy' = Nx.donate y in
-        let t = at [| 4 |] (Array.make 4 2.) in
-        let met = ref None in
-        raises
-          (Invalid_argument "Nx.vdot: operand 2 was donated to Nx.mul")
-          (fun () ->
-            meanwhile
-              (fun () -> met := Some (outcome (fun () -> elements (Nx.mul hy t))))
-              (fun () -> Nx.vdot hx hy'));
-        equal ~msg:"the product" (option outcomes)
-          (Some (Ok [| 2.; 4.; 6.; 8. |]))
-          !met;
-        lives "after the loss" x hx);
-    test "a composite reading the donor beside a copy of its handle"
-      (fun () ->
-        (* [h2], [h] copied by a movement, holds [x]'s key, and
-           [Nx.array_equal] reads [x] beside it. A consumer of [h] on the
-           other domain inside the comparison's kernel computes into fresh
-           memory, so the comparison reads [x]'s elements, and the composite
-           then raises as a loser. *)
-        let xs = [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-        let x = computed [| 2; 3 |] xs in
-        let h = Nx.donate x in
-        let h2 = Nx.reshape [| 2; 3 |] (Nx.transpose h) in
-        let met = ref None in
-        raises
-          (Invalid_argument "Nx.array_equal: operand 1 was donated to Nx.neg")
-          (fun () ->
-            meanwhile
-              (fun () -> met := Some (outcome (fun () -> elements (Nx.neg h))))
-              (fun () -> Nx.array_equal h2 x));
-        equal ~msg:"the consumer" (option outcomes)
-          (Some (Ok (Array.map Float.neg xs)))
-          !met;
-        raises
-          (Invalid_argument "Nx.copy: operand 1 was donated to Nx.neg")
-          (fun () -> Nx.copy x));
+        lives "after the refusal" x hx);
   ]
 
 let donation =
@@ -960,7 +917,7 @@ let donation =
       stateful "a value lives until a handle of it is consumed" donations;
       test "a read racing a consumer names it" test_raced_read_names;
       group "a live operand racing its consumer names it" raced_live;
-      group "a refused or losing call kills nothing" lost_kills_none;
+      group "a declined or refused call kills nothing" lost_kills_none;
       stateful ~domains:2
         "handles of one value declined and consumed on two domains" raced;
     ]

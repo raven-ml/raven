@@ -21,10 +21,10 @@
 
     An [Extent] receiver first receives the operations of each formula operand
     its rule did not return, rebuilt at the operand's brand, in dependency
-    order, each node once per operand; the operation reads its results. The
-    operation is the final consumer of its donated handles, a movement too:
-    their donors die once the rule returns, and live on if it raises
-    ({!Donate.resolve}); each handle reaches the rule as its arrays. Other operands reach the rule as they are.
+    order, each node once per operand; the operation reads its results. Each
+    donated handle reaches a rule as its arrays, lent ({!Donate.lent}), and
+    its donor lives on: only {!Exec} consumes handles. Other operands reach
+    the rule as they are.
 
     One atomic counts the live [Extent] interpretations of the process, on
     every domain: a continuation may resume on any domain, so no domain's own
@@ -33,8 +33,7 @@
     that is never low. While any [Extent] lives, on any domain, every operation
     of every domain performs the dispatch effect, which costs it a perform and
     changes no result; a continuation dropped inside an extent keeps the count
-    high for the life of the process. Whether an [Extent] is around the caller,
-    which the count cannot tell, is {!inside}'s. *)
+    high for the life of the process. *)
 
 open Value
 
@@ -66,49 +65,34 @@ val quiet : unit -> bool
 (** [quiet ()] is [true] iff the count of live [Extent] interpretations is
     zero: none is live, on any domain. *)
 
-val inside : unit -> bool
-(** [inside ()] is [true] iff an [Extent] interpretation's handler is around
-    the caller. With none live ({!quiet}) it performs nothing. *)
-
-val mix : ('v, 's, 'd) t -> int
-(** [mix x] is [1] for a handle, [2] for a traced value and [0] otherwise:
-    operands whose [mix]es give [3] under [lor] hold a handle beside a
-    traced value. It allocates nothing. *)
-
-val mixed : 'd any list -> bool
-(** [mixed xs] is [true] iff [xs] hold a handle beside a traced value. *)
-
-val call :
+val once :
   by:string ->
   'd any list ->
   (('v 's 'e. ('v, 's, 'e) t -> ('v, 's, 'e) t) -> 'a) ->
   'a
-(** [call ~by xs k] is [k read], the call [by] the one consumer of the
-    donated handles among its operands [xs], though [k] moves them before
-    the operation that reads them, moves that operation's result, or only
-    moves them. Inside an [Extent] ({!inside}), whose rule consumes the
-    handles of each operation it receives, a movement's too, or where [xs]
-    are {!mixed}, so that an operation reading a handle beside a traced
-    value reaches a rule, it is {!Donate.resolve}: a refusal by [k]'s checks
-    or by a rule kills no donor. Elsewhere [read] is the identity: a
-    movement passes a handle on and [k]'s operation consumes it. *)
+(** [once ~by xs k] is [k read], [k] the function [by] that reads its
+    operands [xs] in several operations. Where an interpretation may receive
+    them, a live [Extent] (not {!quiet}) or a traced operand, [read] gives
+    each handle as its arrays, lent ({!Donate.lent}), and nothing dies.
+    Elsewhere [by] consumes the handles among [xs] when called
+    ({!Donate.consume}), and [read] gives [xs] as they were then: their
+    donors are dead from the start, whatever [k] does, and [k]'s operations
+    write into none of their memory, which returns to its device once no
+    value holds it. Raises [Invalid_argument] before [k] as
+    {!Donate.consume} does, naming [by]. *)
 
-val once :
+val once_value :
   by:string ->
   'd any list ->
   (('v 's 'e. ('v, 's, 'e) t -> ('v, 's, 'e) t) -> ('w, 'q, 'd) t) ->
   ('w, 'q, 'd) t
-(** [once ~by xs k] is [k read], the call [by] the one consumer of the
-    donated handles among [xs] in however many operations [k] reads them,
-    eagerly too. Inside an [Extent], or where [xs] hold a handle beside a
-    traced value, it is {!Donate.resolve}: an interpretation may receive
-    [k]'s operations and keep the handles' arrays they read. Elsewhere it is
-    {!Donate.resolve_value}: [k]'s operations compute into fresh memory, and
-    the handles' memory is freed when [k] returns, as an operation frees
-    what it does not reuse, unless [k]'s value holds it or a value made
-    before or during [k] shares it ({!Donate.resolve_value}). A view [k]
-    makes shares it: that memory waits for a collection, and returns to its
-    device once no value holds it. *)
+(** [once_value ~by xs k] is {!once}[ ~by xs k], whose value [y] tells which
+    memory is still held: where [by] consumed the handles, their memory that
+    [y] does not hold and no other value shares is freed when [k] returns, as
+    {!Exec} frees what an operation does not reuse ({!Donate.consumed}). A
+    view [k] makes of it shares it: that memory waits for a collection. [k]
+    calls no function its caller gave, which could reach a rule through a
+    traced value it captures and leave the memory to that rule. *)
 
 val eval : by:string -> 'r prim -> 'r
 (** [eval ~by op] is [op]'s meaning under the rule. Errors name [by]. *)

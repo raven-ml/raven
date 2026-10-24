@@ -260,12 +260,10 @@ let refuse ~by o =
    inside it, with the extent suspended until the rule returns. The cell is
    emptied once no handler answered: [Effect.Unhandled] holds the effect, and
    the runtime keeps the last exception raised reachable while backtraces are
-   recorded. [Around i] is answered by [i]'s handler alone, [Within] by an
-   [Extent]'s. *)
+   recorded. [Around i] is answered by [i]'s handler alone. *)
 type _ Effect.t +=
   | Receive : { by : string; mutable op : 'r prim option } -> 'r Effect.t
   | Around : interpretation -> unit Effect.t
-  | Within : unit Effect.t
 
 (* Whether [o]'s handler is around the caller. *)
 let around o =
@@ -273,38 +271,48 @@ let around o =
   | () -> true
   | exception Effect.Unhandled (Around _) -> false
 
-let inside () =
-  (not (quiet ()))
-  &&
-  match Effect.perform Within with
-  | () -> true
-  | exception Effect.Unhandled Within -> false
+let has_handle xs = List.exists (fun (Any x) -> Donate.is_handle x) xs
+let alive ~by xs = List.iteri (fun i (Any x) -> Prim.alive ~by i x) xs
 
-let mix (type v s d) (x : (v, s, d) t) =
-  match x with
-  | Donated _ -> 1
-  | Traced _ -> 2
-  | Array _ | Shards _ | Deferred _ -> 0
+(* [k read] of the call [by] of [xs], then [ended hs y] of the handles [hs] it
+   claimed and [k]'s value [y]. An interpretation may receive [k]'s operations
+   where an [Extent] lives or an operand is traced: [k] reads the handles as
+   they are lent to one. *)
+let reading (type d a) ~by (xs : d any list)
+    (k : ('v 's 'e. ('v, 's, 'e) t -> ('v, 's, 'e) t) -> a)
+    (ended : Donate.handle list -> a -> unit) : a =
+  if not (has_handle xs) then begin
+    alive ~by xs;
+    k Fun.id
+  end
+  else if (not (quiet ())) || List.exists (fun (Any x) -> is_traced x) xs
+  then begin
+    alive ~by xs;
+    k Donate.lent
+  end
+  else
+    let hs = Donate.consume ~by xs in
+    let y = k (fun x -> Donate.called hs x) in
+    ended hs y;
+    y
 
-let mixed xs = List.fold_left (fun m (Any x) -> m lor mix x) 0 xs = 3
+let once ~by xs k = reading ~by xs k (fun _ _ -> ())
 
-(* Inside an [Extent], or beside a traced value, an operation of [k] reading
-   a handle may reach a rule, which would consume it there and may keep the
-   arrays it reads: [k] reads the handles' arrays, and no memory is freed. *)
-let call ~by xs k =
-  if inside () || mixed xs then Donate.resolve ~by xs k else k Fun.id
+(* The value's memory, which [Donate.consumed] keeps: a constant holds none of
+   the handles'. *)
+let held (type v s d) (y : (v, s, d) t) =
+  match y with
+  | Array _ | Shards _ | Donated _ ->
+      Iarray.to_list (Iarray.map Nx_array.buffer (Prim.arrays y))
+  | Deferred _ | Traced _ -> []
 
-let once ~by xs k =
-  if inside () || mixed xs then Donate.resolve ~by xs k
-  else Donate.resolve_value ~by xs k
+let once_value ~by xs k =
+  reading ~by xs k (fun hs y -> Donate.consumed ~by ~reused:(held y) hs)
 
 (* [i]'s rule on [op], in [i]'s clause. Another interpretation's traced operand
    is refused unless its interpretation is around [i], which is asked once per
-   interpretation; one [i] adopts is around by construction ({!interpret}). An
-   operation the rule receives consumes its handles once the rule returns, a
-   movement too: the rule's results hold none to pass on. The rule reads it as
-   it was called, and if it raises, by its own checks or by the operation's
-   that it computes, the donors live on ({!Donate.resolve}). *)
+   interpretation; one [i] adopts is around by construction ({!interpret}). The
+   rule reads each handle as its arrays, lent, and kills nothing. *)
 let deliver i ~by op =
   let checked = ref ([] : interpretation list) in
   Prim.iteri
@@ -316,21 +324,13 @@ let deliver i ~by op =
           checked := List.cons owner !checked
       | Traced _ | Array _ | Shards _ | Donated _ | Deferred _ -> ())
     op;
-  let rule op =
-    let op =
-      if Prim.exists (fun x -> changes i x) op then
-        Prim.map (fun x -> received i x) op
-      else op
-    in
-    applied i ~by op
+  Prim.iteri (fun k x -> Prim.alive ~by k x) op;
+  let op =
+    if Prim.exists (fun x -> changes i x || Donate.is_handle x) op then
+      Prim.map (fun x -> Donate.lent (received i x)) op
+    else op
   in
-  if Prim.exists Donate.is_handle op then
-    let (Prim.Operands xs) = Prim.operands op in
-    Donate.resolve ~by xs (fun read -> rule (Prim.map read op))
-  else begin
-    Prim.iteri (fun k x -> Prim.alive ~by k x) op;
-    rule op
-  end
+  applied i ~by op
 
 let reaches i op =
   match i.reach with
@@ -380,13 +380,6 @@ let handler i =
               (fun (k : (a, _) Effect.Deep.continuation) ->
                 if present i here then Effect.Deep.continue k ()
                 else Effect.Deep.discontinue k (Effect.Unhandled e))
-        | Within -> (
-            match i.reach with
-            | Extent ->
-                Some
-                  (fun (k : (a, _) Effect.Deep.continuation) ->
-                    Effect.Deep.continue k ())
-            | Values | Adopting _ -> None)
         | _ -> None);
   }
 

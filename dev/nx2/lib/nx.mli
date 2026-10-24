@@ -240,50 +240,49 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     [x] stays usable until an operation consumes a handle of [x]. Then [x] and
     every handle of [x] die: a later operation on any of them raises
     [Invalid_argument] naming the consumer, and its shape, dtype and placement
-    still answer. An operation checks every operand before it consumes any, and
-    one that raises before it takes a handle's memory kills nothing: one refused
-    by its checks, one that lost a race between domains (below), or one declined
-    by its set's kernels where its result goes to fresh memory. One that writes
-    its result into a handle's memory (below) takes the memory before its
-    kernels answer, so if they decline, or it raises otherwise, [x] and its
-    handles may be dead.
+    still answer. An operation checks every operand before it consumes any:
+    one refused by its checks kills nothing, and so does one its set's
+    kernels decline where its result goes to fresh memory. One that writes its
+    result into a handle's memory (below) takes the memory before its kernels
+    answer, so if they decline, or it raises otherwise, [x] and its handles
+    may be dead.
 
     A movement, which rearranges elements without computing them ({!reshape},
     {!transpose}, {!flip}, {!broadcast_to}, slicing by ranges,
     {!sliding_window}), passes a new handle of [x] to its result, whether it
     makes a view or a copy, and kills nothing; the deaths wait for the final
     consumer. The handle it read stays a handle of [x]: once an operation
-    consumes either, the other raises naming that consumer. An interpretation
-    that receives a movement the user calls ({!Prim.interpret}) makes the
-    movement its consumer instead. Any other operation consumes its handles. A
-    function that computes through others, as {!trace} sums a diagonal, is the
-    consumer the deaths name. One that makes several operations, as {!lstsq},
-    reads its handles as they were when called and consumes them when it
-    returns, and none if it raises; it reuses none of their memory. Eagerly,
-    with no operand traced, {!einsum} of more than two operands, {!complex},
-    {!slice} and {!set} reading a donated position in several operations,
-    and {!Rng.dirichlet}, {!Rng.categorical} and {!Rng.permutation} free
-    that memory when they return, unless their result holds it or a value
-    made before or during the call shares it. A view the call makes of it
-    shares it, as when {!complex} reshapes a part it need not cast or
-    {!Rng.permutation} bitcasts a key: that memory waits for a collection,
-    as it does for any other such function, and returns to its device once
-    no value holds it. Two handles
-    of one donor or over one memory reaching one operation raise naming
-    [Nx.donate]: the same handle twice, two donations of one value, or a handle
-    and one a movement passed on. The donor itself beside one of its handles is
-    not a second handle: the consumer reads it as it was when called, so
+    consumes either, the other raises naming that consumer. Any other
+    operation consumes its handles. A function that computes through others,
+    as {!trace} sums a diagonal, is the consumer the deaths name. One that
+    reads an operand in several operations, as {!lstsq}, consumes its handles
+    when it is called, after its operands' checks, and reads them as they were
+    then; they stay dead if it raises. It writes into none of their memory.
+    Where its result is one value, that memory, unless the value holds it or
+    another value shares it (a view the function made does), returns to its
+    device when the function returns, but for a function that calls one of
+    the caller's or draws random numbers; otherwise it returns once no value
+    holds it. Two handles of one donor
+    or over one memory reaching one operation raise naming [Nx.donate]: the
+    same handle twice, two donations of one value, or a handle and one a
+    movement passed on. The donor itself beside one of its handles is not a
+    second handle: the consumer reads it as it was when called, so
     [add (donate x) x] is [x + x].
 
-    On any number of domains, no value is consumed twice, and a call on another
-    domain that overlaps the consumer of [x] either reads [x]'s elements as they
-    were or raises [Invalid_argument] naming that consumer; it never reads the
-    consumer's result. When operations on several domains race to consume the
-    same handles, at least one claims all it reads. A loser raises naming an
-    operation that claimed one of its operands, which may itself have lost or
-    raised. No consumer overwrites elements another call is reading: one that
-    claims a handle while a call reads its memory computes into fresh memory,
-    and a function of several operations reading it then raises as a loser.
+    Only computation consumes handles. An interpretation that receives an
+    operation ({!Prim.interpret}) reads each handle as its arrays and kills
+    nothing, as does a function that reads an operand in several operations
+    where an [Extent] interpretation is live on any domain or an operand is
+    traced: [x] lives on, and its memory is shared from then on.
+
+    On any number of domains, no value is consumed twice, and a call on
+    another domain that overlaps the consumer of [x] either reads [x]'s
+    elements as they were or raises [Invalid_argument] naming that consumer;
+    it never reads the consumer's result. No consumer overwrites elements
+    another call is reading: one that claims a handle while a call reads its
+    memory computes into fresh memory. Racing consumers on several domains
+    for the handles of one donor is a misuse: any of them may raise, naming
+    another, and leave dead the other donors it claimed.
 
     The consumer may write its result into the donated memory when it reads
     that memory only at the result's own index, through the handle or through
@@ -291,9 +290,9 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     {!contract}'s [init]), the memory is C-contiguous with the result's shape
     and dtype, and the memory is not shared. Memory is shared once a value
     outside the donor's handles has been made over it (a view, a borrow by
-    {!place}, a {!Repr} crossing), and stays shared. Otherwise the consumer
-    computes into fresh memory, and a value that shares the memory keeps it.
-    Its result is the same either way.
+    {!place}, a {!Repr} crossing, an interpretation's read), and stays shared.
+    Otherwise the consumer computes into fresh memory, and a value that shares
+    the memory keeps it. Its result is the same either way.
 
     A traced value and a value of every set are returned unchanged: nothing
     dies, and passing such a value twice raises nothing.
@@ -4425,13 +4424,9 @@ module Prim : sig
       named by the functions it calls, and what it raises reaches the caller
       as raised.
 
-      Every function the user calls, a movement too, is the one consumer of
-      the donated handles among its operands ({!Nx.donate}): [rule] receives
-      the movements and operations it makes over the handles' arrays, and a
-      donor beside its handle as a live value, and the donors die, naming
-      the function, when it returns; its result holds no handle to pass on.
-      Refused, by its own checks or by [rule] at any operation it makes, it
-      kills no donor, as when no interpretation receives it.
+      [rule] receives a donated handle ({!Nx.donate}) as a live value over
+      its arrays, whose memory is shared from then on, so that [rule] may keep
+      it: no later donation writes there. Its donor lives on.
 
       With [Adopting p], [i] receives the operations on [p]'s values as on its
       own, without asking whether [p] is around them: [p] is around [i]'s
@@ -4481,15 +4476,13 @@ module Prim : sig
       ({!Nx.donate}), each handle as a live value over its arrays, a donor
       beside its handle as it was, and any other value as it is. Each
       handle's donor is then dead, naming [by]. It checks every value before
-      it kills any, and orders its claims with every operation's and every
-      other consumer's, on any domain. The handles' memory is not consumed:
-      a consumer that writes into it takes it from rig, which says whether
-      it is exclusive ({!Rig.Claim.with_}).
+      it kills any. The handles' memory is not consumed: a consumer that
+      writes into it takes it from rig, which says whether it is exclusive
+      ({!Rig.Claim.with_}).
 
       Raises [Invalid_argument] as an operation's operands do: naming
       [Nx.donate] for two handles of one donor or over one memory, then
-      naming [by] for a value that died. In sequence it then kills
-      nothing. *)
+      naming [by] for a value that died. It then kills nothing. *)
 
   val eval : by:string -> 'r t -> 'r
   (** [eval ~by op] is [op]'s meaning under the rule, as the vocabulary's
