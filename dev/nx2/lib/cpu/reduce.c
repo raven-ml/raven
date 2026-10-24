@@ -905,7 +905,7 @@ typedef enum { FAST, EXACT } arith;
 static int64_t states_at(int k) { return 2 * PT - (2 * PT >> k); }
 static int64_t results_at(int k) { return states_at(k) + k; }
 
-/* A Moments scan's fast pass over one slice by tiles. The network's results
+/* A network scan's fast pass over one slice by tiles. The network's results
    at a tile of PT terms aligned from the slice's start depend only on its
    terms and on two results of the network over the tiles' states at level
    NETWORK_P: the one before the tile and the one at it. In tile q, the
@@ -917,34 +917,461 @@ static int64_t results_at(int k) { return states_at(k) + k; }
    top-down, each level's results follow from the next one's: an odd
    index's is the next level's result at its half, an even one's that
    level's result before joined with its own state. These are pass_'s
-   joins of the same states in the same order, by fast_'s arithmetic, so
-   the bits are pass_'s; each level's joins run over its positions at once.
-   Level k's states hold 2^k terms each, so their joins' weights are the
-   same for the whole level. Results hold position 0 for the result before
-   the tile.
+   joins of the same states in the same order, by the fast pass's
+   arithmetic, so the bits are pass_'s; each level's joins run over its
+   positions at once. Level k's states hold 2^k terms each, so a Moments
+   join's weights are the same for the whole level. Results hold position
+   0 for the result before the tile.
 
    The tiles' states at level NETWORK_P are all that ties tiles together,
    so where units are fewer than threads (network_in), the tiles' states
    are computed apart, then the network over them, then the tiles' results
-   apart, each tile's states up again. */
-#define TILES(T, S)                                                          \
-  /* Level k's [m] states from level k - 1's pairs, their weights [f] and    \
-     [g]: arguments, whose restrict lets the compiler vectorise. */          \
-  static void up_##S(int64_t m, T f, T g, const T *restrict am,              \
-                     const T *restrict as, T *restrict um, T *restrict us) { \
+   apart, each tile's states up again.
+
+   NETWORK makes the scan of the statistic [N] at the float [T] of suffix
+   [S]: a lane's state takes [SIZE] elements of a row, a tile's state two
+   fields and its results [F], and the scan has [OUTS] outputs. The
+   statistic gives at N and S, each inlined into the network's loops:
+   - join(a), its join of two rows of states in arithmetic a, which
+     stream_ takes; leaf, a row of terms' states; centers, the slices'
+     centers; put, a term's outputs from its state, 1 where one is not
+     finite;
+   - for a tile: leaves, its terms' states from the terms at level 0; up,
+     a level's states from the pairs below; top, a full tile's state at
+     level NETWORK_P; seed, the first result of a slice's first tile at a
+     level, its state; down, a level's results at the even positions; and
+     results, the tile's outputs from its results, 1 where one is not
+     finite. */
+#define NETWORK(T, S, N, SIZE, F, OUTS)                                      \
+  static void N##_fast_leaf_##S(int64_t w, const T *x, const T *c, T *r) {   \
+    N##_leaf_##S(FAST, w, x, c, r);                                          \
+  }                                                                          \
+  /* Tile [t0]'s [L] terms, from [x] or [src], into level 0 of [scratch],    \
+     their states of center [c] there and up through the levels, packed at   \
+     states_at(k); a full tile's state at level NETWORK_P into [total]       \
+     where it is not NULL. */                                                \
+  static void N##_tile_up_##S(const T *x, int64_t xs,                        \
+                              const nx_cpu_terms *src, int64_t t0, int64_t L, \
+                              T c, T *scratch, T *total) {                   \
+    T *restrict sm = scratch, *restrict ss = sm + 2 * PT;                    \
+    if (src != NULL)                                                         \
+      for (int64_t i = 0, most = NX_CPU_NETWORK_TILE; i < L; i += most)      \
+        src->fill(src->ctx, t0 + i, L - i < most ? L - i : most,             \
+                  (uint8_t *)(sm + i));                                      \
+    else                                                                     \
+      for (int64_t i = 0; i < L; i++) sm[i] = x[(t0 + i) * xs];              \
+    N##_leaves_##S(L, c, sm, ss);                                            \
+    for (int k = 1; k <= NETWORK_P; k++) {                                   \
+      int64_t a = states_at(k - 1), u = states_at(k);                        \
+      N##_up_##S(k, L >> k, sm + a, ss + a, sm + u, ss + u);                 \
+    }                                                                        \
+    if (total != NULL)                                                       \
+      N##_top_##S(sm[states_at(NETWORK_P)], ss[states_at(NETWORK_P)], total); \
+  }                                                                          \
+  /* Tile [t0]'s [L] outputs from tile_up_'s states and the network's        \
+     results [before] the tile and [at] its last term, NULL in the first     \
+     tile and a partial one, of center [c]: into [ym] and [yv], 1 where one  \
+     is not finite. Results are packed at results_at(k), each of the F       \
+     fields 2 PT + NETWORK_P + 1 after the one before. */                    \
+  static int N##_tile_down_##S(int64_t t0, int64_t L, T c, const T *before,  \
+                               const T *at, T *ym, int64_t ms, T *yv,        \
+                               int64_t vs, T *scratch) {                     \
+    T *sm = scratch, *ss = sm + 2 * PT, *r[F];                               \
+    for (int f = 0; f < F; f++)                                              \
+      r[f] = ss + 2 * PT + f * (2 * PT + NETWORK_P + 1);                     \
+    for (int k = 0; before != NULL && k <= NETWORK_P; k++)                   \
+      for (int f = 0; f < F; f++) r[f][results_at(k)] = before[f];           \
+    for (int f = 0; at != NULL && f < F; f++)                                \
+      r[f][results_at(NETWORK_P) + 1] = at[f];                               \
+    for (int k = NETWORK_P - 1; k >= 0; k--) {                               \
+      int64_t m = L >> k;                                                    \
+      const T *bm = sm + states_at(k), *bs = ss + states_at(k);              \
+      T *u[F], *o[F];                                                        \
+      for (int f = 0; f < F; f++) {                                          \
+        u[f] = r[f] + results_at(k + 1);                                     \
+        o[f] = r[f] + results_at(k);                                         \
+        odd_##S(m / 2, u[f] + 1, o[f] + 2);                                  \
+      }                                                                      \
+      int64_t i0 = 0;                                                        \
+      if (before == NULL && m > 0) {                                         \
+        N##_seed_##S(k, bm, bs, o);                                          \
+        i0 = 1;                                                              \
+      }                                                                      \
+      N##_down_##S(k, i0, (m + 1) / 2, u, bm, bs, o);                        \
+    }                                                                        \
+    for (int f = 0; f < F; f++) r[f]++;                                      \
+    return N##_results_##S(L, c, t0, r, ym, ms, yv, vs);                     \
+  }                                                                          \
+  /* One slice, tile by tile: the streaming network over the tiles' states,  \
+     its sets after tile_up_'s levels and tile_down_'s results, takes each   \
+     full tile's state on to its result. */                                  \
+  static int N##_tiles_##S(const T *x, int64_t xs, T *ym, int64_t ms, T *yv, \
+                           int64_t vs, int64_t n, const nx_cpu_terms *src,   \
+                           T *scratch) {                                     \
+    T *sets = scratch + 4 * PT + F * (2 * PT + NETWORK_P + 1);               \
+    T *held[TILE_LEVELS], *in[TILE_LEVELS], *joined[TILE_LEVELS];            \
+    const T *got[TILE_LEVELS];                                               \
+    for (int k = 0; k < TILE_LEVELS; k++) {                                  \
+      held[k] = sets + 3 * SIZE * k;                                         \
+      in[k] = held[k] + SIZE;                                                \
+      joined[k] = in[k] + SIZE;                                              \
+    }                                                                        \
+    T c, before[F];                                                          \
+    N##_centers_##S(x, 0, 1, src, scratch, &c);                              \
+    int bad = 0;                                                             \
+    for (int64_t t0 = 0, q = 0; t0 < n; t0 += PT, q++) {                     \
+      int64_t L = n - t0 < PT ? n - t0 : PT;                                 \
+      const T *at = NULL;                                                    \
+      N##_tile_up_##S(x, xs, src, t0, L, c, scratch, L == PT ? in[0] : NULL); \
+      if (L == PT) {                                                         \
+        stream_##S(N##_join_##S(FAST), 1, q, held, in, joined, got, NULL);   \
+        at = got[0];                                                         \
+      }                                                                      \
+      bad |= N##_tile_down_##S(t0, L, c, q > 0 ? before : NULL, at, ym, ms,  \
+                               yv, vs, scratch);                             \
+      for (int i = 0; at != NULL && i < F; i++) before[i] = at[i];           \
+    }                                                                        \
+    return bad;                                                              \
+  }                                                                          \
+  /* One pass of arithmetic [a] over terms [lo, hi): 0, or 1 where the fast  \
+     pass met a value not finite. Terms go in tiles of NX_CPU_NETWORK_TILE,  \
+     and lanes not contiguous in [x], or in an output, through rows of the   \
+     scratch, so that every loop over the lanes reads and writes contiguous  \
+     elements. Terms that [src] computes go into those rows too. A range     \
+     past a slice's start is a tile of PT terms, from the network's results  \
+     [carry] before it and, where full, [top] at its last term. */           \
+  static int N##_pass_##S(arith a, const T *x, int64_t xs, int64_t xl,       \
+                          T *ym, int64_t ms, int64_t ml, T *yv, int64_t vs,  \
+                          int64_t vl, int64_t lo, int64_t hi, int64_t w,     \
+                          T *scratch, const nx_cpu_terms *src,               \
+                          const T *carry, const T *top) {                    \
+    join_##S join = N##_join_##S(a);                                         \
+    int64_t size = SIZE * w, tile = NX_CPU_NETWORK_TILE;                     \
+    int bad = 0, levels = nx_cpu_network_levels(hi - lo);                    \
+    T c[NX_CPU_NETWORK_LANES];                                               \
+    T *tx = scratch + 3 * levels * size, *tm = tx + tile * w,                \
+      *tv = tm + tile * w;                                                   \
+    N##_centers_##S(x, xl, w, src, tx, c);                                   \
+    /* Computed terms are read from the tile's rows: xl is 0 then. */        \
+    if (src != NULL) xl = 0;                                                 \
+    /* Level k's waiting, arriving and joined states, and its result. */     \
+    T *held[64], *in[64], *joined[64];                                       \
+    const T *got[64];                                                        \
+    for (int k = 0; k < levels; k++) {                                       \
+      held[k] = scratch + 3 * k * size;                                      \
+      in[k] = held[k] + size;                                                \
+      joined[k] = in[k] + size;                                              \
+    }                                                                        \
+    for (int64_t t0 = lo; t0 < hi; t0 += tile) {                             \
+      int64_t tn = hi - t0 < tile ? hi - t0 : tile;                          \
+      if (src != NULL) src->fill(src->ctx, t0, tn, (uint8_t *)tx);           \
+      else if (xl != 1) rows_##S(tn, w, x + t0 * xs, xs, xl, tx);            \
+      for (int64_t i = 0; i < tn; i++) {                                     \
+        int64_t t = t0 + i, p = t + NETWORK_AHEAD;                           \
+        if (p < hi && xl == 1) PREFETCH_ROW(x + p * xs, w, 0);               \
+        if (p < hi && ml == 1) PREFETCH_ROW(ym + p * ms, w, 1);              \
+        if (OUTS > 1 && p < hi && vl == 1) PREFETCH_ROW(yv + p * vs, w, 1);  \
+        const T *r = top;                                                    \
+        if (top == NULL || t < hi - 1) {                                     \
+          N##_leaf_##S(a, w, xl == 1 ? x + t * xs : tx + i * w, c, in[0]);   \
+          stream_##S(join, w, t - lo, held, in, joined, got, carry);         \
+          r = got[0];                                                        \
+        }                                                                    \
+        T *dm = ml == 1 ? ym + t * ms : tm + i * w;                          \
+        T *dv = OUTS > 1 && vl == 1 ? yv + t * vs : tv + i * w;              \
+        bad |= N##_put_##S(a, w, c, r, (T)t + 1, dm, dv);                    \
+      }                                                                      \
+      if (ml != 1) unrows_##S(tn, w, tm, ym + t0 * ms, ms, ml);              \
+      if (OUTS > 1 && vl != 1) unrows_##S(tn, w, tv, yv + t0 * vs, vs, vl);  \
+    }                                                                        \
+    return bad;                                                              \
+  }                                                                          \
+  /* The scan (cpu.h): a slice alone runs its fast pass by tiles, slices     \
+     side by side by pass_, and the exact one, if needed, by pass_. By a     \
+     span, its step over tiles [q0, q1), each [L] terms from [t0], its       \
+     state [st] at level NETWORK_P, the states before it at [st - size]. */  \
+  static void N##_network_##S(const uint8_t *x_, int64_t xs, int64_t xl,     \
+                              uint8_t *y_, int64_t ms, int64_t ml,           \
+                              uint8_t *y1_, int64_t vs, int64_t vl,          \
+                              int64_t n, int64_t w, uint8_t *scratch_,       \
+                              const nx_cpu_terms *src, nx_cpu_span *span) {  \
+    const T *x = (const T *)x_;                                              \
+    T *ym = (T *)y_, *yv = (T *)y1_, *scratch = (T *)scratch_;               \
+    if (span == NULL || span->step == NX_CPU_EXACT) {                        \
+      int exact = span != NULL;                                              \
+      if (!exact)                                                            \
+        exact = w == 1 ? N##_tiles_##S(x, xs, ym, ms, yv, vs, n, src, scratch) \
+                       : N##_pass_##S(FAST, x, xs, xl, ym, ms, ml, yv, vs, vl, \
+                                      0, n, w, scratch, src, NULL, NULL);    \
+      if (exact)                                                             \
+        N##_pass_##S(EXACT, x, xs, xl, ym, ms, ml, yv, vs, vl, 0, n, w,      \
+                     scratch, src, NULL, NULL);                              \
+      return;                                                                \
+    }                                                                        \
+    int64_t size = SIZE * w;                                                 \
+    T *states = (T *)span->states, c[NX_CPU_NETWORK_LANES];                  \
+    if (span->step == NX_CPU_CARRIES) {                                      \
+      carries_##S(N##_join_##S(FAST), size, w, span->q1, states, scratch);   \
+      return;                                                                \
+    }                                                                        \
+    N##_centers_##S(x, xl, w, src, scratch, c);                              \
+    int bad = 0;                                                             \
+    for (int64_t q = span->q0; q < span->q1; q++) {                          \
+      int64_t t0 = q * PT, L = n - t0 < PT ? n - t0 : PT;                    \
+      T *st = states + q * size;                                             \
+      const T *before = q > 0 ? st - size : NULL, *at = L == PT ? st : NULL; \
+      if (span->step == NX_CPU_TOTALS && w == 1)                             \
+        N##_tile_up_##S(x, xs, src, t0, PT, c[0], scratch, st);              \
+      else if (span->step == NX_CPU_TOTALS)                                  \
+        total_##S(N##_join_##S(FAST), N##_fast_leaf_##S, size, x, xs, xl, c, \
+                  t0, w, scratch, src, st);                                  \
+      else if (w == 1) {                                                     \
+        N##_tile_up_##S(x, xs, src, t0, L, c[0], scratch, NULL);             \
+        bad |= N##_tile_down_##S(t0, L, c[0], before, at, ym, ms, yv, vs,    \
+                                 scratch);                                   \
+      } else                                                                 \
+        bad |= N##_pass_##S(FAST, x, xs, xl, ym, ms, ml, yv, vs, vl, t0,     \
+                            t0 + L, w, scratch, src, before, at);            \
+    }                                                                        \
+    span->bad |= bad;                                                        \
+  }
+
+#define MOMENTS(T, S)                                                        \
+  typedef void (*join_##S)(int64_t, const T *, const T *, T *);              \
+  /* State [b] after state [a], into [r], each [w] elements a row. */        \
+  static void moments_fast_##S(int64_t w, const T *restrict a,               \
+                               const T *restrict b, T *restrict r) {         \
+    T na = a[2 * w], nb = b[2 * w], k = na + nb, f = nb / k, g = na * f;     \
+    for (int64_t l = 0; l < w; l++) {                                        \
+      T ma = a[l], d = b[l] - ma;                                            \
+      r[l] = ma + d * f;                                                     \
+      r[w + l] = (a[w + l] + b[w + l]) + (d * d) * g;                        \
+    }                                                                        \
+    r[2 * w] = k;                                                            \
+  }                                                                          \
+  static void moments_exact_##S(int64_t w, const T *restrict a,              \
+                                const T *restrict b, T *restrict r) {        \
+    const T *ma = a, *va = a + w, *za = a + 3 * w;                           \
+    const T *mb = b, *vb = b + w, *zb = b + 3 * w;                           \
+    T na = a[2 * w], nb = b[2 * w], k = nx_add_##S(na, nb);                  \
+    T f = nx_fdiv_##S(nb, k), g = nx_mul_##S(na, f);                         \
+    T d[NX_CPU_NETWORK_LANES], t[NX_CPU_NETWORK_LANES],                      \
+        sum[NX_CPU_NETWORK_LANES];                                           \
+    LANES_OF(d, nx_sub_##S(mb[l], ma[l]));                                   \
+    LANES_OF(t, nx_mul_##S(d[l], f));                                        \
+    LANES_OF(t, nx_add_##S(ma[l], t[l]));                                    \
+    LANES_OF(sum, nx_add_##S(ma[l], mb[l]));                                 \
+    LANES_OF(r, (FINITE(ma[l]) & FINITE(mb[l]))                              \
+                    ? t[l]                                                   \
+                    : za[l] != 0 ? ma[l] : zb[l] != 0 ? mb[l] : sum[l]);     \
+    LANES_OF(d, nx_mul_##S(d[l], d[l]));                                     \
+    LANES_OF(d, nx_mul_##S(d[l], g));                                        \
+    LANES_OF(t, nx_add_##S(va[l], vb[l]));                                   \
+    LANES_OF(r + w, nx_add_##S(t[l], d[l]));                                 \
+    r[2 * w] = k;                                                            \
+    LANES_OF(r + 3 * w, (T)((za[l] != 0) | (zb[l] != 0)));                   \
+  }                                                                          \
+  static inline join_##S moments_join_##S(arith a) {                         \
+    return a == EXACT ? moments_exact_##S : moments_fast_##S;                \
+  }                                                                          \
+  /* The states of the terms [x] of each lane, shifted by [c]. */            \
+  static void moments_leaf_##S(arith a, int64_t w, const T *restrict x,      \
+                               const T *restrict c, T *restrict r) {         \
+    if (a == EXACT) LANES_OF(r, nx_sub_##S(x[l], c[l]));                     \
+    else LANES_OF(r, x[l] - c[l]);                                           \
+    LANES_OF(r + w, 0);                                                      \
+    r[2 * w] = 1;                                                            \
+    if (a == EXACT) LANES_OF(r + 3 * w, (T)(x[l] != x[l]));                  \
+  }                                                                          \
+  /* [tn] rows of [w] elements from [y] into [r], row i lane l from          \
+     y[i ys + l yl]. Element by element: nx_copy_box's transposed tiles      \
+     took scan-moments-f32-4096x1024-axis1 1.04 times as long on fudge. */   \
+  static void rows_##S(int64_t tn, int64_t w, const T *restrict y,           \
+                       int64_t ys, int64_t yl, T *restrict r) {              \
+    for (int64_t l = 0; l < w; l++)                                          \
+      for (int64_t i = 0; i < tn; i++) r[i * w + l] = y[i * ys + l * yl];    \
+  }                                                                          \
+  /* [tn] rows of [w] elements from [r] into [y], as rows_ reads them. */    \
+  static void unrows_##S(int64_t tn, int64_t w, const T *restrict r, T *y,   \
+                         int64_t ys, int64_t yl) {                           \
+    for (int64_t l = 0; l < w; l++)                                          \
+      for (int64_t i = 0; i < tn; i++) y[i * ys + l * yl] = r[i * w + l];    \
+  }                                                                          \
+  /* The results at a level's [n] odd states, from the next level's:         \
+     o[2 i] = u[i]. */                                                       \
+  static void odd_##S(int64_t n, const T *restrict u, T *restrict o) {       \
+    for (int64_t i = 0; i < n; i++) o[2 * i] = u[i];                         \
+  }                                                                          \
+  /* Takes the [t]th state of a streaming network, at [in[0]], on through    \
+     its levels, each level's [w] lanes' states 4 w elements: joins it with  \
+     the states [held] there, and leaves the result at [t] at [got[0]]. A    \
+     network over a tile past a slice's first, from its first term, takes    \
+     [carry], the network's result before the tile, as the result before     \
+     each level's first state; NULL elsewhere. */                            \
+  static void stream_##S(join_##S join, int64_t w, int64_t t, T **held,      \
+                         T **in, T **joined, const T **got,                  \
+                         const T *carry) {                                   \
+    int k = 0;                                                               \
+    int64_t j = t;                                                           \
+    for (; j & 1; k++, j >>= 1) join(w, held[k], in[k], in[k + 1]);          \
+    const T *before = j == 0 ? carry : got[k + 1];                           \
+    if (before == NULL) got[k] = in[k];                                      \
+    else {                                                                   \
+      join(w, before, in[k], joined[k]);                                     \
+      got[k] = joined[k];                                                    \
+    }                                                                        \
+    T *e = held[k];                                                          \
+    held[k] = in[k];                                                         \
+    in[k] = e;                                                               \
+    for (int h = 0; h < k; h++) got[h] = got[k];                             \
+  }                                                                          \
+  /* The centers [c] of [w] slices, each its first term where finite, else   \
+     0: from [x], lanes [xl] apart, or [src], through [tx]. */               \
+  static void moments_centers_##S(const T *x, int64_t xl, int64_t w,         \
+                                  const nx_cpu_terms *src, T *tx, T *c) {    \
+    if (src != NULL) {                                                       \
+      src->fill(src->ctx, 0, 1, (uint8_t *)tx);                              \
+      x = tx;                                                                \
+      xl = 1;                                                                \
+    }                                                                        \
+    LANES_OF(c, FINITE(x[l * xl]) ? x[l * xl] : 0);                          \
+  }                                                                          \
+  /* Term m - 1's means c + mu and variances S over the count, of state      \
+     [r], into [dm] and [dv]; in the exact pass mu less itself where mu is   \
+     not finite. */                                                          \
+  static inline int moments_put_##S(arith a, int64_t w, const T *c,          \
+                                    const T *r, T m, T *dm, T *dv) {         \
+    if (a == EXACT) {                                                        \
+      T nan[NX_CPU_NETWORK_LANES];                                           \
+      LANES_OF(dm, nx_add_##S(c[l], r[l]));                                  \
+      LANES_OF(dv, nx_fdiv_##S(r[w + l], m));                                \
+      LANES_OF(nan, nx_sub_##S(r[l], r[l]));                                 \
+      LANES_OF(dv, FINITE(r[l]) ? dv[l] : nan[l]);                           \
+      return 0;                                                              \
+    }                                                                        \
+    int bad = 0;                                                             \
+    for (int64_t l = 0; l < w; l++) {                                        \
+      T mean = c[l] + r[l], var = r[w + l] / m;                              \
+      bad |= !(FINITE(mean) & FINITE(var));                                  \
+      dm[l] = mean;                                                          \
+      dv[l] = var;                                                           \
+    }                                                                        \
+    return bad;                                                              \
+  }                                                                          \
+  /* The state at level NETWORK_P of the PT terms of [w] slices from term    \
+     [t0], their states [leaf] makes, centred on [c] where the statistic     \
+     is, joined as the network joins them, each state [size] elements: into  \
+     [total]. Terms go through rows of the scratch as pass_'s do. */         \
+  static void total_##S(join_##S join,                                       \
+                        void (*leaf)(int64_t, const T *, const T *, T *),    \
+                        int64_t size, const T *x, int64_t xs, int64_t xl,    \
+                        const T *c, int64_t t0, int64_t w, T *scratch,       \
+                        const nx_cpu_terms *src, T *total) {                 \
+    int64_t tile = NX_CPU_NETWORK_TILE;                                      \
+    T *held[NETWORK_P + 1], *in[NETWORK_P + 1];                              \
+    for (int k = 0; k <= NETWORK_P; k++) {                                   \
+      held[k] = scratch + 2 * k * size;                                      \
+      in[k] = held[k] + size;                                                \
+    }                                                                        \
+    T *tx = scratch + 2 * (NETWORK_P + 1) * size;                            \
+    int rows = src != NULL || xl != 1;                                       \
+    for (int64_t i0 = 0; i0 < PT; i0 += tile) {                              \
+      if (src != NULL) src->fill(src->ctx, t0 + i0, tile, (uint8_t *)tx);    \
+      else if (xl != 1) rows_##S(tile, w, x + (t0 + i0) * xs, xs, xl, tx);   \
+      for (int64_t i = 0; i < tile; i++) {                                   \
+        leaf(w, rows ? tx + i * w : x + (t0 + i0 + i) * xs, c, in[0]);       \
+        int k = 0;                                                           \
+        for (int64_t j = i0 + i; j & 1; k++, j >>= 1)                        \
+          join(w, held[k], in[k], in[k + 1]);                                \
+        T *e = held[k];                                                      \
+        held[k] = in[k];                                                     \
+        in[k] = e;                                                           \
+      }                                                                      \
+    }                                                                        \
+    memcpy(total, held[NETWORK_P], size * sizeof(T));                        \
+  }                                                                          \
+  /* The network's results over the [n] states at [states], each [size]      \
+     elements, in their place. */                                            \
+  static void carries_##S(join_##S join, int64_t size, int64_t w,            \
+                          int64_t n, T *states, T *scratch) {                \
+    int levels = nx_cpu_network_levels(n);                                   \
+    T *held[64], *in[64], *joined[64];                                       \
+    const T *got[64];                                                        \
+    for (int k = 0; k < levels; k++) {                                       \
+      held[k] = scratch + 3 * k * size;                                      \
+      in[k] = held[k] + size;                                                \
+      joined[k] = in[k] + size;                                              \
+    }                                                                        \
+    for (int64_t q = 0; q < n; q++) {                                        \
+      memcpy(in[0], states + q * size, size * sizeof(T));                    \
+      stream_##S(join, w, q, held, in, joined, got, NULL);                   \
+      memcpy(states + q * size, got[0], size * sizeof(T));                   \
+    }                                                                        \
+  }                                                                          \
+  /* A tile's [L] terms' states: the terms less the center [c], their sums   \
+     0. */                                                                   \
+  static inline void moments_leaves_##S(int64_t L, T c, T *restrict sm,      \
+                                        T *restrict ss) {                    \
+    for (int64_t i = 0; i < L; i++) {                                        \
+      sm[i] -= c;                                                            \
+      ss[i] = 0;                                                             \
+    }                                                                        \
+  }                                                                          \
+  /* Level k's [m] states from level k - 1's pairs, each of 2^(k - 1)        \
+     terms: arguments, whose restrict lets the compiler vectorise. */        \
+  static inline void moments_up_##S(int k, int64_t m, const T *restrict am,  \
+                                    const T *restrict as, T *restrict um,    \
+                                    T *restrict us) {                        \
+    T half = (T)(1 << (k - 1)), w = half + half, f = half / w;               \
+    T g = half * f;                                                          \
     for (int64_t i = 0; i < m; i++) {                                        \
       T u = am[2 * i], d = am[2 * i + 1] - u;                                \
       um[i] = u + d * f;                                                     \
       us[i] = (as[2 * i] + as[2 * i + 1]) + (d * d) * g;                     \
     }                                                                        \
   }                                                                          \
+  /* A full tile's state, its mean [m], its sum [s] and its count. */        \
+  static inline void moments_top_##S(T m, T s, T *total) {                   \
+    total[0] = m;                                                            \
+    total[1] = s;                                                            \
+    total[2] = (T)PT;                                                        \
+  }                                                                          \
+  static inline void moments_seed_##S(int k, const T *bm, const T *bs,       \
+                                      T *const *o) {                         \
+    o[0][1] = bm[0];                                                         \
+    o[1][1] = bs[0];                                                         \
+    o[2][1] = (T)(1 << k);                                                   \
+  }                                                                          \
+  /* Level k's results at the even positions from [i0] on, of [e] of         \
+     them: the next level's results before them [um], [us], [un], joined     \
+     with their states [bm], [bs] of [nb] terms. */                          \
+  static void moments_evens_##S(int64_t i0, int64_t e, T nb,                 \
+                                const T *restrict um, const T *restrict us,  \
+                                const T *restrict un, const T *restrict bm,  \
+                                const T *restrict bs, T *restrict om,        \
+                                T *restrict os, T *restrict on) {            \
+    for (int64_t i = i0; i < e; i++) {                                       \
+      T na = un[i], w = na + nb, f = nb / w, g = na * f;                     \
+      T u = um[i], d = bm[2 * i] - u;                                        \
+      om[2 * i + 1] = u + d * f;                                             \
+      os[2 * i + 1] = (us[i] + bs[2 * i]) + (d * d) * g;                     \
+      on[2 * i + 1] = w;                                                     \
+    }                                                                        \
+  }                                                                          \
+  static inline void moments_down_##S(int k, int64_t i0, int64_t e,          \
+                                      T *const *u, const T *bm,              \
+                                      const T *bs, T *const *o) {            \
+    moments_evens_##S(i0, e, (T)(1 << k), u[0], u[1], u[2], bm, bs, o[0],    \
+                      o[1], o[2]);                                           \
+  }                                                                          \
   /* The means and variances of [n] terms from term [t0], their results      \
      [rm], [rs] centred on [c], into [ym], [yv], stepping [ms], [vs]: 1      \
      where one is not finite. Apart, whose restrict lets the compiler        \
      vectorise the divisions. */                                             \
-  static int results_##S(int64_t n, T c, int64_t t0, const T *restrict rm,   \
-                         const T *restrict rs, T *restrict ym, int64_t ms,   \
-                         T *restrict yv, int64_t vs) {                       \
+  static int moments_outs_##S(int64_t n, T c, int64_t t0,                    \
+                              const T *restrict rm, const T *restrict rs,    \
+                              T *restrict ym, int64_t ms, T *restrict yv,    \
+                              int64_t vs) {                                  \
     int bad = 0;                                                             \
     for (int64_t i = 0; i < n; i++) {                                        \
       T mean = c + rm[i], var = rs[i] / ((T)(t0 + i) + 1);                   \
@@ -954,394 +1381,13 @@ static int64_t results_at(int k) { return states_at(k) + k; }
     }                                                                        \
     return bad;                                                              \
   }                                                                          \
-  /* Level k's results at the even positions from [i0] on, of [e] of         \
-     them: the next level's results before them [um], [us], [un], joined     \
-     with their states [bm], [bs] of [nb] terms. */                          \
-  static void down_##S(int64_t i0, int64_t e, T nb, const T *restrict um,    \
-                       const T *restrict us, const T *restrict un,           \
-                       const T *restrict bm, const T *restrict bs,           \
-                       T *restrict om, T *restrict os, T *restrict on) {     \
-    for (int64_t i = i0; i < e; i++) {                                       \
-      T na = un[i], w = na + nb, f = nb / w, g = na * f;                     \
-      T u = um[i], d = bm[2 * i] - u;                                        \
-      om[2 * i + 1] = u + d * f;                                             \
-      os[2 * i + 1] = (us[i] + bs[2 * i]) + (d * d) * g;                     \
-      on[2 * i + 1] = w;                                                     \
-    }                                                                        \
+  static inline int moments_results_##S(int64_t L, T c, int64_t t0,          \
+                                        T *const *r, T *ym, int64_t ms,      \
+                                        T *yv, int64_t vs) {                 \
+    return moments_outs_##S(L, c, t0, r[0], r[1], ym + t0 * ms, ms,          \
+                            yv + t0 * vs, vs);                               \
   }                                                                          \
-  /* Tile [t0]'s [L] terms, from [x] or [src], less the center [c], into      \
-     level 0 of [scratch], and their states up through the levels, packed     \
-     at states_at(k); a full tile's state at level NETWORK_P, a mean, a sum   \
-     and a count, into [total] where it is not NULL. */                       \
-  static void tile_up_##S(const T *x, int64_t xs, const nx_cpu_terms *src,    \
-                          int64_t t0, int64_t L, T c, T *scratch, T *total) { \
-    /* The regions are apart: restrict lets the compiler vectorise. */       \
-    T *restrict sm = scratch, *restrict ss = sm + 2 * PT;                    \
-    if (src != NULL)                                                          \
-      for (int64_t i = 0, most = NX_CPU_NETWORK_TILE; i < L; i += most)       \
-        src->fill(src->ctx, t0 + i, L - i < most ? L - i : most,              \
-                  (uint8_t *)(sm + i));                                       \
-    else                                                                     \
-      for (int64_t i = 0; i < L; i++) sm[i] = x[(t0 + i) * xs];               \
-    for (int64_t i = 0; i < L; i++) {                                         \
-      sm[i] -= c;                                                             \
-      ss[i] = 0;                                                              \
-    }                                                                        \
-    for (int k = 1; k <= NETWORK_P; k++) {                                    \
-      T half = (T)(1 << (k - 1)), w = half + half, f = half / w;              \
-      T g = half * f;                                                         \
-      int64_t a = states_at(k - 1), u = states_at(k);                         \
-      up_##S(L >> k, f, g, sm + a, ss + a, sm + u, ss + u);                   \
-    }                                                                         \
-    if (total == NULL) return;                                                \
-    total[0] = sm[states_at(NETWORK_P)];                                      \
-    total[1] = ss[states_at(NETWORK_P)];                                      \
-    total[2] = (T)PT;                                                         \
-  }                                                                           \
-  /* Tile [t0]'s [L] results from tile_up_'s states, the network's results    \
-     [before] the tile and [at] its last term, each a mean, a sum and a       \
-     count, NULL in the first tile and a partial one: into [ym], [yv], 1      \
-     where one is not finite. Results are packed at results_at(k). */         \
-  static int tile_down_##S(int64_t t0, int64_t L, T c, const T *before,       \
-                           const T *at, T *ym, int64_t ms, T *yv, int64_t vs, \
-                           T *scratch) {                                      \
-    T *restrict sm = scratch, *restrict ss = sm + 2 * PT;                    \
-    T *restrict rm = ss + 2 * PT, *restrict rs = rm + 2 * PT + NETWORK_P + 1;\
-    T *restrict rn = rs + 2 * PT + NETWORK_P + 1;                            \
-    for (int k = 0; before != NULL && k <= NETWORK_P; k++) {                  \
-      int64_t o = results_at(k);                                              \
-      rm[o] = before[0];                                                      \
-      rs[o] = before[1];                                                      \
-      rn[o] = before[2];                                                      \
-    }                                                                        \
-    if (at != NULL) {                                                         \
-      int64_t r = results_at(NETWORK_P) + 1;                                  \
-      rm[r] = at[0];                                                          \
-      rs[r] = at[1];                                                          \
-      rn[r] = at[2];                                                          \
-    }                                                                         \
-    for (int k = NETWORK_P - 1; k >= 0; k--) {                                \
-      int64_t m = L >> k, u = results_at(k + 1), o = results_at(k);           \
-      T nb = (T)(1 << k);                                                     \
-      const T *restrict um = rm + u, *restrict us = rs + u;                   \
-      const T *restrict un = rn + u, *restrict bm = sm + states_at(k);        \
-      const T *restrict bs = ss + states_at(k);                               \
-      T *restrict om = rm + o, *restrict os = rs + o;                         \
-      T *restrict on = rn + o;                                                \
-      for (int64_t i = 0; i < m / 2; i++) {                                   \
-        om[2 * i + 2] = um[i + 1];                                            \
-        os[2 * i + 2] = us[i + 1];                                            \
-        on[2 * i + 2] = un[i + 1];                                            \
-      }                                                                       \
-      int64_t i0 = 0;                                                         \
-      if (before == NULL && m > 0) {                                          \
-        om[1] = bm[0];                                                        \
-        os[1] = bs[0];                                                        \
-        on[1] = nb;                                                           \
-        i0 = 1;                                                               \
-      }                                                                       \
-      down_##S(i0, (m + 1) / 2, nb, um, us, un, bm, bs, om, os, on);          \
-    }                                                                         \
-    return results_##S(L, c, t0, rm + 1, rs + 1, ym + t0 * ms, ms,            \
-                       yv + t0 * vs, vs);                                     \
-  }                                                                           \
-  /* One slice, tile by tile: the streaming network over the tiles' states,   \
-     its sets after tile_up_'s levels and tile_down_'s results, takes each    \
-     full tile's state on to its result. */                                   \
-  static int tiles_##S(const T *x, int64_t xs, T *ym, int64_t ms, T *yv,     \
-                       int64_t vs, int64_t n, const nx_cpu_terms *src,       \
-                       T *scratch) {                                         \
-    T *sets = scratch + 4 * PT + 3 * (2 * PT + NETWORK_P + 1);                \
-    T *held[TILE_LEVELS], *in[TILE_LEVELS], *joined[TILE_LEVELS];            \
-    const T *got[TILE_LEVELS];                                               \
-    for (int k = 0; k < TILE_LEVELS; k++) {                                  \
-      held[k] = sets + 12 * k;                                               \
-      in[k] = held[k] + 4;                                                   \
-      joined[k] = in[k] + 4;                                                 \
-    }                                                                        \
-    T c, before[3];                                                           \
-    centers_##S(x, 0, 1, src, scratch, &c);                                   \
-    int bad = 0;                                                             \
-    for (int64_t t0 = 0, q = 0; t0 < n; t0 += PT, q++) {                     \
-      int64_t L = n - t0 < PT ? n - t0 : PT;                                 \
-      const T *at = NULL;                                                     \
-      tile_up_##S(x, xs, src, t0, L, c, scratch, L == PT ? in[0] : NULL);     \
-      if (L == PT) {                                                         \
-        stream_##S(fast_##S, 1, q, held, in, joined, got, NULL);              \
-        at = got[0];                                                          \
-      }                                                                      \
-      bad |= tile_down_##S(t0, L, c, q > 0 ? before : NULL, at, ym, ms, yv,   \
-                           vs, scratch);                                      \
-      for (int i = 0; at != NULL && i < 3; i++) before[i] = at[i];            \
-    }                                                                        \
-    return bad;                                                               \
-  }
-
-#define MOMENTS(T, S)                                                         \
-  /* State [b] after state [a], into [r], each [w] elements a row. */       \
-  static void fast_##S(int64_t w, const T *restrict a, const T *restrict b,   \
-                       T *restrict r) {                                       \
-    T na = a[2 * w], nb = b[2 * w], k = na + nb, f = nb / k, g = na * f;      \
-    for (int64_t l = 0; l < w; l++) {                                         \
-      T ma = a[l], d = b[l] - ma;                                             \
-      r[l] = ma + d * f;                                                      \
-      r[w + l] = (a[w + l] + b[w + l]) + (d * d) * g;                         \
-    }                                                                         \
-    r[2 * w] = k;                                                             \
-  }                                                                           \
-  static void exact_##S(int64_t w, const T *restrict a, const T *restrict b,  \
-                        T *restrict r) {                                      \
-    const T *ma = a, *va = a + w, *za = a + 3 * w;                            \
-    const T *mb = b, *vb = b + w, *zb = b + 3 * w;                            \
-    T na = a[2 * w], nb = b[2 * w], k = nx_add_##S(na, nb);                   \
-    T f = nx_fdiv_##S(nb, k), g = nx_mul_##S(na, f);                          \
-    T d[NX_CPU_NETWORK_LANES], t[NX_CPU_NETWORK_LANES],                       \
-        sum[NX_CPU_NETWORK_LANES];                                            \
-    LANES_OF(d, nx_sub_##S(mb[l], ma[l]));                                    \
-    LANES_OF(t, nx_mul_##S(d[l], f));                                         \
-    LANES_OF(t, nx_add_##S(ma[l], t[l]));                                     \
-    LANES_OF(sum, nx_add_##S(ma[l], mb[l]));                                  \
-    LANES_OF(r, (FINITE(ma[l]) & FINITE(mb[l]))                               \
-                    ? t[l]                                                    \
-                    : za[l] != 0 ? ma[l] : zb[l] != 0 ? mb[l] : sum[l]);      \
-    LANES_OF(d, nx_mul_##S(d[l], d[l]));                                      \
-    LANES_OF(d, nx_mul_##S(d[l], g));                                         \
-    LANES_OF(t, nx_add_##S(va[l], vb[l]));                                    \
-    LANES_OF(r + w, nx_add_##S(t[l], d[l]));                                  \
-    r[2 * w] = k;                                                             \
-    LANES_OF(r + 3 * w, (T)((za[l] != 0) | (zb[l] != 0)));                    \
-  }                                                                           \
-  /* The states of the terms [x] of each lane, shifted by [c]. */             \
-  static void leaf_##S(arith a, int64_t w, const T *restrict x,               \
-                       const T *restrict c, T *restrict r) {                  \
-    if (a == EXACT) LANES_OF(r, nx_sub_##S(x[l], c[l]));                      \
-    else LANES_OF(r, x[l] - c[l]);                                            \
-    LANES_OF(r + w, 0);                                                       \
-    r[2 * w] = 1;                                                             \
-    if (a == EXACT) LANES_OF(r + 3 * w, (T)(x[l] != x[l]));                   \
-  }                                                                           \
-  /* [tn] rows of [w] elements from [y] into [r], row i lane l from           \
-     y[i ys + l yl]. Element by element: nx_copy_box's transposed tiles       \
-     took scan-moments-f32-4096x1024-axis1 1.04 times as long on fudge. */    \
-  static void rows_##S(int64_t tn, int64_t w, const T *restrict y,            \
-                       int64_t ys, int64_t yl, T *restrict r) {               \
-    for (int64_t l = 0; l < w; l++)                                           \
-      for (int64_t i = 0; i < tn; i++) r[i * w + l] = y[i * ys + l * yl];     \
-  }                                                                           \
-  /* [tn] rows of [w] elements from [r] into [y], as rows_ reads them. */     \
-  static void unrows_##S(int64_t tn, int64_t w, const T *restrict r, T *y,    \
-                         int64_t ys, int64_t yl) {                            \
-    for (int64_t l = 0; l < w; l++)                                           \
-      for (int64_t i = 0; i < tn; i++) y[i * ys + l * yl] = r[i * w + l];     \
-  }                                                                           \
-  /* Takes the [t]th state of a streaming network, at [in[0]], on through     \
-     its levels, each level's [w] lanes' states 4 w elements: joins it with   \
-     the states [held] there, and leaves the result at [t] at [got[0]]. A     \
-     network over a tile past a slice's first, from its first term, takes     \
-     [carry], the network's result before the tile, as the result before      \
-     each level's first state; NULL elsewhere. */                             \
-  static void stream_##S(void (*join)(int64_t, const T *, const T *, T *),    \
-                         int64_t w, int64_t t, T **held, T **in, T **joined,  \
-                         const T **got, const T *carry) {                     \
-    int k = 0;                                                                \
-    int64_t j = t;                                                            \
-    for (; j & 1; k++, j >>= 1) join(w, held[k], in[k], in[k + 1]);           \
-    const T *before = j == 0 ? carry : got[k + 1];                            \
-    if (before == NULL) got[k] = in[k];                                       \
-    else {                                                                    \
-      join(w, before, in[k], joined[k]);                                      \
-      got[k] = joined[k];                                                     \
-    }                                                                         \
-    T *e = held[k];                                                           \
-    held[k] = in[k];                                                          \
-    in[k] = e;                                                                \
-    for (int h = 0; h < k; h++) got[h] = got[k];                              \
-  }                                                                           \
-  /* The centers [c] of [w] slices, each its first term where finite, else    \
-     0: from [x], lanes [xl] apart, or [src], through [tx]. */                \
-  static void centers_##S(const T *x, int64_t xl, int64_t w,                  \
-                          const nx_cpu_terms *src, T *tx, T *c) {             \
-    if (src != NULL) {                                                        \
-      src->fill(src->ctx, 0, 1, (uint8_t *)tx);                               \
-      x = tx;                                                                 \
-      xl = 1;                                                                 \
-    }                                                                         \
-    LANES_OF(c, FINITE(x[l * xl]) ? x[l * xl] : 0);                           \
-  }                                                                           \
-  /* One pass over terms [lo, hi): 0, or 1 where the fast pass met a value    \
-     not finite. Terms go in tiles of NX_CPU_NETWORK_TILE, and lanes not      \
-     contiguous in [x], or in a result, through rows of the scratch, so       \
-     that every loop over the lanes reads and writes contiguous elements.     \
-     Terms that [src] computes go into those rows too. A range past a         \
-     slice's start is a tile of PT terms, from the network's results          \
-     [carry] before it and, where full, [top] at its last term. */            \
-  static int pass_##S(arith a, const T *x, int64_t xs, int64_t xl, T *ym,     \
-                      int64_t ms, int64_t ml, T *yv, int64_t vs, int64_t vl,  \
-                      int64_t lo, int64_t hi, int64_t w, T *scratch,          \
-                      const nx_cpu_terms *src, const T *carry,                \
-                      const T *top) {                                         \
-    void (*join)(int64_t, const T *, const T *, T *) =                        \
-        a == EXACT ? exact_##S : fast_##S;                                    \
-    int64_t size = 4 * w, tile = NX_CPU_NETWORK_TILE;                         \
-    int bad = 0, levels = nx_cpu_network_levels(hi - lo);                     \
-    T c[NX_CPU_NETWORK_LANES];                                                \
-    T *tx = scratch + 3 * levels * size, *tm = tx + tile * w,                 \
-      *tv = tm + tile * w;                                                    \
-    centers_##S(x, xl, w, src, tx, c);                                        \
-    /* Computed terms are read from the tile's rows: xl is 0 then. */         \
-    if (src != NULL) xl = 0;                                                 \
-    /* Level k's waiting, arriving and joined states, and its result. */    \
-    T *held[64], *in[64], *joined[64];                                        \
-    const T *got[64];                                                         \
-    for (int k = 0; k < levels; k++) {                                        \
-      held[k] = scratch + 3 * k * size;                                       \
-      in[k] = held[k] + size;                                                 \
-      joined[k] = in[k] + size;                                               \
-    }                                                                         \
-    for (int64_t t0 = lo; t0 < hi; t0 += tile) {                              \
-      int64_t tn = hi - t0 < tile ? hi - t0 : tile;                           \
-      if (src != NULL) src->fill(src->ctx, t0, tn, (uint8_t *)tx);           \
-      else if (xl != 1) rows_##S(tn, w, x + t0 * xs, xs, xl, tx);            \
-      for (int64_t i = 0; i < tn; i++) {                                     \
-        int64_t t = t0 + i, p = t + NETWORK_AHEAD;                           \
-        if (p < hi && xl == 1) PREFETCH_ROW(x + p * xs, w, 0);                \
-        if (p < hi && ml == 1) PREFETCH_ROW(ym + p * ms, w, 1);               \
-        if (p < hi && vl == 1) PREFETCH_ROW(yv + p * vs, w, 1);               \
-        const T *r = top;                                                     \
-        if (top == NULL || t < hi - 1) {                                      \
-          leaf_##S(a, w, xl == 1 ? x + t * xs : tx + i * w, c, in[0]);        \
-          stream_##S(join, w, t - lo, held, in, joined, got, carry);          \
-          r = got[0];                                                         \
-        }                                                                     \
-        /* The mean c + mu, the variance S over the count, or mu less         \
-           itself where mu is not finite. */                                  \
-        T m = (T)t + 1;                                                       \
-        T *dm = ml == 1 ? ym + t * ms : tm + i * w;                           \
-        T *dv = vl == 1 ? yv + t * vs : tv + i * w;                           \
-        if (a == EXACT) {                                                     \
-          T nan[NX_CPU_NETWORK_LANES];                                        \
-          LANES_OF(dm, nx_add_##S(c[l], r[l]));                               \
-          LANES_OF(dv, nx_fdiv_##S(r[w + l], m));                             \
-          LANES_OF(nan, nx_sub_##S(r[l], r[l]));                              \
-          LANES_OF(dv, FINITE(r[l]) ? dv[l] : nan[l]);                        \
-          continue;                                                           \
-        }                                                                     \
-        for (int64_t l = 0; l < w; l++) {                                     \
-          T mean = c[l] + r[l], var = r[w + l] / m;                           \
-          bad |= !(FINITE(mean) & FINITE(var));                               \
-          dm[l] = mean;                                                       \
-          dv[l] = var;                                                        \
-        }                                                                     \
-      }                                                                       \
-      if (ml != 1) unrows_##S(tn, w, tm, ym + t0 * ms, ms, ml);               \
-      if (vl != 1) unrows_##S(tn, w, tv, yv + t0 * vs, vs, vl);               \
-    }                                                                         \
-    return bad;                                                               \
-  }                                                                           \
-  /* The state at level NETWORK_P of the PT terms of [w] slices from term     \
-     [t0], their states [leaf] makes, centred on [c] where the statistic      \
-     is, joined as the network joins them, each state [size] elements: into   \
-     [total]. Terms go through rows of the scratch as pass_'s do. */          \
-  static void total_##S(void (*join)(int64_t, const T *, const T *, T *),     \
-                        void (*leaf)(int64_t, const T *, const T *, T *),     \
-                        int64_t size, const T *x, int64_t xs, int64_t xl,     \
-                        const T *c, int64_t t0, int64_t w, T *scratch,        \
-                        const nx_cpu_terms *src, T *total) {                  \
-    int64_t tile = NX_CPU_NETWORK_TILE;                                       \
-    T *held[NETWORK_P + 1], *in[NETWORK_P + 1];                               \
-    for (int k = 0; k <= NETWORK_P; k++) {                                    \
-      held[k] = scratch + 2 * k * size;                                       \
-      in[k] = held[k] + size;                                                 \
-    }                                                                         \
-    T *tx = scratch + 2 * (NETWORK_P + 1) * size;                             \
-    int rows = src != NULL || xl != 1;                                        \
-    for (int64_t i0 = 0; i0 < PT; i0 += tile) {                               \
-      if (src != NULL) src->fill(src->ctx, t0 + i0, tile, (uint8_t *)tx);     \
-      else if (xl != 1) rows_##S(tile, w, x + (t0 + i0) * xs, xs, xl, tx);    \
-      for (int64_t i = 0; i < tile; i++) {                                    \
-        leaf(w, rows ? tx + i * w : x + (t0 + i0 + i) * xs, c, in[0]);        \
-        int k = 0;                                                            \
-        for (int64_t j = i0 + i; j & 1; k++, j >>= 1)                         \
-          join(w, held[k], in[k], in[k + 1]);                                 \
-        T *e = held[k];                                                       \
-        held[k] = in[k];                                                      \
-        in[k] = e;                                                            \
-      }                                                                       \
-    }                                                                         \
-    memcpy(total, held[NETWORK_P], size * sizeof(T));                         \
-  }                                                                           \
-  /* The network's results over the [n] states at [states], each [size]       \
-     elements, in their place. */                                             \
-  static void carries_##S(void (*join)(int64_t, const T *, const T *, T *),   \
-                          int64_t size, int64_t w, int64_t n, T *states,      \
-                          T *scratch) {                                       \
-    int levels = nx_cpu_network_levels(n);                                   \
-    T *held[64], *in[64], *joined[64];                                       \
-    const T *got[64];                                                        \
-    for (int k = 0; k < levels; k++) {                                       \
-      held[k] = scratch + 3 * k * size;                                      \
-      in[k] = held[k] + size;                                                \
-      joined[k] = in[k] + size;                                              \
-    }                                                                        \
-    for (int64_t q = 0; q < n; q++) {                                         \
-      memcpy(in[0], states + q * size, size * sizeof(T));                     \
-      stream_##S(join, w, q, held, in, joined, got, NULL);                    \
-      memcpy(states + q * size, got[0], size * sizeof(T));                    \
-    }                                                                         \
-  }                                                                           \
-  static void fast_leaf_##S(int64_t w, const T *x, const T *c, T *r) {        \
-    leaf_##S(FAST, w, x, c, r);                                               \
-  }                                                                           \
-  TILES(T, S)                                                                 \
-  /* A slice alone runs its fast pass by tiles, slices side by side by        \
-     pass_, and the exact one, if needed, by pass_. By a span, its step       \
-     over tiles [q0, q1), each [L] terms from [t0], its state [st] at         \
-     level NETWORK_P, the states before it at [st - size]. */                 \
-  static void moments_##S(const uint8_t *x_, int64_t xs, int64_t xl,          \
-                          uint8_t *mean_, int64_t ms, int64_t ml,             \
-                          uint8_t *var_, int64_t vs, int64_t vl, int64_t n,   \
-                          int64_t w, uint8_t *scratch_,                       \
-                          const nx_cpu_terms *src, nx_cpu_span *span) {       \
-    const T *x = (const T *)x_;                                              \
-    T *ym = (T *)mean_, *yv = (T *)var_, *scratch = (T *)scratch_;            \
-    if (span == NULL || span->step == NX_CPU_EXACT) {                         \
-      int exact = span != NULL;                                               \
-      if (!exact)                                                             \
-        exact = w == 1 ? tiles_##S(x, xs, ym, ms, yv, vs, n, src, scratch)    \
-                       : pass_##S(FAST, x, xs, xl, ym, ms, ml, yv, vs, vl, 0, \
-                                  n, w, scratch, src, NULL, NULL);            \
-      if (exact)                                                              \
-        pass_##S(EXACT, x, xs, xl, ym, ms, ml, yv, vs, vl, 0, n, w, scratch,  \
-                 src, NULL, NULL);                                            \
-      return;                                                                 \
-    }                                                                         \
-    int64_t size = 4 * w;                                                     \
-    T *states = (T *)span->states, c[NX_CPU_NETWORK_LANES];                   \
-    if (span->step == NX_CPU_CARRIES) {                                       \
-      carries_##S(fast_##S, size, w, span->q1, states, scratch);              \
-      return;                                                                 \
-    }                                                                         \
-    centers_##S(x, xl, w, src, scratch, c);                                   \
-    int bad = 0;                                                             \
-    for (int64_t q = span->q0; q < span->q1; q++) {                           \
-      int64_t t0 = q * PT, L = n - t0 < PT ? n - t0 : PT;                     \
-      T *st = states + q * size;                                              \
-      const T *before = q > 0 ? st - size : NULL, *at = L == PT ? st : NULL;  \
-      if (span->step == NX_CPU_TOTALS && w == 1)                              \
-        tile_up_##S(x, xs, src, t0, PT, c[0], scratch, st);                   \
-      else if (span->step == NX_CPU_TOTALS)                                   \
-        total_##S(fast_##S, fast_leaf_##S, size, x, xs, xl, c, t0, w,         \
-                  scratch, src, st);                                          \
-      else if (w == 1) {                                                      \
-        tile_up_##S(x, xs, src, t0, L, c[0], scratch, NULL);                  \
-        bad |= tile_down_##S(t0, L, c[0], before, at, ym, ms, yv, vs,         \
-                             scratch);                                        \
-      } else                                                                 \
-        bad |= pass_##S(FAST, x, xs, xl, ym, ms, ml, yv, vs, vl, t0, t0 + L,  \
-                        w, scratch, src, before, at);                         \
-    }                                                                        \
-    span->bad |= bad;                                                        \
-  }
+  NETWORK(T, S, moments, 4, 3, 2)
 
 MOMENTS(float, f32)
 MOMENTS(double, f64)
@@ -1749,11 +1795,11 @@ ARG_COMPLEX(min_c128, c128, nx_minimum_c128)
     memcpy(d0, &mean, sizeof mean);                                          \
     memcpy(d1, &var, sizeof var);                                            \
   }                                                                          \
-  /* Logsumexp's network (nx_kernel.mli). The sum of state [a], of        \
+  /* Logsumexp's network (nx_kernel.mli). The sum of state [a], of           \
      maximum [ma] and sum [sa], then state [b], [m] the two's maximum:       \
      where m is finite, the sum of the side whose maximum is m as it is,     \
      its exp 0 being 1, plus the other's rescaled; 0 where m is -∞; m        \
-     itself elsewhere, +∞ as the network makes it, or a NaN no result       \
+     itself elsewhere, +∞ as the network makes it, or a NaN no result        \
      reads. Branch free, so that its loops vectorise. */                     \
   static inline T lse_sum_##S(T ma, T sa, T mb, T sb, T m) {                 \
     int hi = ma == m;                                                        \
@@ -1762,15 +1808,17 @@ ARG_COMPLEX(min_c128, c128, nx_minimum_c128)
     return FINITE(m) ? s : m == -(T)INFINITY ? 0 : m;                        \
   }                                                                          \
   /* A term's sum: exp 0 where finite, 0 for -∞, else the term. */           \
-  static inline T lse_leaf_##S(T x) {                                        \
+  static inline T lse_term_##S(T x) {                                        \
     return FINITE(x) ? 1 : x == -(T)INFINITY ? 0 : x;                        \
   }                                                                          \
   static inline T lse_result_##S(T m, T s) {                                 \
     T r = m + nx_log_##S(s);                                                 \
     return FINITE(m) ? r : m;                                                \
   }                                                                          \
-  /* State [b] after state [a], into [r], each [w] maxima then [w] sums. */  \
-  static void lse_join_##S(int64_t w, const T *restrict a,                   \
+  /* The network's hooks (NETWORK): Logsumexp has one arithmetic and no      \
+     center. A state is a row of [w] maxima then [w] sums. */                \
+  /* State [b] after state [a], into [r]. */                                 \
+  static void lse_pair_##S(int64_t w, const T *restrict a,                   \
                            const T *restrict b, T *restrict r) {             \
     for (int64_t l = 0; l < w; l++) {                                        \
       T m = nx_maximum_##S(a[l], b[l]);                                      \
@@ -1778,198 +1826,96 @@ ARG_COMPLEX(min_c128, c128, nx_minimum_c128)
       r[l] = m;                                                              \
     }                                                                        \
   }                                                                          \
+  static inline join_##S lse_join_##S(arith a) {                             \
+    (void)a;                                                                 \
+    return lse_pair_##S;                                                     \
+  }                                                                          \
+  static inline void lse_leaf_##S(arith a, int64_t w, const T *x,            \
+                                  const T *c, T *r) {                        \
+    (void)a;                                                                 \
+    (void)c;                                                                 \
+    for (int64_t l = 0; l < w; l++) {                                        \
+      r[l] = x[l];                                                           \
+      r[w + l] = lse_term_##S(x[l]);                                         \
+    }                                                                        \
+  }                                                                          \
+  static inline void lse_centers_##S(const T *x, int64_t xl, int64_t w,      \
+                                     const nx_cpu_terms *src, T *tx, T *c) { \
+    (void)x;                                                                 \
+    (void)xl;                                                                \
+    (void)src;                                                               \
+    (void)tx;                                                                \
+    LANES_OF(c, 0);                                                          \
+  }                                                                          \
+  static inline int lse_put_##S(arith a, int64_t w, const T *c, const T *r,  \
+                                T m, T *dm, T *dv) {                         \
+    (void)a;                                                                 \
+    (void)c;                                                                 \
+    (void)m;                                                                 \
+    (void)dv;                                                                \
+    for (int64_t l = 0; l < w; l++) dm[l] = lse_result_##S(r[l], r[w + l]);  \
+    return 0;                                                                \
+  }                                                                          \
+  static inline void lse_leaves_##S(int64_t L, T c, T *restrict sm,          \
+                                    T *restrict ss) {                        \
+    (void)c;                                                                 \
+    for (int64_t i = 0; i < L; i++) ss[i] = lse_term_##S(sm[i]);             \
+  }                                                                          \
   /* Pairs of level k - 1's [2m] states into level k's [m]. */               \
-  static void lse_up_##S(int64_t m, const T *restrict am,                    \
-                         const T *restrict as, T *restrict um,               \
-                         T *restrict us) {                                   \
+  static inline void lse_up_##S(int k, int64_t m, const T *restrict am,      \
+                                const T *restrict as, T *restrict um,        \
+                                T *restrict us) {                            \
+    (void)k;                                                                 \
     for (int64_t i = 0; i < m; i++) {                                        \
       T ma = am[2 * i], mb = am[2 * i + 1], g = nx_maximum_##S(ma, mb);      \
       us[i] = lse_sum_##S(ma, as[2 * i], mb, as[2 * i + 1], g);              \
       um[i] = g;                                                             \
     }                                                                        \
   }                                                                          \
+  static inline void lse_top_##S(T m, T s, T *total) {                       \
+    total[0] = m;                                                            \
+    total[1] = s;                                                            \
+  }                                                                          \
+  static inline void lse_seed_##S(int k, const T *bm, const T *bs,           \
+                                  T *const *o) {                             \
+    (void)k;                                                                 \
+    o[0][1] = bm[0];                                                         \
+    o[1][1] = bs[0];                                                         \
+  }                                                                          \
   /* Level k's results at the even positions from [i0] on, of [e] of         \
-     them: the next level's results before them [um], [us], joined with     \
-     their states [bm], [bs]. */                                            \
-  static void lse_down_##S(int64_t i0, int64_t e, const T *restrict um,      \
-                           const T *restrict us, const T *restrict bm,       \
-                           const T *restrict bs, T *restrict om,             \
-                           T *restrict os) {                                 \
+     them: the next level's results before them [um], [us], joined with      \
+     their states [bm], [bs]. */                                             \
+  static void lse_evens_##S(int64_t i0, int64_t e, const T *restrict um,     \
+                            const T *restrict us, const T *restrict bm,      \
+                            const T *restrict bs, T *restrict om,            \
+                            T *restrict os) {                                \
     for (int64_t i = i0; i < e; i++) {                                       \
       T ma = um[i], mb = bm[2 * i], g = nx_maximum_##S(ma, mb);              \
       os[2 * i + 1] = lse_sum_##S(ma, us[i], mb, bs[2 * i], g);              \
       om[2 * i + 1] = g;                                                     \
     }                                                                        \
   }                                                                          \
-  /* Tile [t0]'s [L] terms of one slice and their states up through the       \
-     levels, as tile_up_ makes Moments'; a full tile's state at level         \
-     NETWORK_P, a maximum and a sum, into [total] where it is not NULL. */    \
-  static void lse_tile_up_##S(const T *x, int64_t xs,                         \
-                              const nx_cpu_terms *src, int64_t t0, int64_t L, \
-                              T *scratch, T *total) {                         \
-    T *restrict sm = scratch, *restrict ss = sm + 2 * PT;                    \
-    if (src != NULL)                                                          \
-      for (int64_t i = 0, most = NX_CPU_NETWORK_TILE; i < L; i += most)       \
-        src->fill(src->ctx, t0 + i, L - i < most ? L - i : most,              \
-                  (uint8_t *)(sm + i));                                       \
-    else                                                                     \
-      for (int64_t i = 0; i < L; i++) sm[i] = x[(t0 + i) * xs];               \
-    for (int64_t i = 0; i < L; i++) ss[i] = lse_leaf_##S(sm[i]);              \
-    for (int k = 1; k <= NETWORK_P; k++) {                                    \
-      int64_t a = states_at(k - 1), u = states_at(k);                         \
-      lse_up_##S(L >> k, sm + a, ss + a, sm + u, ss + u);                     \
-    }                                                                        \
-    if (total == NULL) return;                                                \
-    total[0] = sm[states_at(NETWORK_P)];                                      \
-    total[1] = ss[states_at(NETWORK_P)];                                      \
-  }                                                                           \
-  /* Tile [t0]'s [L] results into [y], as tile_down_ makes Moments'. */       \
-  static void lse_tile_down_##S(int64_t t0, int64_t L, const T *before,       \
-                                const T *at, T *y, int64_t ys, T *scratch) {  \
-    T *restrict sm = scratch, *restrict ss = sm + 2 * PT;                    \
-    T *restrict rm = ss + 2 * PT, *restrict rs = rm + 2 * PT + NETWORK_P + 1;\
-    for (int k = 0; before != NULL && k <= NETWORK_P; k++) {                  \
-      rm[results_at(k)] = before[0];                                          \
-      rs[results_at(k)] = before[1];                                          \
-    }                                                                        \
-    if (at != NULL) {                                                         \
-      rm[results_at(NETWORK_P) + 1] = at[0];                                  \
-      rs[results_at(NETWORK_P) + 1] = at[1];                                  \
-    }                                                                         \
-    for (int k = NETWORK_P - 1; k >= 0; k--) {                                \
-      int64_t m = L >> k, u = results_at(k + 1), o = results_at(k);           \
-      const T *restrict um = rm + u, *restrict us = rs + u;                   \
-      const T *restrict bm = sm + states_at(k);                               \
-      const T *restrict bs = ss + states_at(k);                               \
-      T *restrict om = rm + o, *restrict os = rs + o;                         \
-      for (int64_t i = 0; i < m / 2; i++) {                                   \
-        om[2 * i + 2] = um[i + 1];                                            \
-        os[2 * i + 2] = us[i + 1];                                            \
-      }                                                                       \
-      int64_t i0 = 0;                                                         \
-      if (before == NULL && m > 0) {                                          \
-        om[1] = bm[0];                                                        \
-        os[1] = bs[0];                                                        \
-        i0 = 1;                                                               \
-      }                                                                       \
-      lse_down_##S(i0, (m + 1) / 2, um, us, bm, bs, om, os);                  \
-    }                                                                         \
-    for (int64_t i = 0; i < L; i++)                                           \
-      y[(t0 + i) * ys] = lse_result_##S(rm[1 + i], rs[1 + i]);                \
-  }                                                                           \
-  /* One slice, tile by tile, as tiles_ scans Moments. */                     \
-  static void lse_tiles_##S(const T *x, int64_t xs, T *y, int64_t ys,        \
-                            int64_t n, const nx_cpu_terms *src,              \
-                            T *scratch) {                                    \
-    T *sets = scratch + 4 * PT + 2 * (2 * PT + NETWORK_P + 1);                \
-    T *held[TILE_LEVELS], *in[TILE_LEVELS], *joined[TILE_LEVELS];            \
-    const T *got[TILE_LEVELS];                                               \
-    for (int k = 0; k < TILE_LEVELS; k++) {                                  \
-      held[k] = sets + 6 * k;                                                \
-      in[k] = held[k] + 2;                                                   \
-      joined[k] = in[k] + 2;                                                 \
-    }                                                                        \
-    T before[2];                                                              \
-    for (int64_t t0 = 0, q = 0; t0 < n; t0 += PT, q++) {                     \
-      int64_t L = n - t0 < PT ? n - t0 : PT;                                 \
-      const T *at = NULL;                                                     \
-      lse_tile_up_##S(x, xs, src, t0, L, scratch, L == PT ? in[0] : NULL);    \
-      if (L == PT) {                                                         \
-        stream_##S(lse_join_##S, 1, q, held, in, joined, got, NULL);          \
-        at = got[0];                                                          \
-      }                                                                      \
-      lse_tile_down_##S(t0, L, q > 0 ? before : NULL, at, y, ys, scratch);    \
-      for (int i = 0; at != NULL && i < 2; i++) before[i] = at[i];            \
-    }                                                                        \
+  static inline void lse_down_##S(int k, int64_t i0, int64_t e, T *const *u, \
+                                  const T *bm, const T *bs, T *const *o) {   \
+    (void)k;                                                                 \
+    lse_evens_##S(i0, e, u[0], u[1], bm, bs, o[0], o[1]);                    \
   }                                                                          \
-  /* A row of [w] terms' states, [w] maxima then [w] sums. */                 \
-  static void lse_in_##S(int64_t w, const T *x, const T *c, T *r) {           \
+  /* The results of [n] terms from term [t0], their maxima [rm] and sums     \
+     [rs], into [y], stepping [ys]. */                                       \
+  static void lse_outs_##S(int64_t n, int64_t t0, const T *restrict rm,      \
+                           const T *restrict rs, T *y, int64_t ys) {         \
+    for (int64_t i = 0; i < n; i++)                                          \
+      y[(t0 + i) * ys] = lse_result_##S(rm[i], rs[i]);                       \
+  }                                                                          \
+  static inline int lse_results_##S(int64_t L, T c, int64_t t0, T *const *r, \
+                                    T *ym, int64_t ms, T *yv, int64_t vs) {  \
     (void)c;                                                                 \
-    for (int64_t l = 0; l < w; l++) {                                        \
-      r[l] = x[l];                                                            \
-      r[w + l] = lse_leaf_##S(x[l]);                                          \
-    }                                                                        \
+    (void)yv;                                                                \
+    (void)vs;                                                                \
+    lse_outs_##S(L, t0, r[0], r[1], ym, ms);                                 \
+    return 0;                                                                \
   }                                                                          \
-  /* [w] slices side by side over terms [lo, hi), as pass_ scans Moments:     \
-     a state of rows of [w] maxima then [w] sums, terms and results           \
-     through rows of the scratch where their lanes are not contiguous. */     \
-  static void lse_pass_##S(const T *x, int64_t xs, int64_t xl, T *y,         \
-                           int64_t ys, int64_t yl, int64_t lo, int64_t hi,    \
-                           int64_t w, T *scratch, const nx_cpu_terms *src,    \
-                           const T *carry, const T *top) {                    \
-    int64_t size = 2 * w, tile = NX_CPU_NETWORK_TILE;                        \
-    int levels = nx_cpu_network_levels(hi - lo);                              \
-    T *tx = scratch + 3 * levels * size, *ty = tx + tile * w;                \
-    /* Computed terms are read from the tile's rows. */                      \
-    if (src != NULL) xl = 0;                                                 \
-    T *held[64], *in[64], *joined[64];                                       \
-    const T *got[64];                                                        \
-    for (int k = 0; k < levels; k++) {                                       \
-      held[k] = scratch + 3 * k * size;                                      \
-      in[k] = held[k] + size;                                                \
-      joined[k] = in[k] + size;                                              \
-    }                                                                        \
-    for (int64_t t0 = lo; t0 < hi; t0 += tile) {                              \
-      int64_t tn = hi - t0 < tile ? hi - t0 : tile;                           \
-      if (src != NULL) src->fill(src->ctx, t0, tn, (uint8_t *)tx);           \
-      else if (xl != 1) rows_##S(tn, w, x + t0 * xs, xs, xl, tx);            \
-      for (int64_t i = 0; i < tn; i++) {                                     \
-        int64_t t = t0 + i, p = t + NETWORK_AHEAD;                           \
-        if (p < hi && xl == 1) PREFETCH_ROW(x + p * xs, w, 0);                \
-        if (p < hi && yl == 1) PREFETCH_ROW(y + p * ys, w, 1);                \
-        const T *r = top;                                                     \
-        if (top == NULL || t < hi - 1) {                                      \
-          lse_in_##S(w, xl == 1 ? x + t * xs : tx + i * w, NULL, in[0]);      \
-          stream_##S(lse_join_##S, w, t - lo, held, in, joined, got, carry);  \
-          r = got[0];                                                         \
-        }                                                                     \
-        T *dy = yl == 1 ? y + t * ys : ty + i * w;                           \
-        for (int64_t l = 0; l < w; l++)                                      \
-          dy[l] = lse_result_##S(r[l], r[w + l]);                            \
-      }                                                                      \
-      if (yl != 1) unrows_##S(tn, w, ty, y + t0 * ys, ys, yl);               \
-    }                                                                        \
-  }                                                                          \
-  /* As moments_, Logsumexp's steps. */                                       \
-  static void logsumexp_##S(const uint8_t *x_, int64_t xs, int64_t xl,        \
-                            uint8_t *y_, int64_t ys, int64_t yl, uint8_t *y1, \
-                            int64_t s1, int64_t l1, int64_t n, int64_t w,     \
-                            uint8_t *scratch_, const nx_cpu_terms *src,       \
-                            nx_cpu_span *span) {                              \
-    (void)y1;                                                                \
-    (void)s1;                                                                \
-    (void)l1;                                                                \
-    const T *x = (const T *)x_;                                              \
-    T *y = (T *)y_, *scratch = (T *)scratch_;                                 \
-    if (span == NULL) {                                                       \
-      if (w == 1) lse_tiles_##S(x, xs, y, ys, n, src, scratch);               \
-      else                                                                   \
-        lse_pass_##S(x, xs, xl, y, ys, yl, 0, n, w, scratch, src, NULL, NULL); \
-      return;                                                                 \
-    }                                                                        \
-    int64_t size = 2 * w;                                                     \
-    T *states = (T *)span->states;                                            \
-    if (span->step == NX_CPU_CARRIES) {                                       \
-      carries_##S(lse_join_##S, size, w, span->q1, states, scratch);          \
-      return;                                                                 \
-    }                                                                         \
-    for (int64_t q = span->q0; q < span->q1; q++) {                           \
-      int64_t t0 = q * PT, L = n - t0 < PT ? n - t0 : PT;                     \
-      T *st = states + q * size;                                              \
-      const T *before = q > 0 ? st - size : NULL, *at = L == PT ? st : NULL;  \
-      if (span->step == NX_CPU_TOTALS && w == 1)                              \
-        lse_tile_up_##S(x, xs, src, t0, PT, scratch, st);                     \
-      else if (span->step == NX_CPU_TOTALS)                                   \
-        total_##S(lse_join_##S, lse_in_##S, size, x, xs, xl, NULL, t0, w,     \
-                  scratch, src, st);                                          \
-      else if (w == 1) {                                                      \
-        lse_tile_up_##S(x, xs, src, t0, L, scratch, NULL);                    \
-        lse_tile_down_##S(t0, L, before, at, y, ys, scratch);                 \
-      } else                                                                 \
-        lse_pass_##S(x, xs, xl, y, ys, yl, t0, t0 + L, w, scratch, src,       \
-                     before, at);                                             \
-    }                                                                        \
-  }
+  NETWORK(T, S, lse, 2, 2, 1)
 
 STATES(float, f32, NX_NAN_F32, -87)
 STATES(double, f64, NX_NAN_F64, -708)
@@ -2042,10 +1988,10 @@ static void set(nx_cpu_target *t) {
   SET(NX_MONOID_MIN, NX_BOOL, min_b);
   ALL4(NX_COMPLEX64, c64);
   ALL4(NX_COMPLEX128, c128);
-  t->logsumexp[NX_FLOAT32] = logsumexp_f32;
-  t->logsumexp[NX_FLOAT64] = logsumexp_f64;
-  t->moments[NX_FLOAT32] = moments_f32;
-  t->moments[NX_FLOAT64] = moments_f64;
+  t->logsumexp[NX_FLOAT32] = lse_network_f32;
+  t->logsumexp[NX_FLOAT64] = lse_network_f64;
+  t->moments[NX_FLOAT32] = moments_network_f32;
+  t->moments[NX_FLOAT64] = moments_network_f64;
   t->products[NX_FLOAT32] = products_f32;
   t->products[NX_FLOAT64] = products_f64;
 }
