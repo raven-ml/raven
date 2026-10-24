@@ -213,7 +213,9 @@ let handle_client_msg st = function
       let cell_ids =
         List.filter_map
           (fun c ->
-            match c with Cell.Code { id; _ } -> Some id | Text _ -> None)
+            match c with
+            | Cell.Code { id; _ } when Cell.is_ocaml c -> Some id
+            | Code _ | Text _ -> None)
           (Doc.cells (Session.doc st.session))
       in
       enqueue_execution st cell_ids

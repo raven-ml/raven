@@ -7214,6 +7214,7 @@ thread.
 
 ### Quill
 
+- Execute only OCaml cells; blocks in other languages are left as written.
 - A cell that raises `Failure` or `Invalid_argument` shows its message as
   written, as in `Exception: Failure: msg`, where the toplevel printed it as
   a string literal with escaped newlines and quotes.

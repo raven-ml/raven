@@ -149,6 +149,11 @@ val source : t -> string
 val attrs : t -> attrs
 (** [attrs c] is the display attributes of cell [c]. *)
 
+val is_ocaml : t -> bool
+(** [is_ocaml c] is [true] iff [c] is a code cell in OCaml, the language the
+    kernel runs. A fenced block in another language (["bash"], ["json"],
+    ["python"], or none) is a code cell that is shown and never executed. *)
+
 (** {1:transformations Transformations} *)
 
 val set_source : string -> t -> t

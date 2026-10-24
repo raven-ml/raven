@@ -14,10 +14,10 @@ let run ~create_kernel doc =
   List.iter
     (fun cell ->
       match cell with
-      | Cell.Code { id; source; _ } ->
+      | Cell.Code { id; source; _ } when Cell.is_ocaml cell ->
           kernel.execute ~cell_id:id ~code:source;
           doc := Doc.update id Cell.increment_execution_count !doc
-      | Cell.Text _ -> ())
+      | Cell.Code _ | Cell.Text _ -> ())
     (Doc.cells !doc);
   kernel.shutdown ();
   !doc
