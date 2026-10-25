@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (* Reductions, scans and contractions lowered, against nx's eager result on the
-   same operands: bit for bit where the lowering is exact, within the bound
-   Lower_reduce states elsewhere. *)
+   same operands, or a float64 reference: bit for bit where the lowering is
+   exact, within the bound Lower_reduce states elsewhere. *)
 
 open Windtrap
 module D = Nx_array.Dtype
@@ -113,10 +113,12 @@ let negative (type s) (dt : (float, s) D.t) r =
 
 let among xs = Gen.one_of (List.map Gen.constant xs)
 
-(* [float_raw ~spread dt] draws a float of [dt] whose finite numbers lie within
-   [2^±spread], with zeros, infinities, NaNs of any sign and payload, and
+(* [float_raw ~special ~spread ~subnormal dt] draws a float of [dt] whose
+   finite numbers lie within [2^±spread], with zeros, infinities and NaNs of
+   any sign and payload, of weights [2 special], [special] and [2 special], and
    subnormals of weight [subnormal] against the numbers' 10. *)
-let float_raw (type s) ~spread ~subnormal (dt : (float, s) D.t) =
+let float_raw (type s) ?(special = 1) ~spread ~subnormal (dt : (float, s) D.t)
+    =
   let open Gen in
   let e, f = format dt in
   let bias = (1 lsl (e - 1)) - 1 and top = (1 lsl e) - 1 in
@@ -129,9 +131,9 @@ let float_raw (type s) ~spread ~subnormal (dt : (float, s) D.t) =
     frequency
       [
         (10, constant Number);
-        (2, constant Zero);
-        (1, constant Inf);
-        (2, constant Nan);
+        (2 * special, constant Zero);
+        (special, constant Inf);
+        (2 * special, constant Nan);
         (subnormal, constant Subnormal);
       ]
   in
@@ -170,9 +172,9 @@ let int_raw (type v s) (dt : (v, s) D.t) =
         (1, int64);
       ]
 
-let raw ~spread ~subnormal (D.Any dt) =
+let raw ?special ~spread ~subnormal (D.Any dt) =
   match D.kind dt with
-  | D.Float -> float_raw ~spread ~subnormal dt
+  | D.Float -> float_raw ?special ~spread ~subnormal dt
   | D.Complex -> float_raw ~spread ~subnormal D.Float64
   | _ -> int_raw dt
 
@@ -398,17 +400,26 @@ let hex dt v =
 let same_bits dt eager lowered =
   equal (array string) (Array.map (hex dt) eager) (Array.map (hex dt) lowered)
 
-(* Whether [v] is a NaN, a complex number where a part is. *)
+(* Whether [v] is a NaN, or a complex number with a NaN part. *)
 let is_nan (type v s) (dt : (v, s) D.t) (v : v) =
   match D.kind dt with
   | D.Float -> Float.is_nan v
   | D.Complex -> Float.is_nan v.Complex.re || Float.is_nan v.im
   | _ -> false
 
-(* [same_bits], a NaN matching any NaN: which NaN is unspecified. *)
+(* Whether [v] is a NaN, or a complex number of two NaN parts. *)
+let all_nan (type v s) (dt : (v, s) D.t) (v : v) =
+  match D.kind dt with
+  | D.Complex -> Float.is_nan v.Complex.re && Float.is_nan v.im
+  | _ -> is_nan dt v
+
+(* [same_values dt eager lowered] is [same_bits] but that a NaN result may be
+   any NaN, which for a complex extreme has two NaN parts. *)
 let same_values dt eager lowered =
-  let show v = if is_nan dt v then "nan" else hex dt v in
-  equal (array string) (Array.map show eager) (Array.map show lowered)
+  let shown nan v = if nan v then "nan" else hex dt v in
+  equal (array string)
+    (Array.map (shown (is_nan dt)) eager)
+    (Array.map (shown (all_nan dt)) lowered)
 
 let float_kind x =
   if Float.is_nan x then "nan"
@@ -428,10 +439,10 @@ let part_bits (type v s) (dt : (v, s) D.t) : float -> string =
       | D.Float -> hex dt
       | _ -> invalid_arg "part_bits: not a float")
 
-(* [near ~bits ~zeros ~bound e l] checks [l] against [e]: a NaN where [e] is one,
-   the same infinity, the same zero where [zeros], and otherwise within [bound],
-   inclusive. A zero against a number is within the bound or not, as any other
-   difference. *)
+(* [near ~bits ~zeros ~bound e l] checks [l] against [e]: a NaN where [e] is
+   one, the same infinity, the same zero where [zeros], and otherwise within
+   [bound], inclusive. A zero against a number is within the bound or not, as
+   any other difference. *)
 let near ?(zeros = true) ~bits ~bound e l =
   let msg = Printf.sprintf "%h (%s) against %h (%s)" e (bits e) l (bits l) in
   let unsigned k = if zeros || (k <> "+0" && k <> "-0") then k else "0" in
@@ -684,7 +695,7 @@ let extremes =
       (examples
          D.[ Any Float32; Any Float16; Any Bool; Any Int8; Any Complex64 ]
          [ Max; Min ])
-    "extremes give eager's bits"
+    "extremes give eager's values"
     (case dts [ Max; Min ])
     (fun c ->
       assume (not (refused c));
@@ -753,7 +764,7 @@ let extreme_scans =
       (examples ~scan:true
          D.[ Any Float32; Any Float16; Any Bool; Any Complex64 ]
          [ Max; Min ])
-    "extreme scans give eager's bits"
+    "extreme scans give eager's values"
     (case ~scan:true dts [ Max; Min ])
     (fun c ->
       cover_monoids c [ Max; Min ];
@@ -792,6 +803,347 @@ let complex_scans =
     (fun c ->
       cover "a carry" (c.carry <> None);
       bounded ~scan:true c)
+
+(* Logsumexp, Moments and Arg
+
+   Arg gives eager's values and positions. Logsumexp and Moments, into the
+   operand's dtype, hold the bounds Lower_reduce states, plus the rounding
+   into a destination narrower than the carrier, against a float64 reference:
+   OCaml's [Float] functions on the terms, the special values from
+   {!Nx_kernel.type-reduction}. The reference is in error by the reduction's
+   bounds at float64's unit roundoff, with glibc's [exp] and [log] within an
+   ulp; for float64 the two errors add. *)
+
+(* [E] and [L], the bounds in ulps Lower_real states for [Exp] and [Log] at
+   float32 and float64. *)
+let exp_ulps = 9.
+let log_ulps = 9.
+let u64 = Float.ldexp 1. (-53)
+
+(* The loop of [x]'s identity by [r]: reduced along [c]'s axes, or scanned
+   along its first where [scan]. *)
+let by (type a) ~scan (r : (Nx.host, a) P.reduction) c x () : a =
+  let layout = Nx_array.Layout.contiguous (Nx.shape x) in
+  let prog = identity (Nx.dtype x) and loads = Iarray.of_list [ P.Plain x ] in
+  if scan then
+    P.eval ~by:"t"
+      (P.Scan
+         {
+           layout;
+           axis = List.hd c.axes;
+           prog;
+           reduction = r;
+           loads;
+           carry = None;
+         })
+  else
+    fst
+      (P.eval ~by:"t"
+         (P.Reduce
+            {
+              layout;
+              axes = Iarray.of_list c.axes;
+              prog;
+              reductions = [ r ];
+              loads;
+            }))
+
+let extreme c : K.extreme = if c.m = Max then Max else Min
+
+let arg_law ~scan c =
+  let (D.Any dt) = c.dt in
+  let op = by ~scan (Arg (extreme c, 0, dt)) c (operand dt c) in
+  same_values dt
+    (Nx.to_array (fst (op ())))
+    (Lowered.run (fun () -> fst (op ())));
+  equal (array int64)
+    (Nx.to_array (snd (op ())))
+    (Lowered.run (fun () -> snd (op ())))
+
+(* [slices ~scan c xs] is the terms of each result of [c] in C order, of the
+   elements [xs] of its operand: a reduction's along its axes, a scan's along
+   its axis up to the result's index. *)
+let slices ~scan c xs =
+  let s = c.shape in
+  let r = Array.length s in
+  let reduced a = if scan then a = List.hd c.axes else List.mem a c.axes in
+  let kept = List.filter (fun a -> not (reduced a)) (List.init r Fun.id) in
+  let index i =
+    let idx = Array.make r 0 and rest = ref i in
+    for a = r - 1 downto 0 do
+      idx.(a) <- !rest mod s.(a);
+      rest := !rest / s.(a)
+    done;
+    idx
+  in
+  let key idx = List.fold_left (fun k a -> (k * s.(a)) + idx.(a)) 0 kept in
+  let groups = Array.make (List.fold_left (fun n a -> n * s.(a)) 1 kept) [] in
+  Array.iteri
+    (fun i x ->
+      let k = key (index i) in
+      groups.(k) <- x :: groups.(k))
+    xs;
+  let groups = Array.map List.rev groups in
+  if not scan then groups
+  else
+    Array.init (numel s) (fun i ->
+        let idx = index i in
+        List.filteri (fun j _ -> j <= idx.(List.hd c.axes)) groups.(key idx))
+
+let lse ts =
+  let has p = List.exists p ts in
+  if has Float.is_nan then Float.nan
+  else if has (Float.equal Float.infinity) then Float.infinity
+  else if List.for_all (Float.equal Float.neg_infinity) ts then
+    Float.neg_infinity
+  else
+    let m = List.fold_left Float.max Float.neg_infinity ts in
+    m +. Float.log (List.fold_left (fun s t -> s +. Float.exp (t -. m)) 0. ts)
+
+let moments ts =
+  let n = Float.of_int (List.length ts) in
+  let sum f = List.fold_left (fun s t -> s +. f t) 0. ts in
+  let mean = sum Fun.id /. n in
+  if not (Float.is_finite mean) then (mean, Float.nan)
+  else
+    let d t = t -. mean in
+    let s1 = sum d and s2 = sum (fun t -> d t *. d t) in
+    (mean, Float.max 0. ((s2 -. (s1 *. (s1 /. n))) /. n))
+
+let lse_bound u ~e ~l n r =
+  let n = Float.of_int (max 1 n) in
+  ((((1. +. Float.exp (-1.)) *. (n -. 1.)) +. (2. *. e) +. 1.
+   +. (((2. *. l) +. 1.) *. Float.log n))
+  *. u)
+  +. (u *. Float.abs r)
+
+let mean_bound u n mag = Float.of_int (n + 1) *. u *. mag
+
+(* [depth n] is the network's [D] at a result of [n] terms:
+   [max 0 (2⌈log₂ n⌉ - 1)]. *)
+let depth n =
+  let rec log k p = if p >= n then k else log (k + 1) (2 * p) in
+  Float.of_int (max 0 ((2 * log 0 1) - 1))
+
+let lse_scan_bound u ~e ~l n r =
+  let d = depth n and n = Float.of_int (max 1 n) in
+  ((((2. *. e) +. 3.) *. d) +. (((2. *. l) +. 2.) *. Float.log n)) *. u
+  +. (u *. Float.abs r)
+
+let mean_scan_bound u n range mean =
+  (((4. *. depth n) +. 1.) *. u *. range) +. (u *. Float.abs mean)
+
+let var_scan_bound u n range v =
+  let d = depth n in
+  (((7. *. d) +. 1.) *. u *. v)
+  +. (((4. *. d *. d) -. (2. *. d)) *. u *. range *. Float.sqrt v)
+
+let var_bound u n mag v =
+  let b = mean_bound u n mag and n = Float.of_int n in
+  ((n +. 4.) *. u *. v)
+  +. (2. *. n *. u *. b *. Float.sqrt v)
+  +. (3. *. (n +. 2.) *. u *. b *. b)
+
+(* Each part's error is first order: [1.01] holds the rest. A rounding below the
+   least normal errs by up to half the least subnormal [eta]. *)
+let close (type s) (dt : (float, s) D.t) ~eta n ~ours ~reference e l =
+  let tiny = Float.of_int (2 * (n + 4)) *. eta in
+  let bound = (1.01 *. (ours +. reference)) +. tiny in
+  near ~zeros:false ~bits:(hex dt) ~bound e l
+
+let cover_slices tss =
+  let any p = Array.exists p tss in
+  let finite ts = List.filter (fun t -> Float.is_finite t && t <> 0.) ts in
+  let spread ts =
+    match List.map Float.abs (finite ts) with
+    | [] -> 1.
+    | a :: r ->
+        List.fold_left Float.max a r /. List.fold_left Float.min a r
+  in
+  cover "a slice of -∞ alone"
+    (any (fun ts ->
+         ts <> [] && List.for_all (Float.equal Float.neg_infinity) ts));
+  cover "a slice of one term" (any (fun ts -> List.length ts = 1));
+  cover "a slice of over 1000 finite terms"
+    (any (fun ts -> List.length ts > 1000 && List.for_all Float.is_finite ts));
+  cover "a slice spread past 2^20" (any (fun ts -> spread ts > 0x1p20));
+  cover "a NaN term" (any (List.exists Float.is_nan));
+  cover "an infinity"
+    (any (List.exists (fun t -> Float.abs t = Float.infinity)));
+  cover "a zero" (any (List.exists (Float.equal 0.)))
+
+let float_law (type s) ~scan which c (dt : (float, s) D.t) =
+  let (K.Any_float cd) = K.float_carrier dt in
+  let x = operand dt c in
+  let tss = slices ~scan c (Nx.to_array (Nx.cast D.Float64 x)) in
+  cover_slices tss;
+  cover "a narrow destination"
+    (not (List.mem c.dt D.[ Any Float32; Any Float64 ]));
+  let u = carrier_roundoff c.dt in
+  let eta = match cd with D.Float64 -> 0x1p-1074 | _ -> 0x1p-149 in
+  (* The references rounded into [dt], as the results are. *)
+  let rounded es =
+    let es = Nx.create D.Float64 [| Array.length es |] es in
+    Nx.to_array (Nx.cast D.Float64 (Nx.cast dt es))
+  in
+  let close n e l ~ours ~reference =
+    close dt ~eta n e l ~ours:(ours +. rounding dt e l) ~reference
+  in
+  match which with
+  | `Logsumexp ->
+      let l = Lowered.run (by ~scan (Logsumexp (0, dt)) c x) in
+      let es = rounded (Array.map lse tss) in
+      Array.iteri
+        (fun i ts ->
+          let n = List.length ts and e = es.(i) in
+          let ours =
+            if scan then lse_scan_bound u ~e:exp_ulps ~l:log_ulps n e
+            else lse_bound u ~e:exp_ulps ~l:log_ulps n e
+          in
+          close n e l.(i) ~ours ~reference:(lse_bound u64 ~e:1. ~l:1. n e))
+        tss
+  | `Moments ->
+      let op = by ~scan (Moments (0, dt)) c x in
+      let mean = Lowered.run (fun () -> fst (op ())) in
+      let var = Lowered.run (fun () -> snd (op ())) in
+      let ems = rounded (Array.map (fun ts -> fst (moments ts)) tss) in
+      let evs = rounded (Array.map (fun ts -> snd (moments ts)) tss) in
+      Array.iteri
+        (fun i ts ->
+          let n = List.length ts and em = ems.(i) and ev = evs.(i) in
+          let mag =
+            List.fold_left (fun s t -> s +. Float.abs t) 0. ts /. Float.of_int n
+          in
+          let range =
+            List.fold_left Float.max Float.neg_infinity ts
+            -. List.fold_left Float.min Float.infinity ts
+          in
+          let ours_mean, ours_var =
+            if scan then
+              (mean_scan_bound u n range em, var_scan_bound u n range ev)
+            else (mean_bound u n mag, var_bound u n mag ev)
+          in
+          close n em mean.(i) ~ours:ours_mean
+            ~reference:(mean_bound u64 n mag);
+          close n ev var.(i) ~ours:ours_var
+            ~reference:(var_bound u64 n mag ev);
+          equal ~msg:(Printf.sprintf "variance %h" var.(i)) bool false
+            (var.(i) < 0.))
+        tss
+
+let floating ~scan which c =
+  let (D.Any dt) = c.dt in
+  match D.kind dt with
+  | D.Float -> float_law ~scan which c dt
+  | _ -> invalid_arg "floating: not a float"
+
+(* Rows of -∞ alone; of numbers [2^40] apart; and of a mean far from its
+   deviations, [4096.5] and [4097]. *)
+let spread_example =
+  {
+    dt = D.Any D.Float32;
+    m = Sum;
+    shape = [| 3; 4 |];
+    view = Plain;
+    axes = [ 1 ];
+    raws =
+      Array.concat
+        [
+          Array.make 4 0xff800000L;
+          [| 0x3f800000L; 0x21800000L; 0x53800000L; 0xd3800000L |];
+          [| 0x45800400L; 0x45800800L; 0x45800400L; 0x45800800L |];
+        ];
+    carry = None;
+  }
+
+(* A row of the [n] terms [sin i] of [dt], [float32] or [float16]. *)
+let sine_row dt n =
+  let ts = Array.init n (fun i -> Float.sin (Float.of_int i)) in
+  let raws =
+    match dt with
+    | D.Any D.Float32 ->
+        Array.map Int64.of_int32
+          (Nx.to_array (Nx.bitcast D.Int32 (Nx.create D.Float32 [| n |] ts)))
+    | _ ->
+        Array.map Int64.of_int
+          (Nx.to_array (Nx.bitcast D.Uint16 (Nx.create D.Float16 [| n |] ts)))
+  in
+  { spread_example with dt; shape = [| 1; n |]; raws }
+
+(* A row of hundreds to thousands of finite terms within [2^±spread], which
+   reaches the bounds' growth with the number of terms. *)
+let long_row =
+  let open Gen in
+  let* dt = among floats in
+  let* n = int_range 100 2000 in
+  let* spread = among [ 0; 2; 30 ] in
+  let+ raws =
+    array ~size:(constant n) (raw ~special:0 ~spread ~subnormal:0 dt)
+  in
+  { spread_example with dt; shape = [| 1; n |]; raws }
+
+let float_examples ~scan =
+  spread_example
+  :: sine_row (D.Any D.Float32) 1500
+  :: sine_row (D.Any D.Float16) 300
+  :: List.map
+       (fun c -> { c with carry = None })
+       (examples ~scan D.[ Any Float32; Any Float16; Any Float64 ] [ Sum ])
+
+let float_prop ~scan which name =
+  let short = case ~spread:30 ~scan (weigh 1 floats) [ Sum ] in
+  prop ~count:10 ~examples:(float_examples ~scan) name
+    (Gen.frequency [ (3, short); (1, Gen.with_pp pp_case long_row) ])
+    (fun c ->
+      let c = { c with carry = None } in
+      cover "an empty axis" (List.exists (fun a -> c.shape.(a) = 0) c.axes);
+      floating ~scan which c)
+
+let logsumexps =
+  float_prop ~scan:false `Logsumexp "a logsumexp holds its bound"
+
+let logsumexp_scans =
+  float_prop ~scan:true `Logsumexp "a running logsumexp holds its bound"
+
+let moment_reductions =
+  float_prop ~scan:false `Moments "moments hold their bounds"
+
+let moment_scans =
+  float_prop ~scan:true `Moments "running moments hold their bounds"
+
+let arg_prop ~scan dts name =
+  prop ~count:20
+    ~examples:
+      (List.map
+         (fun c -> { c with carry = None })
+         (examples ~scan
+            D.[ Any Float32; Any Float16; Any Bool; Any Int8; Any Complex64 ]
+            [ Max; Min ]))
+    name (case ~scan dts [ Max; Min ])
+    (fun c ->
+      let c = { c with carry = None } in
+      assume (scan || not (refused c));
+      cover_monoids c [ Max; Min ];
+      cover_floats c;
+      if not scan then cover_shapes c;
+      cover "a boolean" (is_bool c.dt);
+      cover "a complex number" (is_complex c.dt);
+      cover "an integer"
+        (not (is_float c.dt || is_bool c.dt || is_complex c.dt));
+      arg_law ~scan c)
+
+let arg_dts =
+  weigh 3 floats @ weigh 2 ints
+  @ weigh 4 D.[ Any Bool; Any Bit ]
+  @ weigh 3 complexes
+
+let args =
+  arg_prop ~scan:false arg_dts "an arg gives eager's values and positions"
+
+let arg_scans =
+  arg_prop ~scan:true
+    (List.filter (fun (_, d) -> d <> D.Any D.Complex128) arg_dts)
+    "a running arg gives eager's values and positions"
 
 (* Contractions
 
@@ -1021,9 +1373,24 @@ let empty dt =
   in
   [ c; { c with init = Some (Array.make (raws_of dt 2) 0x80000000L) } ]
 
+(* A contraction over two axes with an init, every run: [ones] are the raws
+   of [1] of the dtype. *)
+let two_axes dt ones =
+  let c = List.hd (empty dt) in
+  {
+    c with
+    ek = [| 2; 2 |];
+    ra = [| F 0; C 0; C 1 |];
+    rb = [| C 1; C 0 |];
+    araws = Array.make 8 ones;
+    braws = Array.make 4 ones;
+    init = Some [| ones; ones |];
+  }
+
 let int_contractions =
   let accs d = [ d; D.Any D.Int64 ] in
-  prop ~count:12 ~examples:(empty (D.Any D.Int32))
+  prop ~count:12
+    ~examples:(two_axes (D.Any D.Int32) 1L :: empty (D.Any D.Int32))
     "integer contractions wrap as eager's"
     (contraction (weigh 1 ints) accs)
     (fun c ->
@@ -1038,7 +1405,9 @@ let float_contractions =
     | D.Float32 -> [ dt; D.Any D.Float64 ]
     | _ -> [ D.Any D.Float32 ]
   in
-  prop ~count:12 ~examples:(empty (D.Any D.Float32))
+  prop ~count:12
+    ~examples:
+      (two_axes (D.Any D.Float32) 0x3f800000L :: empty (D.Any D.Float32))
     "float contractions hold their bound"
     (contraction (weigh 1 floats) accs)
     (fun c ->
@@ -1084,7 +1453,7 @@ let pooled m fill =
               loads = Iarray.of_list [ P.Padded { x; fill; pad } ];
             }))
   in
-  same_bits D.Float32 (Nx.to_array (op ())) (Lowered.run op)
+  same_values D.Float32 (Nx.to_array (op ())) (Lowered.run op)
 
 (* Three reductions of one output in one loop. *)
 let several () =
@@ -1237,77 +1606,6 @@ let refused_complex ~scan m () =
     (function Invalid_argument _ -> true | _ -> false)
     (fun () -> Lowered.run op)
 
-(* Expansions: the operations lower through plain reductions and maps. *)
-
-let nan_payload = Int32.float_of_bits 0xffa00001l
-
-let arg e () =
-  let x =
-    f32 [| 2; 4 |] [| 1.; -0.; 0.; 1.; 2.; nan_payload; Float.nan; 7. |]
-  in
-  let op () =
-    fst
-      (P.eval ~by:"t"
-         (P.Reduce
-            {
-              layout = Nx_array.Layout.contiguous [| 2; 4 |];
-              axes = Iarray.of_list [ 1 ];
-              prog = identity D.Float32;
-              reductions = [ Arg (e, 0, D.Float32) ];
-              loads = Iarray.of_list [ P.Plain x ];
-            }))
-  in
-  same_bits D.Float32
-    (Nx.to_array (fst (op ())))
-    (Lowered.run (fun () -> fst (op ())));
-  equal (array int64)
-    (Nx.to_array (snd (op ())))
-    (Lowered.run (fun () -> snd (op ())))
-
-(* Float32 sums of 4 terms below 8: their orders differ by at most [2 γ(3) 32 ≈
-   1.2e-5] in the mean, more through the variance's squares. *)
-let moments () =
-  let x = f32 [| 2; 4 |] [| 1.5; -2.; 0.25; 7.; 3.; 3.; 3.; -1. |] in
-  let op () =
-    fst
-      (P.eval ~by:"t"
-         (P.Reduce
-            {
-              layout = Nx_array.Layout.contiguous [| 2; 4 |];
-              axes = Iarray.of_list [ 1 ];
-              prog = identity D.Float32;
-              reductions = [ Moments (0, D.Float32) ];
-              loads = Iarray.of_list [ P.Plain x ];
-            }))
-  in
-  equal
-    (array (float 1e-4))
-    (Nx.to_array (fst (op ())))
-    (Lowered.run (fun () -> fst (op ())));
-  equal
-    (array (float 1e-4))
-    (Nx.to_array (snd (op ())))
-    (Lowered.run (fun () -> snd (op ())))
-
-(* Float32 exponentials and a logarithm of a sum of 4 terms: a few ulps. *)
-let logsumexp () =
-  let x =
-    f32 [| 2; 4 |] [| 1.5; -2.; 0.25; 7.; Float.neg_infinity; 3.; 3.; -1. |]
-  in
-  let op () =
-    fst
-      (P.eval ~by:"t"
-         (P.Reduce
-            {
-              layout = Nx_array.Layout.contiguous [| 2; 4 |];
-              axes = Iarray.of_list [ 1 ];
-              prog = identity D.Float32;
-              reductions = [ Logsumexp (0, D.Float32) ];
-              loads = Iarray.of_list [ P.Plain x ];
-            }))
-  in
-  equal (array (float 1e-5)) (Nx.to_array (op ())) (Lowered.run op)
-
 (* A boolean is its byte: the bytes a reduction or a scan of booleans leaves are
    eager's. *)
 let bool_bytes ~scan m () =
@@ -1324,6 +1622,15 @@ let bool_bytes ~scan m () =
   in
   equal (array int) (Nx.to_array (op ())) (Lowered.run op)
 
+(* A float32 running variance of [0, 4e19, 0, 0]: the squared deviations
+   overflow from the second term on, which gives eager's [+∞] variances. *)
+let moments_overflow () =
+  let x = Nx.create D.Float32 [| 4 |] [| 0.; 4e19; 0.; 0. |] in
+  let c = { spread_example with shape = [| 4 |]; axes = [ 0 ] } in
+  let op () = snd (by ~scan:true (Moments (0, D.Float32)) c x ()) in
+  let inf = Float.infinity in
+  equal (array float_exact) [| 0.; inf; inf; inf |] (Lowered.run op)
+
 let cases =
   group "cases"
     [
@@ -1331,9 +1638,9 @@ let cases =
       test "booleans' all keeps eager's bytes" (bool_bytes ~scan:false Min);
       test "booleans' running any keeps eager's bytes"
         (bool_bytes ~scan:true Max);
-      test "a max-pooling window gives eager's bits" (fun () ->
+      test "a max-pooling window gives eager's values" (fun () ->
           pooled Max Float.neg_infinity);
-      test "a min-pooling window gives eager's bits" (fun () ->
+      test "a min-pooling window gives eager's values" (fun () ->
           pooled Min Float.infinity);
       test "several reductions of one loop" several;
       test "a uint16 product wraps past int" (uint16_products ~scan:false);
@@ -1355,10 +1662,7 @@ let cases =
         (refused_complex ~scan:true Prod);
       test "a complex128 running maximum is refused"
         (refused_complex ~scan:true Max);
-      test "an argmax gives eager's bits and positions" (arg Max);
-      test "an argmin gives eager's bits and positions" (arg Min);
-      test "moments within float32 sums' differences" moments;
-      test "a logsumexp within a few ulps" logsumexp;
+      test "a running variance that overflows is +∞" moments_overflow;
     ]
 
 let () =
@@ -1368,6 +1672,15 @@ let () =
          group "reductions"
            [ extremes; int_folds; float_sums; float_products; complex_sums ];
          group "scans" [ extreme_scans; int_scans; float_scans; complex_scans ];
+         group "logsumexp, moments and arg"
+           [
+             logsumexps;
+             logsumexp_scans;
+             moment_reductions;
+             moment_scans;
+             args;
+             arg_scans;
+           ];
          group "contractions"
            [ int_contractions; float_contractions; complex_contractions ];
          cases;

@@ -127,43 +127,34 @@ let body (node : 'v 's 'e. ('v, 's, 'e) Nx.t -> Ops.t) layout prog loads =
 let output prog k =
   Nx_kernel.Prog.dtype prog (Iarray.get prog.Nx_kernel.Prog.outs k)
 
-(* [reduction r] is the monoid and the output a reduction folds where a graph
-   folds it, and its dtype. *)
-let reduction (type d a) (r : (d, a) P.reduction) =
+(* [reduction r] is what [r] computes, the output it reads and its result's
+   dtype. *)
+let reduction (type d a) (r : (d, a) P.reduction) :
+    Nx_kernel.reduction * int * D.any =
   match r with
-  | Monoid (m, k, dt) -> Some (m, k, D.Any dt)
-  | Logsumexp _ | Moments _ | Arg _ -> None
+  | Monoid (m, k, dt) -> (Monoid m, k, D.Any dt)
+  | Logsumexp (k, dt) -> (Logsumexp, k, D.Any dt)
+  | Moments (k, dt) -> (Moments, k, D.Any dt)
+  | Arg (e, k, dt) -> (Arg e, k, D.Any dt)
 
 let rec reductions : type d r.
-    (d, r) P.reductions -> (Nx_kernel.monoid * int * D.any) list option =
- function
-  | [] -> Some []
-  | r :: rest -> (
-      match (reduction r, reductions rest) with
-      | Some m, Some ms -> Some (m :: ms)
-      | _ -> None)
+    (d, r) P.reductions -> (Nx_kernel.reduction * int * D.any) list = function
+  | [] -> []
+  | r :: rest -> reduction r :: reductions rest
 
 let reduce (node : 'v 's 'e. ('v, 's, 'e) Nx.t -> Ops.t) layout axes prog rs
     loads =
-  match reductions rs with
-  | None -> None
-  | Some rs ->
-      let ys = body node layout prog loads in
-      let axes = Iarray.to_list axes in
-      let fold (m, k, dt) =
-        Reduce.reduce m axes ~src:(output prog k) dt ys.(k)
-      in
-      Some (Array.of_list (List.map fold rs))
+  let ys = body node layout prog loads in
+  let axes = Iarray.to_list axes in
+  let fold (r, k, dt) = Reduce.reduce r axes ~src:(output prog k) dt ys.(k) in
+  Array.of_list (List.concat_map fold (reductions rs))
 
 let scan (node : 'v 's 'e. ('v, 's, 'e) Nx.t -> Ops.t) layout axis prog r loads
     carry =
-  match reduction r with
-  | None -> None
-  | Some (m, k, dt) ->
-      let ys = body node layout prog loads in
-      let src = output prog k in
-      let carry = Option.map (fun (P.Any c) -> node c) carry in
-      Some [| Reduce.scan m axis ~carry ~src dt ys.(k) |]
+  let r, k, dt = reduction r in
+  let ys = body node layout prog loads in
+  let carry = Option.map (fun (P.Any c) -> node c) carry in
+  Array.of_list (Reduce.scan r axis ~carry ~src:(output prog k) dt ys.(k))
 
 (* Movements
 
@@ -243,7 +234,7 @@ let bitcast dt x u =
 
 let op (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r) (o : r P.t) =
   match o with
-  | Map { layout; prog; loads; outs = _ } -> Some (body node layout prog loads)
+  | Map { layout; prog; loads; outs = _ } -> body node layout prog loads
   | Reduce { layout; axes; prog; reductions = rs; loads } ->
       reduce node layout axes prog rs loads
   | Scan { layout; axis; prog; reduction = r; loads; carry } ->
@@ -263,15 +254,14 @@ let op (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r) (o : r P.t) =
         order = _;
       } ->
       let operand x = (D.Any (Nx.dtype x), node x) in
-      Some
-        [|
-          Reduce.contract ~batch ~contracting ~acc ~out:(D.Any out) (operand a)
-            (operand b) (Option.map node init);
-        |]
+      [|
+        Reduce.contract ~batch ~contracting ~acc ~out:(D.Any out) (operand a)
+          (operand b) (Option.map node init);
+      |]
   | Contract _ -> unlowered "a scaled or segmented Contract"
-  | Copy x -> Some [| node x |]
-  | Move (m, x) -> Some [| move m x (node x) |]
-  | Bitcast (dt, x) -> Some [| bitcast dt x (node x) |]
+  | Copy x -> [| node x |]
+  | Move (m, x) -> [| move m x (node x) |]
+  | Bitcast (dt, x) -> [| bitcast dt x (node x) |]
   | Gather _ | Scatter _ | Sort _ | Fold _ | Assemble _ | Fft _ | Linalg _
   | Place _ | Check _ ->
       unlowered (P.name o)

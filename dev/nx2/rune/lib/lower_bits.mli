@@ -51,10 +51,6 @@ val nan : Ops.t -> Ops.t
 (** [nan x] is the quiet NaN of a clear sign bit and no other fraction bit, of
     the float type and shape of [x]. *)
 
-val quieted : Ops.t -> Ops.t
-(** [quieted x] is the float [x] with its quiet bit, the fraction's first, set:
-    a signalling NaN made quiet, its sign and the rest of its payload kept. *)
-
 (** {1:fma Fused multiply-add} *)
 
 val mulacc : Ops.t -> Ops.t -> Ops.t -> Ops.t

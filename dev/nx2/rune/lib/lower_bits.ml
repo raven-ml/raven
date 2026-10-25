@@ -48,15 +48,10 @@ let magnitude x =
 
 let is_nan x = Ops.ne x x
 
-(* The quiet bit is the fraction's first, below the exponent's ones. *)
-let quiet_bit x = snd (Dtype.finfo (Ops.dtype x)) - 1
-
 let nan x =
   let e, m = Dtype.finfo (Ops.dtype x) in
   let ones = Bigint.pred (Bigint.shift_left Bigint.one (e + 1)) in
   of_bits x (word x (Bigint.shift_left ones (m - 1)))
-
-let quieted x = of_bits x (Ops.bitwise_or (bits x) (bit x (quiet_bit x)))
 
 (* Fused multiply-add *)
 

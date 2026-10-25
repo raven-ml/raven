@@ -47,80 +47,27 @@ let back u axes m =
   let kept = List.mapi (fun i e -> if List.mem i axes then 1 else e) s in
   Shape.expand (Shape.reshape m (dims kept)) (dims s)
 
-(* NaNs
+(* [along u axes v] is the vector [v] laid over [u]'s [axes], C order,
+   expanded to [u]'s shape. *)
+let along u axes v =
+  let s = extents u in
+  let over = List.mapi (fun i e -> if List.mem i axes then e else 1) s in
+  Shape.expand (Shape.reshape v (dims over)) (dims s)
 
-   Where a fold takes a NaN term, its result is the first NaN term, in C order
-   of the reduced indices, quieted; where it takes none but gives a NaN, made
-   from numbers as [∞ - ∞], the quiet NaN of a clear sign bit. Both are selected
-   by integer bit patterns: bitcasts, integer folds and [where]. So a target
-   whose float adder canonicalises NaNs, as CUDA's does, still gives these bits:
-   no float arithmetic produces them.
+(* [only u axis b] is [b] at [axis] of [u]'s axes, [None] elsewhere. *)
+let only u axis b =
+  List.init (Shape.ndim u) (fun i -> if i = axis then Some b else None)
 
-   [first f axes ~nan us] is, at each result of the fold [f] along [axes], the
-   bits of each part of [us] at the first term where [nan] holds, from that term
-   on, and [0] where no term so far is a NaN. A term at position [p] of [n] keys
-   as [n - p] where [nan] holds, [0] elsewhere: the greatest key is the first
-   NaN's.
-
-   Cost: for parts of 32 bits and [n < 2^31], each part packs its key over its
-   bits in an int64, [(n - p) lsl 32 lor bits], whose REDUCE Max, or running
-   Max, is that NaN's bits: one fold per part, reading the terms the fold reads,
-   so a float32 sum or extreme takes two REDUCEs. Otherwise, a REDUCE Max of the
-   keys over the whole slice marks the first NaN, and a Max of each part's
-   marked bits, others [0], reads the terms again. *)
+(* [padded ~value axis before after u] is [u] with [before] and [after]
+   elements of [value] added along [axis], or removed where negative. *)
+let padded ?value axis before after u =
+  Shape.pad ?value u (only u axis (Ops.Int before, Ops.Int after))
 
 (* [positions ~dtype u axes n] is [n - p] at each element of [u], [p] its
    position in C order of the indices along [axes], [n] their count: [n] down to
    [1] laid over [axes]. *)
 let positions ~dtype u axes n =
-  let s = extents u in
-  let along = List.mapi (fun i e -> if List.mem i axes then e else 1) s in
-  let keys = Shape.arange ~start:n ~step:(-1) ~dtype 0 in
-  Shape.expand (Shape.reshape keys (dims along)) (dims s)
-
-let first f axes ~nan us =
-  let u = List.hd us in
-  let s = extents u in
-  let n = List.fold_left (fun n a -> n * List.nth s a) 1 axes in
-  let packs =
-    Dtype.itemsize (Ops.dtype u) = 4 && n < Int32.to_int Int32.max_int
-  in
-  if packs then
-    let key = positions ~dtype:Int64 u axes n in
-    let key = Ops.shl key (int key 32) in
-    let part u =
-      let packed = Ops.bitwise_or key (Ops.cast (Bits.bits u) Int64) in
-      Ops.cast (f Op.Max (Ops.where nan packed (int key 0))) Uint32
-    in
-    List.map part us
-  else
-    let dtype : Dtype.t =
-      if n < Int32.to_int Int32.max_int then Int32 else Int64
-    in
-    let key = positions ~dtype u axes n in
-    let key = Ops.where nan key (int key 0) in
-    let marked =
-      Ops.bitwise_and nan (Ops.eq key (back u axes (Shape.rop key Op.Max axes)))
-    in
-    List.map
-      (fun u ->
-        let b = Bits.bits u in
-        f Op.Max (Ops.where marked b (int b 0)))
-      us
-
-(* [nans f axes ~nan us rs] is each part of the fold's result [rs] of the terms
-   [us], with the first term where [nan] holds, each NaN part quieted, where one
-   does, else the quiet NaN of a clear sign bit where the part is a NaN. *)
-let nans f axes ~nan us rs =
-  let bs = first f axes ~nan us in
-  let nonzero b = Ops.ne b (int b 0) in
-  let has = any nonzero bs in
-  let fix b r =
-    let term = Ops.bitcast b (Ops.dtype r) in
-    let term = Ops.where (Bits.is_nan term) (Bits.quieted term) term in
-    Ops.where has term (Ops.where (Bits.is_nan r) (Bits.nan r) r)
-  in
-  List.map2 fix bs rs
+  along u axes (Shape.arange ~start:n ~step:(-1) ~dtype 0)
 
 (* Sums and products
 
@@ -141,21 +88,23 @@ let arith f op u =
    A float's order key is the signed integer of its bits, a negative float's
    magnitude bits flipped: the greater float has the greater key and [-0] is
    just below [+0]. The key is its own inverse. A minimum is the maximum of the
-   complemented keys. NaN terms take the least key, which no number takes, so
-   the maximum is of the numbers alone.
+   complemented keys. NaN terms take the greatest key, which no number takes
+   and which reads back as a NaN, so an extreme with a NaN term is a NaN.
 
    A complex number orders by its real part, then its imaginary part. With
    float32 parts, each key biased to unsigned, [k xor min_int], packs the real
    key over the imaginary one in a uint64, whose Max is the extreme: NaN terms
-   take [0], below every number's. With float64 parts, a REDUCE Max of the real
-   keys, then of the imaginary keys of the terms whose real key is it: a scan
-   cannot take that second Max, and refuses. *)
+   take the greatest, both of whose parts read back as NaNs. With float64
+   parts, a REDUCE Max of the real keys, then of the imaginary keys of the
+   terms whose real key is it, NaN terms aside: a scan cannot take that second
+   Max, and refuses. *)
 
 let order k =
   let flipped = Shape.const_like k (Dtype.max (Ops.dtype k) :> Dtype.const) in
   Ops.where (Ops.lt k (int k 0)) (Ops.bitwise_xor k flipped) k
 
 let least k = Shape.const_like k (Dtype.min (Ops.dtype k) :> Dtype.const)
+let most k = Shape.const_like k (Dtype.max (Ops.dtype k) :> Dtype.const)
 
 let extreme f axes ~greatest ~nan xs =
   let flip k = if greatest then k else Ops.bitwise_not k in
@@ -166,14 +115,14 @@ let extreme f axes ~greatest ~nan xs =
       [ flip (f Op.Max (flip x)) ]
   | [ x ] ->
       let k = key x in
-      [ value (Ops.dtype x) (f Op.Max (Ops.where nan (least k) k)) ]
+      [ value (Ops.dtype x) (f Op.Max (Ops.where nan (most k) k)) ]
   | [ re; im ] when Dtype.itemsize (Ops.dtype re) = 4 ->
       let biased k =
         Ops.cast (Ops.bitcast (Ops.bitwise_xor k (least k)) Uint32) Uint64
       in
       let kr = biased (key re) and ki = biased (key im) in
       let packed = Ops.bitwise_or (Ops.shl kr (int kr 32)) ki in
-      let m = f Op.Max (Ops.where nan (int packed 0) packed) in
+      let m = f Op.Max (Ops.where nan (most packed) packed) in
       let unbiased u =
         let k = Ops.bitcast (Ops.cast u Uint32) Int32 in
         Ops.bitwise_xor k (least k)
@@ -184,7 +133,7 @@ let extreme f axes ~greatest ~nan xs =
       ]
   | [ re; im ] ->
       let kr = key re and ki = key im in
-      let mr = f Op.Max (Ops.where nan (least kr) kr) in
+      let mr = f Op.Max (Ops.where nan (most kr) kr) in
       let top =
         Ops.bitwise_and (Ops.logical_not nan) (Ops.eq kr (back re axes mr))
       in
@@ -193,25 +142,12 @@ let extreme f axes ~greatest ~nan xs =
   | _ -> invalid_arg "Lower_reduce: a value of another dtype"
 
 (* [fold m f axes xs] folds the parts [xs] of a value of a carrier by [m] with
-   [f] along [axes], NaNs aside. *)
+   [f] along [axes]. *)
 let fold m f axes xs =
   match m with
   | Sum -> List.map (arith f Op.Add) xs
   | Prod -> List.map (arith f Op.Mul) xs
   | Max | Min -> extreme f axes ~greatest:(m = Max) ~nan:(any Bits.is_nan xs) xs
-
-(* [with_nans m f axes xs ys] is the fold [ys] of the parts [xs] with NaNs as
-   {!Nx_kernel.section-reductions} states: a sum or a product takes each
-   part's NaNs alone, an extreme a complex number with a NaN part as a NaN. *)
-let with_nans m f axes xs ys =
-  if not (Dtype.is_float (Ops.dtype (List.hd xs))) then ys
-  else
-    match m with
-    | Sum | Prod ->
-        List.map2
-          (fun x y -> List.hd (nans f axes ~nan:(Bits.is_nan x) [ x ] [ y ]))
-          xs ys
-    | Max | Min -> nans f axes ~nan:(any Bits.is_nan xs) xs ys
 
 (* [carried ~src c x] is [x] in the carrier [c]; a boolean as the byte of its
    truth. *)
@@ -219,13 +155,119 @@ let carried ~src (D.Any dt as c) x =
   if D.is D.Boolean dt then Ops.cast (Ops.ne x (int x 0)) Uint8
   else Arith.cast ~src c x
 
-let reduce m axes ~src dt x =
-  refuse m ~scan:false src;
+let of_extreme : Nx_kernel.extreme -> monoid = function
+  | Max -> Max
+  | Min -> Min
+
+(* The number of terms of [u] along [axes]. *)
+let terms u axes = List.fold_left (fun n a -> n * Bits.extent u a) 1 axes
+
+let num u v = Shape.const_like u (`Float v)
+let finite u = Ops.lt (Bits.magnitude u) (num u Float.infinity)
+let shift m = Ops.where (finite m) m (num m 0.)
+let ( /: ) x y = Ops.alu x Op.Fdiv [ y ]
+let exp = Lower_real.unary Exp
+let log = Lower_real.unary Log
+
+(* Logsumexp
+
+   [c + log Σ exp (x - c)], [c] the maximum [m] where finite and [0] elsewhere,
+   so that no term is shifted by an infinity. The sum is [0] for no term or
+   terms all [-∞], [+∞] with a [+∞] term and a NaN with a NaN term, so the
+   result is [-∞], [+∞] or a NaN there. *)
+let logsumexp f axes x =
+  let c = shift (List.hd (fold Max f axes [ x ])) in
+  let s = List.hd (fold Sum f axes [ exp (Ops.sub x (back x axes c)) ]) in
+  Ops.add c (log s)
+
+(* Moments
+
+   The mean [Σ x / n], then the variance by the corrected two-pass algorithm
+   (Chan, Golub and LeVeque, "Algorithms for computing the sample variance",
+   1983): [(Σ d² - Σ d (Σ d / n)) / n], [d = x - mean]. [Σ (x - c)² - (Σ (x -
+   c))² / n] is [Σ (x - μ)²] for any [c], so the mean's rounding reaches the
+   variance at second order. [Σ d (Σ d / n)] is at most [Σ d²], so it
+   overflows only where [Σ d²] does, which gives [+∞]. Rounding may make the
+   difference negative: [+0]. A NaN mean makes every [d] a NaN. *)
+let moments f axes n x =
+  let sum u = List.hd (fold Sum f axes [ u ]) in
+  let s = sum x in
+  let n = num s (Float.of_int n) in
+  let mean = s /: n in
+  let d = Ops.sub x (back x axes mean) in
+  let s1 = sum d and s2 = sum (Ops.mul d d) in
+  let q = Ops.sub s2 (Ops.mul s1 (s1 /: n)) /: n in
+  let var =
+    Ops.where
+      (Ops.eq s2 (num s2 Float.infinity))
+      s2
+      (Ops.where (Ops.lt q (num q 0.)) (num q 0.) q)
+  in
+  (mean, var)
+
+(* Arg
+
+   A term matches the extreme where each of its parts has the extreme's bits,
+   or where it has a NaN part and the extreme is a NaN. *)
+
+let same x y =
+  if Dtype.is_float (Ops.dtype x) then Ops.eq (Bits.bits x) (Bits.bits y)
+  else Ops.eq x y
+
+let all p us =
+  List.fold_left
+    (fun a u -> Ops.bitwise_and a (p u))
+    (p (List.hd us))
+    (List.tl us)
+
+(* [position axes xs m] is the int64 position, in C order of the indices along
+   [axes], of the first term of the parts [xs] matching the extreme [m]: [n - k]
+   for the greatest key [k] of a match, keys [n] down to [1]. *)
+let position axes xs m =
+  let u = List.hd xs in
+  let n = terms u axes in
+  let m' = List.map (back u axes) m in
+  let found = all (fun (x, y) -> same x y) (List.combine xs m') in
+  let found =
+    if not (Dtype.is_float (Ops.dtype u)) then found
+    else
+      Ops.bitwise_or found
+        (Ops.bitwise_and (any Bits.is_nan xs) (any Bits.is_nan m'))
+  in
+  let key = positions ~dtype:Int64 u axes n in
+  let k = Shape.rop (Ops.where found key (int key 0)) Op.Max axes in
+  Ops.sub (int k n) k
+
+(* [changes axis ys] is, at each position [j] along [axis] of the running
+   extreme [ys], the position of its first term matching it: the running
+   maximum of the positions where it changes its bits, as the extreme changes
+   only at a term that matches no term before it. The extreme at [-1] is [0],
+   whose change at [0] gives [0] anyway. *)
+let changes axis ys =
+  let u = List.hd ys in
+  let n = Bits.extent u axis in
+  let before y = padded axis 0 (-1) (padded axis 1 0 y) in
+  let changed = any (fun y -> Ops.logical_not (same y (before y))) ys in
+  let j = along u [ axis ] (Shape.arange ~dtype:Int64 n) in
+  Shape.cumalu (Ops.where changed j (int j 0)) axis Op.Max
+
+let reduce r axes ~src dt x =
   let c = Nx_kernel.carrier src in
   let f op u = Shape.rop u op axes in
   let xs = Arith.parts c (carried ~src c x) in
-  let ys = with_nans m f axes xs (fold m f axes xs) in
-  Arith.cast ~src:c dt (Arith.of_parts c ys)
+  let out ys = Arith.cast ~src:c dt (Arith.of_parts c ys) in
+  match (r : Nx_kernel.reduction) with
+  | Monoid m ->
+      refuse m ~scan:false src;
+      [ out (fold m f axes xs) ]
+  | Logsumexp -> [ out [ logsumexp f axes (List.hd xs) ] ]
+  | Moments ->
+      let x = List.hd xs in
+      let mean, var = moments f axes (terms x axes) x in
+      [ out [ mean ]; out [ var ] ]
+  | Arg e ->
+      let m = fold (of_extreme e) f axes xs in
+      [ out m; position axes xs m ]
 
 (* Scans *)
 
@@ -253,38 +295,112 @@ let negative_zeros f x y =
     Ops.where (Ops.eq other (int other 0)) zero y
 
 (* A carry is the term before each slice's first: the scan runs over it, then
-   drops its result. An extreme's NaN rule takes the carry as a term; a sum's or
-   a product's takes the slice's own terms, so a NaN carry counts as made from
-   numbers. *)
-let scan m axis ~carry ~src dt x =
-  refuse m ~scan:true src;
-  let c = Nx_kernel.carrier src in
-  let xs = Arith.parts c (carried ~src c x) in
+   drops its result. *)
+let running m axis ~carry c xs =
   let f op u = Shape.cumalu u axis op in
-  let axes = [ axis ] in
-  let out ys = Arith.cast ~src:c dt (Arith.of_parts c ys) in
   match carry with
-  | None -> out (with_nans m f axes xs (fold m f axes xs))
+  | None -> fold m f [ axis ] xs
   | Some k ->
       let joined =
         List.map2 (join axis) (Arith.parts c (carried ~src:c c k)) xs
       in
-      let n = List.nth (extents (List.hd xs)) axis in
-      let drop u =
-        Shape.shrink u
-          (List.init (Shape.ndim u) (fun i ->
-               if i = axis then Some (Ops.Int 1, Ops.Int (n + 1)) else None))
-      in
-      let ys = fold m f axes joined in
-      let ys =
-        match m with
-        | Max | Min -> List.map drop (with_nans m f axes joined ys)
-        | Sum ->
-            let ys = List.map2 (negative_zeros f) joined ys in
-            with_nans m f axes xs (List.map drop ys)
-        | Prod -> with_nans m f axes xs (List.map drop ys)
-      in
-      out ys
+      let ys = fold m f [ axis ] joined in
+      let ys = if m = Sum then List.map2 (negative_zeros f) joined ys else ys in
+      List.map (padded axis (-1) 0) ys
+
+(* [network axis combine xs] is the inclusive scan along [axis] of the states
+   whose components are the nodes [xs], by Brent and Kung's network, as
+   {!Nx_kernel.section-scans} states it: neighbours [2j] and [2j + 1] combine
+   into pairs, the pairs scan, result [0] is state [0], result [2j + 1] is the
+   pairs' result [j], and result [2j], for [j > 0], the pairs' result [j - 1]
+   combined with state [2j]. [combine a b] combines the states [a] then [b].
+   Each level is contiguous, so that tolk realises it, as an inlined level
+   would read up to [n] states per result: [2 log₂ n] kernels of [O(n)] work
+   in all. *)
+let rec network axis combine xs =
+  let m = Bits.extent (List.hd xs) axis in
+  if m <= 1 then xs
+  else
+    let half = m / 2 and rows = (m + 1) / 2 in
+    (* The states [2j + k], [j < n]. *)
+    let pick k n u =
+      let u = padded axis 0 ((2 * n) - m) u in
+      let u = Shape.unflatten u axis [ Ops.Int n; Ops.Int 2 ] in
+      let u = padded (axis + 1) (-k) (k - 1) u in
+      Shape.squeeze ~axis:(axis + 1) u
+    in
+    let p = combine (List.map (pick 0 half) xs) (List.map (pick 1 half) xs) in
+    let q = network axis combine (List.map Ops.contiguous p) in
+    let before = List.map (padded axis 1 (rows - half - 1)) q in
+    let states = List.map (pick 0 rows) xs in
+    (* Result [0] is state [0] itself: a Moments state of count [0] combined
+       first would multiply an overflowing [δ²] by [0]. *)
+    let u = List.hd states in
+    let j = along u [ axis ] (Shape.arange ~dtype:Int32 rows) in
+    let first = Ops.eq j (int j 0) in
+    let evens = List.map2 (Ops.where first) states (combine before states) in
+    let interleave e o =
+      let o = padded axis 0 (rows - half) o in
+      let y = Shape.stack ~axis:(axis + 1) [ e; o ] in
+      let y = Shape.flatten ~start:axis ~stop:(axis + 1) y in
+      Ops.contiguous (padded axis 0 (m - (2 * rows)) y)
+    in
+    List.map2 interleave evens q
+
+(* A Logsumexp state is a maximum [m] and a sum [s] of [exp (x - c)], [c] being
+   [m] where finite and [0] elsewhere; a term [x] is [(x, exp (x - c))]. *)
+let lse_terms x = [ x; exp (Ops.sub x (shift x)) ]
+
+let lse_combine a b =
+  match (a, b) with
+  | [ ma; sa ], [ mb; sb ] ->
+      let m = Ops.maximum ma mb in
+      let c = shift m in
+      let e u = exp (Ops.sub u c) in
+      [ m; Ops.add (Ops.mul sa (e ma)) (Ops.mul sb (e mb)) ]
+  | _ -> invalid_arg "Lower_reduce: a state of another arity"
+
+(* A Moments state is a mean [μ] of terms shifted by [c], a sum [S] of squared
+   deviations and a count [n], combined by Chan, Golub and LeVeque's (1.5b),
+   the mean weighted; [c] is the slice's first term where finite, else [0],
+   and a term [x] is [(x - c, 0, 1)]. *)
+let moments_combine a b =
+  match (a, b) with
+  | [ ma; sa; na ], [ mb; sb; nb ] ->
+      let n = Ops.add na nb in
+      let wa = na /: n and wb = nb /: n in
+      let d = Ops.sub mb ma in
+      let between = Ops.mul (Ops.mul d d) (Ops.mul na wb) in
+      let s = Ops.add (Ops.add sa sb) between in
+      [ Ops.add (Ops.mul wa ma) (Ops.mul wb mb); s; n ]
+  | _ -> invalid_arg "Lower_reduce: a state of another arity"
+
+let scan r axis ~carry ~src dt x =
+  let c = Nx_kernel.carrier src in
+  let xs = Arith.parts c (carried ~src c x) in
+  let out ys = Arith.cast ~src:c dt (Arith.of_parts c ys) in
+  let x = List.hd xs in
+  match (r : Nx_kernel.reduction) with
+  | Monoid m ->
+      refuse m ~scan:true src;
+      [ out (running m axis ~carry c xs) ]
+  | Arg e ->
+      let m = of_extreme e in
+      refuse m ~scan:true src;
+      let ys = running m axis ~carry:None c xs in
+      [ out ys; changes axis ys ]
+  | Logsumexp ->
+      let ms = network axis lse_combine (lse_terms x) in
+      let m = List.hd ms and s = List.nth ms 1 in
+      [ out [ Ops.add (shift m) (log s) ] ]
+  | Moments ->
+      let first = padded axis 0 (1 - Bits.extent x axis) x in
+      let c = shift (Shape.expand first (dims (extents x))) in
+      let terms = [ Ops.sub x c; num x 0.; num x 1. ] in
+      let ms = network axis moments_combine terms in
+      let mean = List.hd ms and s = List.nth ms 1 and n = List.nth ms 2 in
+      let var = Ops.where (finite mean) (s /: n) (num s Float.nan) in
+      [ out [ Ops.add c mean ]; out [ var ] ]
 
 (* Contractions
 
