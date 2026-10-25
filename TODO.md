@@ -224,8 +224,7 @@ raven / llama.cpp (Vulkan; ROCm):
 - the kinds quiet the NaN they return. `nx_nan1`, `nx_nan2`, `nx_maximum`
   and `nx_minimum` keep a signalling NaN's bits (`nx_kinds.h`), while
   reductions, scans, scatters and ranges promise it quieted, so each Max or
-  Min path quiets again (`reduce.c`'s `quiet_*`, `index.c`'s `QUIETED`,
-  `Expand.quieted`). IEEE 754-2019 §6.2.1 and §9.6 quiet it in the
+  Min path quiets again (`reduce.c`'s `quiet_*`, `index.c`'s `QUIETED`). IEEE 754-2019 §6.2.1 and §9.6 quiet it in the
   operation. Done when the kinds quiet it and those wrappers are gone;
   elementwise bits change for signalling NaNs
 - `reduce_ranges` flattens its result to quiet it, which gathers a result

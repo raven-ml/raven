@@ -244,21 +244,3 @@ let signalled a =
     a
 
 let quieted a = map_nans (fun frac v -> Int64.logor v (quiet_bit frac)) a
-
-(* Expansions *)
-
-let folding n step init =
-  let rec go k c =
-    if k = n then c
-    else go (k + 1) (step (Nx.scalar Nx.int64 (Int64.of_int k)) c)
-  in
-  go 0 init
-
-let expanded (which : 'r. 'r Nx.Prim.t -> bool) f =
-  let rule i ~by op =
-    let expansion =
-      if which op then Nx.Prim.expand i ~by ~repeat:folding op else None
-    in
-    match expansion with Some r -> r | None -> Nx.Prim.eval ~by op
-  in
-  Nx.Prim.interpret ~name:"test.expand" Extent rule (fun _ -> f ())

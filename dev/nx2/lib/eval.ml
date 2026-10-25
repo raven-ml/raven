@@ -474,19 +474,3 @@ let place ~by p x =
       Array { at = p; a = r.a; dead = Live }
   | Array _ | Shards _ | Donated _ | Deferred _ | Traced _ ->
       eval ~by (Place (p, x))
-
-module Expand = Expand.Make (struct
-  let apply = eval
-end)
-
-let expand i ~by
-    ~(repeat :
-       'd.
-       int -> ('d index -> 'd any list -> 'd any list) -> 'd any list ->
-       'd any list) op =
-  if not (Atomic.get i.live) then
-    Format.kasprintf invalid_arg "%s: an expansion for %s after it returned" by
-      i.name;
-  Effect.Deep.try_with
-    (fun () -> Expand.run ~by ~repeat op)
-    () (handler i)

@@ -309,16 +309,7 @@ let test_after_return () =
   equal ~msg:"its payload answers" bool true
     (match Nx.Prim.payload i t with Some (Tag 0) -> true | _ -> false);
   invalid ~sub:"Nx.Repr.array: a value traced by test.values has no bytes"
-    (fun () -> Nx.Repr.array t);
-  let expansion = ref ignore in
-  Nx.Prim.interpret ~name:"test.extent" Extent
-    (fun i ~by op ->
-      (expansion :=
-         fun () -> ignore (Nx.Prim.expand i ~by ~repeat:Nx_support.folding op));
-      Nx.Prim.eval ~by op)
-    (fun _ -> ignore (Nx.add x x));
-  invalid ~sub:"Nx.add: an expansion for test.extent after it returned"
-    !expansion
+    (fun () -> Nx.Repr.array t)
 
 let test_domains () =
   let x = x3 () in
@@ -687,18 +678,9 @@ let test_ill_formed () =
       equal ~msg:(name ^ ": kernel calls") int 0 (C.calls ()))
     (ill_formed ())
 
-(* Expansions keep bits. A selection and a constant move bits, so an
-   interpretation that expands every operation it can gives each code of a
-   narrow dtype back unchanged: its infinities, NaNs, [-0], largest finite
-   value and least subnormal among them. *)
-
-let expanding f =
-  Nx.Prim.interpret ~name:"test.expand" Extent
-    (fun i ~by op ->
-      match Nx.Prim.expand i ~by ~repeat:Nx_support.folding op with
-      | Some r -> r
-      | None -> Nx.Prim.eval ~by op)
-    (fun _ -> f ())
+(* A selection and a constant move bits: each code of a narrow dtype comes
+   back unchanged, its infinities, NaNs, [-0], largest finite value and least
+   subnormal among them. *)
 
 (* The bytes of elements of [w] bits holding [codes] in order, a sub-byte
    element in the next bits of its byte from the lowest, a wider one in the
@@ -760,10 +742,10 @@ let changed a b =
 let keeps_bits (type v s) (dt : (v, s) D.t) consts =
   let w = D.bits dt in
   let n = max (1 lsl w) (8 / w) in
-  let msg s = D.name dt ^ ", expanded: " ^ s in
+  let msg s = D.name dt ^ ": " ^ s in
   let same msg a b = equal ~msg (list string) [] (changed a b) in
   let check msg want (f : 'd. 'd Nx.Placement.t -> int array) =
-    same msg want (expanding (fun () -> f Nx.Host.on))
+    same msg want (f Nx.Host.on)
   in
   let x =
     of_bytes dt (pack w (Array.init n (fun j -> j land ((1 lsl w) - 1))))
@@ -804,7 +786,7 @@ let laws =
   group "laws"
     [
       prop "results gives the forms eager execution gives" forms_case law_forms;
-      test "an expanded selection or constant keeps each narrow code's bits"
+      test "a selection or constant keeps each narrow code's bits"
         test_keeps_bits;
       test
         "an ill-formed operation raises naming its function, before any kernel"
@@ -812,7 +794,7 @@ let laws =
     ]
 
 (* (a) A forward derivative: a Values interpretation whose values hold a primal
-   and a tangent. A map of several nodes it expands into one map per node. *)
+   and a tangent, over maps of one node. *)
 
 type ('v, 's, 'd) Nx.Prim.payload +=
   | Dual : {
@@ -880,18 +862,12 @@ let jvp_rule (type r) i ~by (op : r Nx.Prim.t) : r =
   let primal op = Nx.Prim.map (fun x -> fst (parts i x)) op in
   match op with
   | Map ({ outs = [ _ ]; prog; loads; _ } as m) -> (
-      match
-        (one_node prog, Nx.Prim.expand i ~by ~repeat:Nx_support.folding op)
-      with
-      | _, Some r -> r
-      | Some node, None ->
+      match one_node prog with
+      | Some node ->
           let y, () = Nx.Prim.eval ~by (primal (Map m)) in
           (dual i y (tangent i node loads y), ())
-      | None, None -> fail "test.jvp: a map that does not expand")
-  | Map _ -> (
-      match Nx.Prim.expand i ~by ~repeat:Nx_support.folding op with
-      | Some r -> r
-      | None -> fail "test.jvp: a map that does not expand")
+      | None -> fail "test.jvp: a map of several nodes")
+  | Map _ -> fail "test.jvp: a map of several outputs"
   | Reduce _ | Scan _ ->
       invalid_arg (by ^ ": test.jvp has no derivative of a reduction")
   | Gather g ->
@@ -1309,8 +1285,7 @@ let law_staged (cs, steps, xs) =
   equal ~msg:"kernel calls while staging" int 0 calls;
   equal ~msg:"as eager" (array float_exact) (elements (f x)) (elements y)
 
-(* (d) A capture of expressions, whose literals come from creations. A map of
-   several nodes is expanded into one map per node, which reach it again. *)
+(* (d) A capture of expressions, whose literals come from creations. *)
 
 type expr =
   | Lit of string * int array
@@ -1330,24 +1305,19 @@ let exprs = Testable.make ~pp:pp_expr ~equal:( = )
 type ('v, 's, 'd) Nx.Prim.payload += Expr : expr -> ('v, 's, 'd) Nx.Prim.payload
 
 let capturing (type r) i ~by (op : r Nx.Prim.t) : r =
-  match Nx.Prim.expand i ~by ~repeat:Nx_support.folding op with
-  | Some r -> r
-  | None ->
-      let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
-      let arg (Nx.Prim.Any x) =
-        match Nx.Prim.payload i x with
-        | Some (Expr e) -> e
-        | _ -> Col (Nx.shape x)
-      in
-      let e =
-        match op with
-        | Map { loads = [||]; prog; layout; _ } -> (
-            match Iarray.get prog.nodes (Iarray.length prog.nodes - 1) with
-            | Const (_, bits) -> Lit (bits, L.shape layout)
-            | _ -> App ("creation", []))
-        | _ -> App (Nx.Prim.name op, List.map arg xs)
-      in
-      Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form (Expr e)) op
+  let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
+  let arg (Nx.Prim.Any x) =
+    match Nx.Prim.payload i x with Some (Expr e) -> e | _ -> Col (Nx.shape x)
+  in
+  let e =
+    match op with
+    | Map { loads = [||]; prog; layout; _ } -> (
+        match Iarray.get prog.nodes (Iarray.length prog.nodes - 1) with
+        | Const (_, bits) -> Lit (bits, L.shape layout)
+        | _ -> App ("creation", []))
+    | _ -> App (Nx.Prim.name op, List.map arg xs)
+  in
+  Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form (Expr e)) op
 
 let capture f =
   Nx.Prim.interpret ~name:"test.capture" Extent capturing (fun i ->
@@ -1363,23 +1333,7 @@ let test_capture () =
   let two = P.bits D.Float32 2. in
   equal ~msg:"a literal and a column" (list exprs)
     [ App ("Map", [ App ("Move", [ Lit (two, [||]) ]); Col [| 3 |] ]) ]
-    (capture (fun () -> [ Nx.add (Nx.scalar f32 2.) x ]));
-  let col = Col [| 3 |] in
-  let sum = App ("Map", [ col; col ]) in
-  equal ~msg:"a chain, node by node" (list exprs)
-    [ sum; App ("Map", [ sum; col ]) ]
-    (capture (fun () ->
-         let y, (z, ()) =
-           Nx.Prim.eval ~by:"test"
-             (Map
-                {
-                  layout = L.contiguous [| 3 |];
-                  prog = chain_prog;
-                  outs = Nx.Prim.[ f32; f32 ];
-                  loads = [| Plain x; Plain x |];
-                })
-         in
-         [ y; z ]))
+    (capture (fun () -> [ Nx.add (Nx.scalar f32 2.) x ]))
 
 (* (e) The staging compiler called with arguments of a live derivative hands the
    call to it, which stages the derivative: the program takes each argument's
@@ -1984,102 +1938,6 @@ let nesting =
       test "a parent's value costs what an own value does" test_adopting_words;
     ]
 
-(* Loops: an expansion's loop runs through the interpretation's [repeat] *)
-
-(* [repeat] as a fold, counting its trips. *)
-let fold trips n step init =
-  Nx_support.folding n
-    (fun k carry ->
-      incr trips;
-      step k carry)
-    init
-
-let pp_ints ppf a =
-  Format.fprintf ppf "[%s]"
-    (String.concat "; " (Array.to_list (Array.map string_of_int a)))
-
-let form_name (Nx.Prim.Any x) =
-  let f = Nx.Prim.form x in
-  Format.asprintf "%s%a" (D.name f.dtype) pp_ints (L.shape f.layout)
-
-(* The forms [step] gives once traced at stand-ins of its index and of [init]:
-   what a stager that holds [step] once sees. *)
-let traced_once step init =
-  Nx.Prim.interpret ~name:"test.stager" Values tagged (fun s ->
-      let stand_in (Nx.Prim.Any x) =
-        Nx.Prim.Any (Nx.Prim.traced s (Nx.Prim.form x) (Tag 0))
-      in
-      let k = Nx.Prim.traced s (Nx.Prim.form (Nx.scalar Nx.int64 0L)) (Tag 0) in
-      List.map form_name (step k (List.map stand_in init)))
-
-(* [f ()] with each scatter whose targets may repeat expanded through
-   [repeat]. *)
-let looping
-    (repeat :
-      'd.
-      int ->
-      ((int64, D.int64_elt, 'd) Nx.t -> 'd Nx.Prim.any list ->
-       'd Nx.Prim.any list) ->
-      'd Nx.Prim.any list ->
-      'd Nx.Prim.any list) f =
-  Nx.Prim.interpret ~name:"test.loops" Extent
-    (fun (type r) i ~by (op : r Nx.Prim.t) : r ->
-      match op with
-      | Scatter { unique = false; _ } -> (
-          match Nx.Prim.expand i ~by ~repeat op with
-          | Some r -> r
-          | None -> fail "a repeating scatter that does not expand")
-      | _ -> Nx.Prim.eval ~by op)
-    (fun _ -> f ())
-
-(* A scatter whose targets may repeat loops once per position along its
-   axis, through [repeat], to the eager sum. *)
-let test_repeat () =
-  let into = vec f32 [| 0.; 0. |] in
-  let idx = vec Nx.int64 [| 0L; 1L; 0L |] in
-  let updates = vec f32 [| 1.; 2.; 3. |] in
-  let loops = ref 0 and trips = ref 0 in
-  let repeat n step init =
-    incr loops;
-    fold trips n step init
-  in
-  let y =
-    looping repeat (fun () ->
-        Nx.scatter ~combine:Nx.Add ~axis:0 idx updates into)
-  in
-  equal ~msg:"the sum" (array float_exact) [| 4.; 2. |] (elements y);
-  equal ~msg:"loops" int 1 !loops;
-  equal ~msg:"trips" int 3 !trips
-
-(* A loop's step keeps its carry's forms, traced once at stand-ins, so that a
-   stager may hold it once; folded, it gives the eager result. *)
-let test_repeat_forms () =
-  let into = Nx.reshape [| 2; 2 |] (vec f32 [| 0.; 0.; 0.; 0. |]) in
-  let idx = Nx.reshape [| 2; 2 |] (vec Nx.int64 [| 0L; 1L; 1L; 1L |]) in
-  let updates = Nx.reshape [| 2; 2 |] (vec f32 [| 1.; 2.; 3.; 4. |]) in
-  let seen = ref [] and trips = ref 0 in
-  let repeat n step init =
-    seen := (List.map form_name init, traced_once step init) :: !seen;
-    fold trips n step init
-  in
-  let y =
-    looping repeat (fun () ->
-        Nx.scatter ~combine:Nx.Max ~axis:1 idx updates into)
-  in
-  equal ~msg:"the result" (array float_exact) [| 1.; 2.; 0.; 4. |]
-    (elements y);
-  equal ~msg:"forms kept"
-    (list (pair (list string) (list string)))
-    [ ([ "float32[2; 2]" ], [ "float32[2; 2]" ]) ]
-    !seen
-
-let loops =
-  group "loops"
-    [
-      test "a repeating scatter loops through repeat" test_repeat;
-      test "a loop's step keeps its carry's forms" test_repeat_forms;
-    ]
-
 (* Memory
 
    While backtraces are recorded, the runtime keeps the last exception raised
@@ -2243,4 +2101,4 @@ let domains =
 let () =
   exit
     (run "nx interp"
-       [ rule; laws; fibers; nesting; loops; memory; interpreters; domains ])
+       [ rule; laws; fibers; nesting; memory; interpreters; domains ])

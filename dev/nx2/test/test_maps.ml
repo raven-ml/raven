@@ -13,10 +13,6 @@ module D = Nx_array.Dtype
 module P = Nx_kernel.Prog
 module C = Nx_support.Counting
 
-module Expanded = Expand.Make (struct
-  let apply = Exec.run
-end)
-
 type b
 
 let m = Nx_support.memory
@@ -47,14 +43,10 @@ let elements (type v s) (x : (v, s, b) Value.t) : v array =
 
 let first (x, ()) = x
 
-(* [op]'s expansion computed now, which runs no loop. *)
-let expand op =
-  Expanded.run ~by:"t" ~repeat:(fun _ _ _ -> fail "a loop") op
-
 let maps =
   group "maps"
     [
-      test "a map of several nodes expands node by node" (fun () ->
+      test "a map of several nodes computes each node" (fun () ->
           (* x0 * x1 + x0 *)
           let prog =
             P.v
@@ -644,190 +636,6 @@ let donation =
         test_one_donor_twice;
     ]
 
-(* Expansions return values of their own: an output that is an operand, and a
-   scatter of no update, are copies. *)
-let own_memory (type v s) (x : (v, s, b) Value.t) (y : (v, s, b) Value.t) =
-  equal bool ~msg:"another value" false (Obj.repr x == Obj.repr y);
-  equal bool ~msg:"memory of its own" false
-    (Rig.Buffer.overlaps
-       (A.buffer (Iarray.get (Prim.arrays x) 0))
-       (A.buffer (Iarray.get (Prim.arrays y) 0)))
-
-let expansions =
-  group "expansions"
-    [
-      test "a map's output that is an operand is a copy" (fun () ->
-          (* x0, then x0 + x0 *)
-          let prog =
-            P.v ~ins:[| D.Any D.Float32 |]
-              [| In 0; Op2 (Binary Add, 0, 0) |]
-              ~outs:[| 0; 1 |]
-          in
-          let x = f32 [| 1.; 2. |] in
-          let op =
-            Value.Map
-              {
-                layout = A.Layout.contiguous [| 2 |];
-                prog;
-                outs = Value.[ D.Float32; D.Float32 ];
-                loads = [| Plain x |];
-              }
-          in
-          let y, _ = Option.get (expand op) in
-          own_memory x y;
-          equal (array bits) [| 1.; 2. |] (elements y));
-      test "a scatter of no update is a copy" (fun () ->
-          let into = f32 [| 1.; 2. |] and u = f32 [||] in
-          let idx : (int64, D.int64_elt, b) Value.t =
-            Value.Array
-              {
-                at = at1;
-                a = A.to_device (m 0) (A.of_array D.Int64 [| 0 |] [||]);
-                dead = Value.Live;
-              }
-          in
-          let op =
-            Value.Scatter
-              {
-                combine = Add;
-                unique = false;
-                axis = 0;
-                idx;
-                updates = u;
-                into;
-              }
-          in
-          let y = Option.get (expand op) in
-          own_memory into y;
-          equal (array bits) [| 1.; 2. |] (elements y));
-    ]
-
-(* Expansions' arithmetic at axes of up to Layout.max_numel elements, which
-   no test allocates. *)
-
-let max_numel = A.Layout.max_numel
-
-(* [t² mod m] by doubling, each intermediate below [2m]. *)
-let square_mod t m =
-  let a = Int64.rem t m and r = ref 0L in
-  for bit = 62 downto 0 do
-    r := Int64.rem (Int64.mul !r 2L) m;
-    if Int64.logand (Int64.shift_right_logical a bit) 1L = 1L then
-      r := Int64.rem (Int64.add !r a) m
-  done;
-  !r
-
-let value (type v s) (dt : (v, s) D.t) shape (xs : v array) :
-    (v, s, b) Value.t =
-  let a = A.to_device (m 0) (A.of_array dt shape xs) in
-  Value.Array { at = at1; a; dead = Value.Live }
-
-(* A chirp's square: moduli up to Bluestein's largest, [2 max_numel], and
-   operands anywhere in [0, 2^63). *)
-let squares =
-  let open Gen in
-  let* m =
-    frequency
-      [
-        (1, int_range 1 (1 lsl 31));
-        (2, int_range ((1 lsl 31) + 1) (2 * max_numel));
-        (1, constant (2 * max_numel));
-      ]
-  in
-  let+ ts = array ~size:(constant 8) (map (Int64.logand Int64.max_int) int64) in
-  (m, Array.append ts [| 0L; Int64.of_int (m - 1); Int64.max_int |])
-
-let law_square_mod (m, ts) =
-  cover "one digit" (m <= 1 lsl 31);
-  cover "several digits" (m > 1 lsl 31);
-  cover "the largest modulus" (m = 2 * max_numel);
-  let i = P.E.input 0 D.Int64 in
-  let y =
-    first
-      (Exec.run ~by:"t"
-         (Value.Map
-            {
-              layout = A.Layout.contiguous [| Array.length ts |];
-              prog =
-                P.of_exprs ~ins:[| D.Any D.Int64 |]
-                  [| P.E.any (Expand.square_mod m i) |];
-              outs = Value.[ D.Int64 ];
-              loads = [| Plain (value D.Int64 [| Array.length ts |] ts) |];
-            }))
-  in
-  equal (array int64)
-    (Array.map (fun t -> square_mod t (Int64.of_int m)) ts)
-    (elements y)
-
-(* A sort's keys at any width an axis allows: two rows of [n] elements of a
-   dtype that splits into several keys, drawn from few values so that ties,
-   NaNs, signed zeros and extremes meet. *)
-type keyed =
-  | Keyed : ('v, 's) D.t * int * 'v array * int * bool -> keyed
-
-let pp_keyed ppf (Keyed (dt, n, _, bits, descending)) =
-  Format.fprintf ppf "%s [2; %d] at %d bits%s" (D.name dt) n bits
-    (if descending then " descending" else "")
-
-type pool = Pool : ('v, 's) D.t * 'v list -> pool
-
-let floats =
-  [ Float.nan; -.Float.nan; -0.; 0.; Float.infinity; Float.neg_infinity; 1.;
-    -1.; Float.max_float; -.Float.min_float ]
-
-let complexes =
-  List.concat_map
-    (fun re -> List.map (fun im -> { Complex.re; im }) [ 0.; Float.nan; -1. ])
-    [ -0.; 1.; Float.infinity; Float.nan ]
-
-let int32s = [ Int32.min_int; Int32.max_int; -1l; 0l; 1l; 0x10000l ]
-
-let int64s =
-  [ Int64.min_int; Int64.max_int; -1L; 0L; 1L; 0x1_0000_0000L; 0xffff_ffffL;
-    0x7ff0_0000_0000_0000L ]
-
-let pools =
-  [
-    Pool (D.Float32, floats); Pool (D.Float64, floats);
-    Pool (D.Int32, int32s); Pool (D.Uint32, int32s);
-    Pool (D.Int64, int64s); Pool (D.Uint64, int64s);
-    Pool (D.Complex64, complexes); Pool (D.Complex128, complexes);
-  ]
-
-let bit_length n =
-  let rec go n b = if n = 0 then b else go (n lsr 1) (b + 1) in
-  go n 0
-
-let keyed =
-  let open Gen in
-  with_pp pp_keyed
-  @@ let* (Pool (dt, pool)) = of_list pools in
-     let* n = int_range 2 40 in
-     let widest = 63 - bit_length (n - 1) in
-     let* bits =
-       frequency
-         [ (1, constant 10); (3, int_range 10 widest); (1, constant widest) ]
-     in
-     let* descending = bool in
-     let+ xs = array ~size:(constant (2 * n)) (of_list pool) in
-     Keyed (dt, n, xs, bits, descending)
-
-(* The expansion's positions at [bits] are nx.cpu's: the stable order. *)
-let law_sort_keys (Keyed (dt, n, xs, bits, descending)) =
-  let part = match D.kind dt with D.Complex -> D.bits dt / 2 | _ -> D.bits dt in
-  let keys = (part + bits - 1) / bits in
-  cover "a 32-bit part in two keys or more" (part = 32 && keys >= 2);
-  cover "a 64-bit part in seven keys" (part = 64 && keys = 7);
-  cover "the axis's widest keys" (bits = 63 - bit_length (n - 1));
-  let x = value dt [| 2; n |] xs in
-  let _, want =
-    Exec.run ~by:"t" (Value.Sort { axis = 1; descending; k = None; x })
-  in
-  let _, got =
-    Option.get (Expanded.sort ~by:"t" ~bits 1 descending None x)
-  in
-  equal ~msg:"positions" (array int64) (elements want) (elements got)
-
 (* A Logsumexp's terms: shifts from the maximum about the least integers whose
    exp is a normal float32 (-87) and float64 (-708), infinities, signed zeros
    and NaNs with payloads. *)
@@ -906,21 +714,29 @@ let signalling (type s) (dt : (float, s) D.t) shape xs sn :
   | _ -> ());
   Value.Array { at = at1; a = A.to_device (m 0) a; dead = Value.Live }
 
-let bytes (type v s) (x : (v, s, b) Value.t) =
-  let host = Devices.rebrand (Devices.one Devices.host 0) in
-  let a = Iarray.get (Prim.arrays (Place.value ~by:"t" host x)) 0 in
-  A.to_array (Option.get (A.bitcast D.Uint8 (A.copy a)))
+(* [L + D + 5 + 6 ln n] of nx.cpu's Logsumexp bound for [n] terms. *)
+let lse_rounds n =
+  let n' = Float.of_int n in
+  let l = ((min n 1024 + 15) / 16) + 3 in
+  let blocks = (n + 1023) / 1024 in
+  let rec depth b d = if b <= 1 then d else depth ((b + 1) / 2) (d + 1) in
+  Float.of_int (l + depth blocks 0 + 5) +. (6. *. Float.log n')
 
-(* Each element's bytes, or [None] where it is a NaN: a NaN result promises
-   a NaN, never which one. *)
-let nan_blind (type s) (dt : (float, s) D.t) x =
-  let w = D.bits dt / 8 and b = bytes x in
-  Array.mapi
-    (fun i v -> if Float.is_nan v then None else Some (Array.sub b (i * w) w))
-    (elements x)
+(* [m + log Σ exp (t - m)] of [ts] in float64, [m] their maximum: a NaN
+   where a term is, [m] where it is infinite. *)
+let lse_ref ts =
+  if List.exists Float.is_nan ts then Float.nan
+  else
+    let m = List.fold_left Float.max Float.neg_infinity ts in
+    if not (Float.is_finite m) then m
+    else
+      let s = List.fold_left (fun s t -> s +. Float.exp (t -. m)) 0. ts in
+      m +. Float.log s
 
-(* nx.cpu's Logsumexp has its expansion's bits ({!Nx_cpu}), or a NaN where
-   that is one. *)
+(* nx.cpu's Logsumexp is [m + log Σ exp (x - m)] within the bound {!Nx_cpu}
+   states, in the float32 carrier for a narrow float, which adds its own
+   rounding: a NaN where a term is, [-∞] for no term or terms all [-∞], [+∞]
+   for a [+∞] term. *)
 let law_logsumexp (Lse (dt, shape, axes, xs, sn)) =
   let cut = match dt with D.Float64 -> -708. | _ -> -87. in
   let x = signalling dt shape xs sn in
@@ -928,26 +744,31 @@ let law_logsumexp (Lse (dt, shape, axes, xs, sn)) =
   cover "a NaN term" (Array.exists Float.is_nan xs);
   cover "a signalling NaN term" (sn <> []);
   cover "a signalling NaN of a narrow float" (sn <> [] && D.bits dt = 16);
-  (* Each output's terms, as [x] holds them, keyed by the output's index. *)
-  let outputs = Hashtbl.create 8 in
+  (* Each output's terms, as [x] holds them, in C order of the outputs. *)
+  let kept =
+    List.filter
+      (fun a -> not (Array.mem a axes))
+      (List.init (Array.length shape) Fun.id)
+  in
+  let outs = List.fold_left (fun n a -> n * shape.(a)) 1 kept in
+  let rows = Array.make outs [] in
   Array.iteri
     (fun i t ->
-      let key = ref [] and r = ref i in
+      let idx = Array.make (Array.length shape) 0 and r = ref i in
       for a = Array.length shape - 1 downto 0 do
-        if not (Array.mem a axes) then key := (!r mod shape.(a)) :: !key;
+        idx.(a) <- !r mod shape.(a);
         r := !r / shape.(a)
       done;
-      Hashtbl.add outputs !key t)
+      let o = List.fold_left (fun o a -> (o * shape.(a)) + idx.(a)) 0 kept in
+      rows.(o) <- t :: rows.(o))
     (elements x);
   let below =
-    Hashtbl.fold
-      (fun key _ found ->
-        let row = Hashtbl.find_all outputs key in
+    Array.exists
+      (fun row ->
         let m = List.fold_left Float.max Float.neg_infinity row in
-        found
-        || Float.is_finite m
-           && List.exists (fun t -> t -. m < cut && t -. m > -1000.) row)
-      outputs false
+        Float.is_finite m
+        && List.exists (fun t -> t -. m < cut && t -. m > -1000.) row)
+      rows
   in
   cover "a term past the cutoff below a finite maximum" below;
   let op =
@@ -960,24 +781,45 @@ let law_logsumexp (Lse (dt, shape, axes, xs, sn)) =
         loads = [| Plain x |];
       }
   in
-  let want = first (Exec.run ~by:"t" op) in
-  let got = first (Option.get (expand op)) in
-  equal (array (option (array int))) (nan_blind dt want) (nan_blind dt got)
+  let got = elements (first (Exec.run ~by:"t" op)) in
+  let u = match dt with D.Float64 -> Float.epsilon /. 2. | _ -> 0x1p-24 in
+  let narrow =
+    match dt with D.Float16 -> 0x1p-11 | D.Bfloat16 -> 0x1p-8 | _ -> 0.
+  in
+  equal ~msg:"one result per output" int outs (Array.length got);
+  Array.iteri
+    (fun o row ->
+      let want = lse_ref row and y = got.(o) in
+      let msg = Printf.sprintf "output %d" o in
+      if not (Float.is_finite want) then
+        equal ~msg (option float_exact)
+          (if Float.is_nan want then None else Some want)
+          (if Float.is_nan y then None else Some y)
+      else
+        let n = List.length row in
+        (* The float64 reference errs by about [n + 4] roundings. *)
+        let slack =
+          match dt with
+          | D.Float64 -> Float.of_int (n + 4) *. u *. (1. +. Float.abs want)
+          | _ -> 0.
+        in
+        let bound =
+          (lse_rounds n *. u) +. ((u +. narrow) *. Float.abs want) +. slack
+        in
+        at_most ~msg float_exact ~than:bound (Float.abs (y -. want)))
+    rows
 
 let arithmetic =
-  group "expansions' arithmetic"
+  group "arithmetic"
     [
-      prop ~count:500 "a Logsumexp's expansion has nx.cpu's bits, or a NaN"
-        lse law_logsumexp;
-
-      prop "a chirp's square modulo 2n is exact" squares law_square_mod;
-      prop "a sort orders as nx.cpu's at any key width the axis allows" keyed
-        law_sort_keys;
+      prop ~count:500
+        "a Logsumexp is within its bound, NaNs and infinities as stated" lse
+        law_logsumexp;
     ]
 
 let () =
   exit
     (run "nx maps"
        [
-         maps; checks; constants; forced; rules; donation; expansions; arithmetic;
+         maps; checks; constants; forced; rules; donation; arithmetic;
        ])

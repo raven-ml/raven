@@ -356,7 +356,6 @@ val contract_order :
 val load_any : 'd load -> 'd any
 (** [load_any l] is the operand [l] reads. *)
 
-val load_dtype : 'd load -> Nx_array.Dtype.any
 val is_padded : 'd load -> bool
 
 (** {1:families Transforms and factorisations} *)

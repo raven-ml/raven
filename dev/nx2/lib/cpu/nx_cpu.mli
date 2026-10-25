@@ -118,13 +118,13 @@
     normwise relative [γ(2n - 2)] of the exact one, barring overflow and
     underflow.
 
-    A [Logsumexp] or a [Moments] reduction has the bits of Nx's own
-    expansion of it. For one of [n] terms, let
-    [L = ⌈min (n, 1024) / 16⌉ + 3], the most roundings of a block's sum a
-    term takes, [D = ⌈log₂ ⌈n / 1024⌉⌉], the depth of the blocks' tree, and
-    [u] the carrier's unit roundoff; the rounding into a narrower
-    destination adds its own. Barring overflow and underflow, to
-    first order in [u], a [Logsumexp] [r] is within
+    A [Logsumexp] or a [Moments] reduction has the bits of its two passes
+    ({!Nx_kernel.type-reduction}) run on nx.cpu's own [Max], [Sum] and
+    kinds. For one of [n] terms, let [L = ⌈min (n, 1024) / 16⌉ + 3], the
+    most roundings of a block's sum a term takes, [D = ⌈log₂ ⌈n / 1024⌉⌉],
+    the depth of the blocks' tree, and [u] the carrier's unit roundoff; the
+    rounding into a narrower destination adds its own. Barring overflow and
+    underflow, to first order in [u], a [Logsumexp] [r] is within
     [(L + D + 5 + 6 ln n) u + u|r|] of the exact one. A [Moments] mean is
     within [E = (L + D) u M + u|μ|] of the exact [μ], [M] the mean of the
     terms' magnitudes, and its variance within

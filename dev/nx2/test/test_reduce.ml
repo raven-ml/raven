@@ -7,8 +7,8 @@
    elements, an order-free reference; on every dtype each computes the dtypes
    its doc states, as the host's kernel over the same axes (the narrower floats
    at float32, rounded once, a NaN result any NaN), and raises naming itself
-   elsewhere. A NaN term makes a NaN result on every path: the host's kernels,
-   nx's expansions, and values cut along the reduced axis. *)
+   elsewhere. A NaN term makes a NaN result on every path: the host's kernels
+   and values cut along the reduced axis. *)
 
 open Windtrap
 module A = Nx_array
@@ -552,7 +552,7 @@ let test_int_mean () =
 
 (* Scans of complex numbers and narrow floats: a complex sum adds the parts,
    and a narrow float accumulates at float32, rounding each prefix once. *)
-let test_scan_expansions () =
+let test_scan_parts () =
   let z =
     A.of_array D.Complex64 [| 3 |]
       Complex.
@@ -579,19 +579,8 @@ let test_scan_expansions () =
   equal ~msg:"bfloat16 cumsum, rounded once" (array float_exact) want
     (A.to_array (host_array (Nx.cumsum (value b))))
 
-(* Logsumexp, Moments and Arg through Nx.Prim, by nx's expansion, against
-   references over each result's terms. *)
-
-(* [f ()] with each reduction and scan computed by its expansion where it has
-   one. *)
-let expanded f =
-  Nx_support.expanded
-    (fun (type r) (op : r Nx.Prim.t) ->
-      match op with Reduce _ | Scan _ -> true | _ -> false)
-    f
-
-(* [law] whose operations compute by their expansions. *)
-let expanding law c = expanded (fun () -> law c)
+(* Logsumexp, Moments and Arg through Nx.Prim, on nx.cpu, against references
+   over each result's terms. *)
 
 let reduce1 r axes x =
   let y, () =
@@ -644,6 +633,19 @@ let float64_case =
      let+ xs = array ~size:(constant (Array.fold_left ( * ) 1 s)) element in
      (s, axes, xs))
 
+(* nx.cpu's rounds of a block's sum per term, [L = ⌈min (n, 1024) / 16⌉ + 3],
+   and the depth of its blocks' tree, [D = ⌈log₂ ⌈n / 1024⌉⌉], for [n]
+   terms ({!Nx_cpu}). *)
+let block_rounds n =
+  let rec log2_up b k = if 1 lsl b >= k then b else log2_up (b + 1) k in
+  Float.of_int (((min n 1024 + 15) / 16) + 3 + log2_up 0 ((n + 1023) / 1024))
+
+(* nx.cpu's Logsumexp bound for [n] terms and result [r]: [(L + D + 5 + 6 ln n)
+   u + u|r|]. *)
+let cpu_lse_bound u n r =
+  ((block_rounds n +. 5. +. (6. *. log (Float.of_int n))) *. u)
+  +. (u *. Float.abs r)
+
 let law_logsumexp (s, axes, xs) =
   let ax = normal (Array.length s) axes in
   let x = value (A.of_array D.Float64 s xs) in
@@ -663,11 +665,14 @@ let law_logsumexp (s, axes, xs) =
           cover "finite" true;
           let s = List.fold_left (fun s t -> s +. exp (t -. m)) 0. ts in
           let want = m +. log s in
-          let n = Float.of_int (List.length ts) in
+          let n = List.length ts in
+          (* The float64 reference errs by about [n + 4] roundings. *)
+          let u = epsilon_float /. 2. in
+          let slack = Float.of_int (n + 4) *. u *. (1. +. Float.abs want) in
           at_most
             ~msg:(Printf.sprintf "%h against %h" g want)
             float_exact
-            ~than:((n +. 8.) *. epsilon_float *. (1. +. Float.abs want))
+            ~than:(cpu_lse_bound u n want +. slack)
             (Float.abs (g -. want))
         end
         else begin
@@ -700,17 +705,26 @@ let moments_case =
      in
      (s, axes, c, xs))
 
-(* The bounds nx's expansion of Moments states, at float32's unit roundoff: the
-   mean within [γ(n) M], [M = Σ|x| / n], the variance [V] within [(γ(n + 4) +
-   2γ(n)²) V + 2γ(n + 6) γ(n) M √V + 4γ(n + 4) γ(n)² M²]. The references are
-   float64 two-pass sums, whose own error is the slack. *)
+(* nx.cpu's Moments bounds for [n] terms ({!Nx_cpu}), [K = L + D]: the mean
+   within [E = K u M + u|μ|] of the exact [μ], [M] the mean of the terms'
+   magnitudes, and the variance within [(K + 5) u V + 2 (K + 1) u E √V +
+   (3K + 7) u E²] of the exact [V]. *)
+let cpu_moments_bound u n ~mu ~mm ~v =
+  let k = block_rounds n in
+  let e = (k *. u *. mm) +. (u *. Float.abs mu) in
+  ( e,
+    ((k +. 5.) *. u *. v)
+    +. (2. *. (k +. 1.) *. u *. e *. Float.sqrt v)
+    +. (((3. *. k) +. 7.) *. u *. e *. e) )
+
+(* Moments within nx.cpu's bounds, at float32's unit roundoff. The
+   references are float64 two-pass sums, whose own error is the slack. *)
 let law_moments (s, axes, _, xs) =
   let ax = normal (Array.length s) axes in
   let x = value (A.of_array D.Float32 s xs) in
   let mean, var = reduce1 (Moments (0, Nx.float32)) (Iarray.of_list ax) x in
   let mean = read mean and var = read var in
   let u = ldexp 1. (-24) in
-  let gamma k = Float.of_int k *. u /. (1. -. (Float.of_int k *. u)) in
   Array.iteri
     (fun i ts ->
       let n = List.length ts in
@@ -731,23 +745,16 @@ let law_moments (s, axes, _, xs) =
         in
         let e = 4. *. nf *. epsilon_float in
         let slack = (e *. v) +. (e *. abs_mean *. (1. +. (e *. abs_mean))) in
-        at_most ~msg:"mean" float_exact
-          ~than:((gamma n *. abs_mean) +. slack)
+        let bm, bv = cpu_moments_bound u n ~mu:m ~mm:abs_mean ~v in
+        at_most ~msg:"mean" float_exact ~than:(bm +. slack)
           (Float.abs (mean.(i) -. m));
-        let g = gamma n in
-        at_most ~msg:"variance" float_exact
-          ~than:
-            (((gamma (n + 4) +. (2. *. g *. g)) *. v)
-            +. (2. *. gamma (n + 6) *. g *. abs_mean *. Float.sqrt v)
-            +. (4. *. gamma (n + 4) *. g *. g *. abs_mean *. abs_mean)
-            +. slack)
+        at_most ~msg:"variance" float_exact ~than:(bv +. slack)
           (Float.abs (var.(i) -. v))
       end)
     (terms s ax xs)
 
-(* Moments scans: by the expansion, within its stated bounds of float64
-   references over each prefix, and by nx.cpu on the host, with the
-   expansion's bits. *)
+(* Moments scans on nx.cpu, within the bounds Nx_kernel states of float64
+   references over each prefix. *)
 
 let scan1 r axis x =
   Nx.Prim.eval ~by:"t"
@@ -761,23 +768,10 @@ let scan1 r axis x =
          carry = None;
        })
 
-(* Where a Moments scan computes: by the expansion, by nx.cpu, on the
-   host. *)
-type path = Expansion | Cpu
-
-let path_name = function Expansion -> "expansion" | Cpu -> "nx.cpu"
-
-(* The Moments scan of [a] along [axis] by [path], read. *)
-let scan_moments (type v s) path axis (a : (v, s) A.t) =
-  let dt = A.dtype a in
-  match path with
-  | Expansion ->
-      expanded (fun () ->
-          let m, v = scan1 (Moments (0, dt)) axis (value a) in
-          (read m, read v))
-  | Cpu ->
-      let m, v = scan1 (Moments (0, dt)) axis (value a) in
-      (read m, read v)
+(* The Moments scan of [a] along [axis] on nx.cpu, read. *)
+let scan_moments (type v s) axis (a : (v, s) A.t) =
+  let m, v = scan1 (Moments (0, A.dtype a)) axis (value a) in
+  (read m, read v)
 
 (* Each slice of [s] along [axis], in C order of the other axes, as the
    position in C order of its index [j]. *)
@@ -800,7 +794,7 @@ let prefixes s axis =
     (fun at -> List.init s.(axis) (fun j -> List.init (j + 1) at))
     (slices s axis)
 
-(* The most combinations output [i] of a scan's expansion passes through,
+(* The most combinations output [i] of a scan's network passes through,
    [D_i = max(0, 2⌈log₂(i+1)⌉ - 1)], for [n = i + 1] terms. *)
 let depth n =
   let rec log2_up b = if 1 lsl b >= n then b else log2_up (b + 1) in
@@ -827,7 +821,7 @@ let terms_name = function
   | Long -> "N(0, 1), long"
 
 (* float32 terms of a kind of {!terms} along one axis, at times long enough
-   for several levels of the expansion's recursion. *)
+   for several levels of the network. *)
 let moments_scan_case =
   let open Gen in
   let along_n n =
@@ -886,7 +880,7 @@ let moments_scan_case =
           case Long sa);
        ])
 
-(* The expansion's bounds, with [D] the depth of the result and [R] the
+(* Nx_kernel's bounds, with [D] the depth of the result and [R] the
    terms' range: the mean within [(4 D + 1) u R + u|μ|], the variance [V]
    within [(7 D + 1) u V + (4 D² - 2 D) u R √V]. The references run
    Welford's update in float64 over the terms less the slice's first, whose
@@ -906,7 +900,7 @@ let law_moments_scan (kind, s, axis, xs) =
       (((7. *. d) +. 1.) *. u *. v)
       +. (((4. *. d *. d) -. (2. *. d)) *. u *. range *. Float.sqrt v) )
   in
-  let mean, var = scan_moments Expansion axis x in
+  let mean, var = scan_moments axis x in
   List.iter
     (fun at ->
       let c = xs.(at 0) in
@@ -937,16 +931,13 @@ let law_moments_scan (kind, s, axis, xs) =
       done)
     (slices s axis)
 
-(* Both paths: no result along an empty axis; one term's own mean and a
-   variance of [+0]; NaNs from a NaN on; an infinity's mean and a NaN
-   variance; NaNs from opposite infinities on; a narrow float at float32,
-   rounded once. *)
+(* No result along an empty axis; one term's own mean and a variance of
+   [+0]; NaNs from a NaN on; an infinity's mean and a NaN variance; NaNs
+   from opposite infinities on; a narrow float at float32, rounded once. *)
 let test_moments_scan_cases () =
-  let both name f =
-    List.iter (fun p -> f (name ^ ", " ^ path_name p) p) [ Expansion; Cpu ]
-  in
-  let moments p dt s xs =
-    scan_moments p (Array.length s - 1) (A.of_array dt s xs)
+  let both name f = f name () in
+  let moments () dt s xs =
+    scan_moments (Array.length s - 1) (A.of_array dt s xs)
   in
   both "an empty axis" (fun msg p ->
       let mean, var = moments p D.Float64 [| 2; 0 |] [||] in
@@ -1064,7 +1055,7 @@ let overflow_case offset step =
   let+ ks = array ~size:(constant n) (int_range (-1) 1) in
   (offset, step, ks)
 
-(* The bound of {!law_moments}, in steps, of the exact variance of the
+(* nx.cpu's variance bound, in steps, of the exact variance of the
    integers. *)
 let law_overflow (type s) (dt : (float, s) D.t) u (offset, step, ks) =
   let xs = Array.map (fun k -> Float.of_int (offset + k) *. step) ks in
@@ -1082,13 +1073,8 @@ let law_overflow (type s) (dt : (float, s) D.t) u (offset, step, ks) =
   and q = Array.fold_left (fun a k -> a + (k * k)) 0 ks in
   let v = Float.of_int ((n * q) - (s * s)) /. (nf *. nf) in
   let m = Float.of_int ((n * offset) + s) /. nf in
-  let gamma k = Float.of_int k *. u /. (1. -. (Float.of_int k *. u)) in
-  let g = gamma n in
-  at_most ~msg:"variance" float_exact
-    ~than:
-      (((gamma (n + 4) +. (2. *. g *. g)) *. v)
-      +. (2. *. gamma (n + 6) *. g *. m *. Float.sqrt v)
-      +. (4. *. gamma (n + 4) *. g *. g *. m *. m))
+  let _, bound = cpu_moments_bound u n ~mu:m ~mm:m ~v in
+  at_most ~msg:"variance" float_exact ~than:bound
     (Float.abs (((read var).(0) /. (step *. step)) -. v))
 
 let test_moments_cases () =
@@ -1158,8 +1144,8 @@ let test_logsumexp_cases () =
     (A.to_array (cast D.Bfloat16 wide))
     (lse D.Bfloat16 [| 0.; 0. |])
 
-(* Logsumexp and Arg scans: by the expansion and by nx.cpu, on the host,
-   against references over each prefix. *)
+(* Logsumexp and Arg scans on nx.cpu, against references over each
+   prefix. *)
 
 (* [a] by [on], read through a transposed view where [strided]: the elements
    of [a], held in a layout that runs its axes backwards. *)
@@ -1177,18 +1163,14 @@ let transposed on strided a =
     let held = Array.of_list (List.map (fun i -> xs.(at i)) (indices back)) in
     Nx.transpose (on (A.of_array (A.dtype a) back held))
 
-(* [f] by the expansion then by nx.cpu, given the path's name and its placement
-   of an array. *)
-let each_path
-    (f :
-      'd.
-      string -> ('v 's. bool -> ('v, 's) A.t -> ('v, 's, 'd) Nx.t) -> unit) =
-  expanded (fun () ->
-      f "expansion" (fun strided a -> transposed value strided a));
+(* [f] on nx.cpu, given its name and its placement of an array. *)
+let on_cpu
+    (f : string -> ('v 's. bool -> ('v, 's) A.t -> ('v, 's, host) Nx.t) -> unit)
+    =
   f "nx.cpu" (fun strided a -> transposed value strided a)
 
 (* A shape of rank at least one and an axis of it, at times long enough for
-   several levels of the expansion's recursion. *)
+   several levels of the network. *)
 let along =
   let open Gen in
   let* s = shape in
@@ -1250,7 +1232,7 @@ let float_scan_case =
 let rounded (type s) (dt : (float, s) D.t) v =
   (A.to_array (A.of_array dt [| 1 |] [| v |])).(0)
 
-(* nx_kernel.mli's bound, one for both paths: at [n] terms through at most
+(* nx_kernel.mli's bound: at [n] terms through at most
    [D] combinations, [D] the result's {!depth}, within
    [(7 D + 6 ln n) u + u |r|] in the accumulator; then rounded once, so
    between the roundings of the bound's ends. The reference, float64 over
@@ -1298,7 +1280,7 @@ let law_logsumexp_scan (Float_case (dt, s, axis, strided, xs)) =
   let u = match dt with D.Float64 -> ldexp 1. (-53) | _ -> ldexp 1. (-24) in
   let a = A.of_array dt s xs in
   cover_scan s axis strided;
-  each_path (fun by place ->
+  on_cpu (fun by place ->
       let x = place strided a in
       let ts = read x in
       let y = scan1 (Logsumexp (0, dt)) axis x in
@@ -1331,7 +1313,7 @@ let law_logsumexp_scan (Float_case (dt, s, axis, strided, xs)) =
         (prefixes s axis))
 
 let test_logsumexp_scan_cases () =
-  each_path (fun by place ->
+  on_cpu (fun by place ->
       let lse (type s) (dt : (float, s) D.t) s xs =
         let x = place false (A.of_array dt s xs) in
         read (scan1 (Logsumexp (0, dt)) (Array.length s - 1) x)
@@ -1440,7 +1422,7 @@ let beats flip t b =
 let law_arg_scan (Arg_case { dt; key; s; axis; strided; xs }) =
   let a = A.of_array dt s xs in
   cover_scan s axis strided;
-  each_path (fun by place ->
+  on_cpu (fun by place ->
       let x = place strided a in
       let keys = Array.map key (read x) and tb = element_bits (host_array x) in
       List.iter
@@ -1470,7 +1452,7 @@ let law_arg_scan (Arg_case { dt; key; s; axis; strided; xs }) =
         [ ("max", (Max : Nx_kernel.extreme), false); ("min", Min, true) ])
 
 let test_arg_scan_cases () =
-  each_path (fun by place ->
+  on_cpu (fun by place ->
       let msg m = m ^ ", " ^ by in
       let arg (type v s) e (dt : (v, s) D.t) s (xs : v array) =
         let x = place false (A.of_array dt s xs) in
@@ -1827,8 +1809,7 @@ let complex_group =
     ]
 
 (* The prefix law: a scan's result at an index is a function of the terms up
-   to it alone, for each reduction, by the expansion and by nx.cpu, on the
-   host. Axes and prefixes are 1 or 2 long, a power of two or next to one,
+   to it alone, for each reduction, on nx.cpu. Axes and prefixes are 1 or 2 long, a power of two or next to one,
    or next to nx.cpu's chunks of 4096, so that a network or a path chosen
    by the axis's length would give the prefix other bits. *)
 
@@ -1858,44 +1839,6 @@ let length =
       (2, int_range 1 40);
       (1, int_range (chunk - 1) (chunk + 64));
     ]
-
-(* nx.cpu's Logsumexp and Moments scans cut a slice into tiles of 256
-   terms, which several threads share where slices are few. *)
-let tile = 256
-
-(* An axis's length and the slices beside it, for a Logsumexp or Moments
-   scan: a {!length} beside up to two others; one slice of 24 to 32 tiles,
-   two or three of 12 to 24, and 65 to 72 of 1 to 8, each around a multiple
-   of a tile, the last run in units of 16 slices side by side, one
-   partial. *)
-let net_shape =
-  let open Gen in
-  let tiles lo hi =
-    let* k = int_range lo hi in
-    let+ d = int_range (-2) 2 in
-    (k * tile) + d
-  in
-  frequency
-    [
-      (4, pair length (int_range 1 3));
-      (1, pair (int_range 0 1) (int_range 1 3));
-      (1, pair (tiles 24 32) (constant 1));
-      (1, pair (tiles 12 24) (int_range 2 3));
-      (1, pair (tiles 1 8) (int_range 65 72));
-    ]
-
-(* The covers of a Logsumexp or Moments scan of [slices] slices of [n]
-   terms. *)
-let cover_tiles n slices =
-  cover "an axis around a multiple of a tile"
-    (n >= tile - 2 && (n + 2) mod tile <= 4);
-  cover "one slice past one tile, the last partial"
-    (slices = 1 && n > tile && n mod tile <> 0);
-  cover "one slice of 24 tiles or more" (slices = 1 && n >= (24 * tile) - 2);
-  cover "two or three slices of 12 tiles or more"
-    (slices > 1 && slices <= 3 && n >= (12 * tile) - 2);
-  cover "more than 64 slices side by side, past a tile"
-    (slices > 64 && n > tile)
 
 (* Finite terms of either sign. *)
 let finite_term =
@@ -1989,7 +1932,7 @@ let law_scan_prefix (Prefix_case (dt, s, axis, k, xs)) =
     done
   done;
   let pxs = Array.map (fun p -> xs.(p)) from in
-  each_path (fun by place ->
+  on_cpu (fun by place ->
       let whole = place false (A.of_array dt s xs) in
       let prefix = place false (A.of_array dt part pxs) in
       List.iter
@@ -2010,199 +1953,6 @@ let law_scan_prefix (Prefix_case (dt, s, axis, k, xs)) =
           ("arg max", Arg Max);
           ("arg min", Arg Min);
         ])
-
-(* Moments scans whose bits nx.cpu and the expansion both state: float32 or
-   float64 terms near an offset, half the time with specials, of a
-   {!net_shape}, held transposed at times. A term not finite sends nx.cpu's
-   fast pass to its exact one, so finite terms alone check the fast
-   pass's results over many tiles. *)
-type bits_case =
-  | Bits_case :
-      (float, 's) D.t * int array * int * bool * float array
-      -> bits_case
-
-let bits_case =
-  let open Gen in
-  let make (type s) (dt : (float, s) D.t) =
-    let* n, outer = net_shape in
-    let* axis = int_range 0 1 in
-    let* strided = bool in
-    let* c = of_list [ 0.; 1e3; -1e5 ] in
-    let s = if axis = 0 then [| n; outer |] else [| outer; n |] in
-    let* finite = bool in
-    let shift t = if Float.is_finite t then c +. t else t in
-    let term = map shift (if finite then finite_term else prefix_term) in
-    let+ xs = array ~size:(constant (n * outer)) term in
-    Bits_case (dt, s, axis, strided, xs)
-  in
-  with_pp
-    (fun ppf (Bits_case (dt, s, axis, strided, _)) ->
-      Format.fprintf ppf "%a %a along %d%s" D.pp dt pp_ints s axis
-        (if strided then ", transposed" else ""))
-    (one_of [ make D.Float32; make D.Float64 ])
-
-(* Cases the generator draws too rarely for every run. *)
-let bits_examples =
-  let specials =
-    [| 1.5; nan_with 5L; Float.infinity; -0.; Float.neg_infinity |]
-  in
-  let terms n = Array.init n (fun i -> specials.(i mod 5)) in
-  let finite n =
-    Array.init n (fun i -> 1e3 +. Float.of_int (i * 7919 mod 251))
-  in
-  [
-    Bits_case (D.Float64, [| 1; 2 |], 1, false, terms 2);
-    Bits_case (D.Float32, [| 9; 2 |], 0, true, terms 18);
-    Bits_case (D.Float64, [| 3; 17 |], 1, true, terms 51);
-    Bits_case (D.Float32, [| 1; 1 |], 1, false, [| Float.infinity |]);
-    Bits_case (D.Float32, [| 6401; 1 |], 0, false, terms 6401);
-    Bits_case (D.Float64, [| 3; 3074 |], 1, true, terms 9222);
-    Bits_case (D.Float32, [| 70; 514 |], 1, false, terms 35980);
-    Bits_case (D.Float32, [| 3070; 3 |], 0, false, finite 9210);
-    Bits_case (D.Float64, [| 2; 6146 |], 1, true, finite 12292);
-  ]
-
-let law_moments_bits (Bits_case (dt, s, axis, strided, xs)) =
-  let n = s.(axis) in
-  cover "an axis of 1 or 2" (n <= 2);
-  cover_tiles n s.(1 - axis);
-  cover "one to three slices of 12 tiles or more, every term finite"
-    (s.(1 - axis) <= 3
-    && n >= (12 * tile) - 2
-    && Array.for_all Float.is_finite xs);
-  cover "an axis next to a power of two" (next_to_pow2 n);
-  cover "a term not finite or -0"
-    (Array.exists
-       (fun x -> (not (Float.is_finite x)) || 1. /. x = Float.neg_infinity)
-       xs);
-  cover "float64" (D.equal dt D.Float64);
-  cover "transposed" strided;
-  let a = A.of_array dt s xs in
-  let scan on =
-    let m, v = scan1 (Moments (0, dt)) axis (transposed on strided a) in
-    (blind (host_array m), blind (host_array v))
-  in
-  equal ~msg:"nx.cpu's bits, the expansion's"
-    (pair blind_bits blind_bits)
-    (expanded (fun () -> scan value))
-    (scan value)
-
-(* How a Logsumexp scan's operand is read: as held, transposed, reversed
-   along every axis, or broadcast along axis [b] from an extent of 1. *)
-type view = Plain | Transposed | Reversed | Broadcast of int
-
-let view_name = function
-  | Plain -> "plain"
-  | Transposed -> "transposed"
-  | Reversed -> "reversed"
-  | Broadcast _ -> "broadcast"
-
-(* Logsumexp scans whose bits nx.cpu and the expansion both state: every
-   float dtype, terms from [-w] to [w] with [-0], infinities and NaNs at a
-   drawn rate, along an axis of a {!length}, of [0] or [1], or around a
-   multiple of 4096, read through a {!view}. The terms are the held
-   array's, of the shape the view reads but of extent 1 along a broadcast
-   axis. *)
-type lse_case =
-  | Lse_case :
-      (float, 's) D.t * int array * int * view * float array
-      -> lse_case
-
-(* The shape a case's array is held at. *)
-let held s = function
-  | Broadcast b -> Array.mapi (fun a e -> if a = b then 1 else e) s
-  | Plain | Transposed | Reversed -> s
-
-let lse_case =
-  let open Gen in
-  let special =
-    of_list
-      [ nan_with 5L; nan_with 9L; Float.infinity; Float.neg_infinity; -0. ]
-  in
-  let make (type s) (dt : (float, s) D.t) =
-    let* n, outer = net_shape in
-    let* axis = int_range 0 1 in
-    let s = if axis = 0 then [| n; outer |] else [| outer; n |] in
-    let* view =
-      of_list [ Plain; Transposed; Reversed; Broadcast 0; Broadcast 1 ]
-    in
-    let* w = of_list [ 3.; 100.; 1000. ] in
-    let* rate = of_list [ 0; 0; 400; 20 ] in
-    let term =
-      if rate = 0 then float_range (-.w) w
-      else frequency [ (rate - 1, float_range (-.w) w); (1, special) ]
-    in
-    let size = Array.fold_left ( * ) 1 (held s view) in
-    let+ xs = array ~size:(constant size) term in
-    Lse_case (dt, s, axis, view, xs)
-  in
-  with_pp
-    (fun ppf (Lse_case (dt, s, axis, view, _)) ->
-      Format.fprintf ppf "%a %a along %d, %s" D.pp dt pp_ints s axis
-        (view_name view))
-    (one_of
-       [
-         make D.Float32;
-         make D.Float64;
-         make D.Float16;
-         make D.Bfloat16;
-         make D.Float8_e4m3fn;
-         make D.Float8_e5m2;
-         make D.Float4_e2m1fn;
-       ])
-
-(* Cases the generator draws too rarely for every run: specials in turn
-   along short axes, long axes with a NaN, an infinity or an outlier late,
-   and many slices side by side past a tile. *)
-let lse_examples =
-  let specials =
-    [| 1.5; nan_with 5L; Float.infinity; -0.; Float.neg_infinity; -3. |]
-  in
-  let cycle n = Array.init n (fun i -> specials.(i mod 6)) in
-  let late n v =
-    Array.init n (fun i ->
-        if i = n - 5 then v else 50. *. sin (Float.of_int i))
-  in
-  [
-    Lse_case (D.Float64, [| 2; 0 |], 1, Plain, [||]);
-    Lse_case (D.Float32, [| 1; 1 |], 1, Plain, [| -0. |]);
-    Lse_case (D.Float32, [| 12; 2 |], 0, Transposed, cycle 24);
-    Lse_case (D.Float64, [| 3; 18 |], 1, Reversed, cycle 54);
-    Lse_case (D.Bfloat16, [| 6401; 1 |], 0, Plain, late 6401 Float.infinity);
-    Lse_case
-      (D.Float32, [| 2; 6145 |], 1, Broadcast 0, late 6145 (nan_with 7L));
-    Lse_case (D.Float64, [| 3071; 3 |], 0, Broadcast 1, late 3071 1e3);
-    Lse_case (D.Float32, [| 514; 70 |], 0, Plain, late (514 * 70) 1e3);
-  ]
-
-let law_logsumexp_bits (Lse_case (dt, s, axis, view, xs)) =
-  let n = s.(axis) in
-  cover "an axis of 0 or 1" (n <= 1);
-  cover "an axis next to a power of two" (next_to_pow2 n);
-  cover_tiles n s.(1 - axis);
-  cover "a NaN" (Array.exists Float.is_nan xs);
-  cover "an infinity" (Array.exists (fun x -> Float.abs x = Float.infinity) xs);
-  cover "a narrow float" (D.bits dt < 32);
-  List.iter
-    (fun v -> cover (view_name v) (view_name view = view_name v))
-    [ Plain; Transposed; Reversed; Broadcast 0 ];
-  let a = A.of_array dt (held s view) xs in
-  let x () =
-    match view with
-    | Plain -> value a
-    | Transposed -> transposed value true a
-    | Reversed ->
-        let k = Array.length xs in
-        let back = Array.init k (fun i -> xs.(k - 1 - i)) in
-        Nx.flip (value (A.of_array dt s back))
-    | Broadcast _ -> Nx.broadcast_to s (value a)
-  in
-  let scan () =
-    let y = scan1 (Logsumexp (0, dt)) axis (x ()) in
-    blind (host_array y)
-  in
-  equal ~msg:"nx.cpu's bits, the expansion's" blind_bits
-    (expanded scan) (scan ())
 
 let test_optional_rules () =
   let x = vector D.Int32 [| 1l; 2l |] in
@@ -2547,8 +2297,8 @@ let nan_ops =
     };
   ]
 
-(* How a value computes: by the host's nx.cpu or by nx's expansions, on the
-   host or over three devices split along the rows' axis. *)
+(* How a value computes: by the host's nx.cpu, on the host or over three
+   devices split along the rows' axis. *)
 type placing = {
   pname : string;
   cut : bool;
@@ -2559,22 +2309,9 @@ let placings =
   [
     { pname = "nx.cpu"; cut = false; go = (fun o a -> o.run (value a)) };
     {
-      pname = "an expansion";
-      cut = false;
-      go = (fun o a -> expanded (fun () -> o.run (value a)));
-    };
-    {
       pname = "nx.cpu over three devices";
       cut = true;
       go = (fun o a -> o.run (Nx.place (Cpu3.split ~axis:row_axis) (value a)));
-    };
-    {
-      pname = "an expansion over three devices";
-      cut = true;
-      go =
-        (fun o a ->
-          expanded (fun () ->
-              o.run (Nx.place (Cpu3.split ~axis:row_axis) (value a))));
     };
   ]
 
@@ -2692,23 +2429,23 @@ let optional_group =
   group "optional reductions"
     [
       prop "logsumexp is m + log Σ exp (x - m), its specials exact" float64_case
-        (expanding law_logsumexp);
+        law_logsumexp;
       prop "moments are within their stated bounds" moments_case
-        (expanding law_moments);
+        law_moments;
       prop "float32 moments are within their bounds where (Σ d)² overflows"
         (overflow_case ((1 lsl 23) + 2) 0x1p59)
-        (expanding (law_overflow D.Float32 0x1p-24));
+        (law_overflow D.Float32 0x1p-24);
       prop "float64 moments are within their bounds where (Σ d)² overflows"
         (overflow_case ((1 lsl 52) + 2) 0x1p507)
-        (expanding (law_overflow D.Float64 0x1p-53));
+        (law_overflow D.Float64 0x1p-53);
       prop "moment scans are within their stated bounds" moments_scan_case
         law_moments_scan;
       prop "arg is the extreme and its first position" int32_case
-        (expanding law_arg);
-      test "arg's cases" (expanding test_arg_cases);
-      test "moments' cases" (expanding test_moments_cases);
+        law_arg;
+      test "arg's cases" test_arg_cases;
+      test "moments' cases" test_moments_cases;
       test "moment scans' cases" test_moments_scan_cases;
-      test "logsumexp's cases" (expanding test_logsumexp_cases);
+      test "logsumexp's cases" test_logsumexp_cases;
       prop "logsumexp scans are within their stated bound, specials exact"
         float_scan_case law_logsumexp_scan;
       test "logsumexp scans' cases" test_logsumexp_scan_cases;
@@ -2718,12 +2455,6 @@ let optional_group =
       prop ~examples:prefix_examples
         "a scan's prefix is the prefix of its scan, bit for bit" prefix_case
         law_scan_prefix;
-      prop ~examples:bits_examples
-        "nx.cpu's Moments scans give the expansion's bits" bits_case
-        law_moments_bits;
-      prop ~examples:lse_examples
-        "nx.cpu's Logsumexp scans give the expansion's bits" lse_case
-        law_logsumexp_bits;
       test "their rules raise naming the caller" test_optional_rules;
     ]
 
@@ -2994,12 +2725,12 @@ let reductions_group =
         law_int_mean;
       test "integer means of extremes and empty axes" test_int_mean;
       test "a complex cumsum adds the parts, a narrow float's rounds once"
-        test_scan_expansions;
+        test_scan_parts;
       test "a carried scan over a value cut along its axis is the whole's"
         test_carried_cut;
       prop
-        "a NaN term makes a NaN result on the host, through an expansion \
-         and, where partials keep bits, cut along the reduced axis"
+        "a NaN term makes a NaN result on the host and, where partials keep \
+         bits, cut along the reduced axis"
         nan_case law_nans;
     ]
 

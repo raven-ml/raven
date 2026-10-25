@@ -3007,9 +3007,9 @@ let stat_example r d s axes ?view ?(outliers = 0) ?(specials = 0) values =
   in
   stat_of r s axes view values make
 
-(* The arithmetic of Nx's expansions. Logsumexp and Moments reduce in two
-   passes, as Nx expands them: drawn from these spreads of terms, they give
-   the bits of that arithmetic run on the kernels' own Max, Sum and kinds. *)
+(* The two passes' arithmetic. Logsumexp and Moments reduce in two passes:
+   drawn from these spreads of terms, they give the bits of that arithmetic
+   run on the kernels' own Max, Sum and kinds. *)
 
 let normal r =
   let u1 = Random.State.float r 1. and u2 = Random.State.float r 1. in
@@ -5507,7 +5507,7 @@ let cpu (b : Support.backend) =
          same bits on one thread and from a copy"
         stat_case (run (law_stateful b));
       prop ~examples:spread_examples
-        "Logsumexp and Moments give the bits of Nx's expansions" spread_case
+        "Logsumexp and Moments give the bits of their two passes" spread_case
         (run (law_record b));
       test "a reduction or scan into its own operand gives fresh bits"
         (fun () -> b.around (test_in_place b));

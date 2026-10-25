@@ -1402,8 +1402,8 @@ let init =
 (* Scales and segments
 
    [Nx.Prim.Contract] with block scales and segments: on the host, nx.cpu
-   against the operation's expansion within the bound; over devices, a cut
-   placement against one device's bits. *)
+   against the exact sums within the bound; over devices, a cut placement
+   against one device's bits. *)
 
 module Scaled = struct
   module P = Nx.Prim
@@ -1568,34 +1568,6 @@ module Scaled = struct
         segments;
       }
 
-  (* [c] with each value and scale its magnitude: its sums bound the
-     roundings of [c]'s. *)
-  let magnitudes c =
-    let side s =
-      let scale =
-        match s.scale with
-        | Some (sv, Values (dt, vs)) ->
-            Some (sv, Values (dt, Array.map Float.abs vs))
-        | sc -> sc
-      in
-      { s with xs = Array.map Float.abs s.xs; scale }
-    in
-    let init = Option.map (Array.map Float.abs) c.init in
-    { c with a = side c.a; b = side c.b; init }
-
-  (* [op] by its expansion, each other operation eagerly. *)
-  let expanded op =
-    let rule : type q. P.interpretation -> by:string -> q P.t -> q =
-     fun i ~by op ->
-      match op with
-      | Contract _ -> (
-          match P.expand i ~by ~repeat:Nx_support.folding op with
-          | Some r -> r
-          | None -> fail "a contraction without an expansion")
-      | _ -> P.eval ~by op
-    in
-    P.interpret ~name:"test.expand" Extent rule (fun _ -> P.eval ~by:"t" op)
-
   (* The index [r] of the segmented axis is in group [e] of the offsets [o],
      as Nx_kernel.segments states. *)
   let group_of (o : int64 array) r =
@@ -1607,21 +1579,110 @@ module Scaled = struct
     in
     if g > 0 && o.(0) <= r && r < o.(g) then find (g - 1) else None
 
-  (* Each output's bits are within twice the bound of the exact sum of
-     either: [2k + 8] roundings of [u] relative to the magnitudes' sum, and
-     one least subnormal per term for what underflows. A NaN magnitude is a
-     NaN term, which makes both NaNs; an infinite one is an overflow, which
-     the bound bars. Rounded into float16, each sum takes one more rounding
-     of float16's [2^-11] relative and half its least subnormal, [2^-25],
-     an output near float16's largest, [65504], overflowing in either. *)
+  (* Each element of [s]'s view at float64, times its scale block's scale
+     rounded once into the accumulator, float64 where [f64], in C order of
+     the view. *)
+  let scaled ~f64 role s =
+    let (P.Any x) = operand on_host role s in
+    let xs = Nx.to_array (Nx.cast Nx.float64 x) in
+    let sv = match s.scale with Some (sv, _) -> sv | None -> [||] in
+    let ss =
+      match scale on_host role s with
+      | None -> [||]
+      | Some (Exponent e) ->
+          Array.map
+            (fun c -> if c = 255 then Float.nan else Float.ldexp 1. (c - 127))
+            (Nx.to_array e)
+      | Some (Value v) -> Nx.to_array (Nx.cast Nx.float64 v)
+    in
+    if s.scale = None then xs
+    else
+      let r = Array.length s.view in
+      let idx = Array.make r 0 in
+      Array.mapi
+        (fun i x ->
+          let rest = ref i and at = ref 0 in
+          for a = r - 1 downto 0 do
+            idx.(a) <- !rest mod s.view.(a);
+            rest := !rest / s.view.(a)
+          done;
+          for a = 0 to r - 1 do
+            at := (!at * sv.(a)) + (idx.(a) / (s.view.(a) / sv.(a)))
+          done;
+          let p = x *. ss.(!at) in
+          if f64 then p else Int32.float_of_bits (Int32.bits_of_float p))
+        xs
+
+  let two_sum a b =
+    let s = a +. b in
+    let bb = s -. a in
+    (s, a -. (s -. bb) +. (b -. bb))
+
+  (* Each output of [c], in C order of [result_shape c], from [init]'s
+     values as the result's dtype holds them: its sum in double-double, as
+     Nx_kernel.segments groups its products, and the sum of its terms'
+     magnitudes. *)
+  let reference c init =
+    let a = scaled ~f64:c.f64 A c.a and b = scaled ~f64:c.f64 B c.b in
+    let nb = Option.value c.batch ~default:1 and w = c.g + 1 in
+    let gb = match c.segs with Some (Rows _) -> c.g | _ -> 1 in
+    let groups = match c.segs with Some (Contracting _) -> c.g | _ -> 1 in
+    let offsets bi =
+      match c.segs with
+      | Some (Rows os | Contracting os) -> Array.sub os (bi * w) w
+      | None -> [||]
+    in
+    let outs = groups * nb * c.m * c.n in
+    let want = Array.make outs 0. and mag = Array.make outs 0. in
+    for o = 0 to outs - 1 do
+      let j = o mod c.n and i = o / c.n mod c.m in
+      let bi = o / (c.m * c.n) mod nb and e = o / (nb * c.m * c.n) in
+      let t0 = match init with Some xs -> xs.(o) | None -> 0. in
+      let hi = ref t0 and lo = ref 0. and m = ref (Float.abs t0) in
+      let term ~e t =
+        let x = a.((((bi * c.m) + i) * c.k) + t)
+        and y = b.((((((bi * gb) + e) * c.k) + t) * c.n) + j) in
+        let p = x *. y in
+        let s, err = two_sum !hi p in
+        hi := s;
+        lo := !lo +. err +. Float.fma x y (-.p);
+        m := !m +. Float.abs p
+      in
+      (match c.segs with
+      | None -> for t = 0 to c.k - 1 do term ~e:0 t done
+      | Some (Rows _) -> (
+          match group_of (offsets bi) i with
+          | Some e -> for t = 0 to c.k - 1 do term ~e t done
+          | None -> ())
+      | Some (Contracting _) ->
+          for t = 0 to c.k - 1 do
+            if group_of (offsets bi) t = Some e then term ~e:0 t
+          done);
+      want.(o) <- !hi +. !lo;
+      mag.(o) <- !m
+    done;
+    (want, mag)
+
+  (* Each output is within [2k + 8] roundings of [u] relative to the
+     magnitudes' sum of the exact sum, and one least subnormal per term for
+     what underflows. A NaN magnitude is a NaN term, which makes a NaN; an
+     infinite one, or one past the accumulator's largest, is an overflow,
+     which the bound bars. Rounded into
+     float16, each sum takes one more rounding of float16's [2^-11]
+     relative and half its least subnormal, [2^-25], an output near
+     float16's largest, [65504], overflowing. *)
   let check (type r) (acc : (float, r) Nx.dtype) c =
     let read y = Nx.to_array (Nx.cast Nx.float64 y) in
     let run out =
-      ( read (P.eval ~by:"t" (op on_host acc out c)),
-        read (expanded (op on_host acc out c)) )
+      let init =
+        Option.map
+          (fun xs -> read (Nx.cast out (Nx.create Nx.float64 (result_shape c) xs)))
+          c.init
+      in
+      (read (P.eval ~by:"t" (op on_host acc out c)), init)
     in
-    let y, want = if c.half then run Nx.float16 else run acc in
-    let mag = read (expanded (op on_host acc acc (magnitudes c))) in
+    let y, init = if c.half then run Nx.float16 else run acc in
+    let want, mag = reference c init in
     let u, eta =
       if c.f64 then (epsilon_float /. 2., Float.of_string "0x1p-1074")
       else (Float.of_string "0x1p-24", Float.of_string "0x1p-149")
@@ -1629,17 +1690,17 @@ module Scaled = struct
     let n = (2 * c.k) + 8 in
     let gamma = Float.of_int n *. u /. (1. -. (Float.of_int n *. u)) in
     let u16 = Float.of_string "0x1p-11" and eta16 = Float.of_string "0x1p-25" in
+    let largest =
+      if c.f64 then Float.max_float else Float.of_string "0x1.fffffep127"
+    in
+    equal ~msg:"outputs" int (Array.length want) (Array.length y);
     Array.iteri
       (fun i m ->
         let msg = Printf.sprintf "output %d of magnitude %g" i m in
-        let tol = (2. *. gamma *. m) +. (Float.of_int (c.k + 2) *. eta) in
-        let tol =
-          if c.half then tol +. (2. *. ((u16 *. (m +. tol)) +. eta16)) else tol
-        in
-        if Float.is_nan m then
-          equal (pair bool bool) ~msg (true, true)
-            (Float.is_nan want.(i), Float.is_nan y.(i))
-        else if Float.is_finite m && not (c.half && m +. tol >= 65504.) then
+        let tol = (gamma *. m) +. (Float.of_int (c.k + 2) *. eta) in
+        let tol = if c.half then tol +. (u16 *. (m +. tol)) +. eta16 else tol in
+        if Float.is_nan m then equal bool ~msg true (Float.is_nan y.(i))
+        else if m +. tol < largest && not (c.half && m +. tol >= 65504.) then
           equal (float tol) ~msg want.(i) y.(i))
       mag;
     (y, mag)
@@ -1971,7 +2032,7 @@ module Scaled = struct
 
   let within_bound =
     prop ~examples
-      "a scaled or segmented contraction is within the bound of its expansion"
+      "a scaled or segmented contraction is within the bound of its exact sum"
       case law
 
   let placements =
@@ -2071,8 +2132,7 @@ module Scaled = struct
       let want = pick init in
       equal bool ~msg:"some output has no products" true (want <> []);
       let op = op on_host Nx.float32 out c in
-      equal (list int64) ~msg:"nx.cpu" want (pick (P.eval ~by:"t" op));
-      equal (list int64) ~msg:"the expansion" want (pick (expanded op))
+      equal (list int64) ~msg:"nx.cpu" want (pick (P.eval ~by:"t" op))
     in
     cases "an output of no products is its init's bits"
       ~name:(fun (n, _) -> n)

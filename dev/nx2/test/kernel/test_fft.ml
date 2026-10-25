@@ -297,10 +297,11 @@ let pp_case ppf c =
 
 (* Shapes, with the axes they must transform: small ones of any axes; one long
    line among short ones, transformed with any others, of a length at the edge
-   of the passes, of Bluestein's or of the four steps' (with factors not
-   multiples of a vector); and lines of the four steps' lengths side by side. *)
+   of the passes, of Bluestein's (514 and 1018 halved for a real line) or of the
+   four steps' (with factors not multiples of a vector); and lines of the four
+   steps' lengths side by side. *)
 let four = [ 289; 300; 360; 512; 625; 1000; 1024 ]
-let blue = [ 251; 257; 502; 509; 1031 ]
+let blue = [ 251; 257; 502; 509; 514; 1018; 1031 ]
 let edge = [ 53; 64; 65; 97; 100; 241; 243; 255; 256 ]
 
 let shape_gen =
@@ -372,6 +373,27 @@ let case_gen =
            { Complex.re; im })
      in
      { kind; wide; shape = s; axes; view; xs }
+
+(* Real lines of 514 and 1018 points, whose halves go by Bluestein's, in each
+   width and direction: the generator draws them too seldom for every seed. *)
+let halved_cases =
+  let case (n, wide, kind) =
+    let s = match kind with C2r _ -> (n / 2) + 1 | _ -> n in
+    let rs = Random.State.make [| n |] in
+    let xs =
+      Array.init s (fun _ ->
+          let re = value wide rs in
+          let im = match kind with R2c -> 0. | _ -> value wide rs in
+          { Complex.re; im })
+    in
+    { kind; wide; shape = [| s |]; axes = [| 0 |]; view = plain 1; xs }
+  in
+  List.concat_map
+    (fun n ->
+      List.concat_map
+        (fun wide -> List.map case [ (n, wide, R2c); (n, wide, C2r n) ])
+        [ false; true ])
+    [ 514; 1018 ]
 
 let points c =
   let last = c.axes.(Array.length c.axes - 1) in
@@ -508,6 +530,12 @@ let law_bound c =
     | R2c | C2r _ ->
         let n = (points c).(c.axes.(Array.length c.axes - 1)) in
         n mod 2 = 1 || n < 512
+    | C2c _ -> false);
+  cover "a real line halved, its half by Bluestein"
+    (match c.kind with
+    | R2c | C2r _ ->
+        let n = (points c).(c.axes.(Array.length c.axes - 1)) in
+        n mod 2 = 0 && n >= 512 && by_bluestein (n / 2)
     | C2c _ -> false);
   let x = operand c in
   let xs = complexes x in
@@ -1033,7 +1061,8 @@ let laws (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group ("nx.cpu " ^ b.name)
     [
-      prop "transforms are within nx_cpu.mli's bound" case_gen (run law_bound);
+      prop ~examples:halved_cases "transforms are within nx_cpu.mli's bound"
+        case_gen (run law_bound);
       prop "bits do not depend on views, threads or batch" special_gen
         (run law_bits);
       prop ~count:1000

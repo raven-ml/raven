@@ -5,18 +5,13 @@
 
 (* Gather, Scatter and Assemble through the engine's private modules, copied
    here: their rules raise before any kernel, a split placement computes what
-   one device does, a donated target takes the result, and nx's expansion of a
-   sub-byte gather and scatter. *)
+   one device does, and a donated target takes the result. *)
 
 open Windtrap
 module A = Nx_array
 module D = Nx_array.Dtype
 module M = Nx_array.Move
 module C = Nx_support.Counting
-
-module Expanded = Expand.Make (struct
-  let apply = Exec.run
-end)
 
 type b
 
@@ -170,36 +165,4 @@ let donation =
             (elements v));
     ]
 
-(* [op] by its expansion, which runs no loop. *)
-let expanded op =
-  Option.get (Expanded.run ~by:"t" ~repeat:(fun _ _ _ -> fail "a loop") op)
-
-let expansions =
-  group "expansions"
-    [
-      test "a sub-byte gather and scatter expand at a wider dtype"
-        (fun () ->
-          let x = on D.Int4 [| 2; 3 |] [| -8; -1; 0; 1; 7; 3 |] in
-          let idx = on D.Int64 [| 2; 2 |] [| 2L; 0L; 5L; 1L |] in
-          equal ~msg:"gather, position 5 outside the axis" (array int)
-            [| 0; -8; 0; 7 |]
-            (elements (expanded (Value.Gather { axis = 1; idx; x })));
-          let into = on D.Int4 [| 3 |] [| 7; -8; 3 |] in
-          let idx = on D.Int64 [| 4 |] [| 0L; 2L; 0L; 9L |] in
-          let u = on D.Int4 [| 4 |] [| 1; -1; 2; 5 |] in
-          equal ~msg:"scatter Add, 7 + 1 + 2 wrapping to -6" (array int)
-            [| -6; -8; 2 |]
-            (elements
-               (expanded
-                  (Value.Scatter
-                     {
-                       combine = Add;
-                       unique = false;
-                       axis = 0;
-                       idx;
-                       updates = u;
-                       into;
-                     }))));
-    ]
-
-let () = exit (run "nx index ops" [ rules; placements; donation; expansions ])
+let () = exit (run "nx index ops" [ rules; placements; donation ])

@@ -6,7 +6,8 @@
 (* Fft through Nx.Prim, on a library whose transforms are the sums
    Nx_kernel.S.c2c, r2c and c2r state, computed term by term: the values they
    give for small operands, the shapes and dtypes of each transform, its rule
-   before any kernel, a split placement, and nx's expansion of each. *)
+   before any kernel, a split placement, and nx.cpu's reading of a c2r's
+   bins. *)
 
 open Windtrap
 module A = Nx_array
@@ -205,24 +206,10 @@ let test_rules () =
   raises (fun () -> fft (C2c { direction = Forward; axes = [| 1 |]; x = c }));
   equal ~msg:"kernel calls" int 0 (Atomic.get Dft.calls)
 
-(* Expansion: a transform computed by nx's expansion. Against the direct
-   sums, within the bound Expand states: [‖ŷ - y‖₂ <= 20 u P √N ‖x‖₂], [N]
-   the points transformed, [P] the passes, [log₂ n] for an axis of a power of
-   two [n] and [3 log₂ M + 2] for another, [M] the power of two its
-   convolution runs at, and [u] the parts' unit roundoff; a C2r's
-   [‖x‖₂] is its completed bins', at most [√2] times its operand's. *)
-
-(* [f ()] with each transform computed by its expansion. *)
-let expanded f =
-  Nx_support.expanded
-    (fun (type r) (op : r Nx.Prim.t) ->
-      match op with Fft _ -> true | _ -> false)
-    f
-
-(* An expanded C2r reads only the real parts of bins 0 and, for an even n, n/2,
+(* nx.cpu's C2r reads only the real parts of bins 0 and, for an even n, n/2,
    as {!Nx_kernel.S.c2r} states: those of NaN and infinite imaginary parts are
    those of +0 ones. *)
-let test_expanded_c2r () =
+let test_c2r_bins () =
   List.iter
     (fun n ->
       let h = (n / 2) + 1 in
@@ -234,8 +221,7 @@ let test_expanded_c2r () =
         let x =
           Nx.Repr.of_array Nx.Host.v (A.of_array D.Complex128 [| h |] xs)
         in
-        expanded (fun () ->
-            read (fft (C2r { dtype = Nx.float64; n; axes = [| 0 |]; x })))
+        read (fft (C2r { dtype = Nx.float64; n; axes = [| 0 |]; x }))
       in
       equal
         ~msg:(Printf.sprintf "%d points" n)
@@ -243,330 +229,6 @@ let test_expanded_c2r () =
         (c2r (bins (fun _ -> 0.)))
         (c2r (bins (fun k -> if k = 0 then Float.nan else Float.infinity))))
     [ 6; 7; 8 ]
-
-type transform =
-  | Complex of Nx_kernel.direction
-  | Real
-  | Back of int  (** C2r of [n] points. *)
-
-type case = {
-  shape : int array;
-  axes : int array;
-  kind : transform;
-  wide : bool;  (** complex128 or float64. *)
-  xs : Complex.t array;
-}
-
-let pp_case ppf c =
-  let ints a = String.concat "; " (Array.to_list (Array.map string_of_int a)) in
-  Format.fprintf ppf "[%s] axes [%s] %s %s" (ints c.shape) (ints c.axes)
-    (match c.kind with
-    | Complex Forward -> "forward"
-    | Complex Inverse -> "inverse"
-    | Real -> "r2c"
-    | Back n -> Printf.sprintf "c2r %d" n)
-    (if c.wide then "64-bit parts" else "32-bit parts")
-
-let case =
-  let open Gen in
-  with_pp pp_case
-  @@ let* shape = array ~size:(int_range 1 3) (int_range 0 12) in
-     let r = Array.length shape in
-     let* chosen = array ~size:(constant r) bool in
-     let* last = int_range 0 (r - 1) in
-     let axes =
-       Array.of_list
-         (List.filter (fun a -> a = last || chosen.(a)) (List.init r Fun.id))
-     in
-     let* kind = of_list [ Complex Forward; Complex Inverse; Real; Back 0 ] in
-     let* kind =
-       match kind with
-       | Back _ ->
-           let+ n = int_range 0 12 in
-           Back n
-       | k -> constant k
-     in
-     (* A C2r reads n/2 + 1 bins along its last axis. *)
-     let shape =
-       match kind with
-       | Back n ->
-           let l = axes.(Array.length axes - 1) in
-           Array.mapi (fun a e -> if a = l then (n / 2) + 1 else e) shape
-       | Complex _ | Real -> shape
-     in
-     let* wide = bool in
-     let part = map (fun i -> Float.of_int i /. 8.) (int_range (-16) 16) in
-     let+ xs =
-       array
-         ~size:(constant (Array.fold_left ( * ) 1 shape))
-         (let+ re = part and+ im = part in
-          { Complex.re; im })
-     in
-     { shape; axes; kind; wide; xs }
-
-let log2_up n =
-  let rec go p k = if p >= n then k else go (2 * p) (k + 1) in
-  go 1 0
-
-(* The passes of an axis of [n] points. *)
-let passes n =
-  if n land (n - 1) = 0 then log2_up n else (3 * log2_up ((2 * n) - 1)) + 2
-
-let law_expansion c =
-  let l = c.axes.(Array.length c.axes - 1) in
-  let points a =
-    match c.kind with Back n when a = l -> n | _ -> c.shape.(a)
-  in
-  cover "an axis not a power of two"
-    (Array.exists (fun a -> points a land (points a - 1) <> 0) c.axes);
-  cover "several axes" (Array.length c.axes > 1);
-  let p = Array.fold_left (fun k a -> k + passes (points a)) 0 c.axes in
-  let n = Array.fold_left (fun k a -> k * points a) 1 c.axes in
-  let norm2 =
-    Array.fold_left
-      (fun m (z : Complex.t) ->
-        match c.kind with
-        | Real -> m +. (z.re *. z.re)
-        | Complex _ -> m +. (z.re *. z.re) +. (z.im *. z.im)
-        | Back _ -> m +. (2. *. ((z.re *. z.re) +. (z.im *. z.im))))
-      0. c.xs
-  in
-  let u = if c.wide then epsilon_float /. 2. else 0x1p-24 in
-  let bound = 20. *. u *. Float.of_int p *. sqrt (Float.of_int n *. norm2) in
-  let reals xs = Array.map (fun (z : Complex.t) -> z.re) xs in
-  let complexes xs = Array.map (fun re -> { Complex.re; im = 0. }) xs in
-  let compute p =
-    let on a = Nx.place p (Nx.Repr.of_array Nx.Host.v a) in
-    let axes = Iarray.of_array c.axes and s = c.shape in
-    match (c.kind, c.wide) with
-    | Complex direction, true ->
-        let x = on (A.of_array D.Complex128 s c.xs) in
-        read (fft (C2c { direction; axes; x }))
-    | Complex direction, false ->
-        let x = on (A.of_array D.Complex64 s c.xs) in
-        read (fft (C2c { direction; axes; x }))
-    | Real, true ->
-        let x = on (A.of_array D.Float64 s (reals c.xs)) in
-        read (fft (R2c { dtype = Nx.complex128; axes; x }))
-    | Real, false ->
-        let x = on (A.of_array D.Float32 s (reals c.xs)) in
-        read (fft (R2c { dtype = Nx.complex64; axes; x }))
-    | Back n, true ->
-        let x = on (A.of_array D.Complex128 s c.xs) in
-        complexes (read (fft (C2r { dtype = Nx.float64; n; axes; x })))
-    | Back n, false ->
-        let x = on (A.of_array D.Complex64 s c.xs) in
-        complexes (read (fft (C2r { dtype = Nx.float32; n; axes; x })))
-  in
-  let want = compute One.on
-  and got = expanded (fun () -> compute Nx.Host.on) in
-  equal ~msg:"shape" int (Array.length want) (Array.length got);
-  let err =
-    sqrt
-      (Array.fold_left ( +. ) 0.
-         (Array.map2
-            (fun (a : Complex.t) (b : Complex.t) ->
-              let d = Complex.sub a b in
-              (d.re *. d.re) +. (d.im *. d.im))
-            want got))
-  in
-  at_most ~msg:"‖ŷ - y‖₂ within the bound" float_exact ~than:bound err
-
-(* Accuracy: nx.cpu's transforms are no less accurate than the expansion, on
-   each of its routes, against sums in double-double. Errors are summed in
-   squares over fixed seeds, so the law is deterministic, and over at least
-   4096 points, which few roundings would sway on a short line. *)
-
-let two_sum a b =
-  let s = a +. b in
-  let bb = s -. a in
-  (s, a -. (s -. bb) +. (b -. bb))
-
-let dd_add (ah, al) (bh, bl) =
-  let s, e = two_sum ah bh in
-  two_sum s (e +. al +. bl)
-
-let dd_mul (ah, al) (bh, bl) =
-  let p = ah *. bh in
-  two_sum p (Float.fma ah bh (-.p) +. (ah *. bl) +. (al *. bh))
-
-let dd_neg (h, l) = (-.h, -.l)
-
-let dd_div (h, l) d =
-  let q = h /. d in
-  let p = q *. d in
-  two_sum q ((h -. p -. Float.fma q d (-.p) +. l) /. d)
-
-(* e^(-2πi m/n), 0 <= m < n, in double-double: the angle within its quarter
-   taken from the nearer end, sin and cos by their series. *)
-let unit m n =
-  let q = 4 * m / n in
-  let r = (4 * m) - (q * n) in
-  let far = 2 * r > n in
-  let pi_2 = (1.5707963267948966, 6.123233995736766e-17) in
-  let phi =
-    dd_mul pi_2
-      (dd_div (Float.of_int (if far then n - r else r), 0.) (Float.of_int n))
-  in
-  let s = ref (0., 0.) and c = ref (0., 0.) and t = ref (1., 0.) in
-  for k = 0 to 27 do
-    (match k mod 4 with
-    | 0 -> c := dd_add !c !t
-    | 1 -> s := dd_add !s !t
-    | 2 -> c := dd_add !c (dd_neg !t)
-    | _ -> s := dd_add !s (dd_neg !t));
-    t := dd_div (dd_mul !t phi) (Float.of_int (k + 1))
-  done;
-  let c, s = if far then (!s, !c) else (!c, !s) in
-  let re, im =
-    match q with
-    | 0 -> (c, s)
-    | 1 -> (dd_neg s, c)
-    | 2 -> (dd_neg c, dd_neg s)
-    | _ -> (s, dd_neg c)
-  in
-  (re, dd_neg im)
-
-(* A sum in double-double, its low parts added without renormalising, which
-   errs by about n u² of double over n terms. *)
-type sum = { mutable hi : float; mutable lo : float }
-
-(* [s] plus [a·(bh + bl)], [a] a double. *)
-let[@inline] add s a bh bl =
-  let p = a *. bh in
-  let e = Float.fma a bh (-.p) +. (a *. bl) in
-  let t = s.hi +. p in
-  let bb = t -. s.hi in
-  s.lo <- s.lo +. (s.hi -. (t -. bb)) +. (p -. bb) +. e;
-  s.hi <- t
-
-(* The transform of [direction] of [x], each part a double-double. *)
-let exact direction (x : Complex.t array) =
-  let n = Array.length x in
-  let w = Array.init n (fun m -> unit m n) in
-  let sign = match direction with Nx_kernel.Forward -> 1. | Inverse -> -1. in
-  let wrh = Array.map (fun ((h, _), _) -> h) w
-  and wrl = Array.map (fun ((_, l), _) -> l) w
-  and wih = Array.map (fun (_, (h, _)) -> sign *. h) w
-  and wil = Array.map (fun (_, (_, l)) -> sign *. l) w in
-  Array.init n (fun k ->
-      let re = { hi = 0.; lo = 0. } and im = { hi = 0.; lo = 0. } in
-      for j = 0 to n - 1 do
-        let t = j * k mod n and xr = x.(j).re and xi = x.(j).im in
-        add re xr wrh.(t) wrl.(t);
-        add re xi (-.wih.(t)) (-.wil.(t));
-        add im xr wih.(t) wil.(t);
-        add im xi wrh.(t) wrl.(t)
-      done;
-      ((re.hi, re.lo), (im.hi, im.lo)))
-
-module Cpu = (val Nx.devices [ m 3 ])
-
-(* What a route's case transforms: [n] points, of 64-bit parts where [wide]. *)
-type accuracy = { route : string; kind : transform; n : int; wide : bool }
-
-(* ‖ŷ - y‖₂² of nx.cpu's and of the expansion's [c] on the values of [seed]. *)
-let errors c seed =
-  let rs = Random.State.make [| seed; c.n |] in
-  let part () =
-    let v = Random.State.float rs 2. -. 1. in
-    if c.wide then v else Int32.float_of_bits (Int32.bits_of_float v)
-  in
-  let n = c.n in
-  let count = match c.kind with Back _ -> (n / 2) + 1 | _ -> n in
-  let xs =
-    Array.init count (fun _ ->
-        let re = part () in
-        { Complex.re; im = (if c.kind = Real then 0. else part ()) })
-  in
-  let want =
-    match c.kind with
-    | Complex d -> exact d xs
-    | Real -> Array.sub (exact Forward xs) 0 ((n / 2) + 1)
-    | Back _ ->
-        let full =
-          Array.init n (fun k ->
-              if k <= n / 2 then xs.(k) else Complex.conj xs.(n - k))
-        in
-        Array.map (fun (re, _) -> (re, (0., 0.))) (exact Inverse full)
-  in
-  let compute p =
-    let on a = Nx.place p (Nx.Repr.of_array Nx.Host.v a) in
-    let axes = [| 0 |] and s = [| count |] in
-    let reals = Array.map (fun (z : Complex.t) -> z.re) in
-    let complexes = Array.map (fun re -> { Complex.re; im = 0. }) in
-    let axes = Iarray.of_array axes in
-    match (c.kind, c.wide) with
-    | Complex direction, true ->
-        let x = on (A.of_array D.Complex128 s xs) in
-        read (fft (C2c { direction; axes; x }))
-    | Complex direction, false ->
-        let x = on (A.of_array D.Complex64 s xs) in
-        read (fft (C2c { direction; axes; x }))
-    | Real, true ->
-        let x = on (A.of_array D.Float64 s (reals xs)) in
-        read (fft (R2c { dtype = Nx.complex128; axes; x }))
-    | Real, false ->
-        let x = on (A.of_array D.Float32 s (reals xs)) in
-        read (fft (R2c { dtype = Nx.complex64; axes; x }))
-    | Back n, true ->
-        let x = on (A.of_array D.Complex128 s xs) in
-        complexes (read (fft (C2r { dtype = Nx.float64; n; axes; x })))
-    | Back n, false ->
-        let x = on (A.of_array D.Complex64 s xs) in
-        complexes (read (fft (C2r { dtype = Nx.float32; n; axes; x })))
-  in
-  let error (got : Complex.t array) =
-    let sum = ref 0. in
-    Array.iteri
-      (fun k ((rh, rl), (ih, il)) ->
-        let dr = got.(k).re -. rh -. rl and di = got.(k).im -. ih -. il in
-        sum := !sum +. (dr *. dr) +. (di *. di))
-      want;
-    !sum
-  in
-  (error (compute Cpu.on), error (expanded (fun () -> compute Nx.Host.on)))
-
-let accuracy_cases =
-  let each route ns kinds =
-    List.concat_map
-      (fun n ->
-        List.concat_map
-          (fun kind ->
-            List.map
-              (fun wide -> { route; kind = kind n; n; wide })
-              [ false; true ])
-          kinds)
-      ns
-  in
-  let complex = [ (fun _ -> Complex Forward); (fun _ -> Complex Inverse) ] in
-  let real = [ (fun _ -> Real); (fun n -> Back n) ] in
-  each "passes" [ 7; 60; 64; 241 ] complex
-  @ each "the four steps" [ 100; 1000; 1024 ] complex
-  @ each "Bluestein's" [ 257; 1031 ] (complex @ real)
-  @ each "Bluestein's, halved" [ 514 ] real
-  @ each "real lines" [ 6; 8; 16; 32; 64; 128; 256; 512; 1024 ] real
-
-let test_accuracy () =
-  List.iter
-    (fun c ->
-      let k = ref 0. and e = ref 0. in
-      for seed = 1 to Int.max 8 (4096 / c.n) do
-        let ek, ee = errors c seed in
-        k := !k +. ek;
-        e := !e +. ee
-      done;
-      let msg =
-        Format.asprintf "%s, %d points, %s %s" c.route c.n
-          (match c.kind with
-          | Complex Forward -> "forward"
-          | Complex Inverse -> "inverse"
-          | Real -> "r2c"
-          | Back _ -> "c2r")
-          (if c.wide then "64-bit parts" else "32-bit parts")
-      in
-      at_most ~msg float_exact ~than:(sqrt !e) (sqrt !k))
-    accuracy_cases
 
 (* The functions, through Nx: each against its sum computed in OCaml, at
    float64, and the identities between them, over lengths with no point, one,
@@ -920,15 +582,11 @@ let () =
              test "real to complex and back" test_real;
              test "a split value transforms as on one device" test_split;
            ];
-         group "rules and expansion"
+         group "rules"
            [
              test "the rule raises before any kernel" test_rules;
-             test "an expanded c2r ignores bins 0's and n/2's imaginary parts"
-               test_expanded_c2r;
-             prop "an expanded transform is within its bound" case
-               law_expansion;
-             test "nx.cpu is as accurate as the expansion on each route"
-               test_accuracy;
+             test "a c2r ignores bins 0's and n/2's imaginary parts"
+               test_c2r_bins;
            ];
          group "functions"
            [

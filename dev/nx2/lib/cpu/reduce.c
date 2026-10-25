@@ -90,12 +90,12 @@
    the loads itself: the table's products multiply and sum them in
    registers, in the lanes' order.
 
-   Networks. A Logsumexp or Moments scan computes nx_kernel.mli's network
-   on each slice, op by op with the kinds' arithmetic, as Nx's expansion
-   does, so that the two give the same bits. It holds O(log n) states per
-   slice. Slices few for the threads are cut into tiles of 256 terms, the
-   threads computing their states, then the network over them, then their
-   results: the same combinations in the same order (TILES).
+   Networks. A Logsumexp or Moments scan computes the network of
+   nx_kernel.mli's scans section on each slice, op by op with the kinds'
+   arithmetic, so every library gives the same bits. It holds O(log n)
+   states per slice. Slices few for the threads are cut into tiles of 256
+   terms, the threads computing their states, then the network over them,
+   then their results: the same combinations in the same order (TILES).
 
    The kernels come first, compiled once per target: as reduce.c for base
    and as its copy reduce_v3.c for v3. The entries follow, compiled once. */
@@ -1373,8 +1373,8 @@ MOMENTS(double, f64)
    - Moments: first the terms summed in lane order, merged by addition,
      and the center, their mean c; then x - c and (x - c)² summed so, and
      the variance, (Σ (x - c)² - Σ (x - c) (Σ (x - c) / n)) / n, +0 where
-     that is negative, or Σ (x - c)² where that is +inf: Nx's expansion's
-     arithmetic.
+     that is negative, or Σ (x - c)² where that is +inf, as
+     Nx_kernel.reduction's Moments defines it.
    Every function is inlined into each kernel, whose loops of 16 lanes the
    compiler then vectorises. */
 
@@ -1717,7 +1717,8 @@ ARG_COMPLEX(min_c128, c128, nx_minimum_c128)
     a->n += b->n;                                                            \
     a->s = (T)a->s + (T)b->s;                                                \
   }                                                                          \
-  /* The count as the dtype rounds it, as Nx's expansion divides by it. */   \
+  /* The count as the dtype rounds it: Nx_kernel.reduction's Moments         \
+     divides the sum by the count, in the dtype. */                          \
   static void mean_finish_##S(const nx_cpu_state *st, double c,              \
                               uint8_t *d0, uint8_t *d1) {                    \
     (void)c;                                                                 \

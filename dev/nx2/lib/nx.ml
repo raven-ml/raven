@@ -5948,7 +5948,6 @@ module Prim = struct
   let quiet = Eval.quiet
   let donated = Donate.is_handle
   let eval = Eval.eval
-  let expand = Eval.expand
 end
 
 (* Operators *)

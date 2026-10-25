@@ -307,7 +307,7 @@ and ('d, _) linalg =
 
 (** {1:applying Applying operations} *)
 
-(** How {!Expand}, {!Pairwise} and {!Partial} apply the simpler operations
+(** How {!Pairwise} and {!Partial} apply the simpler operations
     they compose. *)
 module type Apply = sig
   val apply : by:string -> 'r prim -> 'r

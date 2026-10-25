@@ -5,7 +5,7 @@
 
 (* Sort through Nx.Prim: the order and stability Nx_kernel.S.sort states,
    against a stable sort of the slices, sub-byte dtypes in one kernel call, its
-   rule before any kernel, a split placement, and nx's expansion of a sort. *)
+   rule before any kernel, and a split placement. *)
 
 open Windtrap
 module A = Nx_array
@@ -168,133 +168,6 @@ let test_split () =
        (Nx.placement (fst two))
        (Some (Count2.split ~axis:0)))
 
-(* Expansion *)
-
-(* [f ()] with each sort computed by its expansion. *)
-let expanded f =
-  Nx_support.expanded
-    (fun (type r) (op : r Nx.Prim.t) ->
-      match op with Sort _ -> true | _ -> false)
-    f
-
-(* Each element's bits, read as unsigned integers of its width: two per
-   complex128. *)
-let bits_of (type v s) (a : (v, s) A.t) : int64 array =
-  let a = A.copy a in
-  let read (type w r) (u : (w, r) D.t) (f : w -> int64) =
-    Array.map f (A.to_array (Option.get (A.bitcast u a)))
-  in
-  match D.bits (A.dtype a) with
-  | 8 -> read D.Uint8 Int64.of_int
-  | 16 -> read D.Uint16 Int64.of_int
-  | 32 -> read D.Uint32 (fun w -> Int64.logand (Int64.of_int32 w) 0xffff_ffffL)
-  | _ -> read D.Uint64 Fun.id
-
-(* A dtype with elements that break an order: NaNs of two payloads and both
-   signs, both zeros, the infinities, the integer extremes. *)
-type elts = Elts : ('v, 's) D.t * 'v Gen.t -> elts
-
-let floats =
-  Gen.of_list
-    [
-      nan_with 3L;
-      nan_with 5L;
-      Float.neg Float.nan;
-      -0.;
-      0.;
-      Float.infinity;
-      Float.neg_infinity;
-      1.;
-      -1.;
-      2.5;
-      -2.5;
-      1e-310;
-    ]
-
-let ints lo hi = Gen.of_list [ lo; hi; -1; 0; 1; 2; hi - 1 ]
-
-let dtypes =
-  let open Gen in
-  let complexes =
-    let+ re = floats and+ im = floats in
-    { Complex.re; im }
-  in
-  [
-    Elts (D.Float32, floats);
-    Elts (D.Float64, floats);
-    Elts (D.Float16, floats);
-    Elts (D.Bfloat16, floats);
-    Elts (D.Float8_e4m3fn, floats);
-    Elts (D.Complex64, complexes);
-    Elts (D.Complex128, complexes);
-    Elts (D.Int8, ints (-128) 127);
-    Elts (D.Uint8, of_list [ 0; 1; 2; 127; 128; 255 ]);
-    Elts (D.Int16, ints (-32768) 32767);
-    Elts (D.Int32, map Int32.of_int (ints (-5) 5));
-    Elts (D.Uint32, of_list [ 0l; 1l; Int32.max_int; Int32.min_int; -1l ]);
-    Elts
-      ( D.Int64,
-        of_list
-          [
-            Int64.min_int;
-            Int64.max_int;
-            -1L;
-            0L;
-            1L;
-            0x1_0000_0000L;
-            -0x1_0000_0000L;
-            0xffff_ffffL;
-          ] );
-    Elts (D.Uint64, of_list [ 0L; 1L; -1L; Int64.min_int; 0xffff_ffffL ]);
-    Elts (D.Bool, bool);
-  ]
-
-type expansion =
-  | Case :
-      ('v, 's) D.t * int array * int * bool * int option * 'v array
-      -> expansion
-
-let pp_expansion ppf (Case (dt, s, axis, descending, k, _)) =
-  Format.fprintf ppf "%s [%s] axis %d%s%s" (D.name dt)
-    (String.concat "; " (Array.to_list (Array.map string_of_int s)))
-    axis
-    (if descending then " descending" else "")
-    (match k with None -> "" | Some k -> Printf.sprintf " k %d" k)
-
-let expansion_case =
-  let open Gen in
-  with_pp pp_expansion
-  @@ let* (Elts (dt, elt)) = of_list dtypes in
-     let* s = array ~size:(int_range 1 3) (int_range 0 4) in
-     let* axis = int_range 0 (Array.length s - 1) in
-     (* A long axis takes the network through several stages. *)
-     let* long =
-       frequency [ (3, constant None); (1, map Option.some (int_range 5 40)) ]
-     in
-     let s =
-       match long with
-       | None -> s
-       | Some n -> Array.mapi (fun i e -> if i = axis then n else e) s
-     in
-     let* descending = bool in
-     let* k = option (int_range 0 s.(axis)) in
-     let+ xs = array ~size:(constant (Array.fold_left ( * ) 1 s)) elt in
-     Case (dt, s, axis, descending, k, xs)
-
-let law_expansion (Case (dt, s, axis, descending, k, xs)) =
-  cover "a complex dtype"
-    (match D.kind dt with D.Complex -> true | _ -> false);
-  cover "two keys or more" (D.bits dt >= 64);
-  cover "an axis of more than 16" (s.(axis) > 16);
-  cover "k" (k <> None);
-  let a = A.of_array dt s xs in
-  let v, p = sort ~descending ?k axis (Nx.place Count.on (value a)) in
-  let v', p' = expanded (fun () -> sort ~descending ?k axis (value a)) in
-  equal ~msg:"values, bit for bit" (array int64)
-    (bits_of (host_array v))
-    (bits_of (host_array v'));
-  equal ~msg:"positions" (array int64) (read p) (read p')
-
 let () =
   exit
     (run "nx sort"
@@ -310,9 +183,5 @@ let () =
            [
              test "the rule raises before any kernel" test_rules;
              test "a split value sorts as on one device" test_split;
-           ];
-         group "expansion"
-           [
-             prop "the expansion sorts as nx.cpu" expansion_case law_expansion;
            ];
        ])

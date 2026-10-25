@@ -480,17 +480,9 @@ let views =
             (elements (Nx.slice Nx.[ A; A; I 3; A ] past)));
     ]
 
-(* A scatter whose targets may repeat, by nx's expansion: the combination the
-   definition gives, over float32 updates that repeat targets, among them NaNs
-   with payloads, infinities and [-0], compared by bits, a NaN as any NaN. *)
-
-(* [f ()] with each scatter whose targets may repeat computed by its
-   expansion. *)
-let expanded f =
-  Nx_support.expanded
-    (fun (type r) (op : r Nx.Prim.t) ->
-      match op with Scatter { unique = false; _ } -> true | _ -> false)
-    f
+(* A scatter whose targets may repeat: the combination the definition gives,
+   over float32 updates that repeat targets, among them NaNs with payloads,
+   infinities and [-0], compared by bits, a NaN as any NaN. *)
 
 (* Float32 bits: a sum of any of the finite ones is exact in any order. *)
 let finite = [ 0l; 0x80000000l; 0x3f800000l; 0xbf800000l; 0x40000000l ]
@@ -516,7 +508,7 @@ let minimum a b =
   else if Float.sign_bit (f a) then a
   else b
 
-let law_expanded (s, a, us, p, combine, x, u) =
+let law_repeated (s, a, us, p, combine, x, u) =
   let touched = Array.make (numel s) false in
   let expected = Array.copy x in
   let step, c =
@@ -546,10 +538,9 @@ let law_expanded (s, a, us, p, combine, x, u) =
   cover "a repeated target" !repeated;
   cover "a NaN update" (combine <> `Add && combine <> `Set && Array.exists nan u);
   let y =
-    expanded (fun () ->
-        Nx.scatter ~combine:c ~axis:a (held us p)
-          (host D.Float32 us (Array.map f u))
-          (host D.Float32 s (Array.map f x)))
+    Nx.scatter ~combine:c ~axis:a (held us p)
+      (host D.Float32 us (Array.map f u))
+      (host D.Float32 s (Array.map f x))
   in
   (* A Max's or Min's NaN as any NaN; Set moves its update's bits, and a
      target no update reaches keeps its own. *)
@@ -559,7 +550,7 @@ let law_expanded (s, a, us, p, combine, x, u) =
   equal (array (option int32)) (Array.mapi bits expected)
     (Array.mapi (fun t v -> bits t (round32 v)) (elements y))
 
-let expanded_case =
+let repeated_case =
   Gen.(
     let* r = int_range 1 3 in
     let* s = array ~size:(constant r) (int_range 1 3) in
@@ -587,9 +578,8 @@ let expanded_case =
 
 (* Signalling NaNs. A scatter's Max and Min give a target a NaN where its
    element or one of its updates is. A target no update reaches keeps its
-   bits. Drawn at every float format with a NaN, on nx.cpu and through nx's
-   expansion of a scatter whose targets may repeat, from elements whose NaNs
-   {!Nx_support.signalled} makes signalling. *)
+   bits. Drawn at every float format with a NaN, on nx.cpu, from elements
+   whose NaNs {!Nx_support.signalled} makes signalling. *)
 
 (* Floats that tie often: small integers, [-0], infinities, and NaNs whose
    payload keeps them NaN once signalling in every float format, the two
@@ -730,12 +720,7 @@ let law_nan_extremes (Nan_case c) =
   let on_cpu =
     Nx.scatter ~combine ~axis:c.a (held c.us c.p) (host u) (host x)
   in
-  equal ~msg:"on nx.cpu" (array (option (array int))) expected (got on_cpu);
-  let expansion =
-    expanded (fun () ->
-        Nx.scatter ~combine ~axis:c.a (held c.us c.p) (host u) (host x))
-  in
-  equal ~msg:"expanded" (array (option (array int))) expected (got expansion)
+  equal ~msg:"on nx.cpu" (array (option (array int))) expected (got on_cpu)
 
 (* nx.cpu, declining every scatter. *)
 module No_scatters = struct
@@ -762,26 +747,26 @@ let test_declined_scatter_raises () =
 (* A narrow float's sum of repeated updates, rounded once from float32: 2048
    plus [1; 1] is 2050 at float16, where rounding after each update gives
    2048. A target no update reaches keeps its bits, a NaN's payload too. *)
-let test_expanded_narrow_sum () =
+let test_narrow_sum () =
   let nan = 0x7e01 in
   let x =
     Nx.bitcast D.Float16 (host D.Uint16 [| 2 |] [| 0x6800 (* 2048 *); nan |])
   in
   let p = host D.Int64 [| 2 |] [| 0L; 0L |] in
   let u = host D.Float16 [| 2 |] [| 1.; 1. |] in
-  let y = expanded (fun () -> Nx.scatter ~combine:Nx.Add ~axis:0 p u x) in
+  let y = Nx.scatter ~combine:Nx.Add ~axis:0 p u x in
   equal (array int)
     [| 0x6801 (* 2050 *); nan |]
     (elements (Nx.bitcast D.Uint16 y))
 
 let declines =
-  group "expansions and declines"
+  group "repeated targets and declines"
     [
-      prop "an expanded scatter combines repeated targets in C order"
-        expanded_case law_expanded;
-      prop "a Max or Min scatter gives a NaN where one meets, expanded too"
-        nan_case law_nan_extremes;
-      test "an expanded narrow float sum rounds once" test_expanded_narrow_sum;
+      prop "a scatter combines repeated targets in C order" repeated_case
+        law_repeated;
+      prop "a Max or Min scatter gives a NaN where one meets" nan_case
+        law_nan_extremes;
+      test "a narrow float sum rounds once" test_narrow_sum;
       test "a scatter its device's kernels decline raises naming the move"
         test_declined_scatter_raises;
     ]

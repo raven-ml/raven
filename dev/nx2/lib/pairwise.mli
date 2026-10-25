@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (** Scans by an associative combination, as simpler operations applied
-    through the [apply] {!Make} takes: the expansions' running reductions and
-    Nx's recurrences, which no kernel offers, share it. *)
+    through the [apply] {!Make} takes: Nx's recurrences, which no kernel
+    offers. *)
 
 module Make : Value.Apply -> sig
   val circuit :

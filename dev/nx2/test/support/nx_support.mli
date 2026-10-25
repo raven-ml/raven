@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Devices, kernel libraries and expansions for nx's suites. *)
+(** Devices and kernel libraries for nx's suites. *)
 
 val memory : int -> Rig.t
 (** [memory k] is the memory device [k], [0 <= k < 4], named ["m<k>"]: its
@@ -58,20 +58,3 @@ val quieted : ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t
 (** [quieted a] is a C-contiguous copy of [a] with each NaN quieted, as an
     operation returns it: its quiet bit set, its sign and the rest of its
     payload kept. float8_e4m3fn's NaNs are quiet already. *)
-
-(** {1:expansions Expansions} *)
-
-val folding :
-  int ->
-  ('d Nx.int64_t -> 'd Nx.Prim.any list -> 'd Nx.Prim.any list) ->
-  'd Nx.Prim.any list ->
-  'd Nx.Prim.any list
-(** [folding n step init] is [step (n - 1) (… (step 0 init))], each trip's
-    index a 0-d int64 constant: the [repeat] of {!Nx.Prim.expand} that
-    computes the trips in turn. *)
-
-val expanded : ('r. 'r Nx.Prim.t -> bool) -> (unit -> 'a) -> 'a
-(** [expanded which f] is [f ()] in an interpretation that computes each
-    operation [which] selects by its expansion ({!Nx.Prim.expand}), its loops
-    {!folding}, and every other operation, and one without an expansion, as
-    eager execution does. *)

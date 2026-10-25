@@ -115,20 +115,3 @@ val place :
 (** [place ~by p x] is {!eval} of [Place (p, x)]. With no live [Extent], a
     value on one device already at [p] answers at once, over
     its array. *)
-
-val expand :
-  interpretation ->
-  by:string ->
-  repeat:
-    ('d.
-    int ->
-    ('d index -> 'd any list -> 'd any list) ->
-    'd any list ->
-    'd any list) ->
-  'r prim ->
-  'r option
-(** [expand i ~by ~repeat op] is {!Expand.run} over {!eval} under [i]'s
-    handler again: [op] as simpler operations, which reach [i] again, its
-    loops run by [repeat].
-
-    Raises [Invalid_argument] naming [by] and [i] if [i] returned. *)

@@ -5,7 +5,7 @@
 
 (* Padded loads and Fold through Nx.Prim: the values Nx_kernel.load and
    Nx_kernel.S.fold state for small operands, their rules before any kernel,
-   a split placement, and nx's expansions of both. *)
+   and a split placement. *)
 
 open Windtrap
 module A = Nx_array
@@ -170,23 +170,7 @@ let test_split_kept () =
     (Nx.Placement.equal split (Option.get (Nx.placement two)));
   equal ~msg:"as on one device" (array float_exact) (read one) (read two)
 
-(* Expansions *)
-
-let padded loads =
-  Iarray.exists (function Nx.Prim.Padded _ -> true | Plain _ -> false) loads
-
-(* [f ()] with each fold and each loop with a padded load computed by its
-   expansion. *)
-let expanded f =
-  Nx_support.expanded
-    (fun (type r) (op : r Nx.Prim.t) ->
-      match op with
-      | Fold _ -> true
-      | Map { loads; _ } -> padded loads
-      | Reduce { loads; _ } -> padded loads
-      | Scan { loads; _ } -> padded loads
-      | _ -> false)
-    f
+(* Loads *)
 
 (* The elements [pad] loads from [xs], of shape [s], in C order of the loaded
    shape [shape]: an index's windows read the padded index [w·step +
@@ -285,99 +269,24 @@ let law_padded c =
       cover "an element loaded" (Array.fold_left ( * ) 1 shape > 0);
       let a = A.of_array D.Float32 c.s c.xs in
       let want = reference c.s c.xs ~fill:c.fill c.p shape in
-      equal ~msg:"expanded map" (array float_exact) want
-        (read (expanded (fun () -> load (host a) ~fill:c.fill c.p)));
       let x = Nx.place Count.on (host a) in
       C.reset ();
       let y = load x ~fill:c.fill c.p in
       if Array.fold_left ( * ) 1 shape > 0 then
         equal ~msg:"nx.cpu's map in one kernel call" int 1 (C.calls ());
       equal ~msg:"nx.cpu's map" (array float_exact) want (read y);
-      if Array.length shape > 0 then
-        equal ~msg:"expanded sum, as nx.cpu's" (array float_exact)
+      (* Small integers and fills sum exactly, in any order. *)
+      if Array.length shape > 0 then begin
+        let r = Array.length shape in
+        let last = shape.(r - 1) in
+        let outer = Array.fold_left ( * ) 1 (Array.sub shape 0 (r - 1)) in
+        let sums =
+          Array.init outer (fun i ->
+              Array.fold_left ( +. ) 0. (Array.sub want (i * last) last))
+        in
+        equal ~msg:"nx.cpu's sum along the last axis" (array float_exact) sums
           (read (sum_of (Nx.place Count.on (host a)) ~fill:c.fill c.p))
-          (read (expanded (fun () -> sum_of (host a) ~fill:c.fill c.p)))
-
-(* A fold's expansion, against nx.cpu's: values whose sums
-   round, so that the order of the taps shows, and windows of up to 25 taps, so
-   that a fold takes more than one map's worth. *)
-let fold_case =
-  let open Gen in
-  with_pp (fun ppf (c, _) -> pp_padded ppf c)
-  @@ let* c = padded_case in
-     let window =
-       let+ size = int_range 1 5
-       and+ step = int_range 1 2
-       and+ dilation = int_range 1 2 in
-       (size, step, dilation)
-     in
-     let* chosen =
-       array
-         ~size:(constant (Array.length c.s))
-         (frequency [ (3, map Option.some window); (1, constant None) ])
-     in
-     let windows =
-       Array.of_list
-         (List.filter_map Fun.id
-            (List.mapi
-               (fun axis ->
-                 Option.map (fun (size, step, dilation) ->
-                     { A.Move.axis; size; step; dilation }))
-               (Array.to_list chosen)))
-     in
-     let+ xs =
-       array ~size:(constant 64) (of_list [ 1e8; 1.; -1e8; 0.1; -0.; 3. ])
-     in
-     ({ c with p = { c.p with windows = Iarray.of_array windows } }, xs)
-
-(* The operand shape a fold [c] reads, if [c]'s padding fits its shape. *)
-let fold_operand c =
-  Result.to_option (Nx_kernel.Shape.padded c.p c.s)
-
-(* [c]'s fold of an operand of [xshape] drawn from [pool], by its expansion and
-   on nx.cpu, bit for bit. *)
-let fold_agrees c xshape pool =
-  let n = Array.fold_left ( * ) 1 xshape in
-  let x =
-    A.of_array D.Float32 xshape
-      (Array.init n (fun i -> pool.(i mod Array.length pool)))
-  in
-  let fold x =
-    Nx.Prim.eval ~by:"t" (Fold { shape = Iarray.of_array c.s; pad = c.p; x })
-  in
-  equal ~msg:"as nx.cpu's, bit for bit" (array int32)
-    (Array.map Int32.bits_of_float (read (fold (Nx.place Count.on (host x)))))
-    (Array.map Int32.bits_of_float
-       (read (expanded (fun () -> fold (host x)))))
-
-let law_fold (c, pool) =
-  match fold_operand c with
-  | None -> reject ()
-  | Some xshape ->
-      cover "an axis without a window"
-        (Iarray.length c.p.windows < Array.length c.s);
-      cover "interior padding" (Iarray.exists (fun e -> e > 0) c.p.interior);
-      cover "a negative lo or hi"
-        (Iarray.exists (fun e -> e < 0) (Iarray.append c.p.lo c.p.hi));
-      fold_agrees c xshape pool
-
-let test_many_taps () =
-  let w axis = { A.Move.axis; size = 5; step = 1; dilation = 1 } in
-  let c =
-    {
-      s = [| 3; 4 |];
-      p =
-        {
-          Nx_kernel.lo = [| 2; 2 |];
-          hi = [| 2; 2 |];
-          interior = [| 1; 0 |];
-          windows = [| w 0; w 1 |];
-        };
-      xs = [||];
-      fill = 0.;
-    }
-  in
-  fold_agrees c (Option.get (fold_operand c)) [| 1e8; 1.; -1e8; 0.1; 3. |]
+      end
 
 let () =
   exit
@@ -391,8 +300,6 @@ let () =
              test "a split value loads as on one device" test_split;
              test "a load and a fold keep the cut of an axis they do not pad"
                test_split_kept;
-             prop "an expanded fold adds as nx.cpu's" fold_case law_fold;
-             test "an expanded fold of 25 taps, in two maps" test_many_taps;
              prop "a padded load is the padded operand's windows" padded_case
                law_padded;
            ];

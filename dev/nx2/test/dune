@@ -93,7 +93,7 @@
   (glob_files golden/special/*.golden)))
 
 (copy_files
- (files ../lib/{grid,devices,route,prim,place,pairwise,expand,partial,donate,exec,repr}.{ml,mli}))
+ (files ../lib/{grid,devices,route,prim,place,partial,donate,exec,repr}.{ml,mli}))
 
 (copy_files
  (files ../lib/value.mli))
@@ -113,8 +113,6 @@
   value
   prim
   place
-  pairwise
-  expand
   partial
   donate
   exec

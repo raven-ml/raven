@@ -1450,8 +1450,7 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     ({!Nx_kernel.section-reductions}); a complex product within a normwise
     relative [γ(c (n - 1))], each complex multiplication by the kernels
     erring by at most [c u], [c = 2] in nx.cpu. A {!mean} is such a sum
-    divided by [n]. {!var} and {!std} are nx's own variance, each of its
-    sums such a sum, so within the bound {!var} states for it. A
+    divided by [n]. {!var} and {!std} are within the bound {!var} states. A
     {!logsumexp} is within [ε + ε{_t}] of the exact one, [ε] the largest
     bound the kernels' library states for the logsumexp of a window's terms
     and [ε{_t}] its bound for one of [t] terms, [t] the windows holding
@@ -1546,15 +1545,13 @@ val var :
     variance, and [1] gives the sample variance. NaN of no element.
 
     On one device, the population variance is the kernels' moments, within
-    the bound their library states. Over axes cut across devices, it is
-    nx's own ({!section-reductions}). nx's own, the mean then the
-    deviations [d] from it and their squares, each summed as {!sum} sums,
-    and [(Σ d² - Σ d (Σ d / n)) / n], is within
-    [(γ(n + 4) + 2γ(n)²) V + 2γ(n + 6) γ(n) M √V + 4γ(n + 4) γ(n)² M²] of
-    the exact [V], [M = Σ|x| / n], barring overflow and underflow,
-    [γ(k) = k u / (1 - k u)] and [u] the unit roundoff of the format it
-    computes in, and [+∞] where [Σ d²] overflows. A [ddof] scales it by a
-    relative [2u] more, then one rounding to the dtype.
+    the bound their library states. Over axes cut across devices, it is the
+    mean, then the deviations [d] from it and their squares, each summed
+    as {!sum} sums, and [(Σ d² - Σ d (Σ d / n)) / n], [+0] where that is
+    negative and [+∞] where [Σ d²] overflows: within nx.cpu's bound for
+    its moments ({!Nx_cpu}) with [L + D + t - 1] in place of its [L + D],
+    [t] the windows holding terms. A [ddof] scales it by a relative [2u]
+    more, then one rounding to the dtype.
 
     Raises [Invalid_argument] naming itself for a negative [ddof], or one of
     at least [n] where [n > 0]. *)
@@ -1575,9 +1572,7 @@ val logsumexp :
     overflows: [-∞] of no element or of elements all [-∞], [+∞] where an
     element is [+∞] and none is NaN. On one device, its error is the bound
     the kernels' library states; over axes cut across devices, the bound of
-    {!section-reductions}. nx's own, for [n] elements whose greatest is finite, is
-    within [γ(2n) + u|r| + ε] of the exact [r], barring overflow and
-    underflow, [ε] the error {!exp} and {!log} add. *)
+    {!section-reductions}. *)
 
 val logmeanexp :
   ?axes:int list -> ?keepdims:bool -> (float, 's, 'd) t -> (float, 's, 'd) t
@@ -4031,16 +4026,20 @@ end
     kernels, and raises if the set has none, but a check of one flag that has
     bytes ([Check]).
 
+    An interpretation's rule receives each operation whole, a [Map] of
+    several nodes or outputs included, and gives it its whole meaning,
+    evaluating pieces it builds, as one-node maps from a [Map]'s program,
+    through {!eval} on the interpretations around its own.
+
     A rule runs outside its own interpretation and outside every handler
     installed in its extent, with the extent suspended until it returns: its
-    operations go to the interpretations around its own, never to its own
-    except through {!expand}, and an effect it performs reaches the handlers
-    around the interpretation. So a rule is never entered while it runs,
-    except by the operations of an {!expand} it calls, which reach it again,
-    and its state needs no lock. A rule that two interpretations share, as an
-    adopting one may share its parent's, is entered for one while it runs for
-    the other: by an operation it applies, or while its fiber is suspended,
-    never on two domains at once.
+    operations go to the interpretations around its own, never to its own,
+    and an effect it performs reaches the handlers around the interpretation.
+    So a rule is never entered while it runs, and its state needs no lock. A
+    rule that two interpretations share, as an adopting one may share its
+    parent's, is entered for one while it runs for the other: by an operation
+    it applies, or while its fiber is suspended, never on two domains at
+    once.
 
     An operation on a traced value raises [Invalid_argument] naming [by] and
     the interpretation where the interpretation is not around it: after it
@@ -4306,9 +4305,7 @@ module Prim : sig
     | Contract : {
         order : Nx_kernel.order;
             (** The order a kernel library adds its sums in: the whole
-                contraction's ({!contract_order}). Where no kernel computes
-                it, its expansion sums rounded products by a reduction, in
-                the reduction's order. *)
+                contraction's ({!contract_order}). *)
         batch : (int * int) iarray;
         contracting : (int * int) iarray;
         acc : Dtype.any;
@@ -4489,51 +4486,6 @@ module Prim : sig
   val eval : by:string -> 'r t -> 'r
   (** [eval ~by op] is [op]'s meaning under the rule, as the vocabulary's
       functions apply it. *)
-
-  val expand :
-    interpretation ->
-    by:string ->
-    repeat:
-      ('d.
-      int ->
-      ((int64, Dtype.int64_elt, 'd) nx -> 'd any list -> 'd any list) ->
-      'd any list ->
-      'd any list) ->
-    'r t ->
-    'r option
-  (** [expand i ~by ~repeat op] is [Some r], [r] [op] as simpler operations
-      applied by {!eval} around [i] again, so that they reach [i]; [None] for
-      an operation that has no expansion. A map of several nodes expands into
-      one map per node.
-
-      A loop of [n] trips runs as [repeat n step init]. It means the fold
-      [step (n - 1) (… (step 0 init))], [step k] taking the carry of trip [k]
-      to the next, [k] a 0-d int64 value, from [0]: an interpretation whose
-      loop counts in another dtype casts its index to int64 for [step]. A
-      [repeat] gives the fold's values within the expansion's stated
-      tolerance, and need not give its bits: one that stages [step] once may
-      fuse and reorder its operations. [step] gives each carry its form back
-      and applies the same operations at every trip, so it may be traced once
-      at a stand-in index; besides its index and its carry, it reads only
-      values made before the loop: [op]'s operands, constants, and what the
-      expansion computed from them, as a cast of an operand. A [repeat] that
-      folds is always one:
-      {[
-        let repeat n step init =
-          let rec go k c =
-            if k = n then c
-            else go (k + 1) (step (Nx.scalar Nx.int64 (Int64.of_int k)) c)
-          in
-          go 0 init
-      ]}
-      A scatter whose targets may repeat loops once per position along its
-      axis. A matrix routine loops once per step of its factorisation or
-      solve, [Eigh] and [Eigh_values] for as many trips as its dtype's
-      precision and its size bound, and [Svd] and [Svd_values] for 30 sweeps,
-      a matrix not converged by then NaN; [Eig] and [Eig_values] have no
-      expansion.
-
-      Raises [Invalid_argument] naming [by] and [i] if [i] returned. *)
 end
 
 (**/**)

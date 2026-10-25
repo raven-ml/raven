@@ -1,4 +1,4 @@
-; Devices, kernel libraries and expansions for nx's suites.
+; Devices and kernel libraries for nx's suites.
 
 (library
  (name nx_support)

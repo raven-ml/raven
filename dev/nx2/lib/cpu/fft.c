@@ -273,11 +273,13 @@ static double cost_of(int64_t bytes, int64_t n, int64_t m) {
 #define PLAN_LINES 4
 
 /* The fewest points of an even real line that goes through complex lines
-   of half as many. Below, the split and merge steps left c2r's error up
-   to 1.25 times the expansion's (8 and 16 points), and the line goes
-   through complex lines of n points, as an odd n's does, for 1.4 to 2.5
-   times the time from 8 to 256 points (M1, one thread). From 512 points,
-   c2r's error is 0.95 to 0.99 times the expansion's. */
+   of half as many, within nx_cpu.mli's [e(n/2) + 8]. Measured against a
+   complex transform of the n completed points, by radix-2 passes or by
+   Bluestein's at a power of two: below, the split and merge steps left
+   c2r's error up to 1.25 times that transform's (8 and 16 points), so the
+   line goes through complex lines of n points, as an odd n's does, for 1.4
+   to 2.5 times the time from 8 to 256 points (M1, one thread). From 512
+   points, c2r's error is 0.95 to 0.99 times that transform's. */
 #define HALVED_POINTS 512
 
 static int halved(int64_t n) { return n % 2 == 0 && n >= HALVED_POINTS; }
@@ -300,8 +302,8 @@ static int halved(int64_t n) { return n % 2 == 0 && n >= HALVED_POINTS; }
    exact by Sterbenz's lemma), exceeds half an ulp of 1, the value whose
    estimated rounding error pushes |w|² that way most moves one ulp back;
    at θ = π/4 it moves cos, so that c ≠ s there. With values rounded as
-   computed, float64's c2r of 8 points erred 6% more than the
-   expansion's; so, no route errs more (test_fft.ml).
+   computed, float64's c2r of 8 points erred 6% more than a radix-2
+   transform of its completed points did.
 
    Only +, -, ×, ÷, fma and nextafter round, so every machine gives the
    same bits, where macOS's and glibc's cos and sin, and with them the
@@ -356,13 +358,13 @@ static void unit(int64_t m, int64_t n, double *re, double *im) {
 }
 
 /* The points of Bluestein's convolution for n points: the least power
-   of two at least 2n - 1. At pocketfft's choice, the least product of 2,
-   3, 5, 7 and 11, the error exceeded the expansion's, whose convolution
-   runs at a power of two: float64's up to 1.5 times (c2r of 32771
-   points: 6.0 against 4.1 in units of u √N ‖x‖₂; of 2062: 4.7 against
-   3.4, and 3.9 with the kernel and the chirp in double-double), and
-   float32's c2r of even n by 2 to 5% (514 to 8198 points). At a power of
-   two the error is 0.4 to 0.95 times the expansion's, for 1.3 to 2.2
+   of two at least 2n - 1. Measured against the same convolution at a
+   power of two by radix-2 passes, pocketfft's choice, the least product
+   of 2, 3, 5, 7 and 11, erred more: float64's up to 1.5 times (c2r of
+   32771 points: 6.0 against 4.1 in units of u √N ‖x‖₂; of 2062: 4.7
+   against 3.4, and 3.9 with the kernel and the chirp in double-double),
+   and float32's c2r of even n by 2 to 5% (514 to 8198 points). At a power
+   of two the error is 0.4 to 0.95 times that reference's, for 1.3 to 2.2
    times the time from 257 to 131101 points (M1, one thread). */
 static int64_t blue_points(int64_t n) {
   int64_t m = 1;
