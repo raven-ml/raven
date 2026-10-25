@@ -2109,10 +2109,10 @@ let complex_bits c = float_bits c.Complex.re ^ "," ^ float_bits c.im
 
 let lane_kinds =
   [
-    Lane_kind (D.Float32, float_bits);
-    Lane_kind (D.Float64, float_bits);
-    Lane_kind (D.Float16, float_bits);
-    Lane_kind (D.Bfloat16, float_bits);
+    Lane_kind (D.Float32, nan_bits);
+    Lane_kind (D.Float64, nan_bits);
+    Lane_kind (D.Float16, nan_bits);
+    Lane_kind (D.Bfloat16, nan_bits);
     Lane_kind (D.Complex64, complex_bits);
     Lane_kind (D.Complex128, complex_bits);
   ]
