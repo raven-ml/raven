@@ -144,12 +144,11 @@ module Rng = Rng
 module D = Nx_array.Dtype
 module P = Nx_kernel.Prog
 
-(* Expansions and scans, applied by {!Eval.eval}. *)
+(* Scans, applied by {!Eval.eval}. *)
 module Evaluated = struct
   let apply = Eval.eval
 end
 
-module Expand = Expand.Make (Evaluated)
 module Pairwise = Pairwise.Make (Evaluated)
 
 let pp_shape = Prim.pp_shape
@@ -3975,22 +3974,13 @@ let reduce_segments c ~segments ids x =
          into = fill ~by dt into start;
        })
 
-(* [a] then [b] combined by [c], [a]'s rows before [b]'s: [Add] adds; [Max]
-   and [Min] keep the first NaN, else {!maximum}'s or {!minimum}'s, so that
-   an extreme is one of its rows. *)
-let combined (type v s d) ~by (c : combine) (a : (v, s, d) t) (b : (v, s, d) t)
-    : (v, s, d) t =
+(* [a] then [b] combined by [c], [a]'s rows before [b]'s. *)
+let combined ~by (c : combine) a b =
   match c with
   | Set -> b
   | Add -> binary ~by (Binary Add) a b
-  | Max | Min -> (
-      let k : P.binary = if c = Max then Maximum else Minimum in
-      match D.kind (dtype a) with
-      | D.Float | D.Complex ->
-          let x = operand 0 a and y = operand 1 b in
-          elementwise ~by (dtype a) [ Any a; Any b ]
-            E.(where (x <> x) x (where (y <> y) y (binary k x y)))
-      | D.Signed | D.Unsigned | D.Boolean -> binary ~by (Binary k) a b)
+  | Max -> binary ~by (Binary Maximum) a b
+  | Min -> binary ~by (Binary Minimum) a b
 
 (* The greatest [k] with [2^k <= v], for [v >= 1]. *)
 let top_bit v =
@@ -4110,14 +4100,7 @@ let reduce_ranges c ~lo ~hi x =
         reshaped ~by (Array.append [| m |] (Array.map (fun _ -> 1) rows)) some
       in
       ternary ~by Where some (take_axis ~by 0 r x) (empty dt start)
-  | Max | Min ->
-      (* A NaN extreme is a row's bits, which the selects keep; quieted as
-         {!max} returns it, flat so that a complex value's parts have an
-         axis to take. *)
-      let y = ranges ~by c ~l ~r x (empty dt start) in
-      let s = shape y in
-      let flat = move ~by (Reshape [| Array.fold_left ( * ) 1 s |]) y in
-      reshaped ~by s (Expand.quieted ~by flat)
+  | Max | Min -> ranges ~by c ~l ~r x (empty dt start)
   | Add ->
       (* Narrow floats sum at float32; [+0] then makes a sum of [-0.] terms
          [+0.], as {!sum}'s is. *)

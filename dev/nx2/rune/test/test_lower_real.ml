@@ -568,6 +568,11 @@ let hex (type s) (dt : (float, s) D.t) v =
 let operands (type s) (dt : (float, s) D.t) es i =
   Nx.create dt [| n |] (Array.map (fun e -> e.(i)) es)
 
+(* A NaN result is any NaN, but neg's and abs's, which act on the sign bit. *)
+let shown (type s) (dt : (float, s) D.t) k v =
+  if Float.is_nan v && k.name <> "neg" && k.name <> "abs" then "nan"
+  else hex dt v
+
 let check k (wide, es) =
   let run (type s) (dt : (float, s) D.t) =
     let xs = Array.init (arity k) (operands dt es) in
@@ -602,8 +607,8 @@ let check k (wide, es) =
         let eager = Nx.to_array (op ()) in
         let lowered = Lowered.run op in
         equal (array string)
-          (show (Array.map (hex dt) eager))
-          (show (Array.map (hex dt) lowered))
+          (show (Array.map (shown dt k) eager))
+          (show (Array.map (shown dt k) lowered))
   in
   let cover_some label f = cover label (Array.exists (f wide) es) in
   cover "float32" (not wide);

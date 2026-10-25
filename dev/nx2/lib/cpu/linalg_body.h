@@ -72,7 +72,7 @@ static inline C F(cplx)(R re, R im) {
 
 /* a b and a / b as nx_kinds.h's Mul and Fdiv, nx.cpu's elementwise
    ones: the textbook product, each part one fma over the other product,
-   and Smith's quotient, NaN parts quieted. C's operators would recover
+   and Smith's quotient. C's operators would recover
    infinities from NaN parts (C99 Annex G) by calls that keep every loop
    scalar. MUL and DIV are T's: these on complex dtypes, C's operators on
    reals. */

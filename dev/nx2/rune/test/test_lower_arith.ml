@@ -326,14 +326,64 @@ let as_compared add d i =
   let c = compared d in
   if name c = name d then i else add (K.Op1 (Bitcast, c, i))
 
+(* NaNs
+
+   Which NaN a NaN result is, its sign and its payload are unspecified, but
+   where a kind moves bits or acts on the sign bit. A complex number with a NaN
+   part is a NaN to the kinds that read it whole; to the others each part is a
+   float. *)
+
+let code b =
+  String.fold_right
+    (fun c z -> Int64.logor (Int64.shift_left z 8) (Int64.of_int (Char.code c)))
+    b 0L
+
+let nan_code ~e ~m z =
+  let open Int64 in
+  let exps = sub (shift_left 1L e) 1L in
+  logand (shift_right_logical z m) exps = exps
+  && logand z (sub (shift_left 1L m) 1L) <> 0L
+
+(* Whether the element of bits [b], of the float [d] or its codes, is a NaN. *)
+let rec is_nan (D.Any dt) b =
+  let f32 = D.Any D.Float32 and f64 = D.Any D.Float64 in
+  let h = String.length b / 2 in
+  let parts p = is_nan p (String.sub b 0 h) || is_nan p (String.sub b h h) in
+  match dt with
+  | D.Float64 -> nan_code ~e:11 ~m:52 (code b)
+  | D.Float32 -> nan_code ~e:8 ~m:23 (code b)
+  | D.Float16 -> nan_code ~e:5 ~m:10 (code b)
+  | D.Bfloat16 -> nan_code ~e:8 ~m:7 (code b)
+  | D.Float8_e5m2 -> nan_code ~e:5 ~m:2 (code b)
+  | D.Float8_e4m3fn -> Int64.logand (code b) 0x7fL = 0x7fL
+  | D.Complex64 -> parts f32
+  | D.Complex128 -> parts f64
+  | _ -> false
+
+let bit_kinds = [ "neg"; "abs"; "where" ]
+let whole_kinds = [ "mul"; "fdiv"; "maximum"; "minimum" ]
+
+(* Whether eager's [a] and the lowering's [b], of [d], agree at [label]. *)
+let same (D.Any dt as d) label a b =
+  let nans p x y = String.equal x y || (is_nan p x && is_nan p y) in
+  if List.mem label bit_kinds then String.equal a b
+  else
+    match dt with
+    | (D.Complex64 | D.Complex128) when not (List.mem label whole_kinds) ->
+        let h = String.length a / 2 in
+        let p = if h = 4 then D.Any D.Float32 else D.Any D.Float64 in
+        let part s i = String.sub s (i * h) h in
+        nans p (part a 0) (part b 0) && nans p (part a 1) (part b 1)
+    | _ -> nans d a b
+
 (* Running *)
 
 type row = { label : string; node : (K.node -> int) -> int }
 
 (* Runs [p] over [loads] at shape [rows; n], eagerly and lowered, and is the
    rows whose elements differ, at most five: the row's label, the element's
-   operands and both results. *)
-let check (D.Any r) p labels ops =
+   operands and both results. Elements agree as [same label] says. *)
+let check (D.Any r) same p labels ops =
   let k = List.length labels in
   let n = match ops with (_, es) :: _ -> List.length es | [] -> 1 in
   let s = [| k; n |] in
@@ -363,8 +413,9 @@ let check (D.Any r) p labels ops =
   let bad = ref [] in
   Array.iteri
     (fun i e ->
-      if e <> lowered.(i) && List.length !bad < 5 then
-        let row = i / n and j = i mod n in
+      let row = i / n and j = i mod n in
+      if (not (same (List.nth labels row) e lowered.(i))) && List.length !bad < 5
+      then
         let operand (_, es) = hex (List.nth es j) in
         bad :=
           Printf.sprintf "%s of %s: eager %s, lowered %s" (List.nth labels row)
@@ -451,7 +502,7 @@ let finish d rows =
 
 let run_rows d ~ins rows ops =
   let p = select ~ins (List.map (fun r -> r.node) rows) in
-  check (compared d) p (List.map (fun r -> r.label) rows) ops
+  check (compared d) (same d) p (List.map (fun r -> r.label) rows) ops
 
 let unary_rows d =
   List.filter_map

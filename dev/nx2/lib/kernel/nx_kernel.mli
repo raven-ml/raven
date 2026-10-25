@@ -91,15 +91,12 @@ type load =
     reduced axes, its {e terms}, numbered from [0] in C order of the reduced
     axes' indices.
 
-    A NaN is {e quieted} as IEEE 754 returns a NaN operand, with its quiet
-    bit, the top bit of its fraction, set and its sign and the rest of its
-    payload kept; [float8_e4m3fn]'s NaNs are quiet already. A NaN result,
-    where a term it reduces is a NaN, is the first such term quieted. With
-    no NaN term it is the quiet NaN of a clear sign bit, the NaN {!Prog}'s
-    kinds make from numbers on every target. To every reduction but [Sum], a
-    complex number with a NaN part is a NaN, quieted part by part, and the
-    NaN made from numbers is that quiet NaN in each part; a complex [Sum]
-    adds each part as a float sum.
+    A float result is a NaN where a term it reduces is a NaN, or where its
+    arithmetic makes one from numbers, as [+∞] plus [-∞] does. Which NaN,
+    its sign and its payload are unspecified, as IEEE 754 leaves them, so a
+    kernel may reduce by a tree and by the hardware's own instructions. To
+    every reduction but [Sum], a complex number with a NaN part is a NaN; a
+    complex [Sum] adds each part as a float sum.
 
     In every library, a float [Sum] or [Prod] reduction adds or multiplies
     each output's terms in lane order ({!section-orders}), a float narrower
@@ -148,7 +145,7 @@ type reduction =
           and [s] the sum of [exp (x - c)], an [exp] of less than [-87]
           ([float32]) or [-708] ([float64]), the least integers whose [exp]
           is normal, taken as [0]. These thresholds are the {e cut}. The
-          result is [m] where it is a NaN. Each kernel library states its
+          result is a NaN where [m] is. Each kernel library states its
           bound. *)
   | Moments
       (** [Moments] is the terms' population mean, then their variance; NaN
@@ -159,8 +156,8 @@ type reduction =
           chip. The first computes the mean [c], the terms' sum over their
           count. The second computes the variance
           [(Σ d² - Σ d (Σ d / n)) / n], [d = x - c], [+0] where that is
-          negative or [Σ d²] where that is [+∞]. Both are [c] where it is a
-          NaN. Each kernel library states their bounds. *)
+          negative or [Σ d²] where that is [+∞]. Both are a NaN where [c]
+          is. Each kernel library states their bounds. *)
   | Arg of extreme
       (** [Arg e] is the extreme [e] of the terms, as [Monoid Max] or
           [Monoid Min] finds it, then its position as an [int64], that of the
@@ -205,7 +202,7 @@ val accepts : reduction -> ('v, 's) Nx_array.Dtype.t -> bool
       [m = Maximum (ma, mb)] and [s = sa e (ma - c) + sb e (mb - c)], [c]
       being [m] where finite and [0] elsewhere. Result [i] is [m + log s],
       or [m] where [m] is not finite. So from the first NaN term on, every
-      result is its bits, quieted; with no NaN, from a [+∞] term on every
+      result is a NaN; with no NaN, from a [+∞] term on every
       result is [+∞], and while every term is [-∞] it is [-∞]. Where the
       terms up to [i] have a finite maximum, the result is within
       [(7 D + 6 ln (i + 1)) u + u|r|] of the exact [r], with {!Prog.Exp}
@@ -215,15 +212,14 @@ val accepts : reduction -> ('v, 's) Nx_array.Dtype.t -> bool
       term, or [0] where that term is not finite. A state [a] then a state
       [b] combine as [n = na + nb], [δ = μb - μa], [w = nb / n],
       [μ = μa + δ w] and [S = (Sa + Sb) + (δ δ) (na w)]. Where [μa] or [μb]
-      is not finite, [μ] is [μa] where a term of [a] is a NaN, else [μb]
-      where one of [b] is, else [μa + μb]. Result [i] is the mean [c + μ]
-      and the variance [S / (i + 1)], or [μ - μ] where [μ] is not finite.
-      So the first NaN term makes both results its bits, quieted, from
-      there on, and with no NaN an infinity makes the mean the sum of the
-      infinities so far and the variance a NaN. For [i + 1] exact in the
-      carrier, [R] the range of the terms up to [i] and [V] their variance,
-      the mean [μ] is within [(4 D + 1) u R + u|μ|] of the exact one and
-      the variance within [(7 D + 1) u V + (4 D² - 2 D) u R √V]. *)
+      is not finite, [μ] is [μa + μb]. Result [i] is the mean [c + μ] and
+      the variance [S / (i + 1)], or [μ - μ] where [μ] is not finite. So
+      from the first NaN term on both results are NaN, and with no NaN an
+      infinity makes the mean the sum of the infinities so far and the
+      variance a NaN. For [i + 1] exact in the carrier, [R] the range of the
+      terms up to [i] and [V] their variance, the mean [μ] is within
+      [(4 D + 1) u R + u|μ|] of the exact one and the variance within
+      [(7 D + 1) u V + (4 D² - 2 D) u R √V]. *)
 
 (** {1:scatters Scatters} *)
 
@@ -507,8 +503,8 @@ end
     routine's matrices, a gather's or a scatter's axis, the axes a padded
     load or a fold pads or windows), the dtypes, the attributes and the
     device's architecture, never on the result's other extents. Neither rule
-    covers the sign and payload of a NaN result where the operation leaves
-    them unspecified, as a contraction and a transform do. IEEE 754
+    covers which NaN a NaN result is, its sign or its payload, which only
+    the moves of bits specify. IEEE 754
     specifies neither for arithmetic, and where two NaNs meet, the one an
     instruction passes on depends on its operands' order, which a kernel's
     paths for different layouts and windows may set differently.
@@ -590,11 +586,9 @@ module type S = sig
       with the carry into that chunk, has the bits of the scan of the whole
       slice from that chunk on. An integer's or a boolean's scan, and a
       [Max]'s or a [Min]'s, is exact, so this holds from any term, with the
-      result before it, in the carrier, as the carry. A [Sum]'s or [Prod]'s
-      NaN carry counts as made from numbers. Results before the slice's
-      first NaN term are the made NaN, and from it on that term quieted. A
-      [Max]'s or [Min]'s carry is a term before the slice's first. Where it
-      is a NaN, every result is it, quieted. It answers [Shape_mismatch] for
+      result before it, in the carrier, as the carry, NaN results being any
+      NaN ({!section-reductions}). A NaN carry makes every result a NaN. It
+      answers [Shape_mismatch] for
       a carry of any other reduction or of another shape, and [Wrong_dtype]
       for one of another dtype. *)
 
@@ -634,8 +628,7 @@ module type S = sig
         unit roundoff of float32 for a narrow float, else of the dtype's
         parts;
       - for [Max] and [Min], {!Prog.Maximum} and {!Prog.Minimum} of [x], [u1],
-        …, [un]; a NaN result is the first NaN among them quieted
-        ({!section-reductions}), a complex number's NaN parts each so.
+        …, [un], a NaN where one of them is ({!section-reductions}).
 
       Under [unique], the caller must give each target at most one update;
       where two share one, the result there is unspecified. It answers

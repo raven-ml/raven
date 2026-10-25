@@ -421,19 +421,13 @@ let cover32 name b =
   cover (name ^ " infinite") (b land 0x7FFF_FFFF = 0x7F80_0000);
   cover (name ^ " subnormal") (b land 0x7F80_0000 = 0 && b land 0x7F_FFFF <> 0)
 
-(* A NaN operand's bits are the result's where the kind keeps them; a NaN made
-   from numbers is any NaN. *)
-let nan_first ns r =
-  match List.find_opt is_nan ns with Some n -> n | None -> r
-
-let testable_of ns = if List.exists is_nan ns then exact32 else value32
-
-(* f32 exact kinds against their meaning
+(* f32 exact kinds against their meaning, any NaN for a NaN
 
    A binary32 sum, difference, product, quotient or square root of floats is the
    double one rounded to binary32, since 53 >= 2 * 24 + 2. *)
 
 let round32 = bits32
+let nan32 = bits32 Float.nan
 
 (* The binary32 fma: a b + c is exact as s + e by TwoSum on the double product;
    rounded to odd in binary64, then to binary32, it rounds once. *)
@@ -456,20 +450,24 @@ let fma32 a b c =
 
 let binary32 =
   [
-    ("add", fun a b -> nan_first [ a; b ] (round32 (f a +. f b)));
-    ("sub", fun a b -> nan_first [ a; b ] (round32 (f a -. f b)));
-    ("mul", fun a b -> nan_first [ a; b ] (round32 (f a *. f b)));
-    ("fdiv", fun a b -> nan_first [ a; b ] (round32 (f a /. f b)));
+    ("add", fun a b -> round32 (f a +. f b));
+    ("sub", fun a b -> round32 (f a -. f b));
+    ("mul", fun a b -> round32 (f a *. f b));
+    ("fdiv", fun a b -> round32 (f a /. f b));
     ("mod", fun a b -> round32 (Float.rem (f a) (f b)));
     (* IEEE 754-2019: -0 below +0 *)
     ( "maximum",
       fun a b ->
-        nan_first [ a; b ]
-          (if f a = f b then a land b else if f a > f b then a else b) );
+        if is_nan a || is_nan b then nan32
+        else if f a = f b then a land b
+        else if f a > f b then a
+        else b );
     ( "minimum",
       fun a b ->
-        nan_first [ a; b ]
-          (if f a = f b then a lor b else if f a < f b then a else b) );
+        if is_nan a || is_nan b then nan32
+        else if f a = f b then a lor b
+        else if f a < f b then a
+        else b );
     ("equal", fun a b -> round32 (if f a = f b then 1. else 0.));
     ("not_equal", fun a b -> round32 (if f a <> f b then 1. else 0.));
     ("less", fun a b -> round32 (if f a < f b then 1. else 0.));
@@ -487,8 +485,7 @@ let test_binary32 =
           let t =
             match kind with
             | "equal" | "not_equal" | "less" | "less_equal" -> exact32
-            | "mod" -> value32
-            | _ -> testable_of [ a; b ]
+            | _ -> value32
           in
           equal t (meaning a b) (K.f32 kind [| a; b |])))
     binary32
@@ -533,15 +530,12 @@ let test_fma32 =
       prop (strf "fma f32 rounds once on %s" target) ~count:20000
         Gen.(frequency [ (1, triple gen32 gen32 gen32); (1, tiny32) ])
         (fun (a, b, c) ->
-          let r = nan_first [ a; b; c ] (fma32 a b c) in
+          let r = fma32 a b c in
           cover32 "addend" c;
           cover "subnormal result"
             (r land 0x7F80_0000 = 0 && r land 0x7F_FFFF <> 0);
           cover "signed zero result" (r = 0x8000_0000);
-          equal
-            (testable_of [ a; b; c ])
-            r
-            (K.f32 ~target "fma" [| a; b; c |])))
+          equal value32 r (K.f32 ~target "fma" [| a; b; c |])))
     (K.targets ())
 
 let test_where32 =
@@ -550,15 +544,19 @@ let test_where32 =
     (fun (c, a, b) ->
       equal exact32 (if f c <> 0. then a else b) (K.f32 "where" [| c; a; b |]))
 
-(* Unary kinds; neg, abs and sign keep a NaN's bits. *)
+(* Unary kinds; neg and abs keep a NaN's payload. *)
 let unary32 =
-  let float_op op a = nan_first [ a ] (round32 (op (f a))) in
+  let float_op op a = round32 (op (f a)) in
   [
     ("neg", (fun a -> a lxor 0x8000_0000), true);
     ("abs", (fun a -> a land 0x7FFF_FFFF), true);
     ( "sign",
-      float_op (fun x -> if x > 0. then 1. else if x < 0. then -1. else 0.),
-      true );
+      float_op (fun x ->
+          if Float.is_nan x then x
+          else if x > 0. then 1.
+          else if x < 0. then -1.
+          else 0.),
+      false );
     ("sqrt", float_op Float.sqrt, false);
     ("recip", float_op (fun x -> 1. /. x), false);
     ("floor", float_op Float.floor, false);
@@ -577,7 +575,7 @@ let test_unary32 =
             (meaning a) (K.f32 kind [| a |])))
     unary32
 
-(* f64 exact kinds, against OCaml's binary64 arithmetic *)
+(* f64 exact kinds, against OCaml's binary64 arithmetic, any NaN for a NaN *)
 
 let gen64 =
   let open Gen in
@@ -612,15 +610,6 @@ let gen64 =
   frequency
     [ (4, any); (2, special); (3, moderate); (2, integers); (1, halves) ]
 
-let nan_first64 ns r =
-  match List.find_opt Float.is_nan ns with Some n -> n | None -> r
-
-let value64_of ns =
-  if List.exists Float.is_nan ns then
-    Testable.make ~pp:(Testable.pp value64) ~equal:(fun a b ->
-        Int64.equal (bits64 a) (bits64 b))
-  else value64
-
 let test_f64_exact =
   let binary =
     [
@@ -630,12 +619,16 @@ let test_f64_exact =
       ("fdiv", ( /. ));
       ( "maximum",
         fun x y ->
-          if x = y then Int64.float_of_bits (Int64.logand (bits64 x) (bits64 y))
+          if Float.is_nan x || Float.is_nan y then Float.nan
+          else if x = y then
+            Int64.float_of_bits (Int64.logand (bits64 x) (bits64 y))
           else if x > y then x
           else y );
       ( "minimum",
         fun x y ->
-          if x = y then Int64.float_of_bits (Int64.logor (bits64 x) (bits64 y))
+          if Float.is_nan x || Float.is_nan y then Float.nan
+          else if x = y then
+            Int64.float_of_bits (Int64.logor (bits64 x) (bits64 y))
           else if x < y then x
           else y );
     ]
@@ -646,10 +639,7 @@ let test_f64_exact =
         Gen.(pair gen64 gen64)
         (fun (a, b) ->
           cover "NaN" (Float.is_nan a || Float.is_nan b);
-          equal
-            (value64_of [ a; b ])
-            (nan_first64 [ a; b ] (op a b))
-            (K.f64 kind [| a; b |])))
+          equal value64 (op a b) (K.f64 kind [| a; b |])))
     binary
   @ List.map
       (fun target ->
@@ -661,15 +651,13 @@ let test_f64_exact =
                 (1, tiny ~emin:(-1022) ~p:53 Fun.id);
               ])
           (fun (a, b, c) ->
-            let r = nan_first64 [ a; b; c ] (Float.fma a b c) in
+            let r = Float.fma a b c in
             cover "subnormal result"
               (r <> 0. && Float.abs r < Float.min_float);
             cover "signed zero result" (r = 0. && Float.sign_bit r);
-            equal (value64_of [ a; b; c ]) r
-              (K.f64 ~target "fma" [| a; b; c |])))
+            equal value64 r (K.f64 ~target "fma" [| a; b; c |])))
       (K.targets ())
   @ [
-      (* fmod promises a NaN, not which *)
       prop "mod f64" ~count:20000
         Gen.(pair gen64 gen64)
         (fun (a, b) -> equal value64 (Float.rem a b) (K.f64 "mod" [| a; b |]));
@@ -841,7 +829,7 @@ let test_threefry =
 (* Complex
 
    c64 and c128 against their meaning: Add, Sub and Neg are their parts' f32
-   and f64 kinds, bit for bit; Mul is within 2u, and Fdiv and Recip within
+   and f64 kinds, any NaN for a NaN but Neg's; Mul is within 2u, and Fdiv and Recip within
    4u, of the exact result, normwise, where parts lie in [2^-40, 2^40], u the
    part's unit roundoff; a NaN part in an operand of Mul, Fdiv or Recip makes
    both parts NaN; the order is the real part's, then the imaginary part's. *)
@@ -942,10 +930,10 @@ let test_complex_bounds =
       (fun _ b -> exact_div (1., 0.) b);
   ]
 
-(* Add, Sub and Neg are their parts', a NaN's bits included. *)
+(* Add, Sub and Neg are their parts'; Neg keeps a NaN's payload. *)
 let test_complex_parts =
   let two32 k (ar, ai, br, bi) =
-    equal (array exact32)
+    equal (array value32)
       [| K.f32 k [| ar; br |]; K.f32 k [| ai; bi |] |]
       (K.c64 k [| ar; ai; br; bi |])
   in
@@ -975,17 +963,15 @@ let test_complex_parts =
             (K.c128 "neg" [| a; b |]));
     ]
 
-(* A NaN part in an operand of Mul, Fdiv or Recip makes both parts the quiet
-   NaN of a clear sign bit, at c64 read as a double. *)
+(* A NaN part in an operand of Mul, Fdiv or Recip makes both parts NaN. *)
 let test_complex_nan =
-  prop "a NaN part makes mul, fdiv and recip the quiet NaN"
+  prop "a NaN part makes both parts of mul, fdiv and recip NaN"
     Gen.(triple parts parts (int_range 0 3))
     (fun ((ar, ai), (br, bi), at) ->
       let ops = [| ar; ai; br; bi |] in
       ops.(at) <- Float.nan;
       let a = (ops.(0), ops.(1)) and b = (ops.(2), ops.(3)) in
-      let quiet x = Int64.equal (bits64 x) 0x7FF8_0000_0000_0000L in
-      let both (re, im) = quiet re && quiet im in
+      let both (re, im) = Float.is_nan re && Float.is_nan im in
       equal bool true (both (c128_call "mul" [ a; b ]));
       equal bool true (both (c128_call "fdiv" [ a; b ]));
       equal bool true (both (c64_call "mul" [ a; b ]));
@@ -1155,7 +1141,7 @@ let test_complex_pow_goldens =
 
 (* C99 Annex G's special values, G.6.1 to G.6.4, at c128 and c64. Where it
    leaves a sign unspecified, the value is nx_kinds.h's choice. A NaN part is
-   the quiet NaN of a clear sign bit. *)
+   any NaN. *)
 
 let inf = Float.infinity
 let ninf = Float.neg_infinity
@@ -1257,22 +1243,12 @@ let special_values =
     ("atanh", (nan, nan), (nan, nan));
   ]
 
-let quiet x = Int64.equal (bits64 x) 0x7FF8_0000_0000_0000L
-
-(* Bit for bit, a NaN part the quiet NaN of a clear sign bit. *)
-let special_part =
-  Testable.make
-    ~pp:(fun ppf x -> Format.fprintf ppf "%h (0x%016Lx)" x (bits64 x))
-    ~equal:(fun want got ->
-      if Float.is_nan want then quiet got
-      else Int64.equal (bits64 want) (bits64 got))
-
 let test_complex_special =
   cases
     ~name:(fun (k, (x, y), _) -> strf "%s %h %h" k x y)
     "Annex G's special values" special_values
     (fun (kind, z, (re, im)) ->
-      let t = pair special_part special_part in
+      let t = pair value64 value64 in
       equal t (re, im) (c128_call kind [ z ]);
       equal t (round_f32 re, round_f32 im) (c64_call kind [ f32_pair z ]))
 
@@ -1317,7 +1293,7 @@ let test_complex_signalling =
       strf "%s 0x%016Lx 0x%016Lx" k (bits64 x) (bits64 y))
     "signalling NaN parts" signalling_values
     (fun (kind, ((x, y) as z), (re, im)) ->
-      let t = pair special_part special_part in
+      let t = pair value64 value64 in
       equal t (re, im) (c128_call kind [ z ]);
       equal t (round_f32 re, round_f32 im)
         (pair_of (K.c64 kind [| signalling32 x; signalling32 y |])))
@@ -1458,7 +1434,7 @@ let test_complex_exp2_far =
    the sides of the negative real axis by the sign of a zero imaginary
    part. *)
 let test_complex_pow_special =
-  let one = pair special_part special_part in
+  let one = pair value64 value64 in
   let check call round =
     List.iter
       (fun z -> equal one (1., 0.) (call "pow" [ round z; (0., 0.) ]))

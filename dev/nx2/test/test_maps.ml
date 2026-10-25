@@ -911,8 +911,16 @@ let bytes (type v s) (x : (v, s, b) Value.t) =
   let a = Iarray.get (Prim.arrays (Place.value ~by:"t" host x)) 0 in
   A.to_array (Option.get (A.bitcast D.Uint8 (A.copy a)))
 
-(* nx.cpu's Logsumexp has its expansion's bits ({!Nx_cpu}), NaN payloads
-   included: a narrow float's first NaN term as it holds it. *)
+(* Each element's bytes, or [None] where it is a NaN: a NaN result promises
+   a NaN, never which one. *)
+let nan_blind (type s) (dt : (float, s) D.t) x =
+  let w = D.bits dt / 8 and b = bytes x in
+  Array.mapi
+    (fun i v -> if Float.is_nan v then None else Some (Array.sub b (i * w) w))
+    (elements x)
+
+(* nx.cpu's Logsumexp has its expansion's bits ({!Nx_cpu}), or a NaN where
+   that is one. *)
 let law_logsumexp (Lse (dt, shape, axes, xs, sn)) =
   let cut = match dt with D.Float64 -> -708. | _ -> -87. in
   let x = signalling dt shape xs sn in
@@ -954,13 +962,13 @@ let law_logsumexp (Lse (dt, shape, axes, xs, sn)) =
   in
   let want = first (Exec.run ~by:"t" op) in
   let got = first (Option.get (expand op)) in
-  equal (array int) (bytes want) (bytes got)
+  equal (array (option (array int))) (nan_blind dt want) (nan_blind dt got)
 
 let arithmetic =
   group "expansions' arithmetic"
     [
-      prop ~count:500 "a Logsumexp's expansion has nx.cpu's bits" lse
-        law_logsumexp;
+      prop ~count:500 "a Logsumexp's expansion has nx.cpu's bits, or a NaN"
+        lse law_logsumexp;
 
       prop "a chirp's square modulo 2n is exact" squares law_square_mod;
       prop "a sort orders as nx.cpu's at any key width the axis allows" keyed

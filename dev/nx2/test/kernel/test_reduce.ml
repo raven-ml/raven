@@ -545,7 +545,7 @@ let wrap (D.Any dt) v =
 
 (* The monoid [m] at [dt] over two terms, and its identity. Floats round
    once to [dt], through a double, which holds float32's sums and products
-   exactly or rounds them innocuously; a NaN operand gives the first. An
+   exactly or rounds them innocuously; a NaN operand gives a NaN. An
    extreme's identity is the least (greatest) element. *)
 let op (D.Any dt as d) m =
   let float x =
@@ -626,30 +626,9 @@ let ordered ?(first = false) (f, id) ts =
 let is_nan = function F (x, _) -> Float.is_nan x | I _ -> false
 let bits_of = function F (_, b) -> b | I v -> v
 
-(* The NaN the kinds make from numbers at the float dtype [dt]: the quiet
-   NaN of a clear sign bit. *)
-let made (D.Any dt) =
-  if D.bits dt = 32 then 0x7FC00000L else 0x7FF8_0000_0000_0000L
-
-(* The bits of [t], a NaN of [made]'s dtype, quieted: its quiet bit, the
-   top of its fraction, set, its sign and the rest of its payload kept. *)
-let quieted made t =
-  Int64.logor (bits_of t)
-    (if made = 0x7FC00000L then 0x40_0000L else 0x8_0000_0000_0000L)
-
-(* [t]'s bits, quieted where a NaN, [u] its dtype's roundoff. *)
-let quiet_u u t =
-  if not (is_nan t) then bits_of t
-  else quieted (if u > 0x1p-30 then 0x7FC00000L else 0x7FF8000000000000L) t
-
-(* A float result's NaN holds its first NaN term, quieted, else it is
-   [made]'s. *)
-let settle made ts r =
-  if not (is_nan r) then Bits (bits_of r)
-  else
-    match Array.find_opt is_nan ts with
-    | Some t -> Bits (quieted made t)
-    | None -> Bits made
+(* [t]'s bits, or some NaN where it is one: a NaN result promises a NaN,
+   never which one. *)
+let want_of t = if is_nan t then Some_nan else Bits (bits_of t)
 
 (* The terms of each output of [c], in C order of outputs, each in C order
    of the reduced axes' indices; a scan's are its slices, in order. *)
@@ -680,9 +659,8 @@ let outputs c ts =
 (* [ts] scanned in nx.cpu's order: chunks of 4096 terms from the start, each
    result the carry combined with the chunk's terms up to it, left to right,
    the carry into a chunk the carry into the one before combined with that
-   chunk's total in [ordered]'s order. From the first NaN term on, a float
-   result is that term, quieted; a NaN result before it is [made]'s. *)
-let scanned made ((f, id) as m) ts =
+   chunk's total in [ordered]'s order. *)
+let scanned ((f, id) as m) ts =
   let n = Array.length ts in
   let out = Array.make n id in
   let carry = ref id in
@@ -695,13 +673,7 @@ let scanned made ((f, id) as m) ts =
     done;
     carry := f !carry (ordered m (Array.sub ts lo (hi - lo)))
   done;
-  let first = Array.find_index is_nan ts in
-  Array.mapi
-    (fun i v ->
-      match first with
-      | Some k when i >= k -> Bits (quieted made ts.(k))
-      | _ -> if is_nan v then Bits made else Bits (bits_of v))
-    out
+  Array.map want_of out
 
 (* The position of each index of shape [s] in C order. *)
 let position s idx =
@@ -736,10 +708,9 @@ let results c ts ~reduce ~scan ~fill =
 let expected c =
   let (A.Any x) = c.x in
   let m = op (D.Any (A.dtype x)) c.monoid in
-  let made = made (D.Any (A.dtype x)) in
   results c (terms c.x) ~fill:Some_nan
-    ~reduce:(fun o -> settle made o (ordered m o))
-    ~scan:(scanned made m)
+    ~reduce:(fun o -> want_of (ordered m o))
+    ~scan:(scanned m)
 
 (* The kernels' result's bits in C order. *)
 let got y =
@@ -750,7 +721,7 @@ let got y =
 let show = function Bits b -> Printf.sprintf "%Lx" b | Some_nan -> "nan"
 
 (* The first results that differ from [want]: a [Some_nan] wanted matches
-   any NaN; [Bits] of a NaN only those bits. *)
+   any NaN. *)
 let differ want y =
   let g = terms y in
   let bad = ref [] in
@@ -850,7 +821,7 @@ let zorder a b =
   if c <> 0 then c else part a.im b.im
 
 (* [m] at the complex dtype, float32's where [narrow], and its identity: a
-   NaN operand of an extreme gives the first. *)
+   NaN operand of an extreme gives a NaN. *)
 let zop narrow m =
   let extreme keep a b =
     if znan a then a
@@ -864,30 +835,16 @@ let zop narrow m =
   | Min -> (extreme (fun c -> c <= 0), zof narrow infinity infinity)
   | Sum -> invalid_arg "zop: Sum"
 
-(* The quiet NaN of a clear sign bit in each part. *)
-let zmade narrow =
-  let q = Int64.float_of_bits 0x7FF8_0000_0000_0000L in
-  (zof narrow q q).bits
+(* An expected complex result: each part's want, or [Z_nan], any number
+   with a NaN part, as every reduction but a sum gives a NaN. *)
+type zwant = Z of want * want | Z_nan
 
-(* [t]'s bits with each NaN part quieted, of complex64's parts where
-   [narrow]. *)
-let zquieted narrow t =
-  let q = if narrow then 0x40_0000L else 0x8_0000_0000_0000L in
-  let part x b = if Float.is_nan x then Int64.logor b q else b in
-  (part t.re (fst t.bits), part t.im (snd t.bits))
+let zwant_of z =
+  if znan z then Z_nan else Z (Bits (fst z.bits), Bits (snd z.bits))
 
-(* A NaN result's bits are its first NaN term's, quieted, else
-   [zmade]'s. *)
-let zsettle narrow ts r =
-  if not (znan r) then r.bits
-  else
-    match Array.find_opt znan ts with
-    | Some t -> zquieted narrow t
-    | None -> zmade narrow
-
-(* [ts] scanned as [scanned] does, in bits, but from the first term where
-   [first]: the first chunk then has no carry. *)
-let zscanned narrow ~first ((f, id) as m) ts =
+(* [ts] scanned as [scanned] does, but from the first term where [first]:
+   the first chunk then has no carry. *)
+let zscanned ~first ((f, id) as m) ts =
   let n = Array.length ts in
   let out = Array.make n id in
   let step a t = match a with None -> t | Some a -> f a t in
@@ -901,27 +858,20 @@ let zscanned narrow ~first ((f, id) as m) ts =
     done;
     carry := Some (step !carry (ordered ~first m (Array.sub ts lo (hi - lo))))
   done;
-  let first = Array.find_index znan ts in
-  Array.mapi
-    (fun i v ->
-      match first with
-      | Some k when i >= k -> zquieted narrow ts.(k)
-      | _ -> if znan v then zmade narrow else v.bits)
-    out
+  Array.map zwant_of out
 
 (* A complex sum's results: each part's, a float sum of the terms' parts in
    nx.cpu's order. *)
 let zsums c ts =
   let part = if narrow c.x then D.Any D.Float32 else D.Any D.Float64 in
-  let m = op part Sum and made = made part in
+  let m = op part Sum in
   let sums f =
     results c (Array.map f ts) ~fill:Some_nan
-      ~reduce:(fun o -> settle made o (ordered m o))
-      ~scan:(scanned made m)
+      ~reduce:(fun o -> want_of (ordered m o))
+      ~scan:(scanned m)
   in
-  let bits = function Bits b -> b | Some_nan -> invalid_arg "zsums: a NaN" in
   Array.map2
-    (fun r i -> (bits r, bits i))
+    (fun r i -> Z (r, i))
     (sums (fun t -> F (t.re, fst t.bits)))
     (sums (fun t -> F (t.im, snd t.bits)))
 
@@ -933,12 +883,13 @@ let zexpected c =
   if c.monoid = Sum then zsums c ts
   else
     let m = zop narrow c.monoid in
-    results c ts ~fill:(0L, 0L)
-      ~reduce:(fun o -> zsettle narrow o (ordered ~first m o))
-      ~scan:(zscanned narrow ~first m)
+    results c ts ~fill:Z_nan
+      ~reduce:(fun o -> zwant_of (ordered ~first m o))
+      ~scan:(zscanned ~first m)
 
 (* Complex sums, products and extremes, reduced and scanned, in nx.cpu's
-   order, bit for bit. *)
+   order, bit for bit, a NaN as any NaN: a sum's NaN part, else a number
+   with a NaN part. *)
 let law_complex (b : Support.backend) c =
   let s = shape_of c.x in
   let per = Array.fold_left (fun n a -> n * s.(a)) 1 c.axes in
@@ -959,14 +910,27 @@ let law_complex (b : Support.backend) c =
   | None -> failf "%s declined a complex %s" b.name (monoid_name c.monoid)
   | Some y ->
       let want = zexpected c and got = zterms y in
+      let part w x b =
+        match w with Some_nan -> Float.is_nan x | Bits w -> w = b
+      in
       let bad = ref [] in
       Array.iteri
-        (fun i (wr, wi) ->
-          let gr, gi = got.(i).bits in
-          if (gr, gi) <> (wr, wi) && List.length !bad < 8 then
+        (fun i w ->
+          let g = got.(i) in
+          let gr, gi = g.bits in
+          let ok =
+            match w with
+            | Z_nan -> znan g
+            | Z (wr, wi) -> part wr g.re gr && part wi g.im gi
+          in
+          let shown =
+            match w with
+            | Z_nan -> "nan"
+            | Z (wr, wi) -> show wr ^ " " ^ show wi
+          in
+          if (not ok) && List.length !bad < 8 then
             bad :=
-              Printf.sprintf "result %d: %Lx %Lx, expected %Lx %Lx" i gr gi wr
-                wi
+              Printf.sprintf "result %d: %Lx %Lx, expected %s" i gr gi shown
               :: !bad)
         want;
       equal (list string) [] (List.rev !bad)
@@ -1170,11 +1134,11 @@ let makes_nan c =
   let dt = D.Any (A.dtype x) in
   match A.dtype x with
   | D.Float32 | D.Float64 ->
-      let m = op dt c.monoid and made = made dt in
+      let m = op dt c.monoid in
       let one o =
         let n = Array.length o in
         let k = Option.value ~default:n (Array.find_index is_nan o) in
-        if c.scan then Array.mem (Bits made) (scanned made m (Array.sub o 0 k))
+        if c.scan then Array.mem Some_nan (scanned m (Array.sub o 0 k))
         else k = n && is_nan (ordered m o)
       in
       List.exists one (outputs c (terms c.x))
@@ -1315,20 +1279,20 @@ let into_case =
     (fun ppf (c, d) -> Format.fprintf ppf "%a into %a" pp_case c pp_dtype d)
     (frequency [ (5, any); (1, rows) ])
 
-(* For each result of [c] in C order, its first NaN term's bits, quieted, a
-   scan's up to it, if one is a NaN. *)
-let first_nans c =
-  let raw = Array.map (Elements.quiet (dtype_of c.x)) (Elements.elements c.x) in
+(* For each result of [c] in C order, whether a NaN term reaches it, a
+   scan's up to it. *)
+let reached c =
   let nan = Array.map is_nan (terms (cast_into f32 c.x)) in
-  let first o = Option.map (Array.get raw) (Array.find_opt (Array.get nan) o) in
   let scan o =
-    let k = Array.find_index (Array.get nan) o in
-    Array.mapi
-      (fun j _ -> match k with Some k when k <= j -> first o | _ -> None)
+    let seen = ref false in
+    Array.map
+      (fun k ->
+        seen := !seen || nan.(k);
+        !seen)
       o
   in
-  let all = Array.init (Array.length raw) Fun.id in
-  results c all ~reduce:first ~scan ~fill:None
+  let all = Array.init (Array.length nan) Fun.id in
+  results c all ~reduce:(Array.exists (Array.get nan)) ~scan ~fill:false
 
 (* NaNs made from numbers at narrow floats, reduced and scanned, into their
    own dtype and float32. *)
@@ -1353,9 +1317,8 @@ let into_examples =
 
 (* A narrow operand's terms reduce in its carrier, and each result rounds
    once into its destination: the bits of the carrier's reduction of the
-   operand cast into it, cast into the destination. A NaN result into the
-   operand's own dtype is its first NaN term quieted, as nx_kernel.mli
-   states. *)
+   operand cast into it, cast into the destination, a NaN as any NaN. A
+   float result a NaN term reaches is a NaN. *)
 let law_into (b : Support.backend) (c, d) =
   let x = dtype_of c.x in
   cover "narrow" (staged x);
@@ -1379,21 +1342,21 @@ let law_into (b : Support.backend) (c, d) =
     [ "permuted"; "stepped"; "reversed"; "broadcast" ];
   let got = run_into b.kernels d c c.x in
   let wide = run_into b.kernels (carrier x) c (cast_into (carrier x) c.x) in
-  let firsts = first_nans c in
+  let reached = reached c in
   let made =
-    Array.exists2 (fun t f -> is_nan t && f = None) (terms wide) firsts
+    Array.exists2 (fun t f -> is_nan t && not f) (terms wide) reached
   in
   cover "a NaN made from numbers" made;
-  let want = Elements.elements (cast_into d wide) in
-  let want =
-    if not (same d x) then want
-    else Array.map2 (fun w f -> Option.value f ~default:w) want firsts
-  in
-  equal (array string) want (Elements.elements got)
+  let got = Elements.elements got in
+  equal (array (Elements.same d)) (Elements.elements (cast_into d wide)) got;
+  let (D.Any dt) = d in
+  if D.is D.Float dt then
+    equal ~msg:"a NaN where a NaN term reaches" (array bool) reached
+      (Array.map2 (fun r e -> r && Elements.nan_of d e) reached got)
 
-(* A NaN result of a narrow float into its own dtype is its first NaN
-   term quieted, whether signalling or quiet: the reduction of zeros with
-   two NaNs, a few terms and past a block and a scan's chunk, by each
+(* A result of a narrow float into its own dtype that a NaN term reaches is
+   a NaN, whether the term is signalling or quiet: the reduction of zeros
+   with two NaNs, a few terms and past a block and a scan's chunk, by each
    monoid, Logsumexp and Moments, the running results from the first NaN
    on, and Arg's extreme, with that NaN's position, reduced and scanned. *)
 let test_nan_bits (b : Support.backend) () =
@@ -1408,8 +1371,8 @@ let test_nan_bits (b : Support.backend) () =
           code w (if k = i then first else if k = j then other else 0))
     in
     let x = Elements.of_elements d [| n |] es in
-    let nan = Elements.quiet d es.(i) in
-    (* Zeros' running results, then the first NaN's. *)
+    let nan = es.(i) and same = array (Elements.same d) in
+    (* Zeros' running results, then NaNs. *)
     let running = Array.init n (fun k -> if k < i then es.(0) else nan) in
     let run scan m =
       let c = { scan; monoid = m; axes = [| 0 |]; x; views = [] } in
@@ -1421,8 +1384,8 @@ let test_nan_bits (b : Support.backend) () =
     List.iter
       (fun m ->
         let msg = msg (monoid_name m) in
-        equal ~msg (array string) [| nan |] (run false m);
-        equal ~msg:(msg ^ ", scanned") (array string) running (run true m))
+        equal ~msg same [| nan |] (run false m);
+        equal ~msg:(msg ^ ", scanned") same running (run true m))
       monoids;
     let stat ~scan r k =
       let s = if scan then [| n |] else [||] in
@@ -1437,16 +1400,16 @@ let test_nan_bits (b : Support.backend) () =
       equal ~msg:"its answer" bool true (answer = A.Done);
       Array.map Elements.elements dsts
     in
-    equal ~msg:(msg "Logsumexp") (array (array string)) [| [| nan |] |]
+    equal ~msg:(msg "Logsumexp") (array same) [| [| nan |] |]
       (stat ~scan:false Logsumexp 1);
-    equal ~msg:(msg "Moments") (array (array string))
+    equal ~msg:(msg "Moments") (array same)
       [| [| nan |]; [| nan |] |]
       (stat ~scan:false Moments 2);
-    equal ~msg:(msg "Moments, scanned") (array (array string))
+    equal ~msg:(msg "Moments, scanned") (array same)
       [| running; running |]
       (stat ~scan:true Moments 2);
     let lse = (stat ~scan:true Logsumexp 1).(0) in
-    equal ~msg:(msg "Logsumexp, scanned, from the first NaN") (array string)
+    equal ~msg:(msg "Logsumexp, scanned, from the first NaN") same
       (Array.sub running i (n - i))
       (Array.sub lse i (n - i));
     List.iter
@@ -1460,7 +1423,7 @@ let test_nan_bits (b : Support.backend) () =
         equal ~msg:"its answer" bool true (answer = A.Done);
         equal
           ~msg:(msg (if e = Max then "Arg Max" else "Arg Min"))
-          (pair (array string) int64)
+          (pair same int64)
           ([| nan |], Int64.of_int i)
           (Elements.elements (A.Any v), (A.to_array at).(0));
         let v = A.create Rig.host dt [| n |]
@@ -1472,7 +1435,7 @@ let test_nan_bits (b : Support.backend) () =
         equal ~msg:"its answer" bool true (answer = A.Done);
         equal
           ~msg:(msg (if e = Max then "Arg Max scanned" else "Arg Min scanned"))
-          (pair (array string) (array int64))
+          (pair same (array int64))
           ( running,
             Array.init n (fun k -> if k < i then 0L else Int64.of_int i) )
           (Elements.elements (A.Any v), A.to_array at))
@@ -1531,7 +1494,7 @@ module One = struct
     Nx_cpu.one_thread (fun () -> Nx_cpu.scan ?carry p ~axis rk ~dsts loads)
 end
 
-(* One thread gives the bits of the job's threads. *)
+(* One thread gives the bits of the job's threads, a NaN as any NaN. *)
 let law_threads (b : Support.backend) c =
   let (A.Any x) = c.x in
   let into k =
@@ -1548,12 +1511,11 @@ let law_threads (b : Support.backend) c =
   cover "narrow" (staged d);
   (* A narrow result read through its carrier, which holds its value. *)
   let wide y = if staged d then cast_into (carrier d) y else y in
-  let exact y = Array.map (fun t -> Bits (bits_of t)) (terms (wide y)) in
-  equal (list string) [] (differ (exact many) (wide one))
+  equal (list string) [] (differ (got (wide many)) (wide one))
 
 (* A NaN made from numbers before two NaN terms past the first block and
-   chunk: the sum, the maximum and the running sum hold the first NaN term,
-   bit for bit, and agree with the reference along the way. *)
+   chunk: the sum, the maximum, the running sum and the running product
+   agree with the reference, NaN where a NaN reaches. *)
 let test_far_nans (b : Support.backend) () =
   let n = 9000 in
   let r = Random.State.make [| 7 |] in
@@ -1575,10 +1537,8 @@ let test_far_nans (b : Support.backend) () =
       match run b c with
       | None -> failf "%s declined a float32 %s" b.name (monoid_name monoid)
       | Some y ->
-          equal (list string) [] (differ (expected c) y);
-          let last = (terms y).(if scan then n - 1 else 0) in
-          equal ~msg:(monoid_name monoid) int64 0x7FC12345L
-            (Int64.logand (bits_of last) 0xFFFFFFFFL))
+          equal ~msg:(monoid_name monoid) (list string) []
+            (differ (expected c) y))
     [ (false, Sum); (false, Max); (true, Sum); (true, Prod) ]
 
 (* Products and sums of 8- and 16-bit integers at their extremes wrap in
@@ -2221,16 +2181,15 @@ let depth i =
   Float.of_int (max 0 ((2 * log2 (i + 1) 1) - 1))
 
 (* The expected mean and variance at each index of [c], in C order: past a
-   NaN term, its bits quieted; past an infinity, the infinities' sum and the NaN
-   the kinds make, the mean that NaN too past infinities of both signs;
-   else the running mean and variance by float64 sums of the terms less the
-   first and of their squares, within nx.cpu's bound at [x]'s unit roundoff
-   [u], the depth [D] of the index and the range [R] and variance [V] of the
-   terms so far, plus the sums' own bound in float64. *)
+   NaN term, NaNs; past an infinity, the infinities' sum and a NaN, the
+   mean a NaN too past infinities of both signs; else the running mean and
+   variance by float64 sums of the terms less the first and of their
+   squares, within nx.cpu's bound at [x]'s unit roundoff [u], the depth [D]
+   of the index and the range [R] and variance [V] of the terms so far, plus
+   the sums' own bound in float64. *)
 let expected_moments (c : moments) =
   let (A.Any x) = c.x in
   let u = if D.bits (A.dtype x) = 32 then 0x1p-24 else 0x1p-53 in
-  let made = Is (Bits (made (D.Any (A.dtype x)))) in
   let gamma k =
     Float.of_int k *. 0x1p-53 /. (1. -. (Float.of_int k *. 0x1p-53))
   in
@@ -2244,17 +2203,14 @@ let expected_moments (c : moments) =
     (fun o ->
       let idx = Array.make r 0 in
       Array.iteri (fun q i -> idx.(i) <- o.(q)) ks;
-      let nan = ref None and pos = ref false and neg = ref false in
+      let nan = ref false and pos = ref false and neg = ref false in
       let s1 = ref 0. and s2 = ref 0. and c = ref None in
       let lo = ref Float.infinity and hi = ref Float.neg_infinity in
       for j = 0 to s.(a) - 1 do
         idx.(a) <- j;
         let at = position s idx in
         let v = match ts.(at) with F (v, _) -> v | I _ -> assert false in
-        if Float.is_nan v then begin
-          if !nan = None then
-            nan := Some (quiet_u u ts.(at))
-        end
+        if Float.is_nan v then nan := true
         else if v = Float.infinity then pos := true
         else if v = Float.neg_infinity then neg := true
         else begin
@@ -2265,34 +2221,32 @@ let expected_moments (c : moments) =
           hi := Float.max !hi v
         end;
         let n = Float.of_int (j + 1) in
-        match !nan with
-        | Some b ->
-            mean.(at) <- Is (Bits b);
-            var.(at) <- Is (Bits b)
-        | None when !pos && !neg ->
-            mean.(at) <- made;
-            var.(at) <- made
-        | None when !pos || !neg ->
-            let inf = if !pos then Float.infinity else Float.neg_infinity in
-            mean.(at) <- Near (inf, 0.);
-            var.(at) <- made
-        | None ->
-            let c = Option.get !c and d = depth j and k = j + 1 in
-            let m = !s1 /. n and r = !hi -. !lo in
-            let v = Float.max 0. ((!s2 /. n) -. (m *. m)) in
-            let slack = gamma (3 * k + 4) *. ((r *. r) +. r +. Float.abs c) in
-            let tm =
-              (((4. *. d) +. 1.) *. u *. r)
-              +. (u *. Float.abs (c +. m))
-              +. slack
-            in
-            let tv =
-              (((7. *. d) +. 1.) *. u *. v)
-              +. (((4. *. d *. d) -. (2. *. d)) *. u *. r *. Float.sqrt v)
-              +. slack
-            in
-            mean.(at) <- Near (c +. m, tm);
-            var.(at) <- Near (v, tv)
+        if !nan || (!pos && !neg) then begin
+          mean.(at) <- Is Some_nan;
+          var.(at) <- Is Some_nan
+        end
+        else if !pos || !neg then begin
+          let inf = if !pos then Float.infinity else Float.neg_infinity in
+          mean.(at) <- Near (inf, 0.);
+          var.(at) <- Is Some_nan
+        end
+        else
+          let c = Option.get !c and d = depth j and k = j + 1 in
+          let m = !s1 /. n and r = !hi -. !lo in
+          let v = Float.max 0. ((!s2 /. n) -. (m *. m)) in
+          let slack = gamma (3 * k + 4) *. ((r *. r) +. r +. Float.abs c) in
+          let tm =
+            (((4. *. d) +. 1.) *. u *. r)
+            +. (u *. Float.abs (c +. m))
+            +. slack
+          in
+          let tv =
+            (((7. *. d) +. 1.) *. u *. v)
+            +. (((4. *. d *. d) -. (2. *. d)) *. u *. r *. Float.sqrt v)
+            +. slack
+          in
+          mean.(at) <- Near (c +. m, tm);
+          var.(at) <- Near (v, tv)
       done)
     (indices (Array.map (fun i -> s.(i)) ks));
   (mean, var)
@@ -2384,7 +2338,7 @@ let misses want got =
 (* A Moments scan has the bits of nx_kernel.mli's network, within nx.cpu's
    bound of the running mean and variance, its NaNs and infinities as
    stated, and the same bits on one thread and from a C-contiguous copy of
-   its operand. *)
+   its operand, a NaN as any NaN. *)
 let law_moments (b : Support.backend) (c : moments) =
   let s = shape_of c.x in
   let len = s.(c.axis) in
@@ -2416,8 +2370,7 @@ let law_moments (b : Support.backend) (c : moments) =
   | None -> failf "nx.cpu declined a Moments scan"
   | Some (mean, var) ->
       let want_mean, want_var = expected_moments c in
-      cover "a NaN"
-        (Array.exists (function Is (Bits _) -> true | _ -> false) want_mean);
+      cover "a NaN" (Array.exists is_nan (terms c.x));
       cover "an infinity"
         (Array.exists
            (function Near (v, _) -> not (Float.is_finite v) | Is _ -> false)
@@ -2435,7 +2388,7 @@ let law_moments (b : Support.backend) (c : moments) =
         (misses (net net_mean mean) mean);
       equal ~msg:"the network's variance" (list string) []
         (misses (net net_var var) var);
-      let exact ts = Array.map (fun t -> Is (Bits (bits_of t))) ts in
+      let exact ts = Array.map (fun t -> Is (want_of t)) ts in
       let (A.Any x) = c.x in
       let copy = { c with x = A.Any (A.copy x) } in
       List.iter
@@ -2614,12 +2567,6 @@ let run_stat k c =
   | A.Declined -> None
   | a -> failf "the kernels answered %a" Nx_array_support.pp_answer a
 
-(* The quiet NaN of a clear sign bit, made from numbers. *)
-let made_nan u = Is (Bits (if u > 0x1p-30 then 0x7FC00000L else 0x7FF8000000000000L))
-
-(* [t]'s bits, quieted where a NaN of [d]. *)
-let quiet_term d t = if is_nan t then quieted (made d) t else bits_of t
-
 (* A float's value. *)
 let value = function F (x, _) -> x | I _ -> invalid_arg "value: an integer"
 
@@ -2650,61 +2597,58 @@ let arg_expect d (e : Nx_kernel.extreme) ts =
   let best = Array.fold_left f ts.(0) ts in
   let same t = if is_nan best then is_nan t else bits_of t = bits_of best in
   let i = Option.get (Array.find_index same ts) in
-  [| Is (Bits (quiet_term d ts.(i))); Is (Bits (Int64.of_int i)) |]
+  [| Is (want_of ts.(i)); Is (Bits (Int64.of_int i)) |]
 
 (* Logsumexp of [ts] within nx_cpu.mli's bound at the unit roundoff [u],
    from a float64 reference within ε (ln n + 4 + |r|). *)
 let lse_expect u ts =
-  match Array.find_opt is_nan ts with
-  | Some t -> [| Is (Bits (quiet_u u t)) |]
-  | None ->
-      let xs = Array.map value ts in
-      let n = Array.length xs in
-      let m = Array.fold_left Float.max neg_infinity xs in
-      if not (Float.is_finite m) then [| Near (m, 0.) |]
-      else
-        let r = m +. log (neumaier (Array.map (fun x -> exp (x -. m)) xs)) in
-        let l, d = depths n and ln = log (Float.of_int n) in
-        let bound = ((l +. d +. 5. +. (6. *. ln)) *. u) +. (u *. Float.abs r) in
-        [| Near (r, bound +. (eps *. (ln +. 4. +. Float.abs r))) |]
+  if Array.exists is_nan ts then [| Is Some_nan |]
+  else
+    let xs = Array.map value ts in
+    let n = Array.length xs in
+    let m = Array.fold_left Float.max neg_infinity xs in
+    if not (Float.is_finite m) then [| Near (m, 0.) |]
+    else
+      let r = m +. log (neumaier (Array.map (fun x -> exp (x -. m)) xs)) in
+      let l, d = depths n and ln = log (Float.of_int n) in
+      let bound = ((l +. d +. 5. +. (6. *. ln)) *. u) +. (u *. Float.abs r) in
+      [| Near (r, bound +. (eps *. (ln +. 4. +. Float.abs r))) |]
 
 (* Moments of [ts] within nx_cpu.mli's bounds, [u] the dtype's roundoff,
    from float64 references of the terms less the first, by compensated
    sums: within ε (4 R + 2 |μ|) and ε (5 V + 8 R √V). *)
 let moments_expect u ts =
-  let nan = made_nan u in
-  match Array.find_opt is_nan ts with
-  | Some t -> [| Is (Bits (quiet_u u t)); Is (Bits (quiet_u u t)) |]
-  | None when ts = [||] -> [| nan; nan |]
-  | None -> (
-      let xs = Array.map value ts in
-      let pos = Array.mem infinity xs and neg = Array.mem neg_infinity xs in
-      match (pos, neg) with
-      | true, true -> [| nan; nan |]
-      | true, false -> [| Near (infinity, 0.); nan |]
-      | false, true -> [| Near (neg_infinity, 0.); nan |]
-      | false, false ->
-          let n = Array.length xs and c = xs.(0) in
-          let nf = Float.of_int n in
-          let ys = Array.map (fun x -> x -. c) xs in
-          let my = neumaier ys /. nf in
-          let mean = c +. my in
-          let v = neumaier (Array.map (fun y -> (y -. my) *. (y -. my)) ys) /. nf in
-          let hi = Array.fold_left Float.max neg_infinity xs in
-          let r = hi -. Array.fold_left Float.min infinity xs in
-          let l, d = depths n and sv = Float.sqrt v in
-          let m = Array.fold_left (fun a x -> a +. Float.abs x) 0. xs /. nf in
-          let tm = ((l +. d) *. u *. m) +. (u *. Float.abs mean) in
-          let k = l +. d in
-          let tv =
-            ((k +. 5.) *. u *. v)
-            +. (2. *. (k +. 1.) *. u *. tm *. sv)
-            +. (((3. *. k) +. 7.) *. u *. tm *. tm)
-          in
-          [|
-            Near (mean, tm +. (eps *. ((4. *. r) +. (2. *. Float.abs mean))));
-            Near (v, tv +. (eps *. ((5. *. v) +. (8. *. r *. sv))));
-          |])
+  let nan = Is Some_nan in
+  if ts = [||] || Array.exists is_nan ts then [| nan; nan |]
+  else (
+    let xs = Array.map value ts in
+    let pos = Array.mem infinity xs and neg = Array.mem neg_infinity xs in
+    match (pos, neg) with
+    | true, true -> [| nan; nan |]
+    | true, false -> [| Near (infinity, 0.); nan |]
+    | false, true -> [| Near (neg_infinity, 0.); nan |]
+    | false, false ->
+        let n = Array.length xs and c = xs.(0) in
+        let nf = Float.of_int n in
+        let ys = Array.map (fun x -> x -. c) xs in
+        let my = neumaier ys /. nf in
+        let mean = c +. my in
+        let v = neumaier (Array.map (fun y -> (y -. my) *. (y -. my)) ys) /. nf in
+        let hi = Array.fold_left Float.max neg_infinity xs in
+        let r = hi -. Array.fold_left Float.min infinity xs in
+        let l, d = depths n and sv = Float.sqrt v in
+        let m = Array.fold_left (fun a x -> a +. Float.abs x) 0. xs /. nf in
+        let tm = ((l +. d) *. u *. m) +. (u *. Float.abs mean) in
+        let k = l +. d in
+        let tv =
+          ((k +. 5.) *. u *. v)
+          +. (2. *. (k +. 1.) *. u *. tm *. sv)
+          +. (((3. *. k) +. 7.) *. u *. tm *. tm)
+        in
+        [|
+          Near (mean, tm +. (eps *. ((4. *. r) +. (2. *. Float.abs mean))));
+          Near (v, tv +. (eps *. ((5. *. v) +. (8. *. r *. sv))));
+        |])
 
 (* The expected results of each destination of [c], in C order. *)
 let stat_expected c =
@@ -2725,7 +2669,8 @@ let stat_expected c =
 
 (* Each result exact (Arg) or within nx_cpu.mli's bound of the exact one,
    NaNs and infinities as Nx_kernel.reduction states them, and the same
-   bits on one thread and from a C-contiguous copy of the operand. *)
+   bits on one thread and from a C-contiguous copy of the operand, a NaN as
+   any NaN. *)
 let law_stateful (b : Support.backend) c =
   let s = shape_of c.x in
   let per = Array.fold_left (fun n a -> n * s.(a)) 1 c.axes in
@@ -2747,13 +2692,13 @@ let law_stateful (b : Support.backend) c =
   | Some got ->
       let want = stat_expected c in
       let wanted p = Array.exists (Array.exists p) want in
-      cover "a NaN" (wanted (function Is (Bits _) -> c.r <> Arg Max && c.r <> Arg Min | _ -> false));
+      cover "a NaN" (wanted (function Is Some_nan -> true | _ -> false));
       cover "an infinity"
         (wanted (function Near (v, _) -> not (Float.is_finite v) | Is _ -> false));
       Array.iteri
         (fun k w -> equal ~msg:(Printf.sprintf "destination %d" k) (list string) [] (misses w got.(k)))
         want;
-      let exact = Array.map (Array.map (fun t -> Is (Bits (bits_of t)))) got in
+      let exact = Array.map (Array.map (fun t -> Is (want_of t))) got in
       let (A.Any x) = c.x in
       List.iter
         (fun (msg, k, c) ->
@@ -2843,7 +2788,7 @@ let arg_scan d (e : Nx_kernel.extreme) ts =
         best := t;
         at := i
       end;
-      [| Is (Bits (quiet_term d !best)); Is (Bits (Int64.of_int !at)) |])
+      [| Is (want_of !best); Is (Bits (Int64.of_int !at)) |])
     ts
 
 (* nx_kernel.mli's bound of a Logsumexp scan's result [r] after [n] terms,
@@ -2853,11 +2798,11 @@ let lse_scan_bound ~n u r =
   +. (u *. Float.abs r)
 
 (* The running Logsumexp of a slice [ts] within nx_kernel.mli's bound at
-   [u]: past a NaN, its bits; past +∞, +∞; -∞ while every term is; else
+   [u]: past a NaN, a NaN; past +∞, +∞; -∞ while every term is; else
    from a float64 running maximum and a compensated sum rescaled as it
    rises, within the bound at float64's roundoff besides. *)
 let lse_scan u ts =
-  let nan = ref None and m = ref Float.neg_infinity in
+  let nan = ref false and m = ref Float.neg_infinity in
   let s = ref 0. and comp = ref 0. in
   let add x =
     let t = !s +. x in
@@ -2869,25 +2814,22 @@ let lse_scan u ts =
   in
   Array.mapi
     (fun i t ->
-      (match !nan with
-      | Some _ -> ()
-      | None when is_nan t -> nan := Some (quiet_u u t)
-      | None ->
-          let x = value t in
-          if x > !m then begin
-            let f = if Float.is_finite !m then exp (!m -. x) else 0. in
-            s := !s *. f;
-            comp := !comp *. f;
-            m := x
-          end;
-          if Float.is_finite !m then add (exp (x -. !m)));
-      match !nan with
-      | Some b -> [| Is (Bits b) |]
-      | None when not (Float.is_finite !m) -> [| Near (!m, 0.) |]
-      | None ->
-          let r = !m +. log (!s +. !comp) in
-          let b u = lse_scan_bound ~n:(i + 1) u r in
-          [| Near (r, b u +. b eps) |])
+      (if is_nan t then nan := true
+       else if not !nan then
+         let x = value t in
+         if x > !m then begin
+           let f = if Float.is_finite !m then exp (!m -. x) else 0. in
+           s := !s *. f;
+           comp := !comp *. f;
+           m := x
+         end;
+         if Float.is_finite !m then add (exp (x -. !m)));
+      if !nan then [| Is Some_nan |]
+      else if not (Float.is_finite !m) then [| Near (!m, 0.) |]
+      else
+        let r = !m +. log (!s +. !comp) in
+        let b u = lse_scan_bound ~n:(i + 1) u r in
+        [| Near (r, b u +. b eps) |])
     ts
 
 (* The bits of a Logsumexp scan of a slice [ts], float32 where [f32] else
@@ -2898,7 +2840,7 @@ let lse_scan u ts =
    where finite and [0] elsewhere and [e] nx_kinds.h's exp, [0] below the
    reduction's cut; the result is [m + log s], or [m] where [m] is not
    finite. Each operation rounds to the dtype. From the first NaN term on,
-   the result is its bits, quieted. *)
+   the result is a NaN. *)
 let lse_replay ~f32 ts =
   let rnd x = if f32 then round32 x else x in
   (* A kind over a vector, in one call. *)
@@ -2966,8 +2908,7 @@ let lse_replay ~f32 ts =
     if f32 then Int64.of_int32 (Int32.bits_of_float r) else Int64.bits_of_float r
   in
   Array.init (Array.length ts) (fun i ->
-      if i >= k then
-        Is (Bits (quiet_u (if f32 then 0x1p-24 else 0x1p-53) ts.(k)))
+      if i >= k then Is Some_nan
       else
         let m, _ = states.(i) in
         let r = if Float.is_finite m then rnd (m +. logs.(i)) else m in
@@ -2993,7 +2934,7 @@ let stat_scan_expected (c : stat) =
 (* Arg scans are exact, Logsumexp scans within nx_kernel.mli's bound and
    the bits of its network replayed, NaNs and infinities as
    Nx_kernel.reduction states them, and both give the same bits on one
-   thread and from a C-contiguous copy of the operand. *)
+   thread and from a C-contiguous copy of the operand, a NaN as any NaN. *)
 let law_stat_scan (b : Support.backend) (c : stat) =
   let s = shape_of c.x in
   let a = c.axes.(0) in
@@ -3015,7 +2956,7 @@ let law_stat_scan (b : Support.backend) (c : stat) =
       let want = stat_scan_expected c in
       let wanted p = Array.exists (Array.exists p) want in
       let lse = c.r = Logsumexp in
-      cover "a NaN" (lse && wanted (function Is (Bits _) -> true | _ -> false));
+      cover "a NaN" (lse && wanted (function Is Some_nan -> true | _ -> false));
       cover "a -∞ term"
         (lse
         && Array.exists
@@ -3038,7 +2979,7 @@ let law_stat_scan (b : Support.backend) (c : stat) =
          in
          equal ~msg:"the replayed network" (list string) []
            (misses replay got.(0)));
-      let exact = Array.map (Array.map (fun t -> Is (Bits (bits_of t)))) got in
+      let exact = Array.map (Array.map (fun t -> Is (want_of t))) got in
       let (A.Any x) = c.x in
       List.iter
         (fun (msg, k, c) ->
@@ -3301,8 +3242,8 @@ let stat_examples =
    it reads: a Moments scan whose terms take its exact pass, its mean or its
    variance in place; running sums, Logsumexps and Arg's extremes of slices
    past a chunk, more units than a job splits into chunks; and a float16
-   sum along no axis of signalling NaNs, whose bits come from the operand,
-   quieted. *)
+   sum along no axis of signalling NaNs, which stay NaNs. A NaN result is
+   any NaN. *)
 let test_in_place (b : Support.backend) () =
   let module K = (val b.kernels) in
   let copy (A.Any x) = A.Any (A.copy x) in
@@ -3311,7 +3252,13 @@ let test_in_place (b : Support.backend) () =
     match
       K.scan (identity (dtype_of x)) ~axis (r, 0) ~dsts [| plain_of x |]
     with
-    | A.Done -> Array.map Elements.elements dsts
+    | A.Done ->
+        Array.map
+          (fun d ->
+            Array.map
+              (fun e -> if Elements.nan_of (dtype_of d) e then "nan" else e)
+              (Elements.elements d))
+          dsts
     | a -> failf "the kernels answered %a" Nx_array_support.pp_answer a
   in
   (* Destination [k] the operand; an Arg's positions int64. *)
@@ -3346,9 +3293,9 @@ let test_in_place (b : Support.backend) () =
       [| (Monoid Sum, 0) |] ~dsts:[| x' |] [| plain_of x' |]
   in
   equal ~msg:"its answer" bool true (answer = A.Done);
-  equal ~msg:"a float16 sum along no axis in place" (array string)
-    (Array.map (Elements.quiet (D.Any D.Float16)) codes)
-    (Elements.elements x')
+  equal ~msg:"a float16 sum along no axis in place"
+    (array (Elements.same (D.Any D.Float16)))
+    codes (Elements.elements x')
 
 (* A scan by Arg, Logsumexp or Moments along the rows of [k; n] terms: a
    few rows of up to a chunk's terms, past one now and then. *)
@@ -3376,10 +3323,10 @@ let lanes_case =
      stat_of r [| k; n |] [| 1 |] plain values.name make)
 
 (* Each row of a scan by Arg, Logsumexp or Moments has the bits of the row
-   scanned alone, whichever way its lanes run: the rows side by side,
-   staged into lanes; their transpose scanned down its columns, whose lanes
-   lie side by side; and one row alone, whose chunks run as lanes past a
-   chunk, or a Logsumexp or Moments scan's tiles. *)
+   scanned alone, a NaN as any NaN, whichever way its lanes run: the rows
+   side by side, staged into lanes; their transpose scanned down its
+   columns, whose lanes lie side by side; and one row alone, whose chunks
+   run as lanes past a chunk, or a Logsumexp or Moments scan's tiles. *)
 let law_lanes (b : Support.backend) (c : stat) =
   let s = shape_of c.x in
   let k = s.(0) and n = s.(1) in
@@ -3390,7 +3337,7 @@ let law_lanes (b : Support.backend) (c : stat) =
   let scan a axis =
     let c = { c with x = A.Any a; axes = [| axis |] } in
     match run_stat_scan b.kernels c with
-    | Some g -> Array.map (Array.map (fun t -> bits_of t)) g
+    | Some g -> Array.map (Array.map (fun t -> show (want_of t))) g
     | None -> failf "nx.cpu declined %s" (reduction_name c.r)
   in
   let rows = scan x 1 in
@@ -3402,9 +3349,9 @@ let law_lanes (b : Support.backend) (c : stat) =
     Array.iteri
       (fun d a ->
         let msg = Printf.sprintf "row %d, destination %d" i d in
-        equal ~msg:(msg ^ ", side by side") (array int64) a
+        equal ~msg:(msg ^ ", side by side") (array string) a
           (Array.sub rows.(d) (i * n) n);
-        equal ~msg:(msg ^ ", transposed") (array int64) a
+        equal ~msg:(msg ^ ", transposed") (array string) a
           (Array.init n (fun j -> cols.(d).((j * k) + i))))
       alone
   done
@@ -3469,15 +3416,12 @@ let test_complex_arg_scan (b : Support.backend) () =
     equal ~msg:"its answer" bool true (answer = A.Done);
     (Elements.elements (A.Any v), A.to_array at)
   in
-  let pick ks =
-    Array.map
-      (fun k -> Elements.quiet (D.Any D.Complex64) (Elements.elements (A.Any x)).(k))
-      ks
-  in
-  equal ~msg:"Arg Max" (pair (array string) (array int64))
+  let pick ks = Array.map (fun k -> (Elements.elements (A.Any x)).(k)) ks in
+  let zs = pair (array (Elements.same (D.Any D.Complex64))) (array int64) in
+  equal ~msg:"Arg Max" zs
     (pick [| 0; 1; 1; 3; 3 |], [| 0L; 1L; 1L; 3L; 3L |])
     (scan Max);
-  equal ~msg:"Arg Min" (pair (array string) (array int64))
+  equal ~msg:"Arg Min" zs
     (pick [| 0; 0; 2; 3; 3 |], [| 0L; 0L; 2L; 3L; 3L |])
     (scan Min)
 
@@ -3634,7 +3578,7 @@ let law_guards (b : Support.backend) ((g : guard), side) =
         [| (g.r, 0) |] ~dsts:ds loads
   in
   equal Elements.answer A.Done
-    (Elements.same_guarded side ~call [| g.x |] dsts)
+    (Elements.same_guarded ~any_nan:true side ~call [| g.x |] dsts)
 
 (* A padded load's operand, which nx.cpu copies padded first, against the
    page, and the destination likewise. *)
@@ -3652,7 +3596,8 @@ let law_padded_guards (b : Support.backend) (p, side) =
           [| padded_load xs.(0) p.fill p.pad |]
       in
       equal Elements.answer A.Done
-        (Elements.same_guarded side ~call [| p.x |] [| (dt, result_shape c) |])
+        (Elements.same_guarded ~any_nan:true side ~call [| p.x |]
+           [| (dt, result_shape c) |])
 
 (* Fused programs *)
 
@@ -3983,7 +3928,8 @@ let bytes_of (A.Any x) =
   | None -> List.init (n * w) (fun _ -> 0)
 
 (* [c] fused, its loads guarded where it says, against [c]'s program mapped
-   into fresh arrays and reduced as their outputs' identity. *)
+   into fresh arrays and reduced as their outputs' identity, a NaN as any
+   NaN. *)
 let law_fused (b : Support.backend) c =
   let module K = (val b.kernels) in
   let s = c.shape in
@@ -4090,18 +4036,18 @@ let law_fused (b : Support.backend) c =
           (compute_in (module One) c.prog c.k ~dsts:one (plain c.loads));
         Array.iteri
           (fun i w ->
-            let bytes = bytes_of (host w) in
-            equal ~msg:(Printf.sprintf "destination %d" i) (list int) bytes
-              (bytes_of (host got.(i)));
+            let es = Elements.elements (host w) in
+            let same = array (Elements.same (dtype_of w)) in
+            equal ~msg:(Printf.sprintf "destination %d" i) same es
+              (Elements.elements (host got.(i)));
             equal ~msg:(Printf.sprintf "destination %d, one thread" i)
-              (list int) bytes (bytes_of (host one.(i))))
+              same es (Elements.elements (host one.(i))))
           want
       end)
 
 (* A program computed into its own load gives the bits of one computed
-   into fresh destinations, as nx_cpu.mli states: a float16 negation of
-   signalling NaNs summed along no axis, whose bits come from the load,
-   quieted; scanned, its NaN results settled from the load;
+   into fresh destinations, as nx_cpu.mli states, a NaN as any NaN: a
+   float16 negation of signalling NaNs summed along no axis; scanned;
    summed beside its maximum, each written after the other reads; and its
    Arg, reduced along no axis and scanned over numbers, each extreme
    computed from the load at its position after earlier results are
@@ -4129,9 +4075,11 @@ let test_program_in_place (b : Support.backend) () =
     let x = load () in
     let got = Array.init (Array.length dts) (fun j -> if j = 0 then x else fresh j) in
     equal ~msg:(what ^ ", into its load") Elements.answer A.Done (call x got);
-    equal ~msg:what (array (array string))
-      (Array.map Elements.elements want)
-      (Array.map Elements.elements got)
+    Array.iteri
+      (fun j w ->
+        equal ~msg:what (array (Elements.same dts.(j)))
+          (Elements.elements w) (Elements.elements got.(j)))
+      want
   in
   let reduce rs x dsts =
     K.reduce p ~shape:[| 3 |] ~axes:[||] rs ~dsts [| plain_of x |]
@@ -4173,7 +4121,8 @@ let several_case =
 let dsts_of (b : Support.backend) c red k =
   fused_dsts b { c with red; k }
 
-(* Several reductions in one call give each one's bits alone. *)
+(* Several reductions in one call give each one's bits alone, a NaN as any
+   NaN. *)
 let law_several (b : Support.backend) s =
   let module K = (val b.kernels) in
   let c = s.first in
@@ -4200,7 +4149,9 @@ let law_several (b : Support.backend) s =
   if answer = A.Done then begin
     let same w g =
       Array.iteri
-        (fun i x -> equal (list int) (bytes_of (host x)) (bytes_of (host g.(i))))
+        (fun i x ->
+          equal (array (Elements.same (dtype_of x)))
+            (Elements.elements (host x)) (Elements.elements (host g.(i))))
         w
     in
     same w1 d1;
@@ -4359,8 +4310,8 @@ let product_of ?(first = false) ~same ~broadcast ldt pdt shape axes v lv
 
 (* Sums along axis 1 of [160; 2; 64], more outputs than a thread's unit
    of a sum of products, of a broadcast first factor by one with a NaN at
-   [0; 0; 5]: the NaN's output takes its first NaN term while the units
-   after it on the thread read the broadcast factor's terms. *)
+   [0; 0; 5]: the NaN's output is a NaN while the units after it on the
+   thread read the broadcast factor's terms. *)
 let nan_before_units =
   let shape = [| 160; 2; 64 |] in
   let n = Array.fold_left ( * ) 1 shape in
@@ -4506,7 +4457,7 @@ let product_examples =
       dw 4 5;
     ]
 
-(* The bytes of [c]'s Sum of [p]'s output over [loads] by [M]. *)
+(* The elements of [c]'s Sum of [p]'s output over [loads] by [M]. *)
 let sum_products (module M : Nx_kernel.S) (b : Support.backend) c p loads =
   let s = c.pshape in
   let kept =
@@ -4519,11 +4470,12 @@ let sum_products (module M : Nx_kernel.S) (b : Support.backend) c p loads =
     M.reduce p ~shape:s ~axes:(Iarray.of_array c.paxes) [| (Monoid Sum, 0) |]
       ~dsts:[| dst |] loads
   with
-  | A.Done -> bytes_of (host dst)
+  | A.Done -> Elements.elements (host dst)
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
 (* The products summed as the program's output mapped into an array, then
-   reduced: the same bits, on the job's threads and on one. *)
+   reduced: the same bits, a NaN as any NaN, on the job's threads and on
+   one. *)
 let law_products (b : Support.backend) c =
   let module K = (val b.kernels) in
   let s = c.pshape in
@@ -4560,8 +4512,9 @@ let law_products (b : Support.backend) c =
   | r -> failf "the map answered %a" Nx_array_support.pp_answer r);
   let reduce k p loads = sum_products k b c p loads in
   let want = reduce b.kernels (identity c.pdt) [| Nx_kernel.Plain y |] in
-  equal ~msg:"the job's threads" (list int) want (reduce b.kernels prog c.loads);
-  equal ~msg:"one thread" (list int) want (reduce (module One) prog c.loads)
+  let same = array (Elements.same c.pdt) in
+  equal ~msg:"the job's threads" same want (reduce b.kernels prog c.loads);
+  equal ~msg:"one thread" same want (reduce (module One) prog c.loads)
 
 (* A Sum adds its terms from +0, so products of -0 by positive factors sum
    to +0: a row of 64 outputs of 9 terms, the positive factor broadcast. *)
@@ -4582,11 +4535,11 @@ let test_zero_products (b : Support.backend) () =
   in
   let prog = product_prog ~same:false f32 f32 in
   let zero =
-    bytes_of (A.Any (A.of_array D.Float32 [| 64 |] (Array.make 64 0.)))
+    Elements.elements (A.Any (A.of_array D.Float32 [| 64 |] (Array.make 64 0.)))
   in
-  equal ~msg:"the job's threads" (list int) zero
+  equal ~msg:"the job's threads" (array string) zero
     (sum_products b.kernels b c prog c.loads);
-  equal ~msg:"one thread" (list int) zero
+  equal ~msg:"one thread" (array string) zero
     (sum_products (module One) b c prog c.loads)
 
 (* A Sum of a program's output over padded loads gives the bits of the Sum
@@ -4959,9 +4912,19 @@ let law_carry (b : Support.backend) c =
   in
   let got = scan ~carry dt (along1 z c.p c.m) in
   let want = along1 (scan dt z) c.p c.m in
-  equal (array string)
-    (Elements.elements (host want))
-    (Elements.elements (host got))
+  (* A NaN as any NaN; a complex Sum's parts apart, as it adds them. *)
+  let parts y =
+    let (A.Any h as a) = host y in
+    match A.dtype h with
+    | D.Complex64 when c.cm = Sum ->
+        A.Any (Option.get (A.bitcast D.Float32 (A.copy h)))
+    | D.Complex128 when c.cm = Sum ->
+        A.Any (Option.get (A.bitcast D.Float64 (A.copy h)))
+    | _ -> a
+  in
+  let want = parts want and got = parts got in
+  equal (array (Elements.same (dtype_of want)))
+    (Elements.elements want) (Elements.elements got)
 
 (* A carry of a reduction that takes none, or of another shape or dtype than
    the carrier's, is refused. *)
@@ -4995,23 +4958,22 @@ let test_carry_refusals (b : Support.backend) () =
   refuses "a float32 carry of float16 terms" A.Done
     (scan D.Float16 ~carry (Monoid Sum) [| make D.Float16 [| 2; 3 |] |])
 
-(* A Max's NaN carry that is its destination, a slice of one term, is the
-   result, quieted, though the scan writes the carry's bytes. *)
+(* A Max's NaN carry that is its destination, a slice of one term, a
+   number, makes the result a NaN, though the scan writes the carry's
+   bytes. *)
 let test_aliased_carry (b : Support.backend) () =
   let (module K : Nx_kernel.S) = b.kernels in
   let on_b x = if Rig.equal (A.device x) b.device then x else A.to_device b.device x in
   let f64 = Int64.float_of_bits in
   let y = on_b (A.of_array D.Float64 [| 1; 1 |] [| f64 0x7FF4_0000_0000_0001L |]) in
-  let x = on_b (A.of_array D.Float64 [| 1; 1 |] [| f64 0xFFF9_2340_0000_0000L |]) in
+  let x = on_b (A.of_array D.Float64 [| 1; 1 |] [| 1. |]) in
   let answer =
     K.scan ~carry:(A.Any y) (identity (D.Any D.Float64)) ~axis:1
       (Monoid Max, 0) ~dsts:[| A.Any y |] [| Plain x |]
   in
   equal ~msg:"answer" Elements.answer A.Done answer;
   let y = if Rig.equal (A.device y) Rig.host then y else A.to_device Rig.host y in
-  equal (array int64)
-    [| 0x7FFC_0000_0000_0001L |]
-    (Array.map Int64.bits_of_float (A.to_array y))
+  equal ~msg:"a NaN" bool true (Float.is_nan (A.to_array y).(0))
 
 (* The suite *)
 
@@ -5233,7 +5195,7 @@ let stat_run k ~scan (c : stat) (D.Any d) x =
 
 (* A narrow operand's terms reduce in their carrier, and each result rounds
    once into its destination: the bits of the reduction of the terms cast
-   into [arg_carrier], cast into the destination. *)
+   into [arg_carrier], cast into the destination, a NaN as any NaN. *)
 let law_stat_into (b : Support.backend) { st = c; scan; into } =
   let x = dtype_of c.x in
   let s = shape_of c.x in
@@ -5252,8 +5214,7 @@ let law_stat_into (b : Support.backend) { st = c; scan; into } =
   let got = stat_run b.kernels ~scan c into c.x in
   let want = stat_run b.kernels ~scan c wide (cast_into wide c.x) in
   (* Into the operand's own dtype, a staged Arg's extreme is the term at
-     its position, and a NaN result the first NaN term, a scan's up to it,
-     each as the operand holds it, quieted. *)
+     its position, as the operand holds it. *)
   let own = staged x && same into x in
   let case = { (as_case c) with scan } in
   (* Each result's terms, a scan's its slice's. *)
@@ -5261,7 +5222,6 @@ let law_stat_into (b : Support.backend) { st = c; scan; into } =
     results case (Elements.elements c.x) ~fill:[||] ~reduce:Fun.id
       ~scan:(fun ts -> Array.map (fun _ -> ts) ts)
   in
-  let firsts () = first_nans case in
   Array.iteri
     (fun k w ->
       let want =
@@ -5269,19 +5229,12 @@ let law_stat_into (b : Support.backend) { st = c; scan; into } =
         | Arg _, 1 -> Elements.elements w
         | Arg _, _ when own ->
             let at = A.to_array (A.expect D.Int64 want.(1)) in
-            Array.mapi
-              (fun o ts -> Elements.quiet x ts.(Int64.to_int at.(o)))
-              (terms ())
-        | _ when own ->
-            Array.map2
-              (fun w f -> Option.value f ~default:w)
-              (Elements.elements (cast_into into w))
-              (firsts ())
+            Array.mapi (fun o ts -> ts.(Int64.to_int at.(o))) (terms ())
         | _ -> Elements.elements (cast_into into w)
       in
       equal
         ~msg:(Printf.sprintf "destination %d" k)
-        (array string) want
+        (array (Elements.same (dtype_of got.(k)))) want
         (Elements.elements got.(k)))
     want
 
@@ -5299,8 +5252,8 @@ let order (b : Support.backend) =
           b.around (test_bool_bytes b));
       test "a program of Prog.of_node's operand computes" (fun () ->
           b.around (test_of_node b));
-      test "a NaN past the first block and chunk is the result's" (fun () ->
-          b.around (test_far_nans b));
+      test "a NaN past the first block and chunk makes the result a NaN"
+        (fun () -> b.around (test_far_nans b));
       test "8- and 16-bit products and sums wrap at their extremes" (fun () ->
           b.around (test_wrap b));
       test
@@ -5511,7 +5464,7 @@ let cpu (b : Support.backend) =
       prop ~examples:into_examples
         "narrow terms reduce in their carrier, rounded once" into_case
         (run (law_into b));
-      test "a narrow NaN result is its first NaN term quieted" (fun () ->
+      test "a narrow result a NaN term reaches is a NaN" (fun () ->
           b.around (test_nan_bits b));
       prop ~examples:stat_into_examples
         "narrow Arg, Logsumexp and Moments reduce in their carrier"

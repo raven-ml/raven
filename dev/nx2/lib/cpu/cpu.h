@@ -293,15 +293,15 @@ typedef struct {
 
 /* A sum of few products at a float dtype (reduce.c) stores the [h] rows of
    [w] sums of [n] products each, n from 1 to NX_CPU_LANES, row i's output
-   j at [y + i·sy2 + j·sy], and answers whether one is NaN: its product t
+   j at [y + i·sy2 + j·sy]: its product t
    is the element [i·sa + oa[t] + j] of [a] times the element
    [i·sb + ob[t] + j] of [b], each a term in lane t from +0, then the
    lanes' tree, as one block of a monoid's [lanes] gives them. */
-typedef int (*nx_cpu_products)(int n, int64_t w, int64_t h, const uint8_t *a,
-                               const int64_t *oa, int64_t sa,
-                               const uint8_t *b, const int64_t *ob,
-                               int64_t sb, uint8_t *y, int64_t sy,
-                               int64_t sy2);
+typedef void (*nx_cpu_products)(int n, int64_t w, int64_t h,
+                                const uint8_t *a, const int64_t *oa,
+                                int64_t sa, const uint8_t *b,
+                                const int64_t *ob, int64_t sb, uint8_t *y,
+                                int64_t sy, int64_t sy2);
 
 /* The reductions nx.cpu computes by a state of each block of terms
    (reduce.c), numbered on from the monoids: Logsumexp, Arg by Max and by

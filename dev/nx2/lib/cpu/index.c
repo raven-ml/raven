@@ -30,19 +30,15 @@
    the axis and walks every update of its run, applying those that land in
    its part: the order per target stays C order.
 
-   Add adds left to right from +0 + x. nx_add keeps the first NaN operand,
-   and a zero sum is stored as +0: a sum that starts from +0 is never -0,
-   and (+0 + x) + u differs from x + u only in that sign. A narrow float
-   sums in float32 and rounds once (Narrow sums below), in the scratch
-   nx_cpu.mli states: a few words per update along the axis and a bin's
-   sums on each thread, or every target's sums where they carry from one
-   sorted block to the next. Max and Min keep the first NaN, the
-   target's value first, quieted as IEEE 754 returns a NaN operand: its
-   quiet bit, the top of its fraction, set, its sign and the rest of its
-   payload kept. Quieting is idempotent, so a NaN target stays the first
-   NaN through later updates. On narrow floats and complex numbers they
-   select an operand by the order of nx_kinds.h's domains, so that the
-   result is an operand's bits, quieted where a NaN. */
+   Add adds left to right from +0 + x, and a zero sum is stored as +0: a
+   sum that starts from +0 is never -0, and (+0 + x) + u differs from x + u
+   only in that sign. A narrow float sums in float32 and rounds once
+   (Narrow sums below), in the scratch nx_cpu.mli states: a few words per
+   update along the axis and a bin's sums on each thread, or every target's
+   sums where they carry from one sorted block to the next. Max and Min are
+   nx_kinds.h's, so a NaN target or update makes the target a NaN. On
+   narrow floats and complex numbers they select an operand by the order of
+   nx_kinds.h's domains, so that the result is an operand's bits. */
 
 #include <stdlib.h>
 #include <string.h>
@@ -299,8 +295,7 @@ struct scatter {
   uint8_t *vals, *gather;
 };
 
-/* Sums that start from +0: the first NaN operand, or the sum, +0 for a
-   zero. */
+/* Sums that start from +0: the sum, +0 for a zero. */
 static inline float add_f32(float a, float b) {
   float s = nx_add_f32(a, b);
   return s == 0 ? 0.0f : s;
@@ -361,38 +356,6 @@ static inline nx_c128 add_c128(nx_c128 a, nx_c128 b) {
     }                                                                        \
   }
 
-/* [g] quieted where a NaN, by a mask of its NaN test: no branch. */
-static inline float quiet_f32(float g) {
-  uint32_t nan = (uint32_t)0 - (uint32_t)(g != g);
-  return nx_bits_float(nx_float_bits(g) | (nan & ((uint32_t)1 << 22)));
-}
-
-static inline double quiet_f64(double g) {
-  uint64_t nan = (uint64_t)0 - (uint64_t)(g != g);
-  return nx_bits_double(nx_double_bits(g) | (nan & ((uint64_t)1 << 51)));
-}
-
-static inline nx_c64 quiet_c64(nx_c64 z) {
-  return nx_c64_of(quiet_f32(z.re), quiet_f32(z.im));
-}
-
-static inline nx_c128 quiet_c128(nx_c128 z) {
-  return nx_c128_of(quiet_f64(z.re), quiet_f64(z.im));
-}
-
-/* The extremes of floats and complex numbers, a NaN result quieted. */
-#define QUIETED(NAME, T, F, Q) \
-  static inline T NAME(T a, T b) { return Q(F(a, b)); }
-
-QUIETED(maximum_f32, float, nx_maximum_f32, quiet_f32)
-QUIETED(minimum_f32, float, nx_minimum_f32, quiet_f32)
-QUIETED(maximum_f64, double, nx_maximum_f64, quiet_f64)
-QUIETED(minimum_f64, double, nx_minimum_f64, quiet_f64)
-QUIETED(maximum_c64, nx_c64, nx_maximum_c64, quiet_c64)
-QUIETED(minimum_c64, nx_c64, nx_minimum_c64, quiet_c64)
-QUIETED(maximum_c128, nx_c128, nx_maximum_c128, quiet_c128)
-QUIETED(minimum_c128, nx_c128, nx_minimum_c128, quiet_c128)
-
 #define SET(a, b) (b)
 #define MAX(a, b) ((a) < (b) ? (b) : (a))
 #define MIN(a, b) ((b) < (a) ? (b) : (a))
@@ -416,10 +379,10 @@ SCATTER_RUN(add_8, uint8_t, ADD_U8)
 SCATTER_RUN(add_16, uint16_t, ADD_U16)
 SCATTER_RUN(add_32, uint32_t, ADD_U32)
 SCATTER_RUN(add_64, uint64_t, ADD_U64)
-SCATTER_RUN(max_f32, float, maximum_f32)
-SCATTER_RUN(min_f32, float, minimum_f32)
-SCATTER_RUN(max_f64, double, maximum_f64)
-SCATTER_RUN(min_f64, double, minimum_f64)
+SCATTER_RUN(max_f32, float, nx_maximum_f32)
+SCATTER_RUN(min_f32, float, nx_minimum_f32)
+SCATTER_RUN(max_f64, double, nx_maximum_f64)
+SCATTER_RUN(min_f64, double, nx_minimum_f64)
 SCATTER_RUN(max_i8, int8_t, MAX)
 SCATTER_RUN(min_i8, int8_t, MIN)
 SCATTER_RUN(max_u8, uint8_t, MAX)
@@ -439,11 +402,11 @@ SCATTER_RUN(min_u64, uint64_t, MIN)
 SCATTER_RUN(max_b, uint8_t, OR_B)
 SCATTER_RUN(min_b, uint8_t, AND_B)
 SCATTER_RUN(add_c64_run, nx_c64, add_c64)
-SCATTER_RUN(max_c64, nx_c64, maximum_c64)
-SCATTER_RUN(min_c64, nx_c64, minimum_c64)
+SCATTER_RUN(max_c64, nx_c64, nx_maximum_c64)
+SCATTER_RUN(min_c64, nx_c64, nx_minimum_c64)
 SCATTER_RUN(add_c128_run, nx_c128, add_c128)
-SCATTER_RUN(max_c128, nx_c128, maximum_c128)
-SCATTER_RUN(min_c128, nx_c128, minimum_c128)
+SCATTER_RUN(max_c128, nx_c128, nx_maximum_c128)
+SCATTER_RUN(min_c128, nx_c128, nx_minimum_c128)
 
 /* Elements one at a time: sub-byte dtypes and narrow floats. */
 
@@ -455,17 +418,6 @@ static uint32_t narrow_of_float(int dt, float f) {
     case NX_FLOAT8_E4M3FN: return nx_float_to_e4m3fn(f);
     case NX_FLOAT8_E5M2: return nx_float_to_e5m2(f);
     default: return nx_float_to_e2m1fn(f);
-  }
-}
-
-/* The quiet bit of a narrow float's NaNs, the top of its fraction; 0 for
-   float8_e4m3fn, whose NaNs have it, and float4_e2m1fn, which has none. */
-static uint32_t narrow_quiet(int dt) {
-  switch (dt) {
-    case NX_FLOAT16: return 0x200;
-    case NX_BFLOAT16: return 0x40;
-    case NX_FLOAT8_E5M2: return 0x2;
-    default: return 0;
   }
 }
 
@@ -510,13 +462,11 @@ static void combine_one(const scatter *c, int64_t pd, int64_t pu) {
   }
   if (is_narrow(dt)) {
     /* The update's code where the extreme is not the element's own value,
-       else the element's, quieted where a NaN; Add sums apart (Narrow
-       sums). */
+       else the element's; Add sums apart (Narrow sums). */
     float x = nx_bits_to_float(dt, a), y = nx_bits_to_float(dt, b);
     float g = c->combine == NX_COMBINE_MAX ? nx_maximum_f32(x, y)
                                         : nx_minimum_f32(x, y);
     uint32_t r = nx_float_bits(g) != nx_float_bits(x) ? b : a;
-    if (g != g) r |= narrow_quiet(dt);
     if (r != a) code_put(d, pd, r);
     return;
   }
@@ -673,17 +623,9 @@ static void start_sums(float *x, int64_t n) {
   for (int64_t i = 0; i < n; i++) x[i] = add_f32(0.0f, x[i]);
 }
 
-/* [y] is [x] plus [u], [n] sums by Prog.Add: a plain add, and where it
-   makes a NaN, Prog.Add's selects of the NaN again, so that a NaN's bits
-   do not depend on the compiler's order of operands. A sum started from
-   +0 is never -0, so needs no more. */
+/* [y] is [x] plus [u], [n] sums by Prog.Add. A sum started from +0 is
+   never -0, so needs no more. */
 static void add_sums(const float *x, const float *u, float *y, int64_t n) {
-  int nan = 0;
-  for (int64_t i = 0; i < n; i++) {
-    y[i] = x[i] + u[i];
-    nan |= y[i] != y[i];
-  }
-  if (!nan) return;
   for (int64_t i = 0; i < n; i++) y[i] = nx_add_f32(x[i], u[i]);
 }
 

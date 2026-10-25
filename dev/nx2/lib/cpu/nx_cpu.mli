@@ -88,11 +88,9 @@
     destination of any dtype. Terms reduce in their carrier
     ({!Nx_kernel.carrier}), each block of them converted into it as a cast
     does where it is not their dtype. Each result rounds once into its
-    destination's dtype, as a cast does, which keeps a NaN's sign and
-    payload: into the operand's own dtype, a NaN result where a term is
-    NaN is the first such term quieted. They also compute one [Arg] so, its
-    positions into [int64] and its extreme into the operand's own dtype the
-    term itself, quieted where a NaN, and one [Logsumexp] and one [Moments]
+    destination's dtype, as a cast does. They also compute one [Arg] so,
+    its positions into [int64] and its extreme into the operand's own dtype
+    the term itself, and one [Logsumexp] and one [Moments]
     so at every float dtype, the operand of a scan by either converted
     whole into its carrier first where that is not its dtype, or a
     program's tile by tile. Both take any program [map] computes, over its

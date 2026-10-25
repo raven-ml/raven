@@ -398,6 +398,18 @@ let hex dt v =
 let same_bits dt eager lowered =
   equal (array string) (Array.map (hex dt) eager) (Array.map (hex dt) lowered)
 
+(* Whether [v] is a NaN, a complex number where a part is. *)
+let is_nan (type v s) (dt : (v, s) D.t) (v : v) =
+  match D.kind dt with
+  | D.Float -> Float.is_nan v
+  | D.Complex -> Float.is_nan v.Complex.re || Float.is_nan v.im
+  | _ -> false
+
+(* [same_bits], a NaN matching any NaN: which NaN is unspecified. *)
+let same_values dt eager lowered =
+  let show v = if is_nan dt v then "nan" else hex dt v in
+  equal (array string) (Array.map show eager) (Array.map show lowered)
+
 let float_kind x =
   if Float.is_nan x then "nan"
   else if x = Float.infinity then "+inf"
@@ -416,17 +428,16 @@ let part_bits (type v s) (dt : (v, s) D.t) : float -> string =
       | D.Float -> hex dt
       | _ -> invalid_arg "part_bits: not a float")
 
-(* [near ~bits ~zeros ~nans ~bound e l] checks [l] against [e]: [e]'s bits where
-   [e] is a NaN and [nans], a NaN where it is not, the same infinity, the same
-   zero where [zeros], and otherwise within [bound], inclusive. A zero against a
-   number is within the bound or not, as any other difference. *)
-let near ?(zeros = true) ?(nans = true) ~bits ~bound e l =
+(* [near ~bits ~zeros ~bound e l] checks [l] against [e]: a NaN where [e] is one,
+   the same infinity, the same zero where [zeros], and otherwise within [bound],
+   inclusive. A zero against a number is within the bound or not, as any other
+   difference. *)
+let near ?(zeros = true) ~bits ~bound e l =
   let msg = Printf.sprintf "%h (%s) against %h (%s)" e (bits e) l (bits l) in
   let unsigned k = if zeros || (k <> "+0" && k <> "-0") then k else "0" in
   let k = unsigned (float_kind e) and kl = unsigned (float_kind l) in
   let number k = k = "number" || k = "+0" || k = "-0" || k = "0" in
-  if Float.is_nan e && nans then equal ~msg string (bits e) (bits l)
-  else if not (number k && number kl && (k = "number" || kl = "number")) then
+  if not (number k && number kl && (k = "number" || kl = "number")) then
     equal ~msg string k kl
   else less ~msg float_exact ~than:(Float.succ bound) (Float.abs (e -. l))
 
@@ -487,7 +498,7 @@ let refused c =
 let exact ~scan c =
   let (D.Any dt) = c.dt in
   let e, l = results dt ~scan c in
-  same_bits dt e l
+  same_values dt e l
 
 (* Each part of the eager and the lowered results of a float sum or product of
    at most [n] terms, the carry's included, is within [γ(n - 1) Σ|x|] of the
@@ -971,7 +982,7 @@ let contract_check c =
         let mags = Nx.to_array mags in
         Array.iteri
           (fun o e ->
-            near ~zeros:(c.init = None) ~nans:false ~bits
+            near ~zeros:(c.init = None) ~bits
               ~bound:((2. *. g *. mags.(o)) +. round e l.(o))
               e l.(o))
           e

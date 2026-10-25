@@ -71,11 +71,38 @@ let bits_of (type v s) (a : (v, s) A.t) =
   | 4 -> A.to_array (Option.get (A.bitcast D.Uint4 a))
   | _ -> A.to_array (Option.get (A.bitcast D.Uint8 a))
 
+(* [bits], as [bits_of] gives them for [d], one string per element. *)
+let elements_of (D.Any dt) bits =
+  let per = max 1 (D.bits dt / 8) in
+  Array.init (Array.length bits / per) (fun i ->
+      String.init per (fun j -> Char.chr bits.((i * per) + j)))
+
+(* Bits as [bits_of] gives them for [d], equal where each element has the
+   same bits or both are NaN. *)
+let same_values d =
+  Testable.make ~pp:(Testable.pp (array int)) ~equal:(fun a b ->
+      Testable.equal (array (Elements.same d)) (elements_of d a)
+        (elements_of d b))
+
+(* Whether [k]'s NaN results are any NaN: all but the moves of bits, and neg
+   and abs, which keep a NaN's payload. *)
+let any_nan : Support.kind -> bool = function
+  | K0 _ | K1 (Copy | Cast | Bitcast | Unary (Neg | Abs)) | K3 Where -> false
+  | K1 (Unary _) | K2 _ | K3 Fma -> true
+
 (* The first elements whose bits differ between [want] and [got], arrays of one
-   dtype and shape, beside the element of [src] each came from. *)
-let differ ?src (want : _ A.t) (got : _ A.t) =
+   dtype and shape, beside the element of [src] each came from; with
+   [any_nan], two NaNs do not differ. *)
+let differ ?src ?(any_nan = false) (want : _ A.t) (got : _ A.t) =
+  let d = D.Any (A.dtype want) in
   let per = max 1 (D.bits (A.dtype want) / 8) in
   let w = bits_of want and g = bits_of got in
+  let same i =
+    let e = elements_of d (Array.sub w (i * per) per)
+    and f = elements_of d (Array.sub g (i * per) per) in
+    if any_nan then Testable.equal (Elements.same d) e.(0) f.(0)
+    else e.(0) = f.(0)
+  in
   let hex bits per i =
     String.concat "" (List.init per (fun j -> strf "%02x" bits.((i * per) + j)))
   in
@@ -89,7 +116,7 @@ let differ ?src (want : _ A.t) (got : _ A.t) =
   let bad = ref [] in
   if w <> g then
     for i = (Array.length w / per) - 1 downto 0 do
-      if Array.sub w (i * per) per <> Array.sub g (i * per) per then
+      if not (same i) then
         bad :=
           strf "element %d: %s, expected %s%s" i (hex g per i) (hex w per i)
             (source i)
@@ -959,7 +986,9 @@ let answers (b : Support.backend) kind (D.Any at) (D.Any dt) shape ~accepted
   | A.Done ->
       cover "computed" true;
       equal ~msg:"accepted" bool true accepted;
-      equal (array int) (want ()) (bits_of (host dst))
+      equal
+        (if any_nan kind then same_values (D.Any dt) else array int)
+        (want ()) (bits_of (host dst))
   | A.Declined ->
       cover "declined" true;
       check_declined b kind (D.Any at);
@@ -1187,69 +1216,6 @@ let fill_insides =
 let large_fills =
   D.[ Any Int4; Any Bit; Any Float4_e2m1fn ]
   |> List.map (fun d -> (d, [| 1_000_001 |], (3, 5), 7))
-
-(* NaN bits *)
-
-(* nx.cpu under each target table the host runs. *)
-let cpu_tables =
-  List.filter (fun (b : Support.backend) -> Rig.equal b.device Rig.host)
-    Support.backends
-
-(* [n] elements of [dt] drawn from its specials alone, by [seed]: NaNs of
-   both signs, signalling and quiet, with payloads, infinities, zeros, and
-   numbers that some kinds make NaN from. *)
-let specials_only (type v s) (dt : (v, s) D.t) n seed : (v, s) A.t =
-  let sp = Array.of_list (specials dt) in
-  let b = bytes_of_seed seed n in
-  let pick i = sp.(Char.code b.[i] * 7 mod Array.length sp) in
-  A.v dt (L.contiguous [| n |]) (B.of_string (String.concat "" (List.init n pick)))
-
-(* A float kind's NaN results, those it passes and those it makes, are the
-   same bits under every target table and into a destination that is its
-   operand: the hardware's choice of NaN varies between targets and between
-   vector and scalar code, and nx_kinds.h pins it. *)
-let law_nan_bits (D.Any dt, seed) =
-  let tables = cpu_tables in
-  match D.kind dt with
-  | D.Float when D.bits dt >= 32 ->
-      let n = 300 in
-      let x = specials_only dt n seed and y = specials_only dt n (seed + 1) in
-      let z = specials_only dt n (seed + 2) in
-      let kinds =
-        List.filter_map
-          (fun (u, name) ->
-            if not (P.accepts1 (Unary u) dt dt) then None
-            else
-              Some (name, fun (module K : Nx_kernel.S) dst x -> Support.map1 (module K) (Unary u) ~dst x))
-          unaries
-        @ List.filter_map
-            (fun k ->
-              match k with
-              | P.Binary b when P.accepts2 k dt ->
-                  Some (name2 k, fun (module K : Nx_kernel.S) dst x -> Support.map2 (module K) (Binary b) ~dst x y)
-              | _ -> None)
-            op2s
-        @ [ ("fma", fun (module K : Nx_kernel.S) dst x -> Support.map3 (module K) Fma ~dst x y z) ]
-      in
-      List.iter
-        (fun (name, run) ->
-          let under (b : Support.backend) ~alias =
-            b.around (fun () ->
-                let x' = A.copy x in
-                let dst = if alias then x' else A.create Rig.host dt [| n |] in
-                equal ~msg:name answer A.Done (run b.kernels dst x');
-                bits_of dst)
-          in
-          let want = under (List.hd tables) ~alias:false in
-          List.iter
-            (fun (b : Support.backend) ->
-              equal ~msg:(strf "%s on %s" name b.name) (array int) want
-                (under b ~alias:false);
-              equal ~msg:(strf "%s in place on %s" name b.name) (array int) want
-                (under b ~alias:true))
-            tables)
-        kinds
-  | _ -> ()
 
 (* Values the kinds' documentation states, through nx.cpu. *)
 let test_kind_values () =
@@ -1572,6 +1538,9 @@ let program ?(length = 6) st (ins : D.any array) ~room ~rank =
   let nins = Array.length ins in
   let nodes = ref (Array.to_list (Array.init nins (fun k -> P.In k))) in
   let tys = ref (Array.to_list ins) in
+  (* Whether each node's bits follow from its loads' and constants': a NaN a
+     kind makes is any NaN, so a bitcast reads only such nodes. *)
+  let settled = ref (List.init nins (fun _ -> true)) in
   let axes = ref [] in
   let pick l = List.nth l (Random.State.int st (List.length l)) in
   let all_dtypes = Array.of_list D.all in
@@ -1598,7 +1567,7 @@ let program ?(length = 6) st (ins : D.any array) ~room ~rank =
         let i = any () in
         P.Op1 (Cast, all_dtypes.(Random.State.int st (Array.length all_dtypes)), i)
     | 3 ->
-        let i = any () in
+        let i = pick (List.filter (List.nth !settled) (List.init n Fun.id)) in
         let (D.Any x) = ty i in
         let same = List.filter (fun (D.Any d) -> D.bits d = D.bits x) D.all in
         P.Op1 (Bitcast, pick same, i)
@@ -1628,6 +1597,19 @@ let program ?(length = 6) st (ins : D.any array) ~room ~rank =
     | Op2 (Compare _, _, _) -> D.Any D.Bool
     | Op2 (_, i, _) | Op3 (_, _, i, _) -> List.nth !tys i
   in
+  let has_nan (D.Any d) =
+    D.is D.Complex d || (D.is D.Float d && not (D.equal d D.Float4_e2m1fn))
+  in
+  let settles node =
+    let ok i = List.nth !settled i in
+    match node with
+    | P.In _ | Coord _ | Const _ -> true
+    | Op1 (Bitcast, _, i) -> ok i
+    | _ when not (has_nan (dtype_of node)) -> true
+    | Op1 ((Copy | Cast | Unary (Neg | Abs)), _, i) -> ok i
+    | Op3 (Where, _, i, j) -> ok i && ok j
+    | _ -> false
+  in
   let operands = function
     | P.In _ | Coord _ | Const _ -> []
     | Op1 (_, _, i) -> [ i ]
@@ -1652,6 +1634,7 @@ let program ?(length = 6) st (ins : D.any array) ~room ~rank =
       else attempt (tries - 1)
     in
     let node = attempt 50 in
+    settled := !settled @ [ settles node ];
     nodes := !nodes @ [ node ];
     tys := !tys @ [ dtype_of node ]
   done;
@@ -1769,7 +1752,8 @@ let unpadded (type v s) (x : (v, s) A.t) =
   Nx_kernel.Padded { x; fill; pad }
 
 (* A program's results are its nodes' results, each node run on its own,
-   bit for bit: an intermediate holds its dtype's value exactly. With
+   bit for bit, any NaN for a NaN: an intermediate holds its dtype's value
+   exactly. With
    [declines], a map that declines a program [declines] does not accept
    fails. [length] bounds the program's nodes past its loads. *)
 let law_map_split ?declines ?(labels = true) ?length ?(padded = false)
@@ -1842,7 +1826,8 @@ let law_map_split ?declines ?(labels = true) ?length ?(padded = false)
             (fun k o ->
               let (A.Any want) = values.(o) in
               let (A.Any got) = dsts.(k) in
-              equal ~msg:(strf "output %d of %s" k (describe p)) (array int)
+              equal ~msg:(strf "output %d of %s" k (describe p))
+                (same_values (D.Any (A.dtype want)))
                 (bits_of (host want))
                 (bits_of (host got)))
             (Iarray.to_array p.outs)
@@ -1952,15 +1937,15 @@ let test_padded_coordinate (b : Support.backend) () =
 
 (* [k dst a] into a fresh destination, then into [a] itself as a C-contiguous
    copy, [a] being an operand [k] reads only at the result's own index: one
-   answer, and on [Done] the same bits. *)
-let in_place ~msg (b : Support.backend) a k =
+   answer, and on [Done] the same bits, any NaN for a NaN with [any_nan]. *)
+let in_place ?any_nan ~msg (b : Support.backend) a k =
   let fresh = A.create b.device (A.dtype a) (L.shape (A.layout a)) in
   let want = k fresh a in
   let alias = on b (A.copy (host a)) in
   equal ~msg answer want (k alias alias);
   if want = A.Done then begin
     cover "computed" true;
-    equal ~msg (list string) [] (differ (host fresh) (host alias))
+    equal ~msg (list string) [] (differ ?any_nan (host fresh) (host alias))
   end
 
 let binaries = List.filter (function P.Binary _ -> true | _ -> false) op2s
@@ -1974,16 +1959,20 @@ let law_in_place ?(ones = op1s) ?(kinds = binaries) (b : Support.backend)
   let x = on b x and y = on b y in
   List.iter
     (fun op ->
-      in_place ~msg:"one operand into itself" b x (fun dst x ->
-          Support.map1 (module K) op ~dst x))
+      in_place ~any_nan:(any_nan (K1 op)) ~msg:"one operand into itself" b x
+        (fun dst x -> Support.map1 (module K) op ~dst x))
     (List.filter (fun op -> P.accepts1 op dt dt) ones);
   let map2 k ~dst x y = Support.map2 (module K) k ~dst x y in
   List.iter
     (fun k ->
       let msg into = strf "%s into %s" (name2 k) into in
-      in_place ~msg:(msg "the first") b x (fun dst x -> map2 k ~dst x y);
-      in_place ~msg:(msg "the second") b y (fun dst y -> map2 k ~dst x y);
-      in_place ~msg:(msg "both") b x (fun dst x -> map2 k ~dst x x))
+      let blind = any_nan (K2 k) in
+      in_place ~any_nan:blind ~msg:(msg "the first") b x (fun dst x ->
+          map2 k ~dst x y);
+      in_place ~any_nan:blind ~msg:(msg "the second") b y (fun dst y ->
+          map2 k ~dst x y);
+      in_place ~any_nan:blind ~msg:(msg "both") b x (fun dst x ->
+          map2 k ~dst x x))
     (List.filter (fun k -> P.accepts2 k dt) kinds);
   let c = on b (seeded D.Bool shape seed) in
   let z = on b (seeded dt shape (seed + 1)) in
@@ -1992,7 +1981,7 @@ let law_in_place ?(ones = op1s) ?(kinds = binaries) (b : Support.backend)
   in_place ~msg:"where into the third" b y (fun dst y ->
       Support.map3 (module K) Where ~dst c x y);
   if P.accepts3 Fma dt dt then
-    in_place ~msg:"fma into the addend" b z (fun dst z ->
+    in_place ~any_nan:true ~msg:"fma into the addend" b z (fun dst z ->
         Support.map3 (module K) Fma ~dst x y z);
   if P.accepts2 (Binary Add) dt then begin
     let p =
@@ -2000,7 +1989,7 @@ let law_in_place ?(ones = op1s) ?(kinds = binaries) (b : Support.backend)
         [| P.In 0; In 1; Op2 (Binary Add, 0, 1) |]
         ~outs:[| 2 |]
     in
-    in_place ~msg:"map into a load" b x (fun dst x ->
+    in_place ~any_nan:true ~msg:"map into a load" b x (fun dst x ->
         K.map p ~dsts:[| A.Any dst |] Nx_kernel.[| Plain x; Plain y |])
   end
 
@@ -2256,7 +2245,8 @@ let law_guards (b : Support.backend) (g, side) =
           (A.expect (A.dtype x) xs.(2))
   in
   match
-    Elements.same_guarded side ~call g.ops [| (result_dtype g, g.shape) |]
+    Elements.same_guarded ~any_nan:true side ~call g.ops
+      [| (result_dtype g, g.shape) |]
   with
   | A.Done -> cover "computed" true
   | A.Declined -> cover "declined" true
@@ -2552,9 +2542,9 @@ let held_program st (D.Any xt) (D.Any dt) ~k ~pattern =
       ~outs:(Iarray.of_array outs),
     Array.of_list (List.rev !tys) )
 
-(* A map of a held program gives the bits of its nodes run one by one, at
-   every dtype, its operand and destinations in memory of their own beside
-   a guard page or not. *)
+(* A map of a held program gives the bits of its nodes run one by one, any
+   NaN for a NaN, at every dtype, its operand and destinations in memory of
+   their own beside a guard page or not. *)
 let law_map_held ?(small = false) (b : Support.backend)
     (Case x, D.Any dt, k, pattern, side, seed) =
   let module K = (val b.kernels) in
@@ -2614,7 +2604,8 @@ let law_map_held ?(small = false) (b : Support.backend)
                       (strf "output %d, %d nodes, %d held, %s from %s" i
                          (Iarray.length p.nodes) h (D.name dt)
                          (D.name (A.dtype x)))
-                    (array int) (bits_of (host want)) (bits_of (host got)))
+                    (same_values (D.Any (A.dtype want)))
+                    (bits_of (host want)) (bits_of (host got)))
                 (Iarray.to_array p.outs)))
 
 (* Arrays of a few hundred to two thousand elements through each view of
@@ -2656,6 +2647,68 @@ let held_cases cases =
   in
   let+ seed = int in
   (c, dt, k, pattern, side, seed)
+
+(* nx.cpu under each target table the host runs. *)
+let cpu_tables =
+  List.filter (fun (b : Support.backend) -> Rig.equal b.device Rig.host)
+    Support.backends
+
+(* [n] elements of [dt] drawn from its specials alone, by [seed]: NaNs of
+   both signs, signalling and quiet, with payloads, infinities, zeros, and
+   numbers that some kinds make NaN from. *)
+let specials_only (type v s) (dt : (v, s) D.t) n seed : (v, s) A.t =
+  let sp = Array.of_list (specials dt) in
+  let b = bytes_of_seed seed n in
+  let pick i = sp.(Char.code b.[i] * 7 mod Array.length sp) in
+  let data = String.concat "" (List.init n pick) in
+  A.v dt (L.contiguous [| n |]) (B.of_string data)
+
+(* A float kind's results at special values are of one class under every
+   target table and into a destination that is its operand: a NaN where one
+   is a NaN, else the same bits. A compiler's fold for one target can turn a
+   NaN into a number. *)
+let law_nan_class (D.Any dt, seed) =
+  let n = 300 in
+  let x = specials_only dt n seed and y = specials_only dt n (seed + 1) in
+  let z = specials_only dt n (seed + 2) in
+  let unary (u, name) =
+    if not (P.accepts1 (Unary u) dt dt) then None
+    else
+      Some (name, fun (module K : Nx_kernel.S) dst x ->
+          Support.map1 (module K) (Unary u) ~dst x)
+  in
+  let binary = function
+    | P.Binary b as k when P.accepts2 k dt ->
+        Some (name2 k, fun (module K : Nx_kernel.S) dst x ->
+            Support.map2 (module K) (Binary b) ~dst x y)
+    | _ -> None
+  in
+  let fma (module K : Nx_kernel.S) dst x =
+    Support.map3 (module K) Fma ~dst x y z
+  in
+  let kinds =
+    List.filter_map unary unaries @ List.filter_map binary op2s
+    @ [ ("fma", fma) ]
+  in
+  let check (name, run) =
+    let under (b : Support.backend) ~alias =
+      b.around (fun () ->
+          let x' = A.copy x in
+          let dst = if alias then x' else A.create Rig.host dt [| n |] in
+          equal ~msg:name answer A.Done (run b.kernels dst x');
+          bits_of dst)
+    in
+    let want = under (List.hd cpu_tables) ~alias:false in
+    let same = same_values (D.Any dt) in
+    List.iter
+      (fun (b : Support.backend) ->
+        equal ~msg:(strf "%s on %s" name b.name) same want
+          (under b ~alias:false);
+        equal ~msg:(strf "%s in place on %s" name b.name) same want
+          (under b ~alias:true))
+      cpu_tables
+  in
+  List.iter check kinds
 
 (* nx.cpu under the table the host runs best: what nx_cpu.mli promises beyond
    Nx_kernel.S. *)
@@ -2734,9 +2787,12 @@ let cpu =
   group "nx.cpu"
     (List.concat_map maps cpu_tables
     @ [
-      prop ~count:8 "NaN results are one set of bits on every table and in place"
-        (Gen.pair (Gen.of_list ~pp:pp_dtype D.[ Any Float32; Any Float64 ]) Gen.int)
-        law_nan_bits;
+      prop ~count:8
+        "kinds at special values give one class on every table and in place"
+        (Gen.pair
+           (Gen.of_list ~pp:pp_dtype D.[ Any Float32; Any Float64 ])
+           Gen.int)
+        law_nan_class;
       test "refuses before any write"
         (test_refusals (module Nx_cpu : Nx_kernel.S));
       test "kinds give the values their documentation states" test_kind_values;

@@ -735,8 +735,8 @@ val set : 'd index list -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 type combine = Nx_kernel.combine =
   | Set  (** The last update. *)
   | Add  (** [+0] plus the target plus its updates. *)
-  | Max  (** The largest of the target and its updates, or the first NaN. *)
-  | Min  (** The smallest, or the first NaN. *)
+  | Max  (** The largest of the target and its updates, or a NaN. *)
+  | Min  (** The smallest, or a NaN. *)
 
 val scatter :
   ?combine:combine ->
@@ -750,9 +750,8 @@ val scatter :
     [p] and [u] have one shape. A target's updates apply in C order of [u]:
     [Set] (default) keeps the last; [Add] gives [+0] plus the element plus
     its updates, a narrow float summed in float32 and rounded once; [Max] and
-    [Min] give the largest or smallest of the element and its updates, or the
-    first NaN among them quieted: its quiet bit, the top bit of its fraction,
-    set, its sign and payload kept. Where no update lands, the element keeps
+    [Min] give the largest or smallest of the element and its updates, or a
+    NaN where one of them is. Where no update lands, the element keeps
     its bits, a signalling NaN's included. A position outside [\[0, d)]
     writes nothing. A float [Add] gives the same bits on every run, adding in
     an order its kernel library states. For finite operands, barring
@@ -990,19 +989,20 @@ end
 
     On complex numbers each is the principal value C99 defines (ISO/IEC 9899,
     7.3), with its special values at infinities, NaNs and signed zeros (Annex
-    G). A function whose inverse is many-valued has branch cuts on an axis,
-    and the sign of a zero part names the side it continues from:
-    [sqrt (-4 + 0i)] is [2i] and [sqrt (-4 - 0i)] is [-2i]. A result [f'] is
-    within [k u |f|] of the value [f], where [|f|] is a normal float: [u] is
-    the parts' unit roundoff, [2{^-24}] for complex64 and [2{^-53}] for
-    complex128, and [k] is [3] for {!sqrt}, [4] for {!exp}, {!exp2}, {!log}
-    and {!log2}, [5] for {!asin}, {!acos}, {!atan}, {!asinh}, {!acosh} and
-    {!atanh}, and [6] for {!sin}, {!cos}, {!tan}, {!sinh}, {!cosh} and
-    {!tanh}. On the real axis, at a non-zero real part where the
-    float function is defined, a function of one operand but {!asinh},
-    {!acosh} and {!atanh} gives the float function's result as its real
-    part; {!pow} does at a positive base and a real exponent. A NaN part of
-    a result is the quiet NaN of a clear sign bit. *)
+    G). Where a result's sign comes from a NaN part, as the imaginary [∞] of
+    [sqrt (-∞ + NaN i)] does, that sign is unspecified, as Annex G allows. A
+    function whose inverse is many-valued has branch cuts on an axis, and the
+    sign of a zero part names the side it continues from: [sqrt (-4 + 0i)] is
+    [2i] and [sqrt (-4 - 0i)] is [-2i]. A result [f'] is within [k u |f|] of
+    the value [f], where [|f|] is a normal float: [u] is the parts' unit
+    roundoff, [2{^-24}] for complex64 and [2{^-53}] for complex128, and [k] is
+    [3] for {!sqrt}, [4] for {!exp}, {!exp2}, {!log} and {!log2}, [5] for
+    {!asin}, {!acos}, {!atan}, {!asinh}, {!acosh} and {!atanh}, and [6] for
+    {!sin}, {!cos}, {!tan}, {!sinh}, {!cosh} and {!tanh}. On the real axis, at
+    a non-zero real part where the float function is defined, a function of
+    one operand but {!asinh}, {!acosh} and {!atanh} gives the float function's
+    result as its real part; {!pow} does at a positive base and a real
+    exponent. *)
 
 val sqrt : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [sqrt x] is the square root, NaN below [-0.]. On complex numbers its real
@@ -1465,12 +1465,9 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     result's terms. {!ewma} and {!logcumsumexp} read their axis whole on
     each device.
 
-    A float result that a NaN reaches is a NaN. On one device, and over cut
-    axes where the bits are kept, it is a quiet NaN with the first NaN's
-    sign and payload, the first in C order: a signalling NaN comes out with
-    its quiet bit, the top bit of its fraction, set. A complex number with a
-    NaN part is a NaN to {!prod}, {!max}, {!min}, their positions and scans,
-    which give the first such element, each NaN part quieted; {!sum} and
+    A float result that a NaN reaches is a NaN; which NaN, its sign and its
+    payload are unspecified. A complex number with a NaN part is a NaN to
+    {!prod}, {!max}, {!min}, their positions and scans; {!sum} and
     {!cumsum} add the parts apart. The float
     formats narrower than 32 bits accumulate at [float32] and round once.
 
@@ -1617,9 +1614,9 @@ val logcumsumexp : ?axis:int -> (float, 's, 'd) t -> (float, 's, 'd) t
     [m] and the sum of [exp (x_k - m)], at most [i + 1], so it stays finite
     where [log (cumsum (exp x))] overflows once an [exp x_k] does. Floats.
 
-    From the first NaN element on, every result is that NaN, quieted. With
-    no NaN, a result is [+∞] from a [+∞] element on, and [-∞] while every
-    element is [-∞].
+    From the first NaN element on, every result is a NaN. With no NaN, a
+    result is [+∞] from a [+∞] element on, and [-∞] while every element is
+    [-∞].
 
     Its bits are the [Logsumexp] scan's ({!Nx_kernel.section-scans}), the
     same in every kernel library that computes one. The result at an index
@@ -2792,7 +2789,7 @@ val correlate :
       narrower than 32 bits sum at [float32] and round once, and integers
       wrap. Every dtype but booleans.
     - [Max] and [Min] keep the greatest or least row as {!maximum} orders
-      them, or the first NaN, as {!max} does. Every dtype.
+      them, or a NaN where a row's is one, as {!max} does. Every dtype.
     - [Set] keeps the last row.
 
     A segment or range of no row holds [Add]'s and [Set]'s zero, or [Max]'s

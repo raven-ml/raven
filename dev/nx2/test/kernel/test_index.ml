@@ -8,8 +8,8 @@
    fresh result. nx.cpu's group checks what Nx_kernel.S states, element by
    element against a reference built here from the elements' bits: zero reads
    and dropped writes outside the axis, a target's updates in C order, a narrow
-   float's sum in float32 rounded once, the first NaN of an extreme quieted;
-   at every dtype and through strided, reversed, permuted and broadcast
+   float's sum in float32 rounded once, any NaN for a NaN result; at every
+   dtype and through strided, reversed, permuted and broadcast
    views. *)
 
 open Windtrap
@@ -206,16 +206,16 @@ let scatter_on (b : Support.backend) ?(in_place = false) c =
   | A.Declined -> None
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
-(* Whether an extreme of a and b keeps a: the first NaN, else the greater
-   (lesser), a on a tie. *)
+(* Whether an extreme of a and b keeps a: a NaN, else the greater (lesser), a
+   on a tie. *)
 let keeps combine ~nan_a ~nan_b cmp =
   if nan_a then true
   else if nan_b then false
   else if combine = Nx_kernel.Max then cmp >= 0
   else cmp <= 0
 
-(* An expected element: its bits, or any NaN of a narrow float. *)
-type want = Bits of string | Some_nan
+(* An expected element: its bits, or its value, any NaN for a NaN. *)
+type want = Bits of string | Value of string
 
 (* The combine of the updates [us] into [x], at [d], in order. *)
 let combined (D.Any dt as d) combine x us =
@@ -229,20 +229,16 @@ let combined (D.Any dt as d) combine x us =
           let s =
             List.fold_left
               (fun s u ->
-                let y = decode d u in
-                if Float.is_nan s then s
-                else if Float.is_nan y then y
-                else
-                  let t = round32 (s +. y) in
-                  if t = 0. then 0. else t)
+                let t = round32 (s +. decode d u) in
+                if t = 0. then 0. else t)
               (let v = decode d x in
-               if Float.is_nan v then v else if v = 0. then 0. else v)
+               if v = 0. then 0. else v)
               us
           in
-          if Float.is_nan s then Some_nan else Bits (encode d s)
+          Value (encode d s)
       | Add when D.is D.Float dt ->
           let z = if w = 4 then f32 0. else f64 0. in
-          Bits (List.fold_left (add_bits ~w) (add_bits ~w z x) us)
+          Value (List.fold_left (add_bits ~w) (add_bits ~w z x) us)
       | Add when D.is D.Complex dt ->
           let h = w / 2 in
           let part e k = String.sub e (k * h) h in
@@ -253,7 +249,7 @@ let combined (D.Any dt as d) combine x us =
               (add_bits ~w:h z (part x k))
               us
           in
-          Bits (sum 0 ^ sum 1)
+          Value (sum 0 ^ sum 1)
       | Add ->
           Bits
             (int_bits d w
@@ -301,7 +297,7 @@ let combined (D.Any dt as d) combine x us =
             in
             if keep then a else b
           in
-          Bits (quiet d (List.fold_left pick x us)))
+          Value (List.fold_left pick x us))
 
 (* The updates that land on each target of [c], in C order. *)
 let lands c =
@@ -324,8 +320,6 @@ let scatter_expected c =
   let ls = lands c in
   Array.mapi (fun t x -> combined d c.combine x ls.(t)) (elements c.into)
 
-let is_nan_element d e = is_narrow d && Float.is_nan (decode d e)
-
 let check_scatter c y =
   let d = dtype_of c.into in
   let got = elements y in
@@ -336,7 +330,7 @@ let check_scatter c y =
          (fun t w ->
            match w with
            | Bits b when b = got.(t) -> None
-           | Some_nan when is_nan_element d got.(t) -> None
+           | Value v when Testable.equal (same d) v got.(t) -> None
            | _ -> Some t)
          (Array.to_list want))
   in
@@ -347,8 +341,7 @@ let check_scatter c y =
             (fun ch -> Printf.sprintf "%02x" (Char.code ch))
             (List.of_seq (String.to_seq got.(t)))))
       (match want.(t) with
-      | Some_nan -> "a NaN"
-      | Bits b ->
+      | Bits b | Value b ->
           String.concat ""
             (List.map
                (fun ch -> Printf.sprintf "%02x" (Char.code ch))
@@ -379,6 +372,38 @@ let law_scatter_reference (b : Support.backend) c =
   cover "narrow float add" (c.combine = Nx_kernel.Add && is_narrow (dtype_of c.into));
   scatter_agrees b c
 
+(* The exponent and fraction widths of [d]'s floats, or of its parts, where
+   a NaN of them can lack the quiet bit, the top of its fraction:
+   float8_e4m3fn's one NaN of each sign has every fraction bit set, and
+   float4_e2m1fn has none. *)
+let nan_fields (D.Any dt) =
+  match dt with
+  | D.Float64 | D.Complex128 -> Some (11, 52)
+  | D.Float32 | D.Complex64 -> Some (8, 23)
+  | D.Float16 -> Some (5, 10)
+  | D.Bfloat16 -> Some (8, 7)
+  | D.Float8_e5m2 -> Some (5, 2)
+  | _ -> None
+
+(* Whether a part of [e], an element of [d], is a signalling NaN. *)
+let signals d e =
+  match nan_fields d with
+  | None -> false
+  | Some (exp, frac) ->
+      let w = (1 + exp + frac) / 8 in
+      let part p =
+        let v = ref 0L in
+        for j = w - 1 downto 0 do
+          v := Int64.(logor (shift_left !v 8) (of_int (Char.code e.[(p * w) + j])))
+        done;
+        let ones = Int64.(sub (shift_left 1L exp) 1L) in
+        let field = Int64.(logand (shift_right_logical !v frac) ones) in
+        let fraction = Int64.(logand !v (sub (shift_left 1L frac) 1L)) in
+        let quiet = Int64.(logand !v (shift_left 1L (frac - 1))) in
+        field = ones && fraction <> 0L && quiet = 0L
+      in
+      List.exists part (List.init (String.length e / w) Fun.id)
+
 (* A signalling NaN of [d] from its bits, in one part of a complex number or
    both: the exponent's ones, the quiet bit clear, a payload below it and a
    sign drawn. float8_e4m3fn's NaNs are quiet: it draws its one NaN of each
@@ -391,7 +416,7 @@ let signalling (D.Any dt as d) rs =
     | _ -> (d, 1)
   in
   let nan () =
-    match quiet_fields part with
+    match nan_fields part with
     | None -> String.make 1 (if Random.State.bool rs then '\x7F' else '\xFF')
     | Some (exp, frac) ->
         let below = Int64.(sub (shift_left 1L (frac - 1)) 1L) in
@@ -435,12 +460,11 @@ let nan_scatters =
     (scatter_gen ~dtypes:nan_dtypes ~combines:Nx_kernel.[ Max; Min ]
        ~draw:signals_often ())
 
-(* A Max or Min scatter is the first NaN among a target's element and its
-   updates, quieted; a target no update reaches keeps its bits, a signalling
-   NaN included. *)
+(* A Max or Min scatter is a NaN where a target's element or an update is;
+   a target no update reaches keeps its bits, a signalling NaN included. *)
 let law_nan_extremes (b : Support.backend) c =
   let d = dtype_of c.into in
-  let signals e = quiet d e <> e in
+  let signals = signals d in
   let xs = elements c.into and ls = lands c in
   let some f = Array.exists Fun.id (Array.mapi f xs) in
   cover "a signalling NaN reaches a target"
@@ -493,10 +517,12 @@ let law_adjoint (b : Support.backend) c =
           in
           equal int64 (dot x s) (dot g y))
 
-(* A scatter into its own operand, donated, gives the fresh result. *)
+(* A scatter into its own operand, donated, gives the fresh result, any NaN
+   for a NaN. *)
 let law_in_place (b : Support.backend) c =
   match (scatter_on b c, scatter_on b ~in_place:true c) with
-  | Some fresh, Some own -> equal (array string) (elements fresh) (elements own)
+  | Some fresh, Some own ->
+      equal (array (same (dtype_of c.into))) (elements fresh) (elements own)
   | None, None -> ()
   | _ -> failf "%s declined one of the two" b.name
 
@@ -507,8 +533,8 @@ let law_set_last (b : Support.backend) c =
   cover "dropped updates" dropped;
   match scatter_on b c with None -> () | Some y -> check_scatter c y
 
-(* Each operand as a C-contiguous copy of its view gives the same bits, on
-   a second run too. *)
+(* Each operand as a C-contiguous copy of its view gives the same bits, any
+   NaN for a NaN, on a second run too. *)
 let law_add_bits (b : Support.backend) c =
   let plain (A.Any x) = A.Any (A.copy x) in
   let c' =
@@ -518,14 +544,15 @@ let law_add_bits (b : Support.backend) c =
   cover "through views" (c.sviews <> []);
   match (scatter_on b c, scatter_on b c, scatter_on b c') with
   | Some y, Some y', Some y'' ->
-      equal ~msg:"again" (array string) (elements y) (elements y');
-      equal ~msg:"contiguous" (array string) (elements y) (elements y'')
+      let t = array (same (dtype_of c.into)) in
+      equal ~msg:"again" t (elements y) (elements y');
+      equal ~msg:"contiguous" t (elements y) (elements y'')
   | None, None, None -> ()
   | _ -> failf "%s declined some of three" b.name
 
-(* A target's bits are those of a scatter of only its updates, in C order,
-   into its element: the association is a function of their count. Checks
-   the first 20 targets reached. *)
+(* A target's bits, any NaN for a NaN, are those of a scatter of only its
+   updates, in C order, into its element: the association is a function of
+   their count. Checks the first 20 targets reached. *)
 let law_add_alone (b : Support.backend) c =
   let d = dtype_of c.into in
   let ls = lands c in
@@ -558,7 +585,8 @@ let law_add_alone (b : Support.backend) c =
         List.filter (fun t -> ls.(t) <> []) (List.init (Array.length ls) Fun.id)
       in
       let first = List.filteri (fun i _ -> i < 20) reached in
-      equal (list string)
+      equal
+        (list (same d))
         (List.map (fun t -> alone xs.(t) ls.(t)) first)
         (List.map (fun t -> got.(t)) first)
 
@@ -1318,10 +1346,11 @@ let narrow_adds =
 
 let narrow_adds = Gen.with_pp pp_scatter narrow_adds
 
-(* A scatter's bits are one thread's. *)
+(* A scatter's bits are one thread's, any NaN for a NaN. *)
 let law_threads (b : Support.backend) c =
   match (scatter_on b c, Nx_cpu.one_thread (fun () -> scatter_on b c)) with
-  | Some y, Some y' -> equal (array string) (elements y) (elements y')
+  | Some y, Some y' ->
+      equal (array (same (dtype_of c.into))) (elements y) (elements y')
   | _ -> failf "%s declined a scatter" b.name
 
 let law_narrow_threads (b : Support.backend) c =
@@ -1437,7 +1466,7 @@ let law_scatter_guards (b : Support.backend) (c, side) =
     K.scatter c.combine ~unique:false ~axis:c.saxis ~dst ~into idx updates
   in
   equal answer A.Done
-    (same_guarded side ~call
+    (same_guarded ~any_nan:true side ~call
        [| c.into; c.sidx; c.updates |]
        [| (dtype_of c.into, shape_of c.into) |])
 
@@ -1454,10 +1483,10 @@ let laws (b : Support.backend) =
       prop ~examples:set_examples
         "a Set scatter keeps each target's last update in C order" sets
         (run (law_set_last b));
-      prop "a float Add gives the same bits again and through any views"
+      prop "a float Add gives the same result again and through any views"
         float_adds
         (run (law_add_bits b));
-      prop "a float Add's target has the bits of its updates alone" float_adds
+      prop "a float Add's target is a scatter of its updates alone" float_adds
         (run (law_add_alone b));
       prop ~examples:bound_examples
         "a float Add is within γ(n + 1) (|x| + Σ|ui|) of the exact sum"
@@ -1477,7 +1506,8 @@ let cpu (b : Support.backend) =
       prop ~examples:scatter_examples
         "a scatter combines each target's updates in C order" scatters
         (run (law_scatter_reference b));
-      prop "a scatter's Max and Min give the first NaN quieted" nan_scatters
+      prop "a scatter's Max and Min give a NaN where one reaches a target"
+        nan_scatters
         (run (law_nan_extremes b));
       prop ~count:10 "large gathers on the job's threads" large_gathers
         (run (gather_agrees b));

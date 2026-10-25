@@ -91,8 +91,8 @@ let identity (type v s) (c : Nx.combine) (dt : (v, s) D.t) : v =
   | Max -> D.min_value dt
   | Min -> D.max_value dt
 
-(* Rows [vs] folded by [c] from the identity, in order: the first NaN, else
-   the first extreme; the last row; a sum by [add]. *)
+(* Rows [vs] folded by [c] from the identity, in order: a NaN, else the
+   first extreme; the last row; a sum by [add]. *)
 let fold (type v s) (c : Nx.combine) (dt : (v, s) D.t) ~add (vs : v list) : v =
   match c with
   | Set -> List.fold_left (fun _ v -> v) (D.zero dt) vs
@@ -308,10 +308,9 @@ let test_range_errors () =
       Nx.reduce_ranges Add ~lo:b ~hi:b (Nx.zeros Nx.float32 [| 2 |]));
   invalid ~by (fun () -> Nx.reduce_ranges Add ~lo:b ~hi:b (Nx.zeros Nx.bool [| 2 |]))
 
-(* Signalling NaNs. A Max or Min range is the first NaN of its rows
-   quieted, as {!Nx.max} gives it: its quiet bit set, its sign and the rest
-   of its payload kept, a range of one row too. Drawn at every float format
-   with a NaN, from elements whose NaNs {!Nx_support.signalled} makes
+(* Signalling NaNs. A Max or Min range is a NaN where one of its rows is,
+   as {!Nx.max} gives it, a range of one row too. Drawn at every float
+   format with a NaN, from elements whose NaNs {!Nx_support.signalled} makes
    signalling. *)
 
 (* Floats that tie often: small integers, [-0], infinities, and NaNs whose
@@ -405,8 +404,8 @@ let law_nan_ranges (Nan_ranges c) =
   let xb = bytes x and xq = bytes (Nx_support.quieted x) in
   let xs = A.to_array x in
   let signals k = elt xb k <> elt xq k in
-  (* The position of each range's extreme of element [e]: the first NaN,
-     else the first greatest or least. *)
+  (* The position of each range's extreme of element [e]: a NaN, else the
+     first greatest or least. *)
   let pick (l, h) e =
     let best = ref (l * row + e) in
     for i = l + 1 to h - 1 do
@@ -431,8 +430,11 @@ let law_nan_ranges (Nan_ranges c) =
     (Array.exists (fun ((l, h), k) -> h - l = 1 && signals k) picks);
   cover "a signalling NaN first of several rows"
     (Array.exists (fun ((l, h), k) -> h - l > 1 && signals k) picks);
+  (* Each result's bytes, or [None] for a NaN. *)
   let expected =
-    Array.concat (Array.to_list (Array.map (fun (_, k) -> elt xq k) picks))
+    Array.map
+      (fun (_, k) -> if c.nan xs.(k) then None else Some (elt xb k))
+      picks
   in
   let bound f =
     Nx.create Nx.int64
@@ -445,7 +447,14 @@ let law_nan_ranges (Nan_ranges c) =
       ~lo:(bound fst) ~hi:(bound snd)
       (Nx.Repr.of_array Nx.Host.v x)
   in
-  equal (array int) expected (bytes (Option.get (Nx.Repr.array y)))
+  let y = Option.get (Nx.Repr.array y) in
+  let yb = bytes y in
+  let actual =
+    Array.mapi
+      (fun i v -> if c.nan v then None else Some (elt yb i))
+      (A.to_array y)
+  in
+  equal (array (option (array int))) expected actual
 
 (* A donated operand: the ranges compute as from the undonated one, and the
    donor lives, since reduce_ranges reads it in many operations. *)
@@ -469,8 +478,8 @@ let test_range_donated () =
 let ranges =
   group "reduce_ranges"
     [
-      prop "a Max or Min range is its first NaN quieted" nan_ranges
-        law_nan_ranges;
+      prop "a Max or Min range is a NaN where a row is, signalling too"
+        nan_ranges law_nan_ranges;
       prop "each range folds its clipped rows in order" ranged law_ranges;
       prop "a range's bits read its rows alone" local law_local;
       test "the doc's sums and maxima" test_range_doc;

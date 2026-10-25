@@ -1435,6 +1435,21 @@ type any_kind = Kind : ('v, 's) kind -> any_kind
 
 let float_bits v = Printf.sprintf "%Lx" (Int64.bits_of_float v)
 
+(* [v] of [dt] as [show] prints it, every NaN alike: a NaN result promises a
+   NaN, never which one. Under [~parts] a complex number's parts are each
+   so, as a sum adds them apart; else a complex number with a NaN part is a
+   NaN. *)
+let nan_blind (type v s) ~parts (dt : (v, s) D.t) (show : v -> string) (v : v)
+    =
+  match D.kind dt with
+  | D.Float -> if Float.is_nan v then "nan" else show v
+  | D.Complex ->
+      let part x = if Float.is_nan x then Float.nan else x in
+      if not (Float.is_nan v.Complex.re || Float.is_nan v.im) then show v
+      else if parts then show { Complex.re = part v.re; im = part v.im }
+      else "nan"
+  | D.Signed | D.Unsigned | D.Boolean -> show v
+
 (* Floats whose sums depend on their association, signed zeros, infinities and
    NaNs of both signs and two payloads. *)
 let floats =
@@ -1570,9 +1585,9 @@ let placed_case =
      let+ data = array ~size:(constant n) (of_list k.values) in
      Case (k, s, data, w, op))
 
-(* [y]'s elements' bits, read on the host. *)
-let shown (type v s d) (k : (v, s) kind) (y : (v, s, d) Nx.t) =
-  Array.map k.show (elements y)
+(* [y]'s elements' bits, read on the host, every NaN alike. *)
+let shown (type v s d) ~parts (k : (v, s) kind) (y : (v, s, d) Nx.t) =
+  Array.map (nan_blind ~parts k.dtype k.show) (elements y)
 
 let law_placed (Case (k, s, data, w, op)) =
   let ts = tiles w in
@@ -1597,19 +1612,22 @@ let law_placed (Case (k, s, data, w, op)) =
   | Combine -> ());
   cover "a signalling NaN" (signals k.dtype data);
   let x = signalling k.dtype s data in
-  let expected = shown k (apply k op x) in
+  (* A maximum's NaN is one of the elements with a NaN part, which one
+     unspecified; other operations keep a complex number's parts apart. *)
+  let parts = match op with Fold _ -> false | _ -> true in
+  let expected = shown ~parts k (apply k op x) in
   let actual =
     match w with
-    | Split3 a -> shown k (apply k op (Nx.place (Set3.split ~axis:a) x))
-    | Split4 a -> shown k (apply k op (Nx.place (Set4.split ~axis:a) x))
+    | Split3 a -> shown ~parts k (apply k op (Nx.place (Set3.split ~axis:a) x))
+    | Split4 a -> shown ~parts k (apply k op (Nx.place (Set4.split ~axis:a) x))
     | Cuts (a, b) ->
         let cuts =
           if a = b then [ (a, [ "a"; "b" ]) ]
           else [ (a, [ "a" ]); (b, [ "b" ]) ]
         in
-        shown k (apply k op (Nx.place (Nx.Placement.mesh mesh4 cuts) x))
+        shown ~parts k (apply k op (Nx.place (Nx.Placement.mesh mesh4 cuts) x))
     | Minor a ->
-        shown k
+        shown ~parts k
           (apply k op (Nx.place (Nx.Placement.mesh mesh4 [ (a, [ "b" ]) ]) x))
   in
   equal (array string) expected actual
@@ -1630,6 +1648,14 @@ type any_reduced = Reduced : ('v, 's) reduced -> any_reduced
 let complexes =
   List.map2 (fun re im -> { Complex.re; im }) floats (List.rev floats)
 
+(* A float's bits, any NaN shown alike: which NaN a result is is
+   unspecified. A complex number with a NaN part is a NaN as a whole. *)
+let nan_bits v = if Float.is_nan v then "nan" else float_bits v
+
+let complex_bits c =
+  if Float.is_nan c.Complex.re || Float.is_nan c.im then "nan"
+  else float_bits c.re ^ "," ^ float_bits c.im
+
 let reduced_kinds =
   let never _ = false in
   let float dt =
@@ -1637,7 +1663,7 @@ let reduced_kinds =
       {
         rdtype = dt;
         rvalues = floats;
-        rshow = float_bits;
+        rshow = nan_bits;
         is_nan = Float.is_nan;
       }
   in
@@ -1665,14 +1691,14 @@ let reduced_kinds =
       {
         rdtype = D.Complex64;
         rvalues = complexes;
-        rshow = (fun c -> float_bits c.Complex.re ^ "," ^ float_bits c.im);
+        rshow = complex_bits;
         is_nan = (fun c -> Float.is_nan c.Complex.re || Float.is_nan c.im);
       };
     Reduced
       {
         rdtype = D.Complex128;
         rvalues = complexes;
-        rshow = (fun c -> float_bits c.Complex.re ^ "," ^ float_bits c.im);
+        rshow = complex_bits;
         is_nan = (fun c -> Float.is_nan c.Complex.re || Float.is_nan c.im);
       };
     Reduced
@@ -1760,16 +1786,19 @@ let of_float (type s d) r axes (x : (float, s, d) Nx.t) =
   | Logmeanexp -> Nx.logmeanexp ?axes x
   | _ -> invalid_arg "of_float: not a reduction of floats alone"
 
-(* Each result's bits as strings, [rshow] printing an element's, or the
-   message of the refusal. *)
+(* Each result's bits as strings, [rshow] printing an element's, every NaN
+   alike, or the message of the refusal. *)
 let reduce (type v s d) (rshow : v -> string) r axes (x : (v, s, d) Nx.t) =
-  let show y = Array.map rshow (elements y) in
+  let blind parts y =
+    Array.map (nan_blind ~parts (Nx.dtype x) rshow) (elements y)
+  in
+  let show = blind false and parts = blind true in
   let int64s y = Array.map Int64.to_string (elements y) in
   let bools y = Array.map string_of_bool (elements y) in
   let axis = Option.map List.hd axes in
   match
     match r with
-    | Sum -> show (Nx.sum ?axes x)
+    | Sum -> parts (Nx.sum ?axes x)
     | Prod -> show (Nx.prod ?axes x)
     | Max -> show (Nx.max ?axes x)
     | Min -> show (Nx.min ?axes x)
@@ -1778,7 +1807,7 @@ let reduce (type v s d) (rshow : v -> string) r axes (x : (v, s, d) Nx.t) =
     | All -> bools (Nx.all ?axes x)
     | Any -> bools (Nx.any ?axes x)
     | Count -> int64s (Nx.count ?axes (Nx.cast D.Bool x))
-    | Mean -> show (Nx.mean ?axes x)
+    | Mean -> parts (Nx.mean ?axes x)
     | Var | Std | Logsumexp | Logmeanexp -> (
         match D.kind (Nx.dtype x) with
         | D.Float -> show (of_float r axes x)
@@ -2297,10 +2326,9 @@ let spread st =
   else
     Float.ldexp (Random.State.float st 2. -. 1.) (Random.State.int st 41 - 20)
 
-(* A contraction's bits, every NaN alike: a contraction leaves a NaN's sign
-   and payload unspecified, and windows keep the bits of the rest
-   ({!Nx_kernel.S}). Where a float16 operand overflows to infinities, their
-   sums are NaNs. *)
+(* A contraction's bits, every NaN alike: a NaN result promises a NaN, never
+   which one, and windows keep the bits of the rest ({!Nx_kernel.S}). Where
+   a float16 operand overflows to infinities, their sums are NaNs. *)
 let product_bits v = if Float.is_nan v then "nan" else float_bits v
 let complex_product_bits c = product_bits c.Complex.re ^ "," ^ product_bits c.im
 
@@ -2802,9 +2830,10 @@ let scan_name = function
   | Cummax -> "cummax"
   | Cummin -> "cummin"
 
-(* Each result's bits as strings, [show] printing an element's, or the message
-   of the refusal. *)
+(* Each result's bits as strings, [show] printing an element's, every NaN
+   alike, or the message of the refusal. *)
 let scan_bits (type v s d) (show : v -> string) r axis (x : (v, s, d) Nx.t) =
+  let parts = r = Cumsum in
   match
     match r with
     | Cumsum -> Nx.cumsum ~axis x
@@ -2812,7 +2841,7 @@ let scan_bits (type v s d) (show : v -> string) r axis (x : (v, s, d) Nx.t) =
     | Cummax -> Nx.cummax ~axis x
     | Cummin -> Nx.cummin ~axis x
   with
-  | y -> Ok (Array.map show (elements y))
+  | y -> Ok (Array.map (nan_blind ~parts (Nx.dtype x) show) (elements y))
   | exception Invalid_argument m -> Error m
 
 (* {!scan_bits} of [x] placed as [w]. *)

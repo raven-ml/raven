@@ -16,15 +16,7 @@
    or one repeated element, as a broadcast operand or a program's constant
    is, takes a loop the compiler vectorises, the transcendental kinds'
    polynomials included. Rows exist at the carriers alone (cpu.h): apply.c
-   runs a narrow or sub-byte dtype's kinds at its carrier's rows.
-
-   nx_kinds.h's add, sub, mul, fdiv and fma of floats differ from the plain
-   operation only in which NaN a NaN result is, and pinning it costs three
-   compares and three selects an element, twice the plain operation's
-   instructions. Their rows compute the plain operation and note a NaN,
-   then run the kind over the row where they found one: a row whose
-   destination shares no byte with an operand, which the kind can read
-   again. */
+   runs a narrow or sub-byte dtype's kinds at its carrier's rows. */
 
 #include "cpu.h"
 
@@ -211,41 +203,6 @@ IDENT(8, uint64_t)
     LOOPS2(T, LD, F);                                                        \
   }
 
-/* A plain loop over [n] elements storing [E] into [d] and noting a NaN. */
-#define NOTED(T, E)                                                          \
-  for (int64_t i = 0; i < n; i++) {                                          \
-    T r = E;                                                                 \
-    d[i] = r;                                                                \
-    nan |= r != r;                                                           \
-  }
-
-/* The row of the float kind [F] of two operands whose plain operation is
-   [OP]. A row that notes a NaN computes again by [F] from its operands, so
-   one whose destination is an operand (cpu.h: disjoint or identical) takes
-   [F] alone. */
-#define EXACT(NAME, T, OP, F)                                                \
-  ROW NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *x_,            \
-           int64_t sx, const uint8_t *y_, int64_t sy) {                      \
-    T *d = (T *)d_;                                                          \
-    const T *x = (const T *)x_, *y = (const T *)y_;                          \
-    int nan = 1;                                                             \
-    if (sd == 1 && d_ != x_ && d_ != y_) {                                   \
-      nan = 0;                                                               \
-      if (sx == 1 && sy == 1) {                                              \
-        NOTED(T, x[i] OP y[i])                                               \
-      } else if (sx == 1 && sy == 0) {                                       \
-        T b = y[0];                                                          \
-        NOTED(T, x[i] OP b)                                                  \
-      } else if (sx == 0 && sy == 1) {                                       \
-        T a = x[0];                                                          \
-        NOTED(T, a OP y[i])                                                  \
-      } else                                                                 \
-        nan = 1;                                                             \
-    }                                                                        \
-    if (!nan) return;                                                        \
-    LOOPS2(T, , F);                                                          \
-  }
-
 /* The loops of a row of [F] over three operands of the type [T], loaded by
    [LD]: contiguous, one of them a repeated element, or any steps. */
 #define LOOPS3(T, LD, F)                                                     \
@@ -272,24 +229,6 @@ IDENT(8, uint64_t)
     T *d = (T *)d_;                                                          \
     const T *a = (const T *)a_, *b = (const T *)b_, *c = (const T *)c_;      \
     LOOPS3(T, LD, F);                                                        \
-  }
-
-/* The row of the float kind [F], fma, whose plain operation is [FN]: the
-   contiguous rows whose destination is no operand alone are noted. */
-#define EXACT_FMA(NAME, T, FN, F)                                            \
-  ROW NAME(int64_t n, uint8_t *d_, int64_t sd, const uint8_t *a_,            \
-           int64_t sa, const uint8_t *b_, int64_t sb,                        \
-           const uint8_t *c_, int64_t sc) {                                  \
-    T *d = (T *)d_;                                                          \
-    const T *a = (const T *)a_, *b = (const T *)b_, *c = (const T *)c_;      \
-    int nan = 1;                                                             \
-    if (sd == 1 && sa == 1 && sb == 1 && sc == 1 && d_ != a_ && d_ != b_ &&  \
-        d_ != c_) {                                                          \
-      nan = 0;                                                               \
-      NOTED(T, FN(a[i], b[i], c[i]))                                         \
-    }                                                                        \
-    if (!nan) return;                                                        \
-    LOOPS3(T, , F);                                                          \
   }
 
 /* The kinds every dtype of a class takes, at the compute suffix [S]. */
@@ -344,15 +283,15 @@ IDENT(8, uint64_t)
   BIN(pow_##D, T, T, LD, nx_pow_##S)                                         \
   FMA(fma_##D, T, LD, nx_fma_##S)
 
-#define FLOATS(D, T, S, FN)                                                  \
+#define FLOATS(D, T, S)                                                      \
   COMPARES(D, T, , S)                                                        \
-  EXACT(add_##D, T, +, nx_add_##S)                                           \
-  EXACT(sub_##D, T, -, nx_sub_##S)                                           \
-  EXACT(mul_##D, T, *, nx_mul_##S)                                           \
-  EXACT(fdiv_##D, T, /, nx_fdiv_##S)                                         \
+  BIN(add_##D, T, T, , nx_add_##S)                                           \
+  BIN(sub_##D, T, T, , nx_sub_##S)                                           \
+  BIN(mul_##D, T, T, , nx_mul_##S)                                           \
+  BIN(fdiv_##D, T, T, , nx_fdiv_##S)                                         \
   BIN(mod_##D, T, T, , nx_mod_##S)                                           \
   BIN(pow_##D, T, T, , nx_pow_##S)                                           \
-  EXACT_FMA(fma_##D, T, FN, nx_fma_##S)                                      \
+  FMA(fma_##D, T, , nx_fma_##S)                                              \
   BIN(atan2_##D, T, T, , nx_atan2_##S)                                       \
   FLOAT_KINDS1(FLOAT1, S, T)                                                 \
   NEAR_KINDS(NEAR1, S, T)
@@ -392,8 +331,8 @@ IDENT(8, uint64_t)
 /* A boolean is 1 where its byte is not zero. */
 #define BOOL_LD(v) ((uint32_t)((v) != 0))
 
-FLOATS(f32, float, f32, nx_fmaf)
-FLOATS(f64, double, f64, nx_fmad)
+FLOATS(f32, float, f32)
+FLOATS(f64, double, f64)
 UN(erf_f32, float, , nx_erf_f32)
 RANGED(erf_f64, double, nx_erf_big_f64, nx_erf_near_f64, nx_erf_far_f64,
        nx_erf_f64)

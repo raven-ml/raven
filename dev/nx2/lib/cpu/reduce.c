@@ -34,19 +34,9 @@
    is a subtree of the blocks' tree: the groups' values combine by the same
    counter.
 
-   NaN. A float result that is NaN, or a complex one with a NaN part, is
-   replaced by its first such term in index order, quieted, found by a
-   second walk taken only then, or by nx_kinds.h's NaN, in each part of a
-   complex, where no term is NaN. Quieting sets each NaN part's quiet bit,
-   the top of its fraction, and keeps its sign and the rest of its payload,
-   as IEEE 754 quiets a signalling NaN an operation returns. A complex
-   sum's parts are float sums, each replaced so apart. A scan's results
-   stay NaN once they are, since adding, multiplying and the extremes keep
-   a NaN: where a slice's last result is NaN, every result from its first
-   NaN term on is that term, quieted, and every NaN result before it
-   nx_kinds.h's. A Max's or a Min's carry is a term before the slice's
-   first, so a NaN one is every result, quieted; a sum's or a product's
-   counts as made from numbers.
+   NaN. A float result that a NaN term reaches, or that the arithmetic
+   makes from numbers, is the NaN the instructions give: its sign and
+   payload are not fixed.
 
    Paths. The operand and the destination, read at the operand's shape with
    step 0 along the reduced axes, coalesce: reduced and kept axes never
@@ -65,10 +55,7 @@
    terms of a row's outputs; a network scan's operand is converted whole
    first. Arg, Logsumexp and Moments reduce in the carrier too.
    Results go into the destination where it is of the carrier, else into a
-   carrier copy of it, rounded into it once at the end, as a cast does. A
-   NaN keeps its sign and payload through the carrier, quieted
-   (nx_dtype.h), so a NaN result rounded into the operand's dtype is its
-   first NaN term quieted, as the rule above gives it.
+   carrier copy of it, rounded into it once at the end, as a cast does.
 
    States. Logsumexp, Arg and Moments reduce by the same blocks, tree and
    paths, an output's value a state of its terms in place of a monoid's
@@ -79,10 +66,8 @@
    over terms the first left in the caches, but where an output's blocks
    fall into groups on several threads, whose first passes all end before
    any second starts. Logsumexp's passes, whose time is their exp's,
-   always run so. A float result that is NaN is replaced as a monoid's is, but
-   Arg's, whose state holds its first NaN term, quieted as it is stored.
-   Arg reads a staged operand in the carrier too; its extreme into the
-   operand's dtype is the term at its position, copied and quieted.
+   always run so. Arg reads a staged operand in the carrier too; its
+   extreme into the operand's dtype is the term at its position, copied.
 
    Arg's scans. An Arg scan cuts the same chunks and carries a state per
    slice: a chunk's total is its terms' state from none, the carry into
@@ -107,8 +92,7 @@
 
    Networks. A Logsumexp or Moments scan computes nx_kernel.mli's network
    on each slice, op by op with the kinds' arithmetic, as Nx's expansion
-   does, so that the two give the same bits; a slice whose results a NaN
-   term reaches has them quieted after. It holds O(log n) states per
+   does, so that the two give the same bits. It holds O(log n) states per
    slice. Slices few for the threads are cut into tiles of 256 terms, the
    threads computing their states, then the network over them, then their
    results: the same combinations in the same order (TILES).
@@ -133,8 +117,7 @@
    terms into a row of accumulators, element by element. Integers compute in
    their own width, unsigned, so they wrap as a wider sum stored back would;
    booleans reduce as any and all of their bytes' being non-zero. A float sum
-   or product uses the instruction: its NaN may differ from nx_kinds.h's, and
-   the entries replace every NaN result. Maxima and minima are nx_kinds.h's,
+   or product uses the instruction. Maxima and minima are nx_kinds.h's,
    whose ties order -0 below +0. Contiguous terms take the lanes as
    vectors. */
 
@@ -743,12 +726,11 @@ COMPLEX(c128, f64, double, 8)
    is -0 only where both its operands are, so the tree over the products
    themselves, plus +0 once, has the same bits. Each count of products is
    compiled apart, its tree unrolled in registers. */
-#define PRODUCTS(D, T, U)                                                    \
+#define PRODUCTS(D, T)                                                       \
   typedef T D##_pv __attribute__((vector_size(NX_VECTOR_BYTES)));            \
-  typedef U D##_pu __attribute__((vector_size(NX_VECTOR_BYTES)));            \
   typedef T D##_pm                                                           \
       __attribute__((vector_size(NX_VECTOR_BYTES), aligned(1), may_alias));  \
-  static inline __attribute__((always_inline)) int products_n_##D(           \
+  static inline __attribute__((always_inline)) void products_n_##D(          \
       int n, int64_t w, int64_t h, const T *a, const int64_t *oa,            \
       int64_t sa, const T *b, const int64_t *ob, int64_t sb, T *y,           \
       int64_t sy, int64_t sy2) {                                             \
@@ -759,8 +741,6 @@ COMPLEX(c128, f64, double, 8)
       pa[t] = a + oa[t];                                                     \
       pb[t] = b + ob[t];                                                     \
     }                                                                        \
-    D##_pu bad = {0};                                                        \
-    T one = 0;                                                               \
     for (int64_t i = 0; i < h; i++, y += sy2) {                              \
       int64_t j = 0;                                                         \
       for (; j + V <= w; j += V) {                                           \
@@ -774,7 +754,6 @@ COMPLEX(c128, f64, double, 8)
           for (int t = 0; t < g && t + g < n; t++) l[t] += l[t + g];         \
         }                                                                    \
         D##_pv r = l[0] + (D##_pv){0};                                       \
-        bad |= (D##_pu)(r != r);                                             \
         if (sy == 1) *(D##_pm *)(y + j) = r;                                 \
         else                                                                 \
           for (int k = 0; k < V; k++) y[(j + k) * sy] = r[k];                \
@@ -789,7 +768,6 @@ COMPLEX(c128, f64, double, 8)
           for (int t = 0; t < g && t + g < n; t++) l[t] += l[t + g];         \
         }                                                                    \
         T r = l[0] + 0;                                                      \
-        one = r != r ? r : one;                                              \
         y[j * sy] = r;                                                       \
       }                                                                      \
       for (int t = 0; t < n; t++) {                                          \
@@ -797,11 +775,8 @@ COMPLEX(c128, f64, double, 8)
         pb[t] += sb;                                                         \
       }                                                                      \
     }                                                                        \
-    U any = one != one;                                                      \
-    for (int k = 0; k < V; k++) any |= bad[k];                               \
-    return any != 0;                                                         \
   }                                                                          \
-  static int products_##D(int n, int64_t w, int64_t h, const uint8_t *a_,    \
+  static void products_##D(int n, int64_t w, int64_t h, const uint8_t *a_,    \
                           const int64_t *oa, int64_t sa, const uint8_t *b_,  \
                           const int64_t *ob, int64_t sb, uint8_t *y_,        \
                           int64_t sy, int64_t sy2) {                         \
@@ -810,11 +785,12 @@ COMPLEX(c128, f64, double, 8)
     switch (n) {                                                             \
       PRODUCTS_CASES(D)                                                      \
     }                                                                        \
-    return 0;                                                                \
   }
 
 #define PRODUCTS_CASE(D, n)                                                  \
-  case n: return products_n_##D(n, w, h, a, oa, sa, b, ob, sb, y, sy, sy2);
+  case n:                                                                    \
+    products_n_##D(n, w, h, a, oa, sa, b, ob, sb, y, sy, sy2);               \
+    return;
 #define PRODUCTS_CASES(D)                                                    \
   PRODUCTS_CASE(D, 1) PRODUCTS_CASE(D, 2) PRODUCTS_CASE(D, 3)                \
   PRODUCTS_CASE(D, 4) PRODUCTS_CASE(D, 5) PRODUCTS_CASE(D, 6)                \
@@ -823,12 +799,11 @@ COMPLEX(c128, f64, double, 8)
   PRODUCTS_CASE(D, 13) PRODUCTS_CASE(D, 14) PRODUCTS_CASE(D, 15)             \
   PRODUCTS_CASE(D, 16)
 
-PRODUCTS(f32, float, int32_t)
-PRODUCTS(f64, double, int64_t)
+PRODUCTS(f32, float)
+PRODUCTS(f64, double)
 
 /* Moments scans. A unit scans [w] slices side by side by the network of
-   nx_kernel.mli, a state rows of [w] lanes: its mu, S and n, and in the
-   exact pass z, whether one of its terms is a NaN, 0 or 1. Every lane's
+   nx_kernel.mli, a state rows of [w] lanes: its mu, S and n. Every lane's
    state at a place in the network counts the same terms, so n is held once,
    in its row's first element, and a join's weight nb / n is one division
    for all its lanes.
@@ -852,8 +827,7 @@ PRODUCTS(f64, double, int64_t)
    The fast pass computes by plain arithmetic, which gives the kinds' bits
    wherever no value is a NaN or an infinity. Where one of its results is
    not finite, the exact pass computes the unit again with the kinds' ops,
-   one kind per loop: gcc leaves scalar a loop that chains two of their
-   NaN selects. */
+   one kind per loop. */
 
 /* Whether [v] is finite: an infinity or a NaN less itself is a NaN. */
 #define FINITE(v) ((v) - (v) == 0)
@@ -898,7 +872,7 @@ typedef enum { FAST, EXACT } arith;
    their results, packed with one more a level, and the streaming
    network's sets; Moments', Logsumexp's being fewer. */
 #define NETWORK_ONE                                                         \
-  (4 * PT + 3 * (2 * PT + NETWORK_P + 1) + 12 * TILE_LEVELS)
+  (4 * PT + 3 * (2 * PT + NETWORK_P + 1) + 9 * TILE_LEVELS)
 
 /* Where a tile's level k starts among its states, packed level by level,
    level k's PT >> k of them, and among its results, one more a level. */
@@ -1151,8 +1125,7 @@ static int64_t results_at(int k) { return states_at(k) + k; }
   }                                                                          \
   static void moments_exact_##S(int64_t w, const T *restrict a,              \
                                 const T *restrict b, T *restrict r) {        \
-    const T *ma = a, *va = a + w, *za = a + 3 * w;                           \
-    const T *mb = b, *vb = b + w, *zb = b + 3 * w;                           \
+    const T *ma = a, *va = a + w, *mb = b, *vb = b + w;                      \
     T na = a[2 * w], nb = b[2 * w], k = nx_add_##S(na, nb);                  \
     T f = nx_fdiv_##S(nb, k), g = nx_mul_##S(na, f);                         \
     T d[NX_CPU_NETWORK_LANES], t[NX_CPU_NETWORK_LANES],                      \
@@ -1161,15 +1134,12 @@ static int64_t results_at(int k) { return states_at(k) + k; }
     LANES_OF(t, nx_mul_##S(d[l], f));                                        \
     LANES_OF(t, nx_add_##S(ma[l], t[l]));                                    \
     LANES_OF(sum, nx_add_##S(ma[l], mb[l]));                                 \
-    LANES_OF(r, (FINITE(ma[l]) & FINITE(mb[l]))                              \
-                    ? t[l]                                                   \
-                    : za[l] != 0 ? ma[l] : zb[l] != 0 ? mb[l] : sum[l]);     \
+    LANES_OF(r, (FINITE(ma[l]) & FINITE(mb[l])) ? t[l] : sum[l]);            \
     LANES_OF(d, nx_mul_##S(d[l], d[l]));                                     \
     LANES_OF(d, nx_mul_##S(d[l], g));                                        \
     LANES_OF(t, nx_add_##S(va[l], vb[l]));                                   \
     LANES_OF(r + w, nx_add_##S(t[l], d[l]));                                 \
     r[2 * w] = k;                                                            \
-    LANES_OF(r + 3 * w, (T)((za[l] != 0) | (zb[l] != 0)));                   \
   }                                                                          \
   static inline join_##S moments_join_##S(arith a) {                         \
     return a == EXACT ? moments_exact_##S : moments_fast_##S;                \
@@ -1181,7 +1151,6 @@ static int64_t results_at(int k) { return states_at(k) + k; }
     else LANES_OF(r, x[l] - c[l]);                                           \
     LANES_OF(r + w, 0);                                                      \
     r[2 * w] = 1;                                                            \
-    if (a == EXACT) LANES_OF(r + 3 * w, (T)(x[l] != x[l]));                  \
   }                                                                          \
   /* [tn] rows of [w] elements from [y] into [r], row i lane l from          \
      y[i ys + l yl]. Element by element: nx_copy_box's transposed tiles      \
@@ -1203,7 +1172,7 @@ static int64_t results_at(int k) { return states_at(k) + k; }
     for (int64_t i = 0; i < n; i++) o[2 * i] = u[i];                         \
   }                                                                          \
   /* Takes the [t]th state of a streaming network, at [in[0]], on through    \
-     its levels, each level's [w] lanes' states 4 w elements: joins it with  \
+     its levels, each level's [w] lanes' states 3 w elements: joins it with  \
      the states [held] there, and leaves the result at [t] at [got[0]]. A    \
      network over a tile past a slice's first, from its first term, takes    \
      [carry], the network's result before the tile, as the result before     \
@@ -1387,7 +1356,7 @@ static int64_t results_at(int k) { return states_at(k) + k; }
     return moments_outs_##S(L, c, t0, r[0], r[1], ym + t0 * ms, ms,          \
                             yv + t0 * vs, vs);                               \
   }                                                                          \
-  NETWORK(T, S, moments, 4, 3, 2)
+  NETWORK(T, S, moments, 3, 3, 2)
 
 MOMENTS(float, f32)
 MOMENTS(double, f64)
@@ -1406,9 +1375,8 @@ MOMENTS(double, f64)
      the variance, (Σ (x - c)² - Σ (x - c) (Σ (x - c) / n)) / n, +0 where
      that is negative, or Σ (x - c)² where that is +inf: Nx's expansion's
      arithmetic.
-   A NaN result is replaced by the driver: by the first NaN term, or by
-   nx_kinds.h's NaN where none is. Every function is inlined into each
-   kernel, whose loops of 16 lanes the compiler then vectorises. */
+   Every function is inlined into each kernel, whose loops of 16 lanes the
+   compiler then vectorises. */
 
 #define KERNEL static __attribute__((flatten)) void
 
@@ -2096,13 +2064,9 @@ typedef struct {
   const nx_cpu_scan_pass *z; /* an Arg scan's kernels, or NULL */
   double *centers;          /* its outputs' centers, a row of them a unit */
   int centering;            /* the pass stores the centers */
-  int w, nan;               /* nan: NaN results take their first NaN term */
-  int part, parts;          /* the dtype of a float or its parts, 1 or 2 */
+  int w;
   int first;                /* lanes, rows and slices start from their
                                first term: a complex product's */
-  int extreme;              /* a Max or a Min, whose scan's carry is a
-                               term before its slice */
-  int slots;                /* 2 for a complex sum's parts, NaN apart, or 1 */
   int carrier, staged;      /* the dtype terms reduce in; src is not in it */
   int own;                  /* Arg's extreme is of src's dtype, not the
                                carrier's: its term, copied */
@@ -2175,8 +2139,7 @@ typedef struct {
      staged_block), a unit's (few, center_units), a sum of products'
      factors (products), or a piece's (run_states, quad). */
   _Alignas(64) uint8_t terms[2 * BLOCK * WIDEST];
-  /* Arg's extremes in the carrier, before their terms (run_states), or
-     one output's terms (nan_term), which no Arg reads. */
+  /* Arg's extremes in the carrier, before their terms (run_states). */
   _Alignas(64) uint8_t extremes[LANES * ROW];
   /* A program's terms in their held dtype (eval_in). */
   _Alignas(64) uint8_t held[2 * LANES * ROW];
@@ -2254,73 +2217,6 @@ static void fill(const plan *q, uint8_t *d, int64_t n) {
     return;
   }
   ids(q, d, n);
-}
-
-/* Whether one of the [n] floats of dtype [part] at [v] is NaN: float32's
-   and float64's in one pass the compiler vectorises, a narrow float's of
-   whole bytes by its code. */
-static int floats_nan(int part, const uint8_t *v, int64_t n) {
-  int bad = 0;
-  if (part == NX_FLOAT32) {
-    const float *f = (const float *)v;
-    for (int64_t j = 0; j < n; j++) bad |= f[j] != f[j];
-  } else if (part == NX_FLOAT64) {
-    const double *f = (const double *)v;
-    for (int64_t j = 0; j < n; j++) bad |= f[j] != f[j];
-  } else {
-    const uint16_t *h = (const uint16_t *)v;
-    int two = nx_cpu_width(part) == 2;
-    for (int64_t j = 0; j < n; j++) {
-      float f = nx_bits_to_float(part, two ? h[j] : v[j]);
-      bad |= f != f;
-    }
-  }
-  return bad;
-}
-
-/* Whether one of the [n] values at [v] is NaN, a complex one where a part
-   is. */
-static int any_nan(const plan *q, const uint8_t *v, int64_t n) {
-  return floats_nan(q->part, v, n * q->parts);
-}
-
-static int is_nan(const plan *q, const uint8_t *p) { return any_nan(q, p, 1); }
-
-/* The quiet bit of the float dtype [p]'s NaNs, the top bit of its
-   fraction; 0 for a dtype whose NaNs all have it, float8_e4m3fn's one NaN
-   of each sign, or that has none. */
-static uint64_t quiet_bit(int p) {
-  switch (p) {
-    case NX_FLOAT64: return (uint64_t)1 << 51;
-    case NX_FLOAT32: return (uint64_t)1 << 22;
-    case NX_FLOAT16: return 0x200;
-    case NX_BFLOAT16: return 0x40;
-    case NX_FLOAT8_E5M2: return 0x2;
-    default: return 0;
-  }
-}
-
-/* Quiets each NaN part of the element of [dt] at [d]: sets its quiet bit,
-   keeping its sign and the rest of its payload, as IEEE 754 quiets a
-   signalling NaN an operation returns. */
-static void quiet(int dt, uint8_t *d) {
-  int p = part_of(dt), w = nx_cpu_width(p), n = p == dt ? 1 : 2;
-  uint64_t bit = quiet_bit(p);
-  if (bit == 0) return;
-  for (int i = 0; i < n; i++) {
-    uint8_t *e = d + i * w;
-    if (!floats_nan(p, e, 1)) continue;
-    uint64_t c = 0;
-    memcpy(&c, e, w); /* little-endian hosts: the low bytes */
-    c |= bit;
-    memcpy(e, &c, w);
-  }
-}
-
-/* A value's slots are NaN or not as a whole: the value, or each part of a
-   complex sum, whose parts are float sums. Whether the slot at [s] is. */
-static int slot_nan(const plan *q, const uint8_t *s) {
-  return floats_nan(q->part, s, q->parts / q->slots);
 }
 
 static const uint8_t *at(const plan *q, int64_t p) {
@@ -2424,13 +2320,6 @@ static const uint8_t *element(const plan *q, int64_t pos, uint8_t *tmp) {
    operand's or a program's. */
 static int sourced(const plan *q) { return q->staged || q->fused != NULL; }
 
-/* Writes the NaN nx_kinds.h makes from numbers into the slot at [d], in
-   each of its parts: a narrow float's rounded from float32's. */
-static void made_nan(const plan *q, uint8_t *d) {
-  parts_at(d, q->part, q->part == NX_FLOAT64 ? NX_NAN_F64 : NX_NAN_F32,
-           q->parts / q->slots);
-}
-
 /* The operand's position of term [t] of the output at [p]. */
 static int64_t term(const plan *q, int64_t p, int64_t t) {
   for (int i = q->nr - 1; i >= 0; i--) {
@@ -2520,52 +2409,6 @@ static void stage_terms(const plan *q, work *wk, int64_t p, int64_t s,
   for (int64_t i = 0; i < m; i++, pos = next(q, idx, pos))
     nx_cpu_stage_as(q->src, pos, s, 0, W, 1, q->carrier, buf + i * W * q->w,
                     W);
-}
-
-/* The index of the first term of the output at [p] whose slot [k] is
-   NaN, the term copied into [e], quieted; or q->terms where none is. A
-   staged operand's or a program's terms come a buffer at a time. */
-static int64_t nan_term(const plan *q, work *wk, int64_t p, int k,
-                        uint8_t *e) {
-  int64_t sw = q->w / q->slots;
-  if (!sourced(q)) {
-    for (int64_t t = 0; t < q->terms; t++) {
-      const uint8_t *x = at(q, term(q, p, t));
-      if (!slot_nan(q, x + k * sw)) continue;
-      memcpy(e, x, q->w);
-      quiet(q->carrier, e);
-      return t;
-    }
-    return q->terms;
-  }
-  uint8_t *buf = wk->extremes;
-  int64_t most = LANES * ROW / q->w;
-  for (int64_t t = 0; t < q->terms; t += most) {
-    int64_t m = q->terms - t < most ? q->terms - t : most;
-    stage_terms(q, wk, p, 0, 1, t, m, buf);
-    for (int64_t i = 0; i < m; i++) {
-      if (!slot_nan(q, buf + i * q->w + k * sw)) continue;
-      memcpy(e, buf + i * q->w, q->w);
-      quiet(q->carrier, e);
-      return t + i;
-    }
-  }
-  return q->terms;
-}
-
-/* Replaces each NaN slot of the result at [e] of the output at [p] by its
-   first term's slot that is NaN, quieted, or by nx_kinds.h's NaN where
-   none is. */
-static void first_nan(const plan *q, work *wk, int64_t p, uint8_t *e) {
-  int64_t sw = q->w / q->slots;
-  _Alignas(16) uint8_t first[WIDEST];
-  for (int k = 0; k < q->slots; k++) {
-    uint8_t *s = e + k * sw;
-    if (!slot_nan(q, s)) continue;
-    if (nan_term(q, wk, p, k, first) < q->terms)
-      memcpy(s, first + k * sw, sw);
-    else made_nan(q, s);
-  }
 }
 
 /* Blocks */
@@ -2836,18 +2679,17 @@ static void copy_element(const nx_array *b, int64_t d, const nx_array *a,
 
 /* Arg's extreme of the operand's dtype into element [d] of the
    destination: the operand's term at [pos], or a program's computed
-   there, quieted. */
+   there. */
 static void own_term(const plan *q, int64_t d, int64_t pos) {
   int64_t w = nx_cpu_width(q->dst->dtype);
   if (q->fused == NULL) copy_element(q->dst, d, q->src, pos);
   else eval(q->fused, pos, 0, 1, 0, 1, q->dst->base + d * w);
-  quiet(q->dst->dtype, q->dst->base + d * w);
 }
 
-/* Stores the results of the unit's states [v], of centers [c], each NaN
-   replaced as store's are, Arg's extreme quieted, of the operand's dtype
-   copied from its term; or, where the pass finds them, the centers. */
-static void store_states(const plan *q, work *wk, const unit *x, double *c,
+/* Stores the results of the unit's states [v], of centers [c], Arg's
+   extreme of the operand's dtype copied from its term; or, where the pass
+   finds them, the centers. */
+static void store_states(const plan *q, const unit *x, double *c,
                          const nx_cpu_state *v) {
   int w1 = nx_cpu_width(q->dst1->dtype);
   for (int64_t j = 0; j < x->W; j++) {
@@ -2865,19 +2707,13 @@ static void store_states(const plan *q, work *wk, const unit *x, double *c,
       continue;
     }
     q->r->finish(&v[j], c != NULL ? c[j] : 0, d0, d1);
-    if (q->arg) quiet(q->dst->dtype, d0);
-    if (!q->nan) continue;
-    if (is_nan(q, d0)) first_nan(q, wk, p, d0);
-    if (q->dst1 != q->dst && is_nan(q, d1)) first_nan(q, wk, p, d1);
   }
 }
 
-/* Stores the unit's values [v], of centers [c], each NaN replaced by its
-   first NaN term, or by nx_kinds.h's where none is. */
-static void store(const plan *q, work *wk, const unit *x, double *c,
-                  const uint8_t *v) {
+/* Stores the unit's values [v], of centers [c]. */
+static void store(const plan *q, const unit *x, double *c, const uint8_t *v) {
   if (q->r != NULL) {
-    store_states(q, wk, x, c, (const nx_cpu_state *)v);
+    store_states(q, x, c, (const nx_cpu_state *)v);
     return;
   }
   uint8_t *d = q->dst->base + x->d * q->w;
@@ -2885,10 +2721,6 @@ static void store(const plan *q, work *wk, const unit *x, double *c,
   else
     for (int64_t j = 0; j < x->W; j++)
       memcpy(d + j * x->sd * q->w, v + j * q->w, q->w);
-  if (!q->nan || !any_nan(q, v, x->W)) return;
-  for (int64_t j = 0; j < x->W; j++)
-    if (is_nan(q, v + j * q->w))
-      first_nan(q, wk, x->p + j * x->s, d + j * x->sd * q->w);
 }
 
 /* The terms of a factor of a sum of products that a thread staged last
@@ -2897,14 +2729,14 @@ typedef struct {
   int64_t at[2], w[2];
 } staged;
 
-/* The unit's sums of the products of two loads, a lane or fewer an output,
-   and whether one is NaN. Each factor's terms are read in place where they
+/* The unit's sums of the products of two loads, a lane or fewer an output.
+   Each factor's terms are read in place where they
    are of the carrier and step one along a row, else staged into the
    carrier, a row of the unit's outputs a term, once for the rows and units
    that read the same ones, as a broadcast factor's do: the table then
    computes the unit's rows at once, but one at a time where a staged
    factor steps along them. */
-static int products(const plan *q, work *wk, const unit *x, staged *kept) {
+static void products(const plan *q, work *wk, const unit *x, staged *kept) {
   const fused *z = q->fused;
   int64_t at[NX_MAX_OPERANDS + 1], rows[LANES];
   loads_at(z, x->p, at);
@@ -2920,7 +2752,6 @@ static int products(const plan *q, work *wk, const unit *x, staged *kept) {
   const uint8_t *base[2];
   const int64_t *off[2];
   int64_t step[2];
-  int bad = 0;
   for (int64_t h = 0; h < x->H; h += each) {
     for (int f = 0; f < 2; f++) {
       const nx_array *l = &z->loads[q->factor[f]];
@@ -2941,11 +2772,10 @@ static int products(const plan *q, work *wk, const unit *x, staged *kept) {
       kept->at[f] = p;
       kept->w[f] = x->W;
     }
-    bad |= nx_cpu_table->products[q->carrier](
+    nx_cpu_table->products[q->carrier](
         n, x->W, each, base[0], off[0], step[0], base[1], off[1], step[1],
         q->dst->base + (x->d + h * x->sd2) * q->w, x->sd, x->sd2);
   }
-  return bad;
 }
 
 /* Outputs of a lane or fewer each, one block: their terms' positions from
@@ -2954,7 +2784,7 @@ static int products(const plan *q, work *wk, const unit *x, staged *kept) {
 static void few(const plan *q, work *wk, const unit *x, staged *kept) {
   int64_t n = q->terms;
   if (q->factor[0] >= 0) {
-    if (!products(q, wk, x, kept)) return;
+    products(q, wk, x, kept);
   } else if (!sourced(q)) {
     q->f->few(at(q, x->p), q->off, (int)n, x->s, x->W, x->s2, x->H, q->id,
               q->dst->base + x->d * q->w, x->sd, x->sd2, wk->lanes);
@@ -2970,15 +2800,6 @@ static void few(const plan *q, work *wk, const unit *x, staged *kept) {
     for (int64_t t = 0; t < n; t++) off[t] = t * x->W;
     q->f->few(buf, off, (int)n, 1, x->W, n * x->W, x->H, q->id,
               q->dst->base + x->d * q->w, x->sd, x->sd2, wk->lanes);
-  }
-  if (!q->nan) return;
-  for (int64_t h = 0; h < x->H; h++) {
-    int64_t p = x->p + h * x->s2;
-    uint8_t *d = q->dst->base + (x->d + h * x->sd2) * q->w;
-    if (x->sd == 1 && !any_nan(q, d, x->W)) continue;
-    for (int64_t j = 0; j < x->W; j++)
-      if (is_nan(q, d + j * x->sd * q->w))
-        first_nan(q, wk, p + j * x->s, d + j * x->sd * q->w);
   }
 }
 
@@ -2998,7 +2819,7 @@ static void reduce_units(const plan *q, work *wk, int64_t lo, int64_t hi) {
     const double *bc = q->centering ? NULL : c;
     if (q->groups == 1) {
       blocks(q, wk, x.p, x.s, x.W, bc, b0, b1, v);
-      store(q, wk, &x, c, v);
+      store(q, &x, c, v);
     } else
       blocks(q, wk, x.p, x.s, x.W, bc, b0, b1,
              q->scratch + u * q->row * q->size);
@@ -3018,7 +2839,7 @@ static void finish_units(const plan *q, work *wk, int64_t lo, int64_t hi) {
                        join(q, stack[top - 2], stack[top - 1], x.W));
     }
     NX_CPU_TREE_END(top, join(q, stack[top - 2], stack[top - 1], x.W));
-    store(q, wk, &x, q->centers ? q->centers + u * q->row : NULL, stack[0]);
+    store(q, &x, q->centers ? q->centers + u * q->row : NULL, stack[0]);
   }
 }
 
@@ -3288,16 +3109,6 @@ static void stage_lanes(const plan *q, work *wk, const unit *x, int64_t W,
   nx_cpu_stage_as(q->src, x->p + t * rs, s, rs, W, m, q->carrier, buf, W);
 }
 
-/* Quiets the NaNs among Arg's [m] by [W] extremes at [y], a scan's
-   results, [q->rd] and [dl] elements apart. */
-static void quiet_rows(const plan *q, uint8_t *y, int64_t m, int64_t W,
-                       int64_t dl) {
-  if (quiet_bit(q->part) == 0) return;
-  for (int64_t i = 0; i < m; i++)
-    for (int64_t l = 0; l < W; l++)
-      quiet(q->dst->dtype, y + (i * q->rd + l * dl) * q->w);
-}
-
 /* Terms [t0, t0 + n) of an Arg scan's [W] sequences into their states
    [a], and each result into the destinations. Sequence l is
    the unit's slice l, or, where [lt] is not 0, the unit's slice from term
@@ -3322,10 +3133,7 @@ static void run_states(const plan *q, work *wk, const unit *x, nx_cpu_state *a,
     int64_t *p = (int64_t *)q->dst1->base + x->d1 + t * q->rd1;
     q->z->rows(a, src, xs, xli, m, W, y, q->own ? W : q->rd, q->own ? 1 : dl,
                p, q->rd1, d1l);
-    if (!q->own) {
-      quiet_rows(q, y, m, W, dl);
-      continue;
-    }
+    if (!q->own) continue;
     for (int64_t i = 0; i < m; i++)
       for (int64_t l = 0; l < W; l++)
         own_term(q, x->d + (t + i) * q->rd + l * dl,
@@ -3438,49 +3246,6 @@ static void rescan(const plan *q, work *wk, const unit *x, int64_t c,
   }
 }
 
-/* Slot [k] of the slice at [p] whose results start at [d], from the carry
-   at [cy] or none: where its last result is NaN, it takes its first NaN
-   term's from that term on, and nx_kinds.h's NaN for each NaN result
-   before it; but where an extreme's carry is NaN, every result is it,
-   quieted. */
-static void settle_slot(const plan *q, work *wk, int64_t p, int64_t d,
-                        const uint8_t *cy, int k) {
-  int64_t sw = q->w / q->slots;
-  uint8_t *y = q->dst->base + k * sw;
-  _Alignas(16) uint8_t first[WIDEST];
-  if (!slot_nan(q, y + (d + (q->terms - 1) * q->rd) * q->w)) return;
-  int64_t i = 0;
-  if (q->extreme && cy != NULL && slot_nan(q, cy + k * sw)) {
-    memcpy(first, cy, q->w);
-    quiet(q->carrier, first);
-  } else i = nan_term(q, wk, p, k, first);
-  for (int64_t t = 0; t < i; t++) {
-    uint8_t *e = y + (d + t * q->rd) * q->w;
-    if (slot_nan(q, e)) made_nan(q, e);
-  }
-  if (i == q->terms) return;
-  for (int64_t t = i; t < q->terms; t++)
-    memcpy(y + (d + t * q->rd) * q->w, first + k * sw, sw);
-}
-
-/* Settles each slot of each of the unit's slices. */
-static void settle(const plan *q, work *wk, const unit *x) {
-  if (!q->nan || q->terms == 0) return;
-  for (int64_t j = 0; j < x->W; j++) {
-    const uint8_t *cy =
-        q->cy != NULL ? q->cy->base + (x->c + j * x->sc) * q->w : NULL;
-    for (int k = 0; k < q->slots; k++)
-      settle_slot(q, wk, x->p + j * x->s, x->d + j * x->sd, cy, k);
-  }
-}
-
-static void settle_units(const plan *q, work *wk, int64_t lo, int64_t hi) {
-  for (int64_t u = lo; u < hi; u++) {
-    unit x = unit_of(q, u * q->groups);
-    settle(q, wk, &x);
-  }
-}
-
 /* The carry [a] of [W] slices into the chunk after [c], from [a] into [c]
    and [c]'s total [v]: the total alone where chunk 0 has no carry, as an
    Arg scan's has none. */
@@ -3507,7 +3272,6 @@ static void scan_units(const plan *q, work *wk, int64_t lo, int64_t hi) {
       total(q, wk, &x, c, v);
       carry_on(q, carry, v, c, x.W);
     }
-    settle(q, wk, &x);
   }
 }
 
@@ -3747,12 +3511,7 @@ static __attribute__((noinline)) int reduce_in(
             .r = stateful ? &st->value : NULL,
             .z = stateful && op == SCAN ? &st->scan : NULL,
             .w = w,
-            .nan = (p == NX_FLOAT32 || p == NX_FLOAT64) && !arg,
-            .part = p,
-            .parts = p == dt ? 1 : 2,
             .first = r == NX_MONOID_PROD && p != dt,
-            .extreme = r == NX_MONOID_MAX || r == NX_MONOID_MIN,
-            .slots = p != dt && r == NX_MONOID_SUM ? 2 : 1,
             .carrier = dt,
             .staged = x->dtype != dt,
             .own = arg && x->dtype != dt && y->dtype == x->dtype,
@@ -3818,7 +3577,6 @@ static __attribute__((noinline)) int reduce_in(
       units_job(units * ((q.groups + SLICES - 1) / SLICES), bytes, cost,
                 rescan_quads, &q);
     else units_job(units * q.groups, bytes, cost, rescan_units, &q);
-    units_serial(units, settle_units, &q);
   }
   free(q.scratch);
   free(q.centers);
@@ -3957,25 +3715,6 @@ static void fill_slices(const void *ctx, int64_t t0, int64_t tn,
           out, c->held);
 }
 
-/* Quiets the NaN results of the [w] slices whose results start at the
-   positions [at]. A slice that a NaN term reaches ends in a NaN, and its
-   results from that term on carry its bits through the kinds'
-   arithmetic: such a slice alone is walked again. */
-static void quiet_slices(const network *q, const int64_t *at, int64_t w) {
-  const nx_loop *l = &q->outer;
-  int last = l->rank - 1, dt = q->a[0]->dtype, w8 = nx_cpu_width(dt);
-  int two = q->r == NX_CPU_MOMENTS;
-  for (int64_t j = 0; j < w; j++) {
-    uint8_t *m = q->a[0]->base + (at[0] + j * l->step[0][last]) * w8;
-    uint8_t *v = q->a[1]->base + (at[1] + j * l->step[1][last]) * w8;
-    if (!floats_nan(dt, m + (q->len - 1) * q->along[0] * w8, 1)) continue;
-    for (int64_t i = 0; i < q->len; i++) {
-      quiet(dt, m + i * q->along[0] * w8);
-      if (two) quiet(dt, v + i * q->along[1] * w8);
-    }
-  }
-}
-
 /* The positions of unit [u]'s first result, variance and term [at]; its
    slices. */
 static int64_t unit_at(const network *q, int64_t u, int64_t *at) {
@@ -3993,16 +3732,8 @@ static int64_t unit_at(const network *q, int64_t u, int64_t *at) {
   return inner - from < most ? inner - from : most;
 }
 
-static void network_quiet(const network *q, int64_t units) {
-  for (int64_t u = 0; u < units; u++) {
-    int64_t at[3], w = unit_at(q, u, at);
-    quiet_slices(q, at, w);
-  }
-}
-
 /* Unit [u]'s run of [run] in [scratch], a program's held values [held]
-   bytes into it, by [span] or whole, quieting its NaN results where the
-   run ends the scan. */
+   bytes into it, by [span] or whole. */
 static void run_unit(network *q, nx_cpu_network run, int64_t u,
                      uint8_t *scratch, int64_t held, nx_cpu_span *span) {
   const nx_loop *l = &q->outer;
@@ -4017,7 +3748,6 @@ static void run_unit(network *q, nx_cpu_network run, int64_t u,
       q->along[0], l->step[0][last], q->a[1]->base + at[1] * w8, q->along[1],
       l->step[1][last], q->len, w, scratch, q->fused != NULL ? &src : NULL,
       span);
-  if (span == NULL || span->step == NX_CPU_EXACT) quiet_slices(q, at, w);
 }
 
 /* Runs units [lo, hi) whole, or by tiles where [q->per] is not 0: items
@@ -4029,7 +3759,7 @@ static void network_units(int64_t lo, int64_t hi, int worker, void *ctx) {
   int64_t inner = l->extent[l->rank - 1], most = q->lanes;
   int64_t lanes = inner < most ? inner : most;
   int64_t levels = nx_cpu_network_levels(q->len);
-  int64_t states = (12 * levels + 3 * NX_CPU_NETWORK_TILE) * lanes;
+  int64_t states = (9 * levels + 3 * NX_CPU_NETWORK_TILE) * lanes;
   if (states < NETWORK_ONE) states = NETWORK_ONE;
   /* The pass's states, then a tile of a program's held values, which are
      no wider than the carrier. */
@@ -4118,7 +3848,7 @@ static __attribute__((noinline)) int network_in(
   }
   int64_t lanes = inner < q.lanes ? inner : q.lanes;
   q.full = terms / PT;
-  q.stride = q.full * 4 * lanes * w8;
+  q.stride = q.full * 3 * lanes * w8;
   q.states = malloc(units * q.stride);
   if (q.states == NULL) return -1;
   nx_cpu_step steps[3] = {NX_CPU_TOTALS, NX_CPU_CARRIES, NX_CPU_RESULTS};
@@ -4129,11 +3859,10 @@ static __attribute__((noinline)) int network_in(
     nx_cpu_job(units * q.per, bytes, cost, network_units, &q);
   }
   /* Where Moments' fast pass met a value not finite, every unit runs its
-     exact pass; else the units quiet their NaN results. */
+     exact pass. */
   q.step = NX_CPU_EXACT;
   q.per = 1;
   if (!q.failed && q.bad) nx_cpu_job(units, bytes, cost, network_units, &q);
-  else if (!q.failed) network_quiet(&q, units);
   free(q.states);
   return q.failed ? -1 : NX_OK;
 }
@@ -4371,8 +4100,8 @@ static value run(const call *c, int dt, value d0, value d1, value vx,
   double extra = copy ? NX_CPU_STRIDED_COST * nx_cpu_width(dt) : 0;
   int released = nx_cpu_release(
       call_cost(c, x, padded ? ys : x->dim, r, copy, extra, a, nd));
-  /* A carry a destination aliases is read from a copy too: a Max's or a
-     Min's scan reads it again after it writes the results (settle). */
+  /* A carry a destination aliases is read from a copy too, as the results
+     may overwrite it before it is read. */
   nx_array kept_carry = {0};
   int failed = cy != NULL && cy->alias && own_copy(cy, &kept_carry, HEAP);
   if (!failed)

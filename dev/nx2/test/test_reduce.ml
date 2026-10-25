@@ -6,10 +6,9 @@
 (* Nx's reductions and scans on the host. On int32 each is the fold of its
    elements, an order-free reference; on every dtype each computes the dtypes
    its doc states, as the host's kernel over the same axes (the narrower floats
-   at float32, rounded once, a NaN result the first NaN element quieted), and
-   raises naming itself elsewhere. A NaN result is the first NaN quieted on
-   every path: the host's kernels, nx's expansions, and values cut along the
-   reduced axis. *)
+   at float32, rounded once, a NaN result any NaN), and raises naming itself
+   elsewhere. A NaN term makes a NaN result on every path: the host's kernels,
+   nx's expansions, and values cut along the reduced axis. *)
 
 open Windtrap
 module A = Nx_array
@@ -239,6 +238,39 @@ let cast (type v s w r) (dt : (w, r) D.t) (a : (v, s) A.t) : (w, r) A.t =
   | A.Done -> dst
   | _ -> failwith "the host's kernel declined a cast"
 
+(* Each element's bits, as the integers of its bytes. *)
+let element_bits (type v s) (a : (v, s) A.t) =
+  let w = Int.max 1 (D.bits (A.dtype a) / 8) in
+  let b = bits_of a in
+  Array.init (Array.length b / w) (fun i -> Array.sub b (i * w) w)
+
+(* Whether each element of [a] is a NaN, a complex number where a part is. *)
+let nans (type v s) (a : (v, s) A.t) =
+  match D.kind (A.dtype a) with
+  | D.Float -> Array.map Float.is_nan (A.to_array (cast D.Float64 a))
+  | D.Complex ->
+      Array.map
+        (fun (c : Complex.t) -> Float.is_nan c.re || Float.is_nan c.im)
+        (A.to_array (cast D.Complex128 a))
+  | D.Signed | D.Unsigned | D.Boolean -> Array.make (L.numel (A.layout a)) false
+
+(* Each element's bits, or [None] for a NaN: a NaN result promises a NaN,
+   never which one. Under [~parts], a complex number's parts are each so,
+   as a sum adds them apart. *)
+let rec blind : type v s. ?parts:bool -> (v, s) A.t -> int array option array
+    =
+ fun ?(parts = false) a ->
+  match A.dtype a with
+  | D.Complex64 when parts ->
+      blind (Option.get (A.bitcast D.Float32 (A.copy a)))
+  | D.Complex128 when parts ->
+      blind (Option.get (A.bitcast D.Float64 (A.copy a)))
+  | _ ->
+      let n = nans a in
+      Array.mapi (fun i e -> if n.(i) then None else Some e) (element_bits a)
+
+let blind_bits = array (option (array int))
+
 let identity dt = P.v ~ins:[| D.Any dt |] [| P.In 0 |] ~outs:[| 0 |]
 
 (* The host kernel's reduction [m] of [a] along [axes]: at float32 for the
@@ -299,32 +331,6 @@ let reductions =
     ("min", Min, fun ?axes x -> Nx.min ?axes x);
   ]
 
-(* [want], the bytes of [a]'s reduction along [axes], with each result that
-   a NaN element reaches made the first one's bytes, quieted: its quiet bit
-   set, its sign and the rest of its payload kept. *)
-let first_nans (type v s) (a : (v, s) A.t) axes want =
-  match D.kind (A.dtype a) with
-  | D.Float when D.bits (A.dtype a) >= 8 ->
-      let w = D.bits (A.dtype a) / 8 in
-      let bytes = bits_of (Nx_support.quieted a) in
-      let nan = Array.map Float.is_nan (A.to_array (cast D.Float32 a)) in
-      let first p i =
-        match p with None when nan.(i) -> Some i | _ -> p
-      in
-      let firsts =
-        fold first None (L.shape (A.layout a)) (Array.to_list axes)
-          (Array.init (Array.length nan) Fun.id)
-      in
-      Array.concat
-        (Array.to_list
-           (Array.mapi
-              (fun o f ->
-                match f with
-                | Some i -> Array.sub bytes (i * w) w
-                | None -> Array.sub want (o * w) w)
-              firsts))
-  | _ -> want
-
 let law_any (Case a, axes) =
   let dt = A.dtype a in
   let s = L.shape (A.layout a) in
@@ -336,7 +342,8 @@ let law_any (Case a, axes) =
   in
   List.iter
     (fun (name, m, f) ->
-      let f () = bits_of (host_array (f ?axes (value a))) in
+      let f () = host_array (f ?axes (value a)) in
+      let parts = m = Nx_kernel.Sum in
       let extreme =
         match (m : Nx_kernel.monoid) with Max | Min -> true | _ -> false
       in
@@ -344,7 +351,7 @@ let law_any (Case a, axes) =
         cover "computed" true;
         match reference m a ax with
         | Some want ->
-            equal ~msg:name (array int) (first_nans a ax (bits_of want)) (f ())
+            equal ~msg:name blind_bits (blind ~parts want) (blind ~parts (f ()))
         | None -> fail (name ^ ": the host's kernel declined a stated dtype")
       end
       else begin
@@ -602,6 +609,13 @@ let reduce1 r axes x =
 
 let read x = A.to_array (host_array x)
 let bits = Int64.bits_of_float
+
+(* Floats of the same bits, or both NaN. *)
+let same_float =
+  Testable.make
+    ~pp:(fun ppf x -> Format.fprintf ppf "%h" x)
+    ~equal:(fun a b ->
+      Int64.equal (bits a) (bits b) || (Float.is_nan a && Float.is_nan b))
 let nan_with k = Int64.float_of_bits (Int64.logor 0x7ff8_0000_0000_0000L k)
 
 (* Each result's terms, in C order of the results and of the reduced indices. *)
@@ -639,27 +653,27 @@ let law_logsumexp (s, axes, xs) =
   Array.iteri
     (fun i ts ->
       let g = got.(i) in
-      match List.find_opt Float.is_nan ts with
-      | Some nan ->
-          cover "a NaN term" true;
-          equal ~msg:"the first NaN, its bits" int64 (bits nan) (bits g)
-      | None ->
-          let m = List.fold_left Float.max Float.neg_infinity ts in
-          if Float.is_finite m then begin
-            cover "finite" true;
-            let s = List.fold_left (fun s t -> s +. exp (t -. m)) 0. ts in
-            let want = m +. log s in
-            let n = Float.of_int (List.length ts) in
-            at_most
-              ~msg:(Printf.sprintf "%h against %h" g want)
-              float_exact
-              ~than:((n +. 8.) *. epsilon_float *. (1. +. Float.abs want))
-              (Float.abs (g -. want))
-          end
-          else begin
-            cover "no term, or an infinite maximum" true;
-            equal ~msg:"an infinity" int64 (bits m) (bits g)
-          end)
+      if List.exists Float.is_nan ts then begin
+        cover "a NaN term" true;
+        equal ~msg:"a NaN" bool true (Float.is_nan g)
+      end
+      else
+        let m = List.fold_left Float.max Float.neg_infinity ts in
+        if Float.is_finite m then begin
+          cover "finite" true;
+          let s = List.fold_left (fun s t -> s +. exp (t -. m)) 0. ts in
+          let want = m +. log s in
+          let n = Float.of_int (List.length ts) in
+          at_most
+            ~msg:(Printf.sprintf "%h against %h" g want)
+            float_exact
+            ~than:((n +. 8.) *. epsilon_float *. (1. +. Float.abs want))
+            (Float.abs (g -. want))
+        end
+        else begin
+          cover "no term, or an infinite maximum" true;
+          equal ~msg:"an infinity" int64 (bits m) (bits g)
+        end)
     (terms s ax xs)
 
 (* float32 terms near an offset [c] within [w], whose large ratio of mean to
@@ -924,9 +938,9 @@ let law_moments_scan (kind, s, axis, xs) =
     (slices s axis)
 
 (* Both paths: no result along an empty axis; one term's own mean and a
-   variance of [+0]; a NaN's bits from it on; an infinity's mean and a NaN
-   variance; a NaN term's bits past the NaN of opposite infinities; a
-   narrow float at float32, rounded once. *)
+   variance of [+0]; NaNs from a NaN on; an infinity's mean and a NaN
+   variance; NaNs from opposite infinities on; a narrow float at float32,
+   rounded once. *)
 let test_moments_scan_cases () =
   let both name f =
     List.iter (fun p -> f (name ^ ", " ^ path_name p) p) [ Expansion; Cpu ]
@@ -943,14 +957,12 @@ let test_moments_scan_cases () =
         ([| 2.5; 0.; 1e300 |], [| 0.; 0.; 0. |])
         (mean, var));
   both "a NaN" (fun msg p ->
-      let a = nan_with 7L in
-      let xs = [| 1.; a; nan_with 9L; 2. |] in
+      let xs = [| 1.; nan_with 7L; nan_with 9L; 2. |] in
       let mean, var = moments p D.Float64 [| 4 |] xs in
       equal ~msg
-        (pair (array int64) (array int64))
-        ( [| bits 1.; bits a; bits a; bits a |],
-          [| bits 0.; bits a; bits a; bits a |] )
-        (Array.map bits mean, Array.map bits var));
+        (pair (array same_float) (array same_float))
+        ([| 1.; nan; nan; nan |], [| 0.; nan; nan; nan |])
+        (mean, var));
   both "infinities" (fun msg p ->
       let xs = [| 1.; Float.infinity; 2.; Float.neg_infinity |] in
       let mean, var = moments p D.Float64 [| 4 |] xs in
@@ -961,14 +973,12 @@ let test_moments_scan_cases () =
         [ true; true; true; true ]
         (List.map Float.is_nan [ mean.(3); var.(1); var.(2); var.(3) ]));
   both "opposite infinities, then a NaN" (fun msg p ->
-      let a = nan_with 7L and made = 0x7ff8_0000_0000_0000L in
-      let xs = [| Float.infinity; Float.neg_infinity; a; 2. |] in
+      let xs = [| Float.infinity; Float.neg_infinity; nan_with 7L; 2. |] in
       let mean, var = moments p D.Float64 [| 4 |] xs in
       equal ~msg
-        (pair (array int64) (array int64))
-        ( [| bits Float.infinity; made; bits a; bits a |],
-          [| made; made; bits a; bits a |] )
-        (Array.map bits mean, Array.map bits var));
+        (pair (array same_float) (array same_float))
+        ([| Float.infinity; nan; nan; nan |], [| nan; nan; nan; nan |])
+        (mean, var));
   both "float16" (fun msg p ->
       let mean, var = moments p D.Float16 [| 4 |] [| 1.; 2.; 3.; 4. |] in
       let want = A.of_array D.Float32 [| 4 |] [| 0.; 0.25; 2. /. 3.; 1.25 |] in
@@ -1010,21 +1020,18 @@ let test_arg_cases () =
   in
   let f64 e xs =
     let v, p = arg e D.Float64 [| 0 |] [| Array.length xs |] xs in
-    (bits v.(0), p.(0))
+    (v.(0), p.(0))
   in
-  let found = pair int64 int64 in
-  equal ~msg:"max of signed zeros: +0, the first one" found
-    (bits 0., 1L)
+  let found = pair same_float int64 in
+  equal ~msg:"max of signed zeros: +0, the first one" found (0., 1L)
     (f64 Max [| -0.; 0.; -0.; 0. |]);
-  equal ~msg:"min of signed zeros: -0, the first one" found
-    (bits (-0.), 0L)
+  equal ~msg:"min of signed zeros: -0, the first one" found (-0., 0L)
     (f64 Min [| -0.; 0.; -0. |]);
   let a = nan_with 7L and b = nan_with 9L in
-  equal ~msg:"a NaN is the extreme: the first, its bits" found
-    (bits a, 1L)
+  equal ~msg:"a NaN is the extreme, at the first NaN" found (nan, 1L)
     (f64 Max [| 1.; a; 5.; b |]);
-  equal ~msg:"and for min" found (bits a, 1L) (f64 Min [| 1.; a; -5.; b |]);
-  equal ~msg:"ties: the first" found (bits 7., 1L) (f64 Max [| 2.; 7.; 7. |]);
+  equal ~msg:"and for min" found (nan, 1L) (f64 Min [| 1.; a; -5.; b |]);
+  equal ~msg:"ties: the first" found (7., 1L) (f64 Max [| 2.; 7.; 7. |]);
   let grid = [| 1.; 9.; 3.; 9.; 0.; 2. |] in
   equal ~msg:"over both axes: positions in C order of the reduced indices"
     (pair (array float_exact) (array int64))
@@ -1090,16 +1097,14 @@ let test_moments_cases () =
   in
   equal ~msg:"no term: NaN" (pair bool bool) (true, true)
     (Float.is_nan (read mean).(0), Float.is_nan (read var).(0));
-  let a = nan_with 7L in
   let mean, var =
     reduce1
       (Moments (0, Nx.float64))
       [| 0 |]
-      (vector D.Float64 [| 1.; a; nan_with 9L |])
+      (vector D.Float64 [| 1.; nan_with 7L; nan_with 9L |])
   in
-  equal ~msg:"a NaN term: the first, its bits" (pair int64 int64)
-    (bits a, bits a)
-    (bits (read mean).(0), bits (read var).(0));
+  equal ~msg:"a NaN term: NaNs" (pair bool bool) (true, true)
+    (Float.is_nan (read mean).(0), Float.is_nan (read var).(0));
   let mean, var =
     reduce1
       (Moments (0, Nx.float16))
@@ -1181,12 +1186,6 @@ let each_path
   expanded (fun () ->
       f "expansion" (fun strided a -> transposed value strided a));
   f "nx.cpu" (fun strided a -> transposed value strided a)
-
-(* Each element's bits, as the integers of its bytes. *)
-let element_bits (type v s) (a : (v, s) A.t) =
-  let w = Int.max 1 (D.bits (A.dtype a) / 8) in
-  let b = bits_of a in
-  Array.init (Array.length b / w) (fun i -> Array.sub b (i * w) w)
 
 (* A shape of rank at least one and an axis of it, at times long enough for
    several levels of the expansion's recursion. *)
@@ -1301,36 +1300,34 @@ let law_logsumexp_scan (Float_case (dt, s, axis, strided, xs)) =
   cover_scan s axis strided;
   each_path (fun by place ->
       let x = place strided a in
-      let ts = read x and tb = element_bits (host_array x) in
+      let ts = read x in
       let y = scan1 (Logsumexp (0, dt)) axis x in
-      let got = read y and gb = element_bits (host_array y) in
+      let got = read y in
       List.iter
         (fun ps ->
           let at = List.nth ps (List.length ps - 1) in
           let terms = List.map (fun p -> ts.(p)) ps in
           let g = got.(at) in
-          match List.find_opt (fun p -> Float.is_nan ts.(p)) ps with
-          | Some p ->
-              cover "a NaN term" true;
-              equal
-                ~msg:(by ^ ": the first NaN, its bits")
-                (array int) tb.(p) gb.(at)
-          | None ->
-              let m = List.fold_left Float.max Float.neg_infinity terms in
-              if not (Float.is_finite m) then begin
-                cover "an infinite maximum" true;
-                equal ~msg:(by ^ ": an infinity") float_exact m g
-              end
-              else begin
-                cover "finite" true;
-                cover "a term far below the maximum"
-                  (List.exists (fun t -> t < m -. 100.) terms);
-                let want, err = lse_ref m terms in
-                let bound = lse_bound u (List.length terms) want +. err in
-                let msg = Printf.sprintf "%s: %h against %h" by g want in
-                at_least ~msg float_exact ~than:(rounded dt (want -. bound)) g;
-                at_most ~msg float_exact ~than:(rounded dt (want +. bound)) g
-              end)
+          if List.exists Float.is_nan terms then begin
+            cover "a NaN term" true;
+            equal ~msg:(by ^ ": a NaN") bool true (Float.is_nan g)
+          end
+          else
+            let m = List.fold_left Float.max Float.neg_infinity terms in
+            if not (Float.is_finite m) then begin
+              cover "an infinite maximum" true;
+              equal ~msg:(by ^ ": an infinity") float_exact m g
+            end
+            else begin
+              cover "finite" true;
+              cover "a term far below the maximum"
+                (List.exists (fun t -> t < m -. 100.) terms);
+              let want, err = lse_ref m terms in
+              let bound = lse_bound u (List.length terms) want +. err in
+              let msg = Printf.sprintf "%s: %h against %h" by g want in
+              at_least ~msg float_exact ~than:(rounded dt (want -. bound)) g;
+              at_most ~msg float_exact ~than:(rounded dt (want +. bound)) g
+            end)
         (prefixes s axis))
 
 let test_logsumexp_scan_cases () =
@@ -1359,13 +1356,10 @@ let test_logsumexp_scan_cases () =
         (array (float 1e-12))
         [| -2000.; -2000. +. ln2; 0. |]
         (lse D.Float64 [| 3 |] [| -2000.; -2000.; 0. |]);
-      let a = nan_with 7L in
       equal
-        ~msg:(msg "a NaN: the first, its bits, from it on")
-        (array int64)
-        [| bits 1.; bits a; bits a; bits a |]
-        (Array.map bits
-           (lse D.Float64 [| 4 |] [| 1.; a; nan_with 9L; inf |]));
+        ~msg:(msg "a NaN, from the first on")
+        (array same_float) [| 1.; nan; nan; nan |]
+        (lse D.Float64 [| 4 |] [| 1.; nan_with 7L; nan_with 9L; inf |]);
       equal ~msg:(msg "infinities") (array float_exact)
         [| ninf; ninf; 1.; inf; inf |]
         (lse D.Float64 [| 5 |] [| ninf; ninf; 1.; inf; ninf |]);
@@ -1453,7 +1447,8 @@ let law_arg_scan (Arg_case { dt; key; s; axis; strided; xs }) =
         (fun (name, e, flip) ->
           let by = by ^ " " ^ name in
           let v, p = scan1 (Arg (e, 0, dt)) axis x in
-          let vb = element_bits (host_array v) and p = read p in
+          let vs = read v and vb = element_bits (host_array v) in
+          let p = read p in
           List.iter
             (fun ps ->
               let at = List.nth ps (List.length ps - 1) in
@@ -1464,9 +1459,13 @@ let law_arg_scan (Arg_case { dt; key; s; axis; strided; xs }) =
               cover "a tie"
                 (List.exists (fun i -> i <> first && tb.(i) = tb.(first)) ps);
               equal ~msg:(by ^ ": position") int64 want p.(at);
-              equal
-                ~msg:(by ^ ": the extreme's bits")
-                (array int) tb.(first) vb.(at))
+              if Float.is_nan keys.(first) then
+                equal ~msg:(by ^ ": a NaN") bool true
+                  (Float.is_nan (key vs.(at)))
+              else
+                equal
+                  ~msg:(by ^ ": the extreme's bits")
+                  (array int) tb.(first) vb.(at))
             (prefixes s axis))
         [ ("max", (Max : Nx_kernel.extreme), false); ("min", Min, true) ])
 
@@ -1478,30 +1477,25 @@ let test_arg_scan_cases () =
         let v, q = scan1 (Arg (e, 0, dt)) (Array.length s - 1) x in
         (read v, read q)
       in
-      let f64 e xs =
-        let v, q = arg e D.Float64 [| Array.length xs |] xs in
-        (Array.map bits v, q)
-      in
-      let found = pair (array int64) (array int64) in
+      let f64 e xs = arg e D.Float64 [| Array.length xs |] xs in
+      let found = pair (array same_float) (array int64) in
       let v, q = arg Max D.Int32 [| 2; 0 |] [||] in
       equal ~msg:(msg "an empty axis") (pair int int) (0, 0)
         (Array.length v, Array.length q);
       equal
         ~msg:(msg "max of signed zeros: +0, the first one")
         found
-        (Array.map bits [| -0.; 0.; 0.; 0. |], [| 0L; 1L; 1L; 1L |])
+        ([| -0.; 0.; 0.; 0. |], [| 0L; 1L; 1L; 1L |])
         (f64 Max [| -0.; 0.; -0.; 0. |]);
       equal
         ~msg:(msg "min of signed zeros: -0, the first one")
         found
-        (Array.map bits [| 0.; -0.; -0.; -0. |], [| 0L; 1L; 1L; 1L |])
+        ([| 0.; -0.; -0.; -0. |], [| 0L; 1L; 1L; 1L |])
         (f64 Min [| 0.; -0.; 0.; -0. |]);
       let a = nan_with 7L and b = nan_with 9L in
-      let first_nan =
-        (Array.map bits [| 1.; a; a; a |], [| 0L; 1L; 1L; 1L |])
-      in
+      let first_nan = ([| 1.; nan; nan; nan |], [| 0L; 1L; 1L; 1L |]) in
       equal
-        ~msg:(msg "a NaN is the max: the first, its bits")
+        ~msg:(msg "a NaN is the max, at the first NaN")
         found first_nan
         (f64 Max [| 1.; a; 5.; b |]);
       equal
@@ -1509,7 +1503,7 @@ let test_arg_scan_cases () =
         found first_nan
         (f64 Min [| 1.; a; -5.; b |]);
       equal ~msg:(msg "ties: the first") found
-        (Array.map bits [| 2.; 7.; 7. |], [| 0L; 1L; 1L |])
+        ([| 2.; 7.; 7. |], [| 0L; 1L; 1L |])
         (f64 Max [| 2.; 7.; 7. |]);
       let grid = [| 1.; 9.; 3.; 9.; 0.; 2. |] in
       let v, q =
@@ -1530,12 +1524,18 @@ let test_arg_scan_cases () =
         (pair (array bool) (array int64))
         ([| false; true; true |], [| 0L; 1L; 1L |])
         (arg Max D.Bool [| 3 |] [| false; true; true |]);
-      (* Complex numbers order by real part, then imaginary part. *)
+      (* Complex numbers order by real part, then imaginary part. A number
+         with a NaN part is a NaN. *)
       let z re im = { Complex.re; im } in
       let parts (v, q) =
-        (Array.map (fun (c : Complex.t) -> (bits c.re, bits c.im)) v, q)
+        ( Array.map
+            (fun (c : Complex.t) ->
+              if Float.is_nan c.re || Float.is_nan c.im then None
+              else Some (bits c.re, bits c.im))
+            v,
+          q )
       in
-      let zs = pair (array (pair int64 int64)) (array int64) in
+      let zs = pair (array (option (pair int64 int64))) (array int64) in
       let want v q = parts (v, q) in
       equal ~msg:(msg "complex128 max, by parts, ties the first") zs
         (want [| z 1. 2.; z 1. 3.; z 1. 3.; z 1. 3. |] [| 0L; 1L; 1L; 1L |])
@@ -1555,7 +1555,8 @@ let test_arg_scan_cases () =
    through Nx on the host, against folds of their terms. A number with a NaN
    part is a NaN. A product's terms are Gaussian integers whose parts are 0 or
    ± a power of two, so every order of multiplication gives the exact product
-   but for the sign of a zero part: products compare by value, NaNs by bits. *)
+   but for the sign of a zero part: products compare by value, extremes by
+   bits, and a NaN as any NaN. *)
 
 type zcase =
   | Zcase : {
@@ -1570,11 +1571,13 @@ type zcase =
 let znan (c : Complex.t) = Float.is_nan c.re || Float.is_nan c.im
 let zbits (c : Complex.t) = (bits c.re, bits c.im)
 let pp_z ppf (c : Complex.t) = Format.fprintf ppf "%h%+hi" c.re c.im
-let z_bits = Testable.make ~pp:pp_z ~equal:(fun a b -> zbits a = zbits b)
+let z_bits =
+  Testable.make ~pp:pp_z ~equal:(fun a b ->
+      zbits a = zbits b || (znan a && znan b))
 
 let z_value =
   Testable.make ~pp:pp_z ~equal:(fun (a : Complex.t) b ->
-      if znan a || znan b then zbits a = zbits b
+      if znan a || znan b then znan a && znan b
       else a.re = b.re && a.im = b.im)
 
 (* A NaN of payload [k] in bits float32 keeps. *)
@@ -1788,9 +1791,8 @@ let test_complex_cases () =
   equal ~msg:"a product of no term is 1 + 0i" (array z_bits) [| z 1. 0. |]
     (read (Nx.prod (v D.Complex64 [||])));
   (* (∞ + 0i)(0 + i) is NaN + ∞i, as Mul's textbook product gives it. *)
-  let quiet = Int64.float_of_bits 0x7ff8_0000_0000_0000L in
-  equal ~msg:"a NaN product of numbers is the quiet NaN in each part"
-    (array z_bits) [| z quiet quiet |]
+  equal ~msg:"a NaN product of numbers is a NaN" (array z_bits)
+    [| z nan Float.infinity |]
     (read (Nx.prod (v D.Complex128 [| z Float.infinity 0.; z 0. 1. |])));
   (* 1 + 0i times either would make a NaN part or flip a zero's sign. *)
   equal ~msg:"a product of one term is that term" (array z_bits)
@@ -1929,19 +1931,19 @@ let prefix_case =
         axis k)
     (one_of [ make D.Float32; make D.Float64 ])
 
-(* The bits of each result of the scan of [x] by [r] along [axis]. *)
+(* The bits of each result of the scan of [x] by [r] along [axis], [None]
+   for a NaN. *)
 let scanned (type s d) (r : Nx_kernel.reduction) (dt : (float, s) D.t) axis
     (x : (float, s, d) Nx.t) =
   match r with
-  | Monoid m -> [ element_bits (host_array (scan1 (Monoid (m, 0, dt)) axis x)) ]
-  | Logsumexp ->
-      [ element_bits (host_array (scan1 (Logsumexp (0, dt)) axis x)) ]
+  | Monoid m -> [ blind (host_array (scan1 (Monoid (m, 0, dt)) axis x)) ]
+  | Logsumexp -> [ blind (host_array (scan1 (Logsumexp (0, dt)) axis x)) ]
   | Moments ->
       let m, v = scan1 (Moments (0, dt)) axis x in
-      [ element_bits (host_array m); element_bits (host_array v) ]
+      [ blind (host_array m); blind (host_array v) ]
   | Arg e ->
       let v, p = scan1 (Arg (e, 0, dt)) axis x in
-      [ element_bits (host_array v); element_bits (host_array p) ]
+      [ blind (host_array v); blind (host_array p) ]
 
 (* Cases the generator draws too rarely for every run: lengths 1 and 2, a
    power of two and its neighbours on either side, specials. *)
@@ -1996,7 +1998,7 @@ let law_scan_prefix (Prefix_case (dt, s, axis, k, xs)) =
           List.iter2
             (fun w p ->
               let kept = Array.map (fun i -> w.(i)) from in
-              equal ~msg (array (array int)) kept p)
+              equal ~msg blind_bits kept p)
             (scanned r dt axis whole) (scanned r dt axis prefix))
         [
           ("sum", Nx_kernel.Monoid Sum);
@@ -2078,10 +2080,10 @@ let law_moments_bits (Bits_case (dt, s, axis, strided, xs)) =
   let a = A.of_array dt s xs in
   let scan on =
     let m, v = scan1 (Moments (0, dt)) axis (transposed on strided a) in
-    (element_bits (host_array m), element_bits (host_array v))
+    (blind (host_array m), blind (host_array v))
   in
   equal ~msg:"nx.cpu's bits, the expansion's"
-    (pair (array (array int)) (array (array int)))
+    (pair blind_bits blind_bits)
     (expanded (fun () -> scan value))
     (scan value)
 
@@ -2197,9 +2199,9 @@ let law_logsumexp_bits (Lse_case (dt, s, axis, view, xs)) =
   in
   let scan () =
     let y = scan1 (Logsumexp (0, dt)) axis (x ()) in
-    element_bits (host_array y)
+    blind (host_array y)
   in
-  equal ~msg:"nx.cpu's bits, the expansion's" (array (array int))
+  equal ~msg:"nx.cpu's bits, the expansion's" blind_bits
     (expanded scan) (scan ())
 
 let test_optional_rules () =
@@ -2370,8 +2372,8 @@ let running_rows (type v s d a) (x : (v, s, d) Nx.t)
 let row_axes = [ 1 ]
 let row_axis = 1
 
-(* The operations nx.mli's reductions section promises the first NaN
-   quieted of: the monoids and their scans, the positions of the extremes
+(* The operations nx.mli's reductions section promises a NaN of where a NaN
+   term reaches: the monoids and their scans, the positions of the extremes
    and the extremes Arg returns, the mean, the variance, the standard
    deviation, logsumexp and the running moments, on one device, and over
    an axis cut across devices where partials keep bits. *)
@@ -2588,44 +2590,54 @@ let nan_parts (type v s) (a : (v, s) A.t) : bool array array =
   | _ ->
       Array.map (fun x -> [| Float.is_nan x |]) (A.to_array (cast D.Float64 a))
 
-(* [want], the bytes of each result the host gives, with each part that a
-   NaN term reaches replaced: by the first NaN term's, quieted, where a
-   complex number with a NaN part is a NaN, by its part's first NaN part,
-   quieted, where the parts fold apart, and a position by the first NaN
-   term's. *)
-let nan_want o rows n (nan : bool array array) (quiet : string array)
-    (want : string array) =
+(* The results [es] of [o] over [dt], each as its parts' bytes, a NaN part
+   as ["nan"] where the parts fold apart, else a number with a NaN part as
+   ["nan"]: a NaN result promises a NaN, never which one. *)
+let blinded (type v s) o (dt : (v, s) D.t) (es : string array) =
+  if o.result = Position then Array.map (fun e -> [| e |]) es
+  else
+    Array.map
+      (fun e ->
+        let one = A.v dt (L.contiguous [| 1 |]) (Rig.Buffer.of_string e) in
+        let nan = (nan_parts one).(0) in
+        if o.apart && Array.length nan = 2 then
+          let pw = String.length e / 2 in
+          Array.init 2 (fun p ->
+              if nan.(p) then "nan" else String.sub e (p * pw) pw)
+        else if Array.exists Fun.id nan then [| "nan" |]
+        else [| e |])
+      es
+
+(* [want], each result the host gives as {!blinded} reads it, with each part
+   that a NaN term reaches made ["nan"]: the whole number where a complex
+   number with a NaN part is a NaN, the part where the parts fold apart, and
+   a position the first NaN term's. *)
+let nan_want o rows n (nan : bool array array) (want : string array array) =
   let parts = Array.length nan.(0) in
-  let pw = if n = 0 then 0 else String.length quiet.(0) / parts in
   let want = Array.copy want in
   let first r upto test =
     let rec go j = if j > upto then None else if test (r * n + j) then Some j else go (j + 1) in
     go 0
   in
+  let reached r upto test = first r upto test <> None in
   let any i = Array.exists Fun.id nan.(i) in
-  let set_part k p src =
-    let b = Bytes.of_string want.(k) in
-    Bytes.blit_string src (p * pw) b (p * pw) pw;
-    want.(k) <- Bytes.to_string b
-  in
   let settle k r upto =
     match o.result with
     | Position -> (
         match first r upto any with
-        | Some j -> want.(k) <- part_bytes 8 (Int64.of_int j)
+        | Some j -> want.(k) <- [| part_bytes 8 (Int64.of_int j) |]
         | None -> ())
     | Folded | Running ->
         if o.apart && parts = 2 then
           List.iter
             (fun p ->
-              match first r upto (fun i -> nan.(i).(p)) with
-              | Some j -> set_part k p quiet.((r * n) + j)
-              | None -> ())
+              if reached r upto (fun i -> nan.(i).(p)) then begin
+                let e = Array.copy want.(k) in
+                e.(p) <- "nan";
+                want.(k) <- e
+              end)
             [ 0; 1 ]
-        else (
-          match first r upto any with
-          | Some j -> want.(k) <- quiet.((r * n) + j)
-          | None -> ())
+        else if reached r upto any then want.(k) <- [| "nan" |]
   in
   for r = 0 to rows - 1 do
     match o.result with
@@ -2648,15 +2660,10 @@ let law_nans (Nan_case { dt; rows; n; bytes }) =
       (fun r -> List.find_opt any (List.init n (fun j -> (r * n) + j)))
       (List.init rows Fun.id)
   in
-  let sign i =
-    let e = raw.(i) in
-    Char.code e.[String.length e - 1] land 0x80 <> 0
-  in
   cover "a signalling NaN first in a row"
     (List.exists (fun i -> raw.(i) <> quiet.(i)) firsts);
   cover "a quiet NaN first in a row"
     (List.exists (fun i -> raw.(i) = quiet.(i)) firsts);
-  cover "a NaN of the sign bit set first in a row" (List.exists sign firsts);
   cover "a row of no NaN" (List.length firsts < rows);
   cover "a NaN first past the first device's window"
     (List.exists (fun i -> i mod n >= (n + 2) / 3) firsts);
@@ -2670,13 +2677,13 @@ let law_nans (Nan_case { dt; rows; n; bytes }) =
   List.iter
     (fun o ->
       if (not o.floats) || parts_of dt = 1 then begin
-        let host = (List.hd placings).go o a in
-        let want = nan_want o rows n nan quiet host in
+        let host = blinded o dt ((List.hd placings).go o a) in
+        let want = nan_want o rows n nan host in
         List.iter
           (fun p ->
             if not (p.cut && o.rounds) then
-              equal ~msg:(o.oname ^ ", " ^ p.pname) (array string) want
-                (p.go o a))
+              equal ~msg:(o.oname ^ ", " ^ p.pname) (array (array string))
+                want (blinded o dt (p.go o a)))
           placings
       end)
     nan_ops
@@ -2784,8 +2791,8 @@ let test_carried_cut () =
   equal (array int32) want (A.to_array (host_array (carried cut on)))
 
 (* Nx.logcumsumexp: within nx_kernel.mli's bound of a float64
-   log-sum-exp over each prefix, specials and prefixes bit for bit,
-   and the host's bits wherever the value lies. *)
+   log-sum-exp over each prefix, specials and prefixes bit for bit, a NaN as
+   any NaN, and the host's bits wherever the value lies. *)
 
 type lcse_case =
   | Lcse_case :
@@ -2846,8 +2853,8 @@ let law_lcse (Lcse_case (dt, s, axis, strided, xs)) =
     (match axis with Some a -> s.(a) > 4 | None -> false);
   let y = Nx.logcumsumexp ?axis x in
   equal ~msg:"shape" (array int) s (Nx.shape y);
-  let ts = read x and tb = element_bits (host_array x) in
-  let got = read y and gb = element_bits (host_array y) in
+  let ts = read x in
+  let got = read y in
   let ps =
     match axis with Some a -> prefixes s a | None -> prefixes [| n |] 0
   in
@@ -2857,34 +2864,36 @@ let law_lcse (Lcse_case (dt, s, axis, strided, xs)) =
       let terms = List.map (fun p -> ts.(p)) ps in
       let g = got.(at) in
       let m = List.fold_left Float.max Float.neg_infinity terms in
-      match List.find_opt (fun p -> Float.is_nan ts.(p)) ps with
-      | Some p ->
-          cover "a NaN term" true;
-          equal ~msg:"the first NaN, its bits" (array int) tb.(p) gb.(at)
-      | None when not (Float.is_finite m) ->
-          cover "+inf" (m > 0.);
-          cover "every term -inf" (m < 0.);
-          equal ~msg:"an infinity" float_exact m g
-      | None ->
-          cover "finite" true;
-          cover "a -inf term among finite ones"
-            (List.exists (fun t -> t = Float.neg_infinity) terms);
-          let want, err = lse_ref m terms in
-          let bound = lse_bound u (List.length terms) want +. err in
-          let msg = Printf.sprintf "%h against %h" g want in
-          at_least ~msg float_exact ~than:(rounded dt (want -. bound)) g;
-          at_most ~msg float_exact ~than:(rounded dt (want +. bound)) g)
+      if List.exists Float.is_nan terms then begin
+        cover "a NaN term" true;
+        equal ~msg:"a NaN" bool true (Float.is_nan g)
+      end
+      else if not (Float.is_finite m) then begin
+        cover "+inf" (m > 0.);
+        cover "every term -inf" (m < 0.);
+        equal ~msg:"an infinity" float_exact m g
+      end
+      else begin
+        cover "finite" true;
+        cover "a -inf term among finite ones"
+          (List.exists (fun t -> t = Float.neg_infinity) terms);
+        let want, err = lse_ref m terms in
+        let bound = lse_bound u (List.length terms) want +. err in
+        let msg = Printf.sprintf "%h against %h" g want in
+        at_least ~msg float_exact ~than:(rounded dt (want -. bound)) g;
+        at_most ~msg float_exact ~than:(rounded dt (want +. bound)) g
+      end)
     ps
 
 (* The logcumsumexp of a prefix of the axis is the prefix of the
-   logcumsumexp, bit for bit; over the elements, it is the logcumsumexp of
-   the elements in C order. Cut over three devices along any axis, it has the
-   host's bits. *)
+   logcumsumexp, bit for bit or both NaN; over the elements, it is the
+   logcumsumexp of the elements in C order. Cut over three devices along any
+   axis, it has the host's bits. *)
 let law_lcse_bits ((Lcse_case (dt, s, axis, strided, xs)), cut, keep) =
   let x = transposed value strided (A.of_array dt s xs) in
   let r = Array.length s in
   let y = Nx.logcumsumexp ?axis x in
-  let bits_of y = element_bits (host_array y) in
+  let bits_of y = blind (host_array y) in
   (match axis with
   | Some a ->
       let k = keep mod (s.(a) + 1) in
@@ -2893,19 +2902,19 @@ let law_lcse_bits ((Lcse_case (dt, s, axis, strided, xs)), cut, keep) =
       let prefix t =
         Nx.slice (List.init r (fun i -> if i = a then Nx.R (0, k) else Nx.A)) t
       in
-      equal ~msg:"the prefix" (array (array int))
+      equal ~msg:"the prefix" blind_bits
         (bits_of (prefix y))
         (bits_of (Nx.logcumsumexp ~axis:a (prefix x)))
   | None ->
       let flat = Nx.reshape [| Array.length xs |] x in
-      equal ~msg:"C order" (array (array int))
+      equal ~msg:"C order" blind_bits
         (bits_of (Nx.reshape [| Array.length xs |] y))
         (bits_of (Nx.logcumsumexp ~axis:0 flat)));
   let c = cut mod r in
   cover "cut along the scanned axis" (axis = Some c);
   cover "cut along another axis" (axis <> None && axis <> Some c);
   let placed = Nx.place (Cpu3.split ~axis:c) x in
-  equal ~msg:"cut over three devices" (array (array int)) (bits_of y)
+  equal ~msg:"cut over three devices" blind_bits (bits_of y)
     (bits_of (Nx.logcumsumexp ?axis placed))
 
 let lcse_bits_case =
@@ -2945,10 +2954,9 @@ let test_lcse_cases () =
     (lcse (f64 [| ninf; ninf; 0.; ninf |]));
   equal ~msg:"+inf from it on" (array float_exact) [| 1.; inf; inf; inf |]
     (lcse (f64 [| 1.; inf; 2.; ninf |]));
-  let a = nan_with 7L in
-  equal ~msg:"the first NaN, its bits, from it on" (array int64)
-    [| bits 1.; bits a; bits a; bits a |]
-    (Array.map bits (lcse (f64 [| 1.; a; nan_with 9L; inf |])));
+  equal ~msg:"a NaN, from the first on" (array same_float)
+    [| 1.; nan; nan; nan |]
+    (lcse (f64 [| 1.; nan_with 7L; nan_with 9L; inf |]));
   let x = value (A.of_array D.Float32 [| 2; 3 |] (Array.make 6 1.)) in
   names "logcumsumexp" (fun () -> Nx.logcumsumexp ~axis:2 x)
 
@@ -2990,8 +2998,8 @@ let reductions_group =
       test "a carried scan over a value cut along its axis is the whole's"
         test_carried_cut;
       prop
-        "a NaN result is the first NaN quieted on the host, through an \
-         expansion and, where partials keep bits, cut along the reduced axis"
+        "a NaN term makes a NaN result on the host, through an expansion \
+         and, where partials keep bits, cut along the reduced axis"
         nan_case law_nans;
     ]
 

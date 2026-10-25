@@ -62,45 +62,6 @@ let of_elements (D.Any dt) s es =
 (* The element of zero bits. *)
 let zero (D.Any dt) = String.make (max 1 (D.bits dt / 8)) '\000'
 
-(* The exponent and fraction widths of [dt]'s floats, or of its parts, where
-   a NaN of them can lack the quiet bit: float8_e4m3fn's one NaN of each sign
-   has every fraction bit set, and float4_e2m1fn has none. *)
-let quiet_fields (D.Any dt) =
-  match dt with
-  | D.Float64 | D.Complex128 -> Some (11, 52)
-  | D.Float32 | D.Complex64 -> Some (8, 23)
-  | D.Float16 -> Some (5, 10)
-  | D.Bfloat16 -> Some (8, 7)
-  | D.Float8_e5m2 -> Some (5, 2)
-  | _ -> None
-
-(* [e], an element of [d], with each NaN part quieted, as an operation
-   returns it: its quiet bit, the top of its fraction, set, its sign and the
-   rest of its payload kept. *)
-let quiet d e =
-  match quiet_fields d with
-  | None -> e
-  | Some (exp, frac) ->
-      let w = (1 + exp + frac) / 8 in
-      let b = Bytes.of_string e in
-      for p = 0 to (String.length e / w) - 1 do
-        let v = ref 0L in
-        for j = w - 1 downto 0 do
-          v := Int64.(logor (shift_left !v 8) (of_int (Char.code e.[(p * w) + j])))
-        done;
-        let ones = Int64.(sub (shift_left 1L exp) 1L) in
-        let field = Int64.(logand (shift_right_logical !v frac) ones) in
-        let fraction = Int64.(logand !v (sub (shift_left 1L frac) 1L)) in
-        if field = ones && fraction <> 0L then begin
-          let q = Int64.(logor !v (shift_left 1L (frac - 1))) in
-          for j = 0 to w - 1 do
-            Bytes.set b ((p * w) + j)
-              (Char.chr (Int64.to_int (Int64.shift_right_logical q (8 * j)) land 0xFF))
-          done
-        end
-      done;
-      Bytes.to_string b
-
 (* Values *)
 
 let f32 x =
@@ -283,23 +244,15 @@ let get32 e at = Int32.float_of_bits (String.get_int32_le e at)
 let get64 e at = Int64.float_of_bits (String.get_int64_le e at)
 let round32 x = Int32.float_of_bits (Int32.bits_of_float x)
 
-(* The quiet NaN of a clear sign bit, the NaN a kind makes from numbers. The
-   hardware's may differ: x86's has the sign bit set. *)
-let made_nan = Int64.float_of_bits 0x7FF8000000000000L
-
-(* Prog.Add on two floats of 32 or 64 bits, from their bits: the first NaN
-   operand's bits, else the rounded sum, +0 for a zero, and {!made_nan} for
-   opposite infinities. *)
+(* Prog.Add on two floats of 32 or 64 bits, from their bits: the rounded
+   sum, +0 for a zero, a NaN where an operand is or opposite infinities
+   meet. *)
 let add_bits ~w a b =
   let get, put, round =
     if w = 4 then (get32, f32, round32) else (get64, f64, Fun.id)
   in
-  let x = get a 0 and y = get b 0 in
-  if Float.is_nan x then a
-  else if Float.is_nan y then b
-  else
-    let s = round (x +. y) in
-    put (if Float.is_nan s then made_nan else if s = 0. then 0. else s)
+  let s = round (get a 0 +. get b 0) in
+  put (if s = 0. then 0. else s)
 
 (* The order of two floats that are not NaN, -0 below +0. *)
 let compare_floats x y =
@@ -379,6 +332,32 @@ let compare_elements (D.Any dt as d) a b =
   else if D.is D.Signed dt then Int64.compare (int_value d a) (int_value d b)
   else Int64.unsigned_compare (int_value d a) (int_value d b)
 
+(* Whether the element [e] of [d] is a NaN, a complex number where a part
+   is. *)
+let nan_of (D.Any dt as d) e =
+  if D.is D.Complex dt then
+    let h = String.length e / 2 in
+    let get = if h = 4 then get32 else get64 in
+    Float.is_nan (get e 0) || Float.is_nan (get e h)
+  else if is_narrow d then Float.is_nan (decode d e)
+  else if D.is D.Float dt then
+    Float.is_nan (if String.length e = 4 then get32 e 0 else get64 e 0)
+  else false
+
+(* Elements of [d] that have the same bits or are both NaN, a complex
+   number's parts each so: a NaN result promises a NaN, never which one,
+   and a NaN part leaves the other part's result to be checked. *)
+let same (D.Any dt as d) =
+  let blind d a b = String.equal a b || (nan_of d a && nan_of d b) in
+  let parts a b =
+    let h = String.length a / 2 in
+    let part = if h = 4 then D.Any D.Float32 else D.Any D.Float64 in
+    let at e i = String.sub e i h in
+    blind part (at a 0) (at b 0) && blind part (at a h) (at b h)
+  in
+  let equal = if D.is D.Complex dt then parts else blind d in
+  Testable.make ~pp:(Testable.pp Testable.string) ~equal
+
 (* Shapes near a fit *)
 
 (* [s] mostly, else [s] missed by one change: an extent one larger, the last
@@ -452,9 +431,9 @@ let tail_shapes =
 
 (* [call xs dsts] into fresh destinations of the dtypes and shapes [dsts], then
    with [xs] and the destinations as {!with_guards} places them: the same
-   answer and, where it is [Done], the same elements, bit for bit. The
-   answer. *)
-let same_guarded side ~call xs dsts =
+   answer and, where it is [Done], the same elements, bit for bit, or any NaN
+   for a NaN where [any_nan]. The answer. *)
+let same_guarded ?(any_nan = false) side ~call xs dsts =
   let fresh =
     Array.map (fun (D.Any dt, s) -> A.Any (A.create Rig.host dt s)) dsts
   in
@@ -464,6 +443,8 @@ let same_guarded side ~call xs dsts =
       equal answer want (call (Array.map guard xs) ds);
       if want = A.Done then
         Array.iteri
-          (fun i d -> equal (array string) (elements fresh.(i)) (elements d))
+          (fun i d ->
+            let elt = if any_nan then same (fst dsts.(i)) else string in
+            equal (array elt) (elements fresh.(i)) (elements d))
           ds);
   want

@@ -35,14 +35,14 @@
    are exact. exp2 is exact at integers whose power is in the type, log2 at
    powers of two.
 
-   NaN. A float kind with a NaN operand gives its first NaN operand, its
-   bits unchanged; neg and abs set its sign bit as they do a number's. A
-   NaN a kind makes from numbers, as sin of an infinity, is the quiet NaN of
-   a clear sign bit. The hardware's choice would differ: of two NaN
-   operands x86 returns one by their order, which a compiler sets per
-   target and differently in vector and scalar code, and its own NaN has
-   the sign bit set where Arm's has it clear. So a kind's NaN bits are the
-   same everywhere, as its numbers are.
+   NaN. A float kind with a NaN operand gives a NaN, but for pow(1, y) and
+   pow(x, 0), which Annex F makes 1, and so does a kind that IEEE 754 or
+   Annex F makes one from numbers, as sin of an infinity. Which NaN, its
+   sign and its payload are unspecified: of two NaN operands x86 returns
+   one by their order, which a compiler sets per target and differently in
+   vector and scalar code, and its own NaN has the sign bit set where Arm's
+   has it clear. neg and abs set a NaN's sign bit as they do a number's,
+   its payload kept.
 
    Each transcendental is one polynomial in one evaluation order, with fma
    where it is written and nowhere else, so its bits, NaNs aside, are the
@@ -511,7 +511,7 @@ NX_INLINE float nx_mod_f32(float x, float y) {
   uint32_t sx = ux & 0x80000000u;
   ux &= 0x7FFFFFFFu;
   if (uy == 0 || ux >= 0x7F800000u || uy > 0x7F800000u)
-    return nx_float_nan(x) ? x : (nx_float_nan(y) ? y : NX_NAN_F32);
+    return NX_NAN_F32;
   if (ux < uy) return x;
   /* Significands as integers with their leading bit at bit 23, exponents
      lowered for subnormals. */
@@ -555,7 +555,6 @@ NX_INLINE float nx_atan_f32(float x) {
   float p = nx_atan_kernel_f32(big ? 1.0f / a : a);
   float y = big ? NX_PIO2_HI_F32 + (NX_PIO2_LO_F32 - p) : p;
   y = nx_copysign_f32(y, x);
-  y = y != y ? NX_NAN_F32 : y;
   return nx_blend_f32(x != x, x, y);
 }
 
@@ -884,7 +883,7 @@ NX_INLINE nx_rem_f64 nx_rem_pio2_big_f64(NX_TABLE_PTR t, double x) {
 }
 
 NX_INLINE double nx_mod_f64(double a, double b) {
-  return nx_nan2_f64(a, b, fmod(a, b));
+  return fmod(a, b);
 }
 
 /* atan t = t + t^3 A(t^2) on |t| <= 7/16, relative error 2^-57.4
@@ -1064,8 +1063,8 @@ NX_INLINE uint32_t nx_double_sign(double d) {
    exact z is normwise, |z' - z| / |z|; each bound holds where no part of
    the computation overflows or underflows.
 
-   Add, Sub and Neg are the parts', each part following its kind's NaN
-   rule, so a NaN part leaves the other part's result as it is. Mul is the
+   Add, Sub and Neg are the parts', so a NaN part leaves the other part's
+   result as it is. Mul is the
    textbook product, (ar br - ai bi) + (ar bi + ai br) i, each part one fma
    over the other product: within 2u (Jeannerod, Kornerup, Louvet and
    Muller, 2017).
@@ -1077,10 +1076,7 @@ NX_INLINE uint32_t nx_double_sign(double d) {
    2^-50 i) / (0 - 2^-1074 i) is -inf + NaN i in glibc's libgcc, -inf + 0 i
    here. Each product that feeds a sum is an fma. Within 4u. Recip is
    (1 + 0 i) / x so. A NaN part in an operand of Mul, Fdiv or Recip makes
-   both parts of the result NaN, and every NaN part of their results is
-   the quiet NaN of a clear sign bit: which NaN an operation propagates
-   varies between its scalar and vector instructions, and a negated
-   operand flips its sign.
+   both parts of the result NaN.
 
    Order is the real part's, then the imaginary part's. Equal holds where
    both parts are equal, Not_equal where Equal does not, Less and
@@ -1109,12 +1105,14 @@ NX_INLINE uint32_t nx_double_sign(double d) {
    at least 1.3u inside its bound (log2's 2.66u at c128, tan's 4.53u at
    c64). On the real axis, at a non-zero real part where
    the float kind is defined, the real part is the float kind's result;
-   pow's is at a positive base and a real exponent. Every NaN part of their
-   results is the quiet NaN of a clear sign bit.
+   pow's is at a positive base and a real exponent.
 
    Where Annex G leaves a sign unspecified, each kind keeps f(conj z) =
    conj f(z) and its parity bit for bit, a NaN part's sign bit counting as
-   its sign, and gives, at operands of positive parts:
+   its sign. A NaN's sign is unspecified, so where a result's sign comes
+   from a NaN part, as sqrt(-inf + i NaN)'s infinite imaginary part's
+   does, that sign is unspecified too, as Annex G allows. At operands of
+   positive parts each gives:
 
      exp(-inf + i inf), exp(-inf + i NaN)      +0 + i0
      exp(inf + i inf), exp(inf + i NaN)        inf + i NaN
@@ -1131,7 +1129,7 @@ NX_INLINE uint32_t nx_double_sign(double d) {
      asinh(NaN + i inf)                        inf + i NaN
      atanh(NaN + i inf)                        +0 + i pi/2 */
 
-#define NX_COMPLEX_KINDS(C, T, R, FMA, ISNAN, SIGN, NANC)                    \
+#define NX_COMPLEX_KINDS(C, T, R, FMA, ISNAN, SIGN)                          \
   typedef struct {                                                           \
     T re, im;                                                                \
   } nx_##C;                                                                  \
@@ -1154,16 +1152,9 @@ NX_INLINE uint32_t nx_double_sign(double d) {
   NX_INLINE nx_##C nx_sub_##C(nx_##C a, nx_##C b) {                          \
     return nx_##C##_of(nx_sub_##R(a.re, b.re), nx_sub_##R(a.im, b.im));      \
   }                                                                          \
-  /* z with each NaN part the quiet NaN of a clear sign bit. A part is NaN \
-     where it is unequal to itself: a compare and a select, which gcc      \
-     vectorises in a loop of products where a test of the part's bits     \
-     keeps it scalar. */                                                   \
-  NX_INLINE nx_##C nx_quiet_##C(T re, T im) {                                \
-    return nx_##C##_of(re != re ? NANC : re, im != im ? NANC : im);          \
-  }                                                                          \
   NX_INLINE nx_##C nx_mul_##C(nx_##C a, nx_##C b) {                          \
     T ii = a.im * b.im, ir = a.im * b.re;                                    \
-    return nx_quiet_##C(FMA(a.re, b.re, -ii), FMA(a.re, b.im, ir));          \
+    return nx_##C##_of(FMA(a.re, b.re, -ii), FMA(a.re, b.im, ir));           \
   }                                                                          \
                                                                              \
   /* Smith's algorithm with selects for its branch, which vectorise: p is   \
@@ -1176,7 +1167,7 @@ NX_INLINE uint32_t nx_double_sign(double d) {
     T x = big ? a.re : a.im, y = big ? a.im : a.re;                          \
     T r = q / p, d = FMA(r, q, p);                                           \
     T im = big ? FMA(-r, x, y) : FMA(r, x, -y);                              \
-    return nx_quiet_##C(FMA(r, y, x) / d, im / d);                           \
+    return nx_##C##_of(FMA(r, y, x) / d, im / d);                            \
   }                                                                          \
   NX_INLINE nx_##C nx_recip_##C(nx_##C a) {                                  \
     return nx_fdiv_##C(nx_##C##_of((T)1, (T)0), a);                          \
@@ -1219,11 +1210,9 @@ NX_INLINE uint32_t nx_double_sign(double d) {
   }                                                                          \
   NX_INLINE nx_##C nx_where_##C(int c, nx_##C a, nx_##C b) { return c ? a : b; }
 
-NX_COMPLEX_KINDS(c64, float, f32, nx_fmaf, nx_float_nan, nx_float_sign,
-                 NX_NAN_F32)
+NX_COMPLEX_KINDS(c64, float, f32, nx_fmaf, nx_float_nan, nx_float_sign)
 #ifndef __METAL_VERSION__
-NX_COMPLEX_KINDS(c128, double, f64, nx_fmad, nx_double_nan, nx_double_sign,
-                 NX_NAN_F64)
+NX_COMPLEX_KINDS(c128, double, f64, nx_fmad, nx_double_nan, nx_double_sign)
 #endif
 
 #define NX_T float

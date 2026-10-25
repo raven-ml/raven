@@ -5,8 +5,8 @@
 
 (* The window law, through the engine's private Prim, Route and Exec, copied
    here: on one device, an operation over the windows its rule gives its
-   operands equals that window of its whole result, bitwise but for a NaN's
-   sign and payload where the operation leaves them unspecified. Each device
+   operands equals that window of its whole result, bitwise but for which NaN
+   a NaN result is, which no operation on numbers specifies. Each device
    of a set computes its window so, so this is the law a set's results rest
    on. *)
 
@@ -573,18 +573,12 @@ let any_nan (type v s) (a : (v, s) A.t) : (v, s) A.t =
   | D.Complex128 -> A.of_array D.Complex128 s (Array.map z (A.to_array a))
   | _ -> a
 
-(* Whether [op] leaves a NaN result's sign and payload unspecified, as
-   nx_kernel.mli states of a contraction and a transform. *)
-let nan_bits_unspecified (type r) (op : r Value.prim) =
-  match op with Value.Contract _ | Value.Fft _ -> true | _ -> false
-
 (* [x] computed at [at] where it is a constant and [at] is given. *)
 let reach (type v s d) at (x : (v, s, d) Value.t) =
   match at with None -> x | Some p -> Exec.at (Devices.rebrand p) x
 
 (* Each result's bytes on the host, in C order, at [windows], each NaN made
-   one where [op] leaves its bits unspecified: a constant result computed at
-   [at], or else on the host. *)
+   one: a constant result computed at [at], or else on the host. *)
 let bytes (type r) ?at windows (op : r Value.prim) (r : r) =
   let host : b Devices.placement = Devices.rebrand (Devices.one Devices.host 0) in
   let arrays = ref [] in
@@ -602,7 +596,7 @@ let bytes (type r) ?at windows (op : r Value.prim) (r : r) =
              (Slice (Iarray.of_array (windows i (L.shape (A.layout a)))))
              a)
       in
-      let a = if nan_bits_unspecified op then any_nan (A.copy a) else a in
+      let a = any_nan (A.copy a) in
       A.to_array (Option.get (A.bitcast D.Uint8 (A.copy a))))
     (Array.of_list (List.rev !arrays))
 

@@ -6,9 +6,10 @@
 (* Folds through every kernel library the host runs: a fold is the padded load's
    adjoint over integers. nx.cpu's group checks each result element against a
    reference that adds, from +0, the elements the load reads from it in C order
-   of their taps, bit for bit, through views of the operand, at every dtype
-   but the booleans; and its maps of padded loads, through the same geometry:
-   a loaded element is the element the fold adds it into, or the fill. *)
+   of their taps, bit for bit or both NaN, through views of the operand, at
+   every dtype but the booleans; and its maps of padded loads, through the
+   same geometry: a loaded element is the element the fold adds it into, or
+   the fill. *)
 
 open Windtrap
 open Elements
@@ -238,7 +239,7 @@ let law_reference (b : Support.backend) = function
        cover "complex" (work && D.is D.Complex d));
       match fold_on b c with
       | None -> failf "%s declined a fold" b.name
-      | Some y -> equal (array string) (expected c) (elements y))
+      | Some y -> equal (array (same (dtype_of c.x))) (expected c) (elements y))
 
 (* Σ load(a) · x = Σ a · fold(x) over wrapping int64. *)
 let law_adjoint (b : Support.backend) = function
@@ -338,7 +339,7 @@ let test_threads (b : Support.backend) () =
     let c = { shape; pad; x; views = view_names v; load = plain 4 } in
     match fold_on b c with
     | None -> failf "%s declined a fold" b.name
-    | Some y -> equal (array string) (expected c) (elements y)
+    | Some y -> equal (array (same (dtype_of c.x))) (expected c) (elements y)
   in
   fold (D.Any D.Float32) [| 8; 16; 20; 20 |] (plain 6);
   (* Slabs of an odd number of int4 elements: neighbouring units' results
@@ -370,7 +371,7 @@ let test_long_rows (b : Support.backend) () =
       let c = { shape; pad; x; views = []; load = plain 2 } in
       match fold_on b c with
       | None -> failf "%s declined a fold" b.name
-      | Some y -> equal (array string) (expected c) (elements y))
+      | Some y -> equal (array (same (dtype_of c.x))) (expected c) (elements y))
     D.[ Any Bfloat16; Any Int4 ]
 
 let test_refusals (b : Support.backend) () =
@@ -446,7 +447,8 @@ let law_guards (b : Support.backend) (c, side) =
         K.fold c.pad ~dst:(A.expect (A.dtype x) ds.(0)) x
       in
       equal answer A.Done
-        (same_guarded side ~call [| c.x |] [| (dtype_of c.x, c.shape) |])
+        (same_guarded ~any_nan:true side ~call [| c.x |]
+           [| (dtype_of c.x, c.shape) |])
 
 let laws (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
