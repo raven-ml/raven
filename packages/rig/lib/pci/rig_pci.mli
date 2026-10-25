@@ -115,11 +115,13 @@
     - The library's locks count among the locks a thread holds ([rig_hold] in
       [rig_edge.h]), so a call of rig's or of a driver's from a callback
       inside one raises [Invalid_argument] as it starts ([Rig]'s domains
-      section). A call of this library's from such a callback raises
-      [Invalid_argument] where it would take a lock its thread holds,
-      without taking it. What it did before stays done, as after any
-      exception there, and a {!Driver.stop} that raised so gives its GPU back
-      at the next stop.
+      section). {!Driver.open_}, {!Driver.reset}, {!Driver.detach},
+      {!Driver.attach} and {!Function.finish_releases}, which wait for other
+      threads, raise it as they start too. Another call of this library's
+      from such a callback raises [Invalid_argument] where it would take a
+      lock its thread holds, without taking it. What it did before stays
+      done, as after any exception there, and a {!Driver.stop} that raised so
+      gives its GPU back as {!Driver.stop} states.
 
     A message names what failed and, where something grants what is missing, the
     command, privilege or setting that grants it.

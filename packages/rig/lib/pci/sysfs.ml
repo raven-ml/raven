@@ -47,20 +47,47 @@ external flock : Unix.file_descr -> unit = "caml_rig_pci_flock"
    in this process or another, is refused. *)
 type 's lock = { files : t; bus : string; fd : Unix.file_descr }
 
+external reraise : exn -> 'a = "%reraise"
+
+(* Closes the lock's descriptor, which would otherwise hold the lock until the
+   process exits. An exception other than [Unix_error] from the close is one
+   a signal handler raised as the close entered its blocking section, before
+   close(2): the close is made again, then the exception passes. Linux frees
+   a descriptor whatever its close answers, but for EBADF, which a descriptor
+   that was not open gives, and only a bug of this library's closes such a
+   one (close(2), NOTES). *)
+let rec unlock fd =
+  match Unix.close fd with
+  | () -> ()
+  | exception (Unix.Unix_error (EBADF, _, _) as e) ->
+      Fail.bug "closing a function's lock" (fun () -> raise e)
+  | exception Unix.Unix_error _ -> ()
+  | exception e ->
+      unlock fd;
+      reraise e
+
 let locked m bus (f : 's. 's lock -> ('a, string) result) =
   let file = path m bus "config" in
   match Unix.openfile file [ O_RDONLY; O_CLOEXEC ] 0 with
   | exception Unix.Unix_error (e, _, _) ->
       Error (strf "opening %s: %s" file (Unix.error_message e))
   | fd -> (
-      Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
-      match flock fd with
-      | exception Unix.Unix_error ((EAGAIN | EWOULDBLOCK), _, _) ->
-          Error (strf "%s is taken already; find who holds it: lsof %s" bus file)
-      | exception Unix.Unix_error (e, _, _) ->
-          Error
-            (strf "locking %s with %s: %s" bus file (Unix.error_message e))
-      | () -> f { files = m; bus; fd })
+      match
+        match flock fd with
+        | exception Unix.Unix_error ((EAGAIN | EWOULDBLOCK), _, _) ->
+            Error
+              (strf "%s is taken already; find who holds it: lsof %s" bus file)
+        | exception Unix.Unix_error (e, _, _) ->
+            Error
+              (strf "locking %s with %s: %s" bus file (Unix.error_message e))
+        | () -> f { files = m; bus; fd }
+      with
+      | r ->
+          unlock fd;
+          r
+      | exception e ->
+          unlock fd;
+          reraise e)
 
 let files l = l.files
 let bus l = l.bus

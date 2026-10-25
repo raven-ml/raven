@@ -9,6 +9,8 @@
 let strf = Printf.sprintf
 let ( let* ) = Result.bind
 
+external reraise : exn -> 'a = "%reraise"
+
 external file_map : Unix.file_descr -> int -> int -> int = "caml_rig_pci_map"
 external file_unmap : int -> int -> unit = "caml_rig_pci_unmap"
 
@@ -42,7 +44,10 @@ type taken = {
   intx : int option; (* the INTx bit as found, if the take turned INTx off *)
   way : way;
   inherited : bool; (* a dead process left it reaching memory, at the take *)
-  fds : Unix.file_descr list; (* every descriptor the take opened *)
+  mutable fds : Unix.file_descr list;
+      (* every descriptor the take opened that no release closed *)
+  mutable given : bool; (* once a release gave a physical take back *)
+  mutable stopped : bool; (* whether that release turned bus mastering off *)
 }
 
 (* The [n] bytes of configuration space at [off] are moved at their offset in
@@ -281,24 +286,54 @@ let forget t =
   | Physical_take s -> Sysmem.forget ~root:(Sysmem.root s) ~bus:t.bus
   | Iommu_take _ -> ()
 
-(* Behind an IOMMU a take's descriptors close whatever happens before: Linux
-   then stops the function's DMA, and the function reaches only what the
+(* Closes the take's descriptors, each dropped from [fds] as its close
+   returns, with nothing between that allocates or polls, so that a release
+   called again after an exception closes the rest and none twice: their
+   numbers may be files opened since. Linux frees a descriptor whatever its
+   close answers, but for EBADF, which a descriptor that was not open gives,
+   and only a bug of this library's closes such a one (close(2), NOTES). *)
+let rec close_fds t =
+  match t.fds with
+  | [] -> ()
+  | fd :: rest -> (
+      match Unix.close fd with
+      | () ->
+          t.fds <- rest;
+          close_fds t
+      | exception (Unix.Unix_error (EBADF, _, _) as e) ->
+          t.fds <- rest;
+          Fail.bug ("closing a descriptor of " ^ t.bus) (fun () -> raise e)
+      | exception Unix.Unix_error _ ->
+          t.fds <- rest;
+          close_fds t)
+
+(* A release that an exception ended goes on from where it was when called
+   again. Behind an IOMMU a take's descriptors close whatever happens before:
+   Linux then stops the function's DMA, and the function reaches only what the
    IOMMU maps for it, whose pages VFIO keeps until it unmaps them. A physical
    take's close only once it is given back and has left the exit's list, so
    that an exception before leaves the take, files open and the function
-   locked, for the exit to give back, and the exit gives back no take through
-   descriptors closed, whose numbers files opened since may hold. *)
+   locked, for the exit or the next release to give back, and neither gives
+   back a take through descriptors closed. [given] is recorded as the
+   give-back returns, and leaving the list, which allocates, is made again
+   by each call. *)
 let release t =
   match t.way with
   | Iommu_take c ->
-      Fun.protect ~finally:(fun () -> List.iter Unix.close t.fds) @@ fun () ->
-      Vfio.close c;
+      (match Vfio.close c with
+      | () -> close_fds t
+      | exception e ->
+          close_fds t;
+          reraise e);
       true
   | Physical_take s ->
-      let stopped = give_back t s in
+      if not t.given then begin
+        t.stopped <- give_back t s;
+        t.given <- true
+      end;
       unhold t;
-      List.iter Unix.close t.fds;
-      stopped
+      close_fds t;
+      t.stopped
 
 let fn t =
   {
@@ -346,6 +381,8 @@ let take_iommu files fds bus bars prefetchable =
     way = Iommu_take c;
     inherited = false;
     fds = !fds;
+    given = false;
+    stopped = false;
   }
 
 (* Bound to vfio-pci, a function taken physically has its interrupts through
@@ -392,6 +429,8 @@ let take_physical l fds bars prefetchable =
       way = Physical_take (Sysmem.store ~root ~bus);
       inherited;
       fds = !fds;
+      given = false;
+      stopped = false;
     }
   in
   let t =

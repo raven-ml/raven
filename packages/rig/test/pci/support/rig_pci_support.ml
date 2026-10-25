@@ -300,6 +300,36 @@ external ofd_hold : string -> Unix.file_descr = "rig_pci_test_ofd_hold"
 external ofd_held : string -> bool = "rig_pci_test_ofd_held"
 external memfd : unit -> Unix.file_descr * string = "rig_pci_test_memfd"
 external refuse_writes : Unix.file_descr -> unit = "rig_pci_test_seal_writes"
+external close_number : int -> unit = "rig_pci_test_close_number"
+
+(* The numbers of this process's descriptors open on [file], from
+   [/proc/self/fd]. A descriptor another thread closes meanwhile is left
+   out. *)
+let descriptors file =
+  let target = Unix.realpath file in
+  let entry n =
+    match Unix.readlink ("/proc/self/fd/" ^ n) with
+    | link when link = target -> Some (int_of_string n)
+    | _ -> None
+    | exception Unix.Unix_error _ -> None
+  in
+  List.filter_map entry (Array.to_list (Sys.readdir "/proc/self/fd"))
+
+(* Whether descriptor [n] holds flock's lock on its file, which its entry in
+   [/proc/self/fdinfo] lists. *)
+let locks n =
+  match
+    In_channel.with_open_text
+      ("/proc/self/fdinfo/" ^ string_of_int n)
+      In_channel.input_all
+  with
+  | info ->
+      List.exists
+        (fun l ->
+          String.starts_with ~prefix:"lock:" l
+          && List.mem "FLOCK" (String.split_on_char ' ' l))
+        (String.split_on_char '\n' info)
+  | exception Sys_error _ -> false
 
 module Tree = struct
   type bar = Mem32 of int * int | Mem64 of int * int | Io of int * int
@@ -571,6 +601,15 @@ module Tree = struct
   let flocked_fd = flocked_fd
   let hold = ofd_hold
   let held = ofd_held
+  let opened file = List.length (descriptors file)
+
+  let close_lock file =
+    match List.find_opt locks (descriptors file) with
+    | Some n ->
+        close_number n;
+        true
+    | None -> false
+
   let add root file s = write (root / file) s
 
   (* An entry of a page map: bit 63 says the page is present, bits 0-54 hold its

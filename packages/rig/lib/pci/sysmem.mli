@@ -81,7 +81,8 @@ val close : store -> unit
     each of which goes once it lists no function and holds no memory. The
     process's mappings keep their pages until {!free}. A file a dead process
     left goes at {!collect_dead} once it lists no function, or at {!forget} of
-    each function it lists. Called once per store. *)
+    each function it lists. A [close] of [s] called again after an exception
+    ended one finishes it. *)
 
 val set_own_length : int -> int
 (** [set_own_length n] makes each range of the process's own addresses that

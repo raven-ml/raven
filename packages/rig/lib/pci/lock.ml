@@ -7,6 +7,17 @@ external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
 external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
 external reraise : exn -> 'a = "%reraise"
 
+external holds : unit -> (int[@untagged])
+  = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
+[@@noalloc]
+
+let check fn =
+  if holds () <> 0 then
+    invalid_arg
+      ("Rig_pci." ^ fn
+     ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
+        inside a lock of the calling thread's")
+
 type t = Mutex.t
 
 let create = Mutex.create

@@ -19,9 +19,7 @@
       and the kernel driver has let go of it. A process can then take it.
     - A function is {e held} by this process while a driver drives it
       ({!type-hold}). No other open of the function succeeds, and no change to
-      the machine touches it. Once an exception ended its stop as it gave the
-      function back ({!stop}), the process holds it until it exits, and none
-      of its opens or changes of the function succeeds.
+      the machine touches it.
     - A function is {e lost} once a hold has ended without a clean stop, or a
       reset of it has failed. Its next open renews it ({!renew}).
 
@@ -31,10 +29,13 @@
     delays the driver's other opens and changes. Each holds a lock for its whole
     run, so a call of rig's or of a rig driver's from a callback on its thread
     meanwhile is made inside a lock and raises [Invalid_argument] ([Rig]'s
-    domains section). {!stop} waits for none of them. Every [Error] about
-    function [i] starts with its name ({!val-name}), and names its bus address
-    where it has one. Each value that takes a function number [i] raises
-    [Invalid_argument] if [i < 0]. *)
+    domains section). {!open_}, {!reset}, {!detach} and {!attach} raise
+    [Invalid_argument] as they start, having changed nothing, if the calling
+    thread holds a lock, as such a callback does ({{!Rig_pci.errors}errors}).
+    {!stop} waits for none of them. Every [Error] about function [i] starts
+    with its name ({!val-name}), and names its bus address where it has one.
+    Each value that takes a function number [i] raises [Invalid_argument] if
+    [i < 0]. *)
 
 type t
 (** The type for a driver. *)
@@ -136,7 +137,18 @@ val buses : t -> Machine.t -> (string list, string) result
     and the other functions are stopped. An exit from a callback inside a lock
     may hold a lock a function's stop takes. That stop raises
     [Invalid_argument], printed as above, and leaves its function as a killed
-    process does, for its next open to renew. *)
+    process does, for its next open to renew.
+
+    A stop that an exception, such as an asynchronous one ({!Sys.Break}), cut
+    before it released the function, and an open that one cut before it
+    returned, are ended as a failed open is by the next {!open_}, {!reset},
+    {!detach} or {!attach} of the driver in this process, which leaves a stop
+    running on another thread. The function is lost where no stop recorded an
+    answer. An exception that a driver's stop raises there passes to that
+    call, once, and the function is lost and released as {!stop} states. Any
+    other exception there also passes to that call, and leaves what it cut
+    to the next. A release an exception cut part-way is finished as
+    {!Function.release} states. *)
 
 type hold
 (** The type for the process's hold on one function. *)
@@ -175,24 +187,18 @@ val set_stop : hold -> (unit -> [ `Clean | `Lost | `Unknown ]) -> unit
     Raises [Invalid_argument] if [h] has a stop already or was stopped. *)
 
 val stop : hold -> [ `Stopped | `Unknown ]
-(** [stop h] calls the driver's stop ({!set_stop}), then releases the function.
-    The function may then be opened again, and its next open renews it if the
-    driver's stop returned [`Lost] or [`Unknown]. [stop h] is [`Unknown] iff the
-    driver's stop returned [`Unknown], and [`Stopped] otherwise. Later calls
+(** [stop h] calls the driver's stop ({!set_stop}), then releases the function
+    ({!Function.release}). The function may then be opened again, and its
+    next open renews it if the driver's stop returned [`Lost] or [`Unknown].
+    [stop h] is [`Unknown] iff the driver's stop returned [`Unknown], and
+    [`Stopped] otherwise. Later calls
     return what the first returned and call no driver's stop, and a call while
-    another runs waits for it and returns the same. Where the first raised
-    before it released the function, as one from a callback inside a lock of
-    this library's on the same thread does, the next call releases it. Where an
-    exception, such as an asynchronous one ({!Sys.Break}), ended the release
-    ({!Function.release}), the process holds the function until it exits, and
-    {!open_}, {!reset}, {!detach} and {!attach} of it fail, saying so. An
-    exception raised by the driver's stop passes through, and the function is
-    lost. A stop that an exception cut before it released the function, and
-    an open that one cut before it returned, are ended as a failed open is by
-    the next {!open_}, {!reset}, {!detach} or {!attach} of any function of the
-    driver in this process, which leaves a stop running on another thread;
-    the function is lost where no stop recorded an answer. A device calls
-    [stop] once its work is done or lost. *)
+    another runs waits for it and returns the same. An exception raised by the
+    driver's stop passes through, and the function is lost. Where another
+    exception ended the first call before the release, as one from a callback
+    inside a lock of this library's on the same thread does, the next call
+    releases the function. A device calls [stop] once its work is done or
+    lost. *)
 
 val renew : hold -> (unit, string) result
 (** [renew h] resets the function [h] holds as its vendor does ([reset] of

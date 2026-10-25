@@ -1612,9 +1612,386 @@ let test_after_release =
     test "after its release, a GPU's memory is given back without a write"
       (fun () -> skip ~reason:"flock on a function's file needs Linux" ())
 
+(* The configuration file of [x]'s function in the tree at [root]. *)
+let config_of root x =
+  Filename.concat root
+    ("sys/bus/pci/devices/" ^ Function.bus x.t_fn ^ "/config")
+
+(* Whether a take holds [x]'s function: another lock of its configuration
+   file is refused. *)
+let taken root x = Tree.flocked (config_of root x)
+
+(* Whether the bus master bit of [x]'s command register (byte 4) is set, as
+   the configuration file holds it. *)
+let mastering root x =
+  let s = In_channel.with_open_bin (config_of root x) In_channel.input_all in
+  String.get_uint16_le s 4 land 0x4 <> 0
+
+(* A GPU mastering the bus whose free of a region is held in its first clear
+   of an entry, on a domain of its own: [held f] is [f root x], with the free
+   inside the clear, and lets the free go on as [f] returns or raises. It
+   joins the free after. *)
+let held f =
+  let armed = Atomic.make false and inside = Atomic.make false in
+  let go = Atomic.make false in
+  let format (fmt : Page_table.format) =
+    let clear ~level ~table i =
+      if Atomic.get armed && not (Atomic.exchange inside true) then
+        while not (Atomic.get go) do
+          Domain.cpu_relax ()
+        done;
+      fmt.clear ~level ~table i
+    in
+    { fmt with clear }
+  in
+  with_gpu ~format @@ fun root _ x ->
+  Function.set_bus_master x.t_fn true;
+  let r = given (Memory.alloc x.t_memory Gpu (64 * kib)) in
+  Atomic.set armed true;
+  let freeing = Domain.spawn (fun () -> Memory.free x.t_memory r) in
+  Fun.protect ~finally:(fun () -> Atomic.set go true) (fun () ->
+      equal ~msg:"the free writes the tables" bool true
+        (poll (fun () -> Atomic.get inside));
+      f root x);
+  Domain.join freeing
+
+(* [returns f] runs [f ()] on a domain of its own and is whether it returned
+   within the test's patience. The domain is joined once it has. *)
+let returns f =
+  let ended = Atomic.make false in
+  let d =
+    Domain.spawn (fun () ->
+        f ();
+        Atomic.set ended true)
+  in
+  let returned = poll (fun () -> Atomic.get ended) in
+  if returned then Domain.join d;
+  returned
+
+(* A release that begins while a free writes the GPU's tables returns, and
+   leaves the function taken while the free runs. The free gives it back as
+   it ends, with its bus mastering off. *)
+let test_release_deferred () =
+  let root = ref "" and gpu = ref None in
+  held (fun r x ->
+      root := r;
+      gpu := Some x;
+      equal ~msg:"the release returned while the free wrote the tables" bool
+        true
+        (returns (fun () -> Function.release x.t_fn));
+      equal ~msg:"taken while the free writes the tables" bool true
+        (taken r x));
+  let x = Option.get !gpu in
+  equal ~msg:"taken once the free returned" bool false (taken !root x);
+  equal ~msg:"mastering once the free returned" bool false (mastering !root x)
+
+(* A finish of the releases waits for a free that writes the tables of a GPU
+   whose release has begun, and the function is given back once both have
+   returned. *)
+let test_finish_waits () =
+  let root = ref "" and gpu = ref None in
+  let finished = Atomic.make false in
+  let finishing = ref None in
+  held (fun r x ->
+      root := r;
+      gpu := Some x;
+      equal ~msg:"the release returned while the free wrote the tables" bool
+        true
+        (returns (fun () -> Function.release x.t_fn));
+      finishing :=
+        Some
+          (Domain.spawn (fun () ->
+               Function.finish_releases ();
+               Atomic.set finished true));
+      Unix.sleepf 0.05;
+      equal ~msg:"the finish returned while the free wrote the tables" bool
+        false (Atomic.get finished));
+  Option.iter Domain.join !finishing;
+  let x = Option.get !gpu in
+  equal ~msg:"taken once both returned" bool false (taken !root x)
+
+(* A release on a domain of its own gives the function back, held here at
+   the give-back's first allocation: the first once the function is
+   released, since a release allocates nothing before. A finish of the
+   releases on another domain waits for that give-back, and once it returns
+   the function is given back and taken again. *)
+let test_finish_waits_give_back () =
+  let inside = Atomic.make false and go = Atomic.make false in
+  with_gpu @@ fun root m x ->
+  Function.set_bus_master x.t_fn true;
+  let wait_go () =
+    Atomic.set inside true;
+    while not (Atomic.get go) do
+      Domain.cpu_relax ()
+    done
+  in
+  let releasing =
+    Domain.spawn (fun () ->
+        Rig_support.interrupted
+          ~from:(fun _ -> Function.released x.t_fn)
+          ~landing:(Call wait_go) 1
+          (fun () -> Function.release x.t_fn))
+  in
+  Fun.protect ~finally:(fun () -> Atomic.set go true) (fun () ->
+      equal ~msg:"the release gives the function back" bool true
+        (poll (fun () -> Atomic.get inside));
+      let finished = Atomic.make false in
+      let finishing =
+        Domain.spawn (fun () ->
+            Function.finish_releases ();
+            Atomic.set finished true)
+      in
+      Unix.sleepf 0.05;
+      equal ~msg:"the finish returned during the give-back" bool false
+        (Atomic.get finished);
+      Atomic.set go true;
+      Domain.join finishing;
+      equal ~msg:"taken once the finish returned" bool false (taken root x);
+      match Function.take m (Function.bus x.t_fn) with
+      | Ok f -> Function.release f
+      | Error why -> fail ("the take after the finish: " ^ why));
+  equal ~msg:"the give-back held" bool true (Domain.join releasing)
+
+(* A second release while a free writes the GPU's tables, after a first that
+   left the give-back to the free, returns, and the free gives the function
+   back as it ends, as Driver.stop then Memory.release do. *)
+let test_second_release () =
+  let root = ref "" and gpu = ref None in
+  held (fun r x ->
+      root := r;
+      gpu := Some x;
+      equal ~msg:"the first release returned" bool true
+        (returns (fun () -> Function.release x.t_fn));
+      equal ~msg:"the second release returned" bool true
+        (returns (fun () -> Memory.release x.t_memory));
+      equal ~msg:"taken while the free writes the tables" bool true
+        (taken r x));
+  let x = Option.get !gpu in
+  equal ~msg:"taken once the free returned" bool false (taken !root x);
+  equal ~msg:"mastering once the free returned" bool false (mastering !root x)
+
+(* A request that writes a GPU's tables through its BAR windows, held here in
+   its first write of an entry on a domain of its own, is a use of the
+   function: a release meanwhile returns, the function taken until the
+   request ends, which gives it back. [theirs] is another GPU's system
+   memory. *)
+let test_write_used (_, request) =
+  let armed = Atomic.make false and inside = Atomic.make false in
+  let go = Atomic.make false in
+  let format (fmt : Page_table.format) =
+    let set_page ~level ~table i ~pa tg ~uncached ~snooped ~fragment =
+      if Atomic.get armed && not (Atomic.exchange inside true) then
+        while not (Atomic.get go) do
+          Domain.cpu_relax ()
+        done;
+      fmt.set_page ~level ~table i ~pa tg ~uncached ~snooped ~fragment
+    in
+    { fmt with set_page }
+  in
+  let root, m, buses = tree_machine 2 in
+  let space = Space.create ~base:space_base space_length in
+  let o = take_gpu ~space m (List.nth buses 0) in
+  let x = take_gpu ~format ~space m (List.nth buses 1) in
+  Fun.protect ~finally:(fun () ->
+      Function.release o.t_fn;
+      Function.release x.t_fn)
+  @@ fun () ->
+  let theirs = given (Memory.alloc o.t_memory Host page) in
+  let call, lent = request x theirs in
+  Atomic.set armed true;
+  let requesting = Domain.spawn call in
+  Fun.protect ~finally:(fun () -> Atomic.set go true) (fun () ->
+      equal ~msg:"the request writes the tables" bool true
+        (poll (fun () -> Atomic.get inside));
+      equal ~msg:"the release returned" bool true
+        (returns (fun () -> Function.release x.t_fn));
+      equal ~msg:"taken while the request writes the tables" bool true
+        (taken root x));
+  let r = Domain.join requesting in
+  equal ~msg:"taken once the request returned" bool false (taken root x);
+  (* The peer's free first, then what the GPUs took, so that the next case's
+     machine finds the addresses free. *)
+  Memory.free x.t_memory r;
+  Option.iter (Function.free_dma x.t_fn) lent;
+  Memory.free o.t_memory theirs
+
+let writes =
+  let alloc kind x _ =
+    ((fun () -> given (Memory.alloc x.t_memory kind (64 * kib))), None)
+  in
+  [
+    ("alloc Gpu", alloc Gpu);
+    ("alloc Host", alloc Host);
+    ( "map_host",
+      fun x _ ->
+        let lent, _ = lend x page in
+        let a = Window.address lent in
+        ((fun () -> mapped (Memory.map_host x.t_memory a page)), Some lent) );
+    ( "map_peer",
+      fun x theirs ->
+        ((fun () -> mapped (Memory.map_peer x.t_memory theirs)), None) );
+  ]
+
+(* [with_held hook] is [(root, x, did)], [x] a GPU mastering the bus with a
+   region of its memory freed on a domain of its own, whose first clear of an
+   entry of the GPU's tables calls [hook root x] inside the free, and [did]
+   what the hook answered, once the free returned within the test's
+   patience. *)
+let with_held hook =
+  let armed = Atomic.make false and did = Atomic.make None in
+  let hooked = ref (fun () -> "no hook") in
+  let format (f : Page_table.format) =
+    let clear ~level ~table i =
+      if Atomic.get armed && Atomic.exchange armed false then
+        Atomic.set did (Some (!hooked ()));
+      f.clear ~level ~table i
+    in
+    { f with clear }
+  in
+  with_gpu ~format @@ fun root _ x ->
+  Function.set_bus_master x.t_fn true;
+  hooked := (fun () -> hook root x);
+  let r = given (Memory.alloc x.t_memory Gpu (64 * kib)) in
+  Atomic.set armed true;
+  equal ~msg:"the free returned" bool true
+    (returns (fun () -> Memory.free x.t_memory r));
+  (root, x, Atomic.get did)
+
+(* A release made inside a free, on its thread, as a callback such as an exit
+   from a signal handler makes it, returns and leaves the function taken. The
+   free gives it back as it ends, with its bus mastering off. *)
+let test_release_inside_free () =
+  let release root x =
+    match Function.release x.t_fn with
+    | () -> if taken root x then "returned, taken" else "returned, given back"
+    | exception e -> Printexc.to_string e
+  in
+  let root, x, did = with_held release in
+  equal ~msg:"the release inside the free" (option string)
+    (Some "returned, taken") did;
+  equal ~msg:"taken once the free returned" bool false (taken root x);
+  equal ~msg:"mastering once the free returned" bool false (mastering root x)
+
+(* A use counts among the locks its thread holds: a finish of the releases
+   from a callback inside a free, on its thread, raises [Invalid_argument]
+   where it would wait for that free, and the free gives the function back
+   as it ends. *)
+let test_use_holds () =
+  let finish _ x =
+    Function.release x.t_fn;
+    match Function.finish_releases () with
+    | () -> "returned"
+    | exception Invalid_argument _ -> "refused"
+  in
+  let root, x, did = with_held finish in
+  equal ~msg:"the finish inside the free" (option string) (Some "refused") did;
+  equal ~msg:"taken once the free returned" bool false (taken root x)
+
+(* Inside a free, once a release begun on another domain has returned,
+   turning the function's bus mastering off reaches its command register.
+   The free gives the function back as it ends. *)
+let test_master_off_inside_free () =
+  let releasing = ref None in
+  let off root x =
+    let released = Atomic.make false in
+    releasing :=
+      Some
+        (Domain.spawn (fun () ->
+             Function.release x.t_fn;
+             Atomic.set released true));
+    if not (poll (fun () -> Atomic.get released)) then
+      "the release did not return"
+    else
+      match Function.set_bus_master x.t_fn false with
+      | () -> if mastering root x then "mastering" else "off"
+      | exception e -> Printexc.to_string e
+  in
+  let root, x, did = with_held off in
+  Option.iter Domain.join !releasing;
+  equal ~msg:"bus mastering turned off inside the free" (option string)
+    (Some "off") did;
+  equal ~msg:"taken once the free returned" bool false (taken root x)
+
+(* A release inside a free leaves the give-back to the free's end. An
+   exception at any allocation after the release, through the rest of the
+   free and its give-back, leaves what was not given back to a finish of the
+   releases, which gives the function back with its bus mastering off. Some
+   cut leaves the function taken for the finish. *)
+let test_cut_give_back () =
+  let left = ref false in
+  let rec walk n =
+    let armed = Atomic.make false and after = Atomic.make false in
+    let fn = ref None in
+    let format (f : Page_table.format) =
+      let clear ~level ~table i =
+        if Atomic.get armed && Atomic.exchange armed false then begin
+          Option.iter Function.release !fn;
+          Atomic.set after true
+        end;
+        f.clear ~level ~table i
+      in
+      { f with clear }
+    in
+    let at what = strf "%s, cut at %d" what n in
+    let reached =
+      with_gpu ~format @@ fun root _ x ->
+      Function.set_bus_master x.t_fn true;
+      fn := Some x.t_fn;
+      let r = given (Memory.alloc x.t_memory Gpu (64 * kib)) in
+      Atomic.set armed true;
+      let reached =
+        Rig_support.interrupted
+          ~from:(fun _ -> Atomic.get after)
+          n
+          (fun () -> Memory.free x.t_memory r)
+      in
+      equal ~msg:(at "released inside the free") bool true
+        (Function.released x.t_fn);
+      if taken root x then left := true;
+      Function.finish_releases ();
+      equal ~msg:(at "taken after the finish") bool false (taken root x);
+      equal ~msg:(at "mastering after the finish") bool false
+        (mastering root x);
+      reached
+    in
+    if n = 1 then equal ~msg:"the walk lands" bool true reached;
+    if reached then walk (n + 1)
+  in
+  walk 1;
+  equal ~msg:"a cut left the function taken for the finish" bool true !left
+
 let on_files =
   group ~timeout:patience "on a machine's files"
     [
+      test
+        "a release while a free writes the GPU's tables returns, and the \
+         free gives the function back"
+        test_release_deferred;
+      test "a finish of the releases waits for a free that writes the tables"
+        test_finish_waits;
+      test "a finish of the releases waits for a give-back on another domain"
+        test_finish_waits_give_back;
+      test
+        "a second release while a free writes the tables returns, and the \
+         free gives the function back"
+        test_second_release;
+      cases
+        "a request that writes the tables is a use: a release meanwhile \
+         leaves the function to it"
+        ~name:fst writes test_write_used;
+      test "a finish of the releases from inside a free raises"
+        test_use_holds;
+      test
+        "a release inside a free, on its thread, returns, and the free gives \
+         the function back"
+        test_release_inside_free;
+      test "inside a free a release left the give-back to, bus mastering \
+            turns off"
+        test_master_off_inside_free;
+      test
+        "an exception in a free's give-back leaves the rest to a finish of \
+         the releases"
+        test_cut_give_back;
       cases "a free gives back what its region took"
         ~name:(Format.asprintf "%a" pp_from)
         froms test_round_trip;

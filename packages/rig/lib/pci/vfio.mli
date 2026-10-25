@@ -76,4 +76,6 @@ val unmap_dma : string -> t -> int -> int -> unit
 val close : t -> unit
 (** [close t] marks [t] released at its function's release, and closes its
     container with the container's last function, which removes every mapping
-    the container holds. *)
+    the container holds. A [close] called again after an exception ended one
+    finishes it, and counts [t] out of its container once. Raises [Failure],
+    having counted [t] out, if the container's descriptor was not open. *)

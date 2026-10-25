@@ -1936,6 +1936,150 @@ let dma_commands =
    a time slice when the processors are busy: its limit is three patiences. *)
 let dma_law = "pins and DMA memory are counted the same from two domains"
 
+(* Releases and finishes of the releases from two domains at once. A program
+   takes a function at most once a step, the one released last first, with
+   windows on three BARs and its bus mastering on, and opens files that take
+   the numbers its release closes. The release that begins gives the function
+   back before it returns, whatever finish runs meanwhile, and a finish gives
+   back what a release an exception cut left. At its end the function is
+   released, every file it opened holds what it wrote, and the function is
+   taken again. *)
+let release_steps = 6
+
+let release_tree =
+  lazy
+    (let buses =
+       List.init release_steps (fun i -> strf "0000:%02x:00.0" (3 + i))
+     in
+     let root = Tree.make (List.map Tree.gpu buses) in
+     (root, Machine.at root, buses))
+
+type release_sys = {
+  fn : Function.t;
+  files : (string * Unix.file_descr) list Atomic.t;  (** The files opened. *)
+}
+
+type release_ref = { mutable gone : bool }
+
+(* What each file opened holds, and the count of files opened, which names
+   the next. *)
+let release_canary = "canary"
+let release_files = Atomic.make 0
+
+(* The bus released last, which the next take tries first. *)
+let last_released = Atomic.make ""
+
+let take_released () =
+  let _, m, buses = Lazy.force release_tree in
+  let first = Atomic.get last_released in
+  let buses = first :: List.filter (( <> ) first) buses in
+  match List.find_map (fun b -> Result.to_option (Function.take m b)) buses with
+  | None -> failf "every one of the %d GPUs is taken" release_steps
+  | Some f ->
+      Function.set_bus_master f true;
+      List.iter (fun i -> ignore (map ~length:4096 f i : Window.t)) [ 0; 2; 5 ];
+      { fn = f; files = Atomic.make [] }
+
+(* Whether a take holds [s]'s function: the process has its configuration
+   file open. A probe that locks the file would be seen by another domain's
+   as a take. *)
+let taken s =
+  let root, _, _ = Lazy.force release_tree in
+  Tree.opened (config_file root (Function.bus s.fn)) > 0
+
+(* Releases [s]'s function, and is whether it is given back as the release
+   returns. *)
+let release_sys s =
+  Function.release s.fn;
+  Atomic.set last_released (Function.bus s.fn);
+  not (taken s)
+
+(* Releases [s]'s function with an exception at the [n]-th allocation of the
+   release, then finishes the releases, and is whether the finish gave back
+   what the release left. *)
+let cut_sys n s =
+  ignore (Rig_support.interrupted n (fun () -> Function.release s.fn) : bool);
+  let left = Function.released s.fn && taken s in
+  Function.finish_releases ();
+  Atomic.set last_released (Function.bus s.fn);
+  left && not (taken s)
+
+(* The first release gives the function back; one after returns at once. *)
+let release_ref r outcome =
+  match outcome with
+  | Error e -> failf "the release raised %s" (Printexc.to_string e)
+  | Ok given ->
+      if not r.gone then begin
+        r.gone <- true;
+        equal ~msg:"the function given back as the release returned" bool
+          true given
+      end
+
+let cut_ref _ r outcome =
+  match outcome with
+  | Error e -> failf "the cut release raised %s" (Printexc.to_string e)
+  | Ok finished ->
+      let first = not r.gone in
+      r.gone <- true;
+      if first then cover "a finish gave back what a cut release left" finished
+
+let open_file s =
+  let root, _, _ = Lazy.force release_tree in
+  let file =
+    Filename.concat root
+      (strf "release-file-%d" (Atomic.fetch_and_add release_files 1))
+  in
+  let fd = Unix.openfile file [ O_RDWR; O_CREAT; O_TRUNC; O_CLOEXEC ] 0o600 in
+  ignore
+    (Unix.write_substring fd release_canary 0 (String.length release_canary)
+      : int);
+  push s.files (file, fd)
+
+let end_released s =
+  Function.release s.fn;
+  Function.finish_releases ();
+  List.iter
+    (fun (file, fd) ->
+      equal ~msg:"a file opened during the releases" string release_canary
+        (In_channel.with_open_bin file In_channel.input_all);
+      Unix.close fd;
+      Sys.remove file)
+    (Atomic.get s.files);
+  match Function.take (Function.machine s.fn) (Function.bus s.fn) with
+  | Ok f -> Function.release f
+  | Error why -> failf "the take after the releases: %s" why
+
+let released_t = abstract "f" ~release:end_released
+
+let release_commands =
+  [
+    Windtrap.command "take"
+      (Gen.unit @-> makes released_t)
+      (fun () -> { gone = false })
+      take_released;
+    Windtrap.command "release"
+      (released_t ^-> judges bool)
+      release_ref release_sys;
+    Windtrap.command "release, cut, then finish"
+      (Gen.int_range 1 24 @-> released_t ^-> judges bool)
+      cut_ref cut_sys;
+    Windtrap.command "released"
+      (released_t ^-> returns bool)
+      (fun r -> r.gone)
+      (fun s -> Function.released s.fn);
+    Windtrap.command "finish the releases"
+      (Gen.unit @-> returns unit)
+      (fun () -> ())
+      Function.finish_releases;
+    Windtrap.command "open a file"
+      (released_t ^-> returns unit)
+      (fun _ -> ())
+      open_file;
+  ]
+
+let release_law =
+  "releases and finishes from two domains give a function back once"
+
 let dma_domains =
   group ~timeout:patience "two domains"
     [
@@ -1945,7 +2089,91 @@ let dma_domains =
        else
          test dma_law (fun () ->
              skip ~reason:"system memory for a function needs Linux" ()));
+      (if flocks then
+         stateful release_law ~timeout:(3. *. patience) ~domains:2 ~count:25
+           ~steps:release_steps release_commands
+       else
+         test release_law (fun () ->
+             skip ~reason:"locking a function's file needs flock" ()));
     ]
+
+(* A release that finds a descriptor of its take closed behind its back, as
+   only a bug of the library's closes one, raises [Failure], and closes none
+   of the process's files twice: the rest of the take's descriptors close as
+   its release finishes. *)
+let test_release_closed () =
+  if not on_linux then skip ~reason:"finding a descriptor needs Linux" ();
+  with_fixture @@ fun root f ->
+  let config = config_file root (Function.bus f) in
+  equal ~msg:"the take's lock found" bool true (Tree.close_lock config);
+  raises_match
+    (Exn.failure ~substring:"Bad file descriptor")
+    (fun () -> Function.release f);
+  Function.finish_releases ();
+  equal ~msg:"descriptors left on the configuration space" int 0
+    (Tree.opened config)
+
+(* A release called from a callback inside a release, at any of its
+   allocations, returns at once. A finish of the releases there raises
+   [Invalid_argument] inside a lock and returns between locks. The release
+   around it gives the function back. *)
+let test_release_inside () =
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
+  let bus = "0000:03:00.0" in
+  let m = Machine.at (Tree.make [ Tree.gpu bus ]) in
+  let refused = ref false and returned = ref false in
+  let rec walk n =
+    let f = take_mastering m bus in
+    List.iter (fun i -> ignore (map ~length:4096 f i : Window.t)) [ 0; 2; 5 ];
+    let finished = ref None in
+    let inside () =
+      let held = Rig_support.holds () <> 0 in
+      Function.release f;
+      finished :=
+        Some
+          ( held,
+            match Function.finish_releases () with
+            | () -> "returned"
+            | exception Invalid_argument _ -> "refused" )
+    in
+    let reached =
+      Rig_support.interrupted ~landing:(Call inside) n (fun () ->
+          Function.release f)
+    in
+    let at what = strf "%s, called at %d" what n in
+    if n = 1 then equal ~msg:"the walk lands" bool true reached;
+    (match !finished with
+    | Some (held, answer) ->
+        if held then refused := true else returned := true;
+        equal ~msg:(at "the finish inside") string
+          (if held then "refused" else "returned")
+          answer
+    | None -> ());
+    (match Function.take m bus with
+    | Ok f -> Function.release f
+    | Error why -> failf "%s: %s" (at "the take after") why);
+    if reached then walk (n + 1)
+  in
+  walk 1;
+  equal ~msg:"landings inside a lock and between locks" (pair bool bool)
+    (true, true) (!refused, !returned)
+
+(* A finish of the releases from a callback inside a lock raises
+   [Invalid_argument], and leaves a release an exception cut to the next
+   finish. *)
+let test_finish_inside_lock () =
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
+  let bus = "0000:03:00.0" in
+  let root = Tree.make [ Tree.gpu bus ] in
+  let f = take_mastering (Machine.at root) bus in
+  ignore (Rig_support.interrupted 1 (fun () -> Function.release f) : bool);
+  raises_match Exn.invalid_arg (fun () ->
+      Rig_support.inside_lock Function.finish_releases);
+  equal ~msg:"taken after the refusal" bool true
+    (Tree.flocked (config_file root (Function.bus f)));
+  Function.finish_releases ();
+  equal ~msg:"taken after the next finish" bool false
+    (Tree.flocked (config_file root (Function.bus f)))
 
 let uses =
   group ~timeout:patience "uses"
@@ -1953,6 +2181,16 @@ let uses =
       test "a string that is no bus address is refused" test_take_no_bus;
       test "a released function refuses all but free_dma, unpin and wait"
         test_released;
+      test
+        "a release that finds a descriptor closed behind it raises Failure, \
+         closing the rest once"
+        test_release_closed;
+      test
+        "a release called inside a release returns at once, and a finish of \
+         the releases there raises"
+        test_release_inside;
+      test "a finish of the releases from inside a lock raises"
+        test_finish_inside_lock;
       test "a BAR window is the rest of the BAR from its offset by default"
         test_defaults;
       test "a window of no bytes inside a BAR is mapped" test_empty;
@@ -2130,34 +2368,30 @@ let fixture () =
   let root = Tree.make [ Tree.gpu bus ] in
   (root, require_ok (Function.take (Machine.at root) bus))
 
-(* [f]'s release returns, on a domain of its own: it waits until no pin, DMA
-   allocation or wait uses [f], so a use an exception left open holds it for
-   good. *)
-let releases f =
-  let released = Atomic.make false in
-  ignore
-    (Domain.spawn (fun () ->
-         Function.release f;
-         Atomic.set released true)
-      : unit Domain.t);
-  equal ~msg:"the release returned" bool true
-    (poll (fun () -> Atomic.get released))
+(* [f]'s release gives it back as it returns: a release leaves the give-back
+   to the last pin, DMA allocation or wait that uses [f], so a use an
+   exception left open would leave [f] taken for good. *)
+let releases root f =
+  Function.release f;
+  equal ~msg:"taken after the release" bool false
+    (Tree.flocked (config_file root (Function.bus f)))
 
 (* An exception at any allocation of a wait that reads the configuration space
-   at its bound ends the wait's use of the function. *)
+   at its bound ends the wait's use of the function: the release gives it
+   back. *)
 let test_interrupted_wait () =
-  let _, f = fixture () in
+  let root, f = fixture () in
   Function.set_config16 f 0 0xffff;
   let wait () =
     ignore (Function.wait f ~us:0 "the fence" (fun () -> false) : _ result)
   in
   let rec from n = if Rig_support.interrupted n wait then from (n + 1) in
   from 1;
-  releases f
+  releases root f
 
 (* An exception at any allocation of a DMA allocation and its free leaves the
    function's lock free and ends the allocation's use of the function: the
-   next allocation runs, and the release returns. *)
+   next allocation runs, and the release gives the function back. *)
 let test_interrupted_dma () =
   let root, f = fixture () in
   reserved f;
@@ -2176,7 +2410,89 @@ let test_interrupted_dma () =
     if raised then from (n + 1)
   in
   from 1;
-  releases f
+  releases root f
+
+(* A free_dma or an unpin gives memory back while no give-back of the
+   function runs, since each is a use of it. The call runs with a landing at
+   its [n]-th allocation, for each [n]; there a release on another domain
+   either returns, leaving the give-back to the call, or gives the function
+   back, held at the give-back's first allocation, its bus mastering still
+   on. While the give-back is held, the call gives back no memory. *)
+let blocks_given = ref 0
+
+let test_under_give_back (_, call) =
+  let refused = ref false in
+  let rec walk n =
+    let at what = strf "%s, landing at %d" what n in
+    let root, f = fixture () in
+    Function.set_bus_master f true;
+    (* A block of its own for each landing: memory kept under a give-back
+       stays the process's until it exits. *)
+    incr blocks_given;
+    let va = free_base + (1 lsl 38) + (!blocks_given * huge) in
+    granted (Machine.reserve (Function.machine f) ~base:va huge);
+    ignore (frames root va (64 * kib));
+    let w, _ = given (Function.alloc_dma ~va f (64 * kib)) in
+    let free = call f w va in
+    let file = memory_file root in
+    let go = Atomic.make false and inside = Atomic.make false in
+    let start = Atomic.make false and returned = Atomic.make false in
+    let wait_go () =
+      Atomic.set inside true;
+      while not (Atomic.get go) do
+        Domain.cpu_relax ()
+      done
+    in
+    let releasing =
+      Domain.spawn (fun () ->
+          while not (Atomic.get start) do
+            Domain.cpu_relax ()
+          done;
+          ignore
+            (Rig_support.interrupted
+               ~from:(fun _ -> Function.released f)
+               ~landing:(Call wait_go) 1
+               (fun () -> Function.release f)
+              : bool);
+          Atomic.set returned true)
+    in
+    let landing () =
+      Atomic.set start true;
+      ignore
+        (poll (fun () -> Atomic.get inside || Atomic.get returned) : bool)
+    in
+    let reached =
+      Fun.protect ~finally:(fun () ->
+          Atomic.set start true;
+          Atomic.set go true)
+      @@ fun () ->
+      let reached = Rig_support.interrupted ~landing:(Call landing) n free in
+      if Atomic.get inside && not (Atomic.get returned) then begin
+        refused := true;
+        equal ~msg:(at "the memory kept during the give-back") int huge
+          (Tree.stored file)
+      end;
+      reached
+    in
+    Domain.join releasing;
+    equal ~msg:(at "taken once both returned") bool false
+      (Tree.flocked (config_file root (Function.bus f)));
+    if n = 1 then equal ~msg:"the walk lands" bool true reached;
+    if reached then walk (n + 1)
+  in
+  walk 1;
+  equal ~msg:"a landing met a give-back" bool true !refused
+
+let under_give_back =
+  [
+    ("free_dma", fun f w _ () -> Function.free_dma f w);
+    ( "unpin",
+      fun f w va ->
+        let n = Window.length w in
+        ignore (pin f va n : (int * int) list);
+        Function.free_dma f w;
+        fun () -> Function.unpin f va n );
+  ]
 
 (* Whether [a] allocates the [Invalid_argument] of a refusal: its innermost
    frame is [Stdlib.invalid_arg]. *)
@@ -2187,13 +2503,14 @@ let refusal (a : Gc.Memprof.allocation) =
   | Some _ | None -> false
 
 (* A use that an exception ends while another domain holds the function's
-   lock, with SIGINT pending, ends: the release returns. The other domain
-   refuses to unpin a range never pinned, and parks as it allocates the
-   refusal, under the lock. The use, a pin of no bytes, allocates its own
-   refusal with SIGINT then pending, and raises it with no poll point
-   before its end, which meets the held lock and the signal at once. *)
+   lock, with SIGINT pending, ends: the release gives the function back. The
+   other domain refuses to unpin a range never pinned, and parks as it
+   allocates the refusal, under the lock. The use, a pin of no bytes,
+   allocates its own refusal with SIGINT then pending, and raises it with no
+   poll point before its end, which meets the held lock and the signal at
+   once. *)
 let test_interrupted_held () =
-  let _, f = fixture () in
+  let root, f = fixture () in
   let page = Machine.page Machine.this in
   let go = Atomic.make false in
   let holder =
@@ -2224,7 +2541,7 @@ let test_interrupted_held () =
   Rig_support.unpark ();
   equal ~msg:"the unpin's refusal" bool true (Domain.join holder);
   equal ~msg:"the pin's refusal" bool true reached;
-  releases f
+  releases root f
 
 (* The test's executable, run with [interrupting], is [interrupted_release]'s
    process. *)
@@ -2241,11 +2558,12 @@ let canary_file root i = Filename.concat root (strf "canary-%d" i)
    of its BARs, allocates and frees memory at [va] and allocates more 2 MiB
    above, whose frames the tree's page map gives, and releases it with an
    exception at the [n]-th allocation of the release. It then opens the
-   canaries, frees the memory left, releases the function again and exits:
-   with 0 if the [n]-th allocation was reached, 4 if it was not, 5 if the
-   second release closed a canary, 6 if the free gave back memory while the
-   function still mastered the bus, and 7 if the function could be taken
-   again meanwhile. *)
+   canaries, frees the memory left, releases the function again, finishes the
+   releases, takes it again and exits: with 0 if the [n]-th allocation was
+   reached, 4 if it was not, 5 if the finish closed a canary, 6 if the free
+   gave back memory while the function still mastered the bus, 7 if the
+   function could be taken again meanwhile, and 8 if it could not be taken
+   again after the finish. *)
 let interrupted_release root bus va n =
   let ok = function Ok x -> x | Error _ -> exit refused_code in
   let f = take_mastering (Machine.at root) bus in
@@ -2274,22 +2592,27 @@ let interrupted_release root bus va n =
     exit 7;
   Function.free_dma f kept;
   let stored f = Tree.stored (Filename.concat root ("dev/hugepages/" ^ f)) in
-  if mastering && List.for_all (fun f -> stored f = 0) (memory_files root) then
+  let still = command_in root bus land bus_master <> 0 in
+  if still && List.for_all (fun f -> stored f = 0) (memory_files root) then
     exit 6;
   Function.release f;
+  Function.finish_releases ();
   let is_open fd =
     match Unix.fstat fd with _ -> true | exception Unix.Unix_error _ -> false
   in
   if not (List.for_all is_open fds) then exit 5;
+  (match Function.take (Machine.at root) bus with
+  | Ok f -> Function.release f
+  | Error _ -> exit 8);
   exit (if reached then 0 else 4)
 
 (* An exception at any allocation of a release, with windows mapped and
    system memory taken, leaves what the release had not given back to the
-   process's exit. Releasing again gives nothing back twice: the files the
-   process opened since stay open and unwritten, through its exit too. While
-   the function may still master the bus, no take gets it and memory freed
-   stays. Once the process exits, the function is taken again, and its reset
-   leaves no memory file or marker. *)
+   finish of the releases, which gives it back and nothing twice: the files
+   the process opened since stay open and unwritten, through its exit too,
+   and the function is taken again. While the function may still master the
+   bus, no take gets it and memory freed stays. Once the process exits, a
+   reset of the function leaves no memory file or marker. *)
 let test_interrupted_release () =
   if not flocks then skip ~reason:"locking a function's file needs flock" ();
   let rec from n =
@@ -2308,11 +2631,12 @@ let test_interrupted_release () =
       match wait_exit pid with
       | WEXITED 0 -> true
       | WEXITED 4 -> false
-      | WEXITED 5 -> failf "%s" (at "the second release closed a file")
+      | WEXITED 5 -> failf "%s" (at "the finish closed a file")
       | WEXITED 6 ->
           failf "%s" (at "a free gave back memory the function reached")
       | WEXITED 7 ->
           failf "%s" (at "a take while the function mastered the bus")
+      | WEXITED 8 -> failf "%s" (at "the finish left the function held")
       | _ -> failf "%s" (at "the process did not exit")
     in
     for i = 0 to canaries - 1 do
@@ -2327,12 +2651,58 @@ let test_interrupted_release () =
   in
   from 1
 
+(* Two releases an exception cut, then a finish of the releases with an
+   exception once at its [n]-th allocation, for [n] from 1 until the finish
+   makes fewer: the finish goes on to the other function and the exception
+   passes, so at most the function it cut is left. The next finish gives that
+   one back. *)
+let test_finish_raises () =
+  if not flocks then skip ~reason:"locking a function's file needs flock" ();
+  let buses = [ "0000:03:00.0"; "0000:04:00.0" ] in
+  let root = Tree.make (List.map Tree.gpu buses) in
+  let m = Machine.at root in
+  let taken () =
+    List.length
+      (List.filter (fun b -> Tree.flocked (config_file root b)) buses)
+  in
+  let rec walk n =
+    let at what = strf "%s, from allocation %d" what n in
+    List.iter
+      (fun b ->
+        let f = take_mastering m b in
+        ignore (map ~length:4096 f 0 : Window.t);
+        ignore (Rig_support.interrupted 1 (fun () -> Function.release f)))
+      buses;
+    equal ~msg:(at "the functions the cut releases left") int 2 (taken ());
+    let raised = ref false in
+    let once () =
+      if not !raised then begin
+        raised := true;
+        raise Exit
+      end
+    in
+    let reached =
+      Rig_support.interrupted ~landing:(Call once) n Function.finish_releases
+    in
+    if n = 1 then equal ~msg:"the walk lands" bool true reached;
+    less ~msg:(at "the functions the raising finish left") int ~than:2
+      (taken ());
+    Function.finish_releases ();
+    equal ~msg:(at "the functions the next finish left") int 0 (taken ());
+    if reached then walk (n + 1)
+  in
+  walk 1
+
 let interrupts =
   group ~timeout:patience "interrupts"
     [
       test
+        "a finish of the releases that an exception cuts finishes the others \
+         and passes it"
+        test_finish_raises;
+      test
         "an exception at any allocation of a release leaves the rest to the \
-         exit, giving nothing back twice"
+         finish of the releases, giving nothing back twice"
         test_interrupted_release;
       test "an exception at any allocation of a wait ends its use"
         test_interrupted_wait;
@@ -2344,6 +2714,8 @@ let interrupts =
         "a use an exception ends while another domain holds the lock, with \
          SIGINT pending, ends"
         test_interrupted_held;
+      cases "a free_dma or an unpin gives no memory back under a give-back"
+        ~name:fst under_give_back test_under_give_back;
     ]
 
 let this_machine =

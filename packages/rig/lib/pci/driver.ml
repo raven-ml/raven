@@ -49,9 +49,10 @@ type t = {
 (* [pid] is the process that opened it: a child of fork inherits the hold, and
    it stays the parent's. [lock] makes the first [stop] the only one to call
    the driver's: [stopped] is its answer, and [lost] whether it loses the
-   function. [returned] is whether a stop began releasing the function, which
-   the next stop does if the first's give-back raised before. A renewal that
-   failed leaves the function lost whatever stops it. *)
+   function. The hold is listed in [held] until a stop's release of its
+   function returns, so that an exception that ended the first stop before
+   leaves the release to the next. A renewal that failed leaves the function
+   lost whatever stops it. *)
 and hold = {
   driver : t;
   machine : Machine.t;
@@ -63,7 +64,6 @@ and hold = {
   mutable unrenewed : bool;
   mutable stopped : [ `Stopped | `Unknown ] option;
   mutable lost : bool;
-  mutable returned : bool;
   mutable opened : bool;
       (* whether its open returned it: one listed in [held] with this unset
          while no open runs is a failed open's, whose bracket an exception
@@ -116,16 +116,12 @@ let buses g m =
 
 (* Checks *)
 
-(* The bus of function [i] of [m], which the process does not hold. A hold
-   found under [holds] whose release began has a release an exception ended,
-   since a give-back holds [holds] through the release. *)
+(* The bus of function [i] of [m], which the process does not hold. *)
 let nth g m i =
   let* all = buses g m in
   let held bus =
     Lock.protect g.holds (fun () ->
-        Option.map
-          (fun h -> h.returned)
-          (List.find_opt (fun h -> h.machine == m && h.bus = bus) g.held))
+        List.exists (fun h -> h.machine == m && h.bus = bus) g.held)
   in
   match List.nth_opt all i with
   | None when all = [] ->
@@ -133,15 +129,8 @@ let nth g m i =
   | None ->
       Error
         (strf "no such function; %s drives %d here" g.name (List.length all))
-  | Some bus -> (
-      match held bus with
-      | None -> Ok bus
-      | Some false -> Error (bus ^ " is open in this process")
-      | Some true ->
-          Error
-            (bus
-           ^ " is held by this process until it exits: an exception ended its \
-              stop as it gave the function back"))
+  | Some bus ->
+      if held bus then Error (bus ^ " is open in this process") else Ok bus
 
 (* Renewals *)
 
@@ -188,16 +177,16 @@ let renew h =
 
 (* Releases [h]'s function once its stop recorded its answer, under [holds]:
    no open or reset sees the function free while still taken, or lost before
-   it is marked. A give-back that raised before the release, as one from a
-   callback inside [holds] on the same thread does, is made by the next stop.
-   [h] stays held until the release returns, so that one an exception ended
-   leaves the function held until the process exits (Function.release). *)
+   it is marked. [h] stays listed until the release returns, so that a
+   give-back an exception ended before the release, as one from a callback
+   inside [holds] on the same thread does, is made by the next stop. A
+   release an exception ended is Function's to finish
+   (Function.finish_releases). *)
 let give_once h =
   let g = h.driver in
-  if not h.returned then begin
-    Lock.protect g.holds @@ fun () ->
+  Lock.protect g.holds @@ fun () ->
+  if List.memq h g.held then begin
     if h.lost then mark g h.machine h.bus ~lost:true;
-    h.returned <- true;
     Function.release h.fn;
     g.held <- List.filter (fun h' -> h' != h) g.held
   end
@@ -239,8 +228,8 @@ let finish_locked h ~failed =
       s
 
 (* The stop's first step under [h.lock] marks the hold leaving, with nothing
-   allocated between the take and the store: a hold found leaving and not
-   returned under the lock is one whose stop an exception cut. *)
+   allocated between the take and the store: a hold found listed and leaving
+   under the lock is one whose stop an exception cut. *)
 let finish h ~failed =
   Lock.take h.lock;
   h.leaving <- true;
@@ -316,42 +305,48 @@ let take g m bus =
   | None -> Function.take m bus
   | Some files -> Sysfs.locked files bus (fun l -> take_locked g m l)
 
-(* Ends the holds of this process's opens of [g] that are no longer live, as
-   their bracket would have, before an open, a reset or a change: a hold
-   listed but never returned, which under [g.mutex], where no open runs, is
-   one an exception ended before its bracket ran, and one found under its
-   lock leaving and not returned, whose stop an exception cut. The function is
-   renewed where no stop recorded an answer, since the open may have written
-   to it before it recorded its stop. A stop that raises here is printed, as
-   at exit, and reaches no unrelated open. A hold whose lock another thread
-   holds is live, a stop or a [set_stop] running: it is left, never waited
-   for, so that an open never waits for a stop, which may itself wait for
-   that open. *)
+(* Ends what exceptions cut in this process before an open, a reset or a
+   change, which all pass here, as a detach passes no take. First the holds of
+   its opens of [g] that are no longer live, as their bracket would have: a
+   hold listed but never returned, which under [g.mutex], where no open runs,
+   is one an exception ended before its bracket ran, and one found under its
+   lock leaving, whose stop an exception cut. The function is renewed where
+   no stop recorded an answer, since the open may have written to it before
+   it recorded its stop. A hold whose lock another thread holds is live, a
+   stop or a [set_stop] running: it is left, never waited for, so that an
+   open never waits for a stop, which may itself wait for that open. Then
+   every function of any driver released and not given back, which waits for
+   its uses and give-back on other threads: none of them takes a lock an
+   open holds, and the entries' check refuses a call from inside one on this
+   thread. An exception
+   here passes to the caller. One a driver's stop raised leaves its hold
+   stopped and released, unlisted, as at any stop (finish_locked), so that no
+   later open calls that stop again; one that cut a release leaves it to the
+   next. *)
 let ended g =
   let me = Unix.getpid () in
   let listed =
-    Lock.protect g.holds (fun () ->
-        List.filter (fun h -> h.pid = me && not h.returned) g.held)
+    Lock.protect g.holds (fun () -> List.filter (fun h -> h.pid = me) g.held)
   in
   List.iter
     (fun h ->
       if Lock.try_take h.lock then begin
-        let dead = (not h.returned) && ((not h.opened) || h.leaving) in
+        let dead = (not h.opened) || h.leaving in
         if dead && Option.is_none h.stopped then h.unrenewed <- true;
         match if dead then ignore (finish_locked h ~failed:true) with
         | () -> Lock.give h.lock
         | exception e ->
             Lock.give h.lock;
-            prerr_endline
-              (strf "ending a hold of %s that an exception cut: %s" h.bus
-                 (Printexc.to_string e))
+            reraise e
       end)
-    listed
+    listed;
+  Function.finish_held ()
 
 (* A function this process lost, or one a process that died left reaching
    memory, is renewed before the driver starts; one whose renewal fails is
    lost. *)
 let open_ g m i f =
+  Lock.check "Driver.open_";
   index "open_" i;
   named g i @@ Lock.protect g.mutex
   @@ fun () ->
@@ -370,7 +365,6 @@ let open_ g m i f =
       unrenewed = false;
       stopped = None;
       lost = false;
-      returned = false;
       opened = false;
       leaving = false;
     }
@@ -407,6 +401,7 @@ let open_ g m i f =
 (* [f l] for function [i] of [m], which no process takes while it runs: [l] is
    the lock a take holds. *)
 let change g fn m i (f : 's. 's Sysfs.lock -> 'a) =
+  Lock.check ("Driver." ^ fn);
   index fn i;
   named g i @@ Lock.protect g.mutex
   @@ fun () ->
@@ -531,13 +526,23 @@ let detach g m i =
 (* Resets *)
 
 (* Renews the function [taken] of [m], releasing it whatever the reset
-   answers. *)
+   answers or raises. The handler's release is its first step: a release an
+   exception ended is finished by the next open, reset or change, and the
+   exception passes as raised. *)
 let reset_taken g m taken =
-  let* fn = taken in
-  Fun.protect ~finally:(fun () -> Function.release fn) @@ fun () ->
-  renew_taken g m (Function.bus fn) fn
+  match taken with
+  | Error _ as e -> e
+  | Ok fn -> (
+      match renew_taken g m (Function.bus fn) fn with
+      | r ->
+          Function.release fn;
+          r
+      | exception e ->
+          Function.release fn;
+          reraise e)
 
 let reset g m i =
+  Lock.check "Driver.reset";
   index "reset" i;
   named g i @@ Lock.protect g.mutex
   @@ fun () ->

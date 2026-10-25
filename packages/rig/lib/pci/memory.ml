@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+external reraise : exn -> 'a = "%reraise"
+
 let strf = Printf.sprintf
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 let ( let* ) = Result.bind
@@ -269,11 +271,27 @@ let live fn m =
       (h, tables)
   | Some _ | None -> invalid_argf "Memory.%s: %s is released" fn m.reach.bus
 
+(* [using fn m f] is [f h tables] for the GPU [m] holds, run as a use of its
+   function: its tables lie behind the function's BAR windows, which a
+   release that begins meanwhile leaves mapped until the use ends. The use's
+   handler is the next step after its count. *)
+let using fn m f =
+  let h, tables = live fn m in
+  if not (Function.use h.fn) then
+    invalid_argf "Memory.%s: %s is released" fn m.reach.bus;
+  match f h tables with
+  | r ->
+      Function.unuse h.fn;
+      r
+  | exception e ->
+      Function.unuse h.fn;
+      reraise e
+
 let keep h r =
   Tables.Address.replace h.regions r.mapping.va { holder = r; out = [ r ] }
 
 let alloc ?(uncached = false) m kind n =
-  let h, tables = live "alloc" m in
+  using "alloc" m @@ fun h tables ->
   positive "alloc" n;
   let r =
     match kind with
@@ -313,7 +331,7 @@ let map_pinned m h tables ~va ~source ~host a n =
    the process: a process's heap and stacks lie far above the addresses a GPU's
    rings take. *)
 let map_host m a n =
-  let h, tables = live "map_host" m in
+  using "map_host" m @@ fun h tables ->
   positive "map_host" n;
   let page = Machine.page m.reach.machine in
   if n > max_int - a || wraps (a + n) page then
@@ -427,7 +445,7 @@ let map_new m h tables r =
    already, its own or a peer's it mapped, lies at its owner's address, so a
    new region there shares that mapping. *)
 let map_peer m r =
-  let h, tables = live "map_peer" m in
+  using "map_peer" m @@ fun h tables ->
   ignore (mine "map_peer" r.owner r : held);
   let r = origin r in
   let owner = mine "map_peer" r.owner r in
@@ -555,7 +573,7 @@ let give_back m h tables r =
   let map = r.mapping in
   (match (r.source, map.target, r.host, tables) with
   | Allocated, System, Some view, _ -> Function.free_dma h.fn view
-  | Allocated, _, Some view, Some _ -> Function.unmap h.fn view
+  | Allocated, _, Some view, Some _ -> Function.unmap_used h.fn view
   | _ -> ());
   Option.iter (fun (a, n) -> Function.unpin h.fn a n) r.pinned;
   (match (r.source, map.target, tables) with
@@ -567,12 +585,11 @@ let give_back m h tables r =
       Space.free m.reach.space map.va
   | Allocated | Borrowed _ | Peer _ -> ()
 
-(* The last region out over a mapping unmaps it and gives back its holder's. *)
-let free m r =
-  let h = mine "free" m r in
+(* The last region out over a mapping unmaps it and gives back its holder's.
+   [tables] are the GPU's while the free counts as a use of the function. *)
+let free_with m h r tables =
   let e = Tables.Address.find h.regions r.mapping.va in
   e.out <- List.filter (fun r' -> r' != r) e.out;
-  let tables = if Function.released h.fn then None else h.tables in
   if e.out = [] && List.mem r.mapping.va h.given then
     Tables.Address.remove h.regions r.mapping.va
   else if e.out = [] then begin
@@ -592,3 +609,18 @@ let free m r =
     h.unconfirmed <- []
   end;
   settle m h
+
+(* A free that writes the GPU's tables, through its BAR windows, counts as a
+   use of the function, as [using]'s requests do, so that a release that
+   begins meanwhile leaves the function's give-back, which unmaps them, to
+   the free's end. The use's handler is the next step after its count. Once
+   a release has begun the free writes no table. *)
+let free m r =
+  let h = mine "free" m r in
+  if Function.use h.fn then
+    match free_with m h r h.tables with
+    | () -> Function.unuse h.fn
+    | exception e ->
+        Function.unuse h.fn;
+        reraise e
+  else free_with m h r None

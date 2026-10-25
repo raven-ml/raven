@@ -44,11 +44,16 @@
     function. A process that exits from a callback inside a lock of this
     library's leaves the function whose release takes that lock as a killed
     process leaves it, prints why on standard error, and releases the
-    others. Behind an IOMMU, Linux stops the DMA of a function so left as
-    it closes the process's files. Taken physically, the
-    function keeps writing, into memory that stays until its GPU is reset
+    others. Behind an IOMMU, Linux stops the DMA of a function so left as it
+    closes the process's files. Taken physically, the function keeps
+    writing, into memory that stays until its GPU is reset
     ({{!dma}system memory}), and its legacy interrupts stay off until a kernel
     driver enables the function.
+
+    Behind an IOMMU, Linux turns a function's bus mastering off when the last
+    descriptor of its files closes. A child of [fork] that has not run [exec]
+    holds copies of them, so the function keeps mastering the bus, after its
+    {!release} too, until that child closes them or exits.
 
     A take changes the function's legacy interrupts until its release
     ({!take}), and a release turns bus mastering off. A function taken
@@ -58,12 +63,22 @@
 
     One owner makes a function's calls one at a time, except that {!pin},
     {!unpin}, {!alloc_dma}, {!free_dma} and {!wait} may be called from any
-    domain.
-    {!release} waits for the pins and allocations that run, and those that
-    start after it began raise [Invalid_argument]. After {!release}, every
+    domain. A pin, an unpin, an allocation, a free, the read of configuration
+    space at a wait's bound and each request that writes the GPU's tables
+    ({!Memory}) are the function's {e uses}. Each counts among the locks its
+    thread holds while it runs ({{!Rig_pci.errors}errors}). Once a {!release}
+    has begun, no use starts. A pin or an allocation then raises
+    [Invalid_argument], and a free or an unpin gives memory back as
+    {{!dma}system memory} states. The function is {e given back} once its
+    release has begun and no use runs. The release gives it back itself if no
+    use runs as it begins, and otherwise the last use to end gives it back. A
+    use refused after the release, or {!finish_releases}, gives back what an
+    exception left of that. A process that exits from a callback inside a use
+    leaves the function as a killed process leaves it. After {!release}, every
     call but {!free_dma}, {!unpin}, {!wait}, {!machine}, {!bus}, {!addressing}
-    and {!released} raises [Invalid_argument]. {!unmap} and {!free_dma} find a
-    window by equality ({!Window.t}). *)
+    and {!released} raises [Invalid_argument], and so does {!set_bus_master}
+    once the function is given back. {!unmap} and {!free_dma} find a window by
+    equality ({!Window.t}). *)
 
 (** {1:functions Functions} *)
 
@@ -100,24 +115,35 @@ val take : Machine.t -> string -> (t, string) result
     too. *)
 
 val release : t -> unit
-(** [release f] gives [f] back. It turns [f]'s bus mastering off, which ends
-    its DMA, and restores the legacy interrupts {!take} turned off. It unmaps
-    [f]'s BAR windows, closes the process's files for [f] and unlocks it.
-    Memory from {!alloc_dma} stays until {!free_dma}. Releasing again does
-    nothing. An exception that ends a release part-way, such as an
-    asynchronous one ({!Sys.Break}), leaves what the release had not given back
-    to the process's exit, which leaves [f] at worst as a killed process leaves
-    a function it holds. Until a release returns, and after one that could not
-    turn [f]'s bus mastering off because the system refused the write, as a
-    kernel locked down meanwhile refuses every write to configuration space,
-    {!free_dma} and {!unpin} give no memory back: [f] may still reach it. The
-    memory stays the process's until the process exits, and taken physically,
-    past its exit ({{!dma}system memory}).
+(** [release f] gives [f] back. Giving it back turns [f]'s bus mastering off,
+    which ends its DMA, restores the legacy interrupts {!take} turned off,
+    unmaps [f]'s BAR windows, closes the process's files for [f] and unlocks
+    it. Memory from {!alloc_dma} stays until {!free_dma}
+    ({{!dma}system memory}). While uses of [f] run, on other threads or
+    below a callback on this one, the release returns immediately, and the
+    last of them to end gives [f] back. A release called once one has begun
+    returns immediately.
 
-    Behind an IOMMU, Linux turns bus mastering off when the last descriptor of
-    the function's files closes. A child of [fork] that has not run [exec]
-    holds copies of them, so the function keeps mastering the bus until that
-    child closes them or exits. *)
+    An exception that ends the give-back part-way, such as an asynchronous
+    one ({!Sys.Break}), passes to the release or the use that made it, and
+    leaves the rest to a use refused after it, to {!finish_releases}, or to
+    the process's exit, which at worst leaves [f] as a killed process
+    does. *)
+
+val finish_releases : unit -> unit
+(** [finish_releases ()] gives back each function of this process whose
+    {!release} has begun and that is not given back, such as one whose
+    give-back an exception ended part-way: what it had not given back, and
+    nothing twice. It first waits for the uses of such a function that run,
+    and for a give-back of it that runs on another thread, so each is given
+    back as it returns. {!Driver} calls [finish_releases] before each open,
+    reset, detach and attach.
+
+    Raises [Invalid_argument], having done nothing, if the calling thread
+    holds a lock or is inside a use, as a callback inside one does
+    ({{!Rig_pci.errors}errors}). Once each function is finished, it raises
+    the first exception that ended a finish, and leaves that function to its
+    next call. *)
 
 val machine : t -> Machine.t
 (** [machine f] is the machine [f] is on. *)
@@ -129,7 +155,7 @@ val addressing : t -> Machine.addressing
 (** [addressing f] is how [f] reaches system memory. *)
 
 val released : t -> bool
-(** [released f] is [true] iff {!release} began giving [f] back. *)
+(** [released f] is [true] iff a {!release} of [f] has begun. *)
 
 val failed : t -> string option
 (** [failed f] is why [f] can no longer be reached, if it cannot: its machine
@@ -159,9 +185,11 @@ val set_bus_master : t -> bool -> unit
 (** [set_bus_master f on] lets [f] master the bus, reaching system memory by
     DMA, iff [on]. It sets or clears the bus master bit of [f]'s command
     register (PCI Express Base Specification, 7.5.1.1.3) and keeps its other
-    bits. {!release} clears it.
+    bits. {!release} clears it. The owner must not call it once it has
+    released [f]. A use's call, which may follow another thread's release, is
+    valid until [f] is given back, which no use outlives.
 
-    Raises [Invalid_argument] if [f] was released. *)
+    Raises [Invalid_argument] if [f] was given back ({!release}). *)
 
 (** {1:config Configuration space}
 
@@ -309,6 +337,13 @@ val reset : t -> (unit, string) result
       pin is {!unpin}ned or the pinning function is reset ({!Driver.reset})
       or renewed ({!Driver.renew}).
 
+    From a release's start until the function is given back, and after a
+    release that could not turn its bus mastering off because the system
+    refused the write, as a kernel locked down since the take does,
+    {!free_dma} and {!unpin} give no memory back, since the function may
+    still reach it. That memory stays the process's until it exits, and
+    taken physically, past its exit.
+
     Either way, a function reaches only the addresses its engines hold,
     which its driver states with {!set_dma_bits}, as Linux's drivers do with
     [dma_set_mask].
@@ -363,9 +398,9 @@ val alloc_dma :
     than a page on a function taken physically. *)
 
 val free_dma : t -> Window.t -> unit
-(** [free_dma f w] frees [w], and [f] reaches it no more. Once a release of
-    [f] began and until it returned, or after a release that could not turn
-    [f]'s bus mastering off, [w] stays instead, as {!release} states.
+(** [free_dma f w] frees [w], and [f] reaches it no more. From a release's
+    start until [f] is given back, or after a release that could not turn
+    [f]'s bus mastering off, [w] stays instead ({{!dma}system memory}).
 
     Raises [Invalid_argument] if [w] is not a live window {!alloc_dma} returned
     for [f]. *)
@@ -395,10 +430,10 @@ val pin : t -> int -> int -> ((int * int) list option, string) result
     Raises [Invalid_argument] if [a] is not on a page or [n <= 0]. *)
 
 val unpin : t -> int -> int -> unit
-(** [unpin f a n] releases one pin of the [n] bytes at [a]. Once a release of
-    [f] began and until it returned, or after a release that could not turn
-    [f]'s bus mastering off, the memory stays locked instead, as {!release}
-    states.
+(** [unpin f a n] releases one pin of the [n] bytes at [a]. From a release's
+    start until [f] is given back, or after a release that could not turn
+    [f]'s bus mastering off, the memory stays locked instead
+    ({{!dma}system memory}).
 
     Raises [Invalid_argument] if [(a, n)] is not pinned for [f]. *)
 
@@ -416,11 +451,33 @@ val take_locked : Machine.t -> 's Sysfs.lock -> (t, string) result
    memory. *)
 val set_own_length : int -> int
 
+(* [use f] counts a use of [f], as {!pin} and {!alloc_dma} are, and is
+   [true], or is [false], counting nothing, if a release of [f] has begun. A
+   [true] use must end with {!unuse}, on every exit: a caller installs its
+   handler as the next step, with nothing between that allocates or polls. A
+   use may write [f]'s BAR windows, which [f]'s give-back unmaps once no use
+   runs. *)
+val use : t -> bool
+
+(* [unuse f] ends a use {!use} counted. The last use to end once a release
+   has begun gives [f] back ({!release}), and raises what ends that. *)
+val unuse : t -> unit
+
+(* [unmap_used f w] is {!unmap} of [w] from inside a use ({!use}), which a
+   release begun meanwhile does not refuse: the give-back lists the windows
+   left only once no use runs. *)
+val unmap_used : t -> Window.t -> unit
+
 (* [reaching f] is [true] iff [f] was released and may still reach the
-   memory it was given: its release has not returned, or it could not turn
-   [f]'s bus mastering off. {!free_dma} and {!unpin} give nothing back
+   memory it was given: it is not given back yet, or its release could not
+   turn [f]'s bus mastering off. {!free_dma} and {!unpin} give nothing back
    then. *)
 val reaching : t -> bool
+
+(* [finish_held ()] is {!finish_releases} without its check of the calling
+   thread's locks, for {!Driver}, which checks at its entries and then holds
+   its own lock. *)
+val finish_held : unit -> unit
 
 (* [inherited f] is the [inherited] of [f]'s take ({!Machine.fn}) until
    {!forget} returns [Ok ()], and [false] after. *)

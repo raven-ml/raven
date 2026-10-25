@@ -126,9 +126,23 @@ val distance : t -> string -> string -> distance option
     windows and pins of each function. An operation is called only with
     arguments {!Function} accepts. The size of [alloc_dma] is rounded up to
     {!val-page}, and its [va] lies inside a range {!val-reserve} reserved. A
-    pin's range starts on a page. On a released function only [free_dma], [unpin] and one
-    [release] are called. Every pin and unpin is passed on, so a transport
-    counts them too. *)
+    pin's range starts on a page. Once {!Function.release} has begun on a
+    function, no use of it ({!Function}) starts, and the uses running finish
+    before the give-back's own [unmap], [config], [set_config] and [release].
+    The release, the last use, a use refused after the release or
+    {!Function.finish_releases} makes them, never two at once. [free_dma] and
+    [unpin] are still called on a released function, once its give-back has
+    turned its bus mastering off, outside any use. An exception, such as an
+    asynchronous one, may end [unmap] or [release] part-way, and {!Function}
+    then calls it again with the same arguments. Every pin and unpin is passed
+    on, so a transport counts them too.
+
+    A use's operations run inside a lock of the calling thread
+    ({{!Rig_pci.errors}errors}), as the give-back's do: [alloc_dma], [pin],
+    [free_dma] and [unpin] but those above, the [config] of a wait's bound, and
+    those of a request of {!Memory} that writes a GPU's tables. Each must call
+    nothing of rig's or of a driver's, and must return on the thread that
+    called it. *)
 
 (** The type for how a function reaches system memory. *)
 type addressing = Ops.addressing =
@@ -154,7 +168,10 @@ type fn = Ops.fn = {
   bar : int -> (int * int) option;  (** {!Function.bar}. *)
   map : combine:bool -> int -> int -> int -> (Window.t, string) result;
       (** [map ~combine i off n] is {!Function.map} of BAR [i]. *)
-  unmap : Window.t -> unit;  (** {!Function.unmap}. *)
+  unmap : Window.t -> unit;
+      (** {!Function.unmap}. It must raise only where an exception cuts it.
+          Called again on a window whose unmap an exception ended part-way, it
+          must unmap what remains of the window and nothing twice. *)
   interrupt : int -> bool;  (** {!Function.interrupt}. *)
   reset : unit -> (unit, string) result;
       (** {!Function.reset}, without waiting for the function to answer. *)
@@ -179,7 +196,9 @@ type fn = Ops.fn = {
       (** {!Function.release}, which turns the function's bus mastering off:
           [false] if the memory the function reached may still be written once
           given back, as when the system refused the write that turns its bus
-          mastering off. *)
+          mastering off. It must raise only where an exception cuts it.
+          Called again after an exception ended it part-way, it must give
+          back what it had not, and nothing twice. *)
 }
 (** The type for the operations on a function that a transport took. *)
 

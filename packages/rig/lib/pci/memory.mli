@@ -22,12 +22,17 @@
     {b After the GPU is given back.} Once the GPU's function is released
     ({!Function.release}, which {!Driver.stop} and {!release} do), {!free}
     writes none of the GPU's tables. It gives back system memory, pins and
-    virtual addresses only, and none of them while the function may still
-    write them ({!Function.release}). {!val-alloc}, {!map_host} and {!map_peer} on
-    this {!t} raise [Invalid_argument]. Once the function is released, another
-    open may reset the GPU, and this {!t} never writes it again. Its system
-    memory stays until its region's {!free}, and another GPU maps it as before
-    ({!map_peer}).
+    virtual addresses only, and none of them while the function may still write
+    them ({!Function.release}). Each request that writes the tables, {!val-
+    alloc}, {!map_host}, {!map_peer} and {!free}, is a use of the function, so
+    a release that begins meanwhile leaves the function's give-back to that
+    request's end ({!Function}). A request that began before the release and
+    reaches a step of {!Function} after it, such as an allocation, a pin or a
+    map, may raise [Invalid_argument] there and keep what it took until the
+    process exits. {!val-alloc}, {!map_host} and {!map_peer} on this {!t} raise
+    [Invalid_argument]. Once the function is released, another open may reset
+    the GPU, and this {!t} never writes it again. Its system memory stays until
+    its region's {!free}, and another GPU maps it as before ({!map_peer}).
 
     {b Unconfirmed flushes.} A {!free} whose flush the GPU does not confirm
     ({!Page_table.unmap}) keeps the region's memory and addresses, which the GPU
@@ -68,7 +73,12 @@ val release : t -> unit
 (** [release m] releases the function of [m]'s GPU ({!Function.release}), then
     drops the page tables {!create} was given, which only a live GPU uses. A
     driver that keeps [m] past the GPU's stop ({!Driver.stop}) releases it
-    there, so that [m] holds no page table. Releasing [m] again does nothing. *)
+    there, so that [m] holds no page table. Releasing [m] again does nothing
+    but drop the page tables if an earlier release did not.
+
+    An exception that ends the function's release passes
+    ({!Function.release}), and leaves the page tables to the next release of
+    [m]. *)
 
 type reach
 (** The type for the facts that decide whose GPU memory a GPU maps

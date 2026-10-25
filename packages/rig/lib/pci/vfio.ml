@@ -281,7 +281,12 @@ type container = {
 }
 
 (* A function behind an IOMMU, in its container. *)
-type t = { c : container; device : fd; mutable released : bool }
+type t = {
+  c : container;
+  device : fd;
+  mutable released : bool;
+  mutable left : bool; (* once [close] left the container *)
+}
 
 (* The containers, with the root of their machine's files. A child of fork
    inherits the list and the parent's descriptors, which share their IOMMU
@@ -353,15 +358,34 @@ let join files bus file group =
 (* Drops a count of [c]'s functions, closing it with the last, which removes
    every mapping it holds. It leaves the list before it is marked closed, so
    that no take joins a closed container, whose descriptor's number another
-   file may have taken: an exception between leaves its descriptor open. *)
+   file may have taken. The count drops last, with nothing between the close
+   and it that allocates or polls, so that a leave an exception ended is made
+   again whole and closes the descriptor once. Linux frees a descriptor
+   whatever its close answers, but for EBADF, which a descriptor that was not
+   open gives (close(2), NOTES): [leave] is [false] then, which only a bug of
+   this library's makes. *)
 let leave c =
   Lock.protect containers_lock @@ fun () ->
-  c.users <- c.users - 1;
-  if c.users = 0 then begin
+  if c.users = 1 then begin
     containers := List.filter (fun (_, c') -> c' != c) !containers;
     Lock.protect c.mutex (fun () -> c.closed <- true);
-    Unix.close c.fd
+    let open_ =
+      match Unix.close c.fd with
+      | () -> true
+      | exception Unix.Unix_error (EBADF, _, _) -> false
+      | exception Unix.Unix_error _ -> true
+    in
+    c.users <- 0;
+    open_
   end
+  else begin
+    c.users <- c.users - 1;
+    true
+  end
+
+let bad_close () =
+  Fail.bug "closing a VFIO container" (fun () ->
+      raise (Unix.Unix_error (EBADF, "close", "")))
 
 (* Opens [bus] behind its IOMMU, its descriptors but its container's on [fds]:
    the function and the eventfd its interrupts signal. *)
@@ -380,9 +404,9 @@ let open_ files fds bus =
   let group = Option.get !group in
   fds := group :: !fds;
   match open_device fds bus group with
-  | device, efd -> ({ c; device; released = false }, efd)
+  | device, efd -> ({ c; device; released = false; left = false }, efd)
   | exception e ->
-      leave c;
+      if not (leave c) then bad_close ();
       raise e
 
 let give_back c iova =
@@ -442,6 +466,12 @@ let unmap_dma bus t a n =
 
 let device t = t.device
 
+(* [left] is recorded as [leave] returns, and the bug it reports raised
+   after. *)
 let close t =
   Lock.protect t.c.mutex (fun () -> t.released <- true);
-  leave t.c
+  if not t.left then begin
+    let open_ = leave t.c in
+    t.left <- true;
+    if not open_ then bad_close ()
+  end

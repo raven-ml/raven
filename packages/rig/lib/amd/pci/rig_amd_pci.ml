@@ -19,6 +19,8 @@ module Window = Rig_pci.Window
 module Driver = Rig_pci.Driver
 module Amd = Rig_amd
 
+external reraise : exn -> 'a = "%reraise"
+
 let strf = Printf.sprintf
 let ( let* ) = Result.bind
 
@@ -295,11 +297,21 @@ let path g h fn ~index : Memory.region Amd.path =
   let mem = { memory = Boot.memory g; lock = Boot.lock g } in
   (* A fault rig lost the device for, a hang included, is the GPU's as much as
      one its interrupt ring reported: the stop leaves the GPU lost. *)
+  (* The memory, which drops the page tables, goes after the hold's stop. A
+     stop that an exception ended before it released the function leaves the
+     release to the hold, which its next stop, or the next open, reset or
+     change of any of the driver's functions, makes; the exception passes as
+     raised. *)
   let stop ~fault =
     Option.iter (Boot.faulted g) fault;
-    Fun.protect
-      (fun () -> Driver.stop h)
-      ~finally:(fun () -> protect mem (fun () -> Memory.release mem.memory))
+    let release () = protect mem (fun () -> Memory.release mem.memory) in
+    match Driver.stop h with
+    | s ->
+        release ();
+        s
+    | exception e ->
+        if Rig_pci.Function.released fn then release ();
+        reraise e
   in
   let on = known (Rig_pci.Function.machine fn) in
   {

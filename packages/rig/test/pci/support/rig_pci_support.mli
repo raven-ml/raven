@@ -287,6 +287,15 @@ module Tree : sig
       through [fd], which must hold no lock of the file: it makes no open, so
       a check repeated after every call costs two system calls. *)
 
+  val opened : string -> int
+  (** [opened file] is the number of this process's descriptors open on
+      [file], from [/proc/self/fd]. Linux only. *)
+
+  val close_lock : string -> bool
+  (** [close_lock file] closes, behind its owner's back, the descriptor of
+      this process that holds flock's lock on [file], as listed in
+      [/proc/self/fdinfo]. It is whether it found one. Linux only. *)
+
   val hold : string -> Unix.file_descr
   (** [hold file] takes a read lock of a new open file description over
       [file], as a memory file's live process holds one, and is the

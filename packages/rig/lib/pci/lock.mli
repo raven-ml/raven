@@ -11,16 +11,22 @@
 
     Locks nest in this order. A driver's lock ({!Driver}) is held over an
     open, a reset or a change, and a hold's lock over its stop. Under either
-    come the driver's holds ({!Driver}) and the driver's own locks. Under
-    those come VFIO's list of containers, then a container's lock ({!Vfio}),
-    then a space's ({!Space}); and system memory's state ({!Sysmem}), then
-    its reservations' lock. A function's lock ({!Function}), the firmware
-    found ({!Firmware}) and the routes read ({!Memory}) hold no other.
+    come the driver's holds ({!Driver}) and the driver's own locks, then a
+    function's release ({!Function}). Under those come VFIO's list of
+    containers, then a container's lock ({!Vfio}), then a space's
+    ({!Space}); and system memory's state ({!Sysmem}), then its
+    reservations' lock. A function's lock ({!Function}), the firmware found
+    ({!Firmware}) and the routes read ({!Memory}) hold no other.
 
     A vendor's lock is held across a whole open, a boot included, and a
     reset, which wait for the GPU: two of them on one GPU would interleave
     their writes. A container's and system memory's locks are held across
     the system calls that map memory for a device. *)
+
+val check : string -> unit
+(** [check fn] raises [Invalid_argument], naming [Rig_pci.fn], if the calling
+    thread holds a lock ([rig_holds] in [rig_edge.h]), as a callback inside
+    one does. An entry that waits for other threads starts with it. *)
 
 type t
 (** The type for locks. *)

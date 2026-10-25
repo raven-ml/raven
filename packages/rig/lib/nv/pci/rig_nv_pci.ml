@@ -277,23 +277,13 @@ let map_host g a n =
 let map_peer g (m : Memory.region Rig_nv.memory) =
   mapped g (protect g (fun () -> Memory.map_peer g.memory m.data))
 
-(* A free once the stop released the GPU's function releases the memory
-   first, which drops the page tables, as the stop does after: one that
-   exception cut before then leaves no free to reach a stopped GPU's tables.
-   A free after the names went, of a GPU whose function is not released,
-   keeps the region, which leaks: the GPU may still read its tables. *)
+(* A free drops the region's name while the GPU has names. *)
 let free g (m : Memory.region Rig_nv.memory) =
   protect g @@ fun () ->
-  if Function.released g.fn then begin
-    Memory.release g.memory;
-    Memory.free g.memory m.data
-  end
-  else
-    match g.names with
-    | Some n ->
-        n.regions <- Handles.remove m.handle n.regions;
-        Memory.free g.memory m.data
-    | None -> ()
+  Option.iter
+    (fun n -> n.regions <- Handles.remove m.handle n.regions)
+    g.names;
+  Memory.free g.memory m.data
 
 (* Another function reaches the memory as a peer GPU does, at its runs through
    the memory BAR, and rig.pci keeps them and the GPU's function for it until
@@ -392,12 +382,13 @@ let device ~word ~on g ~gsp ~hold ~tables (c : Chip.t) =
         (* The hold's stop is the first call, with nothing allocated before
            it, so that an exception later leaves the hold to the next open of
            the GPU. The names and the memory go after it: rig frees nothing
-           during the stop, and a free gives back only once the function is
-           released. A stop that raised before the release leaves it to the
-           hold, which the next open, reset or change of any of the driver's
-           functions, or the exit, ends, so that no open finds it part-way;
-           one that raised after it gives back the memory as one that
-           returned does, the release's own a no-op once begun. *)
+           during the stop, and a free that writes the GPU's tables gives the
+           function back as it ends if the release began meanwhile
+           (Memory.free). A stop that raised before the release leaves it to
+           the hold, which the next open, reset or change of any of the
+           driver's functions, or the exit, ends, so that no open finds it
+           part-way; one that raised after it gives back the memory as one
+           that returned does. *)
         stop =
           (fun () ->
             match Driver.stop hold with
@@ -405,8 +396,7 @@ let device ~word ~on g ~gsp ~hold ~tables (c : Chip.t) =
                 after_stop ();
                 s
             | exception e ->
-                if Function.released g.fn then after_stop ()
-                else protect g (fun () -> g.names <- None);
+                if Function.released g.fn then after_stop ();
                 reraise e);
       }
   with

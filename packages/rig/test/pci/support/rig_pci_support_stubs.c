@@ -345,6 +345,17 @@ value rig_pci_test_flocked_fd(value v_fd) {
 #endif
 }
 
+/* Closes the descriptor numbered [v_n], which the caller found open. */
+value rig_pci_test_close_number(value v_n) {
+#ifdef _WIN32
+  (void)v_n;
+  caml_failwith("rig_pci_test_close_number: Linux only");
+#else
+  if (close(Int_val(v_n)) != 0) caml_uerror("close", Nothing);
+  return Val_unit;
+#endif
+}
+
 /* Takes a read lock of a new open file description over the file at
    [v_path], without waiting, as a memory file's process holds one, and
    returns the descriptor, whose close gives the lock back. Raises Unix_error

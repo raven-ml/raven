@@ -285,12 +285,22 @@ let exit () =
     Lock.protect state @@ fun () ->
     List.iter (fun f -> if f.reachers = [] then unlink f.path) !files
 
-(* A file that lists no function and holds no block goes. *)
+(* A file that lists no function and holds no block goes. It leaves [files]
+   as its descriptor's close returns, with nothing between that allocates or
+   polls, so that a collect an exception ended is made again whole and closes
+   the descriptor once. Linux frees a descriptor whatever its close answers,
+   but for EBADF, which a descriptor that was not open gives (close(2),
+   NOTES), and only a bug of this library's closes such a one. *)
 let collect f =
   if f.reachers = [] && not (has_blocks f) then begin
-    files := List.filter (( != ) f) !files;
+    let rest = List.filter (( != ) f) !files in
     unlink f.path;
-    Unix.close f.fd
+    match Unix.close f.fd with
+    | () -> files := rest
+    | exception (Unix.Unix_error (EBADF, _, _) as e) ->
+        files := rest;
+        Fail.bug ("closing " ^ f.path) (fun () -> raise e)
+    | exception Unix.Unix_error _ -> files := rest
   end
 
 (* A hugetlbfs lists its page size among its mount options. *)
@@ -558,13 +568,17 @@ let free w =
   own_free a
 
 (* The function at [bus] under [root] leaves the lists of the process's
-   files. *)
+   files, each as its marker goes, and each file of [root] that then lists no
+   function and holds no block goes: a leave an exception ended is made again
+   whole. *)
 let leave ~root bus =
   List.iter
     (fun (f : file) ->
-      if f.root = root && List.mem bus f.reachers then begin
-        f.reachers <- List.filter (( <> ) bus) f.reachers;
-        unmark f.path bus;
+      if f.root = root then begin
+        if List.mem bus f.reachers then begin
+          unmark f.path bus;
+          f.reachers <- List.filter (( <> ) bus) f.reachers
+        end;
         collect f
       end)
     !files
