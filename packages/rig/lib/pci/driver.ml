@@ -270,9 +270,21 @@ let stop_held g =
   in
   List.iter stop g.held
 
+(* The thread's signals blocked, its waits included ([rig_shield] and
+   [rig_unshield] in [rig_edge.h]): the stops at exit take no signal, whose
+   exception would skip the exit handlers after this one. *)
+external shield : unit -> unit = "caml_rig_edge_shield" [@@noalloc]
+external unshield : unit -> unit = "caml_rig_edge_unshield"
+
 let register_exit g =
   if not g.exits then begin
-    Stdlib.at_exit (fun () -> stop_held g);
+    Stdlib.at_exit (fun () ->
+        shield ();
+        match stop_held g with
+        | () -> unshield ()
+        | exception e ->
+            unshield ();
+            reraise e);
     g.exits <- true
   end
 
@@ -475,7 +487,7 @@ let let_go g files bus nodes ~bound =
     | Some why when Unix.gettimeofday () >= deadline ->
         Fail.fail "%s after %d ms: %s" bus g.teardown_ms why
     | Some _ ->
-        Unix.sleepf poll_s;
+        Machine.nap poll_s;
         go ()
   in
   go ()

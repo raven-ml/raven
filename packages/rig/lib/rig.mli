@@ -645,6 +645,25 @@ val signaled : t -> int
     leave that device never stopped, holding its memory and its slot for
     the rest of the process.
 
+    rig blocks every signal on the calling thread, but those a fault raises
+    ([SIGSEGV], [SIGBUS], [SIGFPE], [SIGILL], [SIGTRAP], [SIGABRT] and
+    [SIGSYS]), across each call it makes to a driver or an io library but the
+    reads of a word or an address and the check of a peer, which wait for
+    nothing, and the driver unblocks them only inside its waits. A signal that
+    comes while such a call runs outside its waits is delivered at the call's
+    next wait or once the call has returned, so its handler, a Ctrl-C's
+    [Sys.Break] included, never ends the call there. One that comes during a
+    driver's wait runs its handler before the wait returns, and its exception
+    ends the call as an asynchronous one. A function of a driver's library that
+    a program calls directly, such as an opener or a function of a
+    {!capability}, blocks signals in the same way, but for one whose doc says
+    it runs the program's code. A driver's finalisers and exit handlers take no
+    signal, even in their waits. A thread that rig starts blocks every signal
+    for its life. Blocking applies to the calling thread only: a signal sent to
+    the process while this thread blocks it goes to another thread that does
+    not, and a program with several threads chooses the one that takes it with
+    [Thread.sigmask].
+
     A driver changes the memory and code that a device's work uses when it
     allocates, maps or gives back memory, and when it loads, looks up or
     unloads code. An exception other than a fault that escapes the driver

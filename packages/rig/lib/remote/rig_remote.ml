@@ -92,7 +92,7 @@ let rail m (peer : Rig_remote_abi.host option) ~send ~receive :
       | Ok () ->
           (* The rail ends once its end is unreachable: the rail holds the end,
              and work that uses it holds either. *)
-          Gc.finalise collect local;
+          Gc.finalise (fun l -> Agent.shielded (fun () -> collect l)) local;
           Ok rail
       | Error why ->
           Link.release_rail m.link id;
@@ -121,7 +121,9 @@ let rail m (peer : Rig_remote_abi.host option) ~send ~receive :
           | Ok () -> (
               match request m' rail'' with
               | Ok () ->
-                  Gc.finalise collect rail;
+                  Gc.finalise
+                    (fun r -> Agent.shielded (fun () -> collect r))
+                    rail;
                   Ok rail
               | Error why ->
                   Link.drop m.link id;
@@ -194,6 +196,7 @@ let open_proxy m h (a : Wire.account) =
    open of a kind with the accounts it gave first, so both give the same
    proxies ({!open_proxy}). *)
 let devices h kind =
+  Agent.masked @@ fun () ->
   match machine_of_host h with
   | None -> invalid_arg "Rig_remote.devices: the device is no host of a job"
   | Some m -> (
@@ -226,6 +229,7 @@ let failed j = Link.failed j.job
    close, and until then its memory and slot stay held. Their stops wait for
    nothing once the job failed. *)
 let close j =
+  Agent.masked @@ fun () ->
   (match Link.wait j.job ~ms:0 with
   | Link.Closed -> ()
   | Link.Failed _ -> List.iter Rig.close (hosts j)
@@ -242,6 +246,7 @@ let close j =
    the links of a failed job have ended, so each agent reads its abort. *)
 let () =
   at_exit @@ fun () ->
+  Agent.shielded @@ fun () ->
   match Atomic.get current with
   | None -> ()
   | Some j ->
@@ -308,7 +313,7 @@ let join job agents ms =
     | Ok a -> Atomic.set answers.(i) (Some a)
     | Error why -> Link.fail job why
   in
-  let threads = List.mapi (fun i m -> Thread.create (ask i) m) ms in
+  let threads = List.mapi (fun i m -> Agent.spawn (ask i) m) ms in
   let until = Unix.gettimeofday () +. join_answer_s in
   let rec wait () =
     let unanswered =
@@ -322,7 +327,7 @@ let join job agents ms =
     | _ -> if Link.wait job ~ms:10 = Link.Open then wait ()
   in
   wait ();
-  List.iter Thread.join threads;
+  List.iter (Agent.unblocked Thread.join) threads;
   match Link.failed job with
   | Some why -> Error why
   | None -> Ok (List.filter_map Atomic.get (Array.to_list answers))
@@ -375,7 +380,7 @@ let watch j =
         Option.iter (Link.fail j.job) (loss j);
         loop ()
   in
-  ignore (Thread.create loop ())
+  ignore (Agent.spawn loop ())
 
 let check_agents agents =
   if agents = [] then invalid_arg "Rig_remote.connect: no agent";
@@ -416,6 +421,7 @@ let start ~fn ~key ~report agents =
       Ok j
 
 let connect ~key agents =
+  Agent.masked @@ fun () ->
   check_agents agents;
   let named = List.map (fun (h, p) -> (strf "%s:%d" h p, h, p)) agents in
   start ~fn:"connect" ~key ~report:None named
@@ -484,6 +490,7 @@ let launched_key = function
 let called = Atomic.make false
 
 let launched () =
+  Agent.masked @@ fun () ->
   if Atomic.exchange called true then
     invalid_arg "Rig_remote.launched: the process called it before";
   match Agent.take Agent.report_var with

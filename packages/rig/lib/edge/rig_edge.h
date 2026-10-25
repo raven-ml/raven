@@ -283,6 +283,49 @@ int rig_holds(void);
 int rig_hold(void);
 void rig_unhold(void);
 
+/* Signals
+
+   rig_mask () blocks on the calling thread every signal but those a fault
+   raises (SIGSEGV, SIGBUS, SIGFPE, SIGILL, SIGTRAP, SIGABRT and SIGSYS), and
+   rig_unmask () ends it. Pairs nest: the outermost rig_unmask () gives the
+   thread back the mask it had before the outermost rig_mask (). Inside a
+   pair, rig_unblock () gives that mask back for a wait, and rig_block ()
+   blocks again: a wait calls rig_unblock () right before the step that
+   blocks and rig_block () right after it, whether the step returns or
+   raises. The step releases the OCaml runtime while it blocks
+   (caml_enter_blocking_section or caml_release_runtime_system), as any
+   blocking stub does: a signal the runtime recorded while the thread blocked
+   it runs its handler as the step takes the runtime back. A pair that starts
+   inside a wait, from a handler or a callback that runs there, blocks again,
+   and its end opens the wait again unless the pair waited itself, which
+   leaves the rest of the outer wait blocked. rig_shield () and
+   rig_unshield () are a pair inside which rig_unblock () gives nothing back,
+   for code that must take no signal even in its waits, such as a finaliser
+   or an exit handler. Outside every pair rig_unblock () and rig_block ()
+   change nothing. A signal that came while the thread blocked it runs its
+   OCaml handler at the thread's first poll point once the OCaml external
+   caml_rig_edge_unmask or caml_rig_edge_unshield has ended the outermost
+   pair, or inside the wait once rig_unblock () has given the mask back
+   (rig_edge.mli's Drivers section). Each is called from a thread that holds
+   the OCaml runtime. OCaml calls them through the externals
+   caml_rig_edge_mask, caml_rig_edge_shield and caml_rig_edge_unblock,
+   noalloc, of type unit -> unit, caml_rig_edge_unmask and
+   caml_rig_edge_unshield, of the same type, which release and take back the
+   runtime as the outermost pair ends, so that a signal the runtime recorded
+   while the thread blocked it is looked at again, and caml_rig_edge_block,
+   which first runs what a poll point runs (the handlers of the signals
+   pending, finalisers, Gc.Memprof callbacks, a switch to another thread), so
+   that a signal that came during the wait raises its exception there, then
+   blocks. The C functions rig_unmask () and rig_unshield () release nothing:
+   a C caller runs no poll point inside its pair. On Windows they block
+   nothing. */
+void rig_mask(void);
+void rig_unmask(void);
+void rig_shield(void);
+void rig_unshield(void);
+void rig_unblock(void);
+void rig_block(void);
+
 /* rig_code_sync () makes the calling thread run the code that rig linked on
    the host before the call ([Rig.Image.load] on [Rig.host]): on arm64 it
    synchronizes the thread's instruction stream with that code, once per

@@ -371,6 +371,52 @@ let listen_taken () =
   let a = List.hd agents in
   is_error (Rig_remote.listen ~key:(as_key key) "127.0.0.1" a.port)
 
+(* Threads *)
+
+(* The system's numbers of SIGINT and SIGTERM on Linux, whose /proc shows a
+   thread's blocked signals as a mask of bit [n - 1] for signal [n]. *)
+let sigint_number = 2
+let sigterm_number = 15
+
+(* The ids of this process's threads. *)
+let tasks () = Array.to_list (Sys.readdir "/proc/self/task")
+
+(* The signals thread [t] blocks, or [None] once it has ended. *)
+let blocked t =
+  match In_channel.with_open_text ("/proc/self/task/" ^ t ^ "/status")
+          In_channel.input_lines
+  with
+  | exception Sys_error _ -> None
+  | lines ->
+      List.find_map
+        (fun l ->
+          match String.split_on_char '\t' l with
+          | [ "SigBlk:"; hex ] -> Some (Int64.of_string ("0x" ^ hex))
+          | _ -> None)
+        lines
+
+let blocks mask n = Int64.logand mask (Int64.shift_left 1L (n - 1)) <> 0L
+
+(* Every thread a job starts in the controller blocks the signals sent to the
+   process, so a Ctrl-C runs its handler on a thread of the program's. *)
+let threads_block () =
+  if not (Sys.file_exists "/proc/self/task") then
+    skip ~reason:"the system shows no thread's signal mask" ();
+  let before = tasks () in
+  with_job @@ fun _ _ ->
+  let started = List.filter (fun t -> not (List.mem t before)) (tasks ()) in
+  greater ~msg:"threads the job runs" int ~than:0 (List.length started);
+  List.iter
+    (fun t ->
+      match blocked t with
+      | None -> ()
+      | Some mask ->
+          equal ~msg:("SIGINT on thread " ^ t) bool true
+            (blocks mask sigint_number);
+          equal ~msg:("SIGTERM on thread " ^ t) bool true
+            (blocks mask sigterm_number))
+    started
+
 let connecting =
   group "connect"
     [
@@ -379,6 +425,8 @@ let connecting =
       test "an agent refuses a controller of another key, then serves the key's"
         wrong_key;
       test "an address nothing listens at is an Error naming it" unreachable;
+      test "every thread a job starts blocks the process's signals"
+        threads_block;
       test "an agent in a job tells a second controller it serves another"
         second_controller;
       test "an agent admits one of two controllers that come at once"

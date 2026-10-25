@@ -206,6 +206,11 @@ external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
 external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
 external reraise : exn -> 'a = "%reraise"
 
+(* The calling thread's signals blocked and given back ([rig_mask] and
+   [rig_unmask] in [rig_edge.h]). *)
+external mask : unit -> unit = "caml_rig_edge_mask" [@@noalloc]
+external unmask : unit -> unit = "caml_rig_edge_unmask"
+
 (* [take m] takes [m], counted from before the take, so that a signal handler
    that runs inside a contended take sees it held. An exception that ends the
    take gives the count back first, having taken nothing: one a handler
@@ -245,16 +250,27 @@ let with_lock nic f =
       give nic.lock;
       reraise e
 
-(* Raises [Invalid_argument] naming [fn] while the thread holds a lock: the
-   call comes from a signal handler, finaliser or Gc.Memprof callback inside
-   that lock, and would wait for it or see its section half done. A public
-   call that may take a lock starts with it. *)
-let check fn =
+(* A function a caller outside rig makes, and that may take a lock, runs as
+   [guarded fn f]: inside a lock it raises [Invalid_argument] naming [fn],
+   having done nothing, since the call comes from a signal handler,
+   finaliser or Gc.Memprof callback inside that lock and would wait for it or
+   see its section half done. Otherwise it runs [f] with the thread's signals
+   blocked ([rig_mask] and [rig_unmask] in [rig_edge.h]), which only the
+   driver's waits unblock. *)
+let guarded fn f =
   if holds () <> 0 then
     invalid_arg
       ("Rig_mlx5." ^ fn
      ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
-        inside a lock of the calling thread's")
+        inside a lock of the calling thread's");
+  mask ();
+  match f () with
+  | r ->
+      unmask ();
+      r
+  | exception e ->
+      unmask ();
+      reraise e
 
 let alive fn nic =
   if Atomic.get nic.closed then
@@ -347,6 +363,7 @@ let port_address = function
       Ok (Some i, Gid g)
 
 let make p =
+  guarded "make" @@ fun () ->
   let attempt () =
     let module R = D.Ucontext_resp in
     let req =
@@ -411,7 +428,7 @@ let make p =
       raise e
 
 let close nic =
-  check "close";
+  guarded "close" @@ fun () ->
   if not (Atomic.exchange nic.closed true) then begin
     nic.path.close ();
     let cqs, qps = with_lock nic (fun () -> (nic.cqs, nic.qps)) in
@@ -436,10 +453,12 @@ let device root name =
   else Error (strf "%s: no RDMA device of this name" name)
 
 let path ?(root = "/") name =
+  guarded "path" @@ fun () ->
   let* () = device root name in
   Uverbs.open_ ~root name
 
 let open_under ~root name =
+  guarded "open_under" @@ fun () ->
   let* () = device root name in
   let* () =
     if is_mlx5 root name then Ok ()
@@ -463,7 +482,7 @@ module Region = struct
   type t = region
 
   let register nic access order m =
-    check "Region.register";
+    guarded "Region.register" @@ fun () ->
     alive "Region.register" nic;
     let address, bytes =
       match m with
@@ -498,7 +517,7 @@ module Region = struct
      write its pages. A later call answers as the first did, so that it never
      says the NIC is done with memory it may still write. *)
   let deregister r =
-    check "Region.deregister";
+    guarded "Region.deregister" @@ fun () ->
     alive "Region.deregister" r.nic;
     match r.gone with
     | Some answer -> answer
@@ -555,7 +574,7 @@ module Cq = struct
   let counted = 1 lsl 24
 
   let make nic n =
-    check "Cq.make";
+    guarded "Cq.make" @@ fun () ->
     alive "Cq.make" nic;
     if n < 1 then invalid_arg (strf "Rig_mlx5.Cq.make: %d entries" n);
     let most = min nic.facts.cqes counted in
@@ -658,7 +677,7 @@ module Cq = struct
      so the NIC's writes never reach memory the process reuses. A later call
      answers as the first did. *)
   let destroy cq =
-    check "Cq.destroy";
+    guarded "Cq.destroy" @@ fun () ->
     let nic = cq.c_nic in
     alive "Cq.destroy" nic;
     match cq.c_destroyed with
@@ -710,7 +729,7 @@ module Qp = struct
   let rec log2 n = if n <= 1 then 0 else 1 + log2 (n / 2)
 
   let make cq ~receives n =
-    check "Qp.make";
+    guarded "Qp.make" @@ fun () ->
     let nic = cq.c_nic in
     live_cq "Qp.make" cq;
     if n < 1 then invalid_arg (strf "Rig_mlx5.Qp.make: %d entries" n);
@@ -830,6 +849,7 @@ module Qp = struct
     { qp = q.q_number; psn = q.psn; address = nic.address; mtu = nic.facts.mtu }
 
   let connect q access (e : endpoint) =
+    guarded "Qp.connect" @@ fun () ->
     let nic = q.q_nic in
     live_qp "Qp.connect" q;
     if q.connected then invalid_arg "Rig_mlx5.Qp.connect: connected";
@@ -916,7 +936,7 @@ module Qp = struct
      queue pair the kernel keeps may still complete its entries, so they keep
      their room in its queue. *)
   let destroy q =
-    check "Qp.destroy";
+    guarded "Qp.destroy" @@ fun () ->
     let nic = q.q_nic in
     alive "Qp.destroy" nic;
     match q.q_destroyed with
@@ -939,7 +959,7 @@ end
 type event = Completion of Cq.t | Failure of string | Port of string
 
 let wait nic ~ms =
-  check "wait";
+  guarded "wait" @@ fun () ->
   alive "wait" nic;
   if ms < 0 then invalid_arg (strf "Rig_mlx5.wait: %d ms" ms);
   let find tags tag = with_lock nic (fun () -> List.assoc_opt tag (tags ())) in

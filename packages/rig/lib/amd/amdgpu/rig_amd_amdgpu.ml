@@ -155,6 +155,24 @@ external kfd_wait : int -> int array -> int -> int -> fault option
 external kfd_sleep : int -> int array -> int -> int -> int -> int
   = "caml_rig_amd_amdgpu_sleep"
 
+(* The calling thread's signals unblocked across a wait's blocking step
+   ([rig_unblock] and [rig_block] in [rig_edge.h]). *)
+external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
+external block : unit -> unit = "caml_rig_edge_block"
+external reraise : exn -> 'a = "%reraise"
+
+(* [kfd_sleep] with the thread's signals unblocked, so that a signal's
+   handler runs in its wait. *)
+let kfd_nap fd events ms gpu after =
+  unblock ();
+  match kfd_sleep fd events ms gpu after with
+  | age ->
+      block ();
+      age
+  | exception e ->
+      block ();
+      reraise e
+
 (* The render node *)
 
 (* [device_info drm] is the GPU's clock in kHz and its active compute units, 16
@@ -577,7 +595,7 @@ let nodes m =
   Array.copy m.gpus
 
 let gpus_of m =
-  Amd.Lock.check "Rig_amd_amdgpu.gpus_of";
+  Amd.Lock.guarded "Rig_amd_amdgpu.gpus_of" @@ fun () ->
   Array.to_list
     (Array.map
        (fun (bus, node) ->
@@ -869,11 +887,16 @@ let sleep d ~ms ~after =
   let g = d.gpu in
   raise_fault g;
   let age =
-    match kfd_sleep d.fd d.events ms g.node.gpu_id after with
+    match kfd_nap d.fd d.events ms g.node.gpu_id after with
     | age -> age
     | exception Unix.Unix_error (e, _, _) ->
         arm d.events.(0);
         fault "waiting for KFD events" e
+    | exception e ->
+        (* A signal's handler raised as the wait ended, after the wait took
+           the event: the slot is armed again for the next sleep. *)
+        arm d.events.(0);
+        reraise e
   in
   arm d.events.(0);
   if age >= 0 then newer d.age age
@@ -1034,7 +1057,7 @@ let device_name i =
   if i = 0 then "AMD" else strf "AMD:%d" i
 
 let open_ ~root ~word i =
-  Amd.Lock.check "Rig_amd_amdgpu.gpu";
+  Amd.Lock.guarded "Rig_amd_amdgpu.gpu" @@ fun () ->
   if i < 0 then invalid_argf "Rig_amd_amdgpu.gpu: GPU %d is negative" i;
   let* gpus =
     Result.map_error
@@ -1103,7 +1126,7 @@ let gpu i = gpu_under ~root:"/" i
 let age_from = 1014
 
 let event_age () =
-  Amd.Lock.check "Rig_amd_amdgpu.event_age";
+  Amd.Lock.guarded "Rig_amd_amdgpu.event_age" @@ fun () ->
   Amd.Lock.protect opening @@ fun () ->
   match kfd_fd ~dev:"/dev" with
   | Error _ -> false

@@ -65,7 +65,7 @@ let split = split ()
    counted among the locks its thread holds (rig_hold in rig_edge.h). Locks
    nest in one order: an entry takes its image's, then its device's, and no
    section takes any other. An [icb] and an opener's [make], which callers
-   outside rig make, start with [check].
+   outside rig make, run inside [guarded].
 
    An image's lock is held while Metal makes a function's pipeline, and a
    device's while an icb records its dispatches, so that no unload, free or
@@ -81,6 +81,14 @@ external holds : unit -> (int[@untagged])
 external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
 external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
 external reraise : exn -> 'a = "%reraise"
+
+(* The calling thread's signals blocked and given back, and unblocked across
+   a wait's blocking step ([rig_mask], [rig_unmask], [rig_unblock] and
+   [rig_block] in [rig_edge.h]). *)
+external mask : unit -> unit = "caml_rig_edge_mask" [@@noalloc]
+external unmask : unit -> unit = "caml_rig_edge_unmask"
+external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
+external block : unit -> unit = "caml_rig_edge_block"
 
 (* [take m] takes [m], counted from before the take, so that a signal handler
    that runs inside a contended take sees it held. An exception that ends the
@@ -122,15 +130,27 @@ let locked m f r =
       give m;
       reraise e
 
-(* Raises [Invalid_argument] naming [fn] while the thread holds a lock: the
-   call comes from a signal handler, finaliser or Gc.Memprof callback inside
-   that lock, and would wait for it or see its section half done. *)
-let check fn =
+(* A function a caller outside rig makes, and that may take a lock, runs as
+   [guarded fn f]: inside a lock it raises [Invalid_argument] naming [fn],
+   having done nothing, since the call comes from a signal handler,
+   finaliser or Gc.Memprof callback inside that lock and would wait for it or
+   see its section half done. Otherwise it runs [f] with the thread's signals
+   blocked ([rig_mask] and [rig_unmask] in [rig_edge.h]), which only the
+   driver's waits unblock. *)
+let guarded fn f =
   if holds () <> 0 then
     invalid_arg
       (fn
      ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
-        inside a lock of the calling thread's")
+        inside a lock of the calling thread's");
+  mask ();
+  match f () with
+  | r ->
+      unmask ();
+      r
+  | exception e ->
+      unmask ();
+      reraise e
 
 exception Fault of string
 
@@ -273,7 +293,7 @@ let recorded (self, tables, buffer, ds, pipelines, sizes) =
    own copy, and checks and records that copy: a dispatch read again could hold
    a pipeline the checks never saw. *)
 let icb self guard tables align buffer (ds : Rig_metal_abi.dispatch array) =
-  check "Rig_metal_abi.icb";
+  guarded "Rig_metal_abi.icb" @@ fun () ->
   let ds = Array.copy ds in
   let sizes = Array.make (7 * Array.length ds) 0 in
   let record i (d : Rig_metal_abi.dispatch) =
@@ -326,7 +346,7 @@ let count () = Ok (gpus ())
 
 (* The handlers write the word from the host: no work addresses it. *)
 let open_ ~word i =
-  check "Rig_metal.gpu";
+  guarded "Rig_metal.gpu" @@ fun () ->
   if i < 0 then invalid_argf "Rig_metal.gpu: GPU %d is negative" i;
   if i > 0 then Error (strf "no such GPU; Metal sees %d" (gpus ()))
   else
@@ -569,8 +589,21 @@ let unload d (i : image) =
 
 let signaled d = signaled_word d.self
 
+(* The sleep's wait runs with the thread's signals unblocked. It holds no
+   runtime check of pending signals, so a signal's handler runs as the
+   sleep returns. *)
 let sleep d ~seen ~still_ms =
-  if sleep_word d.self seen still_ms <> 0 then raise (Fault (failure d.self))
+  unblock ();
+  let r =
+    match sleep_word d.self seen still_ms with
+    | r ->
+        block ();
+        r
+    | exception e ->
+        block ();
+        reraise e
+  in
+  if r <> 0 then raise (Fault (failure d.self))
 
 (* Ends what the device runs, under [d.guard], taken without a closure. An
    exception that ends a contended take, such as one a signal handler raised,

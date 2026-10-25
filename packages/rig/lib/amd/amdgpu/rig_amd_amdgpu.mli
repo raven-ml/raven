@@ -175,7 +175,7 @@ val machine_at : string -> (machine, string) result
 
 (* [gpus_of m] is the GPUs of [m] in bus order as {!gpu_at} describes each. A
    GPU [Error] at the last look is looked at again; one found is kept. Raises
-   [Invalid_argument] from a callback inside a lock ({!Rig_amd.Lock.check}). *)
+   [Invalid_argument] from a callback inside a lock ({!Rig_amd.Lock.guarded}). *)
 val gpus_of : machine -> (string * (Rig_amd_abi.Gpu.t, string) result) list
 
 (* [save_area_at root bus] is the bytes of a compute queue's context save area

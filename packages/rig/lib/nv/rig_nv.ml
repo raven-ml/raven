@@ -63,6 +63,14 @@ external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
 external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
 external reraise : exn -> 'a = "%reraise"
 
+(* The calling thread's signals blocked and given back, and unblocked across
+   a wait's blocking step ([rig_mask], [rig_unmask], [rig_unblock] and
+   [rig_block] in [rig_edge.h]). *)
+external mask : unit -> unit = "caml_rig_edge_mask" [@@noalloc]
+external unmask : unit -> unit = "caml_rig_edge_unmask"
+external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
+external block : unit -> unit = "caml_rig_edge_block"
+
 (* The rank of the last lock of the driver's the calling thread took, [-1]
    for none, and its change. *)
 external held_rank : unit -> (int[@untagged])
@@ -149,14 +157,24 @@ let try_protect l f =
             reraise e)
   end
 
-(* A function a caller outside rig makes, and that may take a lock, starts
-   with [check_held fn]. *)
-let check_held fn =
+(* A function a caller outside rig makes, and that may take a lock, runs as
+   [guarded fn f]: inside a lock it raises having done nothing, and otherwise
+   it runs [f] with the thread's signals blocked, which only the driver's
+   waits unblock. *)
+let guarded fn f =
   if holds () <> 0 then
     invalid_arg
       (fn
      ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
-        inside a lock of the calling thread's")
+        inside a lock of the calling thread's");
+  mask ();
+  match f () with
+  | r ->
+      unmask ();
+      r
+  | exception e ->
+      unmask ();
+      reraise e
 
 module Lock = struct
   type t = lock
@@ -164,7 +182,7 @@ module Lock = struct
   let create () = ranked path_rank
   let protect = protect
   let try_protect = try_protect
-  let check = check_held
+  let guarded = guarded
 end
 
 (* Paths *)
@@ -808,7 +826,7 @@ let retire_channels d l =
       each (drop_channels l) dropped
 
 let local d n =
-  check_held "Rig_nv_abi.Gpu.local";
+  guarded "Rig_nv_abi.Gpu.local" @@ fun () ->
   match grow_local d n with
   | Served -> Ok ()
   | Stopped -> Error "the device is stopped"
@@ -1726,14 +1744,23 @@ external now : unit -> (int[@untagged])
    already spun on, which are long. *)
 let nap_s = 0.001
 
+(* A nap with the thread's signals unblocked, so that a signal's handler runs
+   there. *)
+let nap () =
+  unblock ();
+  match Unix.sleepf nap_s with
+  | () -> block ()
+  | exception e ->
+      block ();
+      reraise e
+
 let sleep (T d) ~seen ~still_ms =
   if read_word d.self = seen then begin
     check_faults d;
     let until = now () + (still_ms * 1_000_000) in
     let more = ref true in
     while !more && read_word d.self = seen && not (notified d) do
-      if now () >= until then more := false
-      else Unix.sleepf nap_s
+      if now () >= until then more := false else nap ()
     done;
     if notified d then check_faults d
   end

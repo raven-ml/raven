@@ -8,8 +8,8 @@
    each; an operation that gives rig a function runs once more with that
    function raising. After each failure the outcome is the one rig.mli states,
    the driver holds no region of the operation's, a lost device was stopped
-   once, the C heap and the descriptors are back where they were, and the
-   operation runs again. *)
+   once, the C heap, the descriptors and the signals the thread blocks are
+   back where they were, and the operation runs again. *)
 
 open Windtrap
 module B = Rig.Buffer
@@ -69,9 +69,13 @@ let outcome d f =
 
 (* Walking *)
 
+(* The signals the calling thread blocks: every call rig makes below its core
+   blocks them and gives them back. *)
+let blocked () = List.sort compare (Thread.sigmask Unix.SIG_BLOCK [])
+
 let census () =
   collect ();
-  (S.heap_bytes (), S.descriptors ())
+  (S.heap_bytes (), S.descriptors (), blocked ())
 
 (* The regions [p] still holds of the sizes the operations use: the staging
    memory, which the host keeps, has its own. *)
@@ -85,7 +89,7 @@ let attempt op failure =
   let d, p = op.opener name in
   op.prepare d None;
   settle d;
-  let heap, fds = census () in
+  let heap, fds, signals = census () in
   let run = ref (Some (op.prepare d)) in
   inject p failure;
   let got = outcome d (fun () -> Option.get !run (Some failure)) in
@@ -99,8 +103,9 @@ let attempt op failure =
   settle d;
   equal ~msg:("regions left with the driver" ^ at) (list int) [] (left p);
   equal ~msg:("stops" ^ at) int (if lost = None then 0 else 1) (count "stop" p);
-  let heap', fds' = census () in
+  let heap', fds', signals' = census () in
   equal ~msg:("descriptors" ^ at) (option int) fds fds';
+  equal ~msg:("signals blocked" ^ at) (list int) signals signals';
   P.fail_at p 1 (`Refuse 0);
   let d = if lost = None then d else fst (op.opener name) in
   op.prepare d None;
@@ -147,7 +152,7 @@ let walk ?(kinds = all) op () =
 let open_attempt failure =
   let name = fresh "open" in
   let p = P.make () in
-  let heap, fds = census () in
+  let heap, fds, signals = census () in
   inject p failure;
   let make ~word =
     if failure = Raise then raise Exit else Ok (P.bind p ~word)
@@ -167,8 +172,9 @@ let open_attempt failure =
   equal ~msg:("outcome" ^ at) string expected got;
   let stops = match failure with Fault _ -> [ "stop" ] | _ -> [] in
   equal ~msg:("driver calls" ^ at) (list string) stops (P.log p);
-  let heap', fds' = census () in
+  let heap', fds', signals' = census () in
   equal ~msg:("descriptors" ^ at) (option int) fds fds';
+  equal ~msg:("signals blocked" ^ at) (list int) signals signals';
   ignore
     (require_ok
        (Rig.open_
@@ -214,7 +220,7 @@ let memory_attempt n =
     Sub.Run.int64 run (Sub.block (Option.get !s) i) 0 0L
   done;
   Rig.Point.wait (once ~buffers run);
-  let heap, fds = census () in
+  let heap, fds, signals = census () in
   S.store (S.Reader.host counter) n;
   let got =
     outcome d (fun () -> Rig.Point.wait (once ~buffers run))
@@ -222,8 +228,9 @@ let memory_attempt n =
   let at = Printf.sprintf ", fill %d" n in
   equal ~msg:("outcome" ^ at) string "lost: a fill failed" got;
   settle d;
-  let heap', fds' = census () in
+  let heap', fds', signals' = census () in
   equal ~msg:("descriptors" ^ at) (option int) fds fds';
+  equal ~msg:("signals blocked" ^ at) (list int) signals signals';
   s := None;
   let d = Result.get_ok (Rig.memory_device name) in
   equal ~msg:("open again" ^ at) (option string) None (Rig.lost d);
@@ -243,13 +250,14 @@ let test_memory_refused () =
   let d = Result.get_ok (Rig.memory_device (fresh "memory")) in
   ignore (B.create d 64);
   settle d;
-  let heap, fds = census () in
+  let heap, fds, signals = census () in
   raises_match
     (function Rig.Out_of_memory (d', _) -> Rig.equal d d' | _ -> false)
     (fun () -> B.create d (1 lsl 60));
   settle d;
-  let heap', fds' = census () in
+  let heap', fds', signals' = census () in
   equal ~msg:"descriptors" (option int) fds fds';
+  equal ~msg:"signals blocked" (list int) signals signals';
   (match (heap, heap') with
   | Some h, Some h' -> grew "a refused allocation" [ h' - h ]
   | _ -> ());

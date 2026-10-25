@@ -12,9 +12,24 @@ type dispatch = {
 
 type icb = { handle : nativeint; commands : nativeint array }
 
+(* A finaliser runs [collect ()] with the thread's signals blocked, its
+   waits included ([rig_shield] and [rig_unshield] in [rig_edge.h]), so that
+   no signal's exception escapes it into the code it interrupted. *)
+external shield : unit -> unit = "caml_rig_edge_shield" [@@noalloc]
+external unshield : unit -> unit = "caml_rig_edge_unshield"
+external reraise : exn -> 'a = "%reraise"
+
+let collected collect _ =
+  shield ();
+  match collect () with
+  | () -> unshield ()
+  | exception e ->
+      unshield ();
+      reraise e
+
 let icb ~handle ~commands ~collect =
   let b = { handle; commands } in
-  Gc.finalise (fun _ -> collect ()) b;
+  Gc.finalise (collected collect) b;
   b
 
 type t = {

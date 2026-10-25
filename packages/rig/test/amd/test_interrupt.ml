@@ -249,7 +249,7 @@ let test_lock_reentered () =
     Rig_support.covered seen
   in
   walk "Rig_amd: a lock taken again" (fun () -> A.Lock.protect l ignore);
-  walk "Rig_amd.lock: called from" (fun () -> A.Lock.check "Rig_amd.lock")
+  walk "Rig_amd.lock: called from" (fun () -> A.Lock.guarded "Rig_amd.lock" ignore)
 
 (* An exception at any allocation of a section under a path's lock gives the
    lock back: the thread holds what it held before, and takes the lock again. *)

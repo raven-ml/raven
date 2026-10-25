@@ -257,13 +257,18 @@ let release f =
    take a lock or a call that an asynchronous exception can end before it
    wakes the finish. A give-back takes only locks below [giving], none of
    which a finish holds, since its caller holds none but its driver's. A
-   release elected and not yet counted in the word is waited for too. *)
+   release elected and not yet counted in the word is waited for too. The
+   wait for uses naps with the thread's signals unblocked ({!Machine.nap}),
+   so that a signal's handler runs there: an exception it raises ends the
+   finish before it takes [giving], and leaves [f] listed for the next. The
+   wait for a give-back is the take of [giving], which leaves the mask as it
+   is, as every lock's take does: inside a mask, signals stay blocked. *)
 let nap_s = 0.0001
 
 let finish f =
   if Atomic.get f.releasing then begin
     while Atomic.get f.state <> 1 do
-      Unix.sleepf nap_s
+      Machine.nap nap_s
     done;
     Lock.take f.giving;
     give_locked f

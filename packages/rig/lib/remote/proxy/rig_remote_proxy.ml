@@ -172,7 +172,25 @@ let fault d =
   Fault
     (Option.value ~default:"the job failed" (Link.failed (Link.job_of d.link)))
 
-let sleep d ~seen ~still_ms = if sleep_c d.c seen still_ms then raise (fault d)
+(* The calling thread's signals unblocked across the sleep's wait
+   ([rig_unblock] and [rig_block] in [rig_edge.h]), so that a signal's
+   handler runs there. *)
+external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
+external block : unit -> unit = "caml_rig_edge_block"
+external reraise : exn -> 'a = "%reraise"
+
+let sleep d ~seen ~still_ms =
+  unblock ();
+  let failed =
+    match sleep_c d.c seen still_ms with
+    | failed ->
+        block ();
+        failed
+    | exception e ->
+        block ();
+        reraise e
+  in
+  if failed then raise (fault d)
 let stop d ~fault:_ = stop_c d.c
 
 (* Its room never answers RIG_GROW: the device's own driver grows its

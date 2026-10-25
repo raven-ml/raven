@@ -28,6 +28,29 @@ val serve :
   (unit, string) result
 (** {!Rig_remote.serve}. *)
 
+(** {1:signals Signals}
+
+    The library's calls that build its state run with the calling
+    thread's signals blocked ([rig_mask] of [rig_edge.h]), and unblock them
+    only across their waits. Its finalisers and exit handler take none,
+    even in their waits. A command an agent serves runs as its caller's
+    code does: the rig calls it makes block signals themselves. *)
+
+val masked : (unit -> 'a) -> 'a
+(** [masked f] is [f ()] with the calling thread's signals blocked. *)
+
+val shielded : (unit -> 'a) -> 'a
+(** [shielded f] is [f ()] with the calling thread's signals blocked, its
+    waits included ([rig_shield] of [rig_edge.h]). *)
+
+val unblocked : ('a -> 'b) -> 'a -> 'b
+(** [unblocked f x] is [f x], a wait, with the calling thread's signals as
+    they were before the outermost {!masked}. *)
+
+val spawn : ('a -> 'b) -> 'a -> Thread.t
+(** [spawn f x] is [Thread.create f x], whose thread blocks every signal but
+    a fault's for its life. *)
+
 (** {1:reports Reports to a launcher} *)
 
 type report

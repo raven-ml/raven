@@ -147,28 +147,42 @@ let physical = Atomic.make []
 let hold t = update physical (List.cons (Unix.getpid (), t))
 let unhold t = update physical (List.filter (fun (_, t') -> t' != t))
 
-let () =
-  at_exit (fun () ->
-      let pid = Unix.getpid () in
-      let each f (owner, t) =
-        if owner = pid then
-          try f t
-          with e ->
-            prerr_endline
-              (strf "releasing %s at exit: %s" t.bus (Printexc.to_string e))
-      in
-      let give_back t =
-        match t.way with
-        | Physical_take s -> ignore (give_back t s : bool)
-        | Iommu_take _ -> ()
-      in
-      let held = Atomic.get physical in
-      List.iter (each stop_dma) held;
-      List.iter (each give_back) held;
-      try Sysmem.exit ()
+(* The thread's signals blocked, its waits included ([rig_shield] and
+   [rig_unshield] in [rig_edge.h]): the exit's release takes no signal,
+   whose exception would skip the exit handlers after this one. *)
+external shield : unit -> unit = "caml_rig_edge_shield" [@@noalloc]
+external unshield : unit -> unit = "caml_rig_edge_unshield"
+
+let release_all () =
+  let pid = Unix.getpid () in
+  let each f (owner, t) =
+    if owner = pid then
+      try f t
       with e ->
         prerr_endline
-          (strf "releasing system memory at exit: %s" (Printexc.to_string e)))
+          (strf "releasing %s at exit: %s" t.bus (Printexc.to_string e))
+  in
+  let give_back t =
+    match t.way with
+    | Physical_take s -> ignore (give_back t s : bool)
+    | Iommu_take _ -> ()
+  in
+  let held = Atomic.get physical in
+  List.iter (each stop_dma) held;
+  List.iter (each give_back) held;
+  try Sysmem.exit ()
+  with e ->
+    prerr_endline
+      (strf "releasing system memory at exit: %s" (Printexc.to_string e))
+
+let () =
+  at_exit (fun () ->
+      shield ();
+      match release_all () with
+      | () -> unshield ()
+      | exception e ->
+          unshield ();
+          reraise e)
 
 (* mmap maps whole pages from an offset on a page: the pages that hold the [n]
    bytes at [off]. *)

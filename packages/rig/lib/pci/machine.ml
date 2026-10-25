@@ -133,6 +133,18 @@ external now : unit -> (int[@untagged])
   = "caml_rig_edge_now_byte" "caml_rig_edge_now"
 [@@noalloc]
 
+external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
+external block : unit -> unit = "caml_rig_edge_block"
+external reraise : exn -> 'a = "%reraise"
+
+let nap s =
+  unblock ();
+  match Unix.sleepf s with
+  | () -> block ()
+  | exception e ->
+      block ();
+      reraise e
+
 (* A wait spins for [spin_ns], where devices mostly answer, then naps [nap_s]
    between calls, so that a long wait holds no core. Elapsed time is compared in
    whole microseconds against [us], which cannot overflow. *)
@@ -149,7 +161,7 @@ let wait m ~us f =
       let elapsed = now () - start in
       if elapsed / 1_000 >= us then false
       else begin
-        if elapsed < spin_ns then Domain.cpu_relax () else Unix.sleepf nap_s;
+        if elapsed < spin_ns then Domain.cpu_relax () else nap nap_s;
         go ()
       end
   in

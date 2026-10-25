@@ -17,8 +17,8 @@
    Every lock is a [Mutex.t] that [protect] holds, counted among the locks its
    thread holds (rig_hold in rig_edge.h). No section takes a second lock, so
    locks never nest. A function that a caller outside rig makes and that may
-   take a lock, [count], an opener's [make] and a graph call, starts with
-   [check].
+   take a lock, [count], an opener's [make] and a graph call, runs inside
+   [guarded].
 
    The locks are held across calls of the CUDA driver that may wait for the
    GPU: the library's load, a host range's registration, a function's
@@ -43,6 +43,14 @@ external holds : unit -> (int[@untagged])
 external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
 external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
 external reraise : exn -> 'a = "%reraise"
+
+(* The calling thread's signals blocked and given back, and unblocked across
+   a wait's blocking step ([rig_mask], [rig_unmask], [rig_unblock] and
+   [rig_block] in [rig_edge.h]). *)
+external mask : unit -> unit = "caml_rig_edge_mask" [@@noalloc]
+external unmask : unit -> unit = "caml_rig_edge_unmask"
+external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
+external block : unit -> unit = "caml_rig_edge_block"
 
 (* [take m] takes [m], counted from before the take, so that a signal handler
    that runs inside a contended take sees it held. An exception that ends the
@@ -83,15 +91,27 @@ let protect m f =
       give m;
       reraise e
 
-(* Raises [Invalid_argument] naming [fn] while the thread holds a lock: the
-   call comes from a signal handler, finaliser or Gc.Memprof callback inside
-   that lock, and would wait for it or see its section half done. *)
-let check fn =
+(* A function a caller outside rig makes, and that may take a lock, runs as
+   [guarded fn f]: inside a lock it raises [Invalid_argument] naming [fn],
+   having done nothing, since the call comes from a signal handler,
+   finaliser or Gc.Memprof callback inside that lock and would wait for it or
+   see its section half done. Otherwise it runs [f] with the thread's signals
+   blocked ([rig_mask] and [rig_unmask] in [rig_edge.h]), which only the
+   driver's waits unblock. *)
+let guarded fn f =
   if holds () <> 0 then
     invalid_arg
       (fn
      ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
-        inside a lock of the calling thread's")
+        inside a lock of the calling thread's");
+  mask ();
+  match f () with
+  | r ->
+      unmask ();
+      r
+  | exception e ->
+      unmask ();
+      reraise e
 
 (* The CUDA library. A stub with a numeric result returns it as a non-negative
    int, or CUDA's status negated. *)
@@ -313,11 +333,11 @@ external keep_word : int -> int = "caml_rig_cuda_keep_word" [@@noalloc]
 external enable_peer : int -> int -> int -> int -> int = "caml_rig_cuda_peer"
 
 let count () =
-  check "Rig_cuda.count";
+  guarded "Rig_cuda.count" @@ fun () ->
   Result.map (fun g -> Array.length g.devices) (find_gpus ())
 
 let buses () =
-  check "Rig_cuda.buses";
+  guarded "Rig_cuda.buses" @@ fun () ->
   Result.map (fun g -> g.buses) (find_gpus ())
 
 let device_name i =
@@ -413,7 +433,7 @@ let release_image (m : image) =
 
 let graph context guard stopped images pending
     (ks : Rig_cuda_abi.kernel array) =
-  check "Rig_cuda_abi.graph";
+  guarded "Rig_cuda_abi.graph" @@ fun () ->
   let sizes = Array.concat (Array.to_list (Array.mapi sizes ks)) in
   protect guard @@ fun () ->
   drain pending;
@@ -542,7 +562,7 @@ let note_words () =
     registry := { start; bytes; maps = 1 } :: !registry
 
 let open_ ~word i =
-  check "Rig_cuda.gpu";
+  guarded "Rig_cuda.gpu" @@ fun () ->
   if i < 0 then invalid_argf "Rig_cuda.gpu: GPU %d is negative" i;
   let* g = find_gpus () in
   let n = Array.length g.devices in
@@ -945,13 +965,22 @@ external now : unit -> (int[@untagged])
    latency falls on waits rig has already spun on, which are long. *)
 let nap_s = 0.001
 
+(* A nap with the thread's signals unblocked, so that a signal's handler runs
+   there. *)
+let nap () =
+  unblock ();
+  match Unix.sleepf nap_s with
+  | () -> block ()
+  | exception e ->
+      block ();
+      reraise e
+
 let sleep g ~seen ~still_ms =
   let until = now () + (still_ms * 1_000_000) in
   let status = ref 0 and more = ref true in
   while !more && signaled g = seen do
     status := failed g.self;
-    if !status <> 0 || now () >= until then more := false
-    else Unix.sleepf nap_s
+    if !status <> 0 || now () >= until then more := false else nap ()
   done;
   if !status <> 0 then fault "the GPU's work failed" !status
 

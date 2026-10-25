@@ -1,7 +1,7 @@
 ; What a driver is to rig: the C structures and codes by which a caller
 ; hands work to a driver (rig_edge.h), the OCaml facts and signature a
-; driver matches (rig_edge.mli), and the host's clock and the count of the
-; locks a thread holds, which they share.
+; driver matches (rig_edge.mli), and the host's clock, the count of the
+; locks a thread holds and its signal mask, which they share.
 
 (library
  (name rig_edge)

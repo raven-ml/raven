@@ -340,7 +340,10 @@ val serve :
     it serves another job. It opens the devices of a kind of [kinds] with the
     kind's opener at the controller's first {!devices} call for it, and runs
     the work the controller submits from the calling domain
-    ({!section-order}).
+    ({!section-order}). That work, and the openers of [kinds], run as the
+    program's own code: rig's calls they make block signals as {!Rig}'s
+    Errors section states, and a signal's handler may run between them, its
+    exception ending [serve] as an asynchronous one.
 
     [Ok ()] once the controller has closed the job, as {!close} states.
     [Error why] once the job has failed, [why] its root cause

@@ -66,6 +66,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "rig_edge.h"
 #include "rig_remote_proxy_stubs.h"
 
 #ifdef _WIN32
@@ -1419,10 +1420,15 @@ value caml_rig_remote_link_make(value vj, value fd, value name, value peer) {
   pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
   l->threads = 2;
   l->receiving = 1;
+  /* The threads take the mask they are made with, every signal but a
+     fault's blocked, so that a signal sent to the process interrupts none of
+     their system calls and runs its handler on a thread of the program's. */
+  rig_mask();
   int e = pthread_create(&ts, &attr, sender, l);
   if (e != 0) l->threads -= 2;
   if (e == 0 && (e = pthread_create(&tr, &attr, receiver, l)) != 0)
     l->threads -= 1;
+  rig_unmask();
   if (e != 0) l->receiving = 0;
   pthread_attr_destroy(&attr);
   pthread_mutex_unlock(&j->mu);

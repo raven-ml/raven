@@ -2543,6 +2543,57 @@ let test_interrupted_held () =
   equal ~msg:"the pin's refusal" bool true reached;
   releases root f
 
+(* The calling thread's signals blocked, as rig blocks them across a call
+   below its core ([rig_mask] in [rig_edge.h]). *)
+external mask : unit -> unit = "caml_rig_edge_mask" [@@noalloc]
+external unmask : unit -> unit = "caml_rig_edge_unmask"
+
+(* A finish of the releases with the thread's signals blocked takes a
+   SIGINT while it waits for another domain's use of a released function:
+   it raises [Sys.Break] while the use runs, and leaves the function taken
+   for the next finish, which gives it back once the use has ended. *)
+let test_finish_interrupted () =
+  if Sys.win32 then skip ~reason:"Windows has no SIGINT from a thread" ();
+  let root, f = fixture () in
+  let taken () = Tree.flocked (config_file root (Function.bus f)) in
+  let user =
+    Domain.spawn (fun () ->
+        if Function.use f then begin
+          Rig_support.park ();
+          Function.unuse f
+        end)
+  in
+  while not (Rig_support.parked ()) do
+    Domain.cpu_relax ()
+  done;
+  Function.release f;
+  equal ~msg:"taken while the use runs" bool true (taken ());
+  Sys.catch_break true;
+  (* The signal's thread starts before the mask, which it would inherit. *)
+  Rig_support.interrupt_after 0.05;
+  mask ();
+  let finished =
+    Fun.protect ~finally:(fun () ->
+        (* A SIGINT the finish did not take lands here. *)
+        (try
+           unmask ();
+           Rig_support.interrupt_join ()
+         with Sys.Break -> ());
+        Sys.catch_break false)
+    @@ fun () ->
+    match Function.finish_releases () with
+    | () -> "returned"
+    | exception Sys.Break ->
+        if Rig_support.parked () then "raised while the use ran"
+        else "raised once the use ended"
+  in
+  equal ~msg:"the finish" string "raised while the use ran" finished;
+  equal ~msg:"taken after the finish raised" bool true (taken ());
+  Rig_support.unpark ();
+  Domain.join user;
+  Function.finish_releases ();
+  equal ~msg:"taken after the next finish" bool false (taken ())
+
 (* The test's executable, run with [interrupting], is [interrupted_release]'s
    process. *)
 let interrupting = "--interrupted-release"
@@ -2714,6 +2765,10 @@ let interrupts =
         "a use an exception ends while another domain holds the lock, with \
          SIGINT pending, ends"
         test_interrupted_held;
+      test
+        "a finish of the releases takes a signal while it waits for a use, \
+         with signals blocked"
+        test_finish_interrupted;
       cases "a free_dma or an unpin gives no memory back under a give-back"
         ~name:fst under_give_back test_under_give_back;
     ]

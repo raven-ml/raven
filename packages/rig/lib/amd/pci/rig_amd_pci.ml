@@ -151,7 +151,7 @@ let survey ~firmware (d : Discovery.t) =
       Ok (report, Ok (layout, firmware))
 
 let report ~firmware table =
-  Amd.Lock.check "Rig_amd_pci.report";
+  Amd.Lock.guarded "Rig_amd_pci.report" @@ fun () ->
   let* d = Discovery.of_string table in
   Result.map fst (survey ~firmware d)
 
@@ -415,7 +415,7 @@ let start ~word ~firmware ~index h fn =
   | Error why | (exception (Amd.Fault why | Regs.Stuck why)) -> Error why
 
 let open_ ?(machine = Machine.this) ~word ~firmware i =
-  Amd.Lock.check "Rig_amd_pci.gpu";
+  Amd.Lock.guarded "Rig_amd_pci.gpu" @@ fun () ->
   Driver.open_ gpus machine i (start ~word ~firmware ~index:i)
 
 (* Changes to the machine *)
@@ -423,15 +423,15 @@ let open_ ?(machine = Machine.this) ~word ~firmware i =
 (* Each takes the driver's lock ([Driver]), which an open holds through its
    boot, so a call from a callback inside a lock is refused first. *)
 let detach i =
-  Amd.Lock.check "Rig_amd_pci.detach";
+  Amd.Lock.guarded "Rig_amd_pci.detach" @@ fun () ->
   Driver.detach gpus Machine.this i
 
 let attach i =
-  Amd.Lock.check "Rig_amd_pci.attach";
+  Amd.Lock.guarded "Rig_amd_pci.attach" @@ fun () ->
   Driver.attach gpus Machine.this i
 
 let reset ?(machine = Machine.this) i =
-  Amd.Lock.check "Rig_amd_pci.reset";
+  Amd.Lock.guarded "Rig_amd_pci.reset" @@ fun () ->
   Driver.reset gpus machine i
 
 (* The system's firmware directory, searched after the caller's and rig's. *)

@@ -422,6 +422,26 @@ type grown =
     between, and must give it back first in both the return and the raise,
     as [Mutex.protect] does.
 
+    rig calls the driver's functions but {!Driver.locate}, {!Driver.peer}
+    and {!Driver.val-signaled} with the calling thread's signals blocked,
+    all but those a fault raises ([rig_mask] in [rig_edge.h]), and gives the
+    thread its mask back once it has recorded the call's outcome. A signal's
+    handler therefore runs in a driver only where the driver unblocks
+    signals: inside its waits, each of which calls [rig_unblock] right
+    before its blocking step and [rig_block] right after it, whether the
+    step returns or raises, and whose step releases the OCaml runtime while
+    it blocks, as a blocking stub does. [rig_block] runs the handlers of the signals
+    that came during the wait first, so an exception a handler raises ends
+    the wait, and the call as an asynchronous one does. A signal that comes
+    elsewhere in the call runs its handler at the call's next wait or once
+    the call has returned. The driver's functions that start with the check
+    of [rig_holds ()] above block signals the same way for their whole run.
+    Its finalisers and exit handlers block them with [rig_shield], waits
+    included, so that no signal's exception escapes them into the code they
+    interrupt or skips the exit handlers after them. A thread the driver
+    starts blocks them for its life, so that a signal sent to the process
+    runs its handler on a thread of the program's.
+
     rig guarantees these properties, so that a driver checks none of them:
     {ul
     {- it frees each region at most once, on its device, and never again

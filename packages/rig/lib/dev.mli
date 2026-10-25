@@ -142,6 +142,13 @@ val drop_values : device -> unit
     never overlaps ({!counted}). Every driver call on a live device is
     counted except [locate] and [peer].
 
+    Every call of a driver's or an io library's OCaml functions but
+    [locate], [peer] and [signaled] runs with the calling thread's signals
+    blocked ({!masked}), so that a signal's handler runs in a driver only
+    inside its waits (rig_edge.mli's Drivers section). Each of {!counted},
+    {!give}, the stops and the opens gives the mask back once it has
+    recorded the call's outcome.
+
     A device's state is one word of its C line:
     {v
     Live ─loss─> Losing ─spread─> Owed ─claimed─> Stopping ─returned─> Ended
@@ -231,6 +238,10 @@ val counted : device -> scope -> (unit -> 'a) -> 'a
     if [scope] names it, and passes through either way. The loss and the
     end of the count are one C call, the handler's first step. Raises
     {!Lost} without calling [f] if [d] is lost. *)
+
+val masked : (unit -> 'a) -> 'a
+(** [masked f] is [f ()] with the calling thread's signals blocked, as
+    [rig_mask] and [rig_unmask] of [rig_edge.h] block them. *)
 
 (** The outcome of a {!give}: the object went back, or must go back after
     [d]'s stop. *)

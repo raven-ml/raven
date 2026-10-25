@@ -112,6 +112,11 @@ external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
 external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
 external reraise : exn -> 'a = "%reraise"
 
+(* The calling thread's signals blocked and given back ([rig_mask] and
+   [rig_unmask] in [rig_edge.h]). *)
+external mask : unit -> unit = "caml_rig_edge_mask" [@@noalloc]
+external unmask : unit -> unit = "caml_rig_edge_unmask"
+
 (* [take m] takes [m], counted from before the take, so that a signal handler
    that runs inside a contended take sees it held. An exception that ends the
    take gives the count back first, having taken nothing: one a handler
@@ -151,16 +156,27 @@ let protect m f =
       give m;
       reraise e
 
-(* Raises [Invalid_argument] naming [fn] while the thread holds a lock: the
-   call comes from a signal handler, finaliser or Gc.Memprof callback inside
-   that lock, and would wait for it or see its section half done. A public
-   call that may take a lock starts with it. *)
-let check fn =
+(* A function a caller outside rig makes, and that may take a lock, runs as
+   [guarded fn f]: inside a lock it raises [Invalid_argument] naming [fn],
+   having done nothing, since the call comes from a signal handler,
+   finaliser or Gc.Memprof callback inside that lock and would wait for it or
+   see its section half done. Otherwise it runs [f] with the thread's signals
+   blocked ([rig_mask] and [rig_unmask] in [rig_edge.h]), which only the
+   driver's waits unblock. *)
+let guarded fn f =
   if holds () <> 0 then
     invalid_arg
       ("Rig_bnxt." ^ fn
      ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
-        inside a lock of the calling thread's")
+        inside a lock of the calling thread's");
+  mask ();
+  match f () with
+  | r ->
+      unmask ();
+      r
+  | exception e ->
+      unmask ();
+      reraise e
 
 (* The firmware's channel *)
 
@@ -757,7 +773,7 @@ let live nic what =
 (* [f ()] with the NIC's channel to its firmware held, a refusal as an
    [Error]. *)
 let command nic what f =
-  check what;
+  guarded what @@ fun () ->
   live nic what;
   protect nic.hw.lock (fun () -> guard f)
 
@@ -936,7 +952,7 @@ let index what i =
   if i < 0 then invalid_argf "Rig_bnxt.%s: NIC %d is negative" what i
 
 let open_ ?(machine = Machine.this) i =
-  check "open_";
+  guarded "open_" @@ fun () ->
   index "open_" i;
   let name = Driver.name nics i in
   Driver.open_ nics machine i (fun h fn ->
@@ -946,19 +962,19 @@ let open_ ?(machine = Machine.this) i =
       boot ~name h hw)
 
 let close nic =
-  check "close";
+  guarded "close" @@ fun () ->
   if not nic.closed then begin
     nic.closed <- true;
     ignore (Driver.stop nic.hold)
   end
 
 let detach i =
-  check "detach";
+  guarded "detach" @@ fun () ->
   index "detach" i;
   Driver.detach nics Machine.this i
 
 let attach i =
-  check "attach";
+  guarded "attach" @@ fun () ->
   index "attach" i;
   Driver.attach nics Machine.this i
 
@@ -1645,13 +1661,13 @@ module Qp = struct
   let due r = r.posted > r.taken
 
   let poll qp side =
-    check "Qp.poll";
+    guarded "Qp.poll" @@ fun () ->
     usable qp "Qp.poll";
     let r = rings qp side in
     if due r then next qp r else None
 
   let wait qp side ~us =
-    check "Qp.wait";
+    guarded "Qp.wait" @@ fun () ->
     if us < 0 then invalid_argf "Rig_bnxt.Qp.wait: %d us" us;
     usable qp "Qp.wait";
     let r = rings qp side in

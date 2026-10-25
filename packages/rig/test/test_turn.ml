@@ -277,6 +277,63 @@ let test_break_in_wait () =
   equal bool true (breaks (fun () -> Rig.Point.wait first));
   still_works d p ~last:first
 
+(* A Ctrl-C during a driver's wait raises inside it: its handler runs in the
+   sleep it came in. *)
+let test_break_ends_sleep () =
+  let d, p = P.open_ "turn:break-ends-sleep" in
+  let first = point (empty_run d) in
+  P.interrupt p;
+  equal ~msg:"the wait" bool true (breaks (fun () -> Rig.Point.wait first));
+  equal ~msg:"sleeps the signal ended" int 1 (P.broken_sleeps p);
+  still_works d p ~last:first
+
+(* A Ctrl-C while a driver's call runs outside its waits lands nowhere in the
+   call: the signal comes at the start of the driver's allocation, whose hook
+   then allocates, where the handler of a signal the thread takes runs. The
+   allocation finishes, the device stays live, and Sys.Break raises as the
+   call returns. *)
+let test_break_in_call () =
+  let d, p = P.open_ "turn:break-in-call" in
+  let base = Rig.submitted d in
+  let first = point (empty_run d) in
+  equal int (base + 1) (Rig.Point.value first);
+  let finished = ref false in
+  P.before p "alloc" (fun () ->
+      Support.interrupt ();
+      ignore (Sys.opaque_identity (List.init 64 Fun.id));
+      finished := true);
+  equal ~msg:"the call" bool true (breaks (fun () -> B.create d 8));
+  equal ~msg:"the driver's allocation finished" bool true !finished;
+  still_works d p ~last:first
+
+(* The edge's brackets ([rig_edge.h]'s Signals), as a driver's finaliser and
+   its waits use them. *)
+external shield : unit -> unit = "caml_rig_edge_shield" [@@noalloc]
+external unshield : unit -> unit = "caml_rig_edge_unshield"
+external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
+external block : unit -> unit = "caml_rig_edge_block"
+
+(* A Ctrl-C during a wait of a driver's finaliser, which runs shielded inside
+   the driver's allocation, takes nothing there: the allocation finishes,
+   the device stays live, and Sys.Break raises as the call returns. *)
+let test_break_in_shielded_wait () =
+  let d, p = P.open_ "turn:break-shielded" in
+  let base = Rig.submitted d in
+  let first = point (empty_run d) in
+  equal int (base + 1) (Rig.Point.value first);
+  let finished = ref false in
+  P.before p "alloc" (fun () ->
+      shield ();
+      unblock ();
+      Support.interrupt ();
+      Thread.delay 0.;
+      block ();
+      unshield ();
+      finished := true);
+  equal ~msg:"the call" bool true (breaks (fun () -> B.create d 8));
+  equal ~msg:"the driver's allocation finished" bool true !finished;
+  still_works d p ~last:first
+
 (* A wait that loses its device to the hang bound, with an exception at any
    allocation from the loss on, leaves the device's stop to run once, by the
    close. *)
@@ -567,6 +624,13 @@ let tests =
     group ~timeout "interruptions"
       [
         test "Sys.Break in a wait loses nothing" test_break_in_wait;
+        test "a Ctrl-C during a driver's wait raises inside it"
+          test_break_ends_sleep;
+        test "a Ctrl-C during a driver's call outside its waits raises as it \
+              returns"
+          test_break_in_call;
+        test "a Ctrl-C during a shielded wait raises as the call returns"
+          test_break_in_shielded_wait;
         test "Sys.Break in a driver's read of its word loses nothing"
           test_break_in_signaled;
         test "a fault interrupted at any allocation after it loses the device"

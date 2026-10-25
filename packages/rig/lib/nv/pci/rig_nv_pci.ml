@@ -30,8 +30,8 @@ let gib = 1 lsl 30
 
 (* Locks *)
 
-(* A public function that takes a lock, the path's or rig.pci's, starts
-   with [Rig_nv.Lock.check], before it changes anything. Locks nest in this
+(* A public function that takes a lock, the path's or rig.pci's, runs its
+   whole body inside [Rig_nv.Lock.guarded]. Locks nest in this
    order: rig.pci's locks of its GPUs, which an open, a detach, an attach, a
    reset and a stop hold; the path's own, one at a time ([machines_lock], a
    GPU's [lock], its GSP's); rig.pci's others, of memory and firmware. *)
@@ -120,7 +120,7 @@ let survey ~firmware boot42 rom =
       | None -> assert false (* each family's files, not all found *))
 
 let report ~firmware ~chip ~vbios =
-  Rig_nv.Lock.check "Rig_nv_pci.report";
+  Rig_nv.Lock.guarded "Rig_nv_pci.report" @@ fun () ->
   Result.map fst (survey ~firmware chip (fun () -> Vbios.of_string vbios))
 
 (* Memory *)
@@ -496,22 +496,22 @@ let boot ~word ~on ~firmware ~index h fn =
   | Error why | (exception Rig_nv.Fault why) -> Error why
 
 let open_ ?(machine = Machine.this) ~word ~firmware i =
-  Rig_nv.Lock.check "Rig_nv_pci.gpu";
+  Rig_nv.Lock.guarded "Rig_nv_pci.gpu" @@ fun () ->
   let on = known machine in
   Driver.open_ gpus machine i (boot ~word ~on ~firmware ~index:i)
 
 (* Changes to the machine *)
 
 let detach i =
-  Rig_nv.Lock.check "Rig_nv_pci.detach";
+  Rig_nv.Lock.guarded "Rig_nv_pci.detach" @@ fun () ->
   Driver.detach gpus Machine.this i
 
 let attach i =
-  Rig_nv.Lock.check "Rig_nv_pci.attach";
+  Rig_nv.Lock.guarded "Rig_nv_pci.attach" @@ fun () ->
   Driver.attach gpus Machine.this i
 
 let reset ?(machine = Machine.this) i =
-  Rig_nv.Lock.check "Rig_nv_pci.reset";
+  Rig_nv.Lock.guarded "Rig_nv_pci.reset" @@ fun () ->
   Driver.reset gpus machine i
 
 (* The system's firmware directory, searched after the caller's and rig's. *)

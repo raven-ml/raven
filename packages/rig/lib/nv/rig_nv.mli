@@ -604,10 +604,10 @@ type 'm path = {
     time ({!Lock.protect}).
 
     {b Warning.} A path's opener's [make] and its public functions that may
-    take a lock must call {!Lock.check} themselves as they start, before
-    they change anything; one that does not may raise [Invalid_argument]
-    from a lock it takes later, with what it changed before left
-    changed. *)
+    take a lock must run their whole body inside {!Lock.guarded}; one that
+    does not may raise [Invalid_argument] from a lock it takes later, with
+    what it changed before left changed, and a signal's handler may run
+    anywhere in it. *)
 
 module Lock : sig
   type t
@@ -629,8 +629,10 @@ module Lock : sig
       [false], having run nothing, if another thread holds [l] or the
       calling thread holds a path's lock. It never waits. *)
 
-  val check : string -> unit
-  (** [check fn] raises [Invalid_argument], naming [fn], if the calling
+  val guarded : string -> (unit -> 'a) -> 'a
+  (** [guarded fn f] is [f ()] run with the calling thread's signals blocked
+      but inside the path's waits ({!Rig_edge.section-drivers}). It raises
+      [Invalid_argument], naming [fn], having run nothing, if the calling
       thread holds a lock of rig's or of a driver's. A path calls it as
       {!section-locks} states. *)
 end

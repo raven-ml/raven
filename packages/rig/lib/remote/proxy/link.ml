@@ -333,8 +333,29 @@ let job () =
   if j = 0n then invalid_arg "Rig_remote_proxy.Link.job: a job is open";
   j
 
+(* The calling thread's signals unblocked across a wait's blocking step
+   ([rig_unblock] and [rig_block] in [rig_edge.h]), so that a signal's
+   handler runs there. *)
+external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
+external block : unit -> unit = "caml_rig_edge_block"
+external reraise : exn -> 'a = "%reraise"
+
+(* [unblocked f x] is [f x], a call that waits, with the thread's signals
+   unblocked. *)
+let unblocked f x =
+  unblock ();
+  match f x with
+  | r ->
+      block ();
+      r
+  | exception e ->
+      block ();
+      reraise e
+
+let close = unblocked close
+
 let wait j ~ms =
-  match job_wait j (max 0 ms) with
+  match unblocked (job_wait j) (max 0 ms) with
   | 0, _ -> Open
   | 1, _ -> Closed
   | _, why -> Failed why
@@ -373,7 +394,7 @@ external release_rail_c : nativeint -> int -> unit
    A link's two locks are never nested ([next] and [answer]). Each counts
    among the locks its thread holds ([take]), so a call of rig's, or a [next]
    or an [answer], from a signal handler, finaliser or Gc.Memprof callback
-   inside one raises [Invalid_argument] as it starts ([check]).
+   inside one raises [Invalid_argument] as it starts ([guarded]).
 
    [answer_lock] is held across an answer's send, which may wait for the
    socket, so that answers leave in the order of their requests. [next] waits
@@ -388,15 +409,33 @@ external holds : unit -> (int[@untagged])
 
 external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
 external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
-external reraise : exn -> 'a = "%reraise"
 
-(* A function a caller outside rig makes, [fn], starts with [check fn]. *)
-let check fn =
+(* The calling thread's signals blocked and given back ([rig_mask] and
+   [rig_unmask] in [rig_edge.h]). *)
+external mask : unit -> unit = "caml_rig_edge_mask" [@@noalloc]
+external unmask : unit -> unit = "caml_rig_edge_unmask"
+
+(* A function a caller outside rig makes, and that may take a lock, runs as
+   [guarded fn f]: inside a lock it raises [Invalid_argument] naming [fn],
+   having done nothing, since the call comes from a signal handler,
+   finaliser or Gc.Memprof callback inside that lock and would wait for it or
+   see its section half done. Otherwise it runs [f] with the thread's signals
+   blocked ([rig_mask] and [rig_unmask] in [rig_edge.h]), which only the
+   driver's waits unblock. *)
+let guarded fn f =
   if holds () <> 0 then
     invalid_arg
       ("Rig_remote_proxy.Link." ^ fn
      ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
-        inside a lock of the calling thread's")
+        inside a lock of the calling thread's");
+  mask ();
+  match f () with
+  | r ->
+      unmask ();
+      r
+  | exception e ->
+      unmask ();
+      reraise e
 
 (* [take m] takes [m], counted from before the take, so that a signal handler
    that runs inside a contended take sees it held. An exception that ends the
@@ -560,15 +599,16 @@ let take_next l () =
 
 (* The wait for a command holds no lock, so a callback that runs in it calls
    rig as any code does. *)
-let rec next l =
-  check "next";
-  wait_c l.c;
-  match protect l.next_lock (take_next l) with
-  | Some v -> v
-  | None -> next l
+let next l =
+  guarded "next" @@ fun () ->
+  let rec go () =
+    unblocked wait_c l.c;
+    match protect l.next_lock (take_next l) with Some v -> v | None -> go ()
+  in
+  go ()
 
 let answer l q a =
-  check "answer";
+  guarded "answer" @@ fun () ->
   let payload =
     match a with
     | Ok v -> "\000" ^ encode_answer q v
@@ -633,13 +673,14 @@ let rail l ~id ~send ~receive =
   let inbound = landing receive (fun t -> t.dst) in
   let counts = aligned counts_bytes in
   let e =
-    Rig_remote_abi.end_ ~outbound ~inbound ~counts ~ready:(ready_c counts)
+    Rig_remote_abi.end_ ~outbound ~inbound ~counts
+      ~ready:(unblocked (ready_c counts))
       ~ready_fn:(ready_fn ())
   in
   rail_c l.c id (flat send) (flat receive) outbound inbound counts;
   e
 
-let release_rail l id = release_rail_c l.c id
+let release_rail l id = unblocked (release_rail_c l.c) id
 
 (* Pairs *)
 

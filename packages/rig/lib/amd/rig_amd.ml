@@ -49,6 +49,11 @@ module Lock = struct
   external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
   external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
 
+  (* The calling thread's signals blocked and given back ([rig_mask] and
+     [rig_unmask] in [rig_edge.h]). *)
+  external mask : unit -> unit = "caml_rig_edge_mask" [@@noalloc]
+  external unmask : unit -> unit = "caml_rig_edge_unmask"
+
   type t = Mutex.t
 
   let create = Mutex.create
@@ -94,13 +99,23 @@ module Lock = struct
 
   (* Raises [Invalid_argument] naming [fn] while the thread holds a lock: the
      call comes from a signal handler, finaliser or Gc.Memprof callback inside
-     that lock, and would wait for it or see its section half done. *)
-  let check fn =
+     that lock, and would wait for it or see its section half done. Otherwise
+     runs [f] with the thread's signals blocked, which only the driver's
+     waits unblock. *)
+  let guarded fn f =
     if holds () <> 0 then
       invalid_arg
         (fn
        ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
-          inside a lock of the calling thread's")
+          inside a lock of the calling thread's");
+    mask ();
+    match f () with
+    | x ->
+        unmask ();
+        x
+    | exception e ->
+        unmask ();
+        reraise e
 end
 
 type 'm memory = { address : int; host : int option; data : 'm }
@@ -677,10 +692,10 @@ let make_trace g =
           Error (strf "no memory for %d bytes of trace buffers" n))
 
 (* The capability's [scratch]: [g]'s scratch grown for [n] bytes per lane.
-   Compiled code calls it and [trace] outside rig's calls, so each checks its
-   thread's locks first. *)
+   Compiled code calls it and [trace] outside rig's calls, so each runs
+   guarded. *)
 let scratch g n =
-  Lock.check "Rig_amd_abi.Capability.scratch";
+  Lock.guarded "Rig_amd_abi.Capability.scratch" @@ fun () ->
   match grow_scratch g n with
   | Served -> Ok ()
   | Stopped -> Error "the device is stopped"
@@ -1255,8 +1270,8 @@ let make (type m) ~word (p : m path) =
             wgps = p.wgps;
             trace =
               (fun () ->
-                Lock.check "Rig_amd_abi.Capability.trace";
-                make_trace g);
+                Lock.guarded "Rig_amd_abi.Capability.trace" (fun () ->
+                    make_trace g));
           };
         guard = Lock.create ();
         growth = Lock.create ();
@@ -1576,7 +1591,7 @@ let refuse_stopped g what =
     invalid_argf "Rig_amd.%s: the device stopped" what
 
 let renumber g v =
-  Lock.check "Rig_amd.renumber";
+  Lock.guarded "Rig_amd.renumber" @@ fun () ->
   Lock.protect g.guard @@ fun () ->
   refuse_stopped g "renumber";
   let last = last g.self in
@@ -1589,7 +1604,7 @@ let renumber g v =
 external placed : int -> int -> int * int = "caml_rig_amd_placed"
 
 let ring g q =
-  Lock.check "Rig_amd.ring";
+  Lock.guarded "Rig_amd.ring" @@ fun () ->
   let named (d : Rig_edge.queue) = d.name = q in
   match List.find_index named device_queues with
   | Some i ->
@@ -1601,7 +1616,7 @@ let ring g q =
 external segment_bytes : int -> int = "caml_rig_amd_segment_bytes"
 
 let segment g =
-  Lock.check "Rig_amd.segment";
+  Lock.guarded "Rig_amd.segment" @@ fun () ->
   Lock.protect g.guard @@ fun () ->
   refuse_stopped g "segment";
   segment_bytes g.self

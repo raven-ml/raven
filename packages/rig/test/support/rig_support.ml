@@ -80,6 +80,10 @@ external carry : unit -> nativeint = "rig_test_carry"
 external countdown : unit -> nativeint = "rig_test_countdown"
 external ready : unit -> nativeint = "rig_test_ready"
 external interrupt : unit -> unit = "rig_test_interrupt" [@@noalloc]
+
+(* A wait's bracket: [rig_unblock] and [rig_block] of [rig_edge.h]. *)
+external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
+external block : unit -> unit = "caml_rig_edge_block"
 external interrupt_after_ms : int -> unit = "rig_test_interrupt_after"
 external interrupt_join : unit -> unit = "rig_test_interrupt_join"
 external park : unit -> unit = "rig_test_park"
@@ -206,6 +210,7 @@ module Driver = struct
     word_fault : string option Atomic.t;
     word_break : bool Atomic.t;
     mutable interrupt_next : bool;
+    broken_sleeps : int Atomic.t;
     mutable stalls : int;
     mutable gated : bool;
     mutable sleepers : int;
@@ -544,7 +549,19 @@ module Driver = struct
     in
     match step with
     | `Fault why -> raise (Fault why)
-    | `Interrupt -> interrupt ()
+    | `Interrupt -> (
+        (* The signal comes inside the sleep's wait, whose nap runs its
+           handler, as a Ctrl-C does in a driver's wait. *)
+        unblock ();
+        match
+          interrupt ();
+          Thread.delay 0.
+        with
+        | () -> block ()
+        | exception e ->
+            block ();
+            Atomic.incr d.broken_sleeps;
+            raise e)
     | `Stall -> Thread.delay (float still_ms /. 1000.)
     | `Run ->
         if polled_drive d.c < 0 && polled_word d.c = seen then
@@ -610,6 +627,7 @@ module Polled = struct
         word_fault = Atomic.make None;
         word_break = Atomic.make false;
         interrupt_next = false;
+        broken_sleeps = Atomic.make 0;
         stalls = 0;
         gated = false;
         sleepers = 0;
@@ -760,6 +778,7 @@ module Polled = struct
   let host_maps d = protect d.lock (fun () -> List.rev d.maps)
   let allocated d kind = protect d.lock (fun () -> holding d kind)
   let interrupt d = protect d.lock (fun () -> d.interrupt_next <- true)
+  let broken_sleeps d = Atomic.get d.broken_sleeps
   let stall d n = protect d.lock (fun () -> d.stalls <- n)
   let gate d = protect d.lock (fun () -> d.gated <- true)
   let sleepers d = protect d.lock (fun () -> d.sleepers)

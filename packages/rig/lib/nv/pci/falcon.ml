@@ -27,6 +27,21 @@ module B = Defs.Blackwell
 
 (* Register sequences *)
 
+(* [nap s] sleeps [s] seconds with the thread's signals unblocked, so that a
+   signal's handler runs there ([rig_unblock] and [rig_block] in
+   [rig_edge.h]). *)
+external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
+external block : unit -> unit = "caml_rig_edge_block"
+external reraise : exn -> 'a = "%reraise"
+
+let nap s =
+  unblock ();
+  match Unix.sleepf s with
+  | () -> block ()
+  | exception e ->
+      block ();
+      reraise e
+
 type cond = Is of int | Not of int | Differs of int
 
 type op =
@@ -63,7 +78,7 @@ let rec run c = function
           Chip.set c r' (Chip.get c r);
           continue ()
       | Delay us ->
-          Unix.sleepf (float us /. 1e6);
+          nap (float us /. 1e6);
           continue ()
       | Read r ->
           ignore (Chip.get c r : int);

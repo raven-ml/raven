@@ -14,7 +14,7 @@
    the disk's from a signal handler, finaliser or Gc.Memprof callback inside
    one raises [Invalid_argument] as it starts: rig checks the calls that reach
    [Io], and [of_file], [create_file] and [barrier] check themselves
-   ([check]).
+   ([guarded]).
 
    The table's lock is held across the system's open and close of a
    descriptor, and a file's sync lock across its sync, which waits for the
@@ -71,13 +71,32 @@ external hold : unit -> unit = "caml_rig_edge_hold" [@@noalloc]
 external unhold : unit -> unit = "caml_rig_edge_unhold" [@@noalloc]
 external reraise : exn -> 'a = "%reraise"
 
-(* A function a caller outside rig makes, [fn], starts with [check fn]. *)
-let check fn =
+(* The calling thread's signals blocked and given back ([rig_mask] and
+   [rig_unmask] in [rig_edge.h]). *)
+external mask : unit -> unit = "caml_rig_edge_mask" [@@noalloc]
+external unmask : unit -> unit = "caml_rig_edge_unmask"
+
+(* A function a caller outside rig makes, and that may take a lock, runs as
+   [guarded fn f]: inside a lock it raises [Invalid_argument] naming [fn],
+   having done nothing, since the call comes from a signal handler,
+   finaliser or Gc.Memprof callback inside that lock and would wait for it or
+   see its section half done. Otherwise it runs [f] with the thread's signals
+   blocked ([rig_mask] and [rig_unmask] in [rig_edge.h]), which only the
+   driver's waits unblock. *)
+let guarded fn f =
   if holds () <> 0 then
     invalid_arg
       ("Rig_disk." ^ fn
      ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
-        inside a lock of the calling thread's")
+        inside a lock of the calling thread's");
+  mask ();
+  match f () with
+  | r ->
+      unmask ();
+      r
+  | exception e ->
+      unmask ();
+      reraise e
 
 (* [take m] takes [m], counted from before the take, so that a signal handler
    that runs inside a contended take sees it held. An exception that ends the
@@ -550,11 +569,11 @@ let open_file path mode n =
             Printexc.raise_with_backtrace e bt)
 
 let of_file path =
-  check "of_file";
+  guarded "of_file" @@ fun () ->
   open_file path read_mode 0
 
 let create_file path n =
-  check "create_file";
+  guarded "create_file" @@ fun () ->
   if n < 0 then invalid_argf "Rig_disk.create_file: %d bytes is negative" n;
   open_file path create_mode n
 
@@ -586,7 +605,7 @@ let sync_due f = if f.unsynced || Option.is_some f.pages then synced f
 let sync_file f = protect (sync_lock f) sync_due f
 
 let barrier b =
-  check "barrier";
+  guarded "barrier" @@ fun () ->
   (* The message is formatted only on failure: a partial application of a format
      builds its closure at every call. *)
   (match Rig.Buffer.dead b with

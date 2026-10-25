@@ -276,3 +276,9 @@ val files : t -> Sysfs.t option
    it calls [f] until it is [true], [m] failed, or at least [us] microseconds
    passed, and is [true] iff [f] became [true] while [m] had not failed. *)
 val wait : t -> us:int -> (unit -> bool) -> bool
+
+(* [nap s] sleeps [s] seconds with the calling thread's signals unblocked, so
+   that a signal's handler runs there and its exception passes: the step of a
+   wait of rig.pci's ([rig_unblock] and [rig_block] in [rig_edge.h]). Outside
+   a mask it is [Unix.sleepf s]. *)
+val nap : float -> unit

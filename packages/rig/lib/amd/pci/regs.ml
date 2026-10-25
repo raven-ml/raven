@@ -212,7 +212,22 @@ let wait ?(ms = default_ms) r what f =
   | Ok () -> ()
   | Error why -> raise (Stuck why)
 
-let pause us = Unix.sleepf (float us /. 1e6)
+(* [nap s] sleeps [s] seconds with the thread's signals unblocked, so that a
+   signal's handler runs there ([rig_unblock] and [rig_block] in
+   [rig_edge.h]). *)
+external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
+external block : unit -> unit = "caml_rig_edge_block"
+external reraise : exn -> 'a = "%reraise"
+
+let nap s =
+  unblock ();
+  match Unix.sleepf s with
+  | () -> block ()
+  | exception e ->
+      block ();
+      reraise e
+
+let pause us = nap (float us /. 1e6)
 let words r = Window.length r.mmio / 4
 let lo32 v = v land 0xffff_ffff
 let hi32 v = (v lsr 32) land 0xffff_ffff

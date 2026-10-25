@@ -383,8 +383,13 @@ module Polled : sig
       blocked at the gate included. *)
 
   val interrupt : t -> unit
-  (** [interrupt d] makes [d]'s next sleep raise SIGINT in its thread and return
-      without running the queue. *)
+  (** [interrupt d] makes [d]'s next sleep raise SIGINT in its thread inside
+      its wait, where the signal's handler runs, and return without running
+      the queue. *)
+
+  val broken_sleeps : t -> int
+  (** [broken_sleeps d] is the number of [d]'s sleeps that an exception from
+      a signal's handler ended inside their wait. *)
 
   val stall : t -> int -> unit
   (** [stall d n] makes [d]'s next [n] sleeps return after their still interval

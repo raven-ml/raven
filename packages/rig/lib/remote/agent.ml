@@ -17,6 +17,54 @@ let backlog = 0x7fff_ffff
    most. *)
 let join_s = 10.
 
+(* Signals
+
+   The library's calls that build its state run with the calling thread's
+   signals blocked, and unblock them only across their waits ([rig_mask],
+   [rig_unmask], [rig_unblock] and [rig_block] in [rig_edge.h]); its
+   finalisers and exit handler take none, even in their waits
+   ([rig_shield]). A thread it starts takes the mask its creator has inside
+   [masked], all blocked, for its life. *)
+external mask : unit -> unit = "caml_rig_edge_mask" [@@noalloc]
+external unmask : unit -> unit = "caml_rig_edge_unmask"
+external shield : unit -> unit = "caml_rig_edge_shield" [@@noalloc]
+external unshield : unit -> unit = "caml_rig_edge_unshield"
+external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
+external block : unit -> unit = "caml_rig_edge_block"
+external reraise : exn -> 'a = "%reraise"
+
+let masked f =
+  mask ();
+  match f () with
+  | r ->
+      unmask ();
+      r
+  | exception e ->
+      unmask ();
+      reraise e
+
+let shielded f =
+  shield ();
+  match f () with
+  | r ->
+      unshield ();
+      r
+  | exception e ->
+      unshield ();
+      reraise e
+
+let unblocked f x =
+  unblock ();
+  match f x with
+  | r ->
+      block ();
+      r
+  | exception e ->
+      block ();
+      reraise e
+
+let spawn f x = masked (fun () -> Thread.create f x)
+
 (* Reports to a launcher *)
 
 external report_open : int -> Unix.file_descr option
@@ -126,7 +174,7 @@ let watch report j =
         Option.iter (Link.fail j) (Rig.failure ());
         loop ()
   in
-  ignore (Thread.create loop ())
+  ignore (spawn loop ())
 
 (* Addresses *)
 
@@ -220,6 +268,7 @@ type t = {
 }
 
 let listen ~key host port =
+  masked @@ fun () ->
   match resolve host port with
   | Error _ as e -> e
   | Ok addr -> (
@@ -361,7 +410,7 @@ let start a fd =
   match Unix.clear_nonblock fd with
   | exception Unix.Unix_error _ -> close_quietly fd
   | () -> (
-      match Thread.create (handshake a) fd with
+      match spawn (handshake a) fd with
       | _ -> ()
       | exception Sys_error why ->
           Wire.refuse fd ("the agent cannot start a handshake: " ^ why)
@@ -410,7 +459,7 @@ let accept_loop a wake =
 let stop a waker acceptor =
   Mutex.protect a.lock (fun () -> a.stopped <- true);
   ignore (Unix.write_substring waker "x" 0 1);
-  Thread.join acceptor;
+  unblocked Thread.join acceptor;
   Unix.close a.socket;
   Mutex.protect a.lock @@ fun () ->
   Hashtbl.iter (fun _ fd -> Unix.close fd) a.accepted;
@@ -507,12 +556,12 @@ let join s agents =
   let start (j, m) =
     let r = ref (Ok (Error (late m.Wire.name))) in
     let run () = r := match dial j m with v -> Ok v | exception e -> Error e in
-    started := (r, Thread.create run ()) :: !started
+    started := (r, spawn run ()) :: !started
   in
   let close_unlinked () =
     List.iter
       (fun (r, t) ->
-        Thread.join t;
+        unblocked Thread.join t;
         match !r with
         | Ok (Ok (_, _, fd)) when not (List.memq fd !linked) -> (
             try Unix.close fd with Unix.Unix_error _ -> ())
@@ -529,7 +578,7 @@ let join s agents =
   ( Fun.protect ~finally:close_unlinked @@ fun () ->
     List.filteri (fun i _ -> i + 1 > s.self) agents
     |> List.iteri (fun k m -> start (s.self + 1 + k, m));
-    List.iter (fun (_, t) -> Thread.join t) !started;
+    List.iter (fun (_, t) -> unblocked Thread.join t) !started;
     let dialled = List.rev_map result !started in
     match List.find_map refusal dialled with
     | Some why -> raise (Refused why)
@@ -541,7 +590,7 @@ let join s agents =
     Mutex.protect a.lock (fun () -> Hashtbl.length a.accepted)
   in
   while accepted () < List.length before && Unix.gettimeofday () < until do
-    Thread.delay 0.01
+    unblocked Thread.delay 0.01
   done;
   let missing =
     Mutex.protect a.lock @@ fun () ->
@@ -644,7 +693,7 @@ let answer : type a. state -> a Wire.request -> a =
             raise (Refused (strf "rail %d: no memory for its areas" id))
       in
       (* Drop removes the name; a loaded program still owns the end it uses. *)
-      Gc.finalise (fun _ -> Link.release_rail l id) e;
+      Gc.finalise (fun _ -> shielded (fun () -> Link.release_rail l id)) e;
       Hashtbl.replace s.objects id (Rail e)
 
 (* [f] of [b]'s bytes as the host reads them in place: [b]'s own memory on
@@ -819,7 +868,7 @@ let job a =
           Ok ((job, self, controller), broken)
       | Claimed, Some why -> Error why
       | (Claimed | Admitting _), _ ->
-          Condition.wait a.changed a.lock;
+          unblocked (Condition.wait a.changed) a.lock;
           serving ()
     in
     serving ()
@@ -884,7 +933,7 @@ let serve_job a kinds report ~close job self link =
 (* Serves one job, reporting its end on [report]. *)
 let run a kinds report =
   let wake, waker = Link.socket_pair () in
-  let acceptor = Thread.create (accept_loop a) wake in
+  let acceptor = spawn (accept_loop a) wake in
   let close () =
     stop a waker acceptor;
     Unix.close wake;

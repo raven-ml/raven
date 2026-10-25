@@ -80,7 +80,23 @@ let same a b =
 
 (* Sockets *)
 
-external send : Unix.file_descr -> string -> unit = "caml_rig_remote_wire_send"
+(* The calling thread's signals unblocked across a wait's blocking step
+   ([rig_unblock] and [rig_block] in [rig_edge.h]), so that a signal's
+   handler runs there. *)
+external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
+external block : unit -> unit = "caml_rig_edge_block"
+external reraise : exn -> 'a = "%reraise"
+
+external send_c : Unix.file_descr -> string -> unit
+  = "caml_rig_remote_wire_send"
+
+let send fd s =
+  unblock ();
+  match send_c fd s with
+  | () -> block ()
+  | exception e ->
+      block ();
+      reraise e
 external nonce : unit -> string = "caml_rig_remote_wire_nonce"
 
 (* Bounds each send on a socket to a number of seconds, [0.] for none. A send
@@ -109,7 +125,17 @@ let ready fds dir s =
     if s < 0. then -1
     else Float.to_int (Float.min (Float.ceil (s *. 1e3)) (Float.of_int most_ms))
   in
-  match wait fds (dir = `Write) ms with -1 -> None | i -> Some fds.(i)
+  unblock ();
+  let i =
+    match wait fds (dir = `Write) ms with
+    | i ->
+        block ();
+        i
+    | exception e ->
+        block ();
+        reraise e
+  in
+  if i = -1 then None else Some fds.(i)
 
 (* The stream ended or broke, an answer came late, or a field is malformed: the
    handshake's [Error], with its cause. *)

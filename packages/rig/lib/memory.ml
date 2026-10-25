@@ -1878,7 +1878,7 @@ let prefetch d (m : memory) ~at ~len =
   | Io_memory { region = Io_region { m = im; h; r }; _ } when not (Dev.is_host d)
     -> (
       let module I = (val im) in
-      try I.prefetch h r ~at ~len
+      try Dev.masked (fun () -> I.prefetch h r ~at ~len)
       with I.Fault _ | Sys_error _ -> ())
   | _ -> ()
 

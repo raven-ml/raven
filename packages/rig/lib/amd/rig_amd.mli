@@ -649,10 +649,10 @@ val is_gpu : vendor:int -> class_:int -> bool
     {b Warning.} The path must take its locks in the order {!Lock.create}
     states. Nothing checks it, and two threads that take two locks in
     opposite orders wait for each other for good. Only a take by the thread
-    that holds the lock raises. A path's entries must call {!Lock.check}
-    themselves, before they change anything; one that does not may raise
-    [Invalid_argument] from a lock it takes later, with what it changed
-    before left changed. *)
+    that holds the lock raises. A path's entries must run their whole body
+    inside {!Lock.guarded}; one that does not may raise [Invalid_argument]
+    from a lock it takes later, with what it changed before left changed,
+    and a signal's handler may run anywhere in it. *)
 
 module Lock : sig
   type t
@@ -671,11 +671,13 @@ module Lock : sig
       Raises [Invalid_argument], having taken nothing, if the calling thread
       holds [l], as a callback that interrupts a section does. *)
 
-  val check : string -> unit
-  (** [check fn] raises [Invalid_argument], naming [fn], if the calling
-      thread holds a lock of rig's or of a driver's. A path's opener's
-      [make] and its public functions that may take a lock call it as they
-      start, before they change anything ({!Rig_edge.section-drivers}). *)
+  val guarded : string -> (unit -> 'a) -> 'a
+  (** [guarded fn f] is [f ()] run with the calling thread's signals blocked
+      but inside the path's waits. It raises [Invalid_argument], naming
+      [fn], having run nothing, if the calling thread holds a lock of rig's
+      or of a driver's. A path's opener's [make] and its public functions
+      that may take a lock run their whole body inside it
+      ({!Rig_edge.section-drivers}). *)
 end
 
 (** {1:references References}
@@ -700,7 +702,7 @@ val hold_sleeps : (unit -> unit) -> unit
    those past 2^31 and 2^32, without making that many submissions.
 
    Raises [Invalid_argument] if [g] has stopped or is not idle, if [v - 1] is
-   below its last value, or from a callback inside a lock ({!Lock.check}). *)
+   below its last value, or from a callback inside a lock ({!Lock.guarded}). *)
 val renumber : t -> int -> unit
 
 (* [ring g q] is [(n, size)]: the 32-bit words [g] placed on the ring of its
@@ -710,14 +712,14 @@ val renumber : t -> int -> unit
    earlier count.
 
    Raises [Invalid_argument] if [g] has stopped, if it has no queue [q], or
-   from a callback inside a lock ({!Lock.check}). *)
+   from a callback inside a lock ({!Lock.guarded}). *)
 val ring : t -> string -> int * int
 
 (* [segment g] is the bytes of [g]'s argument segment. Tests check that their
    submissions grew it.
 
    Raises [Invalid_argument] if [g] has stopped, or from a callback inside a
-   lock ({!Lock.check}). *)
+   lock ({!Lock.guarded}). *)
 val segment : t -> int
 
 (* [set_first_sizes ~compute ~copy ~segment] makes the first compute ring,

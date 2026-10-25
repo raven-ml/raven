@@ -1002,7 +1002,7 @@ let device_name i =
   if i = 0 then "NV" else strf "NV:%d" i
 
 let open_ ?(wrap = Fun.id) ~root ~word i =
-  Rig_nv.Lock.check "Rig_nv_nvidia.gpu";
+  Rig_nv.Lock.guarded "Rig_nv_nvidia.gpu" @@ fun () ->
   if i < 0 then invalid_argf "Rig_nv_nvidia.gpu: GPU %d < 0" i;
   let* buses =
     Result.map_error

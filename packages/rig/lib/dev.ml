@@ -298,6 +298,31 @@ external holds : unit -> (int[@untagged])
   = "caml_rig_edge_holds_byte" "caml_rig_edge_holds"
 [@@noalloc]
 
+(* Signals
+
+   Every call below rig's core runs with the thread's signals blocked
+   ([rig_mask] and [rig_unmask] of [rig_edge.h]): a driver unblocks them only
+   inside its waits, so a Ctrl-C lands in a driver only there. Each bracket
+   gives the mask back after the call's outcome is recorded, so that a
+   [Sys.Break] raised at the next poll point is the program's, and never
+   taken for the driver's. *)
+external mask : unit -> unit = "caml_rig_edge_mask" [@@noalloc]
+external unmask : unit -> unit = "caml_rig_edge_unmask"
+
+(* Gives the thread its mask back and raises [e] again. *)
+let unmask_raise e =
+  let bt = Printexc.get_raw_backtrace () in
+  unmask ();
+  Printexc.raise_with_backtrace e bt
+
+let masked f =
+  mask ();
+  match f () with
+  | r ->
+      unmask ();
+      r
+  | exception e -> unmask_raise e
+
 let refuse_held fn =
   invalid_arg
     ("Rig." ^ fn
@@ -491,10 +516,18 @@ let stop_handle d fault =
   match d.kind with
   | Driver { m; h; _ } -> (
       let module D = (val m) in
-      try D.stop h ~fault with D.Fault _ -> ())
+      mask ();
+      match D.stop h ~fault with
+      | () -> unmask ()
+      | exception D.Fault _ -> unmask ()
+      | exception e -> unmask_raise e)
   | Io { m; h } -> (
       let module I = (val m) in
-      try I.stop h with I.Fault _ -> ())
+      mask ();
+      match I.stop h with
+      | () -> unmask ()
+      | exception I.Fault _ -> unmask ()
+      | exception e -> unmask_raise e)
   | Host -> ()
 
 (* Moves the state on after the driver's stop. Its values and its names go
@@ -549,14 +582,16 @@ let lose d why =
   ignore (c_lose d.live.c why true);
   raise_lost d
 
-(* Ends the counted call on [d] that raised [e]. Its first step is one C call
-   that loses [d] for a fault or an exception in [scope] and ends the count,
-   and nothing allocates or polls before it: a second exception landing in
-   this handler finds both done. It returns for a fault, and raises another
-   exception again. *)
+(* Ends the counted call on [d] that raised [e], which ran masked. Its first
+   step is one C call that loses [d] for a fault or an exception in [scope]
+   and ends the count, and nothing allocates or polls before it: a second
+   exception landing in this handler finds both done. It then gives the
+   thread its mask back, and returns for a fault and raises another exception
+   again. *)
 let raised d scope e =
   let fault = c_raised d.live.c e d.live.fault scope in
   let bt = Printexc.get_raw_backtrace () in
+  unmask ();
   if not fault then Printexc.raise_with_backtrace e bt
 
 (* A wait's fault loses [d], and another exception passes through. *)
@@ -565,12 +600,22 @@ let wait_raised d e =
   let bt = Printexc.get_raw_backtrace () in
   if fault then raise_lost d else Printexc.raise_with_backtrace e bt
 
+(* As [wait_raised], for a sleep, which ran masked: the thread gets its mask
+   back once [d]'s count has ended. *)
+let slept d e =
+  let fault = c_raised d.live.c e d.live.fault Faults in
+  let bt = Printexc.get_raw_backtrace () in
+  unmask ();
+  if fault then raise_lost d else Printexc.raise_with_backtrace e bt
+
 let counted d scope f =
   match c_enter d.live.c with
   | 0 -> (
+      mask ();
       match f () with
       | r ->
           c_exit d.live.c;
+          unmask ();
           r
       | exception e ->
           raised d scope e;
@@ -587,21 +632,32 @@ type given = Given | Later
    code memory behind its unload. *)
 let give d scope f =
   if orphaned d then Given
-  else if stopped d then
+  else if stopped d then begin
+    mask ();
     match f () with
-    | () -> Given
-    | exception Sys_error _ -> Given
-    | exception e when Obj.Extension_constructor.of_val e == d.live.fault ->
+    | () ->
+        unmask ();
         Given
+    | exception Sys_error _ ->
+        unmask ();
+        Given
+    | exception e when Obj.Extension_constructor.of_val e == d.live.fault ->
+        unmask ();
+        Given
+    | exception e -> unmask_raise e
+  end
   else if c_enter d.live.c <> 0 then Later
-  else
+  else begin
+    mask ();
     match f () with
     | () ->
         c_exit d.live.c;
+        unmask ();
         Given
     | exception e ->
         raised d scope e;
         Given
+  end
 
 (* A fail runs no stop: each device's runs at its close. *)
 let fail why = ignore (c_fail why : bool)
@@ -672,9 +728,12 @@ let sleep d ~seen ~still_ms =
         | Some hang -> bounded d seen ~still_ms hang
       in
       if c_enter l.c <> 0 then raise_lost d;
+      mask ();
       match D.sleep h ~seen ~still_ms with
-      | () -> c_exit l.c
-      | exception e -> wait_raised d e)
+      | () ->
+          c_exit l.c;
+          unmask ()
+      | exception e -> slept d e)
   | _ -> ()
 
 module Answer = struct
@@ -1123,6 +1182,7 @@ let open_driver (type a) ?(memory_device = false)
       match D.stop h ~fault with () -> () | exception D.Fault _ -> ()
     end
   in
+  masked @@ fun () ->
   match make ~word:(c_slot_word index) with
   | Error e -> Error e
   | Ok h -> (
@@ -1156,6 +1216,7 @@ let open_io (type a) (module I : Rig_edge.Io with type t = a) ~machine ~name
   let key = Type.Id.uid I.region_key in
   open_named ~fn:"open_io" ~machine ~name ~key
   @@ fun ~index ~slot ~opened ~name:full ->
+  masked @@ fun () ->
   match make () with
   | Error e -> Error e
   | Ok h -> (
