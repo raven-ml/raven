@@ -712,6 +712,26 @@ let undeclared = Op.Set.of_list [ Op.Range; Op.Buffer; Op.Binary ]
 let always_inlined = Op.Set.of_list [ Op.Index; Op.Shrink; Op.Customi ]
 let casts = Op.Set.of_list [ Op.Cast; Op.Bitcast ]
 
+(* Clang and Metal reject a statement nested more than 256 brackets deep. A
+   value read once is written into its reader, so a chain of them nests without
+   bound: a value whose expression nests past [max_nesting] is declared
+   instead. The rest of the 256 holds its reader's brackets, a narrowing cast
+   and the braces of the loops around it. *)
+let max_nesting = 64
+
+(* The deepest nesting of brackets, ( [ and {, in [s]. *)
+let nesting s =
+  let depth = ref 0 and deepest = ref 0 in
+  for i = 0 to String.length s - 1 do
+    match String.unsafe_get s i with
+    | '(' | '[' | '{' ->
+        incr depth;
+        if !depth > !deepest then deepest := !depth
+    | ')' | ']' | '}' -> decr depth
+    | _ -> ()
+  done;
+  !deepest
+
 let special_name u =
   match arg u with
   | String s -> s
@@ -760,7 +780,7 @@ let render_uops l uops =
       (Format.asprintf "failed to render %a %a [%s] %a" Op.pp (op u) Dtype.pp
          (dtype u) (String.concat ", " srcs) pp_arg (arg u))
   in
-  let inlined u =
+  let inlined u line =
     let o = op u in
     let cast = Op.equal o Op.Cast and casts = Op.Set.mem o casts in
     ((not cast) || max_numel u = 1)
@@ -772,7 +792,8 @@ let render_uops l uops =
        || (casts && is_ptr (addrspace u))
        || (casts || Op.equal o Op.Stack || Op.Set.mem o alu_but_where)
           && children u = 1
-          && not (Setting.value Setting.expand_ssa))
+          && not (Setting.value Setting.expand_ssa)
+          && nesting line <= max_nesting)
   in
   let visit u =
     match op u with
@@ -823,7 +844,7 @@ let render_uops l uops =
           | None -> failed u
         in
         if Op.Set.mem o closes then decr depth;
-        if inlined u then
+        if inlined u line then
           if narrowed u then begin
             Tbl.replace ctx.narrowed u ();
             Tbl.replace r u (strf "(%s)" (render_cast ctx u line))

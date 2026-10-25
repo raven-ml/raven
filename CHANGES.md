@@ -1551,6 +1551,9 @@ thread.
 
 ### Tolk (new)
 
+- The C-style renderers (`Cstyle`) declare a value read once when its
+  expression would nest past 64 brackets, so a long chain of operations, such
+  as rune's float64 `fmod`, compiles where Clang and Metal rejected it.
 - `Compiler_cuda.nvrtc` compiles in processes of its own, which serve compiles
   in turn, so a source that crashes NVRTC 13.3 or 13.4's assembler raises
   `Compile_error` naming the signal, which a search skips, where it ended the

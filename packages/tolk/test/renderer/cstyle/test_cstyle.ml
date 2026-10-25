@@ -261,9 +261,53 @@ let errors =
 (* Five operations in a row, each on the last's result: an associative operation
    is written without the parentheses of its operands, and a subtraction keeps
    them. *)
+(* [chain n] stores [r n] for [r 0 = data1[0]] and
+   [r (i+1) = (r i << data2[0]) % data3[0]], over int32. Each step is read once,
+   by the next, so written into its reader the chain would nest two brackets a
+   step. *)
+let chain n =
+  let zero = Ops.int ~dtype:Int32 0 in
+  let at slot = Ops.index (Call.param ~shape:[ Int 1 ] slot Int32) [ zero ] in
+  let shift = Ops.load (at 2) [] and modulus = Ops.load (at 3) [] in
+  let step r _ = Ops.alu (Ops.alu r Shl [ shift ]) Cmod [ modulus ] in
+  let r = List.fold_left step (Ops.load (at 1) []) (List.init n Fun.id) in
+  Linearizer.linearize
+    (Ops.sink ~kernel:(Ops.kernel_info ~name:"chain" ()) [ Ops.store (at 0) r ])
+
+(* The deepest nesting of brackets, ( [ and {, in [s]. *)
+let nesting s =
+  let depth = ref 0 and deepest = ref 0 in
+  String.iter
+    (function
+      | '(' | '[' | '{' ->
+          incr depth;
+          deepest := max !deepest !depth
+      | ')' | ']' | '}' -> decr depth
+      | _ -> ())
+    s;
+  !deepest
+
+(* An expression written into its reader nests at most 64 brackets. The
+   statement that declares it adds its operation's brackets, and the function
+   its brace. *)
+let max_nesting = 64 + 4
+
+let renderers_and_lengths =
+  let pp ppf (r : Renderer.t) = Format.pp_print_string ppf r.name in
+  Gen.pair
+    (Gen.of_list ~pp [ clang; metal; cuda; hip ])
+    (Gen.int_range 1 300)
+
+let nests_a_bounded_depth ((r : Renderer.t), n) =
+  cover "a chain that would nest past 256 brackets" (n > 128);
+  cover "a chain short enough to be one expression" (n < 30);
+  at_most int ~than:max_nesting (nesting (render r (chain n)))
+
 let parentheses =
   group "parentheses"
     [
+      prop "a chain of any length nests a bounded number of brackets"
+        renderers_and_lengths nests_a_bounded_depth;
       cases ~name:fst "an associative chain is written flat"
         [
           ("add", true);
@@ -689,6 +733,19 @@ let passes_variables_of_32_and_64_bits () =
       []
   in
   equal values (ints (Array.init 4 (fun i -> i + 2 + (1 lsl 40)))) (slot 0 out)
+
+(* 300 steps of [chain], 600 brackets deep if written as one expression. The
+   operands keep every step below 2^27, so int32's [<<] and [%] are OCaml's. *)
+let computes_a_long_chain () =
+  let n = 300 and x = 123457 and shift = 7 and modulus = 1000003 in
+  let step r _ = (r lsl shift) mod modulus in
+  let expected = List.fold_left step x (List.init n Fun.id) in
+  let k = Run.program (Lazy.force host) (chain n) in
+  let out =
+    Run.on_host k
+      [ (1, ints [| x |]); (2, ints [| shift |]); (3, ints [| modulus |]) ]
+  in
+  equal values (ints [| expected |]) (slot 0 out)
 
 let runs_custom_code () =
   let x = [| -2.5; 0.; 3.; -0. |] in
@@ -1153,6 +1210,7 @@ let execution =
       test "reads a constant table" reads_a_constant_table;
       test "passes variables of 32 and 64 bits"
         passes_variables_of_32_and_64_bits;
+      test "computes a chain too deep for one expression" computes_a_long_chain;
       test "runs custom code" runs_custom_code;
       test "accesses volatile buffers" accesses_volatile_buffers;
       test "stores each constant as its type holds it"

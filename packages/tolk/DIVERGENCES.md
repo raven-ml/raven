@@ -4086,3 +4086,30 @@ submission, and a range a loop of rig's program (D146).
   is stored with its sign and payload › *`, which runs a store of NaNs of both
   signs, quiet and signalling, of half, float and double on the host; and the
   `*_inf_nan_*` goldens of the `Cstyle` suite, for every renderer.
+
+## D157. A C-style expression nests at most 64 brackets
+
+- **tinygrad:** `renderer/cstyle.py:244-249` (`_render`'s rule that writes a
+  value read once into its reader).
+- **tolk:** `lib/renderer/cstyle.ml:720` (`max_nesting`), `:723` (`nesting`),
+  `:783-796` (`inlined`) and its call at `:847`.
+- **Differs:** a value read once, which both write into its reader, is
+  declared as a local variable when its expression nests more than 64
+  brackets, counting `(`, `[` and `{`. tinygrad bounds no depth, so a chain of
+  single-use values nests without limit, and Clang and Metal reject a statement
+  past 256 levels: "bracket nesting level exceeded maximum of 256". The limit
+  is Clang's `BracketDepth` (`LangOptions.def`, default 256); HIP compiles
+  through comgr, which is Clang, and its limit is unverified on hardware;
+  NVRTC 13 compiles 1000 levels. tinygrad met the error and removed
+  parentheses of associative chains instead, which a chain of `<<` and `%`
+  cannot use. No golden nests past 24 levels, so none changes and
+  `gen/tinygrad.patch` keeps tinygrad's rule.
+- **Reason:** (b). rune's float64 `fmod` (`dev/nx2/rune/lib/lower_real.ml`,
+  `fmod`) computes `r := (r << left) % my` 187 times, which written as one
+  expression nests about 374 levels, so its kernel did not compile on the
+  host: rune's `binary kinds, comparisons, where and fma give eager's bits`
+  (float64) and `binary › mod` failed.
+- **Pinned by:** the Cstyle suite: `parentheses › a chain of any length nests
+  a bounded number of brackets`, which renders chains of 1 to 300 steps with
+  each renderer, and `execution on the host › computes a chain too deep for
+  one expression`, which runs 300 steps on the host against a fold in OCaml.

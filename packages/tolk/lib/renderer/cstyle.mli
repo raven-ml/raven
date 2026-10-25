@@ -11,7 +11,11 @@
     The function takes the kernel's parameters in order, each named after its
     name, or [data] and its slot, followed by its shape: [data0_16]. Each loop
     is a [for] loop, and each value is a local variable, unless it is used once
-    and cheap to repeat, in which case it is written into its user.
+    and cheap to repeat, in which case it is written into its user. That holds
+    only while its expression nests at most 64 brackets, counting parentheses,
+    square brackets and braces; a deeper one is a local variable, so a chain of
+    any length stays below the 256 levels that Clang and Metal accept in a
+    statement.
 
     A renderer's {!Renderer.t.render} raises [Invalid_argument] on a kernel that
     holds a node its language cannot write, such as an operation the target
