@@ -142,14 +142,17 @@ val window :
     results, the operation over each operand's [window r ~operand:i s w] equals
     the window [w] of the operation over the whole operands, bitwise. It
     computes every route that reads no operand cut along a [Reduced] or a
-    [Scanned] axis. A kernel library meets it where an element's association,
-    its algorithm and whether the library declines depend on the extents the
+    [Scanned] axis. A kernel library declines a window as it declines the
+    whole ({!Nx_kernel.section-contract}). It meets the law where an
+    element's association and its algorithm depend on the extents the
     element reads whole, the dtypes, the attributes, the library and the
-    device's architecture, never on the extents its window cuts. A float or
-    complex contraction keeps the law but for its association, which its
-    library chooses from the window's extents: each window is within the
-    bound of {!Nx_kernel.S.contract} and the same on every run for a given
-    placement and set of devices. *)
+    device model, never on the extents its window cuts, as nx.cpu's do
+    ({!Nx_cpu}); on a library that does not state so, a float or complex
+    window keeps its library's bounds alone. A float or complex contraction
+    keeps the law but for its association, which its library chooses from
+    the window's extents: each window is within the bound of
+    {!Nx_kernel.S.contract} and the same on every run for a given placement
+    and set of devices. *)
 
 (** The type for how the devices of a route compute its results. *)
 type compute =

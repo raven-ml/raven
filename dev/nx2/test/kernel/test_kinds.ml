@@ -10,6 +10,7 @@
    special values and by their symmetries. *)
 
 open Windtrap
+open Exact
 module K = Nx_kinds_support
 
 let strf = Printf.sprintf
@@ -36,20 +37,6 @@ let value64 =
     ~equal:(fun a b ->
       Int64.equal (bits64 a) (bits64 b) || (Float.is_nan a && Float.is_nan b))
 
-(* Distances in ordered-bit ranks, -0 and +0 one apart; NaN is at no distance
-   from NaN and infinitely far from a number. *)
-
-let rank64 x =
-  let b = bits64 x in
-  if Int64.compare b 0L < 0 then Int64.(sub (neg (logand b max_int)) 1L) else b
-
-let ulps64 a b =
-  if Float.is_nan a || Float.is_nan b then
-    if Float.is_nan a && Float.is_nan b then 0 else max_int
-  else
-    let d = Int64.abs (Int64.sub (rank64 a) (rank64 b)) in
-    if Int64.compare d (Int64.of_int max_int) >= 0 then max_int
-    else Int64.to_int d
 
 (* f32 transcendentals
 
@@ -150,8 +137,8 @@ let test_binary_transcendentals =
             ~msg:(strf "%s %h %h (0x%08x 0x%08x)" kind (f a) (f b) a b)))
     [ ("pow", 4); ("atan2", 3) ]
 
-(* What every library computing a kind gives, as a digest of its results over
-   the strata: the same on each target this CPU runs. *)
+(* What every library computing a kind through nx_kinds.h gives, as a digest
+   of its results over the strata: the same on each target this CPU runs. *)
 let test_digests =
   test "digests of every kind over the strata" (fun () ->
       let table target =
@@ -304,19 +291,6 @@ let fraction64 got want lo =
     let ulp = Float.ldexp 1. (max (e - 53) (-1074)) in
     Float.abs (got -. want -. lo) /. ulp
 
-let golden kind =
-  let ic = open_in (Filename.concat "golden/kinds" (kind ^ ".golden")) in
-  let rows = ref [] in
-  (try
-     while true do
-       rows := input_line ic :: !rows
-     done
-   with End_of_file -> close_in ic);
-  List.rev !rows
-  |> List.filter (fun l -> l <> "" && l.[0] <> '#')
-  |> List.tl
-  |> List.map (fun l ->
-      String.split_on_char '\t' l |> List.map float_of_string |> Array.of_list)
 
 let test_f64_goldens =
   cases
@@ -834,47 +808,6 @@ let test_threefry =
    part's unit roundoff; a NaN part in an operand of Mul, Fdiv or Recip makes
    both parts NaN; the order is the real part's, then the imaginary part's. *)
 
-(* The exact values below are double-doubles, hi + lo. *)
-let two_sum a b =
-  let s = a +. b in
-  let bb = s -. a in
-  (s, a -. (s -. bb) +. (b -. bb))
-
-let two_prod a b =
-  let p = a *. b in
-  (p, Float.fma a b (-.p))
-
-let dd_add (ah, al) (bh, bl) =
-  let s, e = two_sum ah bh in
-  two_sum s (e +. al +. bl)
-
-let dd_neg (h, l) = (-.h, -.l)
-
-let dd_mul (ah, al) (bh, bl) =
-  let p, e = two_prod ah bh in
-  two_sum p (e +. (ah *. bl) +. (al *. bh))
-
-let dd_div ((ah, _) as a) ((bh, _) as b) =
-  let q1 = ah /. bh in
-  let r = dd_add a (dd_neg (dd_mul b (q1, 0.))) in
-  two_sum q1 (fst r /. bh)
-
-(* The exact product and quotient of (ar + ai i) and (br + bi i) *)
-let exact_mul (ar, ai) (br, bi) =
-  ( dd_add (two_prod ar br) (dd_neg (two_prod ai bi)),
-    dd_add (two_prod ar bi) (two_prod ai br) )
-
-let exact_div (ar, ai) (br, bi) =
-  let den = dd_add (two_prod br br) (two_prod bi bi) in
-  ( dd_div (dd_add (two_prod ar br) (two_prod ai bi)) den,
-    dd_div (dd_add (two_prod ai br) (dd_neg (two_prod ar bi))) den )
-
-(* |z' - z| / |z| in units of [u]. *)
-let normwise u (re, im) ((zr, _) as r, ((zi, _) as i)) =
-  let d x z = fst (dd_add (x, 0.) (dd_neg z)) in
-  Float.hypot (d re r) (d im i) /. Float.hypot zr zi /. u
-
-let round_f32 x = Int32.float_of_bits (Int32.bits_of_float x)
 
 (* A part of magnitude in [2^-40, 2^40], either sign. *)
 let part =
@@ -1062,18 +995,6 @@ let complex_bounds =
     ("atanh", 5., 2.051, 2.454);
   ]
 
-(* The rows of golden/kinds/complex-<kind>.golden: operands, then each part
-   of the value correctly rounded and its remainder. *)
-let complex_golden kind = golden ("complex-" ^ kind)
-
-(* Whether a row's operands are binary32's and its value is in the range
-   c64's bounds hold in. *)
-let single_row args (re, im) =
-  Array.for_all (fun a -> round_f32 a = a) args
-  && Float.is_finite (round_f32 (Float.hypot (fst re) (fst im)))
-  && Float.hypot (fst re) (fst im) >= 0x1p-100
-
-let golden_value row n = ((row.(n), row.(n + 1)), (row.(n + 2), row.(n + 3)))
 
 (* |z' - z| / |z| of the moduli alone, in units of [u]. *)
 let modulus_error u (re, im) (((zr, _), (zi, _)) : (float * float) * (float * float)) =

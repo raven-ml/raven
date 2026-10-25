@@ -4,11 +4,11 @@
   ---------------------------------------------------------------------------*)
 
 (* Contractions through every kernel library the host runs: within the bound
-   Nx_kernel.S.contract states of the exact sum, the same bits under every
-   layout of the same values and into a destination identical to init, and
-   nothing written where declined. nx.cpu's
-   group checks what nx_cpu.mli states: the cases it computes, how it scales,
-   wraps and rounds, bit for bit, against a reference built here. *)
+   Nx_kernel.S.contract states of the exact sum, the same bits into a
+   destination identical to init, and nothing written where declined.
+   nx.cpu's group checks what nx_cpu.mli states: the cases it computes, how
+   it scales, wraps and rounds, bit for bit, against a reference built here,
+   and the same bits under every layout of the same values. *)
 
 open Windtrap
 open Nx_array_gen
@@ -1857,8 +1857,6 @@ let laws (b : Support.backend) =
     [
       prop ~examples "a contraction is within its bound of the exact sum"
         computed (run (law_bound b));
-      prop ~examples "a contraction's bits do not depend on layouts" computed
-        (run (law_layouts b));
       prop ~examples "an init given as dst gives the same bits" computed
         (run (law_init_as_dst b));
       prop "a declined contraction writes nothing" any_case
@@ -3342,6 +3340,9 @@ let cpu (b : Support.backend) =
       prop ~examples:(examples @ order_edges)
         "each output adds its products in the order nx_cpu.mli states"
         computed (run (law_order b));
+      prop ~examples
+        "a contraction's bits do not depend on layouts, as nx_cpu.mli states"
+        computed (run (law_layouts b));
       prop ~examples:(List.concat_map regimes integer_accs)
         "an integer output is its products' sum modulo the accumulator"
         integer_cases

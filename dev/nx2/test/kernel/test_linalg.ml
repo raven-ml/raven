@@ -4,14 +4,15 @@
   ---------------------------------------------------------------------------*)
 
 (* Factorisations and triangular solves through every kernel library the host
-   runs: each result against its defining relation, within the bound
-   nx_cpu.mli states, by residuals computed in double-double, on operands
-   well and badly conditioned and below the least normal number; LU's
-   pivots as nx_kernel.mli's lu chooses them; a failing matrix NaN alone in
-   its batch; only the triangle a routine names read; the same bits under
-   every layout of the same values. nx.cpu's group checks that it computes
-   what nx_cpu.mli lists, the same bits on one thread as on the job's, and
-   its refusals. *)
+   runs: LU's pivots as nx_kernel.mli's lu chooses them; a failing matrix
+   NaN alone in its batch; a finite matrix NaN in no result, though an
+   element's modulus overflows; only the triangle a routine names read; the
+   dtypes routines take. nx.cpu's group checks what nx_cpu.mli states: each
+   result against its defining relation, within its bound, by residuals
+   computed in double-double, on operands well and badly conditioned and
+   below the least normal number; the Upper factor's bits; a solve into its
+   operand; the same bits under every layout of the same values and on one
+   thread as on the job's; the cases it computes, and its refusals. *)
 
 open Windtrap
 open Nx_array_gen
@@ -1812,7 +1813,7 @@ let test_eig_graded_cycle (b : Support.backend) () =
 
 (* A complex matrix whose largest element is finite but of a modulus past
    the largest float, diag (0.9 max (1 + i), 1): a matrix of numbers, on
-   which svd's and eig's results are no NaN, svd's values +inf and 1.
+   which svd's and eig's results, with vectors and without, hold no NaN.
    Scaled by the modulus, the routines would scale by 0 and give NaN. *)
 let test_overflowing_modulus (b : Support.backend) () =
   let big = 0.9 *. Float.max_float in
@@ -1832,13 +1833,9 @@ let test_overflowing_modulus (b : Support.backend) () =
                 (2 * Array.length v) (numbers dt v))
             y
       | None -> ())
-    [ ("svd", Svd (Some Reduced)); ("eig", Eig true) ];
-  match run b (Svd None) [| x |] with
-  | Some y ->
-      let s = values y.(0) in
-      equal ~msg:"svd's values" (array float_exact) [| infinity; 1. |]
-        (Array.map (fun (z : Complex.t) -> z.re) s)
-  | None -> ()
+    [
+      ("svd", Svd (Some Reduced)); ("eig", Eig true); ("svd's values", Svd None);
+    ]
 
 (* The Jacobi matrix whose eigenvalues are [l] and whose eigenvectors'
    first components are [q], ‖q‖ = 1, by Lanczos on diag l from q,
@@ -2715,6 +2712,37 @@ let laws (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group b.name
     [
+      prop "svd of a matrix with NaN or an infinity is NaN alone" case
+        (run (law_svd_fails b));
+      prop "eig of a matrix with NaN or an infinity is NaN alone" case
+        (run (law_eig_fails b));
+      prop "a matrix that is not definite is NaN alone" case
+        (run (law_cholesky_fails b));
+      prop "a singular triangle is NaN alone" case (run (law_solve_fails b));
+      prop "eigh of a matrix with NaN or an infinity is NaN alone" case
+        (run (law_eigh_fails b));
+      prop "eigh reads the lower triangle and the diagonal's real parts" case
+        (run (law_eigh_reads b));
+      prop "Cholesky reads the lower triangle and the diagonal's real parts"
+        case (run (law_cholesky_reads b));
+      prop "a solve reads its triangle, and its diagonal unless unit" case
+        (run (law_solve_reads b));
+      test "a pivot failing past the first block is NaN alone" (fun () ->
+          b.around (test_cholesky_fails_late b));
+      test "LU's pivot is the scan's" (fun () -> b.around (test_pivots b));
+      test "routines take floats and complex numbers alone" (fun () ->
+          b.around (test_dtypes b));
+      test "a finite matrix gives numbers in every result" (fun () ->
+          b.around (test_overflowing_modulus b));
+    ]
+
+(* What nx_cpu.mli states beyond the contract: its bounds, the Upper factor's
+   bits, a solve into its operand, layout and thread invariance, and the
+   matrices its algorithms find hard. *)
+let cpu (b : Support.backend) =
+  let run f x = b.around (fun () -> f x) in
+  group ("nx.cpu " ^ b.name)
+    [
       prop "Cholesky's factor meets its relation within γ(n + 1)" case
         (run (law_cholesky b));
       prop "the Upper factor is the Lower one's conjugate transpose" case
@@ -2733,31 +2761,13 @@ let laws (b : Support.backend) =
         case (run (law_svd b));
       prop "svd's values are within γ(16 max (m, n) + 100) ‖a‖₂ of the exact ones"
         case (run (law_svd_spectrum b));
-      prop "svd of a matrix with NaN or an infinity is NaN alone" case
-        (run (law_svd_fails b));
       prop "eig's results meet their relations within γ(16n)" case
         (run (law_eig b));
       prop "eig's eigenvalues of a normal matrix are within γ(16n) ‖a‖_F"
         case (run (law_eig_spectrum b));
-      prop "eig of a matrix with NaN or an infinity is NaN alone" case
-        (run (law_eig_fails b));
-      prop "a matrix that is not definite is NaN alone" case
-        (run (law_cholesky_fails b));
-      prop "a singular triangle is NaN alone" case (run (law_solve_fails b));
-      prop "eigh of a matrix with NaN or an infinity is NaN alone" case
-        (run (law_eigh_fails b));
-      prop "eigh reads the lower triangle and the diagonal's real parts" case
-        (run (law_eigh_reads b));
-      prop "Cholesky reads the lower triangle and the diagonal's real parts"
-        case (run (law_cholesky_reads b));
       prop "a solve into its operand gives a fresh destination's bits" case
         (run (law_solve_aliased b));
-      prop "a solve reads its triangle, and its diagonal unless unit" case
-        (run (law_solve_reads b));
       prop "bits do not depend on layouts" case (run (law_layouts b));
-      test "a pivot failing past the first block is NaN alone" (fun () ->
-          b.around (test_cholesky_fails_late b));
-      test "LU's pivot is the scan's" (fun () -> b.around (test_pivots b));
       test "a pivot whose reciprocal is subnormal meets LU's bound" (fun () ->
           b.around (test_huge_pivot b));
       test "eigh at the two-stage reduction's orders" (fun () ->
@@ -2774,20 +2784,10 @@ let laws (b : Support.backend) =
           b.around (test_eig_subnormal_pair b));
       test "eig keeps a graded cycle's vectors finite" (fun () ->
           b.around (test_eig_graded_cycle b));
-      test "svd and eig scale an element whose modulus overflows" (fun () ->
-          b.around (test_overflowing_modulus b));
       test "svd keeps Reference-LAPACK issue 255's bidiagonal's vectors"
         (fun () -> b.around (test_svd_deflation b));
       test "svd keeps a row's tiny rest beside a small matrix" (fun () ->
           b.around (test_svd_tiny_rows b));
-      test "routines take floats and complex numbers alone" (fun () ->
-          b.around (test_dtypes b));
-    ]
-
-let cpu (b : Support.backend) =
-  let run f x = b.around (fun () -> f x) in
-  group ("nx.cpu " ^ b.name)
-    [
       prop ~count:30
         "computes every dtype, a matrix alone giving its bits in a batch" case
         (run (law_cpu_threads b));

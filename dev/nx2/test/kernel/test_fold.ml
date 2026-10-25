@@ -4,7 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (* Folds through every kernel library the host runs: a fold is the padded load's
-   adjoint over integers. nx.cpu's group checks each result element against a
+   adjoint over integers, and a float fold within its bound of the exact sum
+   at each index. nx.cpu's group checks each result element against a
    reference that adds, from +0, the elements the load reads from it in C order
    of their taps, bit for bit or both NaN, through views of the operand, at
    every dtype but the booleans; and its maps of padded loads, through the
@@ -271,6 +272,61 @@ let law_adjoint (b : Support.backend) = function
           Array.iteri (fun i v -> rhs := Int64.add !rhs (Int64.mul a.(i) v)) fs;
           equal int64 !lhs !rhs)
 
+(* A float fold's element is within γ(n - 1) Σ|x| of the exact sum of the
+   [n] elements it adds, where they are finite and their magnitudes' sum is
+   below half the dtype's largest float, so that no sum overflows. *)
+let law_bound (b : Support.backend) = function
+  | None -> assume false
+  | Some c -> (
+      let f32 = dtype_of c.x = D.Any D.Float32 in
+      let get e = if f32 then get32 e 0 else get64 e 0 in
+      let u = if f32 then 0x1p-24 else 0x1p-53 in
+      let top = if f32 then 0x1.fffffep127 else max_float in
+      let xs = shape_of c.x and es = elements c.x in
+      let terms = Array.make (total c.shape) [] in
+      for k = 0 to total xs - 1 do
+        match target c (index_of xs k) with
+        | None -> ()
+        | Some y -> terms.(y) <- get es.(k) :: terms.(y)
+      done;
+      let held t =
+        List.for_all Float.is_finite t
+        && List.fold_left (fun a x -> a +. Float.abs x) 0. t <= top /. 2.
+      in
+      cover "an element of several finite terms"
+        (Array.exists (fun t -> List.length t > 1 && held t) terms);
+      match fold_on b c with
+      | None -> failf "%s declined a fold" b.name
+      | Some y ->
+          let got = Array.map get (elements y) in
+          let bad = ref [] in
+          Array.iteri
+            (fun i t ->
+              if held t then begin
+                (* The exact sum: TwoSum's errors carried in a second part. *)
+                let hi = ref 0. and lo = ref 0. in
+                List.iter
+                  (fun x ->
+                    let s = !hi +. x in
+                    let z = s -. !hi in
+                    lo := !lo +. (!hi -. (s -. z)) +. (x -. z);
+                    hi := s)
+                  t;
+                let exact = !hi +. !lo in
+                let mag = List.fold_left (fun a x -> a +. Float.abs x) 0. t in
+                let n = Float.of_int (max 0 (List.length t - 1)) in
+                let g = n *. u /. (1. -. (n *. u)) in
+                let bound = (g *. mag) +. (0x1p-100 *. mag) in
+                if not (Float.abs (got.(i) -. exact) <= bound) then
+                  bad :=
+                    Printf.sprintf "element %d: %h is %h from %h, past %h" i
+                      got.(i) (got.(i) -. exact) exact bound
+                    :: !bad
+              end)
+            terms;
+          equal (list string) []
+            (List.filteri (fun i _ -> i < 8) (List.rev !bad)))
+
 (* A map of the padded load of an array of the case's result shape, seen
    through the case's [load] view, loads at each index the element the fold
    would add that index into, or the fill where the load reads padding. *)
@@ -411,6 +467,12 @@ let all_cases =
       | None -> Format.pp_print_string ppf "no load" | Some c -> pp_case ppf c)
     (case_gen ~dtypes:D.all ())
 
+let float_cases =
+  Gen.with_pp
+    (fun ppf -> function
+      | None -> Format.pp_print_string ppf "no load" | Some c -> pp_case ppf c)
+    (case_gen ~dtypes:D.[ Any Float32; Any Float64 ] ())
+
 let int_cases =
   Gen.with_pp
     (fun ppf -> function
@@ -455,6 +517,8 @@ let laws (b : Support.backend) =
   group b.name
     [
       prop "a fold is the padded load's adjoint" int_cases (run (law_adjoint b));
+      prop "a float fold is within γ(n - 1) Σ|x| of the exact sum" float_cases
+        (run (law_bound b));
     ]
 
 let cpu (b : Support.backend) =

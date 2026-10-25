@@ -19,7 +19,7 @@
    A fold's result starts at +0. Then each tap, the indices along the window
    axes in C order, adds the operand's elements of that tap into the
    result: within a tap each result element receives at most one, so every
-   element adds its taps in C order, as Nx_kernel.S.fold states. Along an
+   element adds its taps in C order, as nx_cpu.mli states. Along an
    axis, the operand's indices whose padded coordinate w·step + j·dilation
    lands on an element, lo + i·(interior + 1) with 0 <= i < d, step by a
    constant and so do the i they land on: a tap is one box of the operand

@@ -90,12 +90,13 @@
    the loads itself: the table's products multiply and sum them in
    registers, in the lanes' order.
 
-   Networks. A Logsumexp or Moments scan computes the network of
-   nx_kernel.mli's scans section on each slice, op by op with the kinds'
-   arithmetic, so every library gives the same bits. It holds O(log n)
-   states per slice. Slices few for the threads are cut into tiles of 256
-   terms, the threads computing their states, then the network over them,
-   then their results: the same combinations in the same order (TILES).
+   Networks. A Logsumexp or Moments scan computes, on each slice, the
+   network of nx_kernel.mli's scans section over nx_cpu.mli's states, op by
+   op with the kinds' arithmetic, so that every path and thread count gives
+   the same bits. It holds O(log n) states per slice. Slices few for the
+   threads are cut into tiles of 256 terms, the threads computing their
+   states, then the network over them, then their results: the same
+   combinations in the same order (TILES).
 
    The kernels come first, compiled once per target: as reduce.c for base
    and as its copy reduce_v3.c for v3. The entries follow, compiled once. */
@@ -1764,7 +1765,7 @@ ARG_COMPLEX(min_c128, c128, nx_minimum_c128)
     memcpy(d0, &mean, sizeof mean);                                          \
     memcpy(d1, &var, sizeof var);                                            \
   }                                                                          \
-  /* Logsumexp's network (nx_kernel.mli). The sum of state [a], of           \
+  /* Logsumexp's network (nx_cpu.mli). The sum of state [a], of              \
      maximum [ma] and sum [sa], then state [b], [m] the two's maximum:       \
      where m is finite, the sum of the side whose maximum is m as it is,     \
      its exp 0 being 1, plus the other's rescaled; 0 where m is -∞; m        \

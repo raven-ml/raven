@@ -116,7 +116,8 @@ val targets : unit -> string list
 val digest : target:string -> string -> string -> string
 (** [digest ~target kind ty] is the digest of [kind] at [ty] (["f32"], ["f64"]
     or ["int"]) over its strata on [target], every NaN one NaN, as 16 hex
-    digits: what every library computing the kind gives. *)
+    digits: what every library computing the kind through [nx_kinds.h]
+    gives. *)
 
 val kinds : (string * string list) list
 (** [kinds] is every kind with the types it has a loop at. *)

@@ -983,9 +983,11 @@ end
 (** {2:transcendental Powers, exponentials and trigonometry}
 
     Floats and complex numbers, where a function does not say floats. On floats
-    each is its mathematical value rounded to the dtype; a stated range is the
-    mathematical one, which rounding can leave at an end: in [float8_e4m3fn],
-    [π] rounds to [3.25].
+    each is within a bound in ulps of its mathematical value rounded to the
+    dtype, the bound [nx_kinds.h] gives every kernel library
+    ({!Nx_kernel.Prog}): at most 4 ulps at float32 and float64. A stated range
+    is the mathematical one, which rounding can leave at an end: in
+    [float8_e4m3fn], [π] rounds to [3.25].
 
     On complex numbers each is the principal value C99 defines (ISO/IEC 9899,
     7.3), with its special values at infinities, NaNs and signed zeros (Annex
@@ -1002,7 +1004,11 @@ end
     a non-zero real part where the float function is defined, a function of
     one operand but {!asinh}, {!acosh} and {!atanh} gives the float function's
     result as its real part; {!pow} does at a positive base and a real
-    exponent. *)
+    exponent.
+
+    These bounds, and those the functions below state, hold where a set's
+    kernels compute. Under a compiler such as [Rune.jit], the compiler's
+    bounds hold. *)
 
 val sqrt : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [sqrt x] is the square root, NaN below [-0.]. On complex numbers its real
@@ -1022,7 +1028,7 @@ val exp : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [exp x] is [e{^x}]. *)
 
 val exp2 : ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [exp2 x] is [2{^x}], exact at integers whose power the dtype holds. *)
+(** [exp2 x] is [2{^x}]. *)
 
 val expm1 : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [expm1 x] is [e{^x} - 1], accurate near [0]. Floats. *)
@@ -1033,7 +1039,7 @@ val log : ('v, 's, 'd) t -> ('v, 's, 'd) t
     \[[-π], [π]\] and its branch cut the negative real axis. *)
 
 val log2 : ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [log2 x] is the base-2 logarithm, exact at powers of two. *)
+(** [log2 x] is the base-2 logarithm. *)
 
 val log1p : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [log1p x] is [log (1 + x)], accurate near [0]. Floats. *)
@@ -1110,7 +1116,9 @@ val erf : (float, 's, 'd) t -> (float, 's, 'd) t
     the dtype. An inverse's bound adds [κ] times its forward function's bound,
     where [κ = |p / (x F'(x))|] at its result [x], for [F] the forward
     function, is its condition number. A subnormal result is held to its
-    bound in units of the least subnormal, plus half of one.
+    bound in units of the least subnormal, plus half of one. These bounds
+    hold where a set's kernels compute. Under a compiler such as
+    [Rune.jit], the compiler's bounds hold.
 
     The formats narrower than 32 bits compute at [float32] and round once.
     Where a bound is in ulps, their result is within one ulp of the exact
@@ -1434,11 +1442,13 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 
     A reduction folds [x]'s elements along [axes], every axis by default, a
     negative one counted from the end, and drops them, or keeps each with extent
-    [1] where [keepdims]. On one device, its order of association depends on
-    the shape alone. Over axes cut across devices, each device reduces the
-    part its window holds, and only partial results move instead of [x]'s
-    elements: a few per output, combined in C order of the windows' first
-    indices; for
+    [1] where [keepdims]. On one device it gives the same bits on every run
+    of the same computation, for the same values, shapes, dtypes, placement
+    and devices ({!Nx_kernel.section-contract}); on nx.cpu ({!Nx_cpu}) its
+    order of association depends on the shape alone. Over axes cut across
+    devices, each device reduces the part its window holds, and only
+    partial results move instead of [x]'s elements: a few per output,
+    combined in C order of the windows' first indices; for
     {!argmax} and {!argmin}, each device's extreme and its position. Integer
     and boolean reductions, extremes and their positions keep the bits they
     have on one device. A float or complex {!sum}, {!prod}, {!mean},
@@ -1448,9 +1458,8 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     float sum of [n] terms stays within [γ(n - 1) Σ|x|] of the exact sum and a
     product within a relative [γ(n - 1)], as on one device
     ({!Nx_kernel.section-reductions}); a complex product within a normwise
-    relative [γ(c (n - 1))], each complex multiplication by the kernels
-    erring by at most [c u], [c = 2] in nx.cpu. A {!mean} is such a sum
-    divided by [n]. {!var} and {!std} are within the bound {!var} states. A
+    relative [γ(2n - 2)]. A {!mean} is such a sum divided by [n]. {!var} and
+    {!std} are within the bound {!var} states. A
     {!logsumexp} is within [ε + ε{_t}] of the exact one, [ε] the largest
     bound the kernels' library states for the logsumexp of a window's terms
     and [ε{_t}] its bound for one of [t] terms, [t] the windows holding
@@ -1548,10 +1557,10 @@ val var :
     the bound their library states. Over axes cut across devices, it is the
     mean, then the deviations [d] from it and their squares, each summed
     as {!sum} sums, and [(Σ d² - Σ d (Σ d / n)) / n], [+0] where that is
-    negative and [+∞] where [Σ d²] overflows: within nx.cpu's bound for
-    its moments ({!Nx_cpu}) with [L + D + t - 1] in place of its [L + D],
-    [t] the windows holding terms. A [ddof] scales it by a relative [2u]
-    more, then one rounding to the dtype.
+    negative and [+∞] where [Σ d²] overflows: on nx.cpu's kernels, within
+    nx.cpu's bound for its moments ({!Nx_cpu}) with [L + D + t - 1] in place of
+    its [L + D], [t] the windows holding terms. A [ddof] scales it by a
+    relative [2u] more, then one rounding to the dtype.
 
     Raises [Invalid_argument] naming itself for a negative [ddof], or one of
     at least [n] where [n > 0]. *)
@@ -1613,13 +1622,13 @@ val logcumsumexp : ?axis:int -> (float, 's, 'd) t -> (float, 's, 'd) t
     result is [+∞] from a [+∞] element on, and [-∞] while every element is
     [-∞].
 
-    Its bits are the [Logsumexp] scan's ({!Nx_kernel.section-scans}), the
-    same in every kernel library that computes one. The result at an index
-    is a function of the elements up to it alone: the logcumsumexp of a
-    prefix of the axis is the prefix of the logcumsumexp, bit for bit.
-    Where the elements up to [i] have a finite maximum, the result before
-    its rounding to the dtype is within [(7 D + 6 ln (i + 1)) u + u|r|] of
-    the exact [r], to first order, with
+    It is the kernels' [Logsumexp] scan ({!Nx_kernel.section-scans}),
+    within the bound their library states. The result at an index is a
+    function of the elements up to it alone: the logcumsumexp of a prefix
+    of the axis is the prefix of the logcumsumexp, bit for bit. On nx.cpu
+    ({!Nx_cpu}), where the elements up to [i] have a finite maximum, the
+    result before its rounding to the dtype is within
+    [(7 D + 6 ln (i + 1)) u + u|r|] of the exact [r], to first order, with
     [D = max 0 (2⌈log₂ (i + 1)⌉ - 1)] and [u] the unit roundoff of
     [float32] for the floats narrower than it, else of the dtype.
 
@@ -1731,9 +1740,10 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
 (** {1:contraction Contraction}
 
     A contraction multiplies two operands along their paired axes and sums the
-    products over the summed ones. On one device, its order of association
-    depends on the shapes alone. A NaN result's sign and payload are
-    unspecified.
+    products over the summed ones. On one device it gives the same bits on
+    every run of the same computation, as a reduction does
+    ({!section-reductions}); on nx.cpu its order of association depends on the
+    shapes alone. A NaN result's sign and payload are unspecified.
 
     Over operands cut across devices, each device computes its window of
     the result from its windows of the operands. Where both operands' paired
@@ -1808,9 +1818,9 @@ val einsum :
     multiply-add, so the work bounds the memory too. Of trees doing as many,
     each contraction's left part holds the earliest of its operands; of such
     parts, the larger, then the one holding the earliest operand the other
-    lacks: equal work gives [((x1 x2) x3) x4]. The tree, and with it the
-    result's order of association on one device, is a function of [p] and
-    the shapes alone. Choosing it takes time in [3^n], so [p] has at most 11
+    lacks: equal work gives [((x1 x2) x3) x4]. The tree is a function of [p]
+    and the shapes alone, and so, on nx.cpu, is the result's order of
+    association. Choosing it takes time in [3^n], so [p] has at most 11
     operands.
 
     {[
@@ -1887,8 +1897,9 @@ val conv :
     from [+0], in the accumulator {!contract} takes by default, and rounds
     once: the float formats narrower than 32 bits sum at [float32]. Integers
     wrap. Before rounding it is within [γ(K + 1, 2u) Σ|x||w|] of the exact
-    sum, [γ] and [u] as {!contract} states. On one device, its order of
-    summation depends on the shapes alone:
+    sum, [γ] and [u] as {!contract} states. On one device it gives the same
+    bits on every run of the same computation ({!section-reductions}),
+    computing as follows:
     - With other than one input channel a group, [c' = c / groups], it is
       one {!contract} of [x]'s windows with [w], batched over the groups:
       an output's products are numbered [q · c' + i], [q] the tap's place
@@ -2714,8 +2725,10 @@ val combine_patches :
     [+0]. With one geometry, the sum of [extract_patches x * y] is the sum of
     [x * combine_patches y].
 
-    The sums add in C order of the taps, from [+0], and the float formats
-    narrower than 32 bits sum at [float32] and round once. Integers wrap.
+    The sums add from [+0] in an order the kernel library states, the
+    float formats narrower than 32 bits at [float32], rounded once. A float
+    sum keeps the bound of a {!sum} of its terms ({!section-reductions}).
+    Integers wrap.
     Every dtype but booleans.
 
     Raises [Invalid_argument] as {!extract_patches} does on the geometry, if

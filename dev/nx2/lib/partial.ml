@@ -519,9 +519,9 @@ struct
           by_tiles unit ( @ ) settle;
           result r p out per
       | Moments (o, dt) ->
-          (* As on one device ({!Nx_kernel.type-reduction}): the mean from
-             the tiles' sums, then the tiles' sums of the deviations from
-             it and of their squares, each combined in tile order. *)
+          (* Two passes: the mean from the tiles' sums, then the tiles'
+             sums of the deviations from it and of their squares, each
+             combined in tile order. *)
           let (D.Any t) = term o in
           let n = numel whole in
           let xs =

@@ -533,26 +533,34 @@ let law_set_last (b : Support.backend) c =
   cover "dropped updates" dropped;
   match scatter_on b c with None -> () | Some y -> check_scatter c y
 
+(* A second run gives the same bits, any NaN for a NaN. *)
+let law_add_again (b : Support.backend) c =
+  cover "shared targets" (fst (sharing c));
+  match (scatter_on b c, scatter_on b c) with
+  | Some y, Some y' ->
+      equal (array (same (dtype_of c.into))) (elements y) (elements y')
+  | None, None -> ()
+  | _ -> failf "%s declined one of two" b.name
+
 (* Each operand as a C-contiguous copy of its view gives the same bits, any
-   NaN for a NaN, on a second run too. *)
-let law_add_bits (b : Support.backend) c =
+   NaN for a NaN. *)
+let law_add_views (b : Support.backend) c =
   let plain (A.Any x) = A.Any (A.copy x) in
   let c' =
     { c with into = plain c.into; sidx = plain c.sidx; updates = plain c.updates }
   in
   cover "shared targets" (fst (sharing c));
   cover "through views" (c.sviews <> []);
-  match (scatter_on b c, scatter_on b c, scatter_on b c') with
-  | Some y, Some y', Some y'' ->
-      let t = array (same (dtype_of c.into)) in
-      equal ~msg:"again" t (elements y) (elements y');
-      equal ~msg:"contiguous" t (elements y) (elements y'')
-  | None, None, None -> ()
-  | _ -> failf "%s declined some of three" b.name
+  match (scatter_on b c, scatter_on b c') with
+  | Some y, Some y' ->
+      equal (array (same (dtype_of c.into))) (elements y) (elements y')
+  | None, None -> ()
+  | _ -> failf "%s declined a view or its copy" b.name
 
 (* A target's bits, any NaN for a NaN, are those of a scatter of only its
-   updates, in C order, into its element: the association is a function of
-   their count. Checks the first 20 targets reached. *)
+   updates, in C order, into its element: nx.cpu adds them left to right,
+   so the association is a function of their count. Checks the first 20
+   targets reached. *)
 let law_add_alone (b : Support.backend) c =
   let d = dtype_of c.into in
   let ls = lands c in
@@ -1483,11 +1491,8 @@ let laws (b : Support.backend) =
       prop ~examples:set_examples
         "a Set scatter keeps each target's last update in C order" sets
         (run (law_set_last b));
-      prop "a float Add gives the same result again and through any views"
-        float_adds
-        (run (law_add_bits b));
-      prop "a float Add's target is a scatter of its updates alone" float_adds
-        (run (law_add_alone b));
+      prop "a float Add gives the same result again" float_adds
+        (run (law_add_again b));
       prop ~examples:bound_examples
         "a float Add is within γ(n + 1) (|x| + Σ|ui|) of the exact sum"
         finite_adds
@@ -1500,6 +1505,12 @@ let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group ("nx.cpu " ^ b.name)
     [
+      prop "a float Add gives the same result through any views" float_adds
+        (run (law_add_views b));
+      prop
+        "a float Add's target is a scatter of its updates alone, as \
+         nx_cpu.mli states"
+        float_adds (run (law_add_alone b));
       prop ~examples:gather_examples
         "a gather reads each position, zero outside the axis" gathers
         (run (law_gather_reference b));

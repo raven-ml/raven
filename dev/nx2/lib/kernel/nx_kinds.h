@@ -6,14 +6,14 @@
 /* Kinds: what each scalar kind of a program computes.
 
    One function per kind and compute type: nx_<kind>_<type>, the type f32,
-   f64, i32, u32, i64, u64, c64 or c128 (complex, at the end). Every kernel
-   library computes a kind through these functions, or through code that
-   gives the same bits, so that a library's interpreter and its loops agree
-   bit for bit and two libraries agree wherever the kind is exact. The
-   float kinds are written once, in nx_kinds_real.h, which this header
-   includes for f32 and f64; the pieces whose algorithm differs between the
-   two are written here. The complex transcendental kinds are written once
-   too, in nx_kinds_complex.h, included for c64 and c128.
+   f64, i32, u32, i64, u64, c64 or c128 (complex, at the end). A kernel
+   library may compute a kind through these functions, or through code that
+   gives the same bits; one that does so in its interpreter and its loops
+   has them agree bit for bit. The float kinds are written once, in
+   nx_kinds_real.h, which this header includes for f32 and f64; the pieces
+   whose algorithm differs between the two are written here. The complex
+   transcendental kinds are written once too, in nx_kinds_complex.h,
+   included for c64 and c128.
 
    Compute types. float16, bfloat16 and the float8 dtypes compute in f32
    through nx_dtype.h's codecs and round once on the store. 8- and 16-bit
@@ -32,8 +32,11 @@
      tan, pow                                     4     2
 
    Their special values (C99 Annex F) and the signs of their zero results
-   are exact. exp2 is exact at integers whose power is in the type, log2 at
-   powers of two.
+   are exact.
+
+   These functions also give exp2 exactly at integers whose power is in the
+   type, and log2 at powers of two; a library computing them otherwise
+   need not.
 
    NaN. A float kind with a NaN operand gives a NaN, but for pow(1, y) and
    pow(x, 0), which Annex F makes 1, and so does a kind that IEEE 754 or

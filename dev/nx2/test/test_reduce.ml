@@ -880,7 +880,7 @@ let moments_scan_case =
           case Long sa);
        ])
 
-(* Nx_kernel's bounds, with [D] the depth of the result and [R] the
+(* nx_cpu.mli's bounds, with [D] the depth of the result and [R] the
    terms' range: the mean within [(4 D + 1) u R + u|μ|], the variance [V]
    within [(7 D + 1) u V + (4 D² - 2 D) u R √V]. The references run
    Welford's update in float64 over the terms less the slice's first, whose
@@ -1232,7 +1232,7 @@ let float_scan_case =
 let rounded (type s) (dt : (float, s) D.t) v =
   (A.to_array (A.of_array dt [| 1 |] [| v |])).(0)
 
-(* nx_kernel.mli's bound: at [n] terms through at most
+(* nx_cpu.mli's bound: at [n] terms through at most
    [D] combinations, [D] the result's {!depth}, within
    [(7 D + 6 ln n) u + u |r|] in the accumulator; then rounded once, so
    between the roundings of the bound's ends. The reference, float64 over
@@ -2521,7 +2521,7 @@ let test_carried_cut () =
   let cut = Nx.place (Cpu3.split ~axis:0) x and on = Nx.place Cpu3.on c in
   equal (array int32) want (A.to_array (host_array (carried cut on)))
 
-(* Nx.logcumsumexp: within nx_kernel.mli's bound of a float64
+(* Nx.logcumsumexp: within nx_cpu.mli's bound of a float64
    log-sum-exp over each prefix, specials and prefixes bit for bit, a NaN as
    any NaN, and the host's bits wherever the value lies. *)
 

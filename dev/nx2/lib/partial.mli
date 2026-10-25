@@ -36,13 +36,13 @@
       and [Min] drop the positions.
     - A [Logsumexp] is the logsumexp of its tiles' logsumexps, each into the
       carrier, laid out as [[outputs; tiles]] on each device.
-    - [Moments] compute in the carrier in two passes, as
-      {!Nx_kernel.type-reduction} defines them. Each tile's sum combines by
-      [Add] in the tiles' order into [s], and the mean [c] is [s / n], or
-      [s] where that is a NaN. Each tile then sums its terms' deviations
-      [d = x - c] and their squares, which combine so, and the variance is
-      [(Σ d² - Σ d (Σ d / n)) / n], [+0] where that is negative or [Σ d²]
-      where that is [+∞]. Both are [c] where it is a NaN.
+    - [Moments] compute in the carrier in two passes. Each tile's sum
+      combines by [Add] in the tiles' order into [s], and the mean [c] is
+      [s / n], or [s] where that is a NaN. Each tile then sums its terms'
+      deviations [d = x - c] and their squares, which combine so, and the
+      variance is [(Σ d² - Σ d (Σ d / n)) / n], [+0] where that is
+      negative or [Σ d²] where that is [+∞]. Both are [c] where it is a
+      NaN.
 
     A float or complex result does not keep the bits of the reduction on
     one device, and a NaN result is a NaN whose sign and payload it does not
@@ -58,14 +58,14 @@
       and Stability of Numerical Algorithms}, Lemma 3.3) with
       [(m - 1) + (t - 1) <= n - 1]. A float product, so, within a relative
       [γ(n - 1)]. A complex product within a normwise relative
-      [γ(c (n - 1))] where each complex multiplication by the kernels errs
-      by at most [c u], [c = 2] in nx.cpu.
+      [γ(2n - 2)], each complex multiplication by the kernels erring by at
+      most [2u] ({!Nx_kernel.section-reductions}).
     - For a [Logsumexp], within [ε + ε{_t}] of the exact one, [ε] the
       largest of the bounds the kernels state for its tiles' logsumexps and
       [ε{_t}] theirs for one of [t] terms: a logsumexp moves by no more than
       its terms do.
-    - For [Moments], to first order in [u] and for [n] exact in the
-      carrier: a lane-order sum ({!Nx_kernel.section-orders}) of [m] terms
+    - For [Moments] on nx.cpu's kernels, to first order in [u] and for [n]
+      exact in the carrier: a lane-order sum ({!Nx_cpu}) of [m] terms
       rounds each at most [L + D] times, [L = ⌈min (m, 1024) / 16⌉ + 3] in
       its block and [D = ⌈log₂ ⌈m / 1024⌉⌉] across blocks, and the
       combination adds [t - 1]. Let [K = L + D + t - 1] for the tile of

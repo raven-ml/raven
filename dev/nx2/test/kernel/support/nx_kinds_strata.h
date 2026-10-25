@@ -3,9 +3,9 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The arguments every library computes nx_kinds.h's kinds at, and the digest
-   of the results, so that each library's results can be compared with the
-   digests test_kinds.ml records.
+/* The arguments a library computes nx_kinds.h's kinds at, and the digest of
+   the results, so that the results of each library computing them through
+   nx_kinds.h can be compared with the digests test_kinds.ml records.
 
    The f32 and f64 strata are, for each sign: every binade's first and last
    eight patterns and a fixed draw of significands, the infinities and NaNs

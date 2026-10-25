@@ -23,6 +23,30 @@
     235. Other threads of the calling domain may run OCaml code during a
     call.
 
+    A kernel's result is a function of its operands' values alone, in the
+    sense that neither layouts nor threads change a bit of it. An element's
+    association, its algorithm and whether the kernel declines depend on
+    the extents the element reads whole (a reduction's, a scan's, a sort's
+    or a transform's axes, the contracted extent, a routine's matrices, a
+    gather's or a scatter's axis, the axes a padded load or a fold pads or
+    windows), the dtypes, the attributes and the host's architecture, never
+    on the result's other extents; a contraction's association follows its
+    rows, columns and depth, as stated below. Each kind computes through
+    the function of its name in [nx_kinds.h], with that function's bits,
+    NaNs aside, on every target. So [Exp2] is exact at integers whose power
+    is in the dtype, and [Log2] at powers of two.
+
+    {e Lane order} puts the terms of a sum or a product, numbered as
+    {!Nx_kernel.section-reductions} and {!Nx_kernel.section-contraction}
+    number them, into blocks of 1024 consecutive numbers and, within a
+    block, into 16 lanes by number modulo 16, each lane adding its terms in
+    increasing number from [+0], or multiplying them from its first. Lane
+    [i] takes lane [i + 8] for [i] below 8, then lane [i + 4] for [i] below
+    4, then [i + 2] for [i] below 2, then lane 0 takes lane 1, a lane
+    holding no term taking no part. The blocks are combined by a binary
+    tree whose left part holds the largest power of two of blocks below
+    their count, each part combined the same way.
+
     [map] computes every program. A padded load is first copied padded
     into host memory, which the call holds until it returns, once along an
     axis its operand broadcasts and the pad leaves alone; a pad that fits
@@ -57,8 +81,8 @@
     chain in increasing number from [init] or [+0], where its rows, [a]'s
     free extents multiplied, and its columns, [b]'s, are both above 4 and
     multiply to at least 64, and its depth, the contracted extent, is below
-    128 times their product. It adds them in lane order
-    ({!Nx_kernel.section-orders}), then [init], otherwise, so that the
+    128 times their product. It adds them in lane order, then [init],
+    otherwise, so that the
     threads share the depth of a contraction of few outputs. A segmented
     contraction chooses one order for the whole call, from its rows,
     columns and depth as above, [Rows]' columns those of one index along
@@ -110,23 +134,67 @@
     for, a reduction's loads whose shape once loaded is not its [shape],
     and destinations whose shapes are not the ones they give.
 
-    Each complex multiplication of a [Prod] errs by at most twice the
-    parts' unit roundoff [u], so a complex product of [n] terms is within a
-    normwise relative [γ(2n - 2)] of the exact one, barring overflow and
-    underflow.
+    A float or complex [Sum] or [Prod] reduction adds or multiplies each
+    output's terms in lane order, a complex [Sum] part by part and a complex
+    [Prod] by {!Nx_kernel.Prog.Mul}. A float or complex [Sum] or [Prod] scan
+    cuts each slice along its axis into {e chunks} of 4096 terms from its
+    start. A chunk's total is its terms reduced in lane order, as a reduction
+    of exactly them. The carry into chunk 0 is the slice's element of a given
+    carry, else the identity, but a product's chunk 0 given none has none, and
+    its first result is its first term. The carry into chunk [c + 1] is the
+    carry into chunk [c] combined with [c]'s total, and each result of a chunk
+    is its carry combined with the chunk's terms up to it, left to right. So
+    the scan of a slice's terms from a chunk's start, with the carry into that
+    chunk, has the bits of the scan of the whole slice from that chunk on.
 
-    A [Logsumexp] or a [Moments] reduction has the bits of its two passes
-    ({!Nx_kernel.type-reduction}) run on nx.cpu's own [Max], [Sum] and
-    kinds. For one of [n] terms, let [L = ⌈min (n, 1024) / 16⌉ + 3], the
-    most roundings of a block's sum a term takes, [D = ⌈log₂ ⌈n / 1024⌉⌉],
-    the depth of the blocks' tree, and [u] the carrier's unit roundoff; the
-    rounding into a narrower destination adds its own. Barring overflow and
+    A [Logsumexp] or a [Moments] reduction runs two passes, each summing in
+    lane order on nx.cpu's own [Max], [Sum] and kinds. [Logsumexp]'s first
+    finds the terms' maximum [m]. Its second computes [c + log s], [c]
+    being [m] where finite and [0] elsewhere and [s] the sum of
+    [exp (x - c)], an [exp] of less than [-87] ([float32]) or [-708]
+    ([float64]), the least integers whose [exp] is normal, taken as [0].
+    These thresholds are the {e cut}. The result is a NaN where [m] is.
+    [Moments]' first pass computes the mean [c], the terms' sum over their
+    count. Its second computes the variance [(Σ d² - Σ d (Σ d / n)) / n],
+    [d = x - c], [+0] where that is negative or [Σ d²] where that is [+∞].
+    Both are a NaN where [c] is.
+
+    For a [Logsumexp] or [Moments] reduction of [n] terms, let
+    [L = ⌈min (n, 1024) / 16⌉ + 3], the most roundings of a block's sum a
+    term takes, [D = ⌈log₂ ⌈n / 1024⌉⌉], the depth of the blocks' tree,
+    and [u] the carrier's unit roundoff; the rounding into a narrower
+    destination adds its own. Barring overflow and
     underflow, to first order in [u], a [Logsumexp] [r] is within
     [(L + D + 5 + 6 ln n) u + u|r|] of the exact one. A [Moments] mean is
     within [E = (L + D) u M + u|μ|] of the exact [μ], [M] the mean of the
     terms' magnitudes, and its variance within
     [(L + D + 5) u V + 2 (L + D + 1) u E √V + (3L + 3D + 7) u E²] of the
     exact [V].
+
+    A [Logsumexp] or a [Moments] scan combines its states on each slice by
+    the odd/even network ({!Nx_kernel.section-scans}), each operation in
+    the output's carrier as {!Nx_kernel.Prog} computes it, with these
+    states and bounds, [D] the network's:
+    - [Logsumexp]: a state is a maximum [m] and a sum [s], and [e z] is
+      [exp z], or [0] for [z] below the cut. A term [x] is the state
+      [(x, e (x - c))], [c] being [x] where finite and [0] elsewhere, and a
+      state [a] then a state [b] combine as [m = Maximum (ma, mb)] and
+      [s = sa e (ma - c) + sb e (mb - c)], [c] being [m] where finite and
+      [0] elsewhere. Result [i] is [m + log s], or [m] where [m] is not
+      finite. Where the terms up to [i] have a finite maximum, the result
+      is within [(7 D + 6 ln (i + 1)) u + u|r|] of the exact [r],
+      {!Nx_kernel.Prog.Exp} and {!Nx_kernel.Prog.Log} being within 2 ulps.
+    - [Moments]: a term [t] is the state [(t - c, +0, 1)] of a mean [μ], a
+      sum [S] of squared deviations and a count [n], [c] the slice's first
+      term, or [0] where that term is not finite. A state [a] then a state
+      [b] combine as [n = na + nb], [δ = μb - μa], [w = nb / n],
+      [μ = μa + δ w] and [S = (Sa + Sb) + (δ δ) (na w)]. Where [μa] or [μb]
+      is not finite, [μ] is [μa + μb]. Result [i] is the mean [c + μ] and
+      the variance [S / (i + 1)], or [μ - μ] where [μ] is not finite. For
+      [i + 1] exact in the carrier, [R] the range of the terms up to [i]
+      and [V] their variance, the mean [μ] is within [(4 D + 1) u R + u|μ|]
+      of the exact one and the variance within
+      [(7 D + 1) u V + (4 D² - 2 D) u R √V].
 
     [gather] and [scatter] compute every case, at every dtype, and refuse with
     [Shape_mismatch] operands and destinations whose shapes do not fit. A
@@ -158,7 +226,8 @@
 
     [sort] and [assemble] compute every dtype, and [fold] every dtype
     {!Nx_kernel.Prog.Add} takes. The three refuse with [Shape_mismatch]
-    operands and destinations whose shapes do not fit.
+    operands and destinations whose shapes do not fit. A fold adds an
+    index's elements to [+0] from left to right, in C order of their taps.
 
     [c2c], [r2c], [c2r] and the routines of matrices answer [Wrong_dtype]
     for dtypes {!Nx_kernel.S} does not take, and compute the others.

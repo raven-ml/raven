@@ -6,10 +6,22 @@
 (** Scalar programs: the kinds a step computes, and programs of them.
 
     A kind is what one step of a scalar program computes from one element of
-    each operand. Each computes, per compute type, as the function of its name
-    in [nx_kinds.h] ([Exp] as [nx_exp_f32] on float32), or as code that gives
-    the same bits. That header states the compute types, the transcendental
-    kinds' bounds in ulps, their special values and the NaNs each kind gives. *)
+    each operand, in the compute type [nx_kinds.h] states for its dtype. A
+    kind whose result its doc below, IEEE 754 or modular arithmetic defines
+    exactly, as [Floor], [Add], a float's [Sqrt] and an integer's [Mul] are,
+    gives that result. A float [Recip] is [1 / x] by [Fdiv]. In a kernel
+    library, a float kind of that header's table of bounds is within the
+    bound in ulps it states for the function of its name ([nx_exp_f32] for
+    [Exp] at float32), with the special values, the signs of zero results
+    and the NaN results the header states. A complex kind is as the
+    header's complex section states: within the normwise bound in [u] it
+    states for the kind, with its special values, symmetries and NaN parts.
+    A kernel library may compute a kind through that header's function,
+    and states whether it does. On one device model it computes each kind
+    to the same bits in all its paths, so that its interpreter and its
+    loops agree bit for bit. On a device that flushes subnormal numbers to
+    zero, which its library states, the bounds hold where the operands and
+    the result are normal. *)
 
 (** {1:kinds Kinds} *)
 
@@ -25,9 +37,9 @@ type unary =
           [z] at [0]. *)
   | Sqrt
   | Exp
-  | Exp2  (** [2{^x}], exact at integers whose power is in the dtype. *)
+  | Exp2  (** [2{^x}]. *)
   | Log
-  | Log2  (** Exact at powers of two. *)
+  | Log2
   | Log1p  (** [log (1 + x)], accurate near [0]. *)
   | Expm1  (** [exp x - 1], accurate near [0]. *)
   | Sin
