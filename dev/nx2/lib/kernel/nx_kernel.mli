@@ -498,7 +498,10 @@ end
     compute an operation over several devices, each computing a {e window}
     of the results, a box of their indices, from the parts of the operands
     the window reads. Every element keeps the bits the whole operation gives
-    it. An element's association, its algorithm and whether the kernel
+    it. nx may also compute a float reduction or scan from partial results
+    over parts of its terms, one per device, combined in a fixed order; that
+    result keeps the bounds nx states for it, not the whole's bits. An
+    element's association, its algorithm and whether the kernel
     declines depend on the extents the element reads whole (a reduction's, a
     scan's, a sort's or a transform's axes, the contracted extent, a
     routine's matrices, a gather's or a scatter's axis, the axes a padded

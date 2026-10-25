@@ -1421,7 +1421,8 @@ let where_of rank =
     ]
 
 (* A dtype, the elements drawn for it, how its elements' bits print, and a
-   map and a fold it takes. *)
+   map and a fold it takes: a float's or a complex number's the maximum,
+   whose bits no cut changes. *)
 type ('v, 's) kind = {
   dtype : ('v, 's) D.t;
   values : 'v list;
@@ -1442,6 +1443,11 @@ let floats =
     Int32.float_of_bits 0x7fc00123l; Int32.float_of_bits 0xffa00001l;
   ]
 
+(* The maximum along [a], or over no element the sum, [+0]: both keep their
+   bits on one device wherever [x] lies. *)
+let extreme a x =
+  if (Nx.shape x).(a) = 0 then Nx.sum ~axes:[ a ] x else Nx.max ~axes:[ a ] x
+
 let float_kind dtype =
   Kind
     {
@@ -1449,7 +1455,7 @@ let float_kind dtype =
       values = floats;
       show = float_bits;
       combine = Nx.add;
-      fold = (fun a x -> Nx.sum ~axes:[ a ] x);
+      fold = extreme;
     }
 
 let kinds =
@@ -1466,7 +1472,7 @@ let kinds =
             floats (List.rev floats);
         show = (fun c -> float_bits c.Complex.re ^ "," ^ float_bits c.im);
         combine = Nx.add;
-        fold = (fun a x -> Nx.sum ~axes:[ a ] x);
+        fold = extreme;
       };
     Kind
       {
@@ -1801,6 +1807,162 @@ let reduce_at (type v s) w (rshow : v -> string) r axes
       reduce rshow r axes
         (Nx.place (Nx.Placement.mesh mesh4 [ (a, [ "b" ]) ]) x)
 
+(* Float reductions over cut axes *)
+
+(* Over axes cut across devices, a float or complex sum, product, mean,
+   logsumexp or moments combines partials that round ({!Partial}): each
+   tile reduced into the carrier as one device reduces it, the partials
+   combined in the tiles' order, bit for bit. *)
+
+let gamma u k =
+  let k = Float.of_int (Stdlib.max 0 k) in
+  k *. u /. (1. -. (k *. u))
+
+let u64 = epsilon_float /. 2.
+
+(* Whether [r] of [dt] combines partials that round. *)
+let rounds (type v s) (dt : (v, s) D.t) r =
+  match D.kind dt with
+  | D.Float | D.Complex -> (
+      match r with
+      | Sum | Prod | Mean | Var | Std | Logsumexp | Logmeanexp -> true
+      | Max | Min | Argmax | Argmin | All | Any | Count -> false)
+  | D.Signed | D.Unsigned | D.Boolean -> false
+
+(* The elements of [r] of the floats or complex numbers [x]. *)
+let fold_elements (type v s d) r axes (x : (v, s, d) Nx.t) : v array =
+  match r with
+  | Sum -> elements (Nx.sum ?axes x)
+  | Prod -> elements (Nx.prod ?axes x)
+  | Mean -> elements (Nx.mean ?axes x)
+  | Var | Std | Logsumexp | Logmeanexp -> (
+      match D.kind (Nx.dtype x) with
+      | D.Float -> elements (of_float r axes x)
+      | D.Complex | D.Signed | D.Unsigned | D.Boolean ->
+          invalid_arg "fold_elements: a reduction of floats alone")
+  | Max | Min | Argmax | Argmin | All | Any | Count ->
+      invalid_arg "fold_elements: an exact reduction"
+
+(* A polymorphic computation over a placed value. *)
+type ('v, 's, 'a) over = { over : 'd. ('v, 's, 'd) Nx.t -> 'a }
+
+let at_where (type v s a) w (f : (v, s, a) over) (x : (v, s, Nx.Host.d) Nx.t) : a =
+  match w with
+  | Split3 a -> f.over (Nx.place (Set3.split ~axis:a) x)
+  | Split4 a -> f.over (Nx.place (Set4.split ~axis:a) x)
+  | Cuts (a, b) ->
+      let cuts =
+        if a = b then [ (a, [ "a"; "b" ]) ] else [ (a, [ "a" ]); (b, [ "b" ]) ]
+      in
+      f.over (Nx.place (Nx.Placement.mesh mesh4 cuts) x)
+  | Minor a -> f.over (Nx.place (Nx.Placement.mesh mesh4 [ (a, [ "b" ]) ]) x)
+
+(* Balanced windows along an axis of [e] over [t], each its start and
+   count: the first [e mod t] hold one more. *)
+let windows e t =
+  let q = e / t and r = e mod t in
+  List.init t (fun j -> ((j * q) + Stdlib.min j r, q + if j < r then 1 else 0))
+
+(* The tiles of [x] cut along [cuts], [(axis, windows)] by increasing
+   axis: its windows that hold terms, in C order of their first
+   indices. *)
+let tiles_of (type v s d) cuts (x : (v, s, d) Nx.t) =
+  let s = Nx.shape x in
+  let pick acc (a, t) =
+    let held = List.filter (fun (_, n) -> n > 0) (windows s.(a) t) in
+    List.concat_map (fun l -> List.map (fun w -> (a, w) :: l) held) acc
+  in
+  let slice l =
+    let index a =
+      match List.assoc_opt a l with
+      | Some (start, n) -> Nx.R (start, start + n)
+      | None -> Nx.A
+    in
+    Nx.slice (List.init (Array.length s) index) x
+  in
+  List.map slice (List.fold_left pick [ [] ] cuts)
+
+let chain f = function
+  | x :: rest -> List.fold_left f x rest
+  | [] -> invalid_arg "chain: no partial"
+
+(* A reduction of floats alone [r] of [x] along [axes] from its [tiles], as
+   {!combined}: the variance from the mean of the tiles' sums, then the
+   tiles' sums of the deviations from it and of their squares; a logsumexp
+   as the logsumexp of the tiles'. *)
+let floats_combined (type s) r axes tiles (x : (float, s, Nx.Host.d) Nx.t) =
+  let dt = Nx.dtype x in
+  let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
+  let k v = Nx.scalar w v in
+  let n = List.fold_left (fun n a -> n * Nx.dim a x) 1 axes in
+  let n = k (Float.of_int n) in
+  let xs = List.map (Nx.cast w) tiles in
+  let sum t = Nx.sum ~axes ~keepdims:true t in
+  let sums f = chain Nx.add (List.map (fun t -> sum (f t)) xs) in
+  let var () =
+    let s = sums Fun.id in
+    let m = Nx.where (Nx.isnan s) s (Nx.div s n) in
+    let s1 = sums (fun t -> Nx.sub t m) in
+    let s2 = sums (fun t -> Nx.square (Nx.sub t m)) in
+    let q = Nx.div (Nx.sub s2 (Nx.mul s1 (Nx.div s1 n))) n in
+    let v = Nx.where (Nx.less q (k 0.)) (k 0.) q in
+    let v = Nx.where (Nx.equal s2 (k infinity)) s2 v in
+    Nx.where (Nx.isnan m) m v
+  in
+  let lse () =
+    let r = Nx.ndim x in
+    let each = List.map (fun t -> Nx.logsumexp ~axes ~keepdims:true t) xs in
+    Nx.logsumexp ~axes:[ r ] (Nx.stack ~axis:r each)
+  in
+  match r with
+  | Var -> Nx.cast dt (var ())
+  | Std -> Nx.cast dt (Nx.sqrt (var ()))
+  | Logsumexp -> Nx.cast dt (lse ())
+  | Logmeanexp -> Nx.cast dt (Nx.sub (lse ()) (Nx.log n))
+  | _ -> invalid_arg "floats_combined: not a reduction of floats alone"
+
+(* The float or complex fold [r] of [x] along [axes] from its [tiles], as
+   partial.mli combines them: each tile reduced on the host into the
+   carrier, the partials combined in order, rounded once to [x]'s dtype;
+   each result kept along [axes]. *)
+let combined (type v s) r axes tiles (x : (v, s, Nx.Host.d) Nx.t) : v array =
+  let dt = Nx.dtype x in
+  let (D.Any c) = Nx_kernel.carrier (D.Any dt) in
+  let n = List.fold_left (fun n a -> n * Nx.dim a x) 1 axes in
+  let partials f = List.map (fun t -> f (Nx.cast c t)) tiles in
+  let sum t = Nx.sum ~axes ~keepdims:true t in
+  match r with
+  | Sum -> elements (Nx.cast dt (chain Nx.add (partials sum)))
+  | Prod ->
+      let prod t = Nx.prod ~axes ~keepdims:true t in
+      elements (Nx.cast dt (chain Nx.mul (partials prod)))
+  | Mean ->
+      let n = Nx.scalar c (D.of_float c (Float.of_int n)) in
+      elements (Nx.cast dt (Nx.div (chain Nx.add (partials sum)) n))
+  | _ -> (
+      match D.kind dt with
+      | D.Float -> elements (floats_combined r axes tiles x)
+      | D.Complex | D.Signed | D.Unsigned | D.Boolean ->
+          invalid_arg "combined: not a float fold")
+
+(* The float fold [r] of [x] placed as [w]: its tiles' partials combined
+   in order, or its bits on one device where [w] cuts no reduced axis or
+   one has no element, which the route then reads whole. *)
+let float_law (type v s) (show : v -> string) w r axes
+    (x : (v, s, Nx.Host.d) Nx.t) =
+  let s = Nx.shape x in
+  let along =
+    match axes with None -> List.init (Array.length s) Fun.id | Some l -> l
+  in
+  let cuts = List.filter (fun (a, _) -> List.mem a along) (tiles w) in
+  let got = at_where w { over = (fun y -> fold_elements r axes y) } x in
+  let want =
+    if cuts = [] || List.exists (fun a -> s.(a) = 0) along then
+      fold_elements r axes x
+    else combined r along (tiles_of (List.sort compare cuts) x) x
+  in
+  equal (array string) (Array.map show want) (Array.map show got)
+
 let reduced_case =
   let open Gen in
   with_pp pp_reduced_case
@@ -1867,10 +2029,18 @@ let law_reduced (Reduced_case (k, s, data, w, axes, r)) =
   cover "a NaN term over a cut axis" (over && Array.exists k.is_nan data);
   cover "a signalling NaN term over a cut axis" (over && signals k.rdtype data);
   cover "a sub-byte dtype over a cut axis" (over && D.bits k.rdtype < 8);
+  cover "a float sum, product or moments over a cut axis"
+    (over && rounds k.rdtype r);
   let x = signalling k.rdtype s data in
-  equal string
-    (printed (reduce k.rshow r axes x))
-    (printed (reduce_at w k.rshow r axes x))
+  let one_term t = List.for_all (fun a -> Nx.dim a t = 1) along in
+  cover "a float sum, product or moments over a tile of one term"
+    (over && rounds k.rdtype r
+    && List.exists one_term (tiles_of (List.sort compare cut_along) x));
+  if rounds k.rdtype r then float_law k.rshow w r axes x
+  else
+    equal string
+      (printed (reduce k.rshow r axes x))
+      (printed (reduce_at w k.rshow r axes x))
 
 (* nx.cpu, counting its loop positions, over three memory devices. *)
 module Count3 = (val Nx.devices ~kernels:(module C) [ m 0; m 1; m 2 ])
@@ -1901,7 +2071,7 @@ let test_partials_move () =
   fewer "a reduction of every axis"
     (positions 1 (fun x -> Nx.min x) (ints columns))
 
-(* Float reductions over cut axes of several of lane order's blocks *)
+(* Float reductions over cut axes of many terms *)
 
 (* A float or complex dtype and how its elements' bits print. *)
 type lane_kind = Lane_kind : ('v, 's) D.t * ('v -> string) -> lane_kind
@@ -2024,11 +2194,7 @@ let lane_case =
          ]
      in
      let* seed = int in
-     (* Infinities of both signs, whose sum is a NaN made from numbers, early or
-        late, and a NaN term the other side or none. *)
-     let early = float_range 0. 0.3 and late = float_range 0.6 1. in
-     let made a b = [ (a, Inf); (b, Neg_inf) ] in
-     let nan_term = map (fun x -> Nan x) (of_list [ nan; -.nan ]) in
+     (* Infinities of both signs, whose sum is a NaN made from numbers. *)
      let+ marks =
        frequency
          [
@@ -2037,58 +2203,11 @@ let lane_case =
              list ~size:(int_range 1 3)
                (pair (float_range 0. 1.) (of_list specials)) );
            ( 1,
-             let+ a = early and+ b = early and+ c = late and+ x = nan_term in
-             made a b @ [ (c, x) ] );
-           ( 1,
-             let+ a = late and+ b = late and+ c = early and+ x = nan_term in
-             (c, x) :: made a b );
-           ( 1,
              let+ a = float_range 0. 1. and+ b = float_range 0. 1. in
-             made a b );
+             [ (a, Inf); (b, Neg_inf) ] );
          ]
      in
      { lkind; lshape; laxes; lwhere; lr; seed; marks })
-
-(* For the first output of [shape] reduced along [axes], the device window
-   holding each term, numbered by the cuts [ts] of [axes]: a term's window along
-   each cut reduced axis. *)
-let owners shape axes ts =
-  let axes = Array.of_list axes in
-  let whole = Array.map (fun a -> shape.(a)) axes in
-  let n = Array.fold_left ( * ) 1 whole in
-  let window e t i =
-    (* Balanced windows: the first [e mod t] hold one more. *)
-    let q = e / t and r = e mod t in
-    let j = ref 0 in
-    while !j + 1 < t && ((!j + 1) * q) + Stdlib.min (!j + 1) r <= i do
-      incr j
-    done;
-    !j
-  in
-  Array.init n (fun term ->
-      let idx = Array.make (Array.length axes) 0 and k = ref term in
-      for i = Array.length axes - 1 downto 0 do
-        idx.(i) <- !k mod whole.(i);
-        k := !k / whole.(i)
-      done;
-      List.map
-        (fun (a, t) ->
-          match Array.find_index (( = ) a) axes with
-          | Some i -> window whole.(i) t idx.(i)
-          | None -> 0)
-        ts)
-
-(* The number of windows holding terms of each block of 1024. *)
-let block_owners owners =
-  let n = Array.length owners in
-  List.init
-    ((n + 1023) / 1024)
-    (fun b ->
-      let seen = ref [] in
-      for t = b * 1024 to Stdlib.min n ((b + 1) * 1024) - 1 do
-        if not (List.mem owners.(t) !seen) then seen := owners.(t) :: !seen
-      done;
-      List.length !seen)
 
 let law_lanes c =
   let (Lane_kind (dt, show)) = c.lkind in
@@ -2099,9 +2218,7 @@ let law_lanes c =
   let ts = tiles c.lwhere in
   let cut_along = List.filter (fun (a, _) -> List.mem a along) ts in
   let data = lane_data dt c in
-  let owners = owners c.lshape along cut_along in
-  let blocks = block_owners owners in
-  let n = Array.length owners in
+  let n = List.fold_left (fun n a -> n * c.lshape.(a)) 1 along in
   cover ("a reduction of " ^ D.name dt) true;
   cover ("a reduction by " ^ reduction_name c.lr) true;
   cover "no term" (n = 0);
@@ -2116,45 +2233,21 @@ let law_lanes c =
   cover "two reduced axes cut" (List.length cut_along = 2);
   cover "a reduced axis cut over two mesh axes"
     (match c.lwhere with Cuts (a, b) -> a = b | _ -> false);
-  cover "a block whose terms lie in three windows or more"
-    (List.exists (fun k -> k >= 3) blocks);
-  cover "a short last block whose terms lie in several windows"
-    (n mod 1024 <> 0
-    && match List.rev blocks with k :: _ -> k >= 2 | [] -> false);
-  cover "several blocks, each in one window"
-    (List.length blocks > 1 && List.for_all (( = ) 1) blocks);
-  let nan_at =
-    List.filter_map (function f, Nan _ -> Some f | _ -> None) c.marks
-  in
-  let inf_at s =
-    List.filter_map (fun (f, s') -> if s' = s then Some f else None) c.marks
-  in
-  let infs = (inf_at Inf, inf_at Neg_inf) in
-  let first l = List.fold_left Float.min 1. l in
-  let both =
-    List.length along = rank
-    && match infs with [], _ | _, [] -> false | _ -> true
-  in
-  cover "a NaN term after infinities of both signs"
-    (both && nan_at <> []
-    && first nan_at > Float.max (first (fst infs)) (first (snd infs)));
-  cover "a NaN term before infinities of both signs"
-    (both && nan_at <> []
-    && first nan_at < Float.min (first (fst infs)) (first (snd infs)));
-  cover "infinities of both signs and no NaN term" (both && nan_at = []);
+  let has p = List.exists (fun (_, s) -> p s) c.marks in
+  cover "infinities of both signs and no NaN term"
+    (List.length along = rank && has (( = ) Inf) && has (( = ) Neg_inf)
+    && not (has (function Nan _ -> true | _ -> false)));
   cover "a signalling NaN term" (signals dt data);
   let x = signalling dt c.lshape data in
-  equal string
-    (printed (reduce show c.lr c.laxes x))
-    (printed (reduce_at c.lwhere show c.lr c.laxes x))
+  float_law show c.lwhere c.lr c.laxes x
 
 (* nx.cpu, counting its loop positions, over four memory devices. *)
 module Count4 = (val Nx.devices ~kernels:(module C) [ m 0; m 1; m 2; m 3 ])
 
 let test_float_partials_move () =
   (* Read whole, each of four devices would compute every term: [4 n] positions.
-     Each device's window of 2048 terms is a node of lane order's tree; of 6000,
-     windows of 1500 leave blocks straddling two. *)
+     Cut, each reduces its window once, two passes for a logsumexp or a
+     variance, then combines four partials per output. *)
   let counted (type v s) (x : (v, s) A.t) f =
     let x = Nx.place (Count4.split ~axis:0) (Nx.Repr.of_array Nx.Host.v x) in
     C.reset ();
@@ -2833,6 +2926,60 @@ let starts e t =
   let q = e / t and r = e mod t in
   List.init t (fun j -> (j * q) + Stdlib.min j r)
 
+(* The float cumsum or cumprod [r] of [x] along [axis], cut into [t]
+   windows there, as partial.mli computes it: each window that holds terms
+   scanned on the host from the carry of those before it, their totals in
+   the carrier combined in order. *)
+let scan_combined (type v s) r axis t (x : (v, s, Nx.Host.d) Nx.t) : v array =
+  let dt = Nx.dtype x in
+  let (D.Any c) = Nx_kernel.carrier (D.Any dt) in
+  let cumsum = r = Cumsum in
+  let total p =
+    let p = Nx.cast c p in
+    if cumsum then Nx.sum ~axes:[ axis ] ~keepdims:true p
+    else Nx.prod ~axes:[ axis ] ~keepdims:true p
+  in
+  let scan carry p =
+    let open Nx.Prim in
+    let m : Nx_kernel.monoid = if cumsum then Sum else Prod in
+    eval ~by:"scan_combined"
+      (Scan
+         {
+           layout = A.Layout.contiguous (Nx.shape p);
+           axis;
+           prog = Nx_kernel.Prog.of_node ~ins:[| D.Any dt |] (In 0);
+           reduction = Monoid (m, 0, dt);
+           loads = [| Plain p |];
+           carry = Option.map (fun k -> Any k) carry;
+         })
+  in
+  let rec go carry = function
+    | [] -> []
+    | p :: rest ->
+        let k = total p in
+        let next =
+          match carry with
+          | None -> k
+          | Some q -> if cumsum then Nx.add q k else Nx.mul q k
+        in
+        scan carry p :: go (Some next) rest
+  in
+  elements (Nx.concatenate ~axis (go None (tiles_of [ (axis, t) ] x)))
+
+(* The float scan [r] of [x] along [axis] placed as [w]: its windows
+   scanned from the totals before them, or its bits on one device where
+   [w] does not cut [axis] or it has no element. *)
+let scan_law (type v s) (show : v -> string) w r axis
+    (x : (v, s, Nx.Host.d) Nx.t) =
+  let scanned y = elements (if r = Cumsum then Nx.cumsum ~axis y else Nx.cumprod ~axis y) in
+  let got = at_where w { over = scanned } x in
+  let want =
+    match List.assoc_opt axis (tiles w) with
+    | Some t when Nx.dim axis x > 0 -> scan_combined r axis t x
+    | _ -> scanned x
+  in
+  equal (array string) (Array.map show want) (Array.map show got)
+
 let law_scans c =
   let (Reduced k) = c.skind in
   let n = c.sshape.(c.saxis) in
@@ -2887,51 +3034,17 @@ let law_scans c =
   cover "a signalling NaN term along a cut axis"
     (along && signals k.rdtype data);
   let x = signalling k.rdtype c.sshape data in
-  equal string
-    (printed (scan_bits k.rshow c.sr c.saxis x))
-    (printed (scan_at c.swhere k.rshow c.sr c.saxis x))
-
-(* A prefix of a cut float32 value along its cut axis, of [n] terms and [m]
-   kept. *)
-let prefix_case =
-  let open Gen in
-  with_pp
-    (fun ppf (n, m, seed, split4) ->
-      Format.fprintf ppf "%d of [%d] split over %d, seed %d" m n
-        (if split4 then 4 else 3)
-        seed)
-    (let* n = of_list [ 7; 4097; 9001; 12289 ] in
-     let* m = int_range 0 n in
-     let* seed = int in
-     let+ split4 = bool in
-     (n, m, seed, split4))
-
-let law_prefix (n, m, seed, split4) =
-  cover "a prefix ending inside a later window" (m > n / 2);
-  let st = Random.State.make [| seed |] in
-  let data =
-    Array.init n (fun _ ->
-        Float.ldexp
-          (Random.State.float st 2. -. 1.)
-          (Random.State.int st 41 - 20))
-  in
-  let x = Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 [| n |] data) in
-  let bits y = Array.map float_bits (elements y) in
-  let laws (type d) (x : (float, D.float32_elt, d) Nx.t) =
-    let prefix y = Nx.slice [ Nx.R (0, m) ] y in
-    equal (array string)
-      (bits (prefix (Nx.cumsum ~axis:0 x)))
-      (bits (Nx.cumsum ~axis:0 (prefix x)))
-  in
-  if split4 then laws (Nx.place (Set4.split ~axis:0) x)
-  else laws (Nx.place (Set3.split ~axis:0) x)
+  if floats && (c.sr = Cumsum || c.sr = Cumprod) then
+    scan_law k.rshow c.swhere c.sr c.saxis x
+  else
+    equal string
+      (printed (scan_bits k.rshow c.sr c.saxis x))
+      (printed (scan_at c.swhere k.rshow c.sr c.saxis x))
 
 let test_scans_move () =
   (* Read whole, each of four devices would scan every term: [4 n] positions.
-     Cut, each device scans its window: an integer scan adds one combination
-     per result, a float scan the chunk totals, the units of the chunks
-     across windows and the NaN fill, and a float16 one, where windows end
-     inside chunks, scans each window's last piece again into float32. *)
+     Cut, each device reduces its window to its partial, all but the last,
+     and scans it from the partials before it. *)
   let counted (type v s) (x : (v, s) A.t) f =
     let x = Nx.place (Count4.split ~axis:0) (Nx.Repr.of_array Nx.Host.v x) in
     C.reset ();
@@ -2959,21 +3072,65 @@ let test_scans_move () =
         (counted (floats D.Float16) (Nx.cumprod ~axis:0)))
     [ 16384; 9001 ]
 
+(* The variance of float32 terms [c + y], [y] in [[-1, 1)] and [|c|] up
+   to [10{^6}], over an axis cut across devices: within nx.mli's bound of
+   the exact one, which a mean far from [0] keeps relative to the
+   variance. *)
+let pp_shifted ppf (c, n, w, seed) =
+  Format.fprintf ppf "%d terms near %g at %a, seed %d" n c pp_where w seed
+
+let shifted_case =
+  let open Gen in
+  with_pp pp_shifted
+    (let* e = int_range 0 6 in
+     let* sign = of_list [ 1.; -1. ] in
+     let* n = int_range 2 64 in
+     let* w = of_list [ Split3 0; Split4 0; Cuts (0, 0); Minor 0 ] in
+     let+ seed = int in
+     (sign *. (10. ** Float.of_int e), n, w, seed))
+
+let law_shifted (c, n, w, seed) =
+  let st = Random.State.make [| seed |] in
+  let xs = Array.init n (fun _ -> f32 (c +. Random.State.float st 2. -. 1.)) in
+  let x = Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 [| n |] xs) in
+  let got = (at_where w { over = (fun y -> elements (Nx.var y)) } x).(0) in
+  cover "a mean of 1e5 or more" (Float.abs c >= 1e5);
+  cover "a tile of one term" (n < 8);
+  let k = Float.of_int n in
+  let mean f = Array.fold_left (fun s x -> s +. f x) 0. xs /. k in
+  let mu = mean Fun.id in
+  let v = mean (fun x -> (x -. mu) *. (x -. mu)) and m = mean Float.abs in
+  let g j = gamma (ldexp 1. (-24)) j in
+  let bound =
+    ((g (n + 4) +. (2. *. g n *. g n)) *. v)
+    +. (2. *. g (n + 6) *. g n *. m *. Float.sqrt v)
+    +. (4. *. g (n + 4) *. g n *. g n *. m *. m)
+  in
+  (* The float64 reference's own error. *)
+  let slack = ((k +. 4.) *. u64 *. v) +. ((k *. u64 *. m) ** 2.) in
+  let msg = Printf.sprintf "%h against %h" got v in
+  at_most ~msg float_exact ~than:(bound +. slack) (Float.abs (got -. v))
+
 let placements =
   group "placements"
     [
+      prop ~count:300
+        "a float32 variance over a cut axis is within its bound however far \
+         its mean from 0"
+        shifted_case law_shifted;
       prop ~count:1000
         "an operation over a value at any placement gives its bits on one \
          device"
         placed_case law_placed;
       prop ~count:2000
-        "a reduction over cut axes gives its bits on one device" reduced_case
-        law_reduced;
+        "a reduction over cut axes gives an exact one's bits on one device, \
+         a float one its tiles' partials combined in order"
+        reduced_case law_reduced;
       test "a reduction over a cut axis moves partials, not the operand"
         test_partials_move;
       prop ~count:300
-        "a float reduction over cut axes of many terms gives its bits on one \
-         device"
+        "a float reduction over cut axes of many terms combines its tiles' \
+         partials in order"
         lane_case law_lanes;
       test "a float reduction over a cut axis moves partials, not the operand"
         test_float_partials_move;
@@ -2993,10 +3150,10 @@ let placements =
       test "a contraction over a cut axis contracts each window, not the \
             operands"
         test_contractions_move;
-      prop ~count:500 "a scan along cut axes gives its bits on one device"
+      prop ~count:500
+        "a scan along cut axes gives an exact one's bits on one device, a \
+         float sum's or product's continues its windows' totals in order"
         scan_case law_scans;
-      prop ~count:100 "a scan of a cut value's prefix is its scan's prefix"
-        prefix_case law_prefix;
       test "a scan along a cut axis scans each window, not the operand"
         test_scans_move;
     ]

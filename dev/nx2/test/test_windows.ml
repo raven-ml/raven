@@ -846,7 +846,10 @@ let cut_case =
 
 (* A reduction of every kind over a float32 and an int8 load: the floats'
    first maximum and its position, minimum, sum and moments; the int8s' sum
-   into int32, rounding from int8, and first minimum and its position. *)
+   into int32, rounding from int8, and first minimum and its position. The
+   results from [rounding] on, the float sum's and the moments, round their
+   partials: their bits are a function of the placement, which test_exec
+   bounds. *)
 let mixed (x : (float, D.float32_elt, b) Value.t)
     (y : (int, D.int8_signed_elt, b) Value.t)
     shape axes =
@@ -869,6 +872,8 @@ let mixed (x : (float, D.float32_elt, b) Value.t)
           ];
       loads = [| Plain x; Plain y |];
     }
+
+let rounding = 6
 
 let cut_law c =
   let along a = Array.mem a c.axes in
@@ -894,9 +899,12 @@ let cut_law c =
   let place v = Exec.run ~by:"t" (Value.Place (p, v)) in
   let cut = mixed (place x) (place y) c.shape c.axes in
   let actual = bytes whole cut (Exec.run ~by:"t" cut) in
+  let again = bytes whole cut (Exec.run ~by:"t" cut) in
   Array.iteri
     (fun i e ->
-      equal (array int) ~msg:(Printf.sprintf "result %d" i) e actual.(i))
+      let msg = Printf.sprintf "result %d" i in
+      if i < rounding then equal (array int) ~msg e actual.(i);
+      equal (array int) ~msg:(msg ^ ", run again") actual.(i) again.(i))
     expected
 
 let () =
@@ -919,8 +927,8 @@ let () =
              test "a contraction's window over NaNs of both signs"
                test_contract_nans;
              prop ~count:1000
-               "a reduction of each kind over loads cut along its axes gives \
-                its bits on one device"
+               "a reduction over loads cut along its axes gives an exact \
+                kind's bits on one device, each kind's on every run"
                cut_case cut_law;
            ];
        ])

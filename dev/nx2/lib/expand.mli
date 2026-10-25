@@ -6,8 +6,7 @@
 (** Expansions: nx operations as simpler nx operations, applied through the
     [apply] {!Make} takes. An interpretation without a direct form for an
     operation computes it by its expansion ({!Eval.expand},
-    {!Nx.Prim.expand}), and {!Partial} composes the parts of a reduction split
-    over devices from them.
+    {!Nx.Prim.expand}).
 
     A map of several nodes expands into one-node maps, one per node in order,
     each over the values of the nodes it reads; a constant or a coordinate is a

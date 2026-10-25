@@ -7,19 +7,23 @@
     operations applied through [apply]: on one device each, or a [Place].
 
     A [Reduce] of several reductions computes each one alone. One computes
-    per group of its results' devices that hold one window of its results. A device's window along the reduced axes is its
-    {e tile}; a device whose tile is empty reduces nothing. Each device of a
-    group reduces terms its tile holds into partial results, takes the
-    others' and combines them, rounding once into the result's dtype. The
-    results lie where the route puts them, with the bits of the reduction on
-    one device:
+    per group of its results' devices that hold one window of its results. A
+    device's window along the reduced axes is its {e tile}; a device whose
+    tile is empty reduces nothing. A group's tiles are in C order of their
+    first indices. The first device of a group holding a
+    tile reduces its terms into a partial result per output, by its kernels
+    in their own order. Each device of the group takes the partials of each
+    tile it does not hold from that device and combines them, one per tile
+    in the tiles' order, rounding once into the result's dtype. So a result
+    depends on the terms, the placement and the devices' kernels alone, and
+    is the same on every run:
 
-    - An integer or boolean [Sum], [Prod], [Max] or [Min] reduces into the
-      carrier of its output's dtype ({!Nx_kernel.carrier}), one partial per
-      output and device. Each device takes the partials of each tile it does
-      not hold from the first device of its group that holds it, and combines
-      one per tile in the tiles' order by [Add], [Mul], [Maximum] or
-      [Minimum], exact in the carrier.
+    - A [Sum], [Prod], [Max] or [Min] of integers or booleans, and a [Sum]
+      or [Prod] of floats or complex numbers, reduces into the carrier of
+      its output's dtype ({!Nx_kernel.carrier}); its partials combine by
+      [Add], [Mul], [Maximum] or [Minimum] in the carrier. Over integers and
+      booleans this is exact: the result has the bits of the reduction on
+      one device.
     - An [Arg], and a float or complex [Max] or [Min], reduces as an [Arg]
       into its output's dtype, each position renumbered from C order of the
       window's reduced indices into C order of the whole's, and its partials
@@ -30,37 +34,58 @@
       position of two of one bits. So the result is the whole's first
       extreme with its bits, a NaN quieted, whatever the tiles' order. [Max]
       and [Min] drop the positions.
-    - A float or complex [Sum] or [Prod] reduces by lane order's tree
-      ({!Nx_kernel.section-orders}), a function of the term count alone, over
-      the group's terms numbered in C order of the whole's reduced indices. A
-      node whose terms one tile holds is a {e unit} there, as is a block that
-      window edges split, on the device that holds most of its terms, the
-      others moved there first. Each unit is one reduction of exactly its
-      terms, into [float32] for a narrower float and part by part for a
-      complex sum, with whether a term is a NaN in the same loop, and into the
-      result's dtype where that differs; its terms are first laid out as
-      [outputs; terms] where they are not all of its device's window. Each
-      device combines the units up the tree by [Add] or [Mul] and rounds once.
-      Where a unit has a NaN term, the result is the first such unit's
-      reduction into the result's dtype, the first NaN term quieted; a complex
-      product with a NaN part and no NaN term is the quiet NaN in each part.
-    - A [Logsumexp] and [Moments] compute by their expansion ({!Expand.reduced}),
-      whose reductions compute as above.
+    - A [Logsumexp] is the logsumexp of its tiles' logsumexps, each into the
+      carrier, laid out as [[outputs; tiles]] on each device.
+    - [Moments] compute in the carrier in two passes, as
+      {!Nx_kernel.type-reduction} defines them. Each tile's sum combines by
+      [Add] in the tiles' order into [s], and the mean [c] is [s / n], or
+      [s] where that is a NaN. Each tile then sums its terms' deviations
+      [d = x - c] and their squares, which combine so, and the variance is
+      [(Σ d² - Σ d (Σ d / n)) / n], [+0] where that is negative or [Σ d²]
+      where that is [+∞]. Both are [c] where it is a NaN.
 
-    For an exact or ranked reduction, each device moves one partial per output
-    for each tile of its group it does not hold: of [t] tiles, [t - 1] rows of
-    its window of the results, where reading the loads whole moves
-    [(t - 1) / t] of each load's part on its group. For lane order, each
-    device takes three rows per unit it does not compute, two where the
-    carrier is the result's dtype: a tile whose terms form one run holds at
-    most [2 ⌈log₂ b⌉] units of [b] blocks; a block that window edges split
-    moves, once, the terms its device lacks, at most the block. Windows that
-    interleave finely, a cut along a reduced axis after another, make a
-    unit of each block: per block, a [Place] per other tile, an assembly, a
-    reduction and a combination on each device, some 8000 of each for
-    [[8192; 1000]] cut along axis 1. Laying a window's terms out is one pass,
-    after a map where the program is not its operand. A [Reduce] of [k]
-    reductions runs [k] loops over each device's loads.
+    A float or complex result does not keep the bits of the reduction on
+    one device, and a NaN result is a NaN whose sign and payload it does not
+    state. Let [n] be an output's terms, [t] the tiles holding terms and [u]
+    the carrier's unit roundoff. Where each device's kernels keep the bounds
+    of {!Nx_kernel.section-reductions}, and barring overflow and underflow,
+    a result before the rounding into its dtype, which adds its own, is:
+
+    - For a float sum, within [γ(n - 1) Σ|x|] of the exact sum, as on one
+      device, and a complex sum so part by part: a tile of [m] terms sums
+      within [γ(m - 1)] of its magnitudes, the partials within [γ(t - 1)] of
+      theirs, and [γ(j) + γ(k) + γ(j) γ(k) <= γ(j + k)] (Higham, {e Accuracy
+      and Stability of Numerical Algorithms}, Lemma 3.3) with
+      [(m - 1) + (t - 1) <= n - 1]. A float product, so, within a relative
+      [γ(n - 1)]. A complex product within a normwise relative
+      [γ(c (n - 1))] where each complex multiplication by the kernels errs
+      by at most [c u], [c = 2] in nx.cpu.
+    - For a [Logsumexp], within [ε + ε{_t}] of the exact one, [ε] the
+      largest of the bounds the kernels state for its tiles' logsumexps and
+      [ε{_t}] theirs for one of [t] terms: a logsumexp moves by no more than
+      its terms do.
+    - For [Moments], to first order in [u] and for [n] exact in the
+      carrier: a lane-order sum ({!Nx_kernel.section-orders}) of [m] terms
+      rounds each at most [L + D] times, [L = ⌈min (m, 1024) / 16⌉ + 3] in
+      its block and [D = ⌈log₂ ⌈m / 1024⌉⌉] across blocks, and the
+      combination adds [t - 1]. Let [K = L + D + t - 1] for the tile of
+      most terms, [M] the mean of the terms' magnitudes and [V] their
+      variance. The mean is within [A = K u M + u|μ|] of the exact [μ] and
+      the variance within [(K + 5) u V + 2 (K + 1) u A √V + (3K + 7) u A²],
+      nx.cpu's bound on one device with [K] for its [L + D]. For any [c],
+      [Σ (x - c)² - (Σ (x - c))² / n] is [n V], so [c]'s error reaches the
+      variance only through the roundings: [Σ d²] within a relative
+      [(K + 3) u], and [Σ d] within [(K + 1) u Σ|d|], where
+      [Σ|d| <= n (√V + A)] by Cauchy-Schwarz.
+
+    Each device moves one partial per output for each tile of its group it
+    does not hold, two for an [Arg]: of [t] tiles, [t - 1] rows of its
+    window of the results, where reading the loads whole moves
+    [(t - 1) / t] of each load's part on its group. A [Logsumexp] then
+    assembles them and reduces [t] terms per output. [Moments] move one
+    row per tile, then two, and map after each. A [Reduce] of [k]
+    reductions runs [k] loops over each device's loads, [Moments] two over
+    its terms, laid out once where they are not a load.
 
     A [Contract] computes per group of its result's devices that hold one window
     of it, in its order of summation, the whole contraction's. A device's
@@ -101,42 +126,28 @@
     A [Scan] computes per group of its results' devices that hold one window
     of the axes off its axis; a device's window along its axis is its
     {e tile}, and the group's tiles are in their order along it. A device
-    scans its tile from a carry, the partials of the {e units} before it
-    combined in order on that device. Each device's results have the bits
-    of the scan on one device:
+    scans its tile from a carry, the partials of the tiles before it
+    combined in order on that device:
 
-    - An integer or boolean [Sum], [Prod], [Max] or [Min], and a float or
-      complex [Max] or [Min]: a unit is a tile, its partial its terms
-      reduced into the carrier of the result's dtype. Partials combine by
-      [Add], [Mul], [Maximum] or [Minimum], a float extreme keeping the
-      first NaN, and the tile scans from the carry by
-      {!Nx_kernel.S.scan}.
-    - An [Arg]: a unit is a tile, its partial its terms' first extreme and
-      its position from the axis's start. The tile scans alone, and one map
+    - A [Sum], [Prod], [Max] or [Min]: a tile's partial is its terms reduced
+      into their carrier. Partials combine by [Add], [Mul], [Maximum] or
+      [Minimum], a float extreme keeping the first NaN, and the tile scans
+      from the carry by {!Nx_kernel.S.scan}. Over integers and booleans, and
+      for a float or complex [Max] or [Min], each result has the bits of the
+      scan on one device. A float or complex sum's or product's result of
+      [n] terms is within the bound of a reduction of them above: the carry
+      is the reduction of the terms before the tile, and the tile's scan
+      takes it as one more term.
+    - An [Arg]: a tile's partial is its terms' first extreme and its
+      position from the axis's start. The tile scans alone, and one map
       combines each result with the carry into the first extreme, as a
-      reduction's partials combine.
-    - A float or complex [Sum] or [Prod], a complex sum part by part as
-      floats: a unit is a chunk of the scan ({!Nx_kernel.section-scans}).
-      A tile first takes the terms before it back to its first chunk's
-      start from the tiles holding them, so that the device holding a
-      chunk's end holds the chunk whole. A unit's partial is a reduction of
-      exactly its terms with whether one is a NaN, in one reduction over
-      the chunks that end in the tile, all but the axis's last. The tile
-      scans from the carry into its first chunk and drops the results
-      before its own. Where a term before that chunk is a NaN, one map makes
-      each result the first such term, quieted, from the first NaN unit's
-      reduction into the result's dtype.
+      reduction's partials combine, with the bits of the scan on one device.
     - A device whose tile is empty scans its window alone.
 
     Each device takes, as rows of its window of the results off the axis,
-    the partials of the units before its tile: one row per tile for an
-    exact scan, two for an [Arg], and for a float sum or product three per
-    chunk, two where the carrier is the result's dtype. No device waits for
-    another's results. A float sum or product whose tile starts inside a
-    chunk also moves the at most 4095 terms per slice before it in that
-    chunk, once, assembles them with the tile's own and scans them again;
-    it maps over its results where a chunk lies before its first. An [Arg]
-    maps twice over each tile's results but the first's. *)
+    the partials of the tiles before its: one row per tile, two for an
+    [Arg]. No device waits for another's results. An [Arg] maps twice over
+    each tile's results but the first's. *)
 
 val run :
   ('q. by:string -> 'q Value.prim -> 'q) ->

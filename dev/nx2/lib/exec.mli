@@ -55,8 +55,9 @@
     [Place] onto the host from another set is a {!wait} on that set first.
 
     Over devices of one architecture, a result's bits are those of the same
-    operation on one device, by the window law ({!Route.window}) or by
-    {!Partial}, wherever the operands lie. *)
+    operation on one device, by the window law ({!Route.window}), wherever
+    the operands lie, but where {!Partial} combines float partials that
+    round: there they are within its bounds, and the same on every run. *)
 
 val run : by:string -> 'r Value.prim -> 'r
 (** [run ~by op] is [op]'s meaning where no interpretation reaches it.

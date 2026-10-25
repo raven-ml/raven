@@ -1434,29 +1434,39 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 
     A reduction folds [x]'s elements along [axes], every axis by default, a
     negative one counted from the end, and drops them, or keeps each with extent
-    [1] where [keepdims]. Its order of association depends on the shape alone,
-    so its bits do not depend on where [x] lies. Over axes cut across
-    devices, each device reduces the part of that order its window holds,
-    and only partial results move instead of [x]'s elements: a few per
-    output, or one per block of the order where windows interleave; for
-    {!argmax} and {!argmin}, each device's extreme and its position. Where
-    a window's edge falls inside one of the order's blocks
-    ({!Nx_kernel.section-orders}), that block's terms move to one device
-    first. {!var}, {!std}, {!logsumexp} and {!logmeanexp} take two such
-    rounds: the maximum or the mean, then sums.
+    [1] where [keepdims]. On one device, its order of association depends on
+    the shape alone. Over axes cut across devices, each device reduces the
+    part its window holds, and only partial results move instead of [x]'s
+    elements: a few per output, combined in C order of the windows' first
+    indices; for
+    {!argmax} and {!argmin}, each device's extreme and its position. Integer
+    and boolean reductions, extremes and their positions keep the bits they
+    have on one device. A float or complex {!sum}, {!prod}, {!mean},
+    {!var}, {!std}, {!logsumexp} or {!logmeanexp} over cut axes may differ
+    from it in its last bits, and is the same on every run for a given
+    placement and set of devices. Barring overflow and underflow, a float
+    sum of [n] terms stays within [γ(n - 1) Σ|x|] of the exact sum and a
+    product within a relative [γ(n - 1)], as on one device
+    ({!Nx_kernel.section-reductions}); a complex product within a normwise
+    relative [γ(c (n - 1))], each complex multiplication by the kernels
+    erring by at most [c u], [c = 2] in nx.cpu. A {!mean} is such a sum
+    divided by [n]. {!var} and {!std} are nx's own variance, each of its
+    sums such a sum, so within the bound {!var} states for it. A
+    {!logsumexp} is within [ε + ε{_t}] of the exact one, [ε] the largest
+    bound the kernels' library states for the logsumexp of a window's terms
+    and [ε{_t}] its bound for one of [t] terms, [t] the windows holding
+    terms, and {!logmeanexp} is that less [log n].
 
-    A scan's bits do not depend on where [x] lies either. Along an axis cut
-    across devices, each device scans its own window from the state of the
-    terms before it. {!cumsum} and {!cumprod} of floats and complex numbers
-    continue the scan's chunks ({!Nx_kernel.section-scans}): the totals of
-    the chunks before a window move to it as rows of partial results, and
-    a window whose edge falls inside a chunk adds at most one chunk's work,
-    4096 terms per slice. Over integers and booleans, and for {!cummax} and
-    {!cummin}, each device's total moves as one row to the devices after
-    it, which scan from those rows. {!ewma} and {!logcumsumexp} read their
-    axis whole on each device.
+    A scan along an axis cut across devices scans each device's window from
+    the partial results of the windows before it, which move to it as one
+    row each. Over integers and booleans, and for {!cummax} and {!cummin},
+    it keeps the bits it has on one device; {!cumsum} and {!cumprod} of
+    floats and complex numbers keep the bounds of a reduction of each
+    result's terms. {!ewma} and {!logcumsumexp} read their axis whole on
+    each device.
 
-    A float result that a NaN reaches is a quiet NaN with the first NaN's
+    A float result that a NaN reaches is a NaN. On one device, and over cut
+    axes where the bits are kept, it is a quiet NaN with the first NaN's
     sign and payload, the first in C order: a signalling NaN comes out with
     its quiet bit, the top bit of its fraction, set. A complex number with a
     NaN part is a NaN to {!prod}, {!max}, {!min}, their positions and scans,
@@ -1538,10 +1548,11 @@ val var :
     elements, [m] their mean; [ddof] defaults to [0], the population
     variance, and [1] gives the sample variance. NaN of no element.
 
-    The population variance is the kernels' moments, within the bound
-    their library states; nx's own, the mean then the deviations [d] from
-    it and their squares, each summed as {!sum} sums, and
-    [(Σ d² - Σ d (Σ d / n)) / n], is within
+    On one device, the population variance is the kernels' moments, within
+    the bound their library states. Over axes cut across devices, it is
+    nx's own ({!section-reductions}). nx's own, the mean then the
+    deviations [d] from it and their squares, each summed as {!sum} sums,
+    and [(Σ d² - Σ d (Σ d / n)) / n], is within
     [(γ(n + 4) + 2γ(n)²) V + 2γ(n + 6) γ(n) M √V + 4γ(n + 4) γ(n)² M²] of
     the exact [V], [M = Σ|x| / n], barring overflow and underflow,
     [γ(k) = k u / (1 - k u)] and [u] the unit roundoff of the format it
@@ -1565,8 +1576,9 @@ val logsumexp :
 (** [logsumexp ~axes x] is [log Σ exp x], computed as
     [m + log Σ exp (x - m)] for the elements' greatest [m], so no term
     overflows: [-∞] of no element or of elements all [-∞], [+∞] where an
-    element is [+∞] and none is NaN. Its error is the bound the kernels'
-    library states; nx's own, for [n] elements whose greatest is finite, is
+    element is [+∞] and none is NaN. On one device, its error is the bound
+    the kernels' library states; over axes cut across devices, the bound of
+    {!section-reductions}. nx's own, for [n] elements whose greatest is finite, is
     within [γ(2n) + u|r| + ε] of the exact [r], barring overflow and
     underflow, [ε] the error {!exp} and {!log} add. *)
 
@@ -1580,8 +1592,9 @@ val cumsum : ?axis:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     up to that index, inclusive; without [axis], of its elements in C order up
     to that one, in [x]'s shape. Every dtype but booleans.
 
-    The result at an index is a function of the elements up to it alone: the
-    cumsum of a prefix of the axis is the prefix of the cumsum, bit for bit.
+    On one device, or along an axis no device cuts, the result at an index
+    is a function of the elements up to it alone: the cumsum of a prefix of
+    the axis is the prefix of the cumsum, bit for bit.
     Its last element need not equal {!sum}'s of the same elements.
 
     Raises [Invalid_argument] naming itself for an axis outside [x]'s rank or a
@@ -4236,8 +4249,9 @@ module Prim : sig
         (** The reduction of [prog]'s output over the indices along [axis] up to
             each index's, inclusive, as {!Nx_kernel.S.scan} says: a running
             [Moments] is the running mean and variance. Its results have
-            [layout]'s shape and are C-contiguous. The scan of a prefix of the
-            axis is the prefix of the scan, bit for bit. [prog] reads
+            [layout]'s shape and are C-contiguous. On one device, or along
+            an axis no device cuts, the scan of a prefix of the axis is the
+            prefix of the scan, bit for bit. [prog] reads
             coordinates as a map's. With [Some c], of a [Sum], [Prod], [Max]
             or [Min], each slice continues from its element of [c], [S.scan]'s
             carry, of the results' shape but extent [1] along [axis] and of
