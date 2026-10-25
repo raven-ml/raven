@@ -163,10 +163,7 @@ val rule : 'r prim -> Route.rule
     placement computes its window of the loop. A contraction's scale is read
     at its operand's windows where a cut keeps its blocks whole, and whole
     elsewhere; its segmented axes are read whole. A segmented contraction
-    is read whole along its contracting pairs, as is a scaled one unless
-    each scale's blocks merge with its operand's batch, free and
-    contracting axes ({!block_run}) and the run of a block of its contracted
-    extent divides {!contract_block} or that extent is at most one block. *)
+    is read whole along its contracting pairs. *)
 
 val local : 'r prim -> Nx_array.Move.range array -> 'r prim
 (** [local op w] is [op] computing the window [w] of its first result, over
@@ -310,46 +307,6 @@ val contract_shape :
 
 val scale_shape : 'd scale -> int array
 (** [scale_shape s] is the shape of [s]'s array. *)
-
-val contract_block : int
-(** [contract_block] is [4096], the products of a contraction block
-    ({!Nx_kernel.S.section-contraction}). *)
-
-val block_run : int array -> int array -> int array -> int option
-(** [block_run s ss axes] is [Some r] where the axes [axes] of an operand of
-    shape [s], merged into one in order, leave each block of its scale of
-    shape [ss] [r] consecutive elements of that axis: [axes] hold one
-    element per block, then one axis of any blocks, then axes of one block.
-    It is [Some 1] where one of [axes] has no element, and [None] where
-    blocks do not merge so. *)
-
-val contract_groups :
-  batch:(int * int) iarray ->
-  contracting:(int * int) iarray ->
-  int ->
-  int ->
-  int array array * int array array
-(** [contract_groups ~batch ~contracting ra rb] groups the axes of a
-    contraction's operands of ranks [ra] and [rb]: [a]'s as
-    [[|batch; rows; terms|]] and [b]'s as [[|batch; terms; columns|]], the
-    batch and term axes in their pairs' order and the others increasing.
-    Partials lay each operand and its scale out by these groups, and
-    {!rule} lets them take a scale by the same groups. *)
-
-val contract_order :
-  batch:(int * int) iarray ->
-  contracting:(int * int) iarray ->
-  ('a, 'b, 'd) t ->
-  ('c, 'e, 'd) t ->
-  Nx_kernel.order
-(** [contract_order ~batch ~contracting a b] is the order of summation
-    ({!Nx_kernel.section-orders}) of a contraction of [a] with [b]: the one the
-    kernels of [a]'s set, or of [b]'s where [a] is of every set, choose
-    ({!Nx_kernel.S.contract_order}) for its rows, the product of [a]'s extents
-    along the axes no pair names, its columns, [b]'s likewise, and its
-    depth, [a]'s extents along the contracting pairs multiplied, each
-    [max_int] past it. Where that set has no kernels, as one of devices of
-    several kinds, or both are of every set, it is the one nx.cpu chooses. *)
 
 (** {1:loads Loads} *)
 

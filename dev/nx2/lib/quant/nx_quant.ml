@@ -408,7 +408,6 @@ let scaled ~by x codes scales =
     Nx.Prim.eval ~by
       (Contract
          {
-           order = Nx.Prim.contract_order ~batch ~contracting a b;
            batch;
            contracting;
            acc = Nx.Dtype.Any Nx.float32;
@@ -583,7 +582,6 @@ let segmented (type b) r (x : (float, b, _) Nx.t) b scale offsets =
     Nx.Prim.eval ~by:"Nx_quant.apply_experts"
       (Contract
          {
-           order = Nx.Prim.contract_order ~batch ~contracting rows b;
            batch;
            contracting;
            acc;
@@ -604,9 +602,9 @@ let segmented (type b) r (x : (float, b, _) Nx.t) b scale offsets =
    read where it lies, a group per expert. Any other weight, and one summed at
    float64, where a value past float32's range would be finite, enters as its
    values at [x]'s dtype, of the experts the ids name alone, a group per slot.
-   Its order is a function of the shapes alone, and a contraction's
-   association of its order, dtypes and depth, so a row's bits depend on the
-   shapes, its row and its expert. *)
+   A segmented contraction's association does not depend on its offsets
+   (Nx_kernel.S.contract), so a row's bits depend on the shapes, its row and
+   its expert. *)
 let experts ~ids w x =
   let r = route ids and e = (shape w).(0) in
   match w with

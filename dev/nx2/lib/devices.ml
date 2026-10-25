@@ -92,10 +92,6 @@ let rig s k =
 let position s d = Array.find_index (Rig.equal d) s.rigs
 let kernels s = s.kernels
 
-let contract_order s ~rows ~columns ~depth =
-  let (module K : Nx_kernel.S) = Option.value s.kernels ~default:cpu in
-  K.contract_order ~rows ~columns ~depth
-
 let pp ppf s =
   if s.number = 0 then Format.pp_print_string ppf "host"
   else

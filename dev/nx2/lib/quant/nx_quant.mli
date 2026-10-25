@@ -19,8 +19,9 @@
     with its last axis in bytes.
 
     {b Placement.} A weight's parts may lie at any placement of their set; its
-    values, and {!apply}'s and {!apply_experts}' bits except a NaN's sign and
-    payload, do not depend on where they lie. Cut along [n]
+    values do not depend on where they lie, and {!apply}'s and
+    {!apply_experts}' results are within {!Nx.contract}'s bound wherever they
+    lie, the same on every run for a given placement. Cut along [n]
     or a leading axis, each device decodes its own rows. Cut along [k] over [t]
     devices, a weight with values and [b] blocks along [k] decodes on its own
     devices where [t] divides [b]: {!dequant}'s result is cut along [k] as the
@@ -195,12 +196,12 @@ val apply_experts :
     [Mxfp4] weight with a float32, bfloat16 or float16 [x] is read where it
     lies, each block decoded as it is summed. Any other is decoded as
     {!dequant} does, [min p e] matrices for [p] positions: the experts the
-    ids in range name, each once, and zeros for the matrices left over. The
-    kernels choose one order from the shapes alone, so a row's bits are a
-    function of the shapes, its row and its expert: they do not depend on
-    the other positions' experts nor on where [w], [ids] and [x] lie, and
-    may differ from {!apply}'s. Split along [n] ({!Nx.Placement.split}
-    [~axis:1]), each device sums its own columns over every position. Cut
+    ids in range name, each once, and zeros for the matrices left over. A
+    row's bits are a function of the shapes, the placements, its row and its
+    expert: they do not depend on the other positions' experts, and may
+    differ from {!apply}'s. Split along [n]
+    ({!Nx.Placement.split} [~axis:1]), each device sums its own columns over
+    every position. Cut
     along its experts, or along [k] where its tiles do not divide the
     blocks, the weight's packed bytes move to each device. Cut along [k]
     where they do, an [Mxfp4] weight read where it lies moves its packed

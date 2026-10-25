@@ -313,7 +313,6 @@ let test_rule_refused () =
       Nx.Prim.eval ~by:"test"
         (Contract
            {
-             order = Chain;
              batch = [||];
              contracting = [| (1, 1) |];
              acc = D.Any D.Float32;

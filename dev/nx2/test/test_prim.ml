@@ -530,7 +530,6 @@ let contractions =
     Op
       (Contract
          {
-           order = Lane;
            batch = [||];
            contracting;
            acc;
@@ -620,92 +619,8 @@ let contractions =
           invalid (fun () -> Prim.route ~by:"Nx.f" o));
     ]
 
-(* Contraction orders *)
-
-let order =
-  Testable.make
-    ~pp:(fun ppf o ->
-      Format.pp_print_string ppf
-        (match o with Nx_kernel.Chain -> "Chain" | Lane -> "Lane"))
-    ~equal:( = )
-
-(* Kernels that choose [o] at every shape. *)
-let choosing o : (module Nx_kernel.S) =
-  (module struct
-    include Nx_cpu
-
-    let contract_order ~rows:_ ~columns:_ ~depth:_ = o
-  end)
-
-(* Kernels that choose lane order, recording the extents they choose at. *)
-let asked = ref (0, 0, 0)
-
-let asking : (module Nx_kernel.S) =
-  (module struct
-    include Nx_cpu
-
-    let contract_order ~rows ~columns ~depth =
-      asked := (rows, columns, depth);
-      Nx_kernel.Lane
-  end)
-
-let asked_set : b Devices.t = Devices.mint ~by:"t" ~kernels:asking [ m 3 ]
-
-let orders =
-  group "contraction orders"
-    [
-      prop
-        "the set's kernels choose at the products of the free and contracted \
-         extents"
-        Gen.(
-          let free = int_range 0 6 in
-          let named = of_list [ 0; 1; 3 ] in
-          quad (pair free free) (int_range 0 12) named (pair named named))
-        (fun ((r1, r2), c, batch, (k1, k2)) ->
-          (* a [r1; batch; r2; k1; k2] by b [k1; batch; c; k2]. *)
-          let on x =
-            Value.Array
-              {
-                at = Devices.one asked_set 0;
-                a = A.to_device (m 3) (A.of_array D.Float32 x (floats x));
-                dead = Value.Live;
-              }
-          in
-          let o =
-            Prim.contract_order ~batch:[| (1, 1) |]
-              ~contracting:[| (3, 0); (4, 3) |]
-              (on [| r1; batch; r2; k1; k2 |])
-              (on [| k1; batch; c; k2 |])
-          in
-          equal order Lane o;
-          equal (triple int int int) (r1 * r2, c, k1 * k2) !asked);
-      cases "a set minted with kernels takes their order"
-        ~name:(fun (o, rows, cols) ->
-          Printf.sprintf "%s at %d by %d"
-            (match o with Nx_kernel.Chain -> "chain" | Lane -> "lane")
-            rows cols)
-        Nx_kernel.[ (Chain, 1, 1); (Chain, 8, 8); (Lane, 1, 1); (Lane, 8, 8) ]
-        (fun (o, rows, cols) ->
-          let s : b Devices.t =
-            Devices.mint ~by:"t" ~kernels:(choosing o) [ m 2 ]
-          in
-          let on x =
-            Value.Array
-              {
-                at = Devices.one s 0;
-                a = A.to_device (m 2) (A.of_array D.Float32 x (floats x));
-                dead = Value.Live;
-              }
-          in
-          equal order o
-            (Prim.contract_order ~batch:[||] ~contracting:[| (1, 0) |]
-               (on [| rows; 3 |]) (on [| 3; cols |])));
-    ]
-
-(* Partials take a scaled contraction cut along its contracting pairs where
-   each scale's blocks merge with its operand's axes and a block of the
-   contracted extent lies in one of the contraction's blocks of 4096
-   products; they never take a segmented one. *)
+(* Partials take a contraction cut along its contracting pairs, scaled in
+   blocks of any shape or not; they never take a segmented one. *)
 let partials =
   let compute =
     Testable.make
@@ -750,7 +665,6 @@ let partials =
     let op =
       Value.Contract
         {
-          order = Lane;
           batch = [||];
           contracting;
           acc = D.Any D.Float32;
@@ -777,8 +691,8 @@ let partials =
           ("blocks of 3 in one of 4096", [| 96 |], Some [| 32; 3 |], Partials);
           ("a block of 64, all its terms", [| 64 |], Some [| 1; 3 |], Partials);
           ("blocks of 4096", [| 8192 |], Some [| 2; 3 |], Partials);
-          ("blocks of 8192", [| 16384 |], Some [| 2; 3 |], Windows);
-          ("blocks across two pairs", [| 8; 4 |], Some [| 4; 2; 3 |], Windows);
+          ("blocks of 8192", [| 16384 |], Some [| 2; 3 |], Partials);
+          ("blocks across two pairs", [| 8; 4 |], Some [| 4; 2; 3 |], Partials);
           ("blocks of a second pair", [| 8; 4 |], Some [| 8; 2; 3 |], Partials);
         ]
         (fun (_, ks, blocks, want) -> equal compute want (route ks blocks));
@@ -843,6 +757,5 @@ let () =
          others;
          contractions;
          partials;
-         orders;
          operations;
        ])

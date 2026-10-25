@@ -158,7 +158,7 @@ let plain x : Nx_kernel.operand = { array = A.Any x; scale = None }
 
 let contract ~acc ~dst a b =
   done_
-    (Nx_cpu.contract ~order:Chain ~batch:[||] ~contracting:[| (1, 0) |]
+    (Nx_cpu.contract ~batch:[||] ~contracting:[| (1, 0) |]
        ~segments:None ~acc ~dst ~init:None (plain a) (plain b))
 
 let contractions =
@@ -170,7 +170,7 @@ let contractions =
           let dst = f32 [| b; 1; 1 |] in
           releases (fun () ->
               done_
-                (Nx_cpu.contract ~order:Chain ~batch:[| (0, 0) |]
+                (Nx_cpu.contract ~batch:[| (0, 0) |]
                    ~contracting:[| (2, 1) |] ~segments:None
                    ~acc:(D.Any D.Float32) ~dst ~init:None (plain a) (plain x))));
       test "a complex one whose operand is converted" (fun () ->

@@ -52,8 +52,6 @@ let carrier (D.Any dt as d) =
       | Bit -> D.Any Bool
       | _ -> d)
 
-type order = Chain | Lane
-
 type scale =
   | Exponent of (int, D.int8_unsigned_elt) Nx_array.t
   | Value : ('v, 's) Nx_array.t -> scale
@@ -541,10 +539,7 @@ module type S = sig
     answer
 
   val fold : pad -> dst:('v, 's) a -> ('v, 's) a -> answer
-  val contract_order : rows:int -> columns:int -> depth:int -> order
-
   val contract :
-    order:order ->
     batch:(int * int) iarray ->
     contracting:(int * int) iarray ->
     segments:index segments option ->

@@ -27,9 +27,6 @@ let binary : Nx_kernel.monoid -> P.binary = function
   | Max -> Maximum
   | Min -> Minimum
 
-(* The products of a contraction block ({!Nx_kernel.S.section-contraction}). *)
-let contract_block = Prim.contract_block
-
 (* The position of device [k] among [p]'s. *)
 let position p k =
   Option.get (Array.find_index (( = ) k) (Grid.devices (Devices.grid p)))
@@ -51,55 +48,17 @@ let reads rule i shape (w : M.range array) tile =
 
 (* Groups *)
 
-(* A run of a tile's terms: the number [g] of its first in C order of the
-   whole's folded indices and [l] in its tile's, its count [len], and
-   [owner], its tile's position among its group's. *)
-type run = { g : int; l : int; len : int; owner : int }
-
-(* The runs of [tile], at position [t], a window of the folded extents
-   [whole], in increasing number: one per index of the folded axes before
-   the last that [tile] does not hold whole. *)
-let runs whole t (tile : M.range array) =
-  let m = Array.length whole in
-  let stride = Array.make m 1 in
-  for a = m - 2 downto 0 do
-    stride.(a) <- stride.(a + 1) * whole.(a + 1)
-  done;
-  let c = ref (m - 1) in
-  while !c >= 0 && tile.(!c).count = whole.(!c) do
-    decr c
-  done;
-  if !c < 0 then [ { g = 0; l = 0; len = numel whole; owner = t } ]
-  else
-    let c = !c in
-    let len = tile.(c).count * stride.(c) in
-    let outer = numel (Array.sub (counts tile) 0 c) in
-    List.init outer (fun r ->
-        let g = ref (tile.(c).start * stride.(c)) and q = ref r in
-        for a = c - 1 downto 0 do
-          g := !g + ((tile.(a).start + (!q mod tile.(a).count)) * stride.(a));
-          q := !q / tile.(a).count
-        done;
-        { g = !g; l = r * len; len; owner = t })
-
-(* [r] cut to the terms [lo, hi). *)
-let clip lo hi r =
-  let a = Int.max lo r.g and b = Int.min hi (r.g + r.len) in
-  { r with g = a; l = r.l + a - r.g; len = b - a }
-
 (* The devices of a placement, by position, that hold one window of the
    results off the folded axes, its [key]: its [members]; their [tiles],
-   distinct windows along the folded axes of extents [whole] that hold
-   terms, in order; the first member holding each, its [holder]; and the
-   tiles' runs, [held], in increasing number. *)
+   distinct windows along the folded axes that hold terms, in order; and
+   the first member holding each, its [holder]. *)
 type group = {
   members : int list;
   tiles : M.range array array;
   holder : int array;
-  held : run array;
 }
 
-let groups n ~key ~tile whole =
+let groups n ~key ~tile =
   let keys = Array.init n key and tiles = Array.init n tile in
   let all = List.init n Fun.id in
   let group j =
@@ -114,88 +73,14 @@ let groups n ~key ~tile whole =
     let holder =
       Array.map (fun t -> List.find (fun i -> tiles.(i) = t) holding) ts
     in
-    let held = List.concat (Array.to_list (Array.mapi (runs whole) ts)) in
-    let held = List.sort (fun a b -> Int.compare a.g b.g) held in
-    { members; tiles = ts; holder; held = Array.of_list held }
+    { members; tiles = ts; holder }
   in
   let first j = List.find (fun i -> keys.(i) = keys.(j)) all = j in
   List.map group (List.filter first all)
 
-(* Units *)
-
-(* The order partials combine in: a leaf is a unit, the partial of terms
-   one device computes. *)
+(* The order partials combine in: a leaf is the partial of terms one
+   device computes. *)
 type tree = Leaf of int | Node of tree * tree
-
-(* A leaf of lane order's tree: terms [lo, hi) that tile [dest] reduces,
-   holding all of them or, for a block that window edges split, most;
-   [parts] are the runs that hold them, cut to them. *)
-type leaf = { lo : int; hi : int; dest : int; parts : run list }
-
-(* Lane order's tree of [n] terms in blocks of [block] whose runs, of
-   [tiles] tiles, are [runs], in increasing number, and its leaves in term
-   order. A node of blocks [b, b + count) has the value of a lane-order sum
-   of exactly its terms: it is a leaf where one tile holds them all or it
-   is one block. *)
-let tree ~block n tiles (runs : run array) =
-  let find t =
-    let lo = ref 0 and hi = ref (Array.length runs - 1) in
-    while !lo < !hi do
-      let mid = (!lo + !hi + 1) / 2 in
-      if runs.(mid).g <= t then lo := mid else hi := mid - 1
-    done;
-    !lo
-  in
-  let leaves = ref [] and count = ref 0 in
-  let leaf lf =
-    leaves := lf :: !leaves;
-    incr count;
-    Leaf (!count - 1)
-  in
-  let rec walk b blocks =
-    let lo = b * block and hi = Int.min n ((b + blocks) * block) in
-    let s = find lo in
-    let r = runs.(s) in
-    if r.g + r.len >= hi then
-      leaf { lo; hi; dest = r.owner; parts = [ clip lo hi r ] }
-    else if blocks = 1 then begin
-      let parts = ref [] and i = ref s in
-      while !i < Array.length runs && runs.(!i).g < hi do
-        parts := clip lo hi runs.(!i) :: !parts;
-        incr i
-      done;
-      let held = Array.make tiles 0 in
-      List.iter (fun p -> held.(p.owner) <- held.(p.owner) + p.len) !parts;
-      let dest = ref 0 in
-      Array.iteri (fun t k -> if k > held.(!dest) then dest := t) held;
-      leaf { lo; hi; dest = !dest; parts = List.rev !parts }
-    end
-    else
-      (* The left part holds the largest power of two of blocks below. *)
-      let h = ref 1 in
-      while 2 * !h < blocks do
-        h := 2 * !h
-      done;
-      let left = walk b !h in
-      let right = walk (b + !h) (blocks - !h) in
-      Node (left, right)
-  in
-  let t = walk 0 ((n + block - 1) / block) in
-  (t, Array.of_list (List.rev !leaves))
-
-(* Chain order's units over the same: lane order's leaves in term order,
-   each run of them one run of a tile holds merged into one, so that every
-   unit starts and ends at a block's edge or [n]. *)
-let chain_units ~block n tiles runs =
-  let merge units lf =
-    match (units, lf.parts) with
-    | ({ parts = [ r ]; _ } as last) :: rest, [ r' ]
-      when r'.owner = r.owner && r'.g = r.g + r.len && r'.l = r.l + r.len ->
-        { last with hi = lf.hi; parts = [ { r with len = r.len + r'.len } ] }
-        :: rest
-    | _ -> lf :: units
-  in
-  List.rev (Array.fold_left merge [] (snd (tree ~block n tiles runs)))
 
 (* [n > 0] leaves combined in their order. *)
 let chain n =
@@ -204,6 +89,41 @@ let chain n =
     t := Node (!t, Leaf i)
   done;
   !t
+
+(* Contraction pieces *)
+
+let rec gcd a b = if b = 0 then a else gcd b (a mod b)
+
+(* The ranges [lo, hi) splits into, in order, each within one block of
+   every length of [rs] or from one of their common edges to another:
+   [lo, hi) itself where [rs] is empty. *)
+let pieces rs lo hi =
+  let l = List.fold_left (fun l r -> l / gcd l r * r) 1 rs in
+  let rec from x =
+    if x >= hi then []
+    else
+      let body = hi / l * l in
+      let y =
+        if x mod l = 0 && body > x then body
+        else List.fold_left (fun y r -> Int.min y (((x / r) + 1) * r)) hi rs
+      in
+      { M.start = x; count = y - x; step = 1 } :: from y
+  in
+  from lo
+
+(* The parts of [tile], its ranges along the contracting pairs, each cut
+   into {!pieces} of [runs], the pair's scale blocks' lengths, in C
+   order. *)
+let parts runs (tile : M.range array) =
+  let rec from p =
+    if p = Array.length tile then [ [] ]
+    else
+      let rest = from (p + 1) and r = tile.(p) in
+      List.concat_map
+        (fun x -> List.map (fun u -> x :: u) rest)
+        (pieces runs.(p) r.start (r.start + r.count))
+  in
+  List.map Array.of_list (from 0)
 
 (* What a ranked reduction gives: the extreme alone, or with its position. *)
 type gives = Extreme | Extreme_and_position
@@ -254,17 +174,6 @@ struct
     match D.equal_witness (Prim.dtype x) dt with
     | Some Type.Equal -> Value.Any x
     | None -> Value.Any (fst (apply (Prim.op1 ~by Cast dt x)))
-
-  (* [x] with each group of [groups]' axes, in order, made one axis. *)
-  let grouped (type v s d) (groups : int array array) (x : (v, s, d) Value.t)
-      : (v, s, d) Value.t =
-    let s = Prim.shape x in
-    let order = Array.concat (Array.to_list groups) in
-    let x =
-      if Array.for_all2 ( = ) order (Array.init (Array.length s) Fun.id) then x
-      else apply (Value.Move (Permute (Iarray.of_array order), x))
-    in
-    reshape (Array.map (fun g -> numel (Array.map (fun a -> s.(a)) g)) groups) x
 
   (* [x]'s window [w] from its array on its set's device [k], at [at]. *)
   let view (type v s d) k (at : d Devices.placement) w (x : (v, s, d) Value.t)
@@ -338,52 +247,6 @@ struct
     let loads = Iarray.of_list (List.map plain vs) in
     read (apply (Value.Map { layout; prog; outs; loads }))
 
-  (* Slabs *)
-
-  (* A device's terms, laid out alike along an axis of each value. *)
-  type 'd slab = ('d Value.any * int) list
-
-  let cut (sl : 'd slab) l len : 'd slab =
-    List.map (fun (Value.Any x, a) -> (Value.Any (slice a l len x), a)) sl
-
-  (* The terms [lo, hi) of the runs [parts] on [here], [slabs t] holding
-     owner [t]'s: each owner's span moved there once, and the parts
-     assembled in term order. *)
-  let gather here (slabs : int -> 'd slab) lo hi parts : 'd slab =
-    let span t =
-      let mine = List.filter (fun r -> r.owner = t) parts in
-      let s = List.fold_left (fun s r -> Int.min s r.l) max_int mine in
-      let e = List.fold_left (fun e r -> Int.max e (r.l + r.len)) 0 mine in
-      let sl = cut (slabs t) s (e - s) in
-      (t, (s, List.map (fun (Value.Any x, a) -> (Value.Any (move here x), a)) sl))
-    in
-    let owners = List.sort_uniq compare (List.map (fun r -> r.owner) parts) in
-    let spans = List.map span owners in
-    match parts with
-    | [ r ] -> snd (List.assoc r.owner spans)
-    | _ ->
-        let piece r =
-          let s, sl = List.assoc r.owner spans in
-          (r.g - lo, cut sl (r.l - s) r.len)
-        in
-        let pieces = List.map piece parts in
-        let assemble i (Value.Any x, a) =
-          let dt = Prim.dtype x in
-          let shape = Array.copy (Prim.shape x) in
-          shape.(a) <- hi - lo;
-          let region (o, sl) =
-            let y = Prim.expect dt (fst (List.nth sl i)) in
-            let r = Array.map full shape in
-            r.(a) <- { M.start = o; count = (Prim.shape y).(a); step = 1 };
-            (Iarray.of_array r, y)
-          in
-          let pieces = List.map region pieces in
-          let shape = Iarray.of_array shape and fill = D.zero dt in
-          let y = apply (Value.Assemble { dtype = dt; shape; fill; pieces }) in
-          (Value.Any y, a)
-        in
-        List.mapi assemble (snd (List.hd pieces))
-
   (* Folds *)
 
   (* The partials [value i] of [tree]'s leaves combined up it on [here], each
@@ -396,13 +259,6 @@ struct
      [here j] for each member [j] of [g], each given to [settle j]. *)
   let combine here g tree value node settle =
     List.iter (fun j -> settle j (fold node (here j) value tree)) g.members
-
-  (* Lane order's tree over [g]'s [n] terms, whose runs are [held], its
-     leaves' partials by [unit], combined as {!combine}. *)
-  let lane_fold ~block here g n held unit node settle =
-    let tree, leaves = tree ~block n (Array.length g.tiles) held in
-    let values = Array.map unit leaves in
-    combine here g tree (Array.get values) node settle
 
   (* The tile of each device of [route]'s result, in order: its window along
      [axes] of operand [0], of [shape], where [route] reads it. The route
@@ -584,7 +440,7 @@ struct
     let local j prog rs =
       Prim.within (Value.Reduce { layout; axes; prog; reductions = rs; loads = viewed j }) (loop j)
     in
-    let gs = groups (Array.length ks) ~key:outw ~tile:(Array.get tiles) whole in
+    let gs = groups (Array.length ks) ~key:outw ~tile:(Array.get tiles) in
     let term o = P.dtype prog (Iarray.get prog.outs o) in
     let one (type a) (r : (d, a) Value.reduction) : a =
       let per = Array.make (Array.length ks) [] in
@@ -833,12 +689,12 @@ struct
       in
       List.iter member g.members
     in
-    List.iter group (groups (Array.length ks) ~key:off ~tile [| shape.(axis) |]);
+    List.iter group (groups (Array.length ks) ~key:off ~tile);
     result r p shape per
 
   (* Contractions *)
 
-  let contract (type v s d a b c e) (route : unit Route.t) rule ~order ~batch
+  let contract (type v s d a b c e) (route : unit Route.t) rule ~batch
       ~contracting ~acc (out : (v, s) D.t) (a : (a, b, d) Value.t)
       (b : (c, e, d) Value.t) (init : (v, s, d) Value.t option)
       (a_scale : d Value.scale option) (b_scale : d Value.scale option) :
@@ -847,137 +703,91 @@ struct
       Prim.contract_shape ~by ~batch ~contracting ~segments:None ~acc a b init
         a_scale b_scale
     in
-    let sides f ps =
-      Array.init (Iarray.length ps) (fun i -> f (Iarray.get ps i))
-    in
-    let whole = sides (fun (i, _) -> Prim.dim a i) contracting in
+    let pairs = Iarray.to_array contracting in
     let p : d Devices.placement = Devices.rebrand route.result in
     let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
     let resw j = Devices.window ~by p shape j in
     let here j = Devices.one set ks.(j) in
-    let tiles = tiles route (Prim.shape a) (sides fst contracting) in
-    let read (type w r) j i (x : (w, r, d) Value.t) =
-      view ks.(j) (here j)
-        (reads rule i (Prim.shape x) (resw j) (Array.get tiles.(j)))
-        x
+    let tiles = tiles route (Prim.shape a) (Array.map fst pairs) in
+    (* Operand [i] on device [j], its window along the pairs [r], none for
+       [init]. *)
+    let read (type w q) j i r (x : (w, q, d) Value.t) =
+      let w = reads rule i (Prim.shape x) (resw j) (Array.get r) in
+      view ks.(j) (here j) w x
     in
-    let a_axes, b_axes =
-      Prim.contract_groups ~batch ~contracting (Prim.rank a) (Prim.rank b)
-    in
-    (* A device's [a] as [[batch; rows; terms]] and [b] as
-       [[batch; terms; columns]], the terms in their number's order. *)
-    let slab j =
-      [
-        (Value.Any (grouped a_axes (read j 0 a)), 2);
-        (Value.Any (grouped b_axes (read j 1 b)), 1);
-      ]
-    in
-    (* A scaled operand's scale, operand [i] read whole along the terms, laid
-       out as its operand's slab on each device, its terms along [axis], each
-       of its blocks a run of [run] terms. A unit of terms [lo, hi), at the
-       edges of the contraction's blocks, takes the blocks they span. *)
-    let scaled i axes axis x (sc : d Value.scale option) =
-      let laid j : d Value.scale =
-        match sc with
-        | Some (Exponent v) -> Exponent (grouped axes (read j i v))
-        | Some (Value v) -> Value (grouped axes (read j i v))
-        | None -> invalid_arg "Partial.contract: no scale"
+    (* The scale [sc] of [x], operand [i], on device [j]: the blocks that
+       [x]'s window along the pairs [r] spans, [side] naming [x]'s axis of a
+       pair. *)
+    let scale j i side x r (sc : d Value.scale) : d Value.scale =
+      let blocks (type w q) (v : (w, q, d) Value.t) =
+        let w = reads rule i (Prim.shape v) (resw j) (Array.get r) in
+        Array.iteri
+          (fun k pr ->
+            let ax = side pr in
+            let n = Prim.dim x ax / Prim.dim v ax and q = r.(k) in
+            let lo = q.M.start / n and hi = (q.start + q.count + n - 1) / n in
+            w.(ax) <- { M.start = lo; count = hi - lo; step = 1 })
+          pairs;
+        view ks.(j) (here j) w v
       in
-      let blocks run (lo, hi) : d Value.scale -> d Value.scale = function
-        | Exponent v -> Exponent (slice axis (lo / run) ((hi - lo) / run) v)
-        | Value v -> Value (slice axis (lo / run) ((hi - lo) / run) v)
-      in
-      Option.map
-        (fun s ->
-          let shape = Prim.scale_shape s and k = axes.(axis) in
-          let run = Option.get (Prim.block_run (Prim.shape x) shape k) in
-          let per = Array.init (Array.length ks) (fun j -> lazy (laid j)) in
-          fun j terms -> blocks run terms (Lazy.force per.(j)))
-        sc
+      match sc with
+      | Exponent v -> Exponent (blocks v)
+      | Value v -> Value (blocks v)
     in
     let first = if Option.is_some init then 3 else 2 in
-    let a_unit = scaled first a_axes 2 a a_scale in
-    let b_unit =
-      scaled (first + Bool.to_int (Option.is_some a_scale)) b_axes 1 b b_scale
+    let b_at = first + Bool.to_int (Option.is_some a_scale) in
+    let run x ax = function
+      | Some sc -> [ Prim.dim x ax / (Prim.scale_shape sc).(ax) ]
+      | None -> []
+    in
+    let runs =
+      Array.map (fun (i, k) -> run a i a_scale @ run b k b_scale) pairs
     in
     let (D.Any ad) = acc in
-    let contracted j terms (sl : d slab) init =
-      match sl with
-      | [ (Value.Any la, _); (Value.Any lb, _) ] ->
-          let init = Option.map (Prim.expect ad) init in
-          let on f = Option.map (fun f -> f j terms) f in
-          Value.Any
-            (apply
-               (Value.Contract
-                  {
-                    order;
-                    batch = [| (0, 0) |];
-                    contracting = [| (2, 1) |];
-                    acc;
-                    out = ad;
-                    a = la;
-                    b = lb;
-                    init;
-                    a_scale = on a_unit;
-                    b_scale = on b_unit;
-                    segments = None;
-                  }))
-      | _ -> invalid_arg "Partial.contract: two operands"
-    in
-    (* [init] over device [j]'s window of the result, as
-       [[batch; rows; columns]], in the accumulator. *)
-    let init_on j =
-      let w = counts (resw j) in
-      let nb = Iarray.length batch and nr = Array.length a_axes.(1) in
-      let part lo len = numel (Array.sub w lo len) in
-      let flat =
-        [| part 0 nb; part nb nr; part (nb + nr) (Array.length w - nb - nr) |]
-      in
-      Option.map (fun i -> cast acc (Value.Any (reshape flat (read j 2 i)))) init
-    in
-    let rounded j v =
-      let (Value.Any r) = cast (D.Any out) v in
-      Value.Any (reshape (counts (resw j)) r)
+    (* The contraction of a part [r] of a tile on device [j] from no
+       [init], in the accumulator. *)
+    let part j r =
+      [
+        Value.Any
+          (apply
+             (Value.Contract
+                {
+                  batch;
+                  contracting;
+                  acc;
+                  out = ad;
+                  a = read j 0 r a;
+                  b = read j 1 r b;
+                  init = None;
+                  a_scale = Option.map (scale j first fst a r) a_scale;
+                  b_scale = Option.map (scale j b_at snd b r) b_scale;
+                  segments = None;
+                }));
+      ]
     in
     let per = Array.make (Array.length ks) [] in
-    let gs = groups (Array.length ks) ~key:resw ~tile:(Array.get tiles) whole in
     let group g =
-      let slabs = Array.map (fun j -> lazy (slab j)) g.holder in
-      let slab t = Lazy.force slabs.(t) in
-      (* A unit's holder and its terms there. *)
-      let terms lf =
-        let j = g.holder.(lf.dest) in
-        (j, gather (here j) slab lf.lo lf.hi lf.parts)
+      let values =
+        Array.concat
+          (Array.to_list
+             (Array.mapi
+                (fun t tl ->
+                  Array.of_list (List.map (part g.holder.(t)) (parts runs tl)))
+                g.tiles))
       in
-      let block = contract_block and n = numel whole in
-      match (order : Nx_kernel.order) with
-      | Lane ->
-          let value lf =
-            let j, sl = terms lf in
-            [ contracted j (lf.lo, lf.hi) sl None ]
-          in
-          let settle j s =
-            let s = match init_on j with None -> s | Some x -> exact Add s [ x ] in
-            per.(j) <- [ rounded j (List.hd s) ]
-          in
-          lane_fold ~block here g n g.held value (exact Add) settle
-      | Chain ->
-          (* Each unit continues the sum before it, on its holder. *)
-          let step sum lf =
-            let j, sl = terms lf in
-            let from =
-              match sum with
-              | None -> init_on j
-              | Some (Value.Any v) -> Some (Value.Any (move (here j) v))
-            in
-            Some (contracted j (lf.lo, lf.hi) sl from)
-          in
-          let units = chain_units ~block n (Array.length g.tiles) g.held in
-          let sum = Option.get (List.fold_left step None units) in
-          let (Value.Any r) = rounded (List.hd g.members) sum in
-          List.iter (fun j -> per.(j) <- [ Value.Any (move (here j) r) ]) g.members
+      let settle j s =
+        let s =
+          match init with
+          | None -> s
+          | Some i -> exact Add s [ cast acc (Value.Any (read j 2 [||] i)) ]
+        in
+        per.(j) <- [ cast (D.Any out) (List.hd s) ]
+      in
+      combine here g (chain (Array.length values)) (Array.get values)
+        (exact Add) settle
     in
-    List.iter group gs;
+    let tile = Array.get tiles in
+    List.iter group (groups (Array.length ks) ~key:resw ~tile);
     Prim.expect out (at_placement p shape (Array.map List.hd per))
 end
 
@@ -995,7 +805,6 @@ let run (type r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by route
       F.scan route rule layout axis prog reduction loads
   | Value.Contract
       {
-        order;
         batch;
         contracting;
         acc;
@@ -1007,7 +816,7 @@ let run (type r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by route
         b_scale;
         segments = None;
       } ->
-      F.contract route rule ~order ~batch ~contracting ~acc out a b init a_scale
+      F.contract route rule ~batch ~contracting ~acc out a b init a_scale
         b_scale
   | Value.Contract { segments = Some _; _ } ->
       invalid_arg "Partial.run: a segmented contraction by partials"

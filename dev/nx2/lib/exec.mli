@@ -130,7 +130,6 @@ val on_host : by:string -> ('v, 's, 'd) Value.t -> ('v, 's) Nx_array.t
 
 val contract :
   by:string ->
-  order:Nx_kernel.order ->
   batch:(int * int) iarray ->
   contracting:(int * int) iarray ->
   acc:Nx_array.Dtype.any ->
@@ -139,11 +138,11 @@ val contract :
   ('c, 'e, 'd) Value.t ->
   ('v, 's, 'd) Value.t option ->
   ('v, 's, 'd) Value.t option
-(** [contract ~by ~order ~batch ~contracting ~acc dt a b init] is [Some] the
-    contraction [Value.Contract] of [a] and [b] from [init] into [dt], in
-    [order], where no interpretation reaches it, its operands are live arrays
-    on one device at physically one placement whose set has kernels, its pairs
-    fit them: it builds no operation and allocates the C-contiguous result of
+(** [contract ~by ~batch ~contracting ~acc dt a b init] is [Some] the
+    contraction [Value.Contract] of [a] and [b] from [init] into [dt], where
+    no interpretation reaches it, its operands are live arrays on one device
+    at physically one placement whose set has kernels, its pairs fit them:
+    it builds no operation and allocates the C-contiguous result of
     the shape {!Nx_kernel.Shape.contract} gives. [None] otherwise, for the
     operation to decide. A refusal of the kernels raises naming [by], and a
     decline as in {!run}. *)

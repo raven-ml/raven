@@ -122,8 +122,8 @@ let replayed : type r d.
       let pieces = List.map (fun (r, x) -> (r, sub x)) pieces in
       one (Assemble { dtype; shape; fill; pieces })
   | Contract
-      { order; batch; contracting; acc; out; a; b; init; a_scale; b_scale;
-        segments } ->
+      { batch; contracting; acc; out; a; b; init; a_scale; b_scale; segments }
+      ->
       let a = sub a and b = sub b and init = Option.map sub init in
       let scale : type e. e scale -> d scale = function
         | Exponent x -> Exponent (sub x)
@@ -141,7 +141,7 @@ let replayed : type r d.
       in
       one
         (Contract
-           { order; batch; contracting; acc; out; a; b; init; a_scale; b_scale;
+           { batch; contracting; acc; out; a; b; init; a_scale; b_scale;
              segments })
   | Fft (C2c { direction; axes; x }) ->
       one (Fft (C2c { direction; axes; x = sub x }))
@@ -438,10 +438,8 @@ let apply3 ~by k c x y =
       else eval3 ~by k c x y
 
 let contract ~by ~batch ~contracting ~acc dt a b init =
-  let order = Prim.contract_order ~batch ~contracting a b in
   let fast =
-    if quiet () then
-      Exec.contract ~by ~order ~batch ~contracting ~acc dt a b init
+    if quiet () then Exec.contract ~by ~batch ~contracting ~acc dt a b init
     else None
   in
   match fast with
@@ -450,7 +448,6 @@ let contract ~by ~batch ~contracting ~acc dt a b init =
       eval ~by
         (Contract
            {
-             order;
              batch;
              contracting;
              acc;

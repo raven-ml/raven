@@ -7,8 +7,9 @@
    value at its dtype, as the format's reference decodes it from its bytes,
    apply is the product with the dequantised weight within the error of a
    float32 sum, take is the gather of the dequantised weight, and a weight
-   placed anywhere over memory devices gives the host's bits, lying where the
-   interface says. *)
+   placed anywhere over memory devices gives the host's values, products
+   within their bound and the same on every run, lying where the interface
+   says. *)
 
 open Windtrap
 module D = Nx_array.Dtype
@@ -209,6 +210,7 @@ let fdts =
   let at dtype = F { dtype; round = D.of_float dtype } in
   [ at Nx.float32; at Nx.bfloat16; at Nx.float16; at Nx.float64 ]
 
+let f32 = List.hd fdts
 let fdt = Gen.of_list ~pp:(fun ppf (F d) -> D.pp ppf d.dtype) fdts
 
 (* [bits t] is each element's bits, so -0 and +0 differ and a NaN is its
@@ -523,19 +525,13 @@ let products =
 let pp_product ppf (view, w, X { x; _ }) =
   Format.fprintf ppf "@[<v>%a@,x %a@]" pp_weight (view, w) Nx.pp x
 
-(* Each output is within the bound of its product summed at float64, but
-   where [apply] sums at float32 and the output's finite terms reach
-   {!overflows}. *)
-let product_law (_, w, X { at; x }) =
+(* [y], [apply w x] wherever it lies, has each output within the bound of
+   its product summed at float64, but where [apply] sums at float32 and the
+   output's finite terms reach {!overflows}. *)
+let applied (type b d) ~at w (x : (float, b, Nx.host) Nx.t)
+    (y : (float, b, d) Nx.t) =
   let _, _, k = dims w in
   let expected, bound, finite = product w x in
-  List.iter
-    (fun f -> cover ("a " ^ format_name f ^ " weight") (format_of w = f))
-    formats;
-  cover "one block per row" (k = block_values (format_of w));
-  cover "an empty result" (Nx.numel expected = 0);
-  cover "no input" (k = 0);
-  let y = Nx_quant.apply w x in
   equal ~msg:"dtype" string (D.name (Nx.dtype x)) (D.name (Nx.dtype y));
   equal ~msg:"shape" (array int) (Nx.shape expected) (Nx.shape y);
   let flat t =
@@ -545,6 +541,17 @@ let product_law (_, w, X { at; x }) =
   let finite = flat finite in
   let skip j = (not wide) && finite.(j) >= overflows k in
   agrees_but ~at ~k skip (flat expected) (flat bound) (flat y)
+
+let product_law (_, w, X { at; x }) =
+  let _, _, k = dims w in
+  List.iter
+    (fun f -> cover ("a " ^ format_name f ^ " weight") (format_of w = f))
+    formats;
+  let y = Nx_quant.apply w x in
+  cover "one block per row" (k = block_values (format_of w));
+  cover "an empty result" (Nx.numel y = 0);
+  cover "no input" (k = 0);
+  applied ~at w x y
 
 (* [apply]'s stated equation, at [x]'s dtype where the format's values are exact
    there, else at float32. *)
@@ -997,9 +1004,11 @@ let placement_law ((_, w), c) =
     (decoded w c);
   let _, _, k = dims w in
   let x = random_floats [| 3; k |] in
-  equal ~msg:"apply" (array int64)
-    (product_bits (Nx_quant.apply w x))
-    (product_bits (Nx_quant.apply wp (Nx.place Mem.on x)))
+  let run () = Nx_quant.apply wp (Nx.place Mem.on x) in
+  let y = run () in
+  applied ~at:f32 w x y;
+  equal ~msg:"apply's second run" (array int64) (product_bits y)
+    (product_bits (run ()))
 
 (* Work. Kernels that count the positions their maps compute, over four memory
    devices and over one, show where a weight decodes: each device all of [k], or
@@ -1114,14 +1123,6 @@ let decodes_law (f, f64, e, n, ids) =
   equal ~msg:"matrices decoded" (pair int int) (want, 0)
     (got / per, got mod per)
 
-(* [routed w ids x] routes each row of [x] [[| p; k |]] through the expert of
-   [w] [[| e; n; k |]] its id names. *)
-let routed w ids x =
-  let e = (Nx_quant.shape w).(0) in
-  Nx.map_segments ~segments:e ids
-    (fun owners rows -> Nx_quant.apply (Nx_quant.take ~axis:0 owners w) rows)
-    x
-
 (* Experts *)
 
 (* A stack of experts [[| e; n; k |]], MXFP4 most often; ids of shape [[| p |]]
@@ -1192,8 +1193,31 @@ let expert_product w ids x =
   let rows' = Nx.abs rows and picked' = Nx.abs picked in
   (by rows picked, by rows' picked', by (finite rows') (finite picked'))
 
-let experts_law (_, w, ids, X { at; x }) =
+(* [got], [apply_experts ~ids w x] wherever it lies, flattened at float64,
+   is zeros at each row whose id is out of range, and else within the bound
+   of its product; a row whose finite terms reach {!overflows} may overflow
+   at float32 in one order and not another, and is not compared. *)
+let routed_rows ~at w ids x got =
   let lead, n, k = dims w in
+  let e = lead.(0) and id = Nx.to_array ids in
+  let outside i = i < 0L || i >= Int64.of_int e in
+  let outside =
+    Array.init (Array.length id * n) (fun j -> outside id.(j / n))
+  in
+  equal ~msg:"the rows of ids out of range" (array int64)
+    (Array.make (Array.length got) 0L)
+    (Array.mapi
+       (fun j v -> if outside.(j) then Int64.bits_of_float v else 0L)
+       got);
+  let expected, bound, finite = expert_product w ids x in
+  let skip j = outside.(j) || finite.(j) >= overflows k in
+  agrees_but ~at ~k skip expected bound got
+
+(* [t] flattened at float64. *)
+let flat64 t = Nx.to_array (Nx.reshape [| -1 |] (Nx.cast Nx.float64 t))
+
+let experts_law (_, w, ids, X { at; x }) =
+  let lead, n, _ = dims w in
   let e = lead.(0) and id = Nx.to_array ids in
   let inside i = i >= 0L && i < Int64.of_int e in
   let names g = Array.mem (Int64.of_int g) id in
@@ -1217,19 +1241,7 @@ let experts_law (_, w, ids, X { at; x }) =
   equal ~msg:"shape" (array int)
     (Array.append (Nx.shape ids) [| n |])
     (Nx.shape y);
-  (* Each row is zeros where its id is out of range, else within the bound of
-     its product; a row whose finite terms reach {!overflows} may overflow at
-     float32 in one order and not another, and is not compared. *)
-  let row a = Array.init (Array.length id * n) (fun j -> a.(j / n)) in
-  let outside = row (Array.map (fun i -> not (inside i)) id) in
-  let got = bits y in
-  equal ~msg:"the rows of ids out of range" (array int64)
-    (Array.make (Array.length got) 0L)
-    (Array.mapi (fun j b -> if outside.(j) then b else 0L) got);
-  let expected, bound, finite = expert_product w ids x in
-  let skip j = outside.(j) || finite.(j) >= overflows k in
-  agrees_but ~at ~k skip expected bound
-    (Nx.to_array (Nx.reshape [| -1 |] (Nx.cast Nx.float64 y)))
+  routed_rows ~at w ids x (flat64 y)
 
 (* An expert product and, for each position, whether its id is kept, and the
    id that replaces it otherwise. Half the products, of three experts or more,
@@ -1291,6 +1303,35 @@ let rerouted_law ((_, w, ids, X { x; _ }), fresh) =
   let kept a = Array.mapi (fun j b -> if changed.(j / n) then 0L else b) a in
   equal ~msg:"the kept rows" (array int64) (kept y) (kept y')
 
+(* Sixteen positions by sixteen columns, which nx.cpu sums in chain order
+   (nx_cpu.mli), with expert 3 named by four positions or by five: alone,
+   four rows sum in another order than five, so an order chosen per expert
+   would change the bits of the four. *)
+let test_more_named () =
+  let w = random_weight [| 4; 16; 64 |] and x = random_floats [| 16; 64 |] in
+  let ids named =
+    Nx.create Nx.int64 [| 16 |]
+      (Array.init 16 (fun i ->
+           if i < named then 3L else Int64.of_int (i mod 3)))
+  in
+  let m = Nx.slice [ Nx.I 3 ] (Nx_quant.dequant Nx.float32 w) in
+  let alone rows =
+    let y = Nx.matmul (Nx.slice [ Nx.R (0, rows) ] x) (Nx.matrix_transpose m) in
+    Nx.slice [ Nx.R (0, 4) ] y
+  in
+  not_equal
+    ~msg:
+      "the premise: four rows alone sum in another order than five, or this \
+       case proves nothing"
+    (array int64)
+    (product_bits (alone 4))
+    (product_bits (alone 5));
+  let kept named =
+    let y = product_bits (Nx_quant.apply_experts ~ids:(ids named) w x) in
+    Array.mapi (fun j b -> if j / 16 = 4 then 0L else b) y
+  in
+  equal ~msg:"every row but the fifth" (array int64) (kept 4) (kept 5)
+
 let expert_products =
   group "experts"
     [
@@ -1298,6 +1339,8 @@ let expert_products =
         "a row's bits do not depend on the other positions' experts"
         (Gen.with_pp pp_rerouted rerouted)
         rerouted_law;
+      test "a row keeps its bits when more positions name its expert"
+        test_more_named;
       prop ~count:300
         "apply_experts is the routed product within the error of a float32 \
          sum at every format and dtype, and zeros for ids out of range"
@@ -1338,14 +1381,15 @@ let cut_experts =
   (c, split, e)
 
 (* [apply_experts] with [w] at [c] and [ids] and [x] whole on every device, or
-   split along their first axis where [split]. *)
+   split along their first axis where [split]: its values at float64 and its
+   bits. *)
 let experts_at ?(split = false) c w ids x =
   let at (module S : Nx.Devices) p =
     let on t =
       Nx.place (if split && Nx.ndim t > 0 then S.split ~axis:0 else S.on) t
     in
-    product_bits
-      (Nx_quant.apply_experts ~ids:(on ids) (Nx_quant.place p w) (on x))
+    let y = Nx_quant.apply_experts ~ids:(on ids) (Nx_quant.place p w) (on x) in
+    (flat64 y, product_bits y)
   in
   match c with
   | Split { axis; over = 4 } -> at (module Mem) (Mem.split ~axis)
@@ -1353,8 +1397,8 @@ let experts_at ?(split = false) c w ids x =
   | Mesh_n -> at (module Mem) (Nx.Placement.mesh mesh [ (1, [ "b" ]) ])
 
 (* A weight at any placement, with ids and input whole or split along their
-   first axis, gives the host's bits. *)
-let cut_experts_law (c, split, (_, w, ids, X { x; _ })) =
+   first axis, gives rows within their bound, the same on every run. *)
+let cut_experts_law (c, split, (_, w, ids, X { at; x })) =
   let _, n, _ = dims w in
   cover "ids and input split" (split && Nx.dim 0 ids > 1);
   cover "ids split, one input row for every position"
@@ -1371,15 +1415,31 @@ let cut_experts_law (c, split, (_, w, ids, X { x; _ })) =
     ((not mxfp4) && c = Split { axis = 2; over = 4 });
   cover "a weight split along experts" (c = Split { axis = 0; over = 4 });
   cover "a weight cut along n over a mesh" (c = Mesh_n);
-  equal (array int64)
-    (product_bits (Nx_quant.apply_experts ~ids w x))
-    (experts_at ~split c w ids x)
+  let got, b = experts_at ~split c w ids x in
+  routed_rows ~at w ids x got;
+  equal ~msg:"a second run" (array int64) b
+    (snd (experts_at ~split c w ids x))
+
+(* [apply_experts] of {!experts_of}'s case with its weight at [p] and the
+   ids and input whole on each device: rows within their bound, the same on
+   every run. *)
+let placed_experts p format =
+  let w, ids, x = experts_of format in
+  let run () =
+    let on t = Nx.place Mem.on t in
+    let y = Nx_quant.apply_experts ~ids:(on ids) (Nx_quant.place p w) (on x) in
+    (flat64 y, product_bits y)
+  in
+  let got, b = run () in
+  routed_rows ~at:f32 w ids x got;
+  equal ~msg:"a second run" (array int64) b (snd (run ()))
 
 let placements =
   group "placement"
     [
       prop ~count:300
-        "a weight placed anywhere gives the host's bits, where the interface \
+        "a weight placed anywhere gives the host's values and a product \
+         within its bound, the same on every run, lying where the interface \
          says"
         placed placement_law;
       prop
@@ -1390,7 +1450,8 @@ let placements =
          experts), or none read where it lies"
         decodes decodes_law;
       prop ~count:400
-        "experts at any placement give the host's bits"
+        "experts at any placement give rows within their bound, the same on \
+         every run"
         (Gen.with_pp
            (fun ppf (c, split, e) ->
              Format.fprintf ppf "@[<v>%a@,at %a%s@]" pp_experts e pp_expert_cut
@@ -1398,44 +1459,15 @@ let placements =
                (if split then ", ids and x split" else ""))
            cut_experts)
         cut_experts_law;
-      cases
-        ~name:(fun c -> Format.asprintf "%a" pp_expert_cut c)
-        "experts split along n give the host's bits where its order is not \
-         the routed product's"
-        [ Split { axis = 1; over = 4 }; Split { axis = 1; over = 2 } ]
-        (fun c ->
-          (* Sixteen rows by eight columns sum in another order than an
-             expert's few rows do. *)
-          let w = random_weight [| 4; 8; 64 |] in
-          let id i = Int64.of_int (i * 3 mod 5) in
-          let ids = Nx.create Nx.int64 [| 16 |] (Array.init 16 id) in
-          let x = random_floats [| 16; 64 |] in
-          let host = product_bits (Nx_quant.apply_experts ~ids w x) in
-          not_equal
-            ~msg:
-              "the premise: the routed product's bits differ from the \
-               grouped contraction's, or this case proves nothing"
-            (array int64) host
-            (product_bits (routed w ids x));
-          equal (array int64) host (experts_at c w ids x));
       cases ~name:format_name
-        "experts split over four devices give the host's bits" formats
-        (fun format ->
-          let w, ids, x = experts_of format in
-          let on t = Nx.place Mem.on t in
-          let w' = Nx_quant.place (Mem.split ~axis:0) w in
-          equal (array int64)
-            (product_bits (Nx_quant.apply_experts ~ids w x))
-            (product_bits (Nx_quant.apply_experts ~ids:(on ids) w' (on x))));
+        "experts split over four devices give rows within their bound, the \
+         same on every run"
+        formats
+        (placed_experts (Mem.split ~axis:0));
       cases ~name:format_name
-        "experts whole on each device give the host's bits" formats
-        (fun format ->
-          let w, ids, x = experts_of format in
-          let on t = Nx.place Mem.on t in
-          let w' = Nx_quant.place Mem.on w in
-          equal (array int64)
-            (product_bits (Nx_quant.apply_experts ~ids w x))
-            (product_bits (Nx_quant.apply_experts ~ids:(on ids) w' (on x))));
+        "experts whole on each device give rows within their bound, the same \
+         on every run"
+        formats (placed_experts Mem.on);
     ]
 
 (* Structure *)

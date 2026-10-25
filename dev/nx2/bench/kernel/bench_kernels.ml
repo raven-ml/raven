@@ -429,12 +429,12 @@ let apply_rows =
       [ D.Any f32; D.Any D.Float64 ]
 
 (* Contractions: [a] and [b] laid out by [layout] from C-contiguous arrays of
-   the shapes it is given, contracted over [contracting] in [order], with
+   the shapes it is given, contracted over [contracting], with
    [init] if given; the floor runs their flops at the host's peak and, with
    [streams], reads that many bytes. *)
 (* A contraction in [acc] of [operands] into a dst of [out], both [acc]
    by default, from [init] of [out] where given. *)
-let contract ?streams ?(init = false) ?operands ?out ~acc ~order name ~sa ~sb
+let contract ?streams ?(init = false) ?operands ?out ~acc name ~sa ~sb
     ~layout ~contracting ~flops =
   let (D.Any ot) = Option.value operands ~default:acc in
   let (D.Any yt) = Option.value out ~default:acc in
@@ -457,7 +457,7 @@ let contract ?streams ?(init = false) ?operands ?out ~acc ~order name ~sa ~sb
         (A.create Rig.host yt y, init, a, b))
       (fun (dst, init, a, b) ->
         ok
-          (K.contract ~order ~batch:[||] ~contracting ~segments:None ~acc ~dst
+          (K.contract ~batch:[||] ~contracting ~segments:None ~acc ~dst
              ~init a b))
   in
   let read = Option.to_list (Option.map (fun n -> F.Read n) streams) in
@@ -467,7 +467,7 @@ let plain a b = (a, b)
 
 (* [m] float32 rows against an MXFP4 weight: float4 codes stored
    [4096 × 4096] as [n × k], a code of 2^(e - 127) per 32 along k. *)
-let mxfp4 ~order name m =
+let mxfp4 name m =
   let acc = D.Any D.Float32 and contracting : _ iarray = [| (1, 1) |] in
   let n = 4096 and k = 4096 in
   let bench (module K : Nx_kernel.S) =
@@ -487,7 +487,7 @@ let mxfp4 ~order name m =
         (A.create Rig.host D.Float32 [| m; n |], a, b))
       (fun (dst, a, b) ->
         ok
-          (K.contract ~order ~batch:[||] ~contracting ~segments:None ~acc ~dst
+          (K.contract ~batch:[||] ~contracting ~segments:None ~acc ~dst
              ~init:None a b))
   in
   { bench; work = [ F.Fma (acc, 2 * m * n * k); F.Read (n * k / 2) ] }
@@ -529,14 +529,14 @@ let mxfp4_experts name t g =
         (A.create Rig.host D.Float32 [| m; n |], a, b, segments))
       (fun (dst, a, b, segments) ->
         ok
-          (K.contract ~order:Chain ~batch:[||] ~contracting
+          (K.contract ~batch:[||] ~contracting
              ~segments ~acc ~dst ~init:None a b))
   in
   { bench; work = [ F.Fma (acc, 2 * m * n * k); F.Read (g * n * k / 2) ] }
 
-(* The product of [m × k] and [k × n] C-contiguous matrices in [order]. *)
-let gemm ?init ~acc ~order name m n k =
-  contract ?init ~acc ~order name ~sa:[| m; k |] ~sb:[| k; n |] ~layout:plain
+(* The product of [m × k] and [k × n] C-contiguous matrices. *)
+let gemm ?init ~acc name m n k =
+  contract ?init ~acc name ~sa:[| m; k |] ~sb:[| k; n |] ~layout:plain
     ~contracting:[| (1, 0) |] ~flops:(2 * m * n * k)
 
 let f64 = D.Float64
@@ -548,15 +548,14 @@ let f64 = D.Float64
    takes a microcode assist. The row guards x86 only (on the M1
    it times a plain 100³ product), and only when the worker that packed
    the 111-column edge takes the 100-column edge: always on one thread,
-   by chance where threads steal units. Both products sum in chain order,
-   as nx gives them. *)
+   by chance where threads steal units. Both products sum in chain order. *)
 let after_subnormals =
   let acc = D.Any f32 and contracting : _ iarray = [| (1, 0) |] in
   let bench (module K : Nx_kernel.S) =
     let plain a : Nx_kernel.operand = { array = A.Any a; scale = None } in
     let product dst a b =
       ok
-        (K.contract ~order:Nx_kernel.Chain ~batch:[||] ~contracting
+        (K.contract ~batch:[||] ~contracting
            ~segments:None ~acc ~dst ~init:None a b)
     in
     row "contract-f32-100-after-subnormals"
@@ -573,10 +572,9 @@ let after_subnormals =
 
 let contract_rows =
   let acc32 = D.Any f32 and acc64 = D.Any f64 in
-  let chain = Nx_kernel.Chain and lane = Nx_kernel.Lane in
   (* Squares of 8 or more: chain order. *)
   let square acc dt n =
-    gemm ~acc ~order:chain (Printf.sprintf "contract-%s-%d" dt n) n n n
+    gemm ~acc (Printf.sprintf "contract-%s-%d" dt n) n n n
   in
   (* 8³ is a call's fixed cost: the view, the door, the jobs. *)
   List.map (square acc32 "f32") [ 8; 64; 128; 256; 512; 1024; 2048; 4096 ]
@@ -593,14 +591,14 @@ let contract_rows =
       square acc64 "f64" 100;
       (* Few columns, many rows, [4096 × 256] by [256 × 64]: computed as
          its transpose, whose columns lie apart in dst. *)
-      gemm ~acc:acc32 ~order:chain "contract-f32-4096x64x256" 4096 64 256;
+      gemm ~acc:acc32 "contract-f32-4096x64x256" 4096 64 256;
       (* A factorisation's update: a triangular solve's half by 32 columns
          of its right-hand sides. *)
-      gemm ~acc:acc64 ~order:chain "contract-f64-512x32x512" 512 32 512;
-      gemm ~init:true ~acc:acc32 ~order:chain "contract-f32-1024-init" 1024
+      gemm ~acc:acc64 "contract-f64-512x32x512" 512 32 512;
+      gemm ~init:true ~acc:acc32 "contract-f32-1024-init" 1024
         1024 1024;
       (* a transposed: the [k × m] array viewed as [m × k]. *)
-      contract ~acc:acc32 ~order:chain "contract-f32-1024-tn"
+      contract ~acc:acc32 "contract-f32-1024-tn"
         ~sa:[| 1024; 1024 |]
         ~sb:[| 1024; 1024 |]
         ~layout:(fun (A.Any a) b ->
@@ -610,16 +608,16 @@ let contract_rows =
          int4, and complex64 in complex128, whose copies hold the most kept
          buffers at once. *)
       contract ~init:true ~operands:acc32 ~out:acc32 ~acc:(D.Any D.Int4)
-        ~order:chain "contract-f32-i4-256-init" ~sa:[| 256; 256 |]
+        "contract-f32-i4-256-init" ~sa:[| 256; 256 |]
         ~sb:[| 256; 256 |] ~layout:plain ~contracting:[| (1, 0) |]
         ~flops:(2 * 256 * 256 * 256);
       contract ~init:true ~operands:(D.Any D.Complex64)
-        ~out:(D.Any D.Complex64) ~acc:(D.Any D.Complex128) ~order:chain
+        ~out:(D.Any D.Complex64) ~acc:(D.Any D.Complex128)
         "contract-c64-c128-256-init" ~sa:[| 256; 256 |] ~sb:[| 256; 256 |]
         ~layout:plain ~contracting:[| (1, 0) |]
         ~flops:(8 * 256 * 256 * 256);
       (* A dot of 10 Mi elements. *)
-      contract ~acc:acc32 ~order:lane "contract-dot-f32-10M"
+      contract ~acc:acc32 "contract-dot-f32-10M"
         ~sa:[| 10 * mib |]
         ~sb:[| 10 * mib |] ~layout:plain
         ~contracting:[| (0, 0) |] ~flops:(2 * 10 * mib)
@@ -627,24 +625,24 @@ let contract_rows =
     ]
   (* Decoding: [m] rows against a 4096 × 4096 weight stored as [n × k]. *)
   @ List.map
-      (fun (m, order) ->
-        contract ~acc:acc32 ~order
+      (fun m ->
+        contract ~acc:acc32
           (Printf.sprintf "contract-f32-m%dx4096x4096" m)
           ~sa:[| m; 4096 |] ~sb:[| 4096; 4096 |] ~layout:plain
           ~contracting:[| (1, 1) |]
           ~flops:(2 * m * 4096 * 4096)
           ~streams:(4 * 4096 * 4096))
-      [ (1, lane); (4, lane); (8, chain); (32, chain); (128, chain) ]
+      [ 1; 4; 8; 32; 128 ]
   (* One row against the weight stored as [k × n]. *)
   @ [
-      contract ~acc:acc32 ~order:lane "contract-f32-m1x4096x4096-kn"
+      contract ~acc:acc32 "contract-f32-m1x4096x4096-kn"
         ~sa:[| 1; 4096 |]
         ~sb:[| 4096; 4096 |] ~layout:plain ~contracting:[| (1, 0) |]
         ~flops:(2 * 4096 * 4096) ~streams:(4 * 4096 * 4096);
       (* A token, and 8 tokens, through an MXFP4 weight: lane order's dot
          stages the codes along k, chain order's few rows pack them. *)
-      mxfp4 ~order:lane "contract-mxfp4-m1x4096x4096" 1;
-      mxfp4 ~order:chain "contract-mxfp4-m8x4096x4096" 8;
+      mxfp4 "contract-mxfp4-m1x4096x4096" 1;
+      mxfp4 "contract-mxfp4-m8x4096x4096" 8;
       (* 64 tokens through 8 of 32 experts, a mixture of experts' layer. *)
       mxfp4_experts "contract-mxfp4-experts-64x8of32" 64 32;
     ]

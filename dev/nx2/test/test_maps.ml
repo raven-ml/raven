@@ -575,7 +575,6 @@ let test_contract_consumes () =
     Exec.run ~by:"t"
       (Value.Contract
          {
-           order = Lane;
            batch = [| (0, 0) |];
            contracting = [||];
            acc = D.Any D.Float32;

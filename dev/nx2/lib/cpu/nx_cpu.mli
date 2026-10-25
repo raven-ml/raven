@@ -52,23 +52,20 @@
     to the bound, barring overflow of an element times its scale, which
     gives an infinite term where the exact one is finite.
 
-    A float or complex contraction adds in the order it is given
-    ({!Nx_kernel.section-orders}), at any shape, a contraction block
-    ({!Nx_kernel.S.section-contraction}) as the whole. In lane order, a
-    contraction block's sum is lane order's tree of its blocks of 1024
-    terms, so the tree of contraction blocks that section states is lane
-    order's own. In chain order, its association is one chain from [init]
-    or [+0], which a part given the sum of the products before it as [init]
-    continues.
-    [contract_order ~rows ~columns ~depth] is [Chain] where [rows] and
-    [columns] are both above 4 and multiply to at least 64, and [depth] is
-    below 128 times their product; [Lane] otherwise, so that the threads
-    share the depth of a contraction of few outputs. A segmented
-    contraction has, in each group, the bits of the unsegmented contraction
-    of its views in the order given: [Rows]' group's rows of [a] with its
-    index of [b], [Contracting]'s group's window of the pair. A segmented
-    contraction reads the offsets whole before any write, so they may be
-    [dst] itself.
+    A float or complex contraction adds its products, numbered as
+    {!Nx_kernel.section-contraction} numbers them, in {e chain order}, one
+    chain in increasing number from [init] or [+0], where its rows, [a]'s
+    free extents multiplied, and its columns, [b]'s, are both above 4 and
+    multiply to at least 64, and its depth, the contracted extent, is below
+    128 times their product. It adds them in lane order
+    ({!Nx_kernel.section-orders}), then [init], otherwise, so that the
+    threads share the depth of a contraction of few outputs. A segmented
+    contraction chooses one order for the whole call, from its rows,
+    columns and depth as above, [Rows]' columns those of one index along
+    [b_axis], [Contracting]'s depth the pair's whole extent; each output
+    adds its group's products in that order. A segmented contraction
+    reads the offsets whole before any write, so they may be [dst]
+    itself.
 
     A complex output of [K] products is within
     [γ(2K + 2) (|init| + Σ|a||b|)] of the exact sum of [a], [b] and [init]

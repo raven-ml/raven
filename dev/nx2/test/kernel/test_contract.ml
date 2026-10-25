@@ -7,8 +7,8 @@
    Nx_kernel.S.contract states of the exact sum, the same bits under every
    layout of the same values and into a destination identical to init, and
    nothing written where declined. nx.cpu's
-   group checks what nx_cpu.mli states: the cases it computes, and its order,
-   bit for bit, against a reference built here. *)
+   group checks what nx_cpu.mli states: the cases it computes, how it scales,
+   wraps and rounds, bit for bit, against a reference built here. *)
 
 open Windtrap
 open Nx_array_gen
@@ -114,11 +114,10 @@ let value (D.Any dt) r =
 
 (* Cases *)
 
-(* A contraction: its order, pairs, accumulator, operands and result dtype,
-   and the views its operands were drawn through. [init] has the result's
+(* A contraction: its pairs, accumulator, operands and result dtype, and
+   the views its operands were drawn through. [init] has the result's
    dtype. *)
 type case = {
-  order : Nx_kernel.order;
   batch : (int * int) array;
   contracting : (int * int) array;
   acc : D.any;
@@ -134,9 +133,7 @@ let pp_case ppf c =
     | None -> ()
     | Some i -> Format.fprintf ppf "; init %a" pp_any i
   in
-  let order = match c.order with Nx_kernel.Chain -> "chain" | Lane -> "lane" in
-  Format.fprintf ppf
-    "%s order, batch %a contracting %a acc %a out %a; a %a; b %a%a" order
+  Format.fprintf ppf "batch %a contracting %a acc %a out %a; a %a; b %a%a"
     pp_ints (Array.map fst c.batch) pp_ints
     (Array.map fst c.contracting)
     pp_dtype c.acc pp_dtype c.out pp_any c.a pp_any c.b pp_init c.init
@@ -376,11 +373,10 @@ let ranks (batch, rows, cols, con) =
   (nb + Array.length rows + nk, nb + nk + Array.length cols,
    nb + Array.length rows + Array.length cols)
 
-(* The case of the extents [e] in [order] and [acc] into [out]: [a] and [b]
+(* The case of the extents [e] in [acc] into [out]: [a] and [b]
    of the dtypes and through the views given, an init of [out] through the
    view [init] gives, values drawn from [seed]. *)
-let make ~order ~acc ~out (batch, rows, cols, con) (da, va) (db, vb) init seed
-    =
+let make ~acc ~out (batch, rows, cols, con) (da, va) (db, vb) init seed =
   let nb = Array.length batch and fa = Array.length rows in
   let sa = Array.concat [ batch; rows; con ] in
   let sb = Array.concat [ batch; con; cols ] in
@@ -406,14 +402,12 @@ let make ~order ~acc ~out (batch, rows, cols, con) (da, va) (db, vb) init seed
       (seed + 2)
   in
   let views = names va @ names vb @ Option.fold ~none:[] ~some:names init in
-  { order; batch = pairs; contracting; acc; a; b; init = Option.map made init;
-    out; views }
+  { batch = pairs; contracting; acc; a; b; init = Option.map made init; out;
+    views }
 
-(* A case in either order, in [acc] into [out], each operand of [acc] or of
-   [dts]. *)
+(* A case in [acc] into [out], each operand of [acc] or of [dts]. *)
 let case_of ?same ~acc ~out ~dts () =
   let open Gen in
-  let* order = of_list Nx_kernel.[ Chain; Lane ] in
   let* ((batch, _, _, _) as e) = extents in
   let nb = Array.length batch in
   let ra, rb, ry = ranks e in
@@ -425,7 +419,7 @@ let case_of ?same ~acc ~out ~dts () =
   let* vi = view ry 0 in
   let* with_init = bool in
   let+ seed = int in
-  make ~order ~acc ~out e (da, va) (db, vb)
+  make ~acc ~out e (da, va) (db, vb)
     (if with_init then Some vi else None)
     seed
 
@@ -443,16 +437,15 @@ let case_of ?same ~acc ~out ~dts () =
    slivers of b are fewer than the threads, in blocks of rows, with a in
    place and with a alone stored transposed. The few
    rows' case again, and in float64 the chain path over
-   several groups, with a and b stored transposed. Each in the order whose
-   path it names, then cases in the other order: chain order in few rows or
-   columns, lane order in many rows and columns over several passes and
-   blocks of lanes; the lane tile in 2 rows by 1 to 9 columns, 15 to 17 and
+   several groups, with a and b stored transposed. Lane order over more
+   than 8 rows and columns, in passes; the lane tile in 2 rows by 1 to 9
+   columns, 15 to 17 and
    64, either side of each width's one and two vectors, by k off a step of
    the lanes, one step and a whole block. The drawn cases reach each a few
    times in a hundred or never, so a run of a hundred can miss one. A
    complex contraction is a real one of twice the columns and products, and
    an integer one takes chain order's paths, which the floats' cases reach:
-   their own are few, each order over several blocks of products, no
+   their own are few, over several blocks of products, no
    product, a batch, and the few rows' case stored transposed; an integer's
    also the chain path over several blocks of the contraction. Every
    kind's contracted axes stored apart and b's columns, and the floats'
@@ -463,10 +456,10 @@ let regimes acc =
     let axes = Array.init r Fun.id in
     { stepped = false; windowed = None; reversed = false; broadcast = false; stored = axes; perm = axes }
   in
-  let case (order, init, e) =
+  let case (init, e) =
     let ra, rb, ry = ranks e in
     let ti = if init then Some (plain ry) else None in
-    make ~order ~acc ~out:acc e (acc, plain ra) (acc, plain rb) ti 1
+    make ~acc ~out:acc e (acc, plain ra) (acc, plain rb) ti 1
   in
   let swap r =
     { (plain r) with
@@ -474,48 +467,47 @@ let regimes acc =
   in
   let copy (A.Any x) = A.Any (A.copy x) in
   (* [case] with a and b stored transposed, which every table packs. *)
-  let apart (order, init, e) =
+  let apart (init, e) =
     let ra, rb, ry = ranks e in
     let ti = if init then Some (plain ry) else None in
-    let c = make ~order ~acc ~out:acc e (acc, swap ra) (acc, swap rb) ti 1 in
+    let c = make ~acc ~out:acc e (acc, swap ra) (acc, swap rb) ti 1 in
     { c with a = copy c.a; b = copy c.b }
   in
   (* [case] with a alone stored transposed: few rows pack it, and blocks of
      its rows read the pack from their first row. *)
-  let a_apart (order, init, e) =
+  let a_apart (init, e) =
     let ra, rb, ry = ranks e in
     let ti = if init then Some (plain ry) else None in
-    let c = make ~order ~acc ~out:acc e (acc, swap ra) (acc, plain rb) ti 1 in
+    let c = make ~acc ~out:acc e (acc, swap ra) (acc, plain rb) ti 1 in
     { c with a = copy c.a }
   in
   (* [case] with a and b stored in the orders of their made axes [sa] and
      [sb] name. *)
-  let stored (order, init, e, sa, sb) =
+  let stored (init, e, sa, sb) =
     let _, _, ry = ranks e in
     let ti = if init then Some (plain ry) else None in
     let at s = { (plain (Array.length s)) with stored = s } in
-    make ~order ~acc ~out:acc e (acc, at sa) (acc, at sb) ti 1
+    make ~acc ~out:acc e (acc, at sa) (acc, at sb) ti 1
   in
-  let chain = Nx_kernel.Chain and lane = Nx_kernel.Lane in
-  (* Contracted axes stored in another order in a than in b, in either
-     order. *)
+  (* Contracted axes stored in another order in a than in b, with init and
+     without. *)
   let split =
     List.map stored
       [
-        (chain, true, ([||], [| 3 |], [| 4 |], [| 5; 6 |]), [| 0; 2; 1 |],
+        (true, ([||], [| 3 |], [| 4 |], [| 5; 6 |]), [| 0; 2; 1 |],
          [| 0; 1; 2 |]);
-        (lane, false, ([||], [| 3 |], [| 4 |], [| 5; 6 |]), [| 0; 2; 1 |],
+        (false, ([||], [| 3 |], [| 4 |], [| 5; 6 |]), [| 0; 2; 1 |],
          [| 0; 1; 2 |]);
       ]
   in
-  (* b's two axes of columns stored in the other order, in either order:
-     several runs that b alone makes. *)
+  (* b's two axes of columns stored in the other order, with init and
+     without: several runs that b alone makes. *)
   let columns =
     List.map stored
       [
-        (chain, true, ([||], [| 3 |], [| 4; 5 |], [| 6 |]), [| 0; 1 |],
+        (true, ([||], [| 3 |], [| 4; 5 |], [| 6 |]), [| 0; 1 |],
          [| 0; 2; 1 |]);
-        (lane, false, ([||], [| 3 |], [| 4; 5 |], [| 6 |]), [| 0; 1 |],
+        (false, ([||], [| 3 |], [| 4; 5 |], [| 6 |]), [| 0; 1 |],
          [| 0; 2; 1 |]);
       ]
   in
@@ -524,7 +516,7 @@ let regimes acc =
      operands, which the threads take a position at a time. *)
   let heads =
     stored
-      ( chain, false, ([| 16; 4 |], [| 32 |], [| 32 |], [| 32 |]),
+      ( false, ([| 16; 4 |], [| 32 |], [| 32 |], [| 32 |]),
         [| 0; 2; 1; 3 |], [| 0; 3; 1; 2 |] )
   in
   (* a of a dtype acc does not hold, cast into it: float64 into float32 or
@@ -539,14 +531,14 @@ let regimes acc =
       | _ -> D.Any D.Float64
     in
     let e = ([||], [| 3 |], [| 4 |], [| 5 |]) in
-    make ~order:chain ~acc ~out:acc e (wide, plain 2) (acc, plain 2) None 1
+    make ~acc ~out:acc e (wide, plain 2) (acc, plain 2) None 1
   in
   (* A convolution's product: a the windows of an image [n; h; w; c] by
      [kh × kw] taps at [stride] and [dilation], [n; oh; ow; c; kh; kw],
      contracted with b, [kh; kw; c; o], over the taps and channels, in the
      order (kh, kw, c) where [taps_first], whose last two make one run of a
      at dilation 1, else (c, kh, kw), each its own run of a and of b. *)
-  let conv ?(da = acc) ?(init = false) order ~taps_first (n, oh, ow, c, o)
+  let conv ?(da = acc) ?(init = false) ~taps_first (n, oh, ow, c, o)
       (kh, kw) (stride, dilation) =
     let extent t k = ((t - 1) * stride) + (dilation * (k - 1)) + 1 in
     let (A.Any x) =
@@ -563,7 +555,7 @@ let regimes acc =
       if init then Some (operand acc [| n; oh; ow; o |] 0 (plain 4) 5)
       else None
     in
-    { order; batch = [||]; contracting; acc; a; b; init; out = acc;
+    { batch = [||]; contracting; acc; a; b; init; out = acc;
       views = [ "windowed" ] }
   in
   (* Many rows by few columns, b's windows streamed; few rows by more
@@ -575,30 +567,30 @@ let regimes acc =
      real. *)
   let convs =
     [
-      conv chain ~taps_first:true (2, 10, 10, 3, 8) (3, 3) (1, 1);
-      conv chain ~init:true ~taps_first:false (1, 4, 4, 5, 40) (3, 3) (2, 1);
-      conv chain ~taps_first:true (1, 4, 5, 4, 30) (2, 3) (1, 2);
-      conv lane ~init:true ~taps_first:true (1, 3, 3, 4, 3) (3, 3) (1, 1);
-      conv lane ~taps_first:true (1, 3, 3, 4, 16) (3, 3) (1, 1);
-      conv lane ~taps_first:true (1, 3, 3, 16, 3) (3, 3) (1, 1);
+      conv ~taps_first:true (2, 10, 10, 3, 8) (3, 3) (1, 1);
+      conv ~init:true ~taps_first:false (1, 4, 4, 5, 40) (3, 3) (2, 1);
+      conv ~taps_first:true (1, 4, 5, 4, 30) (2, 3) (1, 2);
+      conv ~init:true ~taps_first:true (1, 3, 3, 4, 3) (3, 3) (1, 1);
+      conv ~taps_first:true (1, 3, 3, 4, 16) (3, 3) (1, 1);
+      conv ~taps_first:true (1, 3, 3, 16, 3) (3, 3) (1, 1);
     ]
     @ (match acc with
       | D.Any D.Float32 ->
           [
-            conv chain ~taps_first:true (1, 13, 20, 29, 257) (3, 3) (1, 1);
-            conv chain ~da:(D.Any D.Bfloat16) ~taps_first:false
+            conv ~taps_first:true (1, 13, 20, 29, 257) (3, 3) (1, 1);
+            conv ~da:(D.Any D.Bfloat16) ~taps_first:false
               (2, 6, 6, 3, 16) (3, 3) (1, 1);
           ]
       | D.Any (D.Complex64 | D.Complex128) ->
           [
-            conv chain ~da:(part_of acc) ~taps_first:true (1, 4, 4, 3, 8)
+            conv ~da:(part_of acc) ~taps_first:true (1, 4, 4, 3, 8)
               (3, 3) (1, 1);
           ]
       | _ -> [])
   in
   let rows = few_rows_most + 1 in
   let few =
-    (chain, true, ([||], [| few_rows_most |], [| few_rows_most + 3 |], [| 3 |]))
+    (true, ([||], [| few_rows_most |], [| few_rows_most + 3 |], [| 3 |]))
   in
   (* Several groups of the chain path, both operands packed, take some 135
      million products in float64; float32's packs are half as large, and
@@ -608,66 +600,60 @@ let regimes acc =
     | D.Any D.Float64 ->
         let batch = (panels / (2 * rows * kc_least * 8)) + 1 in
         let e = ([| batch |], [| rows |], [| rows |], [| kc_least |]) in
-        [ apart (chain, true, e) ]
+        [ apart (true, e) ]
     | _ -> []
   in
   let complex =
     [
-      (lane, true, ([||], [| 3 |], [| 64 |], [| 600 |]));
-      (lane, false, ([||], [| 40 |], [| 4 |], [| 600 |]));
-      (chain, true, ([||], [| 40 |], [| 17 |], [| 600 |]));
-      (chain, true, ([||], [| 3 |], [| 2 |], [| 0 |]));
-      (chain, false, ([| 50 |], [| 8 |], [| 8 |], [| 2 |]));
+      (true, ([||], [| 3 |], [| 64 |], [| 600 |]));
+      (false, ([||], [| 40 |], [| 4 |], [| 600 |]));
+      (true, ([||], [| 40 |], [| 17 |], [| 600 |]));
+      (true, ([||], [| 3 |], [| 2 |], [| 0 |]));
+      (false, ([| 50 |], [| 8 |], [| 8 |], [| 2 |]));
     ]
   in
-  let integer = (chain, true, ([||], [| 130 |], [| 130 |], [| 520 |])) :: complex in
+  let integer = (true, ([||], [| 130 |], [| 130 |], [| 520 |])) :: complex in
   if is_complex acc then
     (apart few :: unheld :: split) @ columns @ convs @ List.map case complex
   else if is_integer acc then
     (apart few :: unheld :: split) @ columns @ convs @ List.map case integer
   else
     [ apart few; heads; unheld;
-      a_apart (chain, false, ([| 2 |], [| 20 |], [| 20 |], [| 500 |])) ]
+      a_apart (false, ([| 2 |], [| 20 |], [| 20 |], [| 500 |]));
+      (* Lane order's passes over rows of two runs. *)
+      stored (true, ([||], [| 3; 3 |], [| 12 |], [| 13900 |]), [| 1; 0; 2 |],
+              [| 0; 1 |]) ]
     @ split @ columns @ convs @ groups
     @ List.map case
       ([
-         (lane, true, ([||], [| 0 |], [| 3 |], [| 2 |]));
-         (lane, true, ([| 1 |], [| 1 |], [| 1 |], [| 5 |]));
-         (lane, true, ([||], [| 3 |], [| 2 |], [| 0 |]));
-         (lane, true, ([||], [| 3 |], [| 64 |], [| 600 |]));
-         (lane, true, ([||], [| 64 |], [| 3 |], [| 600 |]));
-         (lane, true, ([||], [| 4 |], [| 40 |], [| 1100 |]));
-         (chain, true, ([||], [| 5 |], [| 40 |], [| 1100 |]));
-         (lane, true, ([||], [| 40 |], [| 4 |], [| 1100 |]));
-         (chain, false, ([||], [| 40 |], [| 5 |], [| 1100 |]));
-         (chain, true, ([||], [| 40 |], [| 40 |], [| 1100 |]));
-         (chain, true, ([||], [| 40 |], [| 17 |], [| 1100 |]));
-         (lane, true, ([| 2 |], [| 1 |], [| 2 |], [| 1500 |]));
-         (lane, true, ([||], [| 1 |], [| 3100 |], [| 3 |]));
-         (lane, true, ([||], [| 3 |], [| 1100 |], [| 1500 |]));
-         (chain, true, ([| 350 |], [| 8 |], [| 8 |], [| 2 |]));
-         (chain, false, ([| 2 |], [| 20 |], [| 20 |], [| 500 |]));
+         (true, ([||], [| 0 |], [| 3 |], [| 2 |]));
+         (true, ([| 1 |], [| 1 |], [| 1 |], [| 5 |]));
+         (true, ([||], [| 3 |], [| 2 |], [| 0 |]));
+         (true, ([||], [| 3 |], [| 64 |], [| 600 |]));
+         (true, ([||], [| 64 |], [| 3 |], [| 600 |]));
+         (true, ([||], [| 4 |], [| 40 |], [| 1100 |]));
+         (true, ([||], [| 5 |], [| 40 |], [| 1100 |]));
+         (true, ([||], [| 40 |], [| 4 |], [| 1100 |]));
+         (false, ([||], [| 40 |], [| 5 |], [| 1100 |]));
+         (true, ([||], [| 40 |], [| 40 |], [| 1100 |]));
+         (true, ([||], [| 40 |], [| 17 |], [| 1100 |]));
+         (true, ([| 2 |], [| 1 |], [| 2 |], [| 1500 |]));
+         (true, ([||], [| 1 |], [| 3100 |], [| 3 |]));
+         (true, ([||], [| 3 |], [| 1100 |], [| 1500 |]));
+         (true, ([| 350 |], [| 8 |], [| 8 |], [| 2 |]));
+         (false, ([| 2 |], [| 20 |], [| 20 |], [| 500 |]));
          few;
-         (chain, true, ([||], [| rows |], [| rows + 3 |], [| 1030 |]));
-         (chain, false, ([||], [| rows |], [| 3100 |], [| 3 |]));
-         (chain, false, ([||], [| rows |], [| rows |], [| 0 |]));
-         (chain, true, ([||], [| 300 |], [| 16 |], [| 600 |]));
-         (chain, true, ([||], [| 1024 |], [| 16 |], [| 16 |]));
-         (* The other order. *)
-         (chain, true, ([| 1 |], [| 1 |], [| 1 |], [| 5 |]));
-         (chain, true, ([||], [| 3 |], [| 64 |], [| 600 |]));
-         (chain, false, ([||], [| 64 |], [| 3 |], [| 600 |]));
-         (chain, true, ([||], [| 4 |], [| 40 |], [| 1100 |]));
-         (chain, true, ([||], [| 1 |], [| 3100 |], [| 3 |]));
-         (lane, true, ([||], [| 5 |], [| 40 |], [| 1100 |]));
-         (lane, false, ([||], [| 40 |], [| 40 |], [| 1100 |]));
-         (lane, true, ([||], [| 40 |], [| 17 |], [| 2100 |]));
-         (lane, true, ([| 350 |], [| 8 |], [| 8 |], [| 2 |]));
-         (lane, true, ([||], [| rows |], [| rows + 3 |], [| 30 |]));
-         (lane, false, ([||], [| rows |], [| rows |], [| 0 |]));
+         (true, ([||], [| rows |], [| rows + 3 |], [| 1030 |]));
+         (false, ([||], [| rows |], [| 3100 |], [| 3 |]));
+         (false, ([||], [| rows |], [| rows |], [| 0 |]));
+         (true, ([||], [| 300 |], [| 16 |], [| 600 |]));
+         (true, ([||], [| 1024 |], [| 16 |], [| 16 |]));
+         (* Lane order's passes: more than 8 rows and columns, of 128
+            products each or more. *)
+         (true, ([||], [| 9 |], [| 12 |], [| 13900 |]));
        ]
       @ List.map
-          (fun (n, k) -> (lane, n mod 2 = 0, ([||], [| 2 |], [| n |], [| k |])))
+          (fun (n, k) -> (n mod 2 = 0, ([||], [| 2 |], [| n |], [| k |])))
           [
             (1, 17); (2, 3); (3, 33); (4, 16); (5, 47); (6, 1); (7, 15);
             (8, 64); (9, 100); (15, 31); (16, 1024); (17, 5); (64, 64);
@@ -967,7 +953,7 @@ let operands c = Array.of_list ([ c.a; c.b ] @ Option.to_list c.init)
    [init] in place of [c]'s. *)
 let contract ?sa ?sb (module K : Nx_kernel.S) c ~dst:(A.Any d) a b init =
   let init = Option.map (A.expect (A.dtype d)) init in
-  K.contract ~order:c.order ~batch:(Iarray.of_array c.batch)
+  K.contract ~batch:(Iarray.of_array c.batch)
     ~contracting:(Iarray.of_array c.contracting) ~segments:None ~acc:c.acc
     ~dst:d ~init
     { array = a; scale = sa }
@@ -1059,6 +1045,22 @@ let rows_cols c =
   let fa = Array.length (shape_of c.a) - nb - Array.length c.contracting in
   (total (Array.sub y nb fa), total (Array.sub y (nb + fa) (Array.length y - nb - fa)))
 
+(* nx.cpu's order in [acc] for [m] rows, [n] columns and a depth [k]
+   (nx_cpu.mli): chain where the rows and columns are both above 4 and
+   multiply to at least 64 and the depth is below 128 times their product,
+   and for an integer accumulator, whose paths are chain order's (gemm.c);
+   lane otherwise. *)
+type order = Chain | Lane
+
+let order_of acc m n k =
+  let chain = m > 4 && n > 4 && m * n >= 64 && k < 128 * m * n in
+  if is_integer acc || chain then Chain else Lane
+
+(* nx.cpu's order for [c]. *)
+let order c =
+  let m, n = rows_cols c and _, k, _ = sizes c in
+  order_of c.acc m n k
+
 (* gemm.c's complex paths: a copied where its numbers lie apart along k or
    are of another dtype, b's blocks once where it is broadcast along the
    batch, and one contraction per part where init's columns lie apart. *)
@@ -1068,8 +1070,8 @@ let complex_covers c =
   let real (A.Any x) = not (is_complex (D.Any (A.dtype x))) in
   let along x (i, _) = (strides x).(i) in
   let last x = Array.length (shape_of x) - 1 in
-  cover "complex in chain order" (complex && c.order = Chain);
-  cover "complex in lane order" (complex && c.order = Lane);
+  cover "complex in chain order" (complex && order c = Chain);
+  cover "complex in lane order" (complex && order c = Lane);
   cover "complex with a real operand" (complex && (real c.a || real c.b));
   cover "complex with a copied"
     (complex && k > 1
@@ -1095,10 +1097,7 @@ let covers c =
   cover "one output" (total y = 1);
   cover "no product" (k = 0 && total y > 0);
   let m, n = rows_cols c in
-  let lanes = per > 0 && c.order = Lane in
-  cover "chain order in 4 rows or fewer" (per > 0 && c.order = Chain && m <= 4);
-  cover "chain order in 4 columns or fewer"
-    (per > 0 && c.order = Chain && n <= 4);
+  let lanes = per > 0 && order c = Lane in
   cover "lane order in 64 outputs or more, rows and columns above 4"
     (lanes && m > 4 && n > 4 && per >= 64);
   cover "lane order in passes: more than 8 rows and columns"
@@ -1117,7 +1116,7 @@ let covers c =
   cover "5 columns over several blocks of lanes" (n = 5 && m > 16 && k > 1024);
   cover "4 rows over several groups of columns" (m <= 4 && n > 1024 && k > 1024);
   let chain =
-    c.order = Chain && per >= 64 && m > few_rows_most && n > few_rows_most
+    order c = Chain && per >= 64 && m > few_rows_most && n > few_rows_most
   in
   let w = if part_of c.acc = D.Any D.Float32 then 4 else 8 in
   cover "the chain path" chain;
@@ -1137,13 +1136,13 @@ let covers c =
   cover "contracted axes of several runs" (rk > 1);
   let windowed = List.mem "windowed" c.views in
   cover "windows with contracted axes of several runs, in chain order"
-    (windowed && rk > 1 && c.order = Chain);
+    (windowed && rk > 1 && order c = Chain);
   cover "windows with rows of several runs, in chain order"
-    (windowed && rr > 1 && c.order = Chain);
+    (windowed && rr > 1 && order c = Chain);
   cover "windows with contracted axes of several runs, in lane order"
-    (windowed && rk > 1 && c.order = Lane);
+    (windowed && rk > 1 && order c = Lane);
   cover "windows with rows of several runs, in lane order"
-    (windowed && rr > 1 && c.order = Lane);
+    (windowed && rr > 1 && order c = Lane);
   let complex = is_complex c.acc in
   let real (A.Any x) = not (is_complex (D.Any (A.dtype x))) in
   cover "complex over rows of several runs" (complex && rr > 1);
@@ -1331,7 +1330,7 @@ let law_declined (b : Support.backend) c =
   | A.Done -> cover "computed" true
   | r -> failf "contract answered %a" Nx_array_support.pp_answer r
 
-(* The order given *)
+(* The order *)
 
 (* [x] rounded to float32. *)
 let round32 x = Int32.float_of_bits (Int32.bits_of_float x)
@@ -1349,11 +1348,14 @@ let fma32 a b c =
 (* float32's addition, rounded once through a double for the same reason. *)
 let add32 x y = round32 (x +. y)
 
-(* [o]'s result in the order given, with [fma] and [add] of the accumulator:
-   chain order, one fused chain from init or +0; or lane order, blocks of
-   1024 terms in 16 lanes, summed by trees, then init, with no term init as
-   it is. *)
-let ordered ~chain ~fma ~add o =
+(* [o]'s result in [acc], in chain order where [chain], one fused chain
+   from init or +0; or in lane order, blocks of 1024 terms in 16 lanes,
+   summed by trees, then init, with no term init as it is. *)
+let ordered ~chain acc o =
+  let fma, add =
+    if part_of acc = D.Any D.Float32 then (fma32, add32)
+    else (Float.fma, ( +. ))
+  in
   let k = Array.length o.av in
   if chain then begin
     let acc = ref (Option.value ~default:0. o.init) in
@@ -1390,6 +1392,8 @@ let ordered ~chain ~fma ~add o =
     match o.init with None -> sum | Some i -> if n = 0 then i else add i sum
   end
 
+(* Each output adds its products in the order nx_cpu.mli states for its
+   shape ({!order}). *)
 let law_order b c =
   covers c;
   match run b c with
@@ -1397,12 +1401,7 @@ let law_order b c =
       failf "nx.cpu declined a case nx_cpu.mli says it computes"
   | None -> cover "declined" true
   | Some y ->
-      let chain = c.order = Chain in
-      let fma, add =
-        if part_of c.acc = D.Any D.Float32 then (fma32, add32)
-        else (Float.fma, ( +. ))
-      in
-      let want = ordered ~chain ~fma ~add in
+      let want = ordered ~chain:(order c = Chain) c.acc in
       equal (list string) []
         (wrong c y (fun o x ->
              let w = want o in
@@ -1498,13 +1497,13 @@ let quad_examples =
   in
   List.concat_map
     (fun (acc, d, low, top) ->
-      let case order e vb =
+      let case e vb =
         let ra, _, ry = ranks e in
-        make ~order ~acc ~out:acc e (d, plain ra) (d, vb) (Some (plain ry)) 3
+        make ~acc ~out:acc e (d, plain ra) (d, vb) (Some (plain ry)) 3
       in
       (* [case] with a and b all [low], init all [top]. *)
-      let extreme order e vb =
-        let c = case order e vb in
+      let extreme e vb =
+        let c = case e vb in
         let fill v (A.Any x as a) =
           let s = shape_of a in
           let vs = A.Any (A.of_array D.Int64 s (Array.make (total s) v)) in
@@ -1515,42 +1514,42 @@ let quad_examples =
         { c with a = fill low c.a; b = fill low c.b; init = Option.map (fill top) c.init }
       in
       (* [case] with b stored as viewed. *)
-      let stored order e vb =
-        let c = case order e vb in
+      let stored e vb =
+        let c = case e vb in
         let (A.Any b) = c.b in
         { c with b = A.Any (A.copy b) }
       in
       [
-        stored Chain ([||], [| 130 |], [| 40 |], [| 2052 |]) (by_rows 2);
-        case Chain ([||], [| axpy_rows + 1 |], [| 50 |], [| 64 |]) (plain 2);
-        case Lane ([||], [| 9 |], [| 33 |], [| 7 |]) (by_rows 2);
-        (let c = case Chain ([||], [| 5 |], [| 9 |], [| 64 |]) (by_rows 2) in
+        stored ([||], [| 130 |], [| 40 |], [| 2052 |]) (by_rows 2);
+        case ([||], [| axpy_rows + 1 |], [| 50 |], [| 64 |]) (plain 2);
+        case ([||], [| 9 |], [| 33 |], [| 7 |]) (by_rows 2);
+        (let c = case ([||], [| 5 |], [| 9 |], [| 64 |]) (by_rows 2) in
          { c with a = shifted c.a; b = shifted c.b });
-        stored Chain ([| 0 |], [| 3 |], [| 5 |], [| 4 |]) (by_rows 3);
-        stored Chain ([| 2 |], [| 3 |], [| 7 |], [| 20 |]) (by_rows 3);
-        stored Chain ([||], [| 3 |], [| 6 |], [| 44 |]) (by_rows 2);
-        stored Lane ([||], [| quad_rows |], [| 33 |], [| 64 |]) (by_rows 2);
-        case Chain ([||], [| 2 |], [| 1 |], [| 7 |]) (plain 2);
-        stored Chain ([||], [| 40 |], [| 3 |], [| 20 |]) (by_rows 2);
-        stored Lane ([| 2 |], [| 5 |], [| 2 |], [| 8 |]) (by_rows 3);
-        case Lane ([| 2 |], [| 3 |], [| 70 |], [| 130 |]) (plain 3);
-        case Chain ([||], [| quad_mr |], [| 70 |], [| 130 |]) (plain 2);
-        case Chain ([||], [| axpy_many |], [| axpy_wide |], [| axpy_deep |]) (plain 2);
-        case Chain ([||], [| axpy_many + 1 |], [| axpy_wide |],
+        stored ([| 0 |], [| 3 |], [| 5 |], [| 4 |]) (by_rows 3);
+        stored ([| 2 |], [| 3 |], [| 7 |], [| 20 |]) (by_rows 3);
+        stored ([||], [| 3 |], [| 6 |], [| 44 |]) (by_rows 2);
+        stored ([||], [| quad_rows |], [| 33 |], [| 64 |]) (by_rows 2);
+        case ([||], [| 2 |], [| 1 |], [| 7 |]) (plain 2);
+        stored ([||], [| 40 |], [| 3 |], [| 20 |]) (by_rows 2);
+        stored ([| 2 |], [| 5 |], [| 2 |], [| 8 |]) (by_rows 3);
+        case ([| 2 |], [| 3 |], [| 70 |], [| 130 |]) (plain 3);
+        case ([||], [| quad_mr |], [| 70 |], [| 130 |]) (plain 2);
+        case ([||], [| axpy_many |], [| axpy_wide |], [| axpy_deep |]) (plain 2);
+        case ([||], [| axpy_many + 1 |], [| axpy_wide |],
                     [| axpy_cached / axpy_wide |]) (plain 2);
-        case Chain ([||], [| 64 |], [| axpy_wide |], [| axpy_deep |]) (plain 2);
-        case Chain ([||], [| axpy_few |], [| 600 |], [| 20 |]) (plain 2);
-        case Chain ([||], [| 64 |], [| 64 |], [| 64 |]) (plain 2);
-        extreme Chain ([||], [| axpy_few |], [| 40 |], [| 2048 |]) (plain 2);
-        extreme Chain ([||], [| quad_mr - 1 |], [| 100 |], [| 70 |]) (plain 2);
-        extreme Chain ([||], [| quad_mr |], [| 100 |], [| 70 |]) (plain 2);
-        case Chain ([||], [| quad_mr |], [| 1024 |], [| 12 |]) (plain 2);
-        case Chain ([||], [| axpy_rows + 1 |], [| 1024 |], [| 12 |]) (plain 2);
-        (let c = stored Chain ([||], [| 2 |], [| 3 |], [| 4096 |]) (by_rows 2) in
+        case ([||], [| 64 |], [| axpy_wide |], [| axpy_deep |]) (plain 2);
+        case ([||], [| axpy_few |], [| 600 |], [| 20 |]) (plain 2);
+        case ([||], [| 64 |], [| 64 |], [| 64 |]) (plain 2);
+        extreme ([||], [| axpy_few |], [| 40 |], [| 2048 |]) (plain 2);
+        extreme ([||], [| quad_mr - 1 |], [| 100 |], [| 70 |]) (plain 2);
+        extreme ([||], [| quad_mr |], [| 100 |], [| 70 |]) (plain 2);
+        case ([||], [| quad_mr |], [| 1024 |], [| 12 |]) (plain 2);
+        case ([||], [| axpy_rows + 1 |], [| 1024 |], [| 12 |]) (plain 2);
+        (let c = stored ([||], [| 2 |], [| 3 |], [| 4096 |]) (by_rows 2) in
          { c with a = shifted c.a });
-        extreme Chain ([||], [| 2 |], [| axpy_cols + 44 |], [| 37 |]) (plain 2);
-        extreme Chain ([||], [| axpy_group + 1 |], [| 40 |], [| 33 |]) (plain 2);
-        extreme Chain ([||], [| (2 * axpy_group) + 3 |], [| 20 |], [| 18 |]) (plain 2);
+        extreme ([||], [| 2 |], [| axpy_cols + 44 |], [| 37 |]) (plain 2);
+        extreme ([||], [| axpy_group + 1 |], [| 40 |], [| 33 |]) (plain 2);
+        extreme ([||], [| (2 * axpy_group) + 3 |], [| 20 |], [| 18 |]) (plain 2);
       ])
     D.[ (Any Int32, Any Int8, -128L, 0x7FFFFFFFL);
         (Any Uint32, Any Uint8, 255L, 0xFFFFFFFFL) ]
@@ -1758,27 +1757,25 @@ let law_computes b c =
   equal ~msg:"computed" bool (cpu_computes c) (Option.is_some (run b c))
 
 (* With no products nx.cpu gives each output init's bits, -0 and a
-   signalling NaN included, below 64 outputs and from 64, in either order:
+   signalling NaN included, below 64 outputs and from 64, in both orders:
    [ud] is an unsigned dtype of [fd]'s width, [bits] init's values in it. *)
 let empty (type u ue f fe) (b : Support.backend) (ud : (u, ue) D.t)
     (fd : (f, fe) D.t) ty (bits : u array) () =
   let module K = (val b.kernels) in
-  let at order (m, n) =
+  let at (m, n) =
     let want = Array.init (m * n) (fun i -> bits.(i mod Array.length bits)) in
     let init = Option.get (A.bitcast fd (A.of_array ud [| m; n |] want)) in
     let a = A.create Rig.host fd [| m; 0 |] and b = A.create Rig.host fd [| 0; n |] in
     let dst = A.create Rig.host fd [| m; n |] in
     (match
-       K.contract ~order ~batch:[||] ~contracting:[| (1, 0) |] ~segments:None
+       K.contract ~batch:[||] ~contracting:[| (1, 0) |] ~segments:None
          ~acc:(D.Any fd) ~dst ~init:(Some init) (plain a) (plain b)
      with
     | A.Done -> ()
     | r -> failf "contract answered %a" Nx_array_support.pp_answer r);
     equal (array ty) want (A.to_array (Option.get (A.bitcast ud dst)))
   in
-  List.iter
-    (fun o -> List.iter (at o) [ (1, 3); (8, 24) ])
-    Nx_kernel.[ Chain; Lane ]
+  List.iter at [ (1, 3); (8, 24) ]
 
 (* On a thread that has run no product, an empty product gives +0, or
    init's bits, in chain order on the few-rows path and the chain path, and
@@ -1786,7 +1783,7 @@ let empty (type u ue f fe) (b : Support.backend) (ud : (u, ue) D.t)
    for it. *)
 let fresh (b : Support.backend) () =
   let module K = (val b.kernels) in
-  let at order (m, n) init =
+  let at (m, n) init =
     let a = A.create Rig.host D.Float32 [| m; 0 |] in
     let b = A.create Rig.host D.Float32 [| 0; n |] in
     let dst = A.of_array D.Float32 [| m; n |] (Array.make (m * n) 7.) in
@@ -1795,7 +1792,7 @@ let fresh (b : Support.backend) () =
     let call () =
       try
         Ok
-          (K.contract ~order ~batch:[||] ~contracting:[| (1, 0) |]
+          (K.contract ~batch:[||] ~contracting:[| (1, 0) |]
              ~segments:None ~acc:(D.Any D.Float32) ~dst ~init (plain a)
              (plain b))
       with e -> Error e
@@ -1808,10 +1805,7 @@ let fresh (b : Support.backend) () =
     equal (array int32) (Array.make (m * n) want)
       (Array.map Int32.bits_of_float (A.to_array dst))
   in
-  List.iter
-    (fun o ->
-      List.iter (fun mn -> at o mn false; at o mn true) [ (8, 8); (200, 200) ])
-    Nx_kernel.[ Chain; Lane ]
+  List.iter (fun mn -> at mn false; at mn true) [ (1, 3); (8, 8); (200, 200) ]
 
 (* A contraction answers Shape_mismatch where Shape.contract answers
    Error for its operands, or where dst's shape is not the result's, and
@@ -1828,7 +1822,7 @@ let test_misfits (b : Support.backend) () =
   let refused ~msg ?(batch : _ iarray = [||]) contracting dst a b' =
     let before = A.to_array (to64 (host (A.Any dst))) in
     equal ~msg answer A.Shape_mismatch
-      (K.contract ~order:Chain ~batch ~contracting ~segments:None
+      (K.contract ~batch ~contracting ~segments:None
          ~acc:(D.Any D.Float32) ~dst ~init:None (plain a) (plain b'));
     equal ~msg:(msg ^ ": untouched") (array float_exact) before
       (A.to_array (to64 (host (A.Any dst))))
@@ -2065,8 +2059,8 @@ let ratio_of k =
     let rec down d = if k mod d = 0 then d else down (d - 1) in
     down (min k 64)
 
-(* Products either side of lane order's blocks of 1024 and nx's cut at
-   4096, in both orders and accs: a float32 [2; k] times bfloat16 [k; 3],
+(* Products either side of lane order's blocks of 1024 and gemm.c's of
+   4096, in both accs: a float32 [2; k] times bfloat16 [k; 3],
    each scaled in blocks along k; and every regime of both accs, which
    reaches each of gemm.c's paths, its operands scaled in turn in 2-D
    blocks, stepped, broadcast or contiguous: a and b, a alone, b alone. *)
@@ -2078,19 +2072,16 @@ let scaled_examples =
   let spec ?(lies = Contiguous) kind extents seed =
     Some { kind; extents; lies; specials = true; seed }
   in
-  let along (order, acc) k =
+  let along acc k =
     let c =
-      make ~order ~acc ~out:acc ([||], [| 2 |], [| 3 |], [| k |])
+      make ~acc ~out:acc ([||], [| 2 |], [| 3 |], [| k |])
         (D.Any D.Float32, plain 2) (D.Any D.Bfloat16, plain 2) None k
     in
     let q = k / ratio_of k in
     (c, spec (Some (D.Any D.Float16)) [| 2; q |] 1, spec None [| q; 3 |] 2)
   in
   let ks = [ 1; 1023; 1024; 1025; 4095; 4096; 4097 ] in
-  let pairs =
-    Nx_kernel.[ (Chain, D.Any D.Float32); (Lane, D.Any D.Float64);
-                (Lane, D.Any D.Float32); (Chain, D.Any D.Float64) ]
-  in
+  let accs = D.[ Any Float32; Any Float64 ] in
   let blocks x =
     Array.map
       (fun e ->
@@ -2108,14 +2099,14 @@ let scaled_examples =
     | 1 -> (c, sa, None)
     | _ -> (c, None, sb)
   in
-  List.concat_map (fun p -> List.map (along p) ks) pairs
+  List.concat_map (fun acc -> List.map (along acc) ks) accs
   @ List.mapi regime (regimes (D.Any D.Float32) @ regimes (D.Any D.Float64))
 
 let scaled_covers (c, sa, sb) =
   cover "float32" (c.acc = D.Any D.Float32);
   cover "float64" (c.acc = D.Any D.Float64);
-  cover "chain order" (c.order = Chain);
-  cover "lane order" (c.order = Lane);
+  cover "chain order" (order c = Chain);
+  cover "lane order" (order c = Lane);
   let specs =
     List.filter_map
       (fun (x, s) -> Option.map (fun s -> (shape_of x, s)) s)
@@ -2136,7 +2127,7 @@ let scaled_covers (c, sa, sb) =
   cover "groups of several runs" (rb > 1 || rr > 1 || rc > 1 || rk > 1);
   let m, n = rows_cols c in
   cover "lane order in passes: more than 8 rows and columns"
-    (per_batch c > 0 && c.order = Lane && m > 8 && n > 8);
+    (per_batch c > 0 && order c = Lane && m > 8 && n > 8);
   (* gemm.c reads an operand of acc's dtype in place along a's last
      contracted axis or b's last column or contracted axis where it steps
      by 1 there, unless it is scaled. *)
@@ -2211,7 +2202,6 @@ let plain_view r =
    weight is, or stored [k; n]; its codes from the second of a byte where
    [mx_odd]; a float4 too where [mx_a], scaled likewise along k. *)
 type mx = {
-  mx_order : Nx_kernel.order;
   mx_acc : D.any;
   mx_m : int;
   mx_n : int;
@@ -2267,7 +2257,7 @@ let mx_case x =
   let odd = if x.mx_odd then 1 else 0 in
   let b = float4_b ~along:x.mx_along ~odd k n (x.mx_seed + 1) in
   let c =
-    { order = x.mx_order; batch = [||]; contracting = [| (1, 0) |];
+    { batch = [||]; contracting = [| (1, 0) |];
       acc = x.mx_acc; a; b; init = None; out = x.mx_acc; views = [] }
   in
   let blocks = if k = 0 then 0 else k / x.mx_ratio in
@@ -2281,18 +2271,17 @@ let mx_case x =
 
 let pp_mx ppf x = pp_scaled ppf (mx_case x)
 
-let mx_of ?(order = Nx_kernel.Lane) ?(acc = D.Any D.Float32) ?(ratio = 32)
+let mx_of ?(acc = D.Any D.Float32) ?(ratio = 32)
     ?(whole = false) ?(along = true) ?(odd = false) ?(f4_a = false) ?kind
     ?(seed = 1) m n k =
-  { mx_order = order; mx_acc = acc; mx_m = m; mx_n = n; mx_k = k;
+  { mx_acc = acc; mx_m = m; mx_n = n; mx_k = k;
     mx_ratio = ratio; mx_whole = whole; mx_along = along; mx_odd = odd;
     mx_a = f4_a; mx_kind = kind; mx_seed = seed }
 
 let mx_draws =
   let open Gen in
   with_pp pp_mx
-    (let* order = of_list Nx_kernel.[ Chain; Lane ] in
-     let* acc = of_list ~pp:pp_dtype D.[ Any Float32; Any Float64 ] in
+    (let* acc = of_list ~pp:pp_dtype D.[ Any Float32; Any Float64 ] in
      let* k = of_list [ 0; 32; 64; 96; 1024; 1056; 2048; 4096; 4128 ] in
      let* ratio =
        if k = 0 then constant 32
@@ -2308,33 +2297,31 @@ let mx_draws =
            (1, map Option.some (of_list ~pp:pp_dtype D.[ Any Float16; Any Float32 ])) ]
      in
      let+ seed = int in
-     mx_of ~order ~acc ~ratio ~whole ~along ~odd ~f4_a ?kind ~seed m n k)
+     mx_of ~acc ~ratio ~whole ~along ~odd ~f4_a ?kind ~seed m n k)
 
 (* The product of a token by a weight, either side of lane order's blocks
-   and nx's cut, in both orders and accs; a weight read along its columns;
-   codes from inside a byte; float4 a; Value scales; the chain path, past
-   the few rows; and the empty and one-element products. *)
+   and gemm.c's, in both accs; a weight read along its columns;
+   codes from inside a byte; float4 a; Value scales; chain order over 13
+   columns; the chain path, past the few rows; and the empty and
+   one-element products. *)
 let mx_examples =
-  let both =
-    Nx_kernel.[ (Lane, D.Any D.Float32); (Chain, D.Any D.Float64);
-                (Chain, D.Any D.Float32); (Lane, D.Any D.Float64) ]
-  in
   List.concat_map
-    (fun (order, acc) ->
-      List.map (fun k -> mx_of ~order ~acc 1 24 k) [ 32; 1024; 1056; 4096; 4128 ]
-      @ [ mx_of ~order ~acc ~along:false ~odd:true 3 17 1056;
-          mx_of ~order ~acc ~odd:true ~ratio:64 2 9 4096;
-          mx_of ~order ~acc ~f4_a:true ~whole:true 5 7 2048;
-          mx_of ~order ~acc ~kind:(D.Any D.Float16) 4 33 1024;
-          mx_of ~order ~acc 1 1 32; mx_of ~order ~acc 0 5 64;
-          mx_of ~order ~acc 3 0 64; mx_of ~order ~acc 2 3 0 ])
-    both
-  @ [ mx_of ~order:Chain ~acc:(D.Any D.Float32) 260 264 1056;
-      mx_of ~order:Chain ~acc:(D.Any D.Float64) ~along:false 260 264 1056 ]
+    (fun acc ->
+      List.map (fun k -> mx_of ~acc 1 24 k) [ 32; 1024; 1056; 4096; 4128 ]
+      @ [ mx_of ~acc ~along:false ~odd:true 3 17 1056;
+          mx_of ~acc ~odd:true ~ratio:64 2 9 4096;
+          mx_of ~acc ~f4_a:true ~whole:true 5 7 2048;
+          mx_of ~acc ~kind:(D.Any D.Float16) 4 33 1024;
+          mx_of ~acc 9 13 1056;
+          mx_of ~acc 1 1 32; mx_of ~acc 0 5 64;
+          mx_of ~acc 3 0 64; mx_of ~acc 2 3 0 ])
+    D.[ Any Float32; Any Float64 ]
+  @ [ mx_of ~acc:(D.Any D.Float32) 260 264 1056;
+      mx_of ~acc:(D.Any D.Float64) ~along:false 260 264 1056 ]
 
 let mx_covers x (c, _, _) =
   cover "every float4 code" (f4_codes c.b = 16);
-  let lane = x.mx_order = Lane and products = x.mx_m * x.mx_n > 0 && x.mx_k > 0 in
+  let lane = order c = Lane and products = x.mx_m * x.mx_n > 0 && x.mx_k > 0 in
   cover "float32" (x.mx_acc = D.Any D.Float32);
   cover "float64" (x.mx_acc = D.Any D.Float64);
   cover "lane order, b read along k" (lane && products && x.mx_along);
@@ -2410,11 +2397,11 @@ let mx_layouts =
   List.concat_map
     (fun (name, batch, contracting, a, b, extents) ->
       List.map
-        (fun (order, acc) ->
-          ( { order; batch; contracting; acc; a; b; init = None; out = acc;
+        (fun acc ->
+          ( { batch; contracting; acc; a; b; init = None; out = acc;
               views = [ name ] },
             None, codes extents ))
-        Nx_kernel.[ (Lane, D.Any D.Float32); (Chain, D.Any D.Float64) ])
+        D.[ Any Float32; Any Float64 ])
     layouts
 
 let law_mx_layouts b ((c, _, _) as x) =
@@ -2479,7 +2466,7 @@ let test_scale_misfits (b : Support.backend) () =
     List.iter
       (fun acc ->
         equal ~msg answer A.Shape_mismatch
-          (K.contract ~order:Chain ~batch:[||] ~contracting:[| (1, 0) |]
+          (K.contract ~batch:[||] ~contracting:[| (1, 0) |]
              ~segments:None ~acc ~dst ~init:None
              (op (arr [| 2; 4 |]) sa)
              (op (arr [| 4; 3 |]) sb));
@@ -2508,10 +2495,10 @@ let test_scaled_empty (b : Support.backend) () =
   let codes =
     A.expect D.Uint8 (on b (A.Any (A.of_array D.Uint8 [| 2; 1; 1 |] [| 127; 127 |])))
   in
-  let at order init =
+  let at init =
     let dst = arr [| 2; 3 |] 7. in
     (match
-       K.contract ~order ~batch:[||] ~contracting:[| (1, 0); (2, 1) |]
+       K.contract ~batch:[||] ~contracting:[| (1, 0); (2, 1) |]
          ~segments:None ~acc:(D.Any D.Float64) ~dst
          ~init:(Option.map (arr [| 2; 3 |]) init)
          { array = A.Any (arr [| 2; big; 0 |] 1.); scale = Some (Exponent codes) }
@@ -2522,7 +2509,8 @@ let test_scaled_empty (b : Support.backend) () =
     equal (array float_exact) (Array.make 6 (Option.value init ~default:0.))
       (A.to_array (to64 (host (A.Any dst))))
   in
-  List.iter (fun o -> at o None; at o (Some (-2.5))) Nx_kernel.[ Chain; Lane ]
+  at None;
+  at (Some (-2.5))
 
 (* Segments
 
@@ -2656,10 +2644,20 @@ let free side c rank =
 
 let before l x = List.length (List.filter (fun i -> i < x) l)
 
-(* [s]'s result by unsegmented contractions of views: each row in a group
-   alone with its group of b, or each group's window alone, of the
-   operands scaled on the host; init as acc holds it, or +0, at every
-   other output. *)
+(* nx.cpu's order for [s], chosen once for the call from its rows, columns
+   and depth, [Rows]' columns those of one index along [b_axis]
+   (nx_cpu.mli). *)
+let seg_order s =
+  let c = s.sg in
+  let m, n = rows_cols c and _, k, _ = sizes c in
+  match s.cut with
+  | Cut_rows _ when s.g > 0 -> order_of c.acc m (n / s.g) k
+  | Cut_rows _ | Cut_pair _ -> order_of c.acc m n k
+
+(* [s]'s result by views of the operands scaled on the host: each row in a
+   group alone with its group of b, or each group's window alone, summed
+   in [s]'s order ({!ordered}), an integer one by an unsegmented
+   contraction; init as acc holds it, or +0, at every other output. *)
 let seg_reference (b : Support.backend) s sa sb =
   let module K = (val b.kernels) in
   let c = s.sg in
@@ -2673,17 +2671,34 @@ let seg_reference (b : Support.backend) s sa sb =
   in
   let dst = cast_to c.out start in
   let nb = Array.length c.batch in
+  let chain = seg_order s = Chain in
+  let model a b init =
+    let y, each = outputs { c with a; b; init; views = [] } in
+    let parts = if is_complex c.acc then 2 else 1 in
+    let v = Array.init parts (fun _ -> Array.make (total y) 0.) in
+    each (fun _ k parts ->
+        Array.iteri (fun p o -> v.(p).(k) <- ordered ~chain c.acc o) parts);
+    if Array.length v = 1 then A.Any (A.of_array D.Float64 y v.(0))
+    else
+      A.Any
+        (A.of_array D.Complex128 y
+           (Array.map2 (fun re im -> { Complex.re; im }) v.(0) v.(1)))
+  in
   let call (A.Any d) a b init =
-    let init = Option.map (A.expect (A.dtype d)) init in
-    match
-      K.contract ~order:c.order ~batch:(Iarray.of_array c.batch)
-        ~contracting:(Iarray.of_array c.contracting) ~segments:None ~acc:c.acc
-        ~dst:d ~init
-        { array = a; scale = None }
-        { array = b; scale = None }
-    with
-    | A.Done -> ()
-    | r -> failf "an unsegmented contraction answered %a" Nx_array_support.pp_answer r
+    if not (is_integer c.acc) then cast_into d (model a b init)
+    else
+      let init = Option.map (A.expect (A.dtype d)) init in
+      match
+        K.contract ~batch:(Iarray.of_array c.batch)
+          ~contracting:(Iarray.of_array c.contracting) ~segments:None
+          ~acc:c.acc ~dst:d ~init
+          { array = a; scale = None }
+          { array = b; scale = None }
+      with
+      | A.Done -> ()
+      | r ->
+          failf "an unsegmented contraction answered %a"
+            Nx_array_support.pp_answer r
   in
   let along side beta = List.init nb (fun k -> (side c.batch.(k), beta.(k), 1)) in
   let at shift beta = List.init nb (fun k -> (k + shift, beta.(k), 1)) in
@@ -2763,9 +2778,9 @@ let draw_offsets r g n =
 (* The segmented contraction of the extents [e] as [make] makes it, cut by
    [cut], positions among [e]'s rows and columns or its contracted axes,
    with an init of the segmented result's shape through [vi]. *)
-let seg_make ~order ~acc ~out ((batch, _, _, con) as e) (da, va) (db, vb) vi
+let seg_make ~acc ~out ((batch, _, _, con) as e) (da, va) (db, vb) vi
     ~cut ~g ?(stepped = false) offs seed =
-  let c = make ~order ~acc ~out e (da, va) (db, vb) None seed in
+  let c = make ~acc ~out e (da, va) (db, vb) None seed in
   let nb = Array.length batch and nk = Array.length con in
   let ia = inverse va.perm and ib = inverse vb.perm in
   let cut =
@@ -2792,8 +2807,7 @@ let seg_draws =
     Array.concat [ Array.sub x 0 i; [| v |]; Array.sub x i (Array.length x - i) ]
   in
   with_pp pp_seg
-    (let* order = of_list Nx_kernel.[ Chain; Lane ] in
-     let* acc =
+    (let* acc =
        frequency
          [ (4, of_list ~pp:pp_dtype D.[ Any Float32; Any Float64 ]);
            (1, of_list ~pp:pp_dtype D.[ Any Complex64; Any Int32 ]) ]
@@ -2834,7 +2848,7 @@ let seg_draws =
      let along = match cut with `Rows (ri, _) -> rows.(ri) | `Pair p -> con.(p) in
      let offs = Array.init (total batch) (fun _ -> draw_offsets r g along) in
      let s =
-       seg_make ~order ~acc ~out e (da, va) (db, vb)
+       seg_make ~acc ~out e (da, va) (db, vb)
          (if with_init then Some vi else None)
          ~cut ~g ~stepped offs seed
      in
@@ -2855,11 +2869,11 @@ let codes_of extents seed =
 (* Experts: [t] bfloat16 tokens of [k] by float4 weights [g; n; k] of [g]
    experts, stored along k, scaled in blocks of 32 along it as MXFP4's
    are, the tokens cut into the experts' groups by [o]. *)
-let experts ?(order = Nx_kernel.Lane) ?(acc = D.Any D.Float32) t g n k o =
+let experts ?(acc = D.Any D.Float32) t g n k o =
   let a = operand (D.Any D.Bfloat16) [| t; k |] 0 (plain_view 2) 7 in
   let b = operand (D.Any D.Float4_e2m1fn) [| g; n; k |] 0 (plain_view 3) 8 in
   let c =
-    { order; batch = [||]; contracting = [| (1, 2) |]; acc; a; b; init = None;
+    { batch = [||]; contracting = [| (1, 2) |]; acc; a; b; init = None;
       out = acc; views = [] }
   in
   { sg = c; cut = Cut_rows { a_axis = 0; b_axis = 0 }; g; offs = [| o |];
@@ -2867,12 +2881,12 @@ let experts ?(order = Nx_kernel.Lane) ?(acc = D.Any D.Float32) t g n k o =
 
 (* [m] bfloat16 rows of [k] by float4 [k; n] stored along k, scaled in
    blocks of 32 along it, k cut into windows by [o]. *)
-let windows ?(order = Nx_kernel.Lane) ?(acc = D.Any D.Float32) m n k o =
+let windows ?(acc = D.Any D.Float32) m n k o =
   let a = operand (D.Any D.Bfloat16) [| m; k |] 0 (plain_view 2) 3 in
   let along = { (plain_view 2) with stored = [| 1; 0 |] } in
   let b = operand (D.Any D.Float4_e2m1fn) [| k; n |] 0 along 4 in
   let c =
-    { order; batch = [||]; contracting = [| (1, 0) |]; acc; a; b; init = None;
+    { batch = [||]; contracting = [| (1, 0) |]; acc; a; b; init = None;
       out = acc; views = [] }
   in
   { sg = c; cut = Cut_pair 0; g = Array.length o - 1; offs = [| o |];
@@ -2882,9 +2896,8 @@ let windows ?(order = Nx_kernel.Lane) ?(acc = D.Any D.Float32) m n k o =
    of experts and windows of k either side of nx's block, within and on
    the scales' blocks. *)
 let seg_examples =
-  let open Nx_kernel in
   let f32 = D.Any D.Float32 and f64 = D.Any D.Float64 in
-  let ex ?(order = Lane) ?(acc = f32) ?out ?(da = acc) ?(db = acc) ?(view = false)
+  let ex ?(acc = f32) ?out ?(da = acc) ?(db = acc) ?(view = false)
       ?(init = false) ?stepped ?sa ?sb ~cut ~g e offs =
     let (batch, _, _, _) = e in
     let nb = Array.length batch in
@@ -2898,7 +2911,7 @@ let seg_examples =
     in
     let out = Option.value out ~default:acc in
     let s =
-      seg_make ~order ~acc ~out e (da, v ra) (db, v rb)
+      seg_make ~acc ~out e (da, v ra) (db, v rb)
         (if init then Some (v ry) else None)
         ~cut ~g ?stepped offs 11
     in
@@ -2912,10 +2925,16 @@ let seg_examples =
   [
     ex ~init:true ~cut:(`Rows (0, 0)) ~g:3 ([||], [| 20 |], [| 3; 4 |], [| 7 |])
       [| [| 2; 5; 5; 18 |] |];
-    ex ~order:Chain ~acc:f64 ~view:true ~stepped:true ~cut:(`Rows (0, 0)) ~g:2
+    (* Calls in chain order and in lane order by their depth whose groups
+       alone would sum in the other. *)
+    ex ~cut:(`Rows (0, 0)) ~g:3 ([||], [| 20 |], [| 3; 5 |], [| 7 |])
+      [| [| 2; 5; 5; 18 |] |];
+    ex ~cut:(`Pair 0) ~g:2 ([||], [| 8 |], [| 8 |], [| 8200 |])
+      [| [| 0; 100; 8200 |] |];
+    ex ~acc:f64 ~view:true ~stepped:true ~cut:(`Rows (0, 0)) ~g:2
       ([| 2 |], [| 40 |], [| 2 |], [| 5; 3 |])
       [| [| 0; 3; 40 |]; [| 0; 40; 40 |] |];
-    ex ~order:Chain ~out:(D.Any D.Float16) ~init:true ~sa:2 ~cut:(`Rows (1, 0)) ~g:4
+    ex ~out:(D.Any D.Float16) ~init:true ~sa:2 ~cut:(`Rows (1, 0)) ~g:4
       ([||], [| 2; 9 |], [| 4 |], [| 1030 |])
       [| [| 5; 2; 9; 7; 3 |] |];
     ex ~acc:f64 ~sb:2 ~cut:(`Rows (0, 1)) ~g:5 ([||], [| 6 |], [| 2; 5 |], [| 4 |])
@@ -2937,10 +2956,10 @@ let seg_examples =
       [| [| 1; 1; 4 |]; [| 0; 2; 5 |] |];
     ex ~cut:(`Pair 0) ~g:3 ([||], [| 2 |], [| 3 |], [| 4200 |])
       [| [| 10; 1000; 4097; 4200 |] |];
-    ex ~order:Chain ~acc:f64 ~init:true ~view:true ~sa:3 ~sb:3 ~cut:(`Pair 1) ~g:2
+    ex ~acc:f64 ~init:true ~view:true ~sa:3 ~sb:3 ~cut:(`Pair 1) ~g:2
       ([| 3 |], [| 2 |], [| 2; 2 |], [| 3; 30 |])
       [| [| 0; 0; 30 |]; [| 0; 1; 30 |]; [| 31; -1; 2 |] |];
-    ex ~order:Chain ~out:(D.Any D.Bfloat16) ~init:true ~cut:(`Pair 0) ~g:0
+    ex ~out:(D.Any D.Bfloat16) ~init:true ~cut:(`Pair 0) ~g:0
       ([||], [| 2 |], [| 2 |], [| 5 |]) [| [| 5 |] |];
     ex ~cut:(`Pair 0) ~g:3 ([||], [| 2 |], [| 3 |], [| 6 |])
       [| [| 1; max_int; 3; max_int |] |];
@@ -2948,11 +2967,11 @@ let seg_examples =
       ([||], [| 3 |], [| 2 |], [| 9 |])
       [| [| 0; 4; 4; 9 |] |];
     experts 37 5 9 1056 [| 0; 7; 7; 20; 36; 37 |];
-    experts ~order:Chain ~acc:f64 60 4 6 64 [| 0; 3; 43; 43; 50 |];
-    experts ~order:Chain 1 4 300 4096 [| 0; 0; 1; 1; 1 |];
+    experts ~acc:f64 60 4 6 64 [| 0; 3; 43; 43; 50 |];
+    experts 1 4 300 4096 [| 0; 0; 1; 1; 1 |];
     windows 3 5 4160 [| 0; 16; 1040; 4100; 4160 |];
-    windows ~order:Chain ~acc:f64 3 5 4160 [| 0; 32; 1056; 4128; 4160 |];
-    windows ~order:Chain 2 4 4160 [| 0; 16; 1040; 4100; 4160 |];
+    windows ~acc:f64 3 5 4160 [| 0; 32; 1056; 4128; 4160 |];
+    windows 2 4 4160 [| 0; 16; 1040; 4100; 4160 |];
     windows ~acc:f64 2 4 4160 [| 0; 32; 1056; 4128; 4160 |];
   ]
 
@@ -2965,8 +2984,6 @@ let seg_covers s =
   cover "float64" (c.acc = D.Any D.Float64);
   cover "a complex accumulator" (is_complex c.acc);
   cover "an integer accumulator" (is_integer c.acc);
-  cover "chain order" (c.order = Chain);
-  cover "lane order" (c.order = Lane);
   let some f = Array.exists f s.offs in
   let groups o f = List.exists (fun e -> f e (members s o e)) (List.init s.g Fun.id) in
   cover "no group" (s.g = 0);
@@ -3016,10 +3033,16 @@ let seg_covers s =
   in
   cover "a group of rows from within a scale's block"
     (row_ratio > 1 && starts (fun lo _ -> lo mod row_ratio <> 0));
-  cover "windows on a scale's blocks" (ratio >= 32 && starts (fun lo _ -> lo > 0 && lo mod ratio = 0))
+  cover "windows on a scale's blocks" (ratio >= 32 && starts (fun lo _ -> lo > 0 && lo mod ratio = 0));
+  let float = not (is_integer c.acc) and chain = seg_order s = Chain in
+  cover "a float call in chain order" (float && chain);
+  cover "a float call in lane order" (float && not chain);
+  let few _ m = m <> [] && List.length m <= 4 in
+  cover "a group of 4 rows or fewer in a call in chain order"
+    (rows && float && chain && some (fun o -> groups o few))
 
-(* A segmented contraction has the bits of its unsegmented contractions of
-   views, a row or a group at a time (seg_reference). *)
+(* Each output of a segmented contraction adds its group's products in the
+   order nx.cpu chooses for the whole call (seg_reference). *)
 let law_segments (b : Support.backend) s =
   seg_covers s;
   let c = s.sg in
@@ -3031,7 +3054,7 @@ let law_segments (b : Support.backend) s =
   let offsets = A.expect D.Int64 (on b (A.Any (offsets_of s))) in
   let sa' = Option.map (scale_on b) sa and sb' = Option.map (scale_on b) sb in
   match
-    K.contract ~order:c.order ~batch:(Iarray.of_array c.batch)
+    K.contract ~batch:(Iarray.of_array c.batch)
       ~contracting:(Iarray.of_array c.contracting)
       ~segments:(Some (segments_of s offsets)) ~acc:c.acc ~dst ~init
       { array = on b c.a; scale = sa' }
@@ -3039,7 +3062,7 @@ let law_segments (b : Support.backend) s =
   with
   | A.Done ->
       equal (list string) []
-        (differ_bits c.acc ~other:"unsegmented" (host (A.Any dst))
+        (differ_bits c.acc ~other:"expected" (host (A.Any dst))
            (seg_reference b s sa sb))
   | r -> failf "a segmented contraction answered %a" Nx_array_support.pp_answer r
 
@@ -3063,7 +3086,7 @@ let test_segment_misfits (b : Support.backend) () =
       ?(contracting : _ iarray = [| (1, 0) |]) segments dst a b' =
     let before = A.to_array (to64 (host (A.Any dst))) in
     equal ~msg answer A.Shape_mismatch
-      (K.contract ~order:Chain ~batch ~contracting ~segments:(Some segments)
+      (K.contract ~batch ~contracting ~segments:(Some segments)
          ~acc:(D.Any D.Float32) ~dst ~init:None (plain a) (plain b'));
     equal ~msg:(msg ^ ": untouched") (array float_exact) before
       (A.to_array (to64 (host (A.Any dst))))
@@ -3111,7 +3134,7 @@ let test_rows_in_none (b : Support.backend) () =
       A.expect D.Int64 (on b (A.Any (A.of_array D.Int64 [| 2 |] [| 1L; 3L |])))
     in
     (match
-       K.contract ~order:Chain ~batch:[||] ~contracting:[| (1, 1) |]
+       K.contract ~batch:[||] ~contracting:[| (1, 1) |]
          ~segments:(Some (Nx_kernel.Rows { offsets; a_axis = 0; b_axis = 0 }))
          ~acc ~dst ~init:(Option.map (arr [| 4 |]) init)
          (plain (arr [| 4; 2 |] (Array.make 8 0.)))
@@ -3140,7 +3163,7 @@ let test_offsets_in_dst (b : Support.backend) () =
   let arr s xs = A.expect D.Int64 (on b (A.Any (A.of_array D.Int64 s xs))) in
   let dst = arr [| 3 |] [| 0L; 1L; 2L |] in
   (match
-     K.contract ~order:Chain ~batch:[||] ~contracting:[| (1, 1) |]
+     K.contract ~batch:[||] ~contracting:[| (1, 1) |]
        ~segments:(Some (Nx_kernel.Rows { offsets = dst; a_axis = 0; b_axis = 0 }))
        ~acc:(D.Any D.Int64) ~dst ~init:None
        (plain (arr [| 3; 2 |] [| 1L; 2L; 3L; 4L; 5L; 6L |]))
@@ -3231,7 +3254,7 @@ let guarded_product (type s) (b : Support.backend) (dt : (float, s) D.t) g =
   in
   let product ~dst a x =
     match
-      K.contract ~order:Nx_kernel.Chain ~batch ~contracting ~segments:None
+      K.contract ~batch ~contracting ~segments:None
         ~acc:(D.Any dt) ~dst ~init:None (plain a)
         (plain (window x))
     with
@@ -3292,9 +3315,23 @@ let test_acc_refused (b : Support.backend) () =
     (fun acc ->
       equal ~msg:(Format.asprintf "%a" pp_dtype acc) Elements.answer
         A.Wrong_dtype
-        (K.contract ~order:Lane ~batch:[||] ~contracting:[| (1, 0) |]
+        (K.contract ~batch:[||] ~contracting:[| (1, 0) |]
            ~segments:None ~acc ~dst ~init:None (plain a) (plain x)))
     D.[ Any Float16; Any Bfloat16; Any Bool ]
+
+(* Float32 products either side of each bound of nx.cpu's order: 4 and 5
+   rows or columns, 63 and 64 outputs, a depth of 128 per output and one
+   less. *)
+let order_edges =
+  let f32 = D.Any D.Float32 and v = plain_view 2 in
+  List.map
+    (fun (m, n, k) ->
+      make ~acc:f32 ~out:f32 ([||], [| m |], [| n |], [| k |]) (f32, v)
+        (f32, v) None 1)
+    [
+      (4, 16, 8); (5, 13, 8); (16, 4, 8); (13, 5, 8); (5, 12, 8); (7, 9, 8);
+      (8, 8, 8); (8, 8, 8191); (8, 8, 8192);
+    ]
 
 let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
@@ -3302,7 +3339,8 @@ let cpu (b : Support.backend) =
     [
       test "refuses an acc a contraction does not compute in" (fun () ->
           b.around (test_acc_refused b));
-      prop ~examples "each output adds its products in the order given"
+      prop ~examples:(examples @ order_edges)
+        "each output adds its products in the order nx_cpu.mli states"
         computed (run (law_order b));
       prop ~examples:(List.concat_map regimes integer_accs)
         "an integer output is its products' sum modulo the accumulator"
@@ -3334,8 +3372,8 @@ let cpu (b : Support.backend) =
       test "a scaled contraction over an empty extent has no products"
         (fun () -> b.around (test_scaled_empty b));
       prop ~examples:seg_examples
-        "each group of a segmented contraction has the bits of its \
-         unsegmented contraction"
+        "each output of a segmented contraction adds its products in the \
+         whole call's order"
         seg_draws (run (law_segments b));
       test "refuses segments that do not fit" (fun () ->
           b.around (test_segment_misfits b));
@@ -3357,56 +3395,7 @@ let cpu (b : Support.backend) =
         (run (fresh b));
     ]
 
-let order =
-  Testable.make
-    ~pp:(fun ppf o ->
-      Format.pp_print_string ppf
-        (match o with Nx_kernel.Chain -> "Chain" | Lane -> "Lane"))
-    ~equal:( = )
-
-let orders =
-  cases
-    "nx.cpu chooses chain order at rows and columns above 4, 64 outputs and \
-     fewer than 128 products per output"
-    ~name:(fun (m, n, k, _) -> Printf.sprintf "%d by %d over %d" m n k)
-    Nx_kernel.
-      [
-        (0, 1000, 4096, Lane);
-        (1000, 0, 4096, Lane);
-        (1, 1, 4096, Lane);
-        (4, 1000, 4096, Lane);
-        (5, 1000, 4096, Chain);
-        (1000, 4, 4096, Lane);
-        (1000, 5, 4096, Chain);
-        (5, 5, 4096, Lane);
-        (5, 12, 4096, Lane);
-        (5, 13, 4096, Chain);
-        (12, 5, 4096, Lane);
-        (13, 5, 4096, Chain);
-        (7, 9, 4096, Lane);
-        (9, 7, 4096, Lane);
-        (8, 8, 4096, Chain);
-        (16, 4, 4096, Lane);
-        (8, 8, 0, Chain);
-        (8, 8, 8191, Chain);
-        (8, 8, 8192, Lane);
-        (16, 16, 32767, Chain);
-        (16, 16, 32768, Lane);
-        (64, 64, 524287, Chain);
-        (64, 64, 524288, Lane);
-        (8, 8, max_int, Lane);
-        (max_int, max_int, 4096, Chain);
-        (max_int, max_int, max_int, Chain);
-        (max_int, 5, max_int, Chain);
-        (5, max_int, max_int, Chain);
-        (max_int, 4, 4096, Lane);
-        (4, max_int, 4096, Lane);
-        (max_int, 0, 4096, Lane);
-      ]
-    (fun (rows, columns, depth, want) ->
-      equal order want (Nx_cpu.contract_order ~rows ~columns ~depth))
-
 let () =
   exit
     (Windtrap.run "nx_kernel.contract"
-       ((orders :: List.map laws Support.backends) @ List.map cpu Support.cpus))
+       (List.map laws Support.backends @ List.map cpu Support.cpus))

@@ -367,19 +367,19 @@ let matrix dt s = filled dt s 1.
 let pair dt sa sb v () = (filled dt sa v, filled dt sb v)
 let matmul (a, b) = Nx.Repr.array (Nx.matmul a b)
 
-(* [make]'s operands as arrays, with their order of summation, and the
-   product of those into a new [s] float32 array by nx.cpu's kernel. *)
-let direct_operands ~contracting make () =
+(* [make]'s operands as arrays, and the product of those into a new [s]
+   float32 array by nx.cpu's kernel. *)
+let direct_operands make () =
   let a, b = make () in
   let plain x : Nx_kernel.operand =
     { array = A.Any (Option.get (Nx.Repr.array x)); scale = None }
   in
-  (Nx.Prim.contract_order ~batch:[||] ~contracting a b, plain a, plain b)
+  (plain a, plain b)
 
-let contract_direct ~contracting s (order, a, b) =
+let contract_direct ~contracting s (a, b) =
   let dst = A.create Rig.host D.Float32 s in
   match
-    Nx_cpu.contract ~order ~batch:[||] ~contracting ~segments:None
+    Nx_cpu.contract ~batch:[||] ~contracting ~segments:None
       ~acc:(D.Any D.Float32) ~dst ~init:None a b
   with
   | Done -> dst
@@ -387,7 +387,7 @@ let contract_direct ~contracting s (order, a, b) =
 
 let direct name ~contracting s make =
   Thumper.bench_with_setup name
-    ~setup:(direct_operands ~contracting make)
+    ~setup:(direct_operands make)
     (contract_direct ~contracting s)
 
 let matmul_rows n =

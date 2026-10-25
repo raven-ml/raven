@@ -279,41 +279,11 @@ external fold :
 
 (* Contractions (gemm.c) *)
 
-(* Chain order where a contraction has the outputs to keep every target's
-   chains in flight, 64 (NEON keeps 16 vectors of 4 chains, 4 pipes of 4
-   cycles; AVX2 8 of 8); lane order where its rows or columns are few, as
-   decoding a token's are, so that b streams once in the order it lies. *)
-let chain_outputs = 64
-let lane_most = 4
-
-(* Lane order also where the depth is at least [lane_depth] products per
-   output, as a weight gradient's few outputs over many tokens are: chain
-   order's threads take tiles of outputs, too few to share the depth, where
-   lane order's take ranges of its blocks. On the Core Ultra 5 235, 8 × 8
-   outputs over 16384 products took 84-125 µs in chain order against 42-57
-   in lane, 16 × 16 over 65536 663-873 against 272-293; 64 × 64 over 262144
-   14.1 ms against 15.0-16.5, and 8 × 8 over 4096 21-25 µs against 44-46. *)
-let lane_depth = 128
-
-let contract_order ~rows ~columns ~depth : Nx_kernel.order =
-  (* [rows · columns >= chain_outputs], without overflow: a factor of
-     chain_outputs or more makes it, and below that the product fits. *)
-  let outputs =
-    rows >= chain_outputs || columns >= chain_outputs
-    || rows * columns >= chain_outputs
-  in
-  (* [rows · columns <= depth / lane_depth], without overflow. *)
-  let per = depth / lane_depth in
-  let long = rows <= per && columns <= per / Int.max 1 rows in
-  if rows > lane_most && columns > lane_most && outputs && not long then Chain
-  else Lane
-
-(* [contract_c order ~batch ~contracting acc ~dst ~init a b sa sb segs]
+(* [contract_c ~batch ~contracting acc ~dst ~init a b sa sb segs]
    contracts [a] and [b], scaled by [sa] and [sb], with [init] if given and
-   cut by [segs], in [order] and the dtype of code [acc], over the view C
-   groups from the pairs on its stack ([nx_contract_view_fill]). *)
+   cut by [segs], in the dtype of code [acc], over the view C groups from
+   the pairs on its stack ([nx_contract_view_fill]). *)
 external contract_c :
-  Nx_kernel.order ->
   batch:(int * int) iarray ->
   contracting:(int * int) iarray ->
   int ->
@@ -328,7 +298,7 @@ external contract_c :
 
 (* An [acc] {!Nx_kernel.accumulates} refuses is the caller's error, refused
    before the kernel is asked. *)
-let contract ~order ~batch ~contracting ~segments ~acc ~dst ~init
+let contract ~batch ~contracting ~segments ~acc ~dst ~init
     (oa : Nx_kernel.operand) (ob : Nx_kernel.operand) =
   let (Nx_array.Dtype.Any dt) = acc in
   let (Nx_array.Any a) = oa.array in
@@ -338,7 +308,7 @@ let contract ~order ~batch ~contracting ~segments ~acc ~dst ~init
   if not (Nx_kernel.accumulates dt) then Nx_array.Wrong_dtype
   else if scaled && not float then Nx_array.Declined
   else
-    contract_c order ~batch ~contracting (Nx_array.Dtype.code dt) ~dst ~init
+    contract_c ~batch ~contracting (Nx_array.Dtype.code dt) ~dst ~init
       a b oa.scale ob.scale segments
 
 (* Fourier transforms (fft.c). The shapes are checked here; the externals take

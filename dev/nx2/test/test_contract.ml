@@ -1158,6 +1158,18 @@ let placements =
           equal (array float_exact)
             (read (Nx.contract Nx.float32 p a b))
             (read y));
+      test "a sum cut three ways along k adds its devices' sums in order"
+        (fun () ->
+          (* On one device, lane order adds 1e7 and -1e7 first. *)
+          let module S3 = (val Nx.devices (List.init 3 Nx_support.memory)) in
+          let a = host D.Float32 [| 1; 3 |] [| 1e7; 0.1; -1e7 |] in
+          let b = host D.Float32 [| 3; 1 |] [| 1.; 1.; 1. |] in
+          let a' = Nx.place (S3.split ~axis:1) a in
+          let b' = Nx.place (S3.split ~axis:0) b in
+          equal ~msg:"one device" (array float_exact) [| f32 0.1 |]
+            (read (Nx.contract Nx.float32 p a b));
+          equal ~msg:"cut" (array float_exact) [| 0. |]
+            (read (Nx.contract Nx.float32 p a' b')));
       test "operands alone on two devices raise" (fun () ->
           let a = x [| 4; 3 |] and b = x [| 3; 2 |] in
           let on k =
@@ -1555,7 +1567,6 @@ module Scaled = struct
     in
     Contract
       {
-        order = P.contract_order ~batch ~contracting a b;
         batch;
         contracting;
         acc = D.Any acc;
@@ -2001,8 +2012,9 @@ module Scaled = struct
     }
 
   (* [c] with [a]'s or [b]'s arrays placed by [where], the others on every
-     device of the set of [on]: the result's placement, and its bits against
-     one device's. *)
+     device of the set of [on]: the result's placement, and its values
+     against one device's, bit for bit, where [c]'s sums are exact in every
+     order. *)
   let placed (type e) (on : e Nx.Placement.t) where c =
     let at role = Option.value ~default:on (where role) in
     let p = { put = (fun role x -> Nx.place (at role) x) } in
@@ -2047,7 +2059,7 @@ module Scaled = struct
     in
     group "placements"
       [
-        test "a cut over b's columns at its blocks gives one device's bits"
+        test "a cut over b's columns at its blocks gives exact sums"
           (fun () ->
             let c = mx ~m:3 ~k:64 ~n:8 ~per:2 () in
             let y = placed S2.on (b_cut (S2.split ~axis:0)) c in
@@ -2058,13 +2070,13 @@ module Scaled = struct
             let y = placed S4.on (b_cut (S4.split ~axis:0)) c in
             equal bool ~msg:"the result's columns are cut" false
               (Nx.Placement.equal (S4.split ~axis:1) y));
-        test "a cut over a's rows at its blocks gives one device's bits"
+        test "a cut over a's rows at its blocks gives exact sums"
           (fun () ->
             let c = mx ~rows:true ~m:4 ~k:32 ~n:2 ~per:1 () in
             let y = placed S2.on (a_cut (S2.split ~axis:0)) c in
             equal bool ~msg:"the result's rows are cut" true
               (Nx.Placement.equal (S2.split ~axis:0) y));
-        test "segmented rows cut over devices give one device's bits" (fun () ->
+        test "segmented rows cut over devices give exact sums" (fun () ->
             let segs = Rows [| 0L; 3L; 3L; 6L |] in
             let c = mx ~segs ~g:3 ~m:6 ~k:32 ~n:4 ~per:2 () in
             ignore (placed S2.on (a_cut ~scale:false (S2.split ~axis:0)) c));

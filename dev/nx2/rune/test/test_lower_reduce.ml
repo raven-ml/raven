@@ -1276,7 +1276,6 @@ let contraction_op c ~acc dt a b init =
   let contracting = pairs c (fun i -> C i) (Array.length c.ek) in
   P.Contract
     {
-      order = P.contract_order ~batch ~contracting a b;
       batch;
       contracting;
       acc;
@@ -1500,7 +1499,6 @@ let int16_contraction () =
     P.eval ~by:"t"
       (P.Contract
          {
-           order = P.contract_order ~batch ~contracting a b;
            batch;
            contracting;
            acc = D.Any D.Int16;
@@ -1525,7 +1523,6 @@ let no_products (type v s) (dt : (v, s) D.t) acc raws () =
     P.eval ~by:"t"
       (P.Contract
          {
-           order = P.contract_order ~batch ~contracting a b;
            batch;
            contracting;
            acc;
@@ -1575,7 +1572,6 @@ let scaled_contraction ~segmented () =
     P.eval ~by:"t"
       (P.Contract
          {
-           order = P.contract_order ~batch ~contracting a b;
            batch;
            contracting;
            acc = D.Any D.Float32;

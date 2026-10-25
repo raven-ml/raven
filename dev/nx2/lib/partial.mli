@@ -87,41 +87,41 @@
     reductions runs [k] loops over each device's loads, [Moments] two over
     its terms, laid out once where they are not a load.
 
-    A [Contract] computes per group of its result's devices that hold one window
-    of it, in its order of summation, the whole contraction's. A device's
-    windows of [a] and [b] along the contracting pairs, alike, are its {e tile};
-    its products are numbered as {!Nx_kernel.section-contraction} numbers the
-    whole's, and it lays its windows out as [[batch; rows; products]] and
-    [[batch; products; columns]], in their number's order. It reads [init] over
-    its window of the result, from wherever [init] lies. The products fall into
-    the contraction blocks ({!Nx_kernel.S.section-contraction}). A node of
-    lane order's tree of contraction blocks whose products one tile holds is a
-    {e unit} there, as is a contraction block that window edges split, on the
-    device that holds most of its products, the others' parts of [a] and [b]
-    moved there first. A scale is read whole along the contracting pairs, laid
-    out as its operand, and each unit takes the scale blocks its products span.
-    The route computes by partials only where each scale block along the
-    products lies in one contraction block ({!Prim.rule}). A segmented
-    contraction never computes so.
+    A [Contract] computes per group of its result's devices that hold one
+    window of it. A device's windows of [a] and [b] along the contracting
+    pairs, alike, are its {e tile}, and a group's tiles are in C order of
+    their first indices. A scale is read whole along the pairs. Along each
+    pair, a tile is cut at its scales' block edges into {e parts}, each
+    within one block of every scale there or from an edge they all share to
+    another: a tile of no scale is one part. The first device of a group
+    holding a tile contracts each of its parts, in C order of their first
+    indices, by its kernels in their own order, from no [init] into the
+    accumulator, each scale read at the blocks the part spans. Each device
+    of the group takes the parts' sums, adds them in order, tile after tile,
+    then [init] as the accumulator holds it over its window of the result,
+    and rounds once into the result's dtype. A segmented contraction never
+    computes so.
 
-    - In lane order, each unit is one contraction of exactly its products
-      into the accumulator from no [init]. Each device of the group takes
-      every unit, combines them up the tree by [Add], adds [init] as the
-      accumulator holds it, and rounds once into the result's dtype.
-    - In chain order, the units in increasing number, those that one run of
-      a tile holds in turn taken as one, contract in turn into the
-      accumulator: the first from [init] as the accumulator holds it, or
-      none, each other from the sum before it, moved to it. The last sum
-      rounds once into the result's dtype and moves to every device of the
-      group.
+    An integer contraction so has the bits it has on one device. A float or
+    complex one does not, and a NaN result is a NaN whose sign and payload
+    it does not state. Let [K] be an output's products and [u] the
+    accumulator's unit roundoff, its parts' for a complex one. Where each
+    device's kernels keep the bound of {!Nx_kernel.S.contract}, and barring
+    overflow and underflow, a result before the rounding into its dtype is
+    within [γ(2K + 2) (|init| + Σ|a||b|)] of the exact sum, a complex one
+    in modulus, plus the roundings each library states its scaling adds: the
+    bound on one device ({!Nx.contract}). A kernel's addition errs by at most
+    [2u] and nx's [Add] by [u]. A part of [m] products sums them and [+0],
+    so each product passes at most [m] additions there; the sums of [p]
+    parts pass at most [p - 1] more and [init] one, and [m + p <= K + 1] as
+    each part holds a product. A term passing [k] additions is within
+    [γ(2k)] of itself (Higham, {e Accuracy and Stability of Numerical
+    Algorithms}, Lemma 3.1).
 
-    In lane order, each device takes its window of the results in the
-    accumulator for each unit it does not compute. In chain order, each
-    unit after the first takes the sum before it, and the devices holding
-    the units compute one after the other. In both, a block that window
-    edges split moves the parts of [a] and [b] its device lacks, once.
-    Laying a window out is one copy where its axes are not in that order
-    already.
+    Each device takes the sum of each part it does not contract, over its
+    window of the result: [p - 1] such windows in the accumulator where it
+    contracts one part. No part of [a] or [b] moves. A tile cut into parts
+    reads each of its scales once per part.
 
     A [Scan] computes per group of its results' devices that hold one window
     of the axes off its axis; a device's window along its axis is its

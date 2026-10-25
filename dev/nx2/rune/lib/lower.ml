@@ -251,7 +251,6 @@ let op (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r) (o : r P.t) =
         a_scale = None;
         b_scale = None;
         segments = None;
-        order = _;
       } ->
       let operand x = (D.Any (Nx.dtype x), node x) in
       [|

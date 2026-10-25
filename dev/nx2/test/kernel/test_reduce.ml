@@ -1471,7 +1471,7 @@ let law_contract (b : Support.backend) c =
       let module K = (val b.kernels) in
       let dst = A.create Rig.host (A.dtype x) [||] in
       let summed =
-        K.contract ~order:Lane ~batch:[||] ~contracting:[| (0, 0) |]
+        K.contract ~batch:[||] ~contracting:[| (0, 0) |]
           ~segments:None ~acc:(dtype_of c.x) ~dst ~init:None
           { Nx_kernel.array = A.Any x; scale = None }
           { Nx_kernel.array = A.Any ones; scale = None }

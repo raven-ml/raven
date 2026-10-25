@@ -219,7 +219,6 @@ and _ prim =
     }
       -> ('v, 's, 'd) t prim
   | Contract : {
-      order : Nx_kernel.order;
       batch : (int * int) iarray;
       contracting : (int * int) iarray;
       acc : Nx_array.Dtype.any;

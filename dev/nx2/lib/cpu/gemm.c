@@ -15,11 +15,12 @@
    cast to acc gives it, exact where acc holds its values. A scaled
    operand is staged wherever it is read, each element then multiplied by
    its block's scale in acc (stage_at, Scales). An integer acc
-   computes on chain order's paths whatever the order asked. Lane order
-   reads b in place where it is acc and adjacent along the axis it streams.
+   computes on chain order's paths. Lane order reads b in place where it
+   is acc and adjacent along the axis it streams.
 
-   Each output's sum adds in the order the caller gives, at any M, N and
-   K:
+   Each output's sum adds in one of two orders, which order_of chooses
+   from a call's M, N and K, a segmented call's once from the whole
+   call's, so that its offsets never change a bit:
 
    - Chain order: one fused multiply-add chain per output, in increasing
      k, from init or +0. The microkernels of every target add each product
@@ -3154,6 +3155,35 @@ static double decode_cost(int acc, const nx_array *sc) {
   return nx_cpu_elements(sc) * nx_cpu_width(acc) * NX_CPU_STRIDED_COST;
 }
 
+/* The order of a contraction in [acc] whose groups have the extents [x].
+   Integers take chain order, the one with integer kernels: an integer sum
+   is exact modulo acc's width in any order.
+
+   Chain order where a contraction has the outputs to keep every target's
+   chains in flight, CHAIN_OUTPUTS (NEON keeps 16 vectors of 4 chains, 4
+   pipes of 4 cycles; AVX2 8 of 8); lane order where its rows or columns
+   are at most LANE_MOST, as decoding a token's are, so that b streams once
+   in the order it lies. Lane order also where the depth is at least
+   LANE_DEPTH products per output, as a weight gradient's few outputs over
+   many tokens are: chain order's threads take tiles of outputs, too few
+   to share the depth, where lane order's take ranges of its blocks. On
+   the Core Ultra 5 235, 8 × 8 outputs over 16384 products took 84-125 µs
+   in chain order against 42-57 in lane, 16 × 16 over 65536 663-873
+   against 272-293; 64 × 64 over 262144 14.1 ms against 15.0-16.5, and
+   8 × 8 over 4096 21-25 µs against 44-46. */
+#define CHAIN_OUTPUTS 64
+#define LANE_MOST 4
+#define LANE_DEPTH 128
+
+static int order_of(int acc, const double *x) {
+  double m = x[ROW], n = x[COL];
+  if (is_integer(acc)) return NX_CPU_CHAIN;
+  if (m > LANE_MOST && n > LANE_MOST && m * n >= CHAIN_OUTPUTS &&
+      x[CON] < LANE_DEPTH * m * n)
+    return NX_CPU_CHAIN;
+  return NX_CPU_LANE;
+}
+
 /* The contraction of the view [v], or of the runs [r] where [runs], over
    [op] in [acc], a of dtype dts[0] and b of dts[1], into dst of dtype
    [out], a and b scaled by [s] where it is not NULL: 0 if an allocation
@@ -3174,15 +3204,15 @@ static inline __attribute__((always_inline)) int computed(
 /* The external: groups the view of the pairs [vbatch] and [vcontracting]
    on the stack, or their runs where a group makes several, answering what
    the fill answers where it does not fit, then reads the operands through
-   the door. [vorder] is the order, [vacc] acc's dtype code, one
+   the door. [vacc] is acc's dtype code, one
    Nx_kernel.accumulates takes, float where a scale is given, [vi] the
    init and [vsa] and [vsb] a's and b's scales, options of
    Nx_kernel.scale. Its body is inlined into two copies, [scaled] a
    constant in each, so that an unscaled call runs none of the scales'
    setup. */
 static inline __attribute__((always_inline)) value contract_body(
-    value vorder, value vbatch, value vcontracting, value vacc, value vdst,
-    value vi, value va, value vb, value vsa, value vsb, int scaled) {
+    value vbatch, value vcontracting, value vacc, value vdst, value vi,
+    value va, value vb, value vsa, value vsb, int scaled) {
   int acc = Int_val(vacc), init = Is_block(vi);
   value vinit = init ? Field(vi, 0) : va;
   nx_contract_view v;
@@ -3217,16 +3247,13 @@ static inline __attribute__((always_inline)) value contract_body(
   int e = nx_read(n, in, a);
   if (e) return Val_int(e);
   const nx_array *op[4] = {&a[0], &a[1], init ? &a[3] : NULL, &a[2]};
-  /* Only chain order has integer kernels, and an integer sum is exact
-     modulo acc's width in any order, so chain order computes it whatever
-     the order asked. */
-  int order = is_integer(acc) ? NX_CPU_CHAIN : Int_val(vorder), done;
   double x[4];
   for (int g = BATCH; g <= CON; g++) {
     x[g] = runs ? 1 : (double)v.extent[g];
     for (int k = 0; runs && k < r.runs[g]; k++)
       x[g] *= (double)r.extent[g][k];
   }
+  int order = order_of(acc, x), done;
   double cost = call_cost(acc, order, x);
   for (int o = A; scaled && o <= B; o++)
     if (at[o] >= 0) cost += decode_cost(acc, &a[at[o]]);
@@ -3251,10 +3278,10 @@ static inline __attribute__((always_inline)) value contract_body(
 }
 
 static __attribute__((noinline)) value contract_scaled(
-    value vorder, value vbatch, value vcontracting, value vacc, value vdst,
-    value vi, value va, value vb, value vsa, value vsb) {
-  return contract_body(vorder, vbatch, vcontracting, vacc, vdst, vi, va, vb,
-                       vsa, vsb, 1);
+    value vbatch, value vcontracting, value vacc, value vdst, value vi,
+    value va, value vb, value vsa, value vsb) {
+  return contract_body(vbatch, vcontracting, vacc, vdst, vi, va, vb, vsa,
+                       vsb, 1);
 }
 
 /* Segments
@@ -3523,8 +3550,8 @@ static int groups_on(segmented *j, const nx_array *off) {
    the door and computes each group (groups_on). Out of line, as
    contract_scaled. */
 static __attribute__((noinline)) value contract_segmented(
-    value vorder, value vbatch, value vcontracting, value vacc, value vdst,
-    value vi, value va, value vb, value vsa, value vsb, value vseg) {
+    value vbatch, value vcontracting, value vacc, value vdst, value vi,
+    value va, value vb, value vsa, value vsb, value vseg) {
   int acc = Int_val(vacc), init = Is_block(vi);
   value vinit = init ? Field(vi, 0) : va;
   value vs = Field(vseg, 0);
@@ -3562,8 +3589,7 @@ static __attribute__((noinline)) value contract_segmented(
   if (e) return Val_int(e);
   const nx_array *op[4] = {&a[0], &a[1], init ? &a[3] : NULL, &a[2]};
   j.op = op;
-  /* As contract_body's. */
-  j.order = is_integer(acc) ? NX_CPU_CHAIN : Int_val(vorder);
+  j.order = order_of(acc, f.x);
   /* Each part's set-up, a product's, for each batch element's groups and
      Rows' two runs of rows in none. */
   double parts = (double)nx_cpu_elements(&a[ao]) + 2;
@@ -3587,22 +3613,21 @@ static __attribute__((noinline)) value contract_segmented(
   return Val_int(NX_OK);
 }
 
-value nx_cpu_contract(value vorder, value vbatch, value vcontracting,
-                      value vacc, value vdst, value vi, value va, value vb,
-                      value vsa, value vsb, value vseg) {
+value nx_cpu_contract(value vbatch, value vcontracting, value vacc,
+                      value vdst, value vi, value va, value vb, value vsa,
+                      value vsb, value vseg) {
   if (Is_block(vseg))
-    return contract_segmented(vorder, vbatch, vcontracting, vacc, vdst, vi,
-                              va, vb, vsa, vsb, vseg);
+    return contract_segmented(vbatch, vcontracting, vacc, vdst, vi, va, vb,
+                              vsa, vsb, vseg);
   if (Is_block(vsa) || Is_block(vsb))
-    return contract_scaled(vorder, vbatch, vcontracting, vacc, vdst, vi, va,
-                           vb, vsa, vsb);
-  return contract_body(vorder, vbatch, vcontracting, vacc, vdst, vi, va, vb,
-                       vsa, vsb, 0);
+    return contract_scaled(vbatch, vcontracting, vacc, vdst, vi, va, vb, vsa,
+                           vsb);
+  return contract_body(vbatch, vcontracting, vacc, vdst, vi, va, vb, vsa, vsb,
+                       0);
 }
 
 value nx_cpu_contract_byte(value *argv, int argn) {
   (void)argn;
   return nx_cpu_contract(argv[0], argv[1], argv[2], argv[3], argv[4],
-                         argv[5], argv[6], argv[7], argv[8], argv[9],
-                         argv[10]);
+                         argv[5], argv[6], argv[7], argv[8], argv[9]);
 }

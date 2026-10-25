@@ -1133,75 +1133,21 @@ let linalg_rule l =
   let r = List.hd ranks in
   Route.Axes (Array.of_list (List.map (reading [| r - 2; r - 1 |]) ranks))
 
-let contract_block = 4096
-
-let block_run s ss axes =
-  let n = Array.length axes in
-  let rec first i =
-    if i = n || ss.(axes.(i)) <> s.(axes.(i)) then i else first (i + 1)
-  in
-  let p = first 0 in
-  if p = n || Array.exists (fun d -> s.(d) = 0) axes then Some 1
-  else
-    let run = ref (s.(axes.(p)) / ss.(axes.(p))) and whole = ref true in
-    for i = p + 1 to n - 1 do
-      whole := !whole && ss.(axes.(i)) = 1;
-      run := !run * s.(axes.(i))
-    done;
-    if !whole then Some !run else None
-
-let contract_groups ~batch ~contracting ra rb =
-  let side pick ps = Iarray.to_array (Iarray.map pick ps) in
-  let free pick r =
-    let named x =
-      Iarray.exists (fun p -> pick p = x) batch
-      || Iarray.exists (fun p -> pick p = x) contracting
-    in
-    Array.of_list (List.filter (fun x -> not (named x)) (List.init r Fun.id))
-  in
-  ( [| side fst batch; free fst ra; side fst contracting |],
-    [| side snd batch; side snd contracting; free snd rb |] )
-
-(* Whether partials can take a contraction's operand of shape [s] scaled by
-   one of [ss], or none, laid out by [groups] of its axes, group [t] its
-   contracting ones: each group's blocks merge with it ({!block_run}), and a
-   block of the contracted extent lies in one of the contraction's blocks,
-   at whose edges partials cut it. *)
-let partials_take s ss groups t =
-  match ss with
-  | None -> true
-  | Some ss -> (
-      let runs = Array.map (block_run s ss) groups in
-      let depth = Array.fold_left (fun n d -> n * s.(d)) 1 groups.(t) in
-      Array.for_all Option.is_some runs
-      &&
-      match runs.(t) with
-      | Some r -> depth <= contract_block || contract_block mod r = 0
-      | None -> false)
-
 (* A contraction's result has the batch pairs' axes, then [a]'s other axes, then
    [b]'s; [init] has its shape. A contracting pair's two axes share its index as
    their factor. Segments are computed uncut: [Rows]' two axes and the result's
    axis of rows are read whole, as is the result's leading axis of
    [Contracting]'s groups. A segmented contraction is read whole along its
-   contracting pairs, as is a scaled one whose scales partials cannot take
-   ({!partials_take}). *)
+   contracting pairs. *)
 let contract_rule ~batch ~contracting ~segments sa sb init sca scb =
   let nb = Iarray.length batch and nc = Iarray.length contracting in
-  let ga, gb =
-    contract_groups ~batch ~contracting (Array.length sa) (Array.length sb)
-  in
   let lead, whole_a, whole_b =
     match (segments : _ Nx_kernel.segments option) with
     | Some (Rows { a_axis; b_axis; _ }) -> (0, a_axis, b_axis)
     | Some (Contracting _) -> (1, -1, -1)
     | None -> (0, -1, -1)
   in
-  let reduced =
-    Option.is_none segments
-    && partials_take sa sca ga 2
-    && partials_take sb scb gb 1
-  in
+  let reduced = Option.is_none segments in
   let kept = ref (if lead = 1 then 0 else -1) in
   let operand pick r first segmented =
     let next = ref first in
@@ -1234,8 +1180,8 @@ let contract_rule ~batch ~contracting ~segments sa sb init sca scb =
   (* A scale's axis that becomes the result's reads as the operand's where
      its extent is the operand's, and regroups into it where a block holds
      more elements, so that a cut keeps whole blocks; one of one block, and
-     every other, is read whole: partials take a contracting pair's blocks
-     by unit. *)
+     every other, is read whole: partials take the blocks each part of a
+     tile spans ({!Partial}). *)
   let scaled row s ss =
     Array.mapi
       (fun d e ->
@@ -1678,43 +1624,6 @@ let contract_shape ~by ~batch ~contracting ~segments ~acc a b init a_scale
         s
   | Some _ | None -> ());
   s
-
-(* Whether a pair of [ps] from the [k]th on names axis [i] on [side]. *)
-let rec names side ps i k =
-  k < Iarray.length ps
-  && (side (Iarray.get ps k) = i || names side ps i (k + 1))
-
-(* [n · e] for [n, e >= 0], [max_int] past it. *)
-let times n e =
-  if n = 0 || e = 0 then 0 else if n > max_int / e then max_int else n * e
-
-(* The product of [x]'s extents along the axes no pair names on [side],
-   [max_int] past it: a contraction's rows or columns. *)
-let free_extent ~batch ~contracting x side =
-  let n = ref 1 in
-  for i = 0 to rank x - 1 do
-    if not (names side batch i 0 || names side contracting i 0) then
-      n := times !n (dim x i)
-  done;
-  !n
-
-(* The product of [a]'s extents along the contracting pairs, [max_int] past
-   it: a contraction's depth. *)
-let depth ~contracting a =
-  let n = ref 1 in
-  for k = 0 to Iarray.length contracting - 1 do
-    n := times !n (dim a (fst (Iarray.get contracting k)))
-  done;
-  !n
-
-let contract_order ~batch ~contracting a b : Nx_kernel.order =
-  let rows = free_extent ~batch ~contracting a fst in
-  let columns = free_extent ~batch ~contracting b snd in
-  let depth = depth ~contracting a in
-  match (at a, at b) with
-  | Some p, _ | None, Some p ->
-      Devices.contract_order (Devices.set p) ~rows ~columns ~depth
-  | None, None -> Devices.contract_order Devices.host ~rows ~columns ~depth
 
 let linalg_results : type d r.
     ('v 's 'c. int -> ('v, 's, 'c) form -> ('v, 's, 'c) t) ->

@@ -1443,9 +1443,9 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     and boolean reductions, extremes and their positions keep the bits they
     have on one device. A float or complex {!sum}, {!prod}, {!mean},
     {!var}, {!std}, {!logsumexp} or {!logmeanexp} over cut axes may differ
-    from it in its last bits, and is the same on every run for a given
-    placement and set of devices. Barring overflow and underflow, a float
-    sum of [n] terms stays within [γ(n - 1) Σ|x|] of the exact sum and a
+    from it within the bounds below, and is the same on every run for a
+    given placement and set of devices. Barring overflow and underflow, a
+    float sum of [n] terms stays within [γ(n - 1) Σ|x|] of the exact sum and a
     product within a relative [γ(n - 1)], as on one device
     ({!Nx_kernel.section-reductions}); a complex product within a normwise
     relative [γ(c (n - 1))], each complex multiplication by the kernels
@@ -1731,36 +1731,22 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
 (** {1:contraction Contraction}
 
     A contraction multiplies two operands along their paired axes and sums the
-    products over the summed ones. Its order of association depends on the
-    shapes alone, so its bits do not depend on where its operands lie,
-    except where it is a NaN. A NaN result's sign and payload are
-    unspecified, and two placements of the operands may give different
-    ones.
+    products over the summed ones. On one device, its order of association
+    depends on the shapes alone. A NaN result's sign and payload are
+    unspecified.
 
-    Each output's products fall into blocks of 4096 consecutive ones in its
-    order of summation ({!Nx_kernel.S.section-contraction}). Where both
-    operands' paired summed axes are cut alike across devices, each device
-    reads its own windows of them, and the devices that hold one window of
-    the result compute it together, cutting the sum only at the edges of
-    blocks. A block that window edges split is gathered first. The device
-    holding most of its products, the earliest along the summed axes of
-    those holding as many, takes the block's parts of both operands that it
-    lacks and sums the block alone. A summed extent of 4096 cut over four
-    devices is one block, so three quarters of both operands' windows along
-    it move to the first device, and the others sum none of it.
-
-    In lane order ({!Nx_kernel.section-orders}), each device sums from [+0]
-    each largest node of lane order's tree of blocks that its windows hold,
-    and each block gathered on it. Each of those devices then takes the
-    others' sums, in the accumulator, combines them up the tree, adds
-    [init], read from where it lies, and rounds once. In chain order, each
-    run of blocks that one device's windows hold whole, and each gathered
-    block, is summed in turn along the order on its device, from the sum
-    before it, which moves there, the first from [init] read where it lies.
-    The last sum rounds once and moves to every device holding that window
-    of the result. On devices that compute apart, as GPUs, chain order
-    serialises them for the contraction. Summed axes cut otherwise are read
-    whole on each device. *)
+    Over operands cut across devices, each device computes its window of
+    the result from its windows of the operands. Where both operands' paired
+    summed axes are cut alike, the devices that hold one window of the
+    result compute it together: each contracts the products its windows
+    hold, and only these partial sums move, in the accumulator, each device
+    holding the window adding them in C order of the windows' first indices,
+    then [init], and rounding once. Summed axes cut otherwise are read whole
+    on each device. Integer contractions keep the bits they have on one
+    device. A float or complex one may differ from it within the bound
+    {!contract} states, and is the same on every run for a given placement
+    and set of devices: float32 [[1e7; 0.1; -1e7]] by ones gives [0.1] on
+    one nx.cpu device and [0.] cut three ways along its summed axis. *)
 
 val contract :
   ?sizes:(string * int) list ->
@@ -1779,10 +1765,10 @@ val contract :
     [float64], [complex64] or [complex128] at the operands' width otherwise, and
     [dt] for integers, which wrap. An integer operand with a float one has no
     default: [acc] is required. The sum starts from [init], or [+0] without it,
-    and associates in an order that is a function of the shapes alone, never of
-    the order a pattern lists its names, which each kernel library states.
-    Before rounding it is within [γ(K + 1, 2u) (|init| + Σ|a||b|)] of the exact
-    sum of its [K] products, where [γ(n, v) = n v / (1 - n v)] and [u] is
+    and associates in an order each kernel library states, never a function
+    of the order a pattern lists its names. Before rounding it is within
+    [γ(K + 1, 2u) (|init| + Σ|a||b|)] of the exact sum of its [K] products,
+    wherever its operands lie, where [γ(n, v) = n v / (1 - n v)] and [u] is
     [acc]'s unit roundoff.
 
     A donated [init] receives the result in its memory where {!donate} lets
@@ -1823,8 +1809,9 @@ val einsum :
     each contraction's left part holds the earliest of its operands; of such
     parts, the larger, then the one holding the earliest operand the other
     lacks: equal work gives [((x1 x2) x3) x4]. The tree, and with it the
-    result's order of association, is a function of [p] and the shapes
-    alone. Choosing it takes time in [3^n], so [p] has at most 11 operands.
+    result's order of association on one device, is a function of [p] and
+    the shapes alone. Choosing it takes time in [3^n], so [p] has at most 11
+    operands.
 
     {[
     (* For square matrices, a (b v): j·k multiply-adds, then i·j, where
@@ -1900,8 +1887,8 @@ val conv :
     from [+0], in the accumulator {!contract} takes by default, and rounds
     once: the float formats narrower than 32 bits sum at [float32]. Integers
     wrap. Before rounding it is within [γ(K + 1, 2u) Σ|x||w|] of the exact
-    sum, [γ] and [u] as {!contract} states. Its order of summation depends
-    on the shapes alone:
+    sum, [γ] and [u] as {!contract} states. On one device, its order of
+    summation depends on the shapes alone:
     - With other than one input channel a group, [c' = c / groups], it is
       one {!contract} of [x]'s windows with [w], batched over the groups:
       an output's products are numbered [q · c' + i], [q] the tap's place
@@ -4303,9 +4290,6 @@ module Prim : sig
             whose region, a [Slice] of [shape] by its ranges, holds it, and
             [fill] where none does. Each piece has its region's shape. *)
     | Contract : {
-        order : Nx_kernel.order;
-            (** The order a kernel library adds its sums in: the whole
-                contraction's ({!contract_order}). *)
         batch : (int * int) iarray;
         contracting : (int * int) iarray;
         acc : Dtype.any;
@@ -4390,21 +4374,6 @@ module Prim : sig
 
       Raises [Invalid_argument] naming [by], before [m] is called, where [op]'s
       operands break its rule. *)
-
-  val contract_order :
-    batch:(int * int) iarray ->
-    contracting:(int * int) iarray ->
-    ('a, 'b, 'd) nx ->
-    ('c, 'e, 'd) nx ->
-    Nx_kernel.order
-  (** [contract_order ~batch ~contracting a b] is the order of summation
-      ({!Nx_kernel.section-orders}) of a contraction of [a] with [b]: the one
-      the kernels of [a]'s set, or of [b]'s where [a] is of every set, choose
-      ({!Nx_kernel.S.contract_order}) for its rows, the product of [a]'s extents
-      along the axes no pair names, its columns, [b]'s likewise, and its
-      depth, [a]'s extents along the contracting pairs multiplied, each
-      [max_int] past it. Where that set has no kernels, as one of devices of
-      several kinds, or both are of every set, it is the one nx.cpu chooses. *)
 
   (** {1:interpretations Interpretations} *)
 

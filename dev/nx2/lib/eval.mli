@@ -106,9 +106,8 @@ val contract :
   ('v, 's, 'd) t option ->
   ('v, 's, 'd) t
 (** [contract ~by ~batch ~contracting ~acc dt a b init] is {!eval} of the
-    contraction [Contract] of [a] and [b] from [init] into [dt], in the order
-    of summation {!Prim.contract_order} gives. With no live [Extent], it is
-    {!Exec.contract} where that answers. *)
+    contraction [Contract] of [a] and [b] from [init] into [dt]. With no
+    live [Extent], it is {!Exec.contract} where that answers. *)
 
 val place :
   by:string -> 'e Devices.placement -> ('v, 's, 'd) t -> ('v, 's, 'e) t

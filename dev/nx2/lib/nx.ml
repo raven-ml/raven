@@ -5898,7 +5898,6 @@ module Prim = struct
       }
         -> ('v, 's, 'd) Value.t t
     | Contract : {
-        order : Nx_kernel.order;
         batch : (int * int) iarray;
         contracting : (int * int) iarray;
         acc : Nx_array.Dtype.any;
@@ -5932,7 +5931,6 @@ module Prim = struct
   let map = Prim.map
   let form = Prim.form
   let results = Prim.results
-  let contract_order = Prim.contract_order
 
   type interpretation = Value.interpretation
   type reach = Value.reach =

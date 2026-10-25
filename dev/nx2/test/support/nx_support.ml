@@ -65,14 +65,14 @@ module Counting = struct
     Atomic.incr count;
     Nx_cpu.fold p ~dst x
 
-  let contract ~order ~batch ~contracting ~segments ~acc ~dst ~init
+  let contract ~batch ~contracting ~segments ~acc ~dst ~init
       (a : Nx_kernel.operand) b =
     Atomic.incr count;
     let (Nx_array.Any x) = a.array in
     let s = Nx_array.Layout.shape (Nx_array.layout x) in
     let k = Iarray.fold_left (fun k (i, _) -> k * s.(i)) 1 contracting in
     ignore (Atomic.fetch_and_add multiplied (loop (Nx_array.Any dst) * k));
-    Nx_cpu.contract ~order ~batch ~contracting ~segments ~acc ~dst ~init a b
+    Nx_cpu.contract ~batch ~contracting ~segments ~acc ~dst ~init a b
 end
 
 module Declining = struct
@@ -113,20 +113,8 @@ module Blocked = struct
     r.(axis) <- { start = lo; count = hi - lo; step = 1 };
     Option.get (Nx_array.move (Slice (Iarray.of_array r)) x)
 
-  (* Lane order's tree of [n] blocks from [lo]: the left part holds the
-     largest power of two of them below their count. *)
-  let rec tree add parts lo n =
-    if n = 1 then parts.(lo)
-    else begin
-      let h = ref 1 in
-      while 2 * !h < n do
-        h := 2 * !h
-      done;
-      add (tree add parts lo !h) (tree add parts (lo + !h) (n - !h))
-    end
-
   (* A scaled or segmented contraction goes to nx.cpu whole. *)
-  let contract ~order ~batch ~contracting ~segments ~acc ~dst ~init
+  let contract ~batch ~contracting ~segments ~acc ~dst ~init
       (oa : Nx_kernel.operand) (ob : Nx_kernel.operand) =
     if Iarray.length contracting > 1 then
       failwith "nx.blocks: a contraction over several pairs";
@@ -140,8 +128,7 @@ module Blocked = struct
       || Option.is_some ob.scale
     in
     if whole then
-      Nx_cpu.contract ~order ~batch ~contracting ~segments ~acc ~dst ~init oa
-        ob
+      Nx_cpu.contract ~batch ~contracting ~segments ~acc ~dst ~init oa ob
     else begin
       let ia, ib = Iarray.get contracting 0 in
       let (Nx_array.Dtype.Any ad) = acc in
@@ -150,7 +137,7 @@ module Blocked = struct
         let lo = i * block and hi = Int.min k ((i + 1) * block) in
         let y = fresh () in
         ok "contraction"
-          (Nx_cpu.contract ~order:Chain ~batch ~contracting ~segments:None
+          (Nx_cpu.contract ~batch ~contracting ~segments:None
              ~acc ~dst:y ~init:None
              { array = Nx_array.Any (slice ia lo hi a); scale = None }
              { array = Nx_array.Any (slice ib lo hi b); scale = None });
@@ -171,20 +158,12 @@ module Blocked = struct
             z)
           init
       in
-      let sum =
-        match (order : Nx_kernel.order) with
-        | Lane ->
-            let t = tree add parts 0 n in
-            Option.fold ~none:t ~some:(add t) init
-        | Chain ->
-            let first i = add i parts.(0) in
-            let s = ref (Option.fold ~none:parts.(0) ~some:first init) in
-            for i = 1 to n - 1 do
-              s := add !s parts.(i)
-            done;
-            !s
-      in
-      cast ~dst sum
+      let from i = add i parts.(0) in
+      let s = ref (Option.fold ~none:parts.(0) ~some:from init) in
+      for i = 1 to n - 1 do
+        s := add !s parts.(i)
+      done;
+      cast ~dst !s
     end
 end
 

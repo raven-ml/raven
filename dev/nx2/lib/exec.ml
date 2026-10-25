@@ -430,7 +430,6 @@ let call : type r.
         loads
   | Value.Contract
       {
-        order;
         batch;
         contracting;
         acc;
@@ -484,7 +483,7 @@ let call : type r.
                  ])
       in
       ran ~by
-        (K.contract ~order ~batch ~contracting ~segments ~acc ~dst ~init
+        (K.contract ~batch ~contracting ~segments ~acc ~dst ~init
            { array = A.Any a; scale = a_scale }
            { array = A.Any b; scale = b_scale })
         [| A.Any dst |] ops
@@ -1203,7 +1202,7 @@ let apply3 ~by k c x y =
    whose set has kernels, computed by them without building the operation into
    a result of the shape its rule gives; a decline raises. [None] elsewhere and
    where the pairs do not fit the operands: the operation decides those. *)
-let contract (type v s a b c e d) ~by ~order ~batch ~contracting ~acc
+let contract (type v s a b c e d) ~by ~batch ~contracting ~acc
     (dt : (v, s) D.t) (x : (a, b, d) Value.t) (y : (c, e, d) Value.t)
     (init : (v, s, d) Value.t option) : (v, s, d) Value.t option =
   match (x, y) with
@@ -1227,7 +1226,7 @@ let contract (type v s a b c e d) ~by ~order ~batch ~contracting ~acc
       | Some array, Ok shape, Some k, Some (module K) -> (
           let dst = A.create (Devices.rig set k) dt shape in
           match
-            K.contract ~order ~batch ~contracting ~segments:None ~acc ~dst
+            K.contract ~batch ~contracting ~segments:None ~acc ~dst
               ~init:array
               { array = A.Any rx.a; scale = None }
               { array = A.Any ry.a; scale = None }

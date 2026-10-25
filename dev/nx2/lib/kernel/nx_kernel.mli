@@ -39,13 +39,7 @@ type index := (int64, Nx_array.Dtype.int64_elt) Nx_array.t
 
     A float sum's bits depend on the order of its additions. A sum adds
     {e terms} numbered from [0], as a reduction ({!section-reductions}) and a
-    contraction ({!section-contraction}) number theirs, in one of two orders.
-    A contraction sums across its contraction blocks
-    ({!S.section-contraction}) in the order it is asked for, and within a
-    contraction block as its library states.
-
-    {e Chain order} adds the terms in increasing number, from a
-    contraction's [init] or from [+0].
+    contraction ({!section-contraction}) number theirs.
 
     {e Lane order} puts the terms into blocks of 1024 consecutive numbers and,
     within a block, into 16 lanes by number modulo 16, each lane adding its
@@ -54,14 +48,7 @@ type index := (int64, Nx_array.Dtype.int64_elt) Nx_array.t
     for [i] below 4, then [i + 2] for [i] below 2, then lane 0 takes lane
     1, a lane holding no term taking no part. The blocks are combined
     by a binary tree whose left part holds the largest power of two of
-    blocks below their count, each part combined the same way; then a
-    contraction's [init] is added. *)
-
-type order =
-  | Chain  (** {e Chain order}. *)
-  | Lane  (** {e Lane order}. *)
-(** The type for the order of summation a contraction is asked for
-    ({!S.section-contraction}). *)
+    blocks below their count, each part combined the same way. *)
 
 (** {1:loops Loops} *)
 
@@ -494,20 +481,23 @@ end
     compute an operation over several devices, each computing a {e window}
     of the results, a box of their indices, from the parts of the operands
     the window reads. Every element keeps the bits the whole operation gives
-    it. nx may also compute a float reduction or scan from partial results
-    over parts of its terms, one per device, combined in a fixed order; that
-    result keeps the bounds nx states for it, not the whole's bits. An
-    element's association, its algorithm and whether the kernel
-    declines depend on the extents the element reads whole (a reduction's, a
-    scan's, a sort's or a transform's axes, the contracted extent, a
-    routine's matrices, a gather's or a scatter's axis, the axes a padded
-    load or a fold pads or windows), the dtypes, the attributes and the
-    device's architecture, never on the result's other extents. Neither rule
-    covers which NaN a NaN result is, its sign or its payload, which only
-    the moves of bits specify. IEEE 754
-    specifies neither for arithmetic, and where two NaNs meet, the one an
-    instruction passes on depends on its operands' order, which a kernel's
-    paths for different layouts and windows may set differently.
+    it, but a float or complex contraction's, which keeps its bound
+    ({!S.section-contraction}). nx may also compute a float reduction, scan
+    or contraction from partial results over parts of its terms, one per
+    device, combined in a fixed order; that result keeps the bounds nx
+    states for it, not the whole's bits. An element's association, its
+    algorithm and whether the kernel declines depend on the extents the
+    element reads whole (a reduction's, a scan's, a sort's or a transform's
+    axes, the contracted extent, a routine's matrices, a gather's or a
+    scatter's axis, the axes a padded load or a fold pads or windows), the
+    dtypes, the attributes and the device's architecture, never on the
+    result's other extents; a contraction's association may depend on any
+    of them, as its library chooses. Neither rule covers which NaN a NaN
+    result is, its sign or its payload, which only the moves of bits
+    specify. IEEE 754 specifies neither for arithmetic, and where two NaNs
+    meet, the one an instruction passes on depends on its operands' order,
+    which a kernel's paths for different layouts and windows may set
+    differently.
 
     A kernel answers [Wrong_dtype] for dtypes its doc does not take, and
     [Shape_mismatch] for operands or destinations that do not fit it by
@@ -674,40 +664,16 @@ module type S = sig
 
   (** {1:contraction Contraction}
 
-      A float contraction's association, which fixes its bits, is a
-      function of its order, the dtypes and the contracted extent alone. The
-      batch, row and column extents, the layouts and the device's size never
-      enter it, so a window of [dst] computed alone has the whole's bits.
-      The kernels of one order never compute a call given the other.
-
-      Each output's products fall into {e contraction blocks} of 4096
-      consecutive ones, by number, and nx cuts a contraction's contracted
-      extent only at their edges. In [Lane] order, each library states the
-      order in which it sums a contraction block from [+0], and the
-      contraction blocks' sums are combined by the tree lane order combines
-      its blocks by, two nodes by {!Prog.Add} in [acc], and then [init] is
-      added as [acc] holds it. In [Chain] order, each library states an
-      association that composes by passing a part's result, in [acc], as the
-      next part's [init]. It is one chain from [init] or [+0], which each
-      contraction block continues, or each contraction block summed from
-      [+0] in an order the library states and their sums added in turn to
-      [init], or without one to the first contraction block's. So a
-      contraction cut over
-      devices of one library has the bits of that library's one call. Cut
-      over devices of several libraries, each contraction block sums as the
-      library that computes it states, and the contraction blocks compose
-      by the order's rule. *)
-
-  val contract_order : rows:int -> columns:int -> depth:int -> order
-  (** [contract_order ~rows ~columns ~depth] is the order these kernels
-      choose for a contraction of [rows] rows, [a]'s free extents
-      multiplied, by [columns] columns, [b]'s, over [depth] products, the
-      contracted extent. nx asks it once of the whole contraction, whatever
-      part of it each call computes, so that every part sums in the whole's
-      order. *)
+      A float or complex contraction's association, which fixes its bits,
+      is its library's choice, from the dtypes, the device and any of the
+      call's extents, as a blocking chosen by the problem's size. A
+      segmented call's offsets never enter it: its association depends on
+      the dtypes, the device and the call's extents alone, so an output's
+      bits do not depend on which groups the other indices are in. A window
+      of [dst] computed alone, or a part of the contracted extent, keeps
+      the bound {!contract} states, not the whole call's bits. *)
 
   val contract :
-    order:order ->
     batch:(int * int) iarray ->
     contracting:(int * int) iarray ->
     segments:index segments option ->
@@ -717,31 +683,30 @@ module type S = sig
     operand ->
     operand ->
     answer
-  (** [contract ~order ~batch ~contracting ~segments ~acc ~dst ~init a b]
+  (** [contract ~batch ~contracting ~segments ~acc ~dst ~init a b]
       stores into [dst] the contraction of [a] with [b], of the shape
       {!Shape.contract} gives:
       {[
       dst[B, I, J] = init[B, I, J] + Σ_K a[B, I, K] · b[B, K, J]
       ]}
-      computed in [acc], a dtype {!accumulates} takes, summed in [order] and
-      rounded once to [dst]'s dtype, each operand's elements times their
-      scales, each group of [segments] as {!type-segments} states. Without
-      [init] the sum starts from [+0]. An output with no products, where the
-      contracted extent is [0], so that it has no contraction block, or,
-      under [segments], where it is in no group or in a group of no index,
-      is [init] as [acc] holds it, rounded into [dst], or [+0] without
-      [init]. No addition touches it, so an [init] of [-0] stays [-0].
-      Integers wrap in [acc]. A float or complex [acc] errs by at most twice
-      its unit roundoff, its parts' for a complex one, per addition, barring
+      computed in [acc], a dtype {!accumulates} takes, summed in the
+      library's order and rounded once to [dst]'s dtype, each operand's
+      elements times their scales, each group of [segments] as
+      {!type-segments} states. Without [init] the sum starts from [+0]. An
+      output with no products, where the contracted extent is [0] or, under
+      [segments], where it is in no group or in a group of no index, is
+      [init] as [acc] holds it, rounded into [dst], or [+0] without [init].
+      No addition touches it, so an [init] of [-0] stays [-0]. Integers wrap
+      in [acc]. A float or complex [acc] errs by at most twice its unit
+      roundoff, its parts' for a complex one, per addition, barring
       underflow. A NaN result's sign and payload are unspecified, but for an
       output of no products.
 
       A scale multiplies, as the library states, each element, rounded once
       into [acc], or each product, or, where a scale block along the
-      contracted extent is whole, its partial sum. Which one is a function
-      of the dtypes and the contracted extent alone, so that parts of [K] cut
-      at scale blocks' edges compose. The library also states the roundings
-      its scaling adds to the bound, barring overflow of what it scales. A
+      contracted extent is whole, its partial sum. The library also states
+      the roundings its scaling adds to the bound, barring overflow of what
+      it scales. A
       [Value] or code that is NaN makes its scale block's terms NaN. *)
 
   (** {1:fft Fourier transforms}

@@ -751,7 +751,7 @@ let test_declined_contract (b : Support.backend) () =
   let y = on b (A.of_array D.Float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |]) in
   let before = bits_of (host y) in
   match
-    K.contract ~order:Lane ~batch:[||] ~contracting:[| (1, 0) |]
+    K.contract ~batch:[||] ~contracting:[| (1, 0) |]
       ~segments:None ~acc:(D.Any D.Float32) ~dst:y ~init:None
       { Nx_kernel.array = A.Any x; scale = None }
       { Nx_kernel.array = A.Any z; scale = None }

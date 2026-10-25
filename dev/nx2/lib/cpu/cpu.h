@@ -809,8 +809,7 @@ void nx_cpu_give(void *p);
 
 /* Matrices */
 
-/* A contraction's order of summation, numbered as Nx_kernel.order's
-   constructors are. */
+/* A contraction's order of summation (gemm.c). */
 enum { NX_CPU_CHAIN = 0, NX_CPU_LANE = 1 };
 
 /* Stores into op[NX_VIEW_DST] the contraction in [acc], float32 or
