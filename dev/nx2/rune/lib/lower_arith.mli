@@ -29,10 +29,14 @@
     A node computes what {!Nx_kernel.Prog} states of its kind, at the compute
     type nx's kinds state: a float narrower than [float32] computes in [float32]
     and rounds once to its dtype, an integer narrower than 32 bits in the 32-bit
-    integer of its signedness. Every kind but the transcendental ones gives the
-    bits nx's kernels give, NaN operands included: a float kind with a NaN
-    operand gives its first NaN operand. A transcendental kind holds the bound
-    in ulps nx's kinds hold for it, and their special values and zero signs. *)
+    integer of its signedness. An exact kind gives the bits nx's kernels give,
+    but where a float or complex kind gives a NaN, which is a NaN of no
+    promised sign or payload: the integer and boolean kinds, comparisons,
+    [Where], casts, bitcasts, and the float and complex kinds {!Lower_real} and
+    {!Lower_complex} state exact. Every other float or complex kind holds the
+    bound and the special values they state; at a float narrower than
+    [float32], whose rounding absorbs [float32]'s error, it is within one rank
+    of the correctly rounded result. *)
 
 open Tolk
 

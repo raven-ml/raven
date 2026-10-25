@@ -3,14 +3,61 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** The float kinds on [float32] and [float64] nodes, as nx's kernels compute
-    them.
+(** The float kinds on [float32] and [float64] nodes.
 
-    Each function computes its kind by the algorithm nx's kinds write for its
-    compute type ([nx_kinds.h] and [nx_kinds_real.h] of {!Nx_kernel}): the same
-    operations in the same order, with a fused multiply-add where they write one
-    and nowhere else, so that a node gives the bits nx's kernels give on a
-    target that rounds as those headers assume, NaN operands included. *)
+    {1:exact Exact kinds}
+
+    [Neg], [Abs], [Sign], [Floor], [Ceil], [Round], [Trunc], [Mod], [Maximum],
+    [Minimum] and the comparisons give the bits {!Nx_kernel.Prog} states. [Add],
+    [Sub], [Mul], [Fdiv], [Recip] (as [1 / x]), [Sqrt] and {!fma} are IEEE 754's
+    operations, correctly rounded. A NaN result of any of them is a NaN, of no
+    promised sign or payload.
+
+    {1:transcendental Transcendental kinds}
+
+    The other kinds compose tolk's [exp2], [log2] and [sin] ({!Tolk.Ops.exp2},
+    {!Tolk.Ops.log2}, {!Tolk.Op.Sin}) and its argument reductions
+    ({!Tolk.Transcendental}) with the exact kinds, in forms that cancel nowhere.
+    Taking [exp2], [log2] and [sin] within 4 ulps, as tolk's targets compute
+    them, and division and the square root correctly rounded, each kind is
+    within these bounds in ulps, the distance in ordered-bit ranks from the
+    correctly rounded result, [-0] and [+0] one rank apart:
+
+    {v
+      kind                        float32  float64
+      exp2, log2, sin                4        4
+      erf                            2        3
+      atan                           2        7
+      asin, acos                     5        9
+      atan2                          6        8
+      exp, log, cos                  9        9
+      cosh                          10       10
+      log1p                         12       12
+      tanh                          18       18
+      tan                           19       19
+      expm1, sinh                   21       21
+      pow                     9 + 6 |y log2 |x||
+    v}
+
+    The bounds are derived to first order in the unit roundoff [u] ([2{^-24}] or
+    [2{^-53}]), an error of [n] ulps taken as a relative error of [2 n u] and a
+    relative error [d] as [d / u + 1/2] ulps after the last rounding; erf's
+    polynomials and float32 atan's carry their measured bounds. pow is
+    [2{^y log2 |x|}], so the bound grows with its exponent: [log2 |x|]'s error
+    is that of a [y] perturbed by a few [u]. [exp2] is not promised exact at
+    integers, nor [log2] at powers of two: they hold their bounds there as
+    elsewhere. The bounds hold at tolk's default
+    {!Tolk.Setting.transcendental}, for every operand on a target that keeps
+    subnormals; a target that flushes them, as Metal's float32 does, differs
+    where an operand, a result or an intermediate is below the least normal.
+
+    Where every operand is [±0], [±inf] or NaN and C99 Annex F (ISO/IEC 9899,
+    F.9) gives a zero, an infinity, [±1] or a NaN, a kind gives it, a zero's
+    sign included: [sin], [tan], [asin], [atan], [sinh], [tanh], [erf], [expm1]
+    and [log1p] keep [-0]; [exp (-inf)] is [+0], [log 0] is [-inf] and
+    [tanh inf] is [1]. [pow] gives F.9.4.4's [1] where [y] is [±0] or [x] is
+    [1], NaN included, and where [x] is [-1] and [y] is infinite. Elsewhere a
+    result that should be NaN is a NaN, of no promised sign or payload. *)
 
 open Tolk
 
@@ -31,9 +78,7 @@ val fma : Ops.t -> Ops.t -> Ops.t -> Ops.t
 
 (** {1:parts Parts of the complex kinds}
 
-    The pieces of the float kinds that the complex kinds ([nx_kinds_complex.h])
-    compute with. A constant is a pair: its value at [float32], then at
-    [float64]. *)
+    A constant is a pair: its value at [float32], then at [float64]. *)
 
 val pick : Ops.t -> 'a * 'a -> 'a
 (** [pick x p] is the member of [p] for [x]'s type. *)
@@ -41,88 +86,37 @@ val pick : Ops.t -> 'a * 'a -> 'a
 val con : Ops.t -> float * float -> Ops.t
 (** [con x p] is the constant {!pick}[ x p] of [x]'s type and shape. *)
 
-val ln2_hi : float * float
-(** [ln2_hi] is ln 2 rounded short, so that its products with an exponent are
-    exact. *)
-
-val ln2_lo : float * float
-(** [ln2_lo] is ln 2 less {!ln2_hi}. *)
+val ln2 : float * float
+(** [ln2] is ln 2 rounded. *)
 
 val log2e : float * float
 (** [log2e] is 1 / ln 2 rounded. *)
 
-val log2e_lo : float * float
-(** [log2e_lo] is 1 / ln 2 less {!log2e}. *)
-
-val pio2_hi : float * float
-(** [pio2_hi] is π/2 rounded. *)
-
-val pio2_lo : float * float
-(** [pio2_lo] is π/2 less {!pio2_hi}. *)
-
-val exp2_lo : float * float
-(** [exp2_lo] is where [exp2] clamps its operand from below. *)
-
-val shifter : float * float
-(** [shifter] is the float whose addition rounds a float below half of it to the
-    nearest integer. *)
-
-val sub_scale : float * float
-(** [sub_scale] is the power of two that scales a subnormal to a normal. *)
-
-val mbits : int * int
-(** [mbits] is the number of fraction bits. *)
-
-val bias : int * int
-(** [bias] is the exponent's bias. *)
-
-val min_normal_bits : int64 * int64
-(** [min_normal_bits] is the bits of the least normal. *)
-
-val sqrt_half_bits : int64 * int64
-(** [sqrt_half_bits] is the bits of √½ rounded. *)
+val hyp_far : float
+(** [hyp_far] is where [cosh], [sinh] and [tanh] are [e{^|x|} / 2] and [±1] to
+    both types' precision. *)
 
 val copysign : Ops.t -> Ops.t -> Ops.t
 (** [copysign m s] is [m] with [s]'s sign bit. *)
+
+val flip : Ops.t -> Ops.t -> Ops.t
+(** [flip m s] is [m] with its sign bit flipped where [s]'s is set. *)
 
 val scale : Ops.t -> Ops.t -> Ops.t
 (** [scale y k] is [y 2{^k}] for the [int32] node [k], rounded once where
     [y 2{^k/2}] is normal. *)
 
+val ilogb : Ops.t -> Ops.t
+(** [ilogb x] is the [int32] exponent [e] of a finite [x > 0], [x = m 2{^e}]
+    with [m] in \[1, 2). *)
+
 val two_sum : Ops.t -> Ops.t -> Ops.t * Ops.t
 (** [two_sum a b] is [(hi, lo)], [hi] the rounded sum and [a + b = hi + lo]
     exactly. *)
 
-val nearest : Ops.t -> Ops.t * Ops.t
-(** [nearest t] is, from [t = v + ]{!shifter}, the integer nearest [v] as a
-    float and as an [int32] node. *)
+val exp_parts : Ops.t -> Ops.t * Ops.t
+(** [exp_parts x] is [(hi, lo)] with [x / ln 2 = hi + lo] to twice the type's
+    precision, [hi] rounded. *)
 
-val exp_reduce : Ops.t -> Ops.t * Ops.t * Ops.t
-(** [exp_reduce x] is [(r, rc, k)] with [x = k ln2 + r], [|r| <= ln2/2], [rc]
-    [r]'s rounding error and [k] an [int32] node. *)
-
-val exp_q : Ops.t -> Ops.t
-(** [exp_q r] is [Q(r)] of [expm1 r = r + r{^2} Q(r)]. *)
-
-val exp2_poly : Ops.t -> Ops.t
-(** [exp2_poly r] is [2{^r}] for [|r| <= 1/2]. *)
-
-(** The table a reduction by π/2 reads. *)
-type table =
-  | Two_over_pi  (** 2/π, for [x] itself. *)
-  | Two_ln2_over_pi  (** 2 ln 2 / π, for [x ln 2]. *)
-
-val trig_big : Ops.t -> Ops.t
-(** [trig_big x] is whether [|x|] is finite and at or past the switch from Cody
-    and Waite's reduction to Payne and Hanek's. *)
-
-val rem_big : table -> Ops.t -> Ops.t * Ops.t * Ops.t
-(** [rem_big t x] is [(hi, lo, q)] with [x k = q π/2 + hi + lo], [k] the number
-    [t] is of [x], [q] an [int32] node: Payne and Hanek's reduction, for [x]
-    where {!trig_big} holds of [x k]. *)
-
-val sin_at : Ops.t -> Ops.t * Ops.t * Ops.t -> Ops.t
-(** [sin_at x r] is [sin x] from [x]'s reduction [r]. *)
-
-val cos_at : Ops.t -> Ops.t * Ops.t * Ops.t -> Ops.t
-(** [cos_at x r] is [cos x] from [x]'s reduction [r]. *)
+val exp2_split : Ops.t -> Ops.t -> Ops.t
+(** [exp2_split hi lo] is [2{^hi + lo}] for [|lo|] at most an ulp of [hi]. *)

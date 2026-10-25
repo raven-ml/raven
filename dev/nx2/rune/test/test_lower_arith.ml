@@ -3,7 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Scalar programs lowered to tolk give the bits nx's eager kernels give.
+(* Scalar programs lowered to tolk give the bits nx's eager kernels give for
+   every exact kind, any NaN for a NaN; a narrow float's transcendental kind,
+   computed in float32 and rounded once, is within two ranks of eager's.
+   Lower_real's and Lower_complex's suites hold the bounds at float32, float64
+   and the complex dtypes.
 
    A case lowers one program over operands of one dtype. Its rows apply one kind
    each to the same operands: the operands are broadcast along a first axis of
@@ -326,64 +330,73 @@ let as_compared add d i =
   let c = compared d in
   if name c = name d then i else add (K.Op1 (Bitcast, c, i))
 
-(* NaNs
-
-   Which NaN a NaN result is, its sign and its payload are unspecified, but
-   where a kind moves bits or acts on the sign bit. A complex number with a NaN
-   part is a NaN to the kinds that read it whole; to the others each part is a
-   float. *)
-
-let code b =
-  String.fold_right
-    (fun c z -> Int64.logor (Int64.shift_left z 8) (Int64.of_int (Char.code c)))
-    b 0L
-
-let nan_code ~e ~m z =
-  let open Int64 in
-  let exps = sub (shift_left 1L e) 1L in
-  logand (shift_right_logical z m) exps = exps
-  && logand z (sub (shift_left 1L m) 1L) <> 0L
-
-(* Whether the element of bits [b], of the float [d] or its codes, is a NaN. *)
-let rec is_nan (D.Any dt) b =
-  let f32 = D.Any D.Float32 and f64 = D.Any D.Float64 in
-  let h = String.length b / 2 in
-  let parts p = is_nan p (String.sub b 0 h) || is_nan p (String.sub b h h) in
-  match dt with
-  | D.Float64 -> nan_code ~e:11 ~m:52 (code b)
-  | D.Float32 -> nan_code ~e:8 ~m:23 (code b)
-  | D.Float16 -> nan_code ~e:5 ~m:10 (code b)
-  | D.Bfloat16 -> nan_code ~e:8 ~m:7 (code b)
-  | D.Float8_e5m2 -> nan_code ~e:5 ~m:2 (code b)
-  | D.Float8_e4m3fn -> Int64.logand (code b) 0x7fL = 0x7fL
-  | D.Complex64 -> parts f32
-  | D.Complex128 -> parts f64
-  | _ -> false
-
-let bit_kinds = [ "neg"; "abs"; "where" ]
-let whole_kinds = [ "mul"; "fdiv"; "maximum"; "minimum" ]
-
-(* Whether eager's [a] and the lowering's [b], of [d], agree at [label]. *)
-let same (D.Any dt as d) label a b =
-  let nans p x y = String.equal x y || (is_nan p x && is_nan p y) in
-  if List.mem label bit_kinds then String.equal a b
-  else
-    match dt with
-    | (D.Complex64 | D.Complex128) when not (List.mem label whole_kinds) ->
-        let h = String.length a / 2 in
-        let p = if h = 4 then D.Any D.Float32 else D.Any D.Float64 in
-        let part s i = String.sub s (i * h) h in
-        nans p (part a 0) (part b 0) && nans p (part a 1) (part b 1)
-    | _ -> nans d a b
-
 (* Running *)
 
 type row = { label : string; node : (K.node -> int) -> int }
 
+(* Formats: a float dtype's width in bits and whether a code is a NaN. *)
+
+let ieee ~e ~m c =
+  let open Int64 in
+  let exps = sub (shift_left 1L e) 1L in
+  logand (shift_right_logical c m) exps = exps
+  && logand c (sub (shift_left 1L m) 1L) <> 0L
+
+let format (D.Any dt) =
+  match dt with
+  | D.Float64 | D.Complex128 -> Some (64, ieee ~e:11 ~m:52)
+  | D.Float32 | D.Complex64 -> Some (32, ieee ~e:8 ~m:23)
+  | D.Float16 -> Some (16, ieee ~e:5 ~m:10)
+  | D.Bfloat16 -> Some (16, ieee ~e:8 ~m:7)
+  | D.Float8_e5m2 -> Some (8, ieee ~e:5 ~m:2)
+  | D.Float8_e4m3fn -> Some (8, fun c -> Int64.logand c 0x7FL = 0x7FL)
+  | D.Float4_e2m1fn -> Some (4, fun _ -> false)
+  | _ -> None
+
+let code b =
+  let n = ref 0L in
+  for i = String.length b - 1 downto 0 do
+    n := Int64.logor (Int64.shift_left !n 8) (Int64.of_int (Char.code b.[i]))
+  done;
+  !n
+
+(* The distance in ordered ranks of two codes of [w] bits, -0 and +0 one
+   apart. *)
+let ranks w a b =
+  let mask = Int64.pred (Int64.shift_left 1L (w - 1)) in
+  let neg c = Int64.logand (Int64.shift_right_logical c (w - 1)) 1L = 1L in
+  let ma = Int64.logand a mask and mb = Int64.logand b mask in
+  if neg a = neg b then Int64.abs (Int64.sub ma mb)
+  else Int64.add (Int64.add ma mb) 1L
+
+(* Whether the elements [a] and [b] of [d] agree within [tol] ranks per part:
+   two NaN parts agree whatever their bits. *)
+let close d tol a b =
+  match format d with
+  | None -> a = b
+  | Some (w, is_nan) ->
+      let parts s =
+        if is_complex d then
+          let h = String.length s / 2 in
+          [ String.sub s 0 h; String.sub s h h ]
+        else [ s ]
+      in
+      let width c =
+        if w < 64 then Int64.logand c (Int64.pred (Int64.shift_left 1L w))
+        else c
+      in
+      List.for_all2
+        (fun a b ->
+          let a = width (code a) and b = width (code b) in
+          if is_nan a || is_nan b then is_nan a && is_nan b
+          else ranks w a b <= Int64.of_int tol)
+        (parts a) (parts b)
+
 (* Runs [p] over [loads] at shape [rows; n], eagerly and lowered, and is the
-   rows whose elements differ, at most five: the row's label, the element's
-   operands and both results. Elements agree as [same label] says. *)
-let check (D.Any r) same p labels ops =
+   rows whose elements of [d] differ by more than [tol] ranks, at most five: the
+   row's label, the element's operands and both results. *)
+let check ?(tol = 0) d p labels ops =
+  let (D.Any r) = compared d in
   let k = List.length labels in
   let n = match ops with (_, es) :: _ -> List.length es | [] -> 1 in
   let s = [| k; n |] in
@@ -413,9 +426,8 @@ let check (D.Any r) same p labels ops =
   let bad = ref [] in
   Array.iteri
     (fun i e ->
-      let row = i / n and j = i mod n in
-      if (not (same (List.nth labels row) e lowered.(i))) && List.length !bad < 5
-      then
+      if (not (close d tol e lowered.(i))) && List.length !bad < 5 then
+        let row = i / n and j = i mod n in
         let operand (_, es) = hex (List.nth es j) in
         bad :=
           Printf.sprintf "%s of %s: eager %s, lowered %s" (List.nth labels row)
@@ -500,14 +512,28 @@ let finish d rows =
     (fun (label, f) -> { label; node = (fun add -> as_compared add d (f add)) })
     rows
 
-let run_rows d ~ins rows ops =
+let run_rows ?tol d ~ins rows ops =
   let p = select ~ins (List.map (fun r -> r.node) rows) in
-  check (compared d) (same d) p (List.map (fun r -> r.label) rows) ops
+  check ?tol d p (List.map (fun r -> r.label) rows) ops
 
-let unary_rows d =
+(* The kinds a float or complex dtype computes exactly. *)
+let exact1 d (k : K.unary) =
+  match k with
+  | Neg -> true
+  | Recip | Abs | Sign | Sqrt | Floor | Ceil | Round | Trunc ->
+      not (is_complex d)
+  | _ -> not (is_float d || is_complex d)
+
+let exact2 d (k : K.binary) =
+  match k with
+  | Mul | Fdiv | Mod -> not (is_complex d)
+  | Pow | Atan2 -> not (is_float d || is_complex d)
+  | _ -> true
+
+let unary_rows ?(keep = exact1) d =
   List.filter_map
     (fun (k, label) ->
-      if accepts1 (K.Unary k) d d then
+      if accepts1 (K.Unary k) d d && keep d k then
         Some (label, fun add -> add (K.Op1 (Unary k, d, 0)))
       else None)
     unaries
@@ -518,7 +544,7 @@ let binary_rows d =
   let bin =
     List.filter_map
       (fun (k, label) ->
-        if accepts2 (K.Binary k) d then
+        if accepts2 (K.Binary k) d && exact2 d k then
           Some (label, fun add -> add (K.Op2 (Binary k, 0, 1)))
         else None)
       binaries
@@ -559,7 +585,7 @@ let cover_classes ds d =
     (fun (label, is) -> if List.exists is ds then cover label (is d))
     classes
 
-let family title ds rows ~arity =
+let family ?tol title ds rows ~arity =
   prop title ~count:2
     ~examples:(List.map (fun d -> (d, 7)) ds)
     (by_dtype ds)
@@ -571,16 +597,35 @@ let family title ds rows ~arity =
         else [ (value d x, x); (value d y, y) ]
       in
       let ins = Array.make arity d in
-      no_difference (run_rows d ~ins (finish d (rows d)) ops))
+      no_difference (run_rows ?tol d ~ins (finish d (rows d)) ops))
 
 let unary =
-  family "unary kinds give eager's bits"
+  family "exact unary kinds give eager's bits"
     (List.filter (fun d -> unary_rows d <> []) dtypes)
     unary_rows ~arity:1
 
 let binary =
-  family "binary kinds, comparisons, where and fma give eager's bits" dtypes
-    binary_rows ~arity:2
+  family "exact binary kinds, comparisons, where and fma give eager's bits"
+    dtypes binary_rows ~arity:2
+
+(* A narrow float's transcendental kind is its float32 kind rounded once: within
+   one rank of the correctly rounded result, as eager's is, so within two of
+   eager's. *)
+let narrow = List.filter (fun d -> is_float d && bits d < 32) dtypes
+
+let rounded =
+  let transcendental d k = not (exact1 d k) in
+  let both d =
+    unary_rows ~keep:transcendental d
+    @ List.filter_map
+        (fun (k, label) ->
+          if exact2 d k then None
+          else Some (label, fun add -> add (K.Op2 (Binary k, 0, 1))))
+        binaries
+  in
+  family ~tol:2
+    "narrow floats' transcendental kinds are within two ranks of eager's" narrow
+    both ~arity:2
 
 (* Casts and bitcasts: one row per destination, compared by its bits in a
    uint64. A complex128 destination, which no uint64 holds, is compared by its
@@ -726,4 +771,4 @@ let shapes =
 let () =
   exit
     (run "Lower_arith"
-       [ unary; binary; cast; into_complex128; bitcast; shapes ])
+       [ unary; binary; rounded; cast; into_complex128; bitcast; shapes ])
