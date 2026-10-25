@@ -2660,17 +2660,24 @@ let dot2 xs ys =
 
 (* [got], an output of [kc] products of parts [xs] and [ys], within
    {!Nx.contract}'s bound of their sum, [mag] their magnitudes' sum: NaN
-   where a float sum of them is, that infinity where it is one. *)
+   where a float sum of them is, that infinity where it is one. A complex
+   init's NaN part makes [mag], which holds the init's modulus, a NaN
+   beside this part's sum of numbers: the bound is then a NaN and promises
+   nothing for this part. An infinite [mag] makes the bound infinite, which
+   still rejects a NaN. *)
 let within (type v) (f : v floats) kc ~mag xs ys got =
   let naive = ref 0. in
   Array.iteri (fun i x -> naive := !naive +. (x *. ys.(i))) xs;
   let show x = if Float.is_nan x then "nan" else Printf.sprintf "%h" x in
   if not (Float.is_finite !naive) then equal string (show !naive) (show got)
+  else if Float.is_nan mag then ()
   else
     let s = dot2 xs ys in
     let g = gamma (2. *. f.u) (kc + 1) *. mag in
     let n = Float.of_int (2 * kc) in
-    let reference = (u64 *. Float.abs s) +. ((n *. u64) ** 2. *. mag) in
+    (* With no product this term is 0, though [mag] may be infinite. *)
+    let terms = if n = 0. then 0. else (n *. u64) ** 2. *. mag in
+    let reference = (u64 *. Float.abs s) +. terms in
     let bound = g +. (f.out_u *. (Float.abs s +. g)) +. f.tiny +. reference in
     if Float.abs got = infinity && Float.abs s +. bound >= f.max then
       (* An overflow of the rounding into the result's dtype. *)
