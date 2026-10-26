@@ -188,6 +188,29 @@ let open_cut () =
       | Error why -> failf "from allocation %d, the open after: %s" n why);
       reached)
 
+(* A mapping of host memory that an exception ends at any allocation leaves
+   the memory as it was: it maps again, and it is unlocked once the regions
+   over it are freed. Where [over] holds, the memory was mapped before, so
+   the mapping counts against that one's lock. *)
+let map_host_cut ~over () =
+  S.with_driver @@ fun g ->
+  S.bind g;
+  cut (fun n ->
+      let p = H.pages H.page in
+      let before = if over then C.map_host g p H.page else None in
+      if over then is_some ~msg:"the mapping before" before;
+      let mapped = ref None in
+      let reached =
+        Rig_support.interrupted n (fun () -> mapped := C.map_host g p 64)
+      in
+      let what = strf "from allocation %d" n in
+      let again = C.map_host g p 64 in
+      is_some ~msg:(what ^ ", a mapping after") again;
+      List.iter (Option.iter (C.free g)) [ again; !mapped; before ];
+      equal ~msg:(what ^ ", locked after the frees") bool false (S.locked p);
+      H.free_pages p H.page;
+      reached)
+
 (* Through rig *)
 
 (* [walk_rig attempt] is {!walk} on a device that rig opened, which it
@@ -300,7 +323,13 @@ let () =
     (run "rig_cuda interrupt"
        [
          group ~timeout "an exception at any allocation"
-           [ test "an open leaves the GPU to the next open" open_cut ];
+           [
+             test "an open leaves the GPU to the next open" open_cut;
+             test "a mapping of host memory leaves it unlocked"
+               (map_host_cut ~over:false);
+             test "a mapping inside a locked range leaves it unlocked"
+               (map_host_cut ~over:true);
+           ];
          group ~timeout "a call from a callback at any allocation"
            [
              test "an entry in an entry of its image, refused inside its lock"

@@ -746,22 +746,32 @@ let map_host g a n =
   else
     protect registry_lock @@ fun () ->
     let inside e = e.start <= a && a + n <= e.start + e.bytes in
+    (* A count or a registration is recorded with nothing allocated after it,
+       and a registration not recorded is ended on any exception: either
+       would keep the range locked for good, and a range locked but not
+       recorded is mapped uncounted, as another owner's. *)
     match List.find_opt inside !registry with
     | Some e -> (
         match locked g (Some e) a with
         | Ok r ->
+            let some = Some r in
             e.maps <- e.maps + 1;
-            Some r
+            some
         | Error s -> fault (page_locking n a) s)
     | None when lock g.context true a n = 0 -> (
-        let e = { start = a; bytes = n; maps = 1 } in
-        match locked g (Some e) a with
-        | Ok r ->
-            registry := e :: !registry;
-            Some r
-        | Error s ->
+        match
+          let e = { start = a; bytes = n; maps = 1 } in
+          match locked g (Some e) a with
+          | Ok r ->
+              let some = Some r and entries = e :: !registry in
+              registry := entries;
+              some
+          | Error s -> fault (page_locking n a) s
+        with
+        | some -> some
+        | exception x ->
             ignore (lock g.context false a 0 : int);
-            fault (page_locking n a) s)
+            reraise x)
     | None -> (
         let start = allocation g.context a in
         if start < 0 || start <> allocation g.context (a + n - 1) then
