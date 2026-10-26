@@ -545,7 +545,8 @@ let enable_peers (g : gpus) i c =
 let compute = { Rig_edge.name = "COMPUTE:0"; runs = [ Fill; Copy; Launch ] }
 let copy = { Rig_edge.name = "COPY:0"; runs = [ Fill; Copy ] }
 
-(* The registrations [map_host] made, with the regions over each. *)
+(* The registrations [map_host] made, with the regions over each. One whose
+   last region was freed stays at 0 until the next registration drops it. *)
 let registry : registration list ref = ref []
 let registry_lock = Mutex.create ()
 
@@ -745,7 +746,7 @@ let map_host g a n =
   if not g.facts.maps_host then None
   else
     protect registry_lock @@ fun () ->
-    let inside e = e.start <= a && a + n <= e.start + e.bytes in
+    let inside e = e.maps > 0 && e.start <= a && a + n <= e.start + e.bytes in
     (* A count or a registration is recorded with nothing allocated after it,
        and a registration not recorded is ended on any exception: either
        would keep the range locked for good, and a range locked but not
@@ -763,7 +764,8 @@ let map_host g a n =
           let e = { start = a; bytes = n; maps = 1 } in
           match locked g (Some e) a with
           | Ok r ->
-              let some = Some r and entries = e :: !registry in
+              let some = Some r
+              and entries = e :: List.filter (fun e -> e.maps > 0) !registry in
               registry := entries;
               some
           | Error s -> fault (page_locking n a) s
@@ -890,12 +892,14 @@ let free g (r : region) =
          context, which the process keeps. *)
       ignore (free_memory g.context (r.kind = Host) r.address)
   | Locked (Some e) ->
-      protect registry_lock @@ fun () ->
+      (* Nothing between the take and the give allocates or polls, nor
+         anything before the take, so no exception lands in the free: rig
+         never frees a region again after its free raised. The entry stays
+         in the registry at 0, for [map_host] to drop. *)
+      take registry_lock;
       e.maps <- e.maps - 1;
-      if e.maps = 0 then begin
-        registry := List.filter (fun e' -> e' != e) !registry;
-        ignore (lock g.context false e.start 0 : int)
-      end
+      if e.maps = 0 then ignore (lock g.context false e.start 0 : int);
+      give registry_lock
   | Own_word ->
       (* The edge keeps the word's value for later claims of the GPU, which
          read it under [held_lock]; the free runs outside it, as CUDA may

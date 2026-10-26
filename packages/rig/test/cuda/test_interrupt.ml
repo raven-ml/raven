@@ -211,6 +211,33 @@ let map_host_cut ~over () =
       H.free_pages p H.page;
       reached)
 
+(* A free of page-locked memory reaches no allocation, so no exception
+   lands in it: rig never frees a region again after its free raised. Its
+   memory is unlocked after the last free over it. *)
+let free_uncut () =
+  S.with_driver @@ fun g ->
+  S.bind g;
+  let p = H.pages H.page and q = H.pages H.page in
+  let first = require_some ~msg:"a mapping" (C.map_host g p H.page) in
+  let inner = require_some ~msg:"a mapping inside it" (C.map_host g p 64) in
+  S.register q H.page;
+  let foreign =
+    require_some ~msg:"a mapping of another owner's memory"
+      (C.map_host g q 64)
+  in
+  let free what r =
+    let reached = Rig_support.interrupted 1 (fun () -> C.free g r) in
+    equal ~msg:(what ^ ", an allocation reached") bool false reached
+  in
+  free "a region that counts" inner;
+  equal ~msg:"locked after a free that counts" bool true (S.locked p);
+  free "the last region" first;
+  equal ~msg:"locked after the last free" bool false (S.locked p);
+  free "another owner's region" foreign;
+  S.unregister q;
+  H.free_pages p H.page;
+  H.free_pages q H.page
+
 (* Through rig *)
 
 (* [walk_rig attempt] is {!walk} on a device that rig opened, which it
@@ -329,6 +356,8 @@ let () =
                (map_host_cut ~over:false);
              test "a mapping inside a locked range leaves it unlocked"
                (map_host_cut ~over:true);
+             test "a free of page-locked memory reaches no allocation"
+               free_uncut;
            ];
          group ~timeout "a call from a callback at any allocation"
            [
