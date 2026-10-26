@@ -106,9 +106,9 @@ val equal : 'd placement -> 'e placement -> bool
 val window :
   by:string -> 'd placement -> int array -> int -> Nx_array.Move.range array
 (** [window ~by p shape i] is the window of a value of [shape] that the [i]th
-    device of [p] holds, in [Grid.devices (grid p)]'s order. Raises
-    [Invalid_argument] naming [by] if [p] cuts an axis [shape] lacks, and if [i]
-    is not a position of [p]'s devices. *)
+    device of [p] holds, in [Grid.devices (grid p)]'s order, for a position
+    [i] of [p]'s devices. Raises [Invalid_argument] naming [by] if [p] cuts an
+    axis [shape] lacks. *)
 
 val uncut : 'd placement -> 'd placement
 (** [uncut p] is [p] with every axis whole on each of its devices: a grid axis

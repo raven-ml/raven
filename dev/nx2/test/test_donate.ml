@@ -1203,6 +1203,21 @@ let test_one_reader_consumes () =
   dies "Nx.istft" spectrum (fun d ->
       ignore (Nx.istft Nx.float32 ~window:4 ~step:2 d))
 
+(* A call that keeps none of its operand still raises for a dead one: an
+   fft cut to no point, patches of an empty axis padded. *)
+let test_none_kept () =
+  let dead x =
+    ignore (Nx.copy (Nx.donate x));
+    x
+  in
+  let parts = [| 1.; 2.; 3.; 4. |] in
+  let z = dead (Nx.complex Nx.complex64 ~re:(fresh parts) ~im:(fresh parts)) in
+  invalid ~sub:(dead_in "Nx.fft" z "Nx.copy") (fun () -> Nx.fft ~s:[ 0 ] z);
+  let x = dead (fresh_at [| 1; 0 |] [||]) in
+  invalid ~sub:(dead_in "Nx.extract_patches" x "Nx.copy") (fun () ->
+      Nx.extract_patches ~kernel_size:[| 1 |] ~stride:[| 1 |] ~dilation:[| 1 |]
+        ~padding:[| (1, 1) |] x)
+
 (* Where a call's operands reach different operations, a donor beside its
    own handle raises naming the call once the handle's operation consumed
    it: here [q]'s sum consumes it before [k]'s comparison reads it. *)
@@ -2291,6 +2306,8 @@ let () =
                test_one_reader_consumes;
              test "a donor beside its handle in another operation raises"
                test_beside_elsewhere;
+             test "a call that keeps none of a dead operand raises"
+               test_none_kept;
              test_dead_names;
              test_donated;
              test "a captured array lives" test_captured;

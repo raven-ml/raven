@@ -76,6 +76,9 @@ let dispatch_rows =
         (fun (b, x) -> Nx.where b x x);
       Thumper.bench_with_setup "cast-1" ~setup:one (Nx.cast D.Float64);
       Thumper.bench_with_setup "reshape-1" ~setup:one (Nx.reshape [| 1; 1 |]);
+      Thumper.bench_with_setup "get-1-of-4x4"
+        ~setup:(fun () -> Nx.reshape [| 4; 4 |] (host 16))
+        (Nx.get [ 1; 2 ]);
       Thumper.bench_with_setup "zeros_like-1" ~setup:one Nx.zeros_like;
       Thumper.bench_with_setup "zeros_like-1M"
         ~setup:(fun () -> host (1 lsl 20))

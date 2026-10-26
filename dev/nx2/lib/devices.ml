@@ -169,9 +169,6 @@ let equal p q =
   p == q || (p.set.number = q.set.number && Grid.equal p.grid q.grid)
 
 let window ~by p shape i =
-  if i < 0 || i >= Grid.count p.grid then
-    invalid_argf "%s: position %d of a placement of %d devices" by i
-      (Grid.count p.grid);
   match Grid.window p.grid shape i with
   | Ok w -> w
   | Error e -> invalid_argf "%s: %s" by e
