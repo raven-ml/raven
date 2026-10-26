@@ -34,7 +34,8 @@
     rows, columns and depth, as stated below. Each kind computes through
     the function of its name in [nx_kinds.h], with that function's bits,
     NaNs aside, on every target. So [Exp2] is exact at integers whose power
-    is in the dtype, and [Log2] at powers of two.
+    is in the dtype, and [Log2] at powers of two. The kinds keep subnormal
+    operands and results.
 
     {e Lane order} puts the terms of a sum or a product, numbered as
     {!Nx_kernel.section-reductions} and {!Nx_kernel.section-contraction}

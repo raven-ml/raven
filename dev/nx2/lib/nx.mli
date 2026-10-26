@@ -825,7 +825,9 @@ val pow : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     value [exp (b * log a)]: [1] where [b] is [0], [0] at [a = 0] where
     [b]'s real part is positive, with [log]'s branch cut
     ({!section-transcendental}); its error grows with [|b log a|], within
-    [(3 + 3|b log a|) u |a{^b}|]. Every dtype but booleans. *)
+    [(3 + 3|b log a|) u |a{^b}|]. On floats it is within 4 ulps at float32
+    and 2 at float64, with Annex F's special values
+    ({!section-transcendental}). Every dtype but booleans. *)
 
 val fma : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [fma a b c] is [a * b + c] rounded once. Floats and integers. *)
@@ -1013,12 +1015,29 @@ end
 
 (** {2:transcendental Powers, exponentials and trigonometry}
 
-    Floats and complex numbers, where a function does not say floats. On floats
-    each is within a bound in ulps of its mathematical value rounded to the
-    dtype, the bound [nx_kinds.h] gives every kernel library
-    ({!Nx_kernel.Prog}): at most 4 ulps at float32 and float64. A stated range
-    is the mathematical one, which rounding can leave at an end: in
+    Floats and complex numbers, where a function does not say floats. A stated
+    range is the mathematical one, which rounding can leave at an end: in
     [float8_e4m3fn], [π] rounds to [3.25].
+
+    On floats the {e error} of a result is the number of floats of the dtype
+    between it and the exact value rounded to the dtype, [-0.] and [+0.] one
+    apart. Each function states a bound on it at float32 and float64.
+    Whatever the bound, a result is exact at the special values of C99's
+    Annex F (ISO/IEC 9899, F.10): [exp (-inf)] is [+0.], [log] of [±0.] is
+    [-inf], [sin] of an infinity is NaN and [atan inf] is [π/2] rounded. A
+    zero result has the sign Annex F gives it, or the exact value's where
+    that rounds to zero: [sin (-0.)] is [-0.] and [exp (-1000.)] is [+0.]. A
+    NaN operand gives a NaN, but where Annex F gives a number for every value
+    of that operand: [pow nan 0.] and [pow 1. nan] are [1.]. Which NaN, its
+    sign and its payload are unspecified. In the formats narrower than 32
+    bits, which compute at float32 and round once ({!section-arith}), a
+    result is within one ulp of the exact value rounded to the dtype.
+
+    nx.cpu keeps subnormal numbers ({!Nx_cpu}). A device whose kernel
+    library flushes them to zero reads a subnormal operand as zero and
+    writes a subnormal result as zero; there each bound, of this section and
+    of {!section-special}, holds where the operands and the result are
+    normal.
 
     On complex numbers each is the principal value C99 defines (ISO/IEC 9899,
     7.3), with its special values at infinities, NaNs and signed zeros (Annex
@@ -1042,8 +1061,9 @@ end
     bounds hold. *)
 
 val sqrt : ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [sqrt x] is the square root, NaN below [-0.]. On complex numbers its real
-    part is never negative, and its branch cut is the negative real axis. *)
+(** [sqrt x] is the square root, NaN below [-0.], correctly rounded on
+    floats. On complex numbers its real part is never negative, and its
+    branch cut is the negative real axis. *)
 
 val rsqrt : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [rsqrt x] is [recip (sqrt x)]: [inf] at [+0.], [-inf] at [-0.], NaN below.
@@ -1056,58 +1076,72 @@ val hypot : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     3 ulps at float32 and float64. Floats. *)
 
 val exp : ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [exp x] is [e{^x}]. *)
+(** [exp x] is [e{^x}]. Within 2 ulps at float32 and float64. *)
 
 val exp2 : ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [exp2 x] is [2{^x}]. *)
+(** [exp2 x] is [2{^x}]. Within 2 ulps at float32 and float64. *)
 
 val expm1 : ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [expm1 x] is [e{^x} - 1], accurate near [0]. Floats. *)
+(** [expm1 x] is [e{^x} - 1], accurate near [0]: [-0.] at [-0.] and [-1.] at
+    [-inf]. Within 1 ulp at float32 and 2 at float64. Floats. *)
 
 val log : ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [log x] is the natural logarithm: [-inf] at [0.], NaN below. On complex
-    numbers it is [log |x| + i angle x], its imaginary part in
-    \[[-π], [π]\] and its branch cut the negative real axis. *)
+(** [log x] is the natural logarithm: [-inf] at [0.], NaN below. Within 1
+    ulp at float32 and 2 at float64. On complex numbers it is
+    [log |x| + i angle x], its imaginary part in \[[-π], [π]\] and its
+    branch cut the negative real axis. *)
 
 val log2 : ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [log2 x] is the base-2 logarithm. *)
+(** [log2 x] is the base-2 logarithm. Within 1 ulp at float32 and 2 at
+    float64. *)
 
 val log1p : ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [log1p x] is [log (1 + x)], accurate near [0]. Floats. *)
+(** [log1p x] is [log (1 + x)], accurate near [0]: [-0.] at [-0.], [-inf] at
+    [-1.], NaN below. Within 1 ulp at float32 and 2 at float64. Floats. *)
 
 val sin : ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [sin x] is the sine of [x] radians. *)
+(** [sin x] is the sine of [x] radians. Within 2 ulps at float32 and
+    float64. *)
 
 val cos : ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [cos x] is the cosine of [x] radians. *)
+(** [cos x] is the cosine of [x] radians. Within 2 ulps at float32 and
+    float64. *)
 
 val tan : ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [tan x] is the tangent of [x] radians. *)
+(** [tan x] is the tangent of [x] radians. Within 4 ulps at float32 and 2
+    at float64. *)
 
 val asin : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [asin x] is the arcsine, in \[[-π/2], [π/2]\]: on complex numbers its real
-    part, with branch cuts on the real axis beyond [-1] and [1]. *)
+    part, with branch cuts on the real axis beyond [-1] and [1]. Within
+    2 ulps at float32 and float64. *)
 
 val acos : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [acos x] is the arccosine, in \[[0], [π]\]: on complex numbers its real
-    part, with {!asin}'s branch cuts. *)
+    part, with {!asin}'s branch cuts. Within 2 ulps at float32 and
+    float64. *)
 
 val atan : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [atan x] is the arctangent, in \[[-π/2], [π/2]\]: on complex numbers its
-    real part, with branch cuts on the imaginary axis beyond [-i] and [i]. *)
+    real part, with branch cuts on the imaginary axis beyond [-i] and [i].
+    Within 2 ulps at float32 and float64. *)
 
 val atan2 : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [atan2 y x] is the angle of the point [(x, y)], in \[[-π], [π]\]:
-    [-π] for [y = -0.] and [x < 0]. Floats. *)
+    [-π] for [y = -0.] and [x < 0]. Within 3 ulps at float32 and 2 at
+    float64. Floats. *)
 
 val sinh : ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [sinh x] is the hyperbolic sine. *)
+(** [sinh x] is the hyperbolic sine. Within 3 ulps at float32 and 2 at
+    float64. *)
 
 val cosh : ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [cosh x] is the hyperbolic cosine. *)
+(** [cosh x] is the hyperbolic cosine. Within 2 ulps at float32 and
+    float64. *)
 
 val tanh : ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [tanh x] is the hyperbolic tangent. *)
+(** [tanh x] is the hyperbolic tangent. Within 2 ulps at float32 and
+    float64. *)
 
 val asinh : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [asinh x] is the inverse hyperbolic sine, odd, [x] itself near [0.]: within
@@ -1129,7 +1163,8 @@ val atanh : ('v, 's, 'd) t -> ('v, 's, 'd) t
     [1]. *)
 
 val erf : (float, 's, 'd) t -> (float, 's, 'd) t
-(** [erf x] is the error function [2/√π ∫₀ˣ e{^-t²} dt]. *)
+(** [erf x] is the error function [2/√π ∫₀ˣ e{^-t²} dt]: [-1.] at [-inf]
+    and [1.] at [inf]. Within 2 ulps at float32 and float64. *)
 
 (** {2:special Special functions}
 
@@ -1139,10 +1174,9 @@ val erf : (float, 's, 'd) t -> (float, 's, 'd) t
     domain, and at a NaN argument, the value is NaN; at a pole it is the
     function's limit there.
 
-    Each function states a bound at float32 and float64 on its {e error}, the
-    number of floats of the dtype between its result and the exact value
-    rounded to the dtype. A bound of [k] ulps {e absolute near zeros} also
-    holds where the exact value is below [1.] in magnitude and the result
+    Each function states a bound at float32 and float64 on its error
+    ({!section-transcendental}). A bound of [k] ulps {e absolute near zeros}
+    also holds where the exact value is below [1.] in magnitude and the result
     within [kε] of it, [ε] being the distance from [1.] to the next float of
     the dtype. An inverse's bound adds [κ] times its forward function's bound,
     where [κ = |p / (x F'(x))|] at its result [x], for [F] the forward
@@ -1154,11 +1188,7 @@ val erf : (float, 's, 'd) t -> (float, 's, 'd) t
     The formats narrower than 32 bits compute at [float32] and round once.
     Where a bound is in ulps, their result is within one ulp of the exact
     value rounded to their dtype; where it is absolute, within that bound at
-    [float32] plus half an ulp of their dtype.
-
-    A device that flushes subnormal numbers to zero reads a subnormal operand
-    as zero and writes a subnormal result as zero; there each bound holds
-    where the operands and the result are normal. *)
+    [float32] plus half an ulp of their dtype. *)
 
 val erfc : (float, 's, 'd) t -> (float, 's, 'd) t
 (** [erfc x] is [1 - erf x], to its own relative precision where [erf x]
@@ -1167,7 +1197,7 @@ val erfc : (float, 's, 'd) t -> (float, 's, 'd) t
 
 val erfinv : (float, 's, 'd) t -> (float, 's, 'd) t
 (** [erfinv p] is the [x] with [erf x = p], on \[[-1.], [1.]\]: [-inf] at
-    [-1.] and [inf] at [1.]. Within [4 + 8κ] ulps, where
+    [-1.], [-0.] at [-0.] and [inf] at [1.]. Within [4 + 8κ] ulps, where
     [κ = |p √π e{^x²} / (2x)|] is [1] at [0.] and grows as [p] nears [±1.]. *)
 
 val ndtr : (float, 's, 'd) t -> (float, 's, 'd) t
