@@ -102,7 +102,7 @@ type rule =
   | Axes of axis array array
       (** Axis [a] of operand [i] is [t.(i).(a)] of [Axes t]. No two axes of
           an operand become one. A loop of no load has one row and no operand
-          behind it: the loop's space, which {!keeps} and {!window} read as an
+          behind it: the loop's space, which {!at} and {!window} read as an
           operand of the loop's shape. {!at} routes it over no operand;
           {!route}, which takes a row per operand, never receives it. *)
   | Into of axis array array
@@ -191,25 +191,21 @@ val route :
   int array array ->
   'd t option
 (** [route ~by r ps shapes] routes an operation of rule [r] over operands at
-    [ps] of [shapes], [None] for an operand of every set. It is [None] where
-    every operand is: the operation is of every set too. An operand of every
-    set is read at the target moved back to its axes.
+    [ps] of [shapes], [None] for an operand of every set. [ps] and [shapes]
+    are of one positive length, and [r] names each axis of each operand. It
+    is [None] where every operand is: the operation is of every set too. An
+    operand of every set is read at the target moved back to its axes.
 
     Raises [Invalid_argument] naming [by] if operands lie on two sets or on two
-    devices alone, if a placement an operand is read at cuts an axis its shape
-    lacks ({!Grid.window}), and as an internal fault if [ps] and [shapes] differ
-    in length, [ps] is empty, or [r] does not name each axis of each operand. *)
-
-val keeps : rule -> int -> bool
-(** [keeps r a] is whether the results of an operation of rule [r] keep their
-    axis [a] whole: no row's axis becomes it or regroups into it. *)
+    devices alone, and if a placement an operand is read at cuts an axis its
+    shape lacks ({!Grid.window}). *)
 
 val at : by:string -> rule -> int array array -> 'd Devices.placement -> 'd t
 (** [at ~by r shapes p] routes an operation of rule [r] over operands of
-    [shapes] whose results are wanted at [p]: the result lies at [p], with
-    each axis [r] keeps whole in the results whole ({!keeps}) and each cut an
-    operand regroups across rows undone ({!Regroups}); each operand is read at
-    that target moved back to its axes. It computes by partials where an
+    [shapes] whose results are wanted at [p]: the result lies at [p], whole
+    along each axis no row's axis becomes or regroups into, and with each cut
+    an operand regroups across rows undone ({!Regroups}); each operand is read
+    at that target moved back to its axes. It computes by partials where an
     operand is then read cut along an axis [r] scans, each such axis holding
     elements, as {!route} decides.
 

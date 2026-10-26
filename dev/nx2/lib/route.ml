@@ -255,18 +255,6 @@ let common (type d) (ps : d Devices.placement option array) : d common =
   | Some p -> One p
   | exception Exit -> Other
 
-(* Raises naming [by] where [rule] does not name each axis of operands of
-   [shapes]. *)
-let check ~by rule shapes =
-  match rule with
-  | Elementwise -> ()
-  | Axes t | Into t ->
-      let fits axes s = Array.length axes = Array.length s in
-      if
-        Array.length t <> Array.length shapes
-        || not (Array.for_all2 fits t shapes)
-      then invalid_argf "%s: a rule that does not name each operand's axes" by
-
 (* The axes of operand [i], of shape [s], that [rule] folds: those it reduces
    or scans. *)
 let folds rule i s =
@@ -464,10 +452,6 @@ let general ~by rule ps shapes =
 
 let route ~by rule ps shapes =
   let n = Array.length ps in
-  if n = 0 || n <> Array.length shapes then
-    invalid_argf "%s: a route of %d placements and %d shapes" by n
-      (Array.length shapes);
-  check ~by rule shapes;
   (* Operands at one placement that cuts no axis are read there, and the
      results lie there: each device reads them whole and computes all of the
      results. *)

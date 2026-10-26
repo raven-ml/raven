@@ -303,12 +303,3 @@ and ('d, _) linalg =
       b : ('v, 's, 'd) t;
     }
       -> ('d, ('v, 's, 'd) t) linalg
-
-(** {1:applying Applying operations} *)
-
-(** How {!Pairwise} and {!Partial} apply the simpler operations
-    they compose. *)
-module type Apply = sig
-  val apply : by:string -> 'r prim -> 'r
-  (** [apply ~by op] is [op]'s results, [by] naming the caller in messages. *)
-end

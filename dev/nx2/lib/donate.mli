@@ -78,23 +78,10 @@ val claim : by:string -> handle list -> unit
     [Invalid_argument] naming [by] and the earlier consumer for a donor that
     died first, on any domain; the donors claimed before it stay dead. *)
 
-val called : handle list -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
-(** [called hs x] is [x] as the consumer of the handles [hs] reads it, before
-    it claims them: a handle as its arrays, a donor of one of [hs] as a live
-    value, and any other value as it is. *)
-
 val unhandled : handle list -> 'r Value.prim -> 'r Value.prim
-(** [unhandled hs op] is [op] with each operand {!called}[ hs]. *)
-
-val holds :
-  Nx_array.Dtype.any -> Nx_array.Layout.t -> ('v, 's) Nx_array.t -> bool
-(** [holds dt l a] is whether [a] may hold a result of [dt] and layout [l] in
-    its memory: of that dtype and layout, over all of its memory. *)
-
-val take : by:string -> Rig.Buffer.t -> Rig.Buffer.t option
-(** [take ~by b] is the live buffer over [b]'s memory, consumed for [by],
-    where rig holds it exclusive: no other value reads it. [None] otherwise,
-    [b] untouched. *)
+(** [unhandled hs op] is [op] with each operand as the consumer of the handles
+    [hs] reads it, before it claims them: a handle as its arrays, a donor of
+    one of [hs] as a live value, and any other value as it is. *)
 
 val reuse :
   by:string ->
@@ -103,9 +90,9 @@ val reuse :
   (int * Rig.Buffer.t * Rig.Buffer.t) option
 (** [reuse ~by op hs] is the claimed handle among [hs] whose memory takes
     [op]'s first result, if one may: on one device, at a position
-    {!Prim.own_index} gives, {!holds} the result, beside operands at its
-    placement none of which [op] reads at other indices from that memory, and
-    which rig holds exclusive. Its memory is then consumed ({!take}), and the
+    {!Prim.own_index} gives, of the result's dtype and layout over all of its
+    memory, beside operands at its placement none of which [op] reads at
+    other indices from that memory, and which rig holds exclusive. Its memory is then consumed for [by], and the
     answer is its position, its buffer and the live buffer over its memory. *)
 
 val consumed : by:string -> reused:Rig.Buffer.t list -> handle list -> unit

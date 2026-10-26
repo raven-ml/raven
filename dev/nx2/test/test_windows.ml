@@ -487,7 +487,8 @@ let ops =
 (* Each case's family, as the covers name it. *)
 let family (Op op) =
   let loop kind loads =
-    if Iarray.exists Prim.is_padded loads then "padded " ^ kind else kind
+    let padded = function Value.Padded _ -> true | Value.Plain _ -> false in
+    if Iarray.exists padded loads then "padded " ^ kind else kind
   in
   match op with
   | Value.Map { loads; _ } -> loop "Map" loads
@@ -536,13 +537,25 @@ let scans (rule : Route.rule) a =
   | Elementwise -> false
   | Axes t | Into t -> Array.exists (Array.mem (Route.Scanned a)) t
 
+(* Whether [rule]'s results keep their axis [a] whole: no operand's axis
+   becomes it, scans along it or regroups into it. *)
+let keeps (rule : Route.rule) a =
+  match rule with
+  | Elementwise -> false
+  | Axes t | Into t ->
+      let into : Route.axis -> bool = function
+        | Becomes b | Scanned b | Regroups { axis = b; _ } -> b = a
+        | Whole | Reduced _ -> false
+      in
+      not (Array.exists (Array.exists into) t)
+
 (* A window of [o]'s results, whole along an axis its rule keeps or scans. *)
 let window_of (Op op as o) =
   let open Gen in
   let rule = Prim.rule op and s = shape_of_results o in
   let+ w =
     let range a d =
-      if Route.keeps rule a || scans rule a || d = 0 then constant (full d)
+      if keeps rule a || scans rule a || d = 0 then constant (full d)
       else
         let* start = int_range 0 (d - 1) in
         let+ count = int_range 0 (d - start) in

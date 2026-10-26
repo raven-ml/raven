@@ -78,18 +78,6 @@ let groups n ~key ~tile =
   let first j = List.find (fun i -> keys.(i) = keys.(j)) all = j in
   List.map group (List.filter first all)
 
-(* The order partials combine in: a leaf is the partial of terms one
-   device computes. *)
-type tree = Leaf of int | Node of tree * tree
-
-(* [n > 0] leaves combined in their order. *)
-let chain n =
-  let t = ref (Leaf 0) in
-  for i = 1 to n - 1 do
-    t := Node (!t, Leaf i)
-  done;
-  !t
-
 (* Contraction pieces *)
 
 let rec gcd a b = if b = 0 then a else gcd b (a mod b)
@@ -129,8 +117,7 @@ let parts runs (tile : M.range array) =
 
 module Make (A : sig
   val by : string
-
-  include Value.Apply
+  val apply : by:string -> 'r Value.prim -> 'r
 end) =
 struct
   let by = A.by
@@ -224,20 +211,12 @@ struct
 
   (* Maps *)
 
-  type 'd outs = Outs : ('d, 'r) Value.outs * ('r -> 'd Value.any list) -> 'd outs
-
-  let rec outs_of : type d. D.any list -> d outs = function
-    | [] -> Outs (Value.[], fun () -> [])
-    | D.Any dt :: rest ->
-        let (Outs (outs, read)) = outs_of rest in
-        Outs (Value.( :: ) (dt, outs), fun (x, r) -> Value.Any x :: read r)
-
   (* The map over [vs], of one shape, its inputs in order, to [exprs]. *)
   let map (type d) (vs : d Value.any list) exprs : d Value.any list =
     let dtype (Value.Any x : d Value.any) = D.Any (Prim.dtype x) in
     let prog = P.of_exprs ~ins:(Iarray.of_list (List.map dtype vs)) (Iarray.of_list exprs) in
     let dts = List.map (P.dtype prog) (Iarray.to_list prog.outs) in
-    let (Outs (outs, read)) = outs_of dts in
+    let (Prim.Outputs (outs, read)) = Prim.outputs dts in
     let (Value.Any x) = List.hd vs in
     let layout = L.contiguous (Prim.shape x) in
     let plain (Value.Any x : d Value.any) = Value.Plain x in
@@ -246,16 +225,20 @@ struct
 
   (* Folds *)
 
-  (* The partials [value i] of [tree]'s leaves combined up it on [here], each
-     moved there, by [node] of two, the earlier first. *)
-  let rec fold node here value = function
-    | Leaf i -> moves here (value i)
-    | Node (a, b) -> node (fold node here value a) (fold node here value b)
+  (* The partials [value i], [i < n], of the terms one device each computes,
+     moved to [here] and combined in order by [node] of two, the earlier
+     first. *)
+  let fold node here value n =
+    let acc = ref (moves here (value 0)) in
+    for i = 1 to n - 1 do
+      acc := node !acc (moves here (value i))
+    done;
+    !acc
 
-  (* The partials [value i] of [tree]'s leaves combined up it by [node] on
-     [here j] for each member [j] of [g], each given to [settle j]. *)
-  let combine here g tree value node settle =
-    List.iter (fun j -> settle j (fold node (here j) value tree)) g.members
+  (* The [n] partials [value i] combined by [node] on [here j] for each member
+     [j] of [g], each given to [settle j]. *)
+  let combine here g n value node settle =
+    List.iter (fun j -> settle j (fold node (here j) value n)) g.members
 
   (* The tile of each device of [route]'s result, in order: its window along
      [axes] of operand [0], of [shape], where [route] reads it. The route
@@ -441,7 +424,7 @@ struct
         List.iter
           (fun g ->
             let values = Array.map unit g.holder in
-            combine here g (chain (Array.length g.tiles)) (Array.get values) node
+            combine here g (Array.length g.tiles) (Array.get values) node
               (store (settle g)))
           gs
       in
@@ -664,7 +647,7 @@ struct
           let x = if j = g.holder.(t) then Lazy.force slabs.(t) else own j in
           let carry =
             if t = 0 then None
-            else Some (fold node (here j) (fun i -> Lazy.force partials.(i)) (chain t))
+            else Some (fold node (here j) (fun i -> Lazy.force partials.(i)) t)
           in
           per.(j) <- moves (here j) (continued carry x (start t))
       in
@@ -764,7 +747,7 @@ struct
         in
         per.(j) <- [ cast (D.Any out) (List.hd s) ]
       in
-      combine here g (chain (Array.length values)) (Array.get values)
+      combine here g (Array.length values) (Array.get values)
         (exact Add) settle
     in
     let tile = Array.get tiles in

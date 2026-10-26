@@ -144,13 +144,6 @@ module Rng = Rng
 module D = Nx_array.Dtype
 module P = Nx_kernel.Prog
 
-(* Scans, applied by {!Eval.eval}. *)
-module Evaluated = struct
-  let apply = Eval.eval
-end
-
-module Pairwise = Pairwise.Make (Evaluated)
-
 let pp_shape = Prim.pp_shape
 
 (* [v] as an expression of [dt], naming [by] where [dt] does not hold it. *)

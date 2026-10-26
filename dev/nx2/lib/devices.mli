@@ -110,14 +110,6 @@ val window :
     [Invalid_argument] naming [by] if [p] cuts an axis [shape] lacks, and if [i]
     is not a position of [p]'s devices. *)
 
-val with_leading_axis : 'd placement -> 'd placement
-(** [with_leading_axis p] is [p] for a value that gains a new axis 0: each cut
-    axis moves up by one, and the new axis is whole on every device. *)
-
-val without_leading_axis : 'd placement -> 'd placement
-(** [without_leading_axis p] is [p] for a value that loses its axis 0: a grid
-    axis that cut it holds copies, and each other cut axis moves down by one. *)
-
 val uncut : 'd placement -> 'd placement
 (** [uncut p] is [p] with every axis whole on each of its devices: a grid axis
     that cut one holds copies. It is [p] itself if [p] cuts no axis. *)

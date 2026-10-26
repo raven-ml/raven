@@ -56,8 +56,10 @@
 
     Over devices of one architecture, a result's bits are those of the same
     operation on one device, by the window law ({!Route.window}), wherever
-    the operands lie, but where {!Partial} combines float partials that
-    round: there they are within its bounds, and the same on every run. *)
+    the operands lie, but for a float or complex contraction, whose library
+    chooses its association from each window's extents, and where
+    {!Partial} combines float partials that round: there they are within
+    their bounds, and the same on every run for a given placement. *)
 
 val run : by:string -> 'r Value.prim -> 'r
 (** [run ~by op] is [op]'s meaning where no interpretation reaches it.
@@ -102,7 +104,7 @@ val apply3 :
 val at : 'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
 (** [at p c] is the constant [c] computed at [p] for an operation that reads it:
     each device computes its window, whole along each axis [c]'s operation keeps
-    whole ({!Route.keeps}), and keeps its window in memory of its own. A
+    whole ({!Route.at}), and keeps its window in memory of its own. A
     movement or a bitcast of a constant is its operand read at [p], viewed.
     The constants [c] is computed from each compute once at each placement an
     operation reads them at, before that operation, and are dropped when [at]

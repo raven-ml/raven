@@ -280,15 +280,6 @@ val op3 :
     Raises [Invalid_argument] naming [by] where [k] does not take the operands'
     dtypes ({!Nx_kernel.Prog.accepts2} and its siblings). *)
 
-val accepted2 : by:string -> Nx_kernel.Prog.op2 -> ('v, 's, 'd) t -> unit
-(** [accepted2 ~by k x] raises as {!op2} does where [k] does not take operands
-    of [x]'s dtype. *)
-
-val accepted3 :
-  by:string -> Nx_kernel.Prog.op3 -> ('a, 'b, 'd) t -> ('v, 's, 'd) t -> unit
-(** [accepted3 ~by k c x] raises as {!op3} does where [k] does not take [c] and
-    operands of [x]'s dtype. *)
-
 val contract_shape :
   by:string ->
   batch:(int * int) iarray ->
@@ -318,14 +309,20 @@ val scale_shape : 'd scale -> int array
 val load_any : 'd load -> 'd any
 (** [load_any l] is the operand [l] reads. *)
 
-val is_padded : 'd load -> bool
-
 (** {1:families Transforms and factorisations} *)
 
 val routine_name : ('d, 'r) linalg -> string
 (** [routine_name l] names [l]'s routine in messages, as ["Cholesky"]. *)
 
 val is_constant : ('v, 's, 'd) t -> bool
+
+(** The outputs of a map whose dtypes are known at run time, and how to read
+    its result as values. *)
+type 'd outputs =
+  | Outputs : ('d, 'r) outs * ('r -> 'd any list) -> 'd outputs
+
+val outputs : Nx_array.Dtype.any list -> 'd outputs
+(** [outputs dts] is the outputs of the dtypes [dts], in order. *)
 
 val iter_outs :
   ('v 's. ('v, 's, 'd) t -> unit) -> ('d, 'r) outs -> 'r -> unit

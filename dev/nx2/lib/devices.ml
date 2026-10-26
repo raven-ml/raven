@@ -176,11 +176,6 @@ let window ~by p shape i =
   | Ok w -> w
   | Error e -> invalid_argf "%s: %s" by e
 
-let with_leading_axis p = normal p.set (Grid.map_axes succ p.grid)
-
-let without_leading_axis p =
-  normal p.set (Grid.map_axes pred (Grid.uncut p.grid ~axis:0))
-
 let uncut p =
   if not (Grid.is_cut p.grid) then p
   else

@@ -36,14 +36,8 @@ let kernels_of ~by ~op set : (module Nx_kernel.S) =
          compiler stages it"
         by Devices.pp set op
 
-(* A kernel's answer: [Done], a refusal raised, or [Declined] passed on. *)
-let done_or_declined ~by answer operands =
-  match (answer : A.answer) with
-  | Done -> true
-  | Declined -> false
-  | refusal -> A.refused by refusal operands
-
-(* As [done_or_declined] over [dsts] then [ops], listing them only to raise. *)
+(* A kernel's answer: [Done], a refusal raised naming [dsts] then [ops], or
+   [Declined] passed on. *)
 let ran ~by answer dsts ops =
   match (answer : A.answer) with
   | Done -> true
@@ -139,8 +133,7 @@ let copy_array ~by kernels a =
   let (module K : Nx_kernel.S) = kernels in
   let dst = A.create (A.device a) (A.dtype a) (L.shape (A.layout a)) in
   let copied = map1 kernels Copy ~dst a in
-  if not (done_or_declined ~by copied [ A.Any dst; A.Any a ])
-  then
+  if not (ran ~by copied [| A.Any dst |] [| A.Any a |]) then
     declined ~by ~kernels:K.name
       (Op1 (Copy, D.Any (A.dtype a), 0))
       (A.device a) [ D.Any (A.dtype a) ];

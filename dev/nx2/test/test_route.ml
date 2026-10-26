@@ -750,14 +750,6 @@ let cases_ =
               placed Elementwise
                 [| Devices.split ~by:"t" ~axis:1 s4 |]
                 [| [| 6 |] |]));
-      test "a rule that does not name each axis raises" (fun () ->
-          invalid (fun () ->
-              placed
-                (Axes [| [| Becomes 0; Becomes 1 |]; [| Becomes 0 |] |])
-                [| Devices.on s4; Devices.on s4 |]
-                [| [| 4; 4 |]; [| 4; 4 |] |]));
-      test "placements and shapes of two lengths raise" (fun () ->
-          invalid (fun () -> placed Elementwise [| Devices.on s4 |] [||]));
     ]
 
 (* Movements: the operand index each result index reads, as Move states it. *)

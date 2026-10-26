@@ -9,9 +9,8 @@
    ──reshape──▶ b's names ─┘ │ permute, reshape ▼ the written result
 
    Each operand is reshaped so that every name is one axis, its groups split and
-   its unit axes dropped. The batch and summed names pair in [a]'s order, the
-   order in which the kernel sums. [init] takes the inverse movements into the
-   kernel's order. *)
+   its unit axes dropped. The batch and summed names pair in [a]'s order.
+   [init] takes the inverse movements into the kernel's order. *)
 
 module D = Nx_array.Dtype
 module M = Nx_array.Move
@@ -33,15 +32,7 @@ type plan = {
   order : int array; (* The kernel's axes in the result's names' order. *)
   names : int array; (* The result's names' extents, in written order. *)
   shape : int array; (* The result's shape. *)
-  a_whole : bool; (* The operand [a] already has [a]: no reshape. *)
-  b_whole : bool;
-  y_whole : bool; (* The kernel's permuted result already has [shape]. *)
 }
-
-(* Whether [x] and [y] hold the same ints. *)
-let same (x : int array) (y : int array) =
-  let rec go i = i = Array.length x || (x.(i) = y.(i) && go (i + 1)) in
-  Array.length x = Array.length y && go 0
 
 let rec mem (n : int) = function [] -> false | x :: l -> x = n || mem n l
 
@@ -66,8 +57,7 @@ let ints f (ns : int list) =
 
 (* The contraction of operands named [na] and [nb] into the names [nr], of the
    result [shape]. A name both operands hold is a batch name where the result
-   keeps it, else summed; the batch and summed names pair in [a]'s order, the
-   order in which the kernel sums. *)
+   keeps it, else summed; the batch and summed names pair in [a]'s order. *)
 let lower ~ext na nb nr shape =
   let pairs ns =
     Iarray.of_list (List.map (fun n -> (index_of n na, index_of n nb)) ns)
@@ -86,9 +76,6 @@ let lower ~ext na nb nr shape =
     order = ints (fun n -> index_of n kernel) nr;
     names = ints (Array.get ext) nr;
     shape;
-    a_whole = false;
-    b_whole = false;
-    y_whole = false;
   }
 
 (* Patterns *)
@@ -194,12 +181,10 @@ let run (type v s a b c e d) ~by ?acc ?init (dt : (v, s) D.t) pl
   let batch = pl.batch and contracting = pl.contracting in
   let y =
     Eval.contract ~by ~batch ~contracting ~acc dt
-      (if pl.a_whole then a else reshape ~by pl.a a)
-      (if pl.b_whole then b else reshape ~by pl.b b)
-      init
+      (reshape ~by pl.a a) (reshape ~by pl.b b) init
   in
   let y = if identity pl.order then y else permute ~by pl.order y in
-  if pl.y_whole then y else reshape ~by pl.shape y
+  reshape ~by pl.shape y
 
 let contract ~by ?(sizes = []) ?acc ?init dt p a b =
   run ~by ?acc ?init dt (plan ~by ~sizes p (operand a) (operand b)) a b
@@ -306,9 +291,6 @@ let matmul ~by a b =
       order;
       names = shape;
       shape;
-      a_whole = same ea sa;
-      b_whole = same eb sb;
-      y_whole = true;
     }
   in
   run ~by (Prim.dtype a) pl a b
@@ -342,9 +324,6 @@ let dot ~by a b =
       order = Array.init r Fun.id;
       names = shape;
       shape;
-      a_whole = true;
-      b_whole = true;
-      y_whole = true;
     }
   in
   run ~by (Prim.dtype a) pl a b
