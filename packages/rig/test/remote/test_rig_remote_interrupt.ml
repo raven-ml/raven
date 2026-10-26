@@ -336,6 +336,235 @@ let raise_in_listen () =
             int before (held ()));
       reached)
 
+(* Serving, in a forked child *)
+
+(* [in_child what f] is [f ()], run in a forked child, so that what one
+   attempt leaves, a failed job of the process among it, never changes the
+   next one. It fails with the child's failure. *)
+let in_child what f =
+  Rig_support.needs_fork ();
+  let r, w = Unix.pipe ~cloexec:true () in
+  match Unix.fork () with
+  | 0 ->
+      Unix.close r;
+      let answer =
+        match f () with v -> Ok v | exception e -> Error (Printexc.to_string e)
+      in
+      let oc = Unix.out_channel_of_descr w in
+      Marshal.to_channel oc (answer : ('a, string) result) [];
+      close_out oc;
+      Unix._exit 0
+  | pid -> (
+      Unix.close w;
+      let ic = Unix.in_channel_of_descr r in
+      let answer = In_channel.input_all ic in
+      close_in ic;
+      match (answer, snd (Unix.waitpid [] pid)) with
+      | "", (WEXITED n | WSIGNALED n | WSTOPPED n) ->
+          failf "the child ended (%d) without answering%s" n what
+      | answer, _ -> (
+          match (Marshal.from_string answer 0 : ('a, string) result) with
+          | Ok v -> v
+          | Error e -> failf "%s%s" e what))
+
+(* The child's start: a thread's [Exit], a landing's, ends it without a word,
+   and a write to a connection the agent closed raises [EPIPE]. *)
+let child_start () =
+  Thread.set_uncaught_exception_handler (function
+    | Exit -> ()
+    | e -> prerr_endline ("a thread raised " ^ Printexc.to_string e));
+  Sys.set_signal Sys.sigpipe Sys.Signal_ignore
+
+(* Whether an allocation's call stack holds the agent's function [fn], or a
+   function inside it. *)
+let in_agent fn =
+  let name = "Rig_remote__Agent." ^ fn in
+  let named s =
+    match Printexc.Slot.name s with
+    | Some n -> String.equal n name || String.starts_with ~prefix:(name ^ ".") n
+    | None -> false
+  in
+  fun (a : Gc.Memprof.allocation) ->
+    match Printexc.backtrace_slots a.callstack with
+    | Some slots -> Array.exists named slots
+    | None -> false
+
+(* [cut_in fn n f] runs [f ()] while every allocation inside the agent's
+   [fn], on any thread, is counted, and the [n]-th raises [Exit], one
+   asynchronous exception: whether [f] reached the [n]-th. The threads of
+   [fn] run one at a time, so the count is the same in each run. Only one
+   allocation raises: a handler that must take the agent's lock meets a
+   poll there when the lock is contended, where a second exception would cut
+   it too. *)
+let cut_in fn n f =
+  let inside = in_agent fn in
+  let left = ref n and armed = ref false in
+  let alloc a =
+    if !armed && inside a then begin
+      decr left;
+      if !left = 0 then raise Exit
+    end;
+    None
+  in
+  let tracker =
+    { Gc.Memprof.null_tracker with alloc_minor = alloc; alloc_major = alloc }
+  in
+  let profile = Gc.Memprof.start ~sampling_rate:1. tracker in
+  armed := true;
+  Fun.protect
+    ~finally:(fun () ->
+      armed := false;
+      Gc.Memprof.stop ();
+      Gc.Memprof.discard profile)
+    f;
+  !left <= 0
+
+let agent_here () =
+  match Rig_remote.listen ~key:(as_key key) "127.0.0.1" 0 with
+  | Ok a -> a
+  | Error why -> failf "listen: %s" why
+
+(* Serves [a] on a thread of its own: [served ()] is what serve answered, or
+   the exception it raised, once it has returned. *)
+let serving a =
+  let r = ref None in
+  let t =
+    Thread.create
+      (fun () ->
+        r :=
+          Some
+            (match Rig_remote.serve a [] with
+            | v -> Ok v
+            | exception e -> Error e))
+      ()
+  in
+  fun () ->
+    until ~what:"serve's return" (fun () -> Option.is_some !r);
+    Thread.join t;
+    Option.get !r
+
+(* A controller's connection to the agent at [port]: [Some fd] once both
+   proved the key, [None] if the agent ended it first or listens no more.
+   Each read gives up after [patience]. *)
+let dial port =
+  let module Wire = Rig_remote_proxy.Wire in
+  let fd = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+  match Unix.connect fd (Unix.ADDR_INET (Unix.inet_addr_loopback, port)) with
+  | exception Unix.Unix_error ((Unix.ECONNREFUSED | Unix.ECONNRESET), _, _) ->
+      Unix.close fd;
+      None
+  | () -> (
+      Rig_support.recv_timeout fd patience;
+      match Wire.dial fd ~key ~self:Wire.Controller ~peer:(Wire.Agent 1) with
+      | Ok () -> Some fd
+      | Error _ ->
+          Unix.close fd;
+          None)
+
+(* Whether the agent at [port] answers the join of a job of it alone over
+   [fd], so that it serves the job. *)
+let joins fd port =
+  let at = strf "127.0.0.1:%d" port in
+  send fd (frame k_request (u8 1 ^ u32 1 ^ str at ^ str "127.0.0.1" ^ u32 port));
+  match next_frame fd with
+  | Some (k, p) -> k = k_answer && p.[0] = '\000'
+  | None -> false
+
+(* Closes the job of [fd]: sends its close, ends the stream once the agent's
+   close, abort or end came, and reads [fd] to its end. *)
+let ends fd =
+  send fd (frame k_close "");
+  let rec closed () =
+    match next_frame fd with
+    | Some (k, _) when k = k_close || k = k_abort -> ()
+    | Some _ -> closed ()
+    | None -> ()
+  in
+  closed ();
+  (try Unix.shutdown fd Unix.SHUTDOWN_SEND with Unix.Unix_error _ -> ());
+  let rec drain () = match next_frame fd with Some _ -> drain () | None -> () in
+  drain ();
+  Unix.close fd
+
+(* Whether anything listens at [port] of the loopback. *)
+let listens port =
+  let fd = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+  match Unix.connect fd (Unix.ADDR_INET (Unix.inet_addr_loopback, port)) with
+  | () -> true
+  | exception Unix.Unix_error (Unix.ECONNREFUSED, _, _) -> false
+
+(* A controller's handshake cut by an exception at each allocation of its
+   thread: the agent serves the controller, or gives back what the handshake
+   took and serves a second one. *)
+let cut_handshake n =
+  in_child (strf ", a handshake cut from allocation %d" n) @@ fun () ->
+  child_start ();
+  let a = agent_here () in
+  let port = Rig_remote.port a in
+  let served = serving a in
+  let first = ref None in
+  let reached =
+    cut_in "handshake" n (fun () ->
+        first := Option.map (fun fd -> (fd, joins fd port)) (dial port))
+  in
+  (* A job given back ends once its connection has: a controller that comes
+     before is refused, and dials again. *)
+  let rec second t0 =
+    match dial port with
+    | Some fd when joins fd port -> fd
+    | fd when Unix.gettimeofday () -. t0 < patience ->
+        Option.iter Unix.close fd;
+        Thread.delay 0.01;
+        second t0
+    | Some _ -> fail "a second controller is refused"
+    | None -> fail "a second controller's handshake failed"
+  in
+  let fd =
+    match !first with
+    | Some (fd, true) -> fd
+    | first ->
+        Option.iter (fun (fd, _) -> Unix.close fd) first;
+        second (Unix.gettimeofday ())
+  in
+  ends fd;
+  (match served () with
+  | Ok (Ok ()) -> ()
+  | Ok (Error why) -> failf "serve answered Error %s" why
+  | Error e -> failf "serve raised %s" (Printexc.to_string e));
+  reached
+
+let handshake_cut () =
+  let rec from n = if cut_handshake n then from (n + 1) else n - 1 in
+  greater ~msg:"allocations cut" int ~than:0 (from 1)
+
+(* The acceptor cut by an exception at each of its allocations, while a
+   controller connects: serve returns, and the agent listens no more. *)
+let cut_acceptor n =
+  in_child (strf ", the acceptor cut from allocation %d" n) @@ fun () ->
+  child_start ();
+  let a = agent_here () in
+  let port = Rig_remote.port a in
+  let result = ref None in
+  let reached =
+    cut_in "accept_loop" n (fun () ->
+        let served = serving a in
+        (match dial port with
+        | Some fd when joins fd port -> ends fd
+        | Some fd -> Unix.close fd
+        | None -> ());
+        result := Some (served ()))
+  in
+  (match !result with
+  | Some (Error e) -> failf "serve raised %s" (Printexc.to_string e)
+  | Some (Ok _) | None -> ());
+  equal ~msg:"the port listens" bool false (listens port);
+  reached
+
+let acceptor_cut () =
+  let rec from n = if cut_acceptor n then from (n + 1) else n - 1 in
+  greater ~msg:"allocations cut" int ~than:0 (from 1)
+
 (* Launched jobs *)
 
 (* Runs support/launched.exe in [mode] with a landing at each allocation of
@@ -443,5 +672,8 @@ let () =
                raise_in_rail;
              test "a listen cut by an exception holds no descriptor"
                raise_in_listen;
+             test "a handshake cut by an exception leaves the agent serving"
+               handshake_cut;
+             test "an acceptor cut by an exception ends serve" acceptor_cut;
            ];
        ])

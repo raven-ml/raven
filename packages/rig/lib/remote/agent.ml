@@ -247,6 +247,8 @@ type phase =
   | Serving of { job : Link.job; self : int; controller : Link.t }
       (** A job, this agent's process in it and the controller's link. *)
 
+module Ids = Map.Make (Int)
+
 type t = {
   key : string;
   socket : Unix.file_descr;
@@ -258,10 +260,11 @@ type t = {
   lock : Mutex.t;
   changed : Condition.t;
   mutable phase : phase;  (** Read once [claimed]. *)
-  accepted : (int, Unix.file_descr) Hashtbl.t;
+  mutable accepted : Unix.file_descr Ids.t;
       (** Connections of the job's agents before this one, admitted, waiting for
-          the join that names their machines. *)
-  peers : (int, Link.t) Hashtbl.t;  (** The job's other agents' links. *)
+          the join that names their machines. Each change is one store, so an
+          exception, an asynchronous one too, keeps or drops it whole. *)
+  mutable peers : Link.t Ids.t;  (** The job's other agents' links, as above. *)
   mutable stopped : bool;  (** Once it listens no more. *)
   mutable broken : string option;
       (** Once its socket failed for good, so that it accepts no more: why. *)
@@ -309,8 +312,8 @@ let listen ~key host port =
                 lock = Mutex.create ();
                 changed = Condition.create ();
                 phase = Claimed;
-                accepted = Hashtbl.create 4;
-                peers = Hashtbl.create 4;
+                accepted = Ids.empty;
+                peers = Ids.empty;
                 stopped = false;
                 broken = None;
               }
@@ -325,49 +328,95 @@ let listen ~key host port =
 
 let port a = a.port
 
+(* A handshake's state, made before its thread: the job its controller's
+   admission made, and whether a step took its connection. *)
+type shake = { mutable mine : Link.job option; mutable handed : bool }
+
 (* Admits one controller, then the agents of its job before this one. A
-   controller's admission makes the job, which [mine] keeps for its handshake: a
-   second controller finds it. *)
-let admit a mine p =
+   controller's admission makes the job, which [st] keeps for its handshake: a
+   second controller finds it. An exception between the job's making and the
+   stores that record it closes it, which would otherwise refuse every later
+   job of the process; the stores come after the last allocation. *)
+let admit a st p =
   Mutex.protect a.lock @@ fun () ->
   match (p, a.phase) with
   | Wire.Controller, Claimed when Option.is_some a.broken ->
       Error (Option.get a.broken)
+  | Wire.Controller, Claimed when a.stopped -> Error "the agent stopped"
   | Wire.Controller, Claimed -> (
       match Link.job () with
-      | j ->
-          a.phase <- Admitting j;
-          mine := Some j;
-          Ok ()
-      | exception Invalid_argument why -> Error why)
+      | exception Invalid_argument why -> Error why
+      | j -> (
+          match (Admitting j, Some j) with
+          | admitting, mine ->
+              a.phase <- admitting;
+              st.mine <- mine;
+              Ok ()
+          | exception e ->
+              Link.close j;
+              reraise e))
   | Wire.Controller, (Admitting _ | Serving _) ->
       Error "the agent serves another job"
   | Wire.Agent j, Serving { self; _ } when j < self -> Ok ()
   | Wire.Agent _, _ -> Error "the agent does not expect this agent"
 
 (* Runs one connection's handshake, and makes its link if it is admitted. A
-   controller admitted whose handshake then fails gives its job back. *)
-let handshake a fd =
-  let mine = ref None in
-  let r = Wire.accept fd ~key:a.key ~admit:(admit a mine) in
-  Mutex.protect a.lock @@ fun () ->
-  match (r, !mine) with
-  | Ok (Wire.Controller, Wire.Agent self), Some job ->
-      let controller =
-        Link.make job fd ~name:"controller" ~peer:Wire.Controller
+   controller admitted whose handshake then fails gives its job back, and so
+   does one admitted once [a] stopped, which no serve would serve. *)
+let shake a st fd =
+  let give fd =
+    st.handed <- true;
+    close_quietly fd
+  in
+  let resolve r () =
+    match (r, st.mine) with
+    | Ok (Wire.Controller, Wire.Agent self), Some job when not a.stopped ->
+        st.handed <- true;
+        let controller =
+          Link.make job fd ~name:"controller" ~peer:Wire.Controller
+        in
+        a.phase <- Serving { job; self; controller };
+        Condition.broadcast a.changed
+    | Ok (Wire.Agent i, _), None ->
+        if a.stopped || Ids.mem i a.accepted || Ids.mem i a.peers then give fd
+        else begin
+          a.accepted <- Ids.add i fd a.accepted;
+          st.handed <- true
+        end
+    | _, Some job ->
+        Link.close job;
+        a.phase <- Claimed;
+        Condition.broadcast a.changed;
+        give fd
+    | _, None -> give fd
+  in
+  let r = Wire.accept fd ~key:a.key ~admit:(admit a st) in
+  Mutex.protect a.lock (resolve r)
+
+(* The handshake's thread. [fd] is the handshake's until [st.handed] is set:
+   the step that gives it to a link, to [accepted] or to a close sets
+   [st.handed] first, so an exception that lands between leaves it open,
+   never closed twice. An exception, such as Out_of_memory or a Gc.Memprof
+   callback's, that ends the handshake gives the job back if [a] still admits
+   it, and closes [fd] if no step took it. Its handler comes before the
+   thread's first allocation, and allocates nothing before the close. *)
+let handshake a st fd =
+  match shake a st fd with
+  | () -> ()
+  | exception e ->
+      Mutex.lock a.lock;
+      let admitted =
+        match (st.mine, a.phase) with
+        | Some j, Admitting j' when j == j' ->
+            a.phase <- Claimed;
+            Condition.broadcast a.changed;
+            true
+        | _ -> false
       in
-      a.phase <- Serving { job; self; controller };
-      Condition.broadcast a.changed
-  | Ok (Wire.Agent i, _), None ->
-      if a.stopped || Hashtbl.mem a.accepted i || Hashtbl.mem a.peers i then
-        close_quietly fd
-      else Hashtbl.replace a.accepted i fd
-  | _, Some job ->
-      Link.close job;
-      a.phase <- Claimed;
-      Condition.broadcast a.changed;
-      close_quietly fd
-  | _, None -> close_quietly fd
+      Mutex.unlock a.lock;
+      (match st.mine with Some j when admitted -> Link.close j | _ -> ());
+      if not st.handed then close_quietly fd;
+      reraise e
 
 (* Accepting *)
 
@@ -402,43 +451,58 @@ let passes (e : Unix.error) =
   | EUNKNOWNERR n -> n = eproto || n = enonet
   | _ -> false
 
-(* Ends [a]'s accepting after an error that recurs, [why]: fails the job it
-   serves, and wakes a serve that waits for a controller. The failure, which
-   may wait for an abort to leave, runs outside [a]'s lock. *)
-let break a why =
-  let serving =
-    Mutex.protect a.lock @@ fun () ->
-    a.broken <- Some why;
-    Condition.broadcast a.changed;
-    match a.phase with
-    | Serving { job; _ } -> Some job
-    | Claimed | Admitting _ -> None
-  in
-  Option.iter (fun job -> Link.fail job why) serving
+(* Ends [a]'s accepting after an error that recurs, [broken] its reason:
+   fails the job it serves, and wakes a serve that waits for a controller.
+   The failure, which may wait for an abort to leave, runs outside [a]'s
+   lock. It allocates nothing, so that the acceptor's handler can end
+   accepting with a reason made before. *)
+let break a broken =
+  Mutex.lock a.lock;
+  a.broken <- broken;
+  Condition.broadcast a.changed;
+  let phase = a.phase in
+  Mutex.unlock a.lock;
+  match (phase, broken) with
+  | Serving { job; _ }, Some why -> Link.fail job why
+  | _ -> ()
+
+(* Why [a] breaks when an exception ends its acceptor, such as Out_of_memory
+   or a Gc.Memprof callback's. *)
+let acceptor_raised = Some "the agent's acceptor raised an exception"
 
 (* Starts the handshake of the accepted [fd] on a thread of its own, or
    refuses it if the system gives it no thread. [fd] blocks first: macOS and
-   Windows give it the listener's non-blocking mode. *)
+   Windows give it the listener's non-blocking mode. [fd] is the handshake's
+   once its thread is made; an exception before closes it. *)
 let start a fd =
   match Unix.clear_nonblock fd with
   | exception Unix.Unix_error _ -> close_quietly fd
+  | exception e ->
+      close_quietly fd;
+      reraise e
   | () -> (
-      match spawn (handshake a) fd with
+      match spawn (handshake a { mine = None; handed = false }) fd with
       | _ -> ()
       | exception Sys_error why ->
           Wire.refuse fd ("the agent cannot start a handshake: " ^ why)
       | exception Out_of_memory ->
           Wire.refuse fd
-            "the agent cannot start a handshake: no memory for a thread")
+            "the agent cannot start a handshake: no memory for a thread"
+      | exception e ->
+          close_quietly fd;
+          reraise e)
 
 (* Accepts connections until [wake] is readable, each handshake on a thread of
    its own. A job assumes a trusted network, so only the job's processes
    connect: the listener takes every connection, and refuses one before its
    proof only when the system gives it no thread. After an error that passes
-   it pauses, then accepts again; after another it breaks [a]. *)
-let accept_loop a wake =
+   it pauses, then accepts again; after another it breaks [a]. An exception
+   that ends it, which its thread blocks every signal against, breaks [a]
+   too: an acceptor that ended silently would leave the agent deaf, and a
+   serve waiting for a controller that never comes. *)
+let accept a wake =
   let err what e =
-    strf "the agent's %s failed: %s" what (Unix.error_message e)
+    Some (strf "the agent's %s failed: %s" what (Unix.error_message e))
   in
   let rec loop pause =
     match Wire.ready [ wake; a.socket ] `Read (-1.) with
@@ -467,6 +531,14 @@ let accept_loop a wake =
   in
   loop first_pause
 
+(* The acceptor's thread: its handler comes before its first allocation. *)
+let accept_loop a wake =
+  match accept a wake with
+  | () -> ()
+  | exception e ->
+      break a acceptor_raised;
+      reraise e
+
 (* Ends [a]'s listening: wakes the acceptor through [waker], waits for it, and
    closes the socket and the connections no join named. *)
 let stop a waker acceptor =
@@ -475,8 +547,8 @@ let stop a waker acceptor =
   unblocked Thread.join acceptor;
   Unix.close a.socket;
   Mutex.protect a.lock @@ fun () ->
-  Hashtbl.iter (fun _ fd -> Unix.close fd) a.accepted;
-  Hashtbl.reset a.accepted
+  Ids.iter (fun _ fd -> Unix.close fd) a.accepted;
+  a.accepted <- Ids.empty
 
 (* Serving *)
 
@@ -582,10 +654,14 @@ let join s agents =
       !started
   in
   let result (r, _) = match !r with Ok v -> v | Error e -> raise e in
+  (* The note that a link took [fd] comes before the take: an exception
+     between them leaves [fd] open, where one after the take would have
+     [close_unlinked] close the link's descriptor, which the system may since
+     have given to another file. *)
   let link (j, name, fd) =
-    let l = Link.make s.job fd ~name ~peer:(Wire.Agent j) in
     linked := fd :: !linked;
-    Mutex.protect a.lock (fun () -> Hashtbl.replace a.peers j l)
+    let l = Link.make s.job fd ~name ~peer:(Wire.Agent j) in
+    Mutex.protect a.lock (fun () -> a.peers <- Ids.add j l a.peers)
   in
   let refusal = function Error why -> Some why | Ok _ -> None in
   ( Fun.protect ~finally:close_unlinked @@ fun () ->
@@ -600,7 +676,7 @@ let join s agents =
      threads. *)
   let before = List.filteri (fun i _ -> i + 1 < s.self) agents in
   let accepted () =
-    Mutex.protect a.lock (fun () -> Hashtbl.length a.accepted)
+    Mutex.protect a.lock (fun () -> Ids.cardinal a.accepted)
   in
   while accepted () < List.length before && Unix.gettimeofday () < until do
     unblocked Thread.delay 0.01
@@ -611,12 +687,12 @@ let join s agents =
       (List.mapi
          (fun i ({ name; _ } : Wire.agent) ->
            let j = i + 1 in
-           match Hashtbl.find_opt a.accepted j with
+           match Ids.find_opt j a.accepted with
            | None -> [ name ]
            | Some fd ->
-               Hashtbl.remove a.accepted j;
-               Hashtbl.replace a.peers j
-                 (Link.make s.job fd ~name ~peer:(Wire.Agent j));
+               a.accepted <- Ids.remove j a.accepted;
+               let l = Link.make s.job fd ~name ~peer:(Wire.Agent j) in
+               a.peers <- Ids.add j l a.peers;
                [])
          before)
   in
@@ -651,7 +727,7 @@ let peer_link s = function
   | Wire.Controller -> s.link
   | Wire.Agent j -> (
       match
-        Mutex.protect s.agent.lock (fun () -> Hashtbl.find_opt s.agent.peers j)
+        Mutex.protect s.agent.lock (fun () -> Ids.find_opt j s.agent.peers)
       with
       | Some l -> l
       | None -> raise (Refused (strf "no link to agent %d" j)))
