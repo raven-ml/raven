@@ -92,6 +92,12 @@ val narrow : string -> int -> int * int
     once to the dtype, against the C library's f64 function rounded once to it,
     in the dtype's ulps; and a code where it occurs. *)
 
+val narrow_binary : string -> int -> int * int * int
+(** [narrow_binary kind code] is {!narrow} for [pow] or [atan2], at every
+    pair of values of a narrow float dtype of at most 8 bits, and at every
+    value of a wider one paired with 16 values drawn from it: the largest
+    error and the codes of a pair where it occurs. *)
+
 val binary : string -> seed:int -> int -> int * int * int
 (** [binary kind ~seed n] checks f32 [pow] or [atan2] at [n] pairs drawn from
     [seed], a sixth from all patterns and the rest where the kind is hard, its

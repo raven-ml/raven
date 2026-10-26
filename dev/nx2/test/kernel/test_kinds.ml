@@ -108,7 +108,8 @@ let test_strata =
         (K.strata kind))
 
 (* Every value of each narrow float, computed in f32 and rounded once, within 1
-   ulp of the exact value rounded once. *)
+   ulp of the exact value rounded once; pow and atan2 likewise at the pairs
+   Nx_kinds_support.narrow_binary takes. *)
 let narrow_dtypes =
   [
     ("float16", 2);
@@ -124,6 +125,16 @@ let test_narrow =
         (fun (name, code) ->
           let e, c = K.narrow kind code in
           at_most int ~than:1 e ~msg:(strf "%s at %s code 0x%x" kind name c))
+        narrow_dtypes)
+
+let test_narrow_binary =
+  cases ~name:Fun.id "narrow floats at pairs of values" [ "pow"; "atan2" ]
+    (fun kind ->
+      List.iter
+        (fun (name, code) ->
+          let e, a, b = K.narrow_binary kind code in
+          at_most int ~than:1 e
+            ~msg:(strf "%s at %s codes 0x%x 0x%x" kind name a b))
         narrow_dtypes)
 
 (* f32 pow and atan2 at a million pairs, drawn from the run's seed, against the
@@ -1425,6 +1436,109 @@ let test_complex_identities =
   in
   check "c128" 0x1p-53 c128_call Fun.id @ check "c64" 0x1p-24 c64_call f32_pair
 
+(* C99 Annex F's special values of the float kinds, F.10, and zero results
+   of underflow, which keep the exact value's sign: at f64 and f32, bit for
+   bit, any NaN for a NaN, through each target's loop and through the best
+   one's over a vector, every lane alike. Each value is the f64 result, exact
+   or correctly rounded; its rounding to binary32 is the f32 one. *)
+
+let annex_f =
+  let pio2 = Float.atan2 1. 0. and pio4 = Float.atan2 1. 1. in
+  let tpio4 = Float.atan2 1. (-1.) in
+  let one k rows = List.map (fun (x, r) -> (k, [| x |], r)) rows in
+  let two k rows = List.map (fun (x, y, r) -> (k, [| x; y |], r)) rows in
+  let exp_like k =
+    one k [ (0., 1.); (-0., 1.); (ninf, 0.); (inf, inf); (nan, nan) ]
+  in
+  let log_like k =
+    one k
+      [
+        (0., ninf); (-0., ninf); (1., 0.); (-1., nan); (ninf, nan); (inf, inf);
+        (nan, nan);
+      ]
+  in
+  let odd_periodic k =
+    one k [ (0., 0.); (-0., -0.); (inf, nan); (ninf, nan); (nan, nan) ]
+  in
+  List.concat
+    [
+      exp_like "exp";
+      one "exp" [ (-1000., 0.) ];
+      exp_like "exp2";
+      one "exp2" [ (-2000., 0.) ];
+      one "expm1"
+        [ (0., 0.); (-0., -0.); (ninf, -1.); (inf, inf); (nan, nan) ];
+      log_like "log";
+      log_like "log2";
+      one "log1p"
+        [
+          (0., 0.); (-0., -0.); (-1., ninf); (-2., nan); (ninf, nan);
+          (inf, inf); (nan, nan);
+        ];
+      odd_periodic "sin";
+      odd_periodic "tan";
+      one "cos" [ (0., 1.); (-0., 1.); (inf, nan); (ninf, nan); (nan, nan) ];
+      one "asin" [ (0., 0.); (-0., -0.); (2., nan); (-2., nan); (nan, nan) ];
+      one "acos" [ (1., 0.); (2., nan); (-2., nan); (nan, nan) ];
+      one "atan"
+        [ (0., 0.); (-0., -0.); (inf, pio2); (ninf, -.pio2); (nan, nan) ];
+      one "sinh"
+        [ (0., 0.); (-0., -0.); (inf, inf); (ninf, ninf); (nan, nan) ];
+      one "cosh" [ (0., 1.); (-0., 1.); (inf, inf); (ninf, inf); (nan, nan) ];
+      one "tanh" [ (0., 0.); (-0., -0.); (inf, 1.); (ninf, -1.); (nan, nan) ];
+      one "erf" [ (0., 0.); (-0., -0.); (inf, 1.); (ninf, -1.); (nan, nan) ];
+      (* atan2 y x *)
+      two "atan2"
+        [
+          (0., -0., pi); (-0., -0., -.pi); (0., 0., 0.); (-0., 0., -0.);
+          (0., -1., pi); (-0., -1., -.pi); (0., 1., 0.); (-0., 1., -0.);
+          (-1., 0., -.pio2); (-1., -0., -.pio2); (1., 0., pio2);
+          (1., -0., pio2); (1., ninf, pi); (-1., ninf, -.pi); (1., inf, 0.);
+          (-1., inf, -0.); (inf, 1., pio2); (ninf, 1., -.pio2);
+          (inf, ninf, tpio4); (ninf, ninf, -.tpio4); (inf, inf, pio4);
+          (ninf, inf, -.pio4); (nan, 1., nan); (1., nan, nan);
+        ];
+      two "pow"
+        [
+          (-0., -3., ninf); (0., -3., inf); (0., ninf, inf); (-0., ninf, inf);
+          (0., -2., inf); (-0., -2., inf); (-0., -0.5, inf); (-0., 3., -0.);
+          (0., 3., 0.); (-0., 2., 0.); (-0., 0.5, 0.); (-1., inf, 1.);
+          (-1., ninf, 1.); (1., nan, 1.); (1., ninf, 1.); (nan, 0., 1.);
+          (nan, -0., 1.); (inf, 0., 1.); (-2., 0.5, nan); (0.5, ninf, inf);
+          (-0.5, ninf, inf); (2., ninf, 0.); (-2., ninf, 0.); (0.5, inf, 0.);
+          (2., inf, inf); (ninf, -3., -0.); (ninf, -2., 0.); (ninf, -0.5, 0.);
+          (ninf, 3., ninf); (ninf, 2., inf); (ninf, 0.5, inf); (inf, -1., 0.);
+          (inf, 0.5, inf); (nan, 1., nan); (2., nan, nan);
+          (-0x1p-60, 3., -0x1p-180); (-0x1p-600, 3., -0.);
+        ];
+    ]
+
+let test_annex_f =
+  let name (k, args, _) =
+    strf "%s %s" k
+      (String.concat " " (Array.to_list (Array.map (strf "%h") args)))
+  in
+  let lanes (type s) (k : (float, s) Bigarray.kind) kind args =
+    let fill v = Bigarray.Array1.init k Bigarray.c_layout 37 (fun _ -> v) in
+    let y = fill 0. in
+    let z = if Array.length args > 1 then args.(1) else 0. in
+    K.run kind (fill args.(0)) (fill z) y;
+    List.init 37 (fun i -> y.{i})
+  in
+  cases ~name "Annex F's special values" annex_f (fun (kind, args, want) ->
+      let args32 = Array.map round_f32 args and want32 = round_f32 want in
+      List.iter
+        (fun target ->
+          equal value64 want (K.f64 ~target kind args) ~msg:target;
+          equal value64 want32
+            (f (K.f32 ~target kind (Array.map bits32 args32)))
+            ~msg:target)
+        (K.targets ());
+      equal (list value64) (List.init 37 (fun _ -> want))
+        (lanes Bigarray.float64 kind args);
+      equal (list value64) (List.init 37 (fun _ -> want32))
+        (lanes Bigarray.float32 kind args32))
+
 let () =
   exit
   @@ run "nx_array.kinds"
@@ -1434,8 +1548,10 @@ let () =
            @ [
                test_strata;
                test_narrow;
+               test_narrow_binary;
                test_exact_points;
                test_f64_goldens;
+               test_annex_f;
                test_digests;
              ]
            @ test_binary_transcendentals);

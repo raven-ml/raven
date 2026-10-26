@@ -116,22 +116,31 @@ let narrow name (f : 's. (float, 's, Nx.host) Nx.t -> (float, 's, Nx.host) Nx.t)
 
 let values f dt xs = Nx.to_array (f (Nx.create dt [| Array.length xs |] xs))
 
+(* C99 Annex F's special values, F.10, at float64 and float32. *)
 let specials () =
-  let f64 = Nx.float64 in
-  equal (array float_exact) [| -0.; 0.; infinity; neg_infinity; nan |]
-    (values Nx.asinh f64 [| -0.; 0.; infinity; neg_infinity; nan |]);
-  equal (array float_exact) [| 0.; nan; nan; infinity |]
-    (values Nx.acosh f64 [| 1.; 0.999; neg_infinity; infinity |]);
-  equal (array float_exact) [| infinity; neg_infinity; nan; nan; -0. |]
-    (values Nx.atanh f64 [| 1.; -1.; 1.5; -2.; -0. |]);
-  equal (array float_exact) [| infinity; neg_infinity; nan |]
-    (values Nx.rsqrt f64 [| 0.; -0.; -1. |])
+  let check (type s) (dt : (float, s) D.t) =
+    equal (array float_exact) [| -0.; 0.; infinity; neg_infinity; nan |]
+      (values Nx.asinh dt [| -0.; 0.; infinity; neg_infinity; nan |]);
+    equal (array float_exact) [| 0.; nan; nan; infinity; nan |]
+      (values Nx.acosh dt [| 1.; 0.5; neg_infinity; infinity; nan |]);
+    equal (array float_exact)
+      [| infinity; neg_infinity; nan; nan; -0.; 0.; nan; nan; nan |]
+      (values Nx.atanh dt
+         [| 1.; -1.; 1.5; -2.; -0.; 0.; infinity; neg_infinity; nan |]);
+    equal (array float_exact) [| infinity; neg_infinity; nan |]
+      (values Nx.rsqrt dt [| 0.; -0.; -1. |])
+  in
+  check Nx.float64;
+  check Nx.float32
 
 let hypot_specials () =
   let v a b = Nx.item [] (Nx.hypot (Nx.scalar Nx.float32 a) (Nx.scalar Nx.float32 b)) in
   equal float_exact infinity (v nan infinity);
   equal float_exact infinity (v neg_infinity nan);
   equal float_exact 0. (v 0. (-0.));
+  equal float_exact 0. (v (-0.) (-0.));
+  equal float_exact 3. (v (-3.) (-0.));
+  equal float_exact infinity (v 2. neg_infinity);
   equal bool true (Float.is_nan (v nan 1.));
   equal float_exact 5. (v 3. 4.);
   equal float_exact 0x5p100 (v 0x3p100 0x4p100)

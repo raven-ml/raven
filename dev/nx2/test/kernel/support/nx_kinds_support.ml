@@ -41,6 +41,9 @@ external strata_raw : string -> (string * int * raw) array
 
 external narrow : string -> int -> int * int = "nx_kinds_support_narrow"
 
+external narrow_binary : string -> int -> int * int * int
+  = "nx_kinds_support_narrow_binary"
+
 external binary_raw : string -> int -> int -> int * int * int
   = "nx_kinds_support_binary"
 
