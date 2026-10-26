@@ -203,6 +203,8 @@ struct rig_remote_dev {
   uint64_t id;
   _Atomic uint64_t *word; /* the shadow, rig's word */
   uint64_t handed;       /* the last value handed over */
+  uint64_t first;        /* [handed] at its make: while [handed] is still
+                            it, no frame or wait names the proxy's values */
   uint64_t written;      /* the last value that copies into local memory */
   uint64_t flying;       /* bytes of [flights] */
   int stopped; /* its stop ran: the word takes [handed] once no copy's
@@ -260,6 +262,10 @@ void rig_remote_settle(struct rig_remote_dev *d);
 /* Adds [d] to its link's proxies: [0]; [-1] if the link has a proxy of
    [d]'s id; [-2] if memory ran out. */
 int rig_remote_add_dev(struct rig_remote_dev *d);
+
+/* Removes [d], which handed nothing over, from its link's proxies, so that
+   the link takes another proxy of its id. Holds the link's lock. */
+void rig_remote_remove_dev(struct rig_remote_dev *d);
 
 #define Link_c(v) ((struct rig_remote_link *)Nativeint_val(Field(v, 0)))
 

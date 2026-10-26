@@ -47,8 +47,10 @@ val device : Link.t -> Wire.account -> Rig_remote_abi.t -> t Rig_edge.opener
 
     [make] raises [Invalid_argument] if [c] is [Host _] and [a]'s id is not
     [0], if [c] is [Device { id }] and [id] is not [a]'s, or if [l] has a proxy
-    of [a]'s device. Closing a proxy does not permit another proxy of that
-    account on the same link. *)
+    of [a]'s device. Closing a proxy that handed work over does not permit
+    another proxy of that account on the same link; closing one that handed
+    none over does. A [make] that raises, an asynchronous exception
+    included, leaves no proxy registered. *)
 
 include Rig_edge.Driver with type t := t
 

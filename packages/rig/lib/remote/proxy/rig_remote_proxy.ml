@@ -26,6 +26,8 @@ type t = {
 
 external make_c : Link.t -> int -> nativeint -> nativeint
   = "caml_rig_remote_proxy_make"
+external reraise : exn -> 'a = "%reraise"
+
 external word_at : nativeint -> int = "caml_rig_remote_proxy_word"
 external signaled_c : nativeint -> int = "caml_rig_remote_proxy_signaled"
 
@@ -42,13 +44,24 @@ let make l (a : Wire.account) c ~word =
       invalid_arg "Rig_remote_proxy.device: a record of another device"
   | _ -> ());
   let c' = make_c l a.id word in
-  {
-    c = c';
-    link = l;
-    account = a;
-    capability = c;
-    word = Word { id = a.id; at = word_at c' };
-  }
+  (* From the registration on, an exception, such as Out_of_memory or a
+     Gc.Memprof callback's, stops the proxy, which rig never had to stop: a
+     proxy that handed nothing over leaves its link, which then takes
+     another proxy of the account. The handler allocates nothing. *)
+  match
+    Ok
+      {
+        c = c';
+        link = l;
+        account = a;
+        capability = c;
+        word = Word { id = a.id; at = word_at c' };
+      }
+  with
+  | r -> r
+  | exception e ->
+      stop_c c';
+      reraise e
 
 (* The job's failure raises; the agent's refusal is the request's [Error]. *)
 let request l q =
@@ -177,7 +190,6 @@ let fault d =
    handler runs there. *)
 external unblock : unit -> unit = "caml_rig_edge_unblock" [@@noalloc]
 external block : unit -> unit = "caml_rig_edge_block"
-external reraise : exn -> 'a = "%reraise"
 
 let sleep d ~seen ~still_ms =
   unblock ();
@@ -226,5 +238,5 @@ let device l (a : Wire.account) c : t Rig_edge.opener =
   {
     name = a.name;
     driver = (module Driver);
-    make = (fun ~word -> Ok (make l a c ~word));
+    make = (fun ~word -> make l a c ~word);
   }

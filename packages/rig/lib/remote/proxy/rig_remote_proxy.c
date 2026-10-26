@@ -291,14 +291,16 @@ value caml_rig_remote_proxy_make(value link, value id, value word) {
   d->link = Link_c(link);
   d->id = (uint64_t)Long_val(id);
   d->word = (_Atomic uint64_t *)Nativeint_val(word);
-  d->handed = d->written = atomic_load(d->word);
+  d->handed = d->written = d->first = atomic_load(d->word);
+  /* Boxed before the registration, so that nothing comes after it. */
+  value vd = caml_copy_nativeint((intnat)d);
   int r = rig_remote_add_dev(d);
   if (r != 0) free(d);
   if (r == -2) caml_raise_out_of_memory();
   if (r == -1)
     caml_invalid_argument(
         "Rig_remote_proxy.device: the link has a proxy of that device");
-  return caml_copy_nativeint((intnat)d);
+  return vd;
 }
 
 /* The host address of the proxy's shadow. */
@@ -339,7 +341,11 @@ value caml_rig_remote_proxy_sleep(value vd, value vseen, value vms) {
 
 /* Stops the proxy: the last value handed over goes into the shadow at once,
    or, while a copy into this process's memory may still land, once none
-   may. Does not release the runtime: it waits for nothing. */
+   may. A proxy that handed nothing over, such as one whose open rig cut
+   before it published it, leaves its link, which then takes another proxy
+   of the device: no frame or wait names it. Its state stays allocated, as
+   rig may still read it. Does not release the runtime: it waits for
+   nothing. */
 value caml_rig_remote_proxy_stop(value vd) {
   struct rig_remote_dev *d = Dev_val(vd);
   struct rig_remote_link *l = d->link;
@@ -350,6 +356,7 @@ value caml_rig_remote_proxy_stop(value vd) {
   pthread_mutex_lock(&l->mu);
   d->stopped = 1;
   rig_remote_settle(d);
+  if (d->handed == d->first) rig_remote_remove_dev(d);
   pthread_mutex_unlock(&l->mu);
   return Val_unit;
 }

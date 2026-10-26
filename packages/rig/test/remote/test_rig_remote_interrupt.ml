@@ -182,6 +182,39 @@ let close_in_first () =
   greater ~msg:"devices refused" int ~than:0 !refusals;
   greater ~msg:"devices closed" int ~than:0 !closes
 
+(* A first devices of MEM cut at each of its allocations by an exception
+   there and at each one after it, rig's opens of the proxies included, in a
+   job of its own: a devices after it gives the kind's devices, which serve
+   copies, and the host is not lost. *)
+let raise_in_devices () =
+  walk (fun n ->
+      with_job @@ fun j agents ->
+      let h = List.hd (Rig_remote.hosts j) in
+      let at = at (List.hd agents) (Rig.name h) in
+      let reached =
+        Rig_support.interrupted n (fun () ->
+            ignore (Rig_remote.devices h "MEM" : _ result))
+      in
+      let msg what = strf "from allocation %d, %s" n what in
+      let ds =
+        match Rig_remote.devices h "MEM" with
+        | Ok ds -> ds
+        | Error why -> failf "%s: Error %s" (msg "MEM after it") why
+        | exception Invalid_argument why ->
+            failf "%s raised %S" (msg "MEM after it") why
+      in
+      equal ~msg:(msg "MEM after it") (list string)
+        [ "MEM:0@" ^ at; "MEM:1@" ^ at ]
+        (names ds);
+      is_none ~msg:(msg "the host's loss") (Rig.lost h);
+      List.iter
+        (fun d ->
+          let s = "on " ^ Rig.name d in
+          equal ~msg:(msg "a copy there and back") string s
+            (read (far_of_string d s)))
+        ds;
+      reached)
+
 (* Connects *)
 
 (* An address of the loopback where nothing listens: a connect to it answers
@@ -724,6 +757,8 @@ let () =
            ];
          group ~timeout:60. "a cut at any allocation"
            [
+             test "a devices after a devices cut by an exception answers"
+               raise_in_devices;
              test "a connect after a connect cut by an exception is not refused"
                raise_in_connect;
              test "a connect after a connect inside a lock is not refused"

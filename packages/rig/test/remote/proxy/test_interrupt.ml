@@ -231,7 +231,7 @@ let next_and_answer_raise () =
   greater ~msg:"allocations interrupted" int ~than:0 !walked
 
 (* An account named [name], as the agent answers an open of kind [name]. *)
-let account name : Wire.account =
+let account_named name : Wire.account =
   {
     id = 1;
     name;
@@ -281,7 +281,7 @@ let next_of_request_raise () =
       let answers = ref 0 in
       let ended () = Bool.to_int (first_done ()) + Bool.to_int (second_done ()) in
       let answer kind r =
-        Link.answer a r (Ok [ account kind ]);
+        Link.answer a r (Ok [ account_named kind ]);
         incr answers;
         until ~what:"an answer's arrival" (fun () -> ended () >= !answers);
         if first_done () && named "A" (first ()) = "B" then
@@ -363,7 +363,7 @@ let answer_cut n =
   with_pair @@ fun c a ->
   let asked_done, asked = spawn (fun () -> Link.request c (Wire.Open "MEM")) in
   let r = opened (Link.next a) in
-  let v = Ok [ account (String.make big 'x') ] in
+  let v = Ok [ account_named (String.make big 'x') ] in
   let limit () =
     ignore (Rig_support.set_address_space (mapped () + (big / 2)) : int)
   in
@@ -395,6 +395,43 @@ let answer_out_of_memory () =
   let rec from n = if answer_cut n then from (n + 1) else n - 1 in
   greater ~msg:"allocations cut" int ~than:0 (from 1)
 
+(* Proxies *)
+
+(* Whether an allocation's call stack holds [fn], a function's full name. *)
+let inside fn (a : Gc.Memprof.allocation) =
+  match Printexc.backtrace_slots a.callstack with
+  | Some slots -> Array.exists (fun s -> Printexc.Slot.name s = Some fn) slots
+  | None -> false
+
+(* A proxy's make of the account [id] cut by an exception at each of its own
+   allocations: a make of the account after it registers a proxy, so the
+   account keeps one on the link. A cut once make returned is its caller's,
+   whose stop does the same ({!Rig_remote}'s suite walks rig's open). *)
+let make_raise () =
+  with_machine @@ fun m ->
+  let make id =
+    let a = Proxy_machine.account id ~reaches:[] in
+    Rig_gpu_support.opened
+      (Proxy.device m.far a (Rig_remote_abi.Device { id }))
+  in
+  let from = inside "Rig_remote_proxy.make" in
+  walk (fun n ->
+      let id = 100 + n in
+      let made = ref false in
+      let reached =
+        Rig_support.interrupted ~from n (fun () ->
+            ignore (make id : _ result);
+            made := true)
+      in
+      if not !made then begin
+        match make id with
+        | Ok _ -> ()
+        | Error why -> failf "from allocation %d, a make after it: %s" n why
+        | exception Invalid_argument why ->
+            failf "from allocation %d, a make after it raised %S" n why
+      end;
+      reached)
+
 let () =
   exit
     (run "rig_remote_proxy interrupt"
@@ -419,6 +456,8 @@ let () =
                next_of_request_raise;
              test "an answer out of memory leaves no request waiting"
                answer_out_of_memory;
+             test "a make cut by an exception leaves its account a proxy"
+               make_raise;
            ];
          group ~timeout
            "a call to rig from a callback at any allocation keeps the host"

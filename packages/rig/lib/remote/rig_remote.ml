@@ -174,12 +174,12 @@ let rec keep_proxy m id d =
     keep_proxy m id d
 
 (* [m]'s proxy of [a], opened unless a call opened one first, which may be
-   closed since. The link takes one proxy of an account for its life. The
-   lookup runs in the opener's [make], which rig runs while no other open of
-   the proxy's name does, so it is one step with the open: a call that a
-   callback interrupts before the open finds the proxy the callback opened
-   and closed. A proxy that rig gave and that is not kept is open, and rig
-   gives it again. *)
+   closed since. Once a proxy of an account handed work over, the link takes
+   no other of that account. The lookup runs in the opener's [make], which
+   rig runs while no other open of the proxy's name does, so it is one step
+   with the open: a call that a callback interrupts before the open finds
+   the proxy the callback opened and closed. A proxy that rig gave and that
+   is not kept is open, and rig gives it again. *)
 let open_proxy m h (a : Wire.account) =
   let o = Proxy.device m.link a (Rig_remote_abi.Device { id = a.id }) in
   let found = ref None in

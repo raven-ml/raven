@@ -997,6 +997,11 @@ int rig_remote_add_dev(struct rig_remote_dev *d) {
   return taken ? -1 : 0;
 }
 
+void rig_remote_remove_dev(struct rig_remote_dev *d) {
+  struct rig_remote_link *l = d->link;
+  if (d->id < l->ndevs && l->devs[d->id] == d) l->devs[d->id] = NULL;
+}
+
 static struct rig_remote_dev *dev_of(struct rig_remote_link *l, uint64_t id) {
   return id < l->ndevs ? l->devs[id] : NULL;
 }
