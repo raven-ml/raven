@@ -3,11 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Interrupt walks of the disk. A copy runs once for each allocation it makes,
-   in a forked child, with every allocation from that one on raising until the
-   copy returns, as an asynchronous exception does. After it the disk keeps
-   its bound of descriptors, every file reads its bytes, and once the files
-   are collected no descriptor of theirs stays open. *)
+(* Interrupt walks of the disk. A copy, a barrier or a create runs once for
+   each allocation it makes, in a forked child, with every allocation from
+   that one on raising until the call returns, as an asynchronous exception
+   does. After a copy the disk keeps its bound of descriptors, every file
+   reads its bytes, and once the files are collected no descriptor of theirs
+   stays open. A create that raised leaves no file at its path. *)
 
 open Windtrap
 module B = Rig.Buffer
@@ -162,6 +163,52 @@ let test_interrupt_barrier () =
   let rec from n = if interrupt_barrier n then from (n + 1) else n - 1 in
   greater ~msg:"allocations interrupted" int ~than:0 (from 1)
 
+(* Creates *)
+
+(* What a create answers until it returns. *)
+let not_returned : (B.t, string) result = Error "not returned"
+
+(* [create_cut n] creates a file, interrupted from its [n]-th allocation. A
+   create that raised leaves no file at its path, so a create of the path
+   after it answers. Is whether the allocation was reached, and what went
+   wrong, if anything. *)
+let create_cut n =
+  in_child (strf ", interrupted from allocation %d" n) (fun () ->
+      let name = path "created" in
+      if Sys.file_exists name then Sys.remove name;
+      let made = ref not_returned in
+      let reached =
+        Rig_support.interrupted n (fun () ->
+            made := Rig_disk.create_file name 8)
+      in
+      equal ~msg:"locks held after" int 0 (Rig_support.holds ());
+      let wrong =
+        match !made with
+        | Error why when !made != not_returned -> Some ("answered " ^ why)
+        | Ok _ -> None
+        | Error _ when Sys.file_exists name -> Some "left a file at its path"
+        | Error _ -> (
+            match Rig_disk.create_file name 8 with
+            | Ok _ -> None
+            | Error why -> Some ("a create after it answered " ^ why))
+      in
+      (reached, wrong))
+
+(* Walks [create_cut] from the first allocation to the last, and fails naming
+   every allocation whose interruption went wrong. *)
+let test_create () =
+  if Sys.win32 then skip ~reason:"Windows has no fork" ();
+  Rig_support.needs_fork ();
+  let rec from n wrongs =
+    match create_cut n with
+    | false, _ -> List.rev wrongs
+    | true, None -> from (n + 1) wrongs
+    | true, Some why -> from (n + 1) ((n, why) :: wrongs)
+  in
+  equal ~msg:"interruptions that went wrong"
+    (list (pair int string))
+    [] (from 1 [])
+
 (* Calls from a callback *)
 
 (* What a call answers: ["refused"] for an [Invalid_argument] that names the
@@ -292,6 +339,7 @@ let () =
               "a barrier under its file's lock and the table's leaves no lock \
                held"
               test_interrupt_barrier;
+            test "a create that raises leaves no file at its path" test_create;
           ];
         group ~timeout "a call from a callback at any allocation"
           [

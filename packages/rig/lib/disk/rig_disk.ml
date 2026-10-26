@@ -540,33 +540,43 @@ let open_file path mode n =
   if String.contains path '\000' then
     Error (strf "%s: the path holds a NUL byte" path)
   else
-    let writable = mode <> read_mode in
-    let opened () =
-      match open_retrying path mode n with
-      | fd, _, _ when fd = not_regular ->
-          Error (strf "%s: not a regular file" path)
-      | fd, size, identity ->
-          let f = file ~path ~writable ~size ~identity in
-          admit f fd;
-          trim ();
-          Ok f
-      | exception Unix.Unix_error (e, _, _) ->
-          Error (strf "%s: %s" path (Unix.error_message e))
-    in
+    (* The file whose descriptor the table took, [ring] until then. *)
+    let taken = ref ring in
+    let opened () = open_retrying path mode n in
     match locked opened () with
-    | Error _ as e -> e
-    | Ok f -> (
+    | exception Unix.Unix_error (e, _, _) ->
+        Error (strf "%s: %s" path (Unix.error_message e))
+    | fd, _, _ when fd = not_regular ->
+        Error (strf "%s: not a regular file" path)
+    | fd, size, identity -> (
+        (* From the open on, an exception removes a file the call created,
+           which would refuse a later create of its path, and closes the
+           descriptor. It may be asynchronous, such as a Gc.Memprof callback's
+           that the open's own allocations deferred, or a drain's that [of_io]
+           ran, which no buffer of the file survives. Nothing polls between
+           the open and the handler, or in the handler before the removal;
+           only [Sys.remove]'s copy of the path can fail there, with
+           Out_of_memory. The removal comes first, which Windows admits: the
+           disk opens files shared for deletion. *)
+        let writable = mode <> read_mode in
         let access = if writable then Rig.Read_write else Read in
-        match Rig.Buffer.of_io device Io.region_key f ~access f.size with
-        | b -> Ok b
+        match
+          let f = file ~path ~writable ~size ~identity in
+          let admitted () =
+            admit f fd;
+            taken := f;
+            trim ()
+          in
+          locked admitted ();
+          Ok (Rig.Buffer.of_io device Io.region_key f ~access size)
+        with
+        | b -> b
         | exception e ->
-            (* A drain [of_io] ran raised, which no buffer of the file survives:
-               the file goes as a failed create's does. *)
-            let bt = Printexc.get_raw_backtrace () in
-            locked close_fd f;
             (if mode = create_mode then
                try Sys.remove path with Sys_error _ -> ());
-            Printexc.raise_with_backtrace e bt)
+            let f = !taken in
+            if f == ring then close fd else locked close_fd f;
+            reraise e)
 
 let of_file path =
   guarded "of_file" @@ fun () ->
