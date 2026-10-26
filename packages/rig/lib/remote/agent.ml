@@ -267,50 +267,63 @@ type t = {
       (** Once its socket failed for good, so that it accepts no more: why. *)
 }
 
+let close_quietly fd = try Unix.close fd with Unix.Unix_error _ -> ()
+
 let listen ~key host port =
   masked @@ fun () ->
   match resolve host port with
   | Error _ as e -> e
   | Ok addr -> (
+      let refused e =
+        Error (strf "listening at %s:%d: %s" host port (Unix.error_message e))
+      in
       let domain = Unix.domain_of_sockaddr addr in
-      let fd = Unix.socket ~cloexec:true domain Unix.SOCK_STREAM 0 in
-      match
-        (* On POSIX, a port whose closed connections linger binds again; on
-           Windows the option would let two sockets bind one port. *)
-        if not Sys.win32 then Unix.setsockopt fd Unix.SO_REUSEADDR true;
-        Unix.bind fd addr;
-        Unix.listen fd backlog;
-        (* A connection reset between the wait and accept leaves nothing to
-           accept: a blocking accept would then wait for the next one, and
-           [stop] for it (Stevens, UNIX Network Programming, 16.6). *)
-        Unix.set_nonblock fd
-      with
-      | exception Unix.Unix_error (e, _, _) ->
-          Unix.close fd;
-          Error (strf "listening at %s:%d: %s" host port (Unix.error_message e))
-      | () ->
-          let port =
-            match Unix.getsockname fd with
-            | Unix.ADDR_INET (_, p) -> p
-            | Unix.ADDR_UNIX _ -> port
-          in
-          Ok
-            {
-              key;
-              socket = fd;
-              port;
-              claimed = Atomic.make false;
-              lock = Mutex.create ();
-              changed = Condition.create ();
-              phase = Claimed;
-              accepted = Hashtbl.create 4;
-              peers = Hashtbl.create 4;
-              stopped = false;
-              broken = None;
-            })
+      match Unix.socket ~cloexec:true domain Unix.SOCK_STREAM 0 with
+      | exception Unix.Unix_error (e, _, _) -> refused e
+      | fd -> (
+          (* From the socket on, an exception closes it: a [Unix_error] of
+             its setup answers [Error], and another, such as Out_of_memory or
+             a Gc.Memprof callback's, is raised again. The handler allocates
+             nothing before the close. *)
+          match
+            (* On POSIX, a port whose closed connections linger binds again;
+               on Windows the option would let two sockets bind one port. *)
+            if not Sys.win32 then Unix.setsockopt fd Unix.SO_REUSEADDR true;
+            Unix.bind fd addr;
+            Unix.listen fd backlog;
+            (* A connection reset between the wait and accept leaves nothing
+               to accept: a blocking accept would then wait for the next one,
+               and [stop] for it (Stevens, UNIX Network Programming, 16.6). *)
+            Unix.set_nonblock fd;
+            let port =
+              match Unix.getsockname fd with
+              | Unix.ADDR_INET (_, p) -> p
+              | Unix.ADDR_UNIX _ -> port
+            in
+            Ok
+              {
+                key;
+                socket = fd;
+                port;
+                claimed = Atomic.make false;
+                lock = Mutex.create ();
+                changed = Condition.create ();
+                phase = Claimed;
+                accepted = Hashtbl.create 4;
+                peers = Hashtbl.create 4;
+                stopped = false;
+                broken = None;
+              }
+          with
+          | r -> r
+          | exception Unix.Unix_error (e, _, _) ->
+              close_quietly fd;
+              refused e
+          | exception e ->
+              close_quietly fd;
+              reraise e))
 
 let port a = a.port
-let close_quietly fd = try Unix.close fd with Unix.Unix_error _ -> ()
 
 (* Admits one controller, then the agents of its job before this one. A
    controller's admission makes the job, which [mine] keeps for its handshake: a

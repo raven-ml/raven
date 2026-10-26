@@ -307,6 +307,35 @@ let raise_in_rail () =
       reached);
   is_none ~msg:"the job's failure" (Rig_remote.failed j)
 
+(* Agents *)
+
+(* What a listen answers until it returns. *)
+let no_agent : (Rig_remote.agent, string) result = Error "not returned"
+
+(* A listen cut at each of its allocations by an exception there and at each
+   one after it: a listen that raised holds no descriptor. *)
+let raise_in_listen () =
+  let held () =
+    match Rig_support.descriptors () with
+    | Some n -> n
+    | None -> skip ~reason:"the system does not count descriptors" ()
+  in
+  walk (fun n ->
+      let before = held () in
+      let made = ref no_agent in
+      let reached =
+        Rig_support.interrupted n (fun () ->
+            made := Rig_remote.listen ~key:(as_key key) "127.0.0.1" 0)
+      in
+      (match !made with
+      | Ok _ -> ()
+      | Error why when !made != no_agent -> failf "listen: %s" why
+      | Error _ ->
+          equal
+            ~msg:(strf "descriptors after a listen cut from allocation %d" n)
+            int before (held ()));
+      reached)
+
 (* Launched jobs *)
 
 (* Runs support/launched.exe in [mode] with a landing at each allocation of
@@ -412,5 +441,7 @@ let () =
              test "a Ctrl-C in a rail lands before or after it" break_in_rail;
              test "a rail cut by an exception leaves the job going"
                raise_in_rail;
+             test "a listen cut by an exception holds no descriptor"
+               raise_in_listen;
            ];
        ])
