@@ -276,7 +276,7 @@ let deliver i ~by op =
           checked := List.cons owner !checked
       | Traced _ | Array _ | Shards _ | Donated _ | Deferred _ -> ())
     op;
-  Prim.iteri (fun k x -> Prim.alive ~by k x) op;
+  Prim.iteri (fun _ x -> Prim.alive ~by x) op;
   let op =
     if Prim.exists (fun x -> changes i x || Donate.is_handle x) op then
       Prim.map (fun x -> Donate.lent (received i x)) op

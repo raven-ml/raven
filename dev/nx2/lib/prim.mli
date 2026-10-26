@@ -44,9 +44,10 @@ val death : ('v, 's, 'd) t -> death
 (** [death x] is whether [x] lives: for a handle, its donor's death. It
     allocates nothing. *)
 
-val alive : by:string -> int -> ('v, 's, 'd) t -> unit
-(** [alive ~by i x] raises [Invalid_argument] naming [by], operand [i + 1] and
-    the function [x] was donated to, if [x] died. *)
+val alive : by:string -> ('v, 's, 'd) t -> unit
+(** [alive ~by x] raises [Invalid_argument] naming [by], [x] as {!pp_value}
+    prints it and the function [x] was donated to, if [x] died, as
+    [Nx.add: float32 [2; 2] was donated to Nx.mul]. *)
 
 val arrays : ('v, 's, 'd) t -> ('v, 's) Nx_array.t iarray
 (** [arrays x] is [x]'s arrays, one per device of its placement, whether [x]
@@ -83,6 +84,10 @@ val merge : int array -> int array -> (int array, int * int * int) result
 
 val pp_shape : Format.formatter -> int array -> unit
 (** [pp_shape ppf s] prints [s] as nx's messages do: [[2; 3]]. *)
+
+val pp_value : Format.formatter -> ('v, 's, 'd) t -> unit
+(** [pp_value ppf x] prints [x]'s dtype and shape as nx's messages do:
+    [float32 [2; 3]]. *)
 
 val check_shape : by:string -> int array -> unit
 (** [check_shape ~by s] raises [Invalid_argument] naming [by] and [s] unless

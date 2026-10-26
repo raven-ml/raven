@@ -505,9 +505,9 @@ let einsum (type v s d) ~by ?(sizes = []) ?acc (p : Pattern.t)
       (List.map (fun x -> (D.name dt, Prim.shape x)) xs)
   in
   let xs = Array.of_list xs in
-  (* Checked before the contractions, which read some operands each: a dead
-     one raises named by its place in the call. *)
-  Array.iteri (fun i x -> Prim.alive ~by i x) xs;
+  (* Checked before the contractions, which read some operands each: one
+     could consume a donation before a later one meets a dead operand. *)
+  Array.iter (Prim.alive ~by) xs;
   let ns = Array.of_list (List.map Array.to_list operands) in
   let nr = Array.to_list result in
   let (D.Any w) = accumulator ~by ?acc dt (D.Any dt) (D.Any dt) in

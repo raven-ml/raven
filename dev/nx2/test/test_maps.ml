@@ -520,7 +520,7 @@ let test_reuse_fast3 () =
       (f32 [| 3.; 4. |])
   in
   equal ~msg:"a donated condition" (array bits) [| 1.; 4. |] (elements y);
-  raises_match (Exn.invalid_arg ~substring:"t: operand 1 was donated to t")
+  raises_match (Exn.invalid_arg ~substring:"t: bool [2] was donated to t")
     (fun () -> Exec.run ~by:"t" (Value.Copy d))
 
 let test_no_reuse_shared () =
@@ -590,7 +590,7 @@ let test_contract_consumes () =
   equal ~msg:"the result" (array bits) [| 13.; 28. |] (elements y);
   equal ~msg:"written in place" bool true
     (Rig.Buffer.overlaps (A.buffer (array_of init)) (A.buffer (array_of y)));
-  raises_match (Exn.invalid_arg ~substring:"t: operand 1 was donated to t")
+  raises_match (Exn.invalid_arg ~substring:"t: float32 [2] was donated to t")
     (fun () -> Exec.run ~by:"t" (Value.Copy init))
 
 (* Two handles of one donor, one a copy a movement passed on, are one handle

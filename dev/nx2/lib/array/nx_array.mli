@@ -389,8 +389,8 @@ val refused : string -> answer -> any list -> 'a
     and each operand's dtype and shape. [name] is the function the user called,
     as ["Nx.add"]. For [Dead_buffer], and for [Held_exclusive] once the
     holder consumed the memory, the reason names each operand whose buffer is
-    dead, numbered from 1 in [operands]' order, with the reason its consumer
-    gave ({!Rig.Buffer.dead}), as
-    [Nx.add: operand 2 was consumed, donated to Nx.mul (float32 [3], …)].
+    dead, in [operands]' order, as [<dtype> <shape> was <why>], [why] the
+    reason its consumer gave ({!Rig.Buffer.dead}):
+    [Nx.add: float32 [3] was donated to Nx.mul (float32 [3], …)].
     [Done] and [Declined] are no refusal, and raise [Invalid_argument] saying
     so. *)

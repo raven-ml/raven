@@ -376,7 +376,7 @@ let of_bigarray b =
 (* [x], waited for, for the read [by]. A read is not an operation: no
    interpretation receives it. *)
 let readable ~by x =
-  Prim.alive ~by 0 x;
+  Prim.alive ~by x;
   match Eval.owner x with
   | Some i -> invalid_argf "%s: the value is traced by %s" by i.name
   | None ->
@@ -457,16 +457,10 @@ let broadcast ~by s x =
 
 let same_shape = Prim.same_shape
 
-(* A function whose operations read its operands one at a time, as a
-   broadcast does, or in another order than the call's checks them first, in
-   the call's order: a dead one raises named by its place in the call. *)
-let alive2 ~by a b =
-  Prim.alive ~by 0 a;
-  Prim.alive ~by 1 b
-
-(* As [alive2], for the operands [xs] of a function of several operations,
-   which then reads each handle among them as {!Donate.lent}. *)
-let alive_all ~by xs = List.iteri (fun i (Value.Any x) -> Prim.alive ~by i x) xs
+(* Raises if one of [xs] is dead: the operands of a function of several
+   operations, checked before any runs, since an earlier one may consume a
+   donation, and {!Donate.lent} revives a dead handle. *)
+let alive_all ~by xs = List.iter (fun (Value.Any x) -> Prim.alive ~by x) xs
 
 (* A call that broadcasts its operands, then reads the broadcasts in one
    operation, which consumes the handles the broadcasts passed on. *)
@@ -474,7 +468,6 @@ let binary ~by k a b =
   if same_shape a b then Eval.apply2 ~by k (dtype a) a b
   else
     let s = Prim.broadcast_shape ~by (shape a) (shape b) in
-    alive2 ~by a b;
     Eval.apply2 ~by k (dtype a) (broadcast ~by s a) (broadcast ~by s b)
 
 let add a b = binary ~by:"Nx.add" (Binary Add) a b
@@ -502,7 +495,6 @@ let comparison ~by k a b =
   if same_shape a b then Eval.apply2 ~by k D.Bool a b
   else
     let s = Prim.broadcast_shape ~by (shape a) (shape b) in
-    alive2 ~by a b;
     Eval.apply2 ~by k D.Bool (broadcast ~by s a) (broadcast ~by s b)
 
 let equal a b = comparison ~by:"Nx.equal" (Compare Equal) a b
@@ -510,9 +502,7 @@ let not_equal a b = comparison ~by:"Nx.not_equal" (Compare Not_equal) a b
 let less a b = comparison ~by:"Nx.less" (Compare Less) a b
 let less_equal a b = comparison ~by:"Nx.less_equal" (Compare Less_equal) a b
 (* [a > b] as [b < a]: the operation reads the operands swapped. *)
-let swapped ~by k a b =
-  alive2 ~by a b;
-  comparison ~by k b a
+let swapped ~by k a b = comparison ~by k b a
 
 let greater a b = swapped ~by:"Nx.greater" (Compare Less) a b
 let greater_equal a b = swapped ~by:"Nx.greater_equal" (Compare Less_equal) a b
@@ -530,17 +520,13 @@ let mod_s x c = scalar_binary ~by:"Nx.mod_s" (Binary Mod) x c
 let maximum_s x c = scalar_binary ~by:"Nx.maximum_s" (Binary Maximum) x c
 let minimum_s x c = scalar_binary ~by:"Nx.minimum_s" (Binary Minimum) x c
 
-let reversed ~by k c x =
-  Prim.alive ~by 0 x;
-  binary ~by k (constant ~by x c) x
+let reversed ~by k c x = binary ~by k (constant ~by x c) x
 let rsub_s c x = reversed ~by:"Nx.rsub_s" (Binary Sub) c x
 let rdiv_s c x = reversed ~by:"Nx.rdiv_s" (Binary (quotient (dtype x))) c x
 let rpow_s c x = reversed ~by:"Nx.rpow_s" (Binary Pow) c x
 
 let compared ~by k x c = comparison ~by k x (constant ~by x c)
-let compared_by ~by k c x =
-  Prim.alive ~by 0 x;
-  comparison ~by k (constant ~by x c) x
+let compared_by ~by k c x = comparison ~by k (constant ~by x c) x
 let equal_s x c = compared ~by:"Nx.equal_s" (Compare Equal) x c
 let not_equal_s x c = compared ~by:"Nx.not_equal_s" (Compare Not_equal) x c
 let less_s x c = compared ~by:"Nx.less_s" (Compare Less) x c
@@ -558,8 +544,6 @@ let ternary ~by k c x y =
         (Prim.broadcast_shape ~by (shape c) (shape x))
         (shape y)
     in
-    alive2 ~by c x;
-    Prim.alive ~by 2 y;
     Eval.apply3 ~by k (broadcast ~by s c) (broadcast ~by s x)
       (broadcast ~by s y)
 
@@ -605,14 +589,18 @@ let trunc x = unary ~by:"Nx.trunc" Trunc x
 let cast_by (type v s w r d) ~by (dt : (w, r) D.t) (x : (v, s, d) t) :
     (w, r, d) t =
   match D.equal_witness (dtype x) dt with
-  | Some Type.Equal -> x
+  | Some Type.Equal ->
+      Prim.alive ~by x;
+      x
   | None -> Eval.apply1 ~by Cast dt x
 
 let cast dt x = cast_by ~by:"Nx.cast" dt x
 
 let bitcast (type v s w r d) (dt : (w, r) D.t) (x : (v, s, d) t) : (w, r, d) t =
   match D.equal_witness (dtype x) dt with
-  | Some Type.Equal -> x
+  | Some Type.Equal ->
+      Prim.alive ~by:"Nx.bitcast" x;
+      x
   | None -> Eval.eval ~by:"Nx.bitcast" (Value.Bitcast (dt, x))
 
 let copy_by ~by x = Eval.eval ~by (Value.Copy x)
@@ -625,9 +613,7 @@ let ndim = Prim.rank
 let numel x = Array.fold_left ( * ) 1 (shape x)
 let nbytes x = ((numel x * D.bits (dtype x)) + 7) / 8
 
-(* An operand in messages, as [float32 [2; 3]]. *)
-let pp_value ppf x =
-  Format.fprintf ppf "%s %a" (D.name (dtype x)) pp_shape (shape x)
+let pp_value = Prim.pp_value
 
 let pp_ints ppf l = pp_shape ppf (Array.of_list l)
 
@@ -730,7 +716,8 @@ let broadcast_shapes ss = broadcast_all ~by:"Nx.broadcast_shapes" ss
 let broadcast_arrays xs =
   let by = "Nx.broadcast_arrays" in
   let s = broadcast_all ~by (List.map shape xs) in
-  List.iteri (Prim.alive ~by) xs;
+  (* A broadcast to its own shape is the operand, unchecked. *)
+  List.iter (Prim.alive ~by) xs;
   List.map (broadcast ~by s) xs
 
 let squeeze ?axes:l x =
@@ -864,7 +851,7 @@ let sliding_window ?axis ~window ?step x =
 
 let split ~axis:a n x =
   let by = "Nx.split" in
-  let x = Donate.read ~by 0 x in
+  let x = Donate.read ~by x in
   let a = axis ~by x a in
   if n < 1 then
     invalid_argf "%s: %d runs of %a; give at least 1" by n pp_value x;
@@ -933,7 +920,6 @@ let stack ?axis:(a = 0) xs =
           if not (same_shape x x0) then
             invalid_argf "%s: %a and %a differ" by pp_value x0 pp_value x)
         xs;
-      List.iteri (Prim.alive ~by) xs;
       let unit =
         Array.init r (fun i ->
             if i < a then s0.(i) else if i = a then 1 else s0.(i - 1))
@@ -963,7 +949,7 @@ let pad widths v x =
 
 let roll ?axis:along k x =
   let by = "Nx.roll" in
-  let x = Donate.read ~by 0 x in
+  let x = Donate.read ~by x in
   let y, a =
     match along with
     | None -> (move ~by (Reshape [| numel x |]) x, 0)
@@ -993,7 +979,10 @@ let roll ?axis:along k x =
    beside it, before it where [outer], which is broadcast to the count and
    merged into it. *)
 let stretch ~by ~outer n x =
-  if Array.for_all (( = ) 1) n then x
+  if Array.for_all (( = ) 1) n then begin
+    Prim.alive ~by x;
+    x
+  end
   else
     let s = shape x in
     let spread f =
@@ -1042,8 +1031,11 @@ module Pattern = struct
 end
 
 let rearrange_by ~by ?(sizes = []) p x =
-  let moves = Pattern.moves ~by ~sizes p (D.name (dtype x), shape x) in
-  List.fold_left (fun x mv -> move ~by mv x) x moves
+  match Pattern.moves ~by ~sizes p (D.name (dtype x), shape x) with
+  | [] ->
+      Prim.alive ~by x;
+      x
+  | moves -> List.fold_left (fun x mv -> move ~by mv x) x moves
 
 let rearrange ?sizes p x = rearrange_by ~by:"Nx.rearrange" ?sizes p x
 
@@ -1228,19 +1220,14 @@ let take_axis ~by axis p y =
   in
   if Prim.has_shape g s' then g else reshaped ~by s' g
 
-(* The values [idx] holds checked live as {!alive2} does, numbered from 0 as
-   written: the number checked. *)
+(* Raises if a value [idx] holds is dead: checked before the selection, whose
+   operations read them one at a time, a donated one {!Donate.lent}. *)
 let index_alive ~by idx =
-  let held i x =
-    Prim.alive ~by i x;
-    i + 1
-  in
-  List.fold_left
-    (fun i -> function
-      | T p -> held i p
-      | D (start, _) -> held i start
-      | I _ | L _ | R _ | Rs _ | A | N -> i)
-    0 idx
+  List.iter
+    (function
+      | T p | D (p, _) -> Prim.alive ~by p
+      | I _ | L _ | R _ | Rs _ | A | N -> ())
+    idx
 
 (* Whether a position [idx] holds in data is donated. *)
 let held_donated idx =
@@ -1299,7 +1286,9 @@ let selected ~by picks x =
 
 let slice_by ~by idx x =
   let picks = picks ~by idx x in
-  Prim.alive ~by (index_alive ~by idx) x;
+  index_alive ~by idx;
+  (* A selection of every element is [x] itself. *)
+  Prim.alive ~by x;
   (* Positions held in data are read in operations of their own. *)
   if held_donated idx then selected ~by (read_picks Donate.lent picks) x
   else selected ~by picks x
@@ -1600,9 +1589,9 @@ let replaced ~by sel picks v x =
 let set idx v x =
   let by = "Nx.set" in
   let picks = picks ~by idx x in
-  let n = index_alive ~by idx in
-  Prim.alive ~by n v;
-  Prim.alive ~by (n + 1) x;
+  index_alive ~by idx;
+  Prim.alive ~by v;
+  Prim.alive ~by x;
   List.iter
     (fun (p, _) ->
       match p with
@@ -1746,8 +1735,6 @@ let elementwise (type v s) ~by (dt : (v, s) D.t) xs (out : (v, s) E.t) =
       (fun s (Value.Any x) -> Prim.broadcast_shape ~by s (shape x))
       [||] xs
   in
-  (* Checked before the broadcasts, which read one operand each. *)
-  List.iteri (fun i (Value.Any x) -> Prim.alive ~by i x) xs;
   let ins = Iarray.of_list (List.map (fun (Value.Any x) -> D.Any (dtype x)) xs) in
   let prog = P.of_exprs ~ins [| E.any out |] in
   let layout = contiguous ~by s in
@@ -1839,7 +1826,10 @@ let rshift x n =
 
 let clamp ?min:lo ?max:hi x =
   let by = "Nx.clamp" in
-  if lo = None && hi = None then x
+  if lo = None && hi = None then begin
+    Prim.alive ~by x;
+    x
+  end
   else
     let dt = dtype x in
     let y = operand 0 x in
@@ -1898,7 +1888,7 @@ let isnan_by ~by x = comparison ~by (Compare Not_equal) x x
 
 let isnan x =
   let by = "Nx.isnan" in
-  isnan_by ~by (Donate.read ~by 0 x)
+  isnan_by ~by (Donate.read ~by x)
 
 let isinf x = predicate ~by:"Nx.isinf" (fun dt x -> infinite dt x) Or false x
 let isfinite x = predicate ~by:"Nx.isfinite" (fun dt x -> finite dt x) And true x
@@ -1923,7 +1913,7 @@ let float_map (type v s d) ~by (xs : (v, s, d) t list)
 
 let square x =
   let by = "Nx.square" in
-  let x = Donate.read ~by 0 x in
+  let x = Donate.read ~by x in
   binary ~by (Binary Mul) x x
 
 let rsqrt (type v s d) (x : (v, s, d) t) : (v, s, d) t =
@@ -2211,7 +2201,7 @@ let int_mean (type v s r d) ~by (acc : (int64, r) D.t) s axes n
 let mean (type v s d) ?axes ?(keepdims = false) (x : (v, s, d) t) :
     (v, s, d) t =
   let by = "Nx.mean" in
-  let x = Donate.read ~by 0 x in
+  let x = Donate.read ~by x in
   let s = shape x and dt = dtype x in
   let axes = reduced_axes ~by x axes in
   let n = reduced_count s axes in
@@ -2271,11 +2261,11 @@ let spread (type s d) ~by ~root ?axes ?(keepdims = false) ?(ddof = 0)
 
 let var ?axes ?keepdims ?ddof x =
   let by = "Nx.var" in
-  spread ~by ~root:false ?axes ?keepdims ?ddof (Donate.read ~by 0 x)
+  spread ~by ~root:false ?axes ?keepdims ?ddof (Donate.read ~by x)
 
 let std ?axes ?keepdims ?ddof x =
   let by = "Nx.std" in
-  spread ~by ~root:true ?axes ?keepdims ?ddof (Donate.read ~by 0 x)
+  spread ~by ~root:true ?axes ?keepdims ?ddof (Donate.read ~by x)
 
 let logsumexp ?axes ?(keepdims = false) x =
   let by = "Nx.logsumexp" in
@@ -2287,7 +2277,7 @@ let logsumexp ?axes ?(keepdims = false) x =
 let logmeanexp (type s d) ?axes ?(keepdims = false) (x : (float, s, d) t) :
     (float, s, d) t =
   let by = "Nx.logmeanexp" in
-  let x = Donate.read ~by 0 x in
+  let x = Donate.read ~by x in
   let s = shape x and dt = dtype x in
   let axes = reduced_axes ~by x axes in
   let n = Float.of_int (reduced_count s axes) in
@@ -2332,7 +2322,7 @@ let average (type s d) ~by ~alpha axis (x : (float, s, d) t) : (float, s, d) t =
 
 let ewma ?axis:along ~alpha x =
   let by = "Nx.ewma" in
-  let x = Donate.read ~by 0 x in
+  let x = Donate.read ~by x in
   if not (alpha > 0. && alpha <= 1.) then
     invalid_argf "%s: alpha %g is outside (0, 1]" by alpha;
   match along with
@@ -2397,19 +2387,19 @@ let normalised (type s d) ~by
 let softmax ?axes ?scale x =
   let by = "Nx.softmax" in
   normalised ~by (fun _ d sum -> E.(exp d / sum)) ?axes ?scale
-    (Donate.read ~by 0 x)
+    (Donate.read ~by x)
 
 let log_softmax ?axes ?scale x =
   let by = "Nx.log_softmax" in
   normalised ~by (fun _ d sum -> E.(d - log sum)) ?axes ?scale
-    (Donate.read ~by 0 x)
+    (Donate.read ~by x)
 
 (* One reduction of the squares, a map of each lane's scale, then one map
    of [x] by its lane's scale: no array of [x]'s size but the result. *)
 let rms_norm (type s d) ?(axes = [ -1 ]) ?(eps = 1e-6) (x : (float, s, d) t) :
     (float, s, d) t =
   let by = "Nx.rms_norm" in
-  let x = Donate.read ~by 0 x in
+  let x = Donate.read ~by x in
   let s = shape x and dt = dtype x in
   let axes = reduced_axes ~by x (Some axes) in
   if Float.is_nan eps || eps < 0. then
@@ -2480,7 +2470,7 @@ let paired (type c a d) ~by (dt : (Complex.t, c) D.t) s
 let complex_of (type c a d) ~by (dt : (Complex.t, c) D.t)
     ~(re : (float, a, d) t) ~(im : (float, a, d) t) : (Complex.t, c, d) t =
   let s = Prim.broadcast_shape ~by (shape re) (shape im) in
-  alive2 ~by re im;
+  alive_all ~by [ Any re; Any im ];
   (* Each part's cast and the assembly read the operands. *)
   paired ~by dt s ~re:(Donate.lent re) ~im:(Donate.lent im)
 
@@ -2506,7 +2496,9 @@ let conjugate_by (type v s d) ~by (x : (v, s, d) t) : (v, s, d) t =
           E.(where (coord last = const D.Int64 1L) (-e) e)
       in
       Eval.eval ~by (Value.Bitcast (D.Complex128, y))
-  | _ -> x
+  | _ ->
+      Prim.alive ~by x;
+      x
 
 let conjugate x = conjugate_by ~by:"Nx.conjugate" x
 
@@ -2518,7 +2510,10 @@ let matrix ~by x =
 
 let matrix_transpose_by ~by x =
   let r = ndim x in
-  if r < 2 then x
+  if r < 2 then begin
+    Prim.alive ~by x;
+    x
+  end
   else
     let p = Array.init r Fun.id in
     p.(r - 2) <- r - 1;
@@ -2621,8 +2616,8 @@ let vdot_by ~by a b =
 
 let vdot a b =
   let by = "Nx.vdot" in
-  let a = Donate.read ~by 0 a in
-  let b = Donate.read ~by 1 b in
+  let a = Donate.read ~by a in
+  let b = Donate.read ~by b in
   vdot_by ~by a b
 
 (* Linear algebra *)
@@ -2727,7 +2722,7 @@ let lower_of ~by triangle a =
 
 let cholesky ?(triangle = Lower) a =
   let by = "Nx.cholesky" in
-  let a = Donate.read ~by 0 a in
+  let a = Donate.read ~by a in
   square_matrices ~by a;
   let a = lower_of ~by triangle a in
   routine ~by (Cholesky { triangle; a })
@@ -2739,7 +2734,7 @@ let qr ?(factors = Reduced) a =
 
 let lu a =
   let by = "Nx.lu" in
-  let a = Donate.read ~by 0 a in
+  let a = Donate.read ~by a in
   matrices ~by a;
   let f, _, perm = routine ~by (Lu a) in
   let m = dim (-2) a and n = dim (-1) a in
@@ -2785,7 +2780,7 @@ let eigh_by ~by ?(vectors = true) ?(triangle = Lower) a =
 
 let eigh ?vectors ?triangle a =
   let by = "Nx.eigh" in
-  eigh_by ~by ?vectors ?triangle (Donate.read ~by 0 a)
+  eigh_by ~by ?vectors ?triangle (Donate.read ~by a)
 
 (* The diagonal of [lu]'s factors, and the function that negates [x] where
    each matrix's rows were interchanged an odd number of times and makes a
@@ -2808,7 +2803,7 @@ let pivots ~by a =
 
 let det a =
   let by = "Nx.det" in
-  let a = Donate.read ~by 0 a in
+  let a = Donate.read ~by a in
   square_matrices ~by a;
   let d, signed = pivots ~by a in
   signed (reduction ~by Prod ~axes:[ -1 ] d)
@@ -2829,7 +2824,7 @@ let phase (type v s d) ~by (z : (v, s, d) t) : (v, s, d) t =
 
 let slogdet a =
   let by = "Nx.slogdet" in
-  let a = Donate.read ~by 0 a in
+  let a = Donate.read ~by a in
   square_matrices ~by a;
   let d, signed = pivots ~by a in
   let sign = signed (reduction ~by Prod ~axes:[ -1 ] (phase ~by d)) in
@@ -2856,8 +2851,8 @@ let is_complex (type v s d) (x : (v, s, d) t) =
 
 let solve_triangular ?(triangle = Lower) ?transpose ?(unit_diag = false) a b =
   let by = "Nx.solve_triangular" in
-  let a = Donate.read ~by 0 a in
-  let b = Donate.read ~by 1 b in
+  let a = Donate.read ~by a in
+  let b = Donate.read ~by b in
   square_matrices ~by a;
   let a, b, back = columns ~by ~rows:(dim (-1) a) a b in
   let solved adjoint b =
@@ -2889,13 +2884,13 @@ let solve_by ~by a b =
 
 let solve a b =
   let by = "Nx.solve" in
-  let a = Donate.read ~by 0 a in
-  let b = Donate.read ~by 1 b in
+  let a = Donate.read ~by a in
+  let b = Donate.read ~by b in
   solve_by ~by a b
 
 let inv a =
   let by = "Nx.inv" in
-  let a = Donate.read ~by 0 a in
+  let a = Donate.read ~by a in
   square_matrices ~by a;
   let n = dim (-1) a in
   solve_by ~by a (broadcast ~by (shape a) (eye_by ~by (dtype a) n))
@@ -2925,8 +2920,8 @@ let resynthesise ~by u d vh =
 
 let lstsq ?rtol a b =
   let by = "Nx.lstsq" in
-  let a = Donate.read ~by 0 a in
-  let b = Donate.read ~by 1 b in
+  let a = Donate.read ~by a in
+  let b = Donate.read ~by b in
   matrices ~by a;
   let a = held_beside ~by b a and b = held_beside ~by a b in
   let m = dim (-2) a and n = dim (-1) a in
@@ -2961,7 +2956,7 @@ let lstsq ?rtol a b =
 
 let pinv ?rtol ?(hermitian = false) a =
   let by = "Nx.pinv" in
-  let a = Donate.read ~by 0 a in
+  let a = Donate.read ~by a in
   if hermitian then square_matrices ~by a else matrices ~by a;
   let m = dim (-2) a and n = dim (-1) a in
   let tol = cutoff ~by rtol a in
@@ -3037,7 +3032,7 @@ let carried (type v s d) ~by (x : (v, s, d) t)
 
 let vector_norm ?(ord = 2.) ?axes:l ?(keepdims = false) x =
   let by = "Nx.vector_norm" in
-  let x = Donate.read ~by 0 x in
+  let x = Donate.read ~by x in
   let along =
     match l with None -> List.init (ndim x) Fun.id | Some l -> axes ~by x l
   in
@@ -3051,7 +3046,7 @@ let vector_norm ?(ord = 2.) ?axes:l ?(keepdims = false) x =
 
 let matrix_norm ?(ord = `Fro) ?(keepdims = false) x =
   let by = "Nx.matrix_norm" in
-  let x = Donate.read ~by 0 x in
+  let x = Donate.read ~by x in
   matrix ~by x;
   let r = ndim x - 2 and c = ndim x - 1 in
   (* The greatest or least sum of a line's magnitudes, [summed] along it. *)
@@ -3207,7 +3202,7 @@ let rows_order ~by keys =
 
 let lexsort keys =
   let by = "Nx.lexsort" in
-  let keys = Donate.read ~by 0 keys in
+  let keys = Donate.read ~by keys in
   keyed ~by keys;
   rows_order ~by keys
 
@@ -3267,8 +3262,8 @@ let search ~by side s v =
 
 let searchsorted ~side s v =
   let by = "Nx.searchsorted" in
-  let s = Donate.read ~by 0 s in
-  let v = Donate.read ~by 1 v in
+  let s = Donate.read ~by s in
+  let v = Donate.read ~by v in
   keyed ~by s;
   if ndim s = 2 && (ndim v <> 2 || Prim.dim v 1 <> Prim.dim s 1) then
     invalid_argf "%s: rows %a sought among rows %a" by pp_value v pp_value s;
@@ -3311,7 +3306,7 @@ let scattered ~by ?(unique = false) combine idx updates into =
    has [n] entries, padded by construction, until the count cuts them. *)
 let unique ?size keys =
   let by = "Nx.unique" in
-  let keys = Donate.read ~by 0 keys in
+  let keys = Donate.read ~by keys in
   keyed ~by keys;
   sized ~by size;
   let n = Prim.dim keys 0 in
@@ -3363,7 +3358,7 @@ let unique ?size keys =
    the total. A negative count counts zero. *)
 let positions ?size c =
   let by = "Nx.positions" in
-  let c = Donate.read ~by 0 c in
+  let c = Donate.read ~by c in
   if ndim c <> 1 then invalid_argf "%s: %a is not 1-d" by pp_value c;
   integer_or_boolean ~by (dtype c);
   sized ~by size;
@@ -3405,7 +3400,7 @@ let vector ~by dt vs =
    map interpolating between them in the compute dtype. *)
 let quantile (type s d) ?axis:along qs (x : (float, s, d) t) : (float, s, d) t =
   let by = "Nx.quantile" in
-  let x = Donate.read ~by 0 x in
+  let x = Donate.read ~by x in
   Array.iter
     (fun q ->
       if not (q >= 0. && q <= 1.) then
@@ -3529,8 +3524,8 @@ let histogram (type s d) ?weights
 
 let array_equal a b =
   let by = "Nx.array_equal" in
-  let a = Donate.read ~by 0 a in
-  let b = Donate.read ~by 1 b in
+  let a = Donate.read ~by a in
+  let b = Donate.read ~by b in
   if not (same_shape a b) then scalar_beside ~by a D.Bool false
   else truth ~by Min (comparison ~by (Compare Equal) a b)
 
@@ -3717,13 +3712,14 @@ let combine_patches_by ~by ~output_size ~kernel_size ~stride ~dilation ~padding
 let combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding p =
   let by = "Nx.combine_patches" in
   combine_patches_by ~by ~output_size ~kernel_size ~stride ~dilation ~padding
-    (Donate.read ~by 0 p)
+    (Donate.read ~by p)
 
 
 
 (* +0 of [x]'s dtype and of [shape], where [x] lies, or [w] for a constant
-   [x]: a sum over no term. *)
+   [x]: a sum over no term. No operation reads [x], so it is checked here. *)
 let no_term ~by x w shape =
+  Prim.alive ~by x;
   let zeros = fill ~by (dtype x) shape (D.zero (dtype x)) in
   match Prim.at x with
   | Some _ -> beside ~by x zeros
@@ -3919,7 +3915,6 @@ let correlate ?(padding = `Valid) x kernel =
   if Array.exists (( = ) 0) ks then
     invalid_argf "%s: the kernel %a has an axis of no element" by pp_value
       kernel;
-  alive2 ~by x kernel;
   let lead = Array.sub s 0 (r - kr) and spatial = Array.sub s (r - kr) kr in
   let runs = Array.init kr (fun i -> run_of padding spatial.(i) ks.(i)) in
   let lo = Array.init kr (fun i -> ks.(i) - 1 - fst runs.(i)) in
@@ -4071,9 +4066,9 @@ let ranges (type v s d) ~by c ~l ~r (x : (v, s, d) t) (none : (v, s, d) t) =
 
 let reduce_ranges c ~lo ~hi x =
   let by = "Nx.reduce_ranges" in
-  let lo = Donate.read ~by 0 lo in
-  let hi = Donate.read ~by 1 hi in
-  let x = Donate.read ~by 2 x in
+  let lo = Donate.read ~by lo in
+  let hi = Donate.read ~by hi in
+  let x = Donate.read ~by x in
   rows_of ~by x;
   if ndim lo <> 1 || not (same_shape lo hi) then
     invalid_argf "%s: bounds %a and %a, not one of each per range" by pp_value
@@ -4360,8 +4355,8 @@ let grouped ~by ~segments ~c ~call ~named ids x =
 
 let map_segments ~segments ids f x =
   let by = "Nx.map_segments" in
-  let ids = Donate.read ~by 0 ids in
-  let x = Donate.read ~by 1 x in
+  let ids = Donate.read ~by ids in
+  let x = Donate.read ~by x in
   if segments < 0 then invalid_argf "%s: %d segments" by segments;
   let s = shape ids and xs = shape x in
   let ns = Array.length s in
@@ -4461,7 +4456,6 @@ let conv_arguments ~by ?stride ?padding ?dilation ?(groups = 1) x w =
   let o = dim 0 w in
   if groups < 1 || o mod groups <> 0 then
     invalid_argf "%s: %d groups for %d output channels" by groups o;
-  alive2 ~by x w;
   (stride, padding, dilation, groups)
 
 (* [w], [[o; k…; c / groups]], as [[groups; o / groups; k…; c / groups]]. *)
@@ -4542,9 +4536,9 @@ type 'd pair = { q : 'd int64_t; k : 'd int64_t; len : 'd int64_t; tq : int }
 
 let causal p =
   let by = "Nx.causal" in
-  let q = Donate.read ~by 0 p.q in
-  let k = Donate.read ~by 1 p.k in
-  let len = Donate.read ~by 2 p.len in
+  let q = Donate.read ~by p.q in
+  let k = Donate.read ~by p.k in
+  let len = Donate.read ~by p.len in
   let last = scalar_binary ~by (Binary Sub) len (Int64.of_int p.tq) in
   let seen = binary ~by (Binary Add) q last in
   comparison ~by (Compare Less_equal) k seen
@@ -5064,11 +5058,11 @@ let complex_by ~by direction ?axes ?s ?(norm = Backward) x =
 
 let fft ?axes ?s ?norm x =
   let by = "Nx.fft" in
-  complex_by ~by Nx_kernel.Forward ?axes ?s ?norm (Donate.read ~by 0 x)
+  complex_by ~by Nx_kernel.Forward ?axes ?s ?norm (Donate.read ~by x)
 
 let ifft ?axes ?s ?norm x =
   let by = "Nx.ifft" in
-  complex_by ~by Nx_kernel.Inverse ?axes ?s ?norm (Donate.read ~by 0 x)
+  complex_by ~by Nx_kernel.Inverse ?axes ?s ?norm (Donate.read ~by x)
 
 let rfft_by ~by dt ?axes ?s ?(norm = Backward) x =
   let axes, sizes = transform_axes ~by x axes s in
@@ -5092,7 +5086,7 @@ let rfft_by ~by dt ?axes ?s ?(norm = Backward) x =
 
 let rfft dt ?axes ?s ?norm x =
   let by = "Nx.rfft" in
-  rfft_by ~by dt ?axes ?s ?norm (Donate.read ~by 0 x)
+  rfft_by ~by dt ?axes ?s ?norm (Donate.read ~by x)
 
 let irfft_by ~by dt ?axes ?s ?(norm = Backward) z =
   let default last d =
@@ -5128,7 +5122,7 @@ let irfft_by ~by dt ?axes ?s ?(norm = Backward) z =
 
 let irfft dt ?axes ?s ?norm z =
   let by = "Nx.irfft" in
-  irfft_by ~by dt ?axes ?s ?norm (Donate.read ~by 0 z)
+  irfft_by ~by dt ?axes ?s ?norm (Donate.read ~by z)
 
 
 (* Cosine and sine transforms, each from one complex transform along the last
@@ -5286,20 +5280,20 @@ let trigonometric (type s d) ~by family ~inverse ?(type_ = Type_2) ?axes
 let dct ?type_ ?axes ?norm x =
   let by = "Nx.dct" in
   trigonometric ~by Cosine ~inverse:false ?type_ ?axes ?norm
-    (Donate.read ~by 0 x)
+    (Donate.read ~by x)
 
 let idct ?type_ ?axes ?norm x =
   let by = "Nx.idct" in
   trigonometric ~by Cosine ~inverse:true ?type_ ?axes ?norm
-    (Donate.read ~by 0 x)
+    (Donate.read ~by x)
 
 let dst ?type_ ?axes ?norm x =
   let by = "Nx.dst" in
-  trigonometric ~by Sine ~inverse:false ?type_ ?axes ?norm (Donate.read ~by 0 x)
+  trigonometric ~by Sine ~inverse:false ?type_ ?axes ?norm (Donate.read ~by x)
 
 let idst ?type_ ?axes ?norm x =
   let by = "Nx.idst" in
-  trigonometric ~by Sine ~inverse:true ?type_ ?axes ?norm (Donate.read ~by 0 x)
+  trigonometric ~by Sine ~inverse:true ?type_ ?axes ?norm (Donate.read ~by x)
 
 (* Short-time transforms *)
 
@@ -5638,10 +5632,6 @@ let check s ok data fail =
   | _ -> ()
   | exception Invalid_argument m ->
       invalid_argf "%s: the structure's walk refuses 0-d arrays: %s" by m);
-  (* The broadcasts read the operands one at a time: they are checked first,
-     [ok] then [data]'s arrays in walk order. *)
-  Prim.alive ~by 0 ok;
-  List.iteri (fun i (P x) -> Prim.alive ~by (i + 1) x) leaves;
   let rec datum = function
     | [] -> Datum (Value.[], fun () -> [])
     | P x :: rest ->
@@ -5709,8 +5699,8 @@ let associative_scan ?axis:(a = 0) s f x =
   else
     structure
       (Pairwise.circuit ~by axes combine
-         (Array.mapi
-            (fun i (Value.Any t) -> Value.Any (Donate.read ~by i t))
+         (Array.map
+            (fun (Value.Any t) -> Value.Any (Donate.read ~by t))
             states))
 
 (* Operations as data *)

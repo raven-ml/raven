@@ -58,10 +58,10 @@ val lent : ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
     Raises [Invalid_argument] as {!Rig.Claim.share} does if a consumer took
     the memory meanwhile. *)
 
-val read : by:string -> int -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
-(** [read ~by i x] is operand [i], [x], as [by], a function of several
+val read : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
+(** [read ~by x] is the operand [x] as [by], a function of several
     operations, reads it: {!lent}[ x]. Raises [Invalid_argument] naming [by]
-    and operand [i + 1] if [x] is dead. *)
+    if [x] is dead. *)
 
 (** {1:engine The engine's steps} *)
 

@@ -390,7 +390,8 @@ let declines =
             let x = refused data in
             invalid ~by (fun () -> ignore (f (Nx.donate x)));
             raises_match
-              (Exn.invalid_arg ~substring:("operand 1 was donated to " ^ by))
+              (Exn.invalid_arg
+                 ~substring:("Nx.copy: float32 [2; 2] was donated to " ^ by))
               (fun () -> Nx.copy x)
           in
           dead "Nx.sort" (fun h -> fst (Nx.sort h));

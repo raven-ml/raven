@@ -72,16 +72,16 @@ let make = Prim.of_arrays
 let typed dt (per : A.any array) =
   Iarray.init (Array.length per) (fun j -> A.expect dt per.(j))
 
-(* Raises unless operand [i], [x], is alive and concrete or a constant: an
+(* Raises unless the operand [x] is alive and concrete or a constant: an
    interpretation receives every operation on its traced values before eager
    execution can. *)
-let checked (type v s d) ~by i (x : (v, s, d) Value.t) =
+let checked (type v s d) ~by (x : (v, s, d) Value.t) =
   match x with
   | Value.Traced { owner; _ } ->
       invalid_argf "%s: a value traced by %s reached eager execution" by
         owner.name
   | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Deferred _ ->
-      Prim.alive ~by i x
+      Prim.alive ~by x
 
 let is_concrete x = not (Prim.is_constant x)
 
@@ -600,12 +600,12 @@ let refused : type r. by:string -> kernels:string -> Rig.t -> r Value.prim -> 'a
 let rec run : type r. by:string -> r Value.prim -> r =
  fun ~by op ->
   if not (Prim.exists Donate.is_handle op) then begin
-    Prim.iteri (fun i x -> checked ~by i x) op;
+    Prim.iteri (fun _ x -> checked ~by x) op;
     plain ~by op
   end
   else
     let (Prim.Operands xs) = Prim.operands op in
-    Prim.iteri (fun i x -> checked ~by i x) op;
+    Prim.iteri (fun _ x -> checked ~by x) op;
     donated ~by op (Donate.handles xs)
 
 (* [op] over donated operands [hs]: a movement that maps elements one to one

@@ -209,7 +209,7 @@ let test_rule_donates () =
       end;
       Nx.Prim.eval ~by op)
     (fun _ -> ignore (Nx.trace (square64 ())));
-  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.neg" (fun () ->
+  invalid ~sub:"Nx.copy: float64 [2] was donated to Nx.neg" (fun () ->
       Nx.copy own)
 
 (* A rule inside [trace] performs an effect whose handler resumes the rest of
@@ -250,7 +250,8 @@ let test_names_after_hop () =
   equal ~msg:"a rule's by" names [ "Nx.neg" ]
     (observed_names (fun () -> Nx.neg (Nx.donate x)));
   ignore (Nx.neg (Nx.donate x));
-  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.neg" (fun () -> Nx.copy x)
+  invalid ~sub:"Nx.copy: float64 [2] was donated to Nx.neg" (fun () ->
+      Nx.copy x)
 
 (* One systhread holds a composite, blocked in its rule, while another of the
    same domain runs a plain operation: the [by] each operation's rule receives

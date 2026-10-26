@@ -9,28 +9,28 @@ module L = Nx_array.Layout
 
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
-let died_to ~by i earlier =
-  invalid_argf "%s: operand %d was donated to %s" by (i + 1) earlier
+let died_to ~by x earlier =
+  invalid_argf "%s: %a was donated to %s" by Prim.pp_value x earlier
 
 (* The key the next donor is offered with. *)
 let offers = Atomic.make 0
 
-(* The key of the donor word [w], which a live donor is given here: a donor
+(* The key of [x]'s donor word [w], which a live donor is given here: a donor
    keeps it for life, and every handle of every donation of it holds it. A
    word that died raises naming its consumer. *)
-let rec offer ~by (w : Value.death Atomic.Loc.t) =
+let rec offer ~by x (w : Value.death Atomic.Loc.t) =
   match Atomic.Loc.get w with
   | Value.Offered k -> k
-  | Value.Died earlier -> died_to ~by 0 earlier
+  | Value.Died earlier -> died_to ~by x earlier
   | Value.Live ->
       (* Fails only where another donation offered it first. *)
       let k = Atomic.fetch_and_add offers 1 in
       if Atomic.Loc.compare_and_set w Value.Live (Value.Offered k) then k
-      else offer ~by w
+      else offer ~by x w
 
 let donate (type v s d) ~by (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   let handle at shape arrays donor =
-    let key = offer ~by donor in
+    let key = offer ~by x donor in
     Value.Donated { key; at; shape; arrays; donor }
   in
   match x with
@@ -41,7 +41,7 @@ let donate (type v s d) ~by (x : (v, s, d) Value.t) : (v, s, d) Value.t =
         [%atomic.loc r.dead]
   | Value.Shards r -> handle r.at r.shape r.arrays [%atomic.loc r.dead]
   | Value.Donated _ | Value.Deferred _ | Value.Traced _ ->
-      Prim.alive ~by 0 x;
+      Prim.alive ~by x;
       x
 
 (* A handle's arrays as a live value, which the operation reads. *)
@@ -115,23 +115,23 @@ let unhandled hs op = Prim.map (fun y -> called hs y) op
    them raises, possibly both, and a donor a loser claimed before it raised
    stays dead. *)
 
-(* Sets the donor word [w] of operand [i] to [died] unless it died first, on
-   any domain, which raises naming that consumer. A word that changed since it
-   was read is read again. *)
-let rec claim_word ~by i (w : Value.death Atomic.Loc.t) died =
+(* Sets the donor word [w] of the handle [x] to [died] unless it died first,
+   on any domain, which raises naming that consumer. A word that changed since
+   it was read is read again. *)
+let rec claim_word ~by x (w : Value.death Atomic.Loc.t) died =
   match Atomic.Loc.get w with
-  | Value.Died earlier -> died_to ~by i earlier
+  | Value.Died earlier -> died_to ~by x earlier
   | Value.Live -> invalid_arg "Donate.claim: a handle's donor was not offered"
   | Value.Offered _ as seen ->
       if not (Atomic.Loc.compare_and_set w seen died) then
-        claim_word ~by i w died
+        claim_word ~by x w died
 
 let claim ~by hs =
   let died = Value.Died by in
   List.iter
-    (fun (Handle (i, x)) ->
+    (fun (Handle (_, x)) ->
       match x with
-      | Value.Donated d -> claim_word ~by i d.donor died
+      | Value.Donated d -> claim_word ~by x d.donor died
       | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ ->
           ())
     hs
@@ -147,8 +147,8 @@ let lent (type v s d) (x : (v, s, d) Value.t) : (v, s, d) Value.t =
       y
   | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> x
 
-let read ~by i x =
-  Prim.alive ~by i x;
+let read ~by x =
+  Prim.alive ~by x;
   lent x
 
 (* [b]'s memory consumed for [by], where rig holds it exclusive: no other value

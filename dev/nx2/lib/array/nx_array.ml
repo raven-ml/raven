@@ -57,26 +57,17 @@ let pp_operand ppf (Any a) =
   Format.fprintf ppf "%a %a" Dtype.pp a.dtype Shape.pp (Layout.shape a.layout)
 
 (* The reason a [Dead_buffer] or [Held_exclusive] gives: each operand dead by
-   now, numbered from 1 in [operands]' order, with the reason its consumer
-   gave. A holder of exclusive memory consumes it, or releases it unread. *)
+   now, in [operands]' order, with the reason its consumer gave. A holder of
+   exclusive memory consumes it, or releases it unread. *)
 let dead answer operands =
-  let ds =
-    List.filter_map Fun.id
-      (List.mapi
-         (fun i (Any a) ->
-           Option.map (fun why -> (i + 1, why)) (Buffer.dead a.buffer))
-         operands)
+  let was (Any a as x) =
+    Option.map
+      (fun why -> Format.asprintf "%a was %s" pp_operand x why)
+      (Buffer.dead a.buffer)
   in
-  match List.rev ds with
+  match List.filter_map was operands with
   | [] -> reason answer
-  | [ (i, why) ] -> Printf.sprintf "operand %d was consumed, %s" i why
-  | (last, _) :: before ->
-      Printf.sprintf "operands %s and %d were consumed: %s"
-        (String.concat ", "
-           (List.rev_map (fun (i, _) -> string_of_int i) before))
-        last
-        (String.concat ", "
-           (List.map (fun (i, why) -> Printf.sprintf "%d %s" i why) ds))
+  | ds -> String.concat ", " ds
 
 let refused name answer operands =
   let why =

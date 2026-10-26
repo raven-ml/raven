@@ -393,20 +393,19 @@ let test_refused () =
       A.refused "add" A.Declined [ A.Any a ])
 
 (* A dead operand's reason is its consumer's, given before the operands, each
-   dead operand numbered from 1 in the list's order. *)
+   dead operand named by its dtype and shape in the list's order. *)
 let test_refused_dead () =
   let a = floats32 [| 3 |] [| 1.; 2.; 3. |] in
   let b = floats32 [| 3 |] [| 4.; 5.; 6. |] in
   kill ~why:"donated (Nx.donate)" (A.buffer b);
   raises
     (Invalid_argument
-       "Nx.add: operand 2 was consumed, donated (Nx.donate) (float32 [3], \
-        float32 [3])")
+       "Nx.add: float32 [3] was donated (Nx.donate) (float32 [3], float32 [3])")
     (fun () -> A.refused "Nx.add" A.Dead_buffer [ A.Any a; A.Any b ]);
   kill ~why:"donated to Nx.set" (A.buffer a);
   raises
     (Invalid_argument
-       "Nx.add: operands 1 and 2 were consumed: 1 donated to Nx.set, 2 donated \
+       "Nx.add: float32 [3] was donated to Nx.set, float32 [3] was donated \
         (Nx.donate) (float32 [3], float32 [3])")
     (fun () -> A.refused "Nx.add" A.Dead_buffer [ A.Any a; A.Any b ])
 

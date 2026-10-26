@@ -1744,8 +1744,14 @@ let observed_names f =
   Nx.Prim.interpret ~name:"test.names" Extent observe (fun _ -> ignore (f ()));
   List.sort String.compare !names
 
+(* The last value {!kill} killed, as messages name it: [float64 [2]]. *)
+let killed = ref ""
+
 (* [x] dead: donated to [Nx.copy], which consumed it. *)
 let kill x =
+  let s = List.map string_of_int (Array.to_list (Nx.shape x)) in
+  killed :=
+    Printf.sprintf "%s [%s]" (A.Dtype.name (Nx.dtype x)) (String.concat "; " s);
   ignore (Nx.copy (Nx.donate x));
   x
 
@@ -1845,13 +1851,32 @@ let names =
               let draw = make ~dead:false in
               equal ~msg:(by ^ ", " ^ keying) (list string) [ by ]
                 (observed_names (fun () -> under draw))));
-      test "a dead first operand names the sampler and the operand" (fun () ->
+      test "a dead first operand names the sampler" (fun () ->
           each_sampler (fun by keying operands make under ->
               if operands > 0 then
                 let draw = make ~dead:true in
-                let want = by ^ ": operand 1 was donated to Nx.copy" in
+                let want = by ^ ": " ^ !killed ^ " was donated to Nx.copy" in
                 raises ~msg:(by ^ ", " ^ keying) (Invalid_argument want)
                   (fun () -> under draw)));
+      test "a draw refused for a dead operand takes no key from its scope"
+        (fun () ->
+          let k = Rng.key 301 in
+          let next () = words (Rng.next_key ()) in
+          List.iter
+            (fun (name, (operands, make)) ->
+              if operands > 0 then begin
+                let draw = make ~dead:true in
+                let after () =
+                  raises_match ~msg:name
+                    (Exn.invalid_arg ~substring:"donated to Nx.copy")
+                    (fun () -> draw None);
+                  next ()
+                in
+                equal ~msg:name (array int32)
+                  (Rng.with_key k next)
+                  (Rng.with_key k after)
+              end)
+            calls);
     ]
 
 (* Goldens *)

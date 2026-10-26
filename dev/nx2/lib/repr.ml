@@ -79,7 +79,7 @@ let of_shards ~by p arrays =
    read; a formula answers [None]. *)
 let crossing (type v s d) ~by (x : (v, s, d) Value.t) :
     (v, s) A.t iarray option =
-  Prim.alive ~by 0 x;
+  Prim.alive ~by x;
   match x with
   | Value.Deferred _ -> None
   | Value.Traced { owner; _ } ->

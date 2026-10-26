@@ -602,7 +602,8 @@ let test_map_callback () =
     r
   in
   ignore (Nx.map_segments ~segments:2 ids f x);
-  raises_match (Exn.invalid_arg ~substring:"Nx.copy: operand 1 was donated to Nx.neg")
+  raises_match
+    (Exn.invalid_arg ~substring:"Nx.copy: float32 [2] was donated to Nx.neg")
     (fun () -> Nx.copy t)
 
 let maps =

@@ -43,12 +43,6 @@ let death : type v s d. (v, s, d) t -> death = function
   | Donated r -> Atomic.Loc.get r.donor
   | Deferred _ | Traced _ -> Live
 
-let alive ~by i x =
-  match death x with
-  | Live | Offered _ -> ()
-  | Died why ->
-      invalid_argf "%s: operand %d was donated to %s" by (i + 1) why
-
 let arrays : type v s d. (v, s, d) t -> (v, s) Nx_array.t iarray = function
   | Array { a; _ } -> [| a |]
   | Shards { arrays; _ } | Donated { arrays; _ } -> arrays
@@ -100,6 +94,13 @@ let pp_shape ppf s =
     (String.concat "; " (Array.to_list (Array.map string_of_int s)))
 
 let pp_ints ppf s = pp_shape ppf (Iarray.to_array s)
+let pp_value ppf x =
+  Format.fprintf ppf "%s %a" (D.name (dtype x)) pp_shape (shape x)
+
+let alive ~by x =
+  match death x with
+  | Live | Offered _ -> ()
+  | Died why -> invalid_argf "%s: %a was donated to %s" by pp_value x why
 
 (* Each refusal of [Layout.fits] in its own words: they are rare, so the cheap
    predicate runs first. *)

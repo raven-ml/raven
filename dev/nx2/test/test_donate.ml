@@ -13,6 +13,16 @@ module D = Nx_array.Dtype
 
 let f32 = Nx.float32
 let invalid ~sub f = raises_match (Exn.invalid_arg ~substring:sub) f
+
+(* [x] as messages name it: [float32 [2; 3]]. *)
+let text x =
+  Printf.sprintf "%s [%s]"
+    (D.name (Nx.dtype x))
+    (String.concat "; " (List.map string_of_int (Array.to_list (Nx.shape x))))
+
+(* What [by] raises for a dead [x] that [consumer] consumed. *)
+let dead_in by x consumer =
+  Printf.sprintf "%s: %s was donated to %s" by (text x) consumer
 let elements x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
 
 (* A value in memory of its own: computed, so no Repr crossing shares it. *)
@@ -34,8 +44,10 @@ let test_dies_at_its_consumer () =
     (elements (Nx.add x x));
   let y = Nx.mul d (fresh [| 3.; 4. |]) in
   equal ~msg:"the result" (array float_exact) [| 3.; 8. |] (elements y);
-  invalid ~sub:"Nx.add: operand 1 was donated to Nx.mul" (fun () -> Nx.add x x);
-  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.mul" (fun () -> Nx.copy d);
+  invalid ~sub:"Nx.add: float32 [2] was donated to Nx.mul" (fun () ->
+      Nx.add x x);
+  invalid ~sub:"Nx.copy: float32 [2] was donated to Nx.mul" (fun () ->
+      Nx.copy d);
   equal ~msg:"its shape answers" (array int) [| 2 |] (Nx.shape x)
 
 (* Two handles of one donor reaching one operation, the same handle twice, two
@@ -44,8 +56,7 @@ let test_dies_at_its_consumer () =
    donor dies once, naming the operation. *)
 let test_one_donor_twice () =
   let dies by x =
-    invalid ~sub:("Nx.copy: operand 1 was donated to " ^ by) (fun () ->
-        Nx.copy x)
+    invalid ~sub:(dead_in "Nx.copy" x by) (fun () -> Nx.copy x)
   in
   let x = fresh [| 1.; 2. |] in
   let d = Nx.donate x in
@@ -79,8 +90,10 @@ let test_passed_on () =
   let y = Nx.copy d in
   equal ~msg:"the consumer's result" (array float_exact) [| 1.; 2.; 3.; 4. |]
     (elements y);
-  invalid ~sub:"Nx.add: operand 1 was donated to Nx.copy" (fun () -> Nx.add x x);
-  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.copy" (fun () -> Nx.copy d);
+  invalid ~sub:"Nx.add: float32 [4] was donated to Nx.copy" (fun () ->
+      Nx.add x x);
+  invalid ~sub:"Nx.copy: float32 [2; 2] was donated to Nx.copy" (fun () ->
+      Nx.copy d);
   (* The handle a movement read and the one it passed on are handles of one
      donor: whichever is consumed first, the other raises naming that
      consumer. *)
@@ -88,11 +101,13 @@ let test_passed_on () =
   let v = Nx.reshape [| 1; 2 |] h in
   equal ~msg:"the handle read" (array float_exact) [| 1.; 2. |]
     (elements (Nx.copy h));
-  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.copy" (fun () -> Nx.copy v);
+  invalid ~sub:"Nx.copy: float32 [1; 2] was donated to Nx.copy" (fun () ->
+      Nx.copy v);
   let h = Nx.donate (fresh [| 1.; 2. |]) in
   let v = Nx.reshape [| 1; 2 |] h in
   ignore (Nx.neg v);
-  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.neg" (fun () -> Nx.copy h);
+  invalid ~sub:"Nx.copy: float32 [2] was donated to Nx.neg" (fun () ->
+      Nx.copy h);
   (* A slice of every element is the operand itself. *)
   let x = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
   equal ~msg:"a slice of every element" (array float_exact)
@@ -127,7 +142,7 @@ let test_refused_kills_none () =
   let d1 = Nx.donate x1 in
   ignore (Nx.mul (Nx.donate x1) (fresh [| 3.; 4. |]));
   let x2 = fresh [| 5.; 6. |] in
-  invalid ~sub:"Nx.add: operand 2 was donated to Nx.mul" (fun () ->
+  invalid ~sub:"Nx.add: float32 [2] was donated to Nx.mul" (fun () ->
       Nx.add (Nx.donate x2) d1);
   equal ~msg:"the other donor lives" (array float_exact) [| 10.; 12. |]
     (elements (Nx.add x2 x2));
@@ -136,14 +151,13 @@ let test_refused_kills_none () =
   let dead = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
   ignore (Nx.copy (Nx.donate dead));
   let b = Nx.donate (fresh [| 7.; 8. |]) in
-  invalid ~sub:"Nx.add: operand 1 was donated to Nx.copy" (fun () ->
+  invalid ~sub:"Nx.add: float32 [2; 2] was donated to Nx.copy" (fun () ->
       Nx.add dead b);
   equal ~msg:"the broadcast operand's handle lives" (array float_exact)
     [| 7.; 8. |] (elements (Nx.copy b))
 
 (* An operation that broadcasts a handle, refused by its dtype or by a dead
-   operand, kills nothing and names the operand that died by its place in the
-   call. *)
+   operand, kills nothing and names the dead operand. *)
 let test_broadcast_refused () =
   let ints s xs =
     let a = Nx.Repr.of_array Nx.Host.v (A.of_array D.Int32 s xs) in
@@ -159,8 +173,8 @@ let test_broadcast_refused () =
   let dead = fresh_at [| 2; 2 |] [| 1.; 0.; 1.; 0. |] in
   ignore (Nx.copy (Nx.donate dead));
   let h = Nx.donate (fresh [| 1.; 2. |]) in
-  invalid ~sub:"Nx.logical_and: operand 2 was donated to Nx.copy" (fun () ->
-      Nx.logical_and h dead);
+  invalid ~sub:"Nx.logical_and: float32 [2; 2] was donated to Nx.copy"
+    (fun () -> Nx.logical_and h dead);
   equal ~msg:"the floats' handle reaches a later consumer" (array float_exact)
     [| 1.; 2. |]
     (elements (Nx.copy h))
@@ -186,7 +200,7 @@ let test_several_reads () =
   equal ~msg:"the donor" (array float_exact) [| 1.; 2. |] (elements x);
   equal ~msg:"its handle's consumer" (array float_exact) [| 2.; 4. |]
     (elements (Nx.add h x));
-  invalid ~sub:"Nx.copy: operand 1 was donated to Nx.add" (fun () ->
+  invalid ~sub:"Nx.copy: float32 [2] was donated to Nx.add" (fun () ->
       Nx.copy x);
   let id = fresh_at [| 2; 2 |] [| 1.; 0.; 0.; 1. |] in
   let a = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
@@ -351,7 +365,7 @@ let test_aligned_refusal () =
   let d2 = Nx.donate x2 in
   ignore (Nx.mul (Nx.donate x2) (fresh [| 3.; 4. |]));
   let x1 = fresh [| 5. |] in
-  invalid ~sub:"Nx.add: operand 2 was donated to Nx.mul" (fun () ->
+  invalid ~sub:"Nx.add: float32 [2] was donated to Nx.mul" (fun () ->
       Nx.add (Nx.donate x1) d2);
   equal ~msg:"the other donor lives" (array float_exact) [| 10. |]
     (elements (Nx.add x1 x1))
@@ -379,8 +393,7 @@ let test_shards_of_one_allocation () =
     in
     let y = Nx.logical_not (Nx.donate x) in
     equal ~msg (array bool) (Array.map not xs) (elements y);
-    invalid ~sub:"Nx.copy: operand 1 was donated to Nx.logical_not" (fun () ->
-        Nx.copy x)
+    invalid ~sub:(dead_in "Nx.copy" x "Nx.logical_not") (fun () -> Nx.copy x)
   in
   donated [| 1; 1 |] 0;
   donated [| 1; 1 |] 1;
@@ -877,8 +890,7 @@ let law_one_donor_twice =
           let x = fresh_at s xs in
           let h = Nx.donate x in
           equal ~msg:by (array int32) (bits32 kept) (bits32 (f h h));
-          invalid ~sub:("Nx.copy: operand 1 was donated to " ^ by) (fun () ->
-              Nx.copy x))
+          invalid ~sub:(dead_in "Nx.copy" x by) (fun () -> Nx.copy x))
         ops)
 
 let terms = Gen.int_range 1 2100
@@ -1100,7 +1112,7 @@ let test_dies_at_the_call () =
     let x = square () in
     let d = Nx.donate x in
     ignore (f d);
-    let sub = "Nx.copy: operand 1 was donated to " ^ name in
+    let sub = dead_in "Nx.copy" x name in
     raises_match ~msg:(name ^ "'s donor") (Exn.invalid_arg ~substring:sub)
       (fun () -> Nx.copy x);
     raises_match ~msg:(name ^ "'s handle") (Exn.invalid_arg ~substring:sub)
@@ -1203,6 +1215,8 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
           show (Nx.broadcast_to [| 2; 2; 3 |] (d 0 (x [| 2; 3 |]))));
       c "broadcast_arrays" 2 (fun d ->
           showl (Nx.broadcast_arrays [ d 0 (x [| 2; 1 |]); d 1 (x [| 3 |]) ]));
+      c "broadcast_arrays" 2 (fun d ->
+          showl (Nx.broadcast_arrays [ d 0 (x [| 2; 3 |]); d 1 (x [| 3 |]) ]));
       c "squeeze" 1 (fun d -> show (Nx.squeeze (d 0 (x [| 2; 1; 3 |]))));
       c "unsqueeze" 1 (fun d ->
           show (Nx.unsqueeze ~axes:[ 0 ] (d 0 (x [| 3 |]))));
@@ -1225,9 +1239,13 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
       c "roll" 1 (fun d -> show (Nx.roll 1 (d 0 (x [| 5 |]))));
       c "roll" 1 (fun d -> show (Nx.roll ~axis:1 2 (d 0 (x [| 2; 3 |]))));
       c "tile" 1 (fun d -> show (Nx.tile [| 2; 1 |] (d 0 (x [| 2; 3 |]))));
+      c "tile" 1 (fun d -> show (Nx.tile [| 1; 1 |] (d 0 (x [| 2; 3 |]))));
       c "repeat" 1 (fun d -> show (Nx.repeat ~axis:0 2 (d 0 (x [| 2; 3 |]))));
+      c "repeat" 1 (fun d -> show (Nx.repeat ~axis:0 1 (d 0 (x [| 2; 3 |]))));
       c "rearrange" 1 (fun d ->
           show (Nx.rearrange (Nx.Pattern.v "a b -> b a") (d 0 (x [| 2; 3 |]))));
+      c "rearrange" 1 (fun d ->
+          show (Nx.rearrange (Nx.Pattern.v "a b -> a b") (d 0 (x [| 2; 3 |]))));
       c "rearrange" 1 (fun d ->
           show
             (Nx.rearrange ~sizes:[ ("b", 3) ]
@@ -1238,6 +1256,8 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
             (Nx.slice [ Nx.R (0, 1); Nx.Rs (2, -4, -1) ] (d 0 (x [| 2; 3 |]))));
       c "slice" 1 (fun d ->
           show (Nx.slice [ Nx.L [ 1; 0 ] ] (d 0 (x [| 2; 3 |]))));
+      c "slice" 1 (fun d ->
+          show (Nx.slice [ Nx.A; Nx.A ] (d 0 (x [| 2; 3 |]))));
       c "slice" 2 (fun d ->
           show
             (Nx.slice
@@ -1307,7 +1327,9 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
       c "cumsum" 1 (fun d -> show (Nx.cumsum ~axis:1 (d 0 (x [| 2; 3 |]))));
       c "cumprod" 1 (fun d -> show (Nx.cumprod ~axis:0 (d 0 (x [| 2; 3 |]))));
       c "cast" 1 (fun d -> show (Nx.cast Nx.complex128 (d 0 (x [| 3 |]))));
+      c "cast" 1 (fun d -> show (Nx.cast dt (d 0 (x [| 3 |]))));
       c "bitcast" 1 (fun d -> show (Nx.bitcast Nx.uint8 (d 0 (x [| 2 |]))));
+      c "bitcast" 1 (fun d -> show (Nx.bitcast dt (d 0 (x [| 2 |]))));
       c "contract" 2 (fun d ->
           show (Nx.contract dt ij_jk (d 0 (x [| 2; 3 |])) (d 1 (x [| 3; 2 |]))));
       c "contract" 3 (fun d ->
@@ -1336,6 +1358,9 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
       c "vdot" 2 (fun d -> show (Nx.vdot (d 0 (x [| 3 |])) (d 1 (x [| 3 |]))));
       c "matrix_transpose" 1 (fun d ->
           show (Nx.matrix_transpose (d 0 (x [| 2; 3 |]))));
+      c "matrix_transpose" 1 (fun d ->
+          show (Nx.matrix_transpose (d 0 (x [| 3 |]))));
+      c "conjugate" 1 (fun d -> show (Nx.conjugate (d 0 (x [| 3 |]))));
       c "tril" 1 (fun d -> show (Nx.tril (d 0 (x [| 3; 3 |]))));
       c "triu" 1 (fun d -> show (Nx.triu ~k:1 (d 0 (x [| 3; 3 |]))));
       c "diagonal" 1 (fun d -> show (Nx.diagonal (d 0 (x [| 3; 3 |]))));
@@ -1473,6 +1498,7 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
       c "isnan" 1 (fun d -> show (Nx.isnan (d 0 (Nx.log (x [| 4 |])))));
       c "isinf" 1 (fun d -> show (Nx.isinf (d 0 (Nx.log (x [| 4 |])))));
       c "isfinite" 1 (fun d -> show (Nx.isfinite (d 0 (Nx.log (x [| 4 |])))));
+      c "clamp" 1 (fun d -> show (Nx.clamp (d 0 (x [| 4 |]))));
       c "clamp" 1 (fun d -> show (Nx.clamp ~min:0. (d 0 (x [| 4 |]))));
       c "clamp" 1 (fun d ->
           show (Nx.clamp ~min:(-1.) ~max:1. (d 0 (x [| 4 |]))));
@@ -1508,6 +1534,8 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
           show (Nx.log_softmax ~axes:[ 0 ] (d 0 (x [| 2; 3 |]))));
       c "conv" 2 (fun d ->
           show (Nx.conv (d 0 (x [| 1; 4; 1 |])) (d 1 (x [| 1; 2; 1 |]))));
+      c "conv" 2 (fun d ->
+          show (Nx.conv (d 0 (x [| 1; 4; 1 |])) (d 1 (x [| 1; 0; 1 |]))));
       c "conv_transpose" 2 (fun d ->
           show
             (Nx.conv_transpose (d 0 (x [| 1; 4; 1 |])) (d 1 (x [| 1; 2; 1 |]))));
@@ -2062,14 +2090,22 @@ let test_dead_names =
     ~name:(fun (name, _, i) -> Printf.sprintf "%s, operand %d" name (i + 1))
     "a dead operand names the function called" each
     (fun (name, c, i) ->
-      let run () = c.run (fun j x -> if j = i then kill x else x) in
+      let killed = ref "" in
+      let dead x =
+        killed := text x;
+        kill x
+      in
+      let run () = c.run (fun j x -> if j = i then dead x else x) in
       match c.dead with
       | Prints death -> equal ~msg:name string death (run ())
       | Raises ->
-          let want =
-            Printf.sprintf "%s: operand %d was donated to Nx.copy" c.by (i + 1)
+          let raised =
+            match run () with
+            | _ -> "no exception"
+            | exception Invalid_argument m -> m
           in
-          raises ~msg:name (Invalid_argument want) run)
+          let want = c.by ^ ": " ^ !killed ^ " was donated to Nx.copy" in
+          equal ~msg:name string want raised)
 
 (* A case: one of the table's, and the operands it donates, as a mask. *)
 let donations =
