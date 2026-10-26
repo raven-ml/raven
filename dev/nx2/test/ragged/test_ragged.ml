@@ -591,27 +591,37 @@ let row_quantiles =
 (* Ids and ranks of rows *)
 
 (* Rows that share long prefixes: prefixes of three rows of up to 140 elements,
-   each with a tail of up to two elements, over few distinct elements. *)
+   each with a tail of up to two elements, over few distinct elements, then
+   copies of some of them. *)
 let shared_rows value =
   let open Gen in
   let* bases = list ~size:(constant 3) (array ~size:(int_range 0 140) value) in
   let bases = Array.of_list bases in
-  array ~size:(int_range 0 12)
-    (let* b = int_range 0 2 in
-     let base = bases.(b) in
-     let* cut =
-       frequency
-         [
-           (3, int_range 0 (Array.length base));
-           ( 1,
-             map
-               (fun k -> Stdlib.min k (Array.length base))
-               (of_list ~pp:Format.pp_print_int
-                  [ 7; 8; 9; 15; 16; 17; 63; 64; 65; 129 ]) );
-         ]
-     in
-     let+ tail = array ~size:(int_range 0 2) value in
-     Array.append (Array.sub base 0 cut) tail)
+  let* rows =
+    array ~size:(int_range 0 12)
+      (let* b = int_range 0 2 in
+       let base = bases.(b) in
+       let* cut =
+         frequency
+           [
+             (3, int_range 0 (Array.length base));
+             ( 1,
+               map
+                 (fun k -> Stdlib.min k (Array.length base))
+                 (of_list ~pp:Format.pp_print_int
+                    [ 7; 8; 9; 15; 16; 17; 63; 64; 65; 129 ]) );
+           ]
+       in
+       let+ tail = array ~size:(int_range 0 2) value in
+       Array.append (Array.sub base 0 cut) tail)
+  in
+  (* Copies of drawn rows: independent draws are rarely equal. *)
+  let n = Array.length rows in
+  if n = 0 then constant rows
+  else
+    let+ copies = list ~size:(int_range 0 2) (int_range 0 (n - 1)) in
+    Array.append rows
+      (Array.of_list (List.map (fun i -> Array.copy rows.(i)) copies))
 
 (* The model: rows compared element by element in the sort order, a prefix
    first. *)
