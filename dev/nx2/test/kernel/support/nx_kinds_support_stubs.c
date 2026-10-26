@@ -9,6 +9,7 @@
    OCaml floats, integers as int64 values. nx_kinds_support_sweep releases
    the runtime; the other stubs take milliseconds and keep it. */
 
+#include <float.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -218,7 +219,9 @@ value nx_kinds_support_c128(value name, value args) {
    below binary32's: where r lies within 2^-44 of it from a midpoint
    between two floats, either float could be the correctly rounded one, and
    the smaller error counts. A NaN against a number and a zero of the wrong
-   sign count as 2^31.
+   sign count as 2^31, and so does any other result where the reference
+   rounds to an infinity or a zero: there a rank bounds nothing, an infinity
+   being one rank past the largest float.
 
    Beside that rank, the error of y against r itself in units of the
    binary32 ulp at r, a fraction: how far a result strays within its rank,
@@ -258,15 +261,27 @@ static int64_t error32(float y, double r, int *ambiguous) {
   if (y != y || r != r) return (y != y && r != r) ? 0 : WRONG;
   if (y == 0 && c == 0) return WRONG;
   int64_t e = llabs(rank32(y) - rank32(c));
+  float n = c;
   if (isfinite(c) && r != (double)c) {
-    float n = nextafterf(c, (double)c < r ? INFINITY : -INFINITY);
+    n = nextafterf(c, (double)c < r ? INFINITY : -INFINITY);
     double mid = ((double)c + (double)n) / 2;
     if (fabs(r - mid) <= fabs(r) * 0x1p-44 + 0x1p-1060) {
       *ambiguous = 1;
       int64_t e2 = llabs(rank32(y) - rank32(n));
       e = e2 < e ? e2 : e;
+    } else {
+      n = c;
     }
   }
+  /* r within its error of the overflow threshold, the largest float plus
+     half an ulp, may stand for an exact value that rounds to that float */
+  if (isinf(c) && fabs(fabs(r) - 0x1.ffffffp127) <= fabs(r) * 0x1p-44) {
+    *ambiguous = 1;
+    n = copysignf(FLT_MAX, c);
+  }
+  if ((isinf(c) || c == 0) && nx_float_bits(y) != nx_float_bits(c) &&
+      nx_float_bits(y) != nx_float_bits(n))
+    return WRONG;
   return e;
 }
 
@@ -601,9 +616,12 @@ value nx_kinds_support_digest(value tgt, value name, value ty) {
    narrow float dtype [dt], computed in f32 and rounded once to [dt],
    against the C library's f64 function rounded once to [dt]: the largest
    error in the dtype's ordered ranks, and a code where it occurs. NaN is at
-   no distance from NaN. [narrow_binary kind dt] is the same for pow and
-   atan2, at every pair of codes of a dtype of at most 8 bits, and at every
-   code of a wider one against 16 others drawn from it. */
+   no distance from NaN. [narrow_binary kind dt seed] is the same for pow
+   and atan2, at every pair of codes of a dtype of at most 8 bits, and at
+   every code of a wider one against 16 others drawn from [seed]: for pow,
+   three in four such that |y log2 x| lies within the dtype's exponents and
+   a little past them, a power's interesting range, the result finite, not
+   zero and not 1 for most of them, which it counts. */
 
 static uint32_t narrow_of_double(int dt, double r) {
   switch (dt) {
@@ -653,7 +671,11 @@ value nx_kinds_support_narrow(value name, value code) {
   int dt = (int)Long_val(code);
   uint32_t n = narrow_codes(dt);
   float *x = malloc(n * sizeof *x), *y = malloc(n * sizeof *y);
-  if (!x || !y) caml_raise_out_of_memory();
+  if (!x || !y) {
+    free(x);
+    free(y);
+    caml_raise_out_of_memory();
+  }
   for (uint32_t c = 0; c < n; c++) x[c] = nx_bits_to_float(dt, c);
   k->f32(x, NULL, NULL, y, (long)n);
   long worst = 0, arg = 0;
@@ -674,8 +696,33 @@ value nx_kinds_support_narrow(value name, value code) {
 
 #define NARROW_DRAWS 16
 
-value nx_kinds_support_narrow_binary(value name, value code) {
-  CAMLparam2(name, code);
+/* log2 of the least positive and of the largest finite value of dt. */
+static void narrow_range(int dt, uint32_t n, double *lo, double *hi) {
+  float most = 0;
+  for (uint32_t c = 1; c < n / 2; c++) {
+    float v = nx_bits_to_float(dt, c);
+    if (isfinite(v) && v > most) most = v;
+  }
+  *lo = log2((double)nx_bits_to_float(dt, 1));
+  *hi = log2((double)most);
+}
+
+/* A partner of x for pow in dt: y with y log2 |x| drawn in [lo - 2, hi + 2],
+   an integer for a negative x, as dt rounds it; a code drawn whole where
+   log2 |x| is no finite number but 0. */
+static uint32_t pow_partner(int dt, uint32_t n, float x, double lo, double hi,
+                            uint64_t *s) {
+  *s = nx_strata_mix(*s);
+  double l = log2(fabs((double)x));
+  if (!isfinite(l) || l == 0) return (uint32_t)(*s & (n - 1));
+  double t = lo - 2 + (hi - lo + 4) * (double)(*s >> 11) * 0x1p-53;
+  double y = t / l;
+  if (x < 0) y = rint(y);
+  return narrow_of_double(dt, y);
+}
+
+value nx_kinds_support_narrow_binary(value name, value code, value seed) {
+  CAMLparam3(name, code, seed);
   CAMLlocal1(res);
   const nx_real_loop *k = real_loop(nx_kinds_loops_best(), name);
   int is_pow = !strcmp(String_val(name), "pow");
@@ -684,36 +731,58 @@ value nx_kinds_support_narrow_binary(value name, value code) {
   uint32_t n = narrow_codes(dt);
   int every = n <= 256;
   long m = every ? (long)n * n : (long)n * NARROW_DRAWS;
+  double lo = 0, hi = 0;
+  if (!every) narrow_range(dt, n, &lo, &hi);
+  uint64_t s = (uint64_t)Long_val(seed);
   uint32_t *cx = malloc((size_t)m * 4), *cz = malloc((size_t)m * 4);
   float *x = malloc((size_t)m * 4), *z = malloc((size_t)m * 4),
         *y = malloc((size_t)m * 4);
-  if (!cx || !cz || !x || !z || !y) caml_raise_out_of_memory();
+  if (!cx || !cz || !x || !z || !y) {
+    free(cx);
+    free(cz);
+    free(x);
+    free(z);
+    free(y);
+    caml_raise_out_of_memory();
+  }
   for (long i = 0; i < m; i++) {
     cx[i] = every ? (uint32_t)(i / n) : (uint32_t)(i / NARROW_DRAWS);
-    cz[i] = every ? (uint32_t)(i % n)
-                  : (uint32_t)(nx_strata_mix((uint64_t)i) & (n - 1));
     x[i] = nx_bits_to_float(dt, cx[i]);
+    if (every) {
+      cz[i] = (uint32_t)(i % n);
+    } else if (is_pow && i % 4 != 0) {
+      cz[i] = pow_partner(dt, n, x[i], lo, hi, &s);
+    } else {
+      s = nx_strata_mix(s);
+      cz[i] = (uint32_t)(s & (n - 1));
+    }
     z[i] = nx_bits_to_float(dt, cz[i]);
   }
   k->f32(x, z, NULL, y, m);
-  long worst = 0, arg = 0;
+  long worst = 0, arg = 0, plain = 0;
   for (long i = 0; i < m; i++) {
     double a = x[i], b = z[i];
-    long e = narrow_error(dt, y[i], is_pow ? pow(a, b) : atan2(a, b));
+    double r = is_pow ? pow(a, b) : atan2(a, b);
+    long e = narrow_error(dt, y[i], r);
     if (e > worst) {
       worst = e;
       arg = i;
     }
+    float v = nx_bits_to_float(dt, narrow_of_double(dt, r));
+    if (isfinite(a) && isfinite(b) && isfinite(v) && v != 0 && v != 1) plain++;
   }
-  res = caml_alloc_tuple(3);
-  Store_field(res, 0, Val_long(worst));
-  Store_field(res, 1, Val_long(cx[arg]));
-  Store_field(res, 2, Val_long(cz[arg]));
+  uint32_t wx = cx[arg], wz = cz[arg];
   free(cx);
   free(cz);
   free(x);
   free(z);
   free(y);
+  res = caml_alloc_tuple(5);
+  Store_field(res, 0, Val_long(worst));
+  Store_field(res, 1, Val_long(wx));
+  Store_field(res, 2, Val_long(wz));
+  Store_field(res, 3, Val_long(plain));
+  Store_field(res, 4, Val_long(m));
   CAMLreturn(res);
 }
 

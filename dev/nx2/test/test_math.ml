@@ -133,17 +133,71 @@ let specials () =
   check Nx.float64;
   check Nx.float32
 
+(* A format without infinities or NaN stores an infinite or NaN result as a
+   cast does: float8_e4m3fn saturates, and float4_e2m1fn holds NaN as +0. *)
+let no_infinities () =
+  let e4m3 = Nx.float8_e4m3fn and e2m1 = Nx.float4_e2m1fn in
+  equal (array float_exact) [| -448. |] (values Nx.log e4m3 [| 0. |]);
+  equal (array float_exact) [| 448. |] (values Nx.atanh e4m3 [| 1. |]);
+  equal (array float_exact) [| 448. |] (values Nx.exp e4m3 [| 100. |]);
+  equal (array float_exact) [| -6.; 0. |] (values Nx.log e2m1 [| 0.; -1. |])
+
+(* At float64 and float32, which compute it differently. *)
 let hypot_specials () =
-  let v a b = Nx.item [] (Nx.hypot (Nx.scalar Nx.float32 a) (Nx.scalar Nx.float32 b)) in
-  equal float_exact infinity (v nan infinity);
-  equal float_exact infinity (v neg_infinity nan);
-  equal float_exact 0. (v 0. (-0.));
-  equal float_exact 0. (v (-0.) (-0.));
-  equal float_exact 3. (v (-3.) (-0.));
-  equal float_exact infinity (v 2. neg_infinity);
-  equal bool true (Float.is_nan (v nan 1.));
-  equal float_exact 5. (v 3. 4.);
-  equal float_exact 0x5p100 (v 0x3p100 0x4p100)
+  let check (type s) (dt : (float, s) D.t) =
+    let v a b = Nx.item [] (Nx.hypot (Nx.scalar dt a) (Nx.scalar dt b)) in
+    equal float_exact infinity (v nan infinity);
+    equal float_exact infinity (v neg_infinity nan);
+    equal float_exact 0. (v 0. (-0.));
+    equal float_exact 0. (v (-0.) (-0.));
+    equal float_exact 3. (v (-3.) (-0.));
+    equal float_exact infinity (v 2. neg_infinity);
+    equal bool true (Float.is_nan (v nan 1.));
+    equal float_exact 5. (v 3. 4.);
+    equal float_exact 0x5p100 (v 0x3p100 0x4p100)
+  in
+  check Nx.float64;
+  check Nx.float32
+
+(* rsqrt's error at [x] in ulps of the exact [e = 1/√x], where [v = e (1 + d)]:
+   [v² x - 1 = 2d + d²], which a square split exactly by fma and one fma
+   give far below an ulp. [x] and [v] are first scaled by [2^-2k] and [2^k],
+   which keeps [v² x] and puts [x] in [\[1/2, 2)], where [v²] cannot
+   overflow. *)
+let rsqrt_ulps dt x v =
+  let _, ex = Float.frexp x in
+  let k = if ex >= 0 then ex / 2 else (ex - 1) / 2 in
+  let x = Float.ldexp x (-2 * k) and v = Float.ldexp v k in
+  let p = v *. v in
+  let pe = Float.fma v v (-.p) in
+  let t = Float.fma p x (-1.) +. (pe *. x) in
+  let d = t /. (1. +. Float.sqrt (1. +. t)) in
+  let e = Float.ldexp (v /. (1. +. d)) (-k) in
+  Float.abs d *. e /. ulp dt e
+
+let law_rsqrt (type s) (dt : (float, s) D.t) (x : (float, s, Nx.host) Nx.t) =
+  let xs = Nx.to_array x and vs = Nx.to_array (Nx.rsqrt x) in
+  Array.iteri
+    (fun i x ->
+      let v = vs.(i) in
+      if x > 0. && Float.is_finite x then begin
+        let e = rsqrt_ulps dt x v in
+        if not (e <= 2.) then
+          failf "at %a: %a, %g ulps from 1/√x" float_pp x float_pp v e
+      end
+      else if not (same (1. /. Float.sqrt x) v) then
+        failf "at %a: %a, not %a" float_pp x float_pp v float_pp
+          (1. /. Float.sqrt x))
+    xs
+
+let rsqrt_ends (type s) (dt : (float, s) D.t) =
+  let least = match dt with D.Float32 -> 0x1p-149 | _ -> 0x1p-1074 in
+  let most =
+    match dt with D.Float32 -> 0x1.fffffep127 | _ -> Float.max_float
+  in
+  law_rsqrt dt
+    (Nx.create dt [| 7 |]
+       [| least; 3. *. least; 0x1p-126; 0.5; 2.; 3.; most |])
 
 let law_hypot (type s) (dt : (float, s) D.t) (x, y) =
   let xs = Nx.to_array x and ys = Nx.to_array y in
@@ -165,6 +219,16 @@ let math =
     accuracy "asinh" (fun x -> Nx.asinh x) Float.asinh;
     accuracy "acosh" (fun x -> Nx.acosh x) Float.acosh;
     accuracy "atanh" (fun x -> Nx.atanh x) Float.atanh;
+    group "rsqrt"
+      [
+        prop "float64 within 2 ulps" (drawn D.Float64 samples)
+          (law_rsqrt D.Float64);
+        prop "float32 within 2 ulps" (drawn D.Float32 samples)
+          (law_rsqrt D.Float32);
+        test "at the ends of the range" (fun () ->
+            rsqrt_ends D.Float64;
+            rsqrt_ends D.Float32);
+      ];
     group "hypot"
       [
         prop "float64 within 3 ulps"
@@ -187,6 +251,8 @@ let math =
       [
         test "square wraps integers and squares complex numbers" test_square;
         test "zeros, ends of the domain, infinities and NaN" specials;
+        test "a format without infinities or NaN stores as a cast"
+          no_infinities;
         cases "a function of floats refuses another dtype"
           ~name:(fun (n, _) -> n)
           [

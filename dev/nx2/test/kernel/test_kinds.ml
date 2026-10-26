@@ -128,14 +128,22 @@ let test_narrow =
         narrow_dtypes)
 
 let test_narrow_binary =
-  cases ~name:Fun.id "narrow floats at pairs of values" [ "pow"; "atan2" ]
+  List.map
     (fun kind ->
-      List.iter
-        (fun (name, code) ->
-          let e, a, b = K.narrow_binary kind code in
-          at_most int ~than:1 e
-            ~msg:(strf "%s at %s codes 0x%x 0x%x" kind name a b))
-        narrow_dtypes)
+      prop (strf "%s at narrow floats' pairs of values" kind) ~count:1 Gen.int
+        (fun seed ->
+          List.iter
+            (fun (name, code) ->
+              let (w : K.narrow_pairs) = K.narrow_binary kind code ~seed in
+              (* The drawn pairs of a 16-bit float mostly give a number other
+                 than 0 and 1: the draws reach the results that rounding once
+                 can get wrong. *)
+              if w.n > 65536 then
+                cover (strf "%s: most results plain" name) (2 * w.plain > w.n);
+              at_most int ~than:1 w.e
+                ~msg:(strf "%s at %s codes 0x%x 0x%x" kind name w.a w.b))
+            narrow_dtypes))
+    [ "pow"; "atan2" ]
 
 (* f32 pow and atan2 at a million pairs, drawn from the run's seed, against the
    C library's f64 functions rounded. *)
@@ -332,10 +340,13 @@ let test_f64_goldens =
         let n = Array.length row - 2 in
         let args = Array.sub row 0 n and want = row.(n) and lo = row.(n + 1) in
         let got = K.f64 kind args in
-        let wrong_zero =
-          got = 0. && want = 0. && Float.sign_bit got <> Float.sign_bit want
+        (* Where the value rounds to an infinity or a zero, a rank bounds
+           nothing: the result is that value. *)
+        let wrong_end =
+          (want = 0. || Float.abs want = Float.infinity)
+          && not (Int64.equal (bits64 got) (bits64 want))
         in
-        let e = if wrong_zero then max_int else ulps64 got want in
+        let e = if wrong_end then max_int else ulps64 got want in
         let at =
           strf "%s %s: got %h, want %h" kind
             (String.concat " " (List.map (strf "%h") (Array.to_list args)))
@@ -1436,17 +1447,26 @@ let test_complex_identities =
   in
   check "c128" 0x1p-53 c128_call Fun.id @ check "c64" 0x1p-24 c64_call f32_pair
 
-(* C99 Annex F's special values of the float kinds, F.10, and zero results
-   of underflow, which keep the exact value's sign: at f64 and f32, bit for
+(* C99 Annex F's special values of the float kinds, F.10, and results the
+   exact value rounds to an infinity or a zero, where a rank's distance
+   bounds nothing: an infinity is one rank past the largest float. Bit for
    bit, any NaN for a NaN, through each target's loop and through the best
-   one's over a vector, every lane alike. Each value is the f64 result, exact
-   or correctly rounded; its rounding to binary32 is the f32 one. *)
+   one's over a vector, every lane alike. A row of [Both] widths holds the
+   f64 result, exact or correctly rounded, whose rounding to binary32 is the
+   f32 one; a row of one width holds that width's operands and result. *)
+
+type width = Both | F64 | F32
 
 let annex_f =
-  let pio2 = Float.atan2 1. 0. and pio4 = Float.atan2 1. 1. in
-  let tpio4 = Float.atan2 1. (-1.) in
-  let one k rows = List.map (fun (x, r) -> (k, [| x |], r)) rows in
-  let two k rows = List.map (fun (x, y, r) -> (k, [| x; y |], r)) rows in
+  let pio2 = 0x1.921fb54442d18p0 and pio4 = 0x1.921fb54442d18p-1 in
+  let tpio4 = 0x1.2d97c7f3321d2p1 in
+  let rows w k = List.map (fun (args, r) -> (w, k, args, r)) in
+  let one ?(w = Both) k rs =
+    rows w k (List.map (fun (x, r) -> ([| x |], r)) rs)
+  in
+  let two ?(w = Both) k rs =
+    rows w k (List.map (fun (x, y, r) -> ([| x; y |], r)) rs)
+  in
   let exp_like k =
     one k [ (0., 1.); (-0., 1.); (ninf, 0.); (inf, inf); (nan, nan) ]
   in
@@ -1463,11 +1483,15 @@ let annex_f =
   List.concat
     [
       exp_like "exp";
-      one "exp" [ (-1000., 0.) ];
+      one "exp" [ (710., inf); (-1000., 0.) ];
+      one ~w:F32 "exp" [ (89., inf); (-110., 0.) ];
       exp_like "exp2";
-      one "exp2" [ (-2000., 0.) ];
+      one "exp2" [ (1024., inf); (-1100., 0.); (-2000., 0.) ];
+      one ~w:F32 "exp2" [ (128., inf); (-151., 0.) ];
       one "expm1"
-        [ (0., 0.); (-0., -0.); (ninf, -1.); (inf, inf); (nan, nan) ];
+        [ (0., 0.); (-0., -0.); (ninf, -1.); (inf, inf); (nan, nan);
+          (710., inf) ];
+      one ~w:F32 "expm1" [ (89., inf) ];
       log_like "log";
       log_like "log2";
       one "log1p"
@@ -1483,8 +1507,13 @@ let annex_f =
       one "atan"
         [ (0., 0.); (-0., -0.); (inf, pio2); (ninf, -.pio2); (nan, nan) ];
       one "sinh"
-        [ (0., 0.); (-0., -0.); (inf, inf); (ninf, ninf); (nan, nan) ];
-      one "cosh" [ (0., 1.); (-0., 1.); (inf, inf); (ninf, inf); (nan, nan) ];
+        [ (0., 0.); (-0., -0.); (inf, inf); (ninf, ninf); (nan, nan);
+          (711., inf); (-711., ninf) ];
+      one ~w:F32 "sinh" [ (90., inf); (-90., ninf) ];
+      one "cosh"
+        [ (0., 1.); (-0., 1.); (inf, inf); (ninf, inf); (nan, nan);
+          (711., inf); (-711., inf) ];
+      one ~w:F32 "cosh" [ (90., inf); (-90., inf) ];
       one "tanh" [ (0., 0.); (-0., -0.); (inf, 1.); (ninf, -1.); (nan, nan) ];
       one "erf" [ (0., 0.); (-0., -0.); (inf, 1.); (ninf, -1.); (nan, nan) ];
       (* atan2 y x *)
@@ -1498,6 +1527,9 @@ let annex_f =
           (inf, ninf, tpio4); (ninf, ninf, -.tpio4); (inf, inf, pio4);
           (ninf, inf, -.pio4); (nan, 1., nan); (1., nan, nan);
         ];
+      two ~w:F64 "atan2" [ (-0x1p-1074, 1e300, -0.); (0x1p-1074, -1e300, pi) ];
+      two ~w:F32 "atan2"
+        [ (-0x1p-149, 0x1p127, -0.); (0x1p-149, -0x1p127, round_f32 pi) ];
       two "pow"
         [
           (-0., -3., ninf); (0., -3., inf); (0., ninf, inf); (-0., ninf, inf);
@@ -1510,12 +1542,33 @@ let annex_f =
           (ninf, 3., ninf); (ninf, 2., inf); (ninf, 0.5, inf); (inf, -1., 0.);
           (inf, 0.5, inf); (nan, 1., nan); (2., nan, nan);
           (-0x1p-60, 3., -0x1p-180); (-0x1p-600, 3., -0.);
+          (2., 1024., inf); (-2., 1025., ninf); (2., -1100., 0.);
+          (-2., -1101., -0.); (0.5, 1100., 0.); (-0.5, 1101., -0.);
+        ];
+      (* Odd integers end where the format's integers grow even. *)
+      two ~w:F64 "pow"
+        [
+          (-0., 0x1.fffffffffffffp52, -0.); (-0., 0x1p53, 0.);
+          (ninf, -0x1.fffffffffffffp52, -0.); (ninf, -0x1p53, 0.);
+          (ninf, 0x1.fffffffffffffp52, ninf); (ninf, 0x1p53, inf);
+          (-1., 0x1.fffffffffffffp52, -1.); (-1., 0x1p53, 1.);
+        ];
+      two ~w:F32 "pow"
+        [
+          (-0., 0x1.fffffep23, -0.); (-0., 0x1p24, 0.);
+          (ninf, -0x1.fffffep23, -0.); (ninf, -0x1p24, 0.);
+          (ninf, 0x1.fffffep23, ninf); (ninf, 0x1p24, inf);
+          (-1., 0x1.fffffep23, -1.); (-1., 0x1p24, 1.);
+          (2., 128., inf); (-2., 129., ninf); (2., -151., 0.);
+          (-2., -151., -0.);
         ];
     ]
 
 let test_annex_f =
-  let name (k, args, _) =
-    strf "%s %s" k
+  let name (w, k, args, _) =
+    strf "%s %s %s"
+      (match w with Both -> "f64 and f32" | F64 -> "f64" | F32 -> "f32")
+      k
       (String.concat " " (Array.to_list (Array.map (strf "%h") args)))
   in
   let lanes (type s) (k : (float, s) Bigarray.kind) kind args =
@@ -1525,19 +1578,31 @@ let test_annex_f =
     K.run kind (fill args.(0)) (fill z) y;
     List.init 37 (fun i -> y.{i})
   in
-  cases ~name "Annex F's special values" annex_f (fun (kind, args, want) ->
-      let args32 = Array.map round_f32 args and want32 = round_f32 want in
-      List.iter
-        (fun target ->
-          equal value64 want (K.f64 ~target kind args) ~msg:target;
-          equal value64 want32
-            (f (K.f32 ~target kind (Array.map bits32 args32)))
-            ~msg:target)
-        (K.targets ());
-      equal (list value64) (List.init 37 (fun _ -> want))
-        (lanes Bigarray.float64 kind args);
-      equal (list value64) (List.init 37 (fun _ -> want32))
-        (lanes Bigarray.float32 kind args32))
+  let at64 kind args want =
+    List.iter
+      (fun target ->
+        equal value64 want (K.f64 ~target kind args) ~msg:target)
+      (K.targets ());
+    equal (list value64) (List.init 37 (fun _ -> want))
+      (lanes Bigarray.float64 kind args)
+  in
+  let at32 kind args want =
+    List.iter
+      (fun target ->
+        equal value64 want
+          (f (K.f32 ~target kind (Array.map bits32 args)))
+          ~msg:target)
+      (K.targets ());
+    equal (list value64) (List.init 37 (fun _ -> want))
+      (lanes Bigarray.float32 kind args)
+  in
+  cases ~name "Annex F's special values" annex_f (fun (w, kind, args, want) ->
+      match w with
+      | F64 -> at64 kind args want
+      | F32 -> at32 kind args want
+      | Both ->
+          at64 kind args want;
+          at32 kind (Array.map round_f32 args) (round_f32 want))
 
 let () =
   exit
@@ -1548,13 +1613,12 @@ let () =
            @ [
                test_strata;
                test_narrow;
-               test_narrow_binary;
                test_exact_points;
                test_f64_goldens;
                test_annex_f;
                test_digests;
              ]
-           @ test_binary_transcendentals);
+           @ test_narrow_binary @ test_binary_transcendentals);
          group ~timeout:10. "f32"
            (test_binary32 @ test_fma32 @ [ test_where32 ] @ test_unary32);
          group ~timeout:10. "f64" test_f64_exact;

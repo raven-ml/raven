@@ -41,7 +41,8 @@ external strata_raw : string -> (string * int * raw) array
 
 external narrow : string -> int -> int * int = "nx_kinds_support_narrow"
 
-external narrow_binary : string -> int -> int * int * int
+external narrow_binary_raw :
+  string -> int -> int -> int * int * int * int * int
   = "nx_kinds_support_narrow_binary"
 
 external binary_raw : string -> int -> int -> int * int * int
@@ -58,6 +59,12 @@ let sweep_range kind lo hi step = worst (sweep_raw kind lo hi step)
 let points kind ps = worst (points_raw kind ps)
 let strata kind = Array.map (fun (r, n, w) -> (r, n, worst w)) (strata_raw kind)
 let binary kind ~seed n = binary_raw kind seed n
+
+type narrow_pairs = { e : int; a : int; b : int; plain : int; n : int }
+
+let narrow_binary kind code ~seed =
+  let e, a, b, plain, n = narrow_binary_raw kind code seed in
+  { e; a; b; plain; n }
 let digest ~target kind ty = digest_raw target kind ty
 let best = lazy (List.hd (List.rev (targets ())))
 let f32 ?(target = Lazy.force best) kind args = f32_raw target kind args
