@@ -3608,11 +3608,15 @@ module Rng : sig
       which no sampler takes.
 
       {!key}'s key is a value of every set, which each draw computes again
-      ({!Nx.section-creation}). {!split} and {!fold_in} of one key of every set
-      compute their keys' words on the host, as a read does, and give keys of
-      every set that hold them as numbers: a draw from one costs the same
-      however many keys it came from, so a key carried through a loop needs no
-      {!place}. *)
+      ({!Nx.section-creation}). {!split} and {!fold_in} of one key of every
+      set, and {!fold_in_tensor} of one by a 0-d index of every set, compute
+      their keys' words on the host, as a read does, and give keys of every
+      set that hold them as numbers: a draw from one costs the same however
+      many keys it came from, so a key carried through a loop needs no
+      {!place}. A batch of every set stays a formula: each {!fold_in} or
+      {!fold_in_tensor} of it adds an operation that every draw from the
+      result computes again, so a batch carried through a loop is placed
+      first, and then each fold computes where it lies. *)
 
   (** {1:keys Keys} *)
 

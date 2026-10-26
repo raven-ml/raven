@@ -210,6 +210,15 @@ let keys_group =
           equal (array int32)
             (words (Rng.fold_in k (Int32.to_int n)))
             (words (Rng.fold_in_tensor k i)));
+      prop "fold_in_tensor of a 0-d index of every set is fold_in of it"
+        ~examples:
+          [ (3, Int32.min_int); (3, -1l); (3, 0l); (3, Int32.max_int) ]
+        (Gen.pair seeds (Gen.int32_range Int32.min_int Int32.max_int))
+        (fun (seed, n) ->
+          let k = Rng.key seed in
+          equal (array int32)
+            (words (Rng.fold_in k (Int32.to_int n)))
+            (words (Rng.fold_in_tensor k (Nx.scalar Nx.int32 n))));
       test "fold_in_tensor of a batch of indices is a batch of keys" (fun () ->
           let k = Rng.key 5 in
           let i = host_of A.Dtype.Int32 [| 3 |] [| 0l; 1l; -4l |] in
@@ -264,6 +273,49 @@ let keys_group =
           equal ~msg:"draws" (array float_exact)
             (read (draw (placed 1000 (Rng.key 3))))
             (read (draw (carried 1000 (Rng.key 3)))));
+      test "a key carried through fold_in_tensor costs a draw what one does"
+        (fun () ->
+          let x =
+            Nx.place Count.on (host_of Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |])
+          in
+          let draw k = Nx.mul x (Rng.uniform ~key:k Nx.float32 [| 4 |]) in
+          let seven = Nx.scalar Nx.int32 7l in
+          let rec carried n k =
+            if n = 0 then k else carried (n - 1) (Rng.fold_in_tensor k seven)
+          in
+          let calls n =
+            let k = carried n (Rng.key 3) in
+            Nx_support.Counting.reset ();
+            ignore (draw k);
+            Nx_support.Counting.calls ()
+          in
+          equal ~msg:"kernel calls" int (calls 1) (calls 1000);
+          let rec folded n k =
+            if n = 0 then k else folded (n - 1) (Rng.fold_in k 7)
+          in
+          equal ~msg:"bits" (array int32)
+            (words (folded 1000 (Rng.key 3)))
+            (words (carried 1000 (Rng.key 3))));
+      test "a placed batch carried through fold_in costs a draw what one does"
+        (fun () ->
+          let x =
+            Nx.place Count.on (host_of Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |])
+          in
+          let draw k = Nx.mul x (Rng.uniform ~key:k Nx.float32 [| 4 |]) in
+          let batch = Rng.split_batch ~n:3 (Rng.key 3) in
+          let rec carried n k =
+            if n = 0 then k else carried (n - 1) (Rng.fold_in k n)
+          in
+          let calls n =
+            let k = carried n (Rng.place Count.on batch) in
+            Nx_support.Counting.reset ();
+            ignore (draw k);
+            Nx_support.Counting.calls ()
+          in
+          equal ~msg:"kernel calls" int (calls 1) (calls 1000);
+          equal ~msg:"bits" (array int32)
+            (words (carried 1000 batch))
+            (words (carried 1000 (Rng.place Count.on batch))));
       test "of_tensor computes nothing, from reversed words too" (fun () ->
           let t = Nx.place Count.on (host_of Nx.int32 [| 2 |] [| 1l; 2l |]) in
           let reversed = Nx.flip t in

@@ -283,19 +283,27 @@ let fold_in k data = fold_in_by ~by:"Nx.Rng.fold_in" k data
 let fold_in_tensor (k : 'd key) (i : (int32, D.int32_elt, 'd) Value.t) : 'd key
     =
   let by = "Nx.Rng.fold_in_tensor" in
-  let w = pack ~by k in
-  let shape = Prim.broadcast_shape ~by (batch k) (Prim.shape i) in
-  let ins : D.any iarray = [| D.Any D.Uint64; D.Any D.Int32 |] in
-  let v = E.(bitcast D.Uint64 (cast D.Int64 (input 1 D.Int32))) in
-  let w32 = u64 two32 in
-  let out = E.threefry E.((v / w32) + (v mod w32 * w32)) (E.input 0 D.Uint64) in
-  let loads =
-    [| Value.Any (stretch ~by shape w); Value.Any (stretch ~by shape i) |]
-  in
-  let u : (int64, D.uint64_elt, 'd) Value.t =
-    map ~by shape (P.of_exprs ~ins [| E.any out |]) D.Uint64 loads
-  in
-  Eval.eval ~by (Value.Bitcast (D.Int32, u))
+  (* One key and a 0-d index that are constants: [i] read on the host, as a
+     read computes a constant, so the key is one map deep, as [fold_in]'s. *)
+  let one = batch k = [||] && Prim.shape i = [||] in
+  if one && Prim.is_constant k && Prim.is_constant i then
+    fold_in_by ~by k (Int32.to_int (Nx_array.get (Exec.on_host ~by i) [||]))
+  else
+    let w = pack ~by k in
+    let shape = Prim.broadcast_shape ~by (batch k) (Prim.shape i) in
+    let ins : D.any iarray = [| D.Any D.Uint64; D.Any D.Int32 |] in
+    let v = E.(bitcast D.Uint64 (cast D.Int64 (input 1 D.Int32))) in
+    let w32 = u64 two32 in
+    let out =
+      E.threefry E.((v / w32) + (v mod w32 * w32)) (E.input 0 D.Uint64)
+    in
+    let loads =
+      [| Value.Any (stretch ~by shape w); Value.Any (stretch ~by shape i) |]
+    in
+    let u : (int64, D.uint64_elt, 'd) Value.t =
+      map ~by shape (P.of_exprs ~ins [| E.any out |]) D.Uint64 loads
+    in
+    Eval.eval ~by (Value.Bitcast (D.Int32, u))
 
 (* The scope *)
 
