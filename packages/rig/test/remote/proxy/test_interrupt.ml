@@ -230,6 +230,85 @@ let next_and_answer_raise () =
       reached || reached');
   greater ~msg:"allocations interrupted" int ~than:0 !walked
 
+(* An account named [name], as the agent answers an open of kind [name]. *)
+let account name : Wire.account =
+  {
+    id = 1;
+    name;
+    arch = "";
+    budget = 0;
+    alignment = 1;
+    reaches = [];
+    reached_by = [];
+  }
+
+(* What a request for the open of [kind] answered: the name of its account,
+   or ["failed"] once the job failed. *)
+let named kind = function
+  | Ok [ (a : Wire.account) ] -> a.name
+  | Ok _ -> failf "the open of %s answered another count of accounts" kind
+  | Error (`Failed _) -> "failed"
+  | Error (`Refused why) -> failf "the open of %s refused: %s" kind why
+
+(* What a next answers until it returns. *)
+let not_taken : (Wire.command, string) result = Error "not taken"
+
+(* A next of a request cut by an exception at each of its allocations, with a
+   second request sent after it: each request is answered with an account of
+   its own kind, or fails with the job. A request the cut next took and did
+   not give, if any, fails the job, so no later answer pairs with it. *)
+let next_of_request_raise () =
+  let walked = ref 0 in
+  walk (fun n ->
+      with_pair @@ fun c a ->
+      (* A failure fails the job first, which ends the requests that wait. *)
+      let failing f =
+        match f () with
+        | v -> v
+        | exception e ->
+            Link.fail (Link.job_of c) "the test failed";
+            raise e
+      in
+      failing @@ fun () ->
+      let ask kind () = Link.request c (Wire.Open kind) in
+      let first_done, first = spawn (ask "A") in
+      let got = ref not_taken in
+      let reached = Rig_support.interrupted n (fun () -> got := Link.next a) in
+      let second_done, second = spawn (ask "B") in
+      (* Answers each request as it comes, then waits for a requester to
+         end, so that an answer that a lost request made pair with the wrong
+         one shows before the other waits for good. *)
+      let answers = ref 0 in
+      let ended () = Bool.to_int (first_done ()) + Bool.to_int (second_done ()) in
+      let answer kind r =
+        Link.answer a r (Ok [ account kind ]);
+        incr answers;
+        until ~what:"an answer's arrival" (fun () -> ended () >= !answers);
+        if first_done () && named "A" (first ()) = "B" then
+          failf "from allocation %d, A answered B's account" n
+      in
+      (match !got with
+      | Ok (Wire.Request (Wire.Open kind as r)) -> answer kind r
+      | Ok _ -> fail "a command other than an open"
+      | Error _ when !got == not_taken -> ()
+      | Error why -> failf "from allocation %d, the next: %s" n why);
+      let rec rest () =
+        if ended () < 2 then
+          match Link.next a with
+          | Ok (Wire.Request (Wire.Open kind as r)) ->
+              answer kind r;
+              rest ()
+          | Ok _ -> fail "a command other than an open"
+          | Error _ -> ()
+      in
+      rest ();
+      let msg what = strf "from allocation %d, %s" n what in
+      mem ~msg:(msg "A's answer") string (named "A" (first ())) [ "A"; "failed" ];
+      mem ~msg:(msg "B's answer") string (named "B" (second ())) [ "B"; "failed" ];
+      if reached then incr walked;
+      reached);
+  greater ~msg:"allocations interrupted" int ~than:0 !walked
+
 let () =
   exit
     (run "rig_remote_proxy interrupt"
@@ -250,6 +329,8 @@ let () =
            [
              test "a next and an answer leave no lock held"
                next_and_answer_raise;
+             test "a next of a request lets no answer pair with another"
+               next_of_request_raise;
            ];
          group ~timeout
            "a call to rig from a callback at any allocation keeps the host"

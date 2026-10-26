@@ -573,29 +573,46 @@ let rec pop_oldest l q =
       Atomic.compare_and_set l.asked a (List.rev older) || pop_oldest l q
   | _ -> false
 
+(* Why a link's job fails when an exception ends a [next] that dequeued a
+   command, which no caller then has. *)
+let next_lost = "a command was lost to an exception in the agent"
+
+(* The command of kind [k] in [a]'s first [n] bytes, recorded if it is a
+   request. *)
+let command l k a n =
+  let r = reader (if Array1.dim a = n then a else Array1.sub a 0 n) in
+  if k = 0 then Some (Error (text a))
+  else if k = k_request then begin
+    let (Any q) = decode_request r in
+    let v = Some (Ok (Wire.Request q)) in
+    push l (Any q);
+    v
+  end
+  else if k = k_handover then Some (Ok (decode_handover r))
+  else if k = k_drop then Some (Ok (Wire.Drop (finished r (u64 r))))
+  else if k = k_close then Some (Ok Wire.Close)
+  else raise Malformed
+
 (* Takes the next command under [l]'s [next_lock], with no wait: [None] if
-   none came, as when another [next] took the one its wait saw. *)
+   none came, as when another [next] took the one its wait saw. From the
+   dequeue on, an exception other than a malformed frame's, such as
+   Out_of_memory or a Gc.Memprof callback's, loses the command, and fails
+   the job unless it was a drop, whose loss only keeps an object: a request
+   that no one answers would pair the answers after it with the wrong
+   requests, and a lost hand-over or close leaves the controller waiting. The
+   handler allocates nothing before the failure. *)
 let take_next l () =
   let k, a, n = next_c l.c in
   if k < 0 then None
   else
-    let r = reader (if Array1.dim a = n then a else Array1.sub a 0 n) in
-    match
-      if k = 0 then Error (text a)
-      else if k = k_request then begin
-        let (Any q) = decode_request r in
-        push l (Any q);
-        Ok (Wire.Request q)
-      end
-      else if k = k_handover then Ok (decode_handover r)
-      else if k = k_drop then Ok (Wire.Drop (finished r (u64 r)))
-      else if k = k_close then Ok Wire.Close
-      else raise Malformed
-    with
-    | v -> Some v
+    match command l k a n with
+    | v -> v
     | exception Malformed ->
         malformed l;
         Some (Error (Option.value (failed l.job) ~default:""))
+    | exception e ->
+        if k <> k_drop then fail l.job next_lost;
+        reraise e
 
 (* The wait for a command holds no lock, so a callback that runs in it calls
    rig as any code does. *)

@@ -192,6 +192,11 @@ val next : t -> (Wire.command, string) result
     so a stream of large [Handover] commands lands in memory already
     mapped.
 
+    An exception that ends [next] once it took a command other than a
+    [Drop], such as [Out_of_memory] or a [Gc.Memprof] callback's, fails the
+    job: the command is lost, and the controller would otherwise wait for
+    it, or pair later answers with the wrong requests.
+
     Raises [Invalid_argument] from a callback inside a lock
     ({!section-domains}). *)
 
