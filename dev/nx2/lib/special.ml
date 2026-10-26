@@ -91,7 +91,7 @@ let log_0_9 = -0x1.af8e8210a415cp-4
 let log_0_01 = -0x1.26bb1bbb55515p+2
 
 let max_float_of (type w) (x : (float, w) E.t) =
-  match E.dtype x with D.Float64 -> max_float | _ -> 0x1.fffffep127
+  (D.float_format (E.dtype x)).max_finite
 
 (* [log (max_float_of x)]. *)
 let log_max_float_of (type w) (x : (float, w) E.t) =
@@ -444,10 +444,10 @@ let lgamma_pos y =
   where below2 r_small (where below8 r_mid r_big)
 
 let epsilon (type w) (x : (float, w) E.t) =
-  match E.dtype x with D.Float64 -> epsilon_float | _ -> 0x1p-23
+  (D.float_format (E.dtype x)).epsilon
 
 let min_normal (type w) (x : (float, w) E.t) =
-  match E.dtype x with D.Float64 -> 0x1p-1022 | _ -> 0x1p-126
+  (D.float_format (E.dtype x)).min_normal
 
 let euler_gamma = 0.57721566490153286061
 
@@ -1558,8 +1558,8 @@ let bgrat a0 b x y lx m =
     t.bgrat;
   mul u !sum
 
-(* [log T.beta_power_x] and [log T.beta_power_bx], written out as above. *)
-let log_beta_power_x = -0x1.af8e8210a415cp-4
+(* [log T.beta_power_bx], written out as above. [T.beta_power_x] is 0.9,
+   whose logarithm is [log_0_9]. *)
 let log_beta_power_bx = -0x1.6d3c324e13f50p-2
 
 (* [log I_x(a, b)], or [log (1 - I_x(a, b))] where [upper], for finite [a, b >
@@ -1622,7 +1622,7 @@ let log_betainc_at upper a b x =
   let far = ge x0 T.beta_x_far in
   let low =
     ge a0 T.beta_a_small ||| cmpge a0 b0
-    ||| le (mul a0 lx0) log_beta_power_x
+    ||| le (mul a0 lx0) log_0_9
   in
   let near_pow =
     lt x0 T.beta_x_near

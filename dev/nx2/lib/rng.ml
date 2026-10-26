@@ -109,6 +109,16 @@ let uniforms (type s) ~key ~p (c : (float, s) D.t) j n : (float, s) E.t array =
    equal programs, and either may stay. *)
 let programs () = Array.init (List.length D.all) (fun _ -> Atomic.make None)
 
+(* [table]'s program for [dt], made by [make] the first time. *)
+let cached table dt make =
+  let slot = table.(D.code dt) in
+  match Atomic.get slot with
+  | Some p -> p
+  | None ->
+      let p = make () in
+      Atomic.set slot (Some p);
+      p
+
 (* A sampler program's operands: the element's key, its position in the
    draw, both uint64, then the sampler's parameters. *)
 let key_operand = 0
@@ -118,16 +128,11 @@ let first_param = 2
 (* The program of [table] for [dt], whose element at position [j] of its draw
    is [body ~key ~j], over parameters of dtypes [ins]. *)
 let lowered table dt ins body =
-  let slot = table.(D.code dt) in
-  match Atomic.get slot with
-  | Some p -> p
-  | None ->
+  cached table dt (fun () ->
       let ins = Array.append [| D.Any D.Uint64; D.Any D.Uint64 |] ins in
       let key = E.input key_operand D.Uint64 in
       let j = E.input position_operand D.Uint64 in
-      let p = P.of_exprs ~ins:(Iarray.of_array ins) [| E.any (body ~key ~j) |] in
-      Atomic.set slot (Some p);
-      p
+      P.of_exprs ~ins:(Iarray.of_array ins) [| E.any (body ~key ~j) |])
 
 (* Draws *)
 
@@ -269,12 +274,16 @@ let split ?(n = 2) k =
       in
       reshape ~by [| 2 |] (move ~by row all))
 
+(* The counter a uint64 [v] folds in: its words [(v lsr 32, v)], the high
+   word first. *)
+let counter v =
+  let w32 = u64 two32 in
+  E.((v / w32) + (v mod w32 * w32))
+
 (* The counter [data] folds in: the words [(data asr 32, data)]. *)
 let fold_in_by ~by (k : 'd key) data : 'd key =
-  let hi = Int64.logand (Int64.of_int (data asr 32)) 0xFFFF_FFFFL in
-  let lo = Int64.logand (Int64.of_int data) 0xFFFF_FFFFL in
-  let c = Int64.logor hi (Int64.shift_left lo 32) in
-  keys ~by k (batch k) (fun ~key -> E.threefry (u64 c) key)
+  let v = u64 (Int64.of_int data) in
+  keys ~by k (batch k) (fun ~key -> E.threefry (counter v) key)
 
 let fold_in k data = fold_in_by ~by:"Nx.Rng.fold_in" k data
 
@@ -293,10 +302,7 @@ let fold_in_tensor (k : 'd key) (i : (int32, D.int32_elt, 'd) Value.t) : 'd key
     let shape = Prim.broadcast_shape ~by (batch k) (Prim.shape i) in
     let ins : D.any iarray = [| D.Any D.Uint64; D.Any D.Int32 |] in
     let v = E.(bitcast D.Uint64 (cast D.Int64 (input 1 D.Int32))) in
-    let w32 = u64 two32 in
-    let out =
-      E.threefry E.((v / w32) + (v mod w32 * w32)) (E.input 0 D.Uint64)
-    in
+    let out = E.threefry (counter v) (E.input 0 D.Uint64) in
     let loads =
       [| Value.Any (stretch ~by shape w); Value.Any (stretch ~by shape i) |]
     in
@@ -502,9 +508,16 @@ let counted =
     inside = (fun c x -> E.(lit c 0. <= x && x < lit c 2147483648.));
   }
 
-(* Raises, at the check, naming [name]'s first element of [p] where [ok], a map
-   over [p], is false, [p]'s value there as [show] writes it, and [text]. *)
-let refuse ~by name text ~show (p : ('v, 's, 'd) Value.t) ok =
+(* Raises, at the check, naming [name]'s first element of [p] where [inside]
+   of the element is false, [p]'s value there as [show] writes it, and
+   [text]. A sampler checks its parameters before it draws from them, so it
+   reads them in several operations ({!Donate.read}). *)
+let refuse (type v s) ~by name text ~show (p : (v, s, 'd) Value.t)
+    (inside : (v, s) E.t -> (bool, D.bool_elt) E.t) =
+  let dt = Prim.dtype p in
+  let ins : D.any iarray = [| D.Any dt |] in
+  let prog = P.of_exprs ~ins [| E.any (inside (E.input 0 dt)) |] in
+  let ok = map ~by (Prim.shape p) prog D.Bool [| Value.Any p |] in
   let fail i (v, ()) =
     Invalid_argument
       (Format.asprintf "%s: %s at %a is %s, not in %s" by name pp_shape i
@@ -515,35 +528,21 @@ let refuse ~by name text ~show (p : ('v, 's, 'd) Value.t) ok =
 (* Checks the float parameter [p] of a sampler computing at [c] against [d]. *)
 let require ~by name d (p : (float, 's, 'd) Value.t) =
   let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier (Prim.dtype p) in
-  let ins : D.any iarray = [| D.Any (Prim.dtype p) |] in
-  let inside = d.inside c (rounded c (E.input 0 (Prim.dtype p))) in
-  let ok =
-    map ~by (Prim.shape p) (P.of_exprs ~ins [| E.any inside |]) D.Bool [| Value.Any p |]
-  in
-  refuse ~by name d.text ~show:(Printf.sprintf "%g") p ok
+  refuse ~by name d.text ~show:(Printf.sprintf "%g") p (fun x ->
+      d.inside c (rounded c x))
 
 (* Checks that the counts [n] are not negative. *)
 let require_counts ~by name (n : (int32, D.int32_elt, 'd) Value.t) =
-  let ins : D.any iarray = [| D.Any D.Int32 |] in
-  let inside = E.(const D.Int32 0l <= input 0 D.Int32) in
-  let ok =
-    map ~by (Prim.shape n) (P.of_exprs ~ins [| E.any inside |]) D.Bool [| Value.Any n |]
-  in
-  refuse ~by name "[0, inf)" ~show:Int32.to_string n ok
-
-(* A sampler checks its parameters before it draws from them, so it reads
-   them in several operations ({!Donate.read}). *)
-let reading ~by ?key p f = f ?key (Donate.read ~by p)
-
-let reading2 ~by ?key a b f =
-  let a = Donate.read ~by a in
-  f ?key a (Donate.read ~by b)
+  refuse ~by name "[0, inf)" ~show:Int32.to_string n (fun x ->
+      E.(const D.Int32 0l <= x))
 
 (* [p 2^53] is exact at the compute dtype, [p] being at most 1: the draw is 53
    bits of block [j] below it, rounded up, at every dtype. *)
 let bernoulli_programs = programs ()
 
-let bernoulli_by ~by ?key p =
+let bernoulli ?key p =
+  let by = "Nx.Rng.bernoulli" in
+  let p = Donate.read ~by p in
   require ~by "p" probability p;
   let dt = Prim.dtype p in
   let prog =
@@ -554,10 +553,6 @@ let bernoulli_by ~by ?key p =
   in
   let key = resolve ~by key in
   draw ~by ~params:[| Value.Any p |] key D.Bool (Prim.shape p) prog
-
-let bernoulli ?key p =
-  let by = "Nx.Rng.bernoulli" in
-  reading ~by ?key p (bernoulli_by ~by)
 
 (* Rejection *)
 
@@ -638,7 +633,9 @@ let log_gamma ~key ~p c j a =
 
 let gamma_programs = programs ()
 
-let gamma_by ~by ?key a =
+let gamma ?key a =
+  let by = "Nx.Rng.gamma" in
+  let a = Donate.read ~by a in
   require ~by "a" positive a;
   let dt = Prim.dtype a in
   let prog =
@@ -654,10 +651,6 @@ let gamma_by ~by ?key a =
   let key = resolve ~by key in
   draw ~by ~params:[| Value.Any a |] key dt (Prim.shape a) prog
 
-let gamma ?key a =
-  let by = "Nx.Rng.gamma" in
-  reading ~by ?key a (gamma_by ~by)
-
 (* Beta(a, b) = G(a) / (G(a) + G(b)) for independent gammas, element [j]'s
    being the {!gamma} draws [2j] and [2j + 1] of its key, formed as [1 / (1 +
    exp d)], [d = log G(b) - log G(a)], so that two gammas that underflow keep
@@ -671,7 +664,10 @@ let gamma ?key a =
    zero [q]. *)
 let beta_programs = programs ()
 
-let beta_by ~by ?key a b =
+let beta ?key a b =
+  let by = "Nx.Rng.beta" in
+  let a = Donate.read ~by a in
+  let b = Donate.read ~by b in
   require ~by "a" positive a;
   require ~by "b" positive b;
   let dt = Prim.dtype a in
@@ -691,10 +687,6 @@ let beta_by ~by ?key a b =
   in
   let key = resolve ~by key in
   draw ~by ~params:[| Value.Any a; Value.Any b |] key dt s prog
-
-let beta ?key a b =
-  let by = "Nx.Rng.beta" in
-  reading2 ~by ?key a b (beta_by ~by)
 
 (* Von Mises *)
 
@@ -746,7 +738,9 @@ let wrapped_cauchy c kappa =
 
 let von_mises_programs = programs ()
 
-let von_mises_by ~by ?key kappa =
+let von_mises ?key kappa =
+  let by = "Nx.Rng.von_mises" in
+  let kappa = Donate.read ~by kappa in
   require ~by "k" non_negative kappa;
   let dt = Prim.dtype kappa in
   let prog =
@@ -777,10 +771,6 @@ let von_mises_by ~by ?key kappa =
   in
   let params = [| Value.Any kappa |] in
   draw ~by ~params (resolve ~by key) dt (Prim.shape kappa) prog
-
-let von_mises ?key kappa =
-  let by = "Nx.Rng.von_mises" in
-  reading ~by ?key kappa (von_mises_by ~by)
 
 (* Counts *)
 
@@ -874,7 +864,9 @@ let poisson_rejection_rounds = 16
 
 let poisson_programs = programs ()
 
-let poisson_by ~by ?key rate =
+let poisson ?key rate =
+  let by = "Nx.Rng.poisson" in
+  let rate = Donate.read ~by rate in
   require ~by "rate" counted rate;
   let dt = Prim.dtype rate in
   let prog =
@@ -926,10 +918,6 @@ let poisson_by ~by ?key rate =
   let params = [| Value.Any rate |] in
   draw ~by ~params (resolve ~by key) D.Int32 (Prim.shape rate) prog
 
-let poisson ?key rate =
-  let by = "Nx.Rng.poisson" in
-  reading ~by ?key rate (poisson_by ~by)
-
 (* Binomial(n, p) counts the failures of [1 - p] where [p] exceeds one half, so
    the regimes see [p <= 1/2], chosen per element by the mean [n p]. Below 10,
    inversion over 48 terms: they follow from [(1 - p)^n] by the ratios [(n - j)
@@ -945,7 +933,10 @@ let binomial_rejection_rounds = 18
 
 let binomial_programs = programs ()
 
-let binomial_by ~by ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
+let binomial ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
+  let by = "Nx.Rng.binomial" in
+  let count = Donate.read ~by count in
+  let prob = Donate.read ~by prob in
   require_counts ~by "n" count;
   require ~by "p" probability prob;
   let dt = Prim.dtype prob in
@@ -1022,10 +1013,6 @@ let binomial_by ~by ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
   let params = [| Value.Any count; Value.Any prob |] in
   draw ~by ~params (resolve ~by key) D.Int32 s prog
 
-let binomial ?key count prob =
-  let by = "Nx.Rng.binomial" in
-  reading2 ~by ?key count prob (binomial_by ~by)
-
 (* Truncated normal *)
 
 (* Inverse-CDF truncation: one uniform [u] per draw and no acceptance test, so
@@ -1052,21 +1039,14 @@ let mass_programs = programs ()
 let masses ~by (b : (float, 's, 'd) Value.t) =
   let dt = Prim.dtype b in
   let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
-  let slot = mass_programs.(D.code dt) in
   let prog =
-    match Atomic.get slot with
-    | Some p -> p
-    | None ->
+    cached mass_programs dt (fun () ->
         let x = rounded c (E.input 0 dt) in
         let positive, n, log_n, log_m = Special.ndtr_halves x in
         let m = E.(lit c 1. - n) in
         let side y z = E.(any (where positive y z)) in
-        let p =
-          P.of_exprs ~ins:[| D.Any dt |]
-            [| side m n; side n m; side log_m log_n; side log_n log_m |]
-        in
-        Atomic.set slot (Some p);
-        p
+        P.of_exprs ~ins:[| D.Any dt |]
+          [| side m n; side n m; side log_m log_n; side log_n log_m |])
   in
   let layout = Nx_array.Layout.contiguous (Prim.shape b) in
   let below, (above, (log_below, (log_above, ()))) =
@@ -1090,7 +1070,10 @@ let log_sum c a b =
 
 let truncated_normal_programs = programs ()
 
-let truncated_normal_by ~by ?key lower upper =
+let truncated_normal ?key lower upper =
+  let by = "Nx.Rng.truncated_normal" in
+  let lower = Donate.read ~by lower in
+  let upper = Donate.read ~by upper in
   require ~by "lower" not_nan lower;
   require ~by "upper" not_nan upper;
   let dt = Prim.dtype lower in
@@ -1145,10 +1128,6 @@ let truncated_normal_by ~by ?key lower upper =
   in
   draw ~by ~params (resolve ~by key) dt s prog
 
-let truncated_normal ?key lower upper =
-  let by = "Nx.Rng.truncated_normal" in
-  reading2 ~by ?key lower upper (truncated_normal_by ~by)
-
 (* Reductions along a draw's last axis *)
 
 (* [x] reduced along the last axis of [shape], its program's output folded by
@@ -1184,7 +1163,9 @@ let along_last ~by shape prog monoid c loads =
    NaN or all zero. *)
 let dirichlet_programs = programs ()
 
-let dirichlet_by ~by ?key a =
+let dirichlet ?key a =
+  let by = "Nx.Rng.dirichlet" in
+  let a = Donate.read ~by a in
   let s = Prim.shape a in
   let r = Array.length s in
   if r = 0 then invalid_argf "%s: concentrations of shape [] have no axis" by;
@@ -1238,10 +1219,6 @@ let dirichlet_by ~by ?key a =
     map ~by shape
       (P.of_exprs ~ins:[| D.Any c; D.Any c; D.Any c; D.Any c |] [| E.any out |])
       dt loads
-
-let dirichlet ?key a =
-  let by = "Nx.Rng.dirichlet" in
-  reading ~by ?key a (dirichlet_by ~by)
 
 (* Categorical *)
 
@@ -1304,15 +1281,8 @@ let categorical ?key ?(axis = -1) logits =
   in
   (* The noise is finite, so a row's largest sum is finite exactly where its
      largest logit is, and is that logit where it is not. *)
-  let ins : D.any iarray = [| D.Any c |] in
-  let inside = finite c (E.input 0 c) in
-  let ok =
-    map ~by (Prim.shape largest)
-      (P.of_exprs ~ins [| E.any inside |])
-      D.Bool [| Value.Any largest |]
-  in
   refuse ~by "the largest logit" "(-inf, inf)" ~show:(Printf.sprintf "%g")
-    largest ok;
+    largest (finite c);
   at
 
 (* Permutation *)
