@@ -5,9 +5,11 @@
 
 (* Interrupt walks of rig.remote's controller. A call is made once for each
    allocation it makes, with a landing at that allocation on the calling
-   thread: another call from a Gc.Memprof callback, an exit from one, or an
-   exception. The callback's call answers as it would outside the callback,
-   no device is lost, and a launched job's report ends as the job does. *)
+   thread: another call from a Gc.Memprof callback, an exit from one, an
+   exception or a Ctrl-C. The callback's call answers as it would outside the
+   callback, no device is lost, and a launched job's report ends as the job
+   does. A connect cut leaves the process able to start another job, and a
+   rail cut leaves its job going. *)
 
 open Windtrap
 open Remote_job
@@ -239,6 +241,72 @@ let connect_inside_lock () =
       starts_with ~msg:"the refusal" ~affix:"Rig.open_: called from" why);
   connects_after "after a connect inside a lock"
 
+(* Rails *)
+
+let host_record h =
+  match Rig.capability h Rig_remote_abi.key with
+  | Some (Rig_remote_abi.Host r) -> r
+  | _ -> fail "a host's record is Host"
+
+let t5 = { Rig_remote_abi.src = 0; dst = 0; length = 5 }
+
+(* [rail r peer] is a rail of [r]'s machine with [peer]'s, or this process's
+   for [None]. *)
+let rail (r : Rig_remote_abi.host) peer =
+  r.rail peer ~send:[| t5 |] ~receive:[| t5 |]
+
+(* The records of [j]'s two hosts. *)
+let two_hosts j =
+  match List.map host_record (Rig_remote.hosts j) with
+  | [ r1; r2 ] -> (r1, r2)
+  | _ -> fail "two hosts"
+
+(* What a rail answers until it returns. *)
+let no_rail : (Rig_remote_abi.rail, string) result = Error "not returned"
+
+(* A rail with this process and one with another machine, with a Ctrl-C at
+   each of their allocations: a function of a capability blocks signals, so
+   the Ctrl-C lands before the rail takes an id, or once it is made, never
+   between its two machines' halves. *)
+let break_in_rail () =
+  with_job ~n:2 @@ fun j _ ->
+  let r1, r2 = two_hosts j in
+  let send = [| t5 |] in
+  List.iter
+    (fun (what, peer) ->
+      walk (fun n ->
+          let made = ref no_rail in
+          let before = Rig_remote_proxy.Link.fresh () in
+          let reached =
+            Rig_support.interrupted ~landing:Signal n (fun () ->
+                made := r1.rail peer ~send ~receive:send)
+          in
+          let taken = Rig_remote_proxy.Link.fresh () - before - 1 in
+          let msg = strf "%s, a Ctrl-C at allocation %d" what n in
+          (match !made with
+          | Ok _ -> ()
+          | Error why when !made != no_rail -> failf "%s: Error %s" msg why
+          | Error _ -> equal ~msg:(msg ^ ", ids taken") int 0 taken);
+          reached))
+    [ ("a rail with this process", None); ("a rail between machines", Some r2) ];
+  is_none ~msg:"the job's failure" (Rig_remote.failed j)
+
+(* A rail between machines cut at each of its allocations by an exception
+   there and at each one after it: the job goes on, and a rail after it is
+   made. *)
+let raise_in_rail () =
+  with_job ~n:2 @@ fun j _ ->
+  let r1, r2 = two_hosts j in
+  walk (fun n ->
+      let reached =
+        Rig_support.interrupted n (fun () -> ignore (rail r1 (Some r2)))
+      in
+      let msg what = strf "from allocation %d, %s" n what in
+      is_none ~msg:(msg "the job's failure") (Rig_remote.failed j);
+      is_ok ~msg:(msg "a rail after it") (rail r1 (Some r2));
+      reached);
+  is_none ~msg:"the job's failure" (Rig_remote.failed j)
+
 (* Launched jobs *)
 
 (* Runs support/launched.exe in [mode] with a landing at each allocation of
@@ -330,13 +398,19 @@ let () =
              test
                "a first devices in a first devices that closes a device answers"
                close_in_first;
-             test "a connect after a connect cut by an exception is not refused"
-               raise_in_connect;
-             test "a connect after a connect inside a lock is not refused"
-               connect_inside_lock;
              test "a close in a close returns" close_in_close;
              test "an exit in a close reports the job's end" exit_in_close;
              test "an exception in a close reports the close at the exit"
                raise_in_close;
+           ];
+         group ~timeout:60. "a cut at any allocation"
+           [
+             test "a connect after a connect cut by an exception is not refused"
+               raise_in_connect;
+             test "a connect after a connect inside a lock is not refused"
+               connect_inside_lock;
+             test "a Ctrl-C in a rail lands before or after it" break_in_rail;
+             test "a rail cut by an exception leaves the job going"
+               raise_in_rail;
            ];
        ])

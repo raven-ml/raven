@@ -67,9 +67,11 @@ let request m q =
 
 (* Rails *)
 
-(* The rail function of [m]'s host. *)
+(* The rail function of [m]'s host. A function of a capability, it blocks
+   signals as rig's do, so a Ctrl-C lands once both machines hold the rail. *)
 let rail m (peer : Rig_remote_abi.host option) ~send ~receive :
     (Rig_remote_abi.rail, string) result =
+  Agent.masked @@ fun () ->
   (match peer with
   | Some h when h.machine = m.name ->
       invalid_arg "Rig_remote_abi.host.rail: the peer is this host"
@@ -127,7 +129,12 @@ let rail m (peer : Rig_remote_abi.host option) ~send ~receive :
                   Ok rail
               | Error why ->
                   Link.drop m.link id;
-                  Error why)))
+                  Error why
+              | exception exn ->
+                  (* [m'] may hold its half, which a drop of none would fail
+                     the job for: only [m]'s goes. *)
+                  Link.drop m.link id;
+                  raise exn)))
 
 (* Opening *)
 
