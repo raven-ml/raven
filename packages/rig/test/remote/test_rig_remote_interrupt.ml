@@ -178,6 +178,67 @@ let close_in_first () =
   greater ~msg:"devices refused" int ~than:0 !refusals;
   greater ~msg:"devices closed" int ~than:0 !closes
 
+(* Connects *)
+
+(* An address of the loopback where nothing listens: a connect to it answers
+   [Error] once it has made the process's job, and gives the job back. *)
+let with_silent_address f =
+  let fd = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
+  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+  Unix.bind fd (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
+  match Unix.getsockname fd with
+  | Unix.ADDR_INET (_, p) -> f ("127.0.0.1", p)
+  | Unix.ADDR_UNIX _ -> fail "no port"
+
+(* A connect after a connect that raised: it answers [Error] for an address
+   where nothing listens, which it can only once the process's job of the
+   connect that raised is not open. *)
+let connects_after msg =
+  with_silent_address @@ fun at ->
+  match Rig_remote.connect ~key:(as_key key) [ at ] with
+  | Ok j ->
+      Rig_remote.close j;
+      failf "%s: a connect to %s:%d answered Ok" msg (fst at) (snd at)
+  | Error _ -> ()
+  | exception Invalid_argument why ->
+      failf "%s: a connect after it raised Invalid_argument %S" msg why
+
+(* What a connect answers until it returns. *)
+let not_returned : (Rig_remote.t, string) result = Error "not returned"
+
+(* A connect cut at each of its allocations by an exception there and at each
+   one after it, as an asynchronous exception's handlers meet it again: a
+   connect after it is not refused. *)
+let raise_in_connect () =
+  walk (fun n ->
+      let made = ref not_returned in
+      let reached =
+        with_agents ~n:2 @@ fun agents ->
+        Rig_support.interrupted n (fun () ->
+            made :=
+              Rig_remote.connect ~key:(as_key key) (List.map address agents))
+      in
+      (match !made with Ok j -> Rig_remote.close j | Error _ -> ());
+      connects_after (strf "from allocation %d" n);
+      reached)
+
+(* A connect from a callback inside a lock of rig's on its thread raises
+   Invalid_argument where it opens the job's first host: a connect after it is
+   not refused. *)
+let connect_inside_lock () =
+  with_agents @@ fun agents ->
+  (match
+     Rig_support.inside_lock (fun () ->
+         Rig_remote.connect ~key:(as_key key) (List.map address agents))
+   with
+  | Ok j ->
+      Rig_remote.close j;
+      fail "a connect inside a lock answered Ok"
+  | Error why -> failf "a connect inside a lock answered Error %S" why
+  | exception Invalid_argument why ->
+      starts_with ~msg:"the refusal" ~affix:"Rig.open_: called from" why);
+  connects_after "after a connect inside a lock"
+
 (* Launched jobs *)
 
 (* Runs support/launched.exe in [mode] with a landing at each allocation of
@@ -269,6 +330,10 @@ let () =
              test
                "a first devices in a first devices that closes a device answers"
                close_in_first;
+             test "a connect after a connect cut by an exception is not refused"
+               raise_in_connect;
+             test "a connect after a connect inside a lock is not refused"
+               connect_inside_lock;
              test "a close in a close returns" close_in_close;
              test "an exit in a close reports the job's end" exit_in_close;
              test "an exception in a close reports the close at the exit"

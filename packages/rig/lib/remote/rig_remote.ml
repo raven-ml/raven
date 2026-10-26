@@ -382,6 +382,11 @@ let watch j =
   in
   ignore (Agent.spawn loop ())
 
+external reraise : exn -> 'a = "%reraise"
+
+(* The reason a start fails its job with when it raises. *)
+let start_raised = "the controller raised while it started the job"
+
 let check_agents agents =
   if agents = [] then invalid_arg "Rig_remote.connect: no agent";
   if List.length (List.sort_uniq compare agents) <> List.length agents then
@@ -401,7 +406,7 @@ let start ~fn ~key ~report agents =
       | Link.Failed _ | Link.Closed -> ())
   | _ -> ());
   let job = Link.job () in
-  let started =
+  let started () =
     match dial ~key job [] 1 agents with
     | Error _ as e -> e
     | Ok ms ->
@@ -409,16 +414,29 @@ let start ~fn ~key ~report agents =
           (fun () -> ms)
           (Result.bind (join job agents ms) (open_hosts job ms))
   in
-  match started with
+  (* From the job's making on, an exception fails and closes the job, which
+     would otherwise refuse every later start: a refusal of rig's, such as
+     [Rig.open_host]'s inside a lock, a thread the system does not give, or
+     an asynchronous exception. The handler allocates nothing before the
+     close. [current] may keep the job, which then reads as failed. *)
+  match
+    match started () with
+    | Error _ as e -> e
+    | Ok ms ->
+        let j = { job; machines = ms; report } in
+        Atomic.set current (Some j);
+        watch j;
+        Ok j
+  with
   | Error _ as e ->
       (* The agents reached read the abort before the caller may exit. *)
       Link.close job;
       e
-  | Ok ms ->
-      let j = { job; machines = ms; report } in
-      Atomic.set current (Some j);
-      watch j;
-      Ok j
+  | Ok _ as r -> r
+  | exception e ->
+      Link.fail job start_raised;
+      Link.close job;
+      reraise e
 
 let connect ~key agents =
   Agent.masked @@ fun () ->
