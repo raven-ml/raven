@@ -12,7 +12,10 @@
    starts, and a function of the driver's signature that takes the held lock
    again is refused at the take. Between locks the call runs as any call
    does. Through rig, a call from such a callback raises Invalid_argument
-   inside a lock and runs between locks, and the device is not lost. *)
+   inside a lock and runs between locks, and the device is not lost. Other
+   walks end the call with an exception at each allocation, as an
+   asynchronous exception does, and check that the driver's state outlasts
+   it whole. *)
 
 open Windtrap
 module C = Rig_cuda
@@ -163,6 +166,28 @@ let free_in_map_host () =
       reached);
   Rig_support.covered seen
 
+(* An exception at any allocation *)
+
+(* [cut attempt] runs [attempt n] from [n = 1] until it no longer reaches
+   its [n]-th allocation. *)
+let rec cut ?(n = 1) attempt = if attempt n then cut ~n:(n + 1) attempt
+
+(* An open that an exception ends at any allocation leaves the GPU to the
+   next open. *)
+let open_cut () =
+  S.with_driver ignore;
+  let opener = C.gpu 0 and word = H.word () in
+  cut (fun n ->
+      let made = ref (Error "not made") in
+      let reached =
+        Rig_support.interrupted n (fun () -> made := opener.make ~word)
+      in
+      Result.iter (fun g -> C.stop g ~fault:None) !made;
+      (match opener.make ~word with
+      | Ok g -> C.stop g ~fault:None
+      | Error why -> failf "from allocation %d, the open after: %s" n why);
+      reached)
+
 (* Through rig *)
 
 (* [walk_rig attempt] is {!walk} on a device that rig opened, which it
@@ -274,6 +299,8 @@ let () =
   exit
     (run "rig_cuda interrupt"
        [
+         group ~timeout "an exception at any allocation"
+           [ test "an open leaves the GPU to the next open" open_cut ];
          group ~timeout "a call from a callback at any allocation"
            [
              test "an entry in an entry of its image, refused inside its lock"

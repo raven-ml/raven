@@ -591,74 +591,96 @@ let open_ ~word i =
              (driver ()))
     | _, 0, _, _, _, _, _ ->
         Error (strf "the GPU lacks unified addressing under %s" (driver ()))
-    | _, _, major, minor, registers, watchdog, budget ->
+    | _, _, major, minor, registers, watchdog, budget -> (
         let held = g.held.(i) in
-        let* () = claim held in
-        let start, bytes = words () in
-        let w = Nativeint.to_int word in
-        let own = registers = 0 || w < start || w + 8 > start + bytes in
-        let self = open_device d word own in
-        if self < 0 then begin
-          Atomic.set held unheld;
-          Error
-            ("opening the GPU's primary context and streams: " ^ error (-self))
-        end
-        else begin
-          let context = context_of self in
-          enable_peers g i context;
-          if not own then note_words ();
-          let kind = if own then Own_word else Word in
-          let word =
-            region i kind ~address:(word_at self) ~handle:(word_address self)
-          in
-          let arch = strf "sm_%d%d" major minor in
-          let params_bound =
-            if major >= large_params_major then large_params else small_params
-          in
-          let images = Atomic.make [] in
-          let pending = g.pending.(i) in
-          let guard = Mutex.create () and stopped = Atomic.make false in
-          let graph = graph context guard stopped images pending in
-          let cap = { Rig_cuda_abi.symbol = find_symbol; graph } in
-          let facts =
-            {
-              Rig_edge.arch;
-              budget;
-              queues = [ compute; copy ];
-              copy_engine = Some 1;
-              completion = Store;
-              (* A submission's waits go to its stream in batches, as many
-                 as it carries. *)
-              waits = { stores = true; hosts = true };
-              may_block = true;
-              hang_ms = (if watchdog = 0 then Some hang_ms else None);
-              maps_host = registers <> 0;
-              host_addresses = false;
-              alignment = allocation_alignment;
-              capability = Rig_cuda_abi.declare cap;
-              word;
-              bus = List.nth_opt g.buses i;
-              edge = Nativeint.of_int self;
-            }
-          in
-          let reached = g.reached.(i) in
-          Ok
-            {
-              self;
-              context;
-              gpu = i;
-              device = d;
-              reached;
-              facts;
-              held;
-              images;
-              pending;
-              guard;
-              stopped;
-              cap;
-              params_bound;
-            }
-        end
+        let opened = ref (-1) in
+        (* An exception after the claim gives it back, stopping the device if
+           one was made: a claim kept would refuse the GPU for good. Nothing
+           allocates between the claim and the handler, between the device's
+           making and its note in [opened], or in the handler. *)
+        match claim held with
+        | Error why -> Error why
+        | Ok () -> (
+            match
+              let start, bytes = words () in
+              let w = Nativeint.to_int word in
+              let own = registers = 0 || w < start || w + 8 > start + bytes in
+              let self = open_device d word own in
+              opened := self;
+              if self < 0 then begin
+                let e =
+                  Error
+                    ("opening the GPU's primary context and streams: "
+                    ^ error (-self))
+                in
+                Atomic.set held unheld;
+                e
+              end
+              else begin
+                let context = context_of self in
+                enable_peers g i context;
+                if not own then note_words ();
+                let kind = if own then Own_word else Word in
+                let word =
+                  region i kind ~address:(word_at self)
+                    ~handle:(word_address self)
+                in
+                let arch = strf "sm_%d%d" major minor in
+                let params_bound =
+                  if major >= large_params_major then large_params
+                  else small_params
+                in
+                let images = Atomic.make [] in
+                let pending = g.pending.(i) in
+                let guard = Mutex.create () and stopped = Atomic.make false in
+                let graph = graph context guard stopped images pending in
+                let cap = { Rig_cuda_abi.symbol = find_symbol; graph } in
+                let facts =
+                  {
+                    Rig_edge.arch;
+                    budget;
+                    queues = [ compute; copy ];
+                    copy_engine = Some 1;
+                    completion = Store;
+                    (* A submission's waits go to its stream in batches, as
+                       many as it carries. *)
+                    waits = { stores = true; hosts = true };
+                    may_block = true;
+                    hang_ms = (if watchdog = 0 then Some hang_ms else None);
+                    maps_host = registers <> 0;
+                    host_addresses = false;
+                    alignment = allocation_alignment;
+                    capability = Rig_cuda_abi.declare cap;
+                    word;
+                    bus = List.nth_opt g.buses i;
+                    edge = Nativeint.of_int self;
+                  }
+                in
+                let reached = g.reached.(i) in
+                Ok
+                  {
+                    self;
+                    context;
+                    gpu = i;
+                    device = d;
+                    reached;
+                    facts;
+                    held;
+                    images;
+                    pending;
+                    guard;
+                    stopped;
+                    cap;
+                    params_bound;
+                  }
+              end
+            with
+            | r -> r
+            | exception e ->
+                let self = !opened in
+                if self < 0 || stop_device self then Atomic.set held unheld
+                else Atomic.set held (-self);
+                reraise e))
 
 (* Facts *)
 
