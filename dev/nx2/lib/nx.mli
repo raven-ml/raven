@@ -262,7 +262,9 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     same handle twice, two donations of one value or a handle and one a
     movement passed on, are read as the donor beside its handle is: as [x]
     was when called, and [x] dies once. So [add (donate x) x] is [x + x], and
-    [mul h h] is [x * x] for [h = donate x].
+    [mul h h] is [x * x] for [h = donate x]. Where they reach different
+    operations of a call, which run in an order the call fixes, one that
+    reads [x] or a handle after another consumed it raises naming the call.
 
     An interpretation that receives an operation ({!Prim.interpret}) reads
     each handle as its arrays and kills nothing: [x] lives on, and its memory

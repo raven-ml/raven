@@ -181,22 +181,21 @@ let test_broadcast_refused () =
 
 (* A function of several operations reads its handles as live values over
    their memory, shared, and kills nothing: the donor beside its handle, one
-   donation twice, an einsum of three operands, a complex value of float32
-   parts at complex128, a slice and a set at positions held in data. The
-   donor keeps its elements, and its handle reaches a later consumer. *)
+   donation twice, an einsum of three operands, a slice and a set at
+   positions held in data. The donor keeps its elements, and its handle
+   reaches a later consumer. *)
 let test_several_reads () =
   let x = fresh [| 1.; 2. |] in
   let h = Nx.donate x in
-  equal ~msg:"the donor beside its handle" (array float_exact) [| 5. |]
-    (elements (Nx.vdot h x));
-  equal ~msg:"one donation twice" (array float_exact) [| 5. |]
-    (elements (Nx.vdot h h));
-  let z = Nx.complex Nx.complex128 ~re:h ~im:h in
-  equal ~msg:"two parts of one donation" (array float_exact)
-    [| 1.; 2.; 1.; 2. |]
-    (Array.append
-       (elements (Nx.real Nx.float32 z))
-       (elements (Nx.imag Nx.float32 z)));
+  let column v = Nx.reshape [| 2; 1 |] v in
+  let solution a b =
+    let s, _, _, _ = Nx.lstsq (column a) (column b) in
+    elements s
+  in
+  let expected = solution (fresh [| 1.; 2. |]) (fresh [| 1.; 2. |]) in
+  equal ~msg:"the donor beside its handle" (array float_exact) expected
+    (solution h x);
+  equal ~msg:"one donation twice" (array float_exact) expected (solution h h);
   equal ~msg:"the donor" (array float_exact) [| 1.; 2. |] (elements x);
   equal ~msg:"its handle's consumer" (array float_exact) [| 2.; 4. |]
     (elements (Nx.add h x));
@@ -944,15 +943,17 @@ let consume_sys x =
   | ys -> Ok ys
   | exception Invalid_argument _ -> Error ()
 
-(* A function of several operations reading its donor beside its handle:
-   it kills nothing, and reads the elements as they were or raises where a
-   consumer overlaps it. *)
+(* A function of several operations reading its handle, the number of
+   distinct keys: it kills nothing, and reads the elements as they were or
+   raises where a consumer overlaps it. *)
 let composite_ref m =
   if m.dead then Error ()
-  else Ok [| Array.fold_left (fun s v -> s +. (v *. v)) 0. m.xs |]
+  else
+    let distinct = List.sort_uniq compare (Array.to_list m.xs) in
+    Ok [| Float.of_int (List.length distinct) |]
 
 let composite_sys x =
-  match elements (Nx.vdot (Nx.donate x) x) with
+  match elements (Nx.cast f32 (Nx.unique (Nx.donate x)).count) with
   | ys -> Ok ys
   | exception Invalid_argument _ -> Error ()
 
@@ -1121,6 +1122,95 @@ let test_dies_at_the_call () =
   dies "Nx.trace" (fun d -> Nx.trace d);
   dies "Nx.qr" (fun d -> fst (Nx.qr d));
   dies "Nx.matmul" (fun d -> Nx.matmul d (square ()))
+
+(* A call whose operand reaches one operation, through movements, consumes
+   it, whatever else the call computes from that operation's result. *)
+let test_one_reader_consumes () =
+  let dies : type v s.
+      string ->
+      (unit -> (v, s, Nx.host) Nx.t) ->
+      ((v, s, Nx.host) Nx.t -> unit) ->
+      unit =
+   fun name make f ->
+    let x = make () in
+    let d = Nx.donate x in
+    f d;
+    let sub = dead_in "Nx.copy" x name in
+    raises_match ~msg:(name ^ "'s donor") (Exn.invalid_arg ~substring:sub)
+      (fun () -> Nx.copy x);
+    raises_match ~msg:(name ^ "'s handle") (Exn.invalid_arg ~substring:sub)
+      (fun () -> Nx.copy d)
+  in
+  let square () = fresh_at [| 2; 2 |] [| 2.; 0.; 0.; 2. |] in
+  let complex () = Nx.complex Nx.complex64 ~re:(square ()) ~im:(square ()) in
+  let counts () = Nx.cast Nx.int64 (fresh [| 1.; 2. |]) in
+  dies "Nx.square" square (fun d -> ignore (Nx.square d));
+  dies "Nx.isnan" square (fun d -> ignore (Nx.isnan d));
+  dies "Nx.mean" square (fun d -> ignore (Nx.mean d));
+  dies "Nx.var" square (fun d -> ignore (Nx.var d));
+  dies "Nx.std" square (fun d -> ignore (Nx.std d));
+  dies "Nx.logmeanexp" square (fun d -> ignore (Nx.logmeanexp d));
+  dies "Nx.ewma" square (fun d -> ignore (Nx.ewma ~alpha:0.5 d));
+  dies "Nx.roll" square (fun d -> ignore (Nx.roll 1 d));
+  dies "Nx.cholesky" square (fun d -> ignore (Nx.cholesky d));
+  dies "Nx.lu" square (fun d -> ignore (Nx.lu d));
+  dies "Nx.eigh" square (fun d -> ignore (Nx.eigh d));
+  dies "Nx.det" square (fun d -> ignore (Nx.det d));
+  dies "Nx.slogdet" square (fun d -> ignore (Nx.slogdet d));
+  dies "Nx.inv" square (fun d -> ignore (Nx.inv d));
+  dies "Nx.pinv" square (fun d -> ignore (Nx.pinv d));
+  dies "Nx.vector_norm" square (fun d -> ignore (Nx.vector_norm d));
+  dies "Nx.matrix_norm" square (fun d -> ignore (Nx.matrix_norm d));
+  dies "Nx.quantile" square (fun d -> ignore (Nx.quantile [| 0.5 |] d));
+  dies "Nx.array_equal" square (fun d ->
+      ignore (Nx.array_equal d (square ())));
+  dies "Nx.positions" counts (fun d -> ignore (Nx.positions d));
+  dies "Nx.combine_patches"
+    (fun () -> fresh_at [| 1; 2 |] [| 1.; 2. |])
+    (fun d ->
+      ignore
+        (Nx.combine_patches ~output_size:[| 2 |] ~kernel_size:[| 1 |]
+           ~stride:[| 1 |] ~dilation:[| 1 |] ~padding:[| (0, 0) |] d));
+  dies "Nx.fft" complex (fun d -> ignore (Nx.fft d));
+  dies "Nx.ifft" complex (fun d -> ignore (Nx.ifft d));
+  dies "Nx.rfft" square (fun d -> ignore (Nx.rfft Nx.complex64 d));
+  dies "Nx.irfft" complex (fun d -> ignore (Nx.irfft Nx.float32 d));
+  let vector () = fresh [| 1.; 2. |] in
+  let ints () = Nx.cast Nx.int64 (fresh [| 0.; 1.; 2. |]) in
+  let pair ~q ~k = { Nx.q; k; len = ints (); tq = 2 } in
+  dies "Nx.vdot" vector (fun d -> ignore (Nx.vdot d (vector ())));
+  dies "Nx.vdot" vector (fun d -> ignore (Nx.vdot (vector ()) d));
+  dies "Nx.solve" square (fun d -> ignore (Nx.solve d (vector ())));
+  dies "Nx.solve" vector (fun d -> ignore (Nx.solve (square ()) d));
+  dies "Nx.solve_triangular" square (fun d ->
+      ignore (Nx.solve_triangular d (Nx.reshape [| 2; 1 |] (vector ()))));
+  dies "Nx.solve_triangular" vector (fun d ->
+      ignore (Nx.solve_triangular (square ()) (Nx.reshape [| 2; 1 |] d)));
+  dies "Nx.searchsorted" vector (fun d ->
+      ignore (Nx.searchsorted ~side:`Left d (vector ())));
+  dies "Nx.searchsorted" vector (fun d ->
+      ignore (Nx.searchsorted ~side:`Left (vector ()) d));
+  dies "Nx.causal" ints (fun d -> ignore (Nx.causal (pair ~q:d ~k:(ints ()))));
+  dies "Nx.causal" ints (fun d -> ignore (Nx.causal (pair ~q:(ints ()) ~k:d)));
+  dies "Nx.complex" vector (fun d ->
+      ignore (Nx.complex Nx.complex128 ~re:d ~im:(vector ())));
+  let signal () = fresh_at [| 8 |] (Array.init 8 Float.of_int) in
+  let taper () = fresh [| 1.; 2.; 2.; 1. |] in
+  dies "Nx.stft" signal (fun d -> ignore (Nx.stft Nx.complex64 ~window:4 d));
+  dies "Nx.stft" taper (fun d ->
+      ignore (Nx.stft Nx.complex64 ~window:4 ~win:d (signal ())));
+  let spectrum () = Nx.stft Nx.complex64 ~window:4 ~step:2 (signal ()) in
+  dies "Nx.istft" spectrum (fun d ->
+      ignore (Nx.istft Nx.float32 ~window:4 ~step:2 d))
+
+(* Where a call's operands reach different operations, a donor beside its
+   own handle raises naming the call once the handle's operation consumed
+   it: here [q]'s sum consumes it before [k]'s comparison reads it. *)
+let test_beside_elsewhere () =
+  let p = Nx.cast Nx.int64 (fresh [| 0.; 1.; 2. |]) in
+  let len = Nx.cast Nx.int64 (fresh [| 3.; 3.; 3. |]) in
+  let pair = { Nx.q = Nx.donate p; k = p; len; tq = 2 } in
+  invalid ~sub:(dead_in "Nx.causal" p "Nx.causal") (fun () -> Nx.causal pair)
 
 (* Every public function that takes a value, called by one table of cases. A
    case makes fresh operands, passes its operand [i] as [d i x], and prints the
@@ -2197,6 +2287,10 @@ let () =
                test_lent;
              test "a donor dies naming the function the user called"
                test_dies_at_the_call;
+             test "an operand one operation reads is consumed"
+               test_one_reader_consumes;
+             test "a donor beside its handle in another operation raises"
+               test_beside_elsewhere;
              test_dead_names;
              test_donated;
              test "a captured array lives" test_captured;

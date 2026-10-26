@@ -949,7 +949,6 @@ let pad widths v x =
 
 let roll ?axis:along k x =
   let by = "Nx.roll" in
-  let x = Donate.read ~by x in
   let y, a =
     match along with
     | None -> (move ~by (Reshape [| numel x |]) x, 0)
@@ -1886,9 +1885,7 @@ let predicate (type v s d) ~by
 (* A NaN is the one value unequal to itself. *)
 let isnan_by ~by x = comparison ~by (Compare Not_equal) x x
 
-let isnan x =
-  let by = "Nx.isnan" in
-  isnan_by ~by (Donate.read ~by x)
+let isnan x = isnan_by ~by:"Nx.isnan" x
 
 let isinf x = predicate ~by:"Nx.isinf" (fun dt x -> infinite dt x) Or false x
 let isfinite x = predicate ~by:"Nx.isfinite" (fun dt x -> finite dt x) And true x
@@ -1913,7 +1910,6 @@ let float_map (type v s d) ~by (xs : (v, s, d) t list)
 
 let square x =
   let by = "Nx.square" in
-  let x = Donate.read ~by x in
   binary ~by (Binary Mul) x x
 
 let rsqrt (type v s d) (x : (v, s, d) t) : (v, s, d) t =
@@ -2201,7 +2197,6 @@ let int_mean (type v s r d) ~by (acc : (int64, r) D.t) s axes n
 let mean (type v s d) ?axes ?(keepdims = false) (x : (v, s, d) t) :
     (v, s, d) t =
   let by = "Nx.mean" in
-  let x = Donate.read ~by x in
   let s = shape x and dt = dtype x in
   let axes = reduced_axes ~by x axes in
   let n = reduced_count s axes in
@@ -2260,12 +2255,10 @@ let spread (type s d) ~by ~root ?axes ?(keepdims = false) ?(ddof = 0)
   kept ~by ~keepdims s axes y
 
 let var ?axes ?keepdims ?ddof x =
-  let by = "Nx.var" in
-  spread ~by ~root:false ?axes ?keepdims ?ddof (Donate.read ~by x)
+  spread ~by:"Nx.var" ~root:false ?axes ?keepdims ?ddof x
 
 let std ?axes ?keepdims ?ddof x =
-  let by = "Nx.std" in
-  spread ~by ~root:true ?axes ?keepdims ?ddof (Donate.read ~by x)
+  spread ~by:"Nx.std" ~root:true ?axes ?keepdims ?ddof x
 
 let logsumexp ?axes ?(keepdims = false) x =
   let by = "Nx.logsumexp" in
@@ -2277,7 +2270,6 @@ let logsumexp ?axes ?(keepdims = false) x =
 let logmeanexp (type s d) ?axes ?(keepdims = false) (x : (float, s, d) t) :
     (float, s, d) t =
   let by = "Nx.logmeanexp" in
-  let x = Donate.read ~by x in
   let s = shape x and dt = dtype x in
   let axes = reduced_axes ~by x axes in
   let n = Float.of_int (reduced_count s axes) in
@@ -2322,7 +2314,6 @@ let average (type s d) ~by ~alpha axis (x : (float, s, d) t) : (float, s, d) t =
 
 let ewma ?axis:along ~alpha x =
   let by = "Nx.ewma" in
-  let x = Donate.read ~by x in
   if not (alpha > 0. && alpha <= 1.) then
     invalid_argf "%s: alpha %g is outside (0, 1]" by alpha;
   match along with
@@ -2470,9 +2461,7 @@ let paired (type c a d) ~by (dt : (Complex.t, c) D.t) s
 let complex_of (type c a d) ~by (dt : (Complex.t, c) D.t)
     ~(re : (float, a, d) t) ~(im : (float, a, d) t) : (Complex.t, c, d) t =
   let s = Prim.broadcast_shape ~by (shape re) (shape im) in
-  alive_all ~by [ Any re; Any im ];
-  (* Each part's cast and the assembly read the operands. *)
-  paired ~by dt s ~re:(Donate.lent re) ~im:(Donate.lent im)
+  paired ~by dt s ~re ~im
 
 let complex dt ~re ~im = complex_of ~by:"Nx.complex" dt ~re ~im
 
@@ -2614,11 +2603,7 @@ let vdot_by ~by a b =
   Contraction.contract ~by (dtype a) (Pattern.v "k, k -> | k")
     (conjugate_by ~by (flat a)) (flat b)
 
-let vdot a b =
-  let by = "Nx.vdot" in
-  let a = Donate.read ~by a in
-  let b = Donate.read ~by b in
-  vdot_by ~by a b
+let vdot a b = vdot_by ~by:"Nx.vdot" a b
 
 (* Linear algebra *)
 
@@ -2722,7 +2707,6 @@ let lower_of ~by triangle a =
 
 let cholesky ?(triangle = Lower) a =
   let by = "Nx.cholesky" in
-  let a = Donate.read ~by a in
   square_matrices ~by a;
   let a = lower_of ~by triangle a in
   routine ~by (Cholesky { triangle; a })
@@ -2734,7 +2718,6 @@ let qr ?(factors = Reduced) a =
 
 let lu a =
   let by = "Nx.lu" in
-  let a = Donate.read ~by a in
   matrices ~by a;
   let f, _, perm = routine ~by (Lu a) in
   let m = dim (-2) a and n = dim (-1) a in
@@ -2778,9 +2761,7 @@ let eigh_by ~by ?(vectors = true) ?(triangle = Lower) a =
     let w = routine ~by (Eigh_values a') in
     (w, no_vectors ~by a)
 
-let eigh ?vectors ?triangle a =
-  let by = "Nx.eigh" in
-  eigh_by ~by ?vectors ?triangle (Donate.read ~by a)
+let eigh ?vectors ?triangle a = eigh_by ~by:"Nx.eigh" ?vectors ?triangle a
 
 (* The diagonal of [lu]'s factors, and the function that negates [x] where
    each matrix's rows were interchanged an odd number of times and makes a
@@ -2803,7 +2784,6 @@ let pivots ~by a =
 
 let det a =
   let by = "Nx.det" in
-  let a = Donate.read ~by a in
   square_matrices ~by a;
   let d, signed = pivots ~by a in
   signed (reduction ~by Prod ~axes:[ -1 ] d)
@@ -2824,7 +2804,6 @@ let phase (type v s d) ~by (z : (v, s, d) t) : (v, s, d) t =
 
 let slogdet a =
   let by = "Nx.slogdet" in
-  let a = Donate.read ~by a in
   square_matrices ~by a;
   let d, signed = pivots ~by a in
   let sign = signed (reduction ~by Prod ~axes:[ -1 ] (phase ~by d)) in
@@ -2851,8 +2830,6 @@ let is_complex (type v s d) (x : (v, s, d) t) =
 
 let solve_triangular ?(triangle = Lower) ?transpose ?(unit_diag = false) a b =
   let by = "Nx.solve_triangular" in
-  let a = Donate.read ~by a in
-  let b = Donate.read ~by b in
   square_matrices ~by a;
   let a, b, back = columns ~by ~rows:(dim (-1) a) a b in
   let solved adjoint b =
@@ -2882,15 +2859,10 @@ let solve_by ~by a b =
   in
   back (solved Upper false (solved Lower true b))
 
-let solve a b =
-  let by = "Nx.solve" in
-  let a = Donate.read ~by a in
-  let b = Donate.read ~by b in
-  solve_by ~by a b
+let solve a b = solve_by ~by:"Nx.solve" a b
 
 let inv a =
   let by = "Nx.inv" in
-  let a = Donate.read ~by a in
   square_matrices ~by a;
   let n = dim (-1) a in
   solve_by ~by a (broadcast ~by (shape a) (eye_by ~by (dtype a) n))
@@ -2956,13 +2928,15 @@ let lstsq ?rtol a b =
 
 let pinv ?rtol ?(hermitian = false) a =
   let by = "Nx.pinv" in
-  let a = Donate.read ~by a in
   if hermitian then square_matrices ~by a else matrices ~by a;
   let m = dim (-2) a and n = dim (-1) a in
   let tol = cutoff ~by rtol a in
-  if Stdlib.min m n = 0 then
+  if Stdlib.min m n = 0 then begin
+    (* No operation reads [a], so it is checked here. *)
+    Prim.alive ~by a;
     let dt = dtype a in
     beside ~by a (fill ~by dt (Array.append (batch a) [| n; m |]) (D.zero dt))
+  end
   else if hermitian then begin
     let w, v = eigh_by ~by a in
     (* An eigenvalue's reciprocal keeps its sign: its magnitude decides. *)
@@ -3032,7 +3006,6 @@ let carried (type v s d) ~by (x : (v, s, d) t)
 
 let vector_norm ?(ord = 2.) ?axes:l ?(keepdims = false) x =
   let by = "Nx.vector_norm" in
-  let x = Donate.read ~by x in
   let along =
     match l with None -> List.init (ndim x) Fun.id | Some l -> axes ~by x l
   in
@@ -3046,7 +3019,6 @@ let vector_norm ?(ord = 2.) ?axes:l ?(keepdims = false) x =
 
 let matrix_norm ?(ord = `Fro) ?(keepdims = false) x =
   let by = "Nx.matrix_norm" in
-  let x = Donate.read ~by x in
   matrix ~by x;
   let r = ndim x - 2 and c = ndim x - 1 in
   (* The greatest or least sum of a line's magnitudes, [summed] along it. *)
@@ -3262,8 +3234,6 @@ let search ~by side s v =
 
 let searchsorted ~side s v =
   let by = "Nx.searchsorted" in
-  let s = Donate.read ~by s in
-  let v = Donate.read ~by v in
   keyed ~by s;
   if ndim s = 2 && (ndim v <> 2 || Prim.dim v 1 <> Prim.dim s 1) then
     invalid_argf "%s: rows %a sought among rows %a" by pp_value v pp_value s;
@@ -3358,7 +3328,6 @@ let unique ?size keys =
    the total. A negative count counts zero. *)
 let positions ?size c =
   let by = "Nx.positions" in
-  let c = Donate.read ~by c in
   if ndim c <> 1 then invalid_argf "%s: %a is not 1-d" by pp_value c;
   integer_or_boolean ~by (dtype c);
   sized ~by size;
@@ -3400,7 +3369,6 @@ let vector ~by dt vs =
    map interpolating between them in the compute dtype. *)
 let quantile (type s d) ?axis:along qs (x : (float, s, d) t) : (float, s, d) t =
   let by = "Nx.quantile" in
-  let x = Donate.read ~by x in
   Array.iter
     (fun q ->
       if not (q >= 0. && q <= 1.) then
@@ -3524,9 +3492,11 @@ let histogram (type s d) ?weights
 
 let array_equal a b =
   let by = "Nx.array_equal" in
-  let a = Donate.read ~by a in
-  let b = Donate.read ~by b in
-  if not (same_shape a b) then scalar_beside ~by a D.Bool false
+  if not (same_shape a b) then begin
+    (* No operation reads them, so they are checked here. *)
+    alive_all ~by [ Any a; Any b ];
+    scalar_beside ~by a D.Bool false
+  end
   else truth ~by Min (comparison ~by (Compare Equal) a b)
 
 let map_item f x =
@@ -3710,9 +3680,8 @@ let combine_patches_by ~by ~output_size ~kernel_size ~stride ~dilation ~padding
   cast_by ~by dt (Eval.eval ~by (Value.Fold { shape; pad; x = y }))
 
 let combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding p =
-  let by = "Nx.combine_patches" in
-  combine_patches_by ~by ~output_size ~kernel_size ~stride ~dilation ~padding
-    (Donate.read ~by p)
+  combine_patches_by ~by:"Nx.combine_patches" ~output_size ~kernel_size ~stride
+    ~dilation ~padding p
 
 
 
@@ -4536,12 +4505,9 @@ type 'd pair = { q : 'd int64_t; k : 'd int64_t; len : 'd int64_t; tq : int }
 
 let causal p =
   let by = "Nx.causal" in
-  let q = Donate.read ~by p.q in
-  let k = Donate.read ~by p.k in
-  let len = Donate.read ~by p.len in
-  let last = scalar_binary ~by (Binary Sub) len (Int64.of_int p.tq) in
-  let seen = binary ~by (Binary Add) q last in
-  comparison ~by (Compare Less_equal) k seen
+  let last = scalar_binary ~by (Binary Sub) p.len (Int64.of_int p.tq) in
+  let seen = binary ~by (Binary Add) p.q last in
+  comparison ~by (Compare Less_equal) p.k seen
 
 (* A mask or a score runs once on stand-ins for a pair's values, under an
    interpretation that records each map it receives as cells of one list, so
@@ -5057,12 +5023,10 @@ let complex_by ~by direction ?axes ?s ?(norm = Backward) x =
   scaled_parts ~by (factor norm ~forward n) y
 
 let fft ?axes ?s ?norm x =
-  let by = "Nx.fft" in
-  complex_by ~by Nx_kernel.Forward ?axes ?s ?norm (Donate.read ~by x)
+  complex_by ~by:"Nx.fft" Nx_kernel.Forward ?axes ?s ?norm x
 
 let ifft ?axes ?s ?norm x =
-  let by = "Nx.ifft" in
-  complex_by ~by Nx_kernel.Inverse ?axes ?s ?norm (Donate.read ~by x)
+  complex_by ~by:"Nx.ifft" Nx_kernel.Inverse ?axes ?s ?norm x
 
 let rfft_by ~by dt ?axes ?s ?(norm = Backward) x =
   let axes, sizes = transform_axes ~by x axes s in
@@ -5084,9 +5048,7 @@ let rfft_by ~by dt ?axes ?s ?(norm = Backward) x =
   in
   cast_by ~by dt (scaled_parts ~by (factor norm ~forward:true n) y)
 
-let rfft dt ?axes ?s ?norm x =
-  let by = "Nx.rfft" in
-  rfft_by ~by dt ?axes ?s ?norm (Donate.read ~by x)
+let rfft dt ?axes ?s ?norm x = rfft_by ~by:"Nx.rfft" dt ?axes ?s ?norm x
 
 let irfft_by ~by dt ?axes ?s ?(norm = Backward) z =
   let default last d =
@@ -5120,9 +5082,7 @@ let irfft_by ~by dt ?axes ?s ?(norm = Backward) z =
   in
   cast_by ~by dt (scaled ~by (factor norm ~forward:false n) y)
 
-let irfft dt ?axes ?s ?norm z =
-  let by = "Nx.irfft" in
-  irfft_by ~by dt ?axes ?s ?norm (Donate.read ~by z)
+let irfft dt ?axes ?s ?norm z = irfft_by ~by:"Nx.irfft" dt ?axes ?s ?norm z
 
 
 (* Cosine and sine transforms, each from one complex transform along the last
@@ -5320,11 +5280,6 @@ let taper ~by dt ~window = function
 
 let stft dt ~window ?step ?win x =
   let by = "Nx.stft" in
-  let operands =
-    Value.Any x :: List.map (fun w -> Value.Any w) (Option.to_list win)
-  in
-  alive_all ~by operands;
-  let x = Donate.lent x and win = Option.map Donate.lent win in
   let step = frame_step ~window step in
   if ndim x = 0 then invalid_argf "%s: %a has no axis" by pp_value x;
   if window < 1 || step < 1 then
@@ -5338,11 +5293,8 @@ let stft dt ~window ?step ?win x =
 
 let istft dt ~window ?step ?win ?length z =
   let by = "Nx.istft" in
-  let operands =
-    Value.Any z :: List.map (fun w -> Value.Any w) (Option.to_list win)
-  in
-  alive_all ~by operands;
-  let z = Donate.lent z and win = Option.map Donate.lent win in
+  (* The taper is read by the signal's map and the envelope's. *)
+  let win = Option.map (Donate.read ~by) win in
   let step = frame_step ~window step in
   let r = ndim z in
   if r < 2 then invalid_argf "%s: %a has fewer than two axes" by pp_value z;
