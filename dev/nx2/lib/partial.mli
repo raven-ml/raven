@@ -18,35 +18,34 @@
     depends on the terms, the placement and the devices' kernels alone, and
     is the same on every run:
 
-    - A [Sum], [Prod], [Max] or [Min] of integers or booleans, and a [Sum]
-      or [Prod] of floats or complex numbers, reduces into the carrier of
-      its output's dtype ({!Nx_kernel.carrier}); its partials combine by
-      [Add], [Mul], [Maximum] or [Minimum] in the carrier. Over integers and
+    - A [Sum], [Prod], [Max] or [Min] reduces into the carrier of its
+      output's dtype ({!Nx_kernel.carrier}); its partials combine by [Add],
+      [Mul], [Maximum] or [Minimum] in the carrier. Over integers and
       booleans this is exact: the result has the bits of the reduction on
-      one device.
-    - An [Arg], and a float or complex [Max] or [Min], reduces as an [Arg]
-      into its output's dtype, each position renumbered from C order of the
-      window's reduced indices into C order of the whole's, and its partials
-      move and combine as an integer's. Two partials
-      combine into the first extreme: a NaN before any number and the smaller
-      position of two NaNs, else the extreme in {!Nx_kernel.Prog}'s order,
-      [-0] below [+0] and complex numbers by their parts, and the smaller
-      position of two of one bits. So the result is the whole's first
-      extreme with its bits, a NaN quieted, whatever the tiles' order. [Max]
-      and [Min] drop the positions.
+      one device. A float or complex [Max] or [Min] has them too where it is
+      not a NaN: {!Nx_kernel.Prog}'s [Maximum] and [Minimum] round nothing,
+      put [-0] below [+0] and give a NaN where either operand is one.
+    - An [Arg] reduces into its output's dtype, each position renumbered
+      from C order of the window's reduced indices into C order of the
+      whole's, and its partials move and combine as an integer's. Two
+      partials combine into the first extreme: a NaN before any number and
+      the smaller position of two NaNs, else the extreme in
+      {!Nx_kernel.Prog}'s order, [-0] below [+0] and complex numbers by
+      their parts, and the smaller position of two of one bits. So the
+      result is the whole's first extreme and its position, whatever the
+      tiles' order.
     - A [Logsumexp] is the logsumexp of its tiles' logsumexps, each into the
       carrier, laid out as [[outputs; tiles]] on each device.
     - [Moments] compute in the carrier in two passes. Each tile's sum
       combines by [Add] in the tiles' order into [s], and the mean [c] is
-      [s / n], or [s] where that is a NaN. Each tile then sums its terms'
+      [s / n]. Each tile then sums its terms'
       deviations [d = x - c] and their squares, which combine so, and the
       variance is [(Σ d² - Σ d (Σ d / n)) / n], [+0] where that is
-      negative or [Σ d²] where that is [+∞]. Both are [c] where it is a
-      NaN.
+      negative or [Σ d²] where that is [+∞]. Both are NaNs where [c] is.
 
-    A float or complex result does not keep the bits of the reduction on
-    one device, and a NaN result is a NaN whose sign and payload it does not
-    state. Let [n] be an output's terms, [t] the tiles holding terms and [u]
+    Any other float or complex result does not keep the bits of the
+    reduction on one device, and a NaN result is a NaN whose sign and
+    payload it does not state. Let [n] be an output's terms, [t] the tiles holding terms and [u]
     the carrier's unit roundoff. Where each device's kernels keep the bounds
     of {!Nx_kernel.section-reductions}, and barring overflow and underflow,
     a result before the rounding into its dtype, which adds its own, is:
@@ -131,10 +130,10 @@
 
     - A [Sum], [Prod], [Max] or [Min]: a tile's partial is its terms reduced
       into their carrier. Partials combine by [Add], [Mul], [Maximum] or
-      [Minimum], a float extreme keeping the first NaN, and the tile scans
-      from the carry by {!Nx_kernel.S.scan}. Over integers and booleans, and
-      for a float or complex [Max] or [Min], each result has the bits of the
-      scan on one device. A float or complex sum's or product's result of
+      [Minimum], and the tile scans from the carry by {!Nx_kernel.S.scan}.
+      Over integers and booleans, and for a float or complex [Max] or [Min]
+      that is not a NaN, each result has the bits of the scan on one device.
+      A float or complex sum's or product's result of
       [n] terms is within the bound of a reduction of them above: the carry
       is the reduction of the terms before the tile, and the tile's scan
       takes it as one more term.

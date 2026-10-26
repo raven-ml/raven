@@ -125,9 +125,6 @@ let parts runs (tile : M.range array) =
   in
   List.map Array.of_list (from 0)
 
-(* What a ranked reduction gives: the extreme alone, or with its position. *)
-type gives = Extreme | Extreme_and_position
-
 (* Folds of partials through [A.apply] *)
 
 module Make (A : sig
@@ -275,33 +272,27 @@ struct
 
   (* Partials [a] then [b], lists of one length, combined element by
      element by [k]: exact over integers and booleans, one rounding per
-     element over floats, and a float extreme keeps the first NaN, as the
-     first NaN term's. *)
+     element over floats. *)
   let exact (k : P.binary) a b =
     let n = List.length a in
     let one i (Value.Any x) =
       let dt = Prim.dtype x in
-      let a = E.input i dt and b = E.input (i + n) dt in
-      match k with
-      | (Maximum | Minimum) when floats (D.Any dt) ->
-          E.any E.(where (a <> a) a (where (b <> b) b (binary k a b)))
-      | _ -> E.any (E.binary k a b)
+      E.any (E.binary k (E.input i dt) (E.input (i + n) dt))
     in
     map (a @ b) (List.mapi one a)
 
-  (* The mean of [n] terms from their sum [s], in the carrier, the sum
-     where it is a NaN. *)
+  (* The mean of [n] terms from their sum [s], in the carrier. *)
   let mean n s =
     let (Value.Any x) = s in
     let c = Prim.dtype x in
-    let v = E.input 0 c in
     let count = E.const c (D.of_float c (Float.of_int n)) in
-    map [ s ] [ E.any E.(where (v <> v) v (fdiv v count)) ]
+    map [ s ] [ E.any (E.fdiv (E.input 0 c) count) ]
 
   (* [Moments] into [dt] of [n] terms from their mean [m], in the carrier,
      and [ds], the sums of their deviations [d] from it and of [d²]:
      [(Σ d² - Σ d (Σ d / n)) / n], [+0] where that is negative or [Σ d²]
-     where that is [+∞], both the mean where it is a NaN. *)
+     where that is [+∞]. A NaN mean makes every deviation, so the variance,
+     a NaN. *)
   let moments (D.Any dt) n m ds =
     let (Value.Any x) = m in
     let c = Prim.dtype x in
@@ -311,8 +302,7 @@ struct
     and inf = E.const c (D.of_float c Float.infinity) in
     let q = E.(fdiv (s2 - (s1 * fdiv s1 count)) count) in
     let v = E.(where (s2 = inf) s2 (where (q < zero) zero q)) in
-    map (Value.Any x :: ds)
-      [ E.any (E.cast dt m); E.any (E.cast dt E.(where (m <> m) m v)) ]
+    map (Value.Any x :: ds) [ E.any (E.cast dt m); E.any (E.cast dt v) ]
 
   (* The values [x] orders by: itself, or a complex number's parts. *)
   let keys (type v s d) (x : (v, s, d) Value.t) : d Value.any list =
@@ -455,26 +445,8 @@ struct
               (store (settle g)))
           gs
       in
-      let ranked e o (D.Any dt) gives =
-        let (D.Any t) = term o in
-        let unit j =
-          let (x, q), () = apply (local j prog Value.[ Arg (e, o, t) ]) in
-          [ Value.Any x; renumber tiles.(j) whole (Value.Any q) ]
-        in
-        let settle _ _ = function
-          | [ x; q ] -> (
-              let x = cast (D.Any dt) x in
-              match gives with Extreme -> [ x ] | Extreme_and_position -> [ x; q ])
-          | _ -> invalid_arg "Partial.reduce: an extreme and its position"
-        in
-        by_tiles unit (first_of e) settle;
-        result r p out per
-      in
       let (D.Any c) = Nx_kernel.carrier (term (snd (Prim.reduction r))) in
       match r with
-      | Monoid (((Max | Min) as m), o, dt) when floats (term o) ->
-          let e : Nx_kernel.extreme = if m = Max then Max else Min in
-          ranked e o (D.Any dt) Extreme
       | Monoid (m, o, dt) ->
           let unit j =
             let v, () = apply (local j prog Value.[ Monoid (m, o, c) ]) in
@@ -483,7 +455,18 @@ struct
           let settle _ _ vs = [ cast (D.Any dt) (List.hd vs) ] in
           by_tiles unit (exact (binary m)) settle;
           result r p out per
-      | Arg (e, o, dt) -> ranked e o (D.Any dt) Extreme_and_position
+      | Arg (e, o, dt) ->
+          let (D.Any t) = term o in
+          let unit j =
+            let (x, q), () = apply (local j prog Value.[ Arg (e, o, t) ]) in
+            [ Value.Any x; renumber tiles.(j) whole (Value.Any q) ]
+          in
+          let settle _ _ = function
+            | [ x; q ] -> [ cast (D.Any dt) x; q ]
+            | _ -> invalid_arg "Partial.reduce: an extreme and its position"
+          in
+          by_tiles unit (first_of e) settle;
+          result r p out per
       | Logsumexp (o, dt) ->
           (* The logsumexp of the tiles' logsumexps, laid out as
              [outputs; tiles]. *)
@@ -625,9 +608,7 @@ struct
     let partial, node, continued =
       match r with
       | Monoid (m, _, dt) ->
-          (* Each tile continues from the tiles before it. A float extreme's
-             carry is a term before the tile's, their first NaN where one
-             is. *)
+          (* Each tile continues from the tiles before it. *)
           let (D.Any c) = Nx_kernel.carrier term in
           let partial x _ =
             let v, () = total x Value.[ Monoid (m, 0, c) ] in

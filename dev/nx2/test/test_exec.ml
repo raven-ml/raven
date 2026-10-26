@@ -2101,6 +2101,35 @@ let test_partials_move () =
   fewer "a reduction of every axis"
     (positions 1 (fun x -> Nx.min x) (ints columns))
 
+(* A float or complex maximum or minimum over a cut axis is a NaN where a
+   term is, whichever tiles hold one: which NaN is unspecified. *)
+let test_cut_extreme_nan () =
+  let nan k = Int64.float_of_bits (Int64.logor 0x7ff8_0000_0000_0000L k) in
+  let cut x = Nx.place (Set3.split ~axis:0) x in
+  let extremes (type s) (x : (float, s, Nx.host) Nx.t) =
+    let one f = Float.is_nan (elements (f (cut x))).(0) in
+    [ one (fun x -> Nx.max x); one (fun x -> Nx.min x) ]
+  in
+  let complex_extremes x =
+    let z = Nx.complex Nx.complex64 ~re:(Nx.ones_like x) ~im:x in
+    let one f =
+      let c = (elements (f (cut z))).(0) in
+      Float.is_nan c.Complex.re || Float.is_nan c.im
+    in
+    [ one (fun x -> Nx.max x); one (fun x -> Nx.min x) ]
+  in
+  let nans msg xs =
+    let x = Nx.create Nx.float64 [| 6 |] xs in
+    let x32 = Nx.cast Nx.float32 x in
+    equal ~msg (list bool) (List.init 6 (fun _ -> true))
+      (extremes x @ extremes x32 @ complex_extremes x32)
+  in
+  nans "in the first tile" [| nan 7L; 1.; 2.; 3.; 4.; 5. |];
+  nans "in the last tile" [| 1.; 2.; 3.; 4.; 5.; nan 7L |];
+  nans "in two tiles" [| 1.; 2.; nan 7L; 4.; -.nan 9L; 0. |];
+  nans "beside infinities"
+    [| Float.infinity; 1.; Float.neg_infinity; nan 3L; 2.; 0. |]
+
 (* Float reductions over cut axes of many terms *)
 
 (* A float or complex dtype and how its elements' bits print. *)
@@ -3380,6 +3409,8 @@ let placements =
         reduced_case law_reduced;
       test "a reduction over a cut axis moves partials, not the operand"
         test_partials_move;
+      test "a float maximum or minimum over a cut axis is a NaN beside one"
+        test_cut_extreme_nan;
       prop ~count:300
         "a float reduction over cut axes of many terms combines its tiles' \
          partials in order"
