@@ -391,6 +391,13 @@ let watch j =
 
 external reraise : exn -> 'a = "%reraise"
 
+(* Closes [m]'s host, if it has one, unless rig refuses, from a callback
+   inside a lock. *)
+let close_host m =
+  match m.host with
+  | Some h -> ( try Rig.close h with Invalid_argument _ -> ())
+  | None -> ()
+
 (* The reason a start fails its job with when it raises. *)
 let start_raised = "the controller raised while it started the job"
 
@@ -413,10 +420,12 @@ let start ~fn ~key ~report agents =
       | Link.Failed _ | Link.Closed -> ())
   | _ -> ());
   let job = Link.job () in
+  let dialled = ref [] in
   let started () =
     match dial ~key job [] 1 agents with
     | Error _ as e -> e
     | Ok ms ->
+        dialled := ms;
         Result.map
           (fun () -> ms)
           (Result.bind (join job agents ms) (open_hosts job ms))
@@ -424,8 +433,11 @@ let start ~fn ~key ~report agents =
   (* From the job's making on, an exception fails and closes the job, which
      would otherwise refuse every later start: a refusal of rig's, such as
      [Rig.open_host]'s inside a lock, a thread the system does not give, or
-     an asynchronous exception. The handler allocates nothing before the
-     close. [current] may keep the job, which then reads as failed. *)
+     an asynchronous exception. It then closes the hosts the start opened,
+     whose memory and slots a failed job's hosts keep until their close; the
+     stops wait for nothing once the job failed. The handler allocates
+     nothing before the job's close. [current] may keep the job, which then
+     reads as failed. *)
   match
     match started () with
     | Error _ as e -> e
@@ -443,6 +455,7 @@ let start ~fn ~key ~report agents =
   | exception e ->
       Link.fail job start_raised;
       Link.close job;
+      List.iter close_host !dialled;
       reraise e
 
 let connect ~key agents =

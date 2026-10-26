@@ -410,10 +410,9 @@ let child_start () =
     | e -> prerr_endline ("a thread raised " ^ Printexc.to_string e));
   Sys.set_signal Sys.sigpipe Sys.Signal_ignore
 
-(* Whether an allocation's call stack holds the agent's function [fn], or a
+(* Whether an allocation's call stack holds the function named [name], or a
    function inside it. *)
-let in_agent fn =
-  let name = "Rig_remote__Agent." ^ fn in
+let in_fn name =
   let named s =
     match Printexc.Slot.name s with
     | Some n -> String.equal n name || String.starts_with ~prefix:(name ^ ".") n
@@ -423,6 +422,9 @@ let in_agent fn =
     match Printexc.backtrace_slots a.callstack with
     | Some slots -> Array.exists named slots
     | None -> false
+
+(* Whether an allocation's call stack holds the agent's function [fn]. *)
+let in_agent fn = in_fn ("Rig_remote__Agent." ^ fn)
 
 (* [cut_in fn n f] runs [f ()] while every allocation inside the agent's
    [fn], on any thread, is counted, and the [n]-th raises [Exit], one
@@ -659,6 +661,75 @@ let serve_break () =
   let rec from n = if cut_serve "a Ctrl-C" Signal n then from (n + 1) in
   from 1
 
+(* Hosts of a start that raised *)
+
+(* An opener of no device, named [name]. *)
+let no_device name : Rig_support.Polled.t Rig_edge.opener =
+  {
+    name;
+    driver = (module Rig_support.Polled);
+    make = (fun ~word:_ -> Error "no device");
+  }
+
+(* Lowers the process limit to 0, in a forked child: no thread or process
+   the child starts after it is made, where the limit binds. *)
+let refuse () =
+  match Rig_support.set_process_limit 0 with
+  | 0 -> ()
+  | e -> failf "setrlimit: errno %d" e
+
+(* Whether the limit [refuse] sets refuses this process a thread. It binds
+   only where the system applies it to threads and to this process: not on
+   macOS, nor for a process privileged to pass it. *)
+let refuses_threads () =
+  refuse ();
+  let refused =
+    match Thread.create ignore () with
+    | t ->
+        Thread.join t;
+        false
+    | exception Sys_error _ -> true
+  in
+  ignore (Rig_support.set_process_limit (-1) : int);
+  refused
+
+(* A connect to [a] with the process limit lowered at its job's watcher's
+   first allocation: connect raises Sys_error, and an open of another host
+   of the machine answers Error, where an open host would make it raise
+   Invalid_argument. *)
+let watcher_cut a =
+  let raised = ref "" in
+  let reached =
+    Rig_support.interrupted ~from:(in_fn "Rig_remote.watch")
+      ~landing:(Call refuse) 1 (fun () ->
+        match Rig_remote.connect ~key:(as_key key) [ address a ] with
+        | Ok _ -> raised := "returned"
+        | Error why -> raised := "answered Error " ^ why
+        | exception Sys_error _ -> raised := "Sys_error")
+  in
+  ignore (Rig_support.set_process_limit (-1) : int);
+  equal ~msg:"the watcher's first allocation reached" bool true reached;
+  equal ~msg:"connect" string "Sys_error" !raised;
+  match Rig.open_host ~machine:(machine a) (no_device "OTHER") with
+  | Ok _ -> fail "a host opened"
+  | Error _ -> ()
+  | exception Invalid_argument why -> failf "the host is still open: %s" why
+
+(* A connect whose job's watcher the system refuses a thread closes the host
+   it opened ({!watcher_cut}), in a forked child, where the process limit
+   refuses threads. *)
+let watcher_refused () =
+  with_agents @@ fun agents ->
+  let a = List.hd agents in
+  let refused =
+    in_child "" @@ fun () ->
+    let refused = refuses_threads () in
+    if refused then watcher_cut a;
+    refused
+  in
+  if not refused then
+    skip ~reason:"the process limit does not refuse this process a thread" ()
+
 (* Launched jobs *)
 
 (* Runs support/launched.exe in [mode] with a landing at each allocation of
@@ -759,6 +830,8 @@ let () =
            [
              test "a devices after a devices cut by an exception answers"
                raise_in_devices;
+             test "a connect whose watcher gets no thread closes its host"
+               watcher_refused;
              test "a connect after a connect cut by an exception is not refused"
                raise_in_connect;
              test "a connect after a connect inside a lock is not refused"

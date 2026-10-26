@@ -33,6 +33,7 @@
   (glob_files ../fixtures/*.o))
  (libraries
   rig
+  rig_edge
   rig_remote
   rig_remote_proxy
   rig_remote_abi

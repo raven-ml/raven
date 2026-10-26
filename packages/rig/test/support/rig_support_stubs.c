@@ -2012,6 +2012,28 @@ value rig_test_descriptor_limit(value unit) {
 #endif
 }
 
+/* Sets the soft limit of the processes and threads of this process's user
+   to [n], keeping the one it replaced, or for a negative [n] puts that one
+   back: 0, the errno, or -1 on Windows, which has no such limit. */
+#if !defined(_WIN32)
+static rlim_t process_limit_kept = RLIM_INFINITY;
+#endif
+
+value rig_test_set_process_limit(value v_n) {
+#if defined(_WIN32)
+  (void)v_n;
+  return Val_int(-1);
+#else
+  struct rlimit l;
+  if (getrlimit(RLIMIT_NPROC, &l) != 0) return Val_int(errno);
+  rlim_t was = l.rlim_cur;
+  l.rlim_cur = Long_val(v_n) < 0 ? process_limit_kept : (rlim_t)Long_val(v_n);
+  if (setrlimit(RLIMIT_NPROC, &l) != 0) return Val_int(errno);
+  if (Long_val(v_n) >= 0) process_limit_kept = was;
+  return Val_int(0);
+#endif
+}
+
 /* Sets this process's soft limit of its descriptors to [n]: 0, the errno,
    or -1 on Windows, which has no such limit. */
 value rig_test_set_descriptor_limit(value v_n) {

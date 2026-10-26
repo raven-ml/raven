@@ -850,6 +850,7 @@ external recv_timeout : Unix.file_descr -> float -> unit
 external descriptor_limit : unit -> int = "rig_test_descriptor_limit"
 
 external set_descriptor_limit : int -> int = "rig_test_set_descriptor_limit"
+external set_process_limit : int -> int = "rig_test_set_process_limit"
 
 external resident : unit -> int = "rig_test_resident"
 

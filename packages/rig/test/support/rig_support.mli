@@ -492,6 +492,15 @@ val set_descriptor_limit : int -> int
     descriptors to [n]: [0], the errno, or [-1] on Windows, which has no such
     limit. *)
 
+val set_process_limit : int -> int
+(** [set_process_limit n] sets the soft limit of the processes and threads
+    the process's user may run to [n], or for a negative [n] puts back the
+    one the last set replaced: [0], the errno, or [-1] on Windows. Under a
+    limit below what the user runs, a thread or process the process starts
+    is refused where the system applies the limit to it: Linux, for a
+    process without the privilege to pass it. Only a forked child sets
+    one. *)
+
 val shares : ('a, 'b, 'c) Bigarray.Array1.t -> int
 (** [shares ba] is how many holders share [ba]'s storage, as the runtime counts
     them on the proxy its arrays share: [0] if they share none. *)
