@@ -539,16 +539,69 @@ let accept_loop a wake =
       break a acceptor_raised;
       reraise e
 
-(* Ends [a]'s listening: wakes the acceptor through [waker], waits for it, and
-   closes the socket and the connections no join named. *)
-let stop a waker acceptor =
-  Mutex.protect a.lock (fun () -> a.stopped <- true);
-  ignore (Unix.write_substring waker "x" 0 1);
-  unblocked Thread.join acceptor;
-  Unix.close a.socket;
-  Mutex.protect a.lock @@ fun () ->
-  Ids.iter (fun _ fd -> Unix.close fd) a.accepted;
-  a.accepted <- Ids.empty
+(* What a serve took, so that one handler gives it back: made before it
+   takes anything, each part recorded by stores with nothing between that
+   allocates or polls, as it is taken. *)
+type held = {
+  mutable report : report option;
+  mutable wake : Unix.file_descr;
+  mutable waker : Unix.file_descr;
+  mutable paired : bool;  (** Once [wake] and [waker] are the pair's. *)
+  mutable acceptor : Thread.t;
+  mutable accepting : bool;  (** Once [acceptor] is the acceptor's. *)
+  mutable released : bool;
+}
+
+let held () =
+  {
+    report = None;
+    wake = Unix.stdin;
+    waker = Unix.stdin;
+    paired = false;
+    acceptor = Thread.self ();
+    accepting = false;
+    released = false;
+  }
+
+(* Ends [a]'s listening, once: wakes the acceptor through [waker], waits for
+   it, and closes the socket, the pair and the connections no join named. A
+   handshake that ends once [a] stopped closes its own connection. It takes
+   no signal, even in its wait for the acceptor, which ends as soon as the
+   acceptor reads [waker]. Under the shield nothing allocates or polls:
+   [Thread.join] blocks in a section that runs only signal handlers, all
+   blocked here. Should an exception come, the shield ends before it is
+   raised again. The connections no join named close after the shield, in
+   a loop whose polls may cut it, which leaves only those not yet closed
+   open. *)
+let release a h =
+  if not h.released then begin
+    h.released <- true;
+    shield ();
+    match
+      Mutex.lock a.lock;
+      a.stopped <- true;
+      let accepted = a.accepted in
+      a.accepted <- Ids.empty;
+      Mutex.unlock a.lock;
+      if h.accepting then begin
+        (try ignore (Unix.write_substring h.waker "x" 0 1)
+         with Unix.Unix_error _ -> ());
+        Thread.join h.acceptor
+      end;
+      close_quietly a.socket;
+      if h.paired then begin
+        close_quietly h.wake;
+        close_quietly h.waker
+      end;
+      accepted
+    with
+    | accepted ->
+        unshield ();
+        Ids.iter (fun _ fd -> close_quietly fd) accepted
+    | exception e ->
+        unshield ();
+        reraise e
+  end
 
 (* Serving *)
 
@@ -968,28 +1021,48 @@ let job a =
       Option.iter (Link.fail job) broken;
       Ok serving
 
-(* Serves [job], reporting its end on [report]; [close] ends [a]'s listening. *)
-let serve_job a kinds report ~close job self link =
-  watch report job;
-  let devices = Hashtbl.create 8 in
-  Hashtbl.replace devices 0 Rig.host;
-  let s =
-    {
-      agent = a;
-      self;
-      job;
-      link;
-      kinds;
-      devices;
-      opened = Hashtbl.create 4;
-      objects = Hashtbl.create 64;
-    }
-  in
-  (* An exception [apply] does not handle, a device's loss or a bug of the agent
-     or an opener, leaves the job's objects in a state the controller cannot
-     know: it fails the job with its text, which ends the controller's wait. *)
+(* [unmasked f x] is [f x] with the calling thread's signals as [serve]'s
+   caller had them, for the program's code that serving runs. It ends
+   [serve]'s pair across [f] and takes it again after, where [unblocked]
+   would open a window that the first wait inside [f] closes. *)
+let unmasked f x =
+  unmask ();
+  match f x with
+  | r ->
+      mask ();
+      r
+  | exception e ->
+      mask ();
+      reraise e
+
+(* Why a job fails when an exception ends [serve] other than its commands'. *)
+let serve_raised = "the agent's serve raised an exception"
+
+(* Serves [job], reporting its end on [h]'s report, and stops listening.
+   From the job's watcher on, an exception, a thread the system does not give
+   or one [apply] does not handle (a device's loss or a bug of the agent or an
+   opener), leaves the job's objects in a state the controller cannot know:
+   it fails the job with its text, which ends the controller's wait. *)
+let serve_job a h kinds job self link =
   let r =
-    match apply s with
+    match
+      watch h.report job;
+      let devices = Hashtbl.create 8 in
+      Hashtbl.replace devices 0 Rig.host;
+      let s =
+        {
+          agent = a;
+          self;
+          job;
+          link;
+          kinds;
+          devices;
+          opened = Hashtbl.create 4;
+          objects = Hashtbl.create 64;
+        }
+      in
+      unmasked apply s
+    with
     | r -> r
     | exception e ->
         let why =
@@ -1002,7 +1075,7 @@ let serve_job a kinds report ~close job self link =
   in
   (* The agent listens no more before its close tells the controller the job
      ended. *)
-  close ();
+  release a h;
   let r =
     match r with
     | Error _ as e -> e
@@ -1011,43 +1084,78 @@ let serve_job a kinds report ~close job self link =
         match Link.failed job with Some why -> Error why | None -> Ok ())
   in
   (match r with
-  | Ok () -> ended report `Closed
+  | Ok () -> ended h.report `Closed
   | Error why ->
-      ended report (`Failed why);
+      ended h.report (`Failed why);
       Rig.fail why;
       (* Each peer reads this process's abort before serve's caller exits. *)
       Link.close job);
   r
 
-(* Serves one job, reporting its end on [report]. *)
-let run a kinds report =
+(* Ends the job [a] serves, if any, after an exception that ends [serve]
+   elsewhere than in its commands: fails it, closes it, and reports its end,
+   failing the process if the job failed. A controller still in its
+   handshake finds [a] stopped and gives its job back. It allocates nothing
+   before the close. *)
+let abandon a report =
+  Mutex.lock a.lock;
+  let phase = a.phase in
+  Mutex.unlock a.lock;
+  match phase with
+  | Serving { job; _ } -> (
+      Link.fail job serve_raised;
+      Link.close job;
+      match Link.failed job with
+      | None -> ended report `Closed
+      | Some why ->
+          ended report (`Failed why);
+          Rig.fail why)
+  | Claimed | Admitting _ -> ended report (`Failed serve_raised)
+
+(* Serves one job. The pair and the acceptor are recorded in [h] as they are
+   taken. *)
+let run a h kinds =
   let wake, waker = Link.socket_pair () in
+  h.wake <- wake;
+  h.waker <- waker;
+  h.paired <- true;
   let acceptor = spawn (accept_loop a) wake in
-  let close () =
-    stop a waker acceptor;
-    Unix.close wake;
-    Unix.close waker
-  in
+  h.acceptor <- acceptor;
+  h.accepting <- true;
   match job a with
-  | Ok (job, self, link) -> serve_job a kinds report ~close job self link
+  | Ok (job, self, link) -> serve_job a h kinds job self link
   | Error why ->
-      close ();
-      ended report (`Failed why);
+      release a h;
+      ended h.report (`Failed why);
       Error why
 
+(* [serve] blocks signals but around the program's code it runs ([unmasked]),
+   so that a Ctrl-C lands in its waits. From its claim the socket is
+   [serve]'s, and an exception that ends it elsewhere than in its commands,
+   a Ctrl-C's in a wait among them, stops listening and ends the job [a]
+   took, which no serve would serve. *)
 let serve a kinds =
   let names = List.map fst kinds in
   if List.length (List.sort_uniq String.compare names) <> List.length names then
     invalid_arg "Rig_remote.serve: kinds names a kind twice";
+  masked @@ fun () ->
+  let h = held () in
   if Atomic.exchange a.claimed true then
     invalid_arg "Rig_remote.serve: the agent served already";
-  match take report_var with
-  | None -> run a kinds None
-  | Some fd -> (
-      match report fd with
-      | Ok r -> run a kinds (Some r)
-      | Error why ->
-          (* From its claim, the socket is [serve]'s: [run]'s stop closes it,
-             and this exit before [run] closes it here. *)
-          close_quietly a.socket;
-          Error why)
+  match
+    match take report_var with
+    | None -> run a h kinds
+    | Some fd -> (
+        match report fd with
+        | Ok r ->
+            h.report <- Some r;
+            run a h kinds
+        | Error why ->
+            release a h;
+            Error why)
+  with
+  | r -> r
+  | exception e ->
+      release a h;
+      abandon a h.report;
+      reraise e

@@ -343,7 +343,8 @@ val serve :
     ({!section-order}). That work, and the openers of [kinds], run as the
     program's own code: rig's calls they make block signals as {!Rig}'s
     Errors section states, and a signal's handler may run between them, its
-    exception ending [serve] as an asynchronous one.
+    exception ending [serve] as an asynchronous one. [serve]'s own steps
+    block signals but in their waits.
 
     [Ok ()] once the controller has closed the job, as {!close} states.
     [Error why] once the job has failed, [why] its root cause
@@ -359,4 +360,7 @@ val serve :
     [RIG_REMOTE_REPORT] names no open descriptor.
 
     Raises [Invalid_argument] if [a] served already, or [kinds] names a kind
-    twice. *)
+    twice. Raises again an exception that ends one of [serve]'s own steps,
+    such as [Sys.Break] from a Ctrl-C in its wait for a controller, once [a]
+    has stopped listening. A job [a] serves then, if it has not ended, fails,
+    and as for [Error why], the process's devices are lost ({!Rig.fail}). *)

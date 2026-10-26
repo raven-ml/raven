@@ -3,13 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Interrupt walks of rig.remote's controller. A call is made once for each
-   allocation it makes, with a landing at that allocation on the calling
-   thread: another call from a Gc.Memprof callback, an exit from one, an
-   exception or a Ctrl-C. The callback's call answers as it would outside the
-   callback, no device is lost, and a launched job's report ends as the job
-   does. A connect cut leaves the process able to start another job, and a
-   rail cut leaves its job going. *)
+(* Interrupt walks of rig.remote. A call is made once for each allocation it
+   makes, with a landing at that allocation on the calling thread: another
+   call from a Gc.Memprof callback, an exit from one, an exception or a
+   Ctrl-C. The callback's call answers as it would outside the callback, no
+   device is lost, and a launched job's report ends as the job does. A
+   connect cut leaves the process able to start another job, and a rail cut
+   leaves its job going. An agent's serve, its acceptor and its handshakes,
+   cut in a forked child, leave the agent serving or no longer listening,
+   and no controller waiting. *)
 
 open Windtrap
 open Remote_job
@@ -486,6 +488,10 @@ let ends fd =
   drain ();
   Unix.close fd
 
+(* The most a handshake takes: a connection that proves nothing within it is
+   dropped ({!Rig_remote.listen}), and a dial gives up. *)
+let handshake_s = 10.
+
 (* Whether anything listens at [port] of the loopback. *)
 let listens port =
   let fd = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
@@ -564,6 +570,61 @@ let cut_acceptor n =
 let acceptor_cut () =
   let rec from n = if cut_acceptor n then from (n + 1) else n - 1 in
   greater ~msg:"allocations cut" int ~than:0 (from 1)
+
+(* A serve whose own steps, its commands' aside, take [landing] at each of
+   their allocations, while a controller joins and closes its job: serve
+   ends, the controller's connection ends, and the agent listens no more
+   and holds no descriptor. A cut before serve claimed the agent leaves it
+   to a later serve, which serves the controller. *)
+let cut_serve what landing n =
+  in_child (strf ", %s from allocation %d" what n) @@ fun () ->
+  child_start ();
+  let before =
+    match Rig_support.descriptors () with
+    | Some n -> n
+    | None -> skip ~reason:"the system does not count descriptors" ()
+  in
+  let a = agent_here () in
+  let port = Rig_remote.port a in
+  let finished = ref false in
+  let controller () =
+    ignore (Thread.sigmask Unix.SIG_BLOCK [ Sys.sigint ]);
+    (match dial port with
+    | Some fd when joins fd port -> ends fd
+    | Some fd -> Unix.close fd
+    | None -> ());
+    finished := true
+  in
+  let t = Thread.create controller () in
+  let not_apply = Fun.negate (in_agent "apply") in
+  let reached =
+    Rig_support.interrupted ~landing ~from:not_apply n (fun () ->
+        ignore (Rig_remote.serve a []))
+  in
+  (match Rig_remote.serve a [] with
+  | Ok () | Error _ -> ()
+  | exception Invalid_argument _ -> ());
+  (* A connection that comes as the agent stops listening may get no answer:
+     its dial gives up after the 10 s a handshake may take. *)
+  let t0 = Unix.gettimeofday () in
+  while (not !finished) && Unix.gettimeofday () -. t0 < handshake_s +. patience do
+    Thread.delay 0.01
+  done;
+  equal ~msg:"the controller ended" bool true !finished;
+  Thread.join t;
+  equal ~msg:"the port listens" bool false (listens port);
+  until ~what:"the agent's descriptors closed" (fun () ->
+      Rig_support.descriptors () = Some before);
+  reached
+
+let serve_cut () =
+  let once = Rig_support.Call (fun () -> raise Exit) in
+  let rec from n = if cut_serve "an exception" once n then from (n + 1) in
+  from 1
+
+let serve_break () =
+  let rec from n = if cut_serve "a Ctrl-C" Signal n then from (n + 1) in
+  from 1
 
 (* Launched jobs *)
 
@@ -675,5 +736,7 @@ let () =
              test "a handshake cut by an exception leaves the agent serving"
                handshake_cut;
              test "an acceptor cut by an exception ends serve" acceptor_cut;
+             test "a serve cut by an exception stops listening" serve_cut;
+             test "a serve cut by a Ctrl-C stops listening" serve_break;
            ];
        ])
