@@ -1019,19 +1019,25 @@ end
     range is the mathematical one, which rounding can leave at an end: in
     [float8_e4m3fn], [π] rounds to [3.25].
 
-    On floats the {e error} of a result is the number of floats of the dtype
-    between it and the exact value rounded to the dtype, [-0.] and [+0.] one
-    apart. Each function states a bound on it at float32 and float64.
-    Whatever the bound, a result is exact at the special values of C99's
-    Annex F (ISO/IEC 9899, F.10): [exp (-inf)] is [+0.], [log] of [±0.] is
-    [-inf], [sin] of an infinity is NaN and [atan inf] is [π/2] rounded. A
-    zero result has the sign Annex F gives it, or the exact value's where
-    that rounds to zero: [sin (-0.)] is [-0.] and [exp (-1000.)] is [+0.]. A
-    NaN operand gives a NaN, but where Annex F gives a number for every value
-    of that operand: [pow nan 0.] and [pow 1. nan] are [1.]. Which NaN, its
-    sign and its payload are unspecified. In the formats narrower than 32
-    bits, which compute at float32 and round once ({!section-arith}), a
-    result is within one ulp of the exact value rounded to the dtype.
+    On floats the {e error} of a result is its distance in floats of the
+    dtype from the exact value rounded to the dtype: a neighbour is one
+    away, and [-0.] and [+0.] are one apart. Each function states a bound on
+    it at float32 and float64. Whatever the bound, a result is exact at the
+    special values of C99's Annex F (ISO/IEC 9899, F.10): [exp (-inf)] is
+    [+0.], [log] of [±0.] is [-inf], [sin] of an infinity is NaN and
+    [atan inf] is [π/2] rounded. Where the exact value rounds to an infinity
+    or to zero, the result is that infinity or zero, of the exact value's
+    sign: [exp 710.] is [inf] and [pow (-2.) (-1101.)] is [-0.]. Another zero
+    result has the sign Annex F gives it: [sin (-0.)] is [-0.]. A NaN operand
+    gives a NaN, but where Annex F gives a number for every value of that
+    operand: [pow nan 0.] and [pow 1. nan] are [1.]. Which NaN, its sign and
+    its payload are unspecified.
+
+    The formats narrower than 32 bits compute at float32 and round once
+    ({!section-arith}). Where a bound is in ulps, their result is within one
+    ulp of the exact value rounded to their dtype. A format without
+    infinities or NaN stores such a value as {!cast} does: [log] of a
+    [float8_e4m3fn] zero is [-448.].
 
     nx.cpu keeps subnormal numbers ({!Nx_cpu}). A device whose kernel
     library flushes them to zero reads a subnormal operand as zero and
@@ -1067,7 +1073,8 @@ val sqrt : ('v, 's, 'd) t -> ('v, 's, 'd) t
 
 val rsqrt : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [rsqrt x] is [recip (sqrt x)]: [inf] at [+0.], [-inf] at [-0.], NaN below.
-    On complex numbers it is {!recip} of {!sqrt}, NaN at [0]. *)
+    Within 2 ulps at float32 and float64. On complex numbers it is {!recip}
+    of {!sqrt}, NaN at [0]. *)
 
 val hypot : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [hypot x y] is [sqrt (x{^2} + y{^2})] with no intermediate overflow: finite
@@ -1185,9 +1192,8 @@ val erf : (float, 's, 'd) t -> (float, 's, 'd) t
     hold where a set's kernels compute. Under a compiler such as
     [Rune.jit], the compiler's bounds hold.
 
-    The formats narrower than 32 bits compute at [float32] and round once.
-    Where a bound is in ulps, their result is within one ulp of the exact
-    value rounded to their dtype; where it is absolute, within that bound at
+    The formats narrower than 32 bits follow {!section-transcendental};
+    where a bound is absolute, their result is within that bound at
     [float32] plus half an ulp of their dtype. *)
 
 val erfc : (float, 's, 'd) t -> (float, 's, 'd) t
