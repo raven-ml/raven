@@ -624,6 +624,10 @@ let next l =
   in
   go ()
 
+(* Why a link's job fails when an exception ends an [answer] that took its
+   request. *)
+let answer_lost = "an answer was lost to an exception in the agent"
+
 let answer l q a =
   guarded "answer" @@ fun () ->
   let payload =
@@ -638,7 +642,14 @@ let answer l q a =
   if not (pop_oldest l q) then
     invalid_arg
       "Rig_remote_proxy.Link.answer: the request is not the oldest unanswered";
-  post l.c k_answer payload
+  (* Once popped, the request is answered or its job fails: [post]'s
+     Out_of_memory for the frame would leave it answered by no one, and the
+     controller waiting. *)
+  match post l.c k_answer payload with
+  | () -> ()
+  | exception e ->
+      fail l.job answer_lost;
+      reraise e
 
 let word l ~device v =
   post l.c k_word

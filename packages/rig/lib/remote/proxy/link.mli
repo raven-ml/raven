@@ -206,6 +206,10 @@ val answer : t -> 'a Wire.request -> ('a, string) result -> unit
     reach the peer in the order of their requests; a call for a request that is
     not the oldest unanswered raises, as below.
 
+    An exception that ends [answer] once it took [r] as answered, such as
+    [Out_of_memory] for its frame, fails the job, which ends the controller's
+    wait.
+
     Raises [Invalid_argument] if [r] is not, physically, the oldest request
     {!next} gave and none answered, and from a callback inside a lock
     ({!section-domains}). *)

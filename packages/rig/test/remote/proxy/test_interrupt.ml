@@ -309,6 +309,92 @@ let next_of_request_raise () =
       reached);
   greater ~msg:"allocations interrupted" int ~than:0 !walked
 
+(* Answers out of memory *)
+
+(* [in_child f] is [f ()], run in a forked child, so that a limit it sets
+   never reaches the next attempt. It fails with the child's failure. *)
+let in_child f =
+  Rig_support.needs_fork ();
+  let r, w = Unix.pipe ~cloexec:true () in
+  match Unix.fork () with
+  | 0 ->
+      Unix.close r;
+      let answer =
+        match f () with v -> Ok v | exception e -> Error (Printexc.to_string e)
+      in
+      let oc = Unix.out_channel_of_descr w in
+      Marshal.to_channel oc (answer : ('a, string) result) [];
+      close_out oc;
+      Unix._exit 0
+  | pid -> (
+      Unix.close w;
+      let ic = Unix.in_channel_of_descr r in
+      let answer = In_channel.input_all ic in
+      close_in ic;
+      match (answer, snd (Unix.waitpid [] pid)) with
+      | "", (WEXITED n | WSIGNALED n | WSTOPPED n) ->
+          failf "the child ended (%d) without answering" n
+      | answer, _ -> (
+          match (Marshal.from_string answer 0 : ('a, string) result) with
+          | Ok v -> v
+          | Error e -> fail e))
+
+(* The bytes the process maps. *)
+let mapped () =
+  let field l = Scanf.sscanf_opt l "VmSize: %d kB" (fun k -> k * 1024) in
+  let ic = open_in "/proc/self/status" in
+  let rec find () =
+    match In_channel.input_line ic with
+    | Some l -> ( match field l with Some n -> n | None -> find ())
+    | None -> failwith "no VmSize in /proc/self/status"
+  in
+  Fun.protect ~finally:(fun () -> close_in ic) find
+
+(* The bytes of the answer: its frame needs a mapping of its own. *)
+let big = 8 lsl 20
+
+(* An answer of [big] bytes with an address-space limit set at its [n]-th
+   allocation, which leaves no room for a mapping of [big] / 2 bytes, so the
+   answer raises Out_of_memory before or after it took the request. Once the
+   limit is lifted, the request is answered again, or the job failed: the
+   controller never waits for an answer that will not come. *)
+let answer_cut n =
+  in_child @@ fun () ->
+  with_pair @@ fun c a ->
+  let asked_done, asked = spawn (fun () -> Link.request c (Wire.Open "MEM")) in
+  let r = opened (Link.next a) in
+  let v = Ok [ account (String.make big 'x') ] in
+  let limit () =
+    ignore (Rig_support.set_address_space (mapped () + (big / 2)) : int)
+  in
+  let raised = ref false in
+  let reached =
+    Rig_support.interrupted ~landing:(Call limit) n (fun () ->
+        match Link.answer a r v with
+        | () -> ()
+        | exception Out_of_memory -> raised := true)
+  in
+  ignore (Rig_support.set_address_space max_int : int);
+  if !raised then begin
+    match Link.answer a r v with
+    | () -> ()
+    | exception Invalid_argument _ -> ()
+  end;
+  until ~what:(strf "from allocation %d, the request's end" n) asked_done;
+  (match asked () with
+  | Ok [ (acc : Wire.account) ] ->
+      equal ~msg:"the answer's bytes" int big (String.length acc.name)
+  | Ok _ -> fail "another count of accounts"
+  | Error (`Failed _) -> ()
+  | Error (`Refused why) -> fail why);
+  reached
+
+let answer_out_of_memory () =
+  if not (Sys.file_exists "/proc/self/status") then
+    skip ~reason:"the limit bounds no mapping off Linux" ();
+  let rec from n = if answer_cut n then from (n + 1) else n - 1 in
+  greater ~msg:"allocations cut" int ~than:0 (from 1)
+
 let () =
   exit
     (run "rig_remote_proxy interrupt"
@@ -331,6 +417,8 @@ let () =
                next_and_answer_raise;
              test "a next of a request lets no answer pair with another"
                next_of_request_raise;
+             test "an answer out of memory leaves no request waiting"
+               answer_out_of_memory;
            ];
          group ~timeout
            "a call to rig from a callback at any allocation keeps the host"
