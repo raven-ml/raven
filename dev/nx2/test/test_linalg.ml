@@ -827,6 +827,104 @@ let test_norm_cases () =
   equal ~msg:"no matrix" (array int) [| 0 |]
     (Nx.shape (Nx.matrix_norm ~ord:`Inf (Nx.zeros Nx.float64 [| 0; 0; 3 |])))
 
+(* Rank and condition *)
+
+(* A rank [q] matrix [s v] of [m] rows and [n] columns: [s]'s first [q] rows
+   are the identity's, [v]'s rows unit vectors moved by at most [0.1] an
+   element, so its [q] singular values other than zero are far above
+   [10{^-3}] of the greatest, and its others far below. *)
+let law_matrix_rank =
+  prop "matrix_rank counts the factors of a product"
+    Gen.(
+      pair (of_list fulls)
+        (pair
+           (triple (int_range 0 5) (int_range 0 5) (int_range 0 5))
+           (array ~size:(constant 50) (float_range (-1.) 1.))))
+    (fun (Full dt, ((m, n, q), r)) ->
+      let q = Stdlib.min q (Stdlib.min m n) in
+      cover "deficient" (q < Stdlib.min m n);
+      cover "full" (q = Stdlib.min m n && q > 0);
+      let s =
+        Array.init (m * q) (fun k ->
+            let i = k / q and j = k mod q in
+            if i >= q then r.(k mod 50) else if i = j then 1. else 0.)
+      in
+      let v =
+        Array.init (q * n) (fun k ->
+            let i = k / n and j = k mod n in
+            (if i = j then 1. else 0.) +. (0.1 *. r.((k + 25) mod 50)))
+      in
+      let f64 sh a = Nx.create Nx.float64 sh a in
+      let a = Nx.to_array (Nx.matmul (f64 [| m; q |] s) (f64 [| q; n |] v)) in
+      let a = value dt [| m; n |] a (Array.make (m * n) 0.) in
+      equal ~msg:"rank" int64 (Int64.of_int q) (Nx.item [] (Nx.matrix_rank ~rtol:1e-3 a)))
+
+(* cond is its definition: the greatest singular value over the least, the
+   norms of [a] and [inv a] multiplied. *)
+let law_cond =
+  prop "cond: each norm is its definition" (matrices ~square:true ())
+    (fun (Case (dt, s, re, im)) ->
+      let x = value dt s re im in
+      assume (s.(Array.length s - 1) > 0);
+      let f64 y = Nx.magnitude Nx.float64 (Nx.cast Nx.complex128 y) in
+      let norm ord y = f64 (Nx.matrix_norm ~ord y) in
+      assume (Array.for_all (fun v -> v > 1e-3) (Nx.to_array (norm `NegTwo x)));
+      let near = near ~tol:(tolerance dt) in
+      near ~msg:"two" (f64 (Nx.cond x)) (Nx.div (norm `Two x) (norm `NegTwo x));
+      near ~msg:"one" (f64 (Nx.cond ~p:`One x)) (Nx.mul (norm `One x) (norm `One (Nx.inv x)));
+      near ~msg:"inf" (f64 (Nx.cond ~p:`Inf x)) (Nx.mul (norm `Inf x) (norm `Inf (Nx.inv x))))
+
+let test_rank_cond_cases () =
+  let invalid_by ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f in
+  let f64 sh a = Nx.create Nx.float64 sh a in
+  let ranks ?rtol x = Array.map Int64.to_int (Nx.to_array (Nx.matrix_rank ?rtol x)) in
+  let batch =
+    Nx.stack
+      [ Nx.eye Nx.float64 3; Nx.zeros Nx.float64 [| 3; 3 |];
+        f64 [| 3; 3 |] [| 1.; 2.; 3.; 2.; 4.; 6.; 1.; 0.; 0. |];
+        f64 [| 3; 3 |] [| 1.; Float.nan; 0.; 0.; 1.; 0.; 0.; 0.; 1. |] ]
+  in
+  equal ~msg:"a batch" (array int) [| 3; 0; 2; -1 |] (ranks batch);
+  equal ~msg:"rtol" (array int) [| 1 |]
+    (ranks ~rtol:1e-2 (Nx.reshape [| 1; 2; 2 |] (f64 [| 2; 2 |] [| 1.; 0.; 0.; 1e-3 |])));
+  (* Past [1 / ε] of the format, its own epsilon would leave no singular
+     value above the bound. *)
+  let eye dt n = Nx.reshape [| 1; n; n |] (Nx.eye dt n) in
+  equal ~msg:"bfloat16, 256" (array int) [| 256 |] (ranks (eye Nx.bfloat16 256));
+  equal ~msg:"float8_e4m3fn, 16" (array int) [| 16 |] (ranks (eye Nx.float8_e4m3fn 16));
+  equal ~msg:"float4_e2m1fn, 4" (array int) [| 4 |] (ranks (eye Nx.float4_e2m1fn 4));
+  equal ~msg:"no element" (array int) [| 0; 0 |] (ranks (Nx.zeros Nx.float32 [| 2; 0; 3 |]));
+  equal ~msg:"bfloat16" (array int) [| 4 |]
+    (ranks (Nx.reshape [| 1; 4; 4 |] (Nx.eye Nx.bfloat16 4)));
+  let one x = Nx.item [] x in
+  let d = f64 [| 2; 2 |] [| 2.; 0.; 0.; 0.5 |] in
+  List.iter
+    (fun p -> equal ~msg:"diagonal" (float 1e-12) 4. (one (Nx.cond ~p d)))
+    [ `One; `Two; `Inf ];
+  equal ~msg:"identity, bfloat16" float_exact 1. (one (Nx.cond (Nx.eye Nx.bfloat16 3)));
+  equal ~msg:"zero" float_exact Float.infinity (one (Nx.cond (Nx.zeros Nx.float64 [| 2; 2 |])));
+  equal ~msg:"singular, one" float_exact Float.infinity
+    (one (Nx.cond ~p:`One (f64 [| 2; 2 |] [| 1.; 2.; 2.; 4. |])));
+  let nan = f64 [| 2; 2 |] [| 1.; Float.nan; 0.; 1. |] in
+  List.iter
+    (fun p -> equal ~msg:"NaN" float_exact Float.nan (one (Nx.cond ~p nan)))
+    [ `One; `Two; `Inf ];
+  (* A norm that overflows is no infinity the matrix holds. *)
+  equal ~msg:"an overflowed norm" float_exact Float.infinity
+    (one (Nx.cond ~p:`One (f64 [| 2; 2 |] [| 1e308; 0.; 1e308; 1. |])));
+  let z = Nx.cast Nx.complex128 d in
+  equal ~msg:"complex" (float 1e-12) 4. (one (Nx.cond z)).re;
+  equal ~msg:"its imaginary part" float_exact 0. (one (Nx.cond z)).im;
+  equal ~msg:"wide" (array int) [| 2 |] (Nx.shape (Nx.cond (Nx.ones Nx.float32 [| 2; 2; 3 |])));
+  invalid_by ~by:"Nx.matrix_rank" (fun () -> Nx.matrix_rank (Nx.zeros Nx.float32 [| 3 |]));
+  invalid_by ~by:"Nx.matrix_rank" (fun () -> Nx.matrix_rank (Nx.zeros Nx.int32 [| 2; 2 |]));
+  invalid_by ~by:"Nx.matrix_rank" (fun () ->
+      Nx.matrix_rank ~rtol:(-1.) (Nx.zeros Nx.float32 [| 2; 2 |]));
+  invalid_by ~by:"Nx.cond" (fun () -> Nx.cond (Nx.eye Nx.float8_e4m3fn 2));
+  invalid_by ~by:"Nx.cond" (fun () -> Nx.cond (Nx.zeros Nx.float32 [| 2; 0 |]));
+  invalid_by ~by:"Nx.cond" (fun () -> Nx.cond ~p:`One (Nx.ones Nx.float32 [| 2; 3 |]));
+  invalid_by ~by:"Nx.cond" (fun () -> Nx.cond (Nx.ones Nx.uint8 [| 2; 2 |]))
+
 (* Narrow floats: a norm computes at float32 and rounds once. *)
 
 type narrow = Narrow : (float, 's) D.t * int array * float array -> narrow
@@ -1007,6 +1105,9 @@ let () =
              test_matrix_norms;
              test "norms at their edges" test_norm_cases;
              test_narrow_norms;
+             law_matrix_rank;
+             law_cond;
+             test "rank and condition at their edges" test_rank_cond_cases;
            ];
          group "refusals"
            [

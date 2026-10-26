@@ -204,6 +204,24 @@ val logspace :
 
     Raises [Invalid_argument] if [n < 0]. *)
 
+val geomspace :
+  (float, 's) dtype ->
+  ?endpoint:bool ->
+  float ->
+  float ->
+  int ->
+  (float, 's, 'd) t
+(** [geomspace dt ~endpoint start stop n] is [n] values in geometric
+    progression from [start] to [stop], [stop] included where [endpoint]
+    (default [true]): the value at [i] is [start (stop / start)^(i / (n - 1))],
+    or [^(i / n)] without [endpoint], of every set. They are computed at
+    float64 and stored in [dt]: the first is [start] and, with [endpoint] and
+    [n >= 2], the last is [stop], each as [dt] stores it.
+    [geomspace float32 1. 1000. 4] is [1], [10], [100] and [1000].
+
+    Raises [Invalid_argument] if [n < 0], or if [start] or [stop] is not
+    positive and finite. *)
+
 val eye : ?m:int -> ?k:int -> ('v, 's) dtype -> int -> ('v, 's, 'd) t
 (** [eye ~m ~k dt n] is the [n × m] value ([m] defaults to [n]) whose element at
     row [i] and column [j] is one where [j - i = k] (default [0]) and zero
@@ -811,6 +829,17 @@ val pow : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 
 val fma : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [fma a b c] is [a * b + c] rounded once. Floats and integers. *)
+
+val lerp :
+  (float, 's, 'd) t ->
+  (float, 's, 'd) t ->
+  (float, 's, 'd) t ->
+  (float, 's, 'd) t
+(** [lerp a b w] is [a + w (b - a)], by one {!fma}: [a + w (b - a)] where
+    [w < 0.5], else [b + (w - 1) (b - a)], [b - a] rounded once first. Where
+    [b - a] is finite, [w = 0]
+    gives [a] and [w = 1] gives [b], and [lerp a a w] is [a] for a finite
+    [w], each equal as a number: a [-0.] there may give [+0.]. Floats. *)
 
 val maximum : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [maximum a b] is the greater element by the dtype's order ({!less}). On
@@ -2077,10 +2106,11 @@ val diag : ?k:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     Factorisations, solves and norms of the matrices of a batch, laid out as
     {!section-matrices} says, [m] rows, [n] columns and [k = min m n]. They
     compute [float32], [float64], [complex64] and [complex128]: another dtype
-    raises [Invalid_argument]. {!vector_norm} and {!matrix_norm} also take the
-    float formats narrower than 32 bits, which they compute at [float32] and
-    round once. [aᴴ] is the conjugate transpose, the transpose of a real
-    [a].
+    raises [Invalid_argument]. {!vector_norm}, {!matrix_norm},
+    {!matrix_rank} and {!cond} also take the float formats narrower than 32
+    bits, {!cond} those with infinities, which they compute at [float32],
+    rounding a float result once.
+    [aᴴ] is the conjugate transpose, the transpose of a real [a].
 
     Every result has its operand's dtype. A real result of a complex operand
     (a singular value, an eigenvalue of {!eigh}, {!slogdet}'s logarithm, a
@@ -2316,6 +2346,32 @@ val matrix_norm :
     or if [ord] takes a greatest or least singular value, column or row of a
     matrix that has none. *)
 
+val matrix_rank : ?rtol:float -> ('v, 's, 'd) t -> 'd int64_t
+(** [matrix_rank a] is the rank of each matrix of [a], of [a]'s batch shape:
+    the number of its singular values above [rtol] times [max m n] times
+    the greatest, as {!lstsq} counts them, [rtol] defaulting to the dtype's
+    machine epsilon, float32's for a narrower float. A matrix of no element
+    has rank [0]. A matrix on which {!svd} is NaN, one that holds NaN or an
+    infinity or on which the iteration does not converge, has rank [-1]: its
+    rank is undefined.
+
+    Raises [Invalid_argument] if [a] has fewer than two axes, for its dtype,
+    or if [rtol] is negative or NaN. *)
+
+val cond : ?p:[ `One | `Two | `Inf ] -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [cond a] is the condition number of each matrix of [a] in the norm [p]
+    (default [`Two]), dropping its last two axes: under [`Two] its greatest
+    singular value over its least, under [`One] and [`Inf]
+    [matrix_norm ~ord:p a] times [matrix_norm ~ord:p (inv a)]. A singular
+    matrix, whose least singular value is zero or whose {!inv} is NaN, has
+    an infinite condition number; one singular only to rounding has one near
+    [1 / ε] or above. A matrix that holds NaN or an infinity, or on which
+    {!svd} fails, has NaN.
+
+    Raises [Invalid_argument] if [a] has fewer than two axes or a matrix of
+    no element, for its dtype, a float format without infinities included,
+    or if [p] is [`One] or [`Inf] and [a] is not square. *)
+
 (** {1:fft Fourier transforms}
 
     Along an axis of [n] points, the forward transform is
@@ -2441,6 +2497,40 @@ val idst :
   (float, 's, 'd) t ->
   (float, 's, 'd) t
 (** [idst x] is the inverse of {!dst} under the same [type_] and [norm]. *)
+
+val fftfreq : (float, 's) dtype -> ?d:float -> int -> (float, 's, 'd) t
+(** [fftfreq dt ~d n] is the frequency of each of {!fft}'s [n] bins for
+    samples [d] apart (default [1.]), in cycles per unit of [d]: [i / (d n)]
+    for [i] in [[0, (n - 1) / 2]], then [(i - n) / (d n)] for the rest, the
+    negative frequencies. Each is computed at float64 from [d n] rounded once,
+    then stored in [dt], of every set: [fftfreq float64 4] is [0], [0.25],
+    [-0.5] and [-0.25].
+
+    Raises [Invalid_argument] if [n < 1] or [d] is zero or not finite. *)
+
+val rfftfreq : (float, 's) dtype -> ?d:float -> int -> (float, 's, 'd) t
+(** [rfftfreq dt ~d n] is the frequency of each of {!rfft}'s [n / 2 + 1] bins
+    for [n] samples [d] apart: [i / (d n)] for [i] in [[0, n / 2]], computed
+    as {!fftfreq}'s.
+
+    Raises [Invalid_argument] as {!fftfreq}. *)
+
+val fftshift : ?axes:int list -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [fftshift x] is [x] rolled along each of [axes] (default the last) by
+    [n / 2] places toward the end, [n] its extent there: the zero frequency
+    of a transform moves to the middle, after the negative frequencies.
+    [fftshift (fftfreq float64 5)] is [-0.4], [-0.2], [0], [0.2] and [0.4]. A
+    copy.
+
+    Raises [Invalid_argument] if [x] is 0-d, [axes] is empty, or an axis is
+    outside [x]'s rank or repeats. *)
+
+val ifftshift : ?axes:int list -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [ifftshift x] undoes {!fftshift} along the same [axes]: [x] rolled by
+    [n / 2] places toward the start. The two differ only along an axis of odd
+    extent.
+
+    Raises [Invalid_argument] as {!fftshift}. *)
 
 val hann : (float, 's) dtype -> int -> (float, 's, 'd) t
 (** [hann dt n] is the periodic Hann window of [n] points,
@@ -2599,6 +2689,18 @@ val positions : ?size:int -> ('v, 's, 'd) t -> 'd int64_t
 
     Raises [Invalid_argument] if [c] is not 1-d, is a float or a complex, or if
     [size] is negative. *)
+
+val argwhere : ?size:int -> ('v, 's, 'd) t -> 'd int64_t
+(** [argwhere t] is the coordinates of [t]'s elements other than zero, a row
+    each in C order: of shape [[k; ndim t]] for [k] such elements, whose row
+    [i] is the coordinates in [t]'s shape of the [i]th entry of
+    [positions (flatten (not_equal t (zeros_like t)))]. A NaN is not zero,
+    [-0.] is, and a 0-d [t] other than zero has one row of no coordinate.
+    Without [size], [k] is read on the host. With [size], the result has
+    [size] rows and reads nothing: the first rows, then rows of [t]'s
+    extents, out of range along every axis.
+
+    Raises [Invalid_argument] if [size] is negative. *)
 
 type 'd groups = {
   ids : 'd int64_t;  (** Each key's group, [n] entries. *)
@@ -3722,6 +3824,19 @@ module Rng : sig
     ?key:'d key -> (float, 's) dtype -> int array -> (float, 's, 'd) t
   (** [exponential dt shape] is exponential draws of rate 1, by inverting the
       distribution at [1 - u] for a uniform [u]: finite, and never negative.
+
+      Raises [Invalid_argument] if an extent is negative. *)
+
+  val gumbel :
+    ?key:'d key -> (float, 's) dtype -> int array -> (float, 's, 'd) t
+  (** [gumbel dt shape] is standard Gumbel draws, of distribution
+      [exp (-exp (-x))]: [-log e] for an exponential draw [e] of 53 random
+      bits at float64 and 32 otherwise, computed so that [e] keeps its
+      relative precision near [0.], so the draws are finite. Added to
+      unnormalised
+      log-probabilities, its argmax draws from the distribution they
+      describe, as {!categorical} does; a softmax in place of the argmax
+      gives that draw's relaxed, differentiable form.
 
       Raises [Invalid_argument] if an extent is negative. *)
 

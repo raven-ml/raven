@@ -154,7 +154,19 @@ let test_refused_kills_none () =
   invalid ~sub:"Nx.add: float32 [2; 2] was donated to Nx.copy" (fun () ->
       Nx.add dead b);
   equal ~msg:"the broadcast operand's handle lives" (array float_exact)
-    [| 7.; 8. |] (elements (Nx.copy b))
+    [| 7.; 8. |] (elements (Nx.copy b));
+  (* A function that computes a narrow float at float32 refuses before the
+     cast that would consume its operand. *)
+  let narrow s = Nx.cast Nx.bfloat16 (fresh_at s (Array.make (s.(0) * s.(1)) 1.)) in
+  let x3 = narrow [| 2; 2 |] in
+  invalid ~sub:"Nx.matrix_rank: rtol" (fun () ->
+      Nx.matrix_rank ~rtol:(-1.) (Nx.donate x3));
+  equal ~msg:"matrix_rank's refused donor lives" (array int) [| 2; 2 |]
+    (Nx.shape (Nx.copy x3));
+  let x4 = narrow [| 2; 3 |] in
+  invalid ~sub:"Nx.cond: " (fun () -> Nx.cond ~p:`One (Nx.donate x4));
+  equal ~msg:"cond's refused donor lives" (array int) [| 2; 3 |]
+    (Nx.shape (Nx.copy x4))
 
 (* An operation that broadcasts a handle, refused by its dtype or by a dead
    operand, kills nothing and names the dead operand. *)
@@ -1161,6 +1173,10 @@ let test_one_reader_consumes () =
   dies "Nx.pinv" square (fun d -> ignore (Nx.pinv d));
   dies "Nx.vector_norm" square (fun d -> ignore (Nx.vector_norm d));
   dies "Nx.matrix_norm" square (fun d -> ignore (Nx.matrix_norm d));
+  dies "Nx.matrix_rank" square (fun d -> ignore (Nx.matrix_rank d));
+  dies "Nx.cond" square (fun d -> ignore (Nx.cond d));
+  dies "Nx.argwhere" square (fun d -> ignore (Nx.argwhere d));
+  dies "Nx.fftshift" square (fun d -> ignore (Nx.fftshift ~axes:[ 0; 1 ] d));
   dies "Nx.quantile" square (fun d -> ignore (Nx.quantile [| 0.5 |] d));
   dies "Nx.array_equal" square (fun d ->
       ignore (Nx.array_equal d (square ())));

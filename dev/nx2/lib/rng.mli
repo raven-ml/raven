@@ -41,6 +41,12 @@ val exponential :
   int array ->
   (float, 's, 'd) Value.t
 
+val gumbel :
+  ?key:'d key ->
+  (float, 's) Nx_array.Dtype.t ->
+  int array ->
+  (float, 's, 'd) Value.t
+
 val randint :
   ?key:'d key ->
   ?low:int ->

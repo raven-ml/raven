@@ -288,6 +288,31 @@ let logspace dt ?(endpoint = true) ?(base = 10.) start stop n =
   let e = spaced ~by ~endpoint start stop n in
   leaf ~by dt [| Stdlib.max n 0 |] E.(cast dt (const D.Float64 base ** e))
 
+(* [start (stop / start)^e] for [e] spaced from [0] to [1], or, where the
+   ratio leaves float64's normal range, [e^(log start + e (log stop - log
+   start))]; [start] and [stop] are set at their ends, so these are exact. *)
+let geomspace dt ?(endpoint = true) start stop n =
+  let by = "Nx.geomspace" in
+  let usable x = x > 0. && Float.is_finite x in
+  if not (usable start && usable stop) then
+    invalid_argf "%s: %g and %g are not both positive and finite" by start stop;
+  let e = spaced ~by ~endpoint 0. 1. n in
+  let f64 = E.const D.Float64 and i64 i = E.const D.Int64 (Int64.of_int i) in
+  let ratio = stop /. start in
+  let v =
+    if Float.is_finite ratio && ratio >= Float.min_float then
+      E.(f64 start * (f64 ratio ** e))
+    else
+      let lo = Float.log start in
+      E.(exp (fma e (f64 (Float.log stop -. lo)) (f64 lo)))
+  in
+  let v = E.(where (coord 0 = i64 0) (f64 start) v) in
+  let last = i64 (n - 1) in
+  let v =
+    if endpoint && n >= 2 then E.(where (coord 0 = last) (f64 stop) v) else v
+  in
+  leaf ~by dt [| Stdlib.max n 0 |] (E.cast dt v)
+
 (* Data in and out *)
 
 type 'd packed = 'd Ptree.packed = P : ('v, 's, 'd) t -> 'd packed
@@ -976,8 +1001,7 @@ let padded ~by ?interior ~lo ~hi v x =
         in
         assemble ~by (dtype x) out v [ (region, piece) ]
 
-let roll ?axis:along k x =
-  let by = "Nx.roll" in
+let roll_by ~by ?axis:along k x =
   let y, a =
     match along with
     | None -> (move ~by (Reshape [| numel x |]) x, 0)
@@ -1001,6 +1025,8 @@ let roll ?axis:along k x =
   match along with
   | Some _ -> rolled
   | None -> reshaped ~by (shape x) rolled
+
+let roll ?axis k x = roll_by ~by:"Nx.roll" ?axis k x
 
 (* [x] with its axis [i] repeated [n.(i)] times: whole, end to end, where
    [outer]; element by element otherwise. Each repeated axis gains a unit axis
@@ -1913,6 +1939,15 @@ let rsqrt (type v s d) (x : (v, s, d) t) : (v, s, d) t =
   | D.Complex ->
       elementwise ~by (dtype x) [ Any x ] E.(recip (sqrt (operand 0 x)))
   | _ -> float_map ~by [ x ] (fun _ ins -> E.(recip (sqrt ins.(0))))
+
+(* [a + w (b - a)] by one fused multiply-add: from [a] where [w < 1/2], else
+   [b + (w - 1) (b - a)], so [w = 0] gives [a] and [w = 1] gives [b]. *)
+let lerp a b w =
+  float_map ~by:"Nx.lerp" [ a; b; w ] (fun f ins ->
+      let a = ins.(0) and b = ins.(1) and w = ins.(2) in
+      let half = E.const f 0.5 and one = E.const f 1. in
+      let d = E.(b - a) in
+      E.(where (w < half) (fma w d a) (fma (w - one) d b)))
 
 (* [sqrt (x^2 + y^2)] with nothing overflowing: at float32, the squares summed
    at float64, which holds them; at float64, [m sqrt (1 + (n / m)^2)] for the
@@ -2827,11 +2862,12 @@ let solve_by ~by a b =
 
 let solve a b = solve_by ~by:"Nx.solve" a b
 
-let inv a =
-  let by = "Nx.inv" in
+let inv_by ~by a =
   square_matrices ~by a;
   let n = dim (-1) a in
   solve_by ~by a (broadcast ~by (shape a) (eye_by ~by (dtype a) n))
+
+let inv a = inv_by ~by:"Nx.inv" a
 
 (* Each singular value's reciprocal where it is above [tol] times its
    matrix's greatest, zero at or below, NaN where it is. *)
@@ -2983,8 +3019,7 @@ let vector_norm ?(ord = 2.) ?axes:l ?(keepdims = false) x =
     let along = Iarray.of_list (List.sort compare along) in
     reshaped ~by (Prim.reduced (shape x) along) y
 
-let matrix_norm ?(ord = `Fro) ?(keepdims = false) x =
-  let by = "Nx.matrix_norm" in
+let matrix_norm_by ~by ?(ord = `Fro) ?(keepdims = false) x =
   matrix ~by x;
   let r = ndim x - 2 and c = ndim x - 1 in
   (* The greatest or least sum of a line's magnitudes, [summed] along it. *)
@@ -3010,6 +3045,124 @@ let matrix_norm ?(ord = `Fro) ?(keepdims = false) x =
   in
   let y = carried ~by x norm in
   if keepdims then y else reshaped ~by (batch x) y
+
+let matrix_norm ?ord ?keepdims x =
+  matrix_norm_by ~by:"Nx.matrix_norm" ?ord ?keepdims x
+
+(* Rank and condition *)
+
+(* [f] of the real parts of [x] and [y], of one dtype the routines take:
+   themselves where they are floats. *)
+let real_parts (type v s d b) ~by (x : (v, s, d) t) (y : (v, s, d) t)
+    (f : 'r. (float, 'r, d) t -> (float, 'r, d) t -> b) : b =
+  match dtype x with
+  | D.Float32 -> f x y
+  | D.Float64 -> f x y
+  | D.Complex64 -> f (real_by ~by D.Float32 x) (real_by ~by D.Float32 y)
+  | D.Complex128 -> f (real_by ~by D.Float64 x) (real_by ~by D.Float64 y)
+  | _ ->
+      invalid_argf "%s: %a is not float32, float64, complex64 or complex128" by
+        pp_value x
+
+(* The singular values above [cutoff rtol] times the greatest counted, or
+   [-1] where the greatest is NaN; a narrower float counted at its carrier,
+   whose epsilon [rtol] defaults to. [a] reaches one operation, so it is
+   consumed; [rtol] is checked before the carrier's cast, which would
+   consume it. *)
+let matrix_rank (type v s d) ?rtol (a : (v, s, d) t) : d int64_t =
+  let by = "Nx.matrix_rank" in
+  matrix ~by a;
+  ignore (cutoff ~by rtol a);
+  let rank (type w r) (a : (w, r, d) t) : d int64_t =
+    matrices ~by a;
+    let bound = cutoff ~by rtol a in
+    if Stdlib.min (dim (-2) a) (dim (-1) a) = 0 then begin
+      Prim.alive ~by a;
+      beside ~by a (fill ~by D.Int64 (batch a) 0L)
+    end
+    else
+      let _, s, _ = svd_by ~by ~vectors:false a in
+      real_parts ~by s s (fun s _ ->
+          let dt = dtype s and r = ndim s - 1 in
+          let top = reduction ~by Max ~axes:[ r ] ~keepdims:true s in
+          let v = operand 0 s and t = operand 1 top in
+          let above =
+            elementwise ~by D.Int64 [ Any s; Any top ]
+              E.(cast D.Int64 (v > const dt bound * t))
+          in
+          let count = reduction ~by Sum ~axes:[ r ] above in
+          let top = reshaped ~by (batch a) top in
+          let c = operand 0 count and t = operand 1 top in
+          elementwise ~by D.Int64 [ Any count; Any top ]
+            E.(where (t <> t) (i64 (-1)) c))
+  in
+  match D.kind (dtype a) with
+  | D.Float when not (Nx_kernel.full_precision (dtype a)) ->
+      let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier (dtype a) in
+      rank (cast_by ~by w a)
+  | _ -> rank a
+
+(* One where every element of a matrix of [a] is finite, zero elsewhere:
+   [x - x] is zero only for a finite [x]. *)
+let finite_matrices ~by a =
+  let dt = dtype a and x = operand 0 a in
+  let held =
+    elementwise ~by D.Int64 [ Any a ]
+      E.(cast D.Int64 (x - x = const dt (D.zero dt)))
+  in
+  reduction ~by Min ~axes:[ ndim a - 2; ndim a - 1 ] held
+
+(* Under [`Two] the greatest singular value over the least, infinite where
+   the least is zero; under [`One] and [`Inf] the norms of [a] and [inv a]
+   multiplied, NaN where [a] holds a value that is not finite, infinite
+   where [inv a] is NaN. Only [`Two] reaches one operation, the
+   factorisation, so only it consumes [a]. Every check runs before the
+   carrier's cast, which would consume it. *)
+let cond (type v s d) ?(p = `Two) (a : (v, s, d) t) : (v, s, d) t =
+  let by = "Nx.cond" in
+  matrix ~by a;
+  if Stdlib.min (dim (-2) a) (dim (-1) a) = 0 then
+    invalid_argf "%s: %a has no singular value" by pp_value a;
+  (match D.kind (dtype a) with
+  | D.Float when not (D.float_format (dtype a)).infinities ->
+      invalid_argf "%s: %s has no infinity" by (D.name (dtype a))
+  | _ -> ());
+  if p <> `Two && dim (-1) a <> dim (-2) a then
+    invalid_argf "%s: %a is not square" by pp_value a;
+  let number (type w r d) (a : (w, r, d) t) : (w, r, d) t =
+    match p with
+    | `Two ->
+        let _, s, _ = svd_by ~by ~vectors:false a in
+        let r = ndim s - 1 in
+        let top = reduction ~by Max ~axes:[ r ] s
+        and bottom = reduction ~by Min ~axes:[ r ] s in
+        real_parts ~by top bottom (fun top bottom ->
+            let dt = dtype top in
+            let t = operand 0 top and b = operand 1 bottom in
+            let zero = E.const dt 0. and inf = E.const dt Float.infinity in
+            cast_by ~by (dtype a)
+              (elementwise ~by dt [ Any top; Any bottom ]
+                 E.(where (b = zero) inf (t / b))))
+    | (`One | `Inf) as ord ->
+        let a = Donate.read ~by a in
+        square_matrices ~by a;
+        let norm x = matrix_norm_by ~by ~ord x in
+        let finite = finite_matrices ~by a in
+        real_parts ~by (norm a) (norm (inv_by ~by a)) (fun na ni ->
+            let dt = dtype na in
+            let x = operand 0 na and y = operand 1 ni in
+            let held = E.input 2 D.Int64 in
+            let inf = E.const dt Float.infinity
+            and nan = E.const dt Float.nan in
+            cast_by ~by (dtype a)
+              (elementwise ~by dt [ Any na; Any ni; Any finite ]
+                 E.(
+                   where
+                     (held = i64 0)
+                     nan
+                     (where (y <> y) inf (x * y)))))
+  in
+  carried ~by a number
 
 (* Order *)
 
@@ -3280,8 +3433,7 @@ let unique ?size keys =
 (* Each index's run starts at the sum of the counts before it; a scatter of the
    indices at their starts, a cumulative maximum along the result, and [n] past
    the total. A negative count counts zero. *)
-let positions ?size c =
-  let by = "Nx.positions" in
+let positions_by ~by ?size c =
   if ndim c <> 1 then invalid_argf "%s: %a is not 1-d" by pp_value c;
   integer_or_boolean ~by (dtype c);
   sized ~by size;
@@ -3307,6 +3459,40 @@ let positions ?size c =
   let starts = scan_along ~by Max 0 runs and j = arange_by ~by D.Int64 0 l 1 in
   elementwise ~by D.Int64 [ Any starts; Any j; Any total ]
     E.(where (operand 1 j < operand 2 total) (operand 0 starts) (i64 n))
+
+let positions ?size c = positions_by ~by:"Nx.positions" ?size c
+
+(* The coordinates of [t]'s non-zero elements, a row each: the positions of
+   [t] flattened, cut into coordinates by one map over [[k; r]] whose column
+   [j] is axis [j]'s, [(p / stride) mod extent]. A pad position, [numel t],
+   gives [t]'s extents. Strides and extents of an empty [t] are held at [1],
+   so no division is by zero. [t] reaches one operation, so it is
+   consumed. *)
+let argwhere ?size t =
+  let by = "Nx.argwhere" in
+  let s = shape t and r = ndim t and n = numel t in
+  let held =
+    elementwise ~by D.Bool [ Any t ] (not_zero (dtype t) (operand 0 t))
+  in
+  let p = positions_by ~by ?size (reshaped ~by [| n |] held) in
+  let k = Prim.dim p 0 in
+  if r = 0 then beside ~by p (fill ~by D.Int64 [| k; 0 |] 0L)
+  else
+    let stride = Array.make r 1 in
+    for j = r - 2 downto 0 do
+      stride.(j) <- stride.(j + 1) * s.(j + 1)
+    done;
+    let q = E.input 0 D.Int64 and column = E.coord 1 and pad = i64 n in
+    let rec pick j =
+      let st = i64 (Stdlib.max 1 stride.(j)) and d = i64 (Stdlib.max 1 s.(j)) in
+      let at = E.(where (q = pad) (i64 s.(j)) (q / st mod d)) in
+      if j = r - 1 then at
+      else
+        let rest = pick (j + 1) in
+        E.(where (column = i64 j) at rest)
+    in
+    let rows = broadcast ~by [| k; r |] (reshaped ~by [| k; 1 |] p) in
+    elementwise ~by D.Int64 [ Any rows ] (pick 0)
 
 (* Quantiles and histograms *)
 
@@ -5118,6 +5304,37 @@ let dst ?type_ ?axes ?norm x =
 let idst ?type_ ?axes ?norm x =
   let by = "Nx.idst" in
   trigonometric ~by Sine ~inverse:true ?type_ ?axes ?norm (Donate.read ~by x)
+
+(* Frequencies and shifts *)
+
+(* The frequencies of [count] bins of an [n]-point transform at spacing [d]:
+   [i / (d n)] for bin [i], or [i - n] from the middle on where [wrap]. *)
+let frequencies ~by ~wrap dt ~d n count =
+  if n < 1 then invalid_argf "%s: %d points" by n;
+  if not (Float.is_finite d && d <> 0.) then invalid_argf "%s: spacing %g" by d;
+  let i64 i = E.const D.Int64 (Int64.of_int i) in
+  let i = E.coord 0 in
+  let middle = i64 ((n + 1) / 2) and n' = i64 n in
+  let i = if wrap then E.(where (i < middle) i (i - n')) else i in
+  let span = E.const D.Float64 (d *. Float.of_int n) in
+  leaf ~by dt [| count |] E.(cast dt (cast D.Float64 i / span))
+
+let fftfreq dt ?(d = 1.) n =
+  frequencies ~by:"Nx.fftfreq" ~wrap:true dt ~d n n
+
+let rfftfreq dt ?(d = 1.) n =
+  frequencies ~by:"Nx.rfftfreq" ~wrap:false dt ~d n ((n / 2) + 1)
+
+(* [x] rolled along each of [axes] by half its extent: rounded down toward the
+   end, or toward the start where [inverse], so each undoes the other. *)
+let shifted ~by ~inverse ?axes x =
+  let axes, extents = transform_axes ~by x axes None in
+  List.fold_left2
+    (fun y a d -> roll_by ~by ~axis:a (if inverse then -(d / 2) else d / 2) y)
+    x axes extents
+
+let fftshift ?axes x = shifted ~by:"Nx.fftshift" ~inverse:false ?axes x
+let ifftshift ?axes x = shifted ~by:"Nx.ifftshift" ~inverse:true ?axes x
 
 (* Short-time transforms *)
 

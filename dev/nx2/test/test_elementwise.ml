@@ -345,6 +345,57 @@ let test_atan2_ends () =
   equal float_exact Float.pi (first (at D.Float64 0. (-1.)));
   equal float_exact 3.25 (first (at D.Float8_e4m3fn 0. (-1.)))
 
+(* Composites *)
+
+(* lerp's two forms at float64, as nx.mli states them. *)
+let lerp_reference a b w =
+  let d = b -. a in
+  if w < 0.5 then Float.fma w d a else Float.fma (w -. 1.) d b
+
+let same_bits a b =
+  (Float.is_nan a && Float.is_nan b)
+  || Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b)
+
+let weight =
+  Gen.frequency
+    [
+      (3, Gen.float_range (-2.) 3.);
+      (2, Gen.of_list [ 0.; -0.; 1.; 0.5; -0.5; Float.pred 0.5; 2. ]);
+      (1, Gen.any_float);
+    ]
+
+let ends = Gen.frequency [ (3, Gen.float_range (-1e3) 1e3); (1, Gen.any_float) ]
+
+let law_lerp ((a, b), w) =
+  cover "an end" (w = 0. || w = 1.);
+  cover "the form from b" (w >= 0.5);
+  cover "below -1/2" (w <= -0.5);
+  let s = Nx.scalar Nx.float64 in
+  let got = (Nx.to_array (Nx.lerp (s a) (s b) (s w))).(0) in
+  let want = lerp_reference a b w in
+  if not (same_bits want got) then
+    failf "lerp %h %h %h is %h, not %h" a b w got want;
+  if Float.is_finite (b -. a) && w = 0. then equal ~msg:"w = 0" float_exact a got;
+  if Float.is_finite (b -. a) && w = 1. then equal ~msg:"w = 1" float_exact b got
+
+(* A narrow float computes at float32 and rounds once. *)
+let law_lerp_narrow ((a, b), w) =
+  let bf x = Nx.scalar Nx.bfloat16 x in
+  let a = bf a and b = bf b and w = bf w in
+  let wide x = Nx.cast Nx.float32 x in
+  let want = Nx.cast Nx.bfloat16 (Nx.lerp (wide a) (wide b) (wide w)) in
+  let bits x = Nx.to_array (Nx.bitcast Nx.uint16 x) in
+  equal (array int) (bits want) (bits (Nx.lerp a b w))
+
+let test_lerp_shapes () =
+  let a = Nx.zeros Nx.float32 [| 2; 1 |] and b = Nx.ones Nx.float32 [| 3 |] in
+  let y = Nx.lerp a b (Nx.scalar Nx.float32 0.25) in
+  equal (array int) [| 2; 3 |] (Nx.shape y);
+  equal (array float_exact) (Array.make 6 0.25) (Nx.to_array y);
+  raises_match
+    (Exn.invalid_arg ~substring:"Nx.lerp: ")
+    (fun () -> ignore (Nx.lerp b (Nx.ones Nx.float32 [| 4 |]) b))
+
 let elementwise =
   group "elementwise"
     [
@@ -362,6 +413,11 @@ let elementwise =
       prop "a bitcast to its own dtype is the value itself" unary_operands
         law_bitcast_same;
       test "atan2 reaches its range's ends, rounded" test_atan2_ends;
+      prop "lerp is one fma, from a below w = 1/2" (Gen.pair (Gen.pair ends ends) weight)
+        law_lerp;
+      prop "lerp of bfloat16 is lerp at float32, rounded once"
+        (Gen.pair (Gen.pair ends ends) weight) law_lerp_narrow;
+      test "lerp broadcasts, and refuses shapes that do not" test_lerp_shapes;
     ]
 
 let () = exit (run "nx elementwise" [ elementwise ])

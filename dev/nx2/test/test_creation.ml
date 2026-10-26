@@ -316,6 +316,50 @@ let test_logspace () =
   equal (array float_exact) [| 1.; 2.; 4. |]
     (Nx.to_array (Nx.logspace Nx.bfloat16 ~endpoint:false ~base:2. 0. 3. 3))
 
+(* The ends are [start] and [stop] as stored, and each value is
+   [start (stop / start)^(i / div)] stored once: within one step of [dt] of
+   that value at float64 stored, or 2{^-40} of it at float64. Far ends put
+   [stop / start] past float64's range. *)
+let law_geomspace
+    (D.Any dt, (n, ((far, flip), ((m1, m2), ((a, b), endpoint))))) =
+  match D.kind dt with
+  | D.Float ->
+      let ea, eb =
+        if far then (-(600 + a), 600 + b) else ((a mod 41) - 20, (b mod 41) - 20)
+      in
+      let start = Float.ldexp (Float.of_int m1) ea
+      and stop = Float.ldexp (Float.of_int m2) eb in
+      let start, stop = if flip then (stop, start) else (start, stop) in
+      cover "a ratio past float64's range" far;
+      cover "one value" (n = 1);
+      let x = Nx.to_array (Nx.geomspace dt ~endpoint start stop n) in
+      equal int n (Array.length x);
+      if n >= 1 then equal_elements dt [| D.of_float dt start |] [| x.(0) |];
+      if endpoint && n >= 2 then
+        equal_elements dt [| D.of_float dt stop |] [| x.(n - 1) |];
+      let div = if endpoint then n - 1 else n in
+      let f = D.float_format dt in
+      let rel = Float.max f.epsilon (Float.ldexp 1. (-40)) in
+      let lo = Float.log start in
+      Array.iteri
+        (fun i v ->
+          let e = if div > 0 then Float.of_int i /. Float.of_int div else 0. in
+          let r = D.of_float dt (Float.exp (lo +. (e *. (Float.log stop -. lo)))) in
+          if not (Float.equal v r) then
+            at_most ~msg:(Printf.sprintf "value %d of %g" i r) float_exact
+              ~than:((rel *. Float.abs r) +. (f.min_normal *. f.epsilon))
+              (Float.abs (v -. r)))
+        x
+  | _ -> ()
+
+let test_geomspace () =
+  equal (array float_exact) [| 1.; 10.; 100.; 1000. |]
+    (Nx.to_array (Nx.geomspace Nx.float32 1. 1000. 4));
+  equal (array float_exact) [| 1.; 2.; 4.; 8. |]
+    (Nx.to_array (Nx.geomspace Nx.float32 ~endpoint:false 1. 16. 4));
+  equal (array float_exact) [| 3. |] (Nx.to_array (Nx.geomspace Nx.float64 3. 10. 1));
+  equal (array float_exact) [||] (Nx.to_array (Nx.geomspace Nx.float64 3. 10. 0))
+
 let ranges =
   group "ranges"
     [
@@ -335,8 +379,23 @@ let ranges =
       test "linspace into integers, without its end, of one and of none"
         test_linspace_ints;
       test "logspace is exact at exact powers" test_logspace;
+      prop "geomspace keeps its ends and its ratio"
+        (Gen.pair float_dtype
+           (Gen.pair (Gen.int_range 0 7)
+              (Gen.pair (Gen.pair Gen.bool Gen.bool)
+                 (Gen.pair
+                    (Gen.pair (Gen.int_range 1 7) (Gen.int_range 1 7))
+                    (Gen.pair
+                       (Gen.pair (Gen.int_range 0 400) (Gen.int_range 0 400))
+                       Gen.bool)))))
+        law_geomspace;
+      test "geomspace at exact powers, of one and of none" test_geomspace;
       refusals
         [
+          ("Nx.geomspace", fun () -> ignore (Nx.geomspace Nx.float32 0. 1. 3));
+          ("Nx.geomspace", fun () -> ignore (Nx.geomspace Nx.float32 (-1.) (-2.) 3));
+          ("Nx.geomspace", fun () -> ignore (Nx.geomspace Nx.float32 1. infinity 3));
+          ("Nx.geomspace", fun () -> ignore (Nx.geomspace Nx.float32 1. 2. (-1)));
           ("Nx.arange", fun () -> ignore (Nx.arange Nx.int32 0 4 0));
           ("Nx.arange", fun () -> ignore (Nx.arange Nx.uint8 0 300 1));
           ("Nx.arange", fun () -> ignore (Nx.arange Nx.uint8 2 (-2) (-1)));

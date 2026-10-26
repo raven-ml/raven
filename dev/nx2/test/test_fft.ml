@@ -540,6 +540,60 @@ module Laws = struct
           done
         done)
 
+  let ints x = Array.map Int32.to_int (Nx.to_array x)
+
+  let test_frequencies () =
+    let freqs = Nx.to_array in
+    equal ~msg:"fftfreq 4" (array float_exact) [| 0.; 0.25; -0.5; -0.25 |]
+      (freqs (Nx.fftfreq Nx.float64 4));
+    equal ~msg:"fftfreq 5, d 0.5" (array float_exact)
+      [| 0.; 0.4; 0.8; -0.8; -0.4 |]
+      (freqs (Nx.fftfreq Nx.float64 ~d:0.5 5));
+    equal ~msg:"fftfreq 1" (array float_exact) [| 0. |] (freqs (Nx.fftfreq Nx.float32 1));
+    equal ~msg:"rfftfreq 4" (array float_exact) [| 0.; 0.25; 0.5 |]
+      (freqs (Nx.rfftfreq Nx.float64 4));
+    equal ~msg:"rfftfreq 5" (array float_exact) [| 0.; 0.2; 0.4 |]
+      (freqs (Nx.rfftfreq Nx.float64 5));
+    equal ~msg:"fftshift (fftfreq 5)" (array float_exact)
+      [| -0.4; -0.2; 0.; 0.2; 0.4 |]
+      (freqs (Nx.fftshift (Nx.fftfreq Nx.float64 5)));
+    let x = Nx.arange Nx.int32 0 6 1 |> Nx.reshape [| 2; 3 |] in
+    equal ~msg:"fftshift, last axis" (array int) [| 2; 0; 1; 5; 3; 4 |] (ints (Nx.fftshift x));
+    equal ~msg:"fftshift, both axes" (array int) [| 5; 3; 4; 2; 0; 1 |]
+      (ints (Nx.fftshift ~axes:[ 0; 1 ] x));
+    equal ~msg:"ifftshift, last axis" (array int) [| 1; 2; 0; 4; 5; 3 |] (ints (Nx.ifftshift x))
+
+  (* Each frequency is [i / (d n)] at float64, [i] wrapped past the middle,
+     stored once; and fftshift orders them, zero at [n / 2]. *)
+  let law_frequencies =
+    prop "fftfreq is i / (d n) at float64, ascending after fftshift"
+      Gen.(pair (int_range 1 64) (int_range 1 16))
+      (fun (n, k) ->
+        let d = Float.of_int k /. 8. and f = Float.of_int n in
+        let i_of j = if j < (n + 1) / 2 then j else j - n in
+        let want = Array.init n (fun j -> Float.of_int (i_of j) /. (d *. f)) in
+        equal ~msg:"fftfreq" (array float_exact) want (Nx.to_array (Nx.fftfreq Nx.float64 ~d n));
+        let real = Array.init ((n / 2) + 1) (fun j -> Float.of_int j /. (d *. f)) in
+        equal ~msg:"rfftfreq" (array float_exact) real (Nx.to_array (Nx.rfftfreq Nx.float64 ~d n));
+        let shifted = Nx.to_array (Nx.fftshift (Nx.fftfreq Nx.float64 ~d n)) in
+        equal ~msg:"zero at n / 2" float_exact 0. shifted.(n / 2);
+        Array.iteri
+          (fun j v -> if j > 0 then less ~msg:"ascending" float_exact ~than:v shifted.(j - 1))
+          shifted)
+
+  (* ifftshift undoes fftshift along any distinct axes, at any extents. *)
+  let law_shift_round_trip =
+    prop "ifftshift undoes fftshift"
+      Gen.(pair (array ~size:(int_range 1 3) (int_range 0 5)) (int_range 0 7))
+      (fun (s, pick) ->
+        let r = Array.length s in
+        let axes = List.filter (fun a -> (pick lsr a) land 1 = 1) (List.init r Fun.id) in
+        let axes = if axes = [] then [ r - 1 ] else axes in
+        cover "an odd extent shifted" (List.exists (fun a -> s.(a) mod 2 = 1) axes);
+        let x = Nx.arange Nx.int32 0 (Array.fold_left ( * ) 1 s) 1 |> Nx.reshape s in
+        let y = Nx.fftshift ~axes x in
+        equal ~msg:"round trip" (array int32) (Nx.to_array x) (Nx.to_array (Nx.ifftshift ~axes y)))
+
   let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
 
   let test_refusals () =
@@ -556,6 +610,12 @@ module Laws = struct
     invalid ~by:"Nx.dst" (fun () -> Nx.dst ~axes:[ 1 ] x);
     invalid ~by:"Nx.idst" (fun () -> Nx.idst ~axes:[ 0; 0 ] x);
     invalid ~by:"Nx.hann" (fun () -> Nx.hann Nx.float32 (-1));
+    invalid ~by:"Nx.fftfreq" (fun () -> Nx.fftfreq Nx.float32 0);
+    invalid ~by:"Nx.fftfreq" (fun () -> Nx.fftfreq Nx.float32 ~d:0. 4);
+    invalid ~by:"Nx.rfftfreq" (fun () -> Nx.rfftfreq Nx.float32 ~d:Float.nan 4);
+    invalid ~by:"Nx.fftshift" (fun () -> Nx.fftshift (Nx.zeros Nx.float32 [||]));
+    invalid ~by:"Nx.fftshift" (fun () -> Nx.fftshift ~axes:[] x);
+    invalid ~by:"Nx.ifftshift" (fun () -> Nx.ifftshift ~axes:[ 0; 0 ] x);
     invalid ~by:"Nx.stft" (fun () -> Nx.stft Nx.complex64 ~window:5 x);
     invalid ~by:"Nx.stft" (fun () -> Nx.stft Nx.complex64 ~window:2 ~win:x x);
     invalid ~by:"Nx.istft" (fun () -> Nx.istft Nx.float32 ~window:4 ~step:5 (Nx.zeros Nx.complex64 [| 2; 3 |]));
@@ -599,6 +659,9 @@ let () =
              Laws.law_trigonometric;
              test "an axis of no element" Laws.test_trigonometric_empty;
              test "hann" Laws.test_hann;
+             test "frequencies and shifts" Laws.test_frequencies;
+             Laws.law_frequencies;
+             Laws.law_shift_round_trip;
              Laws.law_stft;
              test "each refusal names its function" Laws.test_refusals;
              test "a composite names its function" Laws.test_composites_named;

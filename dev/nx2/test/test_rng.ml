@@ -354,6 +354,7 @@ let samplers =
       ("uniform", fun k s -> read (Rng.uniform ~key:k Nx.float16 s));
       ("normal", fun k s -> read (Rng.normal ~key:k Nx.float32 s));
       ("exponential", fun k s -> read (Rng.exponential ~key:k Nx.float64 s));
+      ("gumbel", fun k s -> read (Rng.gumbel ~key:k Nx.float32 s));
       ( "randint",
         fun k s -> of_ints (read (Rng.randint ~key:k ~low:(-9) ~high:1000 s)) );
       ( "bernoulli",
@@ -675,6 +676,17 @@ let distributions =
           near ~var:1. 1. (mean xs);
           near ~var:8. 1. (variance xs);
           ks (fun x -> -.Float.expm1 (-.x)) xs);
+      (* Mean γ, variance π²/6, whose estimate's variance is 22/5 (π²/6)²
+         from its excess kurtosis 12/5. *)
+      prop "gumbel: finite, mean γ, variance π²/6"
+        (Gen.pair keys wide)
+        (fun (k, F dt) ->
+          let xs = read (Rng.gumbel ~key:k dt [| n |]) in
+          Array.iter (fun x -> if not (Float.is_finite x) then failf "draw %g" x) xs;
+          let v = Float.pi *. Float.pi /. 6. in
+          near ~var:v 0.5772156649015329 (mean xs);
+          near ~var:(4.4 *. v *. v) v (variance xs);
+          ks (fun x -> Float.exp (-.Float.exp (-.x))) xs);
       prop "randint draws every value of [low, high), uniformly"
         (Gen.pair keys ranges)
         (fun (k, (low, high)) ->
@@ -1771,6 +1783,7 @@ let calls =
     ("normal", none (fun key -> ignore (Rng.normal ?key f64 [| 3 |])));
     ( "exponential",
       none (fun key -> ignore (Rng.exponential ?key f64 [| 3 |])) );
+    ("gumbel", none (fun key -> ignore (Rng.gumbel ?key f64 [| 3 |])));
     ("randint", none (fun key -> ignore (Rng.randint ?key ~high:5 [| 3 |])));
     ("permutation", none (fun key -> ignore (Rng.permutation ?key 4)));
     ( "bernoulli",

@@ -553,6 +553,70 @@ let test_positions_cases () =
   invalid ~by:"Nx.positions" (fun () ->
       Nx.positions ~size:(-1) (Nx.zeros Nx.bool [| 2 |]))
 
+(* argwhere *)
+
+(* The coordinates of [s]'s index [i] in C order. *)
+let coordinates s i =
+  let r = Array.length s in
+  let c = Array.make r 0 and i = ref i in
+  for j = r - 1 downto 0 do
+    c.(j) <- !i mod s.(j);
+    i := !i / s.(j)
+  done;
+  c
+
+let argwhere_case =
+  let open Gen in
+  let shape =
+    array ~size:(int_range 0 3)
+      (frequency [ (1, constant 0); (1, constant 1); (3, int_range 2 4) ])
+  in
+  let element = of_list [ 0.; -0.; Float.nan; 1.; -2.5 ] in
+  let* s = shape in
+  let n = Array.fold_left ( * ) 1 s in
+  let* vs = array ~size:(constant n) element in
+  let+ size = option (int_range 0 (n + 2)) in
+  (s, vs, size)
+
+(* Each row is the coordinates of an element other than zero, NaN included,
+   in C order; with [size], pad rows of the extents. *)
+let law_argwhere (s, vs, size) =
+  let r = Array.length s in
+  cover "0-d" (r = 0);
+  cover "an empty value" (Array.length vs = 0 && r > 0);
+  cover "padded" (match size with Some l -> l > 0 | None -> false);
+  let rows =
+    List.concat
+      (List.mapi
+         (fun i v -> if v = 0. then [] else [ coordinates s i ])
+         (Array.to_list vs))
+  in
+  let rows =
+    match size with
+    | None -> rows
+    | Some l ->
+        List.init l (fun j -> if j < List.length rows then List.nth rows j else s)
+  in
+  let y = Nx.argwhere ?size (Nx.create Nx.float64 s vs) in
+  equal ~msg:"shape" (array int) [| List.length rows; r |] (Nx.shape y);
+  let want = List.concat_map (fun c -> List.map Int64.of_int (Array.to_list c)) rows in
+  equal ~msg:"rows" (list int64) want (Array.to_list (Nx.to_array y))
+
+let test_argwhere_cases () =
+  let t = Nx.create Nx.int32 [| 2; 3 |] [| 0l; 1l; 0l; 2l; 0l; 3l |] in
+  equal (array int64) [| 0L; 1L; 1L; 0L; 1L; 2L |] (Nx.to_array (Nx.argwhere t));
+  equal (array int) [| 3; 2 |] (Nx.shape (Nx.argwhere t));
+  equal (array int) [| 1; 0 |] (Nx.shape (Nx.argwhere (Nx.scalar Nx.bool true)));
+  equal (array int) [| 0; 0 |] (Nx.shape (Nx.argwhere (Nx.scalar Nx.bool false)));
+  invalid ~by:"Nx.argwhere" (fun () -> Nx.argwhere ~size:(-1) t);
+  Nx.Prim.interpret ~name:"test.order" Values mark (fun i ->
+      let x = Nx.Prim.traced i (Nx.Prim.form t) Mark in
+      raises_match
+        (Exn.invalid_arg
+           ~substring:"Nx.argwhere: the value is traced by test.order")
+        (fun () -> Nx.argwhere x);
+      ignore (Nx.argwhere ~size:2 x))
+
 (* quantile *)
 
 type quantile_case =
@@ -766,6 +830,12 @@ let () =
            [
              prop "each index repeated its count" count_case law_positions;
              test "cases" test_positions_cases;
+           ];
+         group "argwhere"
+           [
+             prop "the coordinates of each element other than zero"
+               argwhere_case law_argwhere;
+             test "cases" test_argwhere_cases;
            ];
          group "quantile"
            [

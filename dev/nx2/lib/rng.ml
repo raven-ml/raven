@@ -1229,7 +1229,7 @@ let dirichlet ?key a =
    2^-b], so that it keeps its relative precision near 0, where the noise that
    wins lies, and is never 0 or infinite. The noise is then bounded by [(b + 1)
    ln 2] above and [-ln ((b + 1) ln 2)] below. *)
-let gumbel (type s) ~key (c : (float, s) D.t) j : (float, s) E.t =
+let gumbel_noise (type s) ~key (c : (float, s) D.t) j : (float, s) E.t =
   let b, k =
     match c with
     | D.Float64 -> (53, bits53 (block ~key j))
@@ -1244,6 +1244,17 @@ let gumbel (type s) ~key (c : (float, s) D.t) j : (float, s) E.t =
   let low = E.(k < half_range) in
   let e = E.(where low (lit c 0. - log1p (-lo)) (lit c 0. - log hi)) in
   E.(-log e)
+
+let gumbel_programs = programs ()
+
+let gumbel ?key dt s =
+  let by = "Nx.Rng.gumbel" in
+  let prog =
+    lowered gumbel_programs dt [||] (fun ~key ~j ->
+        let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
+        rounded dt (gumbel_noise ~key c j))
+  in
+  draw ~by (resolve ~by key) dt s prog
 
 let categorical_programs = programs ()
 
@@ -1264,7 +1275,7 @@ let categorical ?key ?(axis = -1) logits =
   let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
   let prog =
     lowered categorical_programs dt [| D.Any dt |] (fun ~key ~j ->
-        E.(param c 0 dt + gumbel ~key c j))
+        E.(param c 0 dt + gumbel_noise ~key c j))
   in
   let noisy = draw ~by ~params:[| Value.Any logits |] key c s prog in
   let shape = Prim.shape noisy in
