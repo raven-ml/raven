@@ -53,11 +53,12 @@ let kv key v =
 
 let align a n = (n + a - 1) / a * a
 
-(* [gguf ?magic ?version ?alignment ?shift kvs tensors] is a GGUF file of the
-   encoded key-values [kvs] and of [tensors], each a name, a type tag, a logical
-   shape and its bytes. Each tensor's data starts on a multiple of [alignment],
-   [shift] bytes later, and the file ends where the last ends. *)
-let gguf ?(magic = "GGUF") ?(version = 3) ?(alignment = 32) ?(shift = 0) kvs
+(* [laid_out ?magic ?version ?alignment ?shift kvs tensors] is a GGUF file of
+   the encoded key-values [kvs] and of [tensors], each a name, a type tag, a
+   logical shape and its bytes, with the position in the file of each tensor's
+   bytes. Each tensor's data starts on a multiple of [alignment], [shift] bytes
+   later, and the file ends where the last ends. *)
+let laid_out ?(magic = "GGUF") ?(version = 3) ?(alignment = 32) ?(shift = 0) kvs
     tensors =
   let offsets, _ =
     List.fold_left
@@ -87,9 +88,13 @@ let gguf ?(magic = "GGUF") ?(version = 3) ?(alignment = 32) ?(shift = 0) kvs
       Buffer.add_string data bytes)
     tensors offsets;
   let start = align alignment (String.length header) in
-  header
-  ^ String.make (start - String.length header) '\000'
-  ^ Buffer.contents data
+  ( header
+    ^ String.make (start - String.length header) '\000'
+    ^ Buffer.contents data,
+    List.map (( + ) start) offsets )
+
+let gguf ?magic ?version ?alignment ?shift kvs tensors =
+  fst (laid_out ?magic ?version ?alignment ?shift kvs tensors)
 
 (* Metadata of every value type, at the bounds of each. *)
 let metadata : (string * Gguf.value) list =
@@ -128,17 +133,22 @@ let gguf_tensors =
     ("empty", 0, [ 0; 3 ], "", "float32", [| 0; 3 |], Gguf.F32);
   ]
 
-let gguf_file ?version ?alignment ?shift () =
+(* [gguf_layout ?version ?alignment ?shift ()] is the file of [metadata] and
+   [gguf_tensors], and the position of each tensor's bytes. *)
+let gguf_layout ?version ?alignment ?shift () =
   let kvs =
     match alignment with
     | None -> metadata
     | Some a -> ("general.alignment", Gguf.Uint32 a) :: metadata
   in
-  gguf ?version ?alignment ?shift
+  laid_out ?version ?alignment ?shift
     (List.map (fun (k, v) -> kv k v) kvs)
     (List.map
        (fun (n, tag, shape, data, _, _, _) -> (n, tag, shape, data))
        gguf_tensors)
+
+let gguf_file ?version ?alignment ?shift () =
+  fst (gguf_layout ?version ?alignment ?shift ())
 
 let rec pp_value ppf : Gguf.value -> unit = function
   | Uint8 n -> Format.fprintf ppf "Uint8 %d" n
@@ -216,30 +226,120 @@ let gguf_group =
           Printf.sprintf "version %d, alignment %s, shift %d" v
             (Option.fold ~none:"default" ~some:string_of_int a)
             s)
-        "a tensor loads its bytes as stored, at any offset of the file"
+        "a tensor loads its bytes as stored, at any offset of the file, over \
+         the file's pages where the offset is a multiple of its element's size \
+         and into memory of its own elsewhere"
         [
           (3, None, 0);
           (2, None, 0);
           (3, Some 64, 0);
           (3, Some 1, 0);
           (3, Some 1, 1);
+          (3, Some 1, 2);
+          (3, Some 1, 3);
         ]
         (fun (version, alignment, shift) ->
-          let g =
-            Nx_io.load_gguf (file (gguf_file ~version ?alignment ~shift ()))
-          in
+          let contents, positions = gguf_layout ~version ?alignment ~shift () in
+          let g = Nx_io.load_gguf (file contents) in
           equal ~msg:"version" int version (Gguf.version g);
-          List.iter
-            (fun (name, _, shape, data, dtype, shape', ty) ->
+          List.iter2
+            (fun (name, _, shape, data, dtype, shape', ty) position ->
+              let (Nx.P x as t) = find (Gguf.tensors g) name in
               equal ~msg:name
                 (triple string (array int) string)
-                (dtype, shape', data)
-                (stored (find (Gguf.tensors g) name));
+                (dtype, shape', data) (stored t);
               let info = Gguf.info name g in
               equal ~msg:"type" gguf_dtype ty info.dtype;
               equal ~msg:"logical shape" (array int) (Array.of_list shape)
-                info.shape)
-            gguf_tensors);
+                info.shape;
+              let size = Int.max 1 (D.bits (Nx.dtype x) / 8) in
+              if data <> "" then
+                equal ~msg:(name ^ " lies") memory
+                  (if position mod size = 0 then Over_file else Own_memory)
+                  (memory_of t))
+            gguf_tensors positions);
+      cases
+        ~name:(fun (_, tag, ty, _) ->
+          Printf.sprintf "%s, tag %d" (List.assoc ty gguf_dtypes) tag)
+        "a scalar type loads at its dtype"
+        [
+          ("f32", 0, Gguf.F32, D.Any D.Float32);
+          ("f16", 1, Gguf.F16, D.Any D.Float16);
+          ("i8", 24, Gguf.I8, D.Any D.Int8);
+          ("i16", 25, Gguf.I16, D.Any D.Int16);
+          ("i32", 26, Gguf.I32, D.Any D.Int32);
+          ("i64", 27, Gguf.I64, D.Any D.Int64);
+          ("f64", 28, Gguf.F64, D.Any D.Float64);
+          ("bf16", 30, Gguf.BF16, D.Any D.Bfloat16);
+        ]
+        (fun (name, tag, ty, D.Any dt) ->
+          let data = pattern (D.bytes dt 6) 5 in
+          let g =
+            Nx_io.load_gguf (file (gguf [] [ (name, tag, [ 2; 3 ], data) ]))
+          in
+          equal ~msg:"type" gguf_dtype ty (Gguf.info name g).dtype;
+          equal
+            (triple string (array int) string)
+            (D.name dt, [| 2; 3 |], data)
+            (stored (find (Gguf.tensors g) name)));
+      (* Each block format's elements and bytes per block, as ggml's
+         ggml-common.h lays out its block structures, under its ggml_type
+         tag. *)
+      cases
+        ~name:(fun (tag, ty, _, _) ->
+          Printf.sprintf "%s, tag %d" (List.assoc ty gguf_dtypes) tag)
+        "a block format loads as its rows' bytes, at uint8, and refuses a row \
+         of no whole number of blocks"
+        [
+          (2, Gguf.Q4_0, 32, 18);
+          (3, Gguf.Q4_1, 32, 20);
+          (6, Gguf.Q5_0, 32, 22);
+          (7, Gguf.Q5_1, 32, 24);
+          (8, Gguf.Q8_0, 32, 34);
+          (9, Gguf.Q8_1, 32, 36);
+          (10, Gguf.Q2_K, 256, 84);
+          (11, Gguf.Q3_K, 256, 110);
+          (12, Gguf.Q4_K, 256, 144);
+          (13, Gguf.Q5_K, 256, 176);
+          (14, Gguf.Q6_K, 256, 210);
+          (15, Gguf.Q8_K, 256, 292);
+          (16, Gguf.IQ2_XXS, 256, 66);
+          (17, Gguf.IQ2_XS, 256, 74);
+          (18, Gguf.IQ3_XXS, 256, 98);
+          (19, Gguf.IQ1_S, 256, 50);
+          (20, Gguf.IQ4_NL, 32, 18);
+          (21, Gguf.IQ3_S, 256, 110);
+          (22, Gguf.IQ2_S, 256, 82);
+          (23, Gguf.IQ4_XS, 256, 136);
+          (29, Gguf.IQ1_M, 256, 56);
+          (34, Gguf.TQ1_0, 256, 54);
+          (35, Gguf.TQ2_0, 256, 66);
+          (39, Gguf.MXFP4, 32, 17);
+        ]
+        (fun (tag, ty, elements, bytes) ->
+          (* Two rows of three blocks. *)
+          let data = pattern (6 * bytes) tag in
+          let g =
+            Nx_io.load_gguf
+              (file (gguf [] [ ("w", tag, [ 2; 3 * elements ], data) ]))
+          in
+          let info = Gguf.info "w" g in
+          equal ~msg:"type" gguf_dtype ty info.dtype;
+          equal ~msg:"logical shape" (array int)
+            [| 2; 3 * elements |]
+            info.shape;
+          equal
+            (triple string (array int) string)
+            ("uint8", [| 2; 3 * bytes |], data)
+            (stored (find (Gguf.tensors g) "w"));
+          (* A row one element past a whole number of blocks. *)
+          let path =
+            file
+              (gguf []
+                 [ ("w", tag, [ 2; elements + 1 ], pattern (4 * bytes) tag) ])
+          in
+          fails ~path ~naming:(Printf.sprintf "not of blocks of %d" elements)
+            (fun () -> Nx_io.load_gguf path));
       test "metadata of arrays nested a million deep loads" (fun () ->
           (* Each level is an array of one array: its element type, then its
              count. The innermost is an empty array of uint8. *)
@@ -288,8 +388,6 @@ let gguf_group =
            ( "a string past the end",
              raw [ gstring "k" ^ le 8 4 ^ u64 max_int ] one );
            ("a tensor type unknown", raw [] [ ("w", 4, [ 1 ], "abcd") ]);
-           ( "a row not a whole number of blocks",
-             raw [] [ ("w", q8_0, [ 31 ], pattern 34 0) ] );
            ("a dimension's high bit", raw [] [ ("w", 0, [ -1 ], "abcd") ]);
            ( "dimensions whose product overflows",
              raw [] [ ("w", 0, [ 1 lsl 40; 1 lsl 40 ], "abcd") ] );
