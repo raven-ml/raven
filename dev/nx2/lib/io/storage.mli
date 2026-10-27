@@ -68,7 +68,7 @@ val copied :
 
     Raises [Invalid_argument] as {!Nx_array.v} does. *)
 
-val byteswap : ('v, 's, Nx.host) Nx.t -> ('v, 's, Nx.host) Nx.t
+val byteswap : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
 (** [byteswap x] is [x] with the bytes of each element reversed, those of each
     component for a complex dtype. *)
 

@@ -42,10 +42,10 @@
     leaves that memory unshared, so a later donation of the value may write its
     result there ({!Nx.Repr.read}).
 
-    A save copies onto the host a value off the host or out of C order, and on a
-    big-endian host one whose bytes it swaps. On a little-endian host, a value
-    off the host and out of C order takes up to twice its bytes. An npz or
-    SafeTensors save writes each entry before it reads the next.
+    A save copies onto the host a value off the host or out of C order, which
+    takes up to twice its bytes. On a big-endian host, it first swaps the bytes
+    of a value whose dtype is wider than a byte into new memory, on the value's
+    set. An npz or SafeTensors save writes each entry before it reads the next.
 
     A save replaces what its path names with a new file it renames over the
     path. After a crash, the path holds the old file or the whole new one,

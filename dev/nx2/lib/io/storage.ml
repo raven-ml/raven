@@ -64,9 +64,9 @@ let copied b dt layout =
   Nx.Repr.unsafe_of_array Nx.Host.v (A.v dt layout c)
 
 (* [value b dt layout] reads [b]'s own memory, through the host's borrow of a
-   file's pages, where [b] starts on a multiple of [dt]'s alignment and the
-   host maps it, and shares it; it reads a copy of [b]'s bytes otherwise,
-   which it owns. *)
+   file's pages, where [b] starts on a multiple of [dt]'s alignment and the host
+   maps it, and shares it; it reads a copy of [b]'s bytes otherwise, which it
+   owns. *)
 let value b dt layout =
   if B.offset b mod alignment dt = 0 then
     let a = A.v dt layout b in
@@ -78,7 +78,7 @@ let value b dt layout =
 (* Each element's bytes are a last axis of [w], split into components of [k]
    bytes, whose order is reversed: a complex number keeps its real part
    first. *)
-let byteswap (type v s) (x : (v, s, Nx.host) Nx.t) : (v, s, Nx.host) Nx.t =
+let byteswap (type v s d) (x : (v, s, d) Nx.t) : (v, s, d) Nx.t =
   let dt = Nx.dtype x in
   let k = alignment dt in
   if k = 1 then x
@@ -104,16 +104,12 @@ let as_bytes a =
   Option.get (A.move (A.Move.Reshape (Iarray.of_array [| n |])) b)
 
 (* [x]'s array is read in place where it is C-contiguous and in the host's byte
-   order is the file's; otherwise a copy holds what the file holds. *)
+   order is the file's; otherwise a copy holds what the file holds. On a
+   big-endian host the swap comes first, on [x]'s set, and its result is fresh
+   and C-contiguous, so it is read in place. *)
 let with_bytes ~by x f =
-  let bytes a =
-    A.read Bigarray.int8_unsigned (as_bytes a) (fun g ->
-        f (Bigarray.array1_of_genarray g))
-  in
+  let x = if Sys.big_endian then Fail.renamed ~by byteswap x else x in
   Fail.reading ~by (Nx.Repr.read x) @@ fun a ->
   let a = if L.is_contiguous (A.layout a) then a else A.copy a in
-  if Sys.big_endian && alignment (A.dtype a) > 1 then
-    let swapped = byteswap (Nx.Repr.unsafe_of_array Nx.Host.v (A.copy a)) in
-    Nx.Repr.read swapped (fun b ->
-        bytes (if L.is_contiguous (A.layout b) then b else A.copy b))
-  else bytes a
+  A.read Bigarray.int8_unsigned (as_bytes a) (fun g ->
+      f (Bigarray.array1_of_genarray g))
