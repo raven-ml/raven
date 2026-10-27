@@ -174,3 +174,203 @@ let scatter (D.Any dt as d) (c : Nx_kernel.combine) ~axis ~idx ~updates into =
         let xs = List.map own (lift into) in
         let us = List.map spread (lift updates) in
         kept (Arith.cast ~src:ca d (summed ca ~landed:mask xs us))
+
+(* Folds
+
+   A fold undoes a padded load's movements in reverse, each by its adjoint: a
+   window's sums the windows' elements back into place, the ends' pads what
+   they cropped and crops what they padded, and the interior padding's keeps
+   every [k + 1]th element. Each part sums in the carrier, an integer on an
+   unsigned pattern of 32 or 64 bits as {!Lower_reduce} folds integers, and
+   rounds once. The same movements over a mark per term, [2] for a term other
+   than [-0] and [1] for [-0], folded by their maximum, find where every term
+   is [-0], which the sum, from tolk's [+0] accumulator, makes [+0]. *)
+
+let ceil_div a b = (a + b - 1) / b
+
+(* [only r i b] is [b] at axis [i] of [r] axes, [None] elsewhere. *)
+let only r i b = List.init r (fun j -> if j = i then Some b else None)
+
+(* [rows u i k] is [u] with its axis [i] split into rows of [k]. *)
+let rows u i k =
+  let e = extents u in
+  let split = List.mapi (fun j d -> if j = i then [ d / k; k ] else [ d ]) e in
+  Shape.reshape u (dims (List.concat split))
+
+let ints a b = (Ops.Int a, Ops.Int b)
+
+(* [unwindow op u w s] is the adjoint of the window [w] over a value of shape
+   [s]: [u]'s elements, of the windowed shape, folded by [op] into the place
+   each reads. The axis is laid out as rows one element longer than
+   [w.dilation] apart from a whole number of copies of it, so that the
+   window's element [j] at window [l] lands [j·dilation + l·step] into a copy:
+   the copies' sum is the fold. *)
+let unwindow op u (w : Nx_array.Move.window) s =
+  let a = w.axis and r = List.length s in
+  let n = List.nth s a and l = Bits.extent u a in
+  if n = 0 || l = 0 then zeros (Ops.dtype u) s
+  else
+    let others = List.filter (( <> ) a) (List.init r Fun.id) in
+    let o = List.map (List.nth s) others in
+    let scale = Int.max 1 (ceil_div ((l * w.step) - w.dilation) n) in
+    let row = (n * scale) + w.dilation in
+    let copies = ceil_div (w.size * row) n in
+    let reshape x e = Shape.reshape x (dims (o @ e)) in
+    let pad_to x e = Shape.pad_to x (List.map Option.some (dims (o @ e))) in
+    let x = Shape.permute u (others @ [ r; a ]) in
+    let x = reshape x [ w.size; l; 1 ] in
+    let x = pad_to x [ w.size; l; w.step ] in
+    let x = reshape x [ w.size; l * w.step ] in
+    let x = pad_to x [ w.size; row ] in
+    let x = reshape x [ w.size * row ] in
+    let x = pad_to x [ copies * n ] in
+    let x = Shape.rop (reshape x [ copies; n ]) op [ r - 1 ] in
+    let back i = if i = a then r - 1 else if i < a then i else i - 1 in
+    Shape.permute x (List.init r back)
+
+(* [unends lo hi s u] is the adjoint of padding a value of shape [s] by [lo]
+   and [hi]: [u] padded with zeros where the load cropped, then cropped where
+   it padded. *)
+let unends lo hi s u =
+  let at f = List.init (List.length s) (fun i -> Some (f i)) in
+  let cropped i a = Int.max 0 (-Iarray.get a i) in
+  let u = Shape.pad u (at (fun i -> ints (cropped i lo) (cropped i hi))) in
+  Shape.shrink u
+    (at (fun i ->
+         let b = Int.max 0 (Iarray.get lo i) in
+         ints b (b + List.nth s i)))
+
+(* [uninterior k s u] is the adjoint of spacing a value of shape [s] by [k]:
+   every [k.(i) + 1]th element of [u] along each axis [i]. *)
+let uninterior k s u =
+  let r = List.length s in
+  let every u i k =
+    if k = 0 || List.nth s i = 0 then u
+    else
+      let u = rows (Shape.pad u (only r i (ints 0 k))) i (k + 1) in
+      let u = Shape.shrink u (only (r + 1) (i + 1) (ints 0 1)) in
+      Shape.flatten ~start:i ~stop:(i + 1) u
+  in
+  let u = ref u in
+  Iarray.iteri (fun i k -> u := every !u i k) k;
+  !u
+
+let fold (D.Any dt as d) (pad : Nx_kernel.pad) shape x =
+  if D.is D.Boolean dt then unlowered "a boolean Fold";
+  let s0 = Iarray.to_list shape in
+  let spaced i n =
+    if n = 0 then 0 else n + ((n - 1) * Iarray.get pad.interior i)
+  in
+  let s1 = List.mapi spaced s0 in
+  let s2 =
+    List.mapi (fun i n -> n + Iarray.get pad.lo i + Iarray.get pad.hi i) s1
+  in
+  (* Each window with the shape it windows, the last first. *)
+  let windows, _ =
+    Iarray.fold_left
+      (fun (ws, s) (w : Nx_array.Move.window) ->
+        let m = Nx_array.Move.Window (Iarray.of_list [ w ]) in
+        let s' = Iarray.to_list (Nx_array.Move.shape m (Iarray.of_list s)) in
+        ((w, s) :: ws, s'))
+      ([], s2) pad.windows
+  in
+  let back op u =
+    let u = List.fold_left (fun u (w, s) -> unwindow op u w s) u windows in
+    uninterior pad.interior s0 (unends pad.lo pad.hi s1 u)
+  in
+  let ca = Nx_kernel.carrier d in
+  let part u =
+    let t = Ops.dtype u in
+    if not (Dtype.is_float t) then
+      let wide : Dtype.t =
+        if Dtype.itemsize t < 4 then Uint32 else Bits.unsigned t
+      in
+      let y = back Op.Add (Ops.cast u wide) in
+      (* A cast, not a bitcast, back to a signed type: tolk renders a
+         bitcast of a constant of 64 bits from a 32-bit literal. *)
+      Ops.cast (Ops.cast y (Bits.unsigned t)) t
+    else
+      let y = back Op.Add u in
+      let mark =
+        Ops.where (negative_zero u) (int (Bits.bits u) 1) (int (Bits.bits u) 2)
+      in
+      let mark = back Op.Max (Ops.cast mark Uint8) in
+      Ops.where (Ops.eq mark (int mark 1)) (Shape.const_like y (`Float (-0.))) y
+  in
+  let x = Arith.cast ~src:d ca x in
+  Arith.cast ~src:ca d (Arith.of_parts ca (List.map part (Arith.parts ca x)))
+
+(* Assemblies
+
+   A piece is placed into the result's shape by the adjoint of its region's
+   slice, which spaces its elements [step] apart and pads around them, and so
+   is a mask of where it lies. Each piece in turn selects its elements where
+   it lies over what came before. *)
+
+(* [placed s ranges u] is [u] at the positions [ranges] keep of a shape [s],
+   zeros elsewhere. *)
+let placed s (ranges : Nx_array.Move.range iarray) u =
+  let r = List.length s in
+  let place u i ({ start; count; step } : Nx_array.Move.range) =
+    let u, first, step =
+      if step < 0 then (Shape.flip u [ i ], start + ((count - 1) * step), -step)
+      else (u, start, step)
+    in
+    let span = ((count - 1) * step) + 1 in
+    let u =
+      if step = 1 then u
+      else
+        let gaps = only (r + 1) (i + 1) (ints 0 (step - 1)) in
+        let u = Shape.pad (rows u i 1) gaps in
+        let u = Shape.flatten ~start:i ~stop:(i + 1) u in
+        Shape.shrink u (only r i (ints 0 span))
+    in
+    Shape.pad u (only r i (ints first (List.nth s i - first - span)))
+  in
+  let u = ref u in
+  Iarray.iteri (fun i range -> u := place !u i range) ranges;
+  !u
+
+(* [words dt x] is the bits of each part of the element [x] of [dt], as
+   unsigned integers in the host's order. *)
+let words (type v s) (dt : (v, s) D.t) (x : v) =
+  let b = Nx_kernel.Prog.bits dt x in
+  let word b =
+    let n = ref Bigint.zero in
+    for i = String.length b - 1 downto 0 do
+      n := Bigint.add (Bigint.shift_left !n 8) (Bigint.of_int (Char.code b.[i]))
+    done;
+    `Int !n
+  in
+  if not (D.is D.Complex dt) then [ word b ]
+  else
+    let h = String.length b / 2 in
+    [ word (String.sub b 0 h); word (String.sub b h h) ]
+
+(* A float assembles as its bits: tolk folds a constant float fill joined to
+   another part by an addition, which quiets a signalling NaN. *)
+let assemble (type v s) (dt : (v, s) D.t) (fill : v) shape pieces =
+  let d = D.Any dt in
+  let s = Iarray.to_list shape in
+  let tdt = Arith.dtype d in
+  let floats = Dtype.is_float tdt in
+  let start =
+    if floats then
+      let tb = Bits.unsigned tdt in
+      List.map (fun w -> broadcast (Ops.const ~dtype:tb w) s) (words dt fill)
+    else
+      let const c = broadcast (Ops.const ~dtype:tdt c) s in
+      List.map const (Arith.fill dt fill)
+  in
+  let empty (r : Nx_array.Move.range) = r.count = 0 in
+  let put acc (ranges, u) =
+    if Iarray.exists empty ranges then acc
+    else
+      let parts = Arith.parts d u in
+      let parts = if floats then List.map Bits.bits parts else parts in
+      let ones = Shape.const_like ~dtype:Bool (List.hd parts) (`Bool true) in
+      let mask = placed s ranges ones in
+      List.map2 (fun a p -> Ops.where mask (placed s ranges p) a) acc parts
+  in
+  let y = Arith.of_parts d (List.fold_left put start pieces) in
+  if floats then Ops.bitcast y tdt else y

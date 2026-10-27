@@ -3,22 +3,25 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Gathers and scatters as tolk graphs.
+(** Gathers, scatters, folds and assemblies as tolk graphs.
 
     Each function takes nodes as {!Lower_arith} holds elements and computes
     what {!Nx_kernel.S} states of its operation, of static shapes.
 
-    {b Numerics.} A gather and a scatter by [Set] move elements: they give
-    eager's bits, a NaN's sign and payload included, and so does a scatter
-    where no update lands. A scatter by [Max] or [Min] gives eager's bits but
-    for a NaN, of no promised sign or payload, a complex one with two NaN
-    parts. A scatter by [Add] wraps integers exactly. Its float sum, of [x] and
-    the [n] updates [u1], …, [un] that land on it, adds in the carrier
+    {b Numerics.} A gather, a scatter by [Set] and an assembly move elements:
+    they give eager's bits, a NaN's sign and payload included, and so does a
+    scatter where no update lands. A scatter by [Max] or [Min] gives eager's
+    bits but for a NaN, of no promised sign or payload, a complex one with two
+    NaN parts. A scatter by [Add] wraps integers exactly. Its float sum, of
+    [x] and the [n] updates [u1], …, [un] that land on it, adds in the carrier
     ({!Nx_kernel.carrier}) in an association tolk chooses and rounds once: it
     is within [γ(n) (|x| + Σ |ui|)] of the exact sum before that rounding, as
     {!Lower_reduce} states its sums, each part of a complex sum such a sum. It
     is [-0] where [x] and every [ui] are, and [+0] for other terms of zero
-    sum. *)
+    sum. A fold of [m] terms [ti] sums them as a scatter's [Add] does, within
+    [γ(m - 1) Σ |ti|], [-0] where every [ti] is and [+0] where it has none: it
+    rounds a narrow float once from [float32], where eager rounds each
+    addition. *)
 
 open Tolk
 
@@ -44,3 +47,23 @@ val scatter :
     distinct targets changes nothing.
 
     Raises [Invalid_argument] for a boolean [Add]. *)
+
+val fold :
+  Nx_array.Dtype.any -> Nx_kernel.pad -> int iarray -> Ops.t -> Ops.t
+(** [fold d pad shape x] is the adjoint of a [Padded] load by [pad] of a value
+    of [d] and of [shape], [x] of the shape the load gives, as
+    {!Nx_kernel.S.fold} states. Each window's terms sum as copies of its axis
+    laid end to end, [O(size (windows step + extent))] work for each window.
+
+    Raises [Invalid_argument] for a boolean [d]. *)
+
+val assemble :
+  ('v, 's) Nx_array.Dtype.t ->
+  'v ->
+  int iarray ->
+  (Nx_array.Move.range iarray * Ops.t) list ->
+  Ops.t
+(** [assemble dt fill shape pieces] is the value of [dt] and [shape] whose
+    element at an index is the last piece's whose region holds it and [fill]
+    where none does, as {!Nx_kernel.S.assemble} states. Each piece selects its
+    elements over the earlier ones: one select per piece at every element. *)

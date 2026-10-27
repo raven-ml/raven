@@ -270,5 +270,10 @@ let op (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r) (o : r P.t) =
           (D.Any (Nx.dtype into))
           combine ~axis ~idx:(node idx) ~updates:(node updates) (node into);
       |]
-  | Sort _ | Fold _ | Assemble _ | Fft _ | Linalg _ | Check _ ->
+  | Fold { shape; pad; x } ->
+      [| Lower_index.fold (D.Any (Nx.dtype x)) pad shape (node x) |]
+  | Assemble { dtype; shape; fill; pieces } ->
+      let pieces = List.map (fun (r, p) -> (r, node p)) pieces in
+      [| Lower_index.assemble dtype fill shape pieces |]
+  | Sort _ | Fft _ | Linalg _ | Check _ ->
       unlowered (P.name o)

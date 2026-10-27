@@ -21,13 +21,14 @@ val op :
     where it reads no element. A [Reduce] and a [Scan] reduce their program's
     outputs as {!Lower_reduce} does; a [Contract] of no scale and no segments
     sums its products in its accumulator; a [Copy] is its operand, a [Move]
-    its operand moved, a [Bitcast] of one width its operand's bits, and a
-    [Place] is its operand: a graph computes on one device, which its caller
+    its operand moved, a [Bitcast] of one width its operand's bits, a
+    [Place] its operand, as a graph computes on one device, which its caller
     holds every value on. A
-    [Gather] and a [Scatter] compute as {!Lower_index} states.
+    [Gather], a [Scatter], a [Fold] and an [Assemble] compute as
+    {!Lower_index} states.
 
     Raises [Invalid_argument] naming the operation for one not lowered yet:
-    [Sort], [Fold], [Assemble], [Fft], [Linalg] and [Check], a
-    boolean [Add] [Scatter], a scaled or segmented [Contract], a [Bitcast]
+    [Sort], [Fft], [Linalg] and [Check], a boolean [Add] [Scatter]
+    or [Fold], a scaled or segmented [Contract], a [Bitcast]
     that changes width, a reduction or a scan of a complex [Prod], and a scan
     of a [complex128] [Max], [Min] or [Arg]. *)

@@ -765,10 +765,355 @@ let scatter_adds =
           sums dt ~mags ~terms e l
       | _ -> same_bits dt e l)
 
+(* Folds *)
+
+module M = Nx_array.Move
+
+type fold = {
+  f_dt : D.any;
+  f_shape : int array;
+  f_pad : K.pad;
+  f_padded : int array;
+  f_raws : int64 array;
+}
+
+let pp_fold ppf c =
+  let a x = ints (Iarray.to_array x) in
+  let w (w : M.window) =
+    Printf.sprintf "%d:%d/%d*%d" w.axis w.size w.step w.dilation
+  in
+  Format.fprintf ppf
+    "%s [%s] lo [%s] hi [%s] interior [%s] windows [%s] raws [%s]"
+    (name c.f_dt) (ints c.f_shape) (a c.f_pad.lo) (a c.f_pad.hi)
+    (a c.f_pad.interior)
+    (String.concat ";" (List.map w (Iarray.to_list c.f_pad.windows)))
+    (raws_text c.f_raws)
+
+(* A padding of a shape of rank [r]: ends that pad or crop, interior padding,
+   and windows on some axes half the time. *)
+let pad_gen r =
+  let open Gen in
+  let ends = map Iarray.of_list (list ~size:(constant r) (int_range (-2) 2)) in
+  let* lo = ends in
+  let* hi = ends in
+  let* interior =
+    map Iarray.of_list (list ~size:(constant r) (int_range 0 2))
+  in
+  let* windowed = list ~size:(constant r) bool in
+  let* sizes = list ~size:(constant r) (int_range 1 3) in
+  let* steps = list ~size:(constant r) (int_range 1 2) in
+  let+ dilations = list ~size:(constant r) (int_range 1 2) in
+  let windows =
+    List.filteri (fun i _ -> List.nth windowed i) (List.init r Fun.id)
+    |> List.map (fun axis ->
+        {
+          M.axis;
+          size = List.nth sizes axis;
+          step = List.nth steps axis;
+          dilation = List.nth dilations axis;
+        })
+  in
+  { K.lo; hi; interior; windows = Iarray.of_list windows }
+
+(* A float dtype's fraction bits. *)
+let fraction (D.Any dt) =
+  match D.kind dt with D.Float -> Some (snd (format dt)) | _ -> None
+
+let fold_case dts =
+  let open Gen in
+  let* d = among dts in
+  let* s = shape in
+  let* pad = pad_gen (Array.length s) in
+  match K.Shape.padded pad s with
+  | Error _ -> reject ()
+  | Ok out ->
+      let+ raws = raws d (numel out) in
+      { f_dt = d; f_shape = s; f_pad = pad; f_padded = out; f_raws = raws }
+
+let folded (type v s) (x : (v, s, Nx.host) Nx.t) c =
+  P.eval ~by:"t"
+    (P.Fold { shape = Iarray.of_array c.f_shape; pad = c.f_pad; x })
+
+let cover_fold c =
+  let pad = c.f_pad in
+  let exists f a = Iarray.exists f a in
+  dtype_covers ~booleans:false c.f_dt;
+  cover_floats c.f_dt c.f_raws;
+  cover "a cropping end"
+    (exists (fun n -> n < 0) pad.lo || exists (fun n -> n < 0) pad.hi);
+  cover "a padding end"
+    (exists (fun n -> n > 0) pad.lo || exists (fun n -> n > 0) pad.hi);
+  cover "interior padding" (exists (fun n -> n > 0) pad.interior);
+  cover "overlapping windows"
+    (exists (fun (w : M.window) -> w.size > 1 && w.step < w.size) pad.windows);
+  cover "an empty operand" (numel c.f_padded = 0);
+  cover "an empty result" (numel c.f_shape = 0)
+
+let foldable = List.filter (fun d -> not (is_bool d)) D.all
+
+(* Each dtype with ends that pad and crop, interior padding and overlapping
+   windows. *)
+let fold_examples =
+  let a = Iarray.of_list in
+  let pad =
+    {
+      K.lo = a [ 1; -1 ];
+      hi = a [ -1; 2 ];
+      interior = a [ 1; 0 ];
+      windows = a [ { M.axis = 1; size = 2; step = 1; dilation = 1 } ];
+    }
+  in
+  let s = [| 3; 4 |] in
+  let out = Result.get_ok (K.Shape.padded pad s) in
+  (* An int64 fold of an element no term reaches, a constant [0]. *)
+  let reached =
+    {
+      K.lo = a [ 2; 0; 0 ];
+      hi = a [ -1; 0; 0 ];
+      interior = a [ 0; 0; 0 ];
+      windows = a [ { M.axis = 2; size = 1; step = 1; dilation = 1 } ];
+    }
+  in
+  let r = [| 1; 2; 2 |] in
+  let r_out = Result.get_ok (K.Shape.padded reached r) in
+  {
+    f_dt = D.Any D.Int64;
+    f_shape = r;
+    f_pad = reached;
+    f_padded = r_out;
+    f_raws = cycled (D.Any D.Int64) (numel r_out);
+  }
+  :: List.mapi
+       (fun i d ->
+         {
+           f_dt = d;
+           f_shape = s;
+           f_pad = pad;
+           f_padded = out;
+           f_raws = cycled ~i d (numel out);
+         })
+       foldable
+
+let folds =
+  prop ~count:40 ~examples:fold_examples
+    "a fold wraps integers and holds its float bound"
+    (Gen.with_pp pp_fold (fold_case foldable))
+    (fun c ->
+      let (D.Any dt) = c.f_dt in
+      cover_fold c;
+      let x = value dt c.f_padded c.f_raws in
+      let op () = folded x c in
+      let e = Nx.to_array (op ()) and l = Lowered.run op in
+      match D.kind dt with
+      | D.Float | D.Complex ->
+          (* Each element's terms and their magnitudes' sum, by eager folds
+             of ones and of the magnitudes. *)
+          let terms =
+            Array.map Float.to_int
+              (Nx.to_array (folded (Nx.ones D.Float64 c.f_padded) c))
+          in
+          let mags =
+            List.map
+              (fun p ->
+                Nx.to_array
+                  (folded
+                     (Nx.abs (Nx.create D.Float64 c.f_padded p))
+                     c))
+              (parts64 x)
+          in
+          (* Eager rounds a narrow float's sum at each addition: its
+             [terms - 1] roundings of the dtype add to the bound. *)
+          let narrow o =
+            match fraction c.f_dt with
+            | Some f when is_narrow c.f_dt ->
+                Float.ldexp 1. (-f) *. Float.of_int terms.(o)
+            | _ -> 0.
+          in
+          List.iter2
+            (fun (e, l) mags ->
+              Array.iteri
+                (fun o e ->
+                  let n = max 0 (terms.(o) - 1) in
+                  let bound =
+                    ((2. *. gamma c.f_dt n) +. narrow o) *. mags.(o)
+                    +. rounding_of dt e l.(o)
+                  in
+                  near ~bound e l.(o))
+                e)
+            (List.combine (parts dt e) (parts dt l))
+            mags
+      | _ -> same_bits dt e l)
+
+(* Assemblies *)
+
+type assembly = {
+  a_dt : D.any;
+  a_shape : int array;
+  a_fill : int64 array;
+  a_pieces : (M.range array * view * int64 array) list;
+}
+
+let pp_range (r : M.range) = Printf.sprintf "%d+%d*%d" r.start r.count r.step
+
+let pp_assembly ppf c =
+  Format.fprintf ppf "%s [%s] fill [%s] %s" (name c.a_dt) (ints c.a_shape)
+    (raws_text c.a_fill)
+    (String.concat " "
+       (List.map
+          (fun (rs, v, raws) ->
+            Printf.sprintf "(%s %s [%s])"
+              (String.concat ";" (Array.to_list (Array.map pp_range rs)))
+              (view_name v) (raws_text raws))
+          c.a_pieces))
+
+let rec all = function
+  | [] -> Gen.constant []
+  | g :: gs ->
+      let open Gen in
+      let* x = g in
+      let+ xs = all gs in
+      x :: xs
+
+let range d =
+  let open Gen in
+  let* up = bool in
+  let* m = int_range 1 3 in
+  let step = if up then m else -m in
+  if d = 0 then constant { M.start = 0; count = 0; step }
+  else
+    let* start = int_range 0 (d - 1) in
+    let most =
+      if step > 0 then ((d - 1 - start) / step) + 1 else (start / -step) + 1
+    in
+    let+ count =
+      frequency [ (1, constant 0); (6, int_range 1 most) ]
+    in
+    { M.start; count; step }
+
+let region_shape rs = Array.map (fun (r : M.range) -> r.count) rs
+
+let assembly_case =
+  let open Gen in
+  let* d = all_dtypes in
+  let* s = shape in
+  let* fill = raws d 1 in
+  let piece =
+    let* rs = map Array.of_list (all (List.map range (Array.to_list s))) in
+    let* v = among views in
+    let+ raws = operand_gen d v (region_shape rs) in
+    (rs, v, raws)
+  in
+  let* k = int_range 0 3 in
+  let+ pieces = list ~size:(constant k) piece in
+  { a_dt = d; a_shape = s; a_fill = fill; a_pieces = pieces }
+
+(* Whether two pieces of [c] share an element. *)
+let overlap c =
+  let holds (rs : M.range array) idx =
+    Array.for_all2
+      (fun (r : M.range) i ->
+        let o = i - r.start in
+        o mod r.step = 0 && o / r.step >= 0 && o / r.step < r.count)
+      rs idx
+  in
+  let n = numel c.a_shape in
+  let idx k =
+    let a = Array.make (Array.length c.a_shape) 0 in
+    let k = ref k in
+    for i = Array.length c.a_shape - 1 downto 0 do
+      a.(i) <- !k mod c.a_shape.(i);
+      k := !k / c.a_shape.(i)
+    done;
+    a
+  in
+  List.exists
+    (fun k ->
+      List.length (List.filter (fun (rs, _, _) -> holds rs (idx k)) c.a_pieces)
+      > 1)
+    (List.init n Fun.id)
+
+(* Each dtype with a reversed and a strided piece that overlap, an example
+   with an empty piece and one without pieces. *)
+let assembly_examples =
+  let r start count step = { M.start; count; step } in
+  let s = [| 3; 4 |] in
+  let piece i d v rs =
+    (rs, v, cycled ~i d (numel (base v (region_shape rs))))
+  in
+  let each i d =
+    {
+      a_dt = d;
+      a_shape = s;
+      a_fill = cycled ~i:(i + 1) d 1;
+      a_pieces =
+        [
+          piece i d (List.nth views (i mod 4)) [| r 0 3 1; r 3 2 (-1) |];
+          piece (i + 5) d Plain [| r 2 2 (-1); r 0 2 2 |];
+        ];
+    }
+  in
+  let f32 = D.Any D.Float32 in
+  (* Signalling NaN fills of both parts of a complex number, around a piece. *)
+  let snan =
+    {
+      a_dt = D.Any D.Complex128;
+      a_shape = [| 2 |];
+      a_fill = [| 0x7ff0000000000001L; 0x7ff0000000000001L |];
+      a_pieces =
+        [ ([| r 0 1 (-1) |], Plain, [| 0x3fb0000000000000L; 1L |]) ];
+    }
+  in
+  let empty = [ piece 0 f32 Plain [| r 0 0 1; r 1 2 1 |] ] in
+  snan
+  :: { (each 0 f32) with a_pieces = empty }
+  :: { (each 0 f32) with a_pieces = [] }
+  :: List.mapi each D.all
+
+let assemblies =
+  prop ~count:40 ~examples:assembly_examples "an assembly gives eager's bits"
+    (Gen.with_pp pp_assembly assembly_case)
+    (fun c ->
+      let (D.Any dt) = c.a_dt in
+      dtype_covers c.a_dt;
+      cover_floats c.a_dt
+        (Array.concat (c.a_fill :: List.map (fun (_, _, r) -> r) c.a_pieces));
+      cover "a reversed region"
+        (List.exists
+           (fun (rs, _, _) ->
+             Array.exists (fun (r : M.range) -> r.step < 0 && r.count > 1) rs)
+           c.a_pieces);
+      cover "a strided region"
+        (List.exists
+           (fun (rs, _, _) ->
+             Array.exists
+               (fun (r : M.range) -> abs r.step > 1 && r.count > 1)
+               rs)
+           c.a_pieces);
+      cover "an empty region"
+        (List.exists
+           (fun (rs, _, _) -> numel (region_shape rs) = 0)
+           c.a_pieces);
+      cover "overlapping pieces" (overlap c);
+      cover "no piece" (c.a_pieces = []);
+      let fill = (Nx.to_array (value dt [| 1 |] c.a_fill)).(0) in
+      let pieces =
+        List.map
+          (fun (rs, v, raws) ->
+            (Iarray.of_array rs, operand dt v (region_shape rs) raws))
+          c.a_pieces
+      in
+      let op () =
+        P.eval ~by:"t"
+          (P.Assemble
+             { dtype = dt; shape = Iarray.of_array c.a_shape; fill; pieces })
+      in
+      same_bits dt (Nx.to_array (op ())) (Lowered.run op))
+
 let () =
   exit
     (run "Lower_index"
        [
          group "gathers and scatters"
            [ gathers; scatters_moved; scatter_adds ];
+         group "folds and assemblies" [ folds; assemblies ];
        ])
