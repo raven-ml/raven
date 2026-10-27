@@ -62,8 +62,8 @@ let regions_gen shape =
     in
     go (r - 1) []
   in
-  (* Up to 7 pieces, or past a run of the door's reads, which takes
-     Nx_array.max_operands operands at a time with the destination. *)
+  (* Up to 7 pieces, or more than a call reads at once,
+     Nx_array.max_operands operands with the destination. *)
   let any =
     let pieces =
       frequency
@@ -170,7 +170,7 @@ let law_reference (b : Support.backend) c =
   cover "concatenation" (c.form = "concatenation");
   cover "pad" (c.form = "pad");
   cover "fill alone" (c.pieces = [||]);
-  cover "pieces past a run of the door's reads"
+  cover "more pieces than operands a call reads at once"
     (Array.length c.pieces + 1 > A.max_operands);
   match assemble_on b c with
   | None -> failf "%s declined an assembly" b.name
@@ -305,48 +305,9 @@ let law_refuses (b : Support.backend) c =
        ~dst:(A.create Rig.host D.Float32 (Iarray.of_array c.into))
        (Array.map (fun (r, s) -> (Iarray.of_array r, zeros s)) c.parts))
 
-let test_refusals (b : Support.backend) () =
-  let module K = (val b.kernels) in
-  let x = A.of_array D.Float32 [| 2 |] [| 1.; 2. |] in
-  let region : _ iarray = [| { M.start = 1; count = 2; step = 1 } |] in
-  let dst = A.create Rig.host D.Float32 [| 4 |] in
-  equal ~msg:"a piece off its region" answer A.Shape_mismatch
-    (K.assemble ~fill:0. ~dst
-       [| (region, A.of_array D.Float32 [| 3 |] [| 1.; 2.; 3. |]) |]);
-  equal ~msg:"a region past the destination" answer A.Shape_mismatch
-    (K.assemble ~fill:0.
-       ~dst:(A.create Rig.host D.Float32 [| 2 |])
-       [| (region, x) |]);
-  equal ~msg:"a region of another rank" answer A.Shape_mismatch
-    (K.assemble ~fill:0.
-       ~dst:(A.create Rig.host D.Float32 [| 4; 1 |])
-       [| (region, x) |])
-
 (* Whether no claim holds [b]'s memory: a donation of it is exclusive. *)
 let unclaimed b =
   Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c -> Rig.Claim.exclusive c b)
-
-(* Assemblies of 17, 18, 19, 35, 36 and 37 operands, a run of the door's
-   reads and its neighbours: each piece, one element, lands at its
-   index. *)
-let test_run_counts (b : Support.backend) () =
-  let module K = (val b.kernels) in
-  let m = A.max_operands in
-  List.iter
-    (fun n ->
-      let np = n - 1 in
-      let dst = A.create Rig.host D.Float32 [| np |] in
-      let piece i =
-        ( ([| { M.start = i; count = 1; step = 1 } |] : _ iarray),
-          A.of_array D.Float32 [| 1 |] [| Float.of_int i |] )
-      in
-      let msg = Printf.sprintf "%d operands" n in
-      equal ~msg answer A.Done
-        (K.assemble ~fill:(-1.) ~dst (Array.init np piece));
-      equal ~msg (array float_exact)
-        (Array.init np Float.of_int)
-        (A.to_array dst))
-    [ m - 1; m; m + 1; (2 * m) - 1; 2 * m; (2 * m) + 1 ]
 
 (* A refusal of a piece read in a later run than the destination's leaves
    no claim on any operand. *)
@@ -397,18 +358,36 @@ let law_guards (b : Support.backend) (c, side) =
 
 let cases = Gen.with_pp pp_case (case_gen ())
 
-(* A fill alone, which drawn cases reach rarely. *)
+(* A fill alone, which drawn cases reach rarely; and pieces of one element
+   at each index, as many as the operands a call reads at once and its
+   neighbours, and twice as many. *)
 let examples =
-  [
+  let m = A.max_operands in
+  let ones n =
+    let np = n - 1 in
+    let rs = Random.State.make [| n |] in
     {
       dtype = D.Any D.Float32;
-      shape = [| 2; 3 |];
-      fill = f32 1.5;
-      regions = [||];
-      pieces = [||];
+      shape = [| np |];
+      fill = f32 (-1.);
+      regions =
+        Array.init np (fun i -> [| { M.start = i; count = 1; step = 1 } |]);
+      pieces =
+        Array.init np (fun _ ->
+            operand (D.Any D.Float32) [| 1 |] (plain 1) (fun _ ->
+                element (D.Any D.Float32) rs));
       form = "slices";
-    };
-  ]
+    }
+  in
+  {
+    dtype = D.Any D.Float32;
+    shape = [| 2; 3 |];
+    fill = f32 1.5;
+    regions = [||];
+    pieces = [||];
+    form = "slices";
+  }
+  :: List.map ones [ m - 1; m; m + 1; (2 * m) - 1; 2 * m; (2 * m) + 1 ]
 
 let laws (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
@@ -428,10 +407,6 @@ let cpu (b : Support.backend) =
       test "fills on the job's threads" (fun () -> b.around (test_threads b));
       prop "refuses what Nx_kernel.Shape refuses and other shapes" misfits
         (run (law_refuses b));
-      test "refuses shapes that do not fit" (fun () ->
-          b.around (test_refusals b));
-      test "assembles operands around a run of the door's reads" (fun () ->
-          b.around (test_run_counts b));
       test "a refusal in a later run of reads leaves no claim" (fun () ->
           b.around (test_late_refusals b));
       prop ~count:300

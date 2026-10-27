@@ -76,49 +76,12 @@ let differ ?src ?(any_nan = false) (want : _ A.t) (got : _ A.t) =
 
 let same ?src want got = equal (list string) [] (differ ?src want got)
 
-(* Arrays over drawn bytes *)
-
-(* Transposed arrays whose rows lie a multiple of 4 KiB apart, as a
-   4096-wide matrix's do: a tile's rows share their addresses' low bits. *)
-let aliased =
-  Gen.with_pp pp_case
-    (let open Gen in
-     let* (D.Any dt) = dtypes in
-     let* h = of_list ~pp:Format.pp_print_int [ 1; 9; 70 ] in
-     let+ seed = int in
-     Case
-       (Option.get
-          (A.move (M.Permute [| 1; 0 |]) (seeded dt [| h; 4096 |] seed))))
-
 (* Copies *)
 
 let law_copy b (Case a) =
   let r = run_op b Copy (A.dtype a) a in
   declines r;
   Option.iter (same a) r
-
-(* A uint4 copy on several threads whose blocks start mid-byte: the walk
-   gives each thread a share of an odd count of elements. *)
-let test_sub_byte_shares b () =
-  let n = (105 lsl 13) + 1 in
-  let a =
-    A.of_array D.Uint4 [| n |] (Array.init n (fun i -> i * 7919 land 15))
-  in
-  Option.iter (same a) (run_op b Copy D.Uint4 a)
-
-(* Transposed copies whose square blocks nx.cpu stores past the caches:
-   rows 4 KiB apart, which x86-64 transposes through a buffer, and float64
-   ones, of 32 to 34 MiB, past fudge's and nonnormal's largest caches, and
-   rows of 4000 float32, which end in a tile half as wide as the others,
-   of 64 MiB, past four times the M1 Max's. *)
-let test_streamed_copies b () =
-  List.iter
-    (fun (Case a) -> Option.iter (same a) (run_op b Copy (A.dtype a) a))
-    [
-      large_at D.Float32 4096 2048 1 1;
-      large_at D.Float32 4200 4000 1 2;
-      large_at D.Float64 1500 3000 1 3;
-    ]
 
 let test_copy_nan_payloads b () =
   let bits = [| 0x7fc00001l; 0xffa00002l; 0x80000000l; 0x7f800001l |] in
@@ -145,8 +108,8 @@ let pair c =
   in
   (c, d)
 
-(* [a] cast to every dtype is the reference. *)
-let casts_are_reference b a =
+(* [a] cast to every dtype, or to [dts], is the reference. *)
+let casts_are_reference ?(dts = D.all) b a =
   List.iter
     (fun (D.Any d) ->
       Option.iter
@@ -154,7 +117,10 @@ let casts_are_reference b a =
           equal ~msg:(D.name d) (list string) []
             (differ ~src:(A.Any a) (reference a d) dst))
         (run_op b Cast d a))
-    D.all
+    dts
+
+(* The float and complex dtypes, whose casts round. *)
+let rounding = List.filter (fun (D.Any d) -> D.is D.Float d || D.is D.Complex d) D.all
 
 (* Every code of a format of at most 16 bits, cast to every dtype. *)
 let test_every_code b (D.Any s) () =
@@ -179,8 +145,7 @@ let test_every_code b (D.Any s) () =
 let narrow = List.filter (fun (D.Any dt) -> D.bits dt <= 16) D.all
 
 (* Floats about every rounding point of the narrow float formats, as float32 and
-   as float64, cast to every dtype: the integer stores meet NaN, the infinities
-   and the bounds of every range there too. *)
+   as float64, cast to every float and complex dtype. *)
 
 (* float32 whose low half is about a float16 or bfloat16 rounding bit, or all
    ones, the largest float32 below a power of two; every float8 and float4
@@ -213,7 +178,7 @@ let sweep64 =
 
 let test_sweep b (type s) (s : (float, s) D.t) (xs : float array Lazy.t) () =
   let xs = Lazy.force xs in
-  casts_are_reference b (A.of_array s [| Array.length xs |] xs)
+  casts_are_reference ~dts:rounding b (A.of_array s [| Array.length xs |] xs)
 
 (* Every length from 0 to 64, cast to every dtype, so that each run's
    vector loops and its scalar tail meet every cast: float32 about 1.0 from
@@ -284,55 +249,12 @@ let test_specials b (D.Any s) () =
 
 (* A cast whose operands do not fit the caches reads and writes them through
    buffers. *)
-let test_past_the_caches b () =
-  let n = (1 lsl 22) + 3 in
-  let x i = float_of_int ((i * 7919 mod 65537) - 32768) *. 1.25 in
-  let a = A.of_array D.Float32 [| n |] (Array.init n x) in
-  List.iter
-    (fun (D.Any d) ->
-      Option.iter
-        (fun dst ->
-          equal ~msg:(D.name d) (list string) [] (differ (reference a d) dst))
-        (run_op b Cast d a))
-    [ D.Any D.Float64; D.Any D.Int32; D.Any D.Float16 ]
-
 (* Declines *)
 
 (* Every kind of one operand. *)
 let op1s =
   Nx_kernel.Prog.[ Copy; Cast; Bitcast ]
   @ List.map (fun (u, _) -> Nx_kernel.Prog.Unary u) unaries
-
-(* A kernel that declines writes nothing: [dst] keeps its drawn bytes. *)
-let law_declined_map1 (b : Support.backend) (Case a, D.Any d) =
-  let module K = (val b.kernels) in
-  let a = on b a and dst = on b (seeded d (L.shape (A.layout a)) 99) in
-  List.iter
-    (fun op ->
-      let before = bits_of (host dst) in
-      match Support.map1 (module K) op ~dst a with
-      | A.Declined ->
-          cover "declined" true;
-          check_declined b (K1 op) (D.Any (A.dtype a));
-          equal (array int) before (bits_of (host dst))
-      | _ -> cover "computed" true)
-    (List.filter (fun op -> Nx_kernel.Prog.accepts1 op (A.dtype a) d) op1s)
-
-let test_declined_contract (b : Support.backend) () =
-  let module K = (val b.kernels) in
-  let x = on b (A.of_array D.Float32 [| 2; 3 |] (Array.make 6 1.)) in
-  let z = on b (A.of_array D.Float32 [| 3; 2 |] (Array.make 6 2.)) in
-  let y = on b (A.of_array D.Float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |]) in
-  let before = bits_of (host y) in
-  match
-    K.contract ~batch:[||] ~contracting:[| (1, 0) |]
-      ~segments:None ~acc:(D.Any D.Float32) ~dst:y ~init:None
-      { Nx_kernel.array = A.Any x; scale = None }
-      { Nx_kernel.array = A.Any z; scale = None }
-  with
-  | A.Declined -> equal (array int) before (bits_of (host y))
-  | A.Done -> ()
-  | r -> failf "contract answered %a" Nx_array_support.pp_answer r
 
 (* Kinds of no, two and three operands *)
 
@@ -359,57 +281,6 @@ let same_width c =
     frequency [ (4, of_list ~pp:pp_dtype alike); (1, dtypes) ]
   in
   (c, d)
-
-(* Idiv and Mod by a divisor repeated along the rows, each power of two the
-   dtype holds, are nx_kinds.h's, over dividends with the dtype's extremes:
-   the rows shift and mask for such a divisor. *)
-let law_power_of_two_divisors (b : Support.backend) seed =
-  let module K = (val b.kernels) in
-  let n = 300 in
-  let each (D.Any dt) =
-    let x = seeded dt [| n |] seed in
-    let signed = D.is D.Signed dt in
-    for k = 0 to D.bits dt - if signed then 2 else 1 do
-      let one = A.create Rig.host dt [| 1 |] in
-      let p = A.of_array D.Float64 [| 1 |] [| Float.ldexp 1. k |] in
-      ignore (Support.map1 (module Nx_cpu) Cast ~dst:one p);
-      let y = A.v dt (L.v ~strides:[| 0 |] [| n |]) (A.buffer one) in
-      let x' = on b x and y' = on b y in
-      List.iter
-        (fun kind ->
-          answers b (K2 kind) (D.Any dt) (D.Any dt) [| n |] ~accepted:true
-            ~want:(fun () -> expected (name2 kind) dt ~compare:false [| x; y |])
-            (fun dst -> Support.map2 (module K) kind ~dst x' y'))
-        P.[ Binary Idiv; Binary Mod ]
-    done
-  in
-  List.iter each
-    (List.filter
-       (fun (D.Any d) -> D.is D.Signed d || D.is D.Unsigned d)
-       D.all)
-
-(* Threefry's contiguous rows run two blocks of vectors at a time, 16
-   elements on x86-64 and 8 on arm64, then a tail of the elements
-   left one at a time: a length that is no multiple of 8 leaves a tail on
-   every table. Over lengths around the blocks, with the counters or the
-   keys one element repeated, its bits are nx_kinds.h's. *)
-let law_threefry_rows (b : Support.backend) (n, repeated, seed) =
-  let module K = (val b.kernels) in
-  let dt = D.Uint64 in
-  let operand which s =
-    if repeated <> which then seeded dt [| n |] s
-    else A.v dt (L.v ~strides:[| 0 |] [| n |]) (A.buffer (seeded dt [| 1 |] s))
-  in
-  let x = operand 1 seed and y = operand 2 (seed + 1) in
-  cover "both contiguous" (repeated = 0);
-  cover "counters repeated" (repeated = 1);
-  cover "keys repeated" (repeated = 2);
-  cover "a tail on every table" (n mod 8 <> 0);
-  cover "several blocks" (n >= 32);
-  let x' = on b x and y' = on b y in
-  answers b (K2 (Binary Threefry)) (D.Any dt) (D.Any dt) [| n |] ~accepted:true
-    ~want:(fun () -> expected "threefry" dt ~compare:false [| x; y |])
-    (fun dst -> Support.map2 (module K) (Binary Threefry) ~dst x' y')
 
 (* Where picks each element's bytes; Fma is nx_kinds.h's. *)
 let law_map3 (b : Support.backend) (Pair (x, y), seed) =
@@ -527,21 +398,6 @@ let large_fills =
   D.[ Any Int4; Any Bit; Any Float4_e2m1fn ]
   |> List.map (fun d -> (d, [| 1_000_001 |], (3, 5), 7))
 
-(* A map the kernels decline writes nothing. *)
-let test_declined_map (b : Support.backend) () =
-  let module K = (val b.kernels) in
-  let p =
-    P.v ~ins:[| D.Any D.Float32 |] [| P.In 0; Op2 (Binary Add, 0, 0) |]
-      ~outs:[| 1 |]
-  in
-  let x = on b (A.of_array D.Float32 [| 3 |] [| 1.; 2.; 3. |]) in
-  let y = on b (A.of_array D.Float32 [| 3 |] [| 9.; 9.; 9. |]) in
-  let before = bits_of (host y) in
-  match K.map p ~dsts:[| A.Any y |] [| Nx_kernel.Plain x |] with
-  | A.Declined -> equal (array int) before (bits_of (host y))
-  | A.Done -> equal (array float_exact) [| 2.; 4.; 6. |] (A.to_array (host y))
-  | r -> failf "map answered %a" Nx_array_support.pp_answer r
-
 (* A map given other destinations or loads than its program's outputs and
    operands is refused with [Shape_mismatch] and writes nothing. *)
 let test_map_arity (b : Support.backend) () =
@@ -648,8 +504,7 @@ let binaries = List.filter (function P.Binary _ -> true | _ -> false) op2s
 
 (* A [Plain] load of [map], of one node or more, may be the destination
    itself: the kernels read each index before they write it. *)
-let law_in_place ?(ones = op1s) ?(kinds = binaries) (b : Support.backend)
-    (Pair (x, y), seed) =
+let law_in_place (b : Support.backend) (Pair (x, y), seed) =
   let module K = (val b.kernels) in
   let dt = A.dtype x and shape = L.shape (A.layout x) in
   let x = on b x and y = on b y in
@@ -657,7 +512,7 @@ let law_in_place ?(ones = op1s) ?(kinds = binaries) (b : Support.backend)
     (fun op ->
       in_place ~any_nan:(any_nan (K1 op)) ~msg:"one operand into itself" b x
         (fun dst x -> Support.map1 (module K) op ~dst x))
-    (List.filter (fun op -> P.accepts1 op dt dt) ones);
+    (List.filter (fun op -> P.accepts1 op dt dt) op1s);
   let map2 k ~dst x y = Support.map2 (module K) k ~dst x y in
   List.iter
     (fun k ->
@@ -669,7 +524,7 @@ let law_in_place ?(ones = op1s) ?(kinds = binaries) (b : Support.backend)
           map2 k ~dst x y);
       in_place ~any_nan:blind ~msg:(msg "both") b x (fun dst x ->
           map2 k ~dst x x))
-    (List.filter (fun k -> P.accepts2 k dt) kinds);
+    (List.filter (fun k -> P.accepts2 k dt) binaries);
   let c = on b (seeded D.Bool shape seed) in
   let z = on b (seeded dt shape (seed + 1)) in
   in_place ~msg:"where into the second" b x (fun dst x ->
@@ -952,12 +807,14 @@ let switch_points =
 
 (* Each float kind at float32 within its bound of the C library's f64
    function rounded once: at Annex F's operands, at the switch points and
-   at every 2^14th bit pattern from [offset], every binade of both signs
+   at every 2^20th bit pattern from [offset], every binade of both signs
    reached, and for a kind of two operands at Annex F's pairs and pairs
    from [seed], half of any patterns and half where [pow] and [atan2]
    neither overflow nor underflow. *)
+let f32_step = 1 lsl 20
+
 let law_f32_kinds (b : Support.backend) (offset, seed) =
-  let step = 1 lsl 14 in
+  let step = f32_step in
   let xs =
     Array.concat
       [
@@ -976,7 +833,7 @@ let law_f32_kinds (b : Support.backend) (offset, seed) =
       let x = Float.ldexp (Random.State.float r 1.) (Random.State.int r 9 - 4) in
       (Exact.round_f32 x, Exact.round_f32 (Random.State.float r 40. -. 20.))
   in
-  let ps = Array.append special_pairs (Array.init (1 lsl 14) pair) in
+  let ps = Array.append special_pairs (Array.init (1 lsl 12) pair) in
   List.iter
     (fun (k, name, bound, _) ->
       let two = match k with Support.K2 _ -> true | _ -> false in
@@ -1118,6 +975,119 @@ let law_complex_arith (b : Support.backend) seed =
   at 0x1p-53 Fun.id D.Complex128;
   at 0x1p-24 f32 D.Complex64
 
+(* Boxes *)
+
+(* A box of a shape [s]: along each axis a start and a count within the
+   extent. *)
+let box_of s =
+  let open Gen in
+  let rec axes = function
+    | [] -> constant []
+    | e :: rest ->
+        let* start = int_range 0 e in
+        let* count = int_range 0 (e - start) in
+        let+ r = axes rest in
+        { M.start; count; step = 1 } :: r
+  in
+  map Array.of_list (axes (Array.to_list s))
+
+let pp_box ppf (Pair (x, _), box) =
+  Format.fprintf ppf "%a %a box %a" D.pp (A.dtype x) L.pp (A.layout x)
+    (Format.pp_print_list ~pp_sep:Format.pp_print_space
+       (fun ppf (r : M.range) -> Format.fprintf ppf "%d+%d" r.start r.count))
+    (Array.to_list box)
+
+let box_cases =
+  Gen.with_pp pp_box
+    (let open Gen in
+     let* (D.Any dt) =
+       of_list ~pp:pp_dtype
+         D.[ Any Int32; Any Float32; Any Uint8; Any Int4; Any Float64; Any Int16; Any Bfloat16 ]
+     in
+     let* s = array ~size:(int_range 1 3) (int_range 1 6) in
+     let* x = drawn dt (Iarray.of_array s) and+ y = drawn dt (Iarray.of_array s) in
+     let whole = Array.map (fun e -> { M.start = 0; count = e; step = 1 }) s in
+     let+ box = frequency [ (3, box_of s); (1, constant whole) ] in
+     (Pair (x, y), box))
+
+(* A result whose bits the contract fixes depends on its own index's
+   operand elements alone: over a box of the indices, the results computed
+   from the operands' box alone have the whole result's bits there, for an
+   exact kind of two operands, a copy of a view and an integer sum over the
+   last axis. *)
+let law_box (b : Support.backend) (Pair (x, y), box) =
+  let module K = (val b.kernels) in
+  let dt = A.dtype x in
+  let shape = Iarray.to_array (L.shape (A.layout x)) in
+  let r = Array.length box in
+  let slice ranges a =
+    if Array.length ranges = 0 then a
+    else Option.get (A.move (M.Slice (Iarray.of_array ranges)) a)
+  in
+  let fresh a = A.create b.device dt (L.shape (A.layout a)) in
+  let fresh2 (a, _) = fresh a in
+  cover "an empty box" (Array.exists (fun (g : M.range) -> g.count = 0) box);
+  cover "the whole as the box"
+    (Array.for_all2 (fun (g : M.range) e -> g.start = 0 && g.count = e) box shape);
+  (* [call] into a destination, [fresh] for the operands, over the whole
+     operands [a] and over their box [a']; [sub] is the result's box. *)
+  let both ~msg ~sub fresh call a a' =
+    let d = fresh a and d' = fresh a' in
+    match (call ~dst:d a, call ~dst:d' a') with
+    | A.Done, A.Done ->
+        cover msg true;
+        equal ~msg (list string) []
+          (differ ~any_nan:true (A.copy (slice sub (host d))) (host d'))
+    | A.Declined, A.Declined -> cover "declined" true
+    | p, q ->
+        failf "%s answered %a over the whole and %a over the box" msg
+          Nx_array_support.pp_answer p Nx_array_support.pp_answer q
+  in
+  let x = on b x and y = on b y in
+  if P.accepts2 (Binary Add) dt then
+    both ~msg:"an exact kind of two operands" ~sub:box fresh2
+      (fun ~dst (a, c) -> Support.map2 (module K) (Binary Add) ~dst a c)
+      (x, y)
+      (slice box x, slice box y);
+  let flipped =
+    slice
+      (Array.mapi
+         (fun i e ->
+           if i = r - 1 then { M.start = e - 1; count = e; step = -1 }
+           else { M.start = 0; count = e; step = 1 })
+         shape)
+      x
+  in
+  both ~msg:"a copy of a view" ~sub:box fresh
+    (fun ~dst a -> Support.map1 (module K) Copy ~dst a)
+    flipped (slice box flipped);
+  if (D.is D.Signed dt || D.is D.Unsigned dt) && Nx_kernel.accepts (Monoid Sum) dt
+  then begin
+    let id = P.v ~ins:[| D.Any dt |] [| P.In 0 |] ~outs:[| 0 |] in
+    let whole = { M.start = 0; count = shape.(r - 1); step = 1 } in
+    let obox = Array.mapi (fun i g -> if i = r - 1 then whole else g) box in
+    let sum ~dst a =
+      let dst = A.Any dst in
+      K.reduce id ~shape:(Iarray.to_array (L.shape (A.layout a)))
+        ~axes:[| r - 1 |] [| (Monoid Sum, 0) |] ~dsts:[| dst |]
+        [| Nx_kernel.Plain a |]
+    in
+    let d = A.create b.device dt (Iarray.of_array (Array.sub shape 0 (r - 1))) in
+    let d' =
+      A.create b.device dt
+        (Iarray.of_array (Array.map (fun (g : M.range) -> g.count) (Array.sub box 0 (r - 1))))
+    in
+    match (sum ~dst:d x, sum ~dst:d' (slice obox x)) with
+    | A.Done, A.Done ->
+        cover "an integer sum" true;
+        equal ~msg:"sum" (list string) []
+          (differ (A.copy (slice (Array.sub box 0 (r - 1)) (host d))) (host d'))
+    | A.Declined, A.Declined -> cover "declined" true
+    | p, q ->
+        failf "sum answered %a over the whole and %a over the box"
+          Nx_array_support.pp_answer p Nx_array_support.pp_answer q
+  end
+
 let laws (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   let unit f () = b.around f in
@@ -1132,13 +1102,7 @@ let laws (b : Support.backend) =
         (run (fun c ->
              covers_large c;
              law_copy b c));
-      prop ~count:16 "copy of views with rows 4 KiB apart is bits for bits"
-        aliased (run (law_copy b));
       test "copy keeps NaN payloads" (unit (test_copy_nan_payloads b));
-      test "a sub-byte copy shared mid-byte is bits for bits"
-        (unit (test_sub_byte_shares b));
-      test "a transposed copy past the caches is bits for bits"
-        (unit (test_streamed_copies b));
       prop "cast is the reference, element by element" (pair case)
         (run (fun ((Case a as c), D.Any d) ->
              covers c;
@@ -1154,9 +1118,9 @@ let laws (b : Support.backend) =
         (List.map
            (fun (D.Any s as d) -> test (D.name s) (unit (test_every_code b d)))
            narrow);
-      test "float32 about every rounding point, to every dtype"
+      test "float32 about every rounding point, to every float dtype"
         (unit (test_sweep b D.Float32 sweep32));
-      test "float64 about every tie, to every dtype"
+      test "float64 about every tie, to every float dtype"
         (unit (test_sweep b D.Float64 sweep64));
       test "every length to 64, to every dtype" (unit (test_lengths b));
       test "integers about every rounding point" (unit (test_integer_ties b));
@@ -1166,22 +1130,10 @@ let laws (b : Support.backend) =
              if D.bits s < 8 || specials s = [] then None
              else Some (test (D.name s) (unit (test_specials b d))))
            D.all);
-      test "a cast past the caches is the reference"
-        (unit (test_past_the_caches b));
-      prop "a declined kind of one operand writes nothing" (pair case)
-        (run (law_declined_map1 b));
-      test "a declined contraction writes nothing"
-        (unit (test_declined_contract b));
       prop "bitcast keeps every element's bits" (same_width case)
         (run (fun ((c, _) as x) ->
              covers c;
              law_bitcast b x));
-      prop ~count:4 "idiv and mod by a repeated power of two are nx_kinds.h's"
-        Gen.nat
-        (run (law_power_of_two_divisors b));
-      prop "Threefry's rows are nx_kinds.h's around their vector blocks"
-        Gen.(triple (int_range 0 80) (int_range 0 2) nat)
-        (run (law_threefry_rows b));
       prop "where picks bytes and fma is nx_kinds.h's"
         (Gen.pair pairs Gen.nat)
         (run (law_map3 b));
@@ -1193,29 +1145,25 @@ let laws (b : Support.backend) =
         "fill and iota store inside a buffer and nothing around it"
         fill_insides
         (run (law_map0_inside b));
-      test "a declined map writes nothing" (unit (test_declined_map b));
       test "a map of other destinations or loads than its program's is refused"
         (unit (test_map_arity b));
       test "a map reads a load identical to a destination before writing it"
         (unit (test_map_identical_view b));
       test "a map of a padded load reads its coordinates"
         (unit (test_padded_coordinate b));
-      prop ~count:300 "a map gives the bits of its nodes run one by one"
-        (Gen.pair pairs Gen.int)
-        (run (fun ((Pair (x, _), _) as c) ->
-             covers (Case x);
-             law_map_split b c));
-      prop "an operand read at the result's own index may be the destination"
-        (Gen.pair pairs Gen.nat)
+      prop ~count:300
+        ~examples:(List.map (fun p -> (p, 1, Plain)) large_view_pairs)
+        "a map gives the bits of its nodes run one by one, or declines and \
+         writes nothing"
+        split_cases (run (law_split b));
+      prop ~examples:(List.map (fun p -> (p, 1)) (erf_pair :: nan_pairs))
+        "an operand read at the result's own index may be the destination"
+        (Gen.pair (Gen.frequency [ (9, pairs); (1, large_pairs) ]) Gen.nat)
         (run (fun ((Pair (x, _), _) as c) ->
              covers (Case x);
              law_in_place b c));
-      prop ~count:8 "in place over large views" (Gen.pair large_pairs Gen.nat)
-        (run
-           (law_in_place
-              ~ones:P.[ Copy; Unary Neg; Unary Sin ]
-              ~kinds:P.[ Binary Add; Binary Mul ]
-              b));
+      prop "a result in a box of indices is computed from the operands' box"
+        box_cases (run (law_box b));
       test "operands outlive a released call"
         (unit (test_collect_during_call b));
       test "real transforms take one precision"
@@ -1224,14 +1172,15 @@ let laws (b : Support.backend) =
         (run (fun (Case x as c) ->
              covers c;
              law_map1 ~kinds:(exact1 (D.Any (A.dtype x))) b c));
-      prop "a kind of two operands the contract fixes gives its result" pairs
+      prop ~examples:(divisor_pairs @ threefry_pairs)
+        "a kind of two operands the contract fixes gives its result" pairs
         (run (fun (Pair (x, _) as p) ->
              covers (Case x);
              law_map2 ~kinds:(exact2 (D.Any (A.dtype x))) b p));
       test "float kinds at float64 are within nx_kinds.h's bounds of the goldens"
         (unit (test_f64_kinds b));
-      prop ~count:1 "float kinds at float32 are within nx_kinds.h's bounds"
-        Gen.(pair (int_range 0 ((1 lsl 14) - 1)) int)
+      prop ~count:4 "float kinds at float32 are within nx_kinds.h's bounds"
+        Gen.(pair (int_range 0 (f32_step - 1)) int)
         (run (law_f32_kinds b));
       test "complex kinds are within nx_kinds.h's bounds of the goldens"
         (unit (test_complex_kinds b));

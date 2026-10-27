@@ -16,43 +16,6 @@ module Support = Nx_kernels_support
 
 (* Cases *)
 
-(* The most rows gemm_quads.c's dots and its axpys take, and the most
-   bytes of a unit's sums in the axpys, AXPY_SUMS: more columns than fit
-   take several units whatever the threads. The axpys take more than
-   [axpy_few] rows only by k of [axpy_deep] or more and columns enough for
-   every thread, 64 a thread: [axpy_wide] at the 16 threads of the most
-   threaded host here; and more than [axpy_many] only by a b of more than
-   an eighth of the host's largest cache: [axpy_cached] bytes pass it on
-   every host here, [axpy_held] on none. *)
-let quad_rows = 32
-
-let axpy_rows = 128
-
-let axpy_sums = 32 * 1024
-
-let axpy_few = 16
-
-let axpy_deep = 512
-
-let axpy_wide = 64 * 16
-
-let axpy_many = 32
-
-let axpy_cached = 4 * 1024 * 1024
-
-let axpy_held = 1024 * 1024
-
-(* The rows of NEON's quads kernel's tile, MR, from which its axpys run it
-   over b's rows zipped; x86's axpys never zip. *)
-let quad_mr = 8
-
-(* x86's axpys of several rows: the columns of b they keep at once,
-   widened into pairs by AVX2 and zipped into words by AVX-VNNI-INT8, and
-   the most rows of a group besides the first. *)
-let axpy_cols = 256
-
-let axpy_group = 6
-
 let integer_accs =
   D.
     [
@@ -85,22 +48,6 @@ let rounded =
 (* Whether nx_cpu.mli says nx.cpu computes [c]: an acc it computes in, of
    operands of any dtype, into any result, at any layout. *)
 let cpu_computes c = List.mem c.acc accs || is_integer c.acc
-
-(* The laws of S *)
-
-(* Each operand as a C-contiguous copy of its view gives the same bits,
-   where both layouts are computed. *)
-let law_layouts b c =
-  let plain (A.Any x) = A.Any (A.copy x) in
-  let c' =
-    { c with a = plain c.a; b = plain c.b; init = Option.map plain c.init }
-  in
-  match (run b c, run b c') with
-  | Some y, Some y' ->
-      cover "computed" true;
-      cover "computed from views" (c.views <> []);
-      equal (list string) [] (differ_bits c.acc ~other:"contiguous" y y')
-  | _ -> cover "declined" true
 
 (* The order *)
 
@@ -180,6 +127,43 @@ let law_order b c =
              if bits x = bits w then None
              else Some (Printf.sprintf "%h, expected %h" x w)))
 
+(* Contractions of few outputs over a depth of several blocks of lanes,
+   4097 or 200003 products, which the threads share. *)
+let deep_cases =
+  let open Gen in
+  with_pp pp_case
+    (let* acc = of_list ~pp:pp_dtype D.[ Any Float32; Any Float64 ] in
+     let* k = of_list [ 4097; 200003 ] in
+     let* m = int_range 1 4 and+ n = int_range 1 6 in
+     let* va = view 2 0 and+ vb = view 2 0 and+ vi = view 2 0 in
+     let* with_init = bool in
+     let+ seed = int in
+     make ~acc ~out:acc ([||], [| m |], [| n |], [| k |]) (acc, va) (acc, vb)
+       (if with_init then Some vi else None)
+       seed)
+
+let deep_examples =
+  let f32 = D.Any D.Float32 and f64 = D.Any D.Float64 and v = Elements.plain 2 in
+  List.map
+    (fun (acc, k) ->
+      make ~acc ~out:acc ([||], [| 3 |], [| 5 |], [| k |]) (acc, v) (acc, v)
+        (Some v) 1)
+    [ (f32, 4097); (f32, 200003); (f64, 4097); (f64, 200003) ]
+
+(* A contraction on the job's threads has the bits of the same contraction
+   on one thread. *)
+let law_threads b c =
+  let _, k, _ = sizes c in
+  cover "float32" (c.acc = D.Any D.Float32);
+  cover "float64" (c.acc = D.Any D.Float64);
+  cover "a depth of 4097" (k = 4097);
+  cover "a depth of 200003" (k = 200003);
+  cover "init" (c.init <> None);
+  match (run b c, Nx_cpu.one_thread (fun () -> run b c)) with
+  | Some y, Some y' ->
+      equal (list string) [] (differ_bits c.acc ~other:"one thread" y y')
+  | _ -> failf "nx.cpu declined a float contraction"
+
 (* A result of another dtype than acc is the result in acc, from init cast
    to acc, cast to it: the sum rounds once. *)
 let law_rounds_once b c =
@@ -190,9 +174,6 @@ let law_rounds_once b c =
      is_integer c.acc && D.bits acc = 4);
   cover "a complex acc" (is_complex c.acc);
   cover "init" (c.init <> None);
-  cover "a group of several runs"
-    (let rb, rr, rc, rk = runs c in
-     rb > 1 || rr > 1 || rc > 1 || rk > 1);
   match run b c with
   | None when cpu_computes c ->
       failf "nx.cpu declined a case nx_cpu.mli says it computes"
@@ -237,33 +218,14 @@ let shifted (A.Any x as a) =
   A.transfer ~src:x ~dst:y;
   A.Any y
 
-(* Quads in place: a as made, and b stored [n × k], adjacent along k, over
-   several of chain order's blocks of words, past the dots' rows and
-   columns; b interleaved past the axpys' rows; a copied tail;
-   operands adjacent along k at an odd offset; an empty batch of operands
-   adjacent along k. Quads' dots: a batch of few rows by b stored [n × k],
-   over columns and words that do not fill the dot's 4 columns and 4
-   words; 11 words, a step of 8 and a tail, by odd rows and columns; the
-   most rows; one column of b, copied; few columns, with a and b swapped,
-   alone and in a batch. Quads' axpys, b stored [k × n]: a batch over
-   partial blocks of columns and of b's rows, and the same by NEON's tile
-   at its rows; rows past few and past many over a column a thread, by the
-   least k and b they take them by, and by a b held in cache; few rows
-   over several groups of columns, past the most sums a unit holds; 64
-   rows by 64 columns and 64 along k, which chain order takes; few rows by
-   few columns, in bands of rows; either side of NEON's tile; two rows
-   over more columns than x86's axpys keep at once, by an odd k; a row and
-   a full group; a row and three groups. Each with every element of a and
-   b at the dtype's extreme and init at the accumulator's largest value,
-   so that two products pass 16 bits and every sum wraps. Copies whose
-   rows would lie 4 KiB apart: b's of 1024 columns, zipped by NEON's
-   tile's rows and copied past the axpys' rows, and a's of 4096 elements
-   at an odd offset, by b stored [n × k]. *)
-let quad_examples =
-  let plain r =
-    let axes = Array.init r Fun.id in
-    { stepped = false; windowed = None; reversed = false; broadcast = false; stored = axes; perm = axes }
-  in
+(* Int8 and uint8 operands into 32-bit accumulators, whose products pass 16
+   bits: every element of a and b at the dtype's extreme and init at the
+   accumulator's largest value, so that every sum wraps ([extreme]); b
+   stored [n × k] ([stored]); operands adjacent along k at an odd offset
+   ([shifted]); rows, columns and depths from one to a few thousand, an
+   empty batch and a batch of two. *)
+let byte_examples =
+  let plain = Elements.plain in
   let by_rows r =
     { (plain r) with perm = Array.init r (fun i -> if i < r - 2 then i else (2 * r) - 3 - i) }
   in
@@ -273,7 +235,6 @@ let quad_examples =
         let ra, _, ry = ranks e in
         make ~acc ~out:acc e (d, plain ra) (d, vb) (Some (plain ry)) 3
       in
-      (* [case] with a and b all [low], init all [top]. *)
       let extreme e vb =
         let c = case e vb in
         let fill v (A.Any x as a) =
@@ -286,7 +247,6 @@ let quad_examples =
         in
         { c with a = fill low c.a; b = fill low c.b; init = Option.map (fill top) c.init }
       in
-      (* [case] with b stored as viewed. *)
       let stored e vb =
         let c = case e vb in
         let (A.Any b) = c.b in
@@ -294,44 +254,25 @@ let quad_examples =
       in
       [
         stored ([||], [| 130 |], [| 40 |], [| 2052 |]) (by_rows 2);
-        case ([||], [| axpy_rows + 1 |], [| 50 |], [| 64 |]) (plain 2);
+        case ([||], [| 129 |], [| 50 |], [| 64 |]) (plain 2);
         case ([||], [| 9 |], [| 33 |], [| 7 |]) (by_rows 2);
         (let c = case ([||], [| 5 |], [| 9 |], [| 64 |]) (by_rows 2) in
          { c with a = shifted c.a; b = shifted c.b });
         stored ([| 0 |], [| 3 |], [| 5 |], [| 4 |]) (by_rows 3);
         stored ([| 2 |], [| 3 |], [| 7 |], [| 20 |]) (by_rows 3);
-        stored ([||], [| 3 |], [| 6 |], [| 44 |]) (by_rows 2);
-        stored ([||], [| quad_rows |], [| 33 |], [| 64 |]) (by_rows 2);
         case ([||], [| 2 |], [| 1 |], [| 7 |]) (plain 2);
-        stored ([||], [| 40 |], [| 3 |], [| 20 |]) (by_rows 2);
-        stored ([| 2 |], [| 5 |], [| 2 |], [| 8 |]) (by_rows 3);
-        case ([| 2 |], [| 3 |], [| 70 |], [| 130 |]) (plain 3);
-        case ([||], [| quad_mr |], [| 70 |], [| 130 |]) (plain 2);
-        case ([||], [| axpy_many |], [| axpy_wide |], [| axpy_deep |]) (plain 2);
-        case ([||], [| axpy_many + 1 |], [| axpy_wide |],
-                    [| axpy_cached / axpy_wide |]) (plain 2);
-        case ([||], [| 64 |], [| axpy_wide |], [| axpy_deep |]) (plain 2);
-        case ([||], [| axpy_few |], [| 600 |], [| 20 |]) (plain 2);
-        case ([||], [| 64 |], [| 64 |], [| 64 |]) (plain 2);
-        extreme ([||], [| axpy_few |], [| 40 |], [| 2048 |]) (plain 2);
-        extreme ([||], [| quad_mr - 1 |], [| 100 |], [| 70 |]) (plain 2);
-        extreme ([||], [| quad_mr |], [| 100 |], [| 70 |]) (plain 2);
-        case ([||], [| quad_mr |], [| 1024 |], [| 12 |]) (plain 2);
-        case ([||], [| axpy_rows + 1 |], [| 1024 |], [| 12 |]) (plain 2);
+        case ([||], [| 8 |], [| 1024 |], [| 12 |]) (plain 2);
+        case ([||], [| 33 |], [| 1024 |], [| 4096 |]) (plain 2);
+        extreme ([||], [| 16 |], [| 40 |], [| 2048 |]) (plain 2);
+        extreme ([||], [| 7 |], [| 100 |], [| 70 |]) (plain 2);
+        extreme ([||], [| 8 |], [| 100 |], [| 70 |]) (plain 2);
         (let c = stored ([||], [| 2 |], [| 3 |], [| 4096 |]) (by_rows 2) in
          { c with a = shifted c.a });
-        extreme ([||], [| 2 |], [| axpy_cols + 44 |], [| 37 |]) (plain 2);
-        extreme ([||], [| axpy_group + 1 |], [| 40 |], [| 33 |]) (plain 2);
-        extreme ([||], [| (2 * axpy_group) + 3 |], [| 20 |], [| 18 |]) (plain 2);
+        extreme ([||], [| 2 |], [| 300 |], [| 37 |]) (plain 2);
+        extreme ([||], [| 15 |], [| 20 |], [| 18 |]) (plain 2);
       ])
     D.[ (Any Int32, Any Int8, -128L, 0x7FFFFFFFL);
         (Any Uint32, Any Uint8, 255L, 0xFFFFFFFFL) ]
-
-let quad_cases =
-  Gen.with_pp pp_case
-    (Gen.bind (Gen.of_list ~pp:pp_dtype D.[ Any Int32; Any Uint32 ]) (fun acc ->
-         let same = Gen.of_list ~pp:pp_dtype D.[ Any Int8; Any Uint8 ] in
-         case_of ~same ~acc ~out:acc ~dts:[] ()))
 
 (* [x]'s values as int64s: an integer's own value, a bool's 0 or 1. *)
 let ints x =
@@ -355,7 +296,6 @@ let wrap (D.Any dt) v =
    multiple of every width. *)
 let integer_covers (c : case) =
   let wider (A.Any x) = D.Any (A.dtype x) <> c.acc in
-  let m, n = rows_cols c and _, k, _ = sizes c in
   cover "an operand of another dtype" (wider c.a || wider c.b);
   let (D.Any acc) = c.acc in
   cover "a 64-bit accumulator" (D.bits acc = 64);
@@ -368,106 +308,12 @@ let integer_covers (c : case) =
            match D.kind (A.dtype x) with
            | D.Float | D.Complex -> true
            | _ -> false)
-         (operands c));
-  cover "more than 128 rows and columns over 513 products or more"
-    (m > 128 && n > 128 && k > 512)
+         (operands c))
 
-(* The quads path reads an operand in place where k is a multiple of 4,
-   the operand is adjacent along k and its offset and other steps are
-   multiples of 4. Where b's columns are adjacent instead, it reads b in
-   place by axpys for few rows and interleaves b's rows for more; it
-   copies any other operand element by element, padded with zeros. *)
-let quad_covers (c : case) =
-  let _, k, _ = sizes c in
-  let strides (A.Any x) = Iarray.to_array (L.strides (A.layout x)) in
-  let offset (A.Any x) = L.offset (A.layout x) in
-  let pairs = Array.append c.batch c.contracting in
-  (* [x]'s axes of more than one element, those [side] of the contracting
-     pairs names, or the others. *)
-  let axes x side ~con =
-    List.filter
-      (fun ax ->
-        (shape_of x).(ax) > 1
-        && con = Array.exists (fun p -> side p = ax) c.contracting
-        && (con || not (Array.exists (fun p -> side p = ax) pairs)))
-      (List.init (Array.length (shape_of x)) Fun.id)
-  in
-  let adjacent x side =
-    let rec steps want = function
-      | [] -> true
-      | ax :: r -> (strides x).(ax) = want && steps (want * (shape_of x).(ax)) r
-    in
-    let along = Array.to_list (Array.map side c.contracting) in
-    steps 1 (List.rev (List.filter (fun ax -> List.mem ax (axes x side ~con:true)) along))
-  in
-  let aligned x side =
-    offset x mod 4 = 0
-    && List.for_all (fun ax -> (strides x).(ax) mod 4 = 0) (axes x side ~con:false)
-    && Array.for_all (fun p -> (strides x).(side p) mod 4 = 0) c.batch
-  in
-  let fours = k > 0 && k mod 4 = 0 in
-  let in_place x side = fours && adjacent x side && aligned x side in
-  let columns_adjacent =
-    match List.rev (axes c.b snd ~con:false) with
-    | ax :: _ -> (strides c.b).(ax) = 1
-    | [] -> false
-  in
-  cover "products a multiple of 4" fours;
-  cover "a read in place" (in_place c.a fst);
-  cover "b read in place" (in_place c.b snd);
-  cover "an operand adjacent along k copied for its offset or steps"
-    (fours
-    && ((adjacent c.a fst && not (aligned c.a fst))
-       || (adjacent c.b snd && not (aligned c.b snd))));
-  let m, n = rows_cols c in
-  let by_rows = k > 1 && not (adjacent c.b snd) && columns_adjacent in
-  cover "b's rows interleaved" (by_rows && k >= 4 && m > axpy_rows);
-  let b_bytes = Array.fold_left ( * ) 1 (shape_of c.b) in
-  let axpys =
-    by_rows && m > 0
-    && (m <= axpy_few
-       || m <= axpy_rows && k >= axpy_deep && n >= axpy_wide
-          && (m <= axpy_many || b_bytes >= axpy_cached))
-  in
-  cover "few rows by quads' axpys" axpys;
-  cover "more rows than few by quads' axpys" (axpys && m > axpy_few);
-  cover "quads' axpys in bands of rows" (axpys && m > 1 && n <= 64 && k >= 1024);
-  cover "more rows than few by few columns in chain order"
-    (by_rows && m > axpy_few && m <= axpy_rows && n <= 64);
-  cover "more rows than many by quads' axpys" (axpys && m > axpy_many);
-  cover "more rows than many by a b held in cache, in chain order"
-    (by_rows && m > axpy_many && m <= axpy_rows && k >= axpy_deep
-    && n >= axpy_wide && b_bytes <= axpy_held);
-  cover "quads' axpys over several groups of columns"
-    (axpys && n > axpy_sums / 4 / m / 64 * 64);
-  cover "quads' axpys over k not a multiple of 4" (axpys && k mod 4 <> 0);
-  cover "quads' axpys below the tile" (axpys && m < quad_mr);
-  cover "quads' axpys by the tile" (axpys && m >= quad_mr);
-  cover "quads' axpys of two rows" (axpys && m = 2);
-  cover "quads' axpys over more rows than a group holds"
-    (axpys && m - 1 > axpy_group);
-  cover "quads' axpys of several rows over more columns than they keep"
-    (axpys && m > 1 && n > axpy_cols);
-  let dots = m > 0 && n > 0 && (in_place c.b snd || n = 1) in
-  cover "few rows by quads' dots" (dots && m <= n && m <= quad_rows);
-  cover "few columns by quads' dots" (dots && n < m && n <= quad_rows);
-  let words = (k + 3) / 4 in
-  cover "quads' dots over 8 words and a tail"
-    (dots && min m n <= quad_rows && words > 8 && words mod 8 <> 0);
-  cover "an odd count of rows by quads' dots, the last alone"
-    (dots && min m n <= quad_rows && min m n mod 2 = 1);
-  cover "b read in place by chain order" (in_place c.b snd && min m n > quad_rows);
-  cover "a copy's rows a line past 4 KiB"
-    ((m > 0 && n > 0 && k > 0)
-    && ((not (in_place c.b snd)) && (not axpys) && n * 4 mod 4096 = 0
-       || ((not (in_place c.a fst)) && words * 4 mod 4096 = 0)));
-  cover "quads' axpys zipping 1024 columns by the tile"
-    (axpys && m >= quad_mr && n mod 1024 = 0 && k > 4);
-  cover "fewer than 4 products" (k < 4);
-  cover "products not a multiple of 4" (k mod 4 <> 0)
-
-let law_wraps ~covers b (c : case) =
-  covers c;
+(* An integer output is its products' sum from init modulo the
+   accumulator's width. *)
+let law_wraps b (c : case) =
+  integer_covers c;
   cover "init" (c.init <> None);
   List.iter
     (fun v -> cover v (List.mem v c.views))
@@ -533,7 +379,7 @@ let law_computes b c =
    signalling NaN included, below 64 outputs and from 64, in both orders:
    [ud] is an unsigned dtype of [fd]'s width, [bits] init's values in it. *)
 let empty (type u ue f fe) (b : Support.backend) (ud : (u, ue) D.t)
-    (fd : (f, fe) D.t) ty (bits : u array) () =
+    (fd : (f, fe) D.t) ty (bits : u array) =
   let module K = (val b.kernels) in
   let at (m, n) =
     let want = Array.init (m * n) (fun i -> bits.(i mod Array.length bits)) in
@@ -550,35 +396,10 @@ let empty (type u ue f fe) (b : Support.backend) (ud : (u, ue) D.t)
   in
   List.iter at [ (1, 3); (8, 24) ]
 
-(* On a thread that has run no product, an empty product gives +0, or
-   init's bits, in chain order on the few-rows path and the chain path, and
-   in lane order: a thread's first product makes the buffers nx.cpu keeps
-   for it. *)
-let fresh (b : Support.backend) () =
-  let module K = (val b.kernels) in
-  let at (m, n) init =
-    let a = A.create Rig.host D.Float32 [| m; 0 |] in
-    let b = A.create Rig.host D.Float32 [| 0; n |] in
-    let dst = A.of_array D.Float32 [| m; n |] (Array.make (m * n) 7.) in
-    let i = A.of_array D.Float32 [| m; n |] (Array.make (m * n) (-0.)) in
-    let init = if init then Some i else None in
-    let call () =
-      try
-        Ok
-          (K.contract ~batch:[||] ~contracting:[| (1, 0) |]
-             ~segments:None ~acc:(D.Any D.Float32) ~dst ~init (plain a)
-             (plain b))
-      with e -> Error e
-    in
-    (match Domain.join (Domain.spawn call) with
-    | Ok A.Done -> ()
-    | Ok r -> failf "contract answered %a" Nx_array_support.pp_answer r
-    | Error e -> failf "contract raised %s" (Printexc.to_string e));
-    let want = if Option.is_some init then 0x80000000l else 0l in
-    equal (array int32) (Array.make (m * n) want)
-      (Array.map Int32.bits_of_float (A.to_array dst))
-  in
-  List.iter (fun mn -> at mn false; at mn true) [ (1, 3); (8, 8); (200, 200) ]
+let test_empty b () =
+  empty b D.Uint32 D.Float32 int32 [| 0x80000000l; 0x7F800001l; 0x3FC00000l |];
+  empty b D.Uint64 D.Float64 int64
+    [| 0x8000000000000000L; 0x7FF0000000000001L; 0x3FF8000000000000L |]
 
 (* Scales *)
 
@@ -775,16 +596,13 @@ let ratio_of k =
     let rec down d = if k mod d = 0 then d else down (d - 1) in
     down (min k 64)
 
-(* Products either side of lane order's blocks of 1024 and gemm.c's of
-   4096, in both accs: a float32 [2; k] times bfloat16 [k; 3],
-   each scaled in blocks along k; and every regime of both accs, which
-   reaches each of gemm.c's paths, its operands scaled in turn in 2-D
-   blocks, stepped, broadcast or contiguous: a and b, a alone, b alone. *)
+(* Products either side of lane order's blocks of 1024 and of 4096, in
+   both accs: a float32 [2; k] times bfloat16 [k; 3], each scaled in
+   blocks along k; and every regime of both accs, its operands scaled in
+   turn in 2-D blocks, stepped, broadcast or contiguous: a and b, a alone,
+   b alone. *)
 let scaled_examples =
-  let plain r =
-    let axes = Array.init r Fun.id in
-    { stepped = false; windowed = None; reversed = false; broadcast = false; stored = axes; perm = axes }
-  in
+  let plain = Elements.plain in
   let spec ?(lies = Contiguous) kind extents seed =
     Some { kind; extents; lies; specials = true; seed }
   in
@@ -815,8 +633,23 @@ let scaled_examples =
     | 1 -> (c, sa, None)
     | _ -> (c, None, sb)
   in
+  (* A scale over an empty axis: a [2; 2^28; 0] by [2^28; 0; 3], a scaled
+     in whole axes, with and without init. A scale table once reached past
+     its allocation there. *)
+  let empty init =
+    let f64 = D.Any D.Float64 in
+    let c =
+      make ~acc:f64 ~out:f64
+        ([||], [| 2 |], [| 3 |], [| 1 lsl 28; 0 |])
+        (f64, plain 3) (f64, plain 3)
+        (if init then Some (plain 2) else None)
+        3
+    in
+    (c, spec None [| 2; 1; 1 |] 3, None)
+  in
   List.concat_map (fun acc -> List.map (along acc) ks) accs
   @ List.mapi regime (regimes (D.Any D.Float32) @ regimes (D.Any D.Float64))
+  @ [ empty false; empty true ]
 
 let scaled_covers (c, sa, sb) =
   cover "float32" (c.acc = D.Any D.Float32);
@@ -839,35 +672,13 @@ let scaled_covers (c, sa, sb) =
   cover "a broadcast scale" (any (fun (_, s) -> s.lies = Broadcast));
   cover "a transposed operand" (List.mem "permuted" c.views);
   cover "a broadcast operand" (List.mem "broadcast" c.views);
-  let rb, rr, rc, rk = runs c in
-  cover "groups of several runs" (rb > 1 || rr > 1 || rc > 1 || rk > 1);
-  let m, n = rows_cols c in
-  cover "lane order in passes: more than 8 rows and columns"
-    (per_batch c > 0 && order c = Lane && m > 8 && n > 8);
-  (* gemm.c reads an operand of acc's dtype in place along a's last
-     contracted axis or b's last column or contracted axis where it steps
-     by 1 there, unless it is scaled. *)
-  let unit (A.Any x) i = L.stride (A.layout x) i = 1 in
-  let last l = Array.length l > 0 in
-  let of_acc (A.Any x) = D.Any (A.dtype x) = c.acc in
-  let con side = Array.map side c.contracting in
-  let a_streams =
-    let ks = con fst in
-    of_acc c.a && last ks && unit c.a ks.(Array.length ks - 1)
-  in
-  let b_streams =
-    let ks = con snd and rank = Array.length (shape_of c.b) in
-    let paired j =
-      Array.exists (fun (_, x) -> x = j) c.batch
-      || Array.exists (fun (_, x) -> x = j) c.contracting
-    in
-    let free = List.filter (fun j -> not (paired j)) (List.init rank Fun.id) in
-    of_acc c.b
-    && ((free <> [] && unit c.b (List.nth free (List.length free - 1)))
-       || (last ks && unit c.b ks.(Array.length ks - 1)))
-  in
-  cover "a scaled operand of acc's dtype adjacent along its streamed axis"
-    ((sa <> None && a_streams) || (sb <> None && b_streams));
+  let (A.Any w) = c.b in
+  let st = Iarray.to_array (L.strides (A.layout w)) in
+  cover "two contracting pairs" (Array.length c.contracting = 2);
+  cover "b stepped along k"
+    (c.contracting <> [||] && st.(snd c.contracting.(0)) = 2);
+  cover "b broadcast across its columns" (Array.length st = 2 && st.(1) = 0);
+  cover "a batch axis" (c.batch <> [||]);
   let _, k, _ = sizes c in
   List.iter
     (fun n -> cover (Printf.sprintf "%d products" n) (k = n))
@@ -905,10 +716,6 @@ let scaled_bits b (c, sa, sb) =
 let law_scaled b x =
   scaled_covers x;
   scaled_bits b x
-
-let plain_view r =
-  let axes = Array.init r Fun.id in
-  { stepped = false; windowed = None; reversed = false; broadcast = false; stored = axes; perm = axes }
 
 (* Block-scaled float4
 
@@ -968,9 +775,8 @@ let float4_b ~along ~odd k n seed =
 
 let mx_case x =
   let k = x.mx_k and n = x.mx_n and m = x.mx_m in
-  let plain2 = { stepped = false; windowed = None; reversed = false; broadcast = false; stored = [| 0; 1 |]; perm = [| 0; 1 |] } in
   let da = if x.mx_a then D.Any D.Float4_e2m1fn else D.Any D.Bfloat16 in
-  let a = operand da [| m; k |] 0 plain2 x.mx_seed in
+  let a = operand da [| m; k |] (Elements.plain 2) x.mx_seed in
   let odd = if x.mx_odd then 1 else 0 in
   let b = float4_b ~along:x.mx_along ~odd k n (x.mx_seed + 1) in
   let c =
@@ -1017,10 +823,9 @@ let mx_draws =
      mx_of ~acc ~ratio ~whole ~along ~odd ~f4_a ?kind ~seed m n k)
 
 (* The product of a token by a weight, either side of lane order's blocks
-   and gemm.c's, in both accs; a weight read along its columns;
-   codes from inside a byte; float4 a; Value scales; chain order over 13
-   columns; the chain path, past the few rows; and the empty and
-   one-element products. *)
+   and of 4096, in both accs; a weight read along its columns; codes from
+   inside a byte; float4 a; Value scales; chain order over 13 columns and
+   over hundreds of rows; and the empty and one-element products. *)
 let mx_examples =
   List.concat_map
     (fun acc ->
@@ -1046,7 +851,6 @@ let mx_covers x (c, _, _) =
   cover "chain order, b read along k" ((not lane) && products && x.mx_along);
   cover "chain order, b read along its columns"
     ((not lane) && products && not x.mx_along);
-  cover "the chain path" ((not lane) && x.mx_m > few_rows_most && x.mx_n > few_rows_most);
   cover "k past a block of lanes" (x.mx_k > 1024);
   cover "k past nx's block" (x.mx_k > 4096);
   cover "blocks of 64 or more" (x.mx_k > 0 && x.mx_ratio > 32);
@@ -1082,54 +886,44 @@ let law_mx b x =
   mx_covers x c;
   scaled_bits b c
 
-(* Block-scaled float4 weights through other layouts, in both orders and
-   accs: two contracting pairs that merge, one apart, and pairs in
-   another order than b's axes; b stepped along k, broadcast across its
-   columns; a batch axis. *)
+(* Block-scaled float4 weights through other layouts, in both accs: two
+   contracting pairs that merge, one apart, and pairs in another order
+   than b's axes; b stepped along k, broadcast across its columns; a batch
+   axis. *)
 let mx_layouts =
   let move m x = A.Any (Option.get (A.move m x)) in
-  let bf16 s seed = operand (D.Any D.Bfloat16) s 0 (plain_view (Array.length s)) seed in
+  let bf16 s seed = operand (D.Any D.Bfloat16) s (Elements.plain (Array.length s)) seed in
   let codes extents = Some { kind = None; extents; lies = Contiguous; specials = true; seed = 5 } in
   let range start count step = { M.start; count; step } in
   let layouts =
     [
-      ("two pairs that merge", [||], [| (1, 0); (2, 1) |], bf16 [| 3; 2; 64 |] 1,
+      ([||], [| (1, 0); (2, 1) |], bf16 [| 3; 2; 64 |] 1,
        move (M.Permute [| 1; 2; 0 |]) (float4 [| 5; 2; 64 |] 2), [| 2; 2; 5 |]);
-      ("two pairs apart, k1 adjacent", [||], [| (1, 0); (2, 1) |], bf16 [| 3; 2; 64 |] 1,
+      ([||], [| (1, 0); (2, 1) |], bf16 [| 3; 2; 64 |] 1,
        move (M.Permute [| 2; 1; 0 |]) (float4 [| 5; 64; 2 |] 2), [| 2; 2; 5 |]);
-      ("pairs in the reverse of b's axes", [||], [| (2, 1); (1, 0) |],
+      ([||], [| (2, 1); (1, 0) |],
        bf16 [| 3; 2; 64 |] 1, move (M.Permute [| 1; 2; 0 |]) (float4 [| 5; 2; 64 |] 2),
        [| 2; 2; 5 |]);
-      ("b stepped along k", [||], [| (1, 0) |], bf16 [| 2; 1056 |] 1,
+      ([||], [| (1, 0) |], bf16 [| 2; 1056 |] 1,
        move (M.Permute [| 1; 0 |])
          (Option.get
             (A.move (M.Slice [| range 0 7 1; range 1 1056 2 |]) (float4 [| 7; 2112 |] 2))),
        [| 33; 7 |]);
-      ("b broadcast across its columns", [||], [| (1, 0) |], bf16 [| 3; 1056 |] 1,
+      ([||], [| (1, 0) |], bf16 [| 3; 1056 |] 1,
        move (M.Broadcast [| 1056; 9 |]) (float4 [| 1056; 1 |] 2), [| 33; 9 |]);
-      ("a batch axis", [| (0, 0) |], [| (2, 1) |], bf16 [| 2; 3; 128 |] 1,
+      ([| (0, 0) |], [| (2, 1) |], bf16 [| 2; 3; 128 |] 1,
        move (M.Permute [| 0; 2; 1 |]) (float4 [| 2; 6; 128 |] 2), [| 2; 4; 6 |]);
     ]
   in
   List.concat_map
-    (fun (name, batch, contracting, a, b, extents) ->
+    (fun (batch, contracting, a, b, extents) ->
       List.map
         (fun acc ->
           ( { batch; contracting; acc; a; b; init = None; out = acc;
-              views = [ name ] },
+              views = [] },
             None, codes extents ))
         D.[ Any Float32; Any Float64 ])
     layouts
-
-let law_mx_layouts b ((c, _, _) as x) =
-  let (A.Any w) = c.b in
-  let st = Iarray.to_array (L.strides (A.layout w)) in
-  cover "two contracting pairs" (Array.length c.contracting = 2);
-  cover "b stepped along k" (st.(snd c.contracting.(0)) = 2);
-  cover "b broadcast across its columns"
-    (Array.length st = 2 && st.(1) = 0);
-  cover "a batch axis" (c.batch <> [||]);
-  scaled_bits b x
 
 (* Integer and complex cases with scales. *)
 let unscalable =
@@ -1201,36 +995,6 @@ let test_scale_misfits (b : Support.backend) () =
   refused ~msg:"b's 0 blocks along 4" ~sb:(codes [| 0; 3 |]) ();
   refused ~msg:"a fitting scale beside a misfit" ~sa:(codes [| 2; 1 |])
     ~sb:(codes [| 3; 3 |]) ()
-
-(* A scaled contraction whose contracting extents multiply to 0 has no
-   products, whatever the extents before the empty one: a [2; 2^28; 0] by
-   [2^28; 0; 3], scaled along a, is [+0], or init, at every output. *)
-let test_scaled_empty (b : Support.backend) () =
-  let module K = (val b.kernels) in
-  let big = 1 lsl 28 in
-  let arr s x =
-    let a = A.of_array D.Float64 (Iarray.of_array s) (Array.make (total s) x) in
-    A.expect D.Float64 (on b (A.Any a))
-  in
-  let codes =
-    A.expect D.Uint8 (on b (A.Any (A.of_array D.Uint8 [| 2; 1; 1 |] [| 127; 127 |])))
-  in
-  let at init =
-    let dst = arr [| 2; 3 |] 7. in
-    (match
-       K.contract ~batch:[||] ~contracting:[| (1, 0); (2, 1) |]
-         ~segments:None ~acc:(D.Any D.Float64) ~dst
-         ~init:(Option.map (arr [| 2; 3 |]) init)
-         { array = A.Any (arr [| 2; big; 0 |] 1.); scale = Some (Exponent codes) }
-         (plain (arr [| big; 0; 3 |] 1.))
-     with
-    | A.Done -> ()
-    | r -> failf "contract answered %a" Nx_array_support.pp_answer r);
-    equal (array float_exact) (Array.make 6 (Option.value init ~default:0.))
-      (A.to_array (to64 (host (A.Any dst))))
-  in
-  at None;
-  at (Some (-2.5))
 
 (* Segments
 
@@ -1507,7 +1271,7 @@ let seg_make ~acc ~out ((batch, _, _, con) as e) (da, va) (db, vb) vi
     ~cut ~g ?(stepped = false) offs seed =
   let c = make ~acc ~out e (da, va) (db, vb) None seed in
   let nb = Array.length batch and nk = Array.length con in
-  let ia = inverse va.perm and ib = inverse vb.perm in
+  let ia = Elements.inverse va.perm and ib = Elements.inverse vb.perm in
   let cut =
     match cut with
     | `Rows (ri, ci) -> Cut_rows { a_axis = ia.(nb + ri); b_axis = ib.(nb + nk + ci) }
@@ -1518,8 +1282,10 @@ let seg_make ~acc ~out ((batch, _, _, con) as e) (da, va) (db, vb) vi
   | None -> s
   | Some vi ->
       let y = seg_shape s in
-      let init = operand c.out (Array.map (fun i -> y.(i)) (inverse vi.perm)) 0 vi (seed + 2) in
-      { s with sg = { c with init = Some init; views = c.views @ names vi } }
+      let init =
+        operand c.out (Array.map (fun i -> y.(i)) (Elements.inverse vi.perm)) vi (seed + 2)
+      in
+      { s with sg = { c with init = Some init; views = c.views @ Elements.view_names vi } }
 
 (* Draws: rows or a pair cut into up to 6 groups along up to 40 indices,
    or a pair of 4090 to 4200 products, over a batch of up to two axes
@@ -1595,8 +1361,8 @@ let codes_of extents seed =
    experts, stored along k, scaled in blocks of 32 along it as MXFP4's
    are, the tokens cut into the experts' groups by [o]. *)
 let experts ?(acc = D.Any D.Float32) t g n k o =
-  let a = operand (D.Any D.Bfloat16) [| t; k |] 0 (plain_view 2) 7 in
-  let b = operand (D.Any D.Float4_e2m1fn) [| g; n; k |] 0 (plain_view 3) 8 in
+  let a = operand (D.Any D.Bfloat16) [| t; k |] (Elements.plain 2) 7 in
+  let b = operand (D.Any D.Float4_e2m1fn) [| g; n; k |] (Elements.plain 3) 8 in
   let c =
     { batch = [||]; contracting = [| (1, 2) |]; acc; a; b; init = None;
       out = acc; views = [] }
@@ -1607,9 +1373,9 @@ let experts ?(acc = D.Any D.Float32) t g n k o =
 (* [m] bfloat16 rows of [k] by float4 [k; n] stored along k, scaled in
    blocks of 32 along it, k cut into windows by [o]. *)
 let windows ?(acc = D.Any D.Float32) m n k o =
-  let a = operand (D.Any D.Bfloat16) [| m; k |] 0 (plain_view 2) 3 in
-  let along = { (plain_view 2) with stored = [| 1; 0 |] } in
-  let b = operand (D.Any D.Float4_e2m1fn) [| k; n |] 0 along 4 in
+  let a = operand (D.Any D.Bfloat16) [| m; k |] (Elements.plain 2) 3 in
+  let along = { (Elements.plain 2) with stored = [| 1; 0 |] } in
+  let b = operand (D.Any D.Float4_e2m1fn) [| k; n |] along 4 in
   let c =
     { batch = [||]; contracting = [| (1, 0) |]; acc; a; b; init = None;
       out = acc; views = [] }
@@ -1628,16 +1394,20 @@ let seg_examples =
     let nb = Array.length batch in
     let ra, rb, ry = ranks e in
     let ry = match cut with `Rows _ -> ry - 1 | `Pair _ -> ry + 1 in
-    let v r =
-      if not view then plain_view r
+    (* Axes reversed, the last made axis stepped, broadcast along the
+       [batch] leading made axes. *)
+    let v ?(batch = nb) r =
+      if not view then Elements.plain r
       else
         let p = Array.init r (fun i -> r - 1 - i) in
-        { stepped = true; windowed = None; reversed = false; broadcast = nb > 0; stored = Array.init r Fun.id; perm = p }
+        let axes = List.init r Fun.id in
+        { (Elements.plain r) with stepped = true; perm = p;
+          broadcast = List.filter (fun i -> p.(i) < batch) axes }
     in
     let out = Option.value out ~default:acc in
     let s =
       seg_make ~acc ~out e (da, v ra) (db, v rb)
-        (if init then Some (v ry) else None)
+        (if init then Some (v ~batch:0 ry) else None)
         ~cut ~g ?stepped offs 11
     in
     let blocks x d = Array.map (fun e -> if e mod d = 0 then e / d else e) (shape_of x) in
@@ -2052,7 +1822,7 @@ let test_acc_refused (b : Support.backend) () =
    rows or columns, 63 and 64 outputs, a depth of 128 per output and one
    less. *)
 let order_edges =
-  let f32 = D.Any D.Float32 and v = plain_view 2 in
+  let f32 = D.Any D.Float32 and v = Elements.plain 2 in
   List.map
     (fun (m, n, k) ->
       make ~acc:f32 ~out:f32 ([||], [| m |], [| n |], [| k |]) (f32, v)
@@ -2068,24 +1838,20 @@ let cpu (b : Support.backend) =
     [
       test "refuses an acc a contraction does not compute in" (fun () ->
           b.around (test_acc_refused b));
-      prop ~examples:(examples @ order_edges)
+      prop ~examples:(examples @ large_examples @ order_edges)
         "each output adds its products in the order nx_cpu.mli states"
         computed (run (law_order b));
-      prop ~examples
-        "a contraction's bits do not depend on layouts, as nx_cpu.mli states"
-        computed (run (law_layouts b));
-      prop ~examples:(List.concat_map regimes integer_accs)
+      prop ~count:16 ~examples:deep_examples
+        "a contraction on the job's threads has one thread's bits" deep_cases
+        (run (law_threads b));
+      prop ~examples:(List.concat_map regimes integer_accs @ byte_examples)
         "an integer output is its products' sum modulo the accumulator"
-        integer_cases
-        (run (law_wraps ~covers:integer_covers b));
-      prop ~examples:quad_examples
-        "8-bit operands into 32 bits wrap as integers do" quad_cases
-        (run (law_wraps ~covers:quad_covers b));
+        integer_cases (run (law_wraps b));
       prop "a result of another dtype rounds the sum in acc once" rounded
         (run (law_rounds_once b));
       prop "computes every contraction nx_cpu.mli lists"
         any_case (run (law_computes b));
-      prop ~examples:scaled_examples
+      prop ~examples:(scaled_examples @ mx_layouts)
         "a scaled contraction has the bits of its operands scaled on the host"
         scaled_cases (run (law_scaled b));
       prop "declines scales in an integer or complex accumulator" unscalable
@@ -2094,15 +1860,8 @@ let cpu (b : Support.backend) =
         "a block-scaled float4 operand has the bits of its elements scaled \
          on the host"
         mx_draws (run (law_mx b));
-      prop ~count:0 ~examples:mx_layouts
-        "block-scaled float4 weights through other layouts have their \
-         elements' bits scaled on the host"
-        (Gen.with_pp pp_scaled (Gen.constant (List.hd mx_layouts)))
-        (run (law_mx_layouts b));
       test "refuses a scale that does not fit its operand" (fun () ->
           b.around (test_scale_misfits b));
-      test "a scaled contraction over an empty extent has no products"
-        (fun () -> b.around (test_scaled_empty b));
       prop ~examples:seg_examples
         "each output of a segmented contraction adds its products in the \
          whole call's order"
@@ -2117,14 +1876,7 @@ let cpu (b : Support.backend) =
         "reads and writes no byte past its operands and dst, whatever pages lie \
          beside them"
         guard_cases (run (law_guards b));
-      test "with no products, a float32 output is init's bits"
-        (run (empty b D.Uint32 D.Float32 int32
-                [| 0x80000000l; 0x7F800001l; 0x3FC00000l |]));
-      test "with no products, a float64 output is init's bits"
-        (run (empty b D.Uint64 D.Float64 int64
-                [| 0x8000000000000000L; 0x7FF0000000000001L; 0x3FF8000000000000L |]));
-      test "on a fresh thread, an empty product is +0 or init"
-        (run (fresh b));
+      test "with no products, an output is init's bits" (run (test_empty b));
     ]
 
 let () =

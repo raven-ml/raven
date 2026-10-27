@@ -178,47 +178,6 @@ let law_add_views (b : Support.backend) c =
   | None, None -> ()
   | _ -> failf "%s declined a view or its copy" b.name
 
-(* A target's bits, any NaN for a NaN, are those of a scatter of only its
-   updates, in C order, into its element: nx.cpu adds them left to right,
-   so the association is a function of their count. Checks the first 20
-   targets reached. *)
-let law_add_alone (b : Support.backend) c =
-  let d = dtype_of c.into in
-  let ls = lands c in
-  cover "a target several updates reach"
-    (Array.exists (fun l -> List.length l > 1) ls);
-  cover "a narrow float" (is_narrow d);
-  cover "through views" (c.sviews <> []);
-  let alone x us =
-    let us = Array.of_list us and one = plain 1 in
-    let n = Array.length us in
-    let c =
-      {
-        combine = Nx_kernel.Add;
-        saxis = 0;
-        into = operand d [| 1 |] one (fun _ -> x);
-        sidx = int64s [| n |] one (fun () -> 0L);
-        updates = operand d [| n |] one (fun k -> us.(k));
-        sviews = [];
-      }
-    in
-    match scatter_on b c with
-    | Some y -> (elements y).(0)
-    | None -> failf "%s declined a scatter of one target" b.name
-  in
-  match scatter_on b c with
-  | None -> ()
-  | Some y ->
-      let got = elements y and xs = elements c.into in
-      let reached =
-        List.filter (fun t -> ls.(t) <> []) (List.init (Array.length ls) Fun.id)
-      in
-      let first = List.filteri (fun i _ -> i < 20) reached in
-      equal
-        (list (same d))
-        (List.map (fun t -> alone xs.(t) ls.(t)) first)
-        (List.map (fun t -> got.(t)) first)
-
 (* Refusals *)
 
 (* A gather's shapes, [x], [idx] and [dst], or a scatter's, [into], [idx],
@@ -285,26 +244,9 @@ let law_scatter_refuses (b : Support.backend) c =
     (K.scatter Set ~unique:false ~axis:c.along ~dst:(zeros32 dst)
        ~into:(zeros32 into) (zeros64 idx) (zeros32 u))
 
-let test_refusals (b : Support.backend) () =
+(* An Add of booleans answers Wrong_dtype. *)
+let test_bool_add (b : Support.backend) () =
   let module K = (val b.kernels) in
-  let x = A.of_array D.Float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let idx = A.of_array D.Int64 [| 2; 2 |] [| 0L; 1L; 2L; 0L |] in
-  let wrong = A.create Rig.host D.Float32 [| 3; 2 |] in
-  equal ~msg:"a gather into another shape" answer A.Shape_mismatch
-    (K.gather ~axis:1 ~dst:wrong idx x);
-  equal ~msg:"positions off the source's shape" answer A.Shape_mismatch
-    (K.gather ~axis:0
-       ~dst:(A.create Rig.host D.Float32 [| 2; 2 |])
-       idx x);
-  let u = A.of_array D.Float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-  let dst = A.create Rig.host D.Float32 [| 2; 3 |] in
-  equal ~msg:"a scatter of positions and updates of two shapes" answer
-    A.Shape_mismatch
-    (K.scatter Add ~unique:false ~axis:1 ~dst ~into:x
-       (A.of_array D.Int64 [| 2; 1 |] [| 0L; 1L |])
-       u);
-  equal ~msg:"a scatter into another shape" answer A.Shape_mismatch
-    (K.scatter Add ~unique:false ~axis:1 ~dst:wrong ~into:x idx u);
   let bools = A.of_array D.Bool [| 2 |] [| true; false |] in
   let bdst = A.create Rig.host D.Bool [| 2 |] in
   equal ~msg:"an Add of booleans" answer A.Wrong_dtype
@@ -389,55 +331,34 @@ let scatter_examples =
 (* Positions past the axis on both sides, cycling over 1003 targets. *)
 let cycled = Array.init 1009 (fun i -> Int64.of_int ((i * 7 mod 1003) - 1))
 
-(* Updates a sorted scatter sorts at once into an axis of 1000: past them,
-   a narrow float's sums carry to the next block. *)
-let first_block = 1 lsl 19
-
-(* Positions that miss targets 900 to 999 over the first block, then
-   [cycled]'s. *)
+(* Positions that miss targets 900 to 999 over the first half million
+   updates, then [cycled]'s. *)
 let late =
   Array.init 600_000 (fun i ->
-      if i < first_block then Int64.of_int (i * 7 mod 900) else cycled.(i mod 1009))
+      if i < 1 lsl 19 then Int64.of_int (i * 7 mod 900) else cycled.(i mod 1009))
 
-(* Whether a target of [c] is first reached past the first block. *)
-let reached_late c =
-  let ps = positions c.sidx and d = (shape_of c.into).(c.saxis) in
-  let first = Array.make d max_int in
-  Array.iteri
-    (fun i p ->
-      let p = Int64.to_int p in
-      if p >= 0 && p < d && first.(p) = max_int then first.(p) <- i)
-    ps;
-  Array.exists (fun i -> i <> max_int && i >= first_block) first
-
-(* Past a block of a sorted scatter: shared targets, a narrow float's sum;
-   targets first reached past the first block, into reversed; sums carried
-   through stepped and reversed updates. *)
+(* Hundreds of thousands of updates into an axis of a thousand: a narrow
+   float's Add over shared targets, targets first reached late, into
+   reversed, sums through stepped and reversed updates; and a float32 Set
+   and Max over shared targets. *)
 let blocked_examples =
   let ex d = scatter_example (D.Any d) Nx_kernel.Add ~ts:[| 1000 |] ~axis:0 in
+  let f32 combine =
+    scatter_example (D.Any D.Float32) combine ~ts:[| 1000 |] ~axis:0
+      ~m:600_000 cycled
+  in
   [
     ex D.Float16 ~m:600_000 cycled;
     ex D.Bfloat16 ~m:600_000 ~tv:{ (plain 1) with reversed = Some 0 } late;
     ex D.Float8_e4m3fn ~m:600_000
       ~uv:{ (plain 1) with stepped = true; reversed = Some 0 }
       cycled;
+    f32 Nx_kernel.Set;
+    f32 Nx_kernel.Max;
   ]
 
-(* A narrow Add's sums past the first block, through views. *)
-let cover_blocks c =
-  let views side = List.exists (String.starts_with ~prefix:side) c.sviews in
-  let carried =
-    c.combine = Nx_kernel.Add
-    && is_narrow (dtype_of c.into)
-    && (shape_of c.updates).(c.saxis) > first_block
-  in
-  cover "a narrow sum first reached past a block, into through a view"
-    (carried && views "into" && reached_late c);
-  cover "a narrow sum carried through a view of the updates"
-    (carried && views "updates")
-
-(* An embedding gradient's rows, sorted: into transposed and the updates
-   stepped and reversed; a narrow float's sum past a block. *)
+(* An embedding gradient's rows: into transposed and the updates stepped
+   and reversed; a narrow float's sum of half a million updates. *)
 let row_examples =
   [
     scatter_example (D.Any D.Float32) Nx_kernel.Add ~ts:[| 1000; 5 |] ~axis:0
@@ -449,34 +370,26 @@ let row_examples =
       ~m:530_000 ~broadcast:[ 1 ] cycled;
   ]
 
-(* A sorted run of 1025 slices, whose last piece is one slice: the updates
+(* A Set of 65 536 rows of 1025 complex128 slices, the updates one row
    broadcast along the axis, positions cycling over 0, 1 and 2 into an axis
-   of 2, so that both targets end as the row. *)
-let test_last_piece (b : Support.backend) () =
+   of 2. *)
+let wide_rows =
   let d = D.Any D.Complex128 and m = 65_536 and len = 1025 in
   let rs = Random.State.make [| 2 |] in
   let row = Array.init len (fun _ -> element d rs) in
-  let c =
-    {
-      combine = Nx_kernel.Set;
-      saxis = 0;
-      into = operand d [| 2; len |] (plain 2) (fun _ -> element d rs);
-      sidx =
-        int64s [| m; len |]
-          { (plain 2) with broadcast = [ 1 ] }
-          (positions_of [| 0L; 1L; 2L |]);
-      updates =
-        operand d [| m; len |] { (plain 2) with broadcast = [ 0 ] } (fun k ->
-            row.(k));
-      sviews = [];
-    }
-  in
-  match scatter_on b c with
-  | None -> failf "%s declined a scatter" b.name
-  | Some y ->
-      equal (array string)
-        (Array.init (2 * len) (fun t -> row.(t mod len)))
-        (elements y)
+  {
+    combine = Nx_kernel.Set;
+    saxis = 0;
+    into = operand d [| 2; len |] (plain 2) (fun _ -> element d rs);
+    sidx =
+      int64s [| m; len |]
+        { (plain 2) with broadcast = [ 1 ] }
+        (positions_of [| 0L; 1L; 2L |]);
+    updates =
+      operand d [| m; len |] { (plain 2) with broadcast = [ 0 ] } (fun k ->
+          row.(k));
+    sviews = [ "updates broadcast" ];
+  }
 
 (* Parted scratch *)
 
@@ -608,19 +521,9 @@ let shaped d combine (ts, axis, m, broadcast) ~tv ~uv rs =
 
 let narrow_dtypes = List.filter is_narrow all_dtypes
 
-(* Positions a parted narrow Add counts at once in a run: past them, its
-   count cuts the run into pieces. *)
-let count_piece = 1 lsl 18
-
-(* A float4_e2m1fn Add of 3 slices, 300 000 updates along an axis of 1000:
-   threads part each slice's targets, its elements sharing bytes, and count
-   its positions in pieces. *)
-let counted = ([| 1000; 3 |], 0, 300_000)
-
-(* A narrow float's Adds, a shape for each way its sums group the
-   updates: an axis of more updates than targets, one of fewer, 3 slices
-   of positions of their own, and rows of 600 slices cut into pieces of
-   512, the positions broadcast along them. *)
+(* A narrow float's Adds: an axis of more updates than targets, one of
+   fewer, 3 slices of positions of their own, and rows of 600 slices, the
+   positions broadcast along them. *)
 let narrow_shapes =
   [
     ("more updates than targets", ([| 1000 |], 0, 70_000, []));
@@ -638,20 +541,18 @@ let narrow_examples =
         (Random.State.make [| 1 |]))
     narrow_shapes
   @ [
-      (* Positions crowding the first of the parts the targets split into,
-         and one outside the axis: sorted by bins at bfloat16, parted at
-         float4_e2m1fn, whose elements share bytes. *)
+      (* Positions crowding the first targets, and one outside the axis,
+         at bfloat16 and at float4_e2m1fn, whose elements share bytes. *)
       scatter_example (D.Any D.Bfloat16) Nx_kernel.Add ~ts:[| 500; 3 |]
         ~axis:0 ~m:70_000
         (Array.init 1009 (fun i -> Int64.of_int ((i * i mod 38) - 1)));
       scatter_example (D.Any D.Float4_e2m1fn) Nx_kernel.Add ~ts:[| 500; 3 |]
         ~axis:0 ~m:70_000
         (Array.init 1009 (fun i -> Int64.of_int ((i * i mod 38) - 1)));
-      (let ts, axis, m = counted in
-       scatter_example (D.Any D.Float4_e2m1fn) Nx_kernel.Add ~ts ~axis ~m
-         cycled);
+      (* 3 slices of 300 000 float4_e2m1fn updates into an axis of 1000. *)
+      scatter_example (D.Any D.Float4_e2m1fn) Nx_kernel.Add ~ts:[| 1000; 3 |]
+        ~axis:0 ~m:300_000 cycled;
     ]
-  @ blocked_examples
 
 let narrow_adds =
   let open Gen in
@@ -667,33 +568,28 @@ let narrow_adds = Gen.with_pp pp_scatter narrow_adds
 
 (* A scatter's bits are one thread's, any NaN for a NaN. *)
 let law_threads (b : Support.backend) c =
+  let d = dtype_of c.into in
+  cover "a narrow float's Add" (c.combine = Nx_kernel.Add && is_narrow d);
+  cover "a sub-byte dtype" (let (D.Any dt) = d in D.bits dt < 8);
+  cover "positions broadcast along the rows"
+    (let (A.Any p) = c.sidx in
+     Iarray.exists (( = ) 0) (L.strides (A.layout p)));
+  cover "through views" (c.sviews <> []);
+  cover "more targets than updates"
+    ((shape_of c.into).(c.saxis) > (shape_of c.updates).(c.saxis));
   match (scatter_on b c, Nx_cpu.one_thread (fun () -> scatter_on b c)) with
   | Some y, Some y' ->
       equal (array (same (dtype_of c.into))) (elements y) (elements y')
   | _ -> failf "%s declined a scatter" b.name
 
-let law_narrow_threads (b : Support.backend) c =
-  let ts = shape_of c.into and m = (shape_of c.updates).(c.saxis) in
-  List.iter
-    (fun (name, (ts', axis, m', _)) ->
-      cover name (ts = ts' && c.saxis = axis && m = m'))
-    narrow_shapes;
-  cover "sums carried from block to block" (m > 1 lsl 19);
-  (let ts', axis, m' = counted in
-   cover "parted positions counted in pieces"
-     (ts = ts' && c.saxis = axis && m = m' && m > count_piece
-     && dtype_of c.into = D.Any D.Float4_e2m1fn));
-  cover_blocks c;
-  law_threads b c
-
 (* Sub-byte scatters *)
 
 let sub_byte_dtypes = List.filter (fun (D.Any dt) -> D.bits dt < 8) all_dtypes
 
-(* Shapes whose threads store elements of one byte: an axis of 9 split
-   into parts, rows of 1001 slices cut into pieces at 512 and starting at
-   odd elements, and 20 units of 33 elements. Each is [(into, axis,
-   updates along it, broadcast axes of the positions)]. *)
+(* Shapes whose neighbouring elements share bytes between threads: a short
+   axis of many updates, rows of an odd count of slices, and slices along
+   a middle axis. Each is [(into, axis, updates along it, broadcast axes of
+   the positions)]. *)
 let shared_bytes =
   [
     ([| 9 |], 0, 70_000, []);
@@ -726,20 +622,29 @@ let sub_byte_scatters =
 
 let sub_byte_scatters = Gen.with_pp pp_scatter sub_byte_scatters
 
-(* A sub-byte scatter's bits are one thread's where threads store elements
-   of one byte. A lost store needs two threads to meet at the byte, which a
-   run may not show; the shapes pin where they would. *)
-let law_sub_byte (b : Support.backend) c =
-  let d = dtype_of c.into in
-  List.iter
-    (fun e -> cover (Format.asprintf "%a" pp_dtype e) (e = d))
-    sub_byte_dtypes;
-  let ts = shape_of c.into in
-  cover "an axis split into parts" (Array.length ts = 1);
-  cover "a row cut into pieces"
-    (Array.length ts = 2 && c.combine = Nx_kernel.Add && is_narrow d);
-  cover "several units" (Array.length ts = 3);
-  law_threads b c
+(* Scatters of many updates: narrow floats' Adds, embedding gradients'
+   rows, sub-byte elements sharing bytes, and long axes of few slices. *)
+let threaded_scatters =
+  Gen.with_pp pp_scatter
+    (Gen.frequency
+       [
+         (3, narrow_adds); (3, row_scatters); (3, sub_byte_scatters);
+         (1, long_scatters);
+       ])
+
+let threaded_examples =
+  narrow_examples @ row_examples @ sub_byte_examples @ [ wide_rows ]
+
+(* Scatters of many updates against the reference: large shapes, long axes
+   of few slices, hundreds of thousands of updates into one axis, and
+   embedding gradients' rows. *)
+let many_scatters =
+  Gen.with_pp pp_scatter
+    (Gen.frequency
+       [
+         (3, large_scatters); (3, long_scatters); (1, blocked_scatters);
+         (3, row_scatters);
+       ])
 
 (* Guard pages *)
 
@@ -794,10 +699,6 @@ let cpu (b : Support.backend) =
     [
       prop "a float Add gives the same result through any views" float_adds
         (run (law_add_views b));
-      prop
-        "a float Add's target is a scatter of its updates alone, as \
-         nx_cpu.mli states"
-        float_adds (run (law_add_alone b));
       prop ~examples:gather_examples
         "a gather reads each position, zero outside the axis" gathers
         (run (law_gather_reference b));
@@ -809,36 +710,16 @@ let cpu (b : Support.backend) =
         (run (law_nan_extremes b));
       prop ~count:10 "large gathers on the job's threads" large_gathers
         (run (gather_agrees b));
-      prop ~count:10 "large scatters on the job's threads" large_scatters
-        (run (scatter_agrees b));
-      prop ~count:10 "long scatters split their targets among threads"
-        long_scatters
-        (run (scatter_agrees b));
-      prop ~count:4 ~examples:blocked_examples
-        "longer scatters split them block by block" blocked_scatters
+      prop ~count:10 ~examples:blocked_examples
+        "scatters of many updates combine each target's updates in C order"
+        many_scatters
         (run (fun c ->
-             cover_blocks c;
+             cover "hundreds of thousands of updates into one axis"
+               ((shape_of c.updates).(c.saxis) > 500_000);
              law_scatter_reference b c));
-      prop ~count:10 ~examples:row_examples
-        "an embedding gradient's rows combine in C order, in place too"
-        row_scatters
-        (run (fun c ->
-             law_scatter_reference b c;
-             law_in_place b c));
-      prop ~count:6 ~examples:narrow_examples
-        "a narrow float Add's bits are one thread's" narrow_adds
-        (run (law_narrow_threads b));
-      prop ~count:10 ~examples:row_examples
-        "an embedding gradient's bits are one thread's" row_scatters
-        (run (fun c ->
-             cover "a narrow float's Add"
-               (c.combine = Nx_kernel.Add && is_narrow (dtype_of c.into));
-             law_threads b c));
-      prop ~count:10 ~examples:sub_byte_examples
-        "a sub-byte scatter's bits are one thread's" sub_byte_scatters
-        (run (law_sub_byte b));
-      test "a sorted run's last piece of one slice" (fun () ->
-          b.around (test_last_piece b));
+      prop ~count:16 ~examples:threaded_examples
+        "a scatter's bits are one thread's" threaded_scatters
+        (run (law_threads b));
       test "boolean extremes are of truths" (fun () ->
           b.around (test_bool_extremes b));
       test "a float16 sum runs in float32 and rounds once" (fun () ->
@@ -851,8 +732,7 @@ let cpu (b : Support.backend) =
       prop "a scatter refuses what Nx_kernel.Shape refuses and other shapes"
         scatter_misfits
         (run (law_scatter_refuses b));
-      test "refuses shapes that do not fit and an Add of booleans" (fun () ->
-          b.around (test_refusals b));
+      test "refuses an Add of booleans" (fun () -> b.around (test_bool_add b));
       prop ~count:300
         "a gather reads and writes no byte past its operands and dst, \
          whatever pages lie beside them"

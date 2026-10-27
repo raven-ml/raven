@@ -3,7 +3,6 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-#include <stdatomic.h>
 #include <string.h>
 
 #include <caml/alloc.h>
@@ -75,34 +74,6 @@ value nx_kernels_support_use(value name) {
   }
   caml_invalid_argument(
       "Nx_kernels_support.with_target: not a target the host runs");
-}
-
-/* Jobs begun from jobs' bodies: [n] outer units of [cost] bytes, each
-   adding 0 to n − 1 by a job of [n] units of that cost begun in its
-   body. */
-typedef struct {
-  int64_t n, cost;
-  _Atomic int64_t sum;
-} nested;
-
-static void nested_inner(int64_t lo, int64_t hi, int worker, void *ctx) {
-  (void)worker;
-  nested *q = ctx;
-  for (int64_t i = lo; i < hi; i++) atomic_fetch_add(&q->sum, i);
-}
-
-static void nested_outer(int64_t lo, int64_t hi, int worker, void *ctx) {
-  (void)worker;
-  nested *q = ctx;
-  for (int64_t u = lo; u < hi; u++)
-    nx_cpu_job(q->n, 0, q->cost, nested_inner, q);
-}
-
-value nx_kernels_support_nested(value n, value cost) {
-  nested q = {.n = Long_val(n), .cost = Long_val(cost)};
-  atomic_init(&q.sum, 0);
-  nx_cpu_job(q.n, 0, q.cost, nested_outer, &q);
-  return Val_long(atomic_load(&q.sum));
 }
 
 /* Guard pages */

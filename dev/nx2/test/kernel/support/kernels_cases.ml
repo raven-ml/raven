@@ -354,6 +354,12 @@ let case_of dts =
 
 let case = Gen.with_pp pp_case (case_of dtypes)
 
+type pair = Pair : ('v, 's) A.t * ('v, 's) A.t -> pair
+
+let pp_pair ppf (Pair (x, y)) =
+  Format.fprintf ppf "%a %a, %a" D.pp (A.dtype x) L.pp (A.layout x) L.pp
+    (A.layout y)
+
 (* An array of [dt], values from [seed], [h] by [w] and seen through [view]:
    as made, transposed, stepped, or cut into 2x2 windows whose last two axes
    are swapped, as a pooling layer reads them. *)
@@ -392,9 +398,96 @@ let large_of dts =
 
 let large = Gen.with_pp pp_case (large_of dtypes)
 
-(* One large array through each view: the 32 drawn cases of a large law miss
-   a view one time in ten thousand. *)
-let large_views = List.map (fun v -> large_at D.Float32 257 65 v 1) [ 0; 1; 2; 3 ]
+(* One large array through each view, which the 32 drawn cases of a large
+   law miss one time in ten thousand; a transposed int8 matrix whose rows
+   lie 4 KiB apart, as a 4096-wide matrix's do; and a uint4 array of an odd
+   count of elements past a job's blocks, which share bytes at the ends of
+   their shares. *)
+let large_views =
+  List.map (fun v -> large_at D.Float32 257 65 v 1) [ 0; 1; 2; 3 ]
+  @ [
+      Case
+        (Option.get
+           (A.move (M.Permute [| 1; 0 |]) (seeded D.Int8 [| 9; 4096 |] 2)));
+      Case (seeded D.Uint4 [| (105 lsl 13) + 1 |] 3);
+    ]
+
+(* Each of [large_views] against a contiguous operand. *)
+let large_view_pairs =
+  List.map
+    (fun (Case x) -> Pair (x, seeded (A.dtype x) (L.shape (A.layout x)) 2))
+    large_views
+
+(* A contiguous bfloat16 pair: a kind that stages every operand, on several
+   threads. *)
+let large_bfloat16_pair =
+  let (Case x) = large_at D.Bfloat16 257 65 0 1 in
+  Pair (x, seeded (A.dtype x) (L.shape (A.layout x)) 2)
+
+(* [n] elements of [dt] drawn from its specials alone, by [seed]: NaNs of
+   both signs, signalling and quiet, with payloads, infinities, zeros, and
+   numbers that some kinds make NaN from. *)
+let specials_only (type v s) (dt : (v, s) D.t) n seed : (v, s) A.t =
+  let sp = Array.of_list (specials dt) in
+  let b = bytes_of_seed seed n in
+  let pick i = sp.(Char.code b.[i] * 7 mod Array.length sp) in
+  let data = String.concat "" (List.init n pick) in
+  A.v dt (L.contiguous [| n |]) (B.of_string data)
+
+(* Float pairs of specials alone, at float32 and float64. *)
+let nan_pairs =
+  [
+    Pair (specials_only D.Float32 300 1, specials_only D.Float32 300 2);
+    Pair (specials_only D.Float64 300 3, specials_only D.Float64 300 4);
+  ]
+
+(* Float64 values either side of erf's switch at 2.5, of both signs, mixed
+   within every few lanes, from [seed]. *)
+let erf_values seed =
+  let n = 1000 in
+  let st = Random.State.make [| seed |] in
+  let v i =
+    let a = Random.State.float st 1. in
+    let low = Random.State.float st 1. < if i / 50 mod 2 = 0 then 0.9 else 0.1 in
+    let v = if low then a *. 2.5 else 2.5 +. (a *. 5.) in
+    if i land 1 = 0 then v else -.v
+  in
+  A.of_array D.Float64 [| n |] (Array.init n v)
+
+let erf_case = Case (erf_values 11)
+
+let erf_pair = Pair (erf_values 11, erf_values 12)
+
+(* [n] elements of [dt] all [v], one element repeated. *)
+let repeated (type v s) (dt : (v, s) D.t) n v : (v, s) A.t =
+  let one = A.of_array dt [| 1 |] [| v |] in
+  A.v dt (L.v ~strides:[| 0 |] [| n |]) (A.buffer one)
+
+(* Integer dividends with the dtype's extremes against a divisor repeated
+   along the row, a power of two the dtype holds, at both ends of its
+   range. *)
+let divisor_pairs =
+  let n = 300 in
+  let at (type v s) (dt : (v, s) D.t) (of_int : int -> v) ks =
+    List.map (fun k -> Pair (seeded dt [| n |] 5, repeated dt n (of_int (1 lsl k)))) ks
+  in
+  at D.Int8 Fun.id [ 0; 3; 6 ]
+  @ at D.Uint8 Fun.id [ 1; 7 ]
+  @ at D.Int32 Int32.of_int [ 3; 30 ]
+  @ at D.Uint64 (fun k -> Int64.of_int k) [ 2; 40 ]
+
+(* Threefry's counters and keys over lengths with a tail after any vector
+   block, both contiguous or one of them one element repeated. *)
+let threefry_pairs =
+  List.concat_map
+    (fun n ->
+      let x = seeded D.Uint64 [| n |] 6 and y = seeded D.Uint64 [| n |] 7 in
+      [
+        Pair (x, y);
+        Pair (repeated D.Uint64 n 0x9E3779B97F4A7C15L, y);
+        Pair (x, repeated D.Uint64 n 0xBB67AE8584CAA73BL);
+      ])
+    [ 37; 80 ]
 
 let covers (Case a) =
   let l = A.layout a in
@@ -582,12 +675,6 @@ let alike (type v s) (x : (v, s) A.t) : (v, s) A.t Gen.t =
     Option.get (A.move (M.Permute (Iarray.of_array rev)) y)
   else drawn (A.dtype x) s
 
-type pair = Pair : ('v, 's) A.t * ('v, 's) A.t -> pair
-
-let pp_pair ppf (Pair (x, y)) =
-  Format.fprintf ppf "%a %a, %a" D.pp (A.dtype x) L.pp (A.layout x) L.pp
-    (A.layout y)
-
 let pairs =
   Gen.with_pp pp_pair
     (let open Gen in
@@ -763,14 +850,25 @@ let program ?(length = 6) st (ins : D.any array) ~room ~rank =
         D.equal x x' && P.accepts3 k c x
     | _ -> true
   in
-  for _ = 1 to 1 + Random.State.int st length do
+  (* A sub-byte input's first node is, half the time, its bitcast to
+     another dtype of its width, which the drawn nodes reach rarely. *)
+  let first =
+    let (D.Any x) = ins.(0) in
+    let same =
+      List.filter (fun (D.Any d) -> D.bits d = D.bits x && not (D.equal d x)) D.all
+    in
+    if D.bits x < 8 && same <> [] && Random.State.bool st then
+      Some (P.Op1 (Bitcast, pick same, 0))
+    else None
+  in
+  for i = 1 to 1 + Random.State.int st length do
     let rec attempt tries =
       let node = draw () in
       if accepts node (List.map (List.nth !tys) (operands node)) then node
       else if tries = 0 then P.Op1 (Copy, List.nth !tys 0, 0)
       else attempt (tries - 1)
     in
-    let node = attempt 50 in
+    let node = match first with Some n when i = 1 -> n | _ -> attempt 50 in
     settled := !settled @ [ settles node ];
     nodes := !nodes @ [ node ];
     tys := !tys @ [ dtype_of node ]
@@ -890,9 +988,9 @@ let unpadded (type v s) (x : (v, s) A.t) =
 
 (* A program's results are its nodes' results, each node run on its own,
    bit for bit, any NaN for a NaN: an intermediate holds its dtype's value
-   exactly. With
-   [declines], a map that declines a program [declines] does not accept
-   fails. [length] bounds the program's nodes past its loads. *)
+   exactly; a declined map writes nothing. With [declines], a map that
+   declines a program [declines] does not accept fails. [length] bounds the
+   program's nodes past its loads. *)
 let law_map_split ?declines ?(labels = true) ?length ?(padded = false)
     (b : Support.backend) (Pair (x, y), seed) =
   let module K = (val b.kernels) in
@@ -919,9 +1017,15 @@ let law_map_split ?declines ?(labels = true) ?length ?(padded = false)
             A.Any (on b (seeded d shape (seed + o))))
           (Iarray.to_array p.outs)
       in
+      let before = Array.map (fun (A.Any d) -> bits_of (host d)) dsts in
       match K.map p ~dsts loads with
       | A.Declined -> (
           cover "map declined" true;
+          Array.iteri
+            (fun k (A.Any d) ->
+              equal ~msg:"declined writes nothing" (array int) before.(k)
+                (bits_of (host d)))
+            dsts;
           match declines with
           | Some ok when not (ok p types) ->
               failf "map declined a program it computes: %d nodes"
@@ -969,3 +1073,23 @@ let law_map_split ?declines ?(labels = true) ?length ?(padded = false)
                 (bits_of (host got)))
             (Iarray.to_array p.outs)
       | r -> failf "map answered %a" Nx_array_support.pp_answer r)
+
+(* Programs: how a map's loads are read, and how long its program is. *)
+type split = Plain | Padded | Long
+
+let split_cases =
+  Gen.triple
+    (Gen.frequency [ (9, pairs); (1, large_pairs) ])
+    Gen.int
+    (Gen.frequency
+       [ (3, Gen.constant Plain); (1, Gen.constant Padded); (1, Gen.constant Long) ])
+
+(* {!law_map_split} over the pair's loads read as [mode] says. *)
+let law_split ?declines b ((Pair (x, _) as p), seed, mode) =
+  covers (Case x);
+  cover "padded loads" (mode = Padded);
+  cover "a program of hundreds of nodes" (mode = Long);
+  match mode with
+  | Plain -> law_map_split ?declines b (p, seed)
+  | Padded -> law_map_split ?declines ~padded:true b (p, seed)
+  | Long -> law_map_split ?declines ~length:400 ~labels:false b (p, seed)

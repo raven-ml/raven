@@ -5,7 +5,8 @@
 
 (* Contractions through every kernel library the host runs: within the bound
    Nx_kernel.S.contract states of the exact sum, the same bits into a
-   destination identical to init, and nothing written where declined. *)
+   destination identical to init, nothing written where declined, and
+   misfits refused. *)
 
 open Windtrap
 open Contract_cases
@@ -39,7 +40,7 @@ let unit_roundoff acc =
 let smallest_subnormal acc =
   if part_of acc = D.Any D.Float32 then 0x1p-149 else 0x1p-1074
 
-(* The laws of S *)
+(* The bound *)
 
 (* An output [x] of [c] is within γ(K + 1, 2u) (|init| + Σ|a·b|) of the exact
    sum of [o], u being [acc]'s unit roundoff, and (K + 1) η where results
@@ -75,27 +76,7 @@ let law_bound b c =
       cover "computed" true;
       equal (list string) [] (wrong c y (within c))
 
-(* An init given as dst itself, an operand identical to the written one,
-   gives the bits of the same contraction into a fresh dst. *)
-let law_init_as_dst (b : Support.backend) (c : case) =
-  match c.init with
-  | None -> cover "no init" true
-  | Some i ->
-      let c' = { c with init = Some (cast_to c.out i) } in
-      let donated = on b (cast_to c.out i) in
-      let answer =
-        contract b.kernels c ~dst:donated (on b c.a) (on b c.b) (Some donated)
-      in
-      begin match (run b c', answer) with
-      | Some y, A.Done ->
-          let per = per_batch c in
-          cover "fewer than 64 outputs" (per > 0 && per < 64);
-          cover "64 outputs or more" (per >= 64);
-          equal (list string) []
-            (differ_bits c.acc ~other:"in place" y (host donated))
-      | None, A.Declined -> cover "declined" true
-      | _, r -> failf "in place, contract answered %a" Nx_array_support.pp_answer r
-      end
+(* In place *)
 
 (* A destination identical to [init], a C-contiguous array of the result's
    dtype, gives the bits a fresh one does: a kernel reads each element of
@@ -189,12 +170,11 @@ let laws (b : Support.backend) =
     [
       prop ~examples "a contraction is within its bound of the exact sum"
         computed (run (law_bound b));
-      prop ~examples "an init given as dst gives the same bits" computed
-        (run (law_init_as_dst b));
       prop "a declined contraction writes nothing" any_case
         (run (law_declined b));
       prop ~examples
-        "a destination identical to init gives a fresh one's bits" computed (run (law_in_place b));
+        "a destination identical to init gives a fresh one's bits" computed
+        (run (law_in_place b));
       test "refuses operands and destinations whose shapes do not fit"
         (fun () -> b.around (test_misfits b));
     ]

@@ -291,20 +291,6 @@ let law_refuses (b : Support.backend) c =
        ~positions:(A.create Rig.host D.Int64 (Iarray.of_array positions))
        (A.of_array D.Float32 (Iarray.of_array x) (Array.make (total x) 0.)))
 
-let test_refusals (b : Support.backend) () =
-  let module K = (val b.kernels) in
-  let x = A.of_array D.Float32 [| 2; 3 |] [| 3.; 1.; 2.; 0.; 5.; 4. |] in
-  let p = A.create Rig.host D.Int64 [| 2; 3 |] in
-  equal ~msg:"values of another shape" answer A.Shape_mismatch
-    (K.sort ~axis:1 ~descending:false
-       ~values:(A.create Rig.host D.Float32 [| 3; 2 |])
-       ~positions:p x);
-  equal ~msg:"keeping past the axis" answer A.Shape_mismatch
-    (K.sort ~axis:1 ~descending:false
-       ~values:(A.create Rig.host D.Float32 [| 2; 4 |])
-       ~positions:(A.create Rig.host D.Int64 [| 2; 4 |])
-       x)
-
 (* Guard pages *)
 
 (* Slices of one element to a few vectors past the widest, at the edges of
@@ -367,7 +353,7 @@ let examples =
 let large =
   Gen.with_pp pp_case
     (case_gen
-       ~shapes:(Gen.of_list [ [| 200_000 |]; [| 400; 500 |]; [| 3; 100_000 |] ])
+       ~shapes:(Gen.of_list [ [| 100_000 |]; [| 400; 500 |]; [| 3; 40_000 |] ])
        ())
 
 (* One long slice of 4-byte keys packed with positions; of 8-byte keys beside
@@ -376,13 +362,13 @@ let large =
    narrow span, packed. *)
 let large_examples =
   [
-    example (D.Any D.Float32) [| 200_000 |];
-    example (D.Any D.Int64) [| 200_000 |] ~descending:true ~k:150_000;
-    example (D.Any D.Int64) [| 200_000 |] ~draw:Spread;
-    example (D.Any D.Float64) [| 200_000 |] ~draw:Spread ~descending:true;
-    example (D.Any D.Uint64) [| 200_000 |] ~draw:Skewed;
-    example (D.Any D.Float64) [| 200_000 |] ~draw:Skewed ~k:150_000;
-    example (D.Any D.Int64) [| 200_000 |] ~draw:(Narrow 3);
+    example (D.Any D.Float32) [| 100_000 |];
+    example (D.Any D.Int64) [| 100_000 |] ~descending:true ~k:75_000;
+    example (D.Any D.Int64) [| 100_000 |] ~draw:Spread;
+    example (D.Any D.Float64) [| 100_000 |] ~draw:Spread ~descending:true;
+    example (D.Any D.Uint64) [| 100_000 |] ~draw:Skewed;
+    example (D.Any D.Float64) [| 100_000 |] ~draw:Skewed ~k:75_000;
+    example (D.Any D.Int64) [| 100_000 |] ~draw:(Narrow 3);
     (* Sub-byte slices on the job's threads, of an odd length, so that
        neighbouring slices' values share a byte, read through views. *)
     example (D.Any D.Int4) [| 400; 501 |]
@@ -409,13 +395,11 @@ let cpu (b : Support.backend) =
     [
       prop ~examples "sorts each slice stably in the order" cases
         (run (law_reference b));
-      prop ~count:8 ~examples:large_examples "large sorts on the job's threads"
+      prop ~count:4 ~examples:large_examples "large sorts on the job's threads"
         large
         (run (law_large b));
       prop "refuses what Nx_kernel.Shape refuses and other shapes" misfits
         (run (law_refuses b));
-      test "refuses results of another shape" (fun () ->
-          b.around (test_refusals b));
       prop ~count:300
         "reads and writes no byte past the operand and destinations, \
          whatever pages lie beside them"

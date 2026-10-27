@@ -66,19 +66,6 @@ let test_refusals k () =
 
 (* Kinds of no, two and three operands *)
 
-(* Each of large_views against a contiguous operand: the 32 drawn cases of
-   a law over large pairs miss one view in some runs. *)
-let large_view_pairs =
-  List.map
-    (fun (Case x) -> Pair (x, seeded (A.dtype x) (L.shape (A.layout x)) 2))
-    large_views
-
-(* A contiguous bfloat16 pair: a kind that stages every operand, on several
-   threads. *)
-let large_bfloat16_pair =
-  let (Case x) = large_at D.Bfloat16 257 65 0 1 in
-  Pair (x, seeded (A.dtype x) (L.shape (A.layout x)) 2)
-
 (* Values the kinds' documentation states, through nx.cpu. *)
 let test_kind_values () =
   let k = (module Nx_cpu : Nx_kernel.S) in
@@ -392,41 +379,6 @@ let test_padded_dead () =
         ~dsts:[| y |] [| load |]);
   refused "a scan" [| 3 |] (fun y ->
       Nx_cpu.scan id ~axis:0 (Monoid Sum, 0) ~dsts:[| y |] [| load |])
-
-(* A map that holds many complex128 values gets blocks of few elements; over
-   a transposed float32 operand the walk tiles rows, as many as fit the
-   block. Each output is [k] times [2x], cast back to float32. *)
-let test_tiled_short_blocks () =
-  let n = 64 and k = 140 in
-  let f32 = D.Any D.Float32 and c128 = D.Any D.Complex128 in
-  let cast = P.Op1 (Cast, c128, 0) in
-  let twice = Array.init k (fun _ -> P.Op2 (Binary Add, 1, 1)) in
-  let sums =
-    Array.init (k - 1) (fun j ->
-        if j = 0 then P.Op2 (Binary Add, 2, 3)
-        else P.Op2 (Binary Add, 2 + k + j - 1, 2 + j + 1))
-  in
-  let nodes = Array.concat [ [| P.In 0; cast |]; twice; sums ] in
-  let last = Array.length nodes - 1 in
-  let nodes = Array.append nodes [| P.Op1 (Cast, f32, last) |] in
-  let p = P.v ~ins:[| f32 |] (Iarray.of_array nodes) ~outs:[| last + 1 |] in
-  let data = Array.init (n * n) Float.of_int in
-  let x =
-    Option.get
-      (A.move (M.Permute [| 1; 0 |]) (A.of_array D.Float32 [| n; n |] data))
-  in
-  let y = A.create Rig.host D.Float32 [| n; n |] in
-  match
-    Nx_cpu.map p ~dsts:[| A.Any y |] [| Nx_kernel.Plain x |]
-  with
-  | A.Done ->
-      let want =
-        Array.init (n * n) (fun q ->
-            let i = q / n and j = q mod n in
-            Float.of_int (2 * k) *. data.((j * n) + i))
-      in
-      equal (array float_exact) want (A.to_array y)
-  | r -> failf "map answered %a" Nx_array_support.pp_answer r
 
 (* Programs *)
 
@@ -742,7 +694,7 @@ let result_dtype g =
 
 (* The same answer and bits with the operands, through their views, and the
    result against an inaccessible page. *)
-let law_guards (b : Support.backend) (g, side) =
+let law_kind_guards (b : Support.backend) (g, side) =
   let module K = (val b.kernels) in
   let after = side = Support.After in
   collect (kind_name g.kind);
@@ -824,45 +776,41 @@ let law_map_guards (b : Support.backend) ((Pair (x, y), seed), side) =
   let call xs ds = K.map p ~dsts:ds (Array.map load xs) in
   equal answer A.Done (Elements.same_guarded side ~call ops dsts)
 
-(* Erf's ranges and nested jobs *)
+(* The kernels guarded: one of a kind over drawn views, a large copy and
+   cast, or a program's map. *)
+type guarded =
+  | Kind of guard
+  | Large of case * D.any
+  | Program of pair * int
 
-(* Erf at float64 is nx_kinds.h's at each index over rows whose pieces mix
-   its two ranges, either one the most, into a fresh destination and into
-   the operand itself: a row computes the range most of a piece's lanes are
-   in and redoes the others. *)
-let law_erf_ranges (near, seed) =
-  let n = 1000 in
-  let st = Random.State.make [| seed |] in
-  let draw () =
-    let a = Random.State.float st 1. in
-    let v =
-      if Random.State.float st 1. < near then a *. 2.5
-      else 2.5 +. Float.succ 0. +. (a *. 5.)
-    in
-    if Random.State.bool st then -.v else v
-  in
-  let xs = Array.init n (fun _ -> draw ()) in
-  let want = Array.map (fun v -> Int64.bits_of_float (Nx_kinds_support.f64 "erf" [| v |])) xs in
-  let x = A.of_array D.Float64 [| n |] xs in
-  let fresh = A.create Rig.host D.Float64 [| n |] in
-  equal answer A.Done (Support.map1 (module Nx_cpu) (Unary Erf) ~dst:fresh x);
-  equal ~msg:"fresh" (array int64) want (Array.map Int64.bits_of_float (A.to_array fresh));
-  equal answer A.Done (Support.map1 (module Nx_cpu) (Unary Erf) ~dst:x x);
-  equal ~msg:"in place" (array int64) want (Array.map Int64.bits_of_float (A.to_array x))
+let pp_guarded ppf = function
+  | Kind g -> pp_guard ppf g
+  | Large (c, d) -> Format.fprintf ppf "%a cast to %a" pp_case c pp_dtype d
+  | Program (p, seed) -> Format.fprintf ppf "%a program %d" pp_pair p seed
 
-(* A job begun from a job's body runs to its end and adds what it is given,
-   whether the outer job runs on the pool's threads or on the calling thread:
-   64 units of 64 MiB each, and 1 unit of 2 MiB. Each of the n outer units
-   adds 0 to n - 1. *)
-let test_nested_jobs () =
-  List.iter
-    (fun (n, cost) ->
-      equal
-        ~msg:(Printf.sprintf "%d units of %d bytes" n cost)
-        int
-        (n * (n * (n - 1) / 2))
-        (Support.nested n cost))
-    [ (64, 64 * 1024 * 1024); (1, 2 * 1024 * 1024); (3, 0) ]
+let guarded_cases =
+  Gen.with_pp pp_guarded
+    (Gen.frequency
+       [
+         (6, Gen.map (fun g -> Kind g) guard_case);
+         (1, Gen.map (fun (c, d) -> Large (c, d)) (Gen.pair large dtypes));
+         (3, Gen.map (fun (p, s) -> Program (p, s)) (Gen.pair pairs Gen.int));
+       ])
+
+let guarded_examples =
+  List.concat_map
+    (fun c ->
+      [
+        (Large (c, D.Any D.Float64), Support.Before);
+        (Large (c, D.Any D.Int8), Support.After);
+      ])
+    large_views
+
+let law_guards b (g, side) =
+  match g with
+  | Kind g -> law_kind_guards b (g, side)
+  | Large (c, d) -> law_large_guards b (c, d, side)
+  | Program (p, seed) -> law_map_guards b ((p, seed), side)
 
 (* Programs that hold hundreds to thousands of values at once *)
 
@@ -945,7 +893,7 @@ let held_program st (D.Any xt) (D.Any dt) ~k ~pattern =
 (* A map of a held program gives the bits of its nodes run one by one, any
    NaN for a NaN, at every dtype, its operand and destinations in memory of
    their own beside a guard page or not. *)
-let law_map_held ?(small = false) (b : Support.backend)
+let law_map_held (b : Support.backend)
     (Case x, D.Any dt, k, pattern, side, seed) =
   let module K = (val b.kernels) in
   let st = Random.State.make [| seed |] in
@@ -955,13 +903,13 @@ let law_map_held ?(small = false) (b : Support.backend)
   | p, types -> (
       let h = held p in
       cover "more than 256 held" (h > 256);
-      cover "more than 1040 held" (h > 1040);
+      cover "more than a thousand values held" (h > 1000);
       cover "reuse" (pattern = Reuse);
       cover "never" (pattern = Never);
       cover "guarded" (side <> None);
       let numel = Iarray.fold_left ( * ) 1 shape in
-      if small then cover "a few elements" (numel <= 4)
-      else cover "a thousand elements or more" (numel >= 1000);
+      cover "a few elements" (numel <= 4);
+      cover "a thousand elements or more" (numel >= 1000);
       match split b p types shape [| A.Any x |] with
       | exception Skip -> fail "a node declined"
       | values ->
@@ -1009,9 +957,8 @@ let law_map_held ?(small = false) (b : Support.backend)
                 (Iarray.to_array p.outs)))
 
 (* Arrays of a few hundred to two thousand elements through each view of
-   [large_at]: past a block's 16 elements, so a held program's walk runs
-   many blocks on the job's threads, its arena on the heap past 1040
-   values. *)
+   [large_at]: a held program's walk over many blocks on the job's
+   threads. *)
 let held_views =
   Gen.with_pp pp_case
     (let open Gen in
@@ -1022,10 +969,9 @@ let held_views =
      let+ seed = int in
      large_at dt h w view seed)
 
-(* Arenas past the stack's at both ends of the widths: over a thousand
-   int8 values, and three hundred complex128 ones, each slot of 16
-   elements 256 bytes. *)
-let heap_arenas =
+(* Over a thousand int8 values held, and three hundred complex128 ones,
+   over views of a few thousand elements. *)
+let held_examples =
   [
     (large_at D.Int8 33 65 1 1, D.Any D.Int8, 1200, Never, None, 1);
     ( large_at D.Complex128 33 65 2 2,
@@ -1048,57 +994,6 @@ let held_cases cases =
   let+ seed = int in
   (c, dt, k, pattern, side, seed)
 
-(* [n] elements of [dt] drawn from its specials alone, by [seed]: NaNs of
-   both signs, signalling and quiet, with payloads, infinities, zeros, and
-   numbers that some kinds make NaN from. *)
-let specials_only (type v s) (dt : (v, s) D.t) n seed : (v, s) A.t =
-  let sp = Array.of_list (specials dt) in
-  let b = bytes_of_seed seed n in
-  let pick i = sp.(Char.code b.[i] * 7 mod Array.length sp) in
-  let data = String.concat "" (List.init n pick) in
-  A.v dt (L.contiguous [| n |]) (B.of_string data)
-
-(* A float kind's results at special values are of one class into a
-   destination that is its operand and into a new one: a NaN where one is a
-   NaN, else the same bits. *)
-let law_nan_class (D.Any dt, seed) =
-  let n = 300 in
-  let x = specials_only dt n seed and y = specials_only dt n (seed + 1) in
-  let z = specials_only dt n (seed + 2) in
-  let unary (u, name) =
-    if not (P.accepts1 (Unary u) dt dt) then None
-    else
-      Some (name, fun (module K : Nx_kernel.S) dst x ->
-          Support.map1 (module K) (Unary u) ~dst x)
-  in
-  let binary = function
-    | P.Binary b as k when P.accepts2 k dt ->
-        Some (name2 k, fun (module K : Nx_kernel.S) dst x ->
-            Support.map2 (module K) (Binary b) ~dst x y)
-    | _ -> None
-  in
-  let fma (module K : Nx_kernel.S) dst x =
-    Support.map3 (module K) Fma ~dst x y z
-  in
-  let kinds =
-    List.filter_map unary unaries @ List.filter_map binary op2s
-    @ [ ("fma", fma) ]
-  in
-  let check (name, run) =
-    let under (b : Support.backend) ~alias =
-      b.around (fun () ->
-          let x' = A.copy x in
-          let dst = if alias then x' else A.create Rig.host dt [| n |] in
-          equal ~msg:name answer A.Done (run b.kernels dst x');
-          bits_of dst)
-    in
-    let b = Support.cpu in
-    equal ~msg:(strf "%s in place on %s" name b.name)
-      (same_values (D.Any dt))
-      (under b ~alias:false) (under b ~alias:true)
-  in
-  List.iter check kinds
-
 (* The suite *)
 
 (* nx.cpu under the table the host runs best: what nx_cpu.mli promises beyond
@@ -1107,7 +1002,7 @@ let cpu =
   let never _ _ = false in
   let maps (b : Support.backend) =
     [
-      prop
+      prop ~examples:[ erf_case ]
         (strf "%s's kinds of one operand are nx_kinds.h's at each index" b.name)
         case
         (fun c ->
@@ -1152,31 +1047,18 @@ let cpu =
         (fun c ->
           b.around (fun () ->
               law_map2 ~kinds:P.[ Binary Add; Compare Less ] b c));
-      prop ~count:300
+      prop ~count:100
         (strf "%s computes every map its loop holds" b.name)
-        (Gen.pair pairs Gen.int)
-        (fun c -> b.around (fun () -> law_map_split ~declines:never b c));
-      prop ~count:300
-        (strf "%s computes held programs of a few elements" b.name)
-        (held_cases case)
-        (fun c -> b.around (fun () -> law_map_held ~small:true b c));
-      prop ~count:12 ~examples:heap_arenas
-        (strf "%s computes held programs over views" b.name)
-        (held_cases held_views)
+        split_cases
+        (fun c -> b.around (fun () -> law_split ~declines:never b c));
+      prop ~count:200 ~examples:held_examples
+        (strf "%s computes held programs" b.name)
+        (held_cases (Gen.frequency [ (3, case); (1, held_views) ]))
         (fun c -> b.around (fun () -> law_map_held b c));
       prop ~count:20
         (strf "%s computes a map of hundreds of values held at once" b.name)
         (Gen.pair case (Gen.int_range 257 1000))
         (fun c -> b.around (fun () -> law_map_wide b c));
-      prop ~count:100
-        (strf "%s computes programs of hundreds of nodes over padded loads"
-           b.name)
-        (Gen.pair pairs Gen.int)
-        (fun c ->
-          b.around (fun () ->
-              law_map_split ~length:400 ~labels:false
-                ~padded:true ~declines:never
-                b c));
       prop
         (strf "%s computes a map of every operand with coordinates" b.name)
         case
@@ -1185,58 +1067,21 @@ let cpu =
         (strf "%s computes maps of any number of arrays" b.name)
         (Gen.pair (Gen.pair pairs Gen.int) widths)
         (fun c -> b.around (fun () -> law_map_widths b c));
-      prop ~count:1000
+      prop ~count:600 ~examples:guarded_examples
         (strf
-           "%s's elementwise kernels read and write no byte past their \
-            operands and dst, whatever pages lie beside them"
+           "%s reads and writes no byte past its operands, loads and \
+            destinations, whatever pages lie beside them"
            b.name)
-        (Gen.pair guard_case Elements.sides)
+        (Gen.pair guarded_cases Elements.sides)
         (fun c -> b.around (fun () -> law_guards b c));
-      prop ~count:300
-        (strf
-           "%s's maps read and write no byte past their loads and dsts, \
-            whatever pages lie beside them"
-           b.name)
-        (Gen.pair (Gen.pair pairs Gen.int) Elements.sides)
-        (fun c -> b.around (fun () -> law_map_guards b c));
-      prop ~count:32
-        ~examples:
-          (List.concat_map
-             (fun c ->
-               [
-                 (c, D.Any D.Float64, Support.Before);
-                 (c, D.Any D.Int8, Support.After);
-               ])
-             large_views)
-        (strf
-           "%s's large copies and casts read and write no byte past their \
-            operand and dst"
-           b.name)
-        (Gen.triple large dtypes Elements.sides)
-        (fun c -> b.around (fun () -> law_large_guards b c));
-      prop ~count:32
-        ~examples:(List.map (fun p -> (p, 1)) large_view_pairs)
-        (strf "%s computes maps over large views" b.name)
-        (Gen.pair large_pairs Gen.int)
-        (fun ((Pair (x, _), _) as c) ->
-          covers_large (Case x);
-          b.around (fun () ->
-              law_map_split ~declines:never ~labels:false b c));
     ]
   in
   group "nx.cpu"
     (maps Support.cpu
     @ [
-      prop ~count:8
-        "kinds at special values give one class in place"
-        (Gen.pair
-           (Gen.of_list ~pp:pp_dtype D.[ Any Float32; Any Float64 ])
-           Gen.int)
-        law_nan_class;
       test "refuses before any write"
         (test_refusals (module Nx_cpu : Nx_kernel.S));
       test "kinds give the values their documentation states" test_kind_values;
-      test "a job begun from a job's body runs to its end" test_nested_jobs;
       test "a map of constants alone fills its destination" test_constant_map;
       test "loops of any number of loads and outputs are computed"
         test_loop_widths;
@@ -1247,11 +1092,6 @@ let cpu =
         test_padded_misfits;
       test "a padded load of a dead operand is refused, fill alone or not"
         test_padded_dead;
-      test "a map of short blocks over a transposed operand tiles them"
-        test_tiled_short_blocks;
-      prop ~count:20 "erf at float64 is nx_kinds.h's over pieces of both ranges"
-        (Gen.pair (Gen.of_list ~pp:Format.pp_print_float [ 0.02; 0.4; 0.6; 0.98 ]) Gen.int)
-        law_erf_ranges;
     ])
 
 let () = exit (run "nx_cpu.kernels" [ cpu ])

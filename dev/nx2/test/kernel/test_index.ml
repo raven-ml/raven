@@ -79,6 +79,80 @@ let law_add_again (b : Support.backend) c =
   | None, None -> ()
   | _ -> failf "%s declined one of two" b.name
 
+(* Scatters whose updates reach distinct targets: along the axis, each
+   slice's positions a shuffled prefix of the axis, the rest outside it. *)
+let unique_gen =
+  let open Gen in
+  let* d = of_list ~pp:pp_dtype all_dtypes in
+  let* combine = combine_gen d in
+  let* ts = shape_gen in
+  let r = Array.length ts in
+  let* axis = int_range 0 (r - 1) in
+  let* m = frequency [ (4, int_range 0 8); (1, int_range 9 60) ] in
+  let us = Array.mapi (fun i e -> if i = axis then m else e) ts in
+  let* tv = view_of r in
+  let* uv = view_of r in
+  let+ seed = int in
+  let rs = Random.State.make [| seed |] in
+  let d_axis = ts.(axis) in
+  let slices = Hashtbl.create 16 in
+  let shuffled () =
+    let p = Array.init d_axis Fun.id in
+    for i = d_axis - 1 downto 1 do
+      let j = Random.State.int rs (i + 1) in
+      let t = p.(i) in
+      p.(i) <- p.(j);
+      p.(j) <- t
+    done;
+    p
+  in
+  let k = ref 0 in
+  let next () =
+    let i = index_of us !k in
+    incr k;
+    let j = i.(axis) in
+    i.(axis) <- 0;
+    let p =
+      match Hashtbl.find_opt slices i with
+      | Some p -> p
+      | None ->
+          let p = shuffled () in
+          Hashtbl.add slices i p;
+          p
+    in
+    if j < d_axis then Int64.of_int p.(j)
+    else if j land 1 = 0 then -1L
+    else Int64.of_int d_axis
+  in
+  {
+    combine;
+    saxis = axis;
+    into = operand d ts tv (fun _ -> element d rs);
+    sidx = int64s us (plain r) next;
+    updates = operand d us uv (fun _ -> element d rs);
+    sviews =
+      List.map (( ^ ) "into ") (view_names tv)
+      @ List.map (( ^ ) "updates ") (view_names uv);
+  }
+
+let unique_scatters = Gen.with_pp pp_scatter unique_gen
+
+(* A scatter whose updates reach distinct targets has, under the caller's
+   promise of it, the bits it has without, any NaN for a NaN. *)
+let law_unique (b : Support.backend) c =
+  cover "Add" (c.combine = Nx_kernel.Add);
+  cover "Set" (c.combine = Nx_kernel.Set);
+  cover "an extreme" (c.combine = Nx_kernel.Max || c.combine = Nx_kernel.Min);
+  cover "dropped updates" (snd (sharing c));
+  cover "every target reached"
+    ((shape_of c.updates).(c.saxis) >= (shape_of c.into).(c.saxis));
+  cover "through views" (c.sviews <> []);
+  match (scatter_on ~unique:true b c, scatter_on b c) with
+  | Some y, Some y' ->
+      equal (array (same (dtype_of c.into))) (elements y') (elements y)
+  | None, None -> ()
+  | _ -> failf "%s declined a scatter one way" b.name
+
 (* Bounds of Add *)
 
 (* [x + y] and its rounding error. *)
@@ -390,6 +464,8 @@ let laws (b : Support.backend) =
         (run (law_add_bound b));
       cases ~name:fst "a scatter's stated values" (stated b) (fun (_, f) ->
           b.around f);
+      prop "a scatter promised distinct targets gives the bits of one not"
+        unique_scatters (run (law_unique b));
     ]
 
 let () =

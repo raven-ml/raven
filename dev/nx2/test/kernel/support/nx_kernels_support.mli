@@ -49,11 +49,6 @@ val x86_64 : bool
     crossovers, as linear algebra's two-stage reductions', differ from
     arm64's. *)
 
-val nested : int -> int -> int
-(** [nested n cost] runs, through nx.cpu's jobs, a job of [n] units of
-    [cost] bytes whose every unit begins a job of [n] units of [cost] bytes
-    adding [0] to [n - 1]: the total of the sums. *)
-
 (** {1:guards Guard pages} *)
 
 (** The type for the side of an array's bytes an inaccessible page lies on. *)

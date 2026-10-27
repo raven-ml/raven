@@ -122,58 +122,127 @@ let element (D.Any dt) r =
 
 (* Views *)
 
-(* How an array of shape [s] is made and viewed: its axes made in another order,
-   stepped by two along its last made axis, reversed along a made axis, and
-   broadcast along the axes [broadcast] from one element. *)
+(* How an array of shape [s] is made and viewed. Axis [i] of [s] is made
+   axis [perm.(i)]; the made axes are stored in the order [stored] names,
+   outermost first; the last made axis is made twice as long and stepped by
+   two where [stepped]; the last two made axes, [p] and [q], are the [p]
+   windows of [q] taps of one made axis, the windows [step] apart and the
+   taps [dilation], where [windowed = Some (step, dilation)]; made axis
+   [reversed] is read backwards; and the axes [broadcast] of [s] are made
+   with one element and broadcast. *)
 type view = {
   perm : int array;
+  stored : int array;
   stepped : bool;
+  windowed : (int * int) option;
   reversed : int option;
   broadcast : int list;
 }
 
+let identity p = p = Array.init (Array.length p) Fun.id
+
+let inverse p =
+  let q = Array.make (Array.length p) 0 in
+  Array.iteri (fun i m -> q.(m) <- i) p;
+  q
+
 let view_names v =
-  (if v.perm <> Array.init (Array.length v.perm) Fun.id then [ "permuted" ]
-   else [])
+  (if identity v.perm then [] else [ "permuted" ])
+  @ (if identity v.stored then [] else [ "stored apart" ])
   @ (if v.stepped then [ "stepped" ] else [])
+  @ (if v.windowed <> None then [ "windowed" ] else [])
   @ (if v.reversed <> None then [ "reversed" ] else [])
   @ if v.broadcast <> [] then [ "broadcast" ] else []
-
-let view_of ?(broadcast = []) r =
-  let open Gen in
-  let* p = permutation ~pp:Format.pp_print_int (List.init r Fun.id) in
-  let* stepped = bool in
-  let+ reversed = option (int_range 0 (max 0 (r - 1))) in
-  {
-    perm = Array.of_list p;
-    stepped = stepped && r > 0;
-    reversed = (if r > 0 then reversed else None);
-    broadcast;
-  }
 
 let plain r =
   {
     perm = Array.init r Fun.id;
+    stored = Array.init r Fun.id;
     stepped = false;
+    windowed = None;
     reversed = None;
     broadcast = [];
   }
 
-(* An array of shape [s] through the view [v] whose elements in C order are [f
-   k], k counted in C order of the array made before broadcasting. *)
-let operand dt s v f =
-  let r = Array.length s in
-  let s0 = Array.mapi (fun i e -> if List.mem i v.broadcast then 1 else e) s in
-  let inv = Array.make r 0 in
-  Array.iteri (fun i m -> inv.(m) <- i) v.perm;
-  let made = Array.init r (fun m -> s0.(inv.(m))) in
-  let last = r - 1 in
-  let made' =
-    Array.mapi (fun i e -> if v.stepped && i = last then 2 * e else e) made
+(* A view of rank [r], broadcast along [broadcast]: windows one time in
+   four where [windows], the made axes stored in another order one time in
+   three where [apart]. *)
+let view_of ?(broadcast = []) ?(windows = false) ?(apart = false) r =
+  let open Gen in
+  let axes = List.init r Fun.id in
+  let* perm = permutation ~pp:Format.pp_print_int axes in
+  let* windowed =
+    if windows && r >= 2 then
+      frequency
+        [
+          (3, constant None);
+          (1, map Option.some (pair (int_range 1 2) (int_range 1 2)));
+        ]
+    else constant None
   in
+  let* stored =
+    if apart && windowed = None then
+      frequency [ (2, constant axes); (1, permutation ~pp:Format.pp_print_int axes) ]
+    else constant axes
+  in
+  let* stepped = bool in
+  let+ reversed = option (int_range 0 (max 0 (r - 1))) in
+  {
+    perm = Array.of_list perm;
+    stored = Array.of_list stored;
+    stepped = stepped && r > 0;
+    windowed;
+    reversed = (if r > 0 then reversed else None);
+    broadcast;
+  }
+
+(* The shape of the array made for [s] through [v], before any move: [s] in
+   made order, a broadcast axis of one element, the windows' two axes one,
+   the last twice as long where stepped. *)
+let made v s =
+  let r = Array.length s in
+  let inv = inverse v.perm in
+  let m =
+    Array.init r (fun a ->
+        if List.mem inv.(a) v.broadcast then 1 else s.(inv.(a)))
+  in
+  let m =
+    match v.windowed with
+    | Some (step, dilation) when r >= 2 && m.(r - 2) > 0 && m.(r - 1) > 0 ->
+        let p = m.(r - 2) and q = m.(r - 1) in
+        Array.append (Array.sub m 0 (r - 2))
+          [| ((p - 1) * step) + (dilation * (q - 1)) + 1 |]
+    | _ -> m
+  in
+  let last = Array.length m - 1 in
+  Array.mapi (fun i e -> if v.stepped && i = last then 2 * e else e) m
+
+(* An array of shape [s] through the view [v], its elements those of
+   [make m], a C-contiguous array of the made shape [m] ({!made}). *)
+let operand_with make s v =
+  let r = Array.length s in
+  let inv = inverse v.perm in
+  let shape =
+    Array.init r (fun a ->
+        if List.mem inv.(a) v.broadcast then 1 else s.(inv.(a)))
+  in
+  let m = made v s in
   let whole e = { M.start = 0; count = e; step = 1 } in
-  let move m (A.Any x) = A.Any (Option.get (A.move m x)) in
-  let x = of_elements dt made' (Array.init (total made') f) in
+  let move mv (A.Any x) = A.Any (Option.get (A.move mv x)) in
+  let x = make m in
+  (* The elements copied into an array stored in [v.stored]'s order, read
+     back in the made axes' order. *)
+  let x =
+    if identity v.stored then x
+    else if Array.length v.stored <> Array.length m then
+      invalid_arg "operand: stored names other axes than the made ones"
+    else
+      let copy (A.Any t) = A.Any (A.copy t) in
+      move
+        (M.Permute (Iarray.of_array (inverse v.stored)))
+        (copy (move (M.Permute (Iarray.of_array v.stored)) x))
+  in
+  let last = Array.length m - 1 in
   let x =
     if not v.stepped then x
     else
@@ -181,26 +250,38 @@ let operand dt s v f =
         (M.Slice
            (Iarray.mapi
               (fun i e ->
-                if i = last then { M.start = 1; count = made.(i); step = 2 }
+                if i = last then { M.start = 1; count = e / 2; step = 2 }
                 else whole e)
-              (Iarray.of_array made')))
+              (Iarray.of_array m)))
         x
   in
   let x =
+    match v.windowed with
+    | Some (step, dilation) when Array.length m < r ->
+        let w : M.window = { axis = r - 2; size = shape.(r - 1); step; dilation } in
+        move (M.Window (Iarray.of_array [| w |])) x
+    | _ -> x
+  in
+  let x =
     match v.reversed with
-    | Some a when made.(a) > 0 ->
+    | Some a when shape.(a) > 0 ->
         move
           (M.Slice
              (Iarray.mapi
                 (fun i e ->
                   if i = a then { M.start = e - 1; count = e; step = -1 }
                   else whole e)
-                (Iarray.of_array made)))
+                (Iarray.of_array shape)))
           x
     | _ -> x
   in
   let x = move (M.Permute (Iarray.of_array v.perm)) x in
   if v.broadcast = [] then x else move (M.Broadcast (Iarray.of_array s)) x
+
+(* An array of [dt] and shape [s] through the view [v] whose elements are
+   [f k], k counted in C order of the made array. *)
+let operand dt s v f =
+  operand_with (fun m -> of_elements dt m (Array.init (total m) f)) s v
 
 (* Positions: in range mostly, and at -1, the extent, past it, and the extremes
    of int64. *)
