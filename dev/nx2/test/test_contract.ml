@@ -2647,50 +2647,53 @@ module Conv = struct
     let z = Nx.conv_transpose ~stride ~padding (ones [| 1; 1; 1 |]) (ones [| 1; 1; 1 |]) in
     equal (array int) [| 1; 0; 1 |] (Nx.shape z)
 
-  (* The process's resident bytes, then their peak since the last reset,
-     read where Linux states them, after resetting the peak to the
-     resident bytes; elsewhere the test skips. *)
-  let status_kb key =
-    In_channel.with_open_text "/proc/self/status" (fun ic ->
-        let rec go () =
-          match In_channel.input_line ic with
-          | None -> skip ~reason:("no " ^ key ^ " in /proc/self/status") ()
-          | Some l when String.starts_with ~prefix:key l ->
-              Scanf.sscanf (String.sub l (String.length key) (String.length l - String.length key))
-                " %d kB" Fun.id
-          | Some _ -> go ()
-        in
-        go ())
-
-  let peak_of f =
-    match Out_channel.with_open_text "/proc/self/clear_refs" (fun oc -> output_string oc "5") with
-    | exception Sys_error _ -> skip ~reason:"no resettable peak of resident memory" ()
-    | () ->
-        let before = status_kb "VmRSS:" in
-        f ();
-        1024 * (status_kb "VmHWM:" - before)
+  (* The bytes the host holds after four rounds of collection, each of
+     which returns to it what it collected. *)
+  let settled () =
+    for _ = 1 to 4 do
+      Gc.full_major ();
+      ignore (Rig.Buffer.create Rig.host 0);
+      Rig.free_cache Rig.host
+    done;
+    Rig.allocated Rig.host
 
   (* Convolutions over a 1 MB input, of 64 output channels, which take
      chain order, of 4, which take lane order, and in complex64: each holds
      the input padded and its result, never a copy per output channel or
-     per tap, 75 and 9.4 MB here. *)
+     per tap. The bytes the host holds more after one, its cache included,
+     count every buffer the convolution held at once. One uncounted run
+     comes first, and the count before is read settled, so that no memory
+     collected late serves the counted run. *)
   let test_memory () =
-    let peak (type v s) (dt : (v, s) Nx.dtype) oc =
+    let grown (type v s) (dt : (v, s) Nx.dtype) oc =
       let x = Nx.init Nx.float32 [| 4; 32; 32; 64 |] (fun i -> Float.of_int (i.(1) mod 3))
       and w = Nx.init Nx.float32 [| oc; 3; 3; 64 |] (fun i -> Float.of_int (i.(3) mod 2)) in
       let x = Nx.cast dt x and w = Nx.cast dt w in
-      let conv () = Nx.sync (Nx.conv ~padding:[| (1, 1); (1, 1) |] x w) in
-      conv ();
+      Nx.sync x;
+      Nx.sync w;
+      let conv () =
+        let y = Nx.conv ~padding:[| (1, 1); (1, 1) |] x w in
+        Nx.sync y;
+        y
+      in
+      ignore (conv ());
+      let before = settled () in
+      let y = conv () in
+      let grew = Rig.allocated Rig.host - before in
       let e = D.bytes dt 1 in
       let padded = 4 * 34 * 34 * 64 * e and result = 4 * 32 * 32 * oc * e in
+      (* A quarter more than it holds: one more copy of the input passes
+         that, a copy per tap is nine and per output channel 64. *)
       less
-        ~msg:(Printf.sprintf "peak bytes above the resident ones, %s, %d channels"
+        ~msg:(Printf.sprintf "bytes held above the settled ones, %s, %d channels"
                 (D.name dt) oc)
-        int ~than:(4 * (padded + result)) (peak_of conv)
+        int ~than:(5 * (padded + result) / 4) grew;
+      equal ~msg:"the result, live while counted" (array int)
+        [| 4; 32; 32; oc |] (Nx.shape y)
     in
-    peak Nx.float32 64;
-    peak Nx.float32 4;
-    peak Nx.complex64 4
+    grown Nx.float32 64;
+    grown Nx.float32 4;
+    grown Nx.complex64 4
 
   let group =
     group "convolution"
