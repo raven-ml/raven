@@ -65,7 +65,6 @@ module B = Rig.Buffer
 module D = Nx_array.Dtype
 module A = Bigarray.Array1
 
-let fail_msg = Fail.failf
 let magic = "GGUF"
 
 (* A file's alignment without a [general.alignment] key. *)
@@ -114,7 +113,7 @@ let dtype_of_tag = function
   | 34 -> TQ1_0
   | 35 -> TQ2_0
   | 39 -> MXFP4
-  | tag -> fail_msg "tensor type %d is unknown" tag
+  | tag -> Fail.failf "tensor type %d is unknown" tag
 
 (* The block sizes are those of ggml's block structures: a Q8_0 block is a
    float16 scale and 32 int8 values, 34 bytes for 32 elements. *)
@@ -166,7 +165,7 @@ let remaining c = A.dim c.bytes - c.pos
    byte at least, so this also bounds what a count allocates. *)
 let need c n =
   if n > remaining c then
-    fail_msg "the file ends at byte %d, inside its header" (A.dim c.bytes)
+    Fail.failf "the file ends at byte %d, inside its header" (A.dim c.bytes)
 
 (* The unsigned little-endian integer of the next [n <= 4] bytes. *)
 let uint c n =
@@ -192,7 +191,7 @@ let count c =
   let pos = c.pos in
   let n = int64 c in
   if Int64.compare n 0L < 0 || Int64.compare n (Int64.of_int (remaining c)) > 0
-  then fail_msg "the count %Lu at byte %d exceeds the header" n pos;
+  then Fail.failf "the count %Lu at byte %d exceeds the header" n pos;
   Int64.to_int n
 
 (* A uint64 dimension or offset. *)
@@ -200,7 +199,7 @@ let size c =
   let pos = c.pos in
   let n = int64 c in
   if Int64.compare n 0L < 0 || Int64.compare n (Int64.of_int max_int) > 0 then
-    fail_msg "the size %Lu at byte %d is too large" n pos;
+    Fail.failf "the size %Lu at byte %d is too large" n pos;
   Int64.to_int n
 
 (* The next [n] bytes. *)
@@ -229,12 +228,12 @@ let scalar c tag =
       match uint c 1 with
       | 0 -> Bool false
       | 1 -> Bool true
-      | b -> fail_msg "the bool at byte %d is %d" (c.pos - 1) b)
+      | b -> Fail.failf "the bool at byte %d is %d" (c.pos - 1) b)
   | 8 -> String (string c)
   | 10 -> Uint64 (int64 c)
   | 11 -> Int64 (int64 c)
   | 12 -> Float64 (Int64.float_of_bits (int64 c))
-  | tag -> fail_msg "value type %d is unknown" tag
+  | tag -> Fail.failf "value type %d is unknown" tag
 
 (* An array being read: its elements' tag, how many are left, and those read,
    last first. *)
@@ -242,7 +241,7 @@ type pending = { tag : int; mutable left : int; mutable items : value list }
 
 let start c =
   let tag = uint c 4 in
-  if tag > 12 then fail_msg "value type %d is unknown" tag;
+  if tag > 12 then Fail.failf "value type %d is unknown" tag;
   { tag; left = count c; items = [] }
 
 (* Arrays nest to any depth the file holds, so nested arrays are read with a
@@ -288,20 +287,20 @@ let version c =
       in
       if swapped >= 1 && swapped <= 3 then
         failwith "the file is big-endian, which is not supported";
-      fail_msg "version %d is not supported, only 2 and 3" v
+      Fail.failf "version %d is not supported, only 2 and 3" v
 
 let alignment metadata =
   match List.assoc_opt "general.alignment" metadata with
   | None -> default_alignment
   | Some (Uint32 a) when a > 0 && a land (a - 1) = 0 -> a
-  | Some (Uint32 a) -> fail_msg "the alignment %d is not a power of two" a
+  | Some (Uint32 a) -> Fail.failf "the alignment %d is not a power of two" a
   | Some _ -> failwith "general.alignment is not a uint32"
 
 let metadata c n =
   let keys = Hashtbl.create n in
   let kv _ =
     let key = string c in
-    if Hashtbl.mem keys key then fail_msg "the key %S is given twice" key;
+    if Hashtbl.mem keys key then Fail.failf "the key %S is given twice" key;
     Hashtbl.add keys key ();
     let tag = uint c 4 in
     (key, value c tag)
@@ -332,7 +331,7 @@ let layout name dtype shape =
       let rank = Array.length shape in
       let row = if rank = 0 then 1 else shape.(rank - 1) in
       if row mod elements <> 0 then
-        fail_msg "tensor %S has rows of %d elements, not of blocks of %d" name
+        Fail.failf "tensor %S has rows of %d elements, not of blocks of %d" name
           row elements;
       let stored = Array.copy shape in
       stored.(rank - 1) <- row / elements * bytes;
@@ -346,17 +345,17 @@ let read_tensors file ~data_start ~alignment infos =
       (fun tensors (name, dtype, dims, offset) ->
         if name = "" then failwith "a tensor has an empty name";
         if Hashtbl.mem by_name name then
-          fail_msg "tensor %S is named twice" name;
+          Fail.failf "tensor %S is named twice" name;
         if offset mod alignment <> 0 then
-          fail_msg "tensor %S is at offset %d, not a multiple of %d" name offset
-            alignment;
+          Fail.failf "tensor %S is at offset %d, not a multiple of %d" name
+            offset alignment;
         let shape = Array.of_list (List.rev (Array.to_list dims)) in
         (try Storage.check_shape shape
-         with Failure m -> fail_msg "tensor %S: %s" name m);
+         with Failure m -> Fail.failf "tensor %S: %s" name m);
         let D.Any dt, stored, len = layout name dtype shape in
         if
           offset > file_len - data_start || len > file_len - data_start - offset
-        then fail_msg "the file ends before tensor %S's data" name;
+        then Fail.failf "the file ends before tensor %S's data" name;
         let b = B.view file ~first:(data_start + offset) ~length:len in
         let x =
           Storage.little b dt
@@ -371,7 +370,7 @@ let read_tensors file ~data_start ~alignment infos =
 let read file =
   let file_len = B.length file in
   if file_len < min_header then
-    fail_msg "%d bytes is too short for a GGUF file" file_len;
+    Fail.failf "%d bytes is too short for a GGUF file" file_len;
   let pages = Storage.pages file in
   let header =
     Storage.read pages @@ fun bytes ->
@@ -399,5 +398,4 @@ let tensors g = g.tensors
 let info name g =
   match Hashtbl.find_opt g.infos name with
   | Some info -> info
-  | None ->
-      Printf.ksprintf failwith "Nx_io.Gguf.info: %s: no tensor in the file" name
+  | None -> Fail.failf "Nx_io.Gguf.info: %s: no tensor in the file" name

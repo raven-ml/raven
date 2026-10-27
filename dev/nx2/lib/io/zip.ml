@@ -68,8 +68,6 @@ type out_file = {
   mutable entries_rev : entry list;
 }
 
-let error fmt = Printf.ksprintf failwith fmt
-
 let safe_name name =
   let length = String.length name in
   length > 0
@@ -83,11 +81,12 @@ let safe_name name =
        (String.split_on_char '/' name)
 
 let checked_add context a b =
-  if a < 0 || b < 0 || a > max_int - b then error "ZIP %s is too large" context;
+  if a < 0 || b < 0 || a > max_int - b then
+    Fail.failf "ZIP %s is too large" context;
   a + b
 
 let byte data off =
-  if off < 0 || off >= Array1.dim data then error "truncated ZIP structure";
+  if off < 0 || off >= Array1.dim data then Fail.failf "truncated ZIP structure";
   Array1.unsafe_get data off
 
 let u16 data off = byte data off lor (byte data (off + 1) lsl 8)
@@ -102,23 +101,25 @@ let u64 data off =
         (Int64.of_int (byte data (off + i)))
   done;
   if !value < 0L || !value > Int64.of_int max_int then
-    error "ZIP64 value exceeds the OCaml integer range";
+    Fail.failf "ZIP64 value exceeds the OCaml integer range";
   Int64.to_int !value
 
 let signature data off expected =
-  if u32 data off <> expected then error "invalid ZIP signature at byte %d" off
+  if u32 data off <> expected then
+    Fail.failf "invalid ZIP signature at byte %d" off
 
 let substring data off len =
   if off < 0 || len < 0 || off > Array1.dim data || len > Array1.dim data - off
-  then error "truncated ZIP string";
+  then Fail.failf "truncated ZIP string";
   String.init len (fun i -> Char.chr (Array1.unsafe_get data (off + i)))
 
 let find_eocd data =
   let size = Array1.dim data in
-  if size < end_length then error "file is too short to be a ZIP archive";
+  if size < end_length then Fail.failf "file is too short to be a ZIP archive";
   let first = max 0 (size - end_length - marker16) in
   let rec scan off =
-    if off < first then error "ZIP end-of-central-directory record not found"
+    if off < first then
+      Fail.failf "ZIP end-of-central-directory record not found"
     else if u32 data off = end_signature then
       let comment_len = u16 data (off + 20) in
       if off + end_length + comment_len = size then off else scan (off - 1)
@@ -129,7 +130,7 @@ let find_eocd data =
 let zip64_directory data eocd =
   let locator = eocd - locator_length in
   if u32 data (locator + 4) <> 0 || u32 data (locator + 16) <> 1 then
-    error "multi-disk ZIP archives are unsupported";
+    Fail.failf "multi-disk ZIP archives are unsupported";
   let record = u64 data (locator + 8) in
   signature data record zip64_end_signature;
   let record_size = u64 data (record + 4) in
@@ -137,13 +138,13 @@ let zip64_directory data eocd =
     record_size < zip64_end_size
     || record > Array1.dim data
     || record_size > Array1.dim data - record - 12
-  then error "truncated ZIP64 end record";
+  then Fail.failf "truncated ZIP64 end record";
   if u32 data (record + 16) <> 0 || u32 data (record + 20) <> 0 then
-    error "multi-disk ZIP archives are unsupported";
+    Fail.failf "multi-disk ZIP archives are unsupported";
   let entries_on_disk = u64 data (record + 24) in
   let entry_count = u64 data (record + 32) in
   if entries_on_disk <> entry_count then
-    error "split ZIP archives are unsupported";
+    Fail.failf "split ZIP archives are unsupported";
   (entry_count, u64 data (record + 40), u64 data (record + 48))
 
 let classic_directory data eocd =
@@ -152,30 +153,31 @@ let classic_directory data eocd =
   let entries_on_disk = u16 data (eocd + 8) in
   let entry_count = u16 data (eocd + 10) in
   if disk <> 0 || central_disk <> 0 || entries_on_disk <> entry_count then
-    error "multi-disk ZIP archives are unsupported";
+    Fail.failf "multi-disk ZIP archives are unsupported";
   (entry_count, u32 data (eocd + 12), u32 data (eocd + 16))
 
 let parse_zip64_extra data off len ~compressed ~uncompressed ~local_offset =
   let limit = checked_add "extra field" off len in
-  if limit > Array1.dim data then error "truncated ZIP extra field";
+  if limit > Array1.dim data then Fail.failf "truncated ZIP extra field";
   let rec fields pos =
     if pos = limit then None
-    else if pos > limit - 4 then error "truncated ZIP extra field"
+    else if pos > limit - 4 then Fail.failf "truncated ZIP extra field"
     else
       let tag = u16 data pos in
       let size = u16 data (pos + 2) in
       let payload = pos + 4 in
       if payload > limit || size > limit - payload then
-        error "truncated ZIP extra field";
+        Fail.failf "truncated ZIP extra field";
       if tag = zip64_tag then Some (payload, size) else fields (payload + size)
   in
   match fields off with
-  | None -> error "missing ZIP64 extended information"
+  | None -> Fail.failf "missing ZIP64 extended information"
   | Some (pos, size) ->
       let cursor = ref pos in
       let remaining () = pos + size - !cursor in
       let take () =
-        if remaining () < 8 then error "truncated ZIP64 extended information";
+        if remaining () < 8 then
+          Fail.failf "truncated ZIP64 extended information";
         let value = u64 data !cursor in
         cursor := !cursor + 8;
         value
@@ -189,17 +191,18 @@ let parse_zip64_extra data off len ~compressed ~uncompressed ~local_offset =
 let parse_entries data ~count ~central_size ~central_offset =
   let size = Array1.dim data in
   if central_offset > size || central_size > size - central_offset then
-    error "ZIP central directory is out of bounds";
+    Fail.failf "ZIP central directory is out of bounds";
   if count > central_size / central_length then
-    error "ZIP entry count exceeds the central-directory size";
+    Fail.failf "ZIP entry count exceeds the central-directory size";
   let central_end = central_offset + central_size in
   let rec loop index off entries =
     if index = count then (
-      if off <> central_end then error "ZIP central-directory size mismatch";
+      if off <> central_end then
+        Fail.failf "ZIP central-directory size mismatch";
       List.rev entries)
     else (
       if off > central_end - central_length then
-        error "truncated ZIP central directory";
+        Fail.failf "truncated ZIP central directory";
       signature data off central_signature;
       let flags = u16 data (off + 8) in
       let method_ = u16 data (off + 10) in
@@ -210,14 +213,14 @@ let parse_entries data ~count ~central_size ~central_offset =
       let extra_len = u16 data (off + 30) in
       let comment_len = u16 data (off + 32) in
       if u16 data (off + 34) <> 0 then
-        error "multi-disk ZIP archives are unsupported";
+        Fail.failf "multi-disk ZIP archives are unsupported";
       let local32 = u32 data (off + 42) in
       let variable =
         checked_add "central entry" name_len
           (checked_add "central entry" extra_len comment_len)
       in
       let next = checked_add "central entry" (off + central_length) variable in
-      if next > central_end then error "truncated ZIP central entry";
+      if next > central_end then Fail.failf "truncated ZIP central entry";
       let name = substring data (off + central_length) name_len in
       let extra_off = off + central_length + name_len in
       let compressed_size, uncompressed_size, local_offset =
@@ -250,12 +253,12 @@ let parse_entries data ~count ~central_size ~central_offset =
 let validate_local_entry data ~central_offset entry =
   let off = entry.local_offset in
   if off < 0 || off > central_offset - local_length then
-    error "ZIP local header for %S is out of bounds" entry.name;
+    Fail.failf "ZIP local header for %S is out of bounds" entry.name;
   signature data off local_signature;
   let flags = u16 data (off + 6) in
   let method_code = u16 data (off + 8) in
   if flags <> entry.flags || method_code <> entry.method_ then
-    error "ZIP local header disagrees with central entry %S" entry.name;
+    Fail.failf "ZIP local header disagrees with central entry %S" entry.name;
   let name_len = u16 data (off + 26) in
   let extra_len = u16 data (off + 28) in
   let payload =
@@ -263,10 +266,10 @@ let validate_local_entry data ~central_offset entry =
   in
   if
     payload > central_offset || entry.compressed_size > central_offset - payload
-  then error "ZIP entry %S overlaps the central directory" entry.name;
+  then Fail.failf "ZIP entry %S overlaps the central directory" entry.name;
   let local_name = substring data (off + local_length) name_len in
   if not (String.equal local_name entry.name) then
-    error "ZIP local filename disagrees with central entry %S" entry.name;
+    Fail.failf "ZIP local filename disagrees with central entry %S" entry.name;
   let compressed32 = u32 data (off + 18) in
   let uncompressed32 = u32 data (off + 22) in
   let data_end = payload + entry.compressed_size in
@@ -283,7 +286,8 @@ let validate_local_entry data ~central_offset entry =
       u32 data (off + 14) <> entry.crc32
       || local_compressed <> entry.compressed_size
       || local_uncompressed <> entry.uncompressed_size
-    then error "ZIP local metadata disagrees with central entry %S" entry.name;
+    then
+      Fail.failf "ZIP local metadata disagrees with central entry %S" entry.name;
     (payload, data_end))
   else
     let zip64 =
@@ -322,7 +326,7 @@ let validate_local_entry data ~central_offset entry =
     in
     match finish with
     | Some finish -> (payload, finish)
-    | None -> error "invalid ZIP data descriptor for %S" entry.name
+    | None -> Fail.failf "invalid ZIP data descriptor for %S" entry.name
 
 (* [validate_entries data ~central_offset entries] is each of [entries] with the
    offset of its data, once their names are found distinct and their records
@@ -332,7 +336,7 @@ let validate_entries data ~central_offset entries =
   List.iter
     (fun entry ->
       if Hashtbl.mem names entry.name then
-        error "duplicate ZIP entry %S" entry.name;
+        Fail.failf "duplicate ZIP entry %S" entry.name;
       Hashtbl.add names entry.name ())
     entries;
   let located =
@@ -345,7 +349,7 @@ let validate_entries data ~central_offset entries =
   let rec disjoint previous_end = function
     | [] -> ()
     | (start, finish) :: rest ->
-        if start < previous_end then error "overlapping ZIP local records";
+        if start < previous_end then Fail.failf "overlapping ZIP local records";
         disjoint finish rest
   in
   disjoint 0 spans;
@@ -366,7 +370,7 @@ let open_in file =
     else classic_directory data eocd
   in
   if central_offset > eocd || central_size > eocd - central_offset then
-    error "ZIP central directory overlaps its end record";
+    Fail.failf "ZIP central directory overlaps its end record";
   let entries = parse_entries data ~count ~central_size ~central_offset in
   { file; entries = validate_entries data ~central_offset entries }
 
@@ -380,17 +384,17 @@ type data = Stored of int * int | Inflated of bytes
    entry is checked so: the archive's other entries are not read. *)
 let check_npy entry =
   if entry.flags land encrypted_flag <> 0 then
-    error "encrypted ZIP entries are unsupported";
+    Fail.failf "encrypted ZIP entries are unsupported";
   let allowed_flags =
     if entry.method_ = stored then descriptor_flag lor utf8_flag
     else if entry.method_ = deflated then
       descriptor_flag lor utf8_flag lor deflate_options
-    else error "unsupported ZIP compression method %d" entry.method_
+    else Fail.failf "unsupported ZIP compression method %d" entry.method_
   in
   if entry.flags land lnot allowed_flags <> 0 then
-    error "unsupported ZIP flags 0x%04x" entry.flags;
+    Fail.failf "unsupported ZIP flags 0x%04x" entry.flags;
   if entry.method_ = stored && entry.compressed_size <> entry.uncompressed_size
-  then error "stored ZIP entry %S has inconsistent sizes" entry.name
+  then Fail.failf "stored ZIP entry %S has inconsistent sizes" entry.name
 
 (* The array of the npy entry [entry], whose data starts at [off]. *)
 let read_npy (archive : in_file) (entry, off) =
@@ -401,21 +405,22 @@ let read_npy (archive : in_file) (entry, off) =
     let src = Array1.sub data off len in
     if entry.method_ = stored then (
       if Crc32.bigbytes src <> entry.crc32 then
-        error "CRC-32 mismatch in ZIP entry %S" entry.name;
+        Fail.failf "CRC-32 mismatch in ZIP entry %S" entry.name;
       Stored (off, len))
     else (
       (* Deflate expands at most 1032 times: 258 bytes from two bits. *)
       if entry.uncompressed_size / 1032 > len then
-        error "ZIP entry %S declares more data than its DEFLATE data holds"
+        Fail.failf "ZIP entry %S declares more data than its DEFLATE data holds"
           entry.name;
       let inflated =
         Array1.create int8_unsigned c_layout entry.uncompressed_size
       in
       (match Compress_deflate.Deflate.decompress_into src inflated with
       | Ok () -> ()
-      | Error e -> error "invalid DEFLATE data in ZIP entry %S: %s" entry.name e);
+      | Error e ->
+          Fail.failf "invalid DEFLATE data in ZIP entry %S: %s" entry.name e);
       if Crc32.bigbytes inflated <> entry.crc32 then
-        error "CRC-32 mismatch in ZIP entry %S" entry.name;
+        Fail.failf "CRC-32 mismatch in ZIP entry %S" entry.name;
       Inflated inflated)
   in
   let entry b value =

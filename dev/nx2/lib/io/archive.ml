@@ -8,10 +8,6 @@ module D = Nx_array.Dtype
 
 type 'd t = 'd Nx.packed Names.t
 
-let invalid_argf = Fail.invalid_argf
-let failf = Fail.failf
-let pp_shape = Fail.pp_shape
-
 (* Formats build an archive from names they keep distinct and non-empty, and
    write one's bindings. *)
 
@@ -26,13 +22,13 @@ let of_list entries =
     (fun t (name, x) ->
       if name = "" then invalid_arg "Nx_io.Archive.of_list: an empty name";
       if Names.mem name t then
-        invalid_argf "Nx_io.Archive.of_list: %S is named twice" name;
+        Fail.invalid_argf "Nx_io.Archive.of_list: %S is named twice" name;
       Names.add name x t)
     Names.empty entries
 
 let union ts =
   let shared name _ _ =
-    invalid_argf "Nx_io.Archive.union: %S is in two archives" name
+    Fail.invalid_argf "Nx_io.Archive.union: %S is in two archives" name
   in
   List.fold_left (Names.union shared) Names.empty ts
 
@@ -46,13 +42,14 @@ let find = Names.find_opt
 let entry ~fn name t =
   match Names.find_opt name t with
   | Some x -> x
-  | None -> failf "Nx_io.Archive.%s: %s: no entry in the archive" fn name
+  | None -> Fail.failf "Nx_io.Archive.%s: %s: no entry in the archive" fn name
 
 let check_shape ~fn name ~shape x =
   if Nx.shape x <> shape then
-    failf "Nx_io.Archive.%s: %s: shape %s in the archive, %s asked for" fn name
-      (pp_shape (Nx.shape x))
-      (pp_shape shape)
+    Fail.failf "Nx_io.Archive.%s: %s: shape %s in the archive, %s asked for" fn
+      name
+      (Fail.pp_shape (Nx.shape x))
+      (Fail.pp_shape shape)
 
 let tensor (type v s d) ~shape (dt : (v, s) D.t) name (t : d t) : (v, s, d) Nx.t
     =
@@ -62,7 +59,7 @@ let tensor (type v s d) ~shape (dt : (v, s) D.t) name (t : d t) : (v, s, d) Nx.t
   match D.equal_witness (Nx.dtype x) dt with
   | Some Type.Equal -> x
   | None ->
-      failf "Nx_io.Archive.%s: %s: %s in the archive, %s asked for" fn name
+      Fail.failf "Nx_io.Archive.%s: %s: %s in the archive, %s asked for" fn name
         (D.name (Nx.dtype x))
         (D.name dt)
 
@@ -76,7 +73,7 @@ let float (type s d) ~shape (dt : (float, s) D.t) name (t : d t) :
     (float, s, d) Nx.t =
   let fn = "float" in
   if not (convertible dt) then
-    invalid_argf
+    Fail.invalid_argf
       "Nx_io.Archive.%s: %s is not float16, bfloat16, float32 or float64" fn
       (D.name dt);
   let (Nx.P x) = entry ~fn name t in
@@ -85,7 +82,7 @@ let float (type s d) ~shape (dt : (float, s) D.t) name (t : d t) :
   | Some Type.Equal -> x
   | None when convertible (Nx.dtype x) -> Nx.cast dt x
   | None ->
-      failf
+      Fail.failf
         "Nx_io.Archive.%s: %s: %s in the archive, not float16, bfloat16, \
          float32 or float64"
         fn name
@@ -105,11 +102,12 @@ let namer ~fn prefix =
   fun path ->
     let name = full prefix path in
     if name = "" then
-      invalid_argf
+      Fail.invalid_argf
         "Nx_io.Archive.%s: an array at the root has no name; give it a ~prefix"
         fn;
     if Hashtbl.mem seen name then
-      invalid_argf "Nx_io.Archive.%s: %s: two arrays have this name" fn name;
+      Fail.invalid_argf "Nx_io.Archive.%s: %s: two arrays have this name" fn
+        name;
     Hashtbl.add seen name ();
     name
 
@@ -134,22 +132,23 @@ let to_value ?(prefix = "") s ~like t =
     Hashtbl.replace named name ();
     (match Names.find_opt name t with
     | None ->
-        failf
+        Fail.failf
           "Nx_io.Archive.%s: %s: no entry in the archive, an array in the value"
           fn name
     | Some (Nx.P x) ->
         if Nx.shape x <> Nx.shape a then
-          failf "Nx_io.Archive.%s: %s: shape %s in the archive, %s in the value"
-            fn name
-            (pp_shape (Nx.shape x))
-            (pp_shape (Nx.shape a));
-        if not (D.equal (Nx.dtype x) (Nx.dtype a)) then
-          failf "Nx_io.Archive.%s: %s: %s in the archive, %s in the value" fn
+          Fail.failf
+            "Nx_io.Archive.%s: %s: shape %s in the archive, %s in the value" fn
             name
+            (Fail.pp_shape (Nx.shape x))
+            (Fail.pp_shape (Nx.shape a));
+        if not (D.equal (Nx.dtype x) (Nx.dtype a)) then
+          Fail.failf "Nx_io.Archive.%s: %s: %s in the archive, %s in the value"
+            fn name
             (D.name (Nx.dtype x))
             (D.name (Nx.dtype a)));
     if Nx.placement a = None then
-      invalid_argf
+      Fail.invalid_argf
         "Nx_io.Archive.%s: %s: the array in the value is of every set, with no \
          placement for the entry"
         fn name
@@ -158,7 +157,7 @@ let to_value ?(prefix = "") s ~like t =
   Names.iter
     (fun entry _ ->
       if owns prefix entry && not (Hashtbl.mem named entry) then
-        failf
+        Fail.failf
           "Nx_io.Archive.%s: %s: an entry in the archive, no array in the value"
           fn entry)
     t;
