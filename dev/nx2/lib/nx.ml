@@ -6447,6 +6447,11 @@ module Prim = struct
     let arrays = Donate.consumer_arrays
     let take = Donate.consumer_take
   end
+
+  (* A value's set reaches its payload, so the identity does not type: the
+     set is phantom there too, nothing at run time reads it. *)
+  let rebrand : type v s d e. (v, s, d) Value.t -> (v, s, e) Value.t =
+    Obj.magic
 end
 
 (* Operators *)

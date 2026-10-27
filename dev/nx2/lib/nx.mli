@@ -4969,6 +4969,16 @@ module Prim : sig
 
         Raises as {!arrays} does. *)
   end
+
+  (**/**)
+
+  val rebrand : ('v, 's, 'd) nx -> ('v, 's, 'e) nx
+  (** [rebrand x] is [x] at the set ['e]. A set is a phantom type: nothing at
+      run time reads it, so [rebrand x] is sound exactly where [x] lies on
+      ['e]'s devices. For an interpretation that binds the values it made and
+      reads each back at its own type, where OCaml cannot see the set. *)
+
+  (**/**)
 end
 
 (**/**)

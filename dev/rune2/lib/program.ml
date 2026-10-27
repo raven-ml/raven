@@ -10,13 +10,13 @@ type form = F : ('v, 's, 'd) Nx.Prim.form -> form
 
 let form (V x) = F (Nx.Prim.form x)
 
-(* A value at another set. nx's sets are phantom types: no value holds one at
-   run time. A program binds each variable to a value its equation computed at
-   the variable's own type, and a structure's arrays lie on its set, so the
-   value read back is at its true type. OCaml cannot see it: a payload is
-   covariant in its set, which a witness of the set would not be. The dtype is
-   checked by its witness wherever a value is read back. *)
-let rebrand : type v s d e. (v, s, d) Nx.t -> (v, s, e) Nx.t = Obj.magic
+(* A value at another set. A program binds each variable to a value its
+   equation computed at the variable's own type, and a structure's arrays lie
+   on its set, so the value read back is at its true type. OCaml cannot see
+   it: a payload is covariant in its set, which a witness of the set would
+   not be. The dtype is checked by its witness wherever a value is read
+   back. *)
+let rebrand = Nx.Prim.rebrand
 
 let unpack (type v s d) (dt : (v, s) Nx.dtype) (V y) : (v, s, d) Nx.t =
   match D.equal_witness (Nx.dtype y) dt with
