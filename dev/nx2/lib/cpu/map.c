@@ -617,7 +617,8 @@ static double element_cost(const step *s, int nn) {
 }
 
 /* What an element of the map of the nodes [s] over the [n] operands [a]
-   costs: its kinds, and its operands' loads and stores once each: a
+   costs, for its call and its walk's jobs: its kinds, and its operands'
+   loads and stores once each: a
    kind's cost counts its own, but a program of no kind, a load copied to
    its output, has none. */
 static double element_price(const step *s, int nn, const nx_array *a,
@@ -625,14 +626,6 @@ static double element_price(const step *s, int nn, const nx_array *a,
   double per = element_cost(s, nn);
   for (int k = 0; k < n; k++) per += 2 * width(a[k].dtype);
   return per;
-}
-
-/* The nodes of [s] that run a kind's row: each takes about as long as a
-   memcpy of the loop's bytes. */
-static int64_t kinds(const step *s, int nn) {
-  int64_t k = 0;
-  for (int i = 0; i < nn; i++) k += s[i].arity > 0 && s[i].alias < 0;
-  return k > 0 ? k : 1;
 }
 
 /* The temporaries the nodes [s] need: TEMPS where one casts, or is of a
@@ -872,8 +865,6 @@ int nx_cpu_prog_bind(nx_cpu_prog *g, const nx_array *a, int rank,
   if (!e) *index = g->j.index >= 0;
   return e;
 }
-
-int64_t nx_cpu_prog_kinds(const nx_cpu_prog *g) { return kinds(g->s, g->nn); }
 
 double nx_cpu_prog_cost(const nx_cpu_prog *g) {
   return element_cost(g->s, g->nn);

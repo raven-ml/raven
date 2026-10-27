@@ -855,12 +855,8 @@ int nx_cpu_prog_held(const nx_cpu_prog *j, int o);
 void nx_cpu_prog_terms(const nx_cpu_prog *j, const nx_cpu_block *b,
                        uint8_t *const *to);
 
-/* The kinds [j] runs an element: each takes about memcpy's time for its
-   element's bytes. */
-int64_t nx_cpu_prog_kinds(const nx_cpu_prog *j);
-
-/* What an element of [j] costs (Calls): the kinds it runs, each at its
-   cost (nx_cpu_kind_cost). */
+/* What an element of [j] costs (Calls and jobs): the kinds it runs, each
+   at its cost (nx_cpu_kind_cost). */
 double nx_cpu_prog_cost(const nx_cpu_prog *j);
 
 /* Whether a run of [j] could not have an arena on the heap, as a program
