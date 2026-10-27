@@ -228,11 +228,25 @@ let npz =
           let whole = read (saved ".npz" Nx_io.save_npz a) in
           equal archive a (Nx_io.load_npz (file whole));
           equal archive a (Nx_io.load_npz (file (without_zip64_end whole))));
-      test "entries of other names than an npy file's are ignored" (fun () ->
+      cases ~name:fst
+        "entries of other names than an npy file's are ignored, whatever they \
+         hold"
+        [
+          ( "a text file",
+            ( "other_names.npz",
+              ("w", Nx.P (Nx.create Nx.float64 [| 2 |] [| 1.5; -2. |])) ) );
+          ( "a directory and a file compressed with bzip2",
+            ( "skipped_entries.npz",
+              ("weights/w", Nx.P (Nx.create Nx.int16 [| 2 |] [| 3; -4 |])) ) );
+        ]
+        (fun (_, (name, entry)) ->
           equal archive
-            (Archive.of_list
-               [ ("w", Nx.P (Nx.create Nx.float64 [| 2 |] [| 1.5; -2. |])) ])
-            (Nx_io.load_npz (fixture "other_names.npz")));
+            (Archive.of_list [ entry ])
+            (Nx_io.load_npz (fixture name)));
+      test "an entry named .npy alone names no array, and fails naming it"
+        (fun () ->
+          let path = fixture "suffix_only.npz" in
+          fails ~path ~naming:{|".npy"|} (fun () -> Nx_io.load_npz path));
       cases ~name:fst "a file that is no npz file fails, naming it"
         [
           ("a text file", fun () -> "hello, nx\n");

@@ -12,7 +12,8 @@ type in_file
 
 val open_in : Rig.Buffer.t -> in_file
 (** [open_in file] is the archive of the disk buffer [file], whose central
-    directory and local headers it checks.
+    directory and local headers it checks: their bounds, their agreement, and
+    that no two entries share a name or overlap.
 
     Raises [Failure] if they are malformed. *)
 
@@ -20,10 +21,11 @@ val read_npys : in_file -> (string * Nx.host Nx.packed) list
 (** [read_npys a] is the arrays of [a]'s entries whose names end in [.npy],
     named without the suffix, in the central directory's order: a value over the
     archive's bytes for a stored entry, over inflated bytes for a compressed
-    one.
+    one. Other entries are not read.
 
-    Raises [Failure] if an entry's checksum does not match or its data is
-    malformed. *)
+    Raises [Failure] if such an entry is encrypted, compressed by a method other
+    than DEFLATE, or has a flag npz does not use, or if its checksum does not
+    match or its data is malformed. *)
 
 (** {1:writing Writing} *)
 

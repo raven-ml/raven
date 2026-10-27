@@ -3,8 +3,10 @@
   SPDX-License-Identifier: ISC
 
   The zip subset npz uses: stored and DEFLATE entries, data descriptors, UTF-8
-  names, and ZIP64 sizes and offsets. Archives over several disks and encrypted
-  ones are refused.
+  names, and ZIP64 sizes and offsets. Archives over several disks are refused,
+  and so are npy entries that are encrypted or of another method. The other
+  entries are not read. Of them, only the records' bounds and agreement and the
+  names' distinctness are checked, since a name is only an archive's key.
   ---------------------------------------------------------------------------*)
 
 open Bigarray
@@ -12,11 +14,14 @@ module Crc32 = Compress_deflate.Crc32
 module Encoder = Compress_deflate.Encoder
 
 type bytes = (int, int8_unsigned_elt, c_layout) Array1.t
-type method_ = Store | Deflate
+
+(* The compression methods of npy entries (APPNOTE, 4.4.5). *)
+let stored = 0
+let deflated = 8
 
 type entry = {
   name : string;
-  method_ : method_;
+  method_ : int;
   flags : int;
   crc32 : Crc32.t;
   compressed_size : int;
@@ -84,18 +89,6 @@ let safe_name name =
        (fun component ->
          component <> "" && component <> "." && component <> "..")
        (String.split_on_char '/' name)
-
-let validate_name ~utf8 name =
-  if not (safe_name name) then
-    error "unsafe or ambiguous ZIP entry name %S" name;
-  if utf8 then (
-    if not (valid_utf8 name) then error "invalid UTF-8 ZIP entry name")
-  else
-    String.iter
-      (fun byte ->
-        if Char.code byte >= 0x80 then
-          error "non-ASCII legacy ZIP entry name %S" name)
-      name
 
 let checked_add context a b =
   if a < 0 || b < 0 || a > max_int - b then error "ZIP %s is too large" context;
@@ -238,19 +231,7 @@ let parse_entries data ~count ~central_size ~central_offset =
       if off > central_end - 46 then error "truncated ZIP central directory";
       signature data off 0x02014b50L;
       let flags = u16 data (off + 8) in
-      if flags land 0x0001 <> 0 then
-        error "encrypted ZIP entries are unsupported";
-      let method_ =
-        match u16 data (off + 10) with
-        | 0 -> Store
-        | 8 -> Deflate
-        | method_ -> error "unsupported ZIP compression method %d" method_
-      in
-      let allowed_flags =
-        match method_ with Store -> 0x0808 | Deflate -> 0x080e
-      in
-      if flags land lnot allowed_flags <> 0 then
-        error "unsupported ZIP flags 0x%04x" flags;
+      let method_ = u16 data (off + 10) in
       let crc32 = u32 data (off + 16) in
       let compressed32 = u32_i64 data (off + 20) in
       let uncompressed32 = u32_i64 data (off + 24) in
@@ -267,7 +248,6 @@ let parse_entries data ~count ~central_size ~central_offset =
       let next = checked_add "central entry" (off + 46) variable in
       if next > central_end then error "truncated ZIP central entry";
       let name = substring data (off + 46) name_len in
-      validate_name ~utf8:(flags land 0x0800 <> 0) name;
       let extra_off = off + 46 + name_len in
       let compressed_size, uncompressed_size, local_offset =
         if
@@ -282,8 +262,6 @@ let parse_entries data ~count ~central_size ~central_offset =
             Int64.to_int uncompressed32,
             Int64.to_int local32 )
       in
-      if method_ = Store && compressed_size <> uncompressed_size then
-        error "stored ZIP entry %S has inconsistent sizes" name;
       let entry =
         {
           name;
@@ -306,8 +284,7 @@ let validate_local_entry data ~central_offset entry =
   signature data off 0x04034b50L;
   let flags = u16 data (off + 6) in
   let method_code = u16 data (off + 8) in
-  let expected_method = match entry.method_ with Store -> 0 | Deflate -> 8 in
-  if flags <> entry.flags || method_code <> expected_method then
+  if flags <> entry.flags || method_code <> entry.method_ then
     error "ZIP local header disagrees with central entry %S" entry.name;
   let name_len = u16 data (off + 26) in
   let extra_len = u16 data (off + 28) in
@@ -431,32 +408,47 @@ let npy_suffix = ".npy"
 (* The bytes of an entry: where they lie in the archive, or inflated. *)
 type data = Stored of int * int | Inflated of bytes
 
+(* [check_npy entry] fails unless the npy entry [entry] is stored or deflated,
+   with no flag but a data descriptor, UTF-8 and DEFLATE's options. Only an npy
+   entry is checked so: the archive's other entries are not read. *)
+let check_npy entry =
+  if entry.flags land 0x0001 <> 0 then
+    error "encrypted ZIP entries are unsupported";
+  let allowed_flags =
+    if entry.method_ = stored then 0x0808
+    else if entry.method_ = deflated then 0x080e
+    else error "unsupported ZIP compression method %d" entry.method_
+  in
+  if entry.flags land lnot allowed_flags <> 0 then
+    error "unsupported ZIP flags 0x%04x" entry.flags;
+  if entry.method_ = stored && entry.compressed_size <> entry.uncompressed_size
+  then error "stored ZIP entry %S has inconsistent sizes" entry.name
+
 (* The array of the npy entry [entry]. *)
 let read_npy (archive : in_file) entry =
+  check_npy entry;
   let data =
     Storage.read archive.file @@ fun data ->
     let off, len = data_span data entry in
     let src = Array1.sub data off len in
-    match entry.method_ with
-    | Store ->
-        if Crc32.bigbytes src <> entry.crc32 then
-          error "CRC-32 mismatch in ZIP entry %S" entry.name;
-        Stored (off, len)
-    | Deflate ->
-        (* Deflate expands at most 1032 times: 258 bytes from two bits. *)
-        if entry.uncompressed_size / 1032 > len then
-          error "ZIP entry %S declares more data than its DEFLATE data holds"
-            entry.name;
-        let inflated =
-          Array1.create int8_unsigned c_layout entry.uncompressed_size
-        in
-        (match Compress_deflate.Deflate.decompress_into src inflated with
-        | Ok () -> ()
-        | Error e ->
-            error "invalid DEFLATE data in ZIP entry %S: %s" entry.name e);
-        if Crc32.bigbytes inflated <> entry.crc32 then
-          error "CRC-32 mismatch in ZIP entry %S" entry.name;
-        Inflated inflated
+    if entry.method_ = stored then (
+      if Crc32.bigbytes src <> entry.crc32 then
+        error "CRC-32 mismatch in ZIP entry %S" entry.name;
+      Stored (off, len))
+    else (
+      (* Deflate expands at most 1032 times: 258 bytes from two bits. *)
+      if entry.uncompressed_size / 1032 > len then
+        error "ZIP entry %S declares more data than its DEFLATE data holds"
+          entry.name;
+      let inflated =
+        Array1.create int8_unsigned c_layout entry.uncompressed_size
+      in
+      (match Compress_deflate.Deflate.decompress_into src inflated with
+      | Ok () -> ()
+      | Error e -> error "invalid DEFLATE data in ZIP entry %S: %s" entry.name e);
+      if Crc32.bigbytes inflated <> entry.crc32 then
+        error "CRC-32 mismatch in ZIP entry %S" entry.name;
+      Inflated inflated)
   in
   let entry b value =
     let read pos n = Storage.string b ~pos n in
@@ -586,18 +578,17 @@ let add_npy archive name header (data : bytes) =
   let filename = name ^ npy_suffix in
   let w = writing header data in
   let method_ =
-    match w with Stored -> Store | Deflated _ | Deflating -> Deflate
+    match w with Stored -> stored | Deflated _ | Deflating -> deflated
   in
   let uncompressed_size =
     checked_add "NPY entry" (String.length header) (Array1.dim data)
   in
   let local_offset = archive.offset in
   let flags = 0x0808 in
-  let method_code = match method_ with Store -> 0 | Deflate -> 8 in
   (* The sizes follow the data, in its descriptor: the local header's ZIP64
      field holds zeros in their place. *)
   write_string archive
-    (le32_i64 0x04034b50L ^ le16 zip64_version ^ le16 flags ^ le16 method_code
+    (le32_i64 0x04034b50L ^ le16 zip64_version ^ le16 flags ^ le16 method_
    ^ le16 0 ^ le16 0 ^ le32 0 ^ le32 marker32 ^ le32 marker32
     ^ le16 (String.length filename)
     ^ le16 20 ^ filename ^ le16 0x0001 ^ le16 16 ^ le64 0 ^ le64 0);
@@ -624,9 +615,8 @@ let central_record entry =
     le64 entry.uncompressed_size
     ^ le64 entry.compressed_size ^ le64 entry.local_offset
   in
-  let method_code = match entry.method_ with Store -> 0 | Deflate -> 8 in
   le32_i64 0x02014b50L ^ le16 0x031e ^ le16 zip64_version ^ le16 entry.flags
-  ^ le16 method_code ^ le16 0 ^ le16 0 ^ le32 entry.crc32 ^ le32 marker32
+  ^ le16 entry.method_ ^ le16 0 ^ le16 0 ^ le32 entry.crc32 ^ le32 marker32
   ^ le32 marker32
   ^ le16 (String.length entry.name)
   ^ le16 (4 + String.length extra)

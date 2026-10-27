@@ -220,12 +220,16 @@ val save_npy : string -> ('v, 's, 'd) Nx.t -> unit
     message names [Nx.cast Nx.bool], which stores a byte per element. *)
 
 val load_npz : string -> Nx.host Archive.t
-(** [load_npz path] is the entries of the npz file [path], named without the
-    [.npy] suffix. Entries of other names are ignored. It reads every npy
-    entry's bytes, since each entry's checksum covers all of them.
+(** [load_npz path] is the entries of the npz file [path]. Each zip entry whose
+    name ends in [.npy] holds one, named by the part before [.npy], which must
+    not be empty. Entries of other names are not read; their records must still
+    be well-formed. It reads every npy entry's bytes, since each entry's
+    checksum covers all of them.
 
     Raises [Failure] as {!section-errors} states, and if a checksum does not
-    match its entry. *)
+    match its entry, if an entry's name is [.npy] alone, or if an entry whose
+    name ends in [.npy] holds no npy stream, as the [__MACOSX/._w.npy] that
+    macOS's Finder writes beside [w.npy] does. *)
 
 val save_npz : string -> 'd Archive.t -> unit
 (** [save_npz path a] writes [a]'s entries to the npz file [path]. Each entry is

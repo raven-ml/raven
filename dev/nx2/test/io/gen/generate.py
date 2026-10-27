@@ -132,6 +132,24 @@ def other_names_npz():
             z.writestr(zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0)), data)
 
 
+def skipped_entries_npz():
+    # An npy entry beside entries a reader of npz files skips without reading
+    # them: a directory, which zip -r writes, and a file compressed with bzip2,
+    # a method npz does not use. Then an npy entry whose name is the suffix
+    # alone, which names no array.
+    npy = io.BytesIO()
+    np.lib.format.write_array(npy, np.array([3, -4], dtype="<i2"))
+    date = (1980, 1, 1, 0, 0, 0)
+    notes = zipfile.ZipInfo("weights/notes.txt", date_time=date)
+    notes.compress_type = zipfile.ZIP_BZIP2
+    with zipfile.ZipFile("skipped_entries.npz", "w") as z:
+        z.writestr(zipfile.ZipInfo("weights/", date_time=date), b"")
+        z.writestr(notes, b"not an array\n" * 8)
+        z.writestr(zipfile.ZipInfo("weights/w.npy", date_time=date), npy.getvalue())
+    with zipfile.ZipFile("suffix_only.npz", "w") as z:
+        z.writestr(zipfile.ZipInfo(".npy", date_time=date), npy.getvalue())
+
+
 def paeth(a, b, c):
     p = a + b - c
     pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
@@ -288,5 +306,6 @@ if __name__ == "__main__":
     numpy_fixtures()
     unaligned_npz()
     other_names_npz()
+    skipped_entries_npz()
     stored_block_npz()
     image_fixtures()

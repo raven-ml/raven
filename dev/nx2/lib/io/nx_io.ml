@@ -30,7 +30,7 @@ let load_npz path =
   let zip = Zip.open_in (Storage.open_file path) in
   List.fold_left
     (fun archive (name, x) ->
-      if name = "" then failwith "an entry has an empty name";
+      if name = "" then failwith {|the entry ".npy" has no name before .npy|};
       Archive.add name x archive)
     Archive.empty (Zip.read_npys zip)
 
