@@ -51,7 +51,8 @@ val add : 'z -> 'x -> 'y -> Nx_array.answer
 val read_all : Nx_array.any array -> Nx_array.answer
 (** [read_all arrays] reads [arrays] through [nx_read], the first for writing
     and the others for reading, and ends the read it admits: [nx_read]'s
-    answer. At most 16 arrays. *)
+    answer. At most [Nx_array.max_operands + 1] arrays, one past the most
+    [nx_read] reads. *)
 
 val copy_into :
   ('v, 's) Nx_array.t -> ('v, 's) Nx_array.t -> Nx_array.answer
@@ -102,7 +103,8 @@ val io_allocations : unit -> int
     a device still running work does until the host waits for it. A submit
     queues its fills; its driver's sleep, or its stop, runs every queued fill in
     order and then shows the last value in its word. The host addresses its
-    memory. *)
+    memory, and it maps host memory that starts on a page
+    ({!Rig.Buffer.borrow}). *)
 module Late : sig
   type t
   (** The type for a Late device's driver state. *)
@@ -113,6 +115,10 @@ module Late : sig
   val fault : t -> string -> unit
   (** [fault d why] makes [d]'s sleeps raise its driver's [Fault why] from now
       on, which loses the device in the wait that sleeps. *)
+
+  val allocations : t -> count:int * last:Rig.Buffer.kind option
+  (** [allocations d] is the number of regions [d]'s driver allocated, and the
+      kind of memory rig asked for the latest, [None] before the first. *)
 end
 
 val write : Rig.Buffer.t -> string -> unit

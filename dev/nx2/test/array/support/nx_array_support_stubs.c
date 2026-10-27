@@ -130,8 +130,9 @@ value nx_array_support_add(value z, value x, value y) {
   return Val_int(e);
 }
 
-/* The most arrays read_all reads. */
-#define READ_ALL 16
+/* The most arrays read_all passes to nx_read: one past the most it reads,
+   so that a call can pass its bound. */
+#define READ_ALL (NX_MAX_OPERANDS + 1)
 
 /* Reads the arrays [anys], Nx_array.any values, at most READ_ALL, through
    the door, the first written and the others read, and ends the read it

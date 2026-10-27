@@ -117,11 +117,12 @@ let test_door_buffers () =
       equal bool true (Rig.Claim.exclusive c (A.buffer held));
       equal ~msg:"exclusive" answer A.Held_exclusive (S.add (zeros [| 2 |]) x held))
 
-(* The door reads any number of operands, more than a loop takes among
-   them, and a refusal after some claims leaves none. *)
+(* The door reads up to max_operands operands, more than a loop takes among
+   them, and refuses more as Shape_mismatch; a refusal after some claims leaves
+   none. *)
 let test_door_arity () =
   let ops n = Array.init n (fun _ -> A.Any (zeros [| 2 |])) in
-  for n = 0 to 9 do
+  for n = 0 to A.max_operands do
     let ops = ops n in
     equal ~msg:(Printf.sprintf "%d" n) answer A.Done (S.read_all ops);
     released ops
@@ -137,7 +138,10 @@ let test_door_arity () =
   let (A.Any d) = ops9.(6) in
   kill (A.buffer d);
   equal ~msg:"9, the seventh dead" answer A.Dead_buffer (S.read_all ops9);
-  released ops9
+  released ops9;
+  let past = ops (A.max_operands + 1) in
+  equal ~msg:"past max_operands" answer A.Shape_mismatch (S.read_all past);
+  released past
 
 (* Each refusal the door answers reaches the user as its own reason. *)
 let test_door_reasons () =
@@ -773,7 +777,8 @@ let tests =
         test "a written operand may be identical to read ones"
           test_door_identical;
         test "dead, foreign and exclusive buffers are refused" test_door_buffers;
-        test "reads any number of operands" test_door_arity;
+        test "reads up to max_operands operands and refuses more"
+          test_door_arity;
         test "refused names the reason of each refusal the door answers"
           test_door_reasons;
         test "an operand with no element passes the door, on the host or off it"

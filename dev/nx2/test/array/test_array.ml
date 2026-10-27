@@ -141,6 +141,49 @@ let dtype_and_shape =
     (fun ppf (D.Any dt, s) -> Format.fprintf ppf "%a %a" D.pp dt pp_ints s)
     Gen.(pair any_dtype (array ~size:(int_range 0 3) (int_range 0 9)))
 
+let memory_kind =
+  Testable.make
+    ~pp:(fun ppf k ->
+      Format.pp_print_string ppf
+        (match k with
+        | B.Device -> "Device"
+        | B.Pinned -> "Pinned"
+        | B.Mapped -> "Mapped"))
+    ~equal:( = )
+
+(* [create ~memory] allocates [d]'s memory of that kind, [Device] by default:
+   the kind a Late device's driver is asked for. Every kind holds the array
+   [create] makes, on the host too, whose memory is of one kind. Each array has
+   its own size, so none reuses another's memory. *)
+let test_create_memory () =
+  let d, driver = late () in
+  let allocations () =
+    let ~count, ~last = S.Late.allocations driver in
+    (count, last)
+  in
+  let made ~msg d memory rows =
+    let s : int iarray = [| rows; 3 |] in
+    let a = A.create ?memory d f32 s in
+    equal ~msg:(msg ^ ": layout") layout (L.contiguous s) (A.layout a);
+    equal ~msg:(msg ^ ": device") bool true (Rig.equal d (A.device a));
+    equal ~msg:(msg ^ ": bytes") int (12 * rows) (B.length (A.buffer a))
+  in
+  List.iteri
+    (fun k (msg, memory, kind) ->
+      let count, _ = allocations () in
+      made ~msg d memory (k + 1);
+      equal ~msg
+        (pair int (option memory_kind))
+        (count + 1, Some kind) (allocations ()))
+    [
+      ("default", None, B.Device);
+      ("Device", Some B.Device, B.Device);
+      ("Pinned", Some B.Pinned, B.Pinned);
+      ("Mapped", Some B.Mapped, B.Mapped);
+    ];
+  made ~msg:"host, Pinned" Rig.host (Some B.Pinned) 1;
+  made ~msg:"host, Mapped" Rig.host (Some B.Mapped) 2
+
 let test_create_refuses () =
   raises_match Exn.invalid_arg (fun () -> A.create Rig.host f32 [| 2; -1 |]);
   raises_match Exn.invalid_arg (fun () ->
@@ -1402,6 +1445,18 @@ let test_bigarray_rank () =
   raises_match (Exn.invalid_arg ~substring:"at most 16") (fun () ->
       A.bigarray Bigarray.int8_unsigned a)
 
+(* [bigarray] waits for the work on its array's memory: a Late device's store
+   into a host array it borrowed, pending until a wait sleeps on the device. A
+   host buffer of 64 KiB starts on a page, which the Late device maps. *)
+let test_wait_bigarray () =
+  let d, _ = late () in
+  let a = A.create Rig.host f32 [| 16384 |] in
+  pending (Option.get (A.borrow d a)) [| 3.; 4. |];
+  equal ~msg:"pending" bool true (Rig.signaled d < Rig.submitted d);
+  let g = A.bigarray Bigarray.float32 a in
+  equal (values f32) [| 3.; 4. |]
+    (Array.init 2 (fun i -> Bigarray.Genarray.get g [| i |]))
+
 let test_of_bigarray () =
   let g =
     Bigarray.Genarray.create Bigarray.int16_signed Bigarray.c_layout [| 2; 2 |]
@@ -1545,6 +1600,7 @@ let tests =
            zero"
           dtype_and_shape law_create;
         test "create refuses what contiguous refuses" test_create_refuses;
+        test "create allocates the kind of memory it is given" test_create_memory;
         prop "move is Layout.move over the same buffer" case law_move;
         prop "every movement keeps an array in its buffer" case law_bounds;
       ];
@@ -1642,6 +1698,8 @@ let tests =
     group "bigarray"
       [
         test "bigarray shares a contiguous host array's bytes" test_bigarray;
+        test "bigarray waits for the work on its array's memory"
+          test_wait_bigarray;
         test "of_bigarray shares the bigarray's bytes" test_of_bigarray;
         prop "bigarray views a C-contiguous host array and raises otherwise"
           case law_bigarray;

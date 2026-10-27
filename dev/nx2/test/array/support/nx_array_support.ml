@@ -134,7 +134,12 @@ external free : int -> unit = "nx_array_support_free"
 external store_fill : unit -> nativeint = "nx_array_support_store"
 
 module Driver = struct
-  type t = { self : nativeint; fault : string option Atomic.t }
+  type t = {
+    self : nativeint;
+    fault : string option Atomic.t;
+    allocated : (int * Rig_edge.memory option) Atomic.t;
+        (* The regions [alloc] made, and the kind of the latest. *)
+  }
 
   (* [raw] is what [malloc] gave, [0] for the word. *)
   type region = { at : int; raw : int }
@@ -155,7 +160,7 @@ module Driver = struct
       waits = { stores = false; hosts = false };
       may_block = false;
       hang_ms = None;
-      maps_host = false;
+      maps_host = true;
       host_addresses = true;
       (* [alloc] rounds each region's start up to 64 bytes. *)
       alignment = 64;
@@ -165,9 +170,18 @@ module Driver = struct
       bus = None;
     }
 
-  let alloc _ _ n =
+  let alloc d m n =
     let raw = malloc n in
-    if raw = 0 then None else Some { at = (raw + 63) land lnot 63; raw }
+    if raw = 0 then None
+    else begin
+      let rec count () =
+        let (k, _) as old = Atomic.get d.allocated in
+        if not (Atomic.compare_and_set d.allocated old (k + 1, Some m)) then
+          count ()
+      in
+      count ();
+      Some { at = (raw + 63) land lnot 63; raw }
+    end
 
   let free _ r = if r.raw <> 0 then free r.raw
 
@@ -180,7 +194,9 @@ module Driver = struct
 
   let peer _ _ = false
   let map_peer _ _ _ = None
-  let map_host _ _ _ = None
+  (* Host pages lie at their own address; [raw = 0] frees nothing. *)
+  let map_host _ p _ = Some { at = p; raw = 0 }
+
   let dma _ _ ~fn:_ = Error "late gives no driver its memory"
   let image _ _ = Error "late loads no code"
   let entry () _ = Rig_edge.Absent
@@ -205,7 +221,8 @@ module Late = struct
     let fault = Atomic.make None in
     let made = ref None in
     let make ~word =
-      let t = { Driver.self = late_new word; fault } in
+      let allocated = Atomic.make (0, None) in
+      let t = { Driver.self = late_new word; fault; allocated } in
       made := Some t;
       Ok t
     in
@@ -214,6 +231,10 @@ module Late = struct
     | Error e -> failwith e
 
   let fault (t : t) why = Atomic.set t.fault (Some why)
+
+  let allocations (t : t) =
+    let n, m = Atomic.get t.allocated in
+    (~count:n, ~last:m)
 end
 
 let store = store_fill ()
