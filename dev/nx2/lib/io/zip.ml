@@ -40,44 +40,6 @@ type out_file = {
 
 let error fmt = Printf.ksprintf failwith fmt
 
-let valid_utf8 text =
-  let length = String.length text in
-  let continuation index =
-    index < length
-    &&
-    let byte = Char.code text.[index] in
-    byte land 0xc0 = 0x80
-  in
-  let rec loop index =
-    if index = length then true
-    else
-      let first = Char.code text.[index] in
-      if first < 0x80 then loop (index + 1)
-      else if first >= 0xc2 && first <= 0xdf then
-        continuation (index + 1) && loop (index + 2)
-      else if first >= 0xe0 && first <= 0xef then
-        index + 2 < length
-        && continuation (index + 1)
-        && continuation (index + 2)
-        &&
-        let second = Char.code text.[index + 1] in
-        (first <> 0xe0 || second >= 0xa0)
-        && (first <> 0xed || second < 0xa0)
-        && loop (index + 3)
-      else if first >= 0xf0 && first <= 0xf4 then
-        index + 3 < length
-        && continuation (index + 1)
-        && continuation (index + 2)
-        && continuation (index + 3)
-        &&
-        let second = Char.code text.[index + 1] in
-        (first <> 0xf0 || second >= 0x90)
-        && (first <> 0xf4 || second < 0x90)
-        && loop (index + 4)
-      else false
-  in
-  loop 0
-
 let safe_name name =
   let length = String.length name in
   length > 0
@@ -565,7 +527,7 @@ let write_entry archive w header (data : bytes) =
       Encoder.src e header 0 (Bytes.length header);
       loop 0 0
 
-let valid_name name = safe_name name && valid_utf8 name
+let valid_name name = safe_name name && String.is_valid_utf_8 name
 
 (* Every entry has ZIP64 sizes and offset and the archive a ZIP64 end record, as
    numpy's np.savez writes them, so that no reader takes a 32-bit field at its

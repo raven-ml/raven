@@ -291,20 +291,11 @@ type entry = {
   length : int;
 }
 
-let is_valid_utf8 s =
-  let rec go i =
-    i >= String.length s
-    ||
-    let d = String.get_utf_8_uchar s i in
-    Uchar.utf_decode_is_valid d && go (i + Uchar.utf_decode_length d)
-  in
-  go 0
-
 (* The header's key for the file's metadata, which names no array. *)
 let metadata = "__metadata__"
 
 let check_name ~by name =
-  if not (is_valid_utf8 name) then
+  if not (String.is_valid_utf_8 name) then
     Fail.invalid_argf "%s: %S is not UTF-8" by name;
   if name = metadata then
     Fail.invalid_argf "%s: %S names the file's metadata" by name
@@ -361,7 +352,7 @@ let entry (name, j) =
    implementation sorts them, and the length of the data they cover, which they
    cover without a gap. *)
 let parse text =
-  if not (is_valid_utf8 text) then failwith "the header is not UTF-8";
+  if not (String.is_valid_utf_8 text) then failwith "the header is not UTF-8";
   let fields =
     match Json.from_string text with
     | `Assoc kv -> kv
