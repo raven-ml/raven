@@ -473,7 +473,7 @@ static inline double nx_cpu_bytes(const nx_array *a) {
 #define NX_CPU_LINE 1024
 
 /* The cost of computing the kind [k] of [arity] operands, nx_kernel.h's
-   code, at one element of [dt] (target.c). */
+   code, at one element of [dt] (rows.c). */
 double nx_cpu_kind_cost(int arity, int k, int dt);
 
 /* Whether the calling thread runs a held call's work, whose jobs then run
