@@ -43,6 +43,73 @@ let elements (type v s) (x : (v, s, b) Value.t) : v array =
 
 let first (x, ()) = x
 
+(* The map [prog] of one float32 output over [loads], of shape [n]. *)
+let map1 n prog loads =
+  first
+    (Exec.run ~by:"t"
+       (Value.Map
+          {
+            layout = Nx_array.Layout.contiguous [| n |];
+            prog;
+            outs = Value.[ D.Float32 ];
+            loads;
+          }))
+
+(* A map of [w] arrays, an output and [w - 1] loads, gives the bits of the
+   same sum computed in pieces of two loads: Σ x_k · c_k in order of k, each
+   product rounded, then each sum. *)
+let test_wide_maps () =
+  let n = 5 and f = D.Any D.Float32 in
+  let c k = P.Const (f, P.bits D.Float32 (1. /. Float.of_int (k + 3))) in
+  let x k = f32 (Array.init n (fun i -> Float.of_int ((7 * k) + i) /. 10.)) in
+  List.iter
+    (fun w ->
+      let nl = w - 1 in
+      let xs = Array.init nl x in
+      (* Loads 0 to nl - 1, then per load its constant and product, then
+         the sums. *)
+      let nodes =
+        List.init nl (fun k -> P.In k)
+        @ List.concat
+            (List.init nl (fun k ->
+                 [ c k; P.Op2 (Binary Mul, k, nl + (2 * k)) ]))
+        @ List.init (nl - 1) (fun i ->
+              let prod k = nl + (2 * k) + 1 in
+              let acc = if i = 0 then prod 0 else (3 * nl) + i - 1 in
+              P.Op2 (Binary Add, acc, prod (i + 1)))
+      in
+      let prog =
+        P.v ~ins:(Iarray.init nl (fun _ -> f)) (Iarray.of_list nodes)
+          ~outs:[| List.length nodes - 1 |]
+      in
+      let whole =
+        map1 n prog (Iarray.map (fun x -> Value.Plain x) (Iarray.of_array xs))
+      in
+      (* The pieces: x_0 · c_0, then acc + x_k · c_k for each next load. *)
+      let first_piece =
+        map1 n
+          (P.v ~ins:[| f |]
+             [| In 0; c 0; Op2 (Binary Mul, 0, 1) |]
+             ~outs:[| 2 |])
+          [| Plain xs.(0) |]
+      in
+      let step acc k =
+        map1 n
+          (P.v ~ins:[| f; f |]
+             [|
+               In 0; In 1; c k; Op2 (Binary Mul, 1, 2); Op2 (Binary Add, 0, 3);
+             |]
+             ~outs:[| 4 |])
+          [| Plain acc; Plain xs.(k) |]
+      in
+      let pieces = ref first_piece in
+      for k = 1 to nl - 1 do
+        pieces := step !pieces k
+      done;
+      equal ~msg:(Printf.sprintf "%d arrays" w) (array bits)
+        (elements !pieces) (elements whole))
+    [ 17; 18; 19; 32; 100 ]
+
 let maps =
   group "maps"
     [
@@ -90,6 +157,8 @@ let maps =
             (array (array bits))
             [| [| 0.; 1. |]; [| 2.; 3. |] |]
             (Iarray.to_array (Iarray.map A.to_array shards)));
+      test "a map of any number of arrays computes as its pieces do"
+        test_wide_maps;
     ]
 
 exception Failed of int array * float

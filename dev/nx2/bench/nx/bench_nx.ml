@@ -76,6 +76,31 @@ let sin_op x : ((float, D.float32_elt, Nx.host) Nx.t * unit) Nx.Prim.t =
       loads = [| Plain x |];
     }
 
+(* The sum of [xs], float32 arrays of one shape, built as one map of an
+   output and a load each, as a compiler fusing maps or a derivative builds
+   one. *)
+let sum_op xs : ((float, D.float32_elt, Nx.host) Nx.t * unit) Nx.Prim.t =
+  let n = Array.length xs and f = D.Any D.Float32 in
+  let nodes =
+    List.init n (fun k -> Nx_kernel.Prog.In k)
+    @ List.init (n - 1) (fun i ->
+          let acc = if i = 0 then 0 else n + i - 1 in
+          Nx_kernel.Prog.Op2 (Binary Add, acc, i + 1))
+  in
+  let prog =
+    Nx_kernel.Prog.v
+      ~ins:(Iarray.init n (fun _ -> f))
+      (Iarray.of_list nodes)
+      ~outs:[| List.length nodes - 1 |]
+  in
+  Map
+    {
+      layout = Nx_array.Layout.contiguous (Iarray.of_array (Nx.shape xs.(0)));
+      prog;
+      outs = Nx.Prim.[ D.Float32 ];
+      loads = Iarray.map (fun x -> Nx.Prim.Plain x) (Iarray.of_array xs);
+    }
+
 let dispatch_rows =
   Thumper.group "dispatch"
     [
@@ -165,6 +190,11 @@ let elementwise_rows =
         Thumper.bench_with_setup "add-f32-1M-transposed"
           ~setup:(fun () -> (Nx.transpose (square ()), square ()))
           (fun (t, y) -> Nx.add t y);
+        Thumper.bench_with_setup "map-sum-24-f32-64K"
+          ~setup:(fun () ->
+            let x () = filled D.Float32 [| 1 lsl 16 |] 1. in
+            sum_op (Array.init 23 (fun _ -> x ())))
+          (fun op -> fst (Nx.Prim.eval ~by:"bench" op));
         Thumper.bench_with_setup "add-f32-1M-broadcast"
           ~setup:(fun () -> (square (), filled D.Float32 [| 1024 |] 1.))
           (fun (x, row) -> Nx.add x row);

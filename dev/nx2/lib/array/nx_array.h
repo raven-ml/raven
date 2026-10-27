@@ -39,11 +39,12 @@
 #include "nx_dtype.h"
 
 #define NX_MAX_RANK 32
-/* The length of the door's runs and the most layouts nx_coalesce takes:
-   Nx_array.max_operands, which shape.ml sets to the same number. It is 18
-   because a run of that many operands keeps other domains waiting to
-   collect for about one unloaded core's copy of 1 MiB, the bound the door
-   promises. */
+/* The length of the door's runs, Nx_array.max_operands, which shape.ml
+   sets to the same number. It is 18 because a run of that many operands
+   keeps other domains waiting to collect for about one unloaded core's
+   copy of 1 MiB, the bound the door promises. A loop (nx_loop) and a
+   block of one (cpu.h) hold that many operands in tables of their own; a
+   kernel of more lays its loop out in tables it sizes (nx_coalesce_into). */
 #define NX_MAX_OPERANDS 18
 
 /* A layout's flags, computed when it is made. */
@@ -230,6 +231,14 @@ typedef struct {
    The loop keeps the C order of indices: axes are dropped and merged,
    never reordered. */
 int nx_coalesce(int n, const nx_array *a, nx_loop *l);
+
+/* nx_coalesce of any number [n] of operands, at least 1, into tables of
+   [n] rows that the caller sizes: the loop's rank into [rank], its
+   extents into [extent], of NX_MAX_RANK, operand k's steps into step[k]
+   and its first position into first[k]. Answers NX_OK, or NX_SHAPE if [n]
+   is below 1 or the shapes differ. */
+int nx_coalesce_into(int n, const nx_array *a, int *rank, int64_t *extent,
+                     int64_t (*step)[NX_MAX_RANK], int64_t *first);
 
 /* Coalesces in place the loop of [n] operands over [rank] axes, [rank] 0
    or more: their [extent]s and operand k's steps step[k], by axis. Drops

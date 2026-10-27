@@ -113,8 +113,8 @@ val coalesce : t array -> t array
     adjacent axes merged where every layout lays them out as one run. Each has
     at least one axis.
 
-    Raises [Invalid_argument] unless [ls] has 1 to {!Nx_array.max_operands}
-    layouts, all of one shape. *)
+    Raises [Invalid_argument] unless [ls] has at least one layout, all of
+    one shape, and [Out_of_memory] if host memory runs out. *)
 
 (** {1:eq Equality} *)
 

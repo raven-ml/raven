@@ -115,23 +115,28 @@ typedef struct {
   int n, nouts, nnodes;
   int index; /* the index's loop operand, or -1 */
   struct heap *heap; /* the arenas past ARENA bytes */
+  struct heap *tabs; /* a block's tables past NX_MAX_OPERANDS operands */
   /* The loop's extents, and the product of those past each axis. */
   int64_t extent[NX_MAX_RANK], inner[NX_MAX_RANK];
   const step *s;
-  int32_t outs[NX_MAX_OPERANDS];
+  const int32_t *outs;
   int nheld; /* the values held at once: their slots come first */
   int temps; /* TEMPS where a node casts or is not of its carrier, else 0 */
   int w;     /* the bytes of the widest carrier a block holds */
 } prog;
 
-/* A plane of a block, and the arena its values are held in: slot k at
-   arena + k·bytes. Where [to] is not NULL, each output [o] with a buffer
-   to[o] goes there, C-contiguous, and no other is stored. */
+/* A plane of a block: [n1] rows of [n0] elements, operand k's first at
+   position at[k], stepping s0[k] along a row and s1[k] across rows; and
+   the arena its values are held in, slot k at arena + k·bytes. Where
+   [term] is an output, its values go to [terms], C-contiguous, and no
+   output is stored into its destination. */
 typedef struct {
-  nx_cpu_block p;
+  int64_t n0, n1;
+  const int64_t *at, *s0, *s1;
   uint8_t *arena;
   int64_t bytes;
-  uint8_t *const *to;
+  int term; /* an output, or -1 */
+  uint8_t *terms;
 } plane;
 
 static uint8_t *slot(const plane *f, int k) { return f->arena + k * f->bytes; }
@@ -185,14 +190,14 @@ static void sub_bitcast(int xt, int dt, const uint8_t *x, uint8_t *codes,
 }
 
 /* Whether the plane [p] reads one element of operand [k]. */
-static int repeated(const nx_cpu_block *p, int k) {
+static int repeated(const plane *p, int k) {
   return p->s0[k] == 0 && (p->s1[k] == 0 || p->n1 == 1);
 }
 
 /* Whether load [k] of plane [p] is read in place. A load identical to an
    output is not: a node may write the output before another reads the
    load. */
-static int in_place(const prog *j, const nx_cpu_block *p, int k) {
+static int in_place(const prog *j, const plane *p, int k) {
   const nx_array *a = &j->a[k];
   return !a->alias && a->dtype == held(a->dtype) &&
          (p->s0[k] == 1 || repeated(p, k));
@@ -203,14 +208,12 @@ static int in_place(const prog *j, const nx_cpu_block *p, int k) {
    its slot. */
 static view home(const prog *j, const plane *f, int i) {
   const step *s = &j->s[i];
-  const nx_cpu_block *p = &f->p;
   int64_t w = width(held(s->dt));
   int o = s->out;
-  if (o >= 0 && f->to != NULL && f->to[o] != NULL)
-    return (view){f->to[o], 1, p->n0 * w};
-  if (o >= 0 && f->to == NULL && p->s0[o] == 1)
-    return (view){j->a[o].base + p->at[o] * w, 1, p->s1[o] * w};
-  return (view){slot(f, s->slot), 1, p->n0 * w};
+  if (o >= 0 && o == f->term) return (view){f->terms, 1, f->n0 * w};
+  if (o >= 0 && f->term < 0 && f->s0[o] == 1)
+    return (view){j->a[o].base + f->at[o] * w, 1, f->s1[o] * w};
+  return (view){slot(f, s->slot), 1, f->n0 * w};
 }
 
 /* Node [i]'s value in plane [f]. */
@@ -218,19 +221,19 @@ static view value_of(const prog *j, const plane *f, int i) {
   const step *s = &j->s[i];
   if (s->alias >= 0) s = &j->s[i = s->alias];
   if (s->tag == NX_NODE_CONST) return (view){(uint8_t *)s->bits, 0, 0};
-  if (s->tag == NX_NODE_IN && in_place(j, &f->p, s->k)) {
+  if (s->tag == NX_NODE_IN && in_place(j, f, s->k)) {
     const nx_array *a = &j->a[s->k];
     int64_t w = width(a->dtype);
-    uint8_t *e = a->base + f->p.at[s->k] * w;
-    if (repeated(&f->p, s->k)) return (view){e, 0, 0};
-    return (view){e, 1, f->p.s1[s->k] * w};
+    uint8_t *e = a->base + f->at[s->k] * w;
+    if (repeated(f, s->k)) return (view){e, 0, 0};
+    return (view){e, 1, f->s1[s->k] * w};
   }
   return home(j, f, i);
 }
 
 /* [v], of the dtype [dt], with contiguous rows: itself, or copied into
    [t]. */
-static view runs(view v, int dt, const nx_cpu_block *p, uint8_t *t) {
+static view runs(view v, int dt, const plane *p, uint8_t *t) {
   if (v.s0 == 1) return v;
   int64_t w = width(dt);
   for (int64_t r = 0; r < p->n1; r++)
@@ -243,7 +246,6 @@ static view runs(view v, int dt, const nx_cpu_block *p, uint8_t *t) {
 /* Operand [o] of node [i] in its carrier: decoded into temporary [o] where
    it is held as codes. */
 static view wide_of(const prog *j, const plane *f, int i, int o) {
-  const nx_cpu_block *p = &f->p;
   int x = j->s[i].x[o];
   int dt = j->s[x].dt, c = nx_cpu_carrier(dt);
   view v = value_of(j, f, x);
@@ -254,9 +256,9 @@ static view wide_of(const prog *j, const plane *f, int i, int o) {
     decode(v.p, t, 1);
     return (view){t, 0, 0};
   }
-  for (int64_t r = 0; r < p->n1; r++)
-    decode(v.p + r * v.s1, t + r * p->n0 * width(c), p->n0);
-  return (view){t, 1, p->n0 * width(c)};
+  for (int64_t r = 0; r < f->n1; r++)
+    decode(v.p + r * v.s1, t + r * f->n0 * width(c), f->n0);
+  return (view){t, 1, f->n0 * width(c)};
 }
 
 /* Fills [v] with each element's index along axis [a] of plane [p]: from
@@ -266,7 +268,7 @@ static view wide_of(const prog *j, const plane *f, int i, int o) {
    element, wrapping at the extent, or holds for runs of inner / s0. Each
    run, and each stretch between wraps, is a loop of its own, which
    vectorises. */
-static void coords(const prog *j, const nx_cpu_block *p, int a, int64_t *v) {
+static void coords(const prog *j, const plane *p, int a, int64_t *v) {
   int k = j->index;
   int64_t inner = j->inner[a], extent = j->extent[a], s0 = p->s0[k];
   int64_t n0 = p->n0;
@@ -294,10 +296,22 @@ static void coords(const prog *j, const nx_cpu_block *p, int a, int64_t *v) {
   }
 }
 
+/* Operand [k] of plane [p] as the one operand of the block [b], which
+   the stage reads (cpu.h, The stage). */
+static void one(const plane *p, int k, nx_cpu_block *b) {
+  b->n0 = p->n0;
+  b->n1 = p->n1;
+  b->n2 = 1;
+  b->at[0] = p->at[k];
+  b->s0[0] = p->s0[k];
+  b->s1[0] = p->s1[k];
+  b->s2[0] = 0;
+}
+
 /* Runs node [i] over plane [f] into its slot. */
 static void run(const prog *j, const plane *f, int i) {
   const step *s = &j->s[i];
-  const nx_cpu_block *p = &f->p;
+  const plane *p = f;
   int64_t n0 = p->n0, n1 = p->n1;
   int dt = s->dt, c = nx_cpu_carrier(dt), h = held(dt);
   uint8_t *d = slot(f, s->slot);
@@ -305,7 +319,9 @@ static void run(const prog *j, const plane *f, int i) {
     if (in_place(j, p, s->k)) return;
     const nx_array *a = &j->a[s->k];
     if (h != a->dtype) {
-      nx_cpu_stage(a, p, s->k, d, n0 * width(h));
+      nx_cpu_block b;
+      one(p, s->k, &b);
+      nx_cpu_stage(a, &b, 0, d, n0 * width(h));
       return;
     }
     nx_copy_box(d, a->base,
@@ -386,16 +402,16 @@ static void run(const prog *j, const plane *f, int i) {
 
 /* Stores output [o]'s value of plane [f] into its destination. */
 static void store(const prog *j, const plane *f, int o) {
-  const nx_cpu_block *p = &f->p;
+  const plane *p = f;
   const nx_array *a = &j->a[o];
   int dt = a->dtype, h = held(dt), i = j->outs[o];
-  if (f->to != NULL) {
+  if (f->term >= 0) {
     /* The value's rows, as its view steps them, a constant's or a
-       repeated load's included, into the buffer's. */
-    if (f->to[o] == NULL || j->s[i].out == o) return;
+       repeated load's included, into the terms'. */
+    if (o != f->term || j->s[i].out == o) return;
     view v = value_of(j, f, i);
     int64_t w = width(h);
-    nx_copy_box(f->to[o], v.p,
+    nx_copy_box(f->terms, v.p,
                 &(nx_box){{1, p->n1, p->n0},
                           {0, 0},
                           {{0, p->n0, 1}, {0, v.s1 / w, v.s0}}},
@@ -414,13 +430,16 @@ static void store(const prog *j, const plane *f, int o) {
     return;
   }
   v = runs(v, h, p, temp(j, f, 0));
-  nx_cpu_unstage(a, p, o, v.p, v.s1, h);
+  nx_cpu_block b;
+  one(p, o, &b);
+  nx_cpu_unstage(a, &b, 0, v.p, v.s1, h);
 }
 
-/* Arenas on the heap, of [bytes] each, which a walk's blocks share: a
-   block takes a spare one or allocates one, and puts it back, so a walk
-   allocates as many as it runs blocks at once; past SPARES spares, an
-   arena given back is freed. [failed] is set where one cannot be had. */
+/* Arenas, or a block's tables, on the heap, of [bytes] each, which a
+   walk's blocks share: a block takes a spare one or allocates one, and
+   puts it back, so a walk allocates as many as it runs blocks at once;
+   past SPARES spares, one given back is freed. [failed] is set where one
+   cannot be had. */
 #define SPARES 64
 
 struct heap {
@@ -449,9 +468,25 @@ static void arena_give(struct heap *h, void *p) {
   free(p);
 }
 
+/* A block of the map's operands: [n2] planes of [n1] rows of [n0]
+   elements, operand k's first at position at[k], stepping s0[k] along a
+   row, s1[k] across rows and s2[k] across planes. Its tables are an
+   nx_cpu_block's, or a wide map's (Wide maps). */
+typedef struct {
+  int64_t n0, n1, n2;
+  const int64_t *at, *s0, *s1, *s2;
+} block_tables;
+
+/* The tables a block of a wide map takes, by operand: its four, and the
+   two its planes rewrite. */
+#define TABLES 6
+
 /* Runs [j] over the block [b], its outputs stored into their destinations,
-   or into the buffers [to]. */
-static void planes(const nx_cpu_block *b, const prog *j, uint8_t *const *to) {
+   or output [term] into [terms] where it is one. [t] holds two tables of
+   the operands, which each plane's first positions and steps along a row
+   are written into. */
+static void planes(const block_tables *b, const prog *j, int term,
+                   uint8_t *terms, int64_t *t) {
   /* The arena, as long as the block needs, on a cache line: on the stack
      up to ARENA bytes, else from the heap. */
   int64_t bytes = (b->n0 * b->n1 * j->w + LINE - 1) / LINE * LINE;
@@ -459,13 +494,17 @@ static void planes(const nx_cpu_block *b, const prog *j, uint8_t *const *to) {
   uint8_t stack[size <= ARENA + LINE ? size : 1];
   uint8_t *room = size <= ARENA + LINE ? stack : arena_take(j->heap);
   if (room == NULL) return;
-  plane f = {*b, room + (LINE - (uintptr_t)room % LINE) % LINE, bytes, to};
-  f.p.n2 = 1;
+  int64_t *at = t, *s0 = t + j->n;
+  plane f = {b->n0, b->n1, at, b->s0, b->s1,
+             room + (LINE - (uintptr_t)room % LINE) % LINE, bytes, term,
+             terms};
   /* A row of one element steps nowhere: every operand's is contiguous. */
-  if (b->n0 == 1)
-    for (int k = 0; k < j->n; k++) f.p.s0[k] = 1;
+  if (b->n0 == 1) {
+    for (int k = 0; k < j->n; k++) s0[k] = 1;
+    f.s0 = s0;
+  }
   for (int64_t q = 0; q < b->n2; q++) {
-    for (int k = 0; k < j->n; k++) f.p.at[k] = b->at[k] + q * b->s2[k];
+    for (int k = 0; k < j->n; k++) at[k] = b->at[k] + q * b->s2[k];
     for (int i = 0; i < j->nnodes; i++)
       if (j->s[i].slot >= 0) run(j, &f, i);
     for (int o = 0; o < j->nouts; o++) store(j, &f, o);
@@ -473,7 +512,41 @@ static void planes(const nx_cpu_block *b, const prog *j, uint8_t *const *to) {
   if (room != stack) arena_give(j->heap, room);
 }
 
-static void block(const nx_cpu_block *b, void *ctx) { planes(b, ctx, NULL); }
+static void block(const nx_cpu_block *b, void *ctx) {
+  int64_t t[2 * NX_MAX_OPERANDS];
+  block_tables x = {b->n0, b->n1, b->n2, b->at, b->s0, b->s1, b->s2};
+  planes(&x, ctx, -1, NULL, t);
+}
+
+/* Wide maps
+
+   A map of more operands than a block holds walks its first operands,
+   output 0 among them, as many as a block holds beside the virtual
+   operand, which follows them (cpu.h, Places): the walk's tiles and the
+   rows it gives each block follow them. Each block places every operand
+   from the virtual one's positions, in tables of TABLES rows taken from
+   the prog's [tabs]. The walk's order decides no bit, so such a map
+   computes what a block of all its operands would. */
+typedef struct {
+  const prog *j;
+  nx_cpu_places pl;
+  int v; /* the virtual operand's place among the walk's */
+} wide;
+
+static void wide_block(const nx_cpu_block *b, void *ctx) {
+  const wide *w = ctx;
+  const prog *j = w->j;
+  int n = j->n, v = w->v;
+  int64_t *t = arena_take(j->tabs);
+  if (t == NULL) return;
+  nx_cpu_places_at(&w->pl, b->at[v], t);
+  nx_cpu_places_along(&w->pl, b->s0[v], t + n);
+  nx_cpu_places_along(&w->pl, b->s1[v], t + 2 * n);
+  nx_cpu_places_along(&w->pl, b->s2[v], t + 3 * n);
+  block_tables x = {b->n0, b->n1, b->n2, t, t + n, t + 2 * n, t + 3 * n};
+  planes(&x, j, -1, NULL, t + 4 * n);
+  arena_give(j->tabs, t);
+}
 
 /* Decoding */
 
@@ -652,20 +725,21 @@ static int widest(const step *s, int nn) {
 /* Decodes the program copied into the steps [s], of [nn] nodes and outputs
    [outs], into [j] over the [n] operands [a], its outputs first and of the
    loop's shape, the index after them where a coordinate reads it, its
-   arenas past ARENA bytes from [heap]; sets [most], the elements a block
-   holds. */
+   arenas past ARENA bytes from [heap] and a wide block's tables from
+   [tabs]; sets [most], the elements a block holds. [outs] outlives [j]. */
 static int setup(prog *j, step *s, int nn, int nouts, const int32_t *outs,
-                 nx_array *a, int n, struct heap *heap, int64_t *most) {
+                 nx_array *a, int n, struct heap *heap, struct heap *tabs,
+                 int64_t *most) {
   int index, slots, e;
   if ((e = decode(s, nn, nouts, outs, a[0].rank, &index, &slots))) return e;
   *j = (prog){.a = a, .n = n, .nouts = nouts, .nnodes = nn, .index = -1,
-              .heap = heap, .s = s, .nheld = slots,
-              .temps = temps(s, nn), .w = widest(s, nn)};
+              .heap = heap, .tabs = tabs, .s = s, .outs = outs,
+              .nheld = slots, .temps = temps(s, nn), .w = widest(s, nn)};
   if (index) {
     a[n] = index_of(&a[0], j->extent, j->inner);
     j->index = j->n++;
   }
-  memcpy(j->outs, outs, sizeof(int32_t) * (size_t)nouts);
+  tabs->bytes = TABLES * j->n * (int64_t)sizeof(int64_t);
   /* A program of constants alone holds nothing in the arena: its blocks
      take SLOT bytes, as one of few slots does. */
   int held = slots + j->temps;
@@ -678,27 +752,68 @@ static int setup(prog *j, step *s, int nn, int nouts, const int32_t *outs,
   return NX_OK;
 }
 
+/* Walks the wide map [j] (Wide maps) over its operands [a], the virtual
+   operand after them, coalesced into [rows] and [first], of one row more
+   than [j]'s operands; releases the domain lock into [released] unless
+   [early] has. */
+static int walk_wide(const prog *j, nx_array *a, int64_t (*rows)[NX_MAX_RANK],
+                     int64_t *first, int64_t most, int early, int *released) {
+  int n = j->n, rank, e;
+  int v = n < NX_MAX_OPERANDS - 1 ? n : NX_MAX_OPERANDS - 1;
+  int64_t extent[NX_MAX_RANK], inner[NX_MAX_RANK];
+  a[n] = index_of(&a[0], extent, inner);
+  wide w = {j, {.n = n, .first = first, .step = rows}, v};
+  if ((e = nx_coalesce_into(n + 1, a, &rank, w.pl.ext, rows, first)))
+    return e;
+  w.pl.rank = rank;
+  memcpy(w.pl.vs, rows[n], sizeof(int64_t) * (size_t)rank);
+  /* The walk's operands, the virtual one last. An element costs every
+     operand's price. */
+  nx_array walked[NX_MAX_OPERANDS];
+  nx_loop l = {.rank = rank};
+  memcpy(l.extent, w.pl.ext, sizeof(int64_t) * (size_t)rank);
+  for (int k = 0; k <= v; k++) {
+    int r = k < v ? k : n;
+    walked[k] = a[r];
+    l.first[k] = first[r];
+    memcpy(l.step[k], rows[r], sizeof(int64_t) * (size_t)rank);
+  }
+  double per = element_price(j->s, j->nnodes, a, n);
+  if (!early)
+    *released = nx_cpu_release(nx_cpu_loop_cost(v + 1, walked, &l, per));
+  nx_cpu_walk(v + 1, walked, &l, most, per, wide_block, &w);
+  return NX_OK;
+}
+
 /* Runs the program copied into the steps [s], of [nn] nodes and outputs
-   [outs], over the [n] operands [a] the door read, its outputs first. */
+   [outs], over the [n] operands [a] the door read, its outputs first. A
+   wide map (Wide maps) gives [a] room for two more operands and the
+   tables [rows] and [first] of n + 2 rows; another gives NULL. */
 static int run_map(step *s, int nn, int nouts, const int32_t *outs,
-                   nx_array *a, int n) {
-  struct heap heap = {0};
+                   nx_array *a, int n, int64_t (*rows)[NX_MAX_RANK],
+                   int64_t *first) {
+  struct heap heap = {0}, tabs = {0};
   prog j;
   int64_t most;
-  /* A program whose nodes' analysis costs a release's worth is analysed
-     with the lock released, whatever its walk costs. */
-  int early = nn > NX_CPU_ITEMS, released = 0;
+  /* A program whose nodes' and operands' analysis costs a release's worth
+     is analysed with the lock released, whatever its walk costs. */
+  int early = nn + n > NX_CPU_ITEMS, released = 0;
   if (early) released = nx_cpu_release(NX_CPU_RELEASE_BYTES);
-  int e = setup(&j, s, nn, nouts, outs, a, n, &heap, &most);
+  int e = setup(&j, s, nn, nouts, outs, a, n, &heap, &tabs, &most);
   nx_loop l;
-  if (!e && !(e = nx_coalesce(j.n, a, &l))) {
+  if (!e && rows != NULL)
+    e = walk_wide(&j, a, rows, first, most, early, &released);
+  else if (!e && !(e = nx_coalesce(j.n, a, &l))) {
     double per = element_price(s, nn, a, j.n);
     if (!early) released = nx_cpu_release(nx_cpu_loop_cost(j.n, a, &l, per));
     nx_cpu_walk(j.n, a, &l, most, per, block, &j);
   }
   nx_cpu_reacquire(released);
-  for (int i = 0; i < SPARES; i++) free(heap.spare[i]);
-  return heap.failed ? -1 : e;
+  for (int i = 0; i < SPARES; i++) {
+    free(heap.spare[i]);
+    free(tabs.spare[i]);
+  }
+  return heap.failed || tabs.failed ? -1 : e;
 }
 
 /* Copies the program at the root [vp], a Prog.t, into the steps [s], one
@@ -764,13 +879,19 @@ static void copy_prog(const value *vp, step *s, int *ins, int32_t *outs) {
 struct nx_cpu_prog {
   step local[STEPS], *s;
   int nn, nouts, nins;
-  int ins[NX_MAX_OPERANDS];
-  int32_t outs[NX_MAX_OPERANDS];
-  /* The outputs, of no buffer, the loads and the index, as a map's
-     operands. */
-  nx_array a[NX_MAX_OPERANDS];
+  /* The loads' dtypes, the outputs' nodes and, as a map's operands, the
+     outputs, of no buffer, the loads and the index: in the local tables
+     where the operands number at most NX_MAX_OPERANDS, else in [owned],
+     on the heap. */
+  int *ins;
+  int32_t *outs;
+  nx_array *a;
+  int ins_local[NX_MAX_OPERANDS];
+  int32_t outs_local[NX_MAX_OPERANDS];
+  nx_array a_local[NX_MAX_OPERANDS];
+  void *owned;
   prog j;
-  struct heap heap;
+  struct heap heap, tabs;
   int64_t most;
 };
 
@@ -794,14 +915,36 @@ nx_cpu_prog *nx_cpu_prog_copy(const value *vp) {
   g->nn = nn;
   g->nouts = (int)Wosize_val(Field(*vp, NX_PROG_OUTS));
   g->nins = (int)Wosize_val(Field(*vp, NX_PROG_INS));
+  int n = g->nouts + g->nins + 1;
+  g->ins = g->ins_local;
+  g->outs = g->outs_local;
+  g->a = g->a_local;
+  if (n > NX_MAX_OPERANDS) {
+    /* Tables sized by a count, allocated as the steps are. */
+    size_t bytes = (size_t)n * sizeof(nx_array) +
+                   (size_t)g->nins * sizeof(int) +
+                   (size_t)g->nouts * sizeof(int32_t);
+    g->owned = n > NX_CPU_ITEMS ? nx_alloc_released(bytes) : malloc(bytes);
+    if (g->owned == NULL) {
+      nx_cpu_prog_free(g);
+      return NULL;
+    }
+    g->a = g->owned;
+    g->ins = (int *)(g->a + n);
+    g->outs = (int32_t *)(g->ins + g->nins);
+  }
   copy_prog(vp, g->s, g->ins, g->outs);
   return g;
 }
 
 void nx_cpu_prog_free(nx_cpu_prog *g) {
   if (g == NULL) return;
-  for (int i = 0; i < SPARES; i++) free(g->heap.spare[i]);
+  for (int i = 0; i < SPARES; i++) {
+    free(g->heap.spare[i]);
+    free(g->tabs.spare[i]);
+  }
   if (g->s != g->local) free(g->s);
+  free(g->owned);
   free(g);
 }
 
@@ -844,12 +987,12 @@ int nx_cpu_prog_product(const nx_cpu_prog *g, int o, int *k) {
 }
 
 int nx_cpu_prog_failed(const nx_cpu_prog *g) {
-  return __atomic_load_n(&g->heap.failed, __ATOMIC_RELAXED);
+  return __atomic_load_n(&g->heap.failed, __ATOMIC_RELAXED) ||
+         __atomic_load_n(&g->tabs.failed, __ATOMIC_RELAXED);
 }
 
 int nx_cpu_prog_bind(nx_cpu_prog *g, const nx_array *a, int rank,
                      const int64_t *shape, int *index) {
-  if (g->nouts + g->nins >= NX_MAX_OPERANDS) return NX_DECLINED;
   for (int o = 0; o < g->nouts; o++) {
     int dt = nx_cpu_prog_out(g, o);
     nx_array *y = &g->a[o];
@@ -861,7 +1004,7 @@ int nx_cpu_prog_bind(nx_cpu_prog *g, const nx_array *a, int rank,
   }
   for (int k = 0; k < g->nins; k++) g->a[g->nouts + k] = a[k];
   int e = setup(&g->j, g->s, g->nn, g->nouts, g->outs, g->a,
-                g->nouts + g->nins, &g->heap, &g->most);
+                g->nouts + g->nins, &g->heap, &g->tabs, &g->most);
   if (!e) *index = g->j.index >= 0;
   return e;
 }
@@ -870,56 +1013,83 @@ double nx_cpu_prog_cost(const nx_cpu_prog *g) {
   return element_cost(g->s, g->nn);
 }
 
-void nx_cpu_prog_terms(const nx_cpu_prog *g, const nx_cpu_block *b,
-                       uint8_t *const *to) {
+void nx_cpu_prog_terms(const nx_cpu_prog *g, const nx_cpu_places *pl,
+                       int o, int64_t p, int64_t s0, int64_t n0, int64_t s1,
+                       int64_t n1, uint8_t *out) {
   const prog *j = &g->j;
-  int loads = g->nins + (j->index >= 0);
-  nx_cpu_block c = {.n2 = 1};
-  for (int o = 0; o < g->nouts; o++) c.s0[o] = 1;
-  for (int k = 0; k < loads; k++) {
-    c.s0[g->nouts + k] = b->s0[k];
-    c.s1[g->nouts + k] = b->s1[k];
+  int n = j->n, nouts = g->nouts;
+  /* The block's tables, the first positions of each piece, and the two
+     its planes rewrite: on the stack up to NX_MAX_OPERANDS operands, else
+     taken from [tabs]. The outputs, stored as terms, step nowhere. */
+  int64_t local[TABLES * NX_MAX_OPERANDS], *t = local;
+  if (n > NX_MAX_OPERANDS && (t = arena_take(j->tabs)) == NULL) return;
+  int64_t *at = t, *b0 = t + n, *b1 = t + 2 * n, *c = t + 3 * n;
+  for (int k = 0; k < nouts; k++) {
+    at[k] = b1[k] = 0;
+    b0[k] = 1;
   }
-  int64_t n0 = b->n0, n1 = b->n1, most = g->most;
-  /* Pieces a block holds: whole rows, or pieces of one. */
+  nx_cpu_places_at(pl, p, at + nouts);
+  nx_cpu_places_along(pl, s0, b0 + nouts);
+  nx_cpu_places_along(pl, s1, b1 + nouts);
+  int64_t most = g->most, w = width(nx_cpu_prog_held(g, o));
+  /* Pieces a block holds: whole rows, or pieces of one. A piece is one
+     plane, which steps nowhere across planes. */
   int64_t rows = n0 <= most ? most / n0 : 1, cut = n0 <= most ? n0 : most;
-  uint8_t *t[NX_MAX_OPERANDS];
   for (int64_t r = 0; r < n1; r += rows)
     for (int64_t i = 0; i < n0; i += cut) {
-      c.n0 = n0 - i < cut ? n0 - i : cut;
-      c.n1 = n1 - r < rows ? n1 - r : rows;
-      for (int k = 0; k < loads; k++)
-        c.at[g->nouts + k] = b->at[k] + r * b->s1[k] + i * b->s0[k];
-      for (int o = 0; o < g->nouts; o++)
-        t[o] = to[o] == NULL
-                   ? NULL
-                   : to[o] + (r * n0 + i) * width(nx_cpu_prog_held(g, o));
-      planes(&c, j, t);
+      for (int k = 0; k < n; k++) c[k] = at[k] + r * b1[k] + i * b0[k];
+      block_tables x = {n0 - i < cut ? n0 - i : cut,
+                        n1 - r < rows ? n1 - r : rows,
+                        1,
+                        c,
+                        b0,
+                        b1,
+                        b1};
+      planes(&x, j, o, out + (r * n0 + i) * w, t + 4 * n);
     }
+  if (t != local) arena_give(j->tabs, t);
+}
+
+/* Whether a node of the steps [s], of [nn] nodes, reads a coordinate,
+   which the loop's index gives. */
+static int reads_index(const step *s, int nn) {
+  for (int i = 0; i < nn; i++)
+    if (s[i].tag == NX_NODE_COORD) return 1;
+  return 0;
 }
 
 /* What nx_cpu_map holds on the C heap where it holds any: a long
-   program's steps. A custom block owns them, so that an exception nx_read
-   raises, Out_of_memory or Rig.Lost, leaves them to its finalizer. A call
-   of a short program allocates none. */
+   program's steps, and a wide map's tables. A custom block owns them, so
+   that an exception the door raises, Out_of_memory or Rig.Lost, leaves
+   them to its finalizer. A call of a short program over few operands
+   allocates none. */
 typedef struct {
   step *s;
+  void *tables;
 } map_held;
 
 static void map_release(value owner) {
   map_held *h = Data_custom_val(owner);
   free(h->s);
+  free(h->tables);
   h->s = NULL;
+  h->tables = NULL;
 }
 
-/* map_release, a long program's steps freed with the domain lock released
+/* map_release, freed with the domain lock released where [many]
    (nx_free_released). */
-static void map_drop(value owner, int long_program) {
+static void map_drop(value owner, int many) {
   map_held *h = Data_custom_val(owner);
-  void *steps = h->s;
+  void *steps = h->s, *tables = h->tables;
   h->s = NULL;
-  if (long_program) nx_free_released(steps);
-  else free(steps);
+  h->tables = NULL;
+  if (!many) {
+    free(steps);
+    free(tables);
+    return;
+  }
+  nx_free_released(steps);
+  nx_free_released(tables);
 }
 
 static struct custom_operations map_ops = {
@@ -928,10 +1098,59 @@ static struct custom_operations map_ops = {
     custom_serialize_default,   custom_deserialize_default,
     custom_compare_ext_default, custom_fixed_length_default};
 
+/* Allocates a wide map's tables into the custom block [owner]: [a],
+   [rows] and [first] of n + 2 entries, and where [ins] is not NULL the
+   [nins] loads' and [nouts] outputs' too. Raises Out_of_memory, having
+   freed what [owner] holds, if host memory runs out. */
+static void wide_tables(value owner, int n, int nins, int nouts,
+                        nx_array **a, int64_t (**rows)[NX_MAX_RANK],
+                        int64_t **first, int **ins, int32_t **outs) {
+  size_t m = (size_t)n + 2;
+  size_t bytes = m * (sizeof **a + sizeof **rows + sizeof **first) +
+                 (size_t)nins * sizeof(int) + (size_t)nouts * sizeof(int32_t);
+  uint8_t *b = nx_alloc_released(bytes);
+  if (b == NULL) {
+    map_drop(owner, 1);
+    caml_raise_out_of_memory();
+  }
+  ((map_held *)Data_custom_val(owner))->tables = b;
+  *a = (nx_array *)b;
+  *rows = (int64_t (*)[NX_MAX_RANK])(*a + m);
+  *first = (int64_t *)(*rows + m);
+  if (ins == NULL) return;
+  *ins = (int *)(*first + m);
+  *outs = (int32_t *)(*ins + nins);
+}
+
+/* The operands of a map as the door reads them, from the roots [vdsts]
+   and [vloads]: the destinations, of the outputs' dtypes, then the
+   loads, of the program's. */
+typedef struct {
+  const value *vdsts, *vloads;
+  const step *s;
+  const int *ins;
+  const int32_t *outs;
+  int nouts;
+} map_operands;
+
+static int map_operand(void *ctx, int k, nx_operand *in) {
+  const map_operands *o = ctx;
+  if (k < o->nouts)
+    *in = (nx_operand){Field(*o->vdsts, k), o->s[o->outs[k]].dt, 1};
+  else
+    *in = (nx_operand){Field(Field(*o->vloads, k - o->nouts), 0),
+                       o->ins[k - o->nouts], 0};
+  return NX_OK;
+}
+
 /* The external: the program [vp], the destinations [vdsts] and the plain
    loads [vloads], each a Plain's array. The program is copied before the
    door, which can run OCaml code: a long program's steps on the heap the
-   custom block owns. */
+   custom block owns. The loop holds the outputs, the loads and, where a
+   node reads a coordinate, the index; a wide map (Wide maps) the virtual
+   operand after them. Its tables, the program's loads and outputs, the
+   door's descriptors and the coalesced loop's, lie on the stack where a
+   block holds every operand, else on the heap the custom block owns. */
 value nx_cpu_map(value vp, value vdsts, value vloads) {
   CAMLparam3(vp, vdsts, vloads);
   CAMLlocal1(owner);
@@ -940,32 +1159,43 @@ value nx_cpu_map(value vp, value vdsts, value vloads) {
   int nn = (int)Wosize_val(Field(vp, NX_PROG_NODES)), n = nouts + nins, e;
   if ((int)Wosize_val(vdsts) != nouts || (int)Wosize_val(vloads) != nins)
     CAMLreturn(Val_int(NX_SHAPE));
-  /* The loop holds the outputs, the loads and, where a node reads a
-     coordinate, the index: past NX_MAX_OPERANDS arrays the map declines,
-     as nx_cpu.mli states. */
-  if (n >= NX_MAX_OPERANDS) CAMLreturn(Val_int(NX_DECLINED));
   step local[STEPS], *s = local;
-  if (nn > STEPS) {
+  int ins_local[NX_MAX_OPERANDS], *ins = ins_local;
+  int32_t outs_local[NX_MAX_OPERANDS], *outs = outs_local;
+  nx_array a_local[NX_MAX_OPERANDS], *a = a_local;
+  int64_t (*rows)[NX_MAX_RANK] = NULL, *first = NULL;
+  if (nn > STEPS || n >= NX_MAX_OPERANDS) {
     owner = caml_alloc_custom(&map_ops, sizeof(map_held), 0, 1);
-    *(map_held *)Data_custom_val(owner) = (map_held){NULL};
+    *(map_held *)Data_custom_val(owner) = (map_held){NULL, NULL};
+  }
+  if (nn > STEPS) {
     s = steps_of(nn);
     if (s == NULL) caml_raise_out_of_memory();
     ((map_held *)Data_custom_val(owner))->s = s;
   }
-  int ins[NX_MAX_OPERANDS];
-  int32_t outs[NX_MAX_OPERANDS];
+  /* Past NX_MAX_OPERANDS arrays the map is wide, and at that many where a
+     node reads a coordinate, as the program's copy shows: the local
+     tables hold its loads and outputs. */
+  int names = n > NX_MAX_OPERANDS;
+  if (names)
+    wide_tables(owner, n, nins, nouts, &a, &rows, &first, &ins, &outs);
   copy_prog(&vp, s, ins, outs);
-  nx_operand in[NX_MAX_OPERANDS];
-  for (int o = 0; o < nouts; o++)
-    in[o] = (nx_operand){Field(vdsts, o), s[outs[o]].dt, 1};
-  for (int k = 0; k < nins; k++)
-    in[nouts + k] = (nx_operand){Field(Field(vloads, k), 0), ins[k], 0};
-  nx_array a[NX_MAX_OPERANDS];
-  if (!(e = nx_read(n, in, a))) {
-    e = run_map(s, nn, nouts, outs, a, n);
+  int wide = names || (n == NX_MAX_OPERANDS && reads_index(s, nn));
+  if (wide && !names)
+    wide_tables(owner, n, 0, 0, &a, &rows, &first, NULL, NULL);
+  int many = nn > NX_CPU_ITEMS || wide;
+  map_operands o = {&vdsts, &vloads, s, ins, outs, nouts};
+  if (wide) e = nx_read_each(n, map_operand, &o, a);
+  else {
+    nx_operand in[NX_MAX_OPERANDS];
+    for (int k = 0; k < n; k++) map_operand(&o, k, &in[k]);
+    e = nx_read(n, in, a);
+  }
+  if (!e) {
+    e = run_map(s, nn, nouts, outs, a, n, rows, first);
     nx_done(n, a);
   }
-  if (nn > STEPS) map_drop(owner, nn > NX_CPU_ITEMS);
+  if (nn > STEPS || n >= NX_MAX_OPERANDS) map_drop(owner, many);
   if (e < 0) caml_raise_out_of_memory();
   CAMLreturn(Val_int(e));
 }

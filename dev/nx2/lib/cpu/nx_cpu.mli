@@ -58,10 +58,11 @@
 
 (** {1:maps Maps}
 
-    [map] computes every program of at most 17 operands and outputs
-    together and declines the others: its loop iterates the outputs, the
-    loads and the index the coordinates read, and holds at most
-    {!Nx_array.max_operands} arrays. *)
+    [map] computes every program, whatever the number of its loads and
+    outputs. Its loop holds the outputs, the loads and, where a node reads
+    a coordinate, one array more; a loop of more than
+    {!Nx_array.max_operands} holds its tables of them on the host heap for
+    the call. *)
 
 (** {1:padded Padded loads}
 
@@ -142,17 +143,15 @@
     the term itself, and one [Logsumexp] and one [Moments]
     so at every float dtype, the operand of a scan by either converted
     whole into its carrier first where that is not its dtype, or a
-    program's tile by tile. Both take any program [map] computes of at
-    most 15 operands, and decline the others: their loop iterates two
-    destinations, the program's output and its loads. They read it over its
-    loads or, with none, over the loop's shape alone, a reduction's [shape]
-    or a scan's destinations': its terms are the
-    program's output there as [map] computes it, so a reduction or a scan
-    of an output has the bits of the output mapped into an array, then
-    reduced or scanned. [reduce] computes several such reductions of one
-    loop, each one's bits alone, every destination checked before any is
-    written, any number of them. They answer [Wrong_dtype] where
-    {!Nx_kernel.accepts} is [false] of a reduction and its output's dtype
+    program's tile by tile. Both take any program [map] computes, of any
+    number of loads. They read it over its loads or, with none, over the
+    loop's shape alone, a reduction's [shape] or a scan's destinations':
+    its terms are the program's output there as [map] computes it, so a
+    reduction or a scan of an output has the bits of the output mapped into
+    an array, then reduced or scanned. [reduce] computes several such
+    reductions of one loop, each one's bits alone, every destination checked
+    before any is written, any number of them. They answer [Wrong_dtype]
+    where {!Nx_kernel.accepts} is [false] of a reduction and its output's dtype
     or an [Arg]'s positions are not [int64], and [Shape_mismatch] for
     destinations other than a reduction's one or two. A destination identical to the operand, or to a program's
     load, is accepted: that operand or load is then read from a copy the

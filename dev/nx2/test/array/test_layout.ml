@@ -611,16 +611,20 @@ let law_coalesce ls =
   let rank = List.fold_left (fun r l -> max r (L.rank l)) 1 ls in
   cover "merges axes" (L.rank cs.(0) < rank)
 
-(* Up to 18 layouts, the last vetoing the merge of the contiguous ones
-   before it. *)
+(* Any number of layouts, one below the door's runs to many past them,
+   merge where every one lays two axes out as one run: contiguous ones
+   into one axis, and with a transposed one last, none. *)
 let test_coalesce_counts () =
   let a = L.contiguous [| 2; 3 |] and t = L.v ~strides:[| 1; 2 |] [| 2; 3 |] in
-  let layouts n = List.init n (fun k -> if k = n - 1 then t else a) in
+  let layouts n last = List.init n (fun k -> if k = n - 1 then last else a) in
   equal ~msg:"max_operands" int 18 Nx_array.max_operands;
-  List.iter (fun n -> ignore (coalesced (layouts n))) [ 1; 2; 17; 18 ];
+  List.iter
+    (fun n ->
+      let msg = Printf.sprintf "%d layouts" n in
+      equal ~msg int 1 (L.rank (coalesced (layouts n a)).(0));
+      if n > 1 then equal ~msg int 2 (L.rank (coalesced (layouts n t)).(0)))
+    [ 1; 2; 17; 18; 19; 32; 100 ];
   raises_match Exn.invalid_arg (fun () -> L.coalesce [||]);
-  raises_match Exn.invalid_arg (fun () ->
-      L.coalesce (Array.of_list (layouts 19)));
   raises_match Exn.invalid_arg (fun () ->
       L.coalesce [| a; L.contiguous [| 3; 2 |] |])
 
@@ -713,8 +717,7 @@ let tests =
           "merges every run, drops extent-1 axes and keeps each layout's \
            positions in order"
           same_shape law_coalesce;
-        test "takes 1 to max_operands, 18, layouts of one shape"
-          test_coalesce_counts;
+        test "takes any number of layouts of one shape" test_coalesce_counts;
       ];
     test "pp shows shape, strides and offset" test_pp;
   ]

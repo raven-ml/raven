@@ -768,6 +768,71 @@ double nx_cpu_loop_cost(int n, const nx_array *a, const nx_loop *l,
 int nx_cpu_walk_threads(int n, const nx_array *a, const nx_loop *l,
                         double per);
 
+/* Places
+
+   A loop's operands placed by the virtual position of an index, its
+   place in C order of the loop's shape, as an index operand of no buffer
+   reads it: a kernel of more operands than a block holds (map.c, reduce.c)
+   walks or reduces the virtual positions and places each operand from
+   them. The loop of the virtual operand and the [n] operands coalesced
+   has [rank] axes of extents [ext], along which virtual positions step
+   [vs], C-contiguous; operand k's first element is at first[k], and it
+   steps step[k][d] along axis d. A position is placed along each axis of
+   more than one element; a step moves along one axis, [s / vs[d]] places
+   along axis d, the innermost whose step divides it into fewer places
+   than its extent. */
+typedef struct {
+  int n, rank;
+  int64_t ext[NX_MAX_RANK], vs[NX_MAX_RANK];
+  const int64_t *first;
+  int64_t (*step)[NX_MAX_RANK];
+} nx_cpu_places;
+
+/* Each operand's position at the virtual position [p], into at[k]. */
+static inline void nx_cpu_places_at(const nx_cpu_places *pl, int64_t p,
+                                    int64_t *at) {
+  for (int k = 0; k < pl->n; k++) at[k] = pl->first[k];
+  for (int d = 0; d < pl->rank; d++) {
+    if (pl->ext[d] <= 1) continue;
+    int64_t i = p / pl->vs[d] % pl->ext[d];
+    for (int k = 0; k < pl->n; k++) at[k] += i * pl->step[k][d];
+  }
+}
+
+/* Operand [k]'s position at the virtual position [p]. */
+static inline int64_t nx_cpu_place(const nx_cpu_places *pl, int k,
+                                   int64_t p) {
+  int64_t at = pl->first[k];
+  for (int d = 0; d < pl->rank; d++)
+    if (pl->ext[d] > 1) at += p / pl->vs[d] % pl->ext[d] * pl->step[k][d];
+  return at;
+}
+
+/* The axis the virtual step [s] moves along, or -1 for no step. */
+static inline int nx_cpu_places_axis(const nx_cpu_places *pl, int64_t s) {
+  int d = pl->rank - 1;
+  while (d >= 0 && (s == 0 || pl->ext[d] <= 1 || s % pl->vs[d] != 0 ||
+                    s / pl->vs[d] >= pl->ext[d]))
+    d--;
+  return d;
+}
+
+/* Each operand's step along the virtual step [s], into st[k]: 0 for no
+   step. */
+static inline void nx_cpu_places_along(const nx_cpu_places *pl, int64_t s,
+                                       int64_t *st) {
+  int d = nx_cpu_places_axis(pl, s);
+  for (int k = 0; k < pl->n; k++)
+    st[k] = d >= 0 ? s / pl->vs[d] * pl->step[k][d] : 0;
+}
+
+/* Operand [k]'s step along the virtual step [s]. */
+static inline int64_t nx_cpu_place_step(const nx_cpu_places *pl, int k,
+                                        int64_t s) {
+  int d = nx_cpu_places_axis(pl, s);
+  return d >= 0 ? s / pl->vs[d] * pl->step[k][d] : 0;
+}
+
 /* nx_cpu_walk for a loop that rule 0 does not run (walk.c, rules 1 to
    3). */
 void nx_cpu_cut(int n, const nx_array *a, const nx_loop *l, int64_t most,
@@ -811,15 +876,14 @@ void nx_cpu_cast_loop(const nx_array *dst, const nx_array *src,
    to the loads the door read, then run over blocks of them: each node
    computes as a map's does, so an output's elements have the map's bits.
 
-   A block of a bound program numbers its operands as the program's loads,
-   then, where it reads a coordinate, the index: the position in C order of
-   the loop's shape, of no buffer. */
+   A bound program places its loads, then, where it reads a coordinate, the
+   index, by the virtual positions of its loop (Places): the index's are
+   the virtual positions themselves. */
 typedef struct nx_cpu_prog nx_cpu_prog;
 
 /* The Prog.t at the root [vp] copied, or NULL if host memory runs out.
-   [vp] has at most NX_MAX_OPERANDS loads and outputs each, as many as the
-   copy holds. Reads [vp] alone, letting other domains collect every
-   NX_CPU_ITEMS nodes. */
+   Reads [vp] alone, letting other domains collect every NX_CPU_ITEMS
+   nodes. */
 nx_cpu_prog *nx_cpu_prog_copy(const value *vp);
 void nx_cpu_prog_free(nx_cpu_prog *j);
 
@@ -839,8 +903,8 @@ int nx_cpu_prog_product(const nx_cpu_prog *j, int o, int *k);
 
 /* Binds [j] to its loads [a], read by the door, over a loop of [rank] axes
    of extents [shape]: NX_OK, NX_SHAPE for a coordinate past the rank, or
-   NX_DECLINED for more operands than a loop holds. Sets [index] to whether
-   the program reads the index. */
+   -1 if host memory runs out. Sets [index] to whether the program reads
+   the index. */
 int nx_cpu_prog_bind(nx_cpu_prog *j, const nx_array *a, int rank,
                      const int64_t *shape, int *index);
 
@@ -848,19 +912,22 @@ int nx_cpu_prog_bind(nx_cpu_prog *j, const nx_array *a, int rank,
    codes included, or its carrier for a sub-byte dtype. */
 int nx_cpu_prog_held(const nx_cpu_prog *j, int o);
 
-/* Runs the bound [j] over the block [b], one plane of n1 rows of n0
-   elements, and stores each output [o] whose [to[o]] is not NULL there,
-   C-contiguous in its held dtype: row r's element i at
-   to[o] + (r·n0 + i)·w, w that dtype's width. */
-void nx_cpu_prog_terms(const nx_cpu_prog *j, const nx_cpu_block *b,
-                       uint8_t *const *to);
+/* Runs the bound [j] over [n1] rows of [n0] elements from the virtual
+   position [p], stepping [s0] along a row and [s1] across rows, each a
+   step along one axis, its loads then the index placed by [pl], and
+   stores its output [o] into [out], C-contiguous in its held dtype: row
+   r's element i at out + (r·n0 + i)·w, w that dtype's width. */
+void nx_cpu_prog_terms(const nx_cpu_prog *j, const nx_cpu_places *pl,
+                       int o, int64_t p, int64_t s0, int64_t n0, int64_t s1,
+                       int64_t n1, uint8_t *out);
 
 /* What an element of [j] costs (Calls and jobs): the kinds it runs, each
    at its cost (nx_cpu_kind_cost). */
 double nx_cpu_prog_cost(const nx_cpu_prog *j);
 
-/* Whether a run of [j] could not have an arena on the heap, as a program
-   of many values needs: its outputs are then unspecified. */
+/* Whether a run of [j] could not have an arena or its tables on the heap,
+   as a program of many values or operands needs: its outputs are then
+   unspecified. */
 int nx_cpu_prog_failed(const nx_cpu_prog *j);
 
 /* Sorts of 64-bit keys with their positions (sort.c, index.c) */

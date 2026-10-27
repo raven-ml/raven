@@ -328,16 +328,16 @@ let move m l =
 external coalesce_into : t array -> int array -> int = "nx_array_coalesce"
 [@@noalloc]
 
-(* The coalescer refuses what is checked here first, so it answers [NX_OK]. *)
+(* The coalescer refuses what is checked here first, so it answers [NX_OK],
+   or [-1] where host memory runs out. *)
 let coalesce ls =
   let n = Array.length ls in
-  if n < 1 || n > Shape.max_operands then
-    invalid_argf "Layout.coalesce: %d layouts, not 1 to %d" n
-      Shape.max_operands;
+  if n < 1 then invalid_arg "Layout.coalesce: no layout";
   if not (Array.for_all (fun l -> ints_equal ls.(0).shape l.shape) ls) then
     invalid_arg "Layout.coalesce: layouts of different shapes";
   let out = Array.make (1 + max_rank + (n * (1 + max_rank))) 0 in
   let e = coalesce_into ls out in
+  if e = -1 then raise Out_of_memory;
   if e <> 0 then invalid_argf "Layout.coalesce: the coalescer answered %d" e;
   (* The coalescer built each layout from checked ones: [finish] computes its
      span and flags. The layouts share one shape. *)

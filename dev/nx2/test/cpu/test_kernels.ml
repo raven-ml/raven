@@ -426,16 +426,12 @@ let test_tiled_short_blocks () =
 
 (* Programs *)
 
-(* The most loads nx.cpu's map takes with one output and the coordinates
-   (nx_cpu.mli): its loop holds the output, the loads and the index. *)
-let most_map_loads = A.max_operands - 2
-
-(* A program of as many loads as nx.cpu's map takes, reading the coordinate
-   along every axis, as its nodes run one by one. *)
+(* A program of sixteen loads, reading the coordinate along every axis, as
+   its nodes run one by one. *)
 let law_map_full (b : Support.backend) (Case x) =
   let module K = (val b.kernels) in
   let shape = L.shape (A.layout x) in
-  let rank = Iarray.length shape and nins = most_map_loads in
+  let rank = Iarray.length shape and nins = 16 in
   let i64 = D.Any D.Int64 in
   let coord a = [ P.Coord a; P.Op2 (Binary Add, nins + (2 * a), nins + (2 * a) + 1) ] in
   let nodes =
@@ -461,28 +457,90 @@ let law_map_full (b : Support.backend) (Case x) =
       let (A.Any want) = values.(List.length nodes - 1) in
       equal (array int) (bits_of (host want)) (bits_of (host dst))
 
-(* A map of one load more than nx.cpu takes, and of twenty, declines and
-   leaves its destination as it was. *)
-let test_map_past (b : Support.backend) () =
+(* The widths of the maps a law draws: the loads and outputs together, one
+   below a block's operands to many past them. *)
+let widths = Gen.of_list ~pp:Format.pp_print_int [ 17; 18; 19; 32; 100 ]
+
+(* Other dtypes a wide map loads, each staged or held its own way. *)
+let wide_dtypes = D.[ Any Int32; Any Float16; Any Uint4; Any Float64 ]
+
+(* A map of [w] arrays, two outputs and [w - 2] loads, has the bits of its
+   nodes run one by one. The loads are [x], [y] and contiguous arrays of
+   [wide_dtypes] in turn, the last a float64 that destination 0 is, every
+   other seed, identical to; the program casts each load to float64 and
+   sums them with the coordinate along the last axis into output 0, and
+   casts that sum to [x]'s dtype into output 1. *)
+let law_map_widths (b : Support.backend) ((Pair (x, y), seed), w) =
   let module K = (val b.kernels) in
-  let declines nins =
-    let nodes =
-      Iarray.init (nins + 1) (fun k ->
-          if k < nins then P.In k else P.Op2 (Binary Add, 0, nins - 1))
-    in
-    let p =
-      P.v ~ins:(Iarray.init nins (fun _ -> D.Any D.Float32)) nodes
-        ~outs:[| nins |]
-    in
-    let x = A.of_array D.Float32 [| 3 |] [| 1.; 2.; 3. |] in
-    let dst = A.of_array D.Float32 [| 3 |] [| 7.; 7.; 7. |] in
-    let msg = strf "%d loads" nins in
-    equal ~msg answer A.Declined
-      (K.map p ~dsts:[| A.Any dst |] (Array.make nins (Nx_kernel.Plain x)));
-    equal ~msg (array float_exact) [| 7.; 7.; 7. |] (A.to_array dst)
+  let f64 = D.Any D.Float64 and shape = L.shape (A.layout x) in
+  let rank = Iarray.length shape and nins = w - 2 in
+  let dt = D.Any (A.dtype x) in
+  let other k = List.nth wide_dtypes (k mod List.length wide_dtypes) in
+  let load k =
+    if k = nins - 1 then A.Any (on b (seeded D.Float64 shape seed))
+    else
+      match k mod 3 with
+      | 0 -> A.Any (on b x)
+      | 1 -> A.Any (on b y)
+      | _ ->
+          let (D.Any d) = other k in
+          A.Any (on b (seeded d shape (seed + k)))
   in
-  declines (most_map_loads + 1);
-  declines 20
+  let ops = Array.init nins load in
+  let ins = Array.map (fun (A.Any a) -> D.Any (A.dtype a)) ops in
+  let nodes = ref [] in
+  let add n =
+    nodes := n :: !nodes;
+    List.length !nodes - 1
+  in
+  let loads = List.init nins (fun k -> add (P.In k)) in
+  let casts = List.map (fun k -> add (P.Op1 (Cast, f64, k))) loads in
+  let terms =
+    if rank = 0 then casts
+    else casts @ [ add (P.Op1 (Cast, f64, add (P.Coord (rank - 1)))) ]
+  in
+  let sum =
+    List.fold_left (fun acc t -> add (P.Op2 (Binary Add, acc, t)))
+      (List.hd terms) (List.tl terms)
+  in
+  let back = add (P.Op1 (Cast, dt, sum)) in
+  let p =
+    P.v ~ins:(Iarray.of_array ins)
+      (Iarray.of_list (List.rev !nodes))
+      ~outs:[| sum; back |]
+  in
+  let types = Array.init (List.length !nodes) (P.dtype p) in
+  (* The reference reads a copy of the load the destination may be. *)
+  let (A.Any last) = ops.(nins - 1) in
+  let kept = Array.copy ops in
+  kept.(nins - 1) <- A.Any (on b (A.copy (host last)));
+  let alias = seed mod 2 = 0 in
+  cover "a destination identical to a load" alias;
+  cover "no element" (L.numel (A.layout x) = 0);
+  cover "a broadcast or strided load"
+    (not (L.is_contiguous (A.layout x) && L.is_contiguous (A.layout y)));
+  cover "past a block's operands" (w > A.max_operands);
+  match split b p types shape kept with
+  | exception Skip -> fail "a node declined"
+  | values ->
+      let s =
+        if alias then A.expect D.Float64 ops.(nins - 1)
+        else A.create b.device D.Float64 shape
+      in
+      let (D.Any d) = dt in
+      let q = A.create b.device d shape in
+      let msg = strf "%d arrays" w in
+      equal ~msg answer A.Done
+        (K.map p ~dsts:[| A.Any s; A.Any q |]
+           (Array.map (fun (A.Any a) -> Nx_kernel.Plain a) ops));
+      let check name (A.Any got) i =
+        let (A.Any want) = values.(i) in
+        equal ~msg:(strf "%s, %s" msg name)
+          (same_values (D.Any (A.dtype want)))
+          (bits_of (host want)) (bits_of (host got))
+      in
+      check "the sum" (A.Any s) sum;
+      check "its cast" (A.Any q) back
 
 (* A program that holds hundreds of values at once, over a padded load and
    the coordinates, as its nodes run one by one: [m] products of the operand,
@@ -1119,8 +1177,10 @@ let cpu =
         (strf "%s computes a map of every operand with coordinates" b.name)
         case
         (fun c -> b.around (fun () -> law_map_full b c));
-      test (strf "%s declines a map past its loads" b.name) (fun () ->
-          b.around (test_map_past b));
+      prop ~count:200
+        (strf "%s computes maps of any number of arrays" b.name)
+        (Gen.pair (Gen.pair pairs Gen.int) widths)
+        (fun c -> b.around (fun () -> law_map_widths b c));
       prop ~count:1000
         (strf
            "%s's elementwise kernels read and write no byte past their \

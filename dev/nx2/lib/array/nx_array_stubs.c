@@ -575,16 +575,20 @@ value nx_array_release(value written, value read) {
 /* Coalescing */
 
 /* The coalescer, written once: it reads axis i's extent at [ein][i] and
-   operand k's step at [sin][k][i], and writes the merged loop into
-   [extent] and [step], which may be [ein] and [sin] themselves. Axis i
-   lands at [out] or merges into out - 1, both at most i: the loop
-   rewrites only what it has read. Inlined at both callers: through a call,
+   operand k's step at index i of the steps [pitch] bytes past operand k -
+   1's, operand 0's at [sin], and writes the merged loop into [extent] and
+   [step], which may be [ein] and the steps themselves. A descriptor's
+   strides lie sizeof(nx_array) bytes apart, a table's rows a row apart.
+   Axis i lands at [out] or merges into out - 1, both at most i: the loop
+   rewrites only what it has read. Inlined at each caller: through a call,
    nx_coalesce read the descriptors into its loop first, and a door's loop
    over strided operands cost about 7 ns more on the M1 Max. A merged
    extent is a product of one layout's extents: at most NX_MAX_NUMEL. */
 static inline __attribute__((always_inline)) int coalesce(
-    int n, int rank, const int64_t *ein, const int64_t *const *sin,
+    int n, int rank, const int64_t *ein, const int64_t *sin, size_t pitch,
     int64_t *extent, int64_t (*step)[NX_MAX_RANK]) {
+#define SIN(k, i) \
+  (((const int64_t *)((const char *)sin + (size_t)(k) * pitch))[i])
   int out = 0;
   for (int i = 0; i < rank; i++) {
     const int64_t d = ein[i];
@@ -598,16 +602,17 @@ static inline __attribute__((always_inline)) int coalesce(
        is this stride times this extent: the two axes are one run. */
     int joins = out > 0;
     for (int k = 0; k < n && joins; k++)
-      joins = step[k][out - 1] == sin[k][i] * d;
+      joins = step[k][out - 1] == SIN(k, i) * d;
     if (joins) {
       extent[out - 1] *= d;
-      for (int k = 0; k < n; k++) step[k][out - 1] = sin[k][i];
+      for (int k = 0; k < n; k++) step[k][out - 1] = SIN(k, i);
     } else {
       extent[out] = d;
-      for (int k = 0; k < n; k++) step[k][out] = sin[k][i];
+      for (int k = 0; k < n; k++) step[k][out] = SIN(k, i);
       out++;
     }
   }
+#undef SIN
   if (out == 0) {
     extent[0] = 1;
     for (int k = 0; k < n; k++) step[k][0] = 0;
@@ -616,15 +621,17 @@ static inline __attribute__((always_inline)) int coalesce(
   return out;
 }
 
-int nx_coalesce(int n, const nx_array *a, nx_loop *l) {
-  if (n < 1 || n > NX_MAX_OPERANDS) return NX_SHAPE;
+static inline __attribute__((always_inline)) int coalesce_into(
+    int n, const nx_array *a, int *rank, int64_t *extent,
+    int64_t (*step)[NX_MAX_RANK], int64_t *first) {
+  if (n < 1) return NX_SHAPE;
   int r = a[0].rank;
   for (int k = 1; k < n; k++) {
     if (a[k].rank != r) return NX_SHAPE;
     for (int i = 0; i < r; i++)
       if (a[k].dim[i] != a[0].dim[i]) return NX_SHAPE;
   }
-  for (int k = 0; k < n; k++) l->first[k] = a[k].offset;
+  for (int k = 0; k < n; k++) first[k] = a[k].offset;
   /* Operands all in C order merge into one run: the loop is their number
      of elements, in steps of one. */
   int contiguous = 1;
@@ -632,22 +639,29 @@ int nx_coalesce(int n, const nx_array *a, nx_loop *l) {
   if (contiguous) {
     int64_t e = 1;
     for (int i = 0; i < r; i++) e *= a[0].dim[i];
-    l->rank = 1;
-    l->extent[0] = e;
-    for (int k = 0; k < n; k++) l->step[k][0] = e > 1;
+    *rank = 1;
+    extent[0] = e;
+    for (int k = 0; k < n; k++) step[k][0] = e > 1;
     return NX_OK;
   }
-  const int64_t *steps[NX_MAX_OPERANDS];
-  for (int k = 0; k < n; k++) steps[k] = a[k].dim + r;
-  l->rank = coalesce(n, r, a[0].dim, steps, l->extent, l->step);
+  *rank = coalesce(n, r, a[0].dim, a[0].dim + r, sizeof(nx_array), extent,
+                   step);
   return NX_OK;
+}
+
+int nx_coalesce(int n, const nx_array *a, nx_loop *l) {
+  if (n > NX_MAX_OPERANDS) return NX_SHAPE;
+  return coalesce_into(n, a, &l->rank, l->extent, l->step, l->first);
+}
+
+int nx_coalesce_into(int n, const nx_array *a, int *rank, int64_t *extent,
+                     int64_t (*step)[NX_MAX_RANK], int64_t *first) {
+  return coalesce_into(n, a, rank, extent, step, first);
 }
 
 int nx_coalesce_dims(int n, int rank, int64_t *extent,
                      int64_t (*step)[NX_MAX_RANK]) {
-  const int64_t *steps[NX_MAX_OPERANDS];
-  for (int k = 0; k < n; k++) steps[k] = step[k];
-  return coalesce(n, rank, extent, steps, extent, step);
+  return coalesce(n, rank, extent, step[0], sizeof step[0], extent, step);
 }
 
 /* Calls [run] on each run of the loop [l] over [n] operands: the positions
@@ -678,27 +692,37 @@ static inline __attribute__((always_inline)) void walk(
   }
 }
 
-/* Layout.coalesce: coalesces the layouts [ls] into [out], an int array of
-   1 + rank + n·(1 + rank) words: the rank, the extents, then per operand
-   its first position and steps. Answers a code. */
+/* Layout.coalesce: coalesces the [n] layouts [ls], at least one and of
+   one shape, into [out], an int array of 1 + rank + n·(1 + rank) words:
+   the rank, the extents, then per operand its first position and steps.
+   Its tables lie on the stack up to NX_MAX_OPERANDS layouts and on the
+   heap past them. Answers a code, or -1 if host memory runs out. */
 value nx_array_coalesce(value ls, value out) {
   int n = (int)Wosize_val(ls);
-  nx_array a[NX_MAX_OPERANDS];
-  nx_loop l;
-  if (n < 1 || n > NX_MAX_OPERANDS) return Val_int(NX_SHAPE);
-  for (int k = 0; k < n; k++) read_layout(Field(ls, k), &a[k]);
-  int e = nx_coalesce(n, a, &l);
-  if (e) return Val_int(e);
-  int r = l.rank;
+  int64_t local[NX_MAX_OPERANDS][NX_MAX_RANK], (*step)[NX_MAX_RANK] = local;
+  int64_t extent[NX_MAX_RANK];
+  if (n < 1) return Val_int(NX_SHAPE);
+  if (n > NX_MAX_OPERANDS &&
+      (step = malloc((size_t)n * sizeof *step)) == NULL)
+    return Val_int(-1);
+  nx_array a;
+  read_layout(Field(ls, 0), &a);
+  int r = a.rank;
+  for (int i = 0; i < r; i++) extent[i] = a.dim[i];
+  for (int k = 0; k < n; k++) {
+    read_layout(Field(ls, k), &a);
+    for (int i = 0; i < r; i++) step[k][i] = a.dim[r + i];
+  }
+  r = nx_coalesce_dims(n, r, extent, step);
   /* [out] is an int array: immediates need no write barrier. */
   Field(out, 0) = Val_long(r);
-  for (int i = 0; i < r; i++) Field(out, 1 + i) = Val_long(l.extent[i]);
+  for (int i = 0; i < r; i++) Field(out, 1 + i) = Val_long(extent[i]);
   for (int k = 0; k < n; k++) {
     mlsize_t at = 1 + r + k * (1 + r);
-    Field(out, at) = Val_long(l.first[k]);
-    for (int i = 0; i < r; i++)
-      Field(out, at + 1 + i) = Val_long(l.step[k][i]);
+    Field(out, at) = Field(Field(ls, k), NX_LAYOUT_OFFSET);
+    for (int i = 0; i < r; i++) Field(out, at + 1 + i) = Val_long(step[k][i]);
   }
+  if (step != local) free(step);
   return Val_int(NX_OK);
 }
 

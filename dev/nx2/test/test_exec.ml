@@ -471,7 +471,8 @@ let declines =
           in
           refused_once "Nx.argmax" "Reduce Arg Max" "float32" (fun () ->
               Nx.argmax ~axis:0 x));
-      test "a map past nx.cpu's loads raises naming nx.cpu" (fun () ->
+      test "a built map of more arrays than the door's runs computes"
+        (fun () ->
           let n = 20 in
           let x = on_host Plain D.Float32 [| 3 |] [| 1.; 2.; 3. |] in
           let nodes =
@@ -489,9 +490,8 @@ let declines =
             Map
               { layout = A.Layout.contiguous [| 3 |]; prog; outs = [ D.Float32 ]; loads }
           in
-          raises_match
-            (Exn.invalid_arg ~substring:"test: nx.cpu does not compute")
-            (fun () -> Nx.Prim.eval ~by:"test" op));
+          equal (array float_exact) [| 2.; 4.; 6. |]
+            (elements (fst (Nx.Prim.eval ~by:"test" op))));
       test "a declined built map names its node, or Map" (fun () ->
           let x = refused [| 4.; 3.; 2.; 1. |] in
           let f = D.Any D.Float32 in

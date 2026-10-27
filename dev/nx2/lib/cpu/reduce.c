@@ -169,18 +169,35 @@ typedef enum { REDUCE, SCAN, NETWORK } task;
 
 /* A program's output as the terms (Programs): output [k] of [prog], bound
    to its [nloads] loads [loads], read at virtual positions, a term's place
-   in C order of the loop's shape. The loop of the virtual operand and the
-   loads coalesced has [rank] axes of extents [ext]; [vs] are the virtual
-   positions' steps along them, C-contiguous, [ls] each load's and [l0]
-   each load's first position. [index] says whether the program reads the
-   index, the virtual position. */
+   in C order of the loop's shape, its loads then, where it reads it, the
+   index placed by [pl] (cpu.h, Places). [rows] has a row for each load and
+   four more, for the loops that coalesce the loads with the destinations,
+   the operand and a carry. Its tables follow it in one block of
+   fused_bytes: the loads, [pl]'s steps after the virtual operand's, their
+   first positions, then [rows]. */
 typedef struct {
   const nx_cpu_prog *prog;
-  const nx_array *loads;
-  int k, nloads, index, rank;
-  int64_t ext[NX_MAX_RANK], vs[NX_MAX_RANK];
-  int64_t ls[NX_MAX_OPERANDS][NX_MAX_RANK], l0[NX_MAX_OPERANDS];
+  nx_array *loads;
+  int k, nloads;
+  nx_cpu_places pl;
+  int64_t (*rows)[NX_MAX_RANK];
 } fused;
+
+/* The bytes of a fused of [nl] loads with its tables. */
+static int64_t fused_bytes(int nl) {
+  return (int64_t)(sizeof(fused) + (size_t)nl * sizeof(nx_array) +
+                   (size_t)(2 * nl + 6) * NX_MAX_RANK * sizeof(int64_t) +
+                   (size_t)(nl + 1) * sizeof(int64_t));
+}
+
+/* Lays out [z]'s tables in its block, for [nl] loads. */
+static void fused_tables(fused *z, int nl) {
+  z->loads = (nx_array *)(z + 1);
+  int64_t (*place)[NX_MAX_RANK] = (int64_t (*)[NX_MAX_RANK])(z->loads + nl);
+  z->pl.step = place + 1;
+  z->pl.first = (const int64_t *)(place + nl + 2);
+  z->rows = (int64_t (*)[NX_MAX_RANK])((int64_t *)(place + nl + 2) + nl + 1);
+}
 
 /* An output's value is an element of the dtype under a monoid, a state
    under a stateful reduction. */
@@ -352,54 +369,27 @@ static const uint8_t *at(const plan *q, int64_t p) {
 
 /* Programs */
 
-/* The loads' positions at the virtual position [p], the index's after
-   them, into [at]. An axis of one element, as a loop of one element has,
-   steps 0. */
-static void loads_at(const fused *z, int64_t p, int64_t *at) {
-  for (int k = 0; k < z->nloads; k++) at[k] = z->l0[k];
-  for (int d = 0; d < z->rank; d++) {
-    if (z->ext[d] <= 1) continue;
-    int64_t i = p / z->vs[d] % z->ext[d];
-    for (int k = 0; k < z->nloads; k++) at[k] += i * z->ls[k][d];
-  }
-  if (z->index) at[z->nloads] = p;
-}
-
-/* The loads' steps, the index's after them, along the virtual step [s],
-   into [st]: 0 for no step. [s] moves along one of the coalesced loop's
-   axes, [s / vs[d]] places along axis d, the innermost whose step divides
-   it into fewer places than its extent. */
-static void loads_along(const fused *z, int64_t s, int64_t *st) {
-  int d = z->rank - 1;
-  while (d >= 0 && (s == 0 || z->ext[d] <= 1 || s % z->vs[d] != 0 ||
-                    s / z->vs[d] >= z->ext[d]))
-    d--;
-  for (int k = 0; k < z->nloads; k++)
-    st[k] = d >= 0 ? s / z->vs[d] * z->ls[k][d] : 0;
-  if (z->index) st[z->nloads] = s;
-}
-
-/* [z] for the program bound to its loads [loads] over the virtual
-   operand [x], C-contiguous over the loop's shape: the loop of [x] and the
-   loads coalesced. Apart, so that its loop's frame is off the stack the
+/* [z] for the program bound to its [z->nloads] loads [z->loads] over the
+   virtual operand [x], C-contiguous over the loop's shape, the index read
+   where [index]: the loop of [x] and the loads coalesced, the index
+   stepping as [x]. Apart, so that its loop's frame is off the stack the
    jobs run on. */
 static __attribute__((noinline)) void fuse(fused *z, const nx_array *x,
-                                           const nx_array *loads) {
-  int r = x->rank;
-  int64_t ext[NX_MAX_RANK], st[NX_MAX_OPERANDS][NX_MAX_RANK];
+                                           int index) {
+  int r = x->rank, nl = z->nloads;
+  int64_t (*st)[NX_MAX_RANK] = z->pl.step - 1;
+  int64_t *first = (int64_t *)(st + nl + 2);
   for (int i = 0; i < r; i++) {
-    ext[i] = x->dim[i];
+    z->pl.ext[i] = x->dim[i];
     st[0][i] = x->dim[r + i];
-    for (int k = 0; k < z->nloads; k++) st[1 + k][i] = loads[k].dim[r + i];
+    for (int k = 0; k < nl; k++) st[1 + k][i] = z->loads[k].dim[r + i];
   }
-  z->loads = loads;
-  z->rank = nx_coalesce_dims(1 + z->nloads, r, ext, st);
-  for (int i = 0; i < z->rank; i++) {
-    z->ext[i] = ext[i];
-    z->vs[i] = st[0][i];
-    for (int k = 0; k < z->nloads; k++) z->ls[k][i] = st[1 + k][i];
-  }
-  for (int k = 0; k < z->nloads; k++) z->l0[k] = loads[k].offset;
+  z->pl.rank = nx_coalesce_dims(1 + nl, r, z->pl.ext, st);
+  memcpy(z->pl.vs, st[0], sizeof(int64_t) * (size_t)z->pl.rank);
+  memcpy(st[1 + nl], st[0], sizeof(int64_t) * (size_t)z->pl.rank);
+  for (int k = 0; k < nl; k++) first[k] = z->loads[k].offset;
+  first[nl] = 0;
+  z->pl.n = nl + index;
 }
 
 /* The program's output over [n1] rows of [n0] terms from the virtual
@@ -408,13 +398,7 @@ static __attribute__((noinline)) void fuse(fused *z, const nx_array *x,
    out + (r·n0 + i)·w. */
 static void eval(const fused *z, int64_t p, int64_t s0, int64_t n0,
                  int64_t s1, int64_t n1, uint8_t *out) {
-  nx_cpu_block b = {.n0 = n0, .n1 = n1, .n2 = 1};
-  loads_at(z, p, b.at);
-  loads_along(z, s0, b.s0);
-  loads_along(z, s1, b.s1);
-  uint8_t *to[NX_MAX_OPERANDS] = {NULL};
-  to[z->k] = out;
-  nx_cpu_prog_terms(z->prog, &b, to);
+  nx_cpu_prog_terms(z->prog, &z->pl, z->k, p, s0, n0, s1, n1, out);
 }
 
 /* As eval, into [out] in the dtype [c]: the held values, through [held],
@@ -865,8 +849,8 @@ typedef struct {
    factor steps along them. */
 static void products(const plan *q, work *wk, const unit *x, staged *kept) {
   const fused *z = q->fused;
-  int64_t at[NX_MAX_OPERANDS + 1], rows[LANES];
-  loads_at(z, x->p, at);
+  int64_t at[2], rows[LANES];
+  for (int f = 0; f < 2; f++) at[f] = nx_cpu_place(&z->pl, q->factor[f], x->p);
   int n = (int)q->terms, place[2];
   for (int t = 0; t < n; t++) rows[t] = t * x->W;
   int64_t each = x->H;
@@ -882,7 +866,7 @@ static void products(const plan *q, work *wk, const unit *x, staged *kept) {
   for (int64_t h = 0; h < x->H; h += each) {
     for (int f = 0; f < 2; f++) {
       const nx_array *l = &z->loads[q->factor[f]];
-      int64_t p = at[q->factor[f]] + h * q->fs2[f];
+      int64_t p = at[f] + h * q->fs2[f];
       if (place[f]) {
         base[f] = l->base + p * q->w;
         off[f] = q->foff[f];
@@ -1130,12 +1114,10 @@ static void factors(plan *q) {
       q->terms > LANES || table.products[q->carrier] == NULL ||
       nx_cpu_prog_product(z->prog, z->k, k) != q->carrier)
     return;
-  int64_t at0[NX_MAX_OPERANDS + 1], at[NX_MAX_OPERANDS + 1];
-  loads_at(z, 0, at0);
-  for (int64_t t = 0; t < q->terms; t++) {
-    loads_at(z, q->off[t], at);
-    for (int f = 0; f < 2; f++) q->foff[f][t] = at[k[f]] - at0[k[f]];
-  }
+  for (int64_t t = 0; t < q->terms; t++)
+    for (int f = 0; f < 2; f++)
+      q->foff[f][t] = nx_cpu_place(&z->pl, k[f], q->off[t]) -
+                      nx_cpu_place(&z->pl, k[f], 0);
   q->factor[0] = k[0];
   q->factor[1] = k[1];
 }
@@ -1144,36 +1126,35 @@ static void factors(plan *q) {
    factors and those axes. */
 static void factor_steps(plan *q) {
   if (q->factor[0] < 0) return;
-  int64_t s[NX_MAX_OPERANDS + 1], s2[NX_MAX_OPERANDS + 1];
-  loads_along(q->fused, q->row > 1 ? q->ks[q->nk - 1] : 0, s);
-  loads_along(q->fused, q->band > 1 ? q->ks[q->nk - 2] : 0, s2);
+  const nx_cpu_places *pl = &q->fused->pl;
+  int64_t s = q->row > 1 ? q->ks[q->nk - 1] : 0;
+  int64_t s2 = q->band > 1 ? q->ks[q->nk - 2] : 0;
   for (int f = 0; f < 2; f++) {
-    q->fs[f] = s[q->factor[f]];
-    q->fs2[f] = s2[q->factor[f]];
+    q->fs[f] = nx_cpu_place_step(pl, q->factor[f], s);
+    q->fs2[f] = nx_cpu_place_step(pl, q->factor[f], s2);
   }
 }
 
-/* Lays out a reduction from the coalesced loop [l] over the destinations
-   and the operand, the destinations stepping 0 along the reduced axes.
+/* Lays out a reduction from the coalesced loop of [rank] axes of extents
+   [extent] over the destinations, steps step[0] and step[1], and the
+   operand, step[2], the destinations stepping 0 along the reduced axes.
    Where units are few and blocks many, each unit takes a group of blocks,
    its size from the shape alone. */
-static void plan_reduce(plan *q, const nx_loop *l) {
+static void plan_reduce(plan *q, int rank, const int64_t *extent,
+                        int64_t (*step)[NX_MAX_RANK]) {
   q->nr = q->nk = 0;
-  for (int i = 0; i < l->rank; i++)
-    if (l->step[0][i] != 0)
-      keep(q, l->extent[i], l->step[2][i], l->step[0][i], l->step[1][i], 0);
-    else if (l->extent[i] > 1) {
-      q->re[q->nr] = l->extent[i];
-      q->rs[q->nr++] = l->step[2][i];
+  for (int i = 0; i < rank; i++)
+    if (step[0][i] != 0)
+      keep(q, extent[i], step[2][i], step[0][i], step[1][i], 0);
+    else if (extent[i] > 1) {
+      q->re[q->nr] = extent[i];
+      q->rs[q->nr++] = step[2][i];
     }
   if (q->nr == 0) {
     q->re[0] = 1;
     q->rs[0] = 0;
     q->nr = 1;
   }
-  q->x0 = l->first[2];
-  q->d0 = l->first[0];
-  q->d1 = l->first[1];
   for (int64_t t = 0; t < q->terms && t < LANES; t++) q->off[t] = term(q, 0, t);
   factors(q);
   choose(q, REDUCE);
@@ -1513,8 +1494,10 @@ static void plan_scan(plan *q, const nx_array *d, const nx_array *d1,
   /* The carries, where given, coalesce with the rest, after the loads. */
   int nc = q->cy != NULL;
   int parts[2][2] = {{0, axis}, {axis + 1, r}};
+  int64_t local[4][NX_MAX_RANK];
+  int64_t (*step)[NX_MAX_RANK] = q->fused != NULL ? q->fused->rows : local;
   for (int k = 0; k < 2; k++) {
-    int64_t extent[NX_MAX_RANK], step[NX_MAX_OPERANDS + 1][NX_MAX_RANK];
+    int64_t extent[NX_MAX_RANK];
     int n = parts[k][1] - parts[k][0];
     for (int i = 0; i < n; i++) {
       int a = parts[k][0] + i;
@@ -1567,20 +1550,23 @@ static void lay_out(plan *q, task op, const int *axes, int naxes,
      loads follow the operand, so that each of the plan's axes steps every
      load evenly. */
   int rank = x->rank, nl = q->fused != NULL ? q->fused->nloads : 0;
-  nx_loop l = {.rank = rank, .first = {y->offset, y1->offset, x->offset}};
+  int64_t extent[NX_MAX_RANK], local[3][NX_MAX_RANK];
+  int64_t (*step)[NX_MAX_RANK] = q->fused != NULL ? q->fused->rows : local;
   for (int i = 0, k = 0, j = 0; i < rank; i++) {
-    l.extent[i] = x->dim[i];
-    l.step[2][i] = x->dim[rank + i];
+    extent[i] = x->dim[i];
+    step[2][i] = x->dim[rank + i];
     for (int o = 0; o < nl; o++)
-      l.step[3 + o][i] = q->fused->loads[o].dim[rank + i];
+      step[3 + o][i] = q->fused->loads[o].dim[rank + i];
     int reduced = j < naxes && axes[j] == i;
     j += reduced;
-    l.step[0][i] = reduced ? 0 : y->dim[y->rank + k];
-    l.step[1][i] = reduced ? 0 : y1->dim[y1->rank + k];
+    step[0][i] = reduced ? 0 : y->dim[y->rank + k];
+    step[1][i] = reduced ? 0 : y1->dim[y1->rank + k];
     k += !reduced;
   }
-  l.rank = nx_coalesce_dims(3 + nl, rank, l.extent, l.step);
-  plan_reduce(q, &l);
+  q->x0 = x->offset;
+  q->d0 = y->offset;
+  q->d1 = y1->offset;
+  plan_reduce(q, nx_coalesce_dims(3 + nl, rank, extent, step), extent, step);
 }
 
 /* A reduction's units, [cost] in all, [term] a term: each unit's blocks,
@@ -1941,6 +1927,8 @@ static __attribute__((noinline)) int network_in(
   network q = {.r = r, .a = {y, y1, x}, .len = terms, .fused = z};
   nx_loop *l = &q.outer;
   int rank = x->rank, k = 0, nl = z != NULL ? z->nloads : 0;
+  int64_t local[3][NX_MAX_RANK];
+  int64_t (*step)[NX_MAX_RANK] = z != NULL ? z->rows : local;
   for (int o = 0; o < 3; o++) {
     l->first[o] = q.a[o]->offset;
     q.along[o] = q.a[o]->dim[rank + axis];
@@ -1948,17 +1936,19 @@ static __attribute__((noinline)) int network_in(
   for (int i = 0; i < rank; i++) {
     if (i == axis) continue;
     l->extent[k] = x->dim[i];
-    for (int o = 0; o < 3; o++) l->step[o][k] = q.a[o]->dim[rank + i];
-    for (int o = 0; o < nl; o++) l->step[3 + o][k] = z->loads[o].dim[rank + i];
+    for (int o = 0; o < 3; o++) step[o][k] = q.a[o]->dim[rank + i];
+    for (int o = 0; o < nl; o++) step[3 + o][k] = z->loads[o].dim[rank + i];
     k++;
   }
   /* A slice alone keeps one outer axis, of extent 1. */
   if (k == 0) {
     l->extent[0] = 1;
-    for (int o = 0; o < 3 + nl; o++) l->step[o][0] = 0;
+    for (int o = 0; o < 3 + nl; o++) step[o][0] = 0;
     k = 1;
   }
-  l->rank = nx_coalesce_dims(3 + nl, k, l->extent, l->step);
+  l->rank = nx_coalesce_dims(3 + nl, k, l->extent, step);
+  for (int o = 0; o < 3; o++)
+    memcpy(l->step[o], step[o], sizeof(int64_t) * (size_t)l->rank);
   int64_t inner = l->extent[l->rank - 1];
   q.rows = outputs / inner;
   /* Units fewer than UNITS run fewer slices each, so that more threads
@@ -2296,10 +2286,11 @@ static int shaped(const nx_array *x, const nx_array *l) {
    another's terms are virtual, read through the program (Programs) in
    the output's held dtype, from its copy made before the door. Each
    reduction's loop holds its one or two destinations, the virtual
-   operand and the loads, whatever the count of reductions, which nothing
-   bounds: their tables, and the door's of every destination and load,
+   operand and the loads, whatever the count of reductions or loads,
+   which nothing bounds. The door's tables of every destination and load
    live on the stack up to NX_MAX_OPERANDS entries and past it on the
-   heap, which a custom block owns with the program's copy. So the
+   heap, which a custom block owns with the program's copy; a program's
+   loops, in the block of its terms (fused), taken after the door. So the
    identity of one load into few destinations allocates nothing. */
 static value run(const call *c, value vp, value vrs, int single, int rank,
                  const int64_t *shape, value vdsts, value vloads,
@@ -2309,12 +2300,6 @@ static value run(const call *c, value vp, value vrs, int single, int rank,
   int nl = (int)Wosize_val(Field(vp, NX_PROG_INS));
   int nouts = (int)Wosize_val(Field(vp, NX_PROG_OUTS));
   if ((int)Wosize_val(vloads) != nl) CAMLreturn(Val_int(NX_SHAPE));
-  /* A reduction's loop holds two destinations, the virtual operand and
-     the loads, and the program's loop its outputs, its loads and the
-     index: past NX_MAX_OPERANDS arrays the call declines, as nx_cpu.mli
-     states, before the program's copy, which holds that many. */
-  if (3 + nl > NX_MAX_OPERANDS || nouts + nl + 1 > NX_MAX_OPERANDS)
-    CAMLreturn(Val_int(NX_DECLINED));
   int nd = (int)Wosize_val(vdsts), e = NX_OK;
   int nc = Is_block(vcarry), dt = identity_of(vp);
   int nr = single ? 1 : (int)Wosize_val(vrs), want = 0;
@@ -2442,10 +2427,15 @@ static value run(const call *c, value vp, value vrs, int single, int rank,
      the door and given back before its end, since nothing raises in
      between. */
   home h = g != NULL ? HEAP : KEPT_SCRATCH;
-  nx_array loads[NX_MAX_OPERANDS];
+  nx_array identity_load, *loads = &identity_load;
   int copied = 0, oom = 0;
-  fused *z = g != NULL ? nx_cpu_take((int64_t)sizeof(fused)) : NULL;
+  fused *z = g != NULL ? nx_cpu_take(fused_bytes(nl)) : NULL;
   if (g != NULL && z == NULL) oom = 1;
+  if (z != NULL) {
+    z->nloads = nl;
+    fused_tables(z, nl);
+    loads = z->loads;
+  }
   for (; copied < nl && !oom; copied++) {
     nx_array *l = &a[nd + copied];
     loads[copied] = *l;
@@ -2462,14 +2452,14 @@ static value run(const call *c, value vp, value vrs, int single, int rank,
   nx_array x = {.rank = rank};
   if (!oom && g != NULL) e = nx_cpu_prog_bind(g, loads, rank, shape, &index);
   if (!oom && !e && g != NULL) {
-    *z = (fused){.prog = g, .nloads = nl, .index = index};
+    z->prog = g;
     int64_t past = 1;
     for (int d = rank - 1; d >= 0; d--) {
       x.dim[d] = shape[d];
       x.dim[rank + d] = past;
       past *= x.dim[d];
     }
-    fuse(z, &x, loads);
+    fuse(z, &x, index);
   }
   for (int i = 0; !oom && !e && i < nr; i++) {
     const nx_array *y = &a[first[i]], *y1 = two(rs[i]) ? y + 1 : y;
