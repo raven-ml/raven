@@ -25,10 +25,10 @@ val op :
     [Place] its operand, as a graph computes on one device, which its caller
     holds every value on. A
     [Gather], a [Scatter], a [Fold], an [Assemble] and a [Sort] compute as
-    {!Lower_index} states.
+    {!Lower_index} states, and a [Linalg] as {!Lower_linalg} states.
 
     Raises [Invalid_argument] naming the operation for one not lowered yet:
-    [Fft], [Linalg] and [Check], a boolean [Add] [Scatter] or
+    [Fft] and [Check], a [Linalg] that {!Lower_linalg} refuses, a boolean [Add] [Scatter] or
     [Fold], a [Sort] along an axis of more than [2{^31}] elements, a scaled
     or segmented [Contract], a [Bitcast] that changes width, a reduction or
     a scan of a complex [Prod], and a scan of a [complex128] [Max], [Min] or

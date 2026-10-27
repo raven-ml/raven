@@ -280,5 +280,6 @@ let op (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r) (o : r P.t) =
         Lower_index.sort (D.Any (Nx.dtype x)) ~axis ~descending ~k (node x)
       in
       [| values; positions |]
-  | Fft _ | Linalg _ | Check _ ->
+  | Linalg l -> Lower_linalg.op node l
+  | Fft _ | Check _ ->
       unlowered (P.name o)

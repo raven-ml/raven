@@ -1,0 +1,416 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(* Matrix routines lowered, held to the relations Lower_linalg states: each
+   factorisation reconstructs its operand and its unitary factors are
+   orthonormal within the stated bounds, its values agree with nx's eager ones
+   within both bounds, and its edges are exact: triangles of +0, pivots by the
+   rule, NaN for a matrix that fails. A check's own float64 rounding is added
+   to the bound it checks. *)
+
+open Windtrap
+module D = Nx_array.Dtype
+module P = Nx.Prim
+
+let linalg l = P.eval ~by:"t" (P.Linalg l)
+
+(* Dtypes *)
+
+type real = R : string * (float, 's) D.t * float -> real
+
+let reals =
+  [ R ("float32", D.Float32, 0x1p-24); R ("float64", D.Float64, 0x1p-53) ]
+let gamma u k = k *. u /. (1. -. (k *. u))
+let u64 = 0x1p-53
+
+(* Matrices
+
+   A batch of [b] matrices of [m] rows and [n] columns, in C order. *)
+
+type mat = { b : int; m : int; n : int; x : float array }
+
+let get t k i j = t.x.((((k * t.m) + i) * t.n) + j)
+let mat b m n x = { b; m; n; x }
+
+let of_nx (type s) (a : (float, s, _) Nx.t) =
+  let s = Nx.shape a in
+  let r = Array.length s in
+  let b = Array.fold_left ( * ) 1 (Array.sub s 0 (r - 2)) in
+  mat b s.(r - 2) s.(r - 1) (Nx.to_array a)
+
+let init b m n f =
+  mat b m n
+    (Array.init (b * m * n) (fun e -> f (e / (m * n)) (e / n mod m) (e mod n)))
+
+let product ?(abs = false) p q =
+  let f = if abs then Float.abs else Fun.id in
+  init p.b p.m q.n (fun k i j ->
+      let s = ref 0. in
+      for l = 0 to p.n - 1 do
+        s := !s +. (f (get p k i l) *. f (get q k l j))
+      done;
+      !s)
+
+let transpose t = init t.b t.n t.m (fun k i j -> get t k j i)
+
+let bits xs = Array.map Int64.bits_of_float xs
+
+(* [bounded ~msg ~than v] asserts that [v] is a number at most [than]. *)
+let bounded ~msg ~than v =
+  equal ~msg:(msg ^ " is a number") bool false (Float.is_nan v);
+  at_most ~msg float_exact ~than v
+
+(* [elementwise ~msg d bound] asserts each element of [d] at most [bound]'s. *)
+let elementwise ~msg d bound =
+  Array.iteri
+    (fun e v ->
+      bounded ~msg:(Printf.sprintf "%s, element %d" msg e) ~than:bound.x.(e)
+        (Float.abs v))
+    d.x
+
+let diff p q = { p with x = Array.mapi (fun e v -> v -. q.x.(e)) p.x }
+
+(* Operands
+
+   Elements uniform in [-1, 1], laid out by rows, by columns, or one matrix
+   broadcast along a batch of two. *)
+
+type layout = Rows | Columns | Broadcast
+
+let layouts = [ Rows; Columns; Broadcast ]
+
+let layout_name = function
+  | Rows -> "rows"
+  | Columns -> "columns"
+  | Broadcast -> "broadcast"
+
+let uniform st = Random.State.float st 2. -. 1.
+
+let operand (type s) (dt : (float, s) D.t) layout batch m n f =
+  let count = Array.fold_left ( * ) 1 batch * m * n in
+  match layout with
+  | Rows ->
+      Nx.create dt (Array.append batch [| m; n |])
+        (Array.init count (fun e -> f (e / (m * n)) (e / n mod m) (e mod n)))
+  | Columns ->
+      Nx.matrix_transpose
+        (Nx.create dt (Array.append batch [| n; m |])
+           (Array.init count (fun e ->
+                f (e / (m * n)) (e mod m) (e / m mod n))))
+  | Broadcast ->
+      Nx.broadcast_to [| 2; m; n |]
+        (Nx.create dt [| m; n |]
+           (Array.init (m * n) (fun e -> f 0 (e / n) (e mod n))))
+
+type case = { dt : real; layout : layout; batch : int array; seed : int }
+
+let pp_case ppf c =
+  let (R (name, _, _)) = c.dt in
+  Format.fprintf ppf "(%s, %s, [%s], %d)" name (layout_name c.layout)
+    (String.concat ";" (Array.to_list (Array.map string_of_int c.batch)))
+    c.seed
+
+let cases_of shapes =
+  Gen.with_pp
+    (fun ppf (c, s) ->
+      Format.fprintf ppf "%a %s" pp_case c
+        (String.concat "x" (List.map string_of_int s)))
+    (Gen.map
+       (fun (((dt, layout), batch), (shape, seed)) ->
+         ({ dt; layout; batch; seed }, shape))
+       (Gen.pair
+          (Gen.pair (Gen.pair (Gen.of_list reals) (Gen.of_list layouts))
+             (Gen.of_list [ [||]; [| 2 |] ]))
+          (Gen.pair (Gen.of_list shapes) (Gen.int_range 0 1_000_000))))
+
+(* Every dtype, layout and shape, in turn. *)
+let examples shapes =
+  List.concat
+    (List.mapi
+       (fun i shape ->
+         List.mapi
+           (fun j dt ->
+             ( {
+                 dt;
+                 layout = List.nth layouts ((i + j) mod 3);
+                 batch = (if (i + j) mod 2 = 0 then [||] else [| 2 |]);
+                 seed = (2 * i) + j;
+               },
+               shape ))
+           reals)
+       shapes)
+
+let cover_case c shape =
+  let (R (name, _, _)) = c.dt in
+  cover name true;
+  cover (layout_name c.layout) true;
+  cover "an empty matrix" (List.mem 0 shape);
+  cover "one element" (List.for_all (( = ) 1) shape)
+
+let state c = Random.State.make [| c.seed |]
+
+(* A case's variant, of three, and its flags: chosen by its seed, so that the
+   examples reach each. *)
+let variant c = c.seed mod 3 = 0
+let flag c bit = (c.seed lsr bit) land 1 = 1
+
+(* A float of the other triangle, which no routine reads: NaN or large. *)
+let garbage st = if Random.State.bool st then Float.nan else 1e30 *. uniform st
+
+(* Cholesky *)
+
+(* [spd st n] is [x xᵀ + (n + 1) I] for [x] uniform: symmetric positive
+   definite and well conditioned, a function of its row and column. *)
+let spd st n =
+  let x = Array.init (n * n) (fun _ -> uniform st) in
+  Array.init (n * n) (fun e ->
+      let i = e / n and j = e mod n in
+      let s = ref (if i = j then float_of_int (n + 1) else 0.) in
+      for l = 0 to n - 1 do
+        s := !s +. (x.((i * n) + l) *. x.((j * n) + l))
+      done;
+      !s)
+
+let cholesky_law (c, shape) =
+  let (R (_, dt, u)) = c.dt in
+  let n = List.hd shape in
+  cover_case c shape;
+  let st = state c in
+  let mats = Array.init 2 (fun _ -> spd st n) in
+  let junk = Array.init (2 * n * n) (fun _ -> garbage st) in
+  let a =
+    operand dt c.layout c.batch n n (fun k i j ->
+        if i >= j then mats.(k).((i * n) + j)
+        else junk.((((k * n) + i) * n) + j))
+  in
+  cover "an upper triangle of NaN" (Array.exists Float.is_nan (Nx.to_array a));
+  let am = of_nx a in
+  let run triangle =
+    Lowered.run (fun () -> linalg (Cholesky { triangle; a }))
+  in
+  let l = { am with x = run Lower } and uf = run Upper in
+  equal ~msg:"Upper is Lower's transpose" (array int64)
+    (bits (transpose l).x) (bits uf);
+  for k = 0 to am.b - 1 do
+    for i = 0 to n - 1 do
+      greater ~msg:"a positive diagonal" float_exact ~than:0. (get l k i i);
+      for j = i + 1 to n - 1 do
+        equal ~msg:"+0 above the diagonal" int64 0L
+          (Int64.bits_of_float (get l k i j))
+      done
+    done
+  done;
+  let sym = init am.b n n (fun k i j -> get am k (max i j) (min i j)) in
+  let bound = product ~abs:true l (transpose l) in
+  let tol =
+    gamma u (float_of_int (n + 1)) +. gamma u64 (float_of_int (n + 1))
+  in
+  elementwise ~msg:"L Lᵀ = a" (diff (product l (transpose l)) sym)
+    { bound with x = Array.map (( *. ) tol) bound.x }
+
+(* A batch of a positive definite matrix and one that is not: the second alone
+   is NaN. *)
+let cholesky_fails () =
+  let a =
+    Nx.create D.Float64 [| 2; 2; 2 |] [| 4.; 0.; 2.; 5.; 1.; 0.; 2.; 1. |]
+  in
+  let l = Lowered.run (fun () -> linalg (Cholesky { triangle = Lower; a })) in
+  equal (array float_exact) [| 2.; 0.; 1.; 2. |] (Array.sub l 0 4);
+  equal (array bool) [| true; true; true; true |]
+    (Array.map Float.is_nan (Array.sub l 4 4))
+
+(* LU *)
+
+let lu_law (c, shape) =
+  let (R (_, dt, u)) = c.dt in
+  let m, n = match shape with [ m; n ] -> (m, n) | _ -> assert false in
+  let k = Int.min m n in
+  cover_case c shape;
+  let st = state c in
+  let zero_column = variant c in
+  cover "a zero pivot" (zero_column && m > 0 && n > 0);
+  let a =
+    operand dt c.layout c.batch m n (fun _ _ j ->
+        if zero_column && j = 0 then 0. else uniform st)
+  in
+  let am = of_nx a in
+  let lu, pivots, perm =
+    ( Lowered.run (fun () ->
+          let x, _, _ = linalg (Lu a) in
+          x),
+      Lowered.run (fun () ->
+          let _, p, _ = linalg (Lu a) in
+          p),
+      Lowered.run (fun () ->
+          let _, _, p = linalg (Lu a) in
+          p) )
+  in
+  let lu = { am with x = lu } in
+  for b = 0 to am.b - 1 do
+    let rows = Array.init m Fun.id in
+    for j = 0 to k - 1 do
+      let p = Int64.to_int pivots.((b * k) + j) in
+      if p < j || p >= m then failf "pivot %d of step %d" p j;
+      let t = rows.(j) in
+      rows.(j) <- rows.(p);
+      rows.(p) <- t
+    done;
+    equal ~msg:"perm follows the pivots" (array int)
+      rows
+      (Array.init m (fun i -> Int64.to_int perm.((b * m) + i)))
+  done;
+  let l =
+    init am.b m k (fun b i j ->
+        if i = j then 1. else if i > j then get lu b i j else 0.)
+  in
+  let r = init am.b k n (fun b i j -> if i <= j then get lu b i j else 0.) in
+  Array.iter (fun x -> bounded ~msg:"|L| <= 1" ~than:1. (Float.abs x)) l.x;
+  let pa =
+    init am.b m n (fun b i j ->
+        get am b (Int64.to_int perm.((b * m) + i)) j)
+  in
+  let bound = product ~abs:true l r in
+  let tol = gamma u (float_of_int k) +. gamma u64 (float_of_int (k + 1)) in
+  elementwise ~msg:"L U = P a" (diff (product l r) pa)
+    { bound with x = Array.map (( *. ) tol) bound.x }
+
+(* [pivots a] is the pivots and the row order of the lowered LU of [a]. *)
+let pivots rows a =
+  let a = Nx.create D.Float64 [| rows; Array.length a / rows |] a in
+  ( Lowered.run (fun () ->
+        let _, p, _ = linalg (Lu a) in
+        p),
+    Lowered.run (fun () ->
+        let _, _, p = linalg (Lu a) in
+        p) )
+
+let pivot_rule () =
+  (* A NaN below the diagonal is never the pivot; a tie keeps the first. *)
+  equal (pair (array int64) (array int64)) ([| 2L; 1L |], [| 2L; 1L; 0L |])
+    (pivots 3 [| 1.; 0.; Float.nan; 0.; 2.; 0. |]);
+  (* Nothing is greater than a NaN on the diagonal. *)
+  equal (pair (array int64) (array int64)) ([| 0L |], [| 0L; 1L |])
+    (pivots 2 [| Float.nan; 5. |]);
+  equal (pair (array int64) (array int64)) ([| 0L |], [| 0L; 1L |])
+    (pivots 2 [| 1.; -1. |])
+
+(* Triangular solves *)
+
+let solve_law (c, shape) =
+  let (R (_, dt, u)) = c.dt in
+  let n, r = match shape with [ n; r ] -> (n, r) | _ -> assert false in
+  cover_case c shape;
+  let st = state c in
+  let triangle = if flag c 0 then Nx_kernel.Upper else Lower in
+  let adjoint = flag c 1 and unit_diagonal = flag c 2 in
+  cover "upper" (triangle = Upper);
+  cover "adjoint" adjoint;
+  cover "unit diagonal" unit_diagonal;
+  let read i j = if triangle = Lower then i >= j else i <= j in
+  let a =
+    operand dt c.layout c.batch n n (fun _ i j ->
+        if i = j && not unit_diagonal then
+          let sign = if Random.State.bool st then 1. else -1. in
+          sign *. (1. +. Random.State.float st 1.)
+        else if read i j && i <> j then uniform st /. float_of_int n
+        else garbage st)
+  in
+  let am = of_nx a in
+  let batch = Array.sub (Nx.shape a) 0 (Array.length (Nx.shape a) - 2) in
+  let b = operand dt Rows batch n r (fun _ _ _ -> uniform st) in
+  let x =
+    Lowered.run (fun () ->
+        linalg (Solve_triangular { triangle; adjoint; unit_diagonal; a; b }))
+  in
+  let x = mat am.b n r x in
+  let t =
+    init am.b n n (fun k i j ->
+        let i, j = if adjoint then (j, i) else (i, j) in
+        if i = j && unit_diagonal then 1.
+        else if read i j then get am k i j
+        else 0.)
+  in
+  let bound = product ~abs:true t x in
+  let tol = gamma u (float_of_int n) +. gamma u64 (float_of_int (n + 1)) in
+  elementwise ~msg:"op(a) x = b" (diff (product t x) (of_nx b))
+    { bound with x = Array.map (( *. ) tol) bound.x }
+
+let solve_singular () =
+  let a = Nx.create D.Float64 [| 2; 2 |] [| 1.; 0.; 3.; 0. |] in
+  let b = Nx.create D.Float64 [| 2; 1 |] [| 1.; 2. |] in
+  let solve unit_diagonal =
+    Lowered.run (fun () ->
+        linalg
+          (Solve_triangular
+             { triangle = Lower; adjoint = false; unit_diagonal; a; b }))
+  in
+  equal (array bool) [| true; true |] (Array.map Float.is_nan (solve false));
+  equal (array float_exact) [| 1.; -1. |] (solve true)
+
+(* Refusals *)
+
+let refuses f =
+  raises_match (function Invalid_argument _ -> true | _ -> false) (fun () ->
+      Lowered.run f)
+
+let refused () =
+  let z = Nx.create D.Complex64 [| 1; 1 |] [| Complex.one |] in
+  let a = Nx.create D.Float32 [| 1; 1 |] [| 1. |] in
+  refuses (fun () -> linalg (Cholesky { triangle = Lower; a = z }));
+  refuses (fun () -> fst (linalg (Eig { dtype = D.Complex64; a })));
+  (* An identity computed from its coordinates reads no storage. *)
+  let eye () =
+    fst
+      (P.eval ~by:"t"
+         (P.Map
+            {
+              layout = Nx_array.Layout.contiguous [| 2; 2 |];
+              prog =
+                Nx_kernel.Prog.v ~ins:[||]
+                  [|
+                    Coord 0;
+                    Coord 1;
+                    Op2 (Compare Equal, 0, 1);
+                    Op1 (Cast, D.Any D.Float32, 2);
+                  |]
+                  ~outs:[| 3 |];
+              outs = [ D.Float32 ];
+              loads = Iarray.of_array [||];
+            }))
+  in
+  refuses (fun () -> linalg (Cholesky { triangle = Lower; a = eye () }))
+
+(* Suites *)
+
+let law name ~count shapes f =
+  prop name ~count ~examples:(examples shapes) (cases_of shapes) f
+
+let square = [ [ 0 ]; [ 1 ]; [ 2 ]; [ 3 ]; [ 5 ] ]
+let general = [ [ 0; 2 ]; [ 2; 0 ]; [ 1; 1 ]; [ 3; 2 ]; [ 2; 3 ]; [ 4; 4 ] ]
+
+let () =
+  exit
+    (run "Lower_linalg"
+       [
+         group "cholesky"
+           [
+             law "L Lᵀ reconstructs a" ~count:4 square cholesky_law;
+             test "a matrix that is not positive definite is NaN"
+               cholesky_fails;
+           ];
+         group "lu"
+           [
+             law "L U reconstructs P a" ~count:4 general lu_law;
+             test "pivots follow the rule" pivot_rule;
+           ];
+         group "solve_triangular"
+           [
+             law "x solves op(a) x = b" ~count:6
+               [ [ 0; 1 ]; [ 1; 1 ]; [ 3; 2 ]; [ 4; 0 ]; [ 5; 1 ] ]
+               solve_law;
+             test "a zero diagonal is NaN" solve_singular;
+           ];
+         test "complex operands, eig and unstored operands are refused" refused;
+       ])
