@@ -2885,6 +2885,31 @@ let test_consumer_memory () =
     (freed (fun x ->
          C.with_ ~by:"test.call" [ Any (Nx.donate x) ] (fun _ -> raise Exit)))
 
+(* A consumer that ends returns the memory of every handle it claimed, in
+   either order of its operands: the donor's, which a view passed on reads,
+   and a copy's, which a movement made. Every value stays reachable across
+   the count, so no collection returns either. *)
+let test_consumer_frees_every_handle =
+  let k = 256 in
+  let bytes = 4 * k * k in
+  cases
+    ~name:(function
+      | true -> "a copy, then a view" | false -> "a view, then a copy")
+    "a consumer frees the memory of every handle it claimed" [ true; false ]
+    (fun copy_first ->
+      let x = on_mem [| k; k |] (Array.init (k * k) Float.of_int) in
+      let view = Nx.reshape [| k * k |] (Nx.donate x) in
+      (* A reshape of a transpose copies. *)
+      let copy = Nx.reshape [| k * k |] (Nx.transpose (Nx.donate x)) in
+      let before = settled () in
+      C.with_ ~by:"test.call"
+        (if copy_first then [ Any copy; Any view ] else [ Any view; Any copy ])
+        ignore;
+      let freed = before - settled () in
+      ignore (Sys.opaque_identity (x, view, copy));
+      at_least ~msg:"the donor's memory and the copy's" int ~than:(2 * bytes)
+        freed)
+
 let () =
   exit
     (run "nx donate"
@@ -2941,6 +2966,7 @@ let () =
                test_consumer_takes;
              test "a consumer updates taken memory in place and frees the rest"
                test_consumer_memory;
+             test_consumer_frees_every_handle;
              test "two values a call gives back over one donor stay apart"
                test_given_back_twice;
            ];

@@ -50,9 +50,6 @@ let read ~by x =
 
 (* Donors *)
 
-(* A handle among a consumer's operands, at its position. *)
-type handle = At : int * ('v, 's, 'd) Value.t -> handle
-
 (* Whether [x] and [y] are one value. Donors are mutable blocks, each made
    once, so physical equality tells them; their types are an operand's,
    whose dtype and brand are existential, so it is taken on their
@@ -60,30 +57,10 @@ type handle = At : int * ('v, 's, 'd) Value.t -> handle
 let same x y = Obj.repr x == Obj.repr y
 
 (* Whether [y] is the donor of the handle [h]. *)
-let donates (At (_, x)) y =
-  match x with
+let donates (Value.Any h) y =
+  match h with
   | Value.Handle { donor; _ } -> same donor y
   | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> false
-
-(* Whether the handles [h] and [h'] have one donor. *)
-let one_donor h (At (_, x')) =
-  match x' with
-  | Value.Handle { donor; _ } -> donates h donor
-  | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> false
-
-(* The handles among [xs], the first of each donor's: two handles of one
-   donor are read as a handle beside its donor is, and the donor dies, and its
-   memory is consumed, once. *)
-let handles xs =
-  let rec first seen = function
-    | [] -> []
-    | h :: rest ->
-        if List.exists (one_donor h) seen then first seen rest
-        else h :: first (h :: seen) rest
-  in
-  first []
-    (List.filter (fun (At (_, x)) -> is_handle x)
-       (List.mapi (fun i (Value.Any x) -> At (i, x)) xs))
 
 (* Claims
 
@@ -91,14 +68,13 @@ let handles xs =
    donor's word from [Live] to its death, for good; a donor that died first,
    on any domain, raises naming its consumer. Two consumers racing for one
    donor is a misuse: one of them raises, possibly both, and a donor a loser
-   claimed before it raised stays dead. [taken] holds the buffers whose
-   memory {!reuse} gave a result, dead since, and [ended] guards the steps
-   after {!consumed}. *)
+   claimed before it raised stays dead. [handles] holds every handle among
+   [operands], in their order, and [ended] guards the steps after
+   {!consumed}. *)
 type 'd claim = {
   by : string;
   operands : 'd Value.any array;
-  handles : handle list;
-  mutable taken : Rig.Buffer.t list;
+  handles : 'd Value.any list;
   mutable ended : bool;
 }
 
@@ -122,16 +98,24 @@ let rec kill ~by x w died =
         kill ~by x w died
 
 let claim ~by xs =
-  let handles = handles xs in
+  let handles = List.filter (fun (Value.Any x) -> is_handle x) xs in
   let died = Value.Died by in
-  List.iter
-    (fun (At (_, x)) ->
-      match x with
-      | Value.Handle { donor; _ } -> kill ~by x (word donor) died
-      | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ ->
-          ())
-    handles;
-  { by; operands = Array.of_list xs; handles; taken = []; ended = false }
+  (* Each handle kills its donor unless a handle before it has that donor:
+     two handles of one donor are read as a handle beside its donor is, and
+     the donor dies once, at the first. *)
+  let rec kills seen = function
+    | [] -> ()
+    | (Value.Any x as h) :: rest ->
+        (match x with
+        | Value.Handle { donor; _ } ->
+            if not (List.exists (fun s -> donates s donor) seen) then
+              kill ~by x (word donor) died
+        | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ ->
+            ());
+        kills (h :: seen) rest
+  in
+  kills [] handles;
+  { by; operands = Array.of_list xs; handles; ended = false }
 
 (* [y] as the consumer of the handles [hs] reads it: a handle as its arrays, a
    donor of one of [hs] as a live value, and any other value as it is. *)
@@ -153,13 +137,14 @@ let operand c i =
 
 (* Reuse *)
 
+(* Whether no consumption killed [b]: a buffer over memory a {!reuse} took,
+   or that the ending of a claim consumed, is dead. *)
+let unconsumed b = Option.is_none (Rig.Buffer.dead b)
+
 (* Whether [b] and [b'] are one buffer, or live and share memory: a dead
    buffer's place may lie in memory made since its memory was freed. *)
 let share b b' =
-  b == b'
-  || Option.is_none (Rig.Buffer.dead b)
-     && Option.is_none (Rig.Buffer.dead b')
-     && Rig.Buffer.overlaps b b'
+  b == b' || (unconsumed b && unconsumed b' && Rig.Buffer.overlaps b b')
 
 (* Whether [a] and [a'] are one buffer placing each index at the same bytes
    as the same dtype. *)
@@ -188,21 +173,18 @@ let has_bytes (type v s d) (x : (v, s, d) Value.t) =
   | Value.Array _ | Value.Shards _ | Value.Handle _ -> true
   | Value.Deferred _ | Value.Traced _ -> false
 
-let claimed c i = List.exists (fun (At (j, _)) -> j = i) c.handles
-
 let reuse (type w r d) (c : d claim) ~own (dt : (w, r) D.t) layout :
     (Rig.Buffer.t * (w, r) A.t) option =
   let n = Array.length c.operands in
-  (* The buffer of operand [i], a claimed handle on one device whose array
-     holds the result, if every operand lies apart from its memory but those
-     at positions of [own], which may read it as that array places it and no
-     other way: a view of the array in another layout reads other indices of
-     it. *)
+  (* The buffer of operand [i], a handle on one device whose array holds the
+     result over memory no earlier reuse took, if every operand lies apart
+     from its memory but those at positions of [own], which may read it as
+     that array places it and no other way: a view of the array in another
+     layout reads other indices of it. *)
   let fits i =
     let (Value.Any x) = operand c i in
     match x with
-    | Value.Handle { arrays; _ } when Iarray.length arrays = 1 && claimed c i
-      ->
+    | Value.Handle { arrays; _ } when Iarray.length arrays = 1 ->
         let a = Iarray.get arrays 0 in
         let b = A.buffer a in
         let apart j a' =
@@ -215,9 +197,7 @@ let reuse (type w r d) (c : d claim) ~own (dt : (w, r) D.t) layout :
           ((not (has_bytes y)) || Iarray.for_all (apart j) (Prim.arrays y))
           && alone (j + 1)
         in
-        if holds dt layout a && (not (List.memq b c.taken)) && alone 0 then
-          Some b
-        else None
+        if holds dt layout a && unconsumed b && alone 0 then Some b else None
     | Value.Handle _ | Value.Array _ | Value.Shards _ | Value.Deferred _
     | Value.Traced _ ->
         None
@@ -228,16 +208,15 @@ let reuse (type w r d) (c : d claim) ~own (dt : (w, r) D.t) layout :
       | None -> None
       | Some b -> (
           match take_memory ~by:c.by b with
-          | Some b' ->
-              c.taken <- b :: c.taken;
-              Some (b, A.v dt layout b')
+          | Some b' -> Some (b, A.v dt layout b')
           | None -> None))
     own
 
 (* Ending *)
 
-(* The buffers of a handle, one per device. *)
-let buffers (At (_, x)) = Iarray.to_list (Iarray.map A.buffer (Prim.arrays x))
+(* The buffers of a handle, one per device, that no consumption killed. *)
+let buffers (Value.Any x) =
+  List.filter unconsumed (Iarray.to_list (Iarray.map A.buffer (Prim.arrays x)))
 
 (* Whether no two of [bufs] share memory. Shards placed by borrowing lie in
    one allocation, where each reads the memory the other holds. *)
@@ -245,19 +224,20 @@ let rec apart = function
   | [] -> true
   | b :: rest -> (not (List.exists (Rig.Buffer.overlaps b) rest)) && apart rest
 
-(* Memory no other value reads, every shard of a value or none, and that no
-   result took, is consumed and then freed, so that it returns to its device
-   once the work on it is done. Shards that share memory with one another are
-   not consumed: each is read by the other, and rig donates no two buffers
-   over one memory together. *)
+(* The memory of each handle that no other value reads, every live shard of
+   it or none, is consumed and then freed, so that it returns to its device
+   once the work on it is done. Memory a result took is dead, and so is
+   memory an earlier handle's ending consumed, which the second of two
+   handles over one memory finds: each memory is consumed once. Shards that
+   share memory with one another are not consumed: each is read by the
+   other, and rig donates no two buffers over one memory together. *)
 let consumed c =
   c.ended <- true;
   let why = "donated to " ^ c.by in
   List.iter
     (fun h ->
       let bufs = buffers h in
-      if (not (List.exists (fun b -> List.memq b c.taken) bufs)) && apart bufs
-      then
+      if apart bufs then
         Rig.Claim.with_ ~read:[] ~donate:bufs (fun cl ->
             if List.for_all (Rig.Claim.exclusive cl) bufs then
               List.map (Rig.Claim.consume cl ~why) bufs

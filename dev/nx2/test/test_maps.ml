@@ -664,10 +664,9 @@ let test_contract_consumes () =
   raises_match (Exn.invalid_arg ~substring:"t: float32 [2] was donated to t")
     (fun () -> Eval.run ~by:"t" (Value.Copy init))
 
-(* Two handles of one donor, one a copy a movement passed on, are one handle
-   to their consumer: the claim kills their donor once and keeps the first,
-   whose memory a result may take beside the donor, while the second's, apart
-   from it, it may not. *)
+(* Two handles of one donor, one a copy a movement passed on, beside their
+   donor: the claim kills the donor once, and a result may take the memory of
+   either, once, the first's beside the donor that reads it identically. *)
 let test_one_donor_twice () =
   let x =
     Value.Array
@@ -692,7 +691,8 @@ let test_one_donor_twice () =
   let takes own s =
     Option.is_some (Donate.reuse c ~own D.Float32 (A.Layout.contiguous s))
   in
-  equal ~msg:"the copy's memory" bool false (takes [ 2 ] [| 4 |]);
+  equal ~msg:"the copy's memory" bool true (takes [ 2 ] [| 4 |]);
+  equal ~msg:"taken once" bool false (takes [ 2 ] [| 4 |]);
   equal ~msg:"the first's memory" bool true (takes [ 0; 1 ] [| 2; 2 |]);
   Donate.consumed c
 

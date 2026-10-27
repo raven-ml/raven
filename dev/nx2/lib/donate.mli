@@ -88,12 +88,11 @@ type 'd claim
     brand ['d]. *)
 
 val claim : by:string -> 'd Value.any list -> 'd claim
-(** [claim ~by xs] claims the handles among [xs] for their consumer [by]: the
-    first handle of each donor, in their order, kills its donor naming [by],
-    for good. A second handle of one donor (the same handle twice, two
-    donations of one value, a handle a movement passed on) is read as the
-    donor beside its handle is: its donor dies once and its memory is
-    consumed once.
+(** [claim ~by xs] claims every handle among [xs] for their consumer [by], in
+    their order, and each kills its donor naming [by], for good. Two handles
+    of one donor (the same handle twice, two donations of one value, a handle
+    and one a movement passed on) are read as the donor beside its handle is,
+    and the donor dies once, at the first.
 
     Raises [Invalid_argument] naming [by] and the earlier consumer for a donor
     that died first, on any domain; the donors claimed before it stay dead. *)
@@ -128,14 +127,15 @@ val reuse :
 
 val consumed : 'd claim -> unit
 (** [consumed c] ends [c] once its consumer returned or raised: the memory of
-    each claimed handle that no other value reads, every shard of a value or
-    none, and that no {!reuse} took, is consumed and freed, so that it returns
-    to its device once the work on it is done; its buffers stay dead naming
-    the consumer. Shards that share memory with one another, as borrows of one
-    allocation do, are read by each other and consumed by none. Memory a
-    {!reuse} took is the result's. A consumer that raises before it makes its
-    result must free that memory; [Eval] does, and {!with_consumer} leaves
-    what {!take} gave [f] to [f]. *)
+    each handle [c] claimed that no other value reads, every live shard of a
+    value or none, and that no {!reuse} took, is consumed and freed, so that
+    it returns to its device once the work on it is done; its buffers stay
+    dead naming the consumer. Memory that several handles lie over, as two
+    handles of one donor may, is consumed once. Shards that share memory with
+    one another, as borrows of one allocation do, are read by each other and
+    consumed by none. Memory a {!reuse} took is the result's. A consumer that
+    raises before it makes its result must free that memory; [Eval] does, and
+    {!with_consumer} leaves what {!take} gave [f] to [f]. *)
 
 (** {1:consumers Functions of several operations} *)
 
