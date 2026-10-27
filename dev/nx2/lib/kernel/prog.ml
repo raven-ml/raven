@@ -377,30 +377,62 @@ let single p =
 (* Expressions *)
 
 module E = struct
-  (* nx_kernel_stubs.c's walk reads this layout: the tags in this order, a
-     dtype as its immediate constructor, and an operation's operands from
-     field 2. *)
+  (* Each expression has an id no other expression made has, by which
+     of_exprs walks a shared subexpression once. *)
   type ('v, 's) t =
-    | In : int * ('v, 's) D.t -> ('v, 's) t
-    | Coord : int -> (int64, D.int64_elt) t
-    | Const : ('v, 's) D.t * string -> ('v, 's) t
-    | Op1 : op1 * ('v, 's) D.t * ('a, 'b) t -> ('v, 's) t
-    | Op2 : op2 * ('v, 's) D.t * ('a, 'b) t * ('a, 'b) t -> ('v, 's) t
-    | Op3 :
-        op3 * ('v, 's) D.t * ('c, 'e) t * ('a, 'b) t * ('a, 'b) t
+    | In : { id : int; k : int; dt : ('v, 's) D.t } -> ('v, 's) t
+    | Coord : { id : int; axis : int } -> (int64, D.int64_elt) t
+    | Const : { id : int; dt : ('v, 's) D.t; bits : string } -> ('v, 's) t
+    | Op1 : {
+        id : int;
+        k : op1;
+        dt : ('v, 's) D.t;
+        x : ('a, 'b) t;
+      }
+        -> ('v, 's) t
+    | Op2 : {
+        id : int;
+        k : op2;
+        dt : ('v, 's) D.t;
+        x : ('a, 'b) t;
+        y : ('a, 'b) t;
+      }
+        -> ('v, 's) t
+    | Op3 : {
+        id : int;
+        k : op3;
+        dt : ('v, 's) D.t;
+        c : ('c, 'e) t;
+        x : ('a, 'b) t;
+        y : ('a, 'b) t;
+      }
         -> ('v, 's) t
 
   type any = Any : ('v, 's) t -> any [@@unboxed]
 
   let any e = Any e
+  let ids = Atomic.make 0
+  let fresh () = Atomic.fetch_and_add ids 1
+
+  let id : type v s. (v, s) t -> int = function
+    | In { id; _ } -> id
+    | Coord { id; _ } -> id
+    | Const { id; _ } -> id
+    | Op1 { id; _ } -> id
+    | Op2 { id; _ } -> id
+    | Op3 { id; _ } -> id
 
   let dtype : type v s. (v, s) t -> (v, s) D.t = function
     | Coord _ -> D.Int64
-    | In (_, dt) -> dt
-    | Const (dt, _) -> dt
-    | Op1 (_, dt, _) -> dt
-    | Op2 (_, dt, _, _) -> dt
-    | Op3 (_, dt, _, _, _) -> dt
+    | In { dt; _ } -> dt
+    | Const { dt; _ } -> dt
+    | Op1 { dt; _ } -> dt
+    | Op2 { dt; _ } -> dt
+    | Op3 { dt; _ } -> dt
+
+  let make1 k dt x = Op1 { id = fresh (); k; dt; x }
+  let make2 k dt x y = Op2 { id = fresh (); k; dt; x; y }
+  let make3 k dt c x y = Op3 { id = fresh (); k; dt; c; x; y }
 
   let refuse by dts =
     let name (D.Any dt) = D.name dt in
@@ -411,33 +443,33 @@ module E = struct
   let input k dt =
     if k < 0 || k >= max_operands then
       invalid_arg (strf "Nx_kernel.Prog.E.input: no operand %d" k);
-    In (k, dt)
+    In { id = fresh (); k; dt }
 
   let coord a =
     if a < 0 || a >= Nx_array.Layout.max_rank then
       invalid_arg (strf "Nx_kernel.Prog.E.coord: no axis %d" a);
-    Coord a
+    Coord { id = fresh (); axis = a }
 
-  let const dt x = Const (dt, bits dt x)
+  let const dt x = Const { id = fresh (); dt; bits = bits dt x }
 
   let op1 k dt x =
     let a = dtype x in
     if not (accepts1 k a dt) then refuse "op1" [ D.Any a; D.Any dt ];
-    Op1 (k, dt, x)
+    make1 k dt x
 
   (* [k], a kind of two operands, over [x] and [y]. *)
   let op2 by k x y =
     let a = dtype x in
     if not (accepts2 k a) then refuse by [ D.Any a ];
-    Op2 (k, a, x, y)
+    make2 k a x y
 
   let binary k x y = op2 "binary" (Binary k) x y
-  let compare k x y = Op2 (Compare k, D.Bool, x, y)
+  let compare k x y = make2 (Compare k) D.Bool x y
 
   let op3 k c x y =
     let a = dtype c and b = dtype x in
     if not (accepts3 k a b) then refuse "op3" [ D.Any a; D.Any b ];
-    Op3 (k, b, c, x, y)
+    make3 k b c x y
 
   (* Kinds. The types of those whose domain a type states, the floats', the
      booleans' and every dtype's, make their nodes valid; the others check.
@@ -453,8 +485,8 @@ module E = struct
   let exp2 x = unary (Unary Exp2) x
   let log x = unary (Unary Log) x
   let log2 x = unary (Unary Log2) x
-  let log1p x = Op1 (Unary Log1p, dtype x, x)
-  let expm1 x = Op1 (Unary Expm1, dtype x, x)
+  let log1p x = make1 (Unary Log1p) (dtype x) x
+  let expm1 x = make1 (Unary Expm1) (dtype x) x
   let sin x = unary (Unary Sin) x
   let cos x = unary (Unary Cos) x
   let tan x = unary (Unary Tan) x
@@ -467,7 +499,7 @@ module E = struct
   let asinh x = unary (Unary Asinh) x
   let acosh x = unary (Unary Acosh) x
   let atanh x = unary (Unary Atanh) x
-  let erf x = Op1 (Unary Erf, dtype x, x)
+  let erf x = make1 (Unary Erf) (dtype x) x
   let floor x = unary (Unary Floor) x
   let ceil x = unary (Unary Ceil) x
   let round x = unary (Unary Round) x
@@ -479,21 +511,21 @@ module E = struct
   let idiv x y = op2 "idiv" (Binary Idiv) x y
   let rem x y = op2 "rem" (Binary Mod) x y
   let pow x y = op2 "pow" (Binary Pow) x y
-  let atan2 x y = Op2 (Binary Atan2, dtype x, x, y)
-  let maximum x y = Op2 (Binary Maximum, dtype x, x, y)
-  let minimum x y = Op2 (Binary Minimum, dtype x, x, y)
+  let atan2 x y = make2 (Binary Atan2) (dtype x) x y
+  let maximum x y = make2 (Binary Maximum) (dtype x) x y
+  let minimum x y = make2 (Binary Minimum) (dtype x) x y
   let logand x y = op2 "logand" (Binary And) x y
   let logor x y = op2 "logor" (Binary Or) x y
   let logxor x y = op2 "logxor" (Binary Xor) x y
-  let threefry x y = Op2 (Binary Threefry, D.Uint64, x, y)
-  let equal x y = Op2 (Compare Equal, D.Bool, x, y)
-  let not_equal x y = Op2 (Compare Not_equal, D.Bool, x, y)
-  let less x y = Op2 (Compare Less, D.Bool, x, y)
-  let less_equal x y = Op2 (Compare Less_equal, D.Bool, x, y)
-  let copy x = Op1 (Copy, dtype x, x)
-  let cast dt x = Op1 (Cast, dt, x)
+  let threefry x y = make2 (Binary Threefry) D.Uint64 x y
+  let equal x y = compare Equal x y
+  let not_equal x y = compare Not_equal x y
+  let less x y = compare Less x y
+  let less_equal x y = compare Less_equal x y
+  let copy x = make1 Copy (dtype x) x
+  let cast dt x = make1 Cast dt x
   let bitcast dt x = op1 Bitcast dt x
-  let where c x y = Op3 (Where, dtype x, c, x, y)
+  let where c x y = make3 Where (dtype x) c x y
   let fma x y z = op3 Fma x y z
 
   (* Operators *)
@@ -513,8 +545,8 @@ module E = struct
   let ( land ) = logand
   let ( lor ) = logor
   let ( lxor ) = logxor
-  let ( && ) x y = Op2 (Binary And, dtype x, x, y)
-  let ( || ) x y = Op2 (Binary Or, dtype x, x, y)
+  let ( && ) x y = make2 (Binary And) (dtype x) x y
+  let ( || ) x y = make2 (Binary Or) (dtype x) x y
   let ( = ) = equal
   let ( <> ) = not_equal
   let ( < ) = less
@@ -523,45 +555,8 @@ module E = struct
   let ( >= ) x y = less_equal y x
 end
 
-(* [walk outs] walks the expressions [outs] depth first, operands left to
-   right, and gives each block the node of its structure, made as the walk
-   finishes the first block of that structure: a block whose kind, fields
-   and operands' nodes are another's is that node. It keys blocks by address
-   and allocates nothing on the OCaml heap until it ends, so no collection
-   can move a block under it. Its result holds native int32 words: the
-   number of nodes, the number of outputs and each output's node, then six
-   words per node, its tag, two fields and three operands ([-1] past its
-   arity), then the constants' bits. A field is an operand, an axis, a
-   dtype's code or a kind's code ([nx_prog.h]), as the tag reads it: In's
-   operand and dtype, Coord's axis, Const's dtype, Op1's kind and dtype,
-   Op2's and Op3's kind. A constant's second field is the word where its
-   bits start, and its first operand their length in bytes. *)
-external walk : E.any iarray -> string = "nx_kernel_prog_walk"
-
-(* Prog's kinds by their codes in nx_prog.h, whose macros number each type's
+(* Each kind's code in nx_prog.h, whose macros number each type's
    constructors in the order prog.ml declares them. *)
-let op1s =
-  [|
-    Copy; Cast; Bitcast; Unary Neg; Unary Recip; Unary Abs; Unary Sign;
-    Unary Sqrt; Unary Exp; Unary Exp2; Unary Log; Unary Log2; Unary Log1p;
-    Unary Expm1; Unary Sin; Unary Cos; Unary Tan; Unary Asin; Unary Acos;
-    Unary Atan; Unary Sinh; Unary Cosh; Unary Tanh; Unary Asinh; Unary Acosh;
-    Unary Atanh; Unary Erf; Unary Floor;
-    Unary Ceil; Unary Round; Unary Trunc;
-  |]
-
-let op2s =
-  [|
-    Binary Add; Binary Sub; Binary Mul; Binary Fdiv; Binary Idiv; Binary Mod;
-    Binary Pow; Binary Atan2; Binary Maximum; Binary Minimum; Binary And;
-    Binary Or; Binary Xor; Binary Threefry; Compare Equal; Compare Not_equal;
-    Compare Less; Compare Less_equal;
-  |]
-
-let op3s = [| Where; Fma |]
-
-(* Each kind's code, its index in [op1s], [op2s] or [op3s]: [op1s.(code1 k)]
-   is [k]. *)
 let unary_code : unary -> int = function
   | Neg -> 0
   | Recip -> 1
@@ -623,6 +618,11 @@ let code2 = function
 
 let code3 = function Where -> 0 | Fma -> 1
 
+(* The codes of each arity's kinds: one past its last kind's. *)
+let op1_codes = 1 + code1 (Unary Trunc)
+let op2_codes = 1 + code2 (Compare Less_equal)
+let op3_codes = 1 + code3 Fma
+
 (* One-node programs *)
 
 let dtypes = List.length D.all
@@ -631,12 +631,12 @@ let dtypes = List.length D.all
    map that finds its program builds none. A slot that two domains fill at
    once keeps either's program; they are equal. *)
 let nodes1 : t option array =
-  Array.make (Array.length op1s * dtypes * dtypes) None
+  Array.make (op1_codes * dtypes * dtypes) None
 
-let nodes2 : t option array = Array.make (Array.length op2s * dtypes) None
+let nodes2 : t option array = Array.make (op2_codes * dtypes) None
 
 let nodes3 : t option array =
-  Array.make (Array.length op3s * dtypes * dtypes) None
+  Array.make (op3_codes * dtypes * dtypes) None
 
 (* [p] kept at [table.(i)]. *)
 let kept table i p =
@@ -667,53 +667,73 @@ let node3 k c x =
       kept nodes3 i
         (of_node ~ins:[| D.Any c; D.Any x; D.Any x |] (Op3 (k, 0, 1, 2)))
 
-(* The dtype of code [c], which the walk read from a dtype. *)
-let dtype_of_code c = Option.get (D.of_code c)
-
-(* The walk's tags: E.t's constructors in order, Op3 last. *)
-let tag_in = 0
-let tag_coord = 1
-let tag_const = 2
-let tag_op1 = 3
-let tag_op2 = 4
-
-(* Expressions checked their nodes as v would, and the walk made each node
+(* Expressions checked their nodes as v would, and the walk makes each node
    after its operands: what remains is what an expression cannot know, its
    program's operands and outputs. *)
 
 (* Whether [ins] has an operand [k] of dtype [dt]. *)
-let reads ins k (D.Any dt) =
+let reads ins k dt =
   k < Iarray.length ins
   &&
   let (D.Any d) = Iarray.get ins k in
   D.equal d dt
 
+(* The walk keeps two tables: [seen] gives an expression walked before, by
+   its id, its node, so that a shared subexpression is walked once;
+   [index] gives a node and its dtype the index of the first node of that
+   structure, so that two expressions of one structure are one node. An id
+   is unique within one process alone: an expression read back through
+   [Marshal] can carry the id of another here, so a hit in [seen] counts
+   only for the expression itself. *)
 let of_exprs ~ins outs =
   let invalid why = invalid_arg ("Nx_kernel.Prog.of_exprs: " ^ why) in
-  let w = walk outs in
-  let word i = Int32.to_int (String.get_int32_ne w (4 * i)) in
-  let node n =
-    let i = 2 + word 1 + (6 * n) in
-    let x0 = word (i + 1) and x1 = word (i + 2) and a = word (i + 3) in
-    let tag = word i in
-    if tag = tag_in then begin
-      if not (reads ins x0 (dtype_of_code x1)) then
-        invalid (strf "In %d is no operand of ins" x0);
-      In x0
-    end
-    else if tag = tag_coord then Coord x0
-    else if tag = tag_const then
-      Const (dtype_of_code x0, String.sub w (4 * x1) a)
-    else if tag = tag_op1 then Op1 (op1s.(x0), dtype_of_code x1, a)
-    else if tag = tag_op2 then Op2 (op2s.(x0), a, word (i + 4))
-    else Op3 (op3s.(x0), a, word (i + 4), word (i + 5))
-  in
-  let nodes = Iarray.init (word 0) node in
-  let outs = Iarray.init (word 1) (fun o -> word (2 + o)) in
   let n = Iarray.length ins + Iarray.length outs in
-  if Iarray.length outs = 0 then invalid "no output"
-  else if n > max_operands then invalid (Option.get (too_many n))
-  else { ins; nodes; outs }
+  if Iarray.length outs = 0 then invalid "no output";
+  if n > max_operands then invalid (Option.get (too_many n));
+  let seen = Hashtbl.create 16 and index = Hashtbl.create 16 in
+  let nodes = ref [] and count = ref 0 in
+  let node nd dt =
+    match Hashtbl.find_opt index (nd, dt) with
+    | Some i -> i
+    | None ->
+        Hashtbl.add index (nd, dt) !count;
+        nodes := nd :: !nodes;
+        incr count;
+        !count - 1
+  in
+  let rec walk : type v s. (v, s) E.t -> int =
+   fun e ->
+    let id = E.id e in
+    match Hashtbl.find_opt seen id with
+    | Some (E.Any walked, i) when E.Any walked == E.Any e -> i
+    | Some _ | None ->
+        let nd =
+          match e with
+          | In { k; dt; _ } ->
+              if not (reads ins k dt) then
+                invalid (strf "In %d is no operand of ins" k);
+              In k
+          | Coord { axis; _ } -> Coord axis
+          | Const { dt; bits; _ } -> Const (D.Any dt, bits)
+          | Op1 { k; dt; x; _ } -> Op1 (k, D.Any dt, walk x)
+          | Op2 { k; x; y; _ } ->
+              let a = walk x in
+              Op2 (k, a, walk y)
+          | Op3 { k; c; x; y; _ } ->
+              let a = walk c in
+              let b = walk x in
+              Op3 (k, a, b, walk y)
+        in
+        let i = node nd (D.Any (E.dtype e)) in
+        Hashtbl.replace seen id (E.Any e, i);
+        i
+  in
+  let out o =
+    let (E.Any e) = Iarray.get outs o in
+    walk e
+  in
+  let outs = Iarray.init (Iarray.length outs) out in
+  { ins; nodes = Iarray.of_list (List.rev !nodes); outs }
 
 (* Binding *)
 

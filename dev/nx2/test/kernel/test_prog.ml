@@ -945,7 +945,7 @@ let law_of_exprs (d, seed) =
   cover "outputs of two builds" (Array.length d.outs >= 2);
   cover "fewer nodes than drawn" (Iarray.length q.nodes < Array.length d.nodes)
 
-(* Programs grown node by node, most of them past the walk's first 128 nodes:
+(* Programs grown node by node, up to 400, so that the walk's tables grow:
    each node is an operand, an axis, a constant, a copy of an earlier node's
    structure, or a kind over earlier nodes of the dtypes it takes. Constants
    are small integers, [-0.], NaNs with payloads, and the same bits in dtypes
@@ -1137,6 +1137,32 @@ let test_of_exprs_two_builds () =
   let q = P.of_exprs ~ins:[| D.Any D.Int64 |] [| chain (); chain () |] in
   equal ~msg:"nodes" int 14999 (Iarray.length q.nodes);
   equal ~msg:"outs" (array int) [| 14998; 14998 |] (Iarray.to_array q.outs)
+
+(* An id is unique within one process alone: a child forked from this one
+   counts ids from where this one does, so an operand read it sends back
+   has the id of the next operand read made here. Both lower as what they
+   are. *)
+let test_of_exprs_foreign_ids () =
+  let r, w = Unix.pipe () in
+  match Unix.fork () with
+  | 0 ->
+      Unix.close r;
+      let oc = Unix.out_channel_of_descr w in
+      Marshal.to_channel oc (P.E.any (P.E.input 0 D.Int64)) [];
+      close_out oc;
+      Unix._exit 0
+  | pid ->
+      Unix.close w;
+      let local = P.E.any (P.E.input 1 D.Int64) in
+      let ic = Unix.in_channel_of_descr r in
+      let (sent : P.E.any) = Marshal.from_channel ic in
+      close_in ic;
+      equal ~msg:"child" bool true (snd (Unix.waitpid [] pid) = Unix.WEXITED 0);
+      let ins = [| D.Any D.Int64; D.Any D.Int64 |] in
+      let q = P.of_exprs ~ins:(Iarray.of_array ins) [| sent; local |] in
+      equal ~msg:"nodes" (array node) [| P.In 0; P.In 1 |]
+        (Iarray.to_array q.nodes);
+      equal ~msg:"outs" (array int) [| 0; 1 |] (Iarray.to_array q.outs)
 
 (* Each kind and dtype comes through a lowering as the node it was. *)
 let test_of_exprs_kinds () =
@@ -1435,6 +1461,8 @@ let tests =
           test_of_exprs_deep;
         test "of_exprs merges two builds of 15000 nodes"
           test_of_exprs_two_builds;
+        test "of_exprs lowers expressions of another process as they are"
+          test_of_exprs_foreign_ids;
         test "of_exprs keeps each kind" test_of_exprs_kinds;
         test "each kind function makes its kind's node"
           test_exprs_kind_functions;
