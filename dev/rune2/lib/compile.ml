@@ -872,7 +872,9 @@ let over (V x) arrays =
 (* [p] evaluated over the arrays of a consumer of [args]: the donors it
    claimed are dead, so the arrays of every placed argument stand for it, a
    donor beside its handle included. Each result is copied, since no value
-   over the arrays may outlive the consumer. *)
+   over the arrays may outlive the consumer. A value over an argument's
+   memory shares it for good, so a later donation of that argument computes
+   into fresh memory: the cost of this path. *)
 let evaluated p args arrays =
   let values =
     Array.mapi

@@ -513,17 +513,34 @@ let law_donation (Donation_case (dt, s, xo, yo, e)) =
   cover "the result is fresh" (Option.is_some !result && not took);
   equal (outcome_t bits_t) eager jitted
 
-(* A contraction reads its operands along their contracted axes, so one that
-   is also its [init] lends nothing. *)
+(* A contraction reads its [init] at its own index and its operands along
+   their contracted axes: an [init] lends, and one that is also an operand
+   does not. *)
 let test_contract_init () =
   let p = Nx.Pattern.v "i j, j k -> i k | j" in
-  let f x = Nx.contract ~init:x f32 p x x in
   let m () = Nx.create f32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-  let expected = bits (f (m ())) in
-  let x = m () in
-  let took, y = in_place (Rune.jit' f) x in
+  let a = m () in
+  let into w = Nx.contract ~init:w f32 p a a in
+  let expected = bits (into (m ())) in
+  let took, y = in_place (Rune.jit' into) (m ()) in
   equal bits_t expected (bits y);
-  equal ~msg:"in place" bool false took
+  equal ~msg:"an init: in place" bool true took;
+  let f x = Nx.contract ~init:x f32 p x x in
+  let expected = bits (f (m ())) in
+  let took, y = in_place (Rune.jit' f) (m ()) in
+  equal bits_t expected (bits y);
+  equal ~msg:"an init that is an operand: in place" bool false took
+
+(* A scatter's target lends to the scatter, first. *)
+let test_scatter_lends () =
+  let p = Nx.create Nx.int64 [| 2 |] [| 2L; 0L |] in
+  let u = Nx.create f32 [| 2 |] [| 9.; -0. |] in
+  let f x = Nx.scatter ~axis:0 p u x in
+  let m () = Nx.create f32 [| 3 |] [| 1.; 2.; 3. |] in
+  let expected = bits (f (m ())) in
+  let took, y = in_place (Rune.jit' f) (m ()) in
+  equal bits_t expected (bits y);
+  equal ~msg:"in place" bool true took
 
 (* Checks: the first failing check in the order the function made them
    raises its exception, with its data at its first failing index in C
@@ -727,7 +744,9 @@ let () =
                test_evaluated_donation;
              prop ~examples:donation_examples "donation keeps the values"
                donation_cases law_donation;
-             test "a contraction's init lends nothing" test_contract_init;
+             test "a contraction's init lends, an operand does not"
+               test_contract_init;
+             test "a scatter's target lends" test_scatter_lends;
              test "checks raise as eagerly" test_checks;
              stateful ~domains:2 ~count:10 ~steps:8
                "a call retraces iff its abstract value is new" cache_commands;
