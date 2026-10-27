@@ -106,8 +106,7 @@ let load_image path =
   let h, w, c = Image.probe src in
   let pixels = Rig.Buffer.create Rig.host (h * w * c) in
   Rig.Buffer.write pixels Bigarray.int8_unsigned (Image.decode src);
-  let shape = if c = 1 then [| h; w |] else [| h; w; c |] in
-  let layout = L.contiguous (Iarray.of_array shape) in
+  let layout = L.contiguous (Iarray.of_array [| h; w; c |]) in
   Nx.Repr.unsafe_of_array Nx.Host.v (A.v Nx_array.Dtype.Uint8 layout pixels)
 
 (* [with_pixels ~by ~channels x f] is [f bytes ~width ~height ~channels] for the
@@ -115,10 +114,8 @@ let load_image path =
 let with_pixels ~by ~channels x f =
   let h, w, c =
     match Nx.shape x with
-    | [| h; w |] -> (h, w, 1)
     | [| h; w; c |] -> (h, w, c)
-    | s ->
-        Fail.invalid_argf "%s: %d axes, an image has 2 or 3" by (Array.length s)
+    | s -> Fail.invalid_argf "%s: %d axes, an image has 3" by (Array.length s)
   in
   if not (List.mem c channels) then
     Fail.invalid_argf "%s: %d channels, the format holds %s" by c

@@ -9,10 +9,9 @@
     npz, SafeTensors and GGUF files do. A file of named arrays is read and
     written as an {!Archive.t}, and each format's functions are named after it.
 
-    An {e image} is a [uint8] array of shape [[|h; w|]] for one channel, or
-    [[|h; w; c|]] for [c] channels: one for grey, two for grey and alpha, three
-    for red, green and blue, four for those and alpha. Its first row is the top
-    of the picture. A PNG or JPEG file holds one image.
+    An {e image} is a [uint8] array of shape [[|h; w; c|]], [c] one for grey,
+    two for grey and alpha, three for RGB, four for RGBA, first row at the top.
+    A PNG or JPEG file holds one image.
 
     {b Loading.} A loader reads the file's header and returns host values
     ({!Nx.Host}). An array whose bytes lie in the file in an order nx reads (C
@@ -440,16 +439,16 @@ val save_txt : ?sep:string -> string -> ('v, 's, 'd) Nx.t -> unit
 
 val load_image : string -> Nx.host Nx.uint8_t
 (** [load_image path] is the image of the PNG or JPEG file [path], recognised
-    by its contents, with the channels the file holds. One channel loads
-    without a channel axis, as [[|h; w|]]. A PNG file loads with 1, 2, 3 or 4
-    channels for grey, grey and alpha, colour, and colour and alpha. A palette
-    loads as its colours. A transparency ([tRNS]) chunk adds an alpha channel,
-    as PNG-3's section 11.3.1.1 defines it: each palette entry's alpha, 255
-    past the chunk's end, or 0 where a pixel's samples, at the file's depth,
-    equal the chunk's with the bits above that depth cleared, and 255
-    elsewhere. A JPEG file loads with 1 channel for grey and 3 for any other
-    colour space, CMYK and YCCK converted. A 16-bit sample keeps its high byte,
-    and a sample of 1, 2 or 4 bits is scaled to 8 bits, rounded to nearest.
+    by its contents, with the channels the file holds. A PNG file loads with 1,
+    2, 3 or 4 channels for grey, grey and alpha, colour, and colour and alpha.
+    A palette loads as its colours. A transparency ([tRNS]) chunk adds an alpha
+    channel, as PNG-3's section 11.3.1.1 defines it: each palette entry's
+    alpha, 255 past the chunk's end, or 0 where a pixel's samples, at the
+    file's depth, equal the chunk's with the bits above that depth cleared, and
+    255 elsewhere. A JPEG file loads with 1 channel for grey and 3 for any
+    other colour space, CMYK and YCCK converted. A 16-bit sample keeps its high
+    byte, and a sample of 1, 2 or 4 bits is scaled to 8 bits, rounded to
+    nearest.
 
     Raises [Failure] also if the file is neither a PNG nor a JPEG stream, or if
     a checksum does not match. *)
@@ -462,8 +461,8 @@ val save_image : string -> 'd Nx.uint8_t -> unit
     quality 90 (the standard tables of T.81's Annex K scaled to 20%), colour
     with its chroma subsampled 4:2:0.
 
-    Raises [Invalid_argument] if the extension is neither, or if [x] has no
-    pixel or a shape its format does not hold. *)
+    Raises [Invalid_argument] if the extension is neither, or if [x] has not
+    three axes, has no pixel, or has channels its format does not hold. *)
 
 val encode_png : ?dpi:float -> ?srgb:bool -> 'd Nx.uint8_t -> string
 (** [encode_png x] is the contents of a PNG file of the image [x], without
@@ -477,7 +476,7 @@ val encode_png : ?dpi:float -> ?srgb:bool -> 'd Nx.uint8_t -> string
 
     Without [dpi] and [srgb] it is the file {!save_image} writes for [x].
 
-    Raises [Invalid_argument] if [x] has no pixel or not 1 to 4 channels, or
-    if [Float.round (dpi /. 0.0254)] is not in \[[1];[2{^31} - 1]\], the range
-    of a PNG integer: [dpi] is below about [0.0127], above about [5.45e7], or
-    not a number. *)
+    Raises [Invalid_argument] if [x] has not three axes, has no pixel or has
+    not 1 to 4 channels, or if [Float.round (dpi /. 0.0254)] is not in
+    \[[1];[2{^31} - 1]\], the range of a PNG integer: [dpi] is below about
+    [0.0127], above about [5.45e7], or not a number. *)

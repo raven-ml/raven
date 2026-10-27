@@ -6,9 +6,9 @@ and zipfile an NPZ file numpy would not write. The PNG files come from the
 minimal writer below, which chooses the row filters, sample depths and
 interlacing that an encoder picks on its own, except png_rgba.png and
 png_la.png, which Pillow writes as it writes the JPEG files. Each image has a
-sibling .npy of the pixels Pillow decodes from it, except png_gray_trns.png and
-png_rgb16_trns.png, whose pixels are stated from PNG-3 where Pillow's decoding
-differs.
+sibling .npy of the pixels Pillow decodes from it, of shape (h, w, c), except
+png_gray_trns.png and png_rgb16_trns.png, whose pixels are stated from PNG-3
+where Pillow's decoding differs.
 
 Usage:
     cd dev/nx2/test/io/support
@@ -131,7 +131,10 @@ def write_png(path, pixels, depth, color, filters=(0,), palette=None,
 
 
 def reference(path, mode):
-    np.save(path.rsplit(".", 1)[0] + ".npy", np.asarray(Image.open(path).convert(mode)))
+    """The pixels Pillow decodes from [path] in [mode], of shape (h, w, c): a
+    grey image keeps a channel axis of one."""
+    pixels = np.asarray(Image.open(path).convert(mode))
+    np.save(path.rsplit(".", 1)[0] + ".npy", pixels.reshape(pixels.shape[:2] + (-1,)))
 
 
 def stated(path, pixels):

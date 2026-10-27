@@ -23,13 +23,13 @@ let expected name =
 
 (* Drawn images *)
 
-(* Images of [channels], [0] for no channel axis, of 1 to 8 rows and columns,
-   with any pixels, in any view. *)
+(* Images of [channels], of 1 to 8 rows and columns, with any pixels, in any
+   view. *)
 let images channels =
   let open Gen in
   let* c = of_list channels in
   let* h, w = pair (int_range 1 8) (int_range 1 8) in
-  let shape = if c = 0 then [| h; w |] else [| h; w; c |] in
+  let shape = [| h; w; c |] in
   let n = Array.fold_left ( * ) 1 shape in
   let* pixels = array ~size:(constant n) (int_range 0 255) in
   let+ view = of_list [ Plain; Transposed; Flipped; Broadcast ] in
@@ -37,8 +37,7 @@ let images channels =
   let x =
     match view with
     | Plain -> x
-    | Transposed ->
-        Nx.transpose ~axes:(if c = 0 then [ 1; 0 ] else [ 1; 0; 2 ]) x
+    | Transposed -> Nx.transpose ~axes:[ 1; 0; 2 ] x
     | Flipped -> Nx.flip ~axes:[ 0 ] x
     | Broadcast -> Nx.broadcast_to shape (Nx.slice [ Nx.R (0, 1) ] x)
   in
@@ -59,10 +58,8 @@ let smooth channels =
   let open Gen in
   let* c = of_list channels in
   let+ h = int_range 8 24 and+ w = int_range 8 24 in
-  let shape = if c = 0 then [| h; w |] else [| h; w; c |] in
-  Nx.init Nx.uint8 shape (fun i ->
-      let k = if Array.length i = 3 then i.(2) else 0 in
-      ((i.(0) * 4) + (i.(1) * 3) + (k * 40)) land 255)
+  Nx.init Nx.uint8 [| h; w; c |] (fun i ->
+      ((i.(0) * 4) + (i.(1) * 3) + (i.(2) * 40)) land 255)
 
 let smooth channels = Gen.with_pp Nx.pp (smooth channels)
 
@@ -129,7 +126,7 @@ let png_chunks =
       prop
         "with ~dpi and ~srgb the file is encode_png's with the two chunks \
          added, and loads back the same"
-        (Gen.pair (images [ 0; 1; 2; 3; 4 ]) (Gen.float_range 1. 1000.))
+        (Gen.pair (images [ 1; 2; 3; 4 ]) (Gen.float_range 1. 1000.))
         (fun ((_, x), dpi) ->
           let plain = Nx_io.encode_png x in
           let png = Nx_io.encode_png ~dpi ~srgb:true x in
@@ -151,22 +148,16 @@ let png_chunks =
               Nx_io.encode_png ~dpi tiny));
     ]
 
-(* [x] as an image of one channel loads: without a channel axis. *)
-let loaded x =
-  match Nx.shape x with
-  | [| h; w; 1 |] -> Nx.reshape [| h; w |] x
-  | _ -> x
-
 let round_trips =
   group "round trips"
     [
       prop
         "save writes encode_png's bytes, which load back as the image, of \
          every channel count"
-        (images [ 0; 1; 2; 3; 4 ])
+        (images [ 1; 2; 3; 4 ])
         (fun (view, x) ->
           covers (view, x);
-          let channels = if Nx.ndim x = 2 then 1 else Nx.dim 2 x in
+          let channels = Nx.dim 2 x in
           cover "grey" (channels = 1);
           cover "grey and alpha" (channels = 2);
           cover "colour" (channels = 3);
@@ -174,14 +165,13 @@ let round_trips =
           let path = temp_file ~suffix:".png" () in
           Nx_io.save_image path x;
           equal string (Nx_io.encode_png x) (read path);
-          equal image (loaded x) (Nx_io.load_image path));
+          equal image x (Nx_io.load_image path));
       prop "a smooth image returns from JPEG within a mean error of 8 levels"
-        (smooth [ 0; 1; 3 ])
+        (smooth [ 1; 3 ])
         (fun x ->
           let path = temp_file ~suffix:".jpg" () in
           Nx_io.save_image path x;
           let back = Nx_io.load_image path in
-          let x = loaded x in
           equal (array int) (Nx.shape x) (Nx.shape back);
           let e = errors x back in
           at_most int ~than:8 (Array.fold_left ( + ) 0 e / Array.length e));
@@ -272,11 +262,14 @@ let files =
           ("a BMP extension", "x.bmp", [| 2; 2; 3 |]);
           ("no extension", "x", [| 2; 2; 3 |]);
           ("a vector", "x.png", [| 4 |]);
+          ("no channel axis", "x.png", [| 2; 2 |]);
+          ("four axes", "x.png", [| 2; 2; 3; 1 |]);
           ("five channels", "x.png", [| 2; 2; 5 |]);
           ("no rows", "x.png", [| 0; 3; 3 |]);
           ("two channels in JPEG", "x.jpg", [| 2; 2; 2 |]);
           ("four channels in JPEG", "x.jpg", [| 2; 2; 4 |]);
-          ("no columns in JPEG", "x.jpg", [| 3; 0 |]);
+          ("no channel axis in JPEG", "x.jpg", [| 2; 2 |]);
+          ("no columns in JPEG", "x.jpg", [| 3; 0; 1 |]);
         ]
         (fun (_, name, shape) ->
           let path = Filename.concat (temp_dir ()) name in
