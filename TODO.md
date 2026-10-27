@@ -45,6 +45,10 @@ raven / llama.cpp (Vulkan; ROCm):
   200 sections take a resource and record it after an allocation, or raise
   with a change half made; each allocates its record, takes the resource,
   then publishes with one store
+- rig.remote: one Ctrl-C ends an agent's `serve` two ways: inside a
+  command it answers `Error "Stdlib.Sys.Break"`, in `serve`'s own waits it
+  raises. An agent idle in its wait for a controller sees the Ctrl-C only
+  when a controller arrives
 - Windows: rig's signal mask blocks nothing there, so a Ctrl-C can land
   inside sections below rig's core that Linux and macOS keep it out of,
   such as rig.cuda's page-lock registry under a contended lock
