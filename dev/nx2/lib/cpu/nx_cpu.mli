@@ -40,7 +40,9 @@
     the function of its name in [nx_kinds.h], with that function's bits,
     NaNs aside, on every target. So [Exp2] is exact at integers whose power
     is in the dtype, and [Log2] at powers of two. The kinds keep subnormal
-    operands and results.
+    operands and results. *)
+
+(** {1:lane_order Lane order}
 
     {e Lane order} puts the terms of a sum or a product, numbered as
     {!Nx_kernel.section-reductions} and {!Nx_kernel.section-contraction}
@@ -51,19 +53,25 @@
     4, then [i + 2] for [i] below 2, then lane 0 takes lane 1, a lane
     holding no term taking no part. The blocks are combined by a binary
     tree whose left part holds the largest power of two of blocks below
-    their count, each part combined the same way.
+    their count, each part combined the same way. *)
+
+(** {1:maps Maps}
 
     [map] computes every program of at most 17 operands and outputs
     together and declines the others: its loop iterates the outputs, the
     loads and the index the coordinates read, and holds at most
-    {!Nx_array.max_operands} arrays.
+    {!Nx_array.max_operands} arrays. *)
+
+(** {1:padded Padded loads}
 
     A padded load of [map], [reduce] or [scan] is read from one copy in
     host memory that the call holds until it returns: its operand padded
     before the windows, which are a view of the copy, an axis the operand
     broadcasts and the pad leaves alone held at one element. A pad that
     fits no operand of its load's shape, or a padded shape other than the
-    loop's, is refused with [Shape_mismatch] before the copy is made.
+    loop's, is refused with [Shape_mismatch] before the copy is made. *)
+
+(** {1:contractions Contractions}
 
     [contract] computes every contraction in [float32], [float64],
     [complex64], [complex128] or an integer of 4 to 64 bits, of [a], [b]
@@ -87,7 +95,9 @@
     a scale multiplies each element, rounded once into [acc], at any contracted
     extent. Each scaled operand adds one unit roundoff of [acc] per term
     to the bound, barring overflow of an element times its scale, which
-    gives an infinite term where the exact one is finite.
+    gives an infinite term where the exact one is finite. *)
+
+(** {2:contraction_order Order}
 
     A float or complex contraction adds its products, numbered as
     {!Nx_kernel.section-contraction} numbers them, in {e chain order}, one
@@ -102,7 +112,9 @@
     [b_axis], [Contracting]'s depth the pair's whole extent; each output
     adds its group's products in that order. A segmented contraction
     reads the offsets whole before any write, so they may be [dst]
-    itself.
+    itself. *)
+
+(** {2:contraction_bound Bound}
 
     A complex output of [K] products is within
     [γ(2K + 2) (|init| + Σ|a||b|)] of the exact sum of [a], [b] and [init]
@@ -115,7 +127,9 @@
     neighbouring lanes until lane 0 takes lane 1. Until then, a term passes
     at most [⌈2K/16⌉ + 3] roundings and a product's two weigh at most
     [√2 |a||b|]; after, at most [log₂] of the blocks [+ 2]. Both stay
-    within [2K + 2] roundings.
+    within [2K + 2] roundings. *)
+
+(** {1:reductions Reductions and scans}
 
     [reduce] and [scan] compute one [Sum], [Prod], [Max] or [Min] of a
     program's one operand, read plain or padded, at every dtype, into a
@@ -145,7 +159,9 @@
     refuse with [Shape_mismatch] what {!Nx_kernel.Shape.padded} and
     {!Nx_kernel.Shape.reduce} or {!Nx_kernel.Shape.scan} answer [Error]
     for, a reduction's loads whose shape once loaded is not its [shape],
-    and destinations whose shapes are not the ones they give.
+    and destinations whose shapes are not the ones they give. *)
+
+(** {2:sums Sums and products}
 
     A float or complex [Sum] or [Prod] reduction adds or multiplies each
     output's terms in lane order, a complex [Sum] part by part and a complex
@@ -158,7 +174,9 @@
     carry into chunk [c] combined with [c]'s total, and each result of a chunk
     is its carry combined with the chunk's terms up to it, left to right. So
     the scan of a slice's terms from a chunk's start, with the carry into that
-    chunk, has the bits of the scan of the whole slice from that chunk on.
+    chunk, has the bits of the scan of the whole slice from that chunk on. *)
+
+(** {2:states Logsumexp and Moments}
 
     A [Logsumexp] or a [Moments] reduction runs two passes, each summing in
     lane order on nx.cpu's own [Max], [Sum] and kinds. [Logsumexp]'s first
@@ -182,7 +200,9 @@
     within [E = (L + D) u M + u|μ|] of the exact [μ], [M] the mean of the
     terms' magnitudes, and its variance within
     [(L + D + 5) u V + 2 (L + D + 1) u E √V + (3L + 3D + 7) u E²] of the
-    exact [V].
+    exact [V]. *)
+
+(** {2:state_scans Logsumexp and Moments scans}
 
     A [Logsumexp] or a [Moments] scan combines its states on each slice by
     the odd/even network ({!Nx_kernel.section-scans}), each operation in
@@ -207,7 +227,9 @@
       [i + 1] exact in the carrier, [R] the range of the terms up to [i]
       and [V] their variance, the mean [μ] is within [(4 D + 1) u R + u|μ|]
       of the exact one and the variance within
-      [(7 D + 1) u V + (4 D² - 2 D) u R √V].
+      [(7 D + 1) u V + (4 D² - 2 D) u R √V]. *)
+
+(** {1:scatters Gathers and scatters}
 
     [gather] and [scatter] compute every case, at every dtype, and refuse with
     [Shape_mismatch] operands and destinations whose shapes do not fit. A
@@ -218,24 +240,21 @@
     scattered axis, with their positions and targets; a {e row of slices}
     is the slices at successive indices of the last axis off it, joined
     with the axes before it where every operand steps through them as
-    one. Over [m] updates along the scattered axis, the Add takes 12 KiB
-    and [32 m] bytes on each of its threads; in place of the [32 m],
-    [40 m + 8] bytes once where its positions step 0 along each of fewer
-    rows of slices than threads, and otherwise, where its slices are fewer
-    than its threads and its dtype is [float4_e2m1fn], 32 bytes for each
-    update in all. Where its slices are fewer than its threads, each the
-    only slice of its row or one whose positions differ along its row, and
-    its dtype of [w] bytes, [w ≥ 1], it sorts a slice's updates by
-    {e bin}, a run of [2{^k}] successive targets along the axis, at most
-    1024 bins in all, a block of updates at a time: all [m] where the axis
-    has [m] targets or more, else at most 2{^22}. It takes instead
-    [8 + w] bytes for each update of a block, and on each thread
-    [16 (8 + w) + 8] bytes for each bin and a bin's sums, a byte of flag
-    and a float32 sum for each of its targets, the flags padded to 64
-    bytes: at most half a core's L2 of sums, or those of a 512th of the
-    axis's targets. Along an axis of more than 2{^19} updates and more
-    updates than targets, every bin keeps its own sums, about five bytes
-    for each target of its bins, the last counted whole.
+    one. Over [m] updates and [t] targets along the scattered axis, the
+    Add takes 12 KiB and [32 m] bytes on each of its threads; in place of
+    the [32 m], [40 m + 8] bytes once where its positions step 0 along each
+    of fewer rows of slices than threads, and otherwise, where its slices
+    are fewer than its threads and its dtype is [float4_e2m1fn], 32 bytes
+    for each update in all. Where its slices are fewer than its threads,
+    each the only slice of its row or one whose positions differ along its
+    row, at a dtype of [w] bytes, [w ≥ 1], it takes instead [(8 + w) m]
+    bytes in all where [t ≥ m], else [(8 + w) min (m, 2{^22})], and on
+    each thread [16 w + 136] KiB and five eighths of a core's L2 cache or
+    [5 t / 512] bytes, whichever is more; where [m] exceeds both [t] and
+    2{^19}, about [5 t] bytes in all in place of each thread's L2 or
+    [5 t / 512]. *)
+
+(** {1:sorts_folds Sorts, assemblies and folds}
 
     [sort] and [assemble] compute every dtype, and [fold] every dtype
     {!Nx_kernel.Prog.Add} takes. The three refuse with [Shape_mismatch]
@@ -243,13 +262,14 @@
     index's elements from left to right, in C order of their taps, with no
     [+0] before the first; it stores [+0] at an index no tap reads. A
     narrow float's or a sub-byte dtype's fold rounds each addition to its
-    dtype, as {!Nx_kernel.Prog.Add} does.
+    dtype, as {!Nx_kernel.Prog.Add} does. *)
 
-    [c2c], [r2c], [c2r] and the routines of matrices answer [Wrong_dtype]
-    for dtypes {!Nx_kernel.S} does not take, and compute the others.
+(** {1:transforms Fourier transforms}
 
-    The transforms refuse with [Shape_mismatch] what {!Nx_kernel.Shape}
-    answers [Error] for and results of other shapes. A transform's result
+    [c2c], [r2c] and [c2r] answer [Wrong_dtype] for dtypes {!Nx_kernel.S}
+    does not take, and compute the others. They refuse with
+    [Shape_mismatch] what {!Nx_kernel.Shape} answers [Error] for and
+    results of other shapes. A transform's result
     is a function of its operand's values alone, whatever its layout, its
     batch or the threads, but for a NaN result's sign and payload, which are
     unspecified. Where its result cannot hold the work, as for an axis after
@@ -271,10 +291,13 @@
       first [e(n)].
     - The last axis of a real transform of even [n >= 512] counts
       [e(n/2) + 8] in place of [e(n)]: its lines compute through complex
-      ones of [n/2] points.
+      ones of [n/2] points. *)
+
+(** {1:matrices Matrices}
 
     [cholesky], [lu], [qr], [solve_triangular], [eigh], [svd] and [eig]
-    refuse with [Shape_mismatch] what
+    answer [Wrong_dtype] for dtypes {!Nx_kernel.S} does not take, and
+    compute the others. They refuse with [Shape_mismatch] what
     {!Nx_kernel.Shape} answers [Error] for and results of other shapes. A
     matrix's results are a function of its values alone, whatever its
     batch, its layout or the threads. A destination of [solve_triangular]
@@ -328,6 +351,8 @@
       form's diagonal leaves it, and each column of [v] has an element of
       largest magnitude real, positive on complex [a]. Values alone may
       differ from the vectors' call's. *)
+
+(** {1:kernels Kernels} *)
 
 include Nx_kernel.S
 
