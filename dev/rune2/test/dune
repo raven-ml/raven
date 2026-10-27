@@ -17,6 +17,11 @@
 ; writes from correctly rounded references.
 
 (test
+ (name test_program)
+ (modules test_program)
+ (libraries nx rune2 windtrap))
+
+(test
  (name test_special)
  (modules special test_special)
  (libraries nx rune2 windtrap)

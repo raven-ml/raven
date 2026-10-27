@@ -576,6 +576,38 @@ let vmap_named name ?axis s =
             Ptree.map u.result (fun _ y -> Vmap.batch i n y) y))
 
 let vmap ?axis s = vmap_named "Rune.vmap" ?axis s
+(* Inspecting a trace *)
+
+type program = Program.t
+
+(* [f]'s trace at [args], as jit's: over C-order stand-ins. *)
+let traced name a r f args =
+  let leaves, _ = Ptree.flatten a args in
+  let like = ref None in
+  let forms =
+    Array.of_list
+      (List.map
+         (fun (Nx.P x) ->
+           let f = Nx.Prim.form x in
+           F
+             {
+               f with
+               layout =
+                 Nx_array.Layout.contiguous (Nx_array.Layout.shape f.layout);
+             })
+         leaves)
+  in
+  let body, _ =
+    Trace.trace Jit ~name forms (fun vs ->
+        let y = f (rebuild a ~like:args vs) in
+        like := Some y;
+        values r y)
+  in
+  (body, Option.get !like)
+
+let program a r f args = fst (traced "Rune.program" a r f args)
+let pp_program = Program.pp
+let eval_shape a r f args = snd (traced "Rune.eval_shape" a r f args)
 
 (* Functions of one array *)
 

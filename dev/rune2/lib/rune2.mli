@@ -531,6 +531,39 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     Raises [Invalid_argument] when applied to [s] if [s] has no argument, and at
     a call if [f] captures a value that another transformation traces. *)
 
+(** {2:inspect Inspecting a trace} *)
+
+type program
+(** The type for traced programs. *)
+
+val program :
+  ('a, 'd) Nx.Ptree.t -> ('b, 'd) Nx.Ptree.t -> ('a -> 'b) -> 'a -> program
+(** [program a b f x] is the program that {!jit} traces of [f], a function of
+    structure [a] to structure [b], at a call over [x], without compiling or
+    computing it: [f] runs once, over stand-ins of [x]'s arrays in C order. What [f] stages from {!jvp}, a {!scan}'s step or
+    another construct is in it, a construct with the programs it carries. As
+    JAX's [make_jaxpr], for reading what a function computes.
+
+    Raises what {!jit} raises at a call that traces. *)
+
+val pp_program : Format.formatter -> program -> unit
+(** [pp_program] formats a program: its parameters, the dtype, shape and
+    placement of each constant it reads, one equation per line, each
+    operation with its operands, a construct with the programs it carries
+    indented, and its outputs. Variables are numbered as traced, so a
+    function prints alike at every trace. *)
+
+val eval_shape :
+  ('a, 'd) Nx.Ptree.t -> ('b, 'd) Nx.Ptree.t -> ('a -> 'b) -> 'a -> 'b
+(** [eval_shape a b f x] is [f x]'s structure with each array a stand-in of
+    its dtype, shape and placement, as {!jit} traces it, computing nothing:
+    {!Nx.shape}, {!Nx.dtype} and {!Nx.placement} answer, and any other
+    operation on a stand-in raises [Invalid_argument]. An array [f] returns
+    that it did not compute from its arguments is that array. As JAX's
+    [eval_shape].
+
+    Raises what {!jit} raises at a call that traces. *)
+
 (** {1:one Functions of one array} *)
 
 val jvp' :

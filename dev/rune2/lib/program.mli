@@ -210,3 +210,15 @@ type _ Effect.t +=
 val staging : unit -> bool
 (** [staging ()] is [true] iff a tracer around the call stages the operations
     applied there, so that a call there is inlined, not run compiled. *)
+
+(** {1:printing Printing} *)
+
+val pp : Format.formatter -> t -> unit
+(** [pp] formats a program: [program (%0, %1, …)], its parameters, then each
+    constant it reads as [cK : dtype shape at placement], each equation on a
+    line, and [return] with its outputs, then [adds] with its additions. A
+    variable is [%n], its number, and a constant [cK], in the order the
+    program first reads it. An operation's line is its results, [=], the
+    operation as {!Nx.Prim.pp} formats it, and below it [with x0 = …] for each
+    operand; a construct's is its operands, then each program it carries,
+    indented. *)
