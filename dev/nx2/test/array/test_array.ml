@@ -25,13 +25,6 @@ let refusals =
 
 (* Arrays of every dtype *)
 
-(* A host array of [dt] of shape [s], its values stores of drawn floats. *)
-let filled dt s =
-  let open Gen in
-  let n = Array.fold_left ( * ) 1 s in
-  let+ xs = array ~size:(const n) (float_range (-300.) 300.) in
-  A.of_array dt (Iarray.of_array s) (Array.map (D.of_float dt) xs)
-
 type case = Case : ('v, 's) A.t * M.t option -> case
 
 let pp_case ppf (Case (a, m)) =
@@ -1065,6 +1058,11 @@ let check_moved ?(msg = "") d a =
     (A.to_array (on_host c));
   (how, c)
 
+(* An array and a movement of it, as often kept by to_device as packed. *)
+let to_place =
+  Gen.with_pp pp_case
+    (Gen.map (fun (A.Any a, m) -> Case (a, m)) Nx_array_gen.to_device_case)
+
 let law_to_device (Case (a, m)) =
   let check : type v s. (v, s) A.t -> unit =
    fun a ->
@@ -1621,11 +1619,8 @@ let tests =
           "copy, to_array and of_array keep every element of views about 256 \
            bytes a side"
           tiles law_tiles;
-        (* About one case in fifty packs, one in 250 a sub-byte dtype: 3000
-           cases reach both in every run. *)
-        prop ~count:3000
-          "to_device copies the elements, keeping a layout that fits them" case
-          law_to_device;
+        prop "to_device copies the elements, keeping a layout that fits them"
+          to_place law_to_device;
         test "to_device moves a column's elements alone" test_to_device_column;
         prop "transfer stores the elements alone, on the host or an io device"
           (Gen.pair case (Gen.pair Gen.bool Gen.bool))

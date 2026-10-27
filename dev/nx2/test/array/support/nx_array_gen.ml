@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Layouts and movements drawn for nx2's suites, their positions by brute
-   force, and the witnesses and references the array suites share. *)
+(* Layouts and movements drawn for nx2's suites, their positions by brute force,
+   and the witnesses and references the array suites share. *)
 
 open Windtrap
 module L = Nx_array.Layout
@@ -150,21 +150,28 @@ let reshape_target s =
       (Iarray.of_list
          (List.filteri (fun i d -> d > 1 || keep.(i)) (Array.to_list s')))
 
+(* Broadcasts of [s]: up to two new leading axes, and each extent-1 axis to an
+   extent up to 3. *)
+let broadcast_of s =
+  let open Gen in
+  let* extra = array ~size:(int_range 0 2) (int_range 0 3) in
+  let+ fill = array ~size:(const (Array.length s)) (int_range 0 3) in
+  M.Broadcast
+    (Iarray.of_array
+       (Array.append extra
+          (Array.mapi (fun i d -> if d = 1 then fill.(i) else d) s)))
+
+(* Permutations of [s]'s axes. *)
+let permute_of s =
+  let open Gen in
+  let+ p =
+    permutation ~pp:Format.pp_print_int (List.init (Array.length s) Fun.id)
+  in
+  M.Permute (Iarray.of_list p)
+
 let movement ~apart s =
   let open Gen in
   let r = Array.length s in
-  let broadcast =
-    let* extra = array ~size:(int_range 0 2) (int_range 0 3) in
-    let+ fill = array ~size:(const r) (int_range 0 3) in
-    M.Broadcast
-      (Iarray.of_array
-         (Array.append extra
-            (Array.mapi (fun i d -> if d = 1 then fill.(i) else d) s)))
-  in
-  let permute =
-    let+ p = permutation ~pp:Format.pp_print_int (List.init r Fun.id) in
-    M.Permute (Iarray.of_list p)
-  in
   let slice =
     let rec all i =
       if i = r then constant []
@@ -175,8 +182,9 @@ let movement ~apart s =
     let+ rs = all 0 in
     M.Slice (Iarray.of_list rs)
   in
-  let views = [ permute; slice; windows ~apart s ] in
-  if apart then one_of views else one_of (reshape_target s :: broadcast :: views)
+  let views = [ permute_of s; slice; windows ~apart s ] in
+  if apart then one_of views
+  else one_of (reshape_target s :: broadcast_of s :: views)
 
 (* A layout [contiguous] reaches by up to three movements, views that keep
    positions apart if [apart]. *)
@@ -252,8 +260,8 @@ let near_bounds s =
         let+ dilation = int_range 1 3
         and+ past = int_range 1 3
         and+ step = int_range 1 3 in
-        (* The least size whose reach, [dilation·(size - 1) + 1], is at
-           least [s.(axis) + past]. *)
+        (* The least size whose reach, [dilation·(size - 1) + 1], is at least
+           [s.(axis) + past]. *)
         let size = 1 + ((s.(axis) + past - 1 + dilation - 1) / dilation) in
         M.Window [| { M.axis; size; step; dilation } |]
   in
@@ -387,3 +395,125 @@ let no_claim a =
 
 (* Whether [e] is a device's loss. *)
 let lost = function Rig.Lost _ -> true | _ -> false
+
+(* Arrays to place *)
+
+(* A host array of [dt] of shape [s], its values stores of drawn floats. *)
+let filled dt s =
+  let open Gen in
+  let n = Array.fold_left ( * ) 1 s in
+  let+ xs = array ~size:(const n) (float_range (-300.) 300.) in
+  Nx_array.of_array dt (Iarray.of_array s)
+    (Array.map (Nx_array.Dtype.of_float dt) xs)
+
+(* Any dtype, those narrower than a byte one draw in four. *)
+let placed_dtype =
+  let module D = Nx_array.Dtype in
+  let pp ppf (D.Any dt) = D.pp ppf dt in
+  let narrow, wide = List.partition (fun (D.Any dt) -> D.bits dt < 8) D.all in
+  Gen.frequency [ (1, Gen.of_list ~pp narrow); (3, Gen.of_list ~pp wide) ]
+
+(* An array and a movement whose span holds no more bytes than its elements,
+   which [to_device] keeps: none, a permutation, a broadcast, a reshape, or a
+   run of the first axis' rows, either way. A sub-byte array's extents are
+   mostly odd, so that its last element ends inside a byte. *)
+let moved =
+  let open Gen in
+  let* (Nx_array.Dtype.Any dt) = placed_dtype in
+  let odd = array ~size:(int_range 1 3) (ints_of [ 1; 3; 5 ]) in
+  let* s =
+    if Nx_array.Dtype.bits dt < 8 then frequency [ (7, odd); (1, shape) ]
+    else shape
+  in
+  let* a = filled dt s in
+  let rows =
+    let d = if s = [||] then 0 else s.(0) in
+    let* step = ints_of [ 1; -1 ] in
+    let* start = int_range 0 (max 0 (d - 1)) in
+    let room = if d = 0 then 0 else if step > 0 then d - start else start + 1 in
+    let+ count = int_range 0 room in
+    M.Slice
+      (Iarray.init (Array.length s) (fun i ->
+           if i = 0 then { M.start; count; step }
+           else { M.start = 0; count = s.(i); step = 1 }))
+  in
+  let moves = [ permute_of s; broadcast_of s; reshape_target s ] in
+  let moves = if s = [||] then moves else rows :: moves in
+  let+ m = option (one_of moves) in
+  (Nx_array.Any a, m)
+
+(* A matrix transposed or its rows reversed: views [to_device] keeps, strided. A
+   sub-byte matrix's extents are odd. *)
+let transposed =
+  let open Gen in
+  let* (Nx_array.Dtype.Any dt) = placed_dtype in
+  let extent =
+    if Nx_array.Dtype.bits dt < 8 then ints_of [ 3; 5 ] else int_range 2 4
+  in
+  let* rows = extent in
+  let* cols = extent in
+  let* a = filled dt [| rows; cols |] in
+  let reversed =
+    M.Slice
+      [|
+        { M.start = rows - 1; count = rows; step = -1 };
+        { M.start = 0; count = cols; step = 1 };
+      |]
+  in
+  let+ m = of_list ~pp:pp_move [ M.Permute [| 1; 0 |]; reversed ] in
+  (Nx_array.Any a, Some m)
+
+(* An array and a movement whose span [to_device] keeps. *)
+let kept = Gen.one_of [ moved; transposed ]
+
+(* An array and a movement whose span holds more bytes than its elements, which
+   [to_device] packs: a column of a matrix whose rows hold two bytes or more,
+   that column broadcast along a new axis, or a slice whose steps pass two bytes
+   or more. *)
+let packed =
+  let open Gen in
+  let* (Nx_array.Dtype.Any dt) = placed_dtype in
+  let bits = Nx_array.Dtype.bits dt in
+  (* The elements in two bytes, at least two. *)
+  let wide = max 2 ((16 + bits - 1) / bits) in
+  let column =
+    let* rows = int_range 2 4 in
+    let* cols = int_range wide (wide + 2) in
+    let* col = int_range 0 (cols - 1) in
+    let+ a = filled dt [| rows; cols |] in
+    let take =
+      M.Slice
+        [|
+          { M.start = 0; count = rows; step = 1 };
+          { M.start = col; count = 1; step = 1 };
+        |]
+    in
+    (a, take, rows)
+  in
+  let one_column =
+    let+ a, take, _ = column in
+    (Nx_array.Any a, Some take)
+  in
+  let broadcast_column =
+    let* a, take, rows = column in
+    let+ k = int_range 2 3 in
+    let c = Option.get (Nx_array.move take a) in
+    (Nx_array.Any c, Some (M.Broadcast [| rows; k |]))
+  in
+  let stepped =
+    let* count = int_range 2 4 in
+    let* step = int_range wide (wide + 2) in
+    let* extra = int_range 0 2 in
+    let n = ((count - 1) * step) + 1 + extra in
+    let* first = int_range 0 extra in
+    let* reversed = bool in
+    let+ a = filled dt [| n |] in
+    let start, step =
+      if reversed then (n - 1 - first, -step) else (first, step)
+    in
+    (Nx_array.Any a, Some (M.Slice [| { M.start; count; step } |]))
+  in
+  one_of [ one_column; broadcast_column; stepped ]
+
+(* An array and a movement, as often kept by [to_device] as packed. *)
+let to_device_case = Gen.one_of [ kept; packed ]
