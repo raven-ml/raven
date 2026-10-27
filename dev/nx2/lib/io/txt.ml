@@ -239,25 +239,34 @@ let parser (type v s) (dt : (v, s) D.t) : (string -> v parsed) option =
 
 let refuse ~by dt = Fail.invalid_argf "%s: text has no %s" by (D.name dt)
 
-(* [fields sep line] is [line]'s fields: the non-empty pieces between [sep]s of
-   the line without its surrounding blanks. *)
+(* The separator of which a run separates two fields, so that columns aligned
+   with spaces read as one field each. *)
+let space = " "
+
+(* [fields sep line] is [line]'s fields: the pieces between [sep]s, each trimmed
+   of blanks, empty ones included unless [sep] is [space]. A line that is blank
+   once trimmed has none. The line is split before any trimming, so that a blank
+   [sep] such as a tab keeps an empty first or last field. *)
 let fields sep line =
-  let s = String.trim line in
-  let n = String.length sep and len = String.length s in
+  let n = String.length sep and len = String.length line in
   let at i =
-    let rec go k = k = n || (s.[i + k] = sep.[k] && go (k + 1)) in
+    let rec go k = k = n || (line.[i + k] = sep.[k] && go (k + 1)) in
     go 0
   in
   let rec split acc start i =
-    if i > len - n then String.sub s start (len - start) :: acc
+    if i > len - n then String.sub line start (len - start) :: acc
     else if at i then
-      split (String.sub s start (i - start) :: acc) (i + n) (i + n)
+      split (String.sub line start (i - start) :: acc) (i + n) (i + n)
     else split acc start (i + 1)
   in
-  if s = "" then [||]
-  else if sep = "" then [| s |]
+  if String.trim line = "" then [||]
+  else if sep = "" then [| String.trim line |]
   else
-    List.rev (split [] 0 0) |> List.filter (fun f -> f <> "") |> Array.of_list
+    let pieces = List.rev_map String.trim (split [] 0 0) in
+    let pieces =
+      if sep = space then List.filter (fun f -> f <> "") pieces else pieces
+    in
+    Array.of_list pieces
 
 (* Saving *)
 
@@ -304,32 +313,38 @@ let load ~sep ~comments ~skiprows dt path =
      an open for reading would wait on for a writer. *)
   let file = Storage.open_file path in
   let text = Storage.string file ~pos:0 (Rig.Buffer.length file) in
-  let rec read skip rows = function
+  (* Each row with the number of its line, counted from 1. *)
+  let rec read line skip rows = function
     | [] -> rows
-    | _ :: lines when skip > 0 -> read (skip - 1) rows lines
-    | line :: lines when is_comment line -> read 0 rows lines
-    | line :: lines ->
-        let f = fields sep line in
-        let rows = if Array.length f = 0 then rows else f :: rows in
-        read 0 rows lines
+    | _ :: lines when skip > 0 -> read (line + 1) (skip - 1) rows lines
+    | l :: lines when is_comment l -> read (line + 1) 0 rows lines
+    | l :: lines ->
+        let f = fields sep l in
+        let rows = if Array.length f = 0 then rows else (line, f) :: rows in
+        read (line + 1) 0 rows lines
   in
   let rows =
-    Array.of_list (List.rev (read skiprows [] (String.split_on_char '\n' text)))
+    Array.of_list
+      (List.rev (read 1 skiprows [] (String.split_on_char '\n' text)))
   in
   if Array.length rows = 0 then failwith "no row";
-  let cols = Array.length rows.(0) in
-  Array.iteri
-    (fun i r ->
+  let first, row = rows.(0) in
+  let cols = Array.length row in
+  Array.iter
+    (fun (line, r) ->
       if Array.length r <> cols then
-        Fail.failf "row %d has %d fields, row 1 has %d" (i + 1) (Array.length r)
-          cols)
+        Fail.failf "line %d has %d fields, line %d has %d" line (Array.length r)
+          first cols)
     rows;
   let field i j =
-    let s = rows.(i).(j) in
+    let line, r = rows.(i) in
+    let s = r.(j) in
     match parse s with
     | Value v -> v
-    | Not_literal -> Fail.failf "%S is no %s literal" s (D.name dt)
-    | Out_of_range -> Fail.failf "%s lies outside %s's range" s (D.name dt)
+    | Not_literal ->
+        Fail.failf "line %d: %S is not a %s literal" line s (D.name dt)
+    | Out_of_range ->
+        Fail.failf "line %d: %s lies outside %s's range" line s (D.name dt)
   in
   let n = Array.length rows in
   let values = Array.init (n * cols) (fun k -> field (k / cols) (k mod cols)) in

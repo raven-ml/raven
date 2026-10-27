@@ -175,6 +175,37 @@ let txt =
           let path = file "1::2::3\n" in
           equal (array int) [| 1; 2; 3 |]
             (Nx.to_array (Nx_io.load_txt ~sep:"::" Nx.int16 path)));
+      cases ~name:fst
+        "an empty field between separators other than the default fails, \
+         naming its line"
+        [
+          ("between two", ("1,,2\n", ",", "line 1:"));
+          ("at a line's start", ("# a header\n1,2\n,3\n", ",", "line 3:"));
+          ("at a line's end", ("1;2;\n", ";", "line 1:"));
+          ("of a separator of two characters", ("1::::2\n", "::", "line 1:"));
+          ("at a line's start, by a tab", ("\t1\t2\n\t3\t4\n", "\t", "line 1:"));
+          ("at a line's end, by a tab", ("1\t2\t\n3\t4\t\n", "\t", "line 1:"));
+        ]
+        (fun (_, (text, sep, line)) ->
+          let path = file text in
+          fails ~naming:line ~path (fun () ->
+              Nx_io.load_txt ~sep Nx.float32 path));
+      test "a field is trimmed of blanks, whatever the separator" (fun () ->
+          equal (array int32) [| 1l; 2l; 3l; 4l |]
+            (Nx.to_array
+               (Nx_io.load_txt ~sep:"," Nx.int32 (file " 1, 2\n3 ,\t4 \r\n"))));
+      cases ~name:fst
+        "a row of another length or a field out of range names its line, \
+         skipped and comment lines counted"
+        [
+          ("a short row", ("skipped\n# a comment\n1 2\n\n3\n", "line 5 "));
+          ( "a field out of range",
+            ("skipped\n# a comment\n1 2\n3 256\n", "line 4:") );
+        ]
+        (fun (_, (text, line)) ->
+          let path = file text in
+          fails ~naming:line ~path (fun () ->
+              Nx_io.load_txt ~skiprows:1 Nx.uint8 path));
       test "a bool field is true, false or a number" (fun () ->
           let path = file "true FALSE 0 2.5 -0.0\n" in
           equal (array bool)
