@@ -19,9 +19,10 @@
     {b Numerics.} The bounds below hold to first order in the dtype's unit
     roundoff [u], barring overflow and underflow, with
     [γ(c) = c u / (1 - c u)], [|·|] taken elementwise and [‖·‖_F] the Frobenius
-    norm. [R] is the number of rounds of rotations of [k] columns:
-    [⌈p ⌈log₂ k⌉ / 10⌉] sweeps of [k - 1] rounds, [k] for an odd [k], [p] the
-    dtype's precision in bits; none for [k < 2].
+    norm. [R] is the number of rounds of rotations of [k] columns: [S] sweeps
+    of [k - 1] rounds, [k] for an odd [k], none for [k < 2], with
+    [S = ⌈p ⌈log₂ k⌉ / 10⌉] for [Eigh] and [S = ⌈p (⌈log₂ k⌉ + 1) / 10⌉] for
+    [Svd], [p] the dtype's precision in bits.
     - [Cholesky]: [L Lᵀ = a + Δ] with [|Δ| <= γ(n + 1) |L| |Lᵀ|], [a] the
       symmetric matrix of [a]'s lower triangle. [Upper]'s factor is [Lower]'s
       transpose, bit for bit.

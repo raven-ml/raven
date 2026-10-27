@@ -458,23 +458,32 @@ let advance u axis =
 let rotate u axis rotations = advance (turn u axis rotations) axis
 
 (* The sweeps that bring a matrix of [n] rows to diagonal, or [n] columns to
-   orthogonality, for a precision of [p] bits: [⌈p ⌈log2 n⌉ / 10⌉]. Serial
-   orderings of the pairs converge quadratically near the end, with repeated
-   values too (Hari, as Drmač and Veselić's LAPACK Working Note 169 recounts in
-   its §1). This ordering gains only a roughly constant factor a sweep on
-   repeated and graded spectra, 2 to 8 in a [float64] model of [svd]'s rounds
-   up to [n = 128]. Over repeated, clustered, graded and random spectra up to [n
-   = 64] in [float32] and [float64], [0.83] of the count brought two-sided
-   rotations to an off-diagonal norm of [0.43 n u], [u] the unit roundoff,
-   against the [16 n u] a matrix fails beyond. One-sided rotations brought
-   singular values within [16 n u] of an eager [svd]'s in at most [0.75] of it
-   up to [n = 128], over graded and random spectra, spectra of half zeros, and
-   spectra of two or three values each repeated. *)
-let sweeps n p = if n < 2 then 0 else ((p * ceil_log2 n) + 9) / 10
+   orthogonality, for a precision of [p] bits: [⌈p (⌈log2 n⌉ + extra) / 10⌉].
+   Serial orderings of the pairs converge quadratically near the end, with
+   repeated values too (Hari, as Drmač and Veselić's LAPACK Working Note 169
+   recounts in its §1). This ordering gains only a roughly constant factor a
+   sweep on repeated and graded spectra, 2 to 8 in a [float64] model of [svd]'s
+   rounds up to [n = 128].
 
-let rounds n dt =
+   Two-sided rotations take [extra = 0]: over repeated, clustered, graded and
+   random spectra up to [n = 64] in [float32] and [float64], [0.83] of the
+   count brought them to an off-diagonal norm of [0.43 n u], [u] the unit
+   roundoff, against the [16 n u] a matrix fails beyond.
+
+   One-sided rotations take [extra = 1]. Their convergence test, relative to
+   each pair of columns, needed up to [0.9] of [extra = 0]'s count: 9 of 10
+   sweeps in [float32] at [n = 16], on a spectrum graded down to twice the
+   norm the test exempts. It needs at most [0.75] of [extra = 1]'s, from
+   [n = 4] to [128] in [float32] and [float64], over graded, clustered and
+   random spectra, spectra of half zeros and spectra of two or three values
+   each repeated, each in 16 random bases up to [n = 20], 4 up to [64] and one
+   at [128]. *)
+let sweeps n p extra =
+  if n < 2 then 0 else ((p * (ceil_log2 n + extra)) + 9) / 10
+
+let rounds ?(extra = 0) n dt =
   let _, mantissa = Dtype.finfo dt in
-  sweeps n (mantissa + 1) * sweep n
+  sweeps n (mantissa + 1) extra * sweep n
 
 (* Singular values by one-sided Jacobi rotations
 
@@ -566,7 +575,7 @@ let svd device ~complete a =
   let r = block (triu r) (Some (0, num)) (Some (0, num)) in
   let e = exponent r in
   let r = Lower_real.scale r (Shape.expand (negate e) (Shape.shape r)) in
-  let rounds = rounds num dt in
+  let rounds = rounds ~extra:1 num dt in
   let y =
     List.hd
       (repeat device rounds

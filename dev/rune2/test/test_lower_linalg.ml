@@ -439,11 +439,12 @@ let first t k = init t.b t.m k (fun b i j -> get t b i j)
 let rows_of t k = init t.b k t.n (fun b i j -> get t b i j)
 
 (* The rounds of Jacobi rotations Lower_linalg takes for [n] positions at a
-   precision of [p] bits. *)
-let rounds n u =
+   roundoff of [u], [extra] [1] for the SVD's. *)
+let rounds ?(extra = 0) n u =
   let p = -int_of_float (Float.log2 u) in
   let rec log2 k = if 1 lsl k >= n then k else log2 (k + 1) in
-  if n < 2 then 0 else (((p * log2 0) + 9) / 10) * (n - 1 + (n mod 2))
+  if n < 2 then 0
+  else (((p * (log2 0 + extra)) + 9) / 10) * (n - 1 + (n mod 2))
 
 let frobenius t k =
   let s = ref 0. in
@@ -486,7 +487,7 @@ let values_near ~msg ~tol k ours eager =
    Frobenius norm [norm]: three [g] and eager's own error. *)
 let svd_bound u m n =
   let k = Int.min m n and p = Int.max m n in
-  let rf = float_of_int (rounds k u) and kf = float_of_int k in
+  let rf = float_of_int (rounds ~extra:1 k u) and kf = float_of_int k in
   let pf = float_of_int p in
   let g = gamma u (16. *. (rf +. (pf *. pf)) *. (kf +. 2.) *. Float.sqrt kf) in
   let near norm =
@@ -582,6 +583,61 @@ let svd_fails () =
   in
   equal (array bool) [| true; true; false; false |] (Array.map Float.is_nan s);
   equal (array float_exact) [| 3.; 2. |] (Array.sub s 2 2)
+
+(* The spectra the rotations converge on slowest, at the size where their count
+   is tightest: 16 columns of values graded from 1 down to twice the norm the
+   convergence test exempts, or of three values each repeated, in a random
+   basis. The test passes and the values are eager's within the bound. *)
+let spectrum_law (R (name, dt, u), (kind, seed)) =
+  let k = 16 in
+  cover name true;
+  cover kind true;
+  let st = Random.State.make [| seed |] in
+  let basis () =
+    let g =
+      Nx.create D.Float64 [| k; k |] (Array.init (k * k) (fun _ -> uniform st))
+    in
+    Nx.to_array (fst (linalg (Qr { factors = Reduced; a = g })))
+  in
+  let q = basis () and v = basis () in
+  let f = float_of_int in
+  let noise =
+    8. *. f (rounds ~extra:1 k u) *. (1. +. Float.sqrt (f k)) *. u
+  in
+  let s =
+    Array.init k (fun i ->
+        if kind = "graded" then (2. *. noise) ** (f i /. f (k - 1))
+        else [| 1.; 0.5; 0.25 |].(i mod 3))
+  in
+  let x =
+    Array.init (k * k) (fun e ->
+        let i = e / k and j = e mod k in
+        let acc = ref 0. in
+        for l = 0 to k - 1 do
+          acc := !acc +. (q.((i * k) + l) *. s.(l) *. v.((j * k) + l))
+        done;
+        !acc)
+  in
+  let a = Nx.create dt [| k; k |] x in
+  let ours = Lowered.run (fun () -> linalg (Svd_values { dtype = dt; a })) in
+  let eager = Nx.to_array (linalg (Svd_values { dtype = dt; a })) in
+  let _, near = svd_bound u k k in
+  let norm = frobenius (of_nx a) 0 in
+  values_near ~msg:"s against eager" ~tol:(fun _ -> near norm) k ours eager
+
+let spectra =
+  Gen.with_pp
+    (fun ppf (R (name, _, _), (kind, seed)) ->
+      Format.fprintf ppf "(%s, %s, %d)" name kind seed)
+    (Gen.pair (Gen.of_list reals)
+       (Gen.pair
+          (Gen.of_list [ "graded"; "repeated" ])
+          (Gen.int_range 0 1_000_000)))
+
+let spectrum_examples =
+  List.concat_map
+    (fun dt -> [ (dt, ("graded", 1)); (dt, ("repeated", 2)) ])
+    reals
 
 (* A zero singular value is +0, of a zero matrix and of a zero column. *)
 let svd_zero () =
@@ -724,6 +780,8 @@ let () =
              law "u diag s vh reconstructs a" ~count:4 ~extra:complete_examples
                general svd_law;
              test "a matrix with an infinity is NaN" svd_fails;
+             prop "graded and repeated spectra converge" ~count:2
+               ~examples:spectrum_examples spectra spectrum_law;
              test "squares past the dtype's range" svd_extremes;
              test "a zero singular value is +0" svd_zero;
            ];
