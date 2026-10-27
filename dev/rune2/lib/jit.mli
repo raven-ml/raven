@@ -31,6 +31,10 @@ type 'y t
 val create : name:string -> unit -> 'y t
 (** [create ~name ()] is an empty table, for the entry point [name]. *)
 
+val stand_ins : 'd Nx.packed list -> Program.form array
+(** [stand_ins leaves] is the forms a call traces [leaves] at: their dtypes,
+    shapes and placements, in C order. *)
+
 val find :
   'y t ->
   'd Nx.packed list ->

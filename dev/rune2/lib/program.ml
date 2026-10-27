@@ -431,39 +431,85 @@ let run c =
     adds;
   r
 
-(* Printing *)
+(* Printing
 
-(* A program's names: a variable is [%n], its number; a constant is [cK], in
-   the order the program first reads it. *)
-type names = { owner : Nx.Prim.interpretation; mutable constants : value list }
+   One naming context covers a program and the programs it carries: each
+   program's variables are numbered from where the previous one's end, so no
+   two programs share a name, and the constants every one of them reads are
+   numbered once, in the order they are first read, and declared at the
+   top. *)
 
-let pp_name names ppf (V x) =
-  match Nx.Prim.payload names.owner x with
-  | Some (Var n) -> Format.fprintf ppf "%%%d" n
+type names = {
+  mutable constants : value list;
+  mutable next : int;
+  mutable bases : (t * int) list;
+}
+
+let carried = function
+  | Scan { step; _ } -> [ step ]
+  | Iterate { until; step; _ } -> [ until; step ]
+  | Call { body; _ } -> [ body ]
+  | Detach _ | Lanes _ | Lane_index _ | Add _ -> []
+
+let owned (p : t) (V x) =
+  match Nx.Prim.payload p.owner x with Some (Var _) -> true | _ -> false
+
+let rec register names (p : t) =
+  names.bases <- (p, names.next) :: names.bases;
+  names.next <- names.next + p.slots;
+  let see v =
+    if (not (owned p v)) && not (List.exists (same v) names.constants) then
+      names.constants <- names.constants @ [ v ]
+  in
+  Array.iter
+    (function
+      | Op { op; _ } ->
+          let (Operands xs) = Nx.Prim.operands op in
+          List.iter (fun (Nx.Prim.Any x) -> see (V x)) xs
+      | Do { c; _ } ->
+          List.iter see (operands c);
+          List.iter (register names) (carried c))
+    p.eqns;
+  Array.iter see p.outputs
+
+let base names p = List.assq p names.bases
+
+let pp_name names (p : t) ppf (V x as v) =
+  match Nx.Prim.payload p.owner x with
+  | Some (Var n) -> Format.fprintf ppf "%%%d" (base names p + n)
   | _ ->
       let rec find k = function
-        | [] ->
-            names.constants <- names.constants @ [ V x ];
-            k
-        | v :: rest -> if same v (V x) then k else find (k + 1) rest
+        | [] -> k
+        | u :: rest -> if same u v then k else find (k + 1) rest
       in
       Format.fprintf ppf "c%d" (find 0 names.constants)
 
-let pp_names names ppf vs =
-  Format.pp_print_list
-    ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
-    (pp_name names) ppf vs
+let comma ppf () = Format.pp_print_string ppf ", "
+
+let pp_names names p ppf vs =
+  Format.pp_print_list ~pp_sep:comma (pp_name names p) ppf vs
 
 let pp_form ppf (F f) =
   let shape = Iarray.to_array (Nx_array.Layout.shape f.layout) in
   Format.fprintf ppf "%a %a" Nx.pp_dtype f.dtype Nx.pp_shape shape;
   match f.placement with
   | None -> Format.pp_print_string ppf " of every set"
-  | Some p -> Format.fprintf ppf " at %a" Nx.Placement.pp p
+  | Some q -> Format.fprintf ppf " at %a" Nx.Placement.pp q
 
-(* The variables an equation's results bind: from [base] to the next
+(* The forms of an operation's results, as eager computation gives them. *)
+let result_forms (p : t) ~by op =
+  let forms = ref [] in
+  ignore
+    (Nx.Prim.results ~by
+       (fun k f ->
+         forms := (k, F f) :: !forms;
+         Nx.Prim.traced p.owner f (Var k))
+       op);
+  List.map snd (List.sort (fun (a, _) (b, _) -> Int.compare a b) !forms)
+
+(* The variables a construct's results bind: from [base] to the next
    equation's, those its program's parameters take aside. *)
-let results (p : t) i base =
+let construct_results (p : t) i base =
   let next =
     if i + 1 < Array.length p.eqns then
       match p.eqns.(i + 1) with Op { base; _ } | Do { base; _ } -> base
@@ -473,79 +519,106 @@ let results (p : t) i base =
     (fun n -> not (Array.mem n p.params))
     (List.init (Int.max 0 (next - base)) (fun k -> base + k))
 
-let rec pp_program ~indent ppf (p : t) =
-  let names = { owner = p.owner; constants = [] } in
+let rec pp_program names ~indent ppf (p : t) =
   let pad = String.make indent ' ' in
-  let var ppf n = Format.fprintf ppf "%%%d" n in
-  let vars ppf ns =
-    Format.pp_print_list
-      ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
-      var ppf ns
-  in
-  let body = Format.asprintf "%a" (pp_eqns ~indent names) p in
-  Format.fprintf ppf "%sprogram (%a)" pad vars (Array.to_list p.params);
-  List.iteri
-    (fun k v -> Format.fprintf ppf "@\n%s  c%d : %a" pad k pp_form (form v))
-    names.constants;
-  Format.fprintf ppf "%s" body;
+  let b = base names p in
+  let var ppf n = Format.fprintf ppf "%%%d" (b + n) in
+  Format.fprintf ppf "%sprogram (%a)" pad
+    (Format.pp_print_list ~pp_sep:comma var)
+    (Array.to_list p.params);
+  Array.iteri (fun i e -> pp_eqn names ~indent p i ppf e) p.eqns;
   let outs = Array.to_list p.outputs in
   let n = List.length outs - Array.length p.adds in
-  Format.fprintf ppf "@\n%s  return %a" pad (pp_names names)
+  Format.fprintf ppf "@\n%s  return %a" pad (pp_names names p)
     (List.filteri (fun i _ -> i < n) outs);
   if Array.length p.adds > 0 then
-    Format.fprintf ppf "@\n%s  adds %a" pad (pp_names names)
+    Format.fprintf ppf "@\n%s  adds %a" pad (pp_names names p)
       (List.filteri (fun i _ -> i >= n) outs)
 
-and pp_eqns ~indent names ppf (p : t) =
+and pp_eqn names ~indent (p : t) i ppf eqn =
   let pad = String.make (indent + 2) ' ' in
-  let lhs i base =
-    match results p i base with
-    | [] -> ""
-    | ns ->
-        String.concat ", " (List.map (Printf.sprintf "%%%d") ns) ^ " = "
+  let b = base names p in
+  let lhs ppf results =
+    match results with
+    | [] -> ()
+    | _ ->
+        Format.fprintf ppf "%a = "
+          (Format.pp_print_list ~pp_sep:comma (fun ppf (n, form) ->
+               Format.fprintf ppf "%%%d : %a" (b + n) pp_form form))
+          results
   in
-  let operands ppf vs =
-    Format.pp_print_list
-      ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
-      (fun ppf (i, v) -> Format.fprintf ppf "x%d = %a" i (pp_name names) v)
-      ppf
-      (List.mapi (fun i v -> (i, v)) vs)
-  in
-  Array.iteri
-    (fun i -> function
-      | Op { op; base; _ } ->
-          let (Operands xs) = Nx.Prim.operands op in
-          Format.fprintf ppf "@\n%s%s%a@\n%s  with %a" pad (lhs i base)
-            Nx.Prim.pp op pad operands
-            (List.map (fun (Nx.Prim.Any x) -> V x) xs)
-      | Do { c; base } ->
-          Format.fprintf ppf "@\n%s%s%a" pad (lhs i base)
-            (pp_construct ~indent:(indent + 2) names)
-            c)
-    p.eqns
+  match eqn with
+  | Op { by; op; base } ->
+      let forms = result_forms p ~by op in
+      let (Operands xs) = Nx.Prim.operands op in
+      Format.fprintf ppf "@\n%s%a%a" pad lhs
+        (List.mapi (fun k f -> (base + k, f)) forms)
+        Nx.Prim.pp op;
+      if xs <> [] then
+        Format.fprintf ppf "@\n%s  with %a" pad
+          (Format.pp_print_list ~pp_sep:comma (fun ppf (k, v) ->
+               Format.fprintf ppf "x%d = %a" k (pp_name names p) v))
+          (List.mapi (fun k (Nx.Prim.Any x) -> (k, V x)) xs)
+  | Do { c; base } ->
+      let ns = construct_results p i base in
+      let forms =
+        match forms c with
+        | fs when Array.length fs = List.length ns -> Array.to_list fs
+        | _ | (exception Invalid_argument _) -> []
+      in
+      let results =
+        if forms = [] then List.map (fun n -> (n, None)) ns
+        else List.map2 (fun n f -> (n, Some f)) ns forms
+      in
+      Format.fprintf ppf "@\n%s%a%a" pad
+        (fun ppf rs ->
+          match rs with
+          | [] -> ()
+          | _ ->
+              Format.fprintf ppf "%a = "
+                (Format.pp_print_list ~pp_sep:comma (fun ppf (n, f) ->
+                     match f with
+                     | Some f -> Format.fprintf ppf "%%%d : %a" (b + n) pp_form f
+                     | None -> Format.fprintf ppf "%%%d" (b + n)))
+                rs)
+        results
+        (pp_construct names ~indent:(indent + 2) p)
+        c
 
-and pp_construct ~indent names ppf c =
+and pp_construct names ~indent (p : t) ppf c =
   let pad = String.make indent ' ' in
-  let values = pp_names names in
-  let program ppf p = Format.fprintf ppf "@\n%a" (pp_program ~indent:(indent + 2)) p in
+  let value = pp_name names p and values = pp_names names p in
+  let program ppf q =
+    Format.fprintf ppf "@\n%a" (pp_program names ~indent:(indent + 4)) q
+  in
   match c with
-  | Detach x -> Format.fprintf ppf "detach %a" (pp_name names) (V x)
-  | Lanes (_, x) -> Format.fprintf ppf "lanes %a" (pp_name names) (V x)
-  | Lane_index _ -> Format.pp_print_string ppf "lane_index"
-  | Add (_, x) -> Format.fprintf ppf "add %a" (pp_name names) (V x)
+  | Detach x -> Format.fprintf ppf "detach %a" value (V x)
+  | Lanes (a, x) -> Format.fprintf ppf "lanes of map %d %a" a value (V x)
+  | Lane_index a -> Format.fprintf ppf "lane_index of map %d" a
+  | Add (_, x) -> Format.fprintf ppf "add %a" value (V x)
   | Scan { step; length; init; xs; captures } ->
-      Format.fprintf ppf "scan %d rows, init (%a), xs (%a), captures (%a)%a"
-        length values (Array.to_list init) values (Array.to_list xs) values
-        (Array.to_list captures) program step
+      Format.fprintf ppf
+        "scan %d rows, init (%a), xs (%a), captures (%a)@\n%s  step%a" length
+        values (Array.to_list init) values (Array.to_list xs) values
+        (Array.to_list captures) pad program step
   | Iterate { step; until; max; init; step_captures; until_captures; _ } ->
       Format.fprintf ppf
-        "iterate at most %d, init (%a), captures (%a) and (%a)@\n%s  until%a@\n%s  step%a"
+        "iterate at most %d, init (%a), captures (%a) and (%a)@\n\
+         %s  until%a@\n\
+         %s  step%a"
         max values (Array.to_list init) values
         (Array.to_list until_captures)
         values
         (Array.to_list step_captures)
         pad program until pad program step
   | Call { body; args; _ } ->
-      Format.fprintf ppf "call (%a)%a" values (Array.to_list args) program body
+      Format.fprintf ppf "call (%a)@\n%s  body%a" values (Array.to_list args)
+        pad program body
 
-let pp ppf p = pp_program ~indent:0 ppf p
+let pp ppf p =
+  let names = { constants = []; next = 0; bases = [] } in
+  register names p;
+  List.iteri
+    (fun k v -> Format.fprintf ppf "c%d : %a@\n" k pp_form (form v))
+    names.constants;
+  pp_program names ~indent:0 ppf p

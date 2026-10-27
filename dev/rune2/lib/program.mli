@@ -214,11 +214,13 @@ val staging : unit -> bool
 (** {1:printing Printing} *)
 
 val pp : Format.formatter -> t -> unit
-(** [pp] formats a program: [program (%0, %1, …)], its parameters, then each
-    constant it reads as [cK : dtype shape at placement], each equation on a
-    line, and [return] with its outputs, then [adds] with its additions. A
-    variable is [%n], its number, and a constant [cK], in the order the
-    program first reads it. An operation's line is its results, [=], the
-    operation as {!Nx.Prim.pp} formats it, and below it [with x0 = …] for each
-    operand; a construct's is its operands, then each program it carries,
-    indented. *)
+(** [pp] formats a program: first each constant it or a program it carries
+    reads, as [cK : dtype shape at placement] or [… of every set], numbered in
+    the order they are first read; then [program (%0, %1, …)], its parameters,
+    each equation, and [return] with its outputs, then [adds] with its
+    additions. Each program's variables are numbered from where the previous
+    one's end, so no two programs share a name. An operation is its results,
+    each [%n : dtype shape at placement], [=], the operation as
+    {!Nx.Prim.pp} formats it, and on the next line [with x0 = …] for each
+    operand; a construct is its results, its operands, and each program it
+    carries under a label, indented. *)

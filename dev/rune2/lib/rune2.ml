@@ -506,6 +506,18 @@ let rec spine : type f d. string -> int -> (f, d) Ptree.fn -> (f, d) spine =
         }
   | Returns _ -> invalid_argf "%s: the signature has no argument" name
 
+(* [traced name a r f args forms] is [f]'s program over stand-ins of [forms]
+   for [args]' leaves, and the result it returned, as jit traces it. *)
+let traced name a r f args forms =
+  let like = ref None in
+  let body, _ =
+    Trace.trace Jit ~name forms (fun vs ->
+        let y = f (rebuild a ~like:args vs) in
+        like := Some y;
+        values r y)
+  in
+  (body, Option.get !like)
+
 (* A call's program comes from its key's entry: traced over stand-ins of its
    leaves the first time the key is met, then compiled. The call is a
    construct, so a transformation around it evaluates the program over its
@@ -516,17 +528,7 @@ let call name t a r f args =
   let paths () =
     List.rev (Ptree.fold a (fun p _ acc -> path_name p :: acc) args [])
   in
-  let trace forms =
-    let like = ref None in
-    let body, _ =
-      Trace.trace Jit ~name forms (fun vs ->
-          let y = f (rebuild a ~like:args vs) in
-          like := Some y;
-          values r y)
-    in
-    (body, Option.get !like)
-  in
-  let e = Jit.find t leaves skeleton ~paths trace in
+  let e = Jit.find t leaves skeleton ~paths (traced name a r f args) in
   let out =
     run (Call { body = e.body; args = args_v; compiled = Some e.compiled })
   in
@@ -581,33 +583,13 @@ let vmap ?axis s = vmap_named "Rune.vmap" ?axis s
 type program = Program.t
 
 (* [f]'s trace at [args], as jit's: over C-order stand-ins. *)
-let traced name a r f args =
+let staged name a r f args =
   let leaves, _ = Ptree.flatten a args in
-  let like = ref None in
-  let forms =
-    Array.of_list
-      (List.map
-         (fun (Nx.P x) ->
-           let f = Nx.Prim.form x in
-           F
-             {
-               f with
-               layout =
-                 Nx_array.Layout.contiguous (Nx_array.Layout.shape f.layout);
-             })
-         leaves)
-  in
-  let body, _ =
-    Trace.trace Jit ~name forms (fun vs ->
-        let y = f (rebuild a ~like:args vs) in
-        like := Some y;
-        values r y)
-  in
-  (body, Option.get !like)
+  traced name a r f args (Jit.stand_ins leaves)
 
-let program a r f args = fst (traced "Rune.program" a r f args)
+let program a r f args = fst (staged "Rune.program" a r f args)
 let pp_program = Program.pp
-let eval_shape a r f args = snd (traced "Rune.eval_shape" a r f args)
+let eval_shape a r f args = snd (staged "Rune.eval_shape" a r f args)
 
 (* Functions of one array *)
 

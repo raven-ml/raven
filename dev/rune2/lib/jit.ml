@@ -115,6 +115,8 @@ let stand_in (Nx.P x) =
   let f = Nx.Prim.form x in
   Program.F { f with layout = L.contiguous (L.shape f.layout) }
 
+let stand_ins leaves = Array.of_list (List.map stand_in leaves)
+
 (* [compiled name body forms] runs [body] compiled, made the first time it
    runs, or evaluated where the compiler declines it. *)
 let compiled name body forms =
@@ -144,7 +146,7 @@ let find t leaves skeleton ~paths trace =
       (fun k -> report "retrace: %s" (difference (paths ()) key k))
       (Atomic.get t.last)
   in
-  let forms = Array.of_list (List.map stand_in leaves) in
+  let forms = stand_ins leaves in
   let make () =
     let body, like = trace forms in
     { body; like; compiled = compiled t.name body forms }
