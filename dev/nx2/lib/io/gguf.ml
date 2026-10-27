@@ -320,28 +320,23 @@ let tensor_info c =
 
 (* Tensors *)
 
-let mul name a b =
-  if b <> 0 && a > max_int / b then fail_msg "tensor %S is too large" name;
-  a * b
-
 (* The dtype, the shape and the size in bytes of tensor [name] of logical
    [shape] as nx loads it. A block format's rows, along the last axis, are their
-   bytes. *)
+   bytes, and a 0-d tensor's one element is a row no block holds. [shape] has
+   passed [Storage.check_shape], so no product here overflows. *)
 let layout name dtype shape =
-  let rank = Array.length shape in
-  let numel = Array.fold_left (mul name) 1 shape in
   match storage dtype with
-  | Scalar (D.Any dt) -> (D.Any dt, shape, mul name numel (D.bits dt / 8))
+  | Scalar (D.Any dt) ->
+      (D.Any dt, shape, Array.fold_left ( * ) (D.bits dt / 8) shape)
   | Blocks { elements; bytes } ->
+      let rank = Array.length shape in
       let row = if rank = 0 then 1 else shape.(rank - 1) in
       if row mod elements <> 0 then
         fail_msg "tensor %S has rows of %d elements, not of blocks of %d" name
           row elements;
-      let row_bytes = row / elements * bytes in
-      let rows = if row = 0 then 0 else numel / row in
-      let stored = if rank = 0 then [| row_bytes |] else Array.copy shape in
-      if rank > 0 then stored.(rank - 1) <- row_bytes;
-      (D.Any D.Uint8, stored, mul name rows row_bytes)
+      let stored = Array.copy shape in
+      stored.(rank - 1) <- row / elements * bytes;
+      (D.Any D.Uint8, stored, Array.fold_left ( * ) 1 stored)
 
 let read_tensors file ~data_start ~alignment infos =
   let file_len = B.length file in
@@ -363,8 +358,10 @@ let read_tensors file ~data_start ~alignment infos =
           offset > file_len - data_start || len > file_len - data_start - offset
         then fail_msg "the file ends before tensor %S's data" name;
         let b = B.view file ~first:(data_start + offset) ~length:len in
-        let layout = Nx_array.Layout.contiguous (Iarray.of_array stored) in
-        let x = Storage.little b dt layout in
+        let x =
+          Storage.little b dt
+            (Nx_array.Layout.contiguous (Iarray.of_array stored))
+        in
         Hashtbl.add by_name name { dtype; shape };
         Archive.add name (Nx.P x) tensors)
       Archive.empty infos
