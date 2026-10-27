@@ -589,10 +589,12 @@ module type S = sig
       by [idx]'s element at [j]; a position outside \[[0], [d]), [d]
       [into]'s extent along [axis], drops it. Where no update lands, the
       result is [into]'s element, its bits unchanged, a signalling NaN's
-      included. Under [unique], the caller must give each target at most
-      one update; where two share one, the result there is unspecified. It
-      answers [Wrong_dtype] for an [Add] of a dtype {!Prog.Add} does not
-      take. *)
+      included.
+
+      Under [unique], the caller promises each target at most one update,
+      which a library may rely on: where two share one, the result there is
+      unspecified. It answers [Wrong_dtype] for an [Add] of a dtype
+      {!Prog.Add} does not take. *)
 
   (** {1:sorts Sorts} *)
 
