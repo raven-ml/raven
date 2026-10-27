@@ -526,7 +526,8 @@ let test_io_refuses () =
   fails (fun () -> A.get a [| 0 |]);
   fails (fun () -> A.set a [| 0 |] 0.);
   fails (fun () -> A.to_array a);
-  is_none (A.bigarray Bigarray.float32 a)
+  raises_match (Exn.invalid_arg ~substring:"Nx_array.bigarray") (fun () ->
+      A.bigarray Bigarray.float32 a)
 
 let test_dead_access () =
   let a = floats32 [| 2 |] [| 1.; 2. |] in
@@ -1368,12 +1369,13 @@ let test_to_device_io_views () =
 
 let test_bigarray () =
   let a = floats32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |] in
-  let g = Option.get (A.bigarray Bigarray.float32 a) in
+  let g = A.bigarray Bigarray.float32 a in
   equal ints [| 2; 3 |] (Bigarray.Genarray.dims g);
   Bigarray.Genarray.set g [| 1; 2 |] 9.;
   equal (values f32) [| 9. |] [| A.get a [| 1; 2 |] |];
   let t = Option.get (A.move (M.Permute [| 1; 0 |]) a) in
-  is_none (A.bigarray Bigarray.float32 t);
+  raises_match (Exn.invalid_arg ~substring:"not C-contiguous") (fun () ->
+      A.bigarray Bigarray.float32 t);
   let row =
     Option.get
       (A.move
@@ -1384,7 +1386,7 @@ let test_bigarray () =
             |])
          a)
   in
-  let g = Option.get (A.bigarray Bigarray.float32 row) in
+  let g = A.bigarray Bigarray.float32 row in
   equal float_exact 9. (Bigarray.Genarray.get g [| 0; 2 |]);
   equal bool false (unclaimed (A.buffer a))
 
@@ -1403,28 +1405,27 @@ let kind : type v s. (v, s) D.t -> (v, s) Bigarray.kind option = function
   | D.Complex64 -> Some Bigarray.complex32
   | _ -> None
 
-(* [bigarray] is [Some] iff the array is C-contiguous, of rank at most 16, and
-   its elements are the array's. *)
+(* [bigarray] of a host array holds its elements if the array is C-contiguous
+   and of rank at most 16, and raises naming itself otherwise. *)
 let law_bigarray (Case (a, m)) =
   let check : type v s. (v, s) A.t -> unit =
    fun a ->
+    let l = A.layout a in
     match kind (A.dtype a) with
     | None -> ()
-    | Some k -> (
-        let l = A.layout a in
-        match A.bigarray k a with
-        | None ->
-            cover "None" true;
-            equal bool false (L.is_contiguous l && L.rank l <= 16)
-        | Some g ->
-            cover "Some" true;
-            equal bool true (L.is_contiguous l);
-            equal ints (L.shape l) (Bigarray.Genarray.dims g);
-            equal
-              (values (A.dtype a))
-              (A.to_array a)
-              (Array.of_list
-                 (List.map (Bigarray.Genarray.get g) (indices (L.shape l)))))
+    | Some k when not (L.is_contiguous l && L.rank l <= 16) ->
+        cover "raises" true;
+        raises_match (Exn.invalid_arg ~substring:"Nx_array.bigarray") (fun () ->
+            A.bigarray k a)
+    | Some k ->
+        cover "a bigarray" true;
+        let g = A.bigarray k a in
+        equal ints (L.shape l) (Bigarray.Genarray.dims g);
+        equal
+          (values (A.dtype a))
+          (A.to_array a)
+          (Array.of_list
+             (List.map (Bigarray.Genarray.get g) (indices (L.shape l))))
   in
   match Option.bind m (fun m -> A.move m a) with
   | Some b -> check b
@@ -1438,9 +1439,11 @@ let test_of_bigarray_misaligned () =
 
 let test_bigarray_rank () =
   let a = A.create Rig.host D.Uint8 (Array.make 16 1) in
-  is_some (A.bigarray Bigarray.int8_unsigned a);
+  equal ints (Array.make 16 1)
+    (Bigarray.Genarray.dims (A.bigarray Bigarray.int8_unsigned a));
   let a = A.create Rig.host D.Uint8 (Array.make 17 1) in
-  is_none (A.bigarray Bigarray.int8_unsigned a)
+  raises_match (Exn.invalid_arg ~substring:"at most 16") (fun () ->
+      A.bigarray Bigarray.int8_unsigned a)
 
 let test_of_bigarray () =
   let g =
@@ -2461,7 +2464,8 @@ let tests =
       [
         test "bigarray shares a contiguous host array's bytes" test_bigarray;
         test "of_bigarray shares the bigarray's bytes" test_of_bigarray;
-        prop "bigarray views a C-contiguous host array" case law_bigarray;
+        prop "bigarray views a C-contiguous host array and raises otherwise"
+          case law_bigarray;
         test "bigarray takes up to 16 axes" test_bigarray_rank;
         test "of_bigarray refuses a bigarray misaligned for its elements"
           test_of_bigarray_misaligned;

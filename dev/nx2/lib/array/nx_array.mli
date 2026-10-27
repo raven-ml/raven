@@ -252,12 +252,11 @@ val borrow : Rig.t -> ('v, 's) t -> ('v, 's) t option
 val bigarray :
   ('v, 's) Bigarray.kind ->
   ('v, 's) t ->
-  ('v, 's, Bigarray.c_layout) Bigarray.Genarray.t option
-(** [bigarray k a] is [Some] bigarray over [a]'s own bytes iff [a] is on
-    {!Rig.host}, C-contiguous ({!Layout.is_contiguous}) and of rank at most 16.
-    Writes through it write [a], and are allowed only if [a]'s memory admits
-    them ({!Rig.Buffer.val-access}). It waits once for the work on [a]'s
-    memory, and from then on that memory is never held exclusive again
+  ('v, 's, Bigarray.c_layout) Bigarray.Genarray.t
+(** [bigarray k a] is a bigarray of [a]'s shape over [a]'s own bytes. Writes
+    through it write [a], and are allowed only if [a]'s memory admits them
+    ({!Rig.Buffer.val-access}). It waits once for the work on [a]'s memory, and
+    from then on that memory is never held exclusive again
     ({!Rig.Buffer.export}): access through the bigarray follows later device
     work only after {!Rig.Buffer.wait}. A format Bigarray lacks is bitcast
     first to one of its width ({!bitcast}).
@@ -267,8 +266,10 @@ val bigarray :
     rounded through binary32 first, so it can differ from {!Dtype.of_float} by
     one unit in the last place.
 
-    Raises [Invalid_argument] if [a]'s buffer is dead, or its memory is held
-    exclusive by claims that have not consumed it. *)
+    Raises [Invalid_argument] naming [Nx_array.bigarray] unless [a] is on
+    {!Rig.host}, C-contiguous ({!Layout.is_contiguous}) and of rank at most 16,
+    and if [a]'s buffer is dead, or its memory is held exclusive by claims that
+    have not consumed it. *)
 
 val read :
   ('v, 's) Bigarray.kind ->

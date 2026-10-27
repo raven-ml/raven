@@ -418,7 +418,7 @@ let to_bigarray k x =
   let by = "Nx.to_bigarray" in
   let r = Prim.rank x in
   if r > 16 then invalid_argf "%s: rank %d, above Bigarray's 16" by r;
-  Option.get (Nx_array.bigarray k (Nx_array.copy (read ~by x)))
+  Nx_array.bigarray k (Nx_array.copy (read ~by x))
 
 let item i x =
   let by = "Nx.item" in

@@ -725,16 +725,24 @@ let bigarray_bytes k a =
 let of_flat a flat =
   Bigarray.reshape (Bigarray.genarray_of_array1 flat) (Layout.shape a.layout)
 
-let bigarray (type v s) (k : (v, s) Bigarray.kind) (a : (v, s) t) :
-    (v, s, Bigarray.c_layout) Bigarray.Genarray.t option =
-  live "Nx_array.bigarray" a.buffer;
-  let l = a.layout in
-  if
-    (not (Rig.equal (Buffer.device a.buffer) Rig.host))
-    || (not (Layout.is_contiguous l))
-    || Layout.rank l > bigarray_max_rank
-  then None
-  else Some (of_flat a (Buffer.export (bigarray_bytes k a) k))
+(* Raises naming [fn] unless a bigarray of [l]'s shape lies over the bytes of
+   an array laid out by [l]: C-contiguous, of at most Bigarray's axes. *)
+let bigarray_fits fn l =
+  if not (Layout.is_contiguous l) then
+    invalid_argf "%s: %a is not C-contiguous" fn Layout.pp l;
+  if Layout.rank l > bigarray_max_rank then
+    invalid_argf "%s: %d axes, a bigarray has at most %d" fn (Layout.rank l)
+      bigarray_max_rank
+
+let bigarray k a =
+  let fn = "Nx_array.bigarray" in
+  live fn a.buffer;
+  bigarray_fits fn a.layout;
+  let d = device a in
+  if not (Rig.equal d Rig.host) then
+    invalid_argf "%s: the array is on %a, and a bigarray needs Rig.host's memory"
+      fn Rig.pp d;
+  of_flat a (Buffer.export (bigarray_bytes k a) k)
 
 (* Under the door's read claim, which names this function in a refusal, rig's
    read waits and passes the bytes. An array with no element has no byte to
@@ -742,11 +750,7 @@ let bigarray (type v s) (k : (v, s) Bigarray.kind) (a : (v, s) t) :
 let read k a f =
   let fn = "Nx_array.read" in
   let l = a.layout in
-  if not (Layout.is_contiguous l) then
-    invalid_argf "%s: %a is not C-contiguous" fn Layout.pp l;
-  if Layout.rank l > bigarray_max_rank then
-    invalid_argf "%s: %d axes, a bigarray has at most %d" fn (Layout.rank l)
-      bigarray_max_rank;
+  bigarray_fits fn l;
   let result = ref None in
   reading fn a (fun () ->
       if Layout.numel l > 0 && host_address a.buffer < 0 then
