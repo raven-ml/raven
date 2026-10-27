@@ -264,7 +264,7 @@ let fields sep line =
 (* The text is written to the file in chunks of about [chunk] bytes. *)
 let chunk = 65536
 
-let save ~sep ~newline ~header ~footer ~comments path x =
+let save ~sep path x =
   let by = "Nx_io.save_txt" in
   let dt = Nx.dtype x in
   let print = match printer dt with Some p -> p | None -> refuse ~by dt in
@@ -280,57 +280,38 @@ let save ~sep ~newline ~header ~footer ~comments path x =
     Save.string fd (Buffer.contents b);
     Buffer.clear b
   in
-  let lines = function
-    | None -> ()
-    | Some text ->
-        List.iter
-          (fun line ->
-            Buffer.add_string b comments;
-            Buffer.add_string b line;
-            Buffer.add_string b newline)
-          (String.split_on_char '\n' text)
-  in
-  lines header;
   Array.iteri
     (fun i v ->
       if i mod cols <> 0 then Buffer.add_string b sep;
       print b v;
-      if (i + 1) mod cols = 0 then Buffer.add_string b newline;
+      if (i + 1) mod cols = 0 then Buffer.add_char b '\n';
       if Buffer.length b >= chunk then drain ())
     values;
-  lines footer;
   drain ()
 
 (* Loading *)
 
-let load ~sep ~comments ~skiprows ~max_rows path dt =
+let load ~sep ~comments ~skiprows path dt =
   let by = "Nx_io.load_txt" in
   let parse = match parser dt with Some p -> p | None -> refuse ~by dt in
   if skiprows < 0 then Fail.invalid_argf "%s: skiprows is %d" by skiprows;
-  (match max_rows with
-  | Some n when n <= 0 -> Fail.invalid_argf "%s: max_rows is %d" by n
-  | _ -> ());
   Fail.file path @@ fun () ->
   let comment = String.trim comments in
   let is_comment line =
     comment <> "" && String.starts_with ~prefix:comment (String.trim line)
   in
-  let full rows = match max_rows with Some n -> rows >= n | None -> false in
   let rows =
     In_channel.with_open_bin path @@ fun ic ->
-    let rec read skip rows count =
-      if full count then rows
-      else
-        match In_channel.input_line ic with
-        | None -> rows
-        | Some _ when skip > 0 -> read (skip - 1) rows count
-        | Some line when is_comment line -> read 0 rows count
-        | Some line ->
-            let f = fields sep line in
-            if Array.length f = 0 then read 0 rows count
-            else read 0 (f :: rows) (count + 1)
+    let rec read skip rows =
+      match In_channel.input_line ic with
+      | None -> rows
+      | Some _ when skip > 0 -> read (skip - 1) rows
+      | Some line when is_comment line -> read 0 rows
+      | Some line ->
+          let f = fields sep line in
+          if Array.length f = 0 then read 0 rows else read 0 (f :: rows)
     in
-    Array.of_list (List.rev (read skiprows [] 0))
+    Array.of_list (List.rev (read skiprows []))
   in
   if Array.length rows = 0 then failwith "no row";
   let cols = Array.length rows.(0) in

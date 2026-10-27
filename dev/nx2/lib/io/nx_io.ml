@@ -95,12 +95,10 @@ let load_gguf path =
 
 (* Text *)
 
-let load_txt ?(sep = " ") ?(comments = "#") ?(skiprows = 0) ?max_rows path dt =
-  Txt.load ~sep ~comments ~skiprows ~max_rows path dt
+let load_txt ?(sep = " ") ?(comments = "#") ?(skiprows = 0) path dt =
+  Txt.load ~sep ~comments ~skiprows path dt
 
-let save_txt ?(sep = " ") ?(newline = "\n") ?header ?footer ?(comments = "# ")
-    path x =
-  Txt.save ~sep ~newline ~header ~footer ~comments path x
+let save_txt ?(sep = " ") path x = Txt.save ~sep path x
 
 (* Images *)
 

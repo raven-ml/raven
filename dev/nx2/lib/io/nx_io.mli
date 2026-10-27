@@ -396,7 +396,6 @@ val load_txt :
   ?sep:string ->
   ?comments:string ->
   ?skiprows:int ->
-  ?max_rows:int ->
   string ->
   ('v, 's) Nx.dtype ->
   ('v, 's, Nx.host) Nx.t
@@ -404,10 +403,10 @@ val load_txt :
 
     The first [skiprows] lines are skipped, then each line is a row of fields
     separated by [sep], except blank lines and lines that start with [comments],
-    and at most [max_rows] rows are read. A file of one row or one column loads
-    as a vector, and any other as a matrix of shape [[|rows; columns|]]. [sep]
-    defaults to [" "], where runs of spaces separate fields, [comments] to
-    ["#"], [skiprows] to [0], and [max_rows] to every row.
+    such as a header another program wrote. A file of one row or one column
+    loads as a vector, and any other as a matrix of shape [[|rows; columns|]].
+    [sep] defaults to [" "], where runs of spaces separate fields, [comments] to
+    ["#"] and [skiprows] to [0].
 
     A float field is a sign, decimal digits with a point, and an exponent of [e]
     or [E], a sign and digits, each part but the digits optional, as [-1.5e3],
@@ -418,25 +417,15 @@ val load_txt :
     float field, [true] where it is not zero. Hexadecimal, underscores and other
     spellings are no literal.
 
-    Raises [Invalid_argument] if [dt] is complex, [skiprows] is negative or
-    [max_rows] is not positive. Raises [Failure] if the file has no row, rows of
-    different lengths, or a field that is no literal of [dt] or lies outside its
-    range. *)
+    Raises [Invalid_argument] if [dt] is complex or [skiprows] is negative.
+    Raises [Failure] if the file has no row, rows of different lengths, or a
+    field that is no literal of [dt] or lies outside its range. *)
 
-val save_txt :
-  ?sep:string ->
-  ?newline:string ->
-  ?header:string ->
-  ?footer:string ->
-  ?comments:string ->
-  string ->
-  ('v, 's, 'd) Nx.t ->
-  unit
+val save_txt : ?sep:string -> string -> ('v, 's, 'd) Nx.t -> unit
 (** [save_txt path x] writes the 0-d value, vector or matrix [x] to the text
-    file [path]: a 0-d value or a vector as one row, a matrix row by row. Each
-    line of [header] and [footer] is written before and after the rows, prefixed
-    with [comments]. [sep] defaults to [" "], [newline] to ["\n"] and [comments]
-    to ["# "].
+    file [path], and nothing else: a 0-d value or a vector as one row, a matrix
+    row by row, each row ended by ["\n"] and its fields separated by [sep],
+    which defaults to [" "].
 
     A float is written in [%.18e] notation, its 19 significant digits rounded
     from its exact value, so it reads back as itself, NaN aside: every NaN is
