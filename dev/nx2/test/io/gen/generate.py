@@ -4,8 +4,11 @@
 numpy writes the NPY, NPZ and text files, torch the bfloat16 SafeTensors file,
 and zipfile an NPZ file numpy would not write. The PNG files come from the
 minimal writer below, which chooses the row filters, sample depths and
-interlacing that an encoder picks on its own, and Pillow writes the JPEG
-files. Each image has a sibling .npy of the pixels Pillow decodes from it.
+interlacing that an encoder picks on its own, except png_rgba.png and
+png_la.png, which Pillow writes as it writes the JPEG files. Each image has a
+sibling .npy of the pixels Pillow decodes from it, except png_gray_trns.png and
+png_rgb16_trns.png, whose pixels are stated from PNG-3 where Pillow's decoding
+differs.
 
 Usage:
     cd dev/nx2/test/io/support
@@ -131,6 +134,13 @@ def reference(path, mode):
     np.save(path.rsplit(".", 1)[0] + ".npy", np.asarray(Image.open(path).convert(mode)))
 
 
+def stated(path, pixels):
+    """The pixels of [path] as PNG-3 states them, where Pillow's decoding
+    differs: a tRNS colour is matched before samples are scaled to 8 bits
+    (section 11.3.1.1)."""
+    np.save(path.rsplit(".", 1)[0] + ".npy", np.array(pixels, dtype=np.uint8))
+
+
 def image_fixtures():
     rgb = [[((31 * y + 73 * x) % 256, (73 * y + 11 * x) % 256, (47 * x * y + 5) % 256)
             for x in range(3)] for y in range(5)]
@@ -147,7 +157,33 @@ def image_fixtures():
     write_png("png_palette_adam7.png", indices, 2, 3, filters=(0, 1, 2, 3, 4),
               palette=[(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0)],
               trns=[255, 128, 255, 0], interlace=True)
-    reference("png_palette_adam7.png", "RGB")
+    reference("png_palette_adam7.png", "RGBA")
+    # A tRNS chunk shorter than the palette: the entries past its end are
+    # opaque.
+    write_png("png_palette_short_trns.png", indices[:3], 2, 3,
+              palette=[(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0)],
+              trns=[0])
+    reference("png_palette_short_trns.png", "RGBA")
+    rgba = np.fromfunction(lambda y, x, c: (37 * y + 59 * x + 83 * c) % 256,
+                           (4, 5, 4)).astype(np.uint8)
+    Image.fromarray(rgba).save("png_rgba.png")
+    reference("png_rgba.png", "RGBA")
+    Image.fromarray(np.ascontiguousarray(rgba[:, :, 1::2])).save("png_la.png")
+    reference("png_la.png", "LA")
+    # A 2-bit grey image whose tRNS value has bits above the depth set, which
+    # a decoder masks: the transparent sample is 2.
+    grey = [[0, 1, 2, 3], [3, 2, 1, 0]]
+    write_png("png_gray_trns.png", [[(s,) for s in row] for row in grey], 2, 0,
+              trns=[0xFF, 0x02])
+    stated("png_gray_trns.png",
+           [[(85 * s, 0 if s == 2 else 255) for s in row] for row in grey])
+    # A 16-bit colour image whose second pixel differs from the tRNS colour
+    # only in its low bytes, which 8 bits drop.
+    write_png("png_rgb16_trns.png",
+              [[(0x1234, 0x5678, 0x9ABC), (0x12FF, 0x56FF, 0x9AFF), (0, 0, 0)]],
+              16, 2, trns=list(struct.pack(">HHH", 0x1234, 0x5678, 0x9ABC)))
+    stated("png_rgb16_trns.png",
+           [[(0x12, 0x56, 0x9A, 0), (0x12, 0x56, 0x9A, 255), (0, 0, 0, 255)]])
 
     def gradient(h, w, mode):
         a = np.fromfunction(lambda y, x, c: 10 + 12 * y + 8 * x + 30 * c,
@@ -159,8 +195,10 @@ def image_fixtures():
     gradient(6, 5, "L").save("jpeg_gray.jpg", quality=90)
     gradient(5, 6, "CMYK").save("jpeg_cmyk.jpg", quality=90)
     gradient(9, 11, "RGB").save("jpeg_restart.jpg", quality=90, restart_marker_blocks=1)
-    for name in ["baseline", "progressive", "gray", "cmyk", "restart"]:
+    for name in ["baseline", "progressive", "cmyk", "restart"]:
         reference("jpeg_%s.jpg" % name, "RGB")
+    reference("jpeg_gray.jpg", "L")
+
 
 if __name__ == "__main__":
     safetensors_fixtures()

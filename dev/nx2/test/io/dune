@@ -1,7 +1,7 @@
 ; nx.io's suites. They read files of the formats written by numpy, torch,
-; Python's zipfile, Pillow and a minimal PNG writer, with the pixels Pillow
-; decodes from each image as an npy file, which gen/generate.py writes into
-; support/.
+; Python's zipfile, Pillow and a minimal PNG writer, with each image's pixels
+; as an npy file, as Pillow decodes it, or as PNG-3 states it where Pillow
+; differs, which gen/generate.py writes into support/.
 
 (tests
  (names test_io test_archive test_image)

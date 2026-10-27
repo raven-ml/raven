@@ -841,21 +841,30 @@ static unsigned multiply_255(unsigned a, unsigned b) {
   return (value + (value >> 8)) >> 8;
 }
 
+/* The channels of a decoded pixel: grey stays one, and every other colour
+   space is converted to red, green and blue. */
+static unsigned output_channels(unsigned component_count) {
+  return component_count == 1 ? 1 : 3;
+}
+
 static jpeg_status write_pixels(const jpeg_decoder *decoder, uint8_t *dst,
-                                size_t dst_len, int grayscale) {
-  unsigned output_channels = grayscale ? 1 : 3;
+                                size_t dst_len) {
+  unsigned out = output_channels(decoder->component_count);
   if (decoder->width > SIZE_MAX / decoder->height ||
-      decoder->width * decoder->height > SIZE_MAX / output_channels ||
-      decoder->width * decoder->height * output_channels != dst_len)
+      decoder->width * decoder->height > SIZE_MAX / out ||
+      decoder->width * decoder->height * out != dst_len)
     return JPEG_SIZE;
   for (size_t y = 0; y < decoder->height; y++) {
     for (size_t x = 0; x < decoder->width; x++) {
+      size_t at = (y * decoder->width + x) * out;
+      if (decoder->component_count == 1) {
+        dst[at] = (uint8_t)resample(decoder, &decoder->components[0], x, y);
+        continue;
+      }
       unsigned r;
       unsigned g;
       unsigned b;
-      if (decoder->component_count == 1) {
-        r = g = b = resample(decoder, &decoder->components[0], x, y);
-      } else if (decoder->component_count == 3) {
+      if (decoder->component_count == 3) {
         unsigned first = resample(decoder, &decoder->components[0], x, y);
         unsigned second = resample(decoder, &decoder->components[1], x, y);
         unsigned third = resample(decoder, &decoder->components[2], x, y);
@@ -889,21 +898,16 @@ static jpeg_status write_pixels(const jpeg_decoder *decoder, uint8_t *dst,
           b = multiply_255(255 - third, 255 - key);
         }
       }
-      size_t out = (y * decoder->width + x) * output_channels;
-      if (grayscale) {
-        dst[out] = (uint8_t)((77u * r + 150u * g + 29u * b + 128u) >> 8);
-      } else {
-        dst[out] = (uint8_t)r;
-        dst[out + 1] = (uint8_t)g;
-        dst[out + 2] = (uint8_t)b;
-      }
+      dst[at] = (uint8_t)r;
+      dst[at + 1] = (uint8_t)g;
+      dst[at + 2] = (uint8_t)b;
     }
   }
   return JPEG_OK;
 }
 
 static jpeg_status decode_jpeg(const uint8_t *src, size_t len, uint8_t *dst,
-                               size_t dst_len, int grayscale) {
+                               size_t dst_len) {
   if (len < 4 || src[0] != 0xff || src[1] != 0xd8)
     return JPEG_MARKER;
   jpeg_decoder decoder;
@@ -975,13 +979,13 @@ static jpeg_status decode_jpeg(const uint8_t *src, size_t len, uint8_t *dst,
   if (status == JPEG_OK)
     status = reconstruct(&decoder);
   if (status == JPEG_OK)
-    status = write_pixels(&decoder, dst, dst_len, grayscale);
+    status = write_pixels(&decoder, dst, dst_len);
   free_decoder(&decoder);
   return status;
 }
 
 static jpeg_status probe_jpeg(const uint8_t *src, size_t len, size_t *width,
-                              size_t *height) {
+                              size_t *height, unsigned *channels) {
   if (len < 4 || src[0] != 0xff || src[1] != 0xd8)
     return JPEG_MARKER;
   size_t off = 2;
@@ -1003,6 +1007,7 @@ static jpeg_status probe_jpeg(const uint8_t *src, size_t len, size_t *width,
         return JPEG_FRAME;
       *height = be16(data + 1);
       *width = be16(data + 3);
+      *channels = output_channels(data[5]);
       return JPEG_OK;
     }
     if ((marker >= 0xc1 && marker <= 0xcf && marker != 0xc4 && marker != 0xc8 &&
@@ -1474,32 +1479,31 @@ CAMLprim value caml_nx_io_jpeg_probe(value vsrc) {
   checked_bytes(vsrc, &src, &len);
   size_t width;
   size_t height;
+  unsigned channels;
   caml_release_runtime_system();
-  jpeg_status status = probe_jpeg(src, len, &width, &height);
+  jpeg_status status = probe_jpeg(src, len, &width, &height, &channels);
   caml_acquire_runtime_system();
   if (status != JPEG_OK)
     caml_failwith(jpeg_message(status));
   if (width > (size_t)Max_long || height > (size_t)Max_long)
     caml_failwith(jpeg_message(JPEG_SIZE));
-  vresult = caml_alloc_tuple(2);
+  vresult = caml_alloc_tuple(3);
   Store_field(vresult, 0, Val_long(width));
   Store_field(vresult, 1, Val_long(height));
+  Store_field(vresult, 2, Val_long(channels));
   CAMLreturn(vresult);
 }
 
-CAMLprim value caml_nx_io_jpeg_decode(value vsrc, value vdst,
-                                      value vgrayscale) {
-  CAMLparam3(vsrc, vdst, vgrayscale);
+CAMLprim value caml_nx_io_jpeg_decode(value vsrc, value vdst) {
+  CAMLparam2(vsrc, vdst);
   const uint8_t *src;
   size_t src_len;
   checked_bytes(vsrc, &src, &src_len);
   const uint8_t *dst_const;
   size_t dst_len;
   checked_bytes(vdst, &dst_const, &dst_len);
-  int grayscale = Bool_val(vgrayscale);
   caml_release_runtime_system();
-  jpeg_status status =
-      decode_jpeg(src, src_len, (uint8_t *)dst_const, dst_len, grayscale);
+  jpeg_status status = decode_jpeg(src, src_len, (uint8_t *)dst_const, dst_len);
   caml_acquire_runtime_system();
   if (status != JPEG_OK)
     caml_failwith(jpeg_message(status));

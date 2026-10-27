@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* Images. A PNG saved from any image loads back as its pixels, a smooth JPEG
-   within its quality, and files other encoders wrote as Pillow decodes them; a
-   file cut short or corrupted raises [Failure] naming it, and never anything
-   else. *)
+   within its quality, and files other encoders wrote as Pillow decodes them,
+   or as PNG-3 states them where Pillow differs; a file cut short or corrupted
+   raises [Failure] naming it, and never anything else. *)
 
 open Windtrap
 open Io_support
@@ -16,8 +16,8 @@ let image =
   Testable.make ~pp:Nx.pp ~equal:(fun a b ->
       Nx.shape a = Nx.shape b && Nx.to_array a = Nx.to_array b)
 
-(* The pixels Pillow decodes from the fixture image [name]. *)
-let pillow name =
+(* The pixels of the fixture image [name], as gen/generate.py states them. *)
+let expected name =
   let npy = Filename.remove_extension name ^ ".npy" in
   Nx.unpack Nx.uint8 (Nx_io.load_npy (fixture npy))
 
@@ -129,7 +129,7 @@ let png_chunks =
       prop
         "with ~dpi and ~srgb the file is encode_png's with the two chunks \
          added, and loads back the same"
-        (Gen.pair (images [ 0; 1; 3; 4 ]) (Gen.float_range 1. 1000.))
+        (Gen.pair (images [ 0; 1; 2; 3; 4 ]) (Gen.float_range 1. 1000.))
         (fun ((_, x), dpi) ->
           let plain = Nx_io.encode_png x in
           let png = Nx_io.encode_png ~dpi ~srgb:true x in
@@ -151,55 +151,37 @@ let png_chunks =
               Nx_io.encode_png ~dpi tiny));
     ]
 
-let flat x = Nx.reshape [| Nx.dim 0 x; Nx.dim 1 x |] x
+(* [x] as an image of one channel loads: without a channel axis. *)
+let loaded x =
+  match Nx.shape x with
+  | [| h; w; 1 |] -> Nx.reshape [| h; w |] x
+  | _ -> x
 
 let round_trips =
   group "round trips"
     [
       prop
-        "save writes encode_png's bytes, which load back exactly: grey in \
-         three equal channels, alpha dropped, and colour in grayscale within \
-         one level of its luma"
-        (images [ 0; 1; 3; 4 ])
+        "save writes encode_png's bytes, which load back as the image, of \
+         every channel count"
+        (images [ 0; 1; 2; 3; 4 ])
         (fun (view, x) ->
           covers (view, x);
-          let h = Nx.dim 0 x and w = Nx.dim 1 x in
-          cover "grey" (Nx.ndim x = 2 || Nx.dim 2 x = 1);
-          cover "colour" (Nx.ndim x = 3 && Nx.dim 2 x = 3);
-          cover "alpha" (Nx.ndim x = 3 && Nx.dim 2 x = 4);
+          let channels = if Nx.ndim x = 2 then 1 else Nx.dim 2 x in
+          cover "grey" (channels = 1);
+          cover "grey and alpha" (channels = 2);
+          cover "colour" (channels = 3);
+          cover "colour and alpha" (channels = 4);
           let path = temp_file ~suffix:".png" () in
           Nx_io.save_image path x;
           equal string (Nx_io.encode_png x) (read path);
-          let colour = Nx_io.load_image path in
-          let gray = Nx_io.load_image ~grayscale:true path in
-          match Nx.shape x with
-          | [| _; _; 3 |] ->
-              equal image x colour;
-              let px = Nx.to_array x and g = Nx.to_array gray in
-              Array.iteri
-                (fun i g ->
-                  let p k = Float.of_int px.((3 * i) + k) in
-                  let luma =
-                    (0.299 *. p 0) +. (0.587 *. p 1) +. (0.114 *. p 2)
-                  in
-                  at_most float_exact ~than:1.
-                    (Float.abs (Float.of_int g -. luma)))
-                g
-          | [| _; _; 4 |] ->
-              equal image (Nx.slice [ Nx.A; Nx.A; Nx.R (0, 3) ] x) colour
-          | _ ->
-              equal image (flat x) gray;
-              equal image
-                (Nx.broadcast_to [| h; w; 3 |] (Nx.reshape [| h; w; 1 |] gray))
-                colour);
+          equal image (loaded x) (Nx_io.load_image path));
       prop "a smooth image returns from JPEG within a mean error of 8 levels"
         (smooth [ 0; 1; 3 ])
         (fun x ->
           let path = temp_file ~suffix:".jpg" () in
           Nx_io.save_image path x;
-          let colour = Nx.ndim x = 3 && Nx.dim 2 x = 3 in
-          let back = Nx_io.load_image ~grayscale:(not colour) path in
-          let x = if colour then x else flat x in
+          let back = Nx_io.load_image path in
+          let x = loaded x in
           equal (array int) (Nx.shape x) (Nx.shape back);
           let e = errors x back in
           at_most int ~than:8 (Array.fold_left ( + ) 0 e / Array.length e));
@@ -246,17 +228,28 @@ let round_trips =
 let files =
   group "files"
     [
-      cases ~name:fst "files other encoders wrote load as Pillow decodes them"
+      cases ~name:fst
+        "files other encoders wrote load with the file's channels: alpha and \
+         transparency kept, grey as one channel, CMYK as colour"
         (List.map
            (fun n -> ("png_" ^ n ^ ".png", 0))
-           [ "filters"; "gray1"; "rgb16"; "palette_adam7" ]
+           [
+             "filters";
+             "gray1";
+             "rgb16";
+             "palette_adam7";
+             "palette_short_trns";
+             "rgba";
+             "la";
+             "gray_trns";
+             "rgb16_trns";
+           ]
         @ List.map
             (fun n -> ("jpeg_" ^ n ^ ".jpg", 3))
             [ "baseline"; "progressive"; "gray"; "cmyk"; "restart" ])
         (fun (name, tolerance) ->
-          let expected = pillow name in
-          let grayscale = Nx.ndim expected = 2 in
-          let x = Nx_io.load_image ~grayscale (fixture name) in
+          let expected = expected name in
+          let x = Nx_io.load_image (fixture name) in
           equal ~msg:"shape" (array int) (Nx.shape expected) (Nx.shape x);
           at_most ~msg:"largest error" int ~than:tolerance
             (Array.fold_left Int.max 0 (errors expected x)));
@@ -279,8 +272,9 @@ let files =
           ("a BMP extension", "x.bmp", [| 2; 2; 3 |]);
           ("no extension", "x", [| 2; 2; 3 |]);
           ("a vector", "x.png", [| 4 |]);
-          ("two channels", "x.png", [| 2; 2; 2 |]);
+          ("five channels", "x.png", [| 2; 2; 5 |]);
           ("no rows", "x.png", [| 0; 3; 3 |]);
+          ("two channels in JPEG", "x.jpg", [| 2; 2; 2 |]);
           ("four channels in JPEG", "x.jpg", [| 2; 2; 4 |]);
           ("no columns in JPEG", "x.jpg", [| 3; 0 |]);
         ]
@@ -310,8 +304,7 @@ let files =
         ] (fun name ->
           let whole = read (fixture name) in
           prefixes_fail Nx_io.load_image whole;
-          flips_load_or_fail Nx_io.load_image whole;
-          flips_load_or_fail (Nx_io.load_image ~grayscale:true) whole);
+          flips_load_or_fail Nx_io.load_image whole);
       test "without overwrite, a save to a path that names a file fails"
         (fun () ->
           let path = file ~suffix:".png" "old" in

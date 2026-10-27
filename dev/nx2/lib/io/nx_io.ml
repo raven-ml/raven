@@ -106,12 +106,12 @@ let save_txt ?(sep = " ") ?(newline = "\n") ?header ?footer ?(comments = "# ")
 
 (* The pixels are decoded into host memory the value owns, which its donation
    may write, as an inflated npz entry's are. *)
-let load_image ?(grayscale = false) path =
+let load_image path =
   Fail.file path @@ fun () ->
   Storage.read (Storage.pages (Storage.open_file path)) @@ fun src ->
-  let h, w, c = Image.probe ~grayscale src in
+  let h, w, c = Image.probe src in
   let pixels = Rig.Buffer.create Rig.host (h * w * c) in
-  Rig.Buffer.write pixels Bigarray.int8_unsigned (Image.decode ~grayscale src);
+  Rig.Buffer.write pixels Bigarray.int8_unsigned (Image.decode src);
   let shape = if c = 1 then [| h; w |] else [| h; w; c |] in
   let layout = L.contiguous (Iarray.of_array shape) in
   Nx.Repr.unsafe_of_array Nx.Host.v (A.v Nx_array.Dtype.Uint8 layout pixels)
@@ -140,7 +140,7 @@ let pixels_per_metre dpi =
   int_of_float ppm
 
 let png ~by ~ppm ~srgb x =
-  with_pixels ~by ~channels:[ 1; 3; 4 ] x (Image.png_encode ~ppm ~srgb)
+  with_pixels ~by ~channels:[ 1; 2; 3; 4 ] x (Image.png_encode ~ppm ~srgb)
 
 let encode_png ?dpi ?(srgb = false) x =
   let ppm = match dpi with None -> 0 | Some dpi -> pixels_per_metre dpi in

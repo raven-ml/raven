@@ -46,6 +46,11 @@ typedef struct {
   unsigned interlace;
   uint8_t palette[256 * 3];
   unsigned palette_size;
+  /* The tRNS chunk: a palette entry's alpha, or the one grey or RGB sample
+     value that is transparent, its bits above the depth masked. */
+  int has_transparency;
+  uint8_t palette_alpha[256];
+  unsigned transparent[3];
   size_t idat_size;
 } png_info;
 
@@ -102,6 +107,7 @@ static int valid_depth(unsigned color, unsigned depth) {
   }
 }
 
+/* The channels of a pixel as the file stores it. */
 static unsigned color_channels(unsigned color) {
   switch (color) {
   case 0:
@@ -182,6 +188,19 @@ static png_status parse_png(const uint8_t *src, size_t len, png_info *info) {
            (length == 0 || !seen_palette || length > info->palette_size)) ||
           info->color == 4 || info->color == 6)
         return PNG_PALETTE;
+      /* PNG-3 11.3.1.1: a grey or RGB value is two bytes whatever the depth,
+         and a decoder masks the bits above it. Palette entries past the
+         chunk's end are opaque. */
+      if (info->color == 3) {
+        memset(info->palette_alpha, 255, sizeof(info->palette_alpha));
+        memcpy(info->palette_alpha, data, length);
+      } else {
+        unsigned mask = info->depth == 16 ? 0xffffu : (1u << info->depth) - 1u;
+        for (unsigned i = 0; i < length / 2; i++)
+          info->transparent[i] =
+              (((unsigned)data[2 * i] << 8) | data[2 * i + 1]) & mask;
+      }
+      info->has_transparency = 1;
       seen_transparency = 1;
     } else if (type_is(type, "IDAT")) {
       if (!seen_header || data_ended || (info->color == 3 && !seen_palette))
@@ -348,11 +367,19 @@ static void pass_geometry(const png_info *info, unsigned pass, size_t *width,
   }
 }
 
+/* The channels of a decoded pixel: the file's, a palette's three colours, and
+   an alpha channel where a tRNS chunk gives transparency. */
+static unsigned output_channels(const png_info *info) {
+  unsigned colours = info->color == 3 ? 3 : info->channels;
+  return colours + (info->has_transparency ? 1u : 0u);
+}
+
 /* Writes the pixels of the unfiltered scanline [line], row [row] of pass
-   [pass], into [dst]. */
+   [pass], into [dst], [output_channels (info)] samples a pixel. A sample is
+   compared with a tRNS value before it is scaled to 8 bits. */
 static png_status write_row(const png_info *info, unsigned pass, size_t row,
                             size_t pass_width, const uint8_t *line,
-                            uint8_t *dst, unsigned output_channels) {
+                            uint8_t *dst) {
   static const uint8_t start_x[7] = {0, 4, 0, 2, 0, 1, 0};
   static const uint8_t start_y[7] = {0, 0, 4, 0, 2, 0, 1};
   static const uint8_t step_x[7] = {8, 8, 4, 4, 2, 2, 1};
@@ -361,37 +388,29 @@ static png_status write_row(const png_info *info, unsigned pass, size_t row,
   unsigned sy = info->interlace ? start_y[pass] : 0;
   unsigned dx = info->interlace ? step_x[pass] : 1;
   unsigned dy = info->interlace ? step_y[pass] : 1;
+  unsigned out = output_channels(info);
   size_t y = sy + row * dy;
   for (size_t x_pass = 0; x_pass < pass_width; x_pass++) {
-    size_t component = x_pass * info->channels;
-    unsigned r;
-    unsigned g;
-    unsigned b;
-    if (info->color == 0 || info->color == 4) {
-      uint8_t gray =
-          scale_sample(sample(line, component, info->depth), info->depth);
-      r = g = b = gray;
-    } else if (info->color == 3) {
+    size_t x = sx + x_pass * dx;
+    uint8_t *pixel = dst + (y * info->width + x) * out;
+    if (info->color == 3) {
       unsigned index = sample(line, x_pass, info->depth);
       if (index >= info->palette_size)
         return PNG_PALETTE;
-      r = info->palette[index * 3];
-      g = info->palette[index * 3 + 1];
-      b = info->palette[index * 3 + 2];
-    } else {
-      r = scale_sample(sample(line, component, info->depth), info->depth);
-      g = scale_sample(sample(line, component + 1, info->depth), info->depth);
-      b = scale_sample(sample(line, component + 2, info->depth), info->depth);
+      memcpy(pixel, info->palette + index * 3, 3);
+      if (info->has_transparency)
+        pixel[3] = info->palette_alpha[index];
+      continue;
     }
-    size_t x = sx + x_pass * dx;
-    size_t at = (y * info->width + x) * output_channels;
-    if (output_channels == 1) {
-      dst[at] = (uint8_t)((77u * r + 150u * g + 29u * b + 128u) >> 8);
-    } else {
-      dst[at] = (uint8_t)r;
-      dst[at + 1] = (uint8_t)g;
-      dst[at + 2] = (uint8_t)b;
+    size_t component = x_pass * info->channels;
+    int transparent = info->has_transparency;
+    for (unsigned c = 0; c < info->channels; c++) {
+      unsigned value = sample(line, component + c, info->depth);
+      transparent = transparent && value == info->transparent[c];
+      pixel[c] = scale_sample(value, info->depth);
     }
+    if (info->has_transparency)
+      pixel[info->channels] = transparent ? 0 : 255;
   }
   return PNG_OK;
 }
@@ -399,12 +418,12 @@ static png_status write_row(const png_info *info, unsigned pass, size_t row,
 /* Unfilters the scanlines of [filtered] in place, pass by pass, and writes
    their pixels into [dst]. */
 static png_status decode_png(const png_info *info, uint8_t *filtered,
-                             size_t filtered_len, uint8_t *dst, size_t dst_len,
-                             int grayscale) {
-  unsigned output_channels = grayscale ? 1 : 3;
+                             size_t filtered_len, uint8_t *dst,
+                             size_t dst_len) {
+  unsigned out = output_channels(info);
   if (info->width > SIZE_MAX / info->height ||
-      info->width * info->height > SIZE_MAX / output_channels ||
-      info->width * info->height * output_channels != dst_len)
+      info->width * info->height > SIZE_MAX / out ||
+      info->width * info->height * out != dst_len)
     return PNG_SIZE;
   size_t total;
   size_t max_row;
@@ -430,7 +449,7 @@ static png_status decode_png(const png_info *info, uint8_t *filtered,
       uint8_t *line = scanline + 1;
       status = unfilter(line, previous, row_size, bpp, scanline[0]);
       if (status == PNG_OK)
-        status = write_row(info, pass, row, width, line, dst, output_channels);
+        status = write_row(info, pass, row, width, line, dst);
       if (status != PNG_OK)
         return status;
       previous = line;
@@ -533,9 +552,10 @@ CAMLprim value caml_nx_io_png_probe(value vsrc) {
     caml_failwith(png_message(status));
   if (info.width > (size_t)Max_long || info.height > (size_t)Max_long)
     caml_failwith(png_message(PNG_SIZE));
-  vresult = caml_alloc_tuple(2);
+  vresult = caml_alloc_tuple(3);
   Store_field(vresult, 0, Val_long(info.width));
   Store_field(vresult, 1, Val_long(info.height));
+  Store_field(vresult, 2, Val_long(output_channels(&info)));
   CAMLreturn(vresult);
 }
 
@@ -568,9 +588,8 @@ CAMLprim value caml_nx_io_png_idat(value vsrc) {
   CAMLreturn(vresult);
 }
 
-CAMLprim value caml_nx_io_png_decode(value vsrc, value vfiltered, value vdst,
-                                     value vgrayscale) {
-  CAMLparam4(vsrc, vfiltered, vdst, vgrayscale);
+CAMLprim value caml_nx_io_png_decode(value vsrc, value vfiltered, value vdst) {
+  CAMLparam3(vsrc, vfiltered, vdst);
   const uint8_t *src;
   size_t src_len;
   checked_bytes(vsrc, &src, &src_len);
@@ -580,13 +599,12 @@ CAMLprim value caml_nx_io_png_decode(value vsrc, value vfiltered, value vdst,
   const uint8_t *dst;
   size_t dst_len;
   checked_bytes(vdst, &dst, &dst_len);
-  int grayscale = Bool_val(vgrayscale);
   png_info info;
   caml_release_runtime_system();
   png_status status = parse_png(src, src_len, &info);
   if (status == PNG_OK)
     status = decode_png(&info, (uint8_t *)filtered, filtered_len,
-                        (uint8_t *)dst, dst_len, grayscale);
+                        (uint8_t *)dst, dst_len);
   caml_acquire_runtime_system();
   if (status != PNG_OK)
     caml_failwith(png_message(status));
@@ -604,8 +622,7 @@ CAMLprim value caml_nx_io_png_filter(value vsrc, value vwidth, value vheight,
   size_t width = (size_t)Long_val(vwidth);
   size_t height = (size_t)Long_val(vheight);
   unsigned channels = (unsigned)Long_val(vchannels);
-  if (width == 0 || height == 0 ||
-      (channels != 1 && channels != 3 && channels != 4) ||
+  if (width == 0 || height == 0 || channels < 1 || channels > 4 ||
       width > SIZE_MAX / height || width * height > SIZE_MAX / channels ||
       width * height * channels != src_len || width > UINT32_MAX ||
       height > UINT32_MAX)

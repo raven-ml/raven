@@ -7,17 +7,17 @@ open Bigarray
 
 type bytes = (int, int8_unsigned_elt, c_layout) Array1.t
 
-external png_parse : bytes -> int * int = "caml_nx_io_png_probe"
+external png_parse : bytes -> int * int * int = "caml_nx_io_png_probe"
 external png_idat : bytes -> bytes * int = "caml_nx_io_png_idat"
 
-external png_unfilter : bytes -> bytes -> bytes -> bool -> unit
+external png_unfilter : bytes -> bytes -> bytes -> unit
   = "caml_nx_io_png_decode"
 
 external png_filter : bytes -> int -> int -> int -> string
   = "caml_nx_io_png_filter"
 
-external jpeg_probe : bytes -> int * int = "caml_nx_io_jpeg_probe"
-external jpeg_decode : bytes -> bytes -> bool -> unit = "caml_nx_io_jpeg_decode"
+external jpeg_probe : bytes -> int * int * int = "caml_nx_io_jpeg_probe"
+external jpeg_decode : bytes -> bytes -> unit = "caml_nx_io_jpeg_decode"
 
 external jpeg_stream : bytes -> int -> int -> int -> string
   = "caml_nx_io_jpeg_encode"
@@ -51,13 +51,13 @@ let png_probe src =
   check 8;
   png_parse src
 
-let png_decode src dst grayscale =
+let png_decode src dst =
   let idat, length = png_idat src in
   let filtered = Array1.create int8_unsigned c_layout length in
   (match Compress_deflate.Zlib.decompress_into idat filtered with
   | Ok () -> ()
   | Error e -> failwith ("invalid PNG zlib stream: " ^ e));
-  png_unfilter src filtered dst grayscale
+  png_unfilter src filtered dst
 
 (* [png_chunk b kind data first length] adds the chunk [kind] of the [length]
    bytes of [data] at [first] to [b]. *)
@@ -84,7 +84,9 @@ let png_encode ~ppm ~srgb data ~width ~height ~channels =
   Bytes.set_int32_be header 0 (Int32.of_int width);
   Bytes.set_int32_be header 4 (Int32.of_int height);
   Bytes.set_uint8 header 8 8;
-  Bytes.set_uint8 header 9 (match channels with 1 -> 0 | 3 -> 2 | _ -> 6);
+  (* The colour type of grey, grey and alpha, RGB and RGBA. *)
+  let color = match channels with 1 -> 0 | 2 -> 4 | 3 -> 2 | _ -> 6 in
+  Bytes.set_uint8 header 9 color;
   png_chunk b "IHDR" (Bytes.to_string header) 0 13;
   if srgb then png_chunk b "sRGB" "\000" 0 1;
   if ppm <> 0 then begin
@@ -126,15 +128,14 @@ let codec src =
   else if is_jpeg src then (jpeg_probe, jpeg_decode)
   else failwith "no PNG or JPEG stream"
 
-let probe ~grayscale src =
+let probe src =
   let probe, _ = codec src in
-  let width, height = probe src in
-  let channels = if grayscale then 1 else 3 in
+  let width, height, channels = probe src in
   if width <= 0 || height <= 0 then failwith "the image has no pixel";
   if width > max_int / height || width * height > max_int / channels then
     failwith "the image is too large";
   (height, width, channels)
 
-let decode ~grayscale src dst =
+let decode src dst =
   let _, decode = codec src in
-  decode src dst grayscale
+  decode src dst
