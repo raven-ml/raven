@@ -1000,6 +1000,73 @@ let law_one_donor_twice =
           invalid ~sub:(dead_in "Nx.copy" x by) (fun () -> Nx.copy x))
         ops)
 
+(* Two handles of one donor, each through a chain of movements, or a handle
+   through one beside its donor, give in one operation what the operation
+   gives undonated copies through the same movements. The donor dies once,
+   naming the operation, and so does every handle the chains passed on. A
+   recut, a reshape of a transpose, copies; the others make views. *)
+type movement = Transpose | Flip | Flatten | Recut | Whole
+
+let movement_name = function
+  | Transpose -> "transpose"
+  | Flip -> "flip"
+  | Flatten -> "flatten"
+  | Recut -> "recut"
+  | Whole -> "whole"
+
+let move n x = function
+  | Transpose -> Nx.transpose x
+  | Flip -> Nx.flip x
+  | Flatten -> Nx.reshape [| n; n |] (Nx.reshape [| n * n |] x)
+  | Recut -> Nx.reshape [| n; n |] (Nx.reshape [| n * n |] (Nx.transpose x))
+  | Whole -> Nx.slice [ A; A ] x
+
+let chain n x ms = List.fold_left (move n) x ms
+
+let movements =
+  Gen.list ~size:(Gen.int_range 0 3)
+    (Gen.of_list
+       ~pp:(fun ppf m -> Format.pp_print_string ppf (movement_name m))
+       [ Transpose; Flip; Flatten; Recut; Whole ])
+
+let moved_case =
+  let names ms = String.concat "; " (List.map movement_name ms) in
+  Gen.with_pp
+    (fun ppf ((n, xs), m1, m2, beside) ->
+      Format.fprintf ppf "%dx%d [%s] through [%s], %s" n n
+        (String.concat "; " (Array.to_list (Array.map Float.to_string xs)))
+        (names m1)
+        (if beside then "beside the donor"
+         else Printf.sprintf "beside [%s]" (names m2)))
+    Gen.(quad square movements movements bool)
+
+let law_moved_twice =
+  prop "two handles of one donor through movements give the undonated result"
+    moved_case (fun ((n, xs), m1, m2, beside) ->
+      let copies m = n >= 2 && List.mem Recut m in
+      cover "a copy passed on" (copies m1 || ((not beside) && copies m2));
+      cover "the donor beside a moved handle" (beside && m1 <> []);
+      cover "two moved handles" ((not beside) && m1 <> [] && m2 <> []);
+      let s = [| n; n |] in
+      let second x h = if beside then x else chain n h m2 in
+      List.iter
+        (fun (by, f) ->
+          let copy () = fresh_at s xs in
+          let kept = f (chain n (copy ()) m1) (second (copy ()) (copy ())) in
+          let x = copy () in
+          let h = Nx.donate x in
+          let a = chain n h m1 and b = second x h in
+          equal ~msg:by (array int32) (bits32 kept) (bits32 (f a b));
+          let dies y =
+            invalid ~sub:(dead_in "Nx.copy" y by) (fun () -> Nx.copy y)
+          in
+          List.iter dies [ x; h; a; b ])
+        [
+          ("Nx.mul", fun a b -> Nx.mul a b);
+          ("Nx.add", fun a b -> Nx.add a b);
+          ("Nx.matmul", fun a b -> Nx.matmul a b);
+        ])
+
 let terms = Gen.int_range 1 2100
 
 let law_init_bits =
@@ -1203,21 +1270,22 @@ let call_ref = pair_ref ( -. ) "test.call"
 
 (* It writes [h1 - h2] over [h1]'s memory where it may take it, reading
    each element of [h1] through the taken array before writing it. *)
-let call_sys h1 h2 =
-  refused (fun () ->
-      Nx.Prim.Consumer.with_ ~by:"test.call" [ Any h1; Any h2 ] (fun c ->
-          let read i = host_floats (Nx.Prim.Consumer.arrays c i).(0) in
-          let b = read 1 in
-          let n = Array.length b in
-          match
-            Nx.Prim.Consumer.take c 0 D.Float32 (A.Layout.contiguous [| n |])
-          with
-          | Some a ->
-              for k = 0 to n - 1 do
-                A.set a [| k |] (A.get a [| k |] -. b.(k))
-              done;
-              A.to_array a
-          | None -> Array.map2 ( -. ) (read 0) b))
+let difference h1 h2 =
+  Nx.Prim.Consumer.with_ ~by:"test.call" [ Any h1; Any h2 ] (fun c ->
+      let read i = host_floats (Nx.Prim.Consumer.arrays c i).(0) in
+      let b = read 1 in
+      let n = Array.length b in
+      match
+        Nx.Prim.Consumer.take c 0 D.Float32 (A.Layout.contiguous [| n |])
+      with
+      | Some a ->
+          for k = 0 to n - 1 do
+            A.set a [| k |] (A.get a [| k |] -. b.(k))
+          done;
+          A.to_array a
+      | None -> Array.map2 ( -. ) (read 0) b)
+
+let call_sys h1 h2 = refused (fun () -> difference h1 h2)
 
 let handles =
   [
@@ -1236,6 +1304,115 @@ let crossed =
     command "make" (pair @-> makes handle) make_handle make_handle_sys;
     command "sub2" (handle ^-> handle ^-> judges taken) sub2_ref sub2_sys;
     command "call" (handle ^-> handle ^-> judges taken) call_ref call_sys;
+  ]
+
+(* On one domain: donors, their handles and values of their own, across
+   calls. A donor's fate is whether it lives or the function it died to. A
+   value is a donor's own or a handle of it, with its shape and elements: a
+   movement of a handle is a handle of the same donor, and a movement of a
+   donor's own value is a view, a value of its own. An operation and a
+   consumer check every operand before they kill anything, then kill the
+   donor of each handle they read, once. A read and a function of several
+   operations kill nothing. Every result is computed from the elements, and
+   every refusal names the function the donor died to. *)
+type donor = { mutable fate : string option }
+type held = { of_ : donor; handle : bool; dims : int array; xs : float array }
+
+let held =
+  abstract "v" ~invariant:(fun r s ->
+      equal ~msg:"donated tells a handle" bool r.handle (Nx.Prim.donated s);
+      equal ~msg:"its shape answers" (array int) r.dims (Nx.shape s))
+
+(* [by]'s refusal of [r], whose donor died to [f]. *)
+let refusal by r f =
+  Printf.sprintf "%s: float32 [%s] was donated to %s" by
+    (String.concat "; " (List.map string_of_int (Array.to_list r.dims)))
+    f
+
+let told f =
+  match f () with ys -> Ok ys | exception Invalid_argument m -> Error m
+
+let made xs = { of_ = { fate = None }; handle = false; dims = [| 2 |]; xs }
+
+(* [Ok (f ())] where [r] lives, else [by]'s refusal. *)
+let living by r f =
+  match r.of_.fate with Some f' -> Error (refusal by r f') | None -> Ok (f ())
+
+(* [f ()], a value [by] makes of [r], where [r] lives; raises as [by] does
+   otherwise. *)
+let making by r f =
+  match r.of_.fate with
+  | Some f' -> invalid_arg (refusal by r f')
+  | None -> f ()
+
+let donate_r r = making "Nx.donate" r (fun () -> { r with handle = true })
+
+let moved by r dims xs =
+  making by r (fun () ->
+      if r.handle then { r with dims; xs }
+      else { of_ = { fate = None }; handle = false; dims; xs })
+
+let toggled dims = if Array.length dims = 1 then [| 1; 2 |] else [| 2 |]
+let reshape_r r = moved "Nx.reshape" r (toggled r.dims) r.xs
+let reshape_s x = Nx.reshape (toggled (Nx.shape x)) x
+let reversed xs = Array.of_list (List.rev (Array.to_list xs))
+let flip_r r = moved "Nx.flip" r r.dims (reversed r.xs)
+
+(* [r]'s donor dead to [by], where [r] is a handle. *)
+let killed by r = if r.handle then r.of_.fate <- Some by
+
+let neg_r r =
+  living "Nx.neg" r (fun () ->
+      killed "Nx.neg" r;
+      Array.map Float.neg r.xs)
+
+let neg_s x = told (fun () -> elements (Nx.neg x))
+
+(* A function [by] of two operands whose result's elements are [f]'s. It
+   refuses naming a dead operand, killing nothing, or kills the donor of each
+   handle it read. Which dead operand it names is left open. *)
+let pair_judged by f a b = function
+  | Ok (Ok ys) ->
+      if Option.is_some a.of_.fate || Option.is_some b.of_.fate then
+        fail (by ^ " read a dead operand");
+      equal (array float_exact) (Array.map2 f a.xs b.xs) ys;
+      killed by a;
+      killed by b
+  | Ok (Error m) ->
+      let names r =
+        match r.of_.fate with Some f' -> refusal by r f' = m | None -> false
+      in
+      cover "an operand refused, the call killing nothing" true;
+      if not (names a || names b) then fail (by ^ " refused: " ^ m)
+  | Error exn -> raise exn
+
+let add_s x y = told (fun () -> elements (Nx.add x y))
+let call_s x y = told (fun () -> difference x y)
+let read_r r = living "Nx.to_array" r (fun () -> r.xs)
+let read_s x = told (fun () -> Nx.to_array x)
+let split_r r = living "Nx.split" r (fun () -> r.xs)
+
+let split_s x =
+  told (fun () ->
+      Array.concat (List.map elements (Nx.split ~axis:(-1) 2 x)))
+
+let lives =
+  [
+    command "make" (pair @-> makes held) made fresh;
+    command "donate" (held ^-> makes held) donate_r Nx.donate;
+    command "reshape" (held ^-> makes held) reshape_r reshape_s;
+    command "flip" (held ^-> makes held) flip_r (fun x -> Nx.flip x);
+    command "neg" (held ^-> returns taken) neg_r neg_s;
+    command "add"
+      (held ^-> held ^-> judges taken)
+      (pair_judged "Nx.add" ( +. ))
+      add_s;
+    command "call"
+      (held ^-> held ^-> judges taken)
+      (pair_judged "test.call" ( -. ))
+      call_s;
+    command "read" (held ^-> returns taken) read_r read_s;
+    command "split" (held ^-> returns taken) split_r split_s;
   ]
 
 (* Naming: a function of one operation consumes a donated operand for the
@@ -2658,6 +2835,8 @@ let () =
              test "two handles of one donor are read as one"
                test_one_donor_twice;
              law_one_donor_twice;
+             law_moved_twice;
+             stateful "donors and handles across calls" lives;
              test "a one-to-one movement passes the handle on" test_passed_on;
              test "a value sharing the memory keeps its elements"
                test_sharer_keeps;
