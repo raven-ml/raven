@@ -196,9 +196,9 @@ end
     An npy file holds one array, and an npz file is a zip archive of npy files,
     each named by its entry's name and [.npy]. npy stores float16, float32,
     float64, the signed and unsigned integers of 8 to 64 bits, complex64,
-    complex128 and bool. A load reads the format's versions 1.0, 2.0 and 3.0, in
-    either byte order and either axis order, and an npz entry stored or
-    compressed with DEFLATE.
+    complex128 and bool. A save writes the format's version 1.0. A load reads
+    its versions 1.0, 2.0 and 3.0, in either byte order and either axis order,
+    and an npz entry stored or compressed with DEFLATE.
 
     Versions 1.0 and 2.0 are NumPy's NEP 1,
     {{:https://numpy.org/neps/nep-0001-npy-format.html}A simple file format for
@@ -213,8 +213,7 @@ val load_npy : string -> Nx.host Nx.packed
     the file states its dtype, which [Nx.unpack dt] checks ({!Nx.unpack}). *)
 
 val save_npy : string -> ('v, 's, 'd) Nx.t -> unit
-(** [save_npy path x] writes [x] to the npy file [path], in version 1.0, or 2.0
-    where its header needs more than 65,535 bytes.
+(** [save_npy path x] writes [x] to the npy file [path].
 
     Raises [Invalid_argument] if npy does not store [x]'s dtype. For [bit], the
     message names [Nx.cast Nx.bool], which stores a byte per element. *)

@@ -12,7 +12,8 @@ module L = Nx_array.Layout
 
 let magic = "\x93NUMPY"
 
-(* NumPy reads headers of at most this many bytes. *)
+(* nx reads headers of at most this many bytes, its own bound: NumPy's np.load
+   reads 10,000 by default, and more when its [max_header_size] is raised. *)
 let max_header = 1 lsl 20
 
 (* Dtypes *)
@@ -279,10 +280,12 @@ let shape_literal s =
   | [ d ] -> Printf.sprintf "%d," d
   | ds -> String.concat ", " (List.map string_of_int ds)
 
-(* The header is padded with spaces so that the data starts on a multiple of 64
-   bytes, and ends with a newline. *)
-let padded ~width body =
-  let used = 8 + width + String.length body + 1 in
+(* A header is written in version 1.0, whose 16-bit length holds the longest nx
+   writes: 32 extents of 16 digits at [<c16] take 630 bytes before padding. It
+   is padded with spaces so that the data starts on a multiple of 64 bytes, and
+   ends with a newline. *)
+let padded body =
+  let used = 10 + String.length body + 1 in
   body ^ String.make ((64 - (used mod 64)) mod 64) ' ' ^ "\n"
 
 let encode dt shape =
@@ -292,14 +295,8 @@ let encode dt shape =
       (Option.get (code dt))
       (shape_literal shape)
   in
-  let v1 = padded ~width:2 body in
-  let version, text, width =
-    if String.length v1 <= 0xffff then (1, v1, 2)
-    else (2, padded ~width:4 body, 4)
-  in
+  let text = padded body in
   let n = String.length text in
-  magic
-  ^ String.make 1 (Char.chr version)
-  ^ "\x00"
-  ^ String.init width (fun i -> Char.chr ((n lsr (8 * i)) land 0xff))
+  magic ^ "\x01\x00"
+  ^ String.init 2 (fun i -> Char.chr ((n lsr (8 * i)) land 0xff))
   ^ text
