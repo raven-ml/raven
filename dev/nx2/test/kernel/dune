@@ -1,16 +1,16 @@
 (tests
- (names test_kinds test_prog test_shape test_kernels test_contract test_reduce test_index test_sort test_fold test_assemble test_linalg test_fft test_release)
- (modules test_kinds test_prog test_shape test_kernels test_contract test_reduce test_index test_sort test_fold test_assemble test_linalg test_fft test_release elements exact)
+ (names test_kinds test_prog test_shape test_kernels test_contract test_reduce test_index test_sort test_fold test_assemble test_linalg test_fft)
+ (modules test_kinds test_prog test_shape test_kernels test_contract test_reduce test_index test_sort test_fold test_assemble test_linalg test_fft exact)
  (libraries
   nx_array
   nx_array_gen
   nx_array_support
   nx_cpu
   nx_kernel
+  nx_kernel_cases
   nx_kernel_support
   nx_kernels_support
   nx_kinds_support
-  nx_release_support
   rig
   unix
   windtrap)

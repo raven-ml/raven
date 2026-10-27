@@ -58,3 +58,22 @@
   (language c)
   (include_dirs ../../../lib/cpu ../../../lib/array ../../../lib/kernel)
   (names nx_kernels_support_stubs)))
+
+; What nx.kernel's suites and nx.cpu's share: elements as their bits, and
+; the cases, references and laws of copies, casts and maps, of reductions
+; and scans, and of contractions.
+
+(library
+ (name nx_kernel_cases)
+ (wrapped false)
+ (modules elements kernels_cases reduce_cases contract_cases)
+ (libraries
+  nx_array
+  nx_array_gen
+  nx_array_support
+  nx_cpu
+  nx_kernel
+  nx_kernels_support
+  nx_kinds_support
+  rig
+  windtrap))

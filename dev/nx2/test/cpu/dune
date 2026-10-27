@@ -1,0 +1,17 @@
+; nx.cpu's suites: what nx_cpu.mli promises beyond Nx_kernel.S, through
+; nx.cpu's interface.
+
+(tests
+ (names test_kernels test_reduce test_contract test_release)
+ (libraries
+  nx_array
+  nx_array_gen
+  nx_array_support
+  nx_cpu
+  nx_kernel
+  nx_kernel_cases
+  nx_kernels_support
+  nx_kinds_support
+  nx_release_support
+  rig
+  windtrap))
