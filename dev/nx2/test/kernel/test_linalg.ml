@@ -134,7 +134,7 @@ let laid_out how (A.Any x) =
   let s = L.shape (A.layout x) in
   let r = Array.length s in
   let into y =
-    A.blit ~src:x ~dst:y;
+    A.transfer ~src:x ~dst:y;
     A.Any y
   in
   match how with

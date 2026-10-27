@@ -88,7 +88,7 @@ let guard side x =
          [| Nx_array.Dtype.bytes dt hi - first |])
       (Nx_array.buffer a)
   in
-  Nx_array.blit ~src:(bytes x) ~dst:(bytes g);
+  Nx_array.transfer ~src:(bytes x) ~dst:(bytes g);
   (g, free)
 
 (* One-node maps *)

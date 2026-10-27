@@ -1467,7 +1467,7 @@ let shifted (A.Any x as a) =
          (M.Slice (Iarray.of_array (Array.mapi at s)))
          (A.create Rig.host (A.dtype x) made))
   in
-  A.blit ~src:x ~dst:y;
+  A.transfer ~src:x ~dst:y;
   A.Any y
 
 (* Quads in place: a as made, and b stored [n × k], adjacent along k, over
@@ -1513,7 +1513,7 @@ let quad_examples =
           let s = shape_of a in
           let vs = A.Any (A.of_array D.Int64 s (Array.make (total s) v)) in
           let src = A.expect (A.dtype x) (cast_to (D.Any (A.dtype x)) vs) in
-          A.blit ~src ~dst:x;
+          A.transfer ~src ~dst:x;
           a
         in
         { c with a = fill low c.a; b = fill low c.b; init = Option.map (fill top) c.init }
@@ -3266,7 +3266,7 @@ let guarded_product (type s) (b : Support.backend) (dt : (float, s) D.t) g =
   in
   let guard x =
     let g', free = Support.guarded g.side dt (A.layout x) in
-    A.blit ~src:x ~dst:g';
+    A.transfer ~src:x ~dst:g';
     (g', free)
   in
   let a = matrix values g.m g.k and x = matrix values g.k g.cols in

@@ -93,7 +93,7 @@ let int64s s x =
   done;
   let src = Bigarray.reshape (Bigarray.genarray_of_array1 b) s in
   let a = A.create Rig.host D.Int64 s in
-  A.blit ~src:(A.of_bigarray D.Int64 src) ~dst:a;
+  A.transfer ~src:(A.of_bigarray D.Int64 src) ~dst:a;
   a
 
 (* An array of [dt] and shape [s] holding stores of 251 values in [-46.25,

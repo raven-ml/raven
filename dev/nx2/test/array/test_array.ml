@@ -526,7 +526,6 @@ let test_io_refuses () =
   fails (fun () -> A.get a [| 0 |]);
   fails (fun () -> A.set a [| 0 |] 0.);
   fails (fun () -> A.to_array a);
-  fails (fun () -> A.copy a);
   is_none (A.bigarray Bigarray.float32 a)
 
 let test_dead_access () =
@@ -577,14 +576,18 @@ let test_dead_empty () =
   raises_match (Exn.invalid_arg ~substring:"consumed by the test") (fun () ->
       A.to_array a)
 
-(* A copy the host cannot make is refused before it allocates. *)
-let test_refused_copy () =
+(* A copy of memory the host does not address is a fresh array on its device:
+   a transposed view on an io device, copied there. *)
+let test_copy_off_host () =
   let d = S.io_device () in
-  let a = A.to_device d (floats32 [| 2 |] [| 1.; 2. |]) in
-  Rig.free_cache d;
-  let before = S.io_allocations () in
-  raises_match (Exn.invalid_arg ~substring:"host") (fun () -> A.copy a);
-  equal int before (S.io_allocations ())
+  let m = A.to_device d (floats32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |]) in
+  let t = Option.get (A.move (M.Permute [| 1; 0 |]) m) in
+  let c = A.copy t in
+  equal ~msg:"device" bool true (Rig.equal d (A.device c));
+  equal ~msg:"layout" layout (L.contiguous [| 3; 2 |]) (A.layout c);
+  equal ~msg:"fresh" bool false (B.overlaps (A.buffer c) (A.buffer m));
+  equal ~msg:"elements" (values f32) [| 0.; 3.; 1.; 4.; 2.; 5. |]
+    (A.to_array (A.to_device Rig.host c))
 
 (* Writes to the elements of one byte from two domains keep each other. *)
 let int4s = abstract "a"
@@ -773,9 +776,9 @@ let law_copy (Case (a, m)) =
       check b
   | None -> check a
 
-(* [blit] into the transpose of a fresh array, a destination whose layout is not
-   C order for two axes or more. *)
-let law_blit (Case (a, m)) =
+(* [transfer] on the host into the transpose of a fresh array, a destination
+   whose layout is not C order for two axes or more. *)
+let law_transfer_layouts (Case (a, m)) =
   let check : type v s. (v, s) A.t -> unit =
    fun a ->
     let s = L.shape (A.layout a) in
@@ -787,7 +790,7 @@ let law_blit (Case (a, m)) =
         (A.move (M.Permute (Iarray.of_array (rev (Array.init r Fun.id)))) base)
     in
     cover "a strided destination" (not (L.is_contiguous (A.layout dst)));
-    A.blit ~src:a ~dst;
+    A.transfer ~src:a ~dst;
     equal (values (A.dtype a)) (A.to_array a) (A.to_array dst)
   in
   match Option.bind m (fun m -> A.move m a) with
@@ -796,43 +799,18 @@ let law_blit (Case (a, m)) =
       check b
   | None -> check a
 
-let test_blit_refuses () =
-  let a = floats32 [| 2 |] [| 1.; 2. |] in
-  let fails what substring f =
-    raises_match ~msg:what (Exn.invalid_arg ~substring) f
-  in
-  fails "another shape" "Nx_array.blit" (fun () ->
-      A.blit ~src:a ~dst:(A.create Rig.host f32 [| 3 |]));
-  fails "a broadcast destination" "Nx_array.blit" (fun () ->
-      let one = A.create Rig.host f32 [| 1 |] in
-      A.blit ~src:a ~dst:(Option.get (A.move (M.Broadcast [| 2 |]) one)));
-  fails "memory the host does not address" "host" (fun () ->
-      A.blit
-        ~src:(A.to_device (S.io_device ()) a)
-        ~dst:(A.create Rig.host f32 [| 2 |]));
-  let dead = A.create Rig.host f32 [| 2 |] in
-  kill (A.buffer dead);
-  fails "a dead destination" "consumed by the test" (fun () ->
-      A.blit ~src:a ~dst:dead);
-  let b = floats32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
-  let part first =
-    Option.get (A.move (M.Slice [| { start = first; count = 3; step = 1 } |]) b)
-  in
-  fails "a destination overlapping the source" "Nx_array.blit" (fun () ->
-      A.blit ~src:(part 0) ~dst:(part 1))
-
-(* [blit] writes its destination's elements alone: an int4 window starting
-   inside a byte keeps its neighbours, and an array stored into itself is
-   unchanged. *)
-let test_blit_writes () =
+(* [transfer] on the host writes its destination's elements alone: an int4
+   window starting inside a byte keeps its neighbours, and an array stored
+   into itself is unchanged. *)
+let test_transfer_writes () =
   let base = A.of_array D.Int4 [| 6 |] [| 1; 2; 3; 4; 5; 6 |] in
   let mid =
     Option.get (A.move (M.Slice [| { start = 1; count = 3; step = 1 } |]) base)
   in
-  A.blit ~src:(A.of_array D.Int4 [| 3 |] [| -1; -2; -3 |]) ~dst:mid;
+  A.transfer ~src:(A.of_array D.Int4 [| 3 |] [| -1; -2; -3 |]) ~dst:mid;
   equal ~msg:"a window" (values D.Int4) [| 1; -1; -2; -3; 5; 6 |]
     (A.to_array base);
-  A.blit ~src:base ~dst:base;
+  A.transfer ~src:base ~dst:base;
   equal ~msg:"itself" (values D.Int4) [| 1; -1; -2; -3; 5; 6 |]
     (A.to_array base)
 
@@ -1251,16 +1229,34 @@ let law_transfer (Case (a, m), (io_src, io_dst)) =
   | Some b -> check b
   | None -> check base
 
+(* Each refusal names transfer, on the host and off it. *)
 let test_transfer_refusals () =
   let a = floats32 [| 2 |] [| 1.; 2. |] in
   let fails what substring f =
-    raises_match ~msg:what (Exn.invalid_arg ~substring) f
+    raises_match ~msg:what
+      (fun e ->
+        Exn.invalid_arg ~substring:"Nx_array.transfer" e
+        && Exn.invalid_arg ~substring e)
+      f
   in
-  fails "another shape" "do not fit" (fun () ->
-      A.transfer ~src:a ~dst:(A.create (S.io_device ()) f32 [| 3 |]));
-  fails "a broadcast destination" "twice" (fun () ->
-      let one = A.create (S.io_device ()) f32 [| 1 |] in
-      A.transfer ~src:a ~dst:(Option.get (A.move (M.Broadcast [| 2 |]) one)))
+  List.iter
+    (fun (where, d) ->
+      fails (where ^ ": another shape") "do not fit" (fun () ->
+          A.transfer ~src:a ~dst:(A.create d f32 [| 3 |]));
+      fails (where ^ ": a broadcast destination") "twice" (fun () ->
+          let one = A.create d f32 [| 1 |] in
+          A.transfer ~src:a ~dst:(Option.get (A.move (M.Broadcast [| 2 |]) one))))
+    [ ("host", Rig.host); ("io", S.io_device ()) ];
+  let dead = A.create Rig.host f32 [| 2 |] in
+  kill (A.buffer dead);
+  fails "a dead destination" "consumed by the test" (fun () ->
+      A.transfer ~src:a ~dst:dead);
+  let b = floats32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+  let part first =
+    Option.get (A.move (M.Slice [| { start = first; count = 3; step = 1 } |]) b)
+  in
+  fails "a destination overlapping the source" "shares bytes" (fun () ->
+      A.transfer ~src:(part 0) ~dst:(part 1))
 
 (* A bitcast is a view on any device: it keeps the buffer and moves no byte. *)
 let memory = lazy (Result.get_ok (Rig.memory_device "nx2-test-memory"))
@@ -2389,7 +2385,6 @@ let tests =
         test "bigarray refuses a dead buffer off the host" test_dead_bigarray;
         test "to_device and to_array refuse a dead buffer under no element"
           test_dead_empty;
-        test "a refused copy allocates nothing" test_refused_copy;
         stateful ~domains:2
           "writes to one byte from two domains keep each other" int4_commands;
         stateful ~domains:2
@@ -2414,12 +2409,14 @@ let tests =
         group "run and scalar stores agree"
           (List.concat_map law_encode float_dtypes);
         test "copy gathers into a fresh buffer" test_copy;
+        test "copy makes a fresh array off the host" test_copy_off_host;
         test "copy keeps NaN payloads" test_copy_bits;
         prop "copy is contiguous with the same elements" case law_copy;
         prop "copy keeps every byte of every element" raw law_copy_bits;
-        prop "blit stores any layout's elements into any layout" case law_blit;
-        test "blit refuses what it cannot store" test_blit_refuses;
-        test "blit writes its destination's elements alone" test_blit_writes;
+        prop "transfer stores any layout's elements into any layout" case
+          law_transfer_layouts;
+        test "transfer writes its destination's elements alone"
+          test_transfer_writes;
         prop "a bool reads true iff its byte is not zero"
           (raw_of [ D.Any D.Bool ]) law_bool_bytes;
         prop ~count:300
@@ -2435,7 +2432,7 @@ let tests =
         prop "transfer stores the elements alone, on the host or an io device"
           (Gen.pair case (Gen.pair Gen.bool Gen.bool))
           law_transfer;
-        test "transfer refuses another shape and a broadcast destination"
+        test "transfer refuses what it cannot store, naming itself"
           test_transfer_refusals;
         test "to_device packs in stride order" test_to_device_layouts;
         test "to_device moves sub-byte views through an io device"

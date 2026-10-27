@@ -4352,7 +4352,7 @@ let law_fused (b : Support.backend) c =
                          (L.shape l))))
                    y)
             in
-            A.blit ~src:(once x) ~dst:(once g);
+            A.transfer ~src:(once x) ~dst:(once g);
             (A.Any g, free))
       c.loads
   in

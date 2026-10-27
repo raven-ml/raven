@@ -376,20 +376,11 @@ let of_array (type v s) (dt : (v, s) Dtype.t) s (values : v array) =
   | Done -> a
   | refusal -> refused fn refusal [ Any a ]
 
-(* The host gathers, so memory it does not address is refused before the copy is
-   allocated on [a]'s device. *)
-let copy a =
-  let fn = "Nx_array.copy" in
-  live fn a.buffer;
-  if Layout.numel a.layout > 0 && host_address a.buffer < 0 then
-    refused fn Off_host [ Any a ];
-  let dst = create (device a) a.dtype (Layout.shape a.layout) in
-  match copy_into dst a with
-  | Done -> dst
-  | refusal -> refused fn refusal [ Any dst; Any a ]
-
-let blit ~src ~dst =
-  let fn = "Nx_array.blit" in
+(* The host gathers [src]'s elements into [dst], of the same shape, bit for
+   bit, through the door, writing [dst]'s elements and no other bit of its
+   buffer: transfer's case where the host addresses both arrays' memory. A
+   refusal names [fn]. *)
+let blit fn ~src ~dst =
   live fn src.buffer;
   live fn dst.buffer;
   match copy_into dst src with
@@ -520,8 +511,8 @@ let iter_runs s t f =
     end
   done
 
-(* [a] with each axis of stride 0 cut to its first index: [blit] stores into a
-   destination that reaches each element once. *)
+(* [a] with each axis of stride 0 cut to its first index: [transfer] stores
+   into a destination that reaches each element once. *)
 let first_of_broadcast a =
   let l = a.layout in
   let range i =
@@ -539,7 +530,7 @@ let first_of_broadcast a =
 (* The host gathers [a]'s runs into [h], on memory it addresses, each run
    brought into one host scratch by [Buffer.copy] where the host does not
    address [a]'s memory. *)
-let gather_runs a h =
+let gather_runs fn a h =
   let bits = Dtype.bits a.dtype in
   let covering ps n =
     (ps * bits / 8, ((((ps + n) * bits) + 7) / 8) - (ps * bits / 8))
@@ -569,7 +560,7 @@ let gather_runs a h =
       and dst =
         { h with layout = Layout.v ~offset:pt ~strides:[| 1 |] [| n |] }
       in
-      blit ~src ~dst)
+      blit fn ~src ~dst)
 
 (* [src]'s device copies [src]'s runs into [dst], on that device, in one
    submission. *)
@@ -600,7 +591,7 @@ let copy_runs src dst =
 (* Stores [s], laid out in [t]'s stride order, into [t]: by a copy per run,
    unless the host addresses [t] and the runs are several, where the host blits
    from [s] brought to it whole. *)
-let spread s t =
+let spread fn s t =
   let _, n = runs s.layout t.layout in
   if n = Layout.numel t.layout || host_address t.buffer < 0 then copy_runs s t
   else begin
@@ -609,7 +600,7 @@ let spread s t =
       else { s with buffer = Buffer.create Rig.host (Buffer.length s.buffer) }
     in
     if h != s then Buffer.copy ~src:s.buffer ~dst:h.buffer;
-    blit ~src:h ~dst:t
+    blit fn ~src:h ~dst:t
   end
 
 (* The host blits where it addresses both arrays' memory. Otherwise a device
@@ -630,15 +621,15 @@ let transfer_by fn ~src ~dst =
   let bits = Dtype.bits src.dtype in
   if bits < 8 && not (hosted dst.buffer) then
     refused fn Off_host [ Any dst; Any src ];
-  if hosted src.buffer && hosted dst.buffer then blit ~src ~dst
+  if hosted src.buffer && hosted dst.buffer then blit fn ~src ~dst
   else if Layout.numel dst.layout > 0 then begin
     let packs =
       bits >= 8 && (not (hosted src.buffer)) && Rig.computes (device src)
     in
     let gather t =
       if packs then pack_on_device src t
-      else if hosted src.buffer then blit ~src ~dst:t
-      else gather_runs src t
+      else if hosted src.buffer then blit fn ~src ~dst:t
+      else gather_runs fn src t
     in
     let direct =
       if packs then Rig.equal (device src) (device dst) else hosted dst.buffer
@@ -655,11 +646,16 @@ let transfer_by fn ~src ~dst =
             let buffer = Buffer.create side (Dtype.bytes dst.dtype n) in
             let stage = { dst with layout = l; buffer } in
             gather stage;
-            spread stage dst
+            spread fn stage dst
           end)
   end
 
 let transfer ~src ~dst = transfer_by "Nx_array.transfer" ~src ~dst
+
+let copy a =
+  let dst = create (device a) a.dtype (Layout.shape a.layout) in
+  transfer_by "Nx_array.copy" ~src:a ~dst;
+  dst
 
 (* [a]'s elements laid out [packed] on [d]. The host gathers a sub-byte array it
    cannot store on [d] into a buffer of its own, moved whole. *)

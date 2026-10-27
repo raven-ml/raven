@@ -3,8 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* to_device of views on a GPU whose memory the host does not address: the GPU
-   packs them, or the host gathers their runs. It skips without such a GPU. *)
+(* to_device and copy of views on a GPU whose memory the host does not
+   address: the GPU packs them, or the host gathers their runs. It skips
+   without such a GPU. *)
 
 open Windtrap
 module A = Nx_array
@@ -75,7 +76,32 @@ let test_views () =
     (slice [ (0, 4, 1); (1, 1, 1) ] q);
   moves "int4 column on the GPU" d want (slice [ (0, 4, 1); (1, 1, 1) ] q)
 
+(* A copy of a view of a GPU's memory is a fresh C-contiguous array on the
+   GPU holding the view's elements. *)
+let test_copy () =
+  let d = off_host () in
+  let m = A.to_device d (iota D.Int16 [| 8; 8 |]) in
+  let back x = A.to_array (A.to_device Rig.host x) in
+  List.iter
+    (fun (name, v) ->
+      let c = A.copy v in
+      equal ~msg:(name ^ ": device") bool true (Rig.equal d (A.device c));
+      equal ~msg:(name ^ ": layout") layout
+        (L.contiguous (L.shape (A.layout v)))
+        (A.layout c);
+      equal ~msg:(name ^ ": fresh") bool false
+        (B.overlaps (A.buffer c) (A.buffer m));
+      equal ~msg:(name ^ ": elements") (array int) (back v) (back c))
+    [
+      ("whole", m);
+      ("column", slice [ (0, 8, 1); (2, 1, 1) ] m);
+      ("transposed", Option.get (A.move (M.Permute [| 1; 0 |]) m));
+    ]
+
 let () =
   exit
     (run "nx_array on a GPU"
-       [ test "to_device packs views of a GPU's memory" test_views ])
+       [
+         test "to_device packs views of a GPU's memory" test_views;
+         test "copy makes a fresh array on the GPU" test_copy;
+       ])
