@@ -250,7 +250,8 @@ let fft (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type d r)
 
 (* Operations *)
 
-let op (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r) (o : r P.t) =
+let op ~device (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r)
+    (o : r P.t) =
   match o with
   | Map { layout; prog; loads; outs = _ } -> body node layout prog loads
   | Reduce { layout; axes; prog; reductions = rs; loads } ->
@@ -301,7 +302,7 @@ let op (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r) (o : r P.t) =
         Lower_index.sort (D.Any (Nx.dtype x)) ~axis ~descending ~k (node x)
       in
       [| values; positions |]
-  | Linalg l -> Lower_linalg.op node l
+  | Linalg l -> Lower_linalg.op ~device node l
   | Fft f -> [| fft node f |]
   | Check _ ->
       unlowered (P.name o)

@@ -12,7 +12,7 @@
     matrix that fails, as it states, is NaN in its own results alone.
 
     A routine repeats one step, a column of a factorisation or a round of
-    rotations, in a tolk loop on the device of its operand's storage: its graph
+    rotations, in a tolk loop on the graph's device: its graph
     holds the step once, whatever the matrix's size, and compiling it costs one
     step.
 
@@ -58,12 +58,12 @@
 open Tolk
 
 val op :
+  device:Ops.device ->
   ('v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) ->
   ('d, 'r) Nx.Prim.linalg ->
   Ops.t array
-(** [op node l] is the node of each result of [l] in position order, its
-    operand [x] read from [node x].
+(** [op ~device node l] is the node of each result of [l] in position order,
+    its operand [x] read from [node x], computed on [device].
 
     Raises [Invalid_argument] naming the routine for a complex operand and for
-    [Eig] and [Eig_values], and naming [Linalg] for an operand of a loop that
-    reads no storage, whose device it cannot name. *)
+    [Eig] and [Eig_values]. *)

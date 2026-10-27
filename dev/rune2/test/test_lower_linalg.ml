@@ -608,28 +608,7 @@ let refused () =
   let z = Nx.create D.Complex64 [| 1; 1 |] [| Complex.one |] in
   let a = Nx.create D.Float32 [| 1; 1 |] [| 1. |] in
   refuses (fun () -> linalg (Cholesky { triangle = Lower; a = z }));
-  refuses (fun () -> fst (linalg (Eig { dtype = D.Complex64; a })));
-  (* An identity computed from its coordinates reads no storage. *)
-  let eye () =
-    fst
-      (P.eval ~by:"t"
-         (P.Map
-            {
-              layout = Nx_array.Layout.contiguous [| 2; 2 |];
-              prog =
-                Nx_kernel.Prog.v ~ins:[||]
-                  [|
-                    Coord 0;
-                    Coord 1;
-                    Op2 (Compare Equal, 0, 1);
-                    Op1 (Cast, D.Any D.Float32, 2);
-                  |]
-                  ~outs:[| 3 |];
-              outs = [ D.Float32 ];
-              loads = Iarray.of_array [||];
-            }))
-  in
-  refuses (fun () -> linalg (Cholesky { triangle = Lower; a = eye () }))
+  refuses (fun () -> fst (linalg (Eig { dtype = D.Complex64; a })))
 
 (* Suites *)
 
@@ -672,5 +651,5 @@ let () =
              law "v diag w vᵀ reconstructs a" ~count:4 square eigh_law;
              test "NaN in the lower triangle is NaN" eigh_fails;
            ];
-         test "complex operands, eig and unstored operands are refused" refused;
+         test "complex operands and eig are refused" refused;
        ])

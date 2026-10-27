@@ -128,7 +128,7 @@ let rule bound i ~by (type r) (op : r Nx.Prim.t) : r =
     | Some _ -> invalid_arg "Lowered: a value of another payload"
     | None -> bind bound x
   in
-  let ys = Rune2.Lower.op node op in
+  let ys = Rune2.Lower.op ~device:cpu node op in
   Nx.Prim.results ~by (fun k f -> Nx.Prim.traced i f (Node ys.(k))) op
 
 let run (type v s d) (f : unit -> (v, s, d) Nx.t) : v array =

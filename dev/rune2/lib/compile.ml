@@ -462,7 +462,7 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
     | Check { ok; data; fail } -> check ok data fail
     | _ ->
         let ys =
-          match Lower.op node op with
+          match Lower.op ~device:st.device node op with
           | ys -> ys
           | exception Invalid_argument why -> decline "%s" why
         in

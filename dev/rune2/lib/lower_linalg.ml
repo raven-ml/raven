@@ -229,17 +229,14 @@ let norm_roundoff l =
 
 (* Loops
 
-   A routine repeats its step in a loop on the device of its operand's
-   storage ({!Loop.repeat}). A loop of no trip, or of values with no element,
-   runs nothing and needs none. *)
+   A routine repeats its step in a loop on the graph's device
+   ({!Loop.repeat}). A loop of no trip, or of values with no element, runs
+   nothing and needs none. *)
 
 let repeat device n init step =
   let empty u = Shape.max_numel u = 0 in
   if n = 0 || List.for_all empty init then init
-  else
-    match device with
-    | Some d -> Loop.repeat d n init step
-    | None -> unlowered "a Linalg of an operand that reads no storage"
+  else Loop.repeat device n init step
 
 (* [dot a b] is the product of the matrices of [a] and [b]: each row of [a]
    against each column of [b] along a new last axis, summed. *)
@@ -804,50 +801,31 @@ let solve_triangular device ~upper ~adjoint ~unit_diagonal a b =
 
 (* Operations *)
 
-(* The device of [u]'s storage: its own, or that of the first node it reads
-   that has one. *)
-let device u =
-  match Ops.device u with
-  | Some d -> Some d
-  | None -> List.find_map Ops.device (Ops.toposort ~calls:Skip u)
-
 let real (type v s) name (dt : (v, s) D.t) =
   if D.is D.Complex dt then unlowered ("a complex " ^ name)
 
-let op (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type d r)
+let op ~device:d (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type d r)
     (l : (d, r) P.linalg) : Ops.t array =
   let operand name a =
     real name (Nx.dtype a);
-    let u = node a in
-    (device u, u)
+    node a
   in
   match l with
   | Cholesky { triangle; a } ->
-      let d, a = operand "Cholesky" a in
-      [| cholesky d ~upper:(triangle = Upper) a |]
-  | Lu a ->
-      let d, a = operand "Lu" a in
-      lu d a
+      [| cholesky d ~upper:(triangle = Upper) (operand "Cholesky" a) |]
+  | Lu a -> lu d (operand "Lu" a)
   | Qr { factors; a } ->
-      let d, a = operand "Qr" a in
-      let q, r = qr d ~complete:(factors = Complete) a in
+      let q, r = qr d ~complete:(factors = Complete) (operand "Qr" a) in
       [| q; r |]
   | Svd_values { a; _ } ->
-      let d, a = operand "Svd_values" a in
-      [| (svd d ~complete:false a).(0) |]
+      [| (svd d ~complete:false (operand "Svd_values" a)).(0) |]
   | Svd { factors; a; _ } ->
-      let d, a = operand "Svd" a in
-      svd d ~complete:(factors = Complete) a
-  | Eigh_values { a; _ } ->
-      let d, a = operand "Eigh_values" a in
-      eigh d ~vectors:false a
-  | Eigh { a; _ } ->
-      let d, a = operand "Eigh" a in
-      eigh d ~vectors:true a
+      svd d ~complete:(factors = Complete) (operand "Svd" a)
+  | Eigh_values { a; _ } -> eigh d ~vectors:false (operand "Eigh_values" a)
+  | Eigh { a; _ } -> eigh d ~vectors:true (operand "Eigh" a)
   | Solve_triangular { triangle; adjoint; unit_diagonal; a; b } ->
-      let d, a = operand "Solve_triangular" a in
-      let e, b = operand "Solve_triangular" b in
-      let d = if Option.is_some d then d else e in
+      let a = operand "Solve_triangular" a in
+      let b = operand "Solve_triangular" b in
       [|
         solve_triangular d ~upper:(triangle = Upper) ~adjoint ~unit_diagonal a
           b;
