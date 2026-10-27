@@ -193,6 +193,17 @@ val equal_witness :
   ('v, 's) t -> ('w, 'r) t -> (('v, 's) t, ('w, 'r) t) Type.eq option
 (** [equal_witness dt dt'] is [Some Equal] iff [equal dt dt']. *)
 
+(** {1:bigarray Bigarray kinds} *)
+
+val of_bigarray_kind : ('v, 's) Bigarray.kind -> ('v, 's) t option
+(** [of_bigarray_kind k] is the dtype that stores [k]'s elements, if one does:
+    [None] for [Char], [Int] and [Nativeint]. *)
+
+val to_bigarray_kind : ('v, 's) t -> ('v, 's) Bigarray.kind option
+(** [to_bigarray_kind dt] is the kind of [dt]'s elements, if {!Bigarray} has
+    their format: [None] for [Bfloat16], the float8 and float4 dtypes, [Int4],
+    [Uint4], [Uint32], [Uint64], [Bool] and [Bit]. *)
+
 (** {1:values Values} *)
 
 val zero : ('v, 's) t -> 'v

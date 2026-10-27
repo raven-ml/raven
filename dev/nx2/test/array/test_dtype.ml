@@ -1136,8 +1136,54 @@ let test_golden ((F (dt, f) as fd), rows) =
 let narrow = List.filter (fun (F (dt, _)) -> D.bits dt <= 16) formats
 let wide = List.filter (fun (F (dt, _)) -> D.bits dt = 32) formats
 
+(* Bigarray kinds *)
+
+(* A dtype's kind is one of its width that holds its extremes, and
+   of_bigarray_kind takes it back. *)
+let test_kind (D.Any dt) =
+  match D.to_bigarray_kind dt with
+  | None -> ()
+  | Some k ->
+      equal ~msg:"its width" int (D.bits dt) (8 * Bigarray.kind_size_in_bytes k);
+      equal ~msg:"of_bigarray_kind takes it back" (option string)
+        (Some (D.name dt))
+        (Option.map D.name (D.of_bigarray_kind k));
+      let b = Bigarray.Genarray.create k Bigarray.c_layout [| 1 |] in
+      let held x =
+        Bigarray.Genarray.set b [| 0 |] x;
+        Bigarray.Genarray.get b [| 0 |]
+      in
+      let extremes =
+        if D.is D.Complex dt then [ D.one dt ]
+        else [ D.min_value dt; D.max_value dt ]
+      in
+      List.iter
+        (fun x -> equal ~msg:"holds its extremes" (value dt) x (held x))
+        extremes
+
+let test_kindless () =
+  equal (list string)
+    [ "bfloat16"; "float8_e4m3fn"; "float8_e5m2"; "float4_e2m1fn"; "uint64";
+      "uint32"; "int4"; "uint4"; "bool"; "bit" ]
+    (List.filter_map
+       (fun (D.Any dt) ->
+         match D.to_bigarray_kind dt with
+         | None -> Some (D.name dt)
+         | Some _ -> None)
+       D.all);
+  let name k = Option.map D.name (D.of_bigarray_kind k) in
+  equal ~msg:"Char" (option string) None (name Bigarray.Char);
+  equal ~msg:"Int" (option string) None (name Bigarray.Int);
+  equal ~msg:"Nativeint" (option string) None (name Bigarray.Nativeint)
+
 let tests =
   [
+    group "bigarray kinds"
+      [
+        cases ~name:any_name "to_bigarray_kind's kind is the dtype's" D.all
+          test_kind;
+        test "the dtypes and kinds with no counterpart" test_kindless;
+      ];
     group "table"
       [
         test "all holds every dtype once" test_all;

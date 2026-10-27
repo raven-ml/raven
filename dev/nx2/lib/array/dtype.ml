@@ -257,6 +257,40 @@ let equal_witness : type v s w r.
   | Bit, Bit -> Some Equal
   | _ -> None
 
+(* Bigarray kinds *)
+
+let of_bigarray_kind : type v s. (v, s) Bigarray.kind -> (v, s) t option =
+  function
+  | Bigarray.Float64 -> Some Float64
+  | Bigarray.Float32 -> Some Float32
+  | Bigarray.Float16 -> Some Float16
+  | Bigarray.Int64 -> Some Int64
+  | Bigarray.Int32 -> Some Int32
+  | Bigarray.Int16_signed -> Some Int16
+  | Bigarray.Int16_unsigned -> Some Uint16
+  | Bigarray.Int8_signed -> Some Int8
+  | Bigarray.Int8_unsigned -> Some Uint8
+  | Bigarray.Complex64 -> Some Complex128
+  | Bigarray.Complex32 -> Some Complex64
+  | Bigarray.Char | Bigarray.Int | Bigarray.Nativeint -> None
+
+let to_bigarray_kind : type v s. (v, s) t -> (v, s) Bigarray.kind option =
+  function
+  | Float64 -> Some Bigarray.Float64
+  | Float32 -> Some Bigarray.Float32
+  | Float16 -> Some Bigarray.Float16
+  | Int64 -> Some Bigarray.Int64
+  | Int32 -> Some Bigarray.Int32
+  | Int16 -> Some Bigarray.Int16_signed
+  | Uint16 -> Some Bigarray.Int16_unsigned
+  | Int8 -> Some Bigarray.Int8_signed
+  | Uint8 -> Some Bigarray.Int8_unsigned
+  | Complex128 -> Some Bigarray.Complex64
+  | Complex64 -> Some Bigarray.Complex32
+  | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn | Int4 | Uint4
+  | Uint32 | Uint64 | Bool | Bit ->
+      None
+
 (* Values *)
 
 let zero : type v s. (v, s) t -> v = function

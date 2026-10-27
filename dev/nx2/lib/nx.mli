@@ -1937,6 +1937,18 @@ val vdot : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     Raises [Invalid_argument] if [a] and [b] have different numbers of
     elements, or the dtype is a boolean. *)
 
+val cross : ?axis:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [cross ~axis a b] is the cross product of the 3-vectors of [a] and [b]
+    along [axis] (default [-1]) of their broadcast shape: component [i] is
+    [a(i+1) b(i+2) - a(i+2) b(i+1)], indices modulo 3. A float format of at
+    most 32 bits gives that difference within one ulp, finite wherever it fits
+    the dtype; float64 within 2 ulps where no product overflows or
+    underflows, and IEEE 754's difference of an infinite product. A zero
+    difference has IEEE 754's sign. Integers wrap.
+
+    Raises [Invalid_argument] if [axis] is not an axis of the broadcast shape,
+    if [a] or [b] does not have 3 elements along it, or for booleans. *)
+
 val conv :
   ?stride:int array ->
   ?padding:(int * int) array ->
@@ -2476,6 +2488,35 @@ val irfft :
 
     Raises [Invalid_argument] also if the last axis has no bin and [s] does
     not give its points. *)
+
+val hfft :
+  (float, 'r) dtype ->
+  ?axes:int list ->
+  ?s:int list ->
+  ?norm:fft_norm ->
+  (Complex.t, 's, 'd) t ->
+  (float, 'r, 'd) t
+(** [hfft dt z] is the forward transform over [axes] of the Hermitian signal
+    [h], with [h(-j) = conj h(j)] for every index [j] over [axes] taken modulo
+    their lengths, whose first [n/2 + 1] samples along the last of [axes] are
+    [z], read as {!irfft} reads its bins: its spectrum is real. Under one
+    [norm] it is [irfft dt (conjugate z)] scaled as a forward transform, so
+    [Backward] does not scale it. It takes [axes] and [s], computes and
+    rounds as {!irfft}, and raises as it does. *)
+
+val ihfft :
+  (Complex.t, 'c) dtype ->
+  ?axes:int list ->
+  ?s:int list ->
+  ?norm:fft_norm ->
+  (float, 's, 'd) t ->
+  (Complex.t, 'c, 'd) t
+(** [ihfft dt x] is the first [n/2 + 1] samples, along the last of [axes], of
+    the Hermitian signal whose transform over [axes] is the real [x]:
+    [conjugate (rfft dt x)] scaled as an inverse transform. Under one [norm],
+    [hfft ~s (ihfft x)] is [x] to rounding, [s] the lengths of [x]'s [axes].
+    It takes [axes] and [s], computes and rounds as {!rfft}, and raises as it
+    does. *)
 
 (** The type for the four discrete cosine and sine transforms, I to IV. *)
 type trig_type = Type_1 | Type_2 | Type_3 | Type_4

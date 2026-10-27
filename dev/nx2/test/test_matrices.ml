@@ -240,13 +240,177 @@ let test_vdot () =
   equal int32 0l (Nx.item [] (Nx.vdot (Nx.zeros Nx.int32 [| 0 |]) (Nx.zeros Nx.int32 [| 0; 3 |])));
   invalid ~by:"Nx.vdot" (fun () -> Nx.vdot (Nx.zeros Nx.int32 [| 2 |]) (Nx.zeros Nx.int32 [| 3 |]))
 
+(* Cross products *)
+
+(* The distance from [r] to the next value of [dt]'s format away from zero,
+   the least subnormal step below its normals. *)
+let ulp (type s) (dt : (float, s) D.t) r =
+  let f = D.float_format dt in
+  let r = Float.abs r in
+  if r < f.min_normal then f.min_normal *. f.epsilon
+  else
+    let _, e = Float.frexp r in
+    Float.ldexp f.epsilon (e - 1)
+
+(* [x y - u v] as the unevaluated sum [s + t] of two floats, within about
+   [2^-104 max |x y| |u v|] of it: each product split exactly by a fused
+   multiply-add, their difference by Knuth's two-sum. *)
+let difference x y u v =
+  let p = x *. y and q = u *. v in
+  let pe = Float.fma x y (-.p) and qe = Float.fma u v (-.q) in
+  let s = p -. q in
+  let z = s -. p in
+  let e = (p -. (s -. z)) +. (-.q -. z) in
+  (s, e +. (pe -. qe))
+
+(* Component [i] of [a × b] for the 3-vectors at [a.(o)] and [b.(o)]. *)
+let component a b o i =
+  let at v k = v.(o + ((i + k) mod 3)) in
+  difference (at a 1) (at b 2) (at a 2) (at b 1)
+
+(* Vectors of [k] 3-vectors with entries of magnitude [2^lo] to [2^hi], half
+   of them pairs within [2^-nudge] of parallel, whose components cancel in
+   about [nudge] bits. *)
+let vectors ~lo ~hi ~nudge =
+  let open Gen in
+  let* k = frequency [ (1, constant 0); (4, int_range 1 4) ] in
+  let entry =
+    let+ m = float_range 0.5 1. and+ e = int_range lo hi and+ neg = bool in
+    Float.ldexp (if neg then -.m else m) e
+  in
+  let* a = array ~size:(constant (3 * k)) entry in
+  let* parallel = bool and+ scale = float_range 0.5 2. in
+  let+ b =
+    if parallel then
+      let+ wobble = array ~size:(constant (3 * k)) (float_range (-1.) 1.) in
+      Array.mapi
+        (fun j x -> x *. scale *. (1. +. Float.ldexp wobble.(j) (-nudge)))
+        a
+    else array ~size:(constant (3 * k)) entry
+  in
+  (k, parallel, a, b)
+
+(* [cross a b] of [dt], from [a] and [b] rounded to [dt], within [ulps] of
+   the exact components wherever they fit [dt]: the count of nonzero ones
+   checked. *)
+let within (type s) (dt : (float, s) D.t) ulps (k, _, a, b) =
+  let on xs = Nx.cast dt (Nx.create Nx.float64 [| k; 3 |] xs) in
+  let ta = on a and tb = on b in
+  let a = Nx.to_array (Nx.cast Nx.float64 ta)
+  and b = Nx.to_array (Nx.cast Nx.float64 tb) in
+  let got = Nx.to_array (Nx.cast Nx.float64 (Nx.cross ta tb)) in
+  let f = D.float_format dt in
+  let checked = ref 0 in
+  for o = 0 to k - 1 do
+    for i = 0 to 2 do
+      let s, t = component a b (3 * o) i in
+      let r = s +. t and v = got.((3 * o) + i) in
+      if Float.abs r <= f.max_finite then begin
+        if r <> 0. then incr checked;
+        if Float.abs ((v -. s) -. t) > ulps *. ulp dt r then
+          failf "%a, vector %d component %d: %h, exactly %h" D.pp dt o i v r
+      end
+    done
+  done;
+  !checked
+
+let law_cross_float64 =
+  prop "cross at float64 is within 2 ulps of its exact components"
+    (vectors ~lo:(-20) ~hi:20 ~nudge:20)
+    (fun ((k, parallel, _, _) as v) ->
+      cover "nearly parallel vectors" (k > 0 && parallel);
+      cover "no vector" (k = 0);
+      ignore (within D.Float64 2. v))
+
+type narrow = Narrow : (float, 's) D.t -> narrow
+
+(* One law per format, its entries within the square root of its range so
+   that most components fit, its parallel pairs within half its precision. *)
+let laws_cross_narrow =
+  List.map
+    (fun (Narrow dt) ->
+      let f = D.float_format dt in
+      let _, top = Float.frexp f.max_finite in
+      let _, bottom = Float.frexp f.min_normal in
+      let v =
+        vectors ~lo:(bottom / 2) ~hi:((top / 2) - 1)
+          ~nudge:(Stdlib.max 1 (f.fraction_bits / 2))
+      in
+      prop
+        (Format.asprintf "cross at %a is within one ulp of its exact components"
+           D.pp dt)
+        v
+        (fun ((k, _, _, _) as v) ->
+          let checked = within dt 1. v in
+          cover "a nonzero component checked" (k > 0 && checked > 0)))
+    [ Narrow D.Float32; Narrow D.Float16; Narrow D.Bfloat16;
+      Narrow D.Float8_e4m3fn; Narrow D.Float8_e5m2; Narrow D.Float4_e2m1fn ]
+
+let test_cross () =
+  let v dt xs = Nx.create dt [| Array.length xs |] xs in
+  equal_elements D.Float32 [| 0.; 0.; 1. |]
+    (Nx.to_array (Nx.cross (v Nx.float32 [| 1.; 0.; 0. |]) (v Nx.float32 [| 0.; 1.; 0. |])));
+  equal_elements D.Int32 [| -3l; 6l; -3l |]
+    (Nx.to_array (Nx.cross (v Nx.int32 [| 1l; 2l; 3l |]) (v Nx.int32 [| 4l; 5l; 6l |])));
+  (* 100 × 100 is 10000, 16 modulo 256. *)
+  equal_elements D.Int8 [| 16; 0; 0 |]
+    (Nx.to_array (Nx.cross (v Nx.int8 [| 0; 100; 0 |]) (v Nx.int8 [| 0; 0; 100 |])));
+  let z re im = { Complex.re; im } in
+  equal_elements D.Complex64 [| z 0. 0.; z 0. 0.; z 0. 1. |]
+    (Nx.to_array
+       (Nx.cross (v Nx.complex64 [| z 0. 1.; z 0. 0.; z 0. 0. |])
+          (v Nx.complex64 [| z 0. 0.; z 1. 0.; z 0. 0. |])));
+  (* Products of 1e40 past float32's range, a difference bfloat16 holds:
+     [1e20 (b2 - b1)], one ulp of 1e20 times 1e20. *)
+  let big = D.of_float D.Bfloat16 1e20 in
+  let next = big +. ulp D.Bfloat16 big in
+  equal_elements D.Bfloat16 [| big *. (next -. big); 0.; 0. |]
+    (Nx.to_array
+       (Nx.cross (v Nx.bfloat16 [| 0.; big; big |]) (v Nx.bfloat16 [| 0.; big; next |])));
+  (* IEEE 754's difference where a product is infinite or the difference is
+     zero, at float32 and float64: [1 - inf], [inf 0], and [-0 - +0]. *)
+  let specials (type s) (dt : (float, s) D.t) =
+    let at xs = Nx.cast dt (v Nx.float64 xs) in
+    let got a b = Nx.to_array (Nx.cast Nx.float64 (Nx.cross (at a) (at b))) in
+    equal_elements D.Float64 [| Float.neg_infinity; Float.nan; 0. |]
+      (got [| 0.; 1.; Float.infinity |] [| 0.; 1.; 1. |]);
+    equal_elements D.Float64 [| -0.; 0.; 0. |]
+      (got [| 0.; -1.; 0. |] [| 0.; 1.; 0. |])
+  in
+  specials D.Float32;
+  specials D.Float64;
+  (* Products of 1e200 past float64's range: their difference's infinity. *)
+  equal_elements D.Float64 [| Float.neg_infinity; 0.; 0. |]
+    (Nx.to_array (Nx.cross (v Nx.float64 [| 0.; 1.; 1e200 |]) (v Nx.float64 [| 0.; 1e200; 1. |])));
+  (* The axis of the broadcast shape: [e0 × e2] and [e1 × e2] in the
+     columns. *)
+  let rows = Nx.create Nx.float64 [| 3; 2 |] [| 1.; 0.; 0.; 1.; 0.; 0. |] in
+  equal_elements D.Float64 [| 0.; 1.; -1.; 0.; 0.; 0. |]
+    (Nx.to_array (Nx.cross ~axis:0 rows (Nx.create Nx.float64 [| 3; 1 |] [| 0.; 0.; 1. |])));
+  equal (array int) [| 2; 0; 3 |]
+    (Nx.shape (Nx.cross (Nx.zeros Nx.float32 [| 2; 0; 3 |]) (Nx.zeros Nx.float32 [| 3 |])))
+
+let cross_refusals =
+  cases "cross refusals" ~name:fst
+    [
+      ("2 elements", fun () -> ignore (Nx.cross (Nx.zeros Nx.float32 [| 2 |]) (Nx.zeros Nx.float32 [| 2 |])));
+      ("one operand broadcast along the axis",
+       fun () -> ignore (Nx.cross (Nx.zeros Nx.float32 [| 2; 3 |]) (Nx.zeros Nx.float32 [| 2; 1 |])));
+      ("an axis outside the shape", fun () -> ignore (Nx.cross ~axis:1 (Nx.zeros Nx.float32 [| 3 |]) (Nx.zeros Nx.float32 [| 3 |])));
+      ("booleans", fun () -> ignore (Nx.cross (Nx.zeros Nx.bool [| 3 |]) (Nx.zeros Nx.bool [| 3 |])));
+    ]
+    (fun (_, f) -> invalid ~by:"Nx.cross" f)
+
 let products =
   group "products"
-    [
+    ([
       prop "dot sums a's last axis against b's"
         (Gen.with_pp (fun ppf (a, b) -> Format.fprintf ppf "%a . %a" pp_ints a pp_ints b) dot_shapes)
         law_dot;
       test "vdot conjugates a and flattens both" test_vdot;
+      law_cross_float64;
+      test "cross at the values its definition gives" test_cross;
+      cross_refusals;
       cases "dot refusals" ~name:fst
         [
           ("a 0-d operand", fun () -> ignore (Nx.dot (Nx.scalar Nx.int32 1l) (Nx.zeros Nx.int32 [| 2 |])));
@@ -255,5 +419,6 @@ let products =
         ]
         (fun (_, f) -> invalid ~by:"Nx.dot" f);
     ]
+    @ laws_cross_narrow)
 
 let () = exit (run "nx matrices" [ triangles; diagonals; products ])

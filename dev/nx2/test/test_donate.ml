@@ -166,7 +166,18 @@ let test_refused_kills_none () =
   let x4 = narrow [| 2; 3 |] in
   invalid ~sub:"Nx.cond: " (fun () -> Nx.cond ~p:`One (Nx.donate x4));
   equal ~msg:"cond's refused donor lives" (array int) [| 2; 3 |]
-    (Nx.shape (Nx.copy x4))
+    (Nx.shape (Nx.copy x4));
+  (* A composite that slices its operand into one map, or conjugates it,
+     refuses before either. *)
+  let x5 = fresh [| 1.; 2.; 3. |] in
+  invalid ~sub:"Nx.cross: " (fun () ->
+      Nx.cross (Nx.donate x5) (fresh [| 1.; 2. |]));
+  equal ~msg:"cross's refused donor lives" (array int) [| 3 |]
+    (Nx.shape (Nx.copy x5));
+  let z6 = Nx.complex Nx.complex64 ~re:(fresh [| 1.; 2. |]) ~im:(fresh [| 3.; 4. |]) in
+  invalid ~sub:"Nx.hfft: " (fun () -> Nx.hfft Nx.float32 ~axes:[ 1 ] (Nx.donate z6));
+  equal ~msg:"hfft's refused donor lives" (array int) [| 2 |]
+    (Nx.shape (Nx.copy z6))
 
 (* An operation that broadcasts a handle, refused by its dtype or by a dead
    operand, kills nothing and names the dead operand. *)
@@ -1177,6 +1188,11 @@ let test_one_reader_consumes () =
   dies "Nx.cond" square (fun d -> ignore (Nx.cond d));
   dies "Nx.argwhere" square (fun d -> ignore (Nx.argwhere d));
   dies "Nx.fftshift" square (fun d -> ignore (Nx.fftshift ~axes:[ 0; 1 ] d));
+  dies "Nx.cross"
+    (fun () -> fresh [| 1.; 2.; 3. |])
+    (fun d -> ignore (Nx.cross d (fresh [| 4.; 5.; 6. |])));
+  dies "Nx.hfft" complex (fun d -> ignore (Nx.hfft Nx.float32 d));
+  dies "Nx.ihfft" square (fun d -> ignore (Nx.ihfft Nx.complex64 d));
   dies "Nx.quantile" square (fun d -> ignore (Nx.quantile [| 0.5 |] d));
   dies "Nx.array_equal" square (fun d ->
       ignore (Nx.array_equal d (square ())));
@@ -1477,6 +1493,8 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
                (d 1 (x [| 3; 2 |]))));
       c "dot" 2 (fun d -> show (Nx.dot (d 0 (x [| 3 |])) (d 1 (x [| 3 |]))));
       c "vdot" 2 (fun d -> show (Nx.vdot (d 0 (x [| 3 |])) (d 1 (x [| 3 |]))));
+      c "cross" 2 (fun d ->
+          show (Nx.cross (d 0 (x [| 2; 3 |])) (d 1 (x [| 3 |]))));
       c "matrix_transpose" 1 (fun d ->
           show (Nx.matrix_transpose (d 0 (x [| 2; 3 |]))));
       c "matrix_transpose" 1 (fun d ->
@@ -1730,6 +1748,7 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
       c "matrix_norm" 1 (fun d ->
           show (Nx.matrix_norm ~ord:`One (d 0 (x [| 2; 2 |]))));
       c "rfft" 1 (fun d -> show (Nx.rfft Nx.complex64 (d 0 (x [| 2; 4 |]))));
+      c "ihfft" 1 (fun d -> show (Nx.ihfft Nx.complex64 (d 0 (x [| 2; 4 |]))));
       c "rfft" 1 (fun d ->
           show (Nx.rfft Nx.complex64 ~norm:Forward (d 0 (x [| 4 |]))));
       c "dct" 1 (fun d -> show (Nx.dct (d 0 (x [| 2; 4 |]))));
@@ -1846,6 +1865,7 @@ let complexes =
       c "fft" 1 (fun d -> show (Nx.fft ~norm:Ortho (d 0 (z [| 4 |]))));
       c "ifft" 1 (fun d -> show (Nx.ifft ~norm:Ortho (d 0 (z [| 4 |]))));
       c "irfft" 1 (fun d -> show (Nx.irfft f32 (d 0 (z [| 3 |]))));
+      c "hfft" 1 (fun d -> show (Nx.hfft f32 (d 0 (z [| 3 |]))));
       c "istft" 1 (fun d ->
           show (Nx.istft f32 ~window:2 ~step:1 (d 0 (z [| 2; 2 |]))));
       c "istft" 2 (fun d ->

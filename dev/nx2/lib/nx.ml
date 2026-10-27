@@ -359,29 +359,17 @@ let init dt shape f =
   let vs = Array.init (Nx_array.Layout.numel l) (fun j -> f (index j)) in
   of_values ~by dt shape vs
 
-let dtype_of_kind (type v s) (k : (v, s) Bigarray.kind) : (v, s) D.t =
-  match k with
-  | Bigarray.Float64 -> D.Float64
-  | Bigarray.Float32 -> D.Float32
-  | Bigarray.Float16 -> D.Float16
-  | Bigarray.Int64 -> D.Int64
-  | Bigarray.Int32 -> D.Int32
-  | Bigarray.Int16_signed -> D.Int16
-  | Bigarray.Int16_unsigned -> D.Uint16
-  | Bigarray.Int8_signed -> D.Int8
-  | Bigarray.Int8_unsigned -> D.Uint8
-  | Bigarray.Complex64 -> D.Complex128
-  | Bigarray.Complex32 -> D.Complex64
-  | Bigarray.Char | Bigarray.Int | Bigarray.Nativeint ->
+let of_bigarray (type v s) (b : (v, s, Bigarray.c_layout) Bigarray.Genarray.t)
+    =
+  let k : (v, s) Bigarray.kind = Bigarray.Genarray.kind b in
+  match D.of_bigarray_kind k with
+  | Some dt -> owned (Nx_array.copy (Nx_array.of_bigarray dt b))
+  | None ->
       invalid_argf "Nx.of_bigarray: no dtype stores Bigarray's %s kind"
         (match k with
         | Bigarray.Char -> "char"
         | Bigarray.Int -> "int"
         | _ -> "nativeint")
-
-let of_bigarray b =
-  let dt = dtype_of_kind (Bigarray.Genarray.kind b) in
-  owned (Nx_array.copy (Nx_array.of_bigarray dt b))
 
 (* [x], waited for, for the read [by]. A read is not an operation: no
    interpretation receives it. *)
@@ -2610,6 +2598,61 @@ let vdot_by ~by a b =
     (conjugate_by ~by (flat a)) (flat b)
 
 let vdot a b = vdot_by ~by:"Nx.vdot" a b
+
+(* [a × b] along [axis]: component [i] is [a(i+1) b(i+2) - a(i+2) b(i+1)],
+   indices mod 3, one map over the six components broadcast back to three.
+   Floats to 32 bits compute at float64, where both products are exact, and
+   round twice, within one ulp. Float64 takes Kahan's difference of products,
+   within 2 ulps (Jeannerod, Louvet and Muller 2013), and the plain difference
+   where it is zero or a product is infinite, whose sign and infinity Kahan's
+   form would lose. *)
+let cross (type v s d) ?(axis = -1) (a : (v, s, d) t) (b : (v, s, d) t) :
+    (v, s, d) t =
+  let by = "Nx.cross" in
+  let dt = dtype a in
+  if D.is D.Boolean dt then invalid_argf "%s: %s is not a number" by (D.name dt);
+  let s = Prim.broadcast_shape ~by (shape a) (shape b) in
+  let r = Array.length s in
+  let ax =
+    Prim.axis ~by r axis (fun ppf ->
+        Format.fprintf ppf "%a and %a" pp_value a pp_value b)
+  in
+  let own x = ax - (r - ndim x) in
+  List.iter
+    (fun x ->
+      let k = own x in
+      if k < 0 || dim k x <> 3 then
+        invalid_argf "%s: %a has no 3 elements along axis %d" by pp_value x
+          axis)
+    [ a; b ];
+  let component x j =
+    let rs = Array.map whole (shape x) in
+    rs.(own x) <- { start = j; count = 1; step = 1 };
+    Value.Any (broadcast ~by s (sliced ~by rs x))
+  in
+  let xs = List.init 3 (component a) @ List.init 3 (component b) in
+  let c = E.coord ax in
+  let pick k0 k1 k2 =
+    E.(where (c = i64 0) (operand k0 a) (where (c = i64 1) (operand k1 a)
+      (operand k2 a)))
+  in
+  (* a(i+1), b(i+2), a(i+2), b(i+1); b's components are operands 3 to 5. *)
+  let x = pick 1 2 0 and y = pick 5 3 4 and u = pick 2 0 1 and v = pick 4 5 3 in
+  let out : (v, s) E.t =
+    match dt with
+    | D.Float64 ->
+        let w = E.(u * v) in
+        let plain = E.((x * y) - w) and inf = E.const D.Float64 Float.infinity in
+        let r = E.(fma x y (neg w) + fma (neg u) v w) in
+        E.(where (abs w = inf) plain (where (r = const D.Float64 0.) plain r))
+    | _ -> (
+        match D.kind dt with
+        | D.Float ->
+            let f e = E.cast D.Float64 e in
+            at dt E.((f x * f y) - (f u * f v))
+        | _ -> E.((x * y) - (u * v)))
+  in
+  elementwise ~by dt xs out
 
 (* Linear algebra *)
 
@@ -5078,7 +5121,7 @@ let fft ?axes ?s ?norm x =
 let ifft ?axes ?s ?norm x =
   complex_by ~by:"Nx.ifft" Nx_kernel.Inverse ?axes ?s ?norm x
 
-let rfft_by ~by dt ?axes ?s ?(norm = Backward) x =
+let rfft_by ~by ?(conj = false) dt ?axes ?s ?(norm = Backward) x =
   let axes, sizes = transform_axes ~by x axes s in
   let x = resized ~by x axes sizes in
   let n = List.fold_left ( * ) 1 sizes in
@@ -5096,11 +5139,12 @@ let rfft_by ~by dt ?axes ?s ?(norm = Backward) x =
         transform ~by
           (C2c { direction = Nx_kernel.Forward; axes = others; x = y })
   in
+  let y = if conj then conjugate_by ~by y else y in
   cast_by ~by dt (scaled ~by (factor norm ~forward:true n) y)
 
 let rfft dt ?axes ?s ?norm x = rfft_by ~by:"Nx.rfft" dt ?axes ?s ?norm x
 
-let irfft_by ~by dt ?axes ?s ?(norm = Backward) z =
+let irfft_by ~by ?(conj = false) dt ?axes ?s ?(norm = Backward) z =
   let default last d =
     if not last then d
     else if d = 0 then invalid_argf "%s: %a has no bin to invert" by pp_value z
@@ -5117,6 +5161,7 @@ let irfft_by ~by dt ?axes ?s ?(norm = Backward) z =
   let z = resized ~by z axes bins in
   let (Formats (r, c)) = formats dt (dtype z) in
   let z = cast_by ~by c z in
+  let z = if conj then conjugate_by ~by z else z in
   let y =
     if last then
       let axes = Iarray.append others [| real |] in
@@ -5133,6 +5178,16 @@ let irfft_by ~by dt ?axes ?s ?(norm = Backward) z =
   cast_by ~by dt (scaled ~by (factor norm ~forward:false n) y)
 
 let irfft dt ?axes ?s ?norm z = irfft_by ~by:"Nx.irfft" dt ?axes ?s ?norm z
+
+(* The transforms of a Hermitian signal from its first half: the conjugate's
+   inverse, scaled as the forward transform, and back. *)
+let opposite = function Backward -> Forward | Forward -> Backward | Ortho -> Ortho
+
+let hfft dt ?axes ?s ?(norm = Backward) z =
+  irfft_by ~by:"Nx.hfft" ~conj:true dt ?axes ?s ~norm:(opposite norm) z
+
+let ihfft dt ?axes ?s ?(norm = Backward) x =
+  rfft_by ~by:"Nx.ihfft" ~conj:true dt ?axes ?s ~norm:(opposite norm) x
 
 
 (* Cosine and sine transforms, each from one complex transform along the last

@@ -605,6 +605,9 @@ module Laws = struct
     invalid ~by:"Nx.fft" (fun () -> Nx.fft ~s:[ 1; 2 ] z);
     invalid ~by:"Nx.rfft" (fun () -> Nx.rfft Nx.complex64 ~s:[ -1 ] x);
     invalid ~by:"Nx.irfft" (fun () -> Nx.irfft Nx.float32 (Nx.zeros Nx.complex64 [| 0 |]));
+    invalid ~by:"Nx.hfft" (fun () -> Nx.hfft Nx.float32 (Nx.zeros Nx.complex64 [| 0 |]));
+    invalid ~by:"Nx.hfft" (fun () -> Nx.hfft Nx.float32 ~axes:[ 1 ] z);
+    invalid ~by:"Nx.ihfft" (fun () -> Nx.ihfft Nx.complex64 ~s:[ -1 ] x);
     invalid ~by:"Nx.dct" (fun () -> Nx.dct ~type_:Type_1 (Nx.zeros Nx.float32 [| 1 |]));
     invalid ~by:"Nx.idct" (fun () -> Nx.idct ~type_:Type_1 (Nx.zeros Nx.float32 [| 0; 1 |]));
     invalid ~by:"Nx.dst" (fun () -> Nx.dst ~axes:[ 1 ] x);
@@ -620,6 +623,101 @@ module Laws = struct
     invalid ~by:"Nx.stft" (fun () -> Nx.stft Nx.complex64 ~window:2 ~win:x x);
     invalid ~by:"Nx.istft" (fun () -> Nx.istft Nx.float32 ~window:4 ~step:5 (Nx.zeros Nx.complex64 [| 2; 3 |]));
     invalid ~by:"Nx.istft" (fun () -> Nx.istft Nx.float32 ~window:4 (Nx.zeros Nx.complex64 [| 2; 4 |]))
+
+  (* The Hermitian signal of [n] points whose first bins are [x], as irfft
+     reads them: bin [k] above [n/2] the conjugate of bin [n - k], bins past
+     [x]'s zero, and the imaginary parts of bin [0] and, for an even [n], of
+     bin [n/2] dropped. *)
+  let hermitian (x : Complex.t array) n =
+    Array.init n (fun j ->
+        let k = if j > n / 2 then n - j else j in
+        let z = if k < Array.length x then x.(k) else Complex.zero in
+        let z = if k = 0 || 2 * k = n then { z with im = 0. } else z in
+        if j > n / 2 then Complex.conj z else z)
+
+  let bins_and_length =
+    let open Gen in
+    let* m = frequency [ (1, constant 1); (2, int_range 2 6) ] and+ odd = bool in
+    let+ re = array ~size:(constant m) (float_range (-1.) 1.)
+    and+ im = array ~size:(constant m) (float_range (-1.) 1.) in
+    (Array.map2 (fun re im -> { Complex.re; im }) re im,
+     if odd then (2 * m) - 1 else 2 * (m - 1))
+
+  let law_hermitian =
+    prop "hfft is the forward sum of the Hermitian signal, ihfft its inverse"
+      bins_and_length (fun (x, n) ->
+        cover_lengths n;
+        let m = Array.length x in
+        cover "one bin" (m = 1);
+        let t = complex_of x in
+        let y = Array.init n (fun j -> x.(j mod m).re -. x.(j mod m).im) in
+        let ty = Nx.create Nx.float64 [| n |] y in
+        let reals = Array.map (fun re -> { Complex.re; im = 0. }) in
+        List.iter
+          (fun norm ->
+            let want =
+              Array.map
+                (fun (z : Complex.t) -> z.re *. factor norm ~forward:true n)
+                (dft ~sign:(-1.) (hermitian x n))
+            in
+            equal ~msg:"hfft" (array (close_floats 1e-12)) want
+              (Nx.to_array (Nx.hfft Nx.float64 ~norm ~s:[ n ] t));
+            if n mod 2 = 0 then
+              equal ~msg:"hfft's default points" (array (close_floats 1e-12))
+                want (Nx.to_array (Nx.hfft Nx.float64 ~norm t));
+            if n > 0 then begin
+              let inverse =
+                scale (factor norm ~forward:false n)
+                  (Array.sub (dft ~sign:1. (reals y)) 0 ((n / 2) + 1))
+              in
+              let h = Nx.ihfft Nx.complex128 ~norm ty in
+              equal ~msg:"ihfft" (array (close 1e-12)) inverse (Nx.to_array h);
+              equal ~msg:"round trip" (array (close_floats 1e-12)) y
+                (Nx.to_array (Nx.hfft Nx.float64 ~norm ~s:[ n ] h))
+            end)
+          norms)
+
+  (* Over two axes, in either order: the half of a Hermitian signal, the
+     inverse sums of a real spectrum, transforms back to that spectrum, and
+     ihfft of the spectrum is that half. *)
+  let test_hermitian_axes () =
+    let rows = 3 and cols = 4 in
+    let spectrum =
+      Array.init (rows * cols) (fun j -> Float.of_int ((j * 7) mod 5) -. 2.)
+    in
+    (* The inverse transform of [y], laid out [rows × cols], along both. *)
+    let along_rows y =
+      Array.concat
+        (List.init rows (fun r -> dft ~sign:1. (Array.sub y (r * cols) cols)))
+    in
+    let along_cols y =
+      let col c = Array.init rows (fun r -> y.((r * cols) + c)) in
+      let t = Array.init cols (fun c -> dft ~sign:1. (col c)) in
+      Array.init (rows * cols) (fun j -> t.(j mod cols).(j / cols))
+    in
+    let n = Float.of_int (rows * cols) in
+    let h =
+      Array.map
+        (fun z -> Complex.div z { re = n; im = 0. })
+        (along_cols (along_rows (Array.map (fun re -> { Complex.re; im = 0. }) spectrum)))
+    in
+    let ty = Nx.create Nx.float64 [| rows; cols |] spectrum in
+    let th = Nx.create Nx.complex128 [| rows; cols |] h in
+    let half axis =
+      match axis with
+      | 1 -> Nx.slice [ A; R (0, (cols / 2) + 1) ] th
+      | _ -> Nx.slice [ R (0, (rows / 2) + 1); A ] th
+    in
+    List.iter
+      (fun (axes, s) ->
+        let msg = Printf.sprintf "axes [%s]" (String.concat "; " (List.map string_of_int axes)) in
+        let last = List.nth axes 1 in
+        equal ~msg:(msg ^ ": hfft") (array (close_floats 1e-12)) spectrum
+          (Nx.to_array (Nx.hfft Nx.float64 ~axes ~s (half last)));
+        equal ~msg:(msg ^ ": ihfft") (array (close 1e-12))
+          (Nx.to_array (half last))
+          (Nx.to_array (Nx.ihfft Nx.complex128 ~axes ty)))
+      [ ([ 0; 1 ], [ rows; cols ]); ([ 1; 0 ], [ cols; rows ]) ]
 
   (* A composite's refusal from a function it calls names the composite: a
      taper on another device than the signal. *)
@@ -652,6 +750,9 @@ let () =
            [
              Laws.law_fft;
              Laws.law_real;
+             Laws.law_hermitian;
+             test "hfft and ihfft over two axes, in either order"
+               Laws.test_hermitian_axes;
              Laws.law_irfft;
              Laws.law_axes;
              test "long lengths at complex128 and complex64" Laws.test_long;
