@@ -327,3 +327,63 @@ let numel s =
       (Some 1) s
   in
   Option.map (fun n -> if Iarray.mem 0 s then 0 else n) nonzero
+
+(* An array of [dt]'s values, each compared as {!value} does. *)
+let values dt = array (value dt)
+
+(* A host float32 array of shape [s] holding [xs] in C order. *)
+let floats32 s xs = Nx_array.of_array Nx_array.Dtype.Float32 s xs
+
+(* Claims and answers *)
+
+(* Kills [b]: a donation consumes its memory, giving [why]. *)
+let kill ?(why = "consumed by the test") b =
+  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
+      ignore (Rig.Claim.consume c ~why b))
+
+(* Whether no claim holds [b]'s memory: a donation of it is exclusive. *)
+let unclaimed b =
+  Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c -> Rig.Claim.exclusive c b)
+
+(* Answers, by their names. *)
+let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = )
+
+(* What a function given to a door or a read raises. *)
+exception Raised
+
+(* Late devices *)
+
+(* Late devices opened so far, which number the next. *)
+let lates = Atomic.make 0
+
+(* A fresh Late device and its driver. *)
+let late () =
+  Nx_array_support.Late.open_
+    (Printf.sprintf "nx2-test-late:%d" (Atomic.fetch_and_add lates 1))
+
+(* The little-endian binary32 bytes of [xs]. *)
+let f32_bytes xs =
+  let b = Bytes.create (4 * Array.length xs) in
+  Array.iteri
+    (fun i x -> Bytes.set_int32_le b (4 * i) (Int32.bits_of_float x))
+    xs;
+  Bytes.to_string b
+
+(* Work on [a]'s device that stores [xs] into [a], unreached. *)
+let pending a xs = Nx_array_support.write (Nx_array.buffer a) (f32_bytes xs)
+
+(* An array of [xs] on the Late device [d], its work reached. *)
+let on_late d xs =
+  let a = Nx_array.create d Nx_array.Dtype.Float32 [| Array.length xs |] in
+  pending a xs;
+  Rig.Buffer.wait (Nx_array.buffer a) Rig.Read_write;
+  a
+
+(* Whether no claim holds [a]'s memory: a donation of it is held exclusive. *)
+let no_claim a =
+  let b = Nx_array.buffer a in
+  equal ~msg:"no claim left" bool true
+    (Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c -> Rig.Claim.exclusive c b))
+
+(* Whether [e] is a device's loss. *)
+let lost = function Rig.Lost _ -> true | _ -> false

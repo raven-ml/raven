@@ -19,4 +19,4 @@
 (library
  (name nx_array_gen)
  (modules nx_array_gen)
- (libraries nx_array windtrap))
+ (libraries nx_array nx_array_support rig windtrap))
