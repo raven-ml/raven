@@ -42,11 +42,25 @@ let elements (type v s) (dt : (v, s) D.t) : v array testable =
 let text_shape s =
   match s with [||] -> [| 1 |] | [| 1; n |] | [| n; 1 |] -> [| n |] | s -> s
 
+(* Values of [dt] compare as text keeps them: by their shape as text holds it
+   and their elements. *)
+let as_text dt =
+  Testable.contramap
+    (fun x -> (text_shape (Nx.shape x), Nx.to_array x))
+    (pair (array int) (elements dt))
+
 let text_cases =
   case ~rank:2
     ~kinds:[ Scalar; Single; Nan; Negative_zero; Bounds; Many ]
     ~views:[ Plain; Transposed; Flipped ]
     txt_dtypes
+
+let quoted = Format.(fun ppf s -> fprintf ppf "%S" s)
+let separators = Gen.of_list ~pp:quoted [ " "; ","; "\t"; ";"; ", "; "||" ]
+let prefixes = Gen.of_list ~pp:quoted [ "#"; "%%"; "//" ]
+
+(* A comment's text, which may hold digits, separators and prefixes. *)
+let comment = Gen.string_of ~size:(Gen.int_range 0 40) (Gen.char_range ' ' '~')
 
 let txt =
   group "text"
@@ -56,11 +70,32 @@ let txt =
           let x = Nx.unpack dt (value c) in
           covers ~empty:false ~broadcast:false c;
           cover "a sub-byte dtype" (D.bits dt < 8);
+          Law.round_trip (as_text dt) string
+            (saved "" (fun p x -> Nx_io.save_txt p x))
+            (Nx_io.load_txt dt) x);
+      prop
+        "a value saved with a separator loads with it, lines under a comment \
+         prefix skipped"
+        (Gen.quad text_cases separators prefixes (Gen.pair comment comment))
+        (fun ((Case (dt, _, _, _) as c), sep, prefix, (header, footer)) ->
+          let commented x =
+            let path = saved "" (fun p x -> Nx_io.save_txt ~sep p x) x in
+            write path
+              (prefix ^ header ^ "\n" ^ read path ^ prefix ^ footer ^ "\n");
+            path
+          in
+          Law.round_trip (as_text dt) string commented
+            (Nx_io.load_txt ~sep ~comments:prefix dt)
+            (Nx.unpack dt (value c)));
+      cases
+        ~name:(fun s -> Format.asprintf "%a" Nx.pp_shape s)
+        "a value with no element writes no row, and its file does not load"
+        [ [| 0 |]; [| 0; 3 |]; [| 3; 0 |] ]
+        (fun shape ->
           let path = temp_file () in
-          Nx_io.save_txt path x;
-          let y = Nx_io.load_txt dt path in
-          equal ~msg:"shape" (array int) (text_shape (Nx.shape x)) (Nx.shape y);
-          equal ~msg:"elements" (elements dt) (Nx.to_array x) (Nx.to_array y));
+          Nx_io.save_txt path (Nx.zeros Nx.float32 shape);
+          equal string "" (read path);
+          fails ~path (fun () -> Nx_io.load_txt Nx.float32 path));
       test
         "a file numpy's savetxt wrote, with comment lines and CRLF line ends, \
          loads and saves back as its rows, its floats in %.18e notation from \
@@ -75,25 +110,40 @@ let txt =
           in
           equal string (String.concat "" rows) (read path));
       cases ~name:fst
-        "integers are written in decimal, unsigned ones as unsigned"
+        "integers are written in decimal, unsigned ones as unsigned, and a \
+         bool or bit as 1 or 0"
         [
-          ( "1 0",
-            fun p ->
-              Nx_io.save_txt p (Nx.create Nx.bool [| 2 |] [| true; false |]) );
-          ( "-9223372036854775808 9223372036854775807",
-            fun p ->
-              Nx_io.save_txt p
-                (Nx.create Nx.int64 [| 2 |] [| Int64.min_int; Int64.max_int |])
+          ( "bool",
+            ( "1 0",
+              fun p ->
+                Nx_io.save_txt p (Nx.create Nx.bool [| 2 |] [| true; false |])
+            ) );
+          ( "bit",
+            ( "1 0",
+              fun p ->
+                Nx_io.save_txt p (Nx.create Nx.bit [| 2 |] [| true; false |]) )
           );
-          ( "18446744073709551615 0",
-            fun p ->
-              Nx_io.save_txt p (Nx.create Nx.uint64 [| 2 |] [| -1L; 0L |]) );
-          ( "4294967295",
-            fun p -> Nx_io.save_txt p (Nx.create Nx.uint32 [| 1 |] [| -1l |]) );
-          ( "-8 7",
-            fun p -> Nx_io.save_txt p (Nx.create Nx.int4 [| 2 |] [| -8; 7 |]) );
+          ( "int64",
+            ( "-9223372036854775808 9223372036854775807",
+              fun p ->
+                Nx_io.save_txt p
+                  (Nx.create Nx.int64 [| 2 |]
+                     [| Int64.min_int; Int64.max_int |]) ) );
+          ( "uint64",
+            ( "18446744073709551615 0",
+              fun p ->
+                Nx_io.save_txt p (Nx.create Nx.uint64 [| 2 |] [| -1L; 0L |]) )
+          );
+          ( "uint32",
+            ( "4294967295",
+              fun p -> Nx_io.save_txt p (Nx.create Nx.uint32 [| 1 |] [| -1l |])
+            ) );
+          ( "int4",
+            ( "-8 7",
+              fun p -> Nx_io.save_txt p (Nx.create Nx.int4 [| 2 |] [| -8; 7 |])
+            ) );
         ]
-        (fun (expected, save) ->
+        (fun (_, (expected, save)) ->
           let path = temp_file () in
           save path;
           equal string (expected ^ "\n") (read path));
