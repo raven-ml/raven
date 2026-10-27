@@ -682,23 +682,12 @@ typedef void (*nx_cpu_network)(const uint8_t *x, int64_t xs, int64_t xl,
   MONOID(NAME, D, T, F)
 
 /* A monoid of a real dtype whose vector op the target lacks: VMONOID's
-   arguments, its lanes an array of their own. */
+   arguments, its lanes an array of their own. 64-bit integers' products
+   take it: no target here has a vector multiply of 64-bit integers, which
+   the compilers emulate at a third of the speed of scalar ones. */
 #define SMONOID(NAME, D, T, W, F, OP)                                        \
   ARRAYS(NAME, T)                                                            \
   AMONOID(NAME, NAME, T, F)
-
-/* 64-bit integers' products multiply lane by lane: no target here has a
-   vector multiply of 64-bit integers, which the compilers emulate at a
-   third of the speed of scalar ones. Their extremes and Arg's lanes too
-   where the target has no compare of 64-bit integers, x86-64 below
-   SSE4.2. */
-#if defined(__x86_64__) && !defined(__SSE4_2__)
-#define EXTREMES_64 SMONOID
-#define ARGS_64 ARGS_A
-#else
-#define EXTREMES_64 XMONOID
-#define ARGS_64 ARGS
-#endif
 
 #define ADD(a, b) ((a) + (b))
 #define MUL(a, b) ((a) * (b))
@@ -707,11 +696,10 @@ typedef void (*nx_cpu_network)(const uint8_t *x, int64_t xs, int64_t xl,
 
 /* The four monoids of an integer dtype of storage [T], of [W] bytes,
    unsigned [U], at the compute suffix [S] for its extremes, [C] its compute
-   type and [M] the unsigned type of [C]'s width, [PROD] and [EXT] the forms
-   of its product and extremes. Sums and products run in [M], where they
-   wrap: 8- and 16-bit operands would promote to int, whose product of two
-   0xFFFF overflows. */
-#define INTS(D, T, U, C, M, S, W, PROD, EXT)                                 \
+   type and [M] the unsigned type of [C]'s width, [PROD] the form of its
+   product. Sums and products run in [M], where they wrap: 8- and 16-bit
+   operands would promote to int, whose product of two 0xFFFF overflows. */
+#define INTS(D, T, U, C, M, S, W, PROD)                                      \
   static inline T add_##D(T a, T b) { return (T)(U)((M)(U)a + (M)(U)b); }    \
   static inline T mul_##D(T a, T b) { return (T)(U)((M)(U)a * (M)(U)b); }    \
   static inline T max_##D(T a, T b) { return (T)nx_maximum_##S((C)a, (C)b); } \
@@ -719,19 +707,17 @@ typedef void (*nx_cpu_network)(const uint8_t *x, int64_t xs, int64_t xl,
   WHOLE_VECTORS(D, T, U, W)                                                  \
   XMONOID(sum_##D, D, T, W, add_##D, V_WRAP_ADD)                             \
   PROD(prod_##D, D, T, W, mul_##D, V_WRAP_MUL)                               \
-  EXT(max_##D, D, T, W, max_##D, V_MAX)                                      \
-  EXT(min_##D, D, T, W, min_##D, V_MIN)
+  XMONOID(max_##D, D, T, W, max_##D, V_MAX)                                  \
+  XMONOID(min_##D, D, T, W, min_##D, V_MIN)
 
-INTS(i8, int8_t, uint8_t, int32_t, uint32_t, i32, 1, XMONOID, XMONOID)
-INTS(u8, uint8_t, uint8_t, uint32_t, uint32_t, u32, 1, XMONOID, XMONOID)
-INTS(i16, int16_t, uint16_t, int32_t, uint32_t, i32, 2, XMONOID, XMONOID)
-INTS(u16, uint16_t, uint16_t, uint32_t, uint32_t, u32, 2, XMONOID, XMONOID)
-INTS(i32, int32_t, uint32_t, int32_t, uint32_t, i32, 4, XMONOID, XMONOID)
-INTS(u32, uint32_t, uint32_t, uint32_t, uint32_t, u32, 4, XMONOID, XMONOID)
-INTS(i64, int64_t, uint64_t, int64_t, uint64_t, i64, 8, SMONOID,
-     EXTREMES_64)
-INTS(u64, uint64_t, uint64_t, uint64_t, uint64_t, u64, 8, SMONOID,
-     EXTREMES_64)
+INTS(i8, int8_t, uint8_t, int32_t, uint32_t, i32, 1, XMONOID)
+INTS(u8, uint8_t, uint8_t, uint32_t, uint32_t, u32, 1, XMONOID)
+INTS(i16, int16_t, uint16_t, int32_t, uint32_t, i32, 2, XMONOID)
+INTS(u16, uint16_t, uint16_t, uint32_t, uint32_t, u32, 2, XMONOID)
+INTS(i32, int32_t, uint32_t, int32_t, uint32_t, i32, 4, XMONOID)
+INTS(u32, uint32_t, uint32_t, uint32_t, uint32_t, u32, 4, XMONOID)
+INTS(i64, int64_t, uint64_t, int64_t, uint64_t, i64, 8, SMONOID)
+INTS(u64, uint64_t, uint64_t, uint64_t, uint64_t, u64, 8, SMONOID)
 
 /* The four monoids of a float dtype of [T], [W] bytes, unsigned [U]. */
 #define FLOATS4(D, T, U, W)                                                  \
@@ -1454,28 +1440,18 @@ MOMENTS(double, f64)
 
 #define KERNEL static __attribute__((flatten)) void
 
-/* Arg's step of its lanes [L], beats_, by the compare over vectors
-   (VBEATS) or lane by lane over an array (ABEATS): a lane takes the term
-   where it beats the lane by [BEAT] or is a NaN by [NANQ]. */
-#define VBEATS(NAME, L, T, W, BEAT, NANQ)                                    \
+/* Arg by the extreme [F] over terms of [T] of [W] bytes, its lanes at the
+   suffix [L], [U] the unsigned integer of its width: [BEAT] is [>] or [<],
+   [F] without its order of NaNs and zeros, which the plain compare
+   vectorises; [NANQ] tests a term, or a vector of them, for a NaN; [FIND]
+   the pragma, if any, of the loop over 16 terms' bits. */
+#define ARG(NAME, L, T, U, W, F, BEAT, NANQ, FIND)                           \
+  /* beats_ steps the lanes: a lane takes the term where it beats the        \
+     lane by BEAT or is a NaN. */                                            \
   static inline L##_v beat_##NAME(L##_v l, L##_v v) {                        \
     return SEL(L##_u, L##_v, (v BEAT l) | NANQ(v), v, l);                    \
   }                                                                          \
-  ON(beats_##NAME, L, T, FIELDS(W), beat_##NAME)
-
-#define ABEATS(NAME, L, T, W, BEAT, NANQ)                                    \
-  static inline T beat_##NAME(T l, T v) {                                   \
-    return v BEAT l || NANQ(v) ? v : l;                                      \
-  }                                                                          \
-  ON_EACH(beats_##NAME, L, T, beat_##NAME)
-
-/* Arg by the extreme [F] over terms of [T] of [W] bytes, its lanes at the
-   suffix [L] stepped by [BEATS], [U] the unsigned integer of its width:
-   [BEAT] is [>] or [<], [F] without its order of NaNs and zeros, which the
-   plain compare vectorises; [NANQ] tests a term, or a vector of them, for
-   a NaN; [FIND] the pragma, if any, of the loop over 16 terms' bits. */
-#define ARG(NAME, L, T, U, W, F, BEAT, NANQ, FIND, BEATS)                    \
-  BEATS(NAME, L, T, W, BEAT, NANQ)                                           \
+  ON(beats_##NAME, L, T, FIELDS(W), beat_##NAME)                             \
   /* The extreme by BEAT of the [n] terms at [x], or a NaN where one is:     \
      a lane takes each NaN it meets and keeps the last. */                   \
   static inline T top_##NAME(const T *x, int64_t n) {                        \
@@ -1634,14 +1610,8 @@ static inline int same_c128(const void *a, const void *b) {
    -O3 from unrolling it whole and leaving it scalar, but not for 64-bit
    integers, which at every count run slower at -O3 on arm64. */
 #define ARGS(D, T, U, W, F_MAX, F_MIN, NANQ, FIND)                           \
-  ARG(max_##D, D, T, U, W, F_MAX, >, NANQ, FIND, VBEATS)                     \
-  ARG(min_##D, D, T, U, W, F_MIN, <, NANQ, FIND, VBEATS)
-
-/* ARGS whose lanes step lane by lane, over the arrays of lanes that
-   SMONOID made for the dtype's extremes (EXTREMES_64). */
-#define ARGS_A(D, T, U, W, F_MAX, F_MIN, NANQ, FIND)                         \
-  ARG(max_##D, max_##D, T, U, W, F_MAX, >, NANQ, FIND, ABEATS)               \
-  ARG(min_##D, min_##D, T, U, W, F_MIN, <, NANQ, FIND, ABEATS)
+  ARG(max_##D, D, T, U, W, F_MAX, >, NANQ, FIND)                             \
+  ARG(min_##D, D, T, U, W, F_MIN, <, NANQ, FIND)
 
 ARGS(i8, int8_t, uint8_t, 1, max_i8, min_i8, NO_NAN, UNROLL(8))
 ARGS(u8, uint8_t, uint8_t, 1, max_u8, min_u8, NO_NAN, UNROLL(8))
@@ -1649,8 +1619,8 @@ ARGS(i16, int16_t, uint16_t, 2, max_i16, min_i16, NO_NAN, UNROLL(8))
 ARGS(u16, uint16_t, uint16_t, 2, max_u16, min_u16, NO_NAN, UNROLL(8))
 ARGS(i32, int32_t, uint32_t, 4, max_i32, min_i32, NO_NAN, UNROLL(8))
 ARGS(u32, uint32_t, uint32_t, 4, max_u32, min_u32, NO_NAN, UNROLL(8))
-ARGS_64(i64, int64_t, uint64_t, 8, max_i64, min_i64, NO_NAN, )
-ARGS_64(u64, uint64_t, uint64_t, 8, max_u64, min_u64, NO_NAN, )
+ARGS(i64, int64_t, uint64_t, 8, max_i64, min_i64, NO_NAN, )
+ARGS(u64, uint64_t, uint64_t, 8, max_u64, min_u64, NO_NAN, )
 ARGS(f32, float, uint32_t, 4, nx_maximum_f32, nx_minimum_f32,
      IS_NAN, UNROLL(8))
 ARGS(f64, double, uint64_t, 8, nx_maximum_f64, nx_minimum_f64,
