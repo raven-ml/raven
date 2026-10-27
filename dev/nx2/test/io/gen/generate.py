@@ -308,6 +308,17 @@ def progression_jpegs():
         f.write(data[:start] + data[end:second] + data[start:end] + data[second:])
 
 
+def zrl_jpegs():
+    # Noise saved progressive and baseline, whose coefficients are the same,
+    # so both decode to the same pixels. In this shape of the noise, an AC
+    # refinement scan holds a run of 16 zeros (ZRL) followed by coefficients
+    # already sent, whose correction bits come after the next code (T.81,
+    # G.1.2.3).
+    im = Image.fromarray(xorshift(128 * 64).reshape(128, 64), "L")
+    im.save("jpeg_zrl_progressive.jpg", quality=50, progressive=True)
+    im.save("jpeg_zrl_baseline.jpg", quality=50)
+
+
 def segment(marker, data):
     return bytes([0xFF, marker]) + struct.pack(">H", len(data) + 2) + data
 
@@ -440,6 +451,7 @@ def image_fixtures():
     late_table_jpeg()
     reference("jpeg_late_table.jpg", "L")
     progression_jpegs()
+    zrl_jpegs()
     overflow_jpeg("jpeg_dc_overflow.jpg", 128, False, False)
     overflow_jpeg("jpeg_dc_overflow_progressive.jpg", 128, True, False)
     overflow_jpeg("jpeg_table16.jpg", 32, False, True)

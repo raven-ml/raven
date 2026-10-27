@@ -579,7 +579,10 @@ decode_progressive(entropy_reader *reader, jpeg_component *component,
           *eob_run = (1u << run) + extra;
           break;
         }
-        run = 16;
+        /* A ZRL passes 16 zeros: the loop below stops at the 16th and the
+           code then steps over it, so the correction bits of the coefficients
+           after it come after the next code (T.81, G.1.2.3). */
+        run = 15;
       } else {
         if (size != 1)
           return JPEG_HUFFMAN;
@@ -610,6 +613,8 @@ decode_progressive(entropy_reader *reader, jpeg_component *component,
         block[zigzag[k++]] = (int16_t)new_coefficient;
       } else if (run != 0) {
         return JPEG_HUFFMAN;
+      } else {
+        k++;
       }
     }
   }

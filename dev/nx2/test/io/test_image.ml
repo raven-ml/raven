@@ -411,6 +411,12 @@ let files =
           equal packed
             (Nx.P (table16_pixels side))
             (Nx.P (Nx_io.load_image (fixture name))));
+      test
+        "a progressive JPEG whose refinement skips 16 zeros decodes as its \
+         baseline twin" (fun () ->
+          equal packed
+            (Nx.P (Nx_io.load_image (fixture "jpeg_zrl_baseline.jpg")))
+            (Nx.P (Nx_io.load_image (fixture "jpeg_zrl_progressive.jpg"))));
       cases ~name:fst
         "a progressive JPEG that sends a coefficient's bit twice or out of \
          order fails"
