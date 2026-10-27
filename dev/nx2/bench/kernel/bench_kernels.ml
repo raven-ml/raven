@@ -1164,7 +1164,7 @@ let linalg_rows =
   let eigvalsh dt ?batch n =
     routine "eigvalsh"
       (fun (module K : Nx_kernel.S) a ->
-        let w = Result.get_ok (Nx_kernel.Shape.eigh_values (shape a)) in
+        let w, _ = Result.get_ok (Nx_kernel.Shape.eigh (shape a)) in
         real_like a w (fun w () -> K.eigh ~w a))
       dt ?batch n ~count:(4 * n * n * n / 3)
   in
@@ -1179,7 +1179,9 @@ let linalg_rows =
   let svdvals dt ?batch n =
     routine "svdvals"
       (fun (module K : Nx_kernel.S) a ->
-        let s = Result.get_ok (Nx_kernel.Shape.svd_values (shape a)) in
+        let s, _, _ =
+          Result.get_ok (Nx_kernel.Shape.svd Reduced (shape a))
+        in
         real_like a s (fun s () -> K.svd ~s a))
       dt ?batch n ~count:(8 * n * n * n / 3)
   in

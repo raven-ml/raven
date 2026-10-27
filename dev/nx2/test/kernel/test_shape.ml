@@ -794,9 +794,9 @@ type routine =
   | Cholesky
   | Lu
   | Qr of Nx_kernel.factors
-  | Svd of Nx_kernel.factors option (* [Some f]: with vectors [f]. *)
-  | Eigh of bool (* [true]: with vectors. *)
-  | Eig of bool
+  | Svd of Nx_kernel.factors
+  | Eigh
+  | Eig
   | Solve
 
 let routines =
@@ -805,13 +805,10 @@ let routines =
     Lu;
     Qr Reduced;
     Qr Complete;
-    Svd None;
-    Svd (Some Reduced);
-    Svd (Some Complete);
-    Eigh false;
-    Eigh true;
-    Eig false;
-    Eig true;
+    Svd Reduced;
+    Svd Complete;
+    Eigh;
+    Eig;
     Solve;
   ]
 
@@ -825,10 +822,9 @@ let pp_routine ppf r =
     | Cholesky -> "cholesky"
     | Lu -> "lu"
     | Qr f -> "qr " ^ factors f
-    | Svd None -> "svd's values"
-    | Svd (Some f) -> "svd " ^ factors f
-    | Eigh v -> if v then "eigh" else "eigh's values"
-    | Eig v -> if v then "eig" else "eig's values"
+    | Svd f -> "svd " ^ factors f
+    | Eigh -> "eigh"
+    | Eig -> "eig"
     | Solve -> "solve_triangular")
 
 type linalg_case = { r : routine; a : int array; b : int array }
@@ -869,11 +865,8 @@ let routine r a b =
   | Cholesky -> Result.map one (Shape.cholesky a)
   | Lu -> Result.map (fun (l, p, q) -> [ l; p; q ]) (Shape.lu a)
   | Qr f -> Result.map (fun (q, r) -> [ q; r ]) (Shape.qr f a)
-  | Svd None -> Result.map one (Shape.svd_values a)
-  | Svd (Some f) ->
-      Result.map (fun (s, u, vh) -> [ s; u; vh ]) (Shape.svd f a)
-  | Eigh false | Eig false -> Result.map one (Shape.eigh_values a)
-  | Eigh true | Eig true -> Result.map (fun (w, v) -> [ w; v ]) (Shape.eigh a)
+  | Svd f -> Result.map (fun (s, u, vh) -> [ s; u; vh ]) (Shape.svd f a)
+  | Eigh | Eig -> Result.map (fun (w, v) -> [ w; v ]) (Shape.eigh a)
   | Solve -> Result.map one (Shape.solve_triangular a b)
 
 (* The destinations by each routine's rule, for [a] of [batch; m; n]. *)
@@ -887,10 +880,9 @@ let law_linalg c =
       let k = min m n in
       let y tail = batch @ tail in
       match c.r with
-      | (Cholesky | Eigh _ | Eig _ | Solve) when m <> n -> misfit
+      | (Cholesky | Eigh | Eig | Solve) when m <> n -> misfit
       | Cholesky -> Ok [ y [ n; n ] ]
-      | Eigh true | Eig true -> Ok [ y [ n ]; y [ n; n ] ]
-      | Eigh false | Eig false -> Ok [ y [ n ] ]
+      | Eigh | Eig -> Ok [ y [ n ]; y [ n; n ] ]
       | Solve ->
           let b = Array.to_list c.b in
           let rows = List.filteri (fun i _ -> i < ra - 1) b in
@@ -898,9 +890,8 @@ let law_linalg c =
       | Lu -> Ok [ y [ m; n ]; y [ k ]; y [ m ] ]
       | Qr Reduced -> Ok [ y [ m; k ]; y [ k; n ] ]
       | Qr Complete -> Ok [ y [ m; m ]; y [ m; n ] ]
-      | Svd None -> Ok [ y [ k ] ]
-      | Svd (Some Reduced) -> Ok [ y [ k ]; y [ m; k ]; y [ k; n ] ]
-      | Svd (Some Complete) -> Ok [ y [ k ]; y [ m; m ]; y [ n; n ] ]
+      | Svd Reduced -> Ok [ y [ k ]; y [ m; k ]; y [ k; n ] ]
+      | Svd Complete -> Ok [ y [ k ]; y [ m; m ]; y [ n; n ] ]
   in
   let wide =
     match List.rev (Array.to_list c.a) with n :: m :: _ -> n > m | _ -> false

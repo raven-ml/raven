@@ -1552,6 +1552,7 @@ let linalg_shapes (type d r) ~by (l : (d, r) linalg) =
   | Eig { dtype = c; a } -> into c a
   | Cholesky _ | Lu _ | Qr _ | Solve_triangular _ -> ());
   let one r = Result.map (fun s -> [| s |]) r in
+  let w r = Result.map (fun (w, _) -> [| w |]) r in
   let two r = Result.map (fun (s, s') -> [| s; s' |]) r in
   let three r = Result.map (fun (s, s', s'') -> [| s; s'; s'' |]) r in
   shaped ~by
@@ -1559,11 +1560,12 @@ let linalg_shapes (type d r) ~by (l : (d, r) linalg) =
     | Cholesky { a; _ } -> one (Shape.cholesky (shape a))
     | Lu a -> three (Shape.lu (shape a))
     | Qr { factors; a } -> two (Shape.qr factors (shape a))
-    | Svd_values { a; _ } -> one (Shape.svd_values (shape a))
+    | Svd_values { a; _ } ->
+        Result.map (fun (s, _, _) -> [| s |]) (Shape.svd Reduced (shape a))
     | Svd { factors; a; _ } -> three (Shape.svd factors (shape a))
-    | Eigh_values { a; _ } -> one (Shape.eigh_values (shape a))
+    | Eigh_values { a; _ } -> w (Shape.eigh (shape a))
     | Eigh { a; _ } -> two (Shape.eigh (shape a))
-    | Eig_values { a; _ } -> one (Shape.eigh_values (shape a))
+    | Eig_values { a; _ } -> w (Shape.eigh (shape a))
     | Eig { a; _ } -> two (Shape.eigh (shape a))
     | Solve_triangular { a; b; _ } ->
         one (Shape.solve_triangular (shape a) (shape b)))

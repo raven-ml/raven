@@ -435,10 +435,6 @@ module Shape = struct
     let* r = admit "r" r in
     Ok (q, r)
 
-  let svd_values a =
-    let* batch, m, n = matrix a in
-    admit "singular values" (Array.append batch [| min m n |])
-
   let svd f a =
     let* batch, m, n = matrix a in
     let y tail = Array.append batch tail in
@@ -453,13 +449,9 @@ module Shape = struct
     let* vh = admit "vh" vh in
     Ok (s, u, vh)
 
-  let eigh_values a =
-    let* batch, _, n = square a in
-    Ok (Array.append batch [| n |])
-
   let eigh a =
-    let* w = eigh_values a in
-    Ok (w, a)
+    let* batch, _, n = square a in
+    Ok (Array.append batch [| n |], a)
 
   let solve_triangular a b =
     let* batch, _, n = square a in

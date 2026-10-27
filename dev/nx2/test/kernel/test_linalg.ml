@@ -413,8 +413,8 @@ let run ?(alloc = fresh) (b : Support.backend) r ops =
               ([| A.Any w; A.Any v |], K.eigh ~w ~v a)
             else ([| A.Any w |], K.eigh ~w a))
     | Svd None ->
-        real (ok (Shape.svd_values (shape ops.(0)))) (fun s ->
-            ([| A.Any s |], K.svd ~s a))
+        let ss, _, _ = ok (Shape.svd Reduced (shape ops.(0))) in
+        real ss (fun s -> ([| A.Any s |], K.svd ~s a))
     | Svd (Some f) ->
         let ss, su, sv = ok (Shape.svd f (shape ops.(0))) in
         real ss (fun s ->
@@ -2620,8 +2620,9 @@ let shapes c =
   | Lu -> Result.map (fun (l, p, q) -> [| l; p; q |]) (S.lu c.a)
   | Qr f -> Result.map (fun (q, r) -> [| q; r |]) (S.qr f c.a)
   | Eigh true | Eig true -> Result.map (fun (w, x) -> [| w; x |]) (S.eigh c.a)
-  | Eigh false | Eig false -> Result.map (fun w -> [| w |]) (S.eigh_values c.a)
-  | Svd None -> Result.map (fun s -> [| s |]) (S.svd_values c.a)
+  | Eigh false | Eig false -> Result.map (fun (w, _) -> [| w |]) (S.eigh c.a)
+  | Svd None ->
+      Result.map (fun (s, _, _) -> [| s |]) (S.svd Reduced c.a)
   | Svd (Some f) -> Result.map (fun (s, u, vh) -> [| s; u; vh |]) (S.svd f c.a)
   | Solve _ -> Result.map (fun y -> [| y |]) (S.solve_triangular c.a c.b)
 

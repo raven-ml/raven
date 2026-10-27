@@ -364,17 +364,10 @@ module Shape : sig
   (** [qr f a] is the shapes of [q] and [r]: [[…; m; k]] and [[…; k; n]]
       under [Reduced], [[…; m; m]] and [[…; m; n]] under [Complete]. *)
 
-  val svd_values : t -> t result
-  (** [svd_values a] is the shape of [s]: [[…; k]]. *)
-
   val svd : factors -> t -> (t * t * t) result
   (** [svd f a] is the shapes of [s], [u] and [vh]: [[…; k]], then
       [[…; m; k]] and [[…; k; n]] under [Reduced], [[…; m; m]] and
       [[…; n; n]] under [Complete]. *)
-
-  val eigh_values : t -> t result
-  (** [eigh_values a] is the shape of [w] of [a], square: [[…; n]], for
-      {!S.eigh} and {!S.eig} alike. *)
 
   val eigh : t -> (t * t) result
   (** [eigh a] is the shapes of [w] and [v] of [a], square: [[…; n]] and
