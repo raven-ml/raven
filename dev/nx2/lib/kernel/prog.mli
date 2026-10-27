@@ -10,32 +10,32 @@
     {e outputs}. It is a sequence of {e nodes}. A node is a {e leaf}, an
     operand's element at the index, the index along an axis or a constant,
     or a {e kind} applied to earlier nodes. A kind is what one node
-    computes from its operands' values, in the compute type [nx_kinds.h]
-    states for its dtype. The dtypes a kind takes are its {e domain}
-    ({!section-domains}). Each node has a dtype ({!dtype}), and its value
-    is its kind's result in that dtype, exact or within a bound as the next
-    paragraph states, a float rounded as {!Nx_array.Dtype.of_float} rounds
-    it. A loop of a kernel library
+    computes from its operands' values, in its dtype's compute type,
+    [float32] for every float narrower than [float32] and a 32-bit integer
+    for an 8- or 16-bit one, as [nx_kinds.h] states. The dtypes a kind
+    takes are its {e domain} ({!section-domains}). Each node has a dtype
+    ({!dtype}), and its value is its kind's result in that dtype, exact or
+    within a bound as the next paragraph states, a float rounded as
+    {!Nx_array.Dtype.of_float} rounds it. A loop of a kernel library
     ({!Nx_kernel.S.section-loops}) runs a program at every index of its
     shape.
 
     A kind whose result its doc below, IEEE 754 or modular arithmetic
     defines exactly, as [Floor], [Add], a float's [Sqrt] and an integer's
     [Mul] are, gives that result rounded once to its dtype. A float [Recip]
-    is [1 / x] by [Fdiv]. In a
-    kernel library, a float kind of [nx_kinds.h]'s table of bounds is within
-    the bound in ulps it states for the function of its name ([nx_exp_f32]
-    for [Exp] at float32), with the special values, the signs of zero
-    results and the NaN results the header states. A complex kind is as the
-    header's complex section states, within the normwise bound in [u] it
-    states for the kind, with its special values, symmetries and NaN parts.
-    A kernel library may compute a kind through that header's function, and
-    states whether it does. On one device model it computes each kind to
-    the same bits in all its paths, so that a kind's own kernel and the
-    program interpreter agree bit for bit. On a device that
-    flushes subnormal numbers to zero,
-    which its library states, the bounds hold where the operands and the
-    result are normal.
+    is [1 / x] by [Fdiv]. In a kernel library, a float kind of
+    [nx_kinds.h]'s table of bounds is within the bound in ulps it states
+    for the function of its name ([nx_exp_f32] for [Exp] at float32), with
+    the special values, the signs of zero results and the NaN results the
+    header states. A complex kind is as the header's complex section
+    states, within the normwise bound in [u] it states for the kind, with
+    its special values, symmetries and NaN parts. A kernel library may
+    compute a kind through that header's function, and states whether it
+    does. On one device model it computes each kind to the same bits in all
+    its paths, so that a kind's own kernel and a loop over a program of
+    that kind agree bit for bit. On a device that flushes subnormal numbers
+    to zero, which its library states, the bounds hold where the operands
+    and the result are normal.
 
     {!v} makes a program from its nodes, {!of_node} from one kind over its
     operands, and {!of_exprs} from {e expressions} ({!E}), nodes written as
@@ -120,7 +120,8 @@ type binary =
   | Pow
       (** The first operand to the power of the second; on complex numbers
           [e{^w log z}] of [z] to the power [w]. On integers a negative
-          exponent gives [0], but for a base of [1] or [-1]. *)
+          exponent gives [0], but a base of [1] gives [1], and a base of
+          [-1] gives [1] for an even exponent and [-1] for an odd one. *)
   | Atan2  (** The angle of [(x, y)], [y] the first operand, in \[-π, π\]. *)
   | Maximum
       (** The IEEE 754 maximum: NaN propagates and [-0] orders below [+0]. *)
@@ -180,8 +181,8 @@ type op3 =
     number with a NaN part, is a NaN to each kind: every comparison with it
     is [false] except [Not_equal], which is [true], and [Maximum] and
     [Minimum] give it. On booleans [Maximum] is [Or] and [Minimum] is
-    [And]. A kind keeps its operands' dtype where its type says so, which
-    leaves out the modulus of a complex number.
+    [And]. A unary kind keeps its operand's dtype, so no kind gives a
+    complex number's modulus.
 
     - [Neg], [Recip], [Sign], [Add], [Sub], [Mul], [Pow]: every dtype but
       booleans.
@@ -234,10 +235,10 @@ type node =
       (** [Coord i] is the iteration index along axis [i], as an [int64]. *)
   | Const of Nx_array.Dtype.any * string
       (** [Const (dt, b)] is the element of [dt] whose bits are [b]
-          ({!bits}), stored as they are: any bits of [dt]'s width in a
+          ({!val-bits}), stored as they are: any bits of [dt]'s width in a
           string of {!Nx_array.Dtype.bytes}[ dt 1] bytes, NaN payloads
-          included, and for a boolean any byte, [true] iff it is not
-          zero. *)
+          included, for [bool] any byte, [true] iff it is not zero, and for
+          [bit] a byte of [0] or [1] alone, as {!v} checks. *)
   | Op1 of op1 * Nx_array.Dtype.any * int
       (** [Op1 (k, dt, i)] is [k] of node [i] into [dt]. *)
   | Op2 of op2 * int * int  (** [Op2 (k, i, j)] is [k] of nodes [i] and [j]. *)
@@ -268,8 +269,8 @@ val v :
 val of_node : ins:Nx_array.Dtype.any iarray -> node -> t
 (** [of_node ~ins n] is the program of the one node [n] over operands of dtypes
     [ins]: [v ~ins nodes ~outs:[| k |]], where [nodes] is [In 0] to
-    [In (k - 1)] then [n] and [k] the length of [ins]. [n]'s references name
-    operands, so that node [j] is operand [j].
+    [In (k - 1)] then [n] and [k] the length of [ins]. Its reference [j]
+    names operand [j].
 
     Raises [Invalid_argument] as {!v} does. *)
 
@@ -336,9 +337,9 @@ module E : sig
       {!Nx_array.Layout.max_rank}. *)
 
   val const : ('v, 's) Nx_array.Dtype.t -> 'v -> ('v, 's) t
-  (** [const dt x] is [Const (dt, bits dt x)] ({!Prog.bits}).
+  (** [const dt x] is [Const (dt, bits dt x)] ({!Prog.val-bits}).
 
-      Raises [Invalid_argument] as {!Prog.bits} does. *)
+      Raises [Invalid_argument] as {!Prog.val-bits} does. *)
 
   val op1 : op1 -> ('w, 'r) Nx_array.Dtype.t -> ('v, 's) t -> ('w, 'r) t
   (** [op1 k dt x] is [Op1 (k, dt, x)]. *)
@@ -484,8 +485,8 @@ val of_exprs : ins:Nx_array.Dtype.any iarray -> E.any iarray -> t
     outputs, operands left to right, finishes them. Two expressions are
     distinct unless they are leaves of one kind, dtype and operand, axis or
     bits, or nodes of one kind and dtype over the same operands, so the
-    program depends on
-    its expressions' values alone, whichever of them are one OCaml value.
+    program depends on its expressions' values alone, whichever of them
+    are one OCaml value.
 
     Raises [Invalid_argument] if an [In] of [outs] reads no operand of [ins]
     or is not of its dtype, or if [outs] is empty. *)

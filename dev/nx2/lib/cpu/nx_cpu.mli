@@ -25,8 +25,8 @@
     the estimate is an upper bound of the work's time on one core of the
     machines it was measured on. Other threads of the calling domain may
     run OCaml code during a call. Several domains may call concurrently. The
-    pool runs one job at a time, so a released call waits for another
-    domain's job to end.
+    pool runs one job on several threads at a time, so a released call
+    whose work takes several threads waits for any other such job to end.
 
     A kernel's result is a function of its operands' values alone, in the
     sense that neither layouts nor threads change a bit of it. An element's
@@ -106,7 +106,7 @@
 
     A complex output of [K] products is within
     [γ(2K + 2) (|init| + Σ|a||b|)] of the exact sum of [a], [b] and [init]
-    as [acc] holds them, with [γ] as {!Nx_kernel.section-reductions}
+    as [acc] holds them, with [γ] as {!Nx_kernel.section-bounds}
     defines it and [u] its parts' unit roundoff, barring overflow and
     underflow. A rounding errs by at most [u] times the modulus of the
     partial sum it rounds, both parts at once, and a partial sum of any of
@@ -241,7 +241,8 @@
     {!Nx_kernel.Prog.Add} takes. The three refuse with [Shape_mismatch]
     operands and destinations whose shapes do not fit. A fold adds an
     index's elements from left to right, in C order of their taps, with no
-    [+0] before the first; it stores [+0] at an index no tap reads.
+    [+0] before the first; it stores [+0] at an index no tap reads. A
+    narrow float's sum rounds at each addition.
 
     [c2c], [r2c], [c2r] and the routines of matrices answer [Wrong_dtype]
     for dtypes {!Nx_kernel.S} does not take, and compute the others.
@@ -278,7 +279,7 @@
     batch, its layout or the threads. A destination of [solve_triangular]
     identical to [a] or [b] is accepted: they are then read from copies the
     call holds, and the results are those of a fresh destination. With [γ]
-    as {!Nx_kernel.section-reductions} defines it, [ε(k) = k η], [u] the
+    as {!Nx_kernel.section-bounds} defines it, [ε(k) = k η], [u] the
     dtype's unit roundoff and [η] its least positive subnormal (2{^-149} or
     2{^-1074}), [k] doubled on complex dtypes, and [|·|] taken elementwise,
     the bounds below hold. Their [ε] terms bound what rounding below the

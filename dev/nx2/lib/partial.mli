@@ -47,7 +47,7 @@
     reduction on one device, and a NaN result is a NaN whose sign and
     payload it does not state. Let [n] be an output's terms, [t] the tiles holding terms and [u]
     the carrier's unit roundoff. Where each device's kernels keep the bounds
-    of {!Nx_kernel.section-reductions}, and barring overflow and underflow,
+    of {!Nx_kernel.section-bounds}, and barring overflow and underflow,
     a result before the rounding into its dtype, which adds its own, is:
 
     - For a float sum, within [γ(n - 1) Σ|x|] of the exact sum, as on one
@@ -58,7 +58,7 @@
       [(m - 1) + (t - 1) <= n - 1]. A float product, so, within a relative
       [γ(n - 1)]. A complex product within a normwise relative
       [γ(2n - 2)], each complex multiplication by the kernels erring by at
-      most [2u] ({!Nx_kernel.section-reductions}).
+      most [2u] ({!Nx_kernel.section-bounds}).
     - For a [Logsumexp], within [ε + ε{_t}] of the exact one, [ε] the
       largest of the bounds the kernels state for its tiles' logsumexps and
       [ε{_t}] theirs for one of [t] terms: a logsumexp moves by no more than

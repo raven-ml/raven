@@ -37,38 +37,40 @@
     nx first checks the arrays' dtypes and shapes, so that an error names
     them. It then allocates the destinations and calls the kernel. The
     kernel claims its destinations and operands for the call through the
-    {e door}, the claim of arrays {!Nx_array.section-kernels} defines, and
-    answers as {!Nx_array.type-answer} states. Any case may be [Declined].
-    nx hands a refusal to {!Nx_array.refused}, and after a decline raises
-    [Invalid_argument] and computes nothing in the library's place. A
-    failure that depends on a float's or a complex
-    number's value is a NaN result. A kernel raises [Out_of_memory] if host
-    memory runs out, {!Rig.Out_of_memory} if its device's does, and
-    {!Rig.Lost} as the door does. After a raise, the destinations' contents
-    are unspecified.
+    {e door}, the claim of arrays {!Nx_array} and
+    {!Nx_array.section-kernels} define, and answers as
+    {!Nx_array.type-answer} states. A kernel may answer [Declined] for any
+    case, before any write or queued work. A {e refusal} is an answer
+    other than [Done] or [Declined]. nx hands a refusal to
+    {!Nx_array.refused}, and after a decline raises [Invalid_argument] and
+    computes nothing in the library's place. A failure that depends on a
+    float's or a complex number's value is a NaN result. A kernel raises
+    [Out_of_memory] if host memory runs out, {!Rig.Out_of_memory} if its
+    device's does, and {!Rig.Lost} as the door does. After a raise, the
+    destinations' contents are unspecified.
 
     Unless a function's doc says otherwise:
-    - A destination is C-contiguous, reaches no element twice, has the shape
-      {!Shape} gives and the dtype the doc states, and is on the operands'
-      device. Operands may be strided, broadcast or offset. A kernel answers
-      [Wrong_dtype] for dtypes its doc does not take and [Shape_mismatch]
-      for operands or destinations that do not fit it, by their number or
-      their shapes.
+    - The caller must pass destinations that are C-contiguous, on the
+      operands' device, of the shape {!Shape} gives and of the dtype the
+      doc states. Operands may be strided, broadcast or offset. The door
+      refuses a destination that reaches an element twice as
+      [Repeated_elements]. A kernel answers [Wrong_dtype] for dtypes its
+      doc does not take and [Shape_mismatch] for operands or destinations
+      that do not fit it, by their number or their shapes.
     - A destination shares no byte with an operand, except one it is
       identical to that the kernel reads only at the result's own index: a
       [Plain] load of [map], [contract]'s [init], [scatter]'s [into], or
       [assemble]'s first piece where its region is the whole result. A
       kernel reads such an operand at an index before writing there, so the
       result equals what a fresh destination would receive. The door
-      refuses other sharing as [Overlapping], and accepts a destination
+      refuses other sharing as [Overlapping]. It accepts a destination
       identical to an operand read at other indices, which the caller must
-      not pass: its result is unspecified unless the library's doc states
-      it.
-    - A kernel is {e deterministic}, in the sense that for the same operand
-      values, shapes, layouts and dtypes, the same attributes, its library
-      and a device of the same model, for a host library the host's
-      architecture, it gives the same bits on every run, whatever the
-      number of threads it runs on.
+      not pass; the result is then unspecified unless the library's doc
+      states it.
+    - A kernel is {e deterministic}. For the same operand values, shapes,
+      layouts and dtypes and the same attributes, it gives the same bits on
+      every run, on any number of threads, on devices of one model, for a
+      host library one architecture.
     - A result whose bits this contract fixes, an integer, a boolean, an
       extreme, a position, a move's or a map of kinds {!Prog} defines
       exactly, depends only on the operand elements its own index reads. So
@@ -118,8 +120,9 @@ type load =
     complex [Sum] adds each part as a float sum.
 
     A float [Sum] or [Prod] reduction adds or multiplies each output's terms
-    in the association its library states, a float narrower than [float32]
-    in [float32], and a complex [Prod] multiplies them by {!Prog.Mul}. Each
+    in the {e association} its library states, the grouping of the terms
+    into the partial results it rounds, a float narrower than [float32] in
+    [float32], and a complex [Prod] multiplies them by {!Prog.Mul}. Each
     result rounds once into its destination, a float as
     {!Nx_array.Dtype.of_float} rounds it. *)
 
@@ -140,9 +143,9 @@ type any_float = Any_float : (float, 's) Nx_array.Dtype.t -> any_float
 [@@unboxed]
 
 val float_carrier : (float, 's) Nx_array.Dtype.t -> any_float
-(** [float_carrier dt] is {!carrier} of the float [dt]. It is the compute
-    type [nx_kinds.h] states for [dt] ({!Prog}), in which a float kind of
-    [dt] computes before it rounds once to [dt]. *)
+(** [float_carrier dt] is {!carrier} of the float [dt], the compute type
+    in which a float kind of [dt] computes before it rounds once to [dt]
+    ({!Prog}). *)
 
 (** The type for what a reduction computes from its terms. *)
 type reduction =
@@ -188,8 +191,9 @@ val accepts : reduction -> ('v, 's) Nx_array.Dtype.t -> bool
     [γ(n - 1) Σ|x|] of the exact sum, and a float product within a relative
     [γ(n - 1)]. A complex product is within a normwise relative
     [γ(2n - 2)], where each {!Prog.Mul} errs by at most [2u]. A float or
-    complex contraction ({!S.contract}) errs by at most [2u] of its
-    accumulator per fused multiply-add, barring underflow. *)
+    complex contraction ({!S.contract}) rounds once per fused multiply-add,
+    by at most [u] of its accumulator's dtype times the partial sum it
+    rounds, a complex sum's modulus, barring overflow and underflow. *)
 
 (** {2:scans Scans}
 
@@ -208,9 +212,9 @@ val accepts : reduction -> ('v, 's) Nx_array.Dtype.t -> bool
     the sense that the scan of a prefix of the axis is the prefix of the
     scan, bit for bit. A scan's last result need not equal the reduction of
     the same terms. A scan of integers or booleans, and a [Max] or [Min]
-    scan, is exact. Scanning a slice from any term, with the carrier value
-    of the result before it as the carry, gives the whole scan's results
-    from that term on. A NaN result may be any NaN.
+    scan, is exact, so scanning a slice from any term, with the result
+    before it as the carry, gives the whole scan's results from that term
+    on. A NaN result may be any NaN.
 
     {3:network The odd/even network}
 
@@ -369,9 +373,9 @@ module Shape : sig
   val reduce : axes:int iarray -> reduction array -> t -> t result
   (** [reduce ~axes rs y] is the shape of each destination of reductions
       [rs] along [axes] of a loop of shape [y]: [y] without [axes], and [y]
-      itself for no axis. It is an [Error] unless [axes] are strictly
-      increasing axes of [y], and where a [Monoid Max], [Monoid Min] or
-      [Arg] of [rs] has a destination element and no term. *)
+      itself for no axis. It is an [Error] if [axes] are not strictly
+      increasing axes of [y], or if a [Monoid Max], [Monoid Min] or [Arg]
+      of [rs] has a destination element and no term. *)
 
   val scan : axis:int -> t -> t result
   (** [scan ~axis y] is the shape of a scan's destinations along [axis] of a
@@ -400,7 +404,7 @@ module Shape : sig
   (** [assemble y regions] is the shape of each piece of an assembly of
       shape [y]: its region's, the elements [regions.(i)] keep of each axis
       of [y], as {!Nx_array.Move.Slice} keeps them. A fold's operand has the
-      shape {!padded} gives for its destination's. *)
+      shape {!S.fold} states. *)
 
   (** {1:contraction Contraction} *)
 
@@ -497,12 +501,13 @@ module type S = sig
       a [Padded] one the shape {!Shape.padded} gives. A loop without loads
       runs over its shape alone. Its [Coord] nodes read axes of that shape,
       and it answers [Shape_mismatch] for a program with a [Coord] past that
-      shape's rank. A reduction or a scan computes in its output's carrier
-      ({!carrier}), in the association and within the bounds
+      shape's rank. A reduction or a scan computes in its program output's
+      carrier ({!carrier}), in the association and within the bounds
       {!section-reductions}, {!section-bounds} and {!section-scans} state.
-      Its destinations are of any dtype, and each result rounds once into
-      its own. It answers [Wrong_dtype] where {!accepts} is [false] of its
-      reduction and that output's dtype. *)
+      Its destinations are of any dtype but an [Arg]'s position, and each
+      result rounds once into its own, as {!Prog.Cast} stores it. It
+      answers [Wrong_dtype] where {!accepts} is [false] of its reduction
+      and that output's dtype. *)
 
   val map : Prog.t -> dsts:any array -> load array -> answer
   (** [map p ~dsts loads] stores [p]'s output [k] at each index into
@@ -680,12 +685,13 @@ module type S = sig
       ]}
       computed in [acc], summed in the library's order and rounded once
       into [dst], each operand's elements times their scales, each group of
-      [segments] as {!type-segments} states. [init] has [dst]'s shape, and
-      without it the sum starts from [+0]. An output without products is as
-      {!section-contraction} states. Integers wrap in [acc]. [a], [b],
-      [init] and [dst] may be of any dtypes: an element enters [acc], and
-      the sum enters [dst], as {!Prog.Cast} stores it. It answers
-      [Wrong_dtype] for an [acc] that {!accumulates} refuses. *)
+      [segments] as {!type-segments} states. [init] has [dst]'s shape. It
+      is one term of the sum, placed where the library's association puts
+      it, and [+0] where none is given. An output without products is as
+      {!Nx_kernel.section-contraction} states. Integers wrap in [acc].
+      [a], [b], [init] and [dst] may be of any dtypes: an element enters
+      [acc], and the sum enters [dst], as {!Prog.Cast} stores it. It
+      answers [Wrong_dtype] for an [acc] that {!accumulates} refuses. *)
 
   (** {1:fft Fourier transforms}
 
@@ -700,7 +706,8 @@ module type S = sig
   val r2c : axes:int iarray -> dst:(Complex.t, 'c) a -> (float, 'r) a -> answer
   (** [r2c ~axes ~dst x] stores the [Forward] transform of [x], bins [0] to
       [n/2] along the last of [axes], [n] [x]'s extent there. For [n = 0] it
-      is one bin of [+0]. [x] and [dst] are of the {!same_precision}. *)
+      is one bin of [+0]. [x] and [dst] are of one precision
+      ({!same_precision}). *)
 
   val c2r : axes:int iarray -> dst:(float, 'r) a -> (Complex.t, 'c) a -> answer
   (** [c2r ~axes ~dst x] reads [n/2 + 1] bins [X] along the last of [axes], [n]
@@ -709,7 +716,7 @@ module type S = sig
       transform of [X'], [X'[k]] [X[k]] for [k <= n/2] and [conj X[n - k]]
       above. The imaginary parts of bin [0] and, for an even [n], of bin [n/2]
       never contribute. It is this linear map for every operand, Hermitian or
-      not. [dst] and [x] are of the {!same_precision}. *)
+      not. [dst] and [x] are of one precision ({!same_precision}). *)
 
   (** {1:linalg Matrices}
 
@@ -718,9 +725,9 @@ module type S = sig
       {!section-matrices} lists. [aᴴ] is the conjugate transpose. The
       routine's other axes, its batch, lead every operand and destination.
       Each matrix is computed on its own, and one that fails is NaN in its
-      own results alone. A singular value and an eigenvalue of [eigh] are
-      floats of [a]'s {!same_precision}, and [eig]'s results complex
-      numbers of it, of a real or a complex [a]. [qr] and [svd] compute
+      own results alone. [svd]'s singular values and [eigh]'s eigenvalues
+      are floats, and [eig]'s results complex numbers, of [a]'s precision
+      ({!same_precision}), for a real or complex [a]. [qr] and [svd] compute
       reduced or complete factors as their destinations' shapes state
       ({!type-factors}). *)
 
@@ -735,8 +742,8 @@ module type S = sig
   (** [lu ~lu ~pivots ~perm a] stores into [lu] the unit lower triangular [L]
       below its diagonal, its ones unstored, and the upper triangular [U] on
       and above it. At step [j], rows [j] and [pivots[j]] were interchanged,
-      [pivots[j]] the row a scan of column [j] down from row [j] ends at. The
-      scan starts at [j] and moves to a later row only where that row's
+      [pivots[j]] the row a search of column [j] down from row [j] ends at.
+      The search starts at [j] and moves to a later row only where that row's
       magnitude, [|re| + |im|] on complex, is greater than the current one's.
       A NaN is never greater, and nothing is greater than a NaN. Row [i] of
       [L U] is row [perm[i]] of [a]. A zero pivot stays in [U] and its column
@@ -755,7 +762,7 @@ module type S = sig
       and not negative, a zero one [+0]. Without [vectors] it stores [s]
       alone. A matrix that holds NaN or an infinity, or on which the
       iteration does not converge, is NaN in every result. It answers
-      [Wrong_dtype] unless [s] is of [a]'s {!same_precision}. *)
+      [Wrong_dtype] unless [s] is of [a]'s precision ({!same_precision}). *)
 
   val eigh : w:(float, 'r) a -> ?v:('v, 's) a -> ('v, 's) a -> answer
   (** [eigh ~w ~v a] stores the eigenvalues of [a], square and Hermitian as
@@ -763,14 +770,14 @@ module type S = sig
       alone are read, ascending into [w], and orthonormal columns [v] with
       [a v = v diag w]. Without [v] it stores [w] alone. NaN as for [svd],
       over what is read. It answers [Wrong_dtype] unless [w] is of [a]'s
-      {!same_precision}. *)
+      precision ({!same_precision}). *)
 
   val eig :
     w:(Complex.t, 'c) a -> ?v:(Complex.t, 'c) a -> ('v, 's) a -> answer
   (** [eig ~w ~v a] stores the eigenvalues of [a], square, into [w], and
       columns [v] of unit norm with [a v = v diag w]. Without [v] it stores
       [w] alone. NaN as for [svd]. It answers [Wrong_dtype] unless [w] and
-      [v] are of [a]'s {!same_precision}. *)
+      [v] are of [a]'s precision ({!same_precision}). *)
 
   val solve_triangular :
     triangle ->

@@ -1,5 +1,6 @@
 ; nx.kernel: the vocabulary kernels compute and the contract kernel
-; libraries implement, with the C headers by which C reads them.
+; libraries implement, with the C headers by which C kernels read that
+; vocabulary.
 
 (library
  (name nx_kernel)

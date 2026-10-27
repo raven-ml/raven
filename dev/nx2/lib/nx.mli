@@ -1572,7 +1572,7 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     negative one counted from the end, and drops them, or keeps each with extent
     [1] where [keepdims]. On one device it gives the same bits on every run
     of the same computation, for the same values, shapes, dtypes, placement
-    and devices ({!Nx_kernel.section-contract}); on nx.cpu ({!Nx_cpu}) its
+    and devices ({!Nx_kernel}); on nx.cpu ({!Nx_cpu}) its
     order of association depends on the shape alone. Over axes cut across
     devices, each device reduces the part its window holds, and only
     partial results move instead of [x]'s elements: a few per output,
@@ -1585,7 +1585,7 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     given placement and set of devices. Barring overflow and underflow, a
     float sum of [n] terms stays within [γ(n - 1) Σ|x|] of the exact sum and a
     product within a relative [γ(n - 1)], as on one device
-    ({!Nx_kernel.section-reductions}); a complex product within a normwise
+    ({!Nx_kernel.section-bounds}); a complex product within a normwise
     relative [γ(2n - 2)]. A {!mean} is such a sum divided by [n]. {!var} and
     {!std} are within the bound {!var} states. A
     {!logsumexp} is within [ε + ε{_t}] of the exact one, [ε] the largest

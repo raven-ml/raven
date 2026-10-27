@@ -205,8 +205,8 @@ let takes n d0 d1 d2 =
 let strf = Printf.sprintf
 
 (* Whether [b] is the bits of an element of [dt]: any bits of its width, a
-   sub-byte element's in the low bits of its byte. A boolean byte is
-   [true] iff it is not zero. *)
+   sub-byte element's in the low bits of its byte. A bool byte is [true]
+   iff it is not zero; a bit byte is 0 or 1. *)
 let is_element (D.Any dt) b =
   String.length b = D.bytes dt 1
   &&
