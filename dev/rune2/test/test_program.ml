@@ -105,21 +105,20 @@ let test_iterate () =
       %1 : float32 [] of every set = Map [float32:0x00000040]
       %2 : float32 [2] of every set = Move (x0: float32 [] of every set)
         with x0 = %1
-      %3 : float32 [] of every set = Map [float32:0x00002041]
-      %4 : float32 [2] at CPU = iterate at most 4, init (%0), captures (%3) and (%2)
+      %3 : float32 [2] at CPU = iterate at most 4, init (%0), captures () and (%2)
         until
-          program (%5, %7)
-            %6 : float32 [] at CPU = Reduce [Sum x0] over [0] (x0: float32 [2] at CPU)
+          program (%4)
+            %5 : float32 [] at CPU = Reduce [Sum x0] over [0] (x0: float32 [2] at CPU)
+              with x0 = %4
+            %6 : bool [] at CPU = Map [less(float32:0x00002041, x0)] (x0: float32 [] at CPU)
               with x0 = %5
-            %8 : bool [] at CPU = Map [less(x0, x1)] (x0: float32 [] of every set) (x1: float32 [] at CPU)
-              with x0 = %7, x1 = %6
-            return %8
+            return %6
         step
-          program (%9, %10)
-            %11 : float32 [2] at CPU = Map [mul(x0, x1)] (x0: float32 [2] at CPU) (x1: float32 [2] of every set)
-              with x0 = %9, x1 = %10
-            return %11
-      return %4
+          program (%7, %8)
+            %9 : float32 [2] at CPU = Map [mul(x0, x1)] (x0: float32 [2] at CPU) (x1: float32 [2] of every set)
+              with x0 = %7, x1 = %8
+            return %9
+      return %3
     |}
 
 (* Two traces of one function print alike. *)
