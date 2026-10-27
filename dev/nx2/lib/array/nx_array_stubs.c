@@ -826,47 +826,29 @@ value nx_array_load_byte_byte(value b, value i) {
   return Val_long(nx_array_load_byte(b, Long_val(i)));
 }
 
-/* get: [v]'s element at position [vp], which its layout reaches, read
-   through the door and boxed as its dtype's OCaml values are. A refusal
-   raises Nx_array's Refused with its code, holding no claim. The element
-   is loaded under the claim and boxed after it, so that an allocation that
-   raises holds no claim. */
-value nx_array_get(value v, value vp) {
-  CAMLparam1(v);
-  CAMLlocal1(x);
-  nx_operand in = {v, nx_array_dtype(v), 0};
-  nx_array a;
-  int e = nx_read(1, &in, &a);
-  if (e) {
-    static const value *refused = NULL;
-    if (refused == NULL) refused = caml_named_value("Nx_array.Refused");
-    caml_raise_with_arg(*refused, Val_int(e));
-  }
-  int dt = a.dtype;
-  int64_t p = Long_val(vp), i = 0;
-  double re = 0, im = 0;
+/* get: [v]'s element at position [vp], which its layout reaches, boxed as
+   its dtype's OCaml values are. The caller holds a claim on [v]'s memory,
+   which the host addresses, and has waited for the device work a read must
+   follow (Nx_array.get). The element is loaded before the one allocation
+   that boxes it, so no value is read after a collection. */
+value nx_array_load(value v, value vp) {
+  int dt = nx_array_dtype(v);
+  const uint8_t *base = rig_buffer_host(Field(v, ARRAY_BUFFER));
+  int64_t p = Long_val(vp);
   int kind = nx_dtype_row_of(dt).kind;
-  if (kind == NX_KIND_FLOAT || kind == NX_KIND_COMPLEX) {
-    re = load_float(a.base, dt, p, 0);
-    if (kind == NX_KIND_COMPLEX) im = load_float(a.base, dt, p, 1);
-  } else
-    i = load_int(a.base, dt, p);
-  nx_done(1, &a);
-  switch (kind) {
-    case NX_KIND_FLOAT: x = caml_copy_double(re); break;
-    case NX_KIND_COMPLEX:
-      x = caml_alloc_small(2 * Double_wosize, Double_array_tag);
-      Store_double_flat_field(x, 0, re);
-      Store_double_flat_field(x, 1, im);
-      break;
-    default:
-      if (dt == NX_INT64 || dt == NX_UINT64) x = caml_copy_int64(i);
-      else if (dt == NX_INT32 || dt == NX_UINT32)
-        x = caml_copy_int32((int32_t)i);
-      else if (dt == NX_BOOL || dt == NX_BIT) x = Val_bool(i != 0);
-      else x = Val_long(i);
+  if (kind == NX_KIND_FLOAT) return caml_copy_double(load_float(base, dt, p, 0));
+  if (kind == NX_KIND_COMPLEX) {
+    double re = load_float(base, dt, p, 0), im = load_float(base, dt, p, 1);
+    value x = caml_alloc_small(2 * Double_wosize, Double_array_tag);
+    Store_double_flat_field(x, 0, re);
+    Store_double_flat_field(x, 1, im);
+    return x;
   }
-  CAMLreturn(x);
+  int64_t i = load_int(base, dt, p);
+  if (dt == NX_INT64 || dt == NX_UINT64) return caml_copy_int64(i);
+  if (dt == NX_INT32 || dt == NX_UINT32) return caml_copy_int32((int32_t)i);
+  if (dt == NX_BOOL || dt == NX_BIT) return Val_bool(i != 0);
+  return Val_long(i);
 }
 
 /* set: stores [x] at [v]'s position [vp], which its layout reaches, through

@@ -539,6 +539,9 @@ let test_dead_access () =
       f
   in
   fails (fun () -> A.get a [| 0 |]);
+  raises_match ~msg:"get names itself"
+    (Exn.invalid_arg ~substring:"Nx_array.get")
+    (fun () -> A.get a [| 0 |]);
   fails (fun () -> A.to_array a);
   fails (fun () -> A.bitcast D.Uint32 a);
   fails (fun () -> A.bitcast D.Uint8 a)
@@ -2074,6 +2077,13 @@ let test_wait_to_array () =
   pending b [| Int32.float_of_bits 5l; Int32.float_of_bits 6l |];
   equal ~msg:"int32" (values D.Int32) [| 5l; 6l |] (A.to_array b)
 
+let test_wait_get () =
+  let d, _ = late () in
+  let a = on_late d [| 0.; 0. |] in
+  pending a [| 3.; 4. |];
+  equal float_exact 4. (A.get a [| 1 |]);
+  no_claim a
+
 let test_wait_of_array () =
   let d, _ = late () in
   let a = on_late d [| 0.; 0. |] in
@@ -2101,7 +2111,8 @@ let test_wait_lost () =
   S.Late.fault l "gone";
   raises_match ~msg:"the kernel" lost (fun () -> S.add z x y);
   List.iter no_claim [ z; y ];
-  raises_match ~msg:"to_array" lost (fun () -> A.to_array x)
+  raises_match ~msg:"to_array" lost (fun () -> A.to_array x);
+  raises_match ~msg:"get" lost (fun () -> A.get x [| 0 |])
 
 (* A read operand identical in bytes to the written one, but of other memory,
    keeps its own claim and wait: a host borrow of a closed device's memory
@@ -2520,6 +2531,7 @@ let tests =
       [
         test "a kernel runs after the work on each operand" test_wait_add;
         test "to_array reads after the work on its array" test_wait_to_array;
+        test "get reads after the work on its array" test_wait_get;
         test "of_array's store runs after the work on its array"
           test_wait_of_array;
         test "a copy reads and writes after the work on its arrays"

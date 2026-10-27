@@ -104,6 +104,14 @@ let door ~written ~read f x =
           Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
   | refusal -> refusal
 
+(* Holds a read claim on [a]'s memory while [f ()] runs: no donation writes
+   it meanwhile. A copy under it orders itself after [a]'s work, and a load
+   waits for that work first. *)
+let reading fn a f =
+  match door ~written:[||] ~read:[| Any a |] f () with
+  | Done -> ()
+  | refusal -> refused fn refusal [ Any a ]
+
 (* Making arrays *)
 
 external host_address : Buffer.t -> (int[@untagged])
@@ -258,13 +266,9 @@ let position fn a idx =
   done;
   !p
 
-(* A refusal of [get_at], raised by C, which allocates no result block. *)
-exception Refused of answer
-
-let () = Callback.register_exception "Nx_array.Refused" (Refused Done)
-
-(* [a]'s element at position [p], through the door. Raises [Refused]. *)
-external get_at : ('v, 's) t -> int -> 'v = "nx_array_get"
+(* [a]'s element at position [p], boxed. [a]'s memory must be claimed, lie at
+   a host address and follow the device work a read must follow. *)
+external load : ('v, 's) t -> int -> 'v = "nx_array_load"
 
 (* Stores [x] at [a]'s position [p], through the door. *)
 external set_at : ('v, 's) t -> int -> 'v -> answer = "nx_array_set"
@@ -276,11 +280,18 @@ let checked fn dt x =
     invalid_argf "%s: %a is outside %a's range [%a, %a]" fn pp x Dtype.pp dt pp
       (Dtype.min_value dt) pp (Dtype.max_value dt)
 
+(* Under the door's read claim, which names this function in a refusal, the
+   element is loaded once the work a read must follow is done. Boxing it
+   allocates under the claim, which the door releases if that raises. *)
 let get a idx =
   let fn = "Nx_array.get" in
-  match get_at a (position fn a idx) with
-  | x -> x
-  | exception Refused refusal -> refused fn refusal [ Any a ]
+  let p = position fn a idx in
+  let x = ref None in
+  reading fn a (fun () ->
+      if host_address a.buffer < 0 then refused fn Off_host [ Any a ];
+      Buffer.wait a.buffer Rig.Read;
+      x := Some (load a p));
+  Option.get !x
 
 let set a idx x =
   let fn = "Nx_array.set" in
@@ -413,13 +424,6 @@ let copy_span ~head ~tail src dst =
     if head then edge 0;
     if tail && (n > 1 || not head) then edge (n - 1)
   end
-
-(* Holds a read claim on [a]'s memory while [f ()] runs: no donation writes
-   it meanwhile. The copies under it order themselves after [a]'s work. *)
-let reading fn a f =
-  match door ~written:[||] ~read:[| Any a |] f () with
-  | Done -> ()
-  | refusal -> refused fn refusal [ Any a ]
 
 (* The elements of [l]: one per index, an axis of stride 0 counted once. *)
 let elements l =
