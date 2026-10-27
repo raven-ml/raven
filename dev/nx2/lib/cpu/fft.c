@@ -49,21 +49,15 @@
 #include "nx_kinds.h"
 
 /* Stores of 32 bytes past the caches (streams), where the target has
-   them: x86-64-v3's for a result over a core's L2 on one thread and over
-   the largest cache on several, arm64 for a result over half of a core's
-   L2 on any threads (measured on the M1 alone). */
-#if defined(__AVX__)
-#define NT_STORES 1
+   them (cpu.h's NX_STREAMS): on x86-64 for a result over a core's L2 on
+   one thread and over the largest cache on several, on arm64 for a result
+   over half of a core's L2 on any threads (measured on the M1 alone). */
+#if defined(__x86_64__)
 #define STREAM_BYTES nx_cpu_l2
 #define STREAM_SEVERAL nx_cpu_llc
-#elif defined(__aarch64__)
-#define NT_STORES 1
+#else
 #define STREAM_BYTES (nx_cpu_l2 / 2)
 #define STREAM_SEVERAL (nx_cpu_l2 / 2)
-#else
-#define NT_STORES 0
-#define STREAM_BYTES nx_cpu_l2
-#define STREAM_SEVERAL nx_cpu_l2
 #endif
 
 /* The most points a line computes by passes alone. Above, the four steps
@@ -217,7 +211,7 @@ static lines lines_of(const nx_array *a, int axis, const nx_array *by, int w) {
    core; below half of a core's L2 (1.5 MiB), lines of 2^16 points (0.5
    to 1 MiB) lost up to 5% on its threads. */
 static int streams(int64_t bytes, int threads) {
-  return NT_STORES && bytes > (threads == 1 ? STREAM_BYTES : STREAM_SEVERAL);
+  return NX_STREAMS && bytes > (threads == 1 ? STREAM_BYTES : STREAM_SEVERAL);
 }
 
 /* Sets every element of [a] to +0. */
