@@ -8,9 +8,9 @@
 
 #define _GNU_SOURCE
 
-#include <caml/alloc.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
+#include <caml/signals.h>
 #include <caml/threads.h>
 #include <caml/unixsupport.h>
 
@@ -104,10 +104,12 @@ CAMLprim value caml_nx_io_sync_dir(value vpath) {
   return Val_unit;
 #else
   CAMLparam1(vpath);
-  CAMLlocal1(vname);
   caml_unix_check_path(vpath, "open");
+  /* Signal handlers run here, before [path] is held. The release below does
+     not run them, so nothing raises while [path] is held. */
+  caml_process_pending_actions();
   char *path = caml_stat_strdup(String_val(vpath));
-  caml_release_runtime_system();
+  caml_enter_blocking_section_no_pending();
   int error = 0;
   int fd;
   do
@@ -120,12 +122,9 @@ CAMLprim value caml_nx_io_sync_dir(value vpath) {
     close(fd);
   }
   caml_acquire_runtime_system();
-  if (error != 0) {
-    vname = caml_copy_string(path);
-    caml_stat_free(path);
-    unix_error(error, "fsync", vname);
-  }
   caml_stat_free(path);
+  if (error != 0)
+    unix_error(error, "fsync", vpath);
   CAMLreturn(Val_unit);
 #endif
 }
