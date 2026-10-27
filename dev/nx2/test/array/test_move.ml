@@ -8,24 +8,10 @@ module M = Nx_array.Move
 open Nx_array_gen
 
 let ( let* ) = Option.bind
-let pp_iints ppf s = pp_ints ppf (Iarray.to_array s)
-let iints = Testable.make ~pp:pp_iints ~equal:(Iarray.equal Int.equal)
 let guard b = if b then Some () else None
 let max_numel = Nx_array.Layout.max_numel
 
 (* The shape a movement gives, by its preconditions *)
-
-(* The product of [s]'s extents, [None] if the product of those other than 0
-   passes [max_numel]. *)
-let numel s =
-  let* n =
-    Array.fold_left
-      (fun n d ->
-        let* n = n in
-        if d = 0 then Some n else if d > max_numel / n then None else Some (n * d))
-      (Some 1) s
-  in
-  Some (if Array.mem 0 s then 0 else n)
 
 let in_axis d i = 0 <= i && i < d
 
@@ -56,14 +42,14 @@ let rec increasing = function
 let expected m s =
   let r = Array.length s in
   let* () = guard (Array.for_all (fun d -> d >= 0) s) in
-  let* _ = numel s in
+  let* _ = numel (Iarray.of_array s) in
   let* s' =
     match m with
     | M.Reshape s' ->
         let s' = Iarray.to_array s' in
         let* () = guard (Array.for_all (fun d -> d >= 0) s') in
-        let* n = numel s in
-        let* n' = numel s' in
+        let* n = numel (Iarray.of_array s) in
+        let* n' = numel (Iarray.of_array s') in
         let* () = guard (n = n') in
         Some s'
     | M.Broadcast s' ->
@@ -107,7 +93,7 @@ let expected m s =
              (Array.of_list (List.map (fun (w : M.window) -> w.size) ws)))
   in
   let* () = guard (Array.length s' <= Nx_array.Layout.max_rank) in
-  let* _ = numel s' in
+  let* _ = numel (Iarray.of_array s') in
   Some s'
 
 let constructor = function

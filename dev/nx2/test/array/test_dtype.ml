@@ -4,26 +4,13 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
+open Nx_array_gen
 module A = Nx_array
 module D = Nx_array.Dtype
 
 let strf = Printf.sprintf
 let pp_hex ppf x = Format.fprintf ppf "%h" x
 let any_name (D.Any dt) = D.name dt
-
-(* A witness of [dt]'s values that prints them as [dt] does and compares floats
-   bit for bit. *)
-let value : type v s. (v, s) D.t -> v testable =
- fun dt ->
-  match D.kind dt with
-  | D.Float ->
-      Testable.make ~pp:(D.pp_value dt) ~equal:(Testable.equal float_exact)
-  | D.Complex ->
-      Testable.make ~pp:(D.pp_value dt) ~equal:(fun (a : Complex.t) b ->
-          Testable.equal float_exact a.re b.re
-          && Testable.equal float_exact a.im b.im)
-  | D.Boolean -> bool
-  | D.Signed | D.Unsigned -> Testable.make ~pp:(D.pp_value dt) ~equal:( = )
 
 (* The table, as the interface states it *)
 

@@ -9,10 +9,6 @@ module M = Nx_array.Move
 open Nx_array_gen
 
 let ( let* ) = Result.bind
-let layout = Testable.make ~pp:L.pp ~equal:L.equal
-let ints = array int
-let pp_iints ppf s = pp_ints ppf (Iarray.to_array s)
-let iints = Testable.make ~pp:pp_iints ~equal:(Iarray.equal Int.equal)
 
 (* An iarray equal to another only as the same value. *)
 let same = Testable.make ~pp:pp_iints ~equal:( == )
@@ -92,18 +88,6 @@ let canonical l =
 (* Construction, by the interface *)
 
 let max_numel = L.max_numel
-
-(* The product of [s]'s extents, if the product of those other than 0 is at
-   most [max_numel]. *)
-let numel s =
-  Iarray.fold_left
-    (fun n d ->
-      Option.bind n (fun n ->
-          if d = 0 then Some n
-          else if d > max_numel / n then None
-          else Some (n * d)))
-    (Some 1) s
-  |> Option.map (fun n -> if Iarray.mem 0 s then 0 else n)
 
 let add a b =
   match (a, b) with

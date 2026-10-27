@@ -11,24 +11,7 @@ module B = Rig.Buffer
 module S = Nx_array_support
 
 let strf = Printf.sprintf
-let layout = Testable.make ~pp:L.pp ~equal:L.equal
-let ints = array int
-let pp_iints ppf s = pp_ints ppf (Iarray.to_array s)
-let iints = Testable.make ~pp:pp_iints ~equal:(Iarray.equal Int.equal)
 let f32 = D.Float32
-
-(* A witness of [dt]'s values that compares floats bit for bit. *)
-let value : type v s. (v, s) D.t -> v testable =
- fun dt ->
-  let float = Testable.equal float_exact in
-  match D.kind dt with
-  | D.Float -> Testable.make ~pp:(D.pp_value dt) ~equal:float
-  | D.Complex ->
-      Testable.make ~pp:(D.pp_value dt) ~equal:(fun (a : Complex.t) b ->
-          float a.re b.re && float a.im b.im)
-  | D.Boolean -> bool
-  | D.Signed | D.Unsigned -> Testable.make ~pp:(D.pp_value dt) ~equal:( = )
-
 let values dt = array (value dt)
 let floats32 s xs = A.of_array f32 s xs
 

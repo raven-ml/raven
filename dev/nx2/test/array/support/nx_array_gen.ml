@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Layouts and movements drawn for nx2's suites, and their positions by brute
-   force. *)
+(* Layouts and movements drawn for nx2's suites, their positions by brute
+   force, and the witnesses and references the array suites share. *)
 
 open Windtrap
 module L = Nx_array.Layout
@@ -285,3 +285,45 @@ let layout_and_move =
      let s = Iarray.to_array (L.shape l) in
      let+ m = frequency [ (3, movement ~apart:false s); (1, near_bounds s) ] in
      (l, m))
+
+(* Witnesses and references *)
+
+(* Layouts, equal by {!L.equal}. *)
+let layout = Testable.make ~pp:L.pp ~equal:L.equal
+
+(* Arrays of ints, as dims and descriptors are. *)
+let ints = array int
+
+(* Formats an iarray of ints as {!pp_ints} does. *)
+let pp_iints ppf s = pp_ints ppf (Iarray.to_array s)
+
+(* Iarrays of ints, as shapes and strides are, equal element by element. *)
+let iints = Testable.make ~pp:pp_iints ~equal:(Iarray.equal Int.equal)
+
+(* A witness of [dt]'s values that prints them as [dt] does and compares floats
+   bit for bit. *)
+let value : type v s. (v, s) Nx_array.Dtype.t -> v testable =
+ fun dt ->
+  let module D = Nx_array.Dtype in
+  let float = Testable.equal float_exact in
+  match D.kind dt with
+  | D.Float -> Testable.make ~pp:(D.pp_value dt) ~equal:float
+  | D.Complex ->
+      Testable.make ~pp:(D.pp_value dt) ~equal:(fun (a : Complex.t) b ->
+          float a.re b.re && float a.im b.im)
+  | D.Boolean -> bool
+  | D.Signed | D.Unsigned -> Testable.make ~pp:(D.pp_value dt) ~equal:( = )
+
+(* The product of [s]'s extents, [None] if the product of those other than 0
+   passes {!L.max_numel}. *)
+let numel s =
+  let nonzero =
+    Iarray.fold_left
+      (fun n d ->
+        match n with
+        | Some n when d = 0 -> Some n
+        | Some n when d <= L.max_numel / n -> Some (n * d)
+        | _ -> None)
+      (Some 1) s
+  in
+  Option.map (fun n -> if Iarray.mem 0 s then 0 else n) nonzero
