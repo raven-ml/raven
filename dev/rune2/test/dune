@@ -34,7 +34,8 @@
   test_lower_real
   test_lower_reduce
   test_lower_index
-  test_lower_linalg)
+  test_lower_linalg
+  test_lower_fft)
  (modules
   test_lower
   test_lower_arith
@@ -42,5 +43,6 @@
   test_lower_real
   test_lower_reduce
   test_lower_index
-  test_lower_linalg)
+  test_lower_linalg
+  test_lower_fft)
  (libraries nx nx_array nx_kernel rune2 lowered windtrap))

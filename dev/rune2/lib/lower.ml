@@ -230,6 +230,24 @@ let bitcast dt x u =
   in
   (Arith.prog prog (Nx.shape x) [| u |]).(0)
 
+(* Transforms: a result of another precision than its operand's is not
+   lowered. *)
+
+let fft (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type d r)
+    (f : (d, r) P.fft) =
+  let paired dt u =
+    if Arith.dtype (D.Any dt) <> Ops.dtype u then
+      unlowered "an Fft of another precision";
+    u
+  in
+  match f with
+  | C2c { direction; axes; x } ->
+      Lower_fft.c2c direction ~axes:(Iarray.to_list axes) (node x)
+  | R2c { dtype; axes; x } ->
+      Lower_fft.r2c ~axes:(Iarray.to_list axes) (paired dtype (node x))
+  | C2r { dtype; n; axes; x } ->
+      Lower_fft.c2r ~axes:(Iarray.to_list axes) ~n (paired dtype (node x))
+
 (* Operations *)
 
 let op (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r) (o : r P.t) =
@@ -284,5 +302,6 @@ let op (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r) (o : r P.t) =
       in
       [| values; positions |]
   | Linalg l -> Lower_linalg.op node l
-  | Fft _ | Check _ ->
+  | Fft f -> [| fft node f |]
+  | Check _ ->
       unlowered (P.name o)
