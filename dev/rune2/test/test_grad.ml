@@ -258,7 +258,8 @@ let test_structures () =
      in C order from the start of its memory. *)
   let a = Nx.create f64 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let pattern = Nx.Pattern.v "k i, k j -> i j | k" in
-  let g = Rune.grad' (fun a -> Nx.sum (Nx.contract f64 pattern a a)) a in
+  let b = Nx.create f64 [| 2; 2 |] [| 1.; -1.; 2.; 0.5 |] in
+  let g = Rune.grad' (fun a -> Nx.sum (Nx.contract f64 pattern a b)) a in
   let layout = (Nx.Prim.form g).layout in
   equal ~msg:"in C order" bool true
     (L.is_contiguous layout && fst (L.span layout) = 0)
