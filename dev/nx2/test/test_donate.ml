@@ -1630,6 +1630,11 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
       c "extract" 2 (fun d ->
           show (Nx.extract ~size:4 ~fill:one (d 0 (x [| 2; 3 |])) (d 1 (x [| 6 |]))));
       c "nonzero" 1 (fun d -> showl (Nx.nonzero (d 0 (x [| 2; 3 |]))));
+      c "( *@ )" ~by:"matmul" 2 (fun d ->
+          show Nx.(d 0 (x [| 2; 3 |]) *@ d 1 (x [| 3; 2 |])));
+      c "( .%{} )" ~by:"get" 1 (fun d -> show Nx.((d 0 (x [| 2; 3 |])).%{[ 1 ]}));
+      c "( .${} )" ~by:"slice" 1 (fun d ->
+          show Nx.((d 0 (x [| 2; 3 |])).${[ A; R (0, 2) ]}));
     ]
 
 (* The functions of floats. *)
@@ -2051,6 +2056,12 @@ let integers =
              [ v ]));
       c "unravel_index" 1 (fun d ->
           showl (Nx.unravel_index (d 0 (ints [| 0; 4; 7 |])) [| 2; 3 |]));
+      c "( land )" ~by:"bitwise_and" 2 (fun d ->
+          show Nx.(d 0 (x [| 4 |]) land d 1 (Nx.flip (x [| 4 |]))));
+      c "( lor )" ~by:"bitwise_or" 2 (fun d ->
+          show Nx.(d 0 (x [| 4 |]) lor d 1 (Nx.flip (x [| 4 |]))));
+      c "( lxor )" ~by:"bitwise_xor" 2 (fun d ->
+          show Nx.(d 0 (x [| 4 |]) lxor d 1 (Nx.flip (x [| 4 |]))));
     ]
 
 (* The functions of booleans. *)
@@ -2092,6 +2103,7 @@ let operators =
       xs "( -$ )" "sub_s" Nx.( -$ );
       xs "( *$ )" "mul_s" Nx.( *$ );
       xs "( /$ )" "div_s" Nx.( /$ );
+      xs "( **$ )" "pow_s" Nx.( **$ );
       x2 "Infix.( = )" "equal" Nx.Infix.( = );
       x2 "Infix.( <> )" "not_equal" Nx.Infix.( <> );
       x2 "Infix.( < )" "less" Nx.Infix.( < );

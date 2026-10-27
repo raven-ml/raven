@@ -968,7 +968,8 @@ val greater_equal_s : ('v, 's, 'd) t -> 'v -> 'd bool_t
 
     The arithmetic operators, for a local open: [Nx.(sin x * x +$ 1.)].
     Comparisons and logical operators live in {!Infix}, so that [Nx.( … )]
-    keeps OCaml's own. *)
+    keeps OCaml's own. The remainder has no operator: {!mod_} takes the
+    dividend's sign. *)
 
 val ( + ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [a + b] is [add a b]. *)
@@ -999,6 +1000,27 @@ val ( *$ ) : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
 
 val ( /$ ) : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
 (** [x /$ c] is [div_s x c]. *)
+
+val ( **$ ) : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
+(** [x **$ c] is [pow_s x c]. *)
+
+val ( land ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [a land b] is [bitwise_and a b]. *)
+
+val ( lor ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [a lor b] is [bitwise_or a b]. *)
+
+val ( lxor ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [a lxor b] is [bitwise_xor a b]. *)
+
+val ( *@ ) : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [a *@ b] is [matmul a b]. *)
+
+val ( .%{} ) : ('v, 's, 'd) t -> int list -> ('v, 's, 'd) t
+(** [x.%{p}] is [get p x]. *)
+
+val ( .${} ) : ('v, 's, 'd) t -> 'd index list -> ('v, 's, 'd) t
+(** [x.${idx}] is [slice idx x]. *)
 
 (** Comparisons and logical operators, for [open Nx.Infix]. *)
 module Infix : sig

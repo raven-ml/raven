@@ -129,6 +129,7 @@ let forms =
     { name = "( * )"; scalar = (fun x c -> Nx.(x * c_of x c)); full = (fun a b -> Nx.mul a b) };
     { name = "( / )"; scalar = (fun x c -> Nx.(x / c_of x c)); full = (fun a b -> Nx.div a b) };
     { name = "( ** )"; scalar = (fun x c -> Nx.(x ** c_of x c)); full = (fun a b -> Nx.pow a b) };
+    { name = "( **$ )"; scalar = (fun x c -> Nx.(x **$ c)); full = (fun a b -> Nx.pow a b) };
   ]
 
 let tests =
@@ -170,6 +171,30 @@ let laws =
     (List.map (fun f -> prop f.name operand (law_form f)) forms
     @ List.map (fun f -> prop f.tname operand (law_test f)) tests)
 
+(* Binary operators of two values, each its function: [b] is [a]'s
+   elements reversed, broadcast where [a] has a unit last axis. *)
+type pair_form = {
+  pname : string;
+  op : 'v 's. ('v, 's, Nx.host) Nx.t -> ('v, 's, Nx.host) Nx.t -> ('v, 's, Nx.host) Nx.t;
+  fn : 'v 's. ('v, 's, Nx.host) Nx.t -> ('v, 's, Nx.host) Nx.t -> ('v, 's, Nx.host) Nx.t;
+}
+
+let pair_forms =
+  [
+    { pname = "( land )"; op = (fun a b -> Nx.(a land b)); fn = Nx.bitwise_and };
+    { pname = "( lor )"; op = (fun a b -> Nx.(a lor b)); fn = Nx.bitwise_or };
+    { pname = "( lxor )"; op = (fun a b -> Nx.(a lxor b)); fn = Nx.bitwise_xor };
+    { pname = "( *@ )"; op = (fun a b -> Nx.(a *@ b)); fn = Nx.matmul };
+  ]
+
+let law_pair f (Operand (dt, x, _)) =
+  let y = Nx.flip x in
+  same_outcome (outcome dt (fun () -> f.fn x y)) (outcome dt (fun () -> f.op x y))
+
+let pair_laws =
+  group "each binary operator is its function"
+    (List.map (fun f -> prop f.pname operand (law_pair f)) pair_forms)
+
 (* Cases *)
 
 let test_negation () =
@@ -197,6 +222,14 @@ let test_placement () =
   equal (array float_exact) (Array.make 4 1.) (Nx.to_array y);
   equal bool true (Nx.placement (Nx.add_s (Nx.zeros Nx.float32 [| 2 |]) 1.) = None)
 
+let test_index_operators () =
+  let x = Nx.reshape [| 2; 3 |] (Nx.arange Nx.int32 0 6 1) in
+  equal (array int32) [| 5l |] (Nx.to_array Nx.(x.%{[ 1; 2 ]}));
+  equal (array int32) [| 3l; 4l; 5l |] (Nx.to_array Nx.(x.%{[ 1 ]}));
+  equal (array int32) [| 1l; 4l |] (Nx.to_array Nx.(x.${[ A; I 1 ]}));
+  invalid ~by:"Nx.get" (fun () -> Nx.(x.%{[ 2 ]}));
+  invalid ~by:"Nx.slice" (fun () -> Nx.(x.${[ A; I 3 ]}))
+
 let refusals =
   [
     ("Nx.add_s", fun () -> ignore (Nx.add_s (Nx.zeros Nx.uint8 [| 2 |]) 256));
@@ -213,8 +246,9 @@ let cases_group =
       test "Infix's && and || are logical_and and logical_or" test_logical;
       test "a formula reads as its arithmetic" test_reads_as_prose;
       test "a scalar form computes where its operand lies" test_placement;
+      test ".%{} is get and .${} is slice" test_index_operators;
       cases "refusals name the scalar form" ~name:fst refusals (fun (by, f) ->
           invalid ~by f);
     ]
 
-let () = exit (run "nx operators" [ laws; cases_group ])
+let () = exit (run "nx operators" [ laws; pair_laws; cases_group ])
