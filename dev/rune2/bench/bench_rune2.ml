@@ -70,6 +70,17 @@ let declined_rows () =
           ~init:a xs);
   ]
 
+(* DeepChain: [ops] sines and a sum, the shape of rune's row, eagerly and under
+   forward mode. *)
+let deep_rows () =
+  let x = one () in
+  let v = Nx.copy (Nx.ones_like x) in
+  let f x = Nx.sum (chain x) in
+  [
+    Thumper.bench "chain-fwd" (fun () -> f x);
+    Thumper.bench "chain-jvp" (fun () -> Rune.jvp' f x v);
+  ]
+
 let () =
   exit
     (Thumper.run "rune2"
@@ -77,4 +88,5 @@ let () =
          Thumper.group "Trace" (trace_rows ());
          Thumper.group "Loops" (loop_rows ());
          Thumper.group "Declined" (declined_rows ());
+         Thumper.group "DeepChain" (deep_rows ());
        ])

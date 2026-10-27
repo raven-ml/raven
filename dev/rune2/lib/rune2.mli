@@ -40,10 +40,12 @@
 (** {1:derivatives Derivatives}
 
     A differentiation tracks the float and complex arrays of its arguments;
-    integer and boolean arrays have no derivative. The elementwise operations nx
-    computes, its movements, copies, assemblies and placements have derivatives;
-    under a differentiation the others raise [Invalid_argument]
-    (["Rune.jvp: Reduce has no derivative yet"]).
+    integer and boolean arrays have no derivative. Every operation nx computes
+    has a derivative but the factorisations and triangular solves
+    ([Nx.cholesky], [Nx.qr], [Nx.lu], [Nx.svd], [Nx.eigh], [Nx.eig],
+    [Nx.solve_triangular] and the functions computed through them), whose
+    tangents raise [Invalid_argument], and a block scale of [Nx.contract] that
+    depends on the parameters, which raises too.
 
     {b Tangents.} A {e tangent} is a displacement: move the parameters by [h]
     times the tangent and the result moves by [h] times its tangent, to first
@@ -56,10 +58,16 @@
     {b Kinks.} Where an operation has no derivative: [Nx.abs] passes the tangent
     at [0.] and [-0.]; where the operands of [Nx.maximum] or [Nx.minimum] tie,
     each takes half of each tangent, and where one is a NaN the tangent is zero;
-    a real [Nx.sign], [Nx.floor], [Nx.ceil], [Nx.round] and [Nx.trunc] have a
-    zero tangent, and [Nx.pow x y] has a zero tangent along [x] where [y] is
-    zero and along [y] where [x] is zero. A function nx composes of others, as
-    [Nx.softplus], takes these rules at its parts' kinks.
+    the tied elements along the axes of [Nx.max] and [Nx.min] share their
+    tangents equally, as a target of [Nx.scatter ~combine:Max] or [Min] and the
+    updates that tie with it do; a running extreme, as [Nx.cummax]'s, takes the
+    tangent of the first element that reaches it; where a log-sum-exp, as
+    [Nx.logsumexp]'s or [Nx.logcumsumexp]'s, is an infinity, the terms equal to
+    it share its tangent equally; a real [Nx.sign], [Nx.floor], [Nx.ceil],
+    [Nx.round] and [Nx.trunc] have a zero tangent, and [Nx.pow x y] has a zero
+    tangent along [x] where [y] is zero and along [y] where [x] is zero. A
+    function nx composes of others, as [Nx.softplus], takes these rules at its
+    parts' kinks.
 
     {b Reads.} Outside constructs, {!Nx.item} of a value a differentiation
     tracks reads its primal, so an OCaml [if] on it differentiates the path

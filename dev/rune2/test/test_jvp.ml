@@ -48,6 +48,16 @@ let rows k = Gen.(map (fun n -> [| k; n |]) (int_range 0 4))
 let matrix =
   Gen.(map (fun (m, n) -> [| m; n |]) (pair (int_range 0 3) (int_range 0 4)))
 
+(* Matrices whose rows and columns are never empty, for extremes. *)
+let full =
+  Gen.(
+    map
+      (fun (m, n) -> [| m + 1; n + 1 |])
+      (pair (int_range 0 2) (int_range 0 3)))
+
+let cube =
+  Gen.(map (fun (m, n) -> [| 2; m; n |]) (pair (int_range 0 3) (int_range 0 4)))
+
 let draw values s =
   let n = numel s in
   let open Gen in
@@ -126,6 +136,36 @@ let parts z = Nx.stack [ Nx.real f64 z; Nx.imag f64 z ]
 let on_complex f x = parts (f (complex x))
 let contiguous s = L.contiguous (Iarray.of_array s)
 let any = D.Any f64
+let identity = P.of_node ~ins:[| any |] (Op1 (Copy, any, 0))
+
+(* A loop of one load along axis 1 of [x], as nx's functions build none. *)
+let reduce1 reduction x =
+  Nx.Prim.eval ~by:"test"
+    (Reduce
+       {
+         layout = contiguous (Nx.shape x);
+         axes = [| 1 |];
+         prog = identity;
+         reductions = reduction;
+         loads = [| Plain x |];
+       })
+
+let scan1 ?carry reduction x =
+  Nx.Prim.eval ~by:"test"
+    (Scan
+       {
+         layout = contiguous (Nx.shape x);
+         axis = 1;
+         prog = identity;
+         reduction;
+         loads = [| Plain x |];
+         carry = Option.map (fun c -> Nx.Prim.Any c) carry;
+       })
+
+(* [x] of shape [m; n + 1]: a carry, column 0, and rows, the others. *)
+let carried x =
+  let n = Nx.dim 1 x in
+  (Nx.slice [ A; R (0, 1) ] x, Nx.slice [ A; R (1, n) ] x)
 
 let padded_shape =
   Gen.(
@@ -213,6 +253,55 @@ let wide_map x =
             loads = wide_loads x;
           }))
 
+let wide_reduce reduction x =
+  fst
+    (Nx.Prim.eval ~by:"test"
+       (Reduce
+          {
+            layout = contiguous [| Nx.dim 1 x |];
+            axes = [| 0 |];
+            prog = wide_prog;
+            reductions = [ reduction ];
+            loads = wide_loads x;
+          }))
+
+(* Two sums of a program's two outputs, the second's first. *)
+let sums x =
+  let prog =
+    P.v ~ins:[| any |]
+      [| In 0; Op1 (Unary Sin, any, 0); Op2 (Binary Mul, 0, 0) |]
+      ~outs:[| 1; 2 |]
+  in
+  let a, (b, ()) =
+    Nx.Prim.eval ~by:"test"
+      (Reduce
+         {
+           layout = contiguous (Nx.shape x);
+           axes = [| 1 |];
+           prog;
+           reductions = [ Monoid (Sum, 1, f64); Monoid (Sum, 0, f64) ];
+           loads = [| Plain x |];
+         })
+  in
+  Nx.stack [ a; b ]
+
+let idx xs =
+  Nx.create Nx.int64 [| Array.length xs |] (Array.map Int64.of_int xs)
+
+(* Positions of a scatter of [n] updates into 3 targets, two on target 0. *)
+let targets n = idx (Array.init n (fun k -> if k < 2 then 0 else k mod 3))
+
+let scatter combine x =
+  let n = Nx.dim 1 x in
+  let into = Nx.slice [ I 0; R (0, Int.min n 3) ] x in
+  let into =
+    if Nx.dim 0 into < 3 then Nx.pad [| (0, 3 - Nx.dim 0 into) |] 0.5 into
+    else into
+  in
+  Nx.scatter ~combine ~axis:0 (targets n) (row 1 x) into
+
+let pattern = Nx.Pattern.v "i j, j k -> i k | j"
+
 let real_cases =
   let unary name ?values f = case ?values name f in
   let binary name ?(values = Uniform [ (-2., 2.); (-2., 2.) ]) f =
@@ -269,6 +358,73 @@ let real_cases =
     case ~empty:false ~shape:padded_shape
       "a map of several outputs, a padded load and coordinates" multi;
     case ~shape:rows_wide "a map of nine operands" wide_map;
+    case ~shape:rows_wide "a sum over nine operands"
+      (wide_reduce (Monoid (Sum, 0, f64)));
+    case ~empty:false
+      ~shape:Gen.(map (fun n -> [| wide; n + 1 |]) (int_range 0 3))
+      ~values:(Spaced (-3., 0.1))
+      "a max over nine operands"
+      (wide_reduce (Monoid (Max, 0, f64)));
+    case ~shape:matrix "sum" (Nx.sum ~axes:[ 1 ]);
+    case ~shape:matrix "sum and its tangent in one loop" (fun x -> Nx.sum x);
+    case ~shape:matrix "two sums of two outputs, in another order" sums;
+    case ~shape:matrix "prod" (Nx.prod ~axes:[ 1 ]);
+    case ~shape:matrix
+      ~values:(Uniform [ (-1., 1.) ])
+      "prod over both axes"
+      (fun x -> Nx.prod x);
+    case ~empty:false ~shape:full ~values:spaced "max" (Nx.max ~axes:[ 1 ]);
+    case ~empty:false ~shape:full ~values:spaced "min" (Nx.min ~axes:[ 0 ]);
+    case ~shape:matrix "mean" (Nx.mean ~axes:[ 1 ]);
+    case ~shape:matrix "var" (Nx.var ~axes:[ 1 ]);
+    case ~shape:matrix "logsumexp" (Nx.logsumexp ~axes:[ 1 ]);
+    case ~empty:false ~shape:full ~values:spaced "an arg reduction's extreme"
+      (fun x ->
+        let (y, _), () = reduce1 [ Arg (Max, 0, f64) ] x in
+        y);
+    case ~shape:matrix "moments" (fun x ->
+        let (m, var), () = reduce1 [ Moments (0, f64) ] x in
+        Nx.stack [ m; var ]);
+    case ~shape:matrix "cumsum" (Nx.cumsum ~axis:1);
+    case ~shape:matrix "cumprod" (Nx.cumprod ~axis:1);
+    case ~shape:matrix ~values:spaced "cummax" (Nx.cummax ~axis:1);
+    case ~shape:matrix ~values:spaced "cummin" (Nx.cummin ~axis:0);
+    case ~shape:matrix "logcumsumexp" (Nx.logcumsumexp ~axis:1);
+    case ~shape:matrix "a running moments" (fun x ->
+        let m, var = scan1 (Moments (0, f64)) x in
+        Nx.stack [ m; var ]);
+    case ~shape:matrix ~values:spaced "a running arg's extreme" (fun x ->
+        fst (scan1 (Arg (Min, 0, f64)) x));
+    case ~empty:false ~shape:padded_shape "a running sum from a carry" (fun x ->
+        let c, r = carried x in
+        scan1 ~carry:c (Monoid (Sum, 0, f64)) r);
+    case ~empty:false ~shape:padded_shape
+      ~values:(Uniform [ (-1.5, 1.5) ])
+      "a running product from a carry"
+      (fun x ->
+        let c, r = carried x in
+        scan1 ~carry:c (Monoid (Prod, 0, f64)) r);
+    case ~empty:false ~shape:padded_shape ~values:spaced
+      "a running max from a carry" (fun x ->
+        let c, r = carried x in
+        scan1 ~carry:c (Monoid (Max, 0, f64)) r);
+    case ~shape:matrix "take" (Nx.take ~axis:1 (idx [| 2; 0; 7; 1 |]));
+    case ~shape:matrix "take_along_axis" (fun x ->
+        let n = Nx.dim 1 x in
+        Nx.take_along_axis ~axis:1
+          (Nx.broadcast_to
+             [| Nx.dim 0 x; n |]
+             (idx (Array.init n (fun k -> k * 3 mod Int.max 1 n))))
+          x);
+    case ~shape:(rows 2) "scatter add" (scatter Add);
+    case ~shape:(rows 2) "scatter set" (scatter Set);
+    case ~shape:(rows 2) ~values:spaced "scatter max" (scatter Max);
+    case ~shape:(rows 2) ~values:spaced "scatter min" (scatter Min);
+    case ~shape:matrix ~values:spaced "sort" (fun x -> fst (Nx.sort ~axis:1 x));
+    case ~empty:false
+      ~shape:Gen.(map (fun n -> [| n + 2 |]) (int_range 0 4))
+      ~values:spaced "top_k"
+      (fun x -> fst (Nx.top_k ~k:2 x));
     case ~empty:false ~shape:padded_shape "pad" (Nx.pad [| (1, 0); (2, 1) |] 3.);
     case ~empty:false
       ~shape:Gen.(map (fun n -> [| 2; n + 3 |]) (int_range 0 3))
@@ -278,8 +434,26 @@ let real_cases =
           ~dilation:[| 1 |]
           ~padding:[| (1, 0) |]
           x);
+    case ~empty:false
+      ~shape:Gen.(map (fun l -> [| 2; 2; l + 1 |]) (int_range 0 3))
+      "combine_patches"
+      (fun x ->
+        let l = Nx.dim 2 x in
+        Nx.combine_patches
+          ~output_size:[| l + 1 |]
+          ~kernel_size:[| 2 |] ~stride:[| 1 |] ~dilation:[| 1 |]
+          ~padding:[| (0, 0) |]
+          x);
     case ~shape:(rows 2) "concatenate" (fun x ->
         Nx.concatenate ~axis:0 [ row 1 x; Nx.sin (row 0 x); row 1 x ]);
+    case ~shape:cube "matmul" (fun x ->
+        Nx.matmul (Nx.transpose (row 0 x)) (row 1 x));
+    case ~shape:cube "contract from an init" (fun x ->
+        let a = Nx.transpose (row 0 x) and b = row 1 x in
+        let n = Nx.dim 1 b in
+        Nx.contract
+          ~init:(Nx.sin (Nx.slice [ A; R (0, n) ] (Nx.matmul a b)))
+          f64 pattern a b);
     case ~shape:matrix "copy" (fun x -> Nx.copy (Nx.sin x));
     case ~shape:matrix "moves" (fun x ->
         Nx.reshape [| -1 |] (Nx.flip ~axes:[ 0 ] (Nx.transpose x)));
@@ -332,6 +506,8 @@ let complex_cases =
     zz "complex mul" Nx.mul;
     zz "complex div" Nx.div;
     zz "complex pow" Nx.pow;
+    zz "complex matmul" Nx.matmul;
+    z "complex prod" (fun z -> Nx.prod z);
     zz "complex where" (fun a b ->
         Nx.where (Nx.less_s (Nx.real f64 a) 1.17) a b);
     case ~shape:(rows 2)
@@ -344,6 +520,15 @@ let complex_cases =
         parts (Nx.mul (Nx.cast c128 x) (Nx.cast c128 x)));
     case ~shape:(rows 2) "a complex cast to real" (fun x ->
         Nx.cast f64 (Nx.exp (complex x)));
+    case ~shape:(rows 2) "fft" (fun x -> parts (Nx.fft (complex x)));
+    case "rfft" (fun x -> parts (Nx.rfft c128 x));
+    case ~empty:false
+      ~shape:Gen.(map (fun n -> [| 2; n + 1 |]) (int_range 0 4))
+      "irfft"
+      (fun x -> Nx.irfft f64 (complex x));
+    case ~shape:(rows 2) "complex sum and cumprod" (fun x ->
+        let z = complex x in
+        parts (Nx.concatenate ~axis:0 [ Nx.sum ~keepdims:true z; Nx.cumprod z ]));
   ]
 
 let tangent_props =
@@ -355,7 +540,8 @@ let floats = array (float 1e-12)
 let tangent f x t = Nx.to_array (snd (Rune.jvp' f x t))
 
 (* JAX's: [abs] passes the tangent at either zero; tied operands of an extreme
-   share it by halves, and a NaN takes none. *)
+   share it by halves, and a NaN takes none; tied elements along a reduction's
+   axes share it equally; a running extreme takes the first element's. *)
 let test_kinks () =
   equal ~msg:"abs" floats [| 1.; 1.; 1.; -1. |]
     (tangent Nx.abs (v [| 0.; -0.; 2.; -2. |]) (v [| 1.; 1.; 1.; 1. |]));
@@ -373,6 +559,14 @@ let test_kinks () =
     (extreme Nx.minimum [| 1.; 2.; 0.; 1. |]
        [| 1.; 0.; 2.; Float.nan |]
        [| 1.; 1.; 1.; 1. |] [| 3.; 3.; 3.; 3. |]);
+  equal ~msg:"max over an axis" floats [| 3. |]
+    (tangent (Nx.max ~keepdims:true) (v [| 1.; 3.; 3. |]) (v [| 1.; 2.; 4. |]));
+  equal ~msg:"min over an axis" floats [| 3. |]
+    (tangent (Nx.min ~keepdims:true) (v [| 2.; 1.; 1. |]) (v [| 5.; 2.; 4. |]));
+  equal ~msg:"cummax" floats [| 1.; 2.; 2.; 2. |]
+    (tangent (Nx.cummax ~axis:0)
+       (v [| 1.; 3.; 3.; 2. |])
+       (v [| 1.; 2.; 4.; 8. |]));
   equal ~msg:"pow at a zero base" floats [| 0.; 0.; 0. |]
     (tangent
        (fun y -> Nx.pow (v [| 0.; 0.; 0. |]) y)
@@ -387,6 +581,136 @@ let test_kinks () =
              (v [| 1. |], v [| 0. |]))));
   equal ~msg:"a real sign" floats [| 0.; 0. |]
     (tangent Nx.sign (v [| 0.; 2. |]) (v [| 1.; 1. |]))
+
+(* Values the derivatives' definitions give at the edges: zeros, infinities,
+   narrow dtypes whose rounding of a primal must not reach its tangent, a
+   reduction into another dtype, ties stated by the kinks' rules. *)
+let test_edges () =
+  let tangent' f x t = Nx.to_array (Nx.cast f64 (snd (Rune.jvp' f x t))) in
+  let close tol = array (float tol) in
+  equal ~msg:"prod at a zero" floats [| 6. |]
+    (tangent (Nx.prod ~keepdims:true) (v [| 0.; 2.; 3. |]) (v [| 1.; 0.; 0. |]));
+  equal ~msg:"cumprod at a zero" floats [| 1.; 2.; 6. |]
+    (tangent Nx.cumprod (v [| 0.; 2.; 3. |]) (v [| 1.; 0.; 0. |]));
+  equal ~msg:"cumprod's first at an infinity" floats [| 1. |]
+    [| (tangent Nx.cumprod (v [| Float.infinity; 1. |]) (v [| 1.; 0. |])).(0) |];
+  equal ~msg:"logcumsumexp after -inf" floats [| 1.; 2.; 5. |]
+    (tangent Nx.logcumsumexp
+       (v [| Float.neg_infinity; Float.neg_infinity; 0. |])
+       (v [| 1.; 3.; 5. |]));
+  equal ~msg:"logcumsumexp from -inf" floats [| 0.; 1. |]
+    (tangent Nx.logcumsumexp (v [| Float.neg_infinity; 0. |]) (v [| 0.; 1. |]));
+  let narrow dt xs = Nx.cast dt (v xs) in
+  let bf = Nx.bfloat16 and h = Nx.float16 in
+  equal ~msg:"logsumexp shifted, bfloat16" (array float_exact) [| 1. |]
+    (tangent'
+       (Nx.logsumexp ~keepdims:false)
+       (narrow bf [| 100.; 100. |])
+       (narrow bf [| 1.; 1. |]));
+  equal ~msg:"var shifted, float16" (array float_exact) [| 0. |]
+    (tangent'
+       (fun x -> Nx.reshape [| 1 |] (Nx.var x))
+       (narrow h [| 2000.; 2001. |])
+       (narrow h [| 1.; 1. |]));
+  equal ~msg:"var along one, float16" (array float_exact) [| 0.5 |]
+    (tangent'
+       (fun x -> Nx.reshape [| 1 |] (Nx.var x))
+       (narrow h [| 2000.; 2001. |])
+       (narrow h [| 0.; 1. |]));
+  equal ~msg:"prod in its carrier, float16" (close 1.) [| 300. |]
+    (tangent'
+       (fun x -> Nx.reshape [| 1 |] (Nx.prod x))
+       (narrow h [| 300.; 300.; 1. /. 300.; 1. /. 300. |])
+       (narrow h [| 0.; 0.; 1.; 0. |]));
+  (* A float64 output reduced into float32, and into int32. *)
+  let into dt x =
+    fst
+      (Nx.Prim.eval ~by:"test"
+         (Reduce
+            {
+              layout = contiguous (Nx.shape x);
+              axes = [| 0 |];
+              prog = identity;
+              reductions = [ Monoid (Max, 0, dt) ];
+              loads = [| Plain x |];
+            }))
+  in
+  equal ~msg:"max into float32" (array float_exact) [| 2. |]
+    (tangent'
+       (fun x -> Nx.reshape [| 1 |] (into Nx.float32 x))
+       (v [| 0.1; 0.2 |])
+       (v [| 1.; 2. |]));
+  let prod_into dt x =
+    fst
+      (Nx.Prim.eval ~by:"test"
+         (Reduce
+            {
+              layout = contiguous (Nx.shape x);
+              axes = [| 0 |];
+              prog = identity;
+              reductions = [ Monoid (Prod, 0, dt) ];
+              loads = [| Plain x |];
+            }))
+  in
+  equal ~msg:"prod into float32, in the output's carrier" (float 1e24) 1e30
+    (tangent'
+       (fun x -> Nx.reshape [| 1 |] (prod_into Nx.float32 x))
+       (v [| 1e30; 1e30; 1e-30; 1e-30 |])
+       (v [| 0.; 0.; 1.; 0. |])).(0);
+  equal ~msg:"max into int32" (array int32) [| 0l |]
+    (Nx.to_array
+       (snd
+          (Rune.jvp'
+             (fun x -> Nx.reshape [| 1 |] (into Nx.int32 x))
+             (v [| 1.5; 2.5 |])
+             (v [| 1.; 2. |]))));
+  (* Ties: a scatter's target with the update that ties it, an arg's extreme, a
+     running maximum's carry against the element tying it. *)
+  let s = T.(pair tensor tensor) in
+  let _, t =
+    Rune.jvp s T.tensor
+      (fun (into, u) -> Nx.scatter ~combine:Max ~axis:0 (idx [| 1; 0 |]) u into)
+      (v [| 1.; 5. |], v [| 5.; 0.5 |])
+      (v [| 1.; 2. |], v [| 4.; 8. |])
+  in
+  equal ~msg:"scatter max" floats [| 1.; 3. |] (Nx.to_array t);
+  let arg x =
+    Nx.reshape [| 1 |] (fst (fst (reduce1 [ Arg (Max, 0, f64) ] x)))
+  in
+  equal ~msg:"arg's extreme" floats [| 3. |]
+    (tangent arg
+       (Nx.reshape [| 1; 3 |] (v [| 1.; 3.; 3. |]))
+       (Nx.reshape [| 1; 3 |] (v [| 1.; 2.; 4. |])));
+  let running x =
+    let c, r = carried x in
+    Nx.reshape [| 2 |] (scan1 ~carry:c (Monoid (Max, 0, f64)) r)
+  in
+  equal ~msg:"running max from a tying carry" floats [| 9.; 9. |]
+    (tangent running
+       (Nx.reshape [| 1; 3 |] (v [| 3.; 3.; 1. |]))
+       (Nx.reshape [| 1; 3 |] (v [| 9.; 5.; 7. |])));
+  (* What has no derivative raises. *)
+  invalid ~sub:"Rune.jvp': Cholesky has no derivative yet" (fun () ->
+      Rune.jvp' Nx.cholesky (Nx.eye f64 2) (Nx.eye f64 2));
+  invalid ~sub:"Rune.jvp': a contraction's scale has a tangent" (fun () ->
+      Rune.jvp'
+        (fun s ->
+          Nx.Prim.eval ~by:"test"
+            (Contract
+               {
+                 batch = [||];
+                 contracting = [| (1, 0) |];
+                 acc = any;
+                 out = f64;
+                 a = v [| 1.; 2. |] |> Nx.reshape [| 1; 2 |];
+                 b = Nx.reshape [| 2; 1 |] (v [| 3.; 4. |]);
+                 init = None;
+                 a_scale = Some (Value s);
+                 b_scale = None;
+                 segments = None;
+               }))
+        (Nx.reshape [| 1; 2 |] (v [| 1.; 1. |]))
+        (Nx.reshape [| 1; 2 |] (v [| 1.; 1. |])))
 
 (* A tangent is the directional derivative: [f'(z) v] for a holomorphic [f],
    [conj v] for the conjugate, [Re (conj z v) / |z|] for the modulus. *)
@@ -431,7 +755,9 @@ let test_one_kernel () =
   in
   equal ~msg:"sin" (pair int int) (1, 3) (calls Nx.sin);
   equal ~msg:"a chain of three" (pair int int) (3, 9)
-    (calls (fun x -> Nx.exp (Nx.mul (Nx.sin x) x)))
+    (calls (fun x -> Nx.exp (Nx.mul (Nx.sin x) x)));
+  equal ~msg:"a sum and its tangent" (pair int int) (1, 3)
+    (calls (fun x -> Nx.sum x))
 
 (* Structures and constructs *)
 
@@ -516,6 +842,7 @@ let () =
            [
              test "kinks take JAX's tangents" test_kinks;
              test "complex tangents are directional derivatives" test_complex;
+             test "edges take their definitions' values" test_edges;
            ];
          group "kernels"
            [ test "a map's tangent is one kernel" test_one_kernel ];
