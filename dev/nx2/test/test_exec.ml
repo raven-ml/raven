@@ -2708,7 +2708,9 @@ let within (type v) (f : v floats) kc ~mag xs ys got =
     (* With no product this term is 0, though [mag] may be infinite. *)
     let terms = if n = 0. then 0. else (n *. u64) ** 2. *. mag in
     let reference = (u64 *. Float.abs s) +. terms in
-    let bound = g +. (f.out_u *. (Float.abs s +. g)) +. f.tiny +. reference in
+    (* No rounding into the result adds nothing, though [g] is infinite. *)
+    let rounding = if f.out_u = 0. then 0. else f.out_u *. (Float.abs s +. g) in
+    let bound = g +. rounding +. f.tiny +. reference in
     if Float.abs got = infinity && Float.abs s +. bound >= f.max then
       (* An overflow of the rounding into the result's dtype. *)
       equal string (show (Float.copy_sign infinity s)) (show got)
