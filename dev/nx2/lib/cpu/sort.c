@@ -58,8 +58,9 @@
 #define SCRATCH 4
 
 /* What a sort takes, in copies of its elements' and positions' bytes
-   (cpu.h, Calls, streaming): 75 for a float64 slice of 4096 (fudge), 100
-   for complex128 slices of 64 (M1), whose two keys sort apart. */
+   (cpu.h, Calls and jobs, streaming; M1 Max and fudge, 2026-10-14): 75 for
+   a float64 slice of 4096 (fudge), 100 for complex128 slices of 64 (M1),
+   whose two keys sort apart. */
 #define CALL_COST 128
 #define COMPLEX_CALL_COST 256
 
@@ -229,6 +230,7 @@ typedef struct {
   uint64_t *src, *dst;
   int64_t *psrc, *pdst; /* positions beside wide keys, else NULL */
   int64_t n, blocks;
+  double pass; /* each pass's share of the sort's cost (pass_cost) */
   int shift, digits;
   uint64_t least, flip; /* subtracted from, and xored into, each key */
   uint64_t (*span)[2];  /* each block's least and greatest key */
@@ -314,7 +316,7 @@ static void move_blocks(int64_t lo, int64_t hi, int worker, void *ctx) {
    item in [start]; answers the most items of one digit. */
 static int64_t count_digit(spread *p, int d, int64_t bytes) {
   p->shift = (p->psrc == NULL ? 32 : 0) + 8 * d;
-  nx_cpu_job(p->blocks, bytes, bytes, count_blocks, p);
+  nx_cpu_job(p->blocks, bytes, p->pass, count_blocks, p);
   int64_t at = 0, most = 0;
   for (int g = 0; g < 256; g++) {
     int64_t first = at;
@@ -333,7 +335,7 @@ static int64_t count_digit(spread *p, int d, int64_t bytes) {
 /* Moves every block's items to its offsets; the destination becomes the
    source. */
 static void move(spread *p, int64_t bytes) {
-  nx_cpu_job(p->blocks, bytes, bytes, move_blocks, p);
+  nx_cpu_job(p->blocks, bytes, p->pass, move_blocks, p);
   uint64_t *t = p->src;
   p->src = p->dst;
   p->dst = t;
@@ -391,31 +393,41 @@ static int msd(spread *p, int kb, int64_t bytes) {
   if (count_digit(p, kb - 1, bytes) > BUCKET) return 0;
   move(p, bytes);
   p->digits = kb - 1;
-  nx_cpu_job(256, bytes, (double)bytes * kb, bucket_blocks, p);
-  nx_cpu_job(p->blocks, bytes, bytes, emit_blocks, p);
+  nx_cpu_job(256, bytes, 2 * p->digits * p->pass, bucket_blocks, p);
+  nx_cpu_job(p->blocks, bytes, p->pass, emit_blocks, p);
   return 1;
 }
 
 /* Runs the passes of [p], over [kb] bytes of keys, and writes the result. */
 static void passes(spread *p, int kb, int64_t bytes) {
-  nx_cpu_job(p->blocks, bytes, bytes, key_blocks, p);
+  nx_cpu_job(p->blocks, bytes, p->pass, key_blocks, p);
   /* Past 256 buckets of BUCKET items, some bucket is always larger. */
   if (p->psrc != NULL && p->n <= 256 * BUCKET && msd(p, kb, bytes)) return;
   /* A digit every key shares leaves its pass out. */
   for (int d = 0; d < kb; d++)
     if (count_digit(p, d, bytes) < p->n) move(p, bytes);
-  nx_cpu_job(p->blocks, bytes, bytes, emit_blocks, p);
+  nx_cpu_job(p->blocks, bytes, p->pass, emit_blocks, p);
 }
 
-/* Sorts the one slice of [s] on [blocks] blocks. Answers 0, or -1 where
-   memory runs out. */
-static int sort_long(const sorter *s, int64_t blocks, int64_t bytes) {
+/* A pass's share of the [cost] of a long slice's sort over keys of [kb]
+   bytes: the passes over its items, at most the keys' span, the keys, a
+   count and a move for each key byte, and the result's, each a like
+   share. The MSD order's buckets sort their bytes below the top in the
+   cache, two passes a byte. */
+static double pass_cost(double cost, int kb) { return cost / (3 + 2 * kb); }
+
+/* Sorts the one slice of [s], of [bytes] and [cost], on [blocks] blocks,
+   each of its passes a share of the cost. Answers 0, or -1 where memory
+   runs out. */
+static int sort_long(const sorter *s, int64_t blocks, int64_t bytes,
+                     double cost) {
   int64_t n = s->n;
   uint64_t mask = s->kb == 8 ? ~0ull : (1ull << (8 * s->kb)) - 1;
   spread p = {.s = s,
               .x = s->a[2].base + s->l.first[2] * s->w,
               .n = n,
               .blocks = blocks,
+              .pass = pass_cost(cost, s->kb),
               .flip = s->descending ? mask : 0,
               .span = malloc((size_t)blocks * sizeof *p.span),
               .count = malloc((size_t)blocks * sizeof *p.count),
@@ -424,7 +436,7 @@ static int sort_long(const sorter *s, int64_t blocks, int64_t bytes) {
   uint64_t *own[4];
   int owned = 0, ok = p.span != NULL && p.count != NULL;
   if (ok) {
-    nx_cpu_job(blocks, bytes, bytes, span_blocks, &p);
+    nx_cpu_job(blocks, bytes, p.pass, span_blocks, &p);
     uint64_t least = ~0ull, most = 0;
     for (int64_t b = 0; b < blocks; b++) {
       least = p.span[b][0] < least ? p.span[b][0] : least;
@@ -649,20 +661,18 @@ value nx_cpu_sort(value vaxis, value vdescending, value vv, value vp,
     s.l.step[2][i] = a[2].dim[rx + i];
   }
   s.l.rank = nx_coalesce_dims(3, rx, s.l.extent, s.l.step);
-  /* A slice's sort costs as long as copying its elements about eight
-     times, a radix's passes. */
-  int64_t bytes = slices * s.n * (s.w + 8), cost = 8 * bytes;
-  int64_t workers = nx_cpu_threads(bytes, cost);
+  int64_t bytes = slices * s.n * (s.w + 8);
   int two_keys = dt == NX_COMPLEX64 || dt == NX_COMPLEX128;
-  double weight = two_keys ? COMPLEX_CALL_COST : CALL_COST;
-  int released = nx_cpu_release(weight * (double)bytes);
+  double cost = (two_keys ? COMPLEX_CALL_COST : CALL_COST) * (double)bytes;
+  int released = nx_cpu_release(cost);
+  int64_t workers = nx_cpu_threads(bytes, cost);
   /* One long slice sorts on the job's threads, a block of its items each;
      a complex128's two keys, a sub-byte slice, whose blocks would read
      their elements by byte, and keeping a few, stay on one. */
   int slots = keep <= KEEP && keep * SPARE <= s.n;
   if (slices == 1 && workers > 1 && s.n >= LONG && dt != NX_COMPLEX128 &&
       s.bits >= 8 && !slots && s.n <= UINT32_MAX) {
-    int e = sort_long(&s, workers, bytes);
+    int e = sort_long(&s, workers, bytes, cost);
     nx_cpu_reacquire(released);
     nx_done(3, a);
     if (e) caml_raise_out_of_memory();
