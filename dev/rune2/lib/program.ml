@@ -100,6 +100,9 @@ let make ~owner ~params eqns ~outputs ~adds ~slots =
   { owner; params; eqns = Array.of_list eqns; outputs; adds; slots }
 
 type _ Effect.t += Construct : construct -> value array Effect.t
+
+exception Evaluate
+
 type _ Effect.t += Bound : axis -> int option Effect.t
 
 let bound a =
@@ -329,6 +332,7 @@ and perform c =
   match Effect.perform (Construct c) with
   | r -> r
   | exception Effect.Unhandled (Construct c') when c' == c -> default c
+  | exception Evaluate -> default c
 
 and default = function
   | Detach x -> [| V x |]

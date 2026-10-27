@@ -28,12 +28,10 @@ let first a = a.(0)
 let path_name p =
   if Ptree.Path.segments p = [] then "the root" else Ptree.Path.to_string p
 
-(* The carry a step returned against the one it received: the same visits, and
-   at each path the same dtype and shape. *)
-let same_carry name s ~received returned =
-  let this = "in the carry the step returned"
-  and that = "in the carry it received" in
-  let _, k = Ptree.flatten s returned and _, k' = Ptree.flatten s received in
+(* [x] and [y] of structure [s] alike: the same visits, and at each path the
+   same dtype and shape, as [this] and [that] name them. *)
+let same_leaves name s ~this x ~that y =
+  let _, k = Ptree.flatten s x and _, k' = Ptree.flatten s y in
   Option.iter
     (fun msg -> invalid_argf "%s: %s" name msg)
     (Ptree.Skeleton.diff ~this k ~that k');
@@ -41,24 +39,54 @@ let same_carry name s ~received returned =
     List.rev (Ptree.fold s (fun p y acc -> (p, V y) :: acc) x [])
   in
   List.iter2
-    (fun (p, V y) (_, V z) ->
-      let path =
-        if Ptree.Path.segments p = [] then "the root"
-        else Ptree.Path.to_string p
-      in
-      if not (Nx.Dtype.equal (Nx.dtype y) (Nx.dtype z)) then
-        invalid_argf "%s: %s: %s %s, %s %s" name path
-          (Nx.Dtype.name (Nx.dtype y))
+    (fun (p, V a) (_, V b) ->
+      if not (Nx.Dtype.equal (Nx.dtype a) (Nx.dtype b)) then
+        invalid_argf "%s: %s: %s %s, %s %s" name (path_name p)
+          (Nx.Dtype.name (Nx.dtype a))
           this
-          (Nx.Dtype.name (Nx.dtype z))
+          (Nx.Dtype.name (Nx.dtype b))
           that;
-      if Nx.shape y <> Nx.shape z then
-        invalid_argf "%s: %s: %s %s, %s %s" name path
-          (Format.asprintf "shape %a" pp_shape (Nx.shape y))
+      if Nx.shape a <> Nx.shape b then
+        invalid_argf "%s: %s: shape %s %s, %s %s" name (path_name p)
+          (Format.asprintf "%a" pp_shape (Nx.shape a))
           this
-          (Format.asprintf "%a" pp_shape (Nx.shape z))
+          (Format.asprintf "%a" pp_shape (Nx.shape b))
           that)
-    (leaves returned) (leaves received)
+    (leaves x) (leaves y)
+
+(* The carry a step returned against the one it received. *)
+let same_carry name s ~received returned =
+  same_leaves name s ~this:"in the carry the step returned" returned
+    ~that:"in the carry it received" received
+
+(* Forward mode *)
+
+let tangible x = Nx.Dtype.(is Float (Nx.dtype x) || is Complex (Nx.dtype x))
+
+let jvp_named name p q f params tangents =
+  same_leaves name p ~this:"in the parameters" params ~that:"in the tangents"
+    tangents;
+  if not (Ptree.fold p (fun _ x acc -> acc || tangible x) params false) then
+    invalid_argf "%s: the parameters hold no real or complex tensor" name;
+  Jvp.run ~name (fun i ->
+      let x =
+        Ptree.map2 p
+          (fun _ x t -> if tangible x then Jvp.seed i x t else x)
+          params tangents
+      in
+      let y = f x in
+      let primals = Ptree.map q (fun _ y -> Jvp.primal i y) y in
+      let tangents =
+        Ptree.map q
+          (fun _ y ->
+            match Jvp.tangent i y with
+            | Some t -> t
+            | None -> Nx.zeros_like (Jvp.primal i y))
+          y
+      in
+      (primals, tangents))
+
+let jvp p q f params tangents = jvp_named "Rune.jvp" p q f params tangents
 
 (* Constructs without programs *)
 
@@ -328,3 +356,4 @@ let iterate' ~max ~until ~f x =
   iterate_named "Rune.iterate'" Ptree.tensor ~max ~until ~f x
 
 let jit' f = jit_named "Rune.jit'" Ptree.(tensor @-> returns tensor) f
+let jvp' f x t = jvp_named "Rune.jvp'" Ptree.tensor Ptree.tensor f x t

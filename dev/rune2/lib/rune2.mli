@@ -3,7 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Transformations of functions over nx values: loops, totals and compilation.
+(** Transformations of functions over nx values: derivatives, loops, totals and
+    compilation.
 
     A transformation takes the structure ({!Nx.Ptree.t}) of each value whose
     arrays it enumerates; everything else the function uses is captured and is a
@@ -36,11 +37,73 @@
     {b Errors.} Every message starts with the entry point the caller applied, as
     ["Rune.scan"] for {!scan}. *)
 
+(** {1:derivatives Derivatives}
+
+    A differentiation tracks the float and complex arrays of its arguments;
+    integer and boolean arrays have no derivative. The elementwise operations nx
+    computes, its movements, copies, assemblies and placements have derivatives;
+    under a differentiation the others raise [Invalid_argument]
+    (["Rune.jvp: Reduce has no derivative yet"]).
+
+    {b Tangents.} A {e tangent} is a displacement: move the parameters by [h]
+    times the tangent and the result moves by [h] times its tangent, to first
+    order. A complex array is two real parts per element, and its tangent the
+    displacement of both, packed as [dre + i dim]: the tangent of a
+    complex-differentiable [f] is [f'(z) t], and that of any other is the
+    derivative of the real function of the parts, so the tangent of
+    [Nx.conjugate] is the conjugate of the tangent.
+
+    {b Kinks.} Where an operation has no derivative: [Nx.abs] passes the tangent
+    at [0.] and [-0.]; where the operands of [Nx.maximum] or [Nx.minimum] tie,
+    each takes half of each tangent, and where one is a NaN the tangent is zero;
+    a real [Nx.sign], [Nx.floor], [Nx.ceil], [Nx.round] and [Nx.trunc] have a
+    zero tangent, and [Nx.pow x y] has a zero tangent along [x] where [y] is
+    zero and along [y] where [x] is zero. A function nx composes of others, as
+    [Nx.softplus], takes these rules at its parts' kinks.
+
+    {b Reads.} Outside constructs, {!Nx.item} of a value a differentiation
+    tracks reads its primal, so an OCaml [if] on it differentiates the path
+    taken. Inside a construct it raises.
+
+    {b Nesting.} Each differentiation tracks the values of its own function
+    alone: in
+    [jvp' (fun x -> Nx.mul x (snd (jvp' (fun y -> Nx.add x y) one one))) one
+     one], the inner tangent is a constant to the outer differentiation, and the
+    result's tangent is [1].
+
+    {b Derivatives are fresh.} A tangent is a value of its own, in C order from
+    the start of its memory, never a view of an argument or of the movement its
+    computation ends with. Under another transformation it is that
+    transformation's value. *)
+
+val jvp :
+  ('p, 'd) Nx.Ptree.t ->
+  ('q, 'd) Nx.Ptree.t ->
+  ('p -> 'q) ->
+  'p ->
+  'p ->
+  'q * 'q
+(** [jvp p q f params tangents] is [(f params, dy)], [dy] the tangent of
+    [f params] where [params] moves along [tangents]: the Jacobian-vector
+    product of [f] at [params], computed in one forward pass. [tangents] has
+    [params]' structure, dtypes and shapes; [dy] has the result's structure [q],
+    one tangent per array, zeros of its dtype and shape for an integer or
+    boolean array and for one that does not depend on [params]. The tangent of
+    an integer or boolean parameter is ignored.
+
+    Raises [Invalid_argument] if [params] holds no float or complex array
+    (["Rune.jvp: the parameters hold no real or complex tensor"]), if [tangents]
+    and [params] differ in their {!Nx.Ptree.val-visits}, naming the first path
+    where they differ, or if a tangent differs from its parameter in dtype or
+    shape (["Rune.jvp: 1: shape [2] in the parameters, [3] in the tangents"]).
+*)
+
 (** {1:control Controlling differentiation} *)
 
 val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
 (** [detach x] is [x] with a zero derivative under every differentiation around
-    the call. Outside every transformation it is [x] itself. *)
+    the call: its tangent is zero. Outside every transformation it is [x]
+    itself. *)
 
 (** {1:maps Maps}
 
@@ -174,6 +237,13 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     a call if [f] captures a value that another transformation traces. *)
 
 (** {1:one Functions of one array} *)
+
+val jvp' :
+  (('v, 's, 'd) Nx.t -> ('w, 'r, 'd) Nx.t) ->
+  ('v, 's, 'd) Nx.t ->
+  ('v, 's, 'd) Nx.t ->
+  ('w, 'r, 'd) Nx.t * ('w, 'r, 'd) Nx.t
+(** [jvp' f x t] is {!jvp} of one array. It raises as {!jvp} does. *)
 
 val scan' :
   f:

@@ -3,5 +3,5 @@
 
 (library
  (name rune2)
- (private_modules program trace)
- (libraries nx nx_array))
+ (private_modules program trace scalar jvp)
+ (libraries nx nx_array nx_kernel))

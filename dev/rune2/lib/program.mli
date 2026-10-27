@@ -159,6 +159,12 @@ type _ Effect.t +=
         (** The effect {!perform} performs: a handler that answers it continues
             with the construct's results, of the forms {!forms} gives. *)
 
+exception Evaluate
+(** A handler that answers {!Construct} by discontinuing it with [Evaluate] has
+    the construct run its default where it was performed, inside every
+    interpretation around that point, and no handler outside it sees the
+    construct. *)
+
 val operands : construct -> value list
 (** [operands c] is the values [c] reads, captures included. *)
 
