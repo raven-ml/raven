@@ -906,17 +906,66 @@ let special_pairs =
   let s = [ 0.; -0.; infinity; neg_infinity; nan; 1.; -1.; 0.5; 2.; -3. ] in
   Array.of_list (List.concat_map (fun x -> List.map (fun y -> (x, y)) s) s)
 
+(* The float32 values at which nx_kinds.h's f32 kinds switch formulas,
+   saturate or clamp, each with its neighbours of either sign: every
+   (k + 1/2) ln 2 and k + 1/2 below the exponentials' overflow and every
+   sqrt 2 2^k, where a reduction switches, with eight; every multiple of
+   pi/4 below the trigonometric switch at 2^15, with four; and the kinds'
+   constants with eight. *)
+let switch_points =
+  let around k v =
+    let b = Int32.to_int (Int32.bits_of_float (Float.abs v)) land 0x7FFF_FFFF in
+    List.concat_map
+      (fun d ->
+        let p = b + d in
+        if p < 0 || p >= 0x8000_0000 then []
+        else [ Int32.float_of_bits (Int32.of_int p); Int32.float_of_bits (Int32.of_int (p lor 0x8000_0000)) ])
+      (List.init ((2 * k) + 1) (fun i -> i - k))
+  in
+  let ln2 = 0.69314718055994531 and pio4 = 0.78539816339744831 in
+  let halves =
+    List.init 153 (fun k -> (Float.of_int k +. 0.5) *. ln2)
+    @ List.init 151 (fun k -> Float.of_int k +. 0.5)
+  in
+  let rec multiples k =
+    let v = Float.of_int k *. pio4 in
+    if v >= 32768. then [] else v :: multiples (k + 1)
+  in
+  let sqrt2 = List.init 277 (fun k -> Float.ldexp 1.4142135623730951 (k - 149)) in
+  let constants =
+    [
+      88.72283935546875; 89.; -104.; 103.97208; 129.; 151.; 128.; 149.; 126.;
+      17.328680; 26.; 709.782712893384; 708.3964185322641; 745.1332191019411;
+      710.; 746.; 1025.; 1076.; 1024.; 1074.; 40.; 37.42994775023705; 86.; 708.;
+      0.70710678118654757; 1.4142135623730951; 0.29289321881345243;
+      0.41421356237309515; 32768.; 268435456.; 0.5; 1.; 0.4375; 0.6875; 1.1875;
+      2.4375; 0.875; 3.92; 1.75; 2.75; 4.; 5.95; 5.921587195794507; 90.;
+      89.41598629223294; 712.; 710.4758600739439; 9.010913339;
+      19.06154746539849; 13.; 22.18070977791825; 44.3614195558365;
+      88.722839111672999; 0x1p-12; 0x1p-24; 0x1p-25; 0x1p-27; 0x1p-53; 0x1p-54;
+      0x1p-100; 0x1p24; 0x1p23; 0x1p52; 0x1p53; 2.; 3.;
+    ]
+  in
+  Array.of_list
+    (List.concat_map (around 8) (halves @ sqrt2 @ constants)
+    @ List.concat_map (around 4) (multiples 1))
+
 (* Each float kind at float32 within its bound of the C library's f64
-   function rounded once: at Annex F's operands and every 2^14th bit pattern
-   from [offset], every binade of both signs reached, and for a kind of two
-   operands at Annex F's pairs and pairs from [seed], half of any patterns
-   and half where [pow] and [atan2] neither overflow nor underflow. *)
+   function rounded once: at Annex F's operands, at the switch points and
+   at every 2^14th bit pattern from [offset], every binade of both signs
+   reached, and for a kind of two operands at Annex F's pairs and pairs
+   from [seed], half of any patterns and half where [pow] and [atan2]
+   neither overflow nor underflow. *)
 let law_f32_kinds (b : Support.backend) (offset, seed) =
   let step = 1 lsl 14 in
   let xs =
-    Array.append specials32
-      (Array.init ((1 lsl 32) / step) (fun i ->
-           Int32.float_of_bits (Int32.of_int ((i * step) + offset))))
+    Array.concat
+      [
+        specials32;
+        switch_points;
+        Array.init ((1 lsl 32) / step) (fun i ->
+            Int32.float_of_bits (Int32.of_int ((i * step) + offset)));
+      ]
   in
   let r = Random.State.make [| seed |] in
   let pair i =

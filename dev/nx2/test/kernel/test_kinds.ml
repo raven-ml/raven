@@ -3,14 +3,21 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* nx_kinds.h: the transcendental kinds within their bounds, f32 at every
-   argument and f64 at the goldens' points; the exact kinds against their
-   meaning, with NaN, -0, infinities, subnormals and integer extremes drawn;
-   the complex transcendental kinds at the goldens' points, at C99 Annex G's
-   special values and by their symmetries. *)
+(* nx_kinds.h's functions, called through loops compiled as nx.cpu's rows:
+   the exact kinds against their meaning, with NaN, -0, infinities,
+   subnormals and integer extremes drawn, and the narrow floats' signed
+   zeros through nx.cpu; the float kinds at C99 Annex F's special values and
+   exp2 and log2 at their exact points; threefry's known answers; the complex
+   kinds at C99 Annex G's special values, at signalling NaNs and by their
+   symmetries. Their bounds are test_kernels', through Nx_kernel.S.map. *)
 
 open Windtrap
 open Exact
+module A = Nx_array
+module D = Nx_array.Dtype
+module L = Nx_array.Layout
+module C = Kernels_cases
+module Support = Nx_kernels_support
 module K = Nx_kinds_support
 
 let strf = Printf.sprintf
@@ -37,243 +44,6 @@ let value64 =
     ~equal:(fun a b ->
       Int64.equal (bits64 a) (bits64 b) || (Float.is_nan a && Float.is_nan b))
 
-
-(* f32 transcendentals
-
-   gen/sweep_kinds.exe checks every argument and records each kind's largest
-   error and worst arguments, stamped with the digest of nx_kinds.h and
-   nx_kinds_real.h; a record older than them fails here, and the worst arguments
-   are rechecked. A change elsewhere that moves a result, in nx_dtype.h's bit
-   helpers, the flags or the compiler, moves the digests of results below
-   instead: then too, run the sweep and accept them.
-
-   A test run checks every 256th bit pattern from an offset the run's seed
-   draws: every binade of both signs gets 2^15 points, so every region wider
-   than 256 ulps is reached by arithmetic. The strata reach the narrower ones:
-   each reduction boundary and clamp with its neighbours. Bounds are the
-   header's; each kind's fractional error, against the reference itself in
-   binary32 ulps at it, is held to Nx_kinds_support.f32_fractions, so that no
-   change worsens a result within its rank. *)
-
-let worst_error (w : K.worst) =
-  if Array.length w.errors = 0 then 0 else fst w.errors.(0)
-
-(* Fractions are compared at the record's three decimals. *)
-let thousandths x = Float.round (x *. 1000.) /. 1000.
-
-let at_bound kind bound (w : K.worst) =
-  let e = worst_error w in
-  let p = if e = 0 then 0 else snd w.errors.(0) in
-  at_most int ~than:bound e ~msg:(strf "%s at %h (0x%08x)" kind (f p) p);
-  at_most float_exact
-    ~than:(List.assoc kind K.f32_fractions)
-    (thousandths w.frac)
-    ~msg:(strf "%s's fractional error at %h (0x%08x)" kind (f w.frac_at) w.frac_at)
-
-let test_record =
-  test "the full sweep is the headers'" (fun () ->
-      let digest, sweeps = K.read_record () in
-      if digest <> K.header_digest () then
-        failf
-          "nx_kinds.h or nx_kinds_real.h changed since the full sweep: run the \
-           full sweep (gen/sweep_kinds.exe, from dev/nx2/test/kernel)";
-      equal (list string)
-        (List.map fst K.f32_bounds)
-        (List.map (fun (k, _, _, _) -> k) sweeps);
-      List.iter
-        (fun (kind, e, (frac, at), ps) ->
-          let bound = List.assoc kind K.f32_bounds in
-          at_most int ~than:bound e ~msg:kind;
-          at_most float_exact ~than:(List.assoc kind K.f32_fractions) frac
-            ~msg:kind;
-          at_bound kind bound (K.points kind (Array.of_list (at :: ps)));
-          equal float_exact frac (thousandths (K.points kind [| at |]).frac)
-            ~msg:(strf "%s at 0x%08x" kind at))
-        sweeps)
-
-let test_strided =
-  List.map
-    (fun (kind, bound) ->
-      prop (strf "%s at every 256th argument" kind)
-        ~count:1 (Gen.int_range 0 255) (fun offset ->
-          at_bound kind bound (K.sweep ~step:256 ~offset kind)))
-    K.f32_bounds
-
-let test_strata =
-  cases ~name:fst "f32 at the strata" K.f32_bounds (fun (kind, bound) ->
-      Array.iter
-        (fun (region, n, w) ->
-          greater int ~than:0 n ~msg:(strf "%s: %s is empty" kind region);
-          at_bound kind bound w)
-        (K.strata kind))
-
-(* Every value of each narrow float, computed in f32 and rounded once, within 1
-   ulp of the exact value rounded once; pow and atan2 likewise at the pairs
-   Nx_kinds_support.narrow_binary takes. *)
-let narrow_dtypes =
-  [
-    ("float16", 2);
-    ("bfloat16", 3);
-    ("float8_e4m3fn", 4);
-    ("float8_e5m2", 5);
-    ("float4_e2m1fn", 6);
-  ]
-
-let test_narrow =
-  cases ~name:fst "narrow floats at every value" K.f32_bounds (fun (kind, _) ->
-      List.iter
-        (fun (name, code) ->
-          let e, c = K.narrow kind code in
-          at_most int ~than:1 e ~msg:(strf "%s at %s code 0x%x" kind name c))
-        narrow_dtypes)
-
-let test_narrow_binary =
-  List.map
-    (fun kind ->
-      prop (strf "%s at narrow floats' pairs of values" kind) ~count:1 Gen.int
-        (fun seed ->
-          List.iter
-            (fun (name, code) ->
-              let (w : K.narrow_pairs) = K.narrow_binary kind code ~seed in
-              (* The drawn pairs of a 16-bit float mostly give a number other
-                 than 0 and 1: the draws reach the results that rounding once
-                 can get wrong. *)
-              if w.n > 65536 then
-                cover (strf "%s: most results plain" name) (2 * w.plain > w.n);
-              at_most int ~than:1 w.e
-                ~msg:(strf "%s at %s codes 0x%x 0x%x" kind name w.a w.b))
-            narrow_dtypes))
-    [ "pow"; "atan2" ]
-
-(* f32 pow and atan2 at a million pairs, drawn from the run's seed, against the
-   C library's f64 functions rounded. *)
-let test_binary_transcendentals =
-  List.map
-    (fun (kind, bound) ->
-      prop (strf "%s f32 at drawn pairs" kind) ~count:1 Gen.int (fun seed ->
-          let e, a, b = K.binary kind ~seed 1_000_000 in
-          at_most int ~than:bound e
-            ~msg:(strf "%s %h %h (0x%08x 0x%08x)" kind (f a) (f b) a b)))
-    [ ("pow", 4); ("atan2", 3) ]
-
-(* What every library computing a kind through nx_kinds.h gives, as a digest
-   of its results over the strata. *)
-let test_digests =
-  test "digests of every kind over the strata" (fun () ->
-      let table =
-        List.concat_map
-          (fun (kind, tys) ->
-            List.map (fun ty -> strf "%s %s %s" kind ty (K.digest kind ty)) tys)
-          K.kinds
-        |> String.concat "\n"
-      in
-      expect table
-      @@ __POS_OF__
-               {|
-            exp f32 17d2c3c91d74a5e6
-            exp f64 9e4592740004bee2
-            exp2 f32 162ffc537d0be92c
-            exp2 f64 619776aadfc58ecf
-            expm1 f32 ed478fe1f7c48a44
-            expm1 f64 0fe1a90f7088a3a9
-            log f32 ed88f9f51d1056d4
-            log f64 5c7f9141f6659317
-            log2 f32 7e7bf05e4e06c906
-            log2 f64 46fb31d9f7137087
-            log1p f32 7c884cacc3dfac9c
-            log1p f64 d5b0989c733c0842
-            sin f32 3306fe5ff79f397b
-            sin f64 cb09ba85cbe1edb3
-            cos f32 e505ac6eeb8cd622
-            cos f64 147a0f2b6644a9b8
-            tan f32 7bbf9342404139c7
-            tan f64 6151db99765d791d
-            asin f32 fce14c3b05ab0855
-            asin f64 e3905a2f07ceeb69
-            acos f32 4b8d8de411e65924
-            acos f64 ac901c34a3c7530b
-            atan f32 9bcb943b590e776a
-            atan f64 045759334a6d727d
-            sinh f32 4b4aa3fb457a75c0
-            sinh f64 2feb552b86b831b7
-            cosh f32 f5ff656dcb45f630
-            cosh f64 fb7b96d81e8a7f2a
-            tanh f32 9936f3800cdafefa
-            tanh f64 7bbebdbbc3b03c9d
-            erf f32 c26fe6bfe9fb6c9b
-            erf f64 1fd4151bac52806d
-            sqrt f32 ee9f8255fb18c10d
-            sqrt f64 eada3c7c0715ecb9
-            floor f32 7de2b62c3fef8114
-            floor f64 8bf1717db53997f2
-            ceil f32 7606f4f30c6e2999
-            ceil f64 bc13e2a9a2892d6e
-            round f32 d30d2b349b43fc05
-            round f64 41d8cb307a0ab148
-            trunc f32 34f9bef2866a88be
-            trunc f64 0ecd64f3ca0f53b8
-            fdiv f32 b871ece0f2592852
-            fdiv f64 e7de96b328ce3382
-            atan2 f32 514e43c0d1518dea
-            atan2 f64 44753a3f36c3f4f0
-            neg f32 cea83e0bddaa4962
-            neg f64 ced5a51f9294a4ca
-            neg int 51a191f53249a86d
-            abs f32 08dcd90d759eb6e2
-            abs f64 a8c23c6593f7a14a
-            abs int b38dd2f56f9d9e5a
-            sign f32 17c4b561ec24f905
-            sign f64 57bb9381be03ba45
-            sign int 5dea5e3027706bbc
-            recip f32 d51e78b9124791bd
-            recip f64 c910225a1f5577d9
-            recip int b301af41e863f911
-            add f32 c6dba66e8ad54c69
-            add f64 77a90934e6682cc5
-            add int e43acf1b1b03de31
-            sub f32 69550897d5cadd4d
-            sub f64 ee98dad1fd8c3140
-            sub int 428a370b690eeda1
-            mul f32 8c47b9c0f9fbf0b6
-            mul f64 85ab9ebe7ff8f131
-            mul int f6e0a9633e92af59
-            mod f32 977b5a2f16e84e40
-            mod f64 e2da65fabc2da284
-            mod int 8f21a2076f3b02f1
-            pow f32 0afbc574906c7d57
-            pow f64 7571971ed918fdcf
-            pow int c21a5c07dfddd9d7
-            maximum f32 a1447ba947915d66
-            maximum f64 7bd64cad6c3f7d68
-            maximum int 31e15067e696aeb0
-            minimum f32 967e301ad5ff4ca8
-            minimum f64 23ff51bf4210736c
-            minimum int 958d0ad38bd04ad4
-            equal f32 803ad2f4668a04f8
-            equal f64 940226b225d8cfd8
-            equal int 5d0597fa23cf4465
-            not_equal f32 05567728a31db838
-            not_equal f64 a9e59c8d015adc18
-            not_equal int 0c6a89f13cf1d4e5
-            less f32 2f4be0e27c4678a5
-            less f64 0b616c56ac6f9e65
-            less int 2c5d30e6a2cb3465
-            less_equal f32 3325699d782f9f78
-            less_equal f64 e3643ce929d5c358
-            less_equal int d8ffc94881c04425
-            fma f32 5ffbff25342b4682
-            fma f64 a41fce1d935fa296
-            fma int b8b2835591bec6d9
-            where f32 ee634f112d2bf35b
-            where f64 5e149b28783ff1ad
-            where int 1cf159101f48986d
-            idiv int 735deb941f72707f
-            and int 6df5b0d261586c1d
-            or int c56273adbda0dda9
-            xor int 2a77981429e09f31
-            threefry int d1c6e25aec1e4932
-            |})
-
 (* exp2 is exact at integers whose power is a float, log2 at powers of two,
    subnormal ones included. *)
 let test_exact_points =
@@ -288,69 +58,6 @@ let test_exact_points =
         equal value64 p (K.f64 "exp2" [| Float.of_int k |]);
         equal value64 (Float.of_int k) (K.f64 "log2" [| p |])
       done)
-
-(* f64 transcendentals at the goldens' points, each value correctly rounded by
-   mpmath with the exact value's remainder past it: uv run
-   dev/nx2/test/kernel/gen/kinds.py. Besides the bound in ranks, each kind's
-   largest error against the exact value in ulps of the rounded one, a
-   fraction, is held to the largest its algorithm last reached. *)
-
-(* |got - (want + lo)| in ulps of want; 0 where want is no finite number. *)
-let fraction64 got want lo =
-  if not (Float.is_finite want) then 0.
-  else
-    let _, e = Float.frexp want in
-    let ulp = Float.ldexp 1. (max (e - 53) (-1074)) in
-    Float.abs (got -. want -. lo) /. ulp
-
-
-let test_f64_goldens =
-  cases
-    ~name:(fun (k, _, _) -> k)
-    "f64 at the goldens"
-    [
-      ("exp", 2, 0.802);
-      ("exp2", 2, 1.000);
-      ("expm1", 2, 0.649);
-      ("log", 2, 0.668);
-      ("log2", 2, 0.750);
-      ("log1p", 2, 0.709);
-      ("sin", 2, 0.642);
-      ("cos", 2, 0.651);
-      ("tan", 2, 0.729);
-      ("asin", 2, 0.607);
-      ("acos", 2, 0.598);
-      ("atan", 2, 0.573);
-      ("sinh", 2, 0.708);
-      ("cosh", 2, 0.590);
-      ("tanh", 2, 0.832);
-      ("erf", 2, 0.714);
-      ("pow", 2, 1.000);
-      ("atan2", 2, 0.946);
-    ]
-    (fun (kind, bound, ceiling) ->
-      let check row =
-        let n = Array.length row - 2 in
-        let args = Array.sub row 0 n and want = row.(n) and lo = row.(n + 1) in
-        let got = K.f64 kind args in
-        (* Where the value rounds to an infinity or a zero, a rank bounds
-           nothing: the result is that value. *)
-        let wrong_end =
-          (want = 0. || Float.abs want = Float.infinity)
-          && not (Int64.equal (bits64 got) (bits64 want))
-        in
-        let e = if wrong_end then max_int else ulps64 got want in
-        let at =
-          strf "%s %s: got %h, want %h" kind
-            (String.concat " " (List.map (strf "%h") (Array.to_list args)))
-            got want
-        in
-        at_most int ~than:bound e ~msg:at;
-        at_most float_exact ~than:ceiling
-          (thousandths (fraction64 got want lo))
-          ~msg:at
-      in
-      List.iter check (golden kind))
 
 (* Drawn f32 operands *)
 
@@ -658,6 +365,135 @@ let test_f64_exact =
         ("trunc", Float.trunc);
         ("recip", fun x -> 1. /. x);
       ]
+
+(* The narrow floats
+
+   A float narrower than float32 computes in f32 and rounds once on the
+   store, through each kernel library's map. At the zeros of either sign,
+   where IEEE 754 fixes the sign of a sum, a difference, a maximum and a
+   minimum, each narrow format holds the f32 kind's result stored; each
+   transcendental kind at every code of each format, and pow and atan2 at
+   every pair of the formats of a byte or less and at every code of the
+   16-bit ones against a drawn partner, hold the reference of the map
+   laws, which computes the f32 kind and stores once. *)
+
+type narrow = Narrow : (float, 's) D.t -> narrow
+
+let narrow_floats =
+  D.
+    [
+      Narrow Float16; Narrow Bfloat16; Narrow Float8_e4m3fn;
+      Narrow Float8_e5m2; Narrow Float4_e2m1fn;
+    ]
+
+let signed_zeros = [ (0., 0.); (0., -0.); (-0., 0.); (-0., -0.) ]
+
+let test_narrow_zeros =
+  let kinds =
+    Nx_kernel.Prog.
+      [ ("add", Add); ("sub", Sub); ("maximum", Maximum); ("minimum", Minimum) ]
+  in
+  let rows =
+    List.concat_map
+      (fun (b : Support.backend) ->
+        List.concat_map
+          (fun dt ->
+            List.concat_map
+              (fun (name, k) ->
+                List.map (fun z -> (b, dt, name, k, z)) signed_zeros)
+              kinds)
+          narrow_floats)
+      Support.backends
+  in
+  cases
+    ~name:(fun ((b : Support.backend), Narrow dt, name, _, (a, c)) ->
+      strf "%s %s %s %h %h" b.name (D.name dt) name a c)
+    "signed zeros at the narrow floats" rows
+    (fun (b, Narrow dt, name, k, (a, c)) ->
+      let module K' = (val b.kernels) in
+      let want = D.of_float dt (f (K.f32 name [| bits32 a; bits32 c |])) in
+      let one v = C.on b (A.of_array dt [| 1 |] [| v |]) in
+      let dst = A.create b.device dt [| 1 |] in
+      equal C.answer A.Done
+        (Support.map2 (module K') (Binary k) ~dst (one a) (one c));
+      equal value64 want (A.get (C.host dst) [| 0 |]))
+
+(* Every code of the narrow float [dt], as [A.bitcast] reads the unsigned
+   integers of its width. *)
+let every_code (type s) (dt : (float, s) D.t) =
+  let n = 1 lsl D.bits dt in
+  let codes = Array.init n Fun.id in
+  let (A.Any u) =
+    match D.bits dt with
+    | 4 -> A.Any (A.of_array D.Uint4 [| n |] codes)
+    | 8 -> A.Any (A.of_array D.Uint8 [| n |] codes)
+    | _ -> A.Any (A.of_array D.Uint16 [| n |] codes)
+  in
+  Option.get (A.bitcast dt u)
+
+let transcendentals =
+  let names =
+    [ "exp"; "exp2"; "expm1"; "log"; "log2"; "log1p"; "sin"; "cos"; "tan";
+      "asin"; "acos"; "atan"; "sinh"; "cosh"; "tanh"; "erf" ]
+  in
+  List.filter (fun (_, name) -> List.mem name names) C.unaries
+
+(* Every code of each format is one operand, so the law draws nothing. *)
+let test_narrow_transcendentals =
+  prop ~count:1 "transcendental kinds at every code of the narrow floats"
+    Gen.unit (fun () ->
+      List.iter
+        (fun (b : Support.backend) ->
+          List.iter
+            (fun (Narrow dt) ->
+              C.law_map1 ~kinds:transcendentals b (C.Case (every_code dt)))
+            narrow_floats)
+        Support.backends)
+
+(* [x]'s partners for pow in [dt], from [seed]: for a finite [x] off 1,
+   [y] with [y log2 |x|] within the format's exponents, give or take 2, an
+   integer for a negative [x]; a drawn code elsewhere. *)
+let pow_partners (type s) (dt : (float, s) D.t) (x : (float, s) A.t) seed =
+  let st = Random.State.make [| seed |] in
+  let format = D.float_format dt in
+  let lo = Float.log2 format.min_normal -. Float.of_int format.fraction_bits in
+  let hi = Float.log2 format.max_finite in
+  let n = L.numel (A.layout x) in
+  let codes = every_code dt in
+  let partner i =
+    let v = A.get x [| i |] in
+    let l = Float.log2 (Float.abs v) in
+    if (not (Float.is_finite l)) || l = 0. then
+      A.get codes [| Random.State.int st (L.numel (A.layout codes)) |]
+    else
+      let y = (lo -. 2. +. Random.State.float st (hi -. lo +. 4.)) /. l in
+      if v < 0. then Float.round y else y
+  in
+  A.of_array dt [| n |] (Array.init n partner)
+
+let test_narrow_pairs =
+  let binaries = Nx_kernel.Prog.[ Binary Pow; Binary Atan2 ] in
+  let rows =
+    List.concat_map
+      (fun b -> List.map (fun dt -> (b, dt)) narrow_floats)
+      Support.backends
+  in
+  prop ~count:3 "pow and atan2 at the narrow floats' pairs" Gen.nat (fun seed ->
+      List.iter
+        (fun ((b : Support.backend), Narrow dt) ->
+          let x = every_code dt in
+          let n = L.numel (A.layout x) in
+          if n <= 256 then begin
+            let codes i = A.get x [| i |] in
+            let firsts = A.of_array dt [| n * n |] (Array.init (n * n) (fun i -> codes (i / n))) in
+            let seconds = A.of_array dt [| n * n |] (Array.init (n * n) (fun i -> codes (i mod n))) in
+            C.law_map2 ~kinds:binaries b (C.Pair (firsts, seconds))
+          end
+          else begin
+            C.law_map2 ~kinds:binaries b (C.Pair (x, C.seeded dt [| n |] seed));
+            C.law_map2 ~kinds:[ Binary Pow ] b (C.Pair (x, pow_partners dt x seed))
+          end)
+        rows)
 
 (* Integer kinds
 
@@ -979,95 +815,10 @@ let complex_kinds =
     "acos"; "atan"; "sinh"; "cosh"; "tanh"; "asinh"; "acosh"; "atanh";
   ]
 
-(* Each kind's bound, normwise in units of its part's u, and the largest
-   error its algorithm last reached at the goldens, at c128 and at c64: a
-   change may lower one, never raise it. pow's bound is (3 + 3|w log z|)u. *)
-let complex_bounds =
-  [
-    ("exp", 4., 2.131, 1.779);
-    ("exp2", 4., 1.901, 1.922);
-    ("log", 4., 1.590, 1.547);
-    ("log2", 4., 1.684, 1.581);
-    ("sqrt", 3., 1.596, 1.534);
-    ("sign", 3., 1.513, 1.407);
-    ("asin", 5., 2.620, 2.522);
-    ("acos", 5., 2.707, 1.974);
-    ("atan", 5., 2.420, 1.907);
-    ("sin", 6., 2.586, 3.033);
-    ("cos", 6., 2.361, 2.007);
-    ("tan", 6., 3.671, 3.009);
-    ("sinh", 6., 3.007, 3.020);
-    ("cosh", 6., 3.628, 2.124);
-    ("tanh", 6., 3.344, 3.053);
-    ("asinh", 5., 3.349, 2.840);
-    ("acosh", 5., 1.902, 2.278);
-    ("atanh", 5., 2.051, 2.454);
-  ]
-
-
 (* |z' - z| / |z| of the moduli alone, in units of [u]. *)
 let modulus_error u (re, im) (((zr, _), (zi, _)) : (float * float) * (float * float)) =
   let m = Float.hypot zr zi in
   Float.abs (Float.hypot re im -. m) /. m /. u
-
-let test_complex_goldens =
-  let check kind ~bound ~ceiling64 ~ceiling32 =
-    let worst128 = ref 0. and worst64 = ref 0. in
-    List.iter
-      (fun row ->
-        let n = Array.length row - 4 in
-        let args = Array.sub row 0 n and want = golden_value row n in
-        let at got =
-          strf "%s %s: got %h %h" kind
-            (String.concat " " (List.map (strf "%h") (Array.to_list args)))
-            (fst got) (snd got)
-        in
-        let ops =
-          List.init (n / 2) (fun i -> (args.(2 * i), args.(2 * i + 1)))
-        in
-        let got = c128_call kind ops in
-        let e = normwise 0x1p-53 got want in
-        at_most float_exact ~than:bound e ~msg:(at got);
-        worst128 := Float.max !worst128 e;
-        if single_row args want then begin
-          let got = c64_call kind ops in
-          let e = normwise 0x1p-24 got want in
-          at_most float_exact ~than:bound e ~msg:(at got);
-          worst64 := Float.max !worst64 e
-        end)
-      (complex_golden kind);
-    at_most float_exact ~than:ceiling64 (thousandths !worst128)
-      ~msg:(kind ^ " c128");
-    at_most float_exact ~than:ceiling32 (thousandths !worst64)
-      ~msg:(kind ^ " c64")
-  in
-  cases
-    ~name:(fun (k, _, _, _) -> k)
-    "complex at the goldens" complex_bounds
-    (fun (kind, bound, ceiling64, ceiling32) ->
-      check kind ~bound ~ceiling64 ~ceiling32)
-
-(* pow within (3 + 3|w log z|)u: its error is log z's, multiplied by w and
-   carried into the exponential. *)
-let test_complex_pow_goldens =
-  test "pow at the goldens" (fun () ->
-      List.iter
-        (fun row ->
-          let args = Array.sub row 0 4 and want = golden_value row 4 in
-          let z = (args.(0), args.(1)) and w = (args.(2), args.(3)) in
-          let modulus (re, im) = Float.hypot re im in
-          let log_z = (Float.log (modulus z), Float.atan2 (snd z) (fst z)) in
-          let bound = 3. +. (3. *. modulus w *. modulus log_z) in
-          let at (re, im) =
-            strf "pow %h %h %h %h: got %h %h" args.(0) args.(1) args.(2)
-              args.(3) re im
-          in
-          let check u got =
-            at_most float_exact ~than:bound (normwise u got want) ~msg:(at got)
-          in
-          check 0x1p-53 (c128_call "pow" [ z; w ]);
-          if single_row args want then check 0x1p-24 (c64_call "pow" [ z; w ]))
-        (complex_golden "pow"))
 
 (* C99 Annex G's special values, G.6.1 to G.6.4, at c128 and c64. Where it
    leaves a sign unspecified, the value is nx_kinds.h's choice. A NaN part is
@@ -1583,35 +1334,198 @@ let test_annex_f =
           at64 kind args want;
           at32 kind (Array.map round_f32 args) (round_f32 want))
 
+(* Digests of the float kinds over a fixed point set
+
+   What every library computing a kind through nx_kinds.h gives: each f32
+   and f64 kind of one or two operands over Annex F's operands and, in every
+   binade of either sign, its first and last pattern and six drawn
+   significands; a kind of two operands at every pair of Annex F's operands
+   and at each binade point paired with another. The digest is MD5 over the
+   results' bits, every NaN as one NaN. *)
+
+let splitmix s =
+  let open Int64 in
+  let s = add s 0x9E3779B97F4A7C15L in
+  let s = mul (logxor s (shift_right_logical s 30)) 0xBF58476D1CE4E5B9L in
+  let s = mul (logxor s (shift_right_logical s 27)) 0x94D049BB133111EBL in
+  logxor s (shift_right_logical s 31)
+
+let annex_f_operands =
+  [ 0.; -0.; inf; ninf; nan; 1.; -1.; 0.5; 2.; -3.; 0x1p-149; 0x1p-1074 ]
+
+(* The NaN every NaN result is digested as: the quiet NaN of the sign bit
+   clear and no payload, 0x7FC00000 as binary32. *)
+let one_nan = Int64.float_of_bits 0x7FF8_0000_0000_0000L
+
+(* The points of a format of [width] bits with [fraction] fraction bits,
+   as [of_bits] reads their patterns. *)
+let points ~width ~fraction ~of_bits =
+  let open Int64 in
+  let binades = (1 lsl (width - 1 - fraction)) - 1 and draws = ref 1L in
+  let draw () =
+    draws := splitmix !draws;
+    logand !draws (sub (shift_left 1L fraction) 1L)
+  in
+  let binade sign e =
+    let top = logor (shift_left (of_int sign) (width - 1)) (shift_left (of_int e) fraction) in
+    List.map
+      (fun frac -> of_bits (logor top frac))
+      (0L :: sub (shift_left 1L fraction) 1L :: List.init 6 (fun _ -> draw ()))
+  in
+  annex_f_operands
+  @ List.concat_map (fun sign -> List.concat_map (binade sign) (List.init binades Fun.id)) [ 0; 1 ]
+
+let digest_kinds =
+  ( [ "exp"; "exp2"; "expm1"; "log"; "log2"; "log1p"; "sin"; "cos"; "tan";
+      "asin"; "acos"; "atan"; "sinh"; "cosh"; "tanh"; "erf"; "neg"; "recip";
+      "abs"; "sign"; "sqrt"; "floor"; "ceil"; "round"; "trunc" ],
+    [ "add"; "sub"; "mul"; "fdiv"; "mod"; "pow"; "atan2"; "maximum";
+      "minimum"; "equal"; "not_equal"; "less"; "less_equal" ] )
+
+let test_digests =
+  test "digests of every float kind, the same on every target" (fun () ->
+      let pairs ps =
+        let n = List.length ps and a = Array.of_list ps in
+        let specials = List.length annex_f_operands in
+        let firsts = ref [] and seconds = ref [] in
+        for i = 0 to (specials * specials) - 1 do
+          firsts := a.(i mod specials) :: !firsts;
+          seconds := a.(i / specials) :: !seconds
+        done;
+        for i = specials to n - 1 do
+          firsts := a.(i) :: !firsts;
+          seconds := a.(((i * 7919) mod (n - specials)) + specials) :: !seconds
+        done;
+        (List.rev !firsts, List.rev !seconds)
+      in
+      let digest (type s) (k : (float, s) Bigarray.kind) ~bits name xs zs =
+        let ba l = Bigarray.Array1.of_array k Bigarray.c_layout (Array.of_list l) in
+        let x = ba xs and z = ba zs and y = ba xs in
+        K.run name x z y;
+        let b = Buffer.create (8 * Bigarray.Array1.dim y) in
+        for i = 0 to Bigarray.Array1.dim y - 1 do
+          bits b (if Float.is_nan y.{i} then one_nan else y.{i})
+        done;
+        String.sub (Digest.to_hex (Digest.string (Buffer.contents b))) 0 16
+      in
+      let rows (type s) ty (k : (float, s) Bigarray.kind) ~bits ps =
+        let unaries, binaries = digest_kinds in
+        let xs, zs = pairs ps in
+        List.map (fun name -> strf "%s %s %s" name ty (digest k ~bits name ps ps)) unaries
+        @ List.map (fun name -> strf "%s %s %s" name ty (digest k ~bits name xs zs)) binaries
+      in
+      let f32 =
+        rows "f32" Bigarray.float32
+          ~bits:(fun b v -> Buffer.add_int32_le b (Int32.bits_of_float v))
+          (points ~width:32 ~fraction:23 ~of_bits:(fun p ->
+               Int32.float_of_bits (Int64.to_int32 p)))
+      in
+      let f64 =
+        rows "f64" Bigarray.float64
+          ~bits:(fun b v -> Buffer.add_int64_le b (bits64 v))
+          (points ~width:64 ~fraction:52 ~of_bits:Int64.float_of_bits)
+      in
+      expect (String.concat "\n" (f32 @ f64)) @@ __POS_OF__ {|
+        exp f32 d148aa0cfe798ea4
+        exp2 f32 06b24c17b64f3f45
+        expm1 f32 d122ce2e9e735110
+        log f32 133e7ba9c8eebf3b
+        log2 f32 3c6f7234b66688a4
+        log1p f32 eb7ada460c663d78
+        sin f32 00e1cfad28177c0c
+        cos f32 e5551b89e045b9f2
+        tan f32 fa822cde5b371ce9
+        asin f32 9727fcb8f7ace84b
+        acos f32 ca63f77d95f5b984
+        atan f32 1746b586621af9b2
+        sinh f32 9df7ed4ea00d14cd
+        cosh f32 4dd8dfbd5619947f
+        tanh f32 0f924977a511b4e7
+        erf f32 fedbb1616eae7321
+        neg f32 4cd8b9f26caee951
+        recip f32 c893237dcd6689a7
+        abs f32 0c6bc9e2df075c81
+        sign f32 793e46243ee50087
+        sqrt f32 d70441c0b52ee39f
+        floor f32 36aab323384d7621
+        ceil f32 31b039f5a050d158
+        round f32 6f14dbaf407b10e4
+        trunc f32 9fbeccc1f44c1ca4
+        add f32 66a8f8de796eb6b1
+        sub f32 ab671dcc371bfd85
+        mul f32 735351c38d3f9707
+        fdiv f32 8f96d3ecbb1e95e5
+        mod f32 18cd8a08dbcdfa2b
+        pow f32 f84c9d0db0dcfe2a
+        atan2 f32 486465bc2d1c5df8
+        maximum f32 2bdcf68d860d9fb7
+        minimum f32 6b882342775a9223
+        equal f32 6a8a7670224e59ea
+        not_equal f32 4227f0a35da257f7
+        less f32 4f324d5e38c1da8e
+        less_equal f32 f0602177e93e3205
+        exp f64 b351bb921af7acbe
+        exp2 f64 981055566a4c7a0d
+        expm1 f64 3485bc4d87872344
+        log f64 fa070786ccd5f17d
+        log2 f64 d2efd3c3ba9f06e8
+        log1p f64 274c1dde447e2bb2
+        sin f64 3009f282a78b4b8f
+        cos f64 0f2ab675630a27e4
+        tan f64 2d18b8071332e6ce
+        asin f64 ea43be89c29c264e
+        acos f64 2cf25916c19bf431
+        atan f64 3952e282059eaa93
+        sinh f64 506a5ec38e14841f
+        cosh f64 2d25fdc9f7313606
+        tanh f64 f311ad69c41b5b98
+        erf f64 86bf2943e85c9366
+        neg f64 58bf1dce50ce5715
+        recip f64 12be1d5649e0e1a3
+        abs f64 34647d3ef73113e1
+        sign f64 2d8a13979ca8f72e
+        sqrt f64 89507a0b4bd4871b
+        floor f64 89cbfa641d5fb8ba
+        ceil f64 681f0cc69ffa1a43
+        round f64 b897f9686c38667f
+        trunc f64 211778a8aab717b0
+        add f64 23b9e8138c933dea
+        sub f64 fb1334bcd9891671
+        mul f64 ca54f9e5f2153e9e
+        fdiv f64 bd7fbfa5e638ae7a
+        mod f64 e2883cecda254de3
+        pow f64 de2d29a86133409e
+        atan2 f64 28f45baa0494ac7e
+        maximum f64 25694c6f0f9f0fcb
+        minimum f64 f25e39f1e49785f2
+        equal f64 7f673d784fb01b37
+        not_equal f64 4df55ea11a62355c
+        less f64 ba9c4bbd090e7e09
+        less_equal f64 48f19170c3ce04c4
+        |})
+
 let () =
   exit
   @@ run "nx_array.kinds"
        [
-         group ~timeout:10. "transcendentals"
-           ((test_record :: test_strided)
-           @ [
-               test_strata;
-               test_narrow;
-               test_exact_points;
-               test_f64_goldens;
-               test_annex_f;
-               test_digests;
-             ]
-           @ test_narrow_binary @ test_binary_transcendentals);
-         group ~timeout:10. "f32"
-           (test_binary32 @ [ test_fma32; test_where32 ] @ test_unary32);
-         group ~timeout:10. "f64" test_f64_exact;
-         group ~timeout:10. "integers" test_ints;
-         group ~timeout:10. "threefry" [ test_threefry ];
-         group ~timeout:10. "complex"
+         group ~timeout:10. "exact kinds give IEEE results"
+           (test_binary32
+           @ [ test_fma32; test_where32 ]
+           @ test_unary32 @ test_f64_exact
+           @ [ test_narrow_zeros; test_exact_points ]);
+         group ~timeout:60. "narrow floats compute in f32 and round once"
+           [ test_narrow_transcendentals; test_narrow_pairs ];
+         group ~timeout:10. "integer kinds are modular" test_ints;
+         group ~timeout:10. "threefry's known answers" [ test_threefry ];
+         group ~timeout:10. "Annex F's special values" [ test_annex_f ];
+         group ~timeout:10. "the header's bits on every target" [ test_digests ];
+         group ~timeout:10. "complex arithmetic within its bounds"
            (test_complex_bounds @ test_complex_parts @ test_complex_order
            @ [ test_complex_nan; test_complex_smith ]);
-         group ~timeout:10. "complex transcendentals"
-           ([
-              test_complex_goldens; test_complex_pow_goldens;
-              test_complex_special; test_complex_signalling;
-            ]
-           @ test_complex_exp2_far @ test_complex_pow_special
+         group ~timeout:10. "complex kinds at their special values"
+           [ test_complex_special; test_complex_signalling ];
+         group ~timeout:10. "complex kinds by their symmetries"
+           (test_complex_exp2_far @ test_complex_pow_special
            @ [ test_complex_log_circle ]
            @ test_complex_conj @ test_complex_parity @ test_complex_real_axis
            @ test_complex_identities);
