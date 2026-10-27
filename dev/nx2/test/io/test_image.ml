@@ -9,56 +9,7 @@
    else. *)
 
 open Windtrap
-
-let fixture name = Filename.concat "support" name
-let read path = In_channel.with_open_bin path In_channel.input_all
-
-let file ?(suffix = "") s =
-  let path = temp_file ~suffix () in
-  Out_channel.with_open_bin path (fun oc -> Out_channel.output_string oc s);
-  path
-
-let flip_byte s i =
-  String.mapi
-    (fun j c -> if i = j then Char.chr (Char.code c lxor 0xff) else c)
-    s
-
-let fails ?(naming = "") ~path f =
-  raises_match
-    (function
-      | Failure m ->
-          String.starts_with ~prefix:(path ^ ": ") m
-          && (naming = "" || Exn.failure ~substring:naming (Failure m))
-      | _ -> false)
-    (fun () -> ignore (f ()))
-
-let invalid ~by f =
-  raises_match
-    (Exn.invalid_arg ~substring:(by ^ ": "))
-    (fun () -> ignore (f ()))
-
-let loads_or_fails ~path f =
-  match f () with
-  | _ -> ()
-  | exception Failure m when String.starts_with ~prefix:(path ^ ": ") m -> ()
-  | exception e -> failf "%s raised %s" path (Printexc.to_string e)
-
-(* [f (make ())] and the bytes the host holds more after it, read once
-   collected memory has returned. One uncounted run comes first. *)
-let host_grown make f =
-  let settled () =
-    for _ = 1 to 4 do
-      Gc.full_major ();
-      ignore (Rig.Buffer.create Rig.host 0);
-      Rig.free_cache Rig.host
-    done;
-    Rig.allocated Rig.host
-  in
-  ignore (f (make ()));
-  let x = make () in
-  let before = settled () in
-  let y = f x in
-  (y, Rig.allocated Rig.host - before)
+open Io_support
 
 (* Images compare as their shapes and pixels. *)
 let image =
@@ -71,9 +22,6 @@ let pillow name =
   Nx.unpack Nx.uint8 (Nx_io.load_npy (fixture npy))
 
 (* Drawn images *)
-
-(* How an image lies in memory. *)
-type view = Plain | Transposed | Flipped | Broadcast
 
 (* Images of [channels], [0] for no channel axis, of 1 to 8 rows and columns,
    with any pixels, in any view. *)
@@ -161,7 +109,7 @@ let png_chunks =
   group "PNG chunks"
     [
       test "encode_png writes neither pHYs nor sRGB by default" (fun () ->
-          let png = Nx_image.encode_png tiny in
+          let png = Nx_io.encode_png tiny in
           equal (list string) [] (chunk_data "pHYs" png);
           equal (list string) [] (chunk_data "sRGB" png));
       cases ~name:fst "~dpi writes the pixels per metre on both axes"
@@ -174,21 +122,21 @@ let png_chunks =
         (fun (_, (dpi, ppm)) ->
           equal (list string)
             [ be32 ppm ^ be32 ppm ^ "\001" ]
-            (chunk_data "pHYs" (Nx_image.encode_png ~dpi tiny)));
+            (chunk_data "pHYs" (Nx_io.encode_png ~dpi tiny)));
       test "~srgb writes one sRGB chunk with the perceptual intent" (fun () ->
           equal (list string) [ "\000" ]
-            (chunk_data "sRGB" (Nx_image.encode_png ~srgb:true tiny)));
+            (chunk_data "sRGB" (Nx_io.encode_png ~srgb:true tiny)));
       prop
         "with ~dpi and ~srgb the file is encode_png's with the two chunks \
          added, and loads back the same"
         (Gen.pair (images [ 0; 1; 3; 4 ]) (Gen.float_range 1. 1000.))
         (fun ((_, x), dpi) ->
-          let plain = Nx_image.encode_png x in
-          let png = Nx_image.encode_png ~dpi ~srgb:true x in
+          let plain = Nx_io.encode_png x in
+          let png = Nx_io.encode_png ~dpi ~srgb:true x in
           equal string plain (without "sRGB" (without "pHYs" png));
           equal image
-            (Nx_image.load (file ~suffix:".png" plain))
-            (Nx_image.load (file ~suffix:".png" png)));
+            (Nx_io.load_image (file ~suffix:".png" plain))
+            (Nx_io.load_image (file ~suffix:".png" png)));
       cases ~name:fst "~dpi outside the range of a PNG integer is refused"
         [
           ("zero", 0.);
@@ -199,8 +147,8 @@ let png_chunks =
           ("nan", nan);
         ]
         (fun (_, dpi) ->
-          invalid ~by:"Nx_image.encode_png" (fun () ->
-              Nx_image.encode_png ~dpi tiny));
+          invalid ~by:"Nx_io.encode_png" (fun () ->
+              Nx_io.encode_png ~dpi tiny));
     ]
 
 let flat x = Nx.reshape [| Nx.dim 0 x; Nx.dim 1 x |] x
@@ -220,10 +168,10 @@ let round_trips =
           cover "colour" (Nx.ndim x = 3 && Nx.dim 2 x = 3);
           cover "alpha" (Nx.ndim x = 3 && Nx.dim 2 x = 4);
           let path = temp_file ~suffix:".png" () in
-          Nx_image.save path x;
-          equal string (Nx_image.encode_png x) (read path);
-          let colour = Nx_image.load path in
-          let gray = Nx_image.load ~grayscale:true path in
+          Nx_io.save_image path x;
+          equal string (Nx_io.encode_png x) (read path);
+          let colour = Nx_io.load_image path in
+          let gray = Nx_io.load_image ~grayscale:true path in
           match Nx.shape x with
           | [| _; _; 3 |] ->
               equal image x colour;
@@ -248,9 +196,9 @@ let round_trips =
         (smooth [ 0; 1; 3 ])
         (fun x ->
           let path = temp_file ~suffix:".jpg" () in
-          Nx_image.save path x;
+          Nx_io.save_image path x;
           let colour = Nx.ndim x = 3 && Nx.dim 2 x = 3 in
-          let back = Nx_image.load ~grayscale:(not colour) path in
+          let back = Nx_io.load_image ~grayscale:(not colour) path in
           let x = if colour then x else flat x in
           equal (array int) (Nx.shape x) (Nx.shape back);
           let e = errors x back in
@@ -263,7 +211,7 @@ let round_trips =
             Nx.create Nx.uint8 [| n; n; 3 |] (Array.make (n * n * 3) 7)
           in
           let saved_then_donated x =
-            Nx_image.save (temp_file ~suffix:".png" ()) x;
+            Nx_io.save_image (temp_file ~suffix:".png" ()) x;
             Nx.neg (Nx.donate x)
           in
           let y, grew = host_grown make saved_then_donated in
@@ -274,11 +222,11 @@ let round_trips =
       test "a loaded image's donation writes in place" (fun () ->
           let n = 256 in
           let path = temp_file ~suffix:".png" () in
-          Nx_image.save path
+          Nx_io.save_image path
             (Nx.create Nx.uint8 [| n; n; 3 |] (Array.make (n * n * 3) 7));
           let y, grew =
             host_grown
-              (fun () -> Nx_image.load path)
+              (fun () -> Nx_io.load_image path)
               (fun x -> Nx.neg (Nx.donate x))
           in
           less ~msg:"no memory of the result's size" int ~than:(n * n * 3)
@@ -291,8 +239,8 @@ let round_trips =
             Nx.init Nx.uint8 [| 3; 2; 3 |] (fun i -> i.(0) + i.(1) + i.(2))
           in
           let path = temp_file ~suffix:".png" () in
-          Nx_image.save path (Nx.place M.on x);
-          equal image x (Nx_image.load path));
+          Nx_io.save_image path (Nx.place M.on x);
+          equal image x (Nx_io.load_image path));
     ]
 
 let files =
@@ -308,7 +256,7 @@ let files =
         (fun (name, tolerance) ->
           let expected = pillow name in
           let grayscale = Nx.ndim expected = 2 in
-          let x = Nx_image.load ~grayscale (fixture name) in
+          let x = Nx_io.load_image ~grayscale (fixture name) in
           equal ~msg:"shape" (array int) (Nx.shape expected) (Nx.shape x);
           at_most ~msg:"largest error" int ~than:tolerance
             (Array.fold_left Int.max 0 (errors expected x)));
@@ -317,13 +265,13 @@ let files =
          contents the decoder, whatever the extension"
         [ ".png"; ".PNG"; ".jpg"; ".JPG"; ".jpeg"; ".JpEg" ] (fun ext ->
           let path = temp_file ~suffix:ext () in
-          Nx_image.save path (Nx.full Nx.uint8 [| 4; 4; 3 |] 7);
+          Nx_io.save_image path (Nx.full Nx.uint8 [| 4; 4; 3 |] 7);
           let png = String.lowercase_ascii ext = ".png" in
           starts_with ~affix:(if png then "\137PNG" else "\xff\xd8") (read path);
           let other =
             file ~suffix:(if png then ".jpg" else ".png") (read path)
           in
-          equal image (Nx_image.load path) (Nx_image.load other));
+          equal image (Nx_io.load_image path) (Nx_io.load_image other));
       cases
         ~name:(fun (name, _, _) -> name)
         "an extension or a shape the format does not hold is refused"
@@ -338,34 +286,20 @@ let files =
         ]
         (fun (_, name, shape) ->
           let path = Filename.concat (temp_dir ()) name in
-          invalid ~by:"Nx_image.save" (fun () ->
-              Nx_image.save path (Nx.zeros Nx.uint8 shape));
+          invalid ~by:"Nx_io.save_image" (fun () ->
+              Nx_io.save_image path (Nx.zeros Nx.uint8 shape));
           if name = "x.png" then
-            invalid ~by:"Nx_image.encode_png" (fun () ->
-                Nx_image.encode_png (Nx.zeros Nx.uint8 shape)));
-      test
-        "a refusal before the write names the save, and an error during it \
-         keeps its own message" (fun () ->
-          let by = "Nx_image.save" in
-          raises
-            (Invalid_argument (by ^ ": the value is dead"))
-            (fun () ->
-              Fail.reading ~by
-                (fun _ -> invalid_arg "Nx.Repr.read: the value is dead")
-                (fun () -> ()));
-          raises (Invalid_argument "codec: a bad image") (fun () ->
-              Fail.reading ~by
-                (fun f -> f ())
-                (fun () -> invalid_arg "codec: a bad image")));
+            invalid ~by:"Nx_io.encode_png" (fun () ->
+                Nx_io.encode_png (Nx.zeros Nx.uint8 shape)));
       test "a PNG chunk whose checksum does not match fails" (fun () ->
           let path = file (flip_byte (read (fixture "png_filters.png")) 30) in
           fails ~path ~naming:"PNG chunk CRC mismatch" (fun () ->
-              Nx_image.load path));
+              Nx_io.load_image path));
       test "a file that is neither PNG nor JPEG, or absent, fails" (fun () ->
           let path = file "GIF89a" in
-          fails ~path (fun () -> Nx_image.load path);
+          fails ~path (fun () -> Nx_io.load_image path);
           let path = Filename.concat (temp_dir ()) "absent.png" in
-          fails ~path (fun () -> Nx_image.load path));
+          fails ~path (fun () -> Nx_io.load_image path));
       cases ~name:Fun.id
         "every proper prefix fails, and any byte flipped loads or fails"
         [
@@ -375,20 +309,14 @@ let files =
           "jpeg_progressive.jpg";
         ] (fun name ->
           let whole = read (fixture name) in
-          for n = 0 to String.length whole - 1 do
-            let path = file (String.sub whole 0 n) in
-            fails ~path (fun () -> Nx_image.load path)
-          done;
-          for i = 0 to String.length whole - 1 do
-            let path = file (flip_byte whole i) in
-            loads_or_fails ~path (fun () -> Nx_image.load path);
-            loads_or_fails ~path (fun () -> Nx_image.load ~grayscale:true path)
-          done);
+          prefixes_fail Nx_io.load_image whole;
+          flips_load_or_fail Nx_io.load_image whole;
+          flips_load_or_fail (Nx_io.load_image ~grayscale:true) whole);
       test "without overwrite, a save to a path that names a file fails"
         (fun () ->
           let path = file ~suffix:".png" "old" in
-          fails ~path (fun () -> Nx_image.save ~overwrite:false path tiny);
+          fails ~path (fun () -> Nx_io.save_image ~overwrite:false path tiny);
           equal string "old" (read path));
     ]
 
-let () = exit (run "nx.image" [ png_chunks; round_trips; files ])
+let () = exit (run "nx.io images" [ png_chunks; round_trips; files ])

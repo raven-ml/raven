@@ -2,8 +2,18 @@
 
 (library
  (name nx_io)
- (private_modules fail save storage npy zip safetensors gguf txt archive)
+ (private_modules
+  fail
+  save
+  storage
+  npy
+  zip
+  safetensors
+  gguf
+  txt
+  image
+  archive)
  (libraries nx nx_array rig rig.disk unix compress.deflate)
  (foreign_stubs
   (language c)
-  (names nx_io_sync)))
+  (names nx_io_sync nx_io_png nx_io_jpeg)))

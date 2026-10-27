@@ -10,21 +10,17 @@
   filtered scanlines.
   --------------------------------------------------------------------------*/
 
-#include "nx_image_codec.h"
-
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
-#include <caml/unixsupport.h>
 
-#include <errno.h>
 #include <limits.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 #define PNG_IDAT_CHUNK (1u << 20)
 
@@ -518,12 +514,12 @@ static png_status filter_image(const uint8_t *src, size_t width, size_t height,
 static void checked_bytes(value vbuf, const uint8_t **data, size_t *len) {
   struct caml_ba_array *array = Caml_ba_array_val(vbuf);
   if ((array->flags & CAML_BA_KIND_MASK) != CAML_BA_UINT8)
-    caml_invalid_argument("Nx_image PNG: expected a uint8 Bigarray");
+    caml_invalid_argument("Nx_io PNG: expected a uint8 Bigarray");
   *data = Caml_ba_data_val(vbuf);
   *len = caml_ba_byte_size(array);
 }
 
-CAMLprim value caml_nx_image_png_probe(value vsrc) {
+CAMLprim value caml_nx_io_png_probe(value vsrc) {
   CAMLparam1(vsrc);
   CAMLlocal1(vresult);
   const uint8_t *src;
@@ -545,7 +541,7 @@ CAMLprim value caml_nx_image_png_probe(value vsrc) {
 
 /* The image data of [src], a probed PNG stream, and the length of its
    decompressed scanlines. */
-CAMLprim value caml_nx_image_png_idat(value vsrc) {
+CAMLprim value caml_nx_io_png_idat(value vsrc) {
   CAMLparam1(vsrc);
   CAMLlocal2(vidat, vresult);
   const uint8_t *src;
@@ -572,7 +568,7 @@ CAMLprim value caml_nx_image_png_idat(value vsrc) {
   CAMLreturn(vresult);
 }
 
-CAMLprim value caml_nx_image_png_decode(value vsrc, value vfiltered, value vdst,
+CAMLprim value caml_nx_io_png_decode(value vsrc, value vfiltered, value vdst,
                                      value vgrayscale) {
   CAMLparam4(vsrc, vfiltered, vdst, vgrayscale);
   const uint8_t *src;
@@ -598,7 +594,7 @@ CAMLprim value caml_nx_image_png_decode(value vsrc, value vfiltered, value vdst,
 }
 
 /* The filtered scanlines of the 8-bit image [src]. */
-CAMLprim value caml_nx_image_png_filter(value vsrc, value vwidth, value vheight,
+CAMLprim value caml_nx_io_png_filter(value vsrc, value vwidth, value vheight,
                                      value vchannels) {
   CAMLparam4(vsrc, vwidth, vheight, vchannels);
   CAMLlocal1(vresult);

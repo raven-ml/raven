@@ -8,22 +8,17 @@
   separate checked stages.
   --------------------------------------------------------------------------*/
 
-#include "nx_image_codec.h"
-
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
 #include <caml/fail.h>
 #include <caml/memory.h>
 #include <caml/mlvalues.h>
 #include <caml/threads.h>
-#include <caml/unixsupport.h>
 
-#include <errno.h>
 #include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 #define JPEG_MAX_COMPONENTS 4
 #define JPEG_MAX_TABLES 4
@@ -39,8 +34,7 @@ typedef enum {
   JPEG_HUFFMAN,
   JPEG_RESTART,
   JPEG_SIZE,
-  JPEG_NOMEM,
-  JPEG_SYSTEM
+  JPEG_NOMEM
 } jpeg_status;
 
 typedef struct {
@@ -140,8 +134,6 @@ static const char *jpeg_message(jpeg_status status) {
     return "JPEG dimensions are too large";
   case JPEG_NOMEM:
     return "JPEG codec allocation failed";
-  case JPEG_SYSTEM:
-    return "JPEG output error";
   }
   return "unknown JPEG error";
 }
@@ -1025,10 +1017,11 @@ typedef struct {
   uint8_t size[256];
 } encoder_huffman;
 
+/* The file being encoded, in a buffer that doubles as it fills. */
 typedef struct {
-  nx_image_fd fd;
-  uint8_t staging[16384];
-  size_t staged;
+  uint8_t *data;
+  size_t length;
+  size_t capacity;
   uint64_t bits;
   unsigned nbits;
 } jpeg_writer;
@@ -1088,17 +1081,19 @@ static const uint8_t ac_chrominance_values[162] = {
     0xe2, 0xe3, 0xe4, 0xe5, 0xe6, 0xe7, 0xe8, 0xe9, 0xea, 0xf2, 0xf3, 0xf4,
     0xf5, 0xf6, 0xf7, 0xf8, 0xf9, 0xfa};
 
-static jpeg_status writer_flush(jpeg_writer *writer) {
-  if (nx_image_write_all(writer->fd, writer->staging, writer->staged) != 0)
-    return JPEG_SYSTEM;
-  writer->staged = 0;
-  return JPEG_OK;
-}
-
 static jpeg_status writer_byte(jpeg_writer *writer, uint8_t byte) {
-  writer->staging[writer->staged++] = byte;
-  return writer->staged == sizeof(writer->staging) ? writer_flush(writer)
-                                                   : JPEG_OK;
+  if (writer->length == writer->capacity) {
+    size_t capacity = writer->capacity == 0 ? 16384 : writer->capacity * 2;
+    if (capacity < writer->capacity)
+      return JPEG_NOMEM;
+    uint8_t *data = realloc(writer->data, capacity);
+    if (data == NULL)
+      return JPEG_NOMEM;
+    writer->data = data;
+    writer->capacity = capacity;
+  }
+  writer->data[writer->length++] = byte;
+  return JPEG_OK;
 }
 
 static jpeg_status writer_data(jpeg_writer *writer, const uint8_t *data,
@@ -1315,8 +1310,11 @@ static size_t append_huffman(uint8_t *dst, unsigned class_, unsigned index,
   return count + 17;
 }
 
-static jpeg_status encode_jpeg(nx_image_fd fd, const uint8_t *src, size_t src_len,
-                               size_t width, size_t height, unsigned channels) {
+/* Encodes [src] as a baseline JPEG file into [writer], whose buffer the caller
+   frees whatever the status. */
+static jpeg_status encode_jpeg(jpeg_writer *writer, const uint8_t *src,
+                               size_t src_len, size_t width, size_t height,
+                               unsigned channels) {
   if (width == 0 || height == 0 || width > 65535 || height > 65535 ||
       (channels != 1 && channels != 3) || width > SIZE_MAX / height ||
       width * height > SIZE_MAX / channels ||
@@ -1340,14 +1338,11 @@ static jpeg_status encode_jpeg(nx_image_fd fd, const uint8_t *src, size_t src_le
   build_encoder_huffman(&ac_chroma, ac_chrominance_counts,
                         ac_chrominance_values);
 
-  jpeg_writer writer;
-  memset(&writer, 0, sizeof(writer));
-  writer.fd = fd;
   const uint8_t soi[2] = {0xff, 0xd8};
-  jpeg_status status = writer_data(&writer, soi, sizeof(soi));
+  jpeg_status status = writer_data(writer, soi, sizeof(soi));
   const uint8_t app0[14] = {'J', 'F', 'I', 'F', 0, 1, 1, 0, 0, 1, 0, 1, 0, 0};
   if (status == JPEG_OK)
-    status = writer_marker(&writer, 0xe0, app0, sizeof(app0));
+    status = writer_marker(writer, 0xe0, app0, sizeof(app0));
 
   uint8_t dqt[130];
   size_t dqt_len = 65;
@@ -1361,7 +1356,7 @@ static jpeg_status encode_jpeg(nx_image_fd fd, const uint8_t *src, size_t src_le
     dqt_len = 130;
   }
   if (status == JPEG_OK)
-    status = writer_marker(&writer, 0xdb, dqt, dqt_len);
+    status = writer_marker(writer, 0xdb, dqt, dqt_len);
 
   uint8_t sof[15];
   size_t sof_len = channels == 1 ? 9 : 15;
@@ -1383,7 +1378,7 @@ static jpeg_status encode_jpeg(nx_image_fd fd, const uint8_t *src, size_t src_le
     sof[14] = 1;
   }
   if (status == JPEG_OK)
-    status = writer_marker(&writer, 0xc0, sof, sof_len);
+    status = writer_marker(writer, 0xc0, sof, sof_len);
 
   uint8_t dht[416];
   size_t dht_len = 0;
@@ -1398,7 +1393,7 @@ static jpeg_status encode_jpeg(nx_image_fd fd, const uint8_t *src, size_t src_le
                               ac_chrominance_values);
   }
   if (status == JPEG_OK)
-    status = writer_marker(&writer, 0xc4, dht, dht_len);
+    status = writer_marker(writer, 0xc4, dht, dht_len);
 
   uint8_t sos[10];
   size_t sos_len = channels == 1 ? 6 : 10;
@@ -1419,7 +1414,7 @@ static jpeg_status encode_jpeg(nx_image_fd fd, const uint8_t *src, size_t src_le
     sos[5] = 0;
   }
   if (status == JPEG_OK)
-    status = writer_marker(&writer, 0xda, sos, sos_len);
+    status = writer_marker(writer, 0xda, sos, sos_len);
 
   int previous_y = 0;
   int previous_cb = 0;
@@ -1438,42 +1433,40 @@ static jpeg_status encode_jpeg(nx_image_fd fd, const uint8_t *src, size_t src_le
         size_t block_y = mcu_y + (block >> 1) * 8;
         luma_block(src, width, height, channels, block_x, block_y, samples);
         forward_block(samples, luma_quant, coefficients);
-        status = encode_block(&writer, &dc_luma, &ac_luma, coefficients,
-                              &previous_y);
+        status =
+            encode_block(writer, &dc_luma, &ac_luma, coefficients, &previous_y);
       }
       if (channels == 3 && status == JPEG_OK) {
         chroma_block(src, width, height, mcu_x, mcu_y, 0, samples);
         forward_block(samples, chroma_quant, coefficients);
-        status = encode_block(&writer, &dc_chroma, &ac_chroma, coefficients,
+        status = encode_block(writer, &dc_chroma, &ac_chroma, coefficients,
                               &previous_cb);
       }
       if (channels == 3 && status == JPEG_OK) {
         chroma_block(src, width, height, mcu_x, mcu_y, 1, samples);
         forward_block(samples, chroma_quant, coefficients);
-        status = encode_block(&writer, &dc_chroma, &ac_chroma, coefficients,
+        status = encode_block(writer, &dc_chroma, &ac_chroma, coefficients,
                               &previous_cr);
       }
     }
   }
   if (status == JPEG_OK)
-    status = writer_finish_bits(&writer);
+    status = writer_finish_bits(writer);
   const uint8_t eoi[2] = {0xff, 0xd9};
   if (status == JPEG_OK)
-    status = writer_data(&writer, eoi, sizeof(eoi));
-  if (status == JPEG_OK)
-    status = writer_flush(&writer);
+    status = writer_data(writer, eoi, sizeof(eoi));
   return status;
 }
 
 static void checked_bytes(value vbuf, const uint8_t **data, size_t *len) {
   struct caml_ba_array *array = Caml_ba_array_val(vbuf);
   if ((array->flags & CAML_BA_KIND_MASK) != CAML_BA_UINT8)
-    caml_invalid_argument("Nx_image JPEG: expected a uint8 Bigarray");
+    caml_invalid_argument("Nx_io JPEG: expected a uint8 Bigarray");
   *data = Caml_ba_data_val(vbuf);
   *len = caml_ba_byte_size(array);
 }
 
-CAMLprim value caml_nx_image_jpeg_probe(value vsrc) {
+CAMLprim value caml_nx_io_jpeg_probe(value vsrc) {
   CAMLparam1(vsrc);
   CAMLlocal1(vresult);
   const uint8_t *src;
@@ -1494,7 +1487,7 @@ CAMLprim value caml_nx_image_jpeg_probe(value vsrc) {
   CAMLreturn(vresult);
 }
 
-CAMLprim value caml_nx_image_jpeg_decode(value vsrc, value vdst,
+CAMLprim value caml_nx_io_jpeg_decode(value vsrc, value vdst,
                                       value vgrayscale) {
   CAMLparam3(vsrc, vdst, vgrayscale);
   const uint8_t *src;
@@ -1513,9 +1506,11 @@ CAMLprim value caml_nx_image_jpeg_decode(value vsrc, value vdst,
   CAMLreturn(Val_unit);
 }
 
-CAMLprim value caml_nx_image_jpeg_encode(value vfd, value vsrc, value vwidth,
-                                      value vheight, value vchannels) {
-  CAMLparam5(vfd, vsrc, vwidth, vheight, vchannels);
+/* The JPEG file of the 8-bit image [src]. */
+CAMLprim value caml_nx_io_jpeg_encode(value vsrc, value vwidth, value vheight,
+                                      value vchannels) {
+  CAMLparam4(vsrc, vwidth, vheight, vchannels);
+  CAMLlocal1(vresult);
   const uint8_t *src;
   size_t src_len;
   checked_bytes(vsrc, &src, &src_len);
@@ -1523,16 +1518,19 @@ CAMLprim value caml_nx_image_jpeg_encode(value vfd, value vsrc, value vwidth,
   intnat height_i = Long_val(vheight);
   intnat channels_i = Long_val(vchannels);
   if (width_i <= 0 || height_i <= 0 || channels_i <= 0)
-    caml_invalid_argument("Nx_image JPEG: invalid image dimensions");
-  nx_image_fd fd = Nx_image_fd_val(vfd);
+    caml_invalid_argument("Nx_io JPEG: invalid image dimensions");
+  jpeg_writer writer;
+  memset(&writer, 0, sizeof(writer));
   caml_release_runtime_system();
-  jpeg_status status = encode_jpeg(fd, src, src_len, (size_t)width_i,
+  jpeg_status status = encode_jpeg(&writer, src, src_len, (size_t)width_i,
                                    (size_t)height_i, (unsigned)channels_i);
-  int saved_errno = errno;
   caml_acquire_runtime_system();
-  if (status == JPEG_SYSTEM)
-    unix_error(saved_errno == 0 ? EIO : saved_errno, "write", Nothing);
-  if (status != JPEG_OK)
+  if (status != JPEG_OK) {
+    free(writer.data);
     caml_failwith(jpeg_message(status));
-  CAMLreturn(Val_unit);
+  }
+  vresult =
+      caml_alloc_initialized_string(writer.length, (const char *)writer.data);
+  free(writer.data);
+  CAMLreturn(vresult);
 }

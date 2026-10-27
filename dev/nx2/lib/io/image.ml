@@ -7,22 +7,20 @@ open Bigarray
 
 type bytes = (int, int8_unsigned_elt, c_layout) Array1.t
 
-external png_parse : bytes -> int * int = "caml_nx_image_png_probe"
-external png_idat : bytes -> bytes * int = "caml_nx_image_png_idat"
+external png_parse : bytes -> int * int = "caml_nx_io_png_probe"
+external png_idat : bytes -> bytes * int = "caml_nx_io_png_idat"
 
 external png_unfilter : bytes -> bytes -> bytes -> bool -> unit
-  = "caml_nx_image_png_decode"
+  = "caml_nx_io_png_decode"
 
 external png_filter : bytes -> int -> int -> int -> string
-  = "caml_nx_image_png_filter"
+  = "caml_nx_io_png_filter"
 
-external jpeg_probe : bytes -> int * int = "caml_nx_image_jpeg_probe"
+external jpeg_probe : bytes -> int * int = "caml_nx_io_jpeg_probe"
+external jpeg_decode : bytes -> bytes -> bool -> unit = "caml_nx_io_jpeg_decode"
 
-external jpeg_decode : bytes -> bytes -> bool -> unit
-  = "caml_nx_image_jpeg_decode"
-
-external jpeg_encode : Unix.file_descr -> bytes -> int -> int -> int -> unit
-  = "caml_nx_image_jpeg_encode"
+external jpeg_stream : bytes -> int -> int -> int -> string
+  = "caml_nx_io_jpeg_encode"
 
 module Crc32 = Compress_deflate.Crc32
 
@@ -118,17 +116,25 @@ let is_jpeg src =
   && Array1.unsafe_get src 0 = 0xff
   && Array1.unsafe_get src 1 = 0xd8
 
-let decode ~grayscale src =
-  let probe, decode =
-    if is_png src then (png_probe, png_decode)
-    else if is_jpeg src then (jpeg_probe, jpeg_decode)
-    else failwith "no PNG or JPEG stream"
-  in
+let jpeg_encode data ~width ~height ~channels =
+  jpeg_stream data width height channels
+
+(* The probe and the decoder of the stream [src], recognised by its first
+   bytes. *)
+let codec src =
+  if is_png src then (png_probe, png_decode)
+  else if is_jpeg src then (jpeg_probe, jpeg_decode)
+  else failwith "no PNG or JPEG stream"
+
+let probe ~grayscale src =
+  let probe, _ = codec src in
   let width, height = probe src in
   let channels = if grayscale then 1 else 3 in
   if width <= 0 || height <= 0 then failwith "the image has no pixel";
   if width > max_int / height || width * height > max_int / channels then
     failwith "the image is too large";
-  let dst = Array1.create int8_unsigned c_layout (width * height * channels) in
-  decode src dst grayscale;
-  (dst, height, width)
+  (height, width, channels)
+
+let decode ~grayscale src dst =
+  let _, decode = codec src in
+  decode src dst grayscale

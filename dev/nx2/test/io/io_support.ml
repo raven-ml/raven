@@ -41,6 +41,52 @@ let invalid ~by f =
     (Exn.invalid_arg ~substring:(by ^ ": "))
     (fun () -> ignore (f ()))
 
+(* [loads_or_fails ~path f] asserts that [f ()] returns or raises [Failure]
+   naming [path]: a corrupted file never raises anything else. *)
+let loads_or_fails ~path f =
+  match f () with
+  | _ -> ()
+  | exception Failure m when String.starts_with ~prefix:(path ^ ": ") m -> ()
+  | exception e -> failf "%s raised %s" path (Printexc.to_string e)
+
+let flip_byte s i =
+  String.mapi
+    (fun j c -> if i = j then Char.chr (Char.code c lxor 0xff) else c)
+    s
+
+(* Every proper prefix of [whole] fails to load, naming its file. *)
+let prefixes_fail load whole =
+  for n = 0 to String.length whole - 1 do
+    let path = file (String.sub whole 0 n) in
+    fails ~path (fun () -> load path)
+  done
+
+(* Every byte of [whole] below [upto], flipped, loads or fails. *)
+let flips_load_or_fail load ?(upto = max_int) whole =
+  for i = 0 to Int.min upto (String.length whole) - 1 do
+    let path = file (flip_byte whole i) in
+    loads_or_fails ~path (fun () -> load path)
+  done
+
+(* Memory *)
+
+(* [f (make ())] and the bytes the host holds more after it, read once collected
+   memory has returned. One uncounted run comes first. *)
+let host_grown make f =
+  let settled () =
+    for _ = 1 to 4 do
+      Gc.full_major ();
+      ignore (Rig.Buffer.create Rig.host 0);
+      Rig.free_cache Rig.host
+    done;
+    Rig.allocated Rig.host
+  in
+  ignore (f (make ()));
+  let x = make () in
+  let before = settled () in
+  let y = f x in
+  (y, Rig.allocated Rig.host - before)
+
 (* Values *)
 
 let pp_shape = Nx.pp_shape

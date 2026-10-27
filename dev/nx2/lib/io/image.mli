@@ -10,12 +10,19 @@
 type bytes =
   (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
 
-val decode : grayscale:bool -> bytes -> bytes * int * int
-(** [decode ~grayscale src] is the pixels of the PNG or JPEG stream [src], with
-    its height and width: one channel with [grayscale], three otherwise, row by
-    row from the top.
+val probe : grayscale:bool -> bytes -> int * int * int
+(** [probe ~grayscale src] is the height, width and channels of the image of the
+    PNG or JPEG stream [src]: one channel with [grayscale], three otherwise.
 
-    Raises [Failure] if [src] is no such stream, or a malformed one. *)
+    Raises [Failure] if [src] is no such stream, if its header is malformed, or
+    if the image has no pixel or more than [max_int] samples. *)
+
+val decode : grayscale:bool -> bytes -> bytes -> unit
+(** [decode ~grayscale src dst] writes the pixels of [src] into [dst], row by
+    row from the top, with the channels {!probe} gives for [grayscale].
+
+    Raises [Failure] if [src] is malformed, or if its pixels do not fill [dst]
+    exactly. *)
 
 val png_encode :
   ppm:int ->
@@ -30,9 +37,6 @@ val png_encode :
     pixels per metre, and [srgb] an sRGB chunk. [channels] is 1, 3 or 4 and the
     image has a pixel. *)
 
-val jpeg_encode : Unix.file_descr -> bytes -> int -> int -> int -> unit
-(** [jpeg_encode fd pixels width height channels] writes a baseline JPEG file of
-    [pixels] to [fd], at quality 90. [channels] is 1 or 3 and the image has a
-    pixel.
-
-    Raises [Unix.Unix_error] if the write fails. *)
+val jpeg_encode : bytes -> width:int -> height:int -> channels:int -> string
+(** [jpeg_encode pixels ~width ~height ~channels] is a baseline JPEG file of
+    [pixels], at quality 90. [channels] is 1 or 3 and the image has a pixel. *)

@@ -9,6 +9,11 @@
     npz, SafeTensors and GGUF files do. A file of named arrays is read and
     written as an {!Archive.t}, and each format's functions are named after it.
 
+    An {e image} is a [uint8] array of shape [[|h; w|]] for one channel, or
+    [[|h; w; c|]] for [c] channels: one for grey, three for red, green and
+    blue, four for those and alpha. Its first row is the top of the picture.
+    A PNG or JPEG file holds one image.
+
     {b Loading.} A loader reads the file's header and returns host values
     ({!Nx.Host}). An array whose bytes lie in the file in an order nx reads (C
     order, or Fortran order for npy), little-endian, at an offset that is a
@@ -18,9 +23,9 @@
     {!Nx.place} of such a value onto a device that addresses host memory, such
     as Metal's, shares the pages, and onto any other device copies them
     ({!Rig.reaches}). Any other array (a compressed npz entry, a big-endian one,
-    one at a misaligned offset) is read at load into host memory of its own,
-    where its donation may write its result ({!Nx.donate}). No donation of a
-    value over the file's pages writes them.
+    one at a misaligned offset, an image) is read at load into host memory of
+    its own, where its donation may write its result ({!Nx.donate}). No
+    donation of a value over the file's pages writes them.
 
     A file stays open while a value over its pages is reachable, and its values
     see the file that was opened: a save to its path, which puts a new file
@@ -35,12 +40,14 @@
     On Windows a file whose pages are mapped can be neither deleted nor
     replaced until its values are collected.
 
-    {b Saving.} A save takes a value of any set and writes its elements in C
-    order, little-endian. It reads the value on the host for the extent of the
-    save ({!Nx.Repr.read}): in the value's own memory where the host addresses
-    it, and otherwise in a copy, made once the value's set has computed it. It
-    leaves the value's memory unshared, so a later donation of the value may
-    write its result there ({!Nx.donate}).
+    {b Saving.} A save takes a value of any set. An npy, npz or SafeTensors
+    save writes its elements in C order, little-endian, and a text save in C
+    order. An image save encodes its pixels row by row from the top. A save
+    reads the value on the host for the extent of the save ({!Nx.Repr.read}):
+    in the value's own memory where the host addresses it, and otherwise in a
+    copy, made once the value's set has computed it. It leaves the value's
+    memory unshared, so a later donation of the value may write its result
+    there ({!Nx.donate}).
 
     A save holds on the host, beyond the value's own memory, a copy of each
     value the host does not address, a C-order copy of each value not in C
@@ -49,7 +56,7 @@
     takes up to twice its bytes, an npy file's peak is its value's, and an npz
     or SafeTensors file's is its largest entry's, since each entry is written
     before the next is read. A text file also holds its value's elements as an
-    OCaml array.
+    OCaml array, and an image file its encoded bytes.
 
     A save writes a new file beside its path, orders the file's bytes before
     every later change to the file system, then renames it over the path and
@@ -443,3 +450,52 @@ val save_txt :
     with no element writes no row, so its file does not load.
 
     Raises [Invalid_argument] if [x] is complex or has more than two axes. *)
+
+(** {1:images Images}
+
+    PNG files are those of the
+    {{:https://www.w3.org/TR/png-3/}PNG Specification, Third Edition}: every
+    colour type and bit depth, palettes, transparency and interlacing. JPEG
+    files are those of {{:https://www.itu.int/rec/T-REC-T.81}ITU-T T.81} with
+    8-bit samples and Huffman coding, sequential or progressive: grey, YCbCr,
+    RGB, CMYK and YCCK, with any sampling and restart intervals. *)
+
+val load_image : ?grayscale:bool -> string -> Nx.host Nx.uint8_t
+(** [load_image path] is the image of the PNG or JPEG file [path], recognised
+    by its contents. It has shape [[|height; width; 3|]], or
+    [[|height; width|]] with [~grayscale:true] (defaults to [false]). An alpha
+    channel is dropped, a grey image loads as three equal channels, and
+    [~grayscale:true] reads a colour image as its luma
+    [0.299 R + 0.587 G + 0.114 B] (ITU-R BT.601), within one level. A 16-bit
+    sample keeps its high byte, and a sample of 1, 2 or 4 bits is scaled to 8
+    bits, rounded to nearest.
+
+    Raises [Failure] also if the file is neither a PNG nor a JPEG stream, or if
+    a checksum does not match. *)
+
+val save_image : ?overwrite:bool -> string -> 'd Nx.uint8_t -> unit
+(** [save_image path x] writes the image [x] to [path], as PNG for the
+    extension [.png] and as JPEG for [.jpg] and [.jpeg], in any case. PNG holds
+    1, 3 or 4 channels at 8 bits; JPEG holds 1 or 3 channels, written baseline
+    at quality 90 (the standard tables of T.81's Annex K scaled to 20%), colour
+    with its chroma subsampled 4:2:0.
+
+    Raises [Invalid_argument] if the extension is neither, or if [x] has no
+    pixel or a shape its format does not hold. *)
+
+val encode_png : ?dpi:float -> ?srgb:bool -> 'd Nx.uint8_t -> string
+(** [encode_png x] is the contents of a PNG file of the image [x], without
+    touching the file system:
+    - [dpi], the image's physical resolution in pixels per inch, is written as a
+      [pHYs] chunk of [Float.round (dpi /. 0.0254)] pixels per metre on both
+      axes, so that viewers and printers show the image at its physical size.
+      Without it the file states no physical size.
+    - [srgb] is whether to write an [sRGB] chunk with the perceptual rendering
+      intent, which states that the samples are sRGB. Defaults to [false].
+
+    Without [dpi] and [srgb] it is the file {!save_image} writes for [x].
+
+    Raises [Invalid_argument] if [x] has no pixel or not 1, 3 or 4 channels, or
+    if [Float.round (dpi /. 0.0254)] is not in \[[1];[2{^31} - 1]\], the range
+    of a PNG integer: [dpi] is below about [0.0127], above about [5.45e7], or
+    not a number. *)

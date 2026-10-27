@@ -1,9 +1,0 @@
-; nx.image: images to and from PNG and JPEG files.
-
-(library
- (name nx_image)
- (private_modules fail save codec)
- (libraries nx nx_array unix compress.deflate)
- (foreign_stubs
-  (language c)
-  (names nx_image_sync nx_image_png nx_image_jpeg)))

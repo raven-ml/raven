@@ -1,9 +1,11 @@
-; nx.io's suites. They read files of the formats written by numpy, torch and
-; Python's zipfile, which gen/generate.py writes into support/.
+; nx.io's suites. They read files of the formats written by numpy, torch,
+; Python's zipfile, Pillow and a minimal PNG writer, with the pixels Pillow
+; decodes from each image as an npy file, which gen/generate.py writes into
+; support/.
 
 (tests
- (names test_io test_archive)
- (modules test_io test_archive io_support fail)
+ (names test_io test_archive test_image)
+ (modules test_io test_archive test_image io_support fail)
  (libraries nx nx_array nx_io nx_support rig unix windtrap)
  (deps
   (glob_files support/*))
