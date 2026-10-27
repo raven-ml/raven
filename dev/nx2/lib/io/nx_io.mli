@@ -22,10 +22,11 @@
 
     Any other array of a file the system maps, such as a compressed npz entry, a
     misaligned one or an image, is read at load into memory of its own, where
-    its donation may write its result. The arrays of a file the system cannot
-    map are read at load into memory. An entry of a dtype nx lacks loads as its
-    bytes at [uint8], at the shape its format's section states, and an entry
-    with no elements is an empty array of that shape.
+    its donation may write its result. A compressed npz entry takes twice its
+    bytes while it loads: its inflated bytes and their copy. The arrays of a
+    file the system cannot map are read at load into memory. An entry of a dtype
+    nx lacks loads as its bytes at [uint8], at the shape its format's section
+    states, and an entry with no elements is an empty array of that shape.
 
     A mapped value keeps its file mapped while it is reachable, and reads the
     file that was opened, so a save to its path leaves it its elements.
@@ -373,12 +374,16 @@ module Gguf : sig
 end
 
 val load_gguf : string -> Gguf.t
-(** [load_gguf path] is the contents of the GGUF file [path].
+(** [load_gguf path] is the contents of the GGUF file [path]. The file's
+    {e alignment} is its [general.alignment], or 32 without one. Each array's
+    data may start at any multiple of the alignment within the data after the
+    header, so two arrays may share bytes or leave bytes between them.
 
     Raises [Failure] as {!section-errors} states, and:
     - if the file does not start with the GGUF magic, its version is not 2 or 3,
       or its byte order is big-endian;
     - if its header is malformed or cut short, or names a key or an array twice;
+    - if its [general.alignment] is not a [uint32] power of two;
     - if it gives an array an empty name, a type this function does not know, a
       row that is not a whole number of blocks, or a position that is not a
       multiple of the alignment;
@@ -419,12 +424,14 @@ val load_txt :
 (** [load_txt dt path] is the array of the text file [path] at [dt].
 
     It skips the first [skiprows] lines, blank lines, and lines starting with
-    [comments] after blanks. Each other line is a row that [sep] divides into
-    fields, each trimmed of blanks. A run of spaces is one separator for the
-    default [sep], [" "]. With any other [sep] an empty field is a field, so
-    with [sep] [","], ["1, 2"] has two fields and ["1,,2"] three. A single row
-    or column loads as a vector, and more as a matrix. [comments] defaults to
-    ["#"] and [skiprows] to [0].
+    [comments] after blanks, [comments] itself trimmed of blanks. An empty or
+    blank [comments] marks no line as a comment. Each other line is a row that
+    [sep] divides into fields, each trimmed of blanks. A run of spaces is one
+    separator for the default [sep], [" "]. With any other non-empty [sep] an
+    empty field is a field, so with [sep] [","], ["1, 2"] has two fields and
+    ["1,,2"] three. With [sep] [""] each line is one field. A single row or
+    column loads as a vector, and more as a matrix. [comments] defaults to ["#"]
+    and [skiprows] to [0].
 
     Raises [Invalid_argument] if [dt] is complex or [skiprows] is negative.
     Raises [Failure] as {!section-errors} states if the file has no row, and,
