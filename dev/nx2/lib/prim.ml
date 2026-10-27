@@ -1398,39 +1398,20 @@ let shifted first (nd : P.node) =
   match nd with Coord c -> first.(c) <> 0 | _ -> false
 
 (* [prog] with each [Coord] of an axis whose window starts at [s > 0] replaced
-   by [Coord + s], so that a device computes its window. Each node keeps its
-   place after the two it gains, [at] mapping old indices to new. *)
+   by [Coord + s], so that a device computes its window. *)
 let with_offsets (prog : P.t) (first : int array) =
   if
     Array.for_all (fun s -> s = 0) first
     || not (Iarray.exists (shifted first) prog.nodes)
   then prog
-  else begin
-    let nodes = ref ([] : P.node list) and count = ref 0 in
-    let push nd =
-      nodes := List.cons nd !nodes;
-      incr count;
-      !count - 1
+  else
+    let offset : P.node -> P.E.any option = function
+      | Coord c when first.(c) <> 0 ->
+          let start = P.E.const D.Int64 (Int64.of_int first.(c)) in
+          Some (P.E.any P.E.(coord c + start))
+      | _ -> None
     in
-    let index = Array.make (Iarray.length prog.nodes) 0 in
-    let at j = index.(j) in
-    Iarray.iteri
-      (fun i nd ->
-        index.(i) <-
-          (match (nd : P.node) with
-          | Coord c when first.(c) <> 0 ->
-              let coord = push nd in
-              let start = P.bits D.Int64 (Int64.of_int first.(c)) in
-              let start = push (Const (D.Any D.Int64, start)) in
-              push (Op2 (Binary Add, coord, start))
-          | Op1 (k, dt, j) -> push (Op1 (k, dt, at j))
-          | Op2 (k, j, l) -> push (Op2 (k, at j, at l))
-          | Op3 (k, j, l, m) -> push (Op3 (k, at j, at l, at m))
-          | In _ | Coord _ | Const _ -> push nd))
-      prog.nodes;
-    let nodes = Iarray.of_list (List.rev !nodes) in
-    P.v ~ins:prog.ins nodes ~outs:(Iarray.map at prog.outs)
-  end
+    P.subst ~ins:prog.ins offset prog
 
 let starts w = Array.map (fun (r : Nx_array.Move.range) -> r.start) w
 let extents w =

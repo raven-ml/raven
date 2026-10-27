@@ -184,6 +184,24 @@ let position ~rank s =
   done;
   match !flat with None -> u64 0L | Some f -> E.bitcast D.Uint64 f
 
+(* [prog] with its operand [k] the value of [x], over its other operands in
+   order: a read of [In i] for [i > k] reads [In (i - 1)]. Binding an
+   operand to an expression of coordinates gives each element a value
+   computed from its index, as [draw] binds its position. *)
+let bind (prog : P.t) k x =
+  let ins =
+    Iarray.init (Iarray.length prog.ins - 1) (fun i ->
+        Iarray.get prog.ins (if i < k then i else i + 1))
+  in
+  let shift : P.node -> E.any option = function
+    | In i when i = k -> Some x
+    | In i when i > k ->
+        let (D.Any dt) = Iarray.get prog.ins i in
+        Some (E.any (E.input (i - 1) dt))
+    | _ -> None
+  in
+  P.subst ~ins shift prog
+
 (* A draw of [dt] and shape [s] per key of [k], by the sampler program [prog]:
    one map over the key's batch then [s], each element reading its key, its
    position in [s], and [params], each stretched to the draw's shape. *)
@@ -199,7 +217,7 @@ let draw ~by ?(params = [||]) (k : 'd key) dt s prog =
       (Array.map (fun (Value.Any x) -> Value.Any (stretch ~by shape x)) params)
   in
   let position = position ~rank:(Array.length shape) s in
-  let prog = P.bind prog position_operand (E.any position) in
+  let prog = bind prog position_operand (E.any position) in
   map ~by shape prog dt loads
 
 (* Parameter [i] of a draw, of dtype [dt], as a node of its program. *)
@@ -463,15 +481,19 @@ let randint ?key ?(low = 0) ~high s =
   in
   let range = Int64.of_int (high - low) in
   let threshold = Int64.unsigned_rem (Int64.neg range) range in
-  (* Each bind renumbers the operands after the one it binds, so the last is
-     bound first and the others keep their indices. *)
-  let bind i x prog = P.bind prog (first_param + i) (E.any x) in
-  let prog =
-    prog
-    |> bind 2 (E.const D.Uint32 (Int32.of_int low))
-    |> bind 1 (u64 threshold)
-    |> bind 0 (u64 range)
+  let params =
+    [|
+      E.any (u64 range);
+      E.any (u64 threshold);
+      E.any (E.const D.Uint32 (Int32.of_int low));
+    |]
   in
+  let bound : P.node -> E.any option = function
+    | In i when i >= first_param -> Some params.(i - first_param)
+    | _ -> None
+  in
+  let ins = Iarray.sub prog.ins ~pos:0 ~len:first_param in
+  let prog = P.subst ~ins bound prog in
   draw ~by (resolve ~by key) D.Int32 s prog
 
 (* Parameters *)

@@ -679,34 +679,43 @@ let like (type v s w r) (x : (v, s) P.E.t) (y : (w, r) P.E.t) : (v, s) P.E.t =
   | None -> failwith "a drawn node's operands differ in dtype"
 
 (* [d]'s nodes as expressions, each over its operands' expressions, so that a
-   node read twice is one value. *)
-let exprs d =
+   node read twice is one value. A leaf [n] is [e] where [leaf n] is
+   [Some e]. *)
+let typed ?(leaf = fun _ -> None) d =
   let e = Array.make (Array.length d.nodes) (Ex (P.E.coord 0)) in
+  let leaf_of = function
+    | (P.In _ | Coord _ | Const _) as nd -> leaf nd
+    | Op1 _ | Op2 _ | Op3 _ -> None
+  in
   Array.iteri
     (fun i nd ->
       e.(i) <-
-        (match nd with
-        | P.In k ->
+        (match (nd, leaf_of nd) with
+        | _, Some x -> x
+        | P.In k, None ->
             let (D.Any dt) = d.ins.(k) in
             Ex (P.E.input k dt)
-        | Coord a -> Ex (P.E.coord a)
-        | Const (D.Any dt, b) -> Ex (P.E.const dt (element dt b))
-        | Op1 (k, D.Any dt, a) ->
+        | Coord a, None -> Ex (P.E.coord a)
+        | Const (D.Any dt, b), None -> Ex (P.E.const dt (element dt b))
+        | Op1 (k, D.Any dt, a), None ->
             let (Ex x) = e.(a) in
             Ex (P.E.op1 k dt x)
-        | Op2 (k, a, b) -> (
+        | Op2 (k, a, b), None -> (
             let (Ex x) = e.(a) in
             let (Ex y) = e.(b) in
             match k with
             | Binary k -> Ex (P.E.binary k x (like x y))
             | Compare k -> Ex (P.E.compare k x (like x y)))
-        | Op3 (k, a, b, c) ->
+        | Op3 (k, a, b, c), None ->
             let (Ex c') = e.(a) in
             let (Ex x) = e.(b) in
             let (Ex y) = e.(c) in
             Ex (P.E.op3 k c' x (like x y))))
     d.nodes;
-  Array.map (fun (Ex x) -> P.E.any x) e
+  e
+
+let any (Ex x) = P.E.any x
+let exprs d = Array.map any (typed d)
 
 (* of_exprs's nodes and outputs as prog.mli states them for [d]'s outputs:
    the nodes they reach, each structure once, in the order a depth-first
@@ -742,13 +751,12 @@ let lowered d =
   let outs = Array.map visit d.outs in
   (Array.of_list (List.rev !nodes), outs)
 
-(* [d] without the nodes its outputs do not reach, whose kinds a library
-   may decline. *)
-let pruned d =
-  let keep = Array.make (Array.length d.nodes) false in
+(* Whether each node of [d] is one the outputs [outs] reach. *)
+let reach d outs =
+  let seen = Array.make (Array.length d.nodes) false in
   let rec visit i =
-    if not keep.(i) then begin
-      keep.(i) <- true;
+    if not seen.(i) then begin
+      seen.(i) <- true;
       match d.nodes.(i) with
       | P.In _ | Coord _ | Const _ -> ()
       | Op1 (_, _, a) -> visit a
@@ -756,7 +764,13 @@ let pruned d =
       | Op3 (_, a, b, c) -> visit a; visit b; visit c
     end
   in
-  Array.iter visit d.outs;
+  Array.iter visit outs;
+  seen
+
+(* [d] without the nodes its outputs do not reach, whose kinds a library
+   may decline. *)
+let pruned d =
+  let keep = reach d d.outs in
   let at = Array.make (Array.length d.nodes) (-1) and count = ref 0 in
   Array.iteri (fun i k -> if k then (at.(i) <- !count; incr count)) keep;
   let renumber = function
@@ -774,20 +788,25 @@ let pruned d =
   }
 
 (* Random elements of [dt]: any bits, a boolean's [0] or [1]. *)
-let random_elements rand (D.Any dt as d) n =
+let random_bits rand (D.Any dt) n =
   let byte () = Char.chr (Random.State.int rand 256) in
   let one () =
     if D.equal dt D.Bool then String.make 1 (Char.chr (Random.State.int rand 2))
     else String.init (max 1 (D.bits dt / 8)) (fun _ -> byte ())
   in
-  Elements.of_elements d [| 2; 3; 2 |] (Array.init n (fun _ -> one ()))
+  Array.init n (fun _ -> one ())
 
-(* [p]'s outputs over [loads] at the shape [2; 3; 2], computed by nx.cpu, as
-   their elements' bits. *)
-let compute (p : P.t) loads =
+let small = [| 2; 3; 2 |]
+
+let random_elements rand d n =
+  Elements.of_elements d small (random_bits rand d n)
+
+(* [p]'s outputs over [loads] at [shape], [2; 3; 2] by default, computed by
+   nx.cpu, as their elements' bits. *)
+let compute ?(shape = small) (p : P.t) loads =
   let dst o =
     let (D.Any dt) = P.dtype p o in
-    A.Any (A.create Rig.host dt [| 2; 3; 2 |])
+    A.Any (A.create Rig.host dt (Iarray.of_array shape))
   in
   let dsts = Array.map dst (Iarray.to_array p.outs) in
   let loads = Array.map (fun (A.Any x) -> Nx_kernel.Plain x) loads in
@@ -797,14 +816,86 @@ let compute (p : P.t) loads =
 
 let outputs = Testable.(result (array (array string)) Elements.answer)
 
-(* Binding *)
+(* Substitution *)
+
+let structural = Testable.structural ~pp:pp_prog
+
+(* [p] as a drawn program. *)
+let drawn_of (p : P.t) =
+  {
+    ins = Iarray.to_array p.ins;
+    nodes = Iarray.to_array p.nodes;
+    types = Array.init (Iarray.length p.nodes) (P.dtype p);
+    outs = Iarray.to_array p.outs;
+  }
+
+(* [subst ?outs ~ins f p] of [d]'s program [p], checked against prog.mli:
+   of_exprs's program over [ins] of the outputs [outs] selects, each leaf [n]
+   they reach replaced by [f n]'s expression where it is [Some], and as v
+   builds it; [f] called once on each such leaf and on no other node. Is the
+   result. *)
+let check_subst ?outs ~ins f d =
+  let ins = Iarray.of_array ins in
+  let calls = ref [] in
+  let called n =
+    calls := n :: !calls;
+    Option.map any (f n)
+  in
+  let s = P.subst ?outs ~ins called (program d) in
+  let picked =
+    match outs with
+    | None -> d.outs
+    | Some o -> Array.map (Array.get d.outs) (Iarray.to_array o)
+  in
+  let reached = reach d picked in
+  let leaves =
+    List.filteri
+      (fun i (nd : P.node) ->
+        reached.(i)
+        && match nd with In _ | Coord _ | Const _ -> true | _ -> false)
+      (Array.to_list d.nodes)
+  in
+  equal ~msg:"f's calls" (list node)
+    (List.sort compare leaves)
+    (List.sort compare !calls);
+  let e = typed ~leaf:f d in
+  let want = P.of_exprs ~ins (Iarray.of_array (Array.map (fun o -> any e.(o)) picked)) in
+  equal ~msg:"of_exprs's program" structural want s;
+  equal ~msg:"as v builds it" bool true
+    (s = P.v ~ins:s.ins s.nodes ~outs:s.outs);
+  s
+
+let law_subst_keeps (d, seed) =
+  let s = check_subst ~ins:d.ins (fun _ -> None) d in
+  let nodes, outs = lowered d in
+  equal ~msg:"nodes" (array node) nodes (Iarray.to_array s.nodes);
+  equal ~msg:"outs" (array int) outs (Iarray.to_array s.outs);
+  let rand = Random.State.make [| seed |] in
+  let loads = Array.map (fun t -> random_elements rand t 12) d.ins in
+  equal ~msg:"outputs' bits" outputs
+    (compute (program (pruned d)) loads)
+    (compute s loads);
+  cover "fewer nodes than drawn"
+    (Iarray.length s.nodes < Array.length d.nodes)
+
+let without k a =
+  Array.of_list (List.filteri (fun i _ -> i <> k) (Array.to_list a))
+
+(* The substitution that binds operand [k] of [ins] to [x]: [In k] is [x],
+   and [In i] for [i > k] is [In (i - 1)]. *)
+let binds ins k x : P.node -> ex option = function
+  | P.In i when i = k -> Some x
+  | In i when i > k ->
+      let (D.Any dt) = ins.(i) in
+      Some (Ex (P.E.input (i - 1) dt))
+  | In _ | Coord _ | Const _ | Op1 _ | Op2 _ | Op3 _ -> None
 
 (* An expression drawn over [ins], its last node cast to [dt]. *)
 let ending ins choices dt =
   let d = build ins choices 1 in
   let last = Array.length d.nodes - 1 in
   let d = { d with nodes = Array.append d.nodes [| P.Op1 (Cast, dt, last) |] } in
-  (exprs d).(last + 1)
+  (typed d).(last + 1)
 
 let binding =
   let open Gen in
@@ -816,102 +907,179 @@ let binding =
      and+ seed = int in
      (d, k, choices, seed))
 
-(* [bind p k x]'s nodes as prog.mli states them: [q]'s, [x] lowered over the
-   result's operands, then [p]'s but [In k], renumbered. *)
-let bound_nodes (p : P.t) k (q : P.t) =
-  let out = Iarray.get q.outs 0 in
-  let index = Array.make (Iarray.length p.nodes) 0 in
-  let nodes = ref (List.rev (Iarray.to_list q.nodes)) in
-  let count = ref (Iarray.length q.nodes) in
-  Iarray.iteri
-    (fun i nd ->
-      let at j = index.(j) in
-      match (nd : P.node) with
-      | In j when j = k -> index.(i) <- out
-      | _ ->
-          let nd : P.node =
-            match nd with
-            | In j when j > k -> In (j - 1)
-            | Op1 (o, dt, x) -> Op1 (o, dt, at x)
-            | Op2 (o, x, y) -> Op2 (o, at x, at y)
-            | Op3 (o, x, y, z) -> Op3 (o, at x, at y, at z)
-            | nd -> nd
-          in
-          nodes := nd :: !nodes;
-          index.(i) <- !count;
-          incr count)
-    p.nodes;
-  (Array.of_list (List.rev !nodes), Array.map (fun o -> index.(o)) (Iarray.to_array p.outs))
-
-(* Checks [bind p k x] against prog.mli: its operands, its nodes and outputs,
-   v's program of them, and its outputs' bits on nx.cpu against [p]'s over
-   [x]'s value, over operands drawn from [seed]. *)
-let check_bind (p : P.t) k x seed =
-  let ins = Iarray.to_array p.ins in
-  let others = Array.of_list (List.filteri (fun i _ -> i <> k) (Array.to_list ins)) in
-  let b = P.bind p k x in
-  let q = P.of_exprs ~ins:(Iarray.of_array others) [| x |] in
-  let nodes, outs = bound_nodes p k q in
-  equal ~msg:"nodes" (array node) nodes (Iarray.to_array b.nodes);
-  equal ~msg:"outs" (array int) outs (Iarray.to_array b.outs);
-  equal ~msg:"ins" (list string) (Array.to_list (Array.map name others))
-    (List.map name (Iarray.to_list b.ins));
-  equal ~msg:"as v builds it" bool true
-    (b = P.v ~ins:b.ins b.nodes ~outs:b.outs);
+(* [d]'s operand [k] bound to [x] by subst, checked as check_subst does over
+   [d]'s other operands, and its outputs' bits on nx.cpu against [d]'s over
+   [x]'s value, over operands drawn from [seed]. Whether nx.cpu computed
+   [x]. *)
+let check_bind d k x seed =
+  let others = without k d.ins in
+  let s = check_subst ~ins:others (binds d.ins k x) d in
+  equal ~msg:"ins" (list string)
+    (Array.to_list (Array.map name others))
+    (List.map name (Iarray.to_list s.ins));
+  let q = P.of_exprs ~ins:(Iarray.of_array others) [| any x |] in
   let rand = Random.State.make [| seed |] in
   let loads = Array.map (fun t -> random_elements rand t 12) others in
-  let computed = compute q loads in
-  match computed with
+  match compute q loads with
   | Error _ -> false
   | Ok out ->
-      let given = Elements.of_elements ins.(k) [| 2; 3; 2 |] out.(0) in
+      let given = Elements.of_elements d.ins.(k) small out.(0) in
       let all =
-        Array.init (Array.length ins) (fun i ->
+        Array.init (Array.length d.ins) (fun i ->
             if i = k then given else loads.(if i < k then i else i - 1))
       in
-      equal ~msg:"outputs' bits" outputs (compute p all) (compute b loads);
+      equal ~msg:"outputs' bits" outputs
+        (compute (program (pruned d)) all)
+        (compute s loads);
       true
 
 let law_bind (d, k, choices, seed) =
   assume (k < Array.length d.ins);
-  let others = Array.of_list (List.filteri (fun i _ -> i <> k) (Array.to_list d.ins)) in
   cover "p reads operand k" (Array.mem (P.In k) d.nodes);
   cover "an operand after k" (k < Array.length d.ins - 1);
   cover "k is 0" (k = 0);
-  cover "x computed" (check_bind (program d) k (ending others choices d.ins.(k)) seed)
+  cover "x computed"
+    (check_bind d k (ending (without k d.ins) choices d.ins.(k)) seed)
 
-(* Expressions whose value is an operand, a coordinate or a constant, at k =
-   0, with p reading or outputting In k. *)
-let test_bind_leaves () =
+(* Expressions whose value is an operand, a coordinate or a constant, bound
+   at k = 0, with p reading or outputting In k. *)
+let test_subst_leaves () =
   let f32 = D.Any D.Float32 and f64 = D.Any D.Float64 and i64 = D.Any D.Int64 in
   let p ins nodes outs =
-    P.v ~ins:(Iarray.of_array ins) (Iarray.of_array nodes) ~outs:(Iarray.of_array outs)
+    drawn_of
+      (P.v ~ins:(Iarray.of_array ins) (Iarray.of_array nodes)
+         ~outs:(Iarray.of_array outs))
   in
   let sum = p [| f32; f32 |] [| P.In 0; In 1; Op2 (Binary Add, 0, 1) |] [| 2 |] in
   equal ~msg:"an operand" bool true
-    (check_bind sum 0 P.E.(any (input 0 D.Float32)) 1);
+    (check_bind sum 0 (Ex (P.E.input 0 D.Float32)) 1);
   let scaled =
-    p [| i64; f32 |] [| P.In 0; In 1; Op1 (Cast, f32, 0); Op2 (Binary Mul, 2, 1) |] [| 3 |]
+    p [| i64; f32 |]
+      [| P.In 0; In 1; Op1 (Cast, f32, 0); Op2 (Binary Mul, 2, 1) |]
+      [| 3 |]
   in
-  equal ~msg:"a coordinate" bool true (check_bind scaled 0 P.E.(any (coord 1)) 2);
+  equal ~msg:"a coordinate" bool true (check_bind scaled 0 (Ex (P.E.coord 1)) 2);
   let passed = p [| f32; f64 |] [| P.In 0; In 1 |] [| 0; 1 |] in
   equal ~msg:"a constant, output as p's In k" bool true
-    (check_bind passed 0 P.E.(any (const D.Float32 2.5)) 3)
+    (check_bind passed 0 (Ex (P.E.const D.Float32 2.5)) 3)
 
-let test_bind_refuses () =
-  let f32 = D.Any D.Float32 and f64 = D.Any D.Float64 in
-  let p = P.of_exprs ~ins:[| f32; f64 |] [| P.E.(any (input 0 D.Float32)) |] in
-  let refuses ~msg k x =
-    raises_match ~msg Exn.invalid_arg (fun () -> P.bind p k x)
+(* A drawn program with [Coord a] and its double added, the double an output,
+   so that a kind reads a coordinate; each axis's offset; a seed. *)
+let shifting =
+  let open Gen in
+  with_pp
+    (fun ppf (d, off, _) ->
+      Format.fprintf ppf "%a, offsets %a" pp_drawn d Elements.pp_ints off)
+    (let+ d = drawn
+     and+ a = int_range 0 2
+     and+ off = array ~size:(int_range 3 3) (int_range 0 3)
+     and+ seed = int in
+     let n = Array.length d.nodes in
+     let added = [| P.Coord a; Op2 (Binary Add, n, n) |] in
+     let i64 = D.Any D.Int64 in
+     ( {
+         d with
+         nodes = Array.append d.nodes added;
+         types = Array.append d.types [| i64; i64 |];
+         outs = Array.append d.outs [| n + 1 |];
+       },
+       off,
+       seed ))
+
+(* subst adding [off] to each coordinate: at each index [i] of [2; 3; 2] it
+   computes as [d] does at [i + off], each operand read at [i + off]. *)
+let law_subst_coords (d, off, seed) =
+  let shift : P.node -> ex option = function
+    | Coord c when off.(c) <> 0 ->
+        Some (Ex P.E.(coord c + const D.Int64 (Int64.of_int off.(c))))
+    | _ -> None
   in
-  refuses ~msg:"an operand past ins" 2 P.E.(any (const D.Float32 1.));
-  refuses ~msg:"a negative operand" (-1) P.E.(any (const D.Float32 1.));
-  refuses ~msg:"an expression of another dtype" 1 P.E.(any (const D.Float32 1.));
-  refuses ~msg:"a read of an operand the result lacks" 1
-    P.E.(any (cast D.Float64 (input 1 D.Float32)));
-  refuses ~msg:"a read of an operand at another dtype" 1
-    P.E.(any (input 0 D.Float64));
-  ignore (P.bind p 1 P.E.(any (const D.Float64 1.)))
+  let s = check_subst ~ins:d.ins shift d in
+  let reached = (pruned d).nodes in
+  cover "a coordinate shifted"
+    (Array.exists (function P.Coord c -> off.(c) <> 0 | _ -> false) reached);
+  cover "a coordinate kept"
+    (Array.exists (function P.Coord c -> off.(c) = 0 | _ -> false) reached);
+  let big = Array.mapi (fun a x -> x + off.(a)) small in
+  let window es =
+    Array.init (Elements.total small) (fun k ->
+        let i = Elements.index_of small k in
+        es.(Elements.flat big (Array.mapi (fun a x -> x + off.(a)) i)))
+  in
+  let rand = Random.State.make [| seed |] in
+  let bits = Array.map (fun t -> random_bits rand t (Elements.total big)) d.ins in
+  let at shape f = Array.mapi (fun k es -> Elements.of_elements d.ins.(k) shape (f es)) bits in
+  let want =
+    compute ~shape:big (program (pruned d)) (at big Fun.id)
+    |> Result.map (Array.map window)
+  in
+  equal ~msg:"outputs' bits" outputs want (compute s (at small window))
+
+(* A drawn program, outputs selected among its own by index, and a seed. *)
+let selecting =
+  let open Gen in
+  with_pp
+    (fun ppf (d, sel, _) ->
+      Format.fprintf ppf "%a, selecting %a" pp_drawn d Elements.pp_ints sel)
+    (let+ d = drawn
+     and+ sel = array ~size:(int_range 1 4) (int_range 0 1_000)
+     and+ seed = int in
+     (d, Array.map (fun k -> k mod Array.length d.outs) sel, seed))
+
+(* subst's outputs with [outs] are [d]'s at [outs], in that order. *)
+let law_subst_outs (d, sel, seed) =
+  let s = check_subst ~outs:(Iarray.of_array sel) ~ins:d.ins (fun _ -> None) d in
+  let rand = Random.State.make [| seed |] in
+  let loads = Array.map (fun t -> random_elements rand t 12) d.ins in
+  let want =
+    compute (program (pruned d)) loads
+    |> Result.map (fun o -> Array.map (Array.get o) sel)
+  in
+  equal ~msg:"outputs' bits" outputs want (compute s loads);
+  let n = Array.length sel in
+  cover "an output twice"
+    (List.length (List.sort_uniq Int.compare (Array.to_list sel)) < n);
+  cover "an output dropped"
+    (List.exists (fun o -> not (Array.mem o sel)) (List.init (Array.length d.outs) Fun.id));
+  cover "outputs reordered"
+    (List.exists (fun j -> sel.(j) > sel.(j + 1)) (List.init (n - 1) Fun.id))
+
+let test_subst_refuses () =
+  let f32 = D.Any D.Float32 and f64 = D.Any D.Float64 in
+  let p =
+    P.of_exprs ~ins:[| f32; f64 |]
+      P.E.[| any (input 0 D.Float32); any (input 1 D.Float64); any (coord 0) |]
+  in
+  let refuses ~msg ?outs ins f =
+    raises_match ~msg Exn.invalid_arg (fun () ->
+        P.subst ?outs ~ins:(Iarray.of_array ins) f p)
+  in
+  let in1 x : P.node -> P.E.any option = function
+    | P.In 1 -> Some x
+    | _ -> None
+  in
+  let keep _ = None in
+  refuses ~msg:"an expression of another dtype" [| f32 |]
+    (in1 P.E.(any (const D.Float32 1.)));
+  refuses ~msg:"a coordinate's expression of another dtype" [| f32; f64 |]
+    (function P.Coord _ -> Some P.E.(any (const D.Int32 1l)) | _ -> None);
+  refuses ~msg:"a read of an operand the result lacks" [| f32 |]
+    (in1 P.E.(any (cast D.Float64 (input 1 D.Float32))));
+  refuses ~msg:"a read of an operand at another dtype" [| f32 |]
+    (in1 P.E.(any (input 0 D.Float64)));
+  refuses ~msg:"a kept operand past ins" [| f32 |] keep;
+  refuses ~msg:"a kept operand at another dtype" [| f32; f32 |] keep;
+  refuses ~msg:"an output past p's" ~outs:[| 3 |] [| f32; f64 |] keep;
+  refuses ~msg:"a negative output" ~outs:[| -1 |] [| f32; f64 |] keep;
+  refuses ~msg:"no output" ~outs:[||] [| f32; f64 |] keep;
+  ignore (P.subst ~ins:[| f32 |] (in1 P.E.(any (const D.Float64 1.))) p);
+  (* A leaf the selected outputs do not reach is not substituted, and need
+     not fit [ins]. *)
+  let unreached : P.node -> P.E.any option = function
+    | P.In 1 -> failwith "subst substituted an unreached leaf"
+    | _ -> None
+  in
+  ignore (P.subst ~outs:[| 0; 2 |] ~ins:[| f32 |] unreached p)
 
 (* of_exprs of [d]'s outputs, the odd ones from a second build, so that every
    node they reach is a value apart from the first build's and merges by its
@@ -1445,11 +1613,6 @@ let tests =
           ~name:name3 keys3 test_node3;
         test "a node found allocates nothing" test_node_found_allocates_nothing;
         test "each tag, field and kind is nx_kernel.h's code" test_codes;
-        prop "bind is p over x's value, its nodes x's then p's" binding
-          law_bind;
-        test "bind takes an operand, a coordinate or a constant"
-          test_bind_leaves;
-        test "bind refuses what is no binding" test_bind_refuses;
       ];
     group "expressions"
       [
@@ -1469,6 +1632,19 @@ let tests =
         test "constructors and of_exprs refuse as v does" test_exprs_refuse;
         test "programs take any number of operands and outputs"
           test_many_operands;
+      ];
+    group "substitution"
+      [
+        prop "subst keeping every leaf is p lowered as of_exprs lowers it"
+          (Gen.pair drawn Gen.int) law_subst_keeps;
+        prop "subst binding an operand is p over its value" binding law_bind;
+        test "subst binds an operand to an operand, a coordinate or a constant"
+          test_subst_leaves;
+        prop "subst offsetting coordinates is p at the offset index" shifting
+          law_subst_coords;
+        prop "subst with outs is the outputs of p it selects" selecting
+          law_subst_outs;
+        test "subst refuses what does not fit" test_subst_refuses;
       ];
   ]
 

@@ -178,7 +178,9 @@ struct
       when P.is_identity prog && D.equal (Prim.dtype x) term ->
         Value.Any x
     | _ ->
-        let one = P.v ~ins:prog.ins prog.nodes ~outs:[| Iarray.get prog.outs o |] in
+        let one =
+          P.subst ~outs:[| o |] ~ins:prog.ins (fun _ -> None) prog
+        in
         let map = Value.Map { layout; prog = one; outs = Value.[ term ]; loads } in
         Value.Any (fst (apply (Prim.within map w)))
 

@@ -471,20 +471,27 @@ val of_exprs : ins:Nx_array.Dtype.any iarray -> E.any iarray -> t
     Raises [Invalid_argument] if an [In] of [outs] reads no operand of [ins]
     or is not of its dtype, or if [outs] is empty. *)
 
-(** {1:binding Binding} *)
+(** {1:substitution Substitution} *)
 
-val bind : t -> int -> E.any -> t
-(** [bind p k x] is [p] with its operand [k] the value of the expression [x].
-    It is a program over [p]'s operands but [k], in order, whose outputs are
-    [p]'s; [x]'s [E.input i] names its operand [i]. Its nodes are [x]'s as
-    {!of_exprs} lowers them, then [p]'s but its [In k] nodes, in order. A
-    node that read [In k] reads [x]'s value, and [In i] for [i > k] becomes
-    [In (i - 1)]. It computes as [p] does over [x]'s value, and the result
-    holds as {!v} states.
+val subst :
+  ?outs:int iarray ->
+  ins:Nx_array.Dtype.any iarray ->
+  (node -> E.any option) ->
+  t ->
+  t
+(** [subst ?outs ~ins f p] is the program over operands of dtypes [ins]
+    that computes [p]'s outputs, or with [outs] those [outs] selects by
+    index, in that order, with each leaf replaced. For each [In], [Coord]
+    or [Const] node [n] of [p] these outputs reach, [f n = Some e] replaces
+    [n] by the expression [e], over operands of [ins], which must be of
+    [n]'s dtype; [f n = None] keeps [n], and a kept [In i] must then name
+    operand [i] of [ins], of [n]'s dtype. [f] is called once on each leaf
+    these outputs reach and on no other node: no kind node and no leaf they
+    do not reach. Kind nodes are rebuilt over their substituted operands.
+    Its nodes are lowered as {!of_exprs} lowers them, distinct
+    subexpressions once in depth-first order, so the result holds as {!v}
+    states.
 
-    Binding an operand to an expression of coordinates, for example, gives
-    each element a value computed from its index, such as its flat position.
-
-    Raises [Invalid_argument] if [k] is not an operand of [p], as {!of_exprs}
-    does for [x] over the result's operands, or if [x] is not of operand
-    [k]'s dtype. *)
+    Raises [Invalid_argument] if an [e] is not of its node's dtype, as
+    {!of_exprs} does for the expressions over [ins], or if [outs] is empty
+    or names no output of [p]. *)

@@ -445,7 +445,9 @@ module E = struct
       invalid_arg (strf "Nx_kernel.Prog.E.coord: no axis %d" a);
     Coord { id = fresh (); axis = a }
 
-  let const dt x = Const { id = fresh (); dt; bits = bits dt x }
+  (* The constant of [dt] whose bits are [b], an element of [dt]. *)
+  let of_bits dt b = Const { id = fresh (); dt; bits = b }
+  let const dt x = of_bits dt (bits dt x)
 
   let op1 k dt x =
     let a = dtype x in
@@ -680,8 +682,8 @@ let reads ins k dt =
    is unique within one process alone: an expression read back through
    [Marshal] can carry the id of another here, so a hit in [seen] counts
    only for the expression itself. *)
-let of_exprs ~ins outs =
-  let invalid why = invalid_arg ("Nx_kernel.Prog.of_exprs: " ^ why) in
+let lower fn ~ins outs =
+  let invalid why = invalid_arg (fn ^ ": " ^ why) in
   if Iarray.length outs = 0 then invalid "no output";
   let seen = Hashtbl.create 16 and index = Hashtbl.create 16 in
   let nodes = ref [] and count = ref 0 in
@@ -728,43 +730,76 @@ let of_exprs ~ins outs =
   let outs = Iarray.init (Iarray.length outs) out in
   { ins; nodes = Iarray.of_list (List.rev !nodes); outs }
 
-(* Binding *)
+let of_exprs ~ins outs = lower "Nx_kernel.Prog.of_exprs" ~ins outs
 
-let same_dtype (D.Any x) (D.Any y) = D.equal x y
+(* Substitution *)
 
-(* x's nodes come first and keep their indices; [p]'s follow, each reference
-   renumbered, a read of operand [k] taking x's value. Both are programs over
-   the result's operands, so their nodes keep their dtypes and kinds, and
-   the result is one. *)
-let bind p k x =
-  let fn = "Nx_kernel.Prog.bind" in
-  let n = Iarray.length p.ins in
-  if k < 0 || k >= n then invalid_arg (strf "%s: no operand %d" fn k);
-  let ins =
-    Iarray.init (n - 1) (fun i -> Iarray.get p.ins (if i < k then i else i + 1))
+(* [y] at [x]'s dtype, which two operands of a node of [p] share: a
+   substitute is of its leaf's dtype, so each rebuilt node is of its
+   node's. *)
+let like (type v s w r) (x : (v, s) E.t) (y : (w, r) E.t) : (v, s) E.t =
+  match D.equal_witness (E.dtype y) (E.dtype x) with
+  | Some Equal -> y
+  | None -> assert false
+
+(* Each node the outputs reach is made once, as an expression over the
+   expressions of its operands, so that of_exprs lowers a shared node
+   once. *)
+let subst ?outs ~ins f p =
+  let fn = "Nx_kernel.Prog.subst" in
+  let picked =
+    match outs with
+    | None -> p.outs
+    | Some outs ->
+        let n = Iarray.length p.outs in
+        let pick o =
+          if o < 0 || o >= n then invalid_arg (strf "%s: no output %d" fn o);
+          Iarray.get p.outs o
+        in
+        Iarray.map pick outs
   in
-  let q = of_exprs ~ins [| x |] in
-  let out = Iarray.get q.outs 0 in
-  if not (same_dtype (dtype q out) (Iarray.get p.ins k)) then
-    invalid_arg (strf "%s: the expression is not of operand %d's dtype" fn k);
-  let m = Iarray.length q.nodes and np = Iarray.length p.nodes in
-  let nodes = Array.make (m + np) (In 0) and count = ref m in
-  Iarray.iteri (fun i nd -> nodes.(i) <- nd) q.nodes;
-  let index = Array.make np 0 in
-  let at i = index.(i) in
-  for i = 0 to np - 1 do
-    let nd = Iarray.get p.nodes i in
-    match nd with
-    | In j when j = k -> index.(i) <- out
-    | _ ->
-        nodes.(!count) <-
-          (match nd with
-          | In j -> if j > k then In (j - 1) else nd
-          | Coord _ | Const _ -> nd
-          | Op1 (o, dt, x) -> Op1 (o, dt, at x)
-          | Op2 (o, x, y) -> Op2 (o, at x, at y)
-          | Op3 (o, x, y, z) -> Op3 (o, at x, at y, at z));
-        index.(i) <- !count;
-        incr count
-  done;
-  { ins; nodes = Iarray.init !count (Array.get nodes); outs = Iarray.map at p.outs }
+  let made = Array.make (Iarray.length p.nodes) None in
+  (* Leaf [i] replaced by [x]. *)
+  let replaced i (E.Any e as x) =
+    let (D.Any dt) = dtype_of p i in
+    if not (D.equal (E.dtype e) dt) then
+      invalid_arg (strf "%s: node %d's expression is not of its dtype" fn i);
+    x
+  in
+  let rec expr i =
+    match made.(i) with
+    | Some e -> e
+    | None ->
+        let e = make i in
+        made.(i) <- Some e;
+        e
+  and make i =
+    match Iarray.get p.nodes i with
+    | In k as nd -> (
+        match f nd with
+        | Some x -> replaced i x
+        | None ->
+            let (D.Any dt) = Iarray.get p.ins k in
+            E.Any (E.input k dt))
+    | Coord a as nd -> (
+        match f nd with Some x -> replaced i x | None -> E.Any (E.coord a))
+    | Const (D.Any dt, b) as nd -> (
+        match f nd with
+        | Some x -> replaced i x
+        | None -> E.Any (E.of_bits dt b))
+    | Op1 (k, D.Any dt, a) ->
+        let (E.Any x) = expr a in
+        E.Any (E.make1 k dt x)
+    | Op2 (k, a, b) -> (
+        let (E.Any x) = expr a in
+        let (E.Any y) = expr b in
+        match k with
+        | Binary _ -> E.Any (E.make2 k (E.dtype x) x (like x y))
+        | Compare _ -> E.Any (E.make2 k D.Bool x (like x y)))
+    | Op3 (k, a, b, c) ->
+        let (E.Any w) = expr a in
+        let (E.Any x) = expr b in
+        let (E.Any y) = expr c in
+        E.Any (E.make3 k (E.dtype x) w x (like x y))
+  in
+  lower fn ~ins (Iarray.map expr picked)
