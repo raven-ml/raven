@@ -3,31 +3,66 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Scalar programs: the kinds a step computes, and programs of them.
+(** Scalar programs: the kinds a node computes, and programs of them.
 
-    A kind is what one step of a scalar program computes from one element of
-    each operand, in the compute type [nx_kinds.h] states for its dtype. A
-    kind whose result its doc below, IEEE 754 or modular arithmetic defines
-    exactly, as [Floor], [Add], a float's [Sqrt] and an integer's [Mul] are,
-    gives that result. A float [Recip] is [1 / x] by [Fdiv]. In a kernel
-    library, a float kind of that header's table of bounds is within the
-    bound in ulps it states for the function of its name ([nx_exp_f32] for
-    [Exp] at float32), with the special values, the signs of zero results
-    and the NaN results the header states. A complex kind is as the
-    header's complex section states: within the normwise bound in [u] it
+    A {e program} computes, at one index of a shape, from one element of
+    each of its {e operands}, and gives one element for each of its
+    {e outputs}. It is a sequence of {e nodes}. A node is a {e leaf}, an
+    operand's element at the index, the index along an axis or a constant,
+    or a {e kind} applied to earlier nodes. A kind is what one node
+    computes from its operands' values, in the compute type [nx_kinds.h]
+    states for its dtype. The dtypes a kind takes are its {e domain}
+    ({!section-domains}). Each node has a dtype ({!dtype}), and its value
+    is its kind's result in that dtype, exact or within a bound as the next
+    paragraph states, a float rounded as {!Nx_array.Dtype.of_float} rounds
+    it. A loop of a kernel library
+    ({!Nx_kernel.S.section-loops}) runs a program at every index of its
+    shape.
+
+    A kind whose result its doc below, IEEE 754 or modular arithmetic
+    defines exactly, as [Floor], [Add], a float's [Sqrt] and an integer's
+    [Mul] are, gives that result rounded once to its dtype. A float [Recip]
+    is [1 / x] by [Fdiv]. In a
+    kernel library, a float kind of [nx_kinds.h]'s table of bounds is within
+    the bound in ulps it states for the function of its name ([nx_exp_f32]
+    for [Exp] at float32), with the special values, the signs of zero
+    results and the NaN results the header states. A complex kind is as the
+    header's complex section states, within the normwise bound in [u] it
     states for the kind, with its special values, symmetries and NaN parts.
-    A kernel library may compute a kind through that header's function,
-    and states whether it does. On one device model it computes each kind
-    to the same bits in all its paths, so that its interpreter and its
-    loops agree bit for bit. On a device that flushes subnormal numbers to
-    zero, which its library states, the bounds hold where the operands and
-    the result are normal. *)
+    A kernel library may compute a kind through that header's function, and
+    states whether it does. On one device model it computes each kind to
+    the same bits in all its paths, so that a kind's own kernel and the
+    program interpreter agree bit for bit. On a device that
+    flushes subnormal numbers to zero,
+    which its library states, the bounds hold where the operands and the
+    result are normal.
+
+    {!v} makes a program from its nodes, {!of_node} from one kind over its
+    operands, and {!of_exprs} from {e expressions} ({!E}), nodes written as
+    values whose operands are expressions. {!subst} rewrites a program's
+    leaves. Programs are plain data, compared and hashed structurally.
+
+    This program draws a normal number from two uniform draws [u1] and
+    [u2] of float32 by Box-Muller, written with the operators of a local
+    open. Each distinct subexpression becomes one node, in the order the
+    walk from [z] finishes them:
+    {[
+    let f32 = Nx_array.Dtype.Float32 in
+    let lit x = Prog.E.const f32 x in
+    let u1 = Prog.E.input 0 f32 and u2 = Prog.E.input 1 f32 in
+    let z =
+      Prog.E.(sqrt (lit (-2.) * log u1) * cos (lit (2. *. Float.pi) * u2))
+    in
+    Prog.of_exprs ~ins:[| Nx_array.Dtype.Any f32; Nx_array.Dtype.Any f32 |]
+      [| Prog.E.any z |]
+    ]} *)
 
 (** {1:kinds Kinds} *)
 
 (** The type for kinds of one operand, of its dtype. Trigonometric kinds take
     radians. On complex numbers a kind is its principal value, with the branch
-    cuts of C99 7.3, as [nx_kinds.h] states. *)
+    cuts of C99 7.3, as [nx_kinds.h] states. On integers [Neg] and [Abs]
+    wrap. *)
 type unary =
   | Neg
   | Recip  (** On integers, [x] for [1] and [-1], [0] otherwise. *)
@@ -84,7 +119,8 @@ type binary =
           integers, [fmod] on floats. *)
   | Pow
       (** The first operand to the power of the second; on complex numbers
-          [e{^w log z}] of [z] to the power [w]. *)
+          [e{^w log z}] of [z] to the power [w]. On integers a negative
+          exponent gives [0], but for a base of [1] or [-1]. *)
   | Atan2  (** The angle of [(x, y)], [y] the first operand, in \[-π, π\]. *)
   | Maximum
       (** The IEEE 754 maximum: NaN propagates and [-0] orders below [+0]. *)
@@ -93,8 +129,10 @@ type binary =
   | Or  (** As [And]. *)
   | Xor  (** As [And]. *)
   | Threefry
-      (** Threefry-2x32 with 20 rounds of the counter, the first operand, under
-          the key, the second: [uint64] words, the low half first. *)
+      (** Threefry-2x32 with 20 rounds of the counter, the first operand,
+          under the key, the second. Each operand and the result is a
+          [uint64] holding the two 32-bit words, word [0] in its low
+          half. *)
 
 (** The type for comparisons of two operands of one dtype, to booleans.
     Unsigned dtypes order unsigned. *)
@@ -133,16 +171,17 @@ type op3 =
 
 (** {1:domains Domains}
 
-    Where each kind is defined. Every dtype has one order: [false < true];
-    integers by value; floats by value, [-0] below [+0]; complex numbers by
-    real part, then imaginary part. [Maximum] and [Minimum] follow it.
-    [Equal], [Not_equal], [Less] and [Less_equal] follow it too, but compare
-    floats, and complex numbers' parts, as IEEE 754 does: [-0] equals [+0]. A
-    NaN, and a complex number with a NaN part, is a NaN to each kind: every
-    comparison with it is [false] except [Not_equal], which is [true], and
-    [Maximum] and [Minimum] give it. On booleans [Maximum] is [Or] and
-    [Minimum] is [And]. A kind keeps its operands' dtype where its type
-    says so: the absolute value of a complex number is no kind.
+    Each kind's domain, the dtypes it takes, is listed below. Every dtype
+    has one order: [false < true]; integers by value; floats by value, [-0]
+    below [+0]; complex numbers by real part, then imaginary part.
+    [Maximum] and [Minimum] follow it. [Equal], [Not_equal], [Less] and
+    [Less_equal] follow it too, but compare floats, and complex numbers'
+    parts, as IEEE 754 does, so [-0] equals [+0]. A NaN, and a complex
+    number with a NaN part, is a NaN to each kind: every comparison with it
+    is [false] except [Not_equal], which is [true], and [Maximum] and
+    [Minimum] give it. On booleans [Maximum] is [Or] and [Minimum] is
+    [And]. A kind keeps its operands' dtype where its type says so, which
+    leaves out the modulus of a complex number.
 
     - [Neg], [Recip], [Sign], [Add], [Sub], [Mul], [Pow]: every dtype but
       booleans.
@@ -177,23 +216,28 @@ val accepts3 :
 val bits : ('v, 's) Nx_array.Dtype.t -> 'v -> string
 (** [bits dt x] is the bits of [x], an element of [dt], in the host's byte
     order: {!Nx_array.Dtype.bytes}[ dt 1] bytes, a sub-byte element in the low
-    bits of one byte. It is the payload of [Const]. A float is
-    stored as {!Nx_array.Dtype.of_float} says.
+    bits of one byte. It is the payload of [Const]. A float is stored as
+    {!Nx_array.Dtype.of_float} says.
 
     Raises [Invalid_argument] for an [int] outside [dt]'s range. *)
 
-(** {1:programs Programs} *)
+(** {1:programs Programs}
 
-(** The type for a program's nodes. A node refers to earlier nodes by index. *)
+    A program's nodes come in order, and a node refers to earlier nodes by
+    index. Every program holds together as {!v} states: {!v} checks it, and
+    {!of_node}, {!of_exprs} and {!subst} make programs that hold. *)
+
+(** The type for a program's nodes. *)
 type node =
   | In of int  (** [In i] is operand [i] at the iteration index. *)
   | Coord of int
       (** [Coord i] is the iteration index along axis [i], as an [int64]. *)
   | Const of Nx_array.Dtype.any * string
       (** [Const (dt, b)] is the element of [dt] whose bits are [b]
-          ({!bits}), stored as they are: any bits of [dt]'s width, NaN
-          payloads included, and for a boolean any byte, [true] iff it is
-          not zero. *)
+          ({!bits}), stored as they are: any bits of [dt]'s width in a
+          string of {!Nx_array.Dtype.bytes}[ dt 1] bytes, NaN payloads
+          included, and for a boolean any byte, [true] iff it is not
+          zero. *)
   | Op1 of op1 * Nx_array.Dtype.any * int
       (** [Op1 (k, dt, i)] is [k] of node [i] into [dt]. *)
   | Op2 of op2 * int * int  (** [Op2 (k, i, j)] is [k] of nodes [i] and [j]. *)
@@ -205,11 +249,7 @@ type t = private {
   nodes : node iarray;  (** The nodes, in order. *)
   outs : int iarray;  (** The nodes it outputs, in order. *)
 }
-(** The type for programs. A program runs at each index of a shape, reading
-    its operands at that index. Each node's value is its exact result rounded
-    once to its dtype ({!dtype}). {!v}, {!of_node} and {!of_exprs} make
-    every program, so its fields hold together as {!v} states; programs are
-    plain data, compared and hashed structurally. *)
+(** The type for programs. *)
 
 val v :
   ins:Nx_array.Dtype.any iarray -> node iarray -> outs:int iarray -> t
@@ -223,14 +263,13 @@ val v :
     [i]'s; [Op2 (k, i, j)] where nodes [i] and [j] are of one dtype [x] and
     {!accepts2}[ k x]; [Op3 (k, i, j, l)] where nodes [j] and [l] are of one
     dtype [x] and {!accepts3}[ k c x], [c] node [i]'s; every [Const]'s bits
-    are an element of its dtype; and [outs] is not empty and names
-    nodes. *)
+    are ones [Const] takes; and [outs] is not empty and names nodes. *)
 
 val of_node : ins:Nx_array.Dtype.any iarray -> node -> t
 (** [of_node ~ins n] is the program of the one node [n] over operands of dtypes
-    [ins]: [v ~ins nodes ~outs:[| k |]], [nodes] being [In 0] to [In (k - 1)]
-    then [n], [k] the length of [ins]. [n]'s references name operands: node
-    [j] is operand [j].
+    [ins]: [v ~ins nodes ~outs:[| k |]], where [nodes] is [In 0] to
+    [In (k - 1)] then [n] and [k] the length of [ins]. [n]'s references name
+    operands, so that node [j] is operand [j].
 
     Raises [Invalid_argument] as {!v} does. *)
 
@@ -244,17 +283,18 @@ val dtype : t -> int -> Nx_array.Dtype.any
 
 val is_identity : t -> bool
 (** [is_identity p] is [true] iff [p] has one operand and one output, and its
-    output is that operand's [In] node: [p] gives its operand back. *)
+    output is that operand's [In] node, so that [p] gives its operand
+    back. *)
 
 val single : t -> node option
 (** [single p] is [Some n] iff [p] is {!of_node}[ ~ins n] where [n] reads
-    each of [p]'s operands in order: a [Const] or a [Coord] of no operand,
-    or a kind of [m] operands reading nodes [0] to [m - 1] over [m]
-    operands. [None] otherwise. A library may run such a program by a
+    each of [p]'s operands in order: a [Const] or a [Coord] over zero
+    operands, or a kind of [m] operands reading nodes [0] to [m - 1] over
+    [m] operands. [None] otherwise. A library may run such a program by a
     kernel of [n]'s kind alone. *)
 
 val is_single : t -> bool
-(** [is_single p] is [true] iff {!single}[ p] is [Some n], [n] being then
+(** [is_single p] is [true] iff {!single}[ p] is [Some n], where [n] is then
     [p]'s last node. It allocates nothing. *)
 
 (** {1:exprs Expressions} *)
@@ -267,15 +307,8 @@ val is_single : t -> bool
     [bool], and two operands of one kind share a dtype. Where it cannot, the
     constructor checks its operands' dtypes as {!Prog.v} does, raising
     [Invalid_argument] where {!Prog.v} refuses the node. An expression used
-    twice is one value: a [let] shares it. {!Prog.of_exprs} lowers
-    expressions into a program.
-
-    This is a Box-Muller normal draw from two uniform draws [u1] and [u2] of
-    float32, written with the operators of a local open:
-    {[
-      let lit x = E.const Nx_array.Dtype.Float32 x in
-      E.(sqrt (lit (-2.) * log u1) * cos (lit (2. *. Float.pi) * u2))
-    ]} *)
+    twice is one value, which a [let] shares. {!Prog.of_exprs} lowers
+    expressions into a program. *)
 module E : sig
   type ('v, 's) t
   (** The type for expressions of dtype [('v, 's) Nx_array.Dtype.t]. *)
@@ -449,9 +482,10 @@ val of_exprs : ins:Nx_array.Dtype.any iarray -> E.any iarray -> t
     results are the expressions [outs]. Its nodes are [outs]' distinct
     subexpressions, each once, in the order a depth-first walk from the
     outputs, operands left to right, finishes them. Two expressions are
-    distinct unless they are leaves of one kind, dtype and field, or nodes of
-    one kind and dtype over the same operands: a program depends on its
-    expressions' values alone, never on which of them are one OCaml value.
+    distinct unless they are leaves of one kind, dtype and operand, axis or
+    bits, or nodes of one kind and dtype over the same operands, so the
+    program depends on
+    its expressions' values alone, whichever of them are one OCaml value.
 
     Raises [Invalid_argument] if an [In] of [outs] reads no operand of [ins]
     or is not of its dtype, or if [outs] is empty. *)
@@ -465,17 +499,16 @@ val subst :
   t ->
   t
 (** [subst ?outs ~ins f p] is the program over operands of dtypes [ins]
-    that computes [p]'s outputs, or with [outs] those [outs] selects by
-    index, in that order, with each leaf replaced. For each [In], [Coord]
+    that computes [p]'s outputs, or with [outs] the outputs of [p] at those
+    indices, in that order, with each leaf replaced. For each [In], [Coord]
     or [Const] node [n] of [p] these outputs reach, [f n = Some e] replaces
     [n] by the expression [e], over operands of [ins], which must be of
-    [n]'s dtype; [f n = None] keeps [n], and a kept [In i] must then name
+    [n]'s dtype, and [f n = None] keeps [n], where a kept [In i] must name
     operand [i] of [ins], of [n]'s dtype. [f] is called once on each leaf
-    these outputs reach and on no other node: no kind node and no leaf they
-    do not reach. Kind nodes are rebuilt over their substituted operands.
-    Its nodes are lowered as {!of_exprs} lowers them, distinct
-    subexpressions once in depth-first order, so the result holds as {!v}
-    states.
+    these outputs reach, and on no kind node and no other leaf. Kind nodes
+    are rebuilt over their substituted operands. Its nodes are lowered as
+    {!of_exprs} lowers them, distinct subexpressions once in depth-first
+    order, so the result holds as {!v} states.
 
     Raises [Invalid_argument] if an [e] is not of its node's dtype, as
     {!of_exprs} does for the expressions over [ins], or if [outs] is empty
