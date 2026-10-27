@@ -85,8 +85,5 @@ let write path f =
         (Unix.error_message e) temp);
   sync_dir (Filename.dirname path)
 
-(* [string fd s] writes [s] to [fd]. *)
 let string fd s = ignore (Unix.write_substring fd s 0 (String.length s))
-
-(* [bytes fd b] writes [b] to [fd]. *)
 let bytes fd b = ignore (Unix.write_bigarray fd b 0 (Bigarray.Array1.dim b))
