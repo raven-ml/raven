@@ -207,6 +207,20 @@ let diagonal_within tol x =
     (Ops.lt off (Ops.mul (squares x) (float off (tol *. tol))))
     (Ops.eq off (zero off))
 
+(* The [int32] exponent of the largest magnitude of each matrix of [u], of two
+   axes of one: [e] with that magnitude in [[2^e, 2^(e + 1))], and [0] for a
+   matrix of zeros or one that holds NaN or an infinity. *)
+let exponent u =
+  let largest = over_matrix Op.Max (abs u) in
+  let usable =
+    Ops.bitwise_and
+      (Ops.gt largest (zero largest))
+      (Ops.lt largest (float largest Float.infinity))
+  in
+  Lower_real.ilogb (Ops.where usable largest (float largest 1.))
+
+let negate k = Ops.sub (Shape.const_like k (`Int Bigint.zero)) k
+
 (* The unit roundoff of the float type [dt]. *)
 let roundoff dt = Float.ldexp 1. (-(snd (Dtype.finfo dt) + 1))
 
@@ -546,7 +560,12 @@ let svd device ~complete a =
         [ rotate y (rank - 1) (columns cosines, columns sines) ]
     | _ -> invalid_arg "Lower_linalg.svd"
   in
+  (* The rotations square r's columns: r is divided by the power of two of its
+     largest magnitude, exactly, so that no square overflows or underflows,
+     and the singular values take it back. *)
   let r = block (triu r) (Some (0, num)) (Some (0, num)) in
+  let e = exponent r in
+  let r = Lower_real.scale r (Shape.expand (negate e) (Shape.shape r)) in
   let rounds = rounds num dt in
   let y =
     List.hd
@@ -569,7 +588,12 @@ let svd device ~complete a =
   in
   let norms = Ops.sqrt (Shape.rop (Ops.mul u u) Op.Add [ rank - 2 ]) in
   let order = order ~descending:true norms in
-  let s = defined ok (take norms (rank - 2) order) in
+  let s = take norms (rank - 2) order in
+  let s =
+    defined ok
+      (Lower_real.scale s
+         (Shape.expand (Shape.squeeze ~axis:(-1) e) (Shape.shape s)))
+  in
   let v = by_order order (part y (rank - 2) num (2 * num)) in
   (* The sorted columns are orthogonal: the reflections that triangularize them
      are an orthogonal basis of which each column, with the sign it takes on the

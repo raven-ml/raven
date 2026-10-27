@@ -465,6 +465,40 @@ let values_near ~msg ~tol k ours eager =
         (Float.abs (v -. eager.(e))))
     ours
 
+(* The SVD's bound [g] for [m] rows and [n] columns at roundoff [u], and the
+   distance [near norm] its values may lie from eager's for a matrix of
+   Frobenius norm [norm]: three [g] and eager's own error. *)
+let svd_bound u m n =
+  let k = Int.min m n and p = Int.max m n in
+  let rf = float_of_int (rounds k u) and kf = float_of_int k in
+  let pf = float_of_int p in
+  let g = gamma u (16. *. (rf +. (pf *. pf)) *. (kf +. 2.) *. Float.sqrt kf) in
+  let near norm =
+    (3. *. g *. norm) +. (gamma u ((16. *. pf) +. 100.) *. norm)
+    +. (eta u *. ((16. *. pf) +. 100.))
+  in
+  (g, near)
+
+(* Matrices whose squares overflow or underflow their dtype: their values are
+   eager's within the bound. *)
+let svd_extremes () =
+  let check (type s) name (dt : (float, s) D.t) u m n x =
+    let a = Nx.create dt [| m; n |] x in
+    let s = Lowered.run (fun () -> linalg (Svd_values { dtype = dt; a })) in
+    let eager = Nx.to_array (linalg (Svd_values { dtype = dt; a })) in
+    let _, near = svd_bound u m n in
+    let norm = frobenius (of_nx a) 0 in
+    values_near ~msg:name ~tol:(fun _ -> near norm) (Int.min m n) s eager
+  in
+  let st = Random.State.make [| 7 |] in
+  let big scale = Array.init 12 (fun _ -> scale *. uniform st) in
+  check "float32 1e-25" D.Float32 0x1p-24 1 1 [| 1e-25 |];
+  check "float32 1e20" D.Float32 0x1p-24 1 1 [| 1e20 |];
+  check "float32 entries near 3e19" D.Float32 0x1p-24 4 3 (big 3e19);
+  check "float64 1e-170" D.Float64 0x1p-53 1 1 [| 1e-170 |];
+  check "float64 1e160" D.Float64 0x1p-53 1 1 [| 1e160 |];
+  check "float64 entries near 1e155" D.Float64 0x1p-53 3 4 (big 1e155)
+
 let svd_law (c, shape) =
   let (R (_, dt, u)) = c.dt in
   let m, n = match shape with [ m; n ] -> (m, n) | _ -> assert false in
@@ -508,15 +542,11 @@ let svd_law (c, shape) =
       if i > 0 then bounded ~msg:"descending" ~than:s.((b * k) + i - 1) si
     done
   done;
-  let rf = float_of_int (rounds k u) and kf = float_of_int k in
   let pf = float_of_int p in
-  let g = gamma u (16. *. (rf +. (pf *. pf)) *. (kf +. 2.) *. Float.sqrt kf) in
+  let g, near = svd_bound u m n in
   let check = gamma u64 (float_of_int (p + 2)) in
   let norm b = frobenius am b in
-  let near b =
-    (3. *. g *. norm b) +. (gamma u ((16. *. pf) +. 100.) *. norm b)
-    +. (eta u *. ((16. *. pf) +. 100.))
-  in
+  let near b = near (norm b) in
   values_near ~msg:"s against eager" ~tol:near k s eager;
   values_near ~msg:"values alone against eager" ~tol:near k values eager;
   frobenius_near ~msg:"uᵀ u = I" ~tol:(fun _ -> g +. check) (gram uu);
@@ -645,6 +675,7 @@ let () =
            [
              law "u diag s vh reconstructs a" ~count:4 general svd_law;
              test "a matrix with an infinity is NaN" svd_fails;
+             test "squares past the dtype's range" svd_extremes;
            ];
          group "eigh"
            [
