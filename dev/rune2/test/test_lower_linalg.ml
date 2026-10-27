@@ -414,6 +414,190 @@ let qr_law (c, shape) =
   orthonormal ~msg:"qᵀ q = I" ~tol:(g +. gamma u64 (float_of_int (m + 1))) q;
   columns_near ~msg:"a = q r" ~g am q r
 
+(* Singular values and Hermitian eigenvalues *)
+
+(* [first t k] is the first [k] columns of [t]. *)
+let first t k = init t.b t.m k (fun b i j -> get t b i j)
+
+(* [rows_of t k] is the first [k] rows of [t]. *)
+let rows_of t k = init t.b k t.n (fun b i j -> get t b i j)
+
+(* The rounds of Jacobi rotations Lower_linalg takes for [n] positions at a
+   precision of [p] bits. *)
+let rounds n u =
+  let p = -int_of_float (Float.log2 u) in
+  let rec log2 k = if 1 lsl k >= n then k else log2 (k + 1) in
+  if n < 2 then 0 else (((p * log2 0) + 9) / 10) * (n - 1 + (n mod 2))
+
+let frobenius t k =
+  let s = ref 0. in
+  for i = 0 to t.m - 1 do
+    for j = 0 to t.n - 1 do
+      s := !s +. (get t k i j ** 2.)
+    done
+  done;
+  Float.sqrt !s
+
+let eta u = if u = 0x1p-24 then 0x1p-149 else 0x1p-1074
+
+(* [frobenius_near ~msg ~tol t] asserts that each matrix of [t] has a norm of at
+   most [tol k], [k] its index in the batch. *)
+let frobenius_near ~msg ~tol t =
+  for b = 0 to t.b - 1 do
+    bounded ~msg:(Printf.sprintf "%s, matrix %d" msg b) ~than:(tol b)
+      (frobenius t b)
+  done
+
+let gram q =
+  let g = product (transpose q) q in
+  init g.b g.m g.n (fun k i j -> get g k i j -. if i = j then 1. else 0.)
+
+let scaled_columns t s =
+  init t.b t.m t.n (fun b i j -> get t b i j *. s.((b * t.n) + j))
+
+(* [values_near ~msg ~tol ours eager] asserts that each value is within
+   [tol b], [b] its matrix's index, of eager's. *)
+let values_near ~msg ~tol k ours eager =
+  Array.iteri
+    (fun e v ->
+      let b = if k = 0 then 0 else e / k in
+      bounded ~msg:(Printf.sprintf "%s, value %d" msg e) ~than:(tol b)
+        (Float.abs (v -. eager.(e))))
+    ours
+
+let svd_law (c, shape) =
+  let (R (_, dt, u)) = c.dt in
+  let m, n = match shape with [ m; n ] -> (m, n) | _ -> assert false in
+  let k = Int.min m n and p = Int.max m n in
+  cover_case c shape;
+  let st = state c in
+  let factors = if c.seed / 3 mod 2 = 1 then Nx_kernel.Complete else Reduced in
+  cover "complete" (factors = Complete && m <> n);
+  cover "wide" (m < n);
+  let rank_one = variant c in
+  cover "a rank-deficient matrix" (rank_one && k > 1);
+  let ls = Array.init (2 * m) (fun _ -> uniform st)
+  and rs = Array.init (2 * n) (fun _ -> uniform st) in
+  let a =
+    operand dt c.layout c.batch m n (fun b i j ->
+        if rank_one then ls.((b * m) + i) *. rs.((b * n) + j) else uniform st)
+  in
+  let am = of_nx a in
+  let s = Lowered.run (fun () ->
+      let s, _, _ = linalg (Svd { factors; dtype = dt; a }) in
+      s)
+  in
+  let uc = if factors = Complete then m else k
+  and vr = if factors = Complete then n else k in
+  let uu =
+    mat am.b m uc (Lowered.run (fun () ->
+        let _, u, _ = linalg (Svd { factors; dtype = dt; a }) in
+        u))
+  in
+  let vh =
+    mat am.b vr n (Lowered.run (fun () ->
+        let _, _, v = linalg (Svd { factors; dtype = dt; a }) in
+        v))
+  in
+  let values = Lowered.run (fun () -> linalg (Svd_values { dtype = dt; a })) in
+  let eager = Nx.to_array (linalg (Svd_values { dtype = dt; a })) in
+  for b = 0 to am.b - 1 do
+    for i = 0 to k - 1 do
+      let si = s.((b * k) + i) in
+      bounded ~msg:"not negative" ~than:si 0.;
+      if i > 0 then bounded ~msg:"descending" ~than:s.((b * k) + i - 1) si
+    done
+  done;
+  let rf = float_of_int (rounds k u) and kf = float_of_int k in
+  let pf = float_of_int p in
+  let g = gamma u (16. *. (rf +. (pf *. pf)) *. (kf +. 2.) *. Float.sqrt kf) in
+  let check = gamma u64 (float_of_int (p + 2)) in
+  let norm b = frobenius am b in
+  let near b =
+    (3. *. g *. norm b) +. (gamma u ((16. *. pf) +. 100.) *. norm b)
+    +. (eta u *. ((16. *. pf) +. 100.))
+  in
+  values_near ~msg:"s against eager" ~tol:near k s eager;
+  values_near ~msg:"values alone against eager" ~tol:near k values eager;
+  frobenius_near ~msg:"uᵀ u = I" ~tol:(fun _ -> g +. check) (gram uu);
+  frobenius_near ~msg:"vh vhᵀ = I"
+    ~tol:(fun _ -> g +. check)
+    (gram (transpose vh));
+  let usv = product (scaled_columns (first uu k) s) (rows_of vh k) in
+  frobenius_near ~msg:"a = u diag s vh"
+    ~tol:(fun b -> ((g +. (check *. pf)) *. norm b))
+    (diff am usv)
+
+(* A batch of a matrix with an infinity and one without: the first alone is NaN
+   in every result. *)
+let svd_fails () =
+  let a =
+    Nx.create D.Float64 [| 2; 2; 2 |]
+      [| 1.; Float.infinity; 0.; 1.; 3.; 0.; 0.; 2. |]
+  in
+  let s =
+    Lowered.run (fun () -> linalg (Svd_values { dtype = D.Float64; a }))
+  in
+  equal (array bool) [| true; true; false; false |] (Array.map Float.is_nan s);
+  equal (array float_exact) [| 3.; 2. |] (Array.sub s 2 2)
+
+let eigh_law (c, shape) =
+  let (R (_, dt, u)) = c.dt in
+  let n = List.hd shape in
+  cover_case c shape;
+  let st = state c in
+  let repeated = variant c in
+  cover "a repeated eigenvalue" (repeated && n > 1);
+  let junk = Array.init (2 * n * n) (fun _ -> garbage st) in
+  let low = Array.init (2 * n * n) (fun _ -> uniform st) in
+  let a =
+    operand dt c.layout c.batch n n (fun b i j ->
+        if i < j then junk.((((b * n) + i) * n) + j)
+        else if repeated then if i = j then 1. else 0.
+        else low.((((b * n) + i) * n) + j))
+  in
+  let am = of_nx a in
+  let sym = init am.b n n (fun k i j -> get am k (max i j) (min i j)) in
+  let w = Lowered.run (fun () -> fst (linalg (Eigh { dtype = dt; a }))) in
+  let v =
+    mat am.b n n
+      (Lowered.run (fun () -> snd (linalg (Eigh { dtype = dt; a }))))
+  in
+  let values = Lowered.run (fun () -> linalg (Eigh_values { dtype = dt; a })) in
+  let eager = Nx.to_array (linalg (Eigh_values { dtype = dt; a })) in
+  for b = 0 to am.b - 1 do
+    for i = 1 to n - 1 do
+      bounded ~msg:"ascending" ~than:w.((b * n) + i) w.((b * n) + i - 1)
+    done
+  done;
+  let rf = float_of_int (rounds n u) and nf = float_of_int n in
+  let g = gamma u (16. *. (rf +. nf) *. (1. +. Float.sqrt nf)) in
+  let check = gamma u64 (nf +. 2.) in
+  let norm b = frobenius sym b in
+  let near b =
+    (gamma u (16. *. (rf +. nf)) *. norm b) +. (gamma u (16. *. nf) *. norm b)
+    +. (eta u *. 16. *. nf)
+  in
+  values_near ~msg:"w against eager" ~tol:near n w eager;
+  values_near ~msg:"values alone against eager" ~tol:near n values eager;
+  frobenius_near ~msg:"vᵀ v = I" ~tol:(fun _ -> g +. check) (gram v);
+  let vwv = product (scaled_columns v w) (transpose v) in
+  frobenius_near ~msg:"a = v diag w vᵀ"
+    ~tol:(fun b -> (g +. (check *. nf)) *. norm b)
+    (diff sym vwv)
+
+(* NaN in the lower triangle makes its matrix NaN in both results. *)
+let eigh_fails () =
+  let a =
+    Nx.create D.Float32 [| 2; 2; 2 |]
+      [| 1.; 0.; Float.nan; 1.; 2.; 0.; 0.; 3. |]
+  in
+  let w =
+    Lowered.run (fun () -> linalg (Eigh_values { dtype = D.Float32; a }))
+  in
+  equal (array bool) [| true; true; false; false |] (Array.map Float.is_nan w);
+  equal (array float_exact) [| 2.; 3. |] (Array.sub w 2 2)
+
 (* Refusals *)
 
 let refuses f =
@@ -478,5 +662,15 @@ let () =
              test "a zero diagonal is NaN" solve_singular;
            ];
          group "qr" [ law "q r reconstructs a" ~count:4 general qr_law ];
+         group "svd"
+           [
+             law "u diag s vh reconstructs a" ~count:4 general svd_law;
+             test "a matrix with an infinity is NaN" svd_fails;
+           ];
+         group "eigh"
+           [
+             law "v diag w vᵀ reconstructs a" ~count:4 square eigh_law;
+             test "NaN in the lower triangle is NaN" eigh_fails;
+           ];
          test "complex operands, eig and unstored operands are refused" refused;
        ])
