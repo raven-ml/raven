@@ -77,20 +77,21 @@ external mask : unit -> unit = "caml_rig_edge_mask" [@@noalloc]
 external unmask : unit -> unit = "caml_rig_edge_unmask"
 
 (* A function a caller outside rig makes, and that may take a lock, runs as
-   [guarded fn f]: inside a lock it raises [Invalid_argument] naming [fn],
-   having done nothing, since the call comes from a signal handler,
+   [guarded fn g x y]: inside a lock it raises [Invalid_argument] naming
+   [fn], having done nothing, since the call comes from a signal handler,
    finaliser or Gc.Memprof callback inside that lock and would wait for it or
-   see its section half done. Otherwise it runs [f] with the thread's signals
-   blocked ([rig_mask] and [rig_unmask] in [rig_edge.h]), which only the
-   driver's waits unblock. *)
-let guarded fn f =
+   see its section half done. Otherwise it is [g x y] with the thread's
+   signals blocked ([rig_mask] and [rig_unmask] in [rig_edge.h]), which only
+   the driver's waits unblock. [g] is a toplevel function, so a call makes
+   no closure. *)
+let guarded fn g x y =
   if holds () <> 0 then
     invalid_arg
       ("Rig_disk." ^ fn
      ^ ": called from a signal handler, finaliser or Gc.Memprof callback \
         inside a lock of the calling thread's");
   mask ();
-  match f () with
+  match g x y with
   | r ->
       unmask ();
       r
@@ -578,14 +579,14 @@ let open_file path mode n =
             if f == ring then close fd else locked close_fd f;
             reraise e)
 
-let of_file path =
-  guarded "of_file" @@ fun () ->
-  open_file path read_mode 0
+let open_read path () = open_file path read_mode 0
+let of_file path = guarded "of_file" open_read path ()
 
-let create_file path n =
-  guarded "create_file" @@ fun () ->
+let open_create path n =
   if n < 0 then invalid_argf "Rig_disk.create_file: %d bytes is negative" n;
   open_file path create_mode n
+
+let create_file path n = guarded "create_file" open_create path n
 
 (* Syncs [f] and keeps a failure before it unpins the descriptor. It marks [f]
    synced while it pins the descriptor, so no eviction falls between the mark
@@ -614,8 +615,7 @@ let synced f =
 let sync_due f = if f.unsynced || Option.is_some f.pages then synced f
 let sync_file f = protect (sync_lock f) sync_due f
 
-let barrier b =
-  guarded "barrier" @@ fun () ->
+let sync_buffer b () =
   (* The message is formatted only on failure: a partial application of a format
      builds its closure at every call. *)
   (match Rig.Buffer.dead b with
@@ -637,3 +637,5 @@ let barrier b =
       (* Until the descriptor is unpinned: collecting [b] would close it. *)
       ignore (Sys.opaque_identity b);
       match f.failure with Unix.Unix_error (e, _, _) -> unix_error f e | _ -> ()
+
+let barrier b = guarded "barrier" sync_buffer b ()
