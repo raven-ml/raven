@@ -196,6 +196,87 @@ let hmc_rows () =
   let q0 = normal 8 [| 16 |] and p0 = normal 9 [| 16 |] in
   [ Thumper.bench "leapfrog" (fun () -> leapfrog q0 p0) ]
 
+(* Jit: a compiled call's hit path, a key traced and compiled, against the
+   same work eagerly; a training step's update of donated state, written in
+   place; and compiled operations of the index family, an FFT and a matrix
+   product. *)
+let n = 4096
+
+(* Values placed on the host: a value of every set computes where it is
+   read, so a program of them alone computes nothing to compile. *)
+let host x = Nx.place Nx.Host.on x
+let floats k = host (Nx.Rng.uniform ~key:(Nx.Rng.key 1) f32 [| k |])
+
+let positions k bound =
+  host
+    (Nx.cast Nx.int64
+       (Nx.mul
+          (Nx.Rng.uniform ~key:(Nx.Rng.key 2) f32 [| k |])
+          (Nx.scalar f32 (Float.of_int bound))))
+
+(* [warm make run] is a case of [run (make ())], the compiled function [make]
+   gives compiled in the worker by one uncounted call: compiling may start
+   domains, after which thumper cannot fork its workers. *)
+let warm name make run =
+  Thumper.bench_with_setup name
+    ~setup:(fun () ->
+      let f = make () in
+      ignore (run f);
+      f)
+    run
+
+let pair_fn () = Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+
+(* [y] once the work that computes it is done. *)
+let synced y =
+  Nx.sync y;
+  y
+
+let jit_rows () =
+  let x = host (one ()) and a = host (one ()) and b = host (one ()) in
+  let xs = floats n and ps = positions n n and g = floats n in
+  let into = floats 1024 and us = floats 16 and qs = positions 16 1024 in
+  let zs = host (Nx.cast Nx.complex64 xs) in
+  let m = Nx.reshape [| 64; 64 |] xs in
+  [
+    warm "chain-100-hit" (fun () -> Rune.jit' chain) (fun f -> synced (f x));
+    Thumper.bench "chain-100-eager" (fun () -> synced (chain x));
+    warm "add-1-hit" (fun () -> Rune.jit (pair_fn ()) Nx.add) (fun f -> synced (f a b));
+    Thumper.bench_with_setup "donated-step-4096"
+      ~setup:(fun () ->
+        let step =
+          Rune.jit (pair_fn ()) (fun w g ->
+              Nx.sub w (Nx.mul (Nx.scalar_like w 0.01) g))
+        in
+        let w = ref (step (Nx.donate (floats n)) g) in
+        (step, w))
+      (fun (step, w) ->
+        w := step (Nx.donate !w) g;
+        synced !w);
+    warm "gather-4096"
+      (fun () -> Rune.jit (pair_fn ()) (fun p x -> Nx.take p x))
+      (fun f -> synced (f ps xs));
+    warm "scatter-1024x16"
+      (fun () ->
+        Rune.jit
+          Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+          (fun p u into -> Nx.scatter ~axis:0 p u into))
+      (fun f -> synced (f qs us into));
+    warm "sort-4096" (fun () -> Rune.jit' (fun x -> fst (Nx.sort x))) (fun f -> synced (f xs));
+    warm "fft-4096" (fun () -> Rune.jit' (fun x -> Nx.fft x)) (fun f -> synced (f zs));
+    warm "matmul-64" (fun () -> Rune.jit (pair_fn ()) Nx.matmul) (fun f -> synced (f m m));
+  ]
+
+(* WarmStart: a compiled function's first call, its trace, lowering and link,
+   with tolk's caches warm, as a fresh process's would be. *)
+let warm_rows () =
+  let x = host (one ()) in
+  [
+    Thumper.bench_with_setup "chain-100"
+      ~setup:(fun () -> ignore (Rune.jit' chain x))
+      (fun () -> synced (Rune.jit' chain x));
+  ]
+
 let () =
   exit
     (Thumper.run "rune2"
@@ -204,6 +285,8 @@ let () =
          Thumper.group "Loops" (loop_rows ());
          Thumper.group "Declined" (declined_rows ());
          Thumper.group "DeepChain" (deep_rows ());
+         Thumper.group "Jit" (jit_rows ());
+         Thumper.group "WarmStart" (warm_rows ());
          Thumper.group "MlpGrad" (mlp_rows ());
          Thumper.group "PerSampleGrads" (per_sample_rows ());
          Thumper.group "Jacobians" (jacobian_rows ());
