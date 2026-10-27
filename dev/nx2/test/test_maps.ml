@@ -665,7 +665,9 @@ let test_contract_consumes () =
     (fun () -> Eval.run ~by:"t" (Value.Copy init))
 
 (* Two handles of one donor, one a copy a movement passed on, are one handle
-   to their consumer: both hold the donor, and [handles] keeps the first. *)
+   to their consumer: the claim kills their donor once and keeps the first,
+   whose memory a result may take beside the donor, while the second's, apart
+   from it, it may not. *)
 let test_one_donor_twice () =
   let x =
     Value.Array
@@ -684,9 +686,15 @@ let test_one_donor_twice () =
     moved (Reshape [| 4 |])
       (moved (Permute [| 1; 0 |]) (Donate.donate ~by:"t" x))
   in
-  let positions = List.map (fun (Donate.Handle (i, _)) -> i) in
-  equal (list int) [ 1 ]
-    (positions (Donate.handles [ Value.Any x; Value.Any h1; Value.Any h2 ]))
+  let c = Donate.claim ~by:"t" [ Value.Any x; Value.Any h1; Value.Any h2 ] in
+  raises_match (Exn.invalid_arg ~substring:"t: float32 [2; 2] was donated to t")
+    (fun () -> Prim.alive ~by:"t" x);
+  let takes own s =
+    Option.is_some (Donate.reuse c ~own D.Float32 (A.Layout.contiguous s))
+  in
+  equal ~msg:"the copy's memory" bool false (takes [ 2 ] [| 4 |]);
+  equal ~msg:"the first's memory" bool true (takes [ 0; 1 ] [| 2; 2 |]);
+  Donate.consumed c
 
 let donation =
   group "donation"

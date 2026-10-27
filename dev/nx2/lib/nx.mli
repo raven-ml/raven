@@ -262,7 +262,8 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     still answer. An operation checks every operand before it consumes any:
     one refused by its checks kills nothing. Once its checks pass, [x] and its
     handles are dead, whatever its set's kernels then answer: one that
-    declines raises with them dead.
+    declines raises with them dead and returns their memory to its device, as
+    a consumer that raises does ({!Prim.Consumer.with_}).
 
     A movement, which rearranges elements without computing them
     ({!reshape}, {!transpose}, {!flip}, {!broadcast_to}, slicing by ranges,

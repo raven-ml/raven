@@ -3,44 +3,55 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Donation: handles over a value's memory that one operation reads, and their
-    consumption by the eager engine and by consumers.
+(** Donation: handles over a donor's memory, and the one protocol by which an
+    operation or a function of several operations consumes them.
 
-    A {e donor} is the [Array] or [Shards] value donated. Every handle of every
-    donation of it holds it, and two handles of one donor are told by [==] on
-    it. A handle has no state of its own: it lives while its donor does, and
-    the donor dies once, by one compare-and-set of its word from [Live] to
-    [Died]. An operation the engine ({!Exec})
-    runs consumes handles, and so does a consumer ({!with_consumer}). The
-    engine checks the operation's operands, claims its handles, which kills
-    their donors for good, writes the operation's first result into a
-    handle's memory where {!reuse} allows, and ends the handles once it has
-    read them ({!consumed}). A donor stays dead whatever the kernels answer
-    after the claim.
+    A {e donor} is the [Array] or [Shards] value that {!donate} gives up. A
+    {e handle} is a value over a donor's memory that one consumer reads
+    ({!Value.Handle}). Every handle of every donation of a donor holds it, and
+    two handles of one donor are told by [==] on it. A handle lives while its
+    donor does. A donor dies once, when a compare-and-set changes its word
+    from [Live] to [Died].
 
-    Any other function of several operations, and an interpretation, read a
-    handle as its arrays, shared ({!lent}), and kill nothing. A consumer
-    claims its handles in operand order. Racing consumers on several domains
-    for one donor is a misuse, after which any of them may have raised and
-    any of the donors they claimed may be dead. *)
+    A {e consumer} is the function the deaths name: an eager operation, which
+    [Eval.run] computes, or a function of several operations, which
+    {!with_consumer} runs. Both consume the handles among their operands by
+    the same steps:
+    + The consumer checks its operands. An operation checks its rule and its
+      route too, so that one they refuse kills nothing. A function of several
+      operations checks only that each operand lives, since its operations
+      run in an order it fixes.
+    + {!claim} claims the handles, which kills their donors for good, naming
+      the consumer.
+    + The consumer reads each handle as its arrays and each donor beside one
+      as live ({!called}, {!arrays}).
+    + {!reuse} gives a result the memory of a claimed handle that nothing
+      else reads.
+    + {!consumed} ends the claim when the consumer returns or raises, which
+      frees the memory no other value reads and no result took.
 
-(** The type for a donated operand and its position among an operation's
-    operands. *)
-type handle = Handle : int * ('v, 's, 'd) Value.t -> handle
+    A donor stays dead whatever the consumer does after the claim. Any other
+    reader, a function of several operations that consumes nothing or an
+    interpretation, reads a handle as its arrays, shared ({!lent}), and kills
+    nothing.
+
+    A consumer claims its handles in operand order. Racing consumers on
+    several domains for one donor is a misuse, after which any of them may
+    have raised and any of the donors they claimed may be dead.
+
+    This module calls {!Prim}. [Eval], [Nx] and the modules [Nx] is made of
+    call it. *)
+
+(** {1:handles Handles} *)
 
 val donate : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
-(** [donate ~by x] is a handle over [x]'s memory that one operation reads
-    ({!Value.Handle}): [x] lives until an eager operation claims the handle,
-    then dies with it, naming the operation; the operation reads [x] as it was
-    when called. An operation that reads the handle only at its first result's
-    own index (a map's plain load, a scatter's target, a contraction's [init],
-    an assembly's first piece over the whole result) writes that result into
-    the memory, where rig holds it exclusive (no other value reads it), it has
-    the result's dtype and C-contiguous layout, and the operation reads none
-    of it at other indices through another operand; the memory is consumed
-    either way where no other value reads it. A movement passes a new handle
-    of [x] on instead and kills nothing: the handle it read and the one it
-    passed on die with [x]. A constant or a traced [x] is [x].
+(** [donate ~by x] is a handle over [x]'s memory that one consumer reads
+    ({!Value.Handle}): [x] lives until a consumer claims a handle of it, then
+    dies naming the consumer, which reads [x] as it was when called. An
+    operation may write its first result into the memory ({!reuse}). A
+    movement passes a new handle of [x] on instead and kills nothing: the
+    handle it read and the one it passed on die with [x]. A handle, a constant
+    or a traced [x] is [x].
 
     Raises [Invalid_argument] naming [by] if [x] is dead. *)
 
@@ -62,81 +73,84 @@ val lent : ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
     the memory meanwhile. *)
 
 val read : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
-(** [read ~by x] is the operand [x] as [by], a function of several
-    operations, reads it: {!lent}[ x]. Raises [Invalid_argument] naming [by]
-    if [x] is dead. *)
+(** [read ~by x] is the operand [x] as [by], a function of several operations
+    that consumes nothing, reads it: {!lent}[ x]. Raises [Invalid_argument]
+    naming [by] if [x] is dead. *)
 
-(** {1:engine The engine's steps} *)
+(** {1:consuming Consuming}
 
-val handles : 'd Value.any list -> handle list
-(** [handles xs] is the handles among [xs], the first of each donor's. A
-    second handle of one donor, the same handle twice, two donations of one
-    value or a handle a movement passed on, is read as the donor beside its
-    handle is: [claim] kills the donor once and [consumed] consumes its memory
-    once. *)
+    The steps of the protocol above, which an operation and a function of
+    several operations take alike. A claim reads its consumer's operands by
+    their positions in the list {!claim} takes. *)
 
-val claim : by:string -> handle list -> unit
-(** [claim ~by hs] claims [hs], from {!handles}, for their consumer [by], in
-    their order: each donor, and with it each of its handles, dies naming
-    [by], for good. Raises [Invalid_argument] naming [by] and the earlier
-    consumer for a donor that died first, on any domain; the donors claimed
-    before it stay dead. *)
+type 'd claim
+(** The type for one consumer's claim on the handles among its operands, of
+    brand ['d]. *)
 
-val unhandled : handle list -> 'r Value.prim -> 'r Value.prim
-(** [unhandled hs op] is [op] with each operand as the consumer of the handles
-    [hs] reads it, before or after it claims them: a handle as its arrays, a
-    donor of one of [hs] as a live value, and any other value as it is. *)
+val claim : by:string -> 'd Value.any list -> 'd claim
+(** [claim ~by xs] claims the handles among [xs] for their consumer [by]: the
+    first handle of each donor, in their order, kills its donor naming [by],
+    for good. A second handle of one donor (the same handle twice, two
+    donations of one value, a handle a movement passed on) is read as the
+    donor beside its handle is: its donor dies once and its memory is
+    consumed once.
+
+    Raises [Invalid_argument] naming [by] and the earlier consumer for a donor
+    that died first, on any domain; the donors claimed before it stay dead. *)
+
+val called : 'd claim -> 'r Value.prim -> 'r Value.prim
+(** [called c op] is [op] with each operand as [c]'s consumer reads it: a
+    handle as its arrays, a donor of one of [c]'s handles as a live value, and
+    any other value as it is. [op]'s operands must be those [c] claimed. *)
 
 val reuse :
-  by:string ->
-  'r Value.prim ->
-  handle list ->
-  (int * Rig.Buffer.t * Rig.Buffer.t) option
-(** [reuse ~by op hs] is the claimed handle among [hs] whose memory takes
-    [op]'s first result, if one may: on one device, at a position
-    {!Prim.own_index} gives, of the result's dtype and layout over all of its
-    memory, beside operands at its placement none of which [op] reads at
-    other indices from that memory, and which rig holds exclusive. Its memory is then consumed for [by], and the
-    answer is its position, its buffer and the live buffer over its memory. *)
-
-val consumed : by:string -> reused:Rig.Buffer.t list -> handle list -> unit
-(** [consumed ~by ~reused hs] ends the claimed handles [hs] once [by] read
-    them: memory no other value reads, every shard of a value or none, and
-    not among [reused], is consumed and freed, so that it returns to its
-    device once the work on it is done; its buffers stay dead naming [by]. Shards that share memory with one
-    another, as borrows of one allocation do, are read by each other and
-    consumed by none. *)
-
-(** {1:consumers Consumers}
-
-    A function of several operations that consumes its operands' handles as
-    one operation does, by the steps above, such as a compiled call: it
-    reads its operands by position. *)
-
-type 'd consumer
-
-val with_consumer :
-  by:string -> 'd Value.any list -> ('d consumer -> 'a) -> 'a
-(** [with_consumer ~by xs f] checks that each of [xs] lives, then claims the
-    handles among them ({!handles}, {!claim}) for [by], and is [f c]; it ends
-    the handles ({!consumed}) when [f] returns or raises, the memory taken by
-    {!consumer_take} excepted. Raises [Invalid_argument] naming [by] for a
-    dead value, claiming nothing, as {!claim} does, and what [f] raises. *)
-
-val consumer_arrays : 'd consumer -> int -> Nx_array.any array
-(** [consumer_arrays c i] is operand [i]'s arrays, one per device, shared with
-    nothing. Raises [Invalid_argument] for a constant or a traced operand, a
-    position out of range, or once {!with_consumer} returned. *)
-
-val consumer_take :
-  'd consumer ->
-  int ->
-  ('w, 'r) Nx_array.Dtype.t ->
+  'd claim ->
+  own:int list ->
+  ('v, 's) Nx_array.Dtype.t ->
   Nx_array.Layout.t ->
-  ('w, 'r) Nx_array.t option
-(** [consumer_take c i dt l] is [Some a], [a] of [dt] and [l] over operand
-    [i]'s memory, where operand [i] is a handle [c] claimed, on one device,
-    whose array has [dt] and [l] over all of its memory, which no operand at
-    another position shares and rig holds exclusive: that memory is then
-    consumed for [c]'s [by]. [None] otherwise. Raises as
-    {!consumer_arrays}. *)
+  (Rig.Buffer.t * ('v, 's) Nx_array.t) option
+(** [reuse c ~own dt l] is the memory of the first handle [c] claimed at a
+    position of [own] that may hold a result of [dt] laid out as [l]: on one
+    device, its array of [dt] and [l] over all of its memory, each operand at
+    a position outside [own] apart from that memory, each at a position of
+    [own] reading it as the handle's array does, the memory no other value
+    reads (rig holds it exclusive), and no earlier [reuse] of [c] having taken
+    it. The memory is then consumed for [c]'s consumer, and the answer is the
+    handle's buffer, dead from then on, and an array of [dt] and [l] over the
+    memory, the result's. [None] otherwise.
+
+    [own] must hold only positions the consumer reads at the result's own
+    index, each before it writes the result there, as the positions
+    {!Prim.own_index} gives an operation.
+
+    Raises [Invalid_argument] naming [c]'s consumer for a position of [own] no
+    operand has, and once {!consumed} returned. *)
+
+val consumed : 'd claim -> unit
+(** [consumed c] ends [c] once its consumer returned or raised: the memory of
+    each claimed handle that no other value reads, every shard of a value or
+    none, and that no {!reuse} took, is consumed and freed, so that it returns
+    to its device once the work on it is done; its buffers stay dead naming
+    the consumer. Shards that share memory with one another, as borrows of one
+    allocation do, are read by each other and consumed by none. Memory a
+    {!reuse} took is the result's. A consumer that raises before it makes its
+    result must free that memory; [Eval] does, and {!with_consumer} leaves
+    what {!reuse} gave [f] to [f]. *)
+
+(** {1:consumers Functions of several operations} *)
+
+val with_consumer : by:string -> 'd Value.any list -> ('d claim -> 'a) -> 'a
+(** [with_consumer ~by xs f] checks that each of [xs] lives, then is [f c] for
+    [c], the claim of [by] on the handles among them ({!claim}), and ends [c]
+    ({!consumed}) when [f] returns or raises. [f] must not keep an array it
+    reads by [c], or a value over one, past its return, but those {!reuse}
+    gave.
+
+    Raises [Invalid_argument] naming [by] for a dead value, claiming nothing,
+    as {!claim} does, and what [f] raises. *)
+
+val arrays : 'd claim -> int -> Nx_array.any array
+(** [arrays c i] is operand [i]'s arrays, one per device, shared with nothing.
+
+    Raises [Invalid_argument] naming [c]'s consumer for a constant or a traced
+    operand, a position no operand has, and once {!consumed} returned. *)

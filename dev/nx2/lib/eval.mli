@@ -13,11 +13,14 @@
     constant operand is computed where the route reads it ({!Constant.at}),
     each other operand is placed there ({!Exec.placer}), and the operation
     computes by partials ({!Partial}) or by windows ({!Exec.windows}), as the
-    route says. Donated handles among the operands are claimed after the
-    route ({!Donate.claim}), the first result takes a handle's memory where
-    one may hold it ({!Donate.reuse}), and the handles end once the
-    operation returns ({!Donate.consumed}). A movement of a handle claims
-    nothing. It passes on a handle of the same donor over the moved arrays.
+    route says. The operation consumes the donated handles among its
+    operands as {!Donate} states: it claims them after the route
+    ({!Donate.claim}), its first result takes a handle's memory where one may
+    hold it and every operand with a placement lies at one ({!Donate.reuse}),
+    and the claim ends once the operation returns or raises
+    ({!Donate.consumed}). One that raises frees the memory its first result
+    took. A movement of a handle claims nothing. It passes on a handle of the
+    same donor over the moved arrays.
     A [Place] of a constant computes it at the placement; one of another
     value onto the host from another set first waits on that set
     ({!Check.wait}), then places it ({!Exec.place}). A [Check] is issued

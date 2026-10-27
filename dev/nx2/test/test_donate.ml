@@ -861,6 +861,35 @@ let test_extent_elsewhere () =
     (elements (Nx.reshape [| 2 * n |] y));
   invalid ~sub:"donated to Nx.add" (fun () -> Nx.copy x)
 
+(* An operation whose kernels decline once its checks pass raises with its
+   donors dead and returns their memory, as a consumer that raises does, the
+   memory it took for its result included: on a set whose kernels decline
+   [Add], a sum that may write into its handle's memory, and one beside a
+   wider operand, which may not. The operands stay reachable, so no
+   collection explains the bytes. *)
+module Dec = (val Nx.devices ~kernels:(module Nx_support.Declining) [ device ])
+
+(* [xs] of shape [s] on [Dec] in memory of its own: a copy, since the set's
+   kernels decline the sum [on_mem] computes. *)
+let on_dec s xs =
+  Nx.copy
+    (Nx.place Dec.on (Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 s xs)))
+
+let test_declined_frees () =
+  let n = 1 lsl 14 in
+  let freed ~msg y =
+    let x = on_dec [| n |] (Array.make n 1.) in
+    let before = settled () in
+    invalid ~sub:"does not compute Add" (fun () -> Nx.add (Nx.donate x) y);
+    let freed = before - settled () in
+    ignore (Sys.opaque_identity y);
+    invalid ~sub:(dead_in "Nx.copy" x "Nx.add") (fun () -> Nx.copy x);
+    at_least ~msg int ~than:(4 * n) freed
+  in
+  freed ~msg:"a sum that may write in place" (on_dec [| n |] (Array.make n 2.));
+  freed ~msg:"a sum beside a wider operand"
+    (on_dec [| 2; n |] (Array.make (2 * n) 2.))
+
 (* A Values rule may keep the arrays it receives, as a tape keeps a
    derivative's primals. The donor lives, and its next donation computes into
    fresh memory, leaving the kept arrays' elements as they were. *)
@@ -2904,6 +2933,8 @@ let () =
              test
                "an eager call beside an Extent on another domain frees its \
                 donor" test_extent_elsewhere;
+             test "a declining operation returns its donors' memory"
+               test_declined_frees;
              test "a donation leaves the arrays a rule kept"
                test_kept_by_rule;
              law_scatter_bits;

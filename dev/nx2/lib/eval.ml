@@ -45,26 +45,61 @@ let placed : type v s d e.
 (* [x] readable at [p]: a constant computed there. *)
 let placer ~by p x = Exec.placer ~by p (Constant.at p x)
 
+(* Whether every operand of [op] with a placement lies at one: a result
+   written into a handle's memory then lies where the handle does. *)
+let together op =
+  let first = ref None in
+  not
+    (Prim.exists
+       (fun x ->
+         match (Prim.at x, !first) with
+         | None, _ -> false
+         | Some p, None ->
+             first := Some p;
+             false
+         | Some p, Some q -> p != q)
+       op)
+
+(* The memory of a handle [c] claimed that [op]'s first result may take
+   ({!Donate.reuse}), where every operand lies at one placement: the handle's
+   buffer, dead from then on, and the array the result takes. *)
+let taken c op =
+  match Prim.own_index op with
+  | Some (own, layout, Nx_array.Dtype.Any dt) when together op ->
+      Option.map (fun (b, a) -> (b, A.Any a)) (Donate.reuse c ~own dt layout)
+  | Some _ | None -> None
+
+(* [f ()], the claim [c] ended once it returns or raises. Where it raises, the
+   memory [into] took for its result is freed too, since no result holds
+   it. *)
+let ending ~by c into f =
+  match f () with
+  | y ->
+      Donate.consumed c;
+      y
+  | exception e ->
+      let bt = Printexc.get_raw_backtrace () in
+      Donate.consumed c;
+      let why = "donated to " ^ by in
+      Option.iter
+        (fun (A.Any a) -> ignore (Rig.Buffer.free ~why (A.buffer a) : bool))
+        into;
+      Printexc.raise_with_backtrace e bt
+
 let rec run : type r. by:string -> r prim -> r =
  fun ~by op -> if Exec.is_local op then Exec.local ~by op else general ~by op
 
 and general : type r. by:string -> r prim -> r =
  fun ~by op ->
-  if not (Prim.exists Donate.is_handle op) then begin
-    Prim.iteri (fun _ x -> checked ~by x) op;
-    plain ~by op
-  end
-  else
-    let (Prim.Operands xs) = Prim.operands op in
-    Prim.iteri (fun _ x -> checked ~by x) op;
-    donated ~by op (Donate.handles xs)
+  Prim.iteri (fun _ x -> checked ~by x) op;
+  if Prim.exists Donate.is_handle op then donated ~by op else plain ~by op
 
-(* [op] over donated operands [hs]: a movement that maps elements one to one
-   passes a new handle on; any other operation checks its rule, then claims the
-   handles, reads their memory, writes its first result into a handle's memory
-   where it may, and ends the handles. *)
-and donated : type r. by:string -> r prim -> Donate.handle list -> r =
- fun ~by op hs ->
+(* [op] over donated operands: a movement that maps elements one to one passes
+   a new handle on; any other operation checks its rule, claims the handles,
+   reads their memory, writes its first result into a handle's memory where it
+   may, and ends the claim when it returns or raises. *)
+and donated : type r. by:string -> r prim -> r =
+ fun ~by op ->
   match op with
   | Move (mv, (Handle d as x)) ->
       (* A view of a handle leaves the memory unshared: the handle it passes on
@@ -94,12 +129,14 @@ and donated : type r. by:string -> r prim -> Donate.handle list -> r =
          a handle's memory nor shows another domain a handle dead. Once
          claimed, the donors stay dead whatever the kernels answer. *)
       let r = Prim.route ~by op in
-      let op = Donate.unhandled hs op in
-      Donate.claim ~by hs;
-      match Donate.reuse ~by op hs with
-      | Some (i, b, b') ->
-          (* Operand [i]'s memory is the result's, now over [b']: the kernel
+      let (Prim.Operands xs) = Prim.operands op in
+      let c = Donate.claim ~by xs in
+      let op = Donate.called c op in
+      match taken c op with
+      | Some (b, (A.Any a as into)) ->
+          (* The handle's memory is the result's, now over [b']: the kernel
              reads each index of it before it writes the result there. *)
+          let b' = A.buffer a in
           let over (type v s d) (y : (v, s, d) t) : (v, s, d) t =
             match y with
             | Array r when A.buffer r.a == b ->
@@ -107,16 +144,8 @@ and donated : type r. by:string -> r prim -> Donate.handle list -> r =
             | Array _ | Shards _ | Handle _ | Deferred _ | Traced _ -> y
           in
           let op = Prim.map over op in
-          let (Prim.Operands xs) = Prim.operands op in
-          let (Any target) = List.nth xs i in
-          let into = A.Any (Iarray.get (Prim.arrays target) 0) in
-          let y = routed ~by ~into r op in
-          Donate.consumed ~by ~reused:[ b ] hs;
-          y
-      | None ->
-          let y = routed ~by r op in
-          Donate.consumed ~by ~reused:[] hs;
-          y)
+          ending ~by c (Some into) (fun () -> routed ~by ~into r op)
+      | None -> ending ~by c None (fun () -> routed ~by r op))
 
 and plain : type r. by:string -> r prim -> r =
  fun ~by op ->
