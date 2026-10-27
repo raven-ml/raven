@@ -11,6 +11,6 @@ val load :
   sep:string ->
   comments:string ->
   skiprows:int ->
-  string ->
   ('v, 's) Nx_array.Dtype.t ->
+  string ->
   ('v, 's, Nx.host) Nx.t

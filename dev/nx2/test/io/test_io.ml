@@ -58,7 +58,7 @@ let saves =
           fails ~path (fun () -> Nx_io.load_npz path);
           fails ~path (fun () -> Nx_io.load_safetensors path);
           fails ~path (fun () -> Nx_io.load_gguf path);
-          fails ~path (fun () -> Nx_io.load_txt path Nx.float32));
+          fails ~path (fun () -> Nx_io.load_txt Nx.float32 path));
       test
         "a refusal before the write names the save, and an error during it \
          keeps its own message" (fun () ->
@@ -963,7 +963,7 @@ let txt =
           cover "a sub-byte dtype" (D.bits dt < 8);
           let path = temp_file () in
           Nx_io.save_txt path x;
-          let y = Nx_io.load_txt path dt in
+          let y = Nx_io.load_txt dt path in
           equal ~msg:"shape" (array int) (text_shape (Nx.shape x)) (Nx.shape y);
           is_true ~msg:"elements"
             (same_elements dt (Nx.to_array x) (Nx.to_array y)));
@@ -973,7 +973,7 @@ let txt =
          their exact value" (fun () ->
           let numpy = fixture "savetxt.txt" and path = temp_file () in
           Nx_io.save_txt ~sep:"," path
-            (Nx_io.load_txt ~sep:"," numpy Nx.float64);
+            (Nx_io.load_txt ~sep:"," Nx.float64 numpy);
           let rows =
             String.split_on_char '\n' (read numpy)
             |> List.filter (fun l -> l <> "" && l.[0] <> '#')
@@ -1007,14 +1007,14 @@ let txt =
           let path = file "# a\n1 2\n\n3   4\n# b\n5 6\n" in
           equal (array int32)
             [| 1l; 2l; 3l; 4l; 5l; 6l |]
-            (Nx.to_array (Nx_io.load_txt path Nx.int32));
-          equal (array int) [| 3; 2 |] (Nx.shape (Nx_io.load_txt path Nx.int32));
+            (Nx.to_array (Nx_io.load_txt Nx.int32 path));
+          equal (array int) [| 3; 2 |] (Nx.shape (Nx_io.load_txt Nx.int32 path));
           equal (array int32) [| 3l; 4l; 5l; 6l |]
-            (Nx.to_array (Nx_io.load_txt ~skiprows:2 path Nx.int32)));
+            (Nx.to_array (Nx_io.load_txt ~skiprows:2 Nx.int32 path)));
       test "a float field takes a sign, a point, an exponent or a word"
         (fun () ->
           let path = file "+1e+3 .5 5. -2E-1 NaN -Infinity inf\n" in
-          let x = Nx_io.load_txt path Nx.float64 in
+          let x = Nx_io.load_txt Nx.float64 path in
           equal (array float_exact)
             [| 1000.; 0.5; 5.; -0.2; Float.neg_infinity; Float.infinity |]
             (Array.of_list
@@ -1023,16 +1023,16 @@ let txt =
                   (Array.to_list (Nx.to_array x))));
           is_true ~msg:"NaN" (Float.is_nan (Nx.to_array x).(4));
           equal (array int32) [| 7l; -7l |]
-            (Nx.to_array (Nx_io.load_txt (file "+7 -7\n") Nx.int32)));
+            (Nx.to_array (Nx_io.load_txt Nx.int32 (file "+7 -7\n"))));
       test "a separator of several characters splits fields" (fun () ->
           let path = file "1::2::3\n" in
           equal (array int) [| 1; 2; 3 |]
-            (Nx.to_array (Nx_io.load_txt ~sep:"::" path Nx.int16)));
+            (Nx.to_array (Nx_io.load_txt ~sep:"::" Nx.int16 path)));
       test "a bool field is true, false or a number" (fun () ->
           let path = file "true FALSE 0 2.5 -0.0\n" in
           equal (array bool)
             [| true; false; false; true; false |]
-            (Nx.to_array (Nx_io.load_txt path Nx.bool)));
+            (Nx.to_array (Nx_io.load_txt Nx.bool path)));
       cases ~name:fst "a field outside its dtype or no literal of it fails"
         [
           ("256 in uint8", ("1 256\n", D.Any D.Uint8));
@@ -1053,14 +1053,14 @@ let txt =
         ]
         (fun (_, (text, D.Any dt)) ->
           let path = file text in
-          fails ~path (fun () -> Nx_io.load_txt path dt));
+          fails ~path (fun () -> Nx_io.load_txt dt path));
       test "a complex dtype, three axes or a negative skiprows are refused"
         (fun () ->
           let path = file "1\n" in
           invalid ~by:"Nx_io.load_txt" (fun () ->
-              Nx_io.load_txt path Nx.complex64);
+              Nx_io.load_txt Nx.complex64 path);
           invalid ~by:"Nx_io.load_txt" (fun () ->
-              Nx_io.load_txt ~skiprows:(-1) path Nx.int8);
+              Nx_io.load_txt ~skiprows:(-1) Nx.int8 path);
 
           invalid ~by:"Nx_io.save_txt" (fun () ->
               Nx_io.save_txt (temp_file ()) (Nx.zeros Nx.complex128 [| 2 |]));

@@ -215,7 +215,8 @@ end
     without encryption or several disks. *)
 
 val load_npy : string -> Nx.host Nx.packed
-(** [load_npy path] is the array of the npy file [path]. *)
+(** [load_npy path] is the array of the npy file [path]. It is packed because
+    the file states its dtype, which [Nx.unpack dt] asserts ({!Nx.unpack}). *)
 
 val save_npy : string -> ('v, 's, 'd) Nx.t -> unit
 (** [save_npy path x] writes [x] to the npy file [path], in version 1.0, or 2.0
@@ -389,10 +390,10 @@ val load_txt :
   ?sep:string ->
   ?comments:string ->
   ?skiprows:int ->
-  string ->
   ('v, 's) Nx.dtype ->
+  string ->
   ('v, 's, Nx.host) Nx.t
-(** [load_txt path dt] is the array of the text file [path] at [dt].
+(** [load_txt dt path] is the array of the text file [path] at [dt].
 
     The first [skiprows] lines are skipped, then each line is a row of fields
     separated by [sep], except blank lines and lines that start with [comments],
@@ -435,7 +436,12 @@ val save_txt : ?sep:string -> string -> ('v, 's, 'd) Nx.t -> unit
     colour type and bit depth, palettes, transparency and interlacing. JPEG
     files are those of {{:https://www.itu.int/rec/T-REC-T.81}ITU-T T.81} with
     8-bit samples and Huffman coding, sequential or progressive: grey, YCbCr,
-    RGB, CMYK and YCCK, with any sampling and restart intervals. *)
+    RGB, CMYK and YCCK, with any sampling and restart intervals.
+
+    Each save writes the format it is named after, whatever the path's
+    extension. The writers {!save_png}, {!save_jpeg} and {!encode_png} raise
+    [Invalid_argument] naming the function for a value that has not three axes,
+    has no pixel, or has a number of channels its format does not hold. *)
 
 val load_image : string -> Nx.host Nx.uint8_t
 (** [load_image path] is the image of the PNG or JPEG file [path], recognised
@@ -453,20 +459,11 @@ val load_image : string -> Nx.host Nx.uint8_t
     Raises [Failure] also if the file is neither a PNG nor a JPEG stream, or if
     a checksum does not match. *)
 
-val save_image : string -> 'd Nx.uint8_t -> unit
-(** [save_image path x] writes the image [x] to [path], as PNG for the
-    extension [.png] and as JPEG for [.jpg] and [.jpeg], in any case. PNG holds
-    1 to 4 channels at 8 bits, so every image {!load_image} reads from a PNG
-    file saves back as itself; JPEG holds 1 or 3 channels, written baseline at
-    quality 90 (the standard tables of T.81's Annex K scaled to 20%), colour
-    with its chroma subsampled 4:2:0.
-
-    Raises [Invalid_argument] if the extension is neither, or if [x] has not
-    three axes, has no pixel, or has channels its format does not hold. *)
-
-val encode_png : ?dpi:float -> ?srgb:bool -> 'd Nx.uint8_t -> string
-(** [encode_png x] is the contents of a PNG file of the image [x], without
-    touching the file system:
+val save_png : ?dpi:float -> ?srgb:bool -> string -> 'd Nx.uint8_t -> unit
+(** [save_png path x] writes the image [x] to [path] as a PNG file of 8 bits
+    per sample: the bytes [encode_png ?dpi ?srgb x], replacing what [path]
+    names as every save does. PNG holds 1 to 4 channels, so every image
+    {!load_image} reads from a PNG file saves back as itself.
     - [dpi], the image's physical resolution in pixels per inch, is written as a
       [pHYs] chunk of [Float.round (dpi /. 0.0254)] pixels per metre on both
       axes, so that viewers and printers show the image at its physical size.
@@ -474,9 +471,17 @@ val encode_png : ?dpi:float -> ?srgb:bool -> 'd Nx.uint8_t -> string
     - [srgb] is whether to write an [sRGB] chunk with the perceptual rendering
       intent, which states that the samples are sRGB. Defaults to [false].
 
-    Without [dpi] and [srgb] it is the file {!save_image} writes for [x].
-
-    Raises [Invalid_argument] if [x] has not three axes, has no pixel or has
-    not 1 to 4 channels, or if [Float.round (dpi /. 0.0254)] is not in
+    Raises [Invalid_argument] if [Float.round (dpi /. 0.0254)] is not in
     \[[1];[2{^31} - 1]\], the range of a PNG integer: [dpi] is below about
     [0.0127], above about [5.45e7], or not a number. *)
+
+val save_jpeg : string -> 'd Nx.uint8_t -> unit
+(** [save_jpeg path x] writes the image [x] to [path] as a JPEG file, baseline
+    at quality 90 (the standard tables of T.81's Annex K scaled to 20%), colour
+    with its chroma subsampled 4:2:0. JPEG holds 1 or 3 channels. *)
+
+val encode_png : ?dpi:float -> ?srgb:bool -> 'd Nx.uint8_t -> string
+(** [encode_png ?dpi ?srgb x] is the file {!save_png} writes, without touching
+    the file system.
+
+    Raises [Invalid_argument] as {!save_png} does. *)

@@ -91,8 +91,8 @@ let load_gguf path =
 
 (* Text *)
 
-let load_txt ?(sep = " ") ?(comments = "#") ?(skiprows = 0) path dt =
-  Txt.load ~sep ~comments ~skiprows path dt
+let load_txt ?(sep = " ") ?(comments = "#") ?(skiprows = 0) dt path =
+  Txt.load ~sep ~comments ~skiprows dt path
 
 let save_txt ?(sep = " ") path x = Txt.save ~sep path x
 
@@ -124,27 +124,23 @@ let with_pixels ~by ~channels x f =
   Storage.with_bytes ~by x (fun b -> f b ~width:w ~height:h ~channels:c)
 
 (* The pHYs chunk holds a positive four-byte PNG integer, at most 2^31 - 1. *)
-let pixels_per_metre dpi =
+let pixels_per_metre ~by dpi =
   let ppm = Float.round (dpi /. 0.0254) in
   if not (1. <= ppm && ppm <= 2147483647.) then
-    Fail.invalid_argf "Nx_io.encode_png: the dpi %g" dpi;
+    Fail.invalid_argf "%s: the dpi %g" by dpi;
   int_of_float ppm
 
-let png ~by ~ppm ~srgb x =
+let png ~by ?dpi ?(srgb = false) x =
+  let ppm = match dpi with None -> 0 | Some dpi -> pixels_per_metre ~by dpi in
   with_pixels ~by ~channels:[ 1; 2; 3; 4 ] x (Image.png_encode ~ppm ~srgb)
 
-let encode_png ?dpi ?(srgb = false) x =
-  let ppm = match dpi with None -> 0 | Some dpi -> pixels_per_metre dpi in
-  png ~by:"Nx_io.encode_png" ~ppm ~srgb x
+let encode_png ?dpi ?srgb x = png ~by:"Nx_io.encode_png" ?dpi ?srgb x
 
-let save_image path x =
-  let by = "Nx_io.save_image" in
-  let file =
-    match String.lowercase_ascii (Filename.extension path) with
-    | ".png" -> png ~by ~ppm:0 ~srgb:false x
-    | ".jpg" | ".jpeg" -> with_pixels ~by ~channels:[ 1; 3 ] x Image.jpeg_encode
-    | ext ->
-        Fail.invalid_argf "%s: the extension %S is neither .png, .jpg nor .jpeg"
-          by ext
-  in
+let save_png ?dpi ?srgb path x =
+  let file = png ~by:"Nx_io.save_png" ?dpi ?srgb x in
+  Save.write path (fun fd -> Save.string fd file)
+
+let save_jpeg path x =
+  let by = "Nx_io.save_jpeg" in
+  let file = with_pixels ~by ~channels:[ 1; 3 ] x Image.jpeg_encode in
   Save.write path (fun fd -> Save.string fd file)

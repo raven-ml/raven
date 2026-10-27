@@ -291,7 +291,7 @@ let save ~sep path x =
 
 (* Loading *)
 
-let load ~sep ~comments ~skiprows path dt =
+let load ~sep ~comments ~skiprows dt path =
   let by = "Nx_io.load_txt" in
   let parse = match parser dt with Some p -> p | None -> refuse ~by dt in
   if skiprows < 0 then Fail.invalid_argf "%s: skiprows is %d" by skiprows;
