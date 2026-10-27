@@ -142,15 +142,10 @@ let map_programs f = function
   | Iterate s -> Iterate { s with step = f s.step; until = f s.until }
   | Call c -> Call { c with body = f c.body }
 
-(* The additions a construct's results end with. *)
-let additions = function
-  | Detach _ | Lanes _ | Lane_index _ | Add _ -> [||]
-  | Scan { step; _ } -> step.adds
-  | Iterate { step; until; _ } -> Array.append step.adds until.adds
-  | Call { body; _ } -> body.adds
-
 (* Forms *)
 
+(* Outputs [i] to [j - 1]. *)
+let slice a i j = Array.sub a i (j - i)
 let contiguous shape = Nx_array.Layout.contiguous (Iarray.of_array shape)
 
 let shape_of (f : _ Nx.Prim.form) =
@@ -167,8 +162,49 @@ let stacked n (F f) =
 
 let computed (F f) = F { f with layout = contiguous (shape_of f) }
 
-(* Outputs [i] to [j - 1]. *)
-let slice a i j = Array.sub a i (j - i)
+(* The additions [p]'s outputs end with. *)
+let tail p =
+  let n = Array.length p.outputs in
+  slice p.outputs (n - Array.length p.adds) n
+
+(* A loop's sums: one per total and shape its programs add to, in the order
+   their first additions are made, each the chain of that total's additions in
+   the order they are made, as an eager loop would make them. With each
+   program's additions, the sum each feeds. *)
+let sums programs =
+  let found = ref [] in
+  let index (Addition (t, _) as a) (F f) =
+    let shape = shape_of f in
+    let rec go k = function
+      | [] ->
+          found := !found @ [ (a, F f) ];
+          k
+      | (Addition (u, _), F g) :: rest ->
+          if Option.is_some (same_total t u) && shape_of g = shape then k
+          else go (k + 1) rest
+    in
+    go 0 !found
+  in
+  let feeds =
+    List.map
+      (fun p ->
+        Array.mapi (fun k a -> index a (computed (form (tail p).(k)))) p.adds)
+      programs
+  in
+  let adds, forms = List.split !found in
+  (Array.of_list adds, Array.of_list forms, feeds)
+
+(* The additions a construct's results end with: a loop's sums, and a call's
+   additions. *)
+let additions = function
+  | Detach _ | Lanes _ | Lane_index _ | Add _ -> [||]
+  | Scan { step; _ } ->
+      let adds, _, _ = sums [ step ] in
+      adds
+  | Iterate { step; until; _ } ->
+      let adds, _, _ = sums [ until; step ] in
+      adds
+  | Call { body; _ } -> body.adds
 
 let no_map name =
   invalid_arg (name ^ ": no map named by the axis is around the call")
@@ -190,20 +226,11 @@ let forms = function
         else Array.map form (slice step.outputs 0 nc)
       in
       let ys = Array.map form (slice step.outputs nc (no - na)) in
-      let adds = Array.map form (slice step.outputs (no - na) no) in
-      Array.concat
-        [ carry; Array.map (stacked length) ys; Array.map computed adds ]
+      let _, sums, _ = sums [ step ] in
+      Array.concat [ carry; Array.map (stacked length) ys; sums ]
   | Iterate { step; until; init; _ } ->
-      let tail p =
-        let n = Array.length p.outputs in
-        slice p.outputs (n - Array.length p.adds) n
-      in
-      Array.concat
-        [
-          Array.map form init;
-          Array.map (fun v -> computed (form v)) (tail step);
-          Array.map (fun v -> computed (form v)) (tail until);
-        ]
+      let _, sums, _ = sums [ until; step ] in
+      Array.append (Array.map form init) sums
   | Call { body; _ } -> Array.map form body.outputs
 
 (* Values of a form *)
@@ -286,24 +313,22 @@ and default = function
       iterate name step ~until ~max ~init ~step_captures ~until_captures
   | Call { body; args } -> eval body args
 
-(* The sums of a construct's additions start at the identity, so that a loop
-   that runs no step adds nothing a total can tell. *)
-and accumulators p =
-  let n = Array.length p.outputs in
-  Array.map
-    (fun v -> filled ~zero:false (computed (form v)))
-    (slice p.outputs (n - Array.length p.adds) n)
+(* A loop's sums start at the identity, so that a loop that runs no step adds
+   nothing a total can tell. *)
+and accumulators forms = Array.map (filled ~zero:false) forms
 
-(* [acc] plus the additions the outputs [out] end with. *)
-and accumulate acc out =
-  let n = Array.length out and na = Array.length acc in
-  Array.iteri (fun k a -> acc.(k) <- add a out.(n - na + k)) acc
+(* [acc] plus the additions [p]'s outputs [out] end with, each to the sum it
+   feeds. *)
+and accumulate acc feeds out =
+  let base = Array.length out - Array.length feeds in
+  Array.iteri (fun k j -> acc.(j) <- add acc.(j) out.(base + k)) feeds
 
 and scan step ~length ~init ~xs ~captures =
   let nc = Array.length init in
   let no = Array.length step.outputs and na = Array.length step.adds in
   let ny = no - nc - na in
-  let acc = accumulators step in
+  let _, forms, feeds = sums [ step ] in
+  let feeds = List.hd feeds and acc = accumulators forms in
   let carry = ref init and ys = Array.make ny [] in
   for i = 0 to length - 1 do
     let row = Array.map (fun (V x) -> V (Nx.get [ i ] x)) xs in
@@ -312,7 +337,7 @@ and scan step ~length ~init ~xs ~captures =
     for j = 0 to ny - 1 do
       ys.(j) <- out.(nc + j) :: ys.(j)
     done;
-    accumulate acc out
+    accumulate acc feeds out
   done;
   let ys =
     if length = 0 then
@@ -324,10 +349,12 @@ and scan step ~length ~init ~xs ~captures =
   Array.concat [ !carry; ys; acc ]
 
 and iterate name step ~until ~max ~init ~step_captures ~until_captures =
-  let step_acc = accumulators step and until_acc = accumulators until in
+  let _, forms, feeds = sums [ until; step ] in
+  let until_feeds = List.nth feeds 0 and step_feeds = List.nth feeds 1 in
+  let acc = accumulators forms in
   let rec go k carry =
     let out = eval until (Array.append carry until_captures) in
-    accumulate until_acc out;
+    accumulate acc until_feeds out;
     let stop = unpack Nx.bool out.(0) in
     if Nx.item (List.init (Array.length (Nx.shape stop)) (fun _ -> 0)) stop then
       carry
@@ -336,12 +363,12 @@ and iterate name step ~until ~max ~init ~step_captures ~until_captures =
         (Printf.sprintf "%s: until is still false after max = %d steps" name max)
     else begin
       let out = eval step (Array.append carry step_captures) in
-      accumulate step_acc out;
+      accumulate acc step_feeds out;
       go (k + 1) (slice out 0 (Array.length carry))
     end
   in
   let carry = go 0 init in
-  Array.concat [ carry; step_acc; until_acc ]
+  Array.append carry acc
 
 let run c =
   let r = perform c in

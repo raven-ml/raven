@@ -3,19 +3,26 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Transformations of functions over nx values: totals and compilation.
+(** Transformations of functions over nx values: loops, totals and compilation.
 
     A transformation takes the structure ({!Nx.Ptree.t}) of each value whose
     arrays it enumerates; everything else the function uses is captured and is a
     constant of the transformation.
 
-    {b Traced functions.} The function {!jit} receives is {e traced} at the
-    call: its OCaml code runs once per call over stand-ins of its arguments'
-    arrays, values with a dtype, a shape and a placement but no elements, and
-    what it computes is recorded as a program, which the call then evaluates.
-    Inside it {!Nx.item} of a stand-in, or of a value computed in it, raises
-    ([Nx.item: the value is traced by Rune.jit]), and a draw without [~key]
-    raises naming {!jit}.
+    {b Functions of a construct are traced.} The functions that {!scan},
+    {!iterate} and {!jit} receive are {e traced} at the call: their OCaml code
+    runs once per call over stand-ins of their arguments' arrays, values with a
+    dtype, a shape and a placement but no elements, and what it computes from
+    them is recorded as a program, which the construct then evaluates. So a
+    step's code runs once whatever the number of steps, its side effects happen
+    once, and inside it {!Nx.item} of a stand-in, or of a value computed from
+    one, raises ([Nx.item: the value is traced by Rune.scan]); a branch on a
+    value is {!Nx.where} or a nested {!iterate}. An operation that reads no
+    stand-in computes at the call, once. A draw without [~key] inside a traced
+    function raises, naming the construct, so a step draws from a key in its
+    carry or its rows. Outside every transformation a construct is its program
+    evaluated: a {!scan} is the fold of its step, bit for bit but for a NaN
+    result's sign and payload, which nx leaves unspecified.
 
     {b Extents.} A transformation, a map or a {!Total.collect} is around the
     code its function runs, on whatever domain that code resumes, and the fibers
@@ -25,7 +32,7 @@
     {!lane_index} raise, and an addition to a total is dropped.
 
     {b Errors.} Every message starts with the entry point the caller applied, as
-    ["Rune.jit"] for {!jit}. *)
+    ["Rune.scan"] for {!scan}. *)
 
 (** {1:control Controlling differentiation} *)
 
@@ -71,7 +78,14 @@ val lane_index : axis -> unit -> 'd Nx.int32_t
     call, once per execution of the code that makes it. The additions a traced
     function makes reach it when the construct that traced the function returns,
     so a construct that raises adds none: a {!jit} adds its function's additions
-    once per call, as the call returns. *)
+    once per call, as the call returns. A step of {!scan} or {!iterate}, and an
+    [until] once per test, makes its additions once per step: a loop chains each
+    total's additions in the order they are made, from an identity that changes
+    no sum (a negative zero), and that chain reaches the [collect] as one
+    addition, as the loop returns. So the total is the one the steps' additions
+    give made in turn where the [zero] is [0.] or [-0.] and the loop's are the
+    first additions the [collect] receives. A loop that takes no step adds that
+    identity. *)
 module Total : sig
   type ('v, 's, 'd) t
   (** The type for totals of [('v, 's, 'd) Nx.t] values. *)
@@ -96,6 +110,54 @@ module Total : sig
       raises, [collect] raises the same exception. *)
 end
 
+(** {1:loops Loops} *)
+
+val scan :
+  ('c, 'd) Nx.Ptree.t ->
+  ('x, 'd) Nx.Ptree.t ->
+  ('y, 'd) Nx.Ptree.t ->
+  f:('c -> 'x -> 'c * 'y) ->
+  init:'c ->
+  'x ->
+  'c * 'y
+(** [scan c x y ~f ~init xs] folds the step [f] over the rows of [xs], a value
+    of structure [x]: every array of [xs] has the same leading length [n], and
+    step [i] passes [f] row [i] of every array. [f carry row] returns the next
+    carry, of structure [c], and the step's outputs, of structure [y]; the
+    result is the final carry and the outputs, each array stacked along a new
+    axis 0. With [n = 0] the result is [init] and outputs of leading length [0].
+
+    [f] is traced once, at the call, over stand-ins of [init]'s arrays and of
+    [xs]'s arrays without axis 0.
+
+    Raises [Invalid_argument] if [xs] has no array
+    (["Rune.scan: xs has no leaf"]), a 0-d array, or arrays of different leading
+    lengths, naming their paths (["Rune.scan: xs: 1: 3 rows, 0: 2"]), and, at
+    the trace, if the carry [f] returns differs from the one it received in its
+    {!Nx.Ptree.val-visits}, dtypes or shapes, naming the first path where they
+    differ, as in
+    ["Rune.scan: 0: shape [3] in the carry the step returned, [2] in the carry
+     it received"]. *)
+
+val iterate :
+  ('c, 'd) Nx.Ptree.t ->
+  max:int ->
+  until:('c -> 'd Nx.bool_t) ->
+  f:('c -> 'c) ->
+  'c ->
+  'c
+(** [iterate c ~max ~until ~f init] applies the step [f] to a carry of structure
+    [c], from [init], until [until carry] holds, and returns that carry. [until]
+    returns one boolean and is tested before each step, so an [init] that
+    satisfies it is returned unchanged. [f] and [until] are traced once, at the
+    call.
+
+    Raises [Invalid_argument] if [max < 0]
+    (["Rune.iterate: max = -1 is negative"]), if [until] returns other than one
+    element, at the trace if [f]'s carry differs from the one it received as
+    {!scan} says, and if [until] is still false after [max] steps
+    (["Rune.iterate: until is still false after max = 50 steps"]). *)
+
 (** {1:jit Compilation} *)
 
 val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
@@ -108,6 +170,25 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     a call if [f] captures a value that another transformation traces. *)
 
 (** {1:one Functions of one array} *)
+
+val scan' :
+  f:
+    (('a, 'b, 'd) Nx.t ->
+    ('c, 'e, 'd) Nx.t ->
+    ('a, 'b, 'd) Nx.t * ('g, 'h, 'd) Nx.t) ->
+  init:('a, 'b, 'd) Nx.t ->
+  ('c, 'e, 'd) Nx.t ->
+  ('a, 'b, 'd) Nx.t * ('g, 'h, 'd) Nx.t
+(** [scan' ~f ~init xs] is {!scan} of one array each for the carry, the rows and
+    the outputs. *)
+
+val iterate' :
+  max:int ->
+  until:(('v, 's, 'd) Nx.t -> 'd Nx.bool_t) ->
+  f:(('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t) ->
+  ('v, 's, 'd) Nx.t ->
+  ('v, 's, 'd) Nx.t
+(** [iterate' ~max ~until ~f x] is {!iterate} of one array. *)
 
 val jit' :
   (('v, 's, 'd) Nx.t -> ('w, 'r, 'd) Nx.t) ->

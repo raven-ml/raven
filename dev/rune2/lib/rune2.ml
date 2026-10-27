@@ -21,6 +21,41 @@ let rebuild s ~like vs =
 let slice a i j = Array.sub a i (j - i)
 let first a = a.(0)
 
+let path_name p =
+  if Ptree.Path.segments p = [] then "the root" else Ptree.Path.to_string p
+
+(* The carry a step returned against the one it received: the same visits, and
+   at each path the same dtype and shape. *)
+let same_carry name s ~received returned =
+  let this = "in the carry the step returned"
+  and that = "in the carry it received" in
+  let _, k = Ptree.flatten s returned and _, k' = Ptree.flatten s received in
+  Option.iter
+    (fun msg -> invalid_argf "%s: %s" name msg)
+    (Ptree.Skeleton.diff ~this k ~that k');
+  let leaves x =
+    List.rev (Ptree.fold s (fun p y acc -> (p, V y) :: acc) x [])
+  in
+  List.iter2
+    (fun (p, V y) (_, V z) ->
+      let path =
+        if Ptree.Path.segments p = [] then "the root"
+        else Ptree.Path.to_string p
+      in
+      if not (Nx.Dtype.equal (Nx.dtype y) (Nx.dtype z)) then
+        invalid_argf "%s: %s: %s %s, %s %s" name path
+          (Nx.Dtype.name (Nx.dtype y))
+          this
+          (Nx.Dtype.name (Nx.dtype z))
+          that;
+      if Nx.shape y <> Nx.shape z then
+        invalid_argf "%s: %s: %s %s, %s %s" name path
+          (Format.asprintf "shape %a" pp_shape (Nx.shape y))
+          this
+          (Format.asprintf "%a" pp_shape (Nx.shape z))
+          that)
+    (leaves returned) (leaves received)
+
 (* Constructs without programs *)
 
 let detach x = unpack (Nx.dtype x) (first (perform (Detach x)))
@@ -64,6 +99,97 @@ module Total = struct
     let r = Effect.Deep.match_with f () { retc = Fun.id; exnc = raise; effc } in
     (r, !sum)
 end
+
+(* Loops *)
+
+(* The form of [x]'s rows along axis 0. *)
+let row (V x) =
+  let s = Nx.shape x in
+  F
+    {
+      dtype = Nx.dtype x;
+      layout =
+        Nx_array.Layout.contiguous
+          (Iarray.of_array (Array.sub s 1 (Array.length s - 1)));
+      placement = Option.map Nx.Placement.without_leading_axis (Nx.placement x);
+    }
+
+let scan_named name c x y ~f ~init xs =
+  let init_v = values c init and xs_v = values x xs in
+  if Array.length xs_v = 0 then invalid_argf "%s: xs has no leaf" name;
+  let lengths =
+    List.rev
+      (Ptree.fold x
+         (fun p v acc ->
+           match Nx.shape v with
+           | [||] -> invalid_argf "%s: xs: %s is 0-d" name (path_name p)
+           | s -> (path_name p, s.(0)) :: acc)
+         xs [])
+  in
+  let first, length = List.hd lengths in
+  List.iter
+    (fun (p, n) ->
+      if n <> length then
+        invalid_argf "%s: xs: %s: %d rows, %s: %d" name p n first length)
+    lengths;
+  let nc = Array.length init_v and nx = Array.length xs_v in
+  let ys_like = ref None in
+  let step, captures =
+    Trace.trace Body ~name
+      (Array.append (Array.map form init_v) (Array.map row xs_v))
+      (fun vs ->
+        let carry = rebuild c ~like:init (slice vs 0 nc) in
+        let r = rebuild x ~like:xs (slice vs nc (nc + nx)) in
+        let carry', ys = f carry r in
+        same_carry name c ~received:carry carry';
+        ys_like := Some ys;
+        Array.append (values c carry') (values y ys))
+  in
+  let ys_like = Option.get !ys_like in
+  let ny = Array.length (values y ys_like) in
+  let r = run (Scan { step; length; init = init_v; xs = xs_v; captures }) in
+  ( rebuild c ~like:init (slice r 0 nc),
+    rebuild y ~like:ys_like (slice r nc (nc + ny)) )
+
+let scan c x y ~f ~init xs = scan_named "Rune.scan" c x y ~f ~init xs
+
+let iterate_named name c ~max ~until ~f init =
+  if max < 0 then invalid_argf "%s: max = %d is negative" name max;
+  let init_v = values c init in
+  let forms = Array.map form init_v and nc = Array.length init_v in
+  let step, step_captures =
+    Trace.trace Body ~name forms (fun vs ->
+        let carry = rebuild c ~like:init vs in
+        let carry' = f carry in
+        same_carry name c ~received:carry carry';
+        values c carry')
+  in
+  let until, until_captures =
+    Trace.trace Body ~name forms (fun vs ->
+        let stop = until (rebuild c ~like:init vs) in
+        let s = Nx.shape stop in
+        if Array.fold_left ( * ) 1 s <> 1 then
+          invalid_argf "%s: until must return one boolean, got shape %s" name
+            (Format.asprintf "%a" pp_shape s);
+        [| V stop |])
+  in
+  let r =
+    run
+      (Iterate
+         {
+           name;
+           step;
+           until;
+           max;
+           init = init_v;
+           step_captures;
+           until_captures;
+         })
+  in
+  rebuild c ~like:init (slice r 0 nc)
+
+let iterate c ~max ~until ~f init =
+  iterate_named "Rune.iterate" c ~max ~until ~f init
 
 (* Compilation *)
 
@@ -124,5 +250,11 @@ let jit_named name s =
 let jit s = jit_named "Rune.jit" s
 
 (* Functions of one array *)
+
+let scan' ~f ~init xs =
+  scan_named "Rune.scan'" Ptree.tensor Ptree.tensor Ptree.tensor ~f ~init xs
+
+let iterate' ~max ~until ~f x =
+  iterate_named "Rune.iterate'" Ptree.tensor ~max ~until ~f x
 
 let jit' f = jit_named "Rune.jit'" Ptree.(tensor @-> returns tensor) f
