@@ -11,8 +11,11 @@ png_gray_trns.png and png_rgb16_trns.png, whose pixels are stated from PNG-3
 where Pillow's decoding differs. No fixture is a YCCK JPEG, which Pillow does
 not write, so the YCCK conversion goes untested. Python's float(), whose
 reader rounds correctly on every system, gives the float64 nearest each
-literal of floats.txt. The JPEG files that break T.81's ranges are written
-byte by byte below, and have no sibling.
+literal of floats.txt. The JPEG files that break T.81's rules are written
+byte by byte below, or cut from Pillow's files, and have no sibling, except
+jpeg_table16_coarse.jpg, whose 16-bit table Pillow writes and decodes. Nor
+have jpeg_zrl_progressive.jpg and jpeg_zrl_baseline.jpg, which decode to the
+same pixels.
 
 Usage:
     cd dev/nx2/test/io/support
