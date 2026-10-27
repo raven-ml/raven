@@ -157,6 +157,60 @@ let of_raw r = v r.devices r.extents r.cuts
 (* The position in [g] of a device of [g]. *)
 let position g k = Option.get (Array.find_index (( = ) k) (Grid.devices g))
 
+(* Two grids of one mesh, as a fold's result and its operand are: [kept]
+   cuts the value's axes 0 and 1 over some grid axes; [folded] cuts its
+   axes 2 and 3 over others; [axes] is folded axes in some order, which
+   [Grid.cut_like] joins onto the value's axis 4. Each grid takes its own
+   normal form, so grid axes one merges the other may keep apart. *)
+type joined = {
+  jdevices : int array;
+  jextents : int array;
+  kept : (int * int array) array;
+  folded : (int * int array) array;
+  axes : int list;
+}
+
+let pp_cuts ppf cuts =
+  let ints a = String.concat "; " (Array.to_list (Array.map string_of_int a)) in
+  Format.pp_print_string ppf
+    (String.concat "; "
+       (Array.to_list
+          (Array.map (fun (a, o) -> Printf.sprintf "%d/[%s]" a (ints o)) cuts)))
+
+let pp_joined ppf j =
+  let ints a = String.concat "; " (Array.to_list (Array.map string_of_int a)) in
+  Format.fprintf ppf "devices [%s] extents [%s] kept [%a] folded [%a] axes [%s]"
+    (ints j.jdevices) (ints j.jextents) pp_cuts j.kept pp_cuts j.folded
+    (String.concat "; " (List.map string_of_int j.axes))
+
+let joined =
+  let open Gen in
+  let* g = int_range 1 4 in
+  let* jextents = array ~size:(constant g) (int_range 1 3) in
+  let n = Array.fold_left ( * ) 1 jextents in
+  let* jdevices = permutation (List.init n Fun.id) in
+  let* order = permutation (List.init g Fun.id) in
+  let* owner = array ~size:(constant g) (int_range (-1) 3) in
+  let+ axes = of_list [ [ 2 ]; [ 3 ]; [ 2; 3 ]; [ 3; 2 ] ] in
+  let cuts lo hi =
+    Array.of_list
+      (List.filter_map
+         (fun a ->
+           match List.filter (fun h -> owner.(h) = a) order with
+           | [] -> None
+           | over -> Some (a, Array.of_list over))
+         (List.init (hi - lo) (fun i -> lo + i)))
+  in
+  {
+    jdevices = Array.of_list jdevices;
+    jextents;
+    kept = cuts 0 2;
+    folded = cuts 2 4;
+    axes;
+  }
+
+let joined = Gen.with_pp pp_joined joined
+
 let laws =
   group "laws"
     [
@@ -232,6 +286,42 @@ let laws =
               equal int ~msg:"windows holding the index" 1
                 (List.length (List.filter (fun w -> inside w idx) ws)))
             (indices (Array.to_list s)));
+      prop
+        "an axis cut like another grid's axes is cut over their grid axes, \
+         in order, major first"
+        joined (fun j ->
+          let over a =
+            match Array.find_opt (fun (b, _) -> b = a) j.folded with
+            | Some (_, o) -> o
+            | None -> [||]
+          in
+          let joined = Array.concat (List.map over j.axes) in
+          let unnamed h =
+            not (Array.exists (fun (_, o) -> Array.mem h o) j.kept)
+          in
+          let g = Array.length j.jextents in
+          cover "two folded axes joined"
+            (List.for_all (fun a -> over a <> [||]) j.axes
+            && List.length j.axes = 2);
+          cover "a folded grid axis the kept grid merges with a neighbour"
+            (List.exists
+               (fun h ->
+                 h + 1 < g && unnamed h && unnamed (h + 1)
+                 && (Array.mem h joined || Array.mem (h + 1) joined))
+               (List.init g Fun.id));
+          cover "a folded cut over several grid axes minor first"
+            (Array.length joined > 1 && joined.(0) > joined.(1));
+          cover "no folded axis cut" (joined = [||]);
+          let g = v j.jdevices j.jextents j.kept in
+          let like =
+            v j.jdevices j.jextents (Array.append j.kept j.folded)
+          in
+          let want =
+            if joined = [||] then g
+            else
+              v j.jdevices j.jextents (Array.append j.kept [| (4, joined) |])
+          in
+          equal grid want (ok (Grid.cut_like g ~like ~axes:j.axes ~axis:4)));
       prop "a leading axis added and removed gives the grid back" gridded
         (fun (g, _) ->
           equal grid g
@@ -304,6 +394,29 @@ let operations =
                (Grid.window (split 1) [| 6 |] 0)));
       test "uncutting an axis leaves copies on the same devices" (fun () ->
           equal grid on (Grid.uncut (split 1) ~axis:1));
+      cases "Grid.cut_like refuses" ~name:fst
+        [
+          ( "grids of two meshes",
+            Grid.cut_like
+              (v [| 0; 1; 2; 3; 4; 5 |] [| 2; 3 |] [| (0, [| 0 |]) |])
+              ~like:(v [| 0; 1; 2; 3; 4; 5 |] [| 3; 2 |] [| (1, [| 0 |]) |])
+              ~axes:[ 1 ] ~axis:2 );
+          ( "devices in another order",
+            Grid.cut_like on
+              ~like:(v [| 1; 0; 2; 3 |] [| 4 |] [| (0, [| 0 |]) |])
+              ~axes:[ 0 ] ~axis:1 );
+          ( "an axis cut already",
+            Grid.cut_like (mesh [| (0, [| 0 |]) |])
+              ~like:(mesh [| (1, [| 1 |]) |]) ~axes:[ 1 ] ~axis:0 );
+          ( "a grid axis that cuts another axis",
+            Grid.cut_like (mesh [| (0, [| 0 |]) |])
+              ~like:(mesh [| (1, [| 0 |]) |]) ~axes:[ 1 ] ~axis:2 );
+        ]
+        (fun (_, r) ->
+          ignore
+            (require_error
+               ~pp:(fun ppf _ -> Format.pp_print_string ppf "a grid")
+               r));
       test "a grid prints as the placement that makes it" (fun () ->
           equal string "on [0; 1; 2; 3]" (pp on);
           equal string "split ~axis:1 [0; 1; 2; 3]" (pp (split 1));

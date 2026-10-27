@@ -1045,17 +1045,17 @@ let placements =
           equal (array float_exact)
             (read (Nx.contract Nx.float32 p a b))
             (read y));
-      test "a sum cut three ways along k adds its devices' sums in order"
-        (fun () ->
-          (* On one device, lane order adds 1e7 and -1e7 first. *)
-          let module S3 = (val Nx.devices (List.init 3 Nx_support.memory)) in
-          let a = host D.Float32 [| 1; 3 |] [| 1e7; 0.1; -1e7 |] in
-          let b = host D.Float32 [| 3; 1 |] [| 1.; 1.; 1. |] in
-          let a' = Nx.place (S3.split ~axis:1) a in
-          let b' = Nx.place (S3.split ~axis:0) b in
-          equal ~msg:"one device" (array float_exact) [| f32 0.1 |]
+      test "a sum cut two ways along k sums its devices' sums" (fun () ->
+          (* On one device, lane order adds 1e7 and 0.1, which rounds to
+             1e7, and -1e7 and 0, then the two: 0. Cut, each device sums its
+             two products, 0 and 0.1, and the closing sums the two. *)
+          let a = host D.Float32 [| 1; 4 |] [| 1e7; -1e7; 0.1; 0. |] in
+          let b = host D.Float32 [| 4; 1 |] [| 1.; 1.; 1.; 1. |] in
+          let a' = Nx.place (S2.split ~axis:1) a in
+          let b' = Nx.place (S2.split ~axis:0) b in
+          equal ~msg:"one device" (array float_exact) [| 0. |]
             (read (Nx.contract Nx.float32 p a b));
-          equal ~msg:"cut" (array float_exact) [| 0. |]
+          equal ~msg:"cut" (array float_exact) [| f32 0.1 |]
             (read (Nx.contract Nx.float32 p a' b')));
       test "operands alone on two devices raise" (fun () ->
           let a = x [| 4; 3 |] and b = x [| 3; 2 |] in

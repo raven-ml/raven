@@ -66,6 +66,20 @@ val uncut : t -> axis:int -> t
 (** [uncut g ~axis] is [g] with the value's [axis] whole on every device: the
     grid axes that cut it hold copies. [g] itself if [axis] is not cut. *)
 
+val cut_like :
+  t -> like:t -> axes:int list -> axis:int -> (t, string) result
+(** [cut_like g ~like ~axes ~axis] is [g] with the value's [axis] also cut
+    over the grid axes over which [like] cuts [axes], those of each axis of
+    [axes] in turn, major first. Each device holds its window under [g],
+    and along [axis] the tile whose number is that of its tiles under [like]
+    along [axes], in C order of [axes]. An axis of [axes] that [like] does
+    not cut adds no grid axis.
+
+    It is [Error] unless [g] and [like] lay the same devices in one order
+    over one mesh, each grid axis of either a run of the mesh's adjacent
+    axes, [g] leaves [axis] uncut, and [g] cuts no axis over the grid axes
+    it adds. *)
+
 val equal : t -> t -> bool
 (** [equal g g'] is [true] iff every device holds the same window under [g] and
     [g'], whatever the shape. *)

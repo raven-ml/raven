@@ -1577,31 +1577,34 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     and devices ({!Nx_kernel}); on nx.cpu ({!Nx_cpu.section-sums}) its
     order of association depends on the shape alone. Over axes cut across
     devices, each device reduces the part its window holds, and only
-    partial results move instead of [x]'s elements: a few per output,
-    combined in C order of the windows' first indices; for
-    {!argmax} and {!argmin}, each device's extreme and its position. Integer
-    and boolean reductions, extremes and their positions keep the bits they
-    have on one device. A float or complex {!sum}, {!prod}, {!mean},
-    {!var}, {!std}, {!logsumexp} or {!logmeanexp} over cut axes may differ
-    from it within the bounds below, and is the same on every run for a
-    given placement and set of devices. Barring overflow and underflow, a
-    float sum of [n] terms stays within [γ(n - 1) Σ|x|] of the exact sum and a
-    product within a relative [γ(n - 1)], as on one device
-    ({!Nx_kernel.section-bounds}); a complex product within a normwise
-    relative [γ(2n - 2)]. A {!mean} is such a sum divided by [n]. {!var} and
-    {!std} are within the bound {!var} states. A
-    {!logsumexp} is within [ε + ε{_t}] of the exact one, [ε] the largest
-    bound the kernels' library states for the logsumexp of a window's terms
-    and [ε{_t}] its bound for one of [t] terms, [t] the windows holding
-    terms, and {!logmeanexp} is that less [log n].
+    partial results move instead of [x]'s elements: one per output and
+    window, stacked in C order of the windows' first indices and reduced
+    over the stack by the kernels; for {!argmax} and {!argmin}, each
+    device's extreme and its position. Integer and boolean reductions, extremes
+    and their positions keep the bits they have on one device. A float or
+    complex {!sum}, {!prod}, {!mean}, {!var}, {!std}, {!logsumexp} or
+    {!logmeanexp} over cut axes has the kernels' association over each window's
+    terms and over the stacked partials. It may differ from the result on one
+    device within the bounds below, and is the same on every run for a given
+    placement and set of devices. Barring overflow and underflow, a float sum
+    of [n] terms stays within [γ(n - 1) Σ|x|] of the exact sum and a product
+    within a relative [γ(n - 1)], as on one device
+    ({!Nx_kernel.section-bounds}); a complex product within a normwise relative
+    [γ(2n - 2)]. A {!mean} is such a sum divided by [n]. {!var} and {!std} are
+    within the bound {!var} states. A {!logsumexp} is within [ε + ε{_t}] of the
+    exact one, [ε] the largest bound the kernels' library states for the
+    logsumexp of a window's terms and [ε{_t}] its bound for one of [t] terms,
+    [t] the windows holding terms, and {!logmeanexp} is that less [log n].
 
-    A scan along an axis cut across devices scans each device's window from
-    the partial results of the windows before it, which move to it as one
-    row each. Over integers and booleans, and for {!cummax} and {!cummin},
-    it keeps the bits it has on one device; {!cumsum} and {!cumprod} of
-    floats and complex numbers keep the bounds of a reduction of each
-    result's terms. {!ewma} and {!logcumsumexp} read their axis whole on
-    each device.
+    A scan along an axis cut across devices scans each device's window
+    alone. The windows' totals, one row each, move to every device that
+    holds a window of the same rows, and scan once in the windows' order;
+    each window but the first combines each of its results with the
+    totals' scan of the windows before it. Over integers and booleans, and
+    for {!cummax} and {!cummin}, it keeps the bits it has on one device;
+    {!cumsum} and {!cumprod} of floats and complex numbers keep the bounds
+    of a reduction of each result's terms. {!ewma} and {!logcumsumexp} read
+    their axis whole on each device.
 
     A float result that a NaN reaches is a NaN; which NaN, its sign and its
     payload are unspecified. A complex number with a NaN part is a NaN to
@@ -1689,7 +1692,8 @@ val var :
     as {!sum} sums, and [(Σ d² - Σ d (Σ d / n)) / n], [+0] where that is
     negative and [+∞] where [Σ d²] overflows: on nx.cpu's kernels, within
     nx.cpu's bound for its moments ({!Nx_cpu.section-states}) with
-    [L + D + t - 1] in place of its [L + D], [t] the windows holding terms.
+    [L + D + L{_t} + D{_t}] in place of its [L + D], [L{_t}] and [D{_t}]
+    nx.cpu's [L] and [D] for [t] terms, [t] the windows holding terms.
     A [ddof] scales it by a relative [2u] more, then one rounding to the
     dtype.
 
@@ -1880,14 +1884,15 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
     the result from its windows of the operands. Where both operands' paired
     summed axes are cut alike, the devices that hold one window of the
     result compute it together: each contracts the products its windows
-    hold, and only these partial sums move, in the accumulator, each device
-    holding the window adding them in C order of the windows' first indices,
-    then [init], and rounding once. Summed axes cut otherwise are read whole
-    on each device. Integer contractions keep the bits they have on one
-    device. A float or complex one may differ from it within the bound
-    {!contract} states, and is the same on every run for a given placement
-    and set of devices: float32 [[1e7; 0.1; -1e7]] by ones gives [0.1] on
-    one nx.cpu device and [0.] cut three ways along its summed axis. *)
+    hold, and only these partial sums move, in the accumulator, stacked in
+    C order of the windows' first indices and summed over the stack by the
+    kernels, then [init] added and the sum rounded once. Summed axes cut
+    otherwise are read whole on each device. Integer contractions keep the
+    bits they have on one device. A float or complex one may differ from it
+    within the bound {!contract} states, and is the same on every run for a
+    given placement and set of devices: float32 [[1e7; -1e7; 0.1; 0]] by
+    ones gives [0.] on one nx.cpu device and [0.1] cut two ways along its
+    summed axis. *)
 
 val contract :
   ?sizes:(string * int) list ->

@@ -173,6 +173,67 @@ let uncut g ~axis =
   | Grid { devices; extents; cuts } ->
       normal devices extents (List.filter (fun c -> c.axis <> axis) cuts)
 
+(* The running products of [extents]: [2; 3; 2] gives [2; 6; 12]. *)
+let products extents =
+  List.rev
+    (snd
+       (List.fold_left
+          (fun (p, acc) e -> (p * e, (p * e) :: acc))
+          (1, []) extents))
+
+(* The extents of the coarsest mesh both [e] and [e'] merge axes of, and for
+   each, the mesh axes each of its axes spans: [2; 2] and [4] give [2; 2],
+   with [[0]; [1]] and [[0; 1]]. A grid axis spans the mesh axes whose
+   running product lies above its predecessor's and at most its own. [None]
+   where no mesh refines both, as [2; 3] and [3; 2]. *)
+let refine e e' =
+  let ps = List.sort_uniq Int.compare (products e @ products e') in
+  let rec ratios prev = function
+    | [] -> Some []
+    | p :: rest ->
+        if p mod prev <> 0 then None
+        else Option.map (fun r -> (p / prev) :: r) (ratios p rest)
+  in
+  let spans e =
+    let his = products e in
+    let los = 1 :: his in
+    Array.of_list
+      (List.mapi
+         (fun i hi ->
+           let lo = List.nth los i in
+           List.filter_map
+             (fun (j, p) -> if p > lo && p <= hi then Some j else None)
+             (List.mapi (fun j p -> (j, p)) ps))
+         his)
+  in
+  Option.map (fun extents -> (extents, spans e, spans e')) (ratios 1 ps)
+
+let mesh = function
+  | One k -> ([ k ], [], [])
+  | Grid { devices; extents; cuts } -> (devices, extents, cuts)
+
+let cut_like g ~like ~axes ~axis =
+  let devices, eg, cg = mesh g and devices', el, cl = mesh like in
+  if devices <> devices' then Error "the grids lay their devices otherwise"
+  else
+    match refine eg el with
+    | None -> Error "the grids are of two meshes"
+    | Some (extents, sg, sl) ->
+        let over spans l = List.concat_map (fun h -> spans.(h)) l in
+        let cuts = List.map (fun c -> { c with over = over sg c.over }) cg in
+        let from a =
+          match List.find_opt (fun c -> c.axis = a) cl with
+          | Some c -> over sl c.over
+          | None -> []
+        in
+        let added = List.concat_map from axes in
+        let taken = List.concat_map (fun c -> c.over) cuts in
+        if List.exists (fun c -> c.axis = axis) cuts then
+          Error (Printf.sprintf "axis %d is cut already" axis)
+        else if List.exists (fun h -> List.mem h taken) added then
+          Error "a grid axis would cut two axes"
+        else Ok (normal devices extents ({ axis; over = added } :: cuts))
+
 (* Two grids are equal when every device holds the same window under both,
    whatever the shape: the same tile of the same count along every cut axis. *)
 let equal g g' =

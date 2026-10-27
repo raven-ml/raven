@@ -1950,7 +1950,9 @@ let reduce_at (type v s) w (rshow : v -> string) r axes
 (* Over axes cut across devices, a float or complex sum, product, mean,
    logsumexp or moments combines partials that round ({!Partial}): each
    tile reduced into the carrier as one device reduces it, the partials
-   combined in the tiles' order, bit for bit. *)
+   stacked along a new leading axis in the tiles' order and reduced over it
+   by the kernels, bit for bit. The devices are memory devices that nx.cpu
+   computes on, so the host's reduction of the stack is theirs. *)
 
 let gamma u k =
   let k = Float.of_int (Stdlib.max 0 k) in
@@ -2020,9 +2022,9 @@ let tiles_of (type v s d) cuts (x : (v, s, d) Nx.t) =
   in
   List.map slice (List.fold_left pick [ [] ] cuts)
 
-let chain f = function
-  | x :: rest -> List.fold_left f x rest
-  | [] -> invalid_arg "chain: no partial"
+(* The partials [ps], each kept along the reduced axes, stacked along a new
+   leading axis in order: a reduction over axis [0] closes them. *)
+let stack ps = Nx.stack ~axis:0 ps
 
 (* A reduction of floats alone [r] of [x] along [axes] from its [tiles], as
    {!combined}: the variance from the mean of the tiles' sums, then the
@@ -2036,7 +2038,7 @@ let floats_combined (type s) r axes tiles (x : (float, s, Nx.Host.d) Nx.t) =
   let n = k (Float.of_int n) in
   let xs = List.map (Nx.cast w) tiles in
   let sum t = Nx.sum ~axes ~keepdims:true t in
-  let sums f = chain Nx.add (List.map (fun t -> sum (f t)) xs) in
+  let sums f = Nx.sum ~axes:[ 0 ] (stack (List.map (fun t -> sum (f t)) xs)) in
   let var () =
     let s = sums Fun.id in
     let m = Nx.where (Nx.isnan s) s (Nx.div s n) in
@@ -2048,9 +2050,8 @@ let floats_combined (type s) r axes tiles (x : (float, s, Nx.Host.d) Nx.t) =
     Nx.where (Nx.isnan m) m v
   in
   let lse () =
-    let r = Nx.ndim x in
     let each = List.map (fun t -> Nx.logsumexp ~axes ~keepdims:true t) xs in
-    Nx.logsumexp ~axes:[ r ] (Nx.stack ~axis:r each)
+    Nx.logsumexp ~axes:[ 0 ] (stack each)
   in
   match r with
   | Var -> Nx.cast dt (var ())
@@ -2061,7 +2062,7 @@ let floats_combined (type s) r axes tiles (x : (float, s, Nx.Host.d) Nx.t) =
 
 (* The float or complex fold [r] of [x] along [axes] from its [tiles], as
    partial.mli combines them: each tile reduced on the host into the
-   carrier, the partials combined in order, rounded once to [x]'s dtype;
+   carrier, the partials stacked and reduced, rounded once to [x]'s dtype;
    each result kept along [axes]. *)
 let combined (type v s) r axes tiles (x : (v, s, Nx.Host.d) Nx.t) : v array =
   let dt = Nx.dtype x in
@@ -2070,21 +2071,22 @@ let combined (type v s) r axes tiles (x : (v, s, Nx.Host.d) Nx.t) : v array =
   let partials f = List.map (fun t -> f (Nx.cast c t)) tiles in
   let sum t = Nx.sum ~axes ~keepdims:true t in
   match r with
-  | Sum -> elements (Nx.cast dt (chain Nx.add (partials sum)))
+  | Sum -> elements (Nx.cast dt (Nx.sum ~axes:[ 0 ] (stack (partials sum))))
   | Prod ->
       let prod t = Nx.prod ~axes ~keepdims:true t in
-      elements (Nx.cast dt (chain Nx.mul (partials prod)))
+      elements (Nx.cast dt (Nx.prod ~axes:[ 0 ] (stack (partials prod))))
   | Mean ->
       let n = Nx.scalar c (D.of_float c (Float.of_int n)) in
-      elements (Nx.cast dt (Nx.div (chain Nx.add (partials sum)) n))
+      let s = Nx.sum ~axes:[ 0 ] (stack (partials sum)) in
+      elements (Nx.cast dt (Nx.div s n))
   | _ -> (
       match D.kind dt with
       | D.Float -> elements (floats_combined r axes tiles x)
       | D.Complex | D.Signed | D.Unsigned | D.Boolean ->
           invalid_arg "combined: not a float fold")
 
-(* The float fold [r] of [x] placed as [w]: its tiles' partials combined
-   in order, or its bits on one device where [w] cuts no reduced axis or
+(* The float fold [r] of [x] placed as [w]: its tiles' partials stacked
+   and reduced, or its bits on one device where [w] cuts no reduced axis or
    one has no element, which the route then reads whole. *)
 let float_law (type v s) (show : v -> string) w r axes
     (x : (v, s, Nx.Host.d) Nx.t) =
@@ -2154,6 +2156,12 @@ let law_reduced (Reduced_case (k, s, data, w, axes, r)) =
     (List.exists (fun (a, t) -> s.(a) mod t <> 0) cut_along);
   cover "an empty window over a reduced axis"
     (List.exists (fun (a, t) -> s.(a) > 0 && s.(a) < t) cut_along);
+  cover "a cut reduced axis whose one tile holds its terms"
+    (List.exists (fun (a, _) -> s.(a) = 1) cut_along);
+  cover "a 0-d result over a cut axis" (over && List.length along = rank);
+  cover "two cut reduced axes, one with an empty window"
+    (List.length cut_along = 2
+    && List.exists (fun (a, t) -> s.(a) > 0 && s.(a) < t) cut_along);
   cover "a cut reduced axis of no element"
     (List.exists (fun (a, _) -> s.(a) = 0) cut_along);
   cover "a reduced axis cut over two mesh axes"
@@ -2195,8 +2203,8 @@ let positions axis f x =
 
 let test_partials_move () =
   (* 240 terms over three devices, 4 outputs: each device reduces its window
-     of the terms, then combines three partials per output. Reading the
-     operand whole, each would reduce all 240 terms. *)
+     of the terms, then the three partials per output it receives. Reading
+     the operand whole, each would reduce all 240 terms. *)
   let ints s = A.of_array D.Int32 s (Array.init 240 Int32.of_int) in
   let floats s = A.of_array D.Float32 s (Array.init 240 Float.of_int) in
   let fewer what got = less int ~msg:what ~than:(2 * 240) got in
@@ -2209,6 +2217,52 @@ let test_partials_move () =
     (positions 1 (fun x -> Nx.argmax ~axis:1 x) (floats columns));
   fewer "a reduction of every axis"
     (positions 1 (fun x -> Nx.min x) (ints columns))
+
+(* The minor words a float32 sum along an axis cut across three devices
+   allocates: each device's partial, their stack, its move, the reduction
+   of it, and the move of the parts to the result. It counts 14,299 words
+   alone and 14,286 to 14,289 after the tests before it in the process,
+   which move it by up to 13 words, so it is stated rounded to the hundred,
+   36 words from the nearest edge of the rounding. *)
+let test_closing_words () =
+  let x =
+    Nx.place (Set3.split ~axis:0)
+      (Nx.Repr.of_array Nx.Host.v
+         (A.of_array D.Float32 [| 6; 4 |] (Array.make 24 1.)))
+  in
+  let w = words (fun () -> Nx.sum ~axes:[ 0 ] x) in
+  let hundreds = Float.round (w /. 100.) *. 100. in
+  expect (Printf.sprintf "%.0f words" hundreds) @@ __POS_OF__ {|14300 words|}
+
+(* An extreme's position over two axes of a value cut along the second
+   over three devices: the first tile, columns 0 and 1, holds an extreme at
+   position 4, the second at position 2. The position is the smaller,
+   whichever tile comes first, as on one device. Positions are numbered in
+   C order of the reduced indices. *)
+let test_arg_ties () =
+  let arg (type d) e (x : (float, D.float32_elt, d) Nx.t) =
+    let open Nx.Prim in
+    let (_, i), () =
+      eval ~by:"test_arg_ties"
+        (Reduce
+           {
+             layout = A.Layout.contiguous (Iarray.of_array (Nx.shape x));
+             axes = [| 0; 1 |];
+             prog = Nx_kernel.Prog.of_node ~ins:[| D.Any D.Float32 |] (In 0);
+             reductions = [ Arg (e, 0, D.Float32) ];
+             loads = [| Plain x |];
+           })
+    in
+    (elements i).(0)
+  in
+  let ties msg (e : Nx_kernel.extreme) xs =
+    let x = Nx.create Nx.float32 [| 2; 4 |] xs in
+    equal ~msg int64 2L (arg e x);
+    equal ~msg int64 2L (arg e (Nx.place (Set3.split ~axis:1) x))
+  in
+  ties "maxima" Max [| 0.; 0.; 9.; 0.; 9.; 0.; 0.; 0. |];
+  ties "minima" Min [| 0.; 0.; -9.; 0.; -9.; 0.; 0.; 0. |];
+  ties "NaNs" Max [| 0.; 0.; nan; 0.; -.nan; 9.; 0.; 0. |]
 
 (* A float or complex maximum or minimum over a cut axis is a NaN where a
    term is, whichever tiles hold one: which NaN is unspecified. *)
@@ -2415,7 +2469,7 @@ module Count4 = (val Nx.devices ~kernels:(module C) [ m 0; m 1; m 2; m 3 ])
 let test_float_partials_move () =
   (* Read whole, each of four devices would compute every term: [4 n] positions.
      Cut, each reduces its window once, two passes for a logsumexp or a
-     variance, then combines four partials per output. *)
+     variance, then the four partials per output it receives. *)
   let counted (type v s) (x : (v, s) A.t) f =
     let x = Nx.place (Count4.split ~axis:0) (Nx.Repr.of_array Nx.Host.v x) in
     C.reset ();
@@ -2890,10 +2944,12 @@ let tiled c side tile x =
 
 (* A contraction cut along its contracting pairs is, as partial.mli states,
    each tile contracted on one device into the accumulator from no init,
-   the sums added in the tiles' order, then [init], rounded once: the same
-   bits, whatever the library. Where the result is cut too, each device
-   contracts its tiles of its own window of the result. [pairs] where cases
-   may have no product or two pairs, and the library is nx.cpu. *)
+   the sums stacked in the tiles' order and summed over the stack by the
+   kernels' reduction, then [init], rounded once: the same bits, whatever
+   the library contracts by. Both libraries reduce as nx.cpu does, so the
+   host sums the stack. Where the result is cut too, each device contracts
+   its tiles of its own window of the result. [pairs] where cases may have
+   no product or two pairs, and the library is nx.cpu. *)
 let law_cut ~pairs (module S : Sets) c =
   let (Ckind k) = c.ck in
   let a, b, init, batch, contracting =
@@ -2967,7 +3023,7 @@ let law_cut ~pairs (module S : Sets) c =
           contracted k.acc ad batch contracting (tiled c fst t a)
             (tiled c snd t b) None
         in
-        let sum = chain Nx.add (List.map part ts) in
+        let sum = Nx.sum ~axes:[ 0 ] (stack (List.map part ts)) in
         let sum = if c.init then Nx.add sum (Nx.cast ad init) else sum in
         Nx.cast dt sum
       in
@@ -3334,43 +3390,31 @@ let starts e t =
 
 (* The float cumsum or cumprod [r] of [x] along [axis], cut into [t]
    windows there, as partial.mli computes it: each window that holds terms
-   scanned on the host from the carry of those before it, their totals in
-   the carrier combined in order. *)
+   scanned alone on the host in the carrier; their totals, each window's
+   last result, stacked along a new leading axis and scanned along it; and
+   each window but the first combined with the totals' scan at the window
+   before it, rounded once to [x]'s dtype. *)
 let scan_combined (type v s) r axis t (x : (v, s, Nx.Host.d) Nx.t) : v array =
   let dt = Nx.dtype x in
   let (D.Any c) = Nx_kernel.carrier (D.Any dt) in
   let cumsum = r = Cumsum in
-  let total p =
-    let p = Nx.cast c p in
-    if cumsum then Nx.sum ~axes:[ axis ] ~keepdims:true p
-    else Nx.prod ~axes:[ axis ] ~keepdims:true p
+  let scan ~axis p = if cumsum then Nx.cumsum ~axis p else Nx.cumprod ~axis p in
+  let combine p q = if cumsum then Nx.add p q else Nx.mul p q in
+  let scans =
+    List.map (fun p -> scan ~axis (Nx.cast c p)) (tiles_of [ (axis, t) ] x)
   in
-  let scan carry p =
-    let open Nx.Prim in
-    let m : Nx_kernel.monoid = if cumsum then Sum else Prod in
-    eval ~by:"scan_combined"
-      (Scan
-         {
-           layout = A.Layout.contiguous (Iarray.of_array (Nx.shape p));
-           axis;
-           prog = Nx_kernel.Prog.of_node ~ins:[| D.Any dt |] (In 0);
-           reduction = Monoid (m, 0, dt);
-           loads = [| Plain p |];
-           carry = Option.map (fun k -> Any k) carry;
-         })
+  let last p =
+    let n = Nx.dim axis p in
+    let index a = if a = axis then Nx.R (n - 1, n) else Nx.A in
+    Nx.slice (List.init (Nx.ndim p) index) p
   in
-  let rec go carry = function
-    | [] -> []
-    | p :: rest ->
-        let k = total p in
-        let next =
-          match carry with
-          | None -> k
-          | Some q -> if cumsum then Nx.add q k else Nx.mul q k
-        in
-        scan carry p :: go (Some next) rest
+  let prefix = scan ~axis:0 (stack (List.map last scans)) in
+  let before i =
+    let index a = if a = 0 then Nx.I (i - 1) else Nx.A in
+    Nx.slice (List.init (Nx.ndim prefix) index) prefix
   in
-  elements (Nx.concatenate ~axis (go None (tiles_of [ (axis, t) ] x)))
+  let window i p = Nx.cast dt (if i = 0 then p else combine (before i) p) in
+  elements (Nx.concatenate ~axis (List.mapi window scans))
 
 (* The float scan [r] of [x] along [axis] placed as [w]: its windows
    scanned from the totals before them, or its bits on one device where
@@ -3449,8 +3493,8 @@ let law_scans c =
 
 let test_scans_move () =
   (* Read whole, each of four devices would scan every term: [4 n] positions.
-     Cut, each device reduces its window to its partial, all but the last,
-     and scans it from the partials before it. *)
+     Cut, each device scans its window, then each but the first combines its
+     scan with the totals' scan before it, a map of its window. *)
   let counted (type v s) (x : (v, s) A.t) f =
     let x = Nx.place (Count4.split ~axis:0) (Nx.Repr.of_array Nx.Host.v x) in
     C.reset ();
@@ -3477,6 +3521,53 @@ let test_scans_move () =
       under "a float16 cumprod" n (4 * n)
         (counted (floats D.Float16) (Nx.cumprod ~axis:0)))
     [ 16384; 9001 ]
+
+(* A float32 cumsum along an axis cut across devices keeps the bound of a
+   sum of each result's terms, as on one device: the result of terms [0]
+   to [i] within [γ(i) Σ|x|] of their exact sum, then its rounding. The
+   exact sum is the float64 sum compensated by Neumaier's TwoSum, within
+   [2 u64] of it relatively, plus [n² u64²] of the magnitudes. *)
+let pp_scan_bound ppf (n, w, seed) =
+  Format.fprintf ppf "%d terms at %a, seed %d" n pp_where w seed
+
+let scan_bound_case =
+  let open Gen in
+  with_pp pp_scan_bound
+    (let* n = frequency [ (1, int_range 1 16); (2, int_range 4000 9000) ] in
+     let* w = of_list [ Split3 0; Split4 0; Cuts (0, 0); Minor 0 ] in
+     let+ seed = int in
+     (n, w, seed))
+
+let law_scan_bound (n, w, seed) =
+  let st = Random.State.make [| seed |] in
+  let term _ =
+    let m = Random.State.float st 2. -. 1. in
+    f32 (Float.ldexp m (Random.State.int st 21 - 10))
+  in
+  let xs = Array.init n term in
+  let x = Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 [| n |] xs) in
+  let got = at_where w { over = (fun y -> elements (Nx.cumsum ~axis:0 y)) } x in
+  cover "a window past the first chunk" (n > 4096 * 2);
+  cover "an empty window" (n < 4);
+  let u32 = ldexp 1. (-24) in
+  let s = ref 0. and c = ref 0. and mag = ref 0. in
+  Array.iteri
+    (fun i x ->
+      let t = !s +. x in
+      c :=
+        !c
+        +. if Float.abs !s >= Float.abs x then !s -. t +. x else x -. t +. !s;
+      s := t;
+      mag := !mag +. Float.abs x;
+      let exact = !s +. !c in
+      let k = Float.of_int (i + 1) in
+      let slack =
+        (2. *. u64 *. Float.abs exact) +. (k *. k *. u64 *. u64 *. !mag)
+      in
+      let bound = (gamma u32 i *. !mag) +. (u32 *. Float.abs exact) +. slack in
+      let msg = Printf.sprintf "result %d: %h against %h" i got.(i) exact in
+      at_most ~msg float_exact ~than:bound (Float.abs (got.(i) -. exact)))
+    xs
 
 (* The variance of float32 terms [c + y], [y] in [[-1, 1)] and [|c|] up
    to [10{^6}], over an axis cut across devices: within nx.mli's bound of
@@ -3530,26 +3621,30 @@ let placements =
         placed_case law_placed;
       prop ~count:2000
         "a reduction over cut axes gives an exact one's bits on one device, \
-         a float one its tiles' partials combined in order"
+         a float one the reduction of its tiles' stacked partials"
         reduced_case law_reduced;
       test "a reduction over a cut axis moves partials, not the operand"
         test_partials_move;
+      test "a position over cut axes is the smallest of a tie across tiles"
+        test_arg_ties;
+      test "a sum over an axis cut across three devices allocates its closing"
+        test_closing_words;
       test "a float maximum or minimum over a cut axis is a NaN beside one"
         test_cut_extreme_nan;
       prop ~count:300
-        "a float reduction over cut axes of many terms combines its tiles' \
-         partials in order"
+        "a float reduction over cut axes of many terms reduces its tiles' \
+         stacked partials"
         lane_case law_lanes;
       test "a float reduction over a cut axis moves partials, not the operand"
         test_float_partials_move;
       prop ~count:400 ~examples:ccase_examples
-        "a contraction over cut contracting axes adds its tiles' sums in \
-         order"
+        "a contraction over cut contracting axes sums its tiles' stacked \
+         sums, then init"
         ccase
         (law_cut ~pairs:true (module Cpu_sets));
       prop ~count:300
-        "a contraction cut over its contracted extent adds its tiles' sums \
-         in order, for a library that sums blocks its own way"
+        "a contraction cut over its contracted extent sums its tiles' \
+         stacked sums, for a library that sums blocks its own way"
         bcase
         (law_cut ~pairs:false (module Blocked_sets));
       prop ~count:200
@@ -3561,10 +3656,14 @@ let placements =
         test_contractions_move;
       prop ~count:500
         "a scan along cut axes gives an exact one's bits on one device, a \
-         float sum's or product's continues its windows' totals in order"
+         float sum's or product's each window's scan from its totals' scan"
         scan_case law_scans;
       test "a scan along a cut axis scans each window, not the operand"
         test_scans_move;
+      prop ~count:200
+        "a float32 cumsum along a cut axis is within the bound of a sum of \
+         each result's terms"
+        scan_bound_case law_scan_bound;
     ]
 
 let () =
