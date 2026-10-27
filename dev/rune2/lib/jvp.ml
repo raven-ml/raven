@@ -89,47 +89,12 @@ let rec outs_of : type d. D.any list -> d outs = function
       let (Outs (o, read)) = outs_of rest in
       Outs (dt :: o, fun (y, r) -> Prim.Any y :: read r)
 
-(* [p]'s outputs at every index of [layout] over [loads], computed by maps of
-   one node each where one map of [p] would take more operands than every
-   library takes. *)
+(* [p]'s outputs at every index of [layout] over [loads], one map. *)
 let run_map (type d) ~by layout (p : P.t) (loads : d Prim.load iarray) :
     d Prim.any array =
   let dts k = P.dtype p (Iarray.get p.outs k) in
-  let fused =
-    Iarray.length loads + Iarray.length p.outs <= Nx_kernel.loop_width
-  in
-  if fused then
-    let (Outs (outs, read)) = outs_of (List.init (Iarray.length p.outs) dts) in
-    Array.of_list (read (Prim.eval ~by (Map { layout; prog = p; outs; loads })))
-  else
-    let one (type v s) (dt : (v, s) D.t) node (loads : d Prim.load list) :
-        d Prim.any =
-      let ins = Iarray.of_list (List.map load_dtype loads) in
-      let prog = P.of_node ~ins node in
-      let loads = Iarray.of_list loads in
-      let y, () = Prim.eval ~by (Map { layout; prog; outs = [ dt ]; loads }) in
-      Any y
-    in
-    let vals = Array.make (Iarray.length p.nodes) (None : d Prim.any option) in
-    let get k = Option.get vals.(k) in
-    let load k = match get k with Prim.Any x -> Prim.Plain x in
-    Iarray.iteri
-      (fun k n ->
-        let (D.Any dt) = P.dtype p k in
-        let v : d Prim.any =
-          match (n : P.node) with
-          | In j ->
-              (* A copy, so that an output is fresh memory. *)
-              one dt (Op1 (Copy, D.Any dt, 0)) [ Iarray.get loads j ]
-          | Coord _ | Const _ -> one dt n []
-          | Op1 (k, d, a) -> one dt (Op1 (k, d, 0)) [ load a ]
-          | Op2 (k, a, c) -> one dt (Op2 (k, 0, 1)) [ load a; load c ]
-          | Op3 (k, a, c, e) ->
-              one dt (Op3 (k, 0, 1, 2)) [ load a; load c; load e ]
-        in
-        vals.(k) <- Some v)
-      p.nodes;
-    Array.map get (Iarray.to_array p.outs)
+  let (Outs (outs, read)) = outs_of (List.init (Iarray.length p.outs) dts) in
+  Array.of_list (read (Prim.eval ~by (Map { layout; prog = p; outs; loads })))
 
 (* Maps *)
 
@@ -203,25 +168,6 @@ let rec jouts : type d r.
         J (dt :: dt :: o, fun (y, (t, q)) -> (dual i ~fresh:true y t, f q))
       else J (dt :: o, fun (y, q) -> (y, f q))
 
-(* The map's result from [vals], its derivative's outputs in order. *)
-let rec of_values : type d r.
-    Prim.interpretation ->
-    (d, r) Prim.outs ->
-    bool array ->
-    d Prim.any array ->
-    int ->
-    int ->
-    r =
- fun i outs flags vals k at ->
-  match outs with
-  | [] -> ()
-  | dt :: rest ->
-      let y = expect dt vals.(at) in
-      if flags.(k) then
-        let t = expect dt vals.(at + 1) in
-        (dual i ~fresh:true y t, of_values i rest flags vals (k + 1) (at + 2))
-      else (y, of_values i rest flags vals (k + 1) (at + 1))
-
 let map_rule (type d r) i ~by layout prog (outs : (d, r) Prim.outs)
     (loads : d Prim.load iarray) : r =
   let p =
@@ -233,21 +179,16 @@ let map_rule (type d r) i ~by layout prog (outs : (d, r) Prim.outs)
       (Map { layout; prog; outs; loads = Iarray.map (primal_load i) loads })
   else
     let jl = jvp_loads i loads in
-    if Iarray.length jl + Iarray.length p.prog.outs > Nx_kernel.loop_width then
-      of_values i outs p.flags (run_map ~by layout p.prog jl) 0 0
-    else
-      match outs with
-      | [ dt ] ->
-          let y, (t, ()) =
-            Prim.eval ~by
-              (Map { layout; prog = p.prog; outs = [ dt; dt ]; loads = jl })
-          in
-          (dual i ~fresh:true y t, ())
-      | _ ->
-          let (J (o, f)) = jouts i outs p.flags 0 in
-          f
-            (Prim.eval ~by
-               (Map { layout; prog = p.prog; outs = o; loads = jl }))
+    match outs with
+    | [ dt ] ->
+        let y, (t, ()) =
+          Prim.eval ~by
+            (Map { layout; prog = p.prog; outs = [ dt; dt ]; loads = jl })
+        in
+        (dual i ~fresh:true y t, ())
+    | _ ->
+        let (J (o, f)) = jouts i outs p.flags 0 in
+        f (Prim.eval ~by (Map { layout; prog = p.prog; outs = o; loads = jl }))
 
 (* Reductions *)
 
@@ -354,7 +295,6 @@ type ('d, 'a) part = {
 }
 
 let none y = { extra = []; emit = (fun _ _ _ -> ([], fun _ -> y)) }
-let one_value = function [ a ] -> a | _ -> invalid_arg "Rune: one value"
 
 (* [b]'s node [n] in [dt]. *)
 let in_dtype b dt n = if Scalar.dtype b n = dt then n else Scalar.cast b dt n
@@ -561,10 +501,7 @@ let reduce_rule (type d r) i ~by layout axes (prog : P.t)
   let b = Scalar.start prog ~tangents ~extra:[||] in
   let k = Scalar.outputs b in
   let touts = sum_tangents b reductions in
-  if
-    sums_only b reductions
-    && Iarray.length jl + k + List.length touts <= Nx_kernel.loop_width
-  then
+  if sums_only b reductions then
     let (JR (rs, f)) = jreds i b reductions (ref k) in
     let outs =
       Array.append (Array.init k (Scalar.value b)) (Array.of_list touts)
@@ -598,34 +535,12 @@ let reduce_rule (type d r) i ~by layout axes (prog : P.t)
     | reds, finish ->
         let nodes = Array.of_list (List.map fst reds) in
         let makers = List.map snd reds in
-        if Iarray.length loads + Array.length nodes <= Nx_kernel.loop_width then
-          let (Reds (rs, read)) = reds_of (List.mapi (fun o f -> f o) makers) in
-          let prog = Scalar.finish b ~outs:nodes in
-          finish
-            (read
-               (Prim.eval ~by
-                  (Reduce { layout; axes; prog; reductions = rs; loads })))
-        else
-          (* Each term materialised, then reduced alone. *)
-          let terms = run_map ~by layout (Scalar.finish b ~outs:nodes) loads in
-          finish
-            (List.mapi
-               (fun o f ->
-                 let (Prim.Any x) = terms.(o) in
-                 let (Reds (rs, read)) = reds_of [ f 0 ] in
-                 let prog = identity (D.Any (Nx.dtype x)) in
-                 one_value
-                   (read
-                      (Prim.eval ~by
-                         (Reduce
-                            {
-                              layout;
-                              axes;
-                              prog;
-                              reductions = rs;
-                              loads = [| Plain x |];
-                            }))))
-               makers)
+        let (Reds (rs, read)) = reds_of (List.mapi (fun o f -> f o) makers) in
+        let prog = Scalar.finish b ~outs:nodes in
+        finish
+          (read
+             (Prim.eval ~by
+                (Reduce { layout; axes; prog; reductions = rs; loads })))
 
 (* Scans *)
 

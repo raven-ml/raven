@@ -225,9 +225,9 @@ let kinds x =
             loads = [| Plain x |];
           }))
 
-(* A program of nine operands, [Σ_k x_k Π_(j<k) sin x_j], whose derivative takes
-   more operands than one loop does. *)
-let wide = 9
+(* A program of twenty operands, [Σ_k x_k Π_(j<k) sin x_j], past the arrays
+   one block of nx.cpu's holds: its derivative is one loop of forty loads. *)
+let wide = 20
 
 let wide_prog =
   let x k = P.E.input k Nx_array.Dtype.Float64 in
@@ -357,13 +357,13 @@ let real_cases =
     case ~shape:(rows 3) "fma" (three Nx.fma);
     case ~empty:false ~shape:padded_shape
       "a map of several outputs, a padded load and coordinates" multi;
-    case ~shape:rows_wide "a map of nine operands" wide_map;
-    case ~shape:rows_wide "a sum over nine operands"
+    case ~shape:rows_wide "a map of twenty operands" wide_map;
+    case ~shape:rows_wide "a sum over twenty operands"
       (wide_reduce (Monoid (Sum, 0, f64)));
     case ~empty:false
       ~shape:Gen.(map (fun n -> [| wide; n + 1 |]) (int_range 0 3))
       ~values:(Spaced (-3., 0.1))
-      "a max over nine operands"
+      "a max over twenty operands"
       (wide_reduce (Monoid (Max, 0, f64)));
     case ~shape:matrix "sum" (Nx.sum ~axes:[ 1 ]);
     case ~shape:matrix "sum and its tangent in one loop" (fun x -> Nx.sum x);
@@ -882,7 +882,19 @@ let test_one_kernel () =
   equal ~msg:"a chain of three" (pair int int) (3, 9)
     (calls (fun x -> Nx.exp (Nx.mul (Nx.sin x) x)));
   equal ~msg:"a sum and its tangent" (pair int int) (1, 3)
-    (calls (fun x -> Nx.sum x))
+    (calls (fun x -> Nx.sum x));
+  (* A derivative wider than a block of nx.cpu's holds is one loop too. *)
+  let w = Nx.place Count.on (Nx.full f64 [| wide; 3 |] 0.5) in
+  let tw = Nx.place Count.on (Nx.full f64 [| wide; 3 |] 1.) in
+  let wide_calls f =
+    C.reset ();
+    ignore (Rune.jvp' f w tw);
+    (C.calls (), C.positions ())
+  in
+  equal ~msg:"a map of twenty operands" (pair int int) (1, 3)
+    (wide_calls wide_map);
+  equal ~msg:"a sum over twenty operands" (pair int int) (1, 3)
+    (wide_calls (wide_reduce (Monoid (Sum, 0, f64))))
 
 (* Structures and constructs *)
 

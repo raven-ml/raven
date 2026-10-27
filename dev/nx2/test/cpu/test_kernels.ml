@@ -207,13 +207,14 @@ let test_constant_map () =
   | A.Done -> equal (array float_exact) (Array.make 15 2.5) (A.to_array y)
   | r -> failf "map answered %a" Nx_array_support.pp_answer r
 
-(* A loop of {!Nx_kernel.loop_width} loads and outputs together is computed:
-   a map, a reduction of two reductions and a scan, load 0 padded and the
-   coordinate read. The program weighs each load by its own prime, so a load
-   read in another's place changes the result; every value is exact. *)
-let test_loop_width () =
+(* A loop is computed whatever its number of loads and outputs together,
+   the arrays the door reads in runs past the most a block holds: a map, a
+   reduction of two reductions and a scan, load 0 padded and the coordinate
+   read. The program weighs each load by its own odd weight, so a load read
+   in another's place changes the result; every value is exact. *)
+let test_loop_widths () =
   let f64 = D.Any D.Float64 in
-  let primes = [| 2; 3; 5; 7; 11; 13; 17; 19; 23; 29; 31; 37; 41; 43; 47 |] in
+  let weight j = (2 * j) + 3 in
   let fill = 7. in
   let operand j =
     if j = 0 then A.of_array D.Float64 [| 2 |] [| 1.; 2. |]
@@ -239,7 +240,7 @@ let test_loop_width () =
     let weighed w = List.init n (fun j -> P.E.(const D.Float64 (w j) * x j)) in
     let total ts = List.fold_left P.E.add (List.hd ts) (List.tl ts) in
     let first =
-      P.E.(total (weighed (fun j -> Float.of_int primes.(j)))
+      P.E.(total (weighed (fun j -> Float.of_int (weight j)))
            + cast D.Float64 (coord 0))
     and second = total (weighed Float.of_int) in
     P.of_exprs
@@ -250,40 +251,43 @@ let test_loop_width () =
   let first n i =
     Float.of_int i
     +. List.fold_left ( +. ) 0.
-         (List.init n (fun j -> Float.of_int primes.(j) *. read j i))
+         (List.init n (fun j -> Float.of_int (weight j) *. read j i))
   and second n i =
     List.fold_left ( +. ) 0. (List.init n (fun j -> Float.of_int j *. read j i))
   in
-  let n = Nx_kernel.loop_width - 2 in
-  let fresh s = A.create Rig.host D.Float64 s in
-  let s = fresh [| 3 |] and q = fresh [| 3 |] in
-  equal ~msg:"map" answer A.Done
-    (Nx_cpu.map (prog n ~both:true) ~dsts:[| A.Any s; A.Any q |] (loads n));
-  equal ~msg:"map's first" (array float_exact) (Array.init 3 (first n))
-    (A.to_array s);
-  equal ~msg:"map's second" (array float_exact) (Array.init 3 (second n))
-    (A.to_array q);
-  let s = fresh [||] and q = fresh [||] in
-  equal ~msg:"reduction" answer A.Done
-    (Nx_cpu.reduce (prog n ~both:true) ~shape:[| 3 |] ~axes:[| 0 |]
-       [| (Monoid Sum, 0); (Monoid Max, 1) |]
-       ~dsts:[| A.Any s; A.Any q |] (loads n));
-  equal ~msg:"reduction's sum" float_exact
-    (Array.fold_left ( +. ) 0. (Array.init 3 (first n))) (A.get s [||]);
-  equal ~msg:"reduction's max" float_exact
-    (Array.fold_left Float.max Float.neg_infinity (Array.init 3 (second n)))
-    (A.get q [||]);
-  let s = fresh [| 3 |] in
-  equal ~msg:"scan" answer A.Done
-    (Nx_cpu.scan (prog (n + 1) ~both:false) ~axis:0 (Monoid Sum, 0)
-       ~dsts:[| A.Any s |] (loads (n + 1)));
-  let terms = Array.init 3 (first (n + 1)) in
-  let running =
-    Array.mapi
-      (fun i _ -> Array.fold_left ( +. ) 0. (Array.sub terms 0 (i + 1)))
-      terms
+  let widths w =
+    let n = w - 2 and msg k = Printf.sprintf "%s, %d arrays" k w in
+    let fresh s = A.create Rig.host D.Float64 s in
+    let s = fresh [| 3 |] and q = fresh [| 3 |] in
+    equal ~msg:(msg "map") answer A.Done
+      (Nx_cpu.map (prog n ~both:true) ~dsts:[| A.Any s; A.Any q |] (loads n));
+    equal ~msg:(msg "map's first") (array float_exact) (Array.init 3 (first n))
+      (A.to_array s);
+    equal ~msg:(msg "map's second") (array float_exact)
+      (Array.init 3 (second n)) (A.to_array q);
+    let s = fresh [||] and q = fresh [||] in
+    equal ~msg:(msg "reduction") answer A.Done
+      (Nx_cpu.reduce (prog n ~both:true) ~shape:[| 3 |] ~axes:[| 0 |]
+         [| (Monoid Sum, 0); (Monoid Max, 1) |]
+         ~dsts:[| A.Any s; A.Any q |] (loads n));
+    equal ~msg:(msg "reduction's sum") float_exact
+      (Array.fold_left ( +. ) 0. (Array.init 3 (first n))) (A.get s [||]);
+    equal ~msg:(msg "reduction's max") float_exact
+      (Array.fold_left Float.max Float.neg_infinity (Array.init 3 (second n)))
+      (A.get q [||]);
+    let s = fresh [| 3 |] in
+    equal ~msg:(msg "scan") answer A.Done
+      (Nx_cpu.scan (prog (n + 1) ~both:false) ~axis:0 (Monoid Sum, 0)
+         ~dsts:[| A.Any s |] (loads (n + 1)));
+    let terms = Array.init 3 (first (n + 1)) in
+    let running =
+      Array.mapi
+        (fun i _ -> Array.fold_left ( +. ) 0. (Array.sub terms 0 (i + 1)))
+        terms
+    in
+    equal ~msg:(msg "scan's sums") (array float_exact) running (A.to_array s)
   in
-  equal ~msg:"scan's sums" (array float_exact) running (A.to_array s)
+  List.iter widths [ 15; 17; 18; 19; 32; 100 ]
 
 (* A boolean constant of any byte is true iff the byte is not zero, inside a
    program of several nodes as alone: a [Where] it selects by and its [Cast]
@@ -1234,8 +1238,8 @@ let cpu =
       test "kinds give the values their documentation states" test_kind_values;
       test "a job begun from a job's body runs to its end" test_nested_jobs;
       test "a map of constants alone fills its destination" test_constant_map;
-      test "loops of loop_width loads and outputs are computed"
-        test_loop_width;
+      test "loops of any number of loads and outputs are computed"
+        test_loop_widths;
       test "a boolean constant is true iff its byte is not zero"
         test_bool_bytes;
       test "a map's coordinate past its rank is refused" test_coord_past_rank;

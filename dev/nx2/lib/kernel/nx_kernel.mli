@@ -110,13 +110,6 @@ type load =
       (** [x] padded with [fill] as [pad] says. The loop's shape is the padded
           one. *)
 
-val loop_width : int
-(** [loop_width] is [15]: the loads and program outputs, together, of a loop
-    that every library computes ({!S.section-loops}). A [Padded] load counts
-    as one, and a [Coord] node and a reduction's destinations do not count. A
-    producer of programs, as a compiler fusing maps or a transformation
-    deriving one, keeps its loops within it. *)
-
 (** {1:reductions Reductions and scans}
 
     A reduction's terms are the values of one program output along the
@@ -520,10 +513,11 @@ module type S = sig
       stores it. It answers [Wrong_dtype] where {!accepts} is [false] of
       its reduction and that output's dtype.
 
-      A library never declines a loop for its number of loads and program
-      outputs where they number at most {!loop_width} together, nor for its
-      number of reductions. It may decline one for its dtypes, its kinds or
-      its other attributes, as its doc states. *)
+      A library declines a loop for its number of loads, program outputs or
+      reductions only past a bound its device imposes, which its doc states,
+      and computes a wider loop in parts itself where it can. It may decline
+      a loop for its dtypes, its kinds or its other attributes, as its doc
+      states. *)
 
   val map : Prog.t -> dsts:any array -> load array -> answer
   (** [map p ~dsts loads] stores [p]'s output [k] at each index into
