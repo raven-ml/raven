@@ -405,15 +405,23 @@ static inline double nx_cpu_bytes(const nx_array *a) {
   return nx_cpu_elements(a) * nx_cpu_width(a->dtype);
 }
 
-/* Calls
+/* Calls and jobs
 
    A call keeps other domains waiting to collect for at most about one
    core's copy of NX_CPU_HOLD_BYTES, and never waits on another domain's
-   job while it holds the domain lock. Between nx_read and nx_done an
-   external calls nx_cpu_release with the price of its whole call, every
-   pass, fill and copy it runs inline included, then runs its work, then
-   nx_cpu_reacquire: the domain lock is released for the work where the
-   price reaches NX_CPU_RELEASE_BYTES, and a held call runs its jobs on
+   job while it holds the domain lock.
+
+   One number decides both whether a call holds the domain lock and how
+   many threads its jobs take: a work's cost, in bytes one core's memcpy
+   moves in the work's time, the reference nx.cpu's one-thread copy of a
+   filled 128 KiB array. Each family computes it by one function, at its
+   external's entry for the whole call, every pass, fill and copy it runs
+   inline included, and for each job on the job's part of the work. The
+   order is always cost, release, threads: between nx_read and nx_done an
+   external calls nx_cpu_release with its call's cost, then runs its work,
+   whose jobs each take the threads their share pays for (nx_cpu_threads),
+   then nx_cpu_reacquire. The domain lock is released for the work where
+   the cost reaches NX_CPU_RELEASE_BYTES, and a held call runs its jobs on
    the calling thread alone (job.c). The work reads no OCaml value and
    raises nothing, held or released, so every call that passes
    nx_cpu_release reaches nx_cpu_reacquire. A call reads many operands
@@ -425,31 +433,31 @@ static inline double nx_cpu_bytes(const nx_array *a) {
    NX_CPU_HOLD_BYTES is 1 MiB: one core copies it in 12 to 15 us (M1 Max,
    fudge's Core Ultra 5 235), and a release and reacquisition cost 9 to
    150 ns, at most 1% of that, with or without systhreads and another
-   domain collecting. NX_CPU_RELEASE_BYTES, below it, is the least cost
-   at which a job takes a second thread: a call whose jobs could use the
-   pool releases first, and a held one runs on one thread, priced under a
-   quarter of NX_CPU_HOLD_BYTES but for the plans a transform makes on a
-   cache's miss, which fft.c holds within NX_CPU_HOLD_BYTES.
+   domain collecting. NX_CPU_RELEASE_BYTES, a quarter of it, is the least
+   cost at which a job takes a second thread, so a call whose jobs could
+   use the pool releases first. That quarter is the one margin: a held
+   call's work stays within NX_CPU_HOLD_BYTES while no cost underestimates
+   its work by more than four times, but for the plans a transform makes
+   on a cache's miss, which fft.c holds within NX_CPU_HOLD_BYTES.
 
-   A price is in bytes one core's memcpy moves in the work's time, the
-   reference nx.cpu's one-thread copy of a filled 128 KiB array. It is an
-   upper bound in three classes:
-   - streaming: work that moves its bytes in order, the bytes times its
-     kernel's weight against memcpy (nx_cpu_walk_cost);
+   A cost is the work's time on one core in three classes:
+   - streaming: work that moves its elements in order, a cost an element
+     (nx_cpu_loop_cost);
    - lines: an element or term that touches a cache line of its own,
      NX_CPU_LINE each;
    - scalar: work bound by arithmetic, its operations times their cost:
      an elementwise kind's per element (nx_cpu_kind_cost), a family's own
      for its routines.
-   Each constant is 1.5 times the most one core took of its class's
-   members, on the M1 Max and fudge under the timing lock, rounded up to a
-   power of two, and names its worst member; a constant measured on the
-   M1 alone says so. */
+   Each family keeps its values in one table, which names the machines
+   and the date they were measured. The values bound their class: each is
+   1.5 times the most one core took of its class's members, on the M1 Max
+   and fudge under the timing lock, rounded up to a power of two, and
+   names its worst member; a value measured on the M1 alone says so. */
 
 /* The most a held call may cost. */
 #define NX_CPU_HOLD_BYTES (1024 * 1024)
 
-/* The cost of a job for each of its threads (nx_cpu_threads). */
+/* The cost a job takes for each of its threads (nx_cpu_threads). */
 #define NX_CPU_THREAD_BYTES (128 * 1024)
 
 /* The least price at which a call releases the domain lock: the least
@@ -504,17 +512,15 @@ static inline void nx_cpu_reacquire(int released) {
   else nx_cpu_held = 0;
 }
 
-/* Jobs */
-
 /* Chunks a job cuts its units into per thread: a thread that finishes its
    strip takes the chunks left in the others', so a thread that runs
    slower, an efficiency core's say, runs fewer. */
 #define NX_CPU_CHUNKS 8
 
 /* Runs [body] over the units [0, total) of work that touches [bytes] bytes
-   and takes as long as memcpy of [cost] bytes, on as many of the pool's
-   threads as the cost pays for: [body] reads no OCaml value, as a
-   worker is no OCaml thread. The cost is an estimate, a double: one that
+   and costs [cost] (Calls and jobs), its share of its call's cost, on as
+   many of the pool's threads as the cost pays for: [body] reads no OCaml
+   value, as a worker is no OCaml thread. The cost is a double: one that
    multiplies extents of several operands may pass an int64_t. A body may
    begin a job of its own: it runs on the body's thread alone where the
    outer job runs on several (rig_pool.h, Scheduling). */
@@ -726,14 +732,14 @@ typedef void (*nx_cpu_block_fn)(const nx_cpu_block *b, void *ctx);
 /* Calls [f] on blocks of at most [most] elements that cover the loop [l]
    over the [n] operands [a], operand 0 the written one, each element once,
    from a job, or on the calling thread for a loop that one block holds
-   and one thread runs. [f] takes [weight] times as long as a memcpy of
-   the operands' bytes, at least 1, and the job sizes its threads by
-   nx_cpu_walk_cost. Order and threads decide no bit: [f] computes each element
-   from operands' elements at its index alone. Inline, so that a kernel's
-   call of [f] on its one block is direct (walk.c, rule 0). */
+   and one thread runs. An element of [f] costs [per], and the job takes
+   the threads nx_cpu_walk_threads gives. Order and threads decide no bit:
+   [f] computes each element from operands' elements at its index alone.
+   Inline, so that a kernel's call of [f] on its one block is direct
+   (walk.c, rule 0). */
 static inline void nx_cpu_walk(int n, const nx_array *a, const nx_loop *l,
-                               int64_t most, int64_t weight,
-                               nx_cpu_block_fn f, void *ctx);
+                               int64_t most, double per, nx_cpu_block_fn f,
+                               void *ctx);
 
 /* Stores the element of bits [bits] into the elements of block [b] of the
    array [d], its operand 0: rows by rows.c's fill of their width, a
@@ -747,53 +753,38 @@ void nx_cpu_fill_block(const nx_array *d, const nx_cpu_block *b,
    time on one kimchi core. */
 #define NX_CPU_STRIDED_COST 4
 
-/* The cost (job.c) of a walk over [bytes] whose block function takes
-   [weight] times as long as memcpy, [strided] where an operand steps by
-   more than one element along the rows. */
-static inline int64_t nx_cpu_walk_cost(int64_t bytes, int64_t weight,
-                                       int strided) {
-  return weight * (strided ? NX_CPU_STRIDED_COST : 1) * bytes;
-}
+/* The cost (Calls and jobs) of a walk of the loop [l] over the [n]
+   operands [a], [per] an element: NX_CPU_STRIDED_COST times that where
+   the walk's blocks are tiles, an operand steps more than one element
+   along its rows, or the walk runs several rows shorter than its SHORT,
+   as it orders the loop's axes (walk.c). An
+   elementwise call's cost at its entry, [per] its kind's
+   (nx_cpu_kind_cost). */
+double nx_cpu_loop_cost(int n, const nx_array *a, const nx_loop *l,
+                        double per);
 
-/* The price (cpu.h, Calls) of an elementwise call over the loop [l] of [n]
-   operands, [per] an element where its operands step one element along
-   its rows (a kind's, nx_cpu_kind_cost), NX_CPU_STRIDED_COST times that
-   where one steps more or the loop keeps several axes. */
-static inline double nx_cpu_loop_cost(int n, const nx_loop *l, double per) {
-  double elements = 1;
-  int strided = l->rank > 1;
-  for (int i = 0; i < l->rank; i++) elements *= (double)l->extent[i];
-  for (int k = 0; k < n; k++)
-    strided |= l->step[k][l->rank - 1] > 1 || l->step[k][l->rank - 1] < -1;
-  return elements * per * (strided ? NX_CPU_STRIDED_COST : 1);
-}
+/* The threads the walk of the loop [l] over the [n] operands [a], [per] an
+   element, takes: nx_cpu_threads of its operands' bytes and its cost. */
+int nx_cpu_walk_threads(int n, const nx_array *a, const nx_loop *l,
+                        double per);
 
 /* nx_cpu_walk for a loop that rule 0 does not run (walk.c, rules 1 to
    3). */
 void nx_cpu_cut(int n, const nx_array *a, const nx_loop *l, int64_t most,
-                int64_t weight, nx_cpu_block_fn f, void *ctx);
+                double per, nx_cpu_block_fn f, void *ctx);
 
 static inline void nx_cpu_walk(int n, const nx_array *a, const nx_loop *l,
-                               int64_t most, int64_t weight,
-                               nx_cpu_block_fn f, void *ctx) {
-  if (l->rank > 1 || l->extent[0] > most) {
-    nx_cpu_cut(n, a, l, most, weight, f, ctx);
+                               int64_t most, double per, nx_cpu_block_fn f,
+                               void *ctx) {
+  if (l->rank > 1 || l->extent[0] > most ||
+      nx_cpu_walk_threads(n, a, l, per) > 1) {
+    nx_cpu_cut(n, a, l, most, per, f, ctx);
     return;
   }
   nx_cpu_block b = {.n0 = l->extent[0], .n1 = 1, .n2 = 1};
-  int64_t bits = 0;
-  int strided = 0;
   for (int k = 0; k < n; k++) {
     b.at[k] = l->first[k];
     b.s0[k] = l->step[k][0];
-    bits += a[k].bits;
-    strided |= b.s0[k] > 1 || b.s0[k] < -1;
-  }
-  /* Below two threads' cost, nx_cpu_threads gives one. */
-  int64_t bytes = b.n0 * bits / 8;
-  if (nx_cpu_walk_cost(bytes, weight, strided) >= 2 * NX_CPU_THREAD_BYTES) {
-    nx_cpu_cut(n, a, l, most, weight, f, ctx);
-    return;
   }
   if (b.n0 > 0) f(&b, ctx);
 }
@@ -802,14 +793,15 @@ static inline void nx_cpu_walk(int n, const nx_array *a, const nx_loop *l,
 
 /* Copies the elements of [bits] bits of the loop [l]'s operand 1 from [src]
    to its operand 0 at [dst], bits for bits, as a copy's walk does
-   (copy.c). */
+   (copy.c), an element costing [per], the caller's share for it. */
 void nx_cpu_copy_loop(uint8_t *dst, const uint8_t *src, int bits,
-                      const nx_loop *l);
+                      const nx_loop *l, double per);
 
 /* Casts the loop [l]'s operand 1, [src], into its operand 0, [dst], as a
-   cast's walk does (copy.c): each element rounds once to [dst]'s dtype. */
+   cast's walk does (copy.c): each element rounds once to [dst]'s dtype and
+   costs [per], the caller's share for it. */
 void nx_cpu_cast_loop(const nx_array *dst, const nx_array *src,
-                      const nx_loop *l);
+                      const nx_loop *l, double per);
 
 /* Programs
 

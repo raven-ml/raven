@@ -53,12 +53,12 @@ static __attribute__((noinline)) int store_rounded(
       for (int d = 0; d < rank; d++) lt.step[0][d] = l.step[1][d];
       lt.first[0] = 0;
       lt.rank = nx_coalesce_dims(2, rank, lt.extent, lt.step);
-      nx_cpu_cast_loop(&t, y, &lt);
+      nx_cpu_cast_loop(&t, y, &lt, nx_cpu_width(y->dtype));
     }
   }
   if (done) {
     l.rank = nx_coalesce_dims(2, rank, l.extent, l.step);
-    nx_cpu_cast_loop(dst, narrows ? &t : y, &l);
+    nx_cpu_cast_loop(dst, narrows ? &t : y, &l, nx_cpu_width(y->dtype));
   }
   if (t.base) nx_cpu_give(t.base);
   return done;

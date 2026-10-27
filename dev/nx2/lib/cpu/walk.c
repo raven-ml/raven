@@ -111,6 +111,58 @@ static int tile_axis(int n, const nx_loop *l) {
   return t;
 }
 
+/* Rules 1 and 2 on the loop [wl] over the [n] operands [a]: answers
+   whether its blocks are tiles. */
+static int order(int n, const nx_array *a, nx_loop *wl) {
+  int r = wl->rank;
+  for (int k = 0; k < n; k++)
+    if (a[k].bits < 8) return 0;
+  if (r < 2) return 0;
+  if (wl->extent[r - 1] < SHORT)
+    for (int i = r - 2; i >= 0; i--)
+      if (wl->extent[i] >= SHORT) {
+        swap_axes(wl, n, i, r - 1);
+        break;
+      }
+  int t = tile_axis(n, wl);
+  if (t < 0) return 0;
+  swap_axes(wl, n, t, r - 2);
+  return 1;
+}
+
+/* The cost of the loop [wl] over [n] operands as the walk orders it,
+   [tiled] or not, [per] an element: strided where its blocks are tiles,
+   an operand steps more than one element along its rows, or it runs
+   several rows of fewer than SHORT elements, as a sub-byte operand's
+   that the walk cannot reorder. */
+static double ordered_cost(int n, const nx_loop *wl, int tiled, double per) {
+  int r = wl->rank, strided = tiled || (r > 1 && wl->extent[r - 1] < SHORT);
+  double elements = 1;
+  for (int i = 0; i < r; i++) elements *= (double)wl->extent[i];
+  for (int k = 0; k < n; k++) strided |= magnitude(wl->step[k][r - 1]) > 1;
+  return elements * per * (strided ? NX_CPU_STRIDED_COST : 1);
+}
+
+double nx_cpu_loop_cost(int n, const nx_array *a, const nx_loop *l,
+                        double per) {
+  if (l->rank < 2) return ordered_cost(n, l, 0, per);
+  nx_loop wl = *l;
+  return ordered_cost(n, &wl, order(n, a, &wl), per);
+}
+
+/* The bytes of the loop [l]'s elements over the [n] operands [a]. */
+static int64_t loop_bytes(int n, const nx_array *a, const nx_loop *l) {
+  int64_t elements = 1, bits = 0;
+  for (int i = 0; i < l->rank; i++) elements *= l->extent[i];
+  for (int k = 0; k < n; k++) bits += a[k].bits;
+  return elements * bits / 8;
+}
+
+int nx_cpu_walk_threads(int n, const nx_array *a, const nx_loop *l,
+                        double per) {
+  return nx_cpu_threads(loop_bytes(n, a, l), nx_cpu_loop_cost(n, a, l, per));
+}
+
 /* Unit u's block: its first plane, then the same block in each next plane
    along the innermost axis outside the rows that the unit runs. */
 static void block_of(const walk *w, int64_t u, nx_cpu_block *b) {
@@ -156,38 +208,18 @@ static void units(int64_t lo, int64_t hi, int worker, void *ctx) {
 }
 
 void nx_cpu_cut(int n, const nx_array *a, const nx_loop *l, int64_t most,
-                int64_t weight, nx_cpu_block_fn f, void *ctx) {
+                double per, nx_cpu_block_fn f, void *ctx) {
   walk w = {n, *l, 0, 0, 0, 0, 1, 1, f, ctx};
   nx_loop *wl = &w.l;
-  int r = wl->rank, bits = 0, widest = 1, byte_wide = 1;
+  int r = wl->rank, widest = 1;
   if (wl->extent[0] == 0) return;
-  for (int k = 0; k < n; k++) {
-    bits += a[k].bits;
-    if (a[k].bits < 8)
-      byte_wide = 0;
-    else if (a[k].bits / 8 > widest)
-      widest = a[k].bits / 8;
-  }
-  int tiled = 0;
-  if (byte_wide && r > 1) {
-    if (wl->extent[r - 1] < SHORT)
-      for (int i = r - 2; i >= 0; i--)
-        if (wl->extent[i] >= SHORT) {
-          swap_axes(wl, n, i, r - 1);
-          break;
-        }
-    int t = tile_axis(n, wl);
-    if (t >= 0) {
-      swap_axes(wl, n, t, r - 2);
-      tiled = 1;
-    }
-  }
+  for (int k = 0; k < n; k++)
+    if (a[k].bits / 8 > widest) widest = a[k].bits / 8;
+  int tiled = order(n, a, wl);
   int64_t elements = 1;
   for (int i = 0; i < r; i++) elements *= wl->extent[i];
-  int strided = tiled;
-  for (int k = 0; k < n; k++) strided |= magnitude(wl->step[k][r - 1]) > 1;
-  int64_t bytes = elements * bits / 8;
-  int64_t cost = nx_cpu_walk_cost(bytes, weight, strided);
+  int64_t bytes = loop_bytes(n, a, wl);
+  double cost = ordered_cost(n, wl, tiled, per);
   /* A job's threads share its blocks, but a tile keeps its width: a
      512x512 transposed copy took 16.3 us on six of fudge's cores in 52
      tiles 42 elements wide, 13.7 in four tiles of 128x512. */

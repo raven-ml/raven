@@ -580,46 +580,49 @@ static int streams(int64_t bytes, int threads) {
   return NX_STREAMS && bytes > (threads == 1 ? one : several);
 }
 
-/* Copies the loop [l] of the operands [a], destination first, on the
-   threads the walk gives a tiled loop: only a transposed copy, which the
-   walk tiles, streams. */
-static void copy_walk(nx_array *a, const nx_loop *l) {
+/* Copies the loop [l] of the operands [a], destination first, [per] an
+   element, on the threads its walk takes: only a transposed copy, which
+   the walk tiles, streams. */
+static void copy_walk(nx_array *a, const nx_loop *l, double per) {
   int64_t n = 1;
   for (int i = 0; i < l->rank; i++) n *= l->extent[i];
   int64_t bytes = n * a[0].bits / 8;
-  int threads = nx_cpu_threads(2 * bytes, nx_cpu_walk_cost(2 * bytes, 1, 1));
+  int threads = nx_cpu_walk_threads(2, a, l, per);
   copying c = {a, streams(bytes, threads) ? nx_stream_box : nx_copy_box};
-  nx_cpu_walk(2, a, l, COPY_MOST, 1, copy_block, &c);
+  nx_cpu_walk(2, a, l, COPY_MOST, per, copy_block, &c);
 }
 
-/* Casts the loop [l] of the operands [a], destination first. */
-static void cast_walk(nx_array *a, const nx_loop *l) {
-  nx_cpu_walk(2, a, l, cast_most(a[1].dtype, a[0].dtype), 1, cast_block, a);
+/* Casts the loop [l] of the operands [a], destination first, [per] an
+   element. */
+static void cast_walk(nx_array *a, const nx_loop *l, double per) {
+  nx_cpu_walk(2, a, l, cast_most(a[1].dtype, a[0].dtype), per, cast_block,
+              a);
 }
 
 void nx_cpu_copy_loop(uint8_t *dst, const uint8_t *src, int bits,
-                      const nx_loop *l) {
+                      const nx_loop *l, double per) {
   /* The walk and the block copy read the operands' bases and widths. */
   nx_array pair[2] = {{.base = dst, .bits = bits},
                       {.base = (uint8_t *)src, .bits = bits}};
-  copy_walk(pair, l);
+  copy_walk(pair, l, per);
 }
 
 void nx_cpu_cast_loop(const nx_array *dst, const nx_array *src,
-                      const nx_loop *l) {
+                      const nx_loop *l, double per) {
   nx_array pair[2] = {*dst, *src};
   if (dst->dtype == src->dtype)
-    nx_cpu_walk(2, pair, l, COPY_MOST, 1, copy_block, pair);
+    nx_cpu_walk(2, pair, l, COPY_MOST, per, copy_block, pair);
   else
-    nx_cpu_walk(2, pair, l, cast_most(src->dtype, dst->dtype), 1, cast_block,
-                pair);
+    nx_cpu_walk(2, pair, l, cast_most(src->dtype, dst->dtype), per,
+                cast_block, pair);
 }
 
 /* Reads [vd], written, and [vs] of the dtypes [d] and [s] through the door,
    and walks them with [walk], whose element is [kind]'s (nx_kernel.h's
    code) at the wider dtype. */
 static value walk_operands(value vd, value vs, int d, int s, int kind,
-                           void (*walk)(nx_array *, const nx_loop *)) {
+                           void (*walk)(nx_array *, const nx_loop *,
+                                        double)) {
   nx_operand in[2] = {{vd, d, 1}, {vs, s, 0}};
   nx_array a[2];
   nx_loop l;
@@ -628,8 +631,8 @@ static value walk_operands(value vd, value vs, int d, int s, int kind,
   if (!(e = nx_coalesce(2, a, &l))) {
     int wide = nx_cpu_width(d) > nx_cpu_width(s) ? d : s;
     double per = nx_cpu_kind_cost(1, kind, wide);
-    int released = nx_cpu_release(nx_cpu_loop_cost(2, &l, per));
-    walk(a, &l);
+    int released = nx_cpu_release(nx_cpu_loop_cost(2, a, &l, per));
+    walk(a, &l, per);
     nx_cpu_reacquire(released);
   }
   nx_done(2, a);

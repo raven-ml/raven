@@ -201,11 +201,17 @@ static int same_shape(const int64_t *x, int r, const int64_t *y, int ry) {
   return 1;
 }
 
-/* What a call takes (cpu.h, Calls, scalar): a gathered element, 51 read
-   at random over 2^24 elements (M1); a scatter's update, 325 (a float16
-   Max, fudge); a target its copy from into. */
+/* What a call takes (cpu.h, Calls and jobs, scalar): a gathered element,
+   51 read at random over 2^24 elements (M1); a scatter's update, 325 (a
+   float16 Max, fudge). */
 #define GATHER_COST 128
 #define UPDATE_COST 512
+
+/* What a scatter's copy of a target from into takes an element of [dt]
+   (cpu.h, Calls and jobs, streaming): twice its bytes, read and written,
+   the walk of the copy's strided bound NX_CPU_STRIDED_COST times that. A
+   formula, not measured (2026-10-27). */
+static double target_cost(int dt) { return 2.0 * nx_cpu_width(dt); }
 
 value nx_cpu_gather(value vaxis, value vd, value vi, value vx) {
   CAMLparam4(vaxis, vd, vi, vx);
@@ -235,7 +241,7 @@ value nx_cpu_gather(value vaxis, value vd, value vi, value vx) {
     l.step[2][i] = i == axis ? 0 : a[2].dim[r + i];
   }
   l.rank = nx_coalesce_dims(3, r, l.extent, l.step);
-  nx_cpu_walk(3, a, &l, GATHER_MOST, 1, gather_block, &g);
+  nx_cpu_walk(3, a, &l, GATHER_MOST, GATHER_COST, gather_block, &g);
   nx_cpu_reacquire(released);
   nx_done(3, a);
   CAMLreturn(Val_int(NX_OK));
@@ -953,7 +959,8 @@ static void copy_bin(const scatter *c, uint64_t first) {
   l.step[1][0] = c->ta;
   l.step[1][1] = c->st;
   l.rank = nx_coalesce_dims(2, 2, l.extent, l.step);
-  nx_cpu_copy_loop(c->a[0].base, c->a[1].base, c->a[0].bits, &l);
+  nx_cpu_copy_loop(c->a[0].base, c->a[1].base, c->a[0].bits, &l,
+                   target_cost(c->dt));
 }
 
 /* Applies each bin's runs with the scatter's run, over the sorted
@@ -1138,7 +1145,8 @@ static void copy_into(const nx_array *a, int64_t total) {
   if (total == 0 || a[1].alias) return;
   nx_loop l;
   nx_coalesce(2, a, &l);
-  nx_cpu_copy_loop(a[0].base, a[1].base, a[0].bits, &l);
+  nx_cpu_copy_loop(a[0].base, a[1].base, a[0].bits, &l,
+                   target_cost(a[0].dtype));
 }
 
 value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
@@ -1167,7 +1175,7 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
     total *= ys[i];
     updates *= us[i];
   }
-  double target = 2 * NX_CPU_STRIDED_COST * nx_cpu_width(dt);
+  double target = NX_CPU_STRIDED_COST * target_cost(dt);
   int released = nx_cpu_release((double)total * target +
                                 (double)updates * UPDATE_COST);
   if (total == 0 || updates == 0) {

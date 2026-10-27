@@ -84,7 +84,7 @@ static void fill_box(const nx_array *dst, const uint8_t *fill, int r,
   l.rank = nx_coalesce_dims(1, r, l.extent, l.step);
   int w = dst->bits < 8 ? 1 : dst->bits / 8;
   filling f = {dst, fill};
-  nx_cpu_walk(1, dst, &l, NX_CPU_SLOT / w, 1, fill_block, &f);
+  nx_cpu_walk(1, dst, &l, NX_CPU_SLOT / w, w, fill_block, &f);
 }
 
 /* Elements of a pad's unit: a longer row is cut into parts of this many,
@@ -380,7 +380,7 @@ value nx_cpu_assemble(value vfill, value vd, value vpieces) {
     }
     if (n == 0) continue;
     l.rank = nx_coalesce_dims(2, r, l.extent, l.step);
-    nx_cpu_copy_loop(a[0].base, a[1 + j].base, bits, &l);
+    nx_cpu_copy_loop(a[0].base, a[1 + j].base, bits, &l, nx_cpu_width(dt));
   }
   nx_cpu_reacquire(released);
   nx_done(n, a);

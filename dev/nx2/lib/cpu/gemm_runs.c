@@ -125,8 +125,10 @@ int nx_gemm_stage_runs(nx_contract_runs *r, int o, const int *gs, int dt,
   x->offset = 0;
   x->alias = 0;
   l.rank = nx_coalesce_dims(2, rank, l.extent, l.step);
-  if (dt == src->dtype) nx_cpu_copy_loop(base, src->base, bits, &l);
-  else nx_cpu_cast_loop(x, src, &l);
+  /* A staged element costs its bytes, as call_cost prices it. */
+  double per = nx_cpu_width(dt);
+  if (dt == src->dtype) nx_cpu_copy_loop(base, src->base, bits, &l, per);
+  else nx_cpu_cast_loop(x, src, &l, per);
   r->offset[o] = 0;
   if (s) scale_runs(r, gs, dt, s, base);
   return 1;

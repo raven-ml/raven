@@ -699,10 +699,9 @@ static int run_map(step *s, int nn, int nouts, const int32_t *outs,
   int e = setup(&j, s, nn, nouts, outs, a, n, &heap, &most);
   nx_loop l;
   if (!e && !(e = nx_coalesce(j.n, a, &l))) {
-    if (!early)
-      released = nx_cpu_release(
-          nx_cpu_loop_cost(j.n, &l, element_price(s, nn, a, j.n)));
-    nx_cpu_walk(j.n, a, &l, most, kinds(s, nn), block, &j);
+    double per = element_price(s, nn, a, j.n);
+    if (!early) released = nx_cpu_release(nx_cpu_loop_cost(j.n, a, &l, per));
+    nx_cpu_walk(j.n, a, &l, most, per, block, &j);
   }
   nx_cpu_reacquire(released);
   for (int i = 0; i < SPARES; i++) free(heap.spare[i]);

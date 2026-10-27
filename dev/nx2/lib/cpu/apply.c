@@ -213,14 +213,14 @@ static value walk_operands(int n, const nx_operand *in, nx_cpu_block_fn f,
     nx_done(n, a);
     return Val_int(e);
   }
-  int released = nx_cpu_release(nx_cpu_loop_cost(n, &l, per));
+  int released = nx_cpu_release(nx_cpu_loop_cost(n, a, &l, per));
   int64_t block_most = most(n, a);
   int run = f == block && l.rank == 1 && l.extent[0] <= block_most;
   for (int k = 0; k < n && run; k++) {
     int64_t step = l.step[k][0];
     run = a[k].dtype == j->as[k] && (step == 0 || step == 1);
   }
-  if (!run) nx_cpu_walk(n, a, &l, block_most, 1, f, j);
+  if (!run) nx_cpu_walk(n, a, &l, block_most, per, f, j);
   else if (l.extent[0] > 0) {
     uint8_t *p[OPERANDS];
     int64_t s0[OPERANDS], s1[OPERANDS] = {0};

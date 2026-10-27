@@ -6,8 +6,8 @@
 /* Jobs: on how many threads a piece of work runs, and the scratch its
    threads keep.
 
-   A job's threads follow from its cost, the bytes memcpy would move in the
-   time it takes: one thread per NX_CPU_THREAD_BYTES (cpu.h), the bytes a
+   A job's threads follow from its cost (cpu.h, Calls and jobs), its share
+   of its call's: one thread per NX_CPU_THREAD_BYTES, the bytes a
    core moves in the time a job of several threads takes to start. On fudge,
    a Core Ultra 5 235, today's pool starts a job in 0.5 to 1.2 us: 128 KiB,
    at which a 1.5 MiB int8 to int4 pack takes 3.6 us against 5.8 at 384 KiB,
@@ -20,12 +20,6 @@
    as on its eight performance cores, and past the caches the efficiency
    cores add their share of the memory's bandwidth (a 64 MiB copy: 665 us on
    ten, 789 on eight).
-
-   A job's cost sizes its threads; a call's price (cpu.h, Calls) decides
-   whether the call releases the domain lock. The prices bound each kind's
-   time on one core of the machines measured, an Apple M1 Max and an Intel
-   Core Ultra 5 235; the jobs' costs are older estimates, many below it,
-   so a costly kind runs on fewer threads than it would pay for.
 
    A job never releases the domain lock: the call it runs in releases it
    for its whole work at its entry, or holds it through work that costs

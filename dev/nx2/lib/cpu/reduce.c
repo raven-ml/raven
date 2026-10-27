@@ -1758,18 +1758,21 @@ static int own_copy(const nx_array *x, nx_array *t, home h) {
   nx_array pair[2] = {*t, *x};
   nx_loop l;
   nx_coalesce(2, pair, &l);
-  nx_cpu_copy_loop(t->base, x->base, x->bits, &l);
+  nx_cpu_copy_loop(t->base, x->base, x->bits, &l, nx_cpu_width(x->dtype));
   return 0;
 }
 
-/* Casts [a] into [b], of one shape, as a cast does. Apart, so that its
-   loop's 5 KiB are off the frame its caller's jobs run under. */
+/* Casts [a] into [b], of one shape, as a cast does, at a cast's cost.
+   Apart, so that its loop's 5 KiB are off the frame its caller's jobs run
+   under. */
 static __attribute__((noinline)) void cast(const nx_array *b,
                                            const nx_array *a) {
   nx_array pair[2] = {*b, *a};
   nx_loop l;
   nx_coalesce(2, pair, &l);
-  nx_cpu_cast_loop(b, a, &l);
+  int wide = nx_cpu_width(b->dtype) > nx_cpu_width(a->dtype) ? b->dtype
+                                                              : a->dtype;
+  nx_cpu_cast_loop(b, a, &l, nx_cpu_kind_cost(1, NX_OP1_CAST, wide));
 }
 
 /* As reduce_in, of [x] of any dtype in its carrier, into destinations of

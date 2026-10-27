@@ -216,8 +216,10 @@ let families =
     ]
 
 (* The estimate's inputs: a batch of matrices whose work is each under the
-   copy and past it summed, a padded load, whose copy is the work, and a
-   map of no operand, each at the least size past the copy. *)
+   copy and past it summed, a padded load, whose copy is the work, a map of
+   no operand, and a copy of rows too short to stride along whose
+   sub-byte elements the walk cannot reorder, each at the least size past
+   the copy. *)
 let estimates =
   group "a call past the copy by each input of the estimate"
     [
@@ -252,6 +254,16 @@ let estimates =
               done_
                 (Nx_cpu.map prog ~dsts:[| A.Any dst |]
                    [| Nx_kernel.Padded { x; fill = 1.5; pad } |])));
+      test "a copy of short rows of sub-byte elements" (fun () ->
+          let n = 21000 in
+          let base = A.create Rig.host D.Int4 [| n; 4 |] in
+          let layout = Nx_array.Layout.v ~strides:[| 4; 1 |] [| n; 3 |] in
+          let x = A.v D.Int4 layout (A.buffer base) in
+          let dst = A.create Rig.host D.Int4 [| n; 3 |] in
+          let prog = P.v ~ins:[| D.Any D.Int4 |] [| P.In 0 |] ~outs:[| 0 |] in
+          releases (fun () ->
+              done_
+                (Nx_cpu.map prog ~dsts:[| A.Any dst |] [| Nx_kernel.Plain x |])));
       test "an iota of a strided destination" (fun () ->
           let n = 1 lsl 18 in
           let base = A.create Rig.host D.Int64 [| n; 2 |] in
