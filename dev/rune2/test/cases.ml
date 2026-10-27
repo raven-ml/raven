@@ -583,6 +583,9 @@ let factor_cases =
     m "lu, pivoting" tall_or_wide (fun x ->
         let _, l, u = Nx.lu (rotated (spaced x)) in
         flat [ l; u ]);
+    m "batched lu, pivoting" batched (fun x ->
+        let _, l, u = Nx.lu (rotated (spaced x)) in
+        flat [ l; u ]);
     m "batched qr" batched (fun x ->
         let q, r = Nx.qr (spaced x) in
         flat [ q; r ]);
