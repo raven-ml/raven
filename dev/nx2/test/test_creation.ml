@@ -260,7 +260,15 @@ let test_arange_bounds () =
     [| Int64.of_int (max_int - 1) |]
     (Nx.to_array (Nx.arange Nx.int64 (max_int - 1) max_int 1));
   equal (array int64) [| Int64.of_int max_int |]
-    (Nx.to_array (Nx.arange Nx.int64 max_int (max_int - 1) (-1)))
+    (Nx.to_array (Nx.arange Nx.int64 max_int (max_int - 1) (-1)));
+  (* Across the whole range, where [stop - start] overflows [int], in either
+     direction. *)
+  equal (array int64)
+    (Array.map Int64.of_int [| min_int; -(1 lsl 61); 0; 1 lsl 61 |])
+    (Nx.to_array (Nx.arange Nx.int64 min_int max_int (1 lsl 61)));
+  equal (array int64)
+    (Array.map Int64.of_int [| max_int; max_int - (1 lsl 62) |])
+    (Nx.to_array (Nx.arange Nx.int64 max_int min_int (-(1 lsl 62))))
 
 let law_arange_f (D.Any dt, (start, (stop, step))) =
   let start = Float.of_int start /. 4. and stop = Float.of_int stop /. 4. in

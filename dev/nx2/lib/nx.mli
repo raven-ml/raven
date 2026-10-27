@@ -169,8 +169,9 @@ val arange : ('v, 's) dtype -> int -> int -> int -> ('v, 's, 'd) t
     [step]'s direction. Each value is exact, then stored in [dt] as {!cast}
     stores an [int64].
 
-    Raises [Invalid_argument] if [step = 0], or a value is outside [dt]'s range
-    for an integer dtype, or other than [0] and [1] for a boolean one. *)
+    Raises [Invalid_argument] if [step = 0], the range holds more than
+    [max_int] values, or a value is outside [dt]'s range for an integer
+    dtype, or other than [0] and [1] for a boolean one. *)
 
 val arange_f : (float, 's) dtype -> float -> float -> float -> (float, 's, 'd) t
 (** [arange_f dt start stop step] is the 1-d value of the [⌈(stop - start) /

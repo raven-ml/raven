@@ -250,11 +250,20 @@ let arange_by ~by dt start stop step =
   let n =
     if (step > 0 && stop <= start) || (step < 0 && stop >= start) then 0
     else
-      let d = stop - start in
-      if d > 0 <> (stop > start) then
+      (* [stop - start] exceeds [max_int] across a range wider than it, so
+         the count, [⌈|stop - start| / |step|⌉], is taken at int64, where
+         every difference of two ints fits. *)
+      let span =
+        Int64.abs (Int64.sub (Int64.of_int stop) (Int64.of_int start))
+      in
+      let count =
+        Int64.succ
+          (Int64.div (Int64.pred span) (Int64.abs (Int64.of_int step)))
+      in
+      if Int64.compare count (Int64.of_int max_int) > 0 then
         invalid_argf "%s: [%d, %d) holds more than %d values" by start stop
           max_int;
-      ((d - Int.compare step 0) / step) + 1
+      Int64.to_int count
   in
   (if n > 0 then
      match int_bounds dt with
