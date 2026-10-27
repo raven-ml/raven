@@ -66,10 +66,11 @@
 
     {b Errors.} A file that cannot be read or written, or whose contents break
     its format, raises [Failure] whose message starts with the file's path, as
-    in ["w.npy: the file ends inside its header"]. A value, a name or an
-    argument a format cannot hold raises [Invalid_argument] naming the function,
-    as in ["Nx_io.save_npy: npy has no bfloat16"], and so does a value traced by
-    an interpretation, which has no bytes to write. *)
+    in ["w.npy: the file ends inside its header"], and so does a load from a
+    path that names no regular file, such as a directory or a FIFO. A value, a
+    name or an argument a format cannot hold raises [Invalid_argument] naming
+    the function, as in ["Nx_io.save_npy: npy has no bfloat16"], and so does a
+    value traced by an interpretation, which has no bytes to write. *)
 
 (** {1:archives Archives} *)
 

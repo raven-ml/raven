@@ -133,6 +133,50 @@ let saving =
 
 (* Errors *)
 
+(* How a call in a child process ended. *)
+exception Raised_in_child of string
+
+(* [in_child ~seconds f] runs [f] in a forked child, then raises as it did:
+   [Failure] with its message, any other exception as [Raised_in_child] with its
+   text. Fails if the child still runs after [seconds]: a load blocked inside a
+   system call would hang the suite, since no timeout interrupts one. *)
+let in_child ~seconds f =
+  let r, w = Unix.pipe ~cloexec:true () in
+  match Unix.fork () with
+  | 0 ->
+      let outcome =
+        match f () with
+        | () -> "R"
+        | exception Failure m -> "F" ^ m
+        | exception e -> "E" ^ Printexc.to_string e
+      in
+      ignore (Unix.write_substring w outcome 0 (String.length outcome));
+      Unix._exit 0
+  | child -> (
+      Unix.close w;
+      let ic = Unix.in_channel_of_descr r in
+      let deadline = Unix.gettimeofday () +. seconds in
+      let rec wait () =
+        match Unix.waitpid [ Unix.WNOHANG ] child with
+        | 0, _ when Unix.gettimeofday () < deadline ->
+            Unix.sleepf 0.01;
+            wait ()
+        | 0, _ ->
+            Unix.kill child Sys.sigkill;
+            ignore (Unix.waitpid [] child);
+            close_in ic;
+            failf "the call still ran after %g s" seconds
+        | _ -> ()
+      in
+      wait ();
+      let outcome = In_channel.input_all ic in
+      close_in ic;
+      let text = String.sub outcome 1 (String.length outcome - 1) in
+      match outcome.[0] with
+      | 'R' -> ()
+      | 'F' -> failwith text
+      | _ -> raise (Raised_in_child text))
+
 let errors =
   group "errors"
     [
@@ -140,6 +184,19 @@ let errors =
         (fun (_, load) ->
           let path = Filename.concat (temp_dir ()) "absent" in
           fails ~path (fun () -> load path));
+      cases ~name:fst
+        "a path that names no regular file, a directory or a FIFO, fails, \
+         naming it"
+        loaders (fun (_, load) ->
+          let dir = temp_dir () in
+          fails ~path:dir (fun () -> load dir);
+          if Sys.win32 then skip ~reason:"no FIFO on Windows" ();
+          (* A FIFO with no writer: a reader that opens it waits for one, so the
+             load runs where the test can stop it. *)
+          let fifo = Filename.concat (temp_dir ()) "fifo" in
+          Unix.mkfifo fifo 0o600;
+          fails ~path:fifo (fun () ->
+              in_child ~seconds:10. (fun () -> load fifo)));
       cases ~name "a save into a missing directory fails, naming the path" saves
         (fun s ->
           let path = Filename.concat (temp_dir ()) "missing/x" in

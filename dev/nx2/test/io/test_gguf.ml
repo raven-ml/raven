@@ -301,7 +301,6 @@ let gguf_group =
            ( "an alignment not a uint32",
              raw ~alignment:64 [ kv "general.alignment" (Uint64 64L) ] one );
            ("data cut short", fun () -> file (cut (gguf [] one) 1));
-           ("a directory", fun () -> temp_dir ());
          ]
          (fun (_, path) ->
            let path = path () in

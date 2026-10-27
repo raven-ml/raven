@@ -300,18 +300,21 @@ let load ~sep ~comments ~skiprows dt path =
   let is_comment line =
     comment <> "" && String.starts_with ~prefix:comment (String.trim line)
   in
+  (* rig.disk refuses a path that names no regular file, such as a FIFO, which
+     an open for reading would wait on for a writer. *)
+  let file = Storage.open_file path in
+  let text = Storage.string file ~pos:0 (Rig.Buffer.length file) in
+  let rec read skip rows = function
+    | [] -> rows
+    | _ :: lines when skip > 0 -> read (skip - 1) rows lines
+    | line :: lines when is_comment line -> read 0 rows lines
+    | line :: lines ->
+        let f = fields sep line in
+        let rows = if Array.length f = 0 then rows else f :: rows in
+        read 0 rows lines
+  in
   let rows =
-    In_channel.with_open_bin path @@ fun ic ->
-    let rec read skip rows =
-      match In_channel.input_line ic with
-      | None -> rows
-      | Some _ when skip > 0 -> read (skip - 1) rows
-      | Some line when is_comment line -> read 0 rows
-      | Some line ->
-          let f = fields sep line in
-          if Array.length f = 0 then read 0 rows else read 0 (f :: rows)
-    in
-    Array.of_list (List.rev (read skiprows []))
+    Array.of_list (List.rev (read skiprows [] (String.split_on_char '\n' text)))
   in
   if Array.length rows = 0 then failwith "no row";
   let cols = Array.length rows.(0) in

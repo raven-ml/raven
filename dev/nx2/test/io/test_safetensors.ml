@@ -206,7 +206,7 @@ let safetensors =
          Bytes.to_string b
        in
        let twice = [ ("w", "U8", [ 1 ], "a"); ("w", "U8", [ 1 ], "b") ] in
-       cases ~name:fst "a malformed file or no regular file fails, naming it"
+       cases ~name:fst "a malformed file fails, naming it"
          [
            ("a byte past the data", fun () -> file (whole ^ "\000"));
            ("a header past the end", fun () -> file (with_length 8_000L));
@@ -246,7 +246,6 @@ let safetensors =
              fun () -> file (raw_safetensors [ ("w", "U8", [ -1 ], "") ]) );
            ( "a name that is no JSON string",
              fun () -> file (u8_entry {|\ud800|}) );
-           ("a directory", fun () -> temp_dir ());
          ]
          (fun (_, path) ->
            let path = path () in
