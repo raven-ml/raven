@@ -92,12 +92,14 @@ CAMLprim value caml_nx_io_sync(value vfd) {
   return Val_unit;
 }
 
-/* The directory's sync makes the names a rename or link put in it outlast a
-   crash. A directory that cannot be opened, or whose file system refuses to
-   sync one, as some do, is left as it is, as SQLite does for its journal's.
-   Windows opens no directory as a file: a rename there reaches the disk
-   before it returns (MOVEFILE_WRITE_THROUGH), and a link may be lost to a
-   crash but is never seen without its file's bytes. */
+/* The directory's sync orders the names a rename or link put in it before
+   later changes to the file system, as the file's sync orders its bytes; on
+   macOS the barrier promises no more. A directory that cannot be opened, or
+   whose file system refuses to sync one, as some do, is left as it is, as
+   SQLite does for its journal's. Windows opens no directory as a file, so a
+   rename there is ordered by the file system alone. The file's bytes were
+   flushed before it, so a crash may lose the rename but never shows it
+   without them. */
 CAMLprim value caml_nx_io_sync_dir(value vpath) {
 #if defined(_WIN32)
   (void)vpath;

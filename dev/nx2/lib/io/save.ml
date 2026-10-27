@@ -6,8 +6,8 @@
 (* A save leaves, after a crash, the file it replaces or the whole new one. It
    writes the new file beside [path] and syncs it, which orders the file's bytes
    before every later change to the file system. It then renames the file over
-   [path] and syncs the directory, so that the rename outlasts a crash. The
-   order is SQLite's for its journal (os_unix.c, unixSync): the file's sync,
+   [path] and syncs the directory, which orders the rename before later changes.
+   The order is SQLite's for its journal (os_unix.c, unixSync): the file's sync,
    then its directory's.
 
    write temp --> sync temp --> rename to path --> sync directory
@@ -47,7 +47,8 @@ let sibling path =
    changes to the file system. *)
 external sync : Unix.file_descr -> unit = "caml_nx_io_sync"
 
-(* [sync_dir dir] returns once the names put in [dir] outlast a crash. *)
+(* [sync_dir dir] returns once the names put in [dir] are ordered before later
+   changes to the file system. On Windows it does nothing. *)
 external sync_dir : string -> unit = "caml_nx_io_sync_dir"
 
 let replace temp path =
