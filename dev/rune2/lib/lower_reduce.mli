@@ -177,9 +177,11 @@ val contract :
     indices alone, as the others enter its sum as zeros, which round
     nowhere but may change a zero result's sign.
 
-    Costs: [Rows] picks each row's slice of [b] from among the [g] groups'
-    slices, [g] reads per element picked; [Contracting] computes each group
-    over the pair's whole extent, [g] times the unsegmented work.
+    Costs: [Rows] contracts each row with each of the [g] groups' slices of
+    [b], then picks each output from among the [g] results by its row's
+    group: [g] times the work of the contraction of one slice, through
+    [g] results per output; [Contracting] computes each group over the
+    pair's whole extent, [g] times the unsegmented work.
 
     Raises [Invalid_argument] for a scale with an [acc] other than [float32]
     or [float64]. *)

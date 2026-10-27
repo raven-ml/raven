@@ -1148,11 +1148,11 @@ let arg_scans =
 (* Contractions
 
    Each operand's axes are batch, free or contracted, in any order, read through
-   a transposed view or not. An operand of at most one free axis, the result's
-   free axes are those of [a], then of [b]. A scale's blocks divide each of its
-   operand's extents; codes stay below [151] or are [255], so that no partial
-   sum overflows. Offsets are drawn around the segmented axis, int64's
-   extremes included. *)
+   a transposed view or not. An operand has at most one free axis, three for
+   [Rows]; the result's free axes are [a]'s, then [b]'s, in axis order. A
+   scale's blocks divide each of its operand's extents; codes stay below
+   [151] or are [255], so that no partial sum overflows. Offsets are drawn
+   around the segmented axis, int64's extremes included. *)
 
 type role = B of int | F of int | C of int
 
@@ -1160,9 +1160,11 @@ type scale =
   | Codes of int array * int64 array
   | Values of D.any * int array * int64 array
 
-(* [Rows]' segmented axes are each operand's free axis, [b]'s extent the
-   groups'. *)
-type segments = Rows of int64 array | Contracting of int * int * int64 array
+(* [Rows (i, j, o)] segments [a]'s free axis [i] by [b]'s free axis [j], of
+   extent the groups'. *)
+type segments =
+  | Rows of int * int * int64 array
+  | Contracting of int * int * int64 array
 
 type contraction = {
   cdt : D.any;
@@ -1189,17 +1191,19 @@ let ashape c f r =
 let out_shape c =
   match c.seg with
   | None -> Array.concat [ c.eb; c.fa; c.fb ]
-  | Some (Rows _) -> Array.concat [ c.eb; c.fa ]
+  | Some (Rows (_, j, _)) ->
+      let fb = List.filteri (fun k _ -> k <> j) (Array.to_list c.fb) in
+      Array.concat [ c.eb; c.fa; Array.of_list fb ]
   | Some (Contracting (_, g, _)) -> Array.concat [ [| g |]; c.eb; c.fa; c.fb ]
 
 (* The groups of [Contracting]'s pair or [Rows]' [a] axis, and its extent. *)
 let groups c =
   match c.seg with
   | None -> (0, 0)
-  | Some (Rows _) -> (c.fb.(0), c.fa.(0))
+  | Some (Rows (i, j, _)) -> (c.fb.(j), c.fa.(i))
   | Some (Contracting (p, g, _)) -> (g, c.ek.(p))
 
-let offsets_of = function Rows o | Contracting (_, _, o) -> o
+let offsets_of = function Rows (_, _, o) | Contracting (_, _, o) -> o
 
 (* [member o ~g r] is the group of index [r] by the offsets [o.(0)] to
    [o.(g)], as {!Nx_kernel.type-segments} states. *)
@@ -1260,7 +1264,8 @@ let pp_contraction ppf c =
   scale "sb" c.sb;
   match c.seg with
   | None -> ()
-  | Some (Rows o) -> Format.fprintf ppf " rows [%s]" (raws o)
+  | Some (Rows (i, j, o)) ->
+      Format.fprintf ppf " rows f%d by f%d [%s]" i j (raws o)
   | Some (Contracting (p, g, o)) ->
       Format.fprintf ppf " pair %d groups %d [%s]" p g (raws o)
 
@@ -1277,6 +1282,11 @@ let contraction ?(extras = Plain_contraction) dts accs =
     @ List.init nf (fun i -> F i)
     @ List.init (Array.length ek) (fun i -> C i)
   in
+  (* Free axes numbered in axis order, the result's. *)
+  let ordered roles =
+    let number k = function F _ -> (k + 1, F k) | r -> (k, r) in
+    Array.of_list (snd (List.fold_left_map number 0 roles))
+  in
   let* cdt = frequency (List.map (fun (w, d) -> (w, constant d)) dts) in
   let* acc = among (accs cdt) in
   let* rows = if extras = Segmented then bool else constant false in
@@ -1287,10 +1297,12 @@ let contraction ?(extras = Plain_contraction) dts accs =
   in
   let* eb = count 0 1 in
   let* ek = count (if segmented && not rows then 1 else 0) 2 in
-  let* fa = count (if rows then 1 else 0) 1 in
-  let* fb = count (if rows then 1 else 0) 1 in
-  let* ra = map Array.of_list (permutation (roles (Array.length fa) eb ek)) in
-  let* rb = map Array.of_list (permutation (roles (Array.length fb) eb ek)) in
+  (* [Rows] draws up to two free axes on each side beyond the segmented one. *)
+  let lo, hi = if rows then (1, 3) else (0, 1) in
+  let* fa = count lo hi in
+  let* fb = count lo hi in
+  let* ra = map ordered (permutation (roles (Array.length fa) eb ek)) in
+  let* rb = map ordered (permutation (roles (Array.length fb) eb ek)) in
   let* ta = bool in
   let* tb = bool in
   let c =
@@ -1332,7 +1344,10 @@ let contraction ?(extras = Plain_contraction) dts accs =
   in
   let* seg =
     if not segmented then constant None
-    else if rows then map (fun o -> Some (Rows o)) (offsets fb.(0) fa.(0))
+    else if rows then
+      let* i = int_range 0 (Array.length fa - 1) in
+      let* j = int_range 0 (Array.length fb - 1) in
+      map (fun o -> Some (Rows (i, j, o))) (offsets fb.(j) fa.(i))
     else
       let* p = int_range 0 (Array.length ek - 1) in
       let* g = int_range 0 3 in
@@ -1403,9 +1418,9 @@ let segments_of c : _ K.segments =
   let g, _ = groups c in
   let pos r x = Option.get (Array.find_index (( = ) x) r) in
   match c.seg with
-  | Some (Rows o) ->
+  | Some (Rows (i, j, o)) ->
       let offsets = Nx.create D.Int64 (Array.append c.eb [| g + 1 |]) o in
-      Rows { offsets; a_axis = pos c.ra (F 0); b_axis = pos c.rb (F 0) }
+      Rows { offsets; a_axis = pos c.ra (F i); b_axis = pos c.rb (F j) }
   | Some (Contracting (p, _, o)) ->
       let offsets = Nx.create D.Int64 (Array.append c.eb [| g + 1 |]) o in
       Contracting { offsets; pair = p }
@@ -1665,8 +1680,8 @@ let scaled_contractions =
       contract_check c)
 
 (* Segmented contractions: rows whose group [1] is empty and of which two are
-   in no group; a pair cut into three indices and one by an int64 extreme;
-   decreasing offsets. *)
+   in no group; rows by groups of matrices; a pair cut into three indices
+   and one by an int64 extreme; decreasing offsets. *)
 let segmented_examples =
   let c = List.hd (empty (D.Any D.Float32)) in
   let ones n = Array.make n 0x3f800000L in
@@ -1680,7 +1695,7 @@ let segmented_examples =
       rb = [| C 0; F 0 |];
       araws = ones 6;
       braws = ones 4;
-      seg = Some (Rows [| 0L; 1L; 1L |]);
+      seg = Some (Rows (0, 0, [| 0L; 1L; 1L |]));
     }
   in
   let pair o =
@@ -1695,7 +1710,24 @@ let segmented_examples =
       seg = Some (Contracting (0, 2, o));
     }
   in
-  [ rows; pair [| 0L; 3L; Int64.max_int |]; pair [| 0L; 3L; 2L |] ]
+  (* x[2, 3, K]·W[K, 2, 2] from [-0], its second free axis the rows', row
+     [0] in no group, W's slices of [1] and [2]. *)
+  let grouped =
+    {
+      rows with
+      fa = [| 2; 3 |];
+      fb = [| 2; 2 |];
+      ra = [| F 0; F 1; C 0 |];
+      rb = [| C 0; F 0; F 1 |];
+      araws = ones 12;
+      braws =
+        Array.init 8 (fun i ->
+            if i / 2 mod 2 = 0 then 0x3f800000L else 0x40000000L);
+      init = Some (Array.make 12 0x80000000L);
+      seg = Some (Rows (1, 0, [| 1L; 2L; 3L |]));
+    }
+  in
+  [ rows; grouped; pair [| 0L; 3L; Int64.max_int |]; pair [| 0L; 3L; 2L |] ]
 
 let segmented_contractions =
   let accs (D.Any d as dt) =
@@ -1720,7 +1752,12 @@ let segmented_contractions =
       in
       let any f = List.exists f os in
       let extreme x = x = Int64.max_int || x = Int64.min_int in
-      cover "rows" (match c.seg with Some (Rows _) -> true | _ -> false);
+      let rows = match c.seg with Some (Rows _) -> true | _ -> false in
+      cover "rows" rows;
+      cover "rows beside another free axis of a"
+        (rows && Array.length c.fa > 1);
+      cover "rows by groups beside a free axis of b"
+        (rows && Array.length c.fb > 1);
       cover "a contracting pair"
         (match c.seg with Some (Contracting _) -> true | _ -> false);
       cover "an index in no group"

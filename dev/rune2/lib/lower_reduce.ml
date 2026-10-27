@@ -437,13 +437,6 @@ let lay u at target =
   let s = List.mapi (fun i e -> if List.mem i at then e else 1) target in
   Shape.expand (Shape.reshape (Shape.permute u order) (dims s)) (dims target)
 
-(* [move u ~src ~dst] is [u] with its axis [src] moved to [dst]. *)
-let move u ~src ~dst =
-  let rest = List.filter (( <> ) src) (List.init (Shape.ndim u) Fun.id) in
-  let before = List.filteri (fun i _ -> i < dst) rest in
-  let after = List.filteri (fun i _ -> i >= dst) rest in
-  Shape.permute u (before @ (src :: after))
-
 (* A sub-byte accumulator's node holds a byte, which wraps to its width. *)
 let wrap acc r =
   match acc with
@@ -590,40 +583,40 @@ let unless has ~acc ~out init r =
   Arith.of_parts out
     (List.map2 keep (Arith.parts out r) (Arith.parts out none))
 
-(* [Rows]: row [r] of [a]'s [a_axis] reads [b] at its group's index along
-   [b_axis], picked by bits from [b] spread over the groups and the rows, so
-   that the pick is exact, a NaN's payload and [-0] included. [b]'s [b_axis]
-   then holds [a]'s rows, a batch pair whose axis moves back among [a]'s free
-   axes in the result. *)
+(* [Rows]: [a] contracts with every group's slice of [b], [b_axis] a free axis
+   like the others, at axis [e] of that result, and each output is picked by
+   bits from among them by its row's group, so that the pick is exact, a NaN's
+   payload and [-0] included, and no other group's result enters it. [init]
+   is spread over the groups. *)
 let rows ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
   let sa = extents (List.hd a) and sb = extents (List.hd b) in
   let n = List.nth sa a_axis and g = List.nth sb b_axis in
   let m = groups o n in
   let nb = List.length batch in
-  let at i = if i > b_axis then i + 1 else i in
-  let spread =
-    List.concat
-      (List.mapi (fun i e -> if i = b_axis then [ g; n ] else [ e ]) sb)
-  in
-  let spread_m =
-    lay m (List.map (fun (_, j) -> at j) batch @ [ b_axis; b_axis + 1 ]) spread
-  in
-  let pick u =
-    let x = Bits.bits (lay u (List.init (List.length sb) at) spread) in
-    let x = Ops.where spread_m x (Shape.const_like x (`Int Bigint.zero)) in
-    Ops.bitcast (Shape.rop x Op.Add [ b_axis ]) (Ops.dtype u)
-  in
-  let b = List.map pick b in
   let fa = free (List.length sa) (List.map fst (batch @ contracting)) in
-  let j = nb + Option.get (List.find_index (Int.equal a_axis) fa) in
-  let laid = Option.map (move ~src:j ~dst:nb) init in
-  let r =
-    sum ~batch:(batch @ [ (a_axis, b_axis) ]) ~contracting ~acc ~out a b laid
+  let fb = free (List.length sb) (List.map snd (batch @ contracting)) in
+  let index x l = Option.get (List.find_index (Int.equal x) l) in
+  let i = nb + index a_axis fa in
+  let e = nb + List.length fa + index b_axis fb in
+  let spread u =
+    let s = extents u in
+    let before = List.filteri (fun k _ -> k < e) s in
+    let after = List.filteri (fun k _ -> k >= e) s in
+    let at = List.init (List.length s) (fun k -> if k < e then k else k + 1) in
+    lay u at (before @ (g :: after))
   in
-  let r = move ~src:nb ~dst:j r in
+  let r = sum ~batch ~contracting ~acc ~out a b (Option.map spread init) in
+  let value = Arith.parts out r |> List.hd |> extents in
+  let mine = lay m (List.init nb Fun.id @ [ e; i ]) value in
+  let pick u =
+    let x = Bits.bits u in
+    let x = Ops.where mine x (Shape.const_like x (`Int Bigint.zero)) in
+    Ops.bitcast (Shape.rop x Op.Add [ e ]) (Ops.dtype u)
+  in
+  let r = Arith.of_parts out (List.map pick (Arith.parts out r)) in
   let has = any_along m nb in
   let value = Arith.parts out r |> List.hd |> extents in
-  let has = lay has (List.init nb Fun.id @ [ j ]) value in
+  let has = lay has (List.init nb Fun.id @ [ i ]) value in
   unless has ~acc ~out init r
 
 (* [Contracting]: each operand gains a leading batch axis of the groups, its
