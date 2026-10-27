@@ -23,6 +23,12 @@ type load =
 
 type monoid = Sum | Prod | Max | Min
 type extreme = Max | Min
+
+(* The contract leaves a NaN result's sign and payload unspecified, but for
+   a move's: IEEE 754 specifies neither for arithmetic, and where two NaNs
+   meet, the one an instruction passes on depends on its operands' order,
+   which a kernel's paths for different layouts may set differently, so a
+   reduction may run by a tree and by the hardware's own instructions. *)
 type reduction = Monoid of monoid | Logsumexp | Moments | Arg of extreme
 
 let accepts (type v s) r (dt : (v, s) D.t) =
