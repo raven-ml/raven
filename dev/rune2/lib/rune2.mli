@@ -253,6 +253,17 @@ val jvp' :
   ('w, 'r, 'd) Nx.t * ('w, 'r, 'd) Nx.t
 (** [jvp' f x t] is {!jvp} of one array. It raises as {!jvp} does. *)
 
+val jacfwd' :
+  (('v, 's, 'd) Nx.t -> ('w, 'r, 'd) Nx.t) ->
+  ('v, 's, 'd) Nx.t ->
+  ('w, 'r, 'd) Nx.t
+(** [jacfwd' f x] is the Jacobian of [f] at [x], of shape
+    [shape (f x) @ shape x] and [f x]'s dtype: its column [k] is the tangent of
+    [f] along element [k] of [x] in C order, computed in one forward pass per
+    element.
+
+    Raises [Invalid_argument] as {!jvp'} does. *)
+
 val scan' :
   f:
     (('a, 'b, 'd) Nx.t ->

@@ -18,8 +18,9 @@ let values s x =
 let rebuild s ~like vs =
   let leaves = fst (Ptree.flatten s like) in
   Ptree.rebuild s ~like
-    (List.map2 (fun (Nx.P l) v -> Nx.P (Program.like l v)) leaves
-       (Array.to_list vs))
+    (List.map2
+       (fun (Nx.P l) v -> Nx.P (Program.like l v))
+       leaves (Array.to_list vs))
 
 (* Outputs [i] to [j - 1]. *)
 let slice a i j = Array.sub a i (j - i)
@@ -156,22 +157,20 @@ let row (V x) =
       placement = Option.map Nx.Placement.without_leading_axis (Nx.placement x);
     }
 
-(* Whether a carry leaf traced at [r] is traced again at [t], the form its
-   step returned it at: traced of every set and returned placed. A value is
-   read back by its set, so a leaf placed elsewhere on one set, or returned
-   of every set, binds as traced. *)
+(* Whether a carry leaf traced at [r] is traced again at [t], the form its step
+   returned it at: traced of every set and returned placed. A value is read back
+   by its set, so a leaf placed elsewhere on one set, or returned of every set,
+   binds as traced. *)
 let moved (F r) (F t) =
-  match (r.placement, t.placement) with
-  | None, Some _ -> true
-  | _ -> false
+  match (r.placement, t.placement) with None, Some _ -> true | _ -> false
 
 (* [trace like forms] traced until its carry, its first [nc] forms, settles.
    Each trace rebuilds the step's carry like [like]. A leaf of every set the
    step returns placed is traced again at the form it was returned at, as JAX
-   traces a loop again whose weakly typed carry its step promotes: its leaf
-   of [like] becomes the returned one, the others stay. A placed leaf stays
-   placed, so at most [nc] traces follow the first. With the [like] and the
-   forms it settled at. *)
+   traces a loop again whose weakly typed carry its step promotes: its leaf of
+   [like] becomes the returned one, the others stay. A placed leaf stays placed,
+   so at most [nc] traces follow the first. With the [like] and the forms it
+   settled at. *)
 let settling c ~nc trace like forms =
   let rec go like forms =
     let ((_, _, returned, carry') as traced) = trace like forms in
@@ -357,3 +356,23 @@ let iterate' ~max ~until ~f x =
 
 let jit' f = jit_named "Rune.jit'" Ptree.(tensor @-> returns tensor) f
 let jvp' f x t = jvp_named "Rune.jvp'" Ptree.tensor Ptree.tensor f x t
+
+let jacfwd' f x =
+  let name = "Rune.jacfwd'" in
+  let sx = Nx.shape x and n = Nx.numel x in
+  let iota = Nx.arange Nx.int32 0 n 1 in
+  let column k =
+    let e = Nx.equal iota (Nx.scalar_like iota (Int32.of_int k)) in
+    snd
+      (jvp_named name Ptree.tensor Ptree.tensor f x
+         (Nx.reshape sx (Nx.cast (Nx.dtype x) e)))
+  in
+  if n = 0 then
+    (* No column: one pass along the empty tangent gives the result's form, and
+       raises as every column would. *)
+    let t = snd (jvp_named name Ptree.tensor Ptree.tensor f x x) in
+    Nx.zeros (Nx.dtype t) (Array.append (Nx.shape t) sx)
+  else
+    let columns = List.init n column in
+    let sy = Nx.shape (List.hd columns) in
+    Nx.reshape (Array.append sy sx) (Nx.stack ~axis:(Array.length sy) columns)

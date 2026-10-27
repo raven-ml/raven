@@ -5,8 +5,8 @@
 
 (* Rune.jvp: tangents against central differences at float64 for every kind of
    scalar program and every operation that has a derivative, complex functions
-   as maps of their parts, the kinks' tangents, and a map's tangent computed
-   with its primal in one kernel. *)
+   as maps of their parts, the kinks' tangents, jvp of a compiled function
+   against jvp, and a map's tangent computed with its primal in one kernel. *)
 
 open Windtrap
 open Compose
@@ -743,6 +743,131 @@ let test_complex () =
   equal ~msg:"magnitude" floats expected
     (Nx.to_array (snd (Rune.jvp' (Nx.magnitude f64) z t)))
 
+(* jvp of a compiled function *)
+
+type jit_case =
+  | Test_case :
+      (float, 's) Nx.dtype
+      * int array
+      * operand
+      * operand
+      * operand
+      * operand
+      * expr
+      -> jit_case
+
+let jit_cases =
+  let open Gen in
+  (let* s = shape in
+   let* e = expr ~rank:(Array.length s) in
+   let* x = operand s
+   and+ y = operand s
+   and+ tx = operand s
+   and+ ty = operand s in
+   let+ (D.Any dt) = of_list [ D.Any Nx.float32; Any f64 ] in
+   match D.kind dt with
+   | Float -> Test_case (dt, s, x, y, tx, ty, e)
+   | _ -> assert false)
+  |> with_pp (fun ppf (Test_case (dt, s, x, y, _, _, e)) ->
+      Format.fprintf ppf "%a %a, x %a, y %a: %a" Nx.pp_dtype dt pp_shape s
+        pp_view x.view pp_view y.view pp e)
+
+let law_jit (Test_case (dt, s, xo, yo, txo, tyo, e)) =
+  let x = make dt s xo and y = make dt s yo in
+  let tx = make dt s txo and ty = make dt s tyo in
+  cover "a zero-size shape" (numel s = 0);
+  cover "a one-element shape" (numel s = 1 && Array.length s > 0);
+  cover "a 0-d shape" (Array.length s = 0);
+  cover "a view operand" (xo.view <> Plain || yo.view <> Plain);
+  cover "a composition of over 6 functions" (size e > 6);
+  let f x y = eval x y e in
+  let pair = T.(pair tensor tensor) in
+  let both (p, t) = (bits p, bits t) in
+  let eager =
+    outcome (fun () ->
+        both (Rune.jvp pair T.tensor (fun (x, y) -> f x y) (x, y) (tx, ty)))
+  in
+  let jitted =
+    let g = Rune.jit T.(tensor @-> tensor @-> returns tensor) f in
+    outcome (fun () ->
+        both (Rune.jvp pair T.tensor (fun (x, y) -> g x y) (x, y) (tx, ty)))
+  in
+  let staged =
+    let g =
+      Rune.jit
+        T.(
+          tensor @-> tensor @-> tensor @-> tensor
+          @-> returns (pair tensor tensor))
+        (fun x y tx ty ->
+          Rune.jvp pair T.tensor (fun (x, y) -> f x y) (x, y) (tx, ty))
+    in
+    outcome (fun () -> both (g x y tx ty))
+  in
+  cover "a refused operation" (match eager with Raised _ -> true | _ -> false);
+  equal ~msg:"jvp of jit" (outcome_t (Testable.pair bits_t bits_t)) eager jitted;
+  equal ~msg:"jit of jvp" (outcome_t (Testable.pair bits_t bits_t)) eager staged
+
+(* Every dtype, through the functions every dtype has: complex rules staged and
+   evaluated in a call, integers refused alike. *)
+type any_case =
+  | Any_case :
+      ('v, 's) Nx.dtype
+      * int array
+      * operand
+      * operand
+      * operand
+      * operand
+      * expr
+      -> any_case
+
+let any_cases =
+  let open Gen in
+  (let* s = shape in
+   let* e = expr ~rank:(Array.length s) in
+   let* x = operand s
+   and+ y = operand s
+   and+ tx = operand s
+   and+ ty = operand s in
+   let+ (D.Any dt) = of_list D.all in
+   Any_case (dt, s, x, y, tx, ty, generic e))
+  |> with_pp (fun ppf (Any_case (dt, s, x, y, _, _, e)) ->
+      Format.fprintf ppf "%a %a, x %a, y %a: %a" Nx.pp_dtype dt pp_shape s
+        pp_view x.view pp_view y.view pp e)
+
+let law_jit_any (Any_case (dt, s, xo, yo, txo, tyo, e)) =
+  let x = make_any dt s xo and y = make_any dt s yo in
+  let tx = make_any dt s txo and ty = make_any dt s tyo in
+  cover "a complex dtype" (D.is Complex dt);
+  cover "a narrow float dtype"
+    (D.is Float dt && not (D.equal dt f64 || D.equal dt Nx.float32));
+  cover "an integer dtype" (D.is Signed dt || D.is Unsigned dt);
+  let f x y = eval_any x y e in
+  let pair = T.(pair tensor tensor) in
+  let both (p, t) = (codes p, codes t) in
+  let eager =
+    outcome (fun () ->
+        both (Rune.jvp pair T.tensor (fun (x, y) -> f x y) (x, y) (tx, ty)))
+  in
+  let jitted =
+    let g = Rune.jit T.(tensor @-> tensor @-> returns tensor) f in
+    outcome (fun () ->
+        both (Rune.jvp pair T.tensor (fun (x, y) -> g x y) (x, y) (tx, ty)))
+  in
+  let staged =
+    let g =
+      Rune.jit
+        T.(
+          tensor @-> tensor @-> tensor @-> tensor
+          @-> returns (pair tensor tensor))
+        (fun x y tx ty ->
+          Rune.jvp pair T.tensor (fun (x, y) -> f x y) (x, y) (tx, ty))
+    in
+    outcome (fun () -> both (g x y tx ty))
+  in
+  let t = outcome_t (Testable.pair codes_t codes_t) in
+  equal ~msg:"jvp of jit" t eager jitted;
+  equal ~msg:"jit of jvp" t eager staged
+
 (* One kernel per map *)
 
 let test_one_kernel () =
@@ -796,6 +921,24 @@ let test_structures () =
   ignore (Nx.add (Nx.donate t) x);
   equal floats [| 3.; 4. |] (Nx.to_array dx)
 
+(* A parameter of every set, a constant, with a placed tangent: the dual takes
+   the constant's form, and a loop over it is traced again where its step places
+   the carry. *)
+let test_constant_primal () =
+  let zero = Nx.zeros f64 [| 2 |] and t = v [| 1.; 2. |] in
+  let y, dy = Rune.jvp' (fun x -> Nx.add (Nx.mul x x) x) zero t in
+  equal ~msg:"primal" floats [| 0.; 0. |] (Nx.to_array y);
+  equal ~msg:"tangent" floats [| 1.; 2. |] (Nx.to_array dy);
+  let xs = Nx.create f64 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let f c =
+    fst (Rune.scan' ~f:(fun c x -> (Nx.add c (Nx.mul c x), c)) ~init:c xs)
+  in
+  let _, dy = Rune.jvp' f zero t in
+  (* c_3 = c_0 (1 + x_0) (1 + x_1) (1 + x_2), linear in c_0. *)
+  equal ~msg:"through a scan" floats
+    [| 1. *. 2. *. 4. *. 6.; 2. *. 3. *. 5. *. 7. |]
+    (Nx.to_array dy)
+
 let test_detach () =
   let x = v [| 2.; -1. |] and t = v [| 1.; 3. |] in
   equal ~msg:"detach" floats [| 2.; -3. |]
@@ -819,6 +962,232 @@ let test_nesting () =
     (tangent inner (v [| 0.5 |]) one);
   let f x = Nx.mul x (snd (Rune.jvp' (fun y -> Nx.add x y) one one)) in
   equal ~msg:"perturbations apart" floats [| 1. |] (tangent f one one)
+
+let test_jacfwd () =
+  let x = v [| 1.; 2.; -3. |] in
+  let j = Rune.jacfwd' (fun x -> Nx.mul x x) x in
+  equal ~msg:"shape" (array int) [| 3; 3 |] (Nx.shape j);
+  equal floats [| 2.; 0.; 0.; 0.; 4.; 0.; 0.; 0.; -6. |] (Nx.to_array j);
+  (* A linear map's Jacobian is its matrix, rows the result's elements. *)
+  let a = Nx.create f64 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let j = Rune.jacfwd' (fun x -> Nx.matmul a x) x in
+  equal ~msg:"a matrix's shape" (array int) [| 2; 3 |] (Nx.shape j);
+  equal ~msg:"a matrix" floats (Nx.to_array a) (Nx.to_array j);
+  (* A transpose's: [J i j k l] is 1 where [(k, l) = (j, i)], in C order. *)
+  let m = Nx.create f64 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let j = Rune.jacfwd' Nx.transpose m in
+  equal ~msg:"a transpose's shape" (array int) [| 2; 2; 2; 2 |] (Nx.shape j);
+  let expected =
+    Array.init 16 (fun n ->
+        let i = n / 8
+        and jj = n / 4 mod 2
+        and k = n / 2 mod 2
+        and l = n mod 2 in
+        if k = jj && l = i then 1. else 0.)
+  in
+  equal ~msg:"a transpose" floats expected (Nx.to_array j);
+  (* A complex argument's columns are the tangents along its real units. *)
+  let z =
+    Nx.create c128 [| 2 |] [| { re = 1.; im = 2. }; { re = -1.; im = 0.5 } |]
+  in
+  let j = Rune.jacfwd' (fun z -> Nx.mul z z) z in
+  let two_z =
+    Array.map (fun c -> Complex.mul { re = 2.; im = 0. } c) (Nx.to_array z)
+  in
+  equal ~msg:"complex"
+    (array (pair (float 1e-12) (float 1e-12)))
+    (Array.map
+       (fun (c : Complex.t) -> (c.re, c.im))
+       [| two_z.(0); Complex.zero; Complex.zero; two_z.(1) |])
+    (Array.map (fun (c : Complex.t) -> (c.re, c.im)) (Nx.to_array j));
+  let j = Rune.jacfwd' (fun x -> Nx.sum x) (Nx.zeros f64 [| 0 |]) in
+  equal ~msg:"no element" (array int) [| 0 |] (Nx.shape j);
+  invalid ~sub:"Rune.jacfwd': the parameters hold no real or complex tensor"
+    (fun () -> Rune.jacfwd' Fun.id (Nx.zeros Nx.int32 [| 2 |]));
+  invalid ~sub:"Rune.jacfwd': Cholesky has no derivative yet" (fun () ->
+      Rune.jacfwd' Nx.cholesky (Nx.zeros f64 [| 0; 0 |]))
+
+(* Column [k] of the Jacobian, its elements at index [k] of the argument's axes
+   in C order, is the tangent along element [k], bit for bit. *)
+let jac_cases =
+  let open Gen in
+  (let* s = shape in
+   let* e = expr ~rank:(Array.length s) in
+   let* k = int_range 0 (Int.max 0 (numel s - 1)) in
+   let+ x = operand s in
+   (s, x, k, e))
+  |> with_pp (fun ppf (s, x, k, e) ->
+      Format.fprintf ppf "%a, x %a, column %d: %a" pp_shape s pp_view x.view k
+        pp e)
+
+let law_jacobian (s, xo, k, e) =
+  let x = make f64 s xo in
+  let n = numel s in
+  cover "a zero-size shape" (n = 0);
+  cover "several elements" (n > 1);
+  let f x = eval x x e in
+  let jacobian = outcome (fun () -> Rune.jacfwd' f x) in
+  cover "a refused function"
+    (match jacobian with Raised _ -> true | _ -> false);
+  match jacobian with
+  | Raised m ->
+      (* It raises as jvp' does along any tangent, under its own name. *)
+      let renamed m =
+        let jvp = "Rune.jvp'" and n = String.length m in
+        let k = String.length jvp in
+        if n >= k && String.sub m 0 k = jvp then
+          "Rune.jacfwd'" ^ String.sub m k (n - k)
+        else m
+      in
+      let along =
+        match Rune.jvp' f x (Nx.zeros_like x) with
+        | _ -> "no raise"
+        | exception Invalid_argument m -> renamed m
+      in
+      equal ~msg:"raises as jvp'" string along m
+  | Value j ->
+      let sy = Array.sub (Nx.shape j) 0 (Nx.ndim j - Array.length s) in
+      equal ~msg:"shape" (array int) (Array.append sy s) (Nx.shape j);
+      if n > 0 then begin
+        let column =
+          Nx.reshape sy (Nx.slice [ A; I k ] (Nx.reshape [| numel sy; n |] j))
+        in
+        let unit =
+          Nx.reshape s
+            (Nx.create f64 [| n |]
+               (Array.init n (fun i -> if i = k then 1. else 0.)))
+        in
+        equal ~msg:"column" bits_t
+          (bits (snd (Rune.jvp' f x unit)))
+          (bits column)
+      end
+
+(* Loops under forward mode: a scan is its fold's, an iterate its while loop's,
+   the step traced then evaluated with duals, bit for bit, eagerly and under
+   jit. Rows and carry both have tangents. *)
+let fold step ~init xs =
+  let n = (Nx.shape xs).(0) in
+  let rec go i c ys =
+    if i = n then (c, List.rev ys)
+    else
+      let c, y = step c (Nx.get [ i ] xs) in
+      go (i + 1) c (y :: ys)
+  in
+  go 0 init []
+
+type loop_case =
+  | Loop_case :
+      (float, 's) Nx.dtype
+      * int array
+      * int
+      * operand
+      * operand
+      * operand
+      * operand
+      * expr
+      * expr
+      -> loop_case
+
+let loop_cases =
+  let open Gen in
+  (let* s = shape in
+   let* n = of_list [ 0; 1; 2; 5 ] in
+   let rank = Array.length s in
+   let* g = expr ~rank and+ h = expr ~rank in
+   let rows = Array.append [| n |] s in
+   let* c = operand s and+ xs = operand rows in
+   let* tc = operand s and+ txs = operand rows in
+   let+ (D.Any dt) = of_list [ D.Any Nx.float32; Any f64 ] in
+   match D.kind dt with
+   | Float -> Loop_case (dt, s, n, c, xs, tc, txs, g, h)
+   | _ -> assert false)
+  |> with_pp (fun ppf (Loop_case (dt, s, n, c, xs, _, _, g, h)) ->
+      Format.fprintf ppf "%a %a, %d rows, carry %a, xs %a: carry %a, output %a"
+        Nx.pp_dtype dt pp_shape s n pp_view c.view pp_view xs.view pp g pp h)
+
+let law_scan (Loop_case (dt, s, n, co, xso, tco, txso, g, h)) =
+  let rows = Array.append [| n |] s in
+  let init = make dt s co and xs = make dt rows xso in
+  let tinit = make dt s tco and txs = make dt rows txso in
+  cover "no row" (n = 0);
+  cover "several rows" (n > 1);
+  cover "a zero-size row" (numel s = 0);
+  cover "a view operand" (co.view <> Plain || xso.view <> Plain);
+  let step c x =
+    (Nx.broadcast_to s (eval c x g), Nx.broadcast_to s (eval c x h))
+  in
+  let p = T.(pair tensor tensor) in
+  let both ((c, ys), (tc, tys)) = ((bits c, bits ys), (bits tc, bits tys)) in
+  let folded (c, xs) =
+    (* The step is traced at the call, so with no row its errors raise. *)
+    if n = 0 then ignore (step c (Nx.zeros dt s));
+    let c, ys = fold step ~init:c xs in
+    (c, if n = 0 then Nx.zeros dt rows else Nx.stack ~axis:0 ys)
+  in
+  let scanned (c, xs) = Rune.scan' ~f:step ~init:c xs in
+  let jvp f = Rune.jvp p p f (init, xs) (tinit, txs) in
+  let expected = outcome (fun () -> both (jvp folded)) in
+  cover "a refused step" (match expected with Raised _ -> true | _ -> false);
+  let t = Testable.pair bits_t bits_t in
+  equal ~msg:"eager"
+    (outcome_t (Testable.pair t t))
+    expected
+    (outcome (fun () -> both (jvp scanned)));
+  let staged =
+    Rune.jit
+      T.(tensor @-> tensor @-> tensor @-> tensor @-> returns (pair p p))
+      (fun c xs tc txs -> Rune.jvp p p scanned (c, xs) (tc, txs))
+  in
+  equal ~msg:"under jit"
+    (outcome_t (Testable.pair t t))
+    expected
+    (outcome (fun () -> both (staged init xs tinit txs)))
+
+type iterate_case =
+  | Iterate_case :
+      (float, 's) Nx.dtype * int array * int * operand * operand * expr
+      -> iterate_case
+
+let iterate_cases =
+  let open Gen in
+  (let* s = shape in
+   let* trips = int_range 0 3 in
+   let* g = expr ~rank:(Array.length s) in
+   let* c = operand s and+ tc = operand s in
+   let+ (D.Any dt) = of_list [ D.Any Nx.float32; Any f64 ] in
+   match D.kind dt with
+   | Float -> Iterate_case (dt, s, trips, c, tc, g)
+   | _ -> assert false)
+  |> with_pp (fun ppf (Iterate_case (dt, s, trips, _, _, g)) ->
+      Format.fprintf ppf "%a %a, %d trips: %a" Nx.pp_dtype dt pp_shape s trips
+        pp g)
+
+let law_iterate (Iterate_case (dt, s, trips, co, tco, g)) =
+  cover "no trip" (trips = 0);
+  cover "several trips" (trips > 1);
+  let init = make dt s co and tinit = make dt s tco in
+  let step (x, k) =
+    (Nx.broadcast_to s (eval x x g), Nx.add k (Nx.scalar Nx.int32 1l))
+  in
+  let until (_, k) =
+    Nx.greater_equal k (Nx.scalar Nx.int32 (Int32.of_int trips))
+  in
+  let k0 = Nx.scalar Nx.int32 0l in
+  let p = T.(pair tensor tensor) in
+  let both ((x, _), (t, _)) = (bits x, bits t) in
+  let looped c =
+    ignore (step c);
+    let rec go j c = if j = trips then c else go (j + 1) (step c) in
+    go 0 c
+  in
+  let iterated c = Rune.iterate p ~max:trips ~until ~f:step c in
+  let jvp f = Rune.jvp p p f (init, k0) (tinit, k0) in
+  let expected = outcome (fun () -> both (jvp looped)) in
+  cover "a refused step" (match expected with Raised _ -> true | _ -> false);
+  equal
+    (outcome_t (Testable.pair bits_t bits_t))
+    expected
+    (outcome (fun () -> both (jvp iterated)))
 
 (* An addition under forward mode adds its primal. *)
 let test_total () =
@@ -844,14 +1213,28 @@ let () =
              test "complex tangents are directional derivatives" test_complex;
              test "edges take their definitions' values" test_edges;
            ];
+         group "jit"
+           [
+             prop "jvp of jit gives jvp's bits" jit_cases law_jit;
+             prop "jvp of jit gives jvp's bits at every dtype" any_cases
+               law_jit_any;
+           ];
+         group "loops"
+           [
+             prop "jvp of scan is jvp of its fold" loop_cases law_scan;
+             prop "jvp of iterate is jvp of its loop" iterate_cases law_iterate;
+           ];
          group "kernels"
            [ test "a map's tangent is one kernel" test_one_kernel ];
          group "interface"
            [
              test "structures and zero tangents" test_structures;
+             test "a constant parameter" test_constant_primal;
              test "detach" test_detach;
              test "a read reads the primal" test_read;
              test "nesting" test_nesting;
+             test "jacfwd'" test_jacfwd;
+             prop "jacfwd' applied to a tangent is jvp's" jac_cases law_jacobian;
              test "totals" test_total;
            ];
        ])
