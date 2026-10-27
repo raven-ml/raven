@@ -4097,11 +4097,9 @@ static int network_into(int r, int axis, const nx_array *y,
 
 /* Entries */
 
-/* Reads [x], one destination [d0] or two, [d0] and [d1], and computes
-   [c] of them: [r]'s reduction along the [naxes] axes [axes], its scan
-   along [axes[0]], or a Moments scan along [axes[0]] into the two
-   destinations, as [op] says. The destinations are of any dtype, but
-   Arg's int64 positions. */
+/* What a call computes, as [op] says: [r]'s reduction along the [naxes]
+   axes [axes], its scan along [axes[0]], or its network's scan along
+   [axes[0]]. */
 typedef struct {
   task op;
   int r, naxes;
@@ -4228,63 +4226,6 @@ static int identity_of(value vp) {
   return Tag_val(node) == NX_NODE_IN ? Int_val(Field(ins, 0)) : -1;
 }
 
-/* Computes [c] of [vx], a program's one load that is its identity, of
-   the program's dtype [dt], read in place, into the destinations [d0] and
-   [d1] (Val_unit where [c] has one), from the carries [vcarry] where it is
-   Some. Nothing is copied before the door: a call of a few elements
-   allocates nothing. A load a destination aliases is read from a copy,
-   since a scan reads its terms again after it writes their results: for
-   its chunks' totals, and in a Moments scan's exact pass. */
-static value run(const call *c, int dt, value d0, value d1, value vx,
-                 value vcarry) {
-  CAMLparam4(d0, d1, vx, vcarry);
-  int nd = d1 == Val_unit ? 1 : 2;
-  int arg = c->r == NX_CPU_ARG_MAX || c->r == NX_CPU_ARG_MIN;
-  int dt1 = nd == 1 ? dt : arg ? NX_INT64 : nx_array_dtype(d1);
-  int nc = Is_block(vcarry), n = nd + 1 + nc;
-  nx_operand in[4] = {{d0, nx_array_dtype(d0), 1}, {d1, dt1, 1}};
-  in[nd] = (nx_operand){vx, dt, 0};
-  if (nc) in[nd + 1] = (nx_operand){Field(vcarry, 0), nx_cpu_carrier(dt), 0};
-  nx_array a[4], loaded, *x = &a[nd];
-  int e = nx_read(n, in, a);
-  if (e) CAMLreturn(Val_int(e));
-  const nx_array *cy = nc ? &a[nd + 1] : NULL;
-  int copy = x->alias;
-  int64_t terms, outputs;
-  if ((e = checked(c->op, c->r, c->axes, c->naxes, &a[0], &a[nd - 1], x,
-                   &terms, &outputs)) ||
-      (e = carried(c, cy, &a[0]))) {
-    nx_done(n, a);
-    CAMLreturn(Val_int(e));
-  }
-  double extra = copy ? NX_CPU_STRIDED_COST * nx_cpu_width(dt) : 0;
-  int released =
-      nx_cpu_release(call_cost(c, x, x->dim, x->rank, copy, extra, a, nd));
-  /* A carry a destination aliases is read from a copy too, as the results
-     may overwrite it before it is read. */
-  nx_array kept_carry = {0};
-  int failed = cy != NULL && cy->alias && own_copy(cy, &kept_carry, HEAP);
-  if (!failed && copy) failed = own_copy(x, &loaded, KEPT_SCRATCH);
-  if (failed) {
-    free(kept_carry.base);
-    nx_cpu_reacquire(released);
-    nx_done(n, a);
-    caml_raise_out_of_memory();
-  }
-  if (copy) x = &loaded;
-  if (kept_carry.base != NULL) cy = &kept_carry;
-  e = c->op == NETWORK
-          ? network_into(c->r, c->axes[0], &a[0], &a[nd - 1], x, NULL)
-          : reduce_into(c->op, c->r, c->axes, c->naxes, &a[0], &a[nd - 1],
-                        x, cy, NULL);
-  if (copy) nx_cpu_give(loaded.base);
-  free(kept_carry.base);
-  nx_cpu_reacquire(released);
-  nx_done(n, a);
-  if (e < 0) caml_raise_out_of_memory();
-  CAMLreturn(Val_int(e));
-}
-
 /* Copies the axis [v] into [a]: 0, or 1 for an axis no array has. */
 static int axis_of(value v, int *a) {
   intnat x = Long_val(v);
@@ -4298,17 +4239,17 @@ static int two(int r) {
   return r == NX_CPU_ARG_MAX || r == NX_CPU_ARG_MIN || r == NX_CPU_MOMENTS;
 }
 
-/* What run_fused holds on the C heap: the program's copy and, past
-   NX_MAX_OPERANDS entries, its tables. A custom block owns them, so that
-   an exception nx_read raises, Out_of_memory or Rig.Lost, leaves them to
-   its finalizer. */
+/* What a call holds on the C heap where it holds any: a program's copy
+   and, past NX_MAX_OPERANDS entries, its tables. A custom block owns them,
+   so that an exception nx_read_each raises, Out_of_memory or Rig.Lost,
+   leaves them to its finalizer. */
 typedef struct {
   nx_cpu_prog *g;
   void *tables;
-} fused_held;
+} call_held;
 
 static void release(value owner) {
-  fused_held *h = Data_custom_val(owner);
+  call_held *h = Data_custom_val(owner);
   if (h->g != NULL) nx_cpu_prog_free(h->g);
   free(h->tables);
   h->g = NULL;
@@ -4322,64 +4263,80 @@ static void drop(value owner, int many) {
     release(owner);
     return;
   }
-  fused_held h = *(fused_held *)Data_custom_val(owner);
-  *(fused_held *)Data_custom_val(owner) = (fused_held){NULL, NULL};
+  call_held h = *(call_held *)Data_custom_val(owner);
+  *(call_held *)Data_custom_val(owner) = (call_held){NULL, NULL};
   caml_enter_blocking_section_no_pending();
   nx_cpu_prog_free(h.g);
   free(h.tables);
   caml_leave_blocking_section();
 }
 
-static struct custom_operations fused_ops = {
+static struct custom_operations call_ops = {
     "nx.cpu.reduce",            release,
     custom_compare_default,     custom_hash_default,
     custom_serialize_default,   custom_deserialize_default,
     custom_compare_ext_default, custom_fixed_length_default};
 
-/* The operands of a fused call as the door reads them, from the roots
-   [vdsts], [vloads] and [vcarry]: the destinations, each of its own dtype
-   or the one [dts] names, then the loads, as [g] loads them, then the
-   carry, in the carrier of output [k]'s held dtype. */
+/* The operands of a call as the door reads them, from the roots [vdsts],
+   [vloads] and [vcarry]: the destinations, each of its own dtype or the
+   one [dts] names, then the loads, as [g] loads them, then the carry, in
+   the carrier of output [k]'s held dtype. Where [g] is NULL, the program
+   is the identity of its one load, of the dtype [dt]: the load is of
+   [dt], the carry of its carrier. */
 typedef struct {
   const value *vdsts, *vloads, *vcarry;
   const int *dts;
   const nx_cpu_prog *g;
-  int nd, nl, k;
-} fused_operands;
+  int dt, nd, nl, k;
+} operands;
 
-static int fused_operand(void *ctx, int k, nx_operand *in) {
-  const fused_operands *o = ctx;
+static int operand(void *ctx, int k, nx_operand *in) {
+  const operands *o = ctx;
   if (k < o->nd) {
     value y = Field(*o->vdsts, k);
     int dt = o->dts[k] < 0 ? nx_array_dtype(y) : o->dts[k];
     *in = (nx_operand){y, dt, 1};
   } else if (k < o->nd + o->nl) {
     int i = k - o->nd;
-    *in = (nx_operand){Field(Field(*o->vloads, i), 0), nx_cpu_prog_in(o->g, i),
-                       0};
-  } else
-    *in = (nx_operand){Field(*o->vcarry, 0),
-                       nx_cpu_carrier(nx_cpu_prog_held(o->g, o->k)), 0};
+    int dt = o->g == NULL ? o->dt : nx_cpu_prog_in(o->g, i);
+    *in = (nx_operand){Field(Field(*o->vloads, i), 0), dt, 0};
+  } else {
+    int held = o->g == NULL ? o->dt : nx_cpu_prog_held(o->g, o->k);
+    *in = (nx_operand){Field(*o->vcarry, 0), nx_cpu_carrier(held), 0};
+  }
+  return NX_OK;
+}
+
+/* Whether the operand [x] has the loop [l]'s shape: NX_OK, else
+   NX_SHAPE. */
+static int shaped(const nx_array *x, const nx_array *l) {
+  if (x->rank != l->rank) return NX_SHAPE;
+  for (int i = 0; i < x->rank; i++)
+    if (x->dim[i] != l->dim[i]) return NX_SHAPE;
   return NX_OK;
 }
 
 /* Computes [c] of the program [vp] over the loop of [rank] axes of extents
    [shape], or of its first destination's shape where [rank] is -1, its
-   loads [vloads], by the reductions [vrs], an array of
-   pairs of an Nx_kernel.reduction and an output, or a scan's one pair
-   where [single], in turn into the destinations [vdsts], each reduction's
-   one or two as run takes them. The loop's terms are virtual, read
-   through the program (Programs), in the output's held dtype. Every
-   destination is checked before any is written, so that a refusal writes
-   nothing. The program is copied before the door. Each reduction's loop holds its one or two
-   destinations, the virtual operand and the loads, whatever the count of
-   reductions, which nothing bounds: their tables, and the door's of every
-   destination and load, live on the stack up to NX_MAX_OPERANDS entries
-   and past it on the heap, which a custom block owns with the program's
-   copy. */
-static value run_fused(const call *c, value vp, value vrs, int single,
-                       int rank, const int64_t *shape, value vdsts,
-                       value vloads, value vcarry) {
+   plain loads [vloads], by the reductions [vrs], an array of pairs of an
+   Nx_kernel.reduction and an output, or a scan's one pair where [single],
+   in turn into the destinations [vdsts]: a reduction's one, or an Arg's
+   extreme and int64 positions, a Moments' mean and variance. Each load
+   has the loop's shape and every destination is checked before any is
+   written, so that a refusal writes nothing.
+
+   A program that is its one load's identity reads that load in place;
+   another's terms are virtual, read through the program (Programs) in
+   the output's held dtype, from its copy made before the door. Each
+   reduction's loop holds its one or two destinations, the virtual
+   operand and the loads, whatever the count of reductions, which nothing
+   bounds: their tables, and the door's of every destination and load,
+   live on the stack up to NX_MAX_OPERANDS entries and past it on the
+   heap, which a custom block owns with the program's copy. So the
+   identity of one load into few destinations allocates nothing. */
+static value run(const call *c, value vp, value vrs, int single, int rank,
+                 const int64_t *shape, value vdsts, value vloads,
+                 value vcarry) {
   CAMLparam5(vp, vrs, vdsts, vloads, vcarry);
   CAMLlocal1(owner);
   int nl = (int)Wosize_val(Field(vp, NX_PROG_INS));
@@ -4391,13 +4348,8 @@ static value run_fused(const call *c, value vp, value vrs, int single,
      states, before the program's copy, which holds that many. */
   if (3 + nl > NX_MAX_OPERANDS || nouts + nl + 1 > NX_MAX_OPERANDS)
     CAMLreturn(Val_int(NX_DECLINED));
-  owner = caml_alloc_custom(&fused_ops, sizeof(fused_held), 0, 1);
-  *(fused_held *)Data_custom_val(owner) = (fused_held){NULL, NULL};
-  nx_cpu_prog *g = nx_cpu_prog_copy(&vp);
-  if (g == NULL) caml_raise_out_of_memory();
-  ((fused_held *)Data_custom_val(owner))->g = g;
   int nd = (int)Wosize_val(vdsts), e = NX_OK;
-  int nc = Is_block(vcarry);
+  int nc = Is_block(vcarry), dt = identity_of(vp);
   int nr = single ? 1 : (int)Wosize_val(vrs), want = 0;
   /* The tables, on the stack up to NX_MAX_OPERANDS entries, else in one
      block of the heap: the door's descriptors and each destination's
@@ -4405,23 +4357,35 @@ static value run_fused(const call *c, value vp, value vrs, int single,
      destination. */
   int nt = nr > NX_MAX_OPERANDS ? nr : NX_MAX_OPERANDS;
   int no = nd + nl + nc > NX_MAX_OPERANDS ? nd + nl + nc : NX_MAX_OPERANDS;
+  int heap = nt > NX_MAX_OPERANDS || no > NX_MAX_OPERANDS;
+  int owned = heap || dt < 0;
+  if (owned) {
+    owner = caml_alloc_custom(&call_ops, sizeof(call_held), 0, 1);
+    *(call_held *)Data_custom_val(owner) = (call_held){NULL, NULL};
+  }
+  nx_cpu_prog *g = NULL;
+  if (dt < 0) {
+    g = nx_cpu_prog_copy(&vp);
+    if (g == NULL) caml_raise_out_of_memory();
+    ((call_held *)Data_custom_val(owner))->g = g;
+  }
   nx_array a_stack[NX_MAX_OPERANDS], *a = a_stack;
   int tables[4 * NX_MAX_OPERANDS], *dts = tables;
-  if (nt > NX_MAX_OPERANDS || no > NX_MAX_OPERANDS) {
+  if (heap) {
     uint8_t *b = nx_alloc_released((size_t)no * (sizeof *a + sizeof *dts) +
                                    3 * (size_t)nt * sizeof *dts);
     if (b == NULL) {
       release(owner);
       caml_raise_out_of_memory();
     }
-    ((fused_held *)Data_custom_val(owner))->tables = b;
+    ((call_held *)Data_custom_val(owner))->tables = b;
     a = (nx_array *)b;
     dts = (int *)(b + (size_t)no * sizeof *a);
   }
   int *rs = dts + no, *ks = rs + nt, *first = ks + nt;
+  int nodes = g != NULL ? nx_cpu_prog_nodes(g) : 0;
   /* Tables or a program sized by a count, freed with the lock released. */
-  int many = nt > NX_MAX_OPERANDS || no > NX_MAX_OPERANDS ||
-             nx_cpu_prog_nodes(g) > NX_CPU_ITEMS;
+  int many = heap || nodes > NX_CPU_ITEMS;
   if (nr < 1 || (c->op != REDUCE && nr != 1)) e = NX_SHAPE;
   /* The reductions are read from the root, letting other domains collect
      every NX_CPU_ITEMS of them. */
@@ -4443,30 +4407,31 @@ static value run_fused(const call *c, value vp, value vrs, int single,
   }
   if (!e && want != nd) e = NX_SHAPE;
   if (e) {
-    drop(owner, many);
+    if (owned) drop(owner, many);
     CAMLreturn(Val_int(e));
   }
   /* The door: past NX_MAX_OPERANDS operands in runs. */
-  fused_operands o = {&vdsts, &vloads, &vcarry, dts, g, nd, nl, ks[0]};
+  operands o = {&vdsts, &vloads, &vcarry, dts, g, dt, nd, nl, ks[0]};
   int n = nd + nl + nc;
-  e = nx_read_each(n, fused_operand, &o, a);
+  e = nx_read_each(n, operand, &o, a);
   if (e) {
-    drop(owner, many);
+    if (owned) drop(owner, many);
     CAMLreturn(Val_int(e));
   }
   /* A call whose reductions and nodes cost a release's worth to check and
      price does both with the lock released, whatever its work costs. */
-  int early = nr + nx_cpu_prog_nodes(g) > NX_CPU_ITEMS, released = 0;
+  int early = nr + nodes > NX_CPU_ITEMS, released = 0;
   if (early) released = nx_cpu_release(NX_CPU_RELEASE_BYTES);
   if (rank < 0) {
     rank = a[0].rank;
     shape = a[0].dim;
   }
   const nx_array *cy = nc ? &a[nd + nl] : NULL;
-  /* Every reduction's destinations fit the loop, before any load is
-     copied; nx_cpu.ml checked that the loads have its shape. */
+  /* Each load has the loop's shape, and every reduction's destinations
+     fit it, before any load is copied. */
   nx_array loop = {.rank = rank};
   memcpy(loop.dim, shape, sizeof(int64_t) * (size_t)rank);
+  for (int i = 0; !e && i < nl; i++) e = shaped(&a[nd + i], &loop);
   for (int i = 0; !e && i < nr; i++) {
     int64_t terms, outputs;
     const nx_array *y = &a[first[i]];
@@ -4481,52 +4446,56 @@ static value run_fused(const call *c, value vp, value vrs, int single,
   if (e) {
     nx_cpu_reacquire(released);
     nx_done(n, a);
-    drop(owner, many);
+    if (owned) drop(owner, many);
     CAMLreturn(Val_int(e));
   }
-  /* The call's price (cpu.h, Calls): each reduction's, as run prices
-     one over the loop's C-contiguous virtual operand (call_cost), each term
-     also running the program's kinds (nx_cpu_prog_cost), and the copies of
-     aliased loads. */
-  double per = 0, cost = 0;
+  /* The call's price (cpu.h, Calls): each reduction's (call_cost), over
+     the identity's load as it lies or a program's C-contiguous virtual
+     operand, each term also running the program's kinds
+     (nx_cpu_prog_cost), and the copies of aliased loads. */
+  double per = g != NULL ? nx_cpu_prog_cost(g) : 0, cost = 0;
   for (int i = 0; i < nl; i++)
     if (a[nd + i].alias)
       per += NX_CPU_STRIDED_COST * nx_cpu_width(a[nd + i].dtype);
-  per += nx_cpu_prog_cost(g);
+  int contiguous = g != NULL || a[nd].alias;
   for (int i = 0; i < nr; i++) {
     call ci = *c;
     ci.r = rs[i];
-    cost += call_cost(&ci, &a[nd], shape, rank, 1, per, &a[first[i]],
+    cost += call_cost(&ci, &a[nd], shape, rank, contiguous, per, &a[first[i]],
                       1 + two(rs[i]));
   }
   if (!early) released = nx_cpu_release(cost);
-  /* The loop of the program and its loads as it reads them, in the
-     thread's kept scratch, taken after the door and given back before its
-     end, since nothing raises in between: with a reduction's two carrier
-     copies and its work, four kept buffers at most. */
-  uint8_t *held = nx_cpu_take((int64_t)sizeof(fused) + nl * sizeof(nx_array));
-  int copied = 0, oom = held == NULL;
-  fused *z = (fused *)held;
-  nx_array *loads = oom ? NULL : (nx_array *)(held + sizeof(fused));
-  /* A load a destination aliases is read from a copy, as run reads such
-     an operand: on the heap, as many as the loads, so that the thread's
-     kept buffers hold no more than the reductions' copies and work. */
+  /* A load a destination aliases is read from a copy, since a scan reads
+     its terms again after it writes their results: for its chunks'
+     totals, and in a Moments scan's exact pass. The identity's one copy is
+     in the thread's kept scratch; a program's are on the heap, as many as
+     its loads, so that the thread's kept buffers hold no more than the
+     program's loop, the reductions' two carrier copies and their work,
+     four at most. The program's loop is in the kept scratch, taken after
+     the door and given back before its end, since nothing raises in
+     between. */
+  home h = g != NULL ? HEAP : KEPT_SCRATCH;
+  nx_array loads[NX_MAX_OPERANDS];
+  int copied = 0, oom = 0;
+  fused *z = g != NULL ? nx_cpu_take((int64_t)sizeof(fused)) : NULL;
+  if (g != NULL && z == NULL) oom = 1;
   for (; copied < nl && !oom; copied++) {
     nx_array *l = &a[nd + copied];
     loads[copied] = *l;
-    if (l->alias) oom = own_copy(l, &loads[copied], HEAP);
+    if (l->alias) oom = own_copy(l, &loads[copied], h);
   }
-  /* A carry a destination aliases, from a copy, as run reads it. */
+  /* A carry a destination aliases, from a copy, as the results may
+     overwrite it before it is read. */
   nx_array kept_carry = {0};
   if (!oom && cy != NULL && cy->alias) oom = own_copy(cy, &kept_carry, HEAP);
   if (kept_carry.base != NULL) cy = &kept_carry;
-  /* The virtual operand is C-contiguous over the loop's shape, the
-     loads'. */
+  /* A program's virtual operand is C-contiguous over the loop's shape,
+     the loads'. */
   int index = 0;
-  if (!oom) e = nx_cpu_prog_bind(g, loads, rank, shape, &index);
   nx_array x = {.rank = rank};
-  if (!oom) *z = (fused){.prog = g, .nloads = nl, .index = index};
-  if (!oom && !e) {
+  if (!oom && g != NULL) e = nx_cpu_prog_bind(g, loads, rank, shape, &index);
+  if (!oom && !e && g != NULL) {
+    *z = (fused){.prog = g, .nloads = nl, .index = index};
     int64_t past = 1;
     for (int d = rank - 1; d >= 0; d--) {
       x.dim[d] = shape[d];
@@ -4536,49 +4505,40 @@ static value run_fused(const call *c, value vp, value vrs, int single,
     fuse(z, &x, loads);
   }
   for (int i = 0; !oom && !e && i < nr; i++) {
-    int dt = nx_cpu_prog_held(g, ks[i]);
     const nx_array *y = &a[first[i]], *y1 = two(rs[i]) ? y + 1 : y;
-    x.dtype = dt;
-    x.bits = nx_dtype_row_of(dt).bits;
-    z->k = ks[i];
+    const nx_array *terms = &loads[0];
+    if (g != NULL) {
+      x.dtype = nx_cpu_prog_held(g, ks[i]);
+      x.bits = nx_dtype_row_of(x.dtype).bits;
+      z->k = ks[i];
+      terms = &x;
+    }
     e = c->op == NETWORK
-            ? network_into(rs[i], c->axes[0], y, y1, &x, z)
-            : reduce_into(c->op, rs[i], c->axes, c->naxes, y, y1, &x, cy, z);
+            ? network_into(rs[i], c->axes[0], y, y1, terms, z)
+            : reduce_into(c->op, rs[i], c->axes, c->naxes, y, y1, terms, cy,
+                          z);
   }
   /* A program that could not have its arenas computed nothing. */
-  if (!oom && !e && nx_cpu_prog_failed(g)) e = -1;
-  /* A copy that failed left its base NULL: free skips it. */
-  for (int i = 0; i < copied; i++)
-    if (a[nd + i].alias) free(loads[i].base);
+  if (!oom && !e && g != NULL && nx_cpu_prog_failed(g)) e = -1;
+  /* A copy that failed left its base NULL, which free and nx_cpu_give
+     skip. */
+  for (int i = 0; i < copied; i++) {
+    if (!a[nd + i].alias) continue;
+    if (h == HEAP) free(loads[i].base);
+    else nx_cpu_give(loads[i].base);
+  }
   free(kept_carry.base);
-  nx_cpu_give(held);
+  if (z != NULL) nx_cpu_give(z);
   nx_cpu_reacquire(released);
   nx_done(n, a);
-  drop(owner, many);
+  if (owned) drop(owner, many);
   if (oom || e < 0) caml_raise_out_of_memory();
   CAMLreturn(Val_int(e));
 }
 
-/* Computes [c] by the one pair [vr] of a reduction and an output of [vp]
-   into [vdsts], where [vp] is its one load's identity: NX_SHAPE unless
-   the destinations are the reduction's. Sets [*done] to 0, and computes
-   nothing, where [vp] is not. */
-static value in_place(call *c, value vp, value vr, value vdsts,
-                      value vloads, value vcarry, int *done) {
-  int dt = identity_of(vp);
-  *done = dt >= 0 && Int_val(Field(vr, 1)) == 0 && Wosize_val(vloads) == 1;
-  if (!*done) return Val_unit;
-  c->r = code_of(Field(vr, 0));
-  int nd = 1 + two(c->r);
-  if (Wosize_val(vdsts) != (mlsize_t)nd) return Val_int(NX_SHAPE);
-  return run(c, dt, Field(vdsts, 0), nd == 2 ? Field(vdsts, 1) : Val_unit,
-             Field(Field(vloads, 0), 0), vcarry);
-}
-
 /* Reduces the program [vp] over the loop of shape [vshape] along [vaxes],
    its plain [loads], by the reductions [vrs], pairs of an
-   Nx_kernel.reduction and an output, in turn into [vdsts]. A program that
-   is its one load's identity reads the load in place. */
+   Nx_kernel.reduction and an output, in turn into [vdsts]. */
 value nx_cpu_reduce(value vp, value vrs, value vshape, value vaxes,
                     value vdsts, value vloads) {
   call c = {.op = REDUCE, .naxes = (int)Wosize_val(vaxes)};
@@ -4589,12 +4549,7 @@ value nx_cpu_reduce(value vp, value vrs, value vshape, value vaxes,
     if ((shape[d] = Long_val(Field(vshape, d))) < 0) return Val_int(NX_SHAPE);
   for (int i = 0; i < c.naxes; i++)
     if (axis_of(Field(vaxes, i), &c.axes[i])) return Val_int(NX_SHAPE);
-  int done = 0;
-  if (Wosize_val(vrs) == 1) {
-    value r = in_place(&c, vp, Field(vrs, 0), vdsts, vloads, Val_none, &done);
-    if (done) return r;
-  }
-  return run_fused(&c, vp, vrs, 0, rank, shape, vdsts, vloads, Val_none);
+  return run(&c, vp, vrs, 0, rank, shape, vdsts, vloads, Val_none);
 }
 
 value nx_cpu_reduce_byte(value *argv, int argn) {
@@ -4610,10 +4565,7 @@ value nx_cpu_scan(value vp, value vr, value vaxis, value vdsts, value vloads,
                   value vcarry) {
   call c = {.op = Is_long(Field(vr, 0)) ? NETWORK : SCAN, .naxes = 1};
   if (axis_of(vaxis, &c.axes[0])) return Val_int(NX_SHAPE);
-  int done = 0;
-  value r = in_place(&c, vp, vr, vdsts, vloads, vcarry, &done);
-  if (done) return r;
-  return run_fused(&c, vp, vr, 1, -1, NULL, vdsts, vloads, vcarry);
+  return run(&c, vp, vr, 1, -1, NULL, vdsts, vloads, vcarry);
 }
 
 value nx_cpu_scan_byte(value *argv, int argn) {
