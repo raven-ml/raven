@@ -175,63 +175,46 @@ val of_array : ('v, 's) Dtype.t -> int array -> 'v array -> ('v, 's) t
     have one value per index of [s], or if a value is an [int] outside its
     dtype's range. *)
 
-(** {1:placement Placement} *)
+(** {1:placement Placement}
+
+    {!to_device}, {!transfer} and {!copy} store an array's elements bit for
+    bit, NaN payloads included, on any devices, and run no kernel. {!borrow}
+    shares an array's memory with another device instead, where that device
+    maps it. *)
 
 val to_device : Rig.t -> ('v, 's) t -> ('v, 's) t
-(** [to_device d a] is [a]'s elements on [d], bit for bit, in a fresh buffer no
-    larger than they are: [Dtype.bytes] of one element per index of [a], an axis
-    of stride [0] counted once. It copies on [a]'s own device too, and runs no
-    kernel.
-
-    Where the bytes between [a]'s first and last position are no more than that,
-    as for whole rows, a transpose or an overlapping window, the copy is one
-    {!Rig.Buffer.copy} of those bytes, in [a]'s layout shifted to the copy. A
-    sub-byte copy's first and last bytes then keep the source's neighbouring
-    bits, as found before or after a store another domain makes to them
-    meanwhile.
-
-    Otherwise the copy is laid out in [a]'s stride order and filled by
-    {!transfer}: axes by decreasing magnitude of [a]'s stride, ties in axis
-    order, the last at stride [1] and each other at the product of the extents
-    after it, each stride with the sign of [a]'s, an axis of stride [0] keeping
-    [0], the least position at [0]. A column of a matrix gets stride [1]; shape
-    [[3; 2]] at strides [[2; 2]] gets strides [[2; 1]]. A sub-byte copy is
-    filled on the host where the host does not address [d]'s memory, then moved
-    by one {!Rig.Buffer.copy}.
-
-    {!borrow} shares the memory instead, where [d] maps it.
+(** [to_device d a] is [a]'s elements on [d], also when [a] is on [d], in a
+    fresh buffer of at most [Dtype.bytes] of one element per index of [a], an
+    axis of stride [0] counted once. Where the bytes from [a]'s first to its
+    last position are no more than those, the copy keeps [a]'s layout shifted
+    to it, and a sub-byte copy's first and last bytes keep the source's bits
+    beside the elements, each as found before or after a store another domain
+    makes to it meanwhile. Otherwise the copy's axes go by decreasing magnitude
+    of [a]'s stride, ties in axis order, the last at stride [1] and each other
+    at the product of the extents after it, each with the sign of [a]'s
+    stride, an axis of stride [0] keeping [0], and the least position at [0].
+    Shape [[3; 2]] at strides [[2; 2]] gets strides [[2; 1]].
 
     Raises [Invalid_argument] if [a]'s buffer is dead or its memory is held
     exclusive, and what {!Rig.Buffer.create}, {!Rig.Buffer.copy} and
     {!Rig.submit} raise. *)
 
 val transfer : src:('v, 's) t -> dst:('v, 's) t -> unit
-(** [transfer ~src ~dst] stores [src]'s elements into [dst], of the same shape,
-    bit for bit, on any devices, and runs no kernel.
-
-    The host gathers where it addresses both arrays' memory. Otherwise
-    [src]'s device copies where it computes and the host does not address
-    [src]'s memory, one {!Rig.Submission.copy} per run of elements consecutive
-    in both, in one submission; for other memory and for a sub-byte array,
-    the host gathers each run, brought by its own
-    {!Rig.Buffer.copy} from memory it does not address. That device stores into
-    [dst] where [dst] is on it, the host where it addresses [dst]'s memory.
-    Otherwise, if [dst]'s own runs are longer, it stores into a buffer of
-    [dst]'s size on its side laid out in [dst]'s stride order ({!to_device}),
-    whose runs then move to [dst] each by a {!Rig.Buffer.copy}, or, into memory
-    the host addresses, by one {!Rig.Buffer.copy} to the host and a blit. Where
-    they are not, each run moves by its own {!Rig.Buffer.copy}.
+(** [transfer ~src ~dst] stores [src]'s elements into [dst], of the same shape.
+    It writes [dst]'s elements and no other bit of its buffer, a sub-byte
+    neighbour included.
 
     Raises [Invalid_argument] if the shapes differ, a buffer is dead or its
     memory is held exclusive, [dst] reaches an element twice
     ({!Layout.is_distinct}), or [dst]'s elements are narrower than a byte and
-    the host does not address its memory, and what {!Rig.Buffer.create},
-    {!Rig.Buffer.copy} and {!Rig.submit} raise. *)
+    the host does not address its memory, and, where the host addresses both
+    arrays' memory, if [dst]'s memory is [Read] or [dst] shares a byte with
+    [src] without being identical to it ({!section-kernels}). Raises what
+    {!Rig.Buffer.create}, {!Rig.Buffer.copy} and {!Rig.submit} raise. *)
 
 val copy : ('v, 's) t -> ('v, 's) t
 (** [copy a] is a fresh C-contiguous array on [a]'s device holding [a]'s
-    elements bit for bit, NaN payloads included: an array {!create} makes,
-    filled by {!transfer}.
+    elements, the array {!create} makes there filled by {!transfer}.
 
     Raises what {!create} and {!transfer} raise. *)
 
@@ -308,6 +291,11 @@ val of_bigarray :
 
 (** {1:kernels Kernels}
 
+    Two arrays are {e identical} when they have one element width and place
+    every index at the same bits, which two memories may hold, as an io memory
+    and a bigarray over its pages do ({!Rig.Buffer.overlaps}). A written array
+    may share bytes with read arrays identical to it, and with no other.
+
     The door and the kernels that read through it keep other domains
     waiting to collect for no longer than about one unloaded core's copy of
     1 MiB at a time, however many arrays they claim and release. Past
@@ -321,8 +309,11 @@ val max_operands : int
 (** The type for what a kernel answers, and the door. A kernel answers [Done]
     once its work is done on the host or queued on the device's timeline,
     [Declined] for a case it does not compute, and otherwise, before any write,
-    a refusal: what is wrong with an operand. C answers [Val_int] of
-    [nx_array.h]'s code, whose enum lists the constructors in this order. *)
+    a refusal: what is wrong with an operand. [Dead_buffer], [Held_exclusive]
+    and [Read_only], which claiming an operand answers, come before [Off_host],
+    [Repeated_elements] and [Overlapping], so a dead operand is [Dead_buffer]
+    whatever else is wrong with it. C answers [Val_int] of [nx_array.h]'s code,
+    whose enum lists the constructors in this order. *)
 type answer =
   | Done
   | Declined
@@ -334,7 +325,7 @@ type answer =
   | Repeated_elements  (** A written operand reaches an element twice. *)
   | Overlapping
       (** A written operand shares a byte with another written operand, or
-          with a read operand not identical to it ({!door}). *)
+          with a read operand not identical to it ({!section-kernels}). *)
   | Shape_mismatch
       (** The operands do not fit the operation: their number, or their
           shapes. Operands of one loop of different shapes, shapes its
@@ -346,35 +337,22 @@ val door :
   written:any array -> read:any array -> ('a -> unit) -> 'a -> answer
 (** [door ~written ~read f x] claims the memory of [written] for writing and of
     [read] for reading, every claim or none, runs [f x], and releases the claims
-    when [f] returns or raises; an exception of [f] propagates once they are
-    released. It answers [Done] once [f] returns, or, without running [f] and
-    holding no claim when it answers, [Repeated_elements] or [Overlapping] for
-    a written array, [Dead_buffer] or [Held_exclusive] for an array, or
-    [Read_only] for a written array on [Read] memory. [Dead_buffer],
-    [Held_exclusive] and [Read_only] come before the others: a dead array is
-    [Dead_buffer] whatever else is wrong with it.
+    when [f] returns or raises, before an exception of [f] propagates. It waits
+    for no device work. It answers [Done] once [f] returns, and otherwise,
+    without running [f] or holding a claim, [Dead_buffer] or [Held_exclusive]
+    for an array, or [Read_only], [Repeated_elements] or [Overlapping] for a
+    written one.
 
-    Two arrays are {e identical} when they have one element width and place
-    every index at the same bits, which two memories may hold, as an io
-    memory and a bigarray over its pages do ({!Rig.Buffer.overlaps}). A
-    written array may share bytes with read arrays identical to it, and with
-    no other: [Overlapping] for one that shares a byte with another written
-    array, or with a read array not identical to it, of another width or
-    placing an index at other bits.
+    [f] must touch the arrays' elements only through work it submits with
+    {!Rig.submit}, naming each array of [written] in its writes and each of
+    [read] in its reads or writes, and must leave [written] and [read] holding
+    the arrays they held. The door allocates nothing, and nor does a caller
+    that passes an [f] that is not a closure and stores [Any a] into the same
+    [written] and [read] each call.
 
-    It waits for no device work. [f] touches the arrays' elements only through
-    work it submits with {!Rig.submit}, naming each array of [written] in its
-    writes and each of [read] in its reads or writes; rig orders that work after
-    the work before it on every device. [f] leaves the OCaml arrays [written]
-    and [read] holding the arrays they held: the door releases what they hold
-    when [f] ends. With a [f] that is not a closure it allocates nothing, and
-    a caller that reuses its [written] and [read], storing [Any a] into them
-    each call, allocates nothing either.
-
-    Raises {!Rig.Lost}, without running [f] and holding no claim, if, when it
-    claims, an array's memory is a lost device's or must follow work a lost
-    device did not finish. A device lost while [f] runs reaches the caller as
-    [f]'s exception. *)
+    Raises {!Rig.Lost}, without running [f] or holding a claim, if an array's
+    memory is a lost device's or must follow work a lost device did not
+    finish, and as [f]'s exception for a device lost while [f] runs. *)
 
 val refused : string -> answer -> any list -> 'a
 (** [refused name r operands] raises [Invalid_argument] for the refusal [r]

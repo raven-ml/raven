@@ -566,7 +566,8 @@ let gather_runs fn a h =
       in
       blit fn ~src ~dst)
 
-(* [src]'s device copies [src]'s runs into [dst], on that device, in one
+(* [src]'s device copies [src]'s runs into [dst], on that device, one
+   [Submission.copy] per run of elements consecutive in both, in one
    submission. *)
 let pack_on_device src dst =
   let d = device src and eb = Dtype.bits src.dtype / 8 in
@@ -592,9 +593,10 @@ let copy_runs src dst =
         ~src:(Buffer.view src.buffer ~first:(ps * eb) ~length:(n * eb))
         ~dst:(Buffer.view dst.buffer ~first:(pt * eb) ~length:(n * eb)))
 
-(* Stores [s], laid out in [t]'s stride order, into [t]: by a copy per run,
-   unless the host addresses [t] and the runs are several, where the host blits
-   from [s] brought to it whole. *)
+(* Stores [s], laid out in [t]'s stride order, into [t]: by a [Buffer.copy] per
+   run, unless the host addresses [t] and the runs are several, where the host
+   blits from [s], brought to it by one [Buffer.copy] if the host does not
+   address it. *)
 let spread fn s t =
   let _, n = runs s.layout t.layout in
   if n = Layout.numel t.layout || host_address t.buffer < 0 then copy_runs s t
@@ -680,8 +682,9 @@ let move_packed d a =
   if into != dst then Buffer.copy ~src:into.buffer ~dst:dst.buffer;
   dst
 
-(* [a] over a copy of the bytes from its first to its last position, its layout
-   shifted to the copy. *)
+(* [a] over a copy of the bytes from its first to its last position, one
+   [Buffer.copy] but for a sub-byte span's shared end bytes ([copy_span]), its
+   layout shifted to the copy. *)
 let move_span d a =
   let l = a.layout and bits = Dtype.bits a.dtype in
   let lo, hi = Layout.span l in
@@ -697,6 +700,9 @@ let move_span d a =
   let layout = Layout.v ~offset ~strides:(Layout.strides l) (Layout.shape l) in
   v a.dtype layout buffer
 
+(* The span is copied where it holds no more bytes than the elements, as for
+   whole rows, a transpose or an overlapping window; other layouts are packed
+   and filled by [transfer]. *)
 let to_device d a =
   live "Nx_array.to_device" a.buffer;
   let l = a.layout and bits = Dtype.bits a.dtype in
