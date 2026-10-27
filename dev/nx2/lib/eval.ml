@@ -391,17 +391,26 @@ let refuse ~by o =
    inside it, with the extent suspended until the rule returns. The cell is
    emptied once no handler answered: [Effect.Unhandled] holds the effect, and
    the runtime keeps the last exception raised reachable while backtraces are
-   recorded. [Around i] is answered by [i]'s handler alone. *)
+   recorded.
+
+   [Ask] puts a question about the caller to [of_]'s handler. [Around] asks
+   whether that handler is around the caller, which it answers alone.
+   [Readable] asks whether it is around the caller with no [Extent] handler
+   between them, and an [Extent] handler in between answers [false]. Under
+   no handler of [of_], the answer is [false]. *)
+type question = Around | Readable
+
 type _ Effect.t +=
   | Receive : { by : string; mutable op : 'r prim option } -> 'r Effect.t
-  | Around : interpretation -> unit Effect.t
-  | Readable : interpretation -> bool Effect.t
+  | Ask : { of_ : interpretation; what : question } -> bool Effect.t
+
+let ask o what =
+  match Effect.perform (Ask { of_ = o; what }) with
+  | b -> b
+  | exception Effect.Unhandled (Ask _) -> false
 
 (* Whether [o]'s handler is around the caller. *)
-let around o =
-  match Effect.perform (Around o) with
-  | () -> true
-  | exception Effect.Unhandled (Around _) -> false
+let around o = ask o Around
 
 (* [i]'s rule on [op], in [i]'s clause. Another interpretation's traced operand
    is refused unless its interpretation is around [i], which is asked once per
@@ -469,16 +478,11 @@ let handler i =
                 | exception x ->
                     let bt = Printexc.get_raw_backtrace () in
                     Effect.Deep.discontinue_with_backtrace k x bt)
-        | Around j when j == i ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                if present i here then Effect.Deep.continue k ()
-                else Effect.Deep.discontinue k (Effect.Unhandled e))
-        | Readable j when j == i ->
+        | Ask { of_; _ } when of_ == i ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
                 Effect.Deep.continue k (present i here))
-        | Readable _ when i.reach = Extent ->
+        | Ask { what = Readable; _ } when i.reach = Extent ->
             (* An extent inside the owner stages what it reaches: a read
                there would hide its value from it. *)
             Some
@@ -528,12 +532,7 @@ let twinned i c payload =
 
 (* Whether [o]'s handler is around the caller with no [Extent] handler
    between them. *)
-let readable o =
-  Atomic.get o.live
-  &&
-  match Effect.perform (Readable o) with
-  | b -> b
-  | exception Effect.Unhandled (Readable _) -> false
+let readable o = Atomic.get o.live && ask o Readable
 
 let read_through (type v s d) (x : (v, s, d) t) : (v, s, d) t =
   let rec go : (v, s, d) t -> (v, s, d) t = function

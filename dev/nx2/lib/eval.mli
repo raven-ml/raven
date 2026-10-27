@@ -36,6 +36,12 @@
     otherwise. An operation no handler answers is {!run}'s, and raises where
     an operand is traced.
 
+    A second effect asks one interpretation's handler one of two questions
+    about the caller. The first is whether the handler is around the
+    caller. The second is whether it is around the caller with no [Extent]
+    interpretation between them, and an [Extent] handler in between answers
+    it [false]. Where that handler is absent, either answer is [false].
+
     An [Extent] receiver first receives the operations of each formula operand
     its rule did not return, rebuilt at the operand's brand, in dependency
     order, each node once per operand; the operation reads its results. Each
