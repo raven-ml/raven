@@ -254,3 +254,85 @@ let reuse : type r.
           let b = List.hd (buffers h) in
           Option.map (fun b' -> (i, b, b')) (take ~by b))
 
+
+(* Consumers
+
+   A function of several operations that consumes its operands as one
+   operation does: the engine's steps above, over operands it reads by
+   position. [ended] guards the steps after the handles end. *)
+type 'd consumer = {
+  by : string;
+  operands : 'd Value.any array;
+  claimed : handle list;
+  mutable reused : Rig.Buffer.t list;
+  mutable ended : bool;
+}
+
+let with_consumer ~by xs f =
+  List.iter (fun (Value.Any x) -> Prim.alive ~by x) xs;
+  let claimed = handles xs in
+  claim ~by claimed;
+  let c =
+    { by; operands = Array.of_list xs; claimed; reused = []; ended = false }
+  in
+  (* The handles end on a raise too: their donors are dead, so nothing else
+     would return their memory. *)
+  Fun.protect
+    ~finally:(fun () ->
+      c.ended <- true;
+      consumed ~by ~reused:c.reused claimed)
+    (fun () -> f c)
+
+let unended c =
+  if c.ended then
+    invalid_argf "%s: the consumer ended its handles" c.by
+
+let operand c i =
+  unended c;
+  if i < 0 || i >= Array.length c.operands then
+    invalid_argf "%s: no operand %d of %d" c.by i (Array.length c.operands);
+  c.operands.(i)
+
+let consumer_arrays c i =
+  let (Value.Any x) = operand c i in
+  match x with
+  | Value.Deferred _ | Value.Traced _ ->
+      invalid_argf "%s: operand %d, %a, has no bytes" c.by i Prim.pp_value x
+  | Value.Array _ | Value.Shards _ | Value.Donated _ -> Prim.any (Prim.arrays x)
+
+(* Whether operand [i], a claimed handle on one device, may hold a result of
+   [dt] and [layout] in its memory: no operand at another position shares
+   it, since the consumer may read that one at any index. *)
+let consumer_take (type w r d) (c : d consumer) i (dt : (w, r) D.t) layout :
+    (w, r) A.t option =
+  let (Value.Any x) = operand c i in
+  let ours = List.exists (fun (Handle (j, _)) -> j = i) c.claimed in
+  match x with
+  | Value.Donated { arrays; _ } when ours && Iarray.length arrays = 1 ->
+      let a = Iarray.get arrays 0 in
+      let b = A.buffer a in
+      let apart j (Value.Any y) =
+        j = i
+        ||
+        match y with
+        | Value.Deferred _ | Value.Traced _ -> true
+        | Value.Array _ | Value.Shards _ | Value.Donated _ ->
+            not
+              (Iarray.exists (fun a' -> share (A.buffer a') b) (Prim.arrays y))
+      in
+      let alone = ref true in
+      Array.iteri
+        (fun j y -> if not (apart j y) then alone := false)
+        c.operands;
+      if !alone && (not (List.memq b c.reused)) && holds (D.Any dt) layout a
+      then
+        match take ~by:c.by b with
+        | Some b' ->
+            c.reused <- b :: c.reused;
+            Some (A.v dt layout b')
+        | None -> None
+      else None
+  | Value.Donated _ | Value.Array _ | Value.Shards _ | Value.Deferred _
+  | Value.Traced _ ->
+      None
+

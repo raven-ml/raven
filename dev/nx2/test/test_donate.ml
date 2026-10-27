@@ -1105,7 +1105,7 @@ let taker msg =
   match
     List.find_opt
       (fun f -> has ("donated to " ^ f))
-      [ "Nx.add"; "Nx.mul"; "Nx.sub" ]
+      [ "Nx.add"; "Nx.mul"; "Nx.sub"; "test.call" ]
   with
   | Some f -> f
   | None -> msg
@@ -1121,7 +1121,7 @@ let union a b = List.sort_uniq compare (a @ b)
    those it took when it loses another, so a free handle may then have gone
    to one in flight, and is dead from then on. *)
 let lost_to e h =
-  List.mem (Some e) h.states || (e = "Nx.sub" && free h)
+  List.mem (Some e) h.states || ((e = "Nx.sub" || e = "test.call") && free h)
 
 (* A one-handle operation [by] whose result's elements are [f]'s. *)
 let judge1 by f h = function
@@ -1195,9 +1195,34 @@ let pair =
         (String.concat "; " (Array.to_list (Array.map string_of_float a))))
     (Gen.array ~size:(Gen.int_range 2 2) (Gen.of_list [ 0.; 1.; -2.; 3.5 ]))
 
+(* A consumer of several operations, [h1 - h2] read from its operands'
+   arrays. *)
+let host_floats a = A.to_array (A.expect D.Float32 a)
+
+let call_ref = pair_ref ( -. ) "test.call"
+
+(* It writes [h1 - h2] over [h1]'s memory where it may take it, reading
+   each element of [h1] through the taken array before writing it. *)
+let call_sys h1 h2 =
+  refused (fun () ->
+      Nx.Prim.Consumer.with_ ~by:"test.call" [ Any h1; Any h2 ] (fun c ->
+          let read i = host_floats (Nx.Prim.Consumer.arrays c i).(0) in
+          let b = read 1 in
+          let n = Array.length b in
+          match
+            Nx.Prim.Consumer.take c 0 D.Float32 (A.Layout.contiguous [| n |])
+          with
+          | Some a ->
+              for k = 0 to n - 1 do
+                A.set a [| k |] (A.get a [| k |] -. b.(k))
+              done;
+              A.to_array a
+          | None -> Array.map2 ( -. ) (read 0) b))
+
 let handles =
   [
     command "make" (pair @-> makes handle) make_handle make_handle_sys;
+    command "call" (handle ^-> handle ^-> judges taken) call_ref call_sys;
     command "add" (handle ^-> judges taken) add_ref add_sys;
     command "mul" (handle ^-> judges taken) mul_ref mul_sys;
     command "reshape" (handle ^-> judges taken) reshape_ref reshape_sys;
@@ -1210,6 +1235,7 @@ let crossed =
   [
     command "make" (pair @-> makes handle) make_handle make_handle_sys;
     command "sub2" (handle ^-> handle ^-> judges taken) sub2_ref sub2_sys;
+    command "call" (handle ^-> handle ^-> judges taken) call_ref call_sys;
   ]
 
 (* Naming: a function of one operation consumes a donated operand for the
@@ -2508,6 +2534,119 @@ let test_donated =
     "a donated operand gives the undonated result, received too" donations
     law_donated
 
+(* Consumers: a function of several operations that consumes as one
+   operation does. *)
+module C = Nx.Prim.Consumer
+
+let ended = "test.call: the consumer ended its handles"
+
+let test_consumer_kills () =
+  let x = fresh [| 1.; 2.; 3. |] and y = fresh [| 4.; 5.; 6. |] in
+  let kept =
+    C.with_ ~by:"test.call" [ Any (Nx.donate x); Any y ] (fun c ->
+        equal ~msg:"the handle reads the donor" (array float_exact)
+          [| 1.; 2.; 3. |]
+          (host_floats (C.arrays c 0).(0));
+        equal ~msg:"an undonated operand" (array float_exact) [| 4.; 5.; 6. |]
+          (host_floats (C.arrays c 1).(0));
+        invalid ~sub:(dead_in "Nx.copy" x "test.call") (fun () -> Nx.copy x);
+        c)
+  in
+  equal ~msg:"an undonated operand lives" (array float_exact)
+    [| 4.; 5.; 6. |] (elements y);
+  raises (Invalid_argument ended) (fun () -> C.arrays kept 0);
+  raises (Invalid_argument ended) (fun () ->
+      C.take kept 0 D.Float32 (A.Layout.contiguous [| 3 |]))
+
+let test_consumer_checks_first () =
+  let x = fresh [| 1. |] and dead = fresh [| 2. |] in
+  ignore (Nx.copy (Nx.donate dead));
+  invalid ~sub:(dead_in "test.call" dead "Nx.copy") (fun () ->
+      C.with_ ~by:"test.call" [ Any (Nx.donate x); Any dead ] ignore);
+  equal ~msg:"the other donor lives" (array float_exact) [| 1. |] (elements x)
+
+let test_consumer_refuses () =
+  let x = fresh [| 1. |] in
+  C.with_ ~by:"test.call" [ Any x; Any (Nx.zeros f32 [| 2 |]) ] (fun c ->
+      invalid ~sub:"test.call: operand 1" (fun () -> C.arrays c 1);
+      invalid ~sub:"test.call: no operand 2" (fun () -> C.arrays c 2))
+
+let layout_of n = A.Layout.contiguous [| n |]
+
+(* A handle's memory is taken for a result only where nothing else reads it:
+   the handle alone among the operands, owning its memory, of the result's
+   dtype and layout. *)
+let test_consumer_takes () =
+  let some = function Some _ -> true | None -> false in
+  let take xs i dt l =
+    C.with_ ~by:"test.call" xs (fun c -> some (C.take c i dt l))
+  in
+  let h () = Nx.donate (fresh [| 1.; 2. |]) in
+  equal ~msg:"a handle alone" bool true
+    (take [ Any (h ()) ] 0 D.Float32 (layout_of 2));
+  equal ~msg:"another dtype" bool false
+    (take [ Any (h ()) ] 0 D.Int32 (layout_of 2));
+  equal ~msg:"another layout" bool false
+    (take [ Any (h ()) ] 0 D.Float32 (A.Layout.contiguous [| 1; 2 |]));
+  equal ~msg:"an undonated operand" bool false
+    (take [ Any (fresh [| 1.; 2. |]) ] 0 D.Float32 (layout_of 2));
+  let x = fresh [| 1.; 2. |] in
+  equal ~msg:"beside its donor" bool false
+    (take [ Any (Nx.donate x); Any x ] 0 D.Float32 (layout_of 2));
+  let x = fresh [| 1.; 2. |] in
+  let view = Nx.flip x in
+  equal ~msg:"beside a view of it" bool false
+    (take [ Any (Nx.donate x); Any view ] 0 D.Float32 (layout_of 2));
+  equal ~msg:"the view keeps its elements" (array float_exact) [| 2.; 1. |]
+    (elements view);
+  let x = fresh [| 1.; 2. |] in
+  ignore (Nx.Repr.array x);
+  equal ~msg:"shared by a crossing" bool false
+    (take [ Any (Nx.donate x) ] 0 D.Float32 (layout_of 2));
+  C.with_ ~by:"test.call" [ Any (h ()) ] (fun c ->
+      let first = some (C.take c 0 D.Float32 (layout_of 2)) in
+      let second = some (C.take c 0 D.Float32 (layout_of 2)) in
+      equal ~msg:"taken once" (Testable.pair bool bool) (true, false)
+        (first, second))
+
+(* An update in place, [y = x + 1] over [x]'s taken memory: the taken array
+   holds [x]'s elements until it is written, and needs no memory of the
+   result's size. A consumer that takes none returns the donor's memory
+   when it ends, even when it raises. *)
+let test_consumer_memory () =
+  let n = 1 lsl 16 in
+  let bytes = 4 * n in
+  let make () = on_mem [| n |] (Array.init n Float.of_int) in
+  let increment x =
+    C.with_ ~by:"test.call" [ Any (Nx.donate x) ] (fun c ->
+        match C.take c 0 D.Float32 (layout_of n) with
+        | Some a ->
+            let ys = Array.map (fun v -> v +. 1.) (A.to_array a) in
+            A.transfer ~src:(A.of_array D.Float32 [| n |] ys) ~dst:a;
+            Some (Nx.Repr.unsafe_of_array Mem.v a)
+        | None -> None)
+  in
+  let y, grew = grown make increment in
+  in_place ~msg:"taken" ~bytes grew;
+  equal ~msg:"its elements" (array float_exact)
+    (Array.init n (fun k -> Float.of_int k +. 1.))
+    (elements (Option.get y));
+  let freed f =
+    let x = make () in
+    let before = settled () in
+    (try f x with Exit -> ());
+    let freed = before - settled () in
+    ignore (Sys.opaque_identity x);
+    freed
+  in
+  at_least ~msg:"a donor's memory returns at the end, its donor reachable"
+    int ~than:bytes
+    (freed (fun x ->
+         C.with_ ~by:"test.call" [ Any (Nx.donate x) ] (fun _ -> ())));
+  at_least ~msg:"and when the consumer raises" int ~than:bytes
+    (freed (fun x ->
+         C.with_ ~by:"test.call" [ Any (Nx.donate x) ] (fun _ -> raise Exit)))
+
 let () =
   exit
     (run "nx donate"
@@ -2551,6 +2690,16 @@ let () =
              stateful ~domains:2 "handles taken on two domains" handles;
              stateful ~domains:2 "two-handle consumers on two domains" crossed;
              test "donated tells a handle, live or not" test_is_handle;
+             test "a consumer kills its handles' donors, naming itself"
+               test_consumer_kills;
+             test "a consumer checks every operand before it claims"
+               test_consumer_checks_first;
+             test "a consumer reads arrays at positions with bytes"
+               test_consumer_refuses;
+             test "a consumer takes memory nothing else reads"
+               test_consumer_takes;
+             test "a consumer updates taken memory in place and frees the rest"
+               test_consumer_memory;
              test "two values a call gives back over one donor stay apart"
                test_given_back_twice;
            ];

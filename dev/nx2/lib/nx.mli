@@ -4887,6 +4887,70 @@ module Prim : sig
   val eval : by:string -> 'r t -> 'r
   (** [eval ~by op] is [op]'s meaning under the rule, as the vocabulary's
       functions apply it. *)
+
+  (** {1:consumers Consumers}
+
+      A {e consumer} is a function of several operations that consumes the
+      donated handles among its operands as one operation does ({!Nx.donate}),
+      such as a compiled call: the deaths name it, it reads each handle as the
+      donor was when it was claimed, and it may write a result into a handle's
+      memory. {!Consumer.with_} runs one: it checks every operand, then claims
+      the handles among them, which kills their donors for good, runs the
+      consumer, and ends the handles when it returns or raises, so that
+      memory no other value reads, and that no result took, returns to its
+      device once the work on it is done.
+
+      The consumer reads its operands by their position in the list
+      {!Consumer.with_} takes. As for an operation, two handles of one donor,
+      or a handle and its donor, are read as the donor and kill it once. The
+      arrays it reads are its own until it returns: it must not keep one, or
+      a value over one, past that. The arrays {!Consumer.take} gives are the
+      exception: their memory is the consumer's from then on. *)
+
+  module Consumer : sig
+    type 'd t
+    (** The type for consumers of operands of brand ['d]. *)
+
+    val with_ : by:string -> 'd any list -> ('d t -> 'a) -> 'a
+    (** [with_ ~by xs f] is [f c], [c] a consumer named [by] of the operands
+        [xs], whose handles it claimed first. The handles end when [f]
+        returns or raises.
+
+        Raises [Invalid_argument] naming [by] and the earlier consumer if a
+        value of [xs] is dead, claiming nothing then, and, as a racing
+        consumer may, if a donor died to another domain's consumer while it
+        claimed, leaving dead the donors it claimed before. Raises what [f]
+        raises. *)
+
+    val arrays : 'd t -> int -> Nx_array.any array
+    (** [arrays c i] is the arrays of [c]'s operand [i], one per device of its
+        placement, in order.
+
+        Raises [Invalid_argument] naming [c]'s [by] for a constant or a
+        traced operand, a position no operand has, or once {!with_}
+        returned. *)
+
+    val take :
+      'd t ->
+      int ->
+      ('v, 's) dtype ->
+      Nx_array.Layout.t ->
+      ('v, 's) Nx_array.t option
+    (** [take c i dt l] is [Some a], [a] an array of [dt] laid out as [l] over
+        the memory of [c]'s operand [i], for a result to be written there:
+        where the operand is a handle [c] claimed, on one device, its array of
+        [dt] and [l] over all of its memory, no operand at another position
+        shares that memory, and no other value reads it. [None] otherwise,
+        and for an operand {!take} gave before.
+
+        [a] holds the operand's elements until [c] writes it. The operand's
+        arrays and every array made over them are dead from then on, so [c]
+        reads the operand through [a] alone, and a [c] that writes a result
+        there while it reads the operand must read each element before it
+        writes over it, as an elementwise update does.
+
+        Raises as {!arrays} does. *)
+  end
 end
 
 (**/**)

@@ -6427,6 +6427,14 @@ module Prim = struct
   let quiet = Eval.quiet
   let donated = Donate.is_handle
   let eval = Eval.eval
+
+  module Consumer = struct
+    type 'd t = 'd Donate.consumer
+
+    let with_ = Donate.with_consumer
+    let arrays = Donate.consumer_arrays
+    let take = Donate.consumer_take
+  end
 end
 
 (* Operators *)

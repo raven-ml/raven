@@ -4,22 +4,23 @@
   ---------------------------------------------------------------------------*)
 
 (** Donation: handles over a value's memory that one operation reads, and their
-    consumption by the eager engine.
+    consumption by the eager engine and by consumers.
 
     A donor is offered under a key of its own, which it keeps for life and
     every handle of every donation of it holds. A handle has no state of its
-    own: it lives while its donor does. Only an operation the engine ({!Exec})
-    runs consumes handles. The engine checks the operation's operands, claims
-    its handles, which kills their donors for good, writes the operation's
-    first result into a handle's memory where {!reuse} allows, and ends the
-    handles once it has read them ({!consumed}). A donor stays dead whatever
-    the kernels answer after the claim.
+    own: it lives while its donor does. An operation the engine ({!Exec})
+    runs consumes handles, and so does a consumer ({!with_consumer}). The
+    engine checks the operation's operands, claims its handles, which kills
+    their donors for good, writes the operation's first result into a
+    handle's memory where {!reuse} allows, and ends the handles once it has
+    read them ({!consumed}). A donor stays dead whatever the kernels answer
+    after the claim.
 
-    A function of several operations, and an interpretation, read a handle as
-    its arrays, shared ({!lent}), and kill nothing. Claims follow no order:
-    racing consumers on several domains for one donor is a misuse, after which
-    any of them may have raised and any of the donors they claimed may be
-    dead. *)
+    Any other function of several operations, and an interpretation, read a
+    handle as its arrays, shared ({!lent}), and kill nothing. Claims follow
+    no order: racing consumers on several domains for one donor is a misuse,
+    after which any of them may have raised and any of the donors they
+    claimed may be dead. *)
 
 (** The type for a donated operand and its position among an operation's
     operands. *)
@@ -102,3 +103,37 @@ val consumed : by:string -> reused:Rig.Buffer.t list -> handle list -> unit
     device once the work on it is done; its buffers stay dead naming [by]. Shards that share memory with one
     another, as borrows of one allocation do, are read by each other and
     consumed by none. *)
+
+(** {1:consumers Consumers}
+
+    A function of several operations that consumes its operands' handles as
+    one operation does, by the steps above, such as a compiled call: it
+    reads its operands by position. *)
+
+type 'd consumer
+
+val with_consumer :
+  by:string -> 'd Value.any list -> ('d consumer -> 'a) -> 'a
+(** [with_consumer ~by xs f] checks that each of [xs] lives, then claims the
+    handles among them ({!handles}, {!claim}) for [by], and is [f c]; it ends
+    the handles ({!consumed}) when [f] returns or raises, the memory taken by
+    {!consumer_take} excepted. Raises [Invalid_argument] naming [by] for a
+    dead value, claiming nothing, as {!claim} does, and what [f] raises. *)
+
+val consumer_arrays : 'd consumer -> int -> Nx_array.any array
+(** [consumer_arrays c i] is operand [i]'s arrays, one per device, shared with
+    nothing. Raises [Invalid_argument] for a constant or a traced operand, a
+    position out of range, or once {!with_consumer} returned. *)
+
+val consumer_take :
+  'd consumer ->
+  int ->
+  ('w, 'r) Nx_array.Dtype.t ->
+  Nx_array.Layout.t ->
+  ('w, 'r) Nx_array.t option
+(** [consumer_take c i dt l] is [Some a], [a] of [dt] and [l] over operand
+    [i]'s memory, where operand [i] is a handle [c] claimed, on one device,
+    whose array has [dt] and [l] over all of its memory, which no operand at
+    another position shares and rig holds exclusive: that memory is then
+    consumed for [c]'s [by]. [None] otherwise. Raises as
+    {!consumer_arrays}. *)

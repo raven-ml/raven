@@ -23,7 +23,7 @@
     its rule did not return, rebuilt at the operand's brand, in dependency
     order, each node once per operand; the operation reads its results. Each
     donated handle reaches a rule as its arrays, lent ({!Donate.lent}), and
-    its donor lives on: only {!Exec} consumes handles. Other operands reach
+    its donor lives on: a rule kills nothing. Other operands reach
     the rule as they are.
 
     One atomic counts the live [Extent] interpretations of the process, on
