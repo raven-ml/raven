@@ -1618,19 +1618,20 @@ let replaced ~by sel picks v x =
       in
       reshaped ~by s updated
 
+(* Whether [p] writes a position twice. Closed over nothing, so a check of
+   picks allocates no closure. *)
+let repeats (p, _) =
+  match p with
+  | Rows ps -> List.length (List.sort_uniq compare ps) <> List.length ps
+  | At _ | Span _ | Held _ | From _ | New -> false
+
 let set_by ~by idx v x =
   let picks = picks ~by idx x in
   index_alive ~by idx;
   Prim.alive ~by v;
   Prim.alive ~by x;
-  List.iter
-    (fun (p, _) ->
-      match p with
-      | Rows ps ->
-          if List.length (List.sort_uniq compare ps) <> List.length ps then
-            invalid_argf "%s: a list of positions repeats one" by
-      | At _ | Span _ | Held _ | From _ | New -> ())
-    picks;
+  if List.exists repeats picks then
+    invalid_argf "%s: a list of positions repeats one" by;
   let sel = selection x picks in
   let fits =
     match Prim.broadcast_shape ~by (shape v) sel with
