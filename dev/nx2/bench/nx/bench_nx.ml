@@ -61,11 +61,30 @@ let kv_cache () =
   let pos = on_host (Nx.scalar D.Int64 2048L) in
   (ref cache, row, Nx.[ A; A; D (pos, 1); A ])
 
+(* A float32 sine of [x] built as an operation once, as an interpreter that
+   evaluates a program holds it. *)
+let sin_op x : ((float, D.float32_elt, Nx.host) Nx.t * unit) Nx.Prim.t =
+  let prog =
+    Nx_kernel.Prog.of_node ~ins:[| D.Any D.Float32 |]
+      (Op1 (Unary Sin, D.Any D.Float32, 0))
+  in
+  Map
+    {
+      layout = Nx_array.Layout.contiguous (Iarray.of_array (Nx.shape x));
+      prog;
+      outs = Nx.Prim.[ D.Float32 ];
+      loads = [| Plain x |];
+    }
+
 let dispatch_rows =
   Thumper.group "dispatch"
     [
       Thumper.bench_with_setup "shape" ~setup:one Nx.shape;
       Thumper.bench_with_setup "add-1" ~setup:one (fun x -> Nx.add x x);
+      Thumper.bench_with_setup "sin-1" ~setup:one Nx.sin;
+      Thumper.bench_with_setup "prim-eval-sin-1"
+        ~setup:(fun () -> sin_op (one ()))
+        (fun op -> fst (Nx.Prim.eval ~by:"bench" op));
       Thumper.bench_with_setup "add-1-direct"
         ~setup:(fun () -> Option.get (Nx.Repr.array (one ())))
         add_direct;

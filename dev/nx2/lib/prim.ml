@@ -907,34 +907,42 @@ let has_layout_shape x l =
 
 (* A loop's rule on its loads and coordinates: a load per operand of [prog],
    of its dtype and of [layout]'s shape, which is C-contiguous, and a
-   coordinate along an axis of that shape. [what] names the loop. *)
+   coordinate along an axis of that shape. [what] names the loop. It
+   allocates nothing where the rule holds: an interpreter checks it on every
+   map it evaluates. *)
 let check_loads (type d) ~by ~what layout (prog : P.t) (loads : d load iarray)
     =
   let ins = prog.ins in
-  if Iarray.length loads <> Iarray.length ins then
+  let n = Iarray.length loads in
+  if n <> Iarray.length ins then
     invalid_argf "%s: a program of %d operands over %d loads" by
-      (Iarray.length ins) (Iarray.length loads);
-  Iarray.iteri
-    (fun i l ->
-      let (D.Any want) = Iarray.get ins i in
+      (Iarray.length ins) n;
+  for i = 0 to n - 1 do
+    let (D.Any want) = Iarray.get ins i in
+    let l = Iarray.get loads i in
+    let same =
+      match l with
+      | Plain x -> same_dtype want (dtype x)
+      | Padded { x; _ } -> same_dtype want (dtype x)
+    in
+    if not same then
       let (D.Any have) = load_dtype l in
-      if not (same_dtype want have) then
-        invalid_argf "%s: load %d is %s where the program reads %s" by i
-          (D.name have) (D.name want))
-    loads;
+      invalid_argf "%s: load %d is %s where the program reads %s" by i
+        (D.name have) (D.name want)
+  done;
   if not (L.is_contiguous layout && L.offset layout = 0) then
     invalid_argf "%s: a %s's layout %a is not C-contiguous" by what L.pp layout;
-  Iarray.iteri
-    (fun i l ->
-      let fits =
-        match l with
-        | Plain x -> has_layout_shape x layout
-        | Padded _ -> load_shape ~by l = Iarray.to_array (L.shape layout)
-      in
-      if not fits then
-        invalid_argf "%s: load %d has shape %a, the %s %a" by i pp_shape
-          (load_shape ~by l) what pp_ints (L.shape layout))
-    loads;
+  for i = 0 to n - 1 do
+    let l = Iarray.get loads i in
+    let fits =
+      match l with
+      | Plain x -> has_layout_shape x layout
+      | Padded _ -> load_shape ~by l = Iarray.to_array (L.shape layout)
+    in
+    if not fits then
+      invalid_argf "%s: load %d has shape %a, the %s %a" by i pp_shape
+        (load_shape ~by l) what pp_ints (L.shape layout)
+  done;
   for i = 0 to Iarray.length prog.nodes - 1 do
     match Iarray.get prog.nodes i with
     | P.Coord a when a >= L.rank layout ->
@@ -943,28 +951,31 @@ let check_loads (type d) ~by ~what layout (prog : P.t) (loads : d load iarray)
     | _ -> ()
   done
 
+(* The results [outs] from [k] on against [prog]'s outputs from [k] on: one
+   each, of its dtype. *)
+let rec check_outs : type d q. by:string -> P.t -> int -> (d, q) outs -> unit
+    =
+ fun ~by prog k outs ->
+  let produced = Iarray.length prog.outs in
+  match outs with
+  | [] ->
+      if k <> produced then
+        invalid_argf "%s: %d results for a program of %d outputs" by k produced
+  | dt :: rest ->
+      if k >= produced then
+        invalid_argf "%s: more results than the program's %d outputs" by
+          produced;
+      let (D.Any want) = P.dtype prog (Iarray.get prog.outs k) in
+      if not (same_dtype want dt) then
+        invalid_argf "%s: result %d is %s where the program gives %s" by k
+          (D.name dt) (D.name want);
+      check_outs ~by prog (k + 1) rest
+
 (* A map's rule; its result's layout, C-contiguous of [shape]. *)
 let check_map (type d r) ~by layout (prog : P.t) (outs : (d, r) outs)
     (loads : d load iarray) =
   check_loads ~by ~what:"map" layout prog loads;
-  let produced = prog.outs in
-  let rec check : type q. int -> (d, q) outs -> unit =
-   fun k -> function
-     | [] ->
-         if k <> Iarray.length produced then
-           invalid_argf "%s: %d results for a program of %d outputs" by k
-             (Iarray.length produced)
-     | dt :: rest ->
-         if k >= Iarray.length produced then
-           invalid_argf "%s: more results than the program's %d outputs" by
-             (Iarray.length produced);
-         let (D.Any want) = P.dtype prog (Iarray.get produced k) in
-         if not (same_dtype want dt) then
-           invalid_argf "%s: result %d is %s where the program gives %s" by k
-             (D.name dt) (D.name want);
-         check (k + 1) rest
-  in
-  check 0 outs
+  check_outs ~by prog 0 outs
 
 (* A reduction's rule over [prog]'s outputs: its output exists and is of a
    dtype it takes. *)

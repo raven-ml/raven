@@ -192,7 +192,7 @@ let bytes (type v s d) (x : (v, s, d) Nx.t) =
   A.to_array (Option.get (A.bitcast D.Uint8 (Option.get flat)))
 
 (* The one-node map of [node] over [loads], of [shape], into [dt], run as an
-   operation: the general path, which no fast path takes. *)
+   operation. *)
 let run_map (type w r) node ins (dt : (w, r) D.t) shape loads =
   let prog = Nx_kernel.Prog.of_node ~ins node in
   let op : ((w, r, Nx.host) Nx.t * unit) Nx.Prim.t =
@@ -221,6 +221,14 @@ let one_node_maps =
         run_map
           (Op1 (Cast, D.Any D.Float16, 0))
           [| f |] D.Float16 (Nx.shape x) [| Plain x |]);
+    (* Half a byte each, compared as int32. *)
+    maps "cast to int4" 1
+      (fun (x, _, _) -> Nx.cast D.Int32 (Nx.cast D.Int4 x))
+      (fun (x, _, _) ->
+        Nx.cast D.Int32
+          (run_map
+             (Op1 (Cast, D.Any D.Int4, 0))
+             [| f |] D.Int4 (Nx.shape x) [| Plain x |]));
     maps "add" 2
       (fun (x, y, _) -> Nx.add x y)
       (fun (x, y, _) ->
@@ -242,6 +250,34 @@ let one_node_maps =
         run_map (Op3 (Fma, 0, 1, 2)) [| f; f; f |] D.Float32 (Nx.shape x)
           [| Plain x; Plain y; Plain x |]);
   ]
+
+(* Maps of several nodes, as an interpreter fuses them: [x + y] and
+   [(x + y) * y] as two results, and [(x + y) * y] alone. *)
+let chain =
+  let f = D.Any D.Float32 in
+  Nx_kernel.Prog.v ~ins:[| f; f |]
+    [| In 0; In 1; Op2 (Binary Add, 0, 1); Op2 (Binary Mul, 2, 1) |]
+    ~outs:[| 2; 3 |]
+
+let fused =
+  let f = D.Any D.Float32 in
+  Nx_kernel.Prog.v ~ins:[| f; f |]
+    [| In 0; In 1; Op2 (Binary Add, 0, 1); Op2 (Binary Mul, 2, 1) |]
+    ~outs:[| 3 |]
+
+(* The bytes of [chain]'s results and of [fused]'s over [x] and [y]. *)
+let fused_maps x y =
+  let layout = A.Layout.contiguous (Iarray.of_array (Nx.shape x)) in
+  let loads : Nx.host Nx.Prim.load iarray = [| Plain x; Plain y |] in
+  let s, (p, ()) =
+    Nx.Prim.eval ~by:"test"
+      (Map { layout; prog = chain; outs = [ D.Float32; D.Float32 ]; loads })
+  in
+  let q, () =
+    Nx.Prim.eval ~by:"test"
+      (Map { layout; prog = fused; outs = [ D.Float32 ]; loads })
+  in
+  (bytes s, bytes p, bytes q)
 
 let one_node_case =
   Gen.pair
@@ -265,6 +301,28 @@ let laws =
           let c = on_host Plain D.Bool s (Array.map (fun x -> x > 0.) xs) in
           let fast, general = maps (x, y, c) in
           equal (array int) general fast);
+      prop "a map of several nodes gives the bits of its nodes' functions"
+        case (fun (s, la, lb, xs, ys) ->
+          cover "no element" (Array.exists (( = ) 0) s);
+          cover "a strided operand" (la = Transposed || lb = Transposed);
+          let x = on_host la D.Float32 s (Array.map f32 xs)
+          and y = on_host lb D.Float32 s (Array.map f32 ys) in
+          let sum = Nx.add x y in
+          let product = bytes (Nx.mul sum y) in
+          equal
+            (triple (array int) (array int) (array int))
+            (bytes sum, product, product)
+            (fused_maps x y));
+      prop "a map gives the same bits over operands offered for donation"
+        case (fun (s, la, lb, xs, ys) ->
+          let x = on_host la D.Float32 s (Array.map f32 xs)
+          and y = on_host lb D.Float32 s (Array.map f32 ys) in
+          let x' = Nx.copy x and y' = Nx.copy y in
+          ignore (Nx.donate x');
+          ignore (Nx.donate y');
+          equal
+            (triple (array int) (array int) (array int))
+            (fused_maps x y) (fused_maps x' y'));
       prop "add is float32 addition, each element rounded once" case
         (fun (s, la, lb, xs, ys) ->
           cover "no element" (Array.exists (( = ) 0) s);
@@ -342,6 +400,39 @@ let broadcasting =
                 (on_host Plain D.Float32 [| 4 |] (Array.make 4 0.))));
     ]
 
+(* Counting nx.cpu, declining every [Add] and [Less], alone or in a map. A
+   call first runs what its domain left [pending], once: a call another domain
+   makes after the operation checked its operands and before its kernel reads
+   them or declines. *)
+module Gated = struct
+  include C
+
+  let name = "nx.gated"
+  let pending = Domain.DLS.new_key (fun () -> None)
+
+  let first () =
+    match Domain.DLS.get pending with
+    | None -> ()
+    | Some f ->
+        Domain.DLS.set pending None;
+        f ()
+
+  let declined : Nx_kernel.Prog.node -> bool = function
+    | Op2 ((Binary Add | Compare Less), _, _) -> true
+    | _ -> false
+
+  let contract ~batch ~contracting ~segments ~acc ~dst ~init a b =
+    first ();
+    C.contract ~batch ~contracting ~segments ~acc ~dst ~init a b
+
+  let map (prog : Nx_kernel.Prog.t) ~dsts loads =
+    first ();
+    if Iarray.exists declined prog.nodes then A.Declined
+    else C.map prog ~dsts loads
+end
+
+module Gate = (val Nx.devices ~kernels:(module Gated) [ m 1 ])
+
 let to_count x = Nx.place Count.on x
 
 (* [f ()] raises for one decline by nx.refusing on m2, of [kind] over [dts],
@@ -401,6 +492,38 @@ let declines =
           raises_match
             (Exn.invalid_arg ~substring:"test: nx.cpu does not compute")
             (fun () -> Nx.Prim.eval ~by:"test" op));
+      test "a declined built map names its node, or Map" (fun () ->
+          let x = refused [| 4.; 3.; 2.; 1. |] in
+          let f = D.Any D.Float32 in
+          let prog nodes outs = Nx_kernel.Prog.v ~ins:[| f; f |] nodes ~outs in
+          let layout = A.Layout.contiguous [| 2; 2 |] in
+          let loads : Refuse.d Nx.Prim.load iarray = [| Plain x; Plain x |] in
+          let eval p =
+            fst
+              (Nx.Prim.eval ~by:"test"
+                 (Map { layout; prog = p; outs = [ D.Float32 ]; loads }))
+          in
+          refused_once "test" "Add" "float32, float32, float32" (fun () ->
+              eval (prog [| In 0; In 1; Op2 (Binary Add, 0, 1) |] [| 2 |]));
+          let g = on_host Plain D.Float32 [| 2 |] [| 1.; 2. |] in
+          let g = Nx.place Gate.on g in
+          let nodes : Nx_kernel.Prog.node iarray =
+            [| In 0; In 1; Op2 (Binary Add, 0, 1); Op1 (Unary Neg, f, 2) |]
+          in
+          raises
+            (Invalid_argument
+               "test: nx.gated does not compute Map on float32, float32 (m1); \
+                place its operands with Nx.place on a set whose kernels \
+                compute it")
+            (fun () ->
+              Nx.Prim.eval ~by:"test"
+                (Map
+                   {
+                     layout = A.Layout.contiguous [| 2 |];
+                     prog = prog nodes [| 3 |];
+                     outs = [ D.Float32 ];
+                     loads = [| Plain g; Plain g |];
+                   })));
       test "a declined copy raises once" (fun () ->
           let x = refused [| 4.; 3.; 2.; 1. |] in
           refused_once "Nx.reshape" "Copy" "float32" (fun () ->
@@ -422,38 +545,6 @@ let declines =
           dead "Nx.less" (fun h -> Nx.less h y));
     ]
 
-(* Counting nx.cpu, declining every [Add] and [Less], alone or in a map. A
-   call first runs what its domain left [pending], once: a call another domain
-   makes after the operation checked its operands and before its kernel reads
-   them or declines. *)
-module Gated = struct
-  include C
-
-  let name = "nx.gated"
-  let pending = Domain.DLS.new_key (fun () -> None)
-
-  let first () =
-    match Domain.DLS.get pending with
-    | None -> ()
-    | Some f ->
-        Domain.DLS.set pending None;
-        f ()
-
-  let declined : Nx_kernel.Prog.node -> bool = function
-    | Op2 ((Binary Add | Compare Less), _, _) -> true
-    | _ -> false
-
-  let contract ~batch ~contracting ~segments ~acc ~dst ~init a b =
-    first ();
-    C.contract ~batch ~contracting ~segments ~acc ~dst ~init a b
-
-  let map (prog : Nx_kernel.Prog.t) ~dsts loads =
-    first ();
-    if Iarray.exists declined prog.nodes then A.Declined
-    else C.map prog ~dsts loads
-end
-
-module Gate = (val Nx.devices ~kernels:(module Gated) [ m 1 ])
 
 (* [f ()] with [g] run on another domain inside its first call into nx.gated:
    after [f]'s operation checked its operands, before its kernel reads them. *)

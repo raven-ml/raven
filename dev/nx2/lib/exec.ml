@@ -596,7 +596,121 @@ let refused : type r. by:string -> kernels:string -> Rig.t -> r Value.prim -> 'a
       | None -> refuses ~by ~kernels (Prim.name op) d dts)
   | _ -> refuses ~by ~kernels (Prim.name op) d dts
 
+(* A fresh array of [dt] on [d] laid out as [l], C-contiguous from offset 0.
+   A dtype narrower than a byte is created, whose spare bits in its last byte
+   are zero. *)
+let fresh_over (type w r) (dt : (w, r) D.t) l d : (w, r) A.t =
+  if D.bits dt >= 8 then A.v dt l (Rig.Buffer.create d (D.bytes dt (L.numel l)))
+  else A.create d dt (L.shape l)
+
+(* A destination for a result of [dt] beside [x]: over [x]'s layout where it is
+   C-contiguous from offset 0 and of [dt], fresh otherwise. *)
+let destination (type v s w r) (dt : (w, r) D.t) (x : (v, s) A.t) : (w, r) A.t =
+  let l = A.layout x in
+  if L.is_contiguous l && L.offset l = 0 && D.equal dt (A.dtype x) then
+    fresh_over dt l (A.device x)
+  else A.create (A.device x) dt (L.shape l)
+
+(* The kernels of [x]'s set where [x] is a live array. *)
+let live_kernels (type v s d) (x : (v, s, d) Value.t) =
+  match x with
+  | Value.Array r when r.dead == Value.Live ->
+      Devices.kernels (Devices.set r.at)
+  | _ -> None
+
+(* Whether [y] is a live array at [x]'s placement, [x] an array. *)
+let beside (type v s w r d) (x : (v, s, d) Value.t) (y : (w, r, d) Value.t) =
+  match (x, y) with
+  | Value.Array rx, Value.Array ry -> rx.at == ry.at && ry.dead == Value.Live
+  | _ -> false
+
+(* The array [load] reads. *)
+let any (load : Nx_kernel.load) =
+  match load with Plain a -> A.Any a | Padded { x; _ } -> A.Any x
+
+(* The map [p] of one result computed by [K] into [dst] at [at], over
+   [loads]. A decline raises as {!refused} names a map, and a refusal naming
+   [by]. *)
+let mapped (type w r d) ~by (module K : Nx_kernel.S) (at : d Devices.placement)
+    p (dst : (w, r) A.t) loads : (w, r, d) Value.t =
+  match K.map p ~dsts:[| A.Any dst |] loads with
+  | Done -> Value.Array { at; a = dst; dead = Value.Live }
+  | Declined -> (
+      let ins = Iarray.to_list p.ins in
+      match P.single p with
+      | Some node ->
+          declined ~by ~kernels:K.name node (A.device dst)
+            (D.Any (A.dtype dst) :: ins)
+      | None -> refuses ~by ~kernels:K.name "Map" (A.device dst) ins)
+  | refusal ->
+      A.refused by refusal (A.Any dst :: List.map any (Array.to_list loads))
+
+(* Whether [loads] are live arrays read plainly at physically one placement,
+   the first's: a map over them computes on its one device, where its route
+   would read them and put its results ({!Prim.route}). *)
+let beside_first (type d) (loads : d Value.load iarray) =
+  let n = Iarray.length loads in
+  n > 0
+  &&
+  match Iarray.get loads 0 with
+  | Value.Plain (Value.Array f) when f.dead == Value.Live ->
+      let at = f.at and i = ref 1 in
+      while
+        !i < n
+        &&
+        match Iarray.get loads !i with
+        | Value.Plain (Value.Array r) -> r.at == at && r.dead == Value.Live
+        | Value.Plain _ | Value.Padded _ -> false
+      do
+        incr i
+      done;
+      !i = n
+  | Value.Plain _ | Value.Padded _ -> false
+
+(* The map [op] over loads {!beside_first} holds, computed as {!sharded}
+   computes it at their placement without its route: its rule checked, its
+   results fresh there, the set's kernels called once. A map of one result,
+   as an interpreter's one-node map is, builds the kernels' loads directly
+   and computes as {!apply1} does, by {!mapped}. *)
+let local : type r. by:string -> r Value.prim -> r =
+ fun ~by op ->
+  let layouts = Prim.layouts ~by op in
+  match op with
+  | Value.Map { layout; prog; outs = [ dt ]; loads } -> (
+      match Iarray.get loads 0 with
+      | Value.Plain (Value.Array { at; a; _ }) ->
+          let kernels = kernels_of ~by ~op:"Map" (Devices.set at) in
+          let n = Iarray.length loads in
+          let arrays = Array.make n (Nx_kernel.Plain a) in
+          for i = 1 to n - 1 do
+            match Iarray.get loads i with
+            | Value.Plain (Value.Array r) -> arrays.(i) <- Nx_kernel.Plain r.a
+            | Value.Plain _ | Value.Padded _ -> invalid_arg "Exec.local"
+          done;
+          let dst = fresh_over dt layout (A.device a) in
+          (mapped ~by kernels at prog dst arrays, ())
+      | Value.Plain _ | Value.Padded _ -> invalid_arg "Exec.local")
+  | Value.Map { loads; _ } -> (
+      match Iarray.get loads 0 with
+      | Value.Plain (Value.Array { at; a; _ }) ->
+          let p = Some (Devices.rebrand at) in
+          let r = Prim.results_at p layouts (fun k f -> alloc ~by k f) op in
+          let kernels = kernels_of ~by ~op:"Map" (Devices.set at) in
+          if call ~by kernels op r 0 then r
+          else
+            let (module K : Nx_kernel.S) = kernels in
+            refused ~by ~kernels:K.name (A.device a) op
+      | Value.Plain _ | Value.Padded _ -> invalid_arg "Exec.local")
+  | _ -> invalid_arg "Exec.local: not a map"
+
+let is_local : type r. r Value.prim -> bool = function
+  | Value.Map { loads; _ } -> beside_first loads
+  | _ -> false
+
 let rec run : type r. by:string -> r Value.prim -> r =
+ fun ~by op -> if is_local op then local ~by op else general ~by op
+
+and general : type r. by:string -> r Value.prim -> r =
  fun ~by op ->
   if not (Prim.exists Donate.is_handle op) then begin
     Prim.iteri (fun _ x -> checked ~by x) op;
@@ -1131,49 +1245,6 @@ and compute_node result (Value.Node n) p =
         Array.of_list (List.rev !per)
 
 (* The fast path *)
-
-(* A destination for a result of [dt] beside [x]: over [x]'s layout where it is
-   C-contiguous from offset 0 and of [dt], fresh otherwise. A dtype narrower
-   than a byte is always fresh, whose spare bits in its last byte are zero. *)
-let destination (type v s w r) (dt : (w, r) D.t) (x : (v, s) A.t) : (w, r) A.t =
-  let l = A.layout x in
-  if
-    L.is_contiguous l
-    && L.offset l = 0
-    && D.equal dt (A.dtype x)
-    && D.bits dt >= 8
-  then A.v dt l (Rig.Buffer.create (A.device x) (D.bytes dt (L.numel l)))
-  else A.create (A.device x) dt (L.shape l)
-
-(* The kernels of [x]'s set where [x] is a live array. *)
-let live_kernels (type v s d) (x : (v, s, d) Value.t) =
-  match x with
-  | Value.Array r when r.dead == Value.Live ->
-      Devices.kernels (Devices.set r.at)
-  | _ -> None
-
-(* Whether [y] is a live array at [x]'s placement, [x] an array. *)
-let beside (type v s w r d) (x : (v, s, d) Value.t) (y : (w, r, d) Value.t) =
-  match (x, y) with
-  | Value.Array rx, Value.Array ry -> rx.at == ry.at && ry.dead == Value.Live
-  | _ -> false
-
-(* The array [load] reads. *)
-let any (load : Nx_kernel.load) =
-  match load with Plain a -> A.Any a | Padded { x; _ } -> A.Any x
-
-(* The one-node map [p] computed by [K] into [dst] at [at], over [loads]. A
-   decline raises as {!refused} names a one-node map, and a refusal naming
-   [by]. *)
-let mapped (type w r d) ~by (module K : Nx_kernel.S) (at : d Devices.placement)
-    p (dst : (w, r) A.t) loads : (w, r, d) Value.t =
-  match K.map p ~dsts:[| A.Any dst |] loads with
-  | Done -> Value.Array { at; a = dst; dead = Value.Live }
-  | Declined ->
-      declined ~by ~kernels:K.name (Option.get (P.single p)) (A.device dst)
-        (D.Any (A.dtype dst) :: Iarray.to_list p.ins)
-  | refusal ->
-      A.refused by refusal (A.Any dst :: List.map any (Array.to_list loads))
 
 let apply1 ~by k dt x =
   match (x, live_kernels x, Prim.node1 k (Prim.dtype x) dt) with
