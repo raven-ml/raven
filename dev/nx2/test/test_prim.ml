@@ -706,6 +706,192 @@ let partials =
         (fun (_, g) -> equal compute Windows (route ~segments:g [| 64 |] None));
     ]
 
+(* One-node programs *)
+
+let unaries =
+  P.
+    [
+      Neg; Recip; Abs; Sign; Sqrt; Exp; Exp2; Log; Log2; Log1p; Expm1; Sin;
+      Cos; Tan; Asin; Acos; Atan; Sinh; Cosh; Tanh; Asinh; Acosh; Atanh; Erf;
+      Floor; Ceil; Round; Trunc;
+    ]
+
+let binaries =
+  P.
+    [
+      Add; Sub; Mul; Fdiv; Idiv; Mod; Pow; Atan2; Maximum; Minimum; And; Or;
+      Xor; Threefry;
+    ]
+
+let compares = P.[ Equal; Not_equal; Less; Less_equal ]
+
+let op1s =
+  P.[ Copy; Cast; Bitcast ] @ List.map (fun u -> P.Unary u) unaries
+
+let op2s =
+  List.map (fun b -> P.Binary b) binaries
+  @ List.map (fun c -> P.Compare c) compares
+
+let name (D.Any dt) = D.name dt
+
+(* [p]'s fields, each node by its kind and its fields. *)
+let pp_prog ppf (p : P.t) =
+  let list pp ppf xs =
+    let sep ppf () = Format.fprintf ppf "; " in
+    Format.pp_print_list ~pp_sep:sep pp ppf (Iarray.to_list xs)
+  in
+  let node ppf (n : P.node) =
+    let k = Prim.kind n in
+    match n with
+    | In i | Coord i -> Format.fprintf ppf "%s %d" k i
+    | Const (dt, _) -> Format.fprintf ppf "%s %s" k (name dt)
+    | Op1 (_, dt, a) -> Format.fprintf ppf "%s %s %d" k (name dt) a
+    | Op2 (_, a, b) -> Format.fprintf ppf "%s %d %d" k a b
+    | Op3 (_, a, b, c) -> Format.fprintf ppf "%s %d %d %d" k a b c
+  in
+  let dtype ppf d = Format.pp_print_string ppf (name d) in
+  Format.fprintf ppf "{ ins = [%a]; nodes = [%a]; outs = [%a] }" (list dtype)
+    p.ins (list node) p.nodes (list Format.pp_print_int) p.outs
+
+let prog = option (Testable.structural ~pp:pp_prog)
+let pairs f = List.concat_map (fun x -> List.map (f x) D.all) D.all
+
+(* Every key of each arity's programs: a kind and its operands' and result's
+   dtypes. *)
+let keys1 = List.concat_map (fun k -> pairs (fun x y -> (k, x, y))) op1s
+let keys2 = List.concat_map (fun k -> List.map (fun x -> (k, x)) D.all) op2s
+
+let keys3 =
+  List.concat_map (fun k -> pairs (fun c x -> (k, c, x))) P.[ Where; Fma ]
+
+let strf = Printf.sprintf
+
+let name1 (k, x, y) =
+  strf "%s %s to %s" (Prim.kind (Op1 (k, y, 0))) (name x) (name y)
+
+let name2 (k, x) = strf "%s %s" (Prim.kind (Op2 (k, 0, 1))) (name x)
+
+let name3 (k, c, x) =
+  strf "%s %s %s" (Prim.kind (Op3 (k, 0, 1, 2))) (name c) (name x)
+
+let test_node1 (k, D.Any x, D.Any y) =
+  let want =
+    if not (P.accepts1 k x y) then None
+    else Some (P.of_node ~ins:[| D.Any x |] (Op1 (k, D.Any y, 0)))
+  in
+  equal prog want (Prim.node1 k x y)
+
+let test_node2 (k, D.Any x) =
+  let want =
+    if not (P.accepts2 k x) then None
+    else Some (P.of_node ~ins:[| D.Any x; D.Any x |] (Op2 (k, 0, 1)))
+  in
+  equal prog want (Prim.node2 k x)
+
+let test_node3 (k, D.Any c, D.Any x) =
+  let want =
+    if not (P.accepts3 k c x) then None
+    else
+      Some (P.of_node ~ins:[| D.Any c; D.Any x; D.Any x |] (Op3 (k, 0, 1, 2)))
+  in
+  equal prog want (Prim.node3 k c x)
+
+let test_node_found_allocates_nothing () =
+  let add = P.Binary Add and cast = P.Cast in
+  let calls () =
+    ignore (Sys.opaque_identity (Prim.node1 cast D.Float32 D.Int8));
+    ignore (Sys.opaque_identity (Prim.node2 add D.Float32));
+    ignore (Sys.opaque_identity (Prim.node3 Where D.Bool D.Float32))
+  in
+  calls ();
+  let before = Gc.minor_words () in
+  for _ = 1 to 1000 do
+    calls ()
+  done;
+  equal ~msg:"words" (float 0.5) 0. (Gc.minor_words () -. before)
+
+(* The cache against a model, a map from each key to the program its first
+   lookup gave, with lookups on two domains: each result must be the one some
+   order of the calls gives. The keys span every kind and dtype, so that most
+   lookups fill a slot first. *)
+
+type key =
+  | K1 of P.op1 * D.any * D.any
+  | K2 of P.op2 * D.any
+  | K3 of P.op3 * D.any * D.any
+
+module Keys = Map.Make (struct
+  type t = key
+
+  let compare = compare
+end)
+
+let lookup = function
+  | K1 (k, D.Any x, D.Any y) -> Prim.node1 k x y
+  | K2 (k, D.Any x) -> Prim.node2 k x
+  | K3 (k, D.Any c, D.Any x) -> Prim.node3 k c x
+
+(* What prim.mli states the lookup of [key] gives. *)
+let made = function
+  | K1 (k, (D.Any x as dx), (D.Any y as dy)) ->
+      if not (P.accepts1 k x y) then None
+      else Some (P.of_node ~ins:[| dx |] (Op1 (k, dy, 0)))
+  | K2 (k, (D.Any x as dx)) ->
+      if not (P.accepts2 k x) then None
+      else Some (P.of_node ~ins:[| dx; dx |] (Op2 (k, 0, 1)))
+  | K3 (k, (D.Any c as dc), (D.Any x as dx)) ->
+      if not (P.accepts3 k c x) then None
+      else Some (P.of_node ~ins:[| dc; dx; dx |] (Op3 (k, 0, 1, 2)))
+
+let model cache key =
+  match Keys.find_opt key !cache with
+  | Some p -> p
+  | None ->
+      let p = made key in
+      cache := Keys.add key p !cache;
+      p
+
+let pp_key ppf = function
+  | K1 (k, x, y) -> Format.pp_print_string ppf (name1 (k, x, y))
+  | K2 (k, x) -> Format.pp_print_string ppf (name2 (k, x))
+  | K3 (k, c, x) -> Format.pp_print_string ppf (name3 (k, c, x))
+
+let keys f l =
+  let a = Array.of_list (List.map f l) in
+  Gen.with_pp pp_key
+    (Gen.map (Array.get a) (Gen.int_range 0 (Array.length a - 1)))
+
+let cache = abstract "c"
+
+let cache_commands =
+  let start () = ref Keys.empty and system () key = lookup key in
+  [
+    command "start" (Gen.unit @-> makes cache) start Fun.id;
+    command "node1"
+      (cache ^-> keys (fun (k, x, y) -> K1 (k, x, y)) keys1 @-> returns prog)
+      model system;
+    command "node2"
+      (cache ^-> keys (fun (k, x) -> K2 (k, x)) keys2 @-> returns prog)
+      model system;
+    command "node3"
+      (cache ^-> keys (fun (k, c, x) -> K3 (k, c, x)) keys3 @-> returns prog)
+      model system;
+  ]
+
+let one_node_programs =
+  group "one-node programs"
+    [
+      cases "node1 is of_node's program where its kind takes its dtypes"
+        ~name:name1 keys1 test_node1;
+      cases "node2 is of_node's program where its kind takes its dtype"
+        ~name:name2 keys2 test_node2;
+      cases "node3 is of_node's program where its kind takes its dtypes"
+        ~name:name3 keys3 test_node3;
+      test "a node found allocates nothing" test_node_found_allocates_nothing;
+      stateful ~domains:2 ~count:20 ~steps:8
+        "lookups on two domains give the model's programs" cache_commands;
+    ]
+
 let operations =
   group "operations"
     [
@@ -762,4 +948,5 @@ let () =
          contractions;
          partials;
          operations;
+         one_node_programs;
        ])

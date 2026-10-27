@@ -126,7 +126,7 @@ let map_on ~by (module K : Nx_kernel.S) (prog : P.t) loads dsts =
 (* [K]'s map of the one node [k] over the plain operands that follow [dst];
    [Wrong_dtype] where [k] does not take their dtypes, as no program does. *)
 let map1 (module K : Nx_kernel.S) k ~dst a =
-  match P.node1 k (A.dtype a) (A.dtype dst) with
+  match Prim.node1 k (A.dtype a) (A.dtype dst) with
   | None -> A.Wrong_dtype
   | Some p -> K.map p ~dsts:[| A.Any dst |] [| Nx_kernel.Plain a |]
 
@@ -1176,20 +1176,20 @@ let mapped (type w r d) ~by (module K : Nx_kernel.S) (at : d Devices.placement)
       A.refused by refusal (A.Any dst :: List.map any (Array.to_list loads))
 
 let apply1 ~by k dt x =
-  match (x, live_kernels x, P.node1 k (Prim.dtype x) dt) with
+  match (x, live_kernels x, Prim.node1 k (Prim.dtype x) dt) with
   | Value.Array { at; a; _ }, Some kernels, Some p ->
       mapped ~by kernels at p (destination dt a) [| Plain a |]
   | _ -> fst (run ~by (Prim.op1 ~by k dt x))
 
 let apply2 ~by k dt x y =
-  match (x, y, live_kernels x, P.node2 k (Prim.dtype x)) with
+  match (x, y, live_kernels x, Prim.node2 k (Prim.dtype x)) with
   | Value.Array { at; a; _ }, Value.Array { a = b; _ }, Some kernels, Some p
     when beside x y ->
       mapped ~by kernels at p (destination dt a) [| Plain a; Plain b |]
   | _ -> fst (run ~by (Prim.op2 ~by k dt x y))
 
 let apply3 ~by k c x y =
-  match (c, x, y, live_kernels c, P.node3 k (Prim.dtype c) (Prim.dtype x)) with
+  match (c, x, y, live_kernels c, Prim.node3 k (Prim.dtype c) (Prim.dtype x)) with
   | ( Value.Array { at; a = ca; _ },
       Value.Array { a; _ },
       Value.Array { a = b; _ },

@@ -572,8 +572,6 @@ let test_is_single_allocates_nothing () =
   done;
   equal ~msg:"words" (float 0.5) 0. (Gc.minor_words () -. before)
 
-(* One-node programs, kept *)
-
 let pp_prog ppf (p : P.t) =
   let list pp ppf xs =
     let sep ppf () = Format.fprintf ppf "; " in
@@ -582,57 +580,6 @@ let pp_prog ppf (p : P.t) =
   let dtype ppf d = Format.pp_print_string ppf (name d) in
   Format.fprintf ppf "{ ins = [%a]; nodes = [%a]; outs = [%a] }" (list dtype)
     p.ins (list pp_node) p.nodes (list Format.pp_print_int) p.outs
-
-let prog = option (Testable.structural ~pp:pp_prog)
-let pairs f = List.concat_map (fun x -> List.map (f x) D.all) D.all
-
-(* Every key of each arity's programs: a kind and its operands' and result's
-   dtypes. *)
-let keys1 = List.concat_map (fun k -> pairs (fun x y -> (k, x, y))) op1s
-let keys2 = List.concat_map (fun k -> List.map (fun x -> (k, x)) D.all) op2s
-
-let keys3 =
-  List.concat_map (fun k -> pairs (fun c x -> (k, c, x))) P.[ Where; Fma ]
-
-let name1 (k, x, y) = strf "%s %s to %s" (op1_name k) (name x) (name y)
-let name2 (k, x) = strf "%s %s" (op2_name k) (name x)
-let name3 (k, c, x) = strf "%s %s %s" (op3_name k) (name c) (name x)
-
-let test_node1 (k, D.Any x, D.Any y) =
-  let want =
-    if not (P.accepts1 k x y) then None
-    else Some (P.of_node ~ins:[| D.Any x |] (Op1 (k, D.Any y, 0)))
-  in
-  equal prog want (P.node1 k x y)
-
-let test_node2 (k, D.Any x) =
-  let want =
-    if not (P.accepts2 k x) then None
-    else Some (P.of_node ~ins:[| D.Any x; D.Any x |] (Op2 (k, 0, 1)))
-  in
-  equal prog want (P.node2 k x)
-
-let test_node3 (k, D.Any c, D.Any x) =
-  let want =
-    if not (P.accepts3 k c x) then None
-    else
-      Some (P.of_node ~ins:[| D.Any c; D.Any x; D.Any x |] (Op3 (k, 0, 1, 2)))
-  in
-  equal prog want (P.node3 k c x)
-
-let test_node_found_allocates_nothing () =
-  let add = P.Binary Add and cast = P.Cast in
-  let calls () =
-    ignore (Sys.opaque_identity (P.node1 cast D.Float32 D.Int8));
-    ignore (Sys.opaque_identity (P.node2 add D.Float32));
-    ignore (Sys.opaque_identity (P.node3 Where D.Bool D.Float32))
-  in
-  calls ();
-  let before = Gc.minor_words () in
-  for _ = 1 to 1000 do
-    calls ()
-  done;
-  equal ~msg:"words" (float 0.5) 0. (Gc.minor_words () -. before)
 
 let test_program_refuses () =
   let f32 = D.Any D.Float32 in
@@ -1605,13 +1552,6 @@ let tests =
         test "single is one node over its operands in order" test_single;
         test "is_single allocates nothing" test_is_single_allocates_nothing;
         test "dtype refuses a node past the program" test_dtype_refuses;
-        cases "node1 is of_node's program where its kind takes its dtypes"
-          ~name:name1 keys1 test_node1;
-        cases "node2 is of_node's program where its kind takes its dtype"
-          ~name:name2 keys2 test_node2;
-        cases "node3 is of_node's program where its kind takes its dtypes"
-          ~name:name3 keys3 test_node3;
-        test "a node found allocates nothing" test_node_found_allocates_nothing;
         test "each tag, field and kind is nx_kernel.h's code" test_codes;
       ];
     group "expressions"

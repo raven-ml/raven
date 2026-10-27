@@ -95,8 +95,8 @@ val apply3 :
     whose set has kernels, where [k] takes their dtypes, it builds no
     operation: it allocates the result, sharing the first operand's layout
     ([apply3]'s second) when that is C-contiguous at offset 0 and of the
-    result's dtype, at least a byte wide, and calls the kernels' [map] once, with the program of
-    [k] that {!Nx_kernel.Prog.node1} to {!Nx_kernel.Prog.node3} keep. A
+    result's dtype, at least a byte wide, and calls the kernels' [map] once,
+    with the program of [k] that {!Prim.node1} to {!Prim.node3} keep. A
     decline raises as in {!run}, and a refusal naming [by]. Otherwise it is
     {!run} of the operation ({!Prim.op1} to {!Prim.op3}), whose rule raises on
     operands it does not take; a traced operand raises as in {!run}. *)

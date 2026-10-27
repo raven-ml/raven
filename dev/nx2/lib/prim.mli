@@ -252,6 +252,28 @@ val reduction_name : Nx_kernel.reduction -> string
 val reduced : int array -> int iarray -> int array
 (** [reduced s axes] is [s] without [axes]. *)
 
+val node1 :
+  Nx_kernel.Prog.op1 ->
+  ('a, 'b) dtype ->
+  ('v, 's) dtype ->
+  Nx_kernel.Prog.t option
+
+val node2 : Nx_kernel.Prog.op2 -> ('a, 'b) dtype -> Nx_kernel.Prog.t option
+
+val node3 :
+  Nx_kernel.Prog.op3 ->
+  ('c, 'e) dtype ->
+  ('a, 'b) dtype ->
+  Nx_kernel.Prog.t option
+(** [nodeN k x …] is [Some] the program {!Nx_kernel.Prog.of_node} makes of
+    the one node [k] reading its operands in order, over an operand of [x]
+    into [y] for [node1 k x y], two of [x] for [node2 k x], and one of [c]
+    then two of [x] for [node3 k c x]. It is [None] where [k] does not take
+    them ({!Nx_kernel.Prog.accepts1} and its siblings). A program is kept
+    once made: a call that finds it allocates nothing. Domains may call it
+    concurrently; two that find its slot empty at once each make an equal
+    program. *)
+
 val op1 :
   by:string ->
   Nx_kernel.Prog.op1 ->

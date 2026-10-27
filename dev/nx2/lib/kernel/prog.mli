@@ -234,21 +234,6 @@ val of_node : ins:Nx_array.Dtype.any iarray -> node -> t
 
     Raises [Invalid_argument] as {!v} does. *)
 
-val node1 :
-  op1 -> ('a, 'b) Nx_array.Dtype.t -> ('v, 's) Nx_array.Dtype.t -> t option
-
-val node2 : op2 -> ('a, 'b) Nx_array.Dtype.t -> t option
-
-val node3 :
-  op3 -> ('c, 'e) Nx_array.Dtype.t -> ('a, 'b) Nx_array.Dtype.t -> t option
-(** [nodeN k x …] is [Some] the program {!of_node} makes of the one node [k]
-    reading its operands in order, over an operand of [x] into [y] for
-    [node1 k x y], two of [x] for [node2 k x], and one of [c] then two of [x]
-    for [node3 k c x]. It is [None] where [k] does not take them
-    ({!accepts1} and its siblings). A program is kept once made: a call that
-    finds it allocates nothing. Domains may call it concurrently; two that
-    find its slot empty at once each make an equal program. *)
-
 val dtype : t -> int -> Nx_array.Dtype.any
 (** [dtype p i] is the dtype of [p]'s node [i]: its operand's for [In], [int64]
     for [Coord], the one it names for [Const] and [Op1], its operands' for a
