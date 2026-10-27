@@ -213,6 +213,9 @@ static int same_shape(const int64_t *x, int r, const int64_t *y, int ry) {
    formula, not measured (2026-10-27). */
 static double target_cost(int dt) { return 2.0 * nx_cpu_width(dt); }
 
+/* What a scatter's [n] updates take, its call's and each job's share. */
+static double updates_cost(int64_t n) { return (double)n * UPDATE_COST; }
+
 value nx_cpu_gather(value vaxis, value vd, value vi, value vx) {
   CAMLparam4(vaxis, vd, vi, vx);
   intnat axis = Long_val(vaxis);
@@ -706,8 +709,8 @@ static void narrow_rows(scatter *c, int64_t v, int64_t bytes) {
     if (j == 0 || c->rp[j] != c->rp[j - 1]) runs[n++] = j;
   runs[n] = k;
   c->runs = runs;
-  nx_cpu_job(n * ((c->len + RUN_PIECE - 1) / RUN_PIECE), bytes, (double)bytes,
-             run_pieces, c);
+  nx_cpu_job(n * ((c->len + RUN_PIECE - 1) / RUN_PIECE), bytes,
+             updates_cost(c->m * c->len), run_pieces, c);
 }
 
 /* Sums unit [u]'s run of [n] slices, its positions in [lo, lo + span):
@@ -795,8 +798,9 @@ static void count_parts(int64_t lo, int64_t hi, int worker, void *ctx) {
    four for each of its run's positions in its part: answers 0 where memory
    runs out. A run is cut into pieces of at most COUNT_PIECE positions, and
    into enough for the [threads] where the runs are few: a 1-d Add of 200K
-   updates would count on one thread. */
-static int part_order(scatter *c, int64_t units, int64_t bytes,
+   updates would count on one thread. The count reads [bytes] and costs
+   [cost]. */
+static int part_order(scatter *c, int64_t units, int64_t bytes, double cost,
                       int threads) {
   int64_t jobs = units * c->parts;
   int64_t pieces = (c->m + COUNT_PIECE - 1) / COUNT_PIECE;
@@ -809,7 +813,7 @@ static int part_order(scatter *c, int64_t units, int64_t bytes,
   int ok = k.first != NULL && k.counts != NULL && c->at != NULL;
   if (ok) {
     for (int64_t g = 0; g <= c->parts; g++) k.first[g] = part_first(c, g);
-    nx_cpu_job(units * pieces, bytes, (double)bytes, count_parts, &k);
+    nx_cpu_job(units * pieces, bytes, cost, count_parts, &k);
     c->at[0] = 0;
     for (int64_t u = 0; u < jobs; u++) {
       int64_t v = u / c->parts * pieces, g = u % c->parts, n = 0;
@@ -1084,7 +1088,8 @@ static int bin_shift(uint64_t dim, int64_t w, int threads) {
   return s;
 }
 
-/* Scatters run [v] by sorted blocks. */
+/* Scatters run [v] by sorted blocks. A block's updates' cost is shared
+   between its sort and its application as their bytes are. */
 static void sorted(scatter *c, int64_t v, int threads) {
   int64_t p[4];
   c->n = run_at(c, v, p);
@@ -1096,10 +1101,11 @@ static void sorted(scatter *c, int64_t v, int threads) {
     c->steps = c->m - c->b0 < c->block ? c->m - c->b0 : c->block;
     c->chunks = c->steps < threads ? c->steps : threads;
     int64_t e = entry_bytes(c);
-    int64_t bytes = c->steps * 2 * (8 + e);
-    nx_cpu_job(c->chunks, bytes, (double)bytes, sort_chunks, c);
-    bytes = apply_bytes(c, c->steps, c->n);
-    nx_cpu_job(c->bins, bytes, (double)bytes,
+    int64_t sorting = c->steps * 2 * (8 + e);
+    int64_t applying = apply_bytes(c, c->steps, c->n);
+    double per = updates_cost(c->steps * c->n) / (double)(sorting + applying);
+    nx_cpu_job(c->chunks, sorting, per * (double)sorting, sort_chunks, c);
+    nx_cpu_job(c->bins, applying, per * (double)applying,
                c->narrow ? narrow_bins : apply_bins, c);
   }
 }
@@ -1175,8 +1181,8 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
     updates *= us[i];
   }
   double target = NX_CPU_STRIDED_COST * target_cost(dt);
-  int released = nx_cpu_release((double)total * target +
-                                (double)updates * UPDATE_COST);
+  int released =
+      nx_cpu_release((double)total * target + updates_cost(updates));
   if (total == 0 || updates == 0) {
     copy_into(a, total);
     nx_cpu_reacquire(released);
@@ -1197,7 +1203,8 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
   static const int64_t unread[NX_MAX_RANK];
   int64_t units = slices(&c, us, r, axis, unread);
   int64_t bytes = updates * (8 + a[3].bits / 8 + a[0].bits / 8);
-  int threads = nx_cpu_threads(bytes, bytes);
+  double cost = updates_cost(updates);
+  int threads = nx_cpu_threads(bytes, cost);
   /* Fewer units than threads, over many updates, or any for a narrow
      float's sums. Units of one slice, as a 1-d scatter's or a narrow
      float's whose positions differ along its rows, and rows of slices
@@ -1225,7 +1232,12 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
   int parted = c.narrow && c.parts > 1;
   if (c.narrow && !sort)
     c.each = (rows || parted ? 0 : 32 * c.m) + 12 * UNIT_ROW;
-  int laid = !parted || part_order(&c, units, units * c.m * 8, threads);
+  /* Parted targets' count of their positions takes a share of the
+     updates' cost, as its bytes are of the positions' and the updates'. */
+  int64_t counted = parted ? units * c.m * 8 : 0;
+  double per = cost / (double)(bytes + counted);
+  int laid = !parted ||
+             part_order(&c, units, counted, per * (double)counted, threads);
   if (rows) {
     workers = threads;
     c.order = malloc((size_t)(5 * c.m + 1) * sizeof(int64_t));
@@ -1248,7 +1260,7 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
       int64_t apply = apply_bytes(&c, c.m, 1);
       c.each = flag_bytes(c.shift) + ((int64_t)4 << c.shift);
       workers = c.block < c.m ? (int)c.bins
-                              : nx_cpu_threads(apply, (double)apply);
+                              : nx_cpu_threads(apply, updates_cost(c.m));
     }
     int64_t most = c.m < c.block ? c.m : c.block, e = entry_bytes(&c);
     c.gather_bytes = c.bins * GATHER * (8 + e);
@@ -1277,7 +1289,7 @@ value nx_cpu_scatter(value vcombine, value vaxis, value vd, value vinto,
   else if (sort)
     for (int64_t v = 0; v < units; v++) sorted(&c, v, threads);
   else
-    nx_cpu_job(jobs, bytes, bytes, scatter_units, &c);
+    nx_cpu_job(jobs, bytes, per * (double)bytes, scatter_units, &c);
   free(c.sums);
   free(c.order);
   free(c.at);
