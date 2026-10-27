@@ -1542,12 +1542,28 @@ let two_axes dt ones =
     init = Some [| ones; ones |];
   }
 
+(* A product of one free axis on each side by a batch axis, of no contracted
+   axis, through a transposed [a], every run: [ones] as above. *)
+let outer dt ones =
+  let c = List.hd (empty dt) in
+  {
+    c with
+    eb = [| 2 |];
+    ek = [||];
+    fa = [| 2 |];
+    fb = [| 3 |];
+    ra = [| F 0; B 0 |];
+    rb = [| B 0; F 0 |];
+    ta = true;
+    araws = Array.make 4 ones;
+    braws = Array.make 6 ones;
+  }
+
 let int_contractions =
-  (* The wider accumulator is drawn three times as often as the operands'
-     own, so that every run of twelve reaches it. *)
-  let accs d = [ d; D.Any D.Int64; D.Any D.Int64; D.Any D.Int64 ] in
+  let accs d = [ d; D.Any D.Int64 ] in
+  let wide = { (outer (D.Any D.Int32) 1L) with acc = D.Any D.Int64 } in
   prop ~count:12
-    ~examples:(two_axes (D.Any D.Int32) 1L :: empty (D.Any D.Int32))
+    ~examples:(two_axes (D.Any D.Int32) 1L :: wide :: empty (D.Any D.Int32))
     "integer contractions wrap as eager's"
     (contraction (weigh 1 ints) accs)
     (fun c ->
@@ -1564,7 +1580,9 @@ let float_contractions =
   in
   prop ~count:12
     ~examples:
-      (two_axes (D.Any D.Float32) 0x3f800000L :: empty (D.Any D.Float32))
+      (two_axes (D.Any D.Float32) 0x3f800000L
+      :: outer (D.Any D.Float32) 0x3f800000L
+      :: empty (D.Any D.Float32))
     "float contractions hold their bound"
     (contraction (weigh 1 floats) accs)
     (fun c ->
@@ -1591,6 +1609,17 @@ let scaled_example =
     sb = Some (Values (D.Any D.Float16, [| 2; 1 |], [| 0x3c00L; 0xc000L |]));
   }
 
+(* Elements of a narrow float, [ones] the raws of its [1], scaled by codes
+   on both sides, as microscaling formats are, in [float32]. *)
+let coded dt ones =
+  let c = two_axes dt ones in
+  {
+    c with
+    acc = D.Any D.Float32;
+    sa = Some (Codes ([| 1; 1; 2 |], [| 127L; 126L |]));
+    sb = Some (Codes ([| 2; 1 |], [| 127L; 128L |]));
+  }
+
 let scaled_contractions =
   let accs (D.Any d as dt) =
     match d with
@@ -1602,12 +1631,29 @@ let scaled_contractions =
     | Some (Codes (b, _) | Values (_, b, _)) -> Array.exists (( < ) 1) b
     | None -> false
   in
-  prop ~count:12 ~examples:[ scaled_example ]
+  prop ~count:12
+    ~examples:
+      [
+        scaled_example;
+        coded (D.Any D.Float8_e4m3fn) 0x38L;
+        coded (D.Any D.Float4_e2m1fn) 0x2L;
+      ]
     "scaled float contractions hold their bound"
     (contraction ~extras:Scaled
-       (weigh 1 D.[ Any Float64; Any Float32; Any Float16; Any Bfloat16 ])
+       (weigh 1
+          D.
+            [
+              Any Float64;
+              Any Float32;
+              Any Float16;
+              Any Bfloat16;
+              Any Float8_e4m3fn;
+              Any Float4_e2m1fn;
+            ])
        accs)
     (fun c ->
+      cover "a float8_e4m3fn operand" (c.cdt = D.Any D.Float8_e4m3fn);
+      cover "a float4_e2m1fn operand" (c.cdt = D.Any D.Float4_e2m1fn);
       let is_code = function Some (Codes _) -> true | _ -> false in
       let is_value = function Some (Values _) -> true | _ -> false in
       cover "a code scale" (is_code c.sa || is_code c.sb);
