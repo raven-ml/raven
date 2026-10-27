@@ -8,7 +8,6 @@
   nx_cpu
   nx_kernel
   nx_kernel_cases
-  nx_kernel_support
   nx_kernels_support
   nx_kinds_support
   rig

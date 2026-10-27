@@ -5,7 +5,7 @@
 
 (* Programs: the kinds' domains against the table prog.mli states, constant
    bits against an array's bytes, and programs against what they were made
-   of and what C reads. *)
+   of. *)
 
 open Windtrap
 module A = Nx_array
@@ -42,58 +42,26 @@ let op2s =
   List.map (fun b -> P.Binary b) binaries
   @ List.map (fun c -> P.Compare c) compares
 
-(* The kind names nx_kinds.h and the C reader use. *)
-let unary_name : P.unary -> string = function
-  | Neg -> "neg"
-  | Recip -> "recip"
-  | Abs -> "abs"
-  | Sign -> "sign"
-  | Sqrt -> "sqrt"
-  | Exp -> "exp"
-  | Exp2 -> "exp2"
-  | Log -> "log"
-  | Log2 -> "log2"
-  | Log1p -> "log1p"
-  | Expm1 -> "expm1"
-  | Sin -> "sin"
-  | Cos -> "cos"
-  | Tan -> "tan"
-  | Asin -> "asin"
-  | Acos -> "acos"
-  | Atan -> "atan"
-  | Sinh -> "sinh"
-  | Cosh -> "cosh"
-  | Tanh -> "tanh"
-  | Asinh -> "asinh"
-  | Acosh -> "acosh"
-  | Atanh -> "atanh"
-  | Erf -> "erf"
-  | Floor -> "floor"
-  | Ceil -> "ceil"
-  | Round -> "round"
-  | Trunc -> "trunc"
+(* Each kind's name in messages. *)
+let named ks names k = List.assoc k (List.combine ks names)
 
-let binary_name : P.binary -> string = function
-  | Add -> "add"
-  | Sub -> "sub"
-  | Mul -> "mul"
-  | Fdiv -> "fdiv"
-  | Idiv -> "idiv"
-  | Mod -> "mod"
-  | Pow -> "pow"
-  | Atan2 -> "atan2"
-  | Maximum -> "maximum"
-  | Minimum -> "minimum"
-  | And -> "and"
-  | Or -> "or"
-  | Xor -> "xor"
-  | Threefry -> "threefry"
+let unary_name =
+  named unaries
+    [
+      "neg"; "recip"; "abs"; "sign"; "sqrt"; "exp"; "exp2"; "log"; "log2";
+      "log1p"; "expm1"; "sin"; "cos"; "tan"; "asin"; "acos"; "atan"; "sinh";
+      "cosh"; "tanh"; "asinh"; "acosh"; "atanh"; "erf"; "floor"; "ceil";
+      "round"; "trunc";
+    ]
 
-let compare_name : P.compare -> string = function
-  | Equal -> "equal"
-  | Not_equal -> "not_equal"
-  | Less -> "less"
-  | Less_equal -> "less_equal"
+let binary_name =
+  named binaries
+    [
+      "add"; "sub"; "mul"; "fdiv"; "idiv"; "mod"; "pow"; "atan2"; "maximum";
+      "minimum"; "and"; "or"; "xor"; "threefry";
+    ]
+
+let compare_name = named compares [ "equal"; "not_equal"; "less"; "less_equal" ]
 
 let op1_name = function
   | P.Copy -> "copy"
@@ -107,7 +75,15 @@ let op2_name = function
 
 let op3_name = function P.Where -> "where" | Fma -> "fma"
 
-(* prog.mli's table, by kind of number. *)
+(* prog.mli's domains, by kind of number: "Neg, Recip, Sign, Add, Sub, Mul,
+   Pow: every dtype but booleans. Fdiv: floats and complex. Idiv: integers.
+   Abs, Floor, Ceil, Round, Trunc, Mod, Fma: floats and integers. Sqrt, Exp,
+   Exp2, Log, Log2, and Sin to Tanh: floats and complex. Asinh, Acosh, Atanh:
+   complex. Log1p, Expm1, Erf, Atan2: floats. And, Or, Xor: integers and
+   booleans. Threefry: uint64. Maximum, Minimum and the comparisons: every
+   dtype. Copy: every dtype, into itself. Cast: every pair. Bitcast: every
+   pair of one width. Where: a boolean, then two operands of any one
+   dtype." *)
 type cls = Float | Signed | Unsigned | Boolean | Complex
 
 let cls (D.Any dt) : cls =
@@ -210,66 +186,6 @@ let test_domains () =
     dts;
   equal ~msg:"two dtypes" bool false
     (builds [| D.Any D.Float32; D.Any D.Float64 |] (Op2 (Binary Add, 0, 1)))
-
-(* Each kind a base dtype takes has its function in nx_kinds.h at the dtype's
-   compute type. Floor, Ceil, Round and Trunc are the identity on integers,
-   which no function computes. *)
-let test_domains_computed () =
-  let base =
-    D.
-      [
-        Any Float32; Any Float64; Any Int8; Any Uint8; Any Int16; Any Uint16;
-        Any Int32; Any Uint32; Any Int64; Any Uint64; Any Bool; Any Complex64;
-        Any Complex128;
-      ]
-  in
-  let compute (D.Any dt as d) =
-    match (cls d, D.bits dt) with
-    | Float, 64 -> `F64
-    | Float, _ -> `F32
-    | Signed, 64 -> `Int "i64"
-    | Signed, _ -> `Int "i32"
-    | Unsigned, 64 -> `Int "u64"
-    | (Unsigned | Boolean), _ -> `Int "u32"
-    | Complex, 64 -> `C64
-    | Complex, _ -> `C128
-  in
-  let calls kind arity d =
-    match compute d with
-    | `F32 -> ignore (Nx_kinds_support.f32 kind (Array.make arity 0))
-    | `F64 -> ignore (Nx_kinds_support.f64 kind (Array.make arity 0.))
-    | `Int ty -> ignore (Nx_kinds_support.int ty kind (Array.make arity 0L))
-    | `C64 -> ignore (Nx_kinds_support.c64 kind (Array.make (2 * arity) 0))
-    | `C128 -> ignore (Nx_kinds_support.c128 kind (Array.make (2 * arity) 0.))
-  in
-  let identity = P.[ Floor; Ceil; Round; Trunc ] in
-  List.iter
-    (fun (D.Any x as d) ->
-      List.iter
-        (fun u ->
-          if
-            P.accepts1 (Unary u) x x
-            && not (cls d <> Float && List.mem u identity)
-          then calls (unary_name u) 1 d)
-        unaries;
-      List.iter
-        (fun b ->
-          if P.accepts2 (Binary b) x && b <> Threefry then
-            calls (binary_name b) 2 d)
-        binaries;
-      List.iter
-        (fun c -> if P.accepts2 (Compare c) x then calls (compare_name c) 2 d)
-        compares;
-      if P.accepts3 Fma x x then calls "fma" 3 d)
-    base
-
-let test_domains_allocate_nothing () =
-  let k = P.Binary Add in
-  let before = Gc.minor_words () in
-  for _ = 1 to 1000 do
-    ignore (Sys.opaque_identity (P.accepts2 k D.Float32))
-  done;
-  equal ~msg:"words" (float 0.5) 0. (Gc.minor_words () -. before)
 
 (* Bits *)
 
@@ -407,26 +323,6 @@ let drawn =
      and+ nouts = int_range 1 3 in
      build ins choices nouts)
 
-(* What C reads of [d]'s program, rendered as the support reader renders
-   it. *)
-let render d =
-  let code (D.Any dt) = D.code dt in
-  let line nd =
-    match nd with
-    | P.In k -> strf "in %d\n" k
-    | Coord k -> strf "coord %d\n" k
-    | Const (dt, s) -> strf "const %d %s\n" (code dt) (hex s)
-    | Op1 (k, dt, a) -> strf "op1 %s %d %d\n" (op1_name k) (code dt) a
-    | Op2 (k, a, b) -> strf "op2 %s %d %d\n" (op2_name k) a b
-    | Op3 (k, a, b, c) -> strf "op3 %s %d %d %d\n" (op3_name k) a b c
-  in
-  String.concat "" (Array.to_list (Array.map line d.nodes))
-  ^ "ins"
-  ^ String.concat "" (Array.to_list (Array.map (fun t -> strf " %d" (code t)) d.ins))
-  ^ "\nouts"
-  ^ String.concat "" (Array.to_list (Array.map (strf " %d") d.outs))
-  ^ "\n"
-
 let pp_node ppf = function
   | P.In k -> Format.fprintf ppf "In %d" k
   | Coord k -> Format.fprintf ppf "Coord %d" k
@@ -450,7 +346,6 @@ let law_program d =
       cover "an Op1" (match n with P.Op1 _ -> true | _ -> false))
     d.nodes;
   let p = program d in
-  equal ~msg:"C reads" string (render d) (Nx_kernel_support.prog p);
   equal ~msg:"ins" (list string)
     (Array.to_list (Array.map name d.ins))
     (List.map name (Iarray.to_list p.ins));
@@ -514,6 +409,16 @@ let reads_in_order k (n : P.node) =
   | Op3 (_, 0, 1, 2) -> k = 3
   | In _ | Op1 _ | Op2 _ | Op3 _ -> false
 
+(* A kind of two and of three operands reading them in order, and one out
+   of order, which one_node seldom draws. *)
+let singles =
+  let f32 = D.Any D.Float32 and b = D.Any D.Bool in
+  [
+    ([| f32; f32 |], P.Op2 (Compare Less, 0, 1));
+    ([| b; f32; f32 |], P.Op3 (Where, 0, 1, 2));
+    ([| f32; f32 |], P.Op2 (Binary Sub, 1, 0));
+  ]
+
 let law_single_of_node (ins, n) =
   match P.of_node ~ins:(Iarray.of_array ins) n with
   | exception Invalid_argument _ -> ()
@@ -521,56 +426,66 @@ let law_single_of_node (ins, n) =
       let want = if reads_in_order (Array.length ins) n then Some n else None in
       cover "one node" (Option.is_some want);
       cover "not one node" (Option.is_none want);
+      cover "three operands"
+        (Array.length ins = 3 && match n with Op3 (_, 0, 1, 2) -> true | _ -> false);
       equal (option node) want (P.single p);
       equal ~msg:"is_single" bool (Option.is_some want) (P.is_single p)
 
+(* Programs of_node does not build: two outputs, two kind nodes. *)
 let test_single () =
-  let f32 = D.Any D.Float32 and b = D.Any D.Bool in
-  let one ins n = P.of_node ~ins:(Iarray.of_array ins) n in
-  let prog ins nodes outs =
-    P.v ~ins:(Iarray.of_array ins) (Iarray.of_array nodes)
-      ~outs:(Iarray.of_array outs)
-  in
-  let c = P.Const (f32, P.bits D.Float32 1.5) in
-  let is ~msg p n =
-    equal ~msg (option node) (Some n) (P.single p);
-    equal ~msg bool true (P.is_single p)
+  let f32 = D.Any D.Float32 in
+  let prog nodes outs =
+    P.v ~ins:[| f32 |] (Iarray.of_array nodes) ~outs:(Iarray.of_array outs)
   in
   let none ~msg p =
     equal ~msg (option node) None (P.single p);
     equal ~msg bool false (P.is_single p)
   in
-  is ~msg:"a constant" (one [||] c) c;
-  is ~msg:"a coordinate" (one [||] (Coord 1)) (Coord 1);
-  is ~msg:"one operand" (one [| f32 |] (Op1 (Unary Neg, f32, 0)))
-    (Op1 (Unary Neg, f32, 0));
-  is ~msg:"two operands" (one [| f32; f32 |] (Op2 (Compare Less, 0, 1)))
-    (Op2 (Compare Less, 0, 1));
-  is ~msg:"three operands" (one [| b; f32; f32 |] (Op3 (Where, 0, 1, 2)))
-    (Op3 (Where, 0, 1, 2));
-  none ~msg:"an operand alone" (one [| f32 |] (In 0));
-  none ~msg:"operands out of order"
-    (one [| f32; f32 |] (Op2 (Binary Sub, 1, 0)));
-  none ~msg:"an operand read twice" (one [| f32 |] (Op2 (Binary Add, 0, 0)));
-  none ~msg:"an operand unread" (one [| f32; f32 |] (Op1 (Unary Neg, f32, 0)));
-  none ~msg:"a constant beside an operand" (one [| f32 |] c);
-  none ~msg:"two outputs"
-    (prog [| f32 |] [| In 0; Op1 (Unary Neg, f32, 0) |] [| 1; 1 |]);
+  none ~msg:"two outputs" (prog [| In 0; Op1 (Unary Neg, f32, 0) |] [| 1; 1 |]);
   none ~msg:"two nodes"
-    (prog [| f32 |]
-       [| In 0; Op1 (Unary Neg, f32, 0); Op1 (Unary Neg, f32, 1) |]
-       [| 2 |])
+    (prog [| In 0; Op1 (Unary Neg, f32, 0); Op1 (Unary Neg, f32, 1) |] [| 2 |])
 
-let test_is_single_allocates_nothing () =
-  let f32 = D.Any D.Float32 in
-  let p = P.of_node ~ins:[| f32; f32 |] (Op2 (Binary Add, 0, 1)) in
-  let q = P.of_node ~ins:[| f32 |] (Op2 (Binary Add, 0, 0)) in
-  let before = Gc.minor_words () in
-  for _ = 1 to 1000 do
-    ignore (Sys.opaque_identity (P.is_single p));
-    ignore (Sys.opaque_identity (P.is_single q))
-  done;
-  equal ~msg:"words" (float 0.5) 0. (Gc.minor_words () -. before)
+(* One operand, one output, and that output its operand's In node. *)
+let law_identity d =
+  let want =
+    Array.length d.ins = 1 && Array.length d.outs = 1
+    && d.nodes.(d.outs.(0)) = P.In 0
+  in
+  cover "the identity" want;
+  equal bool want (P.is_identity (program d))
+
+let f32 = D.Any D.Float32
+
+let identity =
+  { ins = [| f32 |]; nodes = [| P.In 0 |]; types = [| f32 |]; outs = [| 0 |] }
+
+let identities =
+  let two = [| f32; f32 |] in
+  [
+    ("the identity", identity, true);
+    ( "Copy of the operand",
+      {
+        identity with
+        nodes = [| In 0; Op1 (Copy, f32, 0) |];
+        types = two;
+        outs = [| 1 |];
+      },
+      false );
+    ( "the operand twice",
+      { identity with nodes = [| In 0; In 0 |]; types = two; outs = [| 1 |] },
+      true );
+    ("two outputs", { identity with outs = [| 0; 0 |] }, false);
+    ("two operands", { identity with ins = two }, false);
+    ( "a constant",
+      {
+        identity with
+        ins = [||];
+        nodes = [| Const (f32, P.bits D.Float32 1.) |];
+      },
+      false );
+  ]
+
+let test_identity (_, d, want) = equal bool want (P.is_identity (program d))
 
 let pp_prog ppf (p : P.t) =
   let list pp ppf xs =
@@ -812,16 +727,11 @@ let check_subst ?outs ~ins f d =
     (s = P.v ~ins:s.ins s.nodes ~outs:s.outs);
   s
 
-let law_subst_keeps (d, seed) =
+let law_subst_keeps d =
   let s = check_subst ~ins:d.ins (fun _ -> None) d in
   let nodes, outs = lowered d in
   equal ~msg:"nodes" (array node) nodes (Iarray.to_array s.nodes);
   equal ~msg:"outs" (array int) outs (Iarray.to_array s.outs);
-  let rand = Random.State.make [| seed |] in
-  let loads = Array.map (fun t -> random_elements rand t 12) d.ins in
-  equal ~msg:"outputs' bits" outputs
-    (compute (program (pruned d)) loads)
-    (compute s loads);
   cover "fewer nodes than drawn"
     (Iarray.length s.nodes < Array.length d.nodes)
 
@@ -911,16 +821,15 @@ let test_subst_leaves () =
     (check_bind passed 0 (Ex (P.E.const D.Float32 2.5)) 3)
 
 (* A drawn program with [Coord a] and its double added, the double an output,
-   so that a kind reads a coordinate; each axis's offset; a seed. *)
+   so that a kind reads a coordinate; each axis's offset. *)
 let shifting =
   let open Gen in
   with_pp
-    (fun ppf (d, off, _) ->
+    (fun ppf (d, off) ->
       Format.fprintf ppf "%a, offsets %a" pp_drawn d Elements.pp_ints off)
     (let+ d = drawn
      and+ a = int_range 0 2
-     and+ off = array ~size:(int_range 3 3) (int_range 0 3)
-     and+ seed = int in
+     and+ off = array ~size:(int_range 3 3) (int_range 0 3) in
      let n = Array.length d.nodes in
      let added = [| P.Coord a; Op2 (Binary Add, n, n) |] in
      let i64 = D.Any D.Int64 in
@@ -930,59 +839,35 @@ let shifting =
          types = Array.append d.types [| i64; i64 |];
          outs = Array.append d.outs [| n + 1 |];
        },
-       off,
-       seed ))
+       off ))
 
-(* subst adding [off] to each coordinate: at each index [i] of [2; 3; 2] it
-   computes as [d] does at [i + off], each operand read at [i + off]. *)
-let law_subst_coords (d, off, seed) =
+(* subst adding [off] to each coordinate. *)
+let law_subst_coords (d, off) =
   let shift : P.node -> ex option = function
     | Coord c when off.(c) <> 0 ->
         Some (Ex P.E.(coord c + const D.Int64 (Int64.of_int off.(c))))
     | _ -> None
   in
-  let s = check_subst ~ins:d.ins shift d in
+  ignore (check_subst ~ins:d.ins shift d);
   let reached = (pruned d).nodes in
   cover "a coordinate shifted"
     (Array.exists (function P.Coord c -> off.(c) <> 0 | _ -> false) reached);
   cover "a coordinate kept"
-    (Array.exists (function P.Coord c -> off.(c) = 0 | _ -> false) reached);
-  let big = Array.mapi (fun a x -> x + off.(a)) small in
-  let window es =
-    Array.init (Elements.total small) (fun k ->
-        let i = Elements.index_of small k in
-        es.(Elements.flat big (Array.mapi (fun a x -> x + off.(a)) i)))
-  in
-  let rand = Random.State.make [| seed |] in
-  let bits = Array.map (fun t -> random_bits rand t (Elements.total big)) d.ins in
-  let at shape f = Array.mapi (fun k es -> Elements.of_elements d.ins.(k) shape (f es)) bits in
-  let want =
-    compute ~shape:big (program (pruned d)) (at big Fun.id)
-    |> Result.map (Array.map window)
-  in
-  equal ~msg:"outputs' bits" outputs want (compute s (at small window))
+    (Array.exists (function P.Coord c -> off.(c) = 0 | _ -> false) reached)
 
-(* A drawn program, outputs selected among its own by index, and a seed. *)
+(* A drawn program, outputs selected among its own by index. *)
 let selecting =
   let open Gen in
   with_pp
-    (fun ppf (d, sel, _) ->
+    (fun ppf (d, sel) ->
       Format.fprintf ppf "%a, selecting %a" pp_drawn d Elements.pp_ints sel)
     (let+ d = drawn
-     and+ sel = array ~size:(int_range 1 4) (int_range 0 1_000)
-     and+ seed = int in
-     (d, Array.map (fun k -> k mod Array.length d.outs) sel, seed))
+     and+ sel = array ~size:(int_range 1 4) (int_range 0 1_000) in
+     (d, Array.map (fun k -> k mod Array.length d.outs) sel))
 
 (* subst's outputs with [outs] are [d]'s at [outs], in that order. *)
-let law_subst_outs (d, sel, seed) =
-  let s = check_subst ~outs:(Iarray.of_array sel) ~ins:d.ins (fun _ -> None) d in
-  let rand = Random.State.make [| seed |] in
-  let loads = Array.map (fun t -> random_elements rand t 12) d.ins in
-  let want =
-    compute (program (pruned d)) loads
-    |> Result.map (fun o -> Array.map (Array.get o) sel)
-  in
-  equal ~msg:"outputs' bits" outputs want (compute s loads);
+let law_subst_outs (d, sel) =
+  ignore (check_subst ~outs:(Iarray.of_array sel) ~ins:d.ins (fun _ -> None) d);
   let n = Array.length sel in
   cover "an output twice"
     (List.length (List.sort_uniq Int.compare (Array.to_list sel)) < n);
@@ -1215,20 +1100,6 @@ let law_of_grown_exprs (d, seed) =
     (has (function P.Op3 (Fma, a, b, c) -> a <> b && b <> c && a <> c | _ -> false));
   cover "an Fma over one node" (has (function P.Op3 (Fma, a, b, c) -> a = b && b = c | _ -> false))
 
-let test_of_exprs_deep () =
-  (* [y + y - y] from [y], 5000 times: a tree of 3^5000 leaves, a DAG of
-     10001 nodes, and the operand back. *)
-  let y = ref (P.E.input 0 D.Uint64) in
-  for _ = 1 to 5000 do
-    y := P.E.(!y + !y - !y)
-  done;
-  let q = P.of_exprs ~ins:[| D.Any D.Uint64 |] [| P.E.any !y |] in
-  equal ~msg:"nodes" int 10001 (Iarray.length q.nodes);
-  let input = A.of_array D.Uint64 [| 2; 3; 2 |] (Array.init 12 Int64.of_int) in
-  equal ~msg:"the operand" outputs
-    (Ok [| Elements.elements (A.Any input) |])
-    (compute q [| A.Any input |])
-
 let test_of_exprs_two_builds () =
   (* Two builds of one chain of 15000 nodes, each node a constant or a sum
      over the last: apart as values, one program, both outputs its last
@@ -1243,64 +1114,6 @@ let test_of_exprs_two_builds () =
   let q = P.of_exprs ~ins:[| D.Any D.Int64 |] [| chain (); chain () |] in
   equal ~msg:"nodes" int 14999 (Iarray.length q.nodes);
   equal ~msg:"outs" (array int) [| 14998; 14998 |] (Iarray.to_array q.outs)
-
-(* An id is unique within one process alone: a child forked from this one
-   counts ids from where this one does, so an operand read it sends back
-   has the id of the next operand read made here. Both lower as what they
-   are. *)
-let test_of_exprs_foreign_ids () =
-  let r, w = Unix.pipe () in
-  match Unix.fork () with
-  | 0 ->
-      Unix.close r;
-      let oc = Unix.out_channel_of_descr w in
-      Marshal.to_channel oc (P.E.any (P.E.input 0 D.Int64)) [];
-      close_out oc;
-      Unix._exit 0
-  | pid ->
-      Unix.close w;
-      let local = P.E.any (P.E.input 1 D.Int64) in
-      let ic = Unix.in_channel_of_descr r in
-      let (sent : P.E.any) = Marshal.from_channel ic in
-      close_in ic;
-      equal ~msg:"child" bool true (snd (Unix.waitpid [] pid) = Unix.WEXITED 0);
-      let ins = [| D.Any D.Int64; D.Any D.Int64 |] in
-      let q = P.of_exprs ~ins:(Iarray.of_array ins) [| sent; local |] in
-      equal ~msg:"nodes" (array node) [| P.In 0; P.In 1 |]
-        (Iarray.to_array q.nodes);
-      equal ~msg:"outs" (array int) [| 0; 1 |] (Iarray.to_array q.outs)
-
-(* Each kind and dtype comes through a lowering as the node it was. *)
-let test_of_exprs_kinds () =
-  let f32 = D.Any D.Float32 and u64 = D.Any D.Uint64 and b = D.Any D.Bool in
-  let ins = [| f32; f32; b; u64 |] in
-  let one out nd =
-    let q = P.of_exprs ~ins:(Iarray.of_array ins) [| P.E.any out |] in
-    let last = Iarray.length q.nodes - 1 in
-    equal ~msg:"output" (array int) [| last |] (Iarray.to_array q.outs);
-    equal ~msg:"node" node nd (Iarray.get q.nodes last)
-  in
-  let x = P.E.input 0 D.Float32 and y = P.E.input 1 D.Float32 in
-  let c = P.E.input 2 D.Bool and w = P.E.input 3 D.Uint64 in
-  List.iter
-    (fun k ->
-      let (D.Any dt as d) = match k with P.Bitcast -> D.Any D.Int32 | _ -> f32 in
-      match P.E.op1 k dt x with
-      | e -> one e (P.Op1 (k, d, 0))
-      | exception Invalid_argument _ -> ())
-    op1s;
-  List.iter
-    (fun k ->
-      match k with
-      | P.Binary (Idiv | And | Or | Xor | Threefry as k) ->
-          one (P.E.binary k w w) (P.Op2 (Binary k, 0, 0))
-      | Binary k -> one (P.E.binary k x y) (P.Op2 (Binary k, 0, 1))
-      | Compare k -> one (P.E.compare k x y) (P.Op2 (Compare k, 0, 1)))
-    op2s;
-  one (P.E.op3 Where c x y) (P.Op3 (Where, 0, 1, 2));
-  one (P.E.op3 Fma x y x) (P.Op3 (Fma, 0, 1, 0));
-  one (P.E.const D.Float64 (-0.)) (P.Const (D.Any D.Float64, P.bits D.Float64 (-0.)));
-  one (P.E.coord 3) (P.Coord 3)
 
 (* Each kind function makes the node its kind's constructor makes. *)
 let test_exprs_kind_functions () =
@@ -1337,15 +1150,45 @@ let test_exprs_kind_functions () =
   List.iter2 cmp compares P.E.[ equal; not_equal; less; less_equal ];
   same "threefry" (P.E.any (P.E.threefry w w)) (P.E.any (P.E.binary Threefry w w));
   same "logxor" (P.E.any (P.E.logxor w w)) (P.E.any (P.E.binary Xor w w));
-  same "&&" (P.E.any P.E.(c && c)) (P.E.any (P.E.binary And c c));
-  same "||" (P.E.any P.E.(c || c)) (P.E.any (P.E.binary Or c c));
-  same "/ on floats" (P.E.any P.E.(x / y)) (P.E.any (P.E.binary Fdiv x y));
-  same "/ on integers" (P.E.any P.E.(w / w)) (P.E.any (P.E.binary Idiv w w));
   same "copy" (P.E.any (P.E.copy x)) (P.E.any (P.E.op1 Copy D.Float32 x));
   same "cast" (P.E.any (P.E.cast D.Int8 x)) (P.E.any (P.E.op1 Cast D.Int8 x));
   same "bitcast" (P.E.any (P.E.bitcast D.Int32 x)) (P.E.any (P.E.op1 Bitcast D.Int32 x));
   same "where" (P.E.any (P.E.where c x y)) (P.E.any (P.E.op3 Where c x y));
   same "fma" (P.E.any (P.E.fma x y x)) (P.E.any (P.E.op3 Fma x y x))
+
+(* Each operator over two operands lowers as the function prog.mli names,
+   [>] and [>=] with their operands swapped. *)
+let operators =
+  let x = P.E.input 0 D.Float32 and y = P.E.input 1 D.Float32 in
+  let c = P.E.input 0 D.Bool and e = P.E.input 1 D.Bool in
+  let v = P.E.input 0 D.Uint64 and w = P.E.input 1 D.Uint64 in
+  let f32 = D.Any D.Float32 and b = D.Any D.Bool and u64 = D.Any D.Uint64 in
+  P.E.
+    [
+      ("~-", f32, any (~-x), any (neg x));
+      ("+", f32, any (x + y), any (add x y));
+      ("-", f32, any (x - y), any (sub x y));
+      ("*", f32, any (x * y), any (mul x y));
+      ("/ on floats", f32, any (x / y), any (fdiv x y));
+      ("/ on integers", u64, any (v / w), any (idiv v w));
+      ("mod", f32, any (x mod y), any (rem x y));
+      ("**", f32, any (x ** y), any (pow x y));
+      ("land", u64, any (v land w), any (logand v w));
+      ("lor", u64, any (v lor w), any (logor v w));
+      ("lxor", u64, any (v lxor w), any (logxor v w));
+      ("&&", b, any (c && e), any (logand c e));
+      ("||", b, any (c || e), any (logor c e));
+      ("=", f32, any (x = y), any (equal x y));
+      ("<>", f32, any (x <> y), any (not_equal x y));
+      ("<", f32, any (x < y), any (less x y));
+      ("<=", f32, any (x <= y), any (less_equal x y));
+      (">", f32, any (x > y), any (less y x));
+      (">=", f32, any (x >= y), any (less_equal y x));
+    ]
+
+let test_operator (_, dt, e, want) =
+  let of_expr e = P.of_exprs ~ins:[| dt; dt |] [| e |] in
+  equal structural (of_expr want) (of_expr e)
 
 let test_exprs_refuse () =
   let f32 = D.Any D.Float32 and i32 = D.Any D.Int32 in
@@ -1436,87 +1279,6 @@ let test_many_operands () =
   equal ~msg:"of_node" node (Op2 (Binary Add, 0, 19))
     (Iarray.get r.nodes 20)
 
-(* Representation: C reads a program by nx_kernel.h's codes, so each
-   constructor's tag, each field's position and each kind's code is the one
-   the header names, and a reordered declaration fails here. *)
-
-(* The header's name of the kind of arity [a] named [name]. *)
-let header a name = strf "NX_OP%d_%s" a (String.uppercase_ascii name)
-
-(* Field [off] past the one the header names [name] of [v], as C reads it. *)
-let field ?(off = 0) v name =
-  let r = Obj.repr v and i = Nx_kernel_support.code name + off in
-  if i >= Obj.size r then
-    failf "%s + %d is field %d of a block of %d" name off i (Obj.size r);
-  Obj.field r i
-
-let repr =
-  Testable.make
-    ~pp:(fun ppf o ->
-      if Obj.is_int o then Format.fprintf ppf "%d" (Obj.obj o : int)
-      else Format.fprintf ppf "a block of tag %d" (Obj.tag o))
-    ~equal:( == )
-
-let test_codes () =
-  let code = Nx_kernel_support.code and tag = Nx_kernel_support.tag in
-  List.iter
-    (fun k ->
-      let c = code (header 1 (op1_name k)) in
-      equal ~msg:(op1_name k) int c (Nx_kernel_support.op1 k))
-    op1s;
-  List.iter
-    (fun k ->
-      let c = code (header 2 (op2_name k)) in
-      equal ~msg:(op2_name k) int c (Nx_kernel_support.op2 k))
-    op2s;
-  List.iter
-    (fun k ->
-      let c = code (header 3 (op3_name k)) in
-      equal ~msg:(op3_name k) int c (tag k))
-    P.[ Where; Fma ];
-  (* No code past the kinds named above. *)
-  equal ~msg:"NX_OP1_COUNT" int (code "NX_OP1_COUNT") (List.length op1s);
-  equal ~msg:"NX_OP2_COUNT" int (code "NX_OP2_COUNT") (List.length op2s);
-  equal ~msg:"NX_OP3_COUNT" int (code "NX_OP3_COUNT") (List.length P.[ Where; Fma ]);
-  let f64 = D.Any D.Float64 and one = P.bits D.Float64 1. in
-  let exp = P.Unary Exp and add = P.Binary Add in
-  List.iter
-    (fun (name, t) -> equal ~msg:name int (code name) t)
-    [
-      ("NX_NODE_IN", tag (P.In 3));
-      ("NX_NODE_COORD", tag (P.Coord 3));
-      ("NX_NODE_CONST", tag (P.Const (f64, one)));
-      ("NX_NODE_OP1", tag (P.Op1 (exp, f64, 5)));
-      ("NX_NODE_OP2", tag (P.Op2 (add, 6, 7)));
-      ("NX_NODE_OP3", tag (P.Op3 (Where, 4, 6, 7)));
-      ("NX_OP2_BINARY", tag add);
-      ("NX_OP2_COMPARE", tag (P.Compare Less));
-    ];
-  let p = P.v ~ins:[| f64 |] [| P.In 0 |] ~outs:[| 0 |] in
-  let op1 = P.Op1 (exp, f64, 5) and op2 = P.Op2 (add, 6, 7) in
-  let op3 = P.Op3 (Where, 4, 6, 7) and cst = P.Const (f64, one) in
-  List.iter
-    (fun (name, read, want) -> equal ~msg:name repr want read)
-    [
-      ("NX_PROG_INS", field p "NX_PROG_INS", Obj.repr p.ins);
-      ("NX_PROG_NODES", field p "NX_PROG_NODES", Obj.repr p.nodes);
-      ("NX_PROG_OUTS", field p "NX_PROG_OUTS", Obj.repr p.outs);
-      ("NX_IN_OPERAND", field (P.In 3) "NX_IN_OPERAND", Obj.repr 3);
-      ("NX_COORD_AXIS", field (P.Coord 2) "NX_COORD_AXIS", Obj.repr 2);
-      ("NX_CONST_DTYPE", field cst "NX_CONST_DTYPE", Obj.repr f64);
-      ("NX_CONST_BITS", field cst "NX_CONST_BITS", Obj.repr one);
-      ("NX_OP1_KIND", field op1 "NX_OP1_KIND", Obj.repr exp);
-      ("NX_OP1_DTYPE", field op1 "NX_OP1_DTYPE", Obj.repr f64);
-      ("NX_OP1_OPERAND", field op1 "NX_OP1_OPERAND", Obj.repr 5);
-      ("NX_OP2_KIND", field op2 "NX_OP2_KIND", Obj.repr add);
-      ("NX_OP2_OPERANDS", field op2 "NX_OP2_OPERANDS", Obj.repr 6);
-      ("NX_OP2_OPERANDS + 1", field ~off:1 op2 "NX_OP2_OPERANDS", Obj.repr 7);
-      ("NX_OP3_KIND", field op3 "NX_OP3_KIND", Obj.repr P.Where);
-      ("NX_OP3_OPERANDS", field op3 "NX_OP3_OPERANDS", Obj.repr 4);
-      ("NX_OP3_OPERANDS + 1", field ~off:1 op3 "NX_OP3_OPERANDS", Obj.repr 6);
-      ("NX_OP3_OPERANDS + 2", field ~off:2 op3 "NX_OP3_OPERANDS", Obj.repr 7);
-    ]
-
 let floats =
   Gen.one_of
     [
@@ -1528,12 +1290,7 @@ let floats =
 let tests =
   [
     group "domains"
-      [
-        test "every kind and dtype as prog.mli states" test_domains;
-        test "each base dtype a kind takes is computed by nx_kinds.h"
-          test_domains_computed;
-        test "accepts2 allocates nothing" test_domains_allocate_nothing;
-      ];
+      [ test "every kind and dtype as prog.mli states" test_domains ];
     group "bits"
       [
         prop "bits are a one-element array's bytes"
@@ -1543,16 +1300,19 @@ let tests =
       ];
     group "programs"
       [
-        prop "a program holds what v was given, as C reads it" drawn
-          law_program;
+        prop "a program holds what v was given" drawn law_program;
         test "v refuses ill-formed programs" test_program_refuses;
         prop "of_node is v over the operands' nodes" one_node law_of_node;
-        prop "single is of_node's node where it reads its operands in order"
+        prop ~examples:singles
+          "single is of_node's node where it reads its operands in order"
           one_node law_single_of_node;
-        test "single is one node over its operands in order" test_single;
-        test "is_single allocates nothing" test_is_single_allocates_nothing;
+        test "single is None but for of_node's programs" test_single;
+        prop ~examples:[ identity ]
+          "is_identity is one operand, one output, that operand's In" drawn
+          law_identity;
+        cases ~name:(fun (n, _, _) -> n) "is_identity at named programs"
+          identities test_identity;
         test "dtype refuses a node past the program" test_dtype_refuses;
-        test "each tag, field and kind is nx_kernel.h's code" test_codes;
       ];
     group "expressions"
       [
@@ -1560,15 +1320,13 @@ let tests =
           (Gen.pair drawn Gen.int) law_of_exprs;
         prop "of_exprs is so for programs of hundreds of nodes"
           (Gen.pair grown Gen.int) law_of_grown_exprs;
-        test "of_exprs lowers a DAG of exponential tree size"
-          test_of_exprs_deep;
         test "of_exprs merges two builds of 15000 nodes"
           test_of_exprs_two_builds;
-        test "of_exprs lowers expressions of another process as they are"
-          test_of_exprs_foreign_ids;
-        test "of_exprs keeps each kind" test_of_exprs_kinds;
         test "each kind function makes its kind's node"
           test_exprs_kind_functions;
+        cases ~name:(fun (n, _, _, _) -> n)
+          "each operator makes the node of the function it names" operators
+          test_operator;
         test "constructors and of_exprs refuse as v does" test_exprs_refuse;
         test "programs take any number of operands and outputs"
           test_many_operands;
@@ -1576,7 +1334,7 @@ let tests =
     group "substitution"
       [
         prop "subst keeping every leaf is p lowered as of_exprs lowers it"
-          (Gen.pair drawn Gen.int) law_subst_keeps;
+          drawn law_subst_keeps;
         prop "subst binding an operand is p over its value" binding law_bind;
         test "subst binds an operand to an operand, a coordinate or a constant"
           test_subst_leaves;

@@ -36,19 +36,8 @@
    (:include ../../../lib/cpu/v3_flags.sexp))
   (names nx_kinds_support_loops)))
 
-; nx_kernel.h's codes as C reads them.
-
-(library
- (name nx_kernel_support)
- (modules nx_kernel_support)
- (libraries nx_array nx_kernel)
- (foreign_stubs
-  (language c)
-  (include_dirs ../../../lib/array ../../../lib/kernel)
-  (names nx_kernel_support_stubs)))
-
-; The kernel libraries the suite runs its laws through, nx.cpu's target
-; tables and its contraction views.
+; The kernel libraries the suite runs its laws through, and nx.cpu's target
+; tables.
 
 (library
  (name nx_kernels_support)

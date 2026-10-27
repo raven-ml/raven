@@ -5,9 +5,7 @@
 
 (* Shapes: each function of Nx_kernel.Shape against the rule its doc states,
    at its bounds and their neighbours; Nx_kernel's dtype rules against their
-   tables; the constructors C reads against nx_kernel.h's codes; and the
-   grouped contraction view against every element's position by brute
-   force. *)
+   tables; and a kernel library's name and the devices it computes on. *)
 
 open Windtrap
 open Nx_array_gen
@@ -16,20 +14,6 @@ module D = Nx_array.Dtype
 module L = Nx_array.Layout
 module M = Nx_array.Move
 module Shape = Nx_kernel.Shape
-
-(* The view nx.cpu's nx_contract_fill groups, read from its fields
-   ({!Nx_kernels_support.view_fields}) by cpu.h's indices. *)
-module V = struct
-  type operand = A | B | Init | Dst
-  type axis = Batch | Row | Column | Contracted
-
-  let operand = function A -> 0 | B -> 1 | Init -> 2 | Dst -> 3
-  let axis = function Batch -> 0 | Row -> 1 | Column -> 2 | Contracted -> 3
-  let v = Nx_kernels_support.view_fields
-  let extent f x = f.(axis x)
-  let offset f o = f.(4 + operand o)
-  let stride f o x = f.(8 + (4 * operand o) + axis x)
-end
 
 (* Shape's results, their messages dropped. *)
 
@@ -107,48 +91,23 @@ let result_shape a b batch contracting =
 let extents = Gen.array ~size:(Gen.int_range 0 2) extent
 let axis_order n = Gen.map Array.of_list (Gen.permutation (List.init n Fun.id))
 
-(* A layout of shape [s]: C-contiguous, which a view groups, or, unless
-   [canonical], over drawn strides. *)
-let layout_of ~canonical s =
+(* A layout of shape [s]: C-contiguous or over drawn strides. *)
+let layout_of s =
   let l = L.contiguous (Iarray.of_array s) in
-  if canonical then Gen.constant l
-  else Gen.one_of [ Gen.constant l; strided_of s ]
+  Gen.one_of [ Gen.constant l; strided_of s ]
 
 let permuted l p = Option.get (L.move (M.Permute (Iarray.of_array p)) l)
 
-(* [p] with the memory axes [lo] to [lo + n - 1] in increasing order of the axes
-   that hold them: a free group's axes keep memory order, so they lie as one run
-   in a C-contiguous layout. *)
-let in_order p lo n =
-  let next = ref lo in
-  Array.map
-    (fun m ->
-      if m >= lo && m < lo + n then begin
-        let m' = !next in
-        incr next;
-        m'
-      end
-      else m)
-    p
-
-let case ~canonical =
+let case =
   let open Gen in
-  let layout_of = layout_of ~canonical in
   let* batch = extents in
   let* rows = extents in
   let* contracted = extents in
   let* columns = extents in
   let ma = Array.concat [ batch; rows; contracted ] in
   let mb = Array.concat [ batch; contracted; columns ] in
-  let nb = Array.length batch and nr = Array.length rows in
-  let nk = Array.length contracted in
-  let order p lo n = if canonical then in_order p lo n else p in
-  let* pa = map (fun p -> order p nb nr) (axis_order (Array.length ma)) in
-  let* pb =
-    map
-      (fun p -> order p (nb + nk) (Array.length columns))
-      (axis_order (Array.length mb))
-  in
+  let* pa = axis_order (Array.length ma) in
+  let* pb = axis_order (Array.length mb) in
   let* la = layout_of ma in
   let* lb = layout_of mb in
   let la = permuted la pa and lb = permuted lb pb in
@@ -163,8 +122,7 @@ let case ~canonical =
   let+ li = option (layout_of y) in
   { c with ly; li }
 
-let any_case = Gen.with_pp pp_case (case ~canonical:false)
-let canonical_case = Gen.with_pp pp_case (case ~canonical:true)
+let any_case = Gen.with_pp pp_case case
 
 let law_contract c =
   let batch, contracting = pairs_of c in
@@ -570,6 +528,34 @@ let test_accepts () =
         reductions_all)
     D.all
 
+(* The doc's table: float32 for a float narrower than it, int8 and uint8 for
+   int4 and uint4, bool for bit, else the dtype itself. *)
+let carrier_name (D.Any dt) =
+  match dt with
+  | D.Float16 | D.Bfloat16 | D.Float8_e4m3fn | D.Float8_e5m2 | D.Float4_e2m1fn
+    ->
+      "float32"
+  | D.Int4 -> "int8"
+  | D.Uint4 -> "uint8"
+  | D.Bit -> "bool"
+  | _ -> D.name dt
+
+let test_carrier d =
+  let (D.Any c) = Nx_kernel.carrier d in
+  equal string (carrier_name d) (D.name c)
+
+let floats =
+  List.filter_map
+    (fun (D.Any dt) ->
+      match D.kind dt with
+      | Float -> Some (Nx_kernel.Any_float dt)
+      | Complex | Signed | Unsigned | Boolean -> None)
+    D.all
+
+let test_float_carrier (Nx_kernel.Any_float dt) =
+  let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
+  equal string (carrier_name (D.Any dt)) (D.name c)
+
 (* Gathers, scatters and sorts *)
 
 let test_index_refuses () =
@@ -916,316 +902,23 @@ let test_full_precision () =
       equal ~msg:(D.name dt) bool want (Nx_kernel.full_precision dt))
     D.all
 
-(* Constructor codes *)
+(* Libraries *)
 
-(* Each constructor's name in nx_kernel.h, by a match that a constructor
-   added to Nx_kernel leaves short, and the type's constructors, as many as
-   nx_kernel.h counts. *)
-let load_name = function
-  | Nx_kernel.Plain _ -> "NX_LOAD_PLAIN"
-  | Padded _ -> "NX_LOAD_PADDED"
-
-let monoid_name : Nx_kernel.monoid -> string = function
-  | Sum -> "NX_MONOID_SUM"
-  | Prod -> "NX_MONOID_PROD"
-  | Max -> "NX_MONOID_MAX"
-  | Min -> "NX_MONOID_MIN"
-
-let reduction_name : Nx_kernel.reduction -> string = function
-  | Monoid _ -> "NX_REDUCTION_MONOID"
-  | Arg _ -> "NX_REDUCTION_ARG"
-  | Logsumexp -> "NX_REDUCTION_LOGSUMEXP"
-  | Moments -> "NX_REDUCTION_MOMENTS"
-
-let combine_name : Nx_kernel.combine -> string = function
-  | Set -> "NX_COMBINE_SET"
-  | Add -> "NX_COMBINE_ADD"
-  | Max -> "NX_COMBINE_MAX"
-  | Min -> "NX_COMBINE_MIN"
-
-let triangle_name : Nx_kernel.triangle -> string = function
-  | Lower -> "NX_TRIANGLE_LOWER"
-  | Upper -> "NX_TRIANGLE_UPPER"
-
-(* Each constructor C reads by tag has the code nx_kernel.h declares, and
-   each type as many as nx_kernel.h counts. *)
-let test_codes () =
-  let x = A.create Rig.host D.Float32 [| 1 |] in
-  let pad =
-    { Nx_kernel.lo = [| 0 |]; hi = [| 0 |]; interior = [| 0 |]; windows = [||] }
-  in
-  let code = Nx_kernel_support.code and tag = Nx_kernel_support.tag in
-  let check count name all =
-    List.iter (fun v -> equal ~msg:(name v) int (code (name v)) (tag v)) all;
-    equal ~msg:count int (code count) (List.length all)
-  in
-  check "NX_LOAD_COUNT" load_name
-    [ Nx_kernel.Plain x; Padded { x; fill = 0.; pad } ];
-  check "NX_MONOID_COUNT" monoid_name [ Sum; Prod; Max; Min ];
-  check "NX_REDUCTION_BLOCKS" reduction_name [ Monoid Sum; Arg Max ];
-  check "NX_REDUCTION_CONSTANTS" reduction_name [ Logsumexp; Moments ];
-  check "NX_COMBINE_COUNT" combine_name [ Set; Add; Max; Min ];
-  check "NX_TRIANGLE_COUNT" triangle_name [ Lower; Upper ]
-
-(* Contraction views *)
-
-(* An array of float32 over [l], on a host buffer that holds its positions. *)
-let over l =
-  let hi = snd (L.span l) in
-  A.v D.Float32 l (Rig.Buffer.create Rig.host (4 * (hi + 1)))
-
-(* [c]'s operands [a], [b] and [init], and its destination. *)
-let operands c = (over c.la, over c.lb, Option.map over c.li, over c.ly)
-
-(* What a view answers, as text: whether it groups, or why not. *)
-let outcome = function
-  | Ok _ -> "grouped"
-  | Error A.Declined -> "declined"
-  | Error A.Shape_mismatch -> "shape mismatch"
-  | Error _ -> "another answer"
-
-let view c =
-  let batch, contracting = pairs_of c in
-  let a, b, init, dst = operands c in
-  V.v ~batch ~contracting ~dst ~init a b
-
-(* Each operand's axes of each group, by the rule. *)
-let groups c =
-  let batch, contracting = pairs_of c in
-  let ra = L.rank c.la and rb = L.rank c.lb in
-  let side f ps = Iarray.to_list (Iarray.map f ps) in
-  let fa = free ra (side fst batch @ side fst contracting) in
-  let fb = free rb (side snd batch @ side snd contracting) in
-  let nb = Iarray.length batch and nfa = List.length fa in
-  let y =
-    [
-      (V.Batch, List.init nb Fun.id);
-      (V.Row, List.init nfa (fun k -> nb + k));
-      (V.Column, List.init (List.length fb) (fun k -> nb + nfa + k));
-    ]
-  in
+(* nx.cpu computes on the memory the host reaches: its own and a memory
+   device's, and not an io device's, even one whose pages the host maps. *)
+let devices =
+  let memory = Result.get_ok (Rig.memory_device "nx-kernel-computes-on") in
   [
-    ( V.A,
-      c.la,
-      [
-        (V.Batch, side fst batch);
-        (V.Row, fa);
-        (V.Contracted, side fst contracting);
-      ] );
-    ( V.B,
-      c.lb,
-      [
-        (V.Batch, side snd batch);
-        (V.Column, fb);
-        (V.Contracted, side snd contracting);
-      ] );
-    (V.Dst, c.ly, y);
+    ("the host", Rig.host, true);
+    ("a memory device", memory, true);
+    ("an io device", Nx_array_support.io_device (), false);
+    ("a mapped io device", Nx_array_support.mapped_io_device (), false);
   ]
-  @ match c.li with None -> [] | Some l -> [ (V.Init, l, y) ]
 
-let pp_operand ppf o =
-  Format.pp_print_string ppf
-    (match o with V.A -> "a" | V.B -> "b" | V.Init -> "init" | V.Dst -> "dst")
-
-(* Every element of every operand lies where the view places it: its group's
-   index, flat in C order over the group's axes, times the group's stride. An
-   axis an operand lacks, and an absent init, read 0. *)
-let check_view c v =
-  let zero ~msg n = equal ~msg int 0 n in
-  zero ~msg:"a's column stride" (V.stride v V.A V.Column);
-  zero ~msg:"b's row stride" (V.stride v V.B V.Row);
-  zero ~msg:"dst's contracted stride" (V.stride v V.Dst V.Contracted);
-  zero ~msg:"init's contracted stride" (V.stride v V.Init V.Contracted);
-  if Option.is_none c.li then begin
-    zero ~msg:"an absent init's offset" (V.offset v V.Init);
-    List.iter
-      (fun x -> zero ~msg:"an absent init's stride" (V.stride v V.Init x))
-      V.[ Batch; Row; Column; Contracted ]
-  end;
-  List.iter
-    (fun (o, l, gs) ->
-      let s = Iarray.to_array (L.shape l) in
-      List.iter
-        (fun (g, axes) ->
-          equal ~msg:"extent" int
-            (List.fold_left (fun n ax -> n * s.(ax)) 1 axes)
-            (V.extent v g))
-        gs;
-      List.iter
-        (fun idx ->
-          let at =
-            List.fold_left
-              (fun p (g, axes) ->
-                let flat =
-                  List.fold_left (fun f ax -> (f * s.(ax)) + idx.(ax)) 0 axes
-                in
-                p + (flat * V.stride v o g))
-              (V.offset v o) gs
-          in
-          equal
-            ~msg:(Format.asprintf "%a at %a" pp_operand o pp_ints idx)
-            int (position l idx) at)
-        (indices s))
-    (groups c)
-
-let law_view c =
-  let v = view c in
-  cover "groups" (Result.is_ok v);
-  cover "declines" (Result.is_error v);
-  not_equal ~msg:"a misfit" string "shape mismatch" (outcome v);
-  Result.iter (check_view c) v
-
-let law_canonical c =
-  let v = view c in
-  equal ~msg:"groups" string "grouped" (outcome v);
-  cover "without init" (Option.is_none c.li);
-  Result.iter (check_view c) v
-
-(* [l] with two axes of extent 1 and stride [s] after its last. *)
-let with_unit_axes s l =
-  L.v ~offset:(L.offset l)
-    ~strides:(Iarray.append (L.strides l) [| s; s |])
-    (Iarray.append (L.shape l) [| 1; 1 |])
-
-(* [l]'s shape, C-contiguous, with axis [ax] one longer; [l] where it has no
-   such axis. *)
-let longer ax l =
-  let sh = L.shape l in
-  if ax < 0 || ax >= Iarray.length sh then l
-  else L.contiguous (Iarray.mapi (fun i e -> if i = ax then e + 1 else e) sh)
-
-(* A view of groups of at most one axis each equals the view of the same
-   contraction with two unit axes more in its contracted group, which the
-   general grouping takes, and refuses where it refuses. [misfit] picks
-   what does not fit: nothing, dst's first axis, init's, a's first axis,
-   or b's axis in the first batch pair. *)
-let law_one_axis (c, (misfit, s)) =
-  let batch, contracting = pairs_of c in
-  let la, lb, ly, li =
-    match misfit with
-    | 1 -> (c.la, c.lb, longer 0 c.ly, c.li)
-    | 2 -> (c.la, c.lb, c.ly, Option.map (longer 0) c.li)
-    | 3 -> (longer 0 c.la, c.lb, c.ly, c.li)
-    | 4 when Iarray.length batch > 0 ->
-        (c.la, longer (snd (Iarray.get batch 0)) c.lb, c.ly, c.li)
-    | _ -> (c.la, c.lb, c.ly, c.li)
-  in
-  let dst = over ly and init = Option.map over li in
-  let v = V.v ~batch ~contracting ~dst ~init (over la) (over lb) in
-  let ra = L.rank la and rb = L.rank lb in
-  let v' =
-    V.v ~batch
-      ~contracting:
-          (Iarray.append contracting [| (ra, rb); (ra + 1, rb + 1) |])
-      ~dst ~init
-      (over (with_unit_axes s la))
-      (over (with_unit_axes s lb))
-  in
-  let one =
-    List.for_all
-      (fun g -> Array.length g <= 1)
-      [ c.batch; c.rows; c.columns; c.contracted ]
-  in
-  cover "one-axis groups, grouped" (one && Result.is_ok v);
-  cover "one-axis groups, refused" (one && Result.is_error v);
-  cover "one-axis groups, a batch misfit between a and b"
-    (one && misfit = 4 && Iarray.length batch > 0);
-  cover "one-axis groups, an empty operand"
-    (one && (L.numel la = 0 || L.numel lb = 0));
-  cover "one-axis groups, a batch axis" (one && Array.length c.batch = 1);
-  equal ~msg:"answers" string (outcome v') (outcome v);
-  match (v, v') with
-  | Ok v, Ok v' -> equal (array int) v' v
-  | _ -> ()
-
-(* A view refuses operands that do not fit its pairs, and declines a call
-   whose group does not merge. *)
-let test_view_declines () =
-  let arr s = over (L.contiguous s) in
-  let view ?(batch : _ iarray = [||]) ?(contracting : _ iarray = [| (1, 0) |])
-      ?init ~dst a b =
-    V.v ~batch ~contracting ~dst ~init a b
-  in
-  let mm ?batch ?contracting ?init ~dst a b =
-    outcome (view ?batch ?contracting ?init ~dst a b)
-  in
-  equal ~msg:"fits" string "grouped"
-    (mm ~dst:(arr [| 2; 3 |]) (arr [| 2; 4 |]) (arr [| 4; 3 |]));
-  let misfit ~msg f = equal ~msg string "shape mismatch" (f ()) in
-  misfit ~msg:"contracted extents" (fun () ->
-      mm ~dst:(arr [| 2; 3 |]) (arr [| 2; 4 |]) (arr [| 5; 3 |]));
-  misfit ~msg:"dst's shape" (fun () ->
-      mm ~dst:(arr [| 3; 2 |]) (arr [| 2; 4 |]) (arr [| 4; 3 |]));
-  misfit ~msg:"a's rank" (fun () ->
-      mm ~dst:(arr [| 2; 3 |]) (arr [| 4 |]) (arr [| 4; 3 |]));
-  misfit ~msg:"init's shape" (fun () ->
-      mm ~dst:(arr [| 2; 3 |]) ~init:(arr [| 3; 2 |]) (arr [| 2; 4 |])
-        (arr [| 4; 3 |]));
-  misfit ~msg:"a pair past a's rank" (fun () ->
-      mm ~contracting:[| (2, 0) |] ~dst:(arr [| 2; 3 |]) (arr [| 2; 4 |])
-        (arr [| 4; 3 |]));
-  misfit ~msg:"a pair past b's rank" (fun () ->
-      mm ~contracting:[| (1, 2) |] ~dst:(arr [| 2; 3 |]) (arr [| 2; 4 |])
-        (arr [| 4; 3 |]));
-  let sq = arr [| 4; 4 |] in
-  equal ~msg:"distinct pairs" string "grouped"
-    (mm ~batch:[| (0, 0) |] ~contracting:[| (1, 1) |] ~dst:(arr [| 4 |]) sq sq);
-  misfit ~msg:"an axis of a in two pairs" (fun () ->
-      mm ~batch:[| (0, 0) |] ~contracting:[| (0, 1) |] ~dst:(arr [| 4 |]) sq sq);
-  misfit ~msg:"an axis of b in two pairs" (fun () ->
-      mm ~batch:[| (0, 0) |] ~contracting:[| (1, 0) |] ~dst:(arr [| 4 |]) sq sq);
-  (* A misfit is refused even behind a group that does not merge: [a]'s
-     batch axes transposed, its contracted extent 4 against [b]'s 5. *)
-  let at =
-    Option.get
-      (L.move (M.Permute [| 1; 0; 2; 3 |]) (L.contiguous [| 3; 2; 2; 4 |]))
-  in
-  let a = A.v D.Float32 at (Rig.Buffer.create Rig.host 192) in
-  misfit ~msg:"behind an unmerged group" (fun () ->
-      mm
-        ~batch:[| (0, 0); (1, 1) |]
-        ~contracting:[| (3, 2) |]
-        ~dst:(arr [| 2; 3; 2; 2 |])
-        a
-        (arr [| 2; 3; 5; 2 |]));
-  (* [b]'s two contracted axes transposed lie as no run. *)
-  let bt =
-    Option.get (L.move (M.Permute [| 1; 0; 2 |]) (L.contiguous [| 3; 4; 5 |]))
-  in
-  let b = A.v D.Float32 bt (Rig.Buffer.create Rig.host 240) in
-  equal ~msg:"no run" string "declined"
-    (mm ~contracting:[| (1, 0); (2, 1) |] ~dst:(arr [| 2; 5 |])
-       (arr [| 2; 4; 3 |]) b);
-  let a =
-    A.v D.Float32 (L.v ~strides:[| 1; 8 |] [| 2; 4 |])
-      (Rig.Buffer.create Rig.host 128)
-  in
-  let v = view ~dst:(arr [| 2; 3 |]) a (arr [| 4; 3 |]) in
-  equal ~msg:"strided contraction" string "grouped" (outcome v);
-  let v = Result.get_ok v in
-  equal int 8 (V.stride v V.A V.Contracted)
-
-let minor_words f =
-  let before = Gc.minor_words () in
-  f ();
-  Gc.minor_words () -. before
-
-(* nx.cpu's nx_contract_fill, which groups each contraction, allocates
-   nothing. *)
-let test_view_allocates_nothing () =
-  let arr s = over (L.contiguous s) in
-  let a = arr [| 2; 3; 4 |] and b = arr [| 2; 4; 5 |] in
-  let init = Some (arr [| 2; 3; 5 |]) and dst = arr [| 2; 3; 5 |] in
-  let batch : _ iarray = [| (0, 0) |] and contracting : _ iarray = [| (2, 1) |] in
-  let calls () =
-    for _ = 1 to 1000 do
-      ignore
-        (Nx_kernels_support.view_groups ~batch ~contracting ~dst ~init a b)
-    done
-  in
-  let nothing () = () in
-  calls ();
-  equal float_exact (minor_words nothing) (minor_words calls)
+let test_computes_on (_, d, want) =
+  equal bool want (Nx_cpu.computes_on d);
+  equal ~msg:"as the host reaches it" bool (Rig.reaches Rig.host d)
+    (Nx_cpu.computes_on d)
 
 let tests =
   [
@@ -1260,6 +953,10 @@ let tests =
         test "refuses axes that do not fit and extremes of no term"
           test_reduce_refuses;
         test "accepts states each reduction's dtypes" test_accepts;
+        cases ~name:(fun (D.Any dt) -> D.name dt)
+          "carrier holds every element of the dtype" D.all test_carrier;
+        cases ~name:(fun (Nx_kernel.Any_float dt) -> D.name dt)
+          "float_carrier is the carrier of a float" floats test_float_carrier;
       ];
     group "gathers, scatters and sorts"
       [
@@ -1287,21 +984,13 @@ let tests =
           linalg_case law_linalg;
         test "full_precision states the routines' dtypes" test_full_precision;
       ];
-    group "constructor codes"
-      [ test "each constructor C reads has nx_kernel.h's code" test_codes ];
-    group "contract view"
+    group "libraries"
       [
-        prop "places every element where its layout does" any_case law_view;
-        prop "groups C-contiguous operands of any axis order" canonical_case
-          law_canonical;
-        test "refuses what does not fit and declines an unmerged group"
-          test_view_declines;
-        (* One-axis groups are about 1 draw in 5, a batch misfit among
-           them 1 in 10: 1000 draws reach it about 20 times. *)
-        prop ~count:1000 "a view of one-axis groups is the general grouping's"
-          (Gen.pair any_case (Gen.pair (Gen.int_range 0 4) (Gen.int_range 0 3)))
-          law_one_axis;
-        test "C's fill allocates nothing" test_view_allocates_nothing;
+        test "name names the kernels" (fun () ->
+            equal string "nx.cpu" Nx_cpu.name);
+        cases ~name:(fun (n, _, _) -> n)
+          "computes_on is whether the host reaches the device" devices
+          test_computes_on;
       ];
   ]
 
