@@ -31,7 +31,7 @@
     include them; [nx_contract_view_fill.h] fills a view on the host. *)
 
 module Prog = Prog
-(** Scalar kinds. *)
+(** Scalar programs: what a loop computes at each index. *)
 
 type ('v, 's) a := ('v, 's) Nx_array.t
 type index := (int64, Nx_array.Dtype.int64_elt) Nx_array.t
@@ -393,8 +393,11 @@ end
     Every kernel writes its results into its destinations: C-contiguous,
     reaching no element twice, of the shapes {!Shape} gives and the dtypes its
     doc states, on the operands' device. Operands may be strided, broadcast or
-    offset. The caller has checked their shapes, dtypes, axes and attributes
-    against the kernel's rule.
+    offset. A kernel checks its arrays' dtypes and shapes: it answers
+    [Wrong_dtype] for dtypes its doc does not take, and [Shape_mismatch]
+    for operands or destinations that do not fit it, by their number or by
+    the shapes {!Shape} gives. nx checks the same rules first, so that it
+    can name the error.
 
     A destination shares no byte with an operand, except one it is identical
     to ({!Nx_array.door}) that the kernel reads only at the result's own index:
@@ -423,32 +426,27 @@ end
     A kernel is {e deterministic}, in the sense that for the same operand
     values, shapes, layouts and dtypes, the same attributes, its library
     and a device of the same model, it gives the same bits on every run.
-    No association of
-    a float sum is left to atomics or to the order in which threads finish.
-    Within the bounds this contract and its library state, a float or
-    complex result may otherwise differ between libraries, device models,
-    layouts and extents. nx may compute an operation over several devices,
-    each computing a {e window} of the results, a box of their indices,
-    from the parts of the operands the window reads, or compute a float
-    reduction, scan or contraction from partial results over parts of its
-    terms, one per device, combined in a fixed order. A result whose bits
-    this contract fixes (an integer's or a boolean's, an extreme, a
-    position, a move, a map of kinds {!Prog} defines exactly) keeps the bits
-    of the whole operation, and another float or complex one the bounds its
-    libraries and nx state. Whether a kernel declines depends on the extents
-    an element reads whole (a reduction's, a scan's, a sort's or a
-    transform's axes, the contracted extent, a routine's matrices, a
-    gather's or a scatter's axis, the axes a padded load or a fold pads or
-    windows), the dtypes, the attributes and the device model, never on the
-    result's other extents. Which NaN a NaN result is, its sign and its
-    payload, only the moves of bits specify. IEEE 754 specifies neither for
-    arithmetic, and where two NaNs meet, the one an instruction passes on
-    depends on its operands' order, which a kernel's paths for different
-    layouts may set differently.
+    No association of a float sum is left to atomics or to the order in
+    which threads finish. Within the bounds this contract and its library
+    state, a float or complex result may otherwise differ between
+    libraries, device models, layouts and extents.
 
-    A kernel answers [Wrong_dtype] for dtypes its doc does not take, and
-    [Shape_mismatch] for operands or destinations that do not fit it by
-    their number or by the shapes {!Shape} gives. *)
+    Whether a kernel declines depends only on the extents an element reads
+    whole (a reduction's, a scan's, a sort's or a transform's axes, the
+    contracted extent, a routine's matrices, a gather's or a scatter's
+    axis, the axes a padded load or a fold pads or windows), the dtypes,
+    the attributes and the device model, never on the result's other
+    extents. A result whose bits this contract fixes (an integer's or a
+    boolean's, an extreme, a position, a move, a map of kinds {!Prog}
+    defines exactly) is a function of the operand elements its own index
+    reads, so a box of the results' indices computed alone, from the parts
+    of the operands it reads, has the bits of the whole.
+
+    Which NaN a NaN result is, its sign and its payload, only the moves of
+    bits specify. IEEE 754 specifies neither for arithmetic, and where two
+    NaNs meet, the one an instruction passes on depends on its operands'
+    order, which a kernel's paths for different layouts may set
+    differently. *)
 module type S = sig
   type answer := Nx_array.answer
   type any := Nx_array.any
@@ -616,11 +614,11 @@ module type S = sig
 
       A float or complex contraction's association, which fixes its bits,
       is its library's choice, from the dtypes, the device model and the
-      call's extents, as a blocking chosen by the problem's size.
-      A segmented call's offsets never enter it, so an output's bits do not
-      depend on which groups the other indices are in. A window
-      of [dst] computed alone, or a part of the contracted extent, keeps
-      the bound {!contract} states, not the whole call's bits. *)
+      call's extents, as a blocking chosen by the problem's size. A
+      segmented call's offsets never enter it, so an output's bits do not
+      depend on which groups the other indices are in. A box of [dst]'s
+      indices computed alone, or a part of the contracted extent, keeps the
+      bound {!contract} states; its bits may differ from the whole call's. *)
 
   val contract :
     batch:(int * int) iarray ->
