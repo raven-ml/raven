@@ -1889,79 +1889,87 @@ STATES(double, f64, nx_bits_double(0x7FF8000000000000u), -708)
 
 /* The table's monoids, by monoid then dtype: NULL where declined. */
 #define SET(M, DT, F)                                                        \
-  t->monoid[M][DT] =                                                           \
-      (nx_cpu_monoid){lanes_##F, combine_##F, scan_##F, blocks_##F, few_##F,  \
-                    column_##F}
+  .monoid[M][DT] = {lanes_##F, combine_##F, scan_##F, blocks_##F, few_##F,   \
+                    column_##F},
 
 #define ALL4(DT, D)                                                          \
-  SET(NX_MONOID_SUM, DT, sum_##D);                                            \
-  SET(NX_MONOID_PROD, DT, prod_##D);                                          \
-  SET(NX_MONOID_MAX, DT, max_##D);                                            \
+  SET(NX_MONOID_SUM, DT, sum_##D)                                            \
+  SET(NX_MONOID_PROD, DT, prod_##D)                                          \
+  SET(NX_MONOID_MAX, DT, max_##D)                                            \
   SET(NX_MONOID_MIN, DT, min_##D)
 
 /* The table's stateful reductions, by reduction then dtype: a pass is the
    kernels K, M and F at the suffix D. */
-#define PASS(K, M, F, D) ((nx_cpu_pass){K##_##D, M##_##D, F##_##D})
-#define NONE ((nx_cpu_pass){NULL, NULL, NULL})
+#define PASS(K, M, F, D) {K##_##D, M##_##D, F##_##D}
+#define NONE {NULL, NULL, NULL}
 
 /* A scan's kernels R and M at the suffix D. */
-#define SCAN(R, M, D) ((nx_cpu_scan_pass){R##_##D, M##_##D})
-#define NO_SCAN ((nx_cpu_scan_pass){NULL, NULL})
+#define SCAN(R, M, D) {R##_##D, M##_##D}
+#define NO_SCAN {NULL, NULL}
 
 #define STATE(R, DT, CENTER, VALUE, SCANS)                                   \
-  t->stateful[R - NX_CPU_MONOIDS][DT] =                                      \
-      (nx_cpu_stateful){CENTER, VALUE, SCANS}
+  .stateful[R - NX_CPU_MONOIDS][DT] = {CENTER, VALUE, SCANS},
 
 #define ARG2(DT, D)                                                          \
   STATE(NX_CPU_ARG_MAX, DT, NONE, PASS(arg, arg_merge, arg_finish, max_##D), \
-        SCAN(argscan, argscan_merge, max_##D));                              \
+        SCAN(argscan, argscan_merge, max_##D))                               \
   STATE(NX_CPU_ARG_MIN, DT, NONE, PASS(arg, arg_merge, arg_finish, min_##D), \
         SCAN(argscan, argscan_merge, min_##D))
 
 #define FLOATS(DT, D)                                                        \
   STATE(NX_CPU_LOGSUMEXP, DT, PASS(top, top_merge, top_finish, D),           \
-        PASS(lse, lse_merge, lse_finish, D),                                 \
-        NO_SCAN);                                                            \
+        PASS(lse, lse_merge, lse_finish, D), NO_SCAN)                        \
   STATE(NX_CPU_MOMENTS, DT, PASS(mean, sum_merge, mean_finish, D),           \
         PASS(var, var_merge, var_finish, D), NO_SCAN)
 
-void nx_cpu_set_reduce(nx_cpu_target *t) {
-  ARG2(NX_FLOAT32, f32);
-  ARG2(NX_FLOAT64, f64);
-  ARG2(NX_INT8, i8);
-  ARG2(NX_UINT8, u8);
-  ARG2(NX_INT16, i16);
-  ARG2(NX_UINT16, u16);
-  ARG2(NX_INT32, i32);
-  ARG2(NX_UINT32, u32);
-  ARG2(NX_INT64, i64);
-  ARG2(NX_UINT64, u64);
-  ARG2(NX_BOOL, b);
-  ARG2(NX_COMPLEX64, c64);
-  ARG2(NX_COMPLEX128, c128);
-  FLOATS(NX_FLOAT32, f32);
-  FLOATS(NX_FLOAT64, f64);
-  ALL4(NX_FLOAT32, f32);
-  ALL4(NX_FLOAT64, f64);
-  ALL4(NX_INT8, i8);
-  ALL4(NX_UINT8, u8);
-  ALL4(NX_INT16, i16);
-  ALL4(NX_UINT16, u16);
-  ALL4(NX_INT32, i32);
-  ALL4(NX_UINT32, u32);
-  ALL4(NX_INT64, i64);
-  ALL4(NX_UINT64, u64);
-  SET(NX_MONOID_MAX, NX_BOOL, max_b);
-  SET(NX_MONOID_MIN, NX_BOOL, min_b);
-  ALL4(NX_COMPLEX64, c64);
-  ALL4(NX_COMPLEX128, c128);
-  t->logsumexp[NX_FLOAT32] = lse_network_f32;
-  t->logsumexp[NX_FLOAT64] = lse_network_f64;
-  t->moments[NX_FLOAT32] = moments_network_f32;
-  t->moments[NX_FLOAT64] = moments_network_f64;
-  t->products[NX_FLOAT32] = products_f32;
-  t->products[NX_FLOAT64] = products_f64;
-}
+/* The kernels by reduction and dtype. monoid[m][dt] reduces by the monoid
+   m (NX_MONOID_SUM to NX_MONOID_MIN) at dt: lanes NULL where the table
+   declines. products[dt] sums few products at float32 and float64: NULL
+   where the table declines. logsumexp[dt] and moments[dt] scan by
+   Logsumexp and Moments at float32 and float64.
+   stateful[r - NX_CPU_MONOIDS][dt] reduces by r (NX_CPU_LOGSUMEXP to
+   NX_CPU_MOMENTS) at dt: block NULL where the table declines. */
+static const struct {
+  nx_cpu_monoid monoid[NX_CPU_MONOIDS][NX_DTYPE_COUNT];
+  nx_cpu_products products[NX_DTYPE_COUNT];
+  nx_cpu_network logsumexp[NX_DTYPE_COUNT], moments[NX_DTYPE_COUNT];
+  nx_cpu_stateful stateful[NX_CPU_STATEFUL][NX_DTYPE_COUNT];
+} table = {
+    ARG2(NX_FLOAT32, f32)
+    ARG2(NX_FLOAT64, f64)
+    ARG2(NX_INT8, i8)
+    ARG2(NX_UINT8, u8)
+    ARG2(NX_INT16, i16)
+    ARG2(NX_UINT16, u16)
+    ARG2(NX_INT32, i32)
+    ARG2(NX_UINT32, u32)
+    ARG2(NX_INT64, i64)
+    ARG2(NX_UINT64, u64)
+    ARG2(NX_BOOL, b)
+    ARG2(NX_COMPLEX64, c64)
+    ARG2(NX_COMPLEX128, c128)
+    FLOATS(NX_FLOAT32, f32)
+    FLOATS(NX_FLOAT64, f64)
+    ALL4(NX_FLOAT32, f32)
+    ALL4(NX_FLOAT64, f64)
+    ALL4(NX_INT8, i8)
+    ALL4(NX_UINT8, u8)
+    ALL4(NX_INT16, i16)
+    ALL4(NX_UINT16, u16)
+    ALL4(NX_INT32, i32)
+    ALL4(NX_UINT32, u32)
+    ALL4(NX_INT64, i64)
+    ALL4(NX_UINT64, u64)
+    SET(NX_MONOID_MAX, NX_BOOL, max_b)
+    SET(NX_MONOID_MIN, NX_BOOL, min_b)
+    ALL4(NX_COMPLEX64, c64)
+    ALL4(NX_COMPLEX128, c128)
+    .logsumexp = {[NX_FLOAT32] = lse_network_f32,
+                  [NX_FLOAT64] = lse_network_f64},
+    .moments = {[NX_FLOAT32] = moments_network_f32,
+                [NX_FLOAT64] = moments_network_f64},
+    .products = {[NX_FLOAT32] = products_f32, [NX_FLOAT64] = products_f64},
+};
 
 #include <caml/custom.h>
 #include <caml/fail.h>
@@ -2289,7 +2297,7 @@ static void eval_in(const fused *z, int c, int64_t p, int64_t s0, int64_t n0,
     return;
   }
   eval(z, p, s0, n0, s1, n1, held);
-  nx_cpu_table->convert[h][c](held, out, n0 * n1);
+  nx_cpu_convert(h, c)(held, out, n0 * n1);
 }
 
 /* The operand's element at [pos] in the carrier: in place, or staged into
@@ -2761,7 +2769,7 @@ static void products(const plan *q, work *wk, const unit *x, staged *kept) {
       kept->at[f] = p;
       kept->w[f] = x->W;
     }
-    nx_cpu_table->products[q->carrier](
+    table.products[q->carrier](
         n, x->W, each, base[0], off[0], step[0], base[1], off[1], step[1],
         q->dst->base + (x->d + h * x->sd2) * q->w, x->sd, x->sd2);
   }
@@ -2988,8 +2996,8 @@ static void factors(plan *q) {
   int k[2];
   const fused *z = q->fused;
   q->factor[0] = q->factor[1] = -1;
-  if (z == NULL || q->f != &nx_cpu_table->monoid[NX_MONOID_SUM][q->carrier] ||
-      q->terms > LANES || nx_cpu_table->products[q->carrier] == NULL ||
+  if (z == NULL || q->f != &table.monoid[NX_MONOID_SUM][q->carrier] ||
+      q->terms > LANES || table.products[q->carrier] == NULL ||
       nx_cpu_prog_product(z->prog, z->k, k) != q->carrier)
     return;
   int64_t at0[NX_MAX_OPERANDS + 1], at[NX_MAX_OPERANDS + 1];
@@ -3068,7 +3076,7 @@ static void fill_dst(const nx_array *d, const uint8_t *e, int w) {
   int r = rows_of(d, extent, step);
   int64_t n = extent[r - 1], s = step[0][r - 1], rows = 1;
   for (int i = 0; i < r - 1; i++) rows *= extent[i];
-  nx_cpu_row0 row = nx_cpu_table->fill[nx_cpu_width_index(w)];
+  nx_cpu_row0 row = nx_cpu_rows.fill[nx_cpu_width_index(w)];
   int64_t at[NX_MAX_RANK] = {0}, p = d->offset;
   for (int64_t k = 0; k < rows && n > 0; k++) {
     row(n, d->base + p * w, s, e);
@@ -3495,8 +3503,8 @@ static __attribute__((noinline)) int reduce_in(
   int stateful = r >= NX_CPU_MONOIDS, w = nx_cpu_width(dt), p = part_of(dt);
   int arg = r == NX_CPU_ARG_MAX || r == NX_CPU_ARG_MIN;
   const nx_cpu_stateful *st =
-      stateful ? &nx_cpu_table->stateful[r - NX_CPU_MONOIDS][dt] : NULL;
-  plan q = {.f = stateful ? NULL : &nx_cpu_table->monoid[r][dt],
+      stateful ? &table.stateful[r - NX_CPU_MONOIDS][dt] : NULL;
+  plan q = {.f = stateful ? NULL : &table.monoid[r][dt],
             .r = stateful ? &st->value : NULL,
             .z = stateful && op == SCAN ? &st->scan : NULL,
             .w = w,
@@ -3760,8 +3768,8 @@ static void network_units(int64_t lo, int64_t hi, int worker, void *ctx) {
     return;
   }
   int dt = q->a[2]->dtype;
-  nx_cpu_network run = q->r == NX_CPU_MOMENTS ? nx_cpu_table->moments[dt]
-                                              : nx_cpu_table->logsumexp[dt];
+  nx_cpu_network run =
+      q->r == NX_CPU_MOMENTS ? table.moments[dt] : table.logsumexp[dt];
   for (int64_t i = lo; i < hi;) {
     if (q->per == 0) {
       run_unit(q, run, i++, scratch, states * w8, NULL);

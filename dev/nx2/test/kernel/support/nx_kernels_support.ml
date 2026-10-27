@@ -34,7 +34,7 @@ let with_target t f =
 (* nx_cpu.mli's promise: every kind at every dtype of its domain. *)
 let cpu_computes _ _ = true
 
-let cpu target =
+let under target =
   {
     name = "cpu/" ^ target;
     kernels = (module Nx_cpu);
@@ -43,9 +43,11 @@ let cpu target =
     around = (fun f -> with_target target f);
   }
 
-let cpus = List.map cpu (targets ())
+let cpus = List.map under (targets ())
 
-let backends = cpus
+let cpu = under (current ())
+
+let backends = [ cpu ]
 
 external x86_64 : unit -> bool = "nx_kernels_support_x86_64" [@@noalloc]
 

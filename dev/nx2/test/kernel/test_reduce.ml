@@ -6378,5 +6378,4 @@ let () =
   exit
     (Windtrap.run "nx_kernel.reduce"
        (List.map laws Support.backends
-       @ List.map order Support.cpus
-       @ List.map cpu Support.cpus))
+       @ [ order Support.cpu; cpu Support.cpu ]))

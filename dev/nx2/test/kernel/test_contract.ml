@@ -3427,4 +3427,4 @@ let cpu (b : Support.backend) =
 let () =
   exit
     (Windtrap.run "nx_kernel.contract"
-       (List.map laws Support.backends @ List.map cpu Support.cpus))
+       (List.map laws Support.cpus @ List.map cpu Support.cpus))

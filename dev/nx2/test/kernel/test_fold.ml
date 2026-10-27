@@ -543,4 +543,4 @@ let cpu (b : Support.backend) =
 let () =
   exit
     (Windtrap.run "nx_kernel.fold"
-       (List.map laws Support.backends @ List.map cpu Support.cpus))
+       (List.map laws Support.backends @ [ cpu Support.cpu ]))

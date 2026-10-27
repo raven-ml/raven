@@ -31,9 +31,8 @@
    The routines follow LAPACK's (BSD) and ReLAPACK's recursive ones (MIT),
    named at each.
 
-   A call runs the table's matrices (cpu.h). No C file of nx2 contracts a
-   product into an fma it does not name (dev/nx2/dune), so every target's
-   results have the same bits. */
+   No C file of nx2 contracts a product into an fma it does not name
+   (dev/nx2/dune), so every target's results have the same bits. */
 
 #include <complex.h>
 #include <float.h>
@@ -650,8 +649,7 @@ static void wait_for(const int64_t *x, int64_t v) {
 
 /* The job */
 
-/* The table's linalg (cpu.h): units [lo, hi), matrices [u·per,
-   (u + 1)·per) of each. */
+/* A job's body: units [lo, hi), matrices [u·per, (u + 1)·per) of each. */
 static void matrices(int64_t lo, int64_t hi, int worker, void *ctx) {
   call *c = ctx;
   arena *s = &c->packs[worker];
@@ -673,8 +671,6 @@ static void matrices(int64_t lo, int64_t hi, int worker, void *ctx) {
   }
   nx_cpu_give(w);
 }
-
-void nx_cpu_set_linalg(nx_cpu_target *t) { t->linalg = matrices; }
 
 /* A matrix's flops, two a multiply-add as gemm.c counts them, with k the
    lesser extent: a solve's n² r; Cholesky's n³/3 (xPOTRF); LU's
@@ -900,7 +896,7 @@ static value run(call c, const value *arrays) {
   }
   if (c.matrices > 0) {
     int64_t units = c.matrices / c.per;
-    nx_cpu_job(units, bytes, cost, nx_cpu_table->linalg, &c);
+    nx_cpu_job(units, bytes, cost, matrices, &c);
   }
   for (int i = 0; i < cores; i++) {
     free(c.packs[i].p);

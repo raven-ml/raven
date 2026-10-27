@@ -6,9 +6,9 @@
 /* Fill, iota, and the kinds of one, two and three operands.
 
    Each kind of one, two or three operands runs as a row function per dtype,
-   the target table's (rows.c), at the dtype its operands compute in: their
-   carrier (cpu.h), so that a narrow float computes in float32 and rounds
-   once on the store, and int4 computes in int8 and keeps its low bits.
+   rows.c's, at the dtype its operands compute in: their carrier (cpu.h),
+   so that a narrow float computes in float32 and rounds once on the store,
+   and int4 computes in int8 and keeps its low bits.
    Where moves bits, so a dtype of a byte or more selects in itself, by its
    width alone. The walk hands the rows a block's rows. An operand read in
    place is one already in its compute dtype; the stage brings any other
@@ -48,7 +48,7 @@ static int64_t most(int n, const nx_array *a) {
     staged += c != a[k].dtype;
   }
   int64_t slot = NX_CPU_SLOT / w;
-  int64_t staged_bytes = nx_cpu_table->l1 / 2;
+  int64_t staged_bytes = nx_cpu_l1 / 2;
   int64_t budget = staged > 0 ? staged_bytes / (staged * w) : slot;
   return budget < slot ? budget : slot;
 }
@@ -174,7 +174,7 @@ static void block(const nx_cpu_block *b, void *ctx) {
 void nx_cpu_fill_block(const nx_array *d, const nx_cpu_block *b,
                        const uint8_t *bits) {
   int w = nx_cpu_width(d->dtype);
-  nx_cpu_row0 f = nx_cpu_table->fill[nx_cpu_width_index(w)];
+  nx_cpu_row0 f = nx_cpu_rows.fill[nx_cpu_width_index(w)];
   for (int64_t q = 0; q < b->n2; q++)
     for (int64_t r = 0; r < b->n1; r++) {
       int64_t p = b->at[0] + q * b->s2[0] + r * b->s1[0];
@@ -243,7 +243,7 @@ value nx_cpu_apply1(value k, value vd, value vx) {
   int x = nx_array_dtype(vx), c = nx_cpu_carrier(x);
   int code = NX_OP1_NEG + Int_val(k);
   nx_operand in[2] = {{vd, x, 1}, {vx, x, 0}};
-  op j = {.as = {c, c}, .f1 = nx_cpu_table->op1[code][c]};
+  op j = {.as = {c, c}, .f1 = nx_cpu_rows.op1[code][c]};
   return walk_operands(2, in, block, &j, nx_cpu_kind_cost(1, code, x));
 }
 
@@ -252,7 +252,7 @@ value nx_cpu_apply2(value k, value vd, value vx, value vy) {
   int code = NX_OP2_CODE(k);
   int d = code >= NX_OP2_EQUAL ? NX_BOOL : x;
   nx_operand in[3] = {{vd, d, 1}, {vx, x, 0}, {vy, x, 0}};
-  op j = {.as = {nx_cpu_carrier(d), c, c}, .f2 = nx_cpu_table->op2[code][c]};
+  op j = {.as = {nx_cpu_carrier(d), c, c}, .f2 = nx_cpu_rows.op2[code][c]};
   return walk_operands(3, in, block, &j, nx_cpu_kind_cost(2, code, x));
 }
 
@@ -264,10 +264,10 @@ value nx_cpu_apply3(value k, value vd, value vc, value vx, value vy) {
     /* A sub-byte dtype selects among its codes, one per byte. */
     int s = nx_dtype_row_of(x).bits < 8 ? nx_cpu_carrier(x) : x;
     j = (op){.as = {s, NX_BOOL, s, s},
-             .f3 = nx_cpu_table->where[nx_cpu_width_index(nx_cpu_width(s))]};
+             .f3 = nx_cpu_rows.where[nx_cpu_width_index(nx_cpu_width(s))]};
   } else {
     int s = nx_cpu_carrier(x);
-    j = (op){.as = {s, s, s, s}, .f3 = nx_cpu_table->fma[s]};
+    j = (op){.as = {s, s, s, s}, .f3 = nx_cpu_rows.fma[s]};
   }
   nx_operand in[4] = {{vd, x, 1}, {vc, c, 0}, {vx, x, 0}, {vy, x, 0}};
   return walk_operands(4, in, block, &j, nx_cpu_kind_cost(3, Int_val(k), x));

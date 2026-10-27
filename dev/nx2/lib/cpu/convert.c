@@ -3,9 +3,9 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The conversion runs and the setting of their table, compiled as every
-   unit of nx.cpu but target.c is: for x86-64-v3 on x86-64 (AVX2, FMA, F16C
-   and BMI2), the headers' inline codecs and runs.h's runs included.
+/* The conversion runs and their tables, compiled as every unit of nx.cpu
+   but target.c is: for x86-64-v3 on x86-64 (AVX2, FMA, F16C and BMI2), the
+   headers' inline codecs and runs.h's runs included.
 
    One loop per pair of dtypes, each element converted by an expression
    built from nx_dtype.h's codecs: the store rule of Dtype.of_float from a
@@ -161,24 +161,29 @@ RUN(FLOAT8_E4M3FN, FLOAT32, nx_e4m3fn_to_float_run)
 RUN(INT64, FLOAT32, nx_i64_to_float_run)
 RUN(UINT64, FLOAT32, nx_u64_to_float_run)
 
-/* The table: a loop for every pair, then the runs that differ from one. */
-#define ENTRY(S, ST, CL, D, DT, K, A, B, C) t->convert[NX_##S][NX_##D] = S##_##D;
+/* A loop for every pair of a carrier and a dtype, and from each narrow
+   float to float32. */
+#define ENTRY(S, ST, CL, D, DT, K, A, B, C) [NX_##S][NX_##D] = S##_##D,
 #define ENTRIES(D, DT, K, A, B, C) SRCS(ENTRY, D, DT, K, A, B, C)
 
-void nx_cpu_set_convert(nx_cpu_target *t) {
-  DSTS(ENTRIES)
-  t->convert[NX_FLOAT8_E5M2][NX_FLOAT32] = FLOAT8_E5M2_FLOAT32;
-  t->convert[NX_FLOAT4_E2M1FN][NX_FLOAT32] = FLOAT4_E2M1FN_FLOAT32;
-  t->convert[NX_FLOAT16][NX_FLOAT32] = run_FLOAT16_FLOAT32;
-  t->convert[NX_FLOAT32][NX_FLOAT16] = run_FLOAT32_FLOAT16;
-  t->convert[NX_FLOAT32][NX_INT32] = run_FLOAT32_INT32;
-  t->convert[NX_FLOAT32][NX_INT8] = run_FLOAT32_INT8;
-  t->convert[NX_FLOAT32][NX_UINT8] = run_FLOAT32_UINT8;
-  t->convert[NX_FLOAT64][NX_FLOAT16] = run_FLOAT64_FLOAT16;
-  t->convert[NX_BFLOAT16][NX_FLOAT32] = run_BFLOAT16_FLOAT32;
-  t->convert[NX_FLOAT32][NX_BFLOAT16] = run_FLOAT32_BFLOAT16;
-  t->convert[NX_FLOAT32][NX_FLOAT8_E4M3FN] = run_FLOAT32_FLOAT8_E4M3FN;
-  t->convert[NX_FLOAT8_E4M3FN][NX_FLOAT32] = run_FLOAT8_E4M3FN_FLOAT32;
-  t->convert[NX_INT64][NX_FLOAT32] = run_INT64_FLOAT32;
-  t->convert[NX_UINT64][NX_FLOAT32] = run_UINT64_FLOAT32;
-}
+const nx_cpu_run nx_cpu_convert_loops[NX_DTYPE_COUNT][NX_DTYPE_COUNT] = {
+    DSTS(ENTRIES)
+    [NX_FLOAT8_E5M2][NX_FLOAT32] = FLOAT8_E5M2_FLOAT32,
+    [NX_FLOAT4_E2M1FN][NX_FLOAT32] = FLOAT4_E2M1FN_FLOAT32,
+};
+
+/* The runs, where they outrun the loop. */
+const nx_cpu_run nx_cpu_convert_runs[NX_DTYPE_COUNT][NX_DTYPE_COUNT] = {
+    [NX_FLOAT16][NX_FLOAT32] = run_FLOAT16_FLOAT32,
+    [NX_FLOAT32][NX_FLOAT16] = run_FLOAT32_FLOAT16,
+    [NX_FLOAT32][NX_INT32] = run_FLOAT32_INT32,
+    [NX_FLOAT32][NX_INT8] = run_FLOAT32_INT8,
+    [NX_FLOAT32][NX_UINT8] = run_FLOAT32_UINT8,
+    [NX_FLOAT64][NX_FLOAT16] = run_FLOAT64_FLOAT16,
+    [NX_BFLOAT16][NX_FLOAT32] = run_BFLOAT16_FLOAT32,
+    [NX_FLOAT32][NX_BFLOAT16] = run_FLOAT32_BFLOAT16,
+    [NX_FLOAT32][NX_FLOAT8_E4M3FN] = run_FLOAT32_FLOAT8_E4M3FN,
+    [NX_FLOAT8_E4M3FN][NX_FLOAT32] = run_FLOAT8_E4M3FN_FLOAT32,
+    [NX_INT64][NX_FLOAT32] = run_INT64_FLOAT32,
+    [NX_UINT64][NX_FLOAT32] = run_UINT64_FLOAT32,
+};

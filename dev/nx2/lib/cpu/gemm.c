@@ -1683,10 +1683,10 @@ static int in_place(const problem *p, int o) {
   if (o == B && p->keeps_a) {
     int64_t kc = min64(p->g->kc, p->ext[CON]);
     return adjacent(p, B, COL) &&
-           kc * p->op[B].st[CON] * p->w <= nx_cpu_table->l1 / 2;
+           kc * p->op[B].st[CON] * p->w <= nx_cpu_l1 / 2;
   }
   int64_t n = o == A ? p->ext[ROW] : p->ext[COL];
-  int64_t most = o == A ? IN_PLACE_BYTES : nx_cpu_table->l2 / 2;
+  int64_t most = o == A ? IN_PLACE_BYTES : nx_cpu_l2 / 2;
   if (p->ext[CON] > most / p->w / n) return 0;
   if (o == B) return adjacent(p, B, COL);
   return p->g->kernel.a == NX_CPU_A_ELEMENTS && adjacent(p, A, CON);
@@ -1703,7 +1703,7 @@ static int in_place(const problem *p, int o) {
 static int streams(const problem *p) {
   int64_t m = p->ext[ROW], b_bytes = p->ext[CON] * p->ext[COL] * p->w;
   if (m <= p->g->mc) return 1;
-  return m <= p->g->few && adjacent(p, B, CON) && b_bytes > nx_cpu_table->l2;
+  return m <= p->g->few && adjacent(p, B, CON) && b_bytes > nx_cpu_l2;
 }
 
 /* Whether [p]'s init is its dst: the door lets a read operand be identical to
@@ -2395,7 +2395,7 @@ static int axpys_fit(const nx_cpu_gemm *g, const nx_contract_view *v,
   if (m <= AXPY_FEW) return 1;
   int64_t batch = v->extent[BATCH], n = v->extent[COL];
   if (k < AXPY_DEEP) return 0;
-  if (m > AXPY_MANY && batch * n * k <= nx_cpu_table->llc / AXPY_HELD)
+  if (m > AXPY_MANY && batch * n * k <= nx_cpu_llc / AXPY_HELD)
     return 0;
   double cost = axpys_cost(g, v, k, &bytes);
   int64_t threads = nx_cpu_threads_at(bytes, cost, NX_CPU_THREAD_BYTES);

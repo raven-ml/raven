@@ -599,7 +599,7 @@ static int64_t flag_bytes(int shift) { return (((int64_t)1 << shift) + 63) & -64
 static void load_row(int dt, const nx_array *a, int64_t at, int64_t s,
                      int64_t n, float *f) {
   if (s == 1 && n > 1 && a->bits >= 8) {
-    nx_cpu_table->convert[dt][NX_FLOAT32](a->base + at * (a->bits / 8), f, n);
+    nx_cpu_convert(dt, NX_FLOAT32)(a->base + at * (a->bits / 8), f, n);
     return;
   }
   for (int64_t i = 0; i < n; i++)
@@ -611,7 +611,7 @@ static void load_row(int dt, const nx_array *a, int64_t at, int64_t s,
 static void store_row(int dt, const nx_array *a, int64_t at, int64_t s,
                       int64_t n, const float *f) {
   if (s == 1 && n > 1 && a->bits >= 8) {
-    nx_cpu_table->convert[NX_FLOAT32][dt](f, a->base + at * (a->bits / 8), n);
+    nx_cpu_convert(NX_FLOAT32, dt)(f, a->base + at * (a->bits / 8), n);
     return;
   }
   for (int64_t i = 0; i < n; i++)
@@ -1086,7 +1086,7 @@ static int64_t apply_bytes(const scatter *c, int64_t steps, int64_t n) {
    share the contraction's blocks take, fewer while the threads would have
    under BINS_PER_THREAD bins each, more past MOST_BINS bins. */
 static int bin_shift(uint64_t dim, int64_t w, int threads) {
-  int64_t most = nx_cpu_table->l2 / 2;
+  int64_t most = nx_cpu_l2 / 2;
   int s = 0;
   while (s < 62 && ((int64_t)2 << s) * w <= most) s++;
   while (s > 0 && ((dim - 1) >> s) + 1 < (uint64_t)threads * BINS_PER_THREAD)

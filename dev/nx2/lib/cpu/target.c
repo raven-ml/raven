@@ -129,13 +129,13 @@ static int has_vnni_int8(void) {
 }
 #endif
 
-#if defined(__x86_64__)
-nx_cpu_target nx_cpu_base = {.name = "base", .copy_strided = 1};
+int64_t nx_cpu_l2, nx_cpu_l1, nx_cpu_llc;
 
+nx_cpu_target nx_cpu_base = {.name = "base"};
+
+#if defined(__x86_64__)
 /* Whether the host has x86-64-v3, as the constructor found. */
 static int v3;
-#else
-nx_cpu_target nx_cpu_base = {.name = "base"};
 #endif
 #if defined(__APPLE__) && defined(__aarch64__)
 nx_cpu_target nx_cpu_amx;
@@ -178,15 +178,10 @@ __attribute__((constructor)) static void init(void) {
   v3 = has_v3();
   if (!v3) return;
 #endif
-  nx_cpu_base.l2 = l2_bytes();
-  nx_cpu_base.l1 = l1_bytes();
-  nx_cpu_base.llc = llc_bytes();
-  nx_cpu_set_convert(&nx_cpu_base);
+  nx_cpu_l2 = l2_bytes();
+  nx_cpu_l1 = l1_bytes();
+  nx_cpu_llc = llc_bytes();
   nx_cpu_set_gemm(&nx_cpu_base);
-  nx_cpu_set_rows(&nx_cpu_base);
-  nx_cpu_set_reduce(&nx_cpu_base);
-  nx_cpu_set_fft(&nx_cpu_base);
-  nx_cpu_set_linalg(&nx_cpu_base);
 #if defined(__aarch64__)
   nx_cpu_set_neon(&nx_cpu_base);
 #endif

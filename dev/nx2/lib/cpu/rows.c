@@ -525,79 +525,77 @@ FILL(4, uint32_t)
 FILL(8, uint64_t)
 FILL(16, w16)
 
-/* The tables, by kind then dtype: NULL where Nx_kernel.Prog refuses the
+/* The table, by kind then dtype: NULL where Nx_kernel.Prog refuses the
    kind at the dtype. */
 
 #define CMP_ROWS(DT, D)                                                      \
-  t->op2[NX_OP2_EQUAL][DT] = equal_##D;                                      \
-  t->op2[NX_OP2_NOT_EQUAL][DT] = not_equal_##D;                              \
-  t->op2[NX_OP2_LESS][DT] = less_##D;                                        \
-  t->op2[NX_OP2_LESS_EQUAL][DT] = less_equal_##D;                            \
-  t->op2[NX_OP2_MAXIMUM][DT] = maximum_##D;                                  \
-  t->op2[NX_OP2_MINIMUM][DT] = minimum_##D
+  .op2[NX_OP2_EQUAL][DT] = equal_##D,                                        \
+  .op2[NX_OP2_NOT_EQUAL][DT] = not_equal_##D,                                \
+  .op2[NX_OP2_LESS][DT] = less_##D,                                          \
+  .op2[NX_OP2_LESS_EQUAL][DT] = less_equal_##D,                              \
+  .op2[NX_OP2_MAXIMUM][DT] = maximum_##D,                                    \
+  .op2[NX_OP2_MINIMUM][DT] = minimum_##D,
 
 #define ARITH_ROWS(DT, D)                                                    \
-  CMP_ROWS(DT, D);                                                           \
-  t->op2[NX_OP2_ADD][DT] = add_##D;                                          \
-  t->op2[NX_OP2_SUB][DT] = sub_##D;                                          \
-  t->op2[NX_OP2_MUL][DT] = mul_##D;                                          \
-  t->op2[NX_OP2_MOD][DT] = mod_##D;                                          \
-  t->op2[NX_OP2_POW][DT] = pow_##D;                                          \
-  t->fma[DT] = fma_##D
+  CMP_ROWS(DT, D)                                                            \
+  .op2[NX_OP2_ADD][DT] = add_##D,                                            \
+  .op2[NX_OP2_SUB][DT] = sub_##D,                                            \
+  .op2[NX_OP2_MUL][DT] = mul_##D,                                            \
+  .op2[NX_OP2_MOD][DT] = mod_##D,                                            \
+  .op2[NX_OP2_POW][DT] = pow_##D,                                            \
+  .fma[DT] = fma_##D,
 
-#define SET1(C, K, DT, D) t->op1[NX_OP1_##C][DT] = K##_##D;
+#define SET1(C, K, DT, D) .op1[NX_OP1_##C][DT] = K##_##D,
 #define SETN(C, K, B, DT, D) SET1(C, K, DT, D)
 
 #define FLOAT_ROWS(DT, D)                                                    \
-  ARITH_ROWS(DT, D);                                                         \
-  t->op2[NX_OP2_FDIV][DT] = fdiv_##D;                                        \
-  t->op2[NX_OP2_ATAN2][DT] = atan2_##D;                                      \
+  ARITH_ROWS(DT, D)                                                          \
+  .op2[NX_OP2_FDIV][DT] = fdiv_##D,                                          \
+  .op2[NX_OP2_ATAN2][DT] = atan2_##D,                                        \
   FLOAT_KINDS1(SET1, DT, D)                                                  \
   NEAR_KINDS(SETN, DT, D)
 
 #define INT_ROWS(DT, D, W)                                                   \
-  ARITH_ROWS(DT, D);                                                         \
-  t->op2[NX_OP2_IDIV][DT] = idiv_##D;                                        \
-  t->op2[NX_OP2_AND][DT] = and_##D;                                          \
-  t->op2[NX_OP2_OR][DT] = or_##D;                                            \
-  t->op2[NX_OP2_XOR][DT] = xor_##D;                                          \
+  ARITH_ROWS(DT, D)                                                          \
+  .op2[NX_OP2_IDIV][DT] = idiv_##D,                                          \
+  .op2[NX_OP2_AND][DT] = and_##D,                                            \
+  .op2[NX_OP2_OR][DT] = or_##D,                                              \
+  .op2[NX_OP2_XOR][DT] = xor_##D,                                            \
   INT_KINDS1(SET1, DT, D)                                                    \
-  t->op1[NX_OP1_FLOOR][DT] = t->op1[NX_OP1_CEIL][DT] = ident_##W;            \
-  t->op1[NX_OP1_ROUND][DT] = t->op1[NX_OP1_TRUNC][DT] = ident_##W
+  .op1[NX_OP1_FLOOR][DT] = ident_##W,                                        \
+  .op1[NX_OP1_CEIL][DT] = ident_##W,                                         \
+  .op1[NX_OP1_ROUND][DT] = ident_##W,                                        \
+  .op1[NX_OP1_TRUNC][DT] = ident_##W,
 
 #define COMPLEX_ROWS(DT, D)                                                  \
-  CMP_ROWS(DT, D);                                                           \
-  t->op2[NX_OP2_ADD][DT] = add_##D;                                          \
-  t->op2[NX_OP2_SUB][DT] = sub_##D;                                          \
-  t->op2[NX_OP2_MUL][DT] = mul_##D;                                          \
-  t->op2[NX_OP2_FDIV][DT] = fdiv_##D;                                        \
-  t->op2[NX_OP2_POW][DT] = pow_##D;                                          \
+  CMP_ROWS(DT, D)                                                            \
+  .op2[NX_OP2_ADD][DT] = add_##D,                                            \
+  .op2[NX_OP2_SUB][DT] = sub_##D,                                            \
+  .op2[NX_OP2_MUL][DT] = mul_##D,                                            \
+  .op2[NX_OP2_FDIV][DT] = fdiv_##D,                                          \
+  .op2[NX_OP2_POW][DT] = pow_##D,                                            \
   COMPLEX_KINDS1(SET1, DT, D)
 
-void nx_cpu_set_rows(nx_cpu_target *t) {
-  COMPLEX_ROWS(NX_COMPLEX64, c64);
-  COMPLEX_ROWS(NX_COMPLEX128, c128);
-  FLOAT_ROWS(NX_FLOAT32, f32);
-  FLOAT_ROWS(NX_FLOAT64, f64);
-  t->op1[NX_OP1_ERF][NX_FLOAT32] = erf_f32;
-  t->op1[NX_OP1_ERF][NX_FLOAT64] = erf_f64;
-  INT_ROWS(NX_INT8, i8, 1);
-  INT_ROWS(NX_INT16, i16, 2);
-  INT_ROWS(NX_INT32, i32, 4);
-  INT_ROWS(NX_INT64, i64, 8);
-  INT_ROWS(NX_UINT8, u8, 1);
-  INT_ROWS(NX_UINT16, u16, 2);
-  INT_ROWS(NX_UINT32, u32, 4);
-  INT_ROWS(NX_UINT64, u64, 8);
-  CMP_ROWS(NX_BOOL, b);
-  t->op2[NX_OP2_AND][NX_BOOL] = and_b;
-  t->op2[NX_OP2_OR][NX_BOOL] = or_b;
-  t->op2[NX_OP2_XOR][NX_BOOL] = xor_b;
-  t->op2[NX_OP2_THREEFRY][NX_UINT64] = threefry_u64;
-  nx_cpu_row3 where[] = {where_1, where_2, where_4, where_8, where_16};
-  nx_cpu_row0 fills[] = {fill_1, fill_2, fill_4, fill_8, fill_16};
-  for (int i = 0; i < 5; i++) {
-    t->where[i] = where[i];
-    t->fill[i] = fills[i];
-  }
-}
+const nx_cpu_row_table nx_cpu_rows = {
+    COMPLEX_ROWS(NX_COMPLEX64, c64)
+    COMPLEX_ROWS(NX_COMPLEX128, c128)
+    FLOAT_ROWS(NX_FLOAT32, f32)
+    FLOAT_ROWS(NX_FLOAT64, f64)
+    .op1[NX_OP1_ERF][NX_FLOAT32] = erf_f32,
+    .op1[NX_OP1_ERF][NX_FLOAT64] = erf_f64,
+    INT_ROWS(NX_INT8, i8, 1)
+    INT_ROWS(NX_INT16, i16, 2)
+    INT_ROWS(NX_INT32, i32, 4)
+    INT_ROWS(NX_INT64, i64, 8)
+    INT_ROWS(NX_UINT8, u8, 1)
+    INT_ROWS(NX_UINT16, u16, 2)
+    INT_ROWS(NX_UINT32, u32, 4)
+    INT_ROWS(NX_UINT64, u64, 8)
+    CMP_ROWS(NX_BOOL, b)
+    .op2[NX_OP2_AND][NX_BOOL] = and_b,
+    .op2[NX_OP2_OR][NX_BOOL] = or_b,
+    .op2[NX_OP2_XOR][NX_BOOL] = xor_b,
+    .op2[NX_OP2_THREEFRY][NX_UINT64] = threefry_u64,
+    .where = {where_1, where_2, where_4, where_8, where_16},
+    .fill = {fill_1, fill_2, fill_4, fill_8, fill_16},
+};

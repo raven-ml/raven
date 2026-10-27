@@ -2991,11 +2991,6 @@ let held_cases cases =
   let+ seed = int in
   (c, dt, k, pattern, side, seed)
 
-(* nx.cpu under each target table the host runs. *)
-let cpu_tables =
-  List.filter (fun (b : Support.backend) -> Rig.equal b.device Rig.host)
-    Support.backends
-
 (* [n] elements of [dt] drawn from its specials alone, by [seed]: NaNs of
    both signs, signalling and quiet, with payloads, infinities, zeros, and
    numbers that some kinds make NaN from. *)
@@ -3006,10 +3001,9 @@ let specials_only (type v s) (dt : (v, s) D.t) n seed : (v, s) A.t =
   let data = String.concat "" (List.init n pick) in
   A.v dt (L.contiguous [| n |]) (B.of_string data)
 
-(* A float kind's results at special values are of one class under every
-   target table and into a destination that is its operand: a NaN where one
-   is a NaN, else the same bits. A compiler's fold for one target can turn a
-   NaN into a number. *)
+(* A float kind's results at special values are of one class into a
+   destination that is its operand and into a new one: a NaN where one is a
+   NaN, else the same bits. *)
 let law_nan_class (D.Any dt, seed) =
   let n = 300 in
   let x = specials_only dt n seed and y = specials_only dt n (seed + 1) in
@@ -3041,15 +3035,10 @@ let law_nan_class (D.Any dt, seed) =
           equal ~msg:name answer A.Done (run b.kernels dst x');
           bits_of dst)
     in
-    let want = under (List.hd cpu_tables) ~alias:false in
-    let same = same_values (D.Any dt) in
-    List.iter
-      (fun (b : Support.backend) ->
-        equal ~msg:(strf "%s on %s" name b.name) same want
-          (under b ~alias:false);
-        equal ~msg:(strf "%s in place on %s" name b.name) same want
-          (under b ~alias:true))
-      cpu_tables
+    let b = Support.cpu in
+    equal ~msg:(strf "%s in place on %s" name b.name)
+      (same_values (D.Any dt))
+      (under b ~alias:false) (under b ~alias:true)
   in
   List.iter check kinds
 
@@ -3175,10 +3164,10 @@ let cpu =
     ]
   in
   group "nx.cpu"
-    (List.concat_map maps cpu_tables
+    (maps Support.cpu
     @ [
       prop ~count:8
-        "kinds at special values give one class on every table and in place"
+        "kinds at special values give one class in place"
         (Gen.pair
            (Gen.of_list ~pp:pp_dtype D.[ Any Float32; Any Float64 ])
            Gen.int)

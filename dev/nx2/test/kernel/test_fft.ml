@@ -888,8 +888,7 @@ let lines wide n =
       { kind; wide; shape = s; axes = [| 0 |]; view = plain 1; xs })
     [ C2c Forward; C2c Inverse; R2c; C2r n ]
 
-(* [table digest] is a row of [digest wide n] per length and width, computed on
-   each target, which must agree. *)
+(* [table digest] is a row of [digest wide n] per length and width. *)
 let table digest =
   let rows () =
     List.concat_map
@@ -904,14 +903,7 @@ let table digest =
       lengths
     |> String.concat "\n"
   in
-  match Support.cpus with
-  | [] -> fail "no target"
-  | first :: rest ->
-      let t = first.around rows in
-      List.iter
-        (fun (b : Support.backend) -> equal text t (b.around rows) ~msg:b.name)
-        rest;
-      t
+  Support.cpu.around rows
 
 let test_digests () =
   let one c = String.concat "" (Array.to_list (elements (run c (operand c)))) in
@@ -1056,7 +1048,7 @@ let test_refusals () =
   equal answer A.Shape_mismatch
     (Nx_cpu.c2r ~axes:[| 2 |] ~dst:(f64 [| 4 |]) (c128 [| 3 |]))
 
-(* The laws under each target table the host runs. *)
+(* The laws. *)
 let laws (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group ("nx.cpu " ^ b.name)
@@ -1074,7 +1066,7 @@ let laws (b : Support.backend) =
 let () =
   exit
     (Windtrap.run "nx_kernel.fft"
-       (List.map laws Support.cpus
+       (List.map laws Support.backends
        @ [
            group "nx.cpu"
              [

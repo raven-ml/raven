@@ -34,9 +34,7 @@
 
    Plans are kept for the next call in a cache of PLANS, shared by every
    thread. A job's units are lines where there are enough for its
-   threads; else each line's steps are jobs of their own.
-
-   The entries run the table's transform (cpu.h). */
+   threads; else each line's steps are jobs of their own. */
 
 #include <math.h>
 #include <pthread.h>
@@ -56,16 +54,16 @@
    L2 on any threads (measured on the M1 alone). */
 #if defined(__AVX__)
 #define NT_STORES 1
-#define STREAM_BYTES(t) ((t)->l2)
-#define STREAM_SEVERAL(t) ((t)->llc)
+#define STREAM_BYTES nx_cpu_l2
+#define STREAM_SEVERAL nx_cpu_llc
 #elif defined(__aarch64__)
 #define NT_STORES 1
-#define STREAM_BYTES(t) ((t)->l2 / 2)
-#define STREAM_SEVERAL(t) ((t)->l2 / 2)
+#define STREAM_BYTES (nx_cpu_l2 / 2)
+#define STREAM_SEVERAL (nx_cpu_l2 / 2)
 #else
 #define NT_STORES 0
-#define STREAM_BYTES(t) ((t)->l2)
-#define STREAM_SEVERAL(t) ((t)->l2)
+#define STREAM_BYTES nx_cpu_l2
+#define STREAM_SEVERAL nx_cpu_l2
 #endif
 
 /* The most points a line computes by passes alone. Above, the four steps
@@ -219,9 +217,7 @@ static lines lines_of(const nx_array *a, int axis, const nx_array *by, int w) {
    core; below half of a core's L2 (1.5 MiB), lines of 2^16 points (0.5
    to 1 MiB) lost up to 5% on its threads. */
 static int streams(int64_t bytes, int threads) {
-  const nx_cpu_target *t = nx_cpu_table;
-  return NT_STORES &&
-         bytes > (threads == 1 ? STREAM_BYTES(t) : STREAM_SEVERAL(t));
+  return NT_STORES && bytes > (threads == 1 ? STREAM_BYTES : STREAM_SEVERAL);
 }
 
 /* Sets every element of [a] to +0. */
@@ -684,9 +680,8 @@ static double call_cost(int t, const nx_array *x, const nx_array *y,
   return price + plans < NX_CPU_HOLD_BYTES ? price : price + plans;
 }
 
-/* The table's fft (cpu.h), with the domain lock released where the
-   call's price reaches NX_CPU_RELEASE_BYTES: each target's table keeps
-   its own plans. */
+/* The transform [t] of [x] into [y], with the domain lock released where
+   the call's price reaches NX_CPU_RELEASE_BYTES: 0 if memory runs out. */
 static int run(int t, int inverse, const nx_array *x, const nx_array *y,
                const int *axes, int na) {
   int single = (t == C2R ? x->dtype : y->dtype) == NX_COMPLEX64, ok;
@@ -704,8 +699,6 @@ static int run(int t, int inverse, const nx_array *x, const nx_array *y,
   return ok;
 }
 
-void nx_cpu_set_fft(nx_cpu_target *t) { t->fft = run; }
-
 /* Runs the transform [t], [inverse] for c2c's Inverse, of x into dst
    along the OCaml int array [vaxes], whose shapes nx_cpu.ml checked. The
    caller roots its values. */
@@ -717,7 +710,7 @@ static value transform(int t, int inverse, value vaxes, value dst, value x) {
   nx_array a[2];
   int e = nx_read(2, in, a);
   if (e) return Val_int(e);
-  int ok = nx_cpu_table->fft(t, inverse, &a[0], &a[1], axes, na);
+  int ok = run(t, inverse, &a[0], &a[1], axes, na);
   nx_done(2, a);
   if (!ok) caml_raise_out_of_memory();
   return Val_int(NX_OK);

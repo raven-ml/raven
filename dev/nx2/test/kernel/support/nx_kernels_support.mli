@@ -33,10 +33,16 @@ type backend = {
 (** The type for kernel libraries in one configuration. *)
 
 val cpus : backend list
-(** [cpus] is nx.cpu under each target table the host runs, base first. *)
+(** [cpus] is nx.cpu under each target table the host runs, base first.
+    Only the contractions' and linear algebra's kernels differ by table. *)
+
+val cpu : backend
+(** [cpu] is nx.cpu under the table it runs from the start: the best the
+    host runs. *)
 
 val backends : backend list
-(** [backends] is {!cpus}. *)
+(** [backends] is each kernel library under its own configuration:
+    [[cpu]]. *)
 
 val x86_64 : bool
 (** [x86_64] is [true] iff nx.cpu is compiled for x86-64, whose

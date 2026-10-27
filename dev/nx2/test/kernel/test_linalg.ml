@@ -3025,4 +3025,4 @@ let cpu (b : Support.backend) =
 let () =
   exit
     (Windtrap.run "nx_kernel.linalg"
-       (List.map laws Support.backends @ List.map cpu Support.cpus))
+       (List.map laws Support.cpus @ List.map cpu Support.cpus))

@@ -23,7 +23,7 @@
    axis, the operand's indices whose padded coordinate w·step + j·dilation
    lands on an element, lo + i·(interior + 1) with 0 <= i < d, step by a
    constant and so do the i they land on: a tap is one box of the operand
-   added into one box of the result, rows by the table's add. An axis no
+   added into one box of the result, rows by rows.c's add. An axis no
    window takes is one of step 1 and tap 0, and its span is every tap's:
    the leading such axes, as a convolution's batch and channels, cut the
    boxes into slabs of disjoint results that threads take whole, each
@@ -34,7 +34,7 @@
    An operand whose taps lie innermost, as a convolution's [n; c; h; w; kh;
    kw] does, gives each tap's rows a step of the taps' count: adding them
    ran at about three cycles an element on one fudge core. On a target
-   that copies strided rows (nx_cpu_target's copy_strided), where the
+   that copies strided rows (cpu.h's NX_CPU_COPY_STRIDED), where the
    slab fits half the L2, a unit first copies it into scratch with the
    taps outermost, through the copy's transposed tiles, and adds each
    tap's rows from there in unit steps. A narrow float's or sub-byte
@@ -703,7 +703,7 @@ static int slab_copy(folder *f, const nx_array *a, const int64_t *xs,
     step[1][nw + i - f->leading] = f->sx[i];
   }
   f->scratch_bytes = at * f->w;
-  if (f->scratch_bytes > nx_cpu_table->l2 / 2) return 0;
+  if (f->scratch_bytes > nx_cpu_l2 / 2) return 0;
   n = nx_coalesce_dims(2, nw + r - f->leading, extent, step);
   if (n > 3) return 0;
   nx_box *b = &f->copy;
@@ -722,7 +722,7 @@ value nx_cpu_fold_pad(value vpad, value vd, value vx) {
   int dt = nx_array_dtype(vx);
   if (nx_dtype_row_of(dt).kind == NX_KIND_BOOLEAN)
     CAMLreturn(Val_int(NX_DTYPE));
-  nx_cpu_row2 add = nx_cpu_table->op2[NX_OP2_ADD][nx_cpu_carrier(dt)];
+  nx_cpu_row2 add = nx_cpu_rows.op2[NX_OP2_ADD][nx_cpu_carrier(dt)];
   /* The operand's shape: the padded extents, each window's axis by its
      count, then the windows' sizes. */
   nx_cpu_pad pad;
@@ -802,7 +802,7 @@ value nx_cpu_fold_pad(value vpad, value vd, value vx) {
     if (units * slab == total) f.slab = slab;
     else zero_run(&a[0], a[0].offset, total);
     int64_t bytes = xn * w + taps * total * w;
-    f.tap_major = nx_cpu_table->copy_strided && nx_cpu_carrier(dt) == dt &&
+    f.tap_major = NX_CPU_COPY_STRIDED && nx_cpu_carrier(dt) == dt &&
                   r > f.leading && f.sx[r - 1] != 1 &&
                   slab_copy(&f, a, xs, win, nw);
     nx_cpu_job(units, bytes, bytes, fold_units, &f);

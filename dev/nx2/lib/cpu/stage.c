@@ -87,7 +87,7 @@ static void gather(const nx_array *a, const nx_cpu_block *p, int k,
 static void stage_raw(const nx_array *a, const nx_cpu_block *b, int k,
                       uint8_t *dst, int64_t row) {
   int64_t w = a->bits < 8 ? 1 : a->bits / 8, most = PIECE / w;
-  nx_cpu_run decode = nx_cpu_table->convert[a->dtype][NX_FLOAT32];
+  nx_cpu_run decode = nx_cpu_convert(a->dtype, NX_FLOAT32);
   _Alignas(64) uint8_t raw[PIECE];
   if (b->n0 == 0) return;
   nx_cpu_block p = *b;
@@ -127,7 +127,7 @@ void nx_cpu_stage(const nx_array *a, const nx_cpu_block *b, int k, uint8_t *dst,
     stage_raw(a, b, k, dst, row);
     return;
   }
-  nx_cpu_run decode = nx_cpu_table->convert[dt][NX_FLOAT32];
+  nx_cpu_run decode = nx_cpu_convert(dt, NX_FLOAT32);
   const uint8_t *s = a->base + b->at[k] * w;
   for (int64_t j = 0; j < n1; j++)
     decode(s + j * b->s1[k] * w, dst + j * row, n0);
@@ -138,7 +138,7 @@ void nx_cpu_stage(const nx_array *a, const nx_cpu_block *b, int k, uint8_t *dst,
    operand or scattered into a strided one. */
 static void unstage_raw(const nx_array *a, const nx_cpu_block *b, int k,
                         const uint8_t *src, int64_t row, int c) {
-  nx_cpu_run convert = nx_cpu_table->convert[c][a->dtype];
+  nx_cpu_run convert = nx_cpu_convert(c, a->dtype);
   int64_t w = a->bits < 8 ? 1 : a->bits / 8, most = PIECE / w;
   int64_t cw = nx_cpu_width(c);
   _Alignas(64) uint8_t raw[PIECE];
@@ -181,7 +181,7 @@ void nx_cpu_unstage(const nx_array *a, const nx_cpu_block *b, int k,
     unstage_raw(a, b, k, src, row, c);
     return;
   }
-  nx_cpu_run convert = nx_cpu_table->convert[c][a->dtype];
+  nx_cpu_run convert = nx_cpu_convert(c, a->dtype);
   if (row == n0 * cw && dout == n0 * w) convert(src, d, n0 * n1);
   else
     for (int64_t j = 0; j < n1; j++) convert(src + j * row, d + j * dout, n0);
@@ -203,7 +203,7 @@ static void stage_blocks(const nx_array *a, int64_t at, int64_t s0,
   int widest = cw > w ? cw : w;
   if (a->bits / 8 > widest) widest = a->bits / 8;
   int64_t cols = n0 < bytes / widest ? n0 : bytes / widest;
-  nx_cpu_run convert = nx_cpu_table->convert[c][d];
+  nx_cpu_run convert = nx_cpu_convert(c, d);
   for (int64_t i = 0; i < n0; i += cols) {
     int64_t n = cols < n0 - i ? cols : n0 - i;
     int64_t rows = bytes / (n * widest);

@@ -11,7 +11,7 @@
    is that index's place in C order, from which each coordinate is
    divided out. The loop is walked in blocks. Per block, plane by
    plane, each node runs in order over values held in slots of an arena on
-   the stack, through the target table's rows, as apply.c's kinds do:
+   the stack, through rows.c's rows, as apply.c's kinds do:
 
    - a load held in its own dtype whose rows are contiguous is read in
      place;
@@ -164,8 +164,8 @@ static void round_held(int dt, const uint8_t *s, uint8_t *d, uint8_t *t,
       for (int64_t i = 0; i < n; i++) d[i] = s[i] & 15;
       return;
     case NX_FLOAT4_E2M1FN:
-      nx_cpu_table->convert[NX_FLOAT32][dt](s, t, n);
-      nx_cpu_table->convert[dt][NX_FLOAT32](t, d, n);
+      nx_cpu_convert(NX_FLOAT32, dt)(s, t, n);
+      nx_cpu_convert(dt, NX_FLOAT32)(t, d, n);
       return;
     default:
       if (s != d) memcpy(d, s, (size_t)(n * width(dt)));
@@ -178,11 +178,11 @@ static void round_held(int dt, const uint8_t *s, uint8_t *d, uint8_t *t,
 static void sub_bitcast(int xt, int dt, const uint8_t *x, uint8_t *codes,
                         uint8_t *d, int64_t n) {
   if (xt == NX_FLOAT4_E2M1FN)
-    nx_cpu_table->convert[NX_FLOAT32][xt](x, codes, n);
+    nx_cpu_convert(NX_FLOAT32, xt)(x, codes, n);
   else
     for (int64_t i = 0; i < n; i++) codes[i] = x[i] & 15;
   if (dt == NX_FLOAT4_E2M1FN)
-    nx_cpu_table->convert[dt][NX_FLOAT32](codes, d, n);
+    nx_cpu_convert(dt, NX_FLOAT32)(codes, d, n);
   else round_held(dt, codes, d, NULL, n);
 }
 
@@ -251,7 +251,7 @@ static view wide_of(const prog *j, const plane *f, int i, int o) {
   view v = value_of(j, f, x);
   if (held(dt) == c) return v;
   uint8_t *t = temp(j, f, o);
-  nx_cpu_run decode = nx_cpu_table->convert[dt][c];
+  nx_cpu_run decode = nx_cpu_convert(dt, c);
   if (v.s0 == 0) {
     decode(v.p, t, 1);
     return (view){t, 0, 0};
@@ -337,7 +337,7 @@ static void run(const prog *j, const plane *f, int i) {
     int xc = nx_cpu_carrier(j->s[s->x[0]].dt);
     uint8_t *t2 = temp(j, f, 2);
     view v = runs(wide_of(j, f, i, 0), xc, p, temp(j, f, 1));
-    nx_cpu_run convert = nx_cpu_table->convert[xc][dt];
+    nx_cpu_run convert = nx_cpu_convert(xc, dt);
     if (h == dt) {
       for (int64_t r = 0; r < n1; r++)
         convert(v.p + r * v.s1, t.p + r * t.s1, n0);
@@ -346,7 +346,7 @@ static void run(const prog *j, const plane *f, int i) {
     for (int64_t r = 0; r < n1; r++)
       convert(v.p + r * v.s1, t2 + r * n0 * width(dt), n0);
     if (dt == NX_FLOAT4_E2M1FN)
-      nx_cpu_table->convert[dt][NX_FLOAT32](t2, d, n0 * n1);
+      nx_cpu_convert(dt, NX_FLOAT32)(t2, d, n0 * n1);
     else
       round_held(dt, t2, d, NULL, n0 * n1);
     return;
@@ -378,10 +378,11 @@ static void run(const prog *j, const plane *f, int i) {
   if (where) return;
   /* A kind's result in its carrier: encoded where its dtype is held as
      codes, else brought to the dtype in its slot. */
-  if (h != c)
+  if (h != c) {
+    nx_cpu_run encode = nx_cpu_convert(c, dt);
     for (int64_t r = 0; r < n1; r++)
-      nx_cpu_table->convert[c][dt](t3 + r * n0 * w, t.p + r * t.s1, n0);
-  else if (dt != c)
+      encode(t3 + r * n0 * w, t.p + r * t.s1, n0);
+  } else if (dt != c)
     round_held(dt, d, d, t3, n0 * n1);
 }
 
@@ -482,7 +483,7 @@ static void block(const nx_cpu_block *b, void *ctx) { planes(b, ctx, NULL); }
    boolean first one for a Where: the program has checked the kind
    against its operands' dtypes, and the table has a row for each. */
 static void *row_of(const step *s, int xt) {
-  const nx_cpu_target *t = nx_cpu_table;
+  const nx_cpu_row_table *t = &nx_cpu_rows;
   int c = nx_cpu_carrier(xt);
   switch (s->tag) {
     case NX_NODE_OP1: return (void *)t->op1[s->kind][c];
@@ -500,7 +501,7 @@ static void const_of(step *s) {
   uint8_t bits[16];
   memcpy(bits, s->bits, 16);
   if (dt == NX_FLOAT4_E2M1FN)
-    nx_cpu_table->convert[dt][NX_FLOAT32](bits, s->bits, 1);
+    nx_cpu_convert(dt, NX_FLOAT32)(bits, s->bits, 1);
   else if (held(dt) != dt)
     round_held(dt, bits, s->bits, NULL, 1);
 }

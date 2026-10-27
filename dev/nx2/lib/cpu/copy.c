@@ -572,11 +572,10 @@ static void copy_block(const nx_cpu_block *b, void *ctx) {
    results of 4 to 16 MiB took 1.05 to 1.15 times as long streamed, of 32
    MiB 0.97 to 1.01, of 62 MiB 0.72 to 0.88. */
 static int streams(int64_t bytes, int threads) {
-  const nx_cpu_target *t = nx_cpu_table;
 #if defined(__x86_64__)
-  int64_t one = t->l2, several = t->llc;
+  int64_t one = nx_cpu_l2, several = nx_cpu_llc;
 #else
-  int64_t one = t->l2 / 2, several = 4 * t->llc;
+  int64_t one = nx_cpu_l2 / 2, several = 4 * nx_cpu_llc;
 #endif
   return NX_STREAMS && bytes > (threads == 1 ? one : several);
 }

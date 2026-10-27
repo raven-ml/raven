@@ -63,8 +63,34 @@ _Static_assert(NX_LOAD_COUNT == 2 && NX_MONOID_COUNT == 4 &&
 #define NX_VECTOR_BYTES 16
 #endif
 
+/* Whether a kernel that reads operand rows several times at a step other
+   than one copies them into unit steps first: on x86-64, where strided
+   loads cost more than the copy. In cache, adding rows 9 elements apart
+   took 0.26 ns an element on an Arrow Lake core and 0.15 on an M1 Max
+   one, whose strided adds outrun the copy. */
+#if defined(__x86_64__)
+#define NX_CPU_COPY_STRIDED 1
+#else
+#define NX_CPU_COPY_STRIDED 0
+#endif
+
 /* A run converts [n] contiguous elements at [src] into [dst]. */
 typedef void (*nx_cpu_run)(const void *src, void *dst, int64_t n);
+
+/* The conversions by source then destination (convert.c): a loop for
+   every pair of a carrier and a dtype and from each narrow float to
+   float32, and the runs where they outrun the loop, NULL elsewhere. */
+extern const nx_cpu_run nx_cpu_convert_loops[NX_DTYPE_COUNT][NX_DTYPE_COUNT];
+extern const nx_cpu_run nx_cpu_convert_runs[NX_DTYPE_COUNT][NX_DTYPE_COUNT];
+
+/* The run that converts elements of the dtype [s] into the dtype [d], as a
+   cast does, where s is a carrier, or where s is a narrow float and d
+   float32. A sub-byte dtype has one element per byte, in its low bits:
+   int4 and uint4 their value modulo 16, float4 its code, bit 0 or 1. */
+static inline nx_cpu_run nx_cpu_convert(int s, int d) {
+  nx_cpu_run r = nx_cpu_convert_runs[s][d];
+  return r != NULL ? r : nx_cpu_convert_loops[s][d];
+}
 
 /* The lanes of a sum whose order is fixed by shape: term t of a block of
    NX_CPU_LANE_BLOCK consecutive terms adds into lane t modulo
@@ -263,6 +289,20 @@ typedef void (*nx_cpu_row3)(int64_t n, uint8_t *d, int64_t sd,
 typedef void (*nx_cpu_row0)(int64_t n, uint8_t *d, int64_t sd,
                             const uint8_t *bits);
 
+/* The rows (rows.c). op1[k][dt] and op2[k][dt] compute the kind of one or
+   two operands k (nx_kernel.h's code) at dt, fma[dt] fma: NULL where
+   Nx_kernel.Prog refuses the kind at dt. where[i] and fill[i] move
+   elements of 2^i bytes, i in 0..4. */
+typedef struct {
+  nx_cpu_row1 op1[NX_OP1_COUNT][NX_DTYPE_COUNT];
+  nx_cpu_row2 op2[NX_OP2_COUNT][NX_DTYPE_COUNT];
+  nx_cpu_row3 fma[NX_DTYPE_COUNT];
+  nx_cpu_row3 where[5];
+  nx_cpu_row0 fill[5];
+} nx_cpu_row_table;
+
+extern const nx_cpu_row_table nx_cpu_rows;
+
 /* The monoids nx.cpu reduces by: NX_MONOID_SUM to NX_MONOID_MIN
    (nx_kernel.h). */
 enum { NX_CPU_MONOIDS = NX_MONOID_MIN + 1 };
@@ -442,26 +482,17 @@ typedef void (*nx_cpu_network)(const uint8_t *x, int64_t xs, int64_t xl,
    float32 on the matrix unit. */
 #define NX_CPU_TILE 4096
 
+/* The bytes of L2 cache of a core, as the host reports them when the
+   program starts (target.c). */
+extern int64_t nx_cpu_l2;
+/* The bytes of L1 data cache of the cores a job runs on (target.c). */
+extern int64_t nx_cpu_l1;
+/* The bytes of the largest cache the host reports (target.c). */
+extern int64_t nx_cpu_llc;
+
+/* A target's table: the contraction kernels of its instructions. */
 typedef struct {
   const char *name;
-  /* The bytes of L2 cache of a core, as the host reports them when the
-     program starts (target.c). */
-  int64_t l2;
-  /* The bytes of L1 data cache of the cores a job runs on (target.c). */
-  int64_t l1;
-  /* The bytes of the largest cache the host reports (target.c). */
-  int64_t llc;
-  /* Whether a kernel that reads operand rows several times at a step other
-     than one copies them into unit steps first: on x86-64, where strided
-     loads cost more than the copy. In cache, adding rows 9 elements apart
-     took 0.26 ns an element on an Arrow Lake core and 0.15 on an M1 Max
-     one, whose strided adds outrun the copy. */
-  int copy_strided;
-  /* convert[s][d] converts elements of the dtype s into the dtype d, as a
-     cast does, where s is a carrier, or where s is a narrow float and d
-     float32. A sub-byte dtype has one element per byte, in its low bits:
-     int4 and uint4 their value modulo 16, float4 its code, bit 0 or 1. */
-  nx_cpu_run convert[NX_DTYPE_COUNT][NX_DTYPE_COUNT];
   /* gemm[acc] contracts in acc in chain order; its kernel is NULL where
      the target has none. dot[acc], axpy[acc] and tile[acc] are lane
      order's; gemv[dt] serves the factorisations' leaves (linalg.c).
@@ -485,50 +516,17 @@ typedef struct {
   /* f4[acc] stages a scaled operand's float4 codes adjacent along k
      (gemm.c, stage_f4), in acc float32 or float64. */
   nx_cpu_f4 f4[NX_DTYPE_COUNT];
-  /* op1[k][dt] and op2[k][dt] compute the kind of one or two operands k
-     (nx_kernel.h's code) at dt, fma[dt] fma: NULL where Nx_kernel.Prog
-     refuses the kind at dt (rows.c). */
-  nx_cpu_row1 op1[NX_OP1_COUNT][NX_DTYPE_COUNT];
-  nx_cpu_row2 op2[NX_OP2_COUNT][NX_DTYPE_COUNT];
-  nx_cpu_row3 fma[NX_DTYPE_COUNT];
-  /* where[i] and fill[i] move elements of 2^i bytes, i in 0..4. */
-  nx_cpu_row3 where[5];
-  nx_cpu_row0 fill[5];
-  /* monoid[m][dt] reduces by the monoid m (NX_MONOID_SUM to
-     NX_MONOID_MIN) at dt: lanes NULL where the table declines. */
-  nx_cpu_monoid monoid[NX_CPU_MONOIDS][NX_DTYPE_COUNT];
-  /* products[dt] sums few products at float32 and float64: NULL where the
-     table declines. */
-  nx_cpu_products products[NX_DTYPE_COUNT];
-  /* logsumexp[dt] and moments[dt] scan by Logsumexp and Moments at
-     float32 and float64. */
-  nx_cpu_network logsumexp[NX_DTYPE_COUNT], moments[NX_DTYPE_COUNT];
-  /* stateful[r - NX_CPU_MONOIDS][dt] reduces by r (NX_CPU_LOGSUMEXP to
-     NX_CPU_MOMENTS) at dt: block NULL where the table declines. */
-  nx_cpu_stateful stateful[NX_CPU_STATEFUL][NX_DTYPE_COUNT];
-  /* fft runs fft.c's transform t (its C2C, R2C or C2R; inverse for C2C's
-     Inverse) of x into y along [axes]: 0 if memory runs out. */
-  int (*fft)(int t, int inverse, const nx_array *x, const nx_array *y,
-             const int *axes, int na);
-  /* linalg runs units of linalg.c's call [ctx], a job's body. */
-  rig_pool_body linalg;
 } nx_cpu_target;
 
 /* The tables, each set when the program starts on a host that runs it, by
-   convert.c, gemm_generic.c, rows.c, reduce.c, fft.c and linalg.c, then
-   by the kernels of the host's instructions: gemm_neon.c's on arm64,
-   gemm_avx2.c's on x86-64, and gemm_vnni.c's quads where the host has
-   AVX-VNNI-INT8. amx is base's table with gemm_amx.c's kernels for the
-   matrix unit of Apple's M1. On x86-64 every unit but target.c is
-   compiled for x86-64-v3, and base is set only on a host that has it
-   (target.c). */
+   gemm_generic.c, then by the kernels of the host's instructions:
+   gemm_neon.c's on arm64, gemm_avx2.c's on x86-64, and gemm_vnni.c's
+   quads where the host has AVX-VNNI-INT8. amx is base's table with
+   gemm_amx.c's kernels for the matrix unit of Apple's M1. On x86-64 every
+   unit but target.c is compiled for x86-64-v3, and base is set only on a
+   host that has it (target.c). */
 extern nx_cpu_target nx_cpu_base;
-void nx_cpu_set_convert(nx_cpu_target *t);
 void nx_cpu_set_gemm(nx_cpu_target *t);
-void nx_cpu_set_rows(nx_cpu_target *t);
-void nx_cpu_set_reduce(nx_cpu_target *t);
-void nx_cpu_set_fft(nx_cpu_target *t);
-void nx_cpu_set_linalg(nx_cpu_target *t);
 #if defined(__aarch64__)
 void nx_cpu_set_neon(nx_cpu_target *t);
 #endif
@@ -568,8 +566,8 @@ static inline int nx_cpu_width(int dt) {
   return bits < 8 ? 1 : bits / 8;
 }
 
-/* The index of a width of 1, 2, 4, 8 or 16 bytes in the table's rows by
-   width (where, fill): its log2. */
+/* The index of a width of 1, 2, 4, 8 or 16 bytes in the rows by
+   width (nx_cpu_row_table's where and fill): its log2. */
 static inline int nx_cpu_width_index(int bytes) {
   return __builtin_ctz((unsigned)bytes);
 }
@@ -917,7 +915,7 @@ static inline void nx_cpu_walk(int n, const nx_array *a, const nx_loop *l,
                                nx_cpu_block_fn f, void *ctx);
 
 /* Stores the element of bits [bits] into the elements of block [b] of the
-   array [d], its operand 0: rows by the table's fill of their width, a
+   array [d], its operand 0: rows by rows.c's fill of their width, a
    sub-byte dtype's rows of unit step as runs (nx_array.h) (apply.c). */
 void nx_cpu_fill_block(const nx_array *d, const nx_cpu_block *b,
                        const uint8_t *bits);
