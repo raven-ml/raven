@@ -1586,31 +1586,34 @@ CAMLprim value caml_nx_io_jpeg_decode(value vsrc, value vdst) {
   CAMLreturn(Val_unit);
 }
 
-/* The JPEG file of the 8-bit image [src]. */
+/* The JPEG file of the 8-bit image [src], in a bigarray that owns the
+   writer's buffer, shrunk to the file's length. A negative side or channel
+   count wraps to one [encode_jpeg] refuses. */
 CAMLprim value caml_nx_io_jpeg_encode(value vsrc, value vwidth, value vheight,
                                       value vchannels) {
-  CAMLparam4(vsrc, vwidth, vheight, vchannels);
-  CAMLlocal1(vresult);
+  CAMLparam1(vsrc);
   const uint8_t *src;
   size_t src_len;
   bytes_of(vsrc, &src, &src_len);
-  intnat width_i = Long_val(vwidth);
-  intnat height_i = Long_val(vheight);
-  intnat channels_i = Long_val(vchannels);
-  if (width_i <= 0 || height_i <= 0 || channels_i <= 0)
-    caml_invalid_argument("Nx_io JPEG: invalid image dimensions");
+  size_t width = (size_t)Long_val(vwidth);
+  size_t height = (size_t)Long_val(vheight);
+  unsigned channels = (unsigned)Long_val(vchannels);
   jpeg_writer writer;
   memset(&writer, 0, sizeof(writer));
   caml_release_runtime_system();
-  jpeg_status status = encode_jpeg(&writer, src, src_len, (size_t)width_i,
-                                   (size_t)height_i, (unsigned)channels_i);
+  jpeg_status status =
+      encode_jpeg(&writer, src, src_len, width, height, channels);
+  if (status == JPEG_OK) {
+    uint8_t *data = realloc(writer.data, writer.length);
+    if (data != NULL)
+      writer.data = data;
+  }
   caml_acquire_runtime_system();
   if (status != JPEG_OK) {
     free(writer.data);
     caml_failwith(jpeg_message(status));
   }
-  vresult =
-      caml_alloc_initialized_string(writer.length, (const char *)writer.data);
-  free(writer.data);
-  CAMLreturn(vresult);
+  CAMLreturn(
+      caml_ba_alloc_dims(CAML_BA_UINT8 | CAML_BA_C_LAYOUT | CAML_BA_MANAGED, 1,
+                         writer.data, (intnat)writer.length));
 }

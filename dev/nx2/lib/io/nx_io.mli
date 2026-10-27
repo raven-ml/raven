@@ -455,7 +455,8 @@ val save_txt : ?sep:string -> string -> ('v, 's, 'd) Nx.t -> unit
     extension. A PNG save encodes and writes the file a piece at a time, and
     holds about 3 MiB beyond the image and a row of it. {!encode_png} also holds
     the encoded file twice, in pieces and as the string it returns. A JPEG save
-    allocates two copies of the encoded file.
+    encodes the file whole, into a buffer of at most twice its length or 16 KiB,
+    whichever is larger, before it writes it.
 
     {!load_image} reads the PNG files of the
     {{:https://www.w3.org/TR/png-3/}PNG Specification, Third Edition}, with

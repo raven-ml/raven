@@ -163,4 +163,4 @@ let save_jpeg path x =
   let file =
     with_pixels ~by ~channels:[ 1; 3 ] ~side:jpeg_side x Image.jpeg_encode
   in
-  Save.write path (fun fd -> Save.string fd file)
+  Save.write path (fun fd -> Save.bytes fd file)

@@ -51,7 +51,11 @@ val png_encode :
     Raises [Invalid_argument] if [pixels] does not hold
     [width * height * channels] bytes. *)
 
-val jpeg_encode : bytes -> width:int -> height:int -> channels:int -> string
+val jpeg_encode : bytes -> width:int -> height:int -> channels:int -> bytes
 (** [jpeg_encode pixels ~width ~height ~channels] is a baseline JPEG file of
-    [pixels], at quality 90. [channels] must be 1 or 3, and each side must be 1
-    to 65535. *)
+    [pixels], at quality 90, in memory of its own. Encoding grows a buffer from
+    16 KiB by doubling, to at most twice the file's length or 16 KiB, whichever
+    is larger, and shrinks it to the file.
+
+    Raises [Failure] unless [channels] is 1 or 3, each side is 1 to 65535 and
+    [pixels] holds [width * height * channels] bytes. *)

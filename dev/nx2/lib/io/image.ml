@@ -23,7 +23,7 @@ external png_filter_row : bytes -> Stdlib.Bytes.t -> int -> int -> unit
 external jpeg_probe : bytes -> int * int * int = "caml_nx_io_jpeg_probe"
 external jpeg_decode : bytes -> bytes -> unit = "caml_nx_io_jpeg_decode"
 
-external jpeg_stream : bytes -> int -> int -> int -> string
+external jpeg_encode : bytes -> width:int -> height:int -> channels:int -> bytes
   = "caml_nx_io_jpeg_encode"
 
 module Crc32 = Compress_deflate.Crc32
@@ -160,9 +160,6 @@ let is_jpeg src =
   Array1.dim src >= 2
   && Array1.unsafe_get src 0 = 0xff
   && Array1.unsafe_get src 1 = 0xd8
-
-let jpeg_encode data ~width ~height ~channels =
-  jpeg_stream data width height channels
 
 (* The probe and the decoder of the stream [src], recognised by its first
    bytes. *)
