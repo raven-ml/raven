@@ -118,13 +118,11 @@ let parts runs (tile : M.range array) =
 (* [op], an operation of a fold on [here], one device, where each of its
    operands lies: by {!Exec.local} where it maps operands that lie beside
    each other, else by windows over the route that reads each operand on
-   [here] and puts each result there. One of no operand, a creation, computes
-   there too. *)
-let apply : type r d. by:string -> d Devices.placement -> r Value.prim -> r =
+   [here] and puts each result there. A creation computes there too. *)
+let apply : type r. by:string -> unit Devices.placement -> r Value.prim -> r =
  fun ~by here op ->
   if Exec.is_local op then Exec.local ~by op
   else
-    let here = Devices.rebrand here in
     let (Prim.Operands xs) = Prim.operands op in
     let operands = Array.make (List.length xs) here in
     let route = { Route.operands; result = here; compute = Windows } in
@@ -406,7 +404,7 @@ struct
       (rs : (d, r) Value.reductions) (loads : d Value.load iarray) : r =
     let shape = Iarray.to_array (L.shape layout)
     and ax = Iarray.to_array axes in
-    let p : d Devices.placement = Devices.rebrand route.result in
+    let p = route.result in
     let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
     let out = Prim.reduced shape axes in
     let whole = Array.map (fun a -> shape.(a)) ax in
@@ -569,7 +567,7 @@ struct
   let scan (type d a) (route : unit Route.t) rule layout axis prog
       (r : (d, a) Value.reduction) (loads : d Value.load iarray) : a =
     let shape = Iarray.to_array (L.shape layout) in
-    let p : d Devices.placement = Devices.rebrand route.result in
+    let p = route.result in
     let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
     let win j = Devices.window ~by p shape j in
     let here j = Devices.one set ks.(j) in
@@ -697,7 +695,7 @@ struct
         a_scale b_scale
     in
     let pairs = Iarray.to_array contracting in
-    let p : d Devices.placement = Devices.rebrand route.result in
+    let p = route.result in
     let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
     let resw j = Devices.window ~by p shape j in
     let here j = Devices.one set ks.(j) in

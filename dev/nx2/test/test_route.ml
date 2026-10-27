@@ -568,9 +568,7 @@ let cases_ =
             (route Elementwise [| None; None |] [| [| 4 |]; [| 4 |] |] = None));
       test "a value of every set beside a host value is read on the host"
         (fun () ->
-          let h : b Devices.placement =
-            Devices.rebrand (Devices.one Devices.host 0)
-          in
+          let h = Devices.one Devices.host 0 in
           let r =
             Option.get
               (route Elementwise [| None; Some h |] [| [| 4 |]; [| 4 |] |])
@@ -738,7 +736,7 @@ let cases_ =
       test "operands on two sets raise" (fun () ->
           invalid (fun () ->
               placed Elementwise
-                [| Devices.on s4; Devices.rebrand (Devices.on other) |]
+                [| Devices.on s4; Devices.on other |]
                 [| [| 4 |]; [| 4 |] |]));
       test "operands alone on two devices raise" (fun () ->
           invalid (fun () ->

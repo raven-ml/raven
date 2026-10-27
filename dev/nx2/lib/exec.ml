@@ -481,7 +481,7 @@ let local : type r. by:string -> r Value.prim -> r =
   | Value.Map { loads; _ } -> (
       match Iarray.get loads 0 with
       | Value.Plain (Value.Array { at; a; _ }) ->
-          let p = Some (Devices.rebrand at) in
+          let p = Some at in
           let r = Prim.results_at p layouts (fun k f -> alloc ~by k f) op in
           let kernels = kernels_of ~by ~op:"Map" (Devices.set at) in
           if call ~by kernels op r 0 then r

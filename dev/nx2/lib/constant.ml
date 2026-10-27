@@ -65,7 +65,7 @@ let resolved : type v s d.
  fun result q x ->
   match x with
   | Value.Deferred { form; node; k } ->
-      let arrays = result node (Devices.rebrand q) in
+      let arrays = result node q in
       Prim.of_arrays q
         ~shape:(Iarray.to_array (L.shape form.layout))
         (typed form.dtype arrays.(k))
@@ -82,7 +82,7 @@ let compute_node result (Value.Node n) p =
   let q = route.result in
   let op =
     Prim.mapi
-      (fun i y -> resolved result (Devices.rebrand route.operands.(i)) y)
+      (fun i y -> resolved result route.operands.(i) y)
       n.op
   in
   let r =
@@ -97,7 +97,7 @@ let compute_node result (Value.Node n) p =
     let per = ref [] in
     Prim.iter_results
       (fun y ->
-        let y = Place.value ~by (Devices.rebrand p) y in
+        let y = Place.value ~by p y in
         per := Prim.any (Iarray.map A.copy (Prim.arrays y)) :: !per)
       op r;
     Array.of_list (List.rev !per)
@@ -109,8 +109,7 @@ let at : type v s d.
   | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> x
   | Value.Deferred { form; node; k } ->
       let arrays =
-        Prim.evaluate ~same:Devices.equal ~reads compute_node node
-          (Devices.rebrand p)
+        Prim.evaluate ~same:Devices.equal ~reads compute_node node p
       in
       Prim.of_arrays p
         ~shape:(Iarray.to_array (L.shape form.layout))

@@ -229,7 +229,7 @@ let reuse : type r.
             Prim.iteri
               (fun j z ->
                 (match Prim.at z with
-                | Some q -> if Devices.rebrand q != at then ok := false
+                | Some q -> if q != at then ok := false
                 | None -> ());
                 (* An operand at the result's own index may read the memory
                    as [a] places it, and no other way: a view of [a] in

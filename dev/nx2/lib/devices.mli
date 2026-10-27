@@ -14,16 +14,17 @@
     placements. Sets and placements are immutable once {!mint} returns; any
     domain reads them.
 
-    Brands are phantom: nothing at run time reads ['d], and a value's arrays lie
-    on its placement's devices whatever its brand. A brand names one set: a
-    set's module unpacked twice gives it two brand names. A placement is held
-    at another brand only through {!rebrand} and [Nx.Prim.coerce]. nx's engine
-    alone calls {!rebrand}: to hold placements at [unit], in routes and
-    constants' evaluations, and to bring one back to an operation's brand
-    where it computes, reads a value out on the host, or compares two
-    placements. [Nx.Prim.coerce] gives a value another brand only where that
-    brand names the value's set. This module is nx's one site that names
-    nx.cpu.
+    Brands are phantom. Nothing at run time reads ['d], and a value's arrays
+    lie on its placement's devices whatever its brand. A brand names one
+    set, and a set's module unpacked twice gives it two brand names. A
+    placement is a {!place} at every brand, so the engine holds placements
+    at [unit] in routes and constants' evaluations, and reads them at an
+    operation's brand, without a conversion. {!set} then gives a
+    placement's set at whatever brand its caller names. [Nx] keeps its
+    placements' brand abstract, which ties a program's placement to its
+    set's brand, and [Nx.Prim.coerce] gives a value another brand only where
+    that brand names the value's set. This module is nx's one site that
+    names nx.cpu.
 
     Errors are [Invalid_argument] naming the [by] the caller passes. *)
 
@@ -33,8 +34,12 @@ type host
 type +'d t
 (** The type for sets of brand ['d]. *)
 
-type +'d placement
-(** The type for placements over a set of brand ['d]. *)
+type place
+(** The type for placements. *)
+
+type 'd placement = place
+(** The type for placements over a set of brand ['d], a {!place} whatever
+    ['d] is. *)
 
 type +'d mesh
 (** The type for named axes over a set's devices. *)
@@ -103,8 +108,7 @@ val device : 'd placement -> int option
 (** [device p] is [Some k] iff [p] is its set's device [k] alone. *)
 
 val equal : 'd placement -> 'e placement -> bool
-(** [equal p q] compares physically, then sets by number and grids. It takes two
-    brands: placing compares a value's placement with its destination's. *)
+(** [equal p q] compares physically, then sets by number and grids. *)
 
 val window :
   by:string -> 'd placement -> int array -> int -> Nx_array.Move.range array
@@ -114,18 +118,14 @@ val window :
     axis [shape] lacks. *)
 
 val uncut : 'd placement -> 'd placement
-(** [uncut p] is [p] with every axis whole on each of its devices: a grid axis
-    that cut one holds copies. It is [p] itself if [p] cuts no axis. *)
-
-val rebrand : 'd placement -> 'e placement
-(** [rebrand p] is [p] at another brand. *)
-
-val rebrand_option : 'd placement option -> 'e placement option
-(** [rebrand_option p] is [p] at another brand, allocating nothing. *)
+(** [uncut p] is [p] with every axis whole on each of its devices, so that a
+    grid axis that cut one holds copies. It is [p] itself if [p] cuts no
+    axis. *)
 
 val pp_placement : Format.formatter -> 'd placement -> unit
-(** [pp_placement] formats a placement on one device as the device's name, and others as the placement that builds them over the
-    set: [on [CUDA:0; CUDA:1]], [split ~axis:0 [CUDA:0; CUDA:1]], or a mesh's
+(** [pp_placement] formats a placement on one device as the device's name,
+    and others as the placement that builds them over the set, as
+    [on [CUDA:0; CUDA:1]], [split ~axis:0 [CUDA:0; CUDA:1]], or a mesh's
     grid ({!Grid.pp}). *)
 
 (** {1:meshes Meshes} *)

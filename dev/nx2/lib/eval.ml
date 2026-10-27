@@ -36,7 +36,7 @@ let placed : type v s d e.
     by:string -> e Devices.placement -> (v, s, d) t -> (v, s, e) t =
  fun ~by p x ->
   match x with
-  | Deferred _ -> Place.value ~by p (Constant.at (Devices.rebrand p) x)
+  | Deferred _ -> Place.value ~by p (Constant.at p x)
   | Array _ | Shards _ | Donated _ | Traced _ ->
       if on_host_set p && not (on_host_set (Prim.placement x)) then
         Check.wait ~by x;
@@ -141,7 +141,7 @@ and routed : type r. by:string -> ?into:A.any -> Prim.routed -> r prim -> r =
   | _ -> (
       (* A concrete operand has a placement, so the operation has a route. *)
       let route = Option.get r.Prim.route in
-      let place i x = placer ~by (Devices.rebrand route.operands.(i)) x in
+      let place i x = placer ~by route.operands.(i) x in
       let op = Prim.mapi place op in
       match route.compute with
       | Partials -> Partial.run ~by route op
@@ -661,10 +661,7 @@ let contract ~by ~batch ~contracting ~acc dt a b init =
 
 let place ~by p x =
   match x with
-  | Array r
-    when Devices.rebrand r.at == p
-         && r.dead == Live
-         && quiet () ->
+  | Array r when r.at == p && r.dead == Live && quiet () ->
       (* A second value over the memory shares it. *)
       Rig.Claim.share (Nx_array.buffer r.a);
       Array { at = p; a = r.a; dead = Live }

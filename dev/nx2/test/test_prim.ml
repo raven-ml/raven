@@ -33,12 +33,9 @@ let f32 ?(d = 0) shape =
 (* A maker that records the forms it is given in [forms], and one that must not
    run. *)
 let recording forms k (f : (_, _, _) Value.form) =
-  forms :=
-    (k, D.Any f.dtype, f.layout, Option.map Devices.rebrand f.placement)
-    :: !forms;
+  forms := (k, D.Any f.dtype, f.layout, f.placement) :: !forms;
   let a = A.create Rig.host f.dtype (L.shape f.layout) in
-  Value.Array
-    { at = Devices.rebrand (Devices.one Devices.host 0); a; dead = Value.Live }
+  Value.Array { at = Devices.one Devices.host 0; a; dead = Value.Live }
 
 let refusing _ _ = fail "the maker ran before the rule refused"
 
@@ -367,7 +364,7 @@ let movements =
       prop "a movement of a split value has its eager result's form" moved
         (fun (s0, _, mv) ->
           assume (s0.(0) mod 2 = 0);
-          let host = Devices.rebrand (Devices.one Devices.host 0) in
+          let host = Devices.one Devices.host 0 in
           let x =
             Place.value ~by:"t"
               (Devices.split ~by:"t" ~axis:0 s2)

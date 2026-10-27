@@ -179,9 +179,6 @@ let uncut p =
     let whole g (axis, _) = Grid.uncut g ~axis in
     normal p.set (Array.fold_left whole p.grid (Grid.cuts p.grid))
 
-let rebrand p = p
-let rebrand_option p = p
-
 let pp_placement ppf p =
   Grid.pp
     (fun ppf k -> Format.pp_print_string ppf (Rig.name p.set.rigs.(k)))

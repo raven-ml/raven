@@ -1279,16 +1279,6 @@ let rule : type r. r prim -> Route.rule =
 
 let uncut p = not (Grid.is_cut (Devices.grid p))
 
-(* [x]'s placement at the brand routes carry. *)
-let placed (type v s d) (x : (v, s, d) t) : unit Devices.placement option =
-  match x with
-  | Array { at; _ } | Shards { at; _ } | Donated { at; _ } ->
-      Some (Devices.rebrand at)
-  | Deferred { form; _ } | Traced { form; _ } -> (
-      match form.placement with
-      | None -> None
-      | Some p -> Some (Devices.rebrand p))
-
 (* Where operands lie together ({!Route.common}): [acc] for those before one
    at [q], then that one. *)
 let join (acc : unit Route.common) q =
@@ -1302,11 +1292,11 @@ let join (acc : unit Route.common) q =
 let joined (type v s d) acc (x : (v, s, d) t) =
   match x with
   | Array { at; _ } | Shards { at; _ } | Donated { at; _ } ->
-      join acc (Devices.rebrand at)
+      join acc at
   | Deferred { form; _ } | Traced { form; _ } -> (
       match form.placement with
       | None -> acc
-      | Some p -> join acc (Devices.rebrand p))
+      | Some p -> join acc p)
 
 (* [join] of [x] where it is a live array, [Other] for any other operand. *)
 let live_joined (type v s d) acc (x : (v, s, d) t) =
@@ -1333,7 +1323,7 @@ let route_of (type r) ~by (op : r prim) : unit Route.t option =
       let ps = Array.make n None and shapes = Array.make n [||] in
       iteri
         (fun i x ->
-          ps.(i) <- placed x;
+          ps.(i) <- at x;
           shapes.(i) <- shape x)
         op;
       Route.route ~by (rule op) ps shapes
@@ -1745,29 +1735,28 @@ let results_at : type r.
     r prim ->
     r =
  fun p layouts m op ->
-  let here () = Devices.rebrand_option p in
   match op with
-  | Map { outs; _ } -> make_outs m 0 layouts.(0) (here ()) outs
+  | Map { outs; _ } -> make_outs m 0 layouts.(0) p outs
   | Reduce { reductions; _ } ->
-      make_reductions m 0 layouts.(0) (here ()) reductions
-  | Scan { reduction; _ } -> make_reduction m 0 layouts.(0) (here ()) reduction
-  | Gather { x; _ } -> m 0 (of_layout (dtype x) layouts.(0) (here ()))
-  | Scatter { into; _ } -> m 0 (of_layout (dtype into) layouts.(0) (here ()))
+      make_reductions m 0 layouts.(0) p reductions
+  | Scan { reduction; _ } -> make_reduction m 0 layouts.(0) p reduction
+  | Gather { x; _ } -> m 0 (of_layout (dtype x) layouts.(0) p)
+  | Scatter { into; _ } -> m 0 (of_layout (dtype into) layouts.(0) p)
   | Sort { x; _ } ->
-      let values = m 0 (of_layout (dtype x) layouts.(0) (here ())) in
-      (values, m 1 (of_layout D.Int64 layouts.(0) (here ())))
+      let values = m 0 (of_layout (dtype x) layouts.(0) p) in
+      (values, m 1 (of_layout D.Int64 layouts.(0) p))
   | Fft f -> (
       match f with
-      | C2c { x; _ } -> m 0 (of_layout (dtype x) layouts.(0) (here ()))
-      | R2c { dtype; _ } -> m 0 (of_layout dtype layouts.(0) (here ()))
-      | C2r { dtype; _ } -> m 0 (of_layout dtype layouts.(0) (here ())))
-  | Linalg l -> linalg_results m layouts (here ()) l
-  | Fold { x; _ } -> m 0 (of_layout (dtype x) layouts.(0) (here ()))
-  | Assemble { dtype; _ } -> m 0 (of_layout dtype layouts.(0) (here ()))
-  | Contract { out; _ } -> m 0 (of_layout out layouts.(0) (here ()))
-  | Copy x -> m 0 (of_layout (dtype x) layouts.(0) (here ()))
-  | Move (_, x) -> m 0 (of_layout (dtype x) layouts.(0) (here ()))
-  | Bitcast (dt, _) -> m 0 (of_layout dt layouts.(0) (here ()))
+      | C2c { x; _ } -> m 0 (of_layout (dtype x) layouts.(0) p)
+      | R2c { dtype; _ } -> m 0 (of_layout dtype layouts.(0) p)
+      | C2r { dtype; _ } -> m 0 (of_layout dtype layouts.(0) p))
+  | Linalg l -> linalg_results m layouts p l
+  | Fold { x; _ } -> m 0 (of_layout (dtype x) layouts.(0) p)
+  | Assemble { dtype; _ } -> m 0 (of_layout dtype layouts.(0) p)
+  | Contract { out; _ } -> m 0 (of_layout out layouts.(0) p)
+  | Copy x -> m 0 (of_layout (dtype x) layouts.(0) p)
+  | Move (_, x) -> m 0 (of_layout (dtype x) layouts.(0) p)
+  | Bitcast (dt, _) -> m 0 (of_layout dt layouts.(0) p)
   | Place (p, x) -> m 0 (of_layout (dtype x) layouts.(0) (Some p))
   | Check _ -> ()
 

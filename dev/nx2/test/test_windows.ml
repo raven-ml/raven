@@ -530,7 +530,7 @@ let shape_of_results (Op op) =
          if k = 0 then first := Iarray.to_array (L.shape f.layout);
          Value.Array
            {
-             at = Devices.rebrand at;
+             at;
              a = A.create Rig.host f.dtype [| 0 |];
              dead = Value.Live;
            })
@@ -618,17 +618,17 @@ let any_nan (type v s) (a : (v, s) A.t) : (v, s) A.t =
 
 (* [x] computed at [at] where it is a constant and [at] is given. *)
 let reach (type v s d) at (x : (v, s, d) Value.t) =
-  match at with None -> x | Some p -> Constant.at (Devices.rebrand p) x
+  match at with None -> x | Some p -> Constant.at p x
 
 (* Each result's bytes on the host, in C order, at [windows], each NaN made
    one: a constant result computed at [at], or else on the host. *)
 let bytes (type r) ?at windows (op : r Value.prim) (r : r) =
-  let host : b Devices.placement = Devices.rebrand (Devices.one Devices.host 0) in
+  let host = Devices.one Devices.host 0 in
   let arrays = ref [] in
   Prim.iter_results
     (fun x ->
       let x = reach at x in
-      let x = Eval.run ~by:"t" (Value.Place (Devices.rebrand host, x)) in
+      let x = Eval.run ~by:"t" (Value.Place (host, x)) in
       arrays := A.Any (Iarray.get (Prim.arrays x) 0) :: !arrays)
     op r;
   Array.mapi
@@ -702,7 +702,7 @@ let widened (type v s d) ~abs (x : (v, s, d) Value.t) :
 
 (* [x]'s elements on the host at the window [w], in C order. *)
 let floats_at (type s d) (w : M.range array) (x : (float, s, d) Value.t) =
-  let host = Devices.rebrand (Devices.one Devices.host 0) in
+  let host = Devices.one Devices.host 0 in
   let x = Eval.run ~by:"t" (Value.Place (host, x)) in
   let a = Iarray.get (Prim.arrays x) 0 in
   A.to_array (A.copy (Option.get (A.move (Slice (Iarray.of_array w)) a)))
@@ -953,7 +953,7 @@ let cut_law c =
   let one = mixed x y c.shape c.axes in
   let whole _ s = Array.map full s in
   let expected = bytes whole one (Eval.run ~by:"t" one) in
-  let p = Devices.rebrand (placement_of c.where) in
+  let p = placement_of c.where in
   let place v = Eval.run ~by:"t" (Value.Place (p, v)) in
   let cut = mixed (place x) (place y) c.shape c.axes in
   let actual = bytes whole cut (Eval.run ~by:"t" cut) in

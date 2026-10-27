@@ -36,7 +36,7 @@ let f32 data : (float, D.float32_elt, b) Value.t =
 let elements (type v s) (x : (v, s, b) Value.t) : v array =
   match
     Repr.array
-      (Place.value ~by:"t" (Devices.rebrand (Devices.one Devices.host 0)) x)
+      (Place.value ~by:"t" (Devices.one Devices.host 0) x)
   with
   | Some a -> A.to_array a
   | None -> fail "no array"

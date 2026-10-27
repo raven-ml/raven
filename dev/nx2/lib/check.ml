@@ -10,17 +10,15 @@ module P = Nx_kernel.Prog
 
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
-(* The host's device, at the brand of a value this module reads there: a
-   check's flag, a value read out ({!on_host}). No value at it reaches a
-   function of nx's own. *)
-let host () = Devices.rebrand (Devices.one Devices.host 0)
+(* The host's device, where a value is read out ({!on_host}) and a check
+   whose operands have no bytes computes. *)
+let host = Devices.one Devices.host 0
 
 (* Whether [p] lies on the host's set. *)
 let on_host_set p = Devices.number (Devices.set p) = Devices.number Devices.host
 
 let on_host : type v s d. by:string -> (v, s, d) Value.t -> (v, s) A.t =
  fun ~by x ->
-  let host : d Devices.placement = host () in
   match x with
   | Value.Deferred _ -> Iarray.get (Prim.arrays (Constant.at host x)) 0
   | Value.Traced { owner; _ } ->
@@ -279,7 +277,7 @@ let reduce ~by ok r =
   let { Prim.route; layouts } = Prim.route ~by op in
   (* [ok] has bytes, so the reduction has a route. *)
   let route = Option.get route in
-  let place i x = Exec.placer ~by (Devices.rebrand route.operands.(i)) x in
+  let place i x = Exec.placer ~by route.operands.(i) x in
   let op = Prim.mapi place op in
   match route.compute with
   | Partials -> Partial.run ~by route op
@@ -307,7 +305,7 @@ let issue : type d e.
     let p =
       match Prim.at ok with
       | Some p -> p
-      | None -> Option.value ~default:(host ()) (data_placement data)
+      | None -> Option.value ~default:host (data_placement data)
     in
     let scalar x = A.get (on_host ~by x) [||] in
     (* One flag is its own reduction: no kernel reduces it. *)
