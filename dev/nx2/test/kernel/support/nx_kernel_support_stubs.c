@@ -14,7 +14,6 @@
 
 #include "nx_array.h"
 #include "nx_kernel.h"
-#include "nx_prog.h"
 
 static const char *const tags[] = {"in",  "coord", "const",
                                    "op1", "op2",   "op3"};
@@ -33,7 +32,7 @@ static const char *const op2s[NX_OP2_COUNT] = {
 
 static const char *const op3s[NX_OP3_COUNT] = {"where", "fma"};
 
-/* The kind of the node [d] of tag [tag] read through nx_prog.h's codes. */
+/* The kind of the node [d] of tag [tag] read through nx_kernel.h's codes. */
 static const char *kind(int tag, value d) {
   switch (tag) {
     case NX_NODE_OP1: return op1s[NX_OP1_CODE(Field(d, NX_OP1_KIND))];
@@ -45,7 +44,7 @@ static const char *kind(int tag, value d) {
 value nx_kernel_support_op1(value k) { return Val_int(NX_OP1_CODE(k)); }
 value nx_kernel_support_op2(value k) { return Val_int(NX_OP2_CODE(k)); }
 
-/* The program [p] read through nx_prog.h's codes, one line per node: its
+/* The program [p] read through nx_kernel.h's codes, one line per node: its
    tag, then its fields; then its operands' dtypes and its outputs. */
 value nx_kernel_support_prog(value p) {
   CAMLparam1(p);
@@ -114,7 +113,7 @@ value nx_kernel_support_tag(value v) {
   return Is_long(v) ? Val_long(Long_val(v)) : Val_int(Tag_val(v));
 }
 
-/* nx_kernel.h's and nx_prog.h's codes by name. */
+/* nx_kernel.h's codes by name. */
 static const struct {
   const char *name;
   int code;
@@ -166,7 +165,10 @@ static const struct {
     CODE(NX_OP2_LESS),          CODE(NX_OP2_LESS_EQUAL),
     CODE(NX_OP3_WHERE),         CODE(NX_OP3_FMA),
     CODE(NX_OP1_COUNT),         CODE(NX_OP2_COUNT),
-    CODE(NX_OP3_COUNT),
+    CODE(NX_OP3_COUNT),         CODE(NX_LOAD_COUNT),
+    CODE(NX_MONOID_COUNT),      CODE(NX_REDUCTION_BLOCKS),
+    CODE(NX_REDUCTION_CONSTANTS), CODE(NX_COMBINE_COUNT),
+    CODE(NX_TRIANGLE_COUNT),
 #undef CODE
 };
 

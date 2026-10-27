@@ -19,7 +19,7 @@
 
    OCaml passes a kind as its value: a constant constructor is its index
    among the type's constant constructors, a constructor with an argument a
-   block of that tag. The enums of nx_prog.h list the kinds in that order. */
+   block of that tag. The enums of nx_kernel.h list the kinds in that order. */
 
 #include <stdatomic.h>
 #include <string.h>
@@ -238,7 +238,7 @@ static value walk_operands(int n, const nx_operand *in, nx_cpu_block_fn f,
 
 /* Entries */
 
-/* [k] is a Prog.unary: nx_prog.h's op1 codes list them from NX_OP1_NEG. */
+/* [k] is a Prog.unary: nx_kernel.h's op1 codes list them from NX_OP1_NEG. */
 value nx_cpu_apply1(value k, value vd, value vx) {
   int x = nx_array_dtype(vx), c = nx_cpu_carrier(x);
   int code = NX_OP1_NEG + Int_val(k);

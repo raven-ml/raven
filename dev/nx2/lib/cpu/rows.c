@@ -141,7 +141,7 @@
     }                                                                        \
   }
 
-/* The kinds of one operand by nx_prog.h's code and nx_kinds.h's name: of
+/* The kinds of one operand by nx_kernel.h's code and nx_kinds.h's name: of
    floats, of floats with a near function, of integers. Each applies [X] to
    the code, the name and the arguments that follow [X]; NEAR_KINDS passes
    after the name the prefix of the near function's test. */

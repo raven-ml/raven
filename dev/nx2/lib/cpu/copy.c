@@ -617,7 +617,7 @@ void nx_cpu_cast_loop(const nx_array *dst, const nx_array *src,
 }
 
 /* Reads [vd], written, and [vs] of the dtypes [d] and [s] through the door,
-   and walks them with [walk], whose element is [kind]'s (nx_prog.h's
+   and walks them with [walk], whose element is [kind]'s (nx_kernel.h's
    code) at the wider dtype. */
 static value walk_operands(value vd, value vs, int d, int s, int kind,
                            void (*walk)(nx_array *, const nx_loop *)) {

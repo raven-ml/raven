@@ -5,7 +5,6 @@
  (name nx_kernel)
  (libraries nx_array rig)
  (install_c_headers
-  nx_prog
   nx_kernel
   nx_kinds
   nx_kinds_real

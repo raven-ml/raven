@@ -550,7 +550,7 @@ module E = struct
   let ( >= ) x y = less_equal y x
 end
 
-(* Each kind's code in nx_prog.h, whose macros number each type's
+(* Each kind's code in nx_kernel.h, whose macros number each type's
    constructors in the order prog.ml declares them. *)
 let unary_code : unary -> int = function
   | Neg -> 0

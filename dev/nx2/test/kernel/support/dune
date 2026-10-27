@@ -39,7 +39,7 @@
 (rule
  (copy nx_kinds_support_loops.c nx_kinds_support_loops_v3.c))
 
-; nx_prog.h's and nx_kernel.h's codes as C reads them.
+; nx_kernel.h's codes as C reads them.
 
 (library
  (name nx_kernel_support)

@@ -1321,7 +1321,7 @@ let test_many_operands () =
   equal ~msg:"of_node" node (Op2 (Binary Add, 0, 19))
     (Iarray.get r.nodes 20)
 
-(* Representation: C reads a program by nx_prog.h's codes, so each
+(* Representation: C reads a program by nx_kernel.h's codes, so each
    constructor's tag, each field's position and each kind's code is the one
    the header names, and a reordered declaration fails here. *)
 
@@ -1444,7 +1444,7 @@ let tests =
         cases "node3 is of_node's program where its kind takes its dtypes"
           ~name:name3 keys3 test_node3;
         test "a node found allocates nothing" test_node_found_allocates_nothing;
-        test "each tag, field and kind is nx_prog.h's code" test_codes;
+        test "each tag, field and kind is nx_kernel.h's code" test_codes;
         prop "bind is p over x's value, its nodes x's then p's" binding
           law_bind;
         test "bind takes an operand, a coordinate or a constant"

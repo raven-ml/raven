@@ -37,13 +37,17 @@
 
 #include "nx_array.h"
 #include "nx_kernel.h"
-#include "nx_prog.h"
 #include "rig_pool.h"
 
-/* The counts of nx_prog.h's kinds that nx.cpu's tables and switches take:
-   a kind added there fails nx.cpu's build here until nx.cpu computes it. */
+/* The counts of nx_kernel.h's kinds and constructors that nx.cpu's tables
+   and switches take: a code added there fails nx.cpu's build here until
+   nx.cpu computes it. */
 _Static_assert(NX_OP1_COUNT == 31 && NX_OP2_COUNT == 18 && NX_OP3_COUNT == 2,
                "nx.cpu computes every kind");
+_Static_assert(NX_LOAD_COUNT == 2 && NX_MONOID_COUNT == 4 &&
+                   NX_REDUCTION_BLOCKS == 2 && NX_REDUCTION_CONSTANTS == 2 &&
+                   NX_COMBINE_COUNT == 4 && NX_TRIANGLE_COUNT == 2,
+               "nx.cpu reads every constructor");
 
 /* Targets
 
@@ -482,7 +486,7 @@ typedef struct {
      (gemm.c, stage_f4), in acc float32 or float64. */
   nx_cpu_f4 f4[NX_DTYPE_COUNT];
   /* op1[k][dt] and op2[k][dt] compute the kind of one or two operands k
-     (nx_prog.h's code) at dt, fma[dt] fma: NULL where Nx_kernel.Prog
+     (nx_kernel.h's code) at dt, fma[dt] fma: NULL where Nx_kernel.Prog
      refuses the kind at dt (rows.c). */
   nx_cpu_row1 op1[NX_OP1_COUNT][NX_DTYPE_COUNT];
   nx_cpu_row2 op2[NX_OP2_COUNT][NX_DTYPE_COUNT];
@@ -654,7 +658,7 @@ static inline double nx_cpu_bytes(const nx_array *a) {
    (reduce.c) cover. */
 #define NX_CPU_LINE 1024
 
-/* The cost of computing the kind [k] of [arity] operands, nx_prog.h's
+/* The cost of computing the kind [k] of [arity] operands, nx_kernel.h's
    code, at one element of [dt] (target.c). */
 double nx_cpu_kind_cost(int arity, int k, int dt);
 

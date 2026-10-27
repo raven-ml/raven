@@ -924,33 +924,54 @@ let test_full_precision () =
 
 (* Constructor codes *)
 
-(* Each constructor C reads by tag has the code nx_kernel.h declares. *)
+(* Each constructor's name in nx_kernel.h, by a match that a constructor
+   added to Nx_kernel leaves short, and the type's constructors, as many as
+   nx_kernel.h counts. *)
+let load_name = function
+  | Nx_kernel.Plain _ -> "NX_LOAD_PLAIN"
+  | Padded _ -> "NX_LOAD_PADDED"
+
+let monoid_name : Nx_kernel.monoid -> string = function
+  | Sum -> "NX_MONOID_SUM"
+  | Prod -> "NX_MONOID_PROD"
+  | Max -> "NX_MONOID_MAX"
+  | Min -> "NX_MONOID_MIN"
+
+let reduction_name : Nx_kernel.reduction -> string = function
+  | Monoid _ -> "NX_REDUCTION_MONOID"
+  | Arg _ -> "NX_REDUCTION_ARG"
+  | Logsumexp -> "NX_REDUCTION_LOGSUMEXP"
+  | Moments -> "NX_REDUCTION_MOMENTS"
+
+let combine_name : Nx_kernel.combine -> string = function
+  | Set -> "NX_COMBINE_SET"
+  | Add -> "NX_COMBINE_ADD"
+  | Max -> "NX_COMBINE_MAX"
+  | Min -> "NX_COMBINE_MIN"
+
+let triangle_name : Nx_kernel.triangle -> string = function
+  | Lower -> "NX_TRIANGLE_LOWER"
+  | Upper -> "NX_TRIANGLE_UPPER"
+
+(* Each constructor C reads by tag has the code nx_kernel.h declares, and
+   each type as many as nx_kernel.h counts. *)
 let test_codes () =
   let x = A.create Rig.host D.Float32 [| 1 |] in
   let pad =
     { Nx_kernel.lo = [| 0 |]; hi = [| 0 |]; interior = [| 0 |]; windows = [||] }
   in
-  let tag = Nx_kernel_support.tag in
-  List.iter
-    (fun (name, t) -> equal ~msg:name int (Nx_kernel_support.code name) t)
-    [
-      ("NX_LOAD_PLAIN", tag (Nx_kernel.Plain x));
-      ("NX_LOAD_PADDED", tag (Nx_kernel.Padded { x; fill = 0.; pad }));
-      ("NX_MONOID_SUM", tag (Sum : Nx_kernel.monoid));
-      ("NX_MONOID_PROD", tag (Prod : Nx_kernel.monoid));
-      ("NX_MONOID_MAX", tag (Max : Nx_kernel.monoid));
-      ("NX_MONOID_MIN", tag (Min : Nx_kernel.monoid));
-      ("NX_REDUCTION_MONOID", tag (Nx_kernel.Monoid Sum));
-      ("NX_REDUCTION_ARG", tag (Nx_kernel.Arg Max));
-      ("NX_REDUCTION_LOGSUMEXP", tag Nx_kernel.Logsumexp);
-      ("NX_REDUCTION_MOMENTS", tag Nx_kernel.Moments);
-      ("NX_COMBINE_SET", tag (Set : Nx_kernel.combine));
-      ("NX_COMBINE_ADD", tag (Add : Nx_kernel.combine));
-      ("NX_COMBINE_MAX", tag (Max : Nx_kernel.combine));
-      ("NX_COMBINE_MIN", tag (Min : Nx_kernel.combine));
-      ("NX_TRIANGLE_LOWER", tag (Lower : Nx_kernel.triangle));
-      ("NX_TRIANGLE_UPPER", tag (Upper : Nx_kernel.triangle));
-    ]
+  let code = Nx_kernel_support.code and tag = Nx_kernel_support.tag in
+  let check count name all =
+    List.iter (fun v -> equal ~msg:(name v) int (code (name v)) (tag v)) all;
+    equal ~msg:count int (code count) (List.length all)
+  in
+  check "NX_LOAD_COUNT" load_name
+    [ Nx_kernel.Plain x; Padded { x; fill = 0.; pad } ];
+  check "NX_MONOID_COUNT" monoid_name [ Sum; Prod; Max; Min ];
+  check "NX_REDUCTION_BLOCKS" reduction_name [ Monoid Sum; Arg Max ];
+  check "NX_REDUCTION_CONSTANTS" reduction_name [ Logsumexp; Moments ];
+  check "NX_COMBINE_COUNT" combine_name [ Set; Add; Max; Min ];
+  check "NX_TRIANGLE_COUNT" triangle_name [ Lower; Upper ]
 
 (* Contraction views *)
 

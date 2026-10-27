@@ -25,9 +25,9 @@
     every kernel's destinations.
     In C, [nx_kinds.h] computes each kind, [nx_kinds_real.h] and
     [nx_kinds_complex.h] holding its float and complex kinds' bodies,
-    [nx_prog.h] and [nx_kernel.h] hold the codes by which C reads a program
-    and the other constructors, with no OCaml header, so that C, CUDA, HIP
-    and Metal sources include them. *)
+    [nx_kernel.h] holds the codes by which C reads a program and the other
+    constructors, with no OCaml header, so that C, CUDA, HIP and Metal
+    sources include it. *)
 
 module Prog = Prog
 (** Scalar programs: what a loop computes at each index. *)
