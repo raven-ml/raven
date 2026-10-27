@@ -2071,7 +2071,8 @@ let result_arrays op r =
 
 (* Constants *)
 
-let evaluate ~same ~reads f root p =
+(* [evaluate] of a root that reads the constants [deps]. *)
+let walked ~same ~reads f root p deps =
   let computed = Hashtbl.create 16 in
   let find (Node n) q =
     List.find_map
@@ -2082,6 +2083,7 @@ let evaluate ~same ~reads f root p =
   let result node q = Option.get (find node q) in
   let stack = Stack.create () in
   Stack.push (root, p) stack;
+  List.iter (fun d -> Stack.push d stack) deps;
   while not (Stack.is_empty stack) do
     let ((Node n as node), q) as top = Stack.top stack in
     if not (missing top) then ignore (Stack.pop stack)
@@ -2093,3 +2095,11 @@ let evaluate ~same ~reads f root p =
       | deps -> List.iter (fun d -> Stack.push d stack) deps
   done;
   result root p
+
+let evaluate ~same ~reads f root p =
+  match (reads root p : (node * _) list) with
+  | [] ->
+      (* A root that reads no constant, as a fill is, is computed alone:
+         [f] never asks for another's results. *)
+      f (fun _ _ -> invalid_arg "Prim.evaluate: no constant read") root p
+  | deps -> walked ~same ~reads f root p deps

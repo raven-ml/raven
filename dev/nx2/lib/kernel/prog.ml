@@ -563,6 +563,17 @@ let reads ins k dt =
   let (D.Any d) = Iarray.get ins k in
   D.equal d dt
 
+(* [e]'s node where it reads no other node: an [In] of an operand of
+   [ins], a [Coord] or a [Const]. An [In] of no operand of [ins] is
+   [None], for the walk to refuse. *)
+let leaf : type v s. D.any iarray -> (v, s) E.t -> node option =
+ fun ins e ->
+  match e with
+  | In { k; dt; _ } when reads ins k dt -> Some (In k)
+  | Coord { axis; _ } -> Some (Coord axis)
+  | Const { dt; bits; _ } -> Some (Const (D.Any dt, bits))
+  | In _ | Op1 _ | Op2 _ | Op3 _ -> None
+
 (* The walk keeps two tables: [seen] gives an expression walked before, by
    its id, its node, so that a shared subexpression is walked once;
    [index] gives a node and its dtype the index of the first node of that
@@ -570,9 +581,7 @@ let reads ins k dt =
    is unique within one process alone: an expression read back through
    [Marshal] can carry the id of another here, so a hit in [seen] counts
    only for the expression itself. *)
-let lower fn ~ins outs =
-  let invalid why = invalid_arg (fn ^ ": " ^ why) in
-  if Iarray.length outs = 0 then invalid "no output";
+let walked ~invalid ~ins outs =
   let seen = Hashtbl.create 16 and index = Hashtbl.create 16 in
   let nodes = ref [] and count = ref 0 in
   let node nd dt =
@@ -591,21 +600,18 @@ let lower fn ~ins outs =
     | Some (E.Any walked, i) when E.Any walked == E.Any e -> i
     | Some _ | None ->
         let nd =
-          match e with
-          | In { k; dt; _ } ->
-              if not (reads ins k dt) then
-                invalid (strf "In %d is no operand of ins" k);
-              In k
-          | Coord { axis; _ } -> Coord axis
-          | Const { dt; bits; _ } -> Const (D.Any dt, bits)
-          | Op1 { k; dt; x; _ } -> Op1 (k, D.Any dt, walk x)
-          | Op2 { k; x; y; _ } ->
+          match (leaf ins e, e) with
+          | Some nd, _ -> nd
+          | None, In { k; _ } -> invalid (strf "In %d is no operand of ins" k)
+          | None, Op1 { k; dt; x; _ } -> Op1 (k, D.Any dt, walk x)
+          | None, Op2 { k; x; y; _ } ->
               let a = walk x in
               Op2 (k, a, walk y)
-          | Op3 { k; c; x; y; _ } ->
+          | None, Op3 { k; c; x; y; _ } ->
               let a = walk c in
               let b = walk x in
               Op3 (k, a, b, walk y)
+          | None, (Coord _ | Const _) -> assert false
         in
         let i = node nd (D.Any (E.dtype e)) in
         Hashtbl.replace seen id (E.Any e, i);
@@ -617,6 +623,16 @@ let lower fn ~ins outs =
   in
   let outs = Iarray.init (Iarray.length outs) out in
   { ins; nodes = Iarray.of_list (List.rev !nodes); outs }
+
+(* One output that reads no other node, as a fill's constant is, is its one
+   node: no table is needed to share it. *)
+let lower fn ~ins outs =
+  let invalid why = invalid_arg (fn ^ ": " ^ why) in
+  if Iarray.length outs = 0 then invalid "no output";
+  let (E.Any first) = Iarray.get outs 0 in
+  match if Iarray.length outs = 1 then leaf ins first else None with
+  | Some n -> { ins; nodes = [| n |]; outs = [| 0 |] }
+  | None -> walked ~invalid ~ins outs
 
 let of_exprs ~ins outs = lower "Nx_kernel.Prog.of_exprs" ~ins outs
 
