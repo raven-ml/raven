@@ -1,5 +1,5 @@
 (lang dune 3.21)
 
-(name nx2)
+(name dev)
 
 (implicit_transitive_deps false)

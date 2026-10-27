@@ -1,0 +1,7 @@
+; rune2's library, private until it replaces packages/rune, whose public
+; library is named rune, as dev/nx2/rune's lowering is.
+
+(library
+ (name rune2)
+ (private_modules program trace)
+ (libraries nx nx_array))

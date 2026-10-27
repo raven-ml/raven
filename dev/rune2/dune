@@ -1,0 +1,14 @@
+; rune2: rune rebuilt over nx2, beside packages/rune until it replaces it.
+; Its stanzas name no flag of their own: in dune language 3.21 the dev
+; profile compiles with the compiler's default warnings, which leave unused
+; values, opens and fields unreported, so keep dune's stricter set.
+
+(env
+ (dev
+  (flags
+   (:standard %{dune-warnings}))
+  (env-vars
+   (WINDTRAP_TIMEOUT 60)))
+ (_
+  (env-vars
+   (WINDTRAP_TIMEOUT 60))))
