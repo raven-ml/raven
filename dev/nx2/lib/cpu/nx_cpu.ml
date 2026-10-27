@@ -289,7 +289,7 @@ external fold :
 (* [contract_c ~batch ~contracting acc ~dst ~init a b sa sb segs]
    contracts [a] and [b], scaled by [sa] and [sb], with [init] if given and
    cut by [segs], in the dtype of code [acc], over the view C groups from
-   the pairs on its stack ([nx_contract_fill], view.c). *)
+   the pairs on its stack ([nx_contract_fill], gemm_view.c). *)
 external contract_c :
   batch:(int * int) iarray ->
   contracting:(int * int) iarray ->

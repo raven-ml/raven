@@ -629,7 +629,7 @@ static inline void nx_stream_drain(void) {
 void *nx_cpu_take(int64_t bytes);
 void nx_cpu_give(void *p);
 
-/* Contraction views (view.c) */
+/* Contraction views (gemm_view.c) */
 
 /* A contraction's operands and result grouped into four axes, its arrays
    indexed by the operands and axes below. [offset] is each operand's first
