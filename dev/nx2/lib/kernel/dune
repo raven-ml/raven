@@ -7,12 +7,6 @@
  (install_c_headers
   nx_prog
   nx_kernel
-  nx_contract_view
-  nx_contract_view_fill
   nx_kinds
   nx_kinds_real
-  nx_kinds_complex)
- (foreign_stubs
-  (language c)
-  (include_dirs ../array)
-  (names nx_kernel_stubs)))
+  nx_kinds_complex))

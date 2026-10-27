@@ -7,7 +7,7 @@
  (libraries
   nx_array
   nx_kernel
-  nx_kernel_support
+  nx_kernels_support
   nx_cpu
   nx_cpu_floors
   rig

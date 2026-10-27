@@ -301,3 +301,12 @@ type float_format = {
 
 val float_format : (float, 's) t -> float_format
 (** [float_format dt] is the facts of [dt]'s format. *)
+
+(**/**)
+
+external store : (int[@untagged]) -> (float[@unboxed]) -> (int64[@unboxed])
+  = "nx_dtype_store_byte" "nx_dtype_store"
+[@@noalloc]
+(** [store c x] is the bits a store of [x] ({!of_float}) writes into an
+    element of the integer, boolean or narrow float dtype of code [c]
+    ({!code}), sign-extended for a signed integer dtype. *)

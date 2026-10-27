@@ -5,32 +5,6 @@
 
 (** What nx.kernel's suite needs beyond the library's interface. *)
 
-val view_fields :
-  batch:(int * int) iarray ->
-  contracting:(int * int) iarray ->
-  dst:('v, 's) Nx_array.t ->
-  init:('v, 's) Nx_array.t option ->
-  ('a, 'b) Nx_array.t ->
-  ('c, 'e) Nx_array.t ->
-  (int array, Nx_array.answer) result
-(** [view_fields ~batch ~contracting ~dst ~init a b] is the view
-    [nx_contract_view_fill.h]'s [nx_contract_view_fill] groups on C's stack:
-    its four extents and four offsets, then each operand's four strides, by
-    operand then axis, in [nx_contract_view.h]'s order; or [Error] of what
-    the fill answers. *)
-
-val view_groups :
-  batch:(int * int) iarray ->
-  contracting:(int * int) iarray ->
-  dst:('v, 's) Nx_array.t ->
-  init:('v, 's) Nx_array.t option ->
-  ('a, 'b) Nx_array.t ->
-  ('c, 'e) Nx_array.t ->
-  Nx_array.answer
-(** [view_groups ~batch ~contracting ~dst ~init a b] is what
-    [nx_contract_view_fill] answers for the call: [Done] where it groups. It
-    allocates nothing. *)
-
 val prog : Nx_kernel.Prog.t -> string
 (** [prog p] is [p] read by C through [nx_prog.h]'s codes, one line per node:
     its tag ([in], [coord], [const], [op1], [op2], [op3]), then its fields in

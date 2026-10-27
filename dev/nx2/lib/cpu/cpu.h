@@ -36,11 +36,14 @@
 #include <caml/signals.h>
 
 #include "nx_array.h"
-#include "nx_contract_view.h"
-#include "nx_contract_view_fill.h"
 #include "nx_kernel.h"
 #include "nx_prog.h"
 #include "rig_pool.h"
+
+/* The counts of nx_prog.h's kinds that nx.cpu's tables and switches take:
+   a kind added there fails nx.cpu's build here until nx.cpu computes it. */
+_Static_assert(NX_OP1_COUNT == 31 && NX_OP2_COUNT == 18 && NX_OP3_COUNT == 2,
+               "nx.cpu computes every kind");
 
 /* Targets
 
@@ -807,6 +810,66 @@ static inline void nx_stream_drain(void) {
    in it (job.c), else a new allocation. nx_cpu_give gives it back. */
 void *nx_cpu_take(int64_t bytes);
 void nx_cpu_give(void *p);
+
+/* Contraction views (view.c) */
+
+/* A contraction's operands and result grouped into four axes, its arrays
+   indexed by the operands and axes below. [offset] is each operand's first
+   element and [stride] its stride along each axis, in elements; an axis an
+   operand lacks, and an absent Init, read 0. Kernels write
+   v.stride[NX_VIEW_A][NX_VIEW_CONTRACTED]. */
+enum { NX_VIEW_A, NX_VIEW_B, NX_VIEW_INIT, NX_VIEW_DST };
+enum { NX_VIEW_BATCH, NX_VIEW_ROW, NX_VIEW_COLUMN, NX_VIEW_CONTRACTED };
+
+typedef struct {
+  int64_t extent[4];    /* by axis */
+  int64_t offset[4];    /* by operand */
+  int64_t stride[4][4]; /* by operand, then axis */
+} nx_contract_view;
+
+/* A contraction's groups as runs, indexed as nx_contract_view's arrays:
+   each group's axes coalesced over its operands (nx_coalesce_dims) into
+   [runs[g]] runs, at least one, in C order. Run [r] of group [g] has
+   [extent[g][r]] elements, and operand [o] steps [stride[o][g][r]] along
+   it, 0 in a group it lacks and for an absent init. A view is the runs
+   where every group has one. */
+typedef struct {
+  int runs[4];
+  int64_t extent[4][NX_MAX_RANK];
+  int64_t stride[4][4][NX_MAX_RANK];
+  int64_t offset[4];
+} nx_contract_runs;
+
+/* An array's layout as nx_array_layout reads it: its rank, its extents
+   then its strides, and its first element. */
+typedef struct {
+  int rank;
+  int64_t dim[2 * NX_MAX_RANK];
+  int64_t offset;
+} nx_layout;
+
+/* Groups the axes of the arrays [a] and [b], the init [i], an option, and
+   the result [y], over the pairs [batch] and [contracting], as
+   Nx_kernel.S.contract takes them, into [w]: one axis of each kind, where
+   every operand lays out each group's axes as one run of strides, as a
+   matrix product reads them. [a] has the batch, row and contracted axes,
+   [b] the batch, column and contracted ones, [i] and [y] the batch, row
+   and column ones. It reads each pair once and answers an nx_array.h
+   code: NX_SHAPE if the arrays do not fit the pairs (ranks the pairs do
+   not fit, an axis in two pairs, or extents that differ within a group);
+   otherwise NX_DECLINED, with [r] filled, where a group makes several
+   runs; NX_OK once grouped. It allocates nothing and raises nothing. */
+int nx_contract_fill(nx_contract_view *w, nx_contract_runs *r, value batch,
+                     value contracting, value y, value a, value b, value i);
+
+/* Groups as nx_contract_fill does, the layouts read already: [y], [a],
+   [b] and the init [i], NULL for none, over the [nb] batch pairs then the
+   [nc] contracting pairs [pairs], each a's axis then b's. It reads no
+   OCaml value. */
+int nx_contract_fill_layouts(nx_contract_view *w, nx_contract_runs *r,
+                             int nb, int nc, const int (*pairs)[2],
+                             const nx_layout *y, const nx_layout *a,
+                             const nx_layout *b, const nx_layout *i);
 
 /* Matrices */
 

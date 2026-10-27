@@ -120,3 +120,22 @@ let map3 k op ~dst c x y =
 (* Address space *)
 
 external cap_memory : int -> bool = "nx_kernels_support_cap_memory"
+
+external view_fields :
+  batch:(int * int) iarray ->
+  contracting:(int * int) iarray ->
+  dst:('v, 's) Nx_array.t ->
+  init:('v, 's) Nx_array.t option ->
+  ('a, 'b) Nx_array.t ->
+  ('c, 'e) Nx_array.t ->
+  (int array, Nx_array.answer) result
+  = "nx_kernels_support_view_byte" "nx_kernels_support_view"
+
+external view_groups :
+  batch:(int * int) iarray ->
+  contracting:(int * int) iarray ->
+  dst:('v, 's) Nx_array.t ->
+  init:('v, 's) Nx_array.t option ->
+  ('a, 'b) Nx_array.t ->
+  ('c, 'e) Nx_array.t ->
+  Nx_array.answer = "nx_kernels_support_groups_byte" "nx_kernels_support_groups"

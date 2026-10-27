@@ -1269,8 +1269,8 @@ let rows =
   copy_rows @ cast_rows @ apply_rows @ map_rows @ contract_rows @ reduce_rows
   @ index_rows @ sort_rows @ assembly_rows @ linalg_rows
 
-(* A contraction's axes grouped as a kernel library reads them: the view
-   nx_contract_view_fill groups for the bf16 4096 call, a and b
+(* A contraction's axes grouped as nx.cpu reads them: the view
+   nx_contract_fill groups for the bf16 4096 call, a and b
    [1; 4096; 4096] over the batch pair (0, 0) and the contracting pair
    (2, 2), read out as its fields. *)
 let view =
@@ -1281,8 +1281,8 @@ let view =
       (([| (0, 0) |] : _ iarray), ([| (2, 2) |] : _ iarray), x (), x (), x ()))
     (fun (batch, contracting, dst, a, b) ->
       ignore
-        (Nx_kernel_support.view_fields ~batch ~contracting ~dst ~init:None a
-           b))
+        (Nx_kernels_support.view_fields ~batch ~contracting ~dst ~init:None
+           a b))
 
 (* A backend: its rows, then the floors its support derives from their work. *)
 let backend name kernels floors =

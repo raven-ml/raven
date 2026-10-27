@@ -6,10 +6,10 @@
 /* Contractions: y[b, i, j] = init[b, i, j] + Σ_k a[b, i, k] · b[b, k, j],
    computed in acc and rounded once to y's dtype.
 
-   nx_contract_view_fill groups the axes, as nx_contract_view_fill.h states,
-   into one batch, row (M), column (N) and contracted (K) axis per
-   operand; a group that makes several runs takes an outer loop, a's or
-   b's packs, or a copy (Groups of several runs). An operand is read
+   nx_contract_fill (view.c) groups the axes, as cpu.h states, into one
+   batch, row (M), column (N) and contracted (K) axis per operand; a group
+   that makes several runs takes an outer loop, a's or b's packs, or a copy
+   (Groups of several runs). An operand is read
    through the stage, which takes any strides and dtype into its carrier, and
    the target's conversion takes the carrier into acc: each element as a
    cast to acc gives it, exact where acc holds its values. A scaled

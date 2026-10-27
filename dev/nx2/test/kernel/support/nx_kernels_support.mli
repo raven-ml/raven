@@ -120,3 +120,28 @@ val cap_memory : int -> bool
     above its size, so that an allocation past them fails. It is [true] iff
     the limit is set, which only Linux does. The limit stays for the
     process's life: only a forked child calls it. *)
+
+val view_fields :
+  batch:(int * int) iarray ->
+  contracting:(int * int) iarray ->
+  dst:('v, 's) Nx_array.t ->
+  init:('v, 's) Nx_array.t option ->
+  ('a, 'b) Nx_array.t ->
+  ('c, 'e) Nx_array.t ->
+  (int array, Nx_array.answer) result
+(** [view_fields ~batch ~contracting ~dst ~init a b] is the view nx.cpu's
+    [nx_contract_fill] groups on C's stack: its four extents and four
+    offsets, then each operand's four strides, by operand then axis, in the
+    order of [cpu.h]'s indices; or [Error] of what the fill answers. *)
+
+val view_groups :
+  batch:(int * int) iarray ->
+  contracting:(int * int) iarray ->
+  dst:('v, 's) Nx_array.t ->
+  init:('v, 's) Nx_array.t option ->
+  ('a, 'b) Nx_array.t ->
+  ('c, 'e) Nx_array.t ->
+  Nx_array.answer
+(** [view_groups ~batch ~contracting ~dst ~init a b] is what
+    [nx_contract_fill] answers for the call: [Done] where it groups. It
+    allocates nothing. *)

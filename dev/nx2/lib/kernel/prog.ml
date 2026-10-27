@@ -119,10 +119,9 @@ let accepts3 k c x =
 
 (* Bits *)
 
-(* nx_dtype.h's store of a float into a float format of at most 16 bits. *)
-external narrow_bits : (int[@untagged]) -> (float[@unboxed]) -> (int[@untagged])
-  = "nx_kernel_narrow_bits_byte" "nx_kernel_narrow_bits"
-[@@noalloc]
+(* The bits a store of [x] writes into the float dtype [dt] of at most 16
+   bits. *)
+let narrow_bits dt x = Int64.to_int (D.store dt x)
 
 let check_range dt x =
   if not (D.holds dt x) then

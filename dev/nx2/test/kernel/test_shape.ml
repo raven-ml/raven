@@ -17,15 +17,15 @@ module L = Nx_array.Layout
 module M = Nx_array.Move
 module Shape = Nx_kernel.Shape
 
-(* The view nx_contract_view_fill groups, read from its fields
-   ({!Nx_kernel_support.view_fields}) by nx_contract_view.h's indices. *)
+(* The view nx.cpu's nx_contract_fill groups, read from its fields
+   ({!Nx_kernels_support.view_fields}) by cpu.h's indices. *)
 module V = struct
   type operand = A | B | Init | Dst
   type axis = Batch | Row | Column | Contracted
 
   let operand = function A -> 0 | B -> 1 | Init -> 2 | Dst -> 3
   let axis = function Batch -> 0 | Row -> 1 | Column -> 2 | Contracted -> 3
-  let v = Nx_kernel_support.view_fields
+  let v = Nx_kernels_support.view_fields
   let extent f x = f.(axis x)
   let offset f o = f.(4 + operand o)
   let stride f o x = f.(8 + (4 * operand o) + axis x)
@@ -1195,8 +1195,8 @@ let minor_words f =
   f ();
   Gc.minor_words () -. before
 
-(* C's nx_contract_view_fill, which nx.cpu groups each contraction with,
-   allocates nothing. *)
+(* nx.cpu's nx_contract_fill, which groups each contraction, allocates
+   nothing. *)
 let test_view_allocates_nothing () =
   let arr s = over (L.contiguous s) in
   let a = arr [| 2; 3; 4 |] and b = arr [| 2; 4; 5 |] in
@@ -1205,7 +1205,7 @@ let test_view_allocates_nothing () =
   let calls () =
     for _ = 1 to 1000 do
       ignore
-        (Nx_kernel_support.view_groups ~batch ~contracting ~dst ~init a b)
+        (Nx_kernels_support.view_groups ~batch ~contracting ~dst ~init a b)
     done
   in
   let nothing () = () in

@@ -36,8 +36,8 @@ double nx_dtype_round(intnat dt, double x) {
   }
 }
 
-/* The bits a store of [x] writes into an element of the integer dtype
-   [dt]. */
+/* The bits a store of [x] writes into an element of the integer, boolean
+   or narrow float dtype [dt] (nx_double_to_bits). */
 int64_t nx_dtype_store(intnat dt, double x) {
   return nx_double_to_bits((int)dt, x);
 }

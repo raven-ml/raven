@@ -13,57 +13,8 @@
 #include <caml/mlvalues.h>
 
 #include "nx_array.h"
-#include "nx_contract_view_fill.h"
 #include "nx_kernel.h"
 #include "nx_prog.h"
-
-/* The view nx_contract_view_fill groups on the stack from the pairs [vb]
-   and [vc], the result [y], the init [i] and [a] and [b]: Ok of its 4
-   extents, 4 offsets, then 16 strides by operand then axis, or Error of the
-   fill's answer. */
-value nx_kernel_support_view(value vb, value vc, value y, value i, value a,
-                             value b) {
-  CAMLparam5(vb, vc, y, i, a);
-  CAMLxparam1(b);
-  CAMLlocal2(f, r);
-  nx_contract_view c;
-  int answer = nx_contract_view_fill(&c, vb, vc, y, a, b, i);
-  if (answer != NX_OK) {
-    r = caml_alloc(1, 1);
-    Store_field(r, 0, Val_int(answer));
-    CAMLreturn(r);
-  }
-  f = caml_alloc_tuple(24);
-  for (int i = 0; i < 4; i++) {
-    Store_field(f, i, Val_long(c.extent[i]));
-    Store_field(f, 4 + i, Val_long(c.offset[i]));
-    for (int x = 0; x < 4; x++)
-      Store_field(f, 8 + 4 * i + x, Val_long(c.stride[i][x]));
-  }
-  r = caml_alloc(1, 0);
-  Store_field(r, 0, f);
-  CAMLreturn(r);
-}
-
-value nx_kernel_support_view_byte(value *argv, int argn) {
-  (void)argn;
-  return nx_kernel_support_view(argv[0], argv[1], argv[2], argv[3], argv[4],
-                                argv[5]);
-}
-
-/* What nx_contract_view_fill answers for the call, as nx_kernel_support_view
-   reads it; it allocates nothing. */
-value nx_kernel_support_groups(value vb, value vc, value y, value i, value a,
-                               value b) {
-  nx_contract_view c;
-  return Val_int(nx_contract_view_fill(&c, vb, vc, y, a, b, i));
-}
-
-value nx_kernel_support_groups_byte(value *argv, int argn) {
-  (void)argn;
-  return nx_kernel_support_groups(argv[0], argv[1], argv[2], argv[3], argv[4],
-                                  argv[5]);
-}
 
 static const char *const tags[] = {"in",  "coord", "const",
                                    "op1", "op2",   "op3"};

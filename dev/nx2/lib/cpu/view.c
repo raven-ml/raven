@@ -3,35 +3,22 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-#include <stddef.h>
+/* Contraction views: a contraction's pairs and layouts grouped into the
+   view or the runs gemm.c reads (cpu.h, Contraction views). */
+
 #include <stdint.h>
 #include <string.h>
 
 #include <caml/mlvalues.h>
 
-#include "nx_array.h"
-#include "nx_contract_view_fill.h"
-#include "nx_prog.h"
-
-_Static_assert(NX_OP1_COUNT == 31 && NX_OP2_COUNT == 18 && NX_OP3_COUNT == 2,
-               "one code per kind");
-
-/* The bits nx_dtype.h's store of [x] writes into an element of the float
-   dtype [dt] of at most 16 bits. */
-intnat nx_kernel_narrow_bits(intnat dt, double x) {
-  return (intnat)nx_double_to_bits((int)dt, x);
-}
-
-value nx_kernel_narrow_bits_byte(value dt, value x) {
-  return Val_long(nx_kernel_narrow_bits(Long_val(dt), Double_val(x)));
-}
+#include "cpu.h"
 
 _Static_assert(NX_VIEW_DST == 3 && NX_VIEW_CONTRACTED == 3,
                "operand and axis indices");
 
-/* nx_contract_view_fill, in one pass over the pairs [vbatch] and
+/* nx_contract_fill, in one pass over the pairs [vbatch] and
    [vcontracting] and the layouts of [y], [a], [b] and the init [i], an
-   option, into [w]: the paired axes marked in a mask per side, each
+   option, into [w] or [r]: the paired axes marked in a mask per side, each
    operand's axes of each group gathered, every group's extents checked
    before any merges, then each group coalesced (nx_coalesce_dims) into
    its runs and written. It reads each pair once, so another domain's write
@@ -47,7 +34,7 @@ enum {
 typedef nx_layout layout;
 
 /* Groups the [count] axes of group [g] over the [n] operands [ops], whose
-   axes are [axes][op][g], into its runs in [r] (nx_contract_view_fill.h):
+   axes are [axes][op][g], into its runs in [r] (cpu.h):
    one run where there are at most one axis, as nx_coalesce_dims writes it,
    an absent or single axis of extent 1 stepping 0, as does an empty one.
    The operands not in [ops] step 0. */
@@ -269,11 +256,4 @@ int nx_contract_fill_layouts(nx_contract_view *w, nx_contract_runs *r,
   int e = pairs_of(&q, nb, nc, ps);
   if (e) return e;
   return fill_of(w, r, &q);
-}
-
-int nx_contract_view_fill(nx_contract_view *w, value vbatch,
-                          value vcontracting, value y, value a, value b,
-                          value i) {
-  nx_contract_runs r;
-  return nx_contract_fill(w, &r, vbatch, vcontracting, y, a, b, i);
 }
