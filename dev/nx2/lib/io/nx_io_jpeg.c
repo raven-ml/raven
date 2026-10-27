@@ -1001,6 +1001,8 @@ static jpeg_status decode_jpeg(const uint8_t *src, size_t len, uint8_t *dst,
     status = next_marker(src, len, &off, &marker);
     if (status != JPEG_OK)
       break;
+    /* Bytes after EOI are ignored, as libjpeg ignores them: a motion photo
+       appends its video there. */
     if (marker == 0xd9) {
       saw_end = 1;
       break;
@@ -1045,8 +1047,6 @@ static jpeg_status decode_jpeg(const uint8_t *src, size_t len, uint8_t *dst,
   }
   if (status == JPEG_OK && (!saw_end || !decoder.saw_scan))
     status = JPEG_TRUNCATED;
-  if (status == JPEG_OK && off != len)
-    status = JPEG_MARKER;
   if (status == JPEG_OK && decoder.component_count == 3 &&
       decoder.adobe_transform < 0) {
     int rgb_ids = decoder.components[0].id == 'R' &&

@@ -261,6 +261,15 @@ let round_trips =
 (* The format a save writes. *)
 type format = Png | Jpeg
 
+(* Files of both formats, sequential and progressive or interlaced. *)
+let ended =
+  [
+    "png_filters.png";
+    "png_palette_adam7.png";
+    "jpeg_baseline.jpg";
+    "jpeg_progressive.jpg";
+  ]
+
 let files =
   group "files"
     [
@@ -398,6 +407,19 @@ let files =
           let path = fixture name in
           fails ~path ~naming:"invalid JPEG scan" (fun () ->
               Nx_io.load_image path));
+      prop "bytes after a PNG's IEND or a JPEG's EOI are ignored"
+        (Gen.pair (Gen.of_list ~pp:Format.pp_print_string ended) Gen.string)
+        (fun (name, tail) ->
+          let path = file (read (fixture name) ^ tail) in
+          equal packed
+            (Nx.P (Nx_io.load_image (fixture name)))
+            (Nx.P (Nx_io.load_image path)));
+      cases ~name:Fun.id "a file followed by a copy of itself loads as the file"
+        ended (fun name ->
+          let whole = read (fixture name) in
+          equal packed
+            (Nx.P (Nx_io.load_image (fixture name)))
+            (Nx.P (Nx_io.load_image (file (whole ^ whole)))));
       test "a PNG chunk whose checksum does not match fails" (fun () ->
           let path = file (flip_byte (read (fixture "png_filters.png")) 30) in
           fails ~path ~naming:"PNG chunk CRC mismatch" (fun () ->

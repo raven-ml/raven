@@ -479,7 +479,9 @@ val load_image : string -> Nx.host Nx.uint8_t
     its entry's alpha in the chunk, or 255 for an entry past the chunk's end. In
     any other image, it is 0 where the pixel's samples equal the chunk's at the
     file's bit depth, and 255 elsewhere. A grey JPEG file loads with one
-    channel, and any other with three, CMYK and YCCK converted.
+    channel, and any other with three, CMYK and YCCK converted. Bytes after the
+    image's end, a PNG file's [IEND] chunk or a JPEG file's EOI marker, are
+    ignored.
 
     Raises [Failure] as {!section-errors} states, and if the file is neither a
     PNG nor a JPEG stream, or if a checksum does not match. *)

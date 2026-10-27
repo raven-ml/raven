@@ -5,9 +5,9 @@
   Static PNG decoding and encoding following the W3C PNG specification: the
   chunk stream, scanline filters and pixel formats. The caller checks chunk
   CRC-32s, and compresses and decompresses image data with compress.deflate's
-  zlib streams: the decoder unfilters the decompressed scanlines in place and writes pixels
-  directly into the Nx-owned destination Bigarray, and the encoder returns the
-  filtered scanlines.
+  zlib streams: the decoder unfilters the decompressed scanlines in place and
+  writes pixels directly into the Nx-owned destination Bigarray, and the encoder
+  returns the filtered scanlines.
   --------------------------------------------------------------------------*/
 
 #include <caml/alloc.h>
@@ -52,6 +52,8 @@ typedef struct {
   uint8_t palette_alpha[256];
   unsigned transparent[3];
   size_t idat_size;
+  /* The offset after the IEND chunk, past which bytes are ignored. */
+  size_t end;
 } png_info;
 
 static const uint8_t png_signature[8] = {137, 80, 78, 71, 13, 10, 26, 10};
@@ -212,10 +214,9 @@ static png_status parse_png(const uint8_t *src, size_t len, png_info *info) {
     } else if (type_is(type, "IEND")) {
       if (!seen_header || !seen_data || seen_end || length != 0)
         return PNG_ORDER;
+      /* Bytes after IEND are ignored, as libpng ignores them. */
       seen_end = 1;
-      off += length + 12;
-      if (off != len)
-        return PNG_ORDER;
+      info->end = off + 12;
       break;
     } else {
       if (seen_data)
@@ -232,8 +233,9 @@ static png_status parse_png(const uint8_t *src, size_t len, png_info *info) {
   return PNG_OK;
 }
 
-/* Copies the IDAT chunks of [src] into [dst], which they must fill: [src] may
-   be a mapped file that changed since it was parsed. */
+/* Copies the IDAT chunks of [src], whose IEND chunk ends at [len], into [dst],
+   which they must fill: [src] may be a mapped file that changed since it was
+   parsed. */
 static png_status copy_idat(const uint8_t *src, size_t len, uint8_t *dst,
                             size_t dst_len) {
   size_t off = 8;
@@ -579,7 +581,8 @@ CAMLprim value caml_nx_io_png_idat(value vsrc) {
     caml_failwith(png_message(status));
   vidat = caml_ba_alloc_dims(CAML_BA_UINT8 | CAML_BA_C_LAYOUT, 1, NULL,
                              (intnat)info.idat_size);
-  status = copy_idat(Caml_ba_data_val(vsrc), src_len, Caml_ba_data_val(vidat), info.idat_size);
+  status = copy_idat(Caml_ba_data_val(vsrc), info.end, Caml_ba_data_val(vidat),
+                     info.idat_size);
   if (status != PNG_OK)
     caml_failwith(png_message(status));
   vresult = caml_alloc_tuple(2);
