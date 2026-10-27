@@ -8,7 +8,8 @@ interlacing that an encoder picks on its own, except png_rgba.png and
 png_la.png, which Pillow writes as it writes the JPEG files. Each image has a
 sibling .npy of the pixels Pillow decodes from it, of shape (h, w, c), except
 png_gray_trns.png and png_rgb16_trns.png, whose pixels are stated from PNG-3
-where Pillow's decoding differs.
+where Pillow's decoding differs. No fixture is a YCCK JPEG, which Pillow does
+not write, so the YCCK conversion goes untested.
 
 Usage:
     cd dev/nx2/test/io/support
@@ -209,6 +210,10 @@ def image_fixtures():
     write_png("png_rgb16.png", [[(0x0000, 0xFFFF, 0x8000), (0x1234, 0xABCD, 0x01FF)]],
               16, 2, filters=(4,))
     reference("png_rgb16.png", "RGB")
+    # Every 4-bit sample, two to a byte, in rows of an odd width.
+    write_png("png_gray4.png", [[((5 * y + x) % 16,) for x in range(5)] for y in range(4)],
+              4, 0, filters=(0, 1, 2, 3))
+    reference("png_gray4.png", "L")
     indices = [[((x + 2 * y) % 4,) for x in range(5)] for y in range(5)]
     write_png("png_palette_adam7.png", indices, 2, 3, filters=(0, 1, 2, 3, 4),
               palette=[(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0)],

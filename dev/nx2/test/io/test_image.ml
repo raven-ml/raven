@@ -48,13 +48,20 @@ let covers (view, x) =
     || (view = Flipped && rows > 1));
   cover "broadcast" (view = Broadcast && rows > 1)
 
-(* Smooth images, gradients, which JPEG keeps closely. *)
+(* Smooth images, which JPEG keeps closely: channel [c] of the pixel at [y], [x]
+   is [a + 60 c + sy y + sx x], clamped to a byte, for drawn [a] and slopes.
+   Sides run from 1 to 24 pixels, across a block of 8 and a chroma block of 16,
+   and one image in six is a single row. *)
 let smooth channels =
   let open Gen in
+  let side = int_range 1 24 in
+  let slope = int_range (-6) 6 in
   let* c = of_list channels in
-  let+ h = int_range 8 24 and+ w = int_range 8 24 in
+  let+ h = frequency [ (1, constant 1); (5, side) ]
+  and+ w = side
+  and+ a, sy, sx = triple (int_range 0 255) slope slope in
   Nx.init Nx.uint8 [| h; w; c |] (fun i ->
-      ((i.(0) * 4) + (i.(1) * 3) + (i.(2) * 40)) land 255)
+      Int.max 0 (Int.min 255 (a + (60 * i.(2)) + (sy * i.(0)) + (sx * i.(1)))))
 
 let smooth channels = Gen.with_pp Nx.pp (smooth channels)
 
@@ -126,6 +133,15 @@ let png_chunks =
           let plain = Nx_io.encode_png x in
           let png = Nx_io.encode_png ~dpi ~srgb:true x in
           equal string plain (without "sRGB" (without "pHYs" png));
+          (* PNG-3 places both chunks before the first IDAT. *)
+          let rec before_idat = function
+            | [] | ("IDAT", _) :: _ -> []
+            | (ty, _) :: rest -> ty :: before_idat rest
+          in
+          equal ~msg:"chunks before IDAT"
+            (slist string String.compare)
+            [ "IHDR"; "pHYs"; "sRGB" ]
+            (before_idat (chunks png));
           equal packed
             (Nx.P (Nx_io.load_image (file ~suffix:".png" plain)))
             (Nx.P (Nx_io.load_image (file ~suffix:".png" png))));
@@ -180,12 +196,25 @@ let round_trips =
       prop "a smooth image returns from JPEG within a mean error of 8 levels"
         (smooth [ 1; 3 ])
         (fun x ->
+          let h = Nx.dim 0 x and w = Nx.dim 1 x in
+          cover "one row" (h = 1);
+          cover "both sides below 16 pixels" (h < 16 && w < 16);
+          cover "a side past 16 pixels" (h > 16 || w > 16);
           let path = temp_file ~suffix:".jpg" () in
           Nx_io.save_jpeg path x;
           let back = Nx_io.load_image path in
           equal (array int) (Nx.shape x) (Nx.shape back);
           let e = errors x back in
           at_most int ~than:8 (Array.fold_left ( + ) 0 e / Array.length e));
+      test "an image of noise returns from PNG" (fun () ->
+          let random = Random.State.make [| 0x6e78 |] in
+          let noise =
+            Nx.init Nx.uint8 [| 64; 64; 3 |] (fun _ ->
+                Random.State.int random 256)
+          in
+          let path = temp_file ~suffix:".png" () in
+          Nx_io.save_png path noise;
+          equal packed (Nx.P noise) (Nx.P (Nx_io.load_image path)));
       test "a save leaves its image's memory to the image's next donation"
         (fun () ->
           let n = 256 in
@@ -230,6 +259,7 @@ let files =
            [
              "filters";
              "gray1";
+             "gray4";
              "rgb16";
              "palette_adam7";
              "palette_short_trns";
@@ -277,6 +307,8 @@ let files =
           ("two channels in JPEG", (Jpeg, [| 2; 2; 2 |]));
           ("four channels in JPEG", (Jpeg, [| 2; 2; 4 |]));
           ("no columns in JPEG", (Jpeg, [| 3; 0; 1 |]));
+          ("no channels in PNG", (Png, [| 2; 2; 0 |]));
+          ("no channels in JPEG", (Jpeg, [| 2; 2; 0 |]));
         ]
         (fun (_, (format, shape)) ->
           let x = Nx.zeros Nx.uint8 shape in
@@ -307,6 +339,16 @@ let files =
           let whole = read (fixture name) in
           prefixes_fail Nx_io.load_image whole;
           flips_load_or_fail Nx_io.load_image whole);
+      prop "any bytes after a PNG or a JPEG signature load or fail"
+        (Gen.pair
+           (Gen.of_list ~pp:Format.pp_print_string [ "PNG"; "JPEG" ])
+           Gen.string)
+        (fun (format, bytes) ->
+          let signature =
+            if format = "PNG" then "\137PNG\r\n\026\n" else "\xff\xd8"
+          in
+          let path = file (signature ^ bytes) in
+          loads_or_fails ~path (fun () -> Nx_io.load_image path));
     ]
 
 let () = exit (run "nx.io images" [ png_chunks; round_trips; files ])
