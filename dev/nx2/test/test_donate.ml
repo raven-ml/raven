@@ -164,9 +164,31 @@ let test_refused_kills_none () =
   equal ~msg:"matrix_rank's refused donor lives" (array int) [| 2; 2 |]
     (Nx.shape (Nx.copy x3));
   let x4 = narrow [| 2; 3 |] in
-  invalid ~sub:"Nx.cond: " (fun () -> Nx.cond ~p:`One (Nx.donate x4));
+  invalid ~sub:"Nx.cond: " (fun () -> Nx.cond f32 ~p:`One (Nx.donate x4));
   equal ~msg:"cond's refused donor lives" (array int) [| 2; 3 |]
     (Nx.shape (Nx.copy x4));
+  (* A norm refuses before the cast to its precision, which would consume
+     its operand. *)
+  List.iter
+    (fun (name, s, f) ->
+      let x = narrow s in
+      invalid ~sub:(name ^ ": ") (fun () -> f (Nx.donate x));
+      equal ~msg:(name ^ "'s refused donor lives") (array int) s
+        (Nx.shape (Nx.copy x)))
+    [
+      ("Nx.vector_norm", [| 2; 2 |], fun d ->
+          ignore (Nx.vector_norm f32 ~ord:Float.nan d));
+      ("Nx.vector_norm", [| 2; 2 |], fun d ->
+          ignore (Nx.vector_norm f32 ~axes:[ 2 ] d));
+      ("Nx.vector_norm", [| 2; 0 |], fun d ->
+          ignore (Nx.vector_norm Nx.float64 ~ord:Float.infinity d));
+      ("Nx.matrix_norm", [| 2; 0 |], fun d ->
+          ignore (Nx.matrix_norm Nx.float64 ~ord:`Two d));
+      ("Nx.matrix_norm", [| 2; 0 |], fun d ->
+          ignore (Nx.matrix_norm f32 ~ord:`NegOne d));
+      ("Nx.cond", [| 2; 2 |], fun d -> ignore (Nx.cond Nx.float8_e4m3fn d));
+      ("Nx.cond", [| 2; 0 |], fun d -> ignore (Nx.cond f32 d));
+    ];
   (* A routine that takes its result's dtype first refuses its operand's
      dtype before it consumes the operand. *)
   List.iter
@@ -1244,10 +1266,16 @@ let test_one_reader_consumes () =
   dies "Nx.slogdet" square (fun d -> ignore (Nx.slogdet f32 d));
   dies "Nx.inv" square (fun d -> ignore (Nx.inv d));
   dies "Nx.pinv" square (fun d -> ignore (Nx.pinv d));
-  dies "Nx.vector_norm" square (fun d -> ignore (Nx.vector_norm d));
-  dies "Nx.matrix_norm" square (fun d -> ignore (Nx.matrix_norm d));
+  dies "Nx.vector_norm" square (fun d -> ignore (Nx.vector_norm f32 d));
+  dies "Nx.vector_norm" square (fun d -> ignore (Nx.vector_norm Nx.float64 d));
+  dies "Nx.vector_norm" complex (fun d -> ignore (Nx.vector_norm f32 d));
+  dies "Nx.matrix_norm" square (fun d -> ignore (Nx.matrix_norm f32 d));
+  dies "Nx.matrix_norm" complex (fun d ->
+      ignore (Nx.matrix_norm Nx.float64 ~ord:`Two d));
   dies "Nx.matrix_rank" square (fun d -> ignore (Nx.matrix_rank d));
-  dies "Nx.cond" square (fun d -> ignore (Nx.cond d));
+  dies "Nx.cond" square (fun d -> ignore (Nx.cond f32 d));
+  dies "Nx.cond" complex (fun d -> ignore (Nx.cond f32 d));
+  dies "Nx.cond" square (fun d -> ignore (Nx.cond Nx.float64 ~p:`One d));
   dies "Nx.argwhere" square (fun d -> ignore (Nx.argwhere d));
   dies "Nx.fftshift" square (fun d -> ignore (Nx.fftshift ~axes:[ 0; 1 ] d));
   dies "Nx.cross"
@@ -1646,15 +1674,22 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
   let ids () = ints [| 0; 1; 0; 1 |] in
   table (D.name dt)
     [
-      c "vector_norm" 1 (fun d -> show (Nx.vector_norm (d 0 (x [| 4 |]))));
+      c "vector_norm" 1 (fun d -> show (Nx.vector_norm dt (d 0 (x [| 4 |]))));
       c "vector_norm" 1 (fun d ->
-          show (Nx.vector_norm ~ord:3. (d 0 (x [| 4 |]))));
-      c "matrix_norm" 1 (fun d -> show (Nx.matrix_norm (d 0 (x [| 2; 2 |]))));
+          show (Nx.vector_norm dt ~ord:3. (d 0 (x [| 4 |]))));
+      c "vector_norm" 1 (fun d ->
+          show (Nx.vector_norm Nx.float64 (d 0 (x [| 4 |]))));
       c "matrix_norm" 1 (fun d ->
-          show (Nx.matrix_norm ~ord:`One (d 0 (x [| 2; 2 |]))));
+          show (Nx.matrix_norm dt (d 0 (x [| 2; 2 |]))));
       c "matrix_norm" 1 (fun d ->
-          show (Nx.matrix_norm ~ord:`Two (d 0 (x [| 2; 2 |]))));
-      c "cond" 1 (fun d -> show (Nx.cond (d 0 (positive [| 2; 2 |]))));
+          show (Nx.matrix_norm dt ~ord:`One (d 0 (x [| 2; 2 |]))));
+      c "matrix_norm" 1 (fun d ->
+          show (Nx.matrix_norm dt ~ord:`Two (d 0 (x [| 2; 2 |]))));
+      c "matrix_norm" 1 (fun d ->
+          show (Nx.matrix_norm Nx.float16 ~ord:`Nuc (d 0 (x [| 2; 2 |]))));
+      c "cond" 1 (fun d -> show (Nx.cond dt (d 0 (positive [| 2; 2 |]))));
+      c "cond" 1 (fun d ->
+          show (Nx.cond Nx.float64 ~p:`Inf (d 0 (positive [| 2; 2 |]))));
       c "mod_" 2 (fun d ->
           show (Nx.mod_ (d 0 (x [| 4 |])) (d 1 (positive [| 4 |]))));
       c "pow" 2 (fun d ->
@@ -2017,6 +2052,20 @@ let complexes =
               (d 0 (Nx.add (Nx.eye Nx.complex64 2) (z [| 2; 2 |])))
           in
           showl [ w; v ]);
+      c "vector_norm" 1 (fun d -> show (Nx.vector_norm f32 (d 0 (z [| 4 |]))));
+      c "vector_norm" 1 (fun d ->
+          show (Nx.vector_norm Nx.float64 ~ord:1. (d 0 (z [| 4 |]))));
+      c "matrix_norm" 1 (fun d ->
+          show (Nx.matrix_norm f32 ~ord:`Inf (d 0 (z [| 2; 2 |]))));
+      c "matrix_norm" 1 (fun d ->
+          show (Nx.matrix_norm Nx.bfloat16 ~ord:`Two (d 0 (z [| 2; 2 |]))));
+      c "cond" 1 (fun d ->
+          show
+            (Nx.cond f32 (d 0 (Nx.add (Nx.eye Nx.complex64 2) (z [| 2; 2 |])))));
+      c "cond" 1 (fun d ->
+          show
+            (Nx.cond Nx.float64 ~p:`One
+               (d 0 (Nx.add (Nx.eye Nx.complex64 2) (z [| 2; 2 |])))));
     ]
 
 (* The functions of integers. *)

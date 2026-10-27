@@ -3209,7 +3209,6 @@ let power_norm ~by p axes m =
 (* The norm [p] of the vectors of the magnitudes [m] along [axes], kept as
    axes of one. *)
 let vector ~by p axes m =
-  if Float.is_nan p then invalid_argf "%s: an order of nan" by;
   let sum x = reduction ~by Sum ~axes ~keepdims:true x in
   if p = Float.infinity then reduction ~by Max ~axes ~keepdims:true m
   else if p = Float.neg_infinity then reduction ~by Min ~axes ~keepdims:true m
@@ -3220,57 +3219,109 @@ let vector ~by p axes m =
   else if p = 1. then sum m
   else power_norm ~by p axes m
 
-(* [f x] for float32 and float64; for a narrower float, [f] of [x] at its
-   carrier, rounded once to [x]'s dtype. *)
-let carried (type s d) ~by (x : (float, s, d) t)
-    (f : 'r. (float, 'r, d) t -> (float, 'r, d) t) : (float, s, d) t =
-  let dt = dtype x in
-  if Nx_kernel.full_precision dt then f x
-  else
-    let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
-    cast_by ~by dt (f (cast_by ~by w x))
+(* Compute formats: a float format and the complex one of its precision. *)
+type formats = Formats : (float, 'r) D.t * (Complex.t, 'c) D.t -> formats
 
-let vector_norm ?(ord = 2.) ?axes:l ?(keepdims = false) x =
+(* The formats of the wider of a float [dt]'s compute dtype
+   ({!Nx_kernel.float_carrier}) and a complex [c]'s precision. *)
+let formats dt c =
+  let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
+  if D.bits w > 32 || D.bits c > 64 then Formats (D.Float64, D.Complex128)
+  else Formats (D.Float32, D.Complex64)
+
+(* [f w x'] for [w] the wider of [x]'s precision and [dt]'s, and [x'] [x]
+   cast to the dtype of its kind of precision [w]: [x] itself where it has
+   that dtype. The cast consumes [x], so a caller refuses its arguments
+   first. *)
+let widened (type v s r d b) ~by (dt : (float, r) D.t) (x : (v, s, d) t)
+    (f : 'f 'w 'q. (float, 'f) D.t -> ('w, 'q, d) t -> b) : b =
+  let xt = dtype x in
+  match D.kind xt with
+  | D.Float ->
+      let (Formats (w, _)) =
+        if D.bits xt = 64 then formats dt D.Complex128
+        else formats dt D.Complex64
+      in
+      f w (cast_by ~by w x)
+  | D.Complex ->
+      let (Formats (w, c)) = formats dt xt in
+      f w (cast_by ~by c x)
+  | D.Signed | D.Unsigned | D.Boolean ->
+      invalid_argf "%s: %a is neither float nor complex" by pp_value x
+
+let vector_norm dt ?(ord = 2.) ?axes:l ?(keepdims = false) x =
   let by = "Nx.vector_norm" in
   let along =
     match l with None -> List.init (ndim x) Fun.id | Some l -> axes ~by x l
   in
-  let y = carried ~by x (fun x -> vector ~by ord along (unary ~by Abs x)) in
+  if Float.is_nan ord then invalid_argf "%s: an order of nan" by;
+  (* The greatest or least of no element is undefined: refused where the
+     result has an element. *)
+  let s = shape x in
+  let kept a d = List.mem a along || d > 0 in
+  if
+    Float.abs ord = Float.infinity
+    && List.exists (fun a -> s.(a) = 0) along
+    && Array.for_all Fun.id (Array.mapi kept s)
+  then
+    invalid_argf "%s: an order of %g over %a has no element" by ord pp_value
+      x;
+  let y =
+    widened ~by dt x (fun _ x ->
+        magnitudes ~by x (fun m -> cast_by ~by dt (vector ~by ord along m)))
+  in
   if keepdims then y
   else
     let along = Iarray.of_list (List.sort compare along) in
     reshaped ~by (Prim.reduced (shape x) along) y
 
-let matrix_norm_by ~by ?(ord = `Fro) ?(keepdims = false) x =
-  matrix ~by x;
+(* Refuses an order [ord] that takes the greatest or least singular value,
+   column or row of a matrix of [x] that has none. *)
+let extremes ~by ord x =
+  let m = dim (-2) x and n = dim (-1) x in
+  let some = Array.for_all (fun d -> d > 0) (batch x) in
+  let none what count =
+    if some && count = 0 then invalid_argf "%s: %a has no %s" by pp_value x what
+  in
+  match ord with
+  | `Two | `NegTwo -> none "singular value" (Stdlib.min m n)
+  | `One | `NegOne -> none "column" n
+  | `Inf | `NegInf -> none "row" m
+  | `Fro | `Nuc -> ()
+
+(* The norm [ord] of each matrix of [x], of precision [w], its last two axes
+   kept of one: computed at [w] and stored in [dt]. *)
+let matrix_norms ~by w dt ord x =
   let r = ndim x - 2 and c = ndim x - 1 in
   (* The greatest or least sum of a line's magnitudes, [summed] along it. *)
-  let lines k summed chosen m =
-    reduction ~by k ~axes:[ chosen ] ~keepdims:true
-      (reduction ~by Sum ~axes:[ summed ] ~keepdims:true m)
+  let lines k summed chosen =
+    let line m = reduction ~by Sum ~axes:[ summed ] ~keepdims:true m in
+    let pick m = reduction ~by k ~axes:[ chosen ] ~keepdims:true m in
+    magnitudes ~by x (fun m -> cast_by ~by dt (pick (line m)))
   in
   (* [x]'s singular values, a [[…; k; 1]] column, reduced by [k] along it. *)
-  let singular k x =
-    let _, s, _ = svd_by ~by ~vectors:false (dtype x) x in
-    reduction ~by k ~axes:[ r ] ~keepdims:true (unsqueeze_by ~by ~axes:[ -1 ] s)
+  let singular k =
+    let _, s, _ = svd_by ~by ~vectors:false w x in
+    let s = unsqueeze_by ~by ~axes:[ -1 ] s in
+    cast_by ~by dt (reduction ~by k ~axes:[ r ] ~keepdims:true s)
   in
-  let norm x =
-    let m () = unary ~by Abs x in
-    match ord with
-    | `Fro -> power_norm ~by 2. [ r; c ] (m ())
-    | `One -> lines Max r c (m ())
-    | `NegOne -> lines Min r c (m ())
-    | `Inf -> lines Max c r (m ())
-    | `NegInf -> lines Min c r (m ())
-    | `Nuc -> singular Sum x
-    | `Two -> singular Max x
-    | `NegTwo -> singular Min x
-  in
-  let y = carried ~by x norm in
-  if keepdims then y else reshaped ~by (batch x) y
+  match ord with
+  | `Fro ->
+      magnitudes ~by x (fun m -> cast_by ~by dt (power_norm ~by 2. [ r; c ] m))
+  | `One -> lines Max r c
+  | `NegOne -> lines Min r c
+  | `Inf -> lines Max c r
+  | `NegInf -> lines Min c r
+  | `Nuc -> singular Sum
+  | `Two -> singular Max
+  | `NegTwo -> singular Min
 
-let matrix_norm ?ord ?keepdims x =
-  matrix_norm_by ~by:"Nx.matrix_norm" ?ord ?keepdims x
+let matrix_norm dt ?(ord = `Fro) ?(keepdims = false) x =
+  let by = "Nx.matrix_norm" in
+  matrix ~by x;
+  extremes ~by ord x;
+  let y = widened ~by dt x (fun w x -> matrix_norms ~by w dt ord x) in
+  if keepdims then y else reshaped ~by (batch x) y
 
 (* Rank and condition *)
 
@@ -3325,45 +3376,42 @@ let finite_matrices ~by a =
 (* Under [`Two] the greatest singular value over the least, infinite where
    the least is zero; under [`One] and [`Inf] the norms of [a] and [inv a]
    multiplied, NaN where [a] holds a value that is not finite, infinite
-   where [inv a] is NaN. Only [`Two] reaches one operation, the
-   factorisation, so only it consumes [a]. Every check runs before the
-   carrier's cast, which would consume it. *)
-let cond (type s d) ?(p = `Two) (a : (float, s, d) t) : (float, s, d) t =
+   where [inv a] is NaN. Each is computed at [widened]'s precision [w] and
+   rounded once to [dt]. Only [`Two] reaches one operation, the
+   factorisation, so only it consumes an [a] [widened] does not cast. *)
+let cond (type v s r d) (dt : (float, r) D.t) ?(p = `Two) (a : (v, s, d) t) :
+    (float, r, d) t =
   let by = "Nx.cond" in
   matrix ~by a;
-  if Stdlib.min (dim (-2) a) (dim (-1) a) = 0 then
-    invalid_argf "%s: %a has no singular value" by pp_value a;
-  if not (D.float_format (dtype a)).infinities then
-    invalid_argf "%s: %s has no infinity" by (D.name (dtype a));
+  extremes ~by `Two a;
+  if not (D.float_format dt).infinities then
+    invalid_argf "%s: %s has no infinity" by (D.name dt);
   if p <> `Two && dim (-1) a <> dim (-2) a then
     invalid_argf "%s: %a is not square" by pp_value a;
-  let number (type r) (a : (float, r, d) t) : (float, r, d) t =
-    let dt = dtype a in
-    let inf = E.const dt Float.infinity in
-    match p with
-    | `Two ->
-        let _, s, _ = svd_by ~by ~vectors:false dt a in
-        let r = ndim s - 1 in
-        let top = reduction ~by Max ~axes:[ r ] s
-        and bottom = reduction ~by Min ~axes:[ r ] s in
-        let t = operand 0 top and b = operand 1 bottom in
-        elementwise ~by dt [ Any top; Any bottom ]
-          E.(where (b = const dt 0.) inf (t / b))
-    | (`One | `Inf) as ord ->
-        let a = Donate.read ~by a in
-        square_matrices ~by a;
-        let norm x = matrix_norm_by ~by ~ord x in
-        let finite = finite_matrices ~by a in
-        let ni = norm (inv_by ~by a) in
-        let na = norm a in
-        let x = operand 0 na and y = operand 1 ni in
-        let held = E.input 2 D.Int64 in
-        elementwise ~by dt [ Any na; Any ni; Any finite ]
-          E.(
-            where (held = i64 0) (const dt Float.nan)
-              (where (y <> y) inf (x * y)))
-  in
-  carried ~by a number
+  widened ~by dt a (fun w a ->
+      let inf = E.const w Float.infinity in
+      match p with
+      | `Two ->
+          let _, s, _ = svd_by ~by ~vectors:false w a in
+          let r = ndim s - 1 in
+          let top = reduction ~by Max ~axes:[ r ] s
+          and bottom = reduction ~by Min ~axes:[ r ] s in
+          let t = operand 0 top and b = operand 1 bottom in
+          elementwise ~by dt [ Any top; Any bottom ]
+            (at dt E.(where (b = const w 0.) inf (t / b)))
+      | (`One | `Inf) as ord ->
+          let a = Donate.read ~by a in
+          let norm x = reshaped ~by (batch a) (matrix_norms ~by w w ord x) in
+          let finite = finite_matrices ~by a in
+          let ni = norm (inv_by ~by a) in
+          let na = norm a in
+          let x = operand 0 na and y = operand 1 ni in
+          let held = E.input 2 D.Int64 in
+          elementwise ~by dt [ Any na; Any ni; Any finite ]
+            (at dt
+               E.(
+                 where (held = i64 0) (const w Float.nan)
+                   (where (y <> y) inf (x * y)))))
 
 (* Order *)
 
@@ -5420,17 +5468,6 @@ let times_real (type v s r d) ~by (k : (float, r, d) t) (x : (v, s, d) t) :
 
 let scaled ~by c x =
   if c = 1. then x else times_real ~by (fill ~by D.Float64 [||] c) x
-
-(* A real transform's compute formats: a float format and the complex one of
-   its precision. *)
-type formats = Formats : (float, 'r) D.t * (Complex.t, 'c) D.t -> formats
-
-(* The formats of the wider of a float [dt]'s compute dtype
-   ({!Nx_kernel.float_carrier}) and a complex [c]'s precision. *)
-let formats dt c =
-  let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
-  if D.bits w > 32 || D.bits c > 64 then Formats (D.Float64, D.Complex128)
-  else Formats (D.Float32, D.Complex64)
 
 (* The other axes, ascending, the real one, the last of [axes], and whether it
    is past the others: the kernels' real transforms run along the last of

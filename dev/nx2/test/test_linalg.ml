@@ -329,7 +329,6 @@ let test_declined () =
 type full = Full : ('v, 's) D.t -> full
 
 let fulls = [ Full D.Float32; Full D.Float64; Full D.Complex64; Full D.Complex128 ]
-let reals = [ Full D.Float32; Full D.Float64 ]
 
 (* The float of a dtype's precision, the routines' real results'. *)
 type real = Real : (float, 'r) D.t -> real
@@ -344,17 +343,6 @@ let complex_of (type v s) (dt : (v, s) D.t) =
   match dt with
   | D.Float32 | D.Complex64 -> Cplx D.Complex64
   | _ -> Cplx D.Complex128
-
-(* [f] of [x]'s floats: [x] itself, or a complex [x]'s magnitudes at its
-   precision. *)
-let floats (type v s d b) (x : (v, s, d) Nx.t)
-    (f : 'r. (float, 'r, d) Nx.t -> b) : b =
-  match Nx.dtype x with
-  | D.Complex64 -> f (Nx.magnitude Nx.float32 x)
-  | D.Complex128 -> f (Nx.magnitude Nx.float64 x)
-  | D.Float32 -> f x
-  | D.Float64 -> f x
-  | _ -> fail "floats of a dtype the routines do not take"
 
 let tolerance (type v s) (dt : (v, s) D.t) =
   match dt with D.Float32 | D.Complex64 -> 1e-4 | _ -> 1e-11
@@ -847,10 +835,11 @@ let reference ord (m : float array) =
   else sum (fun v -> v ** ord) ** (1. /. ord)
 
 let test_vector_norms =
-  prop "vector_norm: each order is its definition, of a complex z's magnitudes"
+  prop "vector_norm: each order is its definition, of the magnitudes"
     (matrices ())
     (fun (Case (dt, s, re, im)) ->
       cover_shapes s;
+      let (Real r) = real_of dt in
       (* Zero elements, which order 0 skips and a negative order meets. *)
       let zeroed v = Array.map2 (fun r x -> if r < -0.5 then 0. else x) re v in
       let x = value dt s (zeroed re) (zeroed im) in
@@ -861,19 +850,17 @@ let test_vector_norms =
       let extremes = if n > 0 then [ Float.infinity; Float.neg_infinity ] else [] in
       List.iter
         (fun ord ->
-          let y =
-            floats x (fun m -> magnitudes (Nx.vector_norm ~ord ~axes:[ -1 ] m))
-          in
+          let y = magnitudes (Nx.vector_norm r ~ord ~axes:[ -1 ] x) in
           for i = 0 to rows - 1 do
             let want = reference ord (Array.sub m (i * n) n) in
             equal ~msg:(Printf.sprintf "ord %g" ord) (close (tolerance dt)) want y.(i)
           done)
         ([ 2.; 1.; 3.; 0.5; 0.; -1.; -2.; -0.5 ] @ extremes);
       equal ~msg:"every axis" (close (tolerance dt)) (reference 2. m)
-        (floats x (fun m -> magnitudes (Nx.vector_norm m))).(0))
+        (magnitudes (Nx.vector_norm r x)).(0))
 
 let test_matrix_norms =
-  prop "matrix_norm: each order is its definition, and a complex z's forms"
+  prop "matrix_norm: each order is its definition"
     (matrices ())
     (fun (Case (dt, s, re, im)) ->
       cover_shapes s;
@@ -882,7 +869,8 @@ let test_matrix_norms =
       assume (m > 0 && n > 0);
       let f64 y = Nx.magnitude Nx.float64 (Nx.cast Nx.complex128 y) in
       let abs = f64 x in
-      let norm ord = floats x (fun m -> f64 (Nx.matrix_norm ~ord m)) in
+      let (Real r) = real_of dt in
+      let norm ord = Nx.cast Nx.float64 (Nx.matrix_norm r ~ord x) in
       let near = near ~tol:(tolerance dt) in
       near ~msg:"fro" (norm `Fro) (Nx.sqrt (Nx.sum ~axes:[ -2; -1 ] (Nx.square abs)));
       near ~msg:"one" (norm `One) (Nx.max ~axes:[ -1 ] (Nx.sum ~axes:[ -2 ] abs));
@@ -890,63 +878,64 @@ let test_matrix_norms =
       near ~msg:"inf" (norm `Inf) (Nx.max ~axes:[ -1 ] (Nx.sum ~axes:[ -1 ] abs));
       near ~msg:"neginf" (norm `NegInf) (Nx.min ~axes:[ -1 ] (Nx.sum ~axes:[ -1 ] abs));
       let _, sv, _ = Nx.svd ~vectors:false Nx.float64 (Nx.cast Nx.complex128 x) in
-      (* A complex z's from svd's values, a real x's from matrix_norm. *)
-      let singular (ord : [ `Two | `NegTwo | `Nuc ]) =
-        match D.kind dt with
-        | D.Complex -> (
-            let (Real r) = real_of dt in
-            let _, s, _ = Nx.svd ~vectors:false r x in
-            match ord with
-            | `Two -> f64 (Nx.max ~axes:[ -1 ] s)
-            | `NegTwo -> f64 (Nx.min ~axes:[ -1 ] s)
-            | `Nuc -> f64 (Nx.sum ~axes:[ -1 ] s))
-        | _ -> norm (ord :> [ `Two | `NegTwo | `Nuc | `Fro | `One | `NegOne | `Inf | `NegInf ])
-      in
-      near ~msg:"two" (singular `Two) (Nx.max ~axes:[ -1 ] sv);
-      near ~msg:"negtwo" (singular `NegTwo) (Nx.min ~axes:[ -1 ] sv);
-      near ~msg:"nuc" (singular `Nuc) (Nx.sum ~axes:[ -1 ] sv);
-      floats x (fun m ->
-          near ~msg:"default" (f64 (Nx.matrix_norm m)) (norm `Fro);
-          let kept = Nx.matrix_norm ~keepdims:true m in
-          equal ~msg:"keepdims" (array int) (Array.append (lead s) [| 1; 1 |])
-            (Nx.shape kept)))
+      near ~msg:"two" (norm `Two) (Nx.max ~axes:[ -1 ] sv);
+      near ~msg:"negtwo" (norm `NegTwo) (Nx.min ~axes:[ -1 ] sv);
+      near ~msg:"nuc" (norm `Nuc) (Nx.sum ~axes:[ -1 ] sv);
+      near ~msg:"default" (Nx.cast Nx.float64 (Nx.matrix_norm r x)) (norm `Fro);
+      let kept = Nx.matrix_norm r ~keepdims:true x in
+      equal ~msg:"keepdims" (array int) (Array.append (lead s) [| 1; 1 |])
+        (Nx.shape kept))
 
 let test_norm_cases () =
   let f64 xs = Nx.create Nx.float64 [| Array.length xs |] xs in
   let one x = Nx.item [] x in
-  let v = f64 [| 1e200; 1e200 |] in
-  equal ~msg:"no overflow" (float 1e186) (1e200 *. Float.sqrt 2.) (one (Nx.vector_norm v));
-  let v = f64 [| 1e-200; 1e-200 |] in
+  let norm ?ord x = one (Nx.vector_norm Nx.float64 ?ord x) in
+  equal ~msg:"no overflow" (float 1e186) (1e200 *. Float.sqrt 2.)
+    (norm (f64 [| 1e200; 1e200 |]));
   equal ~msg:"no underflow" (float 1e-214) (1e-200 /. Float.sqrt 2.)
-    (one (Nx.vector_norm ~ord:(-2.) v));
+    (norm ~ord:(-2.) (f64 [| 1e-200; 1e-200 |]));
   let empty = f64 [||] in
-  equal ~msg:"no element" float_exact 0. (one (Nx.vector_norm empty));
-  equal ~msg:"order 0 of no element" float_exact 0. (one (Nx.vector_norm ~ord:0. empty));
+  equal ~msg:"no element" float_exact 0. (norm empty);
+  equal ~msg:"order 0 of no element" float_exact 0. (norm ~ord:0. empty);
   equal ~msg:"a negative order of no element" float_exact Float.infinity
-    (one (Nx.vector_norm ~ord:(-1.) empty));
-  equal ~msg:"order 0" float_exact 2. (one (Nx.vector_norm ~ord:0. (f64 [| 0.; -2.; 5. |])));
+    (norm ~ord:(-1.) empty);
+  equal ~msg:"order 0" float_exact 2. (norm ~ord:0. (f64 [| 0.; -2.; 5. |]));
   List.iter
     (fun ord ->
-      let y = one (Nx.vector_norm ~ord (f64 [| Float.nan; 0.; 1. |])) in
+      let y = norm ~ord (f64 [| Float.nan; 0.; 1. |]) in
       equal ~msg:(Printf.sprintf "NaN at order %g" ord) bool true (Float.is_nan y))
     [ 2.; 1.; 0.; -1.; -2.; 3.; Float.infinity; Float.neg_infinity ];
   let z = Nx.create Nx.complex64 [| 1 |] [| { Complex.re = 3.; im = 4. } |] in
-  equal ~msg:"complex" (float 1e-6) 5.
-    (one (Nx.vector_norm (Nx.magnitude Nx.float32 z)));
+  equal ~msg:"complex" float_exact 5. (one (Nx.vector_norm Nx.float32 z));
+  (* [1; -1; 1] holds in bfloat16, and its norm √3 at float32 is not
+     bfloat16's √3 widened. *)
+  let b = Nx.create Nx.bfloat16 [| 3 |] [| 1.; -1.; 1. |] in
+  let root3 = Int32.float_of_bits (Int32.bits_of_float (Float.sqrt 3.)) in
+  equal ~msg:"bfloat16 at float32" float_exact root3
+    (one (Nx.vector_norm Nx.float32 b));
+  equal ~msg:"bfloat16 at bfloat16" float_exact 1.734375
+    (one (Nx.cast Nx.float32 (Nx.vector_norm Nx.bfloat16 b)));
   let x = Nx.ones Nx.float32 [| 2; 3; 4 |] in
-  equal ~msg:"every axis" (array int) [||] (Nx.shape (Nx.vector_norm x));
-  equal ~msg:"every axis's value" (float 1e-6) (Float.sqrt 24.) (one (Nx.vector_norm x));
-  let y = Nx.vector_norm ~axes:[ 0; 2 ] ~keepdims:true x in
+  equal ~msg:"every axis" (array int) [||] (Nx.shape (Nx.vector_norm Nx.float32 x));
+  equal ~msg:"every axis's value" (float 1e-6) (Float.sqrt 24.)
+    (one (Nx.vector_norm Nx.float32 x));
+  let y = Nx.vector_norm Nx.float32 ~axes:[ 0; 2 ] ~keepdims:true x in
   equal ~msg:"two axes kept" (array int) [| 1; 3; 1 |] (Nx.shape y);
   equal ~msg:"two axes" (float 1e-6) (Float.sqrt 8.) (Nx.item [ 0; 1; 0 ] y);
   let e = Nx.zeros Nx.float64 [| 0; 3 |] in
-  equal ~msg:"Frobenius of no element" float_exact 0. (one (Nx.matrix_norm e));
-  equal ~msg:"columns of no element" float_exact 0. (one (Nx.matrix_norm ~ord:`One e));
+  equal ~msg:"Frobenius of no element" float_exact 0.
+    (one (Nx.matrix_norm Nx.float64 e));
+  equal ~msg:"columns of no element" float_exact 0.
+    (one (Nx.matrix_norm Nx.float64 ~ord:`One e));
   let none = Nx.zeros Nx.float64 [| 0; 0 |] in
   equal ~msg:"no vector" (array int) [| 0 |]
-    (Nx.shape (Nx.vector_norm ~ord:Float.infinity ~axes:[ 1 ] none));
+    (Nx.shape (Nx.vector_norm Nx.float64 ~ord:Float.infinity ~axes:[ 1 ] none));
   equal ~msg:"no matrix" (array int) [| 0 |]
-    (Nx.shape (Nx.matrix_norm ~ord:`Inf (Nx.zeros Nx.float64 [| 0; 0; 3 |])))
+    (Nx.shape
+       (Nx.matrix_norm Nx.float64 ~ord:`Inf (Nx.zeros Nx.float64 [| 0; 0; 3 |])));
+  equal ~msg:"no matrix's singular value" (array int) [| 0 |]
+    (Nx.shape
+       (Nx.matrix_norm Nx.float64 ~ord:`Two (Nx.zeros Nx.float64 [| 0; 2; 0 |])))
 
 (* Rank and condition *)
 
@@ -984,23 +973,19 @@ let law_matrix_rank =
    norms of [a] and [inv a] multiplied. *)
 let law_cond =
   prop "cond: each norm is its definition"
-    (matrices ~square:true ~dtypes:reals ())
+    (matrices ~square:true ())
     (fun (Case (dt, s, re, im)) ->
-      let law (type r) (dt : (float, r) D.t) =
-        let x = value dt s re im in
-        assume (s.(Array.length s - 1) > 0);
-        let f64 y = Nx.cast Nx.float64 y in
-        let norm ord y = f64 (Nx.matrix_norm ~ord y) in
-        assume (Array.for_all (fun v -> v > 1e-3) (Nx.to_array (norm `NegTwo x)));
-        let near = near ~tol:(tolerance dt) in
-        near ~msg:"two" (f64 (Nx.cond x)) (Nx.div (norm `Two x) (norm `NegTwo x));
-        near ~msg:"one" (f64 (Nx.cond ~p:`One x)) (Nx.mul (norm `One x) (norm `One (Nx.inv x)));
-        near ~msg:"inf" (f64 (Nx.cond ~p:`Inf x)) (Nx.mul (norm `Inf x) (norm `Inf (Nx.inv x)))
-      in
-      match dt with
-      | D.Float32 -> law dt
-      | D.Float64 -> law dt
-      | _ -> fail "cond of a dtype it does not take")
+      let x = value dt s re im in
+      assume (s.(Array.length s - 1) > 0);
+      cover "complex" (D.is D.Complex dt);
+      let (Real r) = real_of dt in
+      let f64 y = Nx.cast Nx.float64 y in
+      let norm ord y = f64 (Nx.matrix_norm r ~ord y) in
+      assume (Array.for_all (fun v -> v > 1e-3) (Nx.to_array (norm `NegTwo x)));
+      let near = near ~tol:(tolerance dt) in
+      near ~msg:"two" (f64 (Nx.cond r x)) (Nx.div (norm `Two x) (norm `NegTwo x));
+      near ~msg:"one" (f64 (Nx.cond r ~p:`One x)) (Nx.mul (norm `One x) (norm `One (Nx.inv x)));
+      near ~msg:"inf" (f64 (Nx.cond r ~p:`Inf x)) (Nx.mul (norm `Inf x) (norm `Inf (Nx.inv x))))
 
 let test_rank_cond_cases () =
   let invalid_by ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f in
@@ -1025,99 +1010,170 @@ let test_rank_cond_cases () =
   equal ~msg:"bfloat16" (array int) [| 4 |]
     (ranks (Nx.reshape [| 1; 4; 4 |] (Nx.eye Nx.bfloat16 4)));
   let one x = Nx.item [] x in
+  let cond ?p a = one (Nx.cond Nx.float64 ?p a) in
+  let ps = [ `One; `Two; `Inf ] in
   let d = f64 [| 2; 2 |] [| 2.; 0.; 0.; 0.5 |] in
-  List.iter
-    (fun p -> equal ~msg:"diagonal" (float 1e-12) 4. (one (Nx.cond ~p d)))
-    [ `One; `Two; `Inf ];
-  equal ~msg:"identity, bfloat16" float_exact 1. (one (Nx.cond (Nx.eye Nx.bfloat16 3)));
-  equal ~msg:"zero" float_exact Float.infinity (one (Nx.cond (Nx.zeros Nx.float64 [| 2; 2 |])));
+  List.iter (fun p -> equal ~msg:"diagonal" (float 1e-12) 4. (cond ~p d)) ps;
+  (* [d] with [2i] for [2]: its magnitudes are [d]'s. *)
+  let z =
+    Nx.create Nx.complex128 [| 2; 2 |]
+      Complex.[| { re = 0.; im = 2. }; zero; zero; { re = 0.5; im = 0. } |]
+  in
+  List.iter (fun p -> equal ~msg:"complex diagonal" (float 1e-12) 4. (cond ~p z)) ps;
+  equal ~msg:"identity, bfloat16" float_exact 1.
+    (one (Nx.cond Nx.bfloat16 (Nx.eye Nx.bfloat16 3)));
+  equal ~msg:"identity, float8_e4m3fn, at float32" float_exact 1.
+    (one (Nx.cond Nx.float32 (Nx.eye Nx.float8_e4m3fn 3)));
+  equal ~msg:"zero" float_exact Float.infinity (cond (Nx.zeros Nx.float64 [| 2; 2 |]));
   equal ~msg:"singular, one" float_exact Float.infinity
-    (one (Nx.cond ~p:`One (f64 [| 2; 2 |] [| 1.; 2.; 2.; 4. |])));
-  let nan = f64 [| 2; 2 |] [| 1.; Float.nan; 0.; 1. |] in
+    (cond ~p:`One (f64 [| 2; 2 |] [| 1.; 2.; 2.; 4. |]));
+  (* [(1 + i) b] for the singular [b]: its pivot is exactly zero. *)
+  let b = f64 [| 2; 2 |] [| 1.; 2.; 2.; 4. |] in
+  let singular = Nx.complex Nx.complex64 ~re:b ~im:b in
   List.iter
-    (fun p -> equal ~msg:"NaN" float_exact Float.nan (one (Nx.cond ~p nan)))
-    [ `One; `Two; `Inf ];
+    (fun p ->
+      equal ~msg:"complex singular" float_exact Float.infinity (cond ~p singular))
+    [ `One; `Inf ];
+  equal ~msg:"complex zero" float_exact Float.infinity
+    (cond (Nx.zeros Nx.complex64 [| 2; 2 |]));
+  let nan = f64 [| 2; 2 |] [| 1.; Float.nan; 0.; 1. |] in
+  List.iter (fun p -> equal ~msg:"NaN" float_exact Float.nan (cond ~p nan)) ps;
+  let znan = Nx.complex Nx.complex128 ~re:nan ~im:(Nx.zeros Nx.float64 [| 2; 2 |]) in
+  List.iter (fun p -> equal ~msg:"complex NaN" float_exact Float.nan (cond ~p znan)) ps;
   (* A norm that overflows is no infinity the matrix holds. *)
   equal ~msg:"an overflowed norm" float_exact Float.infinity
-    (one (Nx.cond ~p:`One (f64 [| 2; 2 |] [| 1e308; 0.; 1e308; 1. |])));
-  equal ~msg:"wide" (array int) [| 2 |] (Nx.shape (Nx.cond (Nx.ones Nx.float32 [| 2; 2; 3 |])));
+    (cond ~p:`One (f64 [| 2; 2 |] [| 1e308; 0.; 1e308; 1. |]));
+  equal ~msg:"wide" (array int) [| 2 |]
+    (Nx.shape (Nx.cond Nx.float32 (Nx.ones Nx.float32 [| 2; 2; 3 |])));
+  equal ~msg:"no matrix" (array int) [| 0 |]
+    (Nx.shape (Nx.cond Nx.float32 (Nx.zeros Nx.float32 [| 0; 2; 0 |])));
+  (* An element of NaN and infinite parts has an infinite magnitude. *)
+  let z = Nx.create Nx.complex64 [| 1 |] [| { Complex.re = Float.nan; im = Float.infinity } |] in
+  equal ~msg:"an infinite magnitude" float_exact Float.infinity
+    (one (Nx.vector_norm Nx.float32 z));
   invalid_by ~by:"Nx.matrix_rank" (fun () -> Nx.matrix_rank (Nx.zeros Nx.float32 [| 3 |]));
   invalid_by ~by:"Nx.matrix_rank" (fun () -> Nx.matrix_rank (Nx.zeros Nx.int32 [| 2; 2 |]));
   invalid_by ~by:"Nx.matrix_rank" (fun () ->
       Nx.matrix_rank ~rtol:(-1.) (Nx.zeros Nx.float32 [| 2; 2 |]));
-  invalid_by ~by:"Nx.cond" (fun () -> Nx.cond (Nx.eye Nx.float8_e4m3fn 2));
-  invalid_by ~by:"Nx.cond" (fun () -> Nx.cond (Nx.zeros Nx.float32 [| 2; 0 |]));
-  invalid_by ~by:"Nx.cond" (fun () -> Nx.cond ~p:`One (Nx.ones Nx.float32 [| 2; 3 |]))
+  List.iter
+    (fun (Flt f) ->
+      if not (D.float_format f).infinities then
+        invalid_by ~by:"Nx.cond" (fun () -> Nx.cond f (Nx.eye Nx.float32 2)))
+    float_formats;
+  invalid_by ~by:"Nx.cond" (fun () -> Nx.cond Nx.float32 (Nx.zeros Nx.float32 [| 2; 0 |]));
+  invalid_by ~by:"Nx.cond" (fun () ->
+      Nx.cond Nx.float32 ~p:`One (Nx.ones Nx.float32 [| 2; 3 |]));
+  invalid_by ~by:"Nx.cond" (fun () -> Nx.cond Nx.float32 (Nx.eye Nx.int32 2))
 
-(* Narrow floats: a norm computes at float32 and rounds once. *)
+(* Precision: a norm computes at the wider of its operand's precision and
+   its dtype's, then rounds once to its dtype. *)
 
-type narrow = Narrow : (float, 's) D.t * int array * float array -> narrow
+type operand = Operand : ('v, 's) D.t -> operand
 
-let narrow_dtypes =
-  List.filter
-    (fun (D.Any dt) -> D.is D.Float dt && D.bits dt < 32)
+let pp_operand ppf (Operand dt) = D.pp ppf dt
+
+(* Every float format and both complex ones. *)
+let operands =
+  List.filter_map
+    (fun (D.Any dt) ->
+      if D.is D.Float dt || D.is D.Complex dt then Some (Operand dt) else None)
     D.all
 
-let narrow_case =
+type precise =
+  | Precise :
+      ('v, 's) D.t * (float, 'r) D.t * int array * float array * float array
+      -> precise
+
+let precise_case =
   let open Gen in
   with_pp
-    (fun ppf (Narrow (dt, s, _)) ->
-      Format.fprintf ppf "%a [%s]" D.pp dt
-        (String.concat "; " (Array.to_list (Array.map string_of_int s))))
-    (let* (D.Any dt) =
-       of_list ~pp:(fun ppf (D.Any dt) -> D.pp ppf dt) narrow_dtypes
+    (fun ppf (Precise (dt, f, s, _, _)) ->
+      Format.fprintf ppf "%a [%s] in %a" D.pp dt
+        (String.concat "; " (Array.to_list (Array.map string_of_int s)))
+        D.pp f)
+    (let* (Operand dt) = of_list ~pp:pp_operand operands in
+     let* (Flt f) = of_list float_formats in
+     let* s = array ~size:(int_range 2 3) (int_range 0 3) in
+     let part =
+       array
+         ~size:(constant (Array.fold_left ( * ) 1 s))
+         (frequency
+            [
+              (6, float_range (-8.) 8.);
+              (1, of_list [ 0.; -0.; 1e4; -1e4; Float.infinity; Float.nan ]);
+            ])
      in
-     match D.kind dt with
-     | D.Float ->
-         let* s = array ~size:(int_range 2 3) (int_range 0 3) in
-         let+ xs =
-           array
-             ~size:(constant (Array.fold_left ( * ) 1 s))
-             (frequency
-                [
-                  (6, float_range (-8.) 8.);
-                  ( 1,
-                    of_list
-                      [ 0.; -0.; 1e4; -1e4; Float.infinity; Float.nan ] );
-                ])
-         in
-         Narrow (dt, s, xs)
-     | _ -> assert false)
+     let+ re = part and+ im = part in
+     Precise (dt, f, s, re, im))
 
-(* Each order of [x], at its dtype and at float32 rounded once: the bits of
-   each, or [None] where it raises. *)
-let law_narrow_norms (Narrow (dt, s, xs)) =
-  let x = Nx.create dt s xs in
-  let wide = Nx.cast Nx.float32 x in
+(* A value of [dt] of shape [s], of real parts [re] and imaginary parts [im]
+   where [dt] is complex, each rounded to [dt]. *)
+let operand (type v s) (dt : (v, s) D.t) s re im : (v, s, Nx.host) Nx.t =
+  let f64 a = Nx.create Nx.float64 s a in
+  match D.kind dt with
+  | D.Float -> Nx.cast dt (f64 re)
+  | D.Complex -> Nx.complex dt ~re:(f64 re) ~im:(f64 im)
+  | D.Signed | D.Unsigned | D.Boolean -> invalid_arg "operand"
+
+type wide = Wide : ('v, 's, Nx.host) Nx.t -> wide
+
+(* [x] cast to the dtype of its kind of [float64]'s precision where
+   [double], else of [float32]'s. *)
+let widened (type v s) double (x : (v, s, Nx.host) Nx.t) =
+  match (D.kind (Nx.dtype x), double) with
+  | D.Complex, true -> Wide (Nx.cast Nx.complex128 x)
+  | D.Complex, false -> Wide (Nx.cast Nx.complex64 x)
+  | _, true -> Wide (Nx.cast Nx.float64 x)
+  | _, false -> Wide (Nx.cast Nx.float32 x)
+
+(* Each norm of [x] in [f], and the same of [x] cast to the wider precision
+   [w] rounded once to [f]: the bits of each, or [None] where it raises. *)
+let law_precision (Precise (dt, f, s, re, im)) =
+  let x = operand dt s re im in
+  let operand64 = (D.is D.Float dt && D.bits dt = 64) || D.bits dt = 128 in
+  let double = operand64 || D.bits f = 64 in
+  let (Real w) = if double then Real D.Float64 else Real D.Float32 in
+  let (Wide wide) = widened double x in
+  cover "complex" (D.is D.Complex dt);
+  cover "a narrow operand" (D.is D.Float dt && D.bits dt < 32);
+  cover "a dtype wider than the operand" (D.bits f = 64 && not operand64);
+  cover "a dtype narrower than its computation" (D.bits f < D.bits w);
   let bits y =
     Array.map Int64.bits_of_float (Nx.to_array (Nx.cast Nx.float64 y))
   in
-  let outcome f =
-    match f () with y -> Some (bits y) | exception Invalid_argument _ -> None
+  let outcome g =
+    match g () with y -> Some (bits y) | exception Invalid_argument _ -> None
   in
-  let same msg (f : 'r. (float, 'r, Nx.host) Nx.t -> (float, 'r, Nx.host) Nx.t)
+  let same msg
+      (g :
+        'r 'v 's.
+        (float, 'r) D.t -> ('v, 's, Nx.host) Nx.t -> (float, 'r, Nx.host) Nx.t)
       =
-    let narrow = outcome (fun () -> f x)
-    and rounded = outcome (fun () -> Nx.cast dt (f wide)) in
-    cover "computed" (Option.is_some narrow);
-    equal ~msg (option (array int64)) rounded narrow
+    let direct = outcome (fun () -> g f x)
+    and rounded = outcome (fun () -> Nx.cast f (g w wide)) in
+    cover "computed" (Option.is_some direct);
+    equal ~msg (option (array int64)) rounded direct
   in
   List.iter
     (fun ord ->
-      same (Printf.sprintf "vector_norm ord %g" ord) (fun x ->
-          Nx.vector_norm ~ord ~axes:[ -1 ] x))
+      same (Printf.sprintf "vector_norm ord %g" ord) (fun d x ->
+          Nx.vector_norm d ~ord ~axes:[ -1 ] x))
     [ 2.; 1.; 3.; 0.5; 0.; -1.; -2.; Float.infinity; Float.neg_infinity ];
   List.iter
-    (fun (name, ord) -> same name (fun x -> Nx.matrix_norm ~ord x))
+    (fun (name, ord) -> same name (fun d x -> Nx.matrix_norm d ~ord x))
     [
       ("fro", `Fro); ("nuc", `Nuc); ("one", `One); ("two", `Two);
       ("inf", `Inf); ("negone", `NegOne); ("negtwo", `NegTwo);
       ("neginf", `NegInf);
-    ]
+    ];
+  if (D.float_format f).infinities then
+    List.iter
+      (fun (name, p) -> same name (fun d x -> Nx.cond d ~p x))
+      [ ("cond one", `One); ("cond two", `Two); ("cond inf", `Inf) ]
 
-let test_narrow_norms =
-  prop "a narrow float's norms are float32's, rounded once" narrow_case
-    law_narrow_norms
+let test_precision =
+  prop "a norm is its value at the wider precision, rounded once"
+    precise_case law_precision
 
 let invalid_by ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
 
@@ -1145,16 +1201,26 @@ let test_refusals () =
   invalid_by ~by:"Nx.lstsq" (fun () -> Nx.lstsq Nx.float32 h (Nx.ones Nx.float16 [| 2 |]));
   invalid_by ~by:"Nx.pinv" (fun () -> Nx.pinv ~hermitian:true r);
   invalid_by ~by:"Nx.pinv" (fun () -> Nx.pinv ~hermitian:true (Nx.zeros Nx.float64 [| 0; 3 |]));
-  invalid_by ~by:"Nx.vector_norm" (fun () -> Nx.vector_norm ~ord:Float.nan r);
-  invalid_by ~by:"Nx.vector_norm" (fun () -> Nx.vector_norm ~axes:[ 2 ] r);
-  invalid_by ~by:"Nx.vector_norm" (fun () -> Nx.vector_norm ~axes:[ 0; 0 ] r);
+  let f64 = Nx.float64 in
+  invalid_by ~by:"Nx.vector_norm" (fun () -> Nx.vector_norm f64 ~ord:Float.nan r);
+  invalid_by ~by:"Nx.vector_norm" (fun () -> Nx.vector_norm f64 ~axes:[ 2 ] r);
+  invalid_by ~by:"Nx.vector_norm" (fun () -> Nx.vector_norm f64 ~axes:[ 0; 0 ] r);
   invalid_by ~by:"Nx.vector_norm" (fun () ->
-      Nx.vector_norm ~ord:Float.infinity (Nx.zeros Nx.float64 [| 0 |]));
+      Nx.vector_norm f64 ~ord:Float.infinity (Nx.zeros Nx.float64 [| 0 |]));
   invalid_by ~by:"Nx.vector_norm" (fun () ->
-      Nx.vector_norm ~ord:Float.neg_infinity (Nx.zeros Nx.float64 [| 2; 0 |]));
-  invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm (Nx.ones Nx.float64 [| 3 |]));
-  invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm ~ord:`Two (Nx.zeros Nx.float64 [| 2; 0 |]));
-  invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm ~ord:`One (Nx.zeros Nx.float64 [| 2; 0 |]))
+      Nx.vector_norm f64 ~ord:Float.neg_infinity (Nx.zeros Nx.float64 [| 2; 0 |]));
+  invalid_by ~by:"Nx.vector_norm" (fun () -> Nx.vector_norm f64 (Nx.ones Nx.int32 [| 3 |]));
+  invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm f64 (Nx.ones Nx.float64 [| 3 |]));
+  invalid_by ~by:"Nx.matrix_norm" (fun () ->
+      Nx.matrix_norm f64 ~ord:`Two (Nx.zeros Nx.float64 [| 2; 0 |]));
+  invalid_by ~by:"Nx.matrix_norm" (fun () ->
+      Nx.matrix_norm f64 ~ord:`NegTwo (Nx.zeros Nx.complex64 [| 0; 2 |]));
+  invalid_by ~by:"Nx.matrix_norm" (fun () ->
+      Nx.matrix_norm f64 ~ord:`One (Nx.zeros Nx.float64 [| 2; 0 |]));
+  invalid_by ~by:"Nx.matrix_norm" (fun () ->
+      Nx.matrix_norm f64 ~ord:`NegInf (Nx.zeros Nx.float16 [| 0; 2 |]));
+  invalid_by ~by:"Nx.matrix_norm" (fun () ->
+      Nx.matrix_norm f64 (Nx.ones Nx.bool [| 2; 2 |]))
 
 (* nx.cpu without lu, svd, eigh, eig and gathers. *)
 module Gatherless = struct
@@ -1177,8 +1243,9 @@ let test_composites_named () =
   invalid_by ~by:"Nx.pinv" (fun () -> Nx.pinv ~hermitian:true a);
   invalid_by ~by:"Nx.det" (fun () -> Nx.det a);
   invalid_by ~by:"Nx.slogdet" (fun () -> Nx.slogdet Nx.float64 a);
-  invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm ~ord:`Nuc a);
-  invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm ~ord:`Two a)
+  invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm Nx.float64 ~ord:`Nuc a);
+  invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm Nx.float64 ~ord:`Two a);
+  invalid_by ~by:"Nx.cond" (fun () -> Nx.cond Nx.float64 a)
 
 (* A donated operand that another operation consumed is dead: a composite
    names itself, whatever function it computes through. *)
@@ -1239,7 +1306,7 @@ let () =
              test_vector_norms;
              test_matrix_norms;
              test "norms at their edges" test_norm_cases;
-             test_narrow_norms;
+             test_precision;
              law_matrix_rank;
              law_cond;
              test "rank and condition at their edges" test_rank_cond_cases;

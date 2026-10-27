@@ -2282,20 +2282,20 @@ val diag : ?k:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     compute [float32], [float64], [complex64] and [complex128]: another dtype
     raises [Invalid_argument]. {!vector_norm}, {!matrix_norm},
     {!matrix_rank} and {!cond} also take the float formats narrower than 32
-    bits, {!cond} those with infinities, which they compute at [float32],
-    rounding a float result once.
+    bits. A dtype's {e precision} is [float64]'s for [float64] and
+    [complex128], and [float32]'s for the other floats and [complex64].
     [aᴴ] is the conjugate transpose, the transpose of a real [a].
 
-    A result has its operand's dtype unless it is of another kind. A real
-    result ({!svd}'s singular values, {!eigh}'s eigenvalues, {!slogdet}'s
-    logarithm, {!lstsq}'s residuals and singular values) takes its dtype
-    first, of a real or a complex operand, and so do {!eig}'s complex
-    results. Each is computed at its operand's precision, [float32]'s for
-    [float32] and [complex64] and [float64]'s for [float64] and
-    [complex128], then stored in its dtype by the conversion rule, as
-    {!real} stores: a dtype without NaN or infinities holds what {!cast}
-    gives for the NaN and infinities each function states. The norms and
-    {!cond} take floats, and each states its form for a complex operand.
+    A result has its operand's dtype, except a real result ({!svd}'s
+    singular values, {!eigh}'s eigenvalues, {!slogdet}'s logarithm,
+    {!lstsq}'s residuals and singular values, the norms {!vector_norm} and
+    {!matrix_norm}, and {!cond}) and {!eig}'s complex results, each of
+    which takes its dtype first, of a real or a complex operand. A
+    norm or condition number is computed at the wider of its operand's
+    precision and its dtype's, every other result at its operand's
+    precision. Each is then rounded once to its dtype by the conversion
+    rule, as {!real} stores: a dtype without NaN or infinities holds what
+    {!cast} gives for the NaN and infinities each function states.
 
     Each matrix of a batch is computed on its own, and data never raises: a
     matrix whose factorisation fails, as each function states, is NaN in its
@@ -2497,45 +2497,43 @@ val pinv : ?rtol:float -> ?hermitian:bool -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     under [~hermitian:true], for its dtype, or if [rtol] is negative or NaN. *)
 
 val vector_norm :
+  (float, 'r) dtype ->
   ?ord:float ->
   ?axes:int list ->
   ?keepdims:bool ->
-  (float, 's, 'd) t ->
-  (float, 's, 'd) t
-(** [vector_norm x] is the norm of order [ord] (default [2.]) of the vector of
-    the elements of [x] along [axes] (default all of them), dropping those
-    axes unless [keepdims]. Of the magnitudes [|x|], it is
+  ('v, 's, 'd) t ->
+  (float, 'r, 'd) t
+(** [vector_norm dt x] is, in [dt], the norm of order [ord] (default [2.])
+    of the vector of the elements of [x] along [axes] (default all of them),
+    dropping those axes unless [keepdims]. Of the magnitudes [|x|], the
+    moduli of a complex [x], it is
     [(Σ |x|^ord)^(1/ord)] for a nonzero [ord], the count of nonzero elements
     for [0.], and the greatest or least magnitude for [infinity] or
     [neg_infinity]. A negative [ord] over no element is [infinity].
 
     The sums of powers are scaled by the greatest magnitude, or the least for
     a negative [ord], so that a norm the dtype holds never overflows or
-    underflows on the way: the norm of [[1e200; 1e200]] is [1.414e200]. A
-    NaN element makes its norm NaN. A complex [z]'s norm is
-    [vector_norm (magnitude dt z)].
+    underflows on the way: the norm of [[1e200; 1e200]] is [1.414e200]. An
+    element whose magnitude is NaN makes its norm NaN.
 
     Raises [Invalid_argument] if an axis is outside [x]'s rank or repeats,
     if [ord] is NaN, or if [ord] is [infinity] or [neg_infinity] and a
     vector has no element. *)
 
 val matrix_norm :
+  (float, 'r) dtype ->
   ?ord:[ `Fro | `Nuc | `One | `Two | `Inf | `NegOne | `NegTwo | `NegInf ] ->
   ?keepdims:bool ->
-  (float, 's, 'd) t ->
-  (float, 's, 'd) t
-(** [matrix_norm x] is the norm of order [ord] (default [`Fro]) of each matrix
-    of [x], dropping its last two axes unless [keepdims]. Of a matrix:
+  ('v, 's, 'd) t ->
+  (float, 'r, 'd) t
+(** [matrix_norm dt x] is, in [dt], the norm of order [ord] (default [`Fro])
+    of each matrix of [x], dropping its last two axes unless [keepdims]. Of
+    a matrix:
     - [`Fro] is [sqrt (Σ |x|²)], scaled as {!vector_norm}'s, and [`Nuc] the
       sum of its singular values.
     - [`Two] is its greatest singular value and [`NegTwo] its least.
     - [`One] is the greatest sum of a column's magnitudes and [`NegOne] the
       least; [`Inf] and [`NegInf] are the same of its rows.
-
-    A complex [z]'s norm is [matrix_norm (magnitude dt z)] under [`Fro],
-    [`One], [`NegOne], [`Inf] and [`NegInf]; under [`Nuc], [`Two] and
-    [`NegTwo] it is the sum, greatest or least of the singular values of
-    [svd dt ~vectors:false z].
 
     Raises [Invalid_argument] if [x] has fewer than two axes, or if [ord]
     takes a greatest or least singular value, column or row of a matrix
@@ -2553,23 +2551,24 @@ val matrix_rank : ?rtol:float -> ('v, 's, 'd) t -> 'd int64_t
     Raises [Invalid_argument] if [a] has fewer than two axes, for its dtype,
     or if [rtol] is negative or NaN. *)
 
-val cond : ?p:[ `One | `Two | `Inf ] -> (float, 's, 'd) t -> (float, 's, 'd) t
-(** [cond a] is the condition number of each matrix of [a] in the norm [p]
-    (default [`Two]), dropping its last two axes: under [`Two] its greatest
-    singular value over its least, under [`One] and [`Inf]
-    [matrix_norm ~ord:p a] times [matrix_norm ~ord:p (inv a)]. A singular
-    matrix, whose least singular value is zero or whose {!inv} is NaN, has
-    an infinite condition number; one singular only to rounding has one near
-    [1 / ε] or above. A matrix that holds NaN or an infinity, or on which
-    {!svd} fails, has NaN. An invertible complex [z]'s is, under [`Two], the
-    greatest over the least of the singular values of
-    [svd dt ~vectors:false z], and under [`One] and [`Inf]
-    [matrix_norm ~ord:p (magnitude dt z)] times
-    [matrix_norm ~ord:p (magnitude dt (inv z))].
+val cond :
+  (float, 'r) dtype ->
+  ?p:[ `One | `Two | `Inf ] ->
+  ('v, 's, 'd) t ->
+  (float, 'r, 'd) t
+(** [cond dt a] is, in [dt], the condition number of each matrix of [a] in
+    the norm [p] (default [`Two]), dropping its last two axes: under [`Two]
+    its greatest singular value over its least, under [`One] and [`Inf] its
+    {!matrix_norm} of order [p] times that of its {!inv}. A singular matrix,
+    whose least singular value is zero or whose {!inv} is NaN, has an
+    infinite condition number; one singular only to rounding has one near
+    [1 / ε] or above, [ε] the machine epsilon of the precision it is
+    computed at. A matrix that holds NaN or an infinity, or on which
+    {!svd} fails, has NaN.
 
     Raises [Invalid_argument] if [a] has fewer than two axes or a matrix of
-    no element, for a float format without infinities, or if [p] is [`One]
-    or [`Inf] and [a] is not square. *)
+    no element, if [dt] has no infinities, or if [p] is [`One] or [`Inf]
+    and [a] is not square. *)
 
 (** {1:fft Fourier transforms}
 
