@@ -29,15 +29,14 @@ val report : ('a, out_channel, unit) format -> 'a
     and nothing otherwise. *)
 
 val make : name:string -> Program.t -> Program.form array -> (t, string) result
-(** [make ~name p forms] is [p], traced over arguments of [forms], compiled and
-    linked for arguments in C order at phase [0], or [Error why] where the
-    compiler declines it, [why] saying which value, construct or failure: a loop
+(** [make ~name p forms] is [p], traced over arguments of [forms], ready to
+    link once per variant at its first call ({!run}), or [Error why] where the
+    lowering declines it, [why] saying which value, construct or failure: a loop
     or a map's construct ({!Program.Scan}, {!Program.Iterate},
     {!Program.Lanes}, {!Program.Lane_index}), an operation that {!Lower.op}
     does not lower, a value on another device than the others or over several,
-    a result of every set computed from the arguments, which has no storage,
-    or tolk refusing the graph, as a target without its compiler does. [name]
-    is the entry point messages name. *)
+    or a result of every set computed from the arguments, which has no
+    storage. [name] is the entry point messages name. *)
 
 val run : t -> Program.value array -> Program.value array
 (** [run t args] is the outputs of [t]'s program applied to [args], values of
@@ -49,13 +48,18 @@ val run : t -> Program.value array -> Program.value array
 
     The call is a consumer of [args] ({!Nx.Prim.Consumer}): it claims the
     donated handles among them, whose donors die, and reads each argument as
-    it was then. Raises [Invalid_argument] as {!Nx.Prim.Consumer.with_} does,
-    and what linking a variant raises, at every call of that variant. *)
+    it was then. A result takes a donated argument's memory where rune2.mli's
+    lending rules allow it and {!Nx.Prim.Consumer.take} gives it; otherwise
+    it computes over a copy of that argument. Each check the program makes
+    is computed with it, and the first that failed raises its exception once
+    the program ran. A variant the lowering or tolk declines is evaluated
+    over the consumer's arrays ({!evaluate}). Raises [Invalid_argument] as
+    {!Nx.Prim.Consumer.with_} does, and what linking a variant raises when it
+    does not decline it. *)
 
 val evaluate :
   name:string -> Program.t -> Program.value array -> Program.value array
 (** [evaluate ~name p args] is [p]'s outputs evaluated by nx over [args], none
-    of them traced: an output that is an argument is a copy of it, so that each
-    result is fresh, and the donated handles among [args] are consumed once [p]
-    is evaluated, as {!run} consumes them, after the program read them as many
-    times as it reads them. *)
+    of them traced: an output that is an argument is a copy of it. Where
+    [args] hold donated handles, it claims them first, as {!run} does, and
+    evaluates [p] over the arrays they hold, copying each result. *)

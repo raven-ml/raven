@@ -375,6 +375,146 @@ let test_loop () =
   equal bits_t (bits (fst eager)) (bits (fst jitted));
   equal bits_t (bits (snd eager)) (bits (snd jitted))
 
+(* Donation
+
+   A compiled call consumes the donated handles among its arguments: their
+   donors die. A result takes a donated argument's memory where it reads the
+   argument only at its own index and nothing else of the call reads it, and
+   its values are the same either way. *)
+
+let fresh xs = Nx.create f32 [| Array.length xs |] xs
+
+(* [g (Nx.donate x)] and whether it wrote its result into [x]'s memory. *)
+let in_place g x =
+  let b = Nx.Repr.read x Nx_array.buffer in
+  let y = g (Nx.donate x) in
+  let a = Option.get (Nx.Repr.array y) in
+  (Rig.Buffer.overlaps b (Nx_array.buffer a), y)
+
+let dead x = invalid ~sub:"Rune.jit" (fun () -> ignore (Nx.to_array x))
+
+let test_consumed () =
+  let g = Rune.jit (pair_fn ()) Nx.add in
+  let x = fresh [| 1.; 2. |] and y = fresh [| 3.; 4. |] in
+  equal bits_t (bits (fresh [| 4.; 6. |])) (bits (g (Nx.donate x) y));
+  dead x;
+  equal ~msg:"the other argument lives" bits_t (bits (fresh [| 3.; 4. |]))
+    (bits y)
+
+let test_lending () =
+  let xs = [| 1.; -0.; 2.5; Float.infinity |] in
+  let check ~msg ~lent f =
+    let expected = bits (f (fresh xs)) in
+    let x = fresh xs in
+    let took, y = in_place (Rune.jit' f) x in
+    equal ~msg bits_t expected (bits y);
+    equal ~msg:(msg ^ ": in place") bool lent took;
+    dead x
+  in
+  check ~msg:"an elementwise result" ~lent:true (fun x -> Nx.neg (Nx.mul x x));
+  check ~msg:"the argument itself" ~lent:true (fun x -> x);
+  check ~msg:"a result that reads the argument at other indices" ~lent:false
+    (fun x -> Nx.sub x (Nx.max x));
+  check ~msg:"a reversed result" ~lent:false (fun x -> Nx.flip x);
+  let pair = T.(tensor @-> returns (pair tensor tensor)) in
+  let g = Rune.jit pair (fun x -> (Nx.neg x, Nx.add x x)) in
+  let x = fresh xs in
+  let b = Nx.Repr.read x Nx_array.buffer in
+  let y, z = g (Nx.donate x) in
+  let shares v = Rig.Buffer.overlaps b (Nx_array.buffer (Option.get (Nx.Repr.array v))) in
+  equal ~msg:"two results that read it: neither in place"
+    (Testable.pair bool bool)
+    (false, false) (shares y, shares z);
+  equal bits_t (bits (Nx.neg (fresh xs))) (bits y);
+  equal bits_t (bits (Nx.add (fresh xs) (fresh xs))) (bits z)
+
+(* A donor whose memory another value reads lends nothing: the call computes
+   into fresh memory, and the reader keeps its values. *)
+let test_shared () =
+  let x = fresh [| 1.; 2. |] in
+  let view = Nx.reshape [| 2; 1 |] x in
+  ignore (Nx.Repr.array view);
+  let took, y = in_place (Rune.jit' (fun x -> Nx.neg x)) x in
+  equal ~msg:"in place" bool false took;
+  equal bits_t (bits (fresh [| -1.; -2. |])) (bits y);
+  equal ~msg:"the reader" bits_t (bits (Nx.create f32 [| 2; 1 |] [| 1.; 2. |]))
+    (bits view)
+
+(* An evaluated program may read a donated handle many times; the call still
+   consumes it. *)
+let test_evaluated_donation () =
+  let f x =
+    fst
+      (Rune.scan'
+         ~f:(fun c r -> (Nx.add c (Nx.mul x r), r))
+         ~init:x (Nx.reshape [| 2; 1 |] x))
+  in
+  let expected = bits (f (fresh [| 1.; 2. |])) in
+  let x = fresh [| 1.; 2. |] in
+  equal bits_t expected (bits (Rune.jit' f (Nx.donate x)));
+  dead x
+
+type donation_case =
+  | Donation_case :
+      (float, 's) Nx.dtype * int array * operand * operand * expr
+      -> donation_case
+
+let donation_cases =
+  let open Gen in
+  (let* s = shape in
+   let* e = expr ~rank:(Array.length s) in
+   let* x = operand s and+ y = operand s in
+   let+ wide = bool in
+   let e = elementwise (exact e) in
+   if wide then Donation_case (f64, s, x, y, e)
+   else Donation_case (f32, s, x, y, e))
+  |> with_pp (fun ppf (Donation_case (dt, s, x, y, e)) ->
+      Format.fprintf ppf "%a %a, x %a, y %a: %a" Nx.pp_dtype dt pp_shape s
+        pp_view x.view pp_view y.view pp e)
+
+(* A call over a donated argument gives the bits of one over the argument
+   kept, whether its result took the argument's memory or not. *)
+let law_donation (Donation_case (dt, s, xo, yo, e)) =
+  let f x y = eval x y e in
+  let eager = outcome (fun () -> bits (f (make dt s xo) (make dt s yo))) in
+  let x = make dt s xo and y = make dt s yo in
+  let donated = Nx.donate x in
+  let jitted =
+    outcome (fun () -> bits (Rune.jit (pair_fn ()) f donated y))
+  in
+  cover "a zero-size shape" (numel s = 0);
+  cover "a view operand" (xo.view <> Plain);
+  equal (outcome_t bits_t) eager jitted
+
+(* Checks *)
+
+exception Bad of int array * float
+
+let checked x =
+  Nx.check Nx.Ptree.tensor
+    (Nx.less x (Nx.scalar_like x 3.))
+    x
+    (fun i d -> Bad (i, Nx.item [] d));
+  Nx.neg x
+
+let raised f =
+  match f () with
+  | _ -> None
+  | exception Bad (i, d) -> Some (Array.to_list i, d)
+
+let test_checks () =
+  let g = Rune.jit' checked in
+  let ok = Nx.create f32 [| 2; 2 |] [| 1.; 2.; -0.; 2.5 |] in
+  equal bits_t (bits (checked ok)) (bits (g ok));
+  let bad = Nx.create f32 [| 2; 2 |] [| 1.; 2.; 4.; 5. |] in
+  equal ~msg:"the first failure"
+    (option (Testable.pair (list int) float_exact))
+    (raised (fun () -> checked bad)) (raised (fun () -> g bad));
+  equal ~msg:"raised" bool true (Option.is_some (raised (fun () -> g bad)));
+  let empty = Nx.create f32 [| 0 |] [||] in
+  equal ~msg:"an empty check passes" bits_t (bits (checked empty))
+    (bits (g empty))
+
 (* The cache
 
    A call retraces exactly when its key, the abstract value of its arguments,
@@ -508,6 +648,13 @@ let () =
              test "results are fresh" test_fresh;
              test "an argument off 16 bytes" test_phase;
              test "a program with a loop" test_loop;
+             test "a donated argument is consumed" test_consumed;
+             test "a result takes a donated argument's memory" test_lending;
+             test "a shared donor lends nothing" test_shared;
+             test "an evaluated program consumes its donations"
+               test_evaluated_donation;
+             prop "donation keeps the values" donation_cases law_donation;
+             test "checks raise as eagerly" test_checks;
              stateful ~domains:2 ~count:10 ~steps:8
                "a call retraces iff its abstract value is new" cache_commands;
            ];

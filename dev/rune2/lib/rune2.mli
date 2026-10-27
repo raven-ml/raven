@@ -485,6 +485,26 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     computes, so its values do not change the key; a constant of every set
     that [f] returns is that constant.
 
+    {b Donation.} A call consumes the donated handles among its arguments
+    ({!Nx.donate}), as one operation consumes its operands: their donors die
+    when the call claims them, and a later use of one raises
+    [Invalid_argument] naming [Rune.jit]. A result may take a donated
+    argument's memory instead of fresh memory: where it has the argument's
+    dtype, element count and placement, reads it only at each element's own
+    index (through elementwise functions, casts and bitcasts that keep the
+    width, reshapes in C order, copies, placements, a scatter's target or a
+    contraction's [init]) or is the argument itself, and no other result or
+    check reads it; or where it reads no donated argument and nothing reads
+    that one. A donor whose memory another value reads, or that is a view
+    off 16 bytes or out of C order, lends nothing, and its result is fresh.
+    Each donated argument lends to one result at most, the results of a
+    scatter first. Its values are the same either way.
+
+    {b Checks.} A check the function makes ({!Nx.check}) is computed with the
+    program, and the first that fails, in the order the function made them,
+    raises its exception when the call returns, with the data at its first
+    failing index, as eagerly; the call's results are then lost.
+
     {b Numerics.} A compiled call gives eager's bits, but for a NaN's sign and
     payload, where both compute exactly: movements, selections, comparisons,
     casts, extremes, integer and boolean arithmetic, and the correctly rounded
@@ -501,7 +521,9 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     map's {!lanes} or {!lane_index}, an operation the compiler does not lower,
     values on several devices, or a result of every set computed from the
     arguments, or one tolk cannot compile, runs as its operations evaluated by
-    nx, giving eager's values, each result fresh. So does a call whose
+    nx, giving eager's values; a result that is an argument is a copy of
+    it, and the call consumes its donated arguments once it has read them,
+    lending nothing. So does a call whose
     arguments a transformation around it traces, or that an enclosing [jit]
     traces: the transformation receives its program's operations, and the
     enclosing [jit] stages them.
