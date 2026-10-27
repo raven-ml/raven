@@ -240,24 +240,27 @@ let op (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r) (o : r P.t) =
   | Scan { layout; axis; prog; reduction = r; loads; carry } ->
       scan node layout axis prog r loads carry
   | Contract
-      {
-        batch;
-        contracting;
-        acc;
-        out;
-        a;
-        b;
-        init;
-        a_scale = None;
-        b_scale = None;
-        segments = None;
-      } ->
-      let operand x = (D.Any (Nx.dtype x), node x) in
+      { batch; contracting; acc; out; a; b; init; a_scale; b_scale; segments }
+    ->
+      let scale : _ P.scale -> Reduce.scale = function
+        | Exponent c -> Exponent (node c)
+        | Value v -> Value (D.Any (Nx.dtype v), node v)
+      in
+      let operand x s : Reduce.operand =
+        let scale = Option.map scale s in
+        { dtype = D.Any (Nx.dtype x); node = node x; scale }
+      in
+      let segments : Ops.t Nx_kernel.segments option =
+        match segments with
+        | None -> None
+        | Some (Rows r) -> Some (Rows { r with offsets = node r.offsets })
+        | Some (Contracting c) ->
+            Some (Contracting { c with offsets = node c.offsets })
+      in
       [|
-        Reduce.contract ~batch ~contracting ~acc ~out:(D.Any out) (operand a)
-          (operand b) (Option.map node init);
+        Reduce.contract ~batch ~contracting ~segments ~acc ~out:(D.Any out)
+          (operand a a_scale) (operand b b_scale) (Option.map node init);
       |]
-  | Contract _ -> unlowered "a scaled or segmented Contract"
   | Copy x -> [| node x |]
   | Move (m, x) -> [| move m x (node x) |]
   | Bitcast (dt, x) -> [| bitcast dt x (node x) |]

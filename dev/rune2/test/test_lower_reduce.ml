@@ -1148,9 +1148,21 @@ let arg_scans =
 (* Contractions
 
    Each operand's axes are batch, free or contracted, in any order, read through
-   a transposed view or not. *)
+   a transposed view or not. An operand of at most one free axis, the result's
+   free axes are those of [a], then of [b]. A scale's blocks divide each of its
+   operand's extents; codes stay below [151] or are [255], so that no partial
+   sum overflows. Offsets are drawn around the segmented axis, int64's
+   extremes included. *)
 
 type role = B of int | F of int | C of int
+
+type scale =
+  | Codes of int array * int64 array
+  | Values of D.any * int array * int64 array
+
+(* [Rows]' segmented axes are each operand's free axis, [b]'s extent the
+   groups'. *)
+type segments = Rows of int64 array | Contracting of int * int * int64 array
 
 type contraction = {
   cdt : D.any;
@@ -1166,12 +1178,50 @@ type contraction = {
   araws : int64 array;
   braws : int64 array;
   init : int64 array option;
+  sa : scale option;
+  sb : scale option;
+  seg : segments option;
 }
 
 let ashape c f r =
   Array.map (function B i -> c.eb.(i) | C i -> c.ek.(i) | F i -> f.(i)) r
 
-let out_shape c = Array.concat [ c.eb; c.fa; c.fb ]
+let out_shape c =
+  match c.seg with
+  | None -> Array.concat [ c.eb; c.fa; c.fb ]
+  | Some (Rows _) -> Array.concat [ c.eb; c.fa ]
+  | Some (Contracting (_, g, _)) -> Array.concat [ [| g |]; c.eb; c.fa; c.fb ]
+
+(* The groups of [Contracting]'s pair or [Rows]' [a] axis, and its extent. *)
+let groups c =
+  match c.seg with
+  | None -> (0, 0)
+  | Some (Rows _) -> (c.fb.(0), c.fa.(0))
+  | Some (Contracting (p, g, _)) -> (g, c.ek.(p))
+
+let offsets_of = function Rows o | Contracting (_, _, o) -> o
+
+(* [member o ~g r] is the group of index [r] by the offsets [o.(0)] to
+   [o.(g)], as {!Nx_kernel.type-segments} states. *)
+let member o ~g r =
+  let r = Int64.of_int r in
+  let rec find e =
+    if e = g then None
+    else
+      let rec below j = j > g || (r < o.(j) && below (j + 1)) in
+      if Int64.max o.(0) o.(e) <= r && below (e + 1) then Some e
+      else find (e + 1)
+  in
+  find 0
+
+(* The offsets of each batch index. *)
+let batches c =
+  let g, _ = groups c in
+  match c.seg with
+  | None -> []
+  | Some s ->
+      let o = offsets_of s in
+      List.init (numel c.eb) (fun i -> Array.sub o (i * (g + 1)) (g + 1))
 
 let pairs c pick n =
   let pos r x = Option.get (Array.find_index (( = ) x) r) in
@@ -1198,9 +1248,25 @@ let pp_contraction ppf c =
     (if c.tb then " transposed" else "")
     (ints (ashape c c.fb c.rb))
     (raws c.araws) (raws c.braws)
-    (match c.init with None -> "" | Some r -> " init [" ^ raws r ^ "]")
+    (match c.init with None -> "" | Some r -> " init [" ^ raws r ^ "]");
+  let scale side = function
+    | None -> ()
+    | Some (Codes (s, r)) ->
+        Format.fprintf ppf " %s codes [%s] [%s]" side (ints s) (raws r)
+    | Some (Values (d, s, r)) ->
+        Format.fprintf ppf " %s %s [%s] [%s]" side (name d) (ints s) (raws r)
+  in
+  scale "sa" c.sa;
+  scale "sb" c.sb;
+  match c.seg with
+  | None -> ()
+  | Some (Rows o) -> Format.fprintf ppf " rows [%s]" (raws o)
+  | Some (Contracting (p, g, o)) ->
+      Format.fprintf ppf " pair %d groups %d [%s]" p g (raws o)
 
-let contraction dts accs =
+type extras = Plain_contraction | Scaled | Segmented
+
+let contraction ?(extras = Plain_contraction) dts accs =
   let open Gen in
   let small =
     frequency [ (1, constant 0); (1, constant 1); (4, int_range 2 3) ]
@@ -1213,22 +1279,16 @@ let contraction dts accs =
   in
   let* cdt = frequency (List.map (fun (w, d) -> (w, constant d)) dts) in
   let* acc = among (accs cdt) in
-  let* eb =
-    let* n = int_range 0 1 in
+  let* rows = if extras = Segmented then bool else constant false in
+  let segmented = extras = Segmented in
+  let count lo hi =
+    let* n = int_range lo hi in
     extents n
   in
-  let* ek =
-    let* n = int_range 0 2 in
-    extents n
-  in
-  let* fa =
-    let* n = int_range 0 1 in
-    extents n
-  in
-  let* fb =
-    let* n = int_range 0 1 in
-    extents n
-  in
+  let* eb = count 0 1 in
+  let* ek = count (if segmented && not rows then 1 else 0) 2 in
+  let* fa = count (if rows then 1 else 0) 1 in
+  let* fb = count (if rows then 1 else 0) 1 in
   let* ra = map Array.of_list (permutation (roles (Array.length fa) eb ek)) in
   let* rb = map Array.of_list (permutation (roles (Array.length fb) eb ek)) in
   let* ta = bool in
@@ -1248,6 +1308,9 @@ let contraction dts accs =
       araws = [||];
       braws = [||];
       init = None;
+      sa = None;
+      sb = None;
+      seg = None;
     }
   in
   let raws s =
@@ -1257,21 +1320,101 @@ let contraction dts accs =
   in
   let* araws = raws (ashape c fa ra) in
   let* braws = raws (ashape c fb rb) in
+  let offsets g n =
+    let entry =
+      frequency
+        [
+          (8, map Int64.of_int (int_range (-1) (n + 1)));
+          (1, among [ Int64.min_int; Int64.max_int ]);
+        ]
+    in
+    array ~size:(constant (numel eb * (g + 1))) entry
+  in
+  let* seg =
+    if not segmented then constant None
+    else if rows then map (fun o -> Some (Rows o)) (offsets fb.(0) fa.(0))
+    else
+      let* p = int_range 0 (Array.length ek - 1) in
+      let* g = int_range 0 3 in
+      map (fun o -> Some (Contracting (p, g, o))) (offsets g ek.(p))
+  in
+  let scale s =
+    let divisors n =
+      if n = 0 then [ 0 ] else List.filter (fun k -> n mod k = 0) [ 1; 2; 3 ]
+    in
+    let rec each = function
+      | [] -> constant []
+      | n :: ns ->
+          let* k = among (divisors n) in
+          let+ ks = each ns in
+          k :: ks
+    in
+    let* blocks = map Array.of_list (each (Array.to_list s)) in
+    let k = numel blocks in
+    let code =
+      frequency
+        [
+          (1, constant 0L);
+          (1, constant 255L);
+          (6, map Int64.of_int (int_range 100 150));
+        ]
+    in
+    let codes =
+      map (fun r -> Codes (blocks, r)) (array ~size:(constant k) code)
+    in
+    let values =
+      let* d = among D.[ Any Float32; Any Float64; Any Float16 ] in
+      map
+        (fun r -> Values (d, blocks, r))
+        (array ~size:(constant k) (raw ~spread:2 ~subnormal:1 d))
+    in
+    frequency
+      [
+        (1, constant None);
+        (1, map Option.some codes);
+        (1, map Option.some values);
+      ]
+  in
+  let scaled s = if extras = Scaled then scale s else constant None in
+  let* sa = scaled (ashape c fa ra) in
+  let* sb = scaled (ashape c fb rb) in
+  let c = { c with araws; braws; sa; sb; seg } in
   let+ init =
     frequency [ (1, constant None); (1, map Option.some (raws (out_shape c))) ]
   in
-  { c with araws; braws; init }
+  { c with init }
 
-let contraction dts accs = Gen.with_pp pp_contraction (contraction dts accs)
+let contraction ?extras dts accs =
+  Gen.with_pp pp_contraction (contraction ?extras dts accs)
 
 (* An operand of shape [s], read through a transposed view where [t]. *)
 let contracted (type v s) (dt : (v, s) D.t) s t raws : (v, s, Nx.host) Nx.t =
   if not t then value dt s raws
   else Nx.transpose (value dt (Array.of_list (List.rev (Array.to_list s))) raws)
 
+(* A scale's array, its values' magnitudes where [abs]. *)
+let scale_of ~abs : scale -> Nx.host P.scale = function
+  | Codes (s, r) -> Exponent (Nx.create D.Uint8 s (Array.map Int64.to_int r))
+  | Values (D.Any d, s, r) ->
+      let v = value d s r in
+      Value (if abs then Nx.abs v else v)
+
+let segments_of c : _ K.segments =
+  let g, _ = groups c in
+  let pos r x = Option.get (Array.find_index (( = ) x) r) in
+  match c.seg with
+  | Some (Rows o) ->
+      let offsets = Nx.create D.Int64 (Array.append c.eb [| g + 1 |]) o in
+      Rows { offsets; a_axis = pos c.ra (F 0); b_axis = pos c.rb (F 0) }
+  | Some (Contracting (p, _, o)) ->
+      let offsets = Nx.create D.Int64 (Array.append c.eb [| g + 1 |]) o in
+      Contracting { offsets; pair = p }
+  | None -> invalid_arg "segments_of: no segments"
+
 (* The contraction of [a] and [b] from [init] into [dt], as [c] pairs their
-   axes, summed in [acc]. *)
-let contraction_op c ~acc dt a b init =
+   axes, summed in [acc], scaled and segmented as [c] says, its scales'
+   magnitudes where [abs]. *)
+let contraction_op ?(abs = false) c ~acc dt a b init =
   let batch = pairs c (fun i -> B i) (Array.length c.eb) in
   let contracting = pairs c (fun i -> C i) (Array.length c.ek) in
   P.Contract
@@ -1283,9 +1426,9 @@ let contraction_op c ~acc dt a b init =
       a;
       b;
       init;
-      a_scale = None;
-      b_scale = None;
-      segments = None;
+      a_scale = Option.map (scale_of ~abs) c.sa;
+      b_scale = Option.map (scale_of ~abs) c.sb;
+      segments = Option.map (fun _ -> segments_of c) c.seg;
     }
 
 let contract_results (type v s) (dt : (v, s) D.t) c =
@@ -1303,7 +1446,8 @@ let magnitudes c a b init =
   let a = abs (parts64 a) and b = abs (parts64 b) in
   let start p = Option.map (fun i -> List.nth (abs (parts64 i)) p) init in
   let sum x y init =
-    P.eval ~by:"t" (contraction_op c ~acc:(D.Any D.Float64) D.Float64 x y init)
+    P.eval ~by:"t"
+      (contraction_op ~abs:true c ~acc:(D.Any D.Float64) D.Float64 x y init)
   in
   match (a, b) with
   | [ a ], [ b ] -> [ sum a b (start 0) ]
@@ -1314,27 +1458,36 @@ let magnitudes c a b init =
       ]
   | _ -> invalid_arg "magnitudes: not a float"
 
+(* The least positive subnormal of a float accumulator's parts. *)
+let subnormal (D.Any dt) =
+  match dt with
+  | D.Float64 | D.Complex128 -> Float.ldexp 1. (-1074)
+  | _ -> Float.ldexp 1. (-149)
+
 (* Integers give eager's bits. A float result of [K] contracted terms is within
-   [γ(K + 1) (|init| + Σ|a·b|)] of the exact one on each side, a complex
-   result's part within [γ(K + 2)] of that part's magnitudes. With an init, a
-   zero result's sign follows the order of summation, which the bound leaves
-   open: [+0] added last, or a [-0] init first. A NaN result's bits are
-   unspecified. *)
+   [γ(K + 1 + s) (|init| + Σ|a·b|)] of the exact one on each side, [s] its
+   scaled operands, a complex result's part within [γ(K + 2)] of that part's
+   magnitudes, and each of its roundings errs by half a subnormal more where
+   it underflows. With an init, a zero result's sign follows the order of
+   summation, which the bound leaves open: [+0] added last, or a [-0] init
+   first. A NaN result's bits are unspecified. *)
 let contract_check c =
   let (D.Any dt) = c.cdt in
   let a, b, init, e, l = contract_results dt c in
   match D.kind dt with
   | D.Float | D.Complex ->
       let k = numel c.ek in
-      let depth = if D.is D.Complex dt then k + 2 else k + 1 in
+      let s = Bool.to_int (c.sa <> None) + Bool.to_int (c.sb <> None) in
+      let depth = s + if D.is D.Complex dt then k + 2 else k + 1 in
       let g = gamma (carrier_roundoff c.acc) depth in
+      let under = Float.of_int (depth + 1) *. subnormal c.acc in
       let bits = part_bits dt and round = rounding_of dt in
       let check (e, l) mags =
         let mags = Nx.to_array mags in
         Array.iteri
           (fun o e ->
             near ~zeros:(c.init = None) ~bits
-              ~bound:((2. *. g *. mags.(o)) +. round e l.(o))
+              ~bound:((2. *. g *. mags.(o)) +. under +. round e l.(o))
               e l.(o))
           e
       in
@@ -1368,6 +1521,9 @@ let empty dt =
       araws = [||];
       braws = [||];
       init = None;
+      sa = None;
+      sb = None;
+      seg = None;
     }
   in
   [ c; { c with init = Some (Array.make (raws_of dt 2) 0x80000000L) } ]
@@ -1422,6 +1578,114 @@ let complex_contractions =
     (contraction (weigh 1 complexes) (fun d -> [ d ]))
     (fun c ->
       cover "an init" (c.init <> None);
+      contract_check c)
+
+(* Scaled contractions: a code scale of a NaN code and a [float16] value scale
+   on blocks of two, in [float64]. *)
+let scaled_example =
+  let c = two_axes (D.Any D.Float32) 0x3f800000L in
+  {
+    c with
+    acc = D.Any D.Float64;
+    sa = Some (Codes ([| 1; 1; 2 |], [| 127L; 255L |]));
+    sb = Some (Values (D.Any D.Float16, [| 2; 1 |], [| 0x3c00L; 0xc000L |]));
+  }
+
+let scaled_contractions =
+  let accs (D.Any d as dt) =
+    match d with
+    | D.Float64 -> [ dt ]
+    | _ -> [ D.Any D.Float32; D.Any D.Float64 ]
+  in
+  let codes = function Some (Codes (_, r)) -> Array.to_list r | _ -> [] in
+  let several = function
+    | Some (Codes (b, _) | Values (_, b, _)) -> Array.exists (( < ) 1) b
+    | None -> false
+  in
+  prop ~count:12 ~examples:[ scaled_example ]
+    "scaled float contractions hold their bound"
+    (contraction ~extras:Scaled
+       (weigh 1 D.[ Any Float64; Any Float32; Any Float16; Any Bfloat16 ])
+       accs)
+    (fun c ->
+      let is_code = function Some (Codes _) -> true | _ -> false in
+      let is_value = function Some (Values _) -> true | _ -> false in
+      cover "a code scale" (is_code c.sa || is_code c.sb);
+      cover "a value scale" (is_value c.sa || is_value c.sb);
+      cover "both operands scaled" (c.sa <> None && c.sb <> None);
+      cover "a NaN code" (List.mem 255L (codes c.sa @ codes c.sb));
+      cover "a scale of several elements" (several c.sa || several c.sb);
+      cover "a float64 accumulator" (c.acc = D.Any D.Float64);
+      contract_check c)
+
+(* Segmented contractions: rows whose group [1] is empty and of which two are
+   in no group; a pair cut into three indices and one by an int64 extreme;
+   decreasing offsets. *)
+let segmented_examples =
+  let c = List.hd (empty (D.Any D.Float32)) in
+  let ones n = Array.make n 0x3f800000L in
+  let rows =
+    {
+      c with
+      ek = [| 2 |];
+      fa = [| 3 |];
+      fb = [| 2 |];
+      ra = [| F 0; C 0 |];
+      rb = [| C 0; F 0 |];
+      araws = ones 6;
+      braws = ones 4;
+      seg = Some (Rows [| 0L; 1L; 1L |]);
+    }
+  in
+  let pair o =
+    {
+      c with
+      ek = [| 4 |];
+      fa = [| 2 |];
+      ra = [| F 0; C 0 |];
+      rb = [| C 0 |];
+      araws = ones 8;
+      braws = ones 4;
+      seg = Some (Contracting (0, 2, o));
+    }
+  in
+  [ rows; pair [| 0L; 3L; Int64.max_int |]; pair [| 0L; 3L; 2L |] ]
+
+let segmented_contractions =
+  let accs (D.Any d as dt) =
+    match D.kind d with
+    | D.Float when not (D.equal d D.Float64) -> [ D.Any D.Float32 ]
+    | D.Signed | D.Unsigned -> [ dt; D.Any D.Int64 ]
+    | _ -> [ dt ]
+  in
+  prop ~count:16 ~examples:segmented_examples
+    "segmented contractions give eager's integers and hold their bound"
+    (contraction ~extras:Segmented
+       (weigh 2 D.[ Any Float32; Any Float64 ]
+       @ weigh 1 D.[ Any Int32; Any Uint8; Any Complex64; Any Float16 ])
+       accs)
+    (fun c ->
+      let g, n = groups c in
+      let os = batches c in
+      let in_group o r = member o ~g r <> None in
+      let indices = List.init n Fun.id and groups = List.init g Fun.id in
+      let count o e =
+        List.length (List.filter (fun r -> member o ~g r = Some e) indices)
+      in
+      let any f = List.exists f os in
+      let extreme x = x = Int64.max_int || x = Int64.min_int in
+      cover "rows" (match c.seg with Some (Rows _) -> true | _ -> false);
+      cover "a contracting pair"
+        (match c.seg with Some (Contracting _) -> true | _ -> false);
+      cover "an index in no group"
+        (any (fun o -> List.exists (fun r -> not (in_group o r)) indices));
+      cover "an empty group"
+        (any (fun o -> List.exists (fun e -> count o e = 0) groups));
+      cover "a group of several indices"
+        (any (fun o -> List.exists (fun e -> count o e > 1) groups));
+      cover "an int64 extreme" (any (Array.exists extreme));
+      cover "decreasing offsets"
+        (any (fun o -> List.exists (fun i -> o.(i + 1) < o.(i)) groups));
       contract_check c)
 
 (* Cases *)
@@ -1557,37 +1821,28 @@ let f64_inits =
   |]
 
 (* A contraction with a scale or segments is not lowered. *)
-let scaled_contraction ~segmented () =
-  let a = Nx.create D.Float32 [| 2; 4 |] (Array.init 8 Float.of_int) in
-  let b = Nx.create D.Float32 [| 4; 2 |] (Array.init 8 Float.of_int) in
-  let batch = Iarray.of_list [] and contracting = Iarray.of_list [ (1, 0) ] in
+let int_scaled () =
+  let a = Nx.create D.Int32 [| 2; 4 |] (Array.init 8 Int32.of_int) in
+  let b = Nx.create D.Int32 [| 4; 2 |] (Array.init 8 Int32.of_int) in
   let codes = Nx.create D.Uint8 [| 2; 2 |] [| 127; 128; 126; 127 |] in
-  let b_scale, segments =
-    if segmented then
-      ( None,
-        Some
-          (Nx_kernel.Contracting
-             { offsets = Nx.create D.Int64 [| 2 |] [| 0L; 4L |]; pair = 0 }) )
-    else (Some (P.Exponent codes), None)
-  in
   let op () =
     P.eval ~by:"t"
       (P.Contract
          {
-           batch;
-           contracting;
-           acc = D.Any D.Float32;
-           out = D.Float32;
+           batch = Iarray.of_list [];
+           contracting = Iarray.of_list [ (1, 0) ];
+           acc = D.Any D.Int32;
+           out = D.Int32;
            a;
            b;
            init = None;
            a_scale = None;
-           b_scale;
-           segments;
+           b_scale = Some (P.Exponent codes);
+           segments = None;
          })
   in
   raises_match
-    (Exn.invalid_arg ~substring:"a scaled or segmented Contract is not lowered")
+    (Exn.invalid_arg ~substring:"a contraction scaled in int32 is not lowered")
     (fun () -> Lowered.run op)
 
 (* A complex product, and a complex128 extreme's scan, are not lowered. *)
@@ -1651,10 +1906,7 @@ let cases =
         (no_products D.Float64 (D.Any D.Float64) f64_inits);
       test "a float16 contraction of no products in float32 is its init"
         (no_products D.Float16 (D.Any D.Float32) f16_inits);
-      test "a scaled contraction is not lowered"
-        (scaled_contraction ~segmented:false);
-      test "a segmented contraction is not lowered"
-        (scaled_contraction ~segmented:true);
+      test "a contraction scaled in int32 is not lowered" int_scaled;
       test "a complex product is refused" (refused_complex ~scan:false Prod);
       test "a complex running product is refused"
         (refused_complex ~scan:true Prod);
@@ -1680,6 +1932,12 @@ let () =
              arg_scans;
            ];
          group "contractions"
-           [ int_contractions; float_contractions; complex_contractions ];
+           [
+             int_contractions;
+             float_contractions;
+             complex_contractions;
+             scaled_contractions;
+             segmented_contractions;
+           ];
          cases;
        ])

@@ -127,25 +127,59 @@ val scan :
     Raises [Invalid_argument] for a complex [Prod], and a [complex128] [Max],
     [Min] or [Arg]. *)
 
+(** {1:contractions Contractions} *)
+
+(** The type for a contraction operand's block scale ({!Nx_kernel.type-scale}):
+    the node of an array of its rank whose extents divide the operand's. *)
+type scale =
+  | Exponent of Ops.t
+      (** A [uint8] node of codes: [e] scales its block by [2^(e - 127)],
+          [255] makes it NaN. *)
+  | Value of Nx_array.Dtype.any * Ops.t
+      (** A node of the dtype: each scale read into the accumulator. *)
+
+(** The type for a contraction operand: its dtype, its node and its scale. *)
+type operand = {
+  dtype : Nx_array.Dtype.any;
+  node : Ops.t;
+  scale : scale option;
+}
+
 val contract :
   batch:(int * int) iarray ->
   contracting:(int * int) iarray ->
+  segments:Ops.t Nx_kernel.segments option ->
   acc:Nx_array.Dtype.any ->
   out:Nx_array.Dtype.any ->
-  Nx_array.Dtype.any * Ops.t ->
-  Nx_array.Dtype.any * Ops.t ->
+  operand ->
+  operand ->
   Ops.t option ->
   Ops.t
-(** [contract ~batch ~contracting ~acc ~out (da, a) (db, b) init] is the
-    contraction of [a], a value of [da], with [b], a value of [db], by the pairs
-    [batch] and [contracting], as {!Nx_kernel.S.contract} states: each operand
-    stored into [acc], each product in [acc], their sum along the contracted
-    axes and [init], a value of [out] where present, added in [acc], then
-    rounded once to [out]. With no contracted term the result is [init]
-    in [acc], rounded to [out], or [+0]. An integer [acc] wraps exactly. A float [acc]'s
-    result is within [γ(K + 1) (|init| + Σ|a·b|)] of the exact one for [K]
-    contracted terms, barring overflow and underflow: tolk may fuse a product
-    into the sum that takes it. A complex [acc]'s real part is within
-    [γ(K + 2) (|init| + Σ(|ar br| + |ai bi|))] of the exact one, its imaginary
-    part within [γ(K + 2) (|init| + Σ(|ar bi| + |ai br|))], [|init|] that
-    part's: each takes two products and a difference or a sum per term. *)
+(** [contract ~batch ~contracting ~segments ~acc ~out a b init] is the
+    contraction of [a] with [b] by the pairs [batch] and [contracting], as
+    {!Nx_kernel.S.contract} states: each operand stored into [acc], times its
+    block's scale read into [acc] where it has one, each product in [acc],
+    their sum along the contracted axes and [init], a value of [out] where
+    present, added in [acc], then rounded once to [out]; each group of
+    [segments], a node of [int64] offsets, as {!Nx_kernel.type-segments}
+    states. An output without products is [init] in [acc], rounded to
+    [out], or [+0]. An integer [acc] wraps exactly.
+
+    A float [acc]'s result is within [γ(K + 1 + s) (|init| + Σ|a·b|)] of the
+    exact one for [K] products, barring overflow and underflow, [s] the
+    number of scaled operands: tolk may fuse a product into the sum that
+    takes it, and an element times its scale rounds once. A complex [acc]'s
+    real part is within [γ(K + 2) (|init| + Σ(|ar br| + |ai bi|))] of the
+    exact one, its imaginary part within
+    [γ(K + 2) (|init| + Σ(|ar bi| + |ai br|))], [|init|] that part's: each
+    takes two products and a difference or a sum per term. A [Rows] output's
+    [K] is the contracted extent; a [Contracting] output's counts its group's
+    indices alone, as the others enter its sum as zeros, which round
+    nowhere but may change a zero result's sign.
+
+    Costs: [Rows] picks each row's slice of [b] from among the [g] groups'
+    slices, [g] reads per element picked; [Contracting] computes each group
+    over the pair's whole extent, [g] times the unsegmented work.
+
+    Raises [Invalid_argument] for a scale with an [acc] other than [float32]
+    or [float64]. *)

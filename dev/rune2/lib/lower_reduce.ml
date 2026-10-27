@@ -410,6 +410,9 @@ let scan r axis ~carry ~src dt x =
    the products; tolk lays out the reduce of a product itself. A complex product
    is [(ar br - ai bi) + i (ar bi + ai br)]. *)
 
+type scale = Exponent of Ops.t | Value of D.any * Ops.t
+type operand = { dtype : D.any; node : Ops.t; scale : scale option }
+
 let free r named =
   List.filter (fun i -> not (List.mem i named)) (List.init r Fun.id)
 
@@ -423,6 +426,24 @@ let laid u s order ~at ~ones target =
   let s = before @ List.init ones (fun _ -> 1) @ after in
   Shape.expand (Shape.reshape (Shape.permute u order) (dims s)) (dims target)
 
+(* [lay u at target] is [u] with its axis [k] at axis [at.(k)] of the extents
+   [target], expanded along the others. *)
+let lay u at target =
+  let order =
+    List.sort
+      (fun i j -> Int.compare (List.nth at i) (List.nth at j))
+      (List.init (List.length at) Fun.id)
+  in
+  let s = List.mapi (fun i e -> if List.mem i at then e else 1) target in
+  Shape.expand (Shape.reshape (Shape.permute u order) (dims s)) (dims target)
+
+(* [move u ~src ~dst] is [u] with its axis [src] moved to [dst]. *)
+let move u ~src ~dst =
+  let rest = List.filter (( <> ) src) (List.init (Shape.ndim u) Fun.id) in
+  let before = List.filteri (fun i _ -> i < dst) rest in
+  let after = List.filteri (fun i _ -> i >= dst) rest in
+  Shape.permute u (before @ (src :: after))
+
 (* A sub-byte accumulator's node holds a byte, which wraps to its width. *)
 let wrap acc r =
   match acc with
@@ -430,14 +451,16 @@ let wrap acc r =
   | D.Any D.Uint4 -> Arith.cast ~src:(D.Any D.Uint8) acc r
   | _ -> r
 
-let contract ~batch ~contracting ~acc ~out (da, a) (db, b) init =
-  let a = Arith.parts acc (Arith.cast ~src:da acc a) in
-  let b = Arith.parts acc (Arith.cast ~src:db acc b) in
+let zero u =
+  Shape.const_like u
+    (if Dtype.is_float (Ops.dtype u) then `Float 0. else `Int Bigint.zero)
+
+(* [sum ~batch ~contracting ~acc ~out a b init] contracts the parts [a] and [b],
+   values of [acc]. *)
+let sum ~batch ~contracting ~acc ~out a b init =
   let sa = extents (List.hd a) and sb = extents (List.hd b) in
-  let ba = List.map fst (Iarray.to_list batch) in
-  let bb = List.map snd (Iarray.to_list batch) in
-  let ka = List.map fst (Iarray.to_list contracting) in
-  let kb = List.map snd (Iarray.to_list contracting) in
+  let ba = List.map fst batch and bb = List.map snd batch in
+  let ka = List.map fst contracting and kb = List.map snd contracting in
   let fa = free (List.length sa) (ba @ ka) in
   let fb = free (List.length sb) (bb @ kb) in
   let pick s = List.map (List.nth s) in
@@ -470,9 +493,174 @@ let contract ~batch ~contracting ~acc ~out (da, a) (db, b) init =
     | Some i ->
         let i = List.map held (Arith.parts acc (Arith.cast ~src:out acc i)) in
         if empty then i else List.map2 Ops.add r i
-    | None ->
-        let zero = if float then `Float 0. else `Int Bigint.zero in
-        List.map (fun r -> Ops.add r (Shape.const_like r zero)) r
+    | None -> List.map (fun r -> Ops.add r (zero r)) r
   in
   let r = if float then r else List.map (store t) r in
   Arith.cast ~src:acc out (wrap acc (Arith.of_parts acc r))
+
+(* Scales
+
+   A scale is read at each element of its block: the scale's axis of [k]
+   repeated [n / k] times in place, for an operand's axis of [n]. A code [e]
+   is the float of bits [e << 23] in [float32], [2^-127] being the subnormal
+   of bits [1 << 22], and of bits [(e + 896) << 52] in [float64]: [2^(e -
+   127)] exactly. *)
+
+let blocks u s =
+  let e = extents u in
+  let ratio = List.map2 (fun n k -> if k = 0 then 1 else n / k) s e in
+  let spread = List.concat (List.map2 (fun k r -> [ k; r ]) e ratio) in
+  let u = Shape.reshape u (dims (List.concat_map (fun k -> [ k; 1 ]) e)) in
+  Shape.reshape (Shape.expand u (dims spread)) (dims s)
+
+let power (t : Dtype.t) code =
+  let e = Ops.cast code (Bits.unsigned t) in
+  let k n = Shape.const_like e (`Int (Bigint.of_int n)) in
+  let bits =
+    match t with
+    | Float32 -> Ops.where (Ops.eq e (k 0)) (k 0x400000) (Ops.shl e (k 23))
+    | _ -> Ops.shl (Ops.add e (k 896)) (k 52)
+  in
+  let x = Ops.bitcast bits t in
+  Ops.where (Ops.eq e (k 255)) (Bits.nan x) x
+
+(* [entered acc x] is [x]'s parts stored into [acc], each element times its
+   block's scale read into [acc], the product rounded once. *)
+let entered acc { dtype; node; scale } =
+  let x = Arith.cast ~src:dtype acc node in
+  match (scale, acc) with
+  | None, _ -> Arith.parts acc x
+  | Some scale, D.Any (D.Float32 | D.Float64) ->
+      let t = Arith.dtype acc and s = extents x in
+      let scale =
+        match scale with
+        | Exponent c -> power t (blocks c s)
+        | Value (d, v) -> blocks (Arith.cast ~src:d acc v) s
+      in
+      [ Ops.mul x scale ]
+  | Some _, D.Any d ->
+      invalid_arg
+        (Printf.sprintf
+           "Rune.Lower_reduce: a contraction scaled in %s is not lowered"
+           (D.name d))
+
+(* Segments
+
+   [groups o n] is whether index [r < n] of a segmented axis is in group [e], a
+   boolean node of extents [Bs; g; n] for offsets [o] of [Bs; g + 1]: [max
+   o.(0) o.(e) <= r] and [r] below the least of [o.(e + 1)] to [o.(g)]. That
+   least is a running minimum from the end, taken as a running maximum of
+   complements, which reverse int64's order and never overflow. *)
+
+let groups o n =
+  let s = extents o in
+  let nb = List.length s - 1 in
+  let bs = List.filteri (fun i _ -> i < nb) s in
+  let g = List.nth s nb - 1 in
+  let entries lo hi = Shape.shrink o (only o nb (Ops.Int lo, Ops.Int hi)) in
+  let lo =
+    Ops.maximum (Shape.expand (entries 0 1) (dims (bs @ [ g ]))) (entries 0 g)
+  in
+  let rev u = Shape.flip u [ nb ] in
+  let least =
+    Ops.bitwise_not
+      (rev
+         (Shape.cumalu (rev (Ops.bitwise_not (entries 1 (g + 1)))) nb Op.Max))
+  in
+  let target = bs @ [ g; n ] in
+  let at u = lay u (List.init (nb + 1) Fun.id) target in
+  let r = lay (Shape.arange ~dtype:Int64 n) [ nb + 1 ] target in
+  Ops.bitwise_and (Ops.le (at lo) r) (Ops.lt r (at least))
+
+(* [any m axis] is whether [m] holds anywhere along [axis]. *)
+let any_along m axis =
+  let n = Shape.rop (Ops.cast m Dtype.Int32) Op.Add [ axis ] in
+  Ops.lt (Shape.const_like n (`Int Bigint.zero)) n
+
+(* [unless has ~acc ~out init r] is the result [r] where [has] holds, and
+   elsewhere that of no products: [init] as [acc] holds it, rounded into
+   [out], or [+0]. *)
+let unless has ~acc ~out init r =
+  let none =
+    match init with
+    | Some i -> Arith.cast ~src:acc out (Arith.cast ~src:out acc i)
+    | None -> zero r
+  in
+  let keep r n = Ops.where has r n in
+  Arith.of_parts out
+    (List.map2 keep (Arith.parts out r) (Arith.parts out none))
+
+(* [Rows]: row [r] of [a]'s [a_axis] reads [b] at its group's index along
+   [b_axis], picked by bits from [b] spread over the groups and the rows, so
+   that the pick is exact, a NaN's payload and [-0] included. [b]'s [b_axis]
+   then holds [a]'s rows, a batch pair whose axis moves back among [a]'s free
+   axes in the result. *)
+let rows ~batch ~contracting ~acc ~out a b init o ~a_axis ~b_axis =
+  let sa = extents (List.hd a) and sb = extents (List.hd b) in
+  let n = List.nth sa a_axis and g = List.nth sb b_axis in
+  let m = groups o n in
+  let nb = List.length batch in
+  let at i = if i > b_axis then i + 1 else i in
+  let spread =
+    List.concat
+      (List.mapi (fun i e -> if i = b_axis then [ g; n ] else [ e ]) sb)
+  in
+  let spread_m =
+    lay m (List.map (fun (_, j) -> at j) batch @ [ b_axis; b_axis + 1 ]) spread
+  in
+  let pick u =
+    let x = Bits.bits (lay u (List.init (List.length sb) at) spread) in
+    let x = Ops.where spread_m x (Shape.const_like x (`Int Bigint.zero)) in
+    Ops.bitcast (Shape.rop x Op.Add [ b_axis ]) (Ops.dtype u)
+  in
+  let b = List.map pick b in
+  let fa = free (List.length sa) (List.map fst (batch @ contracting)) in
+  let j = nb + Option.get (List.find_index (Int.equal a_axis) fa) in
+  let laid = Option.map (move ~src:j ~dst:nb) init in
+  let r =
+    sum ~batch:(batch @ [ (a_axis, b_axis) ]) ~contracting ~acc ~out a b laid
+  in
+  let r = move ~src:nb ~dst:j r in
+  let has = any_along m nb in
+  let value = Arith.parts out r |> List.hd |> extents in
+  let has = lay has (List.init nb Fun.id @ [ j ]) value in
+  unless has ~acc ~out init r
+
+(* [Contracting]: each operand gains a leading batch axis of the groups, its
+   elements outside group [e] zero in slice [e], so that their products add
+   [±0], which changes no sum but a zero's sign. *)
+let segmented ~batch ~contracting ~acc ~out a b init o ~pair =
+  let ka, kb = List.nth contracting pair in
+  let n = Bits.extent (List.hd a) ka in
+  let m = groups o n in
+  let nb = List.length batch in
+  let g = Bits.extent m nb in
+  let masked side k u =
+    let s = extents u in
+    let target = g :: s in
+    let x = lay u (List.init (List.length s) succ) target in
+    let at = List.map (fun p -> side p + 1) batch @ [ 0; k + 1 ] in
+    Ops.where (lay m at target) x (zero x)
+  in
+  let a = List.map (masked fst ka) a and b = List.map (masked snd kb) b in
+  let shift = List.map (fun (i, j) -> (i + 1, j + 1)) in
+  let r =
+    sum
+      ~batch:((0, 0) :: shift batch)
+      ~contracting:(shift contracting) ~acc ~out a b init
+  in
+  let has = any_along m (nb + 1) in
+  let value = Arith.parts out r |> List.hd |> extents in
+  let has = lay has (List.init nb succ @ [ 0 ]) value in
+  unless has ~acc ~out init r
+
+let contract ~batch ~contracting ~segments ~acc ~out a b init =
+  let batch = Iarray.to_list batch in
+  let contracting = Iarray.to_list contracting in
+  let a = entered acc a and b = entered acc b in
+  match (segments : Ops.t Nx_kernel.segments option) with
+  | None -> sum ~batch ~contracting ~acc ~out a b init
+  | Some (Rows { offsets; a_axis; b_axis }) ->
+      rows ~batch ~contracting ~acc ~out a b init offsets ~a_axis ~b_axis
+  | Some (Contracting { offsets; pair }) ->
+      segmented ~batch ~contracting ~acc ~out a b init offsets ~pair
