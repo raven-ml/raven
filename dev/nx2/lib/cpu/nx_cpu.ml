@@ -74,30 +74,20 @@ external fold :
   ('v, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_fold_pad"
 
-(* Loads' shapes, checked by Nx_kernel.Shape's rule before a padded load
-   is realised: C sees the realised copy alone, and a misfit is refused
-   before the copy is allocated. *)
+(* Padded loads' shapes. C checks that each load has the loop's shape,
+   but sees a padded load only once realised: these checks, by
+   Nx_kernel.Shape's rule, refuse a misfit before its copy is allocated. *)
 
-(* Whether the layout [l] has extents [shape] from axis [i] on, read without
-   allocating. *)
-let rec extents l shape i =
-  i = Array.length shape
-  || (Nx_array.Layout.dim l i = shape.(i) && extents l shape (i + 1))
-
-(* Whether load [i] on of [loads] have the loop's [shape] once loaded: a
-   plain load its array's, read without allocating on the reductions' hot
-   path, a padded one {!Nx_kernel.Shape.padded}'s. No load has none to
-   differ. *)
-let rec fits shape (loads : Nx_kernel.load array) i =
+(* Whether each padded load of [loads] from [i] on has the loop's [shape]
+   once loaded, {!Nx_kernel.Shape.padded}'s. *)
+let rec padded_fit shape (loads : Nx_kernel.load array) i =
   i = Array.length loads
   || (match loads.(i) with
-     | Plain x ->
-         let l = Nx_array.layout x in
-         Nx_array.Layout.rank l = Array.length shape && extents l shape 0
+     | Plain _ -> true
      | Padded { x; pad; _ } ->
          let s = Iarray.to_array (Nx_array.Layout.shape (Nx_array.layout x)) in
          Nx_kernel.Shape.padded pad s = Ok shape)
-     && fits shape loads (i + 1)
+     && padded_fit shape loads (i + 1)
 
 (* The shape of the destination [d], whose shape a map's or a scan's loop
    has. *)
@@ -252,8 +242,8 @@ let map_plain p ~dsts loads =
 
 let map p ~dsts loads =
   if not (any_padded loads 0) then map_plain p ~dsts loads
-  else if Array.length dsts = 0 || not (fits (loop_of dsts.(0)) loads 0) then
-    Nx_array.Shape_mismatch
+  else if Array.length dsts = 0 || not (padded_fit (loop_of dsts.(0)) loads 0)
+  then Nx_array.Shape_mismatch
   else realised loads (map_plain p ~dsts)
 
 (* Reductions and scans (reduce.c), of a program's outputs through it, over
@@ -289,26 +279,6 @@ let accepted (p : Nx_kernel.Prog.t) (r, k) =
 let rec all_accepted p rs i =
   i = Array.length rs || (accepted p rs.(i) && all_accepted p rs (i + 1))
 
-(* Whether the layouts [l] and [l'] have one extent from axis [i] on, of
-   one rank. *)
-let rec same_extents l l' i =
-  i = Nx_array.Layout.rank l
-  || Nx_array.Layout.dim l i = Nx_array.Layout.dim l' i
-     && same_extents l l' (i + 1)
-
-(* Whether load [i] on of [loads] have the shape of the destination [d]
-   once loaded, as {!fits} says, read without allocating for a plain
-   load. *)
-let rec fits_dst (Nx_array.Any d as any) (loads : Nx_kernel.load array) i =
-  let l = Nx_array.layout d in
-  i = Array.length loads
-  || (match loads.(i) with
-     | Plain x ->
-         let lx = Nx_array.layout x in
-         Nx_array.Layout.rank lx = Nx_array.Layout.rank l && same_extents lx l 0
-     | Padded _ -> fits (loop_of any) loads i)
-     && fits_dst any loads (i + 1)
-
 (* Whether [dsts] are the destinations of the reductions [rs] along [axes]
    of a loop of [shape]: one each, two for an Arg or a Moments, of the
    shape {!Nx_kernel.Shape.reduce} gives. A reduction's loop is given as a
@@ -326,16 +296,17 @@ let reduces_into ~shape ~axes rs dsts =
 
 let reduce p ~shape ~axes rs ~dsts loads =
   if not (all_accepted p rs 0) then Nx_array.Wrong_dtype
-  else if not (fits shape loads 0) then Nx_array.Shape_mismatch
   else if not (any_padded loads 0) then reduce_c p rs shape axes dsts loads
-  else if not (reduces_into ~shape ~axes rs dsts) then Nx_array.Shape_mismatch
+  else if
+    not (padded_fit shape loads 0 && reduces_into ~shape ~axes rs dsts)
+  then Nx_array.Shape_mismatch
   else realised loads (reduce_c p rs shape axes dsts)
 
 let scan ?carry p ~axis rk ~dsts loads =
   if not (accepted p rk) then Nx_array.Wrong_dtype
-  else if Array.length dsts = 0 || not (fits_dst dsts.(0) loads 0) then
-    Nx_array.Shape_mismatch
   else if not (any_padded loads 0) then scan_c p rk axis dsts loads carry
+  else if Array.length dsts = 0 || not (padded_fit (loop_of dsts.(0)) loads 0)
+  then Nx_array.Shape_mismatch
   else realised loads (fun loads -> scan_c p rk axis dsts loads carry)
 
 (* Gathers and scatters (index.c) *)
@@ -408,8 +379,9 @@ let contract ~batch ~contracting ~segments ~acc ~dst ~init
     contract_c ~batch ~contracting (Nx_array.Dtype.code dt) ~dst ~init
       a b oa.scale ob.scale segments
 
-(* Fourier transforms (fft.c). The shapes are checked here; the externals take
-   the direction as its int. *)
+(* Fourier transforms (fft.c). fft.c trusts its operands' shapes: they are
+   checked here, by Nx_kernel.Shape's rule, which states each transform's
+   shapes once. The externals take the direction as its int. *)
 
 external c2c_c :
   Nx_kernel.direction ->

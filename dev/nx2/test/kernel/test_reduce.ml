@@ -1927,6 +1927,30 @@ let test_refusals (b : Support.backend) () =
     (K.reduce p ~shape:[| 2; 4 |] ~axes:[| 1 |] sum
        ~dsts:[| on (A.create Rig.host D.Float32 [| 2 |]) |]
        [| plain_of x |]);
+  (* A dead load of another shape is a dead operand first: the door's
+     refusals come before the shapes' (Nx_array.answer). *)
+  let dead = on (A.of_array D.Float32 [| 2; 3 |] (Array.make 6 1.)) in
+  let (A.Any d) = dead in
+  equal ~msg:"freed" bool true (Rig.Buffer.free (A.buffer d));
+  let f32 = D.Any D.Float32 in
+  let twice =
+    P.v ~ins:[| f32 |] [| P.In 0; Op2 (Binary Add, 0, 0) |] ~outs:[| 1 |]
+  in
+  List.iter
+    (fun (name, p) ->
+      equal
+        ~msg:(name ^ ": a dead load of another shape than the loop's")
+        answer A.Dead_buffer
+        (K.reduce p ~shape:[| 2; 4 |] ~axes:[| 1 |] sum
+           ~dsts:[| on (A.create Rig.host D.Float32 [| 2 |]) |]
+           [| plain_of dead |]);
+      equal
+        ~msg:(name ^ ": a dead load of another shape than the scan's")
+        answer A.Dead_buffer
+        (K.scan p ~axis:1 (Monoid Sum, 0)
+           ~dsts:[| on (A.create Rig.host D.Float32 [| 2; 4 |]) |]
+           [| plain_of dead |]))
+    [ ("identity", p); ("a program", twice) ];
   let ints = on (A.of_array D.Int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]) in
   let mean = on (A.create Rig.host D.Int32 [| 2; 3 |]) in
   let var = on (A.create Rig.host D.Int32 [| 2; 3 |]) in
