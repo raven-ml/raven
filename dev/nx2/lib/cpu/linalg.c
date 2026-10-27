@@ -351,6 +351,7 @@ typedef struct arena {
   void *p;
   int64_t n;
   struct arena *copy, *workers;
+  double factor; /* the call's routine's (factor_of) */
 } arena;
 
 /* [bytes] of [s], NULL if they cannot be allocated. */
@@ -449,25 +450,47 @@ static void stage_rows(int64_t lo, int64_t hi, int worker, void *ctx) {
                 matrix_at(g->c, g->k, g->b) + lo * sr * w, &box, x->bits);
 }
 
-/* The cost of a job (job.c) on [bytes] that computes [flops] in the
-   real dtype [rdt], [cplx] 1 for its complex numbers, whose flops are
-   four real ones each. A unit of the job runs on one thread: its larger
-   products run on the M1's matrix unit, which four cores share, at about
-   3.25 flops a byte in float32 and 0.81 in float64 a thread, and its
-   leaves on scalar loops. Flops are priced at the speed of the core's
-   vector kernel, which lies between, an estimate. */
-static double job_cost(int64_t bytes, double flops, int rdt, int cplx) {
-  return bytes + (cplx ? 4 : 1) * flops / nx_cpu_core_speed(rdt);
+/* What a matrix routine's work takes (cpu.h, Calls and jobs, scalar; M1
+   Max and fudge, 2026-10-14), by whether its routine iterates (eigh, svd,
+   eig) or solves and factors. Its flops at a core's float64 speed, times a
+   factor for its scalar loops, which run no faster in float32:
+   Hessenberg's and QR's sweeps, the tridiagonal's and bidiagonal's
+   iterations, the triangular solves of eig's vectors. The M1 Max took up
+   to 3.8 times them for float64 solves and factorisations of 36 to 128
+   rows, 13 for svd's values alone of 36 rows. And a matrix's set-up and
+   its scratch's, 3.5 KiB an LU of 2 × 2 float32, 2.8 a Cholesky factor
+   and 34 an eigh (fudge). */
+#define SOLVES_FACTOR 4
+#define ITERATES_FACTOR 16
+#define SOLVES_MATRIX (8 * 1024)
+#define ITERATES_MATRIX (64 * 1024)
+
+/* Whether [routine] iterates. */
+static int iterates(int routine) {
+  return routine == EIGH || routine == SVD || routine == EIG;
+}
+
+/* The factor of [routine]'s flops. */
+static double factor_of(int routine) {
+  return iterates(routine) ? ITERATES_FACTOR : SOLVES_FACTOR;
+}
+
+/* The cost of work on [bytes] that computes [flops] real flops, a complex
+   one four, in a routine of [factor]: the call's, past its matrices'
+   set-up, and each of its jobs'. */
+static double work_cost(double factor, double bytes, double flops) {
+  return bytes + factor * flops / nx_cpu_core_speed(NX_FLOAT64);
 }
 
 /* The cost of a job of [units] units on [bytes] that computes [flops],
-   as job_cost, where it takes the call's threads, else 0: where the
-   matrix has them in [s], there are units to share and the cost asks for
-   more than one thread. A matrix without them prices nothing. */
+   [cplx] 1 for complex ones, as work_cost at [s]'s factor, where it takes
+   the call's threads, else 0: where the matrix has them in [s], there are
+   units to share and the cost asks for more than one thread. A matrix
+   without them prices nothing. */
 static double threaded(const arena *s, int64_t units, int64_t bytes,
-                       double flops, int rdt, int cplx) {
+                       double flops, int cplx) {
   if (s->workers == NULL || units < 2) return 0;
-  double cost = job_cost(bytes, flops, rdt, cplx);
+  double cost = work_cost(s->factor, (double)bytes, (cplx ? 4 : 1) * flops);
   return nx_cpu_threads(bytes, cost) > 1 ? cost : 0;
 }
 
@@ -476,7 +499,7 @@ static double threaded(const arena *s, int64_t units, int64_t bytes,
    the call computes alone is copied while the threads wait. */
 static void copying(const arena *s, int64_t units, int64_t bytes,
                     rig_pool_body body, void *ctx) {
-  double cost = threaded(s, units, 2 * bytes, 0, NX_FLOAT64, 0);
+  double cost = threaded(s, units, 2 * bytes, 0, 0);
   if (cost == 0) body(0, units, 0, ctx);
   else nx_cpu_job(units, 2 * bytes, cost, body, ctx);
 }
@@ -693,29 +716,6 @@ static double flops(const call *c) {
   }
 }
 
-/* What a matrix takes (cpu.h, Calls, scalar), by whether its routine
-   iterates (eigh, svd, eig) or solves and factors. Its flops at a core's
-   float64 speed, times a factor for its scalar loops, which run no faster
-   in float32: Hessenberg's and QR's sweeps, the tridiagonal's and
-   bidiagonal's iterations, the triangular solves of eig's vectors. The
-   M1 Max took up to 3.8 times them for float64 solves and factorisations
-   of 36 to 128 rows, 13 for svd's values alone of 36 rows. And a set-up
-   and its scratch's, 3.5 KiB an LU of 2 × 2 float32, 2.8 a Cholesky
-   factor and 34 an eigh (fudge). */
-#define SOLVES_FACTOR 4
-#define ITERATES_FACTOR 16
-#define SOLVES_MATRIX (8 * 1024)
-#define ITERATES_MATRIX (64 * 1024)
-
-/* The price of [c]'s matrices, of [work] flops and [bytes] in all. */
-static double matrices_price(const call *c, double work, double bytes) {
-  int iterates = c->routine == EIGH || c->routine == SVD || c->routine == EIG;
-  double factor = iterates ? ITERATES_FACTOR : SOLVES_FACTOR;
-  double matrix = iterates ? ITERATES_MATRIX : SOLVES_MATRIX;
-  return bytes + (double)c->matrices * matrix +
-         factor * work / nx_cpu_core_speed(NX_FLOAT64);
-}
-
 /* The elements of scratch a matrix of [c] takes besides its products':
    a solve's triangle; QR's factored matrix, its τ and qr_scratch; eigh's
    reduced matrix, its τ, eigh_work, the bulge chase's reflectors, then as
@@ -867,17 +867,18 @@ static value run(call c, const value *arrays) {
   c.w = nx_cpu_width(c.dt);
   c.scratch = scratch(&c);
   int cplx = c.dt == NX_COMPLEX64 || c.dt == NX_COMPLEX128;
-  int rdt = c.dt == NX_FLOAT32 || c.dt == NX_COMPLEX64 ? NX_FLOAT32
-                                                        : NX_FLOAT64;
   int64_t bytes = c.matrices * c.m * (c.n + c.r) * c.w;
-  double cost = job_cost(bytes, c.matrices * flops(&c), rdt, cplx);
+  double factor = factor_of(c.routine);
+  double matrix = iterates(c.routine) ? ITERATES_MATRIX : SOLVES_MATRIX;
+  double cost = work_cost(factor, (double)bytes,
+                          (cplx ? 4 : 1) * (double)c.matrices * flops(&c)) +
+                (double)c.matrices * matrix;
+  int released = nx_cpu_release(cost);
   /* A matrix a unit where there are enough for the threads, else one unit
      of all, whose GEMM updates and own jobs take the threads where the
      call asks for more than one. */
   int t = nx_cpu_threads(bytes, cost);
   c.per = c.matrices >= t ? 1 : c.matrices;
-  double work = (cplx ? 4 : 1) * (double)c.matrices * flops(&c);
-  int released = nx_cpu_release(matrices_price(&c, work, (double)bytes));
   int cores = rig_pool_cores();
   c.packs = calloc((size_t)cores, sizeof(arena));
   c.copies = calloc((size_t)cores, sizeof(arena));
@@ -890,6 +891,7 @@ static value run(call c, const value *arrays) {
   }
   for (int i = 0; i < cores; i++) {
     c.packs[i].copy = &c.copies[i];
+    c.packs[i].factor = c.copies[i].factor = factor;
     if (c.matrices < t) c.packs[i].workers = c.packs;
   }
   if (c.matrices > 0) {

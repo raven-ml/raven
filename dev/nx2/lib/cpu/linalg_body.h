@@ -493,7 +493,7 @@ static void F(solve_unit)(int64_t lo, int64_t hi, int worker, void *ctx) {
 static int F(solve)(solve kind, const T *l, int64_t n, int64_t ld, T *x,
                     int64_t r, int64_t ldx, T *neg, arena *s) {
   int64_t bytes = n * (n + r) * (int64_t)sizeof(T), units = r / SOLVE_COLUMNS;
-  double cost = threaded(s, units, bytes, (double)n * n * r, RDT, CPLX);
+  double cost = threaded(s, units, bytes, (double)n * n * r, CPLX);
   F(solve_job) j = {.l = l, .x = x, .neg = neg, .n = n, .ld = ld, .r = r,
                     .ldx = ldx, .kind = kind, .workers = s->workers};
   if (cost == 0) return F(part)(&j, 0, r, s);
@@ -639,7 +639,7 @@ static int F(cholesky)(T *a, int64_t n, int64_t ld, arena *s) {
     int64_t units = tiles * (tiles + 1) / 2;
     int64_t bytes = (h * h / 2 + 2 * h * CHOL_NB) * (int64_t)sizeof(T);
     double cost =
-        threaded(s, units, bytes, (double)h * h * CHOL_NB, RDT, CPLX);
+        threaded(s, units, bytes, (double)h * h * CHOL_NB, CPLX);
     if (cost == 0) F(tiles)(&t, 0, units, s);
     else nx_cpu_job(units, bytes, cost, F(trailing_unit), &t);
     if (t.failed) return -1;
@@ -948,7 +948,7 @@ static int F(lu)(T *a, int64_t m, int64_t n, int64_t ld, int64_t *pivots,
     int64_t bytes = (m - k) * (n - k) * (int64_t)sizeof(T);
     /* The next block a unit, and the rest's columns at most one each. */
     double cost = threaded(s, 1 + rest, bytes,
-                           2.0 * (m - next) * (n - next) * kb, RDT, CPLX);
+                           2.0 * (m - next) * (n - next) * kb, CPLX);
     int64_t threads = cost > 0 ? nx_cpu_threads(bytes, cost) : 1;
     int64_t tile = rest / (threads > 1 ? threads - 1 : 1);
     tile = tile < bw ? bw : tile;
@@ -1387,7 +1387,7 @@ static void F(hemv)(const T *restrict a, int64_t h, int64_t ld,
   F(hemv_job) j = {.a = a, .v = v, .h = h, .ld = ld, .blocks = blocks,
                    .yp = yp};
   int64_t bytes = h * h / 2 * (int64_t)sizeof(T);
-  double cost = threaded(s, blocks, bytes, (double)h * h, RDT, CPLX);
+  double cost = threaded(s, blocks, bytes, (double)h * h, CPLX);
   if (cost > 0)
     nx_cpu_job(blocks, bytes, cost, F(hemv_unit), &j);
   else
@@ -1582,7 +1582,7 @@ static int F(he2hb)(T *a, int64_t n, int64_t ld, T *tau, T *w, int64_t kd,
                       .workers = s->workers};
     int64_t units = (m + kd - 1) / kd, bytes = m * m * (int64_t)sizeof(T);
     double cost =
-        threaded(s, units, bytes, 2.0 * m * m * 2 * kb, RDT, CPLX);
+        threaded(s, units, bytes, 2.0 * m * m * 2 * kb, CPLX);
     if (cost == 0) F(band_units)(&j, 0, units, s);
     else nx_cpu_job(units, bytes, cost, F(band_unit), &j);
     if (j.failed) return 0;
@@ -1708,7 +1708,7 @@ static void F(hb2st)(const T *a, int64_t n, int64_t ld, T *b, T *slots,
   F(chase) ch = {.b = b, .v = slots, .n = n, .kd = kd, .next = 0,
                  .done = done};
   int64_t bytes = 2 * kd * n * (int64_t)sizeof(T);
-  double cost = threaded(s, n - 1, bytes, 6.0 * kd * n * n, RDT, CPLX);
+  double cost = threaded(s, n - 1, bytes, 6.0 * kd * n * n, CPLX);
   if (cost == 0) F(chase_unit)(0, 1, 0, &ch);
   else nx_cpu_job(n - 1, bytes, cost, F(chase_unit), &ch);
   for (int64_t j = 0; j < n; j++) {
@@ -1784,7 +1784,7 @@ static void F(q2_unit)(int64_t lo, int64_t hi, int worker, void *ctx) {
    allocation failed. */
 static int F(q2)(const T *slots, int64_t n, T *c, int64_t ldc, arena *s) {
   int64_t bytes = n * n * (int64_t)sizeof(T), units = n / KD;
-  double cost = threaded(s, units, bytes, 2.0 * n * n * n, RDT, CPLX);
+  double cost = threaded(s, units, bytes, 2.0 * n * n * n, CPLX);
   if (cost == 0) return F(q2_cols)(slots, n, c, ldc, 0, n, s);
   int threads = nx_cpu_threads(bytes, cost);
   F(q2_job) j = {.slots = slots, .c = c, .n = n, .ldc = ldc,
@@ -2499,7 +2499,7 @@ static void F(on_roots)(int64_t k, int64_t matrices, double flops,
                         rig_pool_body unit, void *j, arena *s) {
   int64_t units = (k + MERGE_ROOTS - 1) / MERGE_ROOTS;
   int64_t bytes = matrices * k * k * (int64_t)sizeof(R);
-  double cost = threaded(s, units, bytes, flops * k * k, RDT, 0);
+  double cost = threaded(s, units, bytes, flops * k * k, 0);
   if (cost > 0)
     nx_cpu_job(units, bytes, cost, unit, j);
   else
@@ -3822,7 +3822,7 @@ static int F(lasd0)(int64_t n, int sqre, int levels, R *d, R *e, R *u,
     int64_t bytes = nodes * big * big * 2 * (int64_t)sizeof(R);
     double cost =
         total <= avail
-            ? threaded(s, nodes, bytes, 4.0 * nodes * big * big * big, RDT, 0)
+            ? threaded(s, nodes, bytes, 4.0 * nodes * big * big * big, 0)
             : 0;
     if (cost > 0 && 2 * nodes >= nx_cpu_threads(bytes, cost))
       nx_cpu_job(nodes, bytes, cost, F(lasd_unit), &l);
@@ -4204,7 +4204,7 @@ static int F(labrd)(T *a, int64_t m, int64_t n, int64_t nb, int64_t lda,
      waits for its last chunk; else the chunks in order, without the
      claims. */
   int64_t bytes = m * n * (int64_t)sizeof(T);
-  double cost = threaded(s, units, bytes, 4.0 * m * n, RDT, CPLX);
+  double cost = threaded(s, units, bytes, 4.0 * m * n, CPLX);
   if (cost > 0) {
     nx_cpu_job(units, bytes, cost, F(brd_unit), &b);
     return 1;
@@ -4357,7 +4357,7 @@ static int F(ge2gb)(T *a, int64_t m, int64_t k, int64_t ld, T *tauq,
                     .t = t, .l = l, .q = q, .m = m2, .wn = wn, .kb = kb,
                     .ld = ld, .kd = kd, .workers = s->workers};
     int64_t units = (wn + kd - 1) / kd, bytes = m2 * wn * (int64_t)sizeof(T);
-    double cost = threaded(s, units, bytes, 2.0 * m2 * wn * kb, RDT, CPLX);
+    double cost = threaded(s, units, bytes, 2.0 * m2 * wn * kb, CPLX);
     if (cost == 0) F(gb_units)(&j, 0, units, s);
     else nx_cpu_job(units, bytes, cost, F(gb_unit), &j);
     if (j.failed) return 0;
@@ -4467,7 +4467,7 @@ static void F(gb2bd)(const T *a, int64_t n, int64_t ld, T *b, T *q, T *p,
   F(bchase) ch = {.b = b, .q = q, .p = p, .n = n, .kd = kd, .next = 0,
                   .done = done};
   int64_t bytes = 3 * kd * n * (int64_t)sizeof(T);
-  double cost = threaded(s, n - 1, bytes, 8.0 * kd * n * n, RDT, CPLX);
+  double cost = threaded(s, n - 1, bytes, 8.0 * kd * n * n, CPLX);
   if (cost == 0) F(bchase_unit)(0, 1, 0, &ch);
   else nx_cpu_job(n - 1, bytes, cost, F(bchase_unit), &ch);
   for (int64_t j = 0; j < n; j++) {
@@ -5496,7 +5496,7 @@ static int F(matrix)(const call *c, int64_t b, T *w, arena *s) {
     }
     F(triangle) t = {.d = d, .n = n, .upper = c->upper};
     int64_t bytes = n * n * (int64_t)sizeof(T);
-    double cost = threaded(s, n, bytes, 0, RDT, CPLX);
+    double cost = threaded(s, n, bytes, 0, CPLX);
     if (cost == 0) F(other_triangle)(0, n, 0, &t);
     else nx_cpu_job(n, bytes, cost, F(other_triangle), &t);
     return 1;
