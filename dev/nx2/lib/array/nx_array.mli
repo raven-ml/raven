@@ -324,9 +324,8 @@ type answer =
   | Shape_mismatch
       (** The operands do not fit the operation: their number, or their
           shapes. Operands of one loop of different shapes, shapes its
-          descriptor refuses, no operand or more than {!max_operands} to a
-          loop, or other destinations than an operation names, as a reduction
-          given other than its one or two. *)
+          descriptor refuses, or other destinations than an operation names,
+          as a reduction given other than its one or two. *)
 
 val door :
   written:any array -> read:any array -> ('a -> unit) -> 'a -> answer
