@@ -56,10 +56,14 @@
     [map] computes every program of at most 17 operands and outputs
     together and declines the others: its loop iterates the outputs, the
     loads and the index the coordinates read, and holds at most
-    {!Nx_array.max_operands} arrays. A padded load is first copied padded
-    into host memory, which the call holds until it returns, once along an
-    axis its operand broadcasts and the pad leaves alone; a pad that fits
-    no operand of its load's shape is refused with [Shape_mismatch].
+    {!Nx_array.max_operands} arrays.
+
+    A padded load of [map], [reduce] or [scan] is read from one copy in
+    host memory that the call holds until it returns: its operand padded
+    before the windows, which are a view of the copy, an axis the operand
+    broadcasts and the pad leaves alone held at one element. A pad that
+    fits no operand of its load's shape, or a padded shape other than the
+    loop's, is refused with [Shape_mismatch] before the copy is made.
 
     [contract] computes every contraction in [float32], [float64],
     [complex64], [complex128] or an integer of 4 to 64 bits, of [a], [b]
@@ -135,9 +139,7 @@
     written, any number of them. They answer [Wrong_dtype] where
     {!Nx_kernel.accepts} is [false] of a reduction and its output's dtype
     or an [Arg]'s positions are not [int64], and [Shape_mismatch] for
-    destinations other than a reduction's one or two. A padded operand is
-    first copied padded into host memory, which the call holds until it
-    returns. A destination identical to the operand, or to a program's
+    destinations other than a reduction's one or two. A destination identical to the operand, or to a program's
     load, is accepted: that operand or load is then read from a copy the
     call holds, and the results are those of fresh destinations. They
     refuse with [Shape_mismatch] what {!Nx_kernel.Shape.padded} and

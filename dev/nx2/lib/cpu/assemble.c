@@ -383,7 +383,22 @@ value nx_cpu_assemble(value vfill, value vd, value vpieces) {
   CAMLreturn(Val_int(e));
 }
 
-int nx_cpu_pad_of(value v, nx_cpu_pad *p) {
+/* Folds */
+
+/* A padding, Nx_kernel.pad, copied out of OCaml: [lo], [hi] and
+   [interior] by axis of its [rank], then by window its axis, size, step
+   and dilation. */
+typedef struct {
+  int rank, nwindows;
+  int64_t lo[NX_MAX_RANK], hi[NX_MAX_RANK], interior[NX_MAX_RANK];
+  int64_t window[NX_MAX_RANK][4];
+} load_pad;
+
+/* Copies the Nx_kernel.pad [v] into [p] and answers NX_OK, or NX_SHAPE
+   where [lo], [hi] and [interior] differ in length or the rank and the
+   windows number more than NX_MAX_RANK. Reads [v] alone and allocates
+   nothing. */
+static int pad_of(value v, load_pad *p) {
   value lo = Field(v, 0), hi = Field(v, 1), inner = Field(v, 2);
   value windows = Field(v, 3);
   mlsize_t r = Wosize_val(lo), nw = Wosize_val(windows);
@@ -412,7 +427,12 @@ static int64_t nx_cpu_windows(int64_t e, const int64_t *w) {
   return (e - 1 - w[3] * (w[1] - 1)) / w[2] + 1;
 }
 
-int nx_cpu_padded_shape(const nx_cpu_pad *p, int r, const int64_t *x,
+/* Fills [y] with the shape an operand of shape [x] and rank [r] has once
+   padded by [p], its windows' axes last, as Nx_kernel.Shape.padded
+   computes it. Answers NX_OK, or NX_SHAPE for a pad it cannot apply: [r]
+   other than [p]'s rank, an extent below zero or past int64, or a window
+   whose size, step or dilation is below one. */
+static int padded_shape(const load_pad *p, int r, const int64_t *x,
                         int64_t *y) {
   if (p->rank != r) return NX_SHAPE;
   for (int i = 0; i < r; i++) {
@@ -437,91 +457,6 @@ int nx_cpu_padded_shape(const nx_cpu_pad *p, int r, const int64_t *x,
   return NX_OK;
 }
 
-int nx_cpu_padding_of(value v, value x, nx_cpu_pad *p, uint8_t *fill) {
-  int64_t xs[2 * NX_MAX_RANK], ys[NX_MAX_RANK], off;
-  int rank = nx_array_layout(x, xs, &off);
-  value bits = Field(v, 1);
-  size_t n = caml_string_length(bits);
-  memset(fill, 0, 16);
-  memcpy(fill, String_val(bits), n < 16 ? n : 16);
-  if (nx_cpu_pad_of(Field(v, 0), p) || nx_cpu_padded_shape(p, rank, xs, ys))
-    return NX_SHAPE;
-  return NX_OK;
-}
-
-/* Padded loads, staged as an assembly of one piece: the fill, then the
-   operand's elements that land inside the padded array, lo + t·(interior
-   + 1) along each axis, then the windows as a layout over the copy. An
-   axis the operand broadcasts and the pad leaves alone is copied once and
-   read at stride 0: a value broadcast over many channels costs the copy
-   of one. */
-
-int nx_cpu_unpad(const nx_array *a, const nx_cpu_pad *p,
-                 const uint8_t *fill, nx_array *out) {
-  int r = a->rank, nw = p->nwindows, bits = a->bits;
-  const int64_t *lo = p->lo, *hi = p->hi, *inner = p->interior;
-  int64_t shape[NX_MAX_RANK], held[NX_MAX_RANK], stride[NX_MAX_RANK];
-  int64_t total = 1, size;
-  for (int i = 0; i < r; i++) {
-    int64_t d = a->dim[i];
-    shape[i] = lo[i] + hi[i] + d + (d > 0 ? inner[i] * (d - 1) : 0);
-    int kept = d > 1 && a->dim[r + i] == 0 && lo[i] == 0 && hi[i] == 0 &&
-               inner[i] == 0;
-    held[i] = kept ? 1 : shape[i];
-  }
-  /* A copy whose bits int64 cannot count has no memory to hold it. */
-  int huge = 0;
-  for (int i = r - 1; i >= 0; i--) {
-    stride[i] = held[i] == shape[i] ? total : 0;
-    huge |= __builtin_mul_overflow(total, held[i], &total);
-  }
-  *out = (nx_array){.dtype = a->dtype, .bits = bits, .rank = r + nw};
-  if (total > 0) {
-    if (huge || __builtin_mul_overflow(total, (int64_t)bits, &size)) return 1;
-    out->base = malloc((size_t)((size + 7) / 8));
-    if (out->base == NULL) return 1;
-    fill_box(out, fill, r, held, stride, 0);
-    /* The operand's indices t that land inside: lo + t·s in [0, held). */
-    nx_loop l = {.rank = r, .first = {0, a->offset}};
-    int64_t n = 1;
-    for (int i = 0; i < r; i++) {
-      int64_t s = inner[i] + 1, t0 = lo[i] >= 0 ? 0 : (-lo[i] + s - 1) / s;
-      int64_t last = held[i] - 1 - lo[i] < 0 ? -1 : (held[i] - 1 - lo[i]) / s;
-      if (last > a->dim[i] - 1) last = a->dim[i] - 1;
-      l.extent[i] = last < t0 ? 0 : last - t0 + 1;
-      l.first[0] += (lo[i] + t0 * s) * stride[i];
-      l.first[1] += t0 * a->dim[r + i];
-      l.step[0][i] = s * stride[i];
-      l.step[1][i] = a->dim[r + i];
-      n *= l.extent[i];
-    }
-    if (n > 0) {
-      l.rank = nx_coalesce_dims(2, r, l.extent, l.step);
-      nx_cpu_copy_loop(out->base, a->base, bits, &l);
-    }
-  }
-  /* The windows: each window's axis by its count, stepping [step]
-     elements, then an axis of its size, stepping [dilation]. */
-  for (int i = 0; i < r; i++) {
-    out->dim[i] = shape[i];
-    out->dim[r + nw + i] = stride[i];
-  }
-  for (int k = 0; k < nw; k++) {
-    const int64_t *w = p->window[k]; /* axis, size, step, dilation */
-    int64_t ax = w[0];
-    out->dim[ax] = nx_cpu_windows(shape[ax], w);
-    out->dim[r + nw + ax] = w[2] * stride[ax];
-    out->dim[r + k] = w[1];
-    out->dim[r + nw + r + k] = w[3] * stride[ax];
-  }
-  int64_t elements = 1;
-  for (int i = 0; i < r + nw; i++) elements *= out->dim[i];
-  int whole = nw == 0 && total == elements;
-  out->flags = elements == 0 ? NX_EMPTY : whole ? NX_CONTIGUOUS | NX_DISTINCT : 0;
-  return 0;
-}
-
-/* Folds */
 
 /* Zeroes the [n] elements of [a] from position [p], contiguous: a
    sub-byte dtype's as a run (nx_array.h), whose end bytes other units'
@@ -725,10 +660,10 @@ value nx_cpu_fold_pad(value vpad, value vd, value vx) {
   nx_cpu_row2 add = nx_cpu_rows.op2[NX_OP2_ADD][nx_cpu_carrier(dt)];
   /* The operand's shape: the padded extents, each window's axis by its
      count, then the windows' sizes. */
-  nx_cpu_pad pad;
+  load_pad pad;
   int64_t shape[2 * NX_MAX_RANK], xs[2 * NX_MAX_RANK], off, want[NX_MAX_RANK];
   int r = nx_array_layout(vd, shape, &off), rx = nx_array_layout(vx, xs, &off);
-  if (nx_cpu_pad_of(vpad, &pad) || nx_cpu_padded_shape(&pad, r, shape, want))
+  if (pad_of(vpad, &pad) || padded_shape(&pad, r, shape, want))
     CAMLreturn(Val_int(NX_SHAPE));
   int nw = pad.nwindows, ry = r;
   if (rx != r + nw) CAMLreturn(Val_int(NX_SHAPE));

@@ -811,51 +811,6 @@ void nx_cpu_copy_loop(uint8_t *dst, const uint8_t *src, int bits,
 void nx_cpu_cast_loop(const nx_array *dst, const nx_array *src,
                       const nx_loop *l);
 
-/* Padded loads */
-
-/* A padding, Nx_kernel.pad, copied out of OCaml: [lo], [hi] and
-   [interior] by axis of its [rank], then by window its axis, size, step
-   and dilation. */
-typedef struct {
-  int rank, nwindows;
-  int64_t lo[NX_MAX_RANK], hi[NX_MAX_RANK], interior[NX_MAX_RANK];
-  int64_t window[NX_MAX_RANK][4];
-} nx_cpu_pad;
-
-/* Copies the Nx_kernel.pad [v] into [p] and answers NX_OK, or NX_SHAPE
-   where [lo], [hi] and [interior] differ in length or the rank and the
-   windows number more than NX_MAX_RANK. Reads [v] alone and allocates
-   nothing (assemble.c). */
-int nx_cpu_pad_of(value v, nx_cpu_pad *p);
-
-/* Fills [y] with the shape an operand of shape [x] and rank [r] has once
-   padded by [p], its windows' axes last, as Nx_kernel.Shape.padded
-   computes it; nx_cpu.ml checks a load's shape by Shape.padded before a
-   kernel copies it. Answers NX_OK, or NX_SHAPE for a pad it cannot
-   apply: [r] other than [p]'s rank, an extent below zero or past int64,
-   or a window whose size, step or dilation is below one. */
-int nx_cpu_padded_shape(const nx_cpu_pad *p, int r, const int64_t *x,
-                        int64_t *y);
-
-/* Copies a load's padding [v], a (Nx_kernel.pad * string) of the pad and
-   its fill's bits, into [p] and [fill], 16 bytes zero-padded, and answers
-   NX_OK, or NX_SHAPE where the pad fits no operand of the shape of [x],
-   the load's array. Reads [v] and [x] alone and allocates nothing, so a
-   kernel copies it before the door, which can run OCaml code
-   (assemble.c). */
-int nx_cpu_padding_of(value v, value x, nx_cpu_pad *p, uint8_t *fill);
-
-/* Fills [out] with the padded load [p] of the operand [a]: a plain
-   descriptor over a C-contiguous copy of [a] padded with the element of
-   bits [fill], laid out by [p]'s windows, which a kernel reads as any
-   operand (assemble.c). [a]'s shape is one nx_cpu_padded_shape answers
-   NX_OK for. The copy lives in C-heap memory at [out->base], which the
-   caller frees; it is NULL for a load with no element. Answers 0, or 1 if
-   host memory runs out, having allocated nothing. Reads no OCaml
-   value. */
-int nx_cpu_unpad(const nx_array *a, const nx_cpu_pad *p,
-                 const uint8_t *fill, nx_array *out);
-
 /* Programs
 
    A map's program as map.c runs it, block by block, for a kernel that

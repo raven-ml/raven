@@ -43,9 +43,7 @@
    wide dtype needs, comes from the heap in place of the stack, once per
    block the walk runs at a time: a block puts it back for the next.
 
-   A padded load is first copied padded into C-heap memory (assemble.c),
-   which the call holds until it returns, and read from there as a plain
-   one. */
+   Every load is plain: nx_cpu.ml realises a padded one first. */
 
 #include <stdlib.h>
 #include <string.h>
@@ -629,11 +627,6 @@ static double element_price(const step *s, int nn, const nx_array *a,
   return per;
 }
 
-/* Whether run_map prices its walk and releases the domain lock for it,
-   or runs it as its caller left the lock, its caller's price covering
-   the walk. */
-enum { OWN_PRICE, CALLERS_PRICE };
-
 /* The nodes of [s] that run a kind's row: each takes about as long as a
    memcpy of the loop's bytes. */
 static int64_t kinds(const step *s, int nn) {
@@ -663,8 +656,6 @@ static int widest(const step *s, int nn) {
   return w;
 }
 
-/* Runs the program copied into the steps [s], of [nn] nodes and outputs
-   [outs], over the [n] operands [a] the door read, its outputs first. */
 /* Decodes the program copied into the steps [s], of [nn] nodes and outputs
    [outs], into [j] over the [n] operands [a], its outputs first and of the
    loop's shape, the index after them where a coordinate reads it, its
@@ -695,26 +686,25 @@ static int setup(prog *j, step *s, int nn, int nouts, const int32_t *outs,
 }
 
 /* Runs the program copied into the steps [s], of [nn] nodes and outputs
-   [outs], over the [n] operands [a] the door read, its outputs first,
-   priced as [pricing] says. */
+   [outs], over the [n] operands [a] the door read, its outputs first. */
 static int run_map(step *s, int nn, int nouts, const int32_t *outs,
-                   nx_array *a, int n, int pricing) {
+                   nx_array *a, int n) {
   struct heap heap = {0};
   prog j;
   int64_t most;
   /* A program whose nodes' analysis costs a release's worth is analysed
      with the lock released, whatever its walk costs. */
-  int early = pricing == OWN_PRICE && nn > NX_CPU_ITEMS, released = 0;
+  int early = nn > NX_CPU_ITEMS, released = 0;
   if (early) released = nx_cpu_release(NX_CPU_RELEASE_BYTES);
   int e = setup(&j, s, nn, nouts, outs, a, n, &heap, &most);
   nx_loop l;
   if (!e && !(e = nx_coalesce(j.n, a, &l))) {
-    if (pricing == OWN_PRICE && !early)
+    if (!early)
       released = nx_cpu_release(
           nx_cpu_loop_cost(j.n, &l, element_price(s, nn, a, j.n)));
     nx_cpu_walk(j.n, a, &l, most, kinds(s, nn), block, &j);
   }
-  if (pricing == OWN_PRICE) nx_cpu_reacquire(released);
+  nx_cpu_reacquire(released);
   for (int i = 0; i < SPARES; i++) free(heap.spare[i]);
   return heap.failed ? -1 : e;
 }
@@ -919,21 +909,17 @@ void nx_cpu_prog_terms(const nx_cpu_prog *g, const nx_cpu_block *b,
 }
 
 /* What nx_cpu_map holds on the C heap where it holds any: a long
-   program's steps and its padded loads' pads. A custom block owns them,
-   so that an exception nx_read raises, Out_of_memory or Rig.Lost, leaves
-   them to its finalizer. A call of a short program and no padded load
-   allocates none. */
+   program's steps. A custom block owns them, so that an exception nx_read
+   raises, Out_of_memory or Rig.Lost, leaves them to its finalizer. A call
+   of a short program allocates none. */
 typedef struct {
   step *s;
-  nx_cpu_pad *pads;
 } map_held;
 
 static void map_release(value owner) {
   map_held *h = Data_custom_val(owner);
   free(h->s);
-  free(h->pads);
   h->s = NULL;
-  h->pads = NULL;
 }
 
 /* map_release, a long program's steps freed with the domain lock released
@@ -942,8 +928,6 @@ static void map_drop(value owner, int long_program) {
   map_held *h = Data_custom_val(owner);
   void *steps = h->s;
   h->s = NULL;
-  free(h->pads);
-  h->pads = NULL;
   if (long_program) nx_free_released(steps);
   else free(steps);
 }
@@ -954,65 +938,12 @@ static struct custom_operations map_ops = {
     custom_serialize_default,   custom_deserialize_default,
     custom_compare_ext_default, custom_fixed_length_default};
 
-/* The paddings of a map's loads, copied out of OCaml before the door:
-   [padded[k]] where load k is padded, with its pad at [pads[k]] and its
-   fill's bits. */
-typedef struct {
-  int padded[NX_MAX_OPERANDS];
-  nx_cpu_pad *pads;
-  uint8_t fill[NX_MAX_OPERANDS][16];
-} paddings;
-
-/* Runs the map over the [n] operands [a] the door read, its loads from
-   [nouts], each padded one through its padded copy, the copies'
-   descriptors in the thread's kept scratch. Answers -1 if host memory
-   runs out. */
-static int run_padded(step *s, int nn, int nouts, const int32_t *outs,
-                      nx_array *a, int n, const paddings *p) {
-  if (p->pads == NULL) return run_map(s, nn, nouts, outs, a, n, OWN_PRICE);
-  /* One descriptor more than the operands: the index's, which setup
-     writes after them where the program reads a coordinate. */
-  nx_array *run = nx_cpu_take((n + 1) * (int64_t)sizeof(nx_array));
-  if (run == NULL) return -1;
-  /* A program whose nodes' analysis costs a release's worth is priced
-     with the lock released, as run_map analyses it. */
-  int early = nn > NX_CPU_ITEMS, released = 0;
-  if (early) released = nx_cpu_release(NX_CPU_RELEASE_BYTES);
-  /* The price of the padded copies and the walk over them, each element
-     strided: each copy has the loop's shape, the destinations', and its
-     load's dtype; the walk's element is priced as run_map prices it, with
-     an index's loads and stores. */
-  double copies = 0, per = element_price(s, nn, a, n) + 2 * sizeof(int64_t);
-  for (int k = 0; k < n - nouts; k++)
-    if (p->padded[k]) copies += nx_cpu_width(a[nouts + k].dtype);
-  if (!early)
-    released = nx_cpu_release(nx_cpu_elements(&a[0]) * (copies + per) *
-                              NX_CPU_STRIDED_COST);
-  int copied = nouts, e = 0;
-  memcpy(run, a, sizeof(nx_array) * (size_t)n);
-  for (; copied < n && !e; copied++) {
-    int k = copied - nouts;
-    if (p->padded[k] &&
-        nx_cpu_unpad(&a[copied], &p->pads[k], p->fill[k], &run[copied]))
-      e = -1;
-  }
-  if (!e) e = run_map(s, nn, nouts, outs, run, n, CALLERS_PRICE);
-  /* A copy that failed left its base NULL: free skips it. */
-  for (int i = nouts; i < copied; i++)
-    if (p->padded[i - nouts]) free(run[i].base);
-  nx_cpu_give(run);
-  nx_cpu_reacquire(released);
-  return e;
-}
-
-/* The external: the program [vp], the destinations [vdsts], the loads
-   [vloads] and their paddings [vpads], each Some (pad, fill's bits) for a
-   padded load, or none where no load is padded. A load's array is its
-   first field, Plain's or Padded's. The program and the paddings are
-   copied before the door, which can run OCaml code: the steps of a long
-   program and the pads on the heap the custom block owns. */
-value nx_cpu_map(value vp, value vdsts, value vloads, value vpads) {
-  CAMLparam4(vp, vdsts, vloads, vpads);
+/* The external: the program [vp], the destinations [vdsts] and the plain
+   loads [vloads], each a Plain's array. The program is copied before the
+   door, which can run OCaml code: a long program's steps on the heap the
+   custom block owns. */
+value nx_cpu_map(value vp, value vdsts, value vloads) {
+  CAMLparam3(vp, vdsts, vloads);
   CAMLlocal1(owner);
   int nouts = (int)Wosize_val(Field(vp, NX_PROG_OUTS));
   int nins = (int)Wosize_val(Field(vp, NX_PROG_INS));
@@ -1023,30 +954,10 @@ value nx_cpu_map(value vp, value vdsts, value vloads, value vpads) {
      coordinate, the index: past NX_MAX_OPERANDS arrays the map declines,
      as nx_cpu.mli states. */
   if (n >= NX_MAX_OPERANDS) CAMLreturn(Val_int(NX_DECLINED));
-  int pads = Wosize_val(vpads) > 0, owned = pads || nn > STEPS;
-  if (owned) {
-    owner = caml_alloc_custom(&map_ops, sizeof(map_held), 0, 1);
-    *(map_held *)Data_custom_val(owner) = (map_held){NULL, NULL};
-  }
-  paddings p;
-  p.pads = NULL;
-  if (pads) {
-    p.pads = malloc((size_t)nins * sizeof *p.pads);
-    if (p.pads == NULL) caml_raise_out_of_memory();
-    ((map_held *)Data_custom_val(owner))->pads = p.pads;
-    for (int k = 0; k < nins; k++) {
-      value v = Field(vpads, k);
-      p.padded[k] = Is_block(v);
-      if (p.padded[k] &&
-          nx_cpu_padding_of(Field(v, 0), Field(Field(vloads, k), 0),
-                            &p.pads[k], p.fill[k])) {
-        map_release(owner);
-        CAMLreturn(Val_int(NX_SHAPE));
-      }
-    }
-  }
   step local[STEPS], *s = local;
   if (nn > STEPS) {
+    owner = caml_alloc_custom(&map_ops, sizeof(map_held), 0, 1);
+    *(map_held *)Data_custom_val(owner) = (map_held){NULL};
     s = steps_of(nn);
     if (s == NULL) caml_raise_out_of_memory();
     ((map_held *)Data_custom_val(owner))->s = s;
@@ -1061,10 +972,10 @@ value nx_cpu_map(value vp, value vdsts, value vloads, value vpads) {
     in[nouts + k] = (nx_operand){Field(Field(vloads, k), 0), ins[k], 0};
   nx_array a[NX_MAX_OPERANDS];
   if (!(e = nx_read(n, in, a))) {
-    e = run_padded(s, nn, nouts, outs, a, n, &p);
+    e = run_map(s, nn, nouts, outs, a, n);
     nx_done(n, a);
   }
-  if (owned) map_drop(owner, nn > NX_CPU_ITEMS);
+  if (nn > STEPS) map_drop(owner, nn > NX_CPU_ITEMS);
   if (e < 0) caml_raise_out_of_memory();
   CAMLreturn(Val_int(e));
 }

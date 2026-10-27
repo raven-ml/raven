@@ -4097,14 +4097,11 @@ static int network_into(int r, int axis, const nx_array *y,
 
 /* Entries */
 
-/* Reads [x], one destination [d0] or two, [d0] and [d1], and, where
-   [vpad] is Some (pad, fill), [x] copied padded with the bits [fill] into
-   C-heap scratch (assemble.c), and computes [c] of them: [r]'s reduction
-   along the [naxes] axes [axes], its scan along [axes[0]], or a Moments
-   scan along [axes[0]] into the two destinations, as [op] says.
-   The destinations are of any dtype, but Arg's int64 positions. The pad
-   is trusted: one that fits no operand of [x]'s shape is refused before
-   anything reads [x]. */
+/* Reads [x], one destination [d0] or two, [d0] and [d1], and computes
+   [c] of them: [r]'s reduction along the [naxes] axes [axes], its scan
+   along [axes[0]], or a Moments scan along [axes[0]] into the two
+   destinations, as [op] says. The destinations are of any dtype, but
+   Arg's int64 positions. */
 typedef struct {
   task op;
   int r, naxes;
@@ -4134,9 +4131,9 @@ static int term_of(const call *c) {
   return c->r <= NX_MONOID_PROD ? BY_SUMS : BY_EXTREMES;
 }
 
-/* Whether the loaded operand [x], of the loaded shape [s] and rank [r],
-   steps one element along axis [i]: a [copied] one, padded or aliased, is
-   read from a C-contiguous copy. */
+/* Whether the operand [x], of the shape [s] and rank [r], steps one
+   element along axis [i]: a [copied] one, aliased or a program's virtual
+   operand, is read C-contiguous. */
 static int unit_step(const nx_array *x, const int64_t *s, int r, int copied,
                      int i) {
   if (copied) {
@@ -4163,7 +4160,7 @@ static double fill_cost(const nx_array *d) {
 }
 
 /* The price (cpu.h, Calls) of the call [c] over the operand [x] of the
-   loaded shape [s] and rank [r], [copied] or not (unit_step), into the
+   shape [s] and rank [r], [copied] or not (unit_step), into the
    [nd] destinations [d]: its terms, each [extra] more, or, without a
    term, the destinations' fills. A call too small to cost
    NX_CPU_RELEASE_BYTES at the dearest term is priced so. */
@@ -4234,23 +4231,15 @@ static int identity_of(value vp) {
 /* Computes [c] of [vx], a program's one load that is its identity, of
    the program's dtype [dt], read in place, into the destinations [d0] and
    [d1] (Val_unit where [c] has one), from the carries [vcarry] where it is
-   Some; [vpad] holds the load's pad and fill where it is padded. Nothing
-   is copied before the door: a call of a few elements allocates nothing.
-   A padded load is read from its padded copy; one a destination aliases,
-   from a copy too, since a scan reads its terms again after it writes
-   their results: for its chunks' totals, and in a Moments scan's exact
-   pass. */
+   Some. Nothing is copied before the door: a call of a few elements
+   allocates nothing. A load a destination aliases is read from a copy,
+   since a scan reads its terms again after it writes their results: for
+   its chunks' totals, and in a Moments scan's exact pass. */
 static value run(const call *c, int dt, value d0, value d1, value vx,
-                 value vpad, value vcarry) {
-  CAMLparam5(d0, d1, vx, vpad, vcarry);
+                 value vcarry) {
+  CAMLparam4(d0, d1, vx, vcarry);
   int nd = d1 == Val_unit ? 1 : 2;
   int arg = c->r == NX_CPU_ARG_MAX || c->r == NX_CPU_ARG_MIN;
-  /* The pad and the fill, copied before anything that can move them. */
-  int padded = Is_block(vpad);
-  nx_cpu_pad pad;
-  uint8_t bits[16] = {0};
-  if (padded && nx_cpu_padding_of(Field(vpad, 0), vx, &pad, bits))
-    CAMLreturn(Val_int(NX_SHAPE));
   int dt1 = nd == 1 ? dt : arg ? NX_INT64 : nx_array_dtype(d1);
   int nc = Is_block(vcarry), n = nd + 1 + nc;
   nx_operand in[4] = {{d0, nx_array_dtype(d0), 1}, {d1, dt1, 1}};
@@ -4260,30 +4249,22 @@ static value run(const call *c, int dt, value d0, value d1, value vx,
   int e = nx_read(n, in, a);
   if (e) CAMLreturn(Val_int(e));
   const nx_array *cy = nc ? &a[nd + 1] : NULL;
-  int copy = padded || x->alias;
-  int64_t ys[NX_MAX_RANK], terms, outputs;
-  if (padded) nx_cpu_padded_shape(&pad, x->rank, x->dim, ys);
-  int r = padded ? pad.rank + pad.nwindows : x->rank;
-  /* The destinations fit the operand, padded, before it is copied. */
-  nx_array loop = {.rank = r};
-  memcpy(loop.dim, padded ? ys : x->dim, sizeof(int64_t) * (size_t)r);
-  if ((e = checked(c->op, c->r, c->axes, c->naxes, &a[0], &a[nd - 1], &loop,
+  int copy = x->alias;
+  int64_t terms, outputs;
+  if ((e = checked(c->op, c->r, c->axes, c->naxes, &a[0], &a[nd - 1], x,
                    &terms, &outputs)) ||
       (e = carried(c, cy, &a[0]))) {
     nx_done(n, a);
     CAMLreturn(Val_int(e));
   }
   double extra = copy ? NX_CPU_STRIDED_COST * nx_cpu_width(dt) : 0;
-  int released = nx_cpu_release(
-      call_cost(c, x, padded ? ys : x->dim, r, copy, extra, a, nd));
+  int released =
+      nx_cpu_release(call_cost(c, x, x->dim, x->rank, copy, extra, a, nd));
   /* A carry a destination aliases is read from a copy too, as the results
      may overwrite it before it is read. */
   nx_array kept_carry = {0};
   int failed = cy != NULL && cy->alias && own_copy(cy, &kept_carry, HEAP);
-  if (!failed)
-    failed = padded     ? nx_cpu_unpad(x, &pad, bits, &loaded)
-             : x->alias ? own_copy(x, &loaded, KEPT_SCRATCH)
-                        : 0;
+  if (!failed && copy) failed = own_copy(x, &loaded, KEPT_SCRATCH);
   if (failed) {
     free(kept_carry.base);
     nx_cpu_reacquire(released);
@@ -4296,8 +4277,7 @@ static value run(const call *c, int dt, value d0, value d1, value vx,
           ? network_into(c->r, c->axes[0], &a[0], &a[nd - 1], x, NULL)
           : reduce_into(c->op, c->r, c->axes, c->naxes, &a[0], &a[nd - 1],
                         x, cy, NULL);
-  if (padded) free(loaded.base);
-  else if (copy) nx_cpu_give(loaded.base);
+  if (copy) nx_cpu_give(loaded.base);
   free(kept_carry.base);
   nx_cpu_reacquire(released);
   nx_done(n, a);
@@ -4318,24 +4298,21 @@ static int two(int r) {
   return r == NX_CPU_ARG_MAX || r == NX_CPU_ARG_MIN || r == NX_CPU_MOMENTS;
 }
 
-/* What run_fused holds on the C heap: the program's copy, past
-   NX_MAX_OPERANDS entries its tables, and its padded loads' pads. A custom
-   block owns them, so that an exception nx_read raises, Out_of_memory or
-   Rig.Lost, leaves them to its finalizer. */
+/* What run_fused holds on the C heap: the program's copy and, past
+   NX_MAX_OPERANDS entries, its tables. A custom block owns them, so that
+   an exception nx_read raises, Out_of_memory or Rig.Lost, leaves them to
+   its finalizer. */
 typedef struct {
   nx_cpu_prog *g;
   void *tables;
-  nx_cpu_pad *pads;
 } fused_held;
 
 static void release(value owner) {
   fused_held *h = Data_custom_val(owner);
   if (h->g != NULL) nx_cpu_prog_free(h->g);
   free(h->tables);
-  free(h->pads);
   h->g = NULL;
   h->tables = NULL;
-  h->pads = NULL;
 }
 
 /* release, what a count sized freed with the domain lock released where
@@ -4346,11 +4323,10 @@ static void drop(value owner, int many) {
     return;
   }
   fused_held h = *(fused_held *)Data_custom_val(owner);
-  *(fused_held *)Data_custom_val(owner) = (fused_held){NULL, NULL, NULL};
+  *(fused_held *)Data_custom_val(owner) = (fused_held){NULL, NULL};
   caml_enter_blocking_section_no_pending();
   nx_cpu_prog_free(h.g);
   free(h.tables);
-  free(h.pads);
   caml_leave_blocking_section();
 }
 
@@ -4389,15 +4365,13 @@ static int fused_operand(void *ctx, int k, nx_operand *in) {
 
 /* Computes [c] of the program [vp] over the loop of [rank] axes of extents
    [shape], or of its first destination's shape where [rank] is -1, its
-   loads [vloads], each copied padded where [vpads], empty where none is
-   padded, holds Some (pad, fill), by the reductions [vrs], an array of
+   loads [vloads], by the reductions [vrs], an array of
    pairs of an Nx_kernel.reduction and an output, or a scan's one pair
    where [single], in turn into the destinations [vdsts], each reduction's
    one or two as run takes them. The loop's terms are virtual, read
    through the program (Programs), in the output's held dtype. Every
    destination is checked before any is written, so that a refusal writes
-   nothing. The program and the pads are
-   copied before the door. Each reduction's loop holds its one or two
+   nothing. The program is copied before the door. Each reduction's loop holds its one or two
    destinations, the virtual operand and the loads, whatever the count of
    reductions, which nothing bounds: their tables, and the door's of every
    destination and load, live on the stack up to NX_MAX_OPERANDS entries
@@ -4405,9 +4379,8 @@ static int fused_operand(void *ctx, int k, nx_operand *in) {
    copy. */
 static value run_fused(const call *c, value vp, value vrs, int single,
                        int rank, const int64_t *shape, value vdsts,
-                       value vloads, value vpads, value vcarry) {
-  CAMLparam5(vp, vrs, vdsts, vloads, vpads);
-  CAMLxparam1(vcarry);
+                       value vloads, value vcarry) {
+  CAMLparam5(vp, vrs, vdsts, vloads, vcarry);
   CAMLlocal1(owner);
   int nl = (int)Wosize_val(Field(vp, NX_PROG_INS));
   int nouts = (int)Wosize_val(Field(vp, NX_PROG_OUTS));
@@ -4419,7 +4392,7 @@ static value run_fused(const call *c, value vp, value vrs, int single,
   if (3 + nl > NX_MAX_OPERANDS || nouts + nl + 1 > NX_MAX_OPERANDS)
     CAMLreturn(Val_int(NX_DECLINED));
   owner = caml_alloc_custom(&fused_ops, sizeof(fused_held), 0, 1);
-  *(fused_held *)Data_custom_val(owner) = (fused_held){NULL, NULL, NULL};
+  *(fused_held *)Data_custom_val(owner) = (fused_held){NULL, NULL};
   nx_cpu_prog *g = nx_cpu_prog_copy(&vp);
   if (g == NULL) caml_raise_out_of_memory();
   ((fused_held *)Data_custom_val(owner))->g = g;
@@ -4469,26 +4442,6 @@ static value run_fused(const call *c, value vp, value vrs, int single,
     if (ks[i] < 0 || ks[i] >= nouts) e = NX_SHAPE;
   }
   if (!e && want != nd) e = NX_SHAPE;
-  /* The pads on the heap, where a load is padded, as its copy will be. */
-  int padded[NX_MAX_OPERANDS] = {0};
-  nx_cpu_pad *pad = NULL;
-  uint8_t fill[NX_MAX_OPERANDS][16] = {{0}};
-  for (int i = 0; !e && i < nl && Wosize_val(vpads) > 0; i++) {
-    value v = Field(vpads, i);
-    padded[i] = Is_block(v);
-    if (!padded[i]) continue;
-    if (pad == NULL) {
-      pad = malloc((size_t)nl * sizeof *pad);
-      if (pad == NULL) {
-        release(owner);
-        caml_raise_out_of_memory();
-      }
-      ((fused_held *)Data_custom_val(owner))->pads = pad;
-    }
-    if (nx_cpu_padding_of(Field(v, 0), Field(Field(vloads, i), 0), &pad[i],
-                          fill[i]))
-      e = NX_SHAPE;
-  }
   if (e) {
     drop(owner, many);
     CAMLreturn(Val_int(e));
@@ -4534,10 +4487,10 @@ static value run_fused(const call *c, value vp, value vrs, int single,
   /* The call's price (cpu.h, Calls): each reduction's, as run prices
      one over the loop's C-contiguous virtual operand (call_cost), each term
      also running the program's kinds (nx_cpu_prog_cost), and the copies of
-     padded and aliased loads. */
+     aliased loads. */
   double per = 0, cost = 0;
   for (int i = 0; i < nl; i++)
-    if (padded[i] || a[nd + i].alias)
+    if (a[nd + i].alias)
       per += NX_CPU_STRIDED_COST * nx_cpu_width(a[nd + i].dtype);
   per += nx_cpu_prog_cost(g);
   for (int i = 0; i < nr; i++) {
@@ -4555,16 +4508,13 @@ static value run_fused(const call *c, value vp, value vrs, int single,
   int copied = 0, oom = held == NULL;
   fused *z = (fused *)held;
   nx_array *loads = oom ? NULL : (nx_array *)(held + sizeof(fused));
-  /* A padded load is read from its padded copy; one a destination
-     aliases, from a copy too, as run reads such an operand: on the heap,
-     as many as the loads, so that the thread's kept buffers hold no more
-     than the reductions' copies and work. */
+  /* A load a destination aliases is read from a copy, as run reads such
+     an operand: on the heap, as many as the loads, so that the thread's
+     kept buffers hold no more than the reductions' copies and work. */
   for (; copied < nl && !oom; copied++) {
     nx_array *l = &a[nd + copied];
     loads[copied] = *l;
-    if (padded[copied])
-      oom = nx_cpu_unpad(l, &pad[copied], fill[copied], &loads[copied]);
-    else if (l->alias) oom = own_copy(l, &loads[copied], HEAP);
+    if (l->alias) oom = own_copy(l, &loads[copied], HEAP);
   }
   /* A carry a destination aliases, from a copy, as run reads it. */
   nx_array kept_carry = {0};
@@ -4599,7 +4549,7 @@ static value run_fused(const call *c, value vp, value vrs, int single,
   if (!oom && !e && nx_cpu_prog_failed(g)) e = -1;
   /* A copy that failed left its base NULL: free skips it. */
   for (int i = 0; i < copied; i++)
-    if (padded[i] || a[nd + i].alias) free(loads[i].base);
+    if (a[nd + i].alias) free(loads[i].base);
   free(kept_carry.base);
   nx_cpu_give(held);
   nx_cpu_reacquire(released);
@@ -4614,24 +4564,23 @@ static value run_fused(const call *c, value vp, value vrs, int single,
    the destinations are the reduction's. Sets [*done] to 0, and computes
    nothing, where [vp] is not. */
 static value in_place(call *c, value vp, value vr, value vdsts,
-                      value vloads, value vpads, value vcarry, int *done) {
+                      value vloads, value vcarry, int *done) {
   int dt = identity_of(vp);
   *done = dt >= 0 && Int_val(Field(vr, 1)) == 0 && Wosize_val(vloads) == 1;
   if (!*done) return Val_unit;
   c->r = code_of(Field(vr, 0));
   int nd = 1 + two(c->r);
   if (Wosize_val(vdsts) != (mlsize_t)nd) return Val_int(NX_SHAPE);
-  value pad = Wosize_val(vpads) > 0 ? Field(vpads, 0) : Val_none;
   return run(c, dt, Field(vdsts, 0), nd == 2 ? Field(vdsts, 1) : Val_unit,
-             Field(Field(vloads, 0), 0), pad, vcarry);
+             Field(Field(vloads, 0), 0), vcarry);
 }
 
 /* Reduces the program [vp] over the loop of shape [vshape] along [vaxes],
-   its [loads] and their paddings [pads], by the reductions [vrs], pairs
-   of an Nx_kernel.reduction and an output, in turn into [vdsts]. A
-   program that is its one load's identity reads the load in place. */
+   its plain [loads], by the reductions [vrs], pairs of an
+   Nx_kernel.reduction and an output, in turn into [vdsts]. A program that
+   is its one load's identity reads the load in place. */
 value nx_cpu_reduce(value vp, value vrs, value vshape, value vaxes,
-                    value vdsts, value vloads, value vpads) {
+                    value vdsts, value vloads) {
   call c = {.op = REDUCE, .naxes = (int)Wosize_val(vaxes)};
   int rank = (int)Wosize_val(vshape);
   if (c.naxes > NX_MAX_RANK || rank > NX_MAX_RANK) return Val_int(NX_SHAPE);
@@ -4642,36 +4591,32 @@ value nx_cpu_reduce(value vp, value vrs, value vshape, value vaxes,
     if (axis_of(Field(vaxes, i), &c.axes[i])) return Val_int(NX_SHAPE);
   int done = 0;
   if (Wosize_val(vrs) == 1) {
-    value r = in_place(&c, vp, Field(vrs, 0), vdsts, vloads, vpads, Val_none,
-                       &done);
+    value r = in_place(&c, vp, Field(vrs, 0), vdsts, vloads, Val_none, &done);
     if (done) return r;
   }
-  return run_fused(&c, vp, vrs, 0, rank, shape, vdsts, vloads, vpads,
-                   Val_none);
+  return run_fused(&c, vp, vrs, 0, rank, shape, vdsts, vloads, Val_none);
 }
 
 value nx_cpu_reduce_byte(value *argv, int argn) {
   (void)argn;
-  return nx_cpu_reduce(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-                       argv[6]);
+  return nx_cpu_reduce(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5]);
 }
 
 /* Scans the program [vp] along [vaxis] by the pair [vr] of a reduction and
-   an output, Logsumexp and Moments by the network, its [loads] and their
-   paddings [pads], into [vdsts], over their first one's shape, from the
-   carries [vcarry] where it is Some. */
+   an output, Logsumexp and Moments by the network, its plain [loads], into
+   [vdsts], over their first one's shape, from the carries [vcarry] where
+   it is Some. */
 value nx_cpu_scan(value vp, value vr, value vaxis, value vdsts, value vloads,
-                  value vpads, value vcarry) {
+                  value vcarry) {
   call c = {.op = Is_long(Field(vr, 0)) ? NETWORK : SCAN, .naxes = 1};
   if (axis_of(vaxis, &c.axes[0])) return Val_int(NX_SHAPE);
   int done = 0;
-  value r = in_place(&c, vp, vr, vdsts, vloads, vpads, vcarry, &done);
+  value r = in_place(&c, vp, vr, vdsts, vloads, vcarry, &done);
   if (done) return r;
-  return run_fused(&c, vp, vr, 1, -1, NULL, vdsts, vloads, vpads, vcarry);
+  return run_fused(&c, vp, vr, 1, -1, NULL, vdsts, vloads, vcarry);
 }
 
 value nx_cpu_scan_byte(value *argv, int argn) {
   (void)argn;
-  return nx_cpu_scan(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
-                     argv[6]);
+  return nx_cpu_scan(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5]);
 }

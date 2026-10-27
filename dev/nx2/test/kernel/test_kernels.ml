@@ -1501,6 +1501,38 @@ let test_padded_misfits () =
         P.v ~ins:[| f32 |] [| P.In 0; Op2 (Binary Add, 0, 0) |] ~outs:[| 1 |] );
     ]
 
+(* A padded load of a dead operand answers [Dead_buffer] and writes
+   nothing, also where none of the operand's elements lands in the loop
+   and every element read is the fill: float32 [2] cropped by 2 and padded
+   by 3, read by a map, a reduction and a scan. *)
+let test_padded_dead () =
+  let x = A.of_array D.Float32 [| 2 |] [| 1.; 2. |] in
+  equal ~msg:"freed" bool true (B.free (A.buffer x));
+  let pad =
+    {
+      Nx_kernel.lo = [| -2 |];
+      hi = [| 3 |];
+      interior = [| 0 |];
+      windows = [||];
+    }
+  in
+  let load = Nx_kernel.Padded { x; fill = 0.; pad } in
+  let id = P.v ~ins:[| D.Any D.Float32 |] [| P.In 0 |] ~outs:[| 0 |] in
+  let refused msg s call =
+    let n = Array.fold_left ( * ) 1 s in
+    let y = A.of_array D.Float32 (Iarray.of_array s) (Array.make n 9.) in
+    equal ~msg answer A.Dead_buffer (call (A.Any y));
+    equal ~msg:(msg ^ ": untouched") (array float_exact) (Array.make n 9.)
+      (A.to_array y)
+  in
+  refused "a map" [| 3 |] (fun y -> Nx_cpu.map id ~dsts:[| y |] [| load |]);
+  refused "a reduction" [||] (fun y ->
+      Nx_cpu.reduce id ~shape:[| 3 |] ~axes:[| 0 |]
+        [| (Monoid Sum, 0) |]
+        ~dsts:[| y |] [| load |]);
+  refused "a scan" [| 3 |] (fun y ->
+      Nx_cpu.scan id ~axis:0 (Monoid Sum, 0) ~dsts:[| y |] [| load |])
+
 (* A map that holds many complex128 values gets blocks of few elements; over
    a transposed float32 operand the walk tiles rows, as many as fit the
    block. Each output is [k] times [2x], cast back to float32. *)
@@ -3182,6 +3214,8 @@ let cpu =
       test "a map's coordinate past its rank is refused" test_coord_past_rank;
       test "a map refuses a padded load that does not fit before copying it"
         test_padded_misfits;
+      test "a padded load of a dead operand is refused, fill alone or not"
+        test_padded_dead;
       test "a map of short blocks over a transposed operand tiles them"
         test_tiled_short_blocks;
       prop ~count:20 "erf at float64 is nx_kinds.h's over pieces of both ranges"

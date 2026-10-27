@@ -57,15 +57,26 @@ external apply3_c :
   ('w, 'r) Nx_array.t ->
   Nx_array.answer = "nx_cpu_apply3"
 
-(* Loads: a padded one's pad and its fill's bits. *)
+(* Assemblies and folds (assemble.c) *)
 
-let padding : Nx_kernel.load -> _ = function
-  | Plain _ -> None
-  | Padded { x; fill; pad } ->
-      Some (pad, Nx_kernel.Prog.bits (Nx_array.dtype x) fill)
+external assemble_c :
+  string ->
+  ('v, 's) Nx_array.t ->
+  (Nx_array.Move.range iarray * ('v, 's) Nx_array.t) array ->
+  Nx_array.answer = "nx_cpu_assemble"
 
-(* Loads' shapes, checked by Nx_kernel.Shape's rule before an external
-   copies a padded load. *)
+let assemble ~fill ~dst pieces =
+  assemble_c (Nx_kernel.Prog.bits (Nx_array.dtype dst) fill) dst pieces
+
+external fold :
+  Nx_kernel.pad ->
+  dst:('v, 's) Nx_array.t ->
+  ('v, 's) Nx_array.t ->
+  Nx_array.answer = "nx_cpu_fold_pad"
+
+(* Loads' shapes, checked by Nx_kernel.Shape's rule before a padded load
+   is realised: C sees the realised copy alone, and a misfit is refused
+   before the copy is allocated. *)
 
 (* Whether the layout [l] has extents [shape] from axis [i] on, read without
    allocating. *)
@@ -93,19 +104,105 @@ let rec fits shape (loads : Nx_kernel.load array) i =
 let loop_of (Nx_array.Any d) =
   Iarray.to_array (Nx_array.Layout.shape (Nx_array.layout d))
 
-(* Maps (map.c): each load passes its padding, or none passes any where
-   no load is padded, so that a plain map allocates nothing. *)
+(* Padded loads
+
+   A padded load is realised before a kernel reads it: a host array of the
+   operand padded, before its windows, assembled from the operand's
+   elements where they land and the pad's value elsewhere, then broadcast
+   and windowed as a view of that array. An axis the operand broadcasts
+   and the pad leaves alone is held at extent 1, so a convolution's copy
+   holds its input once, never once per output channel. The C kernels
+   then read plain loads alone. *)
+
+(* The extent of an axis of extent [d] padded by [pad] along axis [i],
+   before the windows. *)
+let padded_extent (pad : Nx_kernel.pad) d i =
+  Iarray.get pad.lo i + Iarray.get pad.hi i + d
+  + if d > 0 then Iarray.get pad.interior i * (d - 1) else 0
+
+(* The ranges of an axis of [held] elements of the copy, and of [x]'s [d]
+   along it, that [x]'s elements land on: [x]'s [t] at [lo + t s], [s] the
+   interior padding plus one, for each [t] that lands in [0, held). *)
+let landing (pad : Nx_kernel.pad) ~held d i =
+  let lo = Iarray.get pad.lo i and s = Iarray.get pad.interior i + 1 in
+  let first = if lo >= 0 then 0 else (s - 1 - lo) / s in
+  let last =
+    if held - 1 - lo < 0 then -1 else min (d - 1) ((held - 1 - lo) / s)
+  in
+  let count = max 0 (last - first + 1) in
+  let into = { Nx_array.Move.start = lo + (first * s); count; step = s } in
+  (into, { Nx_array.Move.start = first; count; step = 1 })
+
+(* [x] padded with [value] as [pad] says, over a fresh host array whose
+   buffer is pushed onto [buffers] for the caller to free, or the refusal
+   its assembly answers. [x]'s padded shape is one
+   {!Nx_kernel.Shape.padded} admits. *)
+let realise (type v s) ~buffers (x : (v, s) Nx_array.t) (value : v)
+    (pad : Nx_kernel.pad) =
+  let l = Nx_array.layout x and dt = Nx_array.dtype x in
+  let d = Nx_array.Layout.dim l and r = Nx_array.Layout.rank l in
+  let shape = Iarray.init r (fun i -> padded_extent pad (d i) i) in
+  let alone i =
+    Iarray.get pad.lo i = 0 && Iarray.get pad.hi i = 0
+    && Iarray.get pad.interior i = 0
+  in
+  let held =
+    Iarray.init r (fun i ->
+        if d i > 1 && Nx_array.Layout.stride l i = 0 && alone i then 1
+        else Iarray.get shape i)
+  in
+  let a = Nx_array.create Rig.host dt held in
+  buffers := Nx_array.buffer a :: !buffers;
+  let ranges =
+    Array.init r (fun i -> landing pad ~held:(Iarray.get held i) (d i) i)
+  in
+  let region = Iarray.init r (fun i -> fst ranges.(i)) in
+  let slice = Iarray.init r (fun i -> snd ranges.(i)) in
+  let piece = Option.get (Nx_array.move (Slice slice) x) in
+  match assemble ~fill:value ~dst:a [| (region, piece) |] with
+  | Done ->
+      let y = Option.get (Nx_array.move (Broadcast shape) a) in
+      if Iarray.length pad.windows = 0 then Ok y
+      else Ok (Option.get (Nx_array.move (Window pad.windows) y))
+  | refusal -> Error refusal
+
+(* Whether a load of [loads] from [i] on is padded: a loop of its own, as
+   [Array.exists]' closure would allocate on every reduction. *)
+let rec any_padded (loads : Nx_kernel.load array) i =
+  i < Array.length loads
+  && ((match loads.(i) with Plain _ -> false | Padded _ -> true)
+     || any_padded loads (i + 1))
+
+(* [f] of [loads], each padded one realised: the copies are freed once [f]
+   returns or raises, or a copy does. The first refusal a copy answers is
+   the answer. *)
+let realised (loads : Nx_kernel.load array) f =
+  let buffers = ref [] in
+  let free () =
+    List.iter (fun b -> ignore (Rig.Buffer.free b : bool)) !buffers
+  in
+  Fun.protect ~finally:free @@ fun () ->
+  let rec go i (plain : Nx_kernel.load array) =
+    if i = Array.length loads then f plain
+    else
+      match loads.(i) with
+      | Plain _ -> go (i + 1) plain
+      | Padded { x; fill; pad } -> (
+          match realise ~buffers x fill pad with
+          | Error refusal -> refusal
+          | Ok y ->
+              plain.(i) <- Plain y;
+              go (i + 1) plain)
+  in
+  go 0 (Array.copy loads)
+
+(* Maps (map.c), over plain loads. *)
 
 external map_c :
   Nx_kernel.Prog.t ->
   Nx_array.any array ->
   Nx_kernel.load array ->
-  (Nx_kernel.pad * string) option array ->
   Nx_array.answer = "nx_cpu_map"
-
-let padded : Nx_kernel.load -> bool = function
-  | Plain _ -> false
-  | Padded _ -> true
 
 (* Whether loads [i] on of [loads] are plain, one per operand from [i] on,
    each of the dtype [ins] names. *)
@@ -138,12 +235,12 @@ let single (p : Nx_kernel.Prog.t) n (Nx_array.Any dst) loads =
     | Op2 (k, _, _), [| Plain x; Plain y |] -> apply2_c k dst x y
     | Op3 (k, _, _, _), [| Plain c; Plain x; Plain y |] ->
         apply3_c k dst c x y
-    | (In _ | Op1 _ | Op2 _ | Op3 _), _ -> map_c p [| Any dst |] loads [||]
+    | (In _ | Op1 _ | Op2 _ | Op3 _), _ -> map_c p [| Any dst |] loads
 
 (* A program of one node over plain loads, into one destination, runs by
    its kind's kernel, which reads its operands' layouts directly; any
    other through map.c. *)
-let map p ~dsts loads =
+let map_plain p ~dsts loads =
   if
     Array.length dsts = 1
     && Nx_kernel.Prog.is_single p
@@ -151,17 +248,19 @@ let map p ~dsts loads =
   then
     let last = Iarray.get p.nodes (Iarray.length p.nodes - 1) in
     single p last dsts.(0) loads
-  else if not (Array.exists padded loads) then map_c p dsts loads [||]
-  else if Array.length dsts > 0 && not (fits (loop_of dsts.(0)) loads 0) then
-    Nx_array.Shape_mismatch
-  else map_c p dsts loads (Array.map padding loads)
+  else map_c p dsts loads
 
-(* Reductions and scans (reduce.c), of a program's outputs through it,
-   each load passing its padding: an external each, which reads the terms
-   of a program that is its one load's identity in place and those of
-   another block by block (reduce.c's Programs), and checks each
-   reduction's destinations and a scan's carry. Neither allocates for a
-   program of plain loads. *)
+let map p ~dsts loads =
+  if not (any_padded loads 0) then map_plain p ~dsts loads
+  else if Array.length dsts = 0 || not (fits (loop_of dsts.(0)) loads 0) then
+    Nx_array.Shape_mismatch
+  else realised loads (map_plain p ~dsts)
+
+(* Reductions and scans (reduce.c), of a program's outputs through it, over
+   plain loads: an external each, which reads the terms of a program that
+   is its one load's identity in place and those of another block by block
+   (reduce.c's Programs), and checks each reduction's destinations and a
+   scan's carry. Neither allocates for a program of plain loads. *)
 
 external reduce_c :
   Nx_kernel.Prog.t ->
@@ -170,7 +269,6 @@ external reduce_c :
   int iarray ->
   Nx_array.any array ->
   Nx_kernel.load array ->
-  (Nx_kernel.pad * string) option array ->
   Nx_array.answer = "nx_cpu_reduce_byte" "nx_cpu_reduce"
 
 (* A scan, over its first destination's shape. *)
@@ -180,7 +278,6 @@ external scan_c :
   int ->
   Nx_array.any array ->
   Nx_kernel.load array ->
-  (Nx_kernel.pad * string) option array ->
   Nx_array.any option ->
   Nx_array.answer = "nx_cpu_scan_byte" "nx_cpu_scan"
 
@@ -191,14 +288,6 @@ let accepted (p : Nx_kernel.Prog.t) (r, k) =
 
 let rec all_accepted p rs i =
   i = Array.length rs || (accepted p rs.(i) && all_accepted p rs (i + 1))
-
-(* Whether a load of [loads] from [i] on is padded: a loop of its own, as
-   [Array.exists]' closure would allocate on every reduction. *)
-let rec any_padded (loads : Nx_kernel.load array) i =
-  i < Array.length loads && (padded loads.(i) || any_padded loads (i + 1))
-
-(* The loads' paddings, or none where no load is padded. *)
-let pads loads = if any_padded loads 0 then Array.map padding loads else [||]
 
 (* Whether the layouts [l] and [l'] have one extent from axis [i] on, of
    one rank. *)
@@ -220,16 +309,34 @@ let rec fits_dst (Nx_array.Any d as any) (loads : Nx_kernel.load array) i =
      | Padded _ -> fits (loop_of any) loads i)
      && fits_dst any loads (i + 1)
 
+(* Whether [dsts] are the destinations of the reductions [rs] along [axes]
+   of a loop of [shape]: one each, two for an Arg or a Moments, of the
+   shape {!Nx_kernel.Shape.reduce} gives. A reduction's loop is given as a
+   shape alone, which bounds no padded copy: C checks its destinations
+   after the copy, so a padded reduction checks them first. *)
+let reduces_into ~shape ~axes rs dsts =
+  let count n ((r : Nx_kernel.reduction), _) =
+    n + match r with Arg _ | Moments -> 2 | Monoid _ | Logsumexp -> 1
+  in
+  match Nx_kernel.Shape.reduce ~axes (Array.map fst rs) shape with
+  | Error _ -> false
+  | Ok want ->
+      Array.length dsts = Array.fold_left count 0 rs
+      && Array.for_all (fun d -> loop_of d = want) dsts
+
 let reduce p ~shape ~axes rs ~dsts loads =
   if not (all_accepted p rs 0) then Nx_array.Wrong_dtype
   else if not (fits shape loads 0) then Nx_array.Shape_mismatch
-  else reduce_c p rs shape axes dsts loads (pads loads)
+  else if not (any_padded loads 0) then reduce_c p rs shape axes dsts loads
+  else if not (reduces_into ~shape ~axes rs dsts) then Nx_array.Shape_mismatch
+  else realised loads (reduce_c p rs shape axes dsts)
 
 let scan ?carry p ~axis rk ~dsts loads =
   if not (accepted p rk) then Nx_array.Wrong_dtype
   else if Array.length dsts = 0 || not (fits_dst dsts.(0) loads 0) then
     Nx_array.Shape_mismatch
-  else scan_c p rk axis dsts loads (pads loads) carry
+  else if not (any_padded loads 0) then scan_c p rk axis dsts loads carry
+  else realised loads (fun loads -> scan_c p rk axis dsts loads carry)
 
 (* Gathers and scatters (index.c) *)
 
@@ -266,23 +373,6 @@ external sort :
   positions:(int64, Nx_array.Dtype.int64_elt) Nx_array.t ->
   ('v, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_sort"
-
-(* Assemblies and folds (assemble.c) *)
-
-external assemble_c :
-  string ->
-  ('v, 's) Nx_array.t ->
-  (Nx_array.Move.range iarray * ('v, 's) Nx_array.t) array ->
-  Nx_array.answer = "nx_cpu_assemble"
-
-let assemble ~fill ~dst pieces =
-  assemble_c (Nx_kernel.Prog.bits (Nx_array.dtype dst) fill) dst pieces
-
-external fold :
-  Nx_kernel.pad ->
-  dst:('v, 's) Nx_array.t ->
-  ('v, 's) Nx_array.t ->
-  Nx_array.answer = "nx_cpu_fold_pad"
 
 (* Contractions (gemm.c) *)
 
