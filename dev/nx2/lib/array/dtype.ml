@@ -120,7 +120,13 @@ type float_format = {
   max_finite : float;
 }
 
-type row = { name : string; bits : int; format : float_format option }
+(* [most] is the most elements whose bytes an [int] counts. *)
+type row = {
+  name : string;
+  bits : int;
+  most : int;
+  format : float_format option;
+}
 
 let format e m ~infinities ~nans ~max_finite =
   let bias = (1 lsl (e - 1)) - 1 in
@@ -144,7 +150,9 @@ let ieee e m =
 (* The OCP minifloats e4m3fn and e2m1fn spend the top exponent on finite values:
    e4m3fn keeps one NaN code per sign, e2m1fn none. *)
 let ocp e m ~nans ~max_finite = format e m ~infinities:false ~nans ~max_finite
-let row name bits format = { name; bits; format }
+let row name bits format =
+  let most = if bits >= 8 then max_int / (bits / 8) else max_int in
+  { name; bits; most; format }
 
 let rows =
   [|
@@ -181,16 +189,15 @@ let float_format (type s) (dt : (float, s) t) =
 
 let bytes dt n =
   if n < 0 then invalid_arg (Printf.sprintf "Dtype.bytes: %d elements" n);
-  let b = bits dt in
-  if b >= 8 then begin
-    let w = b / 8 in
-    if n > max_int / w then
+  let r = Array.unsafe_get rows (code dt) in
+  if r.bits >= 8 then begin
+    if n > r.most then
       invalid_arg
         (Printf.sprintf "Dtype.bytes: %d elements of %s overflow" n (name dt));
-    n * w
+    n * (r.bits / 8)
   end
   else
-    let k = 8 / b in
+    let k = 8 / r.bits in
     (n / k) + if n mod k = 0 then 0 else 1
 
 (* Kinds *)
