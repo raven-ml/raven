@@ -985,7 +985,7 @@ let order c =
   let m, n = rows_cols c and _, k, _ = sizes c in
   order_of c.acc m n k
 
-(* gemm.c's complex paths: a copied where its numbers lie apart along k or
+(* gemm_complex.c's paths: a copied where its numbers lie apart along k or
    are of another dtype, b's blocks once where it is broadcast along the
    batch, and one contraction per part where init's columns lie apart. *)
 let complex_covers c =

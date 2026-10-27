@@ -16,7 +16,7 @@ module Support = Nx_kernels_support
 
 (* Cases *)
 
-(* The most rows gemm.c's quads' dots and its axpys take, and the most
+(* The most rows gemm_quads.c's dots and its axpys take, and the most
    bytes of a unit's sums in the axpys, AXPY_SUMS: more columns than fit
    take several units whatever the threads. The axpys take more than
    [axpy_few] rows only by k of [axpy_deep] or more and columns enough for

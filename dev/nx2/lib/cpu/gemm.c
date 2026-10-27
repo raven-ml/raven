@@ -9,16 +9,16 @@
    nx_contract_fill (gemm_view.c) groups the axes, as cpu.h states, into one
    batch, row (M), column (N) and contracted (K) axis per operand; a group
    that makes several runs takes an outer loop, a's or b's packs, or a copy
-   (Groups of several runs). An operand is read
-   through the stage, which takes any strides and dtype into its carrier, and
-   the target's conversion takes the carrier into acc: each element as a
-   cast to acc gives it, exact where acc holds its values. A scaled
+   (gemm_runs.c). An operand is read through the stage, which takes any
+   strides and dtype into its carrier, and the target's conversion takes
+   the carrier into acc: each element as a cast to acc gives it, exact
+   where acc holds its values. A scaled
    operand is staged wherever it is read, each element then multiplied by
-   its block's scale in acc (stage_at, Scales). An integer acc
+   its block's scale in acc (stage_at, gemm_scales.c). An integer acc
    computes on chain order's paths. Lane order reads b in place where it
    is acc and adjacent along the axis it streams.
 
-   Each output's sum adds in one of two orders, which order_of chooses
+   Each output's sum adds in one of two orders, which nx_gemm_order_of chooses
    from a call's M, N and K, a segmented call's once from the whole
    call's, so that its offsets never change a bit:
 
@@ -70,8 +70,14 @@
 
    R, the sum in acc, is dst itself where dst is of acc's dtype, and
    otherwise scratch in acc that a cast walk rounds into dst once every
-   product is in (Results of another dtype). Each tile starts as init, or
-   +0, when its first KC block is computed. */
+   product is in (gemm_rounded.c). Each tile starts as init, or +0, when
+   its first KC block is computed.
+
+   The derived contractions have a file each: complex numbers
+   (gemm_complex.c), 8-bit quads (gemm_quads.c), groups of several runs
+   (gemm_runs.c), results of another dtype (gemm_rounded.c), scales
+   (gemm_scales.c) and segments (gemm_segments.c). gemm.h holds what they
+   share with this file. */
 
 #include <math.h>
 #include <stdatomic.h>
@@ -81,15 +87,14 @@
 #include <caml/fail.h>
 #include <caml/mlvalues.h>
 
-#include "cpu.h"
+#include "gemm.h"
 
 /* Rows of a pass of lane order: a product of more runs in passes, each
    reading b again. */
 #define LANE_ROWS 8
 
-/* Lane order's units: dots take DOT_COLUMNS columns of b, rows ROW_BYTES
-   of each row of b, a page. */
-#define DOT_COLUMNS 16
+/* Lane order's units: dots take DOT_COLUMNS columns of b (gemm.h), rows
+   ROW_BYTES of each row of b, a page. */
 #define ROW_BYTES 4096
 
 /* The bytes of a's element up to which chain order reads a in place,
@@ -105,34 +110,9 @@
    jobs. */
 #define PANELS (8 * 1024 * 1024)
 
-/* Units of a compute job per performance core, so that cores that run
-   slower take fewer. */
-#define UNITS 4
-
 /* Job costs, in bytes of memcpy (job.c): a kernel's flops at its speed
    (cpu.h), and two a byte packed, a guess no measurement has refined. */
 #define PACK_COST 2
-
-/* The cost of [flops] on the kernel [k]. Flops multiply the extents of
-   several operands, so they and the costs are doubles; storage, within one
-   operand's extents rounded to a tile, fits in an int64_t (NX_MAX_NUMEL). */
-static double flop_cost(nx_cpu_micro k, double flops) {
-  return flops / k.flops_per_byte;
-}
-
-/* The cost a thread of a job on [g]'s kernels brings to pay for the job's
-   start (nx_cpu_job_at). */
-static double thread_bytes(const nx_cpu_gemm *g) {
-  return NX_CPU_THREAD_BYTES + g->start;
-}
-
-/* The units a compute job of [bytes] and [cost], one thread per [per] of
-   it, splits into: UNITS a thread, or one where it runs on one thread and
-   a split buys nothing. */
-static int64_t units(int64_t bytes, double cost, double per) {
-  int64_t threads = nx_cpu_threads_at(bytes, cost, per);
-  return threads > 1 ? UNITS * threads : 1;
-}
 
 /* The copies of [k]'s hardware the performance cores hold. */
 static int64_t engines(nx_cpu_micro k) {
@@ -140,144 +120,7 @@ static int64_t engines(nx_cpu_micro k) {
   return n > 1 ? n : 1;
 }
 
-/* Operands and axes, as the view numbers them. */
-enum { A = NX_VIEW_A, B = NX_VIEW_B, INIT = NX_VIEW_INIT, DST = NX_VIEW_DST };
-enum {
-  BATCH = NX_VIEW_BATCH,
-  ROW = NX_VIEW_ROW,
-  COL = NX_VIEW_COLUMN,
-  CON = NX_VIEW_CONTRACTED
-};
-
-/* An operand's block scales: [v] holds them in acc, C-contiguous, and
-   t[x][i] is the position in [v] of the block of index i along axis x, the
-   sum over the axes of x's group of each index's block times the scales'
-   step. t[x] is NULL along an axis the operand lacks, [v] NULL for an
-   unscaled operand. The scale is one along k over each run of [run]
-   indices from a multiple of it: the ratio along the operand's last
-   contracted axis. No pass moves t[CON], so the runs stay aligned. */
-typedef struct {
-  const uint8_t *v;
-  const int64_t *t[4];
-  int64_t run;
-} scale;
-
-/* An operand's group of several runs, which its packs read (pack_at):
-   [n] runs in C order, run r of extent[r] indices stepping stride[r]. */
-typedef struct {
-  int n;
-  int64_t extent[NX_MAX_RANK], stride[NX_MAX_RANK];
-} spans;
-
-/* a's and b's spans by group: of[o][x].n is at most 1 along a group of one
-   run. */
-typedef struct {
-  spans of[2][4];
-} reads;
-
-/* An operand as the view lays it out: its element (e, i, j, k) lies at
-   position first + e·st[BATCH] + i·st[ROW] + j·st[COL] + k·st[CON], and
-   an axis it lacks has step 0; along an axis of several runs, sp[x] not
-   NULL, the runs of index skip[x] + i step instead (along), so that lane
-   order's passes move on by rows as [first] moves the others. */
-typedef struct {
-  const nx_array *x; /* NULL for an absent init */
-  int64_t first;
-  int64_t st[4];
-  const spans *sp[4];
-  int64_t skip[4];
-  scale *s; /* NULL for an unscaled operand */
-} operand;
-
-typedef struct {
-  operand op[4]; /* by view operand */
-  int64_t ext[4];
-  int acc, w;
-  const nx_cpu_gemm *g;
-  int init_is_dst;   /* init is dst itself: R starts as it is */
-  int a_in, b_in;    /* chain order reads a, b in place */
-  int keeps_a;       /* fewer columns than rows, a read in place, not
-                        transposed (nx_cpu_contract_on) */
-  int alone;         /* runs on the calling thread, in one state of
-                        g's hardware (runs_alone) */
-  atomic_int failed; /* an allocation failed */
-} problem;
-
-static int64_t ceil_div(int64_t a, int64_t b) { return (a + b - 1) / b; }
-static int64_t gcd(int64_t a, int64_t b) { return b == 0 ? a : gcd(b, a % b); }
-static int64_t min64(int64_t a, int64_t b) { return a < b ? a : b; }
-
-/* The position from operand [q]'s first element of index [i] along its
-   axis [x]. */
-static int64_t along(const operand *q, int x, int64_t i) {
-  const spans *s = q->sp[x];
-  if (s == NULL) return i * q->st[x];
-  int64_t at = 0;
-  i += q->skip[x];
-  for (int r = s->n - 1; r >= 0; r--) {
-    at += i % s->extent[r] * s->stride[r];
-    i /= s->extent[r];
-  }
-  return at;
-}
-
-/* The position of operand [o]'s element (e, i, j, k). */
-static int64_t pos(const problem *p, int o, int64_t e, int64_t i, int64_t j,
-                   int64_t k) {
-  const operand *q = &p->op[o];
-  return q->first + along(q, BATCH, e) + along(q, ROW, i) +
-         along(q, COL, j) + along(q, CON, k);
-}
-
-/* Packed operands start on 128 bytes: the matrix unit loads 128 at once. */
-#define ALIGN 128
-
-static void *alloc(int64_t bytes) {
-  return aligned_alloc(ALIGN,
-                       (size_t)ceil_div(bytes > 0 ? bytes : 1, ALIGN) * ALIGN);
-}
-
-/* The calling worker's scratch of [bytes], given back by nx_cpu_give. */
-static uint8_t *scratch(problem *p, int64_t bytes) {
-  uint8_t *s = nx_cpu_take(bytes);
-  if (s == NULL) atomic_store(&p->failed, 1);
-  return s;
-}
-
-/* Dtypes */
-
-/* The dtype of [acc]'s parts: float32 or float64 for a complex [acc],
-   [acc] itself otherwise. */
-static int part_of(int acc) {
-  if (acc == NX_COMPLEX64) return NX_FLOAT32;
-  return acc == NX_COMPLEX128 ? NX_FLOAT64 : acc;
-}
-
-static int is_integer(int dt) {
-  int k = nx_dtype_row_of(dt).kind;
-  return k == NX_KIND_SIGNED || k == NX_KIND_UNSIGNED;
-}
-
-/* The dtype a sum in [acc] is computed in: int8 and uint8 for int4 and
-   uint4, whose sums modulo 2^8 are theirs modulo 2^4 once narrowed, as
-   the int8 kernels' are; [acc] itself otherwise. */
-static int summed_in(int acc) {
-  if (acc == NX_INT4) return NX_INT8;
-  return acc == NX_UINT4 ? NX_UINT8 : acc;
-}
-
-
-
 /* Staging */
-
-/* Stages operand [o]'s block of [n1] rows of [n0] elements, the first at
-   position [at], stepping [s0] along a row and [s1] across rows, into [dst]
-   in acc: row j's element i at dst + (j·pitch + i)·w. */
-static void stage_acc(const problem *p, int o, int64_t at, int64_t s0,
-                      int64_t s1, int64_t n0, int64_t n1, uint8_t *dst,
-                      int64_t pitch) {
-  nx_cpu_stage_as(p->op[o].x, at, s0, s1, n0, n1, p->acc, dst, pitch);
-}
 
 /* The lines and the scales a call of the target's float4 stage takes at
    most. */
@@ -377,13 +220,9 @@ static int stage_f4(const problem *p, int o, const int64_t *c, int x0,
   return 1;
 }
 
-static void pack_at(const problem *p, nx_cpu_pack move, int o,
-                    const int64_t *c, int x0, int x1, int64_t n0, int64_t n1,
-                    uint8_t *d, int64_t pitch);
-
 /* Stages operand [o]'s block as stage_acc does, from its element
    (e, i, j, k), [n0] along axis [x0] in a row and [n1] rows along [x1]:
-   along an axis of several runs, piece by piece as pack_at reads it, so
+   along an axis of several runs, piece by piece as nx_gemm_pack_at reads it, so
    that the operand is read where it lies; otherwise in one stage, each
    element of a scaled operand, whose axes are one run each, times its
    block's scale, rounded once in acc, a float32 or float64. */
@@ -393,7 +232,7 @@ static void stage_at(const problem *p, int o, int64_t e, int64_t i,
   const operand *q = &p->op[o];
   const int64_t c[4] = {e, i, j, k};
   if (q->sp[x0] || q->sp[x1]) {
-    pack_at(p, NULL, o, c, x0, x1, n0, n1, dst, pitch);
+    nx_gemm_pack_at(p, NULL, o, c, x0, x1, n0, n1, dst, pitch);
     return;
   }
   if (q->s && stage_f4(p, o, c, x0, x1, n0, n1, dst, pitch)) return;
@@ -416,11 +255,6 @@ static void stage_at(const problem *p, int o, int64_t e, int64_t i,
       for (int64_t u = 0; u < n0; u++) d[u] *= v[t0[u]];
     }
   }
-}
-
-/* R's element (e, i, j): dst's, in acc. */
-static uint8_t *at_r(const problem *p, int64_t e, int64_t i, int64_t j) {
-  return p->op[DST].x->base + pos(p, DST, e, i, j, 0) * p->w;
 }
 
 /* Sets R's rows [i0, i1) × columns [j0, j1) of element [e] to init, or
@@ -586,24 +420,6 @@ static void pack(const problem *p, nx_cpu_pack move, int o, int64_t at,
   stage_acc(p, o, at, s0, s1, n0, n1, d, pitch);
 }
 
-/* Operand [q]'s step along axis [x] within a run: its last run's along
-   several. */
-static int64_t step_of(const operand *q, int x) {
-  const spans *s = q->sp[x];
-  return s ? s->stride[s->n - 1] : q->st[x];
-}
-
-/* The indices from [i] along operand [q]'s axis [x], at most [n], that one
-   step reaches, the step into [*st]: the rest of its last run. */
-static int64_t piece(const operand *q, int x, int64_t i, int64_t n,
-                     int64_t *st) {
-  const spans *s = q->sp[x];
-  *st = step_of(q, x);
-  if (s == NULL) return n;
-  int64_t last = s->extent[s->n - 1];
-  return min64(n, last - (q->skip[x] + i) % last);
-}
-
 /* Packs operand [o]'s block from its element [c], (e, i, j, k), as pack
    does: [n0] along axis [x0] in a row and [n1] rows along [x1], into [d]
    [pitch] apart. Along an axis of several runs, as a window's taps make,
@@ -619,9 +435,9 @@ static int64_t piece(const operand *q, int x, int64_t i, int64_t n,
    would reach past the row packs without [move]: in a block of 96 rows of
    windows 20 apart, the piece from row 80 would otherwise give the next
    step's rows 0 to 15 values past the piece's 16 rows. */
-static void pack_at(const problem *p, nx_cpu_pack move, int o,
-                    const int64_t *c, int x0, int x1, int64_t n0, int64_t n1,
-                    uint8_t *d, int64_t pitch) {
+void nx_gemm_pack_at(const problem *p, nx_cpu_pack move, int o,
+                     const int64_t *c, int x0, int x1, int64_t n0, int64_t n1,
+                     uint8_t *d, int64_t pitch) {
   const operand *q = &p->op[o];
   int64_t tile = move == NULL ? 1 : o == A ? p->g->kernel.mr : p->g->kernel.nr;
   for (int64_t u1 = 0, m1; u1 < n1; u1 += m1) {
@@ -653,8 +469,8 @@ static void pack_a(const problem *p, nx_cpu_pack move, int64_t e, int64_t i,
   if (p->op[A].s && elements)
     stage_at(p, A, e, i, 0, pc, CON, ROW, kc, m, d, kc);
   else if (p->op[A].s) stage_at(p, A, e, i, 0, pc, ROW, CON, m, kc, d, lda);
-  else if (elements) pack_at(p, move, A, c, CON, ROW, kc, m, d, kc);
-  else pack_at(p, move, A, c, ROW, CON, m, kc, d, lda);
+  else if (elements) nx_gemm_pack_at(p, move, A, c, CON, ROW, kc, m, d, kc);
+  else nx_gemm_pack_at(p, move, A, c, ROW, CON, m, kc, d, lda);
 }
 
 /* A block of a packed at [d] for [kc] steps of [lda] elements: a kernel
@@ -676,7 +492,7 @@ static void pack_b(const problem *p, nx_cpu_pack move, int64_t e, int64_t j,
                    int64_t n, int nr, int64_t pc, int64_t kc, uint8_t *d) {
   const int64_t c[4] = {e, 0, j, pc};
   if (p->op[B].s) stage_at(p, B, e, 0, j, pc, COL, CON, n, kc, d, nr);
-  else pack_at(p, move, B, c, COL, CON, n, kc, d, nr);
+  else nx_gemm_pack_at(p, move, B, c, COL, CON, n, kc, d, nr);
 }
 
 /* Whether a sliver of [n] columns of b is packed: unless b is read in
@@ -988,7 +804,7 @@ static void fastest(problem *p) {
 
 /* [p] as the product of b's transpose by a's, which has the same outputs
    transposed and the same bits: fma(a, b, c) is fma(b, a, c). */
-static void transpose(problem *p) {
+void nx_gemm_transpose(problem *p) {
   operand a = p->op[A];
   p->op[A] = p->op[B];
   p->op[B] = a;
@@ -1640,7 +1456,7 @@ static void tiles(const problem *p) {
 }
 
 /* Passes of LANE_ROWS rows: each moves a, init and dst on by its rows.
-   The call's entry prices the whole product (call_cost), so that it
+   The call's entry prices the whole product (nx_gemm_call_cost), so that it
    releases the domain lock though each pass's jobs cost less: on one
    core a 2000 × 2000 × 16 float32 product held it for 45 ms, in 250
    passes of 0.6 MiB each. */
@@ -1649,7 +1465,7 @@ static void lanes(problem *p) {
     tiles(p);
     return;
   }
-  if (p->ext[COL] < p->ext[ROW]) transpose(p);
+  if (p->ext[COL] < p->ext[ROW]) nx_gemm_transpose(p);
   int64_t m = p->ext[ROW];
   for (int64_t i = 0; i < m && !atomic_load(&p->failed); i += LANE_ROWS) {
     p->ext[ROW] = min64(LANE_ROWS, m - i);
@@ -1732,8 +1548,8 @@ static void alone(problem *p) {
 }
 
 /* [p]'s operands and extents: [v]'s of [op]. */
-static void lay_out(problem *p, const nx_contract_view *v,
-                    const nx_array *const *op) {
+void nx_gemm_lay_out(problem *p, const nx_contract_view *v,
+                     const nx_array *const *op) {
   for (int o = 0; o < 4; o++) {
     p->op[o].x = op[o];
     p->op[o].first = v->offset[o];
@@ -1745,11 +1561,11 @@ static void lay_out(problem *p, const nx_contract_view *v,
 /* nx_cpu_contract_on on the kernels [g], a and b scaled by [s] where it is
    not NULL, and read along a group of several runs where [sp], a's and
    b's by group, is not NULL and the group's spans hold more than one. */
-static int contract_with(const nx_cpu_gemm *g, int acc, int order,
-                         const nx_contract_view *v, const nx_array *const *op,
-                         const scale *s, const reads *sp) {
+int nx_gemm_contract_with(const nx_cpu_gemm *g, int acc, int order,
+                          const nx_contract_view *v, const nx_array *const *op,
+                          const scale *s, const reads *sp) {
   problem p = {.acc = acc, .w = nx_cpu_width(acc), .g = g};
-  lay_out(&p, v, op);
+  nx_gemm_lay_out(&p, v, op);
   for (int o = A; sp && o <= B; o++)
     for (int x = ROW; x <= CON; x++)
       if (sp->of[o][x].n > 1) p.op[o].sp[x] = &sp->of[o][x];
@@ -1771,8 +1587,8 @@ static int contract_with(const nx_cpu_gemm *g, int acc, int order,
     int narrow = p.ext[COL] < p.ext[ROW];
     p.keeps_a = narrow && in_place(&p, A);
     if (narrow && !p.keeps_a) {
-      transpose(&p);
-      if (!streams(&p)) transpose(&p);
+      nx_gemm_transpose(&p);
+      if (!streams(&p)) nx_gemm_transpose(&p);
     }
     fastest(&p);
     p.a_in = in_place(&p, A);
@@ -1785,697 +1601,8 @@ static int contract_with(const nx_cpu_gemm *g, int acc, int order,
 
 int nx_cpu_contract_on(int acc, int order, const nx_contract_view *v,
                        const nx_array *const *op) {
-  return contract_with(&nx_cpu_table->gemm[acc], acc, order, v, op, NULL,
-                       NULL);
-}
-
-/* Complex */
-
-/* A complex contraction is one in its parts' dtype, of twice the columns
-   and twice the products (the 1m method, Van Zee, "Implementing
-   high-performance complex matrix multiplication via the 1m method", SIAM
-   J. Sci. Comput. 2020, its variant for row-stored c). a's K complex
-   numbers along the contraction are 2K reals, real and imaginary parts in
-   turn, read in place where its numbers lie adjacent along k, or along
-   each run of k where it is several; b's element (k, j) = x + iy is
-   copied as the block
-
-     row 2k:      … x   y …
-     row 2k + 1:  … −y  x …
-
-   so that column 2j sums re·x then im·(−y) for each k, output j's real
-   part, and column 2j + 1 re·y then im·x, its imaginary part. Each part is
-   a float contraction of 2K terms, whose bits the real contraction keeps
-   at any layout and thread count. Where dst's or init's numbers lie apart
-   along the columns, each part is a contraction of its own over b's
-   columns of that part. */
-
-/* Rows 2k and 2k + 1 of the block of [n] complex numbers at [x], [sx]
-   parts apart: (x, y) into [even] and (−y, x) into [odd]. Adjacent
-   numbers take a loop of their own, which vectorises. [even] may be [x]
-   at [sx] 2, as a staged row is: each number is read before its place is
-   written. */
-#define BLOCK_ROWS(T, name)                                                \
-  static void name(const T *x, int64_t sx, T *even, T *restrict odd,       \
-                   int64_t n) {                                            \
-    if (sx == 2) {                                                         \
-      for (int64_t j = 0; j < 2 * n; j += 2) {                             \
-        T re = x[j], im = x[j + 1];                                        \
-        even[j] = re, even[j + 1] = im, odd[j] = -im, odd[j + 1] = re;     \
-      }                                                                    \
-      return;                                                              \
-    }                                                                      \
-    for (int64_t j = 0; j < n; j++) {                                      \
-      T re = x[j * sx], im = x[j * sx + 1];                                \
-      even[2 * j] = re, even[2 * j + 1] = im;                              \
-      odd[2 * j] = -im, odd[2 * j + 1] = re;                               \
-    }                                                                      \
-  }
-BLOCK_ROWS(float, block_rows_f32)
-BLOCK_ROWS(double, block_rows_f64)
-
-/* The block's rows of parts [w] bytes wide. */
-static void block_rows_of(int w, const uint8_t *x, int64_t sx,
-                          uint8_t *even, uint8_t *odd, int64_t n) {
-  if (w == 4)
-    block_rows_f32((const float *)x, sx, (float *)even, (float *)odd, n);
-  else
-    block_rows_f64((const double *)x, sx, (double *)even, (double *)odd, n);
-}
-
-/* b's blocks: batch element e's rows 2k and 2k + 1 at
-   d + (e·2K + 2k)·2N·w, w the parts' width. A unit is a row k of b of
-   the complex problem [p], read piece by piece along its runs: in place
-   where b is acc, staged into the odd row first otherwise. */
-typedef struct {
-  const problem *p;
-  int w;
-  uint8_t *d;
-} blocks_job;
-
-static void blocks(int64_t lo, int64_t hi, int worker, void *ctx) {
-  (void)worker;
-  const blocks_job *j = ctx;
-  const problem *p = j->p;
-  const operand *q = &p->op[B];
-  int64_t n = p->ext[COL], k = p->ext[CON], row = 2 * n * j->w;
-  int w = j->w, staged = q->x->dtype != p->acc;
-  for (int64_t u = lo; u < hi; u++) {
-    uint8_t *even = j->d + 2 * u * row, *odd = even + row;
-    for (int64_t j0 = 0, c; j0 < n; j0 += c) {
-      int64_t st;
-      c = piece(q, COL, j0, n - j0, &st);
-      int64_t at = pos(p, B, u / k, 0, j0, u % k);
-      uint8_t *e0 = even + 2 * j0 * w, *o0 = odd + 2 * j0 * w;
-      if (staged) nx_cpu_stage_as(q->x, at, st, 0, c, 1, p->acc, o0, 0);
-      else block_rows_of(w, q->x->base + at * 2 * w, 2 * st, e0, o0, c);
-    }
-    if (!staged) continue;
-    memcpy(even, odd, (size_t)row);
-    block_rows_of(w, even, 2, even, odd, n);
-  }
-}
-
-/* [x]'s numbers read as their parts, of the dtype [r]. */
-static nx_array as_parts(const nx_array *x, int r) {
-  nx_array y = *x;
-  y.dtype = r;
-  y.bits = x->bits / 2;
-  return y;
-}
-
-/* Operand [o] of the complex problem [p], rows along the axis [x1] of
-   numbers along [x0], as [u]'s operand [y] of parts: in place, each step
-   doubled, or under [copy] copied into acc in scratch (nx_cpu_take) as
-   pack_at reads it, each batch element's rows C-contiguous, one element
-   where [o] steps 0 along the batch. Answers the copy, NULL in place or
-   if allocation fails. */
-static uint8_t *parts_of(const problem *p, int o, int x0, int x1, int copy,
-                         nx_contract_view *u, nx_array *y) {
-  const operand *q = &p->op[o];
-  int r = part_of(p->acc), w = nx_cpu_width(r);
-  int64_t n0 = p->ext[x0], n1 = p->ext[x1];
-  if (!copy) {
-    *y = as_parts(q->x, r);
-    u->offset[o] = 2 * q->first;
-    for (int x = BATCH; x <= CON; x++) u->stride[o][x] = 2 * q->st[x];
-    return NULL;
-  }
-  int64_t ne = q->st[BATCH] == 0 ? 1 : p->ext[BATCH];
-  uint8_t *d = nx_cpu_take(ne * n1 * n0 * 2 * w);
-  if (d == NULL) return NULL;
-  for (int64_t e = 0; e < ne; e++) {
-    const int64_t c[4] = {e, 0, 0, 0};
-    pack_at(p, NULL, o, c, x0, x1, n0, n1, d + e * n1 * n0 * 2 * w, n0);
-  }
-  *y = (nx_array){.base = d, .dtype = r, .bits = 8 * w};
-  u->offset[o] = 0;
-  u->stride[o][BATCH] = q->st[BATCH] == 0 ? 0 : 2 * n1 * n0;
-  u->stride[o][x1] = 2 * n0;
-  u->stride[o][x0] = 2;
-  return d;
-}
-
-/* The spans [s] of a, read in place, as parts: each step doubled, and
-   along k, where its last run steps one number, that run twice as long
-   and stepping one part. */
-static void parts_spans(const operand *a, spans *s) {
-  for (int x = ROW; x <= CON; x++) {
-    if (a->sp[x] == NULL) continue;
-    s[x] = *a->sp[x];
-    for (int t = 0; t < s[x].n; t++) s[x].stride[t] *= 2;
-  }
-  if (a->sp[CON] == NULL) return;
-  s[CON].extent[s[CON].n - 1] *= 2;
-  s[CON].stride[s[CON].n - 1] = 1;
-}
-
-/* The complex contraction of [v] over [op] in [acc], a and b read along
-   their spans [sp] where it is not NULL. */
-static int complex_on(int acc, int order, const nx_contract_view *v,
-                      const nx_array *const *op, const reads *sp) {
-  int r = part_of(acc), w = nx_cpu_width(r);
-  int64_t batch = v->extent[BATCH], m = v->extent[ROW], n = v->extent[COL];
-  int64_t k = v->extent[CON];
-  if (batch == 0 || m == 0 || n == 0) return 1;
-  problem p = {.acc = acc, .w = nx_cpu_width(acc)};
-  lay_out(&p, v, op);
-  for (int o = A; sp && o <= B; o++)
-    for (int x = ROW; x <= CON; x++)
-      if (sp->of[o][x].n > 1) p.op[o].sp[x] = &sp->of[o][x];
-  nx_contract_view u = {.extent = {batch, m, 2 * n, 2 * k}};
-  reads ps = {0};
-  nx_array x[4];
-  const nx_array *ops[4] = {&x[A], &x[B], op[INIT] ? &x[INIT] : NULL, &x[DST]};
-  int copy_a = op[A]->dtype != acc || (step_of(&p.op[A], CON) != 1 && k > 1);
-  int64_t eb = v->stride[B][BATCH] == 0 ? 1 : batch;
-  uint8_t *ab = parts_of(&p, A, CON, ROW, copy_a, &u, &x[A]);
-  if (!copy_a) parts_spans(&p.op[A], ps.of[A]);
-  uint8_t *bb = nx_cpu_take(eb * 4 * k * n * w), *ib = NULL;
-  /* An init of another dtype than acc, a result's of another dtype, is
-     copied into acc's parts. */
-  int copy_i = op[INIT] && op[INIT]->dtype != acc;
-  if (op[INIT])
-    ib = parts_of(&p, INIT, COL, ROW, copy_i, &u, &x[INIT]);
-  parts_of(&p, DST, COL, ROW, 0, &u, &x[DST]);
-  int done = 0;
-  if ((copy_a && ab == NULL) || (copy_i && ib == NULL) || bb == NULL)
-    goto out;
-  u.stride[A][CON] = 1;
-  blocks_job j = {.p = &p, .w = w, .d = bb};
-  /* Each number of b read, two parts, and its block written, four. */
-  int64_t bytes = eb * k * n * 6 * w;
-  nx_cpu_job(eb * k, bytes, bytes, blocks, &j);
-  x[B] = (nx_array){.base = bb, .dtype = r, .bits = 8 * w};
-  u.stride[B][BATCH] = eb == 1 ? 0 : 4 * k * n;
-  u.stride[B][CON] = 2 * n;
-  const nx_cpu_gemm *g = &nx_cpu_table->gemm[r];
-  /* Each part's columns, in turn where dst's or init's numbers lie apart. */
-  int apart = n > 1 && (u.stride[DST][COL] != 2 ||
-                        (op[INIT] && u.stride[INIT][COL] != 2));
-  if (!apart) {
-    u.stride[B][COL] = 1;
-    u.stride[DST][COL] = 1;
-    if (op[INIT]) u.stride[INIT][COL] = 1;
-    done = contract_with(g, r, order, &u, ops, NULL, &ps);
-    goto out;
-  }
-  u.extent[COL] = n;
-  u.stride[B][COL] = 2;
-  done = 1;
-  for (int part = 0; part < 2 && done; part++) {
-    nx_contract_view up = u;
-    for (int o = B; o <= DST; o++) up.offset[o] += part;
-    done = contract_with(g, r, order, &up, ops, NULL, &ps);
-  }
-out:
-  nx_cpu_give(ab);
-  nx_cpu_give(ib);
-  nx_cpu_give(bb);
-  return done;
-}
-
-/* Quads */
-
-/* An 8-bit a by a b of the same dtype into a 32-bit acc runs on the
-   table's quads kernel where it has one: four consecutive elements along
-   k are one 32-bit word, a quad, and the driver contracts words of K/4
-   products each, which the kernel adds four products at a time. A word of
-   a holds a row's four elements, a word of b a column's. Each operand is
-   read in place where it lies adjacent along k with each word on a word's
-   boundary, and copied into words otherwise, k padded with zeros to a
-   multiple of 4: a as rows of words, b as rows of each quad's words. The
-   sum is exact modulo 2^32, as acc's: an integer's bits do not depend on
-   how its products are grouped. */
-
-/* b's words, copied: column i's word q at d + (i + q·pitch)·4. A unit is
-   a column of a batch element where b is adjacent along k, else a quad of
-   each of its columns, so that the reads run along the memory. */
-typedef struct {
-  const nx_array *b;
-  const nx_contract_view *v;
-  int64_t quads, pitch;
-  uint8_t *d;
-} quads_job;
-
-/* Four rows of [n] bytes, each adjacent, interleaved into words: row t's
-   byte i to d[4i + t]. */
-static void interleave(const uint8_t *r0, const uint8_t *r1,
-                       const uint8_t *r2, const uint8_t *r3, uint8_t *d,
-                       int64_t n) {
-  for (int64_t i = 0; i < n; i++) {
-    d[4 * i] = r0[i];
-    d[4 * i + 1] = r1[i];
-    d[4 * i + 2] = r2[i];
-    d[4 * i + 3] = r3[i];
-  }
-}
-
-/* A full quad of b's rows, each adjacent, interleaves; any other element
-   moves alone. */
-static void quad_words(int64_t lo, int64_t hi, int worker, void *ctx) {
-  (void)worker;
-  const quads_job *j = ctx;
-  const int64_t *s = j->v->stride[B];
-  int64_t n = j->v->extent[COL], k = j->v->extent[CON];
-  int by_column = s[CON] == 1;
-  int64_t per = by_column ? n : j->quads;
-  for (int64_t u = lo; u < hi; u++) {
-    int64_t e = u / per, i0 = 0, i1 = n, p0 = 0, p1 = 4 * j->quads;
-    if (by_column) i0 = u % per, i1 = i0 + 1;
-    else p0 = 4 * (u % per), p1 = p0 + 4;
-    const uint8_t *x = j->b->base + j->v->offset[B] + e * s[BATCH];
-    uint8_t *d = j->d + e * j->pitch * j->quads * 4;
-    if (!by_column && s[COL] == 1 && p1 <= k) {
-      const uint8_t *r = x + p0 * s[CON];
-      interleave(r, r + s[CON], r + 2 * s[CON], r + 3 * s[CON],
-                 d + p0 * j->pitch, n);
-      continue;
-    }
-    for (int64_t i = i0; i < i1; i++)
-      for (int64_t p = p0; p < p1; p++)
-        d[(i + p / 4 * j->pitch) * 4 + p % 4] =
-            p < k ? x[p * s[CON] + i * s[COL]] : 0;
-  }
-}
-
-/* Whether operand [o] of [v] is read in place as words: adjacent along k,
-   each word's first element on a word's boundary. */
-static int words_in_place(const nx_contract_view *v, int o) {
-  const int64_t *s = v->stride[o];
-  int64_t k = v->extent[CON];
-  if (s[CON] != 1 && k > 1) return 0;
-  if (k % 4 != 0 || v->offset[o] % 4 != 0) return 0;
-  for (int x = BATCH; x < CON; x++)
-    if (s[x] % 4 != 0) return 0;
-  return 1;
-}
-
-/* The words between the rows of a copy into words, words_of's or
-   zip_rows': a row's [words], or a line more where that is a multiple of
-   4 KiB. Rows a multiple of 4 KiB apart share their low 12 address bits,
-   and with them the L1 sets of a sliver's steps. On one fudge core,
-   contract-i8-i32-1024, whose b is copied into rows of 1024 words, took
-   3.77 ms, and 3.68 with its rows a line further apart; the kernel alone,
-   in cache, ran 273 G products a second, and 294. */
-static int64_t pitch_of(int64_t words) {
-  return words > 0 && words * 4 % 4096 == 0 ? words + 16 : words;
-}
-
-/* Operand [o] of [v] as [u]'s operand [y] of words of [acc]: in place, or
-   under [copy] copied into memory of its own, a's rows of words and b's as
-   quads_job lays them out, rows pitch_of apart, one batch element where
-   [o] steps 0 along the batch. Answers the copy, NULL in place or if
-   allocation fails. */
-static uint8_t *words_of(const nx_contract_view *v, const nx_array *const *op,
-                         int o, int acc, int copy, nx_contract_view *u,
-                         nx_array *y) {
-  const int64_t *s = v->stride[o];
-  int64_t k = v->extent[CON], quads = ceil_div(k, 4);
-  int64_t n = v->extent[o == A ? ROW : COL];
-  *y = *op[o];
-  y->dtype = acc;
-  y->bits = 32;
-  if (!copy) {
-    u->offset[o] = v->offset[o] / 4;
-    for (int x = BATCH; x < CON; x++) u->stride[o][x] = s[x] / 4;
-    u->stride[o][CON] = 1;
-    return NULL;
-  }
-  /* a's rows are of quads words, b's of n. */
-  int64_t pitch = pitch_of(o == A ? quads : n);
-  int64_t rows = o == A ? n : quads;
-  int64_t ne = s[BATCH] == 0 ? 1 : v->extent[BATCH], words = rows * pitch;
-  uint8_t *d = alloc(ne * words * 4);
-  if (d == NULL) return NULL;
-  y->base = d;
-  u->offset[o] = 0;
-  u->stride[o][BATCH] = s[BATCH] == 0 ? 0 : words;
-  if (o == A) {
-    for (int64_t e = 0; e < ne; e++)
-      nx_cpu_stage_as(op[A], v->offset[A] + e * s[BATCH], s[CON], s[ROW], k,
-                      n, op[A]->dtype, d + e * words * 4, 4 * pitch);
-    for (int64_t r = 0; r < ne * n; r++)
-      memset(d + r * pitch * 4 + k, 0, (size_t)(pitch * 4 - k));
-    u->stride[A][ROW] = pitch;
-    u->stride[A][CON] = 1;
-    return d;
-  }
-  quads_job j = {.b = op[B], .v = v, .quads = quads, .pitch = pitch, .d = d};
-  int64_t units = ne * (s[CON] == 1 ? n : quads);
-  nx_cpu_job(units, ne * words * 8, ne * words * 8, quad_words, &j);
-  u->stride[B][COL] = 1;
-  u->stride[B][CON] = pitch;
-  return d;
-}
-
-/* A product of few rows whose b's words lie adjacent along k: each
-   output the dot of a's row and b's column, which reads b once, in the
-   order it lies, where chain order's tiles would pad a's rows to MR and
-   pack b's slivers. A unit is DOT_COLUMNS columns of a batch element,
-   which stay in the L1 cache from one pair of rows to the next while k is
-   at most 8192. The dots do not split k, as lane order's do: a product of
-   at most DOT_COLUMNS rows and columns runs on one core whatever k. On
-   the M1 Max, int8 rows by a 4096 × 4096 weight stored [n × k] take 50 µs
-   at 1 row against chain order's 255, 595 at 32 against 710, and the
-   same 1.2 ms at 64. */
-#define QUAD_ROWS 32
-
-typedef struct {
-  const problem *p; /* a and b of words */
-  nx_cpu_quads_dot dot;
-  int64_t groups; /* of DOT_COLUMNS columns */
-} quad_dots_job;
-
-/* Operand [o]'s words from (e, i, j, 0). */
-static const uint32_t *words_at(const problem *p, int o, int64_t e,
-                                int64_t i, int64_t j) {
-  return (const uint32_t *)p->op[o].x->base + pos(p, o, e, i, j, 0);
-}
-
-/* A product of few rows whose b lies adjacent along its columns, as a
-   weight stored [k × n] does: each row of a times b's rows, read in place
-   in the order they lie, where chain order would interleave all of b into
-   words and pack it. A unit is a group of a batch element's columns, in
-   multiples of AXPY_TILE, UNITS of them a thread, so that a busy core
-   takes fewer: with one core busy elsewhere, one unit a thread took 1 row
-   from memory in 250-400 µs against 225-275, 8 rows in 660-900 against
-   435-585. Its rows' sums, at most AXPY_SUMS bytes, stay in L1.
-   Below the target's quads_zip_rows, the axpy zips rows of b in
-   registers for the rows of a, AXPY_STEP rows of b at a time; from there,
-   AXPY_ZIPS bytes of b's rows are zipped into words once, by
-   interleave(), and the quads kernel runs all rows over them, as chain
-   order would without padding a's rows. A unit's rows lie a row of b
-   apart, a stride no x86 hardware prefetcher follows (the L1's follow at
-   most 2 KiB, the L2's stay within a 4 KiB page; Intel's optimization
-   manual), so each axpy is passed the next step's rows to prefetch.
-
-   On the M1 Max, int8 rows by a 4096 × 4096 weight stored [k × n] take,
-   against chain order (from the system cache unless said): 1 row 142-149
-   µs against 825-831, and 192-227 from memory against 880-920 (148 to
-   read the weight); 8 rows 268-287 against 810-877; 32 rows 694-735
-   against 1.31-1.35 ms; 64 1.25 ms against 2.0; 128 2.6 against 3.1.
-   Steps of 16 rows ran
-   1 row in 140 µs where 64 and 256 swung from 120 to 320. Splitting k
-   across units as well read a cached weight 1.4 times faster but one
-   from memory 1.15 times slower, and memory is where a model's weights
-   lie. */
-#define AXPY_ROWS 128
-/* Past AXPY_FEW rows, the axpys take a product only where b's columns
-   alone give each thread a unit and k is at least AXPY_DEEP, and past
-   AXPY_MANY rows only where b is more than 1 / AXPY_HELD of the largest cache
-   the host reports: chain order splits rows and copies b once for all of
-   them, which few columns, a short k or a b that stays in cache repay.
-   Through AXPY_FEW rows, units split rows too where the columns are too
-   few. On the M1 Max (12 MiB of L2 a cluster), rows by b of n columns and
-   k rows against chain order: 64 by n = k = 64 took 3.7 µs in bands
-   against 5.2, and 6.5 by columns alone; 32 by n 4096, k 256 86 against
-   55; 128 by n = k = 1024 181 against 158 and 64 by n = k = 1024 96
-   against 87, b in cache; 128 by n = k = 2048 661 against 692. 16 by n =
-   k = 64 took 3.08 µs in bands against 2.86: 65K products, which the
-   bands' threads cost more than they save. 32 by n = k = 512 took 15.7
-   µs at best against 22.3, but lost 7 of 8 rounds with a busy core: 8
-   groups of columns give the 8 threads a unit each, no slack to
-   rebalance; 32 by n = k = 1024 61 against 65. On the i9-9900K at 16
-   threads (16 MiB of L3), with AVX2's axpys of several rows, by the
-   axpys against chain order: 16 by n = k = 256 6.9 µs in bands against
-   11.2, by n 64, k 4096 23.7 against 23.4; 32 by n = k = 1024 73 against
-   97; 64 by n = k = 4096 2.10 ms against 3.22. Of those chain order
-   takes: 32 by n 64, k 4096 43 µs against 32 and 64 by n = k = 64 4.4
-   against 4.0, as the bounds mean; 32 by n 4096, k 256 91 against 114
-   and 64 by n = k = 1024 136 against 152, which the axpys would win here
-   and lose on the M1. */
-#define AXPY_FEW 16
-#define AXPY_MANY 32
-/* The share of the largest cache that b passes past AXPY_MANY rows: on
-   the M1 Max (12 MiB) 128 rows by b of 1 MiB lost to chain order and by
-   4 MiB won. */
-#define AXPY_HELD 8
-#define AXPY_DEEP 512
-#define AXPY_STEP 16
-/* A unit's zipped rows and sums, 96 KiB, within the M1's 128 KiB L1. */
-#define AXPY_ZIPS (64 * 1024)
-#define AXPY_SUMS (32 * 1024)
-#define AXPY_TILE 64 /* the axpy's columns at once */
-_Static_assert(AXPY_SUMS / 4 / AXPY_ROWS >= AXPY_TILE,
-               "a unit of the most rows holds a tile of columns");
-
-/* Row [i] of element [e]'s outputs [j0, j0 + c): init, or 0, plus [y]. */
-static void quad_row(const problem *p, int64_t e, int64_t i, int64_t j0,
-                     int64_t c, const uint32_t *y) {
-  uint32_t *d = (uint32_t *)at_r(p, e, i, j0), init[DOT_COLUMNS];
-  int64_t sy = p->op[DST].st[COL];
-  for (int64_t q0 = 0; q0 < c; q0 += DOT_COLUMNS) {
-    int64_t cq = min64(DOT_COLUMNS, c - q0);
-    memset(init, 0, sizeof init);
-    if (p->op[INIT].x)
-      stage_acc(p, INIT, pos(p, INIT, e, i, j0 + q0, 0), p->op[INIT].st[COL],
-                0, cq, 1, (uint8_t *)init, cq);
-    for (int64_t q = 0; q < cq; q++)
-      d[(q0 + q) * sy] = init[q] + y[q0 + q];
-  }
-}
-
-static void quad_dots(int64_t lo, int64_t hi, int worker, void *ctx) {
-  (void)worker;
-  const quad_dots_job *j = ctx;
-  const problem *p = j->p;
-  int64_t m = p->ext[ROW], n = p->ext[COL], k = p->ext[CON];
-  int64_t lda = p->op[A].st[ROW], ldb = p->op[B].st[COL];
-  _Alignas(16) uint32_t y[2][DOT_COLUMNS + 4];
-  for (int64_t t = lo; t < hi; t++) {
-    int64_t e = t / j->groups, j0 = t % j->groups * DOT_COLUMNS;
-    int64_t c = min64(DOT_COLUMNS, n - j0), q;
-    const uint32_t *b = words_at(p, B, e, 0, j0);
-    for (int64_t i = 0; i < m; i += 2) {
-      const uint32_t *a = words_at(p, A, e, i, 0);
-      /* A last row alone is its own pair, a last column its own four. */
-      int64_t pair = i + 1 < m ? lda : 0, ldy = DOT_COLUMNS + 4;
-      for (q = 0; q + 4 <= c; q += 4)
-        j->dot(a, pair, b + q * ldb, ldb, k, y[0] + q, ldy);
-      for (; q < c; q++) j->dot(a, pair, b + q * ldb, 0, k, y[0] + q, ldy);
-      quad_row(p, e, i, j0, c, y[0]);
-      if (i + 1 < m) quad_row(p, e, i + 1, j0, c, y[1]);
-    }
-  }
-}
-
-/* [u]'s product of the words [op] in [acc] by quads' dots, the fewer of
-   rows and columns as rows: a's and b's words both lie adjacent along k,
-   so each output is the same dot with a and b swapped. */
-static void quad_dots_on(nx_cpu_quads_dot dot, const nx_cpu_gemm *g, int acc,
-                         const nx_contract_view *u,
-                         const nx_array *const *op) {
-  problem p = {.acc = acc, .w = nx_cpu_width(acc), .g = g};
-  lay_out(&p, u, op);
-  if (p.ext[COL] < p.ext[ROW]) transpose(&p);
-  int64_t batch = p.ext[BATCH], m = p.ext[ROW], n = p.ext[COL];
-  int64_t k = p.ext[CON], groups = ceil_div(n, DOT_COLUMNS);
-  quad_dots_job j = {.p = &p, .dot = dot, .groups = groups};
-  int64_t bytes = batch * (m + n) * k * p.w;
-  double cost = flop_cost(g->kernel, 2.0 * batch * m * n * k) + bytes;
-  nx_cpu_job(batch * groups, bytes, cost, quad_dots, &j);
-}
-
-typedef struct {
-  problem *p; /* a of words, b of its own elements */
-  nx_cpu_quads_axpy axpy;
-  int64_t k;            /* in elements */
-  int64_t cols, groups; /* columns a group, groups */
-  int64_t rows, bands;  /* rows a band, bands */
-} quad_axpys_job;
-
-/* The rows ahead of a zip that it prefetches, a line at a time, for the
-   stride above AXPY_ROWS: on the i9-9900K 8 rows by a 4096 × 4096 weight
-   took 579 µs at 16 rows ahead, 591 at 32 and 737 without; 128 rows 4.61
-   ms against 4.81. On the M1 Max neither moved. */
-#define ZIP_AHEAD 16
-#define LINE_BYTES 64 /* x86's cache line, half the M1's */
-
-/* Rows [q, q + kb) of b from column [j0] of element [e], zipped as
-   interleave() does into rows of words of [c] columns at [d], [pitch]
-   words apart, a row past k repeating the last, prefetching ZIP_AHEAD
-   rows on. */
-static void zip_rows(const problem *p, int64_t e, int64_t j0, int64_t c,
-                     int64_t pitch, int64_t q, int64_t kb, uint32_t *d) {
-  const uint8_t *b = p->op[B].x->base + pos(p, B, e, 0, j0, q);
-  int64_t ldb = p->op[B].st[CON];
-  for (int64_t w = 0; w < ceil_div(kb, 4); w++) {
-    const uint8_t *r0 = b + 4 * w * ldb;
-    int64_t ahead = 4 * w + ZIP_AHEAD, ahead_end = min64(ahead + 4, kb);
-    for (int64_t r = ahead; r < ahead_end; r++)
-      for (int64_t x = 0; x < c; x += LINE_BYTES)
-        __builtin_prefetch(b + r * ldb + x);
-    const uint8_t *r1 = 4 * w + 1 < kb ? r0 + ldb : r0;
-    const uint8_t *r2 = 4 * w + 2 < kb ? r1 + ldb : r1;
-    const uint8_t *r3 = 4 * w + 3 < kb ? r2 + ldb : r2;
-    interleave(r0, r1, r2, r3, (uint8_t *)(d + w * pitch), c);
-  }
-}
-
-/* A unit's sums [s] of [m] rows from [i0] and [c] columns from [j0] of
-   element [e]: by the axpy below the target's quads_zip_rows, else by the
-   quads kernel over b's rows zipped into [z], AXPY_ZIPS bytes. */
-static void quad_unit(const quad_axpys_job *j, int64_t e, int64_t i0,
-                      int64_t m, int64_t j0, int64_t c, uint32_t *s,
-                      uint32_t *z) {
-  const problem *p = j->p;
-  int64_t ldb = p->op[B].st[CON];
-  nx_cpu_micro km = p->g->kernel;
-  if (m < nx_cpu_table->quads_zip_rows) {
-    const uint8_t *a = (const uint8_t *)words_at(p, A, e, i0, 0);
-    int64_t lda = 4 * p->op[A].st[ROW];
-    for (int64_t q = 0; q < j->k; q += AXPY_STEP) {
-      const uint8_t *b = p->op[B].x->base + pos(p, B, e, 0, j0, q);
-      /* The next step's rows, or b's last AXPY_STEP, or all of b. */
-      int64_t ahead = min64(q + AXPY_STEP, j->k - AXPY_STEP);
-      if (ahead < 0) ahead = 0;
-      const uint8_t *next = b + (ahead - q) * ldb;
-      j->axpy(a + q, lda, m, b, ldb, min64(AXPY_STEP, j->k - q), c, s, c,
-              next);
-    }
-    return;
-  }
-  int64_t zp = pitch_of(c), step = AXPY_ZIPS / zp / 16 * 16;
-  for (int64_t q = 0; q < j->k; q += step) {
-    int64_t kb = min64(step, j->k - q), words = ceil_div(kb, 4);
-    zip_rows(p, e, j0, c, zp, q, kb, z);
-    const uint32_t *a = words_at(p, A, e, i0, 0) + q / 4;
-    for (int64_t jj = 0; jj < c; jj += km.nr)
-      km.f(m, min64(km.nr, c - jj), words, a, p->op[A].st[ROW], 1, z + jj,
-           zp, s + jj, c, NX_CPU_FROM_TILE);
-  }
-}
-
-static void quad_axpys(int64_t lo, int64_t hi, int worker, void *ctx) {
-  (void)worker;
-  const quad_axpys_job *j = ctx;
-  problem *p = j->p;
-  int64_t m = p->ext[ROW], n = p->ext[COL];
-  /* The sums in scratch, as a thread's stack should not hold 32 KiB. */
-  uint32_t *s = (uint32_t *)scratch(p, AXPY_SUMS);
-  if (s == NULL) return;
-  /* A tile reads past its last column: a sliver's width beyond the zips. */
-  uint32_t *z = NULL;
-  if (j->rows >= nx_cpu_table->quads_zip_rows) {
-    z = (uint32_t *)scratch(p, AXPY_ZIPS + 4 * p->g->kernel.nr);
-    if (z == NULL) {
-      nx_cpu_give(s);
-      return;
-    }
-  }
-  for (int64_t t = lo; t < hi; t++) {
-    int64_t e = t / (j->groups * j->bands), g = t % (j->groups * j->bands);
-    int64_t j0 = g / j->bands * j->cols, i0 = g % j->bands * j->rows;
-    int64_t c = min64(j->cols, n - j0), r = min64(j->rows, m - i0);
-    memset(s, 0, (size_t)(r * c * 4));
-    quad_unit(j, e, i0, r, j0, c, s, z);
-    for (int64_t i = 0; i < r; i++) quad_row(p, e, i0 + i, j0, c, s + i * c);
-  }
-  nx_cpu_give(z);
-  nx_cpu_give(s);
-}
-
-/* The cost of quads' axpys over [v]'s extents, [k] its elements along k,
-   and its bytes: each element's product counts as a word's does in the
-   dots, the zips spending about three instructions on each SDOT. */
-static double axpys_cost(const nx_cpu_gemm *g, const nx_contract_view *v,
-                         int64_t k, int64_t *bytes) {
-  int64_t batch = v->extent[BATCH], m = v->extent[ROW], n = v->extent[COL];
-  *bytes = batch * (m + n) * k;
-  return flop_cost(g->kernel, 2.0 * batch * m * n * k) + *bytes;
-}
-
-/* Whether quads' axpys take [v]'s product, [k] its elements along k
-   (AXPY_FEW says when). */
-static int axpys_fit(const nx_cpu_gemm *g, const nx_contract_view *v,
-                     int64_t k) {
-  int64_t m = v->extent[ROW], bytes;
-  if (m > AXPY_ROWS) return 0;
-  if (m <= AXPY_FEW) return 1;
-  int64_t batch = v->extent[BATCH], n = v->extent[COL];
-  if (k < AXPY_DEEP) return 0;
-  if (m > AXPY_MANY && batch * n * k <= nx_cpu_llc / AXPY_HELD)
-    return 0;
-  double cost = axpys_cost(g, v, k, &bytes);
-  int64_t threads = nx_cpu_threads_at(bytes, cost, NX_CPU_THREAD_BYTES);
-  return batch * ceil_div(n, AXPY_TILE) >= threads;
-}
-
-/* [u]'s product in [acc] of a's words and b's [k] elements along k by
-   quads' axpys: 0 if a worker's scratch could not be allocated. Where the
-   groups of columns are fewer than the threads, units split rows too.
-   Where the product zips b's rows (the target's quads_zip_rows), bands
-   keep the quads kernel's MR rows, which zip as the whole would, unless
-   whole tiles leave more than half the threads idle: on the M1 Max 2
-   bands of 8 rows took 16 rows by n 64, k 4096 29.7 µs against 15 in 8
-   bands of 2. */
-static int quad_axpys_on(nx_cpu_quads_axpy axpy, const nx_cpu_gemm *g,
-                         int acc, int64_t k, const nx_contract_view *u,
-                         const nx_array *const *op) {
-  problem p = {.acc = acc, .w = nx_cpu_width(acc), .g = g};
-  lay_out(&p, u, op);
-  atomic_init(&p.failed, 0);
-  int64_t batch = p.ext[BATCH], m = p.ext[ROW], n = p.ext[COL], bytes;
-  double cost = axpys_cost(g, u, k, &bytes);
-  int64_t share = ceil_div(n, units(bytes, cost, NX_CPU_THREAD_BYTES));
-  int64_t cols = min64(ceil_div(share, AXPY_TILE),
-                       AXPY_SUMS / 4 / m / AXPY_TILE) * AXPY_TILE;
-  int64_t groups = ceil_div(n, cols), mr = g->kernel.mr;
-  int64_t threads = nx_cpu_threads_at(bytes, cost, NX_CPU_THREAD_BYTES);
-  int64_t bands = min64(m, ceil_div(threads, batch * groups));
-  int64_t whole = min64(bands, m / mr);
-  int zips = m >= nx_cpu_table->quads_zip_rows;
-  if (zips && 2 * batch * groups * whole >= threads) bands = whole;
-  int64_t rows = ceil_div(m, bands);
-  quad_axpys_job j = {.p = &p, .axpy = axpy, .k = k, .cols = cols,
-                      .groups = groups, .rows = rows,
-                      .bands = ceil_div(m, rows)};
-  nx_cpu_job(batch * groups * j.bands, bytes, cost, quad_axpys, &j);
-  return !atomic_load(&p.failed);
-}
-
-/* The table's quads kernels for a contraction in [acc] of operands of
-   [da] and [db], or NULL. */
-static const nx_cpu_gemm *quads_for(int acc, int da, int db) {
-  if (acc != NX_INT32 && acc != NX_UINT32) return NULL;
-  if (da != db || (da != NX_INT8 && da != NX_UINT8)) return NULL;
-  const nx_cpu_gemm *g = &nx_cpu_table->quads[da];
-  return g->kernel.f ? g : NULL;
-}
-
-static int quads_on(const nx_cpu_gemm *g, int acc, const nx_contract_view *v,
-                    const nx_array *const *op) {
-  if (v->extent[BATCH] == 0 || v->extent[ROW] == 0 || v->extent[COL] == 0)
-    return 1;
-  nx_contract_view u = *v;
-  u.extent[CON] = ceil_div(v->extent[CON], 4);
-  int64_t m = v->extent[ROW], n = v->extent[COL];
-  nx_cpu_quads_axpy axpy = nx_cpu_table->quads_axpy[op[A]->dtype];
-  int by_rows = axpy && v->stride[B][CON] != 1 && v->stride[B][COL] == 1 &&
-                axpys_fit(g, v, v->extent[CON]);
-  nx_array x[2] = {*op[A], *op[B]};
-  int copy_a = !words_in_place(v, A);
-  int copy_b = !by_rows && !words_in_place(v, B);
-  uint8_t *ab = words_of(v, op, A, acc, copy_a, &u, &x[A]), *bb = NULL;
-  if (!by_rows) bb = words_of(v, op, B, acc, copy_b, &u, &x[B]);
-  int done = 0;
-  if ((copy_a && ab == NULL) || (copy_b && bb == NULL)) goto out;
-  const nx_array *ops[4] = {&x[A], &x[B], op[INIT], op[DST]};
-  if (by_rows) {
-    done = quad_axpys_on(axpy, g, acc, v->extent[CON], &u, ops);
-    goto out;
-  }
-  /* a's words lie adjacent along k; the dots need b's to as well. */
-  nx_cpu_quads_dot dot = nx_cpu_table->quads_dot[op[A]->dtype];
-  if (dot && u.stride[B][CON] == 1 && min64(m, n) <= QUAD_ROWS) {
-    quad_dots_on(dot, g, acc, &u, ops);
-    done = 1;
-  } else done = contract_with(g, acc, NX_CPU_CHAIN, &u, ops, NULL, NULL);
-out:
-  free(ab);
-  free(bb);
-  return done;
+  return nx_gemm_contract_with(&nx_cpu_table->gemm[acc], acc, order, v, op,
+                               NULL, NULL);
 }
 
 double nx_cpu_core_speed(int acc) {
@@ -2488,653 +1615,23 @@ double nx_cpu_core_speed(int acc) {
    [db] a's and b's dtypes: 0 if an allocation failed. A scaled
    contraction, [s] not NULL, is a float one: it runs on the float
    kernels. a and b are read along their spans [sp] where it is not NULL,
-   which only the paths spanned names are given. */
-static int contract_view(int acc, int order, int da, int db,
-                         const nx_contract_view *v, const nx_array *const *op,
-                         const scale *s, const reads *sp) {
+   which only the paths nx_gemm_spanned names are given. */
+int nx_gemm_contract_view(int acc, int order, int da, int db,
+                          const nx_contract_view *v, const nx_array *const *op,
+                          const scale *s, const reads *sp) {
   const nx_cpu_gemm *g = &nx_cpu_table->gemm[acc];
-  if (s) return contract_with(g, acc, order, v, op, s, NULL);
-  const nx_cpu_gemm *quads = quads_for(acc, da, db);
-  if (quads) return quads_on(quads, acc, v, op);
-  if (part_of(acc) != acc) return complex_on(acc, order, v, op, sp);
-  return contract_with(g, acc, order, v, op, NULL, sp);
+  if (s) return nx_gemm_contract_with(g, acc, order, v, op, s, NULL);
+  const nx_cpu_gemm *quads = nx_gemm_quads_for(acc, da, db);
+  if (quads) return nx_gemm_quads_on(quads, acc, v, op);
+  if (part_of(acc) != acc) return nx_gemm_complex_on(acc, order, v, op, sp);
+  return nx_gemm_contract_with(g, acc, order, v, op, NULL, sp);
 }
 
-/* Whether contract_view reads a and b along spans: chain order's packs
+/* Whether nx_gemm_contract_view reads a and b along spans: chain order's packs
    and lane order's stages do, and a complex contraction's parts of a and
    blocks of b, where it is unscaled and no quads take it. */
-static int spanned(int acc, int da, int db, const scale *s) {
-  return s == NULL && quads_for(acc, da, db) == NULL;
-}
-
-/* Groups of several runs
-
-   A group whose axes do not coalesce into one, over every operand that
-   has it, is several runs (nx_contract_runs). The last run of each group
-   is the view's axis and the batch's, rows' and columns' other runs an
-   outer loop, each of whose positions is a contraction of the view: an
-   output's sum is the same whichever contraction computes it. Attention's
-   heads, a [b; s; h; d] array read as [b; h; s; d], are so a batch of h
-   with b outside, read in place.
-
-   The contracted runs instead make one. Where the kernels read a and b
-   along spans (spanned), each reads its blocks run by run (pack_at), and the
-   runs of the rows that a alone makes, or of the columns b alone does,
-   are read so too: a convolution over windows of its padded input is one
-   product of all its windows, as an explicit copy of them would be, and
-   reads the input where it lies. Elsewhere a and b are copied, every
-   element of them, into buffers where their runs lie in C order, the
-   contracted ones last, and those then coalesce. Either keeps the
-   products' numbering, so every order gives its bits; a loop over the
-   outer contracted runs, each from the last's sums, would keep chain
-   order's bits alone. */
-
-typedef struct {
-  int acc, order, da, db;
-  nx_contract_view v;      /* the view at the outer loop's first position */
-  int n;                   /* outer runs */
-  int64_t extent[NX_MAX_RANK], stride[4][NX_MAX_RANK];
-  int group[NX_MAX_RANK];  /* each outer run's */
-  int64_t weight[NX_MAX_RANK]; /* the indices of its group one of its
-                                  steps moves on */
-  const nx_array *const *op;
-  const scale *s;          /* a and b's at the first position, or NULL */
-  const reads *sp;         /* a's and b's spans, or NULL */
-  atomic_int failed;
-} outer;
-
-/* The outer loop's positions [lo, hi), each a contraction of its view. */
-static void outer_units(int64_t lo, int64_t hi, int worker, void *ctx) {
-  (void)worker;
-  outer *q = ctx;
-  for (int64_t u = lo; u < hi; u++) {
-    nx_contract_view v = q->v;
-    scale s[2];
-    if (q->s) memcpy(s, q->s, sizeof s);
-    for (int64_t r = q->n - 1, x = u; r >= 0; r--) {
-      int64_t i = x % q->extent[r];
-      x /= q->extent[r];
-      for (int o = A; o <= DST; o++) v.offset[o] += i * q->stride[o][r];
-      for (int o = A; q->s && o <= B; o++)
-        if (s[o].t[q->group[r]]) s[o].t[q->group[r]] += i * q->weight[r];
-    }
-    if (!contract_view(q->acc, q->order, q->da, q->db, &v, q->op,
-                       q->s ? s : NULL, q->sp))
-      atomic_store(&q->failed, 1);
-  }
-}
-
-/* Multiplies the copy at [y] of a scaled operand, of acc [dt], laid out as
-   stage_runs lays it, its groups [gs] whole, by its scales [s]. */
-static void scale_runs(const nx_contract_runs *r, const int *gs, int dt,
-                       const scale *s, uint8_t *y) {
-  int64_t n[3] = {1, 1, 1};
-  for (int t = 0; t < 3; t++)
-    for (int k = 0; k < r->runs[gs[t]]; k++) n[t] *= r->extent[gs[t]][k];
-  const int64_t *t0 = s->t[gs[0]], *t1 = s->t[gs[1]], *t2 = s->t[gs[2]];
-  for (int64_t e = 0; e < n[0]; e++)
-    for (int64_t i = 0; i < n[1]; i++) {
-      int64_t at = t0[e] + t1[i], row = (e * n[1] + i) * n[2];
-      if (dt == NX_FLOAT32) {
-        float *d = (float *)y + row;
-        const float *v = (const float *)s->v + at;
-        for (int64_t k = 0; k < n[2]; k++) d[k] *= v[t2[k]];
-      } else {
-        double *d = (double *)y + row;
-        const double *v = (const double *)s->v + at;
-        for (int64_t k = 0; k < n[2]; k++) d[k] *= v[t2[k]];
-      }
-    }
-}
-
-/* Copies operand [o] of [r] into scratch (nx_cpu_take) of the dtype [dt],
-   cast where it is not [src]'s, where its runs lie in C order, groups [gs]
-   in turn, skipping runs it steps 0 along but the contracted ones, and
-   lays [r] out over it in [x]: 0 if the scratch could not be allocated.
-   The copies hold the operand's elements, O(a + b) for a and b. A scaled
-   operand, [s] not NULL, is copied into acc, [dt], with each element times
-   its scale (stage_at), skipping no run: its scales may differ where its
-   elements do not. */
-static int stage_runs(nx_contract_runs *r, int o, const int *gs, int dt,
-                      const nx_array *src, const scale *s, nx_array *x) {
-  nx_loop l = {.first = {0, r->offset[o]}};
-  int64_t *at[NX_MAX_RANK], n = 1;
-  int rank = 0;
-  for (int t = 0; t < 3; t++) {
-    int g = gs[t];
-    for (int k = 0; k < r->runs[g]; k++) {
-      if (r->stride[o][g][k] == 0 && g != CON && s == NULL) continue;
-      l.extent[rank] = r->extent[g][k];
-      l.step[1][rank] = r->stride[o][g][k];
-      at[rank++] = &r->stride[o][g][k];
-    }
-  }
-  for (int d = rank - 1; d >= 0; d--) {
-    l.step[0][d] = n;
-    *at[d] = n;
-    n *= l.extent[d];
-  }
-  int bits = nx_dtype_row_of(dt).bits;
-  uint8_t *base = nx_cpu_take((n * bits + 7) / 8);
-  if (base == NULL) return 0;
-  *x = *src;
-  x->base = base;
-  x->dtype = dt;
-  x->bits = bits;
-  x->offset = 0;
-  x->alias = 0;
-  l.rank = nx_coalesce_dims(2, rank, l.extent, l.step);
-  if (dt == src->dtype) nx_cpu_copy_loop(base, src->base, bits, &l);
-  else nx_cpu_cast_loop(x, src, &l);
-  r->offset[o] = 0;
-  if (s) scale_runs(r, gs, dt, s, base);
-  return 1;
-}
-
-/* Whether [r]'s contracted runs coalesce into one over a and b, which
-   then holds it. */
-static int merges(nx_contract_runs *r) {
-  int64_t ext[NX_MAX_RANK], st[2][NX_MAX_RANK];
-  for (int k = 0; k < r->runs[CON]; k++) {
-    ext[k] = r->extent[CON][k];
-    st[0][k] = r->stride[A][CON][k];
-    st[1][k] = r->stride[B][CON][k];
-  }
-  if (nx_coalesce_dims(2, r->runs[CON], ext, st) != 1) return 0;
-  r->runs[CON] = 1;
-  r->extent[CON][0] = ext[0];
-  r->stride[A][CON][0] = st[0][0];
-  r->stride[B][CON][0] = st[1][0];
-  return 1;
-}
-
-/* Makes [r]'s group [x] one run, which a, where bit A of [read] is set,
-   and b, where bit B is, read along their own runs coalesced into [sp],
-   each other operand along its one; leaves [r] as it was where another
-   makes several. */
-static void spread(nx_contract_runs *r, int x, int read, reads *sp) {
-  int n = r->runs[x];
-  int64_t one[4], whole = 1;
-  spans own[2];
-  for (int o = A; o <= DST; o++) {
-    int64_t ext[NX_MAX_RANK], st[1][NX_MAX_RANK];
-    memcpy(ext, r->extent[x], (size_t)n * sizeof *ext);
-    memcpy(st[0], r->stride[o][x], (size_t)n * sizeof *ext);
-    int k = nx_coalesce_dims(1, n, ext, st);
-    one[o] = k == 1 ? st[0][0] : 0;
-    if (o <= B && (read >> o & 1)) {
-      own[o].n = k;
-      memcpy(own[o].extent, ext, (size_t)k * sizeof *ext);
-      memcpy(own[o].stride, st[0], (size_t)k * sizeof *ext);
-    } else if (k > 1) return;
-  }
-  for (int o = A; o <= B; o++)
-    if (read >> o & 1) sp->of[o][x] = own[o];
-  for (int k = 0; k < n; k++) whole *= r->extent[x][k];
-  r->runs[x] = 1;
-  r->extent[x][0] = whole;
-  for (int o = A; o <= DST; o++) r->stride[o][x][0] = one[o];
-}
-
-/* The contraction of [r]'s groups over [op], as contract_view's, a and b
-   scaled by [s] where it is not NULL: 0 if an allocation failed. A scaled
-   operand copied (stage_runs) is copied scaled, and read unscaled. */
-static int runs_on(int acc, int order, int da, int db, nx_contract_runs *r,
-                   const nx_array *const *op, const scale *s) {
-  for (int g = BATCH; g <= COL; g++)
-    for (int k = 0; k < r->runs[g]; k++)
-      if (r->extent[g][k] == 0) return 1;
-  nx_array x[2];
-  const nx_array *ops[4] = {op[A], op[B], op[INIT], op[DST]};
-  scale kept[2] = {{0}};
-  if (s) memcpy(kept, s, sizeof kept);
-  reads sp = {0};
-  int packs = spanned(acc, da, db, s);
-  int staged = r->runs[CON] > 1 && !merges(r), done = 0;
-  if (packs) {
-    if (staged) spread(r, CON, 1 << A | 1 << B, &sp);
-    if (r->runs[ROW] > 1) spread(r, ROW, 1 << A, &sp);
-    if (r->runs[COL] > 1) spread(r, COL, 1 << B, &sp);
-    staged = 0;
-  }
-  if (staged) {
-    static const int gs[2][3] = {{BATCH, ROW, CON}, {BATCH, COL, CON}};
-    for (int o = A; o <= B; o++) {
-      const scale *so = kept[o].v ? &kept[o] : NULL;
-      int dt = so ? acc : op[o]->dtype;
-      if (!stage_runs(r, o, gs[o], dt, op[o], so, &x[o])) {
-        if (o == B) nx_cpu_give(x[A].base);
-        return 0;
-      }
-      ops[o] = &x[o];
-      kept[o] = (scale){0};
-    }
-    da = ops[A]->dtype;
-    db = ops[B]->dtype;
-    merges(r);
-  }
-  int scaled = kept[A].v || kept[B].v;
-  outer q = {.acc = acc, .order = order, .da = da, .db = db, .op = ops,
-             .s = scaled ? kept : NULL, .sp = packs ? &sp : NULL};
-  atomic_init(&q.failed, 0);
-  int64_t units = 1;
-  for (int g = BATCH; g <= CON; g++) {
-    int last = r->runs[g] - 1;
-    q.v.extent[g] = r->extent[g][last];
-    for (int o = A; o <= DST; o++) q.v.stride[o][g] = r->stride[o][g][last];
-    int64_t weight = r->extent[g][last];
-    for (int k = last - 1; k >= 0; k--) {
-      q.group[q.n + k] = g;
-      q.weight[q.n + k] = weight;
-      weight *= r->extent[g][k];
-    }
-    for (int k = 0; k < last; k++) {
-      q.extent[q.n] = r->extent[g][k];
-      for (int o = A; o <= DST; o++) q.stride[o][q.n] = r->stride[o][g][k];
-      units *= r->extent[g][k];
-      q.n++;
-    }
-  }
-  for (int o = A; o <= DST; o++) q.v.offset[o] = r->offset[o];
-  /* As a factorisation's matrices (linalg.c): a position a unit where they
-     are as many as the threads the whole takes, each then on its own
-     thread, else in turn, each on the threads it takes. */
-  const nx_cpu_gemm *g = &nx_cpu_table->gemm[part_of(acc)];
-  double e = (double)units * (double)q.v.extent[BATCH];
-  double m = (double)q.v.extent[ROW], n = (double)q.v.extent[COL];
-  double k = (double)q.v.extent[CON];
-  double bytes = e * (m * k + k * n + m * n) * nx_cpu_width(acc);
-  double cost = flop_cost(g->kernel, 2 * e * m * n * k) + bytes;
-  int threads = nx_cpu_threads_at((int64_t)bytes, cost, thread_bytes(g));
-  if (threads > 1 && units >= threads)
-    nx_cpu_job_at(units, (int64_t)bytes, cost, thread_bytes(g), outer_units,
-                  &q);
-  else outer_units(0, units, 0, &q);
-  done = !atomic_load(&q.failed);
-  if (staged) {
-    nx_cpu_give(x[A].base);
-    nx_cpu_give(x[B].base);
-  }
-  return done;
-}
-
-/* Results of another dtype
-
-   A dst of another dtype than acc takes the sum in acc rounded once, as a
-   cast of it would round it: R is scratch in acc, laid out C-contiguous
-   over the batch's, rows' and columns' runs, and a cast walk takes it
-   into dst once every product is in. A 4-bit acc sums in 8 bits
-   (summed_in): R is then narrowed to acc, by a cast into dst where dst
-   is of acc, else into scratch of acc cast into dst in turn. */
-
-/* [r]'s view as runs: one a group. */
-static void runs_of_view(nx_contract_runs *r, const nx_contract_view *v) {
-  for (int g = BATCH; g <= CON; g++) {
-    r->runs[g] = 1;
-    r->extent[g][0] = v->extent[g];
-    for (int o = A; o <= DST; o++) r->stride[o][g][0] = v->stride[o][g];
-  }
-  for (int o = A; o <= DST; o++) r->offset[o] = v->offset[o];
-}
-
-/* R's sums [y] into [dst], over the loop of [rank] axes of [extent], dst
-   from [first] stepping [step], R C-contiguous: narrowed to [acc] first,
-   in scratch of its own laid out as R, where [narrows]. 0 if an
-   allocation failed. Apart, so that its two loops, 5 KiB each, are off
-   the frame the product's jobs run under. */
-static __attribute__((noinline)) int store_rounded(
-    const nx_array *dst, const nx_array *y, int acc, int narrows,
-    int64_t first, int rank, const int64_t *extent, const int64_t *step) {
-  nx_loop l = {.first = {first, 0}};
-  int64_t n = 1;
-  for (int d = rank - 1; d >= 0; d--) {
-    l.extent[d] = extent[d];
-    l.step[0][d] = step[d];
-    l.step[1][d] = n;
-    n *= extent[d];
-  }
-  nx_array t = *y;
-  t.base = NULL;
-  int done = 1;
-  if (narrows) {
-    t.dtype = acc;
-    t.bits = nx_dtype_row_of(acc).bits;
-    t.base = nx_cpu_take((n * t.bits + 7) / 8);
-    done = t.base != NULL;
-    if (done) {
-      nx_loop lt = l;
-      for (int d = 0; d < rank; d++) lt.step[0][d] = l.step[1][d];
-      lt.first[0] = 0;
-      lt.rank = nx_coalesce_dims(2, rank, lt.extent, lt.step);
-      nx_cpu_cast_loop(&t, y, &lt);
-    }
-  }
-  if (done) {
-    l.rank = nx_coalesce_dims(2, rank, l.extent, l.step);
-    nx_cpu_cast_loop(dst, narrows ? &t : y, &l);
-  }
-  if (t.base) nx_cpu_give(t.base);
-  return done;
-}
-
-/* The contraction of [r]'s groups over [op] in [acc], summed in [sum],
-   into op[DST] of another dtype than [sum], through scratch R: 0 if an
-   allocation failed. */
-static int rounded_on(int acc, int sum, int order, nx_contract_runs *r,
-                      const nx_array *const *op, const scale *s) {
-  /* The loop the cast walks, over the runs of more than one element:
-     their extents and dst's steps; R's steps C-contiguous over them. */
-  int64_t extent[NX_MAX_RANK], step[NX_MAX_RANK], first = r->offset[DST];
-  int64_t *at[NX_MAX_RANK], n = 1;
-  int rank = 0;
-  for (int g = BATCH; g <= COL; g++)
-    for (int k = 0; k < r->runs[g]; k++) {
-      int64_t e = r->extent[g][k], s = r->stride[DST][g][k];
-      if (e == 0) return 1;
-      r->stride[DST][g][k] = 0;
-      if (e == 1) continue;
-      extent[rank] = e;
-      step[rank] = s;
-      at[rank++] = &r->stride[DST][g][k];
-    }
-  for (int d = rank - 1; d >= 0; d--) {
-    *at[d] = n;
-    n *= extent[d];
-  }
-  r->offset[DST] = 0;
-  nx_array y = *op[DST];
-  y.dtype = sum;
-  y.bits = nx_dtype_row_of(sum).bits;
-  y.offset = 0;
-  y.alias = 0;
-  y.base = nx_cpu_take(n * nx_cpu_width(sum));
-  if (y.base == NULL) return 0;
-  const nx_array *ops[4] = {op[A], op[B], op[INIT], &y};
-  /* A 4-bit acc's float and complex operands saturate into its range, as
-     a cast into it does, and an 8-bit sum's would into the 8 bits': they
-     are cast into acc first, and the sum reads integers, which convert
-     modulo 2^8. Where the contracted runs are several, a and b are both
-     cast so, contracted last, so that the runs merge and runs_on copies
-     neither again. */
-  static const int gs[3][3] = {[A] = {BATCH, ROW, CON},
-                               [B] = {BATCH, COL, CON},
-                               [INIT] = {BATCH, ROW, COL}};
-  nx_array z[3];
-  int done = 1;
-  for (int o = A; o <= INIT && done; o++) {
-    int kind = op[o] ? nx_dtype_row_of(op[o]->dtype).kind : NX_KIND_BOOLEAN;
-    int split = o != INIT && r->runs[CON] > 1;
-    if (acc == sum ||
-        (!split && kind != NX_KIND_FLOAT && kind != NX_KIND_COMPLEX))
-      continue;
-    done = stage_runs(r, o, gs[o], acc, op[o], NULL, &z[o]);
-    if (done) ops[o] = &z[o];
-  }
-  if (done)
-    done = runs_on(sum, order, ops[A]->dtype, ops[B]->dtype, r, ops, s);
-  for (int o = A; o <= INIT; o++)
-    if (ops[o] == &z[o]) nx_cpu_give(z[o].base);
-  int narrows = acc != sum && op[DST]->dtype != acc;
-  if (done)
-    done = store_rounded(op[DST], &y, acc, narrows, first, rank, extent, step);
-  nx_cpu_give(y.base);
-  return done;
-}
-
-/* Scales
-
-   A scaled operand's scales are decoded into acc once a call, C-contiguous,
-   and each of its groups of axes takes a table from an index to its block's
-   position among them (scale): the scales' count in acc, and O(B + M + K)
-   or O(B + N + K) positions. */
-
-/* Whether axis [d] of side [o], 0 for a and 1 for b, is in a pair of
-   [ps]. */
-static int in_pairs(value ps, int o, int d) {
-  for (mlsize_t k = 0; k < Wosize_val(ps); k++)
-    if (Long_val(Field(Field(ps, k), o)) == d) return 1;
-  return 0;
-}
-
-/* The axes of side [o], of rank [rank], in group [g] into [ax], and their
-   count: the pairs' in pair order for the batch and the contraction, the
-   free ones in axis order for the rows or the columns. */
-static int group_axes(value vbatch, value vcon, int o, int rank, int g,
-                      int *ax) {
-  if (g == BATCH || g == CON) {
-    value ps = g == BATCH ? vbatch : vcon;
-    int n = (int)Wosize_val(ps);
-    for (int k = 0; k < n; k++) ax[k] = (int)Long_val(Field(Field(ps, k), o));
-    return n;
-  }
-  int n = 0;
-  for (int d = 0; d < rank; d++)
-    if (!in_pairs(vbatch, o, d) && !in_pairs(vcon, o, d)) ax[n++] = d;
-  return n;
-}
-
-/* A decode of scales (decode): [sc] into [v] in [acc], [rows] rows of
-   [n0] a plane, [per] rows a unit. */
-typedef struct {
-  const nx_array *sc;
-  int exponent, acc;
-  uint8_t *v;
-  int64_t n0, rows, per, chunks;
-} decoding;
-
-/* The E8M0 scale of OCP's Microscaling Formats (MX) v1.0: code e is
-   2^(e - E8M0_BIAS), and E8M0_NAN is NaN. */
-#define E8M0_BIAS 127
-#define E8M0_NAN 255
-
-/* IEEE 754's quiet NaNs, binary32's and binary64's; binary32's 2^-127, a
-   subnormal, the significand's top bit; and the exponents' biases and the
-   significands' widths. */
-#define F32_QNAN 0x7FC00000u
-#define F64_QNAN 0x7FF8000000000000u
-#define F32_TINY 0x00400000u
-#define F32_BIAS 127
-#define F32_MANT 23
-#define F64_BIAS 1023
-#define F64_MANT 52
-
-/* The scale of code [e], 2^(e - 127), NaN for 255, by its bits: 0 is
-   float32's subnormal 2^-127. */
-static float code32(int e) {
-  uint32_t b = e == E8M0_NAN ? F32_QNAN
-               : e == 0      ? F32_TINY
-                             : (uint32_t)(e - E8M0_BIAS + F32_BIAS) << F32_MANT;
-  float f;
-  memcpy(&f, &b, sizeof f);
-  return f;
-}
-
-static double code64(int e) {
-  uint64_t b = e == E8M0_NAN
-                   ? F64_QNAN
-                   : (uint64_t)(e + F64_BIAS - E8M0_BIAS) << F64_MANT;
-  double f;
-  memcpy(&f, &b, sizeof f);
-  return f;
-}
-
-/* A unit is [per] rows of a plane, staged at once. */
-static void decode_rows(int64_t lo, int64_t hi, int worker, void *ctx) {
-  (void)worker;
-  const decoding *f = ctx;
-  const nx_array *sc = f->sc;
-  int r = sc->rank, w = nx_cpu_width(f->acc);
-  const int64_t *x = sc->dim, *st = sc->dim + r;
-  int64_t s0 = r ? st[r - 1] : 0, s1 = r > 1 ? st[r - 2] : 0;
-  for (int64_t u = lo; u < hi; u++) {
-    int64_t plane = u / f->chunks, i0 = u % f->chunks * f->per;
-    int64_t n1 = min64(f->per, f->rows - i0), at = sc->offset + i0 * s1;
-    for (int64_t d = r - 3, q = plane; d >= 0; d--) {
-      at += q % x[d] * st[d];
-      q /= x[d];
-    }
-    int64_t first = (plane * f->rows + i0) * f->n0, n = n1 * f->n0;
-    nx_cpu_stage_as(sc, at, s0, s1, f->n0, n1, f->acc, f->v + first * w,
-                    f->n0);
-    if (!f->exponent) continue;
-    if (f->acc == NX_FLOAT32) {
-      float *y = (float *)f->v + first;
-      for (int64_t k = 0; k < n; k++) y[k] = code32((int)y[k]);
-    } else {
-      double *y = (double *)f->v + first;
-      for (int64_t k = 0; k < n; k++) y[k] = code64((int)y[k]);
-    }
-  }
-}
-
-/* The scales [sc] into [v], C-contiguous in [acc]: a code e, where
-   [exponent], as 2^(e - 127) and 255 as NaN; a value as a cast into acc
-   gives it. Units of DECODE_ROW elements or more, each staged at once. */
-#define DECODE_ROW 4096
-
-static void decode(const nx_array *sc, int exponent, int acc, uint8_t *v) {
-  int r = sc->rank;
-  const int64_t *x = sc->dim;
-  int64_t n0 = r ? x[r - 1] : 1, rows = r > 1 ? x[r - 2] : 1, planes = 1;
-  for (int d = 0; d + 2 < r; d++) planes *= x[d];
-  if (planes == 0 || rows == 0 || n0 == 0) return;
-  int64_t per = min64(rows, ceil_div(DECODE_ROW, n0));
-  decoding f = {sc, exponent, acc, v, n0, rows, per, ceil_div(rows, per)};
-  int64_t bytes = planes * rows * n0 * nx_cpu_width(acc);
-  nx_cpu_job(planes * f.chunks, bytes, bytes * NX_CPU_STRIDED_COST,
-             decode_rows, &f);
-}
-
-/* Fills [t] with a group's table over its [n] axes [ax]: each index of the
-   group, in C order of the axes' extents [x], to the sum along each axis
-   of the index's block, the index plus the axis's [start] divided by
-   [ratio], times the scales' [step]. A group with an empty axis has no
-   index and its table one entry, [0]: the axes before the empty one would
-   write past it. */
-static void table(int n, const int *ax, const int64_t *x, const int64_t *start,
-                  const int64_t *ratio, const int64_t *step, int64_t *t) {
-  int64_t len = 1;
-  t[0] = 0;
-  for (int a = 0; a < n; a++)
-    if (x[ax[a]] == 0) return;
-  for (int a = 0; a < n; a++) {
-    int d = ax[a];
-    int64_t e = x[d], s0 = start[d];
-    for (int64_t q = len - 1; q >= 0; q--) {
-      int64_t first = t[q];
-      for (int64_t i = e - 1; i >= 0; i--)
-        t[q * e + i] = first + (s0 + i) / ratio[d] * step[d];
-    }
-    len *= e;
-  }
-}
-
-/* A scaled side's facts held in OCaml values, read before nx_read,
-   which may run the collector: whether its scale is codes, and its groups'
-   axes, batch, rows or columns, contraction (group_axes). */
-typedef struct {
-  int exponent, n[3], ax[3][NX_MAX_RANK];
-} scale_axes;
-
-static const int groups[2][3] = {{BATCH, ROW, CON}, {BATCH, COL, CON}};
-
-/* Side [o]'s [scale_axes], its scale [vs] an Nx_kernel.scale and its
-   operand [vx]. Out of line, as scales_fit. */
-static __attribute__((noinline)) void axes_of(value vs, value vx,
-                                              value vbatch, value vcon, int o,
-                                              scale_axes *g) {
-  int64_t dim[2 * NX_MAX_RANK], off;
-  int rank = nx_array_layout(vx, dim, &off);
-  g->exponent = Tag_val(vs) == 0;
-  for (int t = 0; t < 3; t++)
-    g->n[t] = group_axes(vbatch, vcon, o, rank, groups[o][t], g->ax[t]);
-}
-
-/* A scaled operand's scales decoded into acc at [mem], C-contiguous, with
-   room at [t] for its tables at its extents, and along each axis the ratio
-   of the extents and the scales' step. */
-typedef struct {
-  int64_t *mem, *t;
-  int64_t ratio[NX_MAX_RANK], step[NX_MAX_RANK];
-} decoded;
-
-/* The scales [sc] of an operand of rank [r] and extents [x], its axes
-   [g], decoded into [d]: 0 if its memory could not be allocated. */
-static int decoded_of(int acc, int r, const int64_t *x, const nx_array *sc,
-                      const scale_axes *g, decoded *d) {
-  int64_t count = 1, positions = 0;
-  for (int k = r - 1; k >= 0; k--) {
-    d->step[k] = count;
-    count *= sc->dim[k];
-    d->ratio[k] = sc->dim[k] ? x[k] / sc->dim[k] : 1;
-  }
-  for (int t = 0; t < 3; t++) {
-    int64_t len = 1;
-    for (int k = 0; k < g->n[t]; k++) len *= x[g->ax[t][k]];
-    positions += len > 0 ? len : 1;
-  }
-  int64_t values = ceil_div(count * nx_cpu_width(acc), 8);
-  d->mem = alloc((values + positions) * 8);
-  if (d->mem == NULL) return 0;
-  d->t = d->mem + values;
-  decode(sc, g->exponent, acc, (uint8_t *)d->mem);
-  return 1;
-}
-
-/* [s], side [o]'s scale over the view of extents [x] whose index starts at
-   [start] along each axis of the operand, from [d]: its tables at d->t.
-   The scale is one along k over runs of the ratio along its last
-   contracted axis, cut where the view starts or ends within a block. */
-static void scale_at(const decoded *d, const scale_axes *g, int o,
-                     const int64_t *x, const int64_t *start, scale *s) {
-  *s = (scale){.v = (const uint8_t *)d->mem, .run = 1};
-  int nk = g->n[2];
-  if (nk) {
-    int k = g->ax[2][nk - 1];
-    s->run = gcd(gcd(d->ratio[k], start[k]), x[k]);
-  }
-  int64_t *t = d->t;
-  for (int k = 0; k < 3; k++) {
-    int64_t len = 1;
-    for (int a = 0; a < g->n[k]; a++) len *= x[g->ax[k][a]];
-    table(g->n[k], g->ax[k], x, start, d->ratio, d->step, t);
-    s->t[groups[o][k]] = t;
-    t += len > 0 ? len : 1;
-  }
-}
-
-static const int64_t no_start[NX_MAX_RANK];
-
-/* The scales [sc] of operand [x], side [o], its axes [g], into [s], its
-   memory, to free, at [*mem]: 0 if it could not be allocated. Out of
-   line, as scales_fit. */
-static __attribute__((noinline)) int scale_of(int acc, const nx_array *x,
-                                              const nx_array *sc,
-                                              const scale_axes *g, int o,
-                                              scale *s, uint8_t **mem) {
-  decoded d;
-  if (!decoded_of(acc, x->rank, x->dim, sc, g, &d)) return 0;
-  *mem = (uint8_t *)d.mem;
-  scale_at(&d, g, o, x->dim, no_start, s);
-  return 1;
-}
-
-/* Whether each scale of [vs], options of Nx_kernel.scale, fits its
-   operand of [va] and [vb]: of its rank, each extent dividing the
-   operand's, 0 only along an empty axis. Out of line: its layouts stay off
-   the external's frame. */
-static __attribute__((noinline)) int scales_fit(value va, value vb,
-                                                const value *vs) {
-  int64_t x[2 * NX_MAX_RANK], dim[2 * NX_MAX_RANK], off;
-  for (int o = A; o <= B; o++) {
-    if (!Is_block(vs[o])) continue;
-    /* Exponent and Value hold their array in field 0. */
-    int r = nx_array_layout(o == A ? va : vb, x, &off);
-    if (nx_array_layout(Field(Field(vs[o], 0), 0), dim, &off) != r) return 0;
-    for (int d = 0; d < r; d++)
-      if (dim[d] == 0 ? x[d] != 0 : x[d] % dim[d] != 0) return 0;
-  }
-  return 1;
+int nx_gemm_spanned(int acc, int da, int db, const scale *s) {
+  return s == NULL && nx_gemm_quads_for(acc, da, db) == NULL;
 }
 
 /* The price (cpu.h, Calls) of a contraction in [acc] in [order] whose
@@ -3144,10 +1641,9 @@ static __attribute__((noinline)) int scales_fit(value va, value vb,
    batch's products' set-up, 7.7 KiB in a batch of 8192 1 × 1 products
    (M1); streaming, its operands' bytes in that dtype, each a strided
    copy, which it stages inline where they are not in that dtype or not
-   in place (parts_of, words_of, stage_runs, rounded_on). */
-#define PRODUCT_COST (16 * 1024)
-
-static double call_cost(int acc, int order, const double *x) {
+   in place (gemm_complex.c's parts_of, gemm_quads.c's words_of,
+   nx_gemm_stage_runs, nx_gemm_rounded_on). */
+double nx_gemm_call_cost(int acc, int order, const double *x) {
   int sum = summed_in(acc), r = part_of(sum);
   double e = x[BATCH], m = x[ROW], n = x[COL], k = x[CON];
   double flops = 2 * e * m * n * k * (r == sum ? 1 : 4);
@@ -3158,12 +1654,6 @@ static double call_cost(int acc, int order, const double *x) {
      own: gemm_generic.c's C library fma, 0.01 flops a byte. */
   if (flops * 100 + bytes < NX_CPU_RELEASE_BYTES) return flops * 100 + bytes;
   return flops / nx_cpu_core_speed(r) + bytes;
-}
-
-/* The price of decoding the scales [sc] into [acc] (decode), a strided
-   copy. */
-static double decode_cost(int acc, const nx_array *sc) {
-  return nx_cpu_elements(sc) * nx_cpu_width(acc) * NX_CPU_STRIDED_COST;
 }
 
 /* The order of a contraction in [acc] whose groups have the extents [x].
@@ -3186,30 +1676,18 @@ static double decode_cost(int acc, const nx_array *sc) {
 #define LANE_MOST 4
 #define LANE_DEPTH 128
 
-static int order_of(int acc, const double *x) {
+static int is_integer(int dt) {
+  int k = nx_dtype_row_of(dt).kind;
+  return k == NX_KIND_SIGNED || k == NX_KIND_UNSIGNED;
+}
+
+int nx_gemm_order_of(int acc, const double *x) {
   double m = x[ROW], n = x[COL];
   if (is_integer(acc)) return NX_CPU_CHAIN;
   if (m > LANE_MOST && n > LANE_MOST && m * n >= CHAIN_OUTPUTS &&
       x[CON] < LANE_DEPTH * m * n)
     return NX_CPU_CHAIN;
   return NX_CPU_LANE;
-}
-
-/* The contraction of the view [v], or of the runs [r] where [runs], over
-   [op] in [acc], a of dtype dts[0] and b of dts[1], into dst of dtype
-   [out], a and b scaled by [s] where it is not NULL: 0 if an allocation
-   failed. */
-static inline __attribute__((always_inline)) int computed(
-    int acc, int order, int out, const int *dts, int runs,
-    nx_contract_view *v, nx_contract_runs *r, const nx_array *const *op,
-    const scale *s) {
-  int sum = summed_in(acc);
-  if (out != acc || sum != acc) {
-    if (!runs) runs_of_view(r, v);
-    return rounded_on(acc, sum, order, r, op, s);
-  }
-  if (runs) return runs_on(acc, order, dts[0], dts[1], r, op, s);
-  return contract_view(acc, order, dts[0], dts[1], v, op, s, NULL);
 }
 
 /* The external: groups the view of the pairs [vbatch] and [vcontracting]
@@ -3235,13 +1713,13 @@ static inline __attribute__((always_inline)) value contract_body(
                 nx_array_dtype(vinit)};
   int out = nx_array_dtype(vdst);
   value vs[2] = {vsa, vsb};
-  if (scaled && !scales_fit(va, vb, vs)) return Val_int(NX_SHAPE);
+  if (scaled && !nx_gemm_scales_fit(va, vb, vs)) return Val_int(NX_SHAPE);
   /* Read before nx_read, which may run the collector. */
   scale_axes sx[2];
   for (int o = A; scaled && o <= B; o++)
     if (Is_block(vs[o]))
-      axes_of(Field(vs[o], 0), o == A ? va : vb, vbatch, vcontracting, o,
-              &sx[o]);
+      nx_gemm_axes_of(Field(vs[o], 0), o == A ? va : vb, vbatch, vcontracting,
+                      o, &sx[o]);
   nx_operand in[6];
   in[0] = (nx_operand){va, dts[0], 0};
   in[1] = (nx_operand){vb, dts[1], 0};
@@ -3264,10 +1742,10 @@ static inline __attribute__((always_inline)) value contract_body(
     for (int k = 0; runs && k < r.runs[g]; k++)
       x[g] *= (double)r.extent[g][k];
   }
-  int order = order_of(acc, x), done;
-  double cost = call_cost(acc, order, x);
+  int order = nx_gemm_order_of(acc, x), done;
+  double cost = nx_gemm_call_cost(acc, order, x);
   for (int o = A; scaled && o <= B; o++)
-    if (at[o] >= 0) cost += decode_cost(acc, &a[at[o]]);
+    if (at[o] >= 0) cost += nx_gemm_decode_cost(acc, &a[at[o]]);
   int released = nx_cpu_release(cost);
   scale s[2];
   uint8_t *mem[2] = {NULL, NULL};
@@ -3275,7 +1753,7 @@ static inline __attribute__((always_inline)) value contract_body(
   if (scaled) memset(s, 0, sizeof s);
   for (int o = A; scaled && o <= B && done; o++)
     if (at[o] >= 0)
-      done = scale_of(acc, op[o], &a[at[o]], &sx[o], o, &s[o], &mem[o]);
+      done = nx_gemm_scale_of(acc, op[o], &a[at[o]], &sx[o], o, &s[o], &mem[o]);
   if (done)
     done = computed(acc, order, out, dts, runs, &v, &r, op, scaled ? s : NULL);
   if (scaled) {
@@ -3295,341 +1773,12 @@ static __attribute__((noinline)) value contract_scaled(
                        vsb, 1);
 }
 
-/* Segments
-
-   A segmented contraction is, for each batch element and group, the
-   contraction of views of its operands: Rows' group e is a's rows
-   [lo, hi) along a_axis against b's index e along b_axis, Contracting's
-   the pair's window [lo, hi) of a and b into dst's slice e. Each is
-   computed as an unsegmented call of those views is, so it sums as that
-   call does, and the groups write apart. Rows' rows in no group are a
-   view of no products: init as acc holds it, or +0.
-
-   The views are cut from the call's frame: its operands' layouts, Rows'
-   dst and init given an axis of b's g groups, stepping 0, where b_axis
-   lies among the result's columns, and Contracting's without their
-   groups' axis, which each slice steps along. */
-
-typedef struct {
-  int nb, nc, rows, init;     /* rows: Rows, else Contracting */
-  int ps[NX_MAX_RANK][2];     /* the batch pairs, then the contracting */
-  int at[2];                  /* the cut axis of a and of b */
-  int ya, yb;                 /* Rows: dst's axes of a_axis and b_axis */
-  int64_t g, lead[4];         /* Contracting: dst's and init's steps
-                                 along the groups' axis */
-  nx_layout l[4];             /* by view operand */
-  double x[4];                /* the extents' products, by group */
-} frame;
-
-/* [y] with an axis of [n] stepping 0 inserted at [at], into [l]. */
-static void inserted(nx_layout *l, const nx_layout *y, int at, int64_t n) {
-  int r = y->rank;
-  l->rank = r + 1;
-  l->offset = y->offset;
-  for (int d = 0, e = 0; d <= r; d++) {
-    int here = d == at;
-    l->dim[d] = here ? n : y->dim[e];
-    l->dim[r + 1 + d] = here ? 0 : y->dim[r + e];
-    e += !here;
-  }
-}
-
-/* [y] without its first axis, into [l]; its step along it at [lead]. */
-static void dropped(nx_layout *l, const nx_layout *y, int64_t *lead) {
-  int r = y->rank - 1;
-  l->rank = r;
-  l->offset = y->offset;
-  *lead = y->dim[r + 1];
-  for (int d = 0; d < r; d++) {
-    l->dim[d] = y->dim[d + 1];
-    l->dim[r + d] = y->dim[r + 2 + d];
-  }
-}
-
-/* [l] cut along [axis] to [n] indices from [start]. */
-static void cut(nx_layout *l, int axis, int64_t start, int64_t n) {
-  l->offset += start * l->dim[l->rank + axis];
-  l->dim[axis] = n;
-}
-
-/* The count of side [o]'s axes below [x] no pair of [f] names, where [x]
-   is one, 0 <= x < [rank]; else -1. */
-static int free_below(const frame *f, int o, int rank, intnat x) {
-  if (x < 0 || x >= rank) return -1;
-  int n = 0;
-  for (int d = 0; d <= x; d++) {
-    int paired = 0;
-    for (int k = 0; k < f->nb + f->nc; k++) paired |= f->ps[k][o] == d;
-    if (d == x) return paired ? -1 : n;
-    n += !paired;
-  }
-  return -1;
-}
-
-/* Reads the frame [f] of the segments [vs], an Nx_kernel.segments, and
-   the layout of its offsets into [off], from the pairs, [vy], [va], [vb]
-   and the init [vi]: NX_OK, or NX_SHAPE where they do not fit as
-   Shape.contract states. Out of line: its layouts stay off the
-   external's frame. */
-static __attribute__((noinline)) int frame_of(frame *f, value vbatch,
-                                              value vcon, value vs, value vy,
-                                              value va, value vb, value vi,
-                                              nx_layout *off) {
-  nx_layout *l = f->l, y, i;
-  f->nb = (int)Wosize_val(vbatch);
-  f->nc = (int)Wosize_val(vcon);
-  f->init = Is_block(vi);
-  f->rows = Tag_val(vs) == 0;
-  int nb = f->nb, nc = f->nc;
-  l[A].rank = nx_array_layout(va, l[A].dim, &l[A].offset);
-  l[B].rank = nx_array_layout(vb, l[B].dim, &l[B].offset);
-  y.rank = nx_array_layout(vy, y.dim, &y.offset);
-  i.rank = f->init ? nx_array_layout(Field(vi, 0), i.dim, &i.offset) : 0;
-  off->rank = nx_array_layout(Field(vs, 0), off->dim, &off->offset);
-  if (nb + nc > l[A].rank || nb + nc > l[B].rank) return NX_SHAPE;
-  for (int k = 0; k < nb + nc; k++) {
-    value p = Field(k < nb ? vbatch : vcon, k < nb ? k : k - nb);
-    for (int o = A; o <= B; o++) {
-      intnat x = Long_val(Field(p, o));
-      f->ps[k][o] = x < 0 || x >= l[o].rank ? -1 : (int)x;
-    }
-  }
-  /* The offsets: the batch extents, then g + 1. */
-  if (off->rank != nb + 1 || off->dim[nb] < 1) return NX_SHAPE;
-  for (int k = 0; k < nb; k++)
-    if (f->ps[k][A] < 0 || off->dim[k] != l[A].dim[f->ps[k][A]])
-      return NX_SHAPE;
-  f->g = off->dim[nb] - 1;
-  if (f->rows) {
-    intnat xa = Long_val(Field(vs, 1)), xb = Long_val(Field(vs, 2));
-    int fa = l[A].rank - nb - nc;
-    int ba = free_below(f, A, l[A].rank, xa);
-    int bb = free_below(f, B, l[B].rank, xb);
-    if (ba < 0 || bb < 0 || l[B].dim[xb] != f->g) return NX_SHAPE;
-    f->at[A] = (int)xa;
-    f->at[B] = (int)xb;
-    f->ya = nb + ba;
-    f->yb = nb + fa + bb;
-    if (f->yb > y.rank || y.rank >= NX_MAX_RANK ||
-        (f->init && (f->yb > i.rank || i.rank >= NX_MAX_RANK)))
-      return NX_SHAPE;
-    inserted(&l[DST], &y, f->yb, f->g);
-    if (f->init) inserted(&l[INIT], &i, f->yb, f->g);
-  } else {
-    intnat p = Long_val(Field(vs, 1));
-    if (p < 0 || p >= nc || y.rank < 1 || y.dim[0] != f->g ||
-        (f->init && (i.rank < 1 || i.dim[0] != f->g)))
-      return NX_SHAPE;
-    f->at[A] = f->ps[nb + p][A];
-    f->at[B] = f->ps[nb + p][B];
-    dropped(&l[DST], &y, &f->lead[DST]);
-    if (f->init) dropped(&l[INIT], &i, &f->lead[INIT]);
-  }
-  nx_contract_view v;
-  nx_contract_runs r;
-  int fit = nx_contract_fill_layouts(&v, &r, nb, nc,
-                                     (const int (*)[2])f->ps, &l[DST], &l[A],
-                                     &l[B], f->init ? &l[INIT] : NULL);
-  if (fit == NX_SHAPE) return NX_SHAPE;
-  for (int g = BATCH; g <= CON; g++) {
-    f->x[g] = fit == NX_OK ? (double)v.extent[g] : 1;
-    for (int k = 0; fit != NX_OK && k < r.runs[g]; k++)
-      f->x[g] *= (double)r.extent[g][k];
-  }
-  /* Rows' columns hold b's g groups, of which a row takes one. */
-  if (f->rows && f->g > 0) f->x[COL] /= (double)f->g;
-  return NX_OK;
-}
-
-/* A segmented call's work: its frame, dtypes and operands, and its scaled
-   sides' axes and scales, sc[o] NULL for an unscaled side. */
-typedef struct {
-  const frame *f;
-  int acc, order, out, dts[3];
-  const nx_array *const *op;
-  const scale_axes *sx;
-  decoded d[2];
-  const nx_array *sc[2];
-} segmented;
-
-/* Batch element [beta]'s view of group [e] over [n] indices of the cut
-   axis from [lo], of no products where [none]: 0 if an allocation
-   failed. */
-static int part(const segmented *j, const int64_t *beta, int64_t e,
-                int64_t lo, int64_t n, int none) {
-  const frame *f = j->f;
-  nx_layout l[4];
-  memcpy(l, f->l, sizeof l);
-  int64_t start[2][NX_MAX_RANK] = {{0}};
-  for (int k = 0; k < f->nb; k++) {
-    for (int o = A; o <= B; o++) {
-      cut(&l[o], f->ps[k][o], beta[k], 1);
-      start[o][f->ps[k][o]] = beta[k];
-    }
-    cut(&l[DST], k, beta[k], 1);
-    if (f->init) cut(&l[INIT], k, beta[k], 1);
-  }
-  cut(&l[A], f->at[A], lo, n);
-  start[A][f->at[A]] = lo;
-  if (f->rows) {
-    cut(&l[B], f->at[B], e, 1);
-    start[B][f->at[B]] = e;
-    for (int o = INIT; o <= DST; o++) {
-      if (o == INIT && !f->init) continue;
-      cut(&l[o], f->ya, lo, n);
-      cut(&l[o], f->yb, e, 1);
-    }
-  } else {
-    cut(&l[B], f->at[B], lo, n);
-    start[B][f->at[B]] = lo;
-    l[DST].offset += e * f->lead[DST];
-    if (f->init) l[INIT].offset += e * f->lead[INIT];
-  }
-  nx_contract_view v;
-  nx_contract_runs r;
-  int fit = nx_contract_fill_layouts(&v, &r, f->nb, f->nc,
-                                     (const int (*)[2])f->ps, &l[DST], &l[A],
-                                     &l[B], f->init ? &l[INIT] : NULL);
-  int runs = fit == NX_DECLINED;
-  if (none && runs) {
-    r.runs[CON] = 1;
-    r.extent[CON][0] = 0;
-  } else if (none) v.extent[CON] = 0;
-  scale s[2] = {{0}};
-  int scaled = 0;
-  for (int o = A; o <= B && !none; o++)
-    if (j->sc[o]) {
-      scale_at(&j->d[o], &j->sx[o], o, l[o].dim, start[o], &s[o]);
-      scaled = 1;
-    }
-  return computed(j->acc, j->order, j->out, j->dts, runs, &v, &r, j->op,
-                  scaled ? s : NULL);
-}
-
-/* The groups of each batch element under the offsets [off]: 0 if an
-   allocation failed. The offsets are copied first, as dst may be them. */
-static int groups_on(segmented *j, const nx_array *off) {
-  const frame *f = j->f;
-  int nb = f->nb;
-  int64_t w = f->g + 1, count = 1, beta[NX_MAX_RANK] = {0};
-  for (int k = 0; k < nb; k++) count *= off->dim[k];
-  if (count == 0) return 1;
-  int64_t *o = malloc((size_t)(count * w) * sizeof *o);
-  if (o == NULL) return 0;
-  const int64_t *src = (const int64_t *)off->base;
-  for (int64_t q = 0; q < count * w; q++) {
-    int64_t at = off->offset;
-    for (int64_t d = nb, x = q; d >= 0; d--) {
-      at += x % off->dim[d] * off->dim[nb + 1 + d];
-      x /= off->dim[d];
-    }
-    o[q] = src[at];
-  }
-  int64_t n = f->l[A].dim[f->at[A]];
-  int done = 1;
-  for (int64_t q = 0; q < count && done; q++) {
-    const int64_t *of = o + q * w;
-    for (int64_t d = nb - 1, x = q; d >= 0; d--) {
-      beta[d] = x % off->dim[d];
-      x /= off->dim[d];
-    }
-    /* Group e holds [max(of[e], of[0]), min(of[e + 1..g])), within the
-       axis: below, [hi] is the least offset above e, at most n. */
-    int64_t hi = of[f->g] < n ? of[f->g] : n;
-    for (int64_t e = f->g - 1; e >= 0 && done; e--) {
-      int64_t lo = of[e] > of[0] ? of[e] : of[0];
-      lo = lo < 0 ? 0 : lo > n ? n : lo;
-      int64_t len = hi > lo ? hi - lo : 0;
-      if (len > 0 || !f->rows) done = part(j, beta, e, len ? lo : 0, len, 0);
-      if (of[e] < hi) hi = of[e];
-    }
-    if (!f->rows || !done) continue;
-    /* Rows' rows in no group: below of[0] and from of[g]. */
-    int64_t l0 = of[0] < 0 ? 0 : of[0] > n ? n : of[0];
-    int64_t h0 = of[f->g] < l0 ? l0 : of[f->g] > n ? n : of[f->g];
-    if (f->g == 0) h0 = l0;
-    if (l0 > 0) done = part(j, beta, 0, 0, l0, 1);
-    if (done && h0 < n) done = part(j, beta, 0, h0, n - h0, 1);
-  }
-  free(o);
-  return done;
-}
-
-/* The external for a call with segments [vseg], an option: frames the
-   call (frame_of), answering what it answers, refuses as contract_body
-   does, then reads the operands and the offsets through
-   the door and computes each group (groups_on). Out of line, as
-   contract_scaled. */
-static __attribute__((noinline)) value contract_segmented(
-    value vbatch, value vcontracting, value vacc, value vdst, value vi,
-    value va, value vb, value vsa, value vsb, value vseg) {
-  int acc = Int_val(vacc), init = Is_block(vi);
-  value vinit = init ? Field(vi, 0) : va;
-  value vs = Field(vseg, 0);
-  frame f;
-  nx_layout offl;
-  int fit = frame_of(&f, vbatch, vcontracting, vs, vdst, va, vb, vi, &offl);
-  if (fit != NX_OK) return Val_int(fit);
-  value vsc[2] = {vsa, vsb};
-  int scaled = Is_block(vsa) || Is_block(vsb);
-  if (scaled && !scales_fit(va, vb, vsc)) return Val_int(NX_SHAPE);
-  scale_axes sx[2];
-  for (int o = A; o <= B; o++)
-    if (Is_block(vsc[o]))
-      axes_of(Field(vsc[o], 0), o == A ? va : vb, vbatch, vcontracting, o,
-              &sx[o]);
-  segmented j = {.f = &f, .acc = acc, .out = nx_array_dtype(vdst), .sx = sx,
-                 .dts = {nx_array_dtype(va), nx_array_dtype(vb),
-                         nx_array_dtype(vinit)}};
-  nx_operand in[7];
-  in[0] = (nx_operand){va, j.dts[0], 0};
-  in[1] = (nx_operand){vb, j.dts[1], 0};
-  in[2] = (nx_operand){vdst, j.out, 1};
-  in[3] = (nx_operand){vinit, j.dts[2], 0};
-  int n = 3 + init, at[2] = {-1, -1};
-  for (int o = A; o <= B; o++)
-    if (Is_block(vsc[o])) {
-      value sv = Field(Field(vsc[o], 0), 0);
-      at[o] = n;
-      in[n++] = (nx_operand){sv, nx_array_dtype(sv), 0};
-    }
-  int ao = n;
-  in[n++] = (nx_operand){Field(vs, 0), NX_INT64, 0};
-  nx_array a[7];
-  int e = nx_read(n, in, a);
-  if (e) return Val_int(e);
-  const nx_array *op[4] = {&a[0], &a[1], init ? &a[3] : NULL, &a[2]};
-  j.op = op;
-  j.order = order_of(acc, f.x);
-  /* Each part's set-up, a product's, for each batch element's groups and
-     Rows' two runs of rows in none. */
-  double parts = (double)nx_cpu_elements(&a[ao]) + 2;
-  double cost = call_cost(acc, j.order, f.x) + parts * PRODUCT_COST;
-  for (int o = A; o <= B; o++)
-    if (at[o] >= 0) cost += decode_cost(acc, &a[at[o]]);
-  int released = nx_cpu_release(cost);
-  int done = 1;
-  for (int o = A; o <= B && done; o++)
-    if (at[o] >= 0) {
-      j.sc[o] = &a[at[o]];
-      done = decoded_of(acc, f.l[o].rank, f.l[o].dim, j.sc[o], &sx[o], &j.d[o]);
-      if (!done) j.sc[o] = NULL;
-    }
-  if (done) done = groups_on(&j, &a[ao]);
-  for (int o = A; o <= B; o++)
-    if (j.sc[o]) free(j.d[o].mem);
-  nx_cpu_reacquire(released);
-  nx_done(n, a);
-  if (!done) caml_raise_out_of_memory();
-  return Val_int(NX_OK);
-}
-
 value nx_cpu_contract(value vbatch, value vcontracting, value vacc,
                       value vdst, value vi, value va, value vb, value vsa,
                       value vsb, value vseg) {
   if (Is_block(vseg))
-    return contract_segmented(vbatch, vcontracting, vacc, vdst, vi, va, vb,
-                              vsa, vsb, vseg);
+    return nx_gemm_contract_segmented(vbatch, vcontracting, vacc, vdst, vi,
+                                      va, vb, vsa, vsb, vseg);
   if (Is_block(vsa) || Is_block(vsb))
     return contract_scaled(vbatch, vcontracting, vacc, vdst, vi, va, vb, vsa,
                            vsb);

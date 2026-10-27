@@ -144,7 +144,7 @@ TILES(kernel_f64, f64, 8)
    words, which give the even columns' bytes, and shifted right by a byte,
    the odd columns'; the stores merge them back.
 
-   Quads (gemm.c) of int8 or uint8 follow XNNPACK's qs8 GEMM for AVX2
+   Quads (gemm_quads.c) of int8 or uint8 follow XNNPACK's qs8 GEMM for AVX2
    (src/qs8-gemm/MRx8c8-avx2.c.in, BSD-3-Clause; no code of it is copied
    here): each operand widened to 16 bits by VPMOVSXBW or VPMOVZXBW, then
    VPMADDWD adds pairs of their products into 32 bits, exactly: a product
@@ -206,7 +206,7 @@ QDOT(quads_dot_u8, WIDEN_U, 4, MADD)
    widened to 16 bits, each column's pair against the broadcast pair of
    a's elements by VPMADDWD, exact as in the quads kernel. Rows past k
    repeat the last, which a's elements there, zeros, cancel. Each row of b
-   prefetches the same row of [next] (gemm.c says why, above AXPY_ROWS):
+   prefetches the same row of [next] (gemm_quads.c says why, above AXPY_ROWS):
    on the i9-9900K one row by a 4096 × 4096 weight took 141 µs against
    263 without, from memory 508 against 964.
 

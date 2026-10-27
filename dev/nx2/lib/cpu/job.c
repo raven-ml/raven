@@ -95,9 +95,10 @@ void nx_cpu_job_at(int64_t total, int64_t bytes, double cost,
    transforms' buffers saved 0.13 to 0.23 us a call of 64 to 1024 points
    (fft.c). KEPT is the most a kernel holds at once on one thread: eight
    for a complex product whose result is of another dtype than its sums
-   and whose contracted runs are several (gemm.c), its sums R, a's and b's
-   runs copied into C order, a's and the init's parts and b's blocks, and
-   on worker 0 the packed b and its tile; five for a Moments scan of an
+   and whose contracted runs are several (gemm_complex.c, gemm_rounded.c,
+   gemm_runs.c), its sums R, a's and b's runs copied into C order, a's
+   and the init's parts and b's blocks, and on worker 0 the packed b and
+   its tile; five for a Moments scan of an
    aliased operand (reduce.c), four for a transform (fft.c). A thread's
    buffers are freed when it ends. */
 #define KEPT 8

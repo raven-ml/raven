@@ -55,7 +55,7 @@ QDOT(quads_dot_u8, VLOAD, 8, DOT_U)
    ported. */
 /* Rows t to t + 3 of b from column j, a row past k repeating the last,
    which a's zeros there cancel, and a's word at t: a's words lie on 4
-   bytes, in place (gemm.c's words_in_place) or copied, so the int32 load
+   bytes, in place (gemm_quads.c's words_in_place) or copied, so the int32 load
    is aligned, here and in VWORD. */
 #define VROWS                                    \
   const uint8_t *r0 = b + t * ldb + j;           \
