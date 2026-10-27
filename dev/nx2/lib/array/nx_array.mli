@@ -61,12 +61,12 @@ type ('v, 's) t = private {
 (** The type for arrays of elements of storage format ['s] read as ['v]. An
     array's layout reaches only bits of its buffer, at non-negative positions,
     and its first element lies on a multiple of its storage's alignment: its
-    width for byte-wide dtypes, one component's for complex ones. The record
-    is private: only this module's functions make an array, so every array
-    keeps these facts. *)
+    width for dtypes of a byte or more, one byte for narrower ones, one
+    component's for complex ones. The record is private. Only this module's
+    functions make an array, so every array keeps these facts. *)
 
 (** The type for arrays whose dtype is chosen at run time. {!expect} recovers
-    the static type. [Any a] is [a] at run time: packing allocates nothing. *)
+    the static type. [Any a] is [a] at run time. Packing allocates nothing. *)
 type any = Any : ('v, 's) t -> any [@@unboxed]
 
 val v : ('v, 's) Dtype.t -> Layout.t -> Rig.Buffer.t -> ('v, 's) t
@@ -85,9 +85,8 @@ val create :
   ('v, 's) t
 (** [create d dt s] is a fresh C-contiguous array of shape [s] in [d]'s memory
     of kind [memory] (defaults to [Device]), at offset 0, with unspecified
-    elements. Its
-    buffer holds [Dtype.bytes dt n] bytes for [n] elements; the bits of a
-    sub-byte array's last byte past its last element are zero.
+    elements. Its buffer holds [Dtype.bytes dt n] bytes for [n] elements; the
+    bits of a sub-byte array's last byte past its last element are zero.
 
     Raises [Invalid_argument] as {!Layout.contiguous} does, and what
     {!Rig.Buffer.create} raises. *)
@@ -149,10 +148,7 @@ val get : ('v, 's) t -> int iarray -> 'v
 (** [get a i] is [a]'s element at index [i].
 
     Raises [Invalid_argument] unless [i] has [Layout.rank (layout a)] entries,
-    each in [\[0, Layout.dim (layout a) j)] for entry [j], and, as {!refused}
-    raises it, if [a]'s buffer is dead, its memory is held exclusive or the
-    host does not address it. Raises {!Rig.Lost} if its memory is a lost
-    device's or follows work a lost device did not finish. *)
+    each in [\[0, Layout.dim (layout a) j)] for entry [j]. *)
 
 val set : ('v, 's) t -> int iarray -> 'v -> unit
 (** [set a i x] stores [x] at [a]'s index [i]. Stores to the other elements of a
@@ -180,7 +176,8 @@ val of_array : ('v, 's) Dtype.t -> int iarray -> 'v array -> ('v, 's) t
     {!to_device}, {!transfer} and {!copy} store an array's elements bit for
     bit, NaN payloads included, on any devices, and run no kernel. {!borrow}
     shares an array's memory with another device instead, where that device
-    maps it. *)
+    maps it. {!to_device} and {!transfer} also raise what
+    {!Rig.Buffer.create}, {!Rig.Buffer.copy} and {!Rig.submit} raise. *)
 
 val to_device : Rig.t -> ('v, 's) t -> ('v, 's) t
 (** [to_device d a] is [a]'s elements on [d], also when [a] is on [d], in a
@@ -191,13 +188,12 @@ val to_device : Rig.t -> ('v, 's) t -> ('v, 's) t
     beside the elements, each as found before or after a store another domain
     makes to it meanwhile. Otherwise the copy's axes go by decreasing magnitude
     of [a]'s stride, ties in axis order, the last at stride [1] and each other
-    at the product of the extents after it, each with the sign of [a]'s
-    stride, an axis of stride [0] keeping [0], and the least position at [0].
-    Shape [[3; 2]] at strides [[2; 2]] gets strides [[2; 1]].
+    at the product of the extents after it. Each takes the sign of [a]'s
+    stride, an axis of stride [0] keeps [0], and the least position is at
+    [0]. Shape [[3; 2]] at strides [[2; 2]] gets strides [[2; 1]].
 
     Raises [Invalid_argument] if [a]'s buffer is dead or its memory is held
-    exclusive, and what {!Rig.Buffer.create}, {!Rig.Buffer.copy} and
-    {!Rig.submit} raise. *)
+    exclusive. *)
 
 val transfer : src:('v, 's) t -> dst:('v, 's) t -> unit
 (** [transfer ~src ~dst] stores [src]'s elements into [dst], of the same shape.
@@ -209,8 +205,7 @@ val transfer : src:('v, 's) t -> dst:('v, 's) t -> unit
     ({!Layout.is_distinct}), or [dst]'s elements are narrower than a byte and
     the host does not address its memory, and, where the host addresses both
     arrays' memory, if [dst]'s memory is [Read] or [dst] shares a byte with
-    [src] without being identical to it ({!section-kernels}). Raises what
-    {!Rig.Buffer.create}, {!Rig.Buffer.copy} and {!Rig.submit} raise. *)
+    [src] without being identical to it ({!section-kernels}). *)
 
 val copy : ('v, 's) t -> ('v, 's) t
 (** [copy a] is a fresh C-contiguous array on [a]'s device holding [a]'s
@@ -230,7 +225,11 @@ val borrow : Rig.t -> ('v, 's) t -> ('v, 's) t option
 (** {1:bigarrays Bigarrays}
 
     {!bigarray}, {!read} and {!of_bigarray} share bytes with the value they
-    take, without a copy. *)
+    take, without a copy. {!bigarray} and {!read} raise [Invalid_argument]
+    unless the array [a] they take is C-contiguous ({!Layout.is_contiguous})
+    and of rank at most 16, the most axes a Bigarray has, and if [a]'s buffer
+    is dead or its memory is held exclusive. They raise {!Rig.Lost} as
+    {!Rig.Buffer.wait} does. *)
 
 val bigarray :
   ('v, 's) Bigarray.kind ->
@@ -240,7 +239,7 @@ val bigarray :
     through it write [a], and are allowed only if [a]'s memory admits them
     ({!Rig.Buffer.val-access}). It waits once for the work on [a]'s memory, and
     from then on that memory is never held exclusive again
-    ({!Rig.Buffer.export}): access through the bigarray follows later device
+    ({!Rig.Buffer.export}). Access through the bigarray follows later device
     work only after {!Rig.Buffer.wait}. A format Bigarray lacks is bitcast
     first to one of its width ({!bitcast}).
 
@@ -249,10 +248,8 @@ val bigarray :
     rounded through binary32 first, so it can differ from {!Dtype.of_float} by
     one unit in the last place.
 
-    Raises [Invalid_argument] naming [Nx_array.bigarray] unless [a] is on
-    {!Rig.host}, C-contiguous ({!Layout.is_contiguous}) and of rank at most 16,
-    and if [a]'s buffer is dead, or its memory is held exclusive by claims that
-    have not consumed it. *)
+    Raises [Invalid_argument] naming [Nx_array.bigarray], and unless [a] is
+    on {!Rig.host}. *)
 
 val read :
   ('v, 's) Bigarray.kind ->
@@ -267,16 +264,13 @@ val read :
     [f] returns, which {!bigarray} prevents for good.
 
     [f] must not write through [b], since work that reads the memory may still
-    run, and must not keep [b] after it returns: a donation or
+    run, and must not keep [b] after it returns, since a donation or
     {!Rig.Buffer.free} can then give the memory to another array. The claim
-    orders [b] only against donations: work another domain submits while [f]
-    runs needs the program's own synchronization.
+    orders [b] only against donations. The program must order [b] against
+    work another domain submits while [f] runs.
 
-    Raises [Invalid_argument] naming [Nx_array.read] unless [a] is C-contiguous
-    ({!Layout.is_contiguous}) and of rank at most 16, the most axes a Bigarray
-    has, and, if it has an element, the host addresses its memory; or, as
-    {!refused} raises it, if [a]'s buffer is dead or its memory is held
-    exclusive. Raises {!Rig.Lost} as {!Rig.Buffer.wait} does. *)
+    Raises [Invalid_argument] naming [Nx_array.read], and if [a] has an
+    element and the host does not address its memory. *)
 
 val of_bigarray :
   ('v, 's) Dtype.t ->
@@ -297,10 +291,10 @@ val of_bigarray :
     may share bytes with read arrays identical to it, and with no other.
 
     The door and the kernels that read through it keep other domains
-    waiting to collect for no longer than about one unloaded core's copy of
-    1 MiB at a time, however many arrays they claim and release. Past
-    {!max_operands} arrays, other threads of the calling domain may run
-    OCaml code while the door claims or releases them. *)
+    waiting to collect for a bounded time, which does not grow with the
+    number of arrays they claim or release. Past {!max_operands} arrays, other
+    threads of the calling domain may run OCaml code while the door claims or
+    releases them. *)
 
 val max_operands : int
 (** [max_operands] is [18], [nx_array.h]'s [NX_MAX_OPERANDS]: the length of
@@ -364,5 +358,5 @@ val refused : string -> answer -> any list -> 'a
     dead, in [operands]' order, as [<dtype> <shape> was <why>], [why] the
     reason its consumer gave ({!Rig.Buffer.dead}):
     [Nx.add: float32 [3] was donated to Nx.mul (float32 [3], …)].
-    [Done] and [Declined] are no refusal, and raise [Invalid_argument] saying
-    so. *)
+    For [Done] and [Declined] it raises [Invalid_argument] saying they refuse
+    nothing. *)

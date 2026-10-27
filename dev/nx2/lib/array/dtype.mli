@@ -8,14 +8,14 @@
     A dtype [('v, 's) t] names a storage format ['s] whose elements OCaml reads
     and writes as values of type ['v]. Operands of one format share a type, so a
     signature states which operands share one and the compiler checks every
-    typed call. Where {!Bigarray} has the format, ['s] is Bigarray's element
+    typed call. Where [Bigarray] has the format, ['s] is Bigarray's element
     type, so arrays and bigarrays exchange bytes with their kinds checked by the
     type.
 
-    A dtype's facts (its {!name}, {!bits}, {!kind} and {!float_format}) are rows
-    of one table indexed by its {!code}, which the C header [nx_dtype.h] holds
-    too. Every store of a [float] into a dtype follows one rule, stated with
-    {!of_float}.
+    A dtype's facts (its {!name}, {!bits}, {!type-kind} and
+    {!type-float_format}) are rows of one table indexed by its {!code}, which
+    the C header [nx_dtype.h] holds too. Every store of a [float] into a dtype
+    follows one rule, stated in {!section-stores}.
 
     An element wider than a byte is stored little-endian, the byte order of
     every host and device this library runs on: its low byte comes first, and a
@@ -97,8 +97,8 @@ type bit_elt = |
 (** {1:dtypes Dtypes} *)
 
 (** The type for dtypes. An element's OCaml type depends only on its format's
-    width, on every target: [float] for every float format, [int] up to 16 bits,
-    [int32] and [int64] for 32 and 64 bits, [Complex.t] and [bool].
+    width: [float] for every float format, [int] up to 16 bits, [int32] and
+    [int64] for 32 and 64 bits, [Complex.t] and [bool].
 
     An unsigned format carries its bits in the type of its width, and the dtype
     says how to read them: {!pp_value} prints them unsigned, and the [Uint32]
@@ -248,11 +248,10 @@ val pp_value : ('v, 's) t -> Format.formatter -> 'v -> unit
       [re+imi], or [re-imi] when the imaginary part is negative, as [0.5-2i];
     - a boolean as [true] or [false]. *)
 
-(** {1:stores Stores} *)
+(** {1:stores Stores}
 
-val of_float : ('v, 's) t -> float -> 'v
-(** [of_float dt x] is the value a store of [x] into [dt] holds. Every store of
-    a [float] into a dtype follows this rule, a kernel's included:
+    Every store of a [float] into a dtype, a kernel's included, follows one
+    rule:
 
     - A finite [x] rounds once, ties to even, to the nearest value of the format
       with its exponent range unbounded above. Below the least normal magnitude
@@ -270,19 +269,22 @@ val of_float : ('v, 's) t -> float -> 'v
       unsigned alike; NaN stores as [0].
     - Complex numbers store [x] as their real part, rounded to their component's
       format, and a zero imaginary part. Booleans store [x <> 0.], [true] for
-      NaN.
+      NaN. *)
+
+val of_float : ('v, 's) t -> float -> 'v
+(** [of_float dt x] is the value a store of [x] into [dt] holds
+    ({!section-stores}).
 
     So [of_float Float16 0.1] is [0x1.998p-4], the binary16 nearest to [0.1];
     [65519.] stores in [Float16] as [65504.] and [65520.] as infinity; and
     [61440.], halfway past [Float8_e5m2]'s largest finite value [57344.], stores
     as infinity.
 
-    The rule holds in the floating-point environment's default: rounding to
-    nearest, with subnormals kept. A [Float32] store is the C cast from
-    [double], which follows the current environment: under another rounding
-    mode it rounds that way, and under flush-to-zero [Float32] and [Bfloat16]
-    stores of subnormal magnitudes give zero. Stores into [Float16] and the
-    formats of a byte or less give the same bits under flush-to-zero. *)
+    The rule holds in the floating-point environment's default, which rounds
+    to nearest and keeps subnormals. Under another rounding mode, [Float32]
+    stores round that way. Under flush-to-zero, [Float32] and [Bfloat16]
+    stores of subnormal magnitudes give zero, and stores into [Float16] and
+    the formats of a byte or less give the same bits. *)
 
 (** {1:floats Float formats} *)
 
@@ -307,6 +309,6 @@ val float_format : (float, 's) t -> float_format
 external store : (int[@untagged]) -> (float[@unboxed]) -> (int64[@unboxed])
   = "nx_dtype_store_byte" "nx_dtype_store"
 [@@noalloc]
-(** [store c x] is the bits a store of [x] ({!of_float}) writes into an
+(** [store c x] is the bits a store of [x] ({!section-stores}) writes into an
     element of the integer, boolean or narrow float dtype of code [c]
     ({!code}), sign-extended for a signed integer dtype. *)

@@ -40,7 +40,10 @@
 
 #define NX_MAX_RANK 32
 /* The length of the door's runs and the most layouts nx_coalesce takes:
-   Nx_array.max_operands, which shape.ml sets to the same number. */
+   Nx_array.max_operands, which shape.ml sets to the same number. It is 18
+   because a run of that many operands keeps other domains waiting to
+   collect for about one unloaded core's copy of 1 MiB, the bound the door
+   promises. */
 #define NX_MAX_OPERANDS 18
 
 /* A layout's flags, computed when it is made. */

@@ -120,8 +120,8 @@ external host_address : Buffer.t -> (int[@untagged])
   = "nx_array_host_byte" "nx_array_host"
 [@@noalloc]
 
-(* The alignment of a dtype's storage: its width for byte-wide dtypes, one
-   component's for complex ones. *)
+(* The alignment of a dtype's storage: its width for dtypes of a byte or
+   more, one byte for narrower ones, one component's for complex ones. *)
 let alignment dt =
   let bits = Dtype.bits dt in
   if bits < 8 then 1
