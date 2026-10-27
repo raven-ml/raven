@@ -441,6 +441,7 @@ let run c =
 
 type names = {
   mutable constants : value list;
+  mutable axes : axis list;  (** The maps named, in the order first seen. *)
   mutable next : int;
   mutable bases : (t * int) list;
 }
@@ -455,8 +456,14 @@ let owned (p : t) (V x) =
   match Nx.Prim.payload p.owner x with Some (Var _) -> true | _ -> false
 
 let rec register names (p : t) =
-  names.bases <- (p, names.next) :: names.bases;
-  names.next <- names.next + p.slots;
+  (* A program carried twice prints once at the base it first took. *)
+  if not (List.mem_assq p names.bases) then begin
+    names.bases <- (p, names.next) :: names.bases;
+    names.next <- names.next + p.slots
+  end;
+  let axis a =
+    if not (List.mem a names.axes) then names.axes <- names.axes @ [ a ]
+  in
   let see v =
     if (not (owned p v)) && not (List.exists (same v) names.constants) then
       names.constants <- names.constants @ [ v ]
@@ -467,6 +474,7 @@ let rec register names (p : t) =
           let (Operands xs) = Nx.Prim.operands op in
           List.iter (fun (Nx.Prim.Any x) -> see (V x)) xs
       | Do { c; _ } ->
+          (match c with Lanes (a, _) | Lane_index a -> axis a | _ -> ());
           List.iter see (operands c);
           List.iter (register names) (carried c))
     p.eqns;
@@ -485,6 +493,14 @@ let pp_name names (p : t) ppf (V x as v) =
       Format.fprintf ppf "c%d" (find 0 names.constants)
 
 let comma ppf () = Format.pp_print_string ppf ", "
+
+(* A map's number in the printout: the order the program first names it. *)
+let map_number names a =
+  let rec find k = function
+    | [] -> k
+    | b :: rest -> if b = a then k else find (k + 1) rest
+  in
+  find 0 names.axes
 
 let pp_names names p ppf vs =
   Format.pp_print_list ~pp_sep:comma (pp_name names p) ppf vs
@@ -593,8 +609,10 @@ and pp_construct names ~indent (p : t) ppf c =
   in
   match c with
   | Detach x -> Format.fprintf ppf "detach %a" value (V x)
-  | Lanes (a, x) -> Format.fprintf ppf "lanes of map %d %a" a value (V x)
-  | Lane_index a -> Format.fprintf ppf "lane_index of map %d" a
+  | Lanes (a, x) ->
+      Format.fprintf ppf "lanes of map %d %a" (map_number names a) value (V x)
+  | Lane_index a ->
+      Format.fprintf ppf "lane_index of map %d" (map_number names a)
   | Add (_, x) -> Format.fprintf ppf "add %a" value (V x)
   | Scan { step; length; init; xs; captures } ->
       Format.fprintf ppf
@@ -616,7 +634,7 @@ and pp_construct names ~indent (p : t) ppf c =
         pad program body
 
 let pp ppf p =
-  let names = { constants = []; next = 0; bases = [] } in
+  let names = { constants = []; axes = []; next = 0; bases = [] } in
   register names p;
   List.iteri
     (fun k v -> Format.fprintf ppf "c%d : %a@\n" k pp_form (form v))

@@ -553,8 +553,9 @@ val pp_program : Format.formatter -> program -> unit
 (** [pp_program] formats a program: the dtype, shape and placement of each
     constant it reads, its parameters, each equation with its results'
     dtypes, shapes and placements and its operands, a construct with the
-    programs it carries indented, and its outputs. Variables are numbered as
-    traced, so a function prints alike at every trace. *)
+    programs it carries indented, and its outputs. The top program's
+    variables are numbered as traced, and each carried program's follow its
+    parent's, so a function prints alike at every trace. *)
 
 val eval_shape :
   ('a, 'd) Nx.Ptree.t -> ('b, 'd) Nx.Ptree.t -> ('a -> 'b) -> 'a -> 'b
@@ -562,8 +563,8 @@ val eval_shape :
     its dtype, shape and placement, as {!jit} traces it, computing nothing:
     its shape, dtype and placement answer ({!Nx.shape}, {!Nx.dtype},
     {!Nx.placement}), and an operation on it or a read raises
-    [Invalid_argument]. An array [f] returns as it received or captured it is
-    that array.
+    [Invalid_argument]. An array [f] captured and returns unchanged is that
+    array.
 
     Raises what {!jit} raises at a call that traces. *)
 

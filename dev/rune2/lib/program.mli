@@ -223,4 +223,5 @@ val pp : Format.formatter -> t -> unit
     each [%n : dtype shape at placement], [=], the operation as
     {!Nx.Prim.pp} formats it, and on the next line [with x0 = …] for each
     operand; a construct is its results, its operands, and each program it
-    carries under a label, indented. *)
+    carries under a label, indented; a map is numbered in the order the
+    program first names it. *)
