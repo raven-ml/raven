@@ -256,9 +256,7 @@ NX_INLINE NX_CT NX_Z(nx_exp2_raw)(NX_T x, NX_T y) {
 
 /* log z = log |z| + i arg z, arg z = atan2(y, x) with its special values. */
 NX_INLINE NX_CT NX_Z(nx_log_raw)(NX_T x, NX_T y) {
-  NX_T re = NX_(nx_log_abs)(x, y);
-  re = x == 0 && NX_(nx_finite)(y) ? NX_(nx_log)(NX_(nx_abs_bits)(y)) : re;
-  return NX_MK(re, NX_(nx_atan2)(y, x));
+  return NX_MK(NX_(nx_log_abs)(x, y), NX_(nx_atan2)(y, x));
 }
 
 /* log2 z = log z / ln2, 1/ln2 as a head and a tail; on the axes, the part

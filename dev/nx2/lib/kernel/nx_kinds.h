@@ -31,6 +31,10 @@
      atan2, sinh                                  3     2
      tan, pow                                     4     2
 
+   The f32 bounds of one operand hold at every operand. The others, pow's
+   and atan2's at f32 and every f64 bound, are measured, not proven; every
+   f64 kind's worst error measured is within one ulp of the exact value.
+
    Their special values (C99 Annex F) and the signs of their zero results
    are exact.
 
@@ -66,7 +70,9 @@
    so contraction has nothing to fuse there; the flags keep a product held
    in a variable from fusing with a later sum. Division and the square root
    are the target's, correctly rounded under these flags; on Metal, a
-   library compiling this header probes that they are.
+   library compiling this header probes that they are. f64 mod is the
+   target's fmod, exact by C99 7.12.10.1; f32 mod is computed here, as
+   Metal's fmod rounds.
 
    The polynomials' coefficients are minimax fits, written by
    dev/nx2/test/kernel/gen/kinds.py with the fit's error.
@@ -814,6 +820,7 @@ NX_INLINE nx_rem_f64 nx_rem_pio2_big_f64(NX_TABLE_PTR t, double x) {
   return r;
 }
 
+/* f64 mod is the target's fmod, exact by C99 7.12.10.1. */
 NX_INLINE double nx_mod_f64(double a, double b) {
   return fmod(a, b);
 }
