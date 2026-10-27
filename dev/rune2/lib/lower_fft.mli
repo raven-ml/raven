@@ -20,7 +20,7 @@
     is Bluestein's convolution (1970): the points times a chirp, a cyclic
     convolution of [m] points, [m] the least power of two at least [2p - 1],
     by three transforms of [m] points, then the chirp again: [O(log p)] work
-    per point, in about [3 log₂ m] kernels. A transform of [n] points is
+    per point, in [O(log m)] kernels. A transform of [n] points is
     thus [O(n log n)] work. A real transform computes the complex transform
     of its points, twice a real one's work.
 

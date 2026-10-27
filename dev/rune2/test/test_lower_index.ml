@@ -285,7 +285,8 @@ let bits_of it f =
 (* [exact dt op] is the bits of each element of [op ()], eager's then the
    lowered graph's. A float of fewer than 64 bits is read through a bitcast to
    an integer of its width: reading it as an OCaml float quiets a signalling
-   NaN. *)
+   NaN. The bitcast is in the lowered graph, so it ends in an integer store:
+   a lowering that quieted a NaN only when it stores a float would pass. *)
 let exact (type v s) (dt : (v, s) D.t) (op : unit -> (v, s, Nx.host) Nx.t) =
   let as_ it = bits_of it (fun () -> Nx.bitcast it (op ())) in
   match dt with

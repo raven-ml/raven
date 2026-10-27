@@ -52,8 +52,10 @@
       are orthogonal to [k (2p + 10) u] an element; the rounds, which move the
       columns by at most [8 R u] of their norm; and the columns the
       convergence test below exempts, whose norms reach
-      [8 R (1 + √k) u ‖a‖_F]. [g] reaches 1 at [k = p = 68] in [float32] and
-      [82313] in [float64]: from there it bounds nothing. A matrix that holds
+      [8 R (1 + √k) u ‖a‖_F]. [g] reaches 1 where
+      [8 k (p (p + 6) + 8 R) u] nears 1, as at [k = p = 68] in [float32] and
+      [k = p = 82313] in [float64], and sooner for [p > k]: from there it
+      bounds nothing. A matrix that holds
       NaN or an infinity fails, as does one with rotated columns [c_i] and
       [c_j], of norms above [8 R (1 + √k) u ‖a‖_F], whose [|c_iᵀ c_j|]
       exceeds [16 k u ‖c_i‖₂ ‖c_j‖₂]: the rotations did not converge.

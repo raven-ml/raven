@@ -17,13 +17,13 @@ let unlowered what =
    against eager's [n + k], and an assembly selects each of its [p] pieces at
    every element, [p·N] against eager's [N + m] for pieces of [m] elements in
    all. Each is refused past [work_bound] times eager's work, and the jit then
-   evaluates its program uncompiled. Below the bound the extra work is a few
-   comparisons and selects per unit on elements the kernel holds: on a host
-   core, whose vector units retire about 30 lanes' operations in the time
-   memory moves one element in and out, that roughly matches eager's stores,
-   and a GPU hides it entirely. Past it the work outgrows what compiling the
-   rest of the program saves: an embedding's gradient, 512 updates over 50000
-   rows, would make 2.6e7 comparisons per feature against eager's 5e4. *)
+   evaluates its program uncompiled. The bound is a cost model's, not yet
+   timed: below it the extra work is a few comparisons and selects per unit
+   on elements the kernel holds, which the model takes as about what moving
+   each element through memory costs a host core, and as hidden on a GPU.
+   Past it the work outgrows what compiling the rest of the program saves: an
+   embedding's gradient, 512 updates over 50000 rows, would make 2.6e7
+   comparisons per feature against eager's 5e4. *)
 let work_bound = 16
 
 let extents u = List.init (Shape.ndim u) (Bits.extent u)
