@@ -114,12 +114,12 @@ NX_INLINE NX_T NX_(nx_flip)(NX_T v, NX_T s) {
   return NX_OF_BITS(NX_BITS(v) ^ (NX_BITS(s) & NX_SIGN_BIT));
 }
 
-NX_INLINE int NX_(nx_finite)(NX_T x) { return NX_(nx_abs_bits)(x) < NX_C(INF); }
+NX_INLINE int NX_(nx_finite)(NX_T x) { return NX_(nx_abs_bits)(x) < NX_INF; }
 
 /* The exponent e of a finite x > 0, x = m 2^e with m in [1, 2). */
 NX_INLINE int32_t NX_(nx_ilogb)(NX_T x) {
-  int sub = NX_BITS(x) < NX_C(MIN_NORMAL_BITS);
-  NX_T s = sub ? x * NX_C(SUB_SCALE) : x;
+  int sub = NX_BITS(x) < NX_MIN_NORMAL_BITS;
+  NX_T s = sub ? x * NX_SUB_SCALE : x;
   return (int32_t)(NX_BITS(s) >> NX_C(MBITS)) - NX_C(BIAS) -
          (sub ? NX_C(MBITS) : 0);
 }
@@ -160,8 +160,8 @@ NX_INLINE NX_T NX_(nx_hypot)(NX_T x, NX_T y) {
    result keeps its digits near the unit circle. */
 NX_INLINE NX_T NX_(nx_log_abs)(NX_T x, NX_T y) {
   NX_T ax = NX_(nx_abs_bits)(x), ay = NX_(nx_abs_bits)(y);
-  if (ax == NX_C(INF) || ay == NX_C(INF)) return NX_C(INF);
-  if (ax != ax || ay != ay) return NX_C(NAN);
+  if (ax == NX_INF || ay == NX_INF) return NX_INF;
+  if (ax != ax || ay != ay) return NX_NAN;
   NX_T a = ax > ay ? ax : ay, b = ax > ay ? ay : ax;
   if (b == 0) return NX_(nx_log)(a);
   if (a >= NX_HALF && a <= (NX_T)2) {
@@ -204,14 +204,14 @@ NX_INLINE NX_T NX_(nx_exp_times)(NX_T x, NX_T c, int32_t shift) {
 /* e^z = e^x cis y. */
 NX_INLINE NX_CT NX_Z(nx_exp_raw)(NX_T x, NX_T y) {
   if (y == 0) return NX_MK(NX_(nx_exp)(x), y);
-  if (x != x) return NX_MK(NX_C(NAN), NX_C(NAN));
+  if (x != x) return NX_MK(NX_NAN, NX_NAN);
   if (!NX_(nx_finite)(y)) {
-    if (x == NX_C(INF)) return NX_MK(x, NX_C(NAN));
-    if (x == -NX_C(INF)) return NX_MK(0, NX_(nx_copysign)(0, y));
-    return NX_MK(NX_C(NAN), NX_C(NAN));
+    if (x == NX_INF) return NX_MK(x, NX_NAN);
+    if (x == -NX_INF) return NX_MK(0, NX_(nx_copysign)(0, y));
+    return NX_MK(NX_NAN, NX_NAN);
   }
   NX_T c = NX_(nx_cos)(y), s = NX_(nx_sin)(y);
-  if (x == NX_C(INF) || x == -NX_C(INF)) {
+  if (x == NX_INF || x == -NX_INF) {
     NX_T m = x > 0 ? x : 0;
     return NX_MK(m * c, m * s);
   }
@@ -249,7 +249,7 @@ NX_INLINE NX_CT NX_Z(nx_exp2_raw)(NX_T x, NX_T y) {
   }
   NX_T v = x < NX_C(CEXP2_HI) ? x : NX_C(CEXP2_HI);
   v = v > NX_C(EXP2_LO) ? v : NX_C(EXP2_LO);
-  NX_(nx_int) k = NX_(nx_nearest)(v + NX_C(SHIFT));
+  NX_(nx_int) k = NX_(nx_nearest)(v + NX_SHIFT);
   NX_T m = NX_(nx_exp2_poly)(v - k.f);
   return NX_MK(NX_(nx_ldexp)(m * c, k.i), NX_(nx_ldexp)(m * s, k.i));
 }
@@ -278,13 +278,13 @@ NX_INLINE NX_CT NX_Z(nx_log2_raw)(NX_T x, NX_T y) {
    so that its larger part is in [1, 4), and y / 2t is taken of y itself. */
 NX_INLINE NX_CT NX_Z(nx_sqrt_raw)(NX_T x, NX_T y) {
   NX_T ax = NX_(nx_abs_bits)(x), ay = NX_(nx_abs_bits)(y);
-  if (ay == NX_C(INF)) return NX_MK(NX_C(INF), y);
-  if (x != x) return NX_MK(NX_C(NAN), NX_C(NAN));
-  if (x == NX_C(INF))
-    return NX_MK(x, y != y ? NX_C(NAN) : NX_(nx_copysign)(0, y));
-  if (x == -NX_C(INF))
-    return NX_MK(y != y ? NX_C(NAN) : 0, NX_(nx_copysign)(NX_C(INF), y));
-  if (y != y) return NX_MK(NX_C(NAN), NX_C(NAN));
+  if (ay == NX_INF) return NX_MK(NX_INF, y);
+  if (x != x) return NX_MK(NX_NAN, NX_NAN);
+  if (x == NX_INF)
+    return NX_MK(x, y != y ? NX_NAN : NX_(nx_copysign)(0, y));
+  if (x == -NX_INF)
+    return NX_MK(y != y ? NX_NAN : 0, NX_(nx_copysign)(NX_INF, y));
+  if (y != y) return NX_MK(NX_NAN, NX_NAN);
   if (y == 0)
     return x >= 0 ? NX_MK(NX_SQRT(ax), y)
                   : NX_MK(0, NX_(nx_copysign)(NX_SQRT(ax), y));
@@ -324,11 +324,11 @@ NX_INLINE NX_CT NX_Z(nx_pow_raw)(NX_CT z, NX_CT w) {
    that |z| is no subnormal. */
 NX_INLINE NX_CT NX_Z(nx_sign_raw)(NX_T x, NX_T y) {
   NX_T ax = NX_(nx_abs_bits)(x), ay = NX_(nx_abs_bits)(y);
-  if (ax != ax || ay != ay) return NX_MK(NX_C(NAN), NX_C(NAN));
-  if (ax == NX_C(INF) || ay == NX_C(INF)) {
+  if (ax != ax || ay != ay) return NX_MK(NX_NAN, NX_NAN);
+  if (ax == NX_INF || ay == NX_INF) {
     NX_T both = NX_OF_BITS(NX_C(SQRT_HALF_BITS));
-    NX_T re = ax == NX_C(INF) ? (ay == NX_C(INF) ? both : NX_ONE) : 0;
-    NX_T im = ay == NX_C(INF) ? (ax == NX_C(INF) ? both : NX_ONE) : 0;
+    NX_T re = ax == NX_INF ? (ay == NX_INF ? both : NX_ONE) : 0;
+    NX_T im = ay == NX_INF ? (ax == NX_INF ? both : NX_ONE) : 0;
     return NX_MK(NX_(nx_copysign)(re, x), NX_(nx_copysign)(im, y));
   }
   if (ax == 0 && ay == 0) return NX_MK(x, y);
@@ -347,14 +347,14 @@ NX_INLINE NX_CT NX_Z(nx_sign_raw)(NX_T x, NX_T y) {
 
 NX_INLINE NX_CT NX_Z(nx_sinh_raw)(NX_T x, NX_T y) {
   if (y == 0) return NX_MK(NX_(nx_sinh)(x), y);
-  if (x != x) return NX_MK(NX_C(NAN), NX_C(NAN));
+  if (x != x) return NX_MK(NX_NAN, NX_NAN);
   if (!NX_(nx_finite)(y)) {
-    if (x == 0 || !NX_(nx_finite)(x)) return NX_MK(x, NX_C(NAN));
-    return NX_MK(NX_C(NAN), NX_C(NAN));
+    if (x == 0 || !NX_(nx_finite)(x)) return NX_MK(x, NX_NAN);
+    return NX_MK(NX_NAN, NX_NAN);
   }
   NX_T c = NX_(nx_cos)(y), s = NX_(nx_sin)(y);
   NX_T ax = NX_(nx_abs_bits)(x);
-  if (ax == NX_C(INF)) return NX_MK(x * c, ax * s);
+  if (ax == NX_INF) return NX_MK(x * c, ax * s);
   if (ax <= NX_C(HYP_BIG))
     return NX_MK(NX_(nx_sinh)(x) * c, NX_(nx_cosh)(x) * s);
   return NX_MK(NX_(nx_flip)(NX_(nx_exp_times)(ax, c, 1), x),
@@ -363,15 +363,15 @@ NX_INLINE NX_CT NX_Z(nx_sinh_raw)(NX_T x, NX_T y) {
 
 NX_INLINE NX_CT NX_Z(nx_cosh_raw)(NX_T x, NX_T y) {
   if (y == 0) return NX_MK(NX_(nx_cosh)(x), NX_(nx_flip)(y, x));
-  if (x != x) return NX_MK(NX_C(NAN), NX_C(NAN));
+  if (x != x) return NX_MK(NX_NAN, NX_NAN);
   if (!NX_(nx_finite)(y)) {
-    if (x == 0) return NX_MK(NX_C(NAN), NX_(nx_flip)(x, y));
-    if (!NX_(nx_finite)(x)) return NX_MK(NX_C(INF), NX_C(NAN));
-    return NX_MK(NX_C(NAN), NX_C(NAN));
+    if (x == 0) return NX_MK(NX_NAN, NX_(nx_flip)(x, y));
+    if (!NX_(nx_finite)(x)) return NX_MK(NX_INF, NX_NAN);
+    return NX_MK(NX_NAN, NX_NAN);
   }
   NX_T c = NX_(nx_cos)(y), s = NX_(nx_sin)(y);
   NX_T ax = NX_(nx_abs_bits)(x);
-  if (ax == NX_C(INF)) return NX_MK(ax * c, x * s);
+  if (ax == NX_INF) return NX_MK(ax * c, x * s);
   if (ax <= NX_C(HYP_BIG))
     return NX_MK(NX_(nx_cosh)(x) * c, NX_(nx_sinh)(x) * s);
   return NX_MK(NX_(nx_exp_times)(ax, c, 1),
@@ -385,12 +385,12 @@ NX_INLINE NX_CT NX_Z(nx_cosh_raw)(NX_T x, NX_T y) {
    1 + i0 sin(2y) continues. */
 NX_INLINE NX_CT NX_Z(nx_tanh_raw)(NX_T x, NX_T y) {
   if (y == 0) return NX_MK(NX_(nx_tanh)(x), y);
-  if (x != x) return NX_MK(NX_C(NAN), NX_C(NAN));
+  if (x != x) return NX_MK(NX_NAN, NX_NAN);
   NX_T ax = NX_(nx_abs_bits)(x);
   NX_T one = NX_(nx_copysign)(NX_ONE, x);
-  if (ax == NX_C(INF) && !NX_(nx_finite)(y))
+  if (ax == NX_INF && !NX_(nx_finite)(y))
     return NX_MK(one, NX_(nx_copysign)(0, y));
-  if (!NX_(nx_finite)(y)) return NX_MK(NX_C(NAN), NX_C(NAN));
+  if (!NX_(nx_finite)(y)) return NX_MK(NX_NAN, NX_NAN);
   if (ax > NX_C(HYP_BIG)) {
     NX_T e = NX_(nx_exp)(-ax);
     NX_T sc = NX_(nx_sin)(y) * NX_(nx_cos)(y);
@@ -419,7 +419,7 @@ NX_INLINE NX_CT NX_Z(nx_asin_raw)(NX_T x, NX_T y) {
     re = NX_(nx_atan2)(ax, ay);
     im = NX_(nx_log_abs)(ax, ay) + NX_C(LN2_HI) + NX_C(LN2_LO);
   } else if (ax != ax || ay != ay) {
-    return NX_MK(x == 0 ? x : NX_C(NAN), NX_C(NAN));
+    return NX_MK(x == 0 ? x : NX_NAN, NX_NAN);
   } else if (ay == 0 && ax <= NX_ONE) {
     re = NX_(nx_asin)(ax);
     im = 0;
@@ -439,7 +439,7 @@ NX_INLINE NX_CT NX_Z(nx_acos_raw)(NX_T x, NX_T y) {
     re = NX_(nx_atan2)(ay, x);
     im = -(NX_(nx_log_abs)(ax, ay) + NX_C(LN2_HI) + NX_C(LN2_LO));
   } else if (ax != ax || ay != ay) {
-    return NX_MK(x == 0 ? NX_C(PIO2_HI) : NX_C(NAN), NX_C(NAN));
+    return NX_MK(x == 0 ? NX_C(PIO2_HI) : NX_NAN, NX_NAN);
   } else if (ay == 0 && ax <= NX_ONE) {
     re = NX_(nx_acos)(x);
     im = -(NX_T)0;
@@ -461,16 +461,16 @@ NX_INLINE NX_CT NX_Z(nx_acos_raw)(NX_T x, NX_T y) {
 NX_INLINE NX_CT NX_Z(nx_atanh_raw)(NX_T x, NX_T y) {
   NX_T ax = NX_(nx_abs_bits)(x), ay = NX_(nx_abs_bits)(y);
   NX_T re, im;
-  if (ax == NX_C(INF) || ay == NX_C(INF)) {
+  if (ax == NX_INF || ay == NX_INF) {
     re = 0;
-    im = ay != ay ? NX_C(NAN) : NX_C(PIO2_HI);
+    im = ay != ay ? NX_NAN : NX_C(PIO2_HI);
   } else if (ax == 0) {
     re = 0;
     im = NX_(nx_atan)(ay);
   } else if (ax != ax || ay != ay) {
-    return NX_MK(NX_C(NAN), NX_C(NAN));
+    return NX_MK(NX_NAN, NX_NAN);
   } else if (ax == NX_ONE && ay == 0) {
-    re = NX_C(INF);
+    re = NX_INF;
     im = 0;
   } else if (ax > NX_C(ATANH_BIG) || ay > NX_C(ATANH_BIG)) {
     NX_T m = ax > ay ? ax : ay;
@@ -580,7 +580,7 @@ NX_INLINE NX_CT NX_Z(nx_atanh)(NX_CT z) {
 NX_INLINE NX_CT NX_Z(nx_acosh)(NX_CT z) {
   NX_CT u = NX_Z(nx_unsignalled)(z);
   if (u.im != u.im && NX_(nx_finite)(u.re))
-    return NX_MK(NX_C(NAN), NX_C(NAN));
+    return NX_MK(NX_NAN, NX_NAN);
   NX_CT v = NX_Z(nx_acos_raw)(u.re, NX_(nx_abs_bits)(u.im));
   return NX_MK(NX_(nx_neg)(v.im), NX_(nx_flip)(v.re, u.im));
 }

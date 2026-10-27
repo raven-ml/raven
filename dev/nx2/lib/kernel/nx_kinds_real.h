@@ -8,7 +8,7 @@
 
    - NX_T, the type, and NX_U, the unsigned integer of its width;
    - NX_(f), which names f at the type: NX_(nx_exp) is nx_exp_f32;
-   - NX_C(c), the type's constant c: NX_C(SHIFT) is NX_SHIFT_F32;
+   - NX_C(c), the type's constant c: NX_C(BIAS) is NX_BIAS_F32;
    - NX_FMA, NX_SQRT, NX_BITS, NX_OF_BITS and NX_ISNAN;
    - the polynomials (NX_(nx_exp_q), NX_(nx_exp2_poly), NX_(nx_log_t),
      NX_(nx_log_tp), NX_(nx_sincos_p), NX_(nx_asin_b), NX_(nx_tanh_t)).
@@ -19,6 +19,25 @@
 
 #define NX_ONE ((NX_T)1)
 #define NX_SIGN_BIT ((NX_U)1 << (8 * sizeof(NX_U) - 1))
+
+/* The format's constants, from its exponent's bias NX_C(BIAS) and its
+   NX_C(MBITS) fraction bits. The block's per-type code and
+   nx_kinds_complex.h read them too: each inclusion defines them alike,
+   which C allows, and nx_kinds.h undefines them after its last block.
+
+   Adding NX_SHIFT, 1.5 * 2^MBITS, rounds a value below 2^(MBITS - 1) to
+   the nearest integer, ties to even; the sum's bits less the shifter's
+   count it. From NX_INTEGRAL, 2^MBITS, on every value is an integer.
+   NX_SUB_SCALE, the same power, takes a subnormal to a normal. NX_NAN is
+   the quiet NaN of positive sign, the one the kinds make from numbers. */
+#define NX_MMASK (((NX_U)1 << NX_C(MBITS)) - 1)
+#define NX_MIN_NORMAL_BITS ((NX_U)1 << NX_C(MBITS))
+#define NX_ONE_BITS ((NX_U)NX_C(BIAS) << NX_C(MBITS))
+#define NX_INF NX_OF_BITS((NX_U)(2 * NX_C(BIAS) + 1) << NX_C(MBITS))
+#define NX_NAN NX_OF_BITS(NX_BITS(NX_INF) | ((NX_U)1 << (NX_C(MBITS) - 1)))
+#define NX_INTEGRAL ((NX_T)NX_MIN_NORMAL_BITS)
+#define NX_SUB_SCALE NX_INTEGRAL
+#define NX_SHIFT ((NX_T)((NX_U)3 << (NX_C(MBITS) - 1)))
 
 /* Types */
 
@@ -117,12 +136,12 @@ NX_INLINE NX_(nx_pair) NX_(nx_div_pair)(NX_(nx_pair) n, NX_(nx_pair) d) {
   return q;
 }
 
-/* From t = v + NX_C(SHIFT), |v| below half the shifter, the integer nearest
+/* From t = v + NX_SHIFT, |v| below half the shifter, the integer nearest
    v, as a float and as an int. */
 NX_INLINE NX_(nx_int) NX_(nx_nearest)(NX_T t) {
   NX_(nx_int) k;
-  k.f = t - NX_C(SHIFT);
-  k.i = (int32_t)(int64_t)(NX_BITS(t) - NX_BITS(NX_C(SHIFT)));
+  k.f = t - NX_SHIFT;
+  k.i = (int32_t)(int64_t)(NX_BITS(t) - NX_BITS(NX_SHIFT));
   return k;
 }
 
@@ -156,10 +175,10 @@ NX_INLINE NX_T NX_(nx_sqrt)(NX_T a) { return NX_SQRT(a); }
 
 NX_INLINE NX_T NX_(nx_trunc)(NX_T a) {
   NX_T m = NX_(nx_abs_bits)(a);
-  NX_T t = (m + NX_C(INTEGRAL)) - NX_C(INTEGRAL);
+  NX_T t = (m + NX_INTEGRAL) - NX_INTEGRAL;
   t = t > m ? t - 1 : t;
   NX_T r = NX_OF_BITS(NX_BITS(t) | (NX_BITS(a) & NX_SIGN_BIT));
-  return m < NX_C(INTEGRAL) ? r : a;
+  return m < NX_INTEGRAL ? r : a;
 }
 
 NX_INLINE NX_T NX_(nx_floor)(NX_T a) {
@@ -220,7 +239,7 @@ NX_INLINE NX_T NX_(nx_blend)(int c, NX_T a, NX_T b) {
 
 NX_INLINE NX_(nx_exp_red) NX_(nx_exp_reduce)(NX_T x) {
   NX_(nx_exp_red) e;
-  NX_(nx_int) k = NX_(nx_nearest)(NX_FMA(x, NX_C(LOG2E), NX_C(SHIFT)));
+  NX_(nx_int) k = NX_(nx_nearest)(NX_FMA(x, NX_C(LOG2E), NX_SHIFT));
   e.kf = k.f;
   e.k = k.i;
   NX_T rh = NX_FMA(-e.kf, NX_C(LN2_HI), x);
@@ -268,7 +287,7 @@ NX_INLINE int NX_(nx_exp_big)(NX_T x) {
 NX_INLINE NX_T NX_(nx_exp2)(NX_T x) {
   x = x > NX_C(EXP2_HI) ? NX_C(EXP2_HI) : x;
   x = x < NX_C(EXP2_LO) ? NX_C(EXP2_LO) : x;
-  NX_(nx_int) k = NX_(nx_nearest)(x + NX_C(SHIFT));
+  NX_(nx_int) k = NX_(nx_nearest)(x + NX_SHIFT);
   return NX_(nx_nan1)(x, NX_(nx_scale)(NX_(nx_exp2_poly)(x - k.f), k.i));
 }
 
@@ -298,11 +317,11 @@ NX_INLINE NX_T NX_(nx_expm1)(NX_T x) {
 /* The reduction of a positive u; a subnormal is scaled up first. */
 NX_INLINE NX_(nx_log_red) NX_(nx_log_reduce)(NX_T u) {
   NX_(nx_log_red) l;
-  int sub = NX_BITS(u) < NX_C(MIN_NORMAL_BITS);
-  u = sub ? u * NX_C(SUB_SCALE) : u;
-  NX_U ix = NX_BITS(u) + (NX_C(ONE_BITS) - NX_C(SQRT_HALF_BITS));
+  int sub = NX_BITS(u) < NX_MIN_NORMAL_BITS;
+  u = sub ? u * NX_SUB_SCALE : u;
+  NX_U ix = NX_BITS(u) + (NX_ONE_BITS - NX_C(SQRT_HALF_BITS));
   l.k = (NX_T)((int32_t)(ix >> NX_C(MBITS)) - NX_C(BIAS) - (sub ? NX_C(MBITS) : 0));
-  l.f = NX_OF_BITS((ix & NX_C(MMASK)) + NX_C(SQRT_HALF_BITS)) - NX_ONE;
+  l.f = NX_OF_BITS((ix & NX_MMASK) + NX_C(SQRT_HALF_BITS)) - NX_ONE;
   return l;
 }
 
@@ -320,9 +339,9 @@ NX_INLINE NX_T NX_(nx_log_core)(NX_(nx_log_red) l, NX_T c) {
 /* The value at u = 1 + x outside (0, inf), and at a NaN x: y is a number
    elsewhere. */
 NX_INLINE NX_T NX_(nx_log_special)(NX_T u, NX_T x, NX_T y) {
-  y = u == NX_C(INF) ? u : y;
-  y = u == 0 ? -NX_C(INF) : y;
-  y = u < 0 ? NX_C(NAN) : y;
+  y = u == NX_INF ? u : y;
+  y = u == 0 ? -NX_INF : y;
+  y = u < 0 ? NX_NAN : y;
   return x != x ? x : y;
 }
 
@@ -425,7 +444,7 @@ NX_INLINE NX_(nx_rem) NX_(nx_rem_pio2_big)(NX_TABLE_PTR t, NX_T x);
    the range's top. */
 NX_INLINE int NX_(nx_trig_big)(NX_T x) {
   NX_U a = (NX_BITS(x) & ~NX_SIGN_BIT) - NX_BITS(NX_C(PIO2_BIG));
-  return a < NX_BITS(NX_C(INF)) - NX_BITS(NX_C(PIO2_BIG));
+  return a < NX_BITS(NX_INF) - NX_BITS(NX_C(PIO2_BIG));
 }
 
 /* sin, cos and tan below the switch */
@@ -481,7 +500,7 @@ NX_INLINE NX_T NX_(nx_asin)(NX_T x) {
   NX_T hi = NX_C(PIO2_HI) - d;
   NX_T lo = ((NX_C(PIO2_HI) - hi) - d) + NX_FMA((NX_T)-2, r.tail, NX_C(PIO2_LO));
   NX_T y = r.big ? hi + lo : r.s + r.tail;
-  y = a > NX_ONE ? NX_C(NAN) : y;
+  y = a > NX_ONE ? NX_NAN : y;
   return NX_(nx_nan1)(x, NX_(nx_copysign)(y, x));
 }
 
@@ -500,7 +519,7 @@ NX_INLINE NX_T NX_(nx_acos)(NX_T x) {
   tail = plus ? tail : -tail;
   NX_(nx_pair) h = NX_(nx_two_sum)(base_hi, term);
   NX_T y = h.hi + (h.lo + (base_lo + tail));
-  y = a > NX_ONE ? NX_C(NAN) : y;
+  y = a > NX_ONE ? NX_NAN : y;
   return NX_(nx_nan1)(x, y);
 }
 
@@ -600,8 +619,8 @@ NX_INLINE NX_T NX_(nx_pow)(NX_T x, NX_T y) {
   NX_(nx_pair) g = NX_(nx_two_sum)(l.k, ph);
   NX_T gh = g.hi + (g.lo + pl);
   NX_T gl = (g.lo + pl) - (gh - g.hi);
-  gh = ax == NX_C(INF) ? ax : (ax == 0 ? -NX_C(INF) : gh);
-  gl = ax == NX_C(INF) || ax == 0 ? 0 : gl;
+  gh = ax == NX_INF ? ax : (ax == 0 ? -NX_INF : gh);
+  gl = ax == NX_INF || ax == 0 ? 0 : gl;
   /* y log2|x|; past the range, the result is 0 or inf and the tail may be
      NaN */
   NX_T yh = y * gh;
@@ -609,19 +628,19 @@ NX_INLINE NX_T NX_(nx_pow)(NX_T x, NX_T y) {
   yl = yh <= NX_C(POW_HI) && yh >= NX_C(POW_LO) ? yl : 0;
   yh = yh > NX_C(POW_HI) ? NX_C(POW_HI) : yh;
   yh = yh < NX_C(POW_LO) ? NX_C(POW_LO) : yh;
-  NX_(nx_int) k = NX_(nx_nearest)(yh + NX_C(SHIFT));
+  NX_(nx_int) k = NX_(nx_nearest)(yh + NX_SHIFT);
   NX_T v = NX_(nx_scale)(NX_(nx_exp2_poly)((yh - k.f) + yl), k.i);
   /* y's parity: ay + 2^(p-1) rounds ay to an integer, its last bit worth
      1; from 2^(p-1) on y is an integer, its last bit worth 1 below 2^p and
      more above, so even */
-  NX_T ty = ay + NX_C(INTEGRAL);
-  int integer = ay >= NX_C(INTEGRAL) || ty - NX_C(INTEGRAL) == ay;
-  NX_U last = ay >= NX_C(INTEGRAL) ? NX_BITS(ay) : NX_BITS(ty);
-  int odd = ay < (NX_T)2 * NX_C(INTEGRAL) && integer && (last & 1);
+  NX_T ty = ay + NX_INTEGRAL;
+  int integer = ay >= NX_INTEGRAL || ty - NX_INTEGRAL == ay;
+  NX_U last = ay >= NX_INTEGRAL ? NX_BITS(ay) : NX_BITS(ty);
+  int odd = ay < (NX_T)2 * NX_INTEGRAL && integer && (last & 1);
   int neg = (int)(NX_BITS(x) >> (8 * sizeof(NX_U) - 1));
   v = neg && odd ? -v : v;
-  v = neg && !integer && ax != 0 && ax < NX_C(INF) ? NX_C(NAN) : v;
-  v = ax == NX_ONE && ay == NX_C(INF) ? NX_ONE : v;
+  v = neg && !integer && ax != 0 && ax < NX_INF ? NX_NAN : v;
+  v = ax == NX_ONE && ay == NX_INF ? NX_ONE : v;
   v = NX_(nx_nan2)(x, y, v);
   return x == NX_ONE || y == 0 ? NX_ONE : v;
 }

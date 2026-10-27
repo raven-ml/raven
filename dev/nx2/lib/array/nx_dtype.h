@@ -102,7 +102,7 @@ NX_INLINE nx_dtype_row nx_dtype_row_of(int dt) {
 }
 #endif
 
-/* A binary32's bits, and back. */
+/* A binary32's bits, and back; off Metal, a binary64's too. */
 
 #ifdef __METAL_VERSION__
 NX_INLINE uint32_t nx_float_bits(float f) { return as_type<uint32_t>(f); }
@@ -119,16 +119,34 @@ NX_INLINE float nx_bits_float(uint32_t i) {
   memcpy(&f, &i, 4);
   return f;
 }
+
+NX_INLINE uint64_t nx_double_bits(double d) {
+  uint64_t i;
+  memcpy(&i, &d, 8);
+  return i;
+}
+
+NX_INLINE double nx_bits_double(uint64_t i) {
+  double d;
+  memcpy(&d, &i, 8);
+  return d;
+}
 #endif
 
-/* The sign and NaN-ness of [f], from its bits: a compiler folds a float
-   predicate such as isnan away under -ffinite-math-only, which a kernel
-   library's flags may set. */
+/* The sign and NaN-ness of [f], and whether the double [d] is a NaN, from
+   their bits: a compiler folds a float predicate such as isnan away under
+   -ffinite-math-only, which a kernel library's flags may set. */
 NX_INLINE uint32_t nx_float_sign(float f) { return nx_float_bits(f) >> 31; }
 
 NX_INLINE int nx_float_nan(float f) {
   return (nx_float_bits(f) & 0x7FFFFFFFu) > 0x7F800000u;
 }
+
+#ifndef __METAL_VERSION__
+NX_INLINE int nx_double_nan(double d) {
+  return (nx_double_bits(d) & 0x7FFFFFFFFFFFFFFFu) > 0x7FF0000000000000u;
+}
+#endif
 
 /* bfloat16: binary32's top half */
 
@@ -372,18 +390,6 @@ NX_INLINE uint8_t nx_double_to_e2m1fn(double x) {
    loop over integers vectorises where the hardware has no 64-bit integer
    conversion. An unsigned word w converts as the signed word w ^ 2^31, plus
    2^31: a vector unit may lack the unsigned conversion. */
-
-NX_INLINE uint64_t nx_double_bits(double d) {
-  uint64_t i;
-  memcpy(&i, &d, 8);
-  return i;
-}
-
-NX_INLINE double nx_bits_double(uint64_t i) {
-  double d;
-  memcpy(&d, &i, 8);
-  return d;
-}
 
 /* hi + lo, |hi| >= |lo| or hi = 0, rounded to odd. */
 NX_INLINE double nx_sum_odd(double hi, double lo) {

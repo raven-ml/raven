@@ -290,18 +290,7 @@ NX_INLINE uint32_t nx_bits_at(NX_TABLE_PTR t, int32_t g) {
 
 #define NX_BIAS_F32 127
 #define NX_MBITS_F32 23
-#define NX_MMASK_F32 0x007FFFFFu
-#define NX_ONE_BITS_F32 0x3F800000u
 #define NX_SQRT_HALF_BITS_F32 0x3F3504F3u
-#define NX_MIN_NORMAL_BITS_F32 0x00800000u
-#define NX_SUB_SCALE_F32 0x1p23f
-#define NX_INF_F32 nx_bits_float(0x7F800000u)
-#define NX_NAN_F32 nx_bits_float(0x7FC00000u)
-/* Adding 1.5 * 2^23 rounds a float below 2^22 to the nearest integer, ties
-   to even; the sum's bits less the shifter's count it. From 2^23 on every
-   float is an integer. */
-#define NX_SHIFT_F32 0x1.8p23f
-#define NX_INTEGRAL_F32 0x1p23f
 /* 1/ln2, ln2 with a 16-bit head (k ln2_hi exact for |k| < 2^8), 1/ln2 with
    a 12-bit head, 2/3, 2/pi, pi/2 in three parts, pi. */
 #define NX_LOG2E_F32 0x1.715476p+0f
@@ -438,9 +427,9 @@ NX_INLINE float nx_tanh_t_f32(float z) {
    |x| < NX_PIO2_BIG_F32. */
 NX_INLINE nx_rem_f32 nx_rem_pio2_cw_f32(float x) {
   nx_rem_f32 r;
-  float t = nx_fmaf(x, NX_TWO_OVER_PI_F32, NX_SHIFT_F32);
-  float q = t - NX_SHIFT_F32;
-  r.q = nx_float_bits(t) - nx_float_bits(NX_SHIFT_F32);
+  float t = nx_fmaf(x, NX_TWO_OVER_PI_F32, NX_SHIFT);
+  float q = t - NX_SHIFT;
+  r.q = nx_float_bits(t) - nx_float_bits(NX_SHIFT);
   float a = nx_fmaf(-q, NX_PIO2_HI_F32, x);
   float b = nx_fmaf(-q, NX_PIO2_LO_F32, a);
   r.hi = nx_fmaf(-q, NX_PIO2_3_F32, b);
@@ -495,7 +484,7 @@ NX_INLINE float nx_mod_f32(float x, float y) {
   uint32_t sx = ux & 0x80000000u;
   ux &= 0x7FFFFFFFu;
   if (uy == 0 || ux >= 0x7F800000u || uy > 0x7F800000u)
-    return NX_NAN_F32;
+    return NX_NAN;
   if (ux < uy) return x;
   /* Significands as integers with their leading bit at bit 23, exponents
      lowered for subnormals. */
@@ -593,7 +582,7 @@ NX_INLINE float nx_atan2_f32(float y, float x) {
   float num = swap ? ax : ay, den = swap ? ay : ax;
   float t = num / den;
   t = den == 0.0f ? 0.0f : t;
-  t = ax == NX_INF_F32 && ay == NX_INF_F32 ? 1.0f : t;
+  t = ax == NX_INF && ay == NX_INF ? 1.0f : t;
   float p = nx_atan_kernel_f32(t);
   int xneg = nx_float_bits(x) >> 31;
   float base_hi = swap ? NX_PIO2_HI_F32 : (xneg ? NX_PI_HI_F32 : 0.0f);
@@ -623,21 +612,9 @@ NX_INLINE float nx_atan2_f32(float y, float x) {
 
 /* f64 */
 
-NX_INLINE int nx_double_nan(double d) {
-  return (nx_double_bits(d) & 0x7FFFFFFFFFFFFFFFu) > 0x7FF0000000000000u;
-}
-
 #define NX_BIAS_F64 1023
 #define NX_MBITS_F64 52
-#define NX_MMASK_F64 0x000FFFFFFFFFFFFFu
-#define NX_ONE_BITS_F64 0x3FF0000000000000u
 #define NX_SQRT_HALF_BITS_F64 0x3FE6A09E667F3BCDu
-#define NX_MIN_NORMAL_BITS_F64 0x0010000000000000u
-#define NX_SUB_SCALE_F64 0x1p52
-#define NX_INF_F64 nx_bits_double(0x7FF0000000000000u)
-#define NX_NAN_F64 nx_bits_double(0x7FF8000000000000u)
-#define NX_SHIFT_F64 0x1.8p52
-#define NX_INTEGRAL_F64 0x1p52
 /* As f32's; ln2's head has 42 bits (k ln2_hi exact for |k| < 2^11), 1/ln2's
    32. */
 #define NX_LOG2E_F64 0x1.71547652b82fep+0
@@ -801,7 +778,7 @@ NX_INLINE double nx_tanh_t_f64(double z) {
    |x| < NX_PIO2_BIG_F64. */
 NX_INLINE nx_rem_f64 nx_rem_pio2_cw_f64(double x) {
   nx_rem_f64 r;
-  double t = nx_fmad(x, NX_TWO_OVER_PI_F64, NX_SHIFT_F64);
+  double t = nx_fmad(x, NX_TWO_OVER_PI_F64, NX_SHIFT);
   nx_int_f64 q = nx_nearest_f64(t);
   r.q = (uint32_t)q.i;
   double a = nx_fmad(-q.f, NX_PIO2_HI_F64, x);
@@ -901,7 +878,7 @@ NX_INLINE nx_pair_f64 nx_atan_pos_f64(double a, double al) {
   double rest = nx_fmad(-t, den, num);
   double tl = b1 ? nx_fmad(al, nx_fmad(-t, c, 1.0), rest) * rden : al;
   tl = b4 ? rest * rden : tl;
-  tl = a < NX_INF_F64 ? tl : 0.0;
+  tl = a < NX_INF ? tl : 0.0;
   double ch = b4 ? NX_PIO2_HI_F64 : b3 ? NX_ATAN_3_2_HI_F64 :
               b2 ? NX_PIO4_HI_F64 : b1 ? NX_ATAN_1_2_HI_F64 : 0.0;
   double cl = b4 ? NX_PIO2_LO_F64 : b3 ? NX_ATAN_3_2_LO_F64 :
@@ -1012,10 +989,10 @@ NX_INLINE double nx_atan2_f64(double y, double x) {
   double rden = 1.0 / den;
   double t = num * rden;
   double tl = nx_fmad(-t, den, num) * rden;
-  int degenerate = den == 0.0 || (ax == NX_INF_F64 && ay == NX_INF_F64) ||
-                   den == NX_INF_F64;
+  int degenerate =
+      den == 0.0 || (ax == NX_INF && ay == NX_INF) || den == NX_INF;
   t = den == 0.0 ? 0.0 : t;
-  t = ax == NX_INF_F64 && ay == NX_INF_F64 ? 1.0 : t;
+  t = ax == NX_INF && ay == NX_INF ? 1.0 : t;
   tl = degenerate ? 0.0 : tl;
   nx_pair_f64 p = nx_atan_pos_f64(t, tl);
   int xneg = (int)(nx_double_bits(x) >> 63);
@@ -1044,6 +1021,15 @@ NX_INLINE double nx_atan2_f64(double y, double x) {
 #undef NX_MK
 
 #endif /* __METAL_VERSION__ */
+
+#undef NX_MMASK
+#undef NX_MIN_NORMAL_BITS
+#undef NX_ONE_BITS
+#undef NX_INF
+#undef NX_NAN
+#undef NX_INTEGRAL
+#undef NX_SUB_SCALE
+#undef NX_SHIFT
 
 /* Complex
 

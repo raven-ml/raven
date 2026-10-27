@@ -1633,8 +1633,8 @@ ARG_COMPLEX(max_c128, c128, nx_maximum_c128)
 ARG_COMPLEX(min_c128, c128, nx_minimum_c128)
 
 /* Logsumexp and Moments at the float [T] of suffix [S], [MADE] the NaN
-   nx_kinds.h makes from numbers, [CUT] the least integer whose exp is a
-   normal [T]. */
+   nx_kinds.h makes from numbers, the quiet one of positive sign, [CUT] the
+   least integer whose exp is a normal [T]. */
 #define STATES(T, S, MADE, CUT)                                              \
   /* exp [y], or 0 below CUT, computed at CUT: no lane makes a subnormal,    \
      which costs x86 a hundred cycles. */                                    \
@@ -1884,8 +1884,8 @@ ARG_COMPLEX(min_c128, c128, nx_minimum_c128)
   }                                                                          \
   NETWORK(T, S, lse, 2, 2, 1)
 
-STATES(float, f32, NX_NAN_F32, -87)
-STATES(double, f64, NX_NAN_F64, -708)
+STATES(float, f32, nx_bits_float(0x7FC00000u), -87)
+STATES(double, f64, nx_bits_double(0x7FF8000000000000u), -708)
 
 /* The table's monoids, by monoid then dtype: NULL where declined. */
 #define SET(M, DT, F)                                                        \
