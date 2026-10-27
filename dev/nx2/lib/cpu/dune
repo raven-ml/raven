@@ -27,7 +27,7 @@
   (language c)
   (include_dirs ../array ../kernel)
   (flags :standard (:include vector_flags.sexp))
-  (names target job walk stage copy apply map iota rows reduce index sort assemble convert gemm gemm_generic gemm_neon gemm_amx linalg fft view))
+  (names target job walk stage copy apply map rows reduce index sort assemble convert gemm gemm_generic gemm_neon gemm_amx linalg fft view))
  (foreign_stubs
   (language c)
   (include_dirs ../array ../kernel)

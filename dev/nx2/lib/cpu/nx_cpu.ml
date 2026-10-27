@@ -8,10 +8,10 @@ module D = Nx_array.Dtype
 let name = "nx.cpu"
 let computes_on d = Rig.reaches Rig.host d
 
-(* Elementwise kernels (copy.c, convert.c, apply.c, iota.c), which [map]
-   runs for a program of one node: the kind passes as its value. Each reads
-   its operands through the door at the dtypes its kind takes, so their
-   types here are any. *)
+(* Elementwise kernels (copy.c, convert.c, apply.c), which [map] runs for
+   a program of one node: the kind passes as its value. Each reads its
+   operands through the door at the dtypes its kind takes, so their types
+   here are any. *)
 
 external copy :
   dst:('v, 's) Nx_array.t -> ('a, 'b) Nx_array.t -> Nx_array.answer
