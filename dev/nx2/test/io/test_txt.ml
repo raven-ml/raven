@@ -372,6 +372,14 @@ let txt =
           let path = file text in
           fails ~naming:line ~path (fun () ->
               Nx_io.load_txt ~skiprows:1 Nx.uint8 path));
+      cases
+        ~name:(fun (D.Any dt) -> D.name dt)
+        "-0 is 0 in every unsigned dtype"
+        D.[ Any Uint4; Any Uint8; Any Uint16; Any Uint32; Any Uint64 ]
+        (fun (D.Any dt) ->
+          equal (elements dt)
+            [| D.zero dt; D.zero dt |]
+            (Nx.to_array (Nx_io.load_txt dt (file "-0 -000\n"))));
       test "a bool field is true, false or a number" (fun () ->
           let path = file "true FALSE 0 2.5 -0.0\n" in
           equal (array bool)

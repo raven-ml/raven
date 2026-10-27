@@ -376,13 +376,13 @@ let parser (type v s) (dt : (v, s) D.t) : (string -> v parsed) option =
   | D.Uint64 ->
       Some
         (fun s ->
+          let digits = String.sub s (signed s) (String.length s - signed s) in
           if not (is_integer s) then Not_literal
-          else if s.[0] = '-' then Out_of_range
+          else if s.[0] = '-' then
+            if String.for_all (Char.equal '0') digits then Value 0L
+            else Out_of_range
           else
-            let d =
-              if s.[0] = '+' then String.sub s 1 (String.length s - 1) else s
-            in
-            match Int64.of_string_opt ("0u" ^ d) with
+            match Int64.of_string_opt ("0u" ^ digits) with
             | Some v -> Value v
             | None -> Out_of_range)
   | D.Int32 ->
