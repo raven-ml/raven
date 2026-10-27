@@ -47,8 +47,11 @@
     calls the RM returns the RM's refusal of its arguments as its result,
     [None] or [Error], and raises {!Fault} for any other failure;
     {!signaled} never raises it, and {!make} returns it as [Error]. A
-    path's [free] that fails keeps the memory it was given, and its {!Fault}
-    passes on: from {!val-free}, and from {!val-stop} once it has stopped the
+    path's [free] that fails keeps the memory it was given, and the call
+    that freed raises its {!Fault}, {!val-grow} also where it would answer
+    [Short]. A call that fails for another reason reports that failure in
+    the Fault's place: {!make} returns its own [Error], and {!val-grow}
+    raises its own exception. {!val-stop} raises it once it has stopped the
     device and given back every other memory.
 
     The capability's [local] and the paths' openers, called from a callback

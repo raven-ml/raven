@@ -2228,6 +2228,57 @@ let stop_faulted () =
   equal int ~msg:"the frees of each" frees frees';
   N.stop (require_ok (Rig_gpu_support.opened (S.opener 0))) ~fault:None
 
+(* The bytes of a channel's error notifier, a page of [Pinned] memory
+   (rig_nv.mli). A growth of the channels allocates their block, then their
+   notifiers (rig_nv.ml's [channel_memory]), so a path that refuses a
+   notifier makes the growth short with the block taken. *)
+let notifier = 4096
+
+(* [short_of_notifiers armed] is GPU 0's opener on NVIDIA's kernel driver,
+   whose path, while [!armed], has no [Pinned] memory of [notifier] bytes and,
+   after its work, raises [Fault free_fault] from the free of a region it gave
+   while armed. *)
+let short_of_notifiers armed =
+  Rig_nv_nvidia.gpu_with 0 ~wrap:(fun p ->
+      let given = ref [] in
+      let alloc kind n =
+        if !armed && kind = Rig_edge.Pinned && n = notifier then None
+        else
+          let m = p.alloc kind n in
+          (match m with
+          | Some m when !armed -> given := m.N.address :: !given
+          | Some _ | None -> ());
+          m
+      in
+      let free (m : _ N.memory) =
+        p.free m;
+        if !armed && List.mem m.address !given then raise (N.Fault free_fault)
+      in
+      { p with alloc; free })
+
+(* A growth of the channels the path has no notifier for gives back the memory
+   it took for them: a free the path fails there raises the path's fault, which
+   loses the device, as a free the path fails anywhere else does. *)
+let growth_faulted () =
+  on_kernel ();
+  let armed = ref false in
+  let g = require_ok (Rig_gpu_support.opened (short_of_notifiers armed)) in
+  let stop () =
+    armed := false;
+    N.stop g ~fault:None
+  in
+  Fun.protect ~finally:stop @@ fun () ->
+  let past_rings = [| (0, Array.make 600_000 0) |] in
+  equal string ~msg:"past the rings" "GROW" (S.Edge.room g past_rings);
+  armed := true;
+  let answer =
+    match N.grow g with
+    | Grown -> "Grown"
+    | Short n -> strf "Short %d" n
+    | exception N.Fault why -> "Fault " ^ why
+  in
+  equal string ~msg:"the growth" ("Fault " ^ free_fault) answer
+
 let faults =
   group ~timeout:60. "a path's faults"
     [
@@ -2235,6 +2286,7 @@ let faults =
         free_faulted_rig;
       test "a stop gives back every memory, then raises a free's fault"
         stop_faulted;
+      test "a growth short of memory raises a free's fault" growth_faulted;
     ]
 
 let () =

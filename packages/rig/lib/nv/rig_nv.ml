@@ -1459,7 +1459,8 @@ let hand_ring d l i n bar (m : _ memory) =
    if the path lacked them, or the RM lacked memory or another resource for
    it; the device keeps its channels then. The set enters [sets] before its
    hand, and an exception before it enters gives back what the growth
-   made. *)
+   made. A free that fails as a short growth gives back raises its
+   [Fault]. *)
 let grow_channels d l want =
   if Array.for_all (( = ) 0) want then 0
   else
@@ -1467,9 +1468,10 @@ let grow_channels d l want =
     let entries = Array.map2 max want (List.hd l.sets).entries in
     let undo = ref [] and lacked = ref false and recorded = ref false in
     let taken f = undo := f :: !undo in
-    let give_back () =
-      List.iter (fun f -> try f () with Fault _ -> ()) !undo
-    in
+    let give_back () = each (fun f -> f ()) !undo in
+    (* Where the growth failed, which loses the device, its failure passes on
+       before a free's. *)
+    let give_back_failed () = try give_back () with Fault _ -> () in
     let alloc n what =
       match path_alloc p Pinned n with
       | Some m ->
@@ -1509,7 +1511,7 @@ let grow_channels d l want =
           Ok set
       with exn ->
         let bt = Printexc.get_raw_backtrace () in
-        if not !recorded then give_back ();
+        if not !recorded then give_back_failed ();
         Printexc.raise_with_backtrace exn bt
     in
     match made with
@@ -1517,7 +1519,7 @@ let grow_channels d l want =
         give_back ();
         block_bytes entries + (2 * page)
     | Error why ->
-        give_back ();
+        give_back_failed ();
         raise (Fault why)
     | Ok set ->
         hand_channels d.self set.record;
