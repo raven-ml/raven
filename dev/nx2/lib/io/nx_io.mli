@@ -262,8 +262,9 @@ val load_safetensors : string -> Nx.host Archive.t
     bytes. An entry with no elements is an empty array of its shape.
 
     Raises [Failure] if the header is malformed, longer than 100 MB, names an
-    array twice or with an empty name, or if the file's length differs from the
-    one its header describes, as a partial download's does. *)
+    array twice, with an empty name or with a name that is not Unicode text, or
+    if the file's length differs from the one its header describes, as a
+    partial download's does. *)
 
 val save_safetensors : string -> 'd Archive.t -> unit
 (** [save_safetensors path a] writes [a]'s arrays to the SafeTensors file

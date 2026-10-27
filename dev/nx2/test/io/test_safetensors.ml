@@ -69,17 +69,26 @@ let payload path =
 
 let u8_entry name = raw_safetensors [ (name, "U8", [ 1 ], "\042") ]
 
+(* Names a JSON string must escape, or may: a tab, a newline, a quote, a
+   backslash, a slash, control bytes, and characters past ASCII. *)
+let escaped_names =
+  [ "a\tb"; "a\nb"; "say \"w\""; "a\\b"; "a/b"; "\001\031"; "é🚀" ]
+
+let names = entry_names @ escaped_names
+
 let safetensors =
   group "safetensors"
     [
       prop "an archive saved as SafeTensors loads as itself"
-        (Gen.with_pp pp_entries (archives safetensors_dtypes))
+        (Gen.with_pp pp_entries (archives ~names safetensors_dtypes))
         (fun entries ->
           List.iter (fun (_, c) -> covers c) entries;
-          let a = archive_of entries in
-          equal archive a
-            (Nx_io.load_safetensors
-               (saved ".safetensors" Nx_io.save_safetensors a)));
+          cover "an empty archive" (entries = []);
+          cover "a name JSON escapes"
+            (List.exists (fun (n, _) -> List.mem n escaped_names) entries);
+          Law.round_trip archive string
+            (saved ".safetensors" Nx_io.save_safetensors)
+            Nx_io.load_safetensors (archive_of entries));
       cases ~name:fst
         "files numpy and torch wrote load, and save again as they are"
         [
@@ -143,12 +152,31 @@ let safetensors =
           less ~msg:"misaligned: no memory of the result's size" int
             ~than:(4 * n) (negated 1);
           at_least ~msg:"aligned: a fresh result" int ~than:(4 * n) (negated 0));
-      test "a header's JSON string escapes are decoded" (fun () ->
-          equal (list string)
-            [ "aé🚀\"\\/\b\012\r\n\t" ]
-            (Archive.names
-               (Nx_io.load_safetensors
-                  (file (u8_entry {|aé🚀\"\\\/\b\f\r\n\t|})))));
+      cases ~name:fst "a header's JSON string escapes are decoded"
+        [
+          ("short escapes", ({|aé🚀\"\\\/\b\f\r\n\t|}, "aé🚀\"\\/\b\012\r\n\t"));
+          ("\\u escapes", ({|\u0061\u00e9\u00E9|}, "aéé"));
+          ("a surrogate pair", ({|\uD83D\uDE80\ud83d\ude80|}, "🚀🚀"));
+        ]
+        (fun (_, (json, name)) ->
+          equal (list string) [ name ]
+            (Archive.names (Nx_io.load_safetensors (file (u8_entry json)))));
+      cases ~name:fst
+        "a name that is no JSON string or no Unicode text fails, naming the \
+         file"
+        [
+          ("a lone high surrogate", {|\ud800|});
+          ("a lone low surrogate", {|\udc00|});
+          ("a high surrogate before a letter", {|\ud800A|});
+          ("a high surrogate before another escape", {|\ud800\u0041|});
+          ("a \\u escape of no hexadecimal", {|\u12xz|});
+          ("an unknown escape", {|\q|});
+          ("a raw control byte", "a\001b");
+          ("a byte of no UTF-8 character", "a\xffb");
+        ]
+        (fun (_, json) ->
+          let path = file (u8_entry json) in
+          fails ~path (fun () -> Nx_io.load_safetensors path));
       test "metadata of strings is accepted and ignored" (fun () ->
           let json =
             {|{"__metadata__":{"format":"pt"},"w":{"dtype":"U8","shape":[1],"data_offsets":[0,1]}}|}
@@ -244,8 +272,8 @@ let safetensors =
              fun () -> file (raw_safetensors [ ("w", "U16", [ 1 ], "a") ]) );
            ( "a negative extent",
              fun () -> file (raw_safetensors [ ("w", "U8", [ -1 ], "") ]) );
-           ( "a name that is no JSON string",
-             fun () -> file (u8_entry {|\ud800|}) );
+           ("a text file", fun () -> file "hello, nx\n");
+           ("an npy file", fun () -> file (read (fixture "version2.npy")));
          ]
          (fun (_, path) ->
            let path = path () in

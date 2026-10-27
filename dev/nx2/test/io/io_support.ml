@@ -372,19 +372,17 @@ let find a name = Option.get (Archive.find name a)
 
 let entry_names = [ "w"; "layer.0/weight"; "a b"; "é"; "日本"; "deep/er/name" ]
 
-(* Archives of up to three values of [dts], under distinct names: one in six is
-   empty. *)
-let archives dts =
+(* Archives of up to three values of [dts], under distinct [names], each name as
+   likely as another: one in six is empty. *)
+let archives ?(names = entry_names) dts =
   let open Gen in
   let* names =
     frequency
       [
         (1, constant []);
         ( 5,
-          let+ names = subsequence entry_names in
-          match names with
-          | [] -> [ "w" ]
-          | n :: ns -> n :: List.filteri (fun i _ -> i < 2) ns );
+          let+ names = permutation names and+ k = int_range 1 3 in
+          List.filteri (fun i _ -> i < k) names );
       ]
   in
   let+ cs = list ~size:(constant (List.length names)) (case dts) in
