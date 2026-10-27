@@ -13,23 +13,15 @@ let report = Compile.report
 
 type place = Every | At : 'd Nx.Placement.t -> place
 
-(* What a program depends on of a leaf. *)
-type leaf = {
-  dtype : D.any;
-  layout : L.t;  (** Over its run ({!Compile.within}). *)
-  at : place;
-  donated : bool;
-  traced : bool;
-}
+(* What a trace depends on of a leaf: its abstract value. *)
+type leaf = { dtype : D.any; shape : int array; at : place }
 
 let leaf (Nx.P x) =
   let f = Nx.Prim.form x in
   {
     dtype = D.Any f.dtype;
-    layout = Compile.within f.dtype (Compile.layout (Program.F f));
+    shape = Nx.shape x;
     at = (match f.placement with None -> Every | Some p -> At p);
-    donated = Nx.Prim.donated x;
-    traced = Option.is_some (Nx.Prim.owner x);
   }
 
 let same_place a b =
@@ -40,36 +32,18 @@ let same_place a b =
 
 let same_leaf a b =
   (match (a.dtype, b.dtype) with D.Any x, D.Any y -> D.equal x y)
-  && L.equal a.layout b.layout && same_place a.at b.at
-  && Bool.equal a.donated b.donated
-  && Bool.equal a.traced b.traced
+  && a.shape = b.shape && same_place a.at b.at
 
-(* The settings a caller may change around a call that change the program:
-   each setting that shapes what tolk compiles, and whether the engine links
-   each kernel as a submission of its own, as it does for its reports. *)
-type settings = { shaping : (string * string) list; separate : bool }
-
-let settings () =
-  {
-    shaping = Tolk.Setting.shaping ();
-    separate = Tolk.Setting.value Tolk.Setting.debug >= 2;
-  }
-
-type key = {
-  skeleton : Ptree.Skeleton.t;
-  settings : settings;
-  leaves : leaf array;
-}
+type key = { skeleton : Ptree.Skeleton.t; leaves : leaf array }
 
 let same_key k k' =
   Ptree.Skeleton.equal k.skeleton k'.skeleton
-  && k.settings = k'.settings
   && Array.length k.leaves = Array.length k'.leaves
   && Array.for_all2 same_leaf k.leaves k'.leaves
 
 let hash k =
   Array.fold_left
-    (fun h l -> (h * 31) + L.hash l.layout)
+    (fun h l -> (h * 31) + Hashtbl.hash l.shape)
     (Ptree.Skeleton.hash k.skeleton)
     k.leaves
 
@@ -78,12 +52,10 @@ let parts l =
   let (D.Any dt) = l.dtype in
   [
     D.name dt;
-    Format.asprintf "a layout %a over its run" L.pp l.layout;
+    Format.asprintf "shape %a" Nx.pp_shape l.shape;
     (match l.at with
     | Every -> "of every set"
     | At p -> Format.asprintf "at %a" Nx.Placement.pp p);
-    (if l.donated then "donated" else "not donated");
-    (if l.traced then "traced" else "not traced");
   ]
 
 (* The first difference between the key [k] and the previous key [k']. *)
@@ -93,21 +65,6 @@ let difference paths k k' =
       k'.skeleton
   with
   | Some m -> m
-  | None when k.settings <> k'.settings -> (
-      let entries s = s.shaping @ [ ("separate", string_of_bool s.separate) ] in
-      let here = entries k.settings and previous = entries k'.settings in
-      let value name e =
-        Option.value (List.assoc_opt name e) ~default:"unset"
-      in
-      match
-        List.find_opt
-          (fun (name, _) -> value name here <> value name previous)
-          (here @ previous)
-      with
-      | Some (name, _) ->
-          Printf.sprintf "%s=%s here, %s=%s in the previous key" name
-            (value name here) name (value name previous)
-      | None -> "other settings than in the previous key")
   | None ->
       let rec first i paths =
         if i >= Array.length k.leaves then "an equal key"
@@ -141,7 +98,7 @@ end)
 type 'y entry = {
   body : Program.t;
   like : 'y;
-  compiled : (Program.value array -> Program.value array) option;
+  compiled : Program.value array -> Program.value array;
 }
 
 type 'y t = {
@@ -150,31 +107,47 @@ type 'y t = {
   last : key option Atomic.t;
 }
 
-let create ~name () = { name; table = Programs.create (); last = Atomic.make None }
+let create ~name () =
+  { name; table = Programs.create (); last = Atomic.make None }
+
+(* The stand-in of a leaf: its abstract value, in C order. *)
+let stand_in (Nx.P x) =
+  let f = Nx.Prim.form x in
+  Program.F { f with layout = L.contiguous (L.shape f.layout) }
+
+(* [compiled name body forms] runs [body] compiled, made the first time it
+   runs, or evaluated where the compiler declines it. *)
+let compiled name body forms =
+  let made = Atomic.make None and lock = Mutex.create () in
+  let get () =
+    match Atomic.get made with
+    | Some c -> c
+    | None -> (
+        Mutex.protect lock @@ fun () ->
+        match Atomic.get made with
+        | Some c -> c
+        | None ->
+            let c = Compile.make ~name body forms in
+            Result.iter_error (report "evaluates its program uncompiled: %s") c;
+            Atomic.set made (Some c);
+            c)
+  in
+  fun args ->
+    match get () with
+    | Ok c -> Compile.run c args
+    | Error _ -> Compile.evaluate ~name body args
 
 let find t leaves skeleton ~paths trace =
-  let forms =
-    Array.of_list (List.map (fun (Nx.P x) -> Program.F (Nx.Prim.form x)) leaves)
-  in
-  let leaves = Array.of_list (List.map leaf leaves) in
-  let key = { skeleton; settings = settings (); leaves } in
+  let key = { skeleton; leaves = Array.of_list (List.map leaf leaves) } in
   let miss () =
     Option.iter
       (fun k -> report "retrace: %s" (difference (paths ()) key k))
       (Atomic.get t.last)
   in
+  let forms = Array.of_list (List.map stand_in leaves) in
   let make () =
-    let body, like = trace () in
-    let compiled =
-      if Array.exists (fun l -> l.traced) leaves then None
-      else
-        match Compile.make ~name:t.name body forms with
-        | Ok c -> Some (Compile.run c)
-        | Error why ->
-            report "evaluates its program uncompiled: %s" why;
-            None
-    in
-    { body; like; compiled }
+    let body, like = trace forms in
+    { body; like; compiled = compiled t.name body forms }
   in
   let e = Programs.find t.table key ~miss make in
   Atomic.set t.last (Some key);

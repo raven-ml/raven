@@ -751,14 +751,26 @@ let law_scan (Loop_case (dt, s, n, co, xso, tco, txso, g, h)) =
     (outcome_t (Testable.pair t t))
     expected
     (outcome (fun () -> both (jvp scanned)));
+  (* Compiled, the derivative gives the fold's bits where every function of
+     the step is exact. *)
+  let g' = elementwise (exact g) and h' = elementwise (exact h) in
+  let step' c x =
+    (Nx.broadcast_to s (eval c x g'), Nx.broadcast_to s (eval c x h'))
+  in
+  let folded' (c, xs) =
+    if n = 0 then ignore (step' c (Nx.zeros dt s));
+    let c, ys = fold step' ~init:c xs in
+    (c, if n = 0 then Nx.zeros dt rows else Nx.stack ~axis:0 ys)
+  in
+  let scanned' (c, xs) = Rune.scan' ~f:step' ~init:c xs in
   let staged =
     Rune.jit
       T.(tensor @-> tensor @-> tensor @-> tensor @-> returns (pair p p))
-      (fun c xs tc txs -> Rune.jvp p p scanned (c, xs) (tc, txs))
+      (fun c xs tc txs -> Rune.jvp p p scanned' (c, xs) (tc, txs))
   in
   equal ~msg:"under jit"
     (outcome_t (Testable.pair t t))
-    expected
+    (outcome (fun () -> both (jvp folded')))
     (outcome (fun () -> both (staged init xs tinit txs)))
 
 type iterate_case =

@@ -56,14 +56,17 @@ let run_bytes (type v s) (dt : (v, s) D.t) l =
   (first, D.bytes dt (start + n) - first)
 
 (* The bytes by which byte [first] of [b] lies past 16 bytes of memory. Memory
-   that has no address the host computes on is laid out by its device, which
-   starts an allocation on its alignment. *)
+   that has no address the host computes on starts its allocation on its
+   device's alignment, so the bytes before [b] in it place [b]. *)
 let phase b first =
   let rec find j =
     if j >= alignment || Rig.Buffer.aligned b ~at:(first - j) alignment then j
     else find (j + 1)
   in
-  match find 0 with j -> j | exception Invalid_argument _ -> 0
+  match find 0 with
+  | j -> j
+  | exception Invalid_argument _ ->
+      (Rig.Buffer.offset b + first) land (alignment - 1)
 
 let parts (type v s) (dt : (v, s) D.t) = if D.is D.Complex dt then 2 else 1
 let packed (type v s) (dt : (v, s) D.t) = D.bits dt < 8
@@ -174,13 +177,6 @@ let storage ~device ~phase (type v s) (dt : (v, s) D.t) l =
     let flat = if parts dt = 2 then Shape.reshape b (ints [ n; 2 ]) else b in
     (b, viewed dt flat (within dt l))
 
-(* The layout a parameter of form [f] binds: its own, or for a value of
-   every set, which a call computes afresh, C order. *)
-let layout (F f) =
-  match f.placement with
-  | Some _ -> f.layout
-  | None -> L.contiguous (L.shape f.layout)
-
 (* A value of every set computed on the host, then on [rig] in C order. *)
 let computed rig x =
   Nx.Repr.read x (fun a ->
@@ -266,7 +262,9 @@ let construct = function
   | Add _ -> "an addition"
   | Detach _ -> "Rune.detach"
 
-let lower ~rig (p : Program.t) (forms : form array) phases =
+(* [lower ~rig p forms layouts phases] is [p] over arguments of [forms], each
+   laid out over its run as [layouts] says, its run at [phases]. *)
+let lower ~rig (p : Program.t) (forms : form array) layouts phases =
   let st = { rig; device = Ops.Single (Rig.name rig); captures = []; bound = [] } in
   let env = Array.make p.slots None in
   let params =
@@ -281,7 +279,7 @@ let lower ~rig (p : Program.t) (forms : form array) phases =
         else begin
           Option.iter (fun q -> on_rig st q "an argument") f.placement;
           let b, u =
-            storage ~device:st.device ~phase:phases.(k) f.dtype (layout (F f))
+            storage ~device:st.device ~phase:phases.(k) f.dtype layouts.(k)
           in
           env.(var) <- Some u;
           Some b
@@ -373,22 +371,36 @@ let search rig width k =
   in
   Tolk.Search.beam_search ~link ~time ~clock:Engine.clock width k
 
-(* A program linked for one phase of each argument: the linked schedule, its
-   variables, and the slot of each argument and output, [-1] for none. *)
-type variant = {
-  phases : int array;
-  linked : (Engine.t * (string * int) list) option;
+(* The settings a caller may change around a call that change what tolk
+   compiles: each setting that shapes it, and whether the engine links each
+   kernel as a submission of its own, as it does for its reports. *)
+type settings = (string * string) list * bool
+
+let settings () =
+  (Tolk.Setting.shaping (), Tolk.Setting.value Tolk.Setting.debug >= 2)
+
+(* A program linked for one layout and phase of each argument and one value of
+   the settings: the linked schedule, its variables, and the slot of each
+   argument and output, [-1] for none. *)
+type linked = {
+  schedule : (Engine.t * (string * int) list) option;
   inputs : int;
   leaf_slots : int array;
   out_slots : int array;
 }
 
-let link rig l phases =
+type variant = {
+  layouts : L.t array;  (** Each argument's over its run ({!within}). *)
+  phases : int array;
+  settings : settings;
+  linked : (linked, exn) result;  (** A link that raised raises again. *)
+}
+
+let link rig l =
   match l.sink with
   | None ->
       {
-        phases;
-        linked = None;
+        schedule = None;
         inputs = 0;
         leaf_slots = Array.map (fun _ -> -1) l.params;
         out_slots = Array.map (fun _ -> -1) l.outs;
@@ -422,28 +434,31 @@ let link rig l phases =
           ~targets:(fun _ -> Engine.target rig)
           ~held_bufs:(List.map fst l.bound) ~inputs:(List.rev !order) linear
       in
-      let linked = Engine.link ~devices:(fun _ -> rig) ~bound:l.bound linear in
-      { phases; linked = Some (linked, vars); inputs = !next; leaf_slots; out_slots }
+      let schedule = Engine.link ~devices:(fun _ -> rig) ~bound:l.bound linear in
+      { schedule = Some (schedule, vars); inputs = !next; leaf_slots; out_slots }
 
 (* Programs *)
 
 type t = {
   name : string;
   rig : Rig.t;
+  home : form;  (** A placed form on [rig], at whose set arguments of every
+                    set are placed. *)
   program : Program.t;
   forms : form array;
   lock : Mutex.t;
   variants : variant list Atomic.t;
 }
 
-(* The program's device: its arguments', or else its results'. *)
+(* The program's device, and a form placed whole on it: its arguments', or
+   else its results'. *)
 let device (p : Program.t) forms =
   let first = ref None in
-  let consider (F f) =
+  let consider (F f as form) =
     match (!first, f.placement) with
     | None, Some q -> (
         match device_of q with
-        | Some r -> first := Some r
+        | Some r -> first := Some (r, form)
         | None ->
             decline "a value placed at %s, over several devices"
               (Format.asprintf "%a" Nx.Placement.pp q))
@@ -452,32 +467,17 @@ let device (p : Program.t) forms =
   Array.iter consider forms;
   Array.iter (fun v -> consider (form v)) p.outputs;
   match !first with
-  | Some r when Rig.computes r -> r
-  | Some r -> decline "a value on %s, which computes nothing" (Rig.name r)
+  | Some (r, home) when Rig.computes r -> (r, home)
+  | Some (r, _) -> decline "a value on %s, which computes nothing" (Rig.name r)
   | None -> decline "no value placed"
 
-let make ~name p forms =
-  match
-    let rig = device p forms in
-    let zeros = Array.map (fun _ -> 0) forms in
-    ignore (lower ~rig p forms zeros);
-    rig
-  with
-  | rig ->
-      Ok
-        {
-          name;
-          rig;
-          program = p;
-          forms;
-          lock = Mutex.create ();
-          variants = Atomic.make [];
-        }
-  | exception Declined why -> Error why
+let same_variant layouts phases settings v =
+  v.phases = phases && v.settings = settings
+  && Array.for_all2 L.equal v.layouts layouts
 
-let variant t phases =
+let variant t layouts phases settings =
   let find () =
-    List.find_opt (fun v -> v.phases = phases) (Atomic.get t.variants)
+    List.find_opt (same_variant layouts phases settings) (Atomic.get t.variants)
   in
   match find () with
   | Some v -> v
@@ -486,14 +486,52 @@ let variant t phases =
       match find () with
       | Some v -> v
       | None ->
-          let v = link t.rig (lower ~rig:t.rig t.program t.forms phases) phases in
+          let linked =
+            match link t.rig (lower ~rig:t.rig t.program t.forms layouts phases) with
+            | l -> Ok l
+            | exception e -> Error e
+          in
+          let v = { layouts; phases; settings; linked } in
           Atomic.set t.variants (v :: Atomic.get t.variants);
           v)
+
+(* What a program the compiler takes must not raise to compile: an operation it
+   does not lower, or tolk refusing the graph, as a target whose compiler is
+   missing does. *)
+let declined = function
+  | Declined why -> Some why
+  | Invalid_argument why | Failure why -> Some why
+  | _ -> None
+
+let make ~name p forms =
+  match
+    let rig, home = device p forms in
+    let layouts =
+      Array.map (fun (F f) -> within f.dtype (L.contiguous (L.shape f.layout))) forms
+    in
+    let phases = Array.map (fun _ -> 0) forms in
+    let l = link rig (lower ~rig p forms layouts phases) in
+    let first =
+      { layouts; phases; settings = settings (); linked = Ok l }
+    in
+    {
+      name;
+      rig;
+      home;
+      program = p;
+      forms;
+      lock = Mutex.create ();
+      variants = Atomic.make [ first ];
+    }
+  with
+  | t -> Ok t
+  | exception e -> (
+      match declined e with Some why -> Error why | None -> raise e)
 
 (* Calls *)
 
 (* [consumed ~by args f] is [f arrays] under a consumer of the placed values of
-   [args], [arrays k] the arrays of argument [k], placed. *)
+   [args], [arrays k] the arrays of placed argument [k]. *)
 let consumed ~by args f =
   let placed =
     List.filter
@@ -516,6 +554,18 @@ let consumed ~by args f =
       Nx.Prim.Consumer.with_ ~by (List.map any placed) (fun c ->
           f (fun k -> Nx.Prim.Consumer.arrays c position.(k)))
 
+(* [x], of every set, computed whole on [rig] at [home]'s set, where an
+   operation that reads it computes it. *)
+let placed rig (F home) (V x as v) =
+  match (Nx.placement x, home.placement) with
+  | None, Some q -> (
+      let f = { home with dtype = Nx.dtype x; layout = (Nx.Prim.form x).layout } in
+      match Nx.Prim.coerce f x with
+      | Some x ->
+          V (Nx.place (Nx.Placement.device (Nx.Placement.devices q) rig) x)
+      | None -> v)
+  | _ -> v
+
 let result rig (F f) buffer =
   let shape = shape_of f in
   let buffer =
@@ -530,15 +580,12 @@ let result rig (F f) buffer =
 
 let run t args =
   let p = t.program in
+  let args = Array.map (placed t.rig t.home) args in
   consumed ~by:t.name args @@ fun arrays ->
-  (* Each argument's array: its own, or a value of every set computed. *)
-  let array k =
-    let (V x) = args.(k) in
-    match Nx.placement x with
-    | None -> computed t.rig x
-    | Some _ -> (arrays k).(0)
+  let leaves = Array.mapi (fun k _ -> (arrays k).(0)) args in
+  let layouts =
+    Array.map (fun (A.Any a) -> within (A.dtype a) (A.layout a)) leaves
   in
-  let leaves = Array.init (Array.length args) array in
   let phases =
     Array.map
       (fun (A.Any a) ->
@@ -547,7 +594,11 @@ let run t args =
         else phase (A.buffer a) (fst (run_bytes (A.dtype a) l)))
       leaves
   in
-  let v = variant t phases in
+  let v =
+    match (variant t layouts phases (settings ())).linked with
+    | Ok l -> l
+    | Error e -> raise e
+  in
   let slots = Array.make v.inputs [] in
   Array.iteri
     (fun k s ->
@@ -570,7 +621,7 @@ let run t args =
           Some b)
       v.out_slots
   in
-  Option.iter (fun (l, vars) -> Engine.run ~vars l slots) v.linked;
+  Option.iter (fun (l, vars) -> Engine.run ~vars l slots) v.schedule;
   (* A result of every set is a constant: the program declines one it
      computes. *)
   Array.mapi
@@ -579,3 +630,26 @@ let run t args =
       | None -> p.outputs.(j)
       | Some _ -> result t.rig o buffers.(j))
     outputs
+
+(* Evaluation *)
+
+let evaluate ~name p args =
+  let donated = List.filter (fun (V x) -> Nx.Prim.donated x) (Array.to_list args) in
+  (* A result that is an argument is copied, so that each is fresh. *)
+  let evaluated () =
+    Array.map
+      (fun (V y as r) -> if Array.exists (same r) args then V (Nx.copy y) else r)
+      (eval p args)
+  in
+  if donated = [] then evaluated ()
+  else
+    (* An interpretation reads each donated handle as its arrays and kills
+       nothing, so that the program's operations may read one several times;
+       the call then consumes the handles. *)
+    let out =
+      Nx.Prim.interpret ~name Extent
+        (fun _ ~by op -> Nx.Prim.eval ~by op)
+        (fun _ -> evaluated ())
+    in
+    consumed ~by:name (Array.of_list donated) (fun _ -> ());
+    out

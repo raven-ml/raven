@@ -322,12 +322,65 @@ let test_nested () =
   let x = v [| 1.; 2. |] in
   equal bits_t (bits (Nx.add (Nx.mul x x) (Nx.mul c c))) (bits (outer x))
 
+(* Fresh results: a result that is an argument is a copy, compiled and
+   evaluated. *)
+let test_fresh () =
+  let x = v [| 1.; 2. |] in
+  let b = Nx.Repr.read x Nx_array.buffer in
+  let shares y = Rig.Buffer.overlaps b (Nx_array.buffer (Option.get (Nx.Repr.array y))) in
+  let compiled = Rune.jit' (fun x -> x) x in
+  equal ~msg:"compiled" bool false (shares compiled);
+  equal bits_t (bits x) (bits compiled);
+  let looped =
+    Rune.jit' (fun x -> fst (Rune.scan' ~f:(fun c r -> (c, r)) ~init:x (Nx.reshape [| 2; 1 |] x))) x
+  in
+  equal ~msg:"evaluated" bool false (shares looped);
+  equal bits_t (bits x) (bits looped)
+
+(* An argument whose memory starts off 16 bytes binds where it lies, through a
+   program compiled for that phase. *)
+let test_phase () =
+  let f = Rune.jit' (fun x -> Nx.add x x) in
+  let at first =
+    let b = Rig.Buffer.create Rig.host 64 in
+    let a =
+      Nx_array.v Nx.float32 (Nx_array.Layout.contiguous (Iarray.of_list [ 4 ]))
+        (Rig.Buffer.view b ~first ~length:16)
+    in
+    Nx_array.(set a (Iarray.of_list [ 0 ]) 1.);
+    Nx_array.(set a (Iarray.of_list [ 1 ]) (-0.));
+    Nx_array.(set a (Iarray.of_list [ 2 ]) 2.5);
+    Nx_array.(set a (Iarray.of_list [ 3 ]) Float.nan);
+    Nx.Repr.of_array Nx.Host.v a
+  in
+  List.iter
+    (fun first ->
+      let x = at first in
+      equal ~msg:(Printf.sprintf "at byte %d" first) bits_t
+        (bits (Nx.add x x)) (bits (f x)))
+    [ 0; 4; 8; 12; 0 ]
+
+(* A program that holds a loop is evaluated, giving eager's values. *)
+let test_loop () =
+  let step c r = (Nx.add c r, Nx.mul c r) in
+  let xs = Nx.create f32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let init = v [| 0.5; -0. |] in
+  let eager = Rune.scan' ~f:step ~init xs in
+  let jitted =
+    Rune.jit
+      T.(tensor @-> tensor @-> returns (pair tensor tensor))
+      (fun init xs -> Rune.scan' ~f:step ~init xs)
+      init xs
+  in
+  equal bits_t (bits (fst eager)) (bits (fst jitted));
+  equal bits_t (bits (snd eager)) (bits (snd jitted))
+
 (* The cache
 
-   A call retraces exactly when its key differs from every earlier call's of
-   the same compiled function: here its shape, its strides, its offset from
-   the element its 16 bytes start at, and whether it is donated, as rune2.mli
-   states the key, at each dtype's own compiled function. The model is the
+   A call retraces exactly when its key, the abstract value of its arguments,
+   differs from every earlier call's of the same compiled function: here its
+   shape, at each dtype's own compiled function, as rune2.mli states the key.
+   Layouts, offsets and donation vary too, and change no key. The model is the
    set of keys traced, and each call answers whether it traced, which the
    function records on the domain that traces it. *)
 
@@ -367,21 +420,10 @@ let args =
    { wide; rows; layout; donated; value })
   |> with_pp pp_arg
 
-(* What the key holds of an argument: an offset counts modulo the elements of
-   16 bytes, and an axis of one element has no stride, so a transposed row is
-   a contiguous one. *)
-let key a =
-  let per = if a.wide then 2 else 4 in
-  let layout =
-    match a.layout with
-    | Contiguous -> 0
-    | Offset k -> k mod per
-    | Transposed -> if a.rows = 1 then 0 else -1
-  in
-  (a.wide, a.rows, layout, a.donated)
+let key a = (a.wide, a.rows)
 
 module Keys = Set.Make (struct
-  type t = bool * int * int * bool
+  type t = bool * int
 
   let compare = compare
 end)
@@ -463,7 +505,10 @@ let () =
              test "structures in and out" test_structures;
              test "values of every set" test_every_set;
              test "a jit inside a jit" test_nested;
+             test "results are fresh" test_fresh;
+             test "an argument off 16 bytes" test_phase;
+             test "a program with a loop" test_loop;
              stateful ~domains:2 ~count:10 ~steps:8
-               "a call retraces iff its key is new" cache_commands;
+               "a call retraces iff its abstract value is new" cache_commands;
            ];
        ])

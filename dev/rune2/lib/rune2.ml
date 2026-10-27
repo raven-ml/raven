@@ -516,10 +516,10 @@ let call name t a r f args =
   let paths () =
     List.rev (Ptree.fold a (fun p _ acc -> path_name p :: acc) args [])
   in
-  let trace () =
+  let trace forms =
     let like = ref None in
     let body, _ =
-      Trace.trace Jit ~name (Array.map form args_v) (fun vs ->
+      Trace.trace Jit ~name forms (fun vs ->
           let y = f (rebuild a ~like:args vs) in
           like := Some y;
           values r y)
@@ -528,7 +528,7 @@ let call name t a r f args =
   in
   let e = Jit.find t leaves skeleton ~paths trace in
   let out =
-    run (Call { body = e.body; args = args_v; compiled = e.compiled })
+    run (Call { body = e.body; args = args_v; compiled = Some e.compiled })
   in
   rebuild r ~like:e.like (slice out 0 (Array.length (values r e.like)))
 

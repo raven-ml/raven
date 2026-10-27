@@ -5,15 +5,11 @@
 
 (** A compiled function's programs, one per key.
 
-    A call's {e key} is what its program depends on of the call: its
-    arguments' skeleton ({!Nx.Ptree.Skeleton}); for each leaf, its dtype, its
-    layout over the run of storage it reads (shape, strides, and its offset
-    from the run's start), its placement, whether it is a donated handle
-    ({!Nx.donate}) and whether an interpretation traces it; and every setting
-    of tolk that shapes what it compiles ({!Tolk.Setting.shaping}), the search
-    widths [BEAM] and [JITBEAM] among them, and whether the engine links each
-    kernel as a submission of its own ({!Tolk.Setting.debug} at [2] or more).
-    Two calls share a program exactly when their keys are equal.
+    A call's {e key} is the abstract value of its arguments: their skeleton
+    ({!Nx.Ptree.Skeleton}), and each leaf's dtype, shape and placement. A key
+    is traced once, over stand-ins in C order; its program is compiled the
+    first time it runs compiled, then once per variant of its arguments'
+    layouts, phases and tolk's settings ({!Compile}).
 
     With [RUNE_JIT_DEBUG=1] in the environment, a call prints on standard
     error each retrace, with the first difference between its key and the
@@ -22,9 +18,9 @@
 type 'y entry = {
   body : Program.t;  (** The function traced. *)
   like : 'y;  (** The result the trace returned, for its structure. *)
-  compiled : (Program.value array -> Program.value array) option;
-      (** [body] compiled ({!Compile.run}), where the leaves are untraced and
-          the compiler takes it. *)
+  compiled : Program.value array -> Program.value array;
+      (** [body] compiled ({!Compile.run}), or evaluated where the compiler
+          declines it ({!Compile.evaluate}), over untraced arguments. *)
 }
 (** The type for a key's program. *)
 
@@ -40,11 +36,12 @@ val find :
   'd Nx.packed list ->
   Nx.Ptree.Skeleton.t ->
   paths:(unit -> string list) ->
-  (unit -> Program.t * 'y) ->
+  (Program.form array -> Program.t * 'y) ->
   'y entry
 (** [find t leaves skeleton ~paths trace] is the program of the call whose
     arguments' leaves are [leaves], in walk order, and skeleton [skeleton],
-    made by [trace ()] the first time [t] meets its key, then compiled. A key
-    being made makes the other calls with that key wait; a [trace] that raises
+    made by [trace forms] the first time [t] meets its key, [forms] the
+    leaves' stand-ins. A key being made makes the other calls with that key
+    wait, but on the domain making it ({!Cache}); a [trace] that raises
     installs nothing, and the next call with the key traces again. [paths ()]
     names the leaves in reports. *)

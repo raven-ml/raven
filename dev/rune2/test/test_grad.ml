@@ -467,12 +467,25 @@ let law_scan (Loop_case (dt, s, n, co, xso, g, h)) =
   cover "a refused step" (match expected with Raised _ -> true | _ -> false);
   let t = outcome_t (Testable.pair bits_t bits_t) in
   equal ~msg:"eager" t expected (grad scanned);
+  (* Compiled, the gradient gives the fold's bits where every function of the
+     step is exact. *)
+  let g' = elementwise (exact g) and h' = elementwise (exact h) in
+  let step' c x =
+    (Nx.broadcast_to s (eval c x g'), Nx.broadcast_to s (eval c x h'))
+  in
+  let folded' (c, xs) =
+    if n = 0 then ignore (step' c (Nx.zeros dt s));
+    let c, ys = fold step' ~init:c xs in
+    objective (c, if n = 0 then Nx.zeros dt rows else Nx.stack ~axis:0 ys)
+  in
+  let scanned' (c, xs) = objective (Rune.scan' ~f:step' ~init:c xs) in
   let staged =
     Rune.jit
       T.(tensor @-> tensor @-> returns (pair tensor tensor))
-      (fun c xs -> Rune.grad p scanned (c, xs))
+      (fun c xs -> Rune.grad p scanned' (c, xs))
   in
-  equal ~msg:"under jit" t expected (outcome (fun () -> both (staged init xs)))
+  equal ~msg:"under jit" t (grad folded')
+    (outcome (fun () -> both (staged init xs)))
 
 (* Residuals *)
 

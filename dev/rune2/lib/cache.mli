@@ -21,6 +21,8 @@ module Make (K : Hashtbl.HashedType) : sig
       [miss ()] runs under [t]'s lock, and [k] is added only if it returns; the
       first call that reads [k]'s value then makes it with [make ()] under [k]'s
       own latch, so that the values of distinct keys are made concurrently and
-      each key's once. If [make] raises, the next call for [k] makes it again.
-  *)
+      each key's once. A call on the domain making [k]'s value, from inside
+      [make] or from a fiber the domain resumes meanwhile, makes a value with
+      [make ()] for itself, which [t] does not keep, where waiting would wait
+      for itself. If [make] raises, the next call for [k] makes it again. *)
 end

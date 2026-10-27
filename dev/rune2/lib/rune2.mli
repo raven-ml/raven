@@ -462,24 +462,28 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     staged, those over values [f] captures included, which the program reads
     as they are when it is traced.
 
-    {b Keys.} [jit s f] keeps a program per {e key}: the arguments'
-    {!Nx.Ptree.val-visits} and reports, the static data of a call; for each
-    array its dtype, shape and strides, its offset from the element at or
-    below its first whose bits start on 16 bytes of its memory, its placement,
-    and whether it is a donated handle ({!Nx.donate}); and tolk's settings
-    that shape what it compiles, the search widths [BEAM] and [JITBEAM] among
-    them. A call retraces exactly when its key is new to [jit s f]: [f]'s code,
-    and its side effects, run once per key. A call that raises while it traces
-    keeps no program for its key. Calls on several domains share the programs;
-    a key being traced makes its other callers wait. With [RUNE_JIT_DEBUG=1]
-    in the environment, each retrace prints on standard error the first
-    difference between its key and the previous call's.
+    {b Keys.} [jit s f] keeps a program per {e key}, the abstract value of a
+    call's arguments: their {!Nx.Ptree.val-visits} and reports, the static
+    data of a call, and each array's dtype, shape and placement. A call
+    retraces exactly when its key is new to [jit s f], over stand-ins in C
+    order: [f]'s code, and its side effects, run once per key. A call that
+    raises while it traces keeps no program for its key. Calls on several
+    domains share the programs; a key being traced makes its other callers
+    wait, but on the domain that traces it, where a call traces again for
+    itself. With [RUNE_JIT_DEBUG=1] in the environment, each retrace prints on
+    standard error the first difference between its key and the previous
+    call's.
 
-    {b Results.} Each result array of a compiled call is fresh: memory of its
-    own in C order, at the placement eager computation gives it. An argument
-    of every set ({!Nx.zeros}) is computed for the call, so its values do not
-    change the key, and a constant of every set that [f] returns is that
-    constant.
+    {b Compiled programs.} A program compiles the first time a call runs it,
+    then once per {e variant}: each argument's strides and offset from where
+    its 16 bytes of memory start, and tolk's settings that shape what it
+    compiles, the search widths [BEAM] and [JITBEAM] among them. A view thus
+    reads in place, without a copy, from a program compiled for its layout.
+    Each result array is fresh: memory of its own in C order, at the placement
+    eager computation gives it. An argument of every set ({!Nx.zeros}) is
+    computed at the call, on the set where an operation that reads it
+    computes, so its values do not change the key; a constant of every set
+    that [f] returns is that constant.
 
     {b Numerics.} A compiled call gives eager's bits, but for a NaN's sign and
     payload, where both compute exactly: movements, selections, comparisons,
@@ -496,10 +500,11 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     {b Evaluated programs.} A program that holds a {!scan} or an {!iterate}, a
     map's {!lanes} or {!lane_index}, an operation the compiler does not lower,
     values on several devices, or a result of every set computed from the
-    arguments, runs as its operations evaluated by nx, giving eager's values.
-    So does a call whose arguments a transformation around it traces, or that
-    an enclosing [jit] traces: the transformation receives its program's
-    operations, and the enclosing [jit] stages them.
+    arguments, or one tolk cannot compile, runs as its operations evaluated by
+    nx, giving eager's values, each result fresh. So does a call whose
+    arguments a transformation around it traces, or that an enclosing [jit]
+    traces: the transformation receives its program's operations, and the
+    enclosing [jit] stages them.
 
     Raises [Invalid_argument] when applied to [s] if [s] has no argument, and at
     a call if [f] captures a value that another transformation traces. *)
