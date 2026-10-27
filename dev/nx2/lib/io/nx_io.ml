@@ -60,6 +60,7 @@ let load_safetensors path =
 let save_safetensors path archive =
   let by = "Nx_io.save_safetensors" in
   let entry (name, (Nx.P x as p)) =
+    Safetensors.check_name ~by name;
     match Safetensors.code (Nx.dtype x) with
     | Some (code, rank) -> (rank, name, code, p)
     | None ->

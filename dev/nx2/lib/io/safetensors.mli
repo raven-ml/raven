@@ -10,6 +10,12 @@ val code : ('v, 's) Nx_array.Dtype.t -> (string * int) option
     dtypes, by which a file orders its arrays, widest first; [None] if the
     format has no [dt]. *)
 
+val check_name : by:string -> string -> unit
+(** [check_name ~by name] is [()] if {!load} accepts [name] as an array's name.
+
+    Raises [Invalid_argument] naming [by] and [name] if [name] is not UTF-8 or
+    is the header's metadata key. *)
+
 val load : Rig.Buffer.t -> Nx.host Archive.t
 (** [load file] is the arrays of the disk buffer [file].
 

@@ -220,6 +220,21 @@ let safetensors =
             (fun () ->
               save_safetensors (temp_file ())
                 [ ("w", Nx.P (Nx.zeros dt [| 2 |])) ]));
+      cases ~name:fst
+        "a name the format's reader refuses is refused, and nothing is written"
+        [
+          ("a name that is not UTF-8", "a\xffb");
+          ("the metadata's name", "__metadata__");
+        ]
+        (fun (_, name) ->
+          let dir = temp_dir () in
+          let path = Filename.concat dir "x.safetensors" in
+          raises_match
+            (Exn.invalid_arg
+               ~substring:(Printf.sprintf "Nx_io.save_safetensors: %S" name))
+            (fun () ->
+              save_safetensors path [ (name, Nx.P (Nx.zeros Nx.uint8 [| 1 |])) ]);
+          equal (array string) [||] (Sys.readdir dir));
       test
         "every proper prefix fails, and any header byte flipped loads or fails"
         (fun () ->

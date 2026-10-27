@@ -296,6 +296,15 @@ let is_valid_utf8 s =
   in
   go 0
 
+(* The header's key for the file's metadata, which names no array. *)
+let metadata = "__metadata__"
+
+let check_name ~by name =
+  if not (is_valid_utf8 name) then
+    Fail.invalid_argf "%s: %S is not UTF-8" by name;
+  if name = metadata then
+    Fail.invalid_argf "%s: %S names the file's metadata" by name
+
 let int = function `Int n -> n | _ -> failwith "not an integer"
 
 let entry (name, j) =
@@ -354,16 +363,17 @@ let parse text =
       (fun (name, v) ->
         if Hashtbl.mem names name then Fail.failf "%s is named twice" name;
         Hashtbl.add names name ();
-        match (name, v) with
-        | "__metadata__", `Assoc kv ->
-            List.iter
-              (function
-                | _, `String _ -> ()
-                | k, _ -> Fail.failf "the metadata %s is not a string" k)
-              kv;
-            None
-        | "__metadata__", _ -> failwith "the metadata is not an object"
-        | _ -> Some (entry (name, v)))
+        if name <> metadata then Some (entry (name, v))
+        else
+          match v with
+          | `Assoc kv ->
+              List.iter
+                (function
+                  | _, `String _ -> ()
+                  | k, _ -> Fail.failf "the metadata %s is not a string" k)
+                kv;
+              None
+          | _ -> failwith "the metadata is not an object")
       fields
   in
   let entries = List.sort (fun a b -> compare a.first b.first) entries in
