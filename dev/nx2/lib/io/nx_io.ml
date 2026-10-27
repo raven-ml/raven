@@ -139,16 +139,24 @@ let pixels_per_metre ~by dpi =
     Fail.invalid_argf "%s: the dpi %g" by dpi;
   int_of_float ppm
 
-let png ~by ?dpi ?(srgb = false) x =
+(* [png ~by ?dpi ?srgb x write] is [write encode] once [x] is checked and its
+   pixels are read, where [encode emit] gives [emit] each piece of the PNG
+   file. *)
+let png ~by ?dpi ?(srgb = false) x write =
   let ppm = match dpi with None -> 0 | Some dpi -> pixels_per_metre ~by dpi in
   with_pixels ~by ~channels:[ 1; 2; 3; 4 ] ~side:Image.png_max x
-    (Image.png_encode ~ppm ~srgb)
+    (fun b ~width ~height ~channels ->
+      write (Image.png_encode ~ppm ~srgb b ~width ~height ~channels))
 
-let encode_png ?dpi ?srgb x = png ~by:"Nx_io.encode_png" ?dpi ?srgb x
+let encode_png ?dpi ?srgb x =
+  png ~by:"Nx_io.encode_png" ?dpi ?srgb x @@ fun encode ->
+  let pieces = ref [] in
+  encode (fun s -> pieces := s :: !pieces);
+  String.concat "" (List.rev !pieces)
 
 let save_png ?dpi ?srgb path x =
-  let file = png ~by:"Nx_io.save_png" ?dpi ?srgb x in
-  Save.write path (fun fd -> Save.string fd file)
+  png ~by:"Nx_io.save_png" ?dpi ?srgb x @@ fun encode ->
+  Save.write path (fun fd -> encode (Save.string fd))
 
 let save_jpeg path x =
   let by = "Nx_io.save_jpeg" in

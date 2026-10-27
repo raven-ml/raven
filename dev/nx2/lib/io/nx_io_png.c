@@ -5,9 +5,9 @@
   Static PNG decoding and encoding following the W3C PNG specification: the
   chunk stream, scanline filters and pixel formats. The caller checks chunk
   CRC-32s, and compresses and decompresses image data with compress.deflate's
-  zlib streams: the decoder unfilters the decompressed scanlines in place and
-  writes pixels directly into the Nx-owned destination Bigarray, and the encoder
-  returns the filtered scanlines.
+  zlib streams. The decoder unfilters the decompressed scanlines in place and
+  writes pixels directly into the Nx-owned destination Bigarray. The encoder
+  filters one row at a time, which the caller compresses.
   --------------------------------------------------------------------------*/
 
 #include <caml/alloc.h>
@@ -31,8 +31,7 @@ typedef enum {
   PNG_UNSUPPORTED,
   PNG_PALETTE,
   PNG_FILTER,
-  PNG_SIZE,
-  PNG_NOMEM
+  PNG_SIZE
 } png_status;
 
 typedef struct {
@@ -76,8 +75,6 @@ static const char *png_message(png_status status) {
     return "invalid PNG scanline filter";
   case PNG_SIZE:
     return "PNG dimensions are too large";
-  case PNG_NOMEM:
-    return "PNG codec allocation failed";
   }
   return "unknown PNG error";
 }
@@ -470,52 +467,38 @@ static unsigned filter_byte(unsigned filter, unsigned raw, unsigned left,
   return (raw - predictor) & 0xffu;
 }
 
-static png_status filter_image(const uint8_t *src, size_t width, size_t height,
-                               unsigned channels, uint8_t **result,
-                               size_t *result_len) {
-  if (width > SIZE_MAX / channels)
-    return PNG_SIZE;
-  size_t stride = width * channels;
-  if (stride == SIZE_MAX || height > SIZE_MAX / (stride + 1))
-    return PNG_SIZE;
-  size_t length = height * (stride + 1);
-  uint8_t *filtered = malloc(length == 0 ? 1 : length);
-  if (filtered == NULL)
-    return PNG_NOMEM;
-  for (size_t y = 0; y < height; y++) {
-    const uint8_t *row = src + y * stride;
-    const uint8_t *previous = y == 0 ? NULL : row - stride;
-    unsigned best_filter = 0;
-    uint64_t best_score = UINT64_MAX;
-    for (unsigned filter = 0; filter <= 4; filter++) {
-      uint64_t score = 0;
-      for (size_t i = 0; i < stride; i++) {
-        unsigned left = i >= channels ? row[i - channels] : 0;
-        unsigned up = previous == NULL ? 0 : previous[i];
-        unsigned upper_left =
-            previous != NULL && i >= channels ? previous[i - channels] : 0;
-        unsigned value = filter_byte(filter, row[i], left, up, upper_left);
-        score += value < 128 ? value : 256 - value;
-      }
-      if (score < best_score) {
-        best_score = score;
-        best_filter = filter;
-      }
-    }
-    uint8_t *out = filtered + y * (stride + 1);
-    out[0] = (uint8_t)best_filter;
+/* Writes into [out] the filter type, then the [stride] filtered bytes, of the
+   8-bit scanline [row] of [channels] samples a pixel, below [previous], or
+   NULL for the first row. The type is the one whose bytes, read as signed,
+   have the least sum of magnitudes, the heuristic PNG-3 suggests (12.8). */
+static void filter_row(const uint8_t *row, const uint8_t *previous,
+                       size_t stride, unsigned channels, uint8_t *out) {
+  unsigned best_filter = 0;
+  uint64_t best_score = UINT64_MAX;
+  for (unsigned filter = 0; filter <= 4; filter++) {
+    uint64_t score = 0;
     for (size_t i = 0; i < stride; i++) {
       unsigned left = i >= channels ? row[i - channels] : 0;
       unsigned up = previous == NULL ? 0 : previous[i];
       unsigned upper_left =
           previous != NULL && i >= channels ? previous[i - channels] : 0;
-      out[i + 1] =
-          (uint8_t)filter_byte(best_filter, row[i], left, up, upper_left);
+      unsigned value = filter_byte(filter, row[i], left, up, upper_left);
+      score += value < 128 ? value : 256 - value;
+    }
+    if (score < best_score) {
+      best_score = score;
+      best_filter = filter;
     }
   }
-  *result = filtered;
-  *result_len = length;
-  return PNG_OK;
+  out[0] = (uint8_t)best_filter;
+  for (size_t i = 0; i < stride; i++) {
+    unsigned left = i >= channels ? row[i - channels] : 0;
+    unsigned up = previous == NULL ? 0 : previous[i];
+    unsigned upper_left =
+        previous != NULL && i >= channels ? previous[i - channels] : 0;
+    out[i + 1] =
+        (uint8_t)filter_byte(best_filter, row[i], left, up, upper_left);
+  }
 }
 
 /* The bytes of [v], a one-dimensional uint8 bigarray, as its external's type
@@ -598,31 +581,15 @@ CAMLprim value caml_nx_io_png_decode(value vsrc, value vfiltered, value vdst) {
   CAMLreturn(Val_unit);
 }
 
-/* The filtered scanlines of the 8-bit image [src]. */
-CAMLprim value caml_nx_io_png_filter(value vsrc, value vwidth, value vheight,
-                                     value vchannels) {
-  CAMLparam4(vsrc, vwidth, vheight, vchannels);
-  CAMLlocal1(vresult);
-  const uint8_t *src;
-  size_t src_len;
-  bytes_of(vsrc, &src, &src_len);
-  size_t width = (size_t)Long_val(vwidth);
-  size_t height = (size_t)Long_val(vheight);
-  unsigned channels = (unsigned)Long_val(vchannels);
-  if (width == 0 || height == 0 || channels < 1 || channels > 4 ||
-      width > SIZE_MAX / height || width * height > SIZE_MAX / channels ||
-      width * height * channels != src_len || width > UINT32_MAX ||
-      height > UINT32_MAX)
-    caml_failwith(png_message(PNG_SIZE));
-  uint8_t *filtered = NULL;
-  size_t filtered_len;
-  caml_release_runtime_system();
-  png_status status =
-      filter_image(src, width, height, channels, &filtered, &filtered_len);
-  caml_acquire_runtime_system();
-  if (status != PNG_OK)
-    caml_failwith(png_message(status));
-  vresult = caml_alloc_initialized_string(filtered_len, (const char *)filtered);
-  free(filtered);
-  CAMLreturn(vresult);
+/* Filters row [vy] of the 8-bit image [vsrc], of [vchannels] samples a pixel,
+   into [vrow], whose length is one more than the row's. It allocates nothing
+   and keeps the runtime lock. The caller makes [vy] a row of [vsrc]. */
+CAMLprim value caml_nx_io_png_filter_row(value vsrc, value vrow, value vy,
+                                         value vchannels) {
+  size_t stride = caml_string_length(vrow) - 1;
+  size_t y = (size_t)Long_val(vy);
+  const uint8_t *row = (const uint8_t *)Caml_ba_data_val(vsrc) + y * stride;
+  filter_row(row, y == 0 ? NULL : row - stride, stride,
+             (unsigned)Long_val(vchannels), Bytes_val(vrow));
+  return Val_unit;
 }

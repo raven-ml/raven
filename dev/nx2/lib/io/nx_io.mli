@@ -452,9 +452,10 @@ val save_txt : ?sep:string -> string -> ('v, 's, 'd) Nx.t -> unit
 (** {1:images Images}
 
     Each save writes the format it is named after, whatever the path's
-    extension. A PNG save also allocates two copies of the image's filtered
-    rows, about its bytes each, and three of the encoded file, and a JPEG save
-    two of the encoded file.
+    extension. A PNG save encodes and writes the file a piece at a time, and
+    holds about 3 MiB beyond the image and a row of it. {!encode_png} also holds
+    the encoded file twice, in pieces and as the string it returns. A JPEG save
+    allocates two copies of the encoded file.
 
     {!load_image} reads the PNG files of the
     {{:https://www.w3.org/TR/png-3/}PNG Specification, Third Edition}, with

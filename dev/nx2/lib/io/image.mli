@@ -38,11 +38,18 @@ val png_encode :
   width:int ->
   height:int ->
   channels:int ->
-  string
-(** [png_encode ~ppm ~srgb pixels ~width ~height ~channels] is a PNG file of
-    [pixels], 8 bits per sample. A [ppm] other than [0] is a pHYs chunk of [ppm]
+  (string -> unit) ->
+  unit
+(** [png_encode ~ppm ~srgb pixels ~width ~height ~channels emit] calls [emit] on
+    each piece of a PNG file of [pixels], 8 bits per sample, in order: the
+    signature, then each chunk. A [ppm] other than [0] is a pHYs chunk of [ppm]
     pixels per metre, and [srgb] an sRGB chunk. [channels] must be 1 to 4, and
-    each side must be 1 to {!png_max}. *)
+    each side must be 1 to {!png_max}. Beyond [pixels], it holds a row, the zlib
+    encoder's state of about 1 MiB, a buffer of 1 MiB of image data and the
+    chunk [emit] takes.
+
+    Raises [Invalid_argument] if [pixels] does not hold
+    [width * height * channels] bytes. *)
 
 val jpeg_encode : bytes -> width:int -> height:int -> channels:int -> string
 (** [jpeg_encode pixels ~width ~height ~channels] is a baseline JPEG file of

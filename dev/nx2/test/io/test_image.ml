@@ -320,14 +320,18 @@ let round_trips =
           equal (array int) (Nx.shape x) (Nx.shape back);
           let e = errors x back in
           at_most int ~than:8 (Array.fold_left ( + ) 0 e / Array.length e));
-      test "an image of noise returns from PNG" (fun () ->
+      test
+        "an image of noise, of more than 1 MiB, returns from PNG in several \
+         IDAT chunks" (fun () ->
           let random = Random.State.make [| 0x6e78 |] in
           let noise =
-            Nx.init Nx.uint8 [| 64; 64; 3 |] (fun _ ->
+            Nx.init Nx.uint8 [| 600; 640; 3 |] (fun _ ->
                 Random.State.int random 256)
           in
           let path = temp_file ~suffix:".png" () in
           Nx_io.save_png path noise;
+          greater ~msg:"IDAT chunks" int ~than:1
+            (List.length (chunk_data "IDAT" (read path)));
           equal packed (Nx.P noise) (Nx.P (Nx_io.load_image path)));
       test "a save leaves its image's memory to the image's next donation"
         (fun () ->

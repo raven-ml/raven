@@ -13,8 +13,12 @@ external png_idat : bytes -> bytes * int = "caml_nx_io_png_idat"
 external png_unfilter : bytes -> bytes -> bytes -> unit
   = "caml_nx_io_png_decode"
 
-external png_filter : bytes -> int -> int -> int -> string
-  = "caml_nx_io_png_filter"
+(* [png_filter_row pixels row y channels] writes row [y] of [pixels], filtered,
+   into [row], whose length is one more than the row's. [y] must be a row of
+   [pixels]: the stub reads it unchecked. *)
+external png_filter_row : bytes -> Stdlib.Bytes.t -> int -> int -> unit
+  = "caml_nx_io_png_filter_row"
+[@@noalloc]
 
 external jpeg_probe : bytes -> int * int * int = "caml_nx_io_jpeg_probe"
 external jpeg_decode : bytes -> bytes -> unit = "caml_nx_io_jpeg_decode"
@@ -23,9 +27,13 @@ external jpeg_stream : bytes -> int -> int -> int -> string
   = "caml_nx_io_jpeg_encode"
 
 module Crc32 = Compress_deflate.Crc32
+module Zlib = Compress_deflate.Zlib
+module Encoder = Compress_deflate.Encoder
 
 (* PNG image data is a zlib stream of filtered scanlines, cut into IDAT
    chunks. *)
+
+let png_signature = "\137PNG\r\n\026\n"
 
 let be32 src at =
   (Array1.get src at lsl 24)
@@ -64,32 +72,35 @@ let png_probe src =
 let png_decode src dst =
   let idat, length = png_idat src in
   let filtered = Array1.create int8_unsigned c_layout length in
-  (match Compress_deflate.Zlib.decompress_into idat filtered with
+  (match Zlib.decompress_into idat filtered with
   | Ok () -> ()
   | Error e -> failwith ("invalid PNG zlib stream: " ^ e));
   png_unfilter src filtered dst
 
-(* [png_chunk b kind data first length] adds the chunk [kind] of the [length]
-   bytes of [data] at [first] to [b]. *)
-let png_chunk b kind data first length =
-  Buffer.add_int32_be b (Int32.of_int length);
-  Buffer.add_string b kind;
-  Buffer.add_substring b data first length;
-  let crc = Crc32.string ~crc:(Crc32.string kind) ~first ~length data in
-  Buffer.add_int32_be b (Int32.of_int crc)
+(* [png_chunk kind data length] is the chunk [kind] of the first [length] bytes
+   of [data]: its length, type, data and CRC-32. *)
+let png_chunk kind data length =
+  let b = Bytes.create (length + 12) in
+  Bytes.set_int32_be b 0 (Int32.of_int length);
+  Bytes.blit_string kind 0 b 4 4;
+  Bytes.blit_string data 0 b 8 length;
+  let crc = Crc32.string ~crc:(Crc32.string kind) ~length data in
+  Bytes.set_int32_be b (length + 8) (Int32.of_int crc);
+  Bytes.unsafe_to_string b
 
 let idat_length = 1 lsl 20
 
-(* The zlib stream is cut into IDAT chunks of [idat_length] bytes, the last one
-   shorter. A [ppm] other than 0 is written as a pHYs chunk of [ppm] pixels per
+(* Each row is filtered into [row], then given to the zlib encoder, whose output
+   fills [idat]. A full [idat] is emitted as an IDAT chunk, and what remains at
+   the end as a last, shorter one. The bytes do not depend on how the encoder's
+   input is sliced, so they are the whole stream's cut every [idat_length]
+   bytes. A [ppm] other than 0 is written as a pHYs chunk of [ppm] pixels per
    metre on both axes, and [srgb] as an sRGB chunk with the perceptual rendering
    intent. *)
-let png_encode ~ppm ~srgb data ~width ~height ~channels =
-  let b = Buffer.create 1024 in
-  let z =
-    Compress_deflate.Zlib.compress (png_filter data width height channels)
-  in
-  Buffer.add_string b "\137PNG\r\n\026\n";
+let png_encode ~ppm ~srgb data ~width ~height ~channels emit =
+  if Array1.dim data <> width * height * channels then
+    invalid_arg "Image.png_encode: the pixels do not fill the image";
+  emit png_signature;
   let header = Bytes.make 13 '\000' in
   Bytes.set_int32_be header 0 (Int32.of_int width);
   Bytes.set_int32_be header 4 (Int32.of_int height);
@@ -97,31 +108,53 @@ let png_encode ~ppm ~srgb data ~width ~height ~channels =
   (* The colour type of grey, grey and alpha, RGB and RGBA. *)
   let color = match channels with 1 -> 0 | 2 -> 4 | 3 -> 2 | _ -> 6 in
   Bytes.set_uint8 header 9 color;
-  png_chunk b "IHDR" (Bytes.to_string header) 0 13;
-  if srgb then png_chunk b "sRGB" "\000" 0 1;
+  emit (png_chunk "IHDR" (Bytes.unsafe_to_string header) 13);
+  if srgb then emit (png_chunk "sRGB" "\000" 1);
   if ppm <> 0 then begin
     let phys = Bytes.make 9 '\001' in
     Bytes.set_int32_be phys 0 (Int32.of_int ppm);
     Bytes.set_int32_be phys 4 (Int32.of_int ppm);
-    png_chunk b "pHYs" (Bytes.to_string phys) 0 9
+    emit (png_chunk "pHYs" (Bytes.unsafe_to_string phys) 9)
   end;
-  let rec idat first =
-    if first < String.length z then begin
-      let length = Int.min idat_length (String.length z - first) in
-      png_chunk b "IDAT" z first length;
-      idat (first + length)
+  let idat = Bytes.create idat_length in
+  let fill = ref 0 in
+  (* [png_chunk] reads [idat] as a string and copies it, keeping nothing. *)
+  let flush () =
+    emit (png_chunk "IDAT" (Bytes.unsafe_to_string idat) !fill);
+    fill := 0
+  in
+  let rec add b first length =
+    if length > 0 then begin
+      let n = Int.min length (idat_length - !fill) in
+      Bytes.blit b first idat !fill n;
+      fill := !fill + n;
+      if !fill = idat_length then flush ();
+      add b (first + n) (length - n)
     end
   in
-  idat 0;
-  png_chunk b "IEND" "" 0 0;
-  Buffer.contents b
+  let encoder = Zlib.encoder () in
+  let rec drain () =
+    match Encoder.encode encoder with
+    | `Data (b, first, length) ->
+        add b first length;
+        drain ()
+    | `Await | `End -> ()
+  in
+  let row = Bytes.create ((width * channels) + 1) in
+  for y = 0 to height - 1 do
+    png_filter_row data row y channels;
+    Encoder.src encoder row 0 (Bytes.length row);
+    drain ()
+  done;
+  Encoder.src encoder row 0 0;
+  drain ();
+  if !fill > 0 then flush ();
+  emit (png_chunk "IEND" "" 0)
 
 let is_png src =
-  Array1.dim src >= 8
-  && List.for_all2
-       (fun i c -> Array1.unsafe_get src i = c)
-       [ 0; 1; 2; 3; 4; 5; 6; 7 ]
-       [ 0x89; 0x50; 0x4e; 0x47; 0x0d; 0x0a; 0x1a; 0x0a ]
+  let n = String.length png_signature in
+  Array1.dim src >= n
+  && String.init n (fun i -> Char.chr (Array1.unsafe_get src i)) = png_signature
 
 let is_jpeg src =
   Array1.dim src >= 2
