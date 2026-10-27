@@ -270,8 +270,15 @@ let files =
            ]
         @ List.map
             (fun n -> ("jpeg_" ^ n ^ ".jpg", 3))
-            [ "baseline"; "progressive"; "gray"; "cmyk"; "restart"; "extended" ]
-        )
+            [
+              "baseline";
+              "progressive";
+              "progressive_dark";
+              "gray";
+              "cmyk";
+              "restart";
+              "extended";
+            ])
         (fun (name, tolerance) ->
           let expected = expected name in
           let x = Nx_io.load_image (fixture name) in

@@ -493,10 +493,12 @@ decode_progressive(entropy_reader *reader, jpeg_component *component,
       block[0] = component->dc_predictor * delta;
       return JPEG_OK;
     }
+    /* A DC refinement sends the next bit of the two's-complement value, whose
+       first scan shifted it right arithmetically (T.81, G.1.2.1). */
     unsigned bit;
     jpeg_status status = entropy_bits(reader, 1, &bit);
-    if (status == JPEG_OK)
-      refine_nonzero(&block[0], bit, delta);
+    if (status == JPEG_OK && bit)
+      block[0] |= delta;
     return status;
   }
 

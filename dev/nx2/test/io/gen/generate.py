@@ -321,7 +321,16 @@ def image_fixtures():
     gradient(5, 6, "CMYK").save("jpeg_cmyk.jpg", quality=90)
     gradient(9, 11, "RGB").save("jpeg_restart.jpg", quality=90, restart_marker_blocks=1)
     extended_jpeg()
-    for name in ["baseline", "progressive", "cmyk", "restart", "extended"]:
+    # Dark content at quality 50, so that many DC coefficients are negative
+    # and odd: Pillow's progressive script sends DC without its low bit, then
+    # refines it.
+    y, x = np.mgrid[0:64, 0:64]
+    base = (45 + 30 * np.sin(x / 7.0) * np.cos(y / 5.0)).clip(0, 255)
+    dark = np.stack([base, base * 0.5 + 10, 255 - base * 3], -1)
+    Image.fromarray(dark.clip(0, 255).astype(np.uint8), "RGB").save(
+        "jpeg_progressive_dark.jpg", quality=50, progressive=True)
+    for name in ["baseline", "progressive", "progressive_dark", "cmyk", "restart",
+                 "extended"]:
         reference("jpeg_%s.jpg" % name, "RGB")
     reference("jpeg_gray.jpg", "L")
 
