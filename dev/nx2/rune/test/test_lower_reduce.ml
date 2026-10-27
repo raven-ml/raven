@@ -1387,7 +1387,9 @@ let two_axes dt ones =
   }
 
 let int_contractions =
-  let accs d = [ d; D.Any D.Int64 ] in
+  (* The wider accumulator is drawn three times as often as the operands'
+     own, so that every run of twelve reaches it. *)
+  let accs d = [ d; D.Any D.Int64; D.Any D.Int64; D.Any D.Int64 ] in
   prop ~count:12
     ~examples:(two_axes (D.Any D.Int32) 1L :: empty (D.Any D.Int32))
     "integer contractions wrap as eager's"

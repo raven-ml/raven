@@ -1466,7 +1466,9 @@ let others =
                 (Float.of_int counts.(i) /. Float.of_int n))
             ws);
       prop "permutation is an ordering of 0 to n - 1"
-        (Gen.pair keys (Gen.int_range 0 70))
+        (Gen.pair keys
+           (Gen.frequency
+              [ (1, Gen.constant 0); (9, Gen.int_range 1 70) ]))
         (fun (key, m) ->
           cover "none" (m = 0);
           let xs = read (Rng.permutation ~key m) in
