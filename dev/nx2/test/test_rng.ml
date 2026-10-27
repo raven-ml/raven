@@ -1895,6 +1895,57 @@ let names =
             calls);
     ]
 
+(* Refusing scopes *)
+
+let refused by =
+  Invalid_argument
+    (by ^ ": no key inside test.step, which refuses keyless draws")
+
+let refusing f = Rng.refusing "test.step" f
+
+let refusals =
+  group "refusing"
+    [
+      test "every keyless draw raises naming the sampler and the scope"
+        (fun () ->
+          List.iter
+            (fun (name, (_, make)) ->
+              let by = "Nx.Rng." ^ name and draw = make ~dead:false in
+              raises ~msg:by (refused by) (fun () ->
+                  refusing (fun () -> draw None)))
+            calls;
+          raises (refused "Nx.Rng.next_key") (fun () ->
+              refusing (fun () -> Rng.next_key ())));
+      prop "a keyed draw gives the bits it gives outside" seeds (fun s ->
+          let key = Rng.key s in
+          let p = host_of Nx.float32 [| 3 |] [| 0.5; 2.; 9. |] in
+          let draws () =
+            ( read (Rng.bits ~key [| 3 |]),
+              read (Rng.uniform ~key Nx.float32 [| 3 |]),
+              read (Rng.gamma ~key p),
+              read (Rng.permutation ~key 5) )
+          in
+          equal
+            (quad (array int32) (array float_exact) (array float_exact)
+               (array int64))
+            (draws ()) (refusing draws));
+      test "a scope inside gives its keys, and one around is refused"
+        (fun () ->
+          let k = Rng.key 402 in
+          equal (array int32)
+            (read (Rng.bits ~key:(Rng.fold_in k 0) [| 2 |]))
+            (refusing (fun () ->
+                 Rng.with_key k (fun () -> read (Rng.bits [| 2 |]))));
+          raises (refused "Nx.Rng.bits") (fun () ->
+              Rng.with_key k (fun () -> refusing (fun () -> Rng.bits [| 2 |]))));
+      test "a domain started inside keeps its own scope" (fun () ->
+          let bits () = Array.length (read (Rng.bits [| 2 |])) in
+          equal int 2 (refusing (fun () -> Domain.join (Domain.spawn bits))));
+      test "the function's result and exceptions pass through" (fun () ->
+          equal int 3 (refusing (fun () -> 3));
+          raises Exit (fun () -> refusing (fun () -> raise Exit)));
+    ]
+
 (* Goldens *)
 
 (* Each sampler's first draws under key 0, as exact bits: a baseline that a
@@ -1996,5 +2047,6 @@ let () =
          checks;
          scope;
          names;
+         refusals;
          goldens;
        ])

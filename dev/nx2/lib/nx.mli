@@ -3945,7 +3945,8 @@ val associative_scan :
     {!split} keys, its {!fold_in} keys and the keys of a scope rooted at it all
     come from one stream of blocks under it, so using a key two of these ways
     can repeat bits. A scope lets one key stand for a region: a sampler called
-    without [~key] takes the scope's next key.
+    without [~key] takes the scope's next key. A scope may instead refuse such
+    draws ({!refusing}), so that a region draws only from keys it is given.
 
     A draw is a value of every set when its key is: a formula that computes on
     the set of each operation that reads it. *)
@@ -4248,10 +4249,20 @@ module Rng : sig
       [Invalid_argument] if [k] has bytes ({!place}d, or made by {!of_tensor}
       from an array that has). *)
 
+  val refusing : string -> (unit -> 'a) -> 'a
+  (** [refusing name f] runs [f] in a scope that gives no keys. Scopes nest
+      as {!with_key} says: a scope inside [f] gives its own keys.
+
+      A sampler called in [f] without [~key], and {!next_key}, raise
+      [Invalid_argument] naming themselves and [name], as
+      [Nx.Rng.normal: no key inside Rune.scan, which refuses keyless draws]. *)
+
   val next_key : unit -> 'd key
   (** [next_key ()] is the scope's next key, a value of every set. Outside every
       scope, it is the next key of the domain's own, seeded from the system's
-      entropy. *)
+      entropy.
+
+      Raises [Invalid_argument] inside {!refusing}. *)
 end
 
 (** {1:printing Printing} *)

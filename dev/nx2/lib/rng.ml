@@ -339,9 +339,12 @@ let every (type v s d e) ~by (x : (v, s, d) Value.t) : (v, s, e) Value.t =
       Value.Deferred { form = { dtype; layout; placement = None }; node; k }
   | _ -> invalid_argf "%s: the key has bytes; a scope's key is of every set" by
 
-(* A scope answers [Next] with its root and the next index; the caller folds the
-   index in, at its own brand and under whatever interprets it. *)
-type _ Effect.t += Next : (unit key * int) Effect.t
+(* A scope answers [Next] with its root and the next index, which the caller
+   folds in at its own brand and under whatever interprets it, or, where it
+   refuses keyless draws, with the name it refuses them for. *)
+type scope = Root of unit key * int | Refused of string
+
+type _ Effect.t += Next : scope Effect.t
 
 let with_key k f =
   let root = every ~by:"Nx.Rng.with_key" k in
@@ -353,7 +356,18 @@ let with_key k f =
           (fun (kont : (a, _) Effect.Deep.continuation) ->
             let c = !count in
             incr count;
-            Effect.Deep.continue kont (root, c))
+            Effect.Deep.continue kont (Root (root, c)))
+    | _ -> None
+  in
+  Effect.Deep.match_with f () { retc = Fun.id; exnc = raise; effc }
+
+let refusing name f =
+  let effc (type a) (e : a Effect.t) =
+    match e with
+    | Next ->
+        Some
+          (fun (kont : (a, _) Effect.Deep.continuation) ->
+            Effect.Deep.continue kont (Refused name))
     | _ -> None
   in
   Effect.Deep.match_with f () { retc = Fun.id; exnc = raise; effc }
@@ -369,7 +383,9 @@ let unscoped =
 
 let next_key_by ~by : 'd key =
   match Effect.perform Next with
-  | root, c -> fold_in_by ~by (every ~by root) c
+  | Root (root, c) -> fold_in_by ~by (every ~by root) c
+  | Refused name ->
+      invalid_argf "%s: no key inside %s, which refuses keyless draws" by name
   | exception Effect.Unhandled Next ->
       let seed, count = Domain.DLS.get unscoped in
       let c = !count in

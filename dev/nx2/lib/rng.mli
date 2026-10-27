@@ -100,4 +100,5 @@ val permutation :
   ?key:'d key -> int -> (int64, Nx_array.Dtype.int64_elt, 'd) Value.t
 
 val with_key : 'd key -> (unit -> 'a) -> 'a
+val refusing : string -> (unit -> 'a) -> 'a
 val next_key : unit -> 'd key
