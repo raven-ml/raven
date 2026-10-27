@@ -310,15 +310,15 @@ void rig_unhold(void);
    the OCaml runtime. OCaml calls them through the externals
    caml_rig_edge_mask, caml_rig_edge_shield and caml_rig_edge_unblock,
    noalloc, of type unit -> unit, caml_rig_edge_unmask and
-   caml_rig_edge_unshield, of the same type, which release and take back the
-   runtime as the outermost pair ends, so that a signal the runtime recorded
-   while the thread blocked it is looked at again, and caml_rig_edge_block,
+   caml_rig_edge_unshield, of the same type, which, as the outermost pair
+   ends, make the next poll point look again at the signals the runtime
+   recorded while the thread blocked them, and caml_rig_edge_block,
    which first runs what a poll point runs (the handlers of the signals
    pending, finalisers, Gc.Memprof callbacks, a switch to another thread), so
    that a signal that came during the wait raises its exception there, then
-   blocks. The C functions rig_unmask () and rig_unshield () release nothing:
-   a C caller runs no poll point inside its pair. On Windows they block
-   nothing. */
+   blocks. The C functions rig_unmask () and rig_unshield () make no poll
+   point look again: a C caller runs none inside its pair. On Windows they
+   block nothing. */
 void rig_mask(void);
 void rig_unmask(void);
 void rig_shield(void);
