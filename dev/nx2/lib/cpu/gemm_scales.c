@@ -127,7 +127,7 @@ static void decode(const nx_array *sc, int exponent, int acc, uint8_t *v) {
   int64_t per = min64(rows, ceil_div(DECODE_ROW, n0));
   decoding f = {sc, exponent, acc, v, n0, rows, per, ceil_div(rows, per)};
   int64_t bytes = planes * rows * n0 * nx_cpu_width(acc);
-  nx_cpu_job(planes * f.chunks, bytes, bytes * NX_CPU_STRIDED_COST,
+  nx_cpu_job(planes * f.chunks, bytes, nx_gemm_decode_cost(acc, sc),
              decode_rows, &f);
 }
 
@@ -248,8 +248,8 @@ __attribute__((noinline)) int nx_gemm_scales_fit(value va, value vb,
   return 1;
 }
 
-/* The price of decoding the scales [sc] into [acc] (decode), a strided
-   copy. */
+/* The cost of decoding the scales [sc] into [acc] (decode), a strided
+   copy: the call's part and its job's. */
 double nx_gemm_decode_cost(int acc, const nx_array *sc) {
   return nx_cpu_elements(sc) * nx_cpu_width(acc) * NX_CPU_STRIDED_COST;
 }

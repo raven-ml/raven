@@ -125,10 +125,13 @@ int nx_gemm_stage_runs(nx_contract_runs *r, int o, const int *gs, int dt,
   x->offset = 0;
   x->alias = 0;
   l.rank = nx_coalesce_dims(2, rank, l.extent, l.step);
-  /* A staged element costs its bytes, as call_cost prices it. */
-  double per = nx_cpu_width(dt);
-  if (dt == src->dtype) nx_cpu_copy_loop(base, src->base, bits, &l, per);
-  else nx_cpu_cast_loop(x, src, &l, per);
+  /* A staged element costs a copy's or a cast's kind, in the wider
+     dtype. */
+  int wide = nx_cpu_width(dt) > nx_cpu_width(src->dtype) ? dt : src->dtype;
+  if (dt == src->dtype)
+    nx_cpu_copy_loop(base, src->base, bits, &l,
+                     nx_cpu_kind_cost(1, NX_OP1_COPY, dt));
+  else nx_cpu_cast_loop(x, src, &l, nx_cpu_kind_cost(1, NX_OP1_CAST, wide));
   r->offset[o] = 0;
   if (s) scale_runs(r, gs, dt, s, base);
   return 1;
@@ -248,7 +251,8 @@ int nx_gemm_runs_on(int acc, int order, int da, int db, nx_contract_runs *r,
   double m = (double)q.v.extent[ROW], n = (double)q.v.extent[COL];
   double k = (double)q.v.extent[CON];
   double bytes = e * (m * k + k * n + m * n) * nx_cpu_width(acc);
-  double cost = flop_cost(g->kernel, 2 * e * m * n * k) + bytes;
+  double cost =
+      nx_gemm_cost(g->kernel.flops_per_byte, e, m, n, k, nx_cpu_width(acc));
   int threads = nx_cpu_threads_at((int64_t)bytes, cost, thread_bytes(g));
   if (threads > 1 && units >= threads)
     nx_cpu_job_at(units, (int64_t)bytes, cost, thread_bytes(g), outer_units,

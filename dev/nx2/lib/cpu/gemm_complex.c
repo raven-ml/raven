@@ -181,7 +181,8 @@ int nx_gemm_complex_on(int acc, int order, const nx_contract_view *v,
   blocks_job j = {.p = &p, .w = w, .d = bb};
   /* Each number of b read, two parts, and its block written, four. */
   int64_t bytes = eb * k * n * 6 * w;
-  nx_cpu_job(eb * k, bytes, bytes, blocks, &j);
+  nx_cpu_job(eb * k, bytes, nx_gemm_part_cost(eb, 2 * n, 2 * k, w), blocks,
+             &j);
   x[B] = (nx_array){.base = bb, .dtype = r, .bits = 8 * w};
   u.stride[B][BATCH] = eb == 1 ? 0 : 4 * k * n;
   u.stride[B][CON] = 2 * n;

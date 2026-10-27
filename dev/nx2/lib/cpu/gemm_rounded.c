@@ -24,6 +24,14 @@ void nx_gemm_runs_of_view(nx_contract_runs *r, const nx_contract_view *v) {
   for (int o = A; o <= DST; o++) r->offset[o] = v->offset[o];
 }
 
+/* What a cast of [x] into [y] costs an element: a cast's kind, in the
+   wider dtype. */
+static double cast_cost(const nx_array *y, const nx_array *x) {
+  int wide = nx_cpu_width(y->dtype) > nx_cpu_width(x->dtype) ? y->dtype
+                                                              : x->dtype;
+  return nx_cpu_kind_cost(1, NX_OP1_CAST, wide);
+}
+
 /* R's sums [y] into [dst], over the loop of [rank] axes of [extent], dst
    from [first] stepping [step], R C-contiguous: narrowed to [acc] first,
    in scratch of its own laid out as R, where [narrows]. 0 if an
@@ -53,12 +61,13 @@ static __attribute__((noinline)) int store_rounded(
       for (int d = 0; d < rank; d++) lt.step[0][d] = l.step[1][d];
       lt.first[0] = 0;
       lt.rank = nx_coalesce_dims(2, rank, lt.extent, lt.step);
-      nx_cpu_cast_loop(&t, y, &lt, nx_cpu_width(y->dtype));
+      nx_cpu_cast_loop(&t, y, &lt, cast_cost(&t, y));
     }
   }
   if (done) {
+    const nx_array *x = narrows ? &t : y;
     l.rank = nx_coalesce_dims(2, rank, l.extent, l.step);
-    nx_cpu_cast_loop(dst, narrows ? &t : y, &l, nx_cpu_width(y->dtype));
+    nx_cpu_cast_loop(dst, x, &l, cast_cost(dst, x));
   }
   if (t.base) nx_cpu_give(t.base);
   return done;

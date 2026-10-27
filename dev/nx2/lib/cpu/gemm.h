@@ -27,13 +27,6 @@
    slower take fewer. */
 #define UNITS 4
 
-/* The cost of [flops] on the kernel [k]. Flops multiply the extents of
-   several operands, so they and the costs are doubles; storage, within one
-   operand's extents rounded to a tile, fits in an int64_t (NX_MAX_NUMEL). */
-static inline double flop_cost(nx_cpu_micro k, double flops) {
-  return flops / k.flops_per_byte;
-}
-
 /* The cost a thread of a job on [g]'s kernels brings to pay for the job's
    start (nx_cpu_job_at). */
 static inline double thread_bytes(const nx_cpu_gemm *g) {
@@ -205,8 +198,39 @@ static inline int64_t piece(const operand *q, int x, int64_t i, int64_t n,
   return min64(n, last - (q->skip[x] + i) % last);
 }
 
-/* Each product's set-up in a call's price (nx_gemm_call_cost, gemm.c). */
+/* A contraction's costs (cpu.h, Calls and jobs; M1 Max, 2026-10-14):
+   each product's set-up, 7.7 KiB in a batch of 8192 1 × 1 products. */
 #define PRODUCT_COST (16 * 1024)
+
+/* The cost of the work of [e] products of [m] × [k] by [k] × [n]
+   elements of [w] bytes, their flops at [speed] flops a byte
+   (nx_cpu_micro), without the products' set-up: its flops (scalar), and
+   its operands' bytes, each a strided copy, which it stages inline where
+   they are not in its dtype or not in place (streaming). A job over a
+   part of each product takes the part's extents and this cost, a stage
+   of a's rows no columns: the product's first job counts its set-up.
+   Flops multiply the extents of several operands, so they and the costs
+   are doubles. */
+static inline double nx_gemm_work_cost(double speed, double e, double m,
+                                       double n, double k, double w) {
+  double bytes = e * (m * k + k * n + 2 * m * n) * w;
+  return 2 * e * m * n * k / speed + NX_CPU_STRIDED_COST * bytes;
+}
+
+/* The cost of [e] whole products, as nx_gemm_work_cost, and each one's
+   set-up: a call's at the slower kernels it may run on
+   (nx_gemm_call_cost), a job's at the kernel it runs. */
+static inline double nx_gemm_cost(double speed, double e, double m, double n,
+                                  double k, double w) {
+  return nx_gemm_work_cost(speed, e, m, n, k, w) + e * PRODUCT_COST;
+}
+
+/* nx_gemm_work_cost of a part of [e] products that runs no flop, as a
+   stage of an operand of [rows] × [k] elements of [w] bytes. */
+static inline double nx_gemm_part_cost(double e, double rows, double k,
+                                       double w) {
+  return nx_gemm_work_cost(1, e, rows, 0, k, w);
+}
 
 /* A scaled side's facts held in OCaml values, read before nx_read,
    which may run the collector: whether its scale is codes, and its groups'

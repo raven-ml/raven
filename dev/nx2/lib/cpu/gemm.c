@@ -110,9 +110,17 @@
    jobs. */
 #define PANELS (8 * 1024 * 1024)
 
-/* Job costs, in bytes of memcpy (job.c): a kernel's flops at its speed
-   (cpu.h), and two a byte packed, a guess no measurement has refined. */
-#define PACK_COST 2
+/* Lane order's kernels' speed (nx_cpu_micro): a flop in the time memcpy
+   moves a byte, the speed of the cores' float32 vector kernels on a
+   performance core of fudge (gemm_avx2.c, 2026-10-13), taken for lane
+   order's own kernels in every dtype since 2026-10-14 and not measured
+   for them. */
+#define LANE_SPEED 1.0
+
+/* The slowest kernels' speed: gemm_generic.c's, each fused multiply-add a
+   call of the C library's fma, on a performance core of fudge
+   (2026-10-13). */
+#define SLOWEST_SPEED 0.01
 
 /* The copies of [k]'s hardware the performance cores hold. */
 static int64_t engines(nx_cpu_micro k) {
@@ -731,7 +739,7 @@ static void bracketed(int64_t lo, int64_t hi, int worker, void *ctx) {
   b->g->leave();
 }
 
-static void job(const problem *p, int64_t total, int64_t bytes, int64_t cost,
+static void job(const problem *p, int64_t total, int64_t bytes, double cost,
                 rig_pool_body body, void *ctx) {
   if (p->alone) {
     if (total > 0) body(0, total, 0, ctx);
@@ -751,14 +759,15 @@ static int64_t padded(nx_cpu_micro k, int64_t m) {
   return ceil_div(m, k.mr) * k.mr;
 }
 
-/* [p]'s cost on [g]'s kernels in job.c's terms, its operands' [bytes]
-   set: its flops at the kernels' speed and its bytes. */
-static double alone_cost(const problem *p, const nx_cpu_gemm *g,
-                         double *bytes) {
+/* [p]'s cost on [g]'s kernels (nx_gemm_cost), its rows padded to their
+   tile, and the bytes its operands touch into [bytes]. */
+static double problem_cost(const problem *p, const nx_cpu_gemm *g,
+                           double *bytes) {
   double e = (double)p->ext[BATCH], m = (double)p->ext[ROW];
   double n = (double)p->ext[COL], k = (double)p->ext[CON];
   *bytes = e * (m * k + k * n + m * n) * p->w;
-  return flop_cost(g->kernel, 2 * e * m * n * k) + *bytes;
+  return nx_gemm_cost(g->kernel.flops_per_byte, e,
+                      (double)padded(g->kernel, p->ext[ROW]), n, k, p->w);
 }
 
 /* Whether [p] runs alone on [g]'s kernels: on the calling thread, where
@@ -768,7 +777,7 @@ static double alone_cost(const problem *p, const nx_cpu_gemm *g,
    float32 product took 0.94 µs as two jobs, each in its own state of the
    matrix unit, 0.91 alone. */
 static int runs_alone(const problem *p, const nx_cpu_gemm *g) {
-  double bytes, cost = alone_cost(p, g, &bytes);
+  double bytes, cost = problem_cost(p, g, &bytes);
   return nx_cpu_threads_at((int64_t)bytes, cost, thread_bytes(g)) <= 1;
 }
 
@@ -796,9 +805,9 @@ static void fastest(problem *p) {
   }
   p->alone = runs_alone(p, p->g);
   if (o == NULL || !p->alone) return;
-  double f = 2.0 * p->ext[BATCH] * p->ext[COL] * p->ext[CON];
-  double ta = flop_cost(g->kernel, f * padded(g->kernel, m)) + g->call;
-  double tb = flop_cost(o->kernel, f * padded(o->kernel, m)) + o->call;
+  double bytes;
+  double ta = problem_cost(p, g, &bytes) + g->call;
+  double tb = problem_cost(p, o, &bytes) + o->call;
   p->g = tb < ta ? o : g;
 }
 
@@ -846,7 +855,7 @@ static void few_rows(problem *p) {
     return;
   }
   int64_t bytes = batch * (n + m) * k * w;
-  double cost = flop_cost(km, 2.0 * batch * m * n * k) + bytes;
+  double cost = nx_gemm_cost(km.flops_per_byte, batch, m, n, k, w);
   int64_t threads = nx_cpu_threads_at(bytes, cost, thread_bytes(g));
   int64_t blocks = 1;
   if (p->b_in && threads > 1)
@@ -858,10 +867,11 @@ static void few_rows(problem *p) {
     r.mblocks = ceil_div(m, r.rows);
   }
   int64_t total = batch * r.slivers * r.mblocks;
-  r.move_a = mover(p, batch * r.kblocks, packed, PACK_COST * packed);
+  double pack_cost = nx_gemm_part_cost(batch, m, k, w);
+  r.move_a = mover(p, batch * r.kblocks, packed, pack_cost);
   r.move_b = mover(p, total, bytes, cost);
   if (!p->a_in)
-    job(p, batch * r.kblocks, packed, PACK_COST * packed, few_rows_pack, &r);
+    job(p, batch * r.kblocks, packed, pack_cost, few_rows_pack, &r);
   job(p, total, bytes, cost, few_rows_unit, &r);
   if (!p->a_in) nx_cpu_give(r.a);
 }
@@ -895,7 +905,8 @@ static void chain(problem *p) {
   int64_t slivers = ceil_div(nc, nr);
   int64_t b_bytes = p->b_in ? 0 : slivers * nr * kc_most * w;
   int64_t packed = batch * (slivers * nr + m) * kc_most * w;
-  double cost = flop_cost(g->kernel, 2.0 * batch * m * nc * kc_most) + packed;
+  double speed = g->kernel.flops_per_byte;
+  double cost = nx_gemm_cost(speed, batch, m, nc, kc_most, w);
   int64_t rows =
       block_rows(p, units(packed, cost, thread_bytes(g)), slivers);
   int64_t mblocks = ceil_div(m, rows);
@@ -930,21 +941,23 @@ static void chain(problem *p) {
                  .state = state};
       /* Enough units for the threads the compute job takes. */
       packed = ne * (c.slivers * nr + m) * kc_most * w;
-      cost = flop_cost(g->kernel, 2.0 * ne * m * c.nc * kc_most) + packed;
+      cost = nx_gemm_cost(speed, ne, m, c.nc, kc_most, w);
       split(&c, units(packed, cost, thread_bytes(g)));
       int64_t total = ne * c.ranges * mblocks, pc = 0;
       do {
         c.pc = pc;
         c.kc = min64(g->kc, k - pc);
-        double flops = 2.0 * ne * m * c.nc * c.kc;
         int64_t a_packed = c.a ? ne * m * c.kc * w : 0;
+        double a_cost = c.a ? nx_gemm_part_cost(ne, m, c.kc, w) : 0;
         packed = ne * c.slivers * nr * c.kc * w + a_packed;
-        cost = flop_cost(g->kernel, flops) + packed;
-        c.move_a = mover(p, ne * mblocks, a_packed, PACK_COST * a_packed);
+        /* The products' set-up counts in their first panel's first block
+           of k. */
+        cost = nx_gemm_work_cost(speed, ne, m, c.nc, c.kc, w) +
+               (jc == 0 && pc == 0 ? ne * PRODUCT_COST : 0);
+        c.move_a = mover(p, ne * mblocks, a_packed, a_cost);
         c.move_b = mover(p, total, packed, cost);
         if (c.kc > 0 && c.a)
-          job(p, ne * mblocks, a_packed, PACK_COST * a_packed, pack_blocks,
-              &c);
+          job(p, ne * mblocks, a_packed, a_cost, pack_blocks, &c);
         if (c.b)
           for (int64_t v = 0; v < ne * c.slivers; v++)
             atomic_store_explicit(&state[v], FREE, memory_order_relaxed);
@@ -1178,7 +1191,7 @@ static void dots(problem *p, int64_t bytes, double cost) {
     }
     f.lda = k;
     f.a_batch = m * k;
-    nx_cpu_job(batch, batch * m * k * w, PACK_COST * batch * m * k * w,
+    nx_cpu_job(batch, batch * m * k * w, nx_gemm_part_cost(batch, m, k, w),
                dots_a, &f);
   }
   int64_t want = units(bytes, cost, NX_CPU_THREAD_BYTES);
@@ -1190,7 +1203,8 @@ static void dots(problem *p, int64_t bytes, double cost) {
   if (f.ranges > 1 && f.sums == NULL) atomic_store(&p->failed, 1);
   else nx_cpu_job(outer * f.ranges, bytes, cost, dots_unit, &f);
   if (f.ranges > 1 && !atomic_load(&p->failed))
-    nx_cpu_job(batch, outputs * f.blocks * w, outputs * (f.blocks + 1) * w,
+    nx_cpu_job(batch, outputs * f.blocks * w,
+               nx_gemm_work_cost(LANE_SPEED, batch, m, n, f.blocks, w),
                dots_finish, &f);
   free(f.sums);
   free(staged);
@@ -1382,17 +1396,19 @@ static void rows(problem *p, int64_t bytes, double cost) {
     f.spans *= 2;
   nx_cpu_job(blocks * f.spans, bytes, cost, rows_unit, &f);
   if (!atomic_load(&p->failed))
-    nx_cpu_job(batch * f.groups, lanes, 2 * lanes, rows_finish, &f);
+    nx_cpu_job(batch * f.groups, lanes,
+               nx_gemm_work_cost(LANE_SPEED, batch, m, n,
+                                 NX_CPU_LANES * f.blocks, w),
+               rows_finish, &f);
   free(f.lanes);
 }
 
-/* [p]'s cost in lane order, its operands' [bytes] set: the cores'
-   kernels run a flop in the time memcpy moves a byte. */
+/* [p]'s cost in lane order (nx_gemm_cost), its operands' [bytes] set. */
 static double lane_cost(const problem *p, int64_t *bytes) {
   int64_t batch = p->ext[BATCH], m = p->ext[ROW], n = p->ext[COL];
   int64_t k = p->ext[CON];
   *bytes = batch * (m + n) * k * p->w;
-  return 2.0 * batch * m * n * k + *bytes;
+  return nx_gemm_cost(LANE_SPEED, batch, m, n, k, p->w);
 }
 
 /* Whether [p] takes dots: b steps one along k, within runs of at least
@@ -1411,7 +1427,8 @@ static void lane_pass(problem *p) {
   int64_t batch = p->ext[BATCH], m = p->ext[ROW], n = p->ext[COL];
   int64_t w = p->w, bytes;
   if (p->ext[CON] == 0) {
-    nx_cpu_job(batch, batch * m * n * w, batch * m * n * w, empty, p);
+    nx_cpu_job(batch, batch * m * n * w,
+               nx_gemm_cost(LANE_SPEED, batch, m, n, 0, w), empty, p);
     return;
   }
   double cost = lane_cost(p, &bytes);
@@ -1634,26 +1651,46 @@ int nx_gemm_spanned(int acc, int da, int db, const scale *s) {
   return s == NULL && nx_gemm_quads_for(acc, da, db) == NULL;
 }
 
-/* The price (cpu.h, Calls) of a contraction in [acc] in [order] whose
-   groups have the extents [x]: scalar, its flops at a core's speed
-   (nx_cpu_core_speed) in the dtype it sums in, lane order's at a flop a
-   byte (lane_cost), a complex flop at four of its parts', and each of its
-   batch's products' set-up, 7.7 KiB in a batch of 8192 1 × 1 products
-   (M1); streaming, its operands' bytes in that dtype, each a strided
-   copy, which it stages inline where they are not in that dtype or not
-   in place (gemm_complex.c's parts_of, gemm_quads.c's words_of,
-   nx_gemm_stage_runs, nx_gemm_rounded_on). */
+/* The cost of [e] products of the extents [m], [n] and [k] in chain order
+   on [r]'s kernels, of [w] bytes an element and [parts] flops a flop: the
+   most of the table's kernels and their other ones, between which each
+   problem chooses after the release (fastest), each kernel's rows padded
+   to its tile, either way round, as a product may run as its
+   transpose. */
+static double chain_cost(int r, double parts, double e, double m, double n,
+                         double k, double w) {
+  const nx_cpu_gemm *g = &nx_cpu_table->gemm[r];
+  const nx_cpu_gemm *kernels[2] = {g, g->other};
+  double most = 0;
+  for (int i = 0; i < 2 && kernels[i] != NULL; i++) {
+    nx_cpu_micro km = kernels[i]->kernel;
+    double speed = km.flops_per_byte / parts;
+    double rows = (double)padded(km, (int64_t)m);
+    double cols = (double)padded(km, (int64_t)n);
+    double c = fmax(nx_gemm_cost(speed, e, rows, n, k, w),
+                    nx_gemm_cost(speed, e, m, cols, k, w));
+    most = fmax(most, c);
+  }
+  return most;
+}
+
+/* The cost (cpu.h, Calls and jobs) of a contraction in [acc] in [order]
+   whose groups have the extents [x]: nx_gemm_cost in the dtype it sums in,
+   at the slower kernels it may run on: lane order's (LANE_SPEED), or
+   chain order's chain_cost; a complex flop at four of its parts'. Its
+   operands' stages are gemm_complex.c's parts_of, gemm_quads.c's
+   words_of, nx_gemm_stage_runs and nx_gemm_rounded_on. */
 double nx_gemm_call_cost(int acc, int order, const double *x) {
   int sum = summed_in(acc), r = part_of(sum);
+  double parts = r == sum ? 1 : 4, w = nx_cpu_width(sum);
   double e = x[BATCH], m = x[ROW], n = x[COL], k = x[CON];
-  double flops = 2 * e * m * n * k * (r == sum ? 1 : 4);
-  double bytes = e * (m * k + k * n + 2 * m * n) * nx_cpu_width(sum);
-  bytes = bytes * NX_CPU_STRIDED_COST + e * PRODUCT_COST;
-  if (order == NX_CPU_LANE) return flops + bytes;
+  if (order == NX_CPU_LANE)
+    return nx_gemm_cost(LANE_SPEED / parts, e, m, n, k, w);
   /* A call held at the slowest kernels' speed skips the lookup of its
-     own: gemm_generic.c's C library fma, 0.01 flops a byte. */
-  if (flops * 100 + bytes < NX_CPU_RELEASE_BYTES) return flops * 100 + bytes;
-  return flops / nx_cpu_core_speed(r) + bytes;
+     own. */
+  double held = nx_gemm_cost(SLOWEST_SPEED / parts, e, m, n, k, w);
+  if (held < NX_CPU_RELEASE_BYTES) return held;
+  return chain_cost(r, parts, e, m, n, k, w);
 }
 
 /* The order of a contraction in [acc] whose groups have the extents [x].

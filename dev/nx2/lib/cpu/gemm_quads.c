@@ -134,7 +134,8 @@ static uint8_t *words_of(const nx_contract_view *v, const nx_array *const *op,
   }
   quads_job j = {.b = op[B], .v = v, .quads = quads, .pitch = pitch, .d = d};
   int64_t units = ne * (s[CON] == 1 ? n : quads);
-  nx_cpu_job(units, ne * words * 8, ne * words * 8, quad_words, &j);
+  nx_cpu_job(units, ne * words * 8, nx_gemm_part_cost(ne, n, k, 1),
+             quad_words, &j);
   u->stride[B][COL] = 1;
   u->stride[B][CON] = pitch;
   return d;
@@ -284,7 +285,7 @@ static void quad_dots_on(nx_cpu_quads_dot dot, const nx_cpu_gemm *g, int acc,
   int64_t k = p.ext[CON], groups = ceil_div(n, DOT_COLUMNS);
   quad_dots_job j = {.p = &p, .dot = dot, .groups = groups};
   int64_t bytes = batch * (m + n) * k * p.w;
-  double cost = flop_cost(g->kernel, 2.0 * batch * m * n * k) + bytes;
+  double cost = nx_gemm_cost(g->kernel.flops_per_byte, batch, m, n, k, p.w);
   nx_cpu_job(batch * groups, bytes, cost, quad_dots, &j);
 }
 
@@ -394,7 +395,7 @@ static double axpys_cost(const nx_cpu_gemm *g, const nx_contract_view *v,
                          int64_t k, int64_t *bytes) {
   int64_t batch = v->extent[BATCH], m = v->extent[ROW], n = v->extent[COL];
   *bytes = batch * (m + n) * k;
-  return flop_cost(g->kernel, 2.0 * batch * m * n * k) + *bytes;
+  return nx_gemm_cost(g->kernel.flops_per_byte, batch, m, n, k, 1);
 }
 
 /* Whether quads' axpys take [v]'s product, [k] its elements along k
