@@ -6452,15 +6452,12 @@ module Prim = struct
   let donated = Donate.is_handle
   let eval = Eval.eval
 
-  (* A consumer takes its operands' memory by the steps an operation takes:
-     a result written at operand [i] reads it, at any index, through the
-     array [take] gives, so no other position may share it. *)
   module Consumer = struct
     type 'd t = 'd Donate.claim
 
     let with_ = Donate.with_consumer
     let arrays = Donate.arrays
-    let take c i dt l = Option.map snd (Donate.reuse c ~own:[ i ] dt l)
+    let take = Donate.take
   end
 
   (* [x] at [f]'s type where run-time facts allow it: a dtype is its own

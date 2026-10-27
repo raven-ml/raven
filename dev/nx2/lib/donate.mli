@@ -135,7 +135,7 @@ val consumed : 'd claim -> unit
     allocation do, are read by each other and consumed by none. Memory a
     {!reuse} took is the result's. A consumer that raises before it makes its
     result must free that memory; [Eval] does, and {!with_consumer} leaves
-    what {!reuse} gave [f] to [f]. *)
+    what {!take} gave [f] to [f]. *)
 
 (** {1:consumers Functions of several operations} *)
 
@@ -143,7 +143,7 @@ val with_consumer : by:string -> 'd Value.any list -> ('d claim -> 'a) -> 'a
 (** [with_consumer ~by xs f] checks that each of [xs] lives, then is [f c] for
     [c], the claim of [by] on the handles among them ({!claim}), and ends [c]
     ({!consumed}) when [f] returns or raises. [f] must not keep an array it
-    reads by [c], or a value over one, past its return, but those {!reuse}
+    reads by [c], or a value over one, past its return, but those {!take}
     gave.
 
     Raises [Invalid_argument] naming [by] for a dead value, claiming nothing,
@@ -154,3 +154,16 @@ val arrays : 'd claim -> int -> Nx_array.any array
 
     Raises [Invalid_argument] naming [c]'s consumer for a constant or a traced
     operand, a position no operand has, and once {!consumed} returned. *)
+
+val take :
+  'd claim ->
+  int ->
+  ('v, 's) Nx_array.Dtype.t ->
+  Nx_array.Layout.t ->
+  ('v, 's) Nx_array.t option
+(** [take c i dt l] is the array {!reuse}[ c ~own:[i] dt l] gives: operand
+    [i]'s memory for a result of [dt] laid out as [l], through which alone
+    the consumer then reads the operand, each element before it writes over
+    it. [None] where {!reuse} is.
+
+    Raises [Invalid_argument] as {!arrays} does. *)

@@ -2779,6 +2779,38 @@ let test_consumer_refuses () =
 
 let layout_of n = A.Layout.contiguous [| n |]
 
+(* A consumer reads operands with bytes alone: [arrays] and [take] raise
+   naming it for a constant and for a traced value. *)
+let test_consumer_no_bytes =
+  let traced k =
+    Nx.Prim.interpret ~name:"test.tracer" Values
+      (fun i ~by op ->
+        Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form Tag) op)
+      (fun i -> k (Nx.Prim.traced i (Nx.Prim.form (fresh [| 1.; 2. |])) Tag))
+  in
+  let operands =
+    [
+      ("a constant", fun k -> k (Nx.zeros f32 [| 2 |]));
+      ("a traced value", traced);
+    ]
+  in
+  let readers =
+    [
+      ("arrays", fun c -> ignore (C.arrays c 0));
+      ("take", fun c -> ignore (C.take c 0 D.Float32 (layout_of 2)));
+    ]
+  in
+  let each =
+    List.concat_map (fun r -> List.map (fun o -> (r, o)) operands) readers
+  in
+  cases
+    ~name:(fun ((r, _), (o, _)) -> r ^ " of " ^ o)
+    "a consumer refuses an operand without bytes" each
+    (fun ((_, read), (_, given)) ->
+      given (fun x ->
+          invalid ~sub:"test.call: operand 0" (fun () ->
+              C.with_ ~by:"test.call" [ Any x ] read)))
+
 (* A handle's memory is taken for a result only where nothing else reads it:
    the handle alone among the operands, owning its memory, of the result's
    dtype and layout. *)
@@ -2904,6 +2936,7 @@ let () =
                test_consumer_checks_first;
              test "a consumer reads arrays at positions with bytes"
                test_consumer_refuses;
+             test_consumer_no_bytes;
              test "a consumer takes memory nothing else reads"
                test_consumer_takes;
              test "a consumer updates taken memory in place and frees the rest"

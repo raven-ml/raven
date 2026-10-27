@@ -177,7 +177,7 @@ let holds dt layout a =
 
 (* [b]'s memory consumed for [by], where rig holds it exclusive: no other value
    reads it. The live buffer over it, if so. *)
-let take ~by b =
+let take_memory ~by b =
   Rig.Claim.with_ ~read:[] ~donate:[ b ] (fun c ->
       if Rig.Claim.exclusive c b then
         Some (Rig.Claim.consume c ~why:("donated to " ^ by) b)
@@ -227,7 +227,7 @@ let reuse (type w r d) (c : d claim) ~own (dt : (w, r) D.t) layout :
       match fits i with
       | None -> None
       | Some b -> (
-          match take ~by:c.by b with
+          match take_memory ~by:c.by b with
           | Some b' ->
               c.taken <- b :: c.taken;
               Some (b, A.v dt layout b')
@@ -274,9 +274,20 @@ let with_consumer ~by xs f =
      would return their memory. *)
   Fun.protect ~finally:(fun () -> consumed c) (fun () -> f c)
 
+(* Operand [i], which must have bytes: a constant or a traced value has
+   none. *)
+let bytes_at c i =
+  let (Value.Any x as y) = operand c i in
+  if not (has_bytes x) then
+    invalid_argf "%s: operand %d, %a, has no bytes" c.by i Prim.pp_value x;
+  y
+
 let arrays c i =
-  let (Value.Any x) = operand c i in
-  match x with
-  | Value.Deferred _ | Value.Traced _ ->
-      invalid_argf "%s: operand %d, %a, has no bytes" c.by i Prim.pp_value x
-  | Value.Array _ | Value.Shards _ | Value.Handle _ -> Prim.any (Prim.arrays x)
+  let (Value.Any x) = bytes_at c i in
+  Prim.any (Prim.arrays x)
+
+(* A result written over operand [i] reads it, at any index, through the
+   array [take] gives, so no other position may share its memory. *)
+let take c i dt l =
+  let (Value.Any _) = bytes_at c i in
+  Option.map snd (reuse c ~own:[ i ] dt l)
