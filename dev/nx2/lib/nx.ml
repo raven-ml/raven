@@ -3784,7 +3784,7 @@ let extract ?size ?fill c x =
    empty shape are held at [1], so no division is by zero. *)
 let unravel_index i s =
   let by = "Nx.unravel_index" in
-  Prim.check_shape ~by s;
+  Prim.check_shape ~by (Iarray.of_array s);
   let r = Array.length s and n = Array.fold_left ( * ) 1 s in
   if r = 0 then begin
     Prim.alive ~by i;
