@@ -62,6 +62,172 @@ let prefixes = Gen.of_list ~pp:quoted [ "#"; "%%"; "//" ]
 (* A comment's text, which may hold digits, separators and prefixes. *)
 let comment = Gen.string_of ~size:(Gen.int_range 0 40) (Gen.char_range ' ' '~')
 
+(* Floats read *)
+
+(* [read_float s] is the float64 that [load_txt] reads from the field [s]. *)
+let read_float s = (Nx.to_array (Nx_io.load_txt Nx.float64 (file s))).(0)
+
+(* [exact m ~base k] is the decimal digits of [m base^k], computed a digit at a
+   time, so that a literal states a value with no rounding. *)
+let exact m ~base k =
+  let ds = Array.make 800 0 in
+  let mul n =
+    let carry = ref 0 in
+    for i = 0 to Array.length ds - 1 do
+      let v = (ds.(i) * n) + !carry in
+      ds.(i) <- v mod 10;
+      carry := v / 10
+    done
+  in
+  ds.(0) <- 1;
+  mul m;
+  for _ = 1 to k do
+    mul base
+  done;
+  let top = ref (Array.length ds - 1) in
+  while ds.(!top) = 0 do
+    decr top
+  done;
+  String.init (!top + 1) (fun i -> Char.chr (48 + ds.(!top - i)))
+
+(* Half the least subnormal, 2^-1075, and three times it, as decimals. *)
+let half_least = exact 1 ~base:5 1075
+let three_halves = exact 3 ~base:5 1075
+
+(* The overflow threshold, (2^54 - 1) 2^970: the largest finite float64 and half
+   its unit in the last place. *)
+let threshold = exact ((1 lsl 54) - 1) ~base:2 970
+
+(* [midpoint x] is the exact midpoint between the finite float64 [x >= 0] and
+   the next one up, [(2n + 1) 2^(u - 1)] for [x = n 2^u], as decimal digits [d]
+   and an exponent [e] for the value [d 10^e]. *)
+let midpoint x =
+  let bits = Int64.bits_of_float x in
+  let biased = Int64.to_int (Int64.shift_right_logical bits 52) in
+  let fraction = Int64.to_int (Int64.logand bits 0xF_FFFF_FFFF_FFFFL) in
+  let n, u =
+    if biased = 0 then (fraction, -1074)
+    else (fraction + (1 lsl 52), biased - 1075)
+  in
+  let m = (2 * n) + 1 and k = u - 1 in
+  if k >= 0 then (exact m ~base:2 k, 0) else (exact m ~base:5 (-k), k)
+
+(* [below d] is the digits of [d - 1], for the digits [d] of a positive
+   integer. *)
+let below d =
+  let b = Bytes.of_string d in
+  let i = ref (Bytes.length b - 1) in
+  while Bytes.get b !i = '0' do
+    Bytes.set b !i '9';
+    decr i
+  done;
+  Bytes.set b !i (Char.chr (Char.code (Bytes.get b !i) - 1));
+  Bytes.to_string b
+
+(* A finite float64 [x >= 0]: anywhere, a subnormal, zero, the top of a binade,
+   whose next float up is the bottom of the next, or the largest. *)
+let below_midpoints =
+  let open Gen in
+  let bits lo hi = map Int64.float_of_bits (int64_range lo hi) in
+  with_pp
+    (fun ppf x -> Format.fprintf ppf "%h" x)
+    (one_of
+       [
+         bits 0L 0x7FEF_FFFF_FFFF_FFFFL;
+         bits 1L 0xF_FFFF_FFFF_FFFFL;
+         constant 0.;
+         map (fun k -> Float.pred (Float.ldexp 1. k)) (int_range (-1021) 1023);
+         constant Float.max_float;
+       ])
+
+(* The literals of floats.txt, each with the bits of the float64 nearest it. *)
+let python_floats =
+  In_channel.with_open_text (fixture "floats.txt") In_channel.input_lines
+  |> List.map (fun line ->
+      match String.split_on_char ' ' line with
+      | [ s; bits ] -> (s, Int64.of_string ("0x" ^ bits))
+      | _ -> invalid_arg line)
+
+let floats_read =
+  group "floats read"
+    [
+      test
+        "a float field reads as Python's correctly rounded float() reads it, \
+         to the bit" (fun () ->
+          let literals = List.map fst python_floats in
+          let path = file (String.concat "\n" literals ^ "\n") in
+          let read = Nx.to_array (Nx_io.load_txt Nx.float64 path) in
+          let wrong =
+            List.concat
+              (List.mapi
+                 (fun i (s, bits) ->
+                   let x = read.(i) in
+                   if Int64.equal (Int64.bits_of_float x) bits then []
+                   else
+                     [
+                       Printf.sprintf "%s: %h, not %h" s x
+                         (Int64.float_of_bits bits);
+                     ])
+                 python_floats)
+          in
+          equal (list string) [] wrong);
+      prop
+        "a literal at the exact midpoint between two floats reads as the even \
+         one, and one just above or below it as the float on its side"
+        below_midpoints (fun x ->
+          let up = Float.succ x in
+          cover "zero" (x = 0.);
+          cover "a subnormal" (x > 0. && x < Float.min_float);
+          cover "the top of a binade" (x > 0. && fst (Float.frexp up) = 0.5);
+          cover "the largest, whose midpoint rounds to infinity"
+            (x = Float.max_float);
+          let d, e = midpoint x in
+          let path =
+            file
+              (Printf.sprintf "%se%d\n%s1e%d\n%s9e%d\n" d e d (e - 1) (below d)
+                 (e - 1))
+          in
+          let even = Int64.(equal (logand (bits_of_float x) 1L) 0L) in
+          equal (elements D.Float64)
+            [| (if even then x else up); up; x |]
+            (Nx.to_array (Nx_io.load_txt Nx.float64 path)));
+      cases ~name:fst
+        "a float field reads as the float64 nearest its value, a tie as the \
+         even one"
+        [
+          ("2^53 + 1, a tie", ("9007199254740993", Float.ldexp 1. 53));
+          ("2^53 + 3, a tie", ("9007199254740995", Float.ldexp 1. 53 +. 4.));
+          ( "2^53 + 1 in 40 digits, a tie",
+            ("9007199254740993000000000000000000000000e-24", Float.ldexp 1. 53)
+          );
+          ( "40 digits, the last past a tie",
+            ( "9007199254740993000000000000000000000001e-24",
+              Float.ldexp 1. 53 +. 2. ) );
+          ( "just below 2^-792, a binade's bottom, nearer the float below",
+            ("3.839223843572815e-239", Float.pred (Float.ldexp 1. (-792))) );
+          ("half the least subnormal, a tie", (half_least ^ "e-1075", 0.));
+          ( "just past half the least subnormal",
+            (half_least ^ "1e-1076", Float.ldexp 1. (-1074)) );
+          ( "three halves of the least subnormal, a tie",
+            (three_halves ^ "e-1075", Float.ldexp 1. (-1073)) );
+          ( "just below three halves of the least subnormal",
+            (* The digits end in 5: one less, then a 9, is just below. *)
+            ( String.sub three_halves 0 (String.length three_halves - 1)
+              ^ "49e-1076",
+              Float.ldexp 1. (-1074) ) );
+          ( "1.7976931348623158e308, below the overflow threshold",
+            ("1.7976931348623158e308", Float.max_float) );
+          ( "1.797693134862315807e308, below the overflow threshold",
+            ("1.797693134862315807e308", Float.max_float) );
+          ( "1.797693134862315808e308, past the overflow threshold",
+            ("1.797693134862315808e308", Float.infinity) );
+          ("the overflow threshold, a tie", (threshold, Float.infinity));
+          ("its negation", ("-" ^ threshold, Float.neg_infinity));
+        ]
+        (fun (_, (s, expected)) ->
+          equal (elements D.Float64) [| expected |] [| read_float s |]);
+    ]
+
 let txt =
   group "text"
     [
@@ -246,4 +412,4 @@ let txt =
               Nx_io.save_txt (temp_file ()) (Nx.zeros Nx.int8 [| 1; 1; 1 |])));
     ]
 
-let () = exit (run "nx.io text" [ txt ])
+let () = exit (run "nx.io text" [ txt; floats_read ])

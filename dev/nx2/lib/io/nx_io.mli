@@ -398,9 +398,10 @@ val load_gguf : string -> Gguf.t
 
     [nan], [inf] and [infinity], in any case and after an optional sign, are
     float fields too. A load reads a float field as the float64 nearest its
-    value, then stores it as {!Nx.Dtype.of_float} says. A save writes a float in
-    [%.18e] notation, its 19 significant digits rounded from its exact value, so
-    it reads back as itself. It writes every NaN as [nan], and the infinities as
+    value, a tie as the one whose significand is even, on every system, then
+    stores it as {!Nx.Dtype.of_float} says. A save writes a float in [%.18e]
+    notation, its 19 significant digits rounded from its exact value, so it
+    reads back as itself. It writes every NaN as [nan], and the infinities as
     [inf] and [-inf].
 
     An integer field is an optional sign and decimal digits, in its dtype's

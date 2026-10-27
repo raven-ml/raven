@@ -9,7 +9,9 @@ png_rgba.png and png_la.png, which Pillow writes as it writes the JPEG files. Ea
 sibling .npy of the pixels Pillow decodes from it, of shape (h, w, c), except
 png_gray_trns.png and png_rgb16_trns.png, whose pixels are stated from PNG-3
 where Pillow's decoding differs. No fixture is a YCCK JPEG, which Pillow does
-not write, so the YCCK conversion goes untested.
+not write, so the YCCK conversion goes untested. Python's float(), whose
+reader rounds correctly on every system, gives the float64 nearest each
+literal of floats.txt.
 
 Usage:
     cd dev/nx2/test/io/support
@@ -18,6 +20,7 @@ Usage:
 """
 
 import io
+import random
 import struct
 import zipfile
 import zlib
@@ -47,6 +50,28 @@ def safetensors_fixtures():
     save_torch({"e4m3fnuz": fnuz.clone().view(torch.float8_e4m3fnuz),
                 "e5m2fnuz": fnuz.clone().view(torch.float8_e5m2fnuz)},
                "fnuz.safetensors")
+
+
+def float_literals():
+    # Float literals, each with the bits of the float64 nearest it in hex: up
+    # to 17 significant digits, up to 40, among the subnormals, about the
+    # overflow threshold, and past the 800 digits a literal keeps.
+    rng = random.Random(7)
+
+    def literal(n, lead):
+        d = str(rng.randint(1, 9)) + "".join(rng.choice("0123456789") for _ in range(n - 1))
+        p = rng.randint(0, n)
+        return rng.choice(["", "-", "+"]) + d[:p] + "." + d[p:] + "e" + str(lead - p + 1)
+
+    reaches = [(300, (1, 17), (-20, 20)), (100, (18, 40), (-20, 20)),
+               (100, (1, 40), (-330, -305)), (100, (1, 40), (300, 312)),
+               (4, (790, 900), (-310, 300))]
+    with open("floats.txt", "w") as f:
+        for count, digits, lead in reaches:
+            for _ in range(count):
+                s = literal(rng.randint(*digits), rng.randint(*lead))
+                bits = struct.unpack("<Q", struct.pack("<d", float(s)))[0]
+                f.write("%s %016x\n" % (s, bits))
 
 
 def numpy_fixtures():
@@ -304,6 +329,7 @@ def image_fixtures():
 if __name__ == "__main__":
     safetensors_fixtures()
     numpy_fixtures()
+    float_literals()
     unaligned_npz()
     other_names_npz()
     skipped_entries_npz()

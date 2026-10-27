@@ -192,8 +192,172 @@ let small (type s) (dt : (int, s) D.t) s =
   and hi = Int64.of_int (D.max_value dt) in
   map Int64.to_int (int64 ~lo ~hi s)
 
+(* Correct rounding
+
+   A literal is read here rather than by [float_of_string], whose C strtod is
+   not correctly rounded on every system. Its leading digits, scaled by exact
+   powers of ten, make a candidate a few floats from the nearest, which [settle]
+   moves a float at a time until the literal's exact value lies in the
+   candidate's rounding interval: between the midpoints to its neighbours, each
+   included when the candidate's significand is even. The exact values compare
+   as integers in the limbs above. *)
+
+(* A literal keeps this many significant digits, and a [1] after them in place
+   of the others where they are not all zero. A midpoint's decimal expansion has
+   at most 768 significant digits, so a value and its shortened form lie on the
+   same side of each midpoint. *)
+let max_digits = 800
+
+(* An exponent is read up to this bound, which no string's length reaches, so
+   that a larger one still makes a value that rounds to zero or infinity. *)
+let max_exponent = 1 lsl 58
+
+(* [decimal s] is the magnitude of the float literal [s] as [Some (d, e)], the
+   value [d 10^e] for the digits [d] without leading zeros, or [None] for [nan]
+   and the infinities. *)
+let decimal s =
+  let n = String.length s and i = signed s in
+  if i < n && not (is_digit s.[i] || s.[i] = '.') then None
+  else
+    let d = Buffer.create 32 in
+    let e = ref 0 and point = ref false and sticky = ref false and j = ref i in
+    while !j < n && (is_digit s.[!j] || s.[!j] = '.') do
+      (match s.[!j] with
+      | '.' -> point := true
+      | '0' when Buffer.length d = 0 -> if !point then decr e
+      | c when Buffer.length d < max_digits ->
+          Buffer.add_char d c;
+          if !point then decr e
+      | c ->
+          if not !point then incr e;
+          if c <> '0' then sticky := true);
+      incr j
+    done;
+    if !sticky then (
+      Buffer.add_char d '1';
+      decr e);
+    if !j < n then begin
+      let k = !j + 1 + signed (String.sub s (!j + 1) (n - !j - 1)) in
+      let x = ref 0 in
+      for p = k to n - 1 do
+        x := Int.min max_exponent ((10 * !x) + Char.code s.[p] - 48)
+      done;
+      e := if s.[!j + 1] = '-' then !e - !x else !e + !x
+    end;
+    Some (Buffer.contents d, !e)
+
+let pow10 k = int_of_string ("1" ^ String.make k '0')
+
+(* [shift10 a k] is [a 10^k] and [shift2 a k] is [a 2^k], for [k >= 0]. *)
+let shift10 a k =
+  mul_small (Array.append (Array.make (k / 9) 0) a) (pow10 (k mod 9))
+
+let rec shift2 a k =
+  if k > 20 then shift2 (mul_small a (1 lsl 20)) (k - 20)
+  else mul_small a (1 lsl k)
+
+(* The limbs of the decimal digits [d]. *)
+let limbs d =
+  let n = String.length d in
+  Array.init
+    ((n + 8) / 9)
+    (fun i ->
+      let stop = n - (9 * i) in
+      let start = Int.max 0 (stop - 9) in
+      int_of_string (String.sub d start (stop - start)))
+
+let compare_limbs a b =
+  let n = Array.length a in
+  if n <> Array.length b then Int.compare n (Array.length b)
+  else
+    let rec go i =
+      if i < 0 then 0
+      else if a.(i) <> b.(i) then Int.compare a.(i) b.(i)
+      else go (i - 1)
+    in
+    go (n - 1)
+
+(* [compare_exact (d, e) (m, k)] compares [d 10^e], [d] as limbs, with [m
+   2^k]. *)
+let compare_exact (d, e) (m, k) =
+  let lhs = shift2 (shift10 d (Int.max e 0)) (Int.max (-k) 0) in
+  let rhs =
+    shift10 (shift2 (limbs (string_of_int m)) (Int.max k 0)) (-Int.min e 0)
+  in
+  compare_limbs lhs rhs
+
+(* The overflow threshold, the largest finite float64 and half its unit in the
+   last place: [(2^54 - 1) 2^970], which rounds to infinity. *)
+let threshold = ((1 lsl 54) - 1, 970)
+
+(* [settle v c] is the float64 nearest the positive value [v], from the
+   candidate [c >= 0]. The candidate [n 2^u], [n] its significand, lies between
+   the midpoints [(2n - 1) 2^(u - 1)] and [(2n + 1) 2^(u - 1)], the lower one
+   [(4n - 1) 2^(u - 2)] at the bottom of a binade above the subnormals, where
+   the unit below is half. *)
+let rec settle v c =
+  if c = Float.infinity then
+    if compare_exact v threshold < 0 then settle v Float.max_float else c
+  else
+    let u =
+      if c = 0. then -1074 else Int.max (snd (Float.frexp c) - 53) (-1074)
+    in
+    let n = Float.to_int (Float.ldexp c (-u)) in
+    let even = n land 1 = 0 in
+    let low =
+      if n = 1 lsl 52 && u > -1074 then ((4 * n) - 1, u - 2)
+      else ((2 * n) - 1, u - 1)
+    in
+    let l = if n = 0 then 1 else compare_exact v low in
+    if l < 0 || (l = 0 && not even) then settle v (Float.pred c)
+    else
+      let h = compare_exact v ((2 * n) + 1, u - 1) in
+      if h > 0 || (h = 0 && not even) then settle v (Float.succ c) else c
+
+(* The powers of ten a float64 holds exactly: [tens.(k)] is [10^k]. *)
+let tens =
+  let t = Array.make 23 1. in
+  for k = 1 to 22 do
+    t.(k) <- 10. *. t.(k - 1)
+  done;
+  t
+
+(* [scale x k] is [x 10^k], rounded once for each power of ten it applies. *)
+let rec scale x k =
+  if k > 22 then scale (x *. tens.(22)) (k - 22)
+  else if k < -22 then scale (x /. tens.(22)) (k + 22)
+  else if k >= 0 then x *. tens.(k)
+  else x /. tens.(-k)
+
+(* [candidate d e] is a float64 near [d 10^e]: the first 18 digits of [d], which
+   an [int] holds, scaled by powers of ten. Its 17 roundings at most leave it
+   within a few floats of the nearest. *)
+let candidate d e =
+  let n = String.length d in
+  let k = Int.min 18 n in
+  scale (Float.of_int (int_of_string (String.sub d 0 k))) (e + n - k)
+
+(* [nearest s] is the float64 nearest the value of the float literal [s], a tie
+   to the even one. A value whose leading digit lies past [10^310] rounds to
+   infinity, and one below [10^-330] to zero, which spares their exact
+   comparison. *)
+let nearest s =
+  let x =
+    match decimal s with
+    | None ->
+        if Char.lowercase_ascii s.[signed s] = 'n' then Float.nan
+        else Float.infinity
+    | Some ("", _) -> 0.
+    | Some (d, e) ->
+        let lead = String.length d - 1 + e in
+        if lead < -330 then 0.
+        else if lead > 310 then Float.infinity
+        else settle (limbs d, e) (candidate d e)
+  in
+  if s.[0] = '-' then Float.neg x else x
+
 let parser (type v s) (dt : (v, s) D.t) : (string -> v parsed) option =
-  let float s = if is_float s then Value (float_of_string s) else Not_literal in
+  let float s = if is_float s then Value (nearest s) else Not_literal in
   let bool s : bool parsed =
     match String.lowercase_ascii s with
     | "true" -> Value true
