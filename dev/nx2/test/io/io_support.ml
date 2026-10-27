@@ -75,20 +75,21 @@ let saved suffix save x =
 
 (* Memory *)
 
+(* [settled d] is the bytes [d] holds once collected memory has returned. *)
+let settled d =
+  for _ = 1 to 4 do
+    Gc.full_major ();
+    ignore (Rig.Buffer.create d 0);
+    Rig.free_cache d
+  done;
+  Rig.allocated d
+
 (* [grown d make f] is [f (make ())] and the bytes [d] holds more after it, read
    once collected memory has returned. One uncounted run comes first. *)
 let grown d make f =
-  let settled () =
-    for _ = 1 to 4 do
-      Gc.full_major ();
-      ignore (Rig.Buffer.create d 0);
-      Rig.free_cache d
-    done;
-    Rig.allocated d
-  in
   ignore (f (make ()));
   let x = make () in
-  let before = settled () in
+  let before = settled d in
   let y = f x in
   (y, Rig.allocated d - before)
 
