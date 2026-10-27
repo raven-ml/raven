@@ -489,7 +489,7 @@ let svd_bound u m n =
   let k = Int.min m n and p = Int.max m n in
   let rf = float_of_int (rounds ~extra:1 k u) and kf = float_of_int k in
   let pf = float_of_int p in
-  let g = gamma u (16. *. (rf +. (pf *. pf)) *. (kf +. 2.) *. Float.sqrt kf) in
+  let g = gamma u (8. *. kf *. ((pf *. (pf +. 6.)) +. (8. *. rf))) in
   let near norm =
     (3. *. g *. norm) +. (gamma u ((16. *. pf) +. 100.) *. norm)
     +. (eta u *. ((16. *. pf) +. 100.))

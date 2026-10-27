@@ -43,15 +43,21 @@
       infinity fails, as does one whose rotated elements off the diagonal
       have a norm above [16 n u ‖a‖_F]: the rotations did not converge.
     - [Svd] and [Svd_values]: by one-sided Jacobi rotations of the [r] of
-      [a]'s QR, [aᵀ]'s for [m < n]. With [p = max m n] and
-      [g = γ(16 (R + p²) (k + 2) √k)], [‖a - u diag s vh‖_F <= g ‖a‖_F] over
-      [u]'s first [k] columns and [vh]'s first [k] rows,
-      [‖uᵀ u - I‖_F <= g] and [‖vh vhᵀ - I‖_F <= g], and each singular value
-      is within [3 g ‖a‖_F] of the exact one. A matrix that holds NaN or an
-      infinity fails, as does one with rotated columns [c_i] and [c_j], of
-      norms above [8 R (1 + √k) u ‖a‖_F], whose [|c_iᵀ c_j|] exceeds
-      [16 k u ‖c_i‖₂ ‖c_j‖₂]: the rotations did not converge. [Svd_values]
-      computes as [Svd] does.
+      [a]'s QR, [aᵀ]'s for [m < n], scaled by a power of two. With
+      [p = max m n] and [g = γ(8 k (p (p + 6) + 8 R))],
+      [‖a - u diag s vh‖_F <= g ‖a‖_F] over [u]'s first [k] columns and
+      [vh]'s first [k] rows, [‖uᵀ u - I‖_F <= g] and [‖vh vhᵀ - I‖_F <= g],
+      and each singular value is within [3 g ‖a‖_F] of the exact one. The
+      terms of [g] add: the QRs of [a] and of the rotated columns, whose [q]s
+      are orthogonal to [k (2p + 10) u] an element; the rounds, which move the
+      columns by at most [8 R u] of their norm; and the columns the
+      convergence test below exempts, whose norms reach
+      [8 R (1 + √k) u ‖a‖_F]. [g] reaches 1 at [k = p = 68] in [float32] and
+      [82313] in [float64]: from there it bounds nothing. A matrix that holds
+      NaN or an infinity fails, as does one with rotated columns [c_i] and
+      [c_j], of norms above [8 R (1 + √k) u ‖a‖_F], whose [|c_iᵀ c_j|]
+      exceeds [16 k u ‖c_i‖₂ ‖c_j‖₂]: the rotations did not converge.
+      [Svd_values] computes as [Svd] does.
 
     The rotations' bounds are worst cases that grow with [R], as each rotation
     of two columns moves them by at most [8 u] of their norm. *)
