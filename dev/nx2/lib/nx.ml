@@ -5917,10 +5917,10 @@ let pp ppf x =
         fun ppf -> Format.fprintf ppf " traced by %s" owner.name
     | Value.Deferred { node = Value.Node n; _ } ->
         fun ppf -> Format.fprintf ppf " of every set,@ %a" Prim.pp n.op
-    | Value.Array _ | Value.Shards _ | Value.Donated _ -> (
+    | Value.Array _ | Value.Shards _ | Value.Handle _ -> (
         match Prim.death x with
         | Value.Died f -> fun ppf -> Format.fprintf ppf ", donated to %s" f
-        | Value.Live | Value.Offered _ -> (
+        | Value.Live -> (
             let lost d why ppf =
               Format.fprintf ppf ", lost with %s: %s" (Rig.name d) why
             in
@@ -5955,7 +5955,7 @@ module Ptree = struct
       (match Prim.death a with
       | Value.Died _ ->
           Prim.alive ~by:(Format.asprintf "Nx.Ptree.donate: %a" pp_path p) a
-      | Value.Live | Value.Offered _ -> ());
+      | Value.Live -> ());
       donate a
     in
     map s at x

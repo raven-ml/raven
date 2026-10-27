@@ -23,15 +23,10 @@ type ('v, 's, +'d) payload = ..
 
 (** {1:values Values} *)
 
-type death =
-  | Live
-  | Offered of int
-      (** Live and donated: the donor's key, which a later donation of it
-          gives its handle. *)
-  | Died of string  (** Given to the function named. *)
-(** Whether a value lives. Values are made [Live], a donor is [Offered] when
-    first donated, and the operation that consumes it sets [Died], for
-    good. *)
+type death = Live | Died of string  (** Given to the function named. *)
+(** Whether a value lives. Values are made [Live]. The consumer of a
+    donation sets its donor's word to [Died], for good, by one
+    compare-and-set from [Live] ({!Donate.claim}). *)
 
 type ('v, 's, 'd) t =
   | Array of {
@@ -50,20 +45,19 @@ type ('v, 's, 'd) t =
       (** On [at]'s devices, two or more: per device, in
           [Grid.devices (Devices.grid at)]'s order, its window of the value
           ({!Grid.window}). *)
-  | Donated of {
-      key : int;
-          (** The donor's, one per donor, for life: an operation tells two
-              handles of one donor, and the donor beside its handle, by it. *)
+  | Handle of {
+      donor : ('v, 's, 'd) t;
+          (** The [Array] or [Shards] donated, never a handle. Two handles of
+              one donor, and a donor beside its handle, are told by [==] on
+              it. *)
       at : 'd Devices.placement;
       shape : int array;  (** The whole's. *)
       arrays : ('v, 's) Nx_array.t iarray;
-      donor : death Atomic.Loc.t;  (** The donor's [dead]. *)
     }
       (** A handle one operation reads: [arrays] over its donor's memory, one
           per device of [at], each its window, or a copy of it a movement made.
-          It has no word of its own: it lives while its donor does, as does
-          every other handle of the donor, those a movement passed on
-          included. *)
+          It lives while its donor does, as does every other handle of the
+          donor, those a movement passed on included. *)
   | Deferred of { form : ('v, 's, 'd) form; node : node; k : int }
       (** Result [k] of the constant operation [node]. *)
   | Traced of {

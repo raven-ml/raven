@@ -52,7 +52,7 @@ let reads (Value.Node n) p =
     (fun i x ->
       match x with
       | Value.Deferred { node; _ } -> found := (node, r.operands.(i)) :: !found
-      | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> ())
+      | Value.Array _ | Value.Shards _ | Value.Handle _ | Value.Traced _ -> ())
     n.op;
   List.rev !found
 
@@ -69,7 +69,7 @@ let resolved : type v s d.
       Prim.of_arrays q
         ~shape:(Iarray.to_array (L.shape form.layout))
         (typed form.dtype arrays.(k))
-  | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> x
+  | Value.Array _ | Value.Shards _ | Value.Handle _ | Value.Traced _ -> x
 
 (* [node]'s results at [p], its constant operands already computed where it
    reads them, as [result] gives them. Its rule held when it was made. It
@@ -106,7 +106,7 @@ let at : type v s d.
     d Devices.placement -> (v, s, d) Value.t -> (v, s, d) Value.t =
  fun p x ->
   match x with
-  | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> x
+  | Value.Array _ | Value.Shards _ | Value.Handle _ | Value.Traced _ -> x
   | Value.Deferred { form; node; k } ->
       let arrays =
         Prim.evaluate ~same:Devices.equal ~reads compute_node node p

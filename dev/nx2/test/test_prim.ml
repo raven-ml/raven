@@ -325,14 +325,14 @@ let array_of (type v s) (x : (v, s, b) Value.t) =
     ~pp:(fun ppf _ -> Format.pp_print_string ppf "a value on two devices")
     (function
       | Value.Array { a; _ } -> Some a
-      | Shards _ | Donated _ | Deferred _ | Traced _ -> None)
+      | Shards _ | Handle _ | Deferred _ | Traced _ -> None)
     x
 
 let moved_by mv x =
   match x with
   | Value.Array { at; a; _ } ->
       Value.Array { at; a = Option.get (A.move mv a); dead = Value.Live }
-  | Shards _ | Donated _ | Deferred _ | Traced _ -> x
+  | Shards _ | Handle _ | Deferred _ | Traced _ -> x
 
 let movements =
   group "movements"

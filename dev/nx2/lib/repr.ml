@@ -85,7 +85,7 @@ let crossing (type v s d) ~by (x : (v, s, d) Value.t) :
   | Value.Deferred _ -> None
   | Value.Traced { owner; _ } ->
       invalid_argf "%s: a value traced by %s has no bytes" by owner.name
-  | Value.Array _ | Value.Shards _ | Value.Donated _ ->
+  | Value.Array _ | Value.Shards _ | Value.Handle _ ->
       let arrays = Prim.arrays x in
       Iarray.iter (fun a -> Rig.Claim.share (A.buffer a)) arrays;
       Some arrays

@@ -23,7 +23,7 @@ let on_host : type v s d. by:string -> (v, s, d) Value.t -> (v, s) A.t =
   | Value.Deferred _ -> Iarray.get (Prim.arrays (Constant.at host x)) 0
   | Value.Traced { owner; _ } ->
       invalid_argf "%s: the value is traced by %s" by owner.name
-  | Value.Array _ | Value.Shards _ | Value.Donated _ ->
+  | Value.Array _ | Value.Shards _ | Value.Handle _ ->
       Iarray.get (Prim.arrays (Place.value ~by host x)) 0
 
 (* Pending checks
@@ -254,7 +254,7 @@ let wait : type v s d. by:string -> (v, s, d) Value.t -> unit =
   | Value.Deferred _ -> ()
   | Value.Traced { owner; _ } ->
       invalid_argf "%s: the value is traced by %s" by owner.name
-  | Value.Array _ | Value.Shards _ | Value.Donated _ ->
+  | Value.Array _ | Value.Shards _ | Value.Handle _ ->
       Iarray.iter (fun a -> Rig.Buffer.wait (A.buffer a) Read) (Prim.arrays x);
       settle ~by (drained (Devices.number (Devices.set (Prim.placement x))))
 

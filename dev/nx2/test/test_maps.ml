@@ -528,7 +528,7 @@ let rules =
 let array_of (type v s) (x : (v, s, b) Value.t) : (v, s) A.t =
   match x with
   | Value.Array { a; _ } -> a
-  | Value.Shards _ | Value.Donated _ | Value.Deferred _ | Value.Traced _ ->
+  | Value.Shards _ | Value.Handle _ | Value.Deferred _ | Value.Traced _ ->
       fail "not on one device"
 
 let donated_add x =
@@ -665,8 +665,7 @@ let test_contract_consumes () =
     (fun () -> Eval.run ~by:"t" (Value.Copy init))
 
 (* Two handles of one donor, one a copy a movement passed on, are one handle
-   to their consumer: their keys tell one donor's, and [handles] keeps the
-   first. *)
+   to their consumer: both hold the donor, and [handles] keeps the first. *)
 let test_one_donor_twice () =
   let x =
     Value.Array

@@ -23,7 +23,7 @@ let checked (type v s d) ~by (x : (v, s, d) t) =
   | Traced { owner; _ } ->
       invalid_argf "%s: a value traced by %s reached eager execution" by
         owner.name
-  | Array _ | Shards _ | Donated _ | Deferred _ -> Prim.alive ~by x
+  | Array _ | Shards _ | Handle _ | Deferred _ -> Prim.alive ~by x
 
 let is_concrete x = not (Prim.is_constant x)
 
@@ -37,7 +37,7 @@ let placed : type v s d e.
  fun ~by p x ->
   match x with
   | Deferred _ -> Place.value ~by p (Constant.at p x)
-  | Array _ | Shards _ | Donated _ | Traced _ ->
+  | Array _ | Shards _ | Handle _ | Traced _ ->
       if on_host_set p && not (on_host_set (Prim.placement x)) then
         Check.wait ~by x;
       Exec.place ~by p x
@@ -66,9 +66,9 @@ and general : type r. by:string -> r prim -> r =
 and donated : type r. by:string -> r prim -> Donate.handle list -> r =
  fun ~by op hs ->
   match op with
-  | Move (mv, (Donated d as x)) ->
+  | Move (mv, (Handle d as x)) ->
       (* A view of a handle leaves the memory unshared: the handle it passes on
-         has the same donor and key, so its consumer may still write into it.
+         has the same donor, so its consumer may still write into it.
          The movement claims nothing: the deaths wait for that consumer, which
          checks every operand first, so an operation that aligns its operands
          by movements kills nothing when its checks refuse it. *)
@@ -86,7 +86,7 @@ and donated : type r. by:string -> r prim -> Donate.handle list -> r =
           | None -> moved ()
         end
       in
-      Donated { key = d.key; at; shape; arrays; donor = d.donor }
+      Handle { donor = d.donor; at; shape; arrays }
   | Map _ | Reduce _ | Scan _ | Gather _ | Scatter _ | Sort _ | Fft _
   | Linalg _ | Fold _ | Assemble _ | Contract _ | Copy _ | Move _ | Bitcast _
   | Place _ | Check _ -> (
@@ -104,7 +104,7 @@ and donated : type r. by:string -> r prim -> Donate.handle list -> r =
             match y with
             | Array r when A.buffer r.a == b ->
                 Array { r with a = A.v (A.dtype r.a) (A.layout r.a) b' }
-            | Array _ | Shards _ | Donated _ | Deferred _ | Traced _ -> y
+            | Array _ | Shards _ | Handle _ | Deferred _ | Traced _ -> y
           in
           let op = Prim.map over op in
           let (Prim.Operands xs) = Prim.operands op in
@@ -170,7 +170,7 @@ let applied i ~by op =
         (fun y ->
           match y with
           | Deferred { node = Node n; _ } -> add_formula i n.id
-          | Array _ | Shards _ | Donated _ | Traced _ -> ())
+          | Array _ | Shards _ | Handle _ | Traced _ -> ())
         op r);
   r
 
@@ -322,7 +322,7 @@ let replay (type v s d) i (x : (v, s, d) t) : (v, s, d) t =
         if is_formula i n.id then
           Deferred { form = { form with placement = None }; node; k }
         else Prim.expect form.dtype (result node ()).(k)
-    | Array _ | Shards _ | Donated _ | Traced _ ->
+    | Array _ | Shards _ | Handle _ | Traced _ ->
         invalid_arg "Eval: a formula's operand is a formula"
   in
   let reads (Node n) () =
@@ -332,7 +332,7 @@ let replay (type v s d) i (x : (v, s, d) t) : (v, s, d) t =
         match y with
         | Deferred { node = Node m as node; _ } when not (is_formula i m.id) ->
             Some (node, ())
-        | Deferred _ | Array _ | Shards _ | Donated _ | Traced _ -> None)
+        | Deferred _ | Array _ | Shards _ | Handle _ | Traced _ -> None)
       xs
   in
   let rebuilt result (Node n) () =
@@ -342,7 +342,7 @@ let replay (type v s d) i (x : (v, s, d) t) : (v, s, d) t =
   | Deferred { form; node; k } ->
       let same () () = true in
       Prim.expect form.dtype (Prim.evaluate ~same ~reads rebuilt node ()).(k)
-  | Array _ | Shards _ | Donated _ | Traced _ -> x
+  | Array _ | Shards _ | Handle _ | Traced _ -> x
 
 (* Whether [i]'s rule receives [x] changed: for an [Extent], a formula its
    rule did not return replayed. *)
@@ -352,17 +352,17 @@ let changes (type v s d) i (x : (v, s, d) t) =
       match i.reach with
       | Extent -> not (is_formula i n.id)
       | Values | Adopting _ -> false)
-  | Array _ | Shards _ | Donated _ | Traced _ -> false
+  | Array _ | Shards _ | Handle _ | Traced _ -> false
 
 let received (type v s d) i (x : (v, s, d) t) : (v, s, d) t =
   match x with
   | Deferred _ when changes i x -> replay i x
-  | Deferred _ | Array _ | Shards _ | Donated _ | Traced _ -> x
+  | Deferred _ | Array _ | Shards _ | Handle _ | Traced _ -> x
 
 let is_traced (type v s d) (x : (v, s, d) t) =
   match x with
   | Traced _ -> true
-  | Array _ | Shards _ | Donated _ | Deferred _ -> false
+  | Array _ | Shards _ | Handle _ | Deferred _ -> false
 
 (* Whether [i] receives [o]'s values as its own: [o] is [i] or what [i]
    adopts. *)
@@ -373,7 +373,7 @@ let rec adopts i o =
 let owns i (type v s d) (x : (v, s, d) t) =
   match x with
   | Traced { owner; _ } -> adopts i owner
-  | Array _ | Shards _ | Donated _ | Deferred _ -> false
+  | Array _ | Shards _ | Handle _ | Deferred _ -> false
 
 let refuse ~by o =
   if Atomic.get o.live then
@@ -425,7 +425,7 @@ let deliver i ~by op =
         when (not (adopts i owner)) && not (List.memq owner !checked) ->
           if not (around owner) then refuse ~by owner;
           checked := List.cons owner !checked
-      | Traced _ | Array _ | Shards _ | Donated _ | Deferred _ -> ())
+      | Traced _ | Array _ | Shards _ | Handle _ | Deferred _ -> ())
     op;
   Prim.iteri (fun _ x -> Prim.alive ~by x) op;
   let op =
@@ -458,7 +458,7 @@ let absent i ~by op =
     (fun _ x ->
       match x with
       | Traced { owner; _ } when adopts i owner -> refuse ~by owner
-      | Traced _ | Array _ | Shards _ | Donated _ | Deferred _ -> ())
+      | Traced _ | Array _ | Shards _ | Handle _ | Deferred _ -> ())
     op;
   invalid_arg "Eval.absent: an operation its interpretation does not reach"
 
@@ -544,12 +544,12 @@ let read_through (type v s d) (x : (v, s, d) t) : (v, s, d) t =
 let payload (type v s d) i (x : (v, s, d) t) =
   match x with
   | Traced { owner; payload; _ } when owner == i -> Some payload
-  | Traced _ | Array _ | Shards _ | Donated _ | Deferred _ -> None
+  | Traced _ | Array _ | Shards _ | Handle _ | Deferred _ -> None
 
 let owner (type v s d) (x : (v, s, d) t) =
   match x with
   | Traced { owner; _ } -> Some owner
-  | Array _ | Shards _ | Donated _ | Deferred _ -> None
+  | Array _ | Shards _ | Handle _ | Deferred _ -> None
 
 (* An operation no handler answered computes, unless an operand is traced. *)
 let unreached ~by op =
@@ -557,7 +557,7 @@ let unreached ~by op =
     (fun _ x ->
       match x with
       | Traced { owner; _ } -> refuse ~by owner
-      | Array _ | Shards _ | Donated _ | Deferred _ -> ())
+      | Array _ | Shards _ | Handle _ | Deferred _ -> ())
     op;
   run ~by op
 
@@ -623,7 +623,7 @@ let fast3 ~by k c x y =
 let apply1 ~by k dt x =
   match x with
   | Traced _ -> eval1 ~by k dt x
-  | Array _ | Shards _ | Donated _ | Deferred _ ->
+  | Array _ | Shards _ | Handle _ | Deferred _ ->
       if quiet () then fast1 ~by k dt x else eval1 ~by k dt x
 
 let apply2 ~by k dt x y =
@@ -665,5 +665,5 @@ let place ~by p x =
       (* A second value over the memory shares it. *)
       Rig.Claim.share (Nx_array.buffer r.a);
       Array { at = p; a = r.a; dead = Live }
-  | Array _ | Shards _ | Donated _ | Deferred _ | Traced _ ->
+  | Array _ | Shards _ | Handle _ | Deferred _ | Traced _ ->
       eval ~by (Place (p, x))
