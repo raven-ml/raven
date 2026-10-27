@@ -1,6 +1,6 @@
-; nx_kinds.h's kinds by name, compiled with every dev/nx2 C library's flags,
-; and their loops as nx.cpu compiles its rows, vectoriser flags and, on
-; x86-64, x86-64-v3's instructions included.
+; nx_kinds.h's kinds by name, and their loops as nx.cpu compiles its rows,
+; both with the vectoriser flags and, on x86-64, x86-64-v3's instructions,
+; whose fma the header requires.
 
 (library
  (name nx_kinds_support)
@@ -18,7 +18,8 @@
    nx_kinds_strata.h)
   (flags
    :standard
-   (:include ../../../lib/cpu/vector_flags.sexp))
+   (:include ../../../lib/cpu/vector_flags.sexp)
+   (:include ../../../lib/cpu/v3_flags.sexp))
   (names nx_kinds_support_stubs))
  (foreign_stubs
   (language c)

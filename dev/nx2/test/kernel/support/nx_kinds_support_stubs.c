@@ -81,21 +81,6 @@ value nx_kinds_support_f64(value name, value args) {
   CAMLreturn(caml_copy_double(y));
 }
 
-/* nx_kinds.h's nx_fmaf, of and to binary32 bits, and nx_fmad, as this unit
-   compiles them: with dev/nx2's vector flags alone, so on x86-64 without
-   the fma instruction. */
-value nx_kinds_support_fmaf(value a, value b, value c) {
-  float r = nx_fmaf(nx_bits_float((uint32_t)Long_val(a)),
-                    nx_bits_float((uint32_t)Long_val(b)),
-                    nx_bits_float((uint32_t)Long_val(c)));
-  return Val_long(nx_float_bits(r));
-}
-
-value nx_kinds_support_fmad(value a, value b, value c) {
-  return caml_copy_double(
-      nx_fmad(Double_val(a), Double_val(b), Double_val(c)));
-}
-
 /* The integer kind [name] at [ty]: the result's int64, sign-extended from
    i32 and zero-extended from u32. */
 value nx_kinds_support_int(value ty, value name, value args) {

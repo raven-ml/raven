@@ -36,15 +36,6 @@ val c64 : string -> int array -> int array
 val c128 : string -> float array -> float array
 (** [c128 kind args] is {!c64} at c128, parts as floats. *)
 
-val fmaf : int -> int -> int -> int
-(** [fmaf a b c] is [nx_kinds.h]'s [nx_fmaf] of the operands whose binary32
-    bits are [a], [b] and [c], as binary32 bits, compiled with dev/nx2's
-    vector flags alone: on x86-64 without the fma instruction nx.cpu's
-    loops have. *)
-
-val fmad : float -> float -> float -> float
-(** [fmad a b c] is {!fmaf}'s [nx_fmad] at f64. *)
-
 val run :
   string ->
   (float, 's, Bigarray.c_layout) Bigarray.Array1.t ->

@@ -513,38 +513,17 @@ let tiny32 =
     (fun (a, b, c) -> (bits32 a, bits32 b, bits32 c))
     (tiny ~emin:(-126) ~p:24 (fun x -> f (bits32 x)))
 
-(* fma rounds once through the kinds' loops, compiled as nx.cpu's rows,
-   which use the fused instruction on x86-64 and arm64, and through
-   nx_kinds.h's nx_fmaf and nx_fmad compiled without nx.cpu's x86-64-v3
-   flags. On x86-64 those call the C library's fma where OCaml's configure
-   found it to round once (HAS_WORKING_FMA, as on glibc), and run the
-   header's emulation where it did not (mingw-w64); on arm64 they are the
-   fused instruction again. *)
-let fmas32 =
-  [
-    ("the kinds' loop", fun a b c -> K.f32 "fma" [| a; b; c |]);
-    ("nx_fmaf without -mfma", K.fmaf);
-  ]
-
-let fmas64 =
-  [
-    ("the kinds' loop", fun a b c -> K.f64 "fma" [| a; b; c |]);
-    ("nx_fmad without -mfma", K.fmad);
-  ]
-
+(* fma rounds once through the kinds' loops, compiled as nx.cpu's rows. *)
 let test_fma32 =
-  List.map
-    (fun (path, fma) ->
-      prop (strf "fma f32 rounds once through %s" path) ~count:20000
-        Gen.(frequency [ (1, triple gen32 gen32 gen32); (1, tiny32) ])
-        (fun (a, b, c) ->
-          let r = fma32 a b c in
-          cover32 "addend" c;
-          cover "subnormal result"
-            (r land 0x7F80_0000 = 0 && r land 0x7F_FFFF <> 0);
-          cover "signed zero result" (r = 0x8000_0000);
-          equal value32 r (fma a b c)))
-    fmas32
+  prop "fma f32 rounds once" ~count:20000
+    Gen.(frequency [ (1, triple gen32 gen32 gen32); (1, tiny32) ])
+    (fun (a, b, c) ->
+      let r = fma32 a b c in
+      cover32 "addend" c;
+      cover "subnormal result"
+        (r land 0x7F80_0000 = 0 && r land 0x7F_FFFF <> 0);
+      cover "signed zero result" (r = 0x8000_0000);
+      equal value32 r (K.f32 "fma" [| a; b; c |]))
 
 let test_where32 =
   prop "where f32"
@@ -649,23 +628,19 @@ let test_f64_exact =
           cover "NaN" (Float.is_nan a || Float.is_nan b);
           equal value64 (op a b) (K.f64 kind [| a; b |])))
     binary
-  @ List.map
-      (fun (path, fma) ->
-        prop (strf "fma f64 rounds once through %s" path) ~count:20000
-          Gen.(
-            frequency
-              [
-                (1, triple gen64 gen64 gen64);
-                (1, tiny ~emin:(-1022) ~p:53 Fun.id);
-              ])
-          (fun (a, b, c) ->
-            let r = Float.fma a b c in
-            cover "subnormal result"
-              (r <> 0. && Float.abs r < Float.min_float);
-            cover "signed zero result" (r = 0. && Float.sign_bit r);
-            equal value64 r (fma a b c)))
-      fmas64
   @ [
+      prop "fma f64 rounds once" ~count:20000
+        Gen.(
+          frequency
+            [
+              (1, triple gen64 gen64 gen64);
+              (1, tiny ~emin:(-1022) ~p:53 Fun.id);
+            ])
+        (fun (a, b, c) ->
+          let r = Float.fma a b c in
+          cover "subnormal result" (r <> 0. && Float.abs r < Float.min_float);
+          cover "signed zero result" (r = 0. && Float.sign_bit r);
+          equal value64 r (K.f64 "fma" [| a; b; c |]));
       prop "mod f64" ~count:20000
         Gen.(pair gen64 gen64)
         (fun (a, b) -> equal value64 (Float.rem a b) (K.f64 "mod" [| a; b |]));
@@ -1624,7 +1599,7 @@ let () =
              ]
            @ test_narrow_binary @ test_binary_transcendentals);
          group ~timeout:10. "f32"
-           (test_binary32 @ test_fma32 @ [ test_where32 ] @ test_unary32);
+           (test_binary32 @ [ test_fma32; test_where32 ] @ test_unary32);
          group ~timeout:10. "f64" test_f64_exact;
          group ~timeout:10. "integers" test_ints;
          group ~timeout:10. "threefry" [ test_threefry ];

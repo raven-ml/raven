@@ -10,8 +10,6 @@ external int : string -> string -> int64 array -> int64 = "nx_kinds_support_int"
 external threefry : int64 -> int64 -> int64 = "nx_kinds_support_threefry"
 external c64 : string -> int array -> int array = "nx_kinds_support_c64"
 external c128 : string -> float array -> float array = "nx_kinds_support_c128"
-external fmaf : int -> int -> int -> int = "nx_kinds_support_fmaf"
-external fmad : float -> float -> float -> float = "nx_kinds_support_fmad"
 
 external run :
   string ->
