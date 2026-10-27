@@ -2178,7 +2178,124 @@ let domains =
         rule_commands;
     ]
 
+(* Twins: item of a value an interpretation made with a twin reads the twin
+   where the interpretation is around the call, with no extent between
+   them; every other read, and item elsewhere, raises as for a traced
+   value. *)
+
+let twin i x = Nx.Prim.twinned i x (Tag 0)
+
+let refused_read ~by name =
+  invalid ~sub:(by ^ ": the value is traced by " ^ name)
+
+let specials =
+  Gen.with_pp
+    (fun ppf a ->
+      Format.fprintf ppf "[%s]"
+        (String.concat "; " (Array.to_list (Array.map Float.to_string a))))
+    (Gen.array ~size:(Gen.int_range 1 5)
+       (Gen.of_list [ -0.; 0.; Float.nan; Float.infinity; -1.5; 2.25 ]))
+
+let item_bits i x = Int64.bits_of_float (Nx.item i x)
+
+let twins =
+  group "twins"
+    [
+      prop "item of a twinned value reads its twin" specials (fun xs ->
+          cover "-0" (Array.exists (fun v -> 1. /. v = Float.neg_infinity) xs);
+          cover "NaN" (Array.exists Float.is_nan xs);
+          let x = vec f64 xs in
+          logged ~name:"test.twin" Values (ref []) (fun i ->
+              let t = twin i x in
+              Array.iteri
+                (fun k _ ->
+                  equal ~msg:"an element" int64 (item_bits [ k ] x)
+                    (item_bits [ k ] t))
+                xs;
+              let s = twin i (Nx.reshape [||] (Nx.slice [ I 0 ] x)) in
+              equal ~msg:"a 0-d value" int64 (item_bits [ 0 ] x)
+                (item_bits [] s)));
+      test "every other read of a twinned value raises" (fun () ->
+          logged ~name:"test.twin" Values (ref []) (fun i ->
+              let t = twin i (x3 ()) in
+              refused_read ~by:"Nx.to_array" "test.twin" (fun () ->
+                  Nx.to_array t);
+              refused_read ~by:"Nx.to_bigarray" "test.twin" (fun () ->
+                  Nx.to_bigarray Bigarray.float32 t);
+              refused_read ~by:"Nx.sync" "test.twin" (fun () -> Nx.sync t);
+              refused_read ~by:"Nx.Repr.read" "test.twin" (fun () ->
+                  Nx.Repr.read t A.to_array);
+              invalid ~sub:"Nx.Repr.array: a value traced by test.twin"
+                (fun () -> Nx.Repr.array t)));
+      test "item after its interpretation returned raises" (fun () ->
+          let t =
+            logged ~name:"test.twin" Values (ref []) (fun i -> twin i (x3 ()))
+          in
+          refused_read ~by:"Nx.item" "test.twin" (fun () -> Nx.item [ 0 ] t));
+      test "item in the interpretation's own rule raises" (fun () ->
+          let reads = ref "" in
+          let rule i ~by op =
+            (let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
+             let (Nx.Prim.Any x) = List.hd xs in
+             match Nx.item [ 0 ] x with
+             | _ -> reads := "read"
+             | exception Invalid_argument m -> reads := m);
+            tagged i ~by op
+          in
+          Nx.Prim.interpret ~name:"test.twin" Values rule (fun i ->
+              ignore (Nx.add (twin i (x3 ())) (x3 ())));
+          equal string "Nx.item: the value is traced by test.twin" !reads);
+      test "item on another domain raises" (fun () ->
+          logged ~name:"test.twin" Values (ref []) (fun i ->
+              let t = twin i (x3 ()) in
+              let read () =
+                match Nx.item [ 0 ] t with
+                | _ -> "read"
+                | exception Invalid_argument m -> m
+              in
+              equal string "Nx.item: the value is traced by test.twin"
+                (Domain.join (Domain.spawn read))));
+      test "item inside an extent the owner is around raises" (fun () ->
+          logged ~name:"test.twin" Values (ref []) (fun i ->
+              let t = twin i (x3 ()) in
+              logged ~name:"test.stage" Extent (ref []) (fun _ ->
+                  refused_read ~by:"Nx.item" "test.twin" (fun () ->
+                      Nx.item [ 0 ] t));
+              logged ~name:"test.inner" Values (ref []) (fun _ ->
+                  equal ~msg:"a values interpretation between" float_exact 1.
+                    (Nx.item [ 0 ] t))));
+      test "a twin of a twin reads through both while both are around"
+        (fun () ->
+          let x = x3 () in
+          logged ~name:"test.outer" Values (ref []) (fun o ->
+              let outer = twin o x in
+              let inner =
+                logged ~name:"test.inner" Values (ref []) (fun i ->
+                    let inner = twin i outer in
+                    equal ~msg:"inside both" float_exact 2.
+                      (Nx.item [ 1 ] inner);
+                    inner)
+              in
+              refused_read ~by:"Nx.item" "test.inner" (fun () ->
+                  Nx.item [ 1 ] inner);
+              equal ~msg:"the outer twin" float_exact 2.
+                (Nx.item [ 1 ] outer)));
+      test "a value without a twin raises" (fun () ->
+          logged ~name:"test.twin" Values (ref []) (fun i ->
+              refused_read ~by:"Nx.item" "test.twin" (fun () ->
+                  Nx.item [ 0 ] (tag i (x3 ())))));
+      test "an operation on a twinned value reaches its interpretation"
+        (fun () ->
+          let log = ref [] in
+          logged ~name:"test.twin" Values log (fun i ->
+              let t = twin i (x3 ()) in
+              match Nx.Prim.payload i (Nx.add t t) with
+              | Some (Tag k) -> equal ~msg:"its payload" int 0 k
+              | _ -> fail "an operation on a twinned value went elsewhere");
+          equal names [ "Map" ] (received log));
+    ]
+
 let () =
   exit
     (run "nx interp"
-       [ rule; laws; fibers; nesting; memory; interpreters; domains ])
+       [ rule; laws; fibers; nesting; memory; interpreters; domains; twins ])

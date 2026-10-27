@@ -372,14 +372,19 @@ val of_bigarray :
     is not an operation: no interpretation receives it.
 
     Each raises [Invalid_argument] naming itself for a dead value, and for a
-    traced one: [Nx.item: the value is traced by Rune.jit]. *)
+    traced one: [Nx.item: the value is traced by Rune.jit], but that
+    {!item} may read the twin of a traced value made with one, as {!item}
+    says. *)
 
 val to_array : ('v, 's, 'd) t -> 'v array
 (** [to_array x] is [x]'s elements in C order. *)
 
 val item : int list -> ('v, 's, 'd) t -> 'v
 (** [item i x] is [x]'s element at [i], one position per axis, a negative one
-    counting from the end; [item [] x] reads a 0-d value.
+    counting from the end; [item [] x] reads a 0-d value. A traced [x] with a
+    twin ({!Prim.twinned}) reads as its twin where [x]'s interpretation is
+    around the call and no [Extent] interpretation lies between them, and
+    raises as any traced value elsewhere.
 
     Raises [Invalid_argument] if [i] does not have one position per axis of [x]
     or a position is outside its axis. *)
@@ -4865,6 +4870,18 @@ module Prim : sig
   (** [traced i f p] is a value of form [f] that [i] owns, keeping [p]. Its
       form, payload and owner answer after [i] returns; any operation on it then
       raises. *)
+
+  val twinned :
+    interpretation -> ('v, 's, 'd) nx -> ('v, 's, 'd) payload -> ('v, 's, 'd) nx
+  (** [twinned i c p] is {!traced}[ i (form c) p] with the {e twin} [c]:
+      {!item} of it reads [c] where [i] is around the call and no [Extent]
+      interpretation lies between them, so that code [i] runs may branch on
+      a value it computes, as an eager derivative reads its primal. Elsewhere
+      (after [i] returned, in [i]'s rule, outside its extent, inside an
+      [Extent] interpretation [i] is around, which stages the values it
+      reaches) [item] raises as for any traced value. Every other read
+      raises: an array read out would hold the twin's elements without what
+      [i] tracks. Operations on it go to [i] as on any value [i] owns. *)
 
   val payload : interpretation -> ('v, 's, 'd) nx -> ('v, 's, 'd) payload option
   (** [payload i x] is [Some p] iff [i] owns [x], [p] what it keeps: [None]

@@ -464,7 +464,7 @@ let item i x =
         let v = Exec.run ~by (Value.Move (Slice (Iarray.of_list one), live)) in
         Nx_array.get (Exec.on_host ~by v) (Iarray.init r (fun _ -> 0))
   in
-  get (readable ~by x)
+  get (readable ~by (Eval.read_through x))
 
 let broadcast ~by s x =
   if Prim.has_shape x s then x
@@ -6433,6 +6433,7 @@ module Prim = struct
 
   let interpret = Eval.interpret
   let traced = Eval.traced
+  let twinned = Eval.twinned
   let payload = Eval.payload
   let owner = Eval.owner
   let quiet = Eval.quiet

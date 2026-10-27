@@ -70,6 +70,9 @@ type ('v, 's, 'd) t =
       form : ('v, 's, 'd) form;
       owner : interpretation;
       payload : ('v, 's, 'd) payload;
+      twin : ('v, 's, 'd) t option;
+          (** A value of [form] that a read reads while [owner] is around
+              it. *)
     }  (** An interpretation's stand-in: its form, and what [owner] keeps. *)
 
 and ('v, 's, 'd) form = {

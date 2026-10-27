@@ -257,6 +257,7 @@ let refuse ~by o =
 type _ Effect.t +=
   | Receive : { by : string; mutable op : 'r prim option } -> 'r Effect.t
   | Around : interpretation -> unit Effect.t
+  | Readable : interpretation -> bool Effect.t
 
 (* Whether [o]'s handler is around the caller. *)
 let around o =
@@ -335,6 +336,16 @@ let handler i =
               (fun (k : (a, _) Effect.Deep.continuation) ->
                 if present i here then Effect.Deep.continue k ()
                 else Effect.Deep.discontinue k (Effect.Unhandled e))
+        | Readable j when j == i ->
+            Some
+              (fun (k : (a, _) Effect.Deep.continuation) ->
+                Effect.Deep.continue k (present i here))
+        | Readable _ when i.reach = Extent ->
+            (* An extent inside the owner stages what it reaches: a read
+               there would hide its value from it. *)
+            Some
+              (fun (k : (a, _) Effect.Deep.continuation) ->
+                Effect.Deep.continue k false)
         | _ -> None);
   }
 
@@ -372,7 +383,26 @@ let interpret ~name reach
           Atomic.decr extents)
         run
 
-let traced i form payload = Traced { form; owner = i; payload }
+let traced i form payload = Traced { form; owner = i; payload; twin = None }
+
+let twinned i c payload =
+  Traced { form = Prim.form c; owner = i; payload; twin = Some c }
+
+(* Whether [o]'s handler is around the caller with no [Extent] handler
+   between them. *)
+let readable o =
+  Atomic.get o.live
+  &&
+  match Effect.perform (Readable o) with
+  | b -> b
+  | exception Effect.Unhandled (Readable _) -> false
+
+let read_through (type v s d) (x : (v, s, d) t) : (v, s, d) t =
+  let rec go : (v, s, d) t -> (v, s, d) t = function
+    | Traced { owner; twin = Some c; _ } when readable owner -> go c
+    | x -> x
+  in
+  go x
 
 let payload (type v s d) i (x : (v, s, d) t) =
   match x with

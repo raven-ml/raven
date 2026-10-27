@@ -55,6 +55,17 @@ val traced :
   interpretation -> ('v, 's, 'd) form -> ('v, 's, 'd) payload -> ('v, 's, 'd) t
 (** [traced i f p] is a value of form [f] that [i] owns, keeping [p]. *)
 
+val twinned :
+  interpretation -> ('v, 's, 'd) t -> ('v, 's, 'd) payload -> ('v, 's, 'd) t
+(** [twinned i c p] is a value of [c]'s form that [i] owns, keeping [p], whose
+    twin is [c]. *)
+
+val read_through : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [read_through x] is the twin of a traced [x] whose owner is live and
+    around the caller with no [Extent] interpretation between them, read
+    through in turn, and [x] otherwise. It asks each owner once
+    ({!interpret}'s handler). *)
+
 val payload : interpretation -> ('v, 's, 'd) t -> ('v, 's, 'd) payload option
 (** [payload i x] is [Some p] iff [i] owns [x], [p] what it keeps. *)
 
