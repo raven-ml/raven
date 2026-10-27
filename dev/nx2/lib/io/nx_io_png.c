@@ -22,8 +22,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define PNG_IDAT_CHUNK (1u << 20)
-
 typedef enum {
   PNG_OK = 0,
   PNG_TRUNCATED,
@@ -218,11 +216,8 @@ static png_status parse_png(const uint8_t *src, size_t len, png_info *info) {
       seen_end = 1;
       info->end = off + 12;
       break;
-    } else {
-      if (seen_data)
-        data_ended = 1;
-      if ((type[0] & 0x20u) == 0)
-        return PNG_UNSUPPORTED;
+    } else if ((type[0] & 0x20u) == 0) {
+      return PNG_UNSUPPORTED;
     }
     if (seen_data && !type_is(type, "IDAT"))
       data_ended = 1;
@@ -256,41 +251,57 @@ static png_status copy_idat(const uint8_t *src, size_t len, uint8_t *dst,
   return at == dst_len ? PNG_OK : PNG_SIZE;
 }
 
+/* A pass of an image: the column and row of its first pixel, and the steps
+   between its pixels. */
+typedef struct {
+  uint8_t x;
+  uint8_t y;
+  uint8_t dx;
+  uint8_t dy;
+} png_pass;
+
+/* The seven passes of Adam7 interlacing (PNG-3, 8.2). */
+static const png_pass adam7[7] = {{0, 0, 8, 8}, {4, 0, 8, 8}, {0, 4, 4, 8},
+                                  {2, 0, 4, 4}, {0, 2, 2, 4}, {1, 0, 2, 2},
+                                  {0, 1, 1, 2}};
+
+/* The one pass of an image without interlacing. */
+static const png_pass whole = {0, 0, 1, 1};
+
+static const png_pass *pass_of(const png_info *info, unsigned pass) {
+  return info->interlace ? &adam7[pass] : &whole;
+}
+
 static size_t pass_extent(size_t size, unsigned start, unsigned step) {
   if (size <= start)
     return 0;
   return (size - start + step - 1) / step;
 }
 
-static png_status scanline_size(const png_info *info, size_t *total,
-                                size_t *max_row) {
-  static const uint8_t start_x[7] = {0, 4, 0, 2, 0, 1, 0};
-  static const uint8_t start_y[7] = {0, 0, 4, 0, 2, 0, 1};
-  static const uint8_t step_x[7] = {8, 8, 4, 4, 2, 2, 1};
-  static const uint8_t step_y[7] = {8, 8, 8, 4, 4, 2, 2};
+static void pass_geometry(const png_info *info, unsigned pass, size_t *width,
+                          size_t *height) {
+  const png_pass *p = pass_of(info, pass);
+  *width = pass_extent(info->width, p->x, p->dx);
+  *height = pass_extent(info->height, p->y, p->dy);
+}
+
+static png_status scanline_size(const png_info *info, size_t *total) {
   unsigned passes = info->interlace ? 7 : 1;
   size_t sum = 0;
-  size_t maximum = 0;
   for (unsigned pass = 0; pass < passes; pass++) {
-    size_t width = info->interlace
-                       ? pass_extent(info->width, start_x[pass], step_x[pass])
-                       : info->width;
-    size_t height = info->interlace
-                        ? pass_extent(info->height, start_y[pass], step_y[pass])
-                        : info->height;
+    size_t width;
+    size_t height;
+    pass_geometry(info, pass, &width, &height);
     if (width == 0 || height == 0)
       continue;
     if (width > (SIZE_MAX - 7) / (info->channels * info->depth))
       return PNG_SIZE;
     size_t row = (width * info->channels * info->depth + 7) / 8;
-    if (row > maximum)
-      maximum = row;
     if (row == SIZE_MAX || height > (SIZE_MAX - sum) / (row + 1))
       return PNG_SIZE;
     sum += height * (row + 1);
   }
   *total = sum;
-  *max_row = maximum;
   return PNG_OK;
 }
 
@@ -354,21 +365,6 @@ static uint8_t scale_sample(unsigned value, unsigned depth) {
                    ((1u << depth) - 1u));
 }
 
-static void pass_geometry(const png_info *info, unsigned pass, size_t *width,
-                          size_t *height) {
-  static const uint8_t start_x[7] = {0, 4, 0, 2, 0, 1, 0};
-  static const uint8_t start_y[7] = {0, 0, 4, 0, 2, 0, 1};
-  static const uint8_t step_x[7] = {8, 8, 4, 4, 2, 2, 1};
-  static const uint8_t step_y[7] = {8, 8, 8, 4, 4, 2, 2};
-  if (!info->interlace) {
-    *width = info->width;
-    *height = info->height;
-  } else {
-    *width = pass_extent(info->width, start_x[pass], step_x[pass]);
-    *height = pass_extent(info->height, start_y[pass], step_y[pass]);
-  }
-}
-
 /* The channels of a decoded pixel: the file's, a palette's three colours, and
    an alpha channel where a tRNS chunk gives transparency. */
 static unsigned output_channels(const png_info *info) {
@@ -382,18 +378,11 @@ static unsigned output_channels(const png_info *info) {
 static png_status write_row(const png_info *info, unsigned pass, size_t row,
                             size_t pass_width, const uint8_t *line,
                             uint8_t *dst) {
-  static const uint8_t start_x[7] = {0, 4, 0, 2, 0, 1, 0};
-  static const uint8_t start_y[7] = {0, 0, 4, 0, 2, 0, 1};
-  static const uint8_t step_x[7] = {8, 8, 4, 4, 2, 2, 1};
-  static const uint8_t step_y[7] = {8, 8, 8, 4, 4, 2, 2};
-  unsigned sx = info->interlace ? start_x[pass] : 0;
-  unsigned sy = info->interlace ? start_y[pass] : 0;
-  unsigned dx = info->interlace ? step_x[pass] : 1;
-  unsigned dy = info->interlace ? step_y[pass] : 1;
+  const png_pass *p = pass_of(info, pass);
   unsigned out = output_channels(info);
-  size_t y = sy + row * dy;
+  size_t y = p->y + row * p->dy;
   for (size_t x_pass = 0; x_pass < pass_width; x_pass++) {
-    size_t x = sx + x_pass * dx;
+    size_t x = p->x + x_pass * p->dx;
     uint8_t *pixel = dst + (y * info->width + x) * out;
     if (info->color == 3) {
       unsigned index = sample(line, x_pass, info->depth);
@@ -428,15 +417,12 @@ static png_status decode_png(const png_info *info, uint8_t *filtered,
       info->width * info->height * out != dst_len)
     return PNG_SIZE;
   size_t total;
-  size_t max_row;
-  png_status status = scanline_size(info, &total, &max_row);
+  png_status status = scanline_size(info, &total);
   if (status != PNG_OK)
     return status;
   if (total != filtered_len)
     return PNG_SIZE;
   unsigned bpp = (info->channels * info->depth + 7) / 8;
-  if (bpp == 0)
-    bpp = 1;
   unsigned passes = info->interlace ? 7 : 1;
   uint8_t *scanline = filtered;
   for (unsigned pass = 0; pass < passes; pass++) {
@@ -532,12 +518,11 @@ static png_status filter_image(const uint8_t *src, size_t width, size_t height,
   return PNG_OK;
 }
 
-static void checked_bytes(value vbuf, const uint8_t **data, size_t *len) {
-  struct caml_ba_array *array = Caml_ba_array_val(vbuf);
-  if ((array->flags & CAML_BA_KIND_MASK) != CAML_BA_UINT8)
-    caml_invalid_argument("Nx_io PNG: expected a uint8 Bigarray");
-  *data = Caml_ba_data_val(vbuf);
-  *len = caml_ba_byte_size(array);
+/* The bytes of [v], a one-dimensional uint8 bigarray, as its external's type
+   states. */
+static void bytes_of(value v, const uint8_t **data, size_t *len) {
+  *data = Caml_ba_data_val(v);
+  *len = Caml_ba_array_val(v)->dim[0];
 }
 
 CAMLprim value caml_nx_io_png_probe(value vsrc) {
@@ -545,7 +530,7 @@ CAMLprim value caml_nx_io_png_probe(value vsrc) {
   CAMLlocal1(vresult);
   const uint8_t *src;
   size_t src_len;
-  checked_bytes(vsrc, &src, &src_len);
+  bytes_of(vsrc, &src, &src_len);
   png_info info;
   caml_release_runtime_system();
   png_status status = parse_png(src, src_len, &info);
@@ -568,13 +553,12 @@ CAMLprim value caml_nx_io_png_idat(value vsrc) {
   CAMLlocal2(vidat, vresult);
   const uint8_t *src;
   size_t src_len;
-  checked_bytes(vsrc, &src, &src_len);
+  bytes_of(vsrc, &src, &src_len);
   png_info info;
   size_t filtered;
-  size_t max_row;
   png_status status = parse_png(src, src_len, &info);
   if (status == PNG_OK)
-    status = scanline_size(&info, &filtered, &max_row);
+    status = scanline_size(&info, &filtered);
   if (status == PNG_OK && filtered > (size_t)Max_long)
     status = PNG_SIZE;
   if (status != PNG_OK)
@@ -595,13 +579,13 @@ CAMLprim value caml_nx_io_png_decode(value vsrc, value vfiltered, value vdst) {
   CAMLparam3(vsrc, vfiltered, vdst);
   const uint8_t *src;
   size_t src_len;
-  checked_bytes(vsrc, &src, &src_len);
+  bytes_of(vsrc, &src, &src_len);
   const uint8_t *filtered;
   size_t filtered_len;
-  checked_bytes(vfiltered, &filtered, &filtered_len);
+  bytes_of(vfiltered, &filtered, &filtered_len);
   const uint8_t *dst;
   size_t dst_len;
-  checked_bytes(vdst, &dst, &dst_len);
+  bytes_of(vdst, &dst, &dst_len);
   png_info info;
   caml_release_runtime_system();
   png_status status = parse_png(src, src_len, &info);
@@ -621,7 +605,7 @@ CAMLprim value caml_nx_io_png_filter(value vsrc, value vwidth, value vheight,
   CAMLlocal1(vresult);
   const uint8_t *src;
   size_t src_len;
-  checked_bytes(vsrc, &src, &src_len);
+  bytes_of(vsrc, &src, &src_len);
   size_t width = (size_t)Long_val(vwidth);
   size_t height = (size_t)Long_val(vheight);
   unsigned channels = (unsigned)Long_val(vchannels);
