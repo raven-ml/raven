@@ -5937,6 +5937,17 @@ type ('v, 's, 'd) tensor = ('v, 's, 'd) t
 module Ptree = struct
   include Ptree
 
+  (* A leaf's path is formatted only where the leaf is dead. *)
+  let donate s x =
+    let at p a =
+      (match Prim.death a with
+      | Value.Died _ ->
+          Prim.alive ~by:(Format.asprintf "Nx.Ptree.donate: %a" pp_path p) a
+      | Value.Live | Value.Offered _ -> ());
+      donate a
+    in
+    map s at x
+
   (* [x]'s arrays as operands, in walk order. *)
   let operands s x =
     List.rev (fold s (fun _ a acc -> Value.Any a :: acc) x [])

@@ -784,6 +784,42 @@ let signatures =
           | _ -> fail "arguments");
     ]
 
+(* Donation *)
+
+let donation =
+  group "donation"
+    [
+      test "donate gives up every array of the structure" (fun () ->
+          let x = { w = f32 [| 1.; 2. |]; b = Some (f32 [| 3. |]) } in
+          let d = P.donate linear x in
+          equal ~msg:"its visits" (list string) (words linear x)
+            (words linear d);
+          equal ~msg:"every array donated" (list bool) [ true; true ]
+            (List.rev
+               (P.fold linear (fun _ a acc -> Nx.Prim.donated a :: acc) d []));
+          ignore (Nx.add d.w d.w);
+          invalid ~by:"Nx.copy" (fun () -> Nx.copy x.w);
+          equal ~msg:"another array lives" (array float_exact) [| 3. |]
+            (Nx.to_array (Option.get x.b)));
+      test "a dead array raises naming its path" (fun () ->
+          let x = { w = f32 [| 1.; 2. |]; b = None } in
+          ignore (Nx.copy (Nx.donate x.w));
+          raises
+            (Invalid_argument
+               "Nx.Ptree.donate: w: float32 [2] was donated to Nx.copy")
+            (fun () -> P.donate linear x));
+      test "a dead array at the root raises naming the root" (fun () ->
+          let x = f32 [| 1. |] in
+          ignore (Nx.copy (Nx.donate x));
+          raises
+            (Invalid_argument
+               "Nx.Ptree.donate: the root: float32 [1] was donated to Nx.copy")
+            (fun () -> P.donate P.tensor x));
+      test "a structure of no array is itself" (fun () ->
+          equal unit () (P.donate P.unit ()));
+    ]
+
 let () =
   exit
-    (run "nx ptree" [ walks; laws; messages; payloads; arithmetic; signatures ])
+    (run "nx ptree"
+       [ walks; laws; messages; payloads; arithmetic; signatures; donation ])

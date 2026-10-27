@@ -3699,6 +3699,15 @@ module Ptree : sig
     's
   (** [map s f x] is [x] with each array [a] at path [p] replaced by [f p a]. *)
 
+  val donate : ('s, 'd) t -> 's -> 's
+  (** [donate s x] is [x] with each array given up by its owner: {!Nx.donate}
+      of each, in walk order. A consumer of the arrays, an operation or a
+      compiled call, may then write its results into their memory.
+
+      Raises [Invalid_argument] naming [Nx.Ptree.donate] and the path of the
+      first dead array, as
+      [Nx.Ptree.donate: w: float32 [2] was donated to Nx.copy]. *)
+
   val map2 :
     ('s, 'd) t ->
     ('v 'r.
