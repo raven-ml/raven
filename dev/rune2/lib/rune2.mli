@@ -12,20 +12,20 @@
 
     {b Functions of a construct are traced.} The functions that {!scan},
     {!iterate} and {!jit} receive are {e traced} at the call: their OCaml code
-    runs over stand-ins of their arguments' arrays, values with a dtype, a
-    shape and a placement but no elements, and what it computes from them is
-    recorded as a program, which the construct then evaluates. A loop's step
-    is traced once, and again where it places a carry array it received of
-    every set ({!scan}). So a step's code runs once or a few times whatever the
-    number of steps, as do its side effects, and inside it {!Nx.item} of a
-    stand-in, or of a value computed from one, raises
+    runs over stand-ins of their arguments' arrays, values with a dtype, a shape
+    and a placement but no elements, and what it computes from them is recorded
+    as a program, which the construct then evaluates. A loop's step is traced
+    once, and again where it places a carry array it received of every set
+    ({!scan}). So a step's code runs once or a few times whatever the number of
+    steps, as do its side effects, and inside it {!Nx.item} of a stand-in, or of
+    a value computed from one, raises
     ([Nx.item: the value is traced by Rune.scan]); a branch on a value is
-    {!Nx.where} or a nested {!iterate}. An operation that reads no
-    stand-in computes at the call, once. A draw without [~key] inside a traced
-    function raises, naming the construct, so a step draws from a key in its
-    carry or its rows. Outside every transformation a construct is its program
-    evaluated: a {!scan} is the fold of its step, bit for bit but for a NaN
-    result's sign and payload, which nx leaves unspecified.
+    {!Nx.where} or a nested {!iterate}. An operation that reads no stand-in
+    computes at the call, once. A draw without [~key] inside a traced function
+    raises, naming the construct, so a step draws from a key in its carry or its
+    rows. Outside every transformation a construct is its program evaluated: a
+    {!scan} is the fold of its step, bit for bit but for a NaN result's sign and
+    payload, which nx leaves unspecified.
 
     {b Extents.} A transformation, a map or a {!Total.collect} is around the
     code its function runs, on whatever domain that code resumes, and the fibers
@@ -54,6 +54,28 @@
     complex-differentiable [f] is [f'(z) t], and that of any other is the
     derivative of the real function of the parts, so the tangent of
     [Nx.conjugate] is the conjugate of the tangent.
+
+    {b Cotangents.} A {e cotangent} pairs with a tangent of its array by
+    [<w, t> = Re Σ w t], element by element, unconjugated on complex arrays. A
+    {e pullback} maps a cotangent [w] of the result to the cotangent [u] of the
+    arguments such that [<u, t> = <w, dy>] for every tangent [t] of the
+    arguments and its result's tangent [dy]: the transpose of the tangent map.
+    So the pullback of a complex-differentiable [f] applies [f'(z)] to [w], and
+    the gradient of a real [f] of [z = x + iy] is [∂f/∂x - i ∂f/∂y], against
+    whose conjugate a step descends.
+
+    {b Sums.} A cotangent is the sum of the contributions its array receives,
+    element by element, each added to those before with no zero before the
+    first. An element that receives one contribution through elementwise
+    functions, reductions, scans, movements, pads and windows is that
+    contribution, sign of zero included: [grad' (fun x -> Nx.sum (Nx.mul x x))]
+    at [-0.] is [-0.]. The contributions through a gather, as [Nx.take]'s, and
+    the copies of a broadcast are summed from [+0.], as [Nx.sum] sums. An
+    element that receives none is [+0.].
+
+    {b Placement.} A cotangent lies where its array does. That of an array of
+    every set lies on the set of the first placed argument or result, and of
+    every set where every value it meets is.
 
     {b Kinks.} Where an operation has no derivative: [Nx.abs] passes the tangent
     at [0.] and [-0.]; where the operands of [Nx.maximum] or [Nx.minimum] tie,
@@ -105,6 +127,82 @@ val jvp :
     where they differ, or if a tangent differs from its parameter in dtype or
     shape (["Rune.jvp: 1: shape [2] in the parameters, [3] in the tangents"]).
 *)
+
+(** {1:reverse Reverse mode}
+
+    Reverse mode runs the function once in forward mode, recording the
+    operations on tangents, then transposes them from the result's cotangents
+    back to the arguments'. The record keeps the values those operations read:
+    of an elementwise function computed in one loop, its operands, from which
+    the backward pass computes its intermediates again. *)
+
+val grad : ('p, 'd) Nx.Ptree.t -> ('p -> ('v, 's, 'd) Nx.t) -> 'p -> 'p
+(** [grad p f params] is the gradient of the real scalar [f params] at [params]:
+    the pullback of [1], a value of [params]' structure, dtypes and shapes. Its
+    pairing with a tangent of [params] is [f]'s derivative along that tangent,
+    as {!jvp} computes it. The gradient of an integer or boolean array, and of
+    one [f] does not depend on, is zero.
+
+    Raises [Invalid_argument] as {!jvp} does for [params], and if [f params] is
+    not one float element, of any shape, naming its dtype and shape
+    (["Rune.grad: the objective must return a real scalar, got complex128 []"]);
+    {!vjp} differentiates any other result. *)
+
+val value_and_grad :
+  ('p, 'd) Nx.Ptree.t ->
+  ('p -> ('v, 's, 'd) Nx.t) ->
+  'p ->
+  ('v, 's, 'd) Nx.t * 'p
+(** [value_and_grad p f params] is [(f params, grad p f params)], from one
+    forward and one backward pass. It raises as {!grad} does. *)
+
+val value_and_grad_aux :
+  ('p, 'd) Nx.Ptree.t ->
+  ('x, 'd) Nx.Ptree.t ->
+  ('p -> ('v, 's, 'd) Nx.t * 'x) ->
+  'p ->
+  ('v, 's, 'd) Nx.t * 'p * 'x
+(** [value_and_grad_aux p x f params] is [(y, g, aux)], where
+    [(y, aux) = f params] and [g] is the gradient of [y] at [params]. [aux], of
+    structure [x], is a value of [f] that contributes nothing to [g]. It raises
+    as {!grad} does. *)
+
+val vjp :
+  ('p, 'd) Nx.Ptree.t ->
+  ('q, 'd) Nx.Ptree.t ->
+  ('p -> 'q) ->
+  'p ->
+  'q * ('q -> 'p)
+(** [vjp p q f params] is [(f params, pullback)], [pullback] mapping the
+    result's cotangents to [params]' ({!section-derivatives}). Its argument has
+    the result's structure [q], one cotangent per array, of that array's dtype
+    and shape, and the cotangent of an integer or boolean array is ignored.
+    [pullback] runs no part of [f] again. When [vjp] runs outside every
+    transformation, [pullback] may be applied any number of times, from any
+    domain.
+
+    Raises [Invalid_argument] as {!jvp} does for [params]. [pullback] raises
+    [Invalid_argument] if its argument and the result differ in their
+    {!Nx.Ptree.val-visits}, dtypes or shapes, naming the first path where they
+    differ (["Rune.vjp: 0: shape [2] in the result, [3] in the cotangents"]). *)
+
+val check_grads :
+  ?eps:float ->
+  ?tol:float ->
+  ('p, 'd) Nx.Ptree.t ->
+  ('p -> ('v, 's, 'd) Nx.t) ->
+  'p ->
+  (unit, string) result
+(** [check_grads p f params] compares the gradient [g] of the real scalar [f] at
+    [params] with central differences of step [eps] (default [1e-4]) along two
+    fixed directions [v], ones and [sin params + 1.1] on the float and complex
+    arrays: it is [Ok ()] if [Re Σ g v], the derivative [g] predicts, is within
+    [tol] (default [1e-2]) of each difference, relative to its magnitude where
+    above [1], and [Error msg] naming the direction and both derivatives
+    otherwise. It reads [f]'s result, so [f] must not be traced. float64
+    parameters give reliable differences.
+
+    Raises [Invalid_argument] as {!grad} does. *)
 
 (** {1:control Controlling differentiation} *)
 
@@ -201,9 +299,9 @@ val scan :
     axis 0. With [n = 0] the result is [init] and outputs of leading length [0].
 
     [f] is traced at the call over stand-ins of [init]'s arrays and of [xs]'s
-    arrays without axis 0. It is traced again while it returns placed an
-    array of the carry that it received of every set, such as a constant
-    [init] it adds a placed value to, each array at most once.
+    arrays without axis 0. It is traced again while it returns placed an array
+    of the carry that it received of every set, such as a constant [init] it
+    adds a placed value to, each array at most once.
 
     Raises [Invalid_argument] if [xs] has no array
     (["Rune.scan: xs has no leaf"]), a 0-d array, or arrays of different leading
@@ -224,8 +322,8 @@ val iterate :
 (** [iterate c ~max ~until ~f init] applies the step [f] to a carry of structure
     [c], from [init], until [until carry] holds, and returns that carry. [until]
     returns one boolean and is tested before each step, so an [init] that
-    satisfies it is returned unchanged. [f] and [until] are traced at the
-    call, [f] as {!scan}'s step is.
+    satisfies it is returned unchanged. [f] and [until] are traced at the call,
+    [f] as {!scan}'s step is.
 
     Raises [Invalid_argument] if [max < 0]
     (["Rune.iterate: max = -1 is negative"]), if [until] returns other than one
@@ -263,6 +361,36 @@ val jacfwd' :
     element.
 
     Raises [Invalid_argument] as {!jvp'} does. *)
+
+val grad' :
+  (('v, 's, 'd) Nx.t -> ('w, 'r, 'd) Nx.t) ->
+  ('v, 's, 'd) Nx.t ->
+  ('v, 's, 'd) Nx.t
+(** [grad' f x] is {!grad} of one array. It raises as {!grad} does. *)
+
+val value_and_grad' :
+  (('v, 's, 'd) Nx.t -> ('w, 'r, 'd) Nx.t) ->
+  ('v, 's, 'd) Nx.t ->
+  ('w, 'r, 'd) Nx.t * ('v, 's, 'd) Nx.t
+(** [value_and_grad' f x] is {!value_and_grad} of one array. *)
+
+val vjp' :
+  (('v, 's, 'd) Nx.t -> ('w, 'r, 'd) Nx.t) ->
+  ('v, 's, 'd) Nx.t ->
+  ('w, 'r, 'd) Nx.t * (('w, 'r, 'd) Nx.t -> ('v, 's, 'd) Nx.t)
+(** [vjp' f x] is {!vjp} of one array. *)
+
+val jacrev' :
+  (('v, 's, 'd) Nx.t -> ('w, 'r, 'd) Nx.t) ->
+  ('v, 's, 'd) Nx.t ->
+  ('v, 's, 'd) Nx.t
+(** [jacrev' f x] is the Jacobian of [f] at [x], of shape
+    [shape (f x) @ shape x] and [x]'s dtype: its row [k] is the pullback of
+    element [k] of the result in C order, computed in one backward pass per
+    element. For a complex-differentiable [f] it is the complex derivative, as
+    {!jacfwd'} computes it.
+
+    Raises [Invalid_argument] as {!vjp'} does. *)
 
 val scan' :
   f:

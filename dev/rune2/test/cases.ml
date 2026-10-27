@@ -1,0 +1,514 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(* The operations rune2 differentiates, each as a function of a float64 value
+   whose elements a case draws: every kind of scalar program and every
+   operation, real and complex. *)
+
+open Windtrap
+open Compose
+module D = Nx.Dtype
+module L = Nx_array.Layout
+module P = Nx_kernel.Prog
+module T = Nx.Ptree
+module C = Nx_support.Counting
+module Count = (val Nx.devices ~kernels:(module C) [ Nx_support.memory 0 ])
+
+let f64 = Nx.float64
+let c128 = Nx.complex128
+
+type f64_t = (float, D.float64_elt, Nx.host) Nx.t
+type c128_t = (Complex.t, D.complex64_elt, Nx.host) Nx.t
+
+let invalid ~sub f = raises_match (Exn.invalid_arg ~substring:sub) f
+let v xs = Nx.create f64 [| Array.length xs |] xs
+
+(* Operands *)
+
+(* Values a case draws: uniform in a range per row of axis 0, or spaced apart,
+   [lo + (j + 0.3) step] in a random order, so that no step of the differences
+   crosses a kink. *)
+type values = Uniform of (float * float) list | Spaced of float * float
+
+type case = {
+  name : string;
+  empty : bool;  (** Whether its shapes may have no element. *)
+  shape : int array Gen.t;
+  values : values;
+  f : f64_t -> f64_t;
+  z : ((f64_t -> c128_t) * (c128_t -> c128_t)) option;
+      (** A complex function, and the complex value it reads from [f]'s operand,
+          where [f] is it on the parts. *)
+}
+
+let case ?(empty = true) ?(values = Uniform [ (-2., 2.) ])
+    ?(shape = Gen.(map (fun n -> [| n |]) (int_range 0 5))) ?z name f =
+  { name; empty; shape; values; f; z }
+
+let rows k = Gen.(map (fun n -> [| k; n |]) (int_range 0 4))
+
+let matrix =
+  Gen.(map (fun (m, n) -> [| m; n |]) (pair (int_range 0 3) (int_range 0 4)))
+
+(* Matrices whose rows and columns are never empty, for extremes. *)
+let full =
+  Gen.(
+    map
+      (fun (m, n) -> [| m + 1; n + 1 |])
+      (pair (int_range 0 2) (int_range 0 3)))
+
+let cube =
+  Gen.(map (fun (m, n) -> [| 2; m; n |]) (pair (int_range 0 3) (int_range 0 4)))
+
+let draw values s =
+  let n = numel s in
+  let open Gen in
+  match values with
+  | Spaced (lo, step) ->
+      map
+        (fun p ->
+          Array.of_list
+            (List.map (fun j -> lo +. ((Float.of_int j +. 0.3) *. step)) p))
+        (permutation (List.init n Fun.id))
+  | Uniform ranges ->
+      let k = List.length ranges in
+      let per = if Array.length s = 0 then n else n / Int.max 1 s.(0) in
+      let row r = List.nth ranges (if k = 1 then 0 else r) in
+      let rec go i =
+        if i = n then constant []
+        else
+          let lo, hi = row (if per = 0 then 0 else i / per) in
+          let* x = float_range lo hi in
+          let+ rest = go (i + 1) in
+          x :: rest
+      in
+      map Array.of_list (go 0)
+
+let gen c =
+  let open Gen in
+  (let* s = c.shape in
+   let* x = draw c.values s in
+   let+ t = array ~size:(constant (numel s)) (float_range (-1.) 1.) in
+   (s, x, t))
+  |> with_pp (fun ppf (s, x, t) ->
+      Format.fprintf ppf "%a x %a t %a" pp_shape s
+        (Format.pp_print_list Format.pp_print_float)
+        (Array.to_list x)
+        (Format.pp_print_list Format.pp_print_float)
+        (Array.to_list t))
+
+let row k x = Nx.get [ k ] x
+let two f x = f (row 0 x) (row 1 x)
+let three f x = f (row 0 x) (row 1 x) (row 2 x)
+let complex x = Nx.complex c128 ~re:(row 0 x) ~im:(row 1 x)
+let parts z = Nx.stack [ Nx.real f64 z; Nx.imag f64 z ]
+let on_complex f x = parts (f (complex x))
+let contiguous s = L.contiguous (Iarray.of_array s)
+let any = D.Any f64
+let identity = P.of_node ~ins:[| any |] (Op1 (Copy, any, 0))
+
+(* A loop of one load along axis 1 of [x], as nx's functions build none. *)
+let reduce1 reduction x =
+  Nx.Prim.eval ~by:"test"
+    (Reduce
+       {
+         layout = contiguous (Nx.shape x);
+         axes = [| 1 |];
+         prog = identity;
+         reductions = reduction;
+         loads = [| Plain x |];
+       })
+
+let scan1 ?carry reduction x =
+  Nx.Prim.eval ~by:"test"
+    (Scan
+       {
+         layout = contiguous (Nx.shape x);
+         axis = 1;
+         prog = identity;
+         reduction;
+         loads = [| Plain x |];
+         carry = Option.map (fun c -> Nx.Prim.Any c) carry;
+       })
+
+(* [x] of shape [m; n + 1]: a carry, column 0, and rows, the others. *)
+let carried x =
+  let n = Nx.dim 1 x in
+  (Nx.slice [ A; R (0, 1) ] x, Nx.slice [ A; R (1, n) ] x)
+
+let padded_shape =
+  Gen.(
+    map
+      (fun (m, n) -> [| m + 1; n + 1 |])
+      (pair (int_range 0 2) (int_range 0 3)))
+
+(* A map of several nodes and two outputs, reading a padded load and the
+   coordinates: [x0 sin (x1)], and [x0 + coord 0] over [x1] padded by one on
+   each side of axis 1. *)
+let multi x =
+  let m = Nx.dim 0 x and n = Nx.dim 1 x in
+  let pad : Nx_kernel.pad =
+    { lo = [| 0; 1 |]; hi = [| 0; 1 |]; interior = [| 0; 0 |]; windows = [||] }
+  in
+  let x0 = Nx.pad [| (0, 0); (1, 1) |] 1.5 x in
+  let prog =
+    P.v ~ins:[| any; any |]
+      [|
+        In 0;
+        In 1;
+        Op1 (Unary Sin, any, 1);
+        Op2 (Binary Mul, 0, 2);
+        Coord 0;
+        Op1 (Cast, any, 4);
+        Op2 (Binary Add, 0, 5);
+      |]
+      ~outs:[| 3; 6 |]
+  in
+  let y, (z, ()) =
+    Nx.Prim.eval ~by:"test"
+      (Map
+         {
+           layout = contiguous [| m; n + 2 |];
+           prog;
+           outs = [ f64; f64 ];
+           loads = [| Plain x0; Padded { x; fill = 0.25; pad } |];
+         })
+  in
+  Nx.concatenate ~axis:0 [ y; z ]
+
+(* [Copy] and a cast there and back, as kinds of a program. *)
+let kinds x =
+  let c64 = D.Any c128 in
+  let prog =
+    P.v ~ins:[| any |]
+      [| In 0; Op1 (Copy, any, 0); Op1 (Cast, c64, 1); Op1 (Cast, any, 2) |]
+      ~outs:[| 3 |]
+  in
+  fst
+    (Nx.Prim.eval ~by:"test"
+       (Map
+          {
+            layout = contiguous (Nx.shape x);
+            prog;
+            outs = [ f64 ];
+            loads = [| Plain x |];
+          }))
+
+(* A program of twenty operands, [Σ_k x_k Π_(j<k) sin x_j], past the arrays
+   one block of nx.cpu's holds: its derivative is one loop of forty loads. *)
+let wide = 20
+
+let wide_prog =
+  let x k = P.E.input k Nx_array.Dtype.Float64 in
+  let rec go k acc prod =
+    if k = wide then acc
+    else go (k + 1) P.E.(acc + (x k * prod)) P.E.(prod * sin (x k))
+  in
+  P.of_exprs
+    ~ins:(Iarray.init wide (fun _ -> any))
+    [| P.E.any (go 1 (x 0) (P.E.sin (x 0))) |]
+
+let wide_loads x = Iarray.init wide (fun k -> Nx.Prim.Plain (row k x))
+let rows_wide = Gen.(map (fun n -> [| wide; n |]) (int_range 0 4))
+
+let wide_map x =
+  fst
+    (Nx.Prim.eval ~by:"test"
+       (Map
+          {
+            layout = contiguous [| Nx.dim 1 x |];
+            prog = wide_prog;
+            outs = [ f64 ];
+            loads = wide_loads x;
+          }))
+
+let wide_reduce reduction x =
+  fst
+    (Nx.Prim.eval ~by:"test"
+       (Reduce
+          {
+            layout = contiguous [| Nx.dim 1 x |];
+            axes = [| 0 |];
+            prog = wide_prog;
+            reductions = [ reduction ];
+            loads = wide_loads x;
+          }))
+
+(* Two sums of a program's two outputs, the second's first. *)
+let sums x =
+  let prog =
+    P.v ~ins:[| any |]
+      [| In 0; Op1 (Unary Sin, any, 0); Op2 (Binary Mul, 0, 0) |]
+      ~outs:[| 1; 2 |]
+  in
+  let a, (b, ()) =
+    Nx.Prim.eval ~by:"test"
+      (Reduce
+         {
+           layout = contiguous (Nx.shape x);
+           axes = [| 1 |];
+           prog;
+           reductions = [ Monoid (Sum, 1, f64); Monoid (Sum, 0, f64) ];
+           loads = [| Plain x |];
+         })
+  in
+  Nx.stack [ a; b ]
+
+let idx xs =
+  Nx.create Nx.int64 [| Array.length xs |] (Array.map Int64.of_int xs)
+
+(* Positions of a scatter of [n] updates into 3 targets, two on target 0. *)
+let targets n = idx (Array.init n (fun k -> if k < 2 then 0 else k mod 3))
+
+let scatter combine x =
+  let n = Nx.dim 1 x in
+  let into = Nx.slice [ I 0; R (0, Int.min n 3) ] x in
+  let into =
+    if Nx.dim 0 into < 3 then Nx.pad [| (0, 3 - Nx.dim 0 into) |] 0.5 into
+    else into
+  in
+  Nx.scatter ~combine ~axis:0 (targets n) (row 1 x) into
+
+let pattern = Nx.Pattern.v "i j, j k -> i k | j"
+
+let real_cases =
+  let unary name ?values f = case ?values name f in
+  let binary name ?(values = Uniform [ (-2., 2.); (-2., 2.) ]) f =
+    case ~shape:(rows 2) ~values name (two f)
+  in
+  let spaced = Spaced (-3., 0.5) and positive = Uniform [ (0.2, 3.) ] in
+  [
+    unary "neg" Nx.neg;
+    unary "recip" ~values:positive Nx.recip;
+    unary "abs" ~values:spaced Nx.abs;
+    unary "sign" ~values:spaced Nx.sign;
+    unary "sqrt" ~values:positive Nx.sqrt;
+    unary "exp" Nx.exp;
+    unary "exp2" Nx.exp2;
+    unary "log" ~values:positive Nx.log;
+    unary "log2" ~values:positive Nx.log2;
+    unary "log1p" ~values:(Uniform [ (-0.8, 3.) ]) Nx.log1p;
+    unary "expm1" Nx.expm1;
+    unary "sin" Nx.sin;
+    unary "cos" Nx.cos;
+    unary "tan" ~values:(Uniform [ (-1.2, 1.2) ]) Nx.tan;
+    unary "asin" ~values:(Uniform [ (-0.9, 0.9) ]) Nx.asin;
+    unary "acos" ~values:(Uniform [ (-0.9, 0.9) ]) Nx.acos;
+    unary "atan" Nx.atan;
+    unary "sinh" Nx.sinh;
+    unary "cosh" Nx.cosh;
+    unary "tanh" Nx.tanh;
+    unary "asinh" Nx.asinh;
+    unary "acosh" ~values:(Uniform [ (1.1, 4.) ]) Nx.acosh;
+    unary "atanh" ~values:(Uniform [ (-0.9, 0.9) ]) Nx.atanh;
+    unary "erf" Nx.erf;
+    unary "floor" ~values:spaced Nx.floor;
+    unary "ceil" ~values:spaced Nx.ceil;
+    unary "round" ~values:spaced Nx.round;
+    unary "trunc" ~values:spaced Nx.trunc;
+    unary "sigmoid" Nx.sigmoid;
+    unary "softplus" ~values:spaced Nx.softplus;
+    unary "copy and casts, as kinds" kinds;
+    binary "add" Nx.add;
+    binary "sub" Nx.sub;
+    binary "mul" Nx.mul;
+    binary "div" ~values:(Uniform [ (-2., 2.); (0.3, 2.) ]) Nx.div;
+    binary "mod"
+      ~values:(Spaced (0.1, 0.37))
+      (fun a b -> Nx.mod_ a (Nx.add_s b 2.));
+    binary "pow" ~values:(Uniform [ (0.3, 3.); (-2., 2.) ]) Nx.pow;
+    binary "atan2" ~values:(Uniform [ (-2., 2.); (0.3, 2.) ]) Nx.atan2;
+    binary "maximum" ~values:spaced Nx.maximum;
+    binary "minimum" ~values:spaced Nx.minimum;
+    binary "hypot" ~values:(Uniform [ (0.3, 2.); (0.3, 2.) ]) Nx.hypot;
+    binary "where" ~values:spaced (fun a b ->
+        Nx.where (Nx.less a b) (Nx.mul a b) (Nx.sin b));
+    case ~shape:(rows 3) "fma" (three Nx.fma);
+    case ~empty:false ~shape:padded_shape
+      "a map of several outputs, a padded load and coordinates" multi;
+    case ~shape:rows_wide "a map of twenty operands" wide_map;
+    case ~shape:rows_wide "a sum over twenty operands"
+      (wide_reduce (Monoid (Sum, 0, f64)));
+    case ~empty:false
+      ~shape:Gen.(map (fun n -> [| wide; n + 1 |]) (int_range 0 3))
+      ~values:(Spaced (-3., 0.1))
+      "a max over twenty operands"
+      (wide_reduce (Monoid (Max, 0, f64)));
+    case ~shape:matrix "sum" (Nx.sum ~axes:[ 1 ]);
+    case ~shape:matrix "sum and its tangent in one loop" (fun x -> Nx.sum x);
+    case ~shape:matrix "two sums of two outputs, in another order" sums;
+    case ~shape:matrix "prod" (Nx.prod ~axes:[ 1 ]);
+    case ~shape:matrix
+      ~values:(Uniform [ (-1., 1.) ])
+      "prod over both axes"
+      (fun x -> Nx.prod x);
+    case ~empty:false ~shape:full ~values:spaced "max" (Nx.max ~axes:[ 1 ]);
+    case ~empty:false ~shape:full ~values:spaced "min" (Nx.min ~axes:[ 0 ]);
+    case ~shape:matrix "mean" (Nx.mean ~axes:[ 1 ]);
+    case ~shape:matrix "var" (Nx.var ~axes:[ 1 ]);
+    case ~shape:matrix "logsumexp" (Nx.logsumexp ~axes:[ 1 ]);
+    case ~empty:false ~shape:full ~values:spaced "an arg reduction's extreme"
+      (fun x ->
+        let (y, _), () = reduce1 [ Arg (Max, 0, f64) ] x in
+        y);
+    case ~shape:matrix "moments" (fun x ->
+        let (m, var), () = reduce1 [ Moments (0, f64) ] x in
+        Nx.stack [ m; var ]);
+    case ~shape:matrix "cumsum" (Nx.cumsum ~axis:1);
+    case ~shape:matrix "cumprod" (Nx.cumprod ~axis:1);
+    case ~shape:matrix ~values:spaced "cummax" (Nx.cummax ~axis:1);
+    case ~shape:matrix ~values:spaced "cummin" (Nx.cummin ~axis:0);
+    case ~shape:matrix "logcumsumexp" (Nx.logcumsumexp ~axis:1);
+    case ~shape:matrix "a running moments" (fun x ->
+        let m, var = scan1 (Moments (0, f64)) x in
+        Nx.stack [ m; var ]);
+    case ~shape:matrix ~values:spaced "a running arg's extreme" (fun x ->
+        fst (scan1 (Arg (Min, 0, f64)) x));
+    case ~empty:false ~shape:padded_shape "a running sum from a carry" (fun x ->
+        let c, r = carried x in
+        scan1 ~carry:c (Monoid (Sum, 0, f64)) r);
+    case ~empty:false ~shape:padded_shape
+      ~values:(Uniform [ (-1.5, 1.5) ])
+      "a running product from a carry"
+      (fun x ->
+        let c, r = carried x in
+        scan1 ~carry:c (Monoid (Prod, 0, f64)) r);
+    case ~empty:false ~shape:padded_shape ~values:spaced
+      "a running max from a carry" (fun x ->
+        let c, r = carried x in
+        scan1 ~carry:c (Monoid (Max, 0, f64)) r);
+    case ~shape:matrix "take" (Nx.take ~axis:1 (idx [| 2; 0; 7; 1 |]));
+    case ~shape:matrix "take_along_axis" (fun x ->
+        let n = Nx.dim 1 x in
+        Nx.take_along_axis ~axis:1
+          (Nx.broadcast_to
+             [| Nx.dim 0 x; n |]
+             (idx (Array.init n (fun k -> k * 3 mod Int.max 1 n))))
+          x);
+    case ~shape:(rows 2) "scatter add" (scatter Add);
+    case ~shape:(rows 2) "scatter set" (scatter Set);
+    case ~shape:(rows 2) ~values:spaced "scatter max" (scatter Max);
+    case ~shape:(rows 2) ~values:spaced "scatter min" (scatter Min);
+    case ~shape:matrix ~values:spaced "sort" (fun x -> fst (Nx.sort ~axis:1 x));
+    case ~empty:false
+      ~shape:Gen.(map (fun n -> [| n + 2 |]) (int_range 0 4))
+      ~values:spaced "top_k"
+      (fun x -> fst (Nx.top_k ~k:2 x));
+    case ~empty:false ~shape:padded_shape "pad" (Nx.pad [| (1, 0); (2, 1) |] 3.);
+    case ~empty:false
+      ~shape:Gen.(map (fun n -> [| 2; n + 3 |]) (int_range 0 3))
+      "extract_patches"
+      (fun x ->
+        Nx.extract_patches ~kernel_size:[| 2 |] ~stride:[| 1 |]
+          ~dilation:[| 1 |]
+          ~padding:[| (1, 0) |]
+          x);
+    case ~empty:false
+      ~shape:Gen.(map (fun l -> [| 2; 2; l + 1 |]) (int_range 0 3))
+      "combine_patches"
+      (fun x ->
+        let l = Nx.dim 2 x in
+        Nx.combine_patches
+          ~output_size:[| l + 1 |]
+          ~kernel_size:[| 2 |] ~stride:[| 1 |] ~dilation:[| 1 |]
+          ~padding:[| (0, 0) |]
+          x);
+    case ~shape:(rows 2) "concatenate" (fun x ->
+        Nx.concatenate ~axis:0 [ row 1 x; Nx.sin (row 0 x); row 1 x ]);
+    case ~shape:cube "matmul" (fun x ->
+        Nx.matmul (Nx.transpose (row 0 x)) (row 1 x));
+    case ~shape:cube "contract from an init" (fun x ->
+        let a = Nx.transpose (row 0 x) and b = row 1 x in
+        let n = Nx.dim 1 b in
+        Nx.contract
+          ~init:(Nx.sin (Nx.slice [ A; R (0, n) ] (Nx.matmul a b)))
+          f64 pattern a b);
+    case ~shape:matrix "copy" (fun x -> Nx.copy (Nx.sin x));
+    case ~shape:matrix "moves" (fun x ->
+        Nx.reshape [| -1 |] (Nx.flip ~axes:[ 0 ] (Nx.transpose x)));
+    case ~shape:matrix "broadcast" (fun x ->
+        Nx.broadcast_to [| 2; Nx.dim 0 x; Nx.dim 1 x |] (Nx.exp x));
+    case ~shape:matrix "place" (fun x ->
+        Nx.place Nx.Host.on (Nx.sin (Nx.place Count.on x)));
+    case ~shape:matrix "check" (fun x ->
+        Nx.check T.tensor (Nx.less_s x 100.) x (fun _ _ -> Failure "check");
+        Nx.cos x);
+  ]
+
+let complex_cases =
+  let z ?(values = Uniform [ (0.2, 2.); (0.2, 1.) ]) name f =
+    case ~shape:(rows 2) ~values ~z:(complex, f) name (on_complex f)
+  in
+  (* Two complex operands, rows 0 and 1 of one value. *)
+  let pair x =
+    Nx.stack
+      [
+        Nx.complex c128 ~re:(row 0 x) ~im:(row 1 x);
+        Nx.complex c128 ~re:(row 2 x) ~im:(row 3 x);
+      ]
+  in
+  let zz name f =
+    let g z = f (row 0 z) (row 1 z) in
+    case ~shape:(rows 4)
+      ~values:(Uniform [ (0.3, 2.); (0.2, 1.); (0.3, 1.5); (-1., 1.) ])
+      ~z:(pair, g) name
+      (fun x -> parts (g (pair x)))
+  in
+  [
+    z "complex neg" Nx.neg;
+    z "complex recip" Nx.recip;
+    z "complex sign" Nx.sign;
+    z "complex sqrt" Nx.sqrt;
+    z "complex exp" Nx.exp;
+    z "complex exp2" Nx.exp2;
+    z "complex log" Nx.log;
+    z "complex log2" Nx.log2;
+    z "complex sin" Nx.sin;
+    z "complex cos" Nx.cos;
+    z "complex tan" Nx.tan;
+    z "complex asin" Nx.asin;
+    z "complex acos" Nx.acos;
+    z "complex atan" Nx.atan;
+    z "complex sinh" Nx.sinh;
+    z "complex cosh" Nx.cosh;
+    z "complex tanh" Nx.tanh;
+    z "complex asinh" Nx.asinh;
+    z "complex acosh" Nx.acosh;
+    z "complex atanh" Nx.atanh;
+    z "conjugate" Nx.conjugate;
+    zz "complex add" Nx.add;
+    zz "complex sub" Nx.sub;
+    zz "complex mul" Nx.mul;
+    zz "complex div" Nx.div;
+    zz "complex pow" Nx.pow;
+    zz "complex matmul" Nx.matmul;
+    z "complex prod" (fun z -> Nx.prod z);
+    zz "complex where" (fun a b ->
+        Nx.where (Nx.less_s (Nx.real f64 a) 1.17) a b);
+    case ~shape:(rows 2)
+      ~values:(Uniform [ (0.2, 2.); (0.2, 1.) ])
+      "magnitude and angle"
+      (fun x ->
+        let z = complex x in
+        Nx.stack [ Nx.magnitude f64 z; Nx.angle f64 z ]);
+    case "a real cast to complex" (fun x ->
+        parts (Nx.mul (Nx.cast c128 x) (Nx.cast c128 x)));
+    case ~shape:(rows 2) "a complex cast to real" (fun x ->
+        Nx.cast f64 (Nx.exp (complex x)));
+    case ~shape:(rows 2)
+      ~z:(complex, fun z -> Nx.fft z)
+      "fft"
+      (fun x -> parts (Nx.fft (complex x)));
+    case "rfft" (fun x -> parts (Nx.rfft c128 x));
+    case ~empty:false
+      ~shape:Gen.(map (fun n -> [| 2; n + 1 |]) (int_range 0 4))
+      "irfft"
+      (fun x -> Nx.irfft f64 (complex x));
+    (let f z =
+       Nx.concatenate ~axis:0 [ Nx.sum ~keepdims:true z; Nx.cumprod z ]
+     in
+     case ~shape:(rows 2) ~z:(complex, f) "complex sum and cumprod" (fun x ->
+         parts (f (complex x))));
+  ]

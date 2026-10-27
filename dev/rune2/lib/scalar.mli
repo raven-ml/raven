@@ -68,3 +68,45 @@ val finish : t -> outs:int array -> P.t
 
 val tangible : D.any -> bool
 (** [tangible dt] is [true] iff [dt] is a float or complex dtype. *)
+
+(** {1:parts Parts of programs} *)
+
+val depends : P.t -> bool array -> bool array
+(** [depends p reads] is, for each node of [p], whether it reads, through the
+    nodes it is made of, an operand [j] with [reads.(j)]. *)
+
+val reads : P.t -> outs:int array -> bool array
+(** [reads p ~outs] is, for each operand of [p], whether one of the outputs
+    [outs] reads it. *)
+
+val prune : P.t -> keep:bool array -> outs:int array -> P.t
+(** [prune p ~keep ~outs] is [p]'s outputs [outs], in order, over its operands
+    [j] with [keep.(j)], in order.
+
+    Raises [Invalid_argument] if one of [outs] reads another operand. *)
+
+(** {1:transposes Transposes}
+
+    A program is {e linear} in some of its operands, the others {e constants},
+    if each output is a sum of products of a constant by one of those operands.
+    Its transpose maps a cotangent of each output to one of each such operand:
+    [Σ_k <w_k, y_k> = Σ_j <u_j, x_j>] for the pairing [<a, b> = Re (a b)],
+    unconjugated on complex numbers. A node of the constants alone is computed
+    again in the transpose. *)
+
+exception Nonlinear of string
+(** Raised with the name of the kind that applies a nonlinear function to a
+    linear operand, as ["Exp"]. *)
+
+val transpose :
+  P.t -> linear:bool array -> cts:(int * D.any) array -> P.t option * bool array
+(** [transpose p ~linear ~cts] is the transpose of [p] in its operands [j] with
+    [linear.(j)]: a program over [p]'s constants, in order, then each cotangent
+    [(k, dt)] of [cts], of output [k] in the dtype [dt], in order, cast into the
+    output's dtype, whose outputs are the cotangents of the linear operands that
+    receive a contribution, in order, and which those are. [None] where none
+    receives one. A node's cotangent is the sum of its contributions in the
+    order they come, with no zero before the first; the branch of a [Where] its
+    condition does not take receives [+0].
+
+    Raises {!Nonlinear} if [p] is not linear in those operands. *)

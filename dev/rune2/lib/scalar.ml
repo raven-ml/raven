@@ -251,3 +251,221 @@ let finish b ~outs =
       ~outs:(Iarray.of_array outs)
   in
   P.subst ~ins (fun _ -> None) p
+
+(* Parts of programs *)
+
+let depends (p : P.t) reads =
+  let d = Array.make (Iarray.length p.nodes) false in
+  Iarray.iteri
+    (fun k (n : P.node) ->
+      d.(k) <-
+        (match n with
+        | In j -> reads.(j)
+        | Coord _ | Const _ -> false
+        | Op1 (_, _, i) -> d.(i)
+        | Op2 (_, i, j) -> d.(i) || d.(j)
+        | Op3 (_, i, j, l) -> d.(i) || d.(j) || d.(l)))
+    p.nodes;
+  d
+
+let reads (p : P.t) ~outs =
+  let n = Iarray.length p.nodes in
+  let live = Array.make n false in
+  Array.iter (fun o -> live.(Iarray.get p.outs o) <- true) outs;
+  let r = Array.make (Iarray.length p.ins) false in
+  for k = n - 1 downto 0 do
+    if live.(k) then
+      match Iarray.get p.nodes k with
+      | In j -> r.(j) <- true
+      | Coord _ | Const _ -> ()
+      | Op1 (_, _, i) -> live.(i) <- true
+      | Op2 (_, i, j) ->
+          live.(i) <- true;
+          live.(j) <- true
+      | Op3 (_, i, j, l) ->
+          live.(i) <- true;
+          live.(j) <- true;
+          live.(l) <- true
+  done;
+  r
+
+let prune (p : P.t) ~keep ~outs =
+  let index = Array.make (Iarray.length p.ins) (-1) and next = ref 0 in
+  Array.iteri
+    (fun j k ->
+      if k then begin
+        index.(j) <- !next;
+        incr next
+      end)
+    keep;
+  let ins =
+    Iarray.of_list (List.filteri (fun j _ -> keep.(j)) (Iarray.to_list p.ins))
+  in
+  P.subst ~outs:(Iarray.of_array outs) ~ins
+    (function
+      | In j ->
+          let (D.Any dt) = Iarray.get p.ins j in
+          Some (P.E.any (P.E.input index.(j) dt))
+      | Coord _ | Const _ | Op1 _ | Op2 _ | Op3 _ -> None)
+    p
+
+(* Transposes *)
+
+exception Nonlinear of string
+
+let unary_name : P.unary -> string = function
+  | Neg -> "Neg"
+  | Recip -> "Recip"
+  | Abs -> "Abs"
+  | Sign -> "Sign"
+  | Sqrt -> "Sqrt"
+  | Exp -> "Exp"
+  | Exp2 -> "Exp2"
+  | Log -> "Log"
+  | Log2 -> "Log2"
+  | Log1p -> "Log1p"
+  | Expm1 -> "Expm1"
+  | Sin -> "Sin"
+  | Cos -> "Cos"
+  | Tan -> "Tan"
+  | Asin -> "Asin"
+  | Acos -> "Acos"
+  | Atan -> "Atan"
+  | Sinh -> "Sinh"
+  | Cosh -> "Cosh"
+  | Tanh -> "Tanh"
+  | Asinh -> "Asinh"
+  | Acosh -> "Acosh"
+  | Atanh -> "Atanh"
+  | Erf -> "Erf"
+  | Floor -> "Floor"
+  | Ceil -> "Ceil"
+  | Round -> "Round"
+  | Trunc -> "Trunc"
+
+let binary_name : P.binary -> string = function
+  | Add -> "Add"
+  | Sub -> "Sub"
+  | Mul -> "Mul"
+  | Fdiv -> "Fdiv"
+  | Idiv -> "Idiv"
+  | Mod -> "Mod"
+  | Pow -> "Pow"
+  | Atan2 -> "Atan2"
+  | Maximum -> "Maximum"
+  | Minimum -> "Minimum"
+  | And -> "And"
+  | Or -> "Or"
+  | Xor -> "Xor"
+  | Threefry -> "Threefry"
+
+let kind_name : P.node -> string = function
+  | In _ | Coord _ | Const _ -> "a leaf"
+  | Op1 (Copy, _, _) -> "Copy"
+  | Op1 (Cast, _, _) -> "Cast"
+  | Op1 (Bitcast, _, _) -> "Bitcast"
+  | Op1 (Unary u, _, _) -> unary_name u
+  | Op2 (Binary k, _, _) -> binary_name k
+  | Op2 (Compare _, _, _) -> "a comparison"
+  | Op3 (Where, _, _, _) -> "Where"
+  | Op3 (Fma, _, _, _) -> "Fma"
+
+(* [b]'s node [n] in [dt]. *)
+let in_dtype b dt n = if b.dts.(n) = dt then n else cast b dt n
+
+(* A builder of no program, over operands of [ins]. *)
+let blank ins =
+  { ins; nodes = [||]; dts = [||]; n = 0; values = [||]; tangents = [||] }
+
+let transpose (p : P.t) ~linear ~cts =
+  let pins = Iarray.to_array p.ins in
+  let m = Array.length pins and n = Iarray.length p.nodes in
+  let constants = List.filter (fun j -> not linear.(j)) (List.init m Fun.id) in
+  let ins =
+    Array.append
+      (Array.of_list (List.map (fun j -> pins.(j)) constants))
+      (Array.map snd cts)
+  in
+  let b = blank ins in
+  let lin = depends p linear in
+  (* The constant nodes, recomputed: [at.(k)] is node [k]'s in [b]. *)
+  let index = Array.make m (-1) in
+  List.iteri (fun i j -> index.(j) <- i) constants;
+  let at = Array.make n (-1) in
+  Iarray.iteri
+    (fun k (nd : P.node) ->
+      if not lin.(k) then
+        at.(k) <-
+          node b
+            (match nd with
+            | In j -> In index.(j)
+            | Coord _ | Const _ -> nd
+            | Op1 (o, dt, i) -> Op1 (o, dt, at.(i))
+            | Op2 (o, i, j) -> Op2 (o, at.(i), at.(j))
+            | Op3 (o, i, j, l) -> Op3 (o, at.(i), at.(j), at.(l))))
+    p.nodes;
+  (* Each node's cotangent, its contributions added in the order they come, with
+     no zero before the first. *)
+  let ct = Array.make n None in
+  let add k c =
+    ct.(k) <- Some (match ct.(k) with None -> c | Some a -> binary b Add a c)
+  in
+  let first = List.length constants in
+  Array.iteri
+    (fun i (k, _) ->
+      let o = Iarray.get p.outs k in
+      add o (in_dtype b (P.dtype p o) (operand b (first + i))))
+    cts;
+  let opct = Array.make m None in
+  let nonlinear k = raise (Nonlinear (kind_name (Iarray.get p.nodes k))) in
+  for k = n - 1 downto 0 do
+    match ct.(k) with
+    | Some c when lin.(k) -> (
+        let zero () = const b b.dts.(c) 0. in
+        match Iarray.get p.nodes k with
+        | In j ->
+            opct.(j) <-
+              Some
+                (match opct.(j) with None -> c | Some a -> binary b Add a c)
+        | Coord _ | Const _ -> ()
+        | Op1 (Copy, _, i) -> add i c
+        | Op1 (Cast, _, i) -> add i (cast b (P.dtype p i) c)
+        | Op1 (Unary Neg, _, i) -> add i (unary b Neg c)
+        | Op1 ((Unary _ | Bitcast), _, _) -> nonlinear k
+        | Op2 (Binary Add, i, j) ->
+            if lin.(i) then add i c;
+            if lin.(j) then add j c
+        | Op2 (Binary Sub, i, j) ->
+            if lin.(i) then add i c;
+            if lin.(j) then add j (unary b Neg c)
+        | Op2 (Binary Mul, i, j) -> (
+            match (lin.(i), lin.(j)) with
+            | true, false -> add i (mul b c at.(j))
+            | false, true -> add j (mul b at.(i) c)
+            | _ -> nonlinear k)
+        | Op2 (Binary Fdiv, i, j) ->
+            if lin.(j) then nonlinear k else add i (binary b Fdiv c at.(j))
+        | Op2 (_, _, _) -> nonlinear k
+        | Op3 (Where, w, i, j) ->
+            if lin.(w) then nonlinear k;
+            if lin.(i) then add i (where b at.(w) c (zero ()));
+            if lin.(j) then add j (where b at.(w) (zero ()) c)
+        | Op3 (Fma, i, j, l) ->
+            (match (lin.(i), lin.(j)) with
+            | true, true -> nonlinear k
+            | true, false -> add i (mul b c at.(j))
+            | false, true -> add j (mul b at.(i) c)
+            | false, false -> ());
+            if lin.(l) then add l c)
+    | Some _ | None -> ()
+  done;
+  let received = Array.map Option.is_some opct in
+  let outs =
+    List.filter_map
+      (fun j -> if linear.(j) then opct.(j) else None)
+      (List.init m Fun.id)
+  in
+  let received = Array.mapi (fun j r -> linear.(j) && r) received in
+  match outs with
+  | [] -> (None, received)
+  | outs -> (Some (finish b ~outs:(Array.of_list outs)), received)

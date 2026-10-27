@@ -914,3 +914,6 @@ let tangent i x =
   match Prim.payload i x with
   | Some (Dual d) -> Some (if d.fresh then d.tangent else Nx.copy d.tangent)
   | _ -> None
+
+let tangent_of i x =
+  match Prim.payload i x with Some (Dual d) -> Some d.tangent | _ -> None

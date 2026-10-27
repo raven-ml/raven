@@ -37,3 +37,8 @@ val tangent :
   Nx.Prim.interpretation -> ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t option
 (** [tangent i x] is [x]'s tangent as its own memory, in C order: a copy where
     the tangent is a seed's or a view. [None] if [i] does not own [x]. *)
+
+val tangent_of :
+  Nx.Prim.interpretation -> ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t option
+(** [tangent_of i x] is [x]'s tangent as its rule made it, which may be a view
+    of another value. [None] if [i] does not own [x]. *)
