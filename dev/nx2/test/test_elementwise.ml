@@ -364,7 +364,17 @@ let weight =
       (1, Gen.any_float);
     ]
 
-let ends = Gen.frequency [ (3, Gen.float_range (-1e3) 1e3); (1, Gen.any_float) ]
+let ends =
+  Gen.frequency
+    [
+      (3, Gen.float_range (-1e3) 1e3);
+      (1, Gen.of_list [ 0.; -0. ]);
+      (1, Gen.any_float);
+    ]
+
+(* Equal as numbers: [-0.] and [+0.] alike, as nx.mli states the ends. *)
+let number =
+  Testable.make ~pp:(fun ppf x -> Format.fprintf ppf "%h" x) ~equal:Float.equal
 
 let law_lerp ((a, b), w) =
   cover "an end" (w = 0. || w = 1.);
@@ -375,8 +385,8 @@ let law_lerp ((a, b), w) =
   let want = lerp_reference a b w in
   if not (same_bits want got) then
     failf "lerp %h %h %h is %h, not %h" a b w got want;
-  if Float.is_finite (b -. a) && w = 0. then equal ~msg:"w = 0" float_exact a got;
-  if Float.is_finite (b -. a) && w = 1. then equal ~msg:"w = 1" float_exact b got
+  if Float.is_finite (b -. a) && w = 0. then equal ~msg:"w = 0" number a got;
+  if Float.is_finite (b -. a) && w = 1. then equal ~msg:"w = 1" number b got
 
 (* A narrow float computes at float32 and rounds once. *)
 let law_lerp_narrow ((a, b), w) =
@@ -386,6 +396,16 @@ let law_lerp_narrow ((a, b), w) =
   let want = Nx.cast Nx.bfloat16 (Nx.lerp (wide a) (wide b) (wide w)) in
   let bits x = Nx.to_array (Nx.bitcast Nx.uint16 x) in
   equal (array int) (bits want) (bits (Nx.lerp a b w))
+
+(* The ends at signed zeros: equal as numbers. *)
+let test_lerp_zero_ends () =
+  let s = Nx.scalar Nx.float64 in
+  let lerp a b w = (Nx.to_array (Nx.lerp (s a) (s b) (s w))).(0) in
+  List.iter
+    (fun (a, b) ->
+      equal ~msg:"w = 0" number a (lerp a b 0.);
+      equal ~msg:"w = 1" number b (lerp a b 1.))
+    [ (-0., 1.); (1., -0.); (-0., -0.); (0., -0.); (-0., 0.) ]
 
 let test_lerp_shapes () =
   let a = Nx.zeros Nx.float32 [| 2; 1 |] and b = Nx.ones Nx.float32 [| 3 |] in
@@ -417,6 +437,7 @@ let elementwise =
         law_lerp;
       prop "lerp of bfloat16 is lerp at float32, rounded once"
         (Gen.pair (Gen.pair ends ends) weight) law_lerp_narrow;
+      test "lerp's ends at signed zeros" test_lerp_zero_ends;
       test "lerp broadcasts, and refuses shapes that do not" test_lerp_shapes;
     ]
 
