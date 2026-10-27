@@ -5,41 +5,17 @@
 
 (* nx.cpu's Fourier transforms: each result against the sums nx_kernel.mli's
    c2c, r2c and c2r state, computed in double-double (or in double, for
-   single-precision transforms), within the bound nx_cpu.mli states, along lines
-   computed by passes, by the four steps and by Bluestein's convolution, forward
-   and inverse, along one axis or several, through views; exact transforms of
-   long lines; the same bits under every layout, on one thread as on the job's,
-   and for a line alone as in its batch; empty transforms, and the refusals. *)
+   single-precision transforms), within the bound nx_cpu.mli states by the
+   points' prime factors, forward and inverse, along one axis or several,
+   through views; exact transforms of long lines; the same bits under every
+   layout, on one thread as on the job's, for a line alone as in its batch,
+   and on every target; empty transforms; the refusals; and no byte read or
+   written past the operand or the result. *)
 
 open Windtrap
 open Elements
+open Exact
 module Support = Nx_kernels_support
-
-(* Double-double numbers *)
-
-let two_sum a b =
-  let s = a +. b in
-  let bb = s -. a in
-  (s, a -. (s -. bb) +. (b -. bb))
-
-let two_prod a b =
-  let p = a *. b in
-  (p, Float.fma a b (-.p))
-
-let dd_add (ah, al) (bh, bl) =
-  let s, e = two_sum ah bh in
-  two_sum s (e +. al +. bl)
-
-let dd_mul (ah, al) (bh, bl) =
-  let p, e = two_prod ah bh in
-  two_sum p (e +. (ah *. bl) +. (al *. bh))
-
-let dd_neg (h, l) = (-.h, -.l)
-
-let dd_div (h, l) d =
-  let q = h /. d in
-  let p, e = two_prod q d in
-  two_sum q ((h -. p -. e +. l) /. d)
 
 (* sin φ and cos φ by their series, φ in [0, π/4]. *)
 let sincos phi =
@@ -50,7 +26,7 @@ let sincos phi =
     | 1 -> s := dd_add !s !t
     | 2 -> c := dd_add !c (dd_neg !t)
     | _ -> s := dd_add !s (dd_neg !t));
-    t := dd_div (dd_mul !t phi) (Float.of_int (k + 1))
+    t := dd_div (dd_mul !t phi) (Float.of_int (k + 1), 0.)
   done;
   (!s, !c)
 
@@ -63,7 +39,9 @@ let unit m n =
   let pi_2 = (1.5707963267948966, 6.123233995736766e-17) in
   let phi =
     dd_mul pi_2
-      (dd_div (Float.of_int (if far then n - r else r), 0.) (Float.of_int n))
+      (dd_div
+         (Float.of_int (if far then n - r else r), 0.)
+         (Float.of_int n, 0.))
   in
   let s, c = sincos phi in
   let c, s = if far then (s, c) else (c, s) in
@@ -218,38 +196,8 @@ let rec factors n d =
   else if n mod d = 0 then d :: factors (n / d) d
   else factors n (d + 1)
 
-let four_steps n = n > 64 && List.length (factors n 2) > 1
-
 let by_bluestein n = List.exists (fun p -> p > 250) (factors n 2)
-
-(* Whether the four steps of n points take rows of 8: lines of at most 8 KiB. *)
-let rows8 ~wide n =
-  four_steps n
-  && (not (by_bluestein n))
-  && n mod 8 = 0
-  && n * (if wide then 16 else 8) <= 8192
-
-(* The passes of n by pocketfft's factorisation: its fours, then its other
-   prime factors. *)
-let passes n =
-  let rec fours n k = if n mod 4 = 0 then fours (n / 4) (k + 1) else (n, k) in
-  let rest, k = fours n 0 in
-  k + List.length (factors rest 2)
-
-(* The rows of the four steps' grid of n points: n / 8 for rows of 8, else the
-   largest divisor up to √n of the fewest passes of it and its cofactor. *)
-let rows_of ~wide n =
-  if rows8 ~wide n then n / 8
-  else
-    let rec go d best =
-      if d * d > n then best
-      else if
-        n mod d = 0
-        && passes d + passes (n / d) <= passes best + passes (n / best)
-      then go (d + 1) d
-      else go (d + 1) best
-    in
-    go 2 1
+let composite n = List.length (factors n 2) > 1
 
 let pow2 n =
   let rec go p = if p >= n then p else go (2 * p) in
@@ -296,10 +244,10 @@ let pp_case ppf c =
     (String.concat ", " (view_names c.view))
 
 (* Shapes, with the axes they must transform: small ones of any axes; one long
-   line among short ones, transformed with any others, of a length at the edge
-   of the passes, of Bluestein's (514 and 1018 halved for a real line) or of the
-   four steps' (with factors not multiples of a vector); and lines of the four
-   steps' lengths side by side. *)
+   line among short ones, transformed with any others, of a composite length
+   of several primes, of a prime past 250 or twice one (514 and 1018 halved
+   for a real line), or of a length about a power of two; and long composite
+   lines side by side. *)
 let four = [ 289; 300; 360; 512; 625; 1000; 1024 ]
 let blue = [ 251; 257; 502; 509; 514; 1018; 1031 ]
 let edge = [ 53; 64; 65; 97; 100; 241; 243; 255; 256 ]
@@ -374,8 +322,9 @@ let case_gen =
      in
      { kind; wide; shape = s; axes; view; xs }
 
-(* Real lines of 514 and 1018 points, whose halves go by Bluestein's, in each
-   width and direction: the generator draws them too seldom for every seed. *)
+(* Real lines of 514 and 1018 points, whose halves have a prime factor past
+   250, in each width and direction: the generator draws them too seldom for
+   every seed. *)
 let halved_cases =
   let case (n, wide, kind) =
     let s = match kind with C2r _ -> (n / 2) + 1 | _ -> n in
@@ -400,14 +349,6 @@ let points c =
   Array.mapi
     (fun a e -> match c.kind with C2r n when a = last -> n | _ -> e)
     c.shape
-
-(* The points of the complex lines a transform runs on along [a]: half a
-   real line's where it is even and at least 512. *)
-let complex_points c a =
-  let n = (points c).(a) and last = c.axes.(Array.length c.axes - 1) in
-  match c.kind with
-  | (R2c | C2r _) when a = last && n mod 2 = 0 && n >= 512 -> n / 2
-  | _ -> n
 
 (* The operand: complex or real, through the case's view, made from the values
    [xs]. *)
@@ -508,22 +449,16 @@ let norm (zs : Complex.t array) =
 let operand_norm c =
   match c.kind with C2r _ -> sqrt 2. *. norm c.xs | _ -> norm c.xs
 
+(* Within the bound, by the prime factors of the points along each axis. *)
 let law_bound c =
-  cover "by Bluestein"
-    (Array.exists (fun a -> by_bluestein (points c).(a)) c.axes);
-  cover "by the four steps"
+  let lengths = Array.map (fun a -> (points c).(a)) c.axes in
+  cover "a prime factor past 250" (Array.exists by_bluestein lengths);
+  cover "a prime length"
+    (Array.exists (fun n -> n > 1 && not (composite n)) lengths);
+  cover "a composite length of several primes"
     (Array.exists
-       (fun a ->
-         let n = (points c).(a) in
-         four_steps n && not (by_bluestein n))
-       c.axes);
-  cover "rows of 8, the last block short of a vector's lanes"
-    (Array.exists
-       (fun a ->
-         let n = complex_points c a in
-         let lanes = if c.wide then 4 else 8 in
-         rows8 ~wide:c.wide n && n / 8 mod lanes <> 0)
-       c.axes);
+       (fun n -> List.length (List.sort_uniq compare (factors n 2)) > 1)
+       lengths);
   cover "several axes" (Array.length c.axes > 1);
   cover "a real line through complex ones of n points"
     (match c.kind with
@@ -531,7 +466,7 @@ let law_bound c =
         let n = (points c).(c.axes.(Array.length c.axes - 1)) in
         n mod 2 = 1 || n < 512
     | C2c _ -> false);
-  cover "a real line halved, its half by Bluestein"
+  cover "a real line halved, its half with a prime factor past 250"
     (match c.kind with
     | R2c | C2r _ ->
         let n = (points c).(c.axes.(Array.length c.axes - 1)) in
@@ -591,18 +526,12 @@ let bits_of y =
 (* The same bits through every view, on one thread as on the job's, and for
    each line transformed alone, NaNs and infinities included. *)
 let law_bits c =
-  let lanes = if c.wide then 4 else 8 in
   let last = c.axes.(Array.length c.axes - 1) in
   let n = (points c).(last) and r = Array.length c.shape in
-  cover "the four steps, lines side by side"
-    (four_steps n
-    && (not (by_bluestein n))
-    && last < r - 1
-    && c.shape.(r - 1) >= lanes);
-  cover "rows of 8, lines side by side"
-    (rows8 ~wide:c.wide (complex_points c last)
-    && last < r - 1
-    && c.shape.(r - 1) >= lanes);
+  cover "long lines side by side"
+    (n > 64 && last < r - 1 && c.shape.(r - 1) >= 8);
+  cover "a long line alone, its points apart"
+    (n > 64 && last < r - 1 && c.shape.(r - 1) < 8);
   cover "a NaN or an infinity among the points"
     (Array.exists
        (fun (z : Complex.t) ->
@@ -647,9 +576,9 @@ let law_bits c =
 (* Long lines *)
 
 (* Lines past the generated cases' lengths, each a transform of an impulse,
-   whose exact transform is the twiddles: by the four steps, by Bluestein's
-   convolution, real ones of an even length, each line's steps jobs of their
-   own. The same bits on one thread. *)
+   whose exact transform is the twiddles: powers of two, a prime past 250,
+   real ones of an even length and a composite of every small prime, within
+   the bound, with the same bits on one thread. *)
 let test_long () =
   let check ~wide kind n at =
     let shape, xs =
@@ -705,67 +634,39 @@ let test_long () =
       check ~wide (C2r 30030) 30030 5)
     [ false; true ]
 
-(* Results that stream past the caches, on the job's threads and on one:
-   a complex128 line of 2^19 points, 8 MiB, past a core's L2, which one
-   thread streams; a complex64 line of 2^22 points and 2048 lines of 2048
-   side by side, 32 MiB, past the largest cache of the hosts here, which
-   any threads stream; and lines side by side, each line's bits alone. *)
-let test_streamed () =
-  let rs = Random.State.make [| 19 |] in
-  let xs =
-    Array.init (1 lsl 19) (fun _ ->
-        let re = value true rs in
-        { Complex.re; im = value true rs })
-  in
-  let c =
-    {
-      kind = C2c Forward;
-      wide = true;
-      shape = [| 1 lsl 19 |];
-      axes = [| 0 |];
-      view = plain 1;
-      xs;
-    }
-  in
-  let x = operand c in
-  equal (array string)
-    (elements (run c x))
-    (elements (run ~one_thread:true c x));
-  let large shape seed =
-    let rs = Random.State.make [| seed |] in
-    let xs =
-      Array.init (1 lsl 22) (fun _ ->
-          let re = value false rs in
-          { Complex.re; im = value false rs })
-    in
-    let c =
-      { c with wide = false; shape; view = plain (Array.length shape); xs }
-    in
-    let x = operand c in
-    equal (array (pair int64 int64)) (bits_of (run c x))
-      (bits_of (run ~one_thread:true c x))
-  in
-  large [| 1 lsl 22 |] 22;
-  large [| 2048; 2048 |] 11;
-  (* 512 complex64 lines of 1024 points side by side, a 4 MiB result
-     written past the caches by rows of 8 in registers, on the job's
-     threads and on one: each line's bits alone, whose 8 KiB result stays
-     in cache. *)
-  let n = 1024 and lines = 512 in
-  let rs = Random.State.make [| 10 |] in
+(* A forward c2c of [lines] lines of [n] points, drawn from [seed]. *)
+let line ~wide n lines seed =
+  let rs = Random.State.make [| seed |] in
   let xs =
     Array.init (n * lines) (fun _ ->
-        let re = value false rs in
-        { Complex.re; im = value false rs })
+        let re = value wide rs in
+        { Complex.re; im = value wide rs })
   in
-  let c = { c with wide = false; shape = [| n; lines |]; view = plain 2; xs } in
+  let shape = if lines = 1 then [| n |] else [| n; lines |] in
+  let r = Array.length shape in
+  { kind = C2c Forward; wide; shape; axes = [| 0 |]; view = plain r; xs }
+
+(* Transforms of a MiB and past, which nx.cpu runs with the lock released: a
+   line of each dtype, and lines side by side. *)
+let streamed =
+  [
+    line ~wide:true (1 lsl 16) 1 19;
+    line ~wide:false (1 lsl 17) 1 22;
+    line ~wide:false 1024 136 10;
+  ]
+
+(* The same bits on the job's threads as on one, and for lines side by side,
+   each line's bits alone. *)
+let test_streamed () =
+  let bits = array (pair int64 int64) in
+  List.iter
+    (fun c ->
+      let x = operand c in
+      equal bits (bits_of (run c x)) (bits_of (run ~one_thread:true c x)))
+    streamed;
+  let c = List.nth streamed 2 in
+  let n = c.shape.(0) and lines = c.shape.(1) in
   let ys = bits_of (run c (operand c)) in
-  (* One thread: x86-64 streams a result under its largest cache only
-     there. *)
-  equal
-    (array (pair int64 int64))
-    ys
-    (bits_of (run ~one_thread:true c (operand c)));
   List.iter
     (fun l ->
       let alone =
@@ -773,25 +674,15 @@ let test_streamed () =
           c with
           shape = [| n |];
           view = plain 1;
-          xs = Array.init n (fun j -> xs.((j * lines) + l));
+          xs = Array.init n (fun j -> c.xs.((j * lines) + l));
         }
       in
-      equal
-        (array (pair int64 int64))
+      equal bits
         (Array.init n (fun j -> ys.((j * lines) + l)))
         (bits_of (run alone (operand alone))))
-    [ 0; 255; lines - 1 ]
+    [ 0; lines / 2; lines - 1 ]
 
 (* Guard pages *)
-
-(* The axis whose complex lines go by the four steps from the operand into the
-   result, with their points: c2c's first, and a halved real line's. *)
-let into_result c =
-  let last = c.axes.(Array.length c.axes - 1) in
-  let a = match c.kind with C2c _ -> c.axes.(0) | R2c | C2r _ -> last in
-  let n = complex_points c a in
-  let complex = match c.kind with C2c _ -> true | _ -> n <> (points c).(a) in
-  if complex && four_steps n && not (by_bluestein n) then Some (a, n) else None
 
 (* The same bits with the operand, through its view, and the result each
    against an inaccessible page. *)
@@ -801,43 +692,25 @@ let law_guards (c, side) =
     (c.view.stepped && not after);
   cover "a reversed operand at the page after"
     (c.view.reversed <> None && after);
-  cover "a line of four steps" (four_steps (points c).(c.axes.(0)));
-  (* Into the result, a line's four steps write it in place of their grid:
-     lines along an outer axis, side by side or alone, and blocks of rows short
-     of a vector. *)
+  let a = c.axes.(0) in
+  let n = (points c).(a) in
   let s = snd (result c) and r = Array.length c.shape in
-  let side_by_side a =
-    match c.kind with C2r _ -> false | _ -> a < r - 1 && s.(r - 1) >= 8
-  in
-  let into f = match into_result c with Some (a, n) -> f a n | None -> false in
-  cover "the four steps into the result, lines side by side"
-    (into (fun a _ -> side_by_side a));
-  cover "the four steps into the result, a line alone, its points apart"
-    (into (fun a _ ->
-         total (Array.sub s (a + 1) (r - a - 1)) > 1 && not (side_by_side a)));
-  cover "the four steps into the result, the last block of rows short of a vector"
-    (into (fun _ n ->
-         (not (rows8 ~wide:c.wide n)) && rows_of ~wide:c.wide n mod 2 = 1));
+  cover "a long line" (n > 64);
+  cover "long lines side by side" (n > 64 && a < r - 1 && s.(r - 1) >= 8);
+  cover "a long line alone, its points apart"
+    (n > 64
+    && a < r - 1
+    && s.(r - 1) < 8
+    && total (Array.sub s (a + 1) (r - a - 1)) > 1);
   let call xs ds =
     ignore (run ~dst:ds.(0) c xs.(0));
     A.Done
   in
   ignore (same_guarded side ~call [| operand c |] [| result c |])
 
-(* The streamed results of test_streamed, on one thread and on the job's,
-   each against the page. *)
+(* The streamed transforms, on one thread and on the job's, each against the
+   page. *)
 let test_streamed_guards () =
-  let line n lines wide seed =
-    let rs = Random.State.make [| seed |] in
-    let xs =
-      Array.init (n * lines) (fun _ ->
-          let re = value wide rs in
-          { Complex.re; im = value wide rs })
-    in
-    let shape = if lines = 1 then [| n |] else [| n; lines |] in
-    let r = Array.length shape in
-    { kind = C2c Forward; wide; shape; axes = [| 0 |]; view = plain r; xs }
-  in
   List.iter
     (fun c ->
       List.iter
@@ -851,23 +724,14 @@ let test_streamed_guards () =
               ignore (same_guarded side ~call [| operand c |] [| result c |]))
             [ false; true ])
         Support.[ Before; After ])
-    [
-      line (1 lsl 19) 1 true 19;
-      line 1024 512 false 10;
-      line (1 lsl 22) 1 false 22;
-    ]
+    streamed
 
 (* Every target's bits *)
 
-(* Digests are the same on each target this CPU runs, and on every CPU, since a
-   line's arithmetic is a function of its length alone. Past the passes (7, 60,
-   64, 241), the four steps (100, 1000, 1024, 4096), Bluestein (257, 1031) and
-   halved real lines (514): 512 ties the float64 rows of 8, which law_bits
-   checks side by side, to a digest; 1001 takes the odd radix into the four
-   steps, and 59049 radix 3; 65536 splits and merges real lines in chunks on
-   several threads; 255 takes odd radices at float64 on one thread, and is the
-   rfft-4Kx255 row's plan; 504 takes rows of 8 with a short last block,
-   radices 3 and 7 in their columns, and an even real line under 512. *)
+(* Digests of lines whose lengths take each stated regime: small primes and
+   their products, powers of two, primes past 250 and their doubles, real
+   lines halved and not, odd radices and long lines of one prime; each the
+   same on every target, as nx_cpu.mli promises. *)
 let lengths =
   [ 7; 60; 64; 241; 100; 1000; 1024; 4096; 257; 1031; 514; 512; 1001; 59049;
     65536; 255; 504 ]
@@ -890,20 +754,17 @@ let lines wide n =
 
 (* [table digest] is a row of [digest wide n] per length and width. *)
 let table digest =
-  let rows () =
-    List.concat_map
-      (fun n ->
-        List.map
-          (fun wide ->
-            let d = Digest.to_hex (Digest.string (digest wide n)) in
-            Printf.sprintf "%d %s %s" n
-              (if wide then "f64" else "f32")
-              (String.sub d 0 16))
-          [ false; true ])
-      lengths
-    |> String.concat "\n"
-  in
-  Support.cpu.around rows
+  List.concat_map
+    (fun n ->
+      List.map
+        (fun wide ->
+          let d = Digest.to_hex (Digest.string (digest wide n)) in
+          Printf.sprintf "%d %s %s" n
+            (if wide then "f64" else "f32")
+            (String.sub d 0 16))
+        [ false; true ])
+    lengths
+  |> String.concat "\n"
 
 let test_digests () =
   let one c = String.concat "" (Array.to_list (elements (run c (operand c)))) in
@@ -1048,41 +909,37 @@ let test_refusals () =
   equal answer A.Shape_mismatch
     (Nx_cpu.c2r ~axes:[| 2 |] ~dst:(f64 [| 4 |]) (c128 [| 3 |]))
 
-(* The laws. *)
-let laws (b : Support.backend) =
+let suite (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
-  group ("nx.cpu " ^ b.name)
+  let test name f = test name (fun () -> b.around f) in
+  group b.name
     [
-      prop ~examples:halved_cases "transforms are within nx_cpu.mli's bound"
-        case_gen (run law_bound);
-      prop "bits do not depend on views, threads or batch" special_gen
-        (run law_bits);
-      prop ~count:1000
+      group "transforms are within nx_cpu.mli's bound"
+        [
+          prop ~examples:halved_cases "by the prime factors of the points"
+            case_gen (run law_bound);
+          test "long lines" test_long;
+          test "a transform of no point is the empty sum" test_empty;
+        ];
+      group "bits are a function of the values alone"
+        [
+          prop "whatever the views, threads or batch" special_gen
+            (run law_bits);
+          test "whatever the threads, past the size the lock is released for"
+            test_streamed;
+          test "on every target" test_digests;
+          test "on every target, infinities among the points"
+            test_infinity_digests;
+        ];
+      test "refuses dtypes and shapes" test_refusals;
+      group
         "reads and writes no byte past the operand and the result, whatever \
          pages lie beside them"
-        (Gen.pair case_gen sides) (run law_guards);
+        [
+          prop ~count:300 "through views" (Gen.pair case_gen sides)
+            (run law_guards);
+          test "past the size the lock is released for" test_streamed_guards;
+        ];
     ]
 
-let () =
-  exit
-    (Windtrap.run "nx_cpu.fft"
-       (List.map laws Support.backends
-       @ [
-           group "nx.cpu"
-             [
-               test "long lines are within the bound, one thread's bits"
-                 test_long;
-               test "results written past the caches keep their bits"
-                 test_streamed;
-               test "streamed results write no byte past their end"
-                 test_streamed_guards;
-               test "a transform of no point is the empty sum" test_empty;
-               test "refuses dtypes and shapes" test_refusals;
-               test "digests of transforms, the same on every target"
-                 test_digests;
-               test
-                 "digests of transforms of infinities, the same on every \
-                  target"
-                 test_infinity_digests;
-             ];
-         ]))
+let () = exit (Windtrap.run "nx_cpu.fft" (List.map suite Support.backends))

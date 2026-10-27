@@ -40,7 +40,8 @@
     the function of its name in [nx_kinds.h], with that function's bits,
     NaNs aside, on every target. So [Exp2] is exact at integers whose power
     is in the dtype, and [Log2] at powers of two. The kinds keep subnormal
-    operands and results. *)
+    operands and results. A transform's bits too are the same on every
+    target, NaNs aside. *)
 
 (** {1:lane_order Lane order}
 

@@ -60,7 +60,8 @@
   reduce_cases
   contract_cases
   index_cases
-  linalg_cases)
+  linalg_cases
+  exact)
  (libraries
   nx_array
   nx_array_gen

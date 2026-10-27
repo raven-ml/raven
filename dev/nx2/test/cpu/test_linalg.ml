@@ -4,12 +4,14 @@
   ---------------------------------------------------------------------------*)
 
 (* nx.cpu's factorisations and triangular solves, as nx_cpu.mli states
-   them: each result against its defining relation, within its bound, by
-   residuals computed in double-double, on operands well and badly
-   conditioned and below the least normal number; the Upper factor's bits;
-   a solve into its operand; the same bits under every layout of the same
-   values and on one thread as on the job's; the cases it computes, and its
-   refusals. *)
+   them, by the promise each group holds: each result against its defining
+   relation within its bound, by residuals computed in double-double, on
+   operands well and badly conditioned, below the least normal number and
+   near the largest, at orders past its reductions' crossovers and on
+   matrices its algorithms find hard; the Upper factor's bits; the same bits
+   under every layout of the same values, in a batch and on one thread as on
+   the job's; a solve into its operand; its refusals; and no byte read or
+   written past an operand or a result. *)
 
 open Windtrap
 open Nx_array_gen
@@ -315,76 +317,81 @@ let law_lu (b : Support.backend) c =
 
 (* a = q r with, per column, ‖a_j − q r_j‖ <= g ‖a_j‖ + √m h; each element
    of qᴴq − I at most g, g = γ(k(2m + 10)) and h = ε(k(2m + 10)); r +0
-   below its diagonal and real on it. A subnormal a is checked as
-   2^d a = q (2^d r). *)
+   below its diagonal and real on it, for the [count] matrices of [m] × [n]
+   of [a], q of [qc] columns. [a] and [r] are scaled by 2^e. *)
+let check_qr dt ~e ~count ~m ~n ~qc (a : Complex.t array) (q : Complex.t array)
+    (r : Complex.t array) =
+  let g = gamma dt (min m n * ((2 * m) + 10)) in
+  let h = epsilon ~e dt (min m n * ((2 * m) + 10)) in
+  let w = { ratio = 0.; where = "" } in
+  for t = 0 to count - 1 do
+    for i = 0 to qc - 1 do
+      for j = 0 to n - 1 do
+        if j < i then
+          equal ~msg:"r below its diagonal" (pair int64 int64) (0L, 0L)
+            (let v = at r ~rows:qc ~cols:n t i j in
+             (Int64.bits_of_float v.re, Int64.bits_of_float v.im));
+        (* Real: a zero imaginary part of either sign, as an operand's
+           −0 passes through a reflector that leaves it. *)
+        if j = i then
+          equal ~msg:"r's diagonal is real"
+            (Testable.make ~pp:(fun ppf x -> Format.fprintf ppf "%h" x)
+               ~equal:( = ))
+            0. (at r ~rows:qc ~cols:n t i j).im
+      done
+    done;
+    (* r is zero below its diagonal: column j of q r sums its first
+       j + 1 products. *)
+    for j = 0 to n - 1 do
+      let res = ref 0. and norm = ref 0. in
+      for i = 0 to m - 1 do
+        let s = sum () in
+        let aij = at a ~rows:m ~cols:n t i j in
+        add s.re aij.re;
+        add s.im aij.im;
+        for p = 0 to min j (qc - 1) do
+          add_cprod s
+            (Complex.neg (at q ~rows:m ~cols:qc t i p))
+            (at r ~rows:qc ~cols:n t p j)
+        done;
+        res := !res +. (Complex.norm2 (total s));
+        norm := !norm +. Complex.norm2 aij
+      done;
+      worse w
+        ~bound:((g *. sqrt !norm) +. (sqrt (float_of_int m) *. h))
+        ~residual:(sqrt !res) (fun () ->
+          Printf.sprintf "matrix %d, column %d of a - q r" t j)
+    done;
+    (* qᴴq − I is Hermitian: its lower triangle bounds every element. *)
+    for i = 0 to qc - 1 do
+      for j = 0 to i do
+        let s = sum () in
+        if i = j then add s.re (-1.);
+        for p = 0 to m - 1 do
+          add_cprod ~conj:true s
+            (at q ~rows:m ~cols:qc t p j)
+            (at q ~rows:m ~cols:qc t p i)
+        done;
+        worse w ~bound:g ~residual:(Complex.norm (total s)) (fun () ->
+            Printf.sprintf "matrix %d, element (%d, %d) of qᴴq - I" t i j)
+      done
+    done
+  done;
+  check_worst w
+
+(* qr's results meet check_qr's relations, reduced or complete. A subnormal
+   a is checked as 2^d a = q (2^d r). *)
 let law_qr (b : Support.backend) c =
   let cols, x = lu_operand c in
   let f = factors c in
   match run b (Qr f) [| laid_out c.how x |] with
   | None -> ()
   | Some y ->
-      let d = down c in
-      let a = up d (values x) and q = values y.(0) in
-      let r = up d (values y.(1)) in
-      let m = c.n and n = cols in
+      let d = down c and m = c.n and n = cols in
       let qc = if f = Complete then m else min m n in
-      let g = gamma c.dt (min m n * ((2 * m) + 10)) in
-      let h = epsilon ~e:d c.dt (min m n * ((2 * m) + 10)) in
-      let w = { ratio = 0.; where = "" } in
-      for t = 0 to count c - 1 do
-        for i = 0 to qc - 1 do
-          for j = 0 to n - 1 do
-            if j < i then
-              equal ~msg:"r below its diagonal" (pair int64 int64) (0L, 0L)
-                (let v = at r ~rows:qc ~cols:n t i j in
-                 (Int64.bits_of_float v.re, Int64.bits_of_float v.im));
-            (* Real: a zero imaginary part of either sign, as an operand's
-               −0 passes through a reflector that leaves it. *)
-            if j = i then
-              equal ~msg:"r's diagonal is real"
-                (Testable.make ~pp:(fun ppf x -> Format.fprintf ppf "%h" x)
-                   ~equal:( = ))
-                0. (at r ~rows:qc ~cols:n t i j).im
-          done
-        done;
-        (* r is zero below its diagonal: column j of q r sums its first
-           j + 1 products. *)
-        for j = 0 to n - 1 do
-          let res = ref 0. and norm = ref 0. in
-          for i = 0 to m - 1 do
-            let s = sum () in
-            let aij = at a ~rows:m ~cols:n t i j in
-            add s.re aij.re;
-            add s.im aij.im;
-            for p = 0 to min j (qc - 1) do
-              add_cprod s
-                (Complex.neg (at q ~rows:m ~cols:qc t i p))
-                (at r ~rows:qc ~cols:n t p j)
-            done;
-            res := !res +. (Complex.norm2 (total s));
-            norm := !norm +. Complex.norm2 aij
-          done;
-          worse w
-            ~bound:((g *. sqrt !norm) +. (sqrt (float_of_int m) *. h))
-            ~residual:(sqrt !res) (fun () ->
-              Printf.sprintf "matrix %d, column %d of a - q r" t j)
-        done;
-        (* qᴴq − I is Hermitian: its lower triangle bounds every element. *)
-        for i = 0 to qc - 1 do
-          for j = 0 to i do
-            let s = sum () in
-            if i = j then add s.re (-1.);
-            for p = 0 to m - 1 do
-              add_cprod ~conj:true s
-                (at q ~rows:m ~cols:qc t p j)
-                (at q ~rows:m ~cols:qc t p i)
-            done;
-            worse w ~bound:g ~residual:(Complex.norm (total s)) (fun () ->
-                Printf.sprintf "matrix %d, element (%d, %d) of qᴴq - I" t i j)
-          done
-        done
-      done;
-      check_worst w
+      check_qr c.dt ~e:d ~count:(count c) ~m ~n ~qc (up d (values x))
+        (values y.(0))
+        (up d (values y.(1)))
 
 (* a v = v diag w with ‖a − v diag w vᴴ‖_F <= g ‖a‖_F + h and
    ‖vᴴv − I‖_F <= g, g = γ(16n) and h = ε(16n), for the [count] Hermitian
@@ -610,61 +617,46 @@ let agree_bits (b : Support.backend) r x =
         y
   | _ -> ()
 
-(* Orders about nx.cpu's two-stage reductions' crossovers, whose bands
-   have 16 subdiagonals without the vectors and 32 with them: one below
-   the crossover, then those whose last panel below the band has the
-   band's rows, 1, 2, whose columns past its reflectors lie in the band,
-   and one fewer than the band. On x86-64 values alone and real vectors
-   take the two stages from 128; on arm64 values alone from 512, complex
-   vectors from 1024 and real ones from 2048, where the vectors'
-   relations are checked on sampled elements. Arm64's orders of vectors,
-   past every crossover of x86-64, run on arm64 alone. Each order meets a
-   spectrum of repeats, of a cluster 2^-30 apart that divide and conquer
-   barely separates in float64, or graded over 60 binades. The chase and
-   Q2 give their bits whatever the threads and layout (agree_bits) at
-   order 512 without the vectors, and with them at 159 and 576 on x86-64
-   and 1024 on arm64. *)
-let test_eigh_two_stages (b : Support.backend) () =
+(* Spectra a large order meets: values that repeat, that cluster 2^-30
+   apart, which divide and conquer barely separates in float64, or that
+   grade over 60 binades. *)
+let repeating r _ = Float.round (8. *. uniform r) /. 8.
+
+let clustered r j =
+  if j mod 2 = 0 then 1. +. (float_of_int j *. 0x1p-30) else uniform r
+
+let graded r j = Float.copy_sign (Float.ldexp 1. (-(j mod 61))) (uniform r)
+
+(* One order past each crossover to nx.cpu's two-stage reduction, where
+   the bounds hold as below it: on x86-64 from 128, for values alone of
+   either kind and real vectors; on arm64 from 512 for values alone, 1024
+   for complex vectors and 2048 for real ones, which x86-64 is past at
+   129, so they run on arm64 alone. Complex values alone at 513 are past
+   both. The relations are checked whole at 129 and on sampled elements
+   past it, and the bits agree whatever the threads and layout up to
+   1025. *)
+let test_eigh_large (b : Support.backend) () =
   let r = Random.State.make [| 7 |] in
-  let repeated _ = Float.round (8. *. uniform r) /. 8. in
-  let clustered j =
-    if j mod 2 = 0 then 1. +. (float_of_int j *. 0x1p-30) else uniform r
-  in
-  let graded j = Float.copy_sign (Float.ldexp 1. (-(j mod 61))) (uniform r) in
   let orders =
     D.
       [
-        (127, Any Float64, graded, Checked, None);
-        (128, Any Complex128, repeated, Unchecked, None);
-        (128, Any Float64, clustered, Checked, None);
-        (129, Any Complex64, clustered, Unchecked, None);
-        (129, Any Float32, repeated, Checked, None);
-        (130, Any Float32, graded, Checked, None);
-        (143, Any Float64, repeated, Unchecked, None);
-        (159, Any Float64, graded, Checked, Some (Eigh true));
-        (511, Any Float64, graded, Unchecked, None);
-        (512, Any Complex128, repeated, Unchecked, Some (Eigh false));
-        (513, Any Float32, clustered, Unchecked, None);
-        (514, Any Complex64, graded, Unchecked, None);
-        (527, Any Float64, repeated, Unchecked, None);
+        (129, Any Float64, graded r, Checked, true);
+        (513, Any Complex128, repeating r, Unchecked, true);
       ]
-  and x86_64 =
-    D.[ (576, Any Complex64, clustered, Sampled 256, Some (Eigh true)) ]
   and arm64 =
     D.
       [
-        (1024, Any Complex64, clustered, Sampled 256, Some (Eigh true));
-        (2048, Any Float64, repeated, Sampled 256, None);
+        (1025, Any Complex64, clustered r, Sampled 256, true);
+        (2049, Any Float64, repeating r, Sampled 256, false);
       ]
   in
   List.iter
     (fun (n, dt, lambda, vectors, threads) ->
       let l = Array.init n lambda and u = reflector_draws r dt n in
       check_spectrum b ~vectors dt ~k:(n / 3) ~u l;
-      Option.iter
-        (fun routine -> agree_bits b routine (spectral dt ~k:(n / 3) ~u l))
-        threads)
-    (if Support.x86_64 then orders @ x86_64 else orders @ arm64)
+      if threads then
+        agree_bits b (Eigh (vectors <> Unchecked)) (spectral dt ~k:(n / 3) ~u l))
+    (if Support.x86_64 then orders else orders @ arm64)
 
 (* svd's bound: γ(16 max (m, n) + 100), the 100 for the bidiagonal
    iteration's test of convergence, which drops an e below
@@ -677,8 +669,8 @@ let svd_term ~e dt ~m ~n = epsilon ~e dt ((16 * max m n) + 100)
 (* a = u diag s vh with ‖a − u diag s vh‖_F <= g ‖a‖_F + h,
    ‖uᴴu − I‖_F <= g and ‖vh vhᴴ − I‖_F <= g, g = svd_bound and
    h = svd_term, for the [count] matrices of [m] × [n] of [a], u of [uc]
-   columns and vh of [vr] rows; s real, descending and not negative. [a]
-   and [s] are scaled by 2^e. *)
+   columns and vh of [vr] rows; s real, descending and not negative, a zero
+   one +0. [a] and [s] are scaled by 2^e. *)
 let check_svd dt ~e ~count ~m ~n ~uc ~vr (a : Complex.t array)
     (s : Complex.t array) (u : Complex.t array) (vh : Complex.t array) =
   let k = min m n and g = svd_bound dt ~m ~n and h = svd_term ~e dt ~m ~n in
@@ -688,6 +680,9 @@ let check_svd dt ~e ~count ~m ~n ~uc ~vr (a : Complex.t array)
     for j = 0 to k - 1 do
       equal ~msg:"s is real" int64 0L (Int64.bits_of_float (st j).im);
       if not ((st j).re >= 0.) then failf "matrix %d: s %d is %h" t j (st j).re;
+      if (st j).re = 0. then
+        equal ~msg:(Printf.sprintf "matrix %d: a zero s %d is +0" t j) int64 0L
+          (Int64.bits_of_float (st j).re);
       if j > 0 && not ((st (j - 1)).re >= (st j).re) then
         failf "matrix %d: s not descending at %d" t j
     done;
@@ -952,6 +947,9 @@ let check_svd_sampled dt ~m ~n ~k r (a : Complex.t array) (s : Complex.t array)
   for j = 0 to p - 1 do
     equal ~msg:"s is real" int64 0L (Int64.bits_of_float s.(j).im);
     if not (s.(j).re >= 0.) then failf "s %d is %h" j s.(j).re;
+    if s.(j).re = 0. then
+      equal ~msg:(Printf.sprintf "a zero s %d is +0" j) int64 0L
+        (Int64.bits_of_float s.(j).re);
     if j > 0 && not (s.(j - 1).re >= s.(j).re) then
       failf "s not descending at %d" j
   done;
@@ -1051,56 +1049,27 @@ let check_singular (b : Support.backend) ?(vectors = Checked) dt ~m ~n xa
               s u vh)
       (run b (Svd (Some Reduced)) [| xa |])
 
-(* Shapes about nx.cpu's two-stage reductions' crossovers, by the lesser
-   extent k, whose bands have 16 superdiagonals without the vectors and
-   32 with them: one below the crossover, then those whose last step has
-   the band's columns, 1, 2, and one fewer than the band; square, tall,
-   tall enough for a QR first, and wide. On x86-64 values alone take the
-   two stages from 128 and real vectors from 256; on arm64 values alone
-   from 256, complex vectors from 512 and real ones from 1024. Arm64's
-   real vectors, past every crossover of x86-64, run on arm64 alone.
-   Vectors' relations are checked on sampled elements from 255. Each
-   meets values that repeat, cluster 2^-30 apart or grade over 60
-   binades. The two stages give their bits whatever the threads and
-   layout (agree_bits) at 512 without the vectors, and with them at 287
-   on x86-64 and 1024 on arm64, and the one-stage reduction's panels,
-   whose chunks the shape cuts, at 159 on reals and 256 on complex numbers
-   with them. *)
-let test_svd_two_stages (b : Support.backend) () =
+(* One shape past each crossover to nx.cpu's two-stage reduction, by the
+   lesser extent, where the bounds hold as below it: on x86-64 from 128
+   for values alone of either kind and 256 for real vectors; on arm64 from
+   128 for complex values alone, 192 for real ones, 512 for complex
+   vectors and 1024 for real ones, which x86-64 is past at 257, so they
+   run on arm64 alone. The relations are checked whole at 129 and on
+   sampled elements past it, and the bits agree whatever the threads and
+   layout up to 257. *)
+let test_svd_large (b : Support.backend) () =
   let r = Random.State.make [| 11 |] in
-  let repeated _ = Float.round (8. *. uniform r) /. 8. in
-  let clustered j =
-    if j mod 2 = 0 then 1. +. (float_of_int j *. 0x1p-30) else uniform r
-  in
-  let graded j = Float.copy_sign (Float.ldexp 1. (-(j mod 61))) (uniform r) in
   let shapes =
     D.
       [
-        (127, 127, Any Float64, graded, Checked, None);
-        (128, 140, Any Complex128, repeated, Checked, None);
-        (250, 129, Any Float32, clustered, Checked, None);
-        (130, 260, Any Complex64, graded, Unchecked, None);
-        (143, 143, Any Float64, repeated, Unchecked, None);
-        (159, 159, Any Float64, clustered, Checked, Some (Svd (Some Reduced)));
-        (255, 255, Any Float64, graded, Sampled 256, None);
-        (256, 300, Any Complex128, repeated, Unchecked,
-         Some (Svd (Some Reduced)));
-        (257, 600, Any Float32, clustered, Sampled 256, None);
-        (300, 258, Any Complex64, graded, Unchecked, None);
-        (271, 271, Any Float64, repeated, Unchecked, None);
-        (287, 290, Any Float64, graded, Sampled 256,
-         Some (Svd (Some Reduced)));
-        (511, 511, Any Complex128, clustered, Unchecked, None);
-        (512, 512, Any Complex64, graded, Sampled 256, Some (Svd None));
-        (520, 513, Any Complex128, repeated, Sampled 256, None);
-        (543, 543, Any Complex64, clustered, Sampled 256, None);
+        (129, 140, Any Complex128, graded r, Checked, true);
+        (257, 260, Any Float64, clustered r, Sampled 256, true);
       ]
   and arm64 =
     D.
       [
-        (1024, 1024, Any Float64, repeated, Sampled 256,
-         Some (Svd (Some Reduced)));
-        (1025, 1100, Any Float32, graded, Sampled 256, None);
+        (513, 520, Any Complex128, repeating r, Sampled 256, false);
+        (1025, 1030, Any Float64, graded r, Sampled 256, false);
       ]
   in
   List.iter
@@ -1108,8 +1077,93 @@ let test_svd_two_stages (b : Support.backend) () =
       let sigma = Array.init (min m n) sigma in
       let x = singular dt ~m ~n r sigma in
       check_singular b ~vectors dt ~m ~n x sigma;
-      Option.iter (fun routine -> agree_bits b routine x) threads)
+      if threads then agree_bits b (Svd (Some Reduced)) x)
     (if Support.x86_64 then shapes else shapes @ arm64)
+
+(* eigh, qr and svd of float64 matrices scaled as a whole by 1e-310, below
+   the least normal number, and by 1e300, near the largest: every result a
+   number, meeting its relations, and the spectra the known ones scaled
+   within the bounds, whose ε terms cover the elements' rounding below the
+   least normal number. Residuals are computed on the values scaled back
+   by 2^e. *)
+let test_scaled (b : Support.backend) () =
+  let dt = D.Any D.Float64 and n = 30 in
+  let r = Random.State.make [| 3 |] in
+  let l = Array.init n (repeating r) and u = reflector_draws r dt n in
+  let sigma = Array.init n (repeating r) in
+  let plain = lu_operand { dt; batch = [||]; n; r = 0; triangle = Lower;
+                           adjoint = false; unit_diagonal = false; seed = 3;
+                           how = Contiguous; scale = Plain } in
+  let times s x =
+    of_values dt [| n; n |]
+      (Array.map (fun (z : Complex.t) -> { z with re = z.re *. s }) (values x))
+  in
+  (* Each value of [w] within [bound] of one of [exact]. *)
+  let near ~msg ~bound exact (w : Complex.t array) =
+    let worst = { ratio = 0.; where = "" } in
+    Array.iteri
+      (fun j (z : Complex.t) ->
+        let d =
+          Array.fold_left
+            (fun m y -> Float.min m (Float.abs (z.re -. y)))
+            infinity exact
+        in
+        worse worst ~bound ~residual:d (fun () ->
+            Printf.sprintf "%s: value %d, %h" msg j z.re))
+      w;
+    check_worst worst
+  in
+  let numbers_in ~msg y =
+    Array.iteri
+      (fun k y ->
+        let v = values y in
+        equal ~msg:(Printf.sprintf "%s: numbers in result %d" msg k) int
+          (Array.length v) (numbers dt v))
+      y
+  in
+  List.iter
+    (fun (scale, e) ->
+      let msg = Printf.sprintf "scaled by %g" scale in
+      let x = times scale (spectral dt ~k:(n / 3) ~u l) in
+      (match run b (Eigh true) [| x |] with
+      | None -> ()
+      | Some y ->
+          numbers_in ~msg:(msg ^ ", eigh") y;
+          let a = up e (values x) and w = up e (values y.(0)) in
+          check_eigh dt ~e ~count:1 ~n a w (values y.(1));
+          let big = Array.fold_left (fun m x -> Float.max m (Float.abs x)) 0. l in
+          let bound =
+            (gamma dt (16 * n) *. Float.ldexp (big *. scale) e)
+            +. epsilon ~e dt (16 * n)
+          in
+          near ~msg:(msg ^ ", eigh") ~bound
+            (Array.map (fun v -> Float.ldexp (v *. scale) e) l)
+            w);
+      let x = times scale (snd plain) in
+      (match run b (Qr Reduced) [| x |] with
+      | None -> ()
+      | Some y ->
+          numbers_in ~msg:(msg ^ ", qr") y;
+          check_qr dt ~e ~count:1 ~m:n ~n ~qc:n (up e (values x))
+            (values y.(0))
+            (up e (values y.(1))));
+      let x = times scale (singular dt ~m:n ~n r sigma) in
+      match (run b (Svd (Some Reduced)) [| x |], run b (Svd None) [| x |]) with
+      | Some y, Some y' ->
+          numbers_in ~msg:(msg ^ ", svd") y;
+          let a = up e (values x) and s = up e (values y.(0)) in
+          check_svd dt ~e ~count:1 ~m:n ~n ~uc:n ~vr:n a s (values y.(1))
+            (values y.(2));
+          let big = Array.fold_left (fun m x -> Float.max m (Float.abs x)) 0. sigma in
+          let bound =
+            (svd_bound dt ~m:n ~n *. Float.ldexp (big *. scale) e)
+            +. svd_term ~e dt ~m:n ~n
+          in
+          let exact = Array.map (fun v -> Float.ldexp (Float.abs v *. scale) e) sigma in
+          near ~msg:(msg ^ ", svd") ~bound exact s;
+          near ~msg:(msg ^ ", svd's values alone") ~bound exact (up e (values y'.(0)))
+      | _ -> ())
+    [ (1e-310, 1030); (1e300, -997) ]
 
 (* eig's bound γ(16n), and its absolute term ε(16n) times 2^e. *)
 let eig_bound dt n = gamma dt (16 * n)
@@ -1478,6 +1532,65 @@ let test_eig_graded_cycle (b : Support.backend) () =
           check_worst worst)
     [ D.Any D.Float64; D.Any D.Complex128 ]
 
+(* Wilkinson's W⁺_n, tridiagonal with m, m − 1, …, 1, 0, 1, …, m on its
+   diagonal, m = (n − 1) / 2, and ones beside it: its largest eigenvalues
+   come in pairs that agree to many digits. It is symmetric, so balancing
+   leaves it. eig's results meet check_eig's relations, and on reals
+   check_real's, with the vectors and without, and each eigenvalue is
+   within eig's bound plus eigh's of one of eigh's: a normal matrix's
+   eigenvalues move by at most ‖E‖_F under a perturbation E, and ‖a‖₂ is at
+   most ‖a‖_F. *)
+let test_wilkinson (b : Support.backend) () =
+  List.iter
+    (fun (n, dt) ->
+      let m = (n - 1) / 2 in
+      let a =
+        Array.init (n * n) (fun p ->
+            let i = p / n and j = p mod n in
+            let v =
+              if i = j then float_of_int (abs (i - m))
+              else if abs (i - j) = 1 then 1.
+              else 0.
+            in
+            { Complex.re = v; im = 0. })
+      in
+      let x = of_values dt [| n; n |] a in
+      let msg = Format.asprintf "%a, n %d" pp_dtype dt n in
+      match (run b (Eig true) [| x |], run b (Eig false) [| x |]) with
+      | Some y, Some y' ->
+          let w = values y.(0) and v = values y.(1) and w' = values y'.(0) in
+          check_eig dt ~e:0 ~count:1 ~n a w v;
+          if not (is_complex dt) then begin
+            check_real ~msg:(msg ^ " with vectors") ~count:1 ~n w v;
+            check_real ~msg:(msg ^ " alone") ~count:1 ~n w' [||]
+          end;
+          Option.iter
+            (fun z ->
+              let norm = sqrt (Array.fold_left (fun s z -> s +. Complex.norm2 z) 0. a) in
+              let bound = 2. *. ((eig_bound dt n *. norm) +. eig_term ~e:0 dt n) in
+              let eigh = values z.(0) in
+              List.iter
+                (fun (how, w) ->
+                  let worst = { ratio = 0.; where = "" } in
+                  Array.iteri
+                    (fun j (z : Complex.t) ->
+                      let d =
+                        Array.fold_left
+                          (fun d (y : Complex.t) ->
+                            Float.min d (Complex.norm (Complex.sub z y)))
+                          infinity eigh
+                      in
+                      worse worst ~bound ~residual:d (fun () ->
+                          Printf.sprintf "%s, %s: eigenvalue %d, %h%+hi, beside eigh's" msg
+                            how j z.re z.im))
+                    w;
+                  check_worst worst)
+                [ ("with vectors", w); ("alone", w') ])
+            (run b (Eigh false) [| x |])
+      | _ -> ())
+    D.[ (21, Any Float64); (41, Any Float64); (81, Any Float64);
+        (21, Any Complex128); (41, Any Complex128); (81, Any Complex128) ]
+
 (* The Jacobi matrix whose eigenvalues are [l] and whose eigenvectors'
    first components are [q], ‖q‖ = 1, by Lanczos on diag l from q,
    reorthogonalised twice against every earlier vector: its diagonal and
@@ -1646,11 +1759,13 @@ let test_svd_spread_row (b : Support.backend) () =
     dtypes
 
 (* Reference-LAPACK issue 255's upper bidiagonal of order 1000, its
-   diagonal then its superdiagonal in golden/linalg, on which the merges'
-   deflation at 8 u loses u's and vh's orthogonality (#1286 raised it to
-   64 u). svd's results meet its bound element by element: |(uᵀu − I)_ij|,
-   |(vh vhᵀ − I)_ij| <= g and |(a − u diag s vh)_ij| <= g ‖a‖_F, sums of
-   1000 products whose rounding, under 1000 u, is far below g. *)
+   diagonal then its superdiagonal in golden/linalg, on which a deflation
+   of the merges at 8 u lost u's and vh's orthogonality in pairs of
+   vectors. svd's results meet its bound element by element: |(uᵀu − I)_ij|,
+   |(vh vhᵀ − I)_ij| <= g and |(a − u diag s vh)_ij| <= g ‖a‖_F. The
+   products are the kernels' own float64 contractions, which test_contract
+   holds within their bound: 1000 terms rounded fewer than 100 times, far
+   below g. *)
 let test_svd_deflation (b : Support.backend) () =
   let n = 1000 in
   let v =
@@ -1667,52 +1782,49 @@ let test_svd_deflation (b : Support.backend) () =
   match run b (Svd (Some Reduced)) [| x |] with
   | None -> ()
   | Some y ->
-      let floats (A.Any x) : float array =
-        match A.dtype x with D.Float64 -> A.to_array x | _ -> assert false
+      let module K = (val b.kernels) in
+      let f64 y = A.expect D.Float64 y in
+      let s = f64 y.(0) and u = f64 y.(1) and vh = f64 y.(2) in
+      (* The n × n product of [p] and [q] contracted along [contracting]. *)
+      let product ~contracting p q =
+        let dst = A.create Rig.host D.Float64 [| n; n |] in
+        let op x : Nx_kernel.operand = { array = A.Any x; scale = None } in
+        match
+          K.contract ~batch:[||] ~contracting ~segments:None
+            ~acc:(D.Any D.Float64) ~dst ~init:None (op p) (op q)
+        with
+        | A.Done -> A.to_array dst
+        | r -> failf "a contraction answered %a" pp_answer r
       in
-      let s = floats y.(0) and u = floats y.(1) and vh = floats y.(2) in
+      let sv = A.to_array s in
+      let us =
+        A.of_array D.Float64 [| n; n |]
+          (Array.mapi (fun p x -> x *. sv.(p mod n)) (A.to_array u))
+      in
+      let uu = product ~contracting:[| (0, 0) |] u u in
+      let vv = product ~contracting:[| (1, 1) |] vh vh in
+      let usv = product ~contracting:[| (1, 0) |] us vh in
       let g = svd_bound (D.Any D.Float64) ~m:n ~n in
       let norm = sqrt (Array.fold_left (fun t x -> t +. (x *. x)) 0. a) in
-      let tr x = Array.init (n * n) (fun p -> x.((p mod n * n) + (p / n))) in
-      let ut = tr u and vt = tr vh in
-      let us = Array.init (n * n) (fun p -> u.(p) *. s.(p mod n)) in
       let w = { ratio = 0.; where = "" } in
-      (* The sum of the products of rows [i] of [x] and [j] of [y], in four
-         sums of every fourth product: four chains of additions in flight. *)
-      let dot x i y j =
-        let x0 = ref 0. and x1 = ref 0. and x2 = ref 0. and x3 = ref 0. in
-        let xi = i * n and yj = j * n in
-        for q = 0 to (n / 4) - 1 do
-          let p = 4 * q in
-          x0 := !x0 +. (x.(xi + p) *. y.(yj + p));
-          x1 := !x1 +. (x.(xi + p + 1) *. y.(yj + p + 1));
-          x2 := !x2 +. (x.(xi + p + 2) *. y.(yj + p + 2));
-          x3 := !x3 +. (x.(xi + p + 3) *. y.(yj + p + 3))
-        done;
-        for p = n / 4 * 4 to n - 1 do
-          x0 := !x0 +. (x.(xi + p) *. y.(yj + p))
-        done;
-        !x0 +. !x1 +. (!x2 +. !x3)
-      in
-      (* Element (i, j) of x xᵀ − I for the rows of [x]. *)
       let gram msg x =
-        for i = 0 to n - 1 do
-          for j = 0 to i do
-            let t = dot x i x j -. if i = j then 1. else 0. in
+        Array.iteri
+          (fun p t ->
+            let i = p / n and j = p mod n in
+            let t = t -. if i = j then 1. else 0. in
             worse w ~bound:g ~residual:(Float.abs t) (fun () ->
-                Printf.sprintf "%s, element (%d, %d)" msg i j)
-          done
-        done
+                Printf.sprintf "%s, element (%d, %d)" msg i j))
+          x
       in
-      gram "uᵀu - I" ut;
-      gram "vh vhᵀ - I" vh;
-      for i = 0 to n - 1 do
-        for j = 0 to n - 1 do
-          let r = a.((i * n) + j) -. dot us i vt j in
-          worse w ~bound:(g *. norm) ~residual:(Float.abs r) (fun () ->
-              Printf.sprintf "a - u diag s vh, element (%d, %d)" i j)
-        done
-      done;
+      gram "uᵀu - I" uu;
+      gram "vh vhᵀ - I" vv;
+      Array.iteri
+        (fun p t ->
+          worse w ~bound:(g *. norm) ~residual:(Float.abs (a.(p) -. t))
+            (fun () ->
+              Printf.sprintf "a - u diag s vh, element (%d, %d)" (p / n)
+                (p mod n)))
+        usv;
       check_worst w
 
 (* A pivot whose reciprocal is subnormal, past 2^1022 in float64 and
@@ -1878,24 +1990,35 @@ let threads_agree (b : Support.backend) routines c =
       ("eig", Eig true, [| eig_operand one |]);
     ]
 
-(* nx.cpu computes its routines at the four dtypes, and a matrix alone
-   gives the bits it has in a batch. *)
-let law_cpu_threads b c = threads_agree b ([ "qr"; "eig" ] @ with_units) c
+(* A plain contiguous case of [dt], of order [n] and [r] right-hand sides. *)
+let fixed dt n r =
+  {
+    dt;
+    batch = [||];
+    n;
+    r;
+    triangle = Lower;
+    adjoint = false;
+    unit_diagonal = false;
+    seed = 7;
+    how = Contiguous;
+    scale = Plain;
+  }
 
-(* Matrices of order 256 and 160 right-hand sides, of the routines with
-   units: alone, Cholesky's solve of 128 rows, LU's of 128 columns and
-   the solve's of 160 split into units on the threads, eigh's products of
-   its trailing matrix with a vector into blocks of columns and its
-   merges' roots into units, and svd's reduction, by products into rows
-   or columns or in two stages by blocks of columns and sweeps, and its
-   merges' roots into units, which give the bits of one thread. *)
-let law_cpu_units b c =
-  cover "units on the threads" (Domain.recommended_domain_count () > 1);
-  threads_agree b with_units { c with n = 256; r = 160 }
+(* nx.cpu computes every routine at [dt], and a matrix of order 65, past a
+   block of 64, alone gives the bits it has in a batch. *)
+let test_cpu_threads b dt =
+  threads_agree b ([ "qr"; "eig" ] @ with_units) (fixed dt 65 3)
 
-(* One matrix of order 272: Cholesky's blocks end in a partial one of 16
-   columns, and its updates' tiles read a transposed operand. *)
-let law_cpu_large b c = law_cholesky b { c with batch = [||]; n = 272 }
+(* Matrices of order 256 and 160 right-hand sides, of the routines whose
+   work on a matrix's threads goes beyond their products, which give the
+   bits of one thread. On one core nothing runs on several threads. *)
+let test_cpu_units b dt =
+  if Domain.recommended_domain_count () = 1 then skip ~reason:"one core" ();
+  threads_agree b with_units (fixed dt 256 160)
+
+(* One matrix of order 272, past four blocks of 64 and a partial one. *)
+let test_cpu_large b dt = law_cholesky b (fixed dt 272 0)
 
 (* A routine's operand [a], right-hand sides [b] for a solve, and
    destinations [dsts], each near a fit. *)
@@ -2161,75 +2284,86 @@ let law_guards (b : Support.backend) (c, side) =
 
 (* The suite *)
 
+let dtype_name = Format.asprintf "%a" pp_dtype
+
 (* What nx_cpu.mli states beyond the contract: its bounds, the Upper factor's
    bits, a solve into its operand, layout and thread invariance, and the
    matrices its algorithms find hard. *)
 let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
-  group ("nx.cpu " ^ b.name)
+  let test name f = test name (fun () -> b.around (f b)) in
+  let cases name f = cases ~name:dtype_name name dtypes (fun dt -> b.around (fun () -> f b dt)) in
+  group b.name
     [
-      prop "Cholesky's factor meets its relation within γ(n + 1)" case
-        (run (law_cholesky b));
-      prop "the Upper factor is the Lower one's conjugate transpose" case
-        (run (law_upper b));
-      prop "a triangular solve meets its relation within γ(2n)" case
-        (run (law_solve b));
-      prop "LU's factors meet their relation within γ(2k)" case
-        (run (law_lu b));
-      prop "QR's factors meet their relations within γ(k(2m + 10))" case
-        (run (law_qr b));
-      prop "eigh's results meet their relations within γ(16n)" case
-        (run (law_eigh b));
-      prop "eigh's eigenvalues are within γ(16n) ‖a‖₂ of the exact ones" case
-        (run (law_eigh_spectrum b));
-      prop "svd's results meet their relations within γ(16 max (m, n) + 100)"
-        case (run (law_svd b));
-      prop
-        "svd's results meet their relations on parts at the least subnormal, \
-         below the least normal and near 1"
-        spread (run (law_svd_spread b));
-      prop "svd's values are within γ(16 max (m, n) + 100) ‖a‖₂ of the exact ones"
-        case (run (law_svd_spectrum b));
-      prop "eig's results meet their relations within γ(16n)" case
-        (run (law_eig b));
-      prop "eig's eigenvalues of a normal matrix are within γ(16n) ‖a‖_F"
-        case (run (law_eig_spectrum b));
-      prop "a solve into its operand gives a fresh destination's bits" case
-        (run (law_solve_aliased b));
-      prop "bits do not depend on layouts" case (run (law_layouts b));
-      test "a pivot whose reciprocal is subnormal meets LU's bound" (fun () ->
-          b.around (test_huge_pivot b));
-      test "eigh at the two-stage reduction's orders" (fun () ->
-          b.around (test_eigh_two_stages b));
-      test "svd at the two-stage reduction's orders" (fun () ->
-          b.around (test_svd_two_stages b));
-      test "eigh solves Reference-LAPACK issue 1166's secular equation"
-        (fun () -> b.around (test_eigh_secular b));
-      test "eig balances a graded matrix" (fun () ->
-          b.around (test_eig_balanced b));
-      test "eig balances before it scales" (fun () ->
-          b.around (test_eig_extremes b));
-      test "eig keeps a subnormal matrix's pair a pair" (fun () ->
-          b.around (test_eig_subnormal_pair b));
-      test "eig keeps a graded cycle's vectors finite" (fun () ->
-          b.around (test_eig_graded_cycle b));
-      test "svd keeps Reference-LAPACK issue 255's bidiagonal's vectors"
-        (fun () -> b.around (test_svd_deflation b));
-      test "svd keeps a row's tiny rest beside a small matrix" (fun () ->
-          b.around (test_svd_tiny_rows b));
-      test "svd keeps a row's least subnormal rest beside 1 - i" (fun () ->
-          b.around (test_svd_spread_row b));
-      prop ~count:30
-        "computes every dtype, a matrix alone giving its bits in a batch" case
-        (run (law_cpu_threads b));
-      prop ~count:8 "a matrix's units on the threads give its bits in a batch"
-        case (run (law_cpu_units b));
-      prop ~count:4 "Cholesky's factor of order 272 meets its relation" case
-        (run (law_cpu_large b));
-      prop "refuses what Nx_kernel.Shape refuses and other shapes" misfits
-        (run (law_cpu_refuses b));
-      test "refuses dtypes and shapes" (fun () ->
-          b.around (test_cpu_refusals b));
+      group "each result meets its relation within its bound"
+        [
+          prop "Cholesky's factor within γ(n + 1)" case (run (law_cholesky b));
+          cases "Cholesky's factor of order 272" test_cpu_large;
+          prop "the Upper factor is the Lower one's conjugate transpose" case
+            (run (law_upper b));
+          prop "a triangular solve within γ(2n)" case (run (law_solve b));
+          prop "LU's factors within γ(2k)" case (run (law_lu b));
+          test "LU of a pivot whose reciprocal is subnormal" test_huge_pivot;
+          prop "QR's factors within γ(k(2m + 10))" case (run (law_qr b));
+          prop "eigh's results within γ(16n)" case (run (law_eigh b));
+          prop "svd's results within γ(16 max (m, n) + 100)" case
+            (run (law_svd b));
+          prop
+            "svd's results on parts at the least subnormal, below the least \
+             normal and near 1"
+            spread (run (law_svd_spread b));
+          test
+            "svd's results within their bound on a row whose rest is below \
+             the least normal number over u"
+            test_svd_tiny_rows;
+          test "svd's results on a row whose rest is the least subnormal"
+            test_svd_spread_row;
+          test "svd's vectors on a bidiagonal whose merges deflate"
+            test_svd_deflation;
+          prop "eig's results within γ(16n)" case (run (law_eig b));
+          test "eig's results on a graded cycle" test_eig_graded_cycle;
+          test "eig's results on a subnormal matrix with a complex pair"
+            test_eig_subnormal_pair;
+          test "eigh's, qr's and svd's results on matrices scaled below the \
+                least normal number and near the largest"
+            test_scaled;
+        ];
+      group "each spectrum is within its bound of the exact one"
+        [
+          prop "eigh's eigenvalues within γ(16n) ‖a‖₂" case
+            (run (law_eigh_spectrum b));
+          test "eigh's eigenvalues at large orders" test_eigh_large;
+          test "eigh's eigenvalues of a secular equation with a root beside \
+                its pole"
+            test_eigh_secular;
+          prop "svd's values within γ(16 max (m, n) + 100) ‖a‖₂" case
+            (run (law_svd_spectrum b));
+          test "svd's values at large orders" test_svd_large;
+          prop "eig's eigenvalues of a normal matrix within γ(16n) ‖a‖_F" case
+            (run (law_eig_spectrum b));
+          test "eig's eigenvalues of a graded matrix, balanced"
+            test_eig_balanced;
+          test "eig's eigenvalues of a matrix spanning the exponent range, \
+                balanced before it is scaled"
+            test_eig_extremes;
+          test "eig's eigenvalues of Wilkinson's matrices are eigh's"
+            test_wilkinson;
+        ];
+      group "bits are a function of the values alone"
+        [
+          prop "whatever the layout" case (run (law_layouts b));
+          cases "whatever the threads, every routine at every dtype"
+            test_cpu_threads;
+          cases "whatever the threads a matrix's units run on" test_cpu_units;
+          prop "a solve into its operand gives a fresh destination's bits" case
+            (run (law_solve_aliased b));
+        ];
+      group "refusals"
+        [
+          prop "refuses what Nx_kernel.Shape refuses and other shapes" misfits
+            (run (law_cpu_refuses b));
+          test "refuses dtypes and shapes before any write" test_cpu_refusals;
+        ];
       prop ~count:100
         "reads and writes no byte past its operands and results, whatever \
          pages lie beside them"

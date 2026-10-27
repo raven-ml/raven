@@ -4,14 +4,15 @@
   ---------------------------------------------------------------------------*)
 
 (* Folds through every kernel library the host runs: a fold is the padded load's
-   adjoint over integers, and a float fold within its bound of the exact sum
-   at each index. nx.cpu's group checks each result element against a
-   reference that sums, with no +0 before the first, the elements the load
-   reads from it in C order of their taps, +0 where it reads none, bit for
-   bit or both NaN, through views of the operand, at every dtype but the
-   booleans; and its maps of padded loads, through the
-   same geometry: a loaded element is the element the fold adds it into, or
-   the fill. *)
+   adjoint over integers, and each part of a float or complex fold within its
+   bound of the exact sum at each index. nx.cpu's: each result element
+   against a reference that sums, with no +0 before the first, the elements
+   the load reads from it in C order of their taps, +0 where it reads none,
+   bit for bit or both NaN, through views of the operand, at every dtype but
+   the booleans, on the job's threads as on one; its maps of padded loads,
+   through the same geometry: a loaded element is the element the fold adds
+   it into, or the fill; its refusals; and no byte read or written past the
+   operand or the result. *)
 
 open Windtrap
 open Elements
@@ -167,11 +168,16 @@ let target c xi =
   if Array.exists (fun v -> v < 0) i then None else Some (flat c.shape i)
 
 (* Prog.Add on two elements of [d]: floats of 32 and 64 bits by
-   {!Elements.add_bits}, integers wrapping, and narrow floats and complex
-   numbers as nx.cpu's map of one [Add] adds two elements. *)
+   {!Elements.add_bits}, complex numbers part by part so, integers wrapping,
+   and narrow floats as nx.cpu's map of one [Add] adds two elements, which
+   test_kernels holds to nx_kinds.h's. *)
 let add (D.Any dt as d) a b =
   if D.Any D.Float32 = d || D.Any D.Float64 = d then
     add_bits ~w:(String.length a) a b
+  else if D.is D.Complex dt then
+    let w = String.length a / 2 in
+    let part at = add_bits ~w (String.sub a at w) (String.sub b at w) in
+    part 0 ^ part w
   else if D.is D.Signed dt || D.is D.Unsigned dt then
     int_bits d (String.length a) (Int64.add (int_value d a) (int_value d b))
   else
@@ -294,22 +300,30 @@ let law_adjoint (b : Support.backend) = function
           Array.iteri (fun i v -> rhs := Int64.add !rhs (Int64.mul a.(i) v)) fs;
           equal int64 !lhs !rhs)
 
-(* A float fold's element is within γ(n - 1) Σ|x| of the exact sum of the
-   [n] elements it adds, where they are finite and their magnitudes' sum is
-   below half the dtype's largest float, so that no sum overflows. *)
+(* Each part of a float or complex fold's element is within γ(n - 1) Σ|x|
+   of the exact sum of the [n] parts it adds, where they are finite and
+   their magnitudes' sum is below half the dtype's largest float, so that
+   no sum overflows. *)
 let law_bound (b : Support.backend) = function
   | None -> assume false
   | Some c -> (
-      let f32 = dtype_of c.x = D.Any D.Float32 in
-      let get e = if f32 then get32 e 0 else get64 e 0 in
-      let u = if f32 then 0x1p-24 else 0x1p-53 in
-      let top = if f32 then 0x1.fffffep127 else max_float in
+      let (D.Any dt) = dtype_of c.x in
+      let single = D.bits dt = 32 || (D.bits dt = 64 && D.is D.Complex dt) in
+      let parts = if D.is D.Complex dt then 2 else 1 in
+      let w = D.bits dt / 8 / parts in
+      let get e p = if single then get32 e (p * w) else get64 e (p * w) in
+      let u = if single then 0x1p-24 else 0x1p-53 in
+      let top = if single then 0x1.fffffep127 else max_float in
       let xs = shape_of c.x and es = elements c.x in
-      let terms = Array.make (total c.shape) [] in
+      let terms = Array.make (total c.shape * parts) [] in
       for k = 0 to total xs - 1 do
         match target c (index_of xs k) with
         | None -> ()
-        | Some y -> terms.(y) <- get es.(k) :: terms.(y)
+        | Some y ->
+            for p = 0 to parts - 1 do
+              let at = (y * parts) + p in
+              terms.(at) <- get es.(k) p :: terms.(at)
+            done
       done;
       let held t =
         List.for_all Float.is_finite t
@@ -317,10 +331,12 @@ let law_bound (b : Support.backend) = function
       in
       cover "an element of several finite terms"
         (Array.exists (fun t -> List.length t > 1 && held t) terms);
+      cover "complex" (parts = 2);
       match fold_on b c with
       | None -> failf "%s declined a fold" b.name
       | Some y ->
-          let got = Array.map get (elements y) in
+          let ys = elements y in
+          let got i = get ys.(i / parts) (i mod parts) in
           let bad = ref [] in
           Array.iteri
             (fun i t ->
@@ -339,10 +355,12 @@ let law_bound (b : Support.backend) = function
                 let n = Float.of_int (max 0 (List.length t - 1)) in
                 let g = n *. u /. (1. -. (n *. u)) in
                 let bound = (g *. mag) +. (0x1p-100 *. mag) in
-                if not (Float.abs (got.(i) -. exact) <= bound) then
+                if not (Float.abs (got i -. exact) <= bound) then
                   bad :=
-                    Printf.sprintf "element %d: %h is %h from %h, past %h" i
-                      got.(i) (got.(i) -. exact) exact bound
+                    Printf.sprintf
+                      "element %d, part %d: %h is %h from %h, past %h"
+                      (i / parts) (i mod parts) (got i) (got i -. exact) exact
+                      bound
                     :: !bad
               end)
             terms;
@@ -477,40 +495,26 @@ let test_refusals (b : Support.backend) () =
 
 (* The suite *)
 
-let cases =
+(* Cases of [dtypes], printed, or [None] where the pad fits no load. *)
+let cases_of ?dtypes ?last () =
   Gen.with_pp
     (fun ppf -> function
       | None -> Format.pp_print_string ppf "no load" | Some c -> pp_case ppf c)
-    (case_gen ())
+    (case_gen ?dtypes ?last ())
 
-let all_cases =
-  Gen.with_pp
-    (fun ppf -> function
-      | None -> Format.pp_print_string ppf "no load" | Some c -> pp_case ppf c)
-    (case_gen ~dtypes:D.all ())
+let cases = cases_of ()
+let all_cases = cases_of ~dtypes:D.all ()
 
 let float_cases =
-  Gen.with_pp
-    (fun ppf -> function
-      | None -> Format.pp_print_string ppf "no load" | Some c -> pp_case ppf c)
-    (case_gen ~dtypes:D.[ Any Float32; Any Float64 ] ())
+  cases_of
+    ~dtypes:D.[ Any Float32; Any Float64; Any Complex64; Any Complex128 ]
+    ()
 
-let int_cases =
-  Gen.with_pp
-    (fun ppf -> function
-      | None -> Format.pp_print_string ppf "no load" | Some c -> pp_case ppf c)
-    (case_gen ~dtypes:[ D.Any D.Int64 ] ())
+let int_cases = cases_of ~dtypes:[ D.Any D.Int64 ] ()
 
 (* Guard pages *)
 
-let guard_cases =
-  Gen.pair
-    (Gen.with_pp
-       (fun ppf -> function
-         | None -> Format.pp_print_string ppf "no load"
-         | Some c -> pp_case ppf c)
-       (case_gen ~last:tails ()))
-    sides
+let guard_cases = Gen.pair (cases_of ~last:tails ()) sides
 
 (* The same result with the operand, through its view, and the destination
    against an inaccessible page. *)
@@ -534,26 +538,23 @@ let law_guards (b : Support.backend) (c, side) =
         (same_guarded ~any_nan:true side ~call [| c.x |]
            [| (dtype_of c.x, c.shape) |])
 
-let laws (b : Support.backend) =
+let suite (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group b.name
     [
       prop "a fold is the padded load's adjoint" int_cases (run (law_adjoint b));
-      prop "a float fold is within γ(n - 1) Σ|x| of the exact sum" float_cases
-        (run (law_bound b));
-    ]
-
-let cpu (b : Support.backend) =
-  let run f x = b.around (fun () -> f x) in
-  group ("nx.cpu " ^ b.name)
-    [
-      prop "sums each element's taps in order, +0 where none" cases
-        (run (law_reference b));
+      prop "each part of a float fold is within γ(n - 1) Σ|x| of the exact sum"
+        float_cases (run (law_bound b));
+      group "sums each element's taps in order, +0 where none"
+        [
+          prop "at every dtype, through views" cases (run (law_reference b));
+          test "a convolution's gradient on the job's threads" (fun () ->
+              b.around (test_threads b));
+          test "long rows of narrow dtypes" (fun () ->
+              b.around (test_long_rows b));
+        ];
       prop "a map's padded load reads what the fold adds into" all_cases
         (run (law_load b));
-      test "a convolution's gradient on the job's threads" (fun () ->
-          b.around (test_threads b));
-      test "long rows of narrow dtypes" (fun () -> b.around (test_long_rows b));
       test "refuses shapes and pads that do not fit, and booleans" (fun () ->
           b.around (test_refusals b));
       prop ~count:300
@@ -562,7 +563,4 @@ let cpu (b : Support.backend) =
         guard_cases (run (law_guards b));
     ]
 
-let () =
-  exit
-    (Windtrap.run "nx_kernel.fold"
-       (List.map laws Support.backends @ [ cpu Support.cpu ]))
+let () = exit (Windtrap.run "nx_kernel.fold" (List.map suite Support.backends))
