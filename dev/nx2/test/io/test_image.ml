@@ -116,6 +116,22 @@ let without ty png =
 
 let be32 n = String.init 4 (fun i -> Char.chr ((n lsr (8 * (3 - i))) land 0xff))
 let tiny = Nx.full Nx.uint8 [| 2; 3; 3 |] 9
+let signature = "\137PNG\r\n\026\n"
+
+(* The chunk of type [ty] and [data], with its CRC-32. *)
+let chunk ty data =
+  be32 (String.length data)
+  ^ ty ^ data
+  ^ be32 (Compress_deflate.Crc32.string (ty ^ data))
+
+let ihdr ~width ~height =
+  chunk "IHDR" (be32 width ^ be32 height ^ "\008\000\000\000\000")
+
+(* An 8-bit grey PNG of [width] by [height] pixels whose image data is empty. *)
+let header_png ~width ~height =
+  signature ^ ihdr ~width ~height
+  ^ chunk "IDAT" (Compress_deflate.Zlib.compress "")
+  ^ chunk "IEND" ""
 
 let png_chunks =
   group "PNG chunks"
@@ -420,6 +436,23 @@ let files =
           equal packed
             (Nx.P (Nx_io.load_image (fixture name)))
             (Nx.P (Nx_io.load_image (file (whole ^ whole)))));
+      cases ~name:fst
+        "a PNG side or chunk length past the largest PNG integer fails"
+        [
+          ( "a width of 2^31",
+            (header_png ~width:0x80000000 ~height:1, "invalid PNG image header")
+          );
+          ( "a height of 2^31",
+            (header_png ~width:1 ~height:0x80000000, "invalid PNG image header")
+          );
+          ( "a chunk length of 2^31",
+            ( signature ^ ihdr ~width:1 ~height:1 ^ be32 0x80000000 ^ "IDAT"
+              ^ be32 0,
+              "invalid PNG chunk length" ) );
+        ]
+        (fun (_, (png, naming)) ->
+          let path = file png in
+          fails ~path ~naming (fun () -> Nx_io.load_image path));
       test "a PNG chunk whose checksum does not match fails" (fun () ->
           let path = file (flip_byte (read (fixture "png_filters.png")) 30) in
           fails ~path ~naming:"PNG chunk CRC mismatch" (fun () ->

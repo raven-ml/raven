@@ -110,10 +110,6 @@ let load_image path =
   let layout = L.contiguous (Iarray.of_array [| h; w; c |]) in
   Nx.Repr.unsafe_of_array Nx.Host.v (A.v Nx_array.Dtype.Uint8 layout pixels)
 
-(* The largest PNG integer, a four-byte field's (PNG-3, 7.1), which bounds an
-   image's sides and the pHYs chunk's pixels per metre. *)
-let png_max = 2147483647
-
 (* The largest side of a JPEG image, whose frame header states each side in 16
    bits (T.81, B.2.2). *)
 let jpeg_side = 65535
@@ -139,13 +135,13 @@ let with_pixels ~by ~channels ~side x f =
 (* The pHYs chunk holds a positive PNG integer. *)
 let pixels_per_metre ~by dpi =
   let ppm = Float.round (dpi /. 0.0254) in
-  if not (1. <= ppm && ppm <= Float.of_int png_max) then
+  if not (1. <= ppm && ppm <= Float.of_int Image.png_max) then
     Fail.invalid_argf "%s: the dpi %g" by dpi;
   int_of_float ppm
 
 let png ~by ?dpi ?(srgb = false) x =
   let ppm = match dpi with None -> 0 | Some dpi -> pixels_per_metre ~by dpi in
-  with_pixels ~by ~channels:[ 1; 2; 3; 4 ] ~side:png_max x
+  with_pixels ~by ~channels:[ 1; 2; 3; 4 ] ~side:Image.png_max x
     (Image.png_encode ~ppm ~srgb)
 
 let encode_png ?dpi ?srgb x = png ~by:"Nx_io.encode_png" ?dpi ?srgb x

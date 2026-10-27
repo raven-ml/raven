@@ -33,17 +33,20 @@ let be32 src at =
   lor (Array1.get src (at + 2) lsl 8)
   lor Array1.get src (at + 3)
 
+let png_max = 2147483647
+
 (* The chunk type IEND, which ends the image, as a big-endian integer. *)
 let iend = 0x49454e44
 
-(* Checks the CRC-32 of each chunk up to IEND before [png_parse] reads them. A
-   chunk that runs past the end of [src] stops the check, and [png_parse]
-   reports it. *)
+(* Checks the length and CRC-32 of each chunk up to IEND before [png_parse]
+   reads them, then the sides [png_parse] reads. A chunk that runs past the end
+   of [src] stops the check, and [png_parse] reports it. *)
 let png_probe src =
   let n = Array1.dim src in
   let rec check off =
     if n - off >= 12 then begin
       let length = be32 src off in
+      if length > png_max then failwith "invalid PNG chunk length";
       if length <= n - off - 12 then begin
         let crc = Crc32.bigbytes (Array1.sub src (off + 4) (length + 4)) in
         if crc <> be32 src (off + 8 + length) then
@@ -53,7 +56,10 @@ let png_probe src =
     end
   in
   check 8;
-  png_parse src
+  let width, height, channels = png_parse src in
+  if width > png_max || height > png_max then
+    failwith "invalid PNG image header";
+  (width, height, channels)
 
 let png_decode src dst =
   let idat, length = png_idat src in

@@ -21,7 +21,7 @@
   test_txt
   test_image
   io_support)
- (libraries nx nx_array nx_io nx_support rig unix windtrap)
+ (libraries nx nx_array nx_io nx_support rig unix compress.deflate windtrap)
  (deps
   (glob_files support/*))
  ; A stack of 8 MiB, a common system default, so that a parser that recurses
