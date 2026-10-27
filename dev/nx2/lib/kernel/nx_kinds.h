@@ -9,11 +9,11 @@
    f64, i32, u32, i64, u64, c64 or c128 (complex, at the end). A kernel
    library may compute a kind through these functions, or through code that
    gives the same bits; one that does so in its interpreter and its loops
-   has them agree bit for bit. The float kinds are written once, in
-   nx_kinds_real.h, which this header includes for f32 and f64; the pieces
-   whose algorithm differs between the two are written here. The complex
-   transcendental kinds are written once too, in nx_kinds_complex.h,
-   included for c64 and c128.
+   has them agree bit for bit. Each float compute type has one block here:
+   its constants and polynomials, nx_kinds_real.h, which writes the float
+   kinds once for both types, the algorithms that differ between f32 and
+   f64, and nx_kinds_complex.h, which writes the complex kinds once: c64 in
+   f32's block, c128 in f64's.
 
    Compute types. float16, bfloat16 and the float8 dtypes compute in f32
    through nx_dtype.h's codecs and round once on the store. 8- and 16-bit
@@ -353,16 +353,6 @@ NX_INLINE uint32_t nx_bits_at(NX_TABLE_PTR t, int32_t g) {
 #define NX_ASIN_BIG_F32 0x1p13f
 #define NX_ATANH_BIG_F32 0x1p62f
 
-typedef struct {
-  float hi, lo;
-} nx_pair_f32;
-
-/* x = q pi/2 + hi + lo. */
-typedef struct {
-  float hi, lo;
-  uint32_t q;
-} nx_rem_f32;
-
 /* The polynomials. Each is a minimax fit on the interval its kind reduces
    to, with its error relative to the function unless absolute is said. */
 
@@ -427,9 +417,6 @@ NX_INLINE float nx_tanh_t_f32(float z) {
   return nx_fmaf(t, z, -0x1.555532p-2f);
 }
 
-NX_INLINE nx_rem_f32 nx_rem_pio2_cw_f32(float x);
-NX_INLINE nx_rem_f32 nx_rem_pio2_big_f32(NX_TABLE_PTR t, float x);
-
 #define NX_T float
 #define NX_U uint32_t
 #define NX_(f) f##_f32
@@ -439,16 +426,10 @@ NX_INLINE nx_rem_f32 nx_rem_pio2_big_f32(NX_TABLE_PTR t, float x);
 #define NX_BITS nx_float_bits
 #define NX_OF_BITS nx_bits_float
 #define NX_ISNAN nx_float_nan
+#define NX_CT nx_c64
+#define NX_Z(f) f##_c64
+#define NX_MK nx_c64_of
 #include "nx_kinds_real.h"
-#undef NX_T
-#undef NX_U
-#undef NX_
-#undef NX_C
-#undef NX_FMA
-#undef NX_SQRT
-#undef NX_BITS
-#undef NX_OF_BITS
-#undef NX_ISNAN
 
 /* Cody and Waite: pi/2 in three parts of 24 bits, each product subtracted
    by an fma, for sin, cos and tan below the switch. The second subtraction rounds and
@@ -624,6 +605,20 @@ NX_INLINE float nx_atan2_f32(float y, float x) {
   return nx_nan2_f32(y, x, v);
 }
 
+#include "nx_kinds_complex.h"
+#undef NX_T
+#undef NX_U
+#undef NX_
+#undef NX_C
+#undef NX_FMA
+#undef NX_SQRT
+#undef NX_BITS
+#undef NX_OF_BITS
+#undef NX_ISNAN
+#undef NX_CT
+#undef NX_Z
+#undef NX_MK
+
 #ifndef __METAL_VERSION__
 
 /* f64 */
@@ -690,15 +685,6 @@ NX_INLINE int nx_double_nan(double d) {
 #define NX_HYP_BIG_F64 22.0
 #define NX_ASIN_BIG_F64 0x1p28
 #define NX_ATANH_BIG_F64 0x1p510
-
-typedef struct {
-  double hi, lo;
-} nx_pair_f64;
-
-typedef struct {
-  double hi, lo;
-  uint32_t q;
-} nx_rem_f64;
 
 /* expm1 r = r + r^2 Q(r) on |r| <= ln2/2 + 2^-13, 2^-56.4 (expQ). */
 NX_INLINE double nx_exp_q_f64(double r) {
@@ -796,9 +782,6 @@ NX_INLINE double nx_tanh_t_f64(double z) {
   return nx_fmad(t, z, -0x1.55555555554ffp-2);
 }
 
-NX_INLINE nx_rem_f64 nx_rem_pio2_cw_f64(double x);
-NX_INLINE nx_rem_f64 nx_rem_pio2_big_f64(NX_TABLE_PTR t, double x);
-
 #define NX_T double
 #define NX_U uint64_t
 #define NX_(f) f##_f64
@@ -808,16 +791,10 @@ NX_INLINE nx_rem_f64 nx_rem_pio2_big_f64(NX_TABLE_PTR t, double x);
 #define NX_BITS nx_double_bits
 #define NX_OF_BITS nx_bits_double
 #define NX_ISNAN nx_double_nan
+#define NX_CT nx_c128
+#define NX_Z(f) f##_c128
+#define NX_MK nx_c128_of
 #include "nx_kinds_real.h"
-#undef NX_T
-#undef NX_U
-#undef NX_
-#undef NX_C
-#undef NX_FMA
-#undef NX_SQRT
-#undef NX_BITS
-#undef NX_OF_BITS
-#undef NX_ISNAN
 
 /* Cody and Waite with pi/2 in three parts: x - q p1 is exact, the product
    q p2 and its subtraction are kept as pairs. Within the bounds for
@@ -1052,16 +1029,27 @@ NX_INLINE double nx_atan2_f64(double y, double x) {
   return nx_nan2_f64(y, x, v);
 }
 
-NX_INLINE uint32_t nx_double_sign(double d) {
-  return (uint32_t)(nx_double_bits(d) >> 63);
-}
+#include "nx_kinds_complex.h"
+#undef NX_T
+#undef NX_U
+#undef NX_
+#undef NX_C
+#undef NX_FMA
+#undef NX_SQRT
+#undef NX_BITS
+#undef NX_OF_BITS
+#undef NX_ISNAN
+#undef NX_CT
+#undef NX_Z
+#undef NX_MK
 
 #endif /* __METAL_VERSION__ */
 
 /* Complex
 
    complex64 and complex128 compute as pairs of f32 and f64, nx_c64 and
-   nx_c128, the real part first as they are stored. u below is the part's
+   nx_c128, the real part first as they are stored, in nx_kinds_complex.h,
+   which f32's and f64's blocks above include. u below is the part's
    unit roundoff, 2^-24 or 2^-53, and the error of a result z' against the
    exact z is normwise, |z' - z| / |z|; each bound holds where no part of
    the computation overflows or underflows.
@@ -1131,141 +1119,5 @@ NX_INLINE uint32_t nx_double_sign(double d) {
      atan(inf + i NaN)                         pi/2 + i0
      asinh(NaN + i inf)                        inf + i NaN
      atanh(NaN + i inf)                        +0 + i pi/2 */
-
-#define NX_COMPLEX_KINDS(C, T, R, FMA, ISNAN, SIGN)                          \
-  typedef struct {                                                           \
-    T re, im;                                                                \
-  } nx_##C;                                                                  \
-                                                                             \
-  NX_INLINE nx_##C nx_##C##_of(T re, T im) {                                 \
-    nx_##C z;                                                                \
-    z.re = re;                                                               \
-    z.im = im;                                                               \
-    return z;                                                                \
-  }                                                                          \
-                                                                             \
-  NX_INLINE int nx_nan_##C(nx_##C a) { return ISNAN(a.re) || ISNAN(a.im); }  \
-                                                                             \
-  NX_INLINE nx_##C nx_neg_##C(nx_##C a) {                                    \
-    return nx_##C##_of(nx_neg_##R(a.re), nx_neg_##R(a.im));                  \
-  }                                                                          \
-  NX_INLINE nx_##C nx_add_##C(nx_##C a, nx_##C b) {                          \
-    return nx_##C##_of(nx_add_##R(a.re, b.re), nx_add_##R(a.im, b.im));      \
-  }                                                                          \
-  NX_INLINE nx_##C nx_sub_##C(nx_##C a, nx_##C b) {                          \
-    return nx_##C##_of(nx_sub_##R(a.re, b.re), nx_sub_##R(a.im, b.im));      \
-  }                                                                          \
-  NX_INLINE nx_##C nx_mul_##C(nx_##C a, nx_##C b) {                          \
-    T ii = a.im * b.im, ir = a.im * b.re;                                    \
-    return nx_##C##_of(FMA(a.re, b.re, -ii), FMA(a.re, b.im, ir));           \
-  }                                                                          \
-                                                                             \
-  /* Smith's algorithm with selects for its branch, which vectorise: p is   \
-     the divisor's larger part, q the other, x and y the dividend's parts   \
-     in the same roles. Where the real part is the larger, the quotient is  \
-     ((x + r y) + (y - r x) i) / d, else ((x + r y) + (r x - y) i) / d. */  \
-  NX_INLINE nx_##C nx_fdiv_##C(nx_##C a, nx_##C b) {                         \
-    int big = nx_abs_bits_##R(b.re) >= nx_abs_bits_##R(b.im);                \
-    T p = big ? b.re : b.im, q = big ? b.im : b.re;                          \
-    T x = big ? a.re : a.im, y = big ? a.im : a.re;                          \
-    T r = q / p, d = FMA(r, q, p);                                           \
-    T im = big ? FMA(-r, x, y) : FMA(r, x, -y);                              \
-    return nx_##C##_of(FMA(r, y, x) / d, im / d);                            \
-  }                                                                          \
-  NX_INLINE nx_##C nx_recip_##C(nx_##C a) {                                  \
-    return nx_fdiv_##C(nx_##C##_of((T)1, (T)0), a);                          \
-  }                                                                          \
-                                                                             \
-  NX_INLINE int nx_equal_##C(nx_##C a, nx_##C b) {                           \
-    return a.re == b.re && a.im == b.im;                                     \
-  }                                                                          \
-  NX_INLINE int nx_not_equal_##C(nx_##C a, nx_##C b) {                       \
-    return !nx_equal_##C(a, b);                                              \
-  }                                                                          \
-  NX_INLINE int nx_less_##C(nx_##C a, nx_##C b) {                            \
-    int n = nx_nan_##C(a) || nx_nan_##C(b);                                  \
-    return !n && (a.re < b.re || (a.re == b.re && a.im < b.im));             \
-  }                                                                          \
-  NX_INLINE int nx_less_equal_##C(nx_##C a, nx_##C b) {                      \
-    int n = nx_nan_##C(a) || nx_nan_##C(b);                                  \
-    return !n && (a.re < b.re || (a.re == b.re && a.im <= b.im));            \
-  }                                                                          \
-                                                                             \
-  /* 1 where x follows y in the order with -0 below +0, -1 where it         \
-     precedes, 0 where they are one value; neither is NaN. */               \
-  NX_INLINE int nx_order_##R(T x, T y) {                                     \
-    int c = (x > y) - (x < y);                                               \
-    return c != 0 ? c : (int)SIGN(y) - (int)SIGN(x);                         \
-  }                                                                          \
-  NX_INLINE int nx_order_##C(nx_##C a, nx_##C b) {                           \
-    int c = nx_order_##R(a.re, b.re);                                        \
-    return c != 0 ? c : nx_order_##R(a.im, b.im);                            \
-  }                                                                          \
-  NX_INLINE nx_##C nx_maximum_##C(nx_##C a, nx_##C b) {                      \
-    if (nx_nan_##C(a)) return a;                                             \
-    if (nx_nan_##C(b)) return b;                                             \
-    return nx_order_##C(a, b) >= 0 ? a : b;                                  \
-  }                                                                          \
-  NX_INLINE nx_##C nx_minimum_##C(nx_##C a, nx_##C b) {                      \
-    if (nx_nan_##C(a)) return a;                                             \
-    if (nx_nan_##C(b)) return b;                                             \
-    return nx_order_##C(a, b) <= 0 ? a : b;                                  \
-  }                                                                          \
-  NX_INLINE nx_##C nx_where_##C(int c, nx_##C a, nx_##C b) { return c ? a : b; }
-
-NX_COMPLEX_KINDS(c64, float, f32, nx_fmaf, nx_float_nan, nx_float_sign)
-#ifndef __METAL_VERSION__
-NX_COMPLEX_KINDS(c128, double, f64, nx_fmad, nx_double_nan, nx_double_sign)
-#endif
-
-#define NX_T float
-#define NX_U uint32_t
-#define NX_CT nx_c64
-#define NX_(f) f##_f32
-#define NX_Z(f) f##_c64
-#define NX_MK nx_c64_of
-#define NX_C(c) NX_##c##_F32
-#define NX_FMA nx_fmaf
-#define NX_SQRT nx_sqrtf
-#define NX_BITS nx_float_bits
-#define NX_OF_BITS nx_bits_float
-#include "nx_kinds_complex.h"
-#undef NX_T
-#undef NX_U
-#undef NX_CT
-#undef NX_
-#undef NX_Z
-#undef NX_MK
-#undef NX_C
-#undef NX_FMA
-#undef NX_SQRT
-#undef NX_BITS
-#undef NX_OF_BITS
-
-#ifndef __METAL_VERSION__
-#define NX_T double
-#define NX_U uint64_t
-#define NX_CT nx_c128
-#define NX_(f) f##_f64
-#define NX_Z(f) f##_c128
-#define NX_MK nx_c128_of
-#define NX_C(c) NX_##c##_F64
-#define NX_FMA nx_fmad
-#define NX_SQRT nx_sqrtd
-#define NX_BITS nx_double_bits
-#define NX_OF_BITS nx_bits_double
-#include "nx_kinds_complex.h"
-#undef NX_T
-#undef NX_U
-#undef NX_CT
-#undef NX_
-#undef NX_Z
-#undef NX_MK
-#undef NX_C
-#undef NX_FMA
-#undef NX_SQRT
-#undef NX_BITS
-#undef NX_OF_BITS
-#endif
 
 #endif /* NX_KINDS_H */

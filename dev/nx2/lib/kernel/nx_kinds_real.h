@@ -4,24 +4,33 @@
   ---------------------------------------------------------------------------*/
 
 /* The float kinds of one compute type, written once: nx_kinds.h includes
-   this file for f32 and, but on Metal, for f64, after defining
+   this file in f32's block and, but on Metal, in f64's, after defining
 
    - NX_T, the type, and NX_U, the unsigned integer of its width;
    - NX_(f), which names f at the type: NX_(nx_exp) is nx_exp_f32;
    - NX_C(c), the type's constant c: NX_C(SHIFT) is NX_SHIFT_F32;
    - NX_FMA, NX_SQRT, NX_BITS, NX_OF_BITS and NX_ISNAN;
    - the polynomials (NX_(nx_exp_q), NX_(nx_exp2_poly), NX_(nx_log_t),
-     NX_(nx_log_tp), NX_(nx_sincos_p), NX_(nx_asin_b), NX_(nx_tanh_t)), the
-     pair and reduction types, and the prototypes of the trigonometric
-     reductions.
+     NX_(nx_log_tp), NX_(nx_sincos_p), NX_(nx_asin_b), NX_(nx_tanh_t)).
 
    It defines every kind but those whose algorithm differs between the
-   types: the trigonometric reductions, atan, atan2, erf and mod. */
+   types: the trigonometric reductions, atan, atan2, erf and mod, which the
+   block defines after it. */
 
 #define NX_ONE ((NX_T)1)
 #define NX_SIGN_BIT ((NX_U)1 << (8 * sizeof(NX_U) - 1))
 
 /* Types */
+
+typedef struct {
+  NX_T hi, lo;
+} NX_(nx_pair);
+
+/* x = q pi/2 + hi + lo. */
+typedef struct {
+  NX_T hi, lo;
+  uint32_t q;
+} NX_(nx_rem);
 
 /* An integer as a float and an int. */
 typedef struct {
@@ -404,6 +413,12 @@ NX_INLINE NX_T NX_(nx_tan_at)(NX_T x, NX_(nx_rem) r) {
   NX_T y = q.hi + q.lo;
   return !(NX_(nx_abs_bits)(x) >= NX_C(TRIG_TINY)) ? x : y;
 }
+
+/* The reductions by pi/2, which nx_kinds.h defines per type: Cody and
+   Waite's below the switch, and Payne and Hanek's past it, of x k for t
+   the bits of k 2/pi. */
+NX_INLINE NX_(nx_rem) NX_(nx_rem_pio2_cw)(NX_T x);
+NX_INLINE NX_(nx_rem) NX_(nx_rem_pio2_big)(NX_TABLE_PTR t, NX_T x);
 
 /* Whether x takes the integer reduction: |x| in [NX_C(PIO2_BIG), inf) as
    one unsigned compare of its bits, those below the switch wrapping past

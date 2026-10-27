@@ -3,28 +3,109 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The complex transcendental kinds of one compute type, written once:
-   nx_kinds.h includes this file for c64 and, but on Metal, for c128, after
-   nx_kinds_real.h and NX_COMPLEX_KINDS have defined the part type's kinds
-   and the complex type, and after defining
+/* The complex kinds of one part type, written once: nx_kinds.h includes
+   this file at the end of f32's block, for c64, and, but on Metal, of
+   f64's, for c128, once the part type's kinds are defined, with
+   nx_kinds_real.h's parameters and
 
-   - NX_T, the part type, NX_U, the unsigned integer of its width, and
-     NX_CT, the complex type;
-   - NX_(f), which names the part type's f, and NX_Z(f), the complex
-     type's: NX_Z(nx_exp) is nx_exp_c64;
-   - NX_MK, which makes a complex number of two parts;
-   - NX_C(c), NX_FMA, NX_BITS and NX_OF_BITS, as for nx_kinds_real.h.
+   - NX_CT, the complex type;
+   - NX_Z(f), which names f at the complex type: NX_Z(nx_exp) is
+     nx_exp_c64;
+   - NX_MK, the function that makes a complex number of two parts.
 
-   nx_kinds.h's complex section states what these kinds compute. Each makes
-   its operands' NaN parts quiet first and is computed from the part type's
-   kinds in one order, so that its bits, NaNs aside, are the same on every
-   target. A kind whose formula is odd or even in a
-   part computes that part's sign apart, so that its symmetries hold bit
-   for bit. */
+   nx_kinds.h's complex section states what these kinds compute. Each
+   transcendental kind makes its operands' NaN parts quiet first and is
+   computed from the part type's kinds in one order, so that its bits, NaNs
+   aside, are the same on every target. A kind whose formula is odd or even
+   in a part computes that part's sign apart, so that its symmetries hold
+   bit for bit. */
 
 #define NX_ONE ((NX_T)1)
 #define NX_HALF ((NX_T)0.5)
 #define NX_SIGN_BIT ((NX_U)1 << (8 * sizeof(NX_U) - 1))
+
+/* Arithmetic and order */
+
+typedef struct {
+  NX_T re, im;
+} NX_CT;
+
+NX_INLINE NX_CT NX_MK(NX_T re, NX_T im) {
+  NX_CT z;
+  z.re = re;
+  z.im = im;
+  return z;
+}
+
+NX_INLINE int NX_Z(nx_nan)(NX_CT a) { return NX_ISNAN(a.re) || NX_ISNAN(a.im); }
+
+NX_INLINE NX_CT NX_Z(nx_neg)(NX_CT a) {
+  return NX_MK(NX_(nx_neg)(a.re), NX_(nx_neg)(a.im));
+}
+NX_INLINE NX_CT NX_Z(nx_add)(NX_CT a, NX_CT b) {
+  return NX_MK(NX_(nx_add)(a.re, b.re), NX_(nx_add)(a.im, b.im));
+}
+NX_INLINE NX_CT NX_Z(nx_sub)(NX_CT a, NX_CT b) {
+  return NX_MK(NX_(nx_sub)(a.re, b.re), NX_(nx_sub)(a.im, b.im));
+}
+NX_INLINE NX_CT NX_Z(nx_mul)(NX_CT a, NX_CT b) {
+  NX_T ii = a.im * b.im, ir = a.im * b.re;
+  return NX_MK(NX_FMA(a.re, b.re, -ii), NX_FMA(a.re, b.im, ir));
+}
+
+/* Smith's algorithm with selects for its branch, which vectorise: p is the
+   divisor's larger part, q the other, x and y the dividend's parts in the
+   same roles. Where the real part is the larger, the quotient is
+   ((x + r y) + (y - r x) i) / d, else ((x + r y) + (r x - y) i) / d. */
+NX_INLINE NX_CT NX_Z(nx_fdiv)(NX_CT a, NX_CT b) {
+  int big = NX_(nx_abs_bits)(b.re) >= NX_(nx_abs_bits)(b.im);
+  NX_T p = big ? b.re : b.im, q = big ? b.im : b.re;
+  NX_T x = big ? a.re : a.im, y = big ? a.im : a.re;
+  NX_T r = q / p, d = NX_FMA(r, q, p);
+  NX_T im = big ? NX_FMA(-r, x, y) : NX_FMA(r, x, -y);
+  return NX_MK(NX_FMA(r, y, x) / d, im / d);
+}
+NX_INLINE NX_CT NX_Z(nx_recip)(NX_CT a) {
+  return NX_Z(nx_fdiv)(NX_MK(NX_ONE, (NX_T)0), a);
+}
+
+NX_INLINE int NX_Z(nx_equal)(NX_CT a, NX_CT b) {
+  return a.re == b.re && a.im == b.im;
+}
+NX_INLINE int NX_Z(nx_not_equal)(NX_CT a, NX_CT b) {
+  return !NX_Z(nx_equal)(a, b);
+}
+NX_INLINE int NX_Z(nx_less)(NX_CT a, NX_CT b) {
+  int n = NX_Z(nx_nan)(a) || NX_Z(nx_nan)(b);
+  return !n && (a.re < b.re || (a.re == b.re && a.im < b.im));
+}
+NX_INLINE int NX_Z(nx_less_equal)(NX_CT a, NX_CT b) {
+  int n = NX_Z(nx_nan)(a) || NX_Z(nx_nan)(b);
+  return !n && (a.re < b.re || (a.re == b.re && a.im <= b.im));
+}
+
+/* 1 where x follows y in the order with -0 below +0, -1 where it precedes,
+   0 where they are one value; neither is NaN. */
+NX_INLINE int NX_(nx_order)(NX_T x, NX_T y) {
+  int c = (x > y) - (x < y);
+  int sx = (NX_BITS(x) & NX_SIGN_BIT) != 0, sy = (NX_BITS(y) & NX_SIGN_BIT) != 0;
+  return c != 0 ? c : sy - sx;
+}
+NX_INLINE int NX_Z(nx_order)(NX_CT a, NX_CT b) {
+  int c = NX_(nx_order)(a.re, b.re);
+  return c != 0 ? c : NX_(nx_order)(a.im, b.im);
+}
+NX_INLINE NX_CT NX_Z(nx_maximum)(NX_CT a, NX_CT b) {
+  if (NX_Z(nx_nan)(a)) return a;
+  if (NX_Z(nx_nan)(b)) return b;
+  return NX_Z(nx_order)(a, b) >= 0 ? a : b;
+}
+NX_INLINE NX_CT NX_Z(nx_minimum)(NX_CT a, NX_CT b) {
+  if (NX_Z(nx_nan)(a)) return a;
+  if (NX_Z(nx_nan)(b)) return b;
+  return NX_Z(nx_order)(a, b) <= 0 ? a : b;
+}
+NX_INLINE NX_CT NX_Z(nx_where)(int c, NX_CT a, NX_CT b) { return c ? a : b; }
 
 /* Parts */
 
