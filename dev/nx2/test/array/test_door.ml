@@ -25,7 +25,6 @@ let released arrays =
 
 let zeros s = floats32 s (Array.make (Iarray.fold_left ( * ) 1 s) 0.)
 
-
 let test_door_add () =
   let x = floats32 [| 2; 3 |] [| 0.; 1.; 2.; 3.; 4.; 5. |] in
   let y =
@@ -388,7 +387,6 @@ let test_ocaml_door_refuses () =
   kill b;
   refuses ~msg:"dead and overlapping" A.Dead_buffer [| z |] [| y |]
 
-(* Off the host, views of one buffer overlap by their offsets. *)
 (* The OCaml door's identity rule, as nx_read's. *)
 let test_ocaml_door_identical () =
   let xa = floats32 [| 4 |] [| 1.; 2.; 3.; 4. |] in

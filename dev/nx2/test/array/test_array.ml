@@ -48,23 +48,28 @@ let case = Gen.with_pp pp_case case
 
 let test_bounds () =
   let b = B.create Rig.host 16 in
-  let fails l = raises_match Exn.invalid_arg (fun () -> A.v f32 l b) in
+  let fails dt l =
+    raises_match (Exn.invalid_arg ~substring:"reaches past") (fun () ->
+        A.v dt l b)
+  in
   ignore (A.v f32 (L.contiguous [| 4 |]) b);
   ignore (A.v f32 (L.v ~offset:3 ~strides:[| -1 |] [| 4 |]) b);
-  fails (L.contiguous [| 5 |]);
-  fails (L.v ~offset:1 ~strides:[| 1 |] [| 4 |]);
+  fails f32 (L.contiguous [| 5 |]);
+  fails f32 (L.v ~offset:1 ~strides:[| 1 |] [| 4 |]);
   ignore (A.v D.Int4 (L.contiguous [| 32 |]) b);
   ignore (A.v D.Bit (L.contiguous [| 128 |]) b);
-  raises_match Exn.invalid_arg (fun () -> A.v D.Int4 (L.contiguous [| 33 |]) b);
-  raises_match Exn.invalid_arg (fun () -> A.v D.Bit (L.contiguous [| 129 |]) b);
-  raises_match Exn.invalid_arg (fun () ->
-      A.v D.Complex128 (L.contiguous [| 2 |]) b);
+  fails D.Int4 (L.contiguous [| 33 |]);
+  fails D.Bit (L.contiguous [| 129 |]);
+  fails D.Complex128 (L.contiguous [| 2 |]);
   ignore (A.v f32 (L.contiguous [| 0 |]) (B.create Rig.host 0))
 
 let test_alignment () =
   let b = B.create Rig.host 64 in
   let at first = B.view b ~first ~length:32 in
-  let fails dt l b = raises_match Exn.invalid_arg (fun () -> A.v dt l b) in
+  let fails dt l b =
+    raises_match (Exn.invalid_arg ~substring:"not on a multiple") (fun () ->
+        A.v dt l b)
+  in
   fails f32 (L.contiguous [| 1 |]) (at 1);
   fails f32 (L.contiguous [| 1 |]) (at 2);
   fails D.Float64 (L.contiguous [| 1 |]) (at 4);
