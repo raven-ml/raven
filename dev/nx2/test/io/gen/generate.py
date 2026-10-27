@@ -208,6 +208,17 @@ def stated(path, pixels):
     np.save(path.rsplit(".", 1)[0] + ".npy", np.array(pixels, dtype=np.uint8))
 
 
+def extended_jpeg():
+    # An extended sequential frame (SOF1) at 8 bits, which Pillow does not
+    # write: the baseline file with its SOF0 marker renamed, since the two
+    # frame headers are the same (T.81, B.2.2).
+    with open("jpeg_baseline.jpg", "rb") as f:
+        data = f.read()
+    at = data.index(b"\xff\xc0")
+    with open("jpeg_extended.jpg", "wb") as f:
+        f.write(data[:at] + b"\xff\xc1" + data[at + 2:])
+
+
 def image_fixtures():
     rgb = [[((31 * y + 73 * x) % 256, (73 * y + 11 * x) % 256, (47 * x * y + 5) % 256)
             for x in range(3)] for y in range(5)]
@@ -266,7 +277,8 @@ def image_fixtures():
     gradient(6, 5, "L").save("jpeg_gray.jpg", quality=90)
     gradient(5, 6, "CMYK").save("jpeg_cmyk.jpg", quality=90)
     gradient(9, 11, "RGB").save("jpeg_restart.jpg", quality=90, restart_marker_blocks=1)
-    for name in ["baseline", "progressive", "cmyk", "restart"]:
+    extended_jpeg()
+    for name in ["baseline", "progressive", "cmyk", "restart", "extended"]:
         reference("jpeg_%s.jpg" % name, "RGB")
     reference("jpeg_gray.jpg", "L")
 

@@ -267,10 +267,22 @@ static void free_decoder(jpeg_decoder *decoder) {
   }
 }
 
+/* The status of a frame of [marker] whose samples have [precision] bits: a
+   baseline frame (SOF0) has 8, and an extended sequential or progressive one
+   (SOF1, SOF2) 8 or 12, of which this decoder reads 8 (T.81, B.2.2). */
+static jpeg_status frame_precision(unsigned marker, unsigned precision) {
+  if (precision == 8)
+    return JPEG_OK;
+  return marker != 0xc0 && precision == 12 ? JPEG_UNSUPPORTED : JPEG_FRAME;
+}
+
 static jpeg_status parse_frame(jpeg_decoder *decoder, const uint8_t *data,
-                               size_t len, int progressive) {
-  if (decoder->component_count != 0 || len < 6 || data[0] != 8)
+                               size_t len, unsigned marker) {
+  if (decoder->component_count != 0 || len < 6)
     return JPEG_FRAME;
+  jpeg_status status = frame_precision(marker, data[0]);
+  if (status != JPEG_OK)
+    return status;
   size_t height = be16(data + 1);
   size_t width = be16(data + 3);
   unsigned count = data[5];
@@ -280,7 +292,7 @@ static jpeg_status parse_frame(jpeg_decoder *decoder, const uint8_t *data,
   decoder->width = width;
   decoder->height = height;
   decoder->component_count = count;
-  decoder->progressive = progressive;
+  decoder->progressive = marker == 0xc2;
   for (unsigned i = 0; i < count; i++) {
     jpeg_component *component = &decoder->components[i];
     component->id = data[6 + i * 3];
@@ -937,8 +949,8 @@ static jpeg_status decode_jpeg(const uint8_t *src, size_t len, uint8_t *dst,
     status = segment(src, len, &off, &data, &data_len);
     if (status != JPEG_OK)
       break;
-    if (marker == 0xc0 || marker == 0xc2) {
-      status = parse_frame(&decoder, data, data_len, marker == 0xc2);
+    if (marker == 0xc0 || marker == 0xc1 || marker == 0xc2) {
+      status = parse_frame(&decoder, data, data_len, marker);
     } else if (marker == 0xdb) {
       status = parse_dqt(&decoder, data, data_len);
     } else if (marker == 0xc4) {
@@ -959,7 +971,7 @@ static jpeg_status decode_jpeg(const uint8_t *src, size_t len, uint8_t *dst,
     } else if (marker == 0xee && data_len >= 12 &&
                memcmp(data, "Adobe", 5) == 0) {
       decoder.adobe_transform = data[11];
-    } else if ((marker >= 0xc1 && marker <= 0xcf && marker != 0xc4 &&
+    } else if ((marker >= 0xc3 && marker <= 0xcf && marker != 0xc4 &&
                 marker != 0xc8 && marker != 0xcc) ||
                marker == 0xcc) {
       status = JPEG_UNSUPPORTED;
@@ -1001,16 +1013,20 @@ static jpeg_status probe_jpeg(const uint8_t *src, size_t len, size_t *width,
     status = segment(src, len, &off, &data, &data_len);
     if (status != JPEG_OK)
       return status;
-    if (marker == 0xc0 || marker == 0xc2) {
-      if (data_len < 6 || data[0] != 8 || be16(data + 1) == 0 ||
-          be16(data + 3) == 0)
+    if (marker == 0xc0 || marker == 0xc1 || marker == 0xc2) {
+      if (data_len < 6)
+        return JPEG_FRAME;
+      status = frame_precision(marker, data[0]);
+      if (status != JPEG_OK)
+        return status;
+      if (be16(data + 1) == 0 || be16(data + 3) == 0)
         return JPEG_FRAME;
       *height = be16(data + 1);
       *width = be16(data + 3);
       *channels = output_channels(data[5]);
       return JPEG_OK;
     }
-    if ((marker >= 0xc1 && marker <= 0xcf && marker != 0xc4 && marker != 0xc8 &&
+    if ((marker >= 0xc3 && marker <= 0xcf && marker != 0xc4 && marker != 0xc8 &&
          marker != 0xcc))
       return JPEG_UNSUPPORTED;
   }
