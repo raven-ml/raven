@@ -11,3 +11,13 @@
   test_jvp
   test_grad)
  (libraries nx nx_array nx_kernel nx_support rig rune2 windtrap))
+
+; nx's special functions' derivatives, against goldens gen/special_grad.py
+; writes from correctly rounded references.
+
+(test
+ (name test_special)
+ (modules special test_special)
+ (libraries nx rune2 windtrap)
+ (deps
+  (glob_files golden/special_grad/*.golden)))

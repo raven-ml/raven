@@ -72,8 +72,9 @@
     element that receives none is [+0.].
 
     {b Placement.} A cotangent lies where its array does. That of an array of
-    every set lies on the set of the first placed argument or result, and of
-    every set where every value it meets is.
+    every set is of every set where every value it meets is, and otherwise lies
+    on the set of the first placed argument or result; with none placed it
+    raises [Invalid_argument].
 
     {b Kinks.} Where an operation has no derivative: [Nx.abs] passes the tangent
     at [0.] and [-0.]; where the operands of [Nx.maximum] or [Nx.minimum] tie,
@@ -114,10 +115,10 @@
      one], the inner tangent is a constant to the outer differentiation, and the
     result's tangent is [1].
 
-    {b Derivatives are fresh.} A tangent is a value of its own, in C order from
-    the start of its memory, never a view of an argument or of the movement its
-    computation ends with. Under another transformation it is that
-    transformation's value. *)
+    {b Derivatives are fresh.} A tangent, a gradient and a pullback's result are
+    values of their own, in C order from the start of their memory, never a view
+    of an argument or of the movement their computation ends with. Under another
+    transformation each is that transformation's value. *)
 
 val jvp :
   ('p, 'd) Nx.Ptree.t ->
@@ -140,6 +141,73 @@ val jvp :
     where they differ, or if a tangent differs from its parameter in dtype or
     shape (["Rune.jvp: 1: shape [2] in the parameters, [3] in the tangents"]).
 *)
+
+(** {1:special Derivatives of nx's special functions}
+
+    Rune differentiates {!Nx.erfinv}, {!Nx.erfc}, {!Nx.ndtr}, {!Nx.log_ndtr},
+    {!Nx.ndtri}, {!Nx.lgamma}, {!Nx.digamma}, {!Nx.lbeta}, {!Nx.i0e}, {!Nx.i1e},
+    the incomplete gamma family ({!Nx.gammainc}, {!Nx.gammaincc}, their
+    logarithms and their inverses) and the incomplete beta family
+    ({!Nx.betainc}, {!Nx.betaincc} and their logarithms) through the operations
+    nx computes them with, in every argument and at every order. Each derivative
+    is within the budget below of the exact derivative, at [float32] and
+    [float64], eagerly and compiled, where the function and its derivative are
+    finite, which leaves out such points as {!Nx.erfinv} at [±1] and {!Nx.ndtri}
+    at [0] and [1]. At [±0], {!Nx.i0e}'s derivative is its right-hand one, [-1];
+    {!Nx.i1e}'s is [1/2]. [ε] is the distance from 1 to the next float of the
+    dtype.
+
+    {t
+      | Function                                             | First derivative                                                                                                                  |
+      |------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
+      | {!Nx.erfinv}                                         | 64 ulps                                                                                                                           |
+      | {!Nx.erfc}                                           | 128 ulps                                                                                                                          |
+      | {!Nx.ndtr}                                           | 256 ulps                                                                                                                          |
+      | {!Nx.log_ndtr}                                       | 512 ulps                                                                                                                          |
+      | {!Nx.ndtri}                                          | 64 ulps                                                                                                                           |
+      | {!Nx.lgamma}                                         | for [x > 0], 256 ulps, or [256ε] absolutely where below 1; below 0, 256 ulps or [256ε (1 + |ψ(1 - x)| + |π cot (πx)|)] absolutely |
+      | {!Nx.digamma}                                        | for [x > 0], 256 ulps; below 0, 256 ulps or [256ε (1 + ψ'(1 - x) + π² / sin² (πx))] absolutely                                    |
+      | {!Nx.lbeta}, in either argument                      | 4096 ulps, or [8192ε] absolutely where below 1                                                                                    |
+      | {!Nx.i0e}                                            | 128 ulps                                                                                                                          |
+      | {!Nx.i1e}                                            | 128 ulps, or [128ε] absolutely for [1 ≤ |x| ≤ 2], about its zero at [±1.545]                                                      |
+      | {!Nx.gammainc}, {!Nx.gammaincc}, in [x]              | [512 (1 + |log f|) + 64] ulps                                                                                                     |
+      | {!Nx.log_gammainc}, {!Nx.log_gammaincc}, in [x]      | 256 ulps, or [256ε] absolutely where below 1                                                                                      |
+      | the four, in [a]                                     | [2^-40 (1 + |log f|)] relative at [float64], [2^-16 (1 + |log f|)] at [float32]                                                   |
+      | {!Nx.gammaincinv}, {!Nx.gammainccinv}, in [p] or [q] | [64 + 16κ (32 (1 + |log p|) + 4)] ulps, [q] in place of [p] for {!Nx.gammainccinv}                                                |
+      | the two, in [a]                                      | [2^-40] relative at [float64], [2^-16] at [float32]                                                                               |
+      | {!Nx.betainc}, {!Nx.betaincc}, in [x]                | [1024 (1 + |log f|) + 64] ulps                                                                                                    |
+      | {!Nx.log_betainc}, {!Nx.log_betaincc}, in [x]        | 512 ulps, or [512ε] absolutely where below 1                                                                                      |
+      | the four, in [a] or [b]                              | [2^-40 (1 + |log f|)] relative at [float64], [2^-16 (1 + |log f|)] at [float32]                                                   |
+    }
+
+    [f] is the smaller of [P] and [Q], or of [I_x(a, b)] and its complement: a
+    tail and its complement share one derivative up to sign, computed from the
+    smaller tail. [κ] is the inverse's condition number. The incomplete gamma's
+    budgets hold for [0 < a ≤ 2^20]: those of {!Nx.gammainc} and {!Nx.gammaincc}
+    where [f] is a normal number, below which the derivative underflows, and an
+    inverse's where its quantile is normal. The incomplete beta's hold for
+    [0 < a, b ≤ 2^20] where the function is a normal number. At [x = 0],
+    [∂P/∂a = 0] and [∂P/∂x] is its one-sided limit [x^{a-1} e^{-x} / Γ(a)]: [1]
+    at [a = 1], [0] above and infinite below. At [a = 0], where
+    [P = 1 - a E₁(x) + O(a²)] for [x > 0], [∂P/∂a] is its one-sided limit
+    [-E₁(x)], [E₁(x) = ∫ₓ^∞ e^{-t}/t dt], and [∂P/∂x = 0]; there [log Q] is
+    [-inf]. At an end of [x] the incomplete beta's derivatives in [a] and [b]
+    are [0], and in [x] its one-sided limit [x^{a-1} (1 - x)^{b-1} / B(a, b)]:
+    [b] at [x = 0] for [a = 1], [0] above and infinite below; at [x = 1]
+    likewise with [a] and [b] exchanged. At [a = 0] its upper tail vanishes as
+    [a g], [g = ∫ₓ¹ (1 - t)^{b-1} / t dt], and at [b = 0] its lower tail as
+    [b h], [h = ∫₀ˣ t^{a-1} / (1 - t) dt]: for [x] inside (0, 1) its derivatives
+    there are those of these forms, within [2^-40] relative at [float64] and
+    [2^-16] at [float32], except the vanishing tail's logarithm in [a] or [b],
+    which is infinite. An inverse's derivative in [a] is the implicit one,
+    [-(∂P/∂a) / (∂P/∂x)] at the quantile, for either tail; at [a = 0], where the
+    quantile is [0] away from its upper end, both its derivatives are [0].
+
+    Second derivatives of {!Nx.lgamma} and {!Nx.lbeta} are within [2^-40]
+    relative at [float64] and [2^-16] at [float32]. Those of {!Nx.lbeta} hold
+    where both arguments are at least the cube root of the largest float's
+    reciprocal ([1.4e-13] at [float32], [1.8e-103] at [float64]); below, the
+    terms they subtract pass the largest float and the result may be NaN. *)
 
 (** {1:reverse Reverse mode}
 
