@@ -196,8 +196,9 @@ static void fill_block(const nx_cpu_block *b, void *ctx) {
 /* Reads the [n] operands [in] through the door and walks them with [f],
    [per] the cost of an element (nx_cpu_loop_cost). A kind whose loop is
    one run within a block, each operand in its compute dtype and stepping
-   by one element or none, runs the one row block would run on the walk's
-   one block, on the calling thread, without the block: on the M1 Max an
+   by one element or none, and on the one thread its walk takes, runs the
+   one row block would run on the walk's one block, on the calling thread,
+   without the block: on the M1 Max an
    add of one float32 element spent 35 of its 93 ns between the loop and
    the row. */
 static value walk_operands(int n, const nx_operand *in, nx_cpu_block_fn f,
@@ -220,6 +221,7 @@ static value walk_operands(int n, const nx_operand *in, nx_cpu_block_fn f,
     int64_t step = l.step[k][0];
     run = a[k].dtype == j->as[k] && (step == 0 || step == 1);
   }
+  run = run && nx_cpu_walk_threads(n, a, &l, per) == 1;
   if (!run) nx_cpu_walk(n, a, &l, block_most, per, f, j);
   else if (l.extent[0] > 0) {
     uint8_t *p[OPERANDS];
@@ -345,8 +347,10 @@ static void iota_odometer(const nx_array *a, int axis) {
 /* Elements of an iota's unit of work. */
 #define IOTA_UNIT (16 * 1024)
 
-/* What an odometer element takes at most (cpu.h, Calls, scalar): the
-   same loop at float32 took up to 124 on the M1. */
+/* What an iota element takes (cpu.h, Calls and jobs; M1, 2026-10-14): a
+   contiguous one, its int64's store (streaming); an odometer's at most
+   (scalar), the same loop at float32 having taken up to 124. */
+#define IOTA_COST 8
 #define ODOMETER_COST 2048
 
 /* Units [lo, hi) of the job: the last one ends at the last element. */
@@ -373,11 +377,12 @@ value nx_cpu_iota(value vaxis, value vd) {
   for (int i = 0; i < a->rank; i++) numel *= a->dim[i];
   for (int i = axis + 1; i < a->rank; i++) inner *= a->dim[i];
   int job = a->flags & NX_CONTIGUOUS;
-  int released = nx_cpu_release((double)numel * (job ? 8 : ODOMETER_COST));
+  double cost = (double)numel * (job ? IOTA_COST : ODOMETER_COST);
+  int released = nx_cpu_release(cost);
   if (numel > 0 && job) {
     iota_job j = {(int64_t *)a->base + a->offset, numel, inner, a->dim[axis]};
     int64_t units = (numel + IOTA_UNIT - 1) / IOTA_UNIT;
-    nx_cpu_job(units, numel * 8, numel * 8, iota_body, &j);
+    nx_cpu_job(units, numel * 8, cost, iota_body, &j);
   } else if (numel > 0)
     iota_odometer(a, axis);
   nx_cpu_reacquire(released);

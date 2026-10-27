@@ -201,9 +201,9 @@ static int same_shape(const int64_t *x, int r, const int64_t *y, int ry) {
   return 1;
 }
 
-/* What a call takes (cpu.h, Calls and jobs, scalar): a gathered element,
-   51 read at random over 2^24 elements (M1); a scatter's update, 325 (a
-   float16 Max, fudge). */
+/* What a call takes (cpu.h, Calls and jobs, scalar; M1 Max and fudge,
+   2026-10-14): a gathered element, 51 read at random over 2^24 elements
+   (M1); a scatter's update, 325 (a float16 Max, fudge). */
 #define GATHER_COST 128
 #define UPDATE_COST 512
 
@@ -227,8 +227,6 @@ value nx_cpu_gather(value vaxis, value vd, value vi, value vx) {
   if (e) CAMLreturn(Val_int(e));
   int r = a[0].rank;
   int bits = nx_dtype_row_of(dt).bits;
-  double elements = nx_cpu_elements(&a[1]);
-  int released = nx_cpu_release(GATHER_COST * elements);
   gather g = {.a = a,
               .sa = a[2].dim[r + axis],
               .dim = (uint64_t)a[2].dim[axis],
@@ -241,6 +239,7 @@ value nx_cpu_gather(value vaxis, value vd, value vi, value vx) {
     l.step[2][i] = i == axis ? 0 : a[2].dim[r + i];
   }
   l.rank = nx_coalesce_dims(3, r, l.extent, l.step);
+  int released = nx_cpu_release(nx_cpu_loop_cost(3, a, &l, GATHER_COST));
   nx_cpu_walk(3, a, &l, GATHER_MOST, GATHER_COST, gather_block, &g);
   nx_cpu_reacquire(released);
   nx_done(3, a);

@@ -603,10 +603,11 @@ const nx_cpu_row_table nx_cpu_rows = {
 
 /* Kinds' costs
 
-   What computing a kind at one element takes (cpu.h, Calls, scalar), its
-   operands' loads and its result's store included, by the element's
-   class: a real one of up to 4 bytes, one of 8, and a complex one, each
-   the most any dtype of its class took over 4096 elements on one thread.
+   What computing a kind at one element takes (cpu.h, Calls and jobs,
+   scalar; M1 Max and fudge, 2026-10-16), its operands' loads and its
+   result's store included, by the element's class: a real one of up to 4
+   bytes, one of 8, and a complex one, each the most any dtype of its
+   class took over 4096 elements on one thread.
    The worst: pow, 1003 a float64 element (M1); atan2, 658 (M1); mod, 454
    (fudge); tan, 415 (M1). */
 typedef struct {
