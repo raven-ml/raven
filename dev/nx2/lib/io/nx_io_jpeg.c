@@ -56,10 +56,13 @@ typedef struct {
   size_t blocks_y;
   size_t allocated_x;
   size_t allocated_y;
-  int32_t *coefficients;
+  /* Quantised coefficients, which an 8-bit frame keeps within 16 bits. A
+     corrupt file's values wrap: C leaves the conversion of a value out of
+     range to int16_t to the implementation, and GCC, clang and MSVC wrap. */
+  int16_t *coefficients;
   uint8_t *samples;
   size_t sample_stride;
-  int dc_predictor;
+  int16_t dc_predictor;
 } jpeg_component;
 
 typedef struct {
@@ -327,9 +330,9 @@ static jpeg_status parse_frame(jpeg_decoder *decoder, const uint8_t *data,
     if (!checked_product(component->allocated_x, component->allocated_y,
                          &blocks) ||
         !checked_product(blocks, 64, &coefficients) || coefficients == 0 ||
-        coefficients > SIZE_MAX / sizeof(int32_t))
+        coefficients > SIZE_MAX / sizeof(int16_t))
       return JPEG_SIZE;
-    component->coefficients = calloc(coefficients, sizeof(int32_t));
+    component->coefficients = calloc(coefficients, sizeof(int16_t));
     if (component->coefficients == NULL)
       return JPEG_NOMEM;
   }
@@ -424,10 +427,17 @@ static jpeg_status receive_extend(entropy_reader *reader, unsigned count,
   return JPEG_OK;
 }
 
+/* Adds the DC difference [difference] to [component]'s predictor, in unsigned
+   arithmetic, so that a corrupt file's sum wraps instead of overflowing. */
+static void predict_dc(jpeg_component *component, int difference) {
+  component->dc_predictor =
+      (int16_t)((unsigned)component->dc_predictor + (unsigned)difference);
+}
+
 static jpeg_status decode_sequential(entropy_reader *reader,
                                      jpeg_component *component,
                                      const jpeg_decoder *decoder,
-                                     int32_t block[64]) {
+                                     int16_t block[64]) {
   unsigned category;
   jpeg_status status =
       huffman_symbol(reader, &decoder->dc[component->dc_table], &category);
@@ -437,7 +447,7 @@ static jpeg_status decode_sequential(entropy_reader *reader,
   status = receive_extend(reader, category, &difference);
   if (status != JPEG_OK)
     return status;
-  component->dc_predictor += difference;
+  predict_dc(component, difference);
   block[0] = component->dc_predictor;
   unsigned k = 1;
   while (k < 64) {
@@ -462,19 +472,20 @@ static jpeg_status decode_sequential(entropy_reader *reader,
     status = receive_extend(reader, size, &coefficient);
     if (status != JPEG_OK)
       return status;
-    block[zigzag[k++]] = coefficient;
+    block[zigzag[k++]] = (int16_t)coefficient;
   }
   return k <= 64 ? JPEG_OK : JPEG_HUFFMAN;
 }
 
-static void refine_nonzero(int32_t *coefficient, unsigned bit, int delta) {
+static void refine_nonzero(int16_t *coefficient, unsigned bit, int delta) {
   if (bit != 0 && ((unsigned)abs(*coefficient) & (unsigned)delta) == 0)
-    *coefficient += *coefficient >= 0 ? delta : -delta;
+    *coefficient =
+        (int16_t)(*coefficient + (*coefficient >= 0 ? delta : -delta));
 }
 
 static jpeg_status
 decode_progressive(entropy_reader *reader, jpeg_component *component,
-                   const jpeg_decoder *decoder, int32_t block[64],
+                   const jpeg_decoder *decoder, int16_t block[64],
                    unsigned spectral_start, unsigned spectral_end,
                    unsigned high, unsigned low, unsigned *eob_run) {
   int delta = 1 << low;
@@ -489,8 +500,8 @@ decode_progressive(entropy_reader *reader, jpeg_component *component,
       status = receive_extend(reader, category, &difference);
       if (status != JPEG_OK)
         return status;
-      component->dc_predictor += difference;
-      block[0] = component->dc_predictor * delta;
+      predict_dc(component, difference);
+      block[0] = (int16_t)(component->dc_predictor * delta);
       return JPEG_OK;
     }
     /* A DC refinement sends the next bit of the two's-complement value, whose
@@ -498,7 +509,7 @@ decode_progressive(entropy_reader *reader, jpeg_component *component,
     unsigned bit;
     jpeg_status status = entropy_bits(reader, 1, &bit);
     if (status == JPEG_OK && bit)
-      block[0] |= delta;
+      block[0] = (int16_t)(block[0] | delta);
     return status;
   }
 
@@ -535,7 +546,7 @@ decode_progressive(entropy_reader *reader, jpeg_component *component,
       status = receive_extend(reader, size, &value);
       if (status != JPEG_OK)
         return status;
-      block[zigzag[k++]] = value * delta;
+      block[zigzag[k++]] = (int16_t)(value * delta);
     }
     return k <= spectral_end + 1 ? JPEG_OK : JPEG_HUFFMAN;
   }
@@ -571,7 +582,7 @@ decode_progressive(entropy_reader *reader, jpeg_component *component,
         new_coefficient = sign * delta;
       }
       while (k <= spectral_end) {
-        int32_t *coefficient = &block[zigzag[k]];
+        int16_t *coefficient = &block[zigzag[k]];
         if (*coefficient != 0) {
           unsigned bit;
           status = entropy_bits(reader, 1, &bit);
@@ -588,7 +599,7 @@ decode_progressive(entropy_reader *reader, jpeg_component *component,
       if (new_coefficient != 0) {
         if (k > spectral_end)
           return JPEG_HUFFMAN;
-        block[zigzag[k++]] = new_coefficient;
+        block[zigzag[k++]] = (int16_t)new_coefficient;
       } else if (run != 0) {
         return JPEG_HUFFMAN;
       }
@@ -596,7 +607,7 @@ decode_progressive(entropy_reader *reader, jpeg_component *component,
   }
   if (*eob_run != 0) {
     while (k <= spectral_end) {
-      int32_t *coefficient = &block[zigzag[k++]];
+      int16_t *coefficient = &block[zigzag[k++]];
       if (*coefficient != 0) {
         unsigned bit;
         jpeg_status status = entropy_bits(reader, 1, &bit);
@@ -714,7 +725,7 @@ static jpeg_status decode_scan(jpeg_decoder *decoder, const uint8_t *header,
             if (block_x >= component->allocated_x ||
                 block_y >= component->allocated_y)
               return JPEG_SIZE;
-            int32_t *block = component->coefficients +
+            int16_t *block = component->coefficients +
                              (block_y * component->allocated_x + block_x) * 64;
             jpeg_status status =
                 decoder->progressive
@@ -741,7 +752,10 @@ static int clamp_sample(int64_t value) {
   return (int)value;
 }
 
-static void inverse_block(const int32_t *coefficients, const uint16_t *quant,
+/* With coefficients of at most 2^15 in magnitude, table entries below 2^16 and
+   the magnitudes of each row of the matrix summing to 43284, the first pass's
+   sums stay below 2^47 and the second's below 2^62. */
+static void inverse_block(const int16_t *coefficients, const uint16_t *quant,
                           uint8_t *dst, size_t stride) {
   int64_t horizontal[8][8];
   for (unsigned v = 0; v < 8; v++) {
@@ -784,7 +798,7 @@ static jpeg_status reconstruct(jpeg_decoder *decoder) {
       return JPEG_NOMEM;
     for (size_t block_y = 0; block_y < component->blocks_y; block_y++) {
       for (size_t block_x = 0; block_x < component->blocks_x; block_x++) {
-        const int32_t *block =
+        const int16_t *block =
             component->coefficients +
             (block_y * component->allocated_x + block_x) * 64;
         inverse_block(block, decoder->quant[component->quant],

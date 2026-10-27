@@ -11,7 +11,8 @@ png_gray_trns.png and png_rgb16_trns.png, whose pixels are stated from PNG-3
 where Pillow's decoding differs. No fixture is a YCCK JPEG, which Pillow does
 not write, so the YCCK conversion goes untested. Python's float(), whose
 reader rounds correctly on every system, gives the float64 nearest each
-literal of floats.txt.
+literal of floats.txt. The JPEG files that break T.81's ranges are written
+byte by byte below, and have no sibling.
 
 Usage:
     cd dev/nx2/test/io/support
@@ -262,6 +263,64 @@ def extended_jpeg():
         f.write(data[:at] + b"\xff\xc1" + data[at + 2:])
 
 
+def segment(marker, data):
+    return bytes([0xFF, marker]) + struct.pack(">H", len(data) + 2) + data
+
+
+class Bits:
+    """An entropy-coded segment, written most significant bit first, with
+    each 0xFF byte stuffed with a 0x00 and the last byte padded with ones."""
+
+    def __init__(self):
+        self.out, self.acc, self.n = bytearray(), 0, 0
+
+    def put(self, v, n):
+        for i in range(n - 1, -1, -1):
+            self.acc = (self.acc << 1) | ((v >> i) & 1)
+            self.n += 1
+            if self.n == 8:
+                self.out.append(self.acc)
+                if self.acc == 0xFF:
+                    self.out.append(0)
+                self.acc, self.n = 0, 0
+
+    def done(self):
+        while self.n:
+            self.put(1, 1)
+        return bytes(self.out)
+
+
+def overflow_jpeg(path, side, progressive, table16):
+    # A grey JPEG of [side] by [side] pixels whose every DC difference is
+    # +2047, so that the DC predictor grows past 16 bits, with quantisation
+    # entries of 255, or of 65535 in a 16-bit table. A progressive file sends
+    # DC with Al = 13.
+    jpeg = b"\xff\xd8"
+    if table16:
+        jpeg += segment(0xDB, bytes([0x10]) + b"\xff\xff" * 64)
+    else:
+        jpeg += segment(0xDB, bytes([0x00]) + b"\xff" * 64)
+    sof = 0xC2 if progressive else 0xC0
+    jpeg += segment(sof, bytes([8]) + struct.pack(">HH", side, side) + bytes([1, 1, 0x11, 0]))
+    counts = bytes([1] + [0] * 15)
+    jpeg += segment(0xC4, bytes([0x00]) + counts + bytes([11]))  # DC: code 0 is category 11
+    jpeg += segment(0xC4, bytes([0x10]) + counts + bytes([0x00]))  # AC: code 0 is EOB
+    bits = Bits()
+    if progressive:
+        jpeg += segment(0xDA, bytes([1, 1, 0x00, 0, 0, 13]))
+        for _ in range((side // 8) ** 2):
+            bits.put(0, 1)
+            bits.put(0x7FF, 11)
+    else:
+        jpeg += segment(0xDA, bytes([1, 1, 0x00, 0, 63, 0]))
+        for _ in range((side // 8) ** 2):
+            bits.put(0, 1)
+            bits.put(0x7FF, 11)
+            bits.put(0, 1)
+    with open(path, "wb") as f:
+        f.write(jpeg + bits.done() + b"\xff\xd9")
+
+
 def image_fixtures():
     rgb = [[((31 * y + 73 * x) % 256, (73 * y + 11 * x) % 256, (47 * x * y + 5) % 256)
             for x in range(3)] for y in range(5)]
@@ -333,6 +392,20 @@ def image_fixtures():
                  "extended"]:
         reference("jpeg_%s.jpg" % name, "RGB")
     reference("jpeg_gray.jpg", "L")
+    overflow_jpeg("jpeg_dc_overflow.jpg", 128, False, False)
+    overflow_jpeg("jpeg_dc_overflow_progressive.jpg", 128, True, False)
+    overflow_jpeg("jpeg_table16.jpg", 32, False, True)
+    overflow_jpeg("jpeg_table16_large.jpg", 512, False, True)
+    # Entries above 255, which libjpeg writes in a 16-bit table, in an 8-bit
+    # frame, for a coarse quality: T.81 B.2.4.1 reserves such tables for
+    # 12-bit samples, but every libjpeg reader opens the file.
+    coarse = [4 * q for q in [16, 11, 10, 16, 24, 40, 51, 61, 12, 12, 14, 19, 26, 58, 60, 55,
+                              14, 13, 16, 24, 40, 57, 69, 56, 14, 17, 22, 29, 51, 87, 80, 62,
+                              18, 22, 37, 56, 68, 109, 103, 77, 24, 35, 55, 64, 81, 104, 113,
+                              92, 49, 64, 78, 87, 103, 121, 120, 101, 72, 92, 95, 98, 112, 100,
+                              103, 99]]
+    gradient(8, 16, "L").save("jpeg_table16_coarse.jpg", qtables=[coarse])
+    reference("jpeg_table16_coarse.jpg", "L")
 
 
 if __name__ == "__main__":

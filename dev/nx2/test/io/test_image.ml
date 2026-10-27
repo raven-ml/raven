@@ -5,8 +5,8 @@
 
 (* Images. A PNG saved from any image loads back as its pixels, a smooth JPEG
    within its quality, and files other encoders wrote as Pillow decodes them, or
-   as PNG-3 states them where Pillow differs; a file cut short or corrupted
-   raises [Failure] naming it, and never anything else. *)
+   as their format states them where Pillow differs; a file cut short or
+   corrupted raises [Failure] naming it, and never anything else. *)
 
 open Windtrap
 open Io_support
@@ -15,6 +15,19 @@ open Io_support
 let expected name =
   let npy = Filename.remove_extension name ^ ".npy" in
   Nx.unpack Nx.uint8 (Nx_io.load_npy (fixture npy))
+
+(* The pixels of gen/generate.py's overflow_jpeg file of [side] pixels and
+   16-bit tables, as the inverse DCT gives them. Each block has only a DC
+   coefficient, the sum of its differences of 2047 wrapped to 16 bits, and the
+   table's 65535 scales it far past a byte, so its samples are 255 or 0 by the
+   DC's sign. libjpeg masks its range-limit index instead of clamping, so
+   Pillow's pixels differ. *)
+let table16_pixels side =
+  let blocks = side / 8 in
+  Nx.init Nx.uint8 [| side; side; 1 |] (fun i ->
+      let b = (i.(0) / 8 * blocks) + (i.(1) / 8) in
+      let dc = ((((b + 1) * 2047) + 32768) land 0xffff) - 32768 in
+      if dc > 0 then 255 else 0)
 
 (* Drawn images *)
 
@@ -278,6 +291,7 @@ let files =
               "cmyk";
               "restart";
               "extended";
+              "table16_coarse";
             ])
         (fun (name, tolerance) ->
           let expected = expected name in
@@ -358,6 +372,19 @@ let files =
           let path = temp_file ~suffix:".jpg" () in
           Nx_io.save_jpeg path (Nx.full Nx.uint8 shape 7);
           equal (array int) shape (Nx.shape (Nx_io.load_image path)));
+      cases ~name:Fun.id "a JPEG whose DC values outgrow 16 bits loads or fails"
+        [ "jpeg_dc_overflow.jpg"; "jpeg_dc_overflow_progressive.jpg" ]
+        (fun name ->
+          let path = fixture name in
+          loads_or_fails ~path (fun () -> Nx_io.load_image path));
+      cases ~name:fst
+        "a JPEG whose 16-bit table scales its DC past a byte loads as its \
+         inverse DCT's values, clamped"
+        [ ("jpeg_table16.jpg", 32); ("jpeg_table16_large.jpg", 512) ]
+        (fun (name, side) ->
+          equal packed
+            (Nx.P (table16_pixels side))
+            (Nx.P (Nx_io.load_image (fixture name))));
       test "a PNG chunk whose checksum does not match fails" (fun () ->
           let path = file (flip_byte (read (fixture "png_filters.png")) 30) in
           fails ~path ~naming:"PNG chunk CRC mismatch" (fun () ->
