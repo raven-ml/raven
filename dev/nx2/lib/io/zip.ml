@@ -15,7 +15,36 @@ module Encoder = Compress_deflate.Encoder
 
 type bytes = (int, int8_unsigned_elt, c_layout) Array1.t
 
-(* The compression methods of npy entries (APPNOTE, 4.4.5). *)
+(* The records' signatures and fixed lengths (APPNOTE, 4.3). *)
+let local_signature = 0x04034b50
+let local_length = 30
+let descriptor_signature = 0x08074b50
+let central_signature = 0x02014b50
+let central_length = 46
+let zip64_end_signature = 0x06064b50
+let locator_signature = 0x07064b50
+let locator_length = 20
+let end_signature = 0x06054b50
+let end_length = 22
+
+(* A ZIP64 end record's size field counts its bytes past the signature and the
+   field itself, 12 bytes: 44 without extensible data (4.3.14.1). *)
+let zip64_end_size = 44
+
+(* The values of a 16-bit and a 32-bit field that stand for a ZIP64 one, and the
+   tag of the extra field that holds them (4.4.1.4, 4.5.3). *)
+let marker16 = 0xffff
+let marker32 = 0xffffffff
+let zip64_tag = 0x0001
+
+(* The flags npz uses (4.4.4): the sizes in a descriptor after the data, a UTF-8
+   name and DEFLATE's two option bits; and encryption, which it refuses. *)
+let descriptor_flag = 0x0008
+let utf8_flag = 0x0800
+let deflate_options = 0x0006
+let encrypted_flag = 0x0001
+
+(* The compression methods of npy entries (4.4.5). *)
 let stored = 0
 let deflated = 8
 
@@ -29,8 +58,9 @@ type entry = {
   local_offset : int;
 }
 
-(* [file] is the archive's bytes on the host. *)
-type in_file = { file : Rig.Buffer.t; entries : entry list }
+(* [file] is the archive's bytes on the host. [entries] pairs each entry with
+   the offset of its data in [file]. *)
+type in_file = { file : Rig.Buffer.t; entries : (entry * int) list }
 
 type out_file = {
   fd : Unix.file_descr;
@@ -61,15 +91,7 @@ let byte data off =
   Array1.unsafe_get data off
 
 let u16 data off = byte data off lor (byte data (off + 1) lsl 8)
-
-let u32_i64 data off =
-  Int64.logor
-    (Int64.of_int (byte data off))
-    (Int64.logor
-       (Int64.shift_left (Int64.of_int (byte data (off + 1))) 8)
-       (Int64.logor
-          (Int64.shift_left (Int64.of_int (byte data (off + 2))) 16)
-          (Int64.shift_left (Int64.of_int (byte data (off + 3))) 24)))
+let u32 data off = u16 data off lor (u16 data (off + 2) lsl 16)
 
 let u64 data off =
   let value = ref 0L in
@@ -83,15 +105,8 @@ let u64 data off =
     error "ZIP64 value exceeds the OCaml integer range";
   Int64.to_int !value
 
-let u32 data off =
-  let value = u32_i64 data off in
-  if value > Int64.of_int max_int then
-    error "ZIP value exceeds the OCaml integer range";
-  Int64.to_int value
-
 let signature data off expected =
-  if u32_i64 data off <> expected then
-    error "invalid ZIP signature at byte %d" off
+  if u32 data off <> expected then error "invalid ZIP signature at byte %d" off
 
 let substring data off len =
   if off < 0 || len < 0 || off > Array1.dim data || len > Array1.dim data - off
@@ -100,26 +115,26 @@ let substring data off len =
 
 let find_eocd data =
   let size = Array1.dim data in
-  if size < 22 then error "file is too short to be a ZIP archive";
-  let first = max 0 (size - 22 - 0xffff) in
+  if size < end_length then error "file is too short to be a ZIP archive";
+  let first = max 0 (size - end_length - marker16) in
   let rec scan off =
     if off < first then error "ZIP end-of-central-directory record not found"
-    else if u32_i64 data off = 0x06054b50L then
+    else if u32 data off = end_signature then
       let comment_len = u16 data (off + 20) in
-      if off + 22 + comment_len = size then off else scan (off - 1)
+      if off + end_length + comment_len = size then off else scan (off - 1)
     else scan (off - 1)
   in
-  scan (size - 22)
+  scan (size - end_length)
 
 let zip64_directory data eocd =
-  let locator = eocd - 20 in
+  let locator = eocd - locator_length in
   if u32 data (locator + 4) <> 0 || u32 data (locator + 16) <> 1 then
     error "multi-disk ZIP archives are unsupported";
   let record = u64 data (locator + 8) in
-  signature data record 0x06064b50L;
+  signature data record zip64_end_signature;
   let record_size = u64 data (record + 4) in
   if
-    record_size < 44
+    record_size < zip64_end_size
     || record > Array1.dim data
     || record_size > Array1.dim data - record - 12
   then error "truncated ZIP64 end record";
@@ -152,7 +167,7 @@ let parse_zip64_extra data off len ~compressed ~uncompressed ~local_offset =
       let payload = pos + 4 in
       if payload > limit || size > limit - payload then
         error "truncated ZIP extra field";
-      if tag = 0x0001 then Some (payload, size) else fields (payload + size)
+      if tag = zip64_tag then Some (payload, size) else fields (payload + size)
   in
   match fields off with
   | None -> error "missing ZIP64 extended information"
@@ -165,24 +180,17 @@ let parse_zip64_extra data off len ~compressed ~uncompressed ~local_offset =
         cursor := !cursor + 8;
         value
       in
-      let uncompressed =
-        if uncompressed = 0xffffffffL then take ()
-        else Int64.to_int uncompressed
-      in
-      let compressed =
-        if compressed = 0xffffffffL then take () else Int64.to_int compressed
-      in
-      let local_offset =
-        if local_offset = 0xffffffffL then take ()
-        else Int64.to_int local_offset
-      in
+      let field value = if value = marker32 then take () else value in
+      let uncompressed = field uncompressed in
+      let compressed = field compressed in
+      let local_offset = field local_offset in
       (compressed, uncompressed, local_offset)
 
 let parse_entries data ~count ~central_size ~central_offset =
   let size = Array1.dim data in
   if central_offset > size || central_size > size - central_offset then
     error "ZIP central directory is out of bounds";
-  if count > central_size / 46 then
+  if count > central_size / central_length then
     error "ZIP entry count exceeds the central-directory size";
   let central_end = central_offset + central_size in
   let rec loop index off entries =
@@ -190,39 +198,36 @@ let parse_entries data ~count ~central_size ~central_offset =
       if off <> central_end then error "ZIP central-directory size mismatch";
       List.rev entries)
     else (
-      if off > central_end - 46 then error "truncated ZIP central directory";
-      signature data off 0x02014b50L;
+      if off > central_end - central_length then
+        error "truncated ZIP central directory";
+      signature data off central_signature;
       let flags = u16 data (off + 8) in
       let method_ = u16 data (off + 10) in
       let crc32 = u32 data (off + 16) in
-      let compressed32 = u32_i64 data (off + 20) in
-      let uncompressed32 = u32_i64 data (off + 24) in
+      let compressed32 = u32 data (off + 20) in
+      let uncompressed32 = u32 data (off + 24) in
       let name_len = u16 data (off + 28) in
       let extra_len = u16 data (off + 30) in
       let comment_len = u16 data (off + 32) in
       if u16 data (off + 34) <> 0 then
         error "multi-disk ZIP archives are unsupported";
-      let local32 = u32_i64 data (off + 42) in
+      let local32 = u32 data (off + 42) in
       let variable =
         checked_add "central entry" name_len
           (checked_add "central entry" extra_len comment_len)
       in
-      let next = checked_add "central entry" (off + 46) variable in
+      let next = checked_add "central entry" (off + central_length) variable in
       if next > central_end then error "truncated ZIP central entry";
-      let name = substring data (off + 46) name_len in
-      let extra_off = off + 46 + name_len in
+      let name = substring data (off + central_length) name_len in
+      let extra_off = off + central_length + name_len in
       let compressed_size, uncompressed_size, local_offset =
         if
-          compressed32 = 0xffffffffL
-          || uncompressed32 = 0xffffffffL
-          || local32 = 0xffffffffL
+          compressed32 = marker32 || uncompressed32 = marker32
+          || local32 = marker32
         then
           parse_zip64_extra data extra_off extra_len ~compressed:compressed32
             ~uncompressed:uncompressed32 ~local_offset:local32
-        else
-          ( Int64.to_int compressed32,
-            Int64.to_int uncompressed32,
-            Int64.to_int local32 )
+        else (compressed32, uncompressed32, local32)
       in
       let entry =
         {
@@ -239,48 +244,52 @@ let parse_entries data ~count ~central_size ~central_offset =
   in
   loop 0 central_offset []
 
+(* [validate_local_entry data ~central_offset entry] is the offset of [entry]'s
+   data and the end of its record, data and descriptor included, once its local
+   header is checked against [entry]. *)
 let validate_local_entry data ~central_offset entry =
   let off = entry.local_offset in
-  if off < 0 || off > central_offset - 30 then
+  if off < 0 || off > central_offset - local_length then
     error "ZIP local header for %S is out of bounds" entry.name;
-  signature data off 0x04034b50L;
+  signature data off local_signature;
   let flags = u16 data (off + 6) in
   let method_code = u16 data (off + 8) in
   if flags <> entry.flags || method_code <> entry.method_ then
     error "ZIP local header disagrees with central entry %S" entry.name;
   let name_len = u16 data (off + 26) in
   let extra_len = u16 data (off + 28) in
-  let payload = checked_add "local entry" (off + 30) (name_len + extra_len) in
+  let payload =
+    checked_add "local entry" (off + local_length) (name_len + extra_len)
+  in
   if
     payload > central_offset || entry.compressed_size > central_offset - payload
   then error "ZIP entry %S overlaps the central directory" entry.name;
-  let local_name = substring data (off + 30) name_len in
+  let local_name = substring data (off + local_length) name_len in
   if not (String.equal local_name entry.name) then
     error "ZIP local filename disagrees with central entry %S" entry.name;
-  let compressed32 = u32_i64 data (off + 18) in
-  let uncompressed32 = u32_i64 data (off + 22) in
+  let compressed32 = u32 data (off + 18) in
+  let uncompressed32 = u32 data (off + 22) in
   let data_end = payload + entry.compressed_size in
-  if flags land 0x0008 = 0 then (
+  if flags land descriptor_flag = 0 then (
     let local_compressed, local_uncompressed, _ =
-      if compressed32 = 0xffffffffL || uncompressed32 = 0xffffffffL then
+      if compressed32 = marker32 || uncompressed32 = marker32 then
         parse_zip64_extra data
-          (off + 30 + name_len)
+          (off + local_length + name_len)
           extra_len ~compressed:compressed32 ~uncompressed:uncompressed32
-          ~local_offset:0L
-      else (Int64.to_int compressed32, Int64.to_int uncompressed32, 0)
+          ~local_offset:0
+      else (compressed32, uncompressed32, 0)
     in
     if
       u32 data (off + 14) <> entry.crc32
       || local_compressed <> entry.compressed_size
       || local_uncompressed <> entry.uncompressed_size
     then error "ZIP local metadata disagrees with central entry %S" entry.name;
-    (off, data_end))
+    (payload, data_end))
   else
     let zip64 =
-      compressed32 = 0xffffffffL
-      || uncompressed32 = 0xffffffffL
-      || entry.compressed_size > 0xffffffff
-      || entry.uncompressed_size > 0xffffffff
+      compressed32 = marker32 || uncompressed32 = marker32
+      || entry.compressed_size > marker32
+      || entry.uncompressed_size > marker32
     in
     let size_bytes = if zip64 then 16 else 8 in
     let descriptor_at descriptor =
@@ -302,7 +311,9 @@ let validate_local_entry data ~central_offset entry =
         else None
     in
     let finish =
-      if data_end <= central_offset - 4 && u32_i64 data data_end = 0x08074b50L
+      if
+        data_end <= central_offset - 4
+        && u32 data data_end = descriptor_signature
       then
         match descriptor_at (data_end + 4) with
         | Some finish -> Some finish
@@ -310,9 +321,12 @@ let validate_local_entry data ~central_offset entry =
       else descriptor_at data_end
     in
     match finish with
-    | Some finish -> (off, finish)
+    | Some finish -> (payload, finish)
     | None -> error "invalid ZIP data descriptor for %S" entry.name
 
+(* [validate_entries data ~central_offset entries] is each of [entries] with the
+   offset of its data, once their names are found distinct and their records
+   disjoint. *)
 let validate_entries data ~central_offset entries =
   let names = Hashtbl.create (List.length entries) in
   List.iter
@@ -321,8 +335,11 @@ let validate_entries data ~central_offset entries =
         error "duplicate ZIP entry %S" entry.name;
       Hashtbl.add names entry.name ())
     entries;
+  let located =
+    List.map (fun e -> (e, validate_local_entry data ~central_offset e)) entries
+  in
   let spans =
-    List.map (validate_local_entry data ~central_offset) entries
+    List.map (fun (e, (_, finish)) -> (e.local_offset, finish)) located
     |> List.sort (fun (left, _) (right, _) -> Int.compare left right)
   in
   let rec disjoint previous_end = function
@@ -331,7 +348,8 @@ let validate_entries data ~central_offset entries =
         if start < previous_end then error "overlapping ZIP local records";
         disjoint finish rest
   in
-  disjoint 0 spans
+  disjoint 0 spans;
+  List.map (fun (e, (payload, _)) -> (e, payload)) located
 
 let open_in file =
   let file = Storage.pages file in
@@ -341,29 +359,16 @@ let open_in file =
      the classic fields hold their values, at their marker values too: Python's
      zipfile writes an archive of 65535 entries so. *)
   let count, central_size, central_offset =
-    if eocd >= 20 && u32_i64 data (eocd - 20) = 0x07064b50L then
-      zip64_directory data eocd
+    if
+      eocd >= locator_length
+      && u32 data (eocd - locator_length) = locator_signature
+    then zip64_directory data eocd
     else classic_directory data eocd
   in
   if central_offset > eocd || central_size > eocd - central_offset then
     error "ZIP central directory overlaps its end record";
   let entries = parse_entries data ~count ~central_size ~central_offset in
-  validate_entries data ~central_offset entries;
-  { file; entries }
-
-let data_span data entry =
-  let off = entry.local_offset in
-  if off > Array1.dim data - 30 then
-    error "truncated ZIP local header for %S" entry.name;
-  signature data off 0x04034b50L;
-  let name_len = u16 data (off + 26) in
-  let extra_len = u16 data (off + 28) in
-  let payload = checked_add "local entry" (off + 30) (name_len + extra_len) in
-  if
-    payload > Array1.dim data
-    || entry.compressed_size > Array1.dim data - payload
-  then error "ZIP entry %S is out of bounds" entry.name;
-  (payload, entry.compressed_size)
+  { file; entries = validate_entries data ~central_offset entries }
 
 let npy_suffix = ".npy"
 
@@ -374,11 +379,12 @@ type data = Stored of int * int | Inflated of bytes
    with no flag but a data descriptor, UTF-8 and DEFLATE's options. Only an npy
    entry is checked so: the archive's other entries are not read. *)
 let check_npy entry =
-  if entry.flags land 0x0001 <> 0 then
+  if entry.flags land encrypted_flag <> 0 then
     error "encrypted ZIP entries are unsupported";
   let allowed_flags =
-    if entry.method_ = stored then 0x0808
-    else if entry.method_ = deflated then 0x080e
+    if entry.method_ = stored then descriptor_flag lor utf8_flag
+    else if entry.method_ = deflated then
+      descriptor_flag lor utf8_flag lor deflate_options
     else error "unsupported ZIP compression method %d" entry.method_
   in
   if entry.flags land lnot allowed_flags <> 0 then
@@ -386,12 +392,12 @@ let check_npy entry =
   if entry.method_ = stored && entry.compressed_size <> entry.uncompressed_size
   then error "stored ZIP entry %S has inconsistent sizes" entry.name
 
-(* The array of the npy entry [entry]. *)
-let read_npy (archive : in_file) entry =
+(* The array of the npy entry [entry], whose data starts at [off]. *)
+let read_npy (archive : in_file) (entry, off) =
   check_npy entry;
+  let len = entry.compressed_size in
   let data =
     Storage.read archive.file @@ fun data ->
-    let off, len = data_span data entry in
     let src = Array1.sub data off len in
     if entry.method_ = stored then (
       if Crc32.bigbytes src <> entry.crc32 then
@@ -427,30 +433,20 @@ let read_npy (archive : in_file) entry =
 let read_npys (archive : in_file) =
   let n = String.length npy_suffix in
   List.filter_map
-    (fun e ->
+    (fun ((e, _) as located) ->
       if String.ends_with ~suffix:npy_suffix e.name then
         let name = String.sub e.name 0 (String.length e.name - n) in
-        Some (name, read_npy archive e)
+        Some (name, read_npy archive located)
       else None)
     archive.entries
 
-let le16 value =
-  String.init 2 (fun i -> Char.chr ((value lsr (8 * i)) land 0xff))
+(* [le n value] is the [n] bytes of [value], little-endian. *)
+let le n value =
+  String.init n (fun i -> Char.chr ((value lsr (8 * i)) land 0xff))
 
-let le32_i64 value =
-  String.init 4 (fun i ->
-      Char.chr
-        (Int64.to_int
-           (Int64.logand (Int64.shift_right_logical value (8 * i)) 0xffL)))
-
-let le32 value = le32_i64 (Int64.of_int value)
-
-let le64 value =
-  let value = Int64.of_int value in
-  String.init 8 (fun i ->
-      Char.chr
-        (Int64.to_int
-           (Int64.logand (Int64.shift_right_logical value (8 * i)) 0xffL)))
+let le16 = le 2
+let le32 = le 4
+let le64 = le 8
 
 let add_offset archive amount =
   archive.offset <- checked_add "output" archive.offset amount
@@ -531,10 +527,10 @@ let valid_name name = safe_name name && String.is_valid_utf_8 name
 
 (* Every entry has ZIP64 sizes and offset and the archive a ZIP64 end record, as
    numpy's np.savez writes them, so that no reader takes a 32-bit field at its
-   marker value for the value itself. *)
+   marker value for the value itself. ZIP64 needs version 4.5 (4.4.3), and the
+   writer states itself as UNIX, version 3.0 (4.4.2). *)
 let zip64_version = 45
-let marker16 = 0xffff
-let marker32 = 0xffffffff
+let made_by = 0x031e
 
 let add_npy archive name header (data : bytes) =
   let filename = name ^ npy_suffix in
@@ -546,18 +542,21 @@ let add_npy archive name header (data : bytes) =
     checked_add "NPY entry" (String.length header) (Array1.dim data)
   in
   let local_offset = archive.offset in
-  let flags = 0x0808 in
+  let flags = descriptor_flag lor utf8_flag in
   (* The sizes follow the data, in its descriptor: the local header's ZIP64
      field holds zeros in their place. *)
+  let sizes = le64 0 ^ le64 0 in
+  let extra = le16 zip64_tag ^ le16 (String.length sizes) ^ sizes in
   write_string archive
-    (le32_i64 0x04034b50L ^ le16 zip64_version ^ le16 flags ^ le16 method_
+    (le32 local_signature ^ le16 zip64_version ^ le16 flags ^ le16 method_
    ^ le16 0 ^ le16 0 ^ le32 0 ^ le32 marker32 ^ le32 marker32
     ^ le16 (String.length filename)
-    ^ le16 20 ^ filename ^ le16 0x0001 ^ le16 16 ^ le64 0 ^ le64 0);
+    ^ le16 (String.length extra)
+    ^ filename ^ extra);
   let crc32, compressed_size = write_entry archive w header data in
   add_offset archive compressed_size;
   write_string archive
-    (le32_i64 0x08074b50L ^ le32 crc32 ^ le64 compressed_size
+    (le32 descriptor_signature ^ le32 crc32 ^ le64 compressed_size
    ^ le64 uncompressed_size);
   let entry =
     {
@@ -577,12 +576,13 @@ let central_record entry =
     le64 entry.uncompressed_size
     ^ le64 entry.compressed_size ^ le64 entry.local_offset
   in
-  le32_i64 0x02014b50L ^ le16 0x031e ^ le16 zip64_version ^ le16 entry.flags
+  le32 central_signature ^ le16 made_by ^ le16 zip64_version ^ le16 entry.flags
   ^ le16 entry.method_ ^ le16 0 ^ le16 0 ^ le32 entry.crc32 ^ le32 marker32
   ^ le32 marker32
   ^ le16 (String.length entry.name)
   ^ le16 (4 + String.length extra)
-  ^ le16 0 ^ le16 0 ^ le16 0 ^ le32 0 ^ le32 marker32 ^ entry.name ^ le16 0x0001
+  ^ le16 0 ^ le16 0 ^ le16 0 ^ le32 0 ^ le32 marker32 ^ entry.name
+  ^ le16 zip64_tag
   ^ le16 (String.length extra)
   ^ extra
 
@@ -595,15 +595,16 @@ let close_out archive =
   let count = List.length archive.entries_rev in
   let zip64_end = archive.offset in
   write_string archive
-    (le32_i64 0x06064b50L ^ le64 44 ^ le16 0x031e ^ le16 zip64_version ^ le32 0
-   ^ le32 0 ^ le64 count ^ le64 count ^ le64 central_size ^ le64 central_offset
-    );
-  write_string archive (le32_i64 0x07064b50L ^ le32 0 ^ le64 zip64_end ^ le32 1);
+    (le32 zip64_end_signature ^ le64 zip64_end_size ^ le16 made_by
+   ^ le16 zip64_version ^ le32 0 ^ le32 0 ^ le64 count ^ le64 count
+   ^ le64 central_size ^ le64 central_offset);
+  write_string archive
+    (le32 locator_signature ^ le32 0 ^ le64 zip64_end ^ le32 1);
   (* The classic end record holds each value that fits its field, and the marker
      otherwise, as Python's zipfile writes it. *)
   let count = Int.min count marker16 in
   write_string archive
-    (le32_i64 0x06054b50L ^ le16 0 ^ le16 0 ^ le16 count ^ le16 count
+    (le32 end_signature ^ le16 0 ^ le16 0 ^ le16 count ^ le16 count
     ^ le32 (Int.min central_size marker32)
     ^ le32 (Int.min central_offset marker32)
     ^ le16 0)
