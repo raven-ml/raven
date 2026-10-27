@@ -351,7 +351,7 @@ let reduce_op m axes x =
   let dt = Nx.dtype x in
   P.Reduce
     {
-      layout = Nx_array.Layout.contiguous (Nx.shape x);
+      layout = Nx_array.Layout.contiguous (Iarray.of_array (Nx.shape x));
       axes = Iarray.of_list axes;
       prog = identity dt;
       reductions = [ Monoid (m, 0, dt) ];
@@ -362,7 +362,7 @@ let scan_op m axis x carry =
   let dt = Nx.dtype x in
   P.Scan
     {
-      layout = Nx_array.Layout.contiguous (Nx.shape x);
+      layout = Nx_array.Layout.contiguous (Iarray.of_array (Nx.shape x));
       axis;
       prog = identity dt;
       reduction = Monoid (m, 0, dt);
@@ -823,7 +823,7 @@ let u64 = Float.ldexp 1. (-53)
 (* The loop of [x]'s identity by [r]: reduced along [c]'s axes, or scanned
    along its first where [scan]. *)
 let by (type a) ~scan (r : (Nx.host, a) P.reduction) c x () : a =
-  let layout = Nx_array.Layout.contiguous (Nx.shape x) in
+  let layout = Nx_array.Layout.contiguous (Iarray.of_array (Nx.shape x)) in
   let prog = identity (Nx.dtype x) and loads = Iarray.of_list [ P.Plain x ] in
   if scan then
     P.eval ~by:"t"

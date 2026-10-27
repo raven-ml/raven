@@ -66,8 +66,15 @@ let dim (type v s d) (x : (v, s, d) t) i =
 
 let shape (type v s d) (x : (v, s, d) t) =
   match x with
-  | Array _ | Deferred _ | Traced _ -> L.shape (own_layout x)
+  | Array _ | Deferred _ | Traced _ -> Iarray.to_array (L.shape (own_layout x))
   | Shards { shape; _ } | Donated { shape; _ } -> Array.copy shape
+
+(* [x]'s shape as layouts hold it: its own layout's, without a copy, or the
+   whole's of a value on several devices. *)
+let layout_shape (type v s d) (x : (v, s, d) t) =
+  match x with
+  | Array _ | Deferred _ | Traced _ -> L.shape (own_layout x)
+  | Shards { shape; _ } | Donated { shape; _ } -> Iarray.of_array shape
 
 let scale_shape (type d) (sc : d scale) =
   match sc with Exponent x -> shape x | Value x -> shape x
@@ -106,14 +113,18 @@ let alive ~by x =
    predicate runs first. *)
 let check_shape ~by s =
   if not (L.fits s) then begin
-    if Array.exists (fun d -> d < 0) s then
-      invalid_argf "%s: shape %a has a negative extent" by pp_shape s;
-    if Array.length s > L.max_rank then
-      invalid_argf "%s: shape %a has %d axes, more than %d" by pp_shape s
-        (Array.length s) L.max_rank;
+    if Iarray.exists (fun d -> d < 0) s then
+      invalid_argf "%s: shape %a has a negative extent" by pp_ints s;
+    if Iarray.length s > L.max_rank then
+      invalid_argf "%s: shape %a has %d axes, more than %d" by pp_ints s
+        (Iarray.length s) L.max_rank;
     invalid_argf "%s: the extents of shape %a other than 0 multiply past %d" by
-      pp_shape s L.max_numel
+      pp_ints s L.max_numel
   end
+
+(* The C-order layout of shape [s], as the kernels' rules and {!shape} give
+   it. *)
+let contiguous s = L.contiguous (Iarray.of_array s)
 
 let check_value ~by dt v =
   if not (D.holds dt v) then
@@ -182,7 +193,7 @@ let form (type v s d) (x : (v, s, d) t) : (v, s, d) form =
         placement = Some at;
       }
   | Shards { at; _ } | Donated { at; _ } ->
-      of_layout (dtype x) (L.contiguous (shape x)) (Some at)
+      of_layout (dtype x) (L.contiguous (layout_shape x)) (Some at)
   | Deferred { form; _ } | Traced { form; _ } -> form
 
 let is_constant : type v s d. (v, s, d) t -> bool = function
@@ -402,12 +413,12 @@ let own_index : type r. r prim -> (int list * L.t * D.any) option =
         loads;
       Some (List.rev !plain, layout, D.Any dt)
   | Scatter { into; _ } ->
-      Some ([ 2 ], L.contiguous (shape into), D.Any (dtype into))
+      Some ([ 2 ], L.contiguous (layout_shape into), D.Any (dtype into))
   | Contract { out; init = Some i; _ } ->
-      Some ([ 2 ], L.contiguous (shape i), D.Any out)
+      Some ([ 2 ], L.contiguous (layout_shape i), D.Any out)
   | Assemble { dtype; shape; pieces = (region, _) :: _; _ }
     when whole_region region shape ->
-      Some ([ 0 ], L.contiguous (Iarray.to_array shape), D.Any dtype)
+      Some ([ 0 ], L.contiguous shape, D.Any dtype)
   | Map _ | Reduce _ | Scan _ | Gather _ | Contract _ | Sort _ | Fft _
   | Linalg _ | Fold _ | Assemble _ | Copy _ | Move _ | Bitcast _ | Place _
   | Check _ ->
@@ -918,11 +929,11 @@ let check_loads (type d) ~by ~what layout (prog : P.t) (loads : d load iarray)
       let fits =
         match l with
         | Plain x -> has_layout_shape x layout
-        | Padded _ -> load_shape ~by l = L.shape layout
+        | Padded _ -> load_shape ~by l = Iarray.to_array (L.shape layout)
       in
       if not fits then
         invalid_argf "%s: load %d has shape %a, the %s %a" by i pp_shape
-          (load_shape ~by l) what pp_shape (L.shape layout))
+          (load_shape ~by l) what pp_ints (L.shape layout))
     loads;
   for i = 0 to Iarray.length prog.nodes - 1 do
     match Iarray.get prog.nodes i with
@@ -974,7 +985,7 @@ let reduction_width : type d a. (d, a) reduction -> int = function
    rule. *)
 let reduced_shape ~by layout axes rs =
   let kinds = Array.map fst (reductions rs) in
-  shaped ~by (Shape.reduce ~axes kinds (L.shape layout))
+  shaped ~by (Shape.reduce ~axes kinds (Iarray.to_array (L.shape layout)))
 
 (* A reduction's rule; its results' shape. *)
 let check_reduce (type d r) ~by layout axes prog (rs : (d, r) reductions)
@@ -990,7 +1001,9 @@ let any_shape (Any x) = shape x
 let check_scan (type d r) ~by layout axis prog (r : (d, r) reduction)
     (loads : d load iarray) (carry : d any option) =
   check_loads ~by ~what:"scan" layout prog loads;
-  let shape = shaped ~by (Shape.scan ~axis (L.shape layout)) in
+  let shape =
+    shaped ~by (Shape.scan ~axis (Iarray.to_array (L.shape layout)))
+  in
   check_reduction ~by prog (reduction r);
   match (carry, r) with
   | None, _ -> ()
@@ -1040,7 +1053,7 @@ let marked whole =
 (* The axes of a loop of [layout] that its loads read whole, beside [axes]. *)
 let padded_axes (type d) layout ?(axes : int iarray = [||])
     (loads : d load iarray) =
-  let whole = Array.make (Array.length (L.shape layout)) false in
+  let whole = Array.make (L.rank layout) false in
   Iarray.iter (fun a -> whole.(a) <- true) axes;
   Iarray.iter
     (fun (l : d load) ->
@@ -1355,23 +1368,23 @@ let form_layout (type v s d) (x : (v, s, d) t) =
   | Array { a; _ } -> Nx_array.layout a
   | Donated { arrays; _ } when Iarray.length arrays = 1 ->
       Nx_array.layout (Iarray.get arrays 0)
-  | Shards _ | Donated _ -> L.contiguous (shape x)
+  | Shards _ | Donated _ -> L.contiguous (layout_shape x)
   | Deferred { form; _ } | Traced { form; _ } -> form.layout
 
 (* [x]'s shape moved by [mv]. Raises naming [by] where [mv] does not apply: as
    {!check_shape} does for a target shape no layout has, and otherwise naming
    the movement and [x]'s shape. *)
 let moved_shape ~by mv x =
-  match Nx_array.Move.shape mv (shape x) with
+  match Nx_array.Move.shape mv (layout_shape x) with
   | s' -> s'
   | exception Invalid_argument _ ->
       let name =
         match mv with
         | Reshape s' ->
-            check_shape ~by (Iarray.to_array s');
+            check_shape ~by s';
             "Reshape"
         | Broadcast s' ->
-            check_shape ~by (Iarray.to_array s');
+            check_shape ~by s';
             "Broadcast"
         | Permute _ -> "Permute"
         | Slice _ -> "Slice"
@@ -1420,7 +1433,8 @@ let with_offsets (prog : P.t) (first : int array) =
   end
 
 let starts w = Array.map (fun (r : Nx_array.Move.range) -> r.start) w
-let extents w = Array.map (fun (r : Nx_array.Move.range) -> r.count) w
+let extents w =
+  Iarray.init (Array.length w) (fun i -> (w.(i) : Nx_array.Move.range).count)
 
 let within : type r. r prim -> Nx_array.Move.range array -> r prim =
  fun op l ->
@@ -1441,15 +1455,15 @@ let local : type r. r prim -> Nx_array.Move.range array -> r prim =
     | Map { loads; _ } when not (Iarray.exists is_padded loads) -> w
     | _ ->
         let r = loop_rule op [| L.rank layout |] in
-        Route.window r ~operand:0 (L.shape layout) w
+        Route.window r ~operand:0 (Iarray.to_array (L.shape layout)) w
   in
   match op with
   | Map m -> within op (loop m.layout)
   | Reduce m -> within op (loop m.layout)
   | Scan m -> within op (loop m.layout)
-  | Fold f -> Fold { f with shape = Iarray.of_array (extents w) }
+  | Fold f -> Fold { f with shape = extents w }
   | Assemble a ->
-      if extents w <> Iarray.to_array a.shape then
+      if extents w <> a.shape then
         invalid_arg "Prim.local: an assembly is computed whole";
       op
   | Gather _ | Scatter _ | Sort _ | Fft _ | Linalg _ | Contract _ | Copy _
@@ -1464,31 +1478,30 @@ let bitcast_layout ~by l (from : D.any) (into : D.any) =
   let (D.Any t) = into in
   let bf = D.bits f and bt = D.bits t in
   let s = L.shape l and st = L.strides l and o = L.offset l in
-  let r = Array.length s in
+  let r = Iarray.length s in
   if bf = bt then l
   else if bf > bt then begin
     let k = bf / bt in
     if r >= L.max_rank then
       invalid_argf "%s: a narrowing bitcast of rank %d" by r;
     L.v ~offset:(o * k)
-      ~strides:(Array.append (Array.map (fun x -> x * k) st) [| 1 |])
-      (Array.append s [| k |])
+      ~strides:(Iarray.append (Iarray.map (fun x -> x * k) st) [| 1 |])
+      (Iarray.append s [| k |])
   end
   else begin
     let k = bt / bf in
-    if r = 0 || s.(r - 1) <> k then
+    if r = 0 || Iarray.get s (r - 1) <> k then
       invalid_argf "%s: a widening bitcast needs a trailing axis of %d" by k;
-    let s' = Array.sub s 0 (r - 1) in
+    let s' = Iarray.sub s ~pos:0 ~len:(r - 1) in
+    let st' = Iarray.sub st ~pos:0 ~len:(r - 1) in
     let viewable =
       L.numel l = 0
-      || st.(r - 1) = 1
+      || Iarray.get st (r - 1) = 1
          && o mod k = 0
-         && Array.for_all (fun x -> x mod k = 0) (Array.sub st 0 (r - 1))
+         && Iarray.for_all (fun x -> x mod k = 0) st'
     in
     if viewable && L.numel l > 0 then
-      L.v ~offset:(o / k)
-        ~strides:(Array.map (fun x -> x / k) (Array.sub st 0 (r - 1)))
-        s'
+      L.v ~offset:(o / k) ~strides:(Iarray.map (fun x -> x / k) st') s'
     else L.contiguous s'
   end
 
@@ -1576,7 +1589,7 @@ let check_fold ~by whole pad x =
   if not (P.accepts2 (Binary Add) (dtype x)) then
     invalid_argf "%s: Fold does not take %s" by (D.name (dtype x));
   check_shape ~by whole;
-  let s = shaped ~by (Shape.padded pad whole) in
+  let s = shaped ~by (Shape.padded pad (Iarray.to_array whole)) in
   if not (has_shape x s) then
     invalid_argf "%s: an operand of shape %a, not %a" by pp_shape (shape x)
       pp_shape s
@@ -1586,7 +1599,7 @@ let check_assemble (type v s d) ~by (dt : (v, s) dtype) whole (fill : v)
   check_shape ~by whole;
   check_value ~by dt fill;
   let regions = Array.of_list (List.map fst pieces) in
-  let shapes = shaped ~by (Shape.assemble whole regions) in
+  let shapes = shaped ~by (Shape.assemble (Iarray.to_array whole) regions) in
   List.iteri
     (fun i (_, x) ->
       if not (has_shape x shapes.(i)) then
@@ -1662,32 +1675,30 @@ let layouts : type r. by:string -> r prim -> L.t array =
       check_map ~by layout prog outs loads;
       [| layout |]
   | Reduce { layout; axes; prog; reductions; loads } ->
-      [| L.contiguous (check_reduce ~by layout axes prog reductions loads) |]
+      [| contiguous (check_reduce ~by layout axes prog reductions loads) |]
   | Scan { layout; axis; prog; reduction; loads; carry } ->
       check_scan ~by layout axis prog reduction loads carry;
       [| layout |]
-  | Gather { axis; idx; x } -> [| L.contiguous (gather_shape ~by axis idx x) |]
+  | Gather { axis; idx; x } -> [| contiguous (gather_shape ~by axis idx x) |]
   | Scatter { combine; axis; idx; updates; into; _ } ->
-      [| L.contiguous (scatter_shape ~by combine axis idx updates into) |]
-  | Sort { axis; k; x; _ } -> [| L.contiguous (sort_shape ~by axis k x) |]
-  | Fft f -> [| L.contiguous (fft_shape ~by f) |]
-  | Linalg l -> Array.map L.contiguous (linalg_shapes ~by l)
+      [| contiguous (scatter_shape ~by combine axis idx updates into) |]
+  | Sort { axis; k; x; _ } -> [| contiguous (sort_shape ~by axis k x) |]
+  | Fft f -> [| contiguous (fft_shape ~by f) |]
+  | Linalg l -> Array.map contiguous (linalg_shapes ~by l)
   | Fold { shape; pad; x } ->
-      let shape = Iarray.to_array shape in
       check_fold ~by shape pad x;
       [| L.contiguous shape |]
   | Assemble { dtype; shape; fill; pieces } ->
-      let shape = Iarray.to_array shape in
       check_assemble ~by dtype shape fill pieces;
       [| L.contiguous shape |]
   | Contract
       { batch; contracting; acc; a; b; init; a_scale; b_scale; segments; _ } ->
       [|
-        L.contiguous
+        contiguous
           (contract_shape ~by ~batch ~contracting ~segments ~acc a b init
              a_scale b_scale);
       |]
-  | Copy x -> [| L.contiguous (shape x) |]
+  | Copy x -> [| L.contiguous (layout_shape x) |]
   | Move (mv, x) -> (
       let s' = moved_shape ~by mv x in
       match L.move mv (form_layout x) with
@@ -1701,7 +1712,7 @@ let layouts : type r. by:string -> r prim -> L.t array =
       [|
         (match (x, Devices.device p) with
         | Array { a; _ }, Some _ -> Nx_array.layout a
-        | _ -> L.contiguous s);
+        | _ -> contiguous s);
       |]
   | Check { ok; data; _ } ->
       let s = shape ok in
@@ -1779,7 +1790,8 @@ let refused ~by node ins =
 (* The map of [prog] over [loads], into [dt]. *)
 let one_node prog dt loads =
   let (Any x) = load_any (Iarray.get loads 0) in
-  Map { layout = L.contiguous (shape x); prog; outs = Value.[ dt ]; loads }
+  Map
+    { layout = L.contiguous (layout_shape x); prog; outs = Value.[ dt ]; loads }
 
 let op1 ~by k dt x =
   match P.node1 k (dtype x) dt with

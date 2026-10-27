@@ -8,7 +8,8 @@ module M = Nx_array.Move
 open Nx_array_gen
 
 let ( let* ) = Option.bind
-let ints = array int
+let pp_iints ppf s = pp_ints ppf (Iarray.to_array s)
+let iints = Testable.make ~pp:pp_iints ~equal:(Iarray.equal Int.equal)
 let guard b = if b then Some () else None
 let max_numel = Nx_array.Layout.max_numel
 
@@ -133,14 +134,22 @@ let law_shape (s, m) =
       cover (c ^ " accepted") (here && e <> None);
       cover (c ^ " refused") (here && e = None))
     constructors;
+  let s = Iarray.of_array s in
   match e with
-  | Some s' -> equal ints s' (M.shape m s)
+  | Some s' -> equal iints (Iarray.of_array s') (M.shape m s)
   | None -> raises_match Exn.invalid_arg (fun () -> M.shape m s)
 
 (* Values the interface states, at the bounds *)
 
-type case = { name : string; m : M.t; s : int array; shape : int array option }
+type case = {
+  name : string;
+  m : M.t;
+  s : int iarray;
+  shape : int iarray option;
+}
 
+(* [n] copies of [x]. *)
+let make n x = Iarray.init n (Fun.const x)
 let r start count step = { M.start; count; step }
 let w axis size step dilation = { M.axis; size; step; dilation }
 let ok name m s shape = { name; m; s; shape = Some shape }
@@ -169,10 +178,10 @@ let bounds =
     refused "a window of size 0" (M.Window [| w 0 0 1 1 |]) [| 3 |];
     ok "windows on the most axes"
       (M.Window [| w 0 1 1 1 |])
-      (Array.make 31 1) (Array.make 32 1);
+      (make 31 1) (make 32 1);
     refused "a window past the most axes"
       (M.Window [| w 0 1 1 1 |])
-      (Array.make 32 1);
+      (make 32 1);
     ok "a slice of no element may start anywhere"
       (M.Slice [| r 100 0 (-7) |])
       [| 3 |] [| 0 |];
@@ -186,12 +195,8 @@ let bounds =
     refused "a reversed slice of the least step"
       (M.Slice [| r 3 2 min_int |])
       [| 4 |];
-    ok "a reshape to the most axes"
-      (M.Reshape (Iarray.of_array (Array.make 32 1)))
-      [| 1 |] (Array.make 32 1);
-    refused "a reshape past the most axes"
-      (M.Reshape (Iarray.of_array (Array.make 33 1)))
-      [| 1 |];
+    ok "a reshape to the most axes" (M.Reshape (make 32 1)) [| 1 |] (make 32 1);
+    refused "a reshape past the most axes" (M.Reshape (make 33 1)) [| 1 |];
     refused "a reshape whose elements overflow"
       (M.Reshape [| (max_int / 2) + 1; 2 |])
       [| 4 |];
@@ -217,9 +222,7 @@ let bounds =
     ok "a broadcast of an extent 1 to 0"
       (M.Broadcast [| 0; 3 |])
       [| 1; 3 |] [| 0; 3 |];
-    refused "a broadcast past the most axes"
-      (M.Broadcast (Iarray.of_array (Array.make 33 1)))
-      [| 1 |];
+    refused "a broadcast past the most axes" (M.Broadcast (make 33 1)) [| 1 |];
     refused "a broadcast whose elements overflow"
       (M.Broadcast [| max_int; 2 |])
       [| 1; 2 |];
@@ -247,34 +250,19 @@ let bounds =
     ok "a permutation of no axis" (M.Permute [||]) [||] [||];
     refused "a permutation of an argument past the most axes"
       (M.Permute (Iarray.init 33 Fun.id))
-      (Array.make 33 1);
+      (make 33 1);
     refused "a permutation of 64 axes"
       (M.Permute (Iarray.init 64 Fun.id))
-      (Array.make 64 1);
+      (make 64 1);
     refused "a slice of an argument past the most axes"
-      (M.Slice (Iarray.of_array (Array.make 40 (r 0 1 1))))
-      (Array.make 40 1);
+      (M.Slice (make 40 (r 0 1 1)))
+      (make 40 1);
   ]
 
 let test_bound c =
   match c.shape with
-  | Some s' -> equal ints s' (M.shape c.m c.s)
+  | Some s' -> equal iints s' (M.shape c.m c.s)
   | None -> raises_match Exn.invalid_arg (fun () -> M.shape c.m c.s)
-
-(* Ownership *)
-
-let test_fresh () =
-  let s' = [| 3; 2 |] and s = [| 6 |] in
-  let out = M.shape (M.Reshape (Iarray.of_array s')) s in
-  out.(0) <- 0;
-  equal ints [| 3; 2 |] s';
-  let s' = [| 4; 6 |] in
-  let out = M.shape (M.Broadcast (Iarray.of_array s')) s in
-  out.(0) <- 0;
-  equal ints [| 4; 6 |] s';
-  let out = M.shape (M.Permute [| 0 |]) s in
-  out.(0) <- 0;
-  equal ints [| 6 |] s
 
 (* A refusal names the axis at fault, so that the caller sees which extent
    breaks the rule. *)
@@ -316,7 +304,6 @@ let tests =
           "is the result's shape, and raises iff a precondition fails"
           shape_and_move law_shape;
         cases ~name:(fun c -> c.name) "states the bounds" bounds test_bound;
-        test "returns an array it does not hold" test_fresh;
       ];
   ]
 

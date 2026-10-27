@@ -30,7 +30,7 @@ let position l idx =
   Array.iteri (fun i j -> p := !p + (j * L.stride l i)) idx;
   !p
 
-let positions l = List.map (position l) (indices (L.shape l))
+let positions l = List.map (position l) (indices (Iarray.to_array (L.shape l)))
 (* Generators *)
 
 let pp_ints ppf a =
@@ -81,7 +81,8 @@ let strided_of s =
   let open Gen in
   let+ strides = array ~size:(const (Array.length s)) (int_range (-5) 5)
   and+ least = int_range 0 40 in
-  L.v ~offset:(lift s strides least) ~strides s
+  L.v ~offset:(lift s strides least) ~strides:(Iarray.of_array strides)
+    (Iarray.of_array s)
 
 let strided = Gen.bind shape strided_of
 
@@ -185,11 +186,11 @@ let reached ~apart =
   let rec go l k =
     if k = 0 then constant l
     else
-      let* m = movement ~apart (L.shape l) in
+      let* m = movement ~apart (Iarray.to_array (L.shape l)) in
       match L.move m l with Some l' -> go l' (k - 1) | None -> go l (k - 1)
   in
   let* k = int_range 0 3 in
-  go (L.contiguous s) k
+  go (L.contiguous (Iarray.of_array s)) k
 
 let any_layout = Gen.with_pp L.pp (Gen.one_of [ strided; reached ~apart:false ])
 
@@ -281,6 +282,6 @@ let layout_and_move =
   with_pp
     (fun ppf (l, m) -> Format.fprintf ppf "%a, %a" L.pp l pp_move m)
     (let* l = one_of [ strided; reached ~apart:false ] in
-     let s = L.shape l in
+     let s = Iarray.to_array (L.shape l) in
      let+ m = frequency [ (3, movement ~apart:false s); (1, near_bounds s) ] in
      (l, m))

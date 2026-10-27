@@ -368,7 +368,7 @@ let law_load (b : Support.backend) = function
       in
       List.iter
         (fun p ->
-          let dst = A.create Rig.host dt xs in
+          let dst = A.create Rig.host dt (Iarray.of_array xs) in
           match K.map p ~dsts:[| A.Any dst |] [| load |] with
           | A.Declined -> failf "%s declined a padded map" b.name
           | A.Done -> equal (array string) want (elements (A.Any dst))

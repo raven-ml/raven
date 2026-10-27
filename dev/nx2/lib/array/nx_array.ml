@@ -200,7 +200,8 @@ let narrow fn r l =
   done;
   shape.(k) <- r;
   strides.(k) <- 1;
-  Layout.v ~offset:(Layout.offset l * r) ~strides shape
+  Layout.v ~offset:(Layout.offset l * r) ~strides:(Shape.freeze strides)
+    (Shape.freeze shape)
 
 (* A layout of elements [r] times wider over the same bits, if [l] has a
    trailing axis of extent [r] and stride 1, and an offset and other strides
@@ -213,6 +214,7 @@ let widen r l =
     for i = 0 to k - 2 do
       shape.(i) <- Layout.dim l i
     done;
+    let shape = Shape.freeze shape in
     if Layout.numel l = 0 then Some (Layout.contiguous shape)
     else
       let fits =
@@ -224,7 +226,10 @@ let widen r l =
         if s mod r <> 0 then fits := false;
         strides.(i) <- s / r
       done;
-      if !fits then Some (Layout.v ~offset:(Layout.offset l / r) ~strides shape)
+      if !fits then
+        Some
+          (Layout.v ~offset:(Layout.offset l / r)
+             ~strides:(Shape.freeze strides) shape)
       else None
 
 (* A bitcast keeps the bits the array reaches, so its bounds hold. *)
@@ -254,11 +259,11 @@ let expect (type v s) (dt : (v, s) Dtype.t) (Any a) : (v, s) t =
 let position fn a idx =
   let l = a.layout in
   let r = Layout.rank l in
-  if Array.length idx <> r then
+  if Iarray.length idx <> r then
     invalid_argf "%s: index %a for %d axes" fn Shape.pp idx r;
   let p = ref (Layout.offset l) in
   for i = 0 to r - 1 do
-    let j = idx.(i) in
+    let j = Iarray.get idx i in
     if j < 0 || j >= Layout.dim l i then
       invalid_argf "%s: index %a outside shape %a" fn Shape.pp idx Shape.pp
         (Layout.shape l);
@@ -371,8 +376,6 @@ let to_array (type v s) (a : (v, s) t) : v array =
 
 let of_array (type v s) (dt : (v, s) Dtype.t) s (values : v array) =
   let fn = "Nx_array.of_array" in
-  (* A caller's array is read once: the C store loop takes [values] to hold an
-     element per index of the layout it writes, counted on the same layout. *)
   let layout = Layout.contiguous s in
   if Array.length values <> Layout.numel layout then
     invalid_argf "%s: %d values for shape %a" fn (Array.length values) Shape.pp
@@ -458,7 +461,7 @@ let packed l =
     end;
     next := !next * d
   done;
-  Layout.v ~offset:!offset ~strides (Layout.shape l)
+  Layout.v ~offset:!offset ~strides:(Shape.freeze strides) (Layout.shape l)
 
 (* [l]'s axes that take more than one index, outermost first: by decreasing
    magnitude of stride, ties in axis order. *)
@@ -729,7 +732,8 @@ let bigarray_bytes k a =
   Buffer.view a.buffer ~first:(Layout.offset l * w) ~length:(Layout.numel l * w)
 
 let of_flat a flat =
-  Bigarray.reshape (Bigarray.genarray_of_array1 flat) (Layout.shape a.layout)
+  Bigarray.reshape (Bigarray.genarray_of_array1 flat)
+    (Iarray.to_array (Layout.shape a.layout))
 
 (* Raises naming [fn] unless a bigarray of [l]'s shape lies over the bytes of
    an array laid out by [l]: C-contiguous, of at most Bigarray's axes. *)
@@ -769,4 +773,4 @@ let of_bigarray dt g =
   let dims = Bigarray.Genarray.dims g in
   let n = Array.fold_left ( * ) 1 dims in
   let flat = Bigarray.reshape_1 g n in
-  v dt (Layout.contiguous dims) (Buffer.of_bigarray flat)
+  v dt (Layout.contiguous (Iarray.of_array dims)) (Buffer.of_bigarray flat)

@@ -23,7 +23,10 @@ let read x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
 
 (* [x]'s elements on the first device of its set. *)
 let shard x = A.to_array (Iarray.get (Option.get (Nx.Repr.shards x)) 0)
-let host_of dt s xs = Nx.Repr.of_array Nx.Host.v (A.of_array dt s xs)
+
+let host_of dt s xs =
+  Nx.Repr.of_array Nx.Host.v (A.of_array dt (Iarray.of_array s) xs)
+
 let words k = read (Rng.to_tensor k)
 
 (* An int32 word as the unsigned 32-bit value it holds. *)

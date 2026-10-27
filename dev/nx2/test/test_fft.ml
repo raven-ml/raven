@@ -69,7 +69,7 @@ module Dft = struct
     Atomic.incr calls;
     let axes = Iarray.to_array axes in
     let last = axes.(Array.length axes - 1) in
-    let z = complexes x and shape = L.shape (A.layout x) in
+    let z = complexes x and shape = Iarray.to_array (L.shape (A.layout x)) in
     let along sign (z, shape) a = lines z shape a shape.(a) (dft sign) in
     let z, _ =
       match kind with
@@ -96,7 +96,7 @@ module Dft = struct
               Array.map (fun c -> { c with Complex.im = 0. }) (dft 1. full))
     in
     let store (type v s) (d : (v, s) A.t) =
-      let s = L.shape (A.layout d) in
+      let s = Iarray.to_array (L.shape (A.layout d)) in
       let at = Array.make (Array.length s) 0 in
       Array.iteri
         (fun i (c : Complex.t) ->
@@ -105,6 +105,7 @@ module Dft = struct
             at.(a) <- !k mod s.(a);
             k := !k / s.(a)
           done;
+          let at = Iarray.of_array at in
           match D.kind (A.dtype d) with
           | D.Complex -> A.set d at c
           | D.Float -> A.set d at c.re
@@ -119,7 +120,8 @@ module Dft = struct
 
   let c2r ~axes ~dst x =
     let n =
-      (L.shape (A.layout dst)).(Iarray.get axes (Iarray.length axes - 1))
+      let shape = L.shape (A.layout dst) in
+      Iarray.get shape (Iarray.get axes (Iarray.length axes - 1))
     in
     transform (C2r n) ~axes ~dst x
 end

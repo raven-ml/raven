@@ -17,7 +17,7 @@ module M = Nx_array.Move
 let pp_ints = Nx_array_gen.pp_ints
 let pp_dtype ppf (D.Any dt) = D.pp ppf dt
 let total s = Array.fold_left ( * ) 1 s
-let shape_of (A.Any x) = L.shape (A.layout x)
+let shape_of (A.Any x) = Iarray.to_array (L.shape (A.layout x))
 let dtype_of (A.Any x) = D.Any (A.dtype x)
 let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = )
 
@@ -57,7 +57,8 @@ let of_elements (D.Any dt) s es =
         Bytes.set b k
           (Char.chr (Char.code (Bytes.get b k) lor (code lsl (at mod 8)))))
     es;
-  A.Any (A.v dt (L.contiguous s) (Rig.Buffer.of_string (Bytes.to_string b)))
+  let l = L.contiguous (Iarray.of_array s) in
+  A.Any (A.v dt l (Rig.Buffer.of_string (Bytes.to_string b)))
 
 (* The element of zero bits. *)
 let zero (D.Any dt) = String.make (max 1 (D.bits dt / 8)) '\000'
@@ -408,7 +409,8 @@ let with_guards side f =
   in
   let guard (A.Any x) = keep (Nx_kernels_support.guard side x) in
   let place (D.Any dt) s =
-    keep (Nx_kernels_support.guarded side dt (L.contiguous s))
+    let l = L.contiguous (Iarray.of_array s) in
+    keep (Nx_kernels_support.guarded side dt l)
   in
   Fun.protect
     ~finally:(fun () -> List.iter (fun free -> free ()) !frees)
@@ -435,7 +437,9 @@ let tail_shapes =
    for a NaN where [any_nan]. The answer. *)
 let same_guarded ?(any_nan = false) side ~call xs dsts =
   let fresh =
-    Array.map (fun (D.Any dt, s) -> A.Any (A.create Rig.host dt s)) dsts
+    Array.map
+      (fun (D.Any dt, s) -> A.Any (A.create Rig.host dt (Iarray.of_array s)))
+      dsts
   in
   let want = call xs fresh in
   with_guards side (fun guard place ->

@@ -36,7 +36,7 @@ let donate (type v s d) ~by (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   match x with
   | Value.Array r ->
       handle r.at
-        (L.shape (A.layout r.a))
+        (Iarray.to_array (L.shape (A.layout r.a)))
         ([| r.a |] : _ iarray)
         [%atomic.loc r.dead]
   | Value.Shards r -> handle r.at r.shape r.arrays [%atomic.loc r.dead]

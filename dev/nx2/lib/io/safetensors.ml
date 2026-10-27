@@ -397,10 +397,14 @@ let load file =
       let value =
         match e.kind with
         | Dtype (D.Any dt) ->
-            Nx.P (Storage.little b dt (Nx_array.Layout.contiguous e.shape))
+            Nx.P
+              (Storage.little b dt
+                 (Nx_array.Layout.contiguous (Iarray.of_array e.shape)))
         | Bytes { whole } ->
             let shape = if whole then e.shape else [| e.length |] in
-            Nx.P (Storage.value b D.Uint8 (Nx_array.Layout.contiguous shape))
+            Nx.P
+              (Storage.value b D.Uint8
+                 (Nx_array.Layout.contiguous (Iarray.of_array shape)))
       in
       Archive.add e.name value archive)
     Archive.empty entries

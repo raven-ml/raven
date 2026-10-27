@@ -34,7 +34,7 @@ let drawn (type s) (dt : (Complex.t, s) D.t) shape :
   let n = Array.fold_left ( * ) 1 shape in
   let+ data = string_of ~size:(constant (D.bytes dt n)) char in
   Nx.Repr.of_array Nx.Host.v
-    (A.v dt (L.contiguous shape)
+    (A.v dt (L.contiguous (Iarray.of_array shape))
        (Rig.Buffer.of_string (if data = "" then "\000" else data)))
 
 let shape =

@@ -363,7 +363,8 @@ let read_tensors file ~data_start ~alignment infos =
           offset > file_len - data_start || len > file_len - data_start - offset
         then fail_msg "the file ends before tensor %S's data" name;
         let b = B.view file ~first:(data_start + offset) ~length:len in
-        let x = Storage.little b dt (Nx_array.Layout.contiguous stored) in
+        let layout = Nx_array.Layout.contiguous (Iarray.of_array stored) in
+        let x = Storage.little b dt layout in
         Hashtbl.add by_name name { dtype; shape };
         Archive.add name (Nx.P x) tensors)
       Archive.empty infos

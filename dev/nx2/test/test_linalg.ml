@@ -37,7 +37,7 @@ module Filling = struct
   let seen : (routine * int list list * int list list) list ref = ref []
 
   let filled r ops dsts =
-    let shape (A.Any a) = Array.to_list (L.shape (A.layout a)) in
+    let shape (A.Any a) = Iarray.to_list (L.shape (A.layout a)) in
     seen := (r, List.map shape ops, List.map shape dsts) :: !seen;
     List.iteri
       (fun k (A.Any d) ->
@@ -109,7 +109,8 @@ let forms l =
       ignore
         (Nx.Prim.results ~by:"t"
            (fun k (f : _ Nx.Prim.form) ->
-             out := (k, D.name f.dtype, L.shape f.layout) :: !out;
+             let s = Iarray.to_array (L.shape f.layout) in
+             out := (k, D.name f.dtype, s) :: !out;
              Nx.Prim.traced i f Slot)
            (Linalg l));
       List.rev !out)

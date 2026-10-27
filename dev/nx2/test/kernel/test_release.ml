@@ -70,7 +70,7 @@ let f32 s = A.create Rig.host D.Float32 s
 let identity = P.v ~ins:[| D.Any D.Float32 |] [| P.In 0 |] ~outs:[| 0 |]
 
 let reduce r axes ~dst x =
-  let shape = Nx_array.Layout.shape (A.layout x) in
+  let shape = Iarray.to_array (Nx_array.Layout.shape (A.layout x)) in
   done_
     (Nx_cpu.reduce identity ~shape ~axes
        [| (r, 0) |]
@@ -277,7 +277,7 @@ let assemblies =
               windows = [| window |] }
           in
           let shape = Result.get_ok (Nx_kernel.Shape.padded pad [| n |]) in
-          let x = f32 shape and dst = f32 [| n |] in
+          let x = f32 (Iarray.of_array shape) and dst = f32 [| n |] in
           releases (fun () -> done_ (Nx_cpu.fold pad ~dst x)));
     ]
 

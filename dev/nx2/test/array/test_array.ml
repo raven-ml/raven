@@ -13,6 +13,8 @@ module S = Nx_array_support
 let strf = Printf.sprintf
 let layout = Testable.make ~pp:L.pp ~equal:L.equal
 let ints = array int
+let pp_iints ppf s = pp_ints ppf (Iarray.to_array s)
+let iints = Testable.make ~pp:pp_iints ~equal:(Iarray.equal Int.equal)
 let f32 = D.Float32
 
 (* A witness of [dt]'s values that compares floats bit for bit. *)
@@ -31,7 +33,9 @@ let values dt = array (value dt)
 let floats32 s xs = A.of_array f32 s xs
 
 (* Every index's element by [get], in C order. *)
-let gets a = Array.of_list (List.map (A.get a) (indices (L.shape (A.layout a))))
+let gets a =
+  let idxs = indices (Iarray.to_array (L.shape (A.layout a))) in
+  Array.of_list (List.map (fun i -> A.get a (Iarray.of_array i)) idxs)
 
 (* Kills [b]: a donation consumes its memory, giving [why]. *)
 let kill ?(why = "consumed by the test") b =
@@ -64,7 +68,7 @@ let filled dt s =
   let open Gen in
   let n = Array.fold_left ( * ) 1 s in
   let+ xs = array ~size:(const n) (float_range (-300.) 300.) in
-  A.of_array dt s (Array.map (D.of_float dt) xs)
+  A.of_array dt (Iarray.of_array s) (Array.map (D.of_float dt) xs)
 
 type case = Case : ('v, 's) A.t * M.t option -> case
 
@@ -162,6 +166,7 @@ let law_v (D.Any dt, l, first, length) =
 (* [create] is contiguous at offset 0 over the bytes its elements fill, and a
    sub-byte array's last byte is zero past its last element. *)
 let law_create (D.Any dt, s) =
+  let s = Iarray.of_array s in
   let a = A.create Rig.host dt s in
   let n = L.numel (L.contiguous s) in
   let b = A.buffer a in
@@ -184,7 +189,7 @@ let dtype_and_shape =
 let test_create_refuses () =
   raises_match Exn.invalid_arg (fun () -> A.create Rig.host f32 [| 2; -1 |]);
   raises_match Exn.invalid_arg (fun () ->
-      A.create Rig.host f32 (Array.make 33 1));
+      A.create Rig.host f32 (Iarray.init 33 (Fun.const 1)));
   raises_match Exn.invalid_arg (fun () ->
       A.create Rig.host f32 [| max_int; 2 |])
 
@@ -213,24 +218,12 @@ let law_move (Case (a, m)) =
       | Some _, None -> fail "move answered a view Layout.move refuses"
       | None, Some _ -> fail "move answered None where Layout.move has a view")
 
-(* The reshape hole: the shape a movement takes is not kept. *)
-let test_reshape_ownership () =
-  let a = floats32 [| 6 |] [| 0.; 1.; 2.; 3.; 4.; 5. |] in
-  let s = [| 2; 3 |] in
-  let b = Option.get (A.move (M.Reshape (Iarray.of_array s)) a) in
-  s.(0) <- 1_000_000;
-  equal ints [| 2; 3 |] (L.shape (A.layout b));
-  raises_match Exn.invalid_arg (fun () -> A.get b [| 1_000; 0 |]);
-  let shape = L.shape (A.layout b) in
-  shape.(0) <- 1_000_000;
-  equal ints [| 2; 3 |] (L.shape (A.layout b))
-
 (* Bitcasts *)
 
 let test_bitcast_bytes () =
   let a = floats32 [| 2 |] [| 1.; -2. |] in
   let u = Option.get (A.bitcast D.Uint8 a) in
-  equal ints [| 2; 4 |] (L.shape (A.layout u));
+  equal iints [| 2; 4 |] (L.shape (A.layout u));
   equal (array int) [| 0; 0; 0x80; 0x3f; 0; 0; 0; 0xc0 |] (A.to_array u);
   let back = Option.get (A.bitcast f32 u) in
   equal layout (A.layout a) (A.layout back);
@@ -239,10 +232,10 @@ let test_bitcast_bytes () =
 let test_bitcast_sub_byte () =
   let a = A.of_array D.Uint8 [| 2 |] [| 0x21; 0xF7 |] in
   let n = Option.get (A.bitcast D.Int4 a) in
-  equal ints [| 2; 2 |] (L.shape (A.layout n));
+  equal iints [| 2; 2 |] (L.shape (A.layout n));
   equal (array int) [| 1; 2; 7; -1 |] (A.to_array n);
   let bits = Option.get (A.bitcast D.Bit a) in
-  equal ints [| 2; 8 |] (L.shape (A.layout bits));
+  equal iints [| 2; 8 |] (L.shape (A.layout bits));
   equal (array bool)
     [| true; false; false; false; false; true; false; false |]
     (Array.sub (A.to_array bits) 0 8)
@@ -264,13 +257,13 @@ let test_bitcast_refuses () =
   is_none (A.bitcast D.Uint16 s);
   is_none (A.bitcast f32 (A.of_array D.Uint8 [| 2; 3 |] (Array.make 6 0)));
   let e = A.create Rig.host D.Uint8 [| 0; 4 |] in
-  equal (option ints) (Some [| 0 |])
+  equal (option iints) (Some [| 0 |])
     (Option.map (fun a -> L.shape (A.layout a)) (A.bitcast f32 e));
   is_none (A.bitcast f32 (A.create Rig.host D.Uint8 [| 0; 3 |]));
   let b = B.view (B.create Rig.host 32) ~first:4 ~length:16 in
   let c = A.v D.Complex64 (L.contiguous [| 2 |]) b in
   is_none (A.bitcast D.Float64 c);
-  let deep = A.create Rig.host D.Uint16 (Array.make 32 1) in
+  let deep = A.create Rig.host D.Uint16 (Iarray.init 32 (Fun.const 1)) in
   raises_match Exn.invalid_arg (fun () -> A.bitcast D.Uint8 deep)
 
 (* A narrowing bitcast and its widening are inverse, over any layout of a
@@ -295,32 +288,32 @@ let law_bitcast_round_trip (Case (a, m)) =
 let bitcast_reference (D.Any src) (D.Any dst) l b =
   let bs = D.bits src and bd = D.bits dst in
   let s = L.shape l and st = L.strides l and o = L.offset l in
-  let r = Array.length s in
+  let r = Iarray.length s in
   let result =
     if bs = bd then Some l
     else if bs > bd then
       let k = bs / bd in
       Some
         (L.v ~offset:(o * k)
-           ~strides:(Array.append (Array.map (( * ) k) st) [| 1 |])
-           (Array.append s [| k |]))
+           ~strides:(Iarray.append (Iarray.map (( * ) k) st) [| 1 |])
+           (Iarray.append s [| k |]))
     else
       let k = bd / bs in
-      let outer = Array.sub s 0 (max 0 (r - 1)) in
-      if r = 0 || s.(r - 1) <> k then None
+      let outer = Iarray.sub s ~pos:0 ~len:(max 0 (r - 1)) in
+      if r = 0 || Iarray.get s (r - 1) <> k then None
       else if L.numel l = 0 then
-        Some (L.v ~strides:(Array.make (r - 1) 0) outer)
+        Some (L.v ~strides:(Iarray.init (r - 1) (Fun.const 0)) outer)
       else
-        let st' = Array.sub st 0 (r - 1) in
+        let st' = Iarray.sub st ~pos:0 ~len:(r - 1) in
         if
-          st.(r - 1) <> 1
+          Iarray.get st (r - 1) <> 1
           || o mod k <> 0
-          || Array.exists (fun t -> t mod k <> 0) st'
+          || Iarray.exists (fun t -> t mod k <> 0) st'
         then None
         else
           Some
             (L.v ~offset:(o / k)
-               ~strides:(Array.map (fun t -> t / k) st')
+               ~strides:(Iarray.map (fun t -> t / k) st')
                outer)
   in
   Option.bind result (fun l' ->
@@ -346,8 +339,9 @@ let bitcast_case =
        if narrowed && k >= 2 && L.rank l0 < L.max_rank then
          L.v
            ~offset:(L.offset l0 * k)
-           ~strides:(Array.append (Array.map (( * ) k) (L.strides l0)) [| 1 |])
-           (Array.append (L.shape l0) [| k |])
+           ~strides:
+             (Iarray.append (Iarray.map (( * ) k) (L.strides l0)) [| 1 |])
+           (Iarray.append (L.shape l0) [| k |])
        else l0
      in
      let+ slot = int_range 0 4 in
@@ -440,9 +434,10 @@ let law_set_get (Case (a, _)) =
     List.iteri
       (fun k idx ->
         let x = D.of_float dt (Float.of_int ((k * 37) - 100) /. 4.) in
+        let idx = Iarray.of_array idx in
         A.set a idx x;
         equal (value dt) x (A.get a idx))
-      (indices (L.shape (A.layout a)))
+      (indices (Iarray.to_array (L.shape (A.layout a))))
   in
   check a
 
@@ -786,12 +781,11 @@ let law_transfer_layouts (Case (a, m)) =
   let check : type v s. (v, s) A.t -> unit =
    fun a ->
     let s = L.shape (A.layout a) in
-    let r = Array.length s in
-    let rev x = Array.init r (fun i -> x.(r - 1 - i)) in
+    let r = Iarray.length s in
+    let rev x = Iarray.init r (fun i -> Iarray.get x (r - 1 - i)) in
     let base = A.create Rig.host (A.dtype a) (rev s) in
     let dst =
-      Option.get
-        (A.move (M.Permute (Iarray.of_array (rev (Array.init r Fun.id)))) base)
+      Option.get (A.move (M.Permute (rev (Iarray.init r Fun.id))) base)
     in
     cover "a strided destination" (not (L.is_contiguous (A.layout dst)));
     A.transfer ~src:a ~dst;
@@ -827,9 +821,11 @@ let raw_of dts =
   let w = D.bits dt / 8 in
   let n = Array.fold_left ( * ) 1 s * w in
   let* bytes = array ~size:(const n) (int_range 0 255) in
-  let u = A.of_array D.Uint8 (Array.append s [| w |]) bytes in
+  let u = A.of_array D.Uint8 (Iarray.of_array (Array.append s [| w |])) bytes in
   let a = Option.get (A.bitcast dt u) in
-  let+ m = option (movement ~apart:false (L.shape (A.layout a))) in
+  let+ m =
+    option (movement ~apart:false (Iarray.to_array (L.shape (A.layout a))))
+  in
   Case (a, m)
 
 let raw_of dts = Gen.with_pp pp_case (raw_of dts)
@@ -898,7 +894,7 @@ let tiles =
   let n = Array.fold_left ( * ) 1 s in
   let* seed = int in
   let src = bytes_of_seed seed (D.bytes dt n) in
-  let a = A.v dt (L.contiguous s) (B.of_string src) in
+  let a = A.v dt (L.contiguous (Iarray.of_array s)) (B.of_string src) in
   let r = Array.length s in
   let reverse = M.Permute (Iarray.init r (fun i -> r - 1 - i)) in
   let swap =
@@ -963,7 +959,7 @@ let tiles = Gen.with_pp pp_tiles tiles
    of its buffer, at the positions its layout gives: a contiguous array's bytes,
    its last byte's bits past its last element zero. *)
 let gathered src bits l =
-  let s = L.shape l in
+  let s = Iarray.to_array (L.shape l) in
   let n = Array.fold_left ( * ) 1 s in
   let out = Bytes.make (((n * bits) + 7) / 8) '\000' in
   let r = Array.length s in
@@ -1009,20 +1005,20 @@ let law_tiles (Tiles (a, src)) =
   let bits = D.bits dt in
   let t = side (D.Any dt) in
   let ds = L.shape l in
-  let at_edge k = Array.exists (fun d -> d = k) ds in
+  let at_edge k = Iarray.exists (fun d -> d = k) ds in
   cover "an extent of 256 bytes less one element" (at_edge (t - 1));
   cover "an extent of 256 bytes" (at_edge t);
   cover "an extent of 256 bytes and one element" (at_edge (t + 1));
-  cover "an extent past 512 bytes" (Array.exists (fun d -> d > 2 * t) ds);
+  cover "an extent past 512 bytes" (Iarray.exists (fun d -> d > 2 * t) ds);
   cover "an extent past 4 and no multiple of 4"
-    (Array.exists (fun d -> d > 4 && d mod 4 <> 0) ds);
+    (Iarray.exists (fun d -> d > 4 && d mod 4 <> 0) ds);
   cover "a transposed view"
     (L.rank l >= 2
     && abs (L.stride l (L.rank l - 2)) = 1
     && L.dim l (L.rank l - 2) > 1);
   cover "a broadcast axis"
-    (Array.exists2 (fun d st -> d > 1 && st = 0) ds (L.strides l));
-  cover "a reversed axis" (Array.exists (fun st -> st < 0) (L.strides l));
+    (Iarray.exists2 (fun d st -> d > 1 && st = 0) ds (L.strides l));
+  cover "a reversed axis" (Iarray.exists (fun st -> st < 0) (L.strides l));
   cover "sub-byte elements" (bits < 8);
   cover "a sub-byte view starting inside a byte"
     (bits < 8 && L.offset l * bits mod 8 <> 0);
@@ -1045,8 +1041,8 @@ let law_tiles (Tiles (a, src)) =
 let count l =
   if L.numel l = 0 then 0
   else
-    Array.fold_left ( * ) 1
-      (Array.mapi (fun a d -> if L.stride l a = 0 then 1 else d) (L.shape l))
+    Iarray.fold_left ( * ) 1
+      (Iarray.mapi (fun a d -> if L.stride l a = 0 then 1 else d) (L.shape l))
 
 (* The layout [to_device] gives a layout [l] of [bits]-bit elements, by its
    .mli, and whether it keeps [l]: [l] shifted to the copy where the bytes of
@@ -1077,6 +1073,7 @@ let moved bits l =
         if t < 0 then offset := !offset + ((L.dim l a - 1) * !next);
         next := !next * L.dim l a)
       (List.rev order);
+    let strides = Iarray.of_array strides in
     (`Packed, L.v ~offset:!offset ~strides (L.shape l))
 
 let check_moved ?(msg = "") d a =
@@ -1140,7 +1137,7 @@ let slice rs a =
        a)
 
 let iota dt s =
-  let n = Array.fold_left ( * ) 1 s in
+  let n = Iarray.fold_left ( * ) 1 s in
   A.of_array dt s
     (Array.init n (fun i -> D.of_float dt (float_of_int (i mod 7))))
 
@@ -1194,14 +1191,14 @@ let law_transfer (Case (a, m), (io_src, io_dst)) =
   let check : type v s. (v, s) A.t -> unit =
    fun src ->
     let dt = A.dtype src and s = L.shape (A.layout src) in
-    let wide = Array.map (fun d -> (2 * d) + 1) s in
-    let n = Array.fold_left ( * ) 1 wide in
+    let wide = Iarray.map (fun d -> (2 * d) + 1) s in
+    let n = Iarray.fold_left ( * ) 1 wide in
     let before =
       A.of_array dt wide
         (Array.init n (fun k -> D.of_float dt (float_of_int (k mod 5))))
     in
     let big = if io_dst then A.to_device io before else A.copy before in
-    let dst = slice (Array.to_list (Array.map (fun d -> (1, d, 2)) s)) big in
+    let dst = slice (Iarray.to_list (Iarray.map (fun d -> (1, d, 2)) s)) big in
     cover "from an io device" io_src;
     cover "into an io device" io_dst;
     if D.bits dt < 8 && io_dst then
@@ -1214,9 +1211,9 @@ let law_transfer (Case (a, m), (io_src, io_dst)) =
         (A.to_array (on_host dst));
       let outside k =
         let r = ref k and out = ref false in
-        for ax = Array.length wide - 1 downto 0 do
-          if !r mod wide.(ax) mod 2 = 0 then out := true;
-          r := !r / wide.(ax)
+        for ax = Iarray.length wide - 1 downto 0 do
+          if !r mod Iarray.get wide ax mod 2 = 0 then out := true;
+          r := !r / Iarray.get wide ax
         done;
         !out
       in
@@ -1273,8 +1270,8 @@ let law_borrow (Case (a, m)) =
     let d = Lazy.force memory in
     let b = Option.get (A.borrow d a) in
     equal ~msg:"device" bool true (Rig.equal d (A.device b));
-    equal ints (L.shape (A.layout a)) (L.shape (A.layout b));
-    equal ints (L.strides (A.layout a)) (L.strides (A.layout b));
+    equal iints (L.shape (A.layout a)) (L.shape (A.layout b));
+    equal iints (L.strides (A.layout a)) (L.strides (A.layout b));
     equal int (L.offset (A.layout a)) (L.offset (A.layout b));
     equal (values (A.dtype a)) (A.to_array a) (A.to_array b);
     if B.length (A.buffer a) > 0 then
@@ -1420,12 +1417,12 @@ let law_bigarray (Case (a, m)) =
     | Some k ->
         cover "a bigarray" true;
         let g = A.bigarray k a in
-        equal ints (L.shape l) (Bigarray.Genarray.dims g);
+        let s = Iarray.to_array (L.shape l) in
+        equal ints s (Bigarray.Genarray.dims g);
         equal
           (values (A.dtype a))
           (A.to_array a)
-          (Array.of_list
-             (List.map (Bigarray.Genarray.get g) (indices (L.shape l))))
+          (Array.of_list (List.map (Bigarray.Genarray.get g) (indices s)))
   in
   match Option.bind m (fun m -> A.move m a) with
   | Some b -> check b
@@ -1435,13 +1432,13 @@ let test_of_bigarray_misaligned () =
   raises_match Exn.invalid_arg (fun () ->
       A.of_bigarray D.Int16 (S.int16_at 1 4));
   let a = A.of_bigarray D.Int16 (S.int16_at 2 4) in
-  equal ints [| 4 |] (L.shape (A.layout a))
+  equal iints [| 4 |] (L.shape (A.layout a))
 
 let test_bigarray_rank () =
-  let a = A.create Rig.host D.Uint8 (Array.make 16 1) in
+  let a = A.create Rig.host D.Uint8 (Iarray.init 16 (Fun.const 1)) in
   equal ints (Array.make 16 1)
     (Bigarray.Genarray.dims (A.bigarray Bigarray.int8_unsigned a));
-  let a = A.create Rig.host D.Uint8 (Array.make 17 1) in
+  let a = A.create Rig.host D.Uint8 (Iarray.init 17 (Fun.const 1)) in
   raises_match (Exn.invalid_arg ~substring:"at most 16") (fun () ->
       A.bigarray Bigarray.int8_unsigned a)
 
@@ -1459,7 +1456,7 @@ let test_of_bigarray () =
 
 (* The door *)
 
-let zeros s = floats32 s (Array.make (Array.fold_left ( * ) 1 s) 0.)
+let zeros s = floats32 s (Array.make (Iarray.fold_left ( * ) 1 s) 0.)
 
 
 let test_door_add () =
@@ -1478,7 +1475,7 @@ let test_door_add () =
 (* Each operand position given another dtype, then another shape: the call is
    refused and touches no byte. *)
 let test_door_positions () =
-  let s = [| 2; 3 |] in
+  let s : int iarray = [| 2; 3 |] in
   let operands () =
     [| zeros s; floats32 s (Array.make 6 1.); floats32 s (Array.make 6 2.) |]
   in
@@ -2182,14 +2179,14 @@ let law_read (Case (a, m)) =
     (match kind (A.dtype a) with
     | None -> ()
     | Some k when contiguous ->
+        let s = Iarray.to_array (L.shape l) in
         let elements g =
-          Array.of_list
-            (List.map (Bigarray.Genarray.get g) (indices (L.shape l)))
+          Array.of_list (List.map (Bigarray.Genarray.get g) (indices s))
         in
         let dims, xs =
           A.read k a (fun g -> (Bigarray.Genarray.dims g, elements g))
         in
-        equal ints (L.shape l) dims;
+        equal ints s dims;
         equal (values (A.dtype a)) (A.to_array a) xs
     | Some k -> read_fails "contiguous" (fun () -> A.read k a ignore));
     equal ~msg:"released" bool true (unclaimed (A.buffer a))
@@ -2232,10 +2229,10 @@ let test_read_refuses () =
     (fun _ ->
       read_fails ~msg:"held exclusive" "exclusive" (fun () ->
           A.read Bigarray.float32 held ignore));
-  let a = A.create Rig.host D.Uint8 (Array.make 16 1) in
+  let a = A.create Rig.host D.Uint8 (Iarray.init 16 (Fun.const 1)) in
   equal ~msg:"16 axes" ints (Array.make 16 1)
     (A.read Bigarray.int8_unsigned a Bigarray.Genarray.dims);
-  let a = A.create Rig.host D.Uint8 (Array.make 17 1) in
+  let a = A.create Rig.host D.Uint8 (Iarray.init 17 (Fun.const 1)) in
   read_fails ~msg:"17 axes" "17" (fun () ->
       A.read Bigarray.int8_unsigned a ignore)
 
@@ -2363,8 +2360,6 @@ let tests =
         test "create refuses what contiguous refuses" test_create_refuses;
         prop "move is Layout.move over the same buffer" case law_move;
         prop "every movement keeps an array in its buffer" case law_bounds;
-        test "no shape a movement takes or returns is held"
-          test_reshape_ownership;
       ];
     group "bitcast"
       [

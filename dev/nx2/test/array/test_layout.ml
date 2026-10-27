@@ -11,6 +11,11 @@ open Nx_array_gen
 let ( let* ) = Result.bind
 let layout = Testable.make ~pp:L.pp ~equal:L.equal
 let ints = array int
+let pp_iints ppf s = pp_ints ppf (Iarray.to_array s)
+let iints = Testable.make ~pp:pp_iints ~equal:(Iarray.equal Int.equal)
+
+(* An iarray equal to another only as the same value. *)
+let same = Testable.make ~pp:pp_iints ~equal:( == )
 let distinct ps = List.length (List.sort_uniq compare ps) = List.length ps
 let check b reason = if b then Ok () else Error reason
 
@@ -79,9 +84,9 @@ let expressible s t =
    with no element has offset 0 and every stride 0. *)
 let canonical l =
   let s = L.shape l and st = L.strides l in
-  let unit_axes = Array.for_all2 (fun d t -> d <> 1 || t = 0) s st in
+  let unit_axes = Iarray.for_all2 (fun d t -> d <> 1 || t = 0) s st in
   if L.numel l = 0 then
-    unit_axes && L.offset l = 0 && Array.for_all (( = ) 0) st
+    unit_axes && L.offset l = 0 && Iarray.for_all (( = ) 0) st
   else unit_axes
 
 (* Construction, by the interface *)
@@ -91,14 +96,14 @@ let max_numel = L.max_numel
 (* The product of [s]'s extents, if the product of those other than 0 is at
    most [max_numel]. *)
 let numel s =
-  Array.fold_left
+  Iarray.fold_left
     (fun n d ->
       Option.bind n (fun n ->
           if d = 0 then Some n
           else if d > max_numel / n then None
           else Some (n * d)))
     (Some 1) s
-  |> Option.map (fun n -> if Array.mem 0 s then 0 else n)
+  |> Option.map (fun n -> if Iarray.mem 0 s then 0 else n)
 
 let add a b =
   match (a, b) with
@@ -114,17 +119,17 @@ let fits d t = d <= 1 || (t <> min_int && abs t <= max_int / (d - 1))
    the end of the span, one past the greatest position, is at most
    [max_numel]. *)
 let v_reference s strides offset =
-  let r = Array.length s in
+  let r = Iarray.length s in
   let* () = check (r <= L.max_rank) "too many axes" in
-  let* () = check (Array.for_all (fun d -> d >= 0) s) "a negative extent" in
+  let* () = check (Iarray.for_all (fun d -> d >= 0) s) "a negative extent" in
   let* () = check (numel s <> None) "too many elements" in
-  let* () = check (Array.length strides = r) "strides of another length" in
-  let* () = check (Array.for_all2 fits s strides) "an axis' reach overflows" in
-  if numel s = Some 0 then Ok (0, Array.make r 0)
+  let* () = check (Iarray.length strides = r) "strides of another length" in
+  let* () = check (Iarray.for_all2 fits s strides) "an axis' reach overflows" in
+  if numel s = Some 0 then Ok (0, Iarray.init r (Fun.const 0))
   else
     let reach f =
-      Array.fold_left add (Some offset)
-        (Array.map2 (fun d t -> Some ((d - 1) * f t)) s strides)
+      Iarray.fold_left add (Some offset)
+        (Iarray.map2 (fun d t -> Some ((d - 1) * f t)) s strides)
     in
     let* () =
       match (reach (min 0), reach (max 0)) with
@@ -133,7 +138,7 @@ let v_reference s strides offset =
       | Some _, Some _ | None, _ -> Error "a negative position"
       | Some _, None -> Error "a span past max_numel"
     in
-    Ok (offset, Array.map2 (fun d t -> if d = 1 then 0 else t) s strides)
+    Ok (offset, Iarray.map2 (fun d t -> if d = 1 then 0 else t) s strides)
 
 (* Arguments of [v] about the bounds it checks. *)
 let v_args =
@@ -186,7 +191,7 @@ let v_args =
     let+ strides = array ~size:(const (Array.length s)) (int_range 0 3) in
     let reach = ref 0 in
     Array.iteri (fun i d -> reach := !reach + (max 0 (d - 1) * strides.(i))) s;
-    (s, strides, max_numel - 1 - !reach)
+    (Iarray.of_array s, Iarray.of_array strides, max_numel - 1 - !reach)
   in
   let drawn =
     let* s = shapes in
@@ -226,11 +231,11 @@ let v_args =
         Option.value up ~default:least
       else least
     in
-    (s, strides, offset)
+    (Iarray.of_array s, Iarray.of_array strides, offset)
   in
   with_pp
     (fun ppf (s, st, o) ->
-      Format.fprintf ppf "~offset:%d ~strides:%a %a" o pp_ints st pp_ints s)
+      Format.fprintf ppf "~offset:%d ~strides:%a %a" o pp_iints st pp_iints s)
     (frequency [ (19, drawn); (1, at_end) ])
 
 let reasons =
@@ -247,7 +252,7 @@ let law_v (s, strides, offset) =
   let expected = v_reference s strides offset in
   List.iter (fun r -> cover r (expected = Error r)) reasons;
   cover "no element, other extents past max_numel"
-    (expected = Error "too many elements" && Array.mem 0 s);
+    (expected = Error "too many elements" && Iarray.mem 0 s);
   cover "a span that ends at max_numel"
     (match expected with
     | Ok _ -> numel s <> Some 0 && snd (L.span (L.v ~offset ~strides s)) = max_numel
@@ -257,30 +262,31 @@ let law_v (s, strides, offset) =
   | Ok (o, st) ->
       let l = L.v ~offset ~strides s in
       cover "a negative stride"
-        (Array.exists2 (fun d t -> d > 1 && t < 0) s strides);
+        (Iarray.exists2 (fun d t -> d > 1 && t < 0) s strides);
       cover "no element" (numel s = Some 0);
-      equal ints s (L.shape l);
-      equal ints st (L.strides l);
+      equal iints s (L.shape l);
+      equal iints st (L.strides l);
       equal int o (L.offset l);
-      equal int (Array.length s) (L.rank l);
+      equal int (Iarray.length s) (L.rank l);
       equal ~msg:"numel" (option int) (numel s) (Some (L.numel l));
-      Array.iteri
+      Iarray.iteri
         (fun i d ->
           equal ~msg:"dim" int d (L.dim l i);
-          equal ~msg:"stride" int st.(i) (L.stride l i))
+          equal ~msg:"stride" int (Iarray.get st i) (L.stride l i))
         s
 
 let law_contiguous s =
+  let s = Iarray.of_array s in
   let l = L.contiguous s in
   let n = Option.get (numel s) in
-  equal ints s (L.shape l);
+  equal same s (L.shape l);
   equal (list int) (List.init n Fun.id) (positions l)
 
 (* [fits] is the test its interface states, and {!L.contiguous} takes exactly
    the shapes it holds of. *)
 let law_fits (s, _, _) =
-  let natural = Array.for_all (fun d -> d >= 0) s in
-  let expected = Array.length s <= L.max_rank && natural && numel s <> None in
+  let natural = Iarray.for_all (fun d -> d >= 0) s in
+  let expected = Iarray.length s <= L.max_rank && natural && numel s <> None in
   cover "a layout's shape" expected;
   cover "a negative extent" (not natural);
   cover "too many elements" (natural && numel s = None);
@@ -289,17 +295,19 @@ let law_fits (s, _, _) =
   in
   equal (pair bool bool) (expected, expected) (L.fits s, taken)
 
+(* [n] copies of [x]. *)
+let make n x = Iarray.init n (Fun.const x)
+
 let test_fits_rank () =
   equal (pair bool bool) (true, false)
-    (L.fits (Array.make L.max_rank 1), L.fits (Array.make (L.max_rank + 1) 1))
+    (L.fits (make L.max_rank 1), L.fits (make (L.max_rank + 1) 1))
 
 let refusals =
   [
-    ("contiguous of too many axes", fun () -> L.contiguous (Array.make 33 1));
+    ("contiguous of too many axes", fun () -> L.contiguous (make 33 1));
     ("contiguous of a negative extent", fun () -> L.contiguous [| 2; -1 |]);
     ("contiguous of too many elements", fun () -> L.contiguous [| max_int; 2 |]);
-    ( "v of too many axes",
-      fun () -> L.v ~strides:(Array.make 33 0) (Array.make 33 1) );
+    ("v of too many axes", fun () -> L.v ~strides:(make 33 0) (make 33 1));
     ( "v of an axis whose reach overflows",
       fun () -> L.v ~strides:[| (max_int / 2) + 1 |] [| 3 |] );
     ( "v of too many elements",
@@ -325,8 +333,8 @@ let test_refuses (_, f) = raises_match Exn.invalid_arg f
 
 let test_bounds () =
   equal int 32 L.max_rank;
-  equal int 32 (L.rank (L.contiguous (Array.make 32 1)));
-  equal int 32 (L.rank (L.v ~strides:(Array.make 32 0) (Array.make 32 2)));
+  equal int 32 (L.rank (L.contiguous (make 32 1)));
+  equal int 32 (L.rank (L.v ~strides:(make 32 0) (make 32 2)));
   equal int (1 lsl 53) max_numel;
   equal ~msg:"NX_MAX_NUMEL" int max_numel (Nx_array_support.max_numel ());
   equal int max_numel (L.numel (L.contiguous [| max_numel |]));
@@ -334,7 +342,7 @@ let test_bounds () =
     (L.span (L.contiguous [| max_numel / 2; 2 |]));
   let reach = max_numel - 1 in
   let l = L.v ~strides:[| reach |] [| 2 |] in
-  equal ints [| reach |] (L.strides l);
+  equal iints [| reach |] (L.strides l);
   equal (pair int int) (0, max_numel) (L.span l);
   let l = L.v ~offset:(max_numel - 1) ~strides:[| -reach |] [| 2 |] in
   equal (pair int int) (0, max_numel) (L.span l);
@@ -344,9 +352,9 @@ let test_bounds () =
     (L.numel (L.v ~strides:[| 0; 0 |] [| max_numel / 2; 2 |]))
 
 let test_no_element () =
-  let s = [| max_numel / 2; 2; 0 |] in
-  equal ints s (L.shape (L.contiguous s));
-  equal ints s (L.shape (L.v ~strides:[| 0; 0; 0 |] s));
+  let s : int iarray = [| max_numel / 2; 2; 0 |] in
+  equal iints s (L.shape (L.contiguous s));
+  equal iints s (L.shape (L.v ~strides:[| 0; 0; 0 |] s));
   equal int 0 (L.numel (L.contiguous s))
 
 let test_broadcast_scalar () =
@@ -364,23 +372,6 @@ let test_axis_refuses () =
       raises_match ~msg:(string_of_int i) Exn.invalid_arg (fun () ->
           L.stride l i))
     [ -1; 2; min_int; max_int ]
-
-let test_ownership () =
-  let s = [| 2; 3 |] and strides = [| 3; 1 |] in
-  let l = L.v ~strides s in
-  s.(0) <- 1_000_000;
-  strides.(1) <- 7;
-  equal ints [| 2; 3 |] (L.shape l);
-  equal ints [| 3; 1 |] (L.strides l);
-  let l = L.contiguous s in
-  s.(0) <- 2;
-  equal ints [| 1_000_000; 3 |] (L.shape l);
-  let out = L.shape l in
-  out.(0) <- 5;
-  equal ints [| 1_000_000; 3 |] (L.shape l);
-  let out = L.strides l in
-  out.(0) <- 5;
-  equal ints [| 3; 1 |] (L.strides l)
 
 (* The words [f] allocates over a thousand calls, beyond the loop's own. *)
 let words f =
@@ -402,6 +393,8 @@ let test_no_allocation () =
   equal ~msg:"stride" zero 0. (words (fun () -> L.stride l 2));
   equal ~msg:"offset" zero 0. (words (fun () -> L.offset l));
   equal ~msg:"numel" zero 0. (words (fun () -> L.numel l));
+  equal ~msg:"shape" zero 0. (words (fun () -> L.shape l));
+  equal ~msg:"strides" zero 0. (words (fun () -> L.strides l));
   equal ~msg:"is_contiguous" zero 0.
     (words (fun () -> Bool.to_int (L.is_contiguous l)));
   equal ~msg:"is_distinct" zero 0.
@@ -423,6 +416,7 @@ let law_move (l, m) =
       cover "refused" true;
       raises_match Exn.invalid_arg (fun () -> L.move m l)
   | s' -> (
+      let s = Iarray.to_array s in
       let target idx = position l (source m s idx) in
       match L.move m l with
       | Some l' ->
@@ -432,32 +426,20 @@ let law_move (l, m) =
           | M.Permute _ -> cover "permute" true
           | M.Slice _ -> cover "slice" true
           | M.Window _ -> cover "window" true);
-          equal ints s' (L.shape l');
+          equal iints s' (L.shape l');
           List.iter
             (fun idx ->
               equal
                 ~msg:(Format.asprintf "%a" pp_ints idx)
                 int (target idx) (position l' idx))
-            (indices s')
+            (indices (Iarray.to_array s'))
       | None ->
           cover "a reshape no strides express" true;
           (match m with
           | M.Reshape _ -> ()
           | _ -> failf "%a answered None" pp_move m);
           equal ~msg:"strides express the reshape" bool false
-            (expressible s' target))
-
-let test_move_ownership () =
-  let s' = [| 3; 2 |] in
-  let l =
-    Option.get (L.move (M.Reshape (Iarray.of_array s')) (L.contiguous [| 6 |]))
-  in
-  s'.(0) <- 1_000_000;
-  equal ints [| 3; 2 |] (L.shape l);
-  let p = [| 1; 0 |] in
-  let l = Option.get (L.move (M.Permute (Iarray.of_array p)) l) in
-  p.(0) <- 0;
-  equal ints [| 2; 3 |] (L.shape l)
+            (expressible (Iarray.to_array s') target))
 
 (* Canonical form *)
 
@@ -466,7 +448,7 @@ let law_canonical_move (l, m) =
   | exception Invalid_argument _ -> ()
   | None -> ()
   | Some l' ->
-      cover "an extent-1 axis" (Array.mem 1 (L.shape l'));
+      cover "an extent-1 axis" (Iarray.mem 1 (L.shape l'));
       cover "no element" (L.numel l' = 0);
       if not (canonical l') then failf "%a is not canonical" L.pp l'
 
@@ -481,7 +463,8 @@ let similar =
      let layout =
        let+ strides = array ~size:r (int_range (-1) 1)
        and+ least = int_range 2 3 in
-       L.v ~offset:(lift s strides least) ~strides s
+       L.v ~offset:(lift s strides least) ~strides:(Iarray.of_array strides)
+         (Iarray.of_array s)
      in
      pair layout layout)
 
@@ -501,7 +484,7 @@ let law_hash (a, b) =
 let respell l =
   let s = L.shape l in
   let strides =
-    Array.mapi (fun i t -> if s.(i) = 1 then 7 else t) (L.strides l)
+    Iarray.mapi (fun i t -> if Iarray.get s i = 1 then 7 else t) (L.strides l)
   in
   L.v ~offset:(L.offset l) ~strides s
 
@@ -568,7 +551,7 @@ let law_span l =
    of its shape's length, at most max_rank axes, a position no lower than
    0. The doors read layouts without checking this again. *)
 let law_well_formed l =
-  equal ~msg:"strides" int (L.rank l) (Array.length (L.strides l));
+  equal ~msg:"strides" int (L.rank l) (Iarray.length (L.strides l));
   at_most ~msg:"rank" int ~than:L.max_rank (L.rank l);
   at_least ~msg:"offset" int ~than:0 (L.offset l)
 
@@ -586,7 +569,12 @@ let law_descriptor l =
   let bytes = Rig.Buffer.create Rig.host (max 1 (snd (L.span l))) in
   let a = Nx_array.v Nx_array.Dtype.Uint8 l bytes in
   equal ints
-    (Array.concat [ [| r; flags; L.offset l |]; L.shape l; L.strides l ])
+    (Array.concat
+       [
+         [| r; flags; L.offset l |];
+         Iarray.to_array (L.shape l);
+         Iarray.to_array (L.strides l);
+       ])
     (Nx_array_support.descriptor a)
 
 (* Coalescing *)
@@ -597,7 +585,9 @@ let same_shape =
     (fun ppf ls -> Format.pp_print_list L.pp ppf ls)
     (let* l = one_of [ strided; reached ~apart:false ] in
      let s = L.shape l in
-     let other = one_of [ strided_of s; constant (L.contiguous s) ] in
+     let other =
+       one_of [ strided_of (Iarray.to_array s); constant (L.contiguous s) ]
+     in
      let+ others = list ~size:(int_range 0 3) other in
      l :: others)
 
@@ -610,13 +600,13 @@ let coalesced ls =
   let cs = L.coalesce (Array.of_list ls) in
   let s = L.shape cs.(0) in
   equal ~msg:"layouts" int (List.length ls) (Array.length cs);
-  at_least ~msg:"rank" int ~than:1 (Array.length s);
-  Array.iter (fun c -> equal ~msg:"one shape" ints s (L.shape c)) cs;
-  if Array.length s > 1 && Array.mem 1 s then
-    failf "the extent-1 axis of %a is kept" pp_ints s;
-  for i = 0 to Array.length s - 2 do
+  at_least ~msg:"rank" int ~than:1 (Iarray.length s);
+  Array.iter (fun c -> equal ~msg:"one shape" iints s (L.shape c)) cs;
+  if Iarray.length s > 1 && Iarray.mem 1 s then
+    failf "the extent-1 axis of %a is kept" pp_iints s;
+  for i = 0 to Iarray.length s - 2 do
     if Array.for_all (fun c -> one_run c i) cs then
-      failf "axes %d and %d of %a lie as one run" i (i + 1) pp_ints s
+      failf "axes %d and %d of %a lie as one run" i (i + 1) pp_iints s
   done;
   List.iteri (fun k l -> equal (list int) (positions l) (positions cs.(k))) ls;
   cs
@@ -668,7 +658,10 @@ let tests =
           "v keeps its arguments in canonical form, and raises iff they do not \
            fit"
           v_args law_v;
-        prop "contiguous places element k at position k" shape law_contiguous;
+        prop
+          "contiguous s places element k at position k, and its shape is s \
+           itself"
+          shape law_contiguous;
         prop ~count:1000 "fits is its test, and contiguous takes what it fits"
           v_args law_fits;
         test "fits takes max_rank axes and refuses one more" test_fits_rank;
@@ -680,7 +673,6 @@ let tests =
           "a scalar broadcast to two elements is neither contiguous nor \
            distinct"
           test_broadcast_scalar;
-        test "no array v takes is kept, none returned is held" test_ownership;
         test "queries, flags, equal and hash allocate nothing"
           test_no_allocation;
       ];
@@ -692,7 +684,6 @@ let tests =
           layout_and_move law_move;
         prop "a movement's layout is canonical" layout_and_move
           law_canonical_move;
-        test "no array a movement takes is kept" test_move_ownership;
       ];
     group "equality"
       [

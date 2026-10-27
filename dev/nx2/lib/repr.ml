@@ -40,7 +40,8 @@ let of_shards ~by p arrays =
           (Rig.name d))
     devices;
   let shapes =
-    Array.init n (fun j -> L.shape (A.layout (Iarray.get arrays j)))
+    Array.init n (fun j ->
+        Iarray.to_array (L.shape (A.layout (Iarray.get arrays j))))
   in
   let rank = Array.length shapes.(0) in
   Array.iteri

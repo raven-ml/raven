@@ -52,7 +52,7 @@ let drawn (type v s) (dt : (v, s) D.t) s : (v, s, Nx.host) Nx.t Gen.t =
     | _ -> data
   in
   Nx.Repr.of_array Nx.Host.v
-    (A.v dt (L.contiguous s)
+    (A.v dt (L.contiguous (Iarray.of_array s))
        (Rig.Buffer.of_string (if data = "" then "\000" else data)))
 
 (* Small integers in float64: their sums are exact in any order. *)
@@ -397,7 +397,7 @@ let nan_ranges =
               (Array.map (fun (l, h) -> Printf.sprintf "[%d, %d)" l h) c.bounds))))
 
 let law_nan_ranges (Nan_ranges c) =
-  let x = Nx_support.signalled (A.of_array c.dt c.s c.x) in
+  let x = Nx_support.signalled (A.of_array c.dt (Iarray.of_array c.s) c.x) in
   let bytes a = A.to_array (Option.get (A.bitcast D.Uint8 (A.copy a))) in
   let w = D.bits c.dt / 8 and row = c.s.(1) in
   let elt b k = Array.sub b (k * w) w in

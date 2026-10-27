@@ -31,7 +31,8 @@ let position s idx =
 
 let host s =
   let data = Array.init (numel s) (fun k -> Int32.of_int (k + 1)) in
-  (Nx.Repr.of_array Nx.Host.v (A.of_array D.Int32 s data), data)
+  let a = A.of_array D.Int32 (Iarray.of_array s) data in
+  (Nx.Repr.of_array Nx.Host.v a, data)
 
 (* Operands laid out C-contiguous, reversed along every axis, with their axes
    reversed, or broadcast from one element. *)
@@ -57,7 +58,7 @@ let laid l s =
   let rev = Array.init r (fun i -> r - 1 - i) in
   let a =
     match l with
-    | Plain -> A.of_array D.Int32 s data
+    | Plain -> A.of_array D.Int32 (Iarray.of_array s) data
     | Reversed ->
         let whole =
           Array.map
@@ -67,16 +68,19 @@ let laid l s =
         in
         view
           (Slice (Iarray.of_array whole))
-          (A.of_array D.Int32 s (Array.of_list (List.rev (Array.to_list data))))
+          (A.of_array D.Int32 (Iarray.of_array s)
+             (Array.of_list (List.rev (Array.to_list data))))
     | Transposed ->
         let ts = Array.map (fun a -> s.(a)) rev in
         let base =
           Array.init n (fun k ->
               data.(position s (Array.map (fun a -> (index ts k).(a)) rev)))
         in
-        view (Permute (Iarray.of_array rev)) (A.of_array D.Int32 ts base)
+        view
+          (Permute (Iarray.of_array rev))
+          (A.of_array D.Int32 (Iarray.of_array ts) base)
     | Broadcast ->
-        if n = 0 then A.of_array D.Int32 s data
+        if n = 0 then A.of_array D.Int32 (Iarray.of_array s) data
         else
           view
             (Broadcast (Iarray.of_array s))
@@ -429,7 +433,7 @@ let views =
             ignore (Sys.opaque_identity (Nx.rearrange ~sizes p x))
           done;
           let per = (Gc.minor_words () -. before) /. Float.of_int n in
-          at_most (float 0.5) ~than:540. per);
+          at_most (float 0.5) ~than:372. per);
       test "a merge strides cannot express copies" (fun () ->
           let x, _ = host [| 2; 3; 4 |] in
           let y = Nx.rearrange (Nx.Pattern.v "b t d -> (t b) d") x in

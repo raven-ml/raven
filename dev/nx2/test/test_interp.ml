@@ -475,11 +475,12 @@ let operand kind shape : (float, D.float32_elt, Count.d) Nx.t =
   | Constant -> Nx.zeros f32 shape
   | Concrete ->
       Nx.place Count.on
-        (Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 shape data))
+        (Nx.Repr.of_array Nx.Host.v
+           (A.of_array D.Float32 (Iarray.of_array shape) data))
   | View ->
       let r = Array.length shape in
       let rev = Array.init r (fun i -> r - 1 - i) in
-      let t = Array.map (fun a -> shape.(a)) rev in
+      let t = Iarray.of_array (Array.map (fun a -> shape.(a)) rev) in
       let base =
         Nx.place Count.on
           (Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 t data))
@@ -518,7 +519,7 @@ let cases_of shape a b =
       ( "add",
         Map
           {
-            layout = L.contiguous shape;
+            layout = L.contiguous (Iarray.of_array shape);
             prog = add_prog;
             outs = Nx.Prim.[ f32 ];
             loads = [| Plain x; Plain y |];
@@ -527,7 +528,7 @@ let cases_of shape a b =
       ( "chain",
         Map
           {
-            layout = L.contiguous shape;
+            layout = L.contiguous (Iarray.of_array shape);
             prog = chain_prog;
             outs = Nx.Prim.[ f32; f32 ];
             loads = [| Plain x; Plain y |];
@@ -1314,7 +1315,7 @@ let capturing (type r) i ~by (op : r Nx.Prim.t) : r =
     match op with
     | Map { loads = [||]; prog; layout; _ } -> (
         match Iarray.get prog.nodes (Iarray.length prog.nodes - 1) with
-        | Const (_, bits) -> Lit (bits, L.shape layout)
+        | Const (_, bits) -> Lit (bits, Iarray.to_array (L.shape layout))
         | _ -> App ("creation", []))
     | _ -> App (Nx.Prim.name op, List.map arg xs)
   in

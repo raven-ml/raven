@@ -89,7 +89,7 @@ val pp_value : Format.formatter -> ('v, 's, 'd) t -> unit
 (** [pp_value ppf x] prints [x]'s dtype and shape as nx's messages do:
     [float32 [2; 3]]. *)
 
-val check_shape : by:string -> int array -> unit
+val check_shape : by:string -> int iarray -> unit
 (** [check_shape ~by s] raises [Invalid_argument] naming [by] and [s] unless
     [s] is a layout's shape ({!Nx_array.Layout.fits}): where an extent is
     negative, [s] has more than {!Nx_array.Layout.max_rank} axes, or its

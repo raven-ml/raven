@@ -35,7 +35,8 @@ let pp_ints ppf a =
 
 let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
 
-let host dt s data = Nx.Repr.of_array Nx.Host.v (A.of_array dt s data)
+let host dt s data =
+  Nx.Repr.of_array Nx.Host.v (A.of_array dt (Iarray.of_array s) data)
 let held s ps = host D.Int64 s (Array.map Int64.of_int ps)
 
 (* The reference *)
@@ -896,8 +897,8 @@ let nan_case =
         c.a (D.name c.dt) pp_ints c.s pp_ints c.p)
 
 let law_nan_extremes (Nan_case c) =
-  let x = Nx_support.signalled (A.of_array c.dt c.s c.x) in
-  let u = Nx_support.signalled (A.of_array c.dt c.us c.u) in
+  let x = Nx_support.signalled (A.of_array c.dt (Iarray.of_array c.s) c.x) in
+  let u = Nx_support.signalled (A.of_array c.dt (Iarray.of_array c.us) c.u) in
   let bytes a = A.to_array (Option.get (A.bitcast D.Uint8 (A.copy a))) in
   let w = D.bits c.dt / 8 in
   let elt b k = Array.sub b (k * w) w in

@@ -453,7 +453,7 @@ let run ?(one_thread = false) ?dst c (A.Any x) =
   let y =
     match dst with
     | Some d -> A.expect dt d
-    | None -> A.create Rig.host dt s
+    | None -> A.create Rig.host dt (Iarray.of_array s)
   in
   let call () =
     match (c.kind, A.dtype x, dt) with

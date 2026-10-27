@@ -111,7 +111,9 @@ let case =
 let law_stable (s, axis, descending, xs) =
   cover "an empty slice" (Array.exists (( = ) 0) s);
   cover "descending" descending;
-  let v, p = sort ~descending axis (value (A.of_array D.Int32 s xs)) in
+  let v, p =
+    sort ~descending axis (value (A.of_array D.Int32 (Iarray.of_array s) xs))
+  in
   let want_v, want_p = reference descending s axis xs in
   equal ~msg:"values" (array int32) want_v (read v);
   equal ~msg:"positions" (array int64) want_p (read p)

@@ -16,7 +16,8 @@ module D = Nx_array.Dtype
 module L = Nx_array.Layout
 
 let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
-let value dt s xs : (float, _, Nx.host) Nx.t = Nx.Repr.of_array Nx.Host.v (A.of_array dt s xs)
+let value dt s xs : (float, _, Nx.host) Nx.t =
+  Nx.Repr.of_array Nx.Host.v (A.of_array dt (Iarray.of_array s) xs)
 let float_pp ppf v = Format.fprintf ppf "%h" v
 let floats = array float_exact
 let same_bits =

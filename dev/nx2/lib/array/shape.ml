@@ -10,10 +10,10 @@ let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
 let pp ppf a =
   Format.fprintf ppf "[%a]"
-    (Format.pp_print_array
+    (Format.pp_print_seq
        ~pp_sep:(fun ppf () -> Format.pp_print_string ppf "; ")
        Format.pp_print_int)
-    a
+    (Iarray.to_seq a)
 
 (* Array.make and Array.copy are calls into the runtime's C, about 8 ns each on
    the M1 Max; an array literal allocates inline. A shape of up to four axes
@@ -26,21 +26,12 @@ let zeros = function
   | 4 -> [| 0; 0; 0; 0 |]
   | r -> Array.make r 0
 
-let copy s =
-  let r = Array.length s in
-  let s' = zeros r in
-  for i = 0 to r - 1 do
-    Array.unsafe_set s' i (Array.unsafe_get s i)
-  done;
-  s'
-
-let of_iarray s =
-  let r = Iarray.length s in
-  let s' = zeros r in
-  for i = 0 to r - 1 do
-    Array.unsafe_set s' i (Iarray.unsafe_get s i)
-  done;
-  s'
+(* An array and an iarray of one element type have one representation. The
+   standard library's Iarray converts between them by this primitive
+   (iarray.ml's [unsafe_of_array]) and exports only conversions that copy. A
+   layout's strides are formed in an array that nothing writes afterwards, so
+   freezing it in place saves the copy, a call into the runtime's C. *)
+external freeze : int array -> int iarray = "%opaque"
 
 let check_rank fn r =
   if r > max_rank then invalid_argf "%s: rank %d exceeds %d" fn r max_rank
@@ -52,9 +43,9 @@ let check_rank fn r =
    extents then fits, whichever of them a kernel multiplies. Each product is
    formed only once it is known to fit. *)
 let size s =
-  let r = Array.length s and n = ref 1 and zero = ref false and i = ref 0 in
+  let r = Iarray.length s and n = ref 1 and zero = ref false and i = ref 0 in
   while !i < r && !n > 0 do
-    let d = Array.unsafe_get s !i in
+    let d = Iarray.unsafe_get s !i in
     if d < 0 then n := -1
     else if d = 0 then zero := true
     (* Two factors below 2^26 multiply to at most max_numel: the division,
@@ -73,9 +64,10 @@ let numel fn s =
       max_numel
   else
     let i = ref 0 in
-    while s.(!i) >= 0 do
+    while Iarray.get s !i >= 0 do
       incr i
     done;
-    invalid_argf "%s: axis %d of %a is %d, below 0" fn !i pp s s.(!i)
+    invalid_argf "%s: axis %d of %a is %d, below 0" fn !i pp s
+      (Iarray.get s !i)
 
-let fits s = Array.length s <= max_rank && size s >= 0
+let fits s = Iarray.length s <= max_rank && size s >= 0

@@ -16,7 +16,10 @@ module Other = (val Nx.devices [ m 2 ])
 let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
 let floats shape = Array.init (Array.fold_left ( * ) 1 shape) float_of_int
-let on d shape = A.to_device d (A.of_array A.Dtype.Float32 shape (floats shape))
+
+let on d shape =
+  A.to_device d
+    (A.of_array A.Dtype.Float32 (Iarray.of_array shape) (floats shape))
 
 let same a b =
   A.buffer a == A.buffer b && A.Layout.equal (A.layout a) (A.layout b)
@@ -35,7 +38,8 @@ let values =
           cover "no element" (Array.exists (( = ) 0) s);
           cover "rank 0" (s = [||]);
           let x =
-            Nx.Repr.of_array Nx.Host.v (A.of_array A.Dtype.Float32 s (floats s))
+            Nx.Repr.of_array Nx.Host.v
+              (A.of_array A.Dtype.Float32 (Iarray.of_array s) (floats s))
           in
           equal (array int) s (Nx.shape x);
           equal bool true (A.Dtype.equal A.Dtype.Float32 (Nx.dtype x)));

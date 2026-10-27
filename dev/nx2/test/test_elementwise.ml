@@ -40,7 +40,7 @@ let drawn (type v s) (dt : (v, s) D.t) s : (v, s) A.t Gen.t =
     | D.Bool -> String.map (fun c -> Char.chr (Char.code c land 1)) data
     | _ -> data
   in
-  A.v dt (L.contiguous s)
+  A.v dt (L.contiguous (Iarray.of_array s))
     (Rig.Buffer.of_string (if data = "" then "\000" else data))
 
 let shape =
@@ -98,26 +98,26 @@ let result_bits x = bits_of (host_array x)
 
 (* [a] broadcast to [s], as a view. *)
 let stretched s a =
-  if L.shape (A.layout a) = s then a
+  if Iarray.to_array (L.shape (A.layout a)) = s then a
   else Option.get (A.move (M.Broadcast (Iarray.of_array s)) a)
 
 (* nx.cpu, whose one-node maps are the references. *)
 let cpu = (module Nx_cpu : Nx_kernel.S)
 
 let reference1 k dt s a =
-  let dst = A.create Rig.host dt s in
+  let dst = A.create Rig.host dt (Iarray.of_array s) in
   match Support.map1 cpu k ~dst (stretched s a) with
   | A.Done -> Some (bits_of dst)
   | _ | (exception Invalid_argument _) -> None
 
 let reference2 k dt s a b =
-  let dst = A.create Rig.host dt s in
+  let dst = A.create Rig.host dt (Iarray.of_array s) in
   match Support.map2 cpu k ~dst (stretched s a) (stretched s b) with
   | A.Done -> Some (bits_of dst)
   | _ | (exception Invalid_argument _) -> None
 
 let reference3 k s c a b =
-  let dst = A.create Rig.host (A.dtype a) s in
+  let dst = A.create Rig.host (A.dtype a) (Iarray.of_array s) in
   match
     Support.map3 cpu k ~dst (stretched s c) (stretched s a) (stretched s b)
   with
@@ -252,7 +252,7 @@ let binaries =
 let law_binary (s, Case a, rest) =
   let dt = A.dtype a in
   let b = match rest with [ Case b ] -> A.expect dt (A.Any b) | _ -> a in
-  cover "broadcast" (L.shape (A.layout b) <> s);
+  cover "broadcast" (Iarray.to_array (L.shape (A.layout b)) <> s);
   cover "complex" (D.is D.Complex dt);
   List.iter
     (fun (o : binary) ->
@@ -324,7 +324,8 @@ let law_where ((s, Case a, rest), flags) =
   let b = match rest with Case b :: _ -> A.expect dt (A.Any b) | [] -> a in
   let n = Array.fold_left ( * ) 1 s in
   let c =
-    A.of_array D.Bool s (Array.init n (fun i -> List.nth flags (i mod 8)))
+    A.of_array D.Bool (Iarray.of_array s)
+      (Array.init n (fun i -> List.nth flags (i mod 8)))
   in
   agrees "where" ~accepted:true
     (fun () -> reference3 Where s c a b)

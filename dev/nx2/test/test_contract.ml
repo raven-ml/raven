@@ -20,7 +20,8 @@ let pp_shape ppf s =
     (String.concat "; " (Array.to_list (Array.map string_of_int s)))
 
 let numel s = Array.fold_left ( * ) 1 s
-let host dt s xs = Nx.Repr.of_array Nx.Host.v (A.of_array dt s xs)
+let host dt s xs =
+  Nx.Repr.of_array Nx.Host.v (A.of_array dt (Iarray.of_array s) xs)
 let read x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
 
 (* Rounding to float32, and float32's fused multiply-add: [a b] is exact in
@@ -1360,7 +1361,8 @@ let errors =
          than float32)" (fun () ->
           let i s =
             Nx.Repr.of_array Nx.Host.v
-              (A.of_array D.Int32 s (Array.make (numel s) 1l))
+              (A.of_array D.Int32 (Iarray.of_array s)
+                 (Array.make (numel s) 1l))
           in
           Nx.contract Nx.int32 ~acc:Nx.bool
             (Nx.Pattern.v "i k, k j -> i j | k")

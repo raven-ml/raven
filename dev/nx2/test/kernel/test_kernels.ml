@@ -242,8 +242,12 @@ let reference (type v s w r) (a : (v, s) A.t) (d : (w, r) D.t) : (w, r) A.t =
           (L.shape (A.layout a))
           (Array.map (cast_value s d) (A.to_array a))
       in
-      let each f = List.iter f (indices (L.shape (A.layout a))) in
-      let re i = Array.append i [| 0 |] in
+      let each f =
+        List.iter
+          (fun i -> f (Iarray.of_array i))
+          (indices (Iarray.to_array (L.shape (A.layout a))))
+      in
+      let re i = Iarray.append i [| 0 |] in
       (match (D.Any s, D.Any d) with
       | D.Any D.Float32, D.Any D.Complex64 ->
           let w = words want and x = words a in
@@ -363,7 +367,7 @@ let bytes_of_seed seed n =
 (* A contiguous array of [dt] of shape [s] over the bytes of [seed], every
    seventh element one of [dt]'s specials in turn. *)
 let seeded (type v s) (dt : (v, s) D.t) s seed : (v, s) A.t =
-  let n = Array.fold_left ( * ) 1 s in
+  let n = Iarray.fold_left ( * ) 1 s in
   let data = Bytes.of_string (bytes_of_seed seed (max 1 (D.bytes dt n))) in
   (match specials dt with
   | [] -> ()
@@ -381,7 +385,7 @@ let pp_case ppf (Case a) =
    random or one of [dt]'s specials. *)
 let drawn (type v s) (dt : (v, s) D.t) s : (v, s) A.t Gen.t =
   let open Gen in
-  let n = Array.fold_left ( * ) 1 s in
+  let n = Iarray.fold_left ( * ) 1 s in
   let bytes w = string_of ~size:(const w) char in
   let+ data =
     if D.bits dt < 8 then bytes (D.bytes dt n)
@@ -404,7 +408,7 @@ let case_of dts =
   let open Gen in
   let* (D.Any dt) = dts in
   let* s = shape in
-  let* a = drawn dt s in
+  let* a = drawn dt (Iarray.of_array s) in
   let lead =
     let+ e = int_range 2 3 in
     Some (M.Broadcast (Iarray.of_array (Array.append [| e |] s)))
@@ -422,7 +426,7 @@ let large_at dt h w view seed =
   let s =
     match view with 0 -> [| h; w |] | 1 -> [| w; h |] | _ -> [| h; 2 * w |]
   in
-  let a = seeded dt s seed in
+  let a = seeded dt (Iarray.of_array s) seed in
   match view with
   | 0 -> Case a
   | 1 -> Case (Option.get (A.move (M.Permute [| 1; 0 |]) a))
@@ -475,7 +479,7 @@ let covers (Case a) =
   cover "no element" (n = 0);
   cover "one element" (n = 1);
   cover "strided" (n > 1 && not (L.is_contiguous l));
-  cover "broadcast" (Array.exists (fun s -> s = 0) (L.strides l) && n > 1);
+  cover "broadcast" (Iarray.exists (fun s -> s = 0) (L.strides l) && n > 1);
   cover "sub-byte" (D.bits (A.dtype a) < 8)
 
 let covers_large (Case a) =
@@ -872,6 +876,7 @@ let rec expected : type v s.
           (reference (A.v D.Float32 (L.contiguous shape) (B.of_string b)) dt)
   | _ ->
   let per idx =
+    let idx = Iarray.of_array idx in
     match D.kind dt with
     | D.Float when D.bits dt = 32 ->
         let args =
@@ -906,7 +911,7 @@ let rec expected : type v s.
         else low_bytes (D.bits dt / 8) r
     | D.Complex when D.bits dt = 64 ->
         let part a i =
-          Int32.to_int (A.get (words a) (Array.append idx [| i |])) land 0xFFFF_FFFF
+          Int32.to_int (A.get (words a) (Iarray.append idx [| i |])) land 0xFFFF_FFFF
         in
         let args =
           Array.concat (Array.to_list (Array.map (fun a -> [| part a 0; part a 1 |]) ops))
@@ -924,17 +929,18 @@ let rec expected : type v s.
         if compare then [ Bool.to_int (r.(0) <> 0.) ]
         else low_bytes 8 (Int64.bits_of_float r.(0)) @ low_bytes 8 (Int64.bits_of_float r.(1))
   in
-  Array.of_list (List.concat_map per (indices shape))
+  Array.of_list (List.concat_map per (indices (Iarray.to_array shape)))
 
 (* [x]'s shape over drawn bytes, its axes laid out in reverse or in order. *)
 let alike (type v s) (x : (v, s) A.t) : (v, s) A.t Gen.t =
   let open Gen in
   let s = L.shape (A.layout x) in
-  let r = Array.length s in
+  let r = Iarray.length s in
   let rev = Array.init r (fun i -> r - 1 - i) in
   let* flip = bool in
   if flip && r >= 2 then
-    let+ y = drawn (A.dtype x) (Array.map (fun i -> s.(i)) rev) in
+    let reversed = Iarray.init r (fun i -> Iarray.get s rev.(i)) in
+    let+ y = drawn (A.dtype x) reversed in
     Option.get (A.move (M.Permute (Iarray.of_array rev)) y)
   else drawn (A.dtype x) s
 
@@ -1137,9 +1143,10 @@ let law_map0 (b : Support.backend) (D.Any dt, shape, seed) =
   let module K = (val b.kernels) in
   let w = max 1 (D.bits dt / 8) in
   let n = Array.fold_left ( * ) 1 shape in
+  let s = Iarray.of_array shape in
   let e = bits_of (seeded dt [| 1 |] seed) in
   let fill = String.init (Array.length e) (fun i -> Char.chr e.(i)) in
-  answers b (K0 (Fill fill)) (D.Any dt) (D.Any dt) shape ~accepted:true
+  answers b (K0 (Fill fill)) (D.Any dt) (D.Any dt) s ~accepted:true
     ~want:(fun () -> Array.concat (List.init n (fun _ -> Array.sub e 0 w)))
     (fun dst -> Support.map0 (module K) (Fill fill) ~dst);
   if Array.length shape > 0 then begin
@@ -1147,11 +1154,11 @@ let law_map0 (b : Support.backend) (D.Any dt, shape, seed) =
     (* Each index along [axis], an int64; a destination of another dtype is
        not the program's. *)
     let iota (D.Any d) =
-      answers b (K0 (Iota axis)) (D.Any d) (D.Any d) shape
+      answers b (K0 (Iota axis)) (D.Any d) (D.Any d) s
         ~accepted:(D.equal d D.Int64)
         ~want:(fun () ->
           let i = List.map (fun idx -> Int64.of_int idx.(axis)) (indices shape) in
-          bits_of (A.of_array D.Int64 shape (Array.of_list i)))
+          bits_of (A.of_array D.Int64 s (Array.of_list i)))
         (fun dst -> Support.map0 (module K) (Iota axis) ~dst)
     in
     iota (D.Any D.Int64);
@@ -1167,6 +1174,7 @@ let law_map0_inside (b : Support.backend) (D.Any dt, s, (lead, trail), seed)
     =
   let module K = (val b.kernels) in
   let n = Array.fold_left ( * ) 1 s in
+  let s = Iarray.of_array s in
   let strides = L.strides (L.contiguous s) in
   cover "sub-byte, mid-byte" (D.bits dt < 8 && lead mod (8 / D.bits dt) <> 0);
   if Rig.equal b.device Rig.host then
@@ -1198,7 +1206,7 @@ let law_map0_inside (b : Support.backend) (D.Any dt, s, (lead, trail), seed)
   in
   let e = bits_of (seeded dt [| 1 |] (seed + 1)) in
   inside dt (Support.Fill (String.init (Array.length e) (fun i -> Char.chr e.(i))));
-  for axis = 0 to Array.length s - 1 do
+  for axis = 0 to Iarray.length s - 1 do
     inside D.Int64 (Support.Iota axis)
   done
 
@@ -1771,7 +1779,7 @@ let law_map_split ?declines ?(labels = true) ?length ?(padded = false)
   in
   (* nx.cpu's loop holds sixteen operands: a program within them is one
      map. *)
-  let rank = Array.length shape in
+  let rank = Iarray.length shape in
   let p, types = program ?length st ins ~room:16 ~rank in
   let load (A.Any x) = if padded then unpadded x else Nx_kernel.Plain x in
   let loads = Array.map load ops in
@@ -1819,7 +1827,7 @@ let law_map_split ?declines ?(labels = true) ?length ?(padded = false)
             (Array.length ins + Iarray.length p.outs + List.length axes > 4);
           let repeated (A.Any x) =
             let l = A.layout x in
-            L.numel l > 1 && Array.for_all (( = ) 0) (L.strides l)
+            L.numel l > 1 && Iarray.for_all (( = ) 0) (L.strides l)
           in
           cover "a load of one repeated element" (Array.exists repeated ops)
           end;
@@ -1845,7 +1853,7 @@ let most_map_loads = A.max_operands - 2
 let law_map_full (b : Support.backend) (Case x) =
   let module K = (val b.kernels) in
   let shape = L.shape (A.layout x) in
-  let rank = Array.length shape and nins = most_map_loads in
+  let rank = Iarray.length shape and nins = most_map_loads in
   let i64 = D.Any D.Int64 in
   let coord a = [ P.Coord a; P.Op2 (Binary Add, nins + (2 * a), nins + (2 * a) + 1) ] in
   let nodes =
@@ -1900,7 +1908,7 @@ let test_map_past (b : Support.backend) () =
 let law_map_wide (b : Support.backend) ((Case x), m) =
   let module K = (val b.kernels) in
   let shape = L.shape (A.layout x) in
-  let rank = Array.length shape and i64 = D.Any D.Int64 in
+  let rank = Iarray.length shape and i64 = D.Any D.Int64 in
   let nodes = ref [ P.Op1 (Cast, i64, 0); P.In 0 ] in
   let add n =
     nodes := n :: !nodes;
@@ -2296,7 +2304,7 @@ let law_large_guards (b : Support.backend) ((Case a as c), d, side) =
       in
       equal answer A.Done
         (Elements.same_guarded side ~call [| A.Any a |]
-           [| (d, L.shape (A.layout a)) |]))
+           [| (d, Iarray.to_array (L.shape (A.layout a))) |]))
     [ (P.Copy, D.Any (A.dtype a)); (Cast, d) ]
 
 (* A map's outputs with its loads, plain or padded, through their views,
@@ -2312,8 +2320,9 @@ let law_map_guards (b : Support.backend) ((Pair (x, y), seed), side) =
   let padded = Random.State.bool st in
   cover "padded loads" padded;
   cover "plain loads" (not padded);
-  let p, types = program st ins ~room:16 ~rank:(Array.length shape) in
-  let dsts = Array.map (fun o -> (types.(o), shape)) (Iarray.to_array p.outs) in
+  let p, types = program st ins ~room:16 ~rank:(Iarray.length shape) in
+  let s = Iarray.to_array shape in
+  let dsts = Array.map (fun o -> (types.(o), s)) (Iarray.to_array p.outs) in
   let load (A.Any x) = if padded then unpadded x else Nx_kernel.Plain x in
   let call xs ds = K.map p ~dsts:ds (Array.map load xs) in
   equal answer A.Done (Elements.same_guarded side ~call ops dsts)
@@ -2893,7 +2902,7 @@ let law_map_held ?(small = false) (b : Support.backend)
       cover "reuse" (pattern = Reuse);
       cover "never" (pattern = Never);
       cover "guarded" (side <> None);
-      let numel = Array.fold_left ( * ) 1 shape in
+      let numel = Iarray.fold_left ( * ) 1 shape in
       if small then cover "a few elements" (numel <= 4)
       else cover "a thousand elements or more" (numel >= 1000);
       match split b p types shape [| A.Any x |] with

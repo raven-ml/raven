@@ -85,7 +85,10 @@ let gather d dt w sources =
   let on =
     if A.Dtype.bits dt mod 8 = 0 || Rig.reaches Rig.host d then d else Rig.host
   in
-  let dst = A.create on dt (Array.map (fun (r : M.range) -> r.count) w) in
+  let dst =
+    A.create on dt
+      (Iarray.init (Array.length w) (fun i -> (w.(i) : M.range).count))
+  in
   let seen = ref [] in
   Array.iter
     (fun (sw, a) ->
@@ -142,7 +145,8 @@ let value (type v s d e) ~by (p : e Devices.placement) (x : (v, s, d) Value.t) :
            let w = Devices.window ~by p shape j
            and d = Devices.rig set devices.(j) in
            if empty w then
-             A.create d dt (Array.map (fun (r : M.range) -> r.count) w)
+             A.create d dt
+               (Iarray.init (Array.length w) (fun i -> (w.(i) : M.range).count))
            else
              match from_one d w sources with
              | Some a -> a

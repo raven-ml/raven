@@ -26,7 +26,7 @@ type monoid = Nx_kernel.monoid = Sum | Prod | Max | Min
 
 let pp_dtype ppf (D.Any dt) = D.pp ppf dt
 let total s = Array.fold_left ( * ) 1 s
-let shape_of (A.Any x) = L.shape (A.layout x)
+let shape_of (A.Any x) = Iarray.to_array (L.shape (A.layout x))
 
 let monoid_name = function
   | Sum -> "Sum"
@@ -60,8 +60,9 @@ let plain_of (A.Any x) = Nx_kernel.Plain x
 
 (* The shape [l] has once loaded: its array's, padded as its padding says. *)
 let load_shape : Nx_kernel.load -> _ = function
-  | Plain x -> Ok (L.shape (A.layout x))
-  | Padded { x; pad; _ } -> Nx_kernel.Shape.padded pad (L.shape (A.layout x))
+  | Plain x -> Ok (Iarray.to_array (L.shape (A.layout x)))
+  | Padded { x; pad; _ } ->
+      Nx_kernel.Shape.padded pad (Iarray.to_array (L.shape (A.layout x)))
 
 (* The loop's shape: the loads' once loaded, else, for loads of several
    shapes or a padding that fits none, the first load's operand's, which
@@ -72,8 +73,8 @@ let loop_shape (loads : Nx_kernel.load array) =
   | Ok s when Array.for_all (( = ) (Ok s)) shapes -> s
   | _ -> (
       match loads.(0) with
-      | Plain x -> L.shape (A.layout x)
-      | Padded { x; _ } -> L.shape (A.layout x))
+      | Plain x -> Iarray.to_array (L.shape (A.layout x))
+      | Padded { x; _ } -> Iarray.to_array (L.shape (A.layout x)))
 let dtype_of (A.Any x) = D.Any (A.dtype x)
 let accepts m (D.Any dt) = Nx_kernel.accepts (Monoid m) dt
 
@@ -113,7 +114,8 @@ let call (b : Support.backend) c dst =
    it; [None] if they declined. *)
 let run (b : Support.backend) c =
   let (A.Any x) = c.x in
-  let dst = A.Any (A.create b.device (A.dtype x) (result_shape c)) in
+  let ys = Iarray.of_array (result_shape c) in
+  let dst = A.Any (A.create b.device (A.dtype x) ys) in
   match call b c dst with
   | A.Done -> Some (host dst)
   | A.Declined -> None
@@ -1453,7 +1455,8 @@ let law_prefix (b : Support.backend) c =
    example and add its nonempty scan counterpart. *)
 let law_declined (b : Support.backend) c =
   let (A.Any x) = c.x in
-  let dst = on b (A.Any (A.create Rig.host (A.dtype x) (result_shape c))) in
+  let ys = Iarray.of_array (result_shape c) in
+  let dst = on b (A.Any (A.create Rig.host (A.dtype x) ys)) in
   let bits () = Array.map bits_of (terms (host dst)) in
   let before = bits () in
   match call b c dst with
@@ -1556,7 +1559,7 @@ let cast_into (D.Any d) (A.Any x) =
 
 (* [c] by [k] into a fresh destination of [d]. *)
 let run_into k (D.Any d) c x =
-  let dst = A.Any (A.create Rig.host d (result_shape c)) in
+  let dst = A.Any (A.create Rig.host d (Iarray.of_array (result_shape c))) in
   match compute k ~scan:c.scan (identity (dtype_of x)) c.monoid c.axes dst
           [| plain_of x |] with
   | A.Done -> dst
@@ -1726,7 +1729,7 @@ let test_nan_bits (b : Support.backend) () =
         equal ~msg:(msg ^ ", scanned") same running (run true m))
       monoids;
     let stat ~scan r k =
-      let s = if scan then [| n |] else [||] in
+      let s : _ iarray = if scan then [| n |] else [||] in
       let dsts = Array.init k (fun _ -> A.Any (A.create Rig.host dt s)) in
       let loads = [| plain_of x |] in
       let answer =
@@ -1836,7 +1839,8 @@ end
 let law_threads (b : Support.backend) c =
   let (A.Any x) = c.x in
   let into k =
-    let dst = A.create Rig.host (A.dtype x) (result_shape c) in
+    let ys = Iarray.of_array (result_shape c) in
+    let dst = A.create Rig.host (A.dtype x) ys in
     let p = identity (dtype_of c.x) in
     match compute k ~scan:c.scan p c.monoid c.axes (A.Any dst) [| plain_of c.x |] with
     | A.Done -> A.Any dst
@@ -1957,7 +1961,9 @@ let test_padded_refusals (b : Support.backend) () =
   let f32 = D.Any D.Float32 in
   let id = identity f32 in
   let twice = P.v ~ins:[| f32 |] [| P.In 0; Op2 (Binary Add, 0, 0) |] ~outs:[| 1 |] in
-  let dst s = on (A.of_array D.Float32 s (Array.make (total s) 9.)) in
+  let dst s =
+    on (A.of_array D.Float32 (Iarray.of_array s) (Array.make (total s) 9.))
+  in
   let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = ) in
   let refused msg call dsts =
     let before = Array.map (fun d -> A.to_array (A.expect D.Float32 (host d))) dsts in
@@ -2031,7 +2037,7 @@ let pp_padded ppf p =
 let pad_array (A.Any x) fill (pad : Nx_kernel.pad) =
   let dt = A.dtype x in
   let w = D.bits dt / 8 in
-  let s = L.shape (A.layout x) in
+  let s = Iarray.to_array (L.shape (A.layout x)) in
   let r = Array.length s in
   let padded =
     Array.init r (fun i ->
@@ -2056,11 +2062,13 @@ let pad_array (A.Any x) fill (pad : Nx_kernel.pad) =
       (* A sub-byte element is no byte of its own: element by element. *)
       let one = A.v dt (L.contiguous [||]) (Rig.Buffer.of_string fill) in
       let f = A.get one [||] in
-      let a = A.create Rig.host dt padded in
+      let a = A.create Rig.host dt (Iarray.of_array padded) in
       List.iter
         (fun idx ->
-          A.set a idx
-            (match source idx with Some src -> A.get x src | None -> f))
+          A.set a (Iarray.of_array idx)
+            (match source idx with
+            | Some src -> A.get x (Iarray.of_array src)
+            | None -> f))
         (indices padded);
       a
     end
@@ -2082,7 +2090,8 @@ let pad_array (A.Any x) fill (pad : Nx_kernel.pad) =
               | None -> fill.[q])
           done)
         (indices padded);
-      A.v dt (L.contiguous padded) (Rig.Buffer.of_string (Bytes.to_string b))
+      let l = L.contiguous (Iarray.of_array padded) in
+      A.v dt l (Rig.Buffer.of_string (Bytes.to_string b))
     end
   in
   if Iarray.length pad.windows = 0 then A.Any a
@@ -2337,7 +2346,8 @@ let law_padded (b : Support.backend) p =
   cover "a broadcast axis the padding leaves alone" alone;
   match p.loaded with
   | Reads c ->
-      let dst = A.Any (A.create Rig.host (A.dtype x) (result_shape c)) in
+      let ys = Iarray.of_array (result_shape c) in
+      let dst = A.Any (A.create Rig.host (A.dtype x) ys) in
       cover "computed" true;
       (* The dtypes and the fills. *)
       let lo i = Iarray.get pad.lo i and hi i = Iarray.get pad.hi i in
@@ -2379,7 +2389,8 @@ let law_padded (b : Support.backend) p =
           Array.of_list
             (List.filteri (fun i _ -> not (Array.mem i r.axes)) (Array.to_list r.read))
       in
-      let dst = A.Any (A.create Rig.host (A.dtype x) (Array.map (max 0) kept)) in
+      let kept = Iarray.of_array (Array.map (max 0) kept) in
+      let dst = A.Any (A.create Rig.host (A.dtype x) kept) in
       let p = identity (dtype_of p.x) in
       (match compute b.kernels ~scan:r.scan p r.monoid r.axes dst loads with
       | A.Shape_mismatch -> ()
@@ -2481,8 +2492,8 @@ let moments_examples =
     in
     let xs = Array.init n term in
     match d with
-    | D.Any D.Float32 -> A.Any (A.of_array D.Float32 s xs)
-    | D.Any D.Float64 -> A.Any (A.of_array D.Float64 s xs)
+    | D.Any D.Float32 -> A.Any (A.of_array D.Float32 (Iarray.of_array s) xs)
+    | D.Any D.Float64 -> A.Any (A.of_array D.Float64 (Iarray.of_array s) xs)
     | _ -> invalid_arg "moments_examples"
   in
   [
@@ -2496,7 +2507,7 @@ let moments_examples =
 let run_moments k (c : moments) =
   let module K = (val k : Nx_kernel.S) in
   let (A.Any x) = c.x in
-  let s = shape_of c.x in
+  let s = Iarray.of_array (shape_of c.x) in
   let mean = A.create Rig.host (A.dtype x) s in
   let var = A.create Rig.host (A.dtype x) s in
   let p = identity (dtype_of c.x) in
@@ -2886,7 +2897,7 @@ let stat_shape c = result_shape (as_case c)
    mean and the variance for Moments, one for Logsumexp. *)
 let stat_dsts c =
   let (A.Any x) = c.x in
-  let s = stat_shape c in
+  let s = Iarray.of_array (stat_shape c) in
   let like () = A.Any (A.create Rig.host (A.dtype x) s) in
   match c.r with
   | Arg _ -> [| like (); A.Any (A.create Rig.host D.Int64 s) |]
@@ -3098,7 +3109,7 @@ let stat_scan_case =
 let run_stat_scan k (c : stat) =
   let module K = (val k : Nx_kernel.S) in
   let (A.Any x) = c.x in
-  let like dt = A.Any (A.create Rig.host dt (shape_of c.x)) in
+  let like dt = A.Any (A.create Rig.host dt (Iarray.of_array (shape_of c.x))) in
   let dsts =
     match c.r with
     | Arg _ -> [| like (A.dtype x); like D.Int64 |]
@@ -3446,7 +3457,8 @@ let array_bits (type a b) (dt : (a, b) D.t) bits s xs =
       if bits = 32 then Bytes.set_int32_le b (4 * i) (Int32.bits_of_float x)
       else Bytes.set_int64_le b (8 * i) (Int64.bits_of_float x))
     xs;
-  A.Any (A.v dt (L.contiguous s) (Rig.Buffer.of_string (Bytes.to_string b)))
+  let l = L.contiguous (Iarray.of_array s) in
+  A.Any (A.v dt l (Rig.Buffer.of_string (Bytes.to_string b)))
 
 (* [r] along [axes] of the array of shape [s] of [xs] by [k], each
    destination's terms. *)
@@ -3586,7 +3598,9 @@ let stat_examples =
 let test_in_place (b : Support.backend) () =
   let module K = (val b.kernels) in
   let copy (A.Any x) = A.Any (A.copy x) in
-  let fresh (A.Any x as a) = A.Any (A.create Rig.host (A.dtype x) (shape_of a)) in
+  let fresh (A.Any x) =
+    A.Any (A.create Rig.host (A.dtype x) (L.shape (A.layout x)))
+  in
   let scan r axis x dsts =
     match
       K.scan (identity (dtype_of x)) ~axis (r, 0) ~dsts [| plain_of x |]
@@ -3605,7 +3619,7 @@ let test_in_place (b : Support.backend) () =
     let dst j =
       match r with
       | Arg _ when j = 1 ->
-          A.Any (A.create Rig.host D.Int64 (shape_of x))
+          A.Any (A.create Rig.host D.Int64 (Iarray.of_array (shape_of x)))
       | _ -> fresh x
     in
     let n = match r with Moments | Arg _ -> 2 | Monoid _ | Logsumexp -> 1 in
@@ -4245,9 +4259,9 @@ let fused_case =
 let fused_dsts (b : Support.backend) c =
   let s = c.shape in
   let y =
-    if c.scan then s
+    if c.scan then Iarray.of_array s
     else
-      Array.of_list
+      Iarray.of_list
         (List.filteri (fun i _ -> not (Array.mem i c.axes)) (Array.to_list s))
   in
   let (D.Any dt) = P.dtype c.prog (Iarray.get c.prog.outs c.k) in
@@ -4259,7 +4273,7 @@ let fused_dsts (b : Support.backend) c =
 
 (* Each destination's bytes. *)
 let bytes_of (A.Any x) =
-  let n = total (L.shape (A.layout x)) in
+  let n = Iarray.fold_left ( * ) 1 (L.shape (A.layout x)) in
   let w = max 1 (D.bits (A.dtype x) / 8) in
   let u = A.copy x in
   match A.bitcast D.Uint8 u with
@@ -4318,7 +4332,7 @@ let law_fused (b : Support.backend) c =
     Array.map
       (fun o ->
         let (D.Any dt) = P.dtype c.prog o in
-        A.Any (A.create b.device dt s))
+        A.Any (A.create b.device dt (Iarray.of_array s)))
       (Iarray.to_array c.prog.outs)
   in
   (match K.map c.prog ~dsts:outs (plain c.loads) with
@@ -4351,11 +4365,11 @@ let law_fused (b : Support.backend) c =
               Option.get
                 (A.move
                    (M.Slice
-                      (Iarray.of_array (Array.mapi
+                      (Iarray.mapi
                          (fun i e ->
-                           { M.start = 0; count = (if st.(i) = 0 then min e 1 else e);
+                           { M.start = 0; count = (if Iarray.get st i = 0 then min e 1 else e);
                              step = 1 })
-                         (L.shape l))))
+                         (L.shape l)))
                    y)
             in
             A.transfer ~src:(once x) ~dst:(once g);
@@ -4662,7 +4676,7 @@ let nan_before_units =
   Bytes.set_int32_le bits (4 * 5) (Int32.bits_of_float Float.nan);
   let b =
     A.Any
-      (A.v D.Float32 (L.contiguous shape)
+      (A.v D.Float32 (L.contiguous (Iarray.of_array shape))
          (Rig.Buffer.of_string (Bytes.to_string bits)))
   in
   let a = broadcast_factor f32 shape [| 1 |] (plain_view 3) ~specials:0 19 in
@@ -4804,7 +4818,7 @@ let sum_products (module M : Nx_kernel.S) (b : Support.backend) c p loads =
       (List.filteri (fun i _ -> not (Array.mem i c.paxes)) (Array.to_list s))
   in
   let (D.Any pt) = c.pdt in
-  let dst = A.Any (A.create b.device pt kept) in
+  let dst = A.Any (A.create b.device pt (Iarray.of_array kept)) in
   match
     M.reduce p ~shape:s ~axes:(Iarray.of_array c.paxes) [| (Monoid Sum, 0) |]
       ~dsts:[| dst |] loads
@@ -4845,7 +4859,7 @@ let law_products (b : Support.backend) c =
       "a side unpadded"; "a NaN fill"; "a -0 fill" ];
   let prog = product_prog ~same:c.same c.ldt c.pdt in
   let (D.Any pt) = c.pdt in
-  let y = A.create b.device pt s in
+  let y = A.create b.device pt (Iarray.of_array s) in
   (match K.map prog ~dsts:[| A.Any y |] (Array.map plain_of c.reads) with
   | A.Done -> ()
   | r -> failf "the map answered %a" Nx_array_support.pp_answer r);
@@ -4859,7 +4873,9 @@ let law_products (b : Support.backend) c =
    to +0: a row of 64 outputs of 9 terms, the positive factor broadcast. *)
 let test_zero_products (b : Support.backend) () =
   let s = [| 64; 9 |] in
-  let x = A.Any (A.of_array D.Float32 s (Array.make (64 * 9) (-0.))) in
+  let x =
+    A.Any (A.of_array D.Float32 (Iarray.of_array s) (Array.make (64 * 9) (-0.)))
+  in
   let row =
     A.of_array D.Float32 [| 1; 9 |]
       (Array.init 9 (fun i -> 0.5 +. Float.of_int i))
@@ -4920,7 +4936,7 @@ let test_padded_programs (b : Support.backend) () =
       Array.of_list
         (List.filteri (fun i _ -> not (Array.mem i axes)) (Array.to_list shape))
     in
-    let fresh () = A.Any (A.create Rig.host D.Float32 kept) in
+    let fresh () = A.Any (A.create Rig.host D.Float32 (Iarray.of_array kept)) in
     let reads =
       Array.map2 (fun x pad -> plain_of (pad_array x one pad)) xs pads
     in
@@ -5193,13 +5209,13 @@ let carry_terms (type v) (vs : v drawn) c : v array =
 let along1 (A.Any x) lo count =
   let s = L.shape (A.layout x) in
   let r =
-    Array.mapi
+    Iarray.mapi
       (fun a e ->
         if a = 1 then { M.start = lo; count; step = 1 }
         else { M.start = 0; count = e; step = 1 })
       s
   in
-  A.Any (Option.get (A.move (M.Slice (Iarray.of_array r)) x))
+  A.Any (Option.get (A.move (M.Slice r) x))
 
 (* The program a carry case scans: [In 0], or a copy of it where
    [through]. *)
@@ -5262,7 +5278,7 @@ let law_carry ~exact (b : Support.backend) c =
         let (A.Any x) = along1 z (4096 * k) 4096 in
         let y = A.Any (A.create b.device ct [| c.outer; c.inner |]) in
         ok "reduce"
-          (K.reduce p0 ~shape:(L.shape (A.layout x))
+          (K.reduce p0 ~shape:(Iarray.to_array (L.shape (A.layout x)))
              ~axes:[| 1 |] [| (Monoid c.cm, 0) |] ~dsts:[| y |] [| Plain x |]);
         y
       in
@@ -5670,7 +5686,7 @@ let run_special (b : Support.backend) c =
   let st = c.stat in
   let (A.Any x as xa) = on b st.x in
   let s = if c.scanned then shape_of st.x else stat_shape st in
-  let like dt = A.Any (A.create b.device dt s) in
+  let like dt = A.Any (A.create b.device dt (Iarray.of_array s)) in
   let dsts =
     match st.r with
     | Arg _ -> [| like (A.dtype x); like D.Int64 |]
@@ -5951,7 +5967,7 @@ let stat_run k ~scan (c : stat) (D.Any d) x =
   let module K = (val k : Nx_kernel.S) in
   let s = if scan then shape_of x else stat_shape c in
   let make : type a b. (a, b) D.t -> A.any =
-   fun dt -> A.Any (A.create Rig.host dt s)
+   fun dt -> A.Any (A.create Rig.host dt (Iarray.of_array s))
   in
   let dsts =
     match c.r with
@@ -6128,7 +6144,7 @@ let test_many_reductions (b : Support.backend) () =
   let module K = (val b.kernels) in
   let p = identity (D.Any D.Float32) and shape = [| 4; 3 |] in
   let x =
-    A.of_array D.Float32 shape
+    A.of_array D.Float32 (Iarray.of_array shape)
       [| 1.; 5.; 2.; 0.5; 7.; 3.; 9.; 4.; 4.; 2.; 8.; 6. |]
   in
   let width : Nx_kernel.reduction -> int = function

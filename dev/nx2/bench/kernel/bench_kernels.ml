@@ -92,7 +92,7 @@ let int64s s x =
     Bigarray.Array1.unsafe_set b i (x i)
   done;
   let src = Bigarray.reshape (Bigarray.genarray_of_array1 b) s in
-  let a = A.create Rig.host D.Int64 s in
+  let a = A.create Rig.host D.Int64 (Iarray.of_array s) in
   A.transfer ~src:(A.of_bigarray D.Int64 src) ~dst:a;
   a
 
@@ -101,7 +101,7 @@ let int64s s x =
 let filled (type v s) (dt : (v, s) D.t) s : (v, s) A.t =
   let x i = float_of_int ((i * 7919 mod 251) - 125) *. 0.37 in
   let src = float64s s x in
-  let a = A.create Rig.host dt s in
+  let a = A.create Rig.host dt (Iarray.of_array s) in
   cast_into ~dst:a src;
   a
 
@@ -285,7 +285,7 @@ let normal (type v s) (dt : (v, s) D.t) s : (v, s) A.t =
     r *. cos (2. *. Float.pi *. u ((2 * i) + 1))
   in
   let src = float64s s x in
-  let a = A.create Rig.host dt s in
+  let a = A.create Rig.host dt (Iarray.of_array s) in
   cast_into ~dst:a src;
   a
 
@@ -439,7 +439,7 @@ let contract ?streams ?(init = false) ?operands ?out ~acc name ~sa ~sb
   let (D.Any ot) = Option.value operands ~default:acc in
   let (D.Any yt) = Option.value out ~default:acc in
   let bench (module K : Nx_kernel.S) =
-    let shape (A.Any x) = A.Layout.shape (A.layout x) in
+    let shape (A.Any x) = Iarray.to_array (A.Layout.shape (A.layout x)) in
     row name
       (fun () ->
         let a, b = layout (A.Any (filled ot sa)) (A.Any (filled ot sb)) in
@@ -454,7 +454,7 @@ let contract ?streams ?(init = false) ?operands ?out ~acc name ~sa ~sb
         let init = if init then Some (filled yt y) else None in
         let a : Nx_kernel.operand = { array = a; scale = None } in
         let b : Nx_kernel.operand = { array = b; scale = None } in
-        (A.create Rig.host yt y, init, a, b))
+        (A.create Rig.host yt (Iarray.of_array y), init, a, b))
       (fun (dst, init, a, b) ->
         ok
           (K.contract ~batch:[||] ~contracting ~segments:None ~acc ~dst
@@ -659,9 +659,9 @@ let reduce name (r : Nx_kernel.reduction) ~axes a (module K : Nx_kernel.S) =
     (fun () ->
       let (A.Any x) = a () in
       let dt = D.Any (A.dtype x) in
-      let s = A.Layout.shape (A.layout x) in
+      let s = Iarray.to_array (A.Layout.shape (A.layout x)) in
       let y =
-        Array.of_list
+        Iarray.of_list
           (List.filteri (fun i _ -> not (Array.mem i axes)) (Array.to_list s))
       in
       let like () = A.Any (A.create Rig.host (A.dtype x) y) in
@@ -950,8 +950,9 @@ let sort_row name ~axis ~descending ~k x (module K : Nx_kernel.S) =
   row name
     (fun () ->
       let (A.Any x) = x () in
-      let y = Array.copy (A.Layout.shape (A.layout x)) in
+      let y = Iarray.to_array (A.Layout.shape (A.layout x)) in
       Option.iter (fun k -> y.(axis) <- k) k;
+      let y = Iarray.of_array y in
       let values = A.create Rig.host (A.dtype x) y in
       let positions = A.create Rig.host D.Int64 y in
       fun () -> ok (K.sort ~axis ~descending ~values ~positions x))
@@ -1006,7 +1007,7 @@ let fold_row name ~shape pad x (module K : Nx_kernel.S) =
   row name
     (fun () ->
       let (A.Any x) = x () in
-      let dst = A.create Rig.host (A.dtype x) shape in
+      let dst = A.create Rig.host (A.dtype x) (Iarray.of_array shape) in
       fun () -> ok (K.fold pad ~dst x))
     (fun call -> call ())
 
@@ -1101,17 +1102,18 @@ let definite dt ~batch n = operand ~symmetric:true dt ~batch n
 let linalg name call (module K : Nx_kernel.S) =
   row name (fun () -> call (module K : Nx_kernel.S)) (fun call -> ok (call ()))
 
-let shape x = A.Layout.shape (A.layout x)
-let like x s = A.create Rig.host (A.dtype x) s
+let shape x = Iarray.to_array (A.Layout.shape (A.layout x))
+let like x s = A.create Rig.host (A.dtype x) (Iarray.of_array s)
 
 (* [f] of an array of [shape] of the float of [x]'s precision: svd's and
    eigh's values. *)
 let real_like (type v s b) (x : (v, s) A.t) shape
     (f : 'r. (float, 'r) A.t -> b) : b =
+  let shape = Iarray.of_array shape in
   match A.dtype x with
   | D.Float32 | D.Complex64 -> f (A.create Rig.host f32 shape)
   | _ -> f (A.create Rig.host f64 shape)
-let positions_of s = A.create Rig.host D.Int64 s
+let positions_of s = A.create Rig.host D.Int64 (Iarray.of_array s)
 
 let linalg_rows =
   let flops (type v s) (dt : (v, s) D.t) n =
@@ -1190,7 +1192,7 @@ let linalg_rows =
     routine ~symmetric:false "eig"
       (fun (module K : Nx_kernel.S) a ->
         let w, v = Result.get_ok (Nx_kernel.Shape.eigh (shape a)) in
-        let make s = A.create Rig.host D.Complex128 s in
+        let make s = A.create Rig.host D.Complex128 (Iarray.of_array s) in
         let w = make w and v = make v in
         fun () -> K.eig ~w ~v a)
       f64 ?batch n ~count:(25 * n * n * n)

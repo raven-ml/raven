@@ -32,7 +32,7 @@ let window size step = { A.Move.axis = 0; size; step; dilation = 1 }
 (* The shape [x] has once loaded through [pad]. *)
 let loaded x pad =
   match Nx_kernel.Shape.padded pad (Nx.shape x) with
-  | Ok s -> s
+  | Ok s -> Iarray.of_array s
   | Error _ -> fail "no loaded shape"
 
 (* Sum over the last axis of [x] loaded through [pad], padded with [fill]. *)
@@ -267,7 +267,7 @@ let law_padded c =
       cover "interior padding" (Iarray.exists (fun e -> e > 0) c.p.interior);
       cover "windows" (Iarray.length c.p.windows > 0);
       cover "an element loaded" (Array.fold_left ( * ) 1 shape > 0);
-      let a = A.of_array D.Float32 c.s c.xs in
+      let a = A.of_array D.Float32 (Iarray.of_array c.s) c.xs in
       let want = reference c.s c.xs ~fill:c.fill c.p shape in
       let x = Nx.place Count.on (host a) in
       C.reset ();

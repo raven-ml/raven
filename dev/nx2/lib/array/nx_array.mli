@@ -81,7 +81,7 @@ val create :
   ?memory:Rig.Buffer.kind ->
   Rig.t ->
   ('v, 's) Dtype.t ->
-  int array ->
+  int iarray ->
   ('v, 's) t
 (** [create d dt s] is a fresh C-contiguous array of shape [s] in [d]'s memory
     of kind [memory] (defaults to [Device]), at offset 0, with unspecified
@@ -145,7 +145,7 @@ val bitcast : ('w, 'r) Dtype.t -> ('v, 's) t -> ('w, 'r) t option
     the host does not address its memory, and {!Rig.Lost} as {!Rig.Buffer.wait}
     does. *)
 
-val get : ('v, 's) t -> int array -> 'v
+val get : ('v, 's) t -> int iarray -> 'v
 (** [get a i] is [a]'s element at index [i].
 
     Raises [Invalid_argument] unless [i] has [Layout.rank (layout a)] entries,
@@ -154,7 +154,7 @@ val get : ('v, 's) t -> int array -> 'v
     host does not address it. Raises {!Rig.Lost} if its memory is a lost
     device's or follows work a lost device did not finish. *)
 
-val set : ('v, 's) t -> int array -> 'v -> unit
+val set : ('v, 's) t -> int iarray -> 'v -> unit
 (** [set a i x] stores [x] at [a]'s index [i]. Stores to the other elements of a
     sub-byte element's byte, from any domain, are kept.
 
@@ -167,7 +167,7 @@ val to_array : ('v, 's) t -> 'v array
     a flat [float array]; [int32], [int64] and [Complex.t] elements are boxed.
 *)
 
-val of_array : ('v, 's) Dtype.t -> int array -> 'v array -> ('v, 's) t
+val of_array : ('v, 's) Dtype.t -> int iarray -> 'v array -> ('v, 's) t
 (** [of_array dt s xs] is a fresh C-contiguous array of shape [s] on {!Rig.host}
     holding [xs] in C order of indices, each stored as {!Dtype.of_float} says.
 

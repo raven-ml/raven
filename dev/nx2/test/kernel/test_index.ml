@@ -491,7 +491,9 @@ let law_adjoint (b : Support.backend) c =
   match gather_on b ~axis:c.axis c.idx x with
   | None -> ()
   | Some g -> (
-      let into = A.of_array D.Int64 xs (Array.make (total xs) 0L) in
+      let into =
+        A.of_array D.Int64 (Iarray.of_array xs) (Array.make (total xs) 0L)
+      in
       let s =
         scatter_on b
           {
@@ -812,8 +814,11 @@ let scatter_misfits =
      let+ dst = near into in
      { along = axis; shapes = [| into; idx; updates; dst |] })
 
-let zeros32 s = A.of_array D.Float32 s (Array.make (total s) 0.)
-let zeros64 s = A.of_array D.Int64 s (Array.make (total s) 0L)
+let zeros32 s =
+  A.of_array D.Float32 (Iarray.of_array s) (Array.make (total s) 0.)
+
+let zeros64 s =
+  A.of_array D.Int64 (Iarray.of_array s) (Array.make (total s) 0L)
 
 (* [got] is Done where [want] is [dst]'s shape, else Shape_mismatch. *)
 let check_fit want dst got =
@@ -1165,7 +1170,7 @@ let parted_cap = 512 lsl 20
 (* A float4_e2m1fn array of shape [s], each element +0. *)
 let f4_zeros s =
   let n = Array.fold_left ( * ) 1 s in
-  A.of_array D.Float4_e2m1fn s (Array.make n 0.)
+  A.of_array D.Float4_e2m1fn (Iarray.of_array s) (Array.make n 0.)
 
 (* A float4_e2m1fn Add along axis 0 of [2Mi, 2], each update at a position
    of its own, so that threads part each column's targets, its elements
@@ -1185,7 +1190,7 @@ let test_parted_memory (b : Support.backend) () =
     A.of_bigarray D.Int64 (Bigarray.reshape (Bigarray.genarray_of_array1 ps) s)
   in
   let into = f4_zeros s and updates = f4_zeros s in
-  let dst = A.create Rig.host D.Float4_e2m1fn s in
+  let dst = A.create Rig.host D.Float4_e2m1fn (Iarray.of_array s) in
   let run () =
     if not (Support.cap_memory parted_cap) then 3
     else

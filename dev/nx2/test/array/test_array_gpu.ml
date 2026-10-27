@@ -35,7 +35,7 @@ let slice rs a =
        a)
 
 let iota dt s =
-  let n = Array.fold_left ( * ) 1 s in
+  let n = Iarray.fold_left ( * ) 1 s in
   A.of_array dt s
     (Array.init n (fun i -> D.of_float dt (float_of_int (i mod 7))))
 

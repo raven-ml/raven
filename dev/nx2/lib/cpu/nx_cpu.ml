@@ -84,13 +84,14 @@ let rec fits shape (loads : Nx_kernel.load array) i =
          let l = Nx_array.layout x in
          Nx_array.Layout.rank l = Array.length shape && extents l shape 0
      | Padded { x; pad; _ } ->
-         let s = Nx_array.Layout.shape (Nx_array.layout x) in
+         let s = Iarray.to_array (Nx_array.Layout.shape (Nx_array.layout x)) in
          Nx_kernel.Shape.padded pad s = Ok shape)
      && fits shape loads (i + 1)
 
 (* The shape of the destination [d], whose shape a map's or a scan's loop
    has. *)
-let loop_of (Nx_array.Any d) = Nx_array.Layout.shape (Nx_array.layout d)
+let loop_of (Nx_array.Any d) =
+  Iarray.to_array (Nx_array.Layout.shape (Nx_array.layout d))
 
 (* Maps (map.c): each load passes its padding, or none passes any where
    no load is padded, so that a plain map allocates nothing. *)
@@ -339,7 +340,7 @@ external c2r_c :
   (Complex.t, 'c) Nx_array.t ->
   Nx_array.answer = "nx_cpu_c2r"
 
-let shape a = Nx_array.Layout.shape (Nx_array.layout a)
+let shape a = Iarray.to_array (Nx_array.Layout.shape (Nx_array.layout a))
 
 (* Whether [dst] has the shape [Nx_kernel.Shape] gives, if it gives one. *)
 let has_shape want dst =

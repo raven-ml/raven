@@ -24,7 +24,7 @@ let plain x : Nx_kernel.operand = { array = A.Any x; scale = None }
 let pp_any ppf (A.Any x) =
   Format.fprintf ppf "%a %a" D.pp (A.dtype x) L.pp (A.layout x)
 
-let shape_of (A.Any x) = L.shape (A.layout x)
+let shape_of (A.Any x) = Iarray.to_array (L.shape (A.layout x))
 let total s = Array.fold_left ( * ) 1 s
 
 (* [x] cast into [d], by nx.cpu. *)
@@ -35,7 +35,7 @@ let cast_into d (A.Any x) =
 
 (* [x] cast to [dt], C-contiguous. *)
 let cast_to (D.Any dt) x =
-  let d = A.create Rig.host dt (shape_of x) in
+  let d = A.create Rig.host dt (Iarray.of_array (shape_of x)) in
   cast_into d x;
   A.Any d
 
@@ -52,7 +52,7 @@ let on (b : Support.backend) (A.Any x as a) =
 (* [x] as float64: every value of a dtype a contraction takes is one of
    float64's. *)
 let to64 x =
-  let d = A.create Rig.host D.Float64 (shape_of x) in
+  let d = A.create Rig.host D.Float64 (Iarray.of_array (shape_of x)) in
   cast_into d x;
   d
 
@@ -73,7 +73,7 @@ let is_integer (D.Any dt) =
 let planes acc x =
   if not (is_complex acc) then [| A.to_array (to64 x) |]
   else
-    let d = A.create Rig.host D.Complex128 (shape_of x) in
+    let d = A.create Rig.host D.Complex128 (Iarray.of_array (shape_of x)) in
     cast_into d x;
     let z = A.to_array d in
     [|
@@ -243,18 +243,19 @@ let operand ?(wide_ints = false) dt s nb v seed =
           [| ((p - 1) * step) + (dilation * (q - 1)) + 1 |]
   in
   let draw () = value dt r in
+  let ms = Iarray.of_array made in
   let xs =
     if wide_ints && (is_integer dt || dt = D.Any D.Bool || dt = D.Any D.Bit) then
-      A.Any (A.of_array D.Int64 made (Array.init (total made) (fun _ -> wide r)))
+      A.Any (A.of_array D.Int64 ms (Array.init (total made) (fun _ -> wide r)))
     else if is_complex dt then
       A.Any
-        (A.of_array D.Complex128 made
+        (A.of_array D.Complex128 ms
            (Array.init (total made) (fun _ ->
                 let re = draw () in
                 { Complex.re; im = draw () })))
     else
       A.Any
-        (A.of_array D.Float64 made (Array.init (total made) (fun _ -> draw ())))
+        (A.of_array D.Float64 ms (Array.init (total made) (fun _ -> draw ())))
   in
   let move m x = Option.get (A.move m x) in
   let (A.Any x) = cast_to dt xs in
@@ -287,7 +288,7 @@ let operand ?(wide_ints = false) dt s nb v seed =
   in
   let x =
     if v.reversed && last >= 0 && s.(last) > 0 then
-      move (M.Slice (Iarray.of_array (Array.mapi flip (A.Layout.shape (A.layout x))))) x
+      move (M.Slice (Iarray.mapi flip (A.Layout.shape (A.layout x)))) x
     else x
   in
   let x = if v.broadcast then move (M.Broadcast (Iarray.of_array s)) x else x in
@@ -985,18 +986,18 @@ let converted c =
 let runs ?(init_alone = false) c =
   let y, _, _ = sizes c in
   let nb = Array.length c.batch in
-  let strides (A.Any x) = L.strides (A.layout x) in
-  let dst = L.strides (L.contiguous y) in
+  let strides (A.Any x) = Iarray.to_array (L.strides (A.layout x)) in
+  let dst = L.strides (L.contiguous (Iarray.of_array y)) in
   let along x axes =
     if init_alone then [] else [ Array.map (fun i -> (strides x).(i)) axes ]
   in
   let ys axes =
-    if init_alone then [] else [ Array.map (fun i -> dst.(i)) axes ]
+    if init_alone then [] else [ Array.map (Iarray.get dst) axes ]
   in
   let inits axes =
     match c.init with
     | Some (A.Any i) ->
-        [ Array.map (fun k -> (L.strides (A.layout i)).(k)) axes ]
+        [ Array.map (L.stride (A.layout i)) axes ]
     | None -> []
   in
   (* The axes of [x] no pair names, in order. *)
@@ -1071,7 +1072,7 @@ let order c =
    batch, and one contraction per part where init's columns lie apart. *)
 let complex_covers c =
   let complex = is_complex c.acc and _, k, batch = sizes c in
-  let strides (A.Any x) = L.strides (A.layout x) in
+  let strides (A.Any x) = Iarray.to_array (L.strides (A.layout x)) in
   let real (A.Any x) = not (is_complex (D.Any (A.dtype x))) in
   let along x (i, _) = (strides x).(i) in
   let last x = Array.length (shape_of x) - 1 in
@@ -1179,7 +1180,7 @@ let scale_on b : Nx_kernel.scale -> Nx_kernel.scale = function
 let run ?sa ?sb (b : Support.backend) c =
   let y, _, _ = sizes c in
   let (D.Any out) = c.out in
-  let dst = A.Any (A.create b.device out y) in
+  let dst = A.Any (A.create b.device out (Iarray.of_array y)) in
   let init = Option.map (on b) c.init in
   let sa = Option.map (scale_on b) sa and sb = Option.map (scale_on b) sb in
   match contract ?sa ?sb b.kernels c ~dst (on b c.a) (on b c.b) init with
@@ -1324,7 +1325,9 @@ let law_in_place (b : Support.backend) (c : case) =
 (* A kernel that declines writes nothing: [dst] keeps its values. *)
 let law_declined (b : Support.backend) c =
   let y, _, _ = sizes c in
-  let threes = A.Any (A.of_array D.Float64 y (Array.make (total y) 3.)) in
+  let threes =
+    A.Any (A.of_array D.Float64 (Iarray.of_array y) (Array.make (total y) 3.))
+  in
   let dst = on b (cast_to c.out threes) in
   let before = planes c.out (host dst) in
   let init = Option.map (on b) c.init in
@@ -1465,7 +1468,7 @@ let shifted (A.Any x as a) =
     Option.get
       (A.move
          (M.Slice (Iarray.of_array (Array.mapi at s)))
-         (A.create Rig.host (A.dtype x) made))
+         (A.create Rig.host (A.dtype x) (Iarray.of_array made)))
   in
   A.transfer ~src:x ~dst:y;
   A.Any y
@@ -1511,7 +1514,8 @@ let quad_examples =
         let c = case e vb in
         let fill v (A.Any x as a) =
           let s = shape_of a in
-          let vs = A.Any (A.of_array D.Int64 s (Array.make (total s) v)) in
+          let vs = Array.make (total s) v in
+          let vs = A.Any (A.of_array D.Int64 (Iarray.of_array s) vs) in
           let src = A.expect (A.dtype x) (cast_to (D.Any (A.dtype x)) vs) in
           A.transfer ~src ~dst:x;
           a
@@ -1567,7 +1571,7 @@ let quad_cases =
 
 (* [x]'s values as int64s: an integer's own value, a bool's 0 or 1. *)
 let ints x =
-  let d = A.create Rig.host D.Int64 (shape_of x) in
+  let d = A.create Rig.host D.Int64 (Iarray.of_array (shape_of x)) in
   cast_into d x;
   A.to_array d
 
@@ -1611,7 +1615,7 @@ let integer_covers (c : case) =
    copies any other operand element by element, padded with zeros. *)
 let quad_covers (c : case) =
   let _, k, _ = sizes c in
-  let strides (A.Any x) = L.strides (A.layout x) in
+  let strides (A.Any x) = Iarray.to_array (L.strides (A.layout x)) in
   let offset (A.Any x) = L.offset (A.layout x) in
   let pairs = Array.append c.batch c.contracting in
   (* [x]'s axes of more than one element, those [side] of the contracting
@@ -1820,8 +1824,9 @@ let fresh (b : Support.backend) () =
 let test_misfits (b : Support.backend) () =
   let module K = (val b.kernels) in
   let arr s =
-    A.expect D.Float32
-      (on b (A.Any (A.of_array D.Float32 s (Array.make (total s) 1.))))
+    let ones = Array.make (total s) 1. in
+    let x = A.of_array D.Float32 (Iarray.of_array s) ones in
+    A.expect D.Float32 (on b (A.Any x))
   in
   let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = ) in
   let refused ~msg ?(batch : _ iarray = [||]) contracting dst a b' =
@@ -1949,17 +1954,22 @@ let scale_of s : Nx_kernel.scale =
         else 117 + Random.State.int r 21
       in
       Exponent
-        (A.expect D.Uint8 (view (A.Any (A.of_array D.Uint8 stored (Array.init n code)))))
+        (A.expect D.Uint8
+           (view
+              (A.Any
+                 (A.of_array D.Uint8 (Iarray.of_array stored)
+                    (Array.init n code)))))
   | Some dt ->
       let v i = if s.specials && i = 0 then nan else value dt r in
       let (A.Any x) =
+        let stored = Iarray.of_array stored in
         view (cast_to dt (A.Any (A.of_array D.Float64 stored (Array.init n v))))
       in
       Value x
 
 let scale_extents : Nx_kernel.scale -> int array = function
-  | Exponent x -> L.shape (A.layout x)
-  | Value x -> L.shape (A.layout x)
+  | Exponent x -> Iarray.to_array (L.shape (A.layout x))
+  | Value x -> Iarray.to_array (L.shape (A.layout x))
 
 (* A scale's values in C order of its indices, read into [acc]. *)
 let decoded acc : Nx_kernel.scale -> float array = function
@@ -1995,7 +2005,7 @@ let host_scaled acc x s =
     y
   in
   let ys = Array.mapi scaled xs in
-  (cast_to acc (A.Any (A.of_array D.Float64 shape ys)), !over)
+  (cast_to acc (A.Any (A.of_array D.Float64 (Iarray.of_array shape) ys)), !over)
 
 (* A scale for an operand of shape [s]: along each axis a ratio of 1, the
    whole axis, or a divisor of it. *)
@@ -2134,7 +2144,7 @@ let scaled_covers (c, sa, sb) =
   (* gemm.c reads an operand of acc's dtype in place along a's last
      contracted axis or b's last column or contracted axis where it steps
      by 1 there, unless it is scaled. *)
-  let unit (A.Any x) i = (L.strides (A.layout x)).(i) = 1 in
+  let unit (A.Any x) i = L.stride (A.layout x) i = 1 in
   let last l = Array.length l > 0 in
   let of_acc (A.Any x) = D.Any (A.dtype x) = c.acc in
   let con side = Array.map side c.contracting in
@@ -2229,7 +2239,8 @@ let float4 made seed =
   let r = Random.State.make [| seed |] in
   let xs = Array.init (total made) (fun _ -> e2m1.(Random.State.int r 16)) in
   A.expect D.Float4_e2m1fn
-    (cast_to (D.Any D.Float4_e2m1fn) (A.Any (A.of_array D.Float64 made xs)))
+    (cast_to (D.Any D.Float4_e2m1fn)
+       (A.Any (A.of_array D.Float64 (Iarray.of_array made) xs)))
 
 (* The distinct float4 codes of [x]. *)
 let f4_codes x =
@@ -2409,7 +2420,7 @@ let mx_layouts =
 
 let law_mx_layouts b ((c, _, _) as x) =
   let (A.Any w) = c.b in
-  let st = L.strides (A.layout w) in
+  let st = Iarray.to_array (L.strides (A.layout w)) in
   cover "two contracting pairs" (Array.length c.contracting = 2);
   cover "b stepped along k" (st.(snd c.contracting.(0)) = 2);
   cover "b broadcast across its columns"
@@ -2435,7 +2446,9 @@ let law_unscalable b (c, sa, sb) =
   cover "integer" (is_integer c.acc);
   cover "complex" (is_complex c.acc);
   let y, _, _ = sizes c in
-  let threes = A.Any (A.of_array D.Float64 y (Array.make (total y) 3.)) in
+  let threes =
+    A.Any (A.of_array D.Float64 (Iarray.of_array y) (Array.make (total y) 3.))
+  in
   let dst = on b (cast_to c.out threes) in
   let before = planes c.out (host dst) in
   let init = Option.map (on b) c.init in
@@ -2453,13 +2466,13 @@ let law_unscalable b (c, sa, sb) =
 let test_scale_misfits (b : Support.backend) () =
   let module K = (val b.kernels) in
   let arr s =
-    A.expect D.Float32
-      (on b (A.Any (A.of_array D.Float32 s (Array.make (total s) 1.))))
+    let ones = Array.make (total s) 1. in
+    let x = A.of_array D.Float32 (Iarray.of_array s) ones in
+    A.expect D.Float32 (on b (A.Any x))
   in
   let codes s =
-    Nx_kernel.Exponent
-      (A.expect D.Uint8
-         (on b (A.Any (A.of_array D.Uint8 s (Array.make (total s) 127)))))
+    let x = A.of_array D.Uint8 (Iarray.of_array s) (Array.make (total s) 127) in
+    Nx_kernel.Exponent (A.expect D.Uint8 (on b (A.Any x)))
   in
   let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = ) in
   let refused ~msg ?sa ?sb () =
@@ -2493,7 +2506,8 @@ let test_scaled_empty (b : Support.backend) () =
   let module K = (val b.kernels) in
   let big = 1 lsl 28 in
   let arr s x =
-    A.expect D.Float64 (on b (A.Any (A.of_array D.Float64 s (Array.make (total s) x))))
+    let a = A.of_array D.Float64 (Iarray.of_array s) (Array.make (total s) x) in
+    A.expect D.Float64 (on b (A.Any a))
   in
   let codes =
     A.expect D.Uint8 (on b (A.Any (A.of_array D.Uint8 [| 2; 1; 1 |] [| 127; 127 |])))
@@ -2587,12 +2601,15 @@ let segments_of s offsets : _ Nx_kernel.segments =
 let offsets_of s =
   let shape = Array.append (batch_extents s.sg) [| s.g + 1 |] in
   let xs = Array.concat (Array.to_list s.offs) in
-  if not s.stepped then A.of_array D.Int64 shape (Array.map wide xs)
+  if not s.stepped then
+    A.of_array D.Int64 (Iarray.of_array shape) (Array.map wide xs)
   else
     let r = Array.length shape and w = s.g + 1 in
     let made = Array.mapi (fun i e -> if i = r - 1 then 2 * e else e) shape in
     let at q = if q mod 2 = 0 then 999L else wide xs.((q / (2 * w) * w) + (q mod (2 * w) / 2)) in
-    let x = A.of_array D.Int64 made (Array.init (total made) at) in
+    let x =
+      A.of_array D.Int64 (Iarray.of_array made) (Array.init (total made) at)
+    in
     let step i e =
       if i = r - 1 then { M.start = 1; count = e; step = 2 }
       else { M.start = 0; count = e; step = 1 }
@@ -2667,10 +2684,11 @@ let seg_reference (b : Support.backend) s sa sb =
   let scaled x = function None -> x | Some sc -> fst (host_scaled c.acc x sc) in
   let a = scaled c.a sa and b' = scaled c.b sb in
   let y = seg_shape s in
+  let ys = Iarray.of_array y in
   let start =
     match c.init with
     | Some i -> cast_to c.acc i
-    | None -> A.Any (A.of_array D.Float64 y (Array.make (total y) 0.))
+    | None -> A.Any (A.of_array D.Float64 ys (Array.make (total y) 0.))
   in
   let dst = cast_to c.out start in
   let nb = Array.length c.batch in
@@ -2681,10 +2699,11 @@ let seg_reference (b : Support.backend) s sa sb =
     let v = Array.init parts (fun _ -> Array.make (total y) 0.) in
     each (fun _ k parts ->
         Array.iteri (fun p o -> v.(p).(k) <- ordered ~chain c.acc o) parts);
-    if Array.length v = 1 then A.Any (A.of_array D.Float64 y v.(0))
+    let ys = Iarray.of_array y in
+    if Array.length v = 1 then A.Any (A.of_array D.Float64 ys v.(0))
     else
       A.Any
-        (A.of_array D.Complex128 y
+        (A.of_array D.Complex128 ys
            (Array.map2 (fun re im -> { Complex.re; im }) v.(0) v.(1)))
   in
   let call (A.Any d) a b init =
@@ -3051,7 +3070,7 @@ let law_segments (b : Support.backend) s =
   let c = s.sg in
   let sa = Option.map scale_of s.sa and sb = Option.map scale_of s.sb in
   let (D.Any out) = c.out in
-  let dst = A.create b.device out (seg_shape s) in
+  let dst = A.create b.device out (Iarray.of_array (seg_shape s)) in
   let module K = (val b.kernels) in
   let init = Option.map (fun i -> A.expect out (on b i)) c.init in
   let offsets = A.expect D.Int64 (on b (A.Any (offsets_of s))) in
@@ -3077,12 +3096,16 @@ let law_segments (b : Support.backend) s =
 let test_segment_misfits (b : Support.backend) () =
   let module K = (val b.kernels) in
   let arr s =
-    A.expect D.Float32
-      (on b (A.Any (A.of_array D.Float32 s (Array.make (total s) 1.))))
+    let ones = Array.make (total s) 1. in
+    let x = A.of_array D.Float32 (Iarray.of_array s) ones in
+    A.expect D.Float32 (on b (A.Any x))
   in
   let offs s =
     A.expect D.Int64
-      (on b (A.Any (A.of_array D.Int64 s (Array.init (total s) Int64.of_int))))
+      (on b
+         (A.Any
+            (A.of_array D.Int64 (Iarray.of_array s)
+               (Array.init (total s) Int64.of_int))))
   in
   let answer = Testable.make ~pp:Nx_array_support.pp_answer ~equal:( = ) in
   let refused ~msg ?(batch : _ iarray = [||])
@@ -3232,7 +3255,7 @@ let guarded_product (type s) (b : Support.backend) (dt : (float, s) D.t) g =
   let (module K : Nx_kernel.S) = b.kernels in
   let st = Random.State.make [| g.seed |] in
   let values s =
-    A.of_array dt s
+    A.of_array dt (Iarray.of_array s)
       (Array.init (total s) (fun _ -> Random.State.float st 2. -. 1.))
   in
   let move m x = Option.get (A.move m x) in
@@ -3249,7 +3272,7 @@ let guarded_product (type s) (b : Support.backend) (dt : (float, s) D.t) g =
   let window x =
     let all c = { M.start = 0; count = c; step = 1 } in
     let cols = { M.start = g.c0; count = g.n; step = 1 } in
-    let s = L.shape (A.layout x) in
+    let s = Iarray.to_array (L.shape (A.layout x)) in
     let r = Array.length s in
     move
       (M.Slice (Iarray.init r (fun i -> if i = r - 1 then cols else all s.(i))))

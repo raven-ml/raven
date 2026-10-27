@@ -129,6 +129,7 @@ let sort_on (b : Support.backend) c =
   let (A.Any x) = c.x in
   let y = Array.copy (shape_of c.x) in
   y.(c.axis) <- kept c;
+  let y = Iarray.of_array y in
   let values = A.create Rig.host (A.dtype x) y in
   let positions = A.create Rig.host D.Int64 y in
   match K.sort ~axis:c.axis ~descending:c.descending ~values ~positions x with
@@ -286,9 +287,9 @@ let law_refuses (b : Support.backend) c =
   equal answer
     (if fit then A.Done else A.Shape_mismatch)
     (K.sort ~axis:c.along ~descending:false
-       ~values:(A.create Rig.host D.Float32 values)
-       ~positions:(A.create Rig.host D.Int64 positions)
-       (A.of_array D.Float32 x (Array.make (total x) 0.)))
+       ~values:(A.create Rig.host D.Float32 (Iarray.of_array values))
+       ~positions:(A.create Rig.host D.Int64 (Iarray.of_array positions))
+       (A.of_array D.Float32 (Iarray.of_array x) (Array.make (total x) 0.)))
 
 let test_refusals (b : Support.backend) () =
   let module K = (val b.kernels) in

@@ -153,6 +153,7 @@ let const ~by dt v =
 
 (* The C-order layout of shape [s], naming [by] where no layout has [s]. *)
 let contiguous ~by s =
+  let s = Iarray.of_array s in
   Prim.check_shape ~by s;
   Nx_array.Layout.contiguous s
 
@@ -339,7 +340,7 @@ let of_values (type v s) ~by (dt : (v, s) D.t) s (vs : v array) =
   (match D.kind dt with
   | Float | Complex | Boolean -> ()
   | Signed | Unsigned -> Array.iter (Prim.check_value ~by dt) vs);
-  owned (Nx_array.of_array dt s vs)
+  owned (Nx_array.of_array dt (Iarray.of_array s) vs)
 
 let create dt shape vs = of_values ~by:"Nx.create" dt shape vs
 
@@ -439,10 +440,10 @@ let item i x =
     match live with
     | Value.Array { a; _ } when Rig.reaches Rig.host (Nx_array.device a) ->
         let start (w : Nx_array.Move.range) = w.start in
-        Nx_array.get a (Array.of_list (List.map start one))
+        Nx_array.get a (Iarray.of_list (List.map start one))
     | live ->
         let v = Exec.run ~by (Value.Move (Slice (Iarray.of_list one), live)) in
-        Nx_array.get (Exec.on_host ~by v) (Array.make r 0)
+        Nx_array.get (Exec.on_host ~by v) (Iarray.init r (fun _ -> 0))
   in
   get (readable ~by x)
 
@@ -1479,7 +1480,7 @@ let targets ~by x picks =
       Eval.eval ~by
         (Value.Map
            {
-             layout = Nx_array.Layout.contiguous sel;
+             layout = Nx_array.Layout.contiguous (Iarray.of_array sel);
              prog;
              outs = Value.[ D.Int64 ];
              loads;
@@ -1668,7 +1669,7 @@ let reduce_by ~by s axes xs rs out =
   Eval.eval ~by
     (Value.Reduce
        {
-         layout = Nx_array.Layout.contiguous s;
+         layout = Nx_array.Layout.contiguous (Iarray.of_array s);
          axes;
          prog;
          reductions = rs;
@@ -1705,7 +1706,7 @@ let scan_by ~by r axis x =
   Eval.eval ~by
     (Value.Scan
        {
-         layout = Nx_array.Layout.contiguous (shape x);
+         layout = Nx_array.Layout.contiguous (Iarray.of_array (shape x));
          axis;
          prog = P.of_node ~ins:[| D.Any (dtype x) |] (In 0);
          reduction = r;
@@ -2205,7 +2206,7 @@ let int_mean (type v s r d) ~by (acc : (int64, r) D.t) s axes n
       Eval.eval ~by
         (Value.Reduce
            {
-             layout = Nx_array.Layout.contiguous s;
+             layout = Nx_array.Layout.contiguous (Iarray.of_array s);
              axes;
              prog = P.of_exprs ~ins:[| D.Any dt |] [| E.any q; E.any r |];
              reductions = Value.[ Monoid (Sum, 0, acc); Monoid (Sum, 1, acc) ];
@@ -2319,7 +2320,7 @@ let average (type s d) ~by ~alpha axis (x : (float, s, d) t) : (float, s, d) t =
       let a = E.where first (lit 0.) (lit (1. -. alpha)) in
       let c = E.(where first t (lit alpha * t)) in
       let prog = P.of_exprs ~ins:[| D.Any w |] [| E.any a; E.any c |] in
-      let layout = Nx_array.Layout.contiguous s in
+      let layout = Nx_array.Layout.contiguous (Iarray.of_array s) in
       let a, (c, ()) =
         let loads : _ Value.load iarray = [| Value.Plain (cast_by ~by w x) |] in
         Eval.eval ~by (Value.Map { layout; prog; outs = Value.[ w; w ]; loads })
@@ -5382,7 +5383,7 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
   in
   let load (Captured (_, x)) = Value.Plain (broadcast ~by f (read x)) in
   let loads = Iarray.of_list (loads @ List.map load captures) in
-  let layout = Nx_array.Layout.contiguous f in
+  let layout = Nx_array.Layout.contiguous (Iarray.of_array f) in
   let m, () =
     let outs = Value.[ D.Float32 ] in
     Eval.eval ~by (Value.Map { layout; prog; outs; loads })
@@ -5848,13 +5849,13 @@ let edge = 3
 (* [a]'s elements as nested rows, a 0-d array's as its one element. *)
 let pp_elements (type v s) ppf (a : (v, s) Nx_array.t) =
   let dt = Nx_array.dtype a and s = Nx_array.Layout.shape (Nx_array.layout a) in
-  let r = Array.length s in
-  let cut = Array.fold_left ( * ) 1 s > elided in
+  let r = Iarray.length s in
+  let cut = Iarray.fold_left ( * ) 1 s > elided in
   let i = Array.make r 0 in
   let rec row axis =
-    if axis = r then D.pp_value dt ppf (Nx_array.get a i)
+    if axis = r then D.pp_value dt ppf (Nx_array.get a (Iarray.of_array i))
     else begin
-      let d = s.(axis) in
+      let d = Iarray.get s axis in
       let shown j = (not cut) || d <= 2 * edge || j < edge || j >= d - edge in
       Format.fprintf ppf "@[<hv 1>[";
       for j = 0 to d - 1 do

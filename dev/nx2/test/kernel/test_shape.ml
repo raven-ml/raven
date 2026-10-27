@@ -110,8 +110,9 @@ let axis_order n = Gen.map Array.of_list (Gen.permutation (List.init n Fun.id))
 (* A layout of shape [s]: C-contiguous, which a view groups, or, unless
    [canonical], over drawn strides. *)
 let layout_of ~canonical s =
-  if canonical then Gen.constant (L.contiguous s)
-  else Gen.one_of [ Gen.constant (L.contiguous s); strided_of s ]
+  let l = L.contiguous (Iarray.of_array s) in
+  if canonical then Gen.constant l
+  else Gen.one_of [ Gen.constant l; strided_of s ]
 
 let permuted l p = Option.get (L.move (M.Permute (Iarray.of_array p)) l)
 
@@ -156,7 +157,8 @@ let case ~canonical =
   in
   let b, k = pairs_of c in
   let b = Iarray.to_array b and k = Iarray.to_array k in
-  let y = result_shape (L.shape la) (L.shape lb) b k in
+  let shape l = Iarray.to_array (L.shape l) in
+  let y = result_shape (shape la) (shape lb) b k in
   let* ly = layout_of y in
   let+ li = option (layout_of y) in
   { c with ly; li }
@@ -166,10 +168,10 @@ let canonical_case = Gen.with_pp pp_case (case ~canonical:true)
 
 let law_contract c =
   let batch, contracting = pairs_of c in
-  fits ~msg:"fits" (Array.to_list (L.shape c.ly))
+  fits ~msg:"fits" (Iarray.to_list (L.shape c.ly))
     (Shape.contract ~batch ~contracting ~segments:None
-       (L.shape c.la, None)
-       (L.shape c.lb, None))
+       (Iarray.to_array (L.shape c.la), None)
+       (Iarray.to_array (L.shape c.lb), None))
 
 let test_contract_refuses () =
   let a = [| 2; 3; 4 |] and b = [| 2; 4; 5 |] in
@@ -401,8 +403,8 @@ let loaded x = function
         if not (admitted padded) then None
         else if pad.windows = [||] then Some padded
         else
-          match M.shape (Window pad.windows) padded with
-          | y -> Some y
+          match M.shape (Window pad.windows) (Iarray.of_array padded) with
+          | y -> Some (Iarray.to_array y)
           | exception Invalid_argument _ -> None
 
 (* A padding of an operand of any shape. *)
@@ -649,8 +651,9 @@ let assemble_case =
 (* Each piece has its region's shape, as Move.Slice keeps it. *)
 let law_assemble c =
   let regions = Array.map Iarray.of_array c.regions in
+  let s = Iarray.of_array c.shape in
   let pieces =
-    Array.map (fun r -> Array.to_list (M.shape (Slice r) c.shape)) regions
+    Array.map (fun r -> Iarray.to_list (M.shape (Slice r) s)) regions
   in
   cover "pieces" (c.regions <> [||]);
   equal shapes_t (Ok (Array.to_list pieces))
@@ -1041,7 +1044,7 @@ let check_view c v =
   end;
   List.iter
     (fun (o, l, gs) ->
-      let s = L.shape l in
+      let s = Iarray.to_array (L.shape l) in
       List.iter
         (fun (g, axes) ->
           equal ~msg:"extent" int
@@ -1081,15 +1084,15 @@ let law_canonical c =
 (* [l] with two axes of extent 1 and stride [s] after its last. *)
 let with_unit_axes s l =
   L.v ~offset:(L.offset l)
-    ~strides:(Array.append (L.strides l) [| s; s |])
-    (Array.append (L.shape l) [| 1; 1 |])
+    ~strides:(Iarray.append (L.strides l) [| s; s |])
+    (Iarray.append (L.shape l) [| 1; 1 |])
 
 (* [l]'s shape, C-contiguous, with axis [ax] one longer; [l] where it has no
    such axis. *)
 let longer ax l =
   let sh = L.shape l in
-  if ax < 0 || ax >= Array.length sh then l
-  else L.contiguous (Array.mapi (fun i e -> if i = ax then e + 1 else e) sh)
+  if ax < 0 || ax >= Iarray.length sh then l
+  else L.contiguous (Iarray.mapi (fun i e -> if i = ax then e + 1 else e) sh)
 
 (* A view of groups of at most one axis each equals the view of the same
    contraction with two unit axes more in its contracted group, which the

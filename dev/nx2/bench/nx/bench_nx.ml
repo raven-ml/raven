@@ -20,8 +20,9 @@ module D = Nx_array.Dtype
 let memory k = Result.get_ok (Rig.memory_device (Printf.sprintf "bench-m%d" k))
 
 let filled dt s v =
+  let n = Array.fold_left ( * ) 1 s in
   Nx.Repr.of_array Nx.Host.v
-    (A.of_array dt s (Array.make (Array.fold_left ( * ) 1 s) v))
+    (A.of_array dt (Iarray.of_array s) (Array.make n v))
 
 let host n = filled D.Float32 [| n |] 1.
 let one () = host 1
@@ -1090,7 +1091,7 @@ let scan ?(axis = 1) reduction x =
   Nx.Prim.eval ~by:"bench"
     (Scan
        {
-         layout = A.Layout.contiguous (Nx.shape x);
+         layout = A.Layout.contiguous (Iarray.of_array (Nx.shape x));
          axis;
          prog = Nx_kernel.Prog.v ~ins:[| D.Any dt |] [| In 0 |] ~outs:[| 0 |];
          reduction;

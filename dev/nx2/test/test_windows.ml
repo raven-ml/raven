@@ -29,7 +29,11 @@ let full d = { M.start = 0; count = d; step = 1 }
 let value (type v s) (dt : (v, s) D.t) shape (data : v array) :
     (v, s, b) Value.t =
   Value.Array
-    { at; a = A.to_device (m 0) (A.of_array dt shape data); dead = Value.Live }
+    {
+      at;
+      a = A.to_device (m 0) (A.of_array dt (Iarray.of_array shape) data);
+      dead = Value.Live;
+    }
 
 (* Float32 terms whose sums depend on their association, signed zeros and a
    NaN. *)
@@ -106,7 +110,7 @@ let map_op =
   Op
     (Value.Map
        {
-         layout = L.contiguous s;
+         layout = L.contiguous (Iarray.of_array s);
          prog = coords;
          outs = Value.[ D.Float32; D.Float32 ];
          loads = [| Plain x; Plain y |];
@@ -163,7 +167,7 @@ let padded_map_op =
   Op
     (Value.Map
        {
-         layout = L.contiguous loop;
+         layout = L.contiguous (Iarray.of_array loop);
          prog = coords;
          outs = Value.[ D.Float32; D.Float32 ];
          loads = [| load; Plain y |];
@@ -193,7 +197,7 @@ let reduce_of loop prog loads =
     Array.of_list (List.filter (fun a -> not keep.(a)) (List.init rank Fun.id))
   in
   let axes = if axes = [||] then [| rank - 1 |] else axes in
-  let layout = L.contiguous loop in
+  let layout = L.contiguous (Iarray.of_array loop) in
   if Array.for_all (fun a -> loop.(a) > 0) axes then
     Op
       (Value.Reduce
@@ -231,7 +235,7 @@ let scan_of loop prog loads =
   let open Gen in
   let* axis = axis_of (Array.length loop) in
   let+ arg = bool in
-  let layout = L.contiguous loop in
+  let layout = L.contiguous (Iarray.of_array loop) in
   if arg then
     Op
       (Value.Scan
@@ -523,7 +527,7 @@ let shape_of_results (Op op) =
   ignore
     (Prim.results ~by:"t"
        (fun k (f : (_, _, _) Value.form) ->
-         if k = 0 then first := L.shape f.layout;
+         if k = 0 then first := Iarray.to_array (L.shape f.layout);
          Value.Array
            {
              at = Devices.rebrand at;
@@ -632,7 +636,9 @@ let bytes (type r) ?at windows (op : r Value.prim) (r : r) =
       let a =
         Option.get
           (A.move
-             (Slice (Iarray.of_array (windows i (L.shape (A.layout a)))))
+             (Slice
+                (Iarray.of_array
+                   (windows i (Iarray.to_array (L.shape (A.layout a))))))
              a)
       in
       let a = any_nan (A.copy a) in
@@ -689,7 +695,8 @@ let widened (type v s d) ~abs (x : (v, s, d) Value.t) :
   | Some Type.Equal ->
       let xs = A.to_array (Iarray.get (Prim.arrays x) 0) in
       let xs = if abs then Array.map Float.abs xs else xs in
-      let a = A.to_device (m 0) (A.of_array D.Float64 (Prim.shape x) xs) in
+      let s = Iarray.of_array (Prim.shape x) in
+      let a = A.to_device (m 0) (A.of_array D.Float64 s xs) in
       Value.Array { at = Prim.placement x; a; dead = Value.Live }
   | None -> invalid_arg "widened: not float32"
 
@@ -906,7 +913,7 @@ let mixed (x : (float, D.float32_elt, b) Value.t)
     shape axes =
   Value.Reduce
     {
-      layout = L.contiguous shape;
+      layout = L.contiguous (Iarray.of_array shape);
       axes = Iarray.of_array axes;
       prog =
         P.v ~ins:[| D.Any D.Float32; D.Any D.Int8 |] [| In 0; In 1 |]

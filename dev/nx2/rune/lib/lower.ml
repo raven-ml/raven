@@ -117,7 +117,7 @@ let load (node : 'v 's 'e. ('v, 's, 'e) Nx.t -> Ops.t) : 'd P.load -> Ops.t =
 
 (* Loops *)
 
-let shape layout = Nx_array.Layout.shape layout
+let shape layout = Iarray.to_array (Nx_array.Layout.shape layout)
 
 let body (node : 'v 's 'e. ('v, 's, 'e) Nx.t -> Ops.t) layout prog loads =
   Arith.prog prog (shape layout)

@@ -27,8 +27,7 @@ module Counting = struct
 
   let size shape = Array.fold_left ( * ) 1 shape
 
-  let loop (Nx_array.Any dst) =
-    size (Nx_array.Layout.shape (Nx_array.layout dst))
+  let loop (Nx_array.Any dst) = Nx_array.Layout.numel (Nx_array.layout dst)
 
   let map p ~dsts loads =
     Atomic.incr count;
@@ -70,7 +69,9 @@ module Counting = struct
     Atomic.incr count;
     let (Nx_array.Any x) = a.array in
     let s = Nx_array.Layout.shape (Nx_array.layout x) in
-    let k = Iarray.fold_left (fun k (i, _) -> k * s.(i)) 1 contracting in
+    let k =
+      Iarray.fold_left (fun k (i, _) -> k * Iarray.get s i) 1 contracting
+    in
     ignore (Atomic.fetch_and_add multiplied (loop (Nx_array.Any dst) * k));
     Nx_cpu.contract ~batch ~contracting ~segments ~acc ~dst ~init a b
 end
@@ -108,7 +109,7 @@ module Blocked = struct
     let r =
       Array.map
         (fun n -> { Nx_array.Move.start = 0; count = n; step = 1 })
-        (shape x)
+        (Iarray.to_array (shape x))
     in
     r.(axis) <- { start = lo; count = hi - lo; step = 1 };
     Option.get (Nx_array.move (Slice (Iarray.of_array r)) x)
@@ -121,7 +122,9 @@ module Blocked = struct
     let (Nx_array.Any a) = oa.array in
     let (Nx_array.Any b) = ob.array in
     let k =
-      Iarray.fold_left (fun k (i, _) -> k * (shape a).(i)) 1 contracting
+      Iarray.fold_left
+        (fun k (i, _) -> k * Iarray.get (shape a) i)
+        1 contracting
     in
     let whole =
       k = 0 || Option.is_some segments || Option.is_some oa.scale

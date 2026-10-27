@@ -201,7 +201,7 @@ let movements =
       let rec draw () =
         let s = shape st in
         let m = movement st k s in
-        match M.shape m s with
+        match M.shape m (Iarray.of_array s) with
         | _ -> (s, m)
         | exception Invalid_argument _ -> draw ()
       in
@@ -259,7 +259,7 @@ let padded (type v s) (x : (v, s, _) Nx.t) (fill : v) pad shape =
     P.eval ~by:"t"
       (P.Map
          {
-           layout = Nx_array.Layout.contiguous shape;
+           layout = Nx_array.Layout.contiguous (Iarray.of_array shape);
            prog = identity dt;
            outs = [ dt ];
            loads = Iarray.of_array [| P.Padded { x; fill; pad } |];

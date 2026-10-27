@@ -61,7 +61,7 @@ let lay (type v s) l (dt : (v, s) D.t) s (data : v array) : (v, s) A.t =
   let r = Array.length s in
   let view m a = Option.get (A.move m a) in
   match l with
-  | Plain -> A.of_array dt s data
+  | Plain -> A.of_array dt (Iarray.of_array s) data
   | Reversed ->
       let whole =
         Array.map
@@ -70,16 +70,19 @@ let lay (type v s) l (dt : (v, s) D.t) s (data : v array) : (v, s) A.t =
       in
       view
         (Slice (Iarray.of_array whole))
-        (A.of_array dt s (Array.of_list (List.rev (Array.to_list data))))
+        (A.of_array dt (Iarray.of_array s)
+           (Array.of_list (List.rev (Array.to_list data))))
   | Transposed ->
       let t = Array.map (fun a -> s.(a)) (rev_axes r) in
       let base =
         init t (fun j ->
             data.(position s (Array.map (fun a -> j.(a)) (rev_axes r))))
       in
-      view (Permute (Iarray.of_array (rev_axes r))) (A.of_array dt t base)
+      view
+        (Permute (Iarray.of_array (rev_axes r)))
+        (A.of_array dt (Iarray.of_array t) base)
   | Broadcast ->
-      if Array.length data = 0 then A.of_array dt s data
+      if Array.length data = 0 then A.of_array dt (Iarray.of_array s) data
       else
         view (Broadcast (Iarray.of_array s)) (A.of_array dt [||] [| data.(0) |])
 

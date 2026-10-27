@@ -849,13 +849,14 @@ let move_law =
         Value.Array
           {
             at = Devices.one s4 0;
-            a = Nx_array.create (m 0) Nx_array.Dtype.Float32 s;
+            a =
+              Nx_array.create (m 0) Nx_array.Dtype.Float32 (Iarray.of_array s);
             dead = Value.Live;
           }
       in
       let rule = Prim.rule (Value.Move (mv, x)) in
       let r = placed rule [| p |] [| s |] in
-      let s' = R.shape mv s in
+      let s' = Iarray.to_array (R.shape mv (Iarray.of_array s)) in
       cover "a split operand" (Grid.cuts (Devices.grid p) <> [||]);
       cover "a split result" (Grid.cuts (Devices.grid r.result) <> [||]);
       Array.iteri

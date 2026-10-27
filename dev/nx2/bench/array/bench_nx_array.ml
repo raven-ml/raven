@@ -30,7 +30,7 @@ let mib = 1024 * 1024
 let row name setup f = Thumper.bench_with_setup ~setup name f
 let f32 = D.Float32
 let one () = A.of_array f32 [| 1 |] [| 1. |]
-let rank4 = [| 2; 3; 4; 5 |]
+let rank4 : int iarray = [| 2; 3; 4; 5 |]
 let no_alloc = [ Thumper.Budget.at_most ~metric:Thumper.Metric.alloc_words 0. ]
 
 (* Dtypes *)
@@ -300,14 +300,14 @@ let door_rows =
       row "loop-3-scalar"
         (fun () ->
           let s = A.create Rig.host f32 [||] in
-          let s = Option.get (A.move (M.Broadcast (Iarray.of_array rank4)) s) in
+          let s = Option.get (A.move (M.Broadcast rank4) s) in
           let z, x, _ = three () in
           if loop_3 z x s <> 1 then failwith "loop-3-scalar: not one run";
           (z, x, s))
         (fun (z, x, s) -> loop_3 z x s);
       row "loop-3-transposed"
         (fun () ->
-          let shape = [| 5; 4; 3; 2 |] in
+          let shape : int iarray = [| 5; 4; 3; 2 |] in
           (operand ~shape (), transpose (operand ()), operand ~shape ()))
         (fun (z, x, y) -> loop_3 z x y);
       (* The OCaml door over the same three arrays: what a kernel that submits
@@ -354,15 +354,15 @@ let access_rows =
     let st = Random.State.make [| 32 |] in
     Array.init n (fun _ -> Random.State.float st 200. -. 100.)
   in
-  let i4 = [| 1; 2; 3; 4 |] in
+  let i4 : int iarray = [| 1; 2; 3; 4 |] in
   let int4 () = A.of_array D.Int4 rank4 (Array.make 120 3) in
   let int4s k =
     A.of_array D.Int4 [| k |] (Array.init k (fun i -> (i land 15) - 8))
   in
   let filled s =
-    A.of_array f32 s (Array.make (Array.fold_left ( * ) 1 s) 1.5)
+    A.of_array f32 s (Array.make (Iarray.fold_left ( * ) 1 s) 1.5)
   in
-  let square = [| 512; 512 |] in
+  let square : int iarray = [| 512; 512 |] in
   Thumper.group "access"
     [
       row "get-f32-4" (fun () -> operand ()) (fun a -> A.get a i4);

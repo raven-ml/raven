@@ -68,7 +68,7 @@ let drawn (type v s) (dt : (v, s) D.t) s : (v, s, Nx.host) Nx.t Gen.t =
     | _ -> data
   in
   Nx.Repr.of_array Nx.Host.v
-    (A.v dt (L.contiguous s)
+    (A.v dt (L.contiguous (Iarray.of_array s))
        (Rig.Buffer.of_string (if data = "" then "\000" else data)))
 
 (* Small integers in float64: their sums are exact in any order. *)

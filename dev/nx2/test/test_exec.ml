@@ -99,12 +99,12 @@ let pp_layout ppf l =
 let lay (type v s) l (dt : (v, s) D.t) shape (data : v array) : (v, s) A.t =
   let r = Array.length shape in
   match l with
-  | Plain -> A.of_array dt shape data
+  | Plain -> A.of_array dt (Iarray.of_array shape) data
   | Transposed when r >= 2 && Array.length data > 0 ->
       let rev = Array.init r (fun i -> r - 1 - i) in
       let t = Array.map (fun a -> shape.(a)) rev in
       let base =
-        A.of_array dt t
+        A.of_array dt (Iarray.of_array t)
           (Array.of_list (List.init (Array.length data) (fun _ -> data.(0))))
       in
       (* Fill the transposed base so that its view reads [data] in C order. *)
@@ -117,10 +117,10 @@ let lay (type v s) l (dt : (v, s) D.t) shape (data : v array) : (v, s) A.t =
             idx.(a) <- !k mod shape.(a);
             k := !k / shape.(a)
           done;
-          A.set view idx v)
+          A.set view (Iarray.of_array idx) v)
         data;
       view
-  | Transposed -> A.of_array dt shape data
+  | Transposed -> A.of_array dt (Iarray.of_array shape) data
   | Offset ->
       let n = Array.length data in
       let padded =
@@ -134,7 +134,7 @@ let lay (type v s) l (dt : (v, s) D.t) shape (data : v array) : (v, s) A.t =
       in
       Option.get (A.move (M.Reshape (Iarray.of_array shape)) tail)
   | Broadcast ->
-      if Array.length data = 0 then A.of_array dt shape data
+      if Array.length data = 0 then A.of_array dt (Iarray.of_array shape) data
       else
         let one = A.of_array dt [||] [| data.(0) |] in
         Option.get (A.move (M.Broadcast (Iarray.of_array shape)) one)
@@ -168,7 +168,8 @@ let on_host l dt s data = Nx.Repr.of_array Nx.Host.v (lay l dt s data)
 (* [data] of shape [s] on the host, each NaN made signalling where it stays
    a NaN ({!Nx_support.signalled}): an OCaml float holds a NaN quiet. *)
 let signalling (type v s) (dt : (v, s) D.t) s (data : v array) =
-  Nx.Repr.of_array Nx.Host.v (Nx_support.signalled (A.of_array dt s data))
+  Nx.Repr.of_array Nx.Host.v
+    (Nx_support.signalled (A.of_array dt (Iarray.of_array s) data))
 
 (* Whether [data] of [dt] holds a NaN {!signalling} makes signalling. *)
 let signals (type v s) (dt : (v, s) D.t) (data : v array) =
@@ -195,7 +196,8 @@ let bytes (type v s d) (x : (v, s, d) Nx.t) =
 let run_map (type w r) node ins (dt : (w, r) D.t) shape loads =
   let prog = Nx_kernel.Prog.of_node ~ins node in
   let op : ((w, r, Nx.host) Nx.t * unit) Nx.Prim.t =
-    Map { layout = A.Layout.contiguous shape; prog; outs = [ dt ]; loads }
+    let layout = A.Layout.contiguous (Iarray.of_array shape) in
+    Map { layout; prog; outs = [ dt ]; loads }
   in
   fst (Nx.Prim.eval ~by:"test" op)
 
@@ -1273,19 +1275,17 @@ exception One of int array * float
    computes afresh. A flag of every set is computed there first, as alone. *)
 let test_check_one () =
   let shape = [| 1; 1 |] in
+  let host dt v =
+    Nx.Repr.of_array Nx.Host.v (A.of_array dt (Iarray.of_array shape) [| v |])
+  in
   let check ok x =
     Nx.Prim.eval ~by:"test"
       (Check { ok; data = [ x ]; fail = (fun i (v, ()) -> One (i, v)) })
   in
   let failed = One ([| 0; 0 |], 5.) in
   let at (type d) (p : d Nx.Placement.t) =
-    let flag b =
-      Nx.place p (Nx.Repr.of_array Nx.Host.v (A.of_array D.Bool shape [| b |]))
-    in
-    let x =
-      Nx.place p
-        (Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 shape [| 5. |]))
-    in
+    let flag b = Nx.place p (host D.Bool b) in
+    let x = Nx.place p (host D.Float32 5.) in
     let ok = flag true and not_ok = flag false in
     C.reset ();
     check ok x;
@@ -1297,9 +1297,7 @@ let test_check_one () =
   at (Count2.split ~axis:0);
   at (Count2.split ~axis:1);
   let donated (type d) (p : d Nx.Placement.t) =
-    let on dt v =
-      Nx.place p (Nx.Repr.of_array Nx.Host.v (A.of_array dt shape [| v |]))
-    in
+    let on dt v = Nx.place p (host dt v) in
     let x = on D.Float32 5. in
     (* Computed, so the memory is the flag's alone and a donation may write
        it. *)
@@ -1311,9 +1309,7 @@ let test_check_one () =
   donated Count.on;
   donated (Count2.split ~axis:0);
   donated (Count2.split ~axis:1);
-  let on_count dt v =
-    Nx.place Count.on (Nx.Repr.of_array Nx.Host.v (A.of_array dt shape [| v |]))
-  in
+  let on_count dt v = Nx.place Count.on (host dt v) in
   let x = on_count D.Float32 5. in
   let formula () = Nx.equal_s (Nx.zeros D.Float32 shape) 1. in
   C.reset ();
@@ -1387,21 +1383,21 @@ let allocation =
       test "a copy of a one-element host value allocates its budget"
         (fun () ->
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
-          at_most (float 0.5) ~than:130. (words (fun () -> Nx.copy a)));
+          at_most (float 0.5) ~than:124. (words (fun () -> Nx.copy a)));
       test "a matmul of 4x4 float32 host values allocates its budget"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
-          at_most (float 0.5) ~than:179. (words (fun () -> Nx.matmul a a)));
+          at_most (float 0.5) ~than:177. (words (fun () -> Nx.matmul a a)));
       test "a slice of a 4x4 host value by ranges allocates its budget"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
-          at_most (float 0.5) ~than:294.
+          at_most (float 0.5) ~than:273.
             (words (fun () -> Nx.slice Nx.[ R (1, 3); A ] a)));
       test "a set of a row of a 4x4 host value allocates its budget"
         (fun () ->
           let a = on_host Plain D.Float32 [| 4; 4 |] (Array.make 16 1.) in
           let v = on_host Plain D.Float32 [| 4 |] (Array.make 4 2.) in
-          at_most (float 0.5) ~than:564.
+          at_most (float 0.5) ~than:538.
             (words (fun () -> Nx.set Nx.[ I 1 ] v a)));
     ]
 
@@ -2113,7 +2109,8 @@ let test_partials_move () =
   let ints s = A.of_array D.Int32 s (Array.init 240 Int32.of_int) in
   let floats s = A.of_array D.Float32 s (Array.init 240 Float.of_int) in
   let fewer what got = less int ~msg:what ~than:(2 * 240) got in
-  let rows = [| 60; 4 |] and columns = [| 4; 60 |] in
+  let rows : int iarray = [| 60; 4 |]
+  and columns : int iarray = [| 4; 60 |] in
   fewer "an integer sum"
     (positions 0 (fun x -> Nx.sum ~axes:[ 0 ] x) (ints rows));
   fewer "a maximum" (positions 0 (fun x -> Nx.max ~axes:[ 0 ] x) (floats rows));
@@ -2638,7 +2635,7 @@ let ccase_values (type v s) (k : (v, s) D.t) draw floats c =
   let host side s =
     let n = Array.fold_left ( * ) 1 s in
     let data = drawn draw floats st c.cmarks side n in
-    Nx.Repr.of_array Nx.Host.v (A.of_array k s data)
+    Nx.Repr.of_array Nx.Host.v (A.of_array k (Iarray.of_array s) data)
   in
   let a = host false sa and b = host true sb and i = host false so in
   let batch = match c.nb with Some _ -> [| (0, 0) |] | None -> [||] in
@@ -3038,7 +3035,8 @@ let law_nx_case c =
   let host side s =
     let n = Array.fold_left ( * ) 1 s in
     Nx.Repr.of_array Nx.Host.v
-      (A.of_array k.cdtype s (drawn k.draw k.floats st c.nmarks side n))
+      (A.of_array k.cdtype (Iarray.of_array s)
+         (drawn k.draw k.floats st c.nmarks side n))
   in
   let a = host false [| c.nrows; c.k |] in
   let cols =
@@ -3087,7 +3085,7 @@ let test_contractions_move () =
      them, and only sums move. *)
   let counted m n k =
     let floats s =
-      A.of_array D.Float32 s
+      A.of_array D.Float32 (Iarray.of_array s)
         (Array.init (Array.fold_left ( * ) 1 s) (fun i ->
              Float.of_int (i mod 7) /. 7.))
     in
@@ -3262,7 +3260,7 @@ let scan_combined (type v s) r axis t (x : (v, s, Nx.Host.d) Nx.t) : v array =
     eval ~by:"scan_combined"
       (Scan
          {
-           layout = A.Layout.contiguous (Nx.shape p);
+           layout = A.Layout.contiguous (Iarray.of_array (Nx.shape p));
            axis;
            prog = Nx_kernel.Prog.of_node ~ins:[| D.Any dt |] (In 0);
            reduction = Monoid (m, 0, dt);

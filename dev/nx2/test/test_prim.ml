@@ -27,7 +27,8 @@ let value d a : ('v, 's, b) Value.t =
   Value.Array
     { at = Devices.one s2 d; a = A.to_device (m d) a; dead = Value.Live }
 
-let f32 ?(d = 0) shape = value d (A.of_array D.Float32 shape (floats shape))
+let f32 ?(d = 0) shape =
+  value d (A.of_array D.Float32 (Iarray.of_array shape) (floats shape))
 
 (* A maker that records the forms it is given in [forms], and one that must not
    run. *)
@@ -348,7 +349,7 @@ let movements =
               moved_by (M.Permute (Iarray.init rank (fun i -> rank - 1 - i))) x
             else x
           in
-          let s = Prim.shape x in
+          let s = Iarray.of_array (Prim.shape x) in
           match M.shape mv s with
           | exception Invalid_argument _ ->
               cover "refused" true;
@@ -373,7 +374,7 @@ let movements =
               (Value.Array
                  {
                    at = host;
-                   a = A.of_array D.Float32 s0 (floats s0);
+                   a = A.of_array D.Float32 (Iarray.of_array s0) (floats s0);
                    dead = Value.Live;
                  })
           in
@@ -409,7 +410,7 @@ let bitcast (type v s w r) (dt : (w, r) D.t) (x : (v, s, b) Value.t) () =
 
 let u8 shape =
   value 0
-    (A.of_array D.Uint8 shape
+    (A.of_array D.Uint8 (Iarray.of_array shape)
        (Array.init (Array.fold_left ( * ) 1 shape) (fun i -> i mod 256)))
 
 let bitcasts =
@@ -542,10 +543,12 @@ let contractions =
            segments;
          })
   in
-  let index shape xs = value 0 (A.of_array D.Int64 shape xs) in
+  let index shape xs =
+    value 0 (A.of_array D.Int64 (Iarray.of_array shape) xs)
+  in
   let codes shape =
     let n = Array.fold_left ( * ) 1 shape in
-    value 0 (A.of_array D.Uint8 shape (Array.make n 127))
+    value 0 (A.of_array D.Uint8 (Iarray.of_array shape) (Array.make n 127))
   in
   (* [a]'s scale a block per row, [b]'s one per column, [b]'s two columns
      the groups of [a]'s rows by [offsets]. *)
@@ -634,7 +637,8 @@ let partials =
   let every = Devices.on s2 in
   let codes shape =
     let n = Array.fold_left ( * ) 1 shape in
-    placed every (value 0 (A.of_array D.Uint8 shape (Array.make n 127)))
+    placed every
+      (value 0 (A.of_array D.Uint8 (Iarray.of_array shape) (Array.make n 127)))
   in
   (* [a] [[2; ks]] by [b] [[ks; 3]], cut along the first pair, [b] scaled by
      codes of [blocks]. *)

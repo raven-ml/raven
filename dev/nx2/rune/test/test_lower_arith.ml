@@ -413,7 +413,7 @@ let check ?(tol = 0) d p labels ops =
       P.eval ~by:"t"
         (P.Map
            {
-             layout = Nx_array.Layout.contiguous s;
+             layout = Nx_array.Layout.contiguous (Iarray.of_array s);
              prog = p;
              outs = [ r ];
              loads = Iarray.of_list loads;
@@ -664,7 +664,8 @@ let into_complex128 =
           (P.eval ~by:"t"
              (P.Map
                 {
-                  layout = Nx_array.Layout.contiguous (Nx.shape x);
+                  layout =
+                    Nx_array.Layout.contiguous (Iarray.of_array (Nx.shape x));
                   prog =
                     K.of_node ~ins:(Iarray.of_list [ d ])
                       (Op1 (Cast, D.Any D.Complex128, 0));
@@ -691,7 +692,7 @@ let map2 p (D.Any a) (D.Any b) shape loads =
     P.eval ~by:"t"
       (P.Map
          {
-           layout = Nx_array.Layout.contiguous shape;
+           layout = Nx_array.Layout.contiguous (Iarray.of_array shape);
            prog = p;
            outs = [ a; b ];
            loads = Iarray.of_list loads;

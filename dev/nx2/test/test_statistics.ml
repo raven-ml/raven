@@ -100,7 +100,7 @@ let truth_case =
 let law_truth (Case (dt, s, axes, data)) =
   let x =
     Nx.Repr.of_array Nx.Host.v
-      (A.v dt (L.contiguous s) (Rig.Buffer.of_string data))
+      (A.v dt (L.contiguous (Iarray.of_array s)) (Rig.Buffer.of_string data))
   in
   let ax = normal (Array.length s) axes in
   cover "an empty axis" (List.exists (fun a -> s.(a) = 0) ax);

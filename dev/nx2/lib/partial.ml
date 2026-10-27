@@ -218,7 +218,7 @@ struct
     let dts = List.map (P.dtype prog) (Iarray.to_list prog.outs) in
     let (Prim.Outputs (outs, read)) = Prim.outputs dts in
     let (Value.Any x) = List.hd vs in
-    let layout = L.contiguous (Prim.shape x) in
+    let layout = L.contiguous (Iarray.of_array (Prim.shape x)) in
     let plain (Value.Any x : d Value.any) = Value.Plain x in
     let loads = Iarray.of_list (List.map plain vs) in
     read (apply (Value.Map { layout; prog; outs; loads }))
@@ -383,7 +383,8 @@ struct
 
   let reduce (type d r) (route : unit Route.t) rule layout axes prog
       (rs : (d, r) Value.reductions) (loads : d Value.load iarray) : r =
-    let shape = L.shape layout and ax = Iarray.to_array axes in
+    let shape = Iarray.to_array (L.shape layout)
+    and ax = Iarray.to_array axes in
     let p : d Devices.placement = Devices.rebrand route.result in
     let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
     let out = Prim.reduced shape axes in
@@ -463,11 +464,11 @@ struct
               let r = [| full n; { M.start = k; count = 1; step = 1 } |] in
               (Iarray.of_array r, reshape [| n; 1 |] (Prim.expect c v))
             in
-            let pieces = List.mapi piece vs and shape = [| n; t |] in
+            let pieces = List.mapi piece vs
+            and shape : int iarray = [| n; t |] in
             let x =
               apply
-                (Value.Assemble
-                   { dtype = c; shape = Iarray.of_array shape; fill = D.zero c; pieces })
+                (Value.Assemble { dtype = c; shape; fill = D.zero c; pieces })
             in
             let lse, () =
               apply
@@ -496,7 +497,7 @@ struct
           in
           let x j = Prim.expect t (Lazy.force xs.(j)) in
           let over j prog rs loads =
-            let layout = L.contiguous (Prim.shape (x j)) in
+            let layout = L.contiguous (Iarray.of_array (Prim.shape (x j))) in
             apply (Value.Reduce { layout; axes; prog; reductions = rs; loads })
           in
           let total j =
@@ -540,7 +541,7 @@ struct
 
   let scan (type d a) (route : unit Route.t) rule layout axis prog
       (r : (d, a) Value.reduction) (loads : d Value.load iarray) : a =
-    let shape = L.shape layout in
+    let shape = Iarray.to_array (L.shape layout) in
     let p : d Devices.placement = Devices.rebrand route.result in
     let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
     let win j = Devices.window ~by p shape j in
@@ -572,7 +573,7 @@ struct
       apply
         (Value.Reduce
            {
-             layout = L.contiguous split;
+             layout = L.contiguous (Iarray.of_array split);
              axes = [| axis + 1 |];
              prog = identity term;
              reductions = rs;
@@ -581,7 +582,7 @@ struct
     in
     let scanned (Value.Any x : d Value.any) reduction carry =
       let prog = identity (D.Any (Prim.dtype x)) in
-      let layout = L.contiguous (Prim.shape x) in
+      let layout = L.contiguous (Iarray.of_array (Prim.shape x)) in
       apply
         (Value.Scan { layout; axis; prog; reduction; loads = [| Plain x |]; carry })
     in

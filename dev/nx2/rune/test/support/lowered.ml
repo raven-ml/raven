@@ -43,7 +43,7 @@ let elements (type v s) (dt : (v, s) D.t) (xs : v array) =
 
 let strided a flat =
   let l = A.layout a in
-  let shape = A.Layout.shape l in
+  let shape = Iarray.to_array (A.Layout.shape l) in
   let r = Array.length shape in
   let at =
     Array.to_list shape
@@ -116,7 +116,7 @@ let decode (type v s) (dt : (v, s) D.t) shape (bytes : Bytes.t) : v array =
           if c land 8 <> 0 then -.m else m)
   | _ ->
       let b = host_buffer (Bytes.to_string bytes) in
-      A.to_array (A.v dt (A.Layout.contiguous shape) b)
+      A.to_array (A.v dt (A.Layout.contiguous (Iarray.of_array shape)) b)
 
 (* Lowering *)
 

@@ -34,7 +34,9 @@ let fresh xs =
 
 (* As [fresh], of shape [s]: a reshape would make a view, which shares. *)
 let fresh_at s xs =
-  let a = Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 s xs) in
+  let a =
+    Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 (Iarray.of_array s) xs)
+  in
   Nx.add a (Nx.zeros_like a)
 
 let test_dies_at_its_consumer () =
@@ -493,7 +495,8 @@ let test_shards_of_one_allocation () =
     let xs = Array.init (s.(0) * s.(1)) (fun i -> i mod 3 = 0) in
     let x =
       Nx.place (Two.split ~axis)
-        (Nx.Repr.of_array Nx.Host.v (A.of_array D.Bool s xs))
+        (Nx.Repr.of_array Nx.Host.v
+           (A.of_array D.Bool (Iarray.of_array s) xs))
     in
     let y = Nx.logical_not (Nx.donate x) in
     equal ~msg (array bool) (Array.map not xs) (elements y);

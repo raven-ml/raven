@@ -155,8 +155,10 @@ module Shape = struct
           let* padded = admit "a padded operand" padded in
           if Iarray.length p.windows = 0 then Ok padded
           else
-            match Nx_array.Move.shape (Window p.windows) padded with
-            | y -> Ok y
+            match
+              Nx_array.Move.shape (Window p.windows) (Iarray.of_array padded)
+            with
+            | y -> Ok (Iarray.to_array y)
             | exception Invalid_argument e -> errorf "windows: %s" e)
 
   (* [axes] strictly increasing axes of a rank [r]. *)
@@ -225,9 +227,10 @@ module Shape = struct
 
   let assemble y regions =
     let* y = admit "an assembly" y in
+    let y = Iarray.of_array y in
     let piece j rs =
       match Nx_array.Move.shape (Slice rs) y with
-      | s -> Ok s
+      | s -> Ok (Iarray.to_array s)
       | exception Invalid_argument e -> errorf "region %d: %s" j e
     in
     let n = Array.length regions in

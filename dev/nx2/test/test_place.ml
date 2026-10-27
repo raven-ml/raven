@@ -115,7 +115,7 @@ let floats shape = Array.init (Array.fold_left ( * ) 1 shape) float_of_int
 
 let source layout shape =
   let r = Array.length shape in
-  let of_shape s = A.of_array A.Dtype.Float32 s (floats s) in
+  let of_shape s = A.of_array A.Dtype.Float32 (Iarray.of_array s) (floats s) in
   let view m a = Option.get (A.move m a) in
   match layout with
   | Contiguous -> of_shape shape
@@ -131,7 +131,7 @@ let source layout shape =
 let host shape =
   V
     (Nx.Repr.of_array Nx.Host.v
-       (A.of_array A.Dtype.Float32 shape (floats shape)))
+       (A.of_array A.Dtype.Float32 (Iarray.of_array shape) (floats shape)))
 
 (* The elements of window [b] of [shape] in C order, from [xs], the whole's
    elements in C order. *)
@@ -284,7 +284,9 @@ let narrow (type v s) name (dt : (v, s) A.Dtype.t) (of_int : int -> v) =
     let xs =
       Array.init (Array.fold_left ( * ) 1 shape) (fun i -> of_int (i mod 7))
     in
-    let x = Nx.Repr.of_array Nx.Host.v (A.of_array dt shape xs) in
+    let x =
+      Nx.Repr.of_array Nx.Host.v (A.of_array dt (Iarray.of_array shape) xs)
+    in
     let y = Nx.place (S4.split ~axis:1) (Nx.place (S4.split ~axis:0) x) in
     let back = Nx.place Nx.Host.on y in
     equal bool true (A.to_array (require_some (Nx.Repr.array back)) = xs)
@@ -544,7 +546,8 @@ let law_wanted c =
 let blocks n =
   let s = [| 2; n; 32 |] in
   let x =
-    Nx.Repr.of_array Nx.Host.v (A.of_array A.Dtype.Float32 s (floats s))
+    Nx.Repr.of_array Nx.Host.v
+      (A.of_array A.Dtype.Float32 (Iarray.of_array s) (floats s))
   in
   let y = Nx.reshape [| 2; n * 32 |] (Nx.place (Mem.split ~axis:1) x) in
   (Option.get (Nx.placement y), y)
@@ -567,7 +570,8 @@ let reshapes =
         ]
         (fun (s, w, s', w') ->
           let x =
-            Nx.Repr.of_array Nx.Host.v (A.of_array A.Dtype.Float32 s (floats s))
+            Nx.Repr.of_array Nx.Host.v
+              (A.of_array A.Dtype.Float32 (Iarray.of_array s) (floats s))
           in
           let y = Nx.reshape s' (Nx.place (on_mem w) x) in
           equal placement (on_mem w') (Option.get (Nx.placement y));

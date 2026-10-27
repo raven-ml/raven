@@ -124,12 +124,12 @@ let law_int32 (s, axes, keepdims, xs) =
   let ax = normal r axes in
   cover "an empty axis" (List.exists (fun a -> s.(a) = 0) ax);
   cover "kept" keepdims;
-  let x = value (A.of_array D.Int32 s xs) in
+  let x = value (A.of_array D.Int32 (Iarray.of_array s) xs) in
   let check name f init g =
     let y = host_array (g ?axes ~keepdims x) in
     equal ~msg:(name ^ ": shape") (array int)
       (if keepdims then kept s ax else reduced s ax)
-      (L.shape (A.layout y));
+      (Iarray.to_array (L.shape (A.layout y)));
     equal ~msg:name (array int32) (fold f init s ax xs) (A.to_array y)
   in
   check "sum" Int32.add 0l (fun ?axes ~keepdims x -> Nx.sum ?axes ~keepdims x);
@@ -171,11 +171,12 @@ let running f s axis xs =
 let law_int32_scan (s, _, _, xs) =
   let r = Array.length s in
   let n = Array.length xs in
-  let x = value (A.of_array D.Int32 s xs) in
+  let x = value (A.of_array D.Int32 (Iarray.of_array s) xs) in
   List.iter
     (fun (name, f, (g : ?axis:int -> _ -> _)) ->
       let flat = host_array (g x) in
-      equal ~msg:(name ^ ": shape") (array int) s (L.shape (A.layout flat));
+      equal ~msg:(name ^ ": shape") (array int) s
+        (Iarray.to_array (L.shape (A.layout flat)));
       equal ~msg:(name ^ " in C order") (array int32) (running f [| n |] 0 xs)
         (A.to_array flat);
       if r > 0 then
@@ -206,7 +207,7 @@ let drawn (type v s) (dt : (v, s) D.t) s : (v, s) A.t Gen.t =
     | D.Bool -> String.map (fun c -> Char.chr (Char.code c land 1)) data
     | _ -> data
   in
-  A.v dt (L.contiguous s)
+  A.v dt (L.contiguous (Iarray.of_array s))
     (Rig.Buffer.of_string (if data = "" then "\000" else data))
 
 let any_case =
@@ -214,7 +215,7 @@ let any_case =
   with_pp
     (fun ppf (Case a, axes) ->
       Format.fprintf ppf "%a %a over %s" D.pp (A.dtype a) pp_ints
-        (L.shape (A.layout a))
+        (Iarray.to_array (L.shape (A.layout a)))
         (match axes with
         | None -> "all"
         | Some l -> String.concat "," (List.map string_of_int l)))
@@ -300,12 +301,12 @@ let rec reference : type v s.
   | D.Complex64, Nx_kernel.Sum -> pairs D.Float32
   | D.Complex128, Nx_kernel.Sum -> pairs D.Float64
   | _ -> (
-      let s = L.shape (A.layout a) in
+      let s = Iarray.to_array (L.shape (A.layout a)) in
       let out =
         Array.of_list
           (List.filteri (fun i _ -> not (Array.mem i axes)) (Array.to_list s))
       in
-      let dst = A.create Rig.host dt out in
+      let dst = A.create Rig.host dt (Iarray.of_array out) in
       match
         Nx_cpu.reduce (identity dt) ~shape:s ~axes:(Iarray.of_array axes)
           [| (Monoid m, 0) |]
@@ -333,7 +334,7 @@ let reductions =
 
 let law_any (Case a, axes) =
   let dt = A.dtype a in
-  let s = L.shape (A.layout a) in
+  let s = Iarray.to_array (L.shape (A.layout a)) in
   let ax = Array.of_list (normal (Array.length s) axes) in
   (* An element of the result of no term: an extreme there raises. *)
   let no_term =
@@ -389,7 +390,7 @@ let test_mean () =
   equal (array float_exact) [| 2.; 4. |]
     (A.to_array (host_array (Nx.mean ~axes:[ 0 ] x)));
   let all = host_array (Nx.mean ~keepdims:true x) in
-  equal (array int) [| 1; 1 |] (L.shape (A.layout all));
+  equal (array int) [| 1; 1 |] (Iarray.to_array (L.shape (A.layout all)));
   equal (array float_exact) [| 3. |] (A.to_array all);
   let none = value (A.of_array D.Float64 [| 0 |] [||]) in
   equal bool true (Float.is_nan (A.to_array (host_array (Nx.mean none))).(0))
@@ -496,7 +497,7 @@ let int_case =
 let law_int_mean (D.Any dt, s, axes, xs) =
   let ax = normal (Array.length s) axes in
   let xs = Array.map (of_int64 dt) xs in
-  let x = value (A.of_array dt s xs) in
+  let x = value (A.of_array dt (Iarray.of_array s) xs) in
   let n = List.fold_left (fun n a -> n * s.(a)) 1 ax in
   if n = 0 && Array.fold_left ( * ) 1 (reduced s ax) > 0 then
     names "mean" (fun () -> Nx.mean ?axes x)
@@ -547,7 +548,8 @@ let test_int_mean () =
     (Nx.shape (Nx.mean ~axes:[ 0 ] x));
   let x = value (A.of_array D.Int16 [| 2; 2 |] [| 1; 2; 4; 7 |]) in
   let kept = host_array (Nx.mean ~axes:[ 1 ] ~keepdims:true x) in
-  equal ~msg:"kept" (array int) [| 2; 1 |] (L.shape (A.layout kept));
+  equal ~msg:"kept" (array int) [| 2; 1 |]
+    (Iarray.to_array (L.shape (A.layout kept)));
   equal ~msg:"kept" (array int) [| 1; 5 |] (A.to_array kept)
 
 (* Scans of complex numbers and narrow floats: a complex sum adds the parts,
@@ -587,7 +589,7 @@ let reduce1 r axes x =
     Nx.Prim.eval ~by:"t"
       (Reduce
          {
-           layout = L.contiguous (Nx.shape x);
+           layout = L.contiguous (Iarray.of_array (Nx.shape x));
            axes;
            prog = identity (Nx.dtype x);
            reductions = [ r ];
@@ -648,7 +650,7 @@ let cpu_lse_bound u n r =
 
 let law_logsumexp (s, axes, xs) =
   let ax = normal (Array.length s) axes in
-  let x = value (A.of_array D.Float64 s xs) in
+  let x = value (A.of_array D.Float64 (Iarray.of_array s) xs) in
   let got =
     read (reduce1 (Logsumexp (0, Nx.float64)) (Iarray.of_list ax) x)
   in
@@ -721,7 +723,7 @@ let cpu_moments_bound u n ~mu ~mm ~v =
    references are float64 two-pass sums, whose own error is the slack. *)
 let law_moments (s, axes, _, xs) =
   let ax = normal (Array.length s) axes in
-  let x = value (A.of_array D.Float32 s xs) in
+  let x = value (A.of_array D.Float32 (Iarray.of_array s) xs) in
   let mean, var = reduce1 (Moments (0, Nx.float32)) (Iarray.of_list ax) x in
   let mean = read mean and var = read var in
   let u = ldexp 1. (-24) in
@@ -760,7 +762,7 @@ let scan1 r axis x =
   Nx.Prim.eval ~by:"t"
     (Scan
        {
-         layout = L.contiguous (Nx.shape x);
+         layout = L.contiguous (Iarray.of_array (Nx.shape x));
          axis;
          prog = identity (Nx.dtype x);
          reduction = r;
@@ -892,7 +894,7 @@ let law_moments_scan (kind, s, axis, xs) =
   cover "runs of ±1e3" (match kind with Runs _ -> true | _ -> false);
   cover "N(1e4, 1)" (kind = Offset);
   cover "N(0, 1) past 4096 terms" (kind = Long);
-  let x = A.of_array D.Float32 s xs in
+  let x = A.of_array D.Float32 (Iarray.of_array s) xs in
   let u = ldexp 1. (-24) in
   let bound n ~m ~v ~range =
     let d = depth n in
@@ -937,7 +939,7 @@ let law_moments_scan (kind, s, axis, xs) =
 let test_moments_scan_cases () =
   let both name f = f name () in
   let moments () dt s xs =
-    scan_moments (Array.length s - 1) (A.of_array dt s xs)
+    scan_moments (Array.length s - 1) (A.of_array dt (Iarray.of_array s) xs)
   in
   both "an empty axis" (fun msg p ->
       let mean, var = moments p D.Float64 [| 2; 0 |] [||] in
@@ -987,7 +989,7 @@ let first_extreme better ts =
 let law_arg (s, axes, _, xs) =
   let ax = normal (Array.length s) axes in
   if not (List.exists (fun a -> s.(a) = 0) ax) then begin
-    let x = value (A.of_array D.Int32 s xs) in
+    let x = value (A.of_array D.Int32 (Iarray.of_array s) xs) in
     List.iter
       (fun (name, e, better) ->
         let v, p = reduce1 (Arg (e, 0, Nx.int32)) (Iarray.of_list ax) x in
@@ -1006,7 +1008,10 @@ let vector dt xs = value (A.of_array dt [| Array.length xs |] xs)
 
 let test_arg_cases () =
   let arg (type v s) e (dt : (v, s) D.t) axes shape (xs : v array) =
-    let v, p = reduce1 (Arg (e, 0, dt)) axes (value (A.of_array dt shape xs)) in
+    let v, p =
+      reduce1 (Arg (e, 0, dt)) axes
+        (value (A.of_array dt (Iarray.of_array shape) xs))
+    in
     (read v, read p)
   in
   let f64 e xs =
@@ -1150,7 +1155,7 @@ let test_logsumexp_cases () =
 (* [a] by [on], read through a transposed view where [strided]: the elements
    of [a], held in a layout that runs its axes backwards. *)
 let transposed on strided a =
-  let s = L.shape (A.layout a) in
+  let s = Iarray.to_array (L.shape (A.layout a)) in
   let r = Array.length s in
   if (not strided) || r < 2 then on a
   else
@@ -1161,7 +1166,7 @@ let transposed on strided a =
         (Array.init r Fun.id)
     in
     let held = Array.of_list (List.map (fun i -> xs.(at i)) (indices back)) in
-    Nx.transpose (on (A.of_array (A.dtype a) back held))
+    Nx.transpose (on (A.of_array (A.dtype a) (Iarray.of_array back) held))
 
 (* [f] on nx.cpu, given its name and its placement of an array. *)
 let on_cpu
@@ -1278,7 +1283,7 @@ let lse_ref m terms =
 
 let law_logsumexp_scan (Float_case (dt, s, axis, strided, xs)) =
   let u = match dt with D.Float64 -> ldexp 1. (-53) | _ -> ldexp 1. (-24) in
-  let a = A.of_array dt s xs in
+  let a = A.of_array dt (Iarray.of_array s) xs in
   cover_scan s axis strided;
   on_cpu (fun by place ->
       let x = place strided a in
@@ -1315,7 +1320,7 @@ let law_logsumexp_scan (Float_case (dt, s, axis, strided, xs)) =
 let test_logsumexp_scan_cases () =
   on_cpu (fun by place ->
       let lse (type s) (dt : (float, s) D.t) s xs =
-        let x = place false (A.of_array dt s xs) in
+        let x = place false (A.of_array dt (Iarray.of_array s) xs) in
         read (scan1 (Logsumexp (0, dt)) (Array.length s - 1) x)
       in
       let msg m = m ^ ", " ^ by in
@@ -1420,7 +1425,7 @@ let beats flip t b =
     if flip then c < 0 else c > 0
 
 let law_arg_scan (Arg_case { dt; key; s; axis; strided; xs }) =
-  let a = A.of_array dt s xs in
+  let a = A.of_array dt (Iarray.of_array s) xs in
   cover_scan s axis strided;
   on_cpu (fun by place ->
       let x = place strided a in
@@ -1455,7 +1460,7 @@ let test_arg_scan_cases () =
   on_cpu (fun by place ->
       let msg m = m ^ ", " ^ by in
       let arg (type v s) e (dt : (v, s) D.t) s (xs : v array) =
-        let x = place false (A.of_array dt s xs) in
+        let x = place false (A.of_array dt (Iarray.of_array s) xs) in
         let v, q = scan1 (Arg (e, 0, dt)) (Array.length s - 1) x in
         (read v, read q)
       in
@@ -1643,7 +1648,7 @@ let zcase ~product =
     in
     let+ xs = if nans then sprinkle xs ~most:3 nan_term else constant xs in
     (* The terms as stored. *)
-    let xs = A.to_array (A.of_array dt s xs) in
+    let xs = A.to_array (A.of_array dt (Iarray.of_array s) xs) in
     Zcase { dt; s; axes; strided; xs }
   in
   with_pp
@@ -1703,7 +1708,7 @@ let law_complex_prod (Zcase { dt; s; axes; strided; xs }) =
   cover "a product other than a unit"
     (Array.exists (fun t -> Complex.norm (product t) > 1.) ts);
   cover "transposed" (strided && Array.length s > 1);
-  let x = transposed value strided (A.of_array dt s xs) in
+  let x = transposed value strided (A.of_array dt (Iarray.of_array s) xs) in
   equal ~msg:"prod" (array z_value) (Array.map product ts)
     (read (Nx.prod ?axes x));
   let axis = match axes with Some (a :: _) -> Some a | _ -> None in
@@ -1721,7 +1726,7 @@ let law_complex_extremes (Zcase { dt; s; axes; strided; xs }) =
   let r = Array.length s in
   let ax = normal r axes in
   let ts = terms s ax xs in
-  let x = transposed value strided (A.of_array dt s xs) in
+  let x = transposed value strided (A.of_array dt (Iarray.of_array s) xs) in
   cover "a NaN result" (Array.exists (fun t -> List.exists znan t) ts);
   cover "transposed" (strided && r > 1);
   let empty = List.exists (fun a -> s.(a) = 0) ax in
@@ -1933,8 +1938,8 @@ let law_scan_prefix (Prefix_case (dt, s, axis, k, xs)) =
   done;
   let pxs = Array.map (fun p -> xs.(p)) from in
   on_cpu (fun by place ->
-      let whole = place false (A.of_array dt s xs) in
-      let prefix = place false (A.of_array dt part pxs) in
+      let whole = place false (A.of_array dt (Iarray.of_array s) xs) in
+      let prefix = place false (A.of_array dt (Iarray.of_array part) pxs) in
       List.iter
         (fun (name, r) ->
           let msg = Printf.sprintf "%s, %s" name by in
@@ -2096,7 +2101,7 @@ let along_rows (type v s d a) (x : (v, s, d) Nx.t) (r : (d, a) Nx.Prim.reduction
     Nx.Prim.eval ~by:"t"
       (Reduce
          {
-           layout = L.contiguous (Nx.shape x);
+           layout = L.contiguous (Iarray.of_array (Nx.shape x));
            axes = [| 1 |];
            prog = identity (Nx.dtype x);
            reductions = [ r ];
@@ -2111,7 +2116,7 @@ let running_rows (type v s d a) (x : (v, s, d) Nx.t)
   Nx.Prim.eval ~by:"t"
     (Scan
        {
-         layout = L.contiguous (Nx.shape x);
+         layout = L.contiguous (Iarray.of_array (Nx.shape x));
          axis = 1;
          prog = identity (Nx.dtype x);
          reduction = r;
@@ -2462,8 +2467,8 @@ let optional_group =
    element: one with none is the empty result, on one device or cut over
    three along either axis. *)
 let test_empty_extremes () =
-  let empty s = value (A.of_array D.Float32 s [||]) in
-  let shape x = L.shape (A.layout (host_array x)) in
+  let empty s = value (A.of_array D.Float32 (Iarray.of_array s) [||]) in
+  let shape x = Iarray.to_array (L.shape (A.layout (host_array x))) in
   equal ~msg:"max" (array int) [| 0 |]
     (shape (Nx.max ~axes:[ 1 ] (empty [| 0; 0 |])));
   equal ~msg:"min, kept" (array int) [| 0; 1 |]
@@ -2501,7 +2506,7 @@ let test_dead_named () =
    value cut along its axis, each window's results take the terms before it,
    so it has the bits of the scan on one device. *)
 let test_carried_cut () =
-  let s = [| 5; 3 |] in
+  let s : int iarray = [| 5; 3 |] in
   let xs = Array.init 15 (fun i -> Int32.of_int ((i * 7) - 40)) in
   let carried x c : (int32, D.int32_elt, _) Nx.t =
     Nx.Prim.eval ~by:"t"
@@ -2574,7 +2579,7 @@ let lcse_case =
 
 let law_lcse (Lcse_case (dt, s, axis, strided, xs)) =
   let u = match dt with D.Float64 -> ldexp 1. (-53) | _ -> ldexp 1. (-24) in
-  let x = transposed value strided (A.of_array dt s xs) in
+  let x = transposed value strided (A.of_array dt (Iarray.of_array s) xs) in
   let n = Array.length xs in
   cover "float64" (D.name dt = "float64");
   cover "a float narrower than float32" (D.bits dt < 32);
@@ -2621,7 +2626,7 @@ let law_lcse (Lcse_case (dt, s, axis, strided, xs)) =
    logcumsumexp of the elements in C order. Cut over three devices along any
    axis, it has the host's bits. *)
 let law_lcse_bits ((Lcse_case (dt, s, axis, strided, xs)), cut, keep) =
-  let x = transposed value strided (A.of_array dt s xs) in
+  let x = transposed value strided (A.of_array dt (Iarray.of_array s) xs) in
   let r = Array.length s in
   let y = Nx.logcumsumexp ?axis x in
   let bits_of y = blind (host_array y) in
@@ -2668,7 +2673,7 @@ let test_lcse_cases () =
     [| 100.; 100. +. ln2 |]
     (lcse (f32 [| 100.; 100. |]));
   let empty s axis =
-    let x = value (A.of_array D.Float32 s [||]) in
+    let x = value (A.of_array D.Float32 (Iarray.of_array s) [||]) in
     equal ~msg:"an empty value's shape" (array int) s
       (Nx.shape (Nx.logcumsumexp ?axis x))
   in

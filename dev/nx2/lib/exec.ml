@@ -84,7 +84,8 @@ let is_concrete x = not (Prim.is_constant x)
    reads. *)
 let view_of a = Rig.Claim.share (A.buffer a)
 
-let extents (w : M.range array) = Array.map (fun (r : M.range) -> r.count) w
+let extents (w : M.range array) =
+  Iarray.init (Array.length w) (fun i -> (w.(i) : M.range).count)
 
 (* Fresh C-contiguous arrays of a value of [shape] at [p]: each device's
    window. *)
@@ -94,6 +95,7 @@ let fresh ~by p dt shape =
   | Some k -> ([| A.create (Devices.rig set k) dt shape |] : _ iarray)
   | None ->
       let devices = Grid.devices (Devices.grid p) in
+      let shape = Iarray.to_array shape in
       Iarray.init (Array.length devices) (fun j ->
           A.create (Devices.rig set devices.(j)) dt
             (extents (Devices.window ~by p shape j)))
@@ -112,7 +114,7 @@ let alloc (type v s d) ~by ?into k (f : (v, s, d) Value.form) :
       Value.Array { at = p; a = A.expect f.dtype a; dead = Value.Live }
   | Some _ | None ->
       let shape = L.shape f.layout in
-      make p ~shape (fresh ~by p f.dtype shape)
+      make p ~shape:(Iarray.to_array shape) (fresh ~by p f.dtype shape)
 
 (* Programs on one device *)
 
@@ -172,7 +174,7 @@ let localize (mv : M.t) shape cuts local : M.t =
     Array.iter
       (fun (a, t) ->
         match Route.moved mv shape a with
-        | Becomes a' -> s'.(a') <- local.(a)
+        | Becomes a' -> s'.(a') <- Iarray.get local a
         | Regroups { axis; extent } -> s'.(axis) <- extent / t
         | Whole | Reduced _ | Scanned _ -> ())
       cuts;
@@ -186,7 +188,8 @@ let localize (mv : M.t) shape cuts local : M.t =
       Slice
         (Iarray.mapi
            (fun a (r : M.range) ->
-             if cut a then { M.start = 0; count = local.(a); step = 1 } else r)
+             if cut a then { M.start = 0; count = Iarray.get local a; step = 1 }
+             else r)
            rs)
 
 let unravel i shape =
@@ -242,7 +245,9 @@ let resolved : type v s d.
   match x with
   | Value.Deferred { form; node; k } ->
       let arrays = result node (Devices.rebrand q) in
-      make q ~shape:(L.shape form.layout) (typed form.dtype arrays.(k))
+      make q
+        ~shape:(Iarray.to_array (L.shape form.layout))
+        (typed form.dtype arrays.(k))
   | Value.Array _ | Value.Shards _ | Value.Donated _ | Value.Traced _ -> x
 
 (* The host's device, at the brand of a value this library reads there: a
@@ -412,7 +417,8 @@ let call : type r.
       map_on ~by kernels prog (kernel_loads loads) (dsts_at op r j)
   | Value.Reduce { layout; axes; prog; reductions; loads } ->
       let dsts = dsts_at op r j and loads = kernel_loads loads in
-      let rs = Prim.reductions reductions and shape = L.shape layout in
+      let rs = Prim.reductions reductions
+      and shape = Iarray.to_array (L.shape layout) in
       ran_loads ~by (K.reduce prog ~shape ~axes rs ~dsts loads) dsts loads
   | Value.Scan { axis; prog; reduction; loads; carry; _ } ->
       let dsts = dsts_at op r j and loads = kernel_loads loads in
@@ -623,7 +629,7 @@ and donated : type r. by:string -> r Value.prim -> Donate.handle list -> r =
         else begin
           ignore (Prim.layouts ~by op);
           match A.move mv (Iarray.get d.arrays 0) with
-          | Some v -> (d.at, L.shape (A.layout v), [| v |])
+          | Some v -> (d.at, Iarray.to_array (L.shape (A.layout v)), [| v |])
           | None -> moved ()
         end
       in
@@ -792,7 +798,8 @@ and sharded : type r.
           on_device ~by kernels set r 0 k op;
           r
       | None ->
-          let rule = Prim.rule op and first = L.shape layouts.(0) in
+          let rule = Prim.rule op
+          and first = Iarray.to_array (L.shape layouts.(0)) in
           Array.iteri
             (fun j k ->
               let w = Devices.window ~by p first j in
@@ -862,7 +869,7 @@ and shard_views : type v s d.
     (fun _ f ->
       let vs = views () in
       let p = Option.get f.placement in
-      let shape = L.shape f.layout in
+      let shape = Iarray.to_array (L.shape f.layout) in
       if Devices.equal p xp then
         make p ~shape (Iarray.map (fun v -> A.expect f.dtype (A.Any v)) vs)
       else
@@ -899,7 +906,7 @@ and check : type d e.
       run ~by
         (Value.Reduce
            {
-             layout = L.contiguous shape;
+             layout = L.contiguous (Iarray.of_array shape);
              axes = Iarray.init (Array.length shape) Fun.id;
              prog = P.of_node ~ins:[| D.Any D.Bool |] (In 0);
              reductions = Value.[ r ];
@@ -966,11 +973,11 @@ and failed : type d e.
     (int array -> e -> exn) -> exn =
  fun ~by first shape data fail ->
   let idx = unravel (Int64.to_int first) shape in
-  fail idx (data_at ~by idx data)
+  fail idx (data_at ~by (Iarray.of_array idx) data)
 
 (* Each of [data]'s elements at [idx], read on the host. *)
 and data_at : type d e.
-    by:string -> int array -> (d, e) Value.data -> e =
+    by:string -> int iarray -> (d, e) Value.data -> e =
  fun ~by idx -> function
   | [] -> ()
   | x :: rest ->
@@ -989,7 +996,9 @@ and at : type v s d.
         Prim.evaluate ~same:Devices.equal ~reads compute_node node
           (Devices.rebrand p)
       in
-      make p ~shape:(L.shape form.layout) (typed form.dtype arrays.(k))
+      make p
+        ~shape:(Iarray.to_array (L.shape form.layout))
+        (typed form.dtype arrays.(k))
 
 (* [x]'s elements in an array on the host: a constant computed there, any other
    value placed there. *)
@@ -1212,12 +1221,12 @@ let contract (type v s a b c e d) ~by ~batch ~contracting ~acc
       in
       let shape =
         Nx_kernel.Shape.contract ~batch ~contracting ~segments:None
-          (L.shape (A.layout rx.a), None)
-          (L.shape (A.layout ry.a), None)
+          (Iarray.to_array (L.shape (A.layout rx.a)), None)
+          (Iarray.to_array (L.shape (A.layout ry.a)), None)
       in
       match (array, shape, Grid.one (Devices.grid at), Devices.kernels set) with
       | Some array, Ok shape, Some k, Some (module K) -> (
-          let dst = A.create (Devices.rig set k) dt shape in
+          let dst = A.create (Devices.rig set k) dt (Iarray.of_array shape) in
           match
             K.contract ~batch ~contracting ~segments:None ~acc ~dst
               ~init:array

@@ -159,7 +159,7 @@ let pack ~by (k : 'd key) : (int64, D.uint64_elt, 'd) Value.t =
   Eval.eval ~by (Value.Bitcast (D.Uint64, k))
 
 let map ~by shape prog dt loads =
-  let layout = Nx_array.Layout.contiguous shape in
+  let layout = Nx_array.Layout.contiguous (Iarray.of_array shape) in
   let loads =
     Iarray.init (Array.length loads) (fun i ->
         let (Value.Any x) = loads.(i) in
@@ -190,7 +190,7 @@ let position ~rank s =
 let draw ~by ?(params = [||]) (k : 'd key) dt s prog =
   let batch = batch k in
   let shape = Array.append batch s in
-  Prim.check_shape ~by shape;
+  Prim.check_shape ~by (Iarray.of_array shape);
   let w = pack ~by k in
   let w = reshape ~by (Array.append batch (Array.make (Array.length s) 1)) w in
   let loads =
@@ -1048,7 +1048,7 @@ let masses ~by (b : (float, 's, 'd) Value.t) =
         P.of_exprs ~ins:[| D.Any dt |]
           [| side m n; side n m; side log_m log_n; side log_n log_m |])
   in
-  let layout = Nx_array.Layout.contiguous (Prim.shape b) in
+  let layout = Nx_array.Layout.contiguous (Iarray.of_array (Prim.shape b)) in
   let below, (above, (log_below, (log_above, ()))) =
     Eval.eval ~by
       (Value.Map
@@ -1143,7 +1143,7 @@ let along_last ~by shape prog monoid c loads =
     Eval.eval ~by
       (Value.Reduce
          {
-           layout = Nx_array.Layout.contiguous shape;
+           layout = Nx_array.Layout.contiguous (Iarray.of_array shape);
            axes = [| r - 1 |];
            prog;
            reductions = Value.[ Monoid (monoid, 0, c) ];
@@ -1283,7 +1283,7 @@ let categorical ?key ?(axis = -1) logits =
     Eval.eval ~by
       (Value.Reduce
          {
-           layout = Nx_array.Layout.contiguous shape;
+           layout = Nx_array.Layout.contiguous (Iarray.of_array shape);
            axes = [| Array.length (batch key) + a |];
            prog = P.of_node ~ins:[| D.Any c |] (In 0);
            reductions = Value.[ Arg (Nx_kernel.Max, 0, c) ];

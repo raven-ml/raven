@@ -43,7 +43,7 @@ type t =
           at [(…, w, …, j)] is the argument's element at
           [(…, w·step + j·dilation, …)]. *)
 
-val shape : t -> int array -> int array
+val shape : t -> int iarray -> int iarray
 (** [shape m s] is the shape of the result of [m] on an argument of shape [s].
 
     Raises [Invalid_argument] if an extent of [s] is negative, if [s] or the

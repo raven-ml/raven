@@ -246,14 +246,15 @@ let header read ~length =
 
 (* Fortran order lays out the first axis fastest. *)
 let layout h =
-  if not h.fortran then L.contiguous h.shape
+  let shape = Iarray.of_array h.shape in
+  if not h.fortran then L.contiguous shape
   else
     let n = Array.length h.shape in
     let strides = Array.make n 1 in
     for i = 1 to n - 1 do
       strides.(i) <- strides.(i - 1) * h.shape.(i - 1)
     done;
-    L.v ~strides h.shape
+    L.v ~strides:(Iarray.of_array strides) shape
 
 (* The stream [b]'s array over its data's bytes, read by [read]. *)
 let read_data

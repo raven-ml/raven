@@ -17,10 +17,7 @@
     stride 0, and a layout with no element has offset 0 and every stride 0. Two
     layouts of one shape that map every index to the same position are then
     {!equal}. Its sizes are at most {!max_numel}, so code that multiplies them
-    checks nothing.
-
-    No OCaml array a function takes is kept, and every array a function returns
-    is fresh. *)
+    checks nothing. *)
 
 type t
 (** The type for layouts. *)
@@ -34,18 +31,18 @@ val max_numel : int
     product of any of its extents, a position times a width of at most 128
     bits, and a sum of a few of these fit in an [int]. *)
 
-val fits : int array -> bool
+val fits : int iarray -> bool
 (** [fits s] is [true] iff [s] is a layout's shape: at most {!max_rank}
     extents, none negative, and those other than [0] multiplying to at most
     {!max_numel}. It allocates nothing. *)
 
-val contiguous : int array -> t
+val contiguous : int iarray -> t
 (** [contiguous s] is the layout of shape [s] in C order at offset 0: element
-    [k] in C order is at position [k].
+    [k] in C order is at position [k]. Its {!shape} is [s] itself.
 
     Raises [Invalid_argument] unless {!fits}[ s]. *)
 
-val v : ?offset:int -> strides:int array -> int array -> t
+val v : ?offset:int -> strides:int iarray -> int iarray -> t
 (** [v ~offset ~strides s] is the layout of shape [s] with [strides] and
     [offset] (defaults to [0]), in canonical form.
 
@@ -56,8 +53,8 @@ val v : ?offset:int -> strides:int array -> int array -> t
 
 (** {1:queries Queries}
 
-    {!rank}, {!dim}, {!stride}, {!offset}, {!numel}, {!is_contiguous} and
-    {!is_distinct} allocate nothing. *)
+    {!rank}, {!dim}, {!stride}, {!offset}, {!numel}, {!shape}, {!strides},
+    {!is_contiguous} and {!is_distinct} allocate nothing. *)
 
 val rank : t -> int
 (** [rank l] is [l]'s number of axes. *)
@@ -78,10 +75,10 @@ val offset : t -> int
 val numel : t -> int
 (** [numel l] is [l]'s number of indices, the product of its extents. *)
 
-val shape : t -> int array
+val shape : t -> int iarray
 (** [shape l] is [l]'s extents. *)
 
-val strides : t -> int array
+val strides : t -> int iarray
 (** [strides l] is [l]'s strides. *)
 
 val span : t -> int * int

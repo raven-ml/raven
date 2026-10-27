@@ -324,7 +324,9 @@ let coordinate_scans () : (float, D.float32_elt, b) Value.t =
 (* The shapes of [x]'s arrays, one per device. *)
 let shards x =
   Iarray.to_list
-    (Iarray.map (fun a -> Nx_array.Layout.shape (A.layout a)) (Prim.arrays x))
+    (Iarray.map
+       (fun a -> Iarray.to_array (Nx_array.Layout.shape (A.layout a)))
+       (Prim.arrays x))
 
 let row_scans () : (float, D.float32_elt, b) Value.t =
   Exec.run ~by:"t"
@@ -692,14 +694,14 @@ let lse =
    position of [sn]. *)
 let signalling (type s) (dt : (float, s) D.t) shape xs sn :
     (float, s, b) Value.t =
-  let a = A.of_array dt shape xs in
+  let a = A.of_array dt (Iarray.of_array shape) xs in
   let index i =
     let idx = Array.make (Array.length shape) 0 and r = ref i in
     for k = Array.length shape - 1 downto 0 do
       idx.(k) <- !r mod shape.(k);
       r := !r / shape.(k)
     done;
-    idx
+    Iarray.of_array idx
   in
   let put (type u r) (u : (u, r) D.t) (code : u) =
     let raw = Option.get (A.bitcast u a) in
@@ -773,7 +775,7 @@ let law_logsumexp (Lse (dt, shape, axes, xs, sn)) =
   let op =
     Value.Reduce
       {
-        layout = A.Layout.contiguous shape;
+        layout = A.Layout.contiguous (Iarray.of_array shape);
         axes = Iarray.of_array axes;
         prog = P.of_node ~ins:[| D.Any dt |] (In 0);
         reductions = Value.[ Logsumexp (0, dt) ];

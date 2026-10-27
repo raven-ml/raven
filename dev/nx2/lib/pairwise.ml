@@ -12,7 +12,7 @@ module M = Nx_array.Move
 let map_n (type d) ~by shape prog dts (loads : d Value.load iarray) :
     d Value.any array =
   let (Prim.Outputs (outs, read)) = Prim.outputs (Array.to_list dts) in
-  let layout = L.contiguous shape in
+  let layout = L.contiguous (Iarray.of_array shape) in
   Array.of_list (read (Eval.eval ~by (Value.Map { layout; prog; outs; loads })))
 
 (* The ranges of [shape] that keep its elements [start + j step], [j < count],

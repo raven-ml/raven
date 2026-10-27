@@ -16,7 +16,9 @@ module S = (val Nx.devices [ m 0 ])
 module T = (val Nx.devices [ m 1 ])
 module S2 = (val Nx.devices [ m 2; m 3 ])
 
-let host_of dt s xs = Nx.Repr.of_array Nx.Host.v (A.of_array dt s xs)
+let host_of dt s xs =
+  Nx.Repr.of_array Nx.Host.v (A.of_array dt (Iarray.of_array s) xs)
+
 let numel s = Array.fold_left ( * ) 1 s
 
 let check ok data fail =

@@ -54,7 +54,7 @@ let drawn (type v s) (dt : (v, s) D.t) s : v array Gen.t =
     | _ -> data
   in
   A.to_array
-    (A.v dt (L.contiguous s)
+    (A.v dt (L.contiguous (Iarray.of_array s))
        (Rig.Buffer.of_string (if data = "" then "\000" else data)))
 
 let shape =

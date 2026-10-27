@@ -27,7 +27,8 @@
 enum { ARRAY_DTYPE, ARRAY_LAYOUT, ARRAY_BUFFER };
 
 /* A Layout.t's fields, in this order: the extents and the strides (int
-   arrays of one length, the rank), the offset, the flags (NX_CONTIGUOUS,
+   iarrays of one length, the rank, whose blocks are laid out as arrays'),
+   the offset, the flags (NX_CONTIGUOUS,
    NX_DISTINCT, NX_EMPTY), and the span's lo and hi, all ints. layout.ml
    declares the record; the two change together. The record lives in the
    OCaml heap, which a collection moves: a stub copies what it needs before

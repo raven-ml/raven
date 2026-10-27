@@ -76,6 +76,7 @@ let up e v = Array.map (ldexp e) v
    real dtype keeps the real parts. *)
 let of_values (D.Any dt) shape (v : Complex.t array) =
   let re = Array.map (fun (c : Complex.t) -> c.re) v in
+  let shape = Iarray.of_array shape in
   match dt with
   | D.Float32 -> A.Any (A.of_array D.Float32 shape re)
   | D.Float64 -> A.Any (A.of_array D.Float64 shape re)
@@ -132,7 +133,7 @@ let pp_how ppf h =
    through a negative stride. *)
 let laid_out how (A.Any x) =
   let s = L.shape (A.layout x) in
-  let r = Array.length s in
+  let r = Iarray.length s in
   let into y =
     A.transfer ~src:x ~dst:y;
     A.Any y
@@ -142,19 +143,20 @@ let laid_out how (A.Any x) =
   | Transposed ->
       let swap i = if i = r - 2 then r - 1 else if i = r - 1 then r - 2 else i in
       let perm = Array.init r swap in
-      let t = A.create Rig.host (A.dtype x) (Array.map (fun i -> s.(i)) perm) in
+      let shape = Iarray.init r (fun i -> Iarray.get s perm.(i)) in
+      let t = A.create Rig.host (A.dtype x) shape in
       into (Option.get (A.move (M.Permute (Iarray.of_array perm)) t))
   | Stepped ->
-      let wide = Array.mapi (fun i d -> if i = r - 1 then 2 * d else d) s in
+      let wide = Iarray.mapi (fun i d -> if i = r - 1 then 2 * d else d) s in
       let w = A.create Rig.host (A.dtype x) wide in
       let range i d = { M.start = 0; count = d; step = (if i = r - 1 then 2 else 1) } in
-      let ranges = Iarray.of_array (Array.mapi range s) in
+      let ranges = Iarray.mapi range s in
       into (Option.get (A.move (M.Slice ranges) w))
   | Padded ->
-      let wide = Array.mapi (fun i d -> if i = r - 1 then 2 * d else d) s in
+      let wide = Iarray.mapi (fun i d -> if i = r - 1 then 2 * d else d) s in
       let w = A.create Rig.host (A.dtype x) wide in
       let range _ d = { M.start = 0; count = d; step = 1 } in
-      let ranges = Iarray.of_array (Array.mapi range s) in
+      let ranges = Iarray.mapi range s in
       into (Option.get (A.move (M.Slice ranges) w))
   | Reversed ->
       let t = A.create Rig.host (A.dtype x) s in
@@ -162,7 +164,7 @@ let laid_out how (A.Any x) =
         if i = r - 1 && d > 0 then { M.start = d - 1; count = d; step = -1 }
         else { M.start = 0; count = d; step = 1 }
       in
-      let ranges = Iarray.of_array (Array.mapi range s) in
+      let ranges = Iarray.mapi range s in
       into (Option.get (A.move (M.Slice ranges) t))
 
 (* Double-double sums *)
@@ -370,7 +372,7 @@ type routine =
       unit_diagonal : bool;
     }
 
-let fresh (D.Any dt) s = A.Any (A.create Rig.host dt s)
+let fresh (D.Any dt) s = A.Any (A.create Rig.host dt (Iarray.of_array s))
 
 (* [b]'s results of [r] on [ops], or [None] if it declined: Lu's positions
    int64, eig's results complex of a's precision, svd's and eigh's values
@@ -382,7 +384,7 @@ let run ?(alloc = fresh) (b : Support.backend) r ops =
   let module Shape = Nx_kernel.Shape in
   let (A.Any a) = ops.(0) in
   let dt = A.dtype a in
-  let shape (A.Any x) = L.shape (A.layout x) in
+  let shape (A.Any x) = Iarray.to_array (L.shape (A.layout x)) in
   let make s = A.expect dt (alloc (D.Any dt) s) in
   let index s = A.expect D.Int64 (alloc (D.Any D.Int64) s) in
   let real (type b) s (f : 'r. (float, 'r) A.t -> b) : b =
@@ -1040,10 +1042,8 @@ let law_eigh_spectrum (b : Support.backend) c =
    call's alone. *)
 let agree_bits (b : Support.backend) r x =
   let (A.Any a) = x in
-  let s = Array.append [| 2 |] (L.shape (A.layout a)) in
-  let pair =
-    A.Any (A.copy (Option.get (A.move (M.Broadcast (Iarray.of_array s)) a)))
-  in
+  let s = Iarray.append [| 2 |] (L.shape (A.layout a)) in
+  let pair = A.Any (A.copy (Option.get (A.move (M.Broadcast s) a))) in
   let z = run b r [| laid_out Transposed x |] in
   let w = Nx_cpu.one_thread (fun () -> run b r [| pair |]) in
   match (run b r [| x |], z, w) with
@@ -2257,7 +2257,7 @@ let check_alone (b : Support.backend) r ~dt ?(result = dt) ~rows ~cols ~spoil
   let three k = Array.concat [ vs.(k); (if k = 0 then spoil vs.(k) else vs.(k)); vs.(k) ] in
   let shape k =
     let (A.Any x) = ops.(k) in
-    Array.append [| 3 |] (L.shape (A.layout x))
+    Array.append [| 3 |] (Iarray.to_array (L.shape (A.layout x)))
   in
   let batch = Array.init n (fun k -> of_values dt (shape k) (three k)) in
   match (run b r batch, run b r ops) with
@@ -2508,8 +2508,8 @@ let result_bits (A.Any x as r) =
 
 (* [o] repeated along [c]'s batch. *)
 let repeated c (A.Any x) =
-  let s = Array.append c.batch (L.shape (A.layout x)) in
-  A.Any (A.copy (Option.get (A.move (M.Broadcast (Iarray.of_array s)) x)))
+  let s = Iarray.append (Iarray.of_array c.batch) (L.shape (A.layout x)) in
+  A.Any (A.copy (Option.get (A.move (M.Broadcast s) x)))
 
 (* [c] with a batch of at least as many matrices as the host has cores,
    along one axis or two by its seed: nx.cpu then computes each matrix
@@ -2682,10 +2682,13 @@ let misfits =
 
 let law_cpu_refuses (b : Support.backend) c =
   let module K = (val b.kernels) in
-  let zeros s = A.of_array D.Float32 s (Array.make (Elements.total s) 0.) in
-  let dst i = A.create Rig.host D.Float32 c.dsts.(i) in
-  let ints i = A.create Rig.host D.Int64 c.dsts.(i) in
-  let cdst i = A.create Rig.host D.Complex64 c.dsts.(i) in
+  let zeros s =
+    A.of_array D.Float32 (Iarray.of_array s)
+      (Array.make (Elements.total s) 0.)
+  in
+  let dst i = A.create Rig.host D.Float32 (Iarray.of_array c.dsts.(i)) in
+  let ints i = A.create Rig.host D.Int64 (Iarray.of_array c.dsts.(i)) in
+  let cdst i = A.create Rig.host D.Complex64 (Iarray.of_array c.dsts.(i)) in
   let a = zeros c.a in
   let got =
     match c.routine with
@@ -2723,7 +2726,9 @@ let test_cpu_refusals (b : Support.backend) () =
   let f32 = A.of_array D.Float32 [| 2; 2 |] [| 4.; 1.; 1.; 3. |] in
   let i32 = A.of_array D.Int32 [| 2; 2 |] [| 4l; 1l; 1l; 3l |] in
   let wide = A.of_array D.Float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let sentinel dt v s = A.of_array dt s (Array.make (Array.fold_left ( * ) 1 s) v) in
+  let sentinel dt v s =
+    A.of_array dt s (Array.make (Iarray.fold_left ( * ) 1 s) v)
+  in
   let refuses ~msg t want got dst seven =
     equal ~msg answer want got;
     let n = Array.length (A.to_array dst) in
@@ -2795,7 +2800,7 @@ let test_dtypes (b : Support.backend) () =
       in
       let x s = A.create b.device dt s in
       let positions s = A.create b.device D.Int64 s in
-      let sq = [| 2; 2 |] in
+      let sq : _ iarray = [| 2; 2 |] in
       let a = x sq in
       let wide = match dt with D.Float64 | D.Complex128 -> true | _ -> false in
       let eig (type c) (c : (Complex.t, c) D.t) =
