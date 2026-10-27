@@ -2940,6 +2940,19 @@ let law_cut ~pairs (module S : Sets) c =
         got
   | _ -> equal (array string) expected (bits' got)
 
+(* An output of no products from a complex init with an infinite real
+   part: the bound on its imaginary part, which [mag] makes infinite, is
+   infinite, never a NaN. *)
+let ccase_examples =
+  let complex64 =
+    List.find (fun (Ckind k) -> D.name k.cdtype = "complex64") ckinds
+  in
+  [
+    { ck = complex64; nb = Some 1; rows = 1; cols = 1; ks = [| 0 |];
+      ccut = Batch_rows 0; init = true; iwhere = Init_as_result; cseed = 0;
+      cmarks = [ (false, 0., Inf) ] };
+  ]
+
 (* A matrix product through Nx over cut operands: [matmul], [dot] of a
    matrix and a vector, and [einsum]; over three or four devices along the
    contracting axis, over both mesh axes, beside rows on the other one, or
@@ -3419,7 +3432,7 @@ let placements =
         lane_case law_lanes;
       test "a float reduction over a cut axis moves partials, not the operand"
         test_float_partials_move;
-      prop ~count:400
+      prop ~count:400 ~examples:ccase_examples
         "a contraction over cut contracting axes adds its tiles' sums in \
          order"
         ccase
