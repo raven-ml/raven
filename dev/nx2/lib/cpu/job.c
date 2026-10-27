@@ -23,7 +23,8 @@
 
    A job's cost sizes its threads; a call's price (cpu.h, Calls) decides
    whether the call releases the domain lock. The prices bound each kind's
-   time on one core of the machines measured; the jobs' costs are older
+   time on one core of the machines measured, an Apple M1 Max and an Intel
+   Core Ultra 5 235; the jobs' costs are older
    estimates, many below it, so a costly kind runs on fewer threads than
    it would pay for.
 

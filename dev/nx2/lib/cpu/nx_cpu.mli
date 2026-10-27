@@ -23,9 +23,10 @@
     ({!Nx_array.section-kernels}). It runs its work with the domain lock
     released where nx.cpu estimates that work to take longer than that copy;
     the estimate is an upper bound of the work's time on one core of the
-    machines it was measured on, an Apple M1 Max and an Intel Core Ultra 5
-    235. Other threads of the calling domain may run OCaml code during a
-    call.
+    machines it was measured on. Other threads of the calling domain may
+    run OCaml code during a call. Several domains may call concurrently. The
+    pool runs one job at a time, so a released call waits for another
+    domain's job to end.
 
     A kernel's result is a function of its operands' values alone, in the
     sense that neither layouts nor threads change a bit of it. An element's
