@@ -15,12 +15,15 @@
     domain reads them.
 
     Brands are phantom: nothing at run time reads ['d], and a value's arrays lie
-    on its placement's devices whatever its brand. Two values can carry the same
-    set at two brands only through {!rebrand}, which nx's engine alone calls: to
-    hold placements at [unit], in routes and constants' evaluations, and to
-    bring one back to an operation's brand where it computes, reads a value out
-    on the host, or compares two placements. This module is nx's one site that
-    names nx.cpu.
+    on its placement's devices whatever its brand. A brand names one set: a
+    set's module unpacked twice gives it two brand names. A placement is held
+    at another brand only through {!rebrand} and [Nx.Prim.coerce]. nx's engine
+    alone calls {!rebrand}: to hold placements at [unit], in routes and
+    constants' evaluations, and to bring one back to an operation's brand
+    where it computes, reads a value out on the host, or compares two
+    placements. [Nx.Prim.coerce] gives a value another brand only where that
+    brand names the value's set. This module is nx's one site that names
+    nx.cpu.
 
     Errors are [Invalid_argument] naming the [by] the caller passes. *)
 

@@ -118,4 +118,47 @@ let meshes =
               Nx.Placement.mesh mesh cuts));
     ]
 
-let () = exit (run "nx devices" [ sets; placements; meshes ])
+(* Coercions: a dtype and a set are each checked, and a value of every set
+   is at any set. Two mints of one device list are two sets. *)
+let coercions =
+  let module Twin = (val Nx.devices [ m 0; m 1 ]) in
+  let on2 = Nx.place S2.on (Nx.zeros Nx.float32 [| 2 |]) in
+  let coerce f x =
+    Option.map (fun y -> Nx.Dtype.name (Nx.dtype y)) (Nx.Prim.coerce f x)
+  in
+  let some ~msg (f : (_, _, _) Nx.Prim.form) x =
+    equal ~msg (option string) (Some (Nx.Dtype.name f.dtype)) (coerce f x)
+  in
+  let none ~msg f x = equal ~msg (option string) None (coerce f x) in
+  group "coercions"
+    [
+      test "a value coerces to its own form" (fun () ->
+          some ~msg:"placed" (Nx.Prim.form on2) on2;
+          let c = Nx.zeros Nx.float32 [| 2 |] in
+          some ~msg:"of every set" (Nx.Prim.form c) c);
+      test "a value of every set coerces to any set" (fun () ->
+          some ~msg:"onto S2's form" (Nx.Prim.form on2)
+            (Nx.zeros Nx.float32 [| 5 |]));
+      test "a placement of the same set, at either name of its brand"
+        (fun () ->
+          some ~msg:"split against whole"
+            (Nx.Prim.form (Nx.place (Nx.Placement.split ~axis:0 S2.v)
+                             (Nx.zeros Nx.float32 [| 2 |])))
+            on2;
+          let set = Nx.devices [ m 3 ] in
+          let module A = (val set) in
+          let module B = (val set) in
+          some ~msg:"one set unpacked twice"
+            (Nx.Prim.form (Nx.place A.on (Nx.zeros Nx.float32 [| 2 |])))
+            (Nx.place B.on (Nx.zeros Nx.float32 [| 2 |])));
+      test "another set, another dtype or a placed value to every set fail"
+        (fun () ->
+          let twin = Nx.place Twin.on (Nx.zeros Nx.float32 [| 2 |]) in
+          none ~msg:"a twin set of the same devices" (Nx.Prim.form on2) twin;
+          none ~msg:"another dtype" (Nx.Prim.form on2)
+            (Nx.place S2.on (Nx.zeros Nx.float64 [| 2 |]));
+          none ~msg:"a placed value where every set is asked"
+            (Nx.Prim.form (Nx.zeros Nx.float32 [| 2 |])) on2);
+    ]
+
+let () = exit (run "nx devices" [ sets; placements; meshes; coercions ])

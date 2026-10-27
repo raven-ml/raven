@@ -14,8 +14,12 @@ let pp_shape = Nx.pp_shape
 let values s x =
   Array.of_list (List.map (fun (Nx.P y) -> V y) (fst (Ptree.flatten s x)))
 
+(* [vs] as a structure like [like], each at its leaf's type. *)
 let rebuild s ~like vs =
-  Ptree.rebuild s ~like (List.map packed (Array.to_list vs))
+  let leaves = fst (Ptree.flatten s like) in
+  Ptree.rebuild s ~like
+    (List.map2 (fun (Nx.P l) v -> Nx.P (Program.like l v)) leaves
+       (Array.to_list vs))
 
 (* Outputs [i] to [j - 1]. *)
 let slice a i j = Array.sub a i (j - i)
@@ -58,13 +62,23 @@ let same_carry name s ~received returned =
 
 (* Constructs without programs *)
 
-let detach x = unpack (Nx.dtype x) (first (perform (Detach x)))
+let detach x = like x (first (perform (Detach x)))
 
 type nonrec axis = axis
 
 let axis = axis
-let lanes a x = unpack (Nx.dtype x) (first (perform (Lanes (a, x))))
-let lane_index a () = unpack Nx.int32 (first (perform (Lane_index a)))
+let lanes a x = like x (first (perform (Lanes (a, x))))
+
+(* A lane's index is of every set, so it reads back at any. *)
+let lane_index a () =
+  let f : (int32, Nx.int32_elt, _) Nx.Prim.form =
+    {
+      dtype = Nx.int32;
+      layout = Nx_array.Layout.contiguous (Iarray.of_list []);
+      placement = None;
+    }
+  in
+  cast f (first (perform (Lane_index a)))
 
 module Total = struct
   type ('v, 's, 'd) t = ('v, 's, 'd) total
@@ -114,6 +128,45 @@ let row (V x) =
       placement = Option.map Nx.Placement.without_leading_axis (Nx.placement x);
     }
 
+(* Whether a carry leaf traced at [r] is traced again at [t], the form its
+   step returned it at: traced of every set and returned placed. A value is
+   read back by its set, so a leaf placed elsewhere on one set, or returned
+   of every set, binds as traced. *)
+let moved (F r) (F t) =
+  match (r.placement, t.placement) with
+  | None, Some _ -> true
+  | _ -> false
+
+(* [trace like forms] traced until its carry, its first [nc] forms, settles.
+   Each trace rebuilds the step's carry like [like]. A leaf of every set the
+   step returns placed is traced again at the form it was returned at, as JAX
+   traces a loop again whose weakly typed carry its step promotes: its leaf
+   of [like] becomes the returned one, the others stay. A placed leaf stays
+   placed, so at most [nc] traces follow the first. With the [like] and the
+   forms it settled at. *)
+let settling c ~nc trace like forms =
+  let rec go like forms =
+    let ((_, _, returned, carry') as traced) = trace like forms in
+    let moves = Array.init nc (fun i -> moved forms.(i) returned.(i)) in
+    if not (Array.exists Fun.id moves) then (traced, like, forms)
+    else
+      let forms =
+        Array.mapi
+          (fun i (F r as fr) ->
+            if i < nc && moves.(i) then
+              match returned.(i) with F t -> F { t with layout = r.layout }
+            else fr)
+          forms
+      in
+      let before = Array.of_list (fst (Ptree.flatten c like)) in
+      let after = Array.of_list (fst (Ptree.flatten c carry')) in
+      let leaves =
+        List.init nc (fun i -> if moves.(i) then after.(i) else before.(i))
+      in
+      go (Ptree.rebuild c ~like leaves) forms
+  in
+  go like forms
+
 let scan_named name c x y ~f ~init xs =
   let init_v = values c init and xs_v = values x xs in
   if Array.length xs_v = 0 then invalid_argf "%s: xs has no leaf" name;
@@ -134,21 +187,29 @@ let scan_named name c x y ~f ~init xs =
     lengths;
   let nc = Array.length init_v and nx = Array.length xs_v in
   let ys_like = ref None in
-  let step, captures =
-    Trace.trace Body ~name
+  let trace like forms =
+    let returned = ref None in
+    let step, captures =
+      Trace.trace Body ~name forms (fun vs ->
+          let carry = rebuild c ~like (slice vs 0 nc) in
+          let r = rebuild x ~like:xs (slice vs nc (nc + nx)) in
+          let carry', ys = f carry r in
+          same_carry name c ~received:carry carry';
+          ys_like := Some ys;
+          returned := Some carry';
+          Array.append (values c carry') (values y ys))
+    in
+    let carry' = Option.get !returned in
+    (step, captures, Array.map form (values c carry'), carry')
+  in
+  let (step, captures, _, _), like, _ =
+    settling c ~nc trace init
       (Array.append (Array.map form init_v) (Array.map row xs_v))
-      (fun vs ->
-        let carry = rebuild c ~like:init (slice vs 0 nc) in
-        let r = rebuild x ~like:xs (slice vs nc (nc + nx)) in
-        let carry', ys = f carry r in
-        same_carry name c ~received:carry carry';
-        ys_like := Some ys;
-        Array.append (values c carry') (values y ys))
   in
   let ys_like = Option.get !ys_like in
   let ny = Array.length (values y ys_like) in
   let r = run (Scan { step; length; init = init_v; xs = xs_v; captures }) in
-  ( rebuild c ~like:init (slice r 0 nc),
+  ( rebuild c ~like (slice r 0 nc),
     rebuild y ~like:ys_like (slice r nc (nc + ny)) )
 
 let scan c x y ~f ~init xs = scan_named "Rune.scan" c x y ~f ~init xs
@@ -156,17 +217,26 @@ let scan c x y ~f ~init xs = scan_named "Rune.scan" c x y ~f ~init xs
 let iterate_named name c ~max ~until ~f init =
   if max < 0 then invalid_argf "%s: max = %d is negative" name max;
   let init_v = values c init in
-  let forms = Array.map form init_v and nc = Array.length init_v in
-  let step, step_captures =
-    Trace.trace Body ~name forms (fun vs ->
-        let carry = rebuild c ~like:init vs in
-        let carry' = f carry in
-        same_carry name c ~received:carry carry';
-        values c carry')
+  let nc = Array.length init_v in
+  let trace like forms =
+    let returned = ref None in
+    let step, captures =
+      Trace.trace Body ~name forms (fun vs ->
+          let carry = rebuild c ~like vs in
+          let carry' = f carry in
+          same_carry name c ~received:carry carry';
+          returned := Some carry';
+          values c carry')
+    in
+    let carry' = Option.get !returned in
+    (step, captures, Array.map form (values c carry'), carry')
+  in
+  let (step, step_captures, _, _), like, forms =
+    settling c ~nc trace init (Array.map form init_v)
   in
   let until, until_captures =
     Trace.trace Body ~name forms (fun vs ->
-        let stop = until (rebuild c ~like:init vs) in
+        let stop = until (rebuild c ~like vs) in
         let s = Nx.shape stop in
         if Array.fold_left ( * ) 1 s <> 1 then
           invalid_argf "%s: until must return one boolean, got shape %s" name
@@ -186,7 +256,7 @@ let iterate_named name c ~max ~until ~f init =
            until_captures;
          })
   in
-  rebuild c ~like:init (slice r 0 nc)
+  rebuild c ~like (slice r 0 nc)
 
 let iterate c ~max ~until ~f init =
   iterate_named "Rune.iterate" c ~max ~until ~f init

@@ -3,4 +3,4 @@
 (tests
  (names test_jit test_constructs test_loops)
  (modules compose test_jit test_constructs test_loops)
- (libraries nx nx_array rune2 windtrap))
+ (libraries nx nx_array nx_support rune2 windtrap))

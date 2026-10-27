@@ -11,13 +11,15 @@
 
     {b Functions of a construct are traced.} The functions that {!scan},
     {!iterate} and {!jit} receive are {e traced} at the call: their OCaml code
-    runs once per call over stand-ins of their arguments' arrays, values with a
-    dtype, a shape and a placement but no elements, and what it computes from
-    them is recorded as a program, which the construct then evaluates. So a
-    step's code runs once whatever the number of steps, its side effects happen
-    once, and inside it {!Nx.item} of a stand-in, or of a value computed from
-    one, raises ([Nx.item: the value is traced by Rune.scan]); a branch on a
-    value is {!Nx.where} or a nested {!iterate}. An operation that reads no
+    runs over stand-ins of their arguments' arrays, values with a dtype, a
+    shape and a placement but no elements, and what it computes from them is
+    recorded as a program, which the construct then evaluates. A loop's step
+    is traced once, and again where it places a carry array it received of
+    every set ({!scan}). So a step's code runs once or a few times whatever the
+    number of steps, as do its side effects, and inside it {!Nx.item} of a
+    stand-in, or of a value computed from one, raises
+    ([Nx.item: the value is traced by Rune.scan]); a branch on a value is
+    {!Nx.where} or a nested {!iterate}. An operation that reads no
     stand-in computes at the call, once. A draw without [~key] inside a traced
     function raises, naming the construct, so a step draws from a key in its
     carry or its rows. Outside every transformation a construct is its program
@@ -127,8 +129,10 @@ val scan :
     result is the final carry and the outputs, each array stacked along a new
     axis 0. With [n = 0] the result is [init] and outputs of leading length [0].
 
-    [f] is traced once, at the call, over stand-ins of [init]'s arrays and of
-    [xs]'s arrays without axis 0.
+    [f] is traced at the call over stand-ins of [init]'s arrays and of [xs]'s
+    arrays without axis 0. It is traced again while it returns placed an
+    array of the carry that it received of every set, such as a constant
+    [init] it adds a placed value to, each array at most once.
 
     Raises [Invalid_argument] if [xs] has no array
     (["Rune.scan: xs has no leaf"]), a 0-d array, or arrays of different leading
@@ -149,8 +153,8 @@ val iterate :
 (** [iterate c ~max ~until ~f init] applies the step [f] to a carry of structure
     [c], from [init], until [until carry] holds, and returns that carry. [until]
     returns one boolean and is tested before each step, so an [init] that
-    satisfies it is returned unchanged. [f] and [until] are traced once, at the
-    call.
+    satisfies it is returned unchanged. [f] and [until] are traced at the
+    call, [f] as {!scan}'s step is.
 
     Raises [Invalid_argument] if [max < 0]
     (["Rune.iterate: max = -1 is negative"]), if [until] returns other than one

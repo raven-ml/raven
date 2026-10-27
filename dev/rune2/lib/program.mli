@@ -38,13 +38,13 @@ type form =
 val form : value -> form
 (** [form v] is [v]'s form. *)
 
-val packed : value -> 'd Nx.packed
-(** [packed v] is [v] at the set ['d]. [v] must lie on ['d]: a structure's
-    arrays and a program's outputs computed from them do. *)
+val cast : ('v, 's, 'd) Nx.Prim.form -> value -> ('v, 's, 'd) Nx.t
+(** [cast f v] is [v] at [f]'s type, as {!Nx.Prim.coerce} checks it.
 
-val unpack : ('v, 's) Nx.dtype -> value -> ('v, 's, 'd) Nx.t
-(** [unpack dt v] is [v] at [dt] and the set ['d], which [v] must lie on. Raises
-    [Invalid_argument] if [v]'s dtype is not [dt]. *)
+    Raises [Invalid_argument] if [v]'s dtype or set is not [f]'s. *)
+
+val like : ('v, 's, 'd) Nx.t -> value -> ('v, 's, 'd) Nx.t
+(** [like x v] is [cast (Nx.Prim.form x) v]. *)
 
 val same : value -> value -> bool
 (** [same u v] is [true] iff [u] and [v] are one value. *)
@@ -75,8 +75,8 @@ type ('v, 's, 'd) Nx.Prim.payload +=
   | Var : int -> ('v, 's, 'd) Nx.Prim.payload  (** A variable's number. *)
 
 type addition =
-  | Addition : ('v, 's, 'd) total * ('v, 's) Nx.dtype -> addition
-      (** The total an addition output adds to, and the output's dtype. *)
+  | Addition : ('v, 's, 'd) total * ('v, 's, 'd) Nx.Prim.form -> addition
+      (** The total an addition output adds to, and the output's form. *)
 
 type t = private {
   owner : Nx.Prim.interpretation;  (** The tracer whose variables it has. *)

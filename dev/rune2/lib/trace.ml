@@ -75,7 +75,7 @@ let claims st i = function
 let record st i = function
   | Add (t, x) ->
       let x = operand st i x in
-      st.adds <- (Addition (t, Nx.dtype x), V x) :: st.adds;
+      st.adds <- (Addition (t, Nx.Prim.form x), V x) :: st.adds;
       [||]
   | c ->
       let c = map_operands { f = (fun x -> operand st i x) } c in

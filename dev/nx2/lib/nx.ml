@@ -6448,10 +6448,25 @@ module Prim = struct
     let take = Donate.consumer_take
   end
 
-  (* A value's set reaches its payload, so the identity does not type: the
-     set is phantom there too, nothing at run time reads it. *)
-  let rebrand : type v s d e. (v, s, d) Value.t -> (v, s, e) Value.t =
-    Obj.magic
+  (* [x] at [f]'s type where run-time facts allow it: a dtype is its own
+     witness, and a brand names one set, so a value on the set [f]'s
+     placement names is a value of [f]'s brand. A value with no placement is
+     of every set. *)
+  let coerce (type v s d w r e) (f : (v, s, d) Value.form)
+      (x : (w, r, e) Value.t) : (v, s, d) Value.t option =
+    match D.equal_witness (dtype x) f.dtype with
+    | None -> None
+    | Some Type.Equal -> (
+        let on_set =
+          match (placement x, f.placement) with
+          | None, _ -> true
+          | Some p, Some q ->
+              Devices.number (Devices.set p) = Devices.number (Devices.set q)
+          | Some _, None -> false
+        in
+        match on_set with
+        | true -> Some (Obj.magic x : (v, s, d) Value.t)
+        | false -> None)
 end
 
 (* Operators *)

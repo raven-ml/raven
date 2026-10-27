@@ -10,24 +10,34 @@ type form = F : ('v, 's, 'd) Nx.Prim.form -> form
 
 let form (V x) = F (Nx.Prim.form x)
 
-(* A value at another set. A program binds each variable to a value its
-   equation computed at the variable's own type, and a structure's arrays lie
-   on its set, so the value read back is at its true type. OCaml cannot see
-   it: a payload is covariant in its set, which a witness of the set would
-   not be. The dtype is checked by its witness wherever a value is read
-   back. *)
-let rebrand = Nx.Prim.rebrand
-
-let unpack (type v s d) (dt : (v, s) Nx.dtype) (V y) : (v, s, d) Nx.t =
-  match D.equal_witness (Nx.dtype y) dt with
-  | Some Type.Equal -> rebrand y
+(* [v] at [f]'s type. A program binds each variable to a value its equation
+   computed at the variable's type, but holds it as a [value], so the type is
+   read back from the run-time facts nx checks: the dtype and the set. A value
+   is read back at the form its stand-in was traced at, so a failure is a
+   binding at the wrong variable, or a trace at other forms than the
+   evaluation's. *)
+let cast (type v s d) (f : (v, s, d) Nx.Prim.form) (V y) : (v, s, d) Nx.t =
+  match Nx.Prim.coerce f y with
+  | Some y -> y
+  | None when D.equal (Nx.dtype y) f.dtype ->
+      let pp ppf = function
+        | None -> Format.pp_print_string ppf "every set"
+        | Some p -> Nx.Placement.pp ppf p
+      in
+      invalid_arg
+        (Format.asprintf "Rune: a %a value on %a where one on %a was expected"
+           Nx.pp_dtype f.dtype pp (Nx.placement y) pp f.placement)
   | None ->
       invalid_arg
         (Format.asprintf "Rune: a %a value where %a was expected" Nx.pp_dtype
-           (Nx.dtype y) Nx.pp_dtype dt)
+           (Nx.dtype y) Nx.pp_dtype f.dtype)
 
-let packed (V x) = Nx.P (rebrand x)
-let same (V a) (V b) = Obj.repr a == Obj.repr b
+(* [v] at [x]'s type. *)
+let like x v = cast (Nx.Prim.form x) v
+
+(* Whether [a] and [b] are one value. *)
+let same (V a) (V b) =
+  match Nx.Prim.coerce (Nx.Prim.form a) b with Some b -> a == b | None -> false
 
 (* Names *)
 
@@ -45,7 +55,8 @@ let same_total t u = Type.Id.provably_equal t.id u.id
 (* Programs *)
 
 type ('v, 's, 'd) Nx.Prim.payload += Var : int -> ('v, 's, 'd) Nx.Prim.payload
-type addition = Addition : ('v, 's, 'd) total * ('v, 's) Nx.dtype -> addition
+type addition =
+  | Addition : ('v, 's, 'd) total * ('v, 's, 'd) Nx.Prim.form -> addition
 
 type t = {
   owner : Nx.Prim.interpretation;
@@ -173,6 +184,9 @@ let tail p =
    program's additions, the sum each feeds. *)
 let sums programs =
   let found = ref [] in
+  (* A sum's addition and form are its first placed addition's, where one
+     is: an addition of every set joins it at its placement, as nx adds a
+     constant where its other operand lies. *)
   let index (Addition (t, _) as a) (F f) =
     let shape = shape_of f in
     let rec go k = function
@@ -180,7 +194,12 @@ let sums programs =
           found := !found @ [ (a, F f) ];
           k
       | (Addition (u, _), F g) :: rest ->
-          if Option.is_some (same_total t u) && shape_of g = shape then k
+          if Option.is_some (same_total t u) && shape_of g = shape then begin
+            if Option.is_none g.placement && Option.is_some f.placement then
+              found :=
+                List.mapi (fun j e -> if j = k then (a, F f) else e) !found;
+            k
+          end
           else go (k + 1) rest
     in
     go 0 !found
@@ -230,7 +249,14 @@ let forms = function
       Array.concat [ carry; Array.map (stacked length) ys; sums ]
   | Iterate { step; until; init; _ } ->
       let _, sums, _ = sums [ until; step ] in
-      Array.append (Array.map form init) sums
+      (* [init] where no step runs, the step's carry otherwise: the placed of
+         the two forms, where nx would compute a constant beside the other. *)
+      let placed (F i as fi) (F o as fo) =
+        match (i.placement, o.placement) with None, Some _ -> fo | _ -> fi
+      in
+      let carry = slice step.outputs 0 (Array.length init) in
+      let carry = Array.map2 placed (Array.map form init) (Array.map form carry) in
+      Array.append carry sums
   | Call { body; _ } -> Array.map form body.outputs
 
 (* Values of a form *)
@@ -250,22 +276,24 @@ let filled ~zero (F f) =
   let v = if zero then D.zero f.dtype else neg_zero f.dtype in
   V (place f (Nx.full f.dtype (shape_of f) v))
 
-let add (V a) b = V (Nx.add a (unpack (Nx.dtype a) b))
+let add (V a) b = V (Nx.add a (like a b))
 
-let stack = function
-  | [] -> assert false
-  | V y :: _ as vs ->
-      let dt = Nx.dtype y in
-      V (Nx.stack ~axis:0 (List.map (fun v -> rebrand (unpack dt v)) vs))
+(* Rows each read at [f], the form their output was traced at. *)
+let stack (F f) vs = V (Nx.stack ~axis:0 (List.map (cast f) vs))
 
 (* Evaluation *)
 
 (* An unbound slot. *)
 let hole = V (Nx.zeros Nx.bool [||] : (bool, Nx.bool_elt, Nx.host) Nx.t)
 
-(* [x]'s binding [v], read at [x]'s type. *)
-let get (type v s d) v (x : (v, s, d) Nx.t) : (v, s, d) Nx.t =
-  unpack (Nx.dtype x) v
+(* Whether [until]'s output, a boolean of one element at any set, holds. *)
+let stops (V y) =
+  match D.equal_witness (Nx.dtype y) Nx.bool with
+  | Some Type.Equal -> (Nx.item (List.init (Nx.ndim y) (fun _ -> 0)) y : bool)
+  | None ->
+      invalid_arg
+        (Format.asprintf "Rune: until gave a %a value, not a boolean"
+           Nx.pp_dtype (Nx.dtype y))
 
 let rec eval p args =
   if Array.length args <> Array.length p.params then
@@ -276,7 +304,7 @@ let rec eval p args =
   Array.iteri (fun k slot -> env.(slot) <- args.(k)) p.params;
   let owner = p.owner in
   let lookup (type v s d) (x : (v, s, d) Nx.t) : (v, s, d) Nx.t =
-    match Nx.Prim.payload owner x with Some (Var n) -> get env.(n) x | _ -> x
+    match Nx.Prim.payload owner x with Some (Var n) -> like x env.(n) | _ -> x
   in
   let m = { f = lookup } in
   let at = ref 0 in
@@ -344,7 +372,10 @@ and scan step ~length ~init ~xs ~captures =
       Array.map
         (fun v -> filled ~zero:true (stacked 0 (form v)))
         (slice step.outputs nc (nc + ny))
-    else Array.map (fun l -> stack (List.rev l)) ys
+    else
+      Array.mapi
+        (fun j l -> stack (form step.outputs.(nc + j)) (List.rev l))
+        ys
   in
   Array.concat [ !carry; ys; acc ]
 
@@ -355,8 +386,7 @@ and iterate name step ~until ~max ~init ~step_captures ~until_captures =
   let rec go k carry =
     let out = eval until (Array.append carry until_captures) in
     accumulate acc until_feeds out;
-    let stop = unpack Nx.bool out.(0) in
-    if Nx.item (List.init (Array.length (Nx.shape stop)) (fun _ -> 0)) stop then
+    if stops out.(0) then
       carry
     else if k = max then
       invalid_arg
@@ -375,7 +405,6 @@ let run c =
   let adds = additions c in
   let base = Array.length r - Array.length adds in
   Array.iteri
-    (fun k (Addition (t, dt)) ->
-      ignore (perform (Add (t, unpack dt r.(base + k)))))
+    (fun k (Addition (t, f)) -> ignore (perform (Add (t, cast f r.(base + k)))))
     adds;
   r

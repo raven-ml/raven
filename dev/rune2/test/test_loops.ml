@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Rune.scan and Rune.iterate: traced once at the call, eagerly; a scan is the
+(* Rune.scan and Rune.iterate: traced at the call, eagerly; a scan is the
    OCaml fold of its step bit for bit, every NaN read as one, zero rows
    included; reads and keyless draws in a step raise naming the loop. *)
 
@@ -523,6 +523,138 @@ let test_scopes_inside () =
   equal bits_t (bits (Nx.scalar f32 21.)) (bits c);
   equal bits_t (bits (v [| 3.; 7.; 11. |])) (bits ys)
 
+(* Carries, rows and additions of every set beside placed ones: a value is
+   read back at the form it was traced at, and where forms meet the placed
+   one wins, as nx computes a constant where its other operand lies. *)
+let placement =
+  Testable.make ~pp:Nx.Placement.pp ~equal:(fun p q -> Nx.Placement.equal p q)
+
+let host x = Nx.place Nx.Host.on x
+let three = Nx.scalar f32 3.
+
+let test_constant_carry () =
+  let one = host (Nx.scalar f32 1.) in
+  let c =
+    Rune.iterate t ~max:10
+      ~until:(fun c -> Nx.greater_equal c three)
+      ~f:(fun c -> Nx.add c one)
+      (Nx.scalar f32 0.)
+  in
+  equal bits_t (bits three) (bits c);
+  equal ~msg:"where the step put it" (option placement) (Some Nx.Host.on)
+    (Nx.placement c);
+  let c, _ =
+    Rune.scan t t t ~f:(fun c x -> (Nx.add c x, x)) ~init:(Nx.scalar f32 0.)
+      (host (v [| 1.; 2. |]))
+  in
+  equal bits_t (bits three) (bits c)
+
+(* One leaf placed by its step, the other made a constant by it. *)
+let test_crossing_carry () =
+  let one = host (Nx.scalar f32 1.) in
+  let a, b =
+    Rune.iterate (Nx.Ptree.pair t t) ~max:10
+      ~until:(fun (a, _) -> Nx.greater_equal a three)
+      ~f:(fun (a, _) -> (Nx.add a one, Nx.zeros f32 [||]))
+      (Nx.scalar f32 0., host (Nx.scalar f32 5.))
+  in
+  equal bits_t (bits three) (bits a);
+  equal bits_t (bits (Nx.scalar f32 0.)) (bits b)
+
+(* [b] takes [a]'s placement a trace after [a] does: three traces. *)
+let test_chain () =
+  let one = host (Nx.scalar f32 1.) and traces = ref 0 in
+  let a, b =
+    Rune.iterate (Nx.Ptree.pair t t) ~max:10
+      ~until:(fun (a, _) -> Nx.greater_equal a three)
+      ~f:(fun (a, _) ->
+        incr traces;
+        (Nx.add a one, a))
+      (Nx.scalar f32 0., Nx.scalar f32 0.)
+  in
+  equal ~msg:"traces" int 3 !traces;
+  equal bits_t (bits three) (bits a);
+  equal bits_t (bits (Nx.scalar f32 2.)) (bits b)
+
+(* Row 0 of the outputs is the constant [init], the others are placed. *)
+let test_constant_row () =
+  let c, ys =
+    Rune.scan t t t
+      ~f:(fun c x -> (Nx.add c x, c))
+      ~init:(Nx.scalar f32 0.)
+      (host (v [| 1.; 2.; 3. |]))
+  in
+  equal bits_t (bits (Nx.scalar f32 6.)) (bits c);
+  equal bits_t (bits (v [| 0.; 1.; 3. |])) (bits ys)
+
+(* A constant addition, then a placed one, to one total in a step. *)
+let test_constant_addition () =
+  let u = Total.make () in
+  let (), total =
+    Total.collect u ~zero:(Nx.scalar f32 0.) (fun () ->
+        ignore
+          (Rune.scan t t Nx.Ptree.unit
+             ~f:(fun c x ->
+               Total.add u (Nx.scalar f32 1.);
+               Total.add u (Nx.sum x);
+               (c, ()))
+             ~init:(Nx.scalar f32 0.)
+             (host (v [| 1.; 2.; 3. |]))))
+  in
+  equal bits_t (bits (Nx.scalar f32 9.)) (bits total)
+
+(* Two devices of one set: placements that differ on one set. *)
+module Two = (val Nx.devices [ Nx_support.memory 0; Nx_support.memory 1 ])
+
+let on k x = Nx.place (Nx.Placement.device Two.v (Nx_support.memory k)) x
+
+(* Leaves that swap devices of one set bind as traced: one trace. *)
+let test_swap () =
+  let traces = ref 0 in
+  let (a, b), _ =
+    Rune.scan (Nx.Ptree.pair t t) t t
+      ~f:(fun (a, b) x ->
+        incr traces;
+        ((b, a), x))
+      ~init:(on 0 (Nx.scalar f32 1.), on 1 (Nx.scalar f32 2.))
+      (on 0 (v [| 0. |]))
+  in
+  equal ~msg:"traces" int 1 !traces;
+  equal bits_t (bits (Nx.scalar f32 2.)) (bits a);
+  equal bits_t (bits (Nx.scalar f32 1.)) (bits b)
+
+(* An iterate whose step returns a constant and whose [init] is placed: no
+   step or one, under jit and inside a scan's step. *)
+let test_placed_init () =
+  let zero = Nx.scalar f32 0. in
+  let loop a =
+    Rune.iterate' ~max:5
+      ~until:(fun c -> Nx.greater_equal c zero)
+      ~f:(fun _ -> Nx.zeros f32 [||])
+      a
+  in
+  equal ~msg:"no step" bits_t (bits (Nx.scalar f32 1.))
+    (bits (Rune.jit' loop (host (Nx.scalar f32 1.))));
+  equal ~msg:"one step" bits_t (bits zero)
+    (bits (Rune.jit' loop (host (Nx.scalar f32 (-1.)))));
+  let _, ys =
+    Rune.scan' ~f:(fun c x -> (c, loop x)) ~init:zero (host (v [| 1.; -1. |]))
+  in
+  equal ~msg:"in a scan" bits_t (bits (v [| 1.; 0. |])) (bits ys)
+
+(* A jit around an iterate whose constant carry the jit's argument places. *)
+let test_constant_carry_in_jit () =
+  let y =
+    Rune.jit'
+      (fun a ->
+        Rune.iterate' ~max:10
+          ~until:(fun c -> Nx.greater_equal c three)
+          ~f:(fun c -> Nx.add c a)
+          (Nx.scalar f32 0.))
+      (host (Nx.scalar f32 1.))
+  in
+  equal bits_t (bits three) (bits y)
+
 let () =
   exit
     (run "rune2 loops"
@@ -554,5 +686,14 @@ let () =
              prop "iterate gives the while loop's bits" iterate_cases
                law_iterate;
              test "misuse raises" test_iterate_refused;
+             test "a constant carry the step places" test_constant_carry;
+             test "a carry whose leaves cross" test_crossing_carry;
+             test "a carry that settles in three traces" test_chain;
+             test "a constant first row" test_constant_row;
+             test "a constant addition before a placed one"
+               test_constant_addition;
+             test "a constant carry under jit" test_constant_carry_in_jit;
+             test "leaves that swap devices of one set" test_swap;
+             test "a placed init and a constant step" test_placed_init;
            ];
        ])

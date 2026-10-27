@@ -3327,9 +3327,10 @@ module Placement : sig
   val devices : 'd t -> 'd devices
   (** [devices p] is [p]'s set. *)
 
-  val equal : 'd t -> 'd t -> bool
-  (** [equal p q] is [true] iff every device holds the same window of a value at
-      [p] and at [q]. *)
+  val equal : 'd t -> 'e t -> bool
+  (** [equal p q] is [true] iff [p] and [q] are of one set and every device
+      holds the same window of a value at [p] and at [q], whatever their
+      brands. *)
 
   val pp : Format.formatter -> 'd t -> unit
   (** [pp] formats a placement on one device as the device's name, others as
@@ -4972,11 +4973,17 @@ module Prim : sig
 
   (**/**)
 
-  val rebrand : ('v, 's, 'd) nx -> ('v, 's, 'e) nx
-  (** [rebrand x] is [x] at the set ['e]. A set is a phantom type: nothing at
-      run time reads it, so [rebrand x] is sound exactly where [x] lies on
-      ['e]'s devices. For an interpretation that binds the values it made and
-      reads each back at its own type, where OCaml cannot see the set. *)
+  val coerce : ('v, 's, 'd) form -> ('w, 'r, 'e) nx -> ('v, 's, 'd) nx option
+  (** [coerce f x] is [Some x] at [f]'s type if [x]'s dtype is [f]'s and
+      either [x] lies on the set [f]'s placement names or [x] is a value of
+      every set; [None] otherwise, as for a placed [x] and an [f] of every
+      set. Layouts are not compared. Each brand names one set, so a value on
+      that set is a value of the brand.
+
+      A value of every set coerces to any form, so an interpretation that
+      binds its stand-ins reads each binding back at the stand-in's own form,
+      where the check holds. For an interpretation that binds the values it
+      makes where OCaml cannot relate their types. *)
 
   (**/**)
 end
