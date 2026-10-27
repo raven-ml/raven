@@ -3,14 +3,9 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The conversion runs, compiled once per target, and the setting of its table.
-
-   dune compiles this file as itself for the base target, the instructions
-   every host of the architecture has: SSE2 on x86-64, NEON on arm64. It
-   compiles it again as convert_v3.c with NX_CPU_V3 and, on x86-64, AVX2,
-   FMA, F16C and BMI2, the headers' inline codecs and runs.h's runs
-   included. Everything here but the fill is static, so no code compiled
-   for v3 reaches the base table. Elsewhere the v3 unit is empty.
+/* The conversion runs and the setting of their table, compiled as every
+   unit of nx.cpu but target.c is: for x86-64-v3 on x86-64 (AVX2, FMA, F16C
+   and BMI2), the headers' inline codecs and runs.h's runs included.
 
    One loop per pair of dtypes, each element converted by an expression
    built from nx_dtype.h's codecs: the store rule of Dtype.of_float from a
@@ -19,8 +14,6 @@
 
 #include "cpu.h"
 #include "runs.h"
-
-#if !defined(NX_CPU_V3) || defined(__x86_64__)
 
 typedef struct {
   float re, im;
@@ -172,7 +165,7 @@ RUN(UINT64, FLOAT32, nx_u64_to_float_run)
 #define ENTRY(S, ST, CL, D, DT, K, A, B, C) t->convert[NX_##S][NX_##D] = S##_##D;
 #define ENTRIES(D, DT, K, A, B, C) SRCS(ENTRY, D, DT, K, A, B, C)
 
-static void set(nx_cpu_target *t) {
+void nx_cpu_set_convert(nx_cpu_target *t) {
   DSTS(ENTRIES)
   t->convert[NX_FLOAT8_E5M2][NX_FLOAT32] = FLOAT8_E5M2_FLOAT32;
   t->convert[NX_FLOAT4_E2M1FN][NX_FLOAT32] = FLOAT4_E2M1FN_FLOAT32;
@@ -189,16 +182,3 @@ static void set(nx_cpu_target *t) {
   t->convert[NX_INT64][NX_FLOAT32] = run_INT64_FLOAT32;
   t->convert[NX_UINT64][NX_FLOAT32] = run_UINT64_FLOAT32;
 }
-
-#if defined(NX_CPU_V3)
-void nx_cpu_set_convert_v3(nx_cpu_target *t) { set(t); }
-#else
-void nx_cpu_set_convert_base(nx_cpu_target *t) { set(t); }
-#endif
-
-#else
-
-/* ISO C forbids an empty unit. */
-typedef int nx_cpu_no_v3;
-
-#endif

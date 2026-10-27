@@ -3,6 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* Raises where the host lacks the instructions nx.cpu is compiled for
+   (target.c): the first code of nx.cpu to run. *)
+external require : unit -> unit = "nx_cpu_require"
+
+let () = require ()
+
 module D = Nx_array.Dtype
 
 let name = "nx.cpu"

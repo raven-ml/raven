@@ -13,6 +13,10 @@
     any write. It answers [Declined] only where its doc says, and computes
     every other case its contract offers.
 
+    On x86-64 nx.cpu requires x86-64-v3 (AVX2, FMA, F16C and BMI2): on a
+    host without it, initialising the library raises [Failure], before any
+    kernel can run. Other architectures have none.
+
     A call keeps other domains waiting to collect for no longer than about
     one unloaded core's copy of 1 MiB at a time, however many operands,
     reductions or program nodes it has

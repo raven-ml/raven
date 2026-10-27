@@ -35,8 +35,6 @@ type codec =
 external floor_codec : int -> codec -> bytes -> bytes -> int -> unit
   = "nx_cpu_bench_floor_codec"
 
-external codecs_run : unit -> bool = "nx_cpu_bench_codecs_run" [@@noalloc]
-
 external floor_stream :
   int -> int -> int -> int -> bytes -> bytes -> bytes -> bytes -> int -> unit
   = "nx_cpu_bench_floor_stream_byte" "nx_cpu_bench_floor_stream"
@@ -208,13 +206,7 @@ let floor_rows ws =
           (fun () -> (buffer (inb * n), buffer n, buffer (inb * n), buffer (inb * n)))
           (fun (d, c, a, b) -> floor_stream threads (-1) inb inb d c a b n)
   in
-  let floors =
-    List.filter
-      (function
-        | Codec _ | Peak _ | Bytes_read _ -> codecs_run ()
-        | Memcpy _ | Move _ | Streamed _ | Selected _ | Amx _ -> true)
-      (needed ws)
-  in
+  let floors = needed ws in
   (* The matrix unit's floors run on one thread and on one per unit. *)
   let threads_of = function
     | Amx _ -> [ ("1t", 1); ("units", amx_units ()) ]

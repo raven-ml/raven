@@ -1084,7 +1084,7 @@ let law_power_of_two_divisors (b : Support.backend) seed =
        D.all)
 
 (* Threefry's contiguous rows run two blocks of vectors at a time, 16
-   elements on v3 and 8 on the other tables, then a tail of the elements
+   elements on x86-64 and 8 on arm64, then a tail of the elements
    left one at a time: a length that is no multiple of 8 leaves a tail on
    every table. Over lengths around the blocks, with the counters or the
    keys one element repeated, its bits are nx_kinds.h's. *)

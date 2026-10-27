@@ -3,21 +3,19 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** nx_kinds.h's kinds, called by name through per-target loops compiled with
-    dev/nx2's flags: each call runs the loop nx.cpu would run on this CPU, or a
-    named target's. *)
+(** nx_kinds.h's kinds, called by name through loops compiled as nx.cpu's
+    rows are: each call runs the loop nx.cpu would run on this CPU. *)
 
 (** {1 Calls} *)
 
-val f32 : ?target:string -> string -> int array -> int
-(** [f32 ~target kind args] is the f32 kind [kind] ([exp], [add], [fma], …) of
-    the operands whose binary32 bits are [args], as binary32 bits, by
-    [target]'s loop, one of {!targets} (default: the target nx.cpu picked).
-    Comparisons give 1.0 or 0.0; [where] selects on a non-zero first operand.
-    Raises [Invalid_argument] on an unknown target, kind or arity. *)
+val f32 : string -> int array -> int
+(** [f32 kind args] is the f32 kind [kind] ([exp], [add], [fma], …) of the
+    operands whose binary32 bits are [args], as binary32 bits. Comparisons
+    give 1.0 or 0.0; [where] selects on a non-zero first operand. Raises
+    [Invalid_argument] on an unknown kind or arity. *)
 
-val f64 : ?target:string -> string -> float array -> float
-(** [f64 ~target kind args] is {!f32} at f64, operands and result as floats. *)
+val f64 : string -> float array -> float
+(** [f64 kind args] is {!f32} at f64, operands and result as floats. *)
 
 val int : string -> string -> int64 array -> int64
 (** [int ty kind args] is the integer kind [kind] at [ty], one of ["i32"],
@@ -38,6 +36,15 @@ val c64 : string -> int array -> int array
 val c128 : string -> float array -> float array
 (** [c128 kind args] is {!c64} at c128, parts as floats. *)
 
+val fmaf : int -> int -> int -> int
+(** [fmaf a b c] is [nx_kinds.h]'s [nx_fmaf] of the operands whose binary32
+    bits are [a], [b] and [c], as binary32 bits, compiled with dev/nx2's
+    vector flags alone: on x86-64 without the fma instruction nx.cpu's
+    loops have. *)
+
+val fmad : float -> float -> float -> float
+(** [fmad a b c] is {!fmaf}'s [nx_fmad] at f64. *)
+
 val run :
   string ->
   (float, 's, Bigarray.c_layout) Bigarray.Array1.t ->
@@ -45,8 +52,7 @@ val run :
   (float, 's, Bigarray.c_layout) Bigarray.Array1.t ->
   unit
 (** [run kind x z y] writes [kind] of [x]'s elements, and [z]'s for a kind of
-    two operands, into [y]: float32 or float64 vectors of one length, the loop
-    the best target runs. *)
+    two operands, into [y]: float32 or float64 vectors of one length. *)
 
 (** {1 Errors of the f32 transcendentals}
 
@@ -122,15 +128,10 @@ val f32_bounds : (string * int) list
 
 (** {1 Digests} *)
 
-val targets : unit -> string list
-(** [targets ()] is the targets this CPU runs: ["base"], and ["v3"] on an x86-64
-    with AVX2 and FMA. *)
-
-val digest : target:string -> string -> string -> string
-(** [digest ~target kind ty] is the digest of [kind] at [ty] (["f32"], ["f64"]
-    or ["int"]) over its strata on [target], every NaN one NaN, as 16 hex
-    digits: what every library computing the kind through [nx_kinds.h]
-    gives. *)
+val digest : string -> string -> string
+(** [digest kind ty] is the digest of [kind] at [ty] (["f32"], ["f64"] or
+    ["int"]) over its strata, every NaN one NaN, as 16 hex digits: what every
+    library computing the kind through [nx_kinds.h] gives. *)
 
 val kinds : (string * string list) list
 (** [kinds] is every kind with the types it has a loop at. *)

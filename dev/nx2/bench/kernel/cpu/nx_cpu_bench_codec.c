@@ -9,19 +9,7 @@
    threads as the other floors are. Neither CPU converts to or from bfloat16
    or e4m3fn, neither converts a vector of 64-bit integers or narrows a
    double to float16 at once on x86-64, and the M1's conversions of float32
-   to float16 and int8 cost more than an integer narrowing. On x86-64 the
-   loops compile for v3's instructions, as nx.cpu's v3 runs do, and run
-   where nx.cpu runs v3. */
-
-#if defined(__x86_64__)
-#if defined(__clang__)
-#pragma clang attribute push(__attribute__((target("avx2,fma,f16c,bmi2"))), \
-                             apply_to = function)
-#else
-#pragma GCC push_options
-#pragma GCC target("avx2,fma,f16c,bmi2")
-#endif
-#endif
+   to float16 and int8 cost more than an integer narrowing. */
 
 #include <stdint.h>
 
@@ -111,22 +99,3 @@ value nx_cpu_bench_floor_codec(value threads, value codec, value dst,
   caml_leave_blocking_section();
   return Val_unit;
 }
-
-/* Whether the host runs the loops: on x86-64, where nx.cpu runs its v3
-   table, whose instructions they are compiled for. */
-value nx_cpu_bench_codecs_run(value unit) {
-  (void)unit;
-#if defined(__x86_64__)
-  return Val_bool(nx_cpu_table == &nx_cpu_v3);
-#else
-  return Val_true;
-#endif
-}
-
-#if defined(__x86_64__)
-#if defined(__clang__)
-#pragma clang attribute pop
-#else
-#pragma GCC pop_options
-#endif
-#endif

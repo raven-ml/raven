@@ -3,8 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* x86-64's contraction kernels, in the v3 table: dune compiles this file
-   with AVX2 and FMA.
+/* x86-64's contraction kernels, in its table (target.c), compiled with
+   AVX2 and FMA as every unit of nx.cpu but target.c is.
 
    A step of k adds 6 rows × two vectors of outputs, 6 × 16 of float32 or
    6 × 8 of float64: 12 accumulators, two vectors of b and one broadcast of

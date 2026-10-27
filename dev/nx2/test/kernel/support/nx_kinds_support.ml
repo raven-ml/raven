@@ -3,16 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-external f32_raw : string -> string -> int array -> int
-  = "nx_kinds_support_f32"
-
-external f64_raw : string -> string -> float array -> float
-  = "nx_kinds_support_f64"
+external f32 : string -> int array -> int = "nx_kinds_support_f32"
+external f64 : string -> float array -> float = "nx_kinds_support_f64"
 
 external int : string -> string -> int64 array -> int64 = "nx_kinds_support_int"
 external threefry : int64 -> int64 -> int64 = "nx_kinds_support_threefry"
 external c64 : string -> int array -> int array = "nx_kinds_support_c64"
 external c128 : string -> float array -> float array = "nx_kinds_support_c128"
+external fmaf : int -> int -> int -> int = "nx_kinds_support_fmaf"
+external fmad : float -> float -> float -> float = "nx_kinds_support_fmad"
 
 external run :
   string ->
@@ -48,10 +47,7 @@ external narrow_binary_raw :
 external binary_raw : string -> int -> int -> int * int * int
   = "nx_kinds_support_binary"
 
-external targets : unit -> string list = "nx_kinds_support_targets"
-
-external digest_raw : string -> string -> string -> string
-  = "nx_kinds_support_digest"
+external digest : string -> string -> string = "nx_kinds_support_digest"
 
 let worst (errors, ambiguous, frac, frac_at) =
   { errors; ambiguous; frac; frac_at }
@@ -65,10 +61,6 @@ type narrow_pairs = { e : int; a : int; b : int; plain : int; n : int }
 let narrow_binary kind code ~seed =
   let e, a, b, plain, n = narrow_binary_raw kind code seed in
   { e; a; b; plain; n }
-let digest ~target kind ty = digest_raw target kind ty
-let best = lazy (List.hd (List.rev (targets ())))
-let f32 ?(target = Lazy.force best) kind args = f32_raw target kind args
-let f64 ?(target = Lazy.force best) kind args = f64_raw target kind args
 
 let f32_bounds =
   [

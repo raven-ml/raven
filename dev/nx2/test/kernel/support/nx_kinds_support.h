@@ -3,7 +3,7 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The kinds' loops per target, which the support stubs call. */
+/* The kinds' loops, which the support stubs call. */
 
 #ifndef NX_KINDS_SUPPORT_H
 #define NX_KINDS_SUPPORT_H
@@ -32,9 +32,7 @@ typedef struct {
   nx_int_loop ints[NX_INT_LOOPS];
 } nx_kinds_loops;
 
-/* The base target's loops, and on x86-64 the v3 target's (AVX2 and FMA),
-   NULL elsewhere. */
-extern const nx_kinds_loops *const nx_kinds_loops_base;
-extern const nx_kinds_loops *const nx_kinds_loops_v3;
+/* Every kind's loop, as nx.cpu's rows compute it on this CPU. */
+extern const nx_kinds_loops nx_kinds_support_loops;
 
 #endif /* NX_KINDS_SUPPORT_H */

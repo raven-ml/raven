@@ -31,11 +31,9 @@
    The routines follow LAPACK's (BSD) and ReLAPACK's recursive ones (MIT),
    named at each.
 
-   They are compiled once per target, as linalg.c for base and as its copy
-   linalg_v3.c for v3, and a call runs the table's matrices (cpu.h); the
-   entries are compiled once. No C file of nx2 contracts a product into
-   an fma it does not name (dev/nx2/dune), so v3's results have base's
-   bits. */
+   A call runs the table's matrices (cpu.h). No C file of nx2 contracts a
+   product into an fma it does not name (dev/nx2/dune), so every target's
+   results have the same bits. */
 
 #include <complex.h>
 #include <float.h>
@@ -51,8 +49,6 @@
 
 #include "cpu.h"
 #include "nx_kinds.h"
-
-#if !defined(NX_CPU_V3) || defined(__x86_64__)
 
 /* The most columns of a recursive routine's leaf; the columns of the
    blocks of reflectors eigh, svd and eig reduce and apply; the columns of
@@ -81,8 +77,8 @@
 #define LU_NB 64
 #define LU_BLOCKS 16
 
-/* The bytes of a vector of the base targets', SSE2's and NEON's: an LU
-   leaf's scan for its pivot compares that many at once. */
+/* The bytes of a vector of SSE2 and NEON: an LU leaf's scan for its pivot
+   compares that many at once. */
 #define VECTOR_BYTES 16
 
 /* The elements each row of QR's factored matrix takes past its n, and
@@ -678,10 +674,7 @@ static void matrices(int64_t lo, int64_t hi, int worker, void *ctx) {
   nx_cpu_give(w);
 }
 
-#if defined(NX_CPU_V3)
-void nx_cpu_set_linalg_v3(nx_cpu_target *t) { t->linalg = matrices; }
-#else
-void nx_cpu_set_linalg_base(nx_cpu_target *t) { t->linalg = matrices; }
+void nx_cpu_set_linalg(nx_cpu_target *t) { t->linalg = matrices; }
 
 /* A matrix's flops, two a multiply-add as gemm.c counts them, with k the
    lesser extent: a solve's n² r; Cholesky's n³/3 (xPOTRF); LU's
@@ -983,6 +976,3 @@ value nx_cpu_svd(value s, value vectors, value a) {
   value arrays[] = {a, s, some ? u : Val_unit, some ? vh : Val_unit};
   CAMLreturn(run((call){.routine = SVD, .vectors = some}, arrays));
 }
-#endif
-
-#endif

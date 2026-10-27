@@ -55,8 +55,8 @@ _Static_assert(NX_LOAD_COUNT == 2 && NX_MONOID_COUNT == 4 &&
    table per target, chosen once at initialisation. Every table computes the
    same bits. */
 
-/* The target's vector, in bytes: 32 where the target has AVX (x86-64's
-   v3 table, built for AVX2), else 16. */
+/* The target's vector, in bytes: 32 where the unit is compiled with AVX,
+   as every unit of nx.cpu but target.c is on x86-64, else 16. */
 #if defined(__AVX__)
 #define NX_VECTOR_BYTES 32
 #else
@@ -515,18 +515,20 @@ typedef struct {
 } nx_cpu_target;
 
 /* The tables, each set when the program starts on a host that runs it, by
-   convert.c, gemm_generic.c, rows.c, reduce.c, fft.c and linalg.c
-   compiled for its target, then by the kernels of its instructions:
-   gemm_neon.c's on arm64, gemm_avx2.c's for v3, and gemm_vnni.c's quads
-   where the host has AVX-VNNI-INT8. amx is base's table with gemm_amx.c's kernels for the
-   matrix unit of Apple's M1. */
+   convert.c, gemm_generic.c, rows.c, reduce.c, fft.c and linalg.c, then
+   by the kernels of the host's instructions: gemm_neon.c's on arm64,
+   gemm_avx2.c's on x86-64, and gemm_vnni.c's quads where the host has
+   AVX-VNNI-INT8. amx is base's table with gemm_amx.c's kernels for the
+   matrix unit of Apple's M1. On x86-64 every unit but target.c is
+   compiled for x86-64-v3, and base is set only on a host that has it
+   (target.c). */
 extern nx_cpu_target nx_cpu_base;
-void nx_cpu_set_convert_base(nx_cpu_target *t);
-void nx_cpu_set_gemm_base(nx_cpu_target *t);
-void nx_cpu_set_rows_base(nx_cpu_target *t);
-void nx_cpu_set_reduce_base(nx_cpu_target *t);
-void nx_cpu_set_fft_base(nx_cpu_target *t);
-void nx_cpu_set_linalg_base(nx_cpu_target *t);
+void nx_cpu_set_convert(nx_cpu_target *t);
+void nx_cpu_set_gemm(nx_cpu_target *t);
+void nx_cpu_set_rows(nx_cpu_target *t);
+void nx_cpu_set_reduce(nx_cpu_target *t);
+void nx_cpu_set_fft(nx_cpu_target *t);
+void nx_cpu_set_linalg(nx_cpu_target *t);
 #if defined(__aarch64__)
 void nx_cpu_set_neon(nx_cpu_target *t);
 #endif
@@ -536,13 +538,6 @@ int nx_cpu_has_amx(void);
 void nx_cpu_set_amx(nx_cpu_target *t);
 #endif
 #if defined(__x86_64__)
-extern nx_cpu_target nx_cpu_v3;
-void nx_cpu_set_convert_v3(nx_cpu_target *t);
-void nx_cpu_set_gemm_v3(nx_cpu_target *t);
-void nx_cpu_set_rows_v3(nx_cpu_target *t);
-void nx_cpu_set_reduce_v3(nx_cpu_target *t);
-void nx_cpu_set_fft_v3(nx_cpu_target *t);
-void nx_cpu_set_linalg_v3(nx_cpu_target *t);
 void nx_cpu_set_avx2(nx_cpu_target *t);
 void nx_cpu_set_vnni(nx_cpu_target *t);
 #endif

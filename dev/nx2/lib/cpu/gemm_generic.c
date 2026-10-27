@@ -3,30 +3,25 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The portable contraction kernels, compiled once per target as convert.c
-   is: as itself for base, and as gemm_generic_v3.c for v3.
+/* The portable contraction kernels.
 
    A microkernel of 4 × 4 outputs and lane order's dot and axpy, each
    product fused into its addition by C's fma, which rounds once: the same
-   bits as the vector kernels' fused instructions. The integers' microkernels
-   multiply and add modulo their width, as unsigned numbers, which gives a
-   signed accumulator's bits too. A target whose
-   instructions have no fused multiply-add (base on x86-64) calls the C
-   library's, which is exact and slow; every x86-64 host measured runs v3.
-   A target's own kernels replace these where it has them. */
+   bits as the vector kernels' fused instructions. The integers'
+   microkernels multiply and add modulo their width, as unsigned numbers,
+   which gives a signed accumulator's bits too. A target's own kernels
+   replace these where it has them. */
 
 #include <math.h>
 
 #include "cpu.h"
 
-#if !defined(NX_CPU_V3) || defined(__x86_64__)
-
 #define MR 4
 #define NR 4
 
 /* The kernels' speed (cpu.h): a target without vector kernels runs these
-   on every product. It is measured for x86-64's base with glibc, where
-   each fused multiply-add is a call of the C library's fma: on a
+   on every product. It was measured for x86-64's baseline with glibc,
+   where each fused multiply-add is a call of the C library's fma: on a
    performance core of fudge they run 1.4 GFLOP/s of float32 and 1.3 of
    float64, against the 151 GB/s its memcpy moves (floor-copy-256K-1t).
    Another target or C library runs them at its own speed. */
@@ -175,7 +170,7 @@ static nx_cpu_gemm gemm_of(nx_cpu_kernel f) {
                        .few = MC};
 }
 
-static void set(nx_cpu_target *t) {
+void nx_cpu_set_gemm(nx_cpu_target *t) {
   t->gemm[NX_FLOAT32] = gemm_of(kernel_f32);
   t->gemm[NX_FLOAT64] = gemm_of(kernel_f64);
   t->gemm[NX_INT8] = t->gemm[NX_UINT8] = gemm_of(kernel_u8);
@@ -193,16 +188,3 @@ static void set(nx_cpu_target *t) {
   t->f4[NX_FLOAT32] = f4_f32;
   t->f4[NX_FLOAT64] = f4_f64;
 }
-
-#if defined(NX_CPU_V3)
-void nx_cpu_set_gemm_v3(nx_cpu_target *t) { set(t); }
-#else
-void nx_cpu_set_gemm_base(nx_cpu_target *t) { set(t); }
-#endif
-
-#else
-
-/* ISO C forbids an empty unit. */
-typedef int nx_cpu_no_v3;
-
-#endif

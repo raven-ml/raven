@@ -4,10 +4,10 @@
   ---------------------------------------------------------------------------*/
 
 /* x86-64's quads kernels, dots and axpys by AVX-VNNI-INT8, in place of
-   gemm_avx2.c's in the v3 table where the host has it (target.c): dune
-   compiles this file with v3's instructions, and AVX-VNNI-INT8's where the
-   compiler has them. A compiler without them builds a no-op, and v3 keeps
-   AVX2's quads.
+   gemm_avx2.c's in x86-64's table where the host has it (target.c): dune
+   compiles this file with AVX-VNNI-INT8's instructions on top of nx.cpu's
+   where the compiler has them. A compiler without them builds a no-op, and
+   the table keeps AVX2's quads.
 
    VPDPBSSD (int8) and VPDPBUUD (uint8) add, into each 32-bit lane, the
    four products of the lane's bytes in two vectors, 32 products an

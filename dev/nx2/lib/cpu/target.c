@@ -5,13 +5,21 @@
 
 /* The targets' tables, each filled when the program starts on a host that
    runs it, and the one the kernels run: the best whose instructions the
-   host has. A table's fill is compiled for its target's instructions too,
-   so only a host that has them fills it.
+   host has.
 
-   On x86-64, v3 needs AVX, AVX2, FMA, F16C and BMI2 (CPUID leaves 1 and 7),
-   and an operating system that saves the 256-bit registers across a switch
-   (XCR0's bits 1 and 2, read with XGETBV once CPUID reports OSXSAVE). Intel
-   SDM vol. 2A, CPUID; vol. 1, §14.3. */
+   On x86-64 every other unit of nx.cpu is compiled for x86-64-v3, which
+   needs AVX, AVX2, FMA, F16C and BMI2 (CPUID leaves 1 and 7), and an
+   operating system that saves the 256-bit registers across a switch
+   (XCR0's bits 1 and 2, read with XGETBV once CPUID reports OSXSAVE).
+   Intel SDM vol. 2A, CPUID; vol. 1, §14.3. This unit is compiled for the
+   architecture's baseline, so that its check runs on any host. A table's
+   fill is code of the other units, so on a host without v3 the
+   constructor fills none, and nx_cpu_require raises when Nx_cpu
+   initialises: the constructor runs before the OCaml runtime, and cannot
+   raise. */
+
+#include <caml/fail.h>
+#include <caml/mlvalues.h>
 
 #include "cpu.h"
 
@@ -123,7 +131,9 @@ static int has_vnni_int8(void) {
 
 #if defined(__x86_64__)
 nx_cpu_target nx_cpu_base = {.name = "base", .copy_strided = 1};
-nx_cpu_target nx_cpu_v3 = {.name = "v3", .copy_strided = 1};
+
+/* Whether the host has x86-64-v3, as the constructor found. */
+static int v3;
 #else
 nx_cpu_target nx_cpu_base = {.name = "base"};
 #endif
@@ -164,17 +174,25 @@ static int64_t l2_bytes(void) {
 }
 
 __attribute__((constructor)) static void init(void) {
+#if defined(__x86_64__)
+  v3 = has_v3();
+  if (!v3) return;
+#endif
   nx_cpu_base.l2 = l2_bytes();
   nx_cpu_base.l1 = l1_bytes();
   nx_cpu_base.llc = llc_bytes();
-  nx_cpu_set_convert_base(&nx_cpu_base);
-  nx_cpu_set_gemm_base(&nx_cpu_base);
-  nx_cpu_set_rows_base(&nx_cpu_base);
-  nx_cpu_set_reduce_base(&nx_cpu_base);
-  nx_cpu_set_fft_base(&nx_cpu_base);
-  nx_cpu_set_linalg_base(&nx_cpu_base);
+  nx_cpu_set_convert(&nx_cpu_base);
+  nx_cpu_set_gemm(&nx_cpu_base);
+  nx_cpu_set_rows(&nx_cpu_base);
+  nx_cpu_set_reduce(&nx_cpu_base);
+  nx_cpu_set_fft(&nx_cpu_base);
+  nx_cpu_set_linalg(&nx_cpu_base);
 #if defined(__aarch64__)
   nx_cpu_set_neon(&nx_cpu_base);
+#endif
+#if defined(__x86_64__)
+  nx_cpu_set_avx2(&nx_cpu_base);
+  if (has_vnni_int8()) nx_cpu_set_vnni(&nx_cpu_base);
 #endif
 #if defined(__APPLE__) && defined(__aarch64__)
   /* amx is base with the matrix unit's kernels. */
@@ -184,21 +202,19 @@ __attribute__((constructor)) static void init(void) {
   nx_cpu_set_amx(&nx_cpu_amx);
   nx_cpu_table = &nx_cpu_amx;
 #endif
+}
+
+/* Raises Failure where the host lacks the instructions nx.cpu is compiled
+   for: Nx_cpu's initialiser calls it before any other code of nx.cpu
+   runs. */
+value nx_cpu_require(value unit) {
+  (void)unit;
 #if defined(__x86_64__)
-  if (!has_v3()) return;
-  nx_cpu_v3.l2 = nx_cpu_base.l2;
-  nx_cpu_v3.l1 = nx_cpu_base.l1;
-  nx_cpu_v3.llc = nx_cpu_base.llc;
-  nx_cpu_set_convert_v3(&nx_cpu_v3);
-  nx_cpu_set_gemm_v3(&nx_cpu_v3);
-  nx_cpu_set_rows_v3(&nx_cpu_v3);
-  nx_cpu_set_reduce_v3(&nx_cpu_v3);
-  nx_cpu_set_fft_v3(&nx_cpu_v3);
-  nx_cpu_set_linalg_v3(&nx_cpu_v3);
-  nx_cpu_set_avx2(&nx_cpu_v3);
-  if (has_vnni_int8()) nx_cpu_set_vnni(&nx_cpu_v3);
-  nx_cpu_table = &nx_cpu_v3;
+  if (!v3)
+    caml_failwith("nx.cpu needs x86-64-v3 (AVX2, FMA, F16C and BMI2); this "
+                  "host lacks it");
 #endif
+  return Val_unit;
 }
 
 /* Kinds' costs

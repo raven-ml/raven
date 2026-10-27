@@ -1,15 +1,12 @@
 ; Kernels for host memory.
 ;
-; convert.c, gemm_generic.c, rows.c, reduce.c, fft.c and linalg.c are
-; compiled once per target: as themselves for base, and as their copies
-; convert_v3.c, gemm_generic_v3.c, rows_v3.c, reduce_v3.c, fft_v3.c and
-; linalg_v3.c for v3, with v3's instructions on x86-64 and as empty units
-; elsewhere.
-; gemm_neon.c holds arm64's kernels, in base; gemm_avx2.c, compiled with
-; v3's instructions, x86-64's; gemm_vnni.c, with AVX-VNNI-INT8's too where
-; the C compiler has them (probe/vnni.ml asks it), its quads kernels;
-; gemm_amx.c the M1 matrix unit's, empty off
-; Apple's arm64. target.c picks the table at run time.
+; On x86-64 every unit but target.c is compiled for x86-64-v3 (AVX2, FMA,
+; F16C and BMI2), which nx.cpu requires. target.c is compiled for the
+; baseline, so that its check of the host, and everything that runs before
+; it, runs on any x86-64. gemm_vnni.c takes AVX-VNNI-INT8's instructions on
+; top where the C compiler has them (probe/vnni.ml asks it). gemm_neon.c
+; holds arm64's kernels and gemm_avx2.c x86-64's, each empty off its
+; architecture; gemm_amx.c the M1 matrix unit's, empty off Apple's arm64.
 ;
 ; gcc vectorises at -O2 only the loops that need no remainder and no check
 ; of their pointers' overlap, so loops of a run-time count stay scalar
@@ -27,46 +24,17 @@
   (language c)
   (include_dirs ../array ../kernel)
   (flags :standard (:include vector_flags.sexp))
-  (names target job walk stage copy apply map rows reduce index sort assemble convert gemm gemm_generic gemm_neon gemm_amx linalg fft view))
+  (names target))
  (foreign_stubs
   (language c)
   (include_dirs ../array ../kernel)
-  (flags
-   :standard
-   -DNX_CPU_V3
-   (:include vector_flags.sexp)
-   (:include v3_flags.sexp))
-  (names
-   convert_v3
-   gemm_generic_v3
-   rows_v3
-   reduce_v3
-   fft_v3
-   linalg_v3
-   gemm_avx2))
+  (flags :standard (:include vector_flags.sexp) (:include v3_flags.sexp))
+  (names job walk stage copy apply map rows reduce index sort assemble convert gemm gemm_generic gemm_neon gemm_avx2 gemm_amx linalg fft view))
  (foreign_stubs
   (language c)
   (include_dirs ../array ../kernel)
   (flags :standard (:include v3_flags.sexp) (:include vnni_flags.sexp))
   (names gemm_vnni)))
-
-(rule
- (copy convert.c convert_v3.c))
-
-(rule
- (copy gemm_generic.c gemm_generic_v3.c))
-
-(rule
- (copy rows.c rows_v3.c))
-
-(rule
- (copy reduce.c reduce_v3.c))
-
-(rule
- (copy fft.c fft_v3.c))
-
-(rule
- (copy linalg.c linalg_v3.c))
 
 (rule
  (target v3_flags.sexp)

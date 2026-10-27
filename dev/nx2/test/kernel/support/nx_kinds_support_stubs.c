@@ -3,9 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* nx_kinds.h's kinds for test_kinds and sweep_kinds, through the per-target
-   loops: every call runs the loop nx.cpu would run on this CPU, or a named
-   target's. f32 operands and results travel as their bits, f64 ones as
+/* nx_kinds.h's kinds for test_kinds and sweep_kinds, through the loops:
+   every call runs the loop nx.cpu would run on this CPU. f32 operands and results travel as their bits, f64 ones as
    OCaml floats, integers as int64 values. nx_kinds_support_sweep releases
    the runtime; the other stubs take milliseconds and keep it. */
 
@@ -28,13 +27,8 @@
 #include "nx_kinds_strata.h"
 #include "nx_kinds_support.h"
 
-/* The loops of the target nx.cpu picked on this CPU. */
-static const nx_kinds_loops *nx_kinds_loops_best(void) {
-#if defined(__x86_64__)
-  if (nx_cpu_table == &nx_cpu_v3) return nx_kinds_loops_v3;
-#endif
-  return nx_kinds_loops_base;
-}
+/* The loops nx.cpu would run on this CPU. */
+static const nx_kinds_loops *const loops = &nx_kinds_support_loops;
 
 static const nx_real_loop *nx_kinds_real_loop(const nx_kinds_loops *l,
                                               const char *name) {
@@ -64,33 +58,10 @@ static const nx_real_loop *real_loop(const nx_kinds_loops *l, value name) {
   return k;
 }
 
-static const nx_kinds_loops *target(value name) {
-  const char *t = String_val(name);
-  if (strcmp(t, "base") == 0) return nx_kinds_loops_base;
-  if (strcmp(t, "v3") == 0 && nx_kinds_loops_v3 != NULL) return nx_kinds_loops_v3;
-  refuse(name);
-}
-
-/* [targets ()]: the targets this CPU runs, the best last. */
-value nx_kinds_support_targets(value unit) {
-  CAMLparam1(unit);
-  CAMLlocal2(l, cell);
-  l = Val_emptylist;
-  const char *names[2] = {"v3", "base"};
-  for (int i = 0; i < 2; i++) {
-    if (i == 0 && nx_kinds_loops_best() != nx_kinds_loops_v3) continue;
-    cell = caml_alloc(2, 0);
-    Store_field(cell, 0, caml_copy_string(names[i]));
-    Store_field(cell, 1, l);
-    l = cell;
-  }
-  CAMLreturn(l);
-}
-
 /* Scalar calls */
 
-value nx_kinds_support_f32(value tgt, value name, value args) {
-  const nx_real_loop *k = real_loop(target(tgt), name);
+value nx_kinds_support_f32(value name, value args) {
+  const nx_real_loop *k = real_loop(loops, name);
   if ((int)Wosize_val(args) != k->arity) refuse(name);
   float x[3] = {0, 0, 0}, y;
   for (int i = 0; i < k->arity; i++)
@@ -99,9 +70,9 @@ value nx_kinds_support_f32(value tgt, value name, value args) {
   return Val_long(nx_float_bits(y));
 }
 
-value nx_kinds_support_f64(value tgt, value name, value args) {
-  CAMLparam3(tgt, name, args);
-  const nx_real_loop *k = real_loop(target(tgt), name);
+value nx_kinds_support_f64(value name, value args) {
+  CAMLparam2(name, args);
+  const nx_real_loop *k = real_loop(loops, name);
   if ((int)(Wosize_val(args) / Double_wosize) != k->arity)
     refuse(name);
   double x[3] = {0, 0, 0}, y;
@@ -110,11 +81,26 @@ value nx_kinds_support_f64(value tgt, value name, value args) {
   CAMLreturn(caml_copy_double(y));
 }
 
+/* nx_kinds.h's nx_fmaf, of and to binary32 bits, and nx_fmad, as this unit
+   compiles them: with dev/nx2's vector flags alone, so on x86-64 without
+   the fma instruction. */
+value nx_kinds_support_fmaf(value a, value b, value c) {
+  float r = nx_fmaf(nx_bits_float((uint32_t)Long_val(a)),
+                    nx_bits_float((uint32_t)Long_val(b)),
+                    nx_bits_float((uint32_t)Long_val(c)));
+  return Val_long(nx_float_bits(r));
+}
+
+value nx_kinds_support_fmad(value a, value b, value c) {
+  return caml_copy_double(
+      nx_fmad(Double_val(a), Double_val(b), Double_val(c)));
+}
+
 /* The integer kind [name] at [ty]: the result's int64, sign-extended from
    i32 and zero-extended from u32. */
 value nx_kinds_support_int(value ty, value name, value args) {
   CAMLparam3(ty, name, args);
-  const nx_int_loop *k = nx_kinds_int_loop(nx_kinds_loops_best(), String_val(name));
+  const nx_int_loop *k = nx_kinds_int_loop(loops, String_val(name));
   if (k == NULL || (int)Wosize_val(args) != k->arity)
     refuse(name);
   uint64_t x[3] = {0, 0, 0}, y[4];
@@ -404,13 +390,13 @@ static value worst_value(const worst *w) {
 }
 
 /* [sweep kind lo hi step]: the f32 transcendental [kind] at the patterns
-   lo, lo + step, ... below hi, on the best target, without the runtime.
+   lo, lo + step, ... below hi, without the runtime.
    A symmetric kind takes only the positive patterns, each with its
    negation, and checks nothing at a negative one; a step dividing 2^31
    keeps the negations in the set. */
 value nx_kinds_support_sweep(value name, value lo, value hi, value step) {
   CAMLparam4(name, lo, hi, step);
-  const nx_real_loop *k = real_loop(nx_kinds_loops_best(), name);
+  const nx_real_loop *k = real_loop(loops, name);
   int ref = find_reference(name);
   uint64_t a = (uint64_t)Long_val(lo), b = (uint64_t)Long_val(hi);
   uint64_t d = (uint64_t)Long_val(step);
@@ -431,7 +417,7 @@ value nx_kinds_support_sweep(value name, value lo, value hi, value step) {
 /* [points kind ps]: the f32 transcendental [kind] at the patterns ps. */
 value nx_kinds_support_points(value name, value ps) {
   CAMLparam2(name, ps);
-  const nx_real_loop *k = real_loop(nx_kinds_loops_best(), name);
+  const nx_real_loop *k = real_loop(loops, name);
   int ref = find_reference(name);
   long n = (long)Wosize_val(ps);
   uint32_t *p = malloc((size_t)(n ? n : 1) * sizeof *p);
@@ -472,7 +458,7 @@ static size_t strata_of(int f64) {
 value nx_kinds_support_strata(value name) {
   CAMLparam1(name);
   CAMLlocal3(res, row, w);
-  const nx_real_loop *k = real_loop(nx_kinds_loops_best(), name);
+  const nx_real_loop *k = real_loop(loops, name);
   int ref = find_reference(name);
   size_t n = strata_of(0);
   res = caml_alloc(NX_REGION_COUNT, 0);
@@ -497,8 +483,8 @@ value nx_kinds_support_strata(value name) {
 
 /* Digests
 
-   [digest target kind ty]: the digest of the kind at [ty] ("f32", "f64"
-   or "int") over its strata on [target], as 16 hex digits. Kinds of two
+   [digest kind ty]: the digest of the kind at [ty] ("f32", "f64" or
+   "int") over its strata, as 16 hex digits. Kinds of two
    and three operands take every pair (or triple) of nx_strata_specials,
    then 2^18 tuples drawn from the strata; integer kinds take 2^18 drawn
    pairs and every pair of their extremes. */
@@ -590,9 +576,9 @@ static uint64_t digest_int(const nx_int_loop *k) {
   return h;
 }
 
-value nx_kinds_support_digest(value tgt, value name, value ty) {
-  CAMLparam3(tgt, name, ty);
-  const nx_kinds_loops *l = target(tgt);
+value nx_kinds_support_digest(value name, value ty) {
+  CAMLparam2(name, ty);
+  const nx_kinds_loops *l = loops;
   const char *t = String_val(ty);
   uint64_t h;
   if (!strcmp(t, "int")) {
@@ -666,7 +652,7 @@ static long narrow_error(int dt, float y, double r) {
 value nx_kinds_support_narrow(value name, value code) {
   CAMLparam2(name, code);
   CAMLlocal1(res);
-  const nx_real_loop *k = real_loop(nx_kinds_loops_best(), name);
+  const nx_real_loop *k = real_loop(loops, name);
   double (*f)(double) = references[find_reference(name)].ref;
   int dt = (int)Long_val(code);
   uint32_t n = narrow_codes(dt);
@@ -724,7 +710,7 @@ static uint32_t pow_partner(int dt, uint32_t n, float x, double lo, double hi,
 value nx_kinds_support_narrow_binary(value name, value code, value seed) {
   CAMLparam3(name, code, seed);
   CAMLlocal1(res);
-  const nx_real_loop *k = real_loop(nx_kinds_loops_best(), name);
+  const nx_real_loop *k = real_loop(loops, name);
   int is_pow = !strcmp(String_val(name), "pow");
   if (!is_pow && strcmp(String_val(name), "atan2")) refuse(name);
   int dt = (int)Long_val(code);
@@ -811,7 +797,7 @@ static float pattern_f32(uint64_t *s) {
 value nx_kinds_support_binary(value name, value seed, value count) {
   CAMLparam3(name, seed, count);
   CAMLlocal1(res);
-  const nx_real_loop *k = real_loop(nx_kinds_loops_best(), name);
+  const nx_real_loop *k = real_loop(loops, name);
   int is_pow = !strcmp(String_val(name), "pow");
   if (!is_pow && strcmp(String_val(name), "atan2"))
     refuse(name);
@@ -883,10 +869,10 @@ value nx_kinds_support_threefry(value counter, value key) {
   CAMLreturn(caml_copy_int64((int64_t)r));
 }
 
-/* [run kind x z y]: y.{i} <- kind x.{i} (z.{i}) on the best target, x, z
+/* [run kind x z y]: y.{i} <- kind x.{i} (z.{i}), x, z
    and y float32 or float64 bigarrays of one length; the bench's rows. */
 value nx_kinds_support_run(value name, value x, value z, value y) {
-  const nx_real_loop *k = real_loop(nx_kinds_loops_best(), name);
+  const nx_real_loop *k = real_loop(loops, name);
   long n = (long)Caml_ba_array_val(x)->dim[0];
   if ((Caml_ba_array_val(x)->flags & CAML_BA_KIND_MASK) == CAML_BA_FLOAT64)
     k->f64(Caml_ba_data_val(x), Caml_ba_data_val(z), NULL, Caml_ba_data_val(y), n);

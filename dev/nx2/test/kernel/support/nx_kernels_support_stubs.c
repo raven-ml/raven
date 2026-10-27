@@ -17,9 +17,6 @@
    of the one before. */
 static const nx_cpu_target *const tables[] = {
     &nx_cpu_base,
-#if defined(__x86_64__)
-    &nx_cpu_v3,
-#endif
 #if defined(__APPLE__) && defined(__aarch64__)
     &nx_cpu_amx,
 #endif

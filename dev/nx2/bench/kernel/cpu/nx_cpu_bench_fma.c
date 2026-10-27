@@ -10,18 +10,7 @@
    x86-64, whose 16 registers spill at 16: 95.5 against 155 GFLOP/s on
    kimchi. The read sums the bytes into eight vector accumulators. On a
    host with Apple's matrix unit, its peak too.
-   They slice the work on the pool's threads as the other floors do; on
-   x86-64 they compile for v3's instructions. */
-
-#if defined(__x86_64__)
-#if defined(__clang__)
-#pragma clang attribute push(__attribute__((target("avx2,fma,f16c,bmi2"))), \
-                             apply_to = function)
-#else
-#pragma GCC push_options
-#pragma GCC target("avx2,fma,f16c,bmi2")
-#endif
-#endif
+   They slice the work on the pool's threads as the other floors do. */
 
 #include <stdint.h>
 #if defined(__x86_64__)
@@ -209,11 +198,3 @@ value nx_cpu_bench_amx_units(value unit) {
   return Val_int(0);
 #endif
 }
-
-#if defined(__x86_64__)
-#if defined(__clang__)
-#pragma clang attribute pop
-#else
-#pragma GCC pop_options
-#endif
-#endif

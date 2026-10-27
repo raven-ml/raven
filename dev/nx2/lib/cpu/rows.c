@@ -3,10 +3,7 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
-/* The rows of the kinds of one, two and three operands, and of fills,
-   compiled once per target: as itself for base and as its copy rows_v3.c
-   for v3, whose fused multiply-add is an instruction where base's x86-64 is
-   a call.
+/* The rows of the kinds of one, two and three operands, and of fills.
 
    A row loads each operand's element into its compute type, computes the
    kind as nx_kinds.h does, and stores the result in the destination's
@@ -19,8 +16,6 @@
    runs a narrow or sub-byte dtype's kinds at its carrier's rows. */
 
 #include "cpu.h"
-
-#if !defined(NX_CPU_V3) || defined(__x86_64__)
 
 #include <string.h>
 
@@ -579,7 +574,7 @@ FILL(16, w16)
   t->op2[NX_OP2_POW][DT] = pow_##D;                                          \
   COMPLEX_KINDS1(SET1, DT, D)
 
-static void set(nx_cpu_target *t) {
+void nx_cpu_set_rows(nx_cpu_target *t) {
   COMPLEX_ROWS(NX_COMPLEX64, c64);
   COMPLEX_ROWS(NX_COMPLEX128, c128);
   FLOAT_ROWS(NX_FLOAT32, f32);
@@ -606,16 +601,3 @@ static void set(nx_cpu_target *t) {
     t->fill[i] = fills[i];
   }
 }
-
-#if defined(NX_CPU_V3)
-void nx_cpu_set_rows_v3(nx_cpu_target *t) { set(t); }
-#else
-void nx_cpu_set_rows_base(nx_cpu_target *t) { set(t); }
-#endif
-
-#else
-
-/* ISO C forbids an empty unit. */
-typedef int nx_cpu_no_v3;
-
-#endif

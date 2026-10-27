@@ -504,8 +504,8 @@ let kernel_rows =
 
 (* Kinds: each transcendental's throughput over 1M elements, drawn where the
    kind is defined, against access/floor-bigarray-copy-f32-1M's stream: the loop
-   nx.cpu runs on the machine (on x86-64 its v3 target), the trigonometric kinds
-   through the vector pattern nx_kinds.h describes *)
+   nx.cpu runs on the machine, the trigonometric kinds through the vector
+   pattern nx_kinds.h describes *)
 
 let kinds_rows =
   let n = mib in

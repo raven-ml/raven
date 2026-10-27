@@ -98,12 +98,9 @@
    states, then the network over them, then their results: the same
    combinations in the same order (TILES).
 
-   The kernels come first, compiled once per target: as reduce.c for base
-   and as its copy reduce_v3.c for v3. The entries follow, compiled once. */
+   The kernels come first, then the entries. */
 
 #include "cpu.h"
-
-#if !defined(NX_CPU_V3) || defined(__x86_64__)
 
 #include <math.h>
 #include <stdlib.h>
@@ -1928,7 +1925,7 @@ STATES(double, f64, NX_NAN_F64, -708)
   STATE(NX_CPU_MOMENTS, DT, PASS(mean, sum_merge, mean_finish, D),           \
         PASS(var, var_merge, var_finish, D), NO_SCAN)
 
-static void set(nx_cpu_target *t) {
+void nx_cpu_set_reduce(nx_cpu_target *t) {
   ARG2(NX_FLOAT32, f32);
   ARG2(NX_FLOAT64, f64);
   ARG2(NX_INT8, i8);
@@ -1965,16 +1962,6 @@ static void set(nx_cpu_target *t) {
   t->products[NX_FLOAT32] = products_f32;
   t->products[NX_FLOAT64] = products_f64;
 }
-
-#if defined(NX_CPU_V3)
-void nx_cpu_set_reduce_v3(nx_cpu_target *t) { set(t); }
-#else
-void nx_cpu_set_reduce_base(nx_cpu_target *t) { set(t); }
-#endif
-
-#endif
-
-#if !defined(NX_CPU_V3)
 
 #include <caml/custom.h>
 #include <caml/fail.h>
@@ -4501,10 +4488,3 @@ value nx_cpu_scan_byte(value *argv, int argn) {
   return nx_cpu_scan(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5],
                      argv[6]);
 }
-
-#elif !defined(__x86_64__)
-
-/* ISO C forbids an empty unit. */
-typedef int nx_cpu_no_v3;
-
-#endif

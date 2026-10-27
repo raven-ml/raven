@@ -36,10 +36,7 @@
    thread. A job's units are lines where there are enough for its
    threads; else each line's steps are jobs of their own.
 
-   fft.c is compiled once per target, as rows.c is, each copy with its
-   own cache; the entries run the table's. Base x86-64 has no shuffle of
-   a VEC's 32 bytes, and gcc moves its lanes one at a time through
-   memory. */
+   The entries run the table's transform (cpu.h). */
 
 #include <math.h>
 #include <pthread.h>
@@ -54,7 +51,7 @@
 #include "nx_kinds.h"
 
 /* Stores of 32 bytes past the caches (streams), where the target has
-   them: x86-64's v3 for a result over a core's L2 on one thread and over
+   them: x86-64-v3's for a result over a core's L2 on one thread and over
    the largest cache on several, arm64 for a result over half of a core's
    L2 on any threads (measured on the M1 alone). */
 #if defined(__AVX__)
@@ -70,8 +67,6 @@
 #define STREAM_BYTES(t) ((t)->l2)
 #define STREAM_SEVERAL(t) ((t)->l2)
 #endif
-
-#if !defined(NX_CPU_V3) || defined(__x86_64__)
 
 /* The most points a line computes by passes alone. Above, the four steps
    give a single line every lane: a line of 256 points took 0.7 us by them
@@ -453,7 +448,7 @@ static void plan_put(void *p, int rdt);
 #define CAT(a, b) CAT2(a, b)
 #define F(name) CAT(name, SFX)
 
-/* The bytes of a vector of L lanes: the 32 of x86-64's v3, also on
+/* The bytes of a vector of L lanes: the 32 of x86-64-v3's, also on
    targets of 16-byte vectors where clang builds, but their 16 where gcc
    builds, which computes a 32-byte vector there lane by lane through
    memory. Which lanes share a vector changes no bit. Lines of complex64
@@ -709,10 +704,7 @@ static int run(int t, int inverse, const nx_array *x, const nx_array *y,
   return ok;
 }
 
-#if defined(NX_CPU_V3)
-void nx_cpu_set_fft_v3(nx_cpu_target *t) { t->fft = run; }
-#else
-void nx_cpu_set_fft_base(nx_cpu_target *t) { t->fft = run; }
+void nx_cpu_set_fft(nx_cpu_target *t) { t->fft = run; }
 
 /* Runs the transform [t], [inverse] for c2c's Inverse, of x into dst
    along the OCaml int array [vaxes], whose shapes nx_cpu.ml checked. The
@@ -745,6 +737,3 @@ value nx_cpu_c2r(value axes, value dst, value x) {
   CAMLparam3(axes, dst, x);
   CAMLreturn(transform(C2R, 0, axes, dst, x));
 }
-#endif
-
-#endif

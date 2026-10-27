@@ -157,25 +157,18 @@ let test_binary_transcendentals =
     [ ("pow", 4); ("atan2", 3) ]
 
 (* What every library computing a kind through nx_kinds.h gives, as a digest
-   of its results over the strata: the same on each target this CPU runs. *)
+   of its results over the strata. *)
 let test_digests =
   test "digests of every kind over the strata" (fun () ->
-      let table target =
+      let table =
         List.concat_map
           (fun (kind, tys) ->
-            List.map
-              (fun ty -> strf "%s %s %s" kind ty (K.digest ~target kind ty))
-              tys)
+            List.map (fun ty -> strf "%s %s %s" kind ty (K.digest kind ty)) tys)
           K.kinds
         |> String.concat "\n"
       in
-      match K.targets () with
-      | [] -> fail "no target"
-      | first :: rest ->
-          let t = table first in
-          List.iter (fun target -> equal text t (table target) ~msg:target) rest;
-          expect t
-          @@ __POS_OF__
+      expect table
+      @@ __POS_OF__
                {|
             exp f32 17d2c3c91d74a5e6
             exp f64 9e4592740004bee2
@@ -520,10 +513,29 @@ let tiny32 =
     (fun (a, b, c) -> (bits32 a, bits32 b, bits32 c))
     (tiny ~emin:(-126) ~p:24 (fun x -> f (bits32 x)))
 
+(* fma rounds once through the kinds' loops, compiled as nx.cpu's rows,
+   which use the fused instruction on x86-64 and arm64, and through
+   nx_kinds.h's nx_fmaf and nx_fmad compiled without nx.cpu's x86-64-v3
+   flags. On x86-64 those call the C library's fma where OCaml's configure
+   found it to round once (HAS_WORKING_FMA, as on glibc), and run the
+   header's emulation where it did not (mingw-w64); on arm64 they are the
+   fused instruction again. *)
+let fmas32 =
+  [
+    ("the kinds' loop", fun a b c -> K.f32 "fma" [| a; b; c |]);
+    ("nx_fmaf without -mfma", K.fmaf);
+  ]
+
+let fmas64 =
+  [
+    ("the kinds' loop", fun a b c -> K.f64 "fma" [| a; b; c |]);
+    ("nx_fmad without -mfma", K.fmad);
+  ]
+
 let test_fma32 =
   List.map
-    (fun target ->
-      prop (strf "fma f32 rounds once on %s" target) ~count:20000
+    (fun (path, fma) ->
+      prop (strf "fma f32 rounds once through %s" path) ~count:20000
         Gen.(frequency [ (1, triple gen32 gen32 gen32); (1, tiny32) ])
         (fun (a, b, c) ->
           let r = fma32 a b c in
@@ -531,8 +543,8 @@ let test_fma32 =
           cover "subnormal result"
             (r land 0x7F80_0000 = 0 && r land 0x7F_FFFF <> 0);
           cover "signed zero result" (r = 0x8000_0000);
-          equal value32 r (K.f32 ~target "fma" [| a; b; c |])))
-    (K.targets ())
+          equal value32 r (fma a b c)))
+    fmas32
 
 let test_where32 =
   prop "where f32"
@@ -638,8 +650,8 @@ let test_f64_exact =
           equal value64 (op a b) (K.f64 kind [| a; b |])))
     binary
   @ List.map
-      (fun target ->
-        prop (strf "fma f64 rounds once on %s" target) ~count:20000
+      (fun (path, fma) ->
+        prop (strf "fma f64 rounds once through %s" path) ~count:20000
           Gen.(
             frequency
               [
@@ -651,8 +663,8 @@ let test_f64_exact =
             cover "subnormal result"
               (r <> 0. && Float.abs r < Float.min_float);
             cover "signed zero result" (r = 0. && Float.sign_bit r);
-            equal value64 r (K.f64 ~target "fma" [| a; b; c |])))
-      (K.targets ())
+            equal value64 r (fma a b c)))
+      fmas64
   @ [
       prop "mod f64" ~count:20000
         Gen.(pair gen64 gen64)
@@ -1450,8 +1462,8 @@ let test_complex_identities =
 (* C99 Annex F's special values of the float kinds, F.10, and results the
    exact value rounds to an infinity or a zero, where a rank's distance
    bounds nothing: an infinity is one rank past the largest float. Bit for
-   bit, any NaN for a NaN, through each target's loop and through the best
-   one's over a vector, every lane alike. A row of [Both] widths holds the
+   bit, any NaN for a NaN, through a kind's loop at one element and over a
+   vector, every lane alike. A row of [Both] widths holds the
    f64 result, exact or correctly rounded, whose rounding to binary32 is the
    f32 one; a row of one width holds that width's operands and result. *)
 
@@ -1579,20 +1591,12 @@ let test_annex_f =
     List.init 37 (fun i -> y.{i})
   in
   let at64 kind args want =
-    List.iter
-      (fun target ->
-        equal value64 want (K.f64 ~target kind args) ~msg:target)
-      (K.targets ());
+    equal value64 want (K.f64 kind args);
     equal (list value64) (List.init 37 (fun _ -> want))
       (lanes Bigarray.float64 kind args)
   in
   let at32 kind args want =
-    List.iter
-      (fun target ->
-        equal value64 want
-          (f (K.f32 ~target kind (Array.map bits32 args)))
-          ~msg:target)
-      (K.targets ());
+    equal value64 want (f (K.f32 kind (Array.map bits32 args)));
     equal (list value64) (List.init 37 (fun _ -> want))
       (lanes Bigarray.float32 kind args)
   in
