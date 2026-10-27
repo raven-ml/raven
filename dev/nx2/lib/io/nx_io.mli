@@ -62,7 +62,9 @@
     renames it over the path and syncs the directory. After a crash, the path
     holds what it held before or the whole new file, and a save that fails
     leaves it as it was and nothing beside it, except where the rename is
-    refused: the new file is then kept, and the [Failure] names it.
+    refused: the new file is then kept, and the [Failure] names it. On POSIX
+    systems the new file has the permissions [0o666] less the umask, whatever
+    the file it replaces had.
 
     {b Errors.} A file that cannot be read or written, or whose contents break
     its format, raises [Failure] whose message starts with the file's path, as
