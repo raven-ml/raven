@@ -860,6 +860,115 @@ let test_jacfwd_one_pass () =
   in
   equal ~msg:"3 against 7 elements" int (calls 3) (calls 7)
 
+(* Reverse mode *)
+
+let objective f x = Nx.sum (f x)
+
+(* Per lane, the gradient of the sum of a case's function, mapped over the lanes
+   and of the sum over the map's lanes. *)
+let law_grad c (s, o) =
+  cover "no lane" (s.(0) = 0);
+  cover "several lanes" (s.(0) > 1);
+  let xs = make f64 s o in
+  let g = Rune.grad' (objective c.f) in
+  let by_lane = outcome (fun () -> codes (one_by_one g xs)) in
+  cover "a gradient" (match by_lane with Value _ -> true | Raised _ -> false);
+  equal ~msg:"vmap of grad" (outcome_t codes_t) by_lane
+    (outcome (fun () -> codes (Rune.vmap' g xs)));
+  equal ~msg:"grad of vmap" (outcome_t codes_t) by_lane
+    (outcome (fun () -> codes (Rune.grad' (objective (Rune.vmap' c.f)) xs)))
+
+let grad_props = List.map (fun c -> prop c.name (gen c) (law_grad c)) cases
+
+let law_grad_compose (Pair (dt, s, xo, yo, both, e)) =
+  cover "a constant operand" (not both);
+  cover "several lanes" (s.(0) > 1);
+  let x = make_any dt s xo in
+  let lane = Array.sub s 1 (Array.length s - 1) in
+  let y = make_any dt (if both then s else lane) yo in
+  let g x y = Rune.grad' (fun x -> Nx.sum (eval_any x y e)) x in
+  let t = outcome_t codes_t in
+  if both then begin
+    let by_lane = outcome (fun () -> codes (one_by_one2 g x y)) in
+    cover "a gradient of two lanes"
+      (match by_lane with Value _ -> true | Raised _ -> false);
+    equal ~msg:"vmap of grad" t by_lane
+      (outcome (fun () ->
+           codes (Rune.vmap T.(tensor @-> tensor @-> returns tensor) g x y)));
+    equal ~msg:"grad of vmap" t by_lane
+      (outcome (fun () ->
+           codes
+             (Rune.grad'
+                (fun x ->
+                  Nx.sum
+                    (Rune.vmap
+                       T.(tensor @-> tensor @-> returns tensor)
+                       (fun x y -> eval_any x y e)
+                       x y))
+                x)))
+  end
+  else begin
+    let by_lane = outcome (fun () -> codes (one_by_one (fun x -> g x y) x)) in
+    cover "a gradient of a lane and a constant"
+      (match by_lane with Value _ -> true | Raised _ -> false);
+    equal ~msg:"vmap of grad" t by_lane
+      (outcome (fun () -> codes (Rune.vmap' (fun x -> g x y) x)));
+    equal ~msg:"grad of vmap" t by_lane
+      (outcome (fun () ->
+           codes
+             (Rune.grad'
+                (fun x -> Nx.sum (Rune.vmap' (fun x -> eval_any x y e) x))
+                x)))
+  end
+
+(* [lanes a] under reverse mode: a lane's cotangent collects every lane's use of
+   its value. Lane [l]'s objective weighs every lane's [x x] by [w] and by [l +
+   1], so the gradient at lane [k] is [Σ_l (l + 1) 2 x_k w_k], or [12 x_k w_k]
+   over three lanes; one whose weights are complex and linear in [z] has the
+   weights' sum, [6 c_k]. *)
+let test_grad_lanes () =
+  let xs = Nx.create f64 [| 3; 2 |] [| 0.5; -1.; 2.; 0.; 1.5; -0.25 |] in
+  let w = Nx.create f64 [| 3; 2 |] [| 1.; -2.; 0.5; 3.; -1.5; 4. |] in
+  let a = Rune.axis () in
+  let weight () = Nx.mul w (Nx.add_s (index a) 1.) in
+  let f x = Nx.sum (Nx.mul (Rune.lanes a (Nx.mul x x)) (weight ())) in
+  let expected = Nx.to_array (Nx.mul_s (Nx.mul xs w) 12.) in
+  equal ~msg:"in the map" floats expected
+    (Nx.to_array (Rune.vmap' ~axis:a (Rune.grad' f) xs));
+  equal ~msg:"compiled in the map" floats expected
+    (Nx.to_array (Rune.vmap' ~axis:a (Rune.jit' (Rune.grad' f)) xs));
+  let c =
+    Nx.complex c128 ~re:w
+      ~im:(Nx.create f64 [| 3; 2 |] [| 0.5; 1.; -1.; 2.; 0.; -3. |])
+  in
+  let zs = Nx.complex c128 ~re:xs ~im:(Nx.neg xs) in
+  let g z =
+    let k = Nx.cast c128 (Nx.add_s (index a) 1.) in
+    Nx.real f64 (Nx.sum (Nx.mul (Rune.lanes a z) (Nx.mul c k)))
+  in
+  let parts z =
+    Array.map (fun (c : Complex.t) -> (c.re, c.im)) (Nx.to_array z)
+  in
+  equal ~msg:"complex"
+    (array (pair float_exact float_exact))
+    (parts (Nx.mul_s c { Complex.re = 6.; im = 0. }))
+    (parts (Rune.vmap' ~axis:a (Rune.grad' g) zs));
+  (* Outside the map, lanes are the map's batch, and the objective is the sum of
+     the lanes' objectives. *)
+  let g = Rune.grad' (fun xs -> Nx.sum (Rune.vmap' ~axis:a f xs)) xs in
+  equal ~msg:"grad of the map" floats expected (Nx.to_array g)
+
+(* jacrev' is one map of the pullback: its kernels do not grow with the result's
+   elements. *)
+let test_jacrev_one_pass () =
+  let calls n =
+    let x = Nx.place Count.on (Nx.linspace f64 0.1 1. n) in
+    C.reset ();
+    ignore (Rune.jacrev' (fun x -> Nx.mul (Nx.sin x) x) x);
+    C.calls ()
+  in
+  equal ~msg:"3 against 7 elements" int (calls 3) (calls 7)
+
 (* Compiled functions *)
 
 let law_jit (Pair (dt, s, xo, _, _, e)) =
@@ -996,6 +1105,13 @@ let () =
              prop "every dtype" every_dtype (law_compose ~kinds:true);
              prop "under jit" every_dtype law_jit;
            ];
+         group "reverse mode"
+           (grad_props
+           @ [
+               prop "compositions" float_compositions law_grad_compose;
+               test "lanes" test_grad_lanes;
+               test "jacrev' in one pass" test_jacrev_one_pass;
+             ]);
          group "names"
            [
              test "nested maps" test_named;

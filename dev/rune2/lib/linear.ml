@@ -993,6 +993,20 @@ let rule (type r) env (op : r Prim.t) (cts : int -> value option) =
                      env.name Nx.Placement.pp q))
   | Check _ -> ()
 
+(* [lanes a]'s transpose, as JAX's all_gather's: the calling lane's row of the
+   sum over the lanes of their cotangents [w] of every lane's [x]. *)
+let lanes_transpose a (x : ('v, 's, 'd) Nx.t) (V w) =
+  let w = with_dtype (Nx.dtype x) w in
+  let total =
+    Nx.sum ~axes:[ 0 ] (like w (Program.perform (Lanes (a, w))).(0))
+  in
+  let index : (int32, Nx.int32_elt, _) Prim.form =
+    { dtype = Nx.int32; layout = scalar; placement = None }
+  in
+  let own = cast index (Program.perform (Lane_index a)).(0) in
+  let row = Nx.reshape [| 1 |] (Nx.cast Nx.int64 own) in
+  V (Nx.reshape (Nx.shape x) (Nx.take ~axis:0 row total))
+
 (* Transposition *)
 
 let next_bases (p : Program.t) =
@@ -1043,6 +1057,10 @@ let transpose ?witness l cts =
         if reached base n then
           rule env op (fun k ->
               if k < n then Option.map (fun c -> c.v) acc.(base + k) else None)
+    | Do { c = Lanes (a, x); base } -> (
+        match acc.(base) with
+        | Some c when lin x -> give x (fresh (lanes_transpose a x c.v))
+        | _ -> ())
     | Do { base; _ } ->
         if reached base (next.(e) - base) then
           invalid_arg (l.name ^ ": a loop or call has no transpose yet")

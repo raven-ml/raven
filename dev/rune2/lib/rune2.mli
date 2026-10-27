@@ -340,6 +340,11 @@ val lanes : axis -> ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
 (** [lanes a x], inside the map named [a] of [n] lanes, is every lane's [x]
     stacked on a new leading axis of length [n].
 
+    [lanes a] is linear. The tangent of [lanes a x] is [lanes a] of [x]'s
+    tangent, and under reverse mode the cotangent of [x] is the calling lane's
+    row of the sum over the lanes of their cotangents of [lanes a x], so a
+    lane's gradient collects every lane's use of its [x].
+
     Raises [Invalid_argument] with no map named [a] around the call
     (["Rune.lanes: no map named by the axis is around the call"]). *)
 
@@ -503,9 +508,10 @@ val jacrev' :
   ('v, 's, 'd) Nx.t
 (** [jacrev' f x] is the Jacobian of [f] at [x], of shape
     [shape (f x) @ shape x] and [x]'s dtype: its row [k] is the pullback of
-    element [k] of the result in C order, computed in one backward pass per
-    element. For a complex-differentiable [f] it is the complex derivative, as
-    {!jacfwd'} computes it.
+    element [k] of the result in C order. Every row is computed in one backward
+    pass, a {!vmap} of {!vjp'}'s pullback over the elements' unit cotangents.
+    For a complex-differentiable [f] it is the complex derivative, as {!jacfwd'}
+    computes it.
 
     Raises [Invalid_argument] as {!vjp'} does, and if [x] is real and [f x]
     complex, whose Jacobian [x]'s dtype cannot hold. *)

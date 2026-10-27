@@ -597,6 +597,8 @@ let value_and_grad' f x =
 
 let vjp' f x = vjp_named "Rune.vjp'" Ptree.tensor Ptree.tensor f x
 
+(* The Jacobian's rows as the lanes of one map of the pullback over the basis of
+   the result's elements. *)
 let jacrev' f x =
   let name = "Rune.jacrev'" in
   let y, pullback = vjp_named name Ptree.tensor Ptree.tensor f x in
@@ -608,11 +610,7 @@ let jacrev' f x =
       name;
   let sy = Nx.shape y and n = Nx.numel y in
   let iota = Nx.arange Nx.int32 0 n 1 in
-  (* Row [k] is the pullback of element [k] of the result in C order. *)
-  let row k =
-    let e = Nx.equal iota (Nx.scalar_like iota (Int32.of_int k)) in
-    pullback (Nx.reshape sy (Nx.cast (Nx.dtype y) e))
-  in
-  let shape = Array.append sy (Nx.shape x) in
-  if n = 0 then Nx.zeros (Nx.dtype x) shape
-  else Nx.reshape shape (Nx.stack ~axis:0 (List.init n row))
+  let e = Nx.equal (Nx.reshape [| n; 1 |] iota) (Nx.reshape [| 1; n |] iota) in
+  let basis = Nx.reshape (Array.append [| n |] sy) (Nx.cast (Nx.dtype y) e) in
+  let rows = vmap_named name Ptree.(tensor @-> returns tensor) pullback basis in
+  Nx.reshape (Array.append sy (Nx.shape x)) rows

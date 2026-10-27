@@ -147,6 +147,22 @@ let mlp_rows () =
         Rune.value_and_grad mlp loss params);
   ]
 
+(* PerSampleGrads: a gradient per example of a batch of 128, one map of reverse
+   mode: of an elementwise loss of the example, and of the perceptron's loss of
+   the example with respect to its last layer's weights. *)
+let per_sample_rows () =
+  let params = mlp_params () in
+  let x = normal 10 [| 128; 784 |] and c = normal 11 [| 784 |] in
+  let ew xi = Nx.sum (Nx.square (Nx.sin (Nx.mul xi c))) in
+  let w3_loss xi w3 =
+    Nx.sum (Nx.square (forward { params with w3 } (Nx.reshape [| 1; 784 |] xi)))
+  in
+  [
+    Thumper.bench "ew" (fun () -> Rune.vmap' (Rune.grad' ew) x);
+    Thumper.bench "mlp-w3" (fun () ->
+        Rune.vmap' (fun xi -> Rune.grad' (w3_loss xi) params.w3) x);
+  ]
+
 (* Jacobians: of a chain of [ops] sines over 64 float32 elements, each one map
    of forward or reverse mode over the elements. *)
 let jacobian_rows () =
@@ -189,6 +205,7 @@ let () =
          Thumper.group "Declined" (declined_rows ());
          Thumper.group "DeepChain" (deep_rows ());
          Thumper.group "MlpGrad" (mlp_rows ());
+         Thumper.group "PerSampleGrads" (per_sample_rows ());
          Thumper.group "Jacobians" (jacobian_rows ());
          Thumper.group "Hmc" (hmc_rows ());
        ])

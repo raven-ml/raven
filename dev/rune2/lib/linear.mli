@@ -54,6 +54,9 @@ val transpose :
     function's arguments, gives the set of a cotangent of a value of every set
     that the function placed.
 
+    A [Lanes] over tangents, of the map its axis names, gives the calling lane
+    its row of the sum over the lanes of their cotangents.
+
     Raises [Invalid_argument] naming the tape's entry point for an equation that
-    is not linear in its tangents, for a construct over tangents, and for a
-    cotangent of a value of every set that lies on a set without [witness]. *)
+    is not linear in its tangents, for another construct over tangents, and for
+    a cotangent of a value of every set that lies on a set without [witness]. *)
