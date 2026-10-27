@@ -193,14 +193,14 @@ let pp_view ppf v =
 type case = Case : ('v, 's) D.t * int array * 'v array * view -> case
 
 (* What a case holds. Each draws about as often as the others, so that every
-   seed reaches the cases a round trip must cover: a value of no element, of
-   one, and values of two or more with a NaN, a [-0.] or both of an integer
-   type's bounds planted among drawn elements. *)
-type kind = Empty | Single | Nan | Negative_zero | Bounds | Many
+   seed reaches the cases a round trip must cover: a value of no element, a 0-d
+   value, a value of one element, and values of two or more with a NaN, a [-0.]
+   or both of an integer type's bounds planted among drawn elements. *)
+type kind = Empty | Scalar | Single | Nan | Negative_zero | Bounds | Many
 
 let supports kind (D.Any dt) =
   match kind with
-  | Empty | Single | Many -> true
+  | Empty | Scalar | Single | Many -> true
   | Nan -> (
       match D.kind dt with
       | D.Float -> (D.float_format dt).nans
@@ -231,6 +231,7 @@ let shape ~rank = function
       let+ i = int_range 0 (Array.length s - 1) in
       s.(i) <- 0;
       s
+  | Scalar -> Gen.constant [||]
   | Single -> Gen.array ~size:(Gen.int_range 0 rank) (Gen.constant 1)
   | Nan | Negative_zero | Bounds | Many ->
       let open Gen in
@@ -238,7 +239,7 @@ let shape ~rank = function
       if Array.fold_left ( * ) 1 s < 2 then s.(0) <- 2;
       s
 
-let kinds = [ Empty; Single; Nan; Negative_zero; Bounds; Many ]
+let kinds = [ Empty; Scalar; Single; Nan; Negative_zero; Bounds; Many ]
 
 (* Arrays of [dts], of at most [rank] axes, of the [kinds] drawn, laid out by
    [views]. *)
@@ -308,6 +309,7 @@ let has_bounds (type v s) (dt : (v, s) D.t) (vs : v array) =
 let covers ?(empty = true) ?(broadcast = true) (Case (dt, s, vs, view)) =
   let n = Array.fold_left ( * ) 1 s in
   if empty then cover "no element" (n = 0);
+  cover "0-d" (s = [||] && view <> Broadcast);
   cover "one element" (n = 1);
   cover "strided"
     ((view = Transposed && Array.length s >= 2) || (view = Flipped && n >= 2));
@@ -370,14 +372,20 @@ let find a name = Option.get (Archive.find name a)
 
 let entry_names = [ "w"; "layer.0/weight"; "a b"; "é"; "日本"; "deep/er/name" ]
 
-(* Archives of one to three values of [dts], under distinct names. *)
+(* Archives of up to three values of [dts], under distinct names: one in six is
+   empty. *)
 let archives dts =
   let open Gen in
-  let* names = subsequence entry_names in
-  let names =
-    match names with
-    | [] -> [ "w" ]
-    | n :: ns -> n :: List.filteri (fun i _ -> i < 2) ns
+  let* names =
+    frequency
+      [
+        (1, constant []);
+        ( 5,
+          let+ names = subsequence entry_names in
+          match names with
+          | [] -> [ "w" ]
+          | n :: ns -> n :: List.filteri (fun i _ -> i < 2) ns );
+      ]
   in
   let+ cs = list ~size:(constant (List.length names)) (case dts) in
   List.combine names cs

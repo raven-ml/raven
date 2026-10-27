@@ -44,7 +44,7 @@ let text_shape s =
 
 let text_cases =
   case ~rank:2
-    ~kinds:[ Single; Nan; Negative_zero; Bounds; Many ]
+    ~kinds:[ Scalar; Single; Nan; Negative_zero; Bounds; Many ]
     ~views:[ Plain; Transposed; Flipped ]
     txt_dtypes
 

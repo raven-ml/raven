@@ -24,15 +24,38 @@ let npy_file dict data =
       Char.chr ((String.length dict lsr (8 * i)) land 0xff))
   ^ dict ^ data
 
+(* A float32 vector of 2^17 + 3 elements from a drawn start: its data spans many
+   pages and ends inside one, where every other drawn value fits in the file's
+   first page. *)
+let long = (1 lsl 17) + 3
+
+let long_case =
+  Gen.map
+    (fun start ->
+      Case
+        ( D.Float32,
+          [| long |],
+          Array.init long (fun i -> Float.of_int ((start + i) mod 4096) /. 8.),
+          Plain ))
+    (Gen.int_range 0 4095)
+
+(* Values of every dtype npy holds, and one in ten a long vector. *)
+let npy_cases =
+  Gen.with_pp
+    (fun ppf (Case (dt, s, _, view)) ->
+      Format.fprintf ppf "%a %a %a" D.pp dt pp_shape s pp_view view)
+    (Gen.frequency [ (9, case npy_dtypes); (1, long_case) ])
+
 let npy =
   let loads name expected () =
     equal packed expected (Nx_io.load_npy (fixture name))
   in
   group "npy"
     [
-      prop "a value saved as npy loads as itself, bit for bit" (case npy_dtypes)
-        (fun c ->
+      prop "a value saved as npy loads as itself, bit for bit" npy_cases
+        (fun (Case (_, s, _, _) as c) ->
           covers c;
+          cover "a value of 2^17 + 3 elements" (s = [| long |]);
           Law.round_trip packed string
             (fun x -> saved ".npy" save_npy x)
             Nx_io.load_npy (value c));
@@ -75,6 +98,14 @@ let npy =
           equal packed
             (Nx.P (Nx.create Nx.complex128 [| 1 |] [| { re = 1.; im = -2. } |]))
             (Nx_io.load_npy path));
+      cases ~name:fst "a file that is no npy file fails, naming it"
+        [
+          ("a text file", fun () -> "hello, nx\n");
+          ("an npz file", fun () -> read (fixture "savez.npz"));
+        ]
+        (fun (_, contents) ->
+          let path = file (contents ()) in
+          fails ~path (fun () -> Nx_io.load_npy path));
       test "a dtype nx lacks fails, naming the file" (fun () ->
           let path = fixture "unicode.npy" in
           fails ~path (fun () -> Nx_io.load_npy path));
@@ -139,6 +170,16 @@ let npy =
 
 let save_npz path l = Nx_io.save_npz path (Archive.of_list l)
 
+(* [xorshift n] is gen/generate.py's noise: the low byte of each of [n] states
+   of Marsaglia's xorshift32 from 2463534242. *)
+let xorshift n =
+  let mask = 0xffff_ffff and x = ref 2463534242 in
+  Array.init n (fun _ ->
+      x := !x lxor ((!x lsl 13) land mask);
+      x := !x lxor (!x lsr 17);
+      x := !x lxor ((!x lsl 5) land mask);
+      !x land 0xff)
+
 let npz =
   let one = Nx.P (Nx.zeros Nx.int8 [| 1 |]) in
   group "npz"
@@ -147,17 +188,66 @@ let npz =
         (Gen.with_pp pp_entries (archives npy_dtypes))
         (fun entries ->
           List.iter (fun (_, c) -> covers c) entries;
-          let a = archive_of entries in
-          let path = saved ".npz" Nx_io.save_npz a in
-          equal archive a (Nx_io.load_npz path));
-      test "an archive numpy wrote loads" (fun () ->
+          cover "an empty archive" (entries = []);
+          cover "several entries" (List.length entries >= 2);
+          Law.round_trip archive string
+            (saved ".npz" Nx_io.save_npz)
+            Nx_io.load_npz (archive_of entries));
+      cases ~name:fst "archives numpy wrote load, deflated or stored"
+        [
+          ( "archive.npz",
+            [
+              ("a", Nx.P (Nx.create Nx.float32 [| 1; 2 |] [| 1.5; -2. |]));
+              ("b", Nx.P (Nx.arange Nx.int64 3 6 1));
+            ] );
+          ( "savez.npz",
+            [
+              ("a", Nx.P (Nx.create Nx.uint16 [| 3 |] [| 1; 2; 65535 |]));
+              ("b", Nx.P (Nx.create Nx.bool [| 1; 2 |] [| true; false |]));
+            ] );
+        ]
+        (fun (name, entries) ->
+          equal archive (Archive.of_list entries)
+            (Nx_io.load_npz (fixture name)));
+      test "entries of other names than an npy file's are ignored" (fun () ->
           equal archive
             (Archive.of_list
-               [
-                 ("a", Nx.P (Nx.create Nx.float32 [| 1; 2 |] [| 1.5; -2. |]));
-                 ("b", Nx.P (Nx.arange Nx.int64 3 6 1));
-               ])
-            (Nx_io.load_npz (fixture "archive.npz")));
+               [ ("w", Nx.P (Nx.create Nx.float64 [| 2 |] [| 1.5; -2. |])) ])
+            (Nx_io.load_npz (fixture "other_names.npz")));
+      cases ~name:fst "a file that is no npz file fails, naming it"
+        [
+          ("a text file", fun () -> "hello, nx\n");
+          ("an npy file", fun () -> read (fixture "version2.npy"));
+        ]
+        (fun (_, contents) ->
+          let path = file (contents ()) in
+          fails ~path (fun () -> Nx_io.load_npz path));
+      test "an entry numpy deflated with a stored block inside loads" (fun () ->
+          let path = fixture "stored_block.npz" in
+          equal ~msg:"deflated" int 8 (String.get_uint16_le (read path) 8);
+          let w = Array.append (Array.make 1024 0) (xorshift 20_000) in
+          equal archive
+            (Archive.of_list
+               [ ("w", Nx.P (Nx.create Nx.uint8 [| Array.length w |] w)) ])
+            (Nx_io.load_npz path));
+      (* Noise over two of the encoder's blocks of 65535 bytes, which it stores,
+         after a run of zeros, which it codes. *)
+      prop ~count:20
+        "an entry of a run of zeros then noise, saved as npz, loads as itself"
+        (Gen.triple
+           (Gen.int_range 65_536 100_000)
+           (Gen.int_range 131_070 160_000)
+           Gen.nat)
+        (fun (run, noise, seed) ->
+          let random = Random.State.make [| seed |] in
+          let t =
+            Nx.init Nx.uint8
+              [| run + noise |]
+              (fun i -> if i.(0) < run then 0 else Random.State.int random 256)
+          in
+          let path = saved ".npz" save_npz [ ("w", Nx.P t) ] in
+          equal ~msg:"deflated" int 8 (String.get_uint16_le (read path) 8);
+          equal packed (Nx.P t) (find (Nx_io.load_npz path) "w"));
       test
         "a deflated entry whose data starts at no multiple of its element size \
          loads" (fun () ->
