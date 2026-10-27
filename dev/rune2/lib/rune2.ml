@@ -7,6 +7,7 @@ open Program
 module Ptree = Nx.Ptree
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+let pp_shape = Nx.pp_shape
 
 (* Structures as values *)
 
@@ -18,6 +19,51 @@ let rebuild s ~like vs =
 
 (* Outputs [i] to [j - 1]. *)
 let slice a i j = Array.sub a i (j - i)
+let first a = a.(0)
+
+(* Constructs without programs *)
+
+let detach x = unpack (Nx.dtype x) (first (perform (Detach x)))
+
+type nonrec axis = axis
+
+let axis = axis
+let lanes a x = unpack (Nx.dtype x) (first (perform (Lanes (a, x))))
+let lane_index a () = unpack Nx.int32 (first (perform (Lane_index a)))
+
+module Total = struct
+  type ('v, 's, 'd) t = ('v, 's, 'd) total
+
+  let make = total
+  let add t x = ignore (perform (Add (t, x)))
+
+  let collect (type v s d) (t : (v, s, d) t) ~(zero : (v, s, d) Nx.t) f =
+    let sum = ref zero in
+    let effc (type a) (e : a Effect.t) :
+        ((a, _) Effect.Deep.continuation -> _) option =
+      match e with
+      | Construct (Add (u, x)) -> (
+          match same_total u t with
+          | None -> None
+          | Some Type.Equal ->
+              Some
+                (fun k ->
+                  if Nx.shape x <> Nx.shape zero then
+                    Effect.Deep.discontinue k
+                      (Invalid_argument
+                         (Format.asprintf
+                            "Rune.Total.add: shape %a, where the total's zero \
+                             has %a"
+                            pp_shape (Nx.shape x) pp_shape (Nx.shape zero)))
+                  else begin
+                    sum := Nx.add !sum x;
+                    Effect.Deep.continue k [||]
+                  end))
+      | _ -> None
+    in
+    let r = Effect.Deep.match_with f () { retc = Fun.id; exnc = raise; effc } in
+    (r, !sum)
+end
 
 (* Compilation *)
 

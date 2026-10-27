@@ -1,6 +1,6 @@
 ; rune2's suites, through its interface.
 
 (tests
- (names test_jit)
- (modules compose test_jit)
+ (names test_jit test_constructs)
+ (modules compose test_jit test_constructs)
  (libraries nx nx_array rune2 windtrap))
