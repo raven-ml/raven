@@ -714,6 +714,28 @@ let broadcast_arrays xs =
   List.iter (Prim.alive ~by) xs;
   List.map (broadcast ~by s) xs
 
+(* Input [i] along axis [i], but for [`Xy] the first two exchanged. *)
+let meshgrid ~indexing xs =
+  let by = "Nx.meshgrid" in
+  List.iter
+    (fun x ->
+      if ndim x <> 1 then invalid_argf "%s: %a is not 1-d" by pp_value x)
+    xs;
+  let n = List.length xs in
+  let along i =
+    match indexing with
+    | `Xy when n >= 2 && i < 2 -> 1 - i
+    | `Xy | `Ij -> i
+  in
+  let lens = Array.of_list (List.map numel xs) in
+  let s = Array.make n 0 in
+  Array.iteri (fun i d -> s.(along i) <- d) lens;
+  List.mapi
+    (fun i x ->
+      let col = Array.init n (fun a -> if a = along i then lens.(i) else 1) in
+      broadcast ~by s (reshaped ~by col x))
+    xs
+
 let squeeze ?axes:l x =
   let by = "Nx.squeeze" in
   let s = shape x in
@@ -1092,6 +1114,7 @@ type 'd index =
   | A
   | N
   | D of 'd int64_t * int
+  | M of 'd bool_t
 
 (* An entry of a selection checked against its axis of extent [d]: one written
    position, a range, written positions, positions held in data, a window from a
@@ -1176,7 +1199,9 @@ let picks ~by idx x =
             invalid_argf "%s: a window's start %a is not 0-d" by pp_value start;
           if n < 0 || n > s.(a) then
             invalid_argf "%s: a window of %d on axis %d of %a" by n a pp_value x;
-          (From (start, n, s.(a)), Some a))
+          (From (start, n, s.(a)), Some a)
+      (* The public selections replace each mask by its positions first. *)
+      | M _ -> assert false)
     idx
 
 (* The axes a pick gives the selection. *)
@@ -1263,6 +1288,7 @@ let index_alive ~by idx =
   List.iter
     (function
       | T p | D (p, _) -> Prim.alive ~by p
+      | M m -> Prim.alive ~by m
       | I _ | L _ | R _ | Rs _ | A | N -> ())
     idx
 
@@ -1270,8 +1296,8 @@ let index_alive ~by idx =
 let held_donated idx =
   List.exists
     (function
-      | T p | D (p, _) -> Donate.is_handle p | I _ | L _ | R _ | Rs _ | A | N ->
-          false)
+      | T p | D (p, _) -> Donate.is_handle p
+      | I _ | L _ | R _ | Rs _ | A | N | M _ -> false)
     idx
 
 (* Picks' positions held in data as [read] gives them. *)
@@ -1329,8 +1355,6 @@ let slice_by ~by idx x =
   (* Positions held in data are read in operations of their own. *)
   if held_donated idx then selected ~by (read_picks Donate.lent picks) x
   else selected ~by picks x
-
-let slice idx x = slice_by ~by:"Nx.slice" idx x
 
 let get p x = slice_by ~by:"Nx.get" (List.map (fun i -> I i) p) x
 
@@ -1592,8 +1616,7 @@ let replaced ~by sel picks v x =
       in
       reshaped ~by s updated
 
-let set idx v x =
-  let by = "Nx.set" in
+let set_by ~by idx v x =
   let picks = picks ~by idx x in
   index_alive ~by idx;
   Prim.alive ~by v;
@@ -3646,8 +3669,7 @@ let positions ?size c = positions_by ~by:"Nx.positions" ?size c
    gives [t]'s extents. Strides and extents of an empty [t] are held at [1],
    so no division is by zero. [t] reaches one operation, so it is
    consumed. *)
-let argwhere ?size t =
-  let by = "Nx.argwhere" in
+let argwhere_by ~by ?size t =
   let s = shape t and r = ndim t and n = numel t in
   let held =
     elementwise ~by D.Bool [ Any t ] (not_zero (dtype t) (operand 0 t))
@@ -3671,6 +3693,185 @@ let argwhere ?size t =
     in
     let rows = broadcast ~by [| k; r |] (reshaped ~by [| k; 1 |] p) in
     elementwise ~by D.Int64 [ Any rows ] (pick 0)
+
+let argwhere ?size t = argwhere_by ~by:"Nx.argwhere" ?size t
+
+(* Each axis' coordinates, a column of {!argwhere}'s rows: views of one
+   value. *)
+let nonzero ?size t =
+  let by = "Nx.nonzero" in
+  if ndim t = 0 then
+    invalid_argf "%s: %a is 0-d; it has no axis to give coordinates along" by
+      pp_value t;
+  let rows = argwhere_by ~by ?size t in
+  List.init (ndim t) (fun j -> slice_by ~by [ A; I j ] rows)
+
+(* [x] flattened, read at the positions where [c] flattened is not zero; a
+   pad position, [n], reads zero, which [fill] replaces. *)
+let extract ?size ?fill c x =
+  let by = "Nx.extract" in
+  let n = numel x in
+  if numel c <> n then
+    invalid_argf "%s: %a and %a differ in their number of elements" by
+      pp_value c pp_value x;
+  sized ~by size;
+  let fill = Option.map (const ~by (dtype x)) fill in
+  Prim.alive ~by x;
+  let held =
+    elementwise ~by D.Bool [ Any c ] (not_zero (dtype c) (operand 0 c))
+  in
+  let p = positions_by ~by ?size (reshaped ~by [| n |] held) in
+  let y = take_axis ~by 0 p (reshaped ~by [| n |] x) in
+  match fill with
+  | None -> y
+  | Some v ->
+      elementwise ~by (dtype x) [ Any p; Any y ]
+        E.(where (operand 0 p < i64 n) (operand 1 y) v)
+
+(* One map over [[r] @ shape i] whose row [j] is axis [j]'s coordinates,
+   [(i / stride) mod extent] for an index in [0, n) and the extent
+   elsewhere: each result a row of it, a view. Strides and extents of an
+   empty shape are held at [1], so no division is by zero. *)
+let unravel_index i s =
+  let by = "Nx.unravel_index" in
+  Prim.check_shape ~by s;
+  let r = Array.length s and n = Array.fold_left ( * ) 1 s in
+  if r = 0 then begin
+    Prim.alive ~by i;
+    []
+  end
+  else
+    let stride = Array.make r 1 in
+    for j = r - 2 downto 0 do
+      stride.(j) <- stride.(j + 1) * s.(j + 1)
+    done;
+    let q = E.input 0 D.Int64 and row = E.coord 0 in
+    let last = i64 (n - 1) in
+    let outside = E.(q < i64 0 || last < q) in
+    let rec pick j =
+      let st = i64 (Stdlib.max 1 stride.(j)) and d = i64 (Stdlib.max 1 s.(j)) in
+      let at = E.(where outside (i64 s.(j)) (q / st mod d)) in
+      if j = r - 1 then at
+      else
+        let rest = pick (j + 1) in
+        E.(where (row = i64 j) at rest)
+    in
+    let si = shape i in
+    let wide = Array.append [| r |] si in
+    let rows = broadcast ~by wide (reshaped ~by (Array.append [| 1 |] si) i) in
+    let y = elementwise ~by D.Int64 [ Any rows ] (pick 0) in
+    List.init r (fun j -> slice_by ~by [ I j ] y)
+
+(* Masks *)
+
+(* [idx] over [x] with each mask's axes merged into one, a mask's entry
+   [None]; the merged shape; the masks in order. A mask covers as many axes
+   as it has from the next one, so a 0-d mask merges none into a new axis of
+   extent [1]. *)
+let merged ~by idx x =
+  let s = shape x in
+  let r = Array.length s in
+  let rec go a idx entries dims masks =
+    match idx with
+    | [] ->
+        let rest =
+          if a < r then Array.to_list (Array.sub s a (r - a)) else []
+        in
+        ( List.rev entries,
+          Array.of_list (List.rev_append dims rest),
+          List.rev masks )
+    | N :: idx -> go a idx (Some N :: entries) dims masks
+    | M m :: idx ->
+        let k = ndim m in
+        if a + k > r || Array.sub s a k <> shape m then
+          invalid_argf
+            "%s: mask %a does not have the shape of %a's axes from %d" by
+            pp_value m pp_value x a;
+        go (a + k) idx (None :: entries) (numel m :: dims) (m :: masks)
+    | e :: idx ->
+        let dims = if a < r then s.(a) :: dims else dims in
+        go (a + 1) idx (Some e :: entries) dims masks
+  in
+  go 0 idx [] [] []
+
+(* [entries] with each mask's entry the positions [ps] give it. *)
+let rec filled entries ps =
+  match (entries, ps) with
+  | [], _ -> []
+  | Some e :: entries, ps -> e :: filled entries ps
+  | None :: entries, p :: ps -> T p :: filled entries ps
+  (* [ps] holds one positions per mask. *)
+  | None :: _, [] -> assert false
+
+(* Refuses a traced mask, whose count a trace cannot read. *)
+let countable ~by m =
+  match Eval.owner m with
+  | None -> ()
+  | Some i ->
+      invalid_argf
+        "%s: a mask's count is data, which %s cannot read; select with T \
+         (positions ~size m) or compute with where"
+        by i.Value.name
+
+(* [x] at the shape [s], and the masks, after every refusal of [idx]'s:
+   [idx]'s other entries are checked against [x] merged, a mask's axis
+   whole. *)
+let unmasked ~by idx x =
+  let entries, s, masks = merged ~by idx x in
+  let x = if Prim.has_shape x s then x else reshaped ~by s x in
+  ignore (picks ~by (List.map (Option.value ~default:A) entries) x);
+  index_alive ~by idx;
+  Prim.alive ~by x;
+  List.iter (countable ~by) masks;
+  (entries, x, masks)
+
+let has_mask idx = List.exists (function M _ -> true | _ -> false) idx
+let flat ~by m = reshaped ~by [| numel m |] m
+
+let slice idx x =
+  let by = "Nx.slice" in
+  if not (has_mask idx) then slice_by ~by idx x
+  else
+    let entries, x, masks = unmasked ~by idx x in
+    let ps = List.map (fun m -> positions_by ~by (flat ~by m)) masks in
+    slice_by ~by (filled entries ps) x
+
+(* Refuses a [v] that fits the selection at no count of its masks: the
+   masks' axes, their counts unknown until read, take any extent. *)
+let fits_masks ~by entries v x =
+  let one = fill ~by D.Int64 [| 1 |] 0L in
+  let dry = List.map (function Some e -> e | None -> T one) entries in
+  let ps = picks ~by dry x in
+  let sel = selection x ps in
+  let masked = Array.make (Array.length sel) false in
+  ignore
+    (List.fold_left2
+       (fun at e (p, _) ->
+         (match e with Some _ -> () | None -> masked.(at) <- true);
+         at + Array.length (extents_of p))
+       0 entries ps);
+  let sv = shape v in
+  let rv = Array.length sv and rs = Array.length sel in
+  let fits j =
+    let d = sel.(rs - rv + j) in
+    sv.(j) = 1 || sv.(j) = d || masked.(rs - rv + j)
+  in
+  if rv > rs || not (List.for_all fits (List.init rv Fun.id)) then
+    invalid_argf "%s: %a does not broadcast to the selection of %a" by
+      pp_value v pp_value x
+
+(* [v] is checked against each mask's count once its positions are read. *)
+let set idx v x =
+  let by = "Nx.set" in
+  if not (has_mask idx) then set_by ~by idx v x
+  else
+    let s = shape x in
+    Prim.alive ~by v;
+    let entries, y, masks = unmasked ~by idx x in
+    fits_masks ~by entries v y;
+    let ps = List.map (fun m -> positions_by ~by (flat ~by m)) masks in
+    let y = set_by ~by (filled entries ps) v y in
+    if Prim.has_shape y s then y else reshaped ~by s y
 
 (* Quantiles and histograms *)
 

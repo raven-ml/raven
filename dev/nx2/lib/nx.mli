@@ -483,6 +483,17 @@ val broadcast_arrays : ('v, 's, 'd) t list -> ('v, 's, 'd) t list
 
     Raises [Invalid_argument] if two of their shapes do not broadcast. *)
 
+val meshgrid :
+  indexing:[ `Xy | `Ij ] -> ('v, 's, 'd) t list -> ('v, 's, 'd) t list
+(** [meshgrid ~indexing [x1; …; xn]] is the coordinate grids of the 1-d [x1]
+    to [xn]: [n] views of one shape, the [i]th holding [xi]'s element [j]
+    wherever its axis for [xi] is at [j]. With [`Ij], [xi]'s axis is axis
+    [i], of shape [[|n1; …; nn|]]. With [`Xy], the first two exchange, so
+    that [x1] runs along columns and [x2] along rows as a plane's x and y
+    do: [[|n2; n1; n3; …; nn|]].
+
+    Raises [Invalid_argument] if an operand is not 1-d. *)
+
 val squeeze : ?axes:int list -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [squeeze ~axes x] is [x] without the axes [axes]; without [axes], without
     every axis of extent [1]. A view.
@@ -703,16 +714,25 @@ type 'd index =
   | D of 'd int64_t * int
       (** [D (start, n)]: [n] consecutive positions from the 0-d [start] held
           in data, the start clamped into [\[0, d - n\]]; a gather. *)
+  | M of 'd bool_t
+      (** A mask over as many axes as it has, from the next one, of their
+          shape: the positions where it holds, in C order, replace those
+          axes by one; a gather. A 0-d mask covers no axis and adds one of
+          extent [1] or [0]. Its count is a length that is data
+          ({!section-counted}). *)
 
 val slice : 'd index list -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [slice idx x] selects from [x] axis by axis: each entry selects along the
-    next axis independently of the others, [N] excepted, and axes past the
-    list are whole. [I], [R], [Rs], [A] and [N] give a view; [L], [T] and [D]
-    gather.
+    next axis, or a mask along its axes, independently of the others, [N]
+    excepted, and axes past the list are whole. [I], [R], [Rs], [A] and [N]
+    give a view; [L], [T], [D] and [M] gather.
 
     Raises [Invalid_argument] if [idx] addresses more axes than [x] has, a
     written position is outside its axis, a step is [0], a [D] start is not
-    0-d, or a [D] length is negative or exceeds its axis. *)
+    0-d, a [D] length is negative or exceeds its axis, a mask's shape is not
+    that of the axes it covers, or a mask is traced. Under a trace,
+    [T (positions ~size m)] selects, or {!where} computes without
+    selecting. *)
 
 val get : int list -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [get p x] is [slice (List.map (fun i -> I i) p) x], a view. *)
@@ -734,6 +754,16 @@ val take_along_axis :
     Raises [Invalid_argument] if [axis] is not an axis of [x], [p]'s rank is
     not [x]'s, or the shapes off [axis] do not broadcast. *)
 
+val unravel_index : 'd int64_t -> int array -> 'd int64_t list
+(** [unravel_index i s] is the coordinates in the shape [s], in C order, of
+    each flat index of [i]: one value of [i]'s shape per axis of [s], [[]]
+    for a 0-d [s]. An index [k] in [\[0, n)], [n] the number of elements of
+    [s], has [(k / t) mod s.(j)] along axis [j], [t] the product of the
+    extents after [j]. An index outside [\[0, n)] has each axis' extent,
+    outside it, so {!take} reads zero there and {!scatter} writes nothing.
+
+    Raises [Invalid_argument] if [s] is not a shape. *)
+
 (** {1:updates Functional updates} *)
 
 val set : 'd index list -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
@@ -745,7 +775,10 @@ val set : 'd index list -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     order of the selection, wins. A [D] window clamps its start as {!slice}
     does, so a start past [d - n] writes the last [n] positions: a decode step
     whose position reaches the cache's capacity overwrites its last row, and a
-    program that can pass capacity states the bound with a check.
+    program that can pass capacity states the bound with a check. A mask
+    writes the positions where it holds. [v] is checked against its count
+    only once the mask is read: a [v] that fits the selection but for that
+    count raises with a donated mask consumed.
 
     Raises [Invalid_argument] as {!slice} does, if [v] does not broadcast to
     the selection's shape, or if an [L] names one position twice, counting
@@ -2874,6 +2907,23 @@ val argwhere : ?size:int -> ('v, 's, 'd) t -> 'd int64_t
     extents, out of range along every axis.
 
     Raises [Invalid_argument] if [size] is negative. *)
+
+val nonzero : ?size:int -> ('v, 's, 'd) t -> 'd int64_t list
+(** [nonzero ~size t] is the coordinates of [t]'s elements other than zero,
+    one 1-d value per axis: the [j]th is column [j] of [argwhere ~size t], a
+    view. With [size], a pad entry is the axis' extent, outside it.
+
+    Raises [Invalid_argument] if [t] is 0-d or [size] is negative. *)
+
+val extract :
+  ?size:int -> ?fill:'v -> ('c, 'r, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [extract c x] is the elements of [x] where [c] is not zero, in C order,
+    [c] and [x] flattened: a NaN is not zero, [-0.] is. Without [size], its
+    length is read on the host. With [size], it has [size] entries and reads
+    nothing: the first such elements, then [fill] (default zero).
+
+    Raises [Invalid_argument] if [c] and [x] differ in their number of
+    elements, [size] is negative, or [fill] is outside [x]'s dtype. *)
 
 type 'd groups = {
   ids : 'd int64_t;  (** Each key's group, [n] entries. *)

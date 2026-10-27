@@ -512,6 +512,84 @@ let shares x y =
   let buffer v = A.buffer (Option.get (Nx.Repr.array v)) in
   Rig.Buffer.overlaps (buffer x) (buffer y)
 
+(* Grids *)
+
+(* Up to three 1-d operands, each laid out as drawn. *)
+let grid_case =
+  let open Gen in
+  with_pp
+    (fun ppf (ij, os) ->
+      Format.fprintf ppf "%s [%s]" (if ij then "ij" else "xy")
+        (String.concat "; "
+           (List.map (fun o -> Format.asprintf "%a %a" pp_layout o.l pp_ints o.s) os)))
+    (let* ij = bool in
+     let* n = int_range 0 3 in
+     let one =
+       let* d = frequency [ (1, constant 0); (1, constant 1); (3, int_range 2 3) ] in
+       let+ l = of_list [ Plain; Reversed; Broadcast ] in
+       operand_of [| d |] l
+     in
+     let rec all k = if k = 0 then constant [] else
+         let* o = one in
+         let+ os = all (k - 1) in
+         o :: os
+     in
+     let+ os = all n in
+     (ij, os))
+
+(* Grid [i] holds operand [i]'s element at its axis' index: axis [i], or for
+   [`Xy] axis [1 - i] of the first two. *)
+let law_meshgrid (ij, os) =
+  let n = List.length os in
+  cover "two operands or more, xy" ((not ij) && n >= 2);
+  cover "an empty operand" (List.exists (fun o -> o.s.(0) = 0) os);
+  let along i = if (not ij) && n >= 2 && i < 2 then 1 - i else i in
+  let s = Array.make n 0 in
+  List.iteri (fun i o -> s.(along i) <- o.s.(0)) os;
+  let ys =
+    Nx.meshgrid ~indexing:(if ij then `Ij else `Xy) (List.map (fun o -> o.x) os)
+  in
+  equal ~msg:"grids" int n (List.length ys);
+  List.iteri
+    (fun i (o, y) ->
+      equal ~msg:"shape" (array int) s (Nx.shape y);
+      equal ~msg:"elements" (array int32)
+        (init s (fun idx -> o.e.(idx.(along i))))
+        (elements y))
+    (List.combine os ys)
+
+let grids =
+  group "grids"
+    [
+      prop "meshgrid holds each operand along its axis" grid_case law_meshgrid;
+      test "meshgrid's two indexings at a plane" (fun () ->
+          let x = (operand_of [| 3 |] Plain).x and y = (operand_of [| 2 |] Plain).x in
+          (match Nx.meshgrid ~indexing:`Xy [ x; y ] with
+          | [ gx; gy ] ->
+              equal (array int) [| 2; 3 |] (Nx.shape gx);
+              equal (array int32) [| 1l; 2l; 3l; 1l; 2l; 3l |] (elements gx);
+              equal (array int32) [| 1l; 1l; 1l; 2l; 2l; 2l |] (elements gy)
+          | _ -> fail "two grids");
+          match Nx.meshgrid ~indexing:`Ij [ x; y ] with
+          | [ gx; gy ] ->
+              equal (array int) [| 3; 2 |] (Nx.shape gx);
+              equal (array int32) [| 1l; 1l; 2l; 2l; 3l; 3l |] (elements gx);
+              equal (array int32) [| 1l; 2l; 1l; 2l; 1l; 2l |] (elements gy)
+          | _ -> fail "two grids");
+      test "meshgrid's grids are views" (fun () ->
+          let x = (operand_of [| 3 |] Plain).x and y = (operand_of [| 2 |] Plain).x in
+          match Nx.meshgrid ~indexing:`Xy [ x; y ] with
+          | [ gx; gy ] ->
+              equal ~msg:"x" bool true (shares x gx);
+              equal ~msg:"y" bool true (shares y gy)
+          | _ -> fail "two grids");
+      test "meshgrid refuses an operand that is not 1-d" (fun () ->
+          invalid ~by:"Nx.meshgrid" (fun () ->
+              Nx.meshgrid ~indexing:`Ij [ (operand_of [| 2; 2 |] Plain).x ]);
+          invalid ~by:"Nx.meshgrid" (fun () ->
+              Nx.meshgrid ~indexing:`Xy [ (operand_of [||] Plain).x ]));
+    ]
+
 let views =
   group "views"
     [
@@ -738,4 +816,4 @@ let donation =
 let () =
   exit
     (run "nx shapes"
-       [ laws; joins; properties; views; dtypes; refusals; donation ])
+       [ laws; joins; properties; grids; views; dtypes; refusals; donation ])

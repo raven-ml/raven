@@ -206,7 +206,33 @@ let test_refused_kills_none () =
   invalid ~sub:"Nx.multi_dot: " (fun () ->
       Nx.multi_dot [ Nx.donate x9; fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |]; fresh [| 1.; 2.; 3. |] ]);
   equal ~msg:"multi_dot's refused donor lives" (array int) [| 2; 2 |]
-    (Nx.shape (Nx.copy x9))
+    (Nx.shape (Nx.copy x9));
+  (* A value that fits no count refuses before the mask is read; one that
+     fits all but the count refuses once it has consumed the mask, and
+     leaves the target. *)
+  let m10 = Nx.greater_s (fresh [| 1.; 3. |]) 0. and x10 = fresh [| 1.; 3. |] in
+  invalid ~sub:"Nx.set: " (fun () ->
+      Nx.set [ Nx.M (Nx.donate m10) ] (Nx.zeros f32 [| 2; 2 |]) (Nx.donate x10));
+  equal ~msg:"set's refused mask and target live" (array int) [| 2; 2 |]
+    [| Nx.numel (Nx.copy m10); Nx.numel (Nx.copy x10) |];
+  let m13 = Nx.greater_s (fresh [| 1.; 3. |]) 0. and x13 = fresh [| 1.; 3. |] in
+  invalid ~sub:"Nx.set: " (fun () ->
+      Nx.set [ Nx.M (Nx.donate m13) ] (Nx.zeros f32 [| 3 |]) (Nx.donate x13));
+  invalid ~sub:(dead_in "Nx.copy" m13 "Nx.set") (fun () -> Nx.copy m13);
+  equal ~msg:"set's target lives past its count" (array int) [| 2 |]
+    (Nx.shape (Nx.copy x13));
+  let dead = fresh [| 1.; 3. |] in
+  ignore (Nx.copy (Nx.donate dead));
+  let m11 = Nx.greater_s (fresh [| 1.; 3. |]) 0. in
+  invalid ~sub:"Nx.slice: float32 [2] was donated to Nx.copy" (fun () ->
+      Nx.slice [ Nx.M (Nx.donate m11) ] dead);
+  equal ~msg:"slice's refused mask lives" (array int) [| 2 |]
+    (Nx.shape (Nx.copy m11));
+  let c12 = Nx.greater_s (fresh [| 1.; 3. |]) 0. in
+  invalid ~sub:"Nx.extract: " (fun () ->
+      Nx.extract ~fill:300 (Nx.donate c12) (Nx.zeros Nx.uint8 [| 2 |]));
+  equal ~msg:"extract's refused condition lives" (array int) [| 2 |]
+    (Nx.shape (Nx.copy c12))
 
 (* An operation that broadcasts a handle, refused by its dtype or by a dead
    operand, kills nothing and names the dead operand. *)
@@ -1284,7 +1310,18 @@ let test_one_reader_consumes () =
   dies "Nx.multi_dot" vector (fun d -> ignore (Nx.multi_dot [ d; square () ]));
   dies "Nx.matrix_power" square (fun d -> ignore (Nx.matrix_power d 2));
   dies "Nx.matrix_power" square (fun d -> ignore (Nx.matrix_power d 1));
-  dies "Nx.matrix_power" square (fun d -> ignore (Nx.matrix_power d (-3)))
+  dies "Nx.matrix_power" square (fun d -> ignore (Nx.matrix_power d (-3)));
+  dies "Nx.nonzero" square (fun d -> ignore (Nx.nonzero d));
+  dies "Nx.extract" square (fun d -> ignore (Nx.extract d (square ())));
+  dies "Nx.extract" square (fun d -> ignore (Nx.extract (square ()) d));
+  dies "Nx.unravel_index" ints (fun d -> ignore (Nx.unravel_index d [| 2; 3 |]));
+  let mask () = Nx.greater_s (square ()) 1. in
+  dies "Nx.slice" mask (fun d -> ignore (Nx.slice [ Nx.M d ] (square ())));
+  dies "Nx.slice" square (fun d -> ignore (Nx.slice [ Nx.M (mask ()) ] d));
+  dies "Nx.set" mask (fun d ->
+      ignore (Nx.set [ Nx.M d ] (Nx.zeros f32 [| 1 |]) (square ())));
+  dies "Nx.set" square (fun d ->
+      ignore (Nx.set [ Nx.M (mask ()) ] (Nx.zeros f32 [| 1 |]) d))
 
 (* A call that keeps none of its operand still raises for a dead one: an
    fft cut to no point, patches of an empty axis padded. *)
@@ -1580,6 +1617,19 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
       c "matrix_power" 1 (fun d -> show (Nx.matrix_power (d 0 (x [| 2; 2 |])) 2));
       c "matrix_power" 1 (fun d ->
           show (Nx.matrix_power (d 0 (x [| 1; 2; 2 |])) 3));
+      c "meshgrid" 2 (fun d ->
+          showl (Nx.meshgrid ~indexing:`Xy [ d 0 (x [| 2 |]); d 1 (x [| 3 |]) ]));
+      c "slice" 2 (fun d ->
+          let mask = d 0 (Nx.not_equal_s (x [| 2; 3 |]) one) in
+          show (Nx.slice [ Nx.M mask ] (d 1 (x [| 2; 3 |]))));
+      c "set" 3 (fun d ->
+          let mask = d 0 (Nx.not_equal_s (x [| 3 |]) one) in
+          show (Nx.set [ Nx.A; Nx.M mask ] (d 1 (x [| 2; 1 |])) (d 2 (x [| 2; 3 |]))));
+      c "extract" 2 (fun d ->
+          show (Nx.extract (d 0 (x [| 2; 3 |])) (d 1 (x [| 6 |]))));
+      c "extract" 2 (fun d ->
+          show (Nx.extract ~size:4 ~fill:one (d 0 (x [| 2; 3 |])) (d 1 (x [| 6 |]))));
+      c "nonzero" 1 (fun d -> showl (Nx.nonzero (d 0 (x [| 2; 3 |]))));
     ]
 
 (* The functions of floats. *)
@@ -1999,6 +2049,8 @@ let integers =
           showl
             (let v, _ = Nx.sort (d 0 (x [| 5 |])) in
              [ v ]));
+      c "unravel_index" 1 (fun d ->
+          showl (Nx.unravel_index (d 0 (ints [| 0; 4; 7 |])) [| 2; 3 |]));
     ]
 
 (* The functions of booleans. *)

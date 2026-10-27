@@ -617,6 +617,130 @@ let test_argwhere_cases () =
         (fun () -> Nx.argwhere x);
       ignore (Nx.argwhere ~size:2 x))
 
+(* nonzero *)
+
+(* Column [j] of argwhere's rows, a pad entry the axis' extent; a 0-d value
+   has no axis to give. *)
+let law_nonzero (s, vs, size) =
+  let r = Array.length s in
+  let t = Nx.create Nx.float64 s vs in
+  if r = 0 then invalid ~by:"Nx.nonzero" (fun () -> Nx.nonzero ?size t)
+  else
+    let rows = Nx.to_array (Nx.argwhere ?size t) in
+    let k = Array.length rows / r in
+    let cs = Nx.nonzero ?size t in
+    equal ~msg:"axes" int r (List.length cs);
+    List.iteri
+      (fun j c ->
+        equal ~msg:"column" (array int64)
+          (Array.init k (fun i -> rows.((i * r) + j)))
+          (Nx.to_array c))
+      cs
+
+let test_nonzero_cases () =
+  let t = Nx.create Nx.int32 [| 2; 3 |] [| 0l; 1l; 0l; 2l; 0l; 3l |] in
+  (match Nx.nonzero t with
+  | [ r; c ] ->
+      equal (array int64) [| 0L; 1L; 1L |] (Nx.to_array r);
+      equal (array int64) [| 1L; 0L; 2L |] (Nx.to_array c)
+  | _ -> fail "two axes");
+  (match Nx.nonzero ~size:4 t with
+  | [ r; c ] ->
+      equal (array int64) [| 0L; 1L; 1L; 2L |] (Nx.to_array r);
+      equal (array int64) [| 1L; 0L; 2L; 3L |] (Nx.to_array c)
+  | _ -> fail "two axes");
+  invalid ~by:"Nx.nonzero" (fun () -> Nx.nonzero (Nx.scalar Nx.bool true));
+  invalid ~by:"Nx.nonzero" (fun () -> Nx.nonzero ~size:(-1) t);
+  Nx.Prim.interpret ~name:"test.order" Values mark (fun i ->
+      let x = Nx.Prim.traced i (Nx.Prim.form t) Mark in
+      raises_match
+        (Exn.invalid_arg
+           ~substring:"Nx.nonzero: the value is traced by test.order")
+        (fun () -> Nx.nonzero x);
+      ignore (Nx.nonzero ~size:2 x))
+
+(* extract *)
+
+type extract_case =
+  | Extract_case : {
+      dt : ('v, 's) D.t;
+      cond : float array;
+      boolean : bool;
+      xs : int array;
+      size : int option;
+      fill : bool;
+    }
+      -> extract_case
+
+(* A condition of floats or booleans and an operand of every dtype, of one
+   number of elements in two shapes. *)
+let extract_case =
+  let open Gen in
+  with_pp
+    (fun ppf (Extract_case c) ->
+      Format.fprintf ppf "%s [%d] by %s, size %s%s" (D.name c.dt)
+        (Array.length c.cond)
+        (if c.boolean then "bool" else "float64")
+        (match c.size with None -> "-" | Some l -> string_of_int l)
+        (if c.fill then ", filled" else ""))
+    (let* (D.Any dt) = of_list ~pp:(fun ppf (D.Any dt) -> D.pp ppf dt) D.all in
+     let* n = int_range 0 6 in
+     let* boolean = bool in
+     let* cond = array ~size:(constant n) (of_list [ 0.; -0.; Float.nan; 1.; -2.5 ]) in
+     let* xs = array ~size:(constant n) (int_range 1 9) in
+     let* size = option (int_range 0 (n + 2)) in
+     let+ fill = bool in
+     Extract_case { dt; cond; boolean; xs; size; fill })
+
+let law_extract (Extract_case c) =
+  let n = Array.length c.cond in
+  let held i = if c.boolean then c.cond.(i) <> 0. else not (c.cond.(i) = 0.) in
+  let x =
+    Nx.cast c.dt (Nx.create Nx.int64 [| 1; n |] (Array.map Int64.of_int c.xs))
+  in
+  let xv = Nx.to_array x in
+  let fill = if c.fill then Some (D.one c.dt) else None in
+  let pad = Option.value fill ~default:(D.zero c.dt) in
+  let picked = List.filter held (List.init n Fun.id) in
+  cover "padded" (match c.size with Some l -> l > List.length picked | None -> false);
+  cover "cut" (match c.size with Some l -> l < List.length picked | None -> false);
+  let want =
+    match c.size with
+    | None -> List.map (fun i -> xv.(i)) picked
+    | Some l ->
+        List.init l (fun j ->
+            if j < List.length picked then xv.(List.nth picked j) else pad)
+  in
+  let cond = Nx.create Nx.float64 [| n |] c.cond in
+  let y =
+    if c.boolean then Nx.extract ?size:c.size ?fill (Nx.not_equal_s cond 0.) x
+    else Nx.extract ?size:c.size ?fill cond x
+  in
+  let w = Testable.make ~pp:(D.pp_value c.dt) ~equal:( = ) in
+  equal (list w) want (Array.to_list (Nx.to_array y))
+
+let test_extract_cases () =
+  let x = Nx.create Nx.int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |] in
+  equal (array int32) [| 3l; 4l; 5l; 6l |]
+    (Nx.to_array (Nx.extract (Nx.greater_s x 2l) x));
+  equal (array int32) [| 1l; 3l; -1l |]
+    (Nx.to_array
+       (Nx.extract ~size:3 ~fill:(-1l)
+          (Nx.create Nx.int8 [| 6 |] [| 1; 0; 2; 0; 0; 0 |])
+          x));
+  invalid ~by:"Nx.extract" (fun () -> Nx.extract (Nx.zeros Nx.bool [| 5 |]) x);
+  invalid ~by:"Nx.extract" (fun () ->
+      Nx.extract ~size:(-1) (Nx.zeros Nx.bool [| 6 |]) x);
+  invalid ~by:"Nx.extract" (fun () ->
+      Nx.extract ~fill:300 (Nx.zeros Nx.bool [| 2 |]) (Nx.zeros Nx.uint8 [| 2 |]));
+  Nx.Prim.interpret ~name:"test.order" Values mark (fun i ->
+      let c = Nx.Prim.traced i (Nx.Prim.form (Nx.zeros Nx.bool [| 6 |])) Mark in
+      raises_match
+        (Exn.invalid_arg
+           ~substring:"Nx.extract: the value is traced by test.order")
+        (fun () -> Nx.extract c x);
+      ignore (Nx.extract ~size:2 c x))
+
 (* quantile *)
 
 type quantile_case =
@@ -836,6 +960,14 @@ let () =
              prop "the coordinates of each element other than zero"
                argwhere_case law_argwhere;
              test "cases" test_argwhere_cases;
+           ];
+         group "nonzero extract"
+           [
+             prop "nonzero is argwhere's columns" argwhere_case law_nonzero;
+             test "nonzero cases" test_nonzero_cases;
+             prop "extract reads where the condition is not zero" extract_case
+               law_extract;
+             test "extract cases" test_extract_cases;
            ];
          group "quantile"
            [

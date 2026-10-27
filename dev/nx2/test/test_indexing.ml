@@ -33,6 +33,8 @@ let pp_ints ppf a =
   Format.fprintf ppf "[%s]"
     (String.concat "; " (Array.to_list (Array.map string_of_int a)))
 
+let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
+
 let host dt s data = Nx.Repr.of_array Nx.Host.v (A.of_array dt s data)
 let held s ps = host D.Int64 s (Array.map Int64.of_int ps)
 
@@ -410,6 +412,232 @@ let definitions =
             Nx.scatter ~combine:c ~axis:a (held us p) (host D.Int32 us u) x
           in
           equal (array int32) expected (elements y));
+    ]
+
+(* Masks *)
+
+(* A selection with a mask over the [k] axes from [at], the other entries
+   drawn as [case] draws them. Its reference is the selection of the operand
+   with those axes merged into one, the mask by the positions where it
+   holds, in C order: the operand's elements in C order are the merged
+   one's. *)
+type mask_case = {
+  ms : int array;
+  before : entry list;
+  at : int;
+  k : int;
+  mask : bool array;
+  after : entry list;
+}
+
+let pp_mask_case ppf c =
+  Format.fprintf ppf "%a [%a; M %a; %a]" pp_ints c.ms
+    (Format.pp_print_list pp_entry) c.before pp_ints
+    (Array.sub c.ms c.at c.k)
+    (Format.pp_print_list pp_entry) c.after
+
+let mask_case lists =
+  let open Gen in
+  with_pp pp_mask_case
+    (let* r = int_range 0 3 in
+     let* ms = array ~size:(constant r) (int_range 0 3) in
+     (* One mask in five is 0-d, and two in five cover two axes or more
+        where the operand has them. *)
+     let* k =
+       frequency
+         ((1, constant 0)
+         :: (if r >= 1 then [ (2, constant 1) ] else [])
+         @ if r >= 2 then [ (2, int_range 2 r) ] else [])
+     in
+     let* at = int_range 0 (r - k) in
+     let rec entries a stop =
+       if a = stop then constant []
+       else
+         let* e = entry lists ms.(a) in
+         let+ rest = entries (a + 1) stop in
+         e :: rest
+     in
+     let* before = entries 0 at in
+     let* stop = int_range (at + k) r in
+     let* after = entries (at + k) stop in
+     let+ mask =
+       array
+         ~size:(constant (numel (Array.sub ms at k)))
+         (frequency [ (2, constant true); (1, constant false) ])
+     in
+     { ms; before; at; k; mask; after })
+
+let held_positions mask =
+  List.filter (fun i -> mask.(i)) (List.init (Array.length mask) Fun.id)
+  |> Array.of_list
+
+(* The merged shape and the reference's entries. *)
+let merged c =
+  let r = Array.length c.ms in
+  let s =
+    Array.concat
+      [
+        Array.sub c.ms 0 c.at;
+        [| Array.length c.mask |];
+        Array.sub c.ms (c.at + c.k) (r - c.at - c.k);
+      ]
+  in
+  let ps = held_positions c.mask in
+  (s, c.before @ [ T ([| Array.length ps |], ps) ] @ c.after)
+
+let mask_index c =
+  List.map to_index c.before
+  @ [ Nx.M (host D.Bool (Array.sub c.ms c.at c.k) c.mask) ]
+  @ List.map to_index c.after
+
+let mask_covers c =
+  cover "a 0-d mask" (c.k = 0);
+  cover "a mask over two axes or more" (c.k >= 2);
+  cover "entries after the mask" (c.after <> []);
+  cover "a mask holding nowhere" (not (Array.exists Fun.id c.mask))
+
+let law_mask_slice c =
+  mask_covers c;
+  let x, data = operand c.ms in
+  let s, entries = merged c in
+  let sel, read = selection s entries in
+  let y = Nx.slice (mask_index c) x in
+  equal ~msg:"shape" (array int) sel (Nx.shape y);
+  equal ~msg:"elements" (array int32)
+    (Array.init (numel sel) (fun k ->
+         match read (index sel k) with
+         | Some ix -> data.(position s ix)
+         | None -> 0l))
+    (elements y)
+
+let law_mask_set c =
+  mask_covers c;
+  let x, data = operand c.ms in
+  let s, entries = merged c in
+  let sel, read = selection s entries in
+  let v = Array.init (numel sel) (fun k -> Int32.of_int (-k - 1)) in
+  let expected = Array.copy data in
+  for k = 0 to numel sel - 1 do
+    match read (index sel k) with
+    | Some ix -> expected.(position s ix) <- v.(k)
+    | None -> ()
+  done;
+  let y = Nx.set (mask_index c) (host D.Int32 sel v) x in
+  equal ~msg:"shape" (array int) c.ms (Nx.shape y);
+  equal ~msg:"elements" (array int32) expected (elements y)
+
+type ('v, 's, 'd) Nx.Prim.payload += Mark : ('v, 's, 'd) Nx.Prim.payload
+
+let mark i ~by op = Nx.Prim.results ~by (fun _ f -> Nx.Prim.traced i f Mark) op
+
+let test_mask_cases () =
+  let x, _ = operand [| 2; 3 |] in
+  let m s bs = host D.Bool s bs in
+  equal (array int32) [| 2l; 3l; 5l |]
+    (elements
+       (Nx.slice
+          Nx.[ M (m [| 2; 3 |] [| false; true; true; false; true; false |]) ]
+          x));
+  equal (array int32) [| 4l; 5l; 6l |]
+    (elements (Nx.slice Nx.[ M (m [| 2 |] [| false; true |]) ] x));
+  equal (array int32) [| 1l; 3l; 4l; 6l |]
+    (elements (Nx.slice Nx.[ A; M (m [| 3 |] [| true; false; true |]) ] x));
+  equal (array int) [| 1; 2; 3 |]
+    (Nx.shape (Nx.slice Nx.[ M (m [||] [| true |]) ] x));
+  equal (array int) [| 0; 2; 3 |]
+    (Nx.shape (Nx.slice Nx.[ M (m [||] [| false |]) ] x));
+  equal (array int32) [| 1l; 0l; 0l; 4l; 0l; 0l |]
+    (elements
+       (Nx.set Nx.[ A; M (m [| 3 |] [| false; true; true |]) ]
+          (Nx.zeros Nx.int32 [| 1 |])
+          x));
+  (* Two masks, and a mask beside positions, each select along their own
+     axes: the outer product of their selections. *)
+  let two =
+    Nx.slice
+      Nx.[ M (m [| 2 |] [| true; true |]); M (m [| 3 |] [| true; false; true |]) ]
+      x
+  in
+  equal (array int) [| 2; 2 |] (Nx.shape two);
+  equal (array int32) [| 1l; 3l; 4l; 6l |] (elements two);
+  let beside =
+    Nx.slice Nx.[ M (m [| 2 |] [| false; true |]); T (held [| 2 |] [| 2; 0 |]) ] x
+  in
+  equal (array int) [| 1; 2 |] (Nx.shape beside);
+  equal (array int32) [| 6l; 4l |] (elements beside);
+  equal (array int32) [| 0l; 2l; 0l; 0l; 5l; 0l |]
+    (elements
+       (Nx.set
+          Nx.[ M (m [| 2 |] [| true; true |]); M (m [| 3 |] [| true; false; true |]) ]
+          (Nx.zeros Nx.int32 [| 2; 1 |])
+          x));
+  invalid ~by:"Nx.slice" (fun () ->
+      Nx.slice Nx.[ M (m [| 3 |] [| true; true; true |]) ] x);
+  invalid ~by:"Nx.slice" (fun () ->
+      Nx.slice Nx.[ A; A; M (m [| 1 |] [| true |]) ] x);
+  invalid ~by:"Nx.set" (fun () ->
+      Nx.set Nx.[ M (m [| 2 |] [| true; true |]) ] (Nx.zeros Nx.int32 [| 3; 3 |]) x);
+  (* Under a trace a mask's count is unknown: the selection raises, and the
+     positions of a fixed size select. *)
+  let mask = m [| 2 |] [| false; true |] in
+  Nx.Prim.interpret ~name:"test.mask" Values mark (fun i ->
+      let t = Nx.Prim.traced i (Nx.Prim.form mask) Mark in
+      raises
+        (Invalid_argument
+           "Nx.slice: a mask's count is data, which test.mask cannot read; \
+            select with T (positions ~size m) or compute with where")
+        (fun () -> Nx.slice Nx.[ M t ] x);
+      invalid ~by:"Nx.set" (fun () -> Nx.set Nx.[ M t ] x x);
+      ignore (Nx.slice Nx.[ T (Nx.positions ~size:1 t) ] x))
+
+(* Coordinates *)
+
+let law_unravel (s, ks) =
+  let n = numel s in
+  cover "an index outside" (Array.exists (fun k -> k < 0 || k >= n) ks);
+  cover "an empty shape" (n = 0);
+  let i = held [| Array.length ks |] ks in
+  let cs = Nx.unravel_index i s in
+  equal ~msg:"axes" int (Array.length s) (List.length cs);
+  List.iteri
+    (fun j c ->
+      equal ~msg:"coordinates" (array int64)
+        (Array.map
+           (fun k ->
+             Int64.of_int (if k < 0 || k >= n then s.(j) else (index s k).(j)))
+           ks)
+        (elements c))
+    cs
+
+let test_unravel_cases () =
+  match Nx.unravel_index (held [| 2; 2 |] [| 0; 5; 6; -1 |]) [| 2; 3 |] with
+  | [ r; c ] ->
+      equal (array int) [| 2; 2 |] (Nx.shape r);
+      equal (array int64) [| 0L; 1L; 2L; 2L |] (elements r);
+      equal (array int64) [| 0L; 2L; 3L; 3L |] (elements c);
+      equal int 0 (List.length (Nx.unravel_index (held [| 1 |] [| 0 |]) [||]));
+      invalid ~by:"Nx.unravel_index" (fun () ->
+          Nx.unravel_index (held [| 1 |] [| 0 |]) [| -1 |])
+  | _ -> fail "two axes"
+
+let masks =
+  group "masks and coordinates"
+    [
+      prop ~count "slice through a mask reads its positions in C order"
+        (mask_case Repeats) law_mask_slice;
+      prop ~count "set through a mask writes its positions"
+        (mask_case Distinct) law_mask_set;
+      test "masks at the values their definition gives" test_mask_cases;
+      prop "unravel_index gives each index's coordinates"
+        Gen.(
+          let* r = int_range 0 3 in
+          let* s = array ~size:(constant r) (int_range 0 3) in
+          let n = numel s in
+          let+ ks = array ~size:(int_range 0 6) (int_range (-2) (n + 1)) in
+          (s, ks))
+        law_unravel;
+      test "unravel_index at the values its definition gives"
+        test_unravel_cases;
     ]
 
 let shares x y =
@@ -799,8 +1027,6 @@ let dtypes =
         [| data.(0); data.(1); data.(1); data.(3); data.(4); data.(4) |]
         (elements (Nx.set Nx.[ A; T p ] (Nx.slice Nx.[ A; L [ 1; 0 ] ] x) x)))
 
-let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
-
 let refusals =
   let x, _ = operand [| 2; 3 |] in
   group "refusals"
@@ -863,4 +1089,4 @@ let many =
 let () =
   exit
     (run "nx indexing"
-       [ laws; definitions; views; dtypes; declines; many; refusals ])
+       [ laws; definitions; masks; views; dtypes; declines; many; refusals ])
