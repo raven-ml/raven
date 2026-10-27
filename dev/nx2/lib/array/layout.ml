@@ -9,7 +9,8 @@
    are its own: no caller's array is kept or returned, and nothing writes them
    once it is built.
 
-   C reads the fields in this order (nx_layout.h): the two change together. *)
+   C reads the fields in this order (nx_array_stubs.c): the two change
+   together. *)
 
 type t = {
   shape : int array;

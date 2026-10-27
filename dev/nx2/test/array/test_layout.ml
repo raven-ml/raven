@@ -572,19 +572,22 @@ let law_well_formed l =
   at_most ~msg:"rank" int ~than:L.max_rank (L.rank l);
   at_least ~msg:"offset" int ~than:0 (L.offset l)
 
-let law_header l =
+(* The descriptor nx_read fills for an array laid out by [l], over the bytes
+   [l] reaches, holds what the accessors give: the rank, the flags, the offset,
+   the extents and the strides. *)
+let law_descriptor l =
   let flag b f = if b then f else 0 in
-  let lo, hi = L.span l in
   let r = L.rank l in
   let flags =
     flag (L.is_contiguous l) 1
     lor flag (L.is_distinct l) 2
     lor flag (L.numel l = 0) 4
   in
+  let bytes = Rig.Buffer.create Rig.host (max 1 (snd (L.span l))) in
+  let a = Nx_array.v Nx_array.Dtype.Uint8 l bytes in
   equal ints
-    (Array.concat
-       [ [| r; flags; L.offset l; lo; hi |]; L.shape l; L.strides l ])
-    (Nx_array_support.layout l)
+    (Array.concat [ [| r; flags; L.offset l |]; L.shape l; L.strides l ])
+    (Nx_array_support.descriptor a)
 
 (* Coalescing *)
 
@@ -715,8 +718,8 @@ let tests =
           law_distinct_views;
         prop "span holds every position, from 0 up" any_layout law_span;
         prop "every layout made is well formed" any_layout law_well_formed;
-        prop "nx_array.h reads the fields the accessors give" any_layout
-          law_header;
+        prop "nx_read's descriptor holds the fields the accessors give"
+          any_layout law_descriptor;
       ];
     group "coalesce"
       [

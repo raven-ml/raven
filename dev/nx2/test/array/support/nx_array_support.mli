@@ -38,9 +38,10 @@ val max_numel : unit -> int
 val code : Nx_array.answer -> int
 (** [code a] is the integer OCaml represents [a] by, which C reads. *)
 
-val layout : Nx_array.Layout.t -> int array
-(** [layout l] is [l]'s fields as C reads them through [nx_layout.h]'s field
-    order: rank, flags, offset, lo, hi, then the extents and the strides. *)
+val descriptor : ('v, 's) Nx_array.t -> int array
+(** [descriptor a] is the descriptor [nx_read] fills for [a], read for
+    reading: its rank, flags and offset, then its extents and strides. It
+    fails if [nx_read] refuses [a]. *)
 
 val add : 'z -> 'x -> 'y -> Nx_array.answer
 (** [add z x y] is a float32 kernel through [nx_read] and [nx_coalesce]: it

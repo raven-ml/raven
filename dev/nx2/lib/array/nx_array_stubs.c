@@ -15,7 +15,6 @@
 #include <caml/signals.h>
 
 #include "nx_array.h"
-#include "nx_layout.h"
 #include "rig.h"
 
 #ifndef FLAT_FLOAT_ARRAY
@@ -23,9 +22,25 @@
 #endif
 
 /* An array is the record { dtype; layout; buffer }, in this order: the
-   dtype an immediate whose value is its code, the layout a record
-   (nx_layout.h). This file is the only C that reads it. */
+   dtype an immediate whose value is its code, the layout a record. This
+   file is the only C that reads either. */
 enum { ARRAY_DTYPE, ARRAY_LAYOUT, ARRAY_BUFFER };
+
+/* A Layout.t's fields, in this order: the extents and the strides (int
+   arrays of one length, the rank), the offset, the flags (NX_CONTIGUOUS,
+   NX_DISTINCT, NX_EMPTY), and the span's lo and hi, all ints. layout.ml
+   declares the record; the two change together. The record lives in the
+   OCaml heap, which a collection moves: a stub copies what it needs before
+   it allocates or releases the domain lock. Kernels read descriptors
+   (nx_array.h). */
+enum {
+  NX_LAYOUT_SHAPE,
+  NX_LAYOUT_STRIDES,
+  NX_LAYOUT_OFFSET,
+  NX_LAYOUT_FLAGS,
+  NX_LAYOUT_LO,
+  NX_LAYOUT_HI
+};
 
 /* Layouts */
 

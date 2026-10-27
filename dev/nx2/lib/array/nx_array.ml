@@ -529,7 +529,7 @@ let first_of_broadcast a =
   in
   match move (Move.Slice (Iarray.init (Layout.rank l) range)) a with
   | Some a -> a
-  | None -> invalid_arg "Nx_array: a slice is a view"
+  | None -> assert false
 
 (* The host gathers [a]'s runs into [h], on memory it addresses, each run
    brought into one host scratch by [Buffer.copy] where the host does not

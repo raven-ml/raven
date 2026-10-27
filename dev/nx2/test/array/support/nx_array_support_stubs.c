@@ -15,7 +15,6 @@
 #include <caml/mlvalues.h>
 
 #include "nx_array.h"
-#include "nx_layout.h"
 #include "rig_edge.h"
 
 /* The row of the dtype [code] in nx_dtype.h, as (name, bits, kind), or
@@ -34,22 +33,24 @@ value nx_array_support_row(value code) {
   CAMLreturn(caml_alloc_some(row));
 }
 
-/* The fields of the layout [l] as C reads them (nx_layout.h): rank, flags,
-   offset, lo, hi, then the extents and strides. */
-value nx_array_support_layout(value l) {
-  CAMLparam1(l);
+/* The descriptor nx_read fills for the array [v], read for reading: its
+   rank, flags and offset, then its extents and strides. It is copied into C
+   memory under the claim, and boxed after nx_done. */
+value nx_array_support_descriptor(value v) {
+  CAMLparam1(v);
   CAMLlocal1(out);
-  int64_t r = (int64_t)Wosize_val(Field(l, NX_LAYOUT_SHAPE));
-  out = caml_alloc_tuple(5 + 2 * r);
-  Store_field(out, 0, Val_long(r));
-  Store_field(out, 1, Field(l, NX_LAYOUT_FLAGS));
-  Store_field(out, 2, Field(l, NX_LAYOUT_OFFSET));
-  Store_field(out, 3, Field(l, NX_LAYOUT_LO));
-  Store_field(out, 4, Field(l, NX_LAYOUT_HI));
-  for (int64_t i = 0; i < r; i++) {
-    Store_field(out, 5 + i, Field(Field(l, NX_LAYOUT_SHAPE), i));
-    Store_field(out, 5 + r + i, Field(Field(l, NX_LAYOUT_STRIDES), i));
-  }
+  nx_operand in = {v, nx_array_dtype(v), 0};
+  nx_array a;
+  if (nx_read(1, &in, &a)) caml_failwith("nx_array_support_descriptor");
+  int64_t got[3 + 2 * NX_MAX_RANK];
+  int r = a.rank;
+  got[0] = r;
+  got[1] = a.flags;
+  got[2] = a.offset;
+  for (int i = 0; i < 2 * r; i++) got[3 + i] = a.dim[i];
+  nx_done(1, &a);
+  out = caml_alloc_tuple(3 + 2 * r);
+  for (int i = 0; i < 3 + 2 * r; i++) Store_field(out, i, Val_long(got[i]));
   CAMLreturn(out);
 }
 
