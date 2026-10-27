@@ -57,6 +57,12 @@ let diagonal u =
    columns. *)
 let row_index m = Shape.reshape (Shape.arange ~dtype:Int32 m) (ints [ m; 1 ])
 let column_index n = Shape.reshape (Shape.arange ~dtype:Int32 n) (ints [ 1; n ])
+let eye dt n m =
+  Ops.cast (Ops.eq (row_index n) (Shape.arange ~dtype:Int32 m)) dt
+
+(* -1 below zero and 1 elsewhere: the sign of a nonzero element, and 1 for a
+   zero one. *)
+let direction x = Ops.where (Ops.lt x (zero x)) (float x (-1.)) (float x 1.)
 
 (* Indexed reads
 
@@ -149,6 +155,106 @@ let repeat device n init step =
     match device with
     | Some d -> Loop.repeat d n init step
     | None -> unlowered "a Linalg of an operand that reads no storage"
+
+(* [dot a b] is the product of the matrices of [a] and [b]: each row of [a]
+   against each column of [b] along a new last axis, summed. *)
+let dot a b =
+  let p =
+    Ops.mul (Shape.unsqueeze a (-2)) (Shape.unsqueeze (transpose b) (-3))
+  in
+  Shape.rop p Op.Add [ Shape.ndim p - 1 ]
+
+(* Householder QR
+
+   Step [i] reflects the part of column [i] of [r] on and below the diagonal,
+   [x], onto the diagonal: by [I - w vᵀ], [v] being 1 at row [i] and [x] scaled
+   below it, applied to the rows of [r] from [i] on, to the right of column [i],
+   and accumulated in [q] on the right. Column [i] itself takes its reflected
+   value, the diagonal element and zeros below it. The diagonal takes the sign
+   opposite to [x]'s first element, so that no cancellation occurs, and a column
+   already zero below the diagonal takes no reflection. *)
+
+let sum_last u = Shape.unsqueeze (Shape.rop u Op.Add [ Shape.ndim u - 1 ]) (-1)
+let max_last u = Shape.unsqueeze (Shape.rop u Op.Max [ Shape.ndim u - 1 ]) (-1)
+
+let householder device a =
+  let batch, m, n = matrix a in
+  let idx = Shape.arange ~dtype:Int32 m in
+  let rows = row_index m and columns = column_index n in
+  let reflect q r i =
+    let at_i = Ops.eq idx i in
+    let c = Shape.squeeze ~axis:(-1) (at (Shape.ndim r - 1) r i) in
+    let x = Ops.where (Ops.ge idx i) c (zero c) in
+    (* The reflector is built from the column divided by its largest magnitude,
+       so that no square, sum or quotient overflows or underflows; only the
+       diagonal element takes the column's scale back. *)
+    let magnitude = abs x in
+    let largest = max_last magnitude in
+    let scale =
+      Ops.where (Ops.ne largest (zero largest)) largest (float largest 1.)
+    in
+    let scaled = fdiv x scale in
+    let norm = Ops.sqrt (sum_last (Ops.mul scaled scaled)) in
+    let x0 = sum_last (Ops.where at_i x (zero x)) in
+    let s0 = sum_last (Ops.where at_i scaled (zero scaled)) in
+    let sgn = direction x0 in
+    (* A column already zero below the diagonal takes no reflection, and keeps
+       its diagonal element's sign. *)
+    let below = sum_last (Ops.where (Ops.gt idx i) magnitude (zero x)) in
+    let active = Ops.ne below (zero below) in
+    let u0 = Ops.O.(s0 + (sgn * norm)) in
+    let v =
+      fdiv (Ops.where at_i u0 scaled) (Ops.where active u0 (float u0 1.))
+    in
+    let v = Shape.unsqueeze v (-1) in
+    let tau =
+      Ops.where active
+        (fdiv (Ops.mul sgn u0) (Ops.where active norm (float norm 1.)))
+        (zero norm)
+    in
+    let w = Ops.mul (Shape.unsqueeze tau (-1)) v in
+    let diagonal =
+      Ops.where active
+        (Ops.mul (Ops.mul sgn (float sgn (-1.))) (Ops.mul scale norm))
+        x0
+    in
+    let reflected =
+      Ops.where (Ops.eq rows i)
+        (Shape.unsqueeze diagonal (-1))
+        (Ops.where (Ops.lt rows i) r (zero r))
+    in
+    let applied = Ops.sub r (dot w (Ops.contiguous (dot (transpose v) r))) in
+    (* A column that takes no reflection leaves q and r as they are: its v holds
+       what the column held, and a NaN or an infinity there would spread through
+       a product with a zero tau. *)
+    let on = Shape.unsqueeze active (-1) in
+    [
+      Ops.where on (Ops.sub q (dot (Ops.contiguous (dot q v)) (transpose w))) q;
+      Ops.where (Ops.eq columns i) reflected
+        (Ops.where (Ops.ge rows i) (Ops.where on applied r) r);
+    ]
+  in
+  let step i = function
+    | [ q; r ] -> reflect q r i
+    | _ -> invalid_arg "Lower_linalg.householder"
+  in
+  let q = Shape.expand (eye (dtype a) m m) (ints (batch @ [ m; m ])) in
+  match repeat device (Int.min m n) [ q; a ] step with
+  | [ q; r ] -> (q, r)
+  | _ -> invalid_arg "Lower_linalg.householder"
+
+(* The upper triangle of the matrices of [u], [+0] below it. *)
+let triu u =
+  let _, m, n = matrix u in
+  Ops.where (Ops.le (row_index m) (column_index n)) u (zero u)
+
+let qr device ~complete a =
+  let _, m, n = matrix a in
+  let k = Int.min m n in
+  let q, r = householder device a in
+  let r = triu r in
+  if complete then (q, r)
+  else (block q None (Some (0, k)), block r (Some (0, k)) None)
 
 (* LU with partial pivoting
 
@@ -318,7 +424,10 @@ let op (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type d r)
   | Lu a ->
       let d, a = operand "Lu" a in
       lu d a
-  | Qr _ -> unlowered "Qr"
+  | Qr { factors; a } ->
+      let d, a = operand "Qr" a in
+      let q, r = qr d ~complete:(factors = Complete) a in
+      [| q; r |]
   | Svd_values _ -> unlowered "Svd_values"
   | Svd _ -> unlowered "Svd"
   | Eigh_values _ -> unlowered "Eigh_values"

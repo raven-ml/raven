@@ -26,7 +26,10 @@
       computed columns.
     - [Solve_triangular]: [|op a x - b| <= γ(n) |op a| |x|] for each column of
       [b], [op a] the triangle read, transposed under [adjoint], ones on its
-      diagonal under [unit_diagonal]. *)
+      diagonal under [unit_diagonal].
+    - [Qr]: by Householder reflections. With [g = γ(k (2m + 10))], each column
+      [a_j] has [‖a_j - q r_j‖₂ <= g ‖a_j‖₂], and each element of [qᵀ q - I]
+      is at most [g]. [r]'s diagonal has either sign. *)
 
 open Tolk
 
@@ -38,6 +41,6 @@ val op :
     operand [x] read from [node x].
 
     Raises [Invalid_argument] naming the routine for a complex operand and for
-    [Qr], [Svd_values], [Svd], [Eigh_values], [Eigh], [Eig] and [Eig_values],
-    and naming [Linalg] for an operand of a loop that
+    [Svd_values], [Svd], [Eigh_values], [Eigh], [Eig] and [Eig_values], and
+    naming [Linalg] for an operand of a loop that
     reads no storage, whose device it cannot name. *)

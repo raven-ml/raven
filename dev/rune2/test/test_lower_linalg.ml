@@ -349,6 +349,71 @@ let solve_singular () =
   equal (array bool) [| true; true |] (Array.map Float.is_nan (solve false));
   equal (array float_exact) [| 1.; -1. |] (solve true)
 
+(* QR *)
+
+(* [orthonormal ~msg ~tol q] asserts that the columns of each [q] have inner
+   products within [tol] of the identity's, elementwise. *)
+let orthonormal ~msg ~tol q =
+  let g = product (transpose q) q in
+  let d =
+    init g.b g.m g.n (fun k i j -> get g k i j -. if i = j then 1. else 0.)
+  in
+  elementwise ~msg d { d with x = Array.make (Array.length d.x) tol }
+
+(* [columns_near ~msg ~g a q r] asserts that each column [j] of [a] is within
+   [g ‖a_j‖₂], plus the check's rounding, of [q r]'s. *)
+let columns_near ~msg ~g a q r =
+  let p = product q r and pa = product ~abs:true q r in
+  for b = 0 to a.b - 1 do
+    for j = 0 to a.n - 1 do
+      let col t =
+        Float.sqrt
+          (List.fold_left ( +. ) 0.
+             (List.init a.m (fun i -> get t b i j ** 2.)))
+      in
+      let check = gamma u64 (float_of_int (q.n + 2)) *. col pa in
+      bounded ~msg:(Printf.sprintf "%s, column %d" msg j)
+        ~than:((g *. col a) +. check)
+        (col (diff a p))
+    done
+  done
+
+let qr_law (c, shape) =
+  let (R (_, dt, u)) = c.dt in
+  let m, n = match shape with [ m; n ] -> (m, n) | _ -> assert false in
+  let k = Int.min m n in
+  cover_case c shape;
+  let st = state c in
+  let factors = if c.seed / 3 mod 2 = 1 then Nx_kernel.Complete else Reduced in
+  cover "complete" (factors = Complete && m > n);
+  let zero_column = variant c in
+  cover "a zero column" (zero_column && m > 1 && n > 1);
+  let a =
+    operand dt c.layout c.batch m n (fun _ _ j ->
+        if zero_column && j = 1 then 0. else uniform st)
+  in
+  let am = of_nx a in
+  let qc = if factors = Complete then m else k in
+  let q =
+    mat am.b m qc
+      (Lowered.run (fun () -> fst (linalg (Qr { factors; a }))))
+  in
+  let r =
+    mat am.b qc n
+      (Lowered.run (fun () -> snd (linalg (Qr { factors; a }))))
+  in
+  for b = 0 to am.b - 1 do
+    for i = 0 to qc - 1 do
+      for j = 0 to Int.min i n - 1 do
+        equal ~msg:"+0 below the diagonal" int64 0L
+          (Int64.bits_of_float (get r b i j))
+      done
+    done
+  done;
+  let g = gamma u (float_of_int (k * ((2 * m) + 10))) in
+  orthonormal ~msg:"qᵀ q = I" ~tol:(g +. gamma u64 (float_of_int (m + 1))) q;
+  columns_near ~msg:"a = q r" ~g am q r
+
 (* Refusals *)
 
 let refuses f =
@@ -412,5 +477,6 @@ let () =
                solve_law;
              test "a zero diagonal is NaN" solve_singular;
            ];
+         group "qr" [ law "q r reconstructs a" ~count:4 general qr_law ];
          test "complex operands, eig and unstored operands are refused" refused;
        ])
