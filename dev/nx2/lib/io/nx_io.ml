@@ -110,9 +110,18 @@ let load_image path =
   let layout = L.contiguous (Iarray.of_array [| h; w; c |]) in
   Nx.Repr.unsafe_of_array Nx.Host.v (A.v Nx_array.Dtype.Uint8 layout pixels)
 
-(* [with_pixels ~by ~channels x f] is [f bytes ~width ~height ~channels] for the
-   image [x], its pixels read on the host. *)
-let with_pixels ~by ~channels x f =
+(* The largest PNG integer, a four-byte field's (PNG-3, 7.1), which bounds an
+   image's sides and the pHYs chunk's pixels per metre. *)
+let png_max = 2147483647
+
+(* The largest side of a JPEG image, whose frame header states each side in 16
+   bits (T.81, B.2.2). *)
+let jpeg_side = 65535
+
+(* [with_pixels ~by ~channels ~side x f] is [f bytes ~width ~height ~channels]
+   for the image [x], its pixels read on the host, after [x]'s shape is checked
+   against the format's [channels] and largest [side]. *)
+let with_pixels ~by ~channels ~side x f =
   let h, w, c =
     match Nx.shape x with
     | [| h; w; c |] -> (h, w, c)
@@ -122,18 +131,22 @@ let with_pixels ~by ~channels x f =
     Fail.invalid_argf "%s: %d channels, the format holds %s" by c
       (String.concat ", " (List.map string_of_int channels));
   if h = 0 || w = 0 then Fail.invalid_argf "%s: the image has no pixel" by;
+  if h > side || w > side then
+    Fail.invalid_argf "%s: %d by %d pixels, the format holds at most %d a side"
+      by h w side;
   Storage.with_bytes ~by x (fun b -> f b ~width:w ~height:h ~channels:c)
 
-(* The pHYs chunk holds a positive four-byte PNG integer, at most 2^31 - 1. *)
+(* The pHYs chunk holds a positive PNG integer. *)
 let pixels_per_metre ~by dpi =
   let ppm = Float.round (dpi /. 0.0254) in
-  if not (1. <= ppm && ppm <= 2147483647.) then
+  if not (1. <= ppm && ppm <= Float.of_int png_max) then
     Fail.invalid_argf "%s: the dpi %g" by dpi;
   int_of_float ppm
 
 let png ~by ?dpi ?(srgb = false) x =
   let ppm = match dpi with None -> 0 | Some dpi -> pixels_per_metre ~by dpi in
-  with_pixels ~by ~channels:[ 1; 2; 3; 4 ] x (Image.png_encode ~ppm ~srgb)
+  with_pixels ~by ~channels:[ 1; 2; 3; 4 ] ~side:png_max x
+    (Image.png_encode ~ppm ~srgb)
 
 let encode_png ?dpi ?srgb x = png ~by:"Nx_io.encode_png" ?dpi ?srgb x
 
@@ -143,5 +156,7 @@ let save_png ?dpi ?srgb path x =
 
 let save_jpeg path x =
   let by = "Nx_io.save_jpeg" in
-  let file = with_pixels ~by ~channels:[ 1; 3 ] x Image.jpeg_encode in
+  let file =
+    with_pixels ~by ~channels:[ 1; 3 ] ~side:jpeg_side x Image.jpeg_encode
+  in
   Save.write path (fun fd -> Save.string fd file)

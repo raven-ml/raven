@@ -309,6 +309,8 @@ let files =
           ("no columns in JPEG", (Jpeg, [| 3; 0; 1 |]));
           ("no channels in PNG", (Png, [| 2; 2; 0 |]));
           ("no channels in JPEG", (Jpeg, [| 2; 2; 0 |]));
+          ("65536 rows in JPEG", (Jpeg, [| 65536; 1; 1 |]));
+          ("65536 columns in JPEG", (Jpeg, [| 1; 65536; 1 |]));
         ]
         (fun (_, (format, shape)) ->
           let x = Nx.zeros Nx.uint8 shape in
@@ -321,6 +323,33 @@ let files =
           | Jpeg ->
               invalid ~by:"Nx_io.save_jpeg" (fun () -> Nx_io.save_jpeg path x));
           equal (array string) [||] (Sys.readdir dir));
+      cases ~name:fst
+        "a side past the largest PNG integer is refused, before a pixel is read"
+        [
+          ("rows", [| 2147483648; 1; 1 |]); ("columns", [| 1; 2147483648; 1 |]);
+        ]
+        (fun (_, shape) ->
+          (* A view of one pixel: the refusal reads none of its elements. *)
+          let x = Nx.broadcast_to shape (Nx.zeros Nx.uint8 [| 1; 1; 1 |]) in
+          let dir = temp_dir () in
+          let path = Filename.concat dir "x.png" in
+          let side by =
+            Exn.invalid_arg
+              ~substring:
+                (by ^ ": "
+                ^ String.concat " by "
+                    (List.map string_of_int [ shape.(0); shape.(1) ]))
+          in
+          raises_match (side "Nx_io.save_png") (fun () -> Nx_io.save_png path x);
+          raises_match (side "Nx_io.encode_png") (fun () ->
+              ignore (Nx_io.encode_png x));
+          equal (array string) [||] (Sys.readdir dir));
+      cases ~name:fst "a JPEG of 65535 rows or columns, its largest, loads back"
+        [ ("rows", [| 65535; 1; 1 |]); ("columns", [| 1; 65535; 1 |]) ]
+        (fun (_, shape) ->
+          let path = temp_file ~suffix:".jpg" () in
+          Nx_io.save_jpeg path (Nx.full Nx.uint8 shape 7);
+          equal (array int) shape (Nx.shape (Nx_io.load_image path)));
       test "a PNG chunk whose checksum does not match fails" (fun () ->
           let path = file (flip_byte (read (fixture "png_filters.png")) 30) in
           fails ~path ~naming:"PNG chunk CRC mismatch" (fun () ->

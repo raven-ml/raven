@@ -34,9 +34,10 @@ val png_encode :
   string
 (** [png_encode ~ppm ~srgb pixels ~width ~height ~channels] is a PNG file of
     [pixels], 8 bits per sample. A [ppm] other than [0] is a pHYs chunk of [ppm]
-    pixels per metre, and [srgb] an sRGB chunk. [channels] is 1 to 4 and the
-    image has a pixel. *)
+    pixels per metre, and [srgb] an sRGB chunk. [channels] must be 1 to 4, and
+    each side must be 1 to [2{^31} - 1]. *)
 
 val jpeg_encode : bytes -> width:int -> height:int -> channels:int -> string
 (** [jpeg_encode pixels ~width ~height ~channels] is a baseline JPEG file of
-    [pixels], at quality 90. [channels] is 1 or 3 and the image has a pixel. *)
+    [pixels], at quality 90. [channels] must be 1 or 3, and each side must be 1
+    to 65535. *)
