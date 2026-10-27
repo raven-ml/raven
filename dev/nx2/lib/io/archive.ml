@@ -128,8 +128,10 @@ let to_value ?(prefix = "") s ~like t =
   let fn = "to_value" in
   (* Every name, entry and placement is checked before any entry moves. *)
   let name = namer ~fn prefix in
+  let named = Hashtbl.create 64 in
   let check path a () =
     let name = name path in
+    Hashtbl.replace named name ();
     (match Names.find_opt name t with
     | None ->
         failf
@@ -153,10 +155,6 @@ let to_value ?(prefix = "") s ~like t =
         fn name
   in
   Nx.Ptree.fold s check like ();
-  let named = Hashtbl.create 64 in
-  Nx.Ptree.fold s
-    (fun path _ () -> Hashtbl.replace named (full prefix path) ())
-    like ();
   Names.iter
     (fun entry _ ->
       if owns prefix entry && not (Hashtbl.mem named entry) then
