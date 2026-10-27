@@ -58,13 +58,19 @@ let identity dt = P.v ~ins:[| dt |] [| P.In 0 |] ~outs:[| 0 |]
 
 let plain_of (A.Any x) = Nx_kernel.Plain x
 
-(* The loop's shape: the loads' once loaded, else, for a padding that fits
-   none, the first load's operand's, which the kernels refuse with the
-   padding. *)
+(* The shape [l] has once loaded: its array's, padded as its padding says. *)
+let load_shape : Nx_kernel.load -> _ = function
+  | Plain x -> Ok (L.shape (A.layout x))
+  | Padded { x; pad; _ } -> Nx_kernel.Shape.padded pad (L.shape (A.layout x))
+
+(* The loop's shape: the loads' once loaded, else, for loads of several
+   shapes or a padding that fits none, the first load's operand's, which
+   the kernels refuse. *)
 let loop_shape (loads : Nx_kernel.load array) =
-  match Nx_kernel.Shape.loaded loads with
-  | Ok s -> s
-  | Error _ -> (
+  let shapes = Array.map load_shape loads in
+  match shapes.(0) with
+  | Ok s when Array.for_all (( = ) (Ok s)) shapes -> s
+  | _ -> (
       match loads.(0) with
       | Plain x -> L.shape (A.layout x)
       | Padded { x; _ } -> L.shape (A.layout x))
@@ -2171,7 +2177,7 @@ let float_fill (A.Any x) fill =
 (* Whether Nx_kernel.Shape refuses the reduction or scan of [load]. *)
 let refuses ~scan monoid axes load =
   let module Shape = Nx_kernel.Shape in
-  let y = Shape.loaded [| load |] in
+  let y = load_shape load in
   Result.is_error
     (if scan then Result.bind y (Shape.scan ~axis:axes.(0))
      else Result.bind y

@@ -31,8 +31,6 @@ module V = struct
   let stride f o x = f.(8 + (4 * operand o) + axis x)
 end
 
-let pp_dtype ppf (D.Any dt) = D.pp ppf dt
-
 (* Shape's results, their messages dropped. *)
 
 let shape_t = result (list int) unit
@@ -343,32 +341,13 @@ let test_admits () =
     (qr [| k / 2; 0 |]);
   equal ~msg:"square factors past max_numel" shapes_t misfit (qr [| k; 0 |])
 
-(* Loads *)
-
-module P = Nx_kernel.Prog
-
-let load_dtypes = D.[ Any Float32; Any Int8; Any Bool; Any Int4; Any Complex64 ]
-
-(* A loop's loads: one per operand dtype of [ins], each plain or padded by
-   its [pads], over an operand of shape [shape]. *)
-type loop = {
-  ins : D.any array;
-  pads : Nx_kernel.pad option array;
-  shape : int array;
-}
+(* Paddings *)
 
 let pp_pad ppf (pad : Nx_kernel.pad) =
   Format.fprintf ppf "padded lo %a hi %a interior %a, %d windows" pp_ints
     (Iarray.to_array pad.lo) pp_ints (Iarray.to_array pad.hi) pp_ints
     (Iarray.to_array pad.interior)
     (Iarray.length pad.windows)
-
-let pp_loop ppf c =
-  Format.fprintf ppf "shape %a, loads %a" pp_ints c.shape
-    (Format.pp_print_list (fun ppf -> function
-       | None -> Format.pp_print_string ppf "plain"
-       | Some pad -> pp_pad ppf pad))
-    (Array.to_list c.pads)
 
 (* A padding of a rank [r]: crops and pads of a few elements, interiors of
    up to two, and at most one window. *)
@@ -388,30 +367,6 @@ let pad_of r =
   let lo = Iarray.of_array lo and hi = Iarray.of_array hi in
   let interior = Iarray.of_array interior in
   { Nx_kernel.lo; hi; interior; windows = Iarray.of_array windows }
-
-let loop =
-  Gen.with_pp pp_loop
-    (let open Gen in
-     let* shape = Nx_array_gen.shape in
-     let* ins =
-       array ~size:(int_range 1 (P.max_operands / 2)) (of_list ~pp:pp_dtype load_dtypes)
-     in
-     let+ pads =
-       array ~size:(constant (Array.length ins))
-         (option (pad_of (Array.length shape)))
-     in
-     { ins; pads; shape })
-
-(* An operand of [dt] and shape [s], its one element broadcast. *)
-let operand (type v s) (dt : (v, s) D.t) s : (v, s) A.t =
-  Option.get (A.move (M.Broadcast (Iarray.of_array s)) (A.create Rig.host dt [||]))
-
-let loads c =
-  Array.map2
-    (fun (D.Any dt) -> function
-      | None -> Nx_kernel.Plain (operand dt c.shape)
-      | Some pad -> Padded { x = operand dt c.shape; fill = D.one dt; pad })
-    c.ins c.pads
 
 (* Whether the extents of [s] other than 0 multiply to at most max_numel. *)
 let admitted s =
@@ -450,18 +405,6 @@ let loaded x = function
           | y -> Some y
           | exception Invalid_argument _ -> None
 
-let law_loaded c =
-  let shapes = Array.map (loaded c.shape) c.pads in
-  let want =
-    match shapes.(0) with
-    | Some y when Array.for_all (fun z -> z = Some y) shapes ->
-        Ok (Array.to_list y)
-    | _ -> misfit
-  in
-  cover "fits" (Result.is_ok want);
-  cover "padded" (Array.exists Option.is_some c.pads);
-  equal shape_t want (of_shape (Shape.loaded (loads c)))
-
 (* A padding of an operand of any shape. *)
 type padded = { x : int array; pad : Nx_kernel.pad }
 
@@ -480,21 +423,13 @@ let law_padded c =
   equal shape_t (Result.map Array.to_list want)
     (of_shape (Shape.padded c.pad c.x))
 
-let test_loaded_refuses () =
+let test_padded_refuses () =
   let z = { Nx_kernel.lo = [| 0 |]; hi = [| 0 |]; interior = [| 0 |]; windows = [||] } in
   let window axis size : _ iarray =
     [| { M.axis; size; step = 1; dilation = 1 } |]
   in
-  let x = operand D.Float32 [| 2 |] and y = operand D.Float32 [| 3 |] in
-  let padded pad = Nx_kernel.Padded { x; fill = 0.; pad } in
-  refuses ~msg:"no load" (Shape.loaded [||]);
-  fits ~msg:"two loads of one shape" [ 2 ]
-    (Shape.loaded [| Plain x; padded z |]);
-  refuses ~msg:"two loads of two shapes" (Shape.loaded [| Plain x; Plain y |]);
-  fits ~msg:"a padded load as the other" [ 3 ]
-    (Shape.loaded [| Plain y; padded { z with hi = [| 1 |] } |]);
   refuses ~msg:"hi of another rank"
-    (Shape.loaded [| padded { z with hi = [| 0; 0 |] } |]);
+    (Shape.padded { z with hi = [| 0; 0 |] } [| 2 |]);
   refuses ~msg:"a pad of another rank" (Shape.padded z [| 2; 2 |]);
   refuses ~msg:"negative interior"
     (Shape.padded { z with interior = [| -1 |] } [| 2 |]);
@@ -1297,12 +1232,11 @@ let tests =
         test "admits every shape it derives by max_numel" test_admits;
         test "accumulates states the accumulators" test_accumulates;
       ];
-    group "loads"
+    group "paddings"
       [
-        prop "loads have one shape, each padded by the rule" loop law_loaded;
         prop "padded is the padded extents, then the windows" padded_case
           law_padded;
-        test "refuses loads and paddings that do not fit" test_loaded_refuses;
+        test "refuses paddings that do not fit" test_padded_refuses;
       ];
     group "reductions and scans"
       [

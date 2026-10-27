@@ -278,10 +278,6 @@ module Shape : sig
       than its axis gives it no window, as {!Nx_array.Move.Window} counts
       them. *)
 
-  val loaded : load array -> t result
-  (** [loaded ls] is the one shape the loads [ls] have once loaded.
-      [loaded [||]] is an [Error]. *)
-
   val reduce : axes:int iarray -> reduction array -> t -> t result
   (** [reduce ~axes rs y] is the shape of each destination of reductions
       [rs] along [axes] of a loop of shape [y]: [y] without [axes]. It is an
@@ -469,9 +465,10 @@ module type S = sig
       shape, except a reduction, whose destinations drop [axes] and which is
       given its shape. It reads load [i] as the program's operand [i]. Its
       loads are one per operand of the program, each of that operand's
-      dtype, and each has the loop's shape once loaded ({!Shape.loaded}); a
-      loop of no load runs over its shape alone. Its [Coord] nodes read axes
-      of that shape. A loop answers [Shape_mismatch] for a program with a
+      dtype, and each has the loop's shape once loaded: a [Plain] load its
+      array's, a [Padded] one the shape {!Shape.padded} gives. A loop of no
+      load runs over its shape alone. Its [Coord] nodes read axes of that
+      shape. A loop answers [Shape_mismatch] for a program with a
       [Coord] past that shape's rank. *)
 
   val map : Prog.t -> dsts:any array -> load array -> answer

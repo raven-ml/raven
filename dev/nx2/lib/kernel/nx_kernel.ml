@@ -159,24 +159,6 @@ module Shape = struct
             | y -> Ok y
             | exception Invalid_argument e -> errorf "windows: %s" e)
 
-  let load = function
-    | Plain x -> Ok (L.shape (Nx_array.layout x))
-    | Padded { x; pad; _ } -> padded pad (L.shape (Nx_array.layout x))
-
-  let loaded ls =
-    if ls = [||] then Error "a loop with no load has no shape of its own"
-    else
-      let* first = load ls.(0) in
-      let rec go k =
-        if k = Array.length ls then Ok first
-        else
-          let* y = load ls.(k) in
-          if y <> first then
-            errorf "load %d has shape %a, load 0 %a" k pp y pp first
-          else go (k + 1)
-      in
-      go 1
-
   (* [axes] strictly increasing axes of a rank [r]. *)
   let check_axes axes r =
     let rec bad i =
