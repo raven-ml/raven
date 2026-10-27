@@ -120,10 +120,38 @@ let mul a b =
      y[k1 + p k2] = Σ_j2 w_m^(j2 k2) w_n^(j2 k1) Σ_j1 x[m j1 + j2] w_p^(j1 k1)
    v}
 
-   A 2-point transform is [z0 + z1] and [z0 - z1]; another is a sum over the
-   [p × p] table of [w_p^(j k)]. Each is contiguous, so that tolk realises it,
-   as an inlined one would read every point of the line per result: one kernel
-   per prime factor of [n], each of [O(p)] work per point. *)
+   A 2-point transform is [z0 + z1] and [z0 - z1]; another, up to
+   [bluestein_prime], is a sum over the [p × p] table of [w_p^(j k)]. Each is
+   contiguous, so that tolk realises it, as an inlined one would read every
+   point of the line per result: one kernel per prime factor of [n], each of
+   [O(p)] work per point.
+
+   Above [bluestein_prime], whose table and sums grow as [p²], a [p]-point
+   transform is a convolution (Bluestein, "A linear filtering approach to the
+   computation of discrete Fourier transform", 1970). With [c[j] = e^(sign πi
+   j² / p)], [j k = (j² + k² - (k - j)²) / 2] gives
+
+   {v
+     y[k] = c[k] Σ_j (x[j] c[j]) conj c[k - j]
+   v}
+
+   a convolution with [conj c] over [-p < k - j < p], computed cyclically over
+   [m >= 2p - 1] points, a power of two: the inverse transform of the product
+   of the transforms of [x c], zero past [p], and of [conj c] wrapped at [m],
+   over [m]. Three transforms of [m] points, [O(log p)] work per point. *)
+
+let bluestein_prime = 250
+
+(* [blue_points p] is the least power of two at least [2p - 1]. *)
+let blue_points p =
+  let rec up m = if m >= (2 * p) - 1 then m else up (2 * m) in
+  up 1
+
+(* [chirp t ~sign p j] is [e^(sign πi j² / p)], [w_2p^(j² mod 2p)], at each
+   element of the integer node [j], of values below [2p]. *)
+let chirp t ~sign p j =
+  let j = Ops.cast j (index (p * p)) in
+  twiddle t ~sign (2 * p) (Ops.mod_ (Ops.mul j j) (int j (2 * p)))
 
 let butterfly ax z =
   let s = extents z.re in
@@ -153,7 +181,10 @@ let rec line t ~sign ax z =
   let n = List.nth s ax in
   let p = least_factor n 2 in
   let stage z =
-    map Ops.contiguous (if p = 2 then butterfly ax z else dense t ~sign ax z)
+    map Ops.contiguous
+      (if p = 2 then butterfly ax z
+       else if p <= bluestein_prime then dense t ~sign ax z
+       else bluestein t ~sign ax z)
   in
   if n <= 1 then z
   else if p = n then stage z
@@ -170,6 +201,35 @@ let rec line t ~sign ax z =
           if i = ax then ax + 1 else if i = ax + 1 then ax else i)
     in
     map (fun u -> Shape.reshape (Shape.permute u swap) (dims s)) z
+
+(* The kernel, [conj c[l]] at [i = l] and [i = m - l] for [l < p] and zero
+   between, is [conj c] at [min i (m - i)] where that is below [p]: the two
+   ranges meet nowhere as [m >= 2p - 1]. Its transform, over [m] exactly, has
+   no batch axis; tolk computes it once for every line. *)
+and bluestein t ~sign ax z =
+  let s = extents z.re in
+  let p = List.nth s ax in
+  let m = blue_points p in
+  let c = map Ops.contiguous (chirp t ~sign p (Shape.arange p)) in
+  let at u = lay u [ ax ] s in
+  let a = mul z (map at c) in
+  let pad u =
+    Shape.pad ~value:(`Float 0.) u (only u ax (Ops.Int 0, Ops.Int (m - p)))
+  in
+  let a = line t ~sign:(-1) ax (map pad a) in
+  let i = Shape.arange m in
+  let l = Ops.minimum i (Ops.sub (int i m) i) in
+  let inside = Ops.lt l (int l p) in
+  let b = chirp t ~sign p l in
+  let b = { re = b.re; im = Ops.neg b.im } in
+  let b = map (fun u -> Ops.where inside u (zero u)) b in
+  let inv = 1. /. Float.of_int m in
+  let over u = Ops.mul u (Shape.const_like u (`Float inv)) in
+  let k = map over (line t ~sign:(-1) 0 b) in
+  let sm = List.mapi (fun i e -> if i = ax then m else e) s in
+  let k = map (fun u -> lay u [ ax ] sm) k in
+  let v = line t ~sign:1 ax (mul a k) in
+  mul (map (fun u -> cut u ax 0 p) v) (map at c)
 
 (* Transforms *)
 

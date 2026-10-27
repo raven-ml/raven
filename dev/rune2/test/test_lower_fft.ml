@@ -122,7 +122,8 @@ let results c ~wide ~lowered =
 (* Bounds
 
    [Lower_fft]'s [e(n)], and nx's CPU kernels' (Nx_cpu), whose lines here
-   reach neither Bluestein's convolution nor the real lines of 512 points. *)
+   never reach the real lines of 512 points. Both take Bluestein's
+   convolution above a prime factor of 250, of [m] points. *)
 
 let rec factors n p =
   if n <= 1 then []
@@ -130,18 +131,35 @@ let rec factors n p =
   else if n mod p = 0 then p :: factors (n / p) p
   else factors n (p + 1)
 
-let lowered_e n =
+let cut = 250
+
+let blue_points n =
+  let rec up m = if m >= (2 * n) - 1 then m else up (2 * m) in
+  up 1
+
+let rec lowered_e n =
   let fs = factors n 2 in
   let c p =
-    let p = Float.of_int p in
-    if p = 2. then 1. else ((2. *. p) +. 15.) *. sqrt p
+    if p = 2 then 1.
+    else if p <= cut then
+      let p = Float.of_int p in
+      ((2. *. p) +. 15.) *. sqrt p
+    else
+      let e = lowered_e (blue_points p) in
+      let m = Float.of_int (blue_points p) and p = Float.of_int p in
+      ((((2. *. e) +. 18.) *. m) /. sqrt p) +. ((e +. 12.) *. sqrt m) +. 15.
   in
   List.fold_left (fun a p -> a +. c p) 0. fs
   +. (15. *. Float.of_int (max 0 (List.length fs - 1)))
 
-let eager_e n =
+(* By passes, or, past the cut, by Bluestein's unless its kernel is too
+   large: the larger. *)
+let rec eager_e n =
+  let fs = factors n 2 in
   let p32 p = Float.pow (Float.of_int p) 1.5 in
-  (8. *. List.fold_left (fun a p -> a +. p32 p) 0. (factors n 2)) +. 8.
+  let passes = (8. *. List.fold_left (fun a p -> a +. p32 p) 0. fs) +. 8. in
+  if List.for_all (fun p -> p <= cut) fs then passes
+  else Float.max passes ((6. *. eager_e (blue_points n)) +. 26.)
 
 (* The points along each of [c]'s axes. *)
 let points c =
@@ -179,7 +197,7 @@ let extent =
     [
       (1, Gen.constant 0);
       (1, Gen.constant 1);
-      (8, among [ 2; 3; 4; 5; 6; 8; 9; 10; 12; 16 ]);
+      (8, among [ 2; 3; 4; 5; 6; 7; 8; 9; 10; 11; 12; 13; 14; 16; 49 ]);
     ]
 
 let part wide =
@@ -252,7 +270,8 @@ let covers c =
     (some (fun fs -> List.length fs >= 2 && List.for_all (( = ) 2) fs));
   cover "an odd prime factor" (some (List.exists (fun p -> p > 2)));
   cover "mixed factors"
-    (some (fun fs -> List.length (List.sort_uniq Int.compare fs) > 1))
+    (some (fun fs -> List.length (List.sort_uniq Int.compare fs) > 1));
+  cover "a prime factor above the cut" (some (List.exists (fun p -> p > cut)))
 
 let example kind shape axes re im =
   { kind; wide = false; shape; axes; transposed = false; re; im }
@@ -267,6 +286,14 @@ let both kind shape =
   let re = ramp k in
   { kind; wide = true; shape; axes = [ 0; 1 ]; transposed = true; re; im }
 
+(* A transform along the last axis of [shape], [251] points or a multiple,
+   the least prime above the cut. *)
+let blue kind shape =
+  let k = numel shape in
+  let im = match kind with R2c -> [||] | _ -> Array.map Float.neg (ramp k) in
+  let axes = [ Array.length shape - 1 ] in
+  { (example kind shape axes (ramp k) im) with wide = true }
+
 let c2cs =
   let examples =
     [
@@ -275,6 +302,7 @@ let c2cs =
         [| 0.; -0.; 1. |];
       both (C2c Forward) [| 8; 6 |];
       { (both (C2c Inverse) [| 8; 6 |]) with wide = false };
+      { (blue (C2c Inverse) [| 2; 502 |]) with wide = false };
     ]
   in
   prop ~count:20 ~examples "complex transforms hold their bound"
@@ -291,6 +319,7 @@ let r2cs =
       example R2c [| 1 |] [ 0 ] [| -3. |] [||];
       both R2c [| 8; 6 |];
       { (both R2c [| 8; 6 |]) with wide = false };
+      blue R2c [| 251 |];
     ]
   in
   prop ~count:20 ~examples "real transforms hold their bound"
@@ -312,6 +341,7 @@ let c2rs =
         [| nan; 1.; 2.; 1e30; 3.; 4. |];
       both (C2r 6) [| 8; 4 |];
       { (both (C2r 6) [| 8; 4 |]) with wide = false };
+      blue (C2r 251) [| 126 |];
     ]
   in
   prop ~count:20 ~examples "real inverse transforms hold their bound"
