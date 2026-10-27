@@ -106,6 +106,25 @@ module Placement = struct
   let devices = Devices.set
   let equal = Devices.equal
   let pp = Devices.pp_placement
+
+  let with_leading_axis p =
+    let by = "Nx.Placement.with_leading_axis" in
+    let g = Devices.grid p in
+    Array.iter
+      (fun (a, _) ->
+        if a + 1 >= Nx_array.Layout.max_rank then
+          invalid_argf "%s: %a cuts axis %d, the last of %d a layout has" by
+            Devices.pp_placement p a Nx_array.Layout.max_rank)
+      (Grid.cuts g);
+    if not (Grid.is_cut g) then p
+    else Devices.v ~by (Devices.set p) (Grid.map_axes succ g)
+
+  let without_leading_axis p =
+    let g = Devices.grid p in
+    if not (Grid.is_cut g) then p
+    else
+      Devices.v ~by:"Nx.Placement.without_leading_axis" (Devices.set p)
+        (Grid.map_axes pred (Grid.uncut g ~axis:0))
 end
 
 module type Devices = sig

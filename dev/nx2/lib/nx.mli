@@ -3329,6 +3329,30 @@ module Placement : sig
   (** [pp] formats a placement on one device as the device's name, others as
       [on [CUDA:0; CUDA:1]], [split ~axis:0 [CUDA:0; CUDA:1]] or a mesh's
       extents and cuts. *)
+
+  (**/**)
+
+  (** For transformations that map over a leading axis, as a batching
+      interpreter places a lane's operation for all lanes in one
+      operation. *)
+
+  val with_leading_axis : 'd t -> 'd t
+  (** [with_leading_axis p] is the placement of a value of one more axis in
+      front, cut as [p] cuts the others: each device holds the whole of the
+      new axis by its window of the rest. It is [p] itself where [p] cuts no
+      axis.
+
+      Raises [Invalid_argument] if [p] cuts axis
+      [Nx_array.Layout.max_rank - 1], which would become an axis past the
+      most a layout has. *)
+
+  val without_leading_axis : 'd t -> 'd t
+  (** [without_leading_axis p] is the placement of a value without its first
+      axis, cut as [p] cuts the others, each moved down by one: the mesh
+      axes that cut the first axis hold copies. It is [p] itself where [p]
+      cuts no axis. *)
+
+  (**/**)
 end
 
 (** The type for device sets as modules: a brand and its placements. *)

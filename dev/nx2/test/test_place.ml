@@ -591,4 +591,82 @@ let reshapes =
             [| 2; 2880 |] On (V y));
     ]
 
-let () = exit (run "nx place" [ laws; reshapes; sharing; refusals ])
+(* Leading axes: a placement's cuts move up by one with an axis in front, and
+   down without the first, whose cuts become copies. *)
+
+let lead = function
+  | (Host | One | On) as w -> w
+  | Split a -> Split (a + 1)
+  | Cuts (x, y) -> Cuts (x + 1, y + 1)
+  | Major x -> Major (x + 1)
+  | Minor x -> Minor (x + 1)
+
+let unlead = function
+  | (Host | One | On) as w -> w
+  | Split 0 | Major 0 | Minor 0 | Cuts (0, 0) -> On
+  | Split a -> Split (a - 1)
+  | Cuts (0, y) -> Minor (y - 1)
+  | Cuts (x, 0) -> Major (x - 1)
+  | Cuts (x, y) -> Cuts (x - 1, y - 1)
+  | Major x -> Major (x - 1)
+  | Minor x -> Minor (x - 1)
+
+let over_s4 = Gen.bind (Gen.int_range 1 3) where_of
+
+let placed : S4.d Nx.Placement.t testable =
+  Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
+
+let leading =
+  group "leading axes"
+    [
+      prop "an axis in front moves each cut up by one" over_s4 (fun w ->
+          cover "a cut" (split w);
+          match w with
+          | Host | One -> ()
+          | _ ->
+              equal placed (at (lead w))
+                (Nx.Placement.with_leading_axis (at w)));
+      prop "each device holds the new axis whole by its window" case
+        (fun (s, l, w, _) ->
+          cover "a cut" (split w);
+          match w with
+          | Host | One -> ()
+          | _ ->
+              let n = 2 in
+              let s' = Array.append [| n |] s in
+              let a = source l s' in
+              let p = Nx.Placement.with_leading_axis (at w) in
+              let x = Nx.place p (Nx.Repr.of_array Nx.Host.v a) in
+              holds (A.to_array a) s' (lead w) (V x));
+      prop "without the first axis its cuts become copies" over_s4 (fun w ->
+          cover "a cut of the first axis"
+            (match w with
+            | Split 0 | Major 0 | Minor 0 | Cuts (0, _) | Cuts (_, 0) -> true
+            | _ -> false);
+          cover "a cut of another axis"
+            (match w with
+            | Split a | Major a | Minor a -> a > 0
+            | Cuts (x, y) -> x > 0 || y > 0
+            | Host | One | On -> false);
+          match w with
+          | Host | One -> ()
+          | _ ->
+              equal placed (at (unlead w))
+                (Nx.Placement.without_leading_axis (at w)));
+      test "a placement that cuts no axis is itself" (fun () ->
+          let p = S4.on and q = One.on in
+          equal bool true (Nx.Placement.with_leading_axis p == p);
+          equal bool true (Nx.Placement.without_leading_axis p == p);
+          equal bool true (Nx.Placement.with_leading_axis q == q);
+          equal bool true (Nx.Placement.without_leading_axis q == q));
+      test "a cut of the last axis a layout has refuses an axis in front"
+        (fun () ->
+          let last = A.Layout.max_rank - 1 in
+          equal placed ~msg:"the axis before it moves up" (S4.split ~axis:last)
+            (Nx.Placement.with_leading_axis (S4.split ~axis:(last - 1)));
+          invalid ~by:"Nx.Placement.with_leading_axis" (fun () ->
+              Nx.Placement.with_leading_axis (S4.split ~axis:last)));
+    ]
+
+let () =
+  exit (run "nx place" [ laws; reshapes; sharing; refusals; leading ])
