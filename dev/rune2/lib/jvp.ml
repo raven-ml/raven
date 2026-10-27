@@ -946,16 +946,26 @@ let owned i (Program.V x) =
 
 (* A construct over duals: [Detach] and an addition are performed outward on the
    primal, so that every differentiation around detaches the value and a total
-   receives the primal. Loops, calls and maps have no rule of their own yet:
-   they run where they were performed, inside the interpretation, which receives
-   their programs' operations. *)
+   receives the primal. [Lanes] is linear: its tangent is the lanes of the
+   tangent. Loops and calls have no rule of their own yet: they run where they
+   were performed, inside the interpretation, which receives their programs'
+   operations. *)
 let answer i (c : Program.construct) k =
   match c with
   | Detach x -> Effect.Deep.continue k (Program.perform (Detach (primal i x)))
   | Add (t, x) ->
       ignore (Program.perform (Add (t, primal i x)));
       Effect.Deep.continue k [||]
-  | Lanes _ | Lane_index _ | Scan _ | Iterate _ | Call _ ->
+  | Lanes (a, x) ->
+      let lanes x = Program.like x (Program.perform (Lanes (a, x))).(0) in
+      let y = lanes (primal i x) in
+      let y =
+        match tangent i x with
+        | Some t -> dual i ~fresh:false y (lanes t)
+        | None -> y
+      in
+      Effect.Deep.continue k [| Program.V y |]
+  | Lane_index _ | Scan _ | Iterate _ | Call _ ->
       Effect.Deep.discontinue k Program.Evaluate
 
 let run ~name f =

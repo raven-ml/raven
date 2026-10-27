@@ -1,0 +1,605 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+module P = Nx_kernel.Prog
+module D = Nx_array.Dtype
+module L = Nx_array.Layout
+module M = Nx_array.Move
+module Prim = Nx.Prim
+
+type ('v, 's, 'd) Prim.payload +=
+  | Lane : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Prim.payload
+
+(* Lane values *)
+
+let batched i x =
+  match Prim.payload i x with Some (Lane b) -> Some b | _ -> None
+
+let owned i x = Option.is_some (batched i x)
+let tail a = Iarray.sub a ~pos:1 ~len:(Iarray.length a - 1)
+
+(* One lane of [b]: its layout without axis 0, its placement without its leading
+   axis. *)
+let lane_form (type v s d) (b : (v, s, d) Nx.t) : (v, s, d) Prim.form =
+  let f = Prim.form b in
+  let l = f.layout in
+  {
+    dtype = f.dtype;
+    layout =
+      L.v ~offset:(L.offset l) ~strides:(tail (L.strides l)) (tail (L.shape l));
+    placement = Option.map Nx.Placement.without_leading_axis f.placement;
+  }
+
+let lane i b = Prim.traced i (lane_form b) (Lane b)
+let lead n a = Iarray.append (Iarray.of_list [ n ]) a
+let broadcast n x = Nx.broadcast_to (Array.append [| n |] (Nx.shape x)) x
+let batch i n x = match batched i x with Some b -> b | None -> broadcast n x
+
+(* A result's value: a batch, or a value every lane shares. *)
+type out = Batch of Program.value | Shared of Program.value
+
+(* [op]'s results, of the forms eager execution gives one lane: lane values over
+   the batches [compute ()] gives in position order, and the shared values
+   themselves. [op] is checked against its rule first, so that a lane's misuse
+   raises as it would for one lane, whatever the number of lanes. *)
+let results (type r) i ~by (op : r Prim.t) compute : r =
+  let outs = ref None in
+  Prim.results ~by
+    (fun k f ->
+      let os =
+        match !outs with
+        | Some os -> os
+        | None ->
+            let os = compute () in
+            outs := Some os;
+            os
+      in
+      let coerce (Program.V x) =
+        match Prim.coerce f x with
+        | Some x -> x
+        | None ->
+            invalid_arg "Rune: a result of another dtype or set than its lane's"
+      in
+      match os.(k) with
+      | Batch b -> Prim.traced i f (Lane (coerce b))
+      | Shared x -> coerce x)
+    op
+
+(* The values of [op] issued outward, in position order. *)
+let values (type r) ~by (op : r Prim.t) =
+  let r = Prim.eval ~by op and vs = ref [] in
+  Prim.iter_results (fun y -> vs := Program.V y :: !vs) op r;
+  Array.of_list (List.rev !vs)
+
+let issued ~by op () = Array.map (fun v -> Batch v) (values ~by op)
+
+(* Operations' attributes past the lane axis *)
+
+(* [p] reading the coordinates one axis further: its loop gains axis 0. *)
+let shift_coords (p : P.t) =
+  if not (Iarray.exists (function P.Coord _ -> true | _ -> false) p.nodes)
+  then p
+  else
+    P.v ~ins:p.ins
+      (Iarray.map (function P.Coord a -> P.Coord (a + 1) | n -> n) p.nodes)
+      ~outs:p.outs
+
+let shift_window (w : M.window) = { w with axis = w.axis + 1 }
+
+(* A pad that leaves the lane axis as it is. *)
+let lead_pad (pad : Nx_kernel.pad) : Nx_kernel.pad =
+  {
+    lo = lead 0 pad.lo;
+    hi = lead 0 pad.hi;
+    interior = lead 0 pad.interior;
+    windows = Iarray.map shift_window pad.windows;
+  }
+
+let load i n : 'd Prim.load -> 'd Prim.load = function
+  | Plain x -> Plain (batch i n x)
+  | Padded { x; fill; pad } ->
+      Padded { x = batch i n x; fill; pad = lead_pad pad }
+
+let loop_layout n layout = L.contiguous (lead n (L.shape layout))
+let every n = { M.start = 0; count = n; step = 1 }
+
+(* Loops
+
+   A loop's output that reads no load with lanes, and for a scan no carry with
+   lanes, is the same in every lane, as JAX's batching leaves an output of
+   unbatched operands unbatched: forward mode under a map of tangents keeps its
+   primal shared, so it computes once and a read of it reads. A loop is cut into
+   a part over the lanes and a part every lane shares, each its program's
+   outputs over the loads they read. *)
+
+(* Whether each of [loads] holds lanes. *)
+let laned_loads i loads =
+  Array.init (Iarray.length loads) (fun j ->
+      match Iarray.get loads j with
+      | Prim.Plain x -> owned i x
+      | Padded { x; _ } -> owned i x)
+
+(* Some of a program's outputs over the loads they read: [loads] the original
+   positions of its loads, [index] each original output's position, or [-1]. *)
+type part = { prog : P.t; loads : int array; index : int array }
+
+(* A program's outputs that read lanes, and its parts. *)
+type plan = { laned : bool array; lanes : part option; shared : part option }
+
+let positions flags =
+  Array.of_list
+    (List.filter (fun j -> flags.(j)) (List.init (Array.length flags) Fun.id))
+
+let operands = function
+  | P.In _ | Coord _ | Const _ -> []
+  | Op1 (_, _, a) -> [ a ]
+  | Op2 (_, a, b) -> [ a; b ]
+  | Op3 (_, a, b, c) -> [ a; b; c ]
+
+(* [p]'s outputs [outs], in order, over the loads they read. *)
+let restrict (p : P.t) outs =
+  let nodes = p.nodes and nout = Iarray.length p.outs in
+  let n = Iarray.length nodes in
+  let reach = Array.make n false in
+  List.iter (fun k -> reach.(Iarray.get p.outs k) <- true) outs;
+  for v = n - 1 downto 0 do
+    if reach.(v) then
+      List.iter (fun a -> reach.(a) <- true) (operands (Iarray.get nodes v))
+  done;
+  let read = Array.make (Iarray.length p.ins) false in
+  Iarray.iteri
+    (fun v node ->
+      match node with P.In j when reach.(v) -> read.(j) <- true | _ -> ())
+    nodes;
+  let loads = positions read in
+  let at_load = Array.make (Iarray.length p.ins) (-1) in
+  Array.iteri (fun k j -> at_load.(j) <- k) loads;
+  let at = Array.make n (-1) and kept = ref [] and next = ref 0 in
+  Iarray.iteri
+    (fun v node ->
+      if reach.(v) then begin
+        let node : P.node =
+          match node with
+          | P.In j -> In at_load.(j)
+          | (Coord _ | Const _) as c -> c
+          | Op1 (k, dt, a) -> Op1 (k, dt, at.(a))
+          | Op2 (k, a, b) -> Op2 (k, at.(a), at.(b))
+          | Op3 (k, a, b, c) -> Op3 (k, at.(a), at.(b), at.(c))
+        in
+        kept := node :: !kept;
+        at.(v) <- !next;
+        incr next
+      end)
+    nodes;
+  let index = Array.make nout (-1) in
+  List.iteri (fun m k -> index.(k) <- m) outs;
+  let prog =
+    P.v
+      ~ins:(Iarray.of_array (Array.map (Iarray.get p.ins) loads))
+      (Iarray.of_list (List.rev !kept))
+      ~outs:(Iarray.of_list (List.map (fun k -> at.(Iarray.get p.outs k)) outs))
+  in
+  { prog; loads; index }
+
+let plan (p : P.t) laned_load =
+  let nodes = p.nodes in
+  let reads = Array.make (Iarray.length nodes) false in
+  Iarray.iteri
+    (fun v node ->
+      reads.(v) <-
+        (match node with
+        | P.In j -> laned_load.(j)
+        | node -> List.exists (fun a -> reads.(a)) (operands node)))
+    nodes;
+  let laned = Array.map (fun o -> reads.(o)) (Iarray.to_array p.outs) in
+  let nout = Array.length laned in
+  if Array.for_all Fun.id laned then
+    let whole =
+      {
+        prog = p;
+        loads = Array.init (Array.length laned_load) Fun.id;
+        index = Array.init nout Fun.id;
+      }
+    in
+    { laned; lanes = Some whole; shared = None }
+  else
+    let part flag =
+      match List.filter (fun k -> laned.(k) = flag) (List.init nout Fun.id) with
+      | [] -> None
+      | outs -> Some (restrict p outs)
+    in
+    { laned; lanes = part true; shared = part false }
+
+type 'd outs = Outs : ('d, 'r) Prim.outs -> 'd outs
+
+let rec outs_of : type d. D.any list -> d outs = function
+  | [] -> Outs []
+  | D.Any dt :: rest ->
+      let (Outs o) = outs_of rest in
+      Outs (dt :: o)
+
+let out_dtypes (p : P.t) = List.map (P.dtype p) (Iarray.to_list p.outs)
+
+type 'd red = Red : ('d, 'a) Prim.reduction -> 'd red
+type 'd reds = Reds : ('d, 'r) Prim.reductions -> 'd reds
+
+let rec reds_list : type d r. (d, r) Prim.reductions -> d red list = function
+  | [] -> []
+  | r :: rs -> Red r :: reds_list rs
+
+let rec of_list : type d. d red list -> d reds = function
+  | [] -> Reds []
+  | Red r :: l ->
+      let (Reds rs) = of_list l in
+      Reds (r :: rs)
+
+let output : type d a. (d, a) Prim.reduction -> int = function
+  | Monoid (_, k, _) | Logsumexp (k, _) | Moments (k, _) | Arg (_, k, _) -> k
+
+let arity : type d a. (d, a) Prim.reduction -> int = function
+  | Monoid _ | Logsumexp _ -> 1
+  | Moments _ | Arg _ -> 2
+
+let reading : type d a. int -> (d, a) Prim.reduction -> (d, a) Prim.reduction =
+ fun k -> function
+  | Monoid (m, _, dt) -> Monoid (m, k, dt)
+  | Logsumexp (_, dt) -> Logsumexp (k, dt)
+  | Moments (_, dt) -> Moments (k, dt)
+  | Arg (e, _, dt) -> Arg (e, k, dt)
+
+(* The loads of [part] of [loads], batched for the part over the lanes. *)
+let part_loads i n ~laned part loads =
+  let l = Iarray.of_array (Array.map (Iarray.get loads) part.loads) in
+  if laned then Iarray.map (load i n) l else l
+
+let map_rule (type r) i n ~by (op : r Prim.t) : r =
+  match op with
+  | Map m ->
+      let pl = plan m.prog (laned_loads i m.loads) in
+      let issue ~laned part =
+        let (Outs o) = outs_of (out_dtypes part.prog) in
+        let loads = part_loads i n ~laned part m.loads in
+        if laned then
+          values ~by
+            (Map
+               {
+                 layout = loop_layout n m.layout;
+                 prog = shift_coords part.prog;
+                 outs = o;
+                 loads;
+               })
+        else
+          values ~by
+            (Map { layout = m.layout; prog = part.prog; outs = o; loads })
+      in
+      results i ~by op (fun () ->
+          let lv = Option.map (issue ~laned:true) pl.lanes in
+          let sv = Option.map (issue ~laned:false) pl.shared in
+          Array.mapi
+            (fun k laned ->
+              if laned then
+                Batch (Option.get lv).((Option.get pl.lanes).index.(k))
+              else Shared (Option.get sv).((Option.get pl.shared).index.(k)))
+            pl.laned)
+  | _ -> invalid_arg "Rune: a map expected"
+
+let reduce_rule (type r) i n ~by (op : r Prim.t) : r =
+  match op with
+  | Reduce r ->
+      let pl = plan r.prog (laned_loads i r.loads) in
+      let reds = reds_list r.reductions in
+      let issue ~laned part =
+        let mine =
+          List.filter (fun (Red x) -> pl.laned.(output x) = laned) reds
+        in
+        if mine = [] then [||]
+        else
+          let (Reds rs) =
+            of_list
+              (List.map
+                 (fun (Red x) -> Red (reading part.index.(output x) x))
+                 mine)
+          in
+          let loads = part_loads i n ~laned part r.loads in
+          if laned then
+            values ~by
+              (Reduce
+                 {
+                   layout = loop_layout n r.layout;
+                   axes = Iarray.map succ r.axes;
+                   prog = shift_coords part.prog;
+                   reductions = rs;
+                   loads;
+                 })
+          else
+            values ~by
+              (Reduce
+                 {
+                   layout = r.layout;
+                   axes = r.axes;
+                   prog = part.prog;
+                   reductions = rs;
+                   loads;
+                 })
+      in
+      results i ~by op (fun () ->
+          let lv = Option.fold ~none:[||] ~some:(issue ~laned:true) pl.lanes in
+          let sv =
+            Option.fold ~none:[||] ~some:(issue ~laned:false) pl.shared
+          in
+          let at_l = ref 0 and at_s = ref 0 in
+          Array.concat
+            (List.map
+               (fun (Red x) ->
+                 let laned = pl.laned.(output x) in
+                 let at = if laned then at_l else at_s in
+                 let k = !at in
+                 at := k + arity x;
+                 Array.init (arity x) (fun j ->
+                     if laned then Batch lv.(k + j) else Shared sv.(k + j)))
+               reds))
+  | _ -> invalid_arg "Rune: a reduction expected"
+
+let rec data : type d e.
+    Prim.interpretation -> int -> (d, e) Prim.data -> (d, e) Prim.data =
+ fun i n d -> match d with [] -> [] | x :: d -> batch i n x :: data i n d
+
+(* Operations over batches *)
+
+let linalg (type d r) i n (l : (d, r) Prim.linalg) : (d, r) Prim.linalg =
+  let b x = batch i n x in
+  match l with
+  | Cholesky c -> Cholesky { c with a = b c.a }
+  | Lu a -> Lu (b a)
+  | Qr q -> Qr { q with a = b q.a }
+  | Svd_values s -> Svd_values { s with a = b s.a }
+  | Svd s -> Svd { s with a = b s.a }
+  | Eigh_values e -> Eigh_values { e with a = b e.a }
+  | Eigh e -> Eigh { e with a = b e.a }
+  | Eig_values e -> Eig_values { e with a = b e.a }
+  | Eig e -> Eig { e with a = b e.a }
+  | Solve_triangular s -> Solve_triangular { s with a = b s.a; b = b s.b }
+
+(* A contraction maps the lane axis as JAX's dot_general does: a batch pair in
+   front where both operands have lanes, and otherwise a free axis of the one
+   that has them, moved to the front of the result. A scale has its operand's
+   lanes; segments' offsets with lanes make the lane axis a batch pair, as their
+   extents lead with the batch's. A contraction whose lanes are its [init]'s
+   alone maps [a]'s. *)
+let contract (type v s d) i n ~by (op : (v, s, d) Nx.t Prim.t) () =
+  match op with
+  | Contract c ->
+      let b x = batch i n x in
+      let scaled = function
+        | Some (Prim.Exponent x) -> owned i x
+        | Some (Value x) -> owned i x
+        | None -> false
+      in
+      let scale on = function
+        | Some (Prim.Exponent x) when on -> Some (Prim.Exponent (b x))
+        | Some (Value x) when on -> Some (Prim.Value (b x))
+        | s -> s
+      in
+      let offsets =
+        match c.segments with
+        | Some (Rows { offsets; _ } | Contracting { offsets; _ }) ->
+            owned i offsets
+        | None -> false
+      in
+      let on_a = owned i c.a || scaled c.a_scale in
+      let on_b = owned i c.b || scaled c.b_scale in
+      let both = (on_a && on_b) || offsets in
+      let on_a = both || on_a || not on_b and on_b = both || on_b in
+      let da = Bool.to_int on_a and db = Bool.to_int on_b in
+      let pairs = Iarray.map (fun (x, y) -> (x + da, y + db)) in
+      let nb = Iarray.length c.batch and nc = Iarray.length c.contracting in
+      let groups = match c.segments with Some (Contracting _) -> 1 | _ -> 0 in
+      (* The lane axis in the result: the groups, the batch pairs, [a]'s free
+         axes, then [b]'s. *)
+      let p =
+        if both then groups
+        else if on_a then groups + nb
+        else groups + nb + (Nx.ndim c.a - nb - nc)
+      in
+      let offsets o = if both then b o else o in
+      let segments =
+        Option.map
+          (function
+            | Nx_kernel.Rows r ->
+                Nx_kernel.Rows
+                  {
+                    offsets = offsets r.offsets;
+                    a_axis = r.a_axis + da;
+                    b_axis = r.b_axis + db;
+                  }
+            | Contracting r ->
+                Contracting { r with offsets = offsets r.offsets })
+          c.segments
+      in
+      let to_lane x = if p = 0 then x else Nx.moveaxis 0 p x in
+      let y =
+        Prim.eval ~by
+          (Contract
+             {
+               c with
+               batch =
+                 (if both then lead (0, 0) (pairs c.batch) else pairs c.batch);
+               contracting = pairs c.contracting;
+               a = (if on_a then b c.a else c.a);
+               b = (if on_b then b c.b else c.b);
+               init = Option.map (fun x -> to_lane (b x)) c.init;
+               a_scale = scale on_a c.a_scale;
+               b_scale = scale on_b c.b_scale;
+               segments;
+             })
+      in
+      [| Batch (Program.V (if p = 0 then y else Nx.moveaxis p 0 y)) |]
+  | _ -> invalid_arg "Rune: a contraction expected"
+
+let move (type v s d) i n ~by mv (x : (v, s, d) Nx.t) () =
+  let b = batch i n x in
+  let eval mv b = Prim.eval ~by (Move (mv, b)) in
+  let y =
+    match (mv : M.t) with
+    | Reshape s -> eval (Reshape (lead n s)) b
+    | Broadcast s ->
+        (* Ones between the lane axis and [x]'s, so that aligning from the right
+           keeps the lane axis in front. *)
+        let k = Iarray.length s - Nx.ndim x in
+        let ones = Iarray.init k (fun _ -> 1) in
+        let s' = Iarray.append ones (Iarray.of_array (Nx.shape x)) in
+        let b = if k = 0 then b else eval (Reshape (lead n s')) b in
+        eval (Broadcast (lead n s)) b
+    | Permute p -> eval (Permute (lead 0 (Iarray.map succ p))) b
+    | Slice rs -> eval (Slice (lead (every n) rs)) b
+    | Window ws -> eval (Window (Iarray.map shift_window ws)) b
+  in
+  [| Batch (Program.V y) |]
+
+(* A lane's [Place] onto the placement it has passes its batch through: placing
+   the batch at that placement with a leading axis would gather a batch cut
+   along it onto every device. *)
+let place (type v s d e) i n ~by (q : e Nx.Placement.t) (x : (v, s, d) Nx.t) ()
+    =
+  let b = batch i n x in
+  let through =
+    match Nx.placement b with
+    | Some p -> Nx.Placement.(equal (without_leading_axis p) q)
+    | None -> false
+  in
+  if through then [| Batch (Program.V b) |]
+  else
+    let q' = Nx.Placement.with_leading_axis q in
+    [| Batch (Program.V (Prim.eval ~by (Place (q', b)))) |]
+
+let rule (type r) n i ~by (op : r Prim.t) : r =
+  let b x = batch i n x in
+  let loads ls = Iarray.map (load i n) ls in
+  let batched (bop : r Prim.t) = results i ~by op (issued ~by bop) in
+  match op with
+  | Map _ -> map_rule i n ~by op
+  | Reduce _ -> reduce_rule i n ~by op
+  | Scan s
+    when not
+           (Option.fold ~none:false
+              ~some:(fun (Prim.Any c) -> owned i c)
+              s.carry
+           || (plan s.prog (laned_loads i s.loads)).laned.(output s.reduction))
+    ->
+      (* An output and carry every lane shares. *)
+      let k = output s.reduction in
+      let part = restrict s.prog [ k ] in
+      let loads = part_loads i n ~laned:false part s.loads in
+      let scan =
+        Prim.Scan
+          {
+            s with
+            prog = part.prog;
+            reduction = reading part.index.(k) s.reduction;
+            loads;
+          }
+      in
+      results i ~by op (fun () ->
+          Array.map (fun v -> Shared v) (values ~by scan))
+  | Scan s ->
+      batched
+        (Scan
+           {
+             s with
+             layout = loop_layout n s.layout;
+             axis = s.axis + 1;
+             prog = shift_coords s.prog;
+             loads = loads s.loads;
+             carry = Option.map (fun (Prim.Any c) -> Prim.Any (b c)) s.carry;
+           })
+  | Gather g -> batched (Gather { axis = g.axis + 1; idx = b g.idx; x = b g.x })
+  | Scatter s ->
+      batched
+        (Scatter
+           {
+             s with
+             axis = s.axis + 1;
+             idx = b s.idx;
+             updates = b s.updates;
+             into = b s.into;
+           })
+  | Sort s -> batched (Sort { s with axis = s.axis + 1; x = b s.x })
+  | Fold f ->
+      batched (Fold { shape = lead n f.shape; pad = lead_pad f.pad; x = b f.x })
+  | Assemble a ->
+      let piece (r, x) = (lead (every n) r, b x) in
+      batched
+        (Assemble
+           { a with shape = lead n a.shape; pieces = List.map piece a.pieces })
+  | Contract _ -> results i ~by op (contract i n ~by op)
+  | Fft (C2c f) ->
+      batched (Fft (C2c { f with axes = Iarray.map succ f.axes; x = b f.x }))
+  | Fft (R2c f) ->
+      batched (Fft (R2c { f with axes = Iarray.map succ f.axes; x = b f.x }))
+  | Fft (C2r f) ->
+      batched (Fft (C2r { f with axes = Iarray.map succ f.axes; x = b f.x }))
+  | Linalg l -> batched (Linalg (linalg i n l))
+  | Copy x -> batched (Copy (b x))
+  | Move (mv, x) -> results i ~by op (move i n ~by mv x)
+  | Bitcast (dt, x) -> batched (Bitcast (dt, b x))
+  | Place (q, x) -> results i ~by op (place i n ~by q x)
+  | Check { ok; data = d; fail } ->
+      (* Checked as one lane's, then a failure receives the index within the
+         failing lane. *)
+      Prim.results ~by (fun _ _ -> invalid_arg "Rune: a check's result") op;
+      let fail idx e = fail (Array.sub idx 1 (Array.length idx - 1)) e in
+      Prim.eval ~by (Check { ok = b ok; data = data i n d; fail })
+
+(* Constructs *)
+
+let operand i (Program.V x) = owned i x
+
+let claims i axis : Program.construct -> bool = function
+  | Lanes (a, x) -> Program.same_axis a axis || owned i x
+  | Lane_index a -> Program.same_axis a axis
+  | Add _ -> true
+  | c -> List.exists (operand i) (Program.operands c)
+
+(* [Lanes] of this map is every lane's value, the batch, a constant; of another
+   map, every lane's batch, a lane value. An addition adds the sum of its lanes'
+   values, once, and nothing with no lane. *)
+let answer i axis n (c : Program.construct) k =
+  let one x = Effect.Deep.continue k [| Program.V x |] in
+  match c with
+  | Lanes (a, x) when Program.same_axis a axis -> one (batch i n x)
+  | Lanes (a, x) ->
+      let b = batch i n x in
+      let r = Program.like b (Program.perform (Lanes (a, b))).(0) in
+      one (lane i (Nx.swapaxes 0 1 r))
+  | Lane_index _ -> one (lane i (Nx.arange Nx.int32 0 n 1))
+  | Add (t, x) ->
+      if n > 0 then
+        ignore (Program.perform (Add (t, Nx.sum ~axes:[ 0 ] (batch i n x))));
+      Effect.Deep.continue k [||]
+  | Detach x ->
+      let b = batch i n x in
+      one (lane i (Program.like b (Program.perform (Detach b)).(0)))
+  | Scan _ | Iterate _ | Call _ -> Effect.Deep.discontinue k Program.Evaluate
+
+let run ~name ~axis n f =
+  let owner = ref None in
+  let effc (type a) (e : a Effect.t) :
+      ((a, _) Effect.Deep.continuation -> _) option =
+    match (e, !owner) with
+    | Program.Construct c, Some i when claims i axis c ->
+        Some (answer i axis n c)
+    | Program.Bound a, _ when Program.same_axis a axis ->
+        Some (fun k -> Effect.Deep.continue k (Some n))
+    | _ -> None
+  in
+  Effect.Deep.match_with
+    (fun () ->
+      Prim.interpret ~name Values
+        (fun i ~by op -> rule n i ~by op)
+        (fun i ->
+          owner := Some i;
+          f i))
+    ()
+    { retc = Fun.id; exnc = raise; effc }

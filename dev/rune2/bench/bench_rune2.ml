@@ -50,9 +50,9 @@ let loop_rows () =
         !c);
   ]
 
-(* Declined: [ops] adds of constants in a traced step and under reverse mode,
-   which reach no tracer and compute at the call, against the same adds
-   eagerly. *)
+(* Declined: [ops] adds of constants in a traced step, under reverse mode and in
+   a map, which reach neither the tracer nor the map and compute at the call,
+   against the same adds eagerly. *)
 let adds a b =
   for _ = 1 to ops do
     ignore (Sys.opaque_identity (Nx.add a b))
@@ -75,6 +75,12 @@ let declined_rows () =
             adds a b;
             (c, ()))
           ~init:a xs);
+    Thumper.bench "add-1-under-vmap" (fun () ->
+        Rune.vmap'
+          (fun x ->
+            adds a b;
+            x)
+          xs);
   ]
 
 (* DeepChain: [ops] sines and a sum, the shape of rune's row, eagerly and under
@@ -120,24 +126,36 @@ let forward p x =
   let h2 = relu (Nx.add (Nx.matmul h1 p.w2) p.b2) in
   Nx.add (Nx.matmul h2 p.w3) p.b3
 
-let mlp_rows () =
+let mlp_params () =
   let zeros n = Nx.place Nx.Host.on (Nx.zeros f32 [| n |]) in
-  let params =
-    {
-      w1 = normal 1 [| 784; 256 |];
-      b1 = zeros 256;
-      w2 = normal 2 [| 256; 128 |];
-      b2 = zeros 128;
-      w3 = normal 3 [| 128; 10 |];
-      b3 = zeros 10;
-    }
-  in
+  {
+    w1 = normal 1 [| 784; 256 |];
+    b1 = zeros 256;
+    w2 = normal 2 [| 256; 128 |];
+    b2 = zeros 128;
+    w3 = normal 3 [| 128; 10 |];
+    b3 = zeros 10;
+  }
+
+let mlp_rows () =
+  let params = mlp_params () in
   let x = normal 4 [| 128; 784 |] and y = normal 5 [| 128; 10 |] in
   let loss p = Nx.mean (Nx.square (Nx.sub (forward p x) y)) in
   [
     Thumper.bench "mlp-forward" (fun () -> loss params);
     Thumper.bench "mlp-value-and-grad" (fun () ->
         Rune.value_and_grad mlp loss params);
+  ]
+
+(* Jacobians: of a chain of [ops] sines over 64 float32 elements, each one map
+   of forward or reverse mode over the elements. *)
+let jacobian_rows () =
+  let x =
+    Nx.place Nx.Host.on (Nx.Rng.uniform ~key:(Nx.Rng.key 12) f32 [| 64 |])
+  in
+  [
+    Thumper.bench "jacfwd-64" (fun () -> Rune.jacfwd' chain x);
+    Thumper.bench "jacrev-64" (fun () -> Rune.jacrev' chain x);
   ]
 
 (* Hmc: one leapfrog trajectory of 20 steps on a Gaussian over 16 floats, as a
@@ -171,5 +189,6 @@ let () =
          Thumper.group "Declined" (declined_rows ());
          Thumper.group "DeepChain" (deep_rows ());
          Thumper.group "MlpGrad" (mlp_rows ());
+         Thumper.group "Jacobians" (jacobian_rows ());
          Thumper.group "Hmc" (hmc_rows ());
        ])

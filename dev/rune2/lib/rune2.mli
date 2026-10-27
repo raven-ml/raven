@@ -294,14 +294,47 @@ val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
 
 (** {1:maps Maps}
 
+    A {e map} applies a function once per {e lane}. Its arguments' arrays share
+    a leading length [n], and lane [k] receives row [k] of each. The function
+    runs once, over values that stand for all [n] lanes, and the lanes' results
+    are stacked along a new axis 0. A value it captures is the same in every
+    lane, and so is a draw without [~key]. A lane's values have no elements to
+    read: {!Nx.item} of one raises
+    ([Nx.item: the value is traced by Rune.vmap]), so an OCaml [if] cannot take
+    one branch per lane, and {!Nx.where} selects per lane.
+
     A map's lanes are named by an axis, so that code inside nested maps reads
-    the lanes of the map it names. *)
+    the lanes of the map it names: {!lanes} gathers every lane's value and
+    {!lane_index} gives the calling lane's position. An inner map of the same
+    name hides an outer one, and a map without a name is read by neither. *)
 
 type axis
 (** The type for names of maps. *)
 
 val axis : unit -> axis
 (** [axis ()] is a fresh name, distinct from every other. *)
+
+val vmap : ?axis:axis -> ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
+(** [vmap ?axis s f] is [f] mapped over axis 0 of its arguments' arrays, [s]
+    being its signature, one structure per argument and one for the result. Each
+    array of the result is the lanes' arrays at its path stacked along a new
+    axis 0, as {!Nx.stack} stacks [f] applied to each lane's rows; one that
+    depends on no lane is broadcast along that axis. [axis] names the map.
+
+    Each lane computes what [f] computes on its rows, the elements of its arrays
+    bit for bit, but for a NaN's sign and payload and for the order in which a
+    float reduction or contraction associates its terms, which nx lets depend on
+    the shape of the arrays it reads. A lane lies where its rows lie: an
+    argument cut along axis 0 across devices computes each lane on the devices
+    that hold its row, and [Nx.place] of a lane at its own placement moves
+    nothing. An {!iterate} whose [until] depends on the lanes raises
+    [Invalid_argument].
+
+    Raises [Invalid_argument] when applied to [s] if [s] has no argument, and at
+    a call if the arguments hold no array
+    (["Rune.vmap: the arguments hold no array"]), a 0-d one, or arrays of
+    different leading lengths, naming their paths
+    (["Rune.vmap: 1: 3 rows along axis 0, 0: 2"]). *)
 
 val lanes : axis -> ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
 (** [lanes a x], inside the map named [a] of [n] lanes, is every lane's [x]
@@ -337,7 +370,10 @@ val lane_index : axis -> unit -> 'd Nx.int32_t
     addition, as the loop returns. So the total is the one the steps' additions
     give made in turn where the [zero] is [0.] or [-0.] and the loop's are the
     first additions the [collect] receives. A loop that takes no step adds that
-    identity. *)
+    identity. Inside a {!vmap}, each lane makes the additions of the code it
+    runs: a [collect] inside the map receives its lane's, and one outside it
+    receives, as one addition, their sum over the lanes as {!Nx.sum} computes it
+    along the stacked axis, or nothing from a map of no lane. *)
 module Total : sig
   type ('v, 's, 'd) t
   (** The type for totals of [('v, 's, 'd) Nx.t] values. *)
@@ -438,8 +474,8 @@ val jacfwd' :
   ('w, 'r, 'd) Nx.t
 (** [jacfwd' f x] is the Jacobian of [f] at [x], of shape
     [shape (f x) @ shape x] and [f x]'s dtype: its column [k] is the tangent of
-    [f] along element [k] of [x] in C order, computed in one forward pass per
-    element.
+    [f] along element [k] of [x] in C order. Every column is computed in one
+    forward pass, a {!vmap} of {!jvp'} over the elements' unit tangents.
 
     Raises [Invalid_argument] as {!jvp'} does. *)
 
@@ -492,6 +528,13 @@ val iterate' :
   ('v, 's, 'd) Nx.t ->
   ('v, 's, 'd) Nx.t
 (** [iterate' ~max ~until ~f x] is {!iterate} of one array. *)
+
+val vmap' :
+  ?axis:axis ->
+  (('v, 's, 'd) Nx.t -> ('w, 'r, 'd) Nx.t) ->
+  ('v, 's, 'd) Nx.t ->
+  ('w, 'r, 'd) Nx.t
+(** [vmap' ?axis f x] is {!vmap} of a function of one array. *)
 
 val jit' :
   (('v, 's, 'd) Nx.t -> ('w, 'r, 'd) Nx.t) ->

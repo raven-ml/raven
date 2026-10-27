@@ -1,7 +1,7 @@
 ; rune2's suites, through its interface.
 
 (tests
- (names test_jit test_constructs test_loops test_jvp test_grad)
+ (names test_jit test_constructs test_loops test_jvp test_grad test_vmap)
  (modules
   compose
   cases
@@ -9,7 +9,8 @@
   test_constructs
   test_loops
   test_jvp
-  test_grad)
+  test_grad
+  test_vmap)
  (libraries nx nx_array nx_kernel nx_support rig rune2 windtrap))
 
 ; nx's special functions' derivatives, against goldens gen/special_grad.py

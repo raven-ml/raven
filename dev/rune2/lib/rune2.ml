@@ -526,6 +526,42 @@ let jit_named name s =
 
 let jit s = jit_named "Rune.jit" s
 
+(* Maps *)
+
+(* The common length of the arrays' axes 0. *)
+let lanes_of name s args =
+  let lengths =
+    List.rev
+      (Ptree.fold s
+         (fun p v acc ->
+           match Nx.shape v with
+           | [||] -> invalid_argf "%s: %s is 0-d" name (path_name p)
+           | s -> (path_name p, s.(0)) :: acc)
+         args [])
+  in
+  match lengths with
+  | [] -> invalid_argf "%s: the arguments hold no array" name
+  | (first, n) :: _ ->
+      List.iter
+        (fun (p, m) ->
+          if m <> n then
+            invalid_argf "%s: %s: %d rows along axis 0, %s: %d" name p m first n)
+        lengths;
+      n
+
+let vmap_named name ?axis s =
+  let (Spine u) = spine name 0 s in
+  let a = Ptree.v u.walk.walk in
+  let axis = match axis with Some a -> a | None -> Program.axis () in
+  fun f ->
+    u.curry (fun args ->
+        let n = lanes_of name a args in
+        Vmap.run ~name ~axis n (fun i ->
+            let y = u.apply f (Ptree.map a (fun _ x -> Vmap.lane i x) args) in
+            Ptree.map u.result (fun _ y -> Vmap.batch i n y) y))
+
+let vmap ?axis s = vmap_named "Rune.vmap" ?axis s
+
 (* Functions of one array *)
 
 let scan' ~f ~init xs =
@@ -537,25 +573,22 @@ let iterate' ~max ~until ~f x =
 let jit' f = jit_named "Rune.jit'" Ptree.(tensor @-> returns tensor) f
 let jvp' f x t = jvp_named "Rune.jvp'" Ptree.tensor Ptree.tensor f x t
 
+let vmap' ?axis f x =
+  vmap_named "Rune.vmap'" ?axis Ptree.(tensor @-> returns tensor) f x
+
+(* The Jacobian's columns as the lanes of one map of [jvp] over the basis of
+   [x]'s elements. *)
 let jacfwd' f x =
   let name = "Rune.jacfwd'" in
   let sx = Nx.shape x and n = Nx.numel x in
   let iota = Nx.arange Nx.int32 0 n 1 in
-  let column k =
-    let e = Nx.equal iota (Nx.scalar_like iota (Int32.of_int k)) in
-    snd
-      (jvp_named name Ptree.tensor Ptree.tensor f x
-         (Nx.reshape sx (Nx.cast (Nx.dtype x) e)))
-  in
-  if n = 0 then
-    (* No column: one pass along the empty tangent gives the result's form, and
-       raises as every column would. *)
-    let t = snd (jvp_named name Ptree.tensor Ptree.tensor f x x) in
-    Nx.zeros (Nx.dtype t) (Array.append (Nx.shape t) sx)
-  else
-    let columns = List.init n column in
-    let sy = Nx.shape (List.hd columns) in
-    Nx.reshape (Array.append sy sx) (Nx.stack ~axis:(Array.length sy) columns)
+  let e = Nx.equal (Nx.reshape [| n; 1 |] iota) (Nx.reshape [| 1; n |] iota) in
+  let basis = Nx.reshape (Array.append [| n |] sx) (Nx.cast (Nx.dtype x) e) in
+  let column t = snd (jvp_named name Ptree.tensor Ptree.tensor f x t) in
+  let ts = vmap_named name Ptree.(tensor @-> returns tensor) column basis in
+  let r = Nx.ndim ts - 1 in
+  let sy = Array.sub (Nx.shape ts) 1 r in
+  Nx.reshape (Array.append sy sx) (Nx.moveaxis 0 r ts)
 
 let grad' f x = snd (value_and_grad_named "Rune.grad'" Ptree.tensor f x)
 

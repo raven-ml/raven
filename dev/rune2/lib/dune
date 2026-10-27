@@ -3,5 +3,5 @@
 
 (library
  (name rune2)
- (private_modules program trace scalar factor jvp linear)
+ (private_modules program trace scalar factor jvp linear vmap)
  (libraries nx nx_array nx_kernel))

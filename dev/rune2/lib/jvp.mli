@@ -15,9 +15,10 @@
 
     The interpretation's handler of constructs ({!Program.construct}) lies just
     outside it and answers those over its duals: [Detach] is the primal, an
-    addition adds the primal outward, and the others run their default where
-    they were performed ({!Program.Evaluate}), so that their programs'
-    operations reach the rules. *)
+    addition adds the primal outward, [Lanes] is the dual of the primal's and
+    the tangent's lanes, and the others run their default where they were
+    performed ({!Program.Evaluate}), so that their programs' operations reach
+    the rules. *)
 
 val run : name:string -> (Nx.Prim.interpretation -> 'a) -> 'a
 (** [run ~name f] is [f i], [i] a new forward-mode interpretation named [name]

@@ -46,6 +46,7 @@ type axis = int
 
 let axes = Atomic.make 0
 let axis () = Atomic.fetch_and_add axes 1
+let same_axis = Int.equal
 
 type ('v, 's, 'd) total = { id : ('v, 's, 'd) Nx.t Type.Id.t }
 

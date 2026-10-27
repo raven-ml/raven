@@ -57,6 +57,9 @@ type axis
 val axis : unit -> axis
 (** [axis ()] is a fresh name. *)
 
+val same_axis : axis -> axis -> bool
+(** [same_axis a b] is [true] iff [a] and [b] are one name. *)
+
 type ('v, 's, 'd) total
 (** The type for totals of [('v, 's, 'd) Nx.t] values. *)
 
