@@ -1194,6 +1194,29 @@ let svd_columns f ~m ~n =
   let k = min m n in
   if f = Nx_kernel.Complete then (m, n) else (k, k)
 
+(* The values alone [s'] lie within 2 (svd_bound ‖a‖_F + svd_term) of the
+   vectors' call's [s], for the [count] matrices of [m] × [n] of [a]. [a],
+   [s] and [s'] are scaled by 2^e. *)
+let check_values dt ~e ~count ~m ~n (a : Complex.t array) (s : Complex.t array)
+    (s' : Complex.t array) =
+  let k = min m n in
+  let g = svd_bound dt ~m ~n and h = svd_term ~e dt ~m ~n in
+  let worst = { ratio = 0.; where = "" } in
+  for t = 0 to count - 1 do
+    let norm = ref 0. in
+    for p = 0 to (m * n) - 1 do
+      norm := !norm +. Complex.norm2 a.((t * m * n) + p)
+    done;
+    for j = 0 to k - 1 do
+      let p = (t * k) + j in
+      worse worst
+        ~bound:(2. *. ((g *. sqrt !norm) +. h))
+        ~residual:(Float.abs (s.(p).re -. s'.(p).re)) (fun () ->
+          Printf.sprintf "matrix %d: value %d alone" t j)
+    done
+  done;
+  check_worst worst
+
 (* svd's results meet check_svd's relations, reduced or complete, on
    matrices of fewer, as many and more rows than columns, and the values
    alone lie within 2 (svd_bound ‖a‖_F + svd_term) of the vectors'
@@ -1219,23 +1242,105 @@ let law_svd (b : Support.backend) c =
       let uc, vr = svd_columns f ~m ~n in
       check_svd c.dt ~e:d ~count:(count c) ~m ~n ~uc ~vr a s (values y.(1))
         (values y.(2));
-      let s' = up d (values y'.(0)) in
-      let g = svd_bound c.dt ~m ~n and h = svd_term ~e:d c.dt ~m ~n in
-      let worst = { ratio = 0.; where = "" } in
-      for t = 0 to count c - 1 do
-        let norm = ref 0. in
-        for p = 0 to (m * n) - 1 do
-          norm := !norm +. Complex.norm2 a.((t * m * n) + p)
-        done;
-        for j = 0 to k - 1 do
-          let p = (t * k) + j in
-          worse worst
-            ~bound:(2. *. ((g *. sqrt !norm) +. h))
-            ~residual:(Float.abs (s.(p).re -. s'.(p).re)) (fun () ->
-              Printf.sprintf "matrix %d: value %d alone" t j)
-        done
-      done;
-      check_worst worst
+      check_values c.dt ~e:d ~count:(count c) ~m ~n a s (up d (values y'.(0)))
+  | _ -> ()
+
+(* Spread magnitudes *)
+
+(* A matrix of [rows] × [cols] whose columns, or rows by the seed, each
+   lie at one of three scales: drawn in [-1, 1]; drawn, then times
+   2^-(tiny ~bits dt), [bits] in [0, 8], whose parts round to subnormals,
+   the least subnormal η and 0; or ±η throughout. By the seed too, the
+   lines lie in that order, the largest first: the reduction then meets
+   a row whose rest is subnormal beside its first element. Its parts can
+   lie further apart than the largest finite number. *)
+type spread = { sdt : D.any; rows : int; cols : int; key : int }
+
+let pp_spread ppf s =
+  Format.fprintf ppf "%a %d × %d seed %d" pp_dtype s.sdt s.rows s.cols s.key
+
+let spread =
+  Gen.with_pp pp_spread
+    (let open Gen in
+     let size =
+       of_list ~pp:Format.pp_print_int [ 0; 1; 2; 3; 4; 5; 8; 17; 30 ]
+     in
+     let* sdt = of_list ~pp:pp_dtype dtypes in
+     let* rows = size in
+     let* cols = size in
+     let+ key = int_range 0 1_000_000 in
+     { sdt; rows; cols; key })
+
+(* The dtype's largest finite number. *)
+let largest (D.Any dt) =
+  match dt with
+  | D.Float32 | D.Complex64 -> Int32.float_of_bits 0x7f7fffffl
+  | _ -> Float.max_float
+
+(* The exponent that lifts a float64 matrix's subnormal parts above the
+   least normal number while its parts, at most 1, square and sum below
+   the largest: double-double residuals of η's would underflow. float32's
+   are normal as floats. *)
+let lift (D.Any dt) = match dt with D.Float32 | D.Complex64 -> 0 | _ -> 500
+
+let spread_operand s =
+  let r = Random.State.make [| s.key |] in
+  let by_rows = Random.State.bool r and sorted = Random.State.bool r in
+  let eta = Float.ldexp 1. (-tiny ~bits:0 s.sdt) in
+  let at_scale = function
+    | 0 -> Fun.id
+    | 1 ->
+        let e = -tiny ~bits:(Random.State.int r 9) s.sdt in
+        fun x -> Float.ldexp x e
+    | _ -> fun x -> Float.copy_sign eta x
+  in
+  let lines = if by_rows then s.rows else s.cols in
+  let scales = Array.init lines (fun _ -> Random.State.int r 3) in
+  if sorted then Array.sort compare scales;
+  let scales = Array.map at_scale scales in
+  let v =
+    Array.init (s.rows * s.cols) (fun p ->
+        let f = scales.(if by_rows then p / s.cols else p mod s.cols) in
+        let z = draw r s.sdt in
+        { Complex.re = f z.re; im = (if is_complex s.sdt then f z.im else 0.) })
+  in
+  let x = of_values s.sdt [| s.rows; s.cols |] v in
+  let parts =
+    Array.concat
+      (List.map
+         (fun (z : Complex.t) -> [| Float.abs z.re; Float.abs z.im |])
+         (Array.to_list (values x)))
+  in
+  let most = Array.fold_left Float.max 0. parts in
+  let least =
+    Array.fold_left (fun l p -> if p > 0. then Float.min l p else l) infinity
+      parts
+  in
+  cover "a part the least subnormal" (Array.exists (fun p -> p = eta) parts);
+  cover "parts further apart than the largest finite number"
+    (most /. least > largest s.sdt);
+  x
+
+(* svd's results meet check_svd's relations, and the values alone lie
+   near the vectors' call's, on matrices whose parts lie at the least
+   subnormal, below the least normal and near 1 at once: a reflector's
+   first element can then exceed the rest's largest by more than the
+   largest finite number. *)
+let law_svd_spread (b : Support.backend) s =
+  let m = s.rows and n = s.cols in
+  let x = spread_operand s in
+  cover "wide" (m < n);
+  cover "square" (m = n);
+  cover "tall" (m > n);
+  let f = if s.key mod 2 = 0 then Nx_kernel.Reduced else Nx_kernel.Complete in
+  match (run b (Svd (Some f)) [| x |], run b (Svd None) [| x |]) with
+  | Some y, Some y' ->
+      let e = lift s.sdt in
+      let a = up e (values x) and sv = up e (values y.(0)) in
+      let uc, vr = svd_columns f ~m ~n in
+      check_svd s.sdt ~e ~count:1 ~m ~n ~uc ~vr a sv (values y.(1))
+        (values y.(2));
+      check_values s.sdt ~e ~count:1 ~m ~n a sv (up e (values y'.(0)))
   | _ -> ()
 
 (* Of a = H_m Σ H_n, H_k the reflector I − 2 h hᵀ / hᵀh of order k and Σ
@@ -1978,6 +2083,45 @@ let test_svd_tiny_rows (b : Support.backend) () =
       (D.Any D.Float64, 1e-138, 1e-300, 1e-138);
       (D.Any D.Float32, 1e-12, 1e-30, 1e-14);
     ]
+
+(* The rank-one [1 (1 + i) η] over two rows of zeros, η the least
+   subnormal: the first row's rest [η] lies beside 1 − i, the reflector's
+   divisor 1 + √2 − i more than the largest finite number times η. Its
+   singular values are √3, 0 and 0, √2, 0 and 0 on reals, which keep
+   [1 1 η]. svd's results meet their relations, its values within
+   svd_bound ‖a‖₂ + svd_term of those, on every dtype. *)
+let test_svd_spread_row (b : Support.backend) () =
+  List.iter
+    (fun dt ->
+      let eta = Float.ldexp 1. (-tiny ~bits:0 dt) in
+      let z re im = { Complex.re; im } in
+      let a = Array.make 9 Complex.zero in
+      a.(0) <- z 1. 0.;
+      a.(1) <- z 1. 1.;
+      a.(2) <- z eta 0.;
+      let x = of_values dt [| 3; 3 |] a in
+      match (run b (Svd (Some Reduced)) [| x |], run b (Svd None) [| x |]) with
+      | Some y, Some y' ->
+          check_svd dt ~e:0 ~count:1 ~m:3 ~n:3 ~uc:3 ~vr:3 (values x)
+            (values y.(0)) (values y.(1)) (values y.(2));
+          let g = svd_bound dt ~m:3 ~n:3 and h = svd_term ~e:0 dt ~m:3 ~n:3 in
+          let norm = sqrt (if is_complex dt then 3. else 2.) in
+          let exact = [| norm; 0.; 0. |] in
+          let worst = { ratio = 0.; where = "" } in
+          List.iter
+            (fun (msg, s) ->
+              Array.iteri
+                (fun j (v : Complex.t) ->
+                  worse worst
+                    ~bound:((g *. norm) +. h)
+                    ~residual:(Float.abs (v.re -. exact.(j)))
+                    (fun () ->
+                      Format.asprintf "%a: %s %d is %h" pp_dtype dt msg j v.re))
+                s)
+            [ ("value", values y.(0)); ("value alone", values y'.(0)) ];
+          check_worst worst
+      | _ -> ())
+    dtypes
 
 (* Reference-LAPACK issue 255's upper bidiagonal of order 1000, its
    diagonal then its superdiagonal in golden/linalg, on which the merges'
@@ -2820,6 +2964,10 @@ let cpu (b : Support.backend) =
         (run (law_eigh_spectrum b));
       prop "svd's results meet their relations within γ(16 max (m, n) + 100)"
         case (run (law_svd b));
+      prop
+        "svd's results meet their relations on parts at the least subnormal, \
+         below the least normal and near 1"
+        spread (run (law_svd_spread b));
       prop "svd's values are within γ(16 max (m, n) + 100) ‖a‖₂ of the exact ones"
         case (run (law_svd_spectrum b));
       prop "eig's results meet their relations within γ(16n)" case
@@ -2849,6 +2997,8 @@ let cpu (b : Support.backend) =
         (fun () -> b.around (test_svd_deflation b));
       test "svd keeps a row's tiny rest beside a small matrix" (fun () ->
           b.around (test_svd_tiny_rows b));
+      test "svd keeps a row's least subnormal rest beside 1 - i" (fun () ->
+          b.around (test_svd_spread_row b));
       prop ~count:30
         "computes every dtype, a matrix alone giving its bits in a batch" case
         (run (law_cpu_threads b));

@@ -4122,8 +4122,11 @@ static void F(brd_step)(F(brd) *b, int64_t p) {
     b->d[i] = REAL(alpha);
     if (nr > 0) ai[i] = 1;
   } else if (p % 3 == 1 && nr > 0) {
-    /* G_i, then a u_i's powers of two: a part over the largest, and
-       their divisor, G_i's, times 2^-(the largest + its rescales'). */
+    /* G_i, then a u_i's powers of two: a part's, 2^(its exponent − G_i's
+       − its rescales'), at most 2 and of the size of u_i's elements; and
+       their divisor, G_i's with its largest part in [1, 2). Scaled by the
+       rest's largest part instead, the divisor overflows beside a rest of
+       subnormals, and complex division by its infinite parts is NaN. */
     T beta = b->row[0], sc;
     int knt, top = INT_MIN;
     int64_t rest = (nr + MV_COLUMNS - 1) / MV_COLUMNS;
@@ -4131,9 +4134,12 @@ static void F(brd_step)(F(brd) *b, int64_t p) {
     b->e[i] = REAL(beta);
     b->row[0] = 1;
     for (int64_t c = 0; c < rest; c++) top = b->aue[c] > top ? b->aue[c] : top;
+    R sr = F(abs)(REAL(sc)), si = F(abs)(IMAG(sc));
+    int es = top == INT_MIN ? 0 : ILOGB(sr > si ? sr : si);
+    int shift = es + knt * ILOGB(SAFMIN);
     for (int64_t c = 0; c < rest; c++)
-      b->auf[c] = b->aue[c] == INT_MIN ? 0 : LDEXP((R)1, b->aue[c] - top);
-    b->div = top == INT_MIN ? 1 : F(ldexp)(sc, knt * ILOGB(SAFMIN) - top);
+      b->auf[c] = b->aue[c] == INT_MIN ? 0 : LDEXP((R)1, b->aue[c] - shift);
+    b->div = top == INT_MIN ? 1 : F(ldexp)(sc, -es);
   }
 }
 
