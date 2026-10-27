@@ -374,3 +374,160 @@ let assemble (type v s) (dt : (v, s) D.t) (fill : v) shape pieces =
   in
   let y = Arith.of_parts d (List.fold_left put start pieces) in
   if floats then Ops.bitcast y tdt else y
+
+(* Sorts
+
+   A sort orders keys, unsigned integers that order as the elements do, by a
+   bitonic network of maxima and minima, which sorts integers exactly but is
+   not stable. Each key runs packed above its position: packed integers are
+   distinct, so the order the network gives them is the stable one, and the
+   positions are their low bits. A key of more than 32 bits sorts in passes of
+   32 bits, its least significant first: each pass sorts the next bits in the
+   previous pass's order, and being stable keeps that order among equal bits.
+   The values are the elements gathered at the positions, bits unchanged. *)
+
+let bit_length n =
+  let rec go n b = if n = 0 then b else go (n lsr 1) (b + 1) in
+  go n 0
+
+let halves u axis =
+  match Shape.split ~axis u [ 1; 1 ] with
+  | [ a; b ] -> (a, b)
+  | _ -> assert false
+
+(* [bitonic x axis] is the integers [x] sorted increasingly along [axis]. The
+   axis, padded to a power of two with the greatest integer, is split into axes
+   of two elements, one per stage of the network. *)
+let bitonic x axis =
+  let n = Bits.extent x axis in
+  if n <= 1 then x
+  else
+    let stages = bit_length (n - 1) and shape = Shape.shape x in
+    let x =
+      Shape.pad_to
+        ~value:(Dtype.max (Ops.dtype x) :> Dtype.const)
+        x
+        (List.init (Shape.ndim x) (fun d ->
+             if d = axis then Some (Ops.Int (1 lsl stages)) else None))
+    in
+    let x = Shape.unflatten x axis (List.init stages (fun _ -> Ops.Int 2)) in
+    let r = Shape.ndim x in
+    (* A stage's crossover reverses the second half of each of its boxes, so
+       that comparisons all in one direction merge them; it is undone after. *)
+    let crossover stage x =
+      let c = axis + stages - stage - 1 in
+      let blue, green = halves x c in
+      let flipped =
+        List.init (stage + List.length shape - axis) (fun i -> r - 1 - i)
+      in
+      Shape.cat ~axis:c blue [ Shape.flip green flipped ]
+    in
+    let compare x sub =
+      let p = axis + stages - sub - 1 in
+      let top, bottom = halves x p in
+      Ops.contiguous
+        (Shape.cat ~axis:p (Ops.minimum top bottom) [ Ops.maximum top bottom ])
+    in
+    let stage x s =
+      let x = if s < stages then Ops.contiguous (crossover s x) else x in
+      let x = List.fold_left compare x (List.init s (fun i -> s - 1 - i)) in
+      if s < stages then crossover s x else x
+    in
+    let x = List.fold_left stage x (List.init stages (fun i -> i + 1)) in
+    Shape.shrink_to
+      (Shape.flatten ~start:axis ~stop:(axis + stages - 1) x)
+      (List.map Option.some shape)
+
+(* [ranked axis h] is the int64 positions that sort the int64 keys [h], below
+   [2^32], stably along [axis]. *)
+let ranked axis h =
+  let s = extents h in
+  let n = List.nth s axis in
+  let low = bit_length (n - 1) in
+  let ranks = laid s axis (Shape.arange ~dtype:Int64 n) in
+  let packed = Ops.bitwise_or (Ops.shl h (int h low)) ranks in
+  let sorted = bitonic (Ops.contiguous packed) axis in
+  Ops.bitwise_and sorted (int h ((1 lsl low) - 1))
+
+(* [key u] is the unsigned integer of [u]'s width that orders as its elements:
+   a signed integer's or a float's order key with its sign bit flipped, a
+   float's order key being the signed integer of its bits with a negative
+   float's magnitude bits flipped, so that [-0] lies just below [+0]. A boolean
+   is its truth. *)
+let most k = Shape.const_like k (Dtype.max (Ops.dtype k) :> Dtype.const)
+let least k = Shape.const_like k (Dtype.min (Ops.dtype k) :> Dtype.const)
+
+let key u =
+  let t = Ops.dtype u in
+  let biased k = Ops.bitcast (Ops.bitwise_xor k (least k)) (Bits.unsigned t) in
+  if Dtype.is_float t then
+    let k = Ops.bitcast u (Bits.signed t) in
+    biased (Ops.where (Ops.lt k (int k 0)) (Ops.bitwise_xor k (most k)) k)
+  else if Dtype.is_unsigned t then u
+  else biased u
+
+(* [keys d ~descending u] is the keys of the node [u] of a value of [d], their
+   most significant 32 bits first, each an int64 below [2^32]: complemented
+   where [descending], every NaN, and every complex number with a NaN part,
+   the greatest, and a complex number its real part's then its imaginary
+   part's. *)
+let keys (D.Any dt as d) ~descending u =
+  let parts =
+    if D.is D.Boolean dt then [ Ops.cast (Ops.ne u (int u 0)) Uint8 ]
+    else if D.is D.Float dt && D.bits dt < 16 then
+      (* A float of a code orders as its float32 value. *)
+      [ Arith.cast ~src:d (D.Any D.Float32) u ]
+    else Arith.parts d u
+  in
+  let ks = List.map key parts in
+  let ks =
+    if not (Dtype.is_float (Ops.dtype (List.hd parts))) then ks
+    else
+      let nan =
+        List.fold_left
+          (fun a p -> Ops.bitwise_or a (Bits.is_nan p))
+          (Bits.is_nan (List.hd parts))
+          (List.tl parts)
+      in
+      List.map (fun k -> Ops.where nan (most k) k) ks
+  in
+  let ks = if descending then List.map Ops.bitwise_not ks else ks in
+  let split k =
+    if Dtype.itemsize (Ops.dtype k) < 8 then [ Ops.cast k Int64 ]
+    else
+      [
+        Ops.cast (Ops.shr k (int k 32)) Int64;
+        Ops.cast (Ops.bitwise_and k (int k 0xffff_ffff)) Int64;
+      ]
+  in
+  List.concat_map split ks
+
+let sort d ~axis ~descending ~k x =
+  let s = extents (List.hd (Arith.parts d x)) in
+  let n = List.nth s axis in
+  if n > 1 lsl 31 then unlowered "a Sort of more than 2^31 elements";
+  let positions =
+    if n <= 1 || numel s = 0 then zeros Int64 s
+    else
+      match List.rev (keys d ~descending x) with
+      | [] -> assert false
+      | least :: rest ->
+          List.fold_left
+            (fun p h -> take p axis (ranked axis (take h axis p)))
+            (ranked axis least) rest
+  in
+  let values =
+    if n <= 1 || numel s = 0 then x
+    else
+      let gathered u = take u axis positions in
+      Arith.of_parts d (List.map gathered (Arith.parts d x))
+  in
+  match k with
+  | None -> (values, positions)
+  | Some k ->
+      let first u =
+        Shape.shrink u
+          (List.init (Shape.ndim u) (fun i ->
+               if i = axis then Some (Ops.Int 0, Ops.Int k) else None))
+      in
+      (first values, first positions)

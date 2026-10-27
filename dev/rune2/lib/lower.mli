@@ -24,11 +24,12 @@ val op :
     its operand moved, a [Bitcast] of one width its operand's bits, a
     [Place] its operand, as a graph computes on one device, which its caller
     holds every value on. A
-    [Gather], a [Scatter], a [Fold] and an [Assemble] compute as
+    [Gather], a [Scatter], a [Fold], an [Assemble] and a [Sort] compute as
     {!Lower_index} states.
 
     Raises [Invalid_argument] naming the operation for one not lowered yet:
-    [Sort], [Fft], [Linalg] and [Check], a boolean [Add] [Scatter]
-    or [Fold], a scaled or segmented [Contract], a [Bitcast]
-    that changes width, a reduction or a scan of a complex [Prod], and a scan
-    of a [complex128] [Max], [Min] or [Arg]. *)
+    [Fft], [Linalg] and [Check], a boolean [Add] [Scatter] or
+    [Fold], a [Sort] along an axis of more than [2{^31}] elements, a scaled
+    or segmented [Contract], a [Bitcast] that changes width, a reduction or
+    a scan of a complex [Prod], and a scan of a [complex128] [Max], [Min] or
+    [Arg]. *)

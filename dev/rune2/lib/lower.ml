@@ -275,5 +275,10 @@ let op (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r) (o : r P.t) =
   | Assemble { dtype; shape; fill; pieces } ->
       let pieces = List.map (fun (r, p) -> (r, node p)) pieces in
       [| Lower_index.assemble dtype fill shape pieces |]
-  | Sort _ | Fft _ | Linalg _ | Check _ ->
+  | Sort { axis; descending; k; x } ->
+      let values, positions =
+        Lower_index.sort (D.Any (Nx.dtype x)) ~axis ~descending ~k (node x)
+      in
+      [| values; positions |]
+  | Fft _ | Linalg _ | Check _ ->
       unlowered (P.name o)

@@ -3,14 +3,14 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Gathers, scatters, folds and assemblies as tolk graphs.
+(** Gathers, scatters, folds, assemblies and sorts as tolk graphs.
 
     Each function takes nodes as {!Lower_arith} holds elements and computes
     what {!Nx_kernel.S} states of its operation, of static shapes.
 
-    {b Numerics.} A gather, a scatter by [Set] and an assembly move elements:
-    they give eager's bits, a NaN's sign and payload included, and so does a
-    scatter where no update lands. A scatter by [Max] or [Min] gives eager's
+    {b Numerics.} A gather, a scatter by [Set], an assembly and a sort move
+    elements: they give eager's bits, a NaN's sign and payload included, and
+    so does a scatter where no update lands. A scatter by [Max] or [Min] gives eager's
     bits but for a NaN, of no promised sign or payload, a complex one with two
     NaN parts. A scatter by [Add] wraps integers exactly. Its float sum, of
     [x] and the [n] updates [u1], …, [un] that land on it, adds in the carrier
@@ -67,3 +67,20 @@ val assemble :
     element at an index is the last piece's whose region holds it and [fill]
     where none does, as {!Nx_kernel.S.assemble} states. Each piece selects its
     elements over the earlier ones: one select per piece at every element. *)
+
+val sort :
+  Nx_array.Dtype.any ->
+  axis:int ->
+  descending:bool ->
+  k:int option ->
+  Ops.t ->
+  Ops.t * Ops.t
+(** [sort d ~axis ~descending ~k x] is the elements of [x], a value of [d],
+    sorted stably along [axis], then their [int64] positions, as
+    {!Nx_kernel.S.sort} states; with [Some k], the first [k] of each slice.
+    Each slice sorts by a bitonic network over its keys packed above their
+    positions, one pass per 32 bits of key: [O(n log² n)] work and about
+    [log² n / 2] kernels a pass for [n] elements, two passes for a 64-bit
+    dtype or [complex64], four for [complex128].
+
+    Raises [Invalid_argument] for an axis of more than [2{^31}] elements. *)

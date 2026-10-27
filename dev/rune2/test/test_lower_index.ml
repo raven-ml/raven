@@ -1109,6 +1109,116 @@ let assemblies =
       in
       same_bits dt (Nx.to_array (op ())) (Lowered.run op))
 
+(* Sorts *)
+
+type sort = {
+  o_dt : D.any;
+  o_shape : int array;
+  o_view : view;
+  o_axis : int;
+  o_descending : bool;
+  o_k : int option;
+  o_raws : int64 array;
+}
+
+let pp_sort ppf c =
+  Format.fprintf ppf "%s [%s] %s axis %d%s%s raws [%s]" (name c.o_dt)
+    (ints c.o_shape) (view_name c.o_view) c.o_axis
+    (if c.o_descending then " descending" else "")
+    (match c.o_k with None -> "" | Some k -> Printf.sprintf " k %d" k)
+    (raws_text c.o_raws)
+
+let sort_case =
+  let open Gen in
+  let* d = all_dtypes in
+  let* s = shape in
+  let* view = among views in
+  let* axis = int_range 0 (Array.length s - 1) in
+  let* descending = bool in
+  let* k = option (int_range 0 s.(axis)) in
+  let+ raws = operand_gen d view s in
+  {
+    o_dt = d;
+    o_shape = s;
+    o_view = view;
+    o_axis = axis;
+    o_descending = descending;
+    o_k = k;
+    o_raws = raws;
+  }
+
+(* Whether two elements of a slice along [c]'s axis are equal, as the sort
+   orders them. *)
+let ties c =
+  let (D.Any dt) = c.o_dt in
+  let x = operand dt c.o_view c.o_shape c.o_raws in
+  let xs = Nx.to_array x in
+  let s = c.o_shape and axis = c.o_axis in
+  let n = s.(axis) in
+  let inner = numel (Array.sub s (axis + 1) (Array.length s - axis - 1)) in
+  let seen = Hashtbl.create 8 in
+  let found = ref false in
+  Array.iteri
+    (fun j v ->
+      let slice = (j / (n * inner), j mod inner) in
+      let k = (slice, if is_nan dt v then "nan" else hex dt v) in
+      if Hashtbl.mem seen k then found := true else Hashtbl.add seen k ())
+    xs;
+  !found
+
+(* Each dtype, whose specials repeat, and an empty slice. *)
+let sort_examples =
+  let each i d =
+    let s = [| 3; 4 |] and view = List.nth views (i mod 4) in
+    {
+      o_dt = d;
+      o_shape = s;
+      o_view = view;
+      o_axis = i mod 2;
+      o_descending = i mod 3 = 0;
+      o_k = (if i mod 4 = 1 then Some 2 else None);
+      o_raws = cycled ~i d (numel (base view s));
+    }
+  in
+  let empty =
+    {
+      (each 0 (D.Any D.Float32)) with
+      o_shape = [| 2; 0 |];
+      o_axis = 1;
+      o_raws = [||];
+      o_view = Plain;
+    }
+  in
+  empty :: List.mapi each D.all
+
+let sorts =
+  prop ~count:40 ~examples:sort_examples
+    "sorts give eager's values and positions"
+    (Gen.with_pp pp_sort sort_case)
+    (fun c ->
+      let (D.Any dt) = c.o_dt in
+      dtype_covers c.o_dt;
+      cover_floats c.o_dt c.o_raws;
+      cover "descending" c.o_descending;
+      cover "equal elements" (ties c);
+      cover "a first k" (c.o_k <> None);
+      cover "a strided or broadcast view" (c.o_view <> Plain);
+      cover "an empty slice" (c.o_shape.(c.o_axis) = 0);
+      cover "a 64-bit key"
+        (List.mem c.o_dt
+           D.[ Any Float64; Any Int64; Any Uint64; Any Complex64 ]);
+      cover "complex128" (c.o_dt = D.Any D.Complex128);
+      let x = operand dt c.o_view c.o_shape c.o_raws in
+      let op () =
+        P.eval ~by:"t"
+          (P.Sort
+             { axis = c.o_axis; descending = c.o_descending; k = c.o_k; x })
+      in
+      let values, positions = op () in
+      same_bits dt (Nx.to_array values) (Lowered.run (fun () -> fst (op ())));
+      equal (array int64) (Nx.to_array positions)
+        (Lowered.run (fun () -> snd (op ()))))
+
 let () =
   exit
     (run "Lower_index"
@@ -1116,4 +1226,5 @@ let () =
          group "gathers and scatters"
            [ gathers; scatters_moved; scatter_adds ];
          group "folds and assemblies" [ folds; assemblies ];
+         group "sorts" [ sorts ];
        ])
