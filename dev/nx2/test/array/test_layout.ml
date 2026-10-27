@@ -388,28 +388,39 @@ let test_no_allocation () =
 
 (* Movements *)
 
-(* CR: These branch-local covers cannot detect a missing outcome. Add
-   fixed ~examples for each view constructor, an invalid move, and
-   [3;2] with strides [1;3] reshaped to [6], which must answer None.
-   Keep the generator and index-map oracle; use collect for the
-   outcome distribution. *)
+(* One view of each constructor, a movement Move.shape refuses, and a reshape
+   no strides express: every outcome, on every run. *)
+let move_examples =
+  let l = L.contiguous [| 2; 3 |] in
+  let r start count step = { M.start; count; step } in
+  [
+    (l, M.Reshape [| 3; 2 |]);
+    (l, M.Broadcast [| 4; 2; 3 |]);
+    (l, M.Permute [| 1; 0 |]);
+    (l, M.Slice [| r 1 1 1; r 2 2 (-2) |]);
+    (l, M.Window [| { M.axis = 1; size = 2; step = 1; dilation = 1 } |]);
+    (l, M.Permute [| 0; 0 |]);
+    (L.v ~strides:[| 1; 3 |] [| 3; 2 |], M.Reshape [| 6 |]);
+  ]
+
 let law_move (l, m) =
   let s = L.shape l in
   match M.shape m s with
   | exception Invalid_argument _ ->
-      cover "refused" true;
+      collect "refused";
       raises_match Exn.invalid_arg (fun () -> L.move m l)
   | s' -> (
       let s = Iarray.to_array s in
       let target idx = position l (source m s idx) in
       match L.move m l with
       | Some l' ->
-          (match m with
-          | M.Reshape _ -> cover "a reshape view" true
-          | M.Broadcast _ -> cover "broadcast" true
-          | M.Permute _ -> cover "permute" true
-          | M.Slice _ -> cover "slice" true
-          | M.Window _ -> cover "window" true);
+          collect
+            (match m with
+            | M.Reshape _ -> "a reshape view"
+            | M.Broadcast _ -> "broadcast"
+            | M.Permute _ -> "permute"
+            | M.Slice _ -> "slice"
+            | M.Window _ -> "window");
           equal iints s' (L.shape l');
           List.iter
             (fun idx ->
@@ -418,7 +429,7 @@ let law_move (l, m) =
                 int (target idx) (position l' idx))
             (indices (Iarray.to_array s'))
       | None ->
-          cover "a reshape no strides express" true;
+          collect "a reshape no strides express";
           (match m with
           | M.Reshape _ -> ()
           | _ -> failf "%a answered None" pp_move m);
@@ -662,7 +673,7 @@ let tests =
       ];
     group "movements"
       [
-        prop ~count:500
+        prop ~count:500 ~examples:move_examples
           "a movement is its index map, None is a reshape no strides express, \
            and it raises as Move.shape does"
           layout_and_move law_move;

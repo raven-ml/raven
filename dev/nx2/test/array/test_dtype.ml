@@ -575,23 +575,12 @@ let test_every_code (F (dt, f)) =
   equal ~msg:"elements" (array signed_float) expected
     (Array.map (fun c -> A.get a [| c |]) codes)
 
-(* Wider formats: ties around codes drawn across the range. *)
-(* CR: The required largest-code case is drawn by chance, so a correct
-   store can fail coverage. Move these six boundaries to prop's ~examples
-   and draw remaining cases with Gen.int_range 0 top. Keep the oracle and
-   covers; every run then checks the boundaries and explores the range. *)
+(* Wider formats: ties around codes drawn across the range, and around the
+   bounds of its subnormals and of its finite values on every run. *)
 let law_ties (F (dt, f)) =
-  let codes =
-    let top = last f and normal = 1 lsl f.frac in
-    Gen.frequency
-      [
-        (6, Gen.int_range 0 top);
-        ( 1,
-          Gen.of_list ~pp:Format.pp_print_int
-            [ 0; 1; normal - 1; normal; top - 1; top ] );
-      ]
-  in
-  prop (D.name dt) codes (fun c ->
+  let top = last f and normal = 1 lsl f.frac in
+  let bounds = [ 0; 1; normal - 1; normal; top - 1; top ] in
+  prop ~examples:bounds (D.name dt) (Gen.int_range 0 top) (fun c ->
       cover "a subnormal" (c < 1 lsl f.frac);
       cover "past the largest" (c = last f);
       equal (list string) []
