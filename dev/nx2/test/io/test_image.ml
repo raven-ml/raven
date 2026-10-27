@@ -133,6 +133,91 @@ let header_png ~width ~height =
   ^ chunk "IDAT" (Compress_deflate.Zlib.compress "")
   ^ chunk "IEND" ""
 
+(* A byte changed in a PNG file: in the type or data of a chunk, at an index
+   into the type and data, or in the scanlines the image data decompresses
+   to. *)
+type flip = Chunk of int * int | Scanline of int
+
+let pngs =
+  [
+    "png_filters.png";
+    "png_gray1.png";
+    "png_gray4.png";
+    "png_rgb16.png";
+    "png_palette_adam7.png";
+    "png_palette_short_trns.png";
+    "png_rgba.png";
+    "png_la.png";
+    "png_gray_trns.png";
+    "png_rgb16_trns.png";
+  ]
+
+(* The scanlines the image data of [png] decompresses to. *)
+let scanlines png =
+  Result.get_ok
+    (Compress_deflate.Zlib.decompress
+       (String.concat "" (chunk_data "IDAT" png)))
+
+(* [s] with its byte [i] xored by [mask]. *)
+let xor_byte s i mask =
+  String.mapi
+    (fun j c -> if i = j then Char.chr (Char.code c lxor mask) else c)
+    s
+
+(* The file [png] with the byte [flip] names xored by [mask], its scanlines
+   recompressed into its first IDAT chunk and every CRC-32 recomputed, so that
+   the change reaches the decoder past the checksums. *)
+let flipped png flip mask =
+  let cs = chunks png in
+  let first_idat = List.find_index (fun (ty, _) -> ty = "IDAT") cs in
+  let change k (ty, data) =
+    match flip with
+    | Chunk (k', i) when k = k' ->
+        let s = xor_byte (ty ^ data) i mask in
+        Some (String.sub s 0 4, String.sub s 4 (String.length data))
+    | Scanline i when Some k = first_idat ->
+        let scanlines = xor_byte (scanlines png) i mask in
+        Some ("IDAT", Compress_deflate.Zlib.compress scanlines)
+    | Scanline _ when ty = "IDAT" -> None
+    | Chunk _ | Scanline _ -> Some (ty, data)
+  in
+  signature
+  ^ String.concat ""
+      (List.map
+         (fun (ty, data) -> chunk ty data)
+         (List.filter_map Fun.id (List.mapi change cs)))
+
+(* A PNG fixture with one byte changed, half the time in a chunk's type or data
+   and half the time in its scanlines, and by any mask. *)
+let png_flips =
+  let open Gen in
+  let* name = of_list ~pp:Format.pp_print_string pngs in
+  let png = read (fixture name) in
+  let cs = chunks png in
+  let* flip =
+    one_of
+      [
+        (let* k = int_range 0 (List.length cs - 1) in
+         let ty, data = List.nth cs k in
+         let+ i = int_range 0 (String.length ty + String.length data - 1) in
+         Chunk (k, i));
+        (let+ i = int_range 0 (String.length (scanlines png) - 1) in
+         Scanline i);
+      ]
+  in
+  let+ mask = int_range 1 255 in
+  (name, flip, mask)
+
+let png_flips =
+  Gen.with_pp
+    (fun ppf (name, flip, mask) ->
+      match flip with
+      | Chunk (k, i) ->
+          Format.fprintf ppf "%s, chunk %d, byte %d xor %d" name k i mask
+      | Scanline i ->
+          Format.fprintf ppf "%s, scanline byte %d xor %d" name i mask)
+    png_flips
+
 let png_chunks =
   group "PNG chunks"
     [
@@ -473,10 +558,22 @@ let files =
           "png_palette_adam7.png";
           "jpeg_baseline.jpg";
           "jpeg_progressive.jpg";
+          "jpeg_restart.jpg";
+          "jpeg_cmyk.jpg";
+          "jpeg_extended.jpg";
         ] (fun name ->
           let whole = read (fixture name) in
           prefixes_fail Nx_io.load_image whole;
           flips_load_or_fail Nx_io.load_image whole);
+      prop
+        "a PNG with a byte changed and its checksums recomputed loads or fails"
+        png_flips (fun (name, flip, mask) ->
+          cover "a chunk's type or data"
+            (match flip with Chunk _ -> true | Scanline _ -> false);
+          cover "a scanline"
+            (match flip with Scanline _ -> true | Chunk _ -> false);
+          let path = file (flipped (read (fixture name)) flip mask) in
+          loads_or_fails ~path (fun () -> Nx_io.load_image path));
       prop "any bytes after a PNG or a JPEG signature load or fail"
         (Gen.pair
            (Gen.of_list ~pp:Format.pp_print_string [ "PNG"; "JPEG" ])
