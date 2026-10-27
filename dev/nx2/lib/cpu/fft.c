@@ -236,22 +236,12 @@ static int64_t chunk(int64_t u, int64_t per, int64_t n, int64_t *a,
   return u / per;
 }
 
-/* The cost (job.c) of transforms over [bytes] of lines of [n] points by
-   passes or the four steps, or by Bluestein's convolution of [m] points
-   (m 0 otherwise). One thread took 0.9 to 1.5 log₂ n times a copy of the
-   lines from 2^10 to 2^20 points; Bluestein's computes two transforms of
-   m points a line, and took 1.2 times that for lines of 1009 points
-   (M1). */
-static double cost_of(int64_t bytes, int64_t n, int64_t m) {
-  double w = m > 0 ? 2 * (double)m / (double)n * log2((double)m)
-                   : log2((double)n);
-  return (double)bytes * (w > 1 ? w : 1);
-}
+/* The transforms' costs (cpu.h, Calls and jobs; M1 alone, one thread,
+   2026-10-14).
 
-/* The cost of the steps between real lines and complex ones of half as
-   many points, in copies of their bytes: r2c and c2r took 3 to 10 times
-   such a copy's time more than c2c of half as many points, from 2^12 to
-   2^20 points (M1 alone, one thread). */
+   The steps between real lines and complex ones of half as many points,
+   in copies of their bytes: r2c and c2r took 3 to 10 times such a copy's
+   time more than c2c of half as many points, from 2^12 to 2^20 points. */
 #define HALF_COST 6
 
 /* A plan's cost, in lines of its points (plan_cost). */
@@ -398,8 +388,10 @@ static double radix_cost(int64_t p) {
 }
 
 /* The time a transform of lines of n points takes, in copies of the
-   lines' bytes: its passes', or Bluestein's (cost_of) where a prime
-   factor exceeds BLUESTEIN_PRIME (by_bluestein). */
+   lines' bytes: its passes', or where a prime factor exceeds
+   BLUESTEIN_PRIME (by_bluestein) Bluestein's two transforms of m points
+   a line, which took 1.2 times their passes' for lines of 1009 points,
+   and its pointwise steps, a pass each over m, m and n points. */
 static double line_cost(int64_t n) {
   if (n < 2) return 1;
   int twos = __builtin_ctzll((unsigned long long)n);
@@ -415,8 +407,39 @@ static double line_cost(int64_t n) {
     top = k;
   }
   if (top <= BLUESTEIN_PRIME) return w > 1 ? w : 1;
-  int64_t m = blue_points(n);
-  return 2 * (double)m / (double)n * log2((double)m);
+  double m = (double)blue_points(n);
+  return (2 * m * log2(m) + 2 * m + (double)n) / (double)n;
+}
+
+/* The bytes a pass moves for each point of a line: the point read and
+   written, a complex number of two reals of [w] bytes. */
+static double point_bytes(int w) { return 4.0 * w; }
+
+/* The cost of the passes of [count] lines of [n] points, [w] a real's
+   bytes (line_cost): a four-step line's column and row steps', each
+   lines of one of its factors. */
+static double passes_cost(int64_t n, double count, int w) {
+  return count * point_bytes(w) * (double)n * line_cost(n);
+}
+
+/* The cost of [count] lines of [n] points, [w] a real's bytes, the call's
+   and each transform job's: their points' passes and each line's set-up,
+   371 measured for each of 16384 lines of 2 complex64 points (lines,
+   NX_CPU_LINE). */
+static double lines_cost(int64_t n, double count, int w) {
+  return passes_cost(n, count, w) + count * NX_CPU_LINE;
+}
+
+/* The cost of a pointwise step over [points] complex points, [w] a real's
+   bytes, one pass: a Bluestein line's chirp, convolution and unchirp. */
+static double pointwise_cost(double points, int w) {
+  return point_bytes(w) * points;
+}
+
+/* The cost of the steps between [points] real points, [w] a real's bytes,
+   and their complex lines of half as many (streaming). */
+static double half_cost(double points, int w) {
+  return HALF_COST * point_bytes(w) * points;
 }
 
 /* The two precisions */
@@ -630,10 +653,6 @@ static void plan_put(void *p, int rdt) {
 
 enum { C2C, R2C, C2R };
 
-/* The bytes a pass moves for each point of a line: the point read and
-   written, a complex number of two reals of [w] bytes. */
-static double point_bytes(int w) { return 4.0 * w; }
-
 /* What making a plan of n points takes (cpu.h, Calls), in lines of its
    points: making one took 1 to 2.3 times a line's transform from 2^16 to
    2^20 points, Bluestein's included (M1 alone). [w] is a real's
@@ -642,37 +661,33 @@ static double plan_cost(int64_t n, int w) {
   return PLAN_LINES * point_bytes(w) * (double)n * line_cost(n);
 }
 
-/* The price (cpu.h, Calls) of the transform [t] of x into y along the
-   [na] [axes]: scalar, each axis's lines at the cost of their points
-   (line_cost), as F(transform) prices them, and the plans it makes on a
-   cache's miss where they could take it to NX_CPU_HOLD_BYTES; streaming,
-   a real transform's steps between real and complex lines; lines, a
-   line's set-up, 371 measured for each of 16384 lines of 2 complex64
-   points, and a real transform of no point's zeros, element by element
-   (zero), 3 ns a complex64 bin (M1 alone). A line of n points costs at
-   most n: a call held at that bound skips the factoring, which took 8 ns
-   of a 16-point line's 240 (M1). */
+/* The cost (cpu.h, Calls and jobs) of the transform [t] of x into y
+   along the [na] [axes]: each axis's lines (lines_cost), as F(transform)
+   takes them, and the plans it makes on a cache's miss where they could
+   take it to NX_CPU_HOLD_BYTES; a real transform's steps between real and
+   complex lines (half_cost); and a real transform of no point's zeros,
+   element by element (zero), 3 ns a complex64 bin (M1 alone). A line of n
+   points costs at most n: a call held at that bound skips the factoring,
+   which took 8 ns of a 16-point line's 240 (M1). */
 static double call_cost(int t, const nx_array *x, const nx_array *y,
                         const int *axes, int na) {
   const nx_array *r = t == R2C ? x : y, *c = t == C2R ? x : y;
   int w = c->bits / 16;
   double points = (double)numel(r), bytes = point_bytes(w) * points;
-  double price = t == C2C ? 0 : HALF_COST * bytes;
+  double price = t == C2C ? 0 : half_cost(points, w);
   if (t == R2C && x->dim[axes[na - 1]] == 0)
     return price + NX_CPU_LINE * (double)numel(y);
-  for (int i = 0; i < na; i++)
-    if (r->dim[axes[i]] > 0)
-      price += NX_CPU_LINE * points / (double)r->dim[axes[i]];
   double most = price;
   for (int i = 0; i < na; i++) {
     double n = (double)r->dim[axes[i]];
+    if (n > 0) most += NX_CPU_LINE * points / n;
     most += (bytes + PLAN_LINES * point_bytes(w) * n) * n;
   }
   if (most < NX_CPU_RELEASE_BYTES) return most;
   double plans = 0;
   for (int i = 0; i < na; i++) {
     int64_t n = r->dim[axes[i]];
-    price += bytes * line_cost(n);
+    if (n > 0) price += lines_cost(n, points / (double)n, w);
     plans += plan_cost(n, w);
   }
   return price + plans < NX_CPU_HOLD_BYTES ? price : price + plans;

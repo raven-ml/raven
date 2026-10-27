@@ -1222,31 +1222,37 @@ static int F(run)(F(job) * j, int64_t units, int64_t bytes, double cost) {
   return !j->failed;
 }
 
-/* Line j->l's four steps, each a job over j->u: its column steps, then
-   its row steps. */
-static int F(four_steps)(F(job) * j, int64_t bytes, double cost) {
+/* Line j->l's four steps, each a job over j->u that touches [bytes]: its
+   column steps, n2 lines of n1 points, then its row steps, n1 lines of
+   n2. */
+static int F(four_steps)(F(job) * j, int64_t bytes) {
+  const PLAN *p = j->p;
+  int w = (int)sizeof(T);
   j->step = COLUMNS;
-  if (!F(run)(j, j->u->columns, bytes, cost)) return 0;
+  double columns = passes_cost(p->n1, (double)p->n2, w);
+  if (!F(run)(j, j->u->columns, bytes, columns)) return 0;
   j->step = ROWS;
-  return F(run)(j, j->u->rows, bytes, cost);
+  return F(run)(j, j->u->rows, bytes, passes_cost(p->n2, (double)p->n1, w));
 }
 
-/* Line j->l by Bluestein's convolution, each step a job, in the shared
-   row j->r. */
-static int F(blue_steps)(F(job) * j, int64_t bytes, double cost) {
+/* Line j->l by Bluestein's convolution, each step a job that touches
+   [bytes], in the shared row j->r. */
+static int F(blue_steps)(F(job) * j, int64_t bytes) {
   const PLAN *p = j->p;
+  int w = (int)sizeof(T);
   lines rows = F(rows)(j->r, 1, p->m);
   int64_t chunks = (p->m + CHUNK - 1) / CHUNK;
+  double pass = pointwise_cost((double)p->m, w);
   j->per = chunks;
   j->step = CHIRP;
-  if (!F(run)(j, chunks, bytes, cost)) return 0;
+  if (!F(run)(j, chunks, bytes, pass)) return 0;
   if (!F(transform)(p->pm, &rows, &rows, 1)) return 0;
   j->step = CONVOLVE;
-  if (!F(run)(j, chunks, bytes, cost)) return 0;
+  if (!F(run)(j, chunks, bytes, pass)) return 0;
   if (!F(transform)(p->pm, &rows, &rows, 1)) return 0;
   j->step = UNCHIRP;
   j->per = (p->n + CHUNK - 1) / CHUNK;
-  return F(run)(j, j->per, bytes, cost);
+  return F(run)(j, j->per, bytes, pointwise_cost((double)p->n, w));
 }
 
 /* [count] lines of x by [p] into y. Lines are the units where there are
@@ -1255,7 +1261,7 @@ static int F(blue_steps)(F(job) * j, int64_t bytes, double cost) {
 static int F(transform)(const PLAN *p, const lines *x, const lines *y,
                         int64_t count) {
   int64_t n = p->n, bytes = 4 * (int64_t)sizeof(T) * n * count;
-  double cost = cost_of(bytes, n, p->kind == BLUESTEIN ? p->m : 0);
+  double cost = lines_cost(n, (double)count, (int)sizeof(T));
   /* A result streams where its lines' bytes gain on the threads that
      write them (streams). */
   int t = nx_cpu_threads(bytes, cost);
@@ -1285,8 +1291,8 @@ static int F(transform)(const PLAN *p, const lines *x, const lines *y,
   int ok = 1;
   for (j.l = 0; j.l < count && ok; j.l++) {
     if (four) F(unit_at)(&u, p, x, y, j.l, 0, buffer);
-    ok = four ? F(four_steps)(&j, bytes / count, cost / count)
-              : F(blue_steps)(&j, bytes / count, cost / count);
+    ok = four ? F(four_steps)(&j, bytes / count)
+              : F(blue_steps)(&j, bytes / count);
   }
   nx_cpu_give(buffer);
   return ok;
@@ -1306,7 +1312,8 @@ static int F(r2c_lines)(const PLAN *rp, int64_t n, const lines *x,
     if (!F(transform)(rp, &pairs, y, count)) return 0;
     j.step = SPLIT;
     j.per = (h / 2 + 1 + CHUNK - 1) / CHUNK;
-    return F(run)(&j, count * j.per, bytes, HALF_COST * bytes);
+    return F(run)(&j, count * j.per, bytes,
+                  half_cost((double)(n * count), (int)sizeof(T)));
   }
   T *r = malloc(sizeof(T) * 2 * n * count);
   if (r == NULL) return 0;
@@ -1315,7 +1322,8 @@ static int F(r2c_lines)(const PLAN *rp, int64_t n, const lines *x,
   j.step = HALVE;
   j.r = r;
   j.per = (h + 1 + CHUNK - 1) / CHUNK;
-  ok = ok && F(run)(&j, count * j.per, bytes, bytes);
+  ok = ok && F(run)(&j, count * j.per, bytes,
+                    half_cost((double)(n * count), (int)sizeof(T)));
   free(r);
   return ok;
 }
@@ -1332,7 +1340,8 @@ static int F(c2r_lines)(const PLAN *rp, int64_t n, const lines *x,
   F(job) j = {.p = rp, .x = x, .y = y, .count = count, .r = r};
   j.step = half ? MERGE : COMPLETE;
   j.per = ((half ? h / 2 + 1 : n) + CHUNK - 1) / CHUNK;
-  int ok = F(run)(&j, count * j.per, bytes, (half ? HALF_COST : 1) * bytes);
+  int ok = F(run)(&j, count * j.per, bytes,
+                  half_cost((double)(n * count), (int)sizeof(T)));
   lines rows = F(rows)(r, count, points), out = *y;
   rows.conj = out.conj = 1;
   if (half) {
