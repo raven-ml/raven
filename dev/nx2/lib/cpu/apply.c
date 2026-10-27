@@ -225,7 +225,7 @@ static value walk_operands(int n, const nx_operand *in, nx_cpu_block_fn f,
   if (!run) nx_cpu_walk(n, a, &l, block_most, per, f, j);
   else if (l.extent[0] > 0) {
     uint8_t *p[OPERANDS];
-    int64_t s0[OPERANDS], s1[OPERANDS] = {0};
+    int64_t s0[OPERANDS] = {0}, s1[OPERANDS] = {0};
     for (int k = 0; k < n; k++) {
       p[k] = at(a, k, l.first[k]);
       s0[k] = l.step[k][0];
