@@ -172,9 +172,10 @@ val barrier : Rig.Buffer.t -> unit
     unspecified. On Linux it ends the process ([SIGBUS]). On macOS it ends
     the process for a file {!create_file} made, and reads the bytes the page
     held for a file {!of_file} opened, whose pages are the process's own copy.
-    Windows refuses to truncate a file whose pages are mapped. Another change
-    may show through the pages of a file {!of_file} opened that the process
-    has not written.
+    Windows refuses to truncate, delete or replace a file whose pages are
+    mapped, until the mapping's allocation is collected. Another change may
+    show through the pages of a file {!of_file} opened that the process has
+    not written.
 
     A borrow raises [Sys_error] naming the file if the disk cannot map it for
     the moment, such as when the file cannot be reopened ({!descriptors}),
