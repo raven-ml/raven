@@ -6392,6 +6392,7 @@ module Prim = struct
   let map = Prim.map
   let form = Prim.form
   let results = Prim.results
+  let iter_results = Prim.iter_results
 
   type interpretation = Value.interpretation
   type reach = Value.reach =

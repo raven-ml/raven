@@ -784,10 +784,88 @@ let keeps_bits (type v s) (dt : (v, s) D.t) consts =
 let test_keeps_bits () =
   List.iter (fun (D.Any dt, consts) -> keeps_bits dt consts) narrow
 
+(* Operations of each count of results beside [cases_of]'s, each with its
+   count from the constructor's doc: reductions of six results, a scan's
+   two, a sort's, a transform's, factorisations of two and three, and a check
+   of none. *)
+let counted_cases () =
+  let x = operand Concrete [| 2; 3 |] and m = operand Concrete [| 3; 3 |] in
+  let layout = L.contiguous [| 2; 3 |] in
+  let load = P.v ~ins:[| D.Any D.Float32 |] [| In 0 |] ~outs:[| 0 |] in
+  [
+    ( Case
+        ( "reduce",
+          Reduce
+            {
+              layout;
+              axes = [| 1 |];
+              prog = load;
+              reductions =
+                Nx.Prim.
+                  [
+                    Monoid (Sum, 0, f32);
+                    Moments (0, f32);
+                    Logsumexp (0, f32);
+                    Arg (Max, 0, f32);
+                  ];
+              loads = [| Plain x |];
+            } ),
+      6 );
+    ( Case
+        ( "scan",
+          Scan
+            {
+              layout;
+              axis = 1;
+              prog = load;
+              reduction = Moments (0, f32);
+              loads = [| Plain x |];
+              carry = None;
+            } ),
+      2 );
+    (Case ("sort", Sort { axis = 1; descending = false; k = None; x }), 2);
+    ( Case
+        ("r2c", Fft (R2c { dtype = Nx.complex64; axes = [| 1 |]; x })),
+      1 );
+    (Case ("qr", Linalg (Qr { factors = Reduced; a = m })), 2);
+    (Case ("eigh", Linalg (Eigh { dtype = f32; a = m })), 2);
+    (Case ("eig", Linalg (Eig { dtype = Nx.complex64; a = m })), 2);
+    (Case ("lu", Linalg (Lu m)), 3);
+    (Case ("svd", Linalg (Svd { factors = Reduced; dtype = f32; a = m })), 3);
+    ( Case
+        ( "check",
+          Check { ok = Nx.less x x; data = []; fail = (fun _ () -> Exit) } ),
+      0 );
+  ]
+
+(* Each value [results] makes is tagged with the position it is made at;
+   iter_results gives them at positions 0, 1, ... in turn. *)
+let test_iter_results () =
+  let named = function Case ("chain", _) as c -> (c, 2) | c -> (c, 1) in
+  List.iter
+    (fun (Case (name, op), n) ->
+      logged ~name:"test.results" Values (ref []) (fun i ->
+          let seen = ref [] in
+          let r =
+            Nx.Prim.results ~by:"test"
+              (fun k form -> Nx.Prim.traced i form (Tag k))
+              op
+          in
+          Nx.Prim.iter_results
+            (fun y ->
+              match Nx.Prim.payload i y with
+              | Some (Tag k) -> seen := k :: !seen
+              | _ -> fail "a value results did not make")
+            op r;
+          equal ~msg:name (list int) (List.init n Fun.id) (List.rev !seen)))
+    (List.map named (cases_of [| 2; 3 |] Concrete Concrete) @ counted_cases ())
+
 let laws =
   group "laws"
     [
       prop "results gives the forms eager execution gives" forms_case law_forms;
+      test "iter_results visits a result's values in position order"
+        test_iter_results;
       test "a selection or constant keeps each narrow code's bits"
         test_keeps_bits;
       test

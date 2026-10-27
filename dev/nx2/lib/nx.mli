@@ -4767,6 +4767,11 @@ module Prim : sig
       Raises [Invalid_argument] naming [by], before [m] is called, where [op]'s
       operands break its rule. *)
 
+  val iter_results : ('v 's 'd. ('v, 's, 'd) nx -> unit) -> 'r t -> 'r -> unit
+  (** [iter_results f op r] is [f y] for each value [y] of [op]'s result [r]
+      at positions [0], [1], … in turn, the positions {!results} passes its
+      maker. A [Check] has none. *)
+
   (** {1:interpretations Interpretations} *)
 
   type interpretation
