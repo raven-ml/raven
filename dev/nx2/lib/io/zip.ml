@@ -26,12 +26,11 @@ type entry = {
 
 (* [file] is the archive's bytes on the host. *)
 type in_file = { file : Rig.Buffer.t; entries : entry list }
-type written_entry = { entry : entry; zip64_sizes : bool }
 
 type out_file = {
   fd : Unix.file_descr;
   mutable offset : int;
-  mutable entries_rev : written_entry list;
+  mutable entries_rev : entry list;
 }
 
 let error fmt = Printf.ksprintf failwith fmt
@@ -158,9 +157,7 @@ let find_eocd data =
   scan (size - 22)
 
 let zip64_directory data eocd =
-  if eocd < 20 then error "missing ZIP64 locator";
   let locator = eocd - 20 in
-  signature data locator 0x07064b50L;
   if u32 data (locator + 4) <> 0 || u32 data (locator + 16) <> 1 then
     error "multi-disk ZIP archives are unsupported";
   let record = u64 data (locator + 8) in
@@ -401,14 +398,12 @@ let open_in file =
   let file = Storage.pages file in
   Storage.read file @@ fun data ->
   let eocd = find_eocd data in
-  let classic_count = u16 data (eocd + 10) in
-  let classic_size = u32_i64 data (eocd + 12) in
-  let classic_offset = u32_i64 data (eocd + 16) in
+  (* A ZIP64 end record's locator lies just before the end record. Without one,
+     the classic fields hold their values, at their marker values too: Python's
+     zipfile writes an archive of 65535 entries so. *)
   let count, central_size, central_offset =
-    if
-      classic_count = 0xffff || classic_size = 0xffffffffL
-      || classic_offset = 0xffffffffL
-    then zip64_directory data eocd
+    if eocd >= 20 && u32_i64 data (eocd - 20) = 0x07064b50L then
+      zip64_directory data eocd
     else classic_directory data eocd
   in
   if central_offset > eocd || central_size > eocd - central_offset then
@@ -511,10 +506,6 @@ let write_string archive s =
   add_offset archive (String.length s)
 
 let open_out fd = { fd; offset = 0; entries_rev = [] }
-
-let worst_deflate_size size =
-  checked_add "DEFLATE output" size (((size / 65535) + 1) * 5)
-
 let sample_size = 64 * 1024
 
 (* The first [n] bytes of [header] followed by [data]. *)
@@ -584,6 +575,13 @@ let write_entry archive w header (data : bytes) =
 
 let valid_name name = safe_name name && valid_utf8 name
 
+(* Every entry has ZIP64 sizes and offset and the archive a ZIP64 end record, as
+   numpy's np.savez writes them, so that no reader takes a 32-bit field at its
+   marker value for the value itself. *)
+let zip64_version = 45
+let marker16 = 0xffff
+let marker32 = 0xffffffff
+
 let add_npy archive name header (data : bytes) =
   let filename = name ^ npy_suffix in
   let w = writing header data in
@@ -593,33 +591,21 @@ let add_npy archive name header (data : bytes) =
   let uncompressed_size =
     checked_add "NPY entry" (String.length header) (Array1.dim data)
   in
-  let maximum_size =
-    match method_ with
-    | Store -> uncompressed_size
-    | Deflate -> worst_deflate_size uncompressed_size
-  in
-  let zip64_sizes = maximum_size > 0xffffffff in
   let local_offset = archive.offset in
   let flags = 0x0808 in
-  let version = if zip64_sizes then 45 else 20 in
   let method_code = match method_ with Store -> 0 | Deflate -> 8 in
-  let extra =
-    if zip64_sizes then le16 0x0001 ^ le16 16 ^ le64 0 ^ le64 0 else ""
-  in
-  let size_marker = if zip64_sizes then le32_i64 0xffffffffL else le32 0 in
+  (* The sizes follow the data, in its descriptor: the local header's ZIP64
+     field holds zeros in their place. *)
   write_string archive
-    (le32_i64 0x04034b50L ^ le16 version ^ le16 flags ^ le16 method_code
-   ^ le16 0 ^ le16 0 ^ le32 0 ^ size_marker ^ size_marker
+    (le32_i64 0x04034b50L ^ le16 zip64_version ^ le16 flags ^ le16 method_code
+   ^ le16 0 ^ le16 0 ^ le32 0 ^ le32 marker32 ^ le32 marker32
     ^ le16 (String.length filename)
-    ^ le16 (String.length extra)
-    ^ filename ^ extra);
+    ^ le16 20 ^ filename ^ le16 0x0001 ^ le16 16 ^ le64 0 ^ le64 0);
   let crc32, compressed_size = write_entry archive w header data in
   add_offset archive compressed_size;
   write_string archive
-    (le32_i64 0x08074b50L ^ le32 crc32
-    ^
-    if zip64_sizes then le64 compressed_size ^ le64 uncompressed_size
-    else le32 compressed_size ^ le32 uncompressed_size);
+    (le32_i64 0x08074b50L ^ le32 crc32 ^ le64 compressed_size
+   ^ le64 uncompressed_size);
   let entry =
     {
       name = filename;
@@ -631,60 +617,41 @@ let add_npy archive name header (data : bytes) =
       local_offset;
     }
   in
-  archive.entries_rev <- { entry; zip64_sizes } :: archive.entries_rev
+  archive.entries_rev <- entry :: archive.entries_rev
 
-let central_record written =
-  let entry = written.entry in
-  let zip64_offset = entry.local_offset > 0xffffffff in
-  let zip64 = written.zip64_sizes || zip64_offset in
-  let version = if zip64 then 45 else 20 in
-  let extra_payload =
-    (if written.zip64_sizes then
-       le64 entry.uncompressed_size ^ le64 entry.compressed_size
-     else "")
-    ^ if zip64_offset then le64 entry.local_offset else ""
-  in
+let central_record entry =
   let extra =
-    if extra_payload = "" then ""
-    else le16 0x0001 ^ le16 (String.length extra_payload) ^ extra_payload
-  in
-  let compressed =
-    if written.zip64_sizes then le32_i64 0xffffffffL
-    else le32 entry.compressed_size
-  in
-  let uncompressed =
-    if written.zip64_sizes then le32_i64 0xffffffffL
-    else le32 entry.uncompressed_size
-  in
-  let offset =
-    if zip64_offset then le32_i64 0xffffffffL else le32 entry.local_offset
+    le64 entry.uncompressed_size
+    ^ le64 entry.compressed_size ^ le64 entry.local_offset
   in
   let method_code = match entry.method_ with Store -> 0 | Deflate -> 8 in
-  le32_i64 0x02014b50L ^ le16 0x031e ^ le16 version ^ le16 entry.flags
-  ^ le16 method_code ^ le16 0 ^ le16 0 ^ le32 entry.crc32 ^ compressed
-  ^ uncompressed
+  le32_i64 0x02014b50L ^ le16 0x031e ^ le16 zip64_version ^ le16 entry.flags
+  ^ le16 method_code ^ le16 0 ^ le16 0 ^ le32 entry.crc32 ^ le32 marker32
+  ^ le32 marker32
   ^ le16 (String.length entry.name)
+  ^ le16 (4 + String.length extra)
+  ^ le16 0 ^ le16 0 ^ le16 0 ^ le32 0 ^ le32 marker32 ^ entry.name ^ le16 0x0001
   ^ le16 (String.length extra)
-  ^ le16 0 ^ le16 0 ^ le16 0 ^ le32 0 ^ offset ^ entry.name ^ extra
+  ^ extra
 
 let close_out archive =
   let central_offset = archive.offset in
   List.iter
-    (fun written -> write_string archive (central_record written))
+    (fun entry -> write_string archive (central_record entry))
     (List.rev archive.entries_rev);
   let central_size = archive.offset - central_offset in
   let count = List.length archive.entries_rev in
-  if count > 0xffff || central_size > 0xffffffff || central_offset > 0xffffffff
-  then begin
-    let zip64_offset = archive.offset in
-    write_string archive
-      (le32_i64 0x06064b50L ^ le64 44 ^ le16 0x031e ^ le16 45 ^ le32 0 ^ le32 0
-     ^ le64 count ^ le64 count ^ le64 central_size ^ le64 central_offset);
-    write_string archive
-      (le32_i64 0x07064b50L ^ le32 0 ^ le64 zip64_offset ^ le32 1)
-  end;
-  let clamp32 n = if n > 0xffffffff then le32_i64 0xffffffffL else le32 n in
-  let count16 = if count > 0xffff then 0xffff else count in
+  let zip64_end = archive.offset in
   write_string archive
-    (le32_i64 0x06054b50L ^ le16 0 ^ le16 0 ^ le16 count16 ^ le16 count16
-   ^ clamp32 central_size ^ clamp32 central_offset ^ le16 0)
+    (le32_i64 0x06064b50L ^ le64 44 ^ le16 0x031e ^ le16 zip64_version ^ le32 0
+   ^ le32 0 ^ le64 count ^ le64 count ^ le64 central_size ^ le64 central_offset
+    );
+  write_string archive (le32_i64 0x07064b50L ^ le32 0 ^ le64 zip64_end ^ le32 1);
+  (* The classic end record holds each value that fits its field, and the marker
+     otherwise, as Python's zipfile writes it. *)
+  let count = Int.min count marker16 in
+  write_string archive
+    (le32_i64 0x06054b50L ^ le16 0 ^ le16 0 ^ le16 count ^ le16 count
+    ^ le32 (Int.min central_size marker32)
+    ^ le32 (Int.min central_offset marker32)
+    ^ le16 0)

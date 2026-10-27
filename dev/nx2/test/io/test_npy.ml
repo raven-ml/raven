@@ -180,6 +180,16 @@ let xorshift n =
       x := !x lxor ((!x lsl 5) land mask);
       !x land 0xff)
 
+(* [without_zip64_end s] is the archive [s] without its ZIP64 end record and
+   locator, as Python's zipfile, and so numpy, writes an archive of 65535
+   entries: the classic end record's 16-bit count is then the count itself. *)
+let without_zip64_end s =
+  let eocd = String.length s - 22 in
+  if String.sub s (eocd - 20) 4 <> "PK\006\007" then s
+  else
+    let record = Int64.to_int (String.get_int64_le s (eocd - 12)) in
+    String.sub s 0 record ^ String.sub s eocd 22
+
 let npz =
   let one = Nx.P (Nx.zeros Nx.int8 [| 1 |]) in
   group "npz"
@@ -209,6 +219,15 @@ let npz =
         (fun (name, entries) ->
           equal archive (Archive.of_list entries)
             (Nx_io.load_npz (fixture name)));
+      test
+        "an archive of 65535 entries, the most a 16-bit count holds, loads as \
+         itself, with or without a ZIP64 end record" (fun () ->
+          let a =
+            Archive.of_list (List.init 65535 (fun i -> (string_of_int i, one)))
+          in
+          let whole = read (saved ".npz" Nx_io.save_npz a) in
+          equal archive a (Nx_io.load_npz (file whole));
+          equal archive a (Nx_io.load_npz (file (without_zip64_end whole))));
       test "entries of other names than an npy file's are ignored" (fun () ->
           equal archive
             (Archive.of_list
