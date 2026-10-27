@@ -525,18 +525,112 @@ let test_svd_nan () =
   List.iter (fun (msg, x) -> all_nan ~msg (Nx.get [ 1 ] x)) [ ("u", u); ("s", s); ("vh", vh) ];
   near ~msg:"the finite one" (Nx.matmul (columns_by (Nx.get [ 0 ] u) (Nx.get [ 0 ] s)) (Nx.get [ 0 ] vh)) (Nx.get [ 0 ] a)
 
+(* γ(k) = k u / (1 − k u) and ε(k) = k η, u the unit roundoff of [dt]'s
+   precision and η its least positive subnormal, [k] doubled on a complex
+   [dt]: the terms of nx_cpu.mli's bounds. *)
+let terms (type v s) (dt : (v, s) D.t) k =
+  let k = if D.is D.Complex dt then 2 * k else k in
+  let u, eta =
+    match dt with
+    | D.Float32 | D.Complex64 -> (0x1p-24, 0x1p-149)
+    | _ -> (0x1p-53, 0x1p-1074)
+  in
+  let ku = Float.of_int k *. u in
+  (ku /. (1. -. ku), Float.of_int k *. eta)
+
+(* [re] and [im] with each element above a matrix's diagonal the one
+   below it times 1, i, −1 or −i, by the quadrant of the one drawn there,
+   its sign where [real]: |a_ij| = |a_ji|, which eig's balancing leaves. *)
+let mirrored ~real n re im =
+  let re' = Array.copy re and im' = Array.copy im in
+  for p = 0 to Array.length re - 1 do
+    let q = p mod (n * n) in
+    let i = q / n and j = q mod n in
+    if i < j then begin
+      let below = p - q + (j * n) + i in
+      let x = re.(below) and y = im.(below) in
+      let x, y =
+        match (re.(p) < 0., (not real) && im.(p) < 0.) with
+        | false, false -> (x, y)
+        | false, true -> (-.y, x)
+        | true, false -> (-.x, -.y)
+        | true, true -> (y, -.x)
+      in
+      re'.(p) <- x;
+      im'.(p) <- y
+    end
+  done;
+  (re', im')
+
+(* nx_cpu.mli's eig bounds on a with |a_ij| = |a_ji|, which balancing
+   leaves with D = I, so that they read with a itself: with g = γ(16n) and
+   h = ε(16n), each column has ‖a v_j − w_j v_j‖₂ <= (g ‖a‖_F + h) ‖v_j‖₂
+   and |‖v_j‖₂ − 1| <= g, and each value, with v or without, is one of
+   a + E with ‖E‖_F <= g ‖a‖_F + h, so that σ_min (a − w_j I) is at most
+   that. The checks compute at complex128 and add their own rounding: the
+   residual's, γ(4n + 12) (‖a‖_F + |w_j|) ‖v_j‖₂ + n ε(4n + 12); the
+   norm's, 2 γ(2n + 2); and that of a − w_j I with svd's bound on the
+   least singular value of its real form [x_r −x_i; x_i x_r], whose
+   singular values are its own, each twice: γ(32n + 102) (‖a‖_F + √n |w_j|)
+   + ε(32n + 100). *)
 let test_eig =
-  prop "eig: a v is v diag w, of a real or complex a" (matrices ~square:true ())
+  prop "eig: a v is v diag w within nx.cpu's bound, of a real or complex a"
+    (matrices ~square:true ())
     (fun (Case (dt, s, re, im)) ->
       cover_shapes ~square:true s;
       let n = s.(Array.length s - 1) in
+      let re, im = mirrored ~real:(not (D.is D.Complex dt)) n re im in
       let a = value dt s re im in
       let (Cplx c) = complex_of dt in
       let w, v = Nx.eig c a in
-      near ~scale:10. ~msg:"a v" (Nx.matmul (Nx.cast c a) v) (columns_by v w);
       let w', v' = Nx.eig ~vectors:false c a in
       equal ~msg:"no v" (array int) (Array.append (lead s) [| n; 0 |]) (Nx.shape v');
-      near ~scale:10. ~msg:"values alone" (Nx.prod ~axes:[ -1 ] w') (Nx.prod ~axes:[ -1 ] w))
+      let g, h = terms dt (16 * n) in
+      let c128 x = Nx.cast Nx.complex128 x in
+      let a = c128 a and w = c128 w and v = c128 v and w' = c128 w' in
+      let fnorm = Nx.to_array (Nx.matrix_norm Nx.float64 a) in
+      let mags x = Nx.to_array (Nx.magnitude Nx.float64 x) in
+      let columns x = Nx.to_array (Nx.vector_norm Nx.float64 ~axes:[ -2 ] x) in
+      let res = columns (Nx.sub (Nx.matmul a v) (columns_by v w)) in
+      let len = columns v and wm = mags w in
+      let nf = Float.of_int n in
+      let rg, rh = terms Nx.complex128 ((2 * n) + 6) in
+      let ng, _ = terms Nx.complex128 (n + 1) in
+      Array.iteri
+        (fun k r ->
+          let t = k / n and j = k mod n in
+          let msg what = Printf.sprintf "matrix %d, column %d: %s" t j what in
+          let bound = ((g *. fnorm.(t)) +. h) *. len.(k) in
+          let rounding = (rg *. (fnorm.(t) +. wm.(k)) *. len.(k)) +. (nf *. rh) in
+          below ~msg:(msg "‖a v_j - w_j v_j‖") ~than:(bound +. rounding) r;
+          below ~msg:(msg "|‖v_j‖ - 1|") ~than:(g +. (2. *. ng))
+            (Float.abs (len.(k) -. 1.)))
+        res;
+      let sg, _ = terms Nx.float64 ((32 * n) + 102) in
+      let _, sh = terms Nx.float64 ((32 * n) + 100) in
+      let least ~msg w =
+        let wm = mags w in
+        let lambda = Nx.unsqueeze ~axes:[ -1 ] (Nx.unsqueeze ~axes:[ -1 ] w) in
+        let x =
+          Nx.sub (Nx.unsqueeze ~axes:[ -3 ] a) (Nx.mul lambda (Nx.eye Nx.complex128 n))
+        in
+        let xr = Nx.real Nx.float64 x and xi = Nx.imag Nx.float64 x in
+        let row l = Nx.concatenate ~axis:(-1) l in
+        let x = Nx.concatenate ~axis:(-2) [ row [ xr; Nx.neg xi ]; row [ xi; xr ] ] in
+        let sigma = Nx.to_array (Nx.matrix_norm Nx.float64 ~ord:`NegTwo x) in
+        Array.iteri
+          (fun k sigma ->
+            let t = k / n in
+            let rounding = (sg *. (fnorm.(t) +. (sqrt nf *. wm.(k)))) +. sh in
+            below
+              ~msg:(Printf.sprintf "matrix %d: σ_min (a - w_%d I) %s" t (k mod n) msg)
+              ~than:((g *. fnorm.(t)) +. h +. rounding) sigma)
+          sigma
+      in
+      if n > 0 then begin
+        least ~msg:"with v" w;
+        least ~msg:"alone" w'
+      end)
 
 let test_eigh =
   prop "eigh: a v is v diag w, w ascending, one triangle read" (matrices ~square:true ())
