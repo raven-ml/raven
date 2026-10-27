@@ -581,6 +581,11 @@ let regimes acc =
             conv ~da:(D.Any D.Bfloat16) ~taps_first:false
               (2, 6, 6, 3, 16) (3, 3) (1, 1);
           ]
+      | D.Any D.Float64 ->
+          (* A pack crossing its pitch: a block of 48 rows, windows 12
+             apart, whose last run of rows, from row 36, the matrix unit's
+             transposes of 16 rows would write up to row 52. *)
+          [ conv ~taps_first:true (1, 4, 12, 9, 32) (3, 3) (1, 1) ]
       | D.Any (D.Complex64 | D.Complex128) ->
           [
             conv ~da:(part_of acc) ~taps_first:true (1, 4, 4, 3, 8)

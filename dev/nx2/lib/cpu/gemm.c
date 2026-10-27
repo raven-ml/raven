@@ -610,21 +610,32 @@ static int64_t piece(const operand *q, int x, int64_t i, int64_t n,
    a pack per piece of the block that lies in one run of each axis, so
    that the operand is read where it lies, never copied whole: a
    convolution's a packs a block of its windows as an explicit copy of
-   them would hold it, the products numbered as they are there. */
+   them would hold it, the products numbered as they are there.
+
+   [move] may write past a piece's elements up to the next multiple of
+   the kernel's tile (cpu.h). Within the piece's row, the pieces after it
+   overwrite those writes; past the row's [pitch] they would land on the
+   next row's first elements, packed before them. A piece whose writes
+   would reach past the row packs without [move]: in a block of 96 rows of
+   windows 20 apart, the piece from row 80 would otherwise give the next
+   step's rows 0 to 15 values past the piece's 16 rows. */
 static void pack_at(const problem *p, nx_cpu_pack move, int o,
                     const int64_t *c, int x0, int x1, int64_t n0, int64_t n1,
                     uint8_t *d, int64_t pitch) {
   const operand *q = &p->op[o];
+  int64_t tile = move == NULL ? 1 : o == A ? p->g->kernel.mr : p->g->kernel.nr;
   for (int64_t u1 = 0, m1; u1 < n1; u1 += m1) {
     int64_t s0, s1;
     m1 = piece(q, x1, c[x1] + u1, n1 - u1, &s1);
     for (int64_t u0 = 0, m0; u0 < n0; u0 += m0) {
       m0 = piece(q, x0, c[x0] + u0, n0 - u0, &s0);
+      int fits = u0 + ceil_div(m0, tile) * tile <= pitch;
       int64_t t[4] = {c[0], c[1], c[2], c[3]};
       t[x0] += u0;
       t[x1] += u1;
-      pack(p, move, o, pos(p, o, t[BATCH], t[ROW], t[COL], t[CON]), s0, s1,
-           m0, m1, d + (u1 * pitch + u0) * p->w, pitch);
+      pack(p, fits ? move : NULL, o,
+           pos(p, o, t[BATCH], t[ROW], t[COL], t[CON]), s0, s1, m0, m1,
+           d + (u1 * pitch + u0) * p->w, pitch);
     }
   }
 }
