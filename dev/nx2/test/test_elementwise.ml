@@ -390,13 +390,34 @@ let law_lerp ((a, b), w) =
   if Float.is_finite (b -. a) && w = 1. then equal ~msg:"w = 1" number b got
 
 (* A narrow float computes at float32 and rounds once. *)
-let law_lerp_narrow ((a, b), w) =
-  let bf x = Nx.scalar Nx.bfloat16 x in
-  let a = bf a and b = bf b and w = bf w in
+
+type narrow = Narrow : (float, 's) D.t -> narrow
+
+let narrows =
+  Gen.of_list
+    ~pp:(fun ppf (Narrow dt) -> D.pp ppf dt)
+    D.
+      [
+        Narrow Float16;
+        Narrow Bfloat16;
+        Narrow Float8_e4m3fn;
+        Narrow Float8_e5m2;
+        Narrow Float4_e2m1fn;
+      ]
+
+let law_lerp_narrow (Narrow dt, ((a, b), w)) =
+  let s x = Nx.scalar dt x in
+  let a = s a and b = s b and w = s w in
   let wide x = Nx.cast Nx.float32 x in
-  let want = Nx.cast Nx.bfloat16 (Nx.lerp (wide a) (wide b) (wide w)) in
-  let bits x = Nx.to_array (Nx.bitcast Nx.uint16 x) in
-  equal (array int) (bits want) (bits (Nx.lerp a b w))
+  let want = Nx.cast dt (Nx.lerp (wide a) (wide b) (wide w)) in
+  (* Each element's bits, through the exact cast to float64, [None] for a
+     NaN. *)
+  let bits x =
+    Array.map
+      (fun v -> if Float.is_nan v then None else Some (Int64.bits_of_float v))
+      (Nx.to_array (Nx.cast Nx.float64 x))
+  in
+  equal (array (option int64)) (bits want) (bits (Nx.lerp a b w))
 
 (* The ends at signed zeros: equal as numbers. *)
 let test_lerp_zero_ends () =
@@ -436,8 +457,9 @@ let elementwise =
       test "atan2 reaches its range's ends, rounded" test_atan2_ends;
       prop "lerp is one fma, from a below w = 1/2" (Gen.pair (Gen.pair ends ends) weight)
         law_lerp;
-      prop "lerp of bfloat16 is lerp at float32, rounded once"
-        (Gen.pair (Gen.pair ends ends) weight) law_lerp_narrow;
+      prop "lerp of a narrow float is lerp at float32, rounded once"
+        (Gen.pair narrows (Gen.pair (Gen.pair ends ends) weight))
+        law_lerp_narrow;
       test "lerp's ends at signed zeros" test_lerp_zero_ends;
       test "lerp broadcasts, and refuses shapes that do not" test_lerp_shapes;
     ]

@@ -480,6 +480,19 @@ let test_unique_cases () =
       ignore (Nx.unique ~size:2 t);
       ignore (Nx.positions ~size:4 t))
 
+(* Groups over many keys: 70,000 int32 keys of three values, the later
+   two first appearing past 25,000. *)
+let test_unique_long () =
+  let n = 70_000 and cut = 25_000 in
+  let key i = if i < cut then 5l else if i mod 3 = 0 then -3l else 9l in
+  let g = Nx.unique (Nx.create Nx.int32 [| n |] (Array.init n key)) in
+  let id i = if i < cut then 0L else if i mod 3 = 0 then 2L else 1L in
+  equal ~msg:"ids" (array int64) (Array.init n id) (Nx.to_array g.ids);
+  equal ~msg:"first" (array int64) [| 0L; 25_000L; 25_002L |] (Nx.to_array g.first);
+  equal ~msg:"counts" (array int64) [| 25_000L; 30_000L; 15_000L |]
+    (Nx.to_array g.counts);
+  equal ~msg:"count" int64 3L (Nx.item [] g.count)
+
 (* positions *)
 
 type count_case =
@@ -552,6 +565,18 @@ let test_positions_cases () =
       Nx.positions (Nx.zeros Nx.bool [| 2; 2 |]));
   invalid ~by:"Nx.positions" (fun () ->
       Nx.positions ~size:(-1) (Nx.zeros Nx.bool [| 2 |]))
+
+(* Positions of many: 9000 booleans all true, and counts summing past
+   9000, with [size] and without. *)
+let test_positions_long () =
+  let n = 9000 in
+  equal ~msg:"booleans" (array int64) (Array.init n Int64.of_int)
+    (Nx.to_array (Nx.positions (Nx.create Nx.bool [| n |] (Array.make n true))));
+  let c = Nx.create Nx.int32 [| 3 |] [| 5000l; 4000l; 1l |] in
+  let want = Array.init 9001 (fun j -> if j < 5000 then 0L else if j < 9000 then 1L else 2L) in
+  equal ~msg:"counts" (array int64) want (Nx.to_array (Nx.positions c));
+  equal ~msg:"counts, sized" (array int64) (Array.append want [| 3L; 3L |])
+    (Nx.to_array (Nx.positions ~size:9003 c))
 
 (* argwhere *)
 
@@ -949,11 +974,13 @@ let () =
            [
              prop "groups in order of first appearance" unique_case law_unique;
              test "cases" test_unique_cases;
+             test "70,000 keys" test_unique_long;
            ];
          group "positions"
            [
              prop "each index repeated its count" count_case law_positions;
              test "cases" test_positions_cases;
+             test "9000 positions" test_positions_long;
            ];
          group "argwhere"
            [

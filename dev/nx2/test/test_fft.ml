@@ -482,6 +482,36 @@ module Laws = struct
               types)
           [ `C; `S ])
 
+  (* A float narrower than float32 transforms at float32: rfft of it has
+     the bits of rfft of its float32 cast, and irfft into it is the float32
+     result rounded once. The signal is one where a transform at float64
+     rounded once gives other bits: for rfft at every format, for irfft at
+     float16 and bfloat16, while a float8 result's three bits of fraction
+     store the same from either precision, so there it holds the rounding
+     alone. *)
+  let test_narrow () =
+    let x =
+      Nx.create Nx.float32 [| 256 |]
+        (Array.init 256 (fun i -> 3. *. sin (Float.of_int (i * i))))
+    in
+    let narrow (type s) (dt : (float, s) Nx.dtype) =
+      let h = Nx.cast dt x in
+      let wide = Nx.cast Nx.float32 h in
+      let bins z = Nx.to_array (Nx.bitcast Nx.int32 (Nx.bitcast Nx.float32 z)) in
+      equal ~msg:("rfft of " ^ Nx.Dtype.name dt) (array int32)
+        (bins (Nx.rfft Nx.complex64 wide))
+        (bins (Nx.rfft Nx.complex64 h));
+      let z = Nx.rfft Nx.complex64 wide in
+      let points y = Nx.to_array (Nx.bitcast Nx.int64 (Nx.cast Nx.float64 y)) in
+      equal ~msg:("irfft into " ^ Nx.Dtype.name dt) (array int64)
+        (points (Nx.cast dt (Nx.irfft Nx.float32 z)))
+        (points (Nx.irfft dt z))
+    in
+    narrow Nx.float16;
+    narrow Nx.bfloat16;
+    narrow Nx.float8_e4m3fn;
+    narrow Nx.float8_e5m2
+
   let test_trigonometric_empty () =
     List.iter
       (fun (msg, f) ->
@@ -761,6 +791,8 @@ let () =
              test "s cuts and extends, a part scales alone" Laws.test_sizes;
              Laws.law_trigonometric;
              test "an axis of no element" Laws.test_trigonometric_empty;
+             test "a narrow float transforms at float32, rounded once"
+               Laws.test_narrow;
              test "hann" Laws.test_hann;
              test "frequencies and shifts" Laws.test_frequencies;
              Laws.law_frequencies;

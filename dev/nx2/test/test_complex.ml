@@ -132,13 +132,30 @@ let law_polar fname
         (Nx.to_array z)
   | _ -> ()
 
-(* CR: Five witnesses return without calling either operation. Restrict
-   the ULP laws to float32/float64 and add cases for every narrow witness
-   and both complex formats, with independent libm/domain answers stored
-   by D.of_float. Pick values away from rounding midpoints, signed zeros,
-   branch sides and NaN/inf. Check these stored results exactly. Include
-   complex128 (1e300 + 4e300i): angle must round atan2(4,1), while first
-   converting its parts to float32 gives pi/4. *)
+(* A witness narrower than the parts stores the modulus and argument
+   computed at the parts' format, by the conversion rule: [6 + 8i] of either
+   format, whose modulus [10] every narrow format stores by that rule, and at
+   complex128 [1e300 + 4e300i], whose parts are infinite at float32. Each
+   angle lies away from every narrow format's rounding midpoints, so either
+   precision stores the same bits. *)
+let narrow_witnesses = List.filter (fun (F dt) -> D.bits dt < 32) witnesses
+
+let test_polar_narrow (F w) =
+  let z64 = Nx.create Nx.complex64 [| 1 |] [| { Complex.re = 6.; im = 8. } |] in
+  let z128 =
+    Nx.create Nx.complex128 [| 2 |]
+      [| { Complex.re = 6.; im = 8. }; { re = 1e300; im = 4e300 } |]
+  in
+  let stored = Array.map (D.of_float w) in
+  equal_floats (stored [| 10. |]) (Nx.to_array (Nx.magnitude w z64));
+  equal_floats (stored [| Float.atan2 8. 6. |]) (Nx.to_array (Nx.angle w z64));
+  equal_floats
+    (stored [| 10.; Float.hypot 1e300 4e300 |])
+    (Nx.to_array (Nx.magnitude w z128));
+  equal_floats
+    (stored [| Float.atan2 8. 6.; Float.atan2 4e300 1e300 |])
+    (Nx.to_array (Nx.angle w z128))
+
 let polar =
   [
     prop "magnitude is hypot of the parts, within 3 ulps"
@@ -149,18 +166,27 @@ let polar =
       (law_polar "angle" (fun w z -> Nx.angle w z) (fun re im -> Float.atan2 im re) 3.);
     test "the branch cut and zero" (fun () ->
         let z =
-          Nx.create Nx.complex64 [| 4 |]
+          Nx.create Nx.complex64 [| 7 |]
             [|
               { Complex.re = -1.; im = 0. };
               { re = -1.; im = -0. };
               { re = 0.; im = 0. };
               { re = 3.; im = 4. };
+              { re = -0.; im = 0. };
+              { re = -0.; im = -0. };
+              { re = 0.; im = -0. };
             |]
         in
         equal_floats
-          [| Float.pi; -.Float.pi; 0.; Float.atan2 4. 3. |]
+          [|
+            Float.pi; -.Float.pi; 0.; Float.atan2 4. 3.; Float.pi; -.Float.pi; -0.;
+          |]
           (Nx.to_array (Nx.angle Nx.float64 z));
-        equal_floats [| 1.; 1.; 0.; 5. |] (Nx.to_array (Nx.magnitude Nx.float64 z)));
+        equal_floats [| 1.; 1.; 0.; 5.; 0.; 0.; 0. |]
+          (Nx.to_array (Nx.magnitude Nx.float64 z)));
+    cases ~name:(fun (F w) -> D.name w)
+      "a narrow witness stores the parts' hypot and atan2" narrow_witnesses
+      test_polar_narrow;
     test "a large modulus does not overflow" (fun () ->
         let z = Nx.create Nx.complex64 [| 1 |] [| { Complex.re = 3e38; im = 3e38 } |] in
         equal_floats [| D.of_float D.Float32 (Float.hypot 3e38 3e38) |]

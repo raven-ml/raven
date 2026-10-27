@@ -565,6 +565,19 @@ let test_map_split (n, segments) =
   let y = Nx.map_segments ~segments (split ids) by_owner (split x) in
   equal (array float_exact) whole (Nx.to_array y)
 
+(* Segments far above the positions: each position in range is still its
+   row mapped by its owner, the last segment included, and one out of range
+   is zeros. *)
+let test_map_sparse () =
+  let ids =
+    Nx.create Nx.int64 [| 6 |]
+      [| 3L; Int64.shift_left 1L 40; 0L; -1L; Int64.of_int (max_int - 1); 3L |]
+  in
+  let x = Nx.create Nx.float64 [| 6; 1 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  equal (array float_exact)
+    [| 7.; (3. *. 0x1p40) +. 2.; 3.; 0.; 6. *. 0x1p62; 27. |]
+    (Nx.to_array (Nx.map_segments ~segments:max_int ids by_owner x))
+
 let test_map_doc () =
   let ids = Nx.create Nx.int64 [| 4 |] [| 1L; -1L; 0L; 1L |] in
   let x = Nx.create Nx.float64 [| 4; 1 |] [| 1.; 2.; 3.; 4. |] in
@@ -615,6 +628,7 @@ let maps =
         "split ids and rows give the whole result" [ (8, 2); (16, 1) ]
         test_map_split;
       test "the doc's scaled rows" test_map_doc;
+      test "segments far above the positions" test_map_sparse;
       test "misuse raises" test_map_errors;
       test "f keeps the names of the functions it calls" test_map_callback;
     ]

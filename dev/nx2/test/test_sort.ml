@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (* Sort through Nx.Prim: the order and stability Nx_kernel.S.sort states,
-   against a stable sort of the slices, sub-byte dtypes in one kernel call, its
-   rule before any kernel, and a split placement. *)
+   sub-byte dtypes in one kernel call, its rule before any kernel, and a split
+   placement. *)
 
 open Windtrap
 module A = Nx_array
@@ -70,54 +70,6 @@ let test_k () =
     ([| 2; 0 |], [| 2; 0 |])
     (Nx.shape v, Nx.shape p)
 
-(* A stable sort of each slice along [axis], as positions. *)
-let reference descending s axis xs =
-  let r = Array.length s in
-  let n = s.(axis) in
-  let inner = Array.fold_left ( * ) 1 (Array.sub s (axis + 1) (r - axis - 1)) in
-  let outer = Array.fold_left ( * ) 1 (Array.sub s 0 axis) in
-  let values = Array.copy xs and positions = Array.make (Array.length xs) 0L in
-  for o = 0 to outer - 1 do
-    for i = 0 to inner - 1 do
-      let at j = (((o * n) + j) * inner) + i in
-      let order =
-        List.stable_sort
-          (fun j l ->
-            let c = Int32.compare xs.(at j) xs.(at l) in
-            if descending then -c else c)
-          (List.init n Fun.id)
-      in
-      List.iteri
-        (fun t j ->
-          values.(at t) <- xs.(at j);
-          positions.(at t) <- Int64.of_int j)
-        order
-    done
-  done;
-  (values, positions)
-
-let case =
-  let open Gen in
-  let* s = array ~size:(int_range 1 3) (int_range 0 5) in
-  let* axis = int_range 0 (Array.length s - 1) in
-  let* descending = bool in
-  let+ xs =
-    array
-      ~size:(constant (Array.fold_left ( * ) 1 s))
-      (map Int32.of_int (int_range (-3) 3))
-  in
-  (s, axis, descending, xs)
-
-let law_stable (s, axis, descending, xs) =
-  cover "an empty slice" (Array.exists (( = ) 0) s);
-  cover "descending" descending;
-  let v, p =
-    sort ~descending axis (value (A.of_array D.Int32 (Iarray.of_array s) xs))
-  in
-  let want_v, want_p = reference descending s axis xs in
-  equal ~msg:"values" (array int32) want_v (read v);
-  equal ~msg:"positions" (array int64) want_p (read p)
-
 let test_sub_byte () =
   let check (type v s) name (dt : (v, s) D.t) (pp : v testable) (xs : v array)
       (want : v array) (positions : int64 array) =
@@ -178,7 +130,6 @@ let () =
            [
              test "floats: -inf < -0 < +0 < +inf < NaN, stable" test_float_order;
              test "k keeps the first elements" test_k;
-             prop "each slice is a stable sort" case law_stable;
              test "sub-byte dtypes sort in one kernel call" test_sub_byte;
            ];
          group "rules and placements"

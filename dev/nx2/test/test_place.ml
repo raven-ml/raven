@@ -333,6 +333,9 @@ let sharing =
       narrow "bool" A.Dtype.Bool (fun i -> i mod 2 = 0);
     ]
 
+(* An operation of a kind, on a value of any set. *)
+type kind = { run : 'd. (float, A.Dtype.float32_elt, 'd) Nx.t -> unit }
+
 let refusals =
   group "refusals"
     [
@@ -351,6 +354,33 @@ let refusals =
           equal (array int) [| 4 |] (Nx.shape x);
           equal string "nx-place-lost"
             (Format.asprintf "%a" Nx.Placement.pp (Option.get (Nx.placement x))));
+      test "every kind of operation raises a lost device, and a live one answers"
+        (fun () ->
+          let d = Result.get_ok (Rig.memory_device "nx-place-lost-ops") in
+          let e = Result.get_ok (Rig.memory_device "nx-place-live-ops") in
+          let module L = (val Nx.devices [ d ]) in
+          let module E = (val Nx.devices [ e ]) in
+          let square on =
+            Nx.place on (Nx.create Nx.float32 [| 2; 2 |] [| 4.; 1.; 2.; 3. |])
+          in
+          let x = square L.on and y = square E.on in
+          Rig.close d;
+          let lost = function Rig.Lost (t, _) -> Rig.equal t d | _ -> false in
+          let kinds =
+            [
+              ("map", { run = (fun x -> ignore (Nx.neg x)) });
+              ("reduce", { run = (fun x -> ignore (Nx.sum x)) });
+              ("contract", { run = (fun x -> ignore (Nx.matmul x x)) });
+              ("sort", { run = (fun x -> ignore (Nx.sort x)) });
+              ("fft", { run = (fun x -> ignore (Nx.rfft Nx.complex64 x)) });
+              ("lu", { run = (fun x -> ignore (Nx.lu x)) });
+            ]
+          in
+          List.iter
+            (fun (name, k) ->
+              raises_match ~msg:name lost (fun () -> k.run x);
+              k.run y)
+            kinds);
     ]
 
 (* Reshapes of a cut value. A reshape pairs the axes of one product of the

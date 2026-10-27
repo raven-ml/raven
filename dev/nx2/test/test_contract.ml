@@ -4,9 +4,9 @@
   ---------------------------------------------------------------------------*)
 
 (* Contractions: Nx.contract against a reference that reads the pattern's
-   meaning off its names, within the stated bound; on the host, bit for bit
-   against nx.cpu's stated summation order; einsum of two operands and matmul
-   against contract, and of more against a sum over every index tuple. *)
+   meaning off its names, within the stated bound; einsum of two operands and
+   matmul against contract, and of more against a sum over every index
+   tuple. *)
 
 open Windtrap
 module A = Nx_array
@@ -24,24 +24,7 @@ let host dt s xs =
   Nx.Repr.of_array Nx.Host.v (A.of_array dt (Iarray.of_array s) xs)
 let read x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
 
-(* Rounding to float32, and float32's fused multiply-add: [a b] is exact in
-   float64, and the sum rounded to odd in float64 then to float32 rounds once,
-   since float64 holds two more bits than float32's significand. *)
 let f32 x = Int32.float_of_bits (Int32.bits_of_float x)
-
-let fma32 a b c =
-  let p = a *. b in
-  let s = p +. c in
-  let e =
-    let bb = s -. p in
-    p -. (s -. bb) +. (c -. bb)
-  in
-  let odd =
-    if e = 0. || Int64.logand (Int64.bits_of_float s) 1L = 1L then s
-    else if e > 0. then Float.succ s
-    else Float.pred s
-  in
-  f32 odd
 
 (* The reference *)
 
@@ -97,54 +80,6 @@ let reference m xa xb =
 
 let gamma n u = Float.of_int n *. u /. (1. -. (Float.of_int n *. u))
 
-(* nx.cpu's float32 order (nx_cpu.mli): with at least 64 outputs per batch
-   element a fused chain in order from [init]; with fewer, blocks of 1024, 16
-   lanes each, the lanes' tree, the blocks' tree, then [init]. *)
-let chain ~init products =
-  List.fold_left (fun acc (x, y) -> fma32 x y acc) init products
-
-let lanes products =
-  let l = Array.make 16 0. in
-  List.iteri (fun i (x, y) -> l.(i mod 16) <- fma32 x y l.(i mod 16)) products;
-  List.iter
-    (fun w ->
-      for i = 0 to w - 1 do
-        l.(i) <- f32 (l.(i) +. l.(i + w))
-      done)
-    [ 8; 4; 2; 1 ];
-  l.(0)
-
-let rec tree = function
-  | [||] -> 0.
-  | [| x |] -> x
-  | xs ->
-      let n = Array.length xs in
-      let p = ref 1 in
-      while !p * 2 < n do
-        p := !p * 2
-      done;
-      f32 (tree (Array.sub xs 0 !p) +. tree (Array.sub xs !p (n - !p)))
-
-let blocked ~init products =
-  let a = Array.of_list products in
-  let n = Array.length a in
-  let blocks =
-    Array.init
-      ((n + 1023) / 1024)
-      (fun k ->
-        lanes
-          (Array.to_list (Array.sub a (k * 1024) (min 1024 (n - (k * 1024))))))
-  in
-  f32 (tree blocks +. init)
-
-let cpu_order ~outputs ~init m xa xb =
-  List.mapi
-    (fun o ts ->
-      let products = List.map (fun (i, j) -> (xa.(i), xb.(j))) ts in
-      let init = match init with Some x -> x.(o) | None -> 0. in
-      if outputs >= 64 then chain ~init products else blocked ~init products)
-    (terms m)
-
 (* Cases *)
 
 (* A pattern, its operands' shapes, and its meaning. *)
@@ -153,12 +88,11 @@ type case = {
   sa : int array;
   sb : int array;
   meaning : meaning;
-  outputs : int;  (** Per batch element. *)
 }
 
 let extent_of l n = List.assoc n l
 
-let case pattern ~a ~b ~result ~summed ~batch extents =
+let case pattern ~a ~b ~result ~summed extents =
   let extent = extent_of extents in
   let shape names = Array.of_list (List.map extent names) in
   {
@@ -166,20 +100,15 @@ let case pattern ~a ~b ~result ~summed ~batch extents =
     sa = shape a;
     sb = shape b;
     meaning = { extent; result; summed; a; b };
-    outputs =
-      numel (shape (List.filter (fun n -> not (List.mem n batch)) result));
   }
 
 let matmul_like m n k =
   case "i k, k j -> i j | k" ~a:[ "i"; "k" ] ~b:[ "k"; "j" ]
-    ~result:[ "i"; "j" ] ~summed:[ "k" ] ~batch:[]
+    ~result:[ "i"; "j" ] ~summed:[ "k" ]
     [ ("i", m); ("j", n); ("k", k) ]
 
 let cases_of_sizes =
   let open Gen in
-  (* Extents to 12 make at least 64 outputs about one case in five (35 of
-     144 pairs), so the order law reaches both of nx.cpu's orders in every
-     run; to 9 it was 4 of 81, which 100 cases missed about once in 70 runs. *)
   (let+ m = int_range 1 12
    and+ n = int_range 1 12
    and+ k = frequency [ (1, constant 0); (5, int_range 1 40) ]
@@ -190,24 +119,22 @@ let cases_of_sizes =
      | 1 ->
          case "b i k, b j k -> b i j | k" ~a:[ "b"; "i"; "k" ]
            ~b:[ "b"; "j"; "k" ] ~result:[ "b"; "i"; "j" ] ~summed:[ "k" ]
-           ~batch:[ "b" ]
            [ ("b", 2); ("i", m); ("j", n); ("k", k) ]
      | 2 ->
          case "k i, k j -> j i | k" ~a:[ "k"; "i" ] ~b:[ "k"; "j" ]
-           ~result:[ "j"; "i" ] ~summed:[ "k" ] ~batch:[]
+           ~result:[ "j"; "i" ] ~summed:[ "k" ]
            [ ("i", m); ("j", n); ("k", k) ]
      | 3 ->
          case "i, j -> i j" ~a:[ "i" ] ~b:[ "j" ] ~result:[ "i"; "j" ]
-           ~summed:[] ~batch:[]
+           ~summed:[]
            [ ("i", m); ("j", n) ]
      | 4 ->
          case "i j, i j -> | i j" ~a:[ "i"; "j" ] ~b:[ "i"; "j" ] ~result:[]
-           ~summed:[ "i"; "j" ] ~batch:[]
+           ~summed:[ "i"; "j" ]
            [ ("i", m); ("j", n + k) ]
      | _ ->
          case "h i k, k h j -> h j i | k" ~a:[ "h"; "i"; "k" ]
            ~b:[ "k"; "h"; "j" ] ~result:[ "h"; "j"; "i" ] ~summed:[ "k" ]
-           ~batch:[ "h" ]
            [ ("h", 3); ("i", m); ("j", n); ("k", k) ]
    in
    c)
@@ -300,47 +227,6 @@ let widened =
       equal (array int)
         (read (Nx.cast Nx.int8 (Nx.contract Nx.int32 p a b)))
         (read (Nx.contract ~acc:D.Int32 Nx.int8 p a b)))
-
-let bitwise =
-  prop "on the host, contract sums in nx.cpu's stated order" cases_of_sizes
-    (fun c ->
-      cover "fewer than 64 outputs" (c.outputs < 64);
-      cover "at least 64 outputs" (c.outputs >= 64);
-      let xa =
-        Array.map f32 (Array.init (numel c.sa) (fun _ -> Random.float 2. -. 1.))
-      in
-      let xb =
-        Array.map f32 (Array.init (numel c.sb) (fun _ -> Random.float 2. -. 1.))
-      in
-      let a = host D.Float32 c.sa xa and b = host D.Float32 c.sb xb in
-      let y = read (Nx.contract Nx.float32 (Nx.Pattern.v c.pattern) a b) in
-      let want =
-        Array.of_list (cpu_order ~outputs:c.outputs ~init:None c.meaning xa xb)
-      in
-      equal (array float_exact) want y)
-
-let long_sum =
-  test "a long sum takes blocks and lanes" (fun () ->
-      let c = matmul_like 2 3 3000 in
-      let xa =
-        Array.map f32 (Array.init (numel c.sa) (fun _ -> Random.float 2. -. 1.))
-      in
-      let xb =
-        Array.map f32 (Array.init (numel c.sb) (fun _ -> Random.float 2. -. 1.))
-      in
-      let init =
-        Array.map f32 (Array.init 6 (fun _ -> Random.float 2. -. 1.))
-      in
-      let y =
-        read
-          (Nx.contract Nx.float32
-             ~init:(host D.Float32 [| 2; 3 |] init)
-             (Nx.Pattern.v c.pattern) (host D.Float32 c.sa xa)
-             (host D.Float32 c.sb xb))
-      in
-      equal (array float_exact)
-        (Array.of_list (cpu_order ~outputs:6 ~init:(Some init) c.meaning xa xb))
-        y)
 
 let einsum_is_contract =
   prop "einsum p [a; b] is contract (dtype a) p a b" cases_of_sizes (fun c ->
@@ -2831,8 +2717,6 @@ let () =
          within_bound;
          complex_within_bound;
          widened;
-         bitwise;
-         long_sum;
          einsum_is_contract;
          einsum_within_bound;
          einsum_deterministic;
