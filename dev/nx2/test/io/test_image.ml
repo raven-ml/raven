@@ -305,11 +305,6 @@ let files =
           let whole = read (fixture name) in
           prefixes_fail Nx_io.load_image whole;
           flips_load_or_fail Nx_io.load_image whole);
-      test "without overwrite, a save to a path that names a file fails"
-        (fun () ->
-          let path = file ~suffix:".png" "old" in
-          fails ~path (fun () -> Nx_io.save_image ~overwrite:false path tiny);
-          equal string "old" (read path));
     ]
 
 let () = exit (run "nx.io images" [ png_chunks; round_trips; files ])

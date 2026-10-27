@@ -58,16 +58,12 @@
     before the next is read. A text file also holds its value's elements as an
     OCaml array, and an image file its encoded bytes.
 
-    A save writes a new file beside its path, orders the file's bytes before
-    every later change to the file system, then renames it over the path and
-    syncs the directory. After a crash, the path holds what it held before or
-    the whole new file, and a save that fails leaves it as it was and nothing
-    beside it, except where the rename is refused: the new file is then kept,
-    and the [Failure] names it. Every save takes [?overwrite], which defaults to
-    [true]. With [~overwrite:false] the new file is linked to the path, which
-    fails if the path names something; on a file system without hard links, such
-    as FAT, the path is checked and then the file renamed, so a file another
-    process puts at the path between the two is replaced.
+    A save replaces what its path names. It writes a new file beside the path,
+    orders the file's bytes before every later change to the file system, then
+    renames it over the path and syncs the directory. After a crash, the path
+    holds what it held before or the whole new file, and a save that fails
+    leaves it as it was and nothing beside it, except where the rename is
+    refused: the new file is then kept, and the [Failure] names it.
 
     {b Errors.} A file that cannot be read or written, or whose contents break
     its format, raises [Failure] whose message starts with the file's path, as
@@ -222,7 +218,7 @@ end
 val load_npy : string -> Nx.host Nx.packed
 (** [load_npy path] is the array of the npy file [path]. *)
 
-val save_npy : ?overwrite:bool -> string -> ('v, 's, 'd) Nx.t -> unit
+val save_npy : string -> ('v, 's, 'd) Nx.t -> unit
 (** [save_npy path x] writes [x] to the npy file [path], in version 1.0, or 2.0
     where its header needs more than 65,535 bytes.
 
@@ -242,7 +238,7 @@ val load_npz_entry : name:string -> string -> Nx.host Nx.packed
     Raises [Failure] also if [path] has no entry [name], or its checksum does
     not match. *)
 
-val save_npz : ?overwrite:bool -> string -> 'd Archive.t -> unit
+val save_npz : string -> 'd Archive.t -> unit
 (** [save_npz path a] writes [a]'s arrays to the npz file [path]. Each entry is
     compressed with DEFLATE if that shrinks its first 64 KiB, and stored
     otherwise.
@@ -272,7 +268,7 @@ val load_safetensors : string -> Nx.host Archive.t
     array twice or with an empty name, or if the file's length differs from the
     one its header describes, as a partial download's does. *)
 
-val save_safetensors : ?overwrite:bool -> string -> 'd Archive.t -> unit
+val save_safetensors : string -> 'd Archive.t -> unit
 (** [save_safetensors path a] writes [a]'s arrays to the SafeTensors file
     [path], ordered as the format's reference implementation orders them: by
     dtype, in the order U64, I64, F64, F32, U32, I32, BF16, F16, U16, I16,
@@ -433,7 +429,6 @@ val save_txt :
   ?header:string ->
   ?footer:string ->
   ?comments:string ->
-  ?overwrite:bool ->
   string ->
   ('v, 's, 'd) Nx.t ->
   unit
@@ -476,7 +471,7 @@ val load_image : string -> Nx.host Nx.uint8_t
     Raises [Failure] also if the file is neither a PNG nor a JPEG stream, or if
     a checksum does not match. *)
 
-val save_image : ?overwrite:bool -> string -> 'd Nx.uint8_t -> unit
+val save_image : string -> 'd Nx.uint8_t -> unit
 (** [save_image path x] writes the image [x] to [path], as PNG for the
     extension [.png] and as JPEG for [.jpg] and [.jpeg], in any case. PNG holds
     1 to 4 channels at 8 bits, so every image {!load_image} reads from a PNG

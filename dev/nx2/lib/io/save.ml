@@ -6,12 +6,9 @@
 (* A save leaves, after a crash, the file it replaces or the whole new one: the
    new file is written beside [path], synced, then named [path], and the
    directory is synced. The order is SQLite's for its journal (os_unix.c,
-   unixSync): the file's sync, then its directory's. A file that must not
-   replace one is linked to [path], which fails if [path] exists, then its
-   temporary name removed, as Git places an object (object-file.c,
-   finalize_object_file).
+   unixSync): the file's sync, then its directory's.
 
-   write temp --> sync temp --> rename / link to path --> sync directory *)
+   write temp --> sync temp --> rename to path --> sync directory *)
 
 let remove_if_exists path = try Sys.remove path with Sys_error _ -> ()
 let prng = Domain.DLS.new_key Random.State.make_self_init
@@ -56,20 +53,6 @@ let replace temp path =
     Gc.full_major ();
     Unix.rename temp path
 
-(* A file system without hard links, such as FAT, refuses [link]: the name is
-   then checked and the file renamed, as Git does, so that a file put at [path]
-   between the two is replaced. *)
-(* Once the link is made the file is at [path]: a temporary name left by a
-   failed unlink is a second name for it. *)
-let add temp path =
-  let exists () = Fail.failf "the path names a file, and overwrite is false" in
-  match Unix.link temp path with
-  | () -> ( try Unix.unlink temp with Unix.Unix_error _ -> ())
-  | exception Unix.Unix_error (EEXIST, _, _) -> exists ()
-  | exception Unix.Unix_error _ ->
-      if Sys.file_exists path then exists ();
-      Unix.rename temp path
-
 (* [written fd f] is [f fd] then a sync of [fd], and closes [fd] whatever
    happens; the first failure among the three raises. *)
 let written fd f =
@@ -82,26 +65,19 @@ let written fd f =
       (try Unix.close fd with Unix.Unix_error _ -> ());
       raise exn
 
-let write ~overwrite path f =
+let write path f =
   Fail.file path @@ fun () ->
-  (* An existing [path] fails before the file is written; the link that places
-     it is the check that holds. *)
-  if (not overwrite) && Sys.file_exists path then
-    Fail.failf "the path names a file, and overwrite is false";
   let temp, fd = sibling path in
   (match written fd f with
   | () -> ()
   | exception exn ->
       remove_if_exists temp;
       raise exn);
-  (match if overwrite then replace temp path else add temp path with
+  (match replace temp path with
   | () -> ()
-  | exception Unix.Unix_error (e, "rename", _) when overwrite ->
+  | exception Unix.Unix_error (e, _, _) ->
       Fail.failf "cannot be replaced (%s); the new file is %s"
-        (Unix.error_message e) temp
-  | exception exn ->
-      remove_if_exists temp;
-      raise exn);
+        (Unix.error_message e) temp);
   sync_dir (Filename.dirname path)
 
 (* [string fd s] writes [s] to [fd]. *)

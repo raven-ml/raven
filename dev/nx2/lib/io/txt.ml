@@ -264,7 +264,7 @@ let fields sep line =
 (* The text is written to the file in chunks of about [chunk] bytes. *)
 let chunk = 65536
 
-let save ~sep ~newline ~header ~footer ~comments ~overwrite path x =
+let save ~sep ~newline ~header ~footer ~comments path x =
   let by = "Nx_io.save_txt" in
   let dt = Nx.dtype x in
   let print = match printer dt with Some p -> p | None -> refuse ~by dt in
@@ -274,7 +274,7 @@ let save ~sep ~newline ~header ~footer ~comments ~overwrite path x =
       (Array.length shape);
   let values = Fail.renamed ~by Nx.to_array x in
   let cols = match shape with [| _; c |] -> c | [| c |] -> c | _ -> 1 in
-  Save.write ~overwrite path @@ fun fd ->
+  Save.write path @@ fun fd ->
   let b = Buffer.create chunk in
   let drain () =
     Save.string fd (Buffer.contents b);

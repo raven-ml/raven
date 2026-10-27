@@ -45,14 +45,10 @@ let saves =
           Nx_io.save_npy path x;
           Nx_io.save_npy path x;
           equal (array string) [| "x.npy" |] (Sys.readdir dir));
-      test "without overwrite, a save to a path that names a file fails"
-        (fun () ->
+      test "a save replaces the file its path names" (fun () ->
           let path = file "old" in
-          fails ~path (fun () -> Nx_io.save_npy ~overwrite:false path x);
-          equal string "old" (read path);
-          let fresh = Filename.concat (temp_dir ()) "x.npy" in
-          Nx_io.save_npy ~overwrite:false fresh x;
-          equal packed (Nx.P x) (Nx_io.load_npy fresh));
+          Nx_io.save_npy path x;
+          equal packed (Nx.P x) (Nx_io.load_npy path));
       test "a save into a missing directory fails, naming the path" (fun () ->
           let path = Filename.concat (temp_dir ()) "missing/x.npy" in
           fails ~path (fun () -> Nx_io.save_npy path x));

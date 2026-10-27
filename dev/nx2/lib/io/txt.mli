@@ -11,7 +11,6 @@ val save :
   header:string option ->
   footer:string option ->
   comments:string ->
-  overwrite:bool ->
   string ->
   ('v, 's, 'd) Nx.t ->
   unit
