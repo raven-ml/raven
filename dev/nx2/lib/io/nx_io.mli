@@ -5,85 +5,89 @@
 
 (** Arrays to and from files.
 
-    A file holds one array, as npy and text files do, or {e named} arrays, as
-    npz, SafeTensors and GGUF files do. A file of named arrays is read and
-    written as an {!Archive.t}, and each format's functions are named after it.
+    A file holds one array, as npy and text files do, or several arrays under
+    names, as npz, SafeTensors and GGUF files do. A name and its array are an
+    {e entry}. Entries are read and written as an {!Archive.t}.
 
-    An {e image} is a [uint8] array of shape [[|h; w; c|]], [c] one for grey,
-    two for grey and alpha, three for RGB, four for RGBA, first row at the top.
-    A PNG or JPEG file holds one image.
+    An {e image} is a [uint8] array of shape [[|h; w; c|]], first row at the
+    top, with [c] 1 for grey, 2 for grey and alpha, 3 for RGB and 4 for RGBA.
 
-    {b Loading.} A loader reads the file's header and returns host values
-    ({!Nx.Host}). An array whose bytes lie in the file in an order nx reads (C
-    order, or Fortran order for npy), little-endian, at an offset that is a
-    multiple of its element's alignment, is a value over the file's own pages:
-    loading reads none of its bytes, except to check an npz entry's checksum,
-    and the host reads them where they lie when a computation needs them.
-    {!Nx.place} of such a value onto a device that addresses host memory, such
-    as Metal's, shares the pages, and onto any other device copies them
-    ({!Rig.reaches}). Any other array (a compressed npz entry, a big-endian one,
-    one at a misaligned offset, an image) is read at load into host memory of
-    its own, where its donation may write its result ({!Nx.donate}). No
-    donation of a value over the file's pages writes them.
+    {b Loading.} A load returns host values ({!Nx.Host}). Where the system can
+    map the file, a load returns each array whose elements lie in the file in
+    the host's byte order and in C order (or Fortran order, for npy), at an
+    offset that is a multiple of their alignment, as a value over the file's
+    pages, a {e mapped} value. {!Nx.place} shares the pages with a device that
+    addresses host memory and copies them to any other ({!Rig.reaches}). A
+    donation of a mapped value writes its result to new memory ({!Nx.donate}).
 
-    A file stays open while a value over its pages is reachable, and its values
-    see the file that was opened: a save to its path, which puts a new file
-    there, leaves them their values.
-    {b The file must not change in place while a value loaded from it is alive}:
-    rewriting it may change their values, and what a value over its pages
-    reads from a page that a truncation of the file cut off is unspecified: on
-    Linux the read ends the process ([SIGBUS]), and on macOS it reads the
-    bytes the page held. A copy of such a value's bytes, as {!Nx.place} makes
-    onto a device whose memory the host does not address, raises [Sys_error]
-    naming the file. A value read into memory of its own is not affected.
-    On Windows a file whose pages are mapped can be neither deleted nor
-    replaced until its values are collected.
+    Any other array of a file the system maps, such as a compressed npz entry, a
+    misaligned one or an image, is read at load into memory of its own, where
+    its donation may write its result. The arrays of a file the system cannot
+    map are read at load into memory. An entry of a dtype nx lacks loads as its
+    bytes at [uint8], at the shape its format's section states, and an entry
+    with no elements is an empty array of that shape.
 
-    {b Saving.} A save takes a value of any set. An npy, npz or SafeTensors
-    save writes its elements in C order, little-endian, and a text save in C
-    order. An image save encodes its pixels row by row from the top. A save
-    reads the value on the host for the extent of the save ({!Nx.Repr.read}):
-    in the value's own memory where the host addresses it, and otherwise in a
-    copy, made once the value's set has computed it. It leaves the value's
-    memory unshared, so a later donation of the value may write its result
-    there ({!Nx.donate}).
+    A mapped value keeps its file mapped while it is reachable, and reads the
+    file that was opened, so a save to its path leaves it its elements.
+    {b The file must not change in place while a mapped value from it is
+       reachable.} A change may show in the value's elements, and a truncation
+    may end the process. A later copy of such a value to a device whose memory
+    the host does not address ({!Nx.place}) may then raise [Sys_error] naming
+    the file, as may one after a save has replaced the file while over 64 files
+    are open ({!Rig_disk.section-borrows}, {!Rig_disk.section-descriptors}).
 
-    A save holds on the host, beyond the value's own memory, a copy of each
-    value the host does not address, a C-order copy of each value not in C
-    order, and on a big-endian host a copy with each element's bytes swapped. It
-    holds one value's copies at a time: a value off the host and out of C order
-    takes up to twice its bytes, an npy file's peak is its value's, and an npz
-    or SafeTensors file's is its largest entry's, since each entry is written
-    before the next is read. A text file also holds its value's elements as an
-    OCaml array, and an image file its encoded bytes.
+    {b Saving.} A save takes a value of any set. An npy, npz or SafeTensors save
+    writes the elements in C order and little-endian, and a text save in C
+    order. A save reads the value's own memory where the host addresses it, and
+    leaves that memory unshared, so a later donation of the value may write its
+    result there ({!Nx.Repr.read}).
 
-    A save replaces what its path names. It writes a new file beside the path,
-    orders the file's bytes before every later change to the file system, then
-    renames it over the path and syncs the directory. After a crash, the path
-    holds what it held before or the whole new file, and a save that fails
-    leaves it as it was and nothing beside it, except where the rename is
-    refused: the new file is then kept, and the [Failure] names it. On POSIX
-    systems the new file has the permissions [0o666] less the umask, whatever
-    the file it replaces had.
+    A save copies onto the host a value off the host or out of C order, and on a
+    big-endian host one whose bytes it swaps. On a little-endian host, a value
+    off the host and out of C order takes up to twice its bytes. An npz or
+    SafeTensors save writes each entry before it reads the next.
 
-    {b Errors.} A file that cannot be read or written, or whose contents break
-    its format, raises [Failure] whose message starts with the file's path, as
-    in ["w.npy: the file ends inside its header"], and so does a load from a
-    path that names no regular file, such as a directory or a FIFO. A value, a
-    name or an argument a format cannot hold raises [Invalid_argument] naming
-    the function, as in ["Nx_io.save_npy: npy has no bfloat16"], and so does a
-    value traced by an interpretation, which has no bytes to write. *)
+    A save replaces what its path names with a new file it renames over the
+    path. After a crash, the path holds the old file or the whole new one,
+    except on a file system with neither a write barrier nor a flush of the
+    drive's cache, such as some network file systems on macOS, where the order
+    is the file system's own. A save that fails before the rename leaves the
+    path as it was and nothing beside it. A refused rename keeps the new file,
+    which the [Failure] names. Windows refuses it while a mapped value from the
+    old file is reachable ({!Rig_disk.section-borrows}). A failed sync of the
+    directory after the rename raises [Failure] with the new file at the path.
+    On POSIX systems the new file has the permissions [0o666] less the umask.
+
+    {b Defaults.} A load blocks until it has read the file's header and the
+    elements of each value it returns that is not mapped. A save blocks until
+    the value's set has computed it and the new file is at its path. Domains may
+    load one path concurrently. Concurrent saves to one path each write a whole
+    file, and the last rename wins.
+
+    This writes a vector to an npy file and reads it back, and {!Nx.unpack}
+    checks the dtype the file states:
+    {[
+    let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+    Nx_io.save_npy "x.npy" x;
+    Nx.unpack Nx.float32 (Nx_io.load_npy "x.npy")
+    ]} *)
 
 (** {1:archives Archives} *)
 
-(** Archives of named arrays.
+(** Archives of entries.
 
-    An archive is an immutable collection of values of one set, keyed by
-    distinct, non-empty names. A value enters and leaves an archive through its
-    structure ({!Nx.Ptree}): {!of_value} names each array by its path under a
-    prefix, and {!to_value} reads a value back into the shape and the placement
-    of one the program already has. Two values with different prefixes share one
-    file:
+    An archive is an immutable collection of entries with distinct, non-empty
+    names, whose arrays lie on one set. A structure ({!Nx.Ptree}) enters an
+    archive with {!Archive.of_value}, which names each array by a prefix, a dot
+    and the array's path ({!Nx.Ptree.Path.to_string}), as ["model.blocks.0.w"].
+    An empty prefix, the default, is left out with its dot, and so are the dot
+    and the empty path of an array at the root.
+
+    Under a prefix [p], a value {e owns} [p], every name that starts with [p]
+    and a dot, and, for an empty [p], every name. {!Archive.to_value} reads the
+    entries a value owns back into the shape and the placement of one the
+    program already has, and ignores the others, so one file can store several
+    values under distinct prefixes:
 
     {[
     let checkpoint = Nx_io.Archive.union [
@@ -95,9 +99,9 @@
         (Nx_io.load_safetensors path)
     ]}
 
-    A file written elsewhere has its own names and layouts. Its importer asks
-    for each entry by name, shape and dtype with {!tensor} and {!float}, and
-    rearranges it with nx:
+    Code that reads a file another program wrote, an {e importer}, asks for each
+    entry by name, shape and dtype with {!Archive.tensor} and {!Archive.float},
+    and rearranges it with nx:
 
     {[
     let linear a ~inputs ~outputs name =
@@ -106,9 +110,11 @@
         (Nx_io.Archive.float ~shape:[| outputs; inputs |] Nx.float32 name a)
     ]}
 
-    Asking for an entry reads none of its bytes. Bytes are never reinterpreted:
-    only {!float} converts, and a block-quantised or sub-byte entry is read as
-    [uint8] with {!tensor}.
+    Asking for an entry reads none of its bytes, except {!Archive.float} when it
+    converts. Only {!Archive.float} converts an entry's dtype. A block-quantised
+    or sub-byte entry is read as [uint8] with {!Archive.tensor}. An 8-bit float
+    entry is read with {!Archive.tensor} too, since its scales are other
+    entries.
 
     An archive is input data, so a mismatch between an archive and what is asked
     of it raises [Failure], naming the entry. *)
@@ -147,23 +153,20 @@ module Archive : sig
     string ->
     'd t ->
     (float, 's, 'd) Nx.t
-  (** [float ~shape dt name a] is [a]'s entry [name] at [dt]: the entry as
+  (** [float ~shape dt name a] is [a]'s entry [name] at [dt]. It is the entry as
       stored when its dtype is [dt], and otherwise its cast ({!Nx.cast}), which
-      allocates. Both dtypes are float16, bfloat16, float32 or float64. An
-      importer that ties two weights binds the result once and uses it twice.
+      allocates and reads every element. It converts between float16, bfloat16,
+      float32 and float64. Each call that casts makes a new value, so an
+      importer calls [float] once for two tied weights.
 
       Raises [Invalid_argument] if [dt] is not one of the four. Raises [Failure]
       naming the entry if [a] has no entry [name], if its shape is not [shape],
-      or if its dtype is not one of the four. An 8-bit float entry is read with
-      {!tensor}, since its scales are other entries. *)
+      or if its dtype is not one of the four. *)
 
   val of_value : ?prefix:string -> ('s, 'd) Nx.Ptree.t -> 's -> 'd t
-  (** [of_value ~prefix s x] has one entry for each array [s] walks in [x],
-      fixed arrays included, named by [prefix], a dot and its path
-      ({!Nx.Ptree.Path.to_string}), as ["model.blocks.0.w"]. An empty [prefix]
-      (the default) and its dot are left out, and so are the dot and the empty
-      path of an array at the root. The entries are [x]'s arrays; nothing is
-      copied.
+  (** [of_value ~prefix s x] is the archive with one entry for each array [s]
+      walks in [x], fixed arrays included, named under [prefix] as the module's
+      preamble states. The entries are [x]'s arrays, and nothing is copied.
 
       Raises [Invalid_argument] if two arrays of [x] have one name, as in
       ["Nx_io.Archive.of_value: w: two arrays have this name"], or if a name is
@@ -171,118 +174,118 @@ module Archive : sig
 
   val to_value : ?prefix:string -> ('s, 'd) Nx.Ptree.t -> like:'s -> 'e t -> 's
   (** [to_value ~prefix s ~like a] is [like] with each array replaced by [a]'s
-      entry of its name under [prefix], as {!of_value} names it, placed where
-      [like]'s array lies ({!Nx.place}). [like] gives the structure, the dtypes,
-      the shapes and the placements, and its arrays are discarded: a value is
-      read back with [like]'s list lengths, option presences and cases. For
-      values [x] and [y] with equal {!Nx.Ptree.val-visits}, dtypes, shapes and
-      placements, [to_value ~prefix s ~like:y (of_value ~prefix s x)] is [x].
-
-      [like] owns [prefix] and every name that starts with [prefix] and a dot,
-      and every name with an empty [prefix], the default. Each entry it owns
-      must be named by one of its arrays. Entries it does not own are ignored
-      and never moved, so one file holds several values.
+      entry of its name under [prefix], placed where [like]'s array lies
+      ({!Nx.place}). [like] gives the structure, with its list lengths, option
+      presences and variant cases, and each array's dtype, shape and placement.
+      Its arrays' elements are not read. For values [x] and [y] with equal
+      {!Nx.Ptree.val-visits}, dtypes, shapes and placements,
+      [to_value ~prefix s ~like:y (of_value ~prefix s x)] is [x].
 
       Raises [Failure], naming the entry, before any entry is placed:
-      - if an entry [like] names is missing, as in
-        ["Nx_io.Archive.to_value: model.l1.w: no entry in the archive, an array
-         in the value"];
-      - if its shape or dtype differs, as in
-        ["Nx_io.Archive.to_value: model.l1.w: shape [3] in the archive, [2; 3]
-         in the value"];
-      - if an entry [like] owns is named by none of its arrays, as in
-        ["Nx_io.Archive.to_value: blocks.1.b: an entry in the archive, no array
-         in the value"]. A model of one block refuses a file of 24.
+      - if an entry [like] names is missing;
+      - if its shape or dtype differs;
+      - if an entry [like] owns is named by none of its arrays.
 
-      Nothing is converted: a value that states another dtype than the archive
-      fails instead of narrowing its state, and {!float} converts by name.
-
-      Raises [Invalid_argument] as {!of_value} does if [like]'s names are not
-      distinct and non-empty, and, naming the entry, if an array of [like] is a
-      value of every set, which has no placement. *)
+      Raises [Invalid_argument] as {!of_value} does for [like]'s names, and,
+      naming the entry, for an array of [like] of every set, which lies on no
+      device. *)
 end
 
 (** {1:numpy NumPy formats}
 
     An npy file holds one array, and an npz file is a zip archive of npy files,
-    each entry named by its array's name and [.npy]. npy holds the dtypes
-    float16, float32, float64, the signed and unsigned integers of 8 to 64 bits,
-    complex64, complex128 and bool. Loading reads the format's versions 1.0, 2.0
-    and 3.0, in either byte order and either axis order, and an npz entry stored
-    or compressed with DEFLATE.
+    each named by its entry's name and [.npy]. npy stores float16, float32,
+    float64, the signed and unsigned integers of 8 to 64 bits, complex64,
+    complex128 and bool. A load reads the format's versions 1.0, 2.0 and 3.0, in
+    either byte order and either axis order, and an npz entry stored or
+    compressed with DEFLATE.
 
-    The format is NumPy's NEP 1,
+    Versions 1.0 and 2.0 are NumPy's NEP 1,
     {{:https://numpy.org/neps/nep-0001-npy-format.html}A simple file format for
-     NumPy arrays}, and the zip container is PKWARE's
+     NumPy arrays}, and version 3.0 is that of
+    {{:https://numpy.org/doc/stable/reference/generated/numpy.lib.format.html}
+     numpy.lib.format}. The zip container is PKWARE's
     {{:https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT}APPNOTE}
     without encryption or several disks. *)
 
 val load_npy : string -> Nx.host Nx.packed
 (** [load_npy path] is the array of the npy file [path]. It is packed because
-    the file states its dtype, which [Nx.unpack dt] asserts ({!Nx.unpack}). *)
+    the file states its dtype, which [Nx.unpack dt] checks ({!Nx.unpack}). *)
 
 val save_npy : string -> ('v, 's, 'd) Nx.t -> unit
 (** [save_npy path x] writes [x] to the npy file [path], in version 1.0, or 2.0
     where its header needs more than 65,535 bytes.
 
-    Raises [Invalid_argument] if npy has no dtype for [x]'s; for [bit], the
+    Raises [Invalid_argument] if npy does not store [x]'s dtype. For [bit], the
     message names [Nx.cast Nx.bool], which stores a byte per element. *)
 
 val load_npz : string -> Nx.host Archive.t
-(** [load_npz path] is the arrays of the npz file [path], named without the
+(** [load_npz path] is the entries of the npz file [path], named without the
     [.npy] suffix. Entries of other names are ignored. It reads every npy
     entry's bytes, since each entry's checksum covers all of them.
 
-    Raises [Failure] also if a checksum does not match its entry. *)
+    Raises [Failure] as {!section-errors} states, and if a checksum does not
+    match its entry. *)
 
 val save_npz : string -> 'd Archive.t -> unit
-(** [save_npz path a] writes [a]'s arrays to the npz file [path]. Each entry is
+(** [save_npz path a] writes [a]'s entries to the npz file [path]. Each entry is
     compressed with DEFLATE if that shrinks its first 64 KiB, and stored
     otherwise.
 
-    Raises [Invalid_argument] if a name is not valid UTF-8, starts with [/],
-    holds a backslash, a NUL byte or an empty, [.] or [..] component, or names a
-    drive, or if npy has no dtype for an entry's, naming it. *)
+    Raises [Invalid_argument] naming the entry:
+    - if its name is not UTF-8, starts with [/], holds a backslash, a NUL byte
+      or an empty, [.] or [..] component, or names a drive;
+    - if npy does not store its dtype. *)
 
 (** {1:safetensors SafeTensors}
 
     A SafeTensors file is a JSON header that names each array with its dtype,
     shape and byte range, then the arrays' bytes, as
     {{:https://github.com/huggingface/safetensors}the format's README}
-    specifies. It holds bool, the signed and unsigned integers of 8 to 64 bits,
-    float8_e4m3fn, float8_e5m2, float16, bfloat16, float32 and float64. *)
+    specifies. It stores bool, the signed and unsigned integers of 8 to 64 bits,
+    float8_e4m3fn ([F8_E4M3]), float8_e5m2, float16, bfloat16, float32, float64
+    and complex64 ([C64]). The format's other dtypes load as bytes: [F8_E8M0],
+    [F8_E4M3FNUZ] and [F8_E5M2FNUZ] at the entry's shape, and [F4], [F6_E2M3]
+    and [F6_E3M2], whose elements are narrower than a byte, at shape [[|n|]] for
+    an entry of [n] bytes. *)
 
 val load_safetensors : string -> Nx.host Archive.t
-(** [load_safetensors path] is the arrays of the SafeTensors file [path], by
-    name.
+(** [load_safetensors path] is the entries of the SafeTensors file [path].
 
-    An entry whose dtype nx lacks is its bytes, at [uint8]: [F8_E8M0] keeps the
-    entry's shape, and [F4], [F6_E2M3] and [F6_E3M2], whose elements are
-    narrower than a byte, have shape [[| n |]] with [n] the entry's size in
-    bytes. An entry with no elements is an empty array of its shape.
-
-    Raises [Failure] if the header is malformed, longer than 100 MB, names an
-    array twice, with an empty name or with a name that is not Unicode text, or
-    if the file's length differs from the one its header describes, as a
-    partial download's does. *)
+    Raises [Failure] as {!section-errors} states, and:
+    - if the header is malformed or longer than 100 MB;
+    - if it is not UTF-8, names an array twice or gives one an empty name;
+    - if the file's length differs from the one its header states, as a partial
+      download's does. *)
 
 val save_safetensors : string -> 'd Archive.t -> unit
-(** [save_safetensors path a] writes [a]'s arrays to the SafeTensors file
-    [path], ordered as the format's reference implementation orders them: by
-    dtype, in the order U64, I64, F64, F32, U32, I32, BF16, F16, U16, I16,
-    F8_E4M3, F8_E5M2, I8, U8, BOOL, then by name.
+(** [save_safetensors path a] writes [a]'s entries to the SafeTensors file
+    [path], in the order of the format's reference implementation. The entries
+    come by dtype, in the order U64, I64, F64, C64, F32, U32, I32, BF16, F16,
+    U16, I16, F8_E4M3, F8_E5M2, I8, U8, BOOL, then by name.
 
-    Raises [Invalid_argument] if SafeTensors has no dtype for an entry's, naming
-    it. *)
+    Raises [Invalid_argument] naming the entry if SafeTensors does not store its
+    dtype, or if its name is not UTF-8 or is ["__metadata__"], the key of the
+    file's metadata. *)
 
 (** {1:gguf GGUF} *)
 
 (** GGUF files.
 
-    A GGUF file holds a model's arrays and its metadata: key-values that
+    A GGUF file holds a model's arrays and its metadata, key-values that
     describe the architecture, the tokenizer and the file itself, as
     {{:https://github.com/ggml-org/ggml/blob/master/docs/gguf.md}GGML's
-     specification} defines them. *)
+     specification} defines them. Each array is stored as one GGUF type
+    ({!Gguf.type-dtype}). A {e scalar type} stores each element whole, and a
+    {e block format} stores the elements of a row in blocks of a fixed number of
+    elements and bytes. An array's {e logical shape} is its shape in elements,
+    in row-major order ({!Gguf.tensor_info}).
+
+    An array of a scalar type loads at its logical shape. An array of a block
+    format loads as its bytes, at [uint8], at its logical shape with the last
+    extent replaced by the size of a row in bytes. A Q8_0 block is 32 elements
+    in 34 bytes, so a Q8_0 array of logical shape [[|m; 64|]] loads at shape
+    [[|m; 68|]]. *)
 module Gguf : sig
   (** The type for metadata values, one case per GGUF value type. An unsigned
       64-bit value is held in [int64] by its bits. An array's elements are of
@@ -302,10 +305,10 @@ module Gguf : sig
     | String of string  (** The bytes stored, UTF-8 by the specification. *)
     | Array of value array
 
-  (** The type for tensor types. Each array of a file is stored as one of them:
-      a scalar type, whose elements nx holds, or a block format, which stores
-      the elements of a row in blocks of a fixed number of elements and bytes.
-  *)
+  (** The type for GGUF storage types. [F32], [F16], [BF16], [F64], [I8], [I16],
+      [I32] and [I64] are the scalar types, which load as float32, float16,
+      bfloat16, float64, int8, int16, int32 and int64. The others are block
+      formats. *)
   type dtype =
     | F32
     | F16
@@ -343,8 +346,8 @@ module Gguf : sig
   type tensor_info = {
     dtype : dtype;  (** The type the array is stored as. *)
     shape : int array;
-        (** The array's logical shape, in row-major order: the reverse of the
-            dimensions the file lists, whose first varies fastest. *)
+        (** The array's logical shape, the reverse of the dimensions the file
+            lists, whose first varies fastest. *)
   }
   (** The type for an array's description in the file. *)
 
@@ -358,7 +361,7 @@ module Gguf : sig
   (** [metadata g] is [g]'s key-values, in file order. *)
 
   val tensors : t -> Nx.host Archive.t
-  (** [tensors g] is [g]'s arrays, by name. *)
+  (** [tensors g] is the archive of [g]'s arrays. *)
 
   val info : string -> t -> tensor_info
   (** [info name g] is the description of [g]'s array [name].
@@ -367,28 +370,40 @@ module Gguf : sig
 end
 
 val load_gguf : string -> Gguf.t
-(** [load_gguf path] is the contents of the GGUF file [path], of version 2 or 3,
-    in little-endian byte order.
+(** [load_gguf path] is the contents of the GGUF file [path].
 
-    An array of a scalar type has its {!Gguf.tensor_info.shape} and the dtype of
-    the same name: float32, float16, bfloat16, float64, int8, int16, int32 or
-    int64. An array of a block format is its bytes, at [uint8], of its logical
-    shape with the last extent replaced by the size of a row in bytes: a Q8_0
-    row of 64 elements is two blocks of 34 bytes, so a Q8_0 array of logical
-    shape [[|m; 64|]] loads at shape [[|m; 68|]]. An array with no elements is
-    an empty array of its shape.
-
-    Raises [Failure] if [path] does not start with the GGUF magic, if its
-    version is not 2 or 3 or its byte order is big-endian, if its header is
-    malformed or cut short, names a key or an array twice, or gives an array an
-    empty name, a type this function does not know, a row that is not a whole
-    number of blocks or a position that is not a multiple of the alignment, or
-    if the file ends before an array's data. *)
+    Raises [Failure] as {!section-errors} states, and:
+    - if the file does not start with the GGUF magic, its version is not 2 or 3,
+      or its byte order is big-endian;
+    - if its header is malformed or cut short, or names a key or an array twice;
+    - if it gives an array an empty name, a type this function does not know, a
+      row that is not a whole number of blocks, or a position that is not a
+      multiple of the alignment;
+    - if the file ends before an array's data. *)
 
 (** {1:text Text}
 
-    A text file holds a vector or a matrix: one row per line, its fields
-    separated by a separator. Text holds every dtype but the complex ones. *)
+    A text file holds a vector or a matrix, one row per line. A separator
+    divides a row into fields. Text stores every dtype but the complex ones.
+
+    A float field is:
+    - an optional sign;
+    - digits with an optional point, either side of the point possibly empty but
+      not both;
+    - an optional exponent, [e] or [E] followed by an optional sign and digits.
+
+    [nan], [inf] and [infinity], in any case and after an optional sign, are
+    float fields too. A load reads a float field as the float64 nearest its
+    value, then stores it as {!Nx.Dtype.of_float} says. A save writes a float in
+    [%.18e] notation, its 19 significant digits rounded from its exact value, so
+    it reads back as itself. It writes every NaN as [nan], and the infinities as
+    [inf] and [-inf].
+
+    An integer field is an optional sign and decimal digits, in its dtype's
+    range, and a save writes an integer in decimal, an unsigned one unsigned. A
+    bool or bit field is [true] or [false] in any case, or a float field, [true]
+    where it is not zero, and a save writes [1] or [0]. Only these spellings are
+    literals. *)
 
 val load_txt :
   ?sep:string ->
@@ -399,76 +414,70 @@ val load_txt :
   ('v, 's, Nx.host) Nx.t
 (** [load_txt dt path] is the array of the text file [path] at [dt].
 
-    The first [skiprows] lines are skipped, then each line is a row of fields
-    separated by [sep], except blank lines and lines that start with [comments],
-    such as a header another program wrote. A file of one row or one column
-    loads as a vector, and any other as a matrix of shape [[|rows; columns|]].
-    [sep] defaults to [" "], where runs of spaces separate fields, [comments] to
+    It skips the first [skiprows] lines, blank lines, and lines starting with
+    [comments] after blanks. Each other line is a row that [sep] divides into
+    fields, each trimmed of blanks. A run of spaces is one separator for the
+    default [sep], [" "]. With any other [sep] an empty field is a field, so
+    with [sep] [","], ["1, 2"] has two fields and ["1,,2"] three. A single row
+    or column loads as a vector, and more as a matrix. [comments] defaults to
     ["#"] and [skiprows] to [0].
 
-    A float field is a sign, decimal digits with a point, and an exponent of [e]
-    or [E], a sign and digits, each part but the digits optional, as [-1.5e3],
-    [5.] or [.5], or after the sign [nan], [inf] or [infinity] in any case. It
-    is read as the float64 nearest its value, then stored as
-    {!Nx.Dtype.of_float} says. An integer field is a sign and decimal digits, in
-    [dt]'s range. A bool or bit field is [true] or [false] in any case, or a
-    float field, [true] where it is not zero. Hexadecimal, underscores and other
-    spellings are no literal.
-
     Raises [Invalid_argument] if [dt] is complex or [skiprows] is negative.
-    Raises [Failure] if the file has no row, rows of different lengths, or a
-    field that is no literal of [dt] or lies outside its range. *)
+    Raises [Failure] as {!section-errors} states if the file has no row, and,
+    naming the line, if rows differ in length, or a field is not a literal of
+    [dt] or is out of range. *)
 
 val save_txt : ?sep:string -> string -> ('v, 's, 'd) Nx.t -> unit
 (** [save_txt path x] writes the 0-d value, vector or matrix [x] to the text
-    file [path], and nothing else: a 0-d value or a vector as one row, a matrix
-    row by row, each row ended by ["\n"] and its fields separated by [sep],
-    which defaults to [" "].
-
-    A float is written in [%.18e] notation, its 19 significant digits rounded
-    from its exact value, so it reads back as itself, NaN aside: every NaN is
-    written [nan], and the infinities [inf] and [-inf]. An integer is written in
-    decimal, an unsigned one unsigned, and a bool or bit as [1] or [0]. A value
-    with no element writes no row, so its file does not load.
+    file [path], with no header or comment line. A 0-d value or a vector is one
+    row, and a matrix one row per line. Each row ends with ["\n"], and [sep],
+    which defaults to [" "], separates its fields. The file loads back with
+    [sep] only if [sep] is not empty, holds no newline and occurs in no field. A
+    save of a value with no element writes an empty file, which {!load_txt}
+    rejects. A save also allocates [x]'s elements as an OCaml array.
 
     Raises [Invalid_argument] if [x] is complex or has more than two axes. *)
 
 (** {1:images Images}
 
-    PNG files are those of the
-    {{:https://www.w3.org/TR/png-3/}PNG Specification, Third Edition}: every
-    colour type and bit depth, palettes, transparency and interlacing. JPEG
-    files are those of {{:https://www.itu.int/rec/T-REC-T.81}ITU-T T.81} with
-    8-bit samples and Huffman coding, sequential or progressive: grey, YCbCr,
-    RGB, CMYK and YCCK, with any sampling and restart intervals.
-
     Each save writes the format it is named after, whatever the path's
-    extension. The writers {!save_png}, {!save_jpeg} and {!encode_png} raise
-    [Invalid_argument] naming the function for a value that has not three axes,
-    has no pixel, or has a number of channels its format does not hold. *)
+    extension. A PNG save also allocates two copies of the image's filtered
+    rows, about its bytes each, and three of the encoded file, and a JPEG save
+    two of the encoded file.
+
+    {!load_image} reads the PNG files of the
+    {{:https://www.w3.org/TR/png-3/}PNG Specification, Third Edition}, with
+    every colour type and bit depth, palettes, transparency and interlacing.
+
+    It reads the JPEG files of {{:https://www.itu.int/rec/T-REC-T.81}ITU-T T.81}
+    with 8-bit samples and Huffman coding, baseline, extended sequential or
+    progressive, in grey, YCbCr, RGB, CMYK or YCCK, with any sampling and
+    restart intervals.
+
+    {!save_png}, {!save_jpeg} and {!encode_png} raise [Invalid_argument] naming
+    the function for a value that does not have three axes or has no pixel, has
+    a number of channels its format does not store, or has a side longer than
+    the format stores, 65535 pixels for JPEG and [2{^31} - 1] for PNG. *)
 
 val load_image : string -> Nx.host Nx.uint8_t
-(** [load_image path] is the image of the PNG or JPEG file [path], recognised
-    by its contents, with the channels the file holds. A PNG file loads with 1,
-    2, 3 or 4 channels for grey, grey and alpha, colour, and colour and alpha.
-    A palette loads as its colours. A transparency ([tRNS]) chunk adds an alpha
-    channel, as PNG-3's section 11.3.1.1 defines it: each palette entry's
-    alpha, 255 past the chunk's end, or 0 where a pixel's samples, at the
-    file's depth, equal the chunk's with the bits above that depth cleared, and
-    255 elsewhere. A JPEG file loads with 1 channel for grey and 3 for any
-    other colour space, CMYK and YCCK converted. A 16-bit sample keeps its high
-    byte, and a sample of 1, 2 or 4 bits is scaled to 8 bits, rounded to
-    nearest.
+(** [load_image path] is the image of the PNG or JPEG file [path], recognised by
+    its contents, with the channels the file holds. A palette loads as its
+    colours. A 16-bit sample keeps its high byte, and a sample of 1, 2 or 4 bits
+    is scaled to 8 bits, rounded to nearest. A transparency ([tRNS]) chunk adds
+    an alpha channel (PNG-3, 11.3.1.1). In a palette image, a pixel's alpha is
+    its entry's alpha in the chunk, or 255 for an entry past the chunk's end. In
+    any other image, it is 0 where the pixel's samples equal the chunk's at the
+    file's bit depth, and 255 elsewhere. A grey JPEG file loads with one
+    channel, and any other with three, CMYK and YCCK converted.
 
-    Raises [Failure] also if the file is neither a PNG nor a JPEG stream, or if
-    a checksum does not match. *)
+    Raises [Failure] as {!section-errors} states, and if the file is neither a
+    PNG nor a JPEG stream, or if a checksum does not match. *)
 
 val save_png : ?dpi:float -> ?srgb:bool -> string -> 'd Nx.uint8_t -> unit
-(** [save_png path x] writes the image [x] to [path] as a PNG file of 8 bits
-    per sample: the bytes [encode_png ?dpi ?srgb x], replacing what [path]
-    names as every save does. PNG holds 1 to 4 channels, so every image
-    {!load_image} reads from a PNG file saves back as itself.
-    - [dpi], the image's physical resolution in pixels per inch, is written as a
+(** [save_png path x] writes the image [x] to [path] as a PNG file of 8 bits per
+    sample, the bytes [encode_png ?dpi ?srgb x]. PNG stores 1 to 4 channels, so
+    every image {!load_image} reads from a PNG file saves back as itself.
+    - [dpi] is the image's physical resolution in pixels per inch, written as a
       [pHYs] chunk of [Float.round (dpi /. 0.0254)] pixels per metre on both
       axes, so that viewers and printers show the image at its physical size.
       Without it the file states no physical size.
@@ -476,16 +485,29 @@ val save_png : ?dpi:float -> ?srgb:bool -> string -> 'd Nx.uint8_t -> unit
       intent, which states that the samples are sRGB. Defaults to [false].
 
     Raises [Invalid_argument] if [Float.round (dpi /. 0.0254)] is not in
-    \[[1];[2{^31} - 1]\], the range of a PNG integer: [dpi] is below about
-    [0.0127], above about [5.45e7], or not a number. *)
+    \[[1];[2{^31} - 1]\], the range of a PNG integer. *)
 
 val save_jpeg : string -> 'd Nx.uint8_t -> unit
-(** [save_jpeg path x] writes the image [x] to [path] as a JPEG file, baseline
-    at quality 90 (the standard tables of T.81's Annex K scaled to 20%), colour
-    with its chroma subsampled 4:2:0. JPEG holds 1 or 3 channels. *)
+(** [save_jpeg path x] writes the image [x] to [path] as a baseline JPEG file at
+    quality 90, the standard tables of T.81's Annex K scaled to 20%, with a
+    colour image's chroma subsampled 4:2:0. JPEG stores 1 or 3 channels. *)
 
 val encode_png : ?dpi:float -> ?srgb:bool -> 'd Nx.uint8_t -> string
 (** [encode_png ?dpi ?srgb x] is the file {!save_png} writes, without touching
     the file system.
 
     Raises [Invalid_argument] as {!save_png} does. *)
+
+(** {1:errors Errors}
+
+    A load or a save raises [Failure] when its file cannot be read or written or
+    breaks its format, and a load also when its path names no regular file, such
+    as a directory or a FIFO. The message starts with the path, as in
+    ["w.npy: the file ends inside its header"].
+
+    A function raises [Invalid_argument] naming it for a value, a name or an
+    argument its format cannot store, as in
+    ["Nx_io.save_npy: npy has no bfloat16"]. A save also raises it for a value
+    {!Nx.Repr.read} refuses: a traced value, a dead one, or one whose memory is
+    held exclusive. A failed check pending on the value raises as
+    {!Nx.Repr.read} states. *)

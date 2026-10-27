@@ -31,7 +31,8 @@ type out_file
 (** The type for archives being written. *)
 
 val open_out : Unix.file_descr -> out_file
-(** [open_out fd] is an empty archive written to [fd]. *)
+(** [open_out fd] is an empty archive written to [fd]. [fd] stays its caller's,
+    and {!close_out} leaves it open. *)
 
 val valid_name : string -> bool
 (** [valid_name name] is [true] iff [name] is valid UTF-8, relative, and free of
@@ -40,7 +41,8 @@ val valid_name : string -> bool
 val add_npy : out_file -> string -> string -> Storage.bytes -> unit
 (** [add_npy a name header data] writes the npy stream [header] then [data] as
     [a]'s entry [name] and [.npy], compressed if that shrinks its first 64 KiB.
-    [name] is valid and not yet in [a]. *)
+    [name] must pass {!valid_name} and must not be in [a]. *)
 
 val close_out : out_file -> unit
-(** [close_out a] writes [a]'s central directory. *)
+(** [close_out a] writes [a]'s central directory, and leaves [a]'s descriptor
+    open. *)

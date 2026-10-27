@@ -3,18 +3,21 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Saves that leave, after a crash, the old file or the whole new one. *)
+(** Saves that leave, after a crash, the old file or the whole new one. {!Nx_io}
+    states what a save promises, and [save.ml] how it keeps it. *)
 
 val write : string -> (Unix.file_descr -> unit) -> unit
-(** [write path f] is [f fd] for [fd] a new file beside [path], which is then
-    synced and named [path], replacing what [path] names, and the directory
-    synced. [f] writes through [fd] alone: the file is never reopened by its
-    name, which a link put there meanwhile would redirect.
+(** [write path f] calls [f fd] on a new file beside [path]. It then syncs the
+    file, renames it to [path] and syncs the directory. [write] owns [fd] and
+    closes it once [f] returns or raises, so [f] must not close it. [f] must
+    write through [fd] alone, since a link put at the new file's name would
+    redirect a reopen.
 
-    A failure of [f] or of the sync raises [Failure] naming [path] and leaves no
-    new file. A refused rename raises [Failure] naming [path] and keeps the new
-    file, which it names. A failed sync of the directory raises with the new
-    file at [path]. *)
+    A [Failure], [Sys_error] or [Unix.Unix_error] from [f] or from the file's
+    sync raises [Failure] naming [path], and an [Invalid_argument] from [f]
+    passes unchanged. Both leave no new file. A refused rename raises [Failure]
+    naming [path] and keeps the new file, which it names. A failed sync of the
+    directory raises [Failure] naming [path], with the new file at [path]. *)
 
 val string : Unix.file_descr -> string -> unit
 (** [string fd s] writes [s] to [fd]. *)

@@ -6,9 +6,9 @@
 (** The SafeTensors format. *)
 
 val code : ('v, 's) Nx_array.Dtype.t -> (string * int) option
-(** [code dt] is [dt]'s name in the format and its rank among the format's
-    dtypes, by which a file orders its arrays, widest first; [None] if the
-    format has no [dt]. *)
+(** [code dt] is [dt]'s name in the format and its rank in the reference
+    implementation's order of the format's dtypes, or [None] if the format has
+    no [dt]. A file orders its arrays by decreasing rank. *)
 
 val check_name : by:string -> string -> unit
 (** [check_name ~by name] is [()] if {!load} accepts [name] as an array's name.

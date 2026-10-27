@@ -3,9 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** PNG and JPEG codecs over bytes. The C stubs check every span and size before
-    they release the runtime lock, and touch only bigarray storage, copied
-    scalars and their own allocations while it is released. *)
+(** PNG and JPEG codecs over bytes.
+
+    The C stubs capture each bigarray's pointer and length before they release
+    the runtime lock. While it is released they touch only bigarray storage,
+    their locals and memory they allocated with [malloc]. *)
 
 type bytes =
   (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
@@ -14,8 +16,9 @@ val probe : bytes -> int * int * int
 (** [probe src] is the height, width and channels of the image of the PNG or
     JPEG stream [src], as {!Nx_io.load_image} states them.
 
-    Raises [Failure] if [src] is no such stream, if its header is malformed, or
-    if the image has no pixel or more than [max_int] samples. *)
+    Raises [Failure] if [src] is neither a PNG nor a JPEG stream, if its header
+    is malformed, or if the image has no pixel or more than [max_int] samples.
+*)
 
 val decode : bytes -> bytes -> unit
 (** [decode src dst] writes the pixels of [src] into [dst], row by row from the

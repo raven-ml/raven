@@ -13,14 +13,14 @@ val pp_shape : int array -> string
 
 val file : string -> (unit -> 'a) -> 'a
 (** [file path f] is [f ()], whose [Failure], [Sys_error] and [Unix.Unix_error]
-    become a [Failure] whose message starts with [path]. [f] raises [Failure]
-    without the path. *)
+    become a [Failure] whose message starts with [path]. [f] must raise
+    [Failure] without the path, or the message names it twice. *)
 
 val renamed : by:string -> ('a -> 'b) -> 'a -> 'b
 (** [renamed ~by f x] is [f x], whose [Invalid_argument] names [by] in place of
     the function that raised it. *)
 
 val reading : by:string -> (('a -> 'b) -> 'b) -> ('a -> 'b) -> 'b
-(** [reading ~by read f] is [read f], whose refusal before it calls [f], an
-    [Invalid_argument], names [by] in place of the function that raised it.
-    What [f] raises passes unchanged. *)
+(** [reading ~by read f] is [read f]. An [Invalid_argument] that [read] raises
+    before it calls [f] names [by] in place of the function that raised it. What
+    [f] raises passes unchanged. *)

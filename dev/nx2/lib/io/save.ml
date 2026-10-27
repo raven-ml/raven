@@ -3,12 +3,17 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* A save leaves, after a crash, the file it replaces or the whole new one: the
-   new file is written beside [path], synced, then named [path], and the
-   directory is synced. The order is SQLite's for its journal (os_unix.c,
-   unixSync): the file's sync, then its directory's.
+(* A save leaves, after a crash, the file it replaces or the whole new one. It
+   writes the new file beside [path] and syncs it, which orders the file's bytes
+   before every later change to the file system. It then renames the file over
+   [path] and syncs the directory, so that the rename outlasts a crash. The
+   order is SQLite's for its journal (os_unix.c, unixSync): the file's sync,
+   then its directory's.
 
-   write temp --> sync temp --> rename to path --> sync directory *)
+   write temp --> sync temp --> rename to path --> sync directory
+
+   A failure before the rename removes the new file. A refused rename keeps it,
+   so that the bytes written are not lost, and names it in the error. *)
 
 let remove_if_exists path = try Sys.remove path with Sys_error _ -> ()
 let prng = Domain.DLS.new_key Random.State.make_self_init

@@ -37,4 +37,4 @@ val copied : header -> Rig.Buffer.t -> Nx.host Nx.packed
 
 val encode : ('v, 's) Nx_array.Dtype.t -> int array -> string
 (** [encode dt s] is the header of a C-order little-endian stream of [dt]
-    elements at shape [s]. [dt] passes {!check}. *)
+    elements at shape [s]. [dt] must pass {!check}. *)

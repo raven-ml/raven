@@ -11,11 +11,11 @@ val empty : 'd t
 (** [empty] has no entry. *)
 
 val add : string -> 'd Nx.packed -> 'd t -> 'd t
-(** [add name x a] is [a] with the entry [name], which a format checked is
-    non-empty and not in [a]. *)
+(** [add name x a] is [a] with the entry [name]. [name] must be non-empty and
+    not in [a]. *)
 
 val bindings : 'd t -> (string * 'd Nx.packed) list
-(** [bindings a] is [a]'s entries, by name. *)
+(** [bindings a] is [a]'s entries, in name order. *)
 
 val of_list : (string * 'd Nx.packed) list -> 'd t
 val union : 'd t list -> 'd t
