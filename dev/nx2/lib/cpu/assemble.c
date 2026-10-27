@@ -279,8 +279,7 @@ static int operand(void *ctx, int k, nx_operand *in) {
 
 /* The external. [vfill] is the fill's bits and [vpieces] the pieces, each a
    region, a Move.range per axis, and its array, which the door reads with
-   the regions (operand): through nx_read_each past NX_MAX_OPERANDS
-   operands, through nx_read below. */
+   the regions (operand). */
 value nx_cpu_assemble(value vfill, value vd, value vpieces) {
   CAMLparam3(vfill, vd, vpieces);
   CAMLlocal1(owner);
@@ -299,13 +298,7 @@ value nx_cpu_assemble(value vfill, value vd, value vpieces) {
   int64_t *ranges = p.ranges;
   nx_array *a = p.a;
   reading c = {&vd, &vpieces, r, dt, shape, ranges, 0};
-  if (many) e = nx_read_each(n, operand, &c, a);
-  else {
-    nx_operand in[NX_MAX_OPERANDS];
-    e = NX_OK;
-    for (int k = 0; k < n && !e; k++) e = operand(&c, k, &in[k]);
-    if (!e) e = nx_read(n, in, a);
-  }
+  e = nx_read_each(n, operand, &c, a);
   if (e) {
     drop_scratch(owner, many);
     CAMLreturn(Val_int(e));

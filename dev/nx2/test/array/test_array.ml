@@ -1720,6 +1720,63 @@ let test_ocaml_door_late_refusals () =
       kill (A.buffer d);
       A.Any d)
 
+(* Two faults of one call, each in arrays of its own: the door answers the
+   same refusal with few arrays as with more than max_operands, the second
+   fault's arrays then claimed and checked in a later run. Dead_buffer,
+   Held_exclusive and Read_only come before the others. *)
+let test_ocaml_door_many_refusals () =
+  let dead = zeros [| 2 |] in
+  kill (A.buffer dead);
+  let held = zeros [| 2 |] in
+  let ro = A.v f32 (L.contiguous [| 3 |]) (S.read_only 12) in
+  let repeated = Option.get (A.move (M.Broadcast [| 2 |]) (zeros [| 1 |])) in
+  let b = A.buffer (zeros [| 4 |]) in
+  let at offset = A.Any (A.v f32 (L.v ~offset ~strides:[| 1 |] [| 3 |]) b) in
+  let faults =
+    [
+      ("dead", A.Dead_buffer, ([||], [| A.Any dead |]));
+      ("exclusive", A.Held_exclusive, ([||], [| A.Any held |]));
+      ("read-only", A.Read_only, ([| A.Any ro |], [||]));
+      ("repeated", A.Repeated_elements, ([| A.Any repeated |], [||]));
+      ("overlapping", A.Overlapping, ([| at 0 |], [| at 1 |]));
+    ]
+  in
+  let claims = [ A.Dead_buffer; A.Held_exclusive; A.Read_only ] in
+  let pad () = Array.init (A.max_operands + 1) (fun _ -> A.Any (zeros [| 2 |])) in
+  let pads = (pad (), pad ()) in
+  let calls =
+    Rig.Claim.with_ ~read:[]
+      ~donate:[ A.buffer held ]
+      (fun _ ->
+        List.concat_map
+          (fun (n1, r1, (w1, x1)) ->
+            List.filter_map
+              (fun (n2, r2, (w2, x2)) ->
+                if n1 = n2 then None
+                else
+                  let few = ocaml_door (Array.append w1 w2) (Array.append x1 x2) in
+                  let pw, px = pads in
+                  let many =
+                    ocaml_door
+                      (Array.concat [ w1; pw; w2 ])
+                      (Array.concat [ x1; px; x2 ])
+                  in
+                  Some (strf "%s then %s" n1 n2, (r1, r2), few, many))
+              faults)
+          faults)
+  in
+  List.iter
+    (fun (msg, (r1, r2), few, many) ->
+      let door = pair answer (option bool) in
+      equal ~msg door few many;
+      let r, _ = few in
+      if List.mem r1 claims || List.mem r2 claims then
+        equal ~msg:(msg ^ ": a claim's refusal first") bool true
+          (List.mem r claims))
+    calls;
+  let pw, px = pads in
+  released (Array.concat [ pw; px; [| A.Any held; A.Any repeated; at 0 |] ])
+
 let test_ocaml_door_refuses () =
   let x = floats32 [| 3 |] [| 1.; 2.; 3. |] in
   let refuses ~msg r written read =
@@ -2439,6 +2496,8 @@ let tests =
           test_ocaml_door_refuses;
         test "a refusal in a later run of claims leaves no claim"
           test_ocaml_door_late_refusals;
+        test "answers a call of many arrays as one of few"
+          test_ocaml_door_many_refusals;
         test "holds the lock for no long stretch, however many arrays"
           test_ocaml_door_holds;
         test "refuses a dead array before a written one's other faults"

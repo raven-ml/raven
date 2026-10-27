@@ -4314,15 +4314,10 @@ static value run_fused(const call *c, value vp, value vrs, int single,
     drop(owner, many);
     CAMLreturn(Val_int(e));
   }
-  /* The door: past NX_MAX_OPERANDS operands in runs, else as one. */
+  /* The door: past NX_MAX_OPERANDS operands in runs. */
   fused_operands o = {&vdsts, &vloads, &vcarry, dts, g, nd, nl, ks[0]};
   int n = nd + nl + nc;
-  if (n > NX_MAX_OPERANDS) e = nx_read_each(n, fused_operand, &o, a);
-  else {
-    nx_operand in[NX_MAX_OPERANDS];
-    for (int k = 0; k < n; k++) fused_operand(&o, k, &in[k]);
-    e = nx_read(n, in, a);
-  }
+  e = nx_read_each(n, fused_operand, &o, a);
   if (e) {
     drop(owner, many);
     CAMLreturn(Val_int(e));

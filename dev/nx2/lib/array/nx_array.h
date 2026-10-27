@@ -83,7 +83,7 @@ enum {
      holding no claim: the kernel acquires nothing before it that must be
      undone.
    - nx_read and nx_done run on one thread, with the domain lock held;
-     nx_read_each, and nx_done past NX_MAX_OPERANDS operands, release it
+     past NX_MAX_OPERANDS operands, nx_read_each and nx_done release it
      between runs of them and take it back.
    - Descriptors stay where nx_read filled them, in the frame of the C
      function that called it, and are passed by pointer, never copied or
@@ -143,11 +143,13 @@ int nx_array_dtype(value v);
    moves. */
 int nx_array_layout(value v, int64_t *dim, int64_t *offset);
 
-/* Reads the [n] operands [in] into [out] and answers NX_OK, or answers why
-   it refuses one, claims nothing and leaves [out] unspecified. [n] is any
-   number; with no operand it answers NX_OK. Past NX_MAX_OPERANDS it
-   allocates, before any claim, and raises Out_of_memory if host memory
-   runs out. It checks in this order and answers the first refusal: each
+/* Reads the [n] operands [in], at most NX_MAX_OPERANDS, into [out] and
+   answers NX_OK, or answers why it refuses one, claims nothing and leaves
+   [out] unspecified. With no operand it answers NX_OK; past
+   NX_MAX_OPERANDS it answers NX_SHAPE, since the door lets other domains
+   collect between runs of that many, which moves the values [in] holds.
+   Such a call reads its operands through nx_read_each. It allocates
+   nothing. It checks in this order and answers the first refusal: each
    operand's dtype; then each operand's claim of its memory, for writing if
    written: NX_DEAD if its buffer is dead, NX_EXCLUSIVE if the memory is
    held exclusive, NX_READ_ONLY if a written operand's buffer admits only
@@ -157,25 +159,26 @@ int nx_array_layout(value v, int64_t *dim, int64_t *offset);
    two are identical: one width, and every index at one byte (equal extents
    and strides, one first bit). A read operand identical to a written one
    is claimed too, as its own memory, which may be another than the
-   written one's. Under the claims it waits for the device
-   work each operand's access must follow, as Rig.Buffer.wait does; this
-   alone runs OCaml code, and only while such work is unfinished. If the
-   wait raises, as Rig.Lost does for a lost device, nx_read releases every
-   claim and raises it. */
+   written one's. Under the claims it waits for the device work each
+   operand's access must follow, as Rig.Buffer.wait does; this alone runs
+   OCaml code, and only while such work is unfinished. If the wait raises,
+   as Rig.Lost does for a lost device, nx_read releases every claim and
+   raises it. */
 int nx_read(int n, const nx_operand *in, nx_array *out);
 
-/* nx_read for a call of many operands, such as an assembly's pieces,
-   which takes more than NX_MAX_OPERANDS: the door reads them in runs of
-   NX_MAX_OPERANDS, and releases the domain lock and takes it back between
-   two runs, so that however many they are, no stretch of their reading
-   keeps another domain waiting to collect longer than a run's. Operand k
-   is what [operand(ctx, k, &in)] writes, called in order with the lock
-   held as its run begins; a release may move OCaml values, so [operand]
-   reads them only through roots, the kernel's CAMLparam ones. It answers
-   NX_OK, or a refusal, which nx_read_each answers having claimed nothing.
-   Its checks are nx_read's in nx_read's order, [operand]'s refusal with
-   the dtypes'. Each operand's memory must be the host's. It allocates
-   before any claim and raises Out_of_memory if host memory runs out. */
+/* nx_read over operands that a function gives, of any number, such as an
+   assembly's pieces: operand k is what [operand(ctx, k, &in)] writes,
+   called in order with the lock held as its run begins. Past
+   NX_MAX_OPERANDS operands the door reads them in runs of NX_MAX_OPERANDS,
+   and releases the domain lock and takes it back between two runs, so
+   that however many they are, no stretch of their reading keeps another
+   domain waiting to collect longer than a run's; a release may move OCaml
+   values, so [operand] reads them only through roots, the kernel's
+   CAMLparam ones. It answers NX_OK, or a refusal, which nx_read_each
+   answers having claimed nothing. Its checks are nx_read's in nx_read's
+   order, [operand]'s refusal with the dtypes'. Past NX_MAX_OPERANDS it
+   allocates, before any claim, and raises Out_of_memory if host memory
+   runs out. */
 int nx_read_each(int n, int (*operand)(void *ctx, int k, nx_operand *in),
                  void *ctx, nx_array *out);
 

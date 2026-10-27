@@ -82,36 +82,25 @@ let refused name answer operands =
     operands
 
 (* The OCaml door. [admit] claims every array or none, checks under the
-   claims what nx_read checks of a written array, and waits for nothing. An
-   asynchronous exception (a signal handler's, a finaliser's) is raised at a
-   poll point: an allocation, a function's entry or a loop's back edge. No
-   claim the door takes is held across one outside the handler that ends
-   it. *)
+   claims what nx_read checks of a written array, and waits for nothing.
+   [release] ends the claims; past max_operands arrays it lets other domains
+   collect between runs of them, so it is not [@@noalloc]. An asynchronous
+   exception (a signal handler's, a finaliser's) is raised at a poll point:
+   an allocation, a function's entry or a loop's back edge. No claim the door
+   takes is held across one outside the handler that ends it. *)
 
 external admit : any array -> any array -> answer = "nx_array_admit"
-
-external release_few : any array -> any array -> unit = "nx_array_release_all"
-[@@noalloc]
-
-external release_many : any array -> any array -> unit
-  = "nx_array_release_many"
-
-(* Past max_operands arrays, the release lets other domains collect between
-   runs of them, which a noalloc external may not. *)
-let release_all written read =
-  if Array.length written + Array.length read <= max_operands then
-    release_few written read
-  else release_many written read
+external release : any array -> any array -> unit = "nx_array_release"
 
 let door ~written ~read f x =
   match admit written read with
   | Done -> (
       match f x with
       | () ->
-          release_all written read;
+          release written read;
           Done
       | exception e ->
-          release_all written read;
+          release written read;
           Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ()))
   | refusal -> refusal
 
