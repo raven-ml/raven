@@ -14,6 +14,9 @@ module Archive = Nx_io.Archive
 module P = Nx.Ptree
 
 let vec dt xs = Nx.create dt [| Array.length xs |] xs
+
+(* Placements compare as Nx.Placement.equal does. *)
+let placement () = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 let fails_with message f = raises (Failure message) (fun () -> ignore (f ()))
 
 let refuses message f =
@@ -43,23 +46,10 @@ let two_names =
     (function a :: b :: _ -> (a, b) | _ -> assert false)
     (Gen.permutation names)
 
-let dtypes =
-  D.
-    [
-      Any Bool;
-      Any Uint8;
-      Any Int8;
-      Any Float16;
-      Any Bfloat16;
-      Any Int32;
-      Any Float32;
-      Any Float64;
-      Any Uint64;
-    ]
-
+(* Arrays of every dtype SafeTensors holds, of no element, one or several. *)
 let leaf =
   let open Gen in
-  let+ (D.Any dt) = of_list dtypes in
+  let+ (D.Any dt) = of_list safetensors_dtypes in
   D
     ( P.tensor,
       let* kind = of_list [ Empty; Single; Many ] in
@@ -127,7 +117,24 @@ let samples =
 
 (* [like s x] has [x]'s visits, dtypes and shapes, and none of its arrays. *)
 let like s x = P.map s (fun _ t -> Nx.zeros_like t) x
-let arrays s x = List.length (fst (P.flatten s x))
+let arrays s x = fst (P.flatten s x)
+
+(* [covers s x] states the cases a round trip must reach: each dtype, an array
+   of no element, an empty list and an absent option. *)
+let covers s x =
+  let arrays = arrays s x in
+  List.iter
+    (fun (D.Any dt) ->
+      cover (D.name dt)
+        (List.exists (fun (Nx.P a) -> D.equal (Nx.dtype a) dt) arrays))
+    safetensors_dtypes;
+  cover "an array of no element"
+    (List.exists (fun (Nx.P a) -> Nx.numel a = 0) arrays);
+  let reported r =
+    List.exists (function P.Report (_, r') -> r = r' | P.Leaf _ -> false)
+  in
+  cover "an empty list" (reported (P.Length 0) (P.visits s x));
+  cover "an absent option" (reported (P.Present false) (P.visits s x))
 
 (* A model of [n] blocks on the host, for strictness. *)
 let blocks n =
@@ -144,8 +151,7 @@ let values =
     [
       prop "a value read back from its archive is the value" samples
         (fun (S (s, x)) ->
-          cover "an array" (arrays s x > 0);
-          cover "no array" (arrays s x = 0);
+          covers s x;
           equal (value_of s) x
             (Archive.to_value s ~like:(like s x) (Archive.of_value s x)));
       prop "a value read back from a file of its archive is the value" ~count:40
@@ -300,13 +306,10 @@ let entries =
           let w', b' =
             Archive.to_value (record ("w", P.tensor) ("b", P.tensor)) ~like host
           in
-          List.iter
-            (fun x ->
-              is_true
-                (match Nx.placement x with
-                | Some p -> Nx.Placement.equal p M.on
-                | None -> false))
-            [ w'; b' ];
+          equal
+            (list (option (placement ())))
+            [ Some M.on; Some M.on ]
+            [ Nx.placement w'; Nx.placement b' ];
           equal (array float_exact) [| 1.; 2. |] (Nx.to_array w');
           raises_match
             (Exn.invalid_arg

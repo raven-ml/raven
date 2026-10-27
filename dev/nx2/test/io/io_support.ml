@@ -68,24 +68,45 @@ let flips_load_or_fail load ?(upto = max_int) whole =
     loads_or_fails ~path (fun () -> load path)
   done
 
+let saved suffix save x =
+  let path = temp_file ~suffix () in
+  save path x;
+  path
+
 (* Memory *)
 
-(* [f (make ())] and the bytes the host holds more after it, read once collected
-   memory has returned. One uncounted run comes first. *)
-let host_grown make f =
+(* [grown d make f] is [f (make ())] and the bytes [d] holds more after it, read
+   once collected memory has returned. One uncounted run comes first. *)
+let grown d make f =
   let settled () =
     for _ = 1 to 4 do
       Gc.full_major ();
-      ignore (Rig.Buffer.create Rig.host 0);
-      Rig.free_cache Rig.host
+      ignore (Rig.Buffer.create d 0);
+      Rig.free_cache d
     done;
-    Rig.allocated Rig.host
+    Rig.allocated d
   in
   ignore (f (make ()));
   let x = make () in
   let before = settled () in
   let y = f x in
-  (y, Rig.allocated Rig.host - before)
+  (y, Rig.allocated d - before)
+
+(* Where a loaded value's elements lie: over the file's pages, which the host
+   borrows, or in memory of its own. *)
+type memory = Over_file | Own_memory
+
+let memory_of (Nx.P x) =
+  match Nx.Repr.array x with
+  | Some a when Rig.Buffer.is_borrowed (Nx_array.buffer a) -> Over_file
+  | Some _ | None -> Own_memory
+
+let memory =
+  Testable.make ~equal:( = ) ~pp:(fun ppf m ->
+      Format.pp_print_string ppf
+        (match m with
+        | Over_file -> "over the file's pages"
+        | Own_memory -> "in memory of its own"))
 
 (* Values *)
 
@@ -293,3 +314,97 @@ let covers ?(empty = true) ?(broadcast = true) (Case (dt, s, vs, view)) =
   cover "NaN" (has_nan dt vs);
   cover "-0." (has_negative_zero dt vs);
   cover "an integer type's bounds" (has_bounds dt vs)
+
+(* Dtypes *)
+
+let npy_dtypes =
+  D.
+    [
+      Any Float16;
+      Any Float32;
+      Any Float64;
+      Any Int8;
+      Any Int16;
+      Any Int32;
+      Any Int64;
+      Any Uint8;
+      Any Uint16;
+      Any Uint32;
+      Any Uint64;
+      Any Complex64;
+      Any Complex128;
+      Any Bool;
+    ]
+
+let safetensors_dtypes =
+  D.
+    [
+      Any Bool;
+      Any Uint8;
+      Any Int8;
+      Any Float8_e5m2;
+      Any Float8_e4m3fn;
+      Any Int16;
+      Any Uint16;
+      Any Float16;
+      Any Bfloat16;
+      Any Int32;
+      Any Uint32;
+      Any Float32;
+      Any Float64;
+      Any Int64;
+      Any Uint64;
+    ]
+
+(* Archives *)
+
+module Archive = Nx_io.Archive
+
+(* An archive compares as its named values, in name order. *)
+let listed a =
+  List.map (fun n -> (n, Option.get (Archive.find n a))) (Archive.names a)
+
+let archive = Testable.contramap listed (list (pair string packed))
+let find a name = Option.get (Archive.find name a)
+
+let entry_names = [ "w"; "layer.0/weight"; "a b"; "é"; "日本"; "deep/er/name" ]
+
+(* Archives of one to three values of [dts], under distinct names. *)
+let archives dts =
+  let open Gen in
+  let* names = subsequence entry_names in
+  let names =
+    match names with
+    | [] -> [ "w" ]
+    | n :: ns -> n :: List.filteri (fun i _ -> i < 2) ns
+  in
+  let+ cs = list ~size:(constant (List.length names)) (case dts) in
+  List.combine names cs
+
+let archive_of entries =
+  Archive.of_list (List.map (fun (n, c) -> (n, value c)) entries)
+
+let pp_entries ppf l =
+  Format.pp_print_list
+    (fun ppf (n, c) ->
+      Format.fprintf ppf "%s: %a" n
+        (fun ppf (Case (dt, s, _, v)) ->
+          Format.fprintf ppf "%a %a %a" D.pp dt pp_shape s pp_view v)
+        c)
+    ppf l
+
+(* Bytes as stored *)
+
+let pattern n seed =
+  String.init n (fun i -> Char.chr (((i * 37) + seed) land 255))
+
+(* A value's dtype, shape and bytes as stored. *)
+let stored (Nx.P x) =
+  let a = Option.get (Nx.Repr.array (Nx.copy x)) in
+  let b = Nx_array.buffer a in
+  ( D.name (Nx.dtype x),
+    Nx.shape x,
+    String.init (Rig.Buffer.length b) (fun i ->
+        let s = Bytes.create 1 in
+        Rig.Buffer.blit_to_bytes b i s 0 1;
+        Bytes.get s 0) )

@@ -4,8 +4,23 @@
 ; differs, which gen/generate.py writes into support/.
 
 (tests
- (names test_io test_archive test_image)
- (modules test_io test_archive test_image io_support fail)
+ (names
+  test_save
+  test_archive
+  test_npy
+  test_safetensors
+  test_gguf
+  test_txt
+  test_image)
+ (modules
+  test_save
+  test_archive
+  test_npy
+  test_safetensors
+  test_gguf
+  test_txt
+  test_image
+  io_support)
  (libraries nx nx_array nx_io nx_support rig unix windtrap)
  (deps
   (glob_files support/*))
@@ -16,11 +31,6 @@
    OCAMLRUNPARAM
    l=1M
    (run %{test}))))
-
-; Fail, a private module no interface reaches, is tested on a copy.
-
-(copy_files
- (files ../../lib/io/fail.{ml,mli}))
 
 ; Opens this machine's first GPU in a child, so it holds the lock GPU tests
 ; share.

@@ -4,17 +4,12 @@
   ---------------------------------------------------------------------------*)
 
 (* Images. A PNG saved from any image loads back as its pixels, a smooth JPEG
-   within its quality, and files other encoders wrote as Pillow decodes them,
-   or as PNG-3 states them where Pillow differs; a file cut short or corrupted
+   within its quality, and files other encoders wrote as Pillow decodes them, or
+   as PNG-3 states them where Pillow differs; a file cut short or corrupted
    raises [Failure] naming it, and never anything else. *)
 
 open Windtrap
 open Io_support
-
-(* Images compare as their shapes and pixels. *)
-let image =
-  Testable.make ~pp:Nx.pp ~equal:(fun a b ->
-      Nx.shape a = Nx.shape b && Nx.to_array a = Nx.to_array b)
 
 (* The pixels of the fixture image [name], as gen/generate.py states them. *)
 let expected name =
@@ -131,24 +126,9 @@ let png_chunks =
           let plain = Nx_io.encode_png x in
           let png = Nx_io.encode_png ~dpi ~srgb:true x in
           equal string plain (without "sRGB" (without "pHYs" png));
-          equal image
-            (Nx_io.load_image (file ~suffix:".png" plain))
-            (Nx_io.load_image (file ~suffix:".png" png)));
-      prop
-        "save_png ~dpi ~srgb writes encode_png's file, which holds the pHYs \
-         and sRGB chunks and loads back as the image"
-        (Gen.pair (images [ 1; 2; 3; 4 ]) (Gen.float_range 1. 1000.))
-        (fun ((_, x), dpi) ->
-          let path = temp_file ~suffix:".png" () in
-          Nx_io.save_png ~dpi ~srgb:true path x;
-          let png = read path in
-          equal string (Nx_io.encode_png ~dpi ~srgb:true x) png;
-          let ppm = int_of_float (Float.round (dpi /. 0.0254)) in
-          equal (list string)
-            [ be32 ppm ^ be32 ppm ^ "\001" ]
-            (chunk_data "pHYs" png);
-          equal (list string) [ "\000" ] (chunk_data "sRGB" png);
-          equal image x (Nx_io.load_image path));
+          equal packed
+            (Nx.P (Nx_io.load_image (file ~suffix:".png" plain)))
+            (Nx.P (Nx_io.load_image (file ~suffix:".png" png))));
       cases ~name:fst "~dpi outside the range of a PNG integer is refused"
         [
           ("zero", 0.);
@@ -159,12 +139,10 @@ let png_chunks =
           ("nan", nan);
         ]
         (fun (_, dpi) ->
-          invalid ~by:"Nx_io.encode_png" (fun () ->
-              Nx_io.encode_png ~dpi tiny);
+          invalid ~by:"Nx_io.encode_png" (fun () -> Nx_io.encode_png ~dpi tiny);
           let dir = temp_dir () in
           let path = Filename.concat dir "x.png" in
-          invalid ~by:"Nx_io.save_png" (fun () ->
-              Nx_io.save_png ~dpi path tiny);
+          invalid ~by:"Nx_io.save_png" (fun () -> Nx_io.save_png ~dpi path tiny);
           equal (array string) [||] (Sys.readdir dir));
     ]
 
@@ -172,20 +150,33 @@ let round_trips =
   group "round trips"
     [
       prop
-        "save_png writes encode_png's bytes, which load back as the image, \
-         of every channel count"
-        (images [ 1; 2; 3; 4 ])
-        (fun (view, x) ->
+        "save_png writes encode_png's bytes, with or without ~dpi and ~srgb, \
+         which load back as the image, of every channel count"
+        (Gen.triple
+           (images [ 1; 2; 3; 4 ])
+           (Gen.option (Gen.float_range 1. 1000.))
+           (Gen.option Gen.bool))
+        (fun ((view, x), dpi, srgb) ->
           covers (view, x);
           let channels = Nx.dim 2 x in
           cover "grey" (channels = 1);
           cover "grey and alpha" (channels = 2);
           cover "colour" (channels = 3);
           cover "colour and alpha" (channels = 4);
-          let path = temp_file ~suffix:".png" () in
-          Nx_io.save_png path x;
-          equal string (Nx_io.encode_png x) (read path);
-          equal image x (Nx_io.load_image path));
+          cover "~dpi" (Option.is_some dpi);
+          cover "~srgb:true" (srgb = Some true);
+          let save x =
+            let path =
+              saved ".png" (fun p x -> Nx_io.save_png ?dpi ?srgb p x) x
+            in
+            equal ~msg:"the file" string
+              (Nx_io.encode_png ?dpi ?srgb x)
+              (read path);
+            path
+          in
+          Law.round_trip
+            (Testable.contramap (fun x -> Nx.P x) packed)
+            string save Nx_io.load_image x);
       prop "a smooth image returns from JPEG within a mean error of 8 levels"
         (smooth [ 1; 3 ])
         (fun x ->
@@ -206,9 +197,8 @@ let round_trips =
             Nx_io.save_png (temp_file ~suffix:".png" ()) x;
             Nx.neg (Nx.donate x)
           in
-          let y, grew = host_grown make saved_then_donated in
-          less ~msg:"no memory of the result's size" int ~than:(n * n * 3)
-            grew;
+          let y, grew = grown Rig.host make saved_then_donated in
+          less ~msg:"no memory of the result's size" int ~than:(n * n * 3) grew;
           equal (array int) [| 249 |]
             (Nx.to_array (Nx.slice [ Nx.I 0; Nx.I 0; Nx.R (0, 1) ] y)));
       test "a loaded image's donation writes in place" (fun () ->
@@ -217,22 +207,13 @@ let round_trips =
           Nx_io.save_png path
             (Nx.create Nx.uint8 [| n; n; 3 |] (Array.make (n * n * 3) 7));
           let y, grew =
-            host_grown
+            grown Rig.host
               (fun () -> Nx_io.load_image path)
               (fun x -> Nx.neg (Nx.donate x))
           in
-          less ~msg:"no memory of the result's size" int ~than:(n * n * 3)
-            grew;
+          less ~msg:"no memory of the result's size" int ~than:(n * n * 3) grew;
           equal (array int) [| 249 |]
             (Nx.to_array (Nx.slice [ Nx.I 0; Nx.I 0; Nx.R (0, 1) ] y)));
-      test "a value of another set saves" (fun () ->
-          let module M = (val Nx.devices [ Nx_support.memory 2 ]) in
-          let x =
-            Nx.init Nx.uint8 [| 3; 2; 3 |] (fun i -> i.(0) + i.(1) + i.(2))
-          in
-          let path = temp_file ~suffix:".png" () in
-          Nx_io.save_png path (Nx.place M.on x);
-          equal image x (Nx_io.load_image path));
     ]
 
 (* The format a save writes. *)
@@ -268,8 +249,8 @@ let files =
             (Array.fold_left Int.max 0 (errors expected x)));
       cases ~name:Fun.id
         "each save writes its format and load_image reads the contents, \
-         whatever the extension"
-        [ ".png"; ".jpg"; ".JPEG"; ".bmp"; "" ] (fun ext ->
+         whatever the extension" [ ".png"; ".jpg"; ".JPEG"; ".bmp"; "" ]
+        (fun ext ->
           let x = Nx.full Nx.uint8 [| 4; 4; 3 |] 7 in
           let png = temp_file ~suffix:ext () in
           let jpeg = temp_file ~suffix:ext () in
@@ -280,8 +261,10 @@ let files =
           equal string (Nx_io.encode_png x) (read png);
           starts_with ~affix:"\xff\xd8" (read jpeg);
           equal string (read reference) (read jpeg);
-          equal image x (Nx_io.load_image png);
-          equal image (Nx_io.load_image reference) (Nx_io.load_image jpeg));
+          equal packed (Nx.P x) (Nx.P (Nx_io.load_image png));
+          equal packed
+            (Nx.P (Nx_io.load_image reference))
+            (Nx.P (Nx_io.load_image jpeg)));
       cases ~name:fst
         "a shape the format does not hold is refused, and nothing is written"
         [
@@ -310,10 +293,8 @@ let files =
           let path = file (flip_byte (read (fixture "png_filters.png")) 30) in
           fails ~path ~naming:"PNG chunk CRC mismatch" (fun () ->
               Nx_io.load_image path));
-      test "a file that is neither PNG nor JPEG, or absent, fails" (fun () ->
+      test "a file that is neither PNG nor JPEG fails" (fun () ->
           let path = file "GIF89a" in
-          fails ~path (fun () -> Nx_io.load_image path);
-          let path = Filename.concat (temp_dir ()) "absent.png" in
           fails ~path (fun () -> Nx_io.load_image path));
       cases ~name:Fun.id
         "every proper prefix fails, and any byte flipped loads or fails"
