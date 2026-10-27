@@ -207,6 +207,14 @@ type routed = {
   layouts : Nx_array.Layout.t array;  (** Its results' ({!layouts}). *)
 }
 
+val local_at : 'r prim -> unit Route.common
+(** [local_at op] is [One p] where [op] is no placement or check, has an
+    operand, and every operand is a live array at physically the placement
+    [p], one device's: there {!route} reads them and puts the results,
+    whatever [op]'s rule. It is [Every_set] for no operand and [Other]
+    otherwise. Its walk over the operands allocates only where a
+    factorisation's, a contraction's or a check's are listed. *)
+
 val route : by:string -> 'r prim -> routed
 (** [route ~by op] is what [op]'s rule decides, checked once. Operands that
     lie at one placement that cuts no axis, the others of every set, are read
@@ -273,6 +281,11 @@ val node3 :
     once made: a call that finds it allocates nothing. Domains may call it
     concurrently; two that find its slot empty at once each make an equal
     program. *)
+
+val identity : ('v, 's) dtype -> Nx_kernel.Prog.t
+(** [identity dt] is the program of one operand of [dt] that gives it back
+    ({!Nx_kernel.Prog.is_identity}), a reduction's of its one load. It is
+    kept once made, as {!node1}'s programs are. *)
 
 val op1 :
   by:string ->

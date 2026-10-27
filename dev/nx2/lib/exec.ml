@@ -645,38 +645,31 @@ let mapped (type w r d) ~by (module K : Nx_kernel.S) (at : d Devices.placement)
   | refusal ->
       A.refused by refusal (A.Any dst :: List.map any (Array.to_list loads))
 
-(* Whether [loads] are live arrays read plainly at physically one placement,
-   the first's: a map over them computes on its one device, where its route
-   would read them and put its results ({!Prim.route}). *)
-let beside_first (type d) (loads : d Value.load iarray) =
-  let n = Iarray.length loads in
-  n > 0
-  &&
-  match Iarray.get loads 0 with
-  | Value.Plain (Value.Array f) when f.dead == Value.Live ->
-      let at = f.at and i = ref 1 in
-      while
-        !i < n
-        &&
-        match Iarray.get loads !i with
-        | Value.Plain (Value.Array r) -> r.at == at && r.dead == Value.Live
-        | Value.Plain _ | Value.Padded _ -> false
-      do
-        incr i
-      done;
-      !i = n
-  | Value.Plain _ | Value.Padded _ -> false
+(* Whether [loads] are plain from [i] on. *)
+let rec all_plain : type d. d Value.load iarray -> int -> bool =
+ fun loads i ->
+  i = Iarray.length loads
+  || match Iarray.get loads i with
+     | Value.Plain _ -> all_plain loads (i + 1)
+     | Value.Padded _ -> false
 
-(* The map [op] over loads {!beside_first} holds, computed as {!sharded}
-   computes it at their placement without its route: its rule checked, its
-   results fresh there, the set's kernels called once. A map of one result,
-   as an interpreter's one-node map is, builds the kernels' loads directly
-   and computes as {!apply1} does, by {!mapped}. *)
-let local : type r. by:string -> r Value.prim -> r =
+let rec run : type r. by:string -> r Value.prim -> r =
  fun ~by op ->
+  match Prim.local_at op with
+  | Route.One p -> local ~by p op
+  | Route.Every_set | Route.Other -> general ~by op
+
+(* [op], whose operands are live arrays at physically one placement [p] on
+   one device, computed there as {!compute} computes it, its route the one
+   {!Prim.route} gives, without the route's tables or operands placed: its
+   rule checked, its results fresh there. A map of one result over plain
+   loads, as an interpreter's one-node map is, builds the kernels' loads
+   directly and computes as {!apply1} does, by {!mapped}. *)
+and local : type r. by:string -> unit Devices.placement -> r Value.prim -> r =
+ fun ~by p op ->
   let layouts = Prim.layouts ~by op in
   match op with
-  | Value.Map { layout; prog; outs = [ dt ]; loads } -> (
+  | Value.Map { layout; prog; outs = [ dt ]; loads } when all_plain loads 0 -> (
       match Iarray.get loads 0 with
       | Value.Plain (Value.Array { at; a; _ }) ->
           let kernels = kernels_of ~by ~op:"Map" (Devices.set at) in
@@ -690,25 +683,15 @@ let local : type r. by:string -> r Value.prim -> r =
           let dst = fresh_over dt layout (A.device a) in
           (mapped ~by kernels at prog dst arrays, ())
       | Value.Plain _ | Value.Padded _ -> invalid_arg "Exec.local")
-  | Value.Map { loads; _ } -> (
-      match Iarray.get loads 0 with
-      | Value.Plain (Value.Array { at; a; _ }) ->
-          let p = Some (Devices.rebrand at) in
-          let r = Prim.results_at p layouts (fun k f -> alloc ~by k f) op in
-          let kernels = kernels_of ~by ~op:"Map" (Devices.set at) in
-          if call ~by kernels op r 0 then r
-          else
-            let (module K : Nx_kernel.S) = kernels in
-            refused ~by ~kernels:K.name (A.device a) op
-      | Value.Plain _ | Value.Padded _ -> invalid_arg "Exec.local")
-  | _ -> invalid_arg "Exec.local: not a map"
+  | _ -> at_one ~by p layouts op
 
-let is_local : type r. r Value.prim -> bool = function
-  | Value.Map { loads; _ } -> beside_first loads
-  | _ -> false
-
-let rec run : type r. by:string -> r Value.prim -> r =
- fun ~by op -> if is_local op then local ~by op else general ~by op
+(* [op] computed by {!compute} at [p], the route {!Prim.route} gives where
+   every operand is at [p] on one device. *)
+and at_one : type r.
+    by:string -> unit Devices.placement -> L.t array -> r Value.prim -> r =
+ fun ~by p layouts op ->
+  let route = { Route.operands = [||]; result = p; compute = Windows } in
+  compute ~by route layouts op
 
 and general : type r. by:string -> r Value.prim -> r =
  fun ~by op ->
@@ -863,6 +846,13 @@ and compute : type r.
     r =
  fun ~by ?into ?at route layouts op ->
   match op with
+  | Value.Move (mv, Value.Array { at; a; _ })
+    when Devices.rebrand at == route.result ->
+      (* One array, moved where it lies: its view is the result. *)
+      Value.Array { at; a = moved ~by (Devices.set at) mv a; dead = Value.Live }
+  | Value.Bitcast (dt, Value.Array { at; a; _ })
+    when Devices.rebrand at == route.result ->
+      Value.Array { at; a = cast ~by (Devices.set at) dt a; dead = Value.Live }
   | Value.Move (mv, x) ->
       let xp = Prim.placement x and xs = Prim.arrays x in
       let set = Devices.set xp in

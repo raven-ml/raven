@@ -425,7 +425,7 @@ let unreached ~by op =
   Exec.run ~by op
 
 let eval ~by op =
-  if quiet () && (Exec.is_local op || not (Prim.exists is_traced op)) then
+  if quiet () && not (Prim.exists is_traced op) then
     Exec.run ~by op
   else
     let e = Receive { by; op = Some op } in

@@ -1308,6 +1308,16 @@ let joined (type v s d) acc (x : (v, s, d) t) =
       | None -> acc
       | Some p -> join acc (Devices.rebrand p))
 
+(* [join] of [x] where it is a live array, [Other] for any other operand. *)
+let live_joined (type v s d) acc (x : (v, s, d) t) =
+  match x with
+  | Array r when r.dead == Live -> join acc (Devices.rebrand r.at)
+  | Array _ | Shards _ | Donated _ | Deferred _ | Traced _ -> Route.Other
+
+let local_at : type r. r prim -> unit Route.common = function
+  | Place _ | Check _ -> Route.Other
+  | op -> fold (fun () acc x -> live_joined acc x) () Route.Every_set op
+
 (* [op]'s route over its operands ({!Route.route}). Where every operand not of
    every set lies at one placement that cuts no axis, all are read there and
    the results lie there whatever the rule, so neither [op]'s rule nor its
@@ -1862,6 +1872,9 @@ let nodes2 : P.t option array = Array.make (op2_codes * dtypes) None
 let nodes3 : P.t option array =
   Array.make (op3_codes * dtypes * dtypes) None
 
+(* The programs that give their one operand back, by its dtype. *)
+let identities : P.t option array = Array.make dtypes None
+
 (* [p] kept at [table.(i)]. *)
 let kept table i p =
   let p = Some p in
@@ -1890,6 +1903,15 @@ let node3 k c x =
   | None ->
       kept nodes3 i
         (P.of_node ~ins:[| D.Any c; D.Any x; D.Any x |] (Op3 (k, 0, 1, 2)))
+
+let identity dt =
+  let i = D.code dt in
+  match identities.(i) with
+  | Some p -> p
+  | None ->
+      let p = P.v ~ins:[| D.Any dt |] [| In 0 |] ~outs:[| 0 |] in
+      identities.(i) <- Some p;
+      p
 
 (* The map of [prog] over [loads], into [dt]. *)
 let one_node prog dt loads =

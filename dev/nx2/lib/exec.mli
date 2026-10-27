@@ -67,12 +67,6 @@ val run : by:string -> 'r Value.prim -> 'r
     Raises [Invalid_argument] naming [by] for a traced operand: its
     interpretation receives the operation first ({!Eval.eval}). *)
 
-val is_local : 'r Value.prim -> bool
-(** [is_local op] is whether [op] is a map whose loads are live arrays read
-    plainly, at physically one placement: {!run} computes it on that
-    placement's one device without routing it, and none of its operands is
-    traced. It allocates nothing. *)
-
 val apply1 :
   by:string ->
   Nx_kernel.Prog.op1 ->
