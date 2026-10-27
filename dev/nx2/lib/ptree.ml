@@ -360,12 +360,9 @@ end
 
 (* Signatures *)
 
-type role = Read | Consumed
-
 type (_, 'd) fn =
   | Returns : ('a, 'd) t -> ('a, 'd) fn
-  | Arg : role * ('a, 'd) t * ('b, 'd) fn -> ('a -> 'b, 'd) fn
+  | Arg : ('a, 'd) t * ('b, 'd) fn -> ('a -> 'b, 'd) fn
 
-let ( @-> ) a f = Arg (Read, a, f)
-let consumes a f = Arg (Consumed, a, f)
+let ( @-> ) a f = Arg (a, f)
 let returns a = Returns a

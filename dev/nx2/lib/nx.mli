@@ -3842,28 +3842,19 @@ module Ptree : sig
   (** {1:signatures Signatures of compiled functions}
 
       A signature has the shape of the function an interpreter compiles:
-      [tensor @-> index @-> consumes caches @@ returns (pair tensor caches)]. An
-      argument built with {!( @-> )} is read; one built with {!consumes} is
-      given up by each call. Each argument has its own type, so
-      [tensor @-> tensor @-> …] takes arrays of two dtypes. *)
-
-  (** The type for how a call treats an argument. *)
-  type role =
-    | Read  (** The call reads the argument. *)
-    | Consumed  (** The call consumes the argument. *)
+      [tensor @-> index @-> caches @-> returns (pair tensor caches)]. Each
+      argument has its own type, so [tensor @-> tensor @-> …] takes arrays of
+      two dtypes. A caller gives up an argument by donating it at the call
+      ({!donate}). *)
 
   (** The type for signatures of functions of type ['f] on the set ['d]. *)
   type (_, 'd) fn = private
     | Returns : ('a, 'd) t -> ('a, 'd) fn  (** A result. *)
-    | Arg : role * ('a, 'd) t * ('b, 'd) fn -> ('a -> 'b, 'd) fn
+    | Arg : ('a, 'd) t * ('b, 'd) fn -> ('a -> 'b, 'd) fn
         (** An argument, then the rest of the signature. *)
 
   val ( @-> ) : ('a, 'd) t -> ('b, 'd) fn -> ('a -> 'b, 'd) fn
-  (** [a @-> f] reads an argument of [a], then is [f]. *)
-
-  val consumes : ('a, 'd) t -> ('b, 'd) fn -> ('a -> 'b, 'd) fn
-  (** [consumes a f] consumes an argument of [a], then is [f]. It is written
-      [consumes a @@ f]. *)
+  (** [a @-> f] takes an argument of [a], then is [f]. *)
 
   val returns : ('a, 'd) t -> ('a, 'd) fn
   (** [returns a] is a result of [a]. *)

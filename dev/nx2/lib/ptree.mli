@@ -154,14 +154,11 @@ end
 
 (** {1:signatures Signatures} *)
 
-type role = Read | Consumed
-
 type (_, 'd) fn = private
   | Returns : ('a, 'd) t -> ('a, 'd) fn
-  | Arg : role * ('a, 'd) t * ('b, 'd) fn -> ('a -> 'b, 'd) fn
+  | Arg : ('a, 'd) t * ('b, 'd) fn -> ('a -> 'b, 'd) fn
 
 val ( @-> ) : ('a, 'd) t -> ('b, 'd) fn -> ('a -> 'b, 'd) fn
-val consumes : ('a, 'd) t -> ('b, 'd) fn -> ('a -> 'b, 'd) fn
 val returns : ('a, 'd) t -> ('a, 'd) fn
 
 (** {1:flattening Flattening} *)

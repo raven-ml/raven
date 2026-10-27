@@ -778,10 +778,10 @@ let arithmetic =
 let signatures =
   group "signatures"
     [
-      test "a signature lists its arguments' roles, then its result" (fun () ->
-          match P.(tensor @-> consumes linear @@ returns unit) with
-          | P.Arg (Read, _, P.Arg (Consumed, _, P.Returns _)) -> ()
-          | _ -> fail "roles");
+      test "a signature lists its arguments, then its result" (fun () ->
+          match P.(tensor @-> linear @-> returns unit) with
+          | P.Arg (_, P.Arg (_, P.Returns _)) -> ()
+          | _ -> fail "arguments");
     ]
 
 let () =
