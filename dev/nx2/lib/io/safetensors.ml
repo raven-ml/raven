@@ -20,8 +20,6 @@ module Json = struct
     | `Int of int
     | `List of t list ]
 
-  exception Parse_error of string
-
   (* Serialization *)
 
   let quote s =
@@ -55,6 +53,10 @@ module Json = struct
 
   type parser = { input : string; mutable pos : int }
 
+  (* [fail p fmt] fails, naming [p]'s position. *)
+  let fail p fmt =
+    Fail.failf ("the header's JSON at position %d: " ^^ fmt) p.pos
+
   let peek p =
     if p.pos < String.length p.input then Some p.input.[p.pos] else None
 
@@ -75,13 +77,13 @@ module Json = struct
     skip_ws p;
     match peek p with
     | Some ch when ch = c -> advance p
-    | Some ch -> raise (Parse_error (strf "expected '%c' got '%c'" c ch))
-    | None -> raise (Parse_error (strf "expected '%c' got EOF" c))
+    | Some ch -> fail p "expected '%c' got '%c'" c ch
+    | None -> fail p "expected '%c' got EOF" c
 
   let take p c =
     match peek p with
     | Some ch when ch = c -> advance p
-    | _ -> raise (Parse_error (strf "expected '%c'" c))
+    | _ -> fail p "expected '%c'" c
 
   let hex4 p =
     let value = ref 0 in
@@ -91,8 +93,7 @@ module Json = struct
         | Some ('0' .. '9' as c) -> Char.code c - Char.code '0'
         | Some ('a' .. 'f' as c) -> Char.code c - Char.code 'a' + 10
         | Some ('A' .. 'F' as c) -> Char.code c - Char.code 'A' + 10
-        | _ ->
-            raise (Parse_error (strf "invalid Unicode escape digit %d" (i + 1)))
+        | _ -> fail p "invalid Unicode escape digit %d" (i + 1)
       in
       value := (!value lsl 4) lor digit;
       advance p
@@ -105,12 +106,11 @@ module Json = struct
       take p '\\';
       take p 'u';
       let second = hex4 p in
-      if second < 0xdc00 || second > 0xdfff then
-        raise (Parse_error "invalid surrogate pair");
+      if second < 0xdc00 || second > 0xdfff then fail p "invalid surrogate pair";
       Uchar.of_int (0x10000 + ((first - 0xd800) lsl 10) + second - 0xdc00)
     end
     else if first >= 0xdc00 && first <= 0xdfff then
-      raise (Parse_error "unpaired low surrogate")
+      fail p "unpaired low surrogate"
     else Uchar.of_int first
 
   let parse_string p =
@@ -118,14 +118,14 @@ module Json = struct
     let buf = Buffer.create 16 in
     let rec loop () =
       match peek p with
-      | None -> raise (Parse_error "unterminated string")
+      | None -> fail p "unterminated string"
       | Some '"' ->
           advance p;
           Buffer.contents buf
       | Some '\\' ->
           advance p;
           (match peek p with
-          | None -> raise (Parse_error "unterminated escape")
+          | None -> fail p "unterminated escape"
           | Some c -> (
               advance p;
               match c with
@@ -136,11 +136,10 @@ module Json = struct
               | 'r' -> Buffer.add_char buf '\r'
               | 't' -> Buffer.add_char buf '\t'
               | 'u' -> Buffer.add_utf_8_uchar buf (unicode p)
-              | _ -> raise (Parse_error "invalid escape")));
+              | _ -> fail p "invalid escape"));
           loop ()
       | Some c ->
-          if Char.code c < 0x20 then
-            raise (Parse_error "unescaped control character");
+          if Char.code c < 0x20 then fail p "unescaped control character";
           Buffer.add_char buf c;
           advance p;
           loop ()
@@ -158,7 +157,9 @@ module Json = struct
       advance p
     done;
     let s = String.sub p.input start (p.pos - start) in
-    try int_of_string s with _ -> raise (Parse_error ("invalid number: " ^ s))
+    match int_of_string_opt s with
+    | Some n -> n
+    | None -> fail p "invalid number: %s" s
 
   (* A header nests at most three deep: the header, an array's description and
      its shape or offsets. Deeper values are refused before they are read, so
@@ -166,16 +167,15 @@ module Json = struct
   let max_depth = 3
 
   let rec parse_value depth p =
-    if depth > max_depth then
-      raise (Parse_error (strf "values nested more than %d deep" max_depth));
+    if depth > max_depth then fail p "values nested more than %d deep" max_depth;
     skip_ws p;
     match peek p with
-    | None -> raise (Parse_error "unexpected EOF")
+    | None -> fail p "unexpected EOF"
     | Some '"' -> `String (parse_string p)
     | Some '{' -> parse_object (depth + 1) p
     | Some '[' -> parse_list (depth + 1) p
     | Some ('-' | '0' .. '9') -> `Int (parse_int p)
-    | Some c -> raise (Parse_error (strf "unexpected char: '%c'" c))
+    | Some c -> fail p "unexpected char: '%c'" c
 
   and parse_list depth p =
     expect p '[';
@@ -194,7 +194,7 @@ module Json = struct
         | Some ']' ->
             advance p;
             `List (List.rev (v :: acc))
-        | _ -> raise (Parse_error "expected ',' or ']'")
+        | _ -> fail p "expected ',' or ']'"
       in
       loop []
 
@@ -219,20 +219,16 @@ module Json = struct
         | Some '}' ->
             advance p;
             `Assoc (List.rev ((key, value) :: acc))
-        | _ -> raise (Parse_error "expected ',' or '}'")
+        | _ -> fail p "expected ',' or '}'"
       in
       loop []
 
   let from_string s : t =
     let p = { input = s; pos = 0 } in
-    try
-      let v = parse_value 0 p in
-      skip_ws p;
-      if p.pos < String.length s then
-        raise (Parse_error "trailing characters after JSON");
-      v
-    with Parse_error msg ->
-      raise (Parse_error (strf "at position %d: %s" p.pos msg))
+    let v = parse_value 0 p in
+    skip_ws p;
+    if p.pos < String.length s then fail p "trailing characters after JSON";
+    v
 end
 
 (* Dtypes *)
@@ -357,7 +353,6 @@ let parse text =
     match Json.from_string text with
     | `Assoc kv -> kv
     | _ -> failwith "the header is not an object"
-    | exception Json.Parse_error e -> Fail.failf "the header's JSON %s" e
   in
   let names = Hashtbl.create (List.length fields) in
   let entries =
