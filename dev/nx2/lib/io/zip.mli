@@ -16,17 +16,14 @@ val open_in : Rig.Buffer.t -> in_file
 
     Raises [Failure] if they are malformed. *)
 
-val npy_entries : in_file -> string list
-(** [npy_entries a] is the names of [a]'s entries that end in [.npy], without
-    the suffix, in the central directory's order. *)
+val read_npys : in_file -> (string * Nx.host Nx.packed) list
+(** [read_npys a] is the arrays of [a]'s entries whose names end in [.npy],
+    named without the suffix, in the central directory's order: a value over the
+    archive's bytes for a stored entry, over inflated bytes for a compressed
+    one.
 
-val read_npy : in_file -> string -> Nx.host Nx.packed
-(** [read_npy a name] is the array of [a]'s entry [name] and [.npy]: a value
-    over the archive's bytes for a stored entry, over inflated bytes for a
-    compressed one.
-
-    Raises [Failure] if there is no such entry, its checksum does not match, or
-    its data is malformed. *)
+    Raises [Failure] if an entry's checksum does not match or its data is
+    malformed. *)
 
 (** {1:writing Writing} *)
 

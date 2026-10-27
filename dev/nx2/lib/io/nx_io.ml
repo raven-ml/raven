@@ -29,14 +29,10 @@ let load_npz path =
   Fail.file path @@ fun () ->
   let zip = Zip.open_in (Storage.open_file path) in
   List.fold_left
-    (fun archive name ->
+    (fun archive (name, x) ->
       if name = "" then failwith "an entry has an empty name";
-      Archive.add name (Zip.read_npy zip name) archive)
-    Archive.empty (Zip.npy_entries zip)
-
-let load_npz_entry ~name path =
-  Fail.file path @@ fun () ->
-  Zip.read_npy (Zip.open_in (Storage.open_file path)) name
+      Archive.add name x archive)
+    Archive.empty (Zip.read_npys zip)
 
 let save_npz path archive =
   let by = "Nx_io.save_npz" in

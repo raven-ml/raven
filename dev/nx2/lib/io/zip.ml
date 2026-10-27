@@ -433,27 +433,11 @@ let data_span data entry =
 
 let npy_suffix = ".npy"
 
-let npy_entries (archive : in_file) =
-  let n = String.length npy_suffix in
-  List.filter_map
-    (fun { name; _ } ->
-      if String.ends_with ~suffix:npy_suffix name then
-        Some (String.sub name 0 (String.length name - n))
-      else None)
-    archive.entries
-
 (* The bytes of an entry: where they lie in the archive, or inflated. *)
 type data = Stored of int * int | Inflated of bytes
 
-let read_npy (archive : in_file) name =
-  let filename = name ^ npy_suffix in
-  let entry =
-    match
-      List.find_opt (fun e -> String.equal e.name filename) archive.entries
-    with
-    | Some entry -> entry
-    | None -> error "no entry %S" name
-  in
+(* The array of the npy entry [entry]. *)
+let read_npy (archive : in_file) entry =
   let data =
     Storage.read archive.file @@ fun data ->
     let off, len = data_span data entry in
@@ -490,6 +474,16 @@ let read_npy (archive : in_file) name =
       (* The inflated bytes are the entry's alone: its value owns a copy, in
          memory rig may hand to a donation, which a bigarray's never is. *)
       entry (Rig.Buffer.of_bigarray a) Npy.copied
+
+let read_npys (archive : in_file) =
+  let n = String.length npy_suffix in
+  List.filter_map
+    (fun e ->
+      if String.ends_with ~suffix:npy_suffix e.name then
+        let name = String.sub e.name 0 (String.length e.name - n) in
+        Some (name, read_npy archive e)
+      else None)
+    archive.entries
 
 let le16 value =
   String.init 2 (fun i -> Char.chr ((value lsr (8 * i)) land 0xff))

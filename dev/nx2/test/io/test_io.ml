@@ -318,18 +318,13 @@ let npz =
   let one = Nx.P (Nx.zeros Nx.int8 [| 1 |]) in
   group "npz"
     [
-      prop "an archive saved as npz loads as itself, each entry alone too"
+      prop "an archive saved as npz loads as itself"
         (Gen.with_pp pp_entries (archives npy_dtypes))
         (fun entries ->
           List.iter (fun (_, c) -> covers c) entries;
           let a = archive_of entries in
           let path = saved ".npz" Nx_io.save_npz a in
-          equal archive a (Nx_io.load_npz path);
-          List.iter
-            (fun (name, _) ->
-              equal ~msg:name packed (find a name)
-                (Nx_io.load_npz_entry ~name path))
-            entries);
+          equal archive a (Nx_io.load_npz path));
       test "an archive numpy wrote loads" (fun () ->
           equal archive
             (Archive.of_list
@@ -343,7 +338,7 @@ let npz =
          loads" (fun () ->
           equal packed
             (Nx.P (Nx.create Nx.float64 [| 5 |] [| 0.; 1.5; 3.; 4.5; 6. |]))
-            (Nx_io.load_npz_entry ~name:"w" (fixture "unaligned.npz")));
+            (find (Nx_io.load_npz (fixture "unaligned.npz")) "w"));
       cases ~name:Fun.id "an invalid name is refused"
         [ "/w"; "a//b"; "./w"; "a/../b"; "\xff"; "a\\b"; "c:w" ] (fun name ->
           invalid ~by:"Nx_io.save_npz" (fun () ->
@@ -364,7 +359,7 @@ let npz =
               let path = saved ".npz" save_npz [ (name, Nx.P t) ] in
               (* The compression method of the archive's first entry. *)
               equal ~msg:name int method_ (String.get_uint16_le (read path) 8);
-              let loaded = Nx_io.load_npz_entry ~name path in
+              let loaded = find (Nx_io.load_npz path) name in
               equal packed (Nx.P t) loaded;
               if method_ = 0 then
                 is_true ~msg:"over the file" (over_file loaded))
@@ -379,15 +374,12 @@ let npz =
           in
           equal ~msg:"deflated" int 8 (String.get_uint16_le (read path) 8);
           let load () =
-            Nx.unpack Nx.uint8 (Nx_io.load_npz_entry ~name:"w" path)
+            Nx.unpack Nx.uint8 (find (Nx_io.load_npz path) "w")
           in
           let y, grew = host_grown load (fun x -> Nx.neg (Nx.donate x)) in
           less ~msg:"no memory of the result's size" int ~than:n grew;
           equal (array int) (Array.make n 0) (Nx.to_array y));
-      test "a missing entry fails, naming the file" (fun () ->
-          let path = saved ".npz" save_npz [ ("w", one) ] in
-          fails ~path ~naming:"absent" (fun () ->
-              Nx_io.load_npz_entry ~name:"absent" path));
+
       test "an entry whose checksum does not match fails" (fun () ->
           let s = read (saved ".npz" save_npz [ ("w", one) ]) in
           (* The CRC-32 of the central directory's first entry. *)
@@ -395,7 +387,7 @@ let npz =
             if String.sub s i 4 = "PK\001\002" then i + 16 else crc (i + 1)
           in
           let path = file (flip_byte s (crc 0)) in
-          fails ~path (fun () -> Nx_io.load_npz_entry ~name:"w" path));
+          fails ~path (fun () -> Nx_io.load_npz path));
       test
         "a deflated entry that declares more data than deflate can expand to \
          fails" (fun () ->
@@ -409,7 +401,7 @@ let npz =
           Bytes.set_int32_le b (find "PK\001\002" 0 + 24) 0x40000000l;
           let path = file (Bytes.to_string b) in
           fails ~path ~naming:"declares more data" (fun () ->
-              Nx_io.load_npz_entry ~name:"w" path));
+              Nx_io.load_npz path));
       test "every proper prefix fails, and any byte flipped loads or fails"
         (fun () ->
           let whole =

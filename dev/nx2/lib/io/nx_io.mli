@@ -227,16 +227,10 @@ val save_npy : string -> ('v, 's, 'd) Nx.t -> unit
 
 val load_npz : string -> Nx.host Archive.t
 (** [load_npz path] is the arrays of the npz file [path], named without the
-    [.npy] suffix. Entries of other names are ignored.
+    [.npy] suffix. Entries of other names are ignored. It reads every npy
+    entry's bytes, since each entry's checksum covers all of them.
 
     Raises [Failure] also if a checksum does not match its entry. *)
-
-val load_npz_entry : name:string -> string -> Nx.host Nx.packed
-(** [load_npz_entry ~name path] is the array [name] of the npz file [path], and
-    reads no other entry's data.
-
-    Raises [Failure] also if [path] has no entry [name], or its checksum does
-    not match. *)
 
 val save_npz : string -> 'd Archive.t -> unit
 (** [save_npz path a] writes [a]'s arrays to the npz file [path]. Each entry is
