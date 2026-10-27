@@ -53,6 +53,8 @@ let matrix =
   Gen.(map (fun (m, n) -> [| m; n |]) (pair (int_range 0 3) (int_range 0 4)))
 
 (* Matrices whose rows and columns are never empty, for extremes. *)
+let square = Gen.(map (fun n -> [| n + 1; n + 1 |]) (int_range 0 2))
+
 let full =
   Gen.(
     map
@@ -196,8 +198,8 @@ let kinds x =
             loads = [| Plain x |];
           }))
 
-(* A program of twenty operands, [Σ_k x_k Π_(j<k) sin x_j], past the arrays
-   one block of nx.cpu's holds: its derivative is one loop of forty loads. *)
+(* A program of twenty operands, [Σ_k x_k Π_(j<k) sin x_j], past the arrays one
+   block of nx.cpu's holds: its derivative is one loop of forty loads. *)
 let wide = 20
 
 let wide_prog =
@@ -272,6 +274,58 @@ let scatter combine x =
   Nx.scatter ~combine ~axis:0 (targets n) (row 1 x) into
 
 let pattern = Nx.Pattern.v "i j, j k -> i k | j"
+
+(* Contractions with block scales and segments, of twenty draws: [a], then
+   [b]. *)
+let contract_of x ~a ~b ~batch ~contracting ?a_scale ?b_scale ?segments () =
+  let take n off shape = Nx.reshape shape (Nx.slice [ R (off, off + n) ] x) in
+  let na = Array.fold_left ( * ) 1 a in
+  let a = take na 0 a and b = take (Array.fold_left ( * ) 1 b) na b in
+  Nx.Prim.eval ~by:"test"
+    (Contract
+       {
+         batch;
+         contracting;
+         acc = any;
+         out = f64;
+         a;
+         b;
+         init = None;
+         a_scale;
+         b_scale;
+         segments;
+       })
+
+let offsets = Nx.create Nx.int64 [| 3 |] [| 0L; 1L; 4L |]
+
+let contract_cases =
+  let twenty = Gen.constant [| 20 |] in
+  let c name f =
+    case ~empty:false ~shape:twenty name (fun x -> Nx.reshape [| -1 |] (f x))
+  in
+  [
+    c "a contraction of scaled operands" (fun x ->
+        contract_of x ~a:[| 2; 2 |] ~b:[| 2; 2 |] ~batch:[||]
+          ~contracting:[| (1, 0) |]
+          ~a_scale:(Value (Nx.create f64 [| 2; 1 |] [| 1.5; 0.5 |]))
+          ~b_scale:(Exponent (Nx.create Nx.uint8 [| 1; 2 |] [| 128; 126 |]))
+          ());
+    c "a contraction segmented by rows" (fun x ->
+        contract_of x ~a:[| 4; 2 |] ~b:[| 2; 2; 3 |] ~batch:[||]
+          ~contracting:[| (1, 1) |]
+          ~segments:(Rows { offsets; a_axis = 0; b_axis = 0 })
+          ());
+    c "a contraction segmented along its pair" (fun x ->
+        contract_of x ~a:[| 4; 2 |] ~b:[| 4; 3 |] ~batch:[||]
+          ~contracting:[| (0, 0) |]
+          ~segments:(Contracting { offsets; pair = 0 })
+          ());
+    c "a batched contraction of transposed operands" (fun x ->
+        contract_of x ~a:[| 2; 3; 2 |] ~b:[| 2; 2 |]
+          ~batch:[| (0, 1) |]
+          ~contracting:[| (2, 0) |]
+          ());
+  ]
 
 let real_cases =
   let unary name ?values f = case ?values name f in
@@ -415,6 +469,11 @@ let real_cases =
           ~kernel_size:[| 2 |] ~stride:[| 1 |] ~dilation:[| 1 |]
           ~padding:[| (0, 0) |]
           x);
+    case ~empty:false ~shape:full "set, an assembly over its operand" (fun x ->
+        Nx.set [ R (0, 1) ] (Nx.slice [ R (0, 1) ] (Nx.sin (row 0 x))) (row 0 x));
+    case ~empty:false ~shape:square "a strided slice, a diagonal" Nx.diagonal;
+    case ~shape:matrix "a reversed strided slice" (fun x ->
+        Nx.slice [ A; Rs (-1, -100, -2) ] x);
     case ~shape:(rows 2) "concatenate" (fun x ->
         Nx.concatenate ~axis:0 [ row 1 x; Nx.sin (row 0 x); row 1 x ]);
     case ~shape:cube "matmul" (fun x ->
@@ -502,6 +561,22 @@ let complex_cases =
       "fft"
       (fun x -> parts (Nx.fft (complex x)));
     case "rfft" (fun x -> parts (Nx.rfft c128 x));
+    case ~shape:matrix "rfft along a leading axis" (fun x ->
+        parts (Nx.rfft c128 ~axes:[ 0 ] x));
+    case ~shape:matrix "rfft over two axes" (fun x ->
+        parts (Nx.rfft c128 ~axes:[ 0; 1 ] x));
+    case ~shape:(rows 2)
+      ~z:(complex, fun z -> Nx.ifft z)
+      "ifft"
+      (fun x -> parts (Nx.ifft (complex x)));
+    case ~empty:false
+      ~shape:Gen.(map (fun n -> [| 2; n + 1; 2 |]) (int_range 0 3))
+      "irfft along a leading axis"
+      (fun x -> Nx.irfft f64 ~axes:[ 0 ] (complex x));
+    case ~empty:false
+      ~shape:Gen.(map (fun n -> [| 2; n + 1; 3 |]) (int_range 0 2))
+      "irfft over two axes"
+      (fun x -> Nx.irfft f64 ~axes:[ 0; 1 ] (complex x));
     case ~empty:false
       ~shape:Gen.(map (fun n -> [| 2; n + 1 |]) (int_range 0 4))
       "irfft"

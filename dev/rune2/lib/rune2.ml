@@ -567,6 +567,12 @@ let vjp' f x = vjp_named "Rune.vjp'" Ptree.tensor Ptree.tensor f x
 let jacrev' f x =
   let name = "Rune.jacrev'" in
   let y, pullback = vjp_named name Ptree.tensor Ptree.tensor f x in
+  let complex x = Nx.Dtype.is Complex (Nx.dtype x) in
+  if complex y && not (complex x) then
+    invalid_argf
+      "%s: the result is complex and the argument real, so the Jacobian has no \
+       place in the argument's dtype; use Rune.jacfwd'"
+      name;
   let sy = Nx.shape y and n = Nx.numel y in
   let iota = Nx.arange Nx.int32 0 n 1 in
   (* Row [k] is the pullback of element [k] of the result in C order. *)

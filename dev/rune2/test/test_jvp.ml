@@ -47,7 +47,9 @@ let law c (s, xs, ts) =
 (* Helpers over cases' operands *)
 
 let tangent_props =
-  List.map (fun c -> prop c.name (gen c) (law c)) (real_cases @ complex_cases)
+  List.map
+    (fun c -> prop c.name (gen c) (law c))
+    (real_cases @ contract_cases @ complex_cases)
 
 (* Values the conventions state *)
 

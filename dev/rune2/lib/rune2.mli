@@ -390,7 +390,8 @@ val jacrev' :
     element. For a complex-differentiable [f] it is the complex derivative, as
     {!jacfwd'} computes it.
 
-    Raises [Invalid_argument] as {!vjp'} does. *)
+    Raises [Invalid_argument] as {!vjp'} does, and if [x] is real and [f x]
+    complex, whose Jacobian [x]'s dtype cannot hold. *)
 
 val scan' :
   f:

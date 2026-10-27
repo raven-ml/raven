@@ -339,27 +339,62 @@ let reduce_cts (type d r) env layout axes (rs : (d, r) Prim.reductions) cts =
   in
   go rs 0
 
-(* The sums of [x]'s elements from each index on, along [axis]. *)
-let from_each ~axis x =
-  Nx.flip ~axes:[ axis ] (Nx.cumsum ~axis (Nx.flip ~axes:[ axis ] x))
+(* The additive identity that keeps every sign. *)
+let neg_zero (type v s) (dt : (v, s) D.t) : v =
+  match D.kind dt with
+  | Float -> -0.
+  | Complex -> { Complex.re = -0.; im = -0. }
+  | Signed | Unsigned | Boolean -> D.zero dt
+
+(* The sums of [w]'s elements from each index on, along [axis]: a scan of the
+   axis reversed, carried from [-0.], so that a sum of one term is that term,
+   sign of zero included. *)
+let from_each (type v s e) ~by ~axis (w : (v, s, e) Nx.t) : (v, s, e) Nx.t =
+  let dt = Nx.dtype w in
+  let reversed = Nx.flip ~axes:[ axis ] w in
+  let shape = Nx.shape reversed in
+  let one = Array.mapi (fun a d -> if a = axis then 1 else d) shape in
+  let (D.Any c) = Nx_kernel.carrier (D.Any dt) in
+  let carry = rebrand w (Nx.full c one (neg_zero c)) in
+  let r =
+    Prim.eval ~by
+      (Scan
+         {
+           layout = L.contiguous (Iarray.of_array shape);
+           axis;
+           prog = identity (D.Any dt);
+           reduction = Monoid (Sum, 0, dt);
+           loads = [| Plain reversed |];
+           carry = Some (Any carry);
+         })
+  in
+  Nx.flip ~axes:[ axis ] r
 
 let scan_rule (type d r) env layout axis prog
     (reduction : (d, r) Prim.reduction) (loads : d Prim.load iarray)
     (carry : d Prim.any option) cts =
   let running k dt w =
-    sweep env layout prog loads [| (k, dt, V (from_each ~axis w)) |]
+    let r = from_each ~by:env.name ~axis w in
+    sweep env layout prog loads [| (k, dt, V r) |];
+    r
   in
   match reduction with
   | Monoid (Sum, k, dt) ->
       Option.iter
         (fun (V w) ->
-          running k (D.Any dt) w;
-          (* The carry is a term of every element along the axis. *)
+          let r = running k (D.Any dt) w in
+          (* The carry is a term of every element along the axis: its cotangent
+             is the first slice's. *)
           Option.iter
             (fun (Prim.Any c) ->
-              if env.lin c then
-                let s = Nx.sum ~axes:[ axis ] ~keepdims:true w in
-                env.give c (fresh (V (Nx.cast (Nx.dtype c) s))))
+              if env.lin c && Nx.dim axis r > 0 then
+                let first =
+                  Nx.slice
+                    (List.init (Nx.ndim r) (fun a ->
+                         if a = axis then Nx.R (0, 1) else Nx.A))
+                    r
+                in
+                env.give c (held (V (Nx.cast (Nx.dtype c) first))))
             carry)
         (cts 0)
   | Moments (k, dt) ->
@@ -370,7 +405,7 @@ let scan_rule (type d r) env layout axis prog
           let along = Array.init r (fun a -> if a = axis then n else 1) in
           let count = Nx.arange Nx.int32 1 (n + 1) 1 in
           let count = Nx.reshape along (Nx.cast (Nx.dtype w) count) in
-          running k (D.Any dt) (Nx.div w count))
+          ignore (running k (D.Any dt) (Nx.div w count)))
         (cts 0)
   | Monoid ((Prod | Max | Min), _, _) | Logsumexp _ | Arg _ ->
       if Option.is_some (cts 0) then
@@ -678,14 +713,24 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
                segments;
              })
       in
+      (* A contraction's result is its own memory in C order, its axes reordered
+         a view of it. *)
       let give x scale order y =
-        let y = reorder (Array.of_list order) y in
+        let order = Array.of_list order in
+        let fresh =
+          ref
+            (Array.for_all2 ( = ) order
+               (Array.init (Array.length order) Fun.id))
+        in
+        let y = reorder order y in
         let y =
           match scale_at env r scale with
           | None -> y
-          | Some s -> Nx.mul y (expanded (Nx.dtype x) (Nx.shape x) s)
+          | Some s ->
+              fresh := true;
+              Nx.mul y (expanded (Nx.dtype x) (Nx.shape x) s)
         in
-        env.give x (fresh (V y))
+        env.give x { v = V y; fresh = !fresh }
       in
       let (V w) = w in
       if env.lin a then begin
@@ -763,9 +808,9 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
    transform, its matrix symmetric. Each bin of a real transform but bin 0 and,
    for an even [n], bin [n/2] stands for two points, a conjugate pair. *)
 
-(* [c] at each of [n/2 + 1] bins along [x]'s last axis, in [x]'s dtype: [1] at
-   bin 0 and, for an even [n], bin [n/2], [c] at the others. *)
-let bins (type v s d) (x : (v, s, d) Nx.t) n c : (v, s, d) Nx.t =
+(* [c] at each of [n/2 + 1] bins along [x]'s [axis], in [x]'s dtype: [1] at bin
+   0 and, for an even [n], bin [n/2], [c] at the others. *)
+let bins (type v s d) ~axis (x : (v, s, d) Nx.t) n c : (v, s, d) Nx.t =
   let k = (n / 2) + 1 and r = Nx.ndim x in
   let j = Nx.arange Nx.int32 0 k 1 in
   let at b = Nx.equal j (Nx.scalar Nx.int32 (Int32.of_int b)) in
@@ -773,7 +818,7 @@ let bins (type v s d) (x : (v, s, d) Nx.t) n c : (v, s, d) Nx.t =
   let w =
     Nx.where ends (Nx.ones Nx.float64 [| k |]) (Nx.full Nx.float64 [| k |] c)
   in
-  let shape = Array.init r (fun a -> if a = r - 1 then k else 1) in
+  let shape = Array.init r (fun a -> if a = axis then k else 1) in
   Nx.reshape shape (Nx.cast (Nx.dtype x) w)
 
 let last axes = Iarray.get axes (Iarray.length axes - 1)
@@ -792,7 +837,7 @@ let fft_rule (type d r) env (f : (d, r) Prim.fft) (V w) =
            transform of [conj w], bin [k] weighted by [1 / c_k]. *)
         let n = Nx.dim (last axes) x in
         let v = Nx.conjugate (with_dtype dtype w) in
-        let v = Nx.mul v (bins v n 0.5) in
+        let v = Nx.mul v (bins ~axis:(last axes) v n 0.5) in
         let dtype = Nx.dtype x in
         env.give x
           (fresh (V (Prim.eval ~by (Fft (C2r { dtype; n; axes; x = v })))))
@@ -805,7 +850,7 @@ let fft_rule (type d r) env (f : (d, r) Prim.fft) (V w) =
             (Fft (R2c { dtype = Nx.dtype x; axes; x = with_dtype dtype w }))
         in
         let y = Nx.conjugate y in
-        env.give x (fresh (V (Nx.mul y (bins y n 2.))))
+        env.give x (fresh (V (Nx.mul y (bins ~axis:(last axes) y n 2.))))
 
 (* Complex values and their parts' pairs: bitcasts between them are linear. *)
 let same_coordinates (D.Any a) (D.Any b) =

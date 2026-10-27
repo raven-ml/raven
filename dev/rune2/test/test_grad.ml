@@ -22,12 +22,13 @@ let sum_abs a = Array.fold_left (fun s x -> s +. Float.abs x) 0. a
 let finite a = Array.for_all Float.is_finite a
 
 (* [<w, J v> = <Jᵀ w, v>], from the terms of each side, within [2^-40] of their
-   magnitudes: float64's rounding of a few hundred terms. *)
-let adjoint ~msg wjv jtwv =
+   magnitudes and of [size], the magnitude of the products of operands that [J
+   v] may cancel: float64's rounding of a few hundred terms. *)
+let adjoint ~msg ~size wjv jtwv =
   if finite wjv && finite jtwv then
     let lhs = Array.fold_left ( +. ) 0. wjv
     and rhs = Array.fold_left ( +. ) 0. jtwv in
-    let scale = sum_abs wjv +. sum_abs jtwv in
+    let scale = sum_abs wjv +. sum_abs jtwv +. size in
     at_most ~msg float_exact
       ~than:((0x1p-40 *. scale) +. 0x1p-1000)
       (Float.abs (lhs -. rhs))
@@ -45,7 +46,9 @@ let adjoint_law c (s, xs, ts) =
   let w = Nx.create f64 (Nx.shape y) (spread seed (Nx.numel y)) in
   let jtw = pullback w in
   equal ~msg:"gradient shape" (array int) s (Nx.shape jtw);
-  adjoint ~msg:"<w, J v> = <Jᵀ w, v>"
+  let big = Array.fold_left (fun m x -> Float.max m (Float.abs x)) 0. xs in
+  let size = sum_abs (Nx.to_array w) *. sum_abs ts *. ((1. +. big) ** 2.) in
+  adjoint ~msg:"<w, J v> = <Jᵀ w, v>" ~size
     (Nx.to_array (Nx.mul w jv))
     (Nx.to_array (Nx.mul jtw t))
 
@@ -64,14 +67,20 @@ let complex_law (input, f) (s, xs, ts) =
   in
   let jtw = pullback w in
   let re x = Nx.to_array (Nx.real f64 x) in
-  adjoint ~msg:"Re <w, J v> = Re <Jᵀ w, v>"
+  let big = Array.fold_left (fun m x -> Float.max m (Float.abs x)) 0. xs in
+  let size =
+    (sum_abs (re w) +. sum_abs (Nx.to_array (Nx.imag f64 w)))
+    *. sum_abs ts
+    *. ((1. +. big) ** 2.)
+  in
+  adjoint ~msg:"Re <w, J v> = Re <Jᵀ w, v>" ~size
     (re (Nx.mul w jv))
     (re (Nx.mul jtw t))
 
 let adjoint_props =
   List.map
     (fun c -> prop c.name (gen c) (adjoint_law c))
-    (real_cases @ complex_cases)
+    (real_cases @ contract_cases @ complex_cases)
 
 let complex_props =
   List.filter_map
@@ -107,7 +116,10 @@ let fd_law c (s, xs, ts) =
       (Float.abs (d_sum -. fd_sum))
   end
 
-let fd_props = List.map (fun c -> prop c.name (gen c) (fd_law c)) real_cases
+let fd_props =
+  List.map
+    (fun c -> prop c.name (gen c) (fd_law c))
+    (real_cases @ contract_cases)
 
 (* Values the conventions state *)
 
@@ -181,6 +193,17 @@ let test_zeros () =
   equal ~msg:"a slice" signed
     [| (true, -0.); (false, 0.) |]
     (g (Nx.slice [ R (0, 1) ]) [| 1.; 2. |]);
+  (* A running sum's carry receives one contribution from each element; of one
+     element, that one. *)
+  equal ~msg:"a running sum's carry" signed
+    [| (true, -0.) |]
+    (g
+       (fun c ->
+         scan1
+           ~carry:(Nx.reshape [| 1; 1 |] c)
+           (Monoid (Sum, 0, f64))
+           (Nx.reshape [| 1; 1 |] (v [| 2. |])))
+       [| 1. |]);
   equal ~msg:"a gather" signed
     [| (false, 0.); (false, 0.) |]
     (g (Nx.take (Nx.create Nx.int64 [| 1 |] [| 0L |])) [| 1.; 2. |])
@@ -229,7 +252,15 @@ let test_structures () =
   let w = v [| 3.; 4. |] in
   let _, pullback = Rune.vjp' Fun.id (v [| 1.; 2. |]) in
   ignore (Nx.add (Nx.donate (pullback w)) w);
-  equal ~msg:"fresh" floats [| 3.; 4. |] (Nx.to_array (pullback w))
+  equal ~msg:"fresh" floats [| 3.; 4. |] (Nx.to_array (pullback w));
+  (* A gradient whose computation ends with a contraction's axes moved back is
+     in C order from the start of its memory. *)
+  let a = Nx.create f64 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let pattern = Nx.Pattern.v "k i, k j -> i j | k" in
+  let g = Rune.grad' (fun a -> Nx.sum (Nx.contract f64 pattern a a)) a in
+  let layout = (Nx.Prim.form g).layout in
+  equal ~msg:"in C order" bool true
+    (L.is_contiguous layout && fst (L.span layout) = 0)
 
 let test_nesting () =
   let x = v [| 0.5; -1. |] in
@@ -316,7 +347,9 @@ let test_jacrev () =
     (pairs (Rune.jacfwd' (fun z -> Nx.mul z z) z))
     (pairs (Rune.jacrev' (fun z -> Nx.mul z z) z));
   equal ~msg:"no element" (array int) [| 0; 3 |]
-    (Nx.shape (Rune.jacrev' (fun x -> Nx.slice [ R (0, 0) ] x) x))
+    (Nx.shape (Rune.jacrev' (fun x -> Nx.slice [ R (0, 0) ] x) x));
+  invalid ~sub:"Rune.jacrev': the result is complex and the argument real"
+    (fun () -> Rune.jacrev' (fun x -> Nx.cast c128 x) x)
 
 let test_check_grads () =
   let ok =
