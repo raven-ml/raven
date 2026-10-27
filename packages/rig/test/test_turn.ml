@@ -291,15 +291,30 @@ let test_break_ends_sleep () =
    call: the signal comes at the start of the driver's allocation, whose hook
    then allocates, where the handler of a signal the thread takes runs. The
    allocation finishes, the device stays live, and Sys.Break raises as the
-   call returns. *)
-let test_break_in_call () =
-  let d, p = P.open_ "turn:break-in-call" in
+   call returns, at its first poll point after the driver.
+
+   [`Caller] raises the signal in the calling thread, which blocks it until
+   the call gives its mask back. [`Other] raises it in a thread of no OCaml
+   code, which takes it: the runtime records it while the calling thread
+   blocks it, and the hook's poll points skip it, the join's included. The
+   minor collection before it leaves the call no collection, whose poll
+   would look at the recorded signals again. *)
+let test_break_in_call taker () =
+  if taker = `Other && Sys.win32 then
+    skip ~reason:"Windows has no SIGINT from a thread" ();
+  let name = match taker with `Caller -> "caller" | `Other -> "other" in
+  let d, p = P.open_ ("turn:break-in-call-" ^ name) in
   let base = Rig.submitted d in
   let first = point (empty_run d) in
   equal int (base + 1) (Rig.Point.value first);
   let finished = ref false in
   P.before p "alloc" (fun () ->
-      Support.interrupt ();
+      (match taker with
+      | `Caller -> Support.interrupt ()
+      | `Other ->
+          Gc.minor ();
+          Support.interrupt_after 0.;
+          Support.interrupt_join ());
       ignore (Sys.opaque_identity (List.init 64 Fun.id));
       finished := true);
   equal ~msg:"the call" bool true (breaks (fun () -> B.create d 8));
@@ -628,7 +643,10 @@ let tests =
           test_break_ends_sleep;
         test "a Ctrl-C during a driver's call outside its waits raises as it \
               returns"
-          test_break_in_call;
+          (test_break_in_call `Caller);
+        test "a Ctrl-C another thread takes during a driver's call raises as \
+              it returns"
+          (test_break_in_call `Other);
         test "a Ctrl-C during a shielded wait raises as the call returns"
           test_break_in_shielded_wait;
         test "Sys.Break in a driver's read of its word loses nothing"

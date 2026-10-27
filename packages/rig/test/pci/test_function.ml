@@ -2569,7 +2569,6 @@ let test_finish_interrupted () =
   Function.release f;
   equal ~msg:"taken while the use runs" bool true (taken ());
   Sys.catch_break true;
-  (* The signal's thread starts before the mask, which it would inherit. *)
   Rig_support.interrupt_after 0.05;
   mask ();
   let finished =

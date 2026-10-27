@@ -1734,12 +1734,20 @@ value rig_test_interrupt(value unit) {
 }
 
 /* A thread of no OCaml code that raises SIGINT [ms] milliseconds after it
-   starts, as a Ctrl-C does, kept until [rig_test_interrupt_join] joins it. */
+   starts, as a Ctrl-C does, kept until [rig_test_interrupt_join] joins it.
+   It unblocks SIGINT first, so that it takes the signal even when a thread
+   that blocks it starts it: the runtime records it once for the process,
+   and the first poll of a thread that does not block SIGINT runs its
+   handler. */
 #ifndef _WIN32
 static pthread_t later;
 static int later_runs;
 
 static void *interrupt_later(void *p) {
+  sigset_t s;
+  sigemptyset(&s);
+  sigaddset(&s, SIGINT);
+  pthread_sigmask(SIG_UNBLOCK, &s, NULL);
   sleep_ms((uint64_t)(uintptr_t)p);
   raise(SIGINT);
   return NULL;

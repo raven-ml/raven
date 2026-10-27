@@ -546,9 +546,10 @@ val interrupt : unit -> unit
 
 val interrupt_after : float -> unit
 (** [interrupt_after s] starts a thread that runs no OCaml code and raises
-    SIGINT [s] seconds later, as a Ctrl-C does: its handler runs on the next
-    thread that returns to OCaml. One such thread runs until
-    {!interrupt_join}. It raises [Failure] on Windows. *)
+    SIGINT [s] seconds later, as a Ctrl-C does. The thread takes the signal
+    itself, even when the caller blocks SIGINT: its handler runs at the first
+    poll of a thread, on any domain, that does not block SIGINT. One such
+    thread runs until {!interrupt_join}. It raises [Failure] on Windows. *)
 
 val interrupt_join : unit -> unit
 (** [interrupt_join ()] waits until the thread {!interrupt_after} started,
