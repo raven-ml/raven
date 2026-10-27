@@ -779,36 +779,60 @@ let rec retire_rings d l =
 let why = function Lacking why | Refused why -> why
 
 (* Whether the RM freed its object [h] under [parent]: [false] if it refused,
-   or frees no object. *)
+   or frees no object. The path's [Fault] passes on. *)
 let freed (p : _ path) ~parent h =
   match p.rm.free with
   | None -> false
-  | Some free -> (
-      match free ~parent h with
-      | Ok () -> true
-      | Error _ | (exception Fault _) -> false)
+  | Some free -> Result.is_ok (free ~parent h)
+
+(* Whether the path ended its registration of the channel [ch]. The path's
+   [Fault] passes on. *)
+let unregistered (p : _ path) ch = Result.is_ok (p.unregister ch)
+
+(* A step that gives back something the device took: an RM object or a
+   channel's registration, whose step answers whether it went back; memory,
+   which an RM object or a registration kept may still name; or host state,
+   which none names. *)
+type undo =
+  | Object of (unit -> bool)
+  | Memory of (unit -> unit)
+  | Host of (unit -> unit)
+
+(* Runs each step of [undo] in turn, whatever one raises, and the first
+   exception passes on once the last has run ([each]). Memory goes back only
+   if every object and registration before it went back: the GPU may still
+   read memory one the RM kept names. *)
+let give_back undo =
+  let kept = ref false in
+  let step = function
+    | Object f -> (
+        match f () with
+        | true -> ()
+        | false -> kept := true
+        | exception e ->
+            kept := true;
+            reraise e)
+    | Memory f -> if not !kept then f ()
+    | Host f -> f ()
+  in
+  each step undo
 
 (* Gives back the set [s]: its channels, their C record, then their memory,
    which the GPU no longer reads once the RM freed them; a set the RM did not
    free keeps its memory. *)
 let drop_channels l s =
-  let unregistered =
-    Array.for_all Fun.id
-      (Array.map
-         (fun ch ->
-           match l.path.unregister ch with
-           | Ok () -> true
-           | Error _ | (exception Fault _) -> false)
-         s.handles)
-  in
-  let device = l.path.device in
-  let freed =
-    freed l.path ~parent:device s.debugger
-    && freed l.path ~parent:device s.group
-  in
-  if s.record <> 0 then free_channels s.record;
-  if unregistered && freed then
-    each l.path.free (s.block :: Array.to_list s.notifiers)
+  let p = l.path in
+  let unregister ch = Object (fun () -> unregistered p ch) in
+  let free h = Object (fun () -> freed p ~parent:p.device h) in
+  let memory m = Memory (fun () -> p.free m) in
+  give_back
+    (List.map unregister (Array.to_list s.handles)
+    @ [
+        free s.debugger;
+        free s.group;
+        Host (fun () -> if s.record <> 0 then free_channels s.record);
+      ]
+    @ List.map memory (s.block :: Array.to_list s.notifiers))
 
 (* Gives back the sets of channels neither installed nor handed. No work
    uses them: a room installs a set once the device reached every value
@@ -992,7 +1016,7 @@ let new_object (p : _ path) ~taken ~parent cls what fill size =
   let q = params size in
   fill q;
   let* h = in_rm what (p.rm.alloc ~parent cls (Some q)) in
-  taken (fun () -> ignore (freed p ~parent h : bool));
+  taken (Object (fun () -> freed p ~parent h));
   Ok h
 
 (* Channels *)
@@ -1064,7 +1088,7 @@ let make_channels (type m) (p : m path) (module R : D.RELEASE) ~taken entries
     let* () =
       in_rm (strf "registering channel %d" q) (of_path (p.register ch))
     in
-    taken (fun () -> ignore (p.unregister ch));
+    taken (Object (fun () -> unregistered p ch));
     let ints =
       [
         block_host + ring_at entries q;
@@ -1112,7 +1136,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
     match path_alloc p kind bytes with
     | None -> Error (strf "no memory for the %s" what)
     | Some m ->
-        taken (fun () -> p.free m);
+        taken (Memory (fun () -> p.free m));
         Ok m
   in
   let* words = alloc Pinned page "join words" in
@@ -1132,7 +1156,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
         match placed Below_windows chunk (map at chunk) with
         | None -> None
         | Some m ->
-            taken (fun () -> p.free m);
+            taken (Memory (fun () -> p.free m));
             Some m)
   in
   let word_host, word_mem =
@@ -1162,7 +1186,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
   let* launches, launches_bar =
     match in_bar with
     | Some m ->
-        taken (fun () -> p.free m);
+        taken (Memory (fun () -> p.free m));
         Ok (m, true)
     | None ->
         let* m = alloc Pinned launch_bytes "launch ring" in
@@ -1176,7 +1200,7 @@ let start (type m) ~word (p : m path) (module R : D.RELEASE) ~taken =
   in
   if self = 0 then Error "no host memory for the device's state"
   else
-    let () = taken (fun () -> destroy self) in
+    let () = taken (Host (fun () -> destroy self)) in
     set_joins self (words_host + 8);
     let* () =
       if set_stamps self stamps_host stamps.address stamps_bytes slots then
@@ -1305,19 +1329,17 @@ let make ~word p =
       let undo = ref [] in
       let taken f = undo := f :: !undo in
       (* A failure giving something back does not hide the open's. *)
-      let give_back () =
-        List.iter (fun f -> try f () with Fault _ -> ()) !undo
-      in
+      let back () = try give_back !undo with Fault _ -> () in
       match start ~word p release ~taken with
       | exception Fault why ->
-          give_back ();
+          back ();
           Error why
       | Error _ as e ->
-          give_back ();
+          back ();
           e
       | exception exn ->
           let bt = Printexc.get_raw_backtrace () in
-          give_back ();
+          back ();
           Printexc.raise_with_backtrace exn bt
       | Ok _ as d -> d)
 
@@ -1459,8 +1481,8 @@ let hand_ring d l i n bar (m : _ memory) =
    if the path lacked them, or the RM lacked memory or another resource for
    it; the device keeps its channels then. The set enters [sets] before its
    hand, and an exception before it enters gives back what the growth
-   made. A free that fails as a short growth gives back raises its
-   [Fault]. *)
+   made ([give_back]). A short growth raises the [Fault] of a free, an RM
+   object's free or an unregister in that give-back. *)
 let grow_channels d l want =
   if Array.for_all (( = ) 0) want then 0
   else
@@ -1468,14 +1490,13 @@ let grow_channels d l want =
     let entries = Array.map2 max want (List.hd l.sets).entries in
     let undo = ref [] and lacked = ref false and recorded = ref false in
     let taken f = undo := f :: !undo in
-    let give_back () = each (fun f -> f ()) !undo in
     (* Where the growth failed, which loses the device, its failure passes on
        before a free's. *)
-    let give_back_failed () = try give_back () with Fault _ -> () in
+    let give_back_failed () = try give_back !undo with Fault _ -> () in
     let alloc n what =
       match path_alloc p Pinned n with
       | Some m ->
-          taken (fun () -> p.free m);
+          taken (Memory (fun () -> p.free m));
           Ok m
       | None ->
           lacked := true;
@@ -1494,7 +1515,7 @@ let grow_channels d l want =
       }
     in
     let record = ref 0 in
-    taken (fun () -> if !record <> 0 then free_channels !record);
+    taken (Host (fun () -> if !record <> 0 then free_channels !record));
     let made =
       try
         let* memory = channel_memory alloc entries in
@@ -1516,7 +1537,7 @@ let grow_channels d l want =
     in
     match made with
     | Error _ when !lacked ->
-        give_back ();
+        give_back !undo;
         block_bytes entries + (2 * page)
     | Error why ->
         give_back_failed ();
@@ -1771,12 +1792,11 @@ let sleep (T d) ~seen ~still_ms =
 
 (* Whether the path unregistered every channel of [l] and the RM freed every
    set. The first set the RM does not free ends the frees: a GPU that cannot
-   free one frees none of the others either. *)
+   free one frees none of the others either. A [Fault] counts as a refusal:
+   the path's stop, which follows, decides what stays. *)
 let end_channels l =
-  let ok f =
-    match f () with Ok () -> true | Error _ | (exception Fault _) -> false
-  in
-  let unregister ch = ok (fun () -> l.path.unregister ch) in
+  let ok f = try f () with Fault _ -> false in
+  let unregister ch = ok (fun () -> unregistered l.path ch) in
   let unregistered =
     List.for_all Fun.id
       (List.concat_map
@@ -1787,8 +1807,8 @@ let end_channels l =
   let freed =
     List.for_all
       (fun s ->
-        freed l.path ~parent:device s.debugger
-        && freed l.path ~parent:device s.group)
+        ok (fun () -> freed l.path ~parent:device s.debugger)
+        && ok (fun () -> freed l.path ~parent:device s.group))
       l.sets
   in
   unregistered && freed

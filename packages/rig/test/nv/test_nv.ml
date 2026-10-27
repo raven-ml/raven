@@ -2279,6 +2279,162 @@ let growth_faulted () =
   in
   equal string ~msg:"the growth" ("Fault " ^ free_fault) answer
 
+(* How the RM answers the frees of objects in [rm_keeping]. *)
+type rm_free = Refuses | Faults
+
+let rm_fault = "the RM's free faulted"
+
+(* What the path of [rm_keeping] does: [recording], it counts the objects it
+   makes under the device and the regions it gives; [lacking], it lacks the
+   resources to schedule a channel group; [failing], it answers the free of
+   each RM object as the test's [rm_free] says. *)
+type switches = {
+  mutable recording : bool;
+  mutable lacking : bool;
+  mutable failing : bool;
+}
+
+(* GPU 0's opener; the objects its path made under the device while
+   recording; the frees of regions it gave while recording; and, once the
+   switches are off and the device stopped, the give-back of those objects,
+   then of those regions still taken. *)
+type rm_keeping = {
+  opener : N.t Rig_edge.opener;
+  objects : unit -> int;
+  frees : unit -> int;
+  release : unit -> unit;
+}
+
+(* [rm_keeping answer sw] is GPU 0 on NVIDIA's kernel driver, whose path does
+   as [sw] says, its RM's frees answering as [answer] says while failing. *)
+let rm_keeping answer sw =
+  let frees = ref 0 and objects = ref [] and given = ref [] in
+  let path = ref None in
+  let wrap (p : _ N.path) =
+    path := Some p;
+    let rm_free = Option.get p.rm.free in
+    let alloc ~parent cls q =
+      let r = p.rm.alloc ~parent cls q in
+      (match r with
+      | Ok h when sw.recording && parent = p.device -> objects := h :: !objects
+      | Ok _ | Error _ -> ());
+      r
+    in
+    let schedule group q =
+      if sw.lacking then Error (N.Lacking "no resources to schedule the group")
+      else p.rm.schedule group q
+    in
+    let free ~parent h =
+      match (sw.failing, answer) with
+      | false, _ -> rm_free ~parent h
+      | true, Refuses -> Error (N.Refused "the RM refused the free")
+      | true, Faults -> raise (N.Fault rm_fault)
+    in
+    let rm = { p.rm with alloc; schedule; free = Some free } in
+    let alloc kind n =
+      let m = p.alloc kind n in
+      (match m with
+      | Some m when sw.recording -> given := m :: !given
+      | Some _ | None -> ());
+      m
+    in
+    let ours (m : _ N.memory) (m' : _ N.memory) = m.address = m'.address in
+    let free m =
+      if List.exists (ours m) !given then begin
+        incr frees;
+        given := List.filter (fun m' -> not (ours m m')) !given
+      end;
+      p.free m
+    in
+    { p with rm; alloc; free }
+  in
+  (* An object the device's stop freed already is refused again. *)
+  let release () =
+    let p = Option.get !path in
+    List.iter
+      (fun h -> ignore (Option.get p.rm.free ~parent:p.device h))
+      !objects;
+    List.iter p.free !given
+  in
+  {
+    opener = Rig_nv_nvidia.gpu_with 0 ~wrap;
+    objects = (fun () -> List.length !objects);
+    frees = (fun () -> !frees);
+    release;
+  }
+
+(* [with_rm_keeping answer f] is [f sw g] on a device [g] of [rm_keeping
+   answer sw], its switches all off at the start, and turned off before the
+   device stops. *)
+let with_rm_keeping answer f =
+  on_kernel ();
+  let sw = { recording = false; lacking = false; failing = false } in
+  let k = rm_keeping answer sw in
+  let g = require_ok (Rig_gpu_support.opened k.opener) in
+  let stop () =
+    sw.recording <- false;
+    sw.lacking <- false;
+    sw.failing <- false;
+    N.stop g ~fault:None;
+    k.release ()
+  in
+  Fun.protect ~finally:stop (fun () -> f k sw g)
+
+(* Parts of 300,000 entries, past the 262,144 of a channel's ring at open, and
+   of 1,100,000, past the 2^20 the first growth's ring holds (rig_nv.mli). *)
+let past_rings = [| (0, Array.make 600_000 0) |]
+let past_grown = [| (0, Array.make 2_200_000 0) |]
+
+let grown = function
+  | Rig_edge.Grown -> "Grown"
+  | Short _ -> "Short"
+
+(* A growth whose channels the RM made but cannot schedule gives back what it
+   took. Where the RM keeps a channel, refusing its free or faulting, the
+   memory the channel names stays taken: the GPU may still read it. A refusal
+   leaves the growth short; a fault raises it, which loses the device. *)
+let rm_kept answer () =
+  with_rm_keeping answer @@ fun k sw g ->
+  equal string ~msg:"past the rings" "GROW" (S.Edge.room g past_rings);
+  sw.recording <- true;
+  sw.lacking <- true;
+  sw.failing <- true;
+  let got =
+    match N.grow g with
+    | a -> grown a
+    | exception N.Fault why -> "Fault " ^ why
+  in
+  let frees = k.frees () in
+  let want =
+    match answer with Refuses -> "Short" | Faults -> "Fault " ^ rm_fault
+  in
+  equal string ~msg:"the growth" want got;
+  at_least int ~msg:"the objects the growth made" ~than:1 (k.objects ());
+  equal int ~msg:"the frees of what the growth took" 0 frees
+
+(* Two growths replace the first set of channels before a room installed it,
+   so the next allocation gives that set back. A fault of the RM's free there
+   passes on from the allocation, and the set's memory stays taken. *)
+let replaced_kept () =
+  with_rm_keeping Faults @@ fun k sw g ->
+  sw.recording <- true;
+  equal string ~msg:"past the rings" "GROW" (S.Edge.room g past_rings);
+  equal string ~msg:"the first growth" "Grown" (grown (N.grow g));
+  equal string ~msg:"past the set handed" "GROW" (S.Edge.room g past_grown);
+  equal string ~msg:"the second growth" "Grown" (grown (N.grow g));
+  let frees = k.frees () in
+  sw.failing <- true;
+  let got =
+    match N.alloc g Pinned H.page with
+    | Some r ->
+        N.free g r;
+        "Some"
+    | None -> "None"
+    | exception N.Fault why -> "Fault " ^ why
+  in
+  equal string ~msg:"the allocation" ("Fault " ^ rm_fault) got;
+  equal int ~msg:"the frees of the replaced set" frees (k.frees ())
+
 let faults =
   group ~timeout:60. "a path's faults"
     [
@@ -2287,6 +2443,12 @@ let faults =
       test "a stop gives back every memory, then raises a free's fault"
         stop_faulted;
       test "a growth short of memory raises a free's fault" growth_faulted;
+      test "a growth keeps the memory of a channel the RM refused to free"
+        (rm_kept Refuses);
+      test "a growth raises the fault of an RM free, keeping its memory"
+        (rm_kept Faults);
+      test "a replaced set the RM faults on keeps its memory, raising"
+        replaced_kept;
     ]
 
 let () =

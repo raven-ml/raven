@@ -50,9 +50,13 @@
     path's [free] that fails keeps the memory it was given, and the call
     that freed raises its {!Fault}, {!val-grow} also where it would answer
     [Short]. A call that fails for another reason reports that failure in
-    the Fault's place: {!make} returns its own [Error], and {!val-grow}
-    raises its own exception. {!val-stop} raises it once it has stopped the
-    device and given back every other memory.
+    the Fault's place. {!make} returns its own [Error], and {!val-grow}
+    raises its own exception. {!val-stop} raises a [free]'s {!Fault} once it
+    has stopped the device and given back every other memory. The memory an
+    RM object names stays taken while the RM keeps the object, or while the
+    path keeps the object's channel registered. A {!Fault} from the RM's
+    [free] or the path's [unregister] passes on as a [free]'s does, but
+    {!val-stop} drops it and asks the path to stop ({!section-faults}).
 
     The capability's [local] and the paths' openers, called from a callback
     inside a lock ([Rig]'s domains section), raise [Invalid_argument],
