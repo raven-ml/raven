@@ -439,13 +439,14 @@ static void store(const prog *j, const plane *f, int o) {
    walk's blocks share: a block takes a spare one or allocates one, and
    puts it back, so a walk allocates as many as it runs blocks at once;
    past SPARES spares, one given back is freed. [failed] is set where one
-   cannot be had. */
+   cannot be had; [made] is set once one is allocated, so that walks whose
+   blocks all fit on the stack, as a small map's do, free nothing. */
 #define SPARES 64
 
 struct heap {
   int64_t bytes;
   void *spare[SPARES];
-  int failed;
+  int failed, made;
 };
 
 static void *arena_take(struct heap *h) {
@@ -455,7 +456,14 @@ static void *arena_take(struct heap *h) {
   }
   void *p = malloc((size_t)h->bytes);
   if (p == NULL) __atomic_store_n(&h->failed, 1, __ATOMIC_RELAXED);
+  else __atomic_store_n(&h->made, 1, __ATOMIC_RELAXED);
   return p;
+}
+
+/* Frees [h]'s spares, once its walks have ended. */
+static void heap_end(struct heap *h) {
+  if (!__atomic_load_n(&h->made, __ATOMIC_RELAXED)) return;
+  for (int i = 0; i < SPARES; i++) free(h->spare[i]);
 }
 
 static void arena_give(struct heap *h, void *p) {
@@ -809,10 +817,8 @@ static int run_map(step *s, int nn, int nouts, const int32_t *outs,
     nx_cpu_walk(j.n, a, &l, most, per, block, &j);
   }
   nx_cpu_reacquire(released);
-  for (int i = 0; i < SPARES; i++) {
-    free(heap.spare[i]);
-    free(tabs.spare[i]);
-  }
+  heap_end(&heap);
+  heap_end(&tabs);
   return heap.failed || tabs.failed ? -1 : e;
 }
 
@@ -939,10 +945,8 @@ nx_cpu_prog *nx_cpu_prog_copy(const value *vp) {
 
 void nx_cpu_prog_free(nx_cpu_prog *g) {
   if (g == NULL) return;
-  for (int i = 0; i < SPARES; i++) {
-    free(g->heap.spare[i]);
-    free(g->tabs.spare[i]);
-  }
+  heap_end(&g->heap);
+  heap_end(&g->tabs);
   if (g->s != g->local) free(g->s);
   free(g->owned);
   free(g);
