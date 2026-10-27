@@ -10,7 +10,9 @@ module Buffer = Rig.Buffer
 
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
-(* nx_array_stubs.c reads the fields in this order. *)
+(* nx_array_stubs.c reads the fields in this order. The record is private
+   rather than abstract so that [any] below can be unboxed: the compiler
+   must see that an array is a block that holds no float. *)
 type ('v, 's) t = {
   dtype : ('v, 's) Dtype.t;
   layout : Layout.t;
