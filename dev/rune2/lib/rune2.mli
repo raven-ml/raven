@@ -500,10 +500,12 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     Each donated argument lends to one result at most, the results of a
     scatter first. Its values are the same either way.
 
-    {b Checks.} A check the function makes ({!Nx.check}) is computed with the
-    program, and the first that fails, in the order the function made them,
-    raises its exception when the call returns, with the data at its first
-    failing index, as eagerly; the call's results are then lost.
+    {b Checks.} A check the function makes ({!Nx.check}) on the host is
+    computed with the program, and the first that fails, in the order the
+    function made them, raises its exception when the call returns, with the
+    data at its first failing index, as eagerly; the call's results are then
+    lost. A program with a check on another set, which raises at a later wait
+    there, is evaluated.
 
     {b Numerics.} A compiled call gives eager's bits, but for a NaN's sign and
     payload, where both compute exactly: movements, selections, comparisons,
@@ -522,8 +524,8 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     values on several devices, or a result of every set computed from the
     arguments, or one tolk cannot compile, runs as its operations evaluated by
     nx, giving eager's values; a result that is an argument is a copy of
-    it, and the call consumes its donated arguments once it has read them,
-    lending nothing. So does a call whose
+    it, and a call with donated arguments claims them first, consumes them
+    and lends nothing. So does a call whose
     arguments a transformation around it traces, or that an enclosing [jit]
     traces: the transformation receives its program's operations, and the
     enclosing [jit] stages them.

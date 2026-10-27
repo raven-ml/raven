@@ -331,29 +331,31 @@ let operand_reaches (type r) rc (op : r Nx.Prim.t) =
   | Place (_, x) -> [ at x true ]
   | Scatter { idx; updates; into; _ } ->
       [ at idx false; at updates false; at into true ]
-  | Contract { init = Some init; _ } ->
+  | Contract { init = Some _; _ } ->
+      (* Operands [a], [b], then [init], then scales and segments. *)
       let (Operands l) = Nx.Prim.operands op in
-      List.map
-        (fun (Nx.Prim.Any x) -> at x (same (V x) (V init)))
-        l
+      List.mapi (fun i (Nx.Prim.Any x) -> at x (i = 2)) l
   | _ ->
       let (Operands l) = Nx.Prim.operands op in
       rest l
 
-(* [lend p ~reaches ~scattered ~fits] is the argument each result takes the
-   storage of, or [-1], in three passes as RFC 0006 orders them: the results
-   of a scatter that read an argument at their own index, then the other
-   results that do, then the results that read none, each taking an argument
-   nothing reads. [reaches.(j)] is result [j]'s reach, [scattered.(j)] whether
-   a scatter computes it, and [fits k j] whether argument [k] may lend to
-   result [j]: of its dtype, size and placement, and read by no other result
-   or check. An argument lends once. *)
-let lend ~arguments ~reaches ~scattered ~fits =
+(* [lend ~donated ~computed ~reaches ~scattered ~fits] is the argument each
+   result takes the storage of, or [-1], in three passes as RFC 0006 orders
+   them: the results of a scatter that read an argument at their own index,
+   then the other results that do, then the results that read no donated
+   argument, each taking one that nothing reads. [donated.(k)] is whether
+   argument [k] is donated, [computed.(j)] whether the program computes result
+   [j], [reaches.(j)] its reach, [scattered.(j)] whether a scatter computes
+   it, and [fits k j] whether argument [k] may lend to result [j]: of its
+   dtype, size and placement, and read by no other result or check. An
+   argument lends once. *)
+let lend ~donated ~computed ~reaches ~scattered ~fits =
   let n = Array.length reaches in
+  let arguments = Array.length donated in
   let lent = Array.make n (-1) and taken = Array.make arguments false in
   let pass pick =
     for j = 0 to n - 1 do
-      if lent.(j) < 0 then
+      if lent.(j) < 0 && computed.(j) then
         match List.find_opt (fun k -> (not taken.(k)) && fits k j) (pick j) with
         | Some k ->
             lent.(j) <- k;
@@ -365,7 +367,8 @@ let lend ~arguments ~reaches ~scattered ~fits =
   pass (fun j -> if scattered.(j) then own j else []);
   pass own;
   pass (fun j ->
-      if Is.is_empty reaches.(j).reads then List.init arguments Fun.id else []);
+      if Is.exists (fun k -> donated.(k)) reaches.(j).reads then []
+      else List.init arguments Fun.id);
   lent
 
 (* [lower ~rig p forms ~layouts ~phases ~donated] is [p] over arguments of
@@ -412,6 +415,8 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
   let checks = ref [] and check_reads = ref [] in
   let check (type d e) (ok : (bool, _, d) Nx.t) (data : (d, e) Nx.Prim.data)
       (fail : int array -> e -> exn) =
+    if not (Rig.equal st.rig Rig.host) then
+      decline "a check off the host, which raises at a later wait";
     let shape = Nx.shape ok in
     let n = numel shape in
     check_reads := reach ok :: !check_reads;
@@ -512,8 +517,14 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
     && L.offset layouts.(k) = 0
     && phases.(k) = 0
   in
+  let computed =
+    Array.map
+      (fun (V y) ->
+        match Nx.Prim.payload p.owner y with Some (Var _) -> true | _ -> false)
+      p.outputs
+  in
   let lent =
-    lend ~arguments:(Array.length forms) ~reaches ~scattered:scattered_out ~fits
+    lend ~donated ~computed ~reaches ~scattered:scattered_out ~fits
   in
   let stores = ref [] in
   let buffer (F f) =
@@ -858,14 +869,15 @@ let over (V x) arrays =
         (Nx.Repr.of_shards q
            (Iarray.of_array (Array.map (A.expect f.dtype) arrays)))
 
-(* [p] evaluated over the arrays of a consumer of [args]: its donated handles'
-   donors are dead, so their arrays stand for them. Each result is copied,
-   since no value over the arrays may outlive the consumer. *)
+(* [p] evaluated over the arrays of a consumer of [args]: the donors it
+   claimed are dead, so the arrays of every placed argument stand for it, a
+   donor beside its handle included. Each result is copied, since no value
+   over the arrays may outlive the consumer. *)
 let evaluated p args arrays =
   let values =
     Array.mapi
       (fun k (V x as v) ->
-        if Nx.Prim.donated x then over v (arrays k) else v)
+        if Option.is_some (Nx.placement x) then over v (arrays k) else v)
       args
   in
   Array.map (fun (V y) -> V (Nx.copy y)) (eval p values)
@@ -940,8 +952,8 @@ and linked t v args leaves take =
     let first, length = run_bytes (A.dtype a) (A.layout a) in
     Rig.Buffer.view (A.buffer a) ~first ~length
   in
-  (* A lending argument's memory, or a copy of it where its memory is shared
-     or its handle lends to no result on this call. *)
+  (* A lending argument's memory, or a copy of it where nx's consumer does not
+     give its memory, as where another value reads it. *)
   let lending = Array.make (Array.length args) None in
   let lend k =
     match lending.(k) with

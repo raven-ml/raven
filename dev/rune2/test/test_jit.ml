@@ -459,18 +459,29 @@ type donation_case =
       (float, 's) Nx.dtype * int array * operand * operand * expr
       -> donation_case
 
+let pp_donation ppf (Donation_case (dt, s, x, y, e)) =
+  Format.fprintf ppf "%a %a, x %a, y %a: %a" Nx.pp_dtype dt pp_shape s
+    pp_view x.view pp_view y.view pp e
+
 let donation_cases =
   let open Gen in
   (let* s = shape in
    let* e = expr ~rank:(Array.length s) in
    let* x = operand s and+ y = operand s in
    let+ wide = bool in
-   let e = elementwise (exact e) in
+   let e = exact e in
    if wide then Donation_case (f64, s, x, y, e)
    else Donation_case (f32, s, x, y, e))
-  |> with_pp (fun ppf (Donation_case (dt, s, x, y, e)) ->
-      Format.fprintf ppf "%a %a, x %a, y %a: %a" Nx.pp_dtype dt pp_shape s
-        pp_view x.view pp_view y.view pp e)
+  |> with_pp pp_donation
+
+(* A result that takes the argument's memory, and one that reads it along an
+   axis and so does not. *)
+let donation_examples =
+  let plain = { view = Plain; values = [| 1.; -0.; 2.5 |] } in
+  [
+    Donation_case (f32, [| 3 |], plain, plain, Un (Neg, Bin (Mul, X, Y)));
+    Donation_case (f32, [| 3 |], plain, plain, Bin (Sub, X, Un (Max 0, X)));
+  ]
 
 (* A call over a donated argument gives the bits of one over the argument
    kept, whether its result took the argument's memory or not. *)
@@ -478,42 +489,103 @@ let law_donation (Donation_case (dt, s, xo, yo, e)) =
   let f x y = eval x y e in
   let eager = outcome (fun () -> bits (f (make dt s xo) (make dt s yo))) in
   let x = make dt s xo and y = make dt s yo in
-  let donated = Nx.donate x in
+  let memory =
+    if numel s = 0 then None else Some (Nx.Repr.read x Nx_array.buffer)
+  in
+  let result = ref None in
   let jitted =
-    outcome (fun () -> bits (Rune.jit (pair_fn ()) f donated y))
+    outcome (fun () ->
+        let r = Rune.jit (pair_fn ()) f (Nx.donate x) y in
+        result := Some r;
+        bits r)
+  in
+  let took =
+    match (memory, !result) with
+    | Some b, Some r -> (
+        match Nx.Repr.array r with
+        | Some a -> Rig.Buffer.overlaps b (Nx_array.buffer a)
+        | None -> false)
+    | _ -> false
   in
   cover "a zero-size shape" (numel s = 0);
   cover "a view operand" (xo.view <> Plain);
+  cover "the result takes the argument's memory" took;
+  cover "the result is fresh" (Option.is_some !result && not took);
   equal (outcome_t bits_t) eager jitted
 
-(* Checks *)
+(* A contraction reads its operands along their contracted axes, so one that
+   is also its [init] lends nothing. *)
+let test_contract_init () =
+  let p = Nx.Pattern.v "i j, j k -> i k | j" in
+  let f x = Nx.contract ~init:x f32 p x x in
+  let m () = Nx.create f32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let expected = bits (f (m ())) in
+  let x = m () in
+  let took, y = in_place (Rune.jit' f) x in
+  equal bits_t expected (bits y);
+  equal ~msg:"in place" bool false took
 
-exception Bad of int array * float
+(* Checks: the first failing check in the order the function made them
+   raises its exception, with its data at its first failing index in C
+   order. *)
+
+exception Small of int array * float
+exception Signed of int array * int32 * bool
 
 let checked x =
   Nx.check Nx.Ptree.tensor
     (Nx.less x (Nx.scalar_like x 3.))
     x
-    (fun i d -> Bad (i, Nx.item [] d));
+    (fun i d -> Small (i, Nx.item [] d));
+  Nx.check
+    Nx.Ptree.(pair tensor tensor)
+    (Nx.greater_equal x (Nx.scalar_like x 0.))
+    (Nx.cast Nx.int32 x, Nx.isnan x)
+    (fun i (n, b) -> Signed (i, Nx.item [] n, Nx.item [] b));
   Nx.neg x
+
+type failure = None_raised | Small_at of int list * float | Signed_at of int list * int32 * bool
 
 let raised f =
   match f () with
-  | _ -> None
-  | exception Bad (i, d) -> Some (Array.to_list i, d)
+  | _ -> None_raised
+  | exception Small (i, d) -> Small_at (Array.to_list i, d)
+  | exception Signed (i, n, b) -> Signed_at (Array.to_list i, n, b)
+
+let failure =
+  Testable.make
+    ~pp:(fun ppf -> function
+      | None_raised -> Format.pp_print_string ppf "no failure"
+      | Small_at (i, d) ->
+          Format.fprintf ppf "Small at [%s] %g"
+            (String.concat "; " (List.map string_of_int i)) d
+      | Signed_at (i, n, b) ->
+          Format.fprintf ppf "Signed at [%s] %ld %b"
+            (String.concat "; " (List.map string_of_int i)) n b)
+    ~equal:( = )
 
 let test_checks () =
   let g = Rune.jit' checked in
-  let ok = Nx.create f32 [| 2; 2 |] [| 1.; 2.; -0.; 2.5 |] in
-  equal bits_t (bits (checked ok)) (bits (g ok));
-  let bad = Nx.create f32 [| 2; 2 |] [| 1.; 2.; 4.; 5. |] in
-  equal ~msg:"the first failure"
-    (option (Testable.pair (list int) float_exact))
-    (raised (fun () -> checked bad)) (raised (fun () -> g bad));
-  equal ~msg:"raised" bool true (Option.is_some (raised (fun () -> g bad)));
+  let m xs = Nx.create f32 [| 2; 2 |] xs in
+  let at xs = raised (fun () -> g (m xs)) in
+  equal ~msg:"passing" bits_t (bits (Nx.neg (m [| 1.; 2.; -0.; 2.5 |])))
+    (bits (g (m [| 1.; 2.; -0.; 2.5 |])));
+  equal ~msg:"the first check's first failure" failure
+    (Small_at ([ 1; 0 ], 4.)) (at [| 1.; 2.; 4.; 5. |]);
+  equal ~msg:"the first check that fails, in order" failure
+    (Small_at ([ 0; 1 ], 7.)) (at [| -1.; 7.; 0.; 0. |]);
+  equal ~msg:"the second check, its data of two dtypes" failure
+    (Signed_at ([ 1; 1 ], -2l, false)) (at [| 1.; 2.; 0.; -2.5 |]);
+  equal ~msg:"one element" failure (Small_at ([ 0 ], 9.))
+    (raised (fun () -> Rune.jit' checked (Nx.create f32 [| 1 |] [| 9. |])));
   let empty = Nx.create f32 [| 0 |] [||] in
-  equal ~msg:"an empty check passes" bits_t (bits (checked empty))
-    (bits (g empty))
+  equal ~msg:"an empty check passes" bits_t (bits (Nx.neg empty))
+    (bits (g empty));
+  (* A check reads its data, so the argument it reads lends nothing. *)
+  let x = m [| 1.; 2.; -0.; 2.5 |] in
+  let took, y = in_place g x in
+  equal ~msg:"read by a check: in place" bool false took;
+  equal bits_t (bits (Nx.neg (m [| 1.; 2.; -0.; 2.5 |]))) (bits y)
 
 (* The cache
 
@@ -653,7 +725,9 @@ let () =
              test "a shared donor lends nothing" test_shared;
              test "an evaluated program consumes its donations"
                test_evaluated_donation;
-             prop "donation keeps the values" donation_cases law_donation;
+             prop ~examples:donation_examples "donation keeps the values"
+               donation_cases law_donation;
+             test "a contraction's init lends nothing" test_contract_init;
              test "checks raise as eagerly" test_checks;
              stateful ~domains:2 ~count:10 ~steps:8
                "a call retraces iff its abstract value is new" cache_commands;
