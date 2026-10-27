@@ -20,6 +20,12 @@ let with_header header =
   Bytes.set_int64_le b 0 (Int64.of_int (String.length header));
   Bytes.to_string b ^ header
 
+(* [with_json json data] is the SafeTensors file of the header [json], padded to
+   a multiple of 8 bytes, and the data [data]. *)
+let with_json json data =
+  with_header (json ^ String.make ((8 - (String.length json mod 8)) mod 8) ' ')
+  ^ data
+
 (* [raw_safetensors ?pad entries] is a SafeTensors file holding [entries], each
    a name, a dtype tag, a shape and the entry's bytes, in order. The data
    section starts on a multiple of 8, [pad] bytes later. *)
@@ -214,6 +220,19 @@ let safetensors =
         (fun (_, json) ->
           let path = file (u8_entry json) in
           fails ~path (fun () -> Nx_io.load_safetensors path));
+      test
+        "an empty entry at a non-empty one's offset loads, whichever the \
+         header lists first" (fun () ->
+          let json =
+            {|{"w":{"dtype":"U8","shape":[2],"data_offsets":[0,2]},"e":{"dtype":"U8","shape":[0],"data_offsets":[0,0]}}|}
+          in
+          equal archive
+            (Archive.of_list
+               [
+                 ("e", Nx.P (Nx.zeros Nx.uint8 [| 0 |]));
+                 ("w", Nx.P (Nx.create Nx.uint8 [| 2 |] [| 1; 2 |]));
+               ])
+            (Nx_io.load_safetensors (file (with_json json "\001\002"))));
       test "metadata of strings is accepted and ignored" (fun () ->
           let json =
             {|{"__metadata__":{"format":"pt"},"w":{"dtype":"U8","shape":[1],"data_offsets":[0,1]}}|}
@@ -308,6 +327,12 @@ let safetensors =
            ( "a header that is no JSON",
              fun () -> file (with_header "{\"w\":" ^ "\000") );
            ("a name twice", fun () -> file (raw_safetensors twice));
+           ( "a field twice in an entry",
+             fun () ->
+               file
+                 (with_json
+                    {|{"w":{"dtype":"U8","dtype":"I8","shape":[1],"data_offsets":[0,1]}}|}
+                    "a") );
            ( "an empty name",
              fun () -> file (raw_safetensors [ ("", "U8", [ 1 ], "a") ]) );
            ( "an unknown dtype",

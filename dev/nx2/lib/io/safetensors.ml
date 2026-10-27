@@ -312,15 +312,21 @@ let check_name ~by name =
 let int = function `Int n -> n | _ -> failwith "not an integer"
 
 let entry (name, j) =
-  let field f =
-    match j with
-    | `Assoc kv -> (
-        match List.assoc_opt f kv with
-        | Some v -> v
-        | None -> Fail.failf "%s: no %s" name f)
-    | _ -> Fail.failf "%s: not an object" name
-  in
   if name = "" then failwith "an array has an empty name";
+  let kv =
+    match j with `Assoc kv -> kv | _ -> Fail.failf "%s: not an object" name
+  in
+  let fields = Hashtbl.create 4 in
+  List.iter
+    (fun (f, _) ->
+      if Hashtbl.mem fields f then Fail.failf "%s: %s is given twice" name f;
+      Hashtbl.add fields f ())
+    kv;
+  let field f =
+    match List.assoc_opt f kv with
+    | Some v -> v
+    | None -> Fail.failf "%s: no %s" name f
+  in
   let _, bits, kind =
     match field "dtype" with
     | `String c -> (
@@ -351,8 +357,9 @@ let entry (name, j) =
       (numel * bits / 8);
   { name; kind; shape; first; length = stop - first }
 
-(* The header's entries, ordered by offset, and the length of the data they
-   cover, which they cover without a gap. *)
+(* The header's entries, ordered by offset then length as the reference
+   implementation sorts them, and the length of the data they cover, which they
+   cover without a gap. *)
 let parse text =
   if not (is_valid_utf8 text) then failwith "the header is not UTF-8";
   let fields =
@@ -380,7 +387,12 @@ let parse text =
           | _ -> failwith "the metadata is not an object")
       fields
   in
-  let entries = List.sort (fun a b -> compare a.first b.first) entries in
+  let by_range a b =
+    match Int.compare a.first b.first with
+    | 0 -> Int.compare a.length b.length
+    | c -> c
+  in
+  let entries = List.sort by_range entries in
   let stop =
     List.fold_left
       (fun pos e ->
