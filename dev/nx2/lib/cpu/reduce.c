@@ -163,16 +163,6 @@
 /* Units the groups of blocks aim for where outputs are few. */
 #define UNITS 64
 
-/* A reduction of a lane of terms or fewer an output copies each term into its
-   strip, then runs the identity and the lanes' tree there: about ten times
-   memcpy's time for its operand (kimchi, one core: 180 us for the 1.35 MB
-   of 2x2 windows, which memcpy moves in 19 us). Its jobs are priced so. */
-#define FEW_COST 10
-
-/* A term's time against memcpy's, by stateful reduction: Logsumexp's
-   exp, Arg's and Moments' two walks of a block. */
-static const double STATE_COST[NX_CPU_STATEFUL] = {8, 2, 2, 3};
-
 /* What a call computes: a reduction, a scan, or a scan by nx_kernel.mli's
    network, Logsumexp's or Moments'. */
 typedef enum { REDUCE, SCAN, NETWORK } task;
@@ -1593,16 +1583,19 @@ static void lay_out(plan *q, task op, const int *axes, int naxes,
   plan_reduce(q, &l);
 }
 
-/* A reduction's units: each unit's blocks, or each unit's groups of them
-   then the groups combined. */
-static void reduce_jobs(plan *q, int64_t units, int64_t bytes, double cost) {
+/* A reduction's units, [cost] in all, [term] a term: each unit's blocks,
+   or each unit's groups of them then the groups combined, each group's
+   value a term. */
+static void reduce_jobs(plan *q, int64_t units, int64_t bytes, double cost,
+                        double term) {
   if (q->groups == 1) {
     units_job(units, bytes, cost, reduce_units, q);
     return;
   }
-  int64_t values = units * q->groups * q->row * q->size;
+  int64_t values = units * q->groups * q->row;
   units_job(units * q->groups, bytes, cost, reduce_units, q);
-  units_job(units, values, values, finish_units, q);
+  units_job(units, values * q->size, (double)values * term, finish_units,
+            q);
 }
 
 /* Whether [op] by [r] of [x] along the [naxes] axes [axes] fits the
@@ -1629,13 +1622,14 @@ static int checked(task op, int r, const int *axes, int naxes,
    the variance [y1]. The destinations are of [dt],
    but Arg's positions, and its extreme where that is of [x]'s dtype, its
    term copied. A monoid's scan starts from the carries [cy] where they are
-   not NULL. NX_OK, NX_SHAPE for shapes that do not fit, an extreme of no
-   term included, or -1 if host memory runs out. Apart, so that the casts
-   reduce_into runs around it take none of its plan's frame. */
+   not NULL. A term costs [term] (term_cost). NX_OK, NX_SHAPE for shapes
+   that do not fit, an extreme of no term included, or -1 if host memory
+   runs out. Apart, so that the casts reduce_into runs around it take none
+   of its plan's frame. */
 static __attribute__((noinline)) int reduce_in(
     task op, int r, int dt, const int *axes, int naxes, const nx_array *y,
     const nx_array *y1, const nx_array *x, const nx_array *cy,
-    const fused *z) {
+    const fused *z, double term) {
   int64_t terms, outputs;
   int e = checked(op, r, axes, naxes, y, y1, x, &terms, &outputs);
   if (e) return e;
@@ -1673,16 +1667,9 @@ static __attribute__((noinline)) int reduce_in(
   if (outputs == 0 || terms == 0) return NX_OK;
   if (!stateful) identity(r, dt, q.id);
   int64_t bytes = terms * outputs * w;
-  double cost = stateful ? STATE_COST[r - NX_CPU_MONOIDS] * bytes
-                : op == REDUCE && terms <= LANES ? FEW_COST * bytes
-                                                 : bytes;
-  /* A program's kinds take about memcpy's time each, per term. */
-  if (z != NULL) cost += (double)nx_cpu_prog_kinds(z->prog) * bytes;
+  double cost = (double)terms * (double)outputs * term;
   q.threads = nx_cpu_threads(bytes, cost);
   lay_out(&q, op, axes, naxes, y, y1, x);
-  /* A sum of products takes no more than memcpy's time for its terms: on
-     one fudge core, 1 ms for the 58 MB of a 3x3 depthwise convolution's. */
-  if (q.factor[0] >= 0) cost = (double)bytes;
   int64_t units = q.outer * q.bands * q.chunks;
   if (q.groups > 1)
     q.scratch = malloc((size_t)(units * q.groups * q.row * q.size));
@@ -1695,25 +1682,28 @@ static __attribute__((noinline)) int reduce_in(
   }
   if (center && r == NX_CPU_MOMENTS && q.groups == 1) {
     q.center = &st->center;
-    units_job(units, bytes, 2 * cost, center_units, &q);
+    units_job(units, bytes, cost, center_units, &q);
   } else if (center) {
     /* Logsumexp's passes, or an output's groups on several threads, whose
-       center needs them all before its value's pass. */
+       center needs them all before its value's pass: each pass reads
+       every term, half the cost. */
     q.r = &st->center;
     q.centering = 1;
-    reduce_jobs(&q, units, bytes, cost);
+    reduce_jobs(&q, units, bytes, cost / 2, term / 2);
     q.r = &st->value;
     q.centering = 0;
-    reduce_jobs(&q, units, bytes, cost);
-  } else if (op == REDUCE) reduce_jobs(&q, units, bytes, cost);
+    reduce_jobs(&q, units, bytes, cost / 2, term / 2);
+  } else if (op == REDUCE) reduce_jobs(&q, units, bytes, cost, term);
   else if (q.groups == 1) units_job(units, bytes, cost, scan_units, &q);
   else {
-    units_job(units * q.groups, bytes, cost, total_units, &q);
+    /* The groups' totals, then their rescans from the carries: each pass
+       reads every term, half the cost. */
+    units_job(units * q.groups, bytes, cost / 2, total_units, &q);
     units_serial(units, carries, &q);
     if (q.row == 1)
-      units_job(units * ((q.groups + SLICES - 1) / SLICES), bytes, cost,
+      units_job(units * ((q.groups + SLICES - 1) / SLICES), bytes, cost / 2,
                 rescan_quads, &q);
-    else units_job(units * q.groups, bytes, cost, rescan_units, &q);
+    else units_job(units * q.groups, bytes, cost / 2, rescan_units, &q);
   }
   free(q.scratch);
   free(q.centers);
@@ -1780,11 +1770,11 @@ static __attribute__((noinline)) void cast(const nx_array *b,
    into carrier_copy's arrays, then rounded once into them, but Arg's
    extreme of [x]'s dtype, which reduce_in copies from [x]. A monoid's scan
    starts from the carries [cy], of the carrier, where they are not
-   NULL. */
+   NULL. A term costs [term]. */
 static int reduce_into(task op, int r, const int *axes, int naxes,
                        const nx_array *y, const nx_array *y1,
                        const nx_array *x, const nx_array *cy,
-                       const fused *z) {
+                       const fused *z, double term) {
   int c = nx_cpu_carrier(x->dtype);
   int arg = r == NX_CPU_ARG_MAX || r == NX_CPU_ARG_MIN;
   const nx_array *y2[2] = {y, y1}, *d[2] = {y, y1};
@@ -1802,7 +1792,7 @@ static int reduce_into(task op, int r, const int *axes, int naxes,
     }
   }
   if (e == NX_OK)
-    e = reduce_in(op, r, c, axes, naxes, d[0], d[1], x, cy, z);
+    e = reduce_in(op, r, c, axes, naxes, d[0], d[1], x, cy, z, term);
   for (int k = 0; k < 2; k++) {
     if (!copied[k]) continue;
     if (e == NX_OK) cast(y2[k], &t[k]);
@@ -1947,7 +1937,7 @@ static void network_units(int64_t lo, int64_t hi, int worker, void *ctx) {
    tiles. */
 static __attribute__((noinline)) int network_in(
     int r, int axis, int64_t terms, int64_t outputs, const nx_array *y,
-    const nx_array *y1, const nx_array *x, const fused *z) {
+    const nx_array *y1, const nx_array *x, const fused *z, double term) {
   network q = {.r = r, .a = {y, y1, x}, .len = terms, .fused = z};
   nx_loop *l = &q.outer;
   int rank = x->rank, k = 0, nl = z != NULL ? z->nloads : 0;
@@ -1980,8 +1970,7 @@ static __attribute__((noinline)) int network_in(
   q.chunks = (inner + q.lanes - 1) / q.lanes;
   int64_t units = q.rows * q.chunks, w8 = nx_cpu_width(x->dtype);
   int64_t bytes = 3 * terms * outputs * w8, spans = (terms + PT - 1) / PT;
-  double cost = 4.0 * bytes;
-  if (z != NULL) cost += (double)nx_cpu_prog_kinds(z->prog) * bytes / 3;
+  double cost = (double)terms * (double)outputs * term;
   if (spans < 2 || 2 * units > nx_cpu_threads(bytes, cost)) {
     nx_cpu_job(units, bytes, cost, network_units, &q);
     return q.failed ? -1 : NX_OK;
@@ -1991,12 +1980,16 @@ static __attribute__((noinline)) int network_in(
   q.stride = q.full * 3 * lanes * w8;
   q.states = malloc(units * q.stride);
   if (q.states == NULL) return -1;
+  /* The full tiles' states and every tile's results each read the terms,
+     half the cost; the network scans one state a full tile. */
   nx_cpu_step steps[3] = {NX_CPU_TOTALS, NX_CPU_CARRIES, NX_CPU_RESULTS};
   int64_t per[3] = {q.full, 1, spans};
+  double share[3] = {cost / 2, cost * (double)q.full / (double)terms,
+                     cost / 2};
   for (int i = 0; i < 3 && !q.failed; i++) {
     q.step = steps[i];
     q.per = per[i];
-    nx_cpu_job(units * q.per, bytes, cost, network_units, &q);
+    nx_cpu_job(units * q.per, bytes, share[i], network_units, &q);
   }
   /* Where Moments' fast pass met a value not finite, every unit runs its
      exact pass. */
@@ -2011,11 +2004,11 @@ static __attribute__((noinline)) int network_in(
    destinations of any dtype: a narrow [x] cast whole into carrier_copy's
    array first, or a program's terms converted tile by tile, and
    destinations not of the carrier computed into such arrays, then rounded
-   once into them. NX_OK, NX_SHAPE for shapes that do not fit, or -1 if host
-   memory runs out. */
+   once into them. A term costs [term]. NX_OK, NX_SHAPE for shapes that do
+   not fit, or -1 if host memory runs out. */
 static int network_into(int r, int axis, const nx_array *y,
                         const nx_array *y1, const nx_array *x,
-                        const fused *z) {
+                        const fused *z, double term) {
   int64_t terms, outputs;
   if (!fits(NETWORK, x->dim, x->rank, y->dim, y->rank, &axis, 1, &terms,
             &outputs) ||
@@ -2050,7 +2043,7 @@ static int network_into(int r, int axis, const nx_array *y,
     copied[k] = 1;
   }
   if (e == NX_OK)
-    e = network_in(r, axis, terms, outputs, d[0], d[1], d[2], z);
+    e = network_in(r, axis, terms, outputs, d[0], d[1], d[2], z, term);
   for (int k = 0; k < 3; k++) {
     if (!copied[k]) continue;
     if (e == NX_OK && k < 2) cast(a[k], &t[k]);
@@ -2070,7 +2063,8 @@ typedef struct {
   int axes[NX_MAX_RANK];
 } call;
 
-/* What a term of a call takes (cpu.h, Calls, scalar): a reduction's or a
+/* What a term of a call takes (cpu.h, Calls and jobs, scalar; M1 Max and
+   fudge, 2026-10-14): a reduction's or a
    scan's by sums and products, extremes, Logsumexp, Arg and Moments,
    along adjacent terms or strided ones whose neighbours along a kept axis
    share their lines. Worst float16, float32 or float64 terms: reduced,
@@ -2108,7 +2102,8 @@ static int unit_step(const nx_array *x, const int64_t *s, int r, int copied,
 
 /* The price (cpu.h, Calls) of a reduction of no term's fill of [d]
    (fill_dst): streaming its bytes, and ROW_COST for each of its coalesced
-   rows, 102 measured for uint8 rows of 2, 64 bytes apart (M1 alone); or a
+   rows, 102 measured for uint8 rows of 2, 64 bytes apart (M1 Max alone,
+   2026-10-14); or a
    line for each element where a row's elements lie apart. */
 #define ROW_COST 256
 
@@ -2121,23 +2116,11 @@ static double fill_cost(const nx_array *d) {
   return nx_cpu_bytes(d) + rows * (apart ? n * NX_CPU_LINE : ROW_COST);
 }
 
-/* The price (cpu.h, Calls) of the call [c] over the operand [x] of the
-   shape [s] and rank [r], [copied] or not (unit_step), into the
-   [nd] destinations [d]: its terms, each [extra] more, or, without a
-   term, the destinations' fills. A call too small to cost
-   NX_CPU_RELEASE_BYTES at the dearest term is priced so. */
-static double call_cost(const call *c, const nx_array *x, const int64_t *s,
-                        int r, int copied, double extra, const nx_array *d,
-                        int nd) {
-  double numel = 1, cost = 0, pad = extra;
-  for (int i = 0; i < r; i++) numel *= (double)s[i];
-  if (numel == 0) {
-    for (int k = 0; k < nd; k++) cost += fill_cost(&d[k]);
-    return cost;
-  }
-  /* The most a term takes: a line and a scanned term's dearest. */
-  double most = NX_CPU_LINE + DEAREST_TERM + pad;
-  if (numel * most < NX_CPU_RELEASE_BYTES) return numel * most;
+/* What a term of the call [c] over the operand [x] of the shape [s] and
+   rank [r], [copied] or not (unit_step), costs, [extra] more: its jobs'
+   cost a term, and its call's. */
+static double term_cost(const call *c, const nx_array *x, const int64_t *s,
+                        int r, int copied, double extra) {
   double terms = 1;
   int reduced[NX_MAX_RANK] = {0}, shared = 0;
   for (int i = 0; i < c->naxes; i++)
@@ -2155,7 +2138,27 @@ static double call_cost(const call *c, const nx_array *x, const int64_t *s,
   if (few && !stateful) term = FEW_TERM_COST;
   if ((!adjacent && !shared) || (stateful && (!adjacent || few)))
     term += NX_CPU_LINE;
-  return numel * (term + pad);
+  return term + extra;
+}
+
+/* The cost (cpu.h, Calls and jobs) of the call [c] over [x] as term_cost
+   takes it, into the [nd] destinations [d]: its terms, or, without a
+   term, the destinations' fills. A call too small to cost
+   NX_CPU_RELEASE_BYTES at the dearest term is bounded so, held without
+   term_cost's analysis. */
+static double call_cost(const call *c, const nx_array *x, const int64_t *s,
+                        int r, int copied, double extra, const nx_array *d,
+                        int nd) {
+  double numel = 1, cost = 0;
+  for (int i = 0; i < r; i++) numel *= (double)s[i];
+  if (numel == 0) {
+    for (int k = 0; k < nd; k++) cost += fill_cost(&d[k]);
+    return cost;
+  }
+  /* The most a term takes: a line and a scanned term's dearest. */
+  double most = NX_CPU_LINE + DEAREST_TERM + extra;
+  if (numel * most < NX_CPU_RELEASE_BYTES) return numel * most;
+  return numel * term_cost(c, x, s, r, copied, extra);
 }
 
 /* Whether the carries [cy], where not NULL, fit [c], a monoid's scan into
@@ -2477,10 +2480,13 @@ static value run(const call *c, value vp, value vrs, int single, int rank,
       z->k = ks[i];
       terms = &x;
     }
+    call ci = *c;
+    ci.r = rs[i];
+    double term = term_cost(&ci, &a[nd], shape, rank, contiguous, per);
     e = c->op == NETWORK
-            ? network_into(rs[i], c->axes[0], y, y1, terms, z)
+            ? network_into(rs[i], c->axes[0], y, y1, terms, z, term)
             : reduce_into(c->op, rs[i], c->axes, c->naxes, y, y1, terms, cy,
-                          z);
+                          z, term);
   }
   /* A program that could not have its arenas computed nothing. */
   if (!oom && !e && g != NULL && nx_cpu_prog_failed(g)) e = -1;
