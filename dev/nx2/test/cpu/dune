@@ -2,7 +2,14 @@
 ; nx.cpu's interface.
 
 (tests
- (names test_kernels test_reduce test_contract test_release)
+ (names
+  test_kernels
+  test_reduce
+  test_contract
+  test_index
+  test_linalg
+  test_fft
+  test_release)
  (libraries
   nx_array
   nx_array_gen
@@ -14,4 +21,6 @@
   nx_kinds_support
   nx_release_support
   rig
-  windtrap))
+  unix
+  windtrap)
+ (deps golden/linalg/bidiagonal-255.txt))

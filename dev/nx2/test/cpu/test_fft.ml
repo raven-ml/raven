@@ -1065,7 +1065,7 @@ let laws (b : Support.backend) =
 
 let () =
   exit
-    (Windtrap.run "nx_kernel.fft"
+    (Windtrap.run "nx_cpu.fft"
        (List.map laws Support.backends
        @ [
            group "nx.cpu"
