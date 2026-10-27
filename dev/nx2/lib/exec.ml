@@ -834,17 +834,15 @@ and defer : type r. by:string -> r Value.prim -> r =
 
 (* [op] computed over operands that lie where [route], its route, reads them:
    its results lie where the route puts them, laid out as its rule gave them
-   ([layouts], {!Prim.layouts}). For a constant's evaluation at [at], the
-   operations of its computation by partials compute there. *)
+   ([layouts], {!Prim.layouts}). *)
 and compute : type r.
     by:string ->
     ?into:A.any ->
-    ?at:unit Devices.placement ->
     unit Route.t ->
     L.t array ->
     r Value.prim ->
     r =
- fun ~by ?into ?at route layouts op ->
+ fun ~by ?into route layouts op ->
   match op with
   | Value.Move (mv, Value.Array { at; a; _ })
     when Devices.rebrand at == route.result ->
@@ -873,23 +871,18 @@ and compute : type r.
   | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
   | Value.Scatter _ | Value.Sort _ | Value.Fold _ | Value.Fft _ | Value.Linalg _
   | Value.Assemble _ | Value.Contract _ | Value.Copy _ ->
-      sharded ~by ?into ?at route layouts op
+      sharded ~by ?into route layouts op
 
 (* [op]'s results, by {!Partial} where [route] computes by partials. Else
    fresh where it places them, each device's window [w] of the first computed
    there by its kernels over each operand's window ({!Route.window}). A
    decline raises. *)
 and sharded : type r.
-    by:string ->
-    ?into:A.any ->
-    ?at:unit Devices.placement ->
-    unit Route.t ->
-    L.t array ->
-    r Value.prim ->
-    r =
- fun ~by ?into ?at route layouts op ->
+    by:string -> ?into:A.any -> unit Route.t -> L.t array -> r Value.prim -> r
+    =
+ fun ~by ?into route layouts op ->
   match route.compute with
-  | Partials -> Partial.run (fun ~by op -> folded ~by ?at op) ~by route op
+  | Partials -> Partial.run run ~by route op
   | Windows -> (
       let p = route.result in
       let r =
@@ -933,31 +926,6 @@ and on_device : type r.
   if not (call ~by kernels local r j) then
     let (module K : Nx_kernel.S) = kernels in
     refused ~by ~kernels:K.name (Devices.rig set k) local
-
-(* An operation of a computation by partials ({!Partial}), applied where its
-   operands lie, or at [at] for a constant's evaluation. *)
-and folded : type r. by:string -> ?at:unit Devices.placement -> r Value.prim -> r
-    =
- fun ~by ?at op ->
-  match at with None -> run ~by op | Some q -> apply_at q ~by op
-
-(* An operation of a constant's evaluation at [q]: one over a concrete operand
-   computes where its route reads them; a creation, its other operands
-   constants computed at [q], where the evaluation reads it, computes where
-   its route over them puts it, and at [q] where it has no operand. *)
-and apply_at : type r. unit Devices.placement -> by:string -> r Value.prim -> r
-    =
- fun q ~by op ->
-  if Prim.exists is_concrete op then run ~by op
-  else
-    let op = Prim.map (fun y -> at (Devices.rebrand q) y) op in
-    let { Prim.route; layouts } = Prim.route ~by op in
-    let route =
-      match route with
-      | Some r -> r
-      | None -> { Route.operands = [||]; result = q; compute = Windows }
-    in
-    compute ~by ~at:q route layouts op
 
 (* The one result of [op] over the arrays [views ()], one per device of [xp] in
    order: at [route]'s result, whose devices hold them. *)
@@ -1221,7 +1189,7 @@ and compute_node result (Value.Node n) p =
           (fun i y -> resolve (Devices.rebrand route.operands.(i)) y)
           op
       in
-      let r = compute ~by ~at:q route n.layouts op' in
+      let r = compute ~by route n.layouts op' in
       if Devices.equal q p then Prim.result_arrays op' r
       else
         (* Each device of [p] keeps its window, cut from its window at [q], in
