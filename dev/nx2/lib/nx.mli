@@ -1922,8 +1922,8 @@ val matmul : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     the leading axes do not broadcast, or the dtype is a boolean. *)
 
 val dot : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [dot a b] sums the products of [a]'s last axis with [b]'s only axis, for a
-    1-d [b], or its second to last otherwise. The result's axes are [a]'s
+(** [dot a b] is the sum of the products of [a]'s last axis with [b]'s only
+    axis, for a 1-d [b], or its second to last otherwise. The result's axes are [a]'s
     others, then [b]'s: two vectors give their 0-d inner product, two matrices
     their product. It does not broadcast, and accumulates as {!matmul}.
 
@@ -2018,6 +2018,77 @@ val conv_transpose :
 
     Raises [Invalid_argument] as {!conv}, reading [o] from [x]'s last axis, or
     if no input has a [conv] of [x]'s shape. *)
+
+(** {2:products Other products}
+
+    Products of tensors, vectors and chains of matrices, each a {!contract},
+    a chain of them or an elementwise {!mul}. Each takes every dtype but
+    booleans, for which it raises [Invalid_argument]. *)
+
+val tensordot :
+  ?axes:int list * int list ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t ->
+  ('v, 's, 'd) t
+(** [tensordot ~axes:(la, lb) a b] is the sum of the products of [a] and [b]
+    over the axes [la] of [a], paired in order with the axes [lb] of [b]
+    (default [a]'s last two with [b]'s first two). The result's axes are [a]'s others,
+    then [b]'s, each in order: [~axes:([], [])] gives the outer product. It
+    accumulates as {!matmul}.
+
+    Raises [Invalid_argument] if [la] and [lb] differ in length, an axis is
+    not one of its operand's or repeats, or paired extents differ. *)
+
+val inner : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [inner a b] is the sum of the products of [a]'s last axis with [b]'s
+    last axis; the result's axes are [a]'s others, then [b]'s. A 0-d operand gives
+    {!mul}[ a b]. It accumulates as {!matmul}.
+
+    Raises [Invalid_argument] if the last extents differ. *)
+
+val outer : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [outer a b] is of shape [[|numel a; numel b|]], its element [(i, j)] the
+    product of [a]'s [i]th element and [b]'s [j]th, in C order. *)
+
+val vecdot : ?axis:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [vecdot ~axis a b] is the sum of the products of [conjugate a] and [b]
+    along each operand's axis [axis] (default [-1]); their other axes broadcast to the
+    result's shape. It accumulates as {!matmul}.
+
+    Raises [Invalid_argument] if [axis] is not an axis of both, their extents
+    along it differ, or their other axes do not broadcast. *)
+
+val kron : ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [kron a b] is the Kronecker product. With the operand of fewer axes given
+    leading axes of extent [1], each axis has [a]'s extent times [b]'s, and
+    the element at [i sb + j] along each axis, [sb] [b]'s extent there, is
+    [a]'s element at the [i]s times [b]'s at the [j]s.
+
+    Raises [Invalid_argument] if the axes of extent other than [1] of [a] and
+    of [b] number more than {!Nx_array.Layout.max_rank} together. *)
+
+val multi_dot : ('v, 's, 'd) t list -> ('v, 's, 'd) t
+(** [multi_dot [x1; …; xn]] is the matrix product [x1 x2 ⋯ xn] of [n >= 2]
+    operands. The middle ones are matrices; a 1-d [x1] is a row and a 1-d
+    [xn] a column, and the result drops their unit axis. It multiplies in
+    the order of fewest multiply-adds, an [m × k] by a [k × p] doing
+    [m k p]; of orders doing as many, the one that splits the chain earliest,
+    within each part too, so the order is a function of the shapes alone.
+    Each product sums in {!contract}'s default accumulator and leaves its
+    value there, so the result rounds once, within the bound {!einsum}
+    states for its tree.
+
+    Raises [Invalid_argument] if [n < 2], an operand has another rank, or
+    adjacent inner extents differ. *)
+
+val matrix_power : ('v, 's, 'd) t -> int -> ('v, 's, 'd) t
+(** [matrix_power a n] is each square matrix of the batch to the power [n]:
+    the identity for [n = 0], and [inv a] to the power [-n] for a negative
+    [n]. It squares repeatedly, [⌊log₂ |n|⌋] squarings and one product per
+    further set bit of [|n|], each a {!matmul} rounded to the dtype.
+
+    Raises [Invalid_argument] if [a] has fewer than two axes or is not
+    square, and, for a negative [n], for a dtype {!inv} does not take. *)
 
 (** {2:attention Attention}
 

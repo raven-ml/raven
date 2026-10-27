@@ -2654,6 +2654,97 @@ let cross (type v s d) ?(axis = -1) (a : (v, s, d) t) (b : (v, s, d) t) :
   in
   elementwise ~by dt xs out
 
+(* Familiar products *)
+
+let tensordot ?axes:(pairs = ([ -2; -1 ], [ 0; 1 ])) a b =
+  let by = "Nx.tensordot" in
+  let la, lb = pairs in
+  if List.length la <> List.length lb then
+    invalid_argf "%s: %d axes of %a against %d of %a" by (List.length la)
+      pp_value a (List.length lb) pp_value b;
+  let la = axes ~by a la and lb = axes ~by b lb in
+  List.iter2
+    (fun i j ->
+      if dim i a <> dim j b then
+        invalid_argf "%s: axis %d of %a and axis %d of %a differ" by i
+          pp_value a j pp_value b)
+    la lb;
+  Contraction.along ~by ~batch:[||]
+    ~contracting:(Iarray.of_list (List.combine la lb))
+    a b
+
+let inner a b =
+  let by = "Nx.inner" in
+  if ndim a = 0 || ndim b = 0 then mul_by ~by a b
+  else begin
+    if dim (-1) a <> dim (-1) b then
+      invalid_argf "%s: the last axes of %a and %a differ" by pp_value a
+        pp_value b;
+    Contraction.along ~by ~batch:[||]
+      ~contracting:[| (ndim a - 1, ndim b - 1) |]
+      a b
+  end
+
+let outer a b =
+  let by = "Nx.outer" in
+  mul_by ~by
+    (reshaped ~by [| numel a; 1 |] a)
+    (reshaped ~by [| 1; numel b |] b)
+
+(* Both operands moved to their axis last, their other axes broadcast, then
+   one contraction batched over those: [conjugate a] first, after every
+   refusal, since its map consumes [a]. *)
+let vecdot ?axis:(along = -1) a b =
+  let by = "Nx.vecdot" in
+  let ia = axis ~by a along and ib = axis ~by b along in
+  let k = dim ia a in
+  if k <> dim ib b then
+    invalid_argf "%s: axis %d of %a and of %a differ" by along pp_value a
+      pp_value b;
+  let others x i =
+    Array.of_list (List.filteri (fun j _ -> j <> i) (Array.to_list (shape x)))
+  in
+  let lead = Prim.broadcast_shape ~by (others a ia) (others b ib) in
+  Prim.alive ~by a;
+  Prim.alive ~by b;
+  let l = Array.length lead in
+  let full = Array.append lead [| k |] in
+  let last x i = broadcast ~by full (moveaxis_by ~by i (-1) x) in
+  Contraction.along ~by
+    ~batch:(Iarray.init l (fun i -> (i, i)))
+    ~contracting:[| (l, l) |]
+    (last (conjugate_by ~by a) ia)
+    (last b ib)
+
+(* The product of [a] and [b] spread over interleaved axes, [a]'s before
+   [b]'s in each pair, then merged pair by pair: index [i sb + j] of a pair
+   is [a] at [i] times [b] at [j]. An axis of extent [1] in an operand is
+   left out of the spread, whose rank is the number of axes of other
+   extents in both operands. *)
+let kron a b =
+  let by = "Nx.kron" in
+  let r = Stdlib.max (ndim a) (ndim b) in
+  let padded x = Array.append (Array.make (r - ndim x) 1) (shape x) in
+  let sa = padded a and sb = padded b in
+  let pairs =
+    List.concat
+      (List.init r (fun i ->
+           List.filter
+             (fun (ea, eb) -> ea <> 1 || eb <> 1)
+             [ (sa.(i), 1); (1, sb.(i)) ]))
+  in
+  let count = List.length pairs and most = Nx_array.Layout.max_rank in
+  if count > most then
+    invalid_argf "%s: %a and %a have %d axes of extent other than 1, over %d"
+      by pp_value a pp_value b count most;
+  let spread f = Array.of_list (List.map f pairs) in
+  let p =
+    mul_by ~by (reshaped ~by (spread fst) a) (reshaped ~by (spread snd) b)
+  in
+  reshaped ~by (Array.init r (fun i -> sa.(i) * sb.(i))) p
+
+let multi_dot xs = Contraction.chain ~by:"Nx.multi_dot" xs
+
 (* Linear algebra *)
 
 type triangle = Nx_kernel.triangle = Lower | Upper
@@ -2937,6 +3028,44 @@ let inv_by ~by a =
   solve_by ~by a (broadcast ~by (shape a) (eye_by ~by (dtype a) n))
 
 let inv a = inv_by ~by:"Nx.inv" a
+
+(* Matrix powers *)
+
+(* [a^n] by repeated squaring: [p] runs through [a^(2^i)], and [acc] gathers
+   the [p] of each set bit of [n]. [a] reaches several products only for an
+   odd [n] of 3 or more, as [acc] and as [p]; for a negative [n] only the
+   inverse reads it. *)
+let matrix_power a n =
+  let by = "Nx.matrix_power" in
+  matrix ~by a;
+  if dim (-1) a <> dim (-2) a then
+    invalid_argf "%s: %a is not square" by pp_value a;
+  if D.is D.Boolean (dtype a) then
+    invalid_argf "%s: %a is boolean" by pp_value a;
+  if n < 0 then routine_dtype ~by a;
+  Prim.alive ~by a;
+  let k = Stdlib.abs n in
+  if n = 0 then
+    beside ~by a
+      (broadcast ~by (shape a) (eye_by ~by (dtype a) (dim (-1) a)))
+  else if n = 1 then copy_by ~by a
+  else
+    let base =
+      if n < 0 then inv_by ~by a
+      else if k land 1 = 1 then Donate.read ~by a
+      else a
+    in
+    let rec go acc p k =
+      let acc =
+        if k land 1 = 0 then acc
+        else match acc with None -> Some p | Some q -> Some (matmul_by ~by q p)
+      in
+      let k = k lsr 1 in
+      match acc with
+      | Some y when k = 0 -> y
+      | _ -> go acc (matmul_by ~by p p) k
+    in
+    go None base k
 
 (* Each magnitude's reciprocal of the singular values or eigenvalues [s]
    where it is above [tol] times its matrix's greatest, zero at or below,

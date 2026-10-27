@@ -192,7 +192,21 @@ let test_refused_kills_none () =
   let z6 = Nx.complex Nx.complex64 ~re:(fresh [| 1.; 2. |]) ~im:(fresh [| 3.; 4. |]) in
   invalid ~sub:"Nx.hfft: " (fun () -> Nx.hfft Nx.float32 ~axes:[ 1 ] (Nx.donate z6));
   equal ~msg:"hfft's refused donor lives" (array int) [| 2 |]
-    (Nx.shape (Nx.copy z6))
+    (Nx.shape (Nx.copy z6));
+  let z7 = Nx.complex Nx.complex64 ~re:(fresh [| 1.; 2. |]) ~im:(fresh [| 3.; 4. |]) in
+  invalid ~sub:"Nx.vecdot: " (fun () ->
+      Nx.vecdot (Nx.donate z7) (Nx.zeros Nx.complex64 [| 3 |]));
+  let parts () = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let z8 = Nx.complex Nx.complex64 ~re:(parts ()) ~im:(parts ()) in
+  invalid ~sub:"Nx.vecdot: " (fun () ->
+      Nx.vecdot (Nx.donate z8) (Nx.zeros Nx.complex64 [| 3; 2 |]));
+  equal ~msg:"vecdot's refused donors live" (array int) [| 2; 2 |]
+    [| Nx.numel (Nx.copy z7); Nx.ndim (Nx.copy z8) |];
+  let x9 = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  invalid ~sub:"Nx.multi_dot: " (fun () ->
+      Nx.multi_dot [ Nx.donate x9; fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |]; fresh [| 1.; 2.; 3. |] ]);
+  equal ~msg:"multi_dot's refused donor lives" (array int) [| 2; 2 |]
+    (Nx.shape (Nx.copy x9))
 
 (* An operation that broadcasts a handle, refused by its dtype or by a dead
    operand, kills nothing and names the dead operand. *)
@@ -259,6 +273,11 @@ let test_several_reads () =
   let p = positions () and v = Nx.create Nx.int64 [| 2 |] [| 10L; 20L |] in
   equal ~msg:"the set" (array int64) [| 20L; 10L |]
     (elements (Nx.set [ T (Nx.donate p) ] v p));
+  let a = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  equal ~msg:"the cube" (array float_exact) [| 37.; 54.; 81.; 118. |]
+    (elements (Nx.reshape [| 4 |] (Nx.matrix_power (Nx.donate a) 3)));
+  equal ~msg:"the cube's donor" (array float_exact) [| 1.; 2.; 3.; 4. |]
+    (elements (Nx.reshape [| 4 |] a));
   let x = fresh_at [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   invalid ~sub:"Nx.softmax" (fun () -> Nx.softmax ~axes:[ 5 ] (Nx.donate x));
   equal ~msg:"a refused function's donor" (array float_exact)
@@ -1250,7 +1269,22 @@ let test_one_reader_consumes () =
       ignore (Nx.stft Nx.complex64 ~window:4 ~win:d (signal ())));
   let spectrum () = Nx.stft Nx.complex64 ~window:4 ~step:2 (signal ()) in
   dies "Nx.istft" spectrum (fun d ->
-      ignore (Nx.istft Nx.float32 ~window:4 ~step:2 d))
+      ignore (Nx.istft Nx.float32 ~window:4 ~step:2 d));
+  dies "Nx.tensordot" square (fun d -> ignore (Nx.tensordot d (square ())));
+  dies "Nx.tensordot" square (fun d -> ignore (Nx.tensordot (square ()) d));
+  dies "Nx.inner" square (fun d -> ignore (Nx.inner d (vector ())));
+  dies "Nx.outer" vector (fun d -> ignore (Nx.outer (vector ()) d));
+  dies "Nx.vecdot" square (fun d -> ignore (Nx.vecdot d (vector ())));
+  dies "Nx.vecdot" vector (fun d -> ignore (Nx.vecdot (square ()) d));
+  dies "Nx.vecdot" complex (fun d -> ignore (Nx.vecdot d (complex ())));
+  dies "Nx.kron" square (fun d -> ignore (Nx.kron d (vector ())));
+  dies "Nx.kron" vector (fun d -> ignore (Nx.kron (square ()) d));
+  dies "Nx.multi_dot" square (fun d ->
+      ignore (Nx.multi_dot [ square (); d; square () ]));
+  dies "Nx.multi_dot" vector (fun d -> ignore (Nx.multi_dot [ d; square () ]));
+  dies "Nx.matrix_power" square (fun d -> ignore (Nx.matrix_power d 2));
+  dies "Nx.matrix_power" square (fun d -> ignore (Nx.matrix_power d 1));
+  dies "Nx.matrix_power" square (fun d -> ignore (Nx.matrix_power d (-3)))
 
 (* A call that keeps none of its operand still raises for a dead one: an
    fft cut to no point, patches of an empty axis padded. *)
@@ -1523,6 +1557,29 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
       c "trace" 1 (fun d -> show (Nx.trace (d 0 (x [| 3; 3 |]))));
       c "diag" 1 (fun d -> show (Nx.diag (d 0 (x [| 3 |]))));
       c "diag" 1 (fun d -> show (Nx.diag (d 0 (x [| 3; 3 |]))));
+      c "tensordot" 2 (fun d ->
+          show
+            (Nx.tensordot ~axes:([ 1 ], [ 0 ])
+               (d 0 (x [| 2; 3 |]))
+               (d 1 (x [| 3; 2 |]))));
+      c "tensordot" 2 (fun d ->
+          show (Nx.tensordot (d 0 (x [| 2; 3 |])) (d 1 (x [| 2; 3 |]))));
+      c "inner" 2 (fun d -> show (Nx.inner (d 0 (x [| 2; 3 |])) (d 1 (x [| 3 |]))));
+      c "outer" 2 (fun d -> show (Nx.outer (d 0 (x [| 2 |])) (d 1 (x [| 3 |]))));
+      c "vecdot" 2 (fun d ->
+          show (Nx.vecdot (d 0 (x [| 2; 3 |])) (d 1 (x [| 3 |]))));
+      c "kron" 2 (fun d -> show (Nx.kron (d 0 (x [| 2; 1 |])) (d 1 (x [| 3 |]))));
+      c "multi_dot" 2 (fun d ->
+          show (Nx.multi_dot [ d 0 (x [| 3 |]); d 1 (x [| 3; 2 |]) ]));
+      c "multi_dot" 3 (fun d ->
+          show
+            (Nx.multi_dot
+               [ d 0 (x [| 2; 3 |]); d 1 (x [| 3; 1 |]); d 2 (x [| 1; 2 |]) ]));
+      c "matrix_power" 1 (fun d -> show (Nx.matrix_power (d 0 (x [| 2; 2 |])) 0));
+      c "matrix_power" 1 (fun d -> show (Nx.matrix_power (d 0 (x [| 2; 2 |])) 1));
+      c "matrix_power" 1 (fun d -> show (Nx.matrix_power (d 0 (x [| 2; 2 |])) 2));
+      c "matrix_power" 1 (fun d ->
+          show (Nx.matrix_power (d 0 (x [| 1; 2; 2 |])) 3));
     ]
 
 (* The functions of floats. *)

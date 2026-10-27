@@ -295,9 +295,42 @@ let matmul ~by a b =
   in
   run ~by (Prim.dtype a) pl a b
 
-(* [a]'s last axis against [b]'s only axis or its second to last, the
-   result's axes [a]'s others then [b]'s: the kernel's own axes, so the plan
-   moves no operand and no result. *)
+(* [a] and [b] contracted along the axis pairs [batch] and [contracting],
+   the result's axes the kernel's own: the batch axes, then [a]'s others,
+   then [b]'s, each in its operand's order. The plan moves no operand and no
+   result. *)
+let along ~by ~batch ~contracting a b =
+  let sa = Prim.shape a and sb = Prim.shape b in
+  let taken s pairs side =
+    let t = Array.make (Array.length s) false in
+    Iarray.iter (fun p -> t.(side p) <- true) pairs;
+    t
+  in
+  let free s pairs side =
+    let ta = taken s pairs side in
+    let tb = taken s batch side in
+    List.filteri (fun i _ -> not (ta.(i) || tb.(i))) (Array.to_list s)
+  in
+  let shape =
+    Array.of_list
+      (List.map (fun (i, _) -> sa.(i)) (Iarray.to_list batch)
+      @ free sa contracting fst
+      @ free sb contracting snd)
+  in
+  let pl =
+    {
+      a = sa;
+      b = sb;
+      batch;
+      contracting;
+      order = Array.init (Array.length shape) Fun.id;
+      names = shape;
+      shape;
+    }
+  in
+  run ~by (Prim.dtype a) pl a b
+
+(* [a]'s last axis against [b]'s only axis or its second to last. *)
 let dot ~by a b =
   let sa = Prim.shape a and sb = Prim.shape b in
   let ra = Array.length sa and rb = Array.length sb in
@@ -307,26 +340,7 @@ let dot ~by a b =
   if sa.(ra - 1) <> sb.(kb) then
     invalid_argf "%s: summed extents %d and %d differ; %s" by sa.(ra - 1)
       sb.(kb) (both a b sa sb);
-  let r = ra + rb - 2 in
-  let shape =
-    Array.init r (fun i ->
-        if i < ra - 1 then sa.(i)
-        else
-          let j = i - (ra - 1) in
-          if j < kb then sb.(j) else sb.(j + 1))
-  in
-  let pl =
-    {
-      a = sa;
-      b = sb;
-      batch = [||];
-      contracting = [| (ra - 1, kb) |];
-      order = Array.init r Fun.id;
-      names = shape;
-      shape;
-    }
-  in
-  run ~by (Prim.dtype a) pl a b
+  along ~by ~batch:[||] ~contracting:[| (ra - 1, kb) |] a b
 
 (* Several operands *)
 
@@ -500,3 +514,81 @@ let einsum (type v s d) ~by ?(sizes = []) ?acc (p : Pattern.t)
       if Array.exists Donate.is_handle xs then Array.map Donate.lent xs else xs
     in
     tree ~by ~ext p w dt ns nr shape xs
+
+(* Chains *)
+
+(* The product of the matrices [xs], one after another, in the order of
+   fewest multiply-adds. Operand [i] holds the names [i] and [i + 1]; a 1-d
+   first operand holds name [1] alone and a 1-d last one name [n] alone, the
+   names they lack of extent 1. [work.(i).(j)] is the least work of the
+   product of operands [i] to [j] and [cut.(i).(j)] the last operand of its
+   left part, the first such where several tie: a product of parts [i..k] and
+   [k+1..j] does [e(i) e(k+1) e(j+1)] multiply-adds. n³ steps for n
+   operands. Each product but the last leaves its value in the accumulator,
+   so the result rounds once. *)
+let chain (type v s d) ~by (xs : (v, s, d) Value.t list) : (v, s, d) Value.t
+    =
+  let xs = Array.of_list xs in
+  let n = Array.length xs in
+  if n < 2 then invalid_argf "%s: %d operands; a chain needs two" by n;
+  let dt = Prim.dtype xs.(0) in
+  if D.is D.Boolean dt then invalid_argf "%s: the operands are booleans" by;
+  let rank i = Prim.rank xs.(i) in
+  let row = rank 0 = 1 and column = rank (n - 1) = 1 in
+  Array.iteri
+    (fun i x ->
+      let r = rank i in
+      let ends = (i = 0 || i = n - 1) && r = 1 in
+      if r <> 2 && not ends then
+        invalid_argf "%s: operand %d is %s %a; it must be a matrix%s" by i
+          (D.name dt) pp_shape (Prim.shape x)
+          (if i = 0 || i = n - 1 then " or a vector" else ""))
+    xs;
+  let present nm = not ((nm = 0 && row) || (nm = n && column)) in
+  let names i = List.filter present [ i; i + 1 ] in
+  let ext = Array.make (n + 1) 1 in
+  Array.iteri
+    (fun i x ->
+      let s = Prim.shape x in
+      List.iteri (fun k nm -> ext.(nm) <- s.(k)) (names i))
+    xs;
+  for i = 0 to n - 2 do
+    let s = Prim.shape xs.(i) and s' = Prim.shape xs.(i + 1) in
+    if s.(Array.length s - 1) <> s'.(0) then
+      invalid_argf "%s: operands %d and %d, %a and %a: inner extents differ"
+        by i (i + 1) pp_shape s pp_shape s'
+  done;
+  (* Checked before the products, which each consume their operands. *)
+  Array.iter (Prim.alive ~by) xs;
+  let work = Array.make_matrix n n 0 and cut = Array.make_matrix n n 0 in
+  for len = 1 to n - 1 do
+    for i = 0 to n - 1 - len do
+      let j = i + len in
+      (* The first split wins where every split's work saturates. *)
+      work.(i).(j) <- max_int;
+      cut.(i).(j) <- i;
+      for k = i to j - 1 do
+        let w =
+          add
+            (add work.(i).(k) work.(k + 1).(j))
+            (mul ext.(i) (mul ext.(k + 1) ext.(j + 1)))
+        in
+        if w < work.(i).(j) then begin
+          work.(i).(j) <- w;
+          cut.(i).(j) <- k
+        end
+      done
+    done
+  done;
+  let outer i j = List.filter present [ i; j + 1 ] in
+  let shape ns = Array.of_list (List.map (Array.get ext) ns) in
+  let (D.Any w) = accumulator ~by dt (D.Any dt) (D.Any dt) in
+  let rec value i j =
+    if i = j then (names i, Value.Any xs.(i))
+    else
+      let k = cut.(i).(j) and ns = outer i j in
+      let l = value i k and r = value (k + 1) j in
+      (ns, Value.Any (pair ~by ~ext w w ns (shape ns) l r))
+  in
+  let k = cut.(0).(n - 1) and ns = outer 0 (n - 1) in
+  pair ~by ~ext w dt ns (shape ns) (value 0 k) (value (k + 1) (n - 1))
