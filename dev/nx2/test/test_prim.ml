@@ -378,7 +378,7 @@ let movements =
                    dead = Value.Live;
                  })
           in
-          match Exec.run ~by:"t" (Move (mv, x)) with
+          match Eval.run ~by:"t" (Move (mv, x)) with
           | exception Invalid_argument _ -> cover "refused" true
           | y ->
               let _, l, p = one_form (Op (Move (mv, x))) in
@@ -632,7 +632,7 @@ let partials =
           (match c with Route.Windows -> "windows" | Partials -> "partials"))
       ~equal:( = )
   in
-  let placed p x = Exec.run ~by:"t" (Value.Place (p, x)) in
+  let placed p x = Eval.run ~by:"t" (Value.Place (p, x)) in
   let split axis = Devices.split ~by:"t" ~axis s2 in
   let every = Devices.on s2 in
   let codes shape =

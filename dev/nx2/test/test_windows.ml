@@ -618,7 +618,7 @@ let any_nan (type v s) (a : (v, s) A.t) : (v, s) A.t =
 
 (* [x] computed at [at] where it is a constant and [at] is given. *)
 let reach (type v s d) at (x : (v, s, d) Value.t) =
-  match at with None -> x | Some p -> Exec.at (Devices.rebrand p) x
+  match at with None -> x | Some p -> Constant.at (Devices.rebrand p) x
 
 (* Each result's bytes on the host, in C order, at [windows], each NaN made
    one: a constant result computed at [at], or else on the host. *)
@@ -628,7 +628,7 @@ let bytes (type r) ?at windows (op : r Value.prim) (r : r) =
   Prim.iter_results
     (fun x ->
       let x = reach at x in
-      let x = Exec.run ~by:"t" (Value.Place (Devices.rebrand host, x)) in
+      let x = Eval.run ~by:"t" (Value.Place (Devices.rebrand host, x)) in
       arrays := A.Any (Iarray.get (Prim.arrays x) 0) :: !arrays)
     op r;
   Array.mapi
@@ -647,7 +647,7 @@ let bytes (type r) ?at windows (op : r Value.prim) (r : r) =
 
 let agrees (Op op, w) =
   let rule = Prim.rule op in
-  let whole = Exec.run ~by:"t" op in
+  let whole = Eval.run ~by:"t" op in
   let view i x =
     let win = Route.window rule ~operand:i (Prim.shape x) w in
     let a =
@@ -657,7 +657,7 @@ let agrees (Op op, w) =
     Value.Array { at = Prim.placement x; a; dead = Value.Live }
   in
   let local = Prim.local (Prim.mapi view op) w in
-  let part = Exec.run ~by:"t" local in
+  let part = Eval.run ~by:"t" local in
   (* Each result is cut where the first is, and whole along any other axis: a
      routine's pivots or [r] factor share the first's batch alone. *)
   let first = shape_of_results (Op op) in
@@ -703,7 +703,7 @@ let widened (type v s d) ~abs (x : (v, s, d) Value.t) :
 (* [x]'s elements on the host at the window [w], in C order. *)
 let floats_at (type s d) (w : M.range array) (x : (float, s, d) Value.t) =
   let host = Devices.rebrand (Devices.one Devices.host 0) in
-  let x = Exec.run ~by:"t" (Value.Place (host, x)) in
+  let x = Eval.run ~by:"t" (Value.Place (host, x)) in
   let a = Iarray.get (Prim.arrays x) 0 in
   A.to_array (A.copy (Option.get (A.move (Slice (Iarray.of_array w)) a)))
 
@@ -741,7 +741,7 @@ let bound_law ((Op op as o), (w : M.range array)) =
             Value.Array { at = Prim.placement x; a; dead = Value.Live }
           in
           let local = Prim.local (Prim.mapi view op) w in
-          let run () = Exec.run ~by:"t" local in
+          let run () = Eval.run ~by:"t" local in
           let whole y = floats_at (Array.map full (Prim.shape y)) y in
           let got = whole (run ()) in
           let bits = Array.map Int32.bits_of_float in
@@ -749,7 +749,7 @@ let bound_law ((Op op as o), (w : M.range array)) =
             (bits (whole (run ())));
           let wide ~abs =
             floats_at w
-              (Exec.run ~by:"t"
+              (Eval.run ~by:"t"
                  (Value.Contract
                     {
                       batch;
@@ -952,12 +952,12 @@ let cut_law c =
   let x = value D.Float32 c.shape c.xs and y = value D.Int8 c.shape c.ys in
   let one = mixed x y c.shape c.axes in
   let whole _ s = Array.map full s in
-  let expected = bytes whole one (Exec.run ~by:"t" one) in
+  let expected = bytes whole one (Eval.run ~by:"t" one) in
   let p = Devices.rebrand (placement_of c.where) in
-  let place v = Exec.run ~by:"t" (Value.Place (p, v)) in
+  let place v = Eval.run ~by:"t" (Value.Place (p, v)) in
   let cut = mixed (place x) (place y) c.shape c.axes in
-  let actual = bytes whole cut (Exec.run ~by:"t" cut) in
-  let again = bytes whole cut (Exec.run ~by:"t" cut) in
+  let actual = bytes whole cut (Eval.run ~by:"t" cut) in
+  let again = bytes whole cut (Eval.run ~by:"t" cut) in
   Array.iteri
     (fun i e ->
       let msg = Printf.sprintf "result %d" i in

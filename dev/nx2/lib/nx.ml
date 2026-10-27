@@ -405,12 +405,12 @@ let of_bigarray (type v s) (b : (v, s, Bigarray.c_layout) Bigarray.Genarray.t)
 let readable ~by x =
   Prim.alive ~by x;
   let live = Donate.live x in
-  Exec.wait ~by live;
+  Check.wait ~by live;
   live
 
 let sync x = ignore (readable ~by:"Nx.sync" x)
 
-let read ~by x = Exec.on_host ~by (readable ~by x)
+let read ~by x = Check.on_host ~by (readable ~by x)
 
 module Repr = struct
   let of_array s a = Repr.of_array ~by:"Nx.Repr.of_array" s a
@@ -421,7 +421,7 @@ module Repr = struct
   let of_shards p arrays = Repr.of_shards ~by:"Nx.Repr.of_shards" p arrays
   let shards = Repr.shards
 
-  (* A read's array: [Exec.on_host] shares no memory, so the value's next
+  (* A read's array: [Check.on_host] shares no memory, so the value's next
      donation may still write into it once [f] returns. Until then a read claim
      holds the memory, so a donation meanwhile computes into fresh memory, and
      [x] stays reachable, so its memory is not collected under [f]. *)
@@ -470,8 +470,8 @@ let item i x =
         let start (w : Nx_array.Move.range) = w.start in
         Nx_array.get a (Iarray.of_list (List.map start one))
     | live ->
-        let v = Exec.run ~by (Value.Move (Slice (Iarray.of_list one), live)) in
-        Nx_array.get (Exec.on_host ~by v) (Iarray.init r (fun _ -> 0))
+        let v = Eval.run ~by (Value.Move (Slice (Iarray.of_list one), live)) in
+        Nx_array.get (Check.on_host ~by v) (Iarray.init r (fun _ -> 0))
   in
   get (readable ~by (Eval.read_through x))
 
@@ -5926,10 +5926,10 @@ let pp ppf x =
             in
             let unread why ppf = Format.fprintf ppf ", unread: %s" why in
             let live = Donate.live x in
-            match Exec.wait ~by:"Nx.pp" live with
+            match Check.wait ~by:"Nx.pp" live with
             | exception Rig.Lost (d, why) -> lost d why
             | () -> (
-                match Exec.on_host ~by:"Nx.pp" live with
+                match Check.on_host ~by:"Nx.pp" live with
                 | a -> fun ppf -> Format.fprintf ppf "@ %a" pp_elements a
                 | exception Rig.Lost (d, why) -> lost d why
                 | exception Invalid_argument why -> unread why)))

@@ -5,6 +5,24 @@
 
 (** Dispatch: an operation's one entry, from nx's functions to its meaning.
 
+    An operation's {e eager meaning} is {!run}'s. Its operands must be alive,
+    and none may be traced. Its rule is checked and routed once
+    ({!Prim.route}) before anything is allocated, claimed or computed. An
+    operation whose every operand is a constant, a creation included, gives
+    constants ({!Constant.defer}). Otherwise each
+    constant operand is computed where the route reads it ({!Constant.at}),
+    each other operand is placed there ({!Exec.placer}), and the operation
+    computes by partials ({!Partial}) or by windows ({!Exec.windows}), as the
+    route says. Donated handles among the operands are claimed after the
+    route ({!Donate.claim}), the first result takes a handle's memory where
+    one may hold it ({!Donate.reuse}), and the handles end once the
+    operation returns ({!Donate.consumed}). A movement of a handle claims
+    nothing. It passes on a handle of the same donor over the moved arrays.
+    A [Place] of a constant computes it at the placement; one of another
+    value onto the host from another set first waits on that set
+    ({!Check.wait}), then places it ({!Exec.place}). A [Check] is issued
+    ({!Check.issue}).
+
     Each interpretation's extent runs under a handler of its own. An operation
     that a live [Extent] or a traced operand may send to an interpretation
     performs one effect, which the innermost handler whose interpretation
@@ -15,9 +33,8 @@
     it adopts, which is around by construction. On another domain than the
     one it was installed on, an adopting interpretation's handler answers an
     operation it reaches only where its parent is around too, and refuses it
-    otherwise. An
-    operation no handler answers is {!Exec.run}'s, and raises where an operand
-    is traced.
+    otherwise. An operation no handler answers is {!run}'s, and raises where
+    an operand is traced.
 
     An [Extent] receiver first receives the operations of each formula operand
     its rule did not return, rebuilt at the operand's brand, in dependency
@@ -33,7 +50,11 @@
     that is never low. While any [Extent] lives, on any domain, every operation
     of every domain performs the dispatch effect, which costs it a perform and
     changes no result; a continuation dropped inside an extent keeps the count
-    high for the life of the process. *)
+    high for the life of the process.
+
+    This module lies above the rest of the engine: {!Exec}, {!Partial},
+    {!Constant} and {!Check} compute what it dispatches, and nx's functions
+    call it. *)
 
 open Value
 
@@ -76,8 +97,18 @@ val quiet : unit -> bool
 (** [quiet ()] is [true] iff the count of live [Extent] interpretations is
     zero: none is live, on any domain. *)
 
+val run : by:string -> 'r prim -> 'r
+(** [run ~by op] is [op]'s eager meaning, as stated above. No interpretation
+    receives it.
+
+    Raises [Invalid_argument] naming [by] for a dead or traced operand and
+    where [op]'s operands break its rule, before any handle is claimed, and
+    as {!Donate.claim}, {!Exec} and {!Check.issue} state. *)
+
 val eval : by:string -> 'r prim -> 'r
-(** [eval ~by op] is [op]'s meaning under the rule. Errors name [by]. *)
+(** [eval ~by op] is [op]'s meaning, as stated above: {!run}'s where no
+    [Extent] is live and no operand is traced, and otherwise what the
+    handlers around the caller make of it. Errors name [by]. *)
 
 val apply1 :
   by:string ->
@@ -102,9 +133,13 @@ val apply3 :
   ('v, 's, 'd) t ->
   ('v, 's, 'd) t
 (** [applyN ~by k dt x …] is {!eval} of the one-node map [k] ({!Prim.op1} to
-    {!Prim.op3}). With no live [Extent] and no traced operand, it is
-    {!Exec.apply1} to {!Exec.apply3}, which build no operation on their fast
-    path. *)
+    {!Prim.op3}), with result dtype [dt] ([apply3]'s: its second operand's).
+    With no live [Extent] and no traced operand, live arrays at physically
+    one placement whose set has kernels, where [k] takes their dtypes,
+    compute by one {!Exec.map} of the program {!Prim.node1} to {!Prim.node3}
+    keep, which builds no operation and may share the layout of [x]
+    ([apply3]'s second operand). Other operands compute by {!run} of the
+    operation, whose rule raises on operands it does not take. *)
 
 val contract :
   by:string ->
@@ -123,5 +158,5 @@ val contract :
 val place :
   by:string -> 'e Devices.placement -> ('v, 's, 'd) t -> ('v, 's, 'e) t
 (** [place ~by p x] is {!eval} of [Place (p, x)]. With no live [Extent], a
-    value on one device already at [p] answers at once, over
-    its array. *)
+    live value on one device already at [p] answers at once, over its array,
+    whose memory it marks shared ({!Rig.Claim.share}). *)

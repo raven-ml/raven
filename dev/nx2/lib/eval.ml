@@ -5,9 +5,147 @@
 
 open Value
 
+module A = Nx_array
+
+let invalid_argf fmt = Format.kasprintf invalid_arg fmt
+
 (* The live [Extent] interpretations of the process. *)
 let extents = Atomic.make 0
 let quiet () = Atomic.get extents = 0
+
+(* The eager meaning *)
+
+(* Raises unless the operand [x] is alive and concrete or a constant: an
+   interpretation receives every operation on its traced values before eager
+   execution can. *)
+let checked (type v s d) ~by (x : (v, s, d) t) =
+  match x with
+  | Traced { owner; _ } ->
+      invalid_argf "%s: a value traced by %s reached eager execution" by
+        owner.name
+  | Array _ | Shards _ | Donated _ | Deferred _ -> Prim.alive ~by x
+
+let is_concrete x = not (Prim.is_constant x)
+
+(* Whether [p] lies on the host's set. *)
+let on_host_set p = Devices.number (Devices.set p) = Devices.number Devices.host
+
+(* [x] placed at [p]: a constant computed there, a value onto the host from
+   another set waited for first. *)
+let placed : type v s d e.
+    by:string -> e Devices.placement -> (v, s, d) t -> (v, s, e) t =
+ fun ~by p x ->
+  match x with
+  | Deferred _ -> Place.value ~by p (Constant.at (Devices.rebrand p) x)
+  | Array _ | Shards _ | Donated _ | Traced _ ->
+      if on_host_set p && not (on_host_set (Prim.placement x)) then
+        Check.wait ~by x;
+      Exec.place ~by p x
+
+(* [x] readable at [p]: a constant computed there. *)
+let placer ~by p x = Exec.placer ~by p (Constant.at p x)
+
+let rec run : type r. by:string -> r prim -> r =
+ fun ~by op -> if Exec.is_local op then Exec.local ~by op else general ~by op
+
+and general : type r. by:string -> r prim -> r =
+ fun ~by op ->
+  if not (Prim.exists Donate.is_handle op) then begin
+    Prim.iteri (fun _ x -> checked ~by x) op;
+    plain ~by op
+  end
+  else
+    let (Prim.Operands xs) = Prim.operands op in
+    Prim.iteri (fun _ x -> checked ~by x) op;
+    donated ~by op (Donate.handles xs)
+
+(* [op] over donated operands [hs]: a movement that maps elements one to one
+   passes a new handle on; any other operation checks its rule, then claims the
+   handles, reads their memory, writes its first result into a handle's memory
+   where it may, and ends the handles. *)
+and donated : type r. by:string -> r prim -> Donate.handle list -> r =
+ fun ~by op hs ->
+  match op with
+  | Move (mv, (Donated d as x)) ->
+      (* A view of a handle leaves the memory unshared: the handle it passes on
+         has the same donor and key, so its consumer may still write into it.
+         The movement claims nothing: the deaths wait for that consumer, which
+         checks every operand first, so an operation that aligns its operands
+         by movements kills nothing when its checks refuse it. *)
+      let moved () =
+        let r = run ~by (Move (mv, Donate.live x)) in
+        (Prim.placement r, Prim.shape r, Prim.arrays r)
+      in
+      let at, shape, arrays =
+        if Iarray.length d.arrays <> 1 then moved ()
+        else begin
+          ignore (Prim.layouts ~by op);
+          match A.move mv (Iarray.get d.arrays 0) with
+          | Some v ->
+              (d.at, Iarray.to_array (A.Layout.shape (A.layout v)), [| v |])
+          | None -> moved ()
+        end
+      in
+      Donated { key = d.key; at; shape; arrays; donor = d.donor }
+  | Map _ | Reduce _ | Scan _ | Gather _ | Scatter _ | Sort _ | Fft _
+  | Linalg _ | Fold _ | Assemble _ | Contract _ | Copy _ | Move _ | Bitcast _
+  | Place _ | Check _ -> (
+      (* Checked before the claim: an operation its rule refuses neither takes
+         a handle's memory nor shows another domain a handle dead. Once
+         claimed, the donors stay dead whatever the kernels answer. *)
+      let r = Prim.route ~by op in
+      let op = Donate.unhandled hs op in
+      Donate.claim ~by hs;
+      match Donate.reuse ~by op hs with
+      | Some (i, b, b') ->
+          (* Operand [i]'s memory is the result's, now over [b']: the kernel
+             reads each index of it before it writes the result there. *)
+          let over (type v s d) (y : (v, s, d) t) : (v, s, d) t =
+            match y with
+            | Array r when A.buffer r.a == b ->
+                Array { r with a = A.v (A.dtype r.a) (A.layout r.a) b' }
+            | Array _ | Shards _ | Donated _ | Deferred _ | Traced _ -> y
+          in
+          let op = Prim.map over op in
+          let (Prim.Operands xs) = Prim.operands op in
+          let (Any target) = List.nth xs i in
+          let into = A.Any (Iarray.get (Prim.arrays target) 0) in
+          let y = routed ~by ~into r op in
+          Donate.consumed ~by ~reused:[ b ] hs;
+          y
+      | None ->
+          let y = routed ~by r op in
+          Donate.consumed ~by ~reused:[] hs;
+          y)
+
+and plain : type r. by:string -> r prim -> r =
+ fun ~by op ->
+  match op with
+  | Place (p, x) -> placed ~by p x
+  | Check { ok; data; fail } ->
+      ignore (Prim.layouts ~by op);
+      Check.issue ~by ok data fail
+  | _ ->
+      if not (Prim.exists is_concrete op) then Constant.defer ~by op
+      else routed ~by (Prim.route ~by op) op
+
+(* [op], a placement, a check, or an operation of a concrete operand, computed
+   as its rule decided [r] ({!Prim.route}): over operands placed where the
+   route reads them, by partials or by windows as it computes, its first
+   result into [into] where it is given. *)
+and routed : type r. by:string -> ?into:A.any -> Prim.routed -> r prim -> r =
+ fun ~by ?into r op ->
+  match op with
+  | Place (p, x) -> placed ~by p x
+  | Check { ok; data; fail } -> Check.issue ~by ok data fail
+  | _ -> (
+      (* A concrete operand has a placement, so the operation has a route. *)
+      let route = Option.get r.Prim.route in
+      let place i x = placer ~by (Devices.rebrand route.operands.(i)) x in
+      let op = Prim.mapi place op in
+      match route.compute with
+      | Partials -> Partial.run ~by route op
+      | Windows -> Exec.windows ~by ?into route r.layouts op)
 
 (* The nodes of the formulas [i]'s rule returned. *)
 let add_formula i id =
@@ -422,11 +560,11 @@ let unreached ~by op =
       | Traced { owner; _ } -> refuse ~by owner
       | Array _ | Shards _ | Donated _ | Deferred _ -> ())
     op;
-  Exec.run ~by op
+  run ~by op
 
 let eval ~by op =
-  if quiet () && not (Prim.exists is_traced op) then
-    Exec.run ~by op
+  if quiet () && (Exec.is_local op || not (Prim.exists is_traced op)) then
+    run ~by op
   else
     let e = Receive { by; op = Some op } in
     match Effect.perform e with
@@ -450,26 +588,54 @@ let eval3 ~by k c x y =
   v
 
 (* No traced operand and no live [Extent] is the condition under which {!eval}
-   performs nothing, checked on the operands before the operation is built. *)
+   performs nothing, checked on the operands before the operation is built.
+   Live arrays at physically one placement whose set has kernels, where [k]
+   takes their dtypes, then compute by {!Exec.map}, and every other operand
+   by {!run} of the operation. *)
+let fast1 ~by k dt x =
+  match (x, Exec.live_kernels x, Prim.node1 k (Prim.dtype x) dt) with
+  | Array { at; a; _ }, Some kernels, Some p ->
+      Exec.map ~by kernels at p dt a [| Nx_kernel.Plain a |]
+  | _ -> fst (run ~by (Prim.op1 ~by k dt x))
+
+let fast2 ~by k dt x y =
+  match (x, y, Exec.live_kernels x, Prim.node2 k (Prim.dtype x)) with
+  | Array { at; a; _ }, Array { a = b; _ }, Some kernels, Some p
+    when Exec.beside x y ->
+      Exec.map ~by kernels at p dt a [| Nx_kernel.Plain a; Nx_kernel.Plain b |]
+  | _ -> fst (run ~by (Prim.op2 ~by k dt x y))
+
+let fast3 ~by k c x y =
+  match
+    (c, x, y, Exec.live_kernels c, Prim.node3 k (Prim.dtype c) (Prim.dtype x))
+  with
+  | ( Array { at; a = ca; _ },
+      Array { a; _ },
+      Array { a = b; _ },
+      Some kernels,
+      Some p )
+    when Exec.beside c x && Exec.beside c y ->
+      let loads =
+        [| Nx_kernel.Plain ca; Nx_kernel.Plain a; Nx_kernel.Plain b |]
+      in
+      Exec.map ~by kernels at p (A.dtype a) a loads
+  | _ -> fst (run ~by (Prim.op3 ~by k c x y))
+
 let apply1 ~by k dt x =
   match x with
   | Traced _ -> eval1 ~by k dt x
   | Array _ | Shards _ | Donated _ | Deferred _ ->
-      if quiet () then Exec.apply1 ~by k dt x else eval1 ~by k dt x
+      if quiet () then fast1 ~by k dt x else eval1 ~by k dt x
 
 let apply2 ~by k dt x y =
   match (x, y) with
   | Traced _, _ | _, Traced _ -> eval2 ~by k dt x y
-  | _ ->
-      if quiet () then Exec.apply2 ~by k dt x y
-      else eval2 ~by k dt x y
+  | _ -> if quiet () then fast2 ~by k dt x y else eval2 ~by k dt x y
 
 let apply3 ~by k c x y =
   match (c, x, y) with
   | Traced _, _, _ | _, Traced _, _ | _, _, Traced _ -> eval3 ~by k c x y
-  | _ ->
-      if quiet () then Exec.apply3 ~by k c x y
-      else eval3 ~by k c x y
+  | _ -> if quiet () then fast3 ~by k c x y else eval3 ~by k c x y
 
 let contract ~by ~batch ~contracting ~acc dt a b init =
   let fast =

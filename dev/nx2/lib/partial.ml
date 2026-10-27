@@ -113,31 +113,49 @@ let parts runs (tile : M.range array) =
   in
   List.map Array.of_list (from 0)
 
-(* Folds of partials through [A.apply] *)
+(* Operations of folds *)
+
+(* [op], an operation of a fold on [here], one device, where each of its
+   operands lies: by {!Exec.local} where it maps operands that lie beside
+   each other, else by windows over the route that reads each operand on
+   [here] and puts each result there. One of no operand, a creation, computes
+   there too. *)
+let apply : type r d. by:string -> d Devices.placement -> r Value.prim -> r =
+ fun ~by here op ->
+  if Exec.is_local op then Exec.local ~by op
+  else
+    let here = Devices.rebrand here in
+    let (Prim.Operands xs) = Prim.operands op in
+    let operands = Array.make (List.length xs) here in
+    let route = { Route.operands; result = here; compute = Windows } in
+    Exec.windows ~by route (Prim.layouts ~by op) op
+
+(* Folds of partials *)
 
 module Make (A : sig
   val by : string
-  val apply : by:string -> 'r Value.prim -> 'r
 end) =
 struct
   let by = A.by
-  let apply op = A.apply ~by op
+  let apply here op = apply ~by here op
+
+  (* [op] on the device [x] lies on. *)
+  let on x op = apply (Prim.placement x) op
 
   (* Values *)
 
-  (* [x] on [here]; a value of no load lies on no set until placed. *)
+  (* [x] on [here]. *)
   let move (type v s d) (here : d Devices.placement) (x : (v, s, d) Value.t) :
       (v, s, d) Value.t =
-    match Prim.at x with
-    | Some p when Devices.equal p here -> x
-    | Some _ | None -> apply (Value.Place (here, x))
+    if Devices.equal (Prim.placement x) here then x
+    else Exec.place ~by here x
 
   let moves here vs =
     List.map (fun (Value.Any x) -> Value.Any (move here x)) vs
 
   let reshape (type v s d) shape (x : (v, s, d) Value.t) : (v, s, d) Value.t =
     if Prim.has_shape x shape then x
-    else apply (Value.Move (Reshape (Iarray.of_array shape), x))
+    else on x (Value.Move (Reshape (Iarray.of_array shape), x))
 
   (* Elements [start, start + count) of [x] along [axis]. *)
   let slice (type v s d) axis start count (x : (v, s, d) Value.t) :
@@ -146,18 +164,18 @@ struct
     if start = 0 && count = r.(axis).count then x
     else begin
       r.(axis) <- { M.start; count; step = 1 };
-      apply (Value.Move (Slice (Iarray.of_array r), x))
+      on x (Value.Move (Slice (Iarray.of_array r), x))
     end
 
   (* [x] of [shape], its axes of extent 1 stretched. *)
   let spread (type v s d) shape (x : (v, s, d) Value.t) : (v, s, d) Value.t =
     if Prim.has_shape x shape then x
-    else apply (Value.Move (Broadcast (Iarray.of_array shape), x))
+    else on x (Value.Move (Broadcast (Iarray.of_array shape), x))
 
   let cast (type d) (D.Any dt) (Value.Any x : d Value.any) : d Value.any =
     match D.equal_witness (Prim.dtype x) dt with
     | Some Type.Equal -> Value.Any x
-    | None -> Value.Any (fst (apply (Prim.op1 ~by Cast dt x)))
+    | None -> Value.Any (fst (on x (Prim.op1 ~by Cast dt x)))
 
   (* [x]'s window [w] from its array on its set's device [k], at [at]. *)
   let view (type v s d) k (at : d Devices.placement) w (x : (v, s, d) Value.t)
@@ -170,8 +188,9 @@ struct
     | Padded p -> Padded { p with x = view k at w p.x }
 
   (* Output [o] of [prog], of [term], over [loads] in the window [w] of a
-     loop of [layout]: the load itself where [prog] is its identity. *)
-  let terms (type d) layout (prog : P.t) o (D.Any term)
+     loop of [layout], on [here]: the load itself where [prog] is its
+     identity. *)
+  let terms (type d) here layout (prog : P.t) o (D.Any term)
       (loads : d Value.load iarray) w : d Value.any =
     match loads with
     | [| Plain x |]
@@ -182,7 +201,7 @@ struct
           P.subst ~outs:[| o |] ~ins:prog.ins (fun _ -> None) prog
         in
         let map = Value.Map { layout; prog = one; outs = Value.[ term ]; loads } in
-        Value.Any (fst (apply (Prim.within map w)))
+        Value.Any (fst (apply here (Prim.within map w)))
 
   (* The value at [p] of [shape] whose array on each of [p]'s devices, in
      order, is [vs]'s. *)
@@ -223,7 +242,7 @@ struct
     let layout = L.contiguous (Iarray.of_array (Prim.shape x)) in
     let plain (Value.Any x : d Value.any) = Value.Plain x in
     let loads = Iarray.of_list (List.map plain vs) in
-    read (apply (Value.Map { layout; prog; outs; loads }))
+    read (on x (Value.Map { layout; prog; outs; loads }))
 
   (* Folds *)
 
@@ -292,7 +311,7 @@ struct
   (* The values [x] orders by: itself, or a complex number's parts. *)
   let keys (type v s d) (x : (v, s, d) Value.t) : d Value.any list =
     let parts (type w r) (pt : (w, r) D.t) =
-      let pairs = apply (Value.Bitcast (pt, x)) in
+      let pairs = on x (Value.Bitcast (pt, x)) in
       let shape = Prim.shape x in
       let half j = Value.Any (reshape shape (slice (Array.length shape) j 1 pairs)) in
       [ half 0; half 1 ]
@@ -414,7 +433,10 @@ struct
         loads
     in
     let local j prog rs =
-      Prim.within (Value.Reduce { layout; axes; prog; reductions = rs; loads = viewed j }) (loop j)
+      let op =
+        Value.Reduce { layout; axes; prog; reductions = rs; loads = viewed j }
+      in
+      apply (here j) (Prim.within op (loop j))
     in
     let gs = groups (Array.length ks) ~key:outw ~tile:(Array.get tiles) in
     let term o = P.dtype prog (Iarray.get prog.outs o) in
@@ -435,7 +457,7 @@ struct
       match r with
       | Monoid (m, o, dt) ->
           let unit j =
-            let v, () = apply (local j prog Value.[ Monoid (m, o, c) ]) in
+            let v, () = local j prog Value.[ Monoid (m, o, c) ] in
             [ Value.Any v ]
           in
           let settle _ _ vs = [ cast (D.Any dt) (List.hd vs) ] in
@@ -444,7 +466,7 @@ struct
       | Arg (e, o, dt) ->
           let (D.Any t) = term o in
           let unit j =
-            let (x, q), () = apply (local j prog Value.[ Arg (e, o, t) ]) in
+            let (x, q), () = local j prog Value.[ Arg (e, o, t) ] in
             [ Value.Any x; renumber tiles.(j) whole (Value.Any q) ]
           in
           let settle _ _ = function
@@ -457,7 +479,7 @@ struct
           (* The logsumexp of the tiles' logsumexps, laid out as
              [outputs; tiles]. *)
           let unit j =
-            let v, () = apply (local j prog Value.[ Logsumexp (o, c) ]) in
+            let v, () = local j prog Value.[ Logsumexp (o, c) ] in
             [ Value.Any v ]
           in
           let settle _ j vs =
@@ -469,11 +491,11 @@ struct
             let pieces = List.mapi piece vs
             and shape : int iarray = [| n; t |] in
             let x =
-              apply
+              apply (here j)
                 (Value.Assemble { dtype = c; shape; fill = D.zero c; pieces })
             in
             let lse, () =
-              apply
+              apply (here j)
                 (Value.Reduce
                    {
                      layout = L.contiguous shape;
@@ -495,12 +517,15 @@ struct
           let n = numel whole in
           let xs =
             Array.init (Array.length ks) (fun j ->
-                lazy (terms layout prog o (D.Any t) (viewed j) (loop j)))
+                lazy
+                  (terms (here j) layout prog o (D.Any t) (viewed j)
+                     (loop j)))
           in
           let x j = Prim.expect t (Lazy.force xs.(j)) in
           let over j prog rs loads =
             let layout = L.contiguous (Iarray.of_array (Prim.shape (x j))) in
-            apply (Value.Reduce { layout; axes; prog; reductions = rs; loads })
+            apply (here j)
+              (Value.Reduce { layout; axes; prog; reductions = rs; loads })
           in
           let total j =
             let s, () =
@@ -559,7 +584,7 @@ struct
     let o = snd (Prim.reduction r) in
     let term = P.dtype prog (Iarray.get prog.outs o) in
     (* A device's terms over its window. *)
-    let own j = terms layout prog o term (viewed j) (win j) in
+    let own j = terms (here j) layout prog o term (viewed j) (win j) in
     (* [x]'s terms reduced by [rs], their row of extent 1 along the axis. *)
     let total (Value.Any x : d Value.any) rs =
       let w = Prim.shape x in
@@ -572,7 +597,7 @@ struct
           ]
       in
       let loads : d Value.load iarray = [| Value.Plain (reshape split x) |] in
-      apply
+      on x
         (Value.Reduce
            {
              layout = L.contiguous (Iarray.of_array split);
@@ -585,7 +610,7 @@ struct
     let scanned (Value.Any x : d Value.any) reduction carry =
       let prog = identity (D.Any (Prim.dtype x)) in
       let layout = L.contiguous (Iarray.of_array (Prim.shape x)) in
-      apply
+      on x
         (Value.Scan { layout; axis; prog; reduction; loads = [| Plain x |]; carry })
     in
     (* By kind: a tile's partial, of its terms [x] from term [at] of the
@@ -644,7 +669,8 @@ struct
           let op =
             Value.Scan { layout; axis; prog; reduction = r; loads = viewed j; carry = None }
           in
-          per.(j) <- moves (here j) (listed r (apply (Prim.within op w)))
+          let y = apply (here j) (Prim.within op w) in
+          per.(j) <- moves (here j) (listed r y)
         else
           let t = Option.get (Array.find_index (fun tl -> tl.(0) = w.(axis)) g.tiles) in
           let x = if j = g.holder.(t) then Lazy.force slabs.(t) else own j in
@@ -716,7 +742,7 @@ struct
     let part j r =
       [
         Value.Any
-          (apply
+          (apply (here j)
              (Value.Contract
                 {
                   batch;
@@ -758,11 +784,9 @@ struct
     Prim.expect out (at_placement p shape (Array.map List.hd per))
 end
 
-let run (type r) (apply : 'q. by:string -> 'q Value.prim -> 'q) ~by route
-    (op : r Value.prim) : r =
+let run (type r) ~by route (op : r Value.prim) : r =
   let module F = Make (struct
     let by = by
-    let apply = apply
   end) in
   let rule = Prim.rule op in
   match op with

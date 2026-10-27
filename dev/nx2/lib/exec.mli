@@ -3,132 +3,134 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** The eager engine: operations on values, computed now by their set's kernels,
-    or held as constants.
+(** Computing operations by their set's kernels, each device its window.
 
-    {!run} applies an operation's rule ({!Prim.results}) before it allocates or
-    calls anything. An operation whose every operand is a constant, a creation
-    included, gives constants; [Place] and [Check] compute. Otherwise it
-    computes each constant operand where the route reads it, places operands the
-    route moves, and allocates each result at the route's placement. Each device
-    of that placement then computes its window of the results by the set's
-    kernels, over each operand's window there ({!Route.window}); a program that
-    reads coordinates adds the window's first index to them. Where the route
-    computes by partials ({!Route.Partials}), {!Partial} computes it
-    instead. [Done] is the result; a refusal raises
-    through {!Nx_array.refused} naming [by]. A decline raises
-    [Invalid_argument] naming [by], the kernels, the operation (a one-node
-    map's kind, a routine's name, what a reduction or a scan computes, as
+    This module computes an operation whose operands have bytes and lie
+    where its route reads them ({!Prim.route}). Its callers choose the
+    route, place the operands, compute the constants and give it the memory
+    a donation frees. It settles no check. Below it lie {!Prim},
+    {!Route} and {!Place}; above it {!Partial}, {!Constant}, {!Check} and
+    {!Eval} call it, and it calls none of them.
+
+    An operation's results lie at its route's result. Each device of that
+    placement computes its {e window} of the results ({!Devices.window}) by
+    one call of the set's kernels, over each operand's window there
+    ({!Route.window}); a program that reads coordinates adds the window's
+    first index to them. Where a layout expresses a movement or a bitcast,
+    its result is a view of the operand's memory and no kernel runs.
+    Otherwise the operand is copied and the result is a view of the copy. A
+    result shares an operand's memory only as its view, or where a donation
+    gives the operand's memory to it.
+
+    A {e refusal} of the kernels raises through {!Nx_array.refused} naming
+    the [by] the caller passes. A {e decline} raises [Invalid_argument]
+    naming [by], the kernels, the operation (a one-node map's kind, a
+    routine's name, what a reduction or a scan computes, as
     ["Reduce Sum and Moments"]), the dtypes, the device and the move the
     program makes, [Nx.place] onto a set whose kernels compute it: nx
     computes no case on the kernels' behalf and moves no data between
-    devices on its own. A result
-    shares an operand's memory only as its view, or where the operand was
-    donated. Movements and bitcasts are views where a
-    layout expresses them, and a copy, then a view, otherwise. [Check] reduces
-    its flags where they lie, to whether all hold and the first failing index.
-    One flag is its own reduction: its element, on the device of the window
-    that holds it, as a 0-d view, and index [0]; a pending one holds the
-    flag's memory as it holds its data's.
-    On the host it reads them and raises at once; on another set it holds them
-    and its data, unread, on the calling domain's list of the set's pending
-    checks, which the domain's systhreads share, until a {!wait} on the set
-    drains them. There, a device of this machine whose memory the host does
-    not address copies whether all hold, in its order, into [Pinned] memory
-    ({!Rig.Buffer.kind}), which both address: one more copy submitted per
-    check, which nothing waits for. On another machine's device the host
-    reads it through a copy, which follows that device's later work, so
-    settling such a check waits for the work submitted there; no rig read
-    avoids that yet. The check records its result's device's submitted value
-    ({!Rig.submitted}). Issuing a check on the set first settles its earlier
-    checks whose result is written: on a device the new check computes on,
-    once the device has reported that value ({!Rig.signaled}), which commits
-    no work and waits for none; on another, which may get no more work, as
-    {!Rig.Buffer.reached} finds it, which commits that device's work. A
-    passing one goes and a failing one keeps only its exception. A device
-    reports its work at most its driver's batch of values late while work is
-    submitted on it, so the checks no wait follows hold the data of the work
-    in flight and of that batch; on a domain whose submits stop, they hold it
-    until a wait. A failing check's elements are read through a copy where
-    the host does not address them. The new check is computed and kept only if no failure of
-    the set is known then, and a raise while settling leaves it unissued. A
-    [Place] onto the host from another set is a {!wait} on that set first.
+    devices on its own. A set without kernels raises [Invalid_argument]
+    naming [by] before any kernel runs.
 
     Over devices of one architecture, a result's bits are those of the same
     operation on one device, by the window law ({!Route.window}), wherever
     the operands lie, but for a float or complex contraction, whose library
-    chooses its association from each window's extents, and where
-    {!Partial} combines float partials that round: there they are within
-    their bounds, and the same on every run for a given placement. *)
+    chooses its association from each window's extents. That contraction's
+    bits are within its bound, and the same on every run for a given
+    placement.
 
-val run : by:string -> 'r Value.prim -> 'r
-(** [run ~by op] is [op]'s meaning where no interpretation reaches it.
+    Unless a value's doc says otherwise, it raises as stated above, and
+    allocates the results' memory and the values over it. *)
 
-    Raises [Invalid_argument] naming [by] for a traced operand: its
-    interpretation receives the operation first ({!Eval.eval}). *)
+(** {1:windows Windows} *)
 
-val apply1 :
+val windows :
   by:string ->
-  Nx_kernel.Prog.op1 ->
-  ('w, 'r) Value.dtype ->
-  ('v, 's, 'd) Value.t ->
-  ('w, 'r, 'd) Value.t
+  ?into:Nx_array.any ->
+  unit Route.t ->
+  Nx_array.Layout.t array ->
+  'r Value.prim ->
+  'r
+(** [windows ~by ?into route layouts op] is [op] computed by windows, its
+    operands lying where [route] reads them, its results at [route]'s result
+    laid out as [layouts] ({!Prim.layouts}), fresh but the first, which is
+    [into] where it is given: memory of a donated operand ({!Donate.reuse})
+    that holds the first result's window on the one device of the route's
+    result.
 
-val apply2 :
-  by:string ->
-  Nx_kernel.Prog.op2 ->
-  ('w, 'r) Value.dtype ->
-  ('v, 's, 'd) Value.t ->
-  ('v, 's, 'd) Value.t ->
-  ('w, 'r, 'd) Value.t
+    Raises [Invalid_argument] as an internal fault for a route that
+    computes by partials ({!Route.Partials}), a [Place] or a [Check]. *)
 
-val apply3 :
+(** {1:local One device} *)
+
+val is_local : 'r Value.prim -> bool
+(** [is_local op] is whether [op] is a map whose loads are live arrays read
+    plainly at physically one placement. It allocates nothing. *)
+
+val local : by:string -> 'r Value.prim -> 'r
+(** [local ~by op] is the map [op], for which {!is_local} holds, computed on
+    its loads' one device without a route: its rule checked
+    ({!Prim.layouts}), its results fresh there, the set's kernels called
+    once.
+
+    Raises [Invalid_argument] naming [by] where [op]'s operands break its
+    rule, and as an internal fault for an operation {!is_local} refuses. *)
+
+(** {1:placing Placing} *)
+
+val place :
   by:string ->
-  Nx_kernel.Prog.op3 ->
-  ('a, 'b, 'd) Value.t ->
+  'e Devices.placement ->
   ('v, 's, 'd) Value.t ->
+  ('v, 's, 'e) Value.t
+(** [place ~by p x] is [x]'s elements at [p] ({!Place.value}). It settles
+    no check on [x]'s set. An array of the result over memory of [x]'s,
+    kept or borrowed, marks that memory shared ({!Rig.Claim.share}), so
+    that no donation of either value writes what the other reads.
+
+    Raises what {!Place.value} raises. *)
+
+val placer :
+  by:string ->
+  'd Devices.placement ->
   ('v, 's, 'd) Value.t ->
   ('v, 's, 'd) Value.t
-(** [applyN ~by k dt x …] is the one-node map [k] over [x …], of one shape,
-    with result dtype [dt] (the second operand's for [apply3]), where no
-    interpretation reaches it. For live arrays at physically one placement
-    whose set has kernels, where [k] takes their dtypes, it builds no
-    operation: it allocates the result, sharing the first operand's layout
-    ([apply3]'s second) when that is C-contiguous at offset 0 and of the
-    result's dtype, at least a byte wide, and calls the kernels' [map] once,
-    with the program of [k] that {!Prim.node1} to {!Prim.node3} keep. A
-    decline raises as in {!run}, and a refusal naming [by]. Otherwise it is
-    {!run} of the operation ({!Prim.op1} to {!Prim.op3}), whose rule raises on
-    operands it does not take; a traced operand raises as in {!run}. *)
+(** [placer ~by p x] is [x] where its placement equals [p], and
+    {!Place.value} of [x] at [p] otherwise: an operand where a route reads
+    it.
 
-val at : 'd Devices.placement -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
-(** [at p c] is the constant [c] computed at [p] for an operation that reads it:
-    each device computes its window, whole along each axis [c]'s operation keeps
-    whole ({!Route.at}), and keeps its window in memory of its own. A
-    movement or a bitcast of a constant is its operand read at [p], viewed.
-    The constants [c] is computed from each compute once at each placement an
-    operation reads them at, before that operation, and are dropped when [at]
-    returns. [c] keeps nothing: a second call computes it again. A kernel's
-    refusal or decline raises here, naming the function that made the constant.
-    A value that is not a constant is returned as it is. *)
+    Raises what {!Place.value} raises. *)
 
-val wait : by:string -> ('v, 's, 'd) Value.t -> unit
-(** [wait ~by x] waits for the work [x]'s arrays depend on, then drains the
-    checks the calling domain issued on [x]'s set: it reads them in issue order
-    up to the first that fails, which raises its exception, and drops the later
-    ones unread. Each drained check's hold on its data ends then
-    ({!Rig.Claim.release}). A constant has no set: it returns.
+(** {1:fast Fast paths}
 
-    Raises [Invalid_argument] naming [by] for a traced [x]. *)
+    An operation of live arrays on one device whose set has kernels may be
+    computed without building it. These values let the dispatch ({!Eval})
+    test for that case and compute it; each answers what the operation
+    would, by its kernels, and raises as it would. *)
 
-val on_host : by:string -> ('v, 's, 'd) Value.t -> ('v, 's) Nx_array.t
-(** [on_host ~by x] is an array on the host holding [x]'s elements: a constant
-    computed there, a concrete value placed there ({!Place.value}), over [x]'s
-    own array where it is the host's. No interpretation receives it, and it
-    settles no check ({!wait}).
+val live_kernels : ('v, 's, 'd) Value.t -> (module Nx_kernel.S) option
+(** [live_kernels x] is the kernels of [x]'s set where [x] is a live
+    [Array] and the set has kernels. It allocates nothing. *)
 
-    Raises [Invalid_argument] naming [by] for a traced [x], and what
-    {!Place.value} raises. *)
+val beside : ('v, 's, 'd) Value.t -> ('w, 'r, 'd) Value.t -> bool
+(** [beside x y] is whether [x] and [y] are [Array]s at physically one
+    placement and [y] is live. It allocates nothing. *)
+
+val map :
+  by:string ->
+  (module Nx_kernel.S) ->
+  'd Devices.placement ->
+  Nx_kernel.Prog.t ->
+  ('w, 'r) Value.dtype ->
+  ('v, 's) Nx_array.t ->
+  Nx_kernel.load array ->
+  ('w, 'r, 'd) Value.t
+(** [map ~by kernels at p dt x loads] is the live value at [at] of the
+    program [p], of one output of [dt], over [loads], computed by [kernels]
+    on [x]'s device, which is [at]'s one device: one call of their [map].
+    The result shares [x]'s layout where that is C-contiguous from offset 0
+    and of [dt], and [dt] is at least a byte wide; it is fresh and
+    C-contiguous otherwise. *)
 
 val contract :
   by:string ->
@@ -142,9 +144,8 @@ val contract :
   ('v, 's, 'd) Value.t option
 (** [contract ~by ~batch ~contracting ~acc dt a b init] is [Some] the
     contraction [Value.Contract] of [a] and [b] from [init] into [dt], where
-    no interpretation reaches it, its operands are live arrays on one device
-    at physically one placement whose set has kernels, its pairs fit them:
-    it builds no operation and allocates the C-contiguous result of
-    the shape {!Nx_kernel.Shape.contract} gives. [None] otherwise, for the
-    operation to decide. A refusal of the kernels raises naming [by], and a
-    decline as in {!run}. *)
+    its operands are live arrays on one device at physically one placement
+    whose set has kernels and its pairs fit them: it builds no operation and
+    allocates the C-contiguous result of the shape
+    {!Nx_kernel.Shape.contract} gives. [None] otherwise, for the operation
+    to decide. *)

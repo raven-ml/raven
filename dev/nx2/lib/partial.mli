@@ -3,8 +3,18 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Operations whose route computes by partials ({!Route.Partials}), as
-    operations applied through [apply]: on one device each, or a [Place].
+(** Folds over a cut axis: operations whose route computes by partials
+    ({!Route.Partials}).
+
+    Each device computes partial results over the terms its operands'
+    windows hold, and the partials move between devices and combine in a
+    fixed order. Every step is a move by {!Exec.place} or an operation on
+    one device, where each of its operands lies. This module builds such an
+    operation's route, which reads every operand on that device and puts
+    every result there, and {!Exec} computes the operation by windows over
+    it. An operation that creates its values computes on its device too.
+    This module lies above {!Exec}; {!Constant}, {!Check} and {!Eval} route
+    operations and give it those whose route computes by partials.
 
     A [Reduce] of several reductions computes each one alone. One computes
     per group of its results' devices that hold one window of its results. A
@@ -148,15 +158,11 @@
     [Arg]. No device waits for another's results. An [Arg] maps twice over
     each tile's results but the first's. *)
 
-val run :
-  ('q. by:string -> 'q Value.prim -> 'q) ->
-  by:string ->
-  unit Route.t ->
-  'r Value.prim ->
-  'r
-(** [run apply ~by route op] is [op], its operands lying where [route], its
-    route, reads them, computed through [apply] as stated above.
+val run : by:string -> unit Route.t -> 'r Value.prim -> 'r
+(** [run ~by route op] is [op], its operands lying where [route], its route,
+    reads them, computed as stated above.
 
-    Raises [Invalid_argument] as an internal fault for an operation other than
-    a [Reduce], a [Scan] of no carry or a [Contract]: no route computes
+    Raises as {!Exec} states for the kernels, naming [by], and
+    [Invalid_argument] as an internal fault for an operation other than a
+    [Reduce], a [Scan] of no carry or a [Contract]: no route computes
     another by partials. *)

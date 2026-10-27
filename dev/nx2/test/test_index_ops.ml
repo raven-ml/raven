@@ -46,10 +46,10 @@ let array_of (type v s) (x : (v, s, b) Value.t) : (v, s) A.t =
 
 let ints = array int32
 let x23 () = on D.Int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]
-let gather axis idx x = Exec.run ~by:"t" (Value.Gather { axis; idx; x })
+let gather axis idx x = Eval.run ~by:"t" (Value.Gather { axis; idx; x })
 
 let scatter ?(unique = false) combine axis idx updates into =
-  Exec.run ~by:"t" (Value.Scatter { combine; unique; axis; idx; updates; into })
+  Eval.run ~by:"t" (Value.Scatter { combine; unique; axis; idx; updates; into })
 
 let row i : M.range iarray =
   [| { start = i; count = 1; step = 1 }; { start = 0; count = 3; step = 1 } |]
@@ -87,7 +87,7 @@ let rules =
           raises
             (Invalid_argument "t: piece 0 has shape [2; 3], its region [1; 3]")
             (fun () ->
-              Exec.run ~by:"t"
+              Eval.run ~by:"t"
                 (Value.Assemble
                    {
                      dtype = D.Int32;
@@ -141,7 +141,7 @@ let placements =
           in
           equal ~msg:"assembly" ints
             [| 7l; 8l; 9l; -1l; -1l; -1l; 1l; 2l; 3l |]
-            (elements (Exec.run ~by:"t" a)));
+            (elements (Eval.run ~by:"t" a)));
     ]
 
 let donation =
@@ -149,7 +149,7 @@ let donation =
     [
       test "a target whose memory a view shares is copied" (fun () ->
           let x = x23 () in
-          let v = Exec.run ~by:"t" (Value.Move (Reshape [| 6 |], x)) in
+          let v = Eval.run ~by:"t" (Value.Move (Reshape [| 6 |], x)) in
           let y =
             scatter Set 1
               (positions [| 2; 1 |] [| 2; 0 |])

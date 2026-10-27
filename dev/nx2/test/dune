@@ -93,7 +93,8 @@
   (glob_files golden/special/*.golden)))
 
 (copy_files
- (files ../lib/{grid,devices,route,prim,place,partial,donate,exec,repr}.{ml,mli}))
+ (files
+  ../lib/{grid,devices,route,prim,place,partial,donate,exec,constant,check,eval,repr}.{ml,mli}))
 
 (copy_files
  (files ../lib/value.mli))
@@ -116,6 +117,9 @@
   partial
   donate
   exec
+  constant
+  check
+  eval
   repr)
  (modules_without_implementation value)
  (libraries

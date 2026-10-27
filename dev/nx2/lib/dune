@@ -14,6 +14,8 @@
   partial
   donate
   exec
+  constant
+  check
   eval
   repr
   pattern
@@ -34,6 +36,8 @@
   partial
   donate
   exec
+  constant
+  check
   eval
   repr
   pattern

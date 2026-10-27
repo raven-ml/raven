@@ -252,7 +252,7 @@ let walk c k = of_tensor (Ptree.Walk.tensor c k)
 let keys ~by (k : 'd key) shape f : 'd key =
   let u : (int64, D.uint64_elt, 'd) Value.t =
     if Prim.is_constant k && batch k = [||] then
-      let a = Exec.on_host ~by k in
+      let a = Check.on_host ~by k in
       let half i =
         Int64.logand (Int64.of_int32 (Nx_array.get a [| i |])) 0xFFFF_FFFFL
       in
@@ -314,7 +314,7 @@ let fold_in_tensor (k : 'd key) (i : (int32, D.int32_elt, 'd) Value.t) : 'd key
      read computes a constant, so the key is one map deep, as [fold_in]'s. *)
   let one = batch k = [||] && Prim.shape i = [||] in
   if one && Prim.is_constant k && Prim.is_constant i then
-    fold_in_by ~by k (Int32.to_int (Nx_array.get (Exec.on_host ~by i) [||]))
+    fold_in_by ~by k (Int32.to_int (Nx_array.get (Check.on_host ~by i) [||]))
   else
     let w = pack ~by k in
     let shape = Prim.broadcast_shape ~by (batch k) (Prim.shape i) in

@@ -46,7 +46,7 @@ let first (x, ()) = x
 (* The map [prog] of one float32 output over [loads], of shape [n]. *)
 let map1 n prog loads =
   first
-    (Exec.run ~by:"t"
+    (Eval.run ~by:"t"
        (Value.Map
           {
             layout = Nx_array.Layout.contiguous [| n |];
@@ -124,7 +124,7 @@ let maps =
           let x = f32 [| 1.; 2.; 3. |] and y = f32 [| 4.; 5.; 6. |] in
           let z =
             first
-              (Exec.run ~by:"t"
+              (Eval.run ~by:"t"
                  (Value.Map
                     {
                       layout = Nx_array.Layout.contiguous [| 3 |];
@@ -142,7 +142,7 @@ let maps =
           in
           let c =
             first
-              (Exec.run ~by:"t"
+              (Eval.run ~by:"t"
                  (Value.Map
                     {
                       layout = Nx_array.Layout.contiguous [| 4 |];
@@ -151,7 +151,7 @@ let maps =
                       loads = [||];
                     }))
           in
-          let placed = Exec.at split c in
+          let placed = Constant.at split c in
           let shards = Option.get (Repr.shards placed) in
           equal
             (array (array bits))
@@ -176,9 +176,9 @@ let checks =
                 dead = Value.Live;
               }
           in
-          Exec.run ~by:"t"
+          Eval.run ~by:"t"
             (Value.Check { ok; data = []; fail = (fun _ _ -> Exit) });
-          Exec.wait ~by:"t" ok);
+          Check.wait ~by:"t" ok);
       test
         "a check off the host raises its exception at the next wait, at the \
          first failing index, with the data there" (fun () ->
@@ -193,15 +193,15 @@ let checks =
               }
           in
           let fail i (x, ()) = Failed (i, x) in
-          Exec.run ~by:"t"
+          Eval.run ~by:"t"
             (Value.Check { ok; data = [ f32 [| 10.; 20.; 30. |] ]; fail });
-          raises (Failed ([| 1 |], 20.)) (fun () -> Exec.wait ~by:"t" ok));
+          raises (Failed ([| 1 |], 20.)) (fun () -> Check.wait ~by:"t" ok));
     ]
 
 (* A fresh constant [1.]: a node of its own. *)
 let fresh_one () =
   first
-    (Exec.run ~by:"t"
+    (Eval.run ~by:"t"
        (Value.Map
           {
             layout = Nx_array.Layout.contiguous [||];
@@ -223,24 +223,24 @@ let constants =
       test "a constant read computes each node it reads once, at each read"
         (fun () ->
           let one = fresh_one () in
-          let c = Exec.apply2 ~by:"t" (Binary Add) D.Float32 one one in
-          let d = Exec.apply2 ~by:"t" (Binary Mul) D.Float32 c c in
-          let e = Exec.apply2 ~by:"t" (Binary Add) D.Float32 c d in
+          let c = Eval.apply2 ~by:"t" (Binary Add) D.Float32 one one in
+          let d = Eval.apply2 ~by:"t" (Binary Mul) D.Float32 c c in
+          let e = Eval.apply2 ~by:"t" (Binary Add) D.Float32 c d in
           C.reset ();
-          ignore (Exec.at at1 e);
+          ignore (Constant.at at1 e);
           (* one, c, d, e: four nodes. *)
           equal ~msg:"reading e" int 4 (C.calls ());
           C.reset ();
-          ignore (Exec.at at1 e);
+          ignore (Constant.at at1 e);
           equal ~msg:"reading e again" int 4 (C.calls ());
           C.reset ();
-          ignore (Exec.at at1 d);
+          ignore (Constant.at at1 d);
           equal ~msg:"reading d" int 3 (C.calls ()));
       test "a constant read at two placements in one read computes at each"
         (fun () ->
           let c =
             first
-              (Exec.run ~by:"t"
+              (Eval.run ~by:"t"
                  (Value.Map
                     {
                       layout = Nx_array.Layout.contiguous [| 4 |];
@@ -250,19 +250,19 @@ let constants =
                     }))
           in
           let sorted, _ =
-            Exec.run ~by:"t"
+            Eval.run ~by:"t"
               (Value.Sort { axis = 0; descending = true; k = None; x = c })
           in
-          let e = Exec.apply2 ~by:"t" (Binary Add) D.Float32 sorted c in
+          let e = Eval.apply2 ~by:"t" (Binary Add) D.Float32 sorted c in
           C.reset ();
-          let y = Exec.at split e in
+          let y = Constant.at split e in
           (* The add reads [c] split, a window on each device; the sort reads
              it whole on each device and cuts its results to the windows: [c]
              twice on each device, then the sort and the add once on each. *)
           equal ~msg:"split" int 8 (C.calls ());
           equal (array bits) [| 3.; 3.; 3.; 3. |] (elements y);
           C.reset ();
-          ignore (Exec.at at1 e);
+          ignore (Constant.at at1 e);
           equal ~msg:"on one device" int 3 (C.calls ()));
       test "a chain of constants computes in one pass per node, at any length"
         (fun () ->
@@ -271,32 +271,32 @@ let constants =
           let rec chain k x =
             if k = 0 then x
             else
-              chain (k - 1) (Exec.apply2 ~by:"t" (Binary Add) D.Float32 x one)
+              chain (k - 1) (Eval.apply2 ~by:"t" (Binary Add) D.Float32 x one)
           in
           let x =
-            chain n (Exec.apply2 ~by:"t" (Binary Mul) D.Float32 one one)
+            chain n (Eval.apply2 ~by:"t" (Binary Mul) D.Float32 one one)
           in
           C.reset ();
-          let v = Exec.at at1 x in
+          let v = Constant.at at1 x in
           (* The fill of [one], the product and the n sums. *)
           equal int (n + 2) (C.calls ());
           equal (array bits) [| Float.of_int (n + 1) |] (elements v));
       cases "a chain of views of a constant reads at any length" ~name:fst
         [
-          ("read by an operation", fun p x -> Exec.at p x);
+          ("read by an operation", fun p x -> Constant.at p x);
           ( "placed",
-            fun p x -> Exec.run ~by:"t" (Value.Place (p, x)) );
+            fun p x -> Eval.run ~by:"t" (Value.Place (p, x)) );
         ]
         (fun (_, read) ->
           let flip x =
-            Exec.run ~by:"t"
+            Eval.run ~by:"t"
               (Value.Move
                  (Slice [| { Nx_array.Move.start = 1; count = 2; step = -1 } |],
                   x))
           in
           let two =
             first
-              (Exec.run ~by:"t"
+              (Eval.run ~by:"t"
                  (Value.Map
                     {
                       layout = Nx_array.Layout.contiguous [| 2 |];
@@ -311,11 +311,11 @@ let constants =
       test "domains racing to compute a constant agree bit for bit" (fun () ->
           let one = fresh_one () in
           let c =
-            Exec.apply2 ~by:"t" (Binary Mul) D.Float32
-              (Exec.apply2 ~by:"t" (Binary Add) D.Float32 one one)
+            Eval.apply2 ~by:"t" (Binary Mul) D.Float32
+              (Eval.apply2 ~by:"t" (Binary Add) D.Float32 one one)
               one
           in
-          let work () = elements (Exec.at at1 c) in
+          let work () = elements (Constant.at at1 c) in
           let d = Domain.spawn work in
           let here = work () in
           equal (array bits) here (Domain.join d));
@@ -330,12 +330,12 @@ let d0 = Devices.one s2 0
 let split2 = Devices.split ~by:"t" ~axis:0 s2
 
 let assembly pieces : (float, D.float32_elt, b) Value.t =
-  Exec.run ~by:"t"
+  Eval.run ~by:"t"
     (Value.Assemble { dtype = D.Float32; shape = [| 4 |]; fill = 7.; pieces })
 
 let ones n : (float, D.float32_elt, b) Value.t =
   first
-    (Exec.run ~by:"t"
+    (Eval.run ~by:"t"
        (Value.Map
           {
             layout = Nx_array.Layout.contiguous [| n |];
@@ -350,7 +350,7 @@ let ones n : (float, D.float32_elt, b) Value.t =
    over four rows. *)
 let row_sums () : (float, D.float32_elt, b) Value.t =
   let s, () =
-    Exec.run ~by:"t"
+    Eval.run ~by:"t"
       (Value.Reduce
          {
            layout = Nx_array.Layout.contiguous [| 4; 3 |];
@@ -365,7 +365,7 @@ let row_sums () : (float, D.float32_elt, b) Value.t =
 (* The sum along [axis] of the coordinate along axis 0 over [shape]. *)
 let coordinate_sums shape axis : (float, D.float32_elt, b) Value.t =
   let s, () =
-    Exec.run ~by:"t"
+    Eval.run ~by:"t"
       (Value.Reduce
          {
            layout = Nx_array.Layout.contiguous shape;
@@ -379,7 +379,7 @@ let coordinate_sums shape axis : (float, D.float32_elt, b) Value.t =
 
 (* Its running sum along the last axis. *)
 let coordinate_scans () : (float, D.float32_elt, b) Value.t =
-  Exec.run ~by:"t"
+  Eval.run ~by:"t"
     (Value.Scan
        {
          layout = Nx_array.Layout.contiguous [| 4; 3 |];
@@ -398,7 +398,7 @@ let shards x =
        (Prim.arrays x))
 
 let row_scans () : (float, D.float32_elt, b) Value.t =
-  Exec.run ~by:"t"
+  Eval.run ~by:"t"
     (Value.Scan
        {
          layout = Nx_array.Layout.contiguous [| 4; 3 |];
@@ -410,7 +410,7 @@ let row_scans () : (float, D.float32_elt, b) Value.t =
        })
 
 let forced =
-  let at p x = elements (Exec.at p x) in
+  let at p x = elements (Constant.at p x) in
   group "forced constants"
     [
       cases "an empty assembly fills its placement" ~name:fst
@@ -432,7 +432,7 @@ let forced =
         [ ("split", split2, 2); ("on one device", d0, 1) ]
         (fun (_, p, calls) ->
           C.reset ();
-          let y = Exec.at p (row_sums ()) in
+          let y = Constant.at p (row_sums ()) in
           equal ~msg:"kernel calls" int calls (C.calls ());
           equal (array bits) [| 3.; 3.; 3.; 3. |] (elements y));
       cases "a running sum of coordinates scans at its placement, a call a device"
@@ -440,7 +440,7 @@ let forced =
         [ ("split", split2, 2); ("on one device", d0, 1) ]
         (fun (_, p, calls) ->
           C.reset ();
-          let y = Exec.at p (row_scans ()) in
+          let y = Constant.at p (row_scans ()) in
           equal ~msg:"kernel calls" int calls (C.calls ());
           equal (array bits)
             [| 0.; 1.; 3.; 0.; 1.; 3.; 0.; 1.; 3.; 0.; 1.; 3. |]
@@ -452,13 +452,13 @@ let forced =
       test "a loop of no load computes each device's window" (fun () ->
           let shapes = list (array int) in
           C.reset ();
-          let sums = Exec.at split2 (coordinate_sums [| 4; 3 |] 1) in
+          let sums = Constant.at split2 (coordinate_sums [| 4; 3 |] 1) in
           equal ~msg:"row sums" (array bits) [| 0.; 3.; 6.; 9. |]
             (elements sums);
           equal ~msg:"row sums' positions" int 12 (C.positions ());
           equal ~msg:"row sums' shards" shapes [ [| 2 |]; [| 2 |] ] (shards sums);
           C.reset ();
-          let scans = Exec.at split2 (coordinate_scans ()) in
+          let scans = Constant.at split2 (coordinate_scans ()) in
           equal ~msg:"running sums" (array bits)
             [| 0.; 0.; 0.; 1.; 2.; 3.; 2.; 4.; 6.; 3.; 6.; 9. |]
             (elements scans);
@@ -467,7 +467,7 @@ let forced =
             [ [| 2; 3 |]; [| 2; 3 |] ]
             (shards scans);
           C.reset ();
-          let columns = Exec.at split2 (coordinate_sums [| 4; 2 |] 0) in
+          let columns = Constant.at split2 (coordinate_sums [| 4; 2 |] 0) in
           equal ~msg:"column sums" (array bits) [| 6.; 6. |] (elements columns);
           equal ~msg:"column sums' positions" int 8 (C.positions ());
           equal ~msg:"column sums' shards" shapes [ [| 1 |]; [| 1 |] ]
@@ -479,7 +479,7 @@ let forced =
 let refused name op =
   C.reset ();
   raises_match (Exn.invalid_arg ~substring:"t: ") (fun () ->
-      Exec.run ~by:"t" op);
+      Eval.run ~by:"t" op);
   equal ~msg:(name ^ ": kernel calls") int 0 (C.calls ())
 
 let rules =
@@ -535,7 +535,7 @@ let donated_add x =
   let d = Donate.donate ~by:"t" x in
   let y =
     first
-      (Exec.run ~by:"t"
+      (Eval.run ~by:"t"
          (Prim.op2 ~by:"t" (Binary Add) D.Float32 d (f32 [| 1.; 1. |])))
   in
   (y, Rig.Buffer.overlaps (A.buffer (array_of x)) (A.buffer (array_of y)))
@@ -551,7 +551,7 @@ let test_reuse_fast () =
   let x = f32 [| 1.; 2. |] in
   let d = Donate.donate ~by:"t" x in
   let y =
-    Exec.apply2 ~by:"t" (Binary Add) D.Float32 (f32 [| 1.; 1. |]) d
+    Eval.apply2 ~by:"t" (Binary Add) D.Float32 (f32 [| 1.; 1. |]) d
   in
   equal ~msg:"written in place" bool true
     (Rig.Buffer.overlaps (A.buffer (array_of x)) (A.buffer (array_of y)));
@@ -560,7 +560,7 @@ let test_reuse_fast () =
 (* The fast paths of one and three operands, each operand donated in turn. *)
 let test_reuse_fast1 () =
   let x = f32 [| 1.; 2. |] in
-  let y = Exec.apply1 ~by:"t" (Unary Neg) D.Float32 (Donate.donate ~by:"t" x) in
+  let y = Eval.apply1 ~by:"t" (Unary Neg) D.Float32 (Donate.donate ~by:"t" x) in
   equal ~msg:"written in place" bool true
     (Rig.Buffer.overlaps (A.buffer (array_of x)) (A.buffer (array_of y)));
   equal ~msg:"the result" (array bits) [| -1.; -2. |] (elements y)
@@ -578,7 +578,7 @@ let test_reuse_fast3 () =
     let ops = [| f32 [| 1.; 2. |]; f32 [| 3.; 4. |] |] in
     let x = ops.(i) in
     ops.(i) <- Donate.donate ~by:"t" x;
-    let y = Exec.apply3 ~by:"t" Where (c ()) ops.(0) ops.(1) in
+    let y = Eval.apply3 ~by:"t" Where (c ()) ops.(0) ops.(1) in
     equal ~msg:"the result" (array bits) [| 1.; 4. |] (elements y);
     Rig.Buffer.overlaps (A.buffer (array_of x)) (A.buffer (array_of y))
   in
@@ -586,13 +586,13 @@ let test_reuse_fast3 () =
   equal ~msg:"into the third, in place" bool true (where 1);
   let d = c () in
   let y =
-    Exec.apply3 ~by:"t" Where (Donate.donate ~by:"t" d)
+    Eval.apply3 ~by:"t" Where (Donate.donate ~by:"t" d)
       (f32 [| 1.; 2. |])
       (f32 [| 3.; 4. |])
   in
   equal ~msg:"a donated condition" (array bits) [| 1.; 4. |] (elements y);
   raises_match (Exn.invalid_arg ~substring:"t: bool [2] was donated to t")
-    (fun () -> Exec.run ~by:"t" (Value.Copy d))
+    (fun () -> Eval.run ~by:"t" (Value.Copy d))
 
 let test_no_reuse_shared () =
   let x = f32 [| 1.; 2. |] in
@@ -624,13 +624,13 @@ let test_no_reuse_strided () =
 let test_reuse_after_view () =
   let x = f32 [| 1.; 2. |] in
   let d =
-    Exec.run ~by:"t" (Value.Move (Reshape [| 1; 2 |], Donate.donate ~by:"t" x))
+    Eval.run ~by:"t" (Value.Move (Reshape [| 1; 2 |], Donate.donate ~by:"t" x))
   in
   let one =
-    Exec.run ~by:"t" (Value.Move (Reshape [| 1; 2 |], f32 [| 1.; 1. |]))
+    Eval.run ~by:"t" (Value.Move (Reshape [| 1; 2 |], f32 [| 1.; 1. |]))
   in
   let y =
-    first (Exec.run ~by:"t" (Prim.op2 ~by:"t" (Binary Add) D.Float32 d one))
+    first (Eval.run ~by:"t" (Prim.op2 ~by:"t" (Binary Add) D.Float32 d one))
   in
   equal ~msg:"written in place" bool true
     (Rig.Buffer.overlaps (A.buffer (array_of x)) (A.buffer (array_of y)));
@@ -643,7 +643,7 @@ let test_contract_consumes () =
   let init = f32 [| 10.; 20. |] in
   let d = Donate.donate ~by:"t" init in
   let y =
-    Exec.run ~by:"t"
+    Eval.run ~by:"t"
       (Value.Contract
          {
            batch = [| (0, 0) |];
@@ -662,7 +662,7 @@ let test_contract_consumes () =
   equal ~msg:"written in place" bool true
     (Rig.Buffer.overlaps (A.buffer (array_of init)) (A.buffer (array_of y)));
   raises_match (Exn.invalid_arg ~substring:"t: float32 [2] was donated to t")
-    (fun () -> Exec.run ~by:"t" (Value.Copy init))
+    (fun () -> Eval.run ~by:"t" (Value.Copy init))
 
 (* Two handles of one donor, one a copy a movement passed on, are one handle
    to their consumer: their keys tell one donor's, and [handles] keeps the
@@ -678,7 +678,7 @@ let test_one_donor_twice () =
         dead = Value.Live;
       }
   in
-  let moved mv h = Exec.run ~by:"t" (Value.Move (mv, h)) in
+  let moved mv h = Eval.run ~by:"t" (Value.Move (mv, h)) in
   let h1 = Donate.donate ~by:"t" x in
   (* A reshape of a transpose copies. *)
   let h2 =
@@ -851,7 +851,7 @@ let law_logsumexp (Lse (dt, shape, axes, xs, sn)) =
         loads = [| Plain x |];
       }
   in
-  let got = elements (first (Exec.run ~by:"t" op)) in
+  let got = elements (first (Eval.run ~by:"t" op)) in
   let u = match dt with D.Float64 -> Float.epsilon /. 2. | _ -> 0x1p-24 in
   let narrow =
     match dt with D.Float16 -> 0x1p-11 | D.Bfloat16 -> 0x1p-8 | _ -> 0.
