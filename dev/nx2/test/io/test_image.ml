@@ -386,6 +386,18 @@ let files =
           equal packed
             (Nx.P (table16_pixels side))
             (Nx.P (Nx_io.load_image (fixture name))));
+      cases ~name:fst
+        "a progressive JPEG that sends a coefficient's bit twice or out of \
+         order fails"
+        [
+          ("a scan repeated", "jpeg_repeated_scan.jpg");
+          ("a refinement of bits never sent", "jpeg_unsent_refinement.jpg");
+          ("an AC scan before the DC scan", "jpeg_ac_before_dc.jpg");
+        ]
+        (fun (_, name) ->
+          let path = fixture name in
+          fails ~path ~naming:"invalid JPEG scan" (fun () ->
+              Nx_io.load_image path));
       test "a PNG chunk whose checksum does not match fails" (fun () ->
           let path = file (flip_byte (read (fixture "png_filters.png")) 30) in
           fails ~path ~naming:"PNG chunk CRC mismatch" (fun () ->

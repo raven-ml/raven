@@ -54,6 +54,9 @@ typedef struct {
      later table does not change, as libjpeg latches them. */
   uint16_t quant_entries[64];
   int quant_latched;
+  /* For each coefficient, the Al of the last scan that sent its bits, or -1
+     before the first. */
+  int8_t coef_bits[64];
   unsigned dc_table;
   unsigned ac_table;
   size_t blocks_x;
@@ -312,6 +315,7 @@ static jpeg_status parse_frame(jpeg_decoder *decoder, const uint8_t *data,
     for (unsigned previous = 0; previous < i; previous++)
       if (decoder->components[previous].id == component->id)
         return JPEG_FRAME;
+    memset(component->coef_bits, -1, sizeof(component->coef_bits));
     if (component->h > decoder->max_h)
       decoder->max_h = component->h;
     if (component->v > decoder->max_v)
@@ -669,6 +673,26 @@ static jpeg_status latch_quant(const jpeg_decoder *decoder,
   return JPEG_OK;
 }
 
+/* Records that a scan sends bits [high] down to [low] of [component]'s
+   coefficients [start] to [end]. Each bit of a coefficient is sent once: a
+   first scan ([high] 0) sends a coefficient not yet sent, a refinement
+   continues from the last scan's Al, and a component's AC scans follow its
+   first DC scan (T.81, G.1.1.1). A sequential scan is a first scan of every
+   coefficient, so a component is coded once. This bounds a frame's scans at 14
+   per coefficient and component. */
+static jpeg_status progress(jpeg_component *component, unsigned start,
+                            unsigned end, unsigned high, unsigned low) {
+  if (start != 0 && component->coef_bits[0] < 0)
+    return JPEG_SCAN;
+  int expected = high == 0 ? -1 : (int)high;
+  for (unsigned k = start; k <= end; k++) {
+    if (component->coef_bits[k] != expected)
+      return JPEG_SCAN;
+    component->coef_bits[k] = (int8_t)low;
+  }
+  return JPEG_OK;
+}
+
 static jpeg_status decode_scan(jpeg_decoder *decoder, const uint8_t *header,
                                size_t header_len, size_t entropy_off,
                                size_t *next) {
@@ -707,6 +731,9 @@ static jpeg_status decode_scan(jpeg_decoder *decoder, const uint8_t *header,
     return JPEG_SCAN;
   for (unsigned i = 0; i < scan_count; i++) {
     jpeg_status status = latch_quant(decoder, scan_components[i]);
+    if (status == JPEG_OK)
+      status =
+          progress(scan_components[i], spectral_start, spectral_end, high, low);
     if (status != JPEG_OK)
       return status;
   }

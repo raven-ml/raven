@@ -274,6 +274,40 @@ def late_table_jpeg():
         f.write(data[:-2] + segment(0xDB, bytes([0x00]) + bytes([1] * 64)) + data[-2:])
 
 
+def scan_spans(data):
+    """The byte spans of the scans of the JPEG file [data]: each scan's SOS
+    segment and its entropy-coded data, up to the next marker other than a
+    restart."""
+    spans, i = [], 2
+    while data[i + 1] != 0xD9:
+        (length,) = struct.unpack(">H", data[i + 2:i + 4])
+        end = i + 2 + length
+        if data[i + 1] == 0xDA:
+            while not (data[end] == 0xFF and data[end + 1] != 0x00
+                       and not 0xD0 <= data[end + 1] <= 0xD7):
+                end += 1
+            spans.append((i, end))
+        i = end
+    return spans
+
+
+def progression_jpegs():
+    # The progressive file with its first scan, DC with Al = 1, sent twice;
+    # without it, so that the DC refinement refines bits never sent; and with
+    # it after the second, the first AC scan of luma. Each coefficient's bits
+    # are sent once, in order, and a component's DC before its AC (T.81,
+    # G.1.1.1).
+    with open("jpeg_progressive.jpg", "rb") as f:
+        data = f.read()
+    (start, end), (_, second) = scan_spans(data)[:2]
+    with open("jpeg_repeated_scan.jpg", "wb") as f:
+        f.write(data[:end] + data[start:end] + data[end:])
+    with open("jpeg_unsent_refinement.jpg", "wb") as f:
+        f.write(data[:start] + data[end:])
+    with open("jpeg_ac_before_dc.jpg", "wb") as f:
+        f.write(data[:start] + data[end:second] + data[start:end] + data[second:])
+
+
 def segment(marker, data):
     return bytes([0xFF, marker]) + struct.pack(">H", len(data) + 2) + data
 
@@ -405,6 +439,7 @@ def image_fixtures():
     reference("jpeg_gray.jpg", "L")
     late_table_jpeg()
     reference("jpeg_late_table.jpg", "L")
+    progression_jpegs()
     overflow_jpeg("jpeg_dc_overflow.jpg", 128, False, False)
     overflow_jpeg("jpeg_dc_overflow_progressive.jpg", 128, True, False)
     overflow_jpeg("jpeg_table16.jpg", 32, False, True)
