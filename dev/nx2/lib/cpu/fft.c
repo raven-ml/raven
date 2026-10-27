@@ -512,11 +512,15 @@ static int chirp_kernel(int64_t n, int64_t m, double *c, double *k) {
   lines one = rows_f64(k, 1, m);
   int ok = p && serial_f64(p, &one, &one, 0, 1);
   plan_free_f64(p);
+  /* The peak's square against the bound's: hypot differs by an ulp between
+     libcs, and a plan's choice must be the same on every target. */
   double peak = 0;
-  for (int64_t j = 0; j < m; j++)
-    peak = fmax(peak, hypot(k[2 * j], k[2 * j + 1]));
+  for (int64_t j = 0; j < m; j++) {
+    double re = k[2 * j], im = k[2 * j + 1];
+    peak = fmax(peak, re * re + im * im);
+  }
   for (int64_t j = 0; j < 2 * m; j++) k[j] /= (double)m;
-  return !ok ? 0 : peak > 2 * sqrt(2.0 * (double)n - 1) ? -1 : 1;
+  return !ok ? 0 : peak > 4 * (2.0 * (double)n - 1) ? -1 : 1;
 }
 
 /* The cache */
