@@ -16,7 +16,8 @@
       body holds only what depends on its parameters.
     - The {e jit} tracer ([Extent]) traces a compiled function. It receives
       every operation and construct of its extent, those over constants
-      included.
+      included, and answers {!Program.Staging}, so that a compiled call in
+      its extent is inlined.
     - The {e tape} tracer ([Values]) records the linear part of a function whose
       other part computes at the call, as a forward-mode derivative over its
       variables does: of a loop it receives, the outputs that read none of its

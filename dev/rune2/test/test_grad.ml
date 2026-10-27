@@ -368,7 +368,7 @@ let test_check_grads () =
            ~prefix:"Rune.check_grads: the directional derivative along ones is"
            m)
 
-(* grad of jit and jit of grad give grad's bits *)
+(* grad of jit gives grad's bits, and so does jit of grad of exact functions *)
 
 type jit_case =
   | Jit_case :
@@ -402,12 +402,16 @@ let law_jit (Jit_case (dt, s, xo, yo, e)) =
   let t = outcome_t (Testable.pair bits_t bits_t) in
   let g = Rune.jit T.(tensor @-> tensor @-> returns tensor) f in
   equal ~msg:"grad of jit" t eager (grad g);
+  (* Compiled, the gradient gives grad's bits where every function of it is
+     exact. *)
+  let e' = elementwise (exact e) in
+  let f' x y = Nx.sum (eval x y e') in
   let staged =
     Rune.jit
       T.(tensor @-> tensor @-> returns (pair tensor tensor))
-      (fun x y -> Rune.grad pair (fun (x, y) -> f x y) (x, y))
+      (fun x y -> Rune.grad pair (fun (x, y) -> f' x y) (x, y))
   in
-  equal ~msg:"jit of grad" t eager (outcome (fun () -> both (staged x y)))
+  equal ~msg:"jit of grad" t (grad f') (outcome (fun () -> both (staged x y)))
 
 (* Loops under reverse mode: a scan's gradient is its fold's, bit for bit,
    eagerly and under jit. *)

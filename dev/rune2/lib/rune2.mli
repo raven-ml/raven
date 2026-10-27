@@ -456,10 +456,50 @@ val iterate :
 (** {1:jit Compilation} *)
 
 val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
-(** [jit s f] is [f] traced into a program, [s] its signature, one structure per
-    argument and one for the result. Each call traces [f] over stand-ins of its
-    arguments' arrays and evaluates the program. Every operation [f] applies is
-    staged, those over values [f] captures included.
+(** [jit s f] is [f] compiled, [s] its signature, one structure per argument
+    and one for the result. A call traces [f] over stand-ins of its arguments'
+    arrays into a program and runs it compiled. Every operation [f] applies is
+    staged, those over values [f] captures included, which the program reads
+    as they are when it is traced.
+
+    {b Keys.} [jit s f] keeps a program per {e key}: the arguments'
+    {!Nx.Ptree.val-visits} and reports, the static data of a call; for each
+    array its dtype, shape and strides, its offset from the element at or
+    below its first whose bits start on 16 bytes of its memory, its placement,
+    and whether it is a donated handle ({!Nx.donate}); and tolk's settings
+    that shape what it compiles, the search widths [BEAM] and [JITBEAM] among
+    them. A call retraces exactly when its key is new to [jit s f]: [f]'s code,
+    and its side effects, run once per key. A call that raises while it traces
+    keeps no program for its key. Calls on several domains share the programs;
+    a key being traced makes its other callers wait. With [RUNE_JIT_DEBUG=1]
+    in the environment, each retrace prints on standard error the first
+    difference between its key and the previous call's.
+
+    {b Results.} Each result array of a compiled call is fresh: memory of its
+    own in C order, at the placement eager computation gives it. An argument
+    of every set ({!Nx.zeros}) is computed for the call, so its values do not
+    change the key, and a constant of every set that [f] returns is that
+    constant.
+
+    {b Numerics.} A compiled call gives eager's bits, but for a NaN's sign and
+    payload, where both compute exactly: movements, selections, comparisons,
+    casts, extremes, integer and boolean arithmetic, and the correctly rounded
+    float operations of IEEE 754 ([Nx.add], [Nx.sub], [Nx.mul], [Nx.div],
+    [Nx.sqrt]). Another float function is within a bound in ulps of the
+    correctly rounded result, from 2 to 21 by function at [float32] and
+    [float64] (exp 9, sin 4, tanh 18, expm1 21), and a power's bound grows
+    with its exponent; special values are exact. A float sum, product or
+    contraction adds its terms in an order the compiler chooses, a sum of [n]
+    terms within [γ(n - 1) Σ|x|] of the exact one, [γ(k) = k u / (1 - k u)].
+    Narrow floats compute at [float32] and round once.
+
+    {b Evaluated programs.} A program that holds a {!scan} or an {!iterate}, a
+    map's {!lanes} or {!lane_index}, an operation the compiler does not lower,
+    values on several devices, or a result of every set computed from the
+    arguments, runs as its operations evaluated by nx, giving eager's values.
+    So does a call whose arguments a transformation around it traces, or that
+    an enclosing [jit] traces: the transformation receives its program's
+    operations, and the enclosing [jit] stages them.
 
     Raises [Invalid_argument] when applied to [s] if [s] has no argument, and at
     a call if [f] captures a value that another transformation traces. *)

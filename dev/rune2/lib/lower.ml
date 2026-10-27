@@ -261,6 +261,7 @@ let op (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r) (o : r P.t) =
   | Copy x -> [| node x |]
   | Move (m, x) -> [| move m x (node x) |]
   | Bitcast (dt, x) -> [| bitcast dt x (node x) |]
+  | Place (_, x) -> [| node x |]
   | Gather _ | Scatter _ | Sort _ | Fold _ | Assemble _ | Fft _ | Linalg _
-  | Place _ | Check _ ->
+  | Check _ ->
       unlowered (P.name o)

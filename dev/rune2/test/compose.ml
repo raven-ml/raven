@@ -153,6 +153,57 @@ let expr ~rank =
   in
   go 5
 
+(* Exact compositions
+
+   A compiled call gives eager's bits for the functions both compute exactly
+   (Rune.jit's classes): movements, extremes, comparisons, selections, and
+   IEEE 754's correctly rounded arithmetic. [exact e] is [e] with each other
+   function of floats replaced by an exact one; [elementwise e] also replaces
+   each reduction by a movement, so that no derivative of [e] sums terms, as a
+   reduction's transpose or its ties' share does. *)
+
+let rec exact = function
+  | (X | Y | K _) as e -> e
+  | Un (u, e) ->
+      let u =
+        match u with
+        | Sin | Log -> Neg
+        | Exp | Tanh | Sigmoid -> Abs
+        | Cumsum a | Sum a | Mean a -> Max a
+        | (Neg | Abs | Sqrt | Square | Flip _ | Max _) as u -> u
+      in
+      Un (u, exact e)
+  | Bin (b, e, e') ->
+      let b = match b with Pow -> Mul | b -> b in
+      Bin (b, exact e, exact e')
+
+let rec elementwise = function
+  | (X | Y | K _) as e -> e
+  | Un (Max a, e) -> Un (Flip a, elementwise e)
+  | Un (u, e) -> Un (u, elementwise e)
+  | Bin (b, e, e') -> Bin (b, elementwise e, elementwise e')
+
+(* [exact_any dt e] is the [generic] expression [e] with the functions not
+   exact at [dt] replaced: a complex number's magnitude, products, sums and
+   extremes along an axis, which leave a NaN's parts unspecified, and a float's
+   sums. *)
+let rec exact_any : type v s. (v, s) Nx.dtype -> expr -> expr =
+ fun dt e ->
+  let complex = Nx.Dtype.is Complex dt and float = Nx.Dtype.is Float dt in
+  match e with
+  | (X | Y | K _) as e -> e
+  | Un (u, e) ->
+      let u =
+        match u with
+        | (Abs | Square) when complex -> Neg
+        | (Sum a | Cumsum a | Max a) when complex -> Flip a
+        | (Sum a | Cumsum a) when float -> Max a
+        | u -> u
+      in
+      Un (u, exact_any dt e)
+  | Bin (Mul, e, e') when complex -> Bin (Add, exact_any dt e, exact_any dt e')
+  | Bin (b, e, e') -> Bin (b, exact_any dt e, exact_any dt e')
+
 (* Operands *)
 
 let pool =

@@ -95,7 +95,12 @@ and construct =
       until_captures : value array;
     }
       -> construct
-  | Call : { body : t; args : value array } -> construct
+  | Call : {
+      body : t;
+      args : value array;
+      compiled : (value array -> value array) option;
+    }
+      -> construct
 
 let make ~owner ~params eqns ~outputs ~adds ~slots =
   { owner; params; eqns = Array.of_list eqns; outputs; adds; slots }
@@ -110,6 +115,13 @@ let bound a =
   match Effect.perform (Bound a) with
   | n -> n
   | exception Effect.Unhandled (Bound _) -> None
+
+type _ Effect.t += Staging : bool Effect.t
+
+let staging () =
+  match Effect.perform Staging with
+  | b -> b
+  | exception Effect.Unhandled Staging -> false
 
 (* Operands *)
 
@@ -155,7 +167,7 @@ let map_programs f = function
   | (Detach _ | Lanes _ | Lane_index _ | Add _) as c -> c
   | Scan s -> Scan { s with step = f s.step }
   | Iterate s -> Iterate { s with step = f s.step; until = f s.until }
-  | Call c -> Call { c with body = f c.body }
+  | Call c -> Call { c with body = f c.body; compiled = None }
 
 (* Forms *)
 
@@ -344,7 +356,12 @@ and default = function
       scan step ~length ~init ~xs ~captures
   | Iterate { name; step; until; max; init; step_captures; until_captures } ->
       iterate name step ~until ~max ~init ~step_captures ~until_captures
-  | Call { body; args } -> eval body args
+  | Call { body; args; compiled } -> (
+      let untraced (V x) = Option.is_none (Nx.Prim.owner x) in
+      match compiled with
+      | Some run when Array.for_all untraced args && not (staging ()) ->
+          run args
+      | _ -> eval body args)
 
 (* A loop's sums start at the identity, so that a loop that runs no step adds
    nothing a total can tell. *)

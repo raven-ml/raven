@@ -20,8 +20,8 @@ let test_detach () =
   let one_value = Testable.make ~pp:Nx.pp ~equal:( == ) in
   equal ~msg:"x itself" one_value x (Rune.detach x);
   equal bits_t
-    (bits (Nx.sin x))
-    (bits (Rune.jit' (fun x -> Nx.sin (Rune.detach x)) x))
+    (bits (Nx.sqrt x))
+    (bits (Rune.jit' (fun x -> Nx.sqrt (Rune.detach x)) x))
 
 (* With no map around, lanes and lane_index raise eagerly and under jit. *)
 let test_no_map () =

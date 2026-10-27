@@ -379,6 +379,14 @@ let law_jit (Test_case (dt, s, xo, yo, txo, tyo, e)) =
     outcome (fun () ->
         both (Rune.jvp pair T.tensor (fun (x, y) -> g x y) (x, y) (tx, ty)))
   in
+  (* Compiled, the derivative gives jvp's bits where every function of it is
+     exact. *)
+  let e' = elementwise (exact e) in
+  let f' x y = eval x y e' in
+  let exact_eager =
+    outcome (fun () ->
+        both (Rune.jvp pair T.tensor (fun (x, y) -> f' x y) (x, y) (tx, ty)))
+  in
   let staged =
     let g =
       Rune.jit
@@ -386,13 +394,15 @@ let law_jit (Test_case (dt, s, xo, yo, txo, tyo, e)) =
           tensor @-> tensor @-> tensor @-> tensor
           @-> returns (pair tensor tensor))
         (fun x y tx ty ->
-          Rune.jvp pair T.tensor (fun (x, y) -> f x y) (x, y) (tx, ty))
+          Rune.jvp pair T.tensor (fun (x, y) -> f' x y) (x, y) (tx, ty))
     in
     outcome (fun () -> both (g x y tx ty))
   in
   cover "a refused operation" (match eager with Raised _ -> true | _ -> false);
   equal ~msg:"jvp of jit" (outcome_t (Testable.pair bits_t bits_t)) eager jitted;
-  equal ~msg:"jit of jvp" (outcome_t (Testable.pair bits_t bits_t)) eager staged
+  equal ~msg:"jit of jvp"
+    (outcome_t (Testable.pair bits_t bits_t))
+    exact_eager staged
 
 (* Every dtype, through the functions every dtype has: complex rules staged and
    evaluated in a call, integers refused alike. *)
@@ -440,6 +450,12 @@ let law_jit_any (Any_case (dt, s, xo, yo, txo, tyo, e)) =
     outcome (fun () ->
         both (Rune.jvp pair T.tensor (fun (x, y) -> g x y) (x, y) (tx, ty)))
   in
+  let e' = elementwise (exact_any dt e) in
+  let f' x y = eval_any x y e' in
+  let exact_eager =
+    outcome (fun () ->
+        both (Rune.jvp pair T.tensor (fun (x, y) -> f' x y) (x, y) (tx, ty)))
+  in
   let staged =
     let g =
       Rune.jit
@@ -447,13 +463,13 @@ let law_jit_any (Any_case (dt, s, xo, yo, txo, tyo, e)) =
           tensor @-> tensor @-> tensor @-> tensor
           @-> returns (pair tensor tensor))
         (fun x y tx ty ->
-          Rune.jvp pair T.tensor (fun (x, y) -> f x y) (x, y) (tx, ty))
+          Rune.jvp pair T.tensor (fun (x, y) -> f' x y) (x, y) (tx, ty))
     in
     outcome (fun () -> both (g x y tx ty))
   in
   let t = outcome_t (Testable.pair codes_t codes_t) in
   equal ~msg:"jvp of jit" t eager jitted;
-  equal ~msg:"jit of jvp" t eager staged
+  equal ~msg:"jit of jvp" t exact_eager staged
 
 (* One kernel per map *)
 
@@ -818,7 +834,7 @@ let () =
            ];
          group "jit"
            [
-             prop "jvp of jit gives jvp's bits" jit_cases law_jit;
+             prop "jvp of jit and jit of jvp give jvp's bits" jit_cases law_jit;
              prop "jvp of jit gives jvp's bits at every dtype" any_cases
                law_jit_any;
            ];

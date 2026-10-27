@@ -373,6 +373,8 @@ let trace kind ~name inputs f =
     match (e, !owner) with
     | Construct c, Some i when claims st i c ->
         Some (fun k -> Effect.Deep.continue k (record st i c))
+    | Staging, Some _ when st.kind = Jit ->
+        Some (fun k -> Effect.Deep.continue k true)
     | _ -> None
   in
   let reach = match kind with Body | Tape -> Nx.Prim.Values | Jit -> Extent in

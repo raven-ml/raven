@@ -506,23 +506,38 @@ let rec spine : type f d. string -> int -> (f, d) Ptree.fn -> (f, d) spine =
         }
   | Returns _ -> invalid_argf "%s: the signature has no argument" name
 
-let call name a r f args =
-  let args_v = values a args in
-  let like = ref None in
-  let body, _ =
-    Trace.trace Jit ~name (Array.map form args_v) (fun vs ->
-        let y = f (rebuild a ~like:args vs) in
-        like := Some y;
-        values r y)
+(* A call's program comes from its key's entry: traced over stand-ins of its
+   leaves the first time the key is met, then compiled. The call is a
+   construct, so a transformation around it evaluates the program over its
+   values; with none, its compiled form runs. *)
+let call name t a r f args =
+  let leaves, skeleton = Ptree.flatten a args in
+  let args_v = Array.of_list (List.map (fun (Nx.P y) -> V y) leaves) in
+  let paths () =
+    List.rev (Ptree.fold a (fun p _ acc -> path_name p :: acc) args [])
   in
-  let y = Option.get !like in
-  let out = run (Call { body; args = args_v }) in
-  rebuild r ~like:y (slice out 0 (Array.length (values r y)))
+  let trace () =
+    let like = ref None in
+    let body, _ =
+      Trace.trace Jit ~name (Array.map form args_v) (fun vs ->
+          let y = f (rebuild a ~like:args vs) in
+          like := Some y;
+          values r y)
+    in
+    (body, Option.get !like)
+  in
+  let e = Jit.find t leaves skeleton ~paths trace in
+  let out =
+    run (Call { body = e.body; args = args_v; compiled = e.compiled })
+  in
+  rebuild r ~like:e.like (slice out 0 (Array.length (values r e.like)))
 
 let jit_named name s =
   let (Spine u) = spine name 0 s in
   let a = Ptree.v u.walk.walk in
-  fun f -> u.curry (fun args -> call name a u.result (u.apply f) args)
+  fun f ->
+    let t = Jit.create ~name () in
+    u.curry (fun args -> call name t a u.result (u.apply f) args)
 
 let jit s = jit_named "Rune.jit" s
 

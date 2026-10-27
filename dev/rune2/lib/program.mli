@@ -128,8 +128,16 @@ and construct =
       until_captures : value array;
     }
       -> construct
-  | Call : { body : t; args : value array } -> construct
-      (** [body] applied to [args]. *)
+  | Call : {
+      body : t;
+      args : value array;
+      compiled : (value array -> value array) option;
+          (** [body] compiled, applied to arguments of [args]' forms. *)
+    }
+      -> construct
+      (** [body] applied to [args]. Its default runs [compiled] where it has
+          one, no operand is traced and no tracer stages the operations
+          around the call ({!staging}), and evaluates [body] otherwise. *)
 
 val make :
   owner:Nx.Prim.interpretation ->
@@ -179,7 +187,7 @@ val map_operands : map -> construct -> construct
 
 val map_programs : (t -> t) -> construct -> construct
 (** [map_programs f c] is [c] with each program [p] it carries replaced by
-    [f p]. *)
+    [f p], and a call without its compiled form. *)
 
 val forms : construct -> form array
 (** [forms c] is the forms of [c]'s results, as its default gives them. Raises
@@ -193,3 +201,12 @@ type _ Effect.t +=
 val bound : axis -> int option
 (** [bound a] is [Some n] inside the map named [a] of [n] lanes, and [None] with
     none around. *)
+
+type _ Effect.t +=
+  | Staging : bool Effect.t
+        (** Answered [true] by each tracer that stages every operation of its
+            extent, as the jit tracer does. *)
+
+val staging : unit -> bool
+(** [staging ()] is [true] iff a tracer around the call stages the operations
+    applied there, so that a call there is inlined, not run compiled. *)
