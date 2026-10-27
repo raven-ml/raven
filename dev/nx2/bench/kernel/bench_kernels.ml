@@ -1059,6 +1059,21 @@ let assembly_rows =
       work =
         [ F.Read (bytes [| 32; 64; 56; 56; 3; 3 |]); F.Copy (9 * bytes image) ];
     };
+    (* The adjoint of a slice of half the columns: half the result receives
+       no element and is +0. *)
+    {
+      bench =
+        fold_row "fold-crop-half-cols-f32-4096x4096" ~shape:[| 4096; 4096 |]
+          {
+            Nx_kernel.lo = [| 0; 0 |];
+            hi = [| 0; -2048 |];
+            interior = [| 0; 0 |];
+            windows = [||];
+          }
+          (any [| 4096; 2048 |]);
+      work =
+        [ F.Read (bytes [| 4096; 2048 |]); F.Copy (bytes [| 4096; 4096 |]) ];
+    };
   ]
 
 (* Factorisations and triangular solves. An operand is symmetric, values in

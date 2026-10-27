@@ -245,15 +245,14 @@ let get32 e at = Int32.float_of_bits (String.get_int32_le e at)
 let get64 e at = Int64.float_of_bits (String.get_int64_le e at)
 let round32 x = Int32.float_of_bits (Int32.bits_of_float x)
 
-(* Prog.Add on two floats of 32 or 64 bits, from their bits: the rounded
-   sum, +0 for a zero, a NaN where an operand is or opposite infinities
-   meet. *)
+(* Prog.Add on two floats of 32 or 64 bits, from their bits: the IEEE 754
+   sum, rounded once, -0 for two -0's, a NaN where an operand is or opposite
+   infinities meet. *)
 let add_bits ~w a b =
   let get, put, round =
     if w = 4 then (get32, f32, round32) else (get64, f64, Fun.id)
   in
-  let s = round (get a 0 +. get b 0) in
-  put (if s = 0. then 0. else s)
+  put (round (get a 0 +. get b 0))
 
 (* The order of two floats that are not NaN, -0 below +0. *)
 let compare_floats x y =

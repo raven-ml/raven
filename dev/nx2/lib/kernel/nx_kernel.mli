@@ -556,14 +556,15 @@ module type S = sig
       [Set] are moves. Where the updates [u1], …, [un], in C order of their
       indices, land on one element [x], a scatter stores there:
       - for [Set], [un];
-      - for [Add], the sum by {!Prog.Add} of [+0], [x] and [u1] to [un], in
-        the association its library states, a narrow float's sum computed
-        in [float32] and rounded once. A sum has the same bits on every
-        run. For finite operands, barring overflow, a float sum is within
-        [γ(n + 1) (|x| + Σ |ui|)] of the exact one before a narrow float's
-        rounding, with [γ] as {!section-bounds} defines it and [u] the
-        unit roundoff of [float32] for a narrow float, else of the dtype's
-        parts;
+      - for [Add], the sum by {!Prog.Add} of [x] and [u1] to [un], with no
+        [+0] before [x], so that a [-0] target and [-0] updates sum to
+        [-0], in the association its library states, a narrow float's sum
+        computed in [float32] and rounded once. A sum has the same bits on
+        every run. For finite operands, barring overflow, a float sum is
+        within [γ(n + 1) (|x| + Σ |ui|)] of the exact one before a narrow
+        float's rounding, with [γ] as {!section-bounds} defines it and [u]
+        the unit roundoff of [float32] for a narrow float, else of the
+        dtype's parts;
       - for [Max] and [Min], {!Prog.Maximum} and {!Prog.Minimum} of [x],
         [u1], …, [un], a NaN where one of them is
         ({!section-reductions}). *)
@@ -636,13 +637,14 @@ module type S = sig
   val fold : pad -> dst:('v, 's) a -> ('v, 's) a -> answer
   (** [fold p ~dst x] stores into [dst] the adjoint of a [Padded] load by
       [p] of [dst]'s shape, where [x] has the shape that load gives.
-      [dst]'s element at an index is the sum by {!Prog.Add} of [+0] and its
-      terms, the elements of [x] the load reads from that index, in the
-      association its library states and within the bound
-      {!section-bounds} states, each part of a complex sum such a sum. The
-      library states whether a narrow float's sum rounds at each addition
-      or once from [float32]. It answers [Wrong_dtype] for a dtype
-      {!Prog.Add} does not take. *)
+      [dst]'s element at an index is the sum by {!Prog.Add} of its terms,
+      the elements of [x] the load reads from that index, with no [+0]
+      before the first, so that a single [-0] keeps its sign, and [+0]
+      where it reads none; in the association its library states and
+      within the bound {!section-bounds} states, each part of a complex
+      sum such a sum. The library states whether a narrow float's sum
+      rounds at each addition or once from [float32]. It answers
+      [Wrong_dtype] for a dtype {!Prog.Add} does not take. *)
 
   (** {1:contraction Contraction}
 

@@ -16,10 +16,15 @@
    the whole result first. A first piece that is the destination over the
    whole result is already in place.
 
-   A fold's result starts at +0. Then each tap, the indices along the window
-   axes in C order, adds the operand's elements of that tap into the
-   result: within a tap each result element receives at most one, so every
-   element adds its taps in C order, as nx_cpu.mli states. Along an
+   A fold's result starts at -0, the sum of no term with no +0 in it: a
+   float's -0 + x is x, so each element is the sum of its taps alone, a
+   single -0 tap included. Then each tap, the indices along the window axes
+   in C order, adds the operand's elements of that tap into the result:
+   within a tap each result element receives at most one, so every element
+   adds its taps in C order, as nx_cpu.mli states. An element no tap
+   reaches is set to +0 last. Taps are a product of each axis's spans, so
+   an element no tap reaches is one whose index along some axis no span
+   holds: those slices are set, axis by axis. Along an
    axis, the operand's indices whose padded coordinate w·step + j·dilation
    lands on an element, lo + i·(interior + 1) with 0 <= i < d, step by a
    constant and so do the i they land on: a tap is one box of the operand
@@ -27,9 +32,9 @@
    window takes is one of step 1 and tap 0, and its span is every tap's:
    the leading such axes, as a convolution's batch and channels, cut the
    boxes into slabs of disjoint results that threads take whole, each
-   zeroing its slab, then adding its taps in order while it holds the
-   operand's slab in cache. Where the leading axes' indices miss some slab,
-   as padding along them does, the whole result is zeroed first.
+   starting its slab at -0, then adding its taps in order while it holds
+   the operand's slab in cache. Where the leading axes' indices miss some
+   slab, as padding along them does, the whole result starts at -0 first.
 
    An operand whose taps lie innermost, as a convolution's [n; c; h; w; kh;
    kw] does, gives each tap's rows a step of the taps' count: adding them
@@ -466,6 +471,33 @@ static void zero_run(const nx_array *a, int64_t p, int64_t n) {
   else memset(a->base + p * (a->bits / 8), 0, (size_t)(n * (a->bits / 8)));
 }
 
+/* Stores the element of bits [start] into the [n] elements of [a] from
+   position [p], contiguous, as zero_run does. */
+static void start_run(const nx_array *a, const uint8_t *start, int64_t p,
+                      int64_t n) {
+  nx_cpu_block b = {.n0 = n, .n1 = 1, .n2 = 1, .at = {p}, .s0 = {1}};
+  nx_cpu_fill_block(a, &b, start);
+}
+
+/* The bits of -0 of [dt], a float's or each part of a complex number's
+   sign alone, into [start]; 0 for another dtype. Answers whether they are
+   -0's. */
+static int negative_zero(int dt, uint8_t *start) {
+  memset(start, 0, 16);
+  int bits = nx_dtype_row_of(dt).bits, kind = nx_dtype_row_of(dt).kind;
+  if (kind == NX_KIND_FLOAT) {
+    if (bits < 8) start[0] = (uint8_t)(1u << (bits - 1));
+    else start[bits / 8 - 1] = 0x80;
+    return 1;
+  }
+  if (kind == NX_KIND_COMPLEX) {
+    start[bits / 16 - 1] = 0x80;
+    start[bits / 8 - 1] = 0x80;
+    return 1;
+  }
+  return 0;
+}
+
 /* An axis of a tap's box: [count] operand indices from [x0] stepping [xs],
    landing on result indices from [d0] stepping [ds]. */
 typedef struct {
@@ -561,7 +593,8 @@ typedef struct {
   nx_cpu_row2 add;
   int w, r, leading; /* bytes, rank, leading axes no window takes */
   int64_t taps;
-  int64_t slab; /* elements a unit zeroes first, or 0 */
+  int64_t slab; /* elements a unit starts first, or 0 */
+  const uint8_t *start; /* the bits each result element starts from */
   /* Whether a unit copies its operand slab into [scratch_bytes] of
      scratch, taps first: the slab's copy there from position 0, its
      elements per tap and its steps along the result's axes. */
@@ -593,7 +626,7 @@ static void fold_units(int64_t lo, int64_t hi, int worker, void *ctx) {
       px += (b->x0 + k * b->xs) * f->sx[i];
     }
     int rest = f->r - f->leading;
-    if (f->slab > 0) zero_run(&f->a[0], pd, f->slab);
+    if (f->slab > 0) start_run(&f->a[0], f->start, pd, f->slab);
     if (scratch == NULL) {
       for (int64_t t = 0; t < f->taps; t++)
         add_box(f->add, f->a, f->w, rest, f->boxes[t] + f->leading,
@@ -652,6 +685,62 @@ static int slab_copy(folder *f, const nx_array *a, const int64_t *xs,
   return 1;
 }
 
+/* Sets +0 where no tap of [f] lands, in the result of [shape] whose
+   windows are [win], [nw] of them: along each axis, the runs of indices no
+   tap's span holds, each one box. An axis's spans are those of its window's
+   taps alone, the taps where every other window's index is 0, or tap 0's
+   for an axis no window takes; an axis one span holds whole is skipped. A
+   box two axes share is set twice. Answers 1 where the marks' memory cannot
+   be had. */
+static int unreached_zeros(const folder *f, const int64_t *shape,
+                           int64_t (*win)[4], int nw) {
+  static const uint8_t zero[16] = {0};
+  int r = f->r;
+  uint8_t *held = NULL;
+  for (int i = 0; i < r; i++) {
+    int64_t n = shape[i], count = 1, every = 0;
+    /* The taps of the window along [i]: [count] of them, [every] apart. */
+    for (int k = 0; k < nw; k++)
+      if (win[k][0] == i) {
+        count = win[k][1];
+        every = 1;
+        for (int q = k + 1; q < nw; q++) every *= win[q][1];
+      }
+    int whole = 0;
+    for (int64_t j = 0; j < count && !whole; j++)
+      whole = f->boxes[j * every][i].count == n;
+    if (whole) continue;
+    if (held == NULL) {
+      int64_t widest = 1;
+      for (int q = 0; q < r; q++)
+        if (shape[q] > widest) widest = shape[q];
+      held = malloc((size_t)widest);
+      if (held == NULL) return 1;
+    }
+    memset(held, 0, (size_t)n);
+    for (int64_t j = 0; j < count; j++) {
+      const span *b = &f->boxes[j * every][i];
+      for (int64_t k = 0; k < b->count; k++) held[b->d0 + k * b->ds] = 1;
+    }
+    int64_t extent[NX_MAX_RANK];
+    for (int q = 0; q < r; q++) extent[q] = shape[q];
+    for (int64_t d = 0; d < n;) {
+      if (held[d]) {
+        d++;
+        continue;
+      }
+      int64_t e = d;
+      while (e < n && !held[e]) e++;
+      extent[i] = e - d;
+      fill_box(&f->a[0], zero, r, extent, f->sd,
+               f->a[0].offset + d * f->sd[i]);
+      d = e;
+    }
+  }
+  free(held);
+  return 0;
+}
+
 value nx_cpu_fold_pad(value vpad, value vd, value vx) {
   CAMLparam3(vpad, vd, vx);
   int dt = nx_array_dtype(vx);
@@ -695,6 +784,9 @@ value nx_cpu_fold_pad(value vpad, value vd, value vx) {
   if (total > 0 && xn == 0) zero_run(&a[0], a[0].offset, total);
   if (total > 0 && xn > 0) {
     folder f = {.a = a, .add = add, .w = w, .r = r, .taps = taps};
+    uint8_t start[16];
+    int signed_zero = negative_zero(dt, start);
+    f.start = start;
     f.boxes = malloc((size_t)taps * sizeof *f.boxes);
     f.tap_px = malloc((size_t)taps * sizeof *f.tap_px);
     if (f.boxes == NULL || f.tap_px == NULL) {
@@ -735,14 +827,20 @@ value nx_cpu_fold_pad(value vpad, value vd, value vx) {
       units *= f.boxes[0][f.leading++].count;
     for (int i = f.leading; i < r; i++) slab *= shape[i];
     if (units * slab == total) f.slab = slab;
-    else zero_run(&a[0], a[0].offset, total);
+    else start_run(&a[0], start, a[0].offset, total);
     int64_t bytes = xn * w + taps * total * w;
     f.tap_major = NX_CPU_COPY_STRIDED && nx_cpu_carrier(dt) == dt &&
                   r > f.leading && f.sx[r - 1] != 1 &&
                   slab_copy(&f, a, xs, win, nw);
     nx_cpu_job(units, bytes, bytes, fold_units, &f);
+    int lost = signed_zero && unreached_zeros(&f, shape, win, nw);
     free(f.boxes);
     free(f.tap_px);
+    if (lost) {
+      nx_cpu_reacquire(released);
+      nx_done(2, a);
+      caml_raise_out_of_memory();
+    }
   }
   nx_cpu_reacquire(released);
   nx_done(2, a);

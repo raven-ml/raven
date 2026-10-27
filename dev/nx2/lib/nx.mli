@@ -792,7 +792,7 @@ val set : 'd index list -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** The type for how {!scatter} combines a target with its updates. *)
 type combine = Nx_kernel.combine =
   | Set  (** The last update. *)
-  | Add  (** [+0] plus the target plus its updates. *)
+  | Add  (** The target plus its updates. *)
   | Max  (** The largest of the target and its updates, or a NaN. *)
   | Min  (** The smallest, or a NaN. *)
 
@@ -806,8 +806,9 @@ val scatter :
 (** [scatter ~combine ~axis p u x] is [x] with each element of [u] combined
     into [x] at its own index with axis [axis] replaced by [p]'s element there;
     [p] and [u] have one shape. A target's updates apply in C order of [u]:
-    [Set] (default) keeps the last; [Add] gives [+0] plus the element plus
-    its updates, a narrow float summed in float32 and rounded once; [Max] and
+    [Set] (default) keeps the last; [Add] gives the element plus its updates,
+    with no [+0] added, so a [-0.] element and [-0.] updates give [-0.], a
+    narrow float summed in float32 and rounded once; [Max] and
     [Min] give the largest or smallest of the element and its updates, or a
     NaN where one of them is. Where no update lands, the element keeps
     its bits, a signalling NaN's included. A position outside [\[0, d)]

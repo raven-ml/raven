@@ -228,26 +228,17 @@ let combined (D.Any dt as d) combine x us =
       | Add when is_narrow d ->
           let s =
             List.fold_left
-              (fun s u ->
-                let t = round32 (s +. decode d u) in
-                if t = 0. then 0. else t)
-              (let v = decode d x in
-               if v = 0. then 0. else v)
-              us
+              (fun s u -> round32 (s +. decode d u))
+              (decode d x) us
           in
           Value (encode d s)
       | Add when D.is D.Float dt ->
-          let z = if w = 4 then f32 0. else f64 0. in
-          Value (List.fold_left (add_bits ~w) (add_bits ~w z x) us)
+          Value (List.fold_left (add_bits ~w) x us)
       | Add when D.is D.Complex dt ->
           let h = w / 2 in
           let part e k = String.sub e (k * h) h in
-          let z = if h = 4 then f32 0. else f64 0. in
           let sum k =
-            List.fold_left
-              (fun s u -> add_bits ~w:h s (part u k))
-              (add_bits ~w:h z (part x k))
-              us
+            List.fold_left (fun s u -> add_bits ~w:h s (part u k)) (part x k) us
           in
           Value (sum 0 ^ sum 1)
       | Add ->
@@ -1047,8 +1038,10 @@ let stated (b : Support.backend) =
     floats "Set drops positions outside the axis" Set f32 [| 10.; 20.; 30.; 40. |]
       [| -1L; 4L; Int64.min_int; Int64.max_int; 0L |]
       [| 1.; 2.; 3.; 4.; 5. |] [| 5.; 20.; 30.; 40. |];
-    floats "Add starts from +0: -0 and -0 updates sum to +0" Add f32 [| -0. |]
-      [| 0L; 0L |] [| -0.; -0. |] [| 0. |];
+    floats "Add starts from the target: -0 and -0 updates sum to -0" Add f32
+      [| -0. |] [| 0L; 0L |] [| -0.; -0. |] [| -0. |];
+    floats "Add of +0 and a -0 update is +0" Add f32 [| 0. |] [| 0L |] [| -0. |]
+      [| 0. |];
     floats "Add of opposite infinities is a NaN" Add f32 [| infinity; 1. |]
       [| 0L; 1L |] [| neg_infinity; infinity |] [| nan; infinity |];
     floats "Add rounds a bfloat16 sum once, from float32" Add D.Bfloat16

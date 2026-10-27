@@ -30,9 +30,9 @@
    the axis and walks every update of its run, applying those that land in
    its part: the order per target stays C order.
 
-   Add adds left to right from +0 + x, and a zero sum is stored as +0: a
-   sum that starts from +0 is never -0, and (+0 + x) + u differs from x + u
-   only in that sign. A narrow float sums in float32 and rounds once
+   Add adds left to right from the target's element, x + u1 + ... + un,
+   with no +0 before it, so that a -0 target and -0 updates sum to -0, as
+   IEEE 754 sums them. A narrow float sums in float32 and rounds once
    (Narrow sums below), in the scratch nx_cpu.mli states: a few words per
    update along the axis and a bin's sums on each thread, or every target's
    sums where they carry from one sorted block to the next. Max and Min are
@@ -295,23 +295,13 @@ struct scatter {
   uint8_t *vals, *gather;
 };
 
-/* Sums that start from +0: the sum, +0 for a zero. */
-static inline float add_f32(float a, float b) {
-  float s = nx_add_f32(a, b);
-  return s == 0 ? 0.0f : s;
-}
-
-static inline double add_f64(double a, double b) {
-  double s = nx_add_f64(a, b);
-  return s == 0 ? 0.0 : s;
-}
-
+/* Sums by Prog.Add, part by part for complex numbers. */
 static inline nx_c64 add_c64(nx_c64 a, nx_c64 b) {
-  return nx_c64_of(add_f32(a.re, b.re), add_f32(a.im, b.im));
+  return nx_c64_of(nx_add_f32(a.re, b.re), nx_add_f32(a.im, b.im));
 }
 
 static inline nx_c128 add_c128(nx_c128 a, nx_c128 b) {
-  return nx_c128_of(add_f64(a.re, b.re), add_f64(a.im, b.im));
+  return nx_c128_of(nx_add_f64(a.re, b.re), nx_add_f64(a.im, b.im));
 }
 
 /* Typed runs: [F] combines the target's element with the update. Where the
@@ -373,8 +363,8 @@ SCATTER_RUN(set_2, uint16_t, SET)
 SCATTER_RUN(set_4, uint32_t, SET)
 SCATTER_RUN(set_8, uint64_t, SET)
 SCATTER_RUN(set_16, u128, SET)
-SCATTER_RUN(add_f32_run, float, add_f32)
-SCATTER_RUN(add_f64_run, double, add_f64)
+SCATTER_RUN(add_f32_run, float, nx_add_f32)
+SCATTER_RUN(add_f64_run, double, nx_add_f64)
 SCATTER_RUN(add_8, uint8_t, ADD_U8)
 SCATTER_RUN(add_16, uint16_t, ADD_U16)
 SCATTER_RUN(add_32, uint32_t, ADD_U32)
@@ -542,8 +532,8 @@ static int64_t run_at(const scatter *c, int64_t v, int64_t *p) {
 
 /* Narrow sums
 
-   A narrow float's Add sums each target's updates in float32 from +0 plus
-   its element, left to right in C order, and rounds the sum once into the
+   A narrow float's Add sums each target's updates in float32 from its
+   element, left to right in C order, and rounds the sum once into the
    destination. Its updates are grouped by target first, by one of three
    ways that each keep scratch of at most the order of the updates:
 
@@ -618,13 +608,7 @@ static void store_row(int dt, const nx_array *a, int64_t at, int64_t s,
     code_put(a, at + i * s, narrow_of_float(dt, f[i]));
 }
 
-/* Starts [n] sums from +0 plus the elements [x] hold. */
-static void start_sums(float *x, int64_t n) {
-  for (int64_t i = 0; i < n; i++) x[i] = add_f32(0.0f, x[i]);
-}
-
-/* [y] is [x] plus [u], [n] sums by Prog.Add. A sum started from +0 is
-   never -0, so needs no more. */
+/* [y] is [x] plus [u], [n] sums by Prog.Add. */
 static void add_sums(const float *x, const float *u, float *y, int64_t n) {
   for (int64_t i = 0; i < n; i++) y[i] = nx_add_f32(x[i], u[i]);
 }
@@ -659,7 +643,6 @@ static void sum_sorted(const scatter *c, int64_t pd, int64_t pu, int64_t n,
   for (int64_t j = 0, e; j < k; j = e) {
     int64_t at = pd + (int64_t)p[j] * c->da;
     load_row(c->dt, d, at, c->sd, n, sum);
-    start_sums(sum, n);
     for (e = j; e < k && p[e] == p[j]; e++) {
       if (e + 1 < k) {
         const uint8_t *nu = u->base + (pu + r[e + 1] * c->ua) * w;
@@ -1066,7 +1049,7 @@ static void narrow_bins(int64_t lo, int64_t hi, int worker, void *ctx) {
           }
           uint32_t u = c->w == 1 ? c->vals[j] : ((const uint16_t *)c->vals)[j];
           if (!reached[t]) {
-            sums[t] = add_f32(0.0f, nx_bits_to_float(c->dt, code_at(d, at)));
+            sums[t] = nx_bits_to_float(c->dt, code_at(d, at));
             reached[t] = 1;
           }
           sums[t] = nx_add_f32(sums[t], nx_bits_to_float(c->dt, u));

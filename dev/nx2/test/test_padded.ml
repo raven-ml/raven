@@ -109,6 +109,63 @@ let test_fold () =
   counts D.Float4_e2m1fn 1. float_exact [| 2.; 3.; 3.; 2. |];
   counts D.Int4 1 int [| 2; 3; 3; 2 |]
 
+(* A fold sums each element's taps with no +0 before them, so a single -0
+   tap keeps its sign, and is +0 where no tap lands: here interior padding
+   puts the operand's elements at 0, 2 and 4 of five, and a crop drops the
+   result's first element from every tap. *)
+let test_signed_zeros () =
+  let bits a = Array.map Int64.bits_of_float a in
+  let fold (type s) (dt : (float, s) D.t) shape p xs =
+    let x = Nx.place Count.on (host (A.of_array dt [| Array.length xs |] xs)) in
+    bits (read (Nx.Prim.eval ~by:"t" (Fold { shape; pad = p; x })))
+  in
+  let spread = pad ~interior:[| 1 |] [||] and cropped = pad ~lo:[| -1 |] [||] in
+  List.iter
+    (fun (D.Any dt) ->
+      match D.kind dt with
+      | D.Float ->
+          let name = D.name dt in
+          equal ~msg:(name ^ ": one -0 tap") (array int64)
+            (bits [| -0.; -0.; 3. |])
+            (fold dt [| 3 |] spread [| -0.; 6.; -0.; 6.; 3. |]);
+          equal ~msg:(name ^ ": no tap") (array int64)
+            (bits [| 0.; -0.; 1. |])
+            (fold dt [| 3 |] cropped [| -0.; 1. |])
+      | _ -> ())
+    [
+      D.Any D.Float32;
+      D.Any D.Float64;
+      D.Any D.Bfloat16;
+      D.Any D.Float16;
+      D.Any D.Float8_e4m3fn;
+      D.Any D.Float8_e5m2;
+      D.Any D.Float4_e2m1fn;
+    ];
+  (* A complex number's parts each keep a -0. *)
+  let c re im = { Complex.re; im } in
+  let parts (z : Complex.t array) =
+    let both (z : Complex.t) = bits [| z.re; z.im |] in
+    Array.concat (Array.to_list (Array.map both z))
+  in
+  let fold_c (type s) (dt : (Complex.t, s) D.t) shape p zs =
+    let x = Nx.place Count.on (host (A.of_array dt [| Array.length zs |] zs)) in
+    parts (read (Nx.Prim.eval ~by:"t" (Fold { shape; pad = p; x })))
+  in
+  List.iter
+    (fun (D.Any dt) ->
+      match D.kind dt with
+      | D.Complex ->
+          let name = D.name dt in
+          equal ~msg:(name ^ ": one -0 tap") (array int64)
+            (parts [| c (-0.) (-0.); c (-0.) 1.; c 3. (-0.) |])
+            (fold_c dt [| 3 |] spread
+               [| c (-0.) (-0.); c 6. 6.; c (-0.) 1.; c 6. 6.; c 3. (-0.) |]);
+          equal ~msg:(name ^ ": no tap") (array int64)
+            (parts [| c 0. 0.; c (-0.) (-0.); c 1. 1. |])
+            (fold_c dt [| 3 |] cropped [| c (-0.) (-0.); c 1. 1. |])
+      | _ -> ())
+    [ D.Any D.Complex64; D.Any D.Complex128 ]
+
 let test_rules () =
   let x = Nx.place Count.on (host (f32 [| 1.; 2.; 3. |])) in
   let raises f = raises_match (Exn.invalid_arg ~substring:"t: ") f in
@@ -296,6 +353,8 @@ let () =
            [
              test "a padded, windowed load" test_sum_pool;
              test "a fold counts the taps" test_fold;
+             test "a fold keeps one -0 tap's sign and is +0 with none"
+               test_signed_zeros;
              test "the rules raise before any kernel" test_rules;
              test "a split value loads as on one device" test_split;
              test "a load and a fold keep the cut of an axis they do not pad"

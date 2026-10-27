@@ -6,9 +6,10 @@
 (* Folds through every kernel library the host runs: a fold is the padded load's
    adjoint over integers, and a float fold within its bound of the exact sum
    at each index. nx.cpu's group checks each result element against a
-   reference that adds, from +0, the elements the load reads from it in C order
-   of their taps, bit for bit or both NaN, through views of the operand, at
-   every dtype but the booleans; and its maps of padded loads, through the
+   reference that sums, with no +0 before the first, the elements the load
+   reads from it in C order of their taps, +0 where it reads none, bit for
+   bit or both NaN, through views of the operand, at every dtype but the
+   booleans; and its maps of padded loads, through the
    same geometry: a loaded element is the element the fold adds it into, or
    the fill. *)
 
@@ -181,11 +182,23 @@ let add (D.Any dt as d) a b =
     | A.Done -> (elements (A.Any dst)).(0)
     | r -> failf "an add answered %a" Nx_array_support.pp_answer r
 
+(* The number of the operand's elements the load reads from each result
+   index. *)
+let reached c =
+  let xs = shape_of c.x in
+  let counts = Array.make (total c.shape) 0 in
+  for k = 0 to total xs - 1 do
+    match target c (index_of xs k) with
+    | Some y -> counts.(y) <- counts.(y) + 1
+    | None -> ()
+  done;
+  counts
+
 let expected c =
   let d = dtype_of c.x in
   let xs = shape_of c.x and es = elements c.x in
   let r = Array.length c.shape and nw = Iarray.length c.pad.windows in
-  let acc = Array.make (total c.shape) (zero d) in
+  let acc = Array.make (total c.shape) None in
   let taps = Array.sub xs r nw and outer = Array.sub xs 0 r in
   for t = 0 to total taps - 1 do
     let j = index_of taps t in
@@ -193,10 +206,12 @@ let expected c =
       let xi = Array.append (index_of outer k) j in
       match target c xi with
       | None -> ()
-      | Some y -> acc.(y) <- add d acc.(y) es.(flat xs xi)
+      | Some y ->
+          let e = es.(flat xs xi) in
+          acc.(y) <- Some (match acc.(y) with None -> e | Some a -> add d a e)
     done
   done;
-  acc
+  Array.map (function None -> zero d | Some a -> a) acc
 
 (* The axes before the first a window takes. *)
 let leading c =
@@ -229,9 +244,16 @@ let law_reference (b : Support.backend) = function
       cover "windows" (Iarray.length c.pad.windows > 0);
       cover "interior" (Iarray.exists (fun i -> i > 0) c.pad.interior);
       cover "cropped" (Iarray.exists (fun l -> l < 0) c.pad.lo);
-      cover "slabs zeroed per unit" (work && n > 0 && units > 1 && slabs c);
-      cover "whole zeroed, a leading axis padded"
+      cover "slabs started per unit" (work && n > 0 && units > 1 && slabs c);
+      cover "whole started, a leading axis padded"
         (work && n > 0 && not (slabs c));
+      (let (D.Any d) = dtype_of c.x in
+       let counts = reached c in
+       let float = D.is D.Float d || D.is D.Complex d in
+       cover "a float element no tap reaches"
+         (work && float && Array.exists (( = ) 0) counts);
+       cover "a float element of one tap"
+         (work && float && Array.exists (( = ) 1) counts));
       let taps = Array.sub (shape_of c.x) r (Iarray.length c.pad.windows) in
       cover "taps innermost" (work && n < r && total taps > 1);
       (let (D.Any d) = dtype_of c.x in
@@ -525,7 +547,7 @@ let cpu (b : Support.backend) =
   let run f x = b.around (fun () -> f x) in
   group ("nx.cpu " ^ b.name)
     [
-      prop "adds each element's taps in order from +0" cases
+      prop "sums each element's taps in order, +0 where none" cases
         (run (law_reference b));
       prop "a map's padded load reads what the fold adds into" all_cases
         (run (law_load b));

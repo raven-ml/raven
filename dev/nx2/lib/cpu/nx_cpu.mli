@@ -212,7 +212,7 @@
     [gather] and [scatter] compute every case, at every dtype, and refuse with
     [Shape_mismatch] operands and destinations whose shapes do not fit. A
     scatter's [Add] adds a target's updates left to right,
-    [(… ((+0 + x) + u1) + …) + un]. A narrow float's keeps its float32 sums
+    [(… ((x + u1) + u2) + …) + un]. A narrow float's keeps its float32 sums
     and the positions it sorts by target in host memory the call holds
     until it returns. A {e slice} is the updates at one index off the
     scattered axis, with their positions and targets; a {e row of slices}
@@ -240,7 +240,8 @@
     [sort] and [assemble] compute every dtype, and [fold] every dtype
     {!Nx_kernel.Prog.Add} takes. The three refuse with [Shape_mismatch]
     operands and destinations whose shapes do not fit. A fold adds an
-    index's elements to [+0] from left to right, in C order of their taps.
+    index's elements from left to right, in C order of their taps, with no
+    [+0] before the first; it stores [+0] at an index no tap reads.
 
     [c2c], [r2c], [c2r] and the routines of matrices answer [Wrong_dtype]
     for dtypes {!Nx_kernel.S} does not take, and compute the others.

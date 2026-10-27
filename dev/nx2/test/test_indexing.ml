@@ -753,7 +753,7 @@ let law_repeated (s, a, us, p, combine, x, u) =
     | `Max -> (maximum, Nx.Max)
     | `Min -> (minimum, Nx.Min)
   in
-  let repeated = ref false in
+  let repeated = ref false and signed = ref false in
   for k = 0 to numel us - 1 do
     let i = index us k in
     let q = p.(k) in
@@ -761,9 +761,8 @@ let law_repeated (s, a, us, p, combine, x, u) =
       let ix = Array.copy i in
       ix.(a) <- q;
       let t = position s ix in
-      (* [+0] plus the target, once some update lands. *)
-      if combine = `Add && not touched.(t) then
-        expected.(t) <- round32 (0. +. f expected.(t));
+      if combine = `Add && (not touched.(t)) && x.(t) = 0x80000000l then
+        signed := true;
       if touched.(t) then repeated := true;
       touched.(t) <- true;
       expected.(t) <- step expected.(t) u.(k)
@@ -771,6 +770,7 @@ let law_repeated (s, a, us, p, combine, x, u) =
   done;
   let nan b = Float.is_nan (f b) in
   cover "a repeated target" !repeated;
+  cover "an Add from a -0 target" !signed;
   cover "a NaN update" (combine <> `Add && combine <> `Set && Array.exists nan u);
   let y =
     Nx.scatter ~combine:c ~axis:a (held us p)
