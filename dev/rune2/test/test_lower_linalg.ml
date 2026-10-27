@@ -221,6 +221,22 @@ let cholesky_fails () =
   equal (array bool) [| true; true; true; true |]
     (Array.map Float.is_nan (Array.sub l 4 4))
 
+(* A pivot of exactly +0 or -0 is not positive: a first pivot of each, and a
+   second of [1 - 1 = +0] and of [-0 - 0 = -0]. Each such matrix alone is
+   NaN. *)
+let cholesky_zero_pivot () =
+  let a =
+    Nx.create D.Float64 [| 5; 2; 2 |]
+      [|
+        0.; 0.; 0.; 1.; -0.; 0.; 0.; 1.; 1.; 0.; 1.; 1.; 1.; 0.; 0.; -0.; 4.;
+        0.; 2.; 5.;
+      |]
+  in
+  let l = Lowered.run (fun () -> linalg (Cholesky { triangle = Lower; a })) in
+  equal (array bool) (Array.make 16 true)
+    (Array.map Float.is_nan (Array.sub l 0 16));
+  equal (array float_exact) [| 2.; 0.; 1.; 2. |] (Array.sub l 16 4)
+
 (* LU *)
 
 let lu_law (c, shape) =
@@ -517,23 +533,20 @@ let svd_law (c, shape) =
         if rank_one then ls.((b * m) + i) *. rs.((b * n) + j) else uniform st)
   in
   let am = of_nx a in
-  let s = Lowered.run (fun () ->
-      let s, _, _ = linalg (Svd { factors; dtype = dt; a }) in
-      s)
-  in
   let uc = if factors = Complete then m else k
   and vr = if factors = Complete then n else k in
-  let uu =
-    mat am.b m uc (Lowered.run (fun () ->
-        let _, u, _ = linalg (Svd { factors; dtype = dt; a }) in
-        u))
+  (* One program computes all three results, as a caller of [Svd] would. *)
+  let all =
+    Lowered.run (fun () ->
+        let s, u, v = linalg (Svd { factors; dtype = dt; a }) in
+        Nx.concatenate ~axis:0 [ Nx.flatten s; Nx.flatten u; Nx.flatten v ])
   in
-  let vh =
-    mat am.b vr n (Lowered.run (fun () ->
-        let _, _, v = linalg (Svd { factors; dtype = dt; a }) in
-        v))
-  in
+  let ns = am.b * k and nu = am.b * m * uc in
+  let s = Array.sub all 0 ns in
+  let uu = mat am.b m uc (Array.sub all ns nu) in
+  let vh = mat am.b vr n (Array.sub all (ns + nu) (am.b * vr * n)) in
   let values = Lowered.run (fun () -> linalg (Svd_values { dtype = dt; a })) in
+  equal ~msg:"values alone are Svd's" (array int64) (bits s) (bits values);
   let eager = Nx.to_array (linalg (Svd_values { dtype = dt; a })) in
   for b = 0 to am.b - 1 do
     for i = 0 to k - 1 do
@@ -548,7 +561,6 @@ let svd_law (c, shape) =
   let norm b = frobenius am b in
   let near b = near (norm b) in
   values_near ~msg:"s against eager" ~tol:near k s eager;
-  values_near ~msg:"values alone against eager" ~tol:near k values eager;
   frobenius_near ~msg:"uᵀ u = I" ~tol:(fun _ -> g +. check) (gram uu);
   frobenius_near ~msg:"vh vhᵀ = I"
     ~tol:(fun _ -> g +. check)
@@ -571,6 +583,16 @@ let svd_fails () =
   equal (array bool) [| true; true; false; false |] (Array.map Float.is_nan s);
   equal (array float_exact) [| 3.; 2. |] (Array.sub s 2 2)
 
+(* A zero singular value is +0, of a zero matrix and of a zero column. *)
+let svd_zero () =
+  let a =
+    Nx.create D.Float64 [| 2; 2; 2 |] [| 0.; 0.; 0.; 0.; 1.; 0.; 2.; 0. |]
+  in
+  let s =
+    Lowered.run (fun () -> linalg (Svd_values { dtype = D.Float64; a }))
+  in
+  equal (array int64) [| 0L; 0L; 0L |] (bits [| s.(0); s.(1); s.(3) |])
+
 let eigh_law (c, shape) =
   let (R (_, dt, u)) = c.dt in
   let n = List.hd shape in
@@ -580,10 +602,19 @@ let eigh_law (c, shape) =
   cover "a repeated eigenvalue" (repeated && n > 1);
   let junk = Array.init (2 * n * n) (fun _ -> garbage st) in
   let low = Array.init (2 * n * n) (fun _ -> uniform st) in
+  (* A repeated eigenvalue: [I + q qᵀ] for a unit [q], [Q diag(1, …, 1, 2) Qᵀ],
+     which the rotations must turn to diagonal. *)
+  let q =
+    Array.init 2 (fun _ ->
+        let v = Array.init n (fun _ -> uniform st) in
+        let norm = Float.sqrt (Array.fold_left (fun s x -> s +. (x *. x)) 0. v) in
+        Array.map (fun x -> x /. norm) v)
+  in
   let a =
     operand dt c.layout c.batch n n (fun b i j ->
         if i < j then junk.((((b * n) + i) * n) + j)
-        else if repeated then if i = j then 1. else 0.
+        else if repeated then
+          (if i = j then 1. else 0.) +. (q.(b).(i) *. q.(b).(j))
         else low.((((b * n) + i) * n) + j))
   in
   let am = of_nx a in
@@ -642,8 +673,20 @@ let refused () =
 
 (* Suites *)
 
-let law name ~count shapes f =
-  prop name ~count ~examples:(examples shapes) (cases_of shapes) f
+let law name ~count ?(extra = []) shapes f =
+  prop name ~count ~examples:(examples shapes @ extra) (cases_of shapes) f
+
+(* Complete factors of a tall and a wide matrix: q's and u's columns past [n],
+   and vh's rows past [m], which no reduced factor holds. Seeds [3] and [4]
+   choose complete factors, [3] the variant. *)
+let complete_examples =
+  let f32 = List.nth reals 0 and f64 = List.nth reals 1 in
+  [
+    ({ dt = f32; layout = Rows; batch = [||]; seed = 3 }, [ 3; 2 ]);
+    ({ dt = f64; layout = Columns; batch = [| 2 |]; seed = 4 }, [ 4; 2 ]);
+    ({ dt = f32; layout = Broadcast; batch = [||]; seed = 4 }, [ 2; 4 ]);
+    ({ dt = f64; layout = Rows; batch = [||]; seed = 3 }, [ 2; 3 ]);
+  ]
 
 let square = [ [ 0 ]; [ 1 ]; [ 2 ]; [ 3 ]; [ 5 ] ]
 let general = [ [ 0; 2 ]; [ 2; 0 ]; [ 1; 1 ]; [ 3; 2 ]; [ 2; 3 ]; [ 4; 4 ] ]
@@ -657,6 +700,7 @@ let () =
              law "L Lᵀ reconstructs a" ~count:4 square cholesky_law;
              test "a matrix that is not positive definite is NaN"
                cholesky_fails;
+             test "a zero pivot of either sign is NaN" cholesky_zero_pivot;
            ];
          group "lu"
            [
@@ -670,12 +714,18 @@ let () =
                solve_law;
              test "a zero diagonal is NaN" solve_singular;
            ];
-         group "qr" [ law "q r reconstructs a" ~count:4 general qr_law ];
+         group "qr"
+           [
+             law "q r reconstructs a" ~count:4 ~extra:complete_examples general
+               qr_law;
+           ];
          group "svd"
            [
-             law "u diag s vh reconstructs a" ~count:4 general svd_law;
+             law "u diag s vh reconstructs a" ~count:4 ~extra:complete_examples
+               general svd_law;
              test "a matrix with an infinity is NaN" svd_fails;
              test "squares past the dtype's range" svd_extremes;
+             test "a zero singular value is +0" svd_zero;
            ];
          group "eigh"
            [
