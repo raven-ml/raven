@@ -277,14 +277,27 @@ and ('d, _) linalg =
       a : ('v, 's, 'd) t;
     }
       -> ('d, ('v, 's, 'd) t * ('v, 's, 'd) t) linalg
-  | Svd_values : ('v, 's, 'd) t -> ('d, ('v, 's, 'd) t) linalg
-  | Svd : {
-      factors : Nx_kernel.factors;
+  | Svd_values : {
+      dtype : (float, 'r) dtype;
       a : ('v, 's, 'd) t;
     }
-      -> ('d, ('v, 's, 'd) t * ('v, 's, 'd) t * ('v, 's, 'd) t) linalg
-  | Eigh_values : ('v, 's, 'd) t -> ('d, ('v, 's, 'd) t) linalg
-  | Eigh : ('v, 's, 'd) t -> ('d, ('v, 's, 'd) t * ('v, 's, 'd) t) linalg
+      -> ('d, (float, 'r, 'd) t) linalg
+  | Svd : {
+      factors : Nx_kernel.factors;
+      dtype : (float, 'r) dtype;
+      a : ('v, 's, 'd) t;
+    }
+      -> ('d, (float, 'r, 'd) t * ('v, 's, 'd) t * ('v, 's, 'd) t) linalg
+  | Eigh_values : {
+      dtype : (float, 'r) dtype;
+      a : ('v, 's, 'd) t;
+    }
+      -> ('d, (float, 'r, 'd) t) linalg
+  | Eigh : {
+      dtype : (float, 'r) dtype;
+      a : ('v, 's, 'd) t;
+    }
+      -> ('d, (float, 'r, 'd) t * ('v, 's, 'd) t) linalg
   | Eig_values : {
       dtype : (Complex.t, 'c) dtype;
       a : ('v, 's, 'd) t;

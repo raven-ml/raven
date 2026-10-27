@@ -229,10 +229,11 @@ type 'i segments =
 type direction = Forward | Inverse
 
 val same_precision :
-  ('v, 's) Nx_array.Dtype.t -> (Complex.t, 'c) Nx_array.Dtype.t -> bool
-(** [same_precision x c] is [true] iff [x] and [c] have one precision, the
-    dtypes a real transform and {!S.eig} pair: [float32] or [complex64]
-    with [complex64], [float64] or [complex128] with [complex128]. *)
+  ('v, 's) Nx_array.Dtype.t -> ('w, 't) Nx_array.Dtype.t -> bool
+(** [same_precision x y] is [true] iff [x] and [y] have one precision, each
+    [float32] or [complex64], or each [float64] or [complex128]. A real
+    transform, {!S.svd}, {!S.eigh} and {!S.eig} pair dtypes of one
+    precision. *)
 
 (** {1:matrices Matrices} *)
 
@@ -691,13 +692,13 @@ module type S = sig
       and [n] columns, [k = min m n]. Its other axes, the batch, lead every
       operand and destination. Each matrix is computed on its own, and one
       that fails is NaN in its own results alone. [aᴴ] is the conjugate
-      transpose. Routines take the {!full_precision} dtypes; a real result of a
-      complex [a], a singular value or an eigenvalue of [eigh], is complex
-      with an imaginary part of [+0]. [eig]'s results are complex of [a]'s
-      {!same_precision}, a real [a] or not. Each kernel library states its
-      error bounds and the choices below leave open: [eig]'s order of
-      eigenvalues; [qr]'s factors, unique only up to a unit factor per column
-      of [q] and row of [r] where [r]'s diagonal has no zero, and otherwise
+      transpose. Routines take the {!full_precision} dtypes. A singular
+      value and an eigenvalue of [eigh] are floats of [a]'s
+      {!same_precision}, and [eig]'s results complex numbers of it, of a real
+      or a complex [a]. Each kernel library states its error bounds and the
+      choices below leave open: [eig]'s order of eigenvalues; [qr]'s
+      factors, unique only up to a unit factor per column of [q] and row of
+      [r] where [r]'s diagonal has no zero, and otherwise
       from the first zero on up to an orthonormal completion; the vectors of
       [svd], [eigh] and [eig], unique only up to a unit factor where their
       value is simple and up to a unitary basis of its space where it repeats;
@@ -733,21 +734,23 @@ module type S = sig
       triangular [r], [a = q r]. *)
 
   val svd :
-    s:('v, 's) a ->
+    s:(float, 'r) a ->
     ?vectors:(u:('v, 's) a * vh:('v, 's) a) ->
     ('v, 's) a ->
     answer
   (** [svd ~s ~vectors:(~u, ~vh) a] stores [a = u diag s vh], [s] descending
       and not negative, a zero one [+0]. Without [vectors] it stores [s]
       alone. A matrix that holds NaN or an infinity, or on which the
-      iteration does not converge, is NaN in every result. *)
+      iteration does not converge, is NaN in every result. It answers
+      [Wrong_dtype] unless [s] is of [a]'s {!same_precision}. *)
 
-  val eigh : w:('v, 's) a -> ?v:('v, 's) a -> ('v, 's) a -> answer
+  val eigh : w:(float, 'r) a -> ?v:('v, 's) a -> ('v, 's) a -> answer
   (** [eigh ~w ~v a] stores the eigenvalues of [a], square and Hermitian as
       its lower triangle and the real parts of its diagonal name it, which
       alone are read, ascending into [w], and orthonormal columns [v] with
       [a v = v diag w]. Without [v] it stores [w] alone. NaN as for [svd],
-      over what is read. *)
+      over what is read. It answers [Wrong_dtype] unless [w] is of [a]'s
+      {!same_precision}. *)
 
   val eig :
     w:(Complex.t, 'c) a -> ?v:(Complex.t, 'c) a -> ('v, 's) a -> answer

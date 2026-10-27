@@ -167,6 +167,21 @@ let test_refused_kills_none () =
   invalid ~sub:"Nx.cond: " (fun () -> Nx.cond ~p:`One (Nx.donate x4));
   equal ~msg:"cond's refused donor lives" (array int) [| 2; 3 |]
     (Nx.shape (Nx.copy x4));
+  (* A routine that takes its result's dtype first refuses its operand's
+     dtype before it consumes the operand. *)
+  List.iter
+    (fun (name, f) ->
+      let x = narrow [| 2; 2 |] in
+      invalid ~sub:(name ^ ": ") (fun () -> f (Nx.donate x));
+      equal ~msg:(name ^ "'s refused donor lives") (array int) [| 2; 2 |]
+        (Nx.shape (Nx.copy x)))
+    [
+      ("Nx.svd", fun d -> ignore (Nx.svd f32 d));
+      ("Nx.eigh", fun d -> ignore (Nx.eigh f32 d));
+      ("Nx.eig", fun d -> ignore (Nx.eig Nx.complex64 d));
+      ("Nx.slogdet", fun d -> ignore (Nx.slogdet f32 d));
+      ("Nx.lstsq", fun d -> ignore (Nx.lstsq f32 d (narrow [| 2; 2 |])));
+    ];
   (* A composite that slices its operand into one map, or conjugates it,
      refuses before either. *)
   let x5 = fresh [| 1.; 2.; 3. |] in
@@ -212,7 +227,7 @@ let test_several_reads () =
   let h = Nx.donate x in
   let column v = Nx.reshape [| 2; 1 |] v in
   let solution a b =
-    let s, _, _, _ = Nx.lstsq (column a) (column b) in
+    let s, _, _, _ = Nx.lstsq f32 (column a) (column b) in
     elements s
   in
   let expected = solution (fresh [| 1.; 2. |]) (fresh [| 1.; 2. |]) in
@@ -1177,9 +1192,11 @@ let test_one_reader_consumes () =
   dies "Nx.roll" square (fun d -> ignore (Nx.roll 1 d));
   dies "Nx.cholesky" square (fun d -> ignore (Nx.cholesky d));
   dies "Nx.lu" square (fun d -> ignore (Nx.lu d));
-  dies "Nx.eigh" square (fun d -> ignore (Nx.eigh d));
+  dies "Nx.eigh" square (fun d -> ignore (Nx.eigh f32 d));
+  dies "Nx.svd" square (fun d -> ignore (Nx.svd Nx.float64 d));
+  dies "Nx.eig" square (fun d -> ignore (Nx.eig Nx.complex64 d));
   dies "Nx.det" square (fun d -> ignore (Nx.det d));
-  dies "Nx.slogdet" square (fun d -> ignore (Nx.slogdet d));
+  dies "Nx.slogdet" square (fun d -> ignore (Nx.slogdet f32 d));
   dies "Nx.inv" square (fun d -> ignore (Nx.inv d));
   dies "Nx.pinv" square (fun d -> ignore (Nx.pinv d));
   dies "Nx.vector_norm" square (fun d -> ignore (Nx.vector_norm d));
@@ -1517,6 +1534,15 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
   let ids () = ints [| 0; 1; 0; 1 |] in
   table (D.name dt)
     [
+      c "vector_norm" 1 (fun d -> show (Nx.vector_norm (d 0 (x [| 4 |]))));
+      c "vector_norm" 1 (fun d ->
+          show (Nx.vector_norm ~ord:3. (d 0 (x [| 4 |]))));
+      c "matrix_norm" 1 (fun d -> show (Nx.matrix_norm (d 0 (x [| 2; 2 |]))));
+      c "matrix_norm" 1 (fun d ->
+          show (Nx.matrix_norm ~ord:`One (d 0 (x [| 2; 2 |]))));
+      c "matrix_norm" 1 (fun d ->
+          show (Nx.matrix_norm ~ord:`Two (d 0 (x [| 2; 2 |]))));
+      c "cond" 1 (fun d -> show (Nx.cond (d 0 (positive [| 2; 2 |]))));
       c "mod_" 2 (fun d ->
           show (Nx.mod_ (d 0 (x [| 4 |])) (d 1 (positive [| 4 |]))));
       c "pow" 2 (fun d ->
@@ -1741,12 +1767,6 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
             (Nx.histogram
                ~weights:(d 2 (x [| 6 |]))
                [ (edges, d 1 (x [| 6 |])) ]));
-      c "vector_norm" 1 (fun d -> show (Nx.vector_norm (d 0 (x [| 4 |]))));
-      c "vector_norm" 1 (fun d ->
-          show (Nx.vector_norm ~ord:3. (d 0 (x [| 4 |]))));
-      c "matrix_norm" 1 (fun d -> show (Nx.matrix_norm (d 0 (x [| 2; 2 |]))));
-      c "matrix_norm" 1 (fun d ->
-          show (Nx.matrix_norm ~ord:`One (d 0 (x [| 2; 2 |]))));
       c "rfft" 1 (fun d -> show (Nx.rfft Nx.complex64 (d 0 (x [| 2; 4 |]))));
       c "ihfft" 1 (fun d -> show (Nx.ihfft Nx.complex64 (d 0 (x [| 2; 4 |]))));
       c "rfft" 1 (fun d ->
@@ -1788,8 +1808,10 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
                (d 1 (x [| 4; 2 |]))));
     ]
 
-(* The routines' functions. *)
-let routines (type v s) (dt : (v, s) Nx.dtype) =
+(* The routines' functions, of [dt], their real results in [r] and eig's in
+   [c]. *)
+let routines (type v s r c) (dt : (v, s) Nx.dtype) (r : (float, r) Nx.dtype)
+    (c' : (Complex.t, c) Nx.dtype) =
   let x s = data dt s in
   (* Symmetric positive definite: [1.25] on the diagonal, [0.25] off it. *)
   let spd () =
@@ -1809,18 +1831,23 @@ let routines (type v s) (dt : (v, s) Nx.dtype) =
           let p, l, u = Nx.lu (d 0 (spd ())) in
           shows [ show p; show l; show u ]);
       c "svd" 1 (fun d ->
-          let u, s, vh = Nx.svd (d 0 (spd ())) in
-          showl [ u; s; vh ]);
+          let u, s, vh = Nx.svd r (d 0 (spd ())) in
+          shows [ show u; show s; show vh ]);
+      c "svd" 1 (fun d ->
+          let _, s, _ = Nx.svd ~vectors:false Nx.float16 (d 0 (spd ())) in
+          show s);
       c "eigh" 1 (fun d ->
-          showl
-            (let w, v = Nx.eigh (d 0 (spd ())) in
-             [ w; v ]));
-      c "eigh" 1 (fun d -> show (fst (Nx.eigh ~triangle:Upper (d 0 (spd ())))));
+          let w, v = Nx.eigh r (d 0 (spd ())) in
+          shows [ show w; show v ]);
+      c "eigh" 1 (fun d ->
+          show (fst (Nx.eigh ~triangle:Upper r (d 0 (spd ())))));
+      c "eig" 1 (fun d ->
+          let w, v = Nx.eig c' (d 0 (spd ())) in
+          showl [ w; v ]);
       c "det" 1 (fun d -> show (Nx.det (d 0 (spd ()))));
       c "slogdet" 1 (fun d ->
-          showl
-            (let s, l = Nx.slogdet (d 0 (spd ())) in
-             [ s; l ]));
+          let s, l = Nx.slogdet r (d 0 (spd ())) in
+          shows [ show s; show l ]);
       c "solve" 2 (fun d -> show (Nx.solve (d 0 (spd ())) (d 1 (x [| 3 |]))));
       c "solve_triangular" 2 (fun d ->
           show
@@ -1832,17 +1859,16 @@ let routines (type v s) (dt : (v, s) Nx.dtype) =
                (d 1 (x [| 3; 1 |]))));
       c "inv" 1 (fun d -> show (Nx.inv (d 0 (spd ()))));
       c "lstsq" 2 (fun d ->
-          let x, r, k, s = Nx.lstsq (d 0 (spd ())) (d 1 (x [| 3 |])) in
-          shows [ show x; show r; show k; show s ]);
+          let x, res, k, s = Nx.lstsq r (d 0 (spd ())) (d 1 (x [| 3 |])) in
+          shows [ show x; show res; show k; show s ]);
       c "lstsq" 1 (fun d ->
           (* The donor beside its handle. *)
           let a = spd () in
-          let x, _, _, _ = Nx.lstsq (d 0 a) a in
+          let x, _, _, _ = Nx.lstsq r (d 0 a) a in
           show x);
       c "pinv" 1 (fun d -> show (Nx.pinv (d 0 (spd ()))));
       c "pinv" 1 (fun d -> show (Nx.pinv ~hermitian:true (d 0 (spd ()))));
-      c "matrix_norm" 1 (fun d ->
-          show (Nx.matrix_norm ~ord:`Two (d 0 (spd ()))));
+      c "matrix_rank" 1 (fun d -> show (Nx.matrix_rank (d 0 (spd ()))));
     ]
 
 (* The functions of complex numbers. *)
@@ -1875,7 +1901,8 @@ let complexes =
                (d 0 (z [| 3; 3 |]))));
       c "eig" 1 (fun d ->
           let w, v =
-            Nx.eig (d 0 (Nx.add (Nx.eye Nx.complex64 2) (z [| 2; 2 |])))
+            Nx.eig Nx.complex64
+              (d 0 (Nx.add (Nx.eye Nx.complex64 2) (z [| 2; 2 |])))
           in
           showl [ w; v ]);
     ]
@@ -2185,8 +2212,8 @@ let all_cases =
       any_dtype Nx.int32;
       floats Nx.float64;
       floats Nx.float16;
-      routines Nx.float64;
-      routines Nx.complex64;
+      routines Nx.float64 Nx.float64 Nx.complex128;
+      routines Nx.complex64 Nx.float32 Nx.complex64;
       complexes;
       integers;
       booleans;

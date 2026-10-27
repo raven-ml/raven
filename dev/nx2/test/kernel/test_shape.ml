@@ -828,27 +828,29 @@ let test_fft_refuses () =
   fits ~msg:"one bin is no point" [ 2; 0 ]
     (Shape.c2r ~axes:[| 1 |] ~n:0 [| 2; 1 |])
 
-type complex = Complex : (Complex.t, 'c) D.t -> complex
-
-(* The doc's pairs: float32 or complex64 with complex64, float64 or
-   complex128 with complex128. *)
+(* The doc's pairs: each float32 or complex64, or each float64 or
+   complex128. *)
 let test_same_precision () =
+  let precision (D.Any dt) =
+    match dt with
+    | D.Float32 | D.Complex64 -> Some 32
+    | D.Float64 | D.Complex128 -> Some 64
+    | _ -> None
+  in
   List.iter
-    (fun (D.Any x) ->
+    (fun (D.Any x as dx) ->
       List.iter
-        (fun (Complex c) ->
+        (fun (D.Any y as dy) ->
           let want =
-            match (x, c) with
-            | (D.Float32 | D.Complex64), D.Complex64
-            | (D.Float64 | D.Complex128), D.Complex128 ->
-                true
+            match (precision dx, precision dy) with
+            | Some p, Some q -> p = q
             | _ -> false
           in
           equal
-            ~msg:(D.name x ^ " with " ^ D.name c)
+            ~msg:(D.name x ^ " with " ^ D.name y)
             bool want
-            (Nx_kernel.same_precision x c))
-        [ Complex D.Complex64; Complex D.Complex128 ])
+            (Nx_kernel.same_precision x y))
+        D.all)
     D.all
 
 (* Matrices *)
@@ -1324,7 +1326,7 @@ let tests =
       [
         prop "results keep the shape but along the last axis" fft_case law_fft;
         test "refuses axes and bins that do not fit" test_fft_refuses;
-        test "same_precision pairs a dtype with its complex"
+        test "same_precision pairs the dtypes of one precision"
           test_same_precision;
       ];
     group "matrices"

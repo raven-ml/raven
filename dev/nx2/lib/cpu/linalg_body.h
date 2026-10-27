@@ -2782,7 +2782,7 @@ static int F(eigh)(const call *c, int64_t b, T *x, arena *s) {
     *z = e + n, *work = z + n * n;
   int64_t *iwork = (int64_t *)(((uintptr_t)(work + 3 * n + 2 * n * n) + 7) &
                                ~(uintptr_t)7);
-  T *wo = (T *)matrix_at(c, c->nops, b);
+  R *wo = (R *)matrix_at(c, c->nops, b);
   /* The lower triangle, as hetrd reads it column-major, row p of the
      stage from column p on; as the two stages read it row-major, up to
      column p. */
@@ -2818,7 +2818,7 @@ static int F(eigh)(const call *c, int64_t b, T *x, arena *s) {
   } else if (ok)
     ok = F(steqr)(n, d, e, NULL, 0, 0, work);
   if (!ok) {
-    nans(wo, n * (CPLX + 1), RDT);
+    nans(wo, n, RDT);
     if (v) nans(v, n * n * (CPLX + 1), RDT);
     return 1;
   }
@@ -4468,7 +4468,7 @@ static void F(gb2bd)(const T *a, int64_t n, int64_t ld, T *b, T *q, T *p,
 static int F(svd)(const call *c, int64_t b, T *x, arena *s) {
   int64_t m = c->m, n = c->n, wide = m < n, mm = wide ? n : m;
   int64_t k = wide ? m : n, uc = c->complete ? m : k, vr = c->complete ? n : k;
-  T *so = (T *)matrix_at(c, c->nops, b);
+  R *so = (R *)matrix_at(c, c->nops, b);
   T *uo = c->vectors ? (T *)matrix_at(c, c->nops + 1, b) : NULL;
   T *vo = c->vectors ? (T *)matrix_at(c, c->nops + 2, b) : NULL;
   if (k == 0) {
@@ -4530,7 +4530,7 @@ static int F(svd)(const call *c, int64_t b, T *x, arena *s) {
                   : 0;
   if (ok < 0) return 0;
   if (!ok) {
-    nans(so, k * (CPLX + 1), RDT);
+    nans(so, k, RDT);
     if (uo) nans(uo, m * uc * (CPLX + 1), RDT);
     if (vo) nans(vo, vr * n * (CPLX + 1), RDT);
     return 1;

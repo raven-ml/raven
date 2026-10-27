@@ -31,6 +31,12 @@ let complex_of (D.Any dt) =
   | D.Float32 | D.Complex64 -> D.Any D.Complex64
   | _ -> D.Any D.Complex128
 
+(* The float of [dt]'s precision: svd's and eigh's values'. *)
+let real_of (D.Any dt) =
+  match dt with
+  | D.Float32 | D.Complex64 -> D.Any D.Float32
+  | _ -> D.Any D.Float64
+
 (* The dtype's unit roundoff. *)
 let unit_roundoff (D.Any dt) =
   match dt with D.Float32 | D.Complex64 -> 0x1p-24 | _ -> 0x1p-53
@@ -367,9 +373,10 @@ type routine =
 let fresh (D.Any dt) s = A.Any (A.create Rig.host dt s)
 
 (* [b]'s results of [r] on [ops], or [None] if it declined: Lu's positions
-   int64, eig's results complex of a's precision, every other result of a's
-   dtype, of the shapes Nx_kernel.Shape gives, made by [alloc] (defaults to
-   fresh arrays on the host). *)
+   int64, eig's results complex of a's precision, svd's and eigh's values
+   floats of a's precision, every other result of a's dtype, of the shapes
+   Nx_kernel.Shape gives, made by [alloc] (defaults to fresh arrays on the
+   host). *)
 let run ?(alloc = fresh) (b : Support.backend) r ops =
   let module K = (val b.kernels) in
   let module Shape = Nx_kernel.Shape in
@@ -378,6 +385,12 @@ let run ?(alloc = fresh) (b : Support.backend) r ops =
   let shape (A.Any x) = L.shape (A.layout x) in
   let make s = A.expect dt (alloc (D.Any dt) s) in
   let index s = A.expect D.Int64 (alloc (D.Any D.Int64) s) in
+  let real (type b) s (f : 'r. (float, 'r) A.t -> b) : b =
+    match dt with
+    | D.Float32 | D.Complex64 ->
+        f (A.expect D.Float32 (alloc (D.Any D.Float32) s))
+    | _ -> f (A.expect D.Float64 (alloc (D.Any D.Float64) s))
+  in
   let ok = Result.get_ok in
   let dsts, answer =
     match r with
@@ -394,18 +407,19 @@ let run ?(alloc = fresh) (b : Support.backend) r ops =
         ([| A.Any q; A.Any r |], K.qr ~q ~r a)
     | Eigh vectors ->
         let sw, sv = ok (Shape.eigh (shape ops.(0))) in
-        let w = make sw in
-        if vectors then
-          let v = make sv in
-          ([| A.Any w; A.Any v |], K.eigh ~w ~v a)
-        else ([| A.Any w |], K.eigh ~w a)
+        real sw (fun w ->
+            if vectors then
+              let v = make sv in
+              ([| A.Any w; A.Any v |], K.eigh ~w ~v a)
+            else ([| A.Any w |], K.eigh ~w a))
     | Svd None ->
-        let s = make (ok (Shape.svd_values (shape ops.(0)))) in
-        ([| A.Any s |], K.svd ~s a)
+        real (ok (Shape.svd_values (shape ops.(0)))) (fun s ->
+            ([| A.Any s |], K.svd ~s a))
     | Svd (Some f) ->
         let ss, su, sv = ok (Shape.svd f (shape ops.(0))) in
-        let s = make ss and u = make su and vh = make sv in
-        ([| A.Any s; A.Any u; A.Any vh |], K.svd ~s ~vectors:(~u, ~vh) a)
+        real ss (fun s ->
+            let u = make su and vh = make sv in
+            ([| A.Any s; A.Any u; A.Any vh |], K.svd ~s ~vectors:(~u, ~vh) a))
     | Eig vectors -> (
         let sw, sv = ok (Shape.eigh (shape ops.(0))) in
         let eig (type c) (cdt : (Complex.t, c) D.t) =
@@ -2168,7 +2182,9 @@ let law_eigh_fails (b : Support.backend) c =
       v
     in
     List.iter
-      (fun r -> check_alone b r ~dt:c.dt ~rows:c.n ~cols:1 ~spoil [| eigh_operand c |])
+      (fun r ->
+        check_alone b r ~dt:c.dt ~result:(real_of c.dt) ~rows:c.n ~cols:1
+          ~spoil [| eigh_operand c |])
       [ Eigh true; Eigh false ]
 
 (* NaN or an infinity anywhere. *)
@@ -2201,7 +2217,9 @@ let law_svd_fails (b : Support.backend) c =
       v
     in
     List.iter
-      (fun r -> check_alone b r ~dt:c.dt ~rows:(min m n) ~cols:1 ~spoil [| x |])
+      (fun r ->
+        check_alone b r ~dt:c.dt ~result:(real_of c.dt) ~rows:(min m n)
+          ~cols:1 ~spoil [| x |])
       [ Svd (Some (factors c)); Svd None ]
 
 let law_solve_fails (b : Support.backend) c =
@@ -2585,12 +2603,42 @@ let test_cpu_refusals (b : Support.backend) () =
   refuses ~msg:"a reduced q with a complete r" float_exact
     A.Shape_mismatch
     (K.qr ~q ~r:(sentinel D.Float32 7. [| 3; 2 |]) tall)
-    q 7.
+    q 7.;
+  (* Values of another precision than [a]'s, and of [a]'s own complex
+     dtype's. *)
+  let s = sentinel D.Float64 7. [| 2 |] in
+  refuses ~msg:"float64 singular values of float32" float_exact
+    A.Wrong_dtype (K.svd ~s f32) s 7.;
+  let c128 = A.of_array D.Complex128 [| 2; 2 |] (Array.make 4 Complex.one) in
+  (* The vectors too are left as they were. *)
+  let ones () = sentinel D.Complex128 Complex.one [| 2; 2 |] in
+  let untouched ~msg x =
+    equal ~msg
+      (array
+         (Testable.make
+            ~pp:(fun ppf (z : Complex.t) -> Format.fprintf ppf "%h%+hi" z.re z.im)
+            ~equal:( = )))
+      (Array.make 4 Complex.one) (A.to_array x)
+  in
+  let s = sentinel D.Float32 7. [| 2 |] and u = ones () and vh = ones () in
+  refuses ~msg:"float32 singular values of complex128" float_exact
+    A.Wrong_dtype
+    (K.svd ~s ~vectors:(~u, ~vh) c128)
+    s 7.;
+  untouched ~msg:"svd's refused u" u;
+  untouched ~msg:"svd's refused vh" vh;
+  let w = sentinel D.Float16 7. [| 2 |] in
+  refuses ~msg:"float16 eigenvalues of float32" float_exact A.Wrong_dtype
+    (K.eigh ~w f32) w 7.;
+  let w = sentinel D.Float32 7. [| 2 |] and v = ones () in
+  refuses ~msg:"float32 eigenvalues of complex128" float_exact A.Wrong_dtype
+    (K.eigh ~w ~v c128) w 7.;
+  untouched ~msg:"eigh's refused v" v
 
 (* Every routine answers Wrong_dtype at the dtypes routines do not take,
    and computes or declines float32, float64, complex64 and complex128.
-   [eig] answers Wrong_dtype also for results of another precision than
-   [a]'s. *)
+   [eig], [svd] and [eigh] answer Wrong_dtype also for values of another
+   precision than [a]'s. *)
 let test_dtypes (b : Support.backend) () =
   let module K = (val b.kernels) in
   List.iter
@@ -2620,6 +2668,25 @@ let test_dtypes (b : Support.backend) () =
       in
       eig D.Complex64;
       eig D.Complex128;
+      let real (type r) (f : (float, r) D.t) =
+        let y s = A.create b.device f s in
+        let paired = wide = (D.Any f = D.Any D.Float64) && D.bits f >= 32 in
+        let check ~msg got =
+          if paired && takes then begin
+            if got = A.Wrong_dtype then failf "%s answered Wrong_dtype" msg
+          end
+          else equal ~msg answer A.Wrong_dtype got
+        in
+        let msg name = Format.asprintf "%s of %a into %a" name D.pp dt D.pp f in
+        check ~msg:(msg "svd")
+          (K.svd ~s:(y [| 2 |]) ~vectors:(~u:(x sq), ~vh:(x sq)) a);
+        check ~msg:(msg "svd's values") (K.svd ~s:(y [| 2 |]) a);
+        check ~msg:(msg "eigh") (K.eigh ~w:(y [| 2 |]) ~v:(x sq) a);
+        check ~msg:(msg "eigh's values") (K.eigh ~w:(y [| 2 |]) a)
+      in
+      real D.Float16;
+      real D.Float32;
+      real D.Float64;
       List.iter
         (fun (name, call) ->
           let msg = Format.asprintf "%s of %a" name D.pp dt in
@@ -2633,12 +2700,6 @@ let test_dtypes (b : Support.backend) () =
               K.lu ~lu:(x sq) ~pivots:(positions [| 2 |])
                 ~perm:(positions [| 2 |]) a );
           ("qr", fun () -> K.qr ~q:(x sq) ~r:(x sq) a);
-          ( "svd",
-            fun () ->
-              K.svd ~s:(x [| 2 |]) ~vectors:(~u:(x sq), ~vh:(x sq)) a );
-          ("svd's values", fun () -> K.svd ~s:(x [| 2 |]) a);
-          ("eigh", fun () -> K.eigh ~w:(x [| 2 |]) ~v:(x sq) a);
-          ("eigh's values", fun () -> K.eigh ~w:(x [| 2 |]) a);
           ( "solve_triangular",
             fun () ->
               K.solve_triangular Lower ~adjoint:false ~unit_diagonal:false

@@ -2661,11 +2661,21 @@ type factors = Nx_kernel.factors = Reduced | Complete
 
 let routine ~by l = Eval.eval ~by (Value.Linalg l)
 
+let not_routine ~by x =
+  invalid_argf "%s: %a is not float32, float64, complex64 or complex128" by
+    pp_value x
+
 (* Refuses a dtype the routines do not take. *)
 let routine_dtype ~by x =
-  if not (Nx_kernel.full_precision (dtype x)) then
-    invalid_argf "%s: %a is not float32, float64, complex64 or complex128" by
-      pp_value x
+  if not (Nx_kernel.full_precision (dtype x)) then not_routine ~by x
+
+(* The float of [x]'s precision, the dtype the routines give a real result
+   of [x] in. *)
+let real_precision (type v s d) ~by (x : (v, s, d) t) : Nx_kernel.any_float =
+  match dtype x with
+  | D.Float32 | D.Complex64 -> Any_float D.Float32
+  | D.Float64 | D.Complex128 -> Any_float D.Float64
+  | _ -> not_routine ~by x
 
 (* Refuses what is not a batch of matrices of a dtype the routines take. *)
 let matrices ~by x =
@@ -2684,9 +2694,9 @@ let epsilon (type v s) (dt : (v, s) D.t) =
 (* [x]'s batch: its axes before its last two. *)
 let batch x = Array.sub (shape x) 0 (ndim x - 2)
 
-(* An empty value of [x]'s dtype where [x] lies: the vectors a routine did not
+(* An empty value of [dt] where [x] lies: the vectors a routine did not
    compute. *)
-let uncomputed ~by x s = beside ~by x (fill ~by (dtype x) s (D.zero (dtype x)))
+let uncomputed ~by dt x s = beside ~by x (fill ~by dt s (D.zero dt))
 
 (* The first [rows] rows and [cols] columns of [x]'s matrices. *)
 let corner ~by rows cols x =
@@ -2712,20 +2722,19 @@ let unit_lower ~by x =
       where (column < row) (operand 0 x)
         (where (column = row) (lit (D.one dt)) (lit (D.zero dt))))
 
-(* [f] of [x]'s magnitudes, a float of [x]'s precision, its result back in
-   [x]'s dtype: complex with imaginary parts [+0] for a complex [x]. *)
-let magnitudes (type v s d) ~by (x : (v, s, d) t)
-    (f : 'r. (float, 'r, d) t -> (float, 'r, d) t) : (v, s, d) t =
+(* [f] of [x]'s magnitudes, floats of [x]'s precision. *)
+let magnitudes (type v s d b) ~by (x : (v, s, d) t)
+    (f : 'r. (float, 'r, d) t -> b) : b =
   match dtype x with
   | D.Float32 -> f (unary ~by Abs x)
   | D.Float64 -> f (unary ~by Abs x)
-  | D.Complex64 -> cast_by ~by D.Complex64 (f (magnitude_by ~by D.Float32 x))
-  | D.Complex128 -> cast_by ~by D.Complex128 (f (magnitude_by ~by D.Float64 x))
+  | D.Complex64 -> f (magnitude_by ~by D.Float32 x)
+  | D.Complex128 -> f (magnitude_by ~by D.Float64 x)
   | dt -> invalid_argf "%s: %s has no magnitudes" by (D.name dt)
 
 (* [a] and [b] with their leading axes broadcast, [b] as columns of [rows]
-   rows, and the function that gives a result over those columns [b]'s form:
-   a [b] of one axis fewer than [a] is one column, whose axis goes. *)
+   rows, and whether [b] is a vector: of one axis fewer than [a], one
+   column, whose axis {!back} drops from a result over it. *)
 let columns ~by ~rows a b =
   let ra = ndim a and rb = ndim b in
   let vector = rb = ra - 1 in
@@ -2741,11 +2750,11 @@ let columns ~by ~rows a b =
   let along x =
     broadcast ~by (Array.append lead (Array.sub (shape x) (ndim x - 2) 2)) x
   in
-  let back x =
-    if vector then reshaped ~by (Array.sub (shape x) 0 (ndim x - 1)) x
-    else x
-  in
-  (along a, along b, back)
+  (along a, along b, vector)
+
+(* A result over the columns {!columns} gives, in [b]'s form. *)
+let back ~by vector x =
+  if vector then reshaped ~by (Array.sub (shape x) 0 (ndim x - 1)) x else x
 
 let adjoint ~by x = conjugate_by ~by (matrix_transpose_by ~by x)
 
@@ -2775,42 +2784,59 @@ let lu a =
   let u = triangle ~by `Above 0 (corner ~by k n f) in
   (perm, l, u)
 
-let svd_by ~by ?(vectors = true) ?(factors = Reduced) a =
+(* A routine gives a real result in [real_precision], and [cast_by] stores
+   it in the caller's [dt], or returns it itself where the two are one. *)
+
+let svd_by ~by ?(vectors = true) ?(factors = Reduced) dt a =
   matrices ~by a;
+  let (Nx_kernel.Any_float r) = real_precision ~by a in
   if vectors then
-    let s, u, vh = routine ~by (Svd { factors; a }) in
-    (u, s, vh)
+    let s, u, vh = routine ~by (Svd { factors; dtype = r; a }) in
+    (u, cast_by ~by dt s, vh)
   else
-    let s = routine ~by (Svd_values a) in
-    let lead = batch a in
-    let u = uncomputed ~by a (Array.append lead [| dim (-2) a; 0 |]) in
-    let vh = uncomputed ~by a (Array.append lead [| 0; dim (-1) a |]) in
-    (u, s, vh)
+    let s = routine ~by (Svd_values { dtype = r; a }) in
+    let lead = batch a and v = dtype a in
+    let u = uncomputed ~by v a (Array.append lead [| dim (-2) a; 0 |]) in
+    let vh = uncomputed ~by v a (Array.append lead [| 0; dim (-1) a |]) in
+    (u, cast_by ~by dt s, vh)
 
-let svd ?vectors ?factors a = svd_by ~by:"Nx.svd" ?vectors ?factors a
+let svd ?vectors ?factors dt a = svd_by ~by:"Nx.svd" ?vectors ?factors dt a
 
-(* The [[…; n; 0]] vectors an eigenvalue routine did not compute. *)
-let no_vectors ~by a =
-  uncomputed ~by a (Array.append (batch a) [| dim (-1) a; 0 |])
+(* The [[…; n; 0]] vectors of [dt] an eigenvalue routine did not compute. *)
+let no_vectors ~by dt a =
+  uncomputed ~by dt a (Array.append (batch a) [| dim (-1) a; 0 |])
 
-let eig ?(vectors = true) a =
+let eig (type v s c d) ?(vectors = true) (dt : (Complex.t, c) D.t)
+    (a : (v, s, d) t) : (Complex.t, c, d) t * (Complex.t, c, d) t =
   let by = "Nx.eig" in
   square_matrices ~by a;
-  let dtype = dtype a in
-  if vectors then routine ~by (Eig { dtype; a })
-  else
-    let w = routine ~by (Eig_values { dtype; a }) in
-    (w, no_vectors ~by a)
+  (* At the complex dtype of [a]'s precision, then stored in [dt]. *)
+  let at (type c) (c : (Complex.t, c) D.t) =
+    if vectors then
+      let w, v = routine ~by (Eig { dtype = c; a }) in
+      let w = cast_by ~by dt w in
+      (w, cast_by ~by dt v)
+    else
+      let w = routine ~by (Eig_values { dtype = c; a }) in
+      (cast_by ~by dt w, no_vectors ~by dt a)
+  in
+  match dtype a with
+  | D.Float32 | D.Complex64 -> at D.Complex64
+  | _ -> at D.Complex128
 
-let eigh_by ~by ?(vectors = true) ?(triangle = Lower) a =
+let eigh_by ~by ?(vectors = true) ?(triangle = Lower) dt a =
   square_matrices ~by a;
+  let (Nx_kernel.Any_float r) = real_precision ~by a in
   let a' = lower_of ~by triangle a in
-  if vectors then routine ~by (Eigh a')
+  if vectors then
+    let w, v = routine ~by (Eigh { dtype = r; a = a' }) in
+    (cast_by ~by dt w, v)
   else
-    let w = routine ~by (Eigh_values a') in
-    (w, no_vectors ~by a)
+    let w = routine ~by (Eigh_values { dtype = r; a = a' }) in
+    (cast_by ~by dt w, no_vectors ~by (dtype a) a)
 
-let eigh ?vectors ?triangle a = eigh_by ~by:"Nx.eigh" ?vectors ?triangle a
+let eigh ?vectors ?triangle dt a =
+  eigh_by ~by:"Nx.eigh" ?vectors ?triangle dt a
 
 (* The diagonal of [lu]'s factors, and the function that negates [x] where
    each matrix's rows were interchanged an odd number of times and makes a
@@ -2851,7 +2877,7 @@ let phase (type v s d) ~by (z : (v, s, d) t) : (v, s, d) t =
   | D.Complex128 -> unit D.Float64 z
   | _ -> unary ~by Sign z
 
-let slogdet a =
+let slogdet dt a =
   let by = "Nx.slogdet" in
   square_matrices ~by a;
   let d, signed = pivots ~by a in
@@ -2864,9 +2890,9 @@ let slogdet a =
   let logabs =
     magnitudes ~by d (fun m ->
         let l = reduction ~by Sum ~axes:[ -1 ] (unary ~by Log m) in
-        let dt = dtype l in
+        let r = dtype l in
         elementwise ~by dt [ Any sign; Any l ]
-          E.(where singular (const dt Float.neg_infinity) (operand 1 l)))
+          (at dt E.(where singular (const r Float.neg_infinity) (operand 1 l))))
   in
   (sign, logabs)
 
@@ -2875,12 +2901,12 @@ type transpose = Transpose | Adjoint
 let solve_triangular ?(triangle = Lower) ?transpose ?(unit_diag = false) a b =
   let by = "Nx.solve_triangular" in
   square_matrices ~by a;
-  let a, b, back = columns ~by ~rows:(dim (-1) a) a b in
+  let a, b, vector = columns ~by ~rows:(dim (-1) a) a b in
   let solved adjoint b =
     routine ~by
       (Solve_triangular { triangle; adjoint; unit_diagonal = unit_diag; a; b })
   in
-  back
+  back ~by vector
     (match transpose with
     | None -> solved false b
     | Some Transpose when D.is D.Complex (dtype a) ->
@@ -2895,13 +2921,13 @@ let solve_by ~by a b =
   let a = held_beside ~by b a in
   let f, _, perm = routine ~by (Lu a) in
   let perm = reshaped ~by (Array.append (shape perm) [| 1 |]) perm in
-  let f, b, back = columns ~by ~rows:(dim (-1) a) f b in
+  let f, b, vector = columns ~by ~rows:(dim (-1) a) f b in
   let b = take_along ~by (-2) perm b in
   let solved triangle unit_diagonal b =
     routine ~by
       (Solve_triangular { triangle; adjoint = false; unit_diagonal; a = f; b })
   in
-  back (solved Upper false (solved Lower true b))
+  back ~by vector (solved Upper false (solved Lower true b))
 
 let solve a b = solve_by ~by:"Nx.solve" a b
 
@@ -2912,15 +2938,16 @@ let inv_by ~by a =
 
 let inv a = inv_by ~by:"Nx.inv" a
 
-(* Each singular value's reciprocal where it is above [tol] times its
-   matrix's greatest, zero at or below, NaN where it is. *)
+(* Each magnitude's reciprocal of the singular values or eigenvalues [s]
+   where it is above [tol] times its matrix's greatest, zero at or below,
+   NaN where it is. *)
 let reciprocals ~by ~tol s =
-  magnitudes ~by s (fun s ->
-      let top = reduction ~by Max ~axes:[ -1 ] ~keepdims:true s in
-      let dt = dtype s in
-      let v = operand 0 s and cut = E.(operand 1 top * const dt tol) in
-      elementwise ~by dt [ Any s; Any top ]
-        E.(where (v <> v) v (where (cut < v) (recip v) (const dt 0.))))
+  let s = unary ~by Abs s in
+  let top = reduction ~by Max ~axes:[ -1 ] ~keepdims:true s in
+  let dt = dtype s in
+  let v = operand 0 s and cut = E.(operand 1 top * const dt tol) in
+  elementwise ~by dt [ Any s; Any top ]
+    E.(where (v <> v) v (where (cut < v) (recip v) (const dt 0.)))
 
 (* The cutoff of a singular value relative to its matrix's greatest, [rtol]
    (default the dtype's machine epsilon) times [max m n]. *)
@@ -2935,7 +2962,8 @@ let resynthesise ~by u d vh =
   let scaled = mul_by ~by (adjoint ~by vh) (unsqueeze_by ~by ~axes:[ -2 ] d) in
   matmul_by ~by scaled (adjoint ~by u)
 
-let lstsq ?rtol a b =
+let lstsq (type v s r d) ?rtol (dt : (float, r) D.t) (a : (v, s, d) t)
+    (b : (v, s, d) t) =
   let by = "Nx.lstsq" in
   let a = Donate.read ~by a in
   let b = Donate.read ~by b in
@@ -2943,16 +2971,17 @@ let lstsq ?rtol a b =
   let a = held_beside ~by b a and b = held_beside ~by a b in
   let m = dim (-2) a and n = dim (-1) a in
   let tol = cutoff ~by rtol a in
-  let a', b', back = columns ~by ~rows:m a b in
+  let a', b', vector = columns ~by ~rows:m a b in
+  let (Nx_kernel.Any_float f) = real_precision ~by a in
   let x, s, rank =
     if Stdlib.min m n = 0 then
       let lead = batch b' in
       let zero dt s = beside ~by b' (fill ~by dt s (D.zero dt)) in
       ( zero (dtype b') (Array.append lead [| n; dim (-1) b' |]),
-        zero (dtype a) (Array.append (batch a) [| 0 |]),
+        zero f (Array.append (batch a) [| 0 |]),
         zero D.Int64 (batch a) )
     else
-      let u, s, vh = svd_by ~by a in
+      let u, s, vh = svd_by ~by f a in
       let d = reciprocals ~by ~tol s in
       let nonzero =
         comparison ~by (Compare Not_equal) d (like ~by d (D.zero (dtype d)))
@@ -2962,14 +2991,16 @@ let lstsq ?rtol a b =
       let rank = ternary ~by Where failed (like ~by kept (-1L)) kept in
       (* [V (Σ⁺ (Uᴴ b))] rounds less than [b] by the pseudoinverse. *)
       let ub = matmul_by ~by (adjoint ~by u) b' in
+      let d = cast_by ~by (dtype a) d in
       let c = mul_by ~by (unsqueeze_by ~by ~axes:[ -1 ] d) ub in
       (matmul_by ~by (adjoint ~by vh) c, s, rank)
   in
   let r = binary ~by (Binary Sub) b' (matmul_by ~by a' x) in
   let residuals =
-    magnitudes ~by r (fun r -> reduction ~by Sum ~axes:[ -2 ] (mul_by ~by r r))
+    magnitudes ~by r (fun r ->
+        cast_by ~by dt (reduction ~by Sum ~axes:[ -2 ] (mul_by ~by r r)))
   in
-  (back x, back residuals, rank, s)
+  (back ~by vector x, back ~by vector residuals, rank, cast_by ~by dt s)
 
 let pinv ?rtol ?(hermitian = false) a =
   let by = "Nx.pinv" in
@@ -2983,21 +3014,22 @@ let pinv ?rtol ?(hermitian = false) a =
     beside ~by a (fill ~by dt (Array.append (batch a) [| n; m |]) (D.zero dt))
   end
   else if hermitian then begin
-    let w, v = eigh_by ~by a in
+    let (Nx_kernel.Any_float f) = real_precision ~by a in
+    let w, v = eigh_by ~by f a in
     (* An eigenvalue's reciprocal keeps its sign: its magnitude decides. *)
     let kept = reciprocals ~by ~tol w in
-    let dt = dtype kept in
-    let k = operand 0 kept in
+    let k = operand 0 kept and dt = dtype a in
     let w' =
       elementwise ~by dt [ Any kept; Any w ]
-        E.(where (k = const dt (D.zero dt)) k (recip (operand 1 w)))
+        (at dt E.(where (k = const f 0.) k (recip (operand 1 w))))
     in
     let scaled = mul_by ~by v (unsqueeze_by ~by ~axes:[ -2 ] w') in
     matmul_by ~by scaled (adjoint ~by v)
   end
   else
-    let u, s, vh = svd_by ~by a in
-    resynthesise ~by u (reciprocals ~by ~tol s) vh
+    let (Nx_kernel.Any_float f) = real_precision ~by a in
+    let u, s, vh = svd_by ~by f a in
+    resynthesise ~by u (cast_by ~by (dtype a) (reciprocals ~by ~tol s)) vh
 
 (* Norms *)
 
@@ -3036,27 +3068,22 @@ let vector ~by p axes m =
   else if p = 1. then sum m
   else power_norm ~by p axes m
 
-(* [f x] for a dtype the routines take; for a narrower float, [f] of [x] at its
+(* [f x] for float32 and float64; for a narrower float, [f] of [x] at its
    carrier, rounded once to [x]'s dtype. *)
-let carried (type v s d) ~by (x : (v, s, d) t)
-    (f : 'w 'r. ('w, 'r, d) t -> ('w, 'r, d) t) : (v, s, d) t =
+let carried (type s d) ~by (x : (float, s, d) t)
+    (f : 'r. (float, 'r, d) t -> (float, 'r, d) t) : (float, s, d) t =
   let dt = dtype x in
-  match D.kind dt with
-  | D.Float when not (Nx_kernel.full_precision dt) ->
-      let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
-      cast_by ~by dt (f (cast_by ~by w x))
-  | _ ->
-      routine_dtype ~by x;
-      f x
+  if Nx_kernel.full_precision dt then f x
+  else
+    let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
+    cast_by ~by dt (f (cast_by ~by w x))
 
 let vector_norm ?(ord = 2.) ?axes:l ?(keepdims = false) x =
   let by = "Nx.vector_norm" in
   let along =
     match l with None -> List.init (ndim x) Fun.id | Some l -> axes ~by x l
   in
-  let y =
-    carried ~by x (fun x -> magnitudes ~by x (fun m -> vector ~by ord along m))
-  in
+  let y = carried ~by x (fun x -> vector ~by ord along (unary ~by Abs x)) in
   if keepdims then y
   else
     let along = Iarray.of_list (List.sort compare along) in
@@ -3072,16 +3099,17 @@ let matrix_norm_by ~by ?(ord = `Fro) ?(keepdims = false) x =
   in
   (* [x]'s singular values, a [[…; k; 1]] column, reduced by [k] along it. *)
   let singular k x =
-    let _, s, _ = svd_by ~by ~vectors:false x in
+    let _, s, _ = svd_by ~by ~vectors:false (dtype x) x in
     reduction ~by k ~axes:[ r ] ~keepdims:true (unsqueeze_by ~by ~axes:[ -1 ] s)
   in
   let norm x =
+    let m () = unary ~by Abs x in
     match ord with
-    | `Fro -> magnitudes ~by x (fun m -> power_norm ~by 2. [ r; c ] m)
-    | `One -> magnitudes ~by x (fun m -> lines Max r c m)
-    | `NegOne -> magnitudes ~by x (fun m -> lines Min r c m)
-    | `Inf -> magnitudes ~by x (fun m -> lines Max c r m)
-    | `NegInf -> magnitudes ~by x (fun m -> lines Min c r m)
+    | `Fro -> power_norm ~by 2. [ r; c ] (m ())
+    | `One -> lines Max r c (m ())
+    | `NegOne -> lines Min r c (m ())
+    | `Inf -> lines Max c r (m ())
+    | `NegInf -> lines Min c r (m ())
     | `Nuc -> singular Sum x
     | `Two -> singular Max x
     | `NegTwo -> singular Min x
@@ -3093,19 +3121,6 @@ let matrix_norm ?ord ?keepdims x =
   matrix_norm_by ~by:"Nx.matrix_norm" ?ord ?keepdims x
 
 (* Rank and condition *)
-
-(* [f] of the real parts of [x] and [y], of one dtype the routines take:
-   themselves where they are floats. *)
-let real_parts (type v s d b) ~by (x : (v, s, d) t) (y : (v, s, d) t)
-    (f : 'r. (float, 'r, d) t -> (float, 'r, d) t -> b) : b =
-  match dtype x with
-  | D.Float32 -> f x y
-  | D.Float64 -> f x y
-  | D.Complex64 -> f (real_by ~by D.Float32 x) (real_by ~by D.Float32 y)
-  | D.Complex128 -> f (real_by ~by D.Float64 x) (real_by ~by D.Float64 y)
-  | _ ->
-      invalid_argf "%s: %a is not float32, float64, complex64 or complex128" by
-        pp_value x
 
 (* The singular values above [cutoff rtol] times the greatest counted, or
    [-1] where the greatest is NaN; a narrower float counted at its carrier,
@@ -3124,20 +3139,20 @@ let matrix_rank (type v s d) ?rtol (a : (v, s, d) t) : d int64_t =
       beside ~by a (fill ~by D.Int64 (batch a) 0L)
     end
     else
-      let _, s, _ = svd_by ~by ~vectors:false a in
-      real_parts ~by s s (fun s _ ->
-          let dt = dtype s and r = ndim s - 1 in
-          let top = reduction ~by Max ~axes:[ r ] ~keepdims:true s in
-          let v = operand 0 s and t = operand 1 top in
-          let above =
-            elementwise ~by D.Int64 [ Any s; Any top ]
-              E.(cast D.Int64 (v > const dt bound * t))
-          in
-          let count = reduction ~by Sum ~axes:[ r ] above in
-          let top = reshaped ~by (batch a) top in
-          let c = operand 0 count and t = operand 1 top in
-          elementwise ~by D.Int64 [ Any count; Any top ]
-            E.(where (t <> t) (i64 (-1)) c))
+      let (Nx_kernel.Any_float f) = real_precision ~by a in
+      let _, s, _ = svd_by ~by ~vectors:false f a in
+      let r = ndim s - 1 in
+      let top = reduction ~by Max ~axes:[ r ] ~keepdims:true s in
+      let v = operand 0 s and t = operand 1 top in
+      let above =
+        elementwise ~by D.Int64 [ Any s; Any top ]
+          E.(cast D.Int64 (v > const f bound * t))
+      in
+      let count = reduction ~by Sum ~axes:[ r ] above in
+      let top = reshaped ~by (batch a) top in
+      let c = operand 0 count and t = operand 1 top in
+      elementwise ~by D.Int64 [ Any count; Any top ]
+        E.(where (t <> t) (i64 (-1)) c)
   in
   match D.kind (dtype a) with
   | D.Float when not (Nx_kernel.full_precision (dtype a)) ->
@@ -3161,49 +3176,40 @@ let finite_matrices ~by a =
    where [inv a] is NaN. Only [`Two] reaches one operation, the
    factorisation, so only it consumes [a]. Every check runs before the
    carrier's cast, which would consume it. *)
-let cond (type v s d) ?(p = `Two) (a : (v, s, d) t) : (v, s, d) t =
+let cond (type s d) ?(p = `Two) (a : (float, s, d) t) : (float, s, d) t =
   let by = "Nx.cond" in
   matrix ~by a;
   if Stdlib.min (dim (-2) a) (dim (-1) a) = 0 then
     invalid_argf "%s: %a has no singular value" by pp_value a;
-  (match D.kind (dtype a) with
-  | D.Float when not (D.float_format (dtype a)).infinities ->
-      invalid_argf "%s: %s has no infinity" by (D.name (dtype a))
-  | _ -> ());
+  if not (D.float_format (dtype a)).infinities then
+    invalid_argf "%s: %s has no infinity" by (D.name (dtype a));
   if p <> `Two && dim (-1) a <> dim (-2) a then
     invalid_argf "%s: %a is not square" by pp_value a;
-  let number (type w r d) (a : (w, r, d) t) : (w, r, d) t =
+  let number (type r) (a : (float, r, d) t) : (float, r, d) t =
+    let dt = dtype a in
+    let inf = E.const dt Float.infinity in
     match p with
     | `Two ->
-        let _, s, _ = svd_by ~by ~vectors:false a in
+        let _, s, _ = svd_by ~by ~vectors:false dt a in
         let r = ndim s - 1 in
         let top = reduction ~by Max ~axes:[ r ] s
         and bottom = reduction ~by Min ~axes:[ r ] s in
-        real_parts ~by top bottom (fun top bottom ->
-            let dt = dtype top in
-            let t = operand 0 top and b = operand 1 bottom in
-            let zero = E.const dt 0. and inf = E.const dt Float.infinity in
-            cast_by ~by (dtype a)
-              (elementwise ~by dt [ Any top; Any bottom ]
-                 E.(where (b = zero) inf (t / b))))
+        let t = operand 0 top and b = operand 1 bottom in
+        elementwise ~by dt [ Any top; Any bottom ]
+          E.(where (b = const dt 0.) inf (t / b))
     | (`One | `Inf) as ord ->
         let a = Donate.read ~by a in
         square_matrices ~by a;
         let norm x = matrix_norm_by ~by ~ord x in
         let finite = finite_matrices ~by a in
-        real_parts ~by (norm a) (norm (inv_by ~by a)) (fun na ni ->
-            let dt = dtype na in
-            let x = operand 0 na and y = operand 1 ni in
-            let held = E.input 2 D.Int64 in
-            let inf = E.const dt Float.infinity
-            and nan = E.const dt Float.nan in
-            cast_by ~by (dtype a)
-              (elementwise ~by dt [ Any na; Any ni; Any finite ]
-                 E.(
-                   where
-                     (held = i64 0)
-                     nan
-                     (where (y <> y) inf (x * y)))))
+        let ni = norm (inv_by ~by a) in
+        let na = norm a in
+        let x = operand 0 na and y = operand 1 ni in
+        let held = E.input 2 D.Int64 in
+        elementwise ~by dt [ Any na; Any ni; Any finite ]
+          E.(
+            where (held = i64 0) (const dt Float.nan)
+              (where (y <> y) inf (x * y)))
   in
   carried ~by a number
 
@@ -5872,19 +5878,31 @@ module Prim = struct
         a : ('v, 's, 'd) Value.t;
       }
         -> ('d, ('v, 's, 'd) Value.t * ('v, 's, 'd) Value.t) linalg
-    | Svd_values : ('v, 's, 'd) Value.t -> ('d, ('v, 's, 'd) Value.t) linalg
+    | Svd_values : {
+        dtype : (float, 'r) dtype;
+        a : ('v, 's, 'd) Value.t;
+      }
+        -> ('d, (float, 'r, 'd) Value.t) linalg
     | Svd : {
         factors : Nx_kernel.factors;
+        dtype : (float, 'r) dtype;
         a : ('v, 's, 'd) Value.t;
       }
         -> ( 'd,
-             ('v, 's, 'd) Value.t * ('v, 's, 'd) Value.t * ('v, 's, 'd) Value.t
-           )
+             (float, 'r, 'd) Value.t
+             * ('v, 's, 'd) Value.t
+             * ('v, 's, 'd) Value.t )
            linalg
-    | Eigh_values : ('v, 's, 'd) Value.t -> ('d, ('v, 's, 'd) Value.t) linalg
-    | Eigh :
-        ('v, 's, 'd) Value.t
-        -> ('d, ('v, 's, 'd) Value.t * ('v, 's, 'd) Value.t) linalg
+    | Eigh_values : {
+        dtype : (float, 'r) dtype;
+        a : ('v, 's, 'd) Value.t;
+      }
+        -> ('d, (float, 'r, 'd) Value.t) linalg
+    | Eigh : {
+        dtype : (float, 'r) dtype;
+        a : ('v, 's, 'd) Value.t;
+      }
+        -> ('d, (float, 'r, 'd) Value.t * ('v, 's, 'd) Value.t) linalg
     | Eig_values : {
         dtype : (Complex.t, 'c) dtype;
         a : ('v, 's, 'd) Value.t;

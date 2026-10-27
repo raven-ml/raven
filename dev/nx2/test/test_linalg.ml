@@ -145,23 +145,30 @@ let test_forms () =
       (1, "float32", [| 3; 3 |]);
       (2, "float32", [| 3; 5 |]);
     ]
-    (Svd { factors = Reduced; a = f32 [| 3; 5 |] });
+    (Svd { factors = Reduced; dtype = Float32; a = f32 [| 3; 5 |] });
+  check "svd of a complex matrix"
+    [
+      (0, "float32", [| 3 |]);
+      (1, "complex64", [| 3; 3 |]);
+      (2, "complex64", [| 3; 5 |]);
+    ]
+    (Svd { factors = Reduced; dtype = Float32; a = c64 [| 3; 5 |] });
   check "svd complete"
     [
       (0, "float32", [| 3 |]);
       (1, "float32", [| 3; 3 |]);
       (2, "float32", [| 5; 5 |]);
     ]
-    (Svd { factors = Complete; a = f32 [| 3; 5 |] });
+    (Svd { factors = Complete; dtype = Float32; a = f32 [| 3; 5 |] });
   check "singular values"
-    [ (0, "float32", [| 3 |]) ]
-    (Svd_values (f32 [| 3; 5 |]));
+    [ (0, "float64", [| 3 |]) ]
+    (Svd_values { dtype = Float64; a = zeros D.Complex128 [| 3; 5 |] });
   check "eigh"
-    [ (0, "complex64", [| 4 |]); (1, "complex64", [| 4; 4 |]) ]
-    (Eigh (c64 [| 4; 4 |]));
+    [ (0, "float32", [| 4 |]); (1, "complex64", [| 4; 4 |]) ]
+    (Eigh { dtype = Float32; a = c64 [| 4; 4 |] });
   check "eigh's values"
     [ (0, "float32", [| 4 |]) ]
-    (Eigh_values (f32 [| 4; 4 |]));
+    (Eigh_values { dtype = Float32; a = f32 [| 4; 4 |] });
   check "eig"
     [ (0, "complex64", [| 4 |]); (1, "complex64", [| 4; 4 |]) ]
     (Eig { dtype = Complex64; a = c64 [| 4; 4 |] });
@@ -189,9 +196,24 @@ let test_rules () =
       linalg (Cholesky { triangle = Lower; a = zeros D.Float32 [| 2; 3 |] }));
   raises (fun () -> linalg (Lu (zeros D.Int32 [| 2; 2 |])));
   raises (fun () ->
-      linalg (Eigh (zeros D.Float16 [| 2; 2 |])));
+      linalg (Eigh { dtype = Float32; a = zeros D.Float16 [| 2; 2 |] }));
   raises (fun () ->
-      linalg (Svd_values (zeros D.Float64 [| 3 |])));
+      linalg (Svd_values { dtype = Float64; a = zeros D.Float64 [| 3 |] }));
+  (* A real result of another precision than [a]'s. *)
+  let into sub f =
+    raises_match (Exn.invalid_arg ~substring:("t: " ^ sub)) f
+  in
+  into "Svd of complex64 into float64" (fun () ->
+      linalg
+        (Svd_values { dtype = Float64; a = zeros D.Complex64 [| 3; 3 |] }));
+  into "Svd of float64 into float32" (fun () ->
+      linalg
+        (Svd
+           { factors = Reduced; dtype = Float32; a = zeros D.Float64 [| 3; 3 |] }));
+  into "Eigh of complex128 into float32" (fun () ->
+      linalg (Eigh { dtype = Float32; a = zeros D.Complex128 [| 2; 2 |] }));
+  into "Eigh of float32 into float16" (fun () ->
+      linalg (Eigh_values { dtype = Float16; a = zeros D.Float32 [| 2; 2 |] }));
   raises (fun () ->
       linalg
         (Eig_values { dtype = Complex64; a = zeros D.Float64 [| 2; 2 |] }));
@@ -214,7 +236,7 @@ let test_dispatch () =
   equal ~msg:"lu" (array float_exact) (Array.make 18 1.) (read lu);
   equal ~msg:"pivots" (array int64) (Array.make 6 2L) (read pivots);
   equal ~msg:"perm" (array int64) (Array.make 6 3L) (read perm);
-  let s, u, vh = linalg (Svd { factors = Reduced; a }) in
+  let s, u, vh = linalg (Svd { factors = Reduced; dtype = Float64; a }) in
   equal ~msg:"s, u, vh in the constructor's order"
     (list (array float_exact))
     [ Array.make 6 1.; Array.make 18 2.; Array.make 18 3. ]
@@ -225,10 +247,10 @@ let test_dispatch () =
     (list (array float_exact))
     [ Array.make 16 1.; Array.make 8 2. ]
     [ read q; read r ];
-  ignore (linalg (Svd_values tall));
+  ignore (linalg (Svd_values { dtype = Float64; a = tall }));
   let sq = zeros D.Complex64 [| 3; 3 |] in
-  ignore (linalg (Eigh sq));
-  ignore (linalg (Eigh_values sq));
+  ignore (linalg (Eigh { dtype = Float32; a = sq }));
+  ignore (linalg (Eigh_values { dtype = Float32; a = sq }));
   ignore (linalg (Eig { dtype = Complex64; a = sq }));
   ignore (linalg (Eig_values { dtype = Complex64; a = sq }));
   let x =
@@ -272,7 +294,7 @@ let test_split () =
     Nx.place (Two.split ~axis:0)
       (Nx.Repr.of_array Nx.Host.v (A.create Rig.host D.Float32 [| 2; 3; 3 |]))
   in
-  let w, v = linalg (Eigh a) in
+  let w, v = linalg (Eigh { dtype = Float32; a }) in
   equal ~msg:"each device its matrices"
     (list (list (list int)))
     [ [ [ 1; 3; 3 ] ]; [ [ 1; 3; 3 ] ] ]
@@ -307,6 +329,32 @@ let test_declined () =
 type full = Full : ('v, 's) D.t -> full
 
 let fulls = [ Full D.Float32; Full D.Float64; Full D.Complex64; Full D.Complex128 ]
+let reals = [ Full D.Float32; Full D.Float64 ]
+
+(* The float of a dtype's precision, the routines' real results'. *)
+type real = Real : (float, 'r) D.t -> real
+
+let real_of (type v s) (dt : (v, s) D.t) =
+  match dt with D.Float32 | D.Complex64 -> Real D.Float32 | _ -> Real D.Float64
+
+(* The complex dtype of a dtype's precision, eig's results'. *)
+type cplx = Cplx : (Complex.t, 'c) D.t -> cplx
+
+let complex_of (type v s) (dt : (v, s) D.t) =
+  match dt with
+  | D.Float32 | D.Complex64 -> Cplx D.Complex64
+  | _ -> Cplx D.Complex128
+
+(* [f] of [x]'s floats: [x] itself, or a complex [x]'s magnitudes at its
+   precision. *)
+let floats (type v s d b) (x : (v, s, d) Nx.t)
+    (f : 'r. (float, 'r, d) Nx.t -> b) : b =
+  match Nx.dtype x with
+  | D.Complex64 -> f (Nx.magnitude Nx.float32 x)
+  | D.Complex128 -> f (Nx.magnitude Nx.float64 x)
+  | D.Float32 -> f x
+  | D.Float64 -> f x
+  | _ -> fail "floats of a dtype the routines do not take"
 
 let tolerance (type v s) (dt : (v, s) D.t) =
   match dt with D.Float32 | D.Complex64 -> 1e-4 | _ -> 1e-11
@@ -362,11 +410,11 @@ let pp_case ppf (Case (dt, s, _, _)) =
     (String.concat "; " (Array.to_list (Array.map string_of_int s)))
 
 (* Matrices of up to 5 rows and columns, square ones where [square], behind a
-   batch of none, one or two. *)
-let matrices ?(square = false) () =
+   batch of none, one or two, of [dtypes] (default {!fulls}). *)
+let matrices ?(square = false) ?(dtypes = fulls) () =
   Gen.with_pp pp_case
     (let open Gen in
-     let* (Full dt) = of_list fulls in
+     let* (Full dt) = of_list dtypes in
      let* lead = of_list [ [||]; [| 0 |]; [| 1 |]; [| 2 |] ] in
      let* m = int_range 0 5 in
      let* n = if square then constant m else int_range 0 5 in
@@ -463,49 +511,44 @@ let test_svd =
       let a = value dt s re im in
       let m = s.(Array.length s - 2) and n = s.(Array.length s - 1) in
       let k = Stdlib.min m n in
-      let u, sv, vh = Nx.svd a in
-      near ~msg:"u diag s vh" (Nx.matmul (columns_by u sv) vh) a;
+      let (Real r) = real_of dt in
+      let u, sv, vh = Nx.svd r a in
+      near ~msg:"u diag s vh" (Nx.matmul (columns_by u (Nx.cast dt sv)) vh) a;
       near ~msg:"uᴴ u" (Nx.matmul (adj u) u) (identity dt (lead s) k);
       near ~msg:"vh vhᴴ" (Nx.matmul vh (adj vh)) (identity dt (lead s) k);
-      let imag = Nx.imag Nx.float64 (Nx.cast Nx.complex128 sv) in
-      equal ~msg:"s is real" float_exact 0. (worst imag);
-      let values = magnitudes sv in
+      let values = Nx.to_array (Nx.cast Nx.float64 sv) in
+      Array.iter (greater ~msg:"not negative, a zero +0" float_exact ~than:(-0.)) values;
       Array.iteri
         (fun i x ->
           if i mod k > 0 then
             less ~msg:"descending" float_exact ~than:(values.(i - 1) +. Float.min_float) x)
         values;
-      let u', sv', vh' = Nx.svd ~vectors:false a in
+      let u', sv', vh' = Nx.svd ~vectors:false r a in
       equal ~msg:"no u" (array int) (Array.append (lead s) [| m; 0 |]) (Nx.shape u');
       equal ~msg:"no vh" (array int) (Array.append (lead s) [| 0; n |]) (Nx.shape vh');
       near ~msg:"values alone" sv' sv;
-      let u, _, vh = Nx.svd ~factors:Complete a in
+      let u, _, vh = Nx.svd ~factors:Complete r a in
       near ~msg:"complete u" (Nx.matmul (adj u) u) (identity dt (lead s) m);
       near ~msg:"complete vh" (Nx.matmul vh (adj vh)) (identity dt (lead s) n))
 
 let test_svd_nan () =
   let a = Nx.create Nx.float64 [| 2; 2; 2 |] [| 1.; 2.; 3.; 4.; 1.; Float.nan; 0.; 1. |] in
-  let u, s, vh = Nx.svd a in
+  let u, s, vh = Nx.svd Nx.float64 a in
   List.iter (fun (msg, x) -> all_nan ~msg (Nx.get [ 1 ] x)) [ ("u", u); ("s", s); ("vh", vh) ];
   near ~msg:"the finite one" (Nx.matmul (columns_by (Nx.get [ 0 ] u) (Nx.get [ 0 ] s)) (Nx.get [ 0 ] vh)) (Nx.get [ 0 ] a)
 
 let test_eig =
-  prop "eig: a v is v diag w" (matrices ~square:true ())
+  prop "eig: a v is v diag w, of a real or complex a" (matrices ~square:true ())
     (fun (Case (dt, s, re, im)) ->
       cover_shapes ~square:true s;
       let n = s.(Array.length s - 1) in
-      let check (type s) (dt : (Complex.t, s) D.t) =
-        let a = value dt s re im in
-        let w, v = Nx.eig a in
-        near ~scale:10. ~msg:"a v" (Nx.matmul a v) (columns_by v w);
-        let w', v' = Nx.eig ~vectors:false a in
-        equal ~msg:"no v" (array int) (Array.append (lead s) [| n; 0 |]) (Nx.shape v');
-        near ~scale:10. ~msg:"values alone" (Nx.prod ~axes:[ -1 ] w') (Nx.prod ~axes:[ -1 ] w)
-      in
-      match dt with
-      | D.Complex64 -> check D.Complex64
-      | D.Complex128 -> check D.Complex128
-      | _ -> ())
+      let a = value dt s re im in
+      let (Cplx c) = complex_of dt in
+      let w, v = Nx.eig c a in
+      near ~scale:10. ~msg:"a v" (Nx.matmul (Nx.cast c a) v) (columns_by v w);
+      let w', v' = Nx.eig ~vectors:false c a in
+      equal ~msg:"no v" (array int) (Array.append (lead s) [| n; 0 |]) (Nx.shape v');
+      near ~scale:10. ~msg:"values alone" (Nx.prod ~axes:[ -1 ] w') (Nx.prod ~axes:[ -1 ] w))
 
 let test_eigh =
   prop "eigh: a v is v diag w, w ascending, one triangle read" (matrices ~square:true ())
@@ -514,10 +557,11 @@ let test_eigh =
       let g = value dt s re im in
       let a = Nx.add g (adj g) in
       let n = s.(Array.length s - 1) in
-      let w, v = Nx.eigh a in
-      near ~msg:"a v" (Nx.matmul a v) (columns_by v w);
+      let (Real r) = real_of dt in
+      let w, v = Nx.eigh r a in
+      near ~msg:"a v" (Nx.matmul a v) (columns_by v (Nx.cast dt w));
       near ~msg:"vᴴ v" (Nx.matmul (adj v) v) (identity dt (lead s) n);
-      let values = Nx.to_array (Nx.real Nx.float64 (Nx.cast Nx.complex128 w)) in
+      let values = Nx.to_array (Nx.cast Nx.float64 w) in
       Array.iteri
         (fun i x ->
           if i mod n > 0 then
@@ -526,9 +570,66 @@ let test_eigh =
       let noise = Nx.tril ~k:(-1) (Nx.add g g) in
       let upper = Nx.add (Nx.triu a) noise in
       let lower = Nx.add (Nx.tril a) (Nx.matrix_transpose noise) in
-      let wu, _ = Nx.eigh ~triangle:Upper upper and wl, _ = Nx.eigh lower in
+      let wu, _ = Nx.eigh ~triangle:Upper r upper and wl, _ = Nx.eigh r lower in
       near ~msg:"upper triangle" wu w;
       near ~msg:"lower triangle" wl w)
+
+(* Every float format, each a dtype a real result may take. *)
+type flt = Flt : (float, 's) D.t -> flt
+
+let float_formats =
+  D.
+    [
+      Flt Float64; Flt Float32; Flt Float16; Flt Bfloat16; Flt Float8_e4m3fn;
+      Flt Float8_e5m2; Flt Float4_e2m1fn;
+    ]
+
+(* [x]'s parts at float64, which holds every float format's values. *)
+let parts (type v s) (x : (v, s, Nx.host) Nx.t) =
+  let z = Nx.cast Nx.complex128 x in
+  Array.append
+    (Nx.to_array (Nx.real Nx.float64 z))
+    (Nx.to_array (Nx.imag Nx.float64 z))
+
+let test_rounded_once =
+  prop "a result in dt is a's precision's, rounded once to dt"
+    (matrices ~square:true ())
+    (fun (Case (dt, s, re, im)) ->
+      cover_shapes ~square:true s;
+      let g = value dt s re im in
+      let a = Nx.add g (adj g) in
+      let (Real r) = real_of dt in
+      let rounded msg want x =
+        equal ~msg (array float_exact) (parts want) (parts x)
+      in
+      let _, s_r, _ = Nx.svd r a in
+      let _, values_r, _ = Nx.svd ~vectors:false r a in
+      let w_r, _ = Nx.eigh r a in
+      let _, l_r = Nx.slogdet r a in
+      let _, res_r, _, ls_r = Nx.lstsq r a a in
+      List.iter
+        (fun (Flt f) ->
+          cover "wider" (D.bits f > D.bits r);
+          let msg what = what ^ " in " ^ D.name f in
+          let _, s', _ = Nx.svd f a in
+          rounded (msg "svd's s") (Nx.cast f s_r) s';
+          let _, s', _ = Nx.svd ~vectors:false f a in
+          rounded (msg "svd's values") (Nx.cast f values_r) s';
+          rounded (msg "eigh's w") (Nx.cast f w_r) (fst (Nx.eigh f a));
+          rounded (msg "slogdet's logabs") (Nx.cast f l_r) (snd (Nx.slogdet f a));
+          let _, res', _, ls' = Nx.lstsq f a a in
+          rounded (msg "lstsq's residuals") (Nx.cast f res_r) res';
+          rounded (msg "lstsq's s") (Nx.cast f ls_r) ls')
+        float_formats;
+      let (Cplx c) = complex_of dt in
+      let w_c, v_c = Nx.eig c a in
+      List.iter
+        (fun (Cplx c') ->
+          let msg what = what ^ " in " ^ D.name c' in
+          let w', v' = Nx.eig c' a in
+          rounded (msg "eig's w") (Nx.cast c' w_c) w';
+          rounded (msg "eig's v") (Nx.cast c' v_c) v')
+        [ Cplx D.Complex64; Cplx D.Complex128 ])
 
 let test_det =
   prop "det: det (a b) is det a det b; slogdet's sign exp logabs is det"
@@ -539,8 +640,9 @@ let test_det =
       let b = Nx.matrix_transpose a in
       let d = Nx.det a in
       near ~scale:10. ~msg:"det (a b)" (Nx.det (Nx.matmul a b)) (Nx.mul d (Nx.det b));
-      let sign, logabs = Nx.slogdet a in
-      let e = Nx.exp (Nx.real Nx.float64 (Nx.cast Nx.complex128 logabs)) in
+      let (Real r) = real_of dt in
+      let sign, logabs = Nx.slogdet r a in
+      let e = Nx.exp (Nx.cast Nx.float64 logabs) in
       near ~scale:10. ~msg:"sign exp logabs" (Nx.mul sign (Nx.cast dt e)) d;
       near ~tol:(tolerance dt) ~msg:"|sign|" (Nx.cast Nx.float64 (Nx.magnitude Nx.float64 (Nx.cast Nx.complex128 sign)))
         (Nx.ones Nx.float64 (lead s)))
@@ -550,16 +652,16 @@ let test_det_cases () =
   equal ~msg:"no row" float_exact 1. (one (Nx.det (Nx.zeros Nx.float64 [| 0; 0 |])));
   equal ~msg:"a swap" float_exact (-1.)
     (one (Nx.det (Nx.create Nx.float64 [| 2; 2 |] [| 0.; 1.; 1.; 0. |])));
-  let sign, logabs = Nx.slogdet (Nx.create Nx.float64 [| 2; 2 |] [| 1.; 2.; 2.; 4. |]) in
+  let slogdet a = Nx.slogdet Nx.float64 a in
+  let sign, logabs = slogdet (Nx.create Nx.float64 [| 2; 2 |] [| 1.; 2.; 2.; 4. |]) in
   equal ~msg:"singular sign" float_exact 0. (one sign);
   equal ~msg:"singular logabs" float_exact Float.neg_infinity (one logabs);
   let big = Nx.mul_s (Nx.eye Nx.float64 200) 100. in
-  let sign, logabs = Nx.slogdet big in
+  let sign, logabs = slogdet big in
   equal ~msg:"beyond the range" (float 1e-9) (200. *. Float.log 100.) (one logabs);
   equal ~msg:"its sign" float_exact 1. (one sign);
-  let _, logabs = Nx.slogdet (Nx.create Nx.complex128 [| 1; 1 |] [| { Complex.re = 3.; im = 4. } |]) in
-  equal ~msg:"complex logabs" (float 1e-15) (Float.log 5.) (Nx.item [] logabs).re;
-  equal ~msg:"its imaginary part" float_exact 0. (Nx.item [] logabs).im;
+  let _, logabs = slogdet (Nx.create Nx.complex128 [| 1; 1 |] [| { Complex.re = 3.; im = 4. } |]) in
+  equal ~msg:"complex logabs" (float 1e-15) (Float.log 5.) (Nx.item [] logabs);
   (* A zero determinant is +0 whatever the interchanges and the pivots'
      signs: [[-0]] has none, [[1; 2]; [2; 4]] one. *)
   let plus_zero ~msg x = equal ~msg (pair float_exact bool) (0., false) (x, Float.sign_bit x) in
@@ -567,14 +669,14 @@ let test_det_cases () =
     (fun (msg, s, xs) ->
       let a = Nx.create Nx.float64 s xs in
       plus_zero ~msg (one (Nx.det a));
-      plus_zero ~msg:(msg ^ ", slogdet's sign") (one (fst (Nx.slogdet a))))
+      plus_zero ~msg:(msg ^ ", slogdet's sign") (one (fst (slogdet a))))
     [ ("-0", [| 1; 1 |], [| -0. |]);
       ("a -0 pivot", [| 2; 2 |], [| 1.; 0.; 0.; -0. |]);
       ("one interchange", [| 2; 2 |], [| 1.; 2.; 2.; 4. |]) ];
   let z = Nx.det (Nx.create Nx.complex128 [| 1; 1 |] [| { Complex.re = -0.; im = -0. } |]) in
   plus_zero ~msg:"complex -0, real part" (Nx.item [] z).re;
   plus_zero ~msg:"complex -0, imaginary part" (Nx.item [] z).im;
-  let sign, logabs = Nx.slogdet (Nx.create Nx.float64 [| 2; 2 |] [| Float.infinity; 0.; 0.; 0. |]) in
+  let sign, logabs = slogdet (Nx.create Nx.float64 [| 2; 2 |] [| Float.infinity; 0.; 0.; 0. |]) in
   equal ~msg:"an infinite pivot's sign" float_exact 0. (one sign);
   equal ~msg:"an infinite pivot's logabs" float_exact Float.neg_infinity (one logabs)
 
@@ -583,19 +685,19 @@ let test_det_cases () =
 let test_nan_alone () =
   let a = Nx.create Nx.float64 [| 2; 2; 2 |] [| 2.; 1.; 1.; 3.; 1.; Float.nan; Float.nan; 1. |] in
   let finite = Nx.get [ 0 ] a in
-  let w, v = Nx.eigh a in
+  let w, v = Nx.eigh Nx.float64 a in
   near ~msg:"eigh" (Nx.matmul (Nx.get [ 0 ] a) (Nx.get [ 0 ] v)) (columns_by (Nx.get [ 0 ] v) (Nx.get [ 0 ] w));
   all_nan ~msg:"eigh's w" (Nx.get [ 1 ] w);
   all_nan ~msg:"eigh's v" (Nx.get [ 1 ] v);
   let c = Nx.cast Nx.complex128 a in
-  let w, v = Nx.eig c in
+  let w, v = Nx.eig Nx.complex128 a in
   near ~msg:"eig" (Nx.matmul (Nx.get [ 0 ] c) (Nx.get [ 0 ] v)) (columns_by (Nx.get [ 0 ] v) (Nx.get [ 0 ] w));
   all_nan ~msg:"eig's w" (Nx.get [ 1 ] w);
   all_nan ~msg:"eig's v" (Nx.get [ 1 ] v);
   let d = Nx.det a in
   equal ~msg:"det" (float 1e-12) 5. (Nx.item [ 0 ] d);
   all_nan ~msg:"det's NaN" (Nx.get [ 1 ] d);
-  let sign, logabs = Nx.slogdet a in
+  let sign, logabs = Nx.slogdet Nx.float64 a in
   equal ~msg:"slogdet" (float 1e-12) (Float.log 5.) (Nx.item [ 0 ] logabs);
   equal ~msg:"slogdet's sign" float_exact 1. (Nx.item [ 0 ] sign);
   all_nan ~msg:"slogdet's NaN sign" (Nx.get [ 1 ] sign);
@@ -671,7 +773,8 @@ let test_lstsq =
       let bs = Array.append (lead s) [| m; 2 |] in
       let k = Array.fold_left ( * ) 1 bs in
       let b = Nx.cast dt (Nx.sin (Nx.reshape bs (Nx.arange_f Nx.float64 0. (Float.of_int k) 1.))) in
-      let x, residuals, rank, sv = Nx.lstsq a b in
+      let (Real f) = real_of dt in
+      let x, residuals, rank, sv = Nx.lstsq f a b in
       let r = Nx.sub b (Nx.matmul a x) in
       let ar = Nx.matmul (adj a) r in
       near ~scale:10. ~msg:"aᴴ r" ar (Nx.zeros_like ar);
@@ -682,23 +785,24 @@ let test_lstsq =
         (fun i v ->
           equal ~msg:"residuals" (float (tolerance dt *. 10. *. Float.max 1. v)) v residuals.(i))
         squares;
-      let _, s', _ = Nx.svd ~vectors:false a in
-      equal ~msg:"s" (array int) (Nx.shape s') (Nx.shape sv);
+      let _, s', _ = Nx.svd ~vectors:false f a in
+      equal ~msg:"s" (array float_exact) (Nx.to_array s') (Nx.to_array sv);
       let full = Int64.of_int (Stdlib.min m s.(Array.length s - 1)) in
       Array.iter (equal ~msg:"rank" int64 full) (Nx.to_array rank))
 
 let test_lstsq_rank () =
   let a = Nx.create Nx.float64 [| 3; 2 |] [| 1.; 1.; 2.; 2.; 3.; 3. |] in
-  let _, _, rank, _ = Nx.lstsq a (Nx.ones Nx.float64 [| 3 |]) in
+  let lstsq ?rtol a b = Nx.lstsq ?rtol Nx.float64 a b in
+  let _, _, rank, _ = lstsq a (Nx.ones Nx.float64 [| 3 |]) in
   equal ~msg:"repeated column" int64 1L (Nx.item [] rank);
   let a = Nx.create Nx.float64 [| 2; 2 |] [| 1.; Float.nan; 0.; 1. |] in
-  let x, _, rank, _ = Nx.lstsq a (Nx.ones Nx.float64 [| 2 |]) in
+  let x, _, rank, _ = lstsq a (Nx.ones Nx.float64 [| 2 |]) in
   equal ~msg:"failed rank" int64 (-1L) (Nx.item [] rank);
   all_nan ~msg:"failed x" x;
   (* 1e-3 is at or below 6e-4 · max m n · 1: it counts as zero. *)
   let a = Nx.create Nx.float64 [| 2; 2 |] [| 1.; 0.; 0.; 1e-3 |] in
   let b = Nx.ones Nx.float64 [| 2 |] in
-  let x, _, rank, _ = Nx.lstsq ~rtol:6e-4 a b in
+  let x, _, rank, _ = lstsq ~rtol:6e-4 a b in
   equal ~msg:"rtol's rank" int64 1L (Nx.item [] rank);
   equal ~msg:"rtol's x" (array (float 1e-15)) [| 1.; 0. |] (Nx.to_array x);
   equal ~msg:"pinv's rtol" (array (float 1e-15)) [| 1.; 0.; 0.; 0. |]
@@ -743,7 +847,8 @@ let reference ord (m : float array) =
   else sum (fun v -> v ** ord) ** (1. /. ord)
 
 let test_vector_norms =
-  prop "vector_norm: each order is its definition" (matrices ())
+  prop "vector_norm: each order is its definition, of a complex z's magnitudes"
+    (matrices ())
     (fun (Case (dt, s, re, im)) ->
       cover_shapes s;
       (* Zero elements, which order 0 skips and a negative order meets. *)
@@ -756,17 +861,20 @@ let test_vector_norms =
       let extremes = if n > 0 then [ Float.infinity; Float.neg_infinity ] else [] in
       List.iter
         (fun ord ->
-          let y = magnitudes (Nx.vector_norm ~ord ~axes:[ -1 ] x) in
+          let y =
+            floats x (fun m -> magnitudes (Nx.vector_norm ~ord ~axes:[ -1 ] m))
+          in
           for i = 0 to rows - 1 do
             let want = reference ord (Array.sub m (i * n) n) in
             equal ~msg:(Printf.sprintf "ord %g" ord) (close (tolerance dt)) want y.(i)
           done)
         ([ 2.; 1.; 3.; 0.5; 0.; -1.; -2.; -0.5 ] @ extremes);
       equal ~msg:"every axis" (close (tolerance dt)) (reference 2. m)
-        (magnitudes (Nx.vector_norm x)).(0))
+        (floats x (fun m -> magnitudes (Nx.vector_norm m))).(0))
 
 let test_matrix_norms =
-  prop "matrix_norm: each order is its definition" (matrices ())
+  prop "matrix_norm: each order is its definition, and a complex z's forms"
+    (matrices ())
     (fun (Case (dt, s, re, im)) ->
       cover_shapes s;
       let x = value dt s re im in
@@ -774,21 +882,34 @@ let test_matrix_norms =
       assume (m > 0 && n > 0);
       let f64 y = Nx.magnitude Nx.float64 (Nx.cast Nx.complex128 y) in
       let abs = f64 x in
-      let norm ord = f64 (Nx.matrix_norm ~ord x) in
+      let norm ord = floats x (fun m -> f64 (Nx.matrix_norm ~ord m)) in
       let near = near ~tol:(tolerance dt) in
       near ~msg:"fro" (norm `Fro) (Nx.sqrt (Nx.sum ~axes:[ -2; -1 ] (Nx.square abs)));
       near ~msg:"one" (norm `One) (Nx.max ~axes:[ -1 ] (Nx.sum ~axes:[ -2 ] abs));
       near ~msg:"negone" (norm `NegOne) (Nx.min ~axes:[ -1 ] (Nx.sum ~axes:[ -2 ] abs));
       near ~msg:"inf" (norm `Inf) (Nx.max ~axes:[ -1 ] (Nx.sum ~axes:[ -1 ] abs));
       near ~msg:"neginf" (norm `NegInf) (Nx.min ~axes:[ -1 ] (Nx.sum ~axes:[ -1 ] abs));
-      let _, sv, _ = Nx.svd ~vectors:false (Nx.cast Nx.complex128 x) in
-      let sv = Nx.real Nx.float64 sv in
-      near ~msg:"two" (norm `Two) (Nx.max ~axes:[ -1 ] sv);
-      near ~msg:"negtwo" (norm `NegTwo) (Nx.min ~axes:[ -1 ] sv);
-      near ~msg:"nuc" (norm `Nuc) (Nx.sum ~axes:[ -1 ] sv);
-      near ~msg:"default" (f64 (Nx.matrix_norm x)) (norm `Fro);
-      let kept = Nx.matrix_norm ~keepdims:true x in
-      equal ~msg:"keepdims" (array int) (Array.append (lead s) [| 1; 1 |]) (Nx.shape kept))
+      let _, sv, _ = Nx.svd ~vectors:false Nx.float64 (Nx.cast Nx.complex128 x) in
+      (* A complex z's from svd's values, a real x's from matrix_norm. *)
+      let singular (ord : [ `Two | `NegTwo | `Nuc ]) =
+        match D.kind dt with
+        | D.Complex -> (
+            let (Real r) = real_of dt in
+            let _, s, _ = Nx.svd ~vectors:false r x in
+            match ord with
+            | `Two -> f64 (Nx.max ~axes:[ -1 ] s)
+            | `NegTwo -> f64 (Nx.min ~axes:[ -1 ] s)
+            | `Nuc -> f64 (Nx.sum ~axes:[ -1 ] s))
+        | _ -> norm (ord :> [ `Two | `NegTwo | `Nuc | `Fro | `One | `NegOne | `Inf | `NegInf ])
+      in
+      near ~msg:"two" (singular `Two) (Nx.max ~axes:[ -1 ] sv);
+      near ~msg:"negtwo" (singular `NegTwo) (Nx.min ~axes:[ -1 ] sv);
+      near ~msg:"nuc" (singular `Nuc) (Nx.sum ~axes:[ -1 ] sv);
+      floats x (fun m ->
+          near ~msg:"default" (f64 (Nx.matrix_norm m)) (norm `Fro);
+          let kept = Nx.matrix_norm ~keepdims:true m in
+          equal ~msg:"keepdims" (array int) (Array.append (lead s) [| 1; 1 |])
+            (Nx.shape kept)))
 
 let test_norm_cases () =
   let f64 xs = Nx.create Nx.float64 [| Array.length xs |] xs in
@@ -809,9 +930,9 @@ let test_norm_cases () =
       let y = one (Nx.vector_norm ~ord (f64 [| Float.nan; 0.; 1. |])) in
       equal ~msg:(Printf.sprintf "NaN at order %g" ord) bool true (Float.is_nan y))
     [ 2.; 1.; 0.; -1.; -2.; 3.; Float.infinity; Float.neg_infinity ];
-  let z = Nx.vector_norm (Nx.create Nx.complex64 [| 1 |] [| { Complex.re = 3.; im = 4. } |]) in
-  equal ~msg:"complex" (float 1e-6) 5. (Nx.item [] z).re;
-  equal ~msg:"its imaginary part" float_exact 0. (Nx.item [] z).im;
+  let z = Nx.create Nx.complex64 [| 1 |] [| { Complex.re = 3.; im = 4. } |] in
+  equal ~msg:"complex" (float 1e-6) 5.
+    (one (Nx.vector_norm (Nx.magnitude Nx.float32 z)));
   let x = Nx.ones Nx.float32 [| 2; 3; 4 |] in
   equal ~msg:"every axis" (array int) [||] (Nx.shape (Nx.vector_norm x));
   equal ~msg:"every axis's value" (float 1e-6) (Float.sqrt 24.) (one (Nx.vector_norm x));
@@ -862,17 +983,24 @@ let law_matrix_rank =
 (* cond is its definition: the greatest singular value over the least, the
    norms of [a] and [inv a] multiplied. *)
 let law_cond =
-  prop "cond: each norm is its definition" (matrices ~square:true ())
+  prop "cond: each norm is its definition"
+    (matrices ~square:true ~dtypes:reals ())
     (fun (Case (dt, s, re, im)) ->
-      let x = value dt s re im in
-      assume (s.(Array.length s - 1) > 0);
-      let f64 y = Nx.magnitude Nx.float64 (Nx.cast Nx.complex128 y) in
-      let norm ord y = f64 (Nx.matrix_norm ~ord y) in
-      assume (Array.for_all (fun v -> v > 1e-3) (Nx.to_array (norm `NegTwo x)));
-      let near = near ~tol:(tolerance dt) in
-      near ~msg:"two" (f64 (Nx.cond x)) (Nx.div (norm `Two x) (norm `NegTwo x));
-      near ~msg:"one" (f64 (Nx.cond ~p:`One x)) (Nx.mul (norm `One x) (norm `One (Nx.inv x)));
-      near ~msg:"inf" (f64 (Nx.cond ~p:`Inf x)) (Nx.mul (norm `Inf x) (norm `Inf (Nx.inv x))))
+      let law (type r) (dt : (float, r) D.t) =
+        let x = value dt s re im in
+        assume (s.(Array.length s - 1) > 0);
+        let f64 y = Nx.cast Nx.float64 y in
+        let norm ord y = f64 (Nx.matrix_norm ~ord y) in
+        assume (Array.for_all (fun v -> v > 1e-3) (Nx.to_array (norm `NegTwo x)));
+        let near = near ~tol:(tolerance dt) in
+        near ~msg:"two" (f64 (Nx.cond x)) (Nx.div (norm `Two x) (norm `NegTwo x));
+        near ~msg:"one" (f64 (Nx.cond ~p:`One x)) (Nx.mul (norm `One x) (norm `One (Nx.inv x)));
+        near ~msg:"inf" (f64 (Nx.cond ~p:`Inf x)) (Nx.mul (norm `Inf x) (norm `Inf (Nx.inv x)))
+      in
+      match dt with
+      | D.Float32 -> law dt
+      | D.Float64 -> law dt
+      | _ -> fail "cond of a dtype it does not take")
 
 let test_rank_cond_cases () =
   let invalid_by ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f in
@@ -912,9 +1040,6 @@ let test_rank_cond_cases () =
   (* A norm that overflows is no infinity the matrix holds. *)
   equal ~msg:"an overflowed norm" float_exact Float.infinity
     (one (Nx.cond ~p:`One (f64 [| 2; 2 |] [| 1e308; 0.; 1e308; 1. |])));
-  let z = Nx.cast Nx.complex128 d in
-  equal ~msg:"complex" (float 1e-12) 4. (one (Nx.cond z)).re;
-  equal ~msg:"its imaginary part" float_exact 0. (one (Nx.cond z)).im;
   equal ~msg:"wide" (array int) [| 2 |] (Nx.shape (Nx.cond (Nx.ones Nx.float32 [| 2; 2; 3 |])));
   invalid_by ~by:"Nx.matrix_rank" (fun () -> Nx.matrix_rank (Nx.zeros Nx.float32 [| 3 |]));
   invalid_by ~by:"Nx.matrix_rank" (fun () -> Nx.matrix_rank (Nx.zeros Nx.int32 [| 2; 2 |]));
@@ -922,8 +1047,7 @@ let test_rank_cond_cases () =
       Nx.matrix_rank ~rtol:(-1.) (Nx.zeros Nx.float32 [| 2; 2 |]));
   invalid_by ~by:"Nx.cond" (fun () -> Nx.cond (Nx.eye Nx.float8_e4m3fn 2));
   invalid_by ~by:"Nx.cond" (fun () -> Nx.cond (Nx.zeros Nx.float32 [| 2; 0 |]));
-  invalid_by ~by:"Nx.cond" (fun () -> Nx.cond ~p:`One (Nx.ones Nx.float32 [| 2; 3 |]));
-  invalid_by ~by:"Nx.cond" (fun () -> Nx.cond (Nx.ones Nx.uint8 [| 2; 2 |]))
+  invalid_by ~by:"Nx.cond" (fun () -> Nx.cond ~p:`One (Nx.ones Nx.float32 [| 2; 3 |]))
 
 (* Narrow floats: a norm computes at float32 and rounds once. *)
 
@@ -1008,12 +1132,19 @@ let test_refusals () =
   invalid_by ~by:"Nx.solve" (fun () -> Nx.solve (Nx.eye Nx.float64 2) (Nx.ones Nx.float64 [| 1; 1; 2; 1 |]));
   invalid_by ~by:"Nx.solve_triangular" (fun () ->
       Nx.solve_triangular (Nx.ones Nx.float64 [| 3; 2; 2 |]) (Nx.ones Nx.float64 [| 2; 2; 1 |]));
-  invalid_by ~by:"Nx.lstsq" (fun () -> Nx.lstsq ~rtol:(-1.) r (Nx.ones Nx.float64 [| 2 |]));
-  invalid_by ~by:"Nx.lstsq" (fun () -> Nx.lstsq ~rtol:Float.nan r (Nx.ones Nx.float64 [| 2 |]));
+  invalid_by ~by:"Nx.lstsq" (fun () -> Nx.lstsq ~rtol:(-1.) Nx.float64 r (Nx.ones Nx.float64 [| 2 |]));
+  invalid_by ~by:"Nx.lstsq" (fun () -> Nx.lstsq ~rtol:Float.nan Nx.float64 r (Nx.ones Nx.float64 [| 2 |]));
+  invalid_by ~by:"Nx.svd" (fun () -> Nx.svd Nx.float32 h);
+  invalid_by ~by:"Nx.svd" (fun () -> Nx.svd Nx.float64 (Nx.ones Nx.float64 [| 3 |]));
+  invalid_by ~by:"Nx.eigh" (fun () -> Nx.eigh Nx.float32 h);
+  invalid_by ~by:"Nx.eigh" (fun () -> Nx.eigh Nx.float64 r);
+  invalid_by ~by:"Nx.eig" (fun () -> Nx.eig Nx.complex64 h);
+  invalid_by ~by:"Nx.eig" (fun () -> Nx.eig Nx.complex128 (Nx.ones Nx.int32 [| 2; 2 |]));
+  invalid_by ~by:"Nx.eig" (fun () -> Nx.eig Nx.complex128 r);
+  invalid_by ~by:"Nx.slogdet" (fun () -> Nx.slogdet Nx.float32 h);
+  invalid_by ~by:"Nx.lstsq" (fun () -> Nx.lstsq Nx.float32 h (Nx.ones Nx.float16 [| 2 |]));
   invalid_by ~by:"Nx.pinv" (fun () -> Nx.pinv ~hermitian:true r);
   invalid_by ~by:"Nx.pinv" (fun () -> Nx.pinv ~hermitian:true (Nx.zeros Nx.float64 [| 0; 3 |]));
-  let i = Nx.ones Nx.int32 [| 2; 2 |] in
-  invalid_by ~by:"Nx.vector_norm" (fun () -> Nx.vector_norm i);
   invalid_by ~by:"Nx.vector_norm" (fun () -> Nx.vector_norm ~ord:Float.nan r);
   invalid_by ~by:"Nx.vector_norm" (fun () -> Nx.vector_norm ~axes:[ 2 ] r);
   invalid_by ~by:"Nx.vector_norm" (fun () -> Nx.vector_norm ~axes:[ 0; 0 ] r);
@@ -1021,7 +1152,6 @@ let test_refusals () =
       Nx.vector_norm ~ord:Float.infinity (Nx.zeros Nx.float64 [| 0 |]));
   invalid_by ~by:"Nx.vector_norm" (fun () ->
       Nx.vector_norm ~ord:Float.neg_infinity (Nx.zeros Nx.float64 [| 2; 0 |]));
-  invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm i);
   invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm (Nx.ones Nx.float64 [| 3 |]));
   invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm ~ord:`Two (Nx.zeros Nx.float64 [| 2; 0 |]));
   invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm ~ord:`One (Nx.zeros Nx.float64 [| 2; 0 |]))
@@ -1039,11 +1169,14 @@ let test_composites_named () =
   let module Declines = (val Nx.devices ~kernels:(module Gatherless) [ m 0 ]) in
   let on s = Nx.place Declines.on (Nx.Repr.of_array Nx.Host.v (A.create Rig.host D.Float64 s)) in
   let a = on [| 2; 2 |] in
-  invalid_by ~by:"Nx.lstsq" (fun () -> Nx.lstsq a (on [| 2 |]));
+  invalid_by ~by:"Nx.lstsq" (fun () -> Nx.lstsq Nx.float64 a (on [| 2 |]));
+  invalid_by ~by:"Nx.svd" (fun () -> Nx.svd Nx.float32 a);
+  invalid_by ~by:"Nx.eigh" (fun () -> Nx.eigh Nx.float32 a);
+  invalid_by ~by:"Nx.eig" (fun () -> Nx.eig Nx.complex64 a);
   invalid_by ~by:"Nx.pinv" (fun () -> Nx.pinv a);
   invalid_by ~by:"Nx.pinv" (fun () -> Nx.pinv ~hermitian:true a);
   invalid_by ~by:"Nx.det" (fun () -> Nx.det a);
-  invalid_by ~by:"Nx.slogdet" (fun () -> Nx.slogdet a);
+  invalid_by ~by:"Nx.slogdet" (fun () -> Nx.slogdet Nx.float64 a);
   invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm ~ord:`Nuc a);
   invalid_by ~by:"Nx.matrix_norm" (fun () -> Nx.matrix_norm ~ord:`Two a)
 
@@ -1058,7 +1191,8 @@ let test_dead_named () =
   let square () = dead Nx.float64 [| 2; 2 |] 1. in
   invalid_by ~by:"Nx.cholesky" (fun () ->
       Nx.cholesky ~triangle:Upper (square ()));
-  invalid_by ~by:"Nx.eigh" (fun () -> Nx.eigh ~triangle:Upper (square ()));
+  invalid_by ~by:"Nx.eigh" (fun () ->
+      Nx.eigh ~triangle:Upper Nx.float64 (square ()));
   invalid_by ~by:"Nx.solve_triangular" (fun () ->
       Nx.solve_triangular ~transpose:Transpose (Nx.eye Nx.complex64 2)
         (dead Nx.complex64 [| 2; 1 |] Complex.one))
@@ -1086,6 +1220,7 @@ let () =
              test "svd fails in its matrix alone" test_svd_nan;
              test_eig;
              test_eigh;
+             test_rounded_once;
            ];
          group "determinants and solves"
            [

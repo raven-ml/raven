@@ -401,21 +401,28 @@ external solve_triangular :
   Nx_array.answer
   = "nx_cpu_solve_triangular_byte" "nx_cpu_solve_triangular"
 
+(* Whether the real result [x] is of [a]'s precision, as eigh and svd store
+   it. *)
+let real_of a x =
+  Nx_kernel.same_precision (Nx_array.dtype a) (Nx_array.dtype x)
+
 external eigh_c :
-  w:('v, 's) Nx_array.t ->
+  w:(float, 'r) Nx_array.t ->
   ('v, 's) Nx_array.t option ->
   ('v, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_eigh"
 
-let eigh ~w ?v a = eigh_c ~w v a
+let eigh ~w ?v a =
+  if not (real_of a w) then Nx_array.Wrong_dtype else eigh_c ~w v a
 
 external svd_c :
-  s:('v, 's) Nx_array.t ->
+  s:(float, 'r) Nx_array.t ->
   (u:('v, 's) Nx_array.t * vh:('v, 's) Nx_array.t) option ->
   ('v, 's) Nx_array.t ->
   Nx_array.answer = "nx_cpu_svd"
 
-let svd ~s ?vectors a = svd_c ~s vectors a
+let svd ~s ?vectors a =
+  if not (real_of a s) then Nx_array.Wrong_dtype else svd_c ~s vectors a
 
 external eig_c :
   w:(Complex.t, 'c) Nx_array.t ->

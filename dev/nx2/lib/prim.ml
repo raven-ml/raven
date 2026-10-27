@@ -217,10 +217,10 @@ let linalg_operands : type d r. (d, r) linalg -> d any list = function
   | Cholesky { a; _ } -> [ Any a ]
   | Lu a -> [ Any a ]
   | Qr { a; _ } -> [ Any a ]
-  | Svd_values a -> [ Any a ]
+  | Svd_values { a; _ } -> [ Any a ]
   | Svd { a; _ } -> [ Any a ]
-  | Eigh_values a -> [ Any a ]
-  | Eigh a -> [ Any a ]
+  | Eigh_values { a; _ } -> [ Any a ]
+  | Eigh { a; _ } -> [ Any a ]
   | Eig_values { a; _ } -> [ Any a ]
   | Eig { a; _ } -> [ Any a ]
   | Solve_triangular { a; b; _ } -> [ Any a; Any b ]
@@ -268,18 +268,18 @@ let map_linalg : type d r.
   | Qr r ->
       let a = m 0 r.a in
       if a == r.a then l else Qr { r with a }
-  | Svd_values a ->
-      let a' = m 0 a in
-      if a' == a then l else Svd_values a'
+  | Svd_values r ->
+      let a = m 0 r.a in
+      if a == r.a then l else Svd_values { r with a }
   | Svd r ->
       let a = m 0 r.a in
       if a == r.a then l else Svd { r with a }
-  | Eigh_values a ->
-      let a' = m 0 a in
-      if a' == a then l else Eigh_values a'
-  | Eigh a ->
-      let a' = m 0 a in
-      if a' == a then l else Eigh a'
+  | Eigh_values r ->
+      let a = m 0 r.a in
+      if a == r.a then l else Eigh_values { r with a }
+  | Eigh r ->
+      let a = m 0 r.a in
+      if a == r.a then l else Eigh { r with a }
   | Eig_values r ->
       let a = m 0 r.a in
       if a == r.a then l else Eig_values { r with a }
@@ -1551,14 +1551,19 @@ let linalg_shapes (type d r) ~by (l : (d, r) linalg) =
         invalid_argf "%s: %s does not take %s" by (routine_name l)
           (D.name (dtype x)))
     (linalg_operands l);
-  let eig_into c a =
-    if not (Nx_kernel.same_precision (dtype a) c) then
-      invalid_argf "%s: Eig of %s into %s" by (D.name (dtype a)) (D.name c)
+  let into r a =
+    if not (Nx_kernel.same_precision (dtype a) r) then
+      invalid_argf "%s: %s of %s into %s" by (routine_name l)
+        (D.name (dtype a)) (D.name r)
   in
   (match l with
-  | Eig_values { dtype = c; a } -> eig_into c a
-  | Eig { dtype = c; a } -> eig_into c a
-  | _ -> ());
+  | Svd_values { dtype = r; a } -> into r a
+  | Svd { dtype = r; a; _ } -> into r a
+  | Eigh_values { dtype = r; a } -> into r a
+  | Eigh { dtype = r; a } -> into r a
+  | Eig_values { dtype = c; a } -> into c a
+  | Eig { dtype = c; a } -> into c a
+  | Cholesky _ | Lu _ | Qr _ | Solve_triangular _ -> ());
   let one r = Result.map (fun s -> [| s |]) r in
   let two r = Result.map (fun (s, s') -> [| s; s' |]) r in
   let three r = Result.map (fun (s, s', s'') -> [| s; s'; s'' |]) r in
@@ -1567,10 +1572,10 @@ let linalg_shapes (type d r) ~by (l : (d, r) linalg) =
     | Cholesky { a; _ } -> one (Shape.cholesky (shape a))
     | Lu a -> three (Shape.lu (shape a))
     | Qr { factors; a } -> two (Shape.qr factors (shape a))
-    | Svd_values a -> one (Shape.svd_values (shape a))
-    | Svd { factors; a } -> three (Shape.svd factors (shape a))
-    | Eigh_values a -> one (Shape.eigh_values (shape a))
-    | Eigh a -> two (Shape.eigh (shape a))
+    | Svd_values { a; _ } -> one (Shape.svd_values (shape a))
+    | Svd { factors; a; _ } -> three (Shape.svd factors (shape a))
+    | Eigh_values { a; _ } -> one (Shape.eigh_values (shape a))
+    | Eigh { a; _ } -> two (Shape.eigh (shape a))
     | Eig_values { a; _ } -> one (Shape.eigh_values (shape a))
     | Eig { a; _ } -> two (Shape.eigh (shape a))
     | Solve_triangular { a; b; _ } ->
@@ -1650,10 +1655,10 @@ let linalg_results : type d r.
   | Cholesky { a; _ } -> one 0 (dtype a)
   | Lu a -> three (dtype a) D.Int64 D.Int64
   | Qr { a; _ } -> two (dtype a) (dtype a)
-  | Svd_values a -> one 0 (dtype a)
-  | Svd { a; _ } -> three (dtype a) (dtype a) (dtype a)
-  | Eigh_values a -> one 0 (dtype a)
-  | Eigh a -> two (dtype a) (dtype a)
+  | Svd_values { dtype; _ } -> one 0 dtype
+  | Svd { dtype = r; a; _ } -> three r (dtype a) (dtype a)
+  | Eigh_values { dtype; _ } -> one 0 dtype
+  | Eigh { dtype = r; a } -> two r (dtype a)
   | Eig_values { dtype; _ } -> one 0 dtype
   | Eig { dtype; _ } -> two dtype dtype
   | Solve_triangular { a; _ } -> one 0 (dtype a)

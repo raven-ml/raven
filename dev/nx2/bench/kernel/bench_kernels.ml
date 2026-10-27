@@ -1103,6 +1103,14 @@ let linalg name call (module K : Nx_kernel.S) =
 
 let shape x = A.Layout.shape (A.layout x)
 let like x s = A.create Rig.host (A.dtype x) s
+
+(* [f] of an array of [shape] of the float of [x]'s precision: svd's and
+   eigh's values. *)
+let real_like (type v s b) (x : (v, s) A.t) shape
+    (f : 'r. (float, 'r) A.t -> b) : b =
+  match A.dtype x with
+  | D.Float32 | D.Complex64 -> f (A.create Rig.host f32 shape)
+  | _ -> f (A.create Rig.host f64 shape)
 let positions_of s = A.create Rig.host D.Int64 s
 
 let linalg_rows =
@@ -1149,32 +1157,30 @@ let linalg_rows =
     routine "eigh"
       (fun (module K : Nx_kernel.S) a ->
         let w, v = Result.get_ok (Nx_kernel.Shape.eigh (shape a)) in
-        let w = like a w and v = like a v in
-        fun () -> K.eigh ~w ~v a)
+        let v = like a v in
+        real_like a w (fun w () -> K.eigh ~w ~v a))
       dt ?batch n ~count:(10 * n * n * n / 3)
   in
   let eigvalsh dt ?batch n =
     routine "eigvalsh"
       (fun (module K : Nx_kernel.S) a ->
         let w = Result.get_ok (Nx_kernel.Shape.eigh_values (shape a)) in
-        let w = like a w in
-        fun () -> K.eigh ~w a)
+        real_like a w (fun w () -> K.eigh ~w a))
       dt ?batch n ~count:(4 * n * n * n / 3)
   in
   let svd dt ?batch n =
     routine "svd"
       (fun (module K : Nx_kernel.S) a ->
         let s, u, vh = Result.get_ok (Nx_kernel.Shape.svd Reduced (shape a)) in
-        let s = like a s and u = like a u and vh = like a vh in
-        fun () -> K.svd ~s ~vectors:(~u, ~vh) a)
+        let u = like a u and vh = like a vh in
+        real_like a s (fun s () -> K.svd ~s ~vectors:(~u, ~vh) a))
       dt ?batch n ~count:(20 * n * n * n / 3)
   in
   let svdvals dt ?batch n =
     routine "svdvals"
       (fun (module K : Nx_kernel.S) a ->
         let s = Result.get_ok (Nx_kernel.Shape.svd_values (shape a)) in
-        let s = like a s in
-        fun () -> K.svd ~s a)
+        real_like a s (fun s () -> K.svd ~s a))
       dt ?batch n ~count:(8 * n * n * n / 3)
   in
   (* float64 alone: its results are complex128. *)

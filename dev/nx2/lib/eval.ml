@@ -152,10 +152,13 @@ let replayed : type r d.
       one (Linalg (Cholesky { triangle; a = sub a }))
   | Linalg (Lu a) -> three (Linalg (Lu (sub a)))
   | Linalg (Qr { factors; a }) -> two (Linalg (Qr { factors; a = sub a }))
-  | Linalg (Svd_values a) -> one (Linalg (Svd_values (sub a)))
-  | Linalg (Svd { factors; a }) -> three (Linalg (Svd { factors; a = sub a }))
-  | Linalg (Eigh_values a) -> one (Linalg (Eigh_values (sub a)))
-  | Linalg (Eigh a) -> two (Linalg (Eigh (sub a)))
+  | Linalg (Svd_values { dtype; a }) ->
+      one (Linalg (Svd_values { dtype; a = sub a }))
+  | Linalg (Svd { factors; dtype; a }) ->
+      three (Linalg (Svd { factors; dtype; a = sub a }))
+  | Linalg (Eigh_values { dtype; a }) ->
+      one (Linalg (Eigh_values { dtype; a = sub a }))
+  | Linalg (Eigh { dtype; a }) -> two (Linalg (Eigh { dtype; a = sub a }))
   | Linalg (Eig_values { dtype; a }) ->
       one (Linalg (Eig_values { dtype; a = sub a }))
   | Linalg (Eig { dtype; a }) -> two (Linalg (Eig { dtype; a = sub a }))

@@ -274,7 +274,7 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     movements: the call is the consumer the deaths name, as {!trace} is for
     the diagonal it sums. An operand that several operations read is lent:
     the call reads it as a value over [x]'s memory, which is shared from then
-    on, and [x] and its handles live on, as [a] does in [lstsq (donate a) b].
+    on, and [x] and its handles live on, as [a] does in [lstsq dt (donate a) b].
     That memory returns to its device once no value holds it. A sampler's key
     is lent ({!Rng}). Two handles of one donor reaching one operation, the
     same handle twice, two donations of one value or a handle and one a
@@ -2160,9 +2160,16 @@ val diag : ?k:int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     rounding a float result once.
     [aᴴ] is the conjugate transpose, the transpose of a real [a].
 
-    Every result has its operand's dtype. A real result of a complex operand
-    (a singular value, an eigenvalue of {!eigh}, {!slogdet}'s logarithm, a
-    norm) is complex with an imaginary part of [+0], and {!real} extracts it.
+    A result has its operand's dtype unless it is of another kind. A real
+    result ({!svd}'s singular values, {!eigh}'s eigenvalues, {!slogdet}'s
+    logarithm, {!lstsq}'s residuals and singular values) takes its dtype
+    first, of a real or a complex operand, and so do {!eig}'s complex
+    results. Each is computed at its operand's precision, [float32]'s for
+    [float32] and [complex64] and [float64]'s for [float64] and
+    [complex128], then stored in its dtype by the conversion rule, as
+    {!real} stores: a dtype without NaN or infinities holds what {!cast}
+    gives for the NaN and infinities each function states. The norms and
+    {!cond} take floats, and each states its form for a complex operand.
 
     Each matrix of a batch is computed on its own, and data never raises: a
     matrix whose factorisation fails, as each function states, is NaN in its
@@ -2223,11 +2230,13 @@ val lu : ('v, 's, 'd) t -> 'd int64_t * ('v, 's, 'd) t * ('v, 's, 'd) t
 val svd :
   ?vectors:bool ->
   ?factors:factors ->
+  (float, 'r) dtype ->
   ('v, 's, 'd) t ->
-  ('v, 's, 'd) t * ('v, 's, 'd) t * ('v, 's, 'd) t
-(** [svd a] is [(u, s, vh)] with [a = matmul (mul u (unsqueeze ~axes:[ -2 ] s))
-    vh], [s] the [[…; k]] singular values, descending and not negative, a zero
-    one [+0]; [u] and [vh] have orthonormal columns and rows: [[…; m; k]] and
+  ('v, 's, 'd) t * (float, 'r, 'd) t * ('v, 's, 'd) t
+(** [svd dt a] is [(u, s, vh)], [a] the product of [u], the diagonal matrix
+    of [s] and [vh], [s] the [[…; k]]
+    singular values in [dt], descending and not negative, a zero one [+0];
+    [u] and [vh] have orthonormal columns and rows: [[…; m; k]] and
     [[…; k; n]], or under [~factors:Complete] [[…; m; m]] and [[…; n; n]].
     Under [~vectors:false] (default [true]) neither [u] nor [vh] is computed:
     they are [[…; m; 0]] and [[…; 0; n]]. A matrix that holds NaN or an
@@ -2238,25 +2247,28 @@ val svd :
 
 val eig :
   ?vectors:bool ->
-  (Complex.t, 's, 'd) t ->
-  (Complex.t, 's, 'd) t * (Complex.t, 's, 'd) t
-(** [eig a] is [(w, v)], the [[…; n]] eigenvalues of [a] and columns of unit
-    norm [v] with [matmul a v = mul v (unsqueeze ~axes:[ -2 ] w)]. A real
-    matrix is cast first: [eig (cast complex128 a)]. Under [~vectors:false]
-    (default [true]) [v] is not computed and is [[…; n; 0]]. NaN as for
-    {!svd}.
+  (Complex.t, 'c) dtype ->
+  ('v, 's, 'd) t ->
+  (Complex.t, 'c, 'd) t * (Complex.t, 'c, 'd) t
+(** [eig dt a] is [(w, v)] in [dt], the [[…; n]] eigenvalues of the real or
+    complex [a] and columns of unit norm [v], [matmul a v] being [v] with
+    each column scaled by its eigenvalue. Under
+    [~vectors:false] (default [true]) [v] is not computed and is [[…; n; 0]].
+    NaN as for {!svd}.
 
     Raises [Invalid_argument] if [a] has fewer than two axes or is not
-    square. *)
+    square, or for its dtype. *)
 
 val eigh :
   ?vectors:bool ->
   ?triangle:triangle ->
+  (float, 'r) dtype ->
   ('v, 's, 'd) t ->
-  ('v, 's, 'd) t * ('v, 's, 'd) t
-(** [eigh a] is [(w, v)], the [[…; n]] eigenvalues of the Hermitian [a],
-    ascending, and orthonormal columns [v] with
-    [matmul a v = mul v (unsqueeze ~axes:[ -2 ] w)]. [a] is the Hermitian
+  (float, 'r, 'd) t * ('v, 's, 'd) t
+(** [eigh dt a] is [(w, v)], the [[…; n]] eigenvalues in [dt] of the
+    Hermitian [a], ascending, and orthonormal columns [v], [matmul a v]
+    being [v] with each column scaled by its eigenvalue. [a] is the
+    Hermitian
     matrix its [triangle] (default [Lower]) and the real parts of its diagonal
     name, which alone are read. Under [~vectors:false] (default [true]) [v] is
     not computed and is [[…; n; 0]]. A matrix whose read part holds NaN or an
@@ -2275,12 +2287,14 @@ val det : ('v, 's, 'd) t -> ('v, 's, 'd) t
     Raises [Invalid_argument] if [a] has fewer than two axes or is not square,
     or for its dtype. *)
 
-val slogdet : ('v, 's, 'd) t -> ('v, 's, 'd) t * ('v, 's, 'd) t
-(** [slogdet a] is [(sign, logabs)] with [det a = sign · exp logabs], from
-    {!lu}'s pivots: [logabs] is the sum of their magnitudes' logarithms, and
-    [sign] is [1.] or [-1.] for a real [a] and a complex number of magnitude
-    [1.] for a complex one. A singular matrix, one with a zero pivot, has
-    [sign] [+0] and [logabs] [neg_infinity] whatever its other pivots.
+val slogdet :
+  (float, 'r) dtype -> ('v, 's, 'd) t -> ('v, 's, 'd) t * (float, 'r, 'd) t
+(** [slogdet dt a] is [(sign, logabs)] with [det a = sign · exp logabs], from
+    {!lu}'s pivots: [logabs] in [dt] is the sum of their magnitudes'
+    logarithms, and [sign] is [1.] or [-1.] for a real [a] and a complex
+    number of magnitude [1.] for a complex one. A singular matrix, one with
+    a zero pivot, has [sign] [+0] and [logabs] [neg_infinity] whatever its
+    other pivots.
 
     Raises [Invalid_argument] as {!det}. *)
 
@@ -2326,18 +2340,19 @@ val inv : ('v, 's, 'd) t -> ('v, 's, 'd) t
 
 val lstsq :
   ?rtol:float ->
+  (float, 'r) dtype ->
   ('v, 's, 'd) t ->
   ('v, 's, 'd) t ->
-  ('v, 's, 'd) t * ('v, 's, 'd) t * 'd int64_t * ('v, 's, 'd) t
-(** [lstsq a b] is [(x, residuals, rank, s)]: [x] the least-squares solution
-    of [matmul a x ≈ b] of least norm, whatever [a]'s shape and rank, from
-    [s], {!svd}'s singular values of [a]. A singular value at or below [rtol]
-    times [max m n] times its matrix's greatest counts as zero; [rtol]
-    defaults to the dtype's machine epsilon. [rank] is the number of the
-    others, [-1] for a matrix on which {!svd} fails, whose [x] is NaN.
-    [residuals] is the squared norm of each column of [b - matmul a x]: [b]'s
-    shape without its rows. [b] is as {!solve_triangular} takes it, with [m]
-    rows.
+  ('v, 's, 'd) t * (float, 'r, 'd) t * 'd int64_t * (float, 'r, 'd) t
+(** [lstsq dt a b] is [(x, residuals, rank, s)]: [x] the least-squares
+    solution of [matmul a x ≈ b] of least norm, whatever [a]'s shape and
+    rank, from [s], {!svd}'s singular values of [a] in [dt]. A singular value
+    at or below [rtol] times [max m n] times its matrix's greatest counts as
+    zero; [rtol] defaults to [a]'s machine epsilon. [rank] is the
+    number of the others, [-1] for a matrix on which {!svd} fails, whose [x]
+    is NaN. [residuals] is the squared norm of each column of
+    [b - matmul a x] in [dt]: [b]'s shape without its rows. [b] is as
+    {!solve_triangular} takes it, with [m] rows.
 
     Raises [Invalid_argument] if [a] has fewer than two axes, for its dtype,
     if [b] has neither [a]'s rank nor one axis fewer, if [b]'s rows are not
@@ -2359,8 +2374,8 @@ val vector_norm :
   ?ord:float ->
   ?axes:int list ->
   ?keepdims:bool ->
-  ('v, 's, 'd) t ->
-  ('v, 's, 'd) t
+  (float, 's, 'd) t ->
+  (float, 's, 'd) t
 (** [vector_norm x] is the norm of order [ord] (default [2.]) of the vector of
     the elements of [x] along [axes] (default all of them), dropping those
     axes unless [keepdims]. Of the magnitudes [|x|], it is
@@ -2371,17 +2386,18 @@ val vector_norm :
     The sums of powers are scaled by the greatest magnitude, or the least for
     a negative [ord], so that a norm the dtype holds never overflows or
     underflows on the way: the norm of [[1e200; 1e200]] is [1.414e200]. A
-    NaN element makes its norm NaN.
+    NaN element makes its norm NaN. A complex [z]'s norm is
+    [vector_norm (magnitude dt z)].
 
-    Raises [Invalid_argument] for [x]'s dtype, if an axis is outside [x]'s
-    rank or repeats, if [ord] is NaN, or if [ord] is [infinity] or
-    [neg_infinity] and a vector has no element. *)
+    Raises [Invalid_argument] if an axis is outside [x]'s rank or repeats,
+    if [ord] is NaN, or if [ord] is [infinity] or [neg_infinity] and a
+    vector has no element. *)
 
 val matrix_norm :
   ?ord:[ `Fro | `Nuc | `One | `Two | `Inf | `NegOne | `NegTwo | `NegInf ] ->
   ?keepdims:bool ->
-  ('v, 's, 'd) t ->
-  ('v, 's, 'd) t
+  (float, 's, 'd) t ->
+  (float, 's, 'd) t
 (** [matrix_norm x] is the norm of order [ord] (default [`Fro]) of each matrix
     of [x], dropping its last two axes unless [keepdims]. Of a matrix:
     - [`Fro] is [sqrt (Σ |x|²)], scaled as {!vector_norm}'s, and [`Nuc] the
@@ -2390,9 +2406,14 @@ val matrix_norm :
     - [`One] is the greatest sum of a column's magnitudes and [`NegOne] the
       least; [`Inf] and [`NegInf] are the same of its rows.
 
-    Raises [Invalid_argument] if [x] has fewer than two axes, for its dtype,
-    or if [ord] takes a greatest or least singular value, column or row of a
-    matrix that has none. *)
+    A complex [z]'s norm is [matrix_norm (magnitude dt z)] under [`Fro],
+    [`One], [`NegOne], [`Inf] and [`NegInf]; under [`Nuc], [`Two] and
+    [`NegTwo] it is the sum, greatest or least of the singular values of
+    [svd dt ~vectors:false z].
+
+    Raises [Invalid_argument] if [x] has fewer than two axes, or if [ord]
+    takes a greatest or least singular value, column or row of a matrix
+    that has none. *)
 
 val matrix_rank : ?rtol:float -> ('v, 's, 'd) t -> 'd int64_t
 (** [matrix_rank a] is the rank of each matrix of [a], of [a]'s batch shape:
@@ -2406,7 +2427,7 @@ val matrix_rank : ?rtol:float -> ('v, 's, 'd) t -> 'd int64_t
     Raises [Invalid_argument] if [a] has fewer than two axes, for its dtype,
     or if [rtol] is negative or NaN. *)
 
-val cond : ?p:[ `One | `Two | `Inf ] -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+val cond : ?p:[ `One | `Two | `Inf ] -> (float, 's, 'd) t -> (float, 's, 'd) t
 (** [cond a] is the condition number of each matrix of [a] in the norm [p]
     (default [`Two]), dropping its last two axes: under [`Two] its greatest
     singular value over its least, under [`One] and [`Inf]
@@ -2414,11 +2435,15 @@ val cond : ?p:[ `One | `Two | `Inf ] -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     matrix, whose least singular value is zero or whose {!inv} is NaN, has
     an infinite condition number; one singular only to rounding has one near
     [1 / ε] or above. A matrix that holds NaN or an infinity, or on which
-    {!svd} fails, has NaN.
+    {!svd} fails, has NaN. An invertible complex [z]'s is, under [`Two], the
+    greatest over the least of the singular values of
+    [svd dt ~vectors:false z], and under [`One] and [`Inf]
+    [matrix_norm ~ord:p (magnitude dt z)] times
+    [matrix_norm ~ord:p (magnitude dt (inv z))].
 
     Raises [Invalid_argument] if [a] has fewer than two axes or a matrix of
-    no element, for its dtype, a float format without infinities included,
-    or if [p] is [`One] or [`Inf] and [a] is not square. *)
+    no element, for a float format without infinities, or if [p] is [`One]
+    or [`Inf] and [a] is not square. *)
 
 (** {1:fft Fourier transforms}
 
@@ -4339,8 +4364,9 @@ module Prim : sig
             from [n/2 + 1] bins; [dtype] has [x]'s precision. *)
 
   (** Each constructor is one routine of {!Nx_kernel.S}, its results in that
-      routine's order, each of [a]'s dtype but [Lu]'s positions and [Eig]'s
-      results. *)
+      routine's order, each of [a]'s dtype but [Lu]'s positions and the
+      results of a [dtype] field, which is of [a]'s
+      {!Nx_kernel.same_precision}. *)
   type ('d, _) linalg =
     | Cholesky : {
         triangle : Nx_kernel.triangle;
@@ -4360,30 +4386,43 @@ module Prim : sig
         a : ('v, 's, 'd) nx;
       }
         -> ('d, ('v, 's, 'd) nx * ('v, 's, 'd) nx) linalg  (** [q], [r]. *)
-    | Svd_values : ('v, 's, 'd) nx -> ('d, ('v, 's, 'd) nx) linalg
-        (** [s] alone. *)
-    | Svd : {
-        factors : Nx_kernel.factors;
+    | Svd_values : {
+        dtype : (float, 'r) dtype;
         a : ('v, 's, 'd) nx;
       }
-        -> ('d, ('v, 's, 'd) nx * ('v, 's, 'd) nx * ('v, 's, 'd) nx) linalg
-        (** [s], [u], [vh]. *)
-    | Eigh_values : ('v, 's, 'd) nx -> ('d, ('v, 's, 'd) nx) linalg
-        (** [w] alone. *)
-    | Eigh : ('v, 's, 'd) nx -> ('d, ('v, 's, 'd) nx * ('v, 's, 'd) nx) linalg
-        (** [w], [v]. *)
+        -> ('d, (float, 'r, 'd) nx) linalg
+        (** [s] alone, of [dtype]. *)
+    | Svd : {
+        factors : Nx_kernel.factors;
+        dtype : (float, 'r) dtype;
+        a : ('v, 's, 'd) nx;
+      }
+        -> ('d, (float, 'r, 'd) nx * ('v, 's, 'd) nx * ('v, 's, 'd) nx) linalg
+        (** [s] of [dtype], [u], [vh]. *)
+    | Eigh_values : {
+        dtype : (float, 'r) dtype;
+        a : ('v, 's, 'd) nx;
+      }
+        -> ('d, (float, 'r, 'd) nx) linalg
+        (** [w] alone, of [dtype]. *)
+    | Eigh : {
+        dtype : (float, 'r) dtype;
+        a : ('v, 's, 'd) nx;
+      }
+        -> ('d, (float, 'r, 'd) nx * ('v, 's, 'd) nx) linalg
+        (** [w] of [dtype], [v]. *)
     | Eig_values : {
         dtype : (Complex.t, 'c) dtype;
         a : ('v, 's, 'd) nx;
       }
         -> ('d, (Complex.t, 'c, 'd) nx) linalg
-        (** [w] alone, of [dtype], [a]'s {!Nx_kernel.same_precision}. *)
+        (** [w] alone, of [dtype]. *)
     | Eig : {
         dtype : (Complex.t, 'c) dtype;
         a : ('v, 's, 'd) nx;
       }
         -> ('d, (Complex.t, 'c, 'd) nx * (Complex.t, 'c, 'd) nx) linalg
-        (** [w], [v], of [dtype], [a]'s {!Nx_kernel.same_precision}. *)
+        (** [w], [v], of [dtype]. *)
     | Solve_triangular : {
         triangle : Nx_kernel.triangle;
         adjoint : bool;

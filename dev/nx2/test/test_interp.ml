@@ -172,7 +172,7 @@ let test_refusal_named () =
         match op with
         | Nx.Prim.Linalg _ -> invalid_arg (why by)
         | _ -> Nx.Prim.eval ~by op)
-      (fun _ -> ignore (Nx.lstsq a b))
+      (fun _ -> ignore (Nx.lstsq f64 a b))
   in
   raises (Invalid_argument "test.refuse: no factorisation") (fun () ->
       lstsq (fun _ -> "test.refuse: no factorisation"));
@@ -195,7 +195,7 @@ let test_rule_calls_named () =
   in
   raises_match by_reshape (fun () ->
       Nx.Prim.interpret ~name:"test.reshaping" Extent reshaping (fun _ ->
-          Nx.lstsq a b))
+          Nx.lstsq f64 a b))
 
 (* What a rule donates dies naming the function the rule called, inside a
    composite too. *)

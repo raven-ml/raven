@@ -72,9 +72,10 @@ let accumulates (type v s) (dt : (v, s) D.t) =
 
 type direction = Forward | Inverse
 
-let same_precision (type v s c) (x : (v, s) D.t) (c : (Complex.t, c) D.t) =
-  match (x, c) with
-  | (Float32 | Complex64), Complex64 | (Float64 | Complex128), Complex128 ->
+let same_precision (type v s w t) (x : (v, s) D.t) (y : (w, t) D.t) =
+  match (x, y) with
+  | (Float32 | Complex64), (Float32 | Complex64)
+  | (Float64 | Complex128), (Float64 | Complex128) ->
       true
   | _ -> false
 
@@ -560,12 +561,12 @@ module type S = sig
   val qr : q:('v, 's) a -> r:('v, 's) a -> ('v, 's) a -> answer
 
   val svd :
-    s:('v, 's) a ->
+    s:(float, 'r) a ->
     ?vectors:(u:('v, 's) a * vh:('v, 's) a) ->
     ('v, 's) a ->
     answer
 
-  val eigh : w:('v, 's) a -> ?v:('v, 's) a -> ('v, 's) a -> answer
+  val eigh : w:(float, 'r) a -> ?v:('v, 's) a -> ('v, 's) a -> answer
 
   val eig :
     w:(Complex.t, 'c) a -> ?v:(Complex.t, 'c) a -> ('v, 's) a -> answer

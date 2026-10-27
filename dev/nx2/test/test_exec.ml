@@ -1006,7 +1006,7 @@ let constants =
           in
           let solve a b = Array.concat [ elements (Nx.solve a b) ] in
           let lstsq a b =
-            let x, residuals, rank, s = Nx.lstsq a b in
+            let x, residuals, rank, s = Nx.lstsq D.Float64 a b in
             Array.concat
               [
                 elements x;

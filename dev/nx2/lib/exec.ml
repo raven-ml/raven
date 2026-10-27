@@ -522,7 +522,7 @@ let call : type r.
       | Value.Qr { a; _ }, (q, r) ->
           let q = nth j q and r = nth j r and a = one a in
           ran ~by (K.qr ~q ~r a) [| A.Any q; A.Any r |] [| A.Any a |]
-      | Value.Svd_values a, s ->
+      | Value.Svd_values { a; _ }, s ->
           let s = nth j s and a = one a in
           ran ~by (K.svd ~s a) [| A.Any s |] [| A.Any a |]
       | Value.Svd { a; _ }, (s, u, vh) ->
@@ -531,10 +531,10 @@ let call : type r.
             (K.svd ~s ~vectors:(~u, ~vh) a)
             [| A.Any s; A.Any u; A.Any vh |]
             [| A.Any a |]
-      | Value.Eigh_values a, w ->
+      | Value.Eigh_values { a; _ }, w ->
           let w = nth j w and a = one a in
           ran ~by (K.eigh ~w a) [| A.Any w |] [| A.Any a |]
-      | Value.Eigh a, (w, v) ->
+      | Value.Eigh { a; _ }, (w, v) ->
           let w = nth j w and v = nth j v and a = one a in
           ran ~by (K.eigh ~w ~v a) [| A.Any w; A.Any v |] [| A.Any a |]
       | Value.Eig_values { a; _ }, w ->
