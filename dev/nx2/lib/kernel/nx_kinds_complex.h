@@ -13,7 +13,7 @@
      nx_exp_c64;
    - NX_MK, the function that makes a complex number of two parts.
 
-   nx_kinds.h's complex section states what these kinds compute. Each
+   prog.mli's Results section states what these kinds compute. Each
    transcendental kind makes its operands' NaN parts quiet first and is
    computed from the part type's kinds in one order, so that its bits, NaNs
    aside, are the same on every target. A kind whose formula is odd or even

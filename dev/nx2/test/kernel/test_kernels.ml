@@ -10,7 +10,7 @@
    is never declined, and a decline writes nothing; a destination identical to
    an operand read at its own index gives a fresh one's bits; operands
    kept alive across a call; and each kind the contract fixes exact, the
-   others within nx_kinds.h's bounds. *)
+   others within Prog's bounds. *)
 
 open Windtrap
 open Nx_array_gen
@@ -755,8 +755,8 @@ let test_real_transforms (b : Support.backend) () =
 (* The contract's kinds
 
    Every kernel library gives a kind its doc, IEEE 754 or modular arithmetic
-   defines exactly that result, and holds the others to nx_kinds.h's bounds
-   (Nx_kernel.Prog's preamble). nx_kinds.h's functions give the exact
+   defines exactly that result, and holds the others to the bounds of
+   Nx_kernel.Prog's Results section. nx_kinds.h's functions give the exact
    results' bits, which test_kinds checks against their meaning. *)
 
 (* The kinds of one operand the contract fixes at [dt]: every one of an
@@ -783,8 +783,8 @@ let exact2 (D.Any dt) =
       | Binary _ | Compare _ -> true)
     op2s
 
-(* nx_kinds.h's table: each float kind's bound in ulps at float32 and at
-   float64, with its name there. *)
+(* Prog's Results section's table: each float kind's bound in ulps at
+   float32 and at float64, with its name in nx_kinds.h. *)
 let float_bounds =
   let u k = Support.K1 (P.Unary k) and b k = Support.K2 (P.Binary k) in
   P.

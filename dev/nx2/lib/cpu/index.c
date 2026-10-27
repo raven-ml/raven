@@ -38,7 +38,7 @@
    sums where they carry from one sorted block to the next. Max and Min are
    nx_kinds.h's, so a NaN target or update makes the target a NaN. On
    narrow floats and complex numbers they select an operand by the order of
-   nx_kinds.h's domains, so that the result is an operand's bits. */
+   prog.mli's Domains section, so that the result is an operand's bits. */
 
 #include <stdlib.h>
 #include <string.h>

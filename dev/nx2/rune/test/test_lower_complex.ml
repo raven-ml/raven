@@ -135,8 +135,8 @@ let crossed wide (z : Complex.t) =
   && Float.abs (t -. (k *. q)) <= phase_margin *. u wide *. Float.abs t
 
 (* The parts of [k]'s value at [z] whose infinity's sign Annex G leaves open,
-   as nx_kinds.h lists them, sin and cos through sinh and cosh at [iz], and
-   those exp2's rounded phase gives. *)
+   as Prog's Results section lists them, sin and cos through sinh and cosh
+   at [iz], and those exp2's rounded phase gives. *)
 let open_signs wide k (z : Complex.t) =
   let inf v = Float.abs v = Float.infinity in
   let wild v = not (Float.is_finite v) in

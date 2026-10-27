@@ -10,9 +10,9 @@
     {e outputs}. It is a sequence of {e nodes}. A node is a {e leaf}, an
     operand's element at the index, the index along an axis or a constant,
     or a {e kind} applied to earlier nodes. A kind is what one node
-    computes from its operands' values, in the {e compute type}
-    [nx_kinds.h] states for its dtype, the type its arithmetic runs in
-    before it rounds to the dtype. The dtypes a kind takes are its
+    computes from its operands' values, in its dtype's {e compute type}
+    ({!section-results}), the type its arithmetic runs in before it rounds
+    to the dtype. The dtypes a kind takes are its
     {e domain} ({!section-domains}). Each node has a dtype ({!dtype}), and
     its value is its kind's result in that dtype, exact or within a bound
     as the next paragraph states, a float rounded as
@@ -23,14 +23,11 @@
     A kind whose result its doc below, IEEE 754 or modular arithmetic
     defines exactly, as [Floor], [Add], a float's [Sqrt] and an integer's
     [Mul] are, gives that result rounded once to its dtype. A float [Recip]
-    is [1 / x] by [Fdiv]. In a kernel library, a float kind of
-    [nx_kinds.h]'s table of bounds is within the bound in ulps it states
-    for the function of its name ([nx_exp_f32] for [Exp] at float32), with
-    the special values, the signs of zero results and the NaN results the
-    header states. A complex kind is as the header's complex section
-    states, within the normwise bound in [u] it states for the kind, with
-    its special values, symmetries and NaN parts. A kernel library may
-    compute a kind through that header's function, and states whether it
+    is [1 / x] by [Fdiv]. In a kernel library, every other kind is within
+    the bound {!section-results} states for it, with the special values,
+    signs and NaN results stated there. A kernel library may compute a kind
+    through the C function of its name in [nx_kinds.h] ([nx_exp_f32] for
+    [Exp] at float32), which gives these results, and states whether it
     does. On one device model it computes each kind to the same bits in all
     its paths, so that a kind gives the same bits run alone by its own
     kernel and as a node of any program. On a device that flushes
@@ -61,7 +58,7 @@
 
 (** The type for kinds of one operand, of its dtype. Trigonometric kinds take
     radians. On complex numbers a kind is its principal value, with the branch
-    cuts of C99 7.3, as [nx_kinds.h] states. On integers [Neg] and [Abs]
+    cuts of C99 7.3 ({!section-results}). On integers [Neg] and [Abs]
     wrap. *)
 type unary =
   | Neg
@@ -180,8 +177,9 @@ type op3 =
     parts, as IEEE 754 does, so [-0] equals [+0]. A NaN, and a complex
     number with a NaN part, is a NaN to each kind: every comparison with it
     is [false] except [Not_equal], which is [true], and [Maximum] and
-    [Minimum] give it. On booleans [Maximum] is [Or] and [Minimum] is
-    [And]. A unary kind keeps its operand's dtype, so no kind gives a
+    [Minimum] give it, the first of two. A float NaN's bits are as
+    {!section-results} states. On booleans [Maximum] is [Or] and [Minimum]
+    is [And]. A unary kind keeps its operand's dtype, so no kind gives a
     complex number's modulus.
 
     - [Neg], [Recip], [Sign], [Add], [Sub], [Mul], [Pow]: every dtype but
@@ -211,6 +209,101 @@ val accepts3 :
   op3 -> ('c, 'e) Nx_array.Dtype.t -> ('a, 'b) Nx_array.Dtype.t -> bool
 (** [accepts3 k c x] is [true] iff [k] takes a first operand of [c] and two of
     [x]. Its result is of [x]. *)
+
+(** {1:results Results}
+
+    A dtype's compute type is the dtype itself for float32, float64, the
+    32- and 64-bit integers and the complex dtypes. Floats narrower than
+    float32 compute in float32 and round once to their dtype. 8- and 16-bit
+    integers compute in the 32-bit integer of their signedness, their
+    operands sign- or zero-extended, and wrap to their dtype. Booleans
+    compute in uint32. A complex64 computes as a pair of float32, the real
+    part first as it is stored, and a complex128 as a pair of float64.
+
+    A float kind's bound holds in its compute type, in ulps: the distance
+    in ordered-bit ranks from the correctly rounded result, [-0] and [+0]
+    one rank apart.
+
+    {v
+    Kind                                        float32   float64
+    Exp, Exp2, Sin, Cos, Asin, Acos, Atan,
+      Cosh, Tanh, Erf                              2         2
+    Expm1, Log, Log2, Log1p                        1         2
+    Atan2, Sinh                                    3         2
+    Tan, Pow                                       4         2
+    v}
+
+    The float32 bounds of the kinds of one operand hold at every operand.
+    The other bounds, and the complex ones below, hold at every operand
+    measured. The special values of these kinds (C99 Annex F) and the signs
+    of their zero results are exact.
+
+    A float kind with a NaN operand gives a NaN, but for [Pow] of a base
+    [1] or an exponent [0], which Annex F makes [1]. A kind gives a NaN
+    from numbers where IEEE 754 or Annex F does, as [Sin] of an infinity.
+    Which NaN, its sign and its payload are unspecified. They differ
+    between targets, and between a target's vector and scalar code. [Neg]
+    and [Abs] set a NaN's sign bit as they do a number's, its payload kept.
+
+    {2:complex_results Complex numbers}
+
+    [u] is the unit roundoff of a complex dtype's part, [2{^-24}] or
+    [2{^-53}]. The error of a result [z'] against the exact [z] is
+    normwise, [|z' - z| / |z|]. Each complex bound holds where no part of
+    the computation overflows or underflows.
+
+    [Add], [Sub] and [Neg] act on each part, so a NaN part leaves the other
+    part's result as it is. [Mul] is the textbook product
+    [(ar br - ai bi) + (ar bi + ai br) i], each part one fused multiply-add
+    over the other product, within [2u]. [Fdiv] is Smith's algorithm: the
+    divisor's larger part divides its smaller, so an intermediate overflows
+    or underflows only where a part of the quotient does, and
+    [(0 + 2{^-50} i) / (0 - 2{^-1074} i)] is [-inf + 0 i]. Each of its
+    products that feeds a sum is a fused multiply-add, and it is within
+    [4u]. [Recip] is [(1 + 0 i) / x] by [Fdiv]. A NaN part in an operand of
+    [Mul], [Fdiv] or [Recip] makes both parts of the result NaN.
+
+    [Exp], [Exp2], [Log], [Log2], [Sqrt], [Sin], [Cos], [Tan], [Asin],
+    [Acos], [Atan], [Sinh], [Cosh], [Tanh], [Asinh], [Acosh], [Atanh] and
+    [Pow] are the principal values of C99 7.3 (ISO/IEC 9899), with the
+    special values of its Annex G, G.6. Their bounds, in [u], hold where
+    the result's modulus is a normal float:
+
+    {v
+    Sqrt, Sign                                 3
+    Exp, Exp2, Log, Log2                       4
+    Asin, Acos, Atan, Asinh, Acosh, Atanh      5
+    Sin, Cos, Tan, Sinh, Cosh, Tanh            6
+    Pow, z to the power w                      3 + 3 |w log z|
+    v}
+
+    On the real axis, at a non-zero real part where the float kind is
+    defined, the real part is the float kind's result, and [Pow]'s is at a
+    positive base and a real exponent.
+
+    Where Annex G leaves a sign unspecified, each kind keeps
+    [f (conj z) = conj (f z)] and its parity bit for bit, a NaN part's sign
+    bit counting as its sign. Where a result's sign comes from a NaN part,
+    as the infinite imaginary part of [Sqrt (-inf + i NaN)] does, that sign
+    is unspecified, as Annex G allows. At operands of positive parts each
+    kind gives:
+
+    {v
+    Exp (-inf + i inf), Exp (-inf + i NaN)      +0 + i0
+    Exp (inf + i inf), Exp (inf + i NaN)        inf + i NaN
+    Sqrt (-inf + i NaN)                         NaN + i inf
+    Sinh (+0 + i inf), Sinh (+0 + i NaN)        +0 + i NaN
+    Sinh (inf + i inf), Sinh (inf + i NaN)      inf + i NaN
+    Cosh (+0 + i inf), Cosh (+0 + i NaN),
+      Cosh (NaN + i0)                           NaN + i0
+    Cosh (inf + i inf)                          inf + i NaN
+    Tanh (inf + i inf), Tanh (inf + i NaN)      1 + i0
+    Asin (inf + i NaN)                          NaN + i inf
+    Acos (inf + i NaN)                          NaN - i inf
+    Atan (inf + i NaN)                          pi/2 + i0
+    Asinh (NaN + i inf)                         inf + i NaN
+    Atanh (NaN + i inf)                         +0 + i pi/2
+    v} *)
 
 (** {1:bits Bits} *)
 

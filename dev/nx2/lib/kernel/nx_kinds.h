@@ -15,41 +15,16 @@
    f64, and nx_kinds_complex.h, which writes the complex kinds once: c64 in
    f32's block, c128 in f64's.
 
-   Compute types. Floats narrower than float32 compute in f32 through
-   nx_dtype.h's codecs and round once on the store. 8- and 16-bit
-   integers compute in the 32-bit type of their signedness, their operands
-   sign- or zero-extended, and wrap on the store; bool computes in u32.
+   prog.mli's Results section states what each kind computes.
 
-   Exact kinds give the IEEE or modular result. Transcendental kinds hold
-   these bounds, in ulps: the distance in ordered-bit ranks from the
-   correctly rounded result, -0 and +0 one rank apart.
-
-     kind                                        f32   f64
-     exp, exp2, sin, cos, asin, acos, atan,
-       cosh, tanh, erf                            2     2
-     expm1, log, log2, log1p                      1     2
-     atan2, sinh                                  3     2
-     tan, pow                                     4     2
-
-   The f32 bounds of one operand hold at every operand. The others, pow's
-   and atan2's at f32 and every f64 bound, are measured, not proven; every
+   Floats narrower than f32 reach it through nx_dtype.h's codecs. Every
    f64 kind's worst error measured is within one ulp of the exact value.
-
-   Their special values (C99 Annex F) and the signs of their zero results
-   are exact.
-
-   These functions also give exp2 exactly at integers whose power is in the
-   type, and log2 at powers of two; a library computing them otherwise
-   need not.
-
-   NaN. A float kind with a NaN operand gives a NaN, but for pow(1, y) and
-   pow(x, 0), which Annex F makes 1, and so does a kind that IEEE 754 or
-   Annex F makes one from numbers, as sin of an infinity. Which NaN, its
-   sign and its payload are unspecified: of two NaN operands x86 returns
-   one by their order, which a compiler sets per target and differently in
-   vector and scalar code, and its own NaN has the sign bit set where Arm's
-   has it clear. neg and abs set a NaN's sign bit as they do a number's,
-   its payload kept.
+   These functions also give exp2 exactly at integers whose power is in
+   the type, and log2 at powers of two; a library computing them otherwise
+   need not. Which NaN a kind gives is unspecified since x86, of two NaN
+   operands, returns one by their order, which a compiler sets per target
+   and differently in vector and scalar code, and its own NaN has the sign
+   bit set where Arm's has it clear.
 
    Each transcendental is one polynomial in one evaluation order, with fma
    where it is written and nowhere else, so its bits, NaNs aside, are the
@@ -1016,76 +991,20 @@ NX_INLINE double nx_atan2_f64(double y, double x) {
 /* Complex
 
    complex64 and complex128 compute as pairs of f32 and f64, nx_c64 and
-   nx_c128, the real part first as they are stored, in nx_kinds_complex.h,
-   which f32's and f64's blocks above include. u below is the part's
-   unit roundoff, 2^-24 or 2^-53, and the error of a result z' against the
-   exact z is normwise, |z' - z| / |z|; each bound holds where no part of
-   the computation overflows or underflows.
+   nx_c128, in nx_kinds_complex.h, which f32's and f64's blocks above
+   include. prog.mli's Results section states what each one computes.
 
-   Add, Sub and Neg are the parts', so a NaN part leaves the other part's
-   result as it is. Mul is the
-   textbook product, (ar br - ai bi) + (ar bi + ai br) i, each part one fma
-   over the other product: within 2u (Jeannerod, Kornerup, Louvet and
-   Muller, 2017).
+   Mul's bound of 2u is Jeannerod, Kornerup, Louvet and Muller's (2017).
+   Fdiv is Smith's algorithm (1962). The platform's own division (C's
+   operator, __divdc3) scales instead and gives a NaN part where the
+   quotient's is 0: (0 + 2^-50 i) / (0 - 2^-1074 i) is -inf + NaN i in
+   glibc's libgcc.
 
-   Fdiv is Smith's algorithm (1962): the divisor's larger part divides its
-   smaller, so no intermediate overflows or underflows where the quotient's
-   parts do not. The platform's own division (C's operator, __divdc3)
-   scales instead and gives a NaN part where the quotient's is 0: (0 +
-   2^-50 i) / (0 - 2^-1074 i) is -inf + NaN i in glibc's libgcc, -inf + 0 i
-   here. Each product that feeds a sum is an fma. Within 4u. Recip is
-   (1 + 0 i) / x so. A NaN part in an operand of Mul, Fdiv or Recip makes
-   both parts of the result NaN.
-
-   Order is the real part's, then the imaginary part's. Equal holds where
-   both parts are equal, Not_equal where Equal does not, Less and
-   Less_equal by the order. A number with a NaN part is a NaN: Equal, Less
-   and Less_equal with it are false, and Maximum and Minimum give the first
-   such operand, as the real kinds do. Maximum and Minimum order -0 below
-   +0 in each part.
-
-   The transcendental kinds, exp, exp2, log, log2, sqrt, sin, cos, tan,
-   asin, acos, atan, sinh, cosh, tanh, asinh, acosh, atanh and pow, are the
-   principal values of C99 7.3 (ISO/IEC 9899), with the special values of
-   its Annex G, G.6; sign is z / |z|. asinh, acosh and atanh have no float
-   kind. nx_kinds_complex.h computes them from the part type's kinds,
-   branching, so that a vector loop runs them on scalars. Their bounds,
-   normwise in u where the result's modulus is a normal float:
-
-     sqrt, sign                                3
-     exp, exp2, log, log2                      4
-     asin, acos, atan, asinh, acosh, atanh     5
-     sin, cos, tan, sinh, cosh, tanh           6
-     pow, z^w                                  3 + 3 |w log z|
-
-   The bounds are measured, not proven: each kind's worst error at the
-   goldens of test/kernel/gen/kinds.py and at ten times as many points of
-   the same regions, branch cuts, poles and overflow edges among them, was
-   at least 1.3u inside its bound (log2's 2.66u at c128, tan's 4.53u at
-   c64). On the real axis, at a non-zero real part where
-   the float kind is defined, the real part is the float kind's result;
-   pow's is at a positive base and a real exponent.
-
-   Where Annex G leaves a sign unspecified, each kind keeps f(conj z) =
-   conj f(z) and its parity bit for bit, a NaN part's sign bit counting as
-   its sign. A NaN's sign is unspecified, so where a result's sign comes
-   from a NaN part, as sqrt(-inf + i NaN)'s infinite imaginary part's
-   does, that sign is unspecified too, as Annex G allows. At operands of
-   positive parts each gives:
-
-     exp(-inf + i inf), exp(-inf + i NaN)      +0 + i0
-     exp(inf + i inf), exp(inf + i NaN)        inf + i NaN
-     sqrt(-inf + i NaN)                        NaN + i inf
-     sinh(+0 + i inf), sinh(+0 + i NaN)        +0 + i NaN
-     sinh(inf + i inf), sinh(inf + i NaN)      inf + i NaN
-     cosh(+0 + i inf), cosh(+0 + i NaN),
-       cosh(NaN + i0)                          NaN + i0
-     cosh(inf + i inf)                         inf + i NaN
-     tanh(inf + i inf), tanh(inf + i NaN)      1 + i0
-     asin(inf + i NaN)                         NaN + i inf
-     acos(inf + i NaN)                         NaN - i inf
-     atan(inf + i NaN)                         pi/2 + i0
-     asinh(NaN + i inf)                        inf + i NaN
-     atanh(NaN + i inf)                        +0 + i pi/2 */
+   nx_kinds_complex.h computes the transcendental kinds from the part
+   type's kinds, branching, so that a vector loop runs them on scalars.
+   Each kind's worst error at the goldens of test/kernel/gen/kinds.py and
+   at ten times as many points of the same regions, branch cuts, poles and
+   overflow edges among them, was at least 1.3u inside its bound (log2's
+   2.66u at c128, tan's 4.53u at c64). */
 
 #endif /* NX_KINDS_H */

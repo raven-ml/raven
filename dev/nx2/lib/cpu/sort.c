@@ -7,7 +7,7 @@
 
    Each slice along the axis sorts on its own, slices on the job's threads.
    A slice's elements become keys, unsigned integers in the order of
-   nx_kinds.h's domains: a float's bits with every bit flipped where the
+   prog.mli's Domains section: a float's bits with every bit flipped where the
    sign is set and the sign flipped elsewhere, so -0 sits below +0; every
    NaN the greatest key, so NaNs are equal and last; a narrow float its
    float32 carrier's key, float4's its code ranked as a float's bits; a
