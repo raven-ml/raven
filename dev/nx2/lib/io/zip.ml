@@ -528,24 +528,35 @@ let prefix header (data : bytes) n =
   done;
   Bytes.unsafe_to_string b
 
-(* An entry is deflated when deflate shrinks its first 64 KiB. *)
-let choose_method header (data : bytes) =
+(* How an entry's bytes are written: as they are, as the DEFLATE data already
+   made of them, or deflated while they are written. *)
+type writing = Stored | Deflated of string | Deflating
+
+(* An entry is deflated when deflate shrinks its first 64 KiB. Where those are
+   the whole entry, their DEFLATE data is the entry's, which spares an encoder,
+   whose state takes about 1 MiB. *)
+let writing header (data : bytes) =
   let size = String.length header + Array1.dim data in
   let sample = prefix header data (Int.min sample_size size) in
   let compressed = Compress_deflate.Deflate.compress sample in
-  if String.length compressed < String.length sample then Deflate else Store
+  if String.length compressed >= String.length sample then Stored
+  else if String.length sample = size then Deflated compressed
+  else Deflating
 
-(* Writes [header] and [data] to the archive with [method_]. Returns their
-   CRC-32 and their size as written. *)
-let write_entry archive method_ header (data : bytes) =
+(* Writes [header] and [data] to the archive as [w] says. Returns their CRC-32
+   and their size as written. *)
+let write_entry archive w header (data : bytes) =
   let size = Array1.dim data in
   let crc = Crc32.bigbytes ~crc:(Crc32.string header) data in
-  match method_ with
-  | Store ->
+  match w with
+  | Stored ->
       Save.string archive.fd header;
       Save.bytes archive.fd data;
       (crc, String.length header + size)
-  | Deflate ->
+  | Deflated deflated ->
+      Save.string archive.fd deflated;
+      (crc, String.length deflated)
+  | Deflating ->
       let e = Compress_deflate.Deflate.encoder () in
       let chunk = Bytes.create sample_size in
       (* Gives [e] the data from [first], at most a chunk, and the end of the
@@ -575,7 +586,10 @@ let valid_name name = safe_name name && valid_utf8 name
 
 let add_npy archive name header (data : bytes) =
   let filename = name ^ npy_suffix in
-  let method_ = choose_method header data in
+  let w = writing header data in
+  let method_ =
+    match w with Stored -> Store | Deflated _ | Deflating -> Deflate
+  in
   let uncompressed_size =
     checked_add "NPY entry" (String.length header) (Array1.dim data)
   in
@@ -599,7 +613,7 @@ let add_npy archive name header (data : bytes) =
     ^ le16 (String.length filename)
     ^ le16 (String.length extra)
     ^ filename ^ extra);
-  let crc32, compressed_size = write_entry archive method_ header data in
+  let crc32, compressed_size = write_entry archive w header data in
   add_offset archive compressed_size;
   write_string archive
     (le32_i64 0x08074b50L ^ le32 crc32
