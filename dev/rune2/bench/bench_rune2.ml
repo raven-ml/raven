@@ -50,8 +50,9 @@ let loop_rows () =
         !c);
   ]
 
-(* Declined: [ops] adds of constants in a traced step, which reach no tracer and
-   compute at the call, against the same adds eagerly. *)
+(* Declined: [ops] adds of constants in a traced step and under reverse mode,
+   which reach no tracer and compute at the call, against the same adds
+   eagerly. *)
 let adds a b =
   for _ = 1 to ops do
     ignore (Sys.opaque_identity (Nx.add a b))
@@ -62,6 +63,12 @@ let declined_rows () =
   let t = Nx.Ptree.tensor in
   [
     Thumper.bench "add-1" (fun () -> adds a b);
+    Thumper.bench "add-1-under-grad" (fun () ->
+        Rune.grad'
+          (fun x ->
+            adds a b;
+            Nx.sum x)
+          a);
     Thumper.bench "add-1-under-scan" (fun () ->
         Rune.scan t t Nx.Ptree.unit
           ~f:(fun c _ ->
@@ -71,7 +78,7 @@ let declined_rows () =
   ]
 
 (* DeepChain: [ops] sines and a sum, the shape of rune's row, eagerly and under
-   forward mode. *)
+   forward and reverse mode. *)
 let deep_rows () =
   let x = one () in
   let v = Nx.copy (Nx.ones_like x) in
@@ -79,7 +86,81 @@ let deep_rows () =
   [
     Thumper.bench "chain-fwd" (fun () -> f x);
     Thumper.bench "chain-jvp" (fun () -> Rune.jvp' f x v);
+    Thumper.bench "chain-grad" (fun () -> Rune.grad' f x);
   ]
+
+(* MlpGrad: one step's loss and gradient of a three-layer perceptron, 784 to 256
+   to 128 to 10, a batch of 128, float32, against its forward pass. *)
+type 'a mlp = { w1 : 'a; b1 : 'a; w2 : 'a; b2 : 'a; w3 : 'a; b3 : 'a }
+
+module Mlp = struct
+  type ('a, _) t = 'a mlp
+
+  let walk c { w1; b1; w2; b2; w3; b3 } =
+    let open Nx.Ptree.Walk in
+    let w1 = field c "w1" leaf w1 in
+    let b1 = field c "b1" leaf b1 in
+    let w2 = field c "w2" leaf w2 in
+    let b2 = field c "b2" leaf b2 in
+    let w3 = field c "w3" leaf w3 in
+    let b3 = field c "b3" leaf b3 in
+    { w1; b1; w2; b2; w3; b3 }
+end
+
+let mlp = Nx.Ptree.instantiate (module Mlp)
+
+(* Draws held in host memory, so that each use reads them. *)
+let normal k shape =
+  Nx.place Nx.Host.on (Nx.Rng.normal ~key:(Nx.Rng.key k) f32 shape)
+
+let relu x = Nx.maximum x (Nx.zeros_like x)
+
+let forward p x =
+  let h1 = relu (Nx.add (Nx.matmul x p.w1) p.b1) in
+  let h2 = relu (Nx.add (Nx.matmul h1 p.w2) p.b2) in
+  Nx.add (Nx.matmul h2 p.w3) p.b3
+
+let mlp_rows () =
+  let zeros n = Nx.place Nx.Host.on (Nx.zeros f32 [| n |]) in
+  let params =
+    {
+      w1 = normal 1 [| 784; 256 |];
+      b1 = zeros 256;
+      w2 = normal 2 [| 256; 128 |];
+      b2 = zeros 128;
+      w3 = normal 3 [| 128; 10 |];
+      b3 = zeros 10;
+    }
+  in
+  let x = normal 4 [| 128; 784 |] and y = normal 5 [| 128; 10 |] in
+  let loss p = Nx.mean (Nx.square (Nx.sub (forward p x) y)) in
+  [
+    Thumper.bench "mlp-forward" (fun () -> loss params);
+    Thumper.bench "mlp-value-and-grad" (fun () ->
+        Rune.value_and_grad mlp loss params);
+  ]
+
+(* Hmc: one leapfrog trajectory of 20 steps on a Gaussian over 16 floats, as a
+   sampler runs it eagerly, each step taking the log density's gradient. *)
+let hmc_rows () =
+  let mean = normal 6 [| 16 |] and precision = normal 7 [| 16 |] in
+  let log_density q =
+    Nx.mul_s (Nx.sum (Nx.mul precision (Nx.square (Nx.sub q mean)))) (-0.5)
+  in
+  let eps = 0.1 in
+  let grad q = snd (Rune.value_and_grad' log_density q) in
+  let leapfrog q p =
+    let q = ref q and p = ref p and g = ref (grad q) in
+    for _ = 1 to 20 do
+      p := Nx.add !p (Nx.mul_s !g (eps /. 2.));
+      q := Nx.add !q (Nx.mul_s !p eps);
+      g := grad !q;
+      p := Nx.add !p (Nx.mul_s !g (eps /. 2.))
+    done;
+    (!q, !p)
+  in
+  let q0 = normal 8 [| 16 |] and p0 = normal 9 [| 16 |] in
+  [ Thumper.bench "leapfrog" (fun () -> leapfrog q0 p0) ]
 
 let () =
   exit
@@ -89,4 +170,6 @@ let () =
          Thumper.group "Loops" (loop_rows ());
          Thumper.group "Declined" (declined_rows ());
          Thumper.group "DeepChain" (deep_rows ());
+         Thumper.group "MlpGrad" (mlp_rows ());
+         Thumper.group "Hmc" (hmc_rows ());
        ])
