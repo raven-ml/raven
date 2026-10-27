@@ -41,7 +41,8 @@
     {!Nx_array.type-answer} states. It answers [Done], [Declined] for a
     case it does not compute, or a {e refusal}, which names what is wrong
     with an operand, and answers either of the last two before any write
-    or queued work. Any case may be [Declined]. nx raises a refusal as
+    or queued work. Any case may be [Declined], within the bounds
+    {!S.section-loops} states for loops. nx raises a refusal as
     {!Nx_array.refused} does, and after a decline raises
     [Invalid_argument] and computes nothing in the library's place. A
     failure that depends on a float's or a complex number's value is a
@@ -108,6 +109,13 @@ type load =
   | Padded : { x : ('v, 's) a; fill : 'v; pad : pad } -> load
       (** [x] padded with [fill] as [pad] says. The loop's shape is the padded
           one. *)
+
+val loop_width : int
+(** [loop_width] is [15]: the loads and program outputs, together, of a loop
+    that every library computes ({!S.section-loops}). A [Padded] load counts
+    as one, and a [Coord] node and a reduction's destinations do not count. A
+    producer of programs, as a compiler fusing maps or a transformation
+    deriving one, keeps its loops within it. *)
 
 (** {1:reductions Reductions and scans}
 
@@ -510,7 +518,12 @@ module type S = sig
       Its destinations are of any dtype but an [Arg]'s position, an
       [int64], and each result rounds once into its own, as {!Prog.Cast}
       stores it. It answers [Wrong_dtype] where {!accepts} is [false] of
-      its reduction and that output's dtype. *)
+      its reduction and that output's dtype.
+
+      A library never declines a loop for its number of loads and program
+      outputs where they number at most {!loop_width} together, nor for its
+      number of reductions. It may decline one for its dtypes, its kinds or
+      its other attributes, as its doc states. *)
 
   val map : Prog.t -> dsts:any array -> load array -> answer
   (** [map p ~dsts loads] stores [p]'s output [k] at each index into

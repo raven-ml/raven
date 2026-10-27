@@ -17,6 +17,8 @@ type pad = {
   windows : Nx_array.Move.window iarray;
 }
 
+let loop_width = 15
+
 type load =
   | Plain : ('v, 's) a -> load
   | Padded : { x : ('v, 's) a; fill : 'v; pad : pad } -> load
