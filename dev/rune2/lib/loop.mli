@@ -6,8 +6,9 @@
 (** Loops of a program: a range of trips around one call of a body.
 
     A program that repeats a step as many times as its shapes fix holds the step
-    once, as a body that a loop runs, so that compiling it costs one step
-    whatever the count. *)
+    in a body that a loop runs, twice, and once more before the loop for an odd
+    count ({!repeat}), so that compiling it costs the same whatever the
+    count. *)
 
 open Tolk
 

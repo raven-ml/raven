@@ -365,7 +365,7 @@ let qr device ~complete a =
    [(2, 3)], and the positions then hold [0 5 1 2 3 4], so that the second meets
    [(0, 4)], [(5, 3)] and [(1, 2)].
 
-   A program holds one round, which a loop repeats: compiling costs a round
+   A loop repeats the round, which the program holds at most three times
    whatever the count. A round's kernels compute its rotations, then rotate each
    value once. *)
 

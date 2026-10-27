@@ -12,9 +12,9 @@
     matrix that fails, as it states, is NaN in its own results alone.
 
     A routine repeats one step, a column of a factorisation or a round of
-    rotations, in a tolk loop on the graph's device: its graph
-    holds the step once, whatever the matrix's size, and compiling it costs one
-    step.
+    rotations, in a tolk loop on the graph's device: its graph holds the step
+    at most three times whatever the matrix's size, so that compiling it costs
+    the same at every size.
 
     {b Numerics.} The bounds below hold to first order in the dtype's unit
     roundoff [u], barring overflow and underflow, with
