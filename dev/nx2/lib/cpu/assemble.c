@@ -835,8 +835,11 @@ value nx_cpu_fold_pad(value vpad, value vd, value vx) {
     while (f.leading < r && !windowed[f.leading])
       units *= f.boxes[0][f.leading++].count;
     for (int i = f.leading; i < r; i++) slab *= shape[i];
+    /* Where the units miss some slab, the whole result starts at -0 first,
+       on the job's threads: on one thread a 64 MiB result's start took
+       2.6 ms more (fudge, 2026-10-27). */
     if (units * slab == total) f.slab = slab;
-    else start_run(&a[0], start, a[0].offset, total);
+    else fill_box(&a[0], start, r, shape, f.sd, a[0].offset);
     int64_t bytes = xn * w + taps * total * w;
     f.tap_major = NX_CPU_COPY_STRIDED && nx_cpu_carrier(dt) == dt &&
                   r > f.leading && f.sx[r - 1] != 1 &&

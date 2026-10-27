@@ -52,7 +52,7 @@ let folded = List.filter (fun (D.Any d) -> not (D.is D.Boolean d)) D.all
 
 (* How a case's first axis leads: as drawn; unwindowed and unpadded, so
    that the fold's units are slabs of the result; or unwindowed and padded,
-   so that the fold zeroes the whole result first. The last two window the
+   so that the fold starts the whole result first. The last two window the
    last axis, of a result of two or three axes. *)
 type lead = Drawn | Slabs | Padded
 
@@ -229,7 +229,7 @@ let leading c =
   go 0
 
 (* Whether every result index along the leading axes receives an operand
-   index: the fold then zeroes and adds its result a slab at a time. *)
+   index: the fold then starts and adds its result a slab at a time. *)
 let slabs c =
   let p = c.pad in
   let covers a =
@@ -416,18 +416,20 @@ let law_load (b : Support.backend) = function
         [ p; long ])
 
 (* A convolution's input gradient, large enough for the job's threads, at
-   float32, int4 and bfloat16, the last two from views of the operand. *)
+   float32, int4 and bfloat16, the last two from views of the operand; then
+   one padded along its batch axis, whose result starts whole on the job's
+   threads. *)
 let test_threads (b : Support.backend) () =
   let w axis = { M.axis; size = 3; step = 1; dilation = 1 } in
-  let pad =
+  let conv lo0 =
     {
-      Nx_kernel.lo = [| 0; 0; 1; 1 |];
+      Nx_kernel.lo = [| lo0; 0; 1; 1 |];
       hi = [| 0; 0; 1; 1 |];
       interior = [| 0; 0; 0; 0 |];
       windows = [| w 2; w 3 |];
     }
   in
-  let fold d shape v =
+  let fold pad d shape v =
     let rs = Random.State.make [| 11 |] in
     let x =
       operand d (Option.get (loaded pad shape)) v (fun _ -> element d rs)
@@ -437,11 +439,19 @@ let test_threads (b : Support.backend) () =
     | None -> failf "%s declined a fold" b.name
     | Some y -> equal (array (same (dtype_of c.x))) (expected c) (elements y)
   in
-  fold (D.Any D.Float32) [| 8; 16; 20; 20 |] (plain 6);
+  let slabs = conv 0 and whole = conv 1 in
+  fold slabs (D.Any D.Float32) [| 8; 16; 20; 20 |] (plain 6);
   (* Slabs of an odd number of int4 elements: neighbouring units' results
      share a byte. *)
-  fold (D.Any D.Int4) [| 8; 16; 21; 21 |] { (plain 6) with stepped = true };
-  fold (D.Any D.Bfloat16) [| 8; 16; 21; 21 |] { (plain 6) with reversed = Some 3 }
+  fold slabs (D.Any D.Int4) [| 8; 16; 21; 21 |]
+    { (plain 6) with stepped = true };
+  fold slabs (D.Any D.Bfloat16) [| 8; 16; 21; 21 |]
+    { (plain 6) with reversed = Some 3 };
+  fold whole (D.Any D.Float32) [| 2; 16; 40; 40 |] (plain 6);
+  fold whole (D.Any D.Int4) [| 4; 16; 63; 63 |]
+    { (plain 6) with stepped = true };
+  fold whole (D.Any D.Bfloat16) [| 2; 16; 41; 41 |]
+    { (plain 6) with reversed = Some 3 }
 
 (* Rows longer than a slot of float32, of a narrow float and of int4: they add
    through their carrier a piece at a time. *)
