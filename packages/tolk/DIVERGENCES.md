@@ -4052,7 +4052,7 @@ submission, and a range a loop of rig's program (D146).
   all zero. A `-0.` fill takes the selection off the padded mask, so the
   padding holds `-0.` where tinygrad's holds `+0.`.
 - **Reason:** (b). nx's `pad` fills with the value given, `-0.` included, and
-  rune lowers a padded load (`dev/nx2/rune/lib/lower.ml`, `padded`) through
+  rune lowers a padded load (`dev/rune2/lib/lower.ml`, `padded`) through
   `Shape.pad` with that fill, so its compiled pad must compute eager nx's
   bits.
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `signed zeros ›
@@ -4079,7 +4079,7 @@ submission, and a range a loop of rig's program (D146).
   and every float32 NaN as `0x7fffffff` by CUDA. An infinity is written as
   before.
 - **Reason:** (b). nx's values are their bits, and rune lowers every float
-  constant from those bits (`dev/nx2/rune/lib/lower.ml`, `padded`, fills a
+  constant from those bits (`dev/rune2/lib/lower.ml`, `padded`, fills a
   padded load with its fill's bits through `Shape.pad`), so a compiled kernel
   must store the bits eager nx stores.
 - **Pinned by:** the `Codegen` suite (`test/codegen/codegen`): `a NaN constant
@@ -4104,7 +4104,7 @@ submission, and a range a loop of rig's program (D146).
   parentheses of associative chains instead, which a chain of `<<` and `%`
   cannot use. No golden nests past 24 levels, so none changes and
   `gen/tinygrad.patch` keeps tinygrad's rule.
-- **Reason:** (b). rune's float64 `fmod` (`dev/nx2/rune/lib/lower_real.ml`,
+- **Reason:** (b). rune's float64 `fmod` (`dev/rune2/lib/lower_real.ml`,
   `fmod`) computes `r := (r << left) % my` 187 times, which written as one
   expression nests about 374 levels, so its kernel did not compile on the
   host: rune's `binary kinds, comparisons, where and fma give eager's bits`

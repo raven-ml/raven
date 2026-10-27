@@ -547,3 +547,12 @@ val jit' :
   ('v, 's, 'd) Nx.t ->
   ('w, 'r, 'd) Nx.t
 (** [jit' f] is {!jit} of a function of one array. *)
+
+(**/**)
+
+(** The lowering to tolk, for its suites. *)
+
+module Lower = Lower
+module Lower_arith = Lower_arith
+
+(**/**)

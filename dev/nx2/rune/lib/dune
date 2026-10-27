@@ -1,7 +1,0 @@
-; rune on nx2: transformations of nx's operations and their lowering to tolk.
-; Private until it replaces packages/rune, whose public library is also
-; named rune.
-
-(library
- (name rune)
- (libraries nx nx_array nx_kernel tolk))

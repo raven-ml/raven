@@ -1,7 +1,7 @@
 ; rune2's library, private until it replaces packages/rune, whose public
-; library is named rune, as dev/nx2/rune's lowering is.
+; library is named rune.
 
 (library
  (name rune2)
  (private_modules program trace scalar factor jvp linear vmap)
- (libraries nx nx_array nx_kernel))
+ (libraries nx nx_array nx_kernel tolk))

@@ -614,3 +614,8 @@ let jacrev' f x =
   let basis = Nx.reshape (Array.append [| n |] sy) (Nx.cast (Nx.dtype y) e) in
   let rows = vmap_named name Ptree.(tensor @-> returns tensor) pullback basis in
   Nx.reshape (Array.append sy (Nx.shape x)) rows
+
+(* The lowering, for its suites *)
+
+module Lower = Lower
+module Lower_arith = Lower_arith

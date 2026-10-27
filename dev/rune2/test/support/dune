@@ -1,0 +1,5 @@
+; Lowered operations compiled and run on the host, for rune2's lowering suites.
+
+(library
+ (name lowered)
+ (libraries nx nx_array nx_kernel rune2 rig tolk tolk.engine))
