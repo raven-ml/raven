@@ -302,6 +302,24 @@ val op3 :
     Raises [Invalid_argument] naming [by] where [k] does not take the operands'
     dtypes ({!Nx_kernel.Prog.accepts2} and its siblings). *)
 
+val op2_const :
+  by:string ->
+  swapped:bool ->
+  Nx_kernel.Prog.op2 ->
+  ('w, 'r) dtype ->
+  ('v, 's, 'd) t ->
+  'v ->
+  (('w, 'r, 'd) t * unit) prim
+(** [op2_const ~by ~swapped k dt x c] is the map of [k] over [x] and the
+    constant [c] of [x]'s dtype, [x] first or, where [swapped], [c] first,
+    of [x]'s shape, with result dtype [dt]. Its program holds [c] as a
+    [Const] node, read at every index, so the map has [x] alone as an
+    operand.
+
+    Raises [Invalid_argument] naming [by] if [c] is outside [x]'s dtype
+    ({!check_value}) or [k] does not take two operands of [x]'s dtype, as
+    {!op2} does. *)
+
 val contract_shape :
   by:string ->
   batch:(int * int) iarray ->

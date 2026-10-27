@@ -530,10 +530,15 @@ let swapped ~by k a b = comparison ~by k b a
 let greater a b = swapped ~by:"Nx.greater" (Compare Less) a b
 let greater_equal a b = swapped ~by:"Nx.greater_equal" (Compare Less_equal) a b
 
-(* Scalar forms: the constant [c] of [x]'s dtype, of every set, beside [x]. *)
+(* Scalar forms: one map of [x] whose program holds [c] ({!Prim.op2_const}).
+   A constant read at every index needs no value of its own: building,
+   broadcasting and computing one costs several times the map. *)
 
-let constant ~by x c = fill ~by (dtype x) [||] c
-let scalar_binary ~by k x c = binary ~by k x (constant ~by x c)
+let scalar_map ~by ~swapped k out x c =
+  let y, () = Eval.eval ~by (Prim.op2_const ~by ~swapped k out x c) in
+  y
+
+let scalar_binary ~by k x c = scalar_map ~by ~swapped:false k (dtype x) x c
 let add_s x c = scalar_binary ~by:"Nx.add_s" (Binary Add) x c
 let sub_s x c = scalar_binary ~by:"Nx.sub_s" (Binary Sub) x c
 let mul_s x c = scalar_binary ~by:"Nx.mul_s" (Binary Mul) x c
@@ -543,13 +548,13 @@ let mod_s x c = scalar_binary ~by:"Nx.mod_s" (Binary Mod) x c
 let maximum_s x c = scalar_binary ~by:"Nx.maximum_s" (Binary Maximum) x c
 let minimum_s x c = scalar_binary ~by:"Nx.minimum_s" (Binary Minimum) x c
 
-let reversed ~by k c x = binary ~by k (constant ~by x c) x
+let reversed ~by k c x = scalar_map ~by ~swapped:true k (dtype x) x c
 let rsub_s c x = reversed ~by:"Nx.rsub_s" (Binary Sub) c x
 let rdiv_s c x = reversed ~by:"Nx.rdiv_s" (Binary (quotient (dtype x))) c x
 let rpow_s c x = reversed ~by:"Nx.rpow_s" (Binary Pow) c x
 
-let compared ~by k x c = comparison ~by k x (constant ~by x c)
-let compared_by ~by k c x = comparison ~by k (constant ~by x c) x
+let compared ~by k x c = scalar_map ~by ~swapped:false k D.Bool x c
+let compared_by ~by k c x = scalar_map ~by ~swapped:true k D.Bool x c
 let equal_s x c = compared ~by:"Nx.equal_s" (Compare Equal) x c
 let not_equal_s x c = compared ~by:"Nx.not_equal_s" (Compare Not_equal) x c
 let less_s x c = compared ~by:"Nx.less_s" (Compare Less) x c

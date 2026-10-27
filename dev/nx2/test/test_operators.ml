@@ -77,19 +77,37 @@ let shape =
     (Gen.frequency
        [ (1, Gen.constant 0); (1, Gen.constant 1); (4, Gen.int_range 2 4) ])
 
-type operand = Operand : ('v, 's) D.t * ('v, 's, Nx.host) Nx.t * 'v -> operand
+(* An operand as a function reads it: whole, reversed along every axis (a
+   view of negative steps), or broadcast along a new leading axis (a view
+   of step zero). *)
+type view = Whole | Flipped | Broadcast
+
+let view_name = function
+  | Whole -> "whole"
+  | Flipped -> "flipped"
+  | Broadcast -> "broadcast"
+
+type operand =
+  | Operand : ('v, 's) D.t * ('v, 's, Nx.host) Nx.t * 'v * view -> operand
+
+let viewed v x =
+  match v with
+  | Whole -> x
+  | Flipped -> Nx.flip x
+  | Broadcast -> Nx.broadcast_to (Array.append [| 2 |] (Nx.shape x)) x
 
 let operand =
   Gen.with_pp
-    (fun ppf (Operand (dt, x, c)) ->
-      Format.fprintf ppf "%a %a, %a" D.pp dt pp_ints (Nx.shape x)
-        (D.pp_value dt) c)
+    (fun ppf (Operand (dt, x, c, v)) ->
+      Format.fprintf ppf "%a %a %s, %a" D.pp dt pp_ints (Nx.shape x)
+        (view_name v) (D.pp_value dt) c)
     (let open Gen in
      let* (D.Any dt) = of_list ~pp:(fun ppf (D.Any dt) -> D.pp ppf dt) D.all in
      let* s = shape in
+     let* v = of_list [ Whole; Flipped; Broadcast ] in
      let* x = drawn dt s in
      let+ c = drawn dt [||] in
-     Operand (dt, x, Nx.item [] c))
+     Operand (dt, viewed v x, Nx.item [] c, v))
 
 (* Forms *)
 
@@ -154,14 +172,17 @@ let tests =
     { tname = "Infix ( >=$ )"; tscalar = (fun x c -> Nx.Infix.(x >=$ c)); tfull = (fun a b -> Nx.greater_equal a b) };
   ]
 
-(* [x]'s constant [c] as a 0-d value, which broadcasts. *)
-let law_form f (Operand (dt, x, c)) =
+(* [x]'s constant [c] as a 0-d value, which broadcasts, over [x] whole or a
+   view of it. *)
+let law_form f (Operand (dt, x, c, v)) =
   cover "no element" (Nx.numel x = 0);
+  cover "a view of negative steps" (v = Flipped && Nx.numel x > 1);
+  cover "a view of step zero" (v = Broadcast && Nx.numel x > 0);
   same_outcome
     (outcome dt (fun () -> f.full x (Nx.scalar dt c)))
     (outcome dt (fun () -> f.scalar x c))
 
-let law_test f (Operand (dt, x, c)) =
+let law_test f (Operand (dt, x, c, _)) =
   same_outcome
     (outcome D.Bool (fun () -> f.tfull x (Nx.scalar dt c)))
     (outcome D.Bool (fun () -> f.tscalar x c))
@@ -187,7 +208,7 @@ let pair_forms =
     { pname = "( *@ )"; op = (fun a b -> Nx.(a *@ b)); fn = Nx.matmul };
   ]
 
-let law_pair f (Operand (dt, x, _)) =
+let law_pair f (Operand (dt, x, _, _)) =
   let y = Nx.flip x in
   same_outcome (outcome dt (fun () -> f.fn x y)) (outcome dt (fun () -> f.op x y))
 

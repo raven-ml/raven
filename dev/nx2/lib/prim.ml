@@ -1920,6 +1920,24 @@ let op3 ~by k c x y =
   | Some prog -> one_node prog (dtype x) [| Plain c; Plain x; Plain y |]
   | None -> refused ~by (P.Op3 (k, 0, 1, 2)) (ins3 c x)
 
+let op2_const (type v s w q d) ~by ~swapped k (out : (w, q) dtype)
+    (x : (v, s, d) t) (c : v) : ((w, q, d) t * unit) prim =
+  let dt = dtype x in
+  check_value ~by dt c;
+  if not (P.accepts2 k dt) then refused ~by (P.Op2 (k, 0, 1)) (ins2 x);
+  let i = D.Any dt in
+  let node = if swapped then P.Op2 (k, 1, 0) else P.Op2 (k, 0, 1) in
+  let prog =
+    P.v ~ins:[| i |] [| In 0; Const (i, P.bits dt c); node |] ~outs:[| 2 |]
+  in
+  Map
+    {
+      layout = L.contiguous (layout_shape x);
+      prog;
+      outs = Value.[ out ];
+      loads = [| Plain x |];
+    }
+
 type 'd outputs =
   | Outputs : ('d, 'r) outs * ('r -> 'd any list) -> 'd outputs
 
