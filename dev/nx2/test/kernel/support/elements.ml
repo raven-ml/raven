@@ -386,6 +386,71 @@ let axis_near s =
 (* [s] with [n] along [axis], where it has that axis. *)
 let along s axis n = Array.mapi (fun i d -> if i = axis then n else d) s
 
+(* Padded loads *)
+
+(* The array [x] padded with the element [fill] (its bits) as [pad] says,
+   C-contiguous, built element by element: along each axis, padded index
+   [i] holds element [(i - lo) / (interior + 1)] where that divides and lies
+   in the operand, the fill elsewhere; then the windows' view. *)
+let pad_array (A.Any x) fill (pad : Nx_kernel.pad) =
+  let dt = A.dtype x in
+  let w = D.bits dt / 8 in
+  let s = Iarray.to_array (L.shape (A.layout x)) in
+  let r = Array.length s in
+  let padded =
+    Array.init r (fun i ->
+        let d = s.(i) in
+        Iarray.get pad.lo i + Iarray.get pad.hi i + d
+        + if d > 0 then Iarray.get pad.interior i * (d - 1) else 0)
+  in
+  (* The operand's index at padded index [idx], if it lands on one. *)
+  let source idx =
+    let src = Array.make r 0 and inside = ref true in
+    Array.iteri
+      (fun i j ->
+        let c = j - Iarray.get pad.lo i
+        and step = Iarray.get pad.interior i + 1 in
+        if c < 0 || c mod step <> 0 || c / step >= s.(i) then inside := false
+        else src.(i) <- c / step)
+      idx;
+    if !inside then Some src else None
+  in
+  let indices = Nx_array_gen.indices padded in
+  let a =
+    if w = 0 then begin
+      (* A sub-byte element is no byte of its own: element by element. *)
+      let one = A.v dt (L.contiguous [||]) (Rig.Buffer.of_string fill) in
+      let f = A.get one [||] in
+      let a = A.create Rig.host dt (Iarray.of_array padded) in
+      List.iter
+        (fun idx ->
+          A.set a (Iarray.of_array idx)
+            (match source idx with
+            | Some src -> A.get x (Iarray.of_array src)
+            | None -> f))
+        indices;
+      a
+    end
+    else begin
+      let bytes = A.to_array (Option.get (A.bitcast D.Uint8 (A.copy x))) in
+      let b = Bytes.create (max 1 (w * total padded)) in
+      List.iteri
+        (fun k idx ->
+          let at = Option.map (flat s) (source idx) in
+          for q = 0 to w - 1 do
+            Bytes.set b ((k * w) + q)
+              (match at with
+              | Some at -> Char.chr bytes.((at * w) + q)
+              | None -> fill.[q])
+          done)
+        indices;
+      let l = L.contiguous (Iarray.of_array padded) in
+      A.v dt l (Rig.Buffer.of_string (Bytes.to_string b))
+    end
+  in
+  if Iarray.length pad.windows = 0 then A.Any a
+  else A.Any (Option.get (A.move (M.Window pad.windows) a))
+
 (* Guard pages *)
 
 let pp_side ppf s =

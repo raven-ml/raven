@@ -16,6 +16,7 @@ open Nx_array_gen
 open Reduce_cases
 module A = Nx_array
 module D = Nx_array.Dtype
+module P = Nx_kernel.Prog
 module Support = Nx_kernels_support
 
 (* Views *)
@@ -413,63 +414,383 @@ let law_bound (b : Support.backend) (c : case) =
         vs;
       equal (list string) [] (List.rev !bad)
 
+(* The first [m] elements along axis [a] of [x]. *)
+let prefix a m (A.Any x) =
+  let s = L.shape (A.layout x) in
+  let r =
+    Iarray.mapi
+      (fun i e ->
+        if i = a then { M.start = 0; count = m; step = 1 }
+        else { M.start = 0; count = e; step = 1 })
+      s
+  in
+  A.Any (Option.get (A.move (M.Slice r) x))
+
 (* The scan of a prefix of the axis is the prefix of the scan. *)
 let law_prefix (b : Support.backend) (c : case) =
   let s = shape_of c.x and a = c.axes.(0) in
   let m = s.(a) / 2 in
-  let (A.Any x) = c.x in
-  let cut =
-    A.Any
-      (Option.get
-         (A.move
-            (M.Slice
-               (Iarray.of_array (Array.mapi
-                  (fun i e ->
-                    if i = a then { M.start = 0; count = m; step = 1 }
-                    else { M.start = 0; count = e; step = 1 })
-                  s)))
-            x))
-  in
-  match (run b c, run b { c with x = cut }) with
-  | Some (A.Any y), Some y' ->
-      cover "a prefix past a chunk" (m > 4096);
-      let prefix =
-        A.Any
-          (Option.get
-             (A.move
-                (M.Slice
-                   (Iarray.of_array (Array.mapi
-                      (fun i e ->
-                        if i = a then { M.start = 0; count = m; step = 1 }
-                        else { M.start = 0; count = e; step = 1 })
-                      s)))
-                y))
-      in
-      equal (list string) [] (differ (got prefix) y')
+  match (run b c, run b { c with x = prefix a m c.x }) with
+  | Some y, Some y' ->
+      cover "a prefix past 4096 terms" (m > 4096);
+      equal (list string) [] (differ (got (prefix a m y)) y')
   | None, None -> cover "declined" true
   | _ -> failf "a scan and its prefix were not both computed"
 
-(* A kernel that declines writes nothing. *)
-(* CR: terms casts narrow floats and complex values to Int64, so writes
-   can disappear (Float16 0.5 and 0.75 both become 0). Initialize dst
-   with deterministic bytes, keeping spare packed bits zero, and compare
-   its full buffer via Rig.Buffer.copy to host and blit_to_bytes. Use the
-   same byte check in test_contract's refusal law. Keep the Float16 reduce
-   example and add its nonempty scan counterpart. *)
+(* A kernel that declines writes nothing: the destination's bytes, drawn,
+   are as they were. *)
 let law_declined (b : Support.backend) (c : case) =
   let (A.Any x) = c.x in
-  let ys = Iarray.of_array (result_shape c) in
-  let dst = on b (A.Any (A.create Rig.host (A.dtype x) ys)) in
-  let bits () = Array.map bits_of (terms (host dst)) in
-  let before = bits () in
+  let d = D.Any (A.dtype x) and ys = result_shape c in
+  let r = Random.State.make [| 3 |] in
+  let dst =
+    on b
+      (Elements.of_elements d ys
+         (Array.init (total ys) (fun _ -> Elements.element d r)))
+  in
+  let before = Elements.elements (host dst) in
   match call b c dst with
   | A.Declined ->
       cover "declined" true;
-      equal (array int64) before (bits ())
+      equal (array string) before (Elements.elements (host dst))
   | A.Done -> cover "computed" true
   | r -> failf "the kernels answered %a" Nx_array_support.pp_answer r
 
 (* Carries *)
+
+(* A dtype a carried scan draws: its finite elements, near one for a
+   product, its NaNs, its other specials, and two elements whose sum, or
+   product, is a NaN made from numbers. *)
+type 'v drawn = {
+  finite : monoid -> Random.State.t -> 'v;
+  nans : 'v list;
+  others : 'v list;
+  made : monoid -> ('v * 'v) option;
+}
+
+type carried = Carried : ('v, 's) D.t * 'v drawn -> carried
+
+let carried_kinds =
+  let float_values =
+    {
+      finite =
+        (fun m r ->
+          match m with
+          | Prod ->
+              (if Random.State.bool r then 1. else -1.)
+              *. (0.999 +. Random.State.float r 0.002)
+          | _ ->
+              Float.ldexp
+                (Random.State.float r 2. -. 1.)
+                (Random.State.int r 9 - 4));
+      nans =
+        [
+          nan; -.nan; Int64.float_of_bits 0x7FF4_0000_0000_0000L;
+          Int64.float_of_bits 0xFFF9_2340_0000_0000L;
+        ];
+      others = [ -0.; 0.; infinity; neg_infinity ];
+      made =
+        (function
+        | Sum -> Some (infinity, neg_infinity)
+        | Prod -> Some (0., infinity)
+        | Max | Min -> None);
+    }
+  in
+  let float dt = Carried (dt, float_values) in
+  let complex dt =
+    let c re im = { Complex.re; im } in
+    Carried
+      ( dt,
+        {
+          finite =
+            (fun m r ->
+              c (float_values.finite m r) (0.01 *. float_values.finite Sum r));
+          nans = [ c nan 1.; c 1. (-.nan); c (-.nan) nan ];
+          others = [ c (-0.) (-0.); c infinity 0.; c 0. neg_infinity ];
+          made =
+            (function
+            | Sum -> Some (c infinity 0., c neg_infinity 1.)
+            | Prod -> Some (c 0. 0., c infinity 0.)
+            | Max | Min -> None);
+        } )
+  in
+  let ints dt ~small ~edges =
+    Carried
+      ( dt,
+        {
+          finite = (fun _ r -> small (Random.State.int r 16 - 8));
+          nans = [];
+          others = edges;
+          made = (fun _ -> None);
+        } )
+  in
+  [
+    float D.Float32; float D.Float64; float D.Float16; float D.Bfloat16;
+    complex D.Complex64; complex D.Complex128;
+    ints D.Int32 ~small:Int32.of_int ~edges:[ Int32.max_int; Int32.min_int ];
+    ints D.Int8 ~small:Fun.id ~edges:[ 127; -128 ];
+    ints D.Int4 ~small:Fun.id ~edges:[ 7; -8 ];
+    Carried
+      ( D.Bool,
+        {
+          finite = (fun _ r -> Random.State.bool r);
+          nans = [];
+          others = [ true; false ];
+          made = (fun _ -> None);
+        } );
+  ]
+
+(* A scan along axis 1 of [[outer; p + m; inner]] whose last [m] terms of
+   each slice are scanned from the carry of its first [p], the scan's
+   result before them in the carrier, [p] at a multiple of 4096 or within
+   it. One term in [rare] is one of the kind's others, or of its NaNs among
+   the last [m] where [nan_after]. The first [p] hold no NaN, but a NaN made
+   from numbers where [made] and a NaN term where [nan_before], of a [Max]
+   or [Min]; the last hold a NaN where [nan_after]. The terms are a
+   program's copy of the operand where [through]. *)
+type carry_case = {
+  kind : carried;
+  cm : monoid;
+  through : bool;
+  outer : int;
+  inner : int;
+  p : int;
+  m : int;
+  made : bool;
+  nan_before : bool;
+  nan_after : bool;
+  rare : int;
+  cseed : int;
+}
+
+let pp_carry_case ppf c =
+  let (Carried (dt, _)) = c.kind in
+  Format.fprintf ppf
+    "scan %s of %s%a [%d; %d + %d; %d]%s%s%s, one in %d special, seed %d"
+    (monoid_name c.cm)
+    (if c.through then "a copy of " else "")
+    D.pp dt c.outer c.p c.m c.inner
+    (if c.made then ", a made NaN before" else "")
+    (if c.nan_before then ", a NaN before" else "")
+    (if c.nan_after then ", a NaN after" else "")
+    c.rare c.cseed
+
+(* Which scans a carry case draws: [Exact], those every library continues
+   bit for bit from any term, an integer's, a boolean's, a Max's and a
+   Min's; [Inexact], a float's or a complex number's Sum and Prod, from a
+   carry after any term. *)
+type carried_scans = Exact | Inexact
+
+let carry_case scans =
+  let exact = scans = Exact in
+  let open Gen in
+  with_pp pp_carry_case
+    (* One inexact case in five carries a NaN made from numbers and holds a
+       NaN term after it: few draws of independent choices meet both. *)
+    (let* both =
+       if exact then constant false
+       else frequency [ (4, constant false); (1, constant true) ]
+     in
+     let* (Carried (dt, vs) as kind) =
+       of_list
+         (List.filter
+            (fun (Carried (dt, vs)) ->
+              ((not both) || vs.made Sum <> None)
+              && (exact || D.is D.Float dt || D.is D.Complex dt))
+            carried_kinds)
+     in
+     let floating = D.is D.Float dt || D.is D.Complex dt in
+     let* cm =
+       of_list
+         (List.filter
+            (fun m ->
+              accepts m (D.Any dt)
+              && ((not both) || vs.made m <> None)
+              && ((not exact) || (not floating) || m = Max || m = Min)
+              && (exact || m = Sum || m = Prod))
+            [ Sum; Prod; Max; Min ])
+     in
+     let* outer = of_list [ 1; 2 ] in
+     let* inner = of_list [ 1; 3 ] in
+     (* Such a case needs two terms before the carry and one after it. *)
+     let least k l = if both then List.filter (fun n -> n >= k) l else l in
+     let* p, m =
+       frequency
+         [
+           ( 1,
+             let* k = of_list [ 1; 2 ] in
+             let+ m = of_list (least 1 [ 0; 1; 5; 4095; 4096; 4097; 9000 ]) in
+             (4096 * k, m) );
+           ( 1,
+             let* p = of_list (least 2 [ 1; 2; 17; 1024; 2049; 4095 ]) in
+             let+ m = of_list (least 1 [ 0; 1; 4096 - p; (4096 - p) / 2 ]) in
+             (p, m) );
+         ]
+     in
+     (* A bound's case draws NaNs and specials more rarely, so that most of
+        its results are numbers. *)
+     let rarely = frequency [ (1, constant true); (3, constant false) ] in
+     let* made =
+       if both then constant true else if exact then bool else rarely
+     in
+     let* nan_before =
+       if both || vs.nans = [] || (cm <> Max && cm <> Min) then constant false
+       else bool
+     in
+     let* nan_after =
+       if both then constant true else if exact then bool else rarely
+     in
+     let* rare =
+       if exact then constant 64
+       else frequency [ (1, constant 64); (2, constant 4096) ]
+     in
+     let* through = bool in
+     let+ cseed = int in
+     {
+       kind; cm; through; outer; inner; p; m; made; nan_before; nan_after; rare;
+       cseed;
+     })
+
+(* The case's terms in C order of [[outer; p + m; inner]]. *)
+let carry_terms (type v) (vs : v drawn) c : v array =
+  let r = Random.State.make [| c.cseed |] in
+  let n = c.p + c.m in
+  let pick l = List.nth l (Random.State.int r (List.length l)) in
+  let term t =
+    let special = Random.State.int r c.rare = 0 in
+    if special && t >= c.p && c.nan_after && vs.nans <> [] then pick vs.nans
+    else if special then pick vs.others
+    else vs.finite c.cm r
+  in
+  let a =
+    Array.init (c.outer * n * c.inner) (fun i -> term (i / c.inner mod n))
+  in
+  let set t v =
+    for o = 0 to c.outer - 1 do
+      for i = 0 to c.inner - 1 do
+        a.((((o * n) + t) * c.inner) + i) <- v
+      done
+    done
+  in
+  (match vs.made c.cm with
+  | Some (u, v) when c.made && c.p > 1 ->
+      set (Random.State.int r (c.p - 1)) u;
+      set (c.p - 1) v
+  | _ -> ());
+  if c.nan_before then set (Random.State.int r c.p) (pick vs.nans);
+  (if c.nan_after && c.m > 0 && vs.nans <> [] then
+     let t = c.p + Random.State.int r c.m in
+     set t (pick vs.nans));
+  a
+
+(* Elements [lo, lo + count) along axis 1 of [x]. *)
+let along1 (A.Any x) lo count =
+  let s = L.shape (A.layout x) in
+  let r =
+    Iarray.mapi
+      (fun a e ->
+        if a = 1 then { M.start = lo; count; step = 1 }
+        else { M.start = 0; count = e; step = 1 })
+      s
+  in
+  A.Any (Option.get (A.move (M.Slice r) x))
+
+(* The program a carry case scans: [In 0], or a copy of it where
+   [through]. *)
+let carry_prog c (D.Any dt) =
+  if c.through then
+    P.v ~ins:[| D.Any dt |]
+      [| P.In 0; P.Op1 (Copy, D.Any dt, 0) |]
+      ~outs:[| 1 |]
+  else identity (D.Any dt)
+
+(* [c]'s scan by [b] of [x] along axis 1, of [dt]'s terms, into a fresh
+   destination of [into], from [carry]. *)
+let carry_scan (type v s) (b : Support.backend) c dt ?carry (into : (v, s) D.t)
+    (A.Any x) =
+  let (module K : Nx_kernel.S) = b.kernels in
+  let y = A.Any (A.create b.device into (L.shape (A.layout x))) in
+  match
+    K.scan ?carry (carry_prog c dt) ~axis:1 (Monoid c.cm, 0) ~dsts:[| y |]
+      [| Plain x |]
+  with
+  | A.Done -> y
+  | r -> failf "scan: the kernels answered %a" Nx_array_support.pp_answer r
+
+(* The case's terms on [b]'s device, and the carry into its last [m]
+   terms: the scan's result before them, in the carrier. *)
+let carry_of (b : Support.backend) c =
+  let (Carried (dt, vs)) = c.kind in
+  let n = c.p + c.m in
+  let z =
+    on b (A.Any (A.of_array dt [| c.outer; n; c.inner |] (carry_terms vs c)))
+  in
+  let (D.Any ct) = Nx_kernel.carrier (D.Any dt) in
+  (z, along1 (carry_scan b c (D.Any dt) ct (along1 z 0 c.p)) (c.p - 1) 1)
+
+let covers_carry c =
+  cover "a carry after 4096 terms or more" (c.p >= 4096);
+  cover "no term after a carry" (c.m = 0);
+  cover "several slices" (c.outer * c.inner > 1);
+  let (Carried (dt, _)) = c.kind in
+  cover "a NaN term after a carry"
+    ((D.is D.Float dt || D.is D.Complex dt) && c.nan_after && c.m > 0);
+  cover "a narrow float's carry" (D.bits dt = 16 && D.is D.Float dt);
+  cover "a program's terms" c.through
+
+(* An exact scan from the carry of a slice's first [p] terms has the bits
+   of the whole slice's scan from term [p] on, a NaN as any NaN. *)
+let law_carry (b : Support.backend) c =
+  let (Carried (dt, _)) = c.kind in
+  covers_carry c;
+  cover "a NaN term before an extreme's carry" (c.nan_before && c.m > 0);
+  let z, carry = carry_of b c in
+  let got = carry_scan b c (D.Any dt) ~carry dt (along1 z c.p c.m) in
+  let want = along1 (carry_scan b c (D.Any dt) dt z) c.p c.m in
+  equal (array (Elements.same (D.Any dt)))
+    (Elements.elements (host want))
+    (Elements.elements (host got))
+
+(* A float or complex Sum or Prod scan from a carry: each result within the
+   bound of a reduction of the carry's element and the terms up to it, a
+   NaN where a NaN carry or term reaches it. *)
+let law_carry_bound (b : Support.backend) c =
+  let (Carried (dt, _)) = c.kind in
+  let complex = D.is D.Complex dt in
+  covers_carry c;
+  cover "a NaN carry made from numbers" (c.made && c.p > 1 && c.m > 0);
+  cover "a NaN carry and a NaN term after it"
+    (c.made && c.p > 1 && c.nan_after && c.m > 0);
+  cover "a complex carry" complex;
+  cover "a product's carry" (c.cm = Prod);
+  let z, carry = carry_of b c in
+  let (D.Any _ as cd) = Nx_kernel.carrier (D.Any dt) in
+  let terms = along1 z c.p c.m in
+  let got = carry_scan b c (D.Any dt) ~carry dt terms in
+  let pr = precision cd in
+  let into = if same cd (D.Any dt) then None else Some (precision (D.Any dt)) in
+  let cs = zvalues carry and ts = zvalues terms and gs = zvalues got in
+  let bad = ref [] and seen = ref [] in
+  for o = 0 to c.outer - 1 do
+    for i = 0 to c.inner - 1 do
+      let r = reference ?into ~complex pr c.cm in
+      r.push cs.((o * c.inner) + i);
+      for j = 0 to c.m - 1 do
+        let k = (((o * c.m) + j) * c.inner) + i in
+        r.push ts.(k);
+        let v = r.verdict gs.(k) in
+        seen := v :: !seen;
+        match v with
+        | Misses s when List.length !bad < 8 ->
+            bad := Printf.sprintf "slice %d %d, result %d: %s" o i j s :: !bad
+        | _ -> ()
+      done
+    done
+  done;
+  let nan (z : Complex.t) = Float.is_nan z.re || Float.is_nan z.im in
+  cover "a NaN carry's results" (Array.exists nan cs && c.m > 0);
+  cover "a result within its bound" (List.mem Bounded !seen);
+  equal (list string) [] (List.rev !bad)
 
 (* A carry of a reduction that takes none, or of another shape or dtype than
    the carrier's, is refused. *)
@@ -508,68 +829,16 @@ let test_carry_refusals (b : Support.backend) () =
    bytes. *)
 let test_aliased_carry (b : Support.backend) () =
   let (module K : Nx_kernel.S) = b.kernels in
-  let on_b x = if Rig.equal (A.device x) b.device then x else A.to_device b.device x in
   let f64 = Int64.float_of_bits in
-  let y = on_b (A.of_array D.Float64 [| 1; 1 |] [| f64 0x7FF4_0000_0000_0001L |]) in
-  let x = on_b (A.of_array D.Float64 [| 1; 1 |] [| 1. |]) in
+  let y = A.expect D.Float64 (on b (A.Any (A.of_array D.Float64 [| 1; 1 |] [| f64 0x7FF4_0000_0000_0001L |]))) in
+  let x = on b (A.Any (A.of_array D.Float64 [| 1; 1 |] [| 1. |])) in
   let answer =
     K.scan ~carry:(A.Any y) (identity (D.Any D.Float64)) ~axis:1
-      (Monoid Max, 0) ~dsts:[| A.Any y |] [| Plain x |]
+      (Monoid Max, 0) ~dsts:[| A.Any y |] [| plain_of x |]
   in
   equal ~msg:"answer" Elements.answer A.Done answer;
-  let y = if Rig.equal (A.device y) Rig.host then y else A.to_device Rig.host y in
+  let y = A.expect D.Float64 (host (A.Any y)) in
   equal ~msg:"a NaN" bool true (Float.is_nan (A.to_array y).(0))
-
-(* A float or complex Sum or Prod scan from a carry: each result within the
-   bound of a reduction of the carry's element and the terms up to it, a
-   NaN where a NaN carry or term reaches it. The carry is the kernels' scan
-   of the slice's first [p] terms, in the carrier. *)
-let law_carry_bound (b : Support.backend) c =
-  let (Carried (dt, vs)) = c.kind in
-  let n = c.p + c.m in
-  let complex = D.is D.Complex dt in
-  cover "a NaN carry made from numbers" (c.made && c.p > 1 && c.m > 0);
-  cover "a NaN term after a carry" (c.nan_after && c.m > 0);
-  cover "no term after a carry" (c.m = 0);
-  cover "several slices" (c.outer * c.inner > 1);
-  cover "a narrow float's carry" (D.bits dt = 16 && D.is D.Float dt);
-  cover "a complex carry" complex;
-  cover "a product's carry" (c.cm = Prod);
-  cover "a program's terms" c.through;
-  let z =
-    on b (A.Any (A.of_array dt [| c.outer; n; c.inner |] (carry_terms vs c)))
-  in
-  let (D.Any ct as cd) = carrier (D.Any dt) in
-  let carry =
-    along1 (carry_scan b c (D.Any dt) ct (along1 z 0 c.p)) (c.p - 1) 1
-  in
-  let terms = along1 z c.p c.m in
-  let got = carry_scan b c (D.Any dt) ~carry dt terms in
-  let pr = precision cd in
-  let into = if same cd (D.Any dt) then None else Some (precision (D.Any dt)) in
-  let cs = zvalues carry and ts = zvalues terms and gs = zvalues got in
-  let bad = ref [] and seen = ref [] in
-  for o = 0 to c.outer - 1 do
-    for i = 0 to c.inner - 1 do
-      let r = reference ?into ~complex pr c.cm in
-      r.push cs.((o * c.inner) + i);
-      for j = 0 to c.m - 1 do
-        let k = (((o * c.m) + j) * c.inner) + i in
-        r.push ts.(k);
-        let v = r.verdict gs.(k) in
-        seen := v :: !seen;
-        match v with
-        | Misses s when List.length !bad < 8 ->
-            bad := Printf.sprintf "slice %d %d, result %d: %s" o i j s :: !bad
-        | _ -> ()
-      done
-    done
-  done;
-  let nan (z : Complex.t) = Float.is_nan z.re || Float.is_nan z.im in
-  let nan_carry = Array.exists nan cs in
-  cover "a NaN carry's results" (nan_carry && c.m > 0);
-  cover "a result within its bound" (List.mem Bounded !seen);
-  equal (list string) [] (List.rev !bad)
 
 (* Special values *)
 
@@ -922,7 +1191,7 @@ let laws (b : Support.backend) =
         (run (law_declined b));
       prop "an exact scan from a carry continues the scan whose terms it \
             carries"
-        (carry_case Exact) (run (law_carry ~exact:true b));
+        (carry_case Exact) (run (law_carry b));
       prop
         "a float or complex sum or product from a carry is within the bound \
          of the carry's and the terms' reduction"
