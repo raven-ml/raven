@@ -354,6 +354,7 @@ let safetensors_dtypes =
       Any Int32;
       Any Uint32;
       Any Float32;
+      Any Complex64;
       Any Float64;
       Any Int64;
       Any Uint64;

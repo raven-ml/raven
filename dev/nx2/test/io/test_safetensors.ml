@@ -43,6 +43,7 @@ let raw_safetensors ?(pad = 0) entries =
 let typed_entries =
   [
     ("u64", "U64", "uint64", [ 2 ], pattern 16 1);
+    ("c64", "C64", "complex64", [ 2 ], pattern 16 11);
     ("u32", "U32", "uint32", [ 2; 2 ], pattern 16 2);
     ("bf16", "BF16", "bfloat16", [ 3 ], pattern 6 3);
     ("f16", "F16", "float16", [ 1 ], pattern 2 4);
@@ -51,6 +52,8 @@ let typed_entries =
     ("bool", "BOOL", "bool", [ 4 ], "\000\001\002\255");
     ("empty", "F32", "float32", [ 0; 3 ], "");
     ("scales", "F8_E8M0", "uint8", [ 2; 3 ], pattern 6 7);
+    ("e4m3fnuz", "F8_E4M3FNUZ", "uint8", [ 3 ], pattern 3 12);
+    ("e5m2fnuz", "F8_E5M2FNUZ", "uint8", [ 1; 2 ], pattern 2 13);
     ("nibbles", "F4", "uint8", [ 2; 4 ], pattern 4 8);
     ("sixes", "F6_E2M3", "uint8", [ 4 ], pattern 3 9);
     ("other sixes", "F6_E3M2", "uint8", [ 8 ], pattern 6 10);
@@ -103,6 +106,40 @@ let safetensors =
           let again = temp_file () in
           save_safetensors again [ (entry, p) ];
           equal string (payload path) (payload again));
+      test
+        "a complex64 file torch wrote loads bit for bit, and saves again as it \
+         is" (fun () ->
+          let path = fixture "c64_bit_exact.safetensors" in
+          let p = find (Nx_io.load_safetensors path) "c64_tensor" in
+          let bits =
+            [
+              0x3F800000;
+              0x40000000;
+              0x80000000;
+              0xFF800000;
+              0x7FC00000;
+              0x3F000000;
+            ]
+          in
+          let le32 n =
+            String.init 4 (fun i -> Char.chr ((n lsr (8 * i)) land 0xff))
+          in
+          equal
+            (triple string (array int) string)
+            ("complex64", [| 3 |], String.concat "" (List.map le32 bits))
+            (stored p);
+          let again = temp_file () in
+          save_safetensors again [ ("c64_tensor", p) ];
+          equal string (payload path) (payload again));
+      test "the FNUZ float8 entries torch wrote load as their bytes" (fun () ->
+          let a = Nx_io.load_safetensors (fixture "fnuz.safetensors") in
+          List.iter
+            (fun name ->
+              equal ~msg:name
+                (triple string (array int) string)
+                ("uint8", [| 4 |], "\000\001\128\127")
+                (stored (find a name)))
+            [ "e4m3fnuz"; "e5m2fnuz" ]);
       test "an entry of any dtype loads its bytes as stored, at any offset"
         (fun () ->
           List.iter
@@ -196,24 +233,17 @@ let safetensors =
                 ("b", Nx.P (Nx.full Nx.float64 [| 1 |] 1.));
                 ("c", Nx.P (Nx.full Nx.int64 [| 1 |] 2L));
                 ("d", Nx.P (Nx.full Nx.float32 [| 1 |] 3.));
+                ("e", Nx.P (Nx.full Nx.complex64 [| 1 |] { re = 2.; im = 0.5 }));
               ]
           in
-          let p = payload path in
-          equal int 21 (String.length p);
-          equal string "\002\000\000\000\000\000\000\000" (String.sub p 0 8);
-          equal string "\000\000\000\000\000\000\240\063" (String.sub p 8 8));
+          (* int64 2, float64 1, complex64 2 + 0.5i, float32 3, uint8 0. *)
+          equal string
+            "\002\000\000\000\000\000\000\000\000\000\000\000\000\000\240\063\000\000\000\064\000\000\000\063\000\000\064\064\000"
+            (payload path));
       cases
         ~name:(fun (D.Any dt) -> D.name dt)
         "a dtype SafeTensors lacks is refused, naming the entry"
-        D.
-          [
-            Any Complex64;
-            Any Complex128;
-            Any Int4;
-            Any Uint4;
-            Any Bit;
-            Any Float4_e2m1fn;
-          ]
+        D.[ Any Complex128; Any Int4; Any Uint4; Any Bit; Any Float4_e2m1fn ]
         (fun (D.Any dt) ->
           raises_match
             (Exn.invalid_arg ~substring:"Nx_io.save_safetensors: w: ")
@@ -282,7 +312,7 @@ let safetensors =
              fun () -> file (raw_safetensors [ ("", "U8", [ 1 ], "a") ]) );
            ( "an unknown dtype",
              fun () ->
-               file (raw_safetensors [ ("w", "C64", [ 1 ], "abcdefgh") ]) );
+               file (raw_safetensors [ ("w", "C128", [ 1 ], "abcdefgh") ]) );
            ( "a size that is not the shape's",
              fun () -> file (raw_safetensors [ ("w", "U16", [ 1 ], "a") ]) );
            ( "a negative extent",

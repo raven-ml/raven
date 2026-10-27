@@ -241,7 +241,8 @@ end
    entry's shape where its elements are whole bytes. *)
 type kind = Dtype of D.any | Bytes of { whole : bool }
 
-(* The format's dtypes, by name, with their width in bits. *)
+(* The format's dtypes, by name, with their width in bits, in the order of the
+   reference implementation's [Dtype] enum (safetensors/src/tensor.rs). *)
 let dtypes =
   [
     ("BOOL", 8, Dtype (D.Any D.Bool));
@@ -253,6 +254,8 @@ let dtypes =
     ("F8_E5M2", 8, Dtype (D.Any D.Float8_e5m2));
     ("F8_E4M3", 8, Dtype (D.Any D.Float8_e4m3fn));
     ("F8_E8M0", 8, Bytes { whole = true });
+    ("F8_E4M3FNUZ", 8, Bytes { whole = true });
+    ("F8_E5M2FNUZ", 8, Bytes { whole = true });
     ("I16", 16, Dtype (D.Any D.Int16));
     ("U16", 16, Dtype (D.Any D.Uint16));
     ("F16", 16, Dtype (D.Any D.Float16));
@@ -260,6 +263,7 @@ let dtypes =
     ("I32", 32, Dtype (D.Any D.Int32));
     ("U32", 32, Dtype (D.Any D.Uint32));
     ("F32", 32, Dtype (D.Any D.Float32));
+    ("C64", 64, Dtype (D.Any D.Complex64));
     ("F64", 64, Dtype (D.Any D.Float64));
     ("I64", 64, Dtype (D.Any D.Int64));
     ("U64", 64, Dtype (D.Any D.Uint64));

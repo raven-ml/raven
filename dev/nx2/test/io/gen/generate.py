@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Generate nx.io's test fixtures: files other tools write.
 
-numpy writes the NPY, NPZ and text files, torch the bfloat16 SafeTensors file,
-and zipfile the NPZ files numpy would not write. The PNG files come from the
-minimal writer below, which chooses the row filters, sample depths and
-interlacing that an encoder picks on its own, except png_rgba.png and
-png_la.png, which Pillow writes as it writes the JPEG files. Each image has a
+numpy writes the NPY, NPZ and text files and the float16 SafeTensors file,
+torch the other SafeTensors files, and zipfile the NPZ files numpy would not
+write. The PNG files come from the minimal writer below, which chooses the row
+filters, sample depths and interlacing that an encoder picks on its own, except
+png_rgba.png and png_la.png, which Pillow writes as it writes the JPEG files. Each image has a
 sibling .npy of the pixels Pillow decodes from it, of shape (h, w, c), except
 png_gray_trns.png and png_rgb16_trns.png, whose pixels are stated from PNG-3
 where Pillow's decoding differs. No fixture is a YCCK JPEG, which Pillow does
@@ -37,6 +37,16 @@ def safetensors_fixtures():
     bf16_bits = [0x0000, 0x0001, 0x3F80, 0x7F80, 0x7FC1]
     bf16 = torch.tensor(bf16_bits, dtype=torch.int16).view(torch.bfloat16)
     save_torch({"bf16_tensor": bf16}, "bf16_bit_exact.safetensors")
+    # [1+2j, -0-infj, NaN+0.5j] at complex64, from the float32 bits of each part
+    c64_bits = [0x3F800000, 0x40000000, 0x80000000, 0xFF800000, 0x7FC00000, 0x3F000000]
+    c64 = torch.from_numpy(np.array(c64_bits, dtype="<u4").view(np.complex64))
+    save_torch({"c64_tensor": c64}, "c64_bit_exact.safetensors")
+    # The two FNUZ float8 formats, which nx lacks, each of the bytes [0, 1,
+    # 0x80, 0x7F]: zero, the least subnormal, NaN and the largest finite value.
+    fnuz = torch.tensor([0x00, 0x01, 0x80, 0x7F], dtype=torch.uint8)
+    save_torch({"e4m3fnuz": fnuz.clone().view(torch.float8_e4m3fnuz),
+                "e5m2fnuz": fnuz.clone().view(torch.float8_e5m2fnuz)},
+               "fnuz.safetensors")
 
 
 def numpy_fixtures():
