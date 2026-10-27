@@ -262,6 +262,13 @@ let op (node : 'v 's 'd. ('v, 's, 'd) Nx.t -> Ops.t) (type r) (o : r P.t) =
   | Move (m, x) -> [| move m x (node x) |]
   | Bitcast (dt, x) -> [| bitcast dt x (node x) |]
   | Place (_, x) -> [| node x |]
-  | Gather _ | Scatter _ | Sort _ | Fold _ | Assemble _ | Fft _ | Linalg _
-  | Check _ ->
+  | Gather { axis; idx; x } ->
+      [| Lower_index.gather (D.Any (Nx.dtype x)) ~axis (node idx) (node x) |]
+  | Scatter { combine; unique = _; axis; idx; updates; into } ->
+      [|
+        Lower_index.scatter
+          (D.Any (Nx.dtype into))
+          combine ~axis ~idx:(node idx) ~updates:(node updates) (node into);
+      |]
+  | Sort _ | Fold _ | Assemble _ | Fft _ | Linalg _ | Check _ ->
       unlowered (P.name o)
