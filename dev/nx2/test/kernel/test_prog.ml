@@ -678,6 +678,23 @@ let compute ?(shape = small) (p : P.t) loads =
 
 let outputs = Testable.(result (array (array string)) Elements.answer)
 
+(* [p]'s outputs over [loads] as {!compute} gives them, with every NaN
+   element, and every NaN part of a complex element, as the string "nan":
+   only a move specifies a NaN result's bits, so two programs computing
+   the same value may give NaNs of different signs or payloads. Every
+   other element keeps its bits. *)
+let any_nan (p : P.t) loads =
+  let blind d e = if Elements.nan_of d e then "nan" else e in
+  let one (D.Any dt as d) e =
+    if not (D.is D.Complex dt) then blind d e
+    else
+      let h = String.length e / 2 in
+      let part = if h = 4 then D.Any D.Float32 else D.Any D.Float64 in
+      blind part (String.sub e 0 h) ^ blind part (String.sub e h h)
+  in
+  let out i es = Array.map (one (P.dtype p (Iarray.get p.outs i))) es in
+  Result.map (Array.mapi out) (compute p loads)
+
 (* Substitution *)
 
 let structural = Testable.structural ~pp:pp_prog
@@ -786,8 +803,8 @@ let check_bind d k x seed =
             if i = k then given else loads.(if i < k then i else i - 1))
       in
       equal ~msg:"outputs' bits" outputs
-        (compute (program (pruned d)) all)
-        (compute s loads);
+        (any_nan (program (pruned d)) all)
+        (any_nan s loads);
       true
 
 let law_bind (d, k, choices, seed) =
@@ -928,8 +945,8 @@ let check_exprs d seed =
     (List.map name (Iarray.to_list q.ins));
   let rand = Random.State.make [| seed |] in
   let loads = Array.map (fun t -> random_elements rand t 12) d.ins in
-  let want = compute (program (pruned d)) loads in
-  equal ~msg:"outputs' bits" outputs want (compute q loads);
+  let want = any_nan (program (pruned d)) loads in
+  equal ~msg:"outputs' bits" outputs want (any_nan q loads);
   q
 
 let law_of_exprs (d, seed) =
