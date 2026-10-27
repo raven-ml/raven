@@ -100,8 +100,6 @@ typedef struct {
   size_t pos;
   uint64_t bits;
   unsigned nbits;
-  int marker;
-  size_t marker_offset;
 } entropy_reader;
 
 static const uint8_t zigzag[64] = {
@@ -256,7 +254,9 @@ static jpeg_status parse_dht(jpeg_decoder *decoder, const uint8_t *data,
     size_t count = 0;
     for (unsigned i = 0; i < 16; i++)
       count += counts[i];
-    if (count > 256 || count > len - off)
+    if (count > 256)
+      return JPEG_TABLE;
+    if (count > len - off)
       return JPEG_TRUNCATED;
     jpeg_huffman *table =
         class_ == 0 ? &decoder->dc[index] : &decoder->ac[index];
@@ -275,6 +275,14 @@ static void free_decoder(jpeg_decoder *decoder) {
     decoder->components[i].coefficients = NULL;
     decoder->components[i].samples = NULL;
   }
+}
+
+/* Whether [marker] is one this decoder does not read: a lossless,
+   hierarchical or arithmetic-coded frame header, or the arithmetic coding
+   conditioning DAC (T.81, B.1.1.3). SOF0 to SOF2, DHT (0xc4) and the reserved
+   JPG (0xc8) are read or skipped. */
+static int unsupported(unsigned marker) {
+  return marker >= 0xc3 && marker <= 0xcf && marker != 0xc4 && marker != 0xc8;
 }
 
 /* The status of a frame of [marker] whose samples have [precision] bits: a
@@ -354,10 +362,11 @@ static jpeg_component *find_component(jpeg_decoder *decoder, unsigned id) {
   return NULL;
 }
 
+/* The next byte of entropy-coded data, where a marker is an error: a scan's
+   data ends with the bits its blocks need. */
 static jpeg_status entropy_byte(entropy_reader *reader, uint8_t *byte) {
   if (reader->pos >= reader->len)
     return JPEG_TRUNCATED;
-  size_t marker_offset = reader->pos;
   unsigned value = reader->src[reader->pos++];
   if (value != 0xff) {
     *byte = (uint8_t)value;
@@ -372,8 +381,6 @@ static jpeg_status entropy_byte(entropy_reader *reader, uint8_t *byte) {
     *byte = 0xff;
     return JPEG_OK;
   }
-  reader->marker = (int)value;
-  reader->marker_offset = marker_offset;
   return JPEG_SCAN;
 }
 
@@ -637,28 +644,17 @@ decode_progressive(entropy_reader *reader, jpeg_component *component,
 static jpeg_status restart(entropy_reader *reader, unsigned expected) {
   reader->bits = 0;
   reader->nbits = 0;
-  if (reader->marker == 0) {
-    size_t marker_offset = reader->pos;
-    if (reader->pos >= reader->len || reader->src[reader->pos++] != 0xff)
-      return JPEG_RESTART;
-    while (reader->pos < reader->len && reader->src[reader->pos] == 0xff)
-      reader->pos++;
-    if (reader->pos >= reader->len)
-      return JPEG_TRUNCATED;
-    reader->marker = reader->src[reader->pos++];
-    reader->marker_offset = marker_offset;
-  }
-  if (reader->marker != (int)(0xd0u + expected))
+  if (reader->pos >= reader->len || reader->src[reader->pos++] != 0xff)
     return JPEG_RESTART;
-  reader->marker = 0;
-  return JPEG_OK;
+  while (reader->pos < reader->len && reader->src[reader->pos] == 0xff)
+    reader->pos++;
+  if (reader->pos >= reader->len)
+    return JPEG_TRUNCATED;
+  unsigned marker = reader->src[reader->pos++];
+  return marker == 0xd0u + expected ? JPEG_OK : JPEG_RESTART;
 }
 
-static jpeg_status finish_scan(entropy_reader *reader, size_t *next) {
-  if (reader->marker != 0) {
-    *next = reader->marker_offset;
-    return JPEG_OK;
-  }
+static jpeg_status finish_scan(const entropy_reader *reader, size_t *next) {
   size_t off = reader->pos;
   if (off >= reader->len || reader->src[off] != 0xff)
     return JPEG_SCAN;
@@ -743,7 +739,7 @@ static jpeg_status decode_scan(jpeg_decoder *decoder, const uint8_t *header,
       return status;
   }
 
-  entropy_reader reader = {decoder->src, decoder->len, entropy_off, 0, 0, 0, 0};
+  entropy_reader reader = {decoder->src, decoder->len, entropy_off, 0, 0};
   for (unsigned i = 0; i < decoder->component_count; i++)
     decoder->components[i].dc_predictor = 0;
   unsigned eob_run = 0;
@@ -848,7 +844,7 @@ static jpeg_status reconstruct(jpeg_decoder *decoder) {
     size_t sample_count;
     if (!checked_product(component->sample_stride, sample_rows, &sample_count))
       return JPEG_SIZE;
-    component->samples = malloc(sample_count == 0 ? 1 : sample_count);
+    component->samples = malloc(sample_count);
     if (component->samples == NULL)
       return JPEG_NOMEM;
     for (size_t block_y = 0; block_y < component->blocks_y; block_y++) {
@@ -947,10 +943,10 @@ static jpeg_status write_pixels(const jpeg_decoder *decoder, uint8_t *dst,
       unsigned r;
       unsigned g;
       unsigned b;
+      unsigned first = resample(decoder, &decoder->components[0], x, y);
+      unsigned second = resample(decoder, &decoder->components[1], x, y);
+      unsigned third = resample(decoder, &decoder->components[2], x, y);
       if (decoder->component_count == 3) {
-        unsigned first = resample(decoder, &decoder->components[0], x, y);
-        unsigned second = resample(decoder, &decoder->components[1], x, y);
-        unsigned third = resample(decoder, &decoder->components[2], x, y);
         if (decoder->adobe_transform == 0) {
           r = first;
           g = second;
@@ -959,9 +955,6 @@ static jpeg_status write_pixels(const jpeg_decoder *decoder, uint8_t *dst,
           ycbcr(first, second, third, &r, &g, &b);
         }
       } else {
-        unsigned first = resample(decoder, &decoder->components[0], x, y);
-        unsigned second = resample(decoder, &decoder->components[1], x, y);
-        unsigned third = resample(decoder, &decoder->components[2], x, y);
         unsigned key = resample(decoder, &decoder->components[3], x, y);
         if (decoder->adobe_transform == 2) {
           unsigned rr;
@@ -1044,9 +1037,7 @@ static jpeg_status decode_jpeg(const uint8_t *src, size_t len, uint8_t *dst,
     } else if (marker == 0xee && data_len >= 12 &&
                memcmp(data, "Adobe", 5) == 0) {
       decoder.adobe_transform = data[11];
-    } else if ((marker >= 0xc3 && marker <= 0xcf && marker != 0xc4 &&
-                marker != 0xc8 && marker != 0xcc) ||
-               marker == 0xcc) {
+    } else if (unsupported(marker)) {
       status = JPEG_UNSUPPORTED;
     }
   }
@@ -1097,8 +1088,7 @@ static jpeg_status probe_jpeg(const uint8_t *src, size_t len, size_t *width,
       *channels = output_channels(data[5]);
       return JPEG_OK;
     }
-    if ((marker >= 0xc3 && marker <= 0xcf && marker != 0xc4 && marker != 0xc8 &&
-         marker != 0xcc))
+    if (unsupported(marker))
       return JPEG_UNSUPPORTED;
   }
   return JPEG_TRUNCATED;
@@ -1550,12 +1540,11 @@ static jpeg_status encode_jpeg(jpeg_writer *writer, const uint8_t *src,
   return status;
 }
 
-static void checked_bytes(value vbuf, const uint8_t **data, size_t *len) {
-  struct caml_ba_array *array = Caml_ba_array_val(vbuf);
-  if ((array->flags & CAML_BA_KIND_MASK) != CAML_BA_UINT8)
-    caml_invalid_argument("Nx_io JPEG: expected a uint8 Bigarray");
-  *data = Caml_ba_data_val(vbuf);
-  *len = caml_ba_byte_size(array);
+/* The bytes of [v], a one-dimensional uint8 bigarray, as its external's type
+   states. */
+static void bytes_of(value v, const uint8_t **data, size_t *len) {
+  *data = Caml_ba_data_val(v);
+  *len = Caml_ba_array_val(v)->dim[0];
 }
 
 CAMLprim value caml_nx_io_jpeg_probe(value vsrc) {
@@ -1563,7 +1552,7 @@ CAMLprim value caml_nx_io_jpeg_probe(value vsrc) {
   CAMLlocal1(vresult);
   const uint8_t *src;
   size_t len;
-  checked_bytes(vsrc, &src, &len);
+  bytes_of(vsrc, &src, &len);
   size_t width;
   size_t height;
   unsigned channels;
@@ -1585,10 +1574,10 @@ CAMLprim value caml_nx_io_jpeg_decode(value vsrc, value vdst) {
   CAMLparam2(vsrc, vdst);
   const uint8_t *src;
   size_t src_len;
-  checked_bytes(vsrc, &src, &src_len);
+  bytes_of(vsrc, &src, &src_len);
   const uint8_t *dst_const;
   size_t dst_len;
-  checked_bytes(vdst, &dst_const, &dst_len);
+  bytes_of(vdst, &dst_const, &dst_len);
   caml_release_runtime_system();
   jpeg_status status = decode_jpeg(src, src_len, (uint8_t *)dst_const, dst_len);
   caml_acquire_runtime_system();
@@ -1604,7 +1593,7 @@ CAMLprim value caml_nx_io_jpeg_encode(value vsrc, value vwidth, value vheight,
   CAMLlocal1(vresult);
   const uint8_t *src;
   size_t src_len;
-  checked_bytes(vsrc, &src, &src_len);
+  bytes_of(vsrc, &src, &src_len);
   intnat width_i = Long_val(vwidth);
   intnat height_i = Long_val(vheight);
   intnat channels_i = Long_val(vchannels);
