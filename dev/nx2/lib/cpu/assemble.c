@@ -93,14 +93,22 @@ static void fill_box(const nx_array *dst, const uint8_t *fill, int r,
    beside its copy, and a job still has units to share. */
 #define PAD_PART (64 * 1024)
 
-/* What a call takes past its bytes (cpu.h, Calls, scalar): a piece's
-   copy loop, 6.1 KiB for a piece of one element (M1); a pair of pieces'
-   test along an axis (tiles), 79 a pair of 2048 one-element pieces
-   (fudge); a span's step over a position of a tap (span_of), 313 for a
-   fold of one axis, its sums included (fudge). */
+/* What a call takes past its elements' moves (cpu.h, Calls and jobs,
+   scalar; M1 Max and fudge, 2026-10-14): a piece's copy loop, 6.1 KiB for
+   a piece of one element (M1); a pair of pieces' test along an axis
+   (tiles), 79 a pair of 2048 one-element pieces (fudge); a span's step
+   over a position of a tap (span_of), 313 for a fold of one axis, its sums
+   included (fudge). */
 #define PIECE_COST 16384
 #define PAIR_COST 128
 #define SPAN_COST 512
+
+/* What moving, filling or adding [n] elements of [dt] takes, at a strided
+   walk's bound (streaming): a walk of them at their bytes an element
+   costs at most this. */
+static double moves_cost(int dt, double n) {
+  return NX_CPU_STRIDED_COST * nx_cpu_width(dt) * n;
+}
 
 /* A pad: the result and its one piece, of whole bytes, the piece's box
    [lo, hi) per axis of the result's [shape], their steps [sd] and [sp];
@@ -309,9 +317,9 @@ value nx_cpu_assemble(value vfill, value vd, value vpieces) {
     CAMLreturn(Val_int(e));
   }
   double pairs = (double)np * (np - 1) / 2 * r;
-  double cost = NX_CPU_STRIDED_COST * nx_cpu_width(dt) *
-                    (nx_cpu_elements(&a[0]) + (double)c.elements) +
-                PAIR_COST * pairs + PIECE_COST * (double)np;
+  double moved = nx_cpu_elements(&a[0]) + (double)c.elements;
+  double cost = moves_cost(dt, moved) + PAIR_COST * pairs +
+                PIECE_COST * (double)np;
   int released = nx_cpu_release(cost);
   int64_t total = 1;
   for (int i = 0; i < r; i++) total *= shape[i];
@@ -346,7 +354,8 @@ value nx_cpu_assemble(value vfill, value vd, value vpieces) {
                   .sd = step,
                   .sp = a[1].dim + r};
     int64_t bytes = 2 * total * (bits / 8);
-    nx_cpu_job(total / shape[r - 1] * pd.parts, bytes, bytes, pad_units, &pd);
+    nx_cpu_job(total / shape[r - 1] * pd.parts, bytes, moves_cost(dt, moved),
+               pad_units, &pd);
   }
   if (!e && total > 0 && !covered && !padded) {
     if (unit && np == 1) {
@@ -778,9 +787,9 @@ value nx_cpu_fold_pad(value vpad, value vd, value vx) {
   for (int i = 0; i < r; i++) positions += xs[i];
   /* The zeros, each tap's sum of a result, and each tap's spans. */
   double taps_total = (double)taps * (double)total;
-  int released = nx_cpu_release(
-      (double)total * w + NX_CPU_STRIDED_COST * (taps_total + xn) * w +
-      SPAN_COST * (double)taps * (double)positions);
+  double adds = moves_cost(dt, taps_total + (double)xn);
+  int released = nx_cpu_release((double)total * w + adds +
+                                SPAN_COST * (double)taps * (double)positions);
   if (total > 0 && xn == 0) zero_run(&a[0], a[0].offset, total);
   if (total > 0 && xn > 0) {
     folder f = {.a = a, .add = add, .w = w, .r = r, .taps = taps};
@@ -832,7 +841,7 @@ value nx_cpu_fold_pad(value vpad, value vd, value vx) {
     f.tap_major = NX_CPU_COPY_STRIDED && nx_cpu_carrier(dt) == dt &&
                   r > f.leading && f.sx[r - 1] != 1 &&
                   slab_copy(&f, a, xs, win, nw);
-    nx_cpu_job(units, bytes, bytes, fold_units, &f);
+    nx_cpu_job(units, bytes, adds, fold_units, &f);
     int lost = signed_zero && unreached_zeros(&f, shape, win, nw);
     free(f.boxes);
     free(f.tap_px);
