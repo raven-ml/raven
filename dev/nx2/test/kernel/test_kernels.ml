@@ -1836,12 +1836,16 @@ let law_map_split ?declines ?(labels = true) ?length ?(padded = false)
             (Iarray.to_array p.outs)
       | r -> failf "map answered %a" Nx_array_support.pp_answer r)
 
-(* A program of as many loads and outputs as a program has, reading the
-   coordinate along every axis, as its nodes run one by one. *)
+(* The most loads nx.cpu's map takes with one output and the coordinates
+   (nx_cpu.mli): its loop holds the output, the loads and the index. *)
+let most_map_loads = A.max_operands - 2
+
+(* A program of as many loads as nx.cpu's map takes, reading the coordinate
+   along every axis, as its nodes run one by one. *)
 let law_map_full (b : Support.backend) (Case x) =
   let module K = (val b.kernels) in
   let shape = L.shape (A.layout x) in
-  let rank = Array.length shape and nins = P.max_operands - 1 in
+  let rank = Array.length shape and nins = most_map_loads in
   let i64 = D.Any D.Int64 in
   let coord a = [ P.Coord a; P.Op2 (Binary Add, nins + (2 * a), nins + (2 * a) + 1) ] in
   let nodes =
@@ -1866,6 +1870,29 @@ let law_map_full (b : Support.backend) (Case x) =
         (K.map p ~dsts:[| A.Any dst |] (Array.map (fun (A.Any x) -> Nx_kernel.Plain x) ops));
       let (A.Any want) = values.(List.length nodes - 1) in
       equal (array int) (bits_of (host want)) (bits_of (host dst))
+
+(* A map of one load more than nx.cpu takes, and of twenty, declines and
+   leaves its destination as it was. *)
+let test_map_past (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let declines nins =
+    let nodes =
+      Iarray.init (nins + 1) (fun k ->
+          if k < nins then P.In k else P.Op2 (Binary Add, 0, nins - 1))
+    in
+    let p =
+      P.v ~ins:(Iarray.init nins (fun _ -> D.Any D.Float32)) nodes
+        ~outs:[| nins |]
+    in
+    let x = A.of_array D.Float32 [| 3 |] [| 1.; 2.; 3. |] in
+    let dst = A.of_array D.Float32 [| 3 |] [| 7.; 7.; 7. |] in
+    let msg = strf "%d loads" nins in
+    equal ~msg answer A.Declined
+      (K.map p ~dsts:[| A.Any dst |] (Array.make nins (Nx_kernel.Plain x)));
+    equal ~msg (array float_exact) [| 7.; 7.; 7. |] (A.to_array dst)
+  in
+  declines (most_map_loads + 1);
+  declines 20
 
 (* A program that holds hundreds of values at once, over a padded load and
    the coordinates, as its nodes run one by one: [m] products of the operand,
@@ -3097,6 +3124,8 @@ let cpu =
         (strf "%s computes a map of every operand with coordinates" b.name)
         case
         (fun c -> b.around (fun () -> law_map_full b c));
+      test (strf "%s declines a map past its loads" b.name) (fun () ->
+          b.around (test_map_past b));
       prop ~count:1000
         (strf
            "%s's elementwise kernels read and write no byte past their \

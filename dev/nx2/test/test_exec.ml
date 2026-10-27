@@ -378,6 +378,27 @@ let declines =
           in
           refused_once "Nx.argmax" "Reduce Arg Max" "float32" (fun () ->
               Nx.argmax ~axis:0 x));
+      test "a map past nx.cpu's loads raises naming nx.cpu" (fun () ->
+          let n = 20 in
+          let x = on_host Plain D.Float32 [| 3 |] [| 1.; 2.; 3. |] in
+          let nodes =
+            Iarray.init (n + 1) (fun k ->
+                if k < n then Nx_kernel.Prog.In k
+                else Op2 (Binary Add, 0, n - 1))
+          in
+          let prog =
+            Nx_kernel.Prog.v
+              ~ins:(Iarray.init n (fun _ -> D.Any D.Float32))
+              nodes ~outs:[| n |]
+          in
+          let loads = Iarray.init n (fun _ : Nx.host Nx.Prim.load -> Plain x) in
+          let op : ((float, D.float32_elt, Nx.host) Nx.t * unit) Nx.Prim.t =
+            Map
+              { layout = A.Layout.contiguous [| 3 |]; prog; outs = [ D.Float32 ]; loads }
+          in
+          raises_match
+            (Exn.invalid_arg ~substring:"test: nx.cpu does not compute")
+            (fun () -> Nx.Prim.eval ~by:"test" op));
       test "a declined copy raises once" (fun () ->
           let x = refused [| 4.; 3.; 2.; 1. |] in
           refused_once "Nx.reshape" "Copy" "float32" (fun () ->

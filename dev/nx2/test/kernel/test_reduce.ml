@@ -6051,12 +6051,16 @@ let order (b : Support.backend) =
         (fun () -> b.around (test_padded_refusals b));
     ]
 
-(* A reduction and a scan of a program of as many loads as it holds, the sum
-   of fifteen loads of [x]: fifteen times [x]'s sums along the last axis, and
-   its running sums. *)
+(* The most loads nx.cpu's reduction and scan take (nx_cpu.mli): the loop
+   holds two destinations, the program's virtual operand and the loads. *)
+let most_loads = A.max_operands - 3
+
+(* A reduction and a scan of a program of as many loads as nx.cpu takes, the
+   sum of fifteen loads of [x]: fifteen times [x]'s sums along the last axis,
+   and its running sums. *)
 let test_most_loads (b : Support.backend) () =
   let module K = (val b.kernels) in
-  let nl = P.max_operands - 1 in
+  let nl = most_loads in
   let nodes =
     List.init nl (fun k -> P.In k)
     @ List.init (nl - 1) (fun i ->
@@ -6084,6 +6088,38 @@ let test_most_loads (b : Support.backend) () =
          let r = i / 3 and c = i mod 3 in
          Float.of_int (15 * (((c + 1) * 3 * r) + (c * (c + 1) / 2)))))
     (A.to_array running)
+
+(* A reduction and a scan of a program of one load more than nx.cpu
+   takes, of twenty loads, of twenty outputs, and of four thousand loads
+   decline and leave their destinations as they were. *)
+let test_past_loads (b : Support.backend) () =
+  let module K = (val b.kernels) in
+  let declines ?(outs = 1) nl =
+    let nodes =
+      Iarray.init (nl + 1) (fun k ->
+          if k < nl then P.In k else P.Op2 (Binary Add, 0, nl - 1))
+    in
+    let p =
+      P.v ~ins:(Iarray.init nl (fun _ -> D.Any D.Float32)) nodes
+        ~outs:(Iarray.init outs (fun _ -> nl))
+    in
+    let x = A.of_array D.Float32 [| 4; 3 |] (Array.init 12 Float.of_int) in
+    let loads = Array.make nl (Nx_kernel.Plain x) in
+    let msg = Printf.sprintf "%d loads, %d outputs" nl outs in
+    let sums = A.of_array D.Float32 [| 4 |] (Array.make 4 7.) in
+    equal ~msg Elements.answer A.Declined
+      (K.reduce p ~shape:[| 4; 3 |] ~axes:[| 1 |] [| (Monoid Sum, 0) |]
+         ~dsts:[| A.Any sums |] loads);
+    equal ~msg (array float_exact) (Array.make 4 7.) (A.to_array sums);
+    let running = A.of_array D.Float32 [| 4; 3 |] (Array.make 12 7.) in
+    equal ~msg Elements.answer A.Declined
+      (K.scan p ~axis:1 (Monoid Sum, 0) ~dsts:[| A.Any running |] loads);
+    equal ~msg (array float_exact) (Array.make 12 7.) (A.to_array running)
+  in
+  declines (most_loads + 1);
+  declines 20;
+  declines ~outs:20 1;
+  declines 4000
 
 (* Nine Moments of one loop take 18 destinations, twenty Args 40, and many
    sums as many tables of reductions, more than one loop holds beside its
@@ -6237,8 +6273,10 @@ let cpu (b : Support.backend) =
           b.around (test_many_claims b));
       test "reduces more reductions than one loop holds" (fun () ->
           b.around (test_many_reductions b));
-      test "reduces and scans a program of as many loads as it holds"
+      test "reduces and scans a program of as many loads as it takes"
         (fun () -> b.around (test_most_loads b));
+      test "declines a reduction and a scan past its loads or outputs"
+        (fun () -> b.around (test_past_loads b));
       test "refuses destinations other than a reduction's" (fun () ->
           b.around (test_malformed b));
       test "an identity reduction and scan allocate nothing" (fun () ->

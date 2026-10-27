@@ -970,17 +970,6 @@ let reduction_width : type d a. (d, a) reduction -> int = function
   | Monoid _ | Logsumexp _ -> 1
   | Moments _ | Arg _ -> 2
 
-let rec results_width : type d r. (d, r) reductions -> int = function
-  | [] -> 0
-  | r :: rest -> reduction_width r + results_width rest
-
-(* A loop's loads and results number at most [Prog.max_operands], as a
-   program's operands and outputs do. *)
-let check_width ~by loads results =
-  if Iarray.length loads + results > P.max_operands then
-    invalid_argf "%s: %d loads and %d results, past %d" by (Iarray.length loads)
-      results P.max_operands
-
 (* The shape of the results of [rs] along [axes] of a loop of [layout]: its
    rule. *)
 let reduced_shape ~by layout axes rs =
@@ -994,7 +983,6 @@ let check_reduce (type d r) ~by layout axes prog (rs : (d, r) reductions)
   (match reductions_list rs with
   | [] -> invalid_argf "%s: a reduction of no output" by
   | l -> List.iter (check_reduction ~by prog) l);
-  check_width ~by loads (results_width rs);
   reduced_shape ~by layout axes rs
 
 let any_shape (Any x) = shape x
@@ -1004,7 +992,6 @@ let check_scan (type d r) ~by layout axis prog (r : (d, r) reduction)
   check_loads ~by ~what:"scan" layout prog loads;
   let shape = shaped ~by (Shape.scan ~axis (L.shape layout)) in
   check_reduction ~by prog (reduction r);
-  check_width ~by loads (reduction_width r);
   match (carry, r) with
   | None, _ -> ()
   | Some (Any c), Monoid ((Sum | Prod | Max | Min), k, _) ->

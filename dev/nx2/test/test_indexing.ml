@@ -268,6 +268,24 @@ let covers c =
    10^8. *)
 let count = 300
 
+(* [Nx.set] of [c] writes each selection index's value at the position the
+   reference reads, the last write winning, and leaves the operand as it
+   was. *)
+let check_set c =
+  let x, data = operand c.s in
+  let sel, read = selection c.s c.entries in
+  let v = Array.init (numel sel) (fun k -> Int32.of_int (-k - 1)) in
+  let expected = Array.copy data in
+  for k = 0 to numel sel - 1 do
+    match read (index sel k) with
+    | Some ix -> expected.(position c.s ix) <- v.(k)
+    | None -> ()
+  done;
+  let y = Nx.set (List.map to_index c.entries) (host D.Int32 sel v) x in
+  equal ~msg:"shape" (array int) c.s (Nx.shape y);
+  equal ~msg:"elements" (array int32) expected (elements y);
+  equal ~msg:"x unchanged" (array int32) data (elements x)
+
 let laws =
   group "laws"
     [
@@ -295,19 +313,7 @@ let laws =
             (List.length (List.filter data_entry c.entries) = 1
             && List.for_all (fun e -> data_entry e || e = A || e = N) c.entries
             );
-          let x, data = operand c.s in
-          let sel, read = selection c.s c.entries in
-          let v = Array.init (numel sel) (fun k -> Int32.of_int (-k - 1)) in
-          let expected = Array.copy data in
-          for k = 0 to numel sel - 1 do
-            match read (index sel k) with
-            | Some ix -> expected.(position c.s ix) <- v.(k)
-            | None -> ()
-          done;
-          let y = Nx.set (List.map to_index c.entries) (host D.Int32 sel v) x in
-          equal ~msg:"shape" (array int) c.s (Nx.shape y);
-          equal ~msg:"elements" (array int32) expected (elements y);
-          equal ~msg:"x unchanged" (array int32) data (elements x));
+          check_set c);
       prop "set of a slice is the identity" (case Distinct) (fun c ->
           let x, data = operand c.s in
           let idx = List.map to_index c.entries in
@@ -1077,13 +1083,35 @@ let many =
       test "an update at a donated window start" test_donated_start;
       cases "an update through positions held in data" ~name:fst
         [
-          ("15, one program", (15, 15));
-          ("16 in two programs", (16, 16));
-          ("32 in three", (32, 32));
+          ("15", (15, 15));
+          ("16", (16, 16));
+          ("32", (32, 32));
           ("32, the 31st outside", (32, 30));
           ("16, the first outside", (16, 0));
         ]
         (fun (_, (n, k)) -> test_many_held n k ());
+      (* Written positions, positions held in data and a window over three
+         axes: past two of them the address so far carries into the next
+         map, so a position outside its axis read before the carry still
+         keeps its index from being written, and a window's start read
+         after it is still clamped. *)
+      cases "set mixes written, held and window positions"
+        ~name:(Format.asprintf "%a" pp_case)
+        [
+          {
+            s = [| 3; 4; 5 |];
+            entries = [ L [ 2; 0 ]; T ([| 2 |], [| 1; 4 |]); D (4, 2) ];
+          };
+          {
+            s = [| 4; 3; 4 |];
+            entries = [ D (-1, 2); L [ 1; -1 ]; T ([| 2 |], [| 3; -1 |]) ];
+          };
+          {
+            s = [| 4; 4; 3 |];
+            entries = [ T ([| 2 |], [| 0; 4 |]); D (9, 1); L [ -2; 0 ] ];
+          };
+        ]
+        check_set;
     ]
 
 let () =

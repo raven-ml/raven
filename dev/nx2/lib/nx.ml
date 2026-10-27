@@ -1391,11 +1391,12 @@ let take_along_axis ~axis p x = take_along ~by:"Nx.take_along_axis" axis p x
 
 (* The flat position in [x] of each element of the selection [picks], [-1] where
    a position held in data lies outside its axis: a map over the selection's
-   shape, reading each position held in data broadcast to it. A program reads
-   at most [Prog.max_operands] operands and outputs, so more positions held in
-   data than one map reads chain maps, each reading the address so far, [-1]
-   once invalid. Their inputs are placed together first, so the address lies
-   where one map would put it. *)
+   shape, reading each position held in data broadcast to it. A kernel
+   library may decline a map of many loads, so each map reads two: the first
+   two positions held in data, then the address so far, [-1] once invalid,
+   and the next position. A library that computes a map of two loads then
+   computes any selection. Their inputs are placed together first, so the
+   address lies where one map would put it. *)
 let targets ~by x picks =
   let s = shape x in
   let r = Array.length s in
@@ -1442,7 +1443,7 @@ let targets ~by x picks =
         | (At _ | Span _ | Rows _ | Held _ | From _), None -> [])
       picks
   in
-  let room = P.max_operands - 1 in
+  let room = 2 in
   let inputs =
     if List.length inputs <= room then inputs
     else

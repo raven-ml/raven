@@ -4235,12 +4235,21 @@ static value run_fused(const call *c, value vp, value vrs, int single,
   CAMLparam5(vp, vrs, vdsts, vloads, vpads);
   CAMLxparam1(vcarry);
   CAMLlocal1(owner);
+  int nl = (int)Wosize_val(Field(vp, NX_PROG_INS));
+  int nouts = (int)Wosize_val(Field(vp, NX_PROG_OUTS));
+  if ((int)Wosize_val(vloads) != nl) CAMLreturn(Val_int(NX_SHAPE));
+  /* A reduction's loop holds two destinations, the virtual operand and
+     the loads, and the program's loop its outputs, its loads and the
+     index: past NX_MAX_OPERANDS arrays the call declines, as nx_cpu.mli
+     states, before the program's copy, which holds that many. */
+  if (3 + nl > NX_MAX_OPERANDS || nouts + nl + 1 > NX_MAX_OPERANDS)
+    CAMLreturn(Val_int(NX_DECLINED));
   owner = caml_alloc_custom(&fused_ops, sizeof(fused_held), 0, 1);
   *(fused_held *)Data_custom_val(owner) = (fused_held){NULL, NULL, NULL};
   nx_cpu_prog *g = nx_cpu_prog_copy(&vp);
   if (g == NULL) caml_raise_out_of_memory();
   ((fused_held *)Data_custom_val(owner))->g = g;
-  int nl = nx_cpu_prog_ins(g), nd = (int)Wosize_val(vdsts), e = NX_OK;
+  int nd = (int)Wosize_val(vdsts), e = NX_OK;
   int nc = Is_block(vcarry);
   int nr = single ? 1 : (int)Wosize_val(vrs), want = 0;
   /* The tables, on the stack up to NX_MAX_OPERANDS entries, else in one
@@ -4266,8 +4275,7 @@ static value run_fused(const call *c, value vp, value vrs, int single,
   /* Tables or a program sized by a count, freed with the lock released. */
   int many = nt > NX_MAX_OPERANDS || no > NX_MAX_OPERANDS ||
              nx_cpu_prog_nodes(g) > NX_CPU_ITEMS;
-  if (nr < 1 || (c->op != REDUCE && nr != 1) || (int)Wosize_val(vloads) != nl)
-    e = NX_SHAPE;
+  if (nr < 1 || (c->op != REDUCE && nr != 1)) e = NX_SHAPE;
   /* The reductions are read from the root, letting other domains collect
      every NX_CPU_ITEMS of them. */
   for (int i = 0, next = NX_CPU_ITEMS; !e && i < nr; i++) {
@@ -4284,12 +4292,9 @@ static value run_fused(const call *c, value vp, value vrs, int single,
       dts[want + 1] =
           rs[i] == NX_CPU_ARG_MAX || rs[i] == NX_CPU_ARG_MIN ? NX_INT64 : -1;
     want += 1 + two(rs[i]);
-    if (ks[i] < 0 || ks[i] >= nx_cpu_prog_outs(g)) e = NX_SHAPE;
+    if (ks[i] < 0 || ks[i] >= nouts) e = NX_SHAPE;
   }
   if (!e && want != nd) e = NX_SHAPE;
-  /* A reduction's loop holds its destinations, the virtual operand and the
-     loads: a program's loads leave room for them (Prog.max_operands). */
-  if (!e && 3 + nl > NX_MAX_OPERANDS) e = NX_SHAPE;
   /* The pads on the heap, where a load is padded, as its copy will be. */
   int padded[NX_MAX_OPERANDS] = {0};
   nx_cpu_pad *pad = NULL;

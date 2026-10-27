@@ -39,8 +39,8 @@
 #include "nx_dtype.h"
 
 #define NX_MAX_RANK 32
-/* The most operands of a loop: Nx_array.max_operands, which shape.ml sets
-   to the same number. */
+/* The length of the door's runs and the most layouts nx_coalesce takes:
+   Nx_array.max_operands, which shape.ml sets to the same number. */
 #define NX_MAX_OPERANDS 18
 
 /* A layout's flags, computed when it is made. */

@@ -303,8 +303,9 @@ val of_bigarray :
     OCaml code while the door claims or releases them. *)
 
 val max_operands : int
-(** [max_operands] is [18], the most arrays one loop iterates: [nx_array.h]'s
-    [NX_MAX_OPERANDS], and the most layouts {!Layout.coalesce} takes. *)
+(** [max_operands] is [18], [nx_array.h]'s [NX_MAX_OPERANDS]: the length of
+    the runs in which the door claims and releases arrays, and the most
+    layouts {!Layout.coalesce} and [nx_coalesce] take. *)
 
 (** The type for what a kernel answers, and the door. A kernel answers [Done]
     once its work is done on the host or queued on the device's timeline,

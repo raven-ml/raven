@@ -989,8 +989,9 @@ int nx_cpu_unpad(const nx_array *a, const nx_cpu_pad *p,
 typedef struct nx_cpu_prog nx_cpu_prog;
 
 /* The Prog.t at the root [vp] copied, or NULL if host memory runs out.
-   Reads [vp] alone, letting other domains collect every NX_CPU_ITEMS
-   nodes. */
+   [vp] has at most NX_MAX_OPERANDS loads and outputs each, as many as the
+   copy holds. Reads [vp] alone, letting other domains collect every
+   NX_CPU_ITEMS nodes. */
 nx_cpu_prog *nx_cpu_prog_copy(const value *vp);
 void nx_cpu_prog_free(nx_cpu_prog *j);
 
@@ -1009,9 +1010,9 @@ int nx_cpu_prog_out(const nx_cpu_prog *j, int o);
 int nx_cpu_prog_product(const nx_cpu_prog *j, int o, int *k);
 
 /* Binds [j] to its loads [a], read by the door, over a loop of [rank] axes
-   of extents [shape]: NX_OK, or NX_SHAPE for a coordinate past the rank
-   or more operands than a loop holds. Sets [index] to whether the program
-   reads the index. */
+   of extents [shape]: NX_OK, NX_SHAPE for a coordinate past the rank, or
+   NX_DECLINED for more operands than a loop holds. Sets [index] to whether
+   the program reads the index. */
 int nx_cpu_prog_bind(nx_cpu_prog *j, const nx_array *a, int rank,
                      const int64_t *shape, int *index);
 

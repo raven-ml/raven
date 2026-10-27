@@ -185,8 +185,6 @@ type node =
 
 type t = { ins : D.any iarray; nodes : node iarray; outs : int iarray }
 
-let max_operands = Nx_array.max_operands - 2
-
 (* Whether [n]'s kind takes node operands of the dtypes [d0], [d1] and [d2],
    in order, past its arity unread. *)
 let takes n d0 d1 d2 =
@@ -267,12 +265,9 @@ let node_dtype ins ty env = function
   | Op2 (Compare _, _, _) -> D.Any D.Bool
   | Op3 (_, _, b, _) -> ty env b
 
-let too_many n =
-  Some (strf "%d operands and outputs, more than %d" n max_operands)
-
 (* Why [ins], [nodes] and [outs] make no program, if they do not. *)
 let problem ~ins nodes ~outs =
-  let nins = Iarray.length ins and n = Iarray.length nodes in
+  let n = Iarray.length nodes in
   let nouts = Iarray.length outs in
   let types = Array.make n (D.Any D.Bool) in
   let rec from i =
@@ -293,7 +288,6 @@ let problem ~ins nodes ~outs =
       else out (k + 1)
   in
   if nouts = 0 then Some "no output"
-  else if nins + nouts > max_operands then too_many (nins + nouts)
   else match from 0 with Some _ as why -> why | None -> out 0
 
 let invalid why = invalid_arg ("Nx_kernel.Prog.v: " ^ why)
@@ -304,26 +298,28 @@ let v ~ins nodes ~outs =
   | None -> { ins; nodes; outs }
 
 (* of_node's operand nodes, its runs of them and its outputs, by operand
-   count, made once: a one-node program allocates its node alone in an
-   array, its nodes array and itself, and no closure. *)
-let operand_nodes = Array.init max_operands (fun k -> In k)
+   count up to a kind's three, made once: such a one-node program allocates
+   its node alone in an array, its nodes array and itself, and no
+   closure. *)
+let kept = 4
+let operand_nodes = Array.init kept (fun k -> In k)
 let operand_runs =
-  Array.init max_operands (fun k -> Iarray.init k (Array.get operand_nodes))
-let output = Array.init max_operands (fun k -> Iarray.init 1 (fun _ -> k))
+  Array.init kept (fun k -> Iarray.init k (Array.get operand_nodes))
+let output = Array.init kept (fun k -> Iarray.init 1 (fun _ -> k))
+let runs k =
+  if k < kept then operand_runs.(k) else Iarray.init k (fun j -> In j)
+
+let outputs k = if k < kept then output.(k) else Iarray.init 1 (fun _ -> k)
 
 (* Its operands' nodes being valid by construction, a one-node program is
    checked at its one node, as [v] checks it. *)
 let of_node ~ins n =
   let k = Iarray.length ins in
-  let why =
-    if k + 1 > max_operands then too_many (k + 1)
-    else node_problem ins Iarray.get ins k n
-  in
-  match why with
+  match node_problem ins Iarray.get ins k n with
   | Some why -> invalid why
   | None ->
-      let nodes = Iarray.append operand_runs.(k) [| n |] in
-      { ins; nodes; outs = output.(k) }
+      let nodes = Iarray.append (runs k) [| n |] in
+      { ins; nodes; outs = outputs k }
 
 let rec dtype_of p i = node_dtype p.ins dtype_of p (Iarray.get p.nodes i)
 
@@ -441,7 +437,7 @@ module E = struct
          (String.concat ", " (List.map name dts)))
 
   let input k dt =
-    if k < 0 || k >= max_operands then
+    if k < 0 then
       invalid_arg (strf "Nx_kernel.Prog.E.input: no operand %d" k);
     In { id = fresh (); k; dt }
 
@@ -687,9 +683,7 @@ let reads ins k dt =
    only for the expression itself. *)
 let of_exprs ~ins outs =
   let invalid why = invalid_arg ("Nx_kernel.Prog.of_exprs: " ^ why) in
-  let n = Iarray.length ins + Iarray.length outs in
   if Iarray.length outs = 0 then invalid "no output";
-  if n > max_operands then invalid (Option.get (too_many n));
   let seen = Hashtbl.create 16 and index = Hashtbl.create 16 in
   let nodes = ref [] and count = ref 0 in
   let node nd dt =

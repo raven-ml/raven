@@ -390,10 +390,7 @@ let build ins choices nouts =
     ins;
     nodes;
     types = !types;
-    outs =
-      Array.init
-        (min (min nouts n) (P.max_operands - Array.length ins))
-        (fun k -> n - 1 - k);
+    outs = Array.init (min nouts n) (fun k -> n - 1 - k);
   }
 
 let pp_drawn ppf d =
@@ -659,12 +656,7 @@ let test_program_refuses () =
   (* A boolean byte is true iff it is not zero: each is an element. *)
   ignore (P.v ~ins:[||] [| P.Const (D.Any D.Bool, "\002") |] ~outs:[| 0 |]);
   refuses ~msg:"no output" [| P.In 0 |] [||];
-  refuses ~msg:"an output past the nodes" [| P.In 0 |] [| 1 |];
-  refuses ~msg:"seventeen operands and outputs"
-    ~ins:(Array.make 16 f32)
-    [| P.In 0 |] [| 0 |];
-  ignore
-    (P.v ~ins:(Iarray.init 15 (fun _ -> f32)) [| P.In 0 |] ~outs:[| 0 |])
+  refuses ~msg:"an output past the nodes" [| P.In 0 |] [| 1 |]
 
 let test_dtype_refuses () =
   let p = P.v ~ins:[| D.Any D.Float32 |] [| P.In 0 |] ~outs:[| 0 |] in
@@ -1055,7 +1047,6 @@ let grow rand ins n nouts =
     nodes.(k) <- nd;
     types.(k) <- dt
   done;
-  let nouts = min nouts (P.max_operands - Array.length ins) in
   let outs = Array.init nouts (fun _ -> if int 2 = 0 then n - 1 else int n) in
   { ins; nodes; types; outs }
 
@@ -1304,22 +1295,31 @@ let test_exprs_refuse () =
   raises_match ~msg:"an axis past max_rank" Exn.invalid_arg (fun () ->
       P.E.coord Nx_array.Layout.max_rank);
   raises_match ~msg:"a negative axis" Exn.invalid_arg (fun () -> P.E.coord (-1));
-  raises_match ~msg:"an operand past max_operands" Exn.invalid_arg (fun () ->
-      P.E.input P.max_operands D.Float32);
-  raises_match ~msg:"an operand past int32" Exn.invalid_arg (fun () ->
-      P.E.input (1 lsl 32) D.Float32);
   raises_match ~msg:"a negative operand" Exn.invalid_arg (fun () ->
       P.E.input (-1) D.Float32);
   let x = P.E.any (P.E.input 0 D.Float32) in
   raises_match ~msg:"no output" Exn.invalid_arg (fun () ->
       P.of_exprs ~ins:[| f32 |] [||]);
-  raises_match ~msg:"more operands and outputs than max_operands"
-    Exn.invalid_arg (fun () ->
-      P.of_exprs ~ins:(Iarray.init P.max_operands (fun _ -> f32)) [| x |]);
   raises_match ~msg:"an operand past ins" Exn.invalid_arg (fun () ->
       P.of_exprs ~ins:[||] [| x |]);
   raises_match ~msg:"an operand of another dtype" Exn.invalid_arg (fun () ->
       P.of_exprs ~ins:[| i32 |] [| x |])
+
+(* No bound on a program's operands and outputs: twenty operands, each an
+   output, an expression of operand 20, and a node over operand 19. *)
+let test_many_operands () =
+  let f32 = D.Any D.Float32 in
+  let ins n = Iarray.init n (fun _ -> f32) in
+  let p =
+    P.v ~ins:(ins 20) (Iarray.init 20 (fun k -> P.In k))
+      ~outs:(Iarray.init 20 Fun.id)
+  in
+  equal ~msg:"v" (array int) (Array.init 20 Fun.id) (Iarray.to_array p.outs);
+  let q = P.of_exprs ~ins:(ins 21) [| P.E.(any (input 20 D.Float32)) |] in
+  equal ~msg:"of_exprs" (array node) [| P.In 20 |] (Iarray.to_array q.nodes);
+  let r = P.of_node ~ins:(ins 20) (Op2 (Binary Add, 0, 19)) in
+  equal ~msg:"of_node" node (Op2 (Binary Add, 0, 19))
+    (Iarray.get r.nodes 20)
 
 (* Representation: C reads a program by nx_prog.h's codes, so each
    constructor's tag, each field's position and each kind's code is the one
@@ -1467,6 +1467,8 @@ let tests =
         test "each kind function makes its kind's node"
           test_exprs_kind_functions;
         test "constructors and of_exprs refuse as v does" test_exprs_refuse;
+        test "programs take any number of operands and outputs"
+          test_many_operands;
       ];
   ]
 

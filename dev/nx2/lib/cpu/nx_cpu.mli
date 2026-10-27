@@ -48,7 +48,10 @@
     tree whose left part holds the largest power of two of blocks below
     their count, each part combined the same way.
 
-    [map] computes every program. A padded load is first copied padded
+    [map] computes every program of at most 17 operands and outputs
+    together and declines the others: its loop iterates the outputs, the
+    loads and the index the coordinates read, and holds at most
+    {!Nx_array.max_operands} arrays. A padded load is first copied padded
     into host memory, which the call holds until it returns, once along an
     axis its operand broadcasts and the pad leaves alone; a pad that fits
     no operand of its load's shape is refused with [Shape_mismatch].
@@ -115,7 +118,9 @@
     the term itself, and one [Logsumexp] and one [Moments]
     so at every float dtype, the operand of a scan by either converted
     whole into its carrier first where that is not its dtype, or a
-    program's tile by tile. Both take any program [map] computes, over its
+    program's tile by tile. Both take any program [map] computes of at
+    most 15 operands, and decline the others: their loop iterates two
+    destinations, the program's output and its loads. They read it over its
     loads or, with none, over the loop's shape alone, a reduction's [shape]
     or a scan's destinations': its terms are the
     program's output there as [map] computes it, so a reduction or a scan

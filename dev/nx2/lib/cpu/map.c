@@ -866,7 +866,7 @@ int nx_cpu_prog_failed(const nx_cpu_prog *g) {
 
 int nx_cpu_prog_bind(nx_cpu_prog *g, const nx_array *a, int rank,
                      const int64_t *shape, int *index) {
-  if (g->nouts + g->nins >= NX_MAX_OPERANDS) return NX_SHAPE;
+  if (g->nouts + g->nins >= NX_MAX_OPERANDS) return NX_DECLINED;
   for (int o = 0; o < g->nouts; o++) {
     int dt = nx_cpu_prog_out(g, o);
     nx_array *y = &g->a[o];
@@ -1018,9 +1018,10 @@ value nx_cpu_map(value vp, value vdsts, value vloads, value vpads) {
   int nn = (int)Wosize_val(Field(vp, NX_PROG_NODES)), n = nouts + nins, e;
   if ((int)Wosize_val(vdsts) != nouts || (int)Wosize_val(vloads) != nins)
     CAMLreturn(Val_int(NX_SHAPE));
-  /* Prog.v holds a program to two operands fewer than a loop: room for
-     the index. */
-  if (n >= NX_MAX_OPERANDS) CAMLreturn(Val_int(NX_SHAPE));
+  /* The loop holds the outputs, the loads and, where a node reads a
+     coordinate, the index: past NX_MAX_OPERANDS arrays the map declines,
+     as nx_cpu.mli states. */
+  if (n >= NX_MAX_OPERANDS) CAMLreturn(Val_int(NX_DECLINED));
   int pads = Wosize_val(vpads) > 0, owned = pads || nn > STEPS;
   if (owned) {
     owner = caml_alloc_custom(&map_ops, sizeof(map_held), 0, 1);

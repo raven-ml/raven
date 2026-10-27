@@ -211,12 +211,6 @@ type t = private {
     every program, so its fields hold together as {!v} states; programs are
     plain data, compared and hashed structurally. *)
 
-val max_operands : int
-(** [max_operands] is [16], the most operands plus outputs a program has:
-    {!Nx_array.max_operands} less the two arrays a kernel's loop iterates
-    beside them: a map's index, or a reduction's second destination and
-    virtual operand. *)
-
 val v :
   ins:Nx_array.Dtype.any iarray -> node iarray -> outs:int iarray -> t
 (** [v ~ins nodes ~outs] is the program over operands of dtypes [ins] whose
@@ -229,8 +223,8 @@ val v :
     [i]'s; [Op2 (k, i, j)] where nodes [i] and [j] are of one dtype [x] and
     {!accepts2}[ k x]; [Op3 (k, i, j, l)] where nodes [j] and [l] are of one
     dtype [x] and {!accepts3}[ k c x], [c] node [i]'s; every [Const]'s bits
-    are an element of its dtype; [outs] is not empty and names nodes; and
-    operands plus outputs are at most {!max_operands}. *)
+    are an element of its dtype; and [outs] is not empty and names
+    nodes. *)
 
 val of_node : ins:Nx_array.Dtype.any iarray -> node -> t
 (** [of_node ~ins n] is the program of the one node [n] over operands of dtypes
@@ -315,8 +309,7 @@ module E : sig
   val input : int -> ('v, 's) Nx_array.Dtype.t -> ('v, 's) t
   (** [input k dt] is [In k], operand [k] of dtype [dt].
 
-      Raises [Invalid_argument] unless [k] is an operand below
-      {!max_operands}. *)
+      Raises [Invalid_argument] if [k] is negative. *)
 
   val coord : int -> (int64, Nx_array.Dtype.int64_elt) t
   (** [coord i] is [Coord i].
@@ -476,8 +469,7 @@ val of_exprs : ins:Nx_array.Dtype.any iarray -> E.any iarray -> t
     expressions' values alone, never on which of them are one OCaml value.
 
     Raises [Invalid_argument] if an [In] of [outs] reads no operand of [ins]
-    or is not of its dtype, or if [outs] is empty or [ins] and [outs] are
-    more than {!max_operands}. *)
+    or is not of its dtype, or if [outs] is empty. *)
 
 (** {1:binding Binding} *)
 
