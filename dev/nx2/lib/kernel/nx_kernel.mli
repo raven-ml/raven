@@ -37,26 +37,26 @@
     nx first checks the arrays' dtypes and shapes, so that an error names
     them. It then allocates the destinations and calls the kernel. The
     kernel claims its destinations and operands for the call through the
-    {e door}, the claim of arrays {!Nx_array} and
-    {!Nx_array.section-kernels} define, and answers as
-    {!Nx_array.type-answer} states. A kernel may answer [Declined] for any
-    case, before any write or queued work. A {e refusal} is an answer
-    other than [Done] or [Declined]. nx hands a refusal to
-    {!Nx_array.refused}, and after a decline raises [Invalid_argument] and
-    computes nothing in the library's place. A failure that depends on a
-    float's or a complex number's value is a NaN result. A kernel raises
-    [Out_of_memory] if host memory runs out, {!Rig.Out_of_memory} if its
-    device's does, and {!Rig.Lost} as the door does. After a raise, the
-    destinations' contents are unspecified.
+    {e door}, the claim of arrays {!Nx_array} defines, and answers as
+    {!Nx_array.type-answer} states. It answers [Done], [Declined] for a
+    case it does not compute, or a {e refusal}, which names what is wrong
+    with an operand, and answers either of the last two before any write
+    or queued work. Any case may be [Declined]. nx raises a refusal as
+    {!Nx_array.refused} does, and after a decline raises
+    [Invalid_argument] and computes nothing in the library's place. A
+    failure that depends on a float's or a complex number's value is a
+    NaN result. A kernel raises [Out_of_memory] if host memory runs out,
+    {!Rig.Out_of_memory} if its device's does, and {!Rig.Lost} as the door
+    does. After a raise, the destinations' contents are unspecified.
 
     Unless a function's doc says otherwise:
-    - The caller must pass destinations that are C-contiguous, on the
-      operands' device, of the shape {!Shape} gives and of the dtype the
-      doc states. Operands may be strided, broadcast or offset. The door
-      refuses a destination that reaches an element twice as
-      [Repeated_elements]. A kernel answers [Wrong_dtype] for dtypes its
+    - The caller must pass destinations that are C-contiguous, reach no
+      element twice, have the shape {!Shape} gives and the dtype the doc
+      states, and are on the operands' device. Operands may be strided,
+      broadcast or offset. A kernel answers [Wrong_dtype] for dtypes its
       doc does not take and [Shape_mismatch] for operands or destinations
-      that do not fit it, by their number or their shapes.
+      that do not fit it, by their number or their shapes, and for
+      attributes {!Shape} answers [Error] for.
     - A destination shares no byte with an operand, except one it is
       identical to that the kernel reads only at the result's own index: a
       [Plain] load of [map], [contract]'s [init], [scatter]'s [into], or
@@ -64,9 +64,9 @@
       kernel reads such an operand at an index before writing there, so the
       result equals what a fresh destination would receive. The door
       refuses other sharing as [Overlapping]. It accepts a destination
-      identical to an operand read at other indices, which the caller must
-      not pass; the result is then unspecified unless the library's doc
-      states it.
+      identical to an operand read at other indices, and the caller must
+      not pass one; the result is then unspecified unless the library's
+      doc states it.
     - A kernel is {e deterministic}. For the same operand values, shapes,
       layouts and dtypes and the same attributes, it gives the same bits on
       every run, on any number of threads, on devices of one model, for a
@@ -120,11 +120,10 @@ type load =
     complex [Sum] adds each part as a float sum.
 
     A float [Sum] or [Prod] reduction adds or multiplies each output's terms
-    in the {e association} its library states, the grouping of the terms
-    into the partial results it rounds, a float narrower than [float32] in
-    [float32], and a complex [Prod] multiplies them by {!Prog.Mul}. Each
-    result rounds once into its destination, a float as
-    {!Nx_array.Dtype.of_float} rounds it. *)
+    in the {e association} its library states, the order and grouping of
+    its operations, a narrow float's terms in [float32], and a complex
+    [Prod] multiplies them by {!Prog.Mul}. Each result rounds once into
+    its destination, a float as {!Nx_array.Dtype.of_float} rounds it. *)
 
 type monoid = Sum | Prod | Max | Min
 (** The type for monoids a reduction folds with. *)
@@ -185,15 +184,18 @@ val accepts : reduction -> ('v, 's) Nx_array.Dtype.t -> bool
     Within the bounds this contract and its library state, a float or
     complex result may differ between libraries, device models and layouts,
     and the same terms in a call of other extents may round differently.
-    Let [u] be the dtype's unit roundoff, its parts' for a complex one, and
-    [γ(k) = k u / (1 - k u)]. Barring overflow and underflow, a float sum
-    of [n] terms, a reduction's, a scan's or a fold's, is within
+    Let [u] be the unit roundoff of the dtype each addition or
+    multiplication rounds to, its parts' for a complex one, and
+    [γ(k) = k u / (1 - k u)]. Barring overflow and underflow, and before
+    the rounding into the destination, which adds its own, a float sum of
+    [n] terms, a reduction's, a scan's or a fold's, is within
     [γ(n - 1) Σ|x|] of the exact sum, and a float product within a relative
     [γ(n - 1)]. A complex product is within a normwise relative
-    [γ(2n - 2)], where each {!Prog.Mul} errs by at most [2u]. A float or
-    complex contraction ({!S.contract}) rounds once per fused multiply-add,
-    by at most [u] of its accumulator's dtype times the partial sum it
-    rounds, a complex sum's modulus, barring overflow and underflow. *)
+    [γ(2n - 2)], where each {!Prog.Mul} errs by at most [2u]. Barring
+    overflow and underflow, each fused multiply-add of a float or complex
+    contraction ({!S.contract}), and an addition of [init] that a library
+    makes apart, errs by at most [2u] times the modulus of the partial sum
+    it rounds, [u] the accumulator's unit roundoff. *)
 
 (** {2:scans Scans}
 
@@ -212,9 +214,10 @@ val accepts : reduction -> ('v, 's) Nx_array.Dtype.t -> bool
     the sense that the scan of a prefix of the axis is the prefix of the
     scan, bit for bit. A scan's last result need not equal the reduction of
     the same terms. A scan of integers or booleans, and a [Max] or [Min]
-    scan, is exact, so scanning a slice from any term, with the result
-    before it as the carry, gives the whole scan's results from that term
-    on. A NaN result may be any NaN.
+    scan, is exact, so scanning a slice from any term, with the carrier
+    value of the result before it as the carry, gives the whole scan's
+    results from that term on, bit for bit but for a NaN result, which may
+    be any NaN.
 
     {3:network The odd/even network}
 
@@ -504,10 +507,10 @@ module type S = sig
       shape's rank. A reduction or a scan computes in its program output's
       carrier ({!carrier}), in the association and within the bounds
       {!section-reductions}, {!section-bounds} and {!section-scans} state.
-      Its destinations are of any dtype but an [Arg]'s position, and each
-      result rounds once into its own, as {!Prog.Cast} stores it. It
-      answers [Wrong_dtype] where {!accepts} is [false] of its reduction
-      and that output's dtype. *)
+      Its destinations are of any dtype but an [Arg]'s position, an
+      [int64], and each result rounds once into its own, as {!Prog.Cast}
+      stores it. It answers [Wrong_dtype] where {!accepts} is [false] of
+      its reduction and that output's dtype. *)
 
   val map : Prog.t -> dsts:any array -> load array -> answer
   (** [map p ~dsts loads] stores [p]'s output [k] at each index into
@@ -685,9 +688,9 @@ module type S = sig
       ]}
       computed in [acc], summed in the library's order and rounded once
       into [dst], each operand's elements times their scales, each group of
-      [segments] as {!type-segments} states. [init] has [dst]'s shape. It
-      is one term of the sum, placed where the library's association puts
-      it, and [+0] where none is given. An output without products is as
+      [segments] as {!type-segments} states. [init] has [dst]'s shape and
+      is one term of the sum, in the library's association; without
+      [init] the sum starts from [+0]. An output without products is as
       {!Nx_kernel.section-contraction} states. Integers wrap in [acc].
       [a], [b], [init] and [dst] may be of any dtypes: an element enters
       [acc], and the sum enters [dst], as {!Prog.Cast} stores it. It

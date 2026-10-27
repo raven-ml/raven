@@ -242,7 +242,8 @@
     operands and destinations whose shapes do not fit. A fold adds an
     index's elements from left to right, in C order of their taps, with no
     [+0] before the first; it stores [+0] at an index no tap reads. A
-    narrow float's sum rounds at each addition.
+    narrow float's or a sub-byte dtype's fold rounds each addition to its
+    dtype, as {!Nx_kernel.Prog.Add} does.
 
     [c2c], [r2c], [c2r] and the routines of matrices answer [Wrong_dtype]
     for dtypes {!Nx_kernel.S} does not take, and compute the others.

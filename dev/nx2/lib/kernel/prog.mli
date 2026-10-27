@@ -10,12 +10,12 @@
     {e outputs}. It is a sequence of {e nodes}. A node is a {e leaf}, an
     operand's element at the index, the index along an axis or a constant,
     or a {e kind} applied to earlier nodes. A kind is what one node
-    computes from its operands' values, in its dtype's compute type,
-    [float32] for every float narrower than [float32] and a 32-bit integer
-    for an 8- or 16-bit one, as [nx_kinds.h] states. The dtypes a kind
-    takes are its {e domain} ({!section-domains}). Each node has a dtype
-    ({!dtype}), and its value is its kind's result in that dtype, exact or
-    within a bound as the next paragraph states, a float rounded as
+    computes from its operands' values, in the {e compute type}
+    [nx_kinds.h] states for its dtype, the type its arithmetic runs in
+    before it rounds to the dtype. The dtypes a kind takes are its
+    {e domain} ({!section-domains}). Each node has a dtype ({!dtype}), and
+    its value is its kind's result in that dtype, exact or within a bound
+    as the next paragraph states, a float rounded as
     {!Nx_array.Dtype.of_float} rounds it. A loop of a kernel library
     ({!Nx_kernel.S.section-loops}) runs a program at every index of its
     shape.
@@ -32,10 +32,10 @@
     its special values, symmetries and NaN parts. A kernel library may
     compute a kind through that header's function, and states whether it
     does. On one device model it computes each kind to the same bits in all
-    its paths, so that a kind's own kernel and a loop over a program of
-    that kind agree bit for bit. On a device that flushes subnormal numbers
-    to zero, which its library states, the bounds hold where the operands
-    and the result are normal.
+    its paths, so that a kind gives the same bits run alone by its own
+    kernel and as a node of any program. On a device that flushes
+    subnormal numbers to zero, which its library states, the bounds hold
+    where the operands and the result are normal.
 
     {!v} makes a program from its nodes, {!of_node} from one kind over its
     operands, and {!of_exprs} from {e expressions} ({!E}), nodes written as

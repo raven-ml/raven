@@ -15,8 +15,8 @@
    f64, and nx_kinds_complex.h, which writes the complex kinds once: c64 in
    f32's block, c128 in f64's.
 
-   Compute types. float16, bfloat16 and the float8 dtypes compute in f32
-   through nx_dtype.h's codecs and round once on the store. 8- and 16-bit
+   Compute types. Floats narrower than float32 compute in f32 through
+   nx_dtype.h's codecs and round once on the store. 8- and 16-bit
    integers compute in the 32-bit type of their signedness, their operands
    sign- or zero-extended, and wrap on the store; bool computes in u32.
 
