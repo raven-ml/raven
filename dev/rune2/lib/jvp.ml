@@ -750,17 +750,87 @@ let same_coordinates (D.Any a) (D.Any b) =
   | D.Complex128, D.Float64 | D.Float64, D.Complex128 -> true
   | _ -> false
 
-let routine : type d r. (d, r) Prim.linalg -> string = function
-  | Cholesky _ -> "Cholesky"
-  | Lu _ -> "Lu"
-  | Qr _ -> "Qr"
-  | Svd_values _ -> "Svd_values"
-  | Svd _ -> "Svd"
-  | Eigh_values _ -> "Eigh_values"
-  | Eigh _ -> "Eigh"
-  | Eig_values _ -> "Eig_values"
-  | Eig _ -> "Eig"
-  | Solve_triangular _ -> "Solve_triangular"
+(* A factorisation's or a triangular solve's dual results: the routine on the
+   primal, and its tangents from the factors. A routine that gives values alone
+   takes its vectors from the routine that gives both. *)
+let linalg_rule (type d r) name i ~by (l : (d, r) Prim.linalg) : r =
+  let eval l = Prim.eval ~by (Linalg l) in
+  let dual y t = dual i ~fresh:false y t in
+  match l with
+  | Cholesky { triangle; a } -> (
+      let y = eval (Cholesky { triangle; a = primal i a }) in
+      match tangent i a with
+      | Some da -> dual y (Factor.cholesky triangle y da)
+      | None -> y)
+  | Lu a -> (
+      let lu, pivots, perm = eval (Lu (primal i a)) in
+      match tangent i a with
+      | Some da -> (dual lu (Factor.lu lu perm da), pivots, perm)
+      | None -> (lu, pivots, perm))
+  | Qr { factors; a } -> (
+      let q, r = eval (Qr { factors; a = primal i a }) in
+      match tangent i a with
+      | Some da ->
+          let dq, dr = Factor.qr name factors q r da in
+          (dual q dq, dual r dr)
+      | None -> (q, r))
+  | Svd_values { dtype; a } -> (
+      let pa = primal i a in
+      let s = eval (Svd_values { dtype; a = pa }) in
+      match tangent i a with
+      | Some da ->
+          let _, u, vh = eval (Svd { factors = Reduced; dtype; a = pa }) in
+          dual s (Factor.svd_values dtype u vh da)
+      | None -> s)
+  | Svd { factors; dtype; a } -> (
+      let s, u, vh = eval (Svd { factors; dtype; a = primal i a }) in
+      match tangent i a with
+      | Some da ->
+          let ds, du, dvh = Factor.svd name factors dtype s u vh da in
+          (dual s ds, dual u du, dual vh dvh)
+      | None -> (s, u, vh))
+  | Eigh_values { dtype; a } -> (
+      let pa = primal i a in
+      let w = eval (Eigh_values { dtype; a = pa }) in
+      match tangent i a with
+      | Some da ->
+          let _, v = eval (Eigh { dtype; a = pa }) in
+          dual w (Factor.eigh_values dtype v da)
+      | None -> w)
+  | Eigh { dtype; a } -> (
+      let w, v = eval (Eigh { dtype; a = primal i a }) in
+      match tangent i a with
+      | Some da ->
+          let dw, dv = Factor.eigh dtype w v da in
+          (dual w dw, dual v dv)
+      | None -> (w, v))
+  | Eig_values { dtype; a } -> (
+      let pa = primal i a in
+      let w = eval (Eig_values { dtype; a = pa }) in
+      match tangent i a with
+      | Some da ->
+          let _, v = eval (Eig { dtype; a = pa }) in
+          dual w (Factor.eig_values v da)
+      | None -> w)
+  | Eig { dtype; a } -> (
+      let w, v = eval (Eig { dtype; a = primal i a }) in
+      match tangent i a with
+      | Some da ->
+          let dw, dv = Factor.eig w v da in
+          (dual w dw, dual v dv)
+      | None -> (w, v))
+  | Solve_triangular { triangle; adjoint; unit_diagonal; a; b } -> (
+      let pa = primal i a and pb = primal i b in
+      let x =
+        eval
+          (Solve_triangular { triangle; adjoint; unit_diagonal; a = pa; b = pb })
+      in
+      match (tangent i a, tangent i b) with
+      | None, None -> x
+      | da, db ->
+          dual x
+            (Factor.solve_triangular ~by triangle ~adjoint ~unit_diagonal pa x
+               da db))
 
 let rule (type r) name i ~by (op : r Prim.t) : r =
   (* [x]'s dual from [f] of its primal and of its tangent. *)
@@ -855,9 +925,7 @@ let rule (type r) name i ~by (op : r Prim.t) : r =
       both ~fresh:true (fun x -> Prim.eval ~by (Fft (R2c { f with x }))) f.x
   | Fft (C2r f) ->
       both ~fresh:true (fun x -> Prim.eval ~by (Fft (C2r { f with x }))) f.x
-  | Linalg l ->
-      invalid_arg
-        (Printf.sprintf "%s: %s has no derivative yet" name (routine l))
+  | Linalg l -> linalg_rule name i ~by l
   | Copy x -> both ~fresh:true (fun x -> Prim.eval ~by (Copy x)) x
   | Move (mv, x) -> both ~fresh:false (fun x -> Prim.eval ~by (Move (mv, x))) x
   | Bitcast (dt, x) ->

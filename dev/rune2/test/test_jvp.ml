@@ -49,7 +49,8 @@ let law c (s, xs, ts) =
 let tangent_props =
   List.map
     (fun c -> prop c.name (gen c) (law c))
-    (real_cases @ contract_cases @ complex_cases)
+    (real_cases @ contract_cases @ factor_cases @ complex_cases
+   @ complex_factor_cases)
 
 (* Values the conventions state *)
 
@@ -207,8 +208,21 @@ let test_edges () =
        (Nx.reshape [| 1; 3 |] (v [| 3.; 3.; 1. |]))
        (Nx.reshape [| 1; 3 |] (v [| 9.; 5.; 7. |])));
   (* What has no derivative raises. *)
-  invalid ~sub:"Rune.jvp': Cholesky has no derivative yet" (fun () ->
-      Rune.jvp' Nx.cholesky (Nx.eye f64 2) (Nx.eye f64 2));
+  let tall = Nx.create f64 [| 3; 2 |] [| 1.; 0.; 0.; 1.; 1.; 1. |] in
+  invalid
+    ~sub:
+      "Rune.jvp': the tangent of a complete QR factorisation of a tall matrix \
+       has no definition" (fun () ->
+      Rune.jvp' (fun a -> fst (Nx.qr ~factors:Complete a)) tall tall);
+  invalid
+    ~sub:
+      "Rune.jvp': the tangent of a complete SVD of a non-square matrix has no \
+       definition" (fun () ->
+      Rune.jvp'
+        (fun a ->
+          let _, s, _ = Nx.svd ~factors:Complete f64 a in
+          s)
+        tall tall);
   invalid ~sub:"Rune.jvp': a contraction's scale has a tangent" (fun () ->
       Rune.jvp'
         (fun s ->
@@ -259,6 +273,62 @@ let test_complex () =
   in
   equal ~msg:"magnitude" floats expected
     (Nx.to_array (snd (Rune.jvp' (Nx.magnitude f64) z t)))
+
+(* The gauges factorisations' tangents keep, and their first-order
+   reconstructions. *)
+let test_factorisations () =
+  let x =
+    Nx.create f64 [| 3; 3 |]
+      [| 0.3; -0.2; 0.5; 0.1; 0.4; -0.6; 0.2; 0.7; -0.1 |]
+  in
+  let t =
+    Nx.create f64 [| 3; 3 |] [| 1.; 0.5; -0.3; 0.2; -1.; 0.4; 0.6; 0.1; 0.8 |]
+  in
+  let diagonal_zero ~msg m =
+    equal ~msg
+      (array (float 1e-12))
+      [| 0.; 0.; 0. |]
+      (Nx.to_array (Nx.diagonal m))
+  in
+  let pair = T.(pair tensor tensor) in
+  let a = spaced (symmetric x) in
+  let (_, v), (_, dv) =
+    Rune.jvp T.tensor pair (fun a -> Nx.eigh f64 a) a (symmetric t)
+  in
+  diagonal_zero ~msg:"eigh: vᵀ dv" (Nx.matmul (Nx.matrix_transpose v) dv);
+  let a = spaced x in
+  let triple = T.(pair tensor (pair tensor tensor)) in
+  let (u, (s, vh)), (du, (ds, dvh)) =
+    Rune.jvp T.tensor triple
+      (fun a ->
+        let u, s, vh = Nx.svd f64 a in
+        (u, (s, vh)))
+      a t
+  in
+  diagonal_zero ~msg:"svd: vh dvhᵀ" (Nx.matmul vh (Nx.matrix_transpose dvh));
+  let scaled u s = Nx.mul u (Nx.unsqueeze ~axes:[ 0 ] s) in
+  let first_order =
+    Nx.add
+      (Nx.add (Nx.matmul (scaled du s) vh) (Nx.matmul (scaled u ds) vh))
+      (Nx.matmul (scaled u s) dvh)
+  in
+  equal ~msg:"svd: da = d(u s vh)"
+    (array (float 1e-12))
+    (Nx.to_array t) (Nx.to_array first_order);
+  let (_, v), (_, dv) =
+    Rune.jvp T.tensor
+      T.(pair tensor tensor)
+      (fun a -> Nx.eig c128 a)
+      (spaced (Nx.mul_s x 0.3))
+      t
+  in
+  let re m = Nx.to_array (Nx.real f64 m)
+  and im m = Nx.to_array (Nx.imag f64 m) in
+  let g = Nx.diagonal (Nx.matmul (adjoint v) dv) in
+  equal ~msg:"eig: vᴴ dv, real" (array (float 1e-10)) [| 0.; 0.; 0. |] (re g);
+  equal ~msg:"eig: vᴴ dv, imaginary"
+    (array (float 1e-10))
+    [| 0.; 0.; 0. |] (im g)
 
 (* jvp of a compiled function *)
 
@@ -533,8 +603,11 @@ let test_jacfwd () =
   equal ~msg:"no element" (array int) [| 0 |] (Nx.shape j);
   invalid ~sub:"Rune.jacfwd': the parameters hold no real or complex tensor"
     (fun () -> Rune.jacfwd' Fun.id (Nx.zeros Nx.int32 [| 2 |]));
-  invalid ~sub:"Rune.jacfwd': Cholesky has no derivative yet" (fun () ->
-      Rune.jacfwd' Nx.cholesky (Nx.zeros f64 [| 0; 0 |]))
+  invalid ~sub:"Rune.jacfwd': the tangent of a complete QR factorisation"
+    (fun () ->
+      Rune.jacfwd'
+        (fun a -> fst (Nx.qr ~factors:Complete a))
+        (Nx.zeros f64 [| 2; 1 |]))
 
 (* Column [k] of the Jacobian, its elements at index [k] of the argument's axes
    in C order, is the tangent along element [k], bit for bit. *)
@@ -741,6 +814,7 @@ let () =
              test "kinks take JAX's tangents" test_kinks;
              test "complex tangents are directional derivatives" test_complex;
              test "edges take their definitions' values" test_edges;
+             test "factorisations keep their gauges" test_factorisations;
            ];
          group "jit"
            [

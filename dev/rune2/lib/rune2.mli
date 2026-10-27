@@ -41,11 +41,9 @@
 
     A differentiation tracks the float and complex arrays of its arguments;
     integer and boolean arrays have no derivative. Every operation nx computes
-    has a derivative but the factorisations and triangular solves
-    ([Nx.cholesky], [Nx.qr], [Nx.lu], [Nx.svd], [Nx.eigh], [Nx.eig],
-    [Nx.solve_triangular] and the functions computed through them), whose
-    tangents raise [Invalid_argument], and a block scale of [Nx.contract] that
-    depends on the parameters, which raises too.
+    has a derivative but a block scale of [Nx.contract] that depends on the
+    parameters and the complete factors that {b Factorisations} below names,
+    whose tangents raise [Invalid_argument].
 
     {b Tangents.} A {e tangent} is a displacement: move the parameters by [h]
     times the tangent and the result moves by [h] times its tangent, to first
@@ -90,6 +88,21 @@
     tangent along [x] where [y] is zero and along [y] where [x] is zero. A
     function nx composes of others, as [Nx.softplus], takes these rules at its
     parts' kinks.
+
+    {b Factorisations.} The tangents of [Nx.cholesky], [Nx.lu], [Nx.qr],
+    [Nx.svd], [Nx.eigh] and [Nx.eig] are the derivatives of the factors nx
+    computes, where those are differentiable. [Nx.qr ~factors:Complete] of a
+    tall matrix and [Nx.svd ~factors:Complete] of a non-square one have none:
+    their tangents raise [Invalid_argument]. The tangents of singular vectors
+    and eigenvectors are not finite where two singular values or eigenvalues are
+    equal. A vector is defined up to its sign, or a complex one's phase, which
+    nx leaves open and the tangent fixes: the tangent of each eigenvector of
+    [Nx.eigh] and [Nx.eig] is orthogonal to it, so a vector of [Nx.eig] keeps
+    its unit norm, and the tangent of each right singular vector of [Nx.svd] is
+    orthogonal to it, the left one carrying the change of phase that keeps
+    [a = u diag(s) vh]. A factorisation's values alone, as
+    [Nx.svd ~vectors:false]'s, take their tangents from the vectors the full
+    routine computes.
 
     {b Reads.} Outside constructs, {!Nx.item} of a value a differentiation
     tracks reads its primal, so an OCaml [if] on it differentiates the path

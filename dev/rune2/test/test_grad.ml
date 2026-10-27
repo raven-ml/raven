@@ -80,12 +80,13 @@ let complex_law (input, f) (s, xs, ts) =
 let adjoint_props =
   List.map
     (fun c -> prop c.name (gen c) (adjoint_law c))
-    (real_cases @ contract_cases @ complex_cases)
+    (real_cases @ contract_cases @ factor_cases @ complex_cases
+   @ complex_factor_cases)
 
 let complex_props =
   List.filter_map
     (fun c -> Option.map (fun z -> prop c.name (gen c) (complex_law z)) c.z)
-    complex_cases
+    (complex_cases @ complex_factor_cases)
 
 (* Gradients against central differences *)
 
@@ -119,7 +120,7 @@ let fd_law c (s, xs, ts) =
 let fd_props =
   List.map
     (fun c -> prop c.name (gen c) (fd_law c))
-    (real_cases @ contract_cases)
+    (real_cases @ contract_cases @ factor_cases)
 
 (* Values the conventions state *)
 

@@ -496,6 +496,228 @@ let real_cases =
         Nx.cos x);
   ]
 
+(* Factorisations
+
+   Each case builds a well-conditioned matrix from its draws in [-1, 1]: one
+   whose factors are continuous there, with spaced eigenvalues and singular
+   values. A vector defined up to its sign is read squared. *)
+
+let tall_or_wide =
+  Gen.(
+    map
+      (fun (m, n) -> [| m + 1; n + 1 |])
+      (pair (int_range 0 3) (int_range 0 3)))
+
+let flat xs = Nx.concatenate ~axis:0 (List.map (Nx.reshape [| -1 |]) xs)
+let adjoint x = Nx.conjugate (Nx.matrix_transpose x)
+let half x = Nx.mul x (Nx.full_like x (D.of_float (Nx.dtype x) 0.5))
+
+(* [x / 2] plus a spaced diagonal [3, 6, …] of its shape and a fixed matrix of
+   no special form, so that no draw, zero included, makes a matrix at which a
+   factorisation changes its branch, as Householder reflections do at a column
+   already reduced. *)
+let spaced x =
+  let m = Nx.dim (-2) x and n = Nx.dim (-1) x in
+  let k = Int.min m n in
+  let d = Nx.mul_s (Nx.cast f64 (Nx.arange Nx.int32 1 (k + 1) 1)) 3. in
+  let diag = Nx.mul (Nx.eye f64 k) (Nx.unsqueeze ~axes:[ 0 ] d) in
+  let generic =
+    Nx.create f64 [| m; n |]
+      (Array.init (m * n) (fun k ->
+           0.3
+           *. Float.sin
+                ((1.7 *. Float.of_int (k / n))
+                +. (2.9 *. Float.of_int (k mod n))
+                +. 0.4)))
+  in
+  let fixed = Nx.add generic (Nx.pad [| (0, m - k); (0, n - k) |] 0. diag) in
+  Nx.add (half x) (Nx.cast (Nx.dtype x) fixed)
+
+let symmetric x = half (Nx.add x (adjoint x))
+
+let positive x =
+  let n = Nx.dim (-1) x in
+  let shift = Nx.cast (Nx.dtype x) (Nx.mul_s (Nx.eye f64 n) (Float.of_int n)) in
+  Nx.add (Nx.matmul x (adjoint x)) shift
+
+(* [x]'s rows moved one down, the last first: an LU of it pivots. *)
+let rotated x =
+  let m = Nx.dim (-2) x and r = Nx.ndim x in
+  if m < 2 then x
+  else
+    let rows a b =
+      Nx.slice
+        (List.init r (fun i -> if i = r - 2 then Nx.R (a, b) else Nx.A))
+        x
+    in
+    Nx.concatenate ~axis:(r - 2) [ rows (m - 1) m; rows 0 (m - 1) ]
+
+(* [x]'s squared magnitudes, which a vector's sign or phase leaves alone. *)
+let squared x = Nx.mul x (Nx.conjugate x)
+let batched = Gen.(map (fun n -> [| 2; n + 1; n + 1 |]) (int_range 0 2))
+
+let wider =
+  Gen.(
+    map
+      (fun (m, d) -> [| m + 1; m + d + 2 |])
+      (pair (int_range 0 1) (int_range 0 1)))
+
+let factor_cases =
+  let unit = Uniform [ (-1., 1.) ] in
+  let m name shape f = case ~empty:false ~shape ~values:unit name f in
+  let rhs x = Nx.reshape [| Nx.dim 0 x; 1 |] (Nx.sin (Nx.sum ~axes:[ 1 ] x)) in
+  [
+    m "cholesky" square (fun x -> Nx.cholesky (positive x));
+    (* The upper triangle, which Cholesky does not read, moves too. *)
+    m "cholesky of a lower triangle" square (fun x ->
+        Nx.cholesky (Nx.add (positive x) (Nx.triu ~k:1 x)));
+    m "batched cholesky" batched (fun x -> Nx.cholesky (positive x));
+    m "cholesky of the upper triangle" square (fun x ->
+        Nx.cholesky ~triangle:Upper (positive x));
+    m "lu" tall_or_wide (fun x ->
+        let _, l, u = Nx.lu (spaced x) in
+        flat [ l; u ]);
+    m "qr" tall_or_wide (fun x ->
+        let q, r = Nx.qr (spaced x) in
+        flat [ q; r ]);
+    m "lu, pivoting" tall_or_wide (fun x ->
+        let _, l, u = Nx.lu (rotated (spaced x)) in
+        flat [ l; u ]);
+    m "batched qr" batched (fun x ->
+        let q, r = Nx.qr (spaced x) in
+        flat [ q; r ]);
+    m "qr complete of a wide matrix" wider (fun x ->
+        let q, r = Nx.qr ~factors:Complete (spaced x) in
+        flat [ q; r ]);
+    m "svd's values" tall_or_wide (fun x ->
+        let _, s, _ = Nx.svd ~vectors:false f64 (spaced x) in
+        s);
+    m "svd" tall_or_wide (fun x ->
+        let u, s, vh = Nx.svd f64 (spaced x) in
+        flat [ s; Nx.square u; Nx.square vh ]);
+    m "eigh's values" square (fun x ->
+        fst (Nx.eigh ~vectors:false f64 (spaced (symmetric x))));
+    m "eigh" square (fun x ->
+        let w, v = Nx.eigh f64 (spaced (symmetric x)) in
+        flat [ w; Nx.square v ]);
+    (* The triangle eigh does not read moves too. *)
+    m "eigh of a lower triangle" square (fun x ->
+        let w, v = Nx.eigh f64 (spaced x) in
+        flat [ w; Nx.square v ]);
+    m "eigh of the upper triangle" square (fun x ->
+        let w, v = Nx.eigh ~triangle:Upper f64 (spaced (symmetric x)) in
+        flat [ w; Nx.square v ]);
+    m "eig's values" square (fun x ->
+        let w, _ = Nx.eig ~vectors:false c128 (spaced (Nx.mul_s x 0.3)) in
+        Nx.real f64 w);
+    m "eig" square (fun x ->
+        let w, v = Nx.eig c128 (spaced (Nx.mul_s x 0.3)) in
+        flat [ Nx.real f64 w; Nx.real f64 (squared v) ]);
+    m "solve_triangular" square (fun x ->
+        let a = spaced (Nx.tril x) in
+        flat
+          [
+            Nx.solve_triangular a (rhs x);
+            Nx.solve_triangular ~transpose:Transpose a (rhs x);
+          ]);
+    m "solve_triangular, upper" square (fun x ->
+        let a = spaced x in
+        flat
+          [
+            Nx.solve_triangular ~triangle:Upper a (rhs x);
+            Nx.solve_triangular ~triangle:Upper ~transpose:Transpose a (rhs x);
+            Nx.solve_triangular ~triangle:Upper ~transpose:Adjoint a (rhs x);
+          ]);
+    m "solve_triangular, unit diagonal" square (fun x ->
+        flat
+          [
+            Nx.solve_triangular ~triangle:Upper ~unit_diag:true x (rhs x);
+            Nx.solve_triangular ~unit_diag:true ~transpose:Transpose x (rhs x);
+          ]);
+    m "solve" square (fun x -> Nx.solve (spaced x) (rhs x));
+    m "inv" square (fun x -> Nx.inv (spaced x));
+    m "det" square (fun x -> Nx.det (spaced x));
+    m "solve, inv and det, pivoting" square (fun x ->
+        let a = rotated (spaced x) in
+        flat [ Nx.solve a (rhs x); Nx.inv a; Nx.det a ]);
+    m "slogdet" square (fun x -> snd (Nx.slogdet f64 (spaced x)));
+  ]
+
+(* [spaced z] with a fixed imaginary part of no special form too: a complex
+   reflection changes its branch at a real column. *)
+let zspaced z =
+  let m = Nx.dim (-2) z and n = Nx.dim (-1) z in
+  let im =
+    Nx.create f64 [| m; n |]
+      (Array.init (m * n) (fun k ->
+           0.2 *. Float.cos ((1.3 *. Float.of_int k) +. 0.7)))
+  in
+  Nx.add (spaced z) (Nx.complex c128 ~re:(Nx.zeros f64 [| m; n |]) ~im)
+
+let complex_factor_cases =
+  let unit = Uniform [ (-1., 1.); (-1., 1.) ] in
+  let zsq = Gen.(map (fun n -> [| 2; n + 1; n + 1 |]) (int_range 0 2)) in
+  let ztw =
+    Gen.(
+      map
+        (fun (m, n) -> [| 2; m + 1; n + 1 |])
+        (pair (int_range 0 2) (int_range 0 2)))
+  in
+  let m name shape f =
+    case ~empty:false ~shape ~values:unit ~z:(complex, f) name (on_complex f)
+  in
+  let rhs z = Nx.reshape [| Nx.dim 0 z; 1 |] (Nx.sin (Nx.sum ~axes:[ 1 ] z)) in
+  [
+    m "complex cholesky" zsq (fun z -> Nx.cholesky (positive z));
+    m "complex cholesky of the upper triangle" zsq (fun z ->
+        Nx.cholesky ~triangle:Upper (Nx.add (positive z) (Nx.tril ~k:(-1) z)));
+    m "complex eig" zsq (fun z ->
+        let w, v = Nx.eig c128 (zspaced (half z)) in
+        flat [ w; squared v ]);
+    m "complex svd" ztw (fun z ->
+        let u, s, vh = Nx.svd f64 (zspaced z) in
+        let s = Nx.cast c128 s in
+        let usvh = Nx.matmul (Nx.mul u (Nx.unsqueeze ~axes:[ 0 ] s)) vh in
+        flat [ s; squared u; squared vh; usvh ]);
+    m "complex eigh" zsq (fun z ->
+        let w, v = Nx.eigh f64 (zspaced z) in
+        flat [ Nx.cast c128 w; squared v ]);
+    m "complex qr complete of a wide matrix"
+      Gen.(map (fun n -> [| 2; 2; n + 3 |]) (int_range 0 1))
+      (fun z ->
+        let q, r = Nx.qr ~factors:Complete (zspaced z) in
+        flat [ q; r ]);
+    m "complex solve_triangular, unit diagonal and upper" zsq (fun z ->
+        flat
+          [
+            Nx.solve_triangular ~triangle:Upper ~unit_diag:true z (rhs z);
+            Nx.solve_triangular ~triangle:Upper ~transpose:Adjoint (zspaced z)
+              (rhs z);
+          ]);
+    m "complex lu" ztw (fun z ->
+        let _, l, u = Nx.lu (zspaced z) in
+        flat [ l; u ]);
+    m "complex qr" ztw (fun z ->
+        let q, r = Nx.qr (zspaced z) in
+        flat [ q; r ]);
+    m "complex svd's values" ztw (fun z ->
+        let _, s, _ = Nx.svd ~vectors:false f64 (zspaced z) in
+        Nx.cast c128 s);
+    m "complex eigh's values" zsq (fun z ->
+        Nx.cast c128 (fst (Nx.eigh ~vectors:false f64 (zspaced (symmetric z)))));
+    m "complex solve_triangular" zsq (fun z ->
+        let a = spaced (Nx.tril z) in
+        flat
+          [
+            Nx.solve_triangular a (rhs z);
+            Nx.solve_triangular ~transpose:Transpose a (rhs z);
+            Nx.solve_triangular ~transpose:Adjoint a (rhs z);
+          ]);
+    m "complex solve" zsq (fun z -> Nx.solve (zspaced z) (rhs z));
+    m "complex inv" zsq (fun z -> Nx.inv (zspaced z));
+    m "complex det" zsq (fun z -> Nx.det (zspaced z));
+  ]
+
 let complex_cases =
   let z ?(values = Uniform [ (0.2, 2.); (0.2, 1.) ]) name f =
     case ~shape:(rows 2) ~values ~z:(complex, f) name (on_complex f)
