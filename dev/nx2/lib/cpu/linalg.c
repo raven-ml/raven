@@ -616,7 +616,6 @@ static void wait_for(const int64_t *x, int64_t v) {
 #define RDT NX_FLOAT32
 #define SFX c64
 #define C T
-#define CSQRT csqrtf
 #define CK c64
 #define CPLX 1
 #define CONJ conjf
@@ -634,7 +633,6 @@ static void wait_for(const int64_t *x, int64_t v) {
 #define RDT NX_FLOAT64
 #define SFX c128
 #define C T
-#define CSQRT csqrt
 #define CK c128
 #define CPLX 1
 #define CONJ conj

@@ -13,10 +13,9 @@
 /* linalg.c's routines on matrices of one dtype, included once per dtype
    with T the element, R its real part's type, RDT that real type's dtype
    code, CPLX 1 for complex, C the complex type of R's precision and CK
-   its kind in nx_kinds.h, CSQRT its square root on complex dtypes, WORD
-   the signed integer of R's width, and CONJ, REAL, IMAG, SQRT, COPYSIGN,
-   LDEXP and ILOGB for T and R, which it undefines at its end. F(name)
-   names the dtype's instance.
+   its kind in nx_kinds.h, WORD the signed integer of R's width, and
+   CONJ, REAL, IMAG, SQRT, COPYSIGN, LDEXP and ILOGB for T and R, which it
+   undefines at its end. F(name) names the dtype's instance.
 
    Matrices are dense and row-major, row i at a + i·ld. Each routine runs
    by scalar loops on blocks of at most LEAF columns and updates the rest
@@ -27,6 +26,11 @@
 #define EPS ((R)(sizeof(R) == 4 ? FLT_EPSILON / 2 : DBL_EPSILON / 2))
 #define TINY ((R)(sizeof(R) == 4 ? FLT_MIN : DBL_MIN))
 #define ETA ((R)(sizeof(R) == 4 ? FLT_TRUE_MIN : DBL_TRUE_MIN))
+
+/* bdsqr's tolerance factor, EPS^(-1/8) clamped to [10, 100] (xBDSQR's
+   TOLMUL): 10 for float, whose EPS^(-1/8) is 8, and 2^(53/8) rounded for
+   double. */
+#define TOLMUL ((R)(sizeof(R) == 4 ? 10 : 0x1.8ace5422aa0dbp+6))
 
 static R F(abs)(R x) { return x < 0 ? -x : x; }
 
@@ -75,7 +79,8 @@ static inline C F(cplx)(R re, R im) {
    and Smith's quotient. C's operators would recover
    infinities from NaN parts (C99 Annex G) by calls that keep every loop
    scalar. MUL and DIV are T's: these on complex dtypes, C's operators on
-   reals. */
+   reals. csqrt is nx_kinds.h's Sqrt, whose bits, unlike the C library's
+   csqrt, are the same on every host. */
 static inline CAT(nx, CK) F(kind)(C a) {
   return CAT(CAT(nx, CK), of)(((R *)&a)[0], ((R *)&a)[1]);
 }
@@ -87,6 +92,11 @@ static inline C F(cmul)(C a, C b) {
 
 static inline C F(cdiv)(C a, C b) {
   CAT(nx, CK) z = CAT(nx_fdiv, CK)(F(kind)(a), F(kind)(b));
+  return F(cplx)(z.re, z.im);
+}
+
+static inline C F(csqrt)(C a) {
+  CAT(nx, CK) z = CAT(nx_sqrt, CK)(F(kind)(a));
   return F(cplx)(z.re, z.im);
 }
 
@@ -2948,8 +2958,7 @@ static void F(lasv2)(R f, R g, R h, R *smin, R *smax, R *sr, R *cr, R *sl,
    steps. */
 static int F(bdsqr)(int64_t n, R *d, R *e, R *u, int64_t nru, int64_t ldu,
                     R *v, int64_t nrv, int64_t ldv, R *work) {
-  R tol = (R)pow(EPS, -0.125);
-  tol = (tol < 10 ? 10 : tol > 100 ? 100 : tol) * EPS;
+  R tol = TOLMUL * EPS;
   int64_t maxit = 6 * n, sweeps = 0, iter = -1, oldll = -1, oldm = -1;
   int dir = 0;
   R *c1 = work, *s1 = c1 + n, *c2 = s1 + n, *s2 = c2 + n;
@@ -4821,13 +4830,13 @@ static int F(lahqr)(int wantt, int64_t n, int64_t lo, int64_t hi, T *h, R *wr,
         t = DAT1 * F(abs)(REAL(M(h, l + 1, l))) + M(h, l, l);
       else {
         t = M(h, i, i);
-        T u = MUL(CSQRT(M(h, i - 1, i)), CSQRT(M(h, i, i - 1)));
+        T u = MUL(F(csqrt)(M(h, i - 1, i)), F(csqrt)(M(h, i, i - 1)));
         R s = F(magnitude)(u);
         if (s != 0) {
           T x = (M(h, i - 1, i - 1) - t) / 2;
           R sx = F(magnitude)(x);
           s = s > sx ? s : sx;
-          T y = s * CSQRT(MUL(x / s, x / s) + MUL(u / s, u / s));
+          T y = s * F(csqrt)(MUL(x / s, x / s) + MUL(u / s, u / s));
           if (sx > 0 && REAL(x / sx) * REAL(y) + IMAG(x / sx) * IMAG(y) < 0)
             y = -y;
           t -= MUL(u, DIV(u, x + y));
@@ -5540,7 +5549,7 @@ static int F(matrix)(const call *c, int64_t b, T *w, arena *s) {
 #undef CK
 #undef MUL
 #undef DIV
-#undef CSQRT
+#undef TOLMUL
 #undef SAFMIN
 #undef EPS
 #undef TINY
