@@ -11,6 +11,21 @@ module Bits = Lower_bits
 let unlowered what =
   invalid_arg (Printf.sprintf "Rune.Lower.op: %s is not lowered" what)
 
+(* Work
+
+   A scatter meets each update at every position along its axis, [n·k] work
+   against eager's [n + k], and an assembly selects each of its [p] pieces at
+   every element, [p·N] against eager's [N + m] for pieces of [m] elements in
+   all. Each is refused past [work_bound] times eager's work, and the jit then
+   evaluates its program uncompiled. Below the bound the extra work is a few
+   comparisons and selects per unit on elements the kernel holds: on a host
+   core, whose vector units retire about 30 lanes' operations in the time
+   memory moves one element in and out, that roughly matches eager's stores,
+   and a GPU hides it entirely. Past it the work outgrows what compiling the
+   rest of the program saves: an embedding's gradient, 512 updates over 50000
+   rows, would make 2.6e7 comparisons per feature against eager's 5e4. *)
+let work_bound = 16
+
 let extents u = List.init (Shape.ndim u) (Bits.extent u)
 let dims s = List.map (fun n -> Ops.Int n) s
 let numel s = List.fold_left ( * ) 1 s
@@ -27,8 +42,11 @@ let laid s axis v =
   let along = List.init r (fun i -> if i = axis then List.nth s i else 1) in
   Shape.expand (Shape.reshape v (dims along)) (dims s)
 
-(* [joined axis a b] is [a] then [b] along [axis]. Shape.cat adds zero-padded
-   pieces, which would turn a [-0] into [+0]: floats join as their bits. *)
+(* [joined axis a b] is [a] then [b] along [axis]. Floats join as their bits:
+   tolk's Shape.cat of pieces of unequal extents along the axis adds them, each
+   zero-padded to the whole, and adding the padding's [+0] turns a [-0] into
+   [+0] and quiets a signalling NaN. A Shape.cat that selected each element
+   from its piece would let floats join as they are. *)
 let joined axis a b =
   match Ops.dtype a with
   | t when Dtype.is_float t ->
@@ -117,6 +135,8 @@ let scatter (D.Any dt as d) (c : Nx_kernel.combine) ~axis ~idx ~updates into =
   let r = List.length s in
   let n = List.nth s axis and k = List.nth t axis in
   if n = 0 || numel t = 0 then into
+  else if n * k > work_bound * (n + k) then
+    unlowered (Printf.sprintf "a Scatter of %d updates over %d positions" k n)
   else
     let wide = s @ [ k ] in
     (* A node of [idx]'s shape moved to [wide], its axis [axis] last. *)
@@ -347,11 +367,22 @@ let words (type v s) (dt : (v, s) D.t) (x : v) =
     let h = String.length b / 2 in
     [ word (String.sub b 0 h); word (String.sub b h h) ]
 
-(* A float assembles as its bits: tolk folds a constant float fill joined to
-   another part by an addition, which quiets a signalling NaN. *)
+(* A float assembles as its bits. Where a float constant fill meets a padded
+   piece in an Ops.where, tolk quiets a signalling NaN constant before it
+   renders the kernel: a float64 fill of bits 0x7ff0000000000001 beside a
+   piece reaches the kernel's source as 0x7ff8000000000001. A [-0] fill stays
+   [-0], so no addition is involved, and a fill alone keeps its bits. *)
 let assemble (type v s) (dt : (v, s) D.t) (fill : v) shape pieces =
   let d = D.Any dt in
   let s = Iarray.to_list shape in
+  let count (r : Nx_array.Move.range) = r.count in
+  let size (ranges, _) = Iarray.fold_left (fun m r -> m * count r) 1 ranges in
+  let pieces = List.filter (fun piece -> size piece > 0) pieces in
+  let p = List.length pieces and total = numel s in
+  let m = List.fold_left (fun m piece -> m + size piece) 0 pieces in
+  if p * total > work_bound * (total + m) then
+    unlowered
+      (Printf.sprintf "an Assemble of %d pieces into %d elements" p total);
   let tdt = Arith.dtype d in
   let floats = Dtype.is_float tdt in
   let start =
@@ -362,15 +393,12 @@ let assemble (type v s) (dt : (v, s) D.t) (fill : v) shape pieces =
       let const c = broadcast (Ops.const ~dtype:tdt c) s in
       List.map const (Arith.fill dt fill)
   in
-  let empty (r : Nx_array.Move.range) = r.count = 0 in
   let put acc (ranges, u) =
-    if Iarray.exists empty ranges then acc
-    else
-      let parts = Arith.parts d u in
-      let parts = if floats then List.map Bits.bits parts else parts in
-      let ones = Shape.const_like ~dtype:Bool (List.hd parts) (`Bool true) in
-      let mask = placed s ranges ones in
-      List.map2 (fun a p -> Ops.where mask (placed s ranges p) a) acc parts
+    let parts = Arith.parts d u in
+    let parts = if floats then List.map Bits.bits parts else parts in
+    let ones = Shape.const_like ~dtype:Bool (List.hd parts) (`Bool true) in
+    let mask = placed s ranges ones in
+    List.map2 (fun a p -> Ops.where mask (placed s ranges p) a) acc parts
   in
   let y = Arith.of_parts d (List.fold_left put start pieces) in
   if floats then Ops.bitcast y tdt else y

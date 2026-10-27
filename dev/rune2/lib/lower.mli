@@ -22,16 +22,18 @@ val op :
     outputs as {!Lower_reduce} does; a [Contract] sums its products in its
     accumulator as {!Lower_reduce.contract} does; a [Copy] is its operand, a
     [Move] its operand moved, a [Bitcast] of one width its operand's bits, and
-    a [Place] its operand, as a graph computes on one device, which its caller
+    a [Place] its operand: a graph computes on one device, which its caller
     holds every value on. A [Gather], a [Scatter], a [Fold], an [Assemble] and
     a [Sort] compute as {!Lower_index} states, a [Linalg] as {!Lower_linalg}
     states, and an [Fft] transforms as {!Lower_fft} does.
 
     Raises [Invalid_argument] naming the operation for one not lowered yet:
     [Check], a [Linalg] that {!Lower_linalg} refuses, a boolean [Add]
-    [Scatter] or [Fold], a [Sort] along an axis of more than [2{^31}]
-    elements, an [Fft] of a precision other than [float32] and [float64], or
-    whose result's precision is not its operand's, a [Contract] scaled in an
-    accumulator other than [float32] or [float64], a [Bitcast] that changes
-    width, a reduction or a scan of a complex [Prod], and a scan of a
-    [complex128] [Max], [Min] or [Arg]. *)
+    [Scatter] or [Fold], a [Scatter] or an [Assemble] that would do more than
+    16 times eager's work ({!Lower_index.scatter}, {!Lower_index.assemble}), a
+    [Sort] along an axis of more than [2{^31}] elements, an [Fft] of a
+    precision other than [float32] and [float64], or whose result's precision
+    is not its operand's, a [Contract] scaled in an accumulator other than
+    [float32] or [float64], a [Bitcast] that changes width, a reduction or a
+    scan of a complex [Prod], and a scan of a [complex128] [Max], [Min] or
+    [Arg]. *)

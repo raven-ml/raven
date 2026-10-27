@@ -278,19 +278,55 @@ let hex dt v =
   String.concat ""
     (List.init n (fun i -> Printf.sprintf "%02x" (Char.code b.[n - 1 - i])))
 
-let same_bits dt eager lowered =
-  equal (array string) (Array.map (hex dt) eager) (Array.map (hex dt) lowered)
+let bits_of it f =
+  let shown xs = Array.map (hex it) xs in
+  (shown (Nx.to_array (f ())), shown (Lowered.run f))
+
+(* [exact dt op] is the bits of each element of [op ()], eager's then the
+   lowered graph's. A float of fewer than 64 bits is read through a bitcast to
+   an integer of its width: reading it as an OCaml float quiets a signalling
+   NaN. *)
+let exact (type v s) (dt : (v, s) D.t) (op : unit -> (v, s, Nx.host) Nx.t) =
+  let as_ it = bits_of it (fun () -> Nx.bitcast it (op ())) in
+  match dt with
+  | D.Float32 -> as_ D.Int32
+  | D.Complex64 -> as_ D.Int64
+  | D.Float16 | D.Bfloat16 -> as_ D.Uint16
+  | D.Float8_e4m3fn | D.Float8_e5m2 -> as_ D.Uint8
+  | _ -> bits_of dt op
+
+let same_bits dt op =
+  let e, l = exact dt op in
+  equal (array string) e l
+
+(* [nan_of dt h] is whether the bits [h] of a float of [dt], as [exact] shows
+   them, are a NaN, and whether a signalling one: its fraction's top bit
+   clear. *)
+let nan_of (type s) (dt : (float, s) D.t) h =
+  let r = Int64.of_string ("0x" ^ h) and _, f = format dt in
+  let quiet = Int64.logand r (Int64.shift_left 1L (f - 1)) <> 0L in
+  match (float_class dt r, dt) with
+  | Nan, D.Float8_e4m3fn -> Some `Quiet
+  | Nan, _ -> Some (if quiet then `Quiet else `Signalling)
+  | _ -> None
+
+(* The NaNs among the parts of the element of [dt] whose bits are [h]. *)
+let nans (type v s) (dt : (v, s) D.t) h =
+  let halves f =
+    let w = String.length h / 2 in
+    List.filter_map (nan_of f) [ String.sub h 0 w; String.sub h w w ]
+  in
+  match (dt, D.kind dt) with
+  | D.Complex64, _ -> halves D.Float32
+  | D.Complex128, _ -> halves D.Float64
+  | _, D.Float -> Option.to_list (nan_of dt h)
+  | _ -> []
 
 let is_nan (type v s) (dt : (v, s) D.t) (v : v) =
   match D.kind dt with
   | D.Float -> Float.is_nan v
   | D.Complex -> Float.is_nan v.Complex.re || Float.is_nan v.im
   | _ -> false
-
-(* [same_values] is [same_bits] but that a NaN result may be any NaN. *)
-let same_values dt eager lowered =
-  let shown v = if is_nan dt v then "nan" else hex dt v in
-  equal (array string) (Array.map shown eager) (Array.map shown lowered)
 
 let float_kind x =
   if Float.is_nan x then "nan"
@@ -353,9 +389,10 @@ let rounding_of (type v s) (dt : (v, s) D.t) =
   match D.kind dt with D.Float -> rounding dt | _ -> fun _ _ -> 0.
 
 (* [sums dt ~mags ~terms e l] checks each part of the eager and the lowered
-   float sums [e] and [l] against each other: each is within [γ(n) m] of the
-   exact sum, [n + 1] the terms of an element and [m] the sum of their
-   magnitudes, each part's in [mags]. *)
+   float sums [e] and [l] against each other, for elements of [n + 1] terms,
+   [n] in [terms], whose magnitudes sum to [m], each part's in [mags]: the
+   lowered sum is within [γ(n) m] of the exact sum and eager's within
+   [γ(n + 1) m]. *)
 let sums (type v s) (dt : (v, s) D.t) ~mags ~terms (e : v array) (l : v array)
     =
   let round = rounding_of dt in
@@ -365,7 +402,8 @@ let sums (type v s) (dt : (v, s) D.t) ~mags ~terms (e : v array) (l : v array)
       Array.iteri
         (fun o e ->
           let l = l.(o) in
-          let bound = (2. *. g terms.(o) *. mags.(o)) +. round e l in
+          let n = terms.(o) in
+          let bound = ((g n +. g (n + 1)) *. mags.(o)) +. round e l in
           near ~bound e l)
         e)
     (List.combine (parts dt e) (parts dt l))
@@ -558,7 +596,7 @@ let gathers =
         let x = if c.g_computed then computed x else x in
         P.eval ~by:"t" (P.Gather { axis = c.g_axis; idx; x })
       in
-      same_bits dt (Nx.to_array (op ())) (Lowered.run op))
+      same_bits dt op)
 
 (* Scatters *)
 
@@ -637,23 +675,41 @@ let scatter_case dts combines =
     s_updates = updates;
   }
 
-(* Whether two updates of [c] land on one element. *)
-let collide c =
-  let t = c.s_idx and axis = c.s_axis in
-  let n = c.s_shape.(axis) and k = t.(axis) in
+(* [landings c f] applies [f j o] to each update [j] of [c] that lands, [o] the
+   element of the result it lands on. *)
+let landings c f =
+  let s = c.s_shape and t = c.s_idx and axis = c.s_axis in
+  let n = s.(axis) and k = t.(axis) in
   let inner = numel (Array.sub t (axis + 1) (Array.length t - axis - 1)) in
-  let found = ref false in
-  for o = 0 to (Array.length c.s_pos / max 1 (k * inner)) - 1 do
-    for i = 0 to inner - 1 do
-      let seen = Hashtbl.create 8 in
-      for a = 0 to k - 1 do
-        let p = c.s_pos.((((o * k) + a) * inner) + i) in
-        if not (outside n p) then
-          if Hashtbl.mem seen p then found := true else Hashtbl.add seen p ()
-      done
-    done
-  done;
-  !found
+  Array.iteri
+    (fun j p ->
+      if not (outside n p) then
+        let o = j / (k * inner) and i = j mod inner in
+        f j ((((o * n) + Int64.to_int p) * inner) + i))
+    c.s_pos
+
+(* The number of updates of [c] that land on each element of its result. *)
+let landed c =
+  let count = Array.make (numel c.s_shape) 0 in
+  landings c (fun _ o -> count.(o) <- count.(o) + 1);
+  count
+
+let collide c = Array.exists (fun m -> m > 1) (landed c)
+
+(* [untouched c (e, l)] is the bits [e] and [l] where no update of [c]
+   lands. *)
+let untouched c (e, l) =
+  let count = landed c in
+  let keep a = List.filteri (fun o _ -> count.(o) = 0) (Array.to_list a) in
+  (keep e, keep l)
+
+let cover_untouched c (e, _) =
+  let (D.Any dt) = c.s_dt in
+  let count = landed c in
+  cover "a signalling NaN where no update lands"
+    (List.exists
+       (fun o -> count.(o) = 0 && List.mem `Signalling (nans dt e.(o)))
+       (List.init (Array.length e) Fun.id))
 
 let scattered (type v s) (dt : (v, s) D.t) c =
   let into = operand dt c.s_view c.s_shape c.s_into in
@@ -671,7 +727,7 @@ let scattered (type v s) (dt : (v, s) D.t) c =
            into;
          })
   in
-  (into, updates, Nx.to_array (op ()), Lowered.run op)
+  (into, updates, op)
 
 let cover_scatter ?booleans c =
   dtype_covers ?booleans c.s_dt;
@@ -702,14 +758,32 @@ let scatter_example i d combine =
     s_updates = cycled ~i:(i + 3) d (numel t);
   }
 
-(* Each dtype, the combines in turn, and an example without updates. *)
+(* A float32 target of both zeros, a signalling NaN and a number, under [-0]
+   updates: two on the [-0], two on the [+0], none on the others. *)
+let zero_example combine =
+  {
+    s_dt = D.Any D.Float32;
+    s_combine = combine;
+    s_unique = false;
+    s_shape = [| 4 |];
+    s_view = Plain;
+    s_axis = 0;
+    s_idx = [| 4 |];
+    s_pos = [| 0L; 0L; 1L; 1L |];
+    s_into = [| 0x80000000L; 0L; 0x7f800001L; 0x3f800000L |];
+    s_updates = Array.make 4 0x80000000L;
+  }
+
+(* Each dtype, the combines in turn, an example without updates and one of
+   zeros for each combine. *)
 let scatter_examples dts combines =
   let none = scatter_example 1 (List.hd dts) (List.hd combines) in
   { none with s_idx = [| 3; 0 |]; s_pos = [||]; s_updates = [||] }
-  :: List.mapi
-       (fun i d ->
-         scatter_example i d (List.nth combines (i mod List.length combines)))
-       dts
+  :: List.map zero_example combines
+  @ List.mapi
+      (fun i d ->
+        scatter_example i d (List.nth combines (i mod List.length combines)))
+      dts
 
 let scatters_moved =
   prop ~count:40
@@ -722,32 +796,44 @@ let scatters_moved =
       List.iter
         (fun k -> cover (combine_name k) (c.s_combine = k))
         [ Set; Max; Min ];
-      let _, _, e, l = scattered dt c in
-      if c.s_combine = Set then same_bits dt e l else same_values dt e l)
+      let _, _, op = scattered dt c in
+      let e, l = exact dt op in
+      cover_untouched c (e, l);
+      (* A NaN where an update lands under Max or Min may be any NaN. *)
+      let count = landed c in
+      let shown o h =
+        if c.s_combine <> Set && count.(o) > 0 && nans dt h <> [] then "nan"
+        else h
+      in
+      equal (array string) (Array.mapi shown e) (Array.mapi shown l))
 
 let addable = List.filter (fun d -> not (is_bool d)) D.all
 
-(* The number of updates that land on each element of [c]'s result and the sum
-   of the magnitudes of its terms, each part's. *)
-let terms c into updates =
-  let s = c.s_shape and t = c.s_idx and axis = c.s_axis in
-  let n = s.(axis) and k = t.(axis) in
-  let inner = numel (Array.sub t (axis + 1) (Array.length t - axis - 1)) in
-  let count = Array.make (numel s) 0 in
+(* The sum of the magnitudes of the terms of each element of [c]'s result, each
+   part's. *)
+let magnitudes c into updates =
   let mags = List.map (Array.map Float.abs) (parts64 into) in
   let us = parts64 updates in
-  Array.iteri
-    (fun j p ->
-      if not (outside n p) then begin
-        let o = j / (k * inner) and i = j mod inner in
-        let target = (((o * n) + Int64.to_int p) * inner) + i in
-        count.(target) <- count.(target) + 1;
-        List.iter2
-          (fun m u -> m.(target) <- m.(target) +. Float.abs u.(j))
-          mags us
-      end)
-    c.s_pos;
-  (count, mags)
+  landings c (fun j o ->
+      List.iter2 (fun m u -> m.(o) <- m.(o) +. Float.abs u.(j)) mags us);
+  mags
+
+(* Whether a part of an element of [c]'s result is a zero of [into], [-0]
+   where [negative] and [+0] otherwise, whose landing updates are all
+   [-0]. *)
+let zero_target ~negative c into updates =
+  let count = landed c in
+  let neg0 v = v = 0. && Float.sign_bit v in
+  List.exists2
+    (fun x u ->
+      let all = Array.make (Array.length x) true in
+      landings c (fun j o -> if not (neg0 u.(j)) then all.(o) <- false);
+      let hit o =
+        count.(o) > 0 && all.(o) && x.(o) = 0.
+        && Float.sign_bit x.(o) = negative
+      in
+      List.exists hit (List.init (Array.length x) Fun.id))
+    (parts64 into) (parts64 updates)
 
 let scatter_adds =
   prop ~count:40
@@ -758,12 +844,20 @@ let scatter_adds =
       let (D.Any dt) = c.s_dt in
       cover_scatter ~booleans:false c;
       cover "a narrow float" (is_narrow c.s_dt);
-      let into, updates, e, l = scattered dt c in
-      match D.kind dt with
-      | D.Float | D.Complex ->
-          let terms, mags = terms c into updates in
-          sums dt ~mags ~terms e l
-      | _ -> same_bits dt e l)
+      let into, updates, op = scattered dt c in
+      let floats = is_float c.s_dt || is_complex c.s_dt in
+      let zero negative = floats && zero_target ~negative c into updates in
+      cover "a -0 target whose landing updates are all -0" (zero true);
+      cover "a +0 target with -0 updates" (zero false);
+      let bits = exact dt op in
+      cover_untouched c bits;
+      if not floats then equal (array string) (fst bits) (snd bits)
+      else begin
+        let keep_e, keep_l = untouched c bits in
+        equal ~msg:"where no update lands" (list string) keep_e keep_l;
+        let e = Nx.to_array (op ()) and l = Lowered.run op in
+        sums dt ~mags:(magnitudes c into updates) ~terms:(landed c) e l
+      end)
 
 (* Folds *)
 
@@ -865,7 +959,7 @@ let fold_examples =
   in
   let s = [| 3; 4 |] in
   let out = Result.get_ok (K.Shape.padded pad s) in
-  (* An int64 fold of an element no term reaches, a constant [0]. *)
+  (* Folds whose elements no term reaches, a constant [0]. *)
   let reached =
     {
       K.lo = a [ 2; 0; 0 ];
@@ -876,13 +970,28 @@ let fold_examples =
   in
   let r = [| 1; 2; 2 |] in
   let r_out = Result.get_ok (K.Shape.padded reached r) in
-  {
-    f_dt = D.Any D.Int64;
-    f_shape = r;
-    f_pad = reached;
-    f_padded = r_out;
-    f_raws = cycled (D.Any D.Int64) (numel r_out);
-  }
+  let unreached d =
+    {
+      f_dt = d;
+      f_shape = r;
+      f_pad = reached;
+      f_padded = r_out;
+      f_raws = cycled d (numel r_out);
+    }
+  in
+  (* A float32 fold of [-0] terms. *)
+  let negative =
+    {
+      f_dt = D.Any D.Float32;
+      f_shape = s;
+      f_pad = pad;
+      f_padded = out;
+      f_raws = Array.make (numel out) 0x80000000L;
+    }
+  in
+  unreached (D.Any D.Int64)
+  :: unreached (D.Any D.Float32)
+  :: negative
   :: List.mapi
        (fun i d ->
          {
@@ -903,15 +1012,27 @@ let folds =
       cover_fold c;
       let x = value dt c.f_padded c.f_raws in
       let op () = folded x c in
-      let e = Nx.to_array (op ()) and l = Lowered.run op in
+      let floats = is_float c.f_dt || is_complex c.f_dt in
+      (* Each element's terms and, each part's, its terms other than [-0], by
+         eager folds of ones and of marks. *)
+      let count marks =
+        Array.map Float.to_int
+          (Nx.to_array (folded (Nx.create D.Float64 c.f_padded marks) c))
+      in
+      let terms = count (Array.make (numel c.f_padded) 1.) in
+      let elements = List.init (Array.length terms) Fun.id in
+      let all_neg0 p =
+        let other v = if v = 0. && Float.sign_bit v then 0. else 1. in
+        let others = count (Array.map other p) in
+        List.exists (fun o -> terms.(o) > 0 && others.(o) = 0) elements
+      in
+      cover "an element whose terms are all -0"
+        (floats && List.exists all_neg0 (parts64 x));
+      cover "a float element no term reaches"
+        (floats && List.exists (fun o -> terms.(o) = 0) elements);
       match D.kind dt with
       | D.Float | D.Complex ->
-          (* Each element's terms and their magnitudes' sum, by eager folds
-             of ones and of the magnitudes. *)
-          let terms =
-            Array.map Float.to_int
-              (Nx.to_array (folded (Nx.ones D.Float64 c.f_padded) c))
-          in
+          let e = Nx.to_array (op ()) and l = Lowered.run op in
           let mags =
             List.map
               (fun p ->
@@ -942,7 +1063,7 @@ let folds =
                 e)
             (List.combine (parts dt e) (parts dt l))
             mags
-      | _ -> same_bits dt e l)
+      | _ -> same_bits dt op)
 
 (* Assemblies *)
 
@@ -1053,7 +1174,7 @@ let assembly_examples =
     }
   in
   let f32 = D.Any D.Float32 in
-  (* Signalling NaN fills of both parts of a complex number, around a piece. *)
+  (* Signalling NaN fills of both parts of a complex number, beside a piece. *)
   let snan =
     {
       a_dt = D.Any D.Complex128;
@@ -1063,8 +1184,17 @@ let assembly_examples =
         [ ([| r 0 1 (-1) |], Plain, [| 0x3fb0000000000000L; 1L |]) ];
     }
   in
+  (* A signalling NaN fill beside a piece. *)
+  let snan64 =
+    {
+      a_dt = D.Any D.Float64;
+      a_shape = [| 2 |];
+      a_fill = [| 0x7ff0000000000001L |];
+      a_pieces = [ ([| r 0 1 (-1) |], Plain, [| 0x3fb0000000000000L |]) ];
+    }
+  in
   let empty = [ piece 0 f32 Plain [| r 0 0 1; r 1 2 1 |] ] in
-  snan
+  snan :: snan64
   :: { (each 0 f32) with a_pieces = empty }
   :: { (each 0 f32) with a_pieces = [] }
   :: List.mapi each D.all
@@ -1107,7 +1237,7 @@ let assemblies =
           (P.Assemble
              { dtype = dt; shape = Iarray.of_array c.a_shape; fill; pieces })
       in
-      same_bits dt (Nx.to_array (op ())) (Lowered.run op))
+      same_bits dt op)
 
 (* Sorts *)
 
@@ -1128,12 +1258,22 @@ let pp_sort ppf c =
     (match c.o_k with None -> "" | Some k -> Printf.sprintf " k %d" k)
     (raws_text c.o_raws)
 
+(* A sort's slices are at most 4 elements long, or 9 to 17 a quarter of the
+   time, so that the network has 4 or 5 stages. *)
 let sort_case =
   let open Gen in
   let* d = all_dtypes in
   let* s = shape in
-  let* view = among views in
   let* axis = int_range 0 (Array.length s - 1) in
+  let* long =
+    frequency [ (3, constant None); (1, map Option.some (int_range 9 17)) ]
+  in
+  let s =
+    match long with
+    | None -> s
+    | Some n -> Array.mapi (fun i e -> if i = axis then n else e) s
+  in
+  let* view = among views in
   let* descending = bool in
   let* k = option (int_range 0 s.(axis)) in
   let+ raws = operand_gen d view s in
@@ -1166,7 +1306,8 @@ let ties c =
     xs;
   !found
 
-(* Each dtype, whose specials repeat, and an empty slice. *)
+(* Each dtype, whose specials repeat, an empty slice, and slices of 17 and 9
+   elements, whose networks have 5 and 4 stages. *)
 let sort_examples =
   let each i d =
     let s = [| 3; 4 |] and view = List.nth views (i mod 4) in
@@ -1189,7 +1330,15 @@ let sort_examples =
       o_view = Plain;
     }
   in
-  empty :: List.mapi each D.all
+  let long d s axis =
+    let c = each 1 d in
+    let raws = cycled d (numel (base c.o_view s)) in
+    { c with o_shape = s; o_axis = axis; o_raws = raws }
+  in
+  empty
+  :: long (D.Any D.Float32) [| 2; 17 |] 1
+  :: { (long (D.Any D.Int64) [| 9; 2 |] 0) with o_descending = true }
+  :: List.mapi each D.all
 
 let sorts =
   prop ~count:40 ~examples:sort_examples
@@ -1204,6 +1353,7 @@ let sorts =
       cover "a first k" (c.o_k <> None);
       cover "a strided or broadcast view" (c.o_view <> Plain);
       cover "an empty slice" (c.o_shape.(c.o_axis) = 0);
+      cover "a network of 3 or more stages" (c.o_shape.(c.o_axis) > 4);
       cover "a 64-bit key"
         (List.mem c.o_dt
            D.[ Any Float64; Any Int64; Any Uint64; Any Complex64 ]);
@@ -1214,10 +1364,54 @@ let sorts =
           (P.Sort
              { axis = c.o_axis; descending = c.o_descending; k = c.o_k; x })
       in
-      let values, positions = op () in
-      same_bits dt (Nx.to_array values) (Lowered.run (fun () -> fst (op ())));
-      equal (array int64) (Nx.to_array positions)
+      same_bits dt (fun () -> fst (op ()));
+      equal (array int64)
+        (Nx.to_array (snd (op ())))
         (Lowered.run (fun () -> snd (op ()))))
+
+(* Work bounds *)
+
+let refused what f =
+  let prefix = "Rune.Lower.op: " ^ what in
+  raises_match
+    (function
+      | Invalid_argument m -> String.starts_with ~prefix m | _ -> false)
+    (fun () -> Lowered.run f)
+
+(* A scatter of [k] updates over an axis of [n] positions. *)
+let line_scatter n k () =
+  let into = Nx.create D.Float32 [| n |] (Array.make n 0.) in
+  let idx =
+    Nx.create D.Int64 [| k |] (Array.init k (fun j -> Int64.of_int (j mod n)))
+  in
+  let updates = Nx.create D.Float32 [| k |] (Array.init k Float.of_int) in
+  P.eval ~by:"t"
+    (P.Scatter
+       { combine = Set; unique = false; axis = 0; idx; updates; into })
+
+(* An assembly of [p] pieces of one element into 64. *)
+let spots p () =
+  let piece i =
+    ( Iarray.of_list [ { M.start = i; count = 1; step = 1 } ],
+      Nx.create D.Float32 [| 1 |] [| Float.of_int i |] )
+  in
+  P.eval ~by:"t"
+    (P.Assemble
+       {
+         dtype = D.Float32;
+         shape = Iarray.of_list [ 64 ];
+         fill = -1.;
+         pieces = List.init p piece;
+       })
+
+let work_bounds =
+  test "a scatter and an assembly past 16 times eager's work are refused"
+    (fun () ->
+      (* [32·32 = 16 (32 + 32)], and [21·64 <= 16 (64 + 21) < 22·64]. *)
+      same_bits D.Float32 (line_scatter 32 32);
+      refused "a Scatter" (line_scatter 33 33);
+      same_bits D.Float32 (spots 21);
+      refused "an Assemble" (spots 22))
 
 let () =
   exit
@@ -1227,4 +1421,5 @@ let () =
            [ gathers; scatters_moved; scatter_adds ];
          group "folds and assemblies" [ folds; assemblies ];
          group "sorts" [ sorts ];
+         group "work bounds" [ work_bounds ];
        ])
