@@ -1573,7 +1573,7 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     negative one counted from the end, and drops them, or keeps each with extent
     [1] where [keepdims]. On one device it gives the same bits on every run
     of the same computation, for the same values, shapes, dtypes, placement
-    and devices ({!Nx_kernel}); on nx.cpu ({!Nx_cpu}) its
+    and devices ({!Nx_kernel}); on nx.cpu ({!Nx_cpu.section-sums}) its
     order of association depends on the shape alone. Over axes cut across
     devices, each device reduces the part its window holds, and only
     partial results move instead of [x]'s elements: a few per output,
@@ -1687,9 +1687,10 @@ val var :
     mean, then the deviations [d] from it and their squares, each summed
     as {!sum} sums, and [(Σ d² - Σ d (Σ d / n)) / n], [+0] where that is
     negative and [+∞] where [Σ d²] overflows: on nx.cpu's kernels, within
-    nx.cpu's bound for its moments ({!Nx_cpu}) with [L + D + t - 1] in place of
-    its [L + D], [t] the windows holding terms. A [ddof] scales it by a
-    relative [2u] more, then one rounding to the dtype.
+    nx.cpu's bound for its moments ({!Nx_cpu.section-states}) with
+    [L + D + t - 1] in place of its [L + D], [t] the windows holding terms.
+    A [ddof] scales it by a relative [2u] more, then one rounding to the
+    dtype.
 
     Raises [Invalid_argument] naming itself for a negative [ddof], or one of
     at least [n] where [n > 0]. *)
@@ -1755,8 +1756,8 @@ val logcumsumexp : ?axis:int -> (float, 's, 'd) t -> (float, 's, 'd) t
     within the bound their library states. The result at an index is a
     function of the elements up to it alone: the logcumsumexp of a prefix
     of the axis is the prefix of the logcumsumexp, bit for bit. On nx.cpu
-    ({!Nx_cpu}), where the elements up to [i] have a finite maximum, the
-    result before its rounding to the dtype is within
+    ({!Nx_cpu.section-state_scans}), where the elements up to [i] have a
+    finite maximum, the result before its rounding to the dtype is within
     [(7 D + 6 ln (i + 1)) u + u|r|] of the exact [r], to first order, with
     [D = max 0 (2⌈log₂ (i + 1)⌉ - 1)] and [u] the unit roundoff of
     [float32] for the floats narrower than it, else of the dtype.
