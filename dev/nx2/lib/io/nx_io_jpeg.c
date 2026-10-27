@@ -50,6 +50,10 @@ typedef struct {
   unsigned h;
   unsigned v;
   unsigned quant;
+  /* The entries of table [quant] at the component's first scan, which a
+     later table does not change, as libjpeg latches them. */
+  uint16_t quant_entries[64];
+  int quant_latched;
   unsigned dc_table;
   unsigned ac_table;
   size_t blocks_x;
@@ -653,6 +657,18 @@ static jpeg_status finish_scan(entropy_reader *reader, size_t *next) {
   return JPEG_OK;
 }
 
+static jpeg_status latch_quant(const jpeg_decoder *decoder,
+                               jpeg_component *component) {
+  if (component->quant_latched)
+    return JPEG_OK;
+  if (!decoder->quant_valid[component->quant])
+    return JPEG_TABLE;
+  memcpy(component->quant_entries, decoder->quant[component->quant],
+         sizeof component->quant_entries);
+  component->quant_latched = 1;
+  return JPEG_OK;
+}
+
 static jpeg_status decode_scan(jpeg_decoder *decoder, const uint8_t *header,
                                size_t header_len, size_t entropy_off,
                                size_t *next) {
@@ -689,6 +705,11 @@ static jpeg_status decode_scan(jpeg_decoder *decoder, const uint8_t *header,
         (spectral_start != 0 && scan_count != 1) ||
         (high != 0 && high != low + 1))))
     return JPEG_SCAN;
+  for (unsigned i = 0; i < scan_count; i++) {
+    jpeg_status status = latch_quant(decoder, scan_components[i]);
+    if (status != JPEG_OK)
+      return status;
+  }
 
   entropy_reader reader = {decoder->src, decoder->len, entropy_off, 0, 0, 0, 0};
   for (unsigned i = 0; i < decoder->component_count; i++)
@@ -783,8 +804,10 @@ static void inverse_block(const int16_t *coefficients, const uint16_t *quant,
 static jpeg_status reconstruct(jpeg_decoder *decoder) {
   for (unsigned index = 0; index < decoder->component_count; index++) {
     jpeg_component *component = &decoder->components[index];
-    if (!decoder->quant_valid[component->quant])
-      return JPEG_TABLE;
+    /* A component no scan coded takes the table it names at the end. */
+    jpeg_status status = latch_quant(decoder, component);
+    if (status != JPEG_OK)
+      return status;
     if (component->blocks_x > SIZE_MAX / 8 ||
         component->blocks_y > SIZE_MAX / 8)
       return JPEG_SIZE;
@@ -801,7 +824,7 @@ static jpeg_status reconstruct(jpeg_decoder *decoder) {
         const int16_t *block =
             component->coefficients +
             (block_y * component->allocated_x + block_x) * 64;
-        inverse_block(block, decoder->quant[component->quant],
+        inverse_block(block, component->quant_entries,
                       component->samples +
                           block_y * 8 * component->sample_stride + block_x * 8,
                       component->sample_stride);

@@ -263,6 +263,17 @@ def extended_jpeg():
         f.write(data[:at] + b"\xff\xc1" + data[at + 2:])
 
 
+def late_table_jpeg():
+    # The grey file with its table redefined after its scan: a component
+    # keeps the table it had at its first scan, as libjpeg latches it, so the
+    # pixels do not change.
+    with open("jpeg_gray.jpg", "rb") as f:
+        data = f.read()
+    assert data.endswith(b"\xff\xd9")
+    with open("jpeg_late_table.jpg", "wb") as f:
+        f.write(data[:-2] + segment(0xDB, bytes([0x00]) + bytes([1] * 64)) + data[-2:])
+
+
 def segment(marker, data):
     return bytes([0xFF, marker]) + struct.pack(">H", len(data) + 2) + data
 
@@ -392,6 +403,8 @@ def image_fixtures():
                  "extended"]:
         reference("jpeg_%s.jpg" % name, "RGB")
     reference("jpeg_gray.jpg", "L")
+    late_table_jpeg()
+    reference("jpeg_late_table.jpg", "L")
     overflow_jpeg("jpeg_dc_overflow.jpg", 128, False, False)
     overflow_jpeg("jpeg_dc_overflow_progressive.jpg", 128, True, False)
     overflow_jpeg("jpeg_table16.jpg", 32, False, True)

@@ -288,6 +288,7 @@ let files =
               "progressive";
               "progressive_dark";
               "gray";
+              "late_table";
               "cmyk";
               "restart";
               "extended";
