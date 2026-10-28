@@ -14,15 +14,15 @@ let keys = Nx.Rng.split ~n:15 (Nx.Rng.key 20240127)
 
 (* [uniform k n] is [n] draws from [[0, 1)] of [keys.(k)]. *)
 let uniform k n : float array =
-  Nx.to_array (Nx.Rng.uniform keys.(k) Nx.float64 [| n |])
+  Nx.to_array (Nx.Rng.uniform ~key:keys.(k) Nx.float64 [| n |])
 
 let normal k n : float array =
-  Nx.to_array (Nx.Rng.normal keys.(k) Nx.float64 [| n |])
+  Nx.to_array (Nx.Rng.normal ~key:keys.(k) Nx.float64 [| n |])
 
 (* [ints k lo hi n] is [n] draws from [[lo, hi]] of [keys.(k)]. *)
 let ints k lo hi n : int array =
   Array.map Int32.to_int
-    (Nx.to_array (Nx.Rng.randint keys.(k) ~low:lo ~high:(hi + 1) [| n |]))
+    (Nx.to_array (Nx.Rng.randint ~key:keys.(k) ~low:lo ~high:(hi + 1) [| n |]))
 
 (* [pick names weights u] is the name of [names] whose share of [weights],
    which sum to 1, holds [u]. *)

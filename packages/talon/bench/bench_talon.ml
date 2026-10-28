@@ -106,10 +106,10 @@ let check name ~rows:expected_rows ~amount:expected q value =
 
 (* The rows and amounts that bench_talon.py's pandas computes. *)
 let () =
-  check "filter" ~rows:599 ~amount:92888.46 (filtered ()) (total (filtered ()));
-  check "group" ~rows:24 ~amount:2607651.61 (grouped ()) (total (grouped ()));
-  check "join" ~rows:40000 ~amount:2607651.61 (joined ()) (total (joined ()));
-  check "sort" ~rows:40000 ~amount:464.41 (sorted ()) (first_amount (sorted ()))
+  check "filter" ~rows:514 ~amount:78520.97 (filtered ()) (total (filtered ()));
+  check "group" ~rows:24 ~amount:2608626.10 (grouped ()) (total (grouped ()));
+  check "join" ~rows:40000 ~amount:2608626.10 (joined ()) (total (joined ()));
+  check "sort" ~rows:40000 ~amount:427.44 (sorted ()) (first_amount (sorted ()))
 
 (* Nulls *)
 
@@ -121,10 +121,10 @@ let n = 1 lsl 20
 let keys = Nx.Rng.split ~n:13 (Nx.Rng.key 22)
 
 let valid k p =
-  Nx.greater_equal_s (Nx.Rng.uniform keys.(k) Nx.float64 [| n |]) p
+  Nx.greater_equal_s (Nx.Rng.uniform ~key:keys.(k) Nx.float64 [| n |]) p
 
-let ints k high = Nx.cast Nx.int64 (Nx.Rng.randint keys.(k) ~high [| n |])
-let bools k = Nx.Rng.bernoulli keys.(k) (Nx.full Nx.float64 [| n |] 0.5)
+let ints k high = Nx.cast Nx.int64 (Nx.Rng.randint ~key:keys.(k) ~high [| n |])
+let bools k = Nx.Rng.bernoulli ~key:keys.(k) (Nx.full Nx.float64 [| n |] 0.5)
 
 let nullable ?valid x =
   Column.of_tensor ?validity:(Option.map (Nx.cast Nx.bit) valid) x
@@ -145,12 +145,12 @@ let nulls =
       ("key", nullable ~valid:key_valid key_values);
       ( "f",
         nullable ~valid:(valid 4 0.1)
-          (Nx.Rng.uniform keys.(5) Nx.float64 [| n |]) );
+          (Nx.Rng.uniform ~key:keys.(5) Nx.float64 [| n |]) );
       ("s", strings);
       ("a", nullable ~valid:(valid 6 0.1) (bools 7));
       ("b", nullable ~valid:(valid 8 0.1) (bools 9));
       ("i", nullable (ints 10 1_000_000));
-      ("g", nullable (Nx.Rng.uniform keys.(11) Nx.float64 [| n |]));
+      ("g", nullable (Nx.Rng.uniform ~key:keys.(11) Nx.float64 [| n |]));
     ]
 
 let run q = Error.get_ok (Query.run q)
@@ -205,7 +205,9 @@ let parquet = Filename.concat data_dir "nulls.parquet"
 (* 2^16 float64 texts of 17 significant digits, as a writer that keeps every
    bit of a float writes them, read as float64. *)
 let texts =
-  let xs = Nx.to_array (Nx.Rng.uniform (Nx.Rng.key 23) Nx.float64 [| 1 lsl 16 |]) in
+  let xs =
+    Nx.to_array (Nx.Rng.uniform ~key:(Nx.Rng.key 23) Nx.float64 [| 1 lsl 16 |])
+  in
   Column.v Type.string (Array.map (fun x -> Printf.sprintf "%.17g" (1000. *. x)) xs)
 
 let parse_floats () = Result.get_ok (Column.parse float64 texts)
