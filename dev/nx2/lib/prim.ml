@@ -13,21 +13,22 @@ let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
 (* Values' facts *)
 
-let placement : type v s d. (v, s, d) t -> d Devices.placement = function
-  | Array { at; _ } | Shards { at; _ } | Handle { at; _ } -> at
+let rec placement : type v s d. (v, s, d) t -> d Devices.placement = function
+  | Array { at; _ } | Shards { at; _ } -> at
+  | Handle { over; _ } -> placement over
   | Traced { form; _ } -> form.placement
 
-let dtype : type v s d. (v, s, d) t -> (v, s) dtype = function
+let rec dtype : type v s d. (v, s, d) t -> (v, s) dtype = function
   | Array { a; _ } -> Nx_array.dtype a
-  | Shards { arrays; _ } | Handle { arrays; _ } ->
-      Nx_array.dtype (Iarray.get arrays 0)
+  | Shards { arrays; _ } -> Nx_array.dtype (Iarray.get arrays 0)
+  | Handle { over; _ } -> dtype over
   | Traced { form; _ } -> form.dtype
 
 (* The layout of [x]'s array, of its first shard, or of its form. *)
-let own_layout : type v s d. (v, s, d) t -> L.t = function
+let rec own_layout : type v s d. (v, s, d) t -> L.t = function
   | Array { a; _ } -> Nx_array.layout a
-  | Shards { arrays; _ } | Handle { arrays; _ } ->
-      Nx_array.layout (Iarray.get arrays 0)
+  | Shards { arrays; _ } -> Nx_array.layout (Iarray.get arrays 0)
+  | Handle { over; _ } -> own_layout over
   | Traced { form; _ } -> form.layout
 
 let rank x = L.rank (own_layout x)
@@ -38,9 +39,11 @@ let rec death : type v s d. (v, s, d) t -> death = function
   | Handle { donor; _ } -> death donor
   | Traced _ -> Live
 
-let arrays : type v s d. (v, s, d) t -> (v, s) Nx_array.t iarray = function
+let rec arrays : type v s d. (v, s, d) t -> (v, s) Nx_array.t iarray =
+  function
   | Array { a; _ } -> [| a |]
-  | Shards { arrays; _ } | Handle { arrays; _ } -> arrays
+  | Shards { arrays; _ } -> arrays
+  | Handle { over; _ } -> arrays over
   | Traced _ -> invalid_arg "Prim.arrays: a traced value has no arrays"
 
 let of_arrays (type v s d) (p : d Devices.placement) ~shape
@@ -49,26 +52,32 @@ let of_arrays (type v s d) (p : d Devices.placement) ~shape
     Array { at = p; a = Iarray.get arrays 0; dead = Live }
   else Shards { at = p; shape; arrays; dead = Live }
 
-let dim (type v s d) (x : (v, s, d) t) i =
+let rec dim : type v s d. (v, s, d) t -> int -> int =
+ fun x i ->
   let l = own_layout x in
   if i < 0 || i >= L.rank l then
     invalid_arg
       (Printf.sprintf "Prim.dim: axis %d of a value of rank %d" i (L.rank l));
   match x with
   | Array _ | Traced _ -> L.dim l i
-  | Shards { shape; _ } | Handle { shape; _ } -> shape.(i)
+  | Shards { shape; _ } -> shape.(i)
+  | Handle { over; _ } -> dim over i
 
-let shape (type v s d) (x : (v, s, d) t) =
+let rec shape : type v s d. (v, s, d) t -> int array =
+ fun x ->
   match x with
   | Array _ | Traced _ -> Iarray.to_array (L.shape (own_layout x))
-  | Shards { shape; _ } | Handle { shape; _ } -> Array.copy shape
+  | Shards { shape; _ } -> Array.copy shape
+  | Handle { over; _ } -> shape over
 
 (* [x]'s shape as layouts hold it: its own layout's, without a copy, or the
    whole's of a value on several devices. *)
-let layout_shape (type v s d) (x : (v, s, d) t) =
+let rec layout_shape : type v s d. (v, s, d) t -> int iarray =
+ fun x ->
   match x with
   | Array _ | Traced _ -> L.shape (own_layout x)
-  | Shards { shape; _ } | Handle { shape; _ } -> Iarray.of_array shape
+  | Shards { shape; _ } -> Iarray.of_array shape
+  | Handle { over; _ } -> layout_shape over
 
 let scale_shape (type d) (sc : d scale) =
   match sc with Exponent x -> shape x | Value x -> shape x
@@ -172,12 +181,12 @@ let of_layout (type v s d) (dtype : (v, s) dtype) layout
 
 (* [x]'s layout, as its form has it, allocating nothing for a value on one
    device. *)
-let form_layout (type v s d) (x : (v, s, d) t) =
+let rec form_layout : type v s d. (v, s, d) t -> L.t =
+ fun x ->
   match x with
   | Array { a; _ } -> Nx_array.layout a
-  | Handle { arrays; _ } when Iarray.length arrays = 1 ->
-      Nx_array.layout (Iarray.get arrays 0)
-  | Shards _ | Handle _ -> L.contiguous (layout_shape x)
+  | Shards _ -> L.contiguous (layout_shape x)
+  | Handle { over; _ } -> form_layout over
   | Traced { form; _ } -> form.layout
 
 let form (type v s d) (x : (v, s, d) t) : (v, s, d) form =

@@ -50,14 +50,15 @@ type ('v, 's, 'd) t =
           (** The [Array] or [Shards] donated, never a handle. Two handles of
               one donor, and a donor beside its handle, are told by [==] on
               it. *)
-      at : 'd Devices.placement;
-      shape : int array;  (** The whole's. *)
-      arrays : ('v, 's) Nx_array.t iarray;
+      over : ('v, 's, 'd) t;
+          (** The [Array] or [Shards] the handle reads: [donor] as donated, or
+              the result of the movement that passed the handle on, a view of
+              the donor's memory or a copy of it. *)
     }
-      (** A handle one operation reads: [arrays] over its donor's memory, one
-          per device of [at], each its window, or a copy of it a movement made.
-          It lives while its donor does, as does every other handle of the
-          donor, those a movement passed on included. *)
+      (** A handle one operation reads. Its placement, dtype, shape and arrays
+          are [over]'s, and its death is its donor's: it lives while its donor
+          does, as does every other handle of the donor, those a movement
+          passed on included. *)
   | Traced of {
       form : ('v, 's, 'd) form;
       owner : interpretation;

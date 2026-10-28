@@ -81,27 +81,24 @@ and general : type r. by:string -> r prim -> r =
 and donated : type r. by:string -> r prim -> r =
  fun ~by op ->
   match op with
-  | Move (mv, (Handle d as x)) ->
-      (* A view of a handle leaves the memory unshared: the handle it passes on
-         has the same donor, so its consumer may still write into it.
-         The movement claims nothing: the deaths wait for that consumer, which
+  | Move (mv, (Handle { donor; over } as x)) ->
+      (* A view of a handle's one array, made here, leaves the memory
+         unshared, where [run]'s view would share it: the handle it passes on
+         has the same donor, so its consumer may still write into it. The
+         movement claims nothing: the deaths wait for that consumer, which
          checks every operand first, so an operation that aligns its operands
          by movements kills nothing when its checks refuse it. *)
-      let moved () =
-        let r = run ~by (Move (mv, Donate.live x)) in
-        (Prim.placement r, Prim.shape r, Prim.arrays r)
+      let moved () = run ~by (Move (mv, Donate.live x)) in
+      let over =
+        match over with
+        | Array r -> (
+            ignore (Prim.layouts ~by op);
+            match A.move mv r.a with
+            | Some a -> Array { r with a; dead = Live }
+            | None -> moved ())
+        | Shards _ | Handle _ | Traced _ -> moved ()
       in
-      let at, shape, arrays =
-        if Iarray.length d.arrays <> 1 then moved ()
-        else begin
-          ignore (Prim.layouts ~by op);
-          match A.move mv (Iarray.get d.arrays 0) with
-          | Some v ->
-              (d.at, Iarray.to_array (A.Layout.shape (A.layout v)), [| v |])
-          | None -> moved ()
-        end
-      in
-      Handle { donor = d.donor; at; shape; arrays }
+      Handle { donor; over }
   | Map _ | Reduce _ | Scan _ | Gather _ | Scatter _ | Sort _ | Fft _
   | Linalg _ | Fold _ | Assemble _ | Contract _ | Copy _ | Move _ | Bitcast _
   | Place _ | Check _ -> (
@@ -117,13 +114,13 @@ and donated : type r. by:string -> r prim -> r =
           (* The handle's memory is the result's, now over [b']: the kernel
              reads each index of it before it writes the result there. *)
           let b' = A.buffer a in
-          let over (type v s d) (y : (v, s, d) t) : (v, s, d) t =
+          let as_taken (type v s d) (y : (v, s, d) t) : (v, s, d) t =
             match y with
             | Array r when A.buffer r.a == b ->
                 Array { r with a = A.v (A.dtype r.a) (A.layout r.a) b' }
             | Array _ | Shards _ | Handle _ | Traced _ -> y
           in
-          let op = Prim.map over op in
+          let op = Prim.map as_taken op in
           ending ~by c (Some into) (fun () -> routed ~by ~into r op)
       | None -> ending ~by c None (fun () -> routed ~by r op))
 

@@ -15,17 +15,16 @@ let died_to ~by x earlier =
 let donate (type v s d) ~by (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   Prim.alive ~by x;
   match x with
-  | Value.Array r ->
-      let shape = Iarray.to_array (L.shape (A.layout r.a)) in
-      Value.Handle { donor = x; at = r.at; shape; arrays = [| r.a |] }
-  | Value.Shards r ->
-      Value.Handle { donor = x; at = r.at; shape = r.shape; arrays = r.arrays }
+  | Value.Array _ | Value.Shards _ -> Value.Handle { donor = x; over = x }
   | Value.Handle _ | Value.Traced _ -> x
 
-(* A handle's arrays as a live value, which the operation reads. *)
+(* A handle's arrays as a live value, which the operation reads: a value of
+   its own, since [over] may be the donor, whose word a claim sets. *)
 let live (type v s d) (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   match x with
-  | Value.Handle { at; shape; arrays; _ } -> Prim.of_arrays at ~shape arrays
+  | Value.Handle { over; _ } ->
+      Prim.of_arrays (Prim.placement over) ~shape:(Prim.shape over)
+        (Prim.arrays over)
   | Value.Array _ | Value.Shards _ | Value.Traced _ -> x
 
 let is_handle (type v s d) (x : (v, s, d) Value.t) =
@@ -184,8 +183,7 @@ let reuse (type w r d) (c : d claim) ~own (dt : (w, r) D.t) layout :
   let fits i =
     let (Value.Any x) = operand c i in
     match x with
-    | Value.Handle { arrays; _ } when Iarray.length arrays = 1 ->
-        let a = Iarray.get arrays 0 in
+    | Value.Handle { over = Value.Array { a; _ }; _ } ->
         let b = A.buffer a in
         let apart j a' =
           (not (share (A.buffer a') b)) || (List.mem j own && identical a a')
