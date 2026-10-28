@@ -324,6 +324,187 @@ let custom_rows () =
     Thumper.bench "custom-vjp-grad-grad" (fun () -> grad_grad x);
   ]
 
+(* Compiled: replays of compiled programs, each compiled in its setup's first
+   call: [lorenz] an Euler integration of 64 states, its steps written out or
+   as one scan; [rnn] an affine recurrence h <- x_t W + h U over a batch of 32
+   with a sum-of-squares loss, its value and its gradient; and the gradient of
+   a compiled call, the program derived from the key's. *)
+
+type 'a lorenz = { lx : 'a; ly : 'a; lz : 'a }
+
+module Lorenz = struct
+  type ('a, _) t = 'a lorenz
+
+  let walk c { lx; ly; lz } =
+    let open Nx.Ptree.Walk in
+    let lx = field c "x" leaf lx in
+    let ly = field c "y" leaf ly in
+    let lz = field c "z" leaf lz in
+    { lx; ly; lz }
+end
+
+let lorenz_t = Nx.Ptree.instantiate (module Lorenz)
+
+let lorenz_step { lx = x; ly = y; lz = z } =
+  let dt = 0.0625 in
+  let dx = Nx.mul_s (Nx.sub y x) 10. in
+  let dy = Nx.sub (Nx.mul x (Nx.sub (Nx.scalar_like z 28.) z)) y in
+  let dz = Nx.sub (Nx.mul x y) (Nx.mul_s z 2.5) in
+  {
+    lx = Nx.add x (Nx.mul_s dx dt);
+    ly = Nx.add y (Nx.mul_s dy dt);
+    lz = Nx.add z (Nx.mul_s dz dt);
+  }
+
+let lorenz_sum { lx; ly; lz } = Nx.sum (Nx.add (Nx.add lx ly) lz)
+
+let lorenz n s =
+  let rec go i s = if i = 0 then s else go (i - 1) (lorenz_step s) in
+  lorenz_sum (go n s)
+
+let lorenz_scan n s =
+  let rows = Nx.zeros f32 [| n; 1 |] in
+  let s, () =
+    Rune.scan lorenz_t Nx.Ptree.tensor Nx.Ptree.unit
+      ~f:(fun s _ -> (lorenz_step s, ()))
+      ~init:s rows
+  in
+  lorenz_sum s
+
+type 'a rnn = { w : 'a; u : 'a; h0 : 'a; xs : 'a list }
+
+module Rnn = struct
+  type ('a, _) t = 'a rnn
+
+  let walk c { w; u; h0; xs } =
+    let open Nx.Ptree.Walk in
+    let w = field c "w" leaf w in
+    let u = field c "u" leaf u in
+    let h0 = field c "h0" leaf h0 in
+    let xs = field c "xs" (list leaf) xs in
+    { w; u; h0; xs }
+end
+
+let rnn_t = Nx.Ptree.instantiate (module Rnn)
+
+let rnn_forward p =
+  let step (h, loss) x =
+    let h = Nx.add (Nx.matmul x p.w) (Nx.matmul h p.u) in
+    (h, Nx.add loss (Nx.sum (Nx.square h)))
+  in
+  snd (List.fold_left step (p.h0, Nx.scalar_like p.h0 0.) p.xs)
+
+let rnn_params horizon =
+  let k = ref 20 in
+  let draw shape =
+    incr k;
+    Nx.mul_s (normal !k shape) 0.1
+  in
+  {
+    w = draw [| 32; 32 |];
+    u = draw [| 32; 32 |];
+    h0 = draw [| 32; 32 |];
+    xs = List.init horizon (fun _ -> draw [| 32; 32 |]);
+  }
+
+let compiled_rows () =
+  let state k = normal k [| 64 |] in
+  let s = { lx = state 13; ly = state 14; lz = state 15 } in
+  let lorenz_row name f =
+    warm name
+      (fun () -> Rune.jit Nx.Ptree.(lorenz_t @-> returns tensor) f)
+      (fun g -> synced (g s))
+  in
+  let rnn_row name horizon f =
+    let p = rnn_params horizon in
+    warm name (fun () -> f ()) (fun g -> g p)
+  in
+  let fwd () = Rune.jit Nx.Ptree.(rnn_t @-> returns tensor) rnn_forward in
+  let grad () =
+    Rune.jit Nx.Ptree.(rnn_t @-> returns rnn_t) (Rune.grad rnn_t rnn_forward)
+  in
+  let x = host (Nx.Rng.uniform ~key:(Nx.Rng.key 16) f32 [| 4096 |]) in
+  let h = Rune.jit' (fun x -> Nx.mul (Nx.sin x) x) in
+  [
+    lorenz_row "lorenz-n10-replay" (lorenz 10);
+    lorenz_row "lorenz-n50-replay" (lorenz 50);
+    lorenz_row "lorenz-n100-replay" (lorenz 100);
+    lorenz_row "lorenz-scan-n100-replay" (lorenz_scan 100);
+    rnn_row "rnn-fwd-h2-replay" 2 fwd;
+    rnn_row "rnn-fwd-h10-replay" 10 fwd;
+    rnn_row "rnn-fwd-h20-replay" 20 fwd;
+    rnn_row "rnn-grad-h2-replay" 2 grad;
+    rnn_row "rnn-grad-h10-replay" 10 grad;
+    rnn_row "rnn-grad-h20-replay" 20 grad;
+    warm "grad-of-jit-4096"
+      (fun () -> Rune.grad' (fun x -> Nx.sum (h x)))
+      (fun g -> synced (g x));
+  ]
+
+(* TrainStep: one compiled training step of a perceptron 784 -> 256 -> 128 ->
+   10 over a batch of 128, its loss's gradient and an Adam update of donated
+   parameters and moments, the shape of kaun's training step: its words are the
+   hit path's over 18 leaves. *)
+type 'a adam = { params : 'a mlp; m : 'a mlp; v : 'a mlp }
+
+module Adam = struct
+  type ('a, _) t = 'a adam
+
+  let walk c { params; m; v } =
+    let open Nx.Ptree.Walk in
+    let params = field c "params" Mlp.walk params in
+    let m = field c "m" Mlp.walk m in
+    let v = field c "v" Mlp.walk v in
+    { params; m; v }
+end
+
+let adam = Nx.Ptree.instantiate (module Adam)
+
+let map3 f a b c =
+  {
+    w1 = f a.w1 b.w1 c.w1;
+    b1 = f a.b1 b.b1 c.b1;
+    w2 = f a.w2 b.w2 c.w2;
+    b2 = f a.b2 b.b2 c.b2;
+    w3 = f a.w3 b.w3 c.w3;
+    b3 = f a.b3 b.b3 c.b3;
+  }
+
+let train_rows () =
+  let x = normal 17 [| 128; 784 |] and y = normal 18 [| 128; 10 |] in
+  let zeros_like p =
+    map3 (fun w _ _ -> Nx.place Nx.Host.on (Nx.zeros_like w)) p p p
+  in
+  let step =
+    Rune.jit
+      Nx.Ptree.(tensor @-> tensor @-> adam @-> returns (pair tensor adam))
+      (fun x y { params; m; v } ->
+        let loss p = Nx.mean (Nx.square (Nx.sub (forward p x) y)) in
+        let l, g = Rune.value_and_grad mlp loss params in
+        let lr = 1e-3 and b1 = 0.9 and b2 = 0.999 in
+        let moment b m g = Nx.add (Nx.mul_s m b) (Nx.mul_s g (1. -. b)) in
+        let m = map3 (fun m g _ -> moment b1 m g) m g g in
+        let v = map3 (fun v g _ -> moment b2 v (Nx.square g)) v g g in
+        let update p m v =
+          Nx.sub p (Nx.div (Nx.mul_s m lr) (Nx.add_s (Nx.sqrt v) 1e-8))
+        in
+        let params = map3 update params m v in
+        (l, { params; m; v }))
+  in
+  [
+    Thumper.bench_with_setup "train-step"
+      ~setup:(fun () ->
+        let p = mlp_params () in
+        let state = ref { params = p; m = zeros_like p; v = zeros_like p } in
+        let _, s = step x y (Nx.Ptree.donate adam !state) in
+        state := s;
+        state)
+      (fun state ->
+        let l, s = step x y (Nx.Ptree.donate adam !state) in
+        state := s;
+        synced l);
+  ]
+
 let () =
   exit
     (Thumper.run "rune2"
@@ -340,4 +521,6 @@ let () =
          Thumper.group "Jacobians" (jacobian_rows ());
          Thumper.group "Hmc" (hmc_rows ());
          Thumper.group "Custom" (custom_rows ());
+         Thumper.group "Compiled" (compiled_rows ());
+         Thumper.group "TrainStep" (train_rows ());
        ])
