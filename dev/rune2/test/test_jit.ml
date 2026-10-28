@@ -628,6 +628,77 @@ let law_placed (Placed_case (dt, s, o, offset)) =
   equal codes_t (codes (snd (f x))) (codes y)
 end
 
+(* Buffers, equal where their memory overlaps, printed as the byte they start
+   at. *)
+let memory_t =
+  Testable.make
+    ~pp:(fun ppf b ->
+      Format.fprintf ppf "%s at %d"
+        (Rig.name (Rig.Buffer.device b))
+        (Rig.Buffer.offset b))
+    ~equal:Rig.Buffer.overlaps
+
+(* A step on a memory device over a donated pool, a weight placed there, host
+   values placed for each call, which share their memory, and a host constant
+   the step places itself: once a first call has compiled it and uploaded the
+   constant, a call copies nothing onto the device, and the pool is written in
+   its own memory. The first pool is placed host memory, shared, so it lends
+   nothing. *)
+let test_placed_calls () =
+  let device = Nx_support.memory 2 in
+  let address x = Nx.Repr.read x Nx_array.buffer in
+  let copied f =
+    let y, events = Rig.Profile.take f in
+    let count n = function
+      | Rig.Profile.Copy { dst; bytes; _ } when Rig.equal dst device ->
+          n + bytes
+      | _ -> n
+    in
+    (y, List.fold_left count 0 events)
+  in
+  let table = Nx.create Nx.int64 [| 4 |] [| 3L; 0L; 2L; 1L |] in
+  let step pool w at token =
+    let slot = Nx.take ~axis:0 at (Nx.place Away.on table) in
+    let row = Nx.mul w (Nx.cast f32 token) in
+    let indices = Nx.broadcast_to [| 1; 2 |] (Nx.reshape [| 1; 1 |] slot) in
+    let pool = Nx.scatter ~axis:0 indices row pool in
+    (pool, Nx.sum pool)
+  in
+  let g =
+    Rune.jit
+      T.(
+        tensor @-> tensor @-> tensor @-> tensor
+        @-> returns (pair tensor tensor))
+      step
+  in
+  let w = Nx.place Away.on (Nx.reshape [| 1; 2 |] (v [| 0.5; -2. |])) in
+  let pool = ref (Nx.place Away.on (Nx.zeros f32 [| 4; 2 |])) in
+  let eager = ref (Nx.place Away.on (Nx.zeros f32 [| 4; 2 |])) in
+  for i = 0 to 3 do
+    let msg = Printf.sprintf "call %d" i in
+    let host_at = Nx.create Nx.int64 [| 1 |] [| Int64.of_int i |] in
+    let host_token = Nx.create Nx.int64 [| 1; 1 |] [| Int64.of_int (i + 1) |] in
+    let before = address !pool in
+    let calls = Rune.evaluations () in
+    let (pool', sum), bytes =
+      copied (fun () ->
+          g (Nx.donate !pool) w (Nx.place Away.on host_at)
+            (Nx.place Away.on host_token))
+    in
+    equal ~msg:(msg ^ ": compiled") int 0 (Rune.evaluations () - calls);
+    if i > 0 then begin
+      equal ~msg:(msg ^ ": bytes copied onto the device") int 0 bytes;
+      equal ~msg:(msg ^ ": the pool in place") memory_t before (address pool')
+    end;
+    let e, e_sum =
+      step !eager w (Nx.place Away.on host_at) (Nx.place Away.on host_token)
+    in
+    equal ~msg bits_t (bits e) (bits pool');
+    equal ~msg bits_t (bits e_sum) (bits sum);
+    pool := pool';
+    eager := e
+  done
+
 (* A set of the host and a memory device: a program over it computes on the
    host. *)
 module Pair = (val Nx.devices [ Rig.host; Nx_support.memory 3 ])
@@ -1352,6 +1423,55 @@ let test_contract_init () =
   let took, y = in_place (Rune.jit' f) (m ()) in
   equal bits_t expected (bits y);
   equal ~msg:"an init that is an operand: in place" bool false took
+
+(* A decoder's step over two donated pools: each scatters a token's row at the
+   slot its table names, and the scores read both pools' new values back through
+   the table. Each pool is written in its own memory call after call, and the
+   values keep eager's bits. *)
+let test_pools () =
+  let address x = Nx.Repr.read x Nx_array.buffer in
+  let slots = 5 and width = 3 in
+  let table = Nx.create Nx.int64 [| 1; slots |] [| 4L; 0L; 3L; 1L; 2L |] in
+  let row = Nx.reshape [| 1; width |] (fresh [| 0.5; -2.; 1.5 |]) in
+  let step (keys, values) at =
+    let target = Nx.take_along_axis ~axis:1 (Nx.reshape [| 1; 1 |] at) table in
+    let into pool r =
+      let indices =
+        Nx.broadcast_to [| 1; width |] (Nx.reshape [| 1; 1 |] target)
+      in
+      Nx.scatter ~axis:0 indices r pool
+    in
+    let keys = into keys row and values = into values (Nx.neg row) in
+    let seen pool = Nx.take ~axis:0 table pool in
+    let scores = Nx.sum ~axes:[ 2 ] (Nx.mul (seen keys) (seen values)) in
+    ((keys, values), scores)
+  in
+  let two = T.(pair tensor tensor) in
+  let g = Rune.jit T.(two @-> tensor @-> returns (pair two tensor)) step in
+  let pools () =
+    (Nx.zeros f32 [| slots; width |], Nx.zeros f32 [| slots; width |])
+  in
+  let compiled = ref (pools ()) and eager = ref (pools ()) in
+  for i = 0 to slots - 1 do
+    let msg = Printf.sprintf "call %d" i in
+    let at = Nx.create Nx.int64 [| 1 |] [| Int64.of_int i |] in
+    let keys, values = !compiled in
+    let before = (address keys, address values) in
+    let calls = Rune.evaluations () in
+    let pools, scores = g (Nx.donate keys, Nx.donate values) at in
+    equal ~msg:(msg ^ ": compiled") int 0 (Rune.evaluations () - calls);
+    equal
+      ~msg:(msg ^ ": each pool in its own memory")
+      (Testable.pair memory_t memory_t)
+      before
+      (address (fst pools), address (snd pools));
+    let e, e_scores = step !eager at in
+    equal ~msg bits_t (bits e_scores) (bits scores);
+    equal ~msg bits_t (bits (fst e)) (bits (fst pools));
+    equal ~msg bits_t (bits (snd e)) (bits (snd pools));
+    compiled := pools;
+    eager := e
+  done
 
 (* A scatter's target lends to the scatter, first. *)
 let test_scatter_lends () =
@@ -2515,6 +2635,7 @@ let () =
              prop "a function searched at a width" searched_cases law_searched;
              prop "a constant placed where the program computes" placed_cases
                law_placed;
+             test "a call over placed values copies nothing" test_placed_calls;
              test "a constant result off the program's device"
                test_constant_result;
              test "a jit inside a jit" test_nested;
@@ -2541,6 +2662,7 @@ let () =
              test "a contraction's init lends, an operand does not"
                test_contract_init;
              test "a scatter's target lends" test_scatter_lends;
+             test "donated pools scattered and read lend" test_pools;
              test "checks raise as eagerly" test_checks;
              test "a shortcut over a capture stages" test_shortcut_captures;
              stateful ~count:10 ~steps:8
