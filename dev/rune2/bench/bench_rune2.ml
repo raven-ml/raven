@@ -287,6 +287,93 @@ let jit_rows () =
     warm "matmul-64" (fun () -> Rune.jit (pair_fn ()) Nx.matmul) (fun f -> synced (f m m));
   ]
 
+(* Loops whose lanes stop apart: Newton's iteration for one value's square root,
+   to a relative residual, mapped over 256 lanes from 0.5 to 10,000, whose lanes
+   stop after 4 to 10 trips, each held at its donor meanwhile (rune's
+   workload). *)
+let lanes = 256
+
+let lane_newton a =
+  Rune.iterate' ~max:64
+    ~until:(fun x -> Nx.less (Nx.abs (Nx.sub (Nx.mul x x) a)) (Nx.mul_s a 1e-5))
+    ~f:(fun x -> Nx.mul_s (Nx.add x (Nx.div a x)) 0.5)
+    (Nx.add_s a 1.)
+
+let lane_rows () =
+  let a =
+    Nx.init f32 [| lanes |] (fun i ->
+        0.5 *. (20_000. ** (Float.of_int i.(0) /. Float.of_int (lanes - 1))))
+  in
+  let mapped = Rune.vmap' lane_newton in
+  [
+    Thumper.bench (Printf.sprintf "vmap-newton-%d-lanes-eager" lanes) (fun () ->
+        synced (mapped a));
+  ]
+
+(* Bodies: a scan in a custom_jvp rule under grad, inside a total's collect: the
+   rule's program threads the total's running value through the scan's steps,
+   each adding its row's sum (rune's workload, 64 x 16 rows). *)
+let added = Rune.Total.make ()
+
+let scanned_rule =
+  Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+      let y =
+        fst
+          (Rune.scan'
+             ~f:(fun c xi ->
+               Rune.Total.add added (Nx.sum xi);
+               (Nx.add c (Nx.sin xi), c))
+             ~init:(Nx.zeros_like (Nx.get [ 0 ] x))
+             x)
+      in
+      (y, fun dx -> Nx.sum ~axes:[ 0 ] (Nx.mul (Nx.cos x) dx)))
+
+let grad_rule_in_scope x =
+  Rune.grad'
+    (fun x ->
+      let y, _ =
+        Rune.Total.collect added
+          ~zero:(host (Nx.scalar f32 0.))
+          (fun () -> scanned_rule x)
+      in
+      Nx.sum y)
+    x
+
+let body_rows () =
+  let rows = Nx.reshape [| 64; 16 |] (floats (64 * 16)) in
+  [
+    Thumper.bench "grad-scan-in-a-rule-in-a-total-scope-eager" (fun () ->
+        synced (grad_rule_in_scope rows));
+  ]
+
+(* Roots: the gradient of a scan whose step holds a root, x² = a + r for each
+   row r, its solve Newton's iteration and its linear solve the default dense
+   one: the backward scan solves the transposed system once per row. *)
+let root_rows () =
+  let rs = floats 16 and a = host (Nx.full f32 [| 1 |] 2.) in
+  let sqrt_root a =
+    Rune.root Nx.Ptree.tensor
+      ~residual:(fun x -> Nx.sub (Nx.mul x x) a)
+      (fun () ->
+        Rune.iterate' ~max:32
+          ~until:(fun x ->
+            Nx.less_s (Nx.max (Nx.abs (Nx.sub (Nx.mul x x) a))) 1e-5)
+          ~f:(fun x -> Nx.mul_s (Nx.add x (Nx.div a x)) 0.5)
+          (Nx.add_s a 1.))
+  in
+  let f a =
+    let c, _ =
+      Rune.scan' ~init:a
+        ~f:(fun c r -> (sqrt_root (Nx.add c (Nx.reshape [| 1 |] r)), c))
+        rs
+    in
+    Nx.sum c
+  in
+  [
+    Thumper.bench "grad-root-in-scan-16-eager" (fun () ->
+        synced (Rune.grad' f a));
+  ]
+
 (* WarmStart: a compiled function's first call, its trace, lowering and link,
    with tolk's caches warm, as a fresh process's would be. *)
 let warm_rows () =
@@ -521,7 +608,7 @@ let () =
     (Thumper.run "rune2"
        [
          Thumper.group "Trace" (trace_rows ());
-         Thumper.group "Loops" (loop_rows ());
+         Thumper.group "Loops" (loop_rows () @ lane_rows ());
          Thumper.group "Declined" (declined_rows ());
          Thumper.group "DeepChain" (deep_rows ());
          Thumper.group "Remat" (remat_rows ());
@@ -534,4 +621,6 @@ let () =
          Thumper.group "Custom" (custom_rows ());
          Thumper.group "Compiled" (compiled_rows ());
          Thumper.group "TrainStep" (train_rows ());
+         Thumper.group "Bodies" (body_rows ());
+         Thumper.group "Roots" (root_rows ());
        ])
