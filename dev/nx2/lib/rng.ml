@@ -916,10 +916,6 @@ let von_mises ?key kappa =
 
 let not_ x = E.(x = const D.Bool false)
 
-(* log (2π) / 2 rounded to a double, written out: [Float.log] calls the C
-   library, whose last bit may differ by system, and on Windows by domain. *)
-let half_log_two_pi = 0x1.d67f1c864beb5p-1
-
 (* Log pmfs at integer-valued counts, written so that no term grows with the
    counts: the direct forms cancel terms of size [m log m] to a margin of order
    one, which float32 loses above a mean of ten thousand. With Stirling's
@@ -935,7 +931,7 @@ let half_log_two_pi = 0x1.d67f1c864beb5p-1
    everywhere, so the arithmetic stays finite where it is not selected. *)
 
 let stirlerr lit y =
-  let main y = E.(((y + lit 0.5) * log y) - y + lit half_log_two_pi) in
+  let main y = E.(((y + lit 0.5) * log y) - y + lit Special.log_sqrt_2pi) in
   let tail y =
     let y2 = E.(y * y) in
     E.((lit (1.0 /. 12.0) - ((lit (1.0 /. 360.0) - (lit (1.0 /. 1260.0) / y2)) / y2)) / y)
@@ -1246,7 +1242,7 @@ let truncated_normal ?key lower upper =
            bounds far out on it: the draw is then the nearer bound, onto which a
            draw of 0 clamps. *)
         let finite = E.(lit Float.neg_infinity < log_q) in
-        let log_half = -0x1.62e42fefa39efp-1 in
+        let log_half = -.Special.ln2 in
         let y =
           Special.ndtri_mass
             E.(q - lit 0.5)

@@ -5,10 +5,11 @@
 
 (** Special functions as expressions.
 
-    Each value is the expression of the function {!Nx} names alike, over
+    Each function is the expression of the function {!Nx} names alike, over
     expressions of one dtype, which must be float32 or float64. Its contract,
-    the domain, edges and bound, is {!Nx}'s. Its arguments are in {!Nx}'s
-    order, parameters first and the variable last.
+    the domain, edges and bound, is {!Nx}'s. Its arguments are in {!Nx}'s order,
+    parameters first and the variable last. The module also holds the constants
+    its callers share with it ({!section-constants}).
 
     This module lies above [Special_tables], which holds its coefficients;
     {!Rng} and {!Nx} build programs from it. *)
@@ -52,3 +53,14 @@ val ndtri_mass : 'w e -> 'w e -> 'w e
 (** [ndtri_mass d log_q] is [x] with [ndtr x = 1/2 + d], from [d] and the
     logarithm [log_q] of the nearer tail's mass [1/2 - |d|], finite, which keeps
     the tails' digits where that mass underflows. *)
+
+(** {1:constants Constants}
+
+    Each constant is the double nearest its value, written out, so that it has
+    the same bits on every system. *)
+
+val ln2 : float
+(** [ln2] is the logarithm of 2. *)
+
+val log_sqrt_2pi : float
+(** [log_sqrt_2pi] is the logarithm of [sqrt (2 pi)]. *)

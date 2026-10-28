@@ -2004,10 +2004,6 @@ let hypot x y =
 let big = 0x1p28
 let tiny = 0x1p-28
 
-(* log 2 rounded to a double, written out: [Float.log] calls the C library,
-   whose last bit may differ by system, and on Windows by domain. *)
-let ln2 = 0x1.62e42fefa39efp-1
-
 let asinh (type v s d) (x : (v, s, d) t) : (v, s, d) t =
   match D.kind (dtype x) with
   | D.Complex -> unary ~by:"Nx.asinh" Asinh x
@@ -2015,7 +2011,7 @@ let asinh (type v s d) (x : (v, s, d) t) : (v, s, d) t =
       float_map ~by:"Nx.asinh" [ x ] (fun w ins ->
           let lit = E.const w and x = ins.(0) in
           let a = E.abs x in
-          let far = E.(log a + lit ln2) in
+          let far = E.(log a + lit Special.ln2) in
           let a2 = E.(a * a) in
           let root = E.(sqrt (lit 1. + a2)) in
           let near = E.(log1p (a + (a2 / (lit 1. + root)))) in
@@ -2029,7 +2025,7 @@ let acosh (type v s d) (x : (v, s, d) t) : (v, s, d) t =
   | _ ->
       float_map ~by:"Nx.acosh" [ x ] (fun w ins ->
           let lit = E.const w and x = ins.(0) in
-          let far = E.(log x + lit ln2) in
+          let far = E.(log x + lit Special.ln2) in
           let root = E.(sqrt (fma x x (lit (-1.)))) in
           let mid = E.(log (x + x - recip (x + root))) in
           let t = E.(x - lit 1.) in
