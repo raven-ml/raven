@@ -1743,12 +1743,97 @@ let complex_law ((xr, xi), (vr, vi), (wr, wi)) =
   let bits a = Array.append (values (Nx.real f64 a)) (values (Nx.imag f64 a)) in
   agree bits (z xr xi, z vr vi, z wr wi)
 
+(* f x = sin x · x, whose derivative is scaled by s = Σ |f x|, plus Σ |u| of the
+   derivative's input u with [~input]. With [read] the derivative reads s with
+   {!Nx.item}, as an adaptive derivative reads a tolerance, which works where it
+   runs on values; without, it multiplies by s as an array, which works where it
+   is traced. *)
+let f_sin x = Nx.mul (Nx.sin x) x
+let d_sin x = Nx.add (Nx.mul (Nx.cos x) x) (Nx.sin x)
+
+let by ~read ~input y u t =
+  let s = Nx.sum (Nx.abs y) in
+  let s = if input then Nx.add s (Nx.sum (Nx.abs u)) else s in
+  if read then Nx.mul_s t (Nx.item [] s) else Nx.mul t s
+
+let scaled_jvp ~read ~input =
+  Rune.custom_jvp tensor tensor (fun x ->
+      let y = f_sin x in
+      (y, fun dx -> by ~read ~input y dx (Nx.mul (d_sin x) dx)))
+
+let scaled_vjp ~read =
+  Rune.custom_vjp tensor tensor (fun x ->
+      let y = f_sin x in
+      (y, fun g -> by ~read ~input:true y g (Nx.mul (d_sin x) g)))
+
+(* The tangent map v ↦ s · f' x · v as a custom_transpose, its own transpose.
+   With [read] it also reads v, without using the read, to stay linear in v. *)
+let scaled_linear ~read =
+  Rune.custom_jvp tensor tensor (fun x ->
+      let y = f_sin x in
+      let scale v =
+        if read then ignore (Nx.item [] (Nx.sum v));
+        by ~read ~input:false y v (Nx.mul (d_sin x) v)
+      in
+      (y, Rune.custom_transpose tensor tensor scale ~transpose:scale))
+
+(* A derivative that reads values, run on values, gives the bits of its twin
+   that does not read, traced. Reverse mode transposes a tangent map, so the
+   tangent map reads its tangent only under jvp. On finite arguments, grad is
+   the closed form s · f' x, with s + n for the pullback, which reads n ones. *)
+let read_law ((xs, _), (vs, _), (ws, _)) =
+  let n = Array.length xs in
+  let finite = n > 0 && Array.for_all Float.is_finite xs in
+  cover "no element" (n = 0);
+  cover "one element" (n = 1);
+  cover "several elements" (n > 1);
+  cover "a special value" (Array.exists special xs);
+  cover "every value finite" finite;
+  let x = vec xs and v = vec vs and w = vec ws in
+  let sum f x = Nx.sum (f x) in
+  List.iter
+    (fun (msg, read, held) ->
+      exact ~msg:(msg ^ ", jvp")
+        (snd (Rune.jvp' (in_step held) x v))
+        (snd (Rune.jvp' read x v)))
+    [
+      ( "tangent map reading its tangent",
+        scaled_jvp ~read:true ~input:true,
+        scaled_jvp ~read:false ~input:true );
+      ("custom_transpose", scaled_linear ~read:true, scaled_linear ~read:false);
+    ];
+  List.iter
+    (fun (msg, read, held, extra) ->
+      exact ~msg:(msg ^ ", grad")
+        (Rune.grad' (sum (in_step held)) x)
+        (Rune.grad' (sum read) x);
+      exact ~msg:(msg ^ ", vjp")
+        (snd (Rune.vjp' (in_step held) x) w)
+        (snd (Rune.vjp' read x) w);
+      if finite then
+        let s = Nx.item [] (Nx.sum (Nx.abs (f_sin x))) +. extra in
+        near ~tol:1e-10 ~msg:(msg ^ ", closed form")
+          (Nx.mul_s (d_sin x) s)
+          (Rune.grad' (sum read) x))
+    [
+      ( "custom_jvp",
+        scaled_jvp ~read:true ~input:false,
+        scaled_jvp ~read:false ~input:false,
+        0. );
+      ( "custom_vjp",
+        scaled_vjp ~read:true,
+        scaled_vjp ~read:false,
+        float_of_int n );
+    ]
+
 let law_tests =
   [
     prop "a rule on values gives the traced rule's bits" gen_breaking
       real_law;
     prop "a complex rule on values gives the traced rule's bits" gen_breaking
       complex_law;
+    prop "a derivative that reads values gives its traced twin's bits"
+      gen_breaking read_law;
     prop "the pullback is the tangent map's adjoint" gen_vecs adjoint_law;
     prop "a differentiation of a capture leaves the rule to the argument's"
       gen_vecs capture_law;
