@@ -1448,8 +1448,9 @@ let take_along_axis ~axis p x = take_along ~by:"Nx.take_along_axis" axis p x
    library may decline a map of many loads, so each map reads two: the first
    two positions held in data, then the address so far, [-1] once invalid,
    and the next position. A library that computes a map of two loads then
-   computes any selection. Their inputs are placed together first, so the
-   address lies where one map would put it. *)
+   computes any selection. Each map reads the address so far beside the next
+   position, each where it lies, so the address lies at the union of the
+   inputs' cuts in pick order, where one map of them all would put it. *)
 let targets ~by x picks =
   let s = shape x in
   let r = Array.length s in
@@ -1497,15 +1498,6 @@ let targets ~by x picks =
       picks
   in
   let room = 2 in
-  let inputs =
-    if List.length inputs <= room then inputs
-    else
-      let ps = Array.of_list (List.map Prim.at inputs) in
-      let shapes = Array.make (Array.length ps) sel in
-      match Route.route ~by Elementwise ps shapes with
-      | None -> inputs
-      | Some route -> List.map (Eval.place ~by route.result) inputs
-  in
   let inputs = ref inputs in
   (* The current map's loads and their dtypes, last first. *)
   let loads = ref [] and dtypes = ref [] in

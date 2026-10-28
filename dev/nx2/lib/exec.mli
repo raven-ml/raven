@@ -7,10 +7,10 @@
 
     This module computes an operation whose operands have bytes and lie
     where its route reads them ({!Prim.route}). Its callers choose the
-    route, place the operands, compute the constants and give it the memory
-    a donation frees. It settles no check. Below it lie {!Prim},
-    {!Route} and {!Place}; above it {!Partial}, {!Constant}, {!Check} and
-    {!Eval} call it, and it calls none of them.
+    route, read the operands there ({!placer}), compute the constants and
+    give it the memory a donation frees. It settles no check. Below it lie
+    {!Prim}, {!Route} and {!Place}; above it {!Partial}, {!Constant},
+    {!Check} and {!Eval} call it, and it calls none of them.
 
     An operation's results lie at its route's result. Each device of that
     placement computes its {e window} of the results ({!Devices.window}) by
@@ -95,11 +95,15 @@ val placer :
   'd Devices.placement ->
   ('v, 's, 'd) Value.t ->
   ('v, 's, 'd) Value.t
-(** [placer ~by p x] is [x] where its placement equals [p], and
-    {!Place.value} of [x] at [p] otherwise: an operand where a route reads
-    it.
+(** [placer ~by p x] is [x] read at [p], an operand where its route reads it
+    ({!Route.t}): [x] where its placement equals [p], and otherwise the value
+    at [p] whose array on each device is a view of [x]'s array there at that
+    device's window, or an array of no bytes where the window is empty. It
+    moves no bytes.
 
-    Raises what {!Place.value} raises. *)
+    Raises [Invalid_argument] as an internal fault where [x] has no array
+    holding a nonempty window of [p] on its device, as {!Place.view}
+    does. *)
 
 (** {1:fast Fast paths}
 

@@ -35,7 +35,8 @@ let position p k =
 
 (* The window of operand [i], of [shape], that a device reads by [rule]: the
    window its window [w] of the results reads ({!Route.window}), but [tile f]
-   along an axis of the folded factor [f]. *)
+   along an axis of the folded factor [f]. An axis of blocks of [f] is whole:
+   its reader takes the blocks a tile spans. *)
 let reads rule i shape (w : M.range array) tile =
   match (rule : Route.rule) with
   | Elementwise -> w
@@ -45,7 +46,7 @@ let reads rule i shape (w : M.range array) tile =
         (fun a r ->
           match t.(i).(a) with
           | Route.Reduced f -> tile f
-          | Becomes _ | Scanned _ | Regroups _ | Whole -> r)
+          | Becomes _ | Scanned _ | Regroups _ | Blocks _ | Whole -> r)
         window
 
 (* The tile of each device of [route]'s result, in order: its window along

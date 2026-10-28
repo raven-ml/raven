@@ -20,6 +20,9 @@ let placement = Testable.make ~pp:Devices.pp_placement ~equal:Devices.equal
 let invalid f = raises_match (Exn.invalid_arg ~substring:"Nx.f: ") f
 let route r ps shapes = Route.route ~by:"Nx.f" r ps shapes
 
+(* [f ()] raises the route's refusal [msg], whole. *)
+let refused msg f = raises (Invalid_argument msg) f
+
 (* The route of operands that all have a placement. *)
 let placed r ps shapes = Option.get (route r (Array.map Option.some ps) shapes)
 
@@ -40,6 +43,8 @@ let pp_axis ppf : Route.axis -> unit = function
   | Becomes a -> Format.pp_print_int ppf a
   | Whole -> Format.pp_print_string ppf "whole"
   | Reduced f -> Format.fprintf ppf "reduced %d" f
+  | Blocks { factor; extent } ->
+      Format.fprintf ppf "blocks of %d of %d" factor extent
   | Scanned a -> Format.fprintf ppf "scanned %d" a
   | Regroups { axis; extent } ->
       Format.fprintf ppf "regroups %d of %d" axis extent
@@ -103,7 +108,8 @@ let extent = Gen.of_list [ 0; 1; 3; 4; 5; 8 ]
 (* An operand of results of shape [out]: each axis becomes a distinct axis of
    the results, of its extent, plainly or scanned, or regroups into one, both
    extents above one and its own even, or none, whole of any extent or
-   reduced. Its reduced axes, in order, have the factors 0, 1 and 2, of
+   reduced, plainly or in blocks of 2 or 4 where more than one block fills
+   the factor. Its reduced axes, in order, have the factors 0, 1 and 2, of
    [factors]' extents. *)
 let operand_of factors out =
   let open Gen in
@@ -114,7 +120,8 @@ let operand_of factors out =
   and+ reduced = array ~size:(constant r) bool
   and+ scanned = array ~size:(constant r) bool
   and+ regroups = array ~size:(constant r) bool
-  and+ rows = array ~size:(constant r) (of_list [ 2; 4; 6; 8; 12; 16 ]) in
+  and+ rows = array ~size:(constant r) (of_list [ 2; 4; 6; 8; 12; 16 ])
+  and+ blocks = array ~size:(constant r) (of_list [ 0; 2; 4 ]) in
   let axes = Array.of_list (List.filteri (fun a _ -> a < r) order) in
   let factor a =
     let f = ref 0 in
@@ -126,15 +133,22 @@ let operand_of factors out =
   let regroup a t =
     t >= 0 && regroups.(a) && out.(t) > 1 && rows.(a) <> out.(t)
   in
+  let in_blocks a =
+    let e = factors.(factor a) and b = blocks.(a) in
+    b > 0 && e mod b = 0 && e / b > 1
+  in
   let axis a t : Route.axis =
     if regroup a t then Regroups { axis = t; extent = out.(t) }
     else if t >= 0 then if scanned.(a) then Scanned t else Becomes t
+    else if reduced.(a) && in_blocks a then
+      Blocks { factor = factor a; extent = factors.(factor a) }
     else if reduced.(a) then Reduced (factor a)
     else Whole
   in
   let extent a t =
     if regroup a t then rows.(a)
     else if t >= 0 then out.(t)
+    else if reduced.(a) && in_blocks a then factors.(factor a) / blocks.(a)
     else if reduced.(a) then factors.(factor a)
     else along.(a)
   in
@@ -180,7 +194,11 @@ let case =
   let factor0 i =
     match rule with
     | Route.Elementwise -> None
-    | Axes t | Into t -> Array.find_index (( = ) (Route.Reduced 0)) t.(i)
+    | Axes t | Into t ->
+        Array.find_index
+          (function
+            | Route.Reduced 0 | Blocks { factor = 0; _ } -> true | _ -> false)
+          t.(i)
   in
   (* Often an operand's axis that regroups split over the four devices. *)
   let* split_regroup = bool in
@@ -209,7 +227,38 @@ let case =
   let+ ps = placements 0 in
   { rule; ps = Array.of_list ps; shapes; result = out }
 
-let case = Gen.with_pp pp_case case
+(* A matrix product beside its second operand's scale, a value per block of
+   [k / d] along its pair: [a] [[m; k]], [b] [[k; n]] and the scale
+   [[n; d]]. Half the time each is split along its pair over the four
+   devices; else each lies anywhere. *)
+let scaled =
+  let open Gen in
+  let* m = of_list [ 1; 3; 4 ]
+  and+ n = of_list [ 1; 2; 4 ]
+  and+ k = of_list [ 8; 16; 32 ]
+  and+ per = of_list [ 2; 4 ]
+  and+ paired = bool in
+  let rule =
+    Route.Axes
+      [|
+        [| Becomes 0; Reduced 0 |];
+        [| Reduced 0; Becomes 1 |];
+        [| Becomes 1; Blocks { factor = 0; extent = k } |];
+      |]
+  in
+  let shapes = [| [| m; k |]; [| k; n |]; [| n; k / per |] |] in
+  let split axis = Some (Devices.split ~by:"t" ~axis s4) in
+  let+ ps =
+    if paired then constant [| split 1; split 0; split 1 |]
+    else
+      let+ pa = placement_of 2
+      and+ pb = placement_of 2
+      and+ pc = placement_of 2 in
+      [| pa; pb; pc |]
+  in
+  { rule; ps; shapes; result = [| m; n |] }
+
+let case = Gen.with_pp pp_case (Gen.frequency [ (3, case); (1, scaled) ])
 
 (* The part of operand [i] that result window [w] depends on. Along an axis of
    [d] that regroups into one of [e], the rows of [d / e] the window's range
@@ -227,7 +276,8 @@ let depends c i (w : R.range array) =
               let lo = r.start * d / e in
               let hi = (((r.start + r.count) * d) + e - 1) / e in
               { R.start = lo; count = hi - lo; step = 1 }
-          | Whole | Reduced _ -> { R.start = 0; count = d; step = 1 })
+          | Whole | Reduced _ | Blocks _ ->
+              { R.start = 0; count = d; step = 1 })
         c.shapes.(i)
 
 let pp_ranges ppf (w : R.range array) =
@@ -255,9 +305,19 @@ let factor_of c i a =
   | Axes t | Into t -> (
       match t.(i).(a) with
       | Route.Reduced f -> Some f
-      | Becomes _ | Whole | Scanned _ | Regroups _ -> None)
+      | Becomes _ | Whole | Scanned _ | Regroups _ | Blocks _ -> None)
 
-let is_reduced c i a = factor_of c i a <> None
+(* The factor of operand [i]'s axis [a] and its extent, if it holds the
+   factor's blocks. *)
+let blocks_of c i a =
+  match c.rule with
+  | Route.Elementwise -> None
+  | Axes t | Into t -> (
+      match t.(i).(a) with
+      | Route.Blocks { factor; extent } -> Some (factor, extent)
+      | Becomes _ | Whole | Scanned _ | Regroups _ | Reduced _ -> None)
+
+let is_reduced c i a = factor_of c i a <> None || blocks_of c i a <> None
 
 (* [box] along the axes [keep] holds, whole along the others. *)
 let along keep (box : R.range array) (whole : R.range array) =
@@ -285,23 +345,58 @@ let together (ws : R.range array list) (box : R.range array) =
   in
   walk 0
 
+(* The window [p] gives device [k] of a value of shape [s], if [k] is one of
+   [p]'s devices. *)
+let held p s k = Option.map (Devices.window ~by:"t" p s) (position p k)
+
+let is_empty (w : R.range array) =
+  Array.exists (fun (r : R.range) -> r.count = 0) w
+
+(* Whether a value of shape [s] at [p] holds, on each device of [q], the
+   window [q] gives that device. An empty window reads nothing. *)
+let holds p s q =
+  Array.for_all
+    (fun k ->
+      let w = Option.get (held q s k) in
+      is_empty w
+      || match held p s k with Some h -> contains h w | None -> false)
+    (Grid.devices (Devices.grid q))
+
+(* The cuts of operand [i] at [p] that land on a result axis, each with that
+   axis: one it becomes or scans, or regroups into in tiles that divide both
+   extents. *)
+let landing c i p =
+  List.filter_map
+    (fun (a, t) ->
+      match c.rule with
+      | Route.Elementwise -> Some (a, a)
+      | Axes r | Into r -> (
+          match r.(i).(a) with
+          | Route.Becomes a' | Scanned a' -> Some (a, a')
+          | Regroups { axis; extent }
+            when c.shapes.(i).(a) mod t = 0 && extent mod t = 0 ->
+              Some (a, axis)
+          | Regroups _ | Whole | Reduced _ | Blocks _ -> None))
+    (Array.to_list (Grid.cuts (Devices.grid p)))
+
+(* The operand whose cuts the results take first: an [Into]'s last where it
+   has a placement, else the first that has one. *)
+let first_placed c =
+  let n = Array.length c.ps in
+  match c.rule with
+  | Route.Into _ when c.ps.(n - 1) <> None -> n - 1
+  | Elementwise | Axes _ | Into _ ->
+      Option.get (Array.find_index Option.is_some c.ps)
+
 let law =
-  prop ~count:2000 "each result window reads operands on its own device" case
-    (fun c ->
+  prop ~count:2000
+    "each operand is read where it lies, and each result window on its own \
+     device"
+    case (fun c ->
       let all_constant = Array.for_all (fun p -> p = None) c.ps in
       cover "constants only" all_constant;
       match route c.rule c.ps c.shapes with
-      | exception Invalid_argument msg ->
-          (* Two operands alone on two devices is the one refusal of valid
-             operands. *)
-          let alone =
-            List.sort_uniq compare
-              (List.filter_map
-                 (fun p -> Option.bind p Devices.device)
-                 (Array.to_list c.ps))
-          in
-          cover "two devices alone" true;
-          greater int ~msg ~than:1 (List.length alone)
+      | exception Invalid_argument _ -> cover "a refusal" true
       | None -> equal bool ~msg:"no route of values of every set" true all_constant
       | Some r ->
           if all_constant then fail "a route of values of every set"
@@ -316,7 +411,7 @@ let law =
                   Array.exists
                     (Array.exists (function
                       | Route.Becomes _ | Scanned _ | Regroups _ -> false
-                      | Whole | Reduced _ -> true))
+                      | Whole | Reduced _ | Blocks _ -> true))
                     t
             in
             cover "a split result beside an axis read whole"
@@ -340,7 +435,8 @@ let law =
                                      aligned
                                      = (c.shapes.(i).(a) mod n = 0
                                        && extent mod n = 0)
-                                 | Becomes _ | Scanned _ | Whole | Reduced _ ->
+                                 | Becomes _ | Scanned _ | Whole | Reduced _
+                                 | Blocks _ ->
                                      false)
                                (Grid.cuts (Devices.grid p)))
                        ps)
@@ -349,6 +445,56 @@ let law =
               (regrouped (Array.map Option.some r.operands) true);
             cover "a cut across rows of an axis that regroups"
               (regrouped c.ps false);
+            (* Each operand is read where it lies: at its own placement, or
+               at one whose window on each device its own holds there. *)
+            Array.iteri
+              (fun i q ->
+                match c.ps.(i) with
+                | None -> ()
+                | Some p ->
+                    cover "an operand read by views of its own windows"
+                      (not (Devices.equal p q));
+                    equal bool
+                      ~msg:"the operand holds each window it is read at" true
+                      (holds p c.shapes.(i) q))
+              r.operands;
+            (* The forward union: each cut of the results is a cut of an
+               operand that lands there, tile for tile, and the cuts of the
+               operand the results take first all stay where it has
+               elements: without, it holds every window it is read at. *)
+            let matches i p (a, _) =
+              Array.for_all
+                (fun k ->
+                  match held p c.shapes.(i) k with
+                  | None -> false
+                  | Some h ->
+                      let w = Option.get (held r.result rs k) in
+                      (depends c i w).(a) = h.(a))
+                (Grid.devices target)
+            in
+            Array.iter
+              (fun (a', _) ->
+                let from i = function
+                  | None -> false
+                  | Some p ->
+                      List.exists
+                        (fun ((_, b) as l) -> b = a' && matches i p l)
+                        (landing c i p)
+                in
+                let msg =
+                  Printf.sprintf "result axis %d is cut as an operand cuts it" a'
+                in
+                equal bool ~msg true
+                  (Array.exists Fun.id (Array.mapi from c.ps)))
+              (Grid.cuts target);
+            let f = first_placed c in
+            let p = Option.get c.ps.(f) in
+            if not (Array.mem 0 c.shapes.(f)) then
+              List.iter
+                (fun l ->
+                  cover "a cut of the operand the results take first" true;
+                  equal bool ~msg:"its cut stays" true (matches f p l))
+                (landing c f p);
             let windows = Grid.devices target in
             Array.iteri
               (fun j k ->
@@ -394,19 +540,22 @@ let law =
                       (Route.window c.rule ~operand:i c.shapes.(i) w))
                   r.operands;
                 (* Axes of one factor hold one range on each device, so
-                   each device's terms pair up across operands. *)
-                let held = Hashtbl.create 3 in
+                   each device's terms pair up across operands, and an axis
+                   of its blocks holds the blocks that range spans. *)
+                let held = Hashtbl.create 3 and spans = Hashtbl.create 3 in
                 Array.iteri
                   (fun i p ->
                     let pos = Option.get (position p k) in
                     let wk = Devices.window ~by:"t" p c.shapes.(i) pos in
                     Array.iteri
                       (fun a (rg : R.range) ->
-                        match factor_of c i a with
-                        | Some f ->
-                            let cut = rg.count < c.shapes.(i).(a) in
-                            Hashtbl.add held f (i, rg, cut)
-                        | None -> ())
+                        let cut = rg.count < c.shapes.(i).(a) in
+                        match (factor_of c i a, blocks_of c i a) with
+                        | Some f, _ -> Hashtbl.add held f (i, rg, cut)
+                        | None, Some (f, e) ->
+                            let per = e / c.shapes.(i).(a) in
+                            Hashtbl.add spans f (rg, per, e, cut)
+                        | None, None -> ())
                       wk)
                   r.operands;
                 List.iter
@@ -422,10 +571,168 @@ let law =
                           (fun (_, rg, _) ->
                             equal ranges ~msg:"one factor's range" [| first |]
                               [| rg |])
-                          rest)
+                          rest;
+                        List.iter
+                          (fun ((rg : R.range), per, e, cut) ->
+                            cover "a factor's blocks read cut alike" cut;
+                            let lo = rg.start * per
+                            and hi = min e ((rg.start + rg.count) * per) in
+                            let spanned =
+                              first.count = 0
+                              || (lo <= first.start
+                                 && first.start + first.count <= hi)
+                            in
+                            equal bool
+                              ~msg:"the blocks a factor's range spans" true
+                              spanned)
+                          (Hashtbl.find_all spans f))
                   [ 0; 1; 2 ])
               windows
           end)
+
+(* Refusals, as the route writes them: "<by>: operand <i> lies at <p> and is
+   read at <q>; Nx.place (<call>) <name>". *)
+
+(* [s] around the first [sep], or the last under [~last]: the text before it
+   and the text after. *)
+let cut_at ?(last = false) sep s =
+  let n = String.length sep and m = String.length s in
+  let rec find i =
+    if i < 0 || i + n > m then None
+    else if String.sub s i n = sep then Some i
+    else find (if last then i - 1 else i + 1)
+  in
+  Option.map
+    (fun i -> (String.sub s 0 i, String.sub s (i + n) (m - i - n)))
+    (find (if last then m - n else 0))
+
+type refusal = {
+  operand : int;
+  lies : string;
+  read : string;
+  call : string;
+  named : string;
+}
+
+let refusal msg =
+  let ( let* ) = Option.bind in
+  let* by, rest = cut_at ": operand " msg in
+  let* () = if by = "Nx.f" then Some () else None in
+  let* i, rest = cut_at " lies at " rest in
+  let* lies, rest = cut_at " and is read at " rest in
+  let* read, rest = cut_at "; Nx.place (" rest in
+  let* call, named = cut_at ~last:true ") " rest in
+  let* operand = int_of_string_opt i in
+  Some { operand; lies; read; call; named }
+
+let name = function 0 -> "x" | 1 -> "y" | 2 -> "z" | i -> "x" ^ string_of_int i
+
+(* Each placement over [s4] of a value of rank [rank] that a route reads at,
+   with the expression a refusal writes for it: each device alone, the whole
+   on every device, each split, and each other cut by the mesh's axes [a]
+   and [b], which the expression names ["g0"] and ["g1"]. *)
+let readable rank =
+  let axes = List.init rank Fun.id in
+  let quoted gs = String.concat "; " (List.map (Printf.sprintf "%S") gs) in
+  let call cuts =
+    Printf.sprintf
+      "Placement.mesh (Mesh.v s [ (\"g0\", 2); (\"g1\", 2) ]) [ %s ]"
+      (String.concat "; "
+         (List.map
+            (fun (a, gs) -> Printf.sprintf "(%d, [ %s ])" a (quoted gs))
+            cuts))
+  in
+  let g = function "a" -> "g0" | _ -> "g1" in
+  let named cuts = call (List.map (fun (a, ns) -> (a, List.map g ns)) cuts) in
+  let ones =
+    List.init 4 (fun k ->
+        (Devices.one s4 k, Printf.sprintf "Placement.device s m%d" k))
+  in
+  let splits =
+    List.map
+      (fun a ->
+        ( Devices.split ~by:"t" ~axis:a s4,
+          Printf.sprintf "Placement.split ~axis:%d s" a ))
+      axes
+  in
+  (* The mesh's [a] cutting axis [x] and [b] axis [y], [-1] for none; [a]
+     then [b] over one axis is a split. *)
+  let owners =
+    List.concat_map
+      (fun x -> List.map (fun y -> (x, y)) (-1 :: axes))
+      (-1 :: axes)
+  in
+  let meshes =
+    List.concat_map
+      (fun (x, y) ->
+        if x = y && x >= 0 then
+          let cuts = [ (x, [ "b"; "a" ]) ] in
+          [ (Devices.mesh ~by:"t" mesh cuts, named cuts) ]
+        else if x < 0 && y < 0 then []
+        else
+          let cuts =
+            List.sort compare
+              (List.filter
+                 (fun (a, _) -> a >= 0)
+                 [ (x, [ "a" ]); (y, [ "b" ]) ])
+          in
+          [ (Devices.mesh ~by:"t" mesh cuts, named cuts) ])
+      owners
+  in
+  ((Devices.on s4, "Placement.on s") :: ones) @ splits @ meshes
+
+let refusals =
+  prop ~count:2000
+    "a refusal names an operand that lacks a window it is read at, and the \
+     Nx.place after which the call routes"
+    case (fun c ->
+      (* The operand a refusal names and where it is read, its text checked
+         against them. *)
+      let parse ps msg =
+        let r = require_some ~msg (refusal msg) in
+        let i = r.operand in
+        let p = require_some ~msg:"the operand has a placement" ps.(i) in
+        equal string ~msg:"where it lies"
+          (Format.asprintf "%a" Devices.pp_placement p)
+          r.lies;
+        equal string ~msg:"its name" (name i) r.named;
+        let q, call =
+          require_some ~msg:("a placement printed " ^ r.read)
+            (List.find_opt
+               (fun (q, _) ->
+                 Format.asprintf "%a" Devices.pp_placement q = r.read)
+               (readable (Array.length c.shapes.(i))))
+        in
+        equal string ~msg:"the call" call r.call;
+        equal bool ~msg:"it lacks a window it is read at" false
+          (holds p c.shapes.(i) q);
+        (i, q, call)
+      in
+      match route c.rule c.ps c.shapes with
+      | Some _ | None -> ()
+      | exception Invalid_argument msg ->
+          let i, q, call = parse c.ps msg in
+          cover "read whole on every device" (Devices.equal q (Devices.on s4));
+          cover "read on one device" (Devices.device q <> None);
+          cover "read split"
+            (String.starts_with ~prefix:"Placement.split" call);
+          cover "read at a mesh's cut"
+            (String.starts_with ~prefix:"Placement.mesh" call);
+          (* The remedies, written one after another, let the call route. *)
+          let ps = Array.copy c.ps in
+          ps.(i) <- Some q;
+          let rec settle n =
+            match route c.rule ps c.shapes with
+            | Some _ | None -> ()
+            | exception Invalid_argument msg ->
+                if n = 0 then fail ("the remedies do not settle: " ^ msg)
+                else begin
+                  let i, q, _ = parse ps msg in
+                  ps.(i) <- Some q;
+                  settle (n - 1)
+                end
+          in
+          settle (2 * Array.length ps))
 
 (* The devices of [p], in increasing order. *)
 let devices_of p =
@@ -459,7 +766,7 @@ let folded c i a =
   | Route.Elementwise -> false
   | Axes t | Into t -> (
       match t.(i).(a) with
-      | Route.Reduced _ | Scanned _ -> true
+      | Route.Reduced _ | Blocks _ | Scanned _ -> true
       | Becomes _ | Whole | Regroups _ -> false)
 
 (* Whether an axis [c]'s rule folds has no element. *)
@@ -608,7 +915,9 @@ let cases_ =
           equal placement (Devices.on s4) r.result;
           equal placement x r.operands.(0);
           equal bool true (r.operands.(1) == x));
-      test "a reduction over operands cut at two grids reads them whole"
+      test
+        "a reduction over operands cut at two grids refuses the second, read \
+         cut alike"
         (fun () ->
           let x = Devices.split ~by:"t" ~axis:1 s4 in
           let y = Devices.split ~by:"t" ~axis:0 s4 in
@@ -616,17 +925,22 @@ let cases_ =
             Route.Axes
               [| [| Becomes 0; Reduced 1 |]; [| Becomes 0; Reduced 1 |] |]
           in
-          let r = placed rule [| x; y |] [| [| 4; 8 |]; [| 4; 8 |] |] in
-          equal placement y r.result;
-          equal placement y r.operands.(0);
-          equal placement y r.operands.(1));
-      test "an operand read whole along an axis it acts along is moved"
+          refused
+            "Nx.f: operand 1 lies at split ~axis:0 [m0; m1; m2; m3] and is \
+             read at split ~axis:1 [m0; m1; m2; m3]; Nx.place \
+             (Placement.split ~axis:1 s) y"
+            (fun () -> placed rule [| x; y |] [| [| 4; 8 |]; [| 4; 8 |] |]));
+      test "an operand cut along an axis it acts along is refused, read whole"
         (fun () ->
           let x = Devices.split ~by:"t" ~axis:1 s4 in
-          let r =
-            placed (Axes [| [| Becomes 0; Whole |] |]) [| x |] [| [| 4; 8 |] |]
-          in
-          equal placement (Devices.on s4) r.operands.(0));
+          refused
+            "Nx.f: operand 0 lies at split ~axis:1 [m0; m1; m2; m3] and is \
+             read at on [m0; m1; m2; m3]; Nx.place (Placement.on s) x"
+            (fun () ->
+              placed
+                (Axes [| [| Becomes 0; Whole |] |])
+                [| x |]
+                [| [| 4; 8 |] |]));
       test "a scan of a split axis reads it where it lies and keeps it split"
         (fun () ->
           let x = Devices.split ~by:"t" ~axis:1 s4 in
@@ -655,16 +969,23 @@ let cases_ =
           in
           let r = placed rule [| u; into |] [| [| 4; 8 |]; [| 8; 8 |] |] in
           equal placement into r.result);
-      test "an operation reading all whole lies on its operands' devices"
+      test "an operation reading all whole lies on its operand's device"
         (fun () ->
           let whole = Route.Axes [| [| Whole |] |] in
           let r = placed whole [| Devices.one s4 2 |] [| [| 4 |] |] in
-          equal placement (Devices.one s4 2) r.result;
+          equal placement (Devices.one s4 2) r.result);
+      test "an operation reading a split axis whole refuses it" (fun () ->
           let x = Devices.split ~by:"t" ~axis:0 s4 in
-          let r = placed whole [| x |] [| [| 8 |] |] in
-          equal placement (Devices.on s4) r.result);
-      test "operands read whole alone on two devices raise" (fun () ->
-          invalid (fun () ->
+          refused
+            "Nx.f: operand 0 lies at split ~axis:0 [m0; m1; m2; m3] and is \
+             read at on [m0; m1; m2; m3]; Nx.place (Placement.on s) x"
+            (fun () -> placed (Axes [| [| Whole |] |]) [| x |] [| [| 8 |] |]));
+      test "operands read whole alone on two devices refuse the second"
+        (fun () ->
+          refused
+            "Nx.f: operand 1 lies at m1 and is read at m0; Nx.place \
+             (Placement.device s m0) y"
+            (fun () ->
               placed
                 (Axes [| [| Whole |]; [| Whole |] |])
                 [| Devices.one s4 0; Devices.one s4 1 |]
@@ -725,21 +1046,72 @@ let cases_ =
           equal placement r.result r'.result;
           equal placement r.operands.(0) r'.operands.(0);
           equal placement r.operands.(1) r'.operands.(1));
-      test "a contraction reads a pair cut unlike whole" (fun () ->
+      test "a contraction over a pair cut unlike refuses the second" (fun () ->
           let x = Devices.mesh ~by:"t" mesh [ (1, [ "a" ]) ] in
           let y = Devices.mesh ~by:"t" mesh [ (0, [ "b" ]) ] in
           let shapes = [| [| 8; 5 |]; [| 5; 6 |] |] in
-          let r = placed matrix_product [| x; y |] shapes in
-          equal placement (Devices.on s4) r.result;
-          equal placement (Devices.on s4) r.operands.(0);
-          equal placement (Devices.on s4) r.operands.(1));
-      test "operands on two sets raise" (fun () ->
-          invalid (fun () ->
+          refused
+            "Nx.f: operand 1 lies at mesh 2x2 [m0; m1; m2; m3] ~axis:0/1 and \
+             is read at mesh 2x2 [m0; m1; m2; m3] ~axis:0/0; Nx.place \
+             (Placement.mesh (Mesh.v s [ (\"g0\", 2); (\"g1\", 2) ]) [ (0, \
+             [ \"g0\" ]) ]) y"
+            (fun () -> placed matrix_product [| x; y |] shapes));
+      test
+        "a contraction refuses a free axis cut over the devices that cut its \
+         pair"
+        (fun () ->
+          let x = Devices.split ~by:"t" ~axis:1 s4 in
+          let shapes = [| [| 8; 5 |]; [| 5; 6 |] |] in
+          refused
+            "Nx.f: operand 1 lies at split ~axis:1 [m0; m1; m2; m3] and is \
+             read at split ~axis:0 [m0; m1; m2; m3]; Nx.place \
+             (Placement.split ~axis:0 s) y"
+            (fun () -> placed matrix_product [| x; x |] shapes));
+      test "operands cut by two mesh axes join, each read by views" (fun () ->
+          let x = Devices.mesh ~by:"t" mesh [ (0, [ "a" ]) ] in
+          let y = Devices.mesh ~by:"t" mesh [ (1, [ "b" ]) ] in
+          let both = Devices.mesh ~by:"t" mesh [ (0, [ "a" ]); (1, [ "b" ]) ] in
+          let r = placed Elementwise [| x; y |] [| [| 4; 4 |]; [| 4; 4 |] |] in
+          equal placement both r.result;
+          equal placement both r.operands.(0);
+          equal placement both r.operands.(1));
+      test "a coarser cut of an axis the results cut finer is read by views"
+        (fun () ->
+          let x = Devices.split ~by:"t" ~axis:0 s4 in
+          let y = Devices.mesh ~by:"t" mesh [ (0, [ "a" ]) ] in
+          let r = placed Elementwise [| x; y |] [| [| 8 |]; [| 8 |] |] in
+          equal bool true (r.result == x);
+          equal placement x r.operands.(1));
+      test "a device alone beside the whole on every device takes the results"
+        (fun () ->
+          let one = Devices.one s4 2 in
+          let r =
+            placed Elementwise [| Devices.on s4; one |] [| [| 4 |]; [| 4 |] |]
+          in
+          equal bool true (r.result == one);
+          equal bool true (r.operands.(0) == one));
+      test "a device alone beside a split operand is refused" (fun () ->
+          refused
+            "Nx.f: operand 1 lies at m2 and is read at split ~axis:0 [m0; m1; \
+             m2; m3]; Nx.place (Placement.split ~axis:0 s) y"
+            (fun () ->
+              placed Elementwise
+                [| Devices.split ~by:"t" ~axis:0 s4; Devices.one s4 2 |]
+                [| [| 4 |]; [| 4 |] |]));
+      test "operands on two sets refuse the second, read on the first's"
+        (fun () ->
+          refused
+            "Nx.f: operand 1 lies at on [m0; m1] and is read at on [m0; m1; \
+             m2; m3]; Nx.place (Placement.on s) y"
+            (fun () ->
               placed Elementwise
                 [| Devices.on s4; Devices.on other |]
                 [| [| 4 |]; [| 4 |] |]));
-      test "operands alone on two devices raise" (fun () ->
-          invalid (fun () ->
+      test "operands alone on two devices refuse the second" (fun () ->
+          refused
+            "Nx.f: operand 1 lies at m1 and is read at m0; Nx.place \
+             (Placement.device s m0) y"
+            (fun () ->
               placed Elementwise
                 [| Devices.one s4 0; Devices.one s4 1 |]
                 [| [| 4 |]; [| 4 |] |]));
@@ -853,9 +1225,27 @@ let move_law =
           }
       in
       let rule = Prim.rule (Value.Move (mv, x)) in
-      let r = placed rule [| p |] [| s |] in
-      let s' = Iarray.to_array (R.shape mv (Iarray.of_array s)) in
       cover "a split operand" (Grid.cuts (Devices.grid p) <> [||]);
+      match route rule [| Some p |] [| s |] with
+      | exception Invalid_argument _ ->
+          (* A move refuses an operand cut along an axis it reads whole: one
+             it does not keep in order, or regroups across rows. *)
+          let whole (a, t) =
+            match rule with
+            | Route.Axes r -> (
+                match r.(0).(a) with
+                | Route.Whole -> true
+                | Regroups { extent; _ } ->
+                    s.(a) mod t <> 0 || extent mod t <> 0
+                | Becomes _ | Scanned _ | Reduced _ | Blocks _ -> false)
+            | Elementwise | Into _ -> false
+          in
+          cover "a move reading a cut axis whole" true;
+          equal bool ~msg:"the operand is cut along an axis read whole" true
+            (Array.exists whole (Grid.cuts (Devices.grid p)))
+      | None -> fail "a placed operand has a route"
+      | Some r ->
+      let s' = Iarray.to_array (R.shape mv (Iarray.of_array s)) in
       cover "a split result" (Grid.cuts (Devices.grid r.result) <> [||]);
       Array.iteri
           (fun j k ->
@@ -884,6 +1274,6 @@ let () =
     (run "nx route"
        [
          group "laws"
-           [ law; exact; computes; keeps; at_law; move_law ];
+           [ law; refusals; exact; computes; keeps; at_law; move_law ];
          cases_;
        ])

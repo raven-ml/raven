@@ -7,47 +7,57 @@
 
     A route is plain data from placements and shapes; it computes nothing. The
     engine takes placements from it alone, for traced results and eager ones, so
-    a traced result lies where its eager twin does.
+    a traced result lies where its eager twin does, and a route that raises
+    raises at trace time as it would eagerly.
 
-    The rule: every result lies at one placement, the {e target}. An operand of
-    every set has no placement and joins the others: operands that are all of
-    every set give no route. Each other operand is first given the axes the
-    operation reads whole on each device (an axis it acts along), and moved to
-    the result's axes. The target is the one of these that cuts the results
-    into the most windows, the last of them where several do; else, where
-    some lie on one device, that device, which every such operand must share;
-    else the first. A cut of the target along an axis that an operand regroups
-    into, in tiles that do not divide both extents, is undone. Each operand is
-    then read where it lies if that gives every device of the target the part
-    of the operand the device's window of the result depends on, and lies on no
-    other device: the same window, or the whole operand on each device of the
-    target; otherwise it is read at the target moved back to its axes, which
-    the engine places it at.
+    The rule: each operand is read where it lies, and the results lie at the
+    {e forward union} of the operands' cuts. A cut of an operand's axis that
+    becomes a result axis, is scanned along it, or regroups into one in tiles
+    that divide both extents, cuts that result axis over the same devices,
+    each device holding the tile it holds of the operand. A cut of an axis
+    read whole cuts nothing. A cut of an axis the operation reduces cuts
+    nothing in the results, and the devices compute by partials
+    ({!Partial}), where every operand that holds that axis is cut alike along
+    it; an axis of its blocks is cut alike in tiles that divide both
+    extents. Grid axes that cut a reduced axis hold copies of the
+    results.
 
-    An operand may instead be read cut along the axes the operation reduces
-    ({!Reduced}), where the first operand lying so gives the grid of the
-    others. Each operand with reduced axes is then read where it lies, or at
-    the first's placement where it reads its axes as the first does and lies
-    whole on each of its devices, or is of every set. Each must:
-    - cut each reduced axis's factor as the first does, over the same grid
-      axes;
-    - give what the target wants of it with its reduced axes uncut;
-    - lie along its other axes, moved to the results' axes, as the target
-      does; one such operand lies at the whole target.
+    The cuts join in operand order. The first operand gives its cuts, and
+    each next one adds its own where they join the union so far
+    ({!Grid.union}), and none where they do not. An operand alone on one
+    device beside operands whole on every device of the set puts the
+    results on that device. Where an operation writes into its last operand
+    ({!Into}), the results lie where that operand's cuts put them, and the
+    other operands add none. A cut of the union along an axis that an
+    operand regroups into in tiles that do not divide both extents is
+    undone.
 
-    Operands with no reduced axes are read as above. The devices that hold
-    one window of the results then hold all of its terms between them. Where
-    an operand cannot be read so, or an axis the operation reduces or scans
-    has no element, every operand is read as above, whole along its reduced
-    axes.
+    Each operand is read at the union moved back to its axes. Where that is
+    its own placement, it is read there. Where its own placement holds on
+    each device the window it is read at, as a value whole on every device
+    does, it is read by a view of that window. An operand of every set is
+    read at the union moved back to its axes, computed there.
 
-    Two rules follow, with JAX as the reference for placements. Operands of one
-    set never raise for where they lie: the brand already makes them one set,
-    and moving data within a set is the route's, as JAX computes over operands
-    sharded differently on one device set. Operands each alone on a different
-    device raise, as JAX refuses operands committed to two devices: no
-    arrangement holds both, and moving one is a choice the program makes with
-    [Nx.place]. *)
+    The route raises [Invalid_argument] where an operand is read neither
+    way, so that a device of the results needs a window of it the device
+    does not hold: an operand cut along an axis read whole, along an axis
+    the union cuts over other devices or in tiles that do not hold the
+    union's, or along two axes where the union cuts one over the same
+    devices, and one alone on another device than the results. It raises
+    too where an operand lies on another set. The message names the
+    function, the operand, its placement, the placement it is read at, and
+    the [Nx.place] to write, the set named [s] and the operand [x], [y],
+    [z], then [x3], [x4], …:
+
+    {v
+Nx.matmul: operand 1 lies at split ~axis:1 [CUDA:0; CUDA:1] and is read
+at split ~axis:0 [CUDA:0; CUDA:1]; Nx.place (Placement.split ~axis:0 s) y
+    v}
+
+    The expression is [Placement.on s], [Placement.device s] with the
+    device's name, [Placement.split ~axis s], or a [Placement.mesh] over
+    [Mesh.v s] whose axes, named ["g0"], ["g1"], …, are the read placement's
+    grid axes in normal form ({!Grid}). *)
 
 (** The type for what an operation makes of an operand's axis. *)
 type axis =
@@ -68,6 +78,14 @@ type axis =
           is [Reduced p] in both operands. Read whole on each device, or cut
           where the operand lies so, each factor alike in every operand
           ({!route}). *)
+  | Blocks of { factor : int; extent : int }
+      (** Gone from the results as [Reduced factor] is, its index the block
+          of the factor's index it holds: a contraction's scale along a
+          contracting pair of [extent] elements, a whole multiple of the
+          axis's own, both above one, one value per block. A cut of it into
+          [t] tiles routes as [Reduced factor] where [t] divides both
+          extents: each device then holds the blocks of its tile of the
+          factor. Otherwise it is read whole on each device. *)
   | Scanned of int
       (** The results' axis [a] of [Scanned a], along which a scan of a
           [Sum], [Prod], [Max], [Min] or [Arg] without a carry runs, every
@@ -106,10 +124,10 @@ type rule =
           operand of the loop's shape. {!at} routes it over no operand;
           {!route}, which takes a row per operand, never receives it. *)
   | Into of axis array array
-      (** [Axes]' windows, written into the last operand: the target is the last
-          operand's placement where it lies on the set, or, where it is of
-          every set, the target {!route} gives with the results' axes it
-          does not become whole. *)
+      (** [Axes]' windows, written into the last operand: the results lie
+          where the last operand's cuts put them where it has a placement,
+          and where it is of every set, where the others' union puts the
+          axes the last operand becomes. *)
 
 val moved : Nx_array.Move.t -> int array -> int -> axis
 (** [moved m s a] is what [m] makes of axis [a] of a value of shape [s]:
@@ -167,22 +185,12 @@ type compute =
 
 type 'd t = {
   operands : 'd Devices.placement array;
-      (** Where each operand is read, in the operation's operand order. *)
+      (** Where each operand is read, in the operation's operand order: its
+          own placement, or one whose window on each device its own holds
+          there. *)
   result : 'd Devices.placement;
   compute : compute;
 }
-
-(** The type for where operands lie together. *)
-type 'd common =
-  | Every_set  (** Every operand is of every set. *)
-  | One of 'd Devices.placement
-      (** Every operand not of every set lies at this placement. *)
-  | Other  (** Any other arrangement. *)
-
-val common : 'd Devices.placement option array -> 'd common
-(** [common ps] is where operands at [ps] lie together, [None] for an operand of
-    every set. Operands at [One p], [p] cutting no axis, are read at [p] and
-    their results lie there, whatever the rule ({!route}). *)
 
 val route :
   by:string ->
@@ -191,14 +199,19 @@ val route :
   int array array ->
   'd t option
 (** [route ~by r ps shapes] routes an operation of rule [r] over operands at
-    [ps] of [shapes], [None] for an operand of every set. [ps] and [shapes]
-    are of one positive length, and [r] names each axis of each operand. It
-    is [None] where every operand is: the operation is of every set too. An
-    operand of every set is read at the target moved back to its axes.
+    [ps] of [shapes], [None] for an operand of every set, as the module's
+    preamble states. [ps] and [shapes] are of one positive length, and [r]
+    names each axis of each operand. It is [None] where every operand is: the
+    operation is of every set too. Operands all at one placement are read
+    there and their results lie there, where it cuts no axis or [r] is
+    [Elementwise]. A route reads an operand at a placement other than its
+    own only through views of its arrays. An axis that [r] reduces and that
+    has no element is read whole by every operand; one it scans keeps its
+    cut, and the devices compute by windows.
 
-    Raises [Invalid_argument] naming [by] if operands lie on two sets or on two
-    devices alone, and if a placement an operand is read at cuts an axis its
-    shape lacks ({!Grid.window}). *)
+    Raises [Invalid_argument] naming [by] if an operand's placement cuts an
+    axis its shape lacks ({!Grid.window}), and with the preamble's message
+    where an operand cannot be read where it lies. *)
 
 val at : by:string -> rule -> int array array -> 'd Devices.placement -> 'd t
 (** [at ~by r shapes p] routes an operation of rule [r] over operands of

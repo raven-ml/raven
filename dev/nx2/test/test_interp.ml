@@ -2295,7 +2295,144 @@ let twins =
           equal names [ "Map" ] (received log));
     ]
 
+(* Placements: a traced result lies where its eager twin does, and a call
+   the route refuses raises the same message eagerly and traced. *)
+
+module Mem4 = (val Nx.devices (List.init 4 Nx_support.memory))
+
+let mesh4 = Nx.Mesh.v Mem4.v [ ("a", 2); ("b", 2) ]
+
+type ('v, 's, 'd) Nx.Prim.payload += Stand_in : ('v, 's, 'd) Nx.Prim.payload
+
+(* The placement of [f x y] over stand-ins of [x]'s and [y]'s forms, under an
+   Extent interpretation whose rule gives each result the form eager
+   execution gives it. *)
+let traced_placement f x y =
+  Nx.Prim.interpret ~name:"test.forms" Extent
+    (fun i ~by op ->
+      Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form Stand_in) op)
+    (fun i ->
+      let stand_in v = Nx.Prim.traced i (Nx.Prim.form v) Stand_in in
+      Nx.placement (f (stand_in x) (stand_in y)))
+
+(* Where an operand of [[4; 4]] lies over the four devices. *)
+type where =
+  | On
+  | Device of int
+  | Split of int
+  | Cuts of int * int  (** Axis [x] over mesh axis [a], [y] over [b]. *)
+  | Minor of int
+
+let pp_where ppf = function
+  | On -> Format.pp_print_string ppf "on"
+  | Device k -> Format.fprintf ppf "m%d" k
+  | Split a -> Format.fprintf ppf "split %d" a
+  | Cuts (x, y) -> Format.fprintf ppf "cuts %d/a %d/b" x y
+  | Minor a -> Format.fprintf ppf "cut %d/b" a
+
+let at = function
+  | On -> Mem4.on
+  | Device k -> Nx.Placement.device Mem4.v (Nx_support.memory k)
+  | Split a -> Mem4.split ~axis:a
+  | Cuts (x, y) when x = y -> Nx.Placement.mesh mesh4 [ (x, [ "a"; "b" ]) ]
+  | Cuts (x, y) -> Nx.Placement.mesh mesh4 [ (x, [ "a" ]); (y, [ "b" ]) ]
+  | Minor a -> Nx.Placement.mesh mesh4 [ (a, [ "b" ]) ]
+
+(* Operations of two operands of [[4; 4]], each reading its axes as a kind
+   of rule does: elementwise, a contraction, a reduction, a permutation, a
+   scan, reshapes and a sort. *)
+type binary = Mem4.d Nx.float32_t -> Mem4.d Nx.float32_t -> Mem4.d Nx.float32_t
+
+let binaries : (string * binary) list =
+  [
+    ("add", Nx.add);
+    ("matmul", Nx.matmul);
+    ( "a sum along 0 beside y",
+      fun x y -> Nx.add (Nx.sum ~axes:[ 0 ] ~keepdims:true x) y );
+    ("x transposed by y", fun x y -> Nx.mul (Nx.transpose x) y);
+    ("a cumsum along 1 by y", fun x y -> Nx.mul (Nx.cumsum ~axis:1 x) y);
+    ( "x flattened and back, by y",
+      fun x y -> Nx.mul (Nx.reshape [| 4; 4 |] (Nx.reshape [| 16 |] x)) y );
+    ("x sorted along 1, by y", fun x y -> Nx.mul (fst (Nx.sort ~axis:1 x)) y);
+  ]
+
+let where =
+  let open Gen in
+  let axis = int_range 0 1 in
+  one_of
+    [
+      constant On;
+      map (fun k -> Device k) (int_range 0 3);
+      map (fun a -> Split a) axis;
+      map (fun (x, y) -> Cuts (x, y)) (pair axis axis);
+      map (fun a -> Minor a) axis;
+    ]
+
+let law_forms (k, wx, wy) =
+  let f = snd (List.nth binaries k) in
+  let value i = Nx.reshape [| 4; 4 |] (Nx.arange f32 i (i + 16) 1) in
+  let x = Nx.place (at wx) (value 0) and y = Nx.place (at wy) (value 16) in
+  let outcome g =
+    match g () with p -> Ok p | exception Invalid_argument m -> Error m
+  in
+  let eager = outcome (fun () -> Nx.placement (f x y)) in
+  let traced = outcome (fun () -> traced_placement f x y) in
+  cover "a refusal" (Result.is_error eager);
+  cover "a cut result"
+    (match eager with
+    | Ok (Some p) -> not (Nx.Placement.equal p Mem4.on)
+    | Ok None | Error _ -> false);
+  match (eager, traced) with
+  | Ok p, Ok q ->
+      equal ~msg:"where the result lies" bool true
+        (match (p, q) with
+        | Some p, Some q -> Nx.Placement.equal p q
+        | None, None -> true
+        | Some _, None | None, Some _ -> false)
+  | Error m, Error m' -> equal ~msg:"the refusal" string m m'
+  | Ok _, Error m -> fail ("traced alone raises: " ^ m)
+  | Error m, Ok _ -> fail ("eager alone raises: " ^ m)
+
+let forms =
+  group "placements"
+    [
+      prop
+        "a traced result lies where its eager twin does, and a refusal is \
+         the same message"
+        (Gen.with_pp
+           (fun ppf (k, wx, wy) ->
+             Format.fprintf ppf "%s, x at %a, y at %a"
+               (fst (List.nth binaries k))
+               pp_where wx pp_where wy)
+           Gen.(triple (int_range 0 (List.length binaries - 1)) where where))
+        law_forms;
+      test "a product cut unlike raises one message eagerly and traced"
+        (fun () ->
+          let value = Nx.reshape [| 4; 4 |] (Nx.arange f32 0 16 1) in
+          let x = Nx.place (Mem4.split ~axis:1) value in
+          let y = Nx.place (Mem4.split ~axis:1) value in
+          let refusal =
+            Invalid_argument
+              "Nx.matmul: operand 1 lies at split ~axis:1 [m0; m1; m2; m3] \
+               and is read at split ~axis:0 [m0; m1; m2; m3]; Nx.place \
+               (Placement.split ~axis:0 s) y"
+          in
+          raises ~msg:"eager" refusal (fun () -> Nx.matmul x y);
+          raises ~msg:"traced" refusal (fun () ->
+              traced_placement Nx.matmul x y));
+    ]
+
 let () =
   exit
     (run "nx interp"
-       [ rule; laws; fibers; nesting; memory; interpreters; domains; twins ])
+       [
+         rule;
+         laws;
+         fibers;
+         nesting;
+         memory;
+         interpreters;
+         domains;
+         twins;
+         forms;
+       ])

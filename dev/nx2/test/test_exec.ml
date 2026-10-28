@@ -1140,16 +1140,28 @@ let constants =
               (Atomic.get Factoring.factored);
             equal ~msg:(name ^ ": bits") (array bits) want y
           in
-          (* Beside a cut [b], [a] lies whole on each device, which factors
-             it. *)
+          (* Beside [b] on two devices, whole or cut, [a] lies whole on
+             each, which factors it. A solve reads [b]'s matrices whole, so a
+             [b] cut along one of their axes raises. *)
+          let both = Nx.place Factor2.on data in
           let rows = Nx.place (Factor2.split ~axis:0) data in
           let columns = Nx.place (Factor2.split ~axis:1) data in
           check "solve" ~factored:1 (placed solve) solve one;
-          check "solve, rows cut" ~factored:2 (placed solve) solve rows;
-          check "solve, columns cut" ~factored:2 (placed solve) solve columns;
+          check "solve, on two devices" ~factored:2 (placed solve) solve both;
           check "lstsq" ~factored:1 (placed lstsq) lstsq one;
+          check "lstsq, on two devices" ~factored:2 (placed lstsq) lstsq both;
           check "lstsq, rows cut" ~factored:2 (placed lstsq) lstsq rows;
-          check "lstsq, columns cut" ~factored:2 (placed lstsq) lstsq columns);
+          check "lstsq, columns cut" ~factored:2 (placed lstsq) lstsq columns;
+          List.iter
+            (fun (axis, b) ->
+              raises
+                (Invalid_argument
+                   (Printf.sprintf
+                      "Nx.solve: operand 1 lies at split ~axis:%d [m2; m3] and \
+                       is read at on [m2; m3]; Nx.place (Placement.on s) y"
+                      axis))
+                (fun () -> solve (a ()) b))
+            [ (0, rows); (1, columns) ]);
       test "placing a constant computes it at the placement, each time"
         (fun () ->
           let z = Nx.zeros D.Float32 [| 2 |] in
@@ -1725,19 +1737,40 @@ let law_placed (Case (k, s, data, w, op)) =
      unspecified; other operations keep a complex number's parts apart. *)
   let parts = match op with Fold _ -> false | _ -> true in
   let expected = shown ~parts k (apply k op x) in
+  (* A slice that drops the first element of a cut axis reads it whole,
+     which raises where the value has elements; read at [q], that cut
+     undone, as the refusal writes, it computes. *)
+  let last = Array.length s - 1 in
+  let refused =
+    op = Moved Sliced && List.mem last cut && not (Array.mem 0 s)
+  in
+  cover "a slice that reads a cut axis whole" refused;
+  let run p q =
+    let y = Nx.place p x in
+    if not refused then shown ~parts k (apply k op y)
+    else begin
+      let prefix =
+        Format.asprintf
+          "Nx.slice: operand 0 lies at %a and is read at %a; Nx.place ("
+          Nx.Placement.pp p Nx.Placement.pp q
+      in
+      raises_match (Exn.invalid_arg ~substring:prefix) (fun () -> apply k op y);
+      shown ~parts k (apply k op (Nx.place q y))
+    end
+  in
   let actual =
     match w with
-    | Split3 a -> shown ~parts k (apply k op (Nx.place (Set3.split ~axis:a) x))
-    | Split4 a -> shown ~parts k (apply k op (Nx.place (Set4.split ~axis:a) x))
+    | Split3 a -> run (Set3.split ~axis:a) Set3.on
+    | Split4 a -> run (Set4.split ~axis:a) Set4.on
     | Cuts (a, b) ->
         let cuts =
           if a = b then [ (a, [ "a"; "b" ]) ]
           else [ (a, [ "a" ]); (b, [ "b" ]) ]
         in
-        shown ~parts k (apply k op (Nx.place (Nx.Placement.mesh mesh4 cuts) x))
-    | Minor a ->
-        shown ~parts k
-          (apply k op (Nx.place (Nx.Placement.mesh mesh4 [ (a, [ "b" ]) ]) x))
+        let kept = List.filter (fun (c, _) -> c <> last) cuts in
+        let q = if kept = [] then Set4.on else Nx.Placement.mesh mesh4 kept in
+        run (Nx.Placement.mesh mesh4 cuts) q
+    | Minor a -> run (Nx.Placement.mesh mesh4 [ (a, [ "b" ]) ]) Set4.on
   in
   equal (array string) expected actual
 
@@ -2182,11 +2215,35 @@ let law_reduced (Reduced_case (k, s, data, w, axes, r)) =
   cover "a float sum, product or moments over a tile of one term"
     (over && rounds k.rdtype r
     && List.exists one_term (tiles_of (List.sort compare cut_along) x));
+  (* Without an axis, a position is read over [x] reshaped to one axis: it
+     raises where that reshape does, naming itself. *)
+  let flat =
+    match (r, axes) with
+    | (Argmax | Argmin), None ->
+        let n = Array.fold_left ( * ) 1 s in
+        let refusal y =
+          match Nx.reshape [| n |] y with
+          | _ -> None
+          | exception Invalid_argument m -> Some m
+        in
+        at_where w { over = refusal } x
+    | _ -> None
+  in
+  cover "a position among all elements whose reshape raises" (flat <> None);
   if rounds k.rdtype r then float_law k.rshow w r axes x
   else
-    equal string
-      (printed (reduce k.rshow r axes x))
-      (printed (reduce_at w k.rshow r axes x))
+    let want =
+      match flat with
+      | None -> printed (reduce k.rshow r axes x)
+      | Some m ->
+          let by = "Nx.reshape: " in
+          let n = String.length by in
+          equal bool ~msg:"the reshape's refusal" true
+            (String.starts_with ~prefix:by m);
+          let rest = String.sub m n (String.length m - n) in
+          "raises Nx." ^ reduction_name r ^ ": " ^ rest
+    in
+    equal string want (printed (reduce_at w k.rshow r axes x))
 
 (* nx.cpu, counting its loop positions, over three memory devices. *)
 module Count3 = (val Nx.devices ~kernels:(module C) [ m 0; m 1; m 2 ])
@@ -2220,10 +2277,10 @@ let test_partials_move () =
 
 (* The minor words a float32 sum along an axis cut across three devices
    allocates: each device's partial, their stack, its move, the reduction
-   of it, and the move of the parts to the result. It counts 14,299 words
-   alone and 14,286 to 14,289 after the tests before it in the process,
+   of it, and the move of the parts to the result. It counts 12,327 words
+   alone and 12,314 to 12,315 after the tests before it in the process,
    which move it by up to 13 words, so it is stated rounded to the hundred,
-   36 words from the nearest edge of the rounding. *)
+   23 words from the nearest edge of the rounding. *)
 let test_closing_words () =
   let x =
     Nx.place (Set3.split ~axis:0)
@@ -2232,7 +2289,7 @@ let test_closing_words () =
   in
   let w = words (fun () -> Nx.sum ~axes:[ 0 ] x) in
   let hundreds = Float.round (w /. 100.) *. 100. in
-  expect (Printf.sprintf "%.0f words" hundreds) @@ __POS_OF__ {|14300 words|}
+  expect (Printf.sprintf "%.0f words" hundreds) @@ __POS_OF__ {|12300 words|}
 
 (* An extreme's position over two axes of a value cut along the second
    over three devices: the first tile, columns 0 and 1, holds an extreme at
@@ -3085,8 +3142,21 @@ let law_cut ~pairs (module S : Sets) c =
           (mesh [ (0, [ "a" ]); (pb p, [ "b" ]) ])
           (result [ (0, [ "a" ]) ])
     | Batch_rows p ->
+        (* The minor mesh axis cuts [a]'s rows and [b]'s pair: [b] is read
+           at the batch's cut alone, which it holds where its pair has no
+           element; placed there, each device contracts its window. *)
         let batch_rows = [ (0, [ "a" ]); (1, [ "b" ]) ] in
-        at (mesh batch_rows) (mesh [ (pb p, [ "b" ]) ]) (result batch_rows)
+        let lies = mesh [ (pb p, [ "b" ]) ] and read = mesh [ (0, [ "a" ]) ] in
+        if kc > 0 then
+          raises
+            (Invalid_argument
+               (Format.asprintf
+                  "test: operand 1 lies at %a and is read at %a; Nx.place \
+                   (Placement.mesh (Mesh.v s [ (\"g0\", 2); (\"g1\", 2) ]) \
+                   [ (0, [ \"g0\" ]) ]) y"
+                  Nx.Placement.pp lies Nx.Placement.pp read))
+            (fun () -> at (mesh batch_rows) lies (result batch_rows));
+        at (mesh batch_rows) read (result batch_rows)
     | Pairs ->
         at
           (mesh [ (pa 0, [ "a" ]); (pa 1, [ "b" ]) ])
@@ -3096,8 +3166,8 @@ let law_cut ~pairs (module S : Sets) c =
   let got = actual () in
   match (c.ccut, k.floats) with
   | Batch_rows _, Some f ->
-      (* [b] is read whole: each device contracts its window of the
-         result. *)
+      (* [b] is read whole along its pair: each device contracts its window
+         of the result. *)
       equal (array string) ~msg:"a second run" (bits' got) (bits' (actual ()));
       bounded f ~complex:(D.is D.Complex k.cdtype) ~rows:c.rows ~cols:c.cols
         ~k:terms (elements a) (elements b)

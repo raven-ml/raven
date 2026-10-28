@@ -194,11 +194,19 @@ let test_rules () =
            }));
   equal ~msg:"kernel calls" int 0 (C.calls ())
 
+(* A load reads its padded axis whole, so a value cut along it raises with
+   the placement to write; placed there, it loads as on one device. *)
 let test_split () =
   let a = f32 [| 1.; 2.; 3.; 4. |] in
   let p = pad ~lo:[| 1 |] ~hi:[| 1 |] [| window 3 1 |] in
   let one = sum_of (Nx.place Count.on (host a)) ~fill:0. p in
-  let two = sum_of (Nx.place (Count2.split ~axis:0) (host a)) ~fill:0. p in
+  let split = Nx.place (Count2.split ~axis:0) (host a) in
+  raises
+    (Invalid_argument
+       "t: operand 0 lies at split ~axis:0 [m0; m1] and is read at on [m0; \
+        m1]; Nx.place (Placement.on s) x")
+    (fun () -> sum_of split ~fill:0. p);
+  let two = sum_of (Nx.place Count2.on split) ~fill:0. p in
   equal ~msg:"as on one device" (array float_exact) (read one) (read two)
 
 (* A load and a fold keep the cut of an axis they neither pad nor window, as
@@ -356,7 +364,7 @@ let () =
              test "a fold keeps one -0 tap's sign and is +0 with none"
                test_signed_zeros;
              test "the rules raise before any kernel" test_rules;
-             test "a split value loads as on one device" test_split;
+             test "a split value along its padded axis raises" test_split;
              test "a load and a fold keep the cut of an axis they do not pad"
                test_split_kept;
              prop "a padded load is the padded operand's windows" padded_case

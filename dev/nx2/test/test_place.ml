@@ -389,7 +389,9 @@ let refusals =
    a cut of an unpaired axis [a] of [s], of more than one element after a
    positive product, in [t] tiles, on the result's axis of more than one
    element of that product, where [t] divides both extents: each window then
-   holds whole rows on both sides. Otherwise the result is whole along it. *)
+   holds whole rows on both sides. Otherwise it reads the value whole along
+   that axis, which raises where the value has elements, since a device then
+   needs rows it does not hold, and the result is whole along it. *)
 let before s a = Array.fold_left ( * ) 1 (Array.sub s 0 a)
 
 let lands s s' a t =
@@ -432,6 +434,23 @@ let reshaped s s' w =
       | None, None -> On)
   | Major x -> ( match lands s s' x 2 with Some x' -> Major x' | None -> On)
   | Minor y -> ( match lands s s' y 2 with Some y' -> Minor y' | None -> On)
+
+(* The placement a reshape of [s] to [s'] reads a value at [w] at: [w] with
+   each cut that keeps no axis undone. *)
+let read s s' w =
+  let kept a t = lands s s' a t <> None in
+  match w with
+  | Host | One | On -> w
+  | Split a -> if kept a 4 then w else On
+  | Cuts (x, y) when x = y -> if kept x 4 then w else On
+  | Cuts (x, y) -> (
+      match (kept x 2, kept y 2) with
+      | true, true -> w
+      | true, false -> Major x
+      | false, true -> Minor y
+      | false, false -> On)
+  | Major x -> if kept x 2 then w else On
+  | Minor y -> if kept y 2 then w else On
 
 (* A reshape of [s] to [s'] that merges or factors the axis [cut] of [s], past a
    unit axis or not, of a value laid out as [layout] at [w]; [wanted] is a
@@ -531,7 +550,7 @@ let law_reshape c =
   cover "a factoring past a unit axis keeps its cut"
     (kept && c.unit && not c.merge);
   cover "a cut of a strided source kept" (kept && c.layout <> Contiguous);
-  cover "tiles that divide the merged extent alone gather"
+  cover "tiles that divide the merged extent alone raise"
     (c.merge && c.w = Split c.cut
     &&
     match into with
@@ -543,8 +562,27 @@ let law_reshape c =
        (cuts c.w));
   cover "two cuts kept" (match w' with Cuts (x, y) -> x <> y | _ -> false);
   cover "no element" (Array.mem 0 c.s);
+  let r = read c.s c.s' c.w in
+  let refused = r <> c.w && not (Array.mem 0 c.s) in
+  cover "a cut kept beside one that raises"
+    (refused && match r with Major _ | Minor _ -> true | _ -> false);
+  cover "a cut that keeps no axis raises" refused;
   let a = source c.layout c.s in
   let x = Nx.place (on_mem c.w) (Nx.Repr.of_array Nx.Host.v a) in
+  let x =
+    if not refused then x
+    else begin
+      let prefix =
+        Format.asprintf
+          "Nx.reshape: operand 0 lies at %a and is read at %a; Nx.place ("
+          Nx.Placement.pp (on_mem c.w) Nx.Placement.pp (on_mem r)
+      in
+      raises_match
+        (Exn.invalid_arg ~substring:prefix)
+        (fun () -> Nx.reshape c.s' x);
+      Nx.place (on_mem r) x
+    end
+  in
   let y = Nx.reshape c.s' x in
   equal placement (on_mem w') (Option.get (Nx.placement y));
   holds ~dev:Nx_support.memory (A.to_array a) c.s' w' (V y)
@@ -589,21 +627,32 @@ let reshapes =
         reshape_case law_reshape;
       prop "a reshape of a value of every set is computed where it is wanted"
         reshape_case law_wanted;
+      (* A unit axis the result drops keeps no cut: a device past the first
+         tile holds none of its rows, so the reshape raises, and read where
+         it names, the result keeps the paired axes' cuts. *)
       cases "unit axes cut by a mesh pair with the result's in order"
-        ~name:(fun (s, w, s', _) ->
+        ~name:(fun (s, w, s', _, _) ->
           Format.asprintf "%a at %a to %a" pp_ints s pp_where w pp_ints s')
         [
-          ([| 1; 1 |], Cuts (0, 1), [| 1 |], Major 0);
-          ([| 1; 1 |], Cuts (0, 1), [| 1; 1; 1 |], Cuts (0, 1));
-          ([| 1; 8 |], Cuts (0, 1), [| 8 |], Minor 0);
-          ([| 1; 1; 4 |], Cuts (0, 1), [| 1; 4 |], Major 0);
+          ([| 1; 1 |], Cuts (0, 1), [| 1 |], Major 0, Major 0);
+          ([| 1; 1 |], Cuts (0, 1), [| 1; 1; 1 |], Cuts (0, 1), Cuts (0, 1));
+          ([| 1; 8 |], Cuts (0, 1), [| 8 |], Minor 1, Minor 0);
+          ([| 1; 1; 4 |], Cuts (0, 1), [| 1; 4 |], Major 0, Major 0);
         ]
-        (fun (s, w, s', w') ->
+        (fun (s, w, s', r, w') ->
           let x =
             Nx.Repr.of_array Nx.Host.v
               (A.of_array A.Dtype.Float32 (Iarray.of_array s) (floats s))
           in
-          let y = Nx.reshape s' (Nx.place (on_mem w) x) in
+          let x = Nx.place (on_mem w) x in
+          if r <> w then
+            raises_match
+              (Exn.invalid_arg
+                 ~substring:
+                   (Format.asprintf "is read at %a;" Nx.Placement.pp
+                      (on_mem r)))
+              (fun () -> Nx.reshape s' x);
+          let y = Nx.reshape s' (Nx.place (on_mem r) x) in
           equal placement (on_mem w') (Option.get (Nx.placement y));
           holds ~dev:Nx_support.memory (floats s) s' w' (V y));
       test "blocks that four devices divide stay cut when merged" (fun () ->
@@ -612,13 +661,13 @@ let reshapes =
           holds ~dev:Nx_support.memory
             (floats [| 2; 92; 32 |])
             [| 2; 2944 |] (Split 1) (V y));
-      test "2880 elements of 90 blocks over four devices are read whole"
-        (fun () ->
-          let p, y = blocks 90 in
-          equal placement Mem.on p;
-          holds ~dev:Nx_support.memory
-            (floats [| 2; 90; 32 |])
-            [| 2; 2880 |] On (V y));
+      test "2880 elements of 90 blocks over four devices raise" (fun () ->
+          raises
+            (Invalid_argument
+               "Nx.reshape: operand 0 lies at split ~axis:1 [m0; m1; m2; m3] \
+                and is read at on [m0; m1; m2; m3]; Nx.place (Placement.on s) \
+                x")
+            (fun () -> blocks 90));
     ]
 
 (* Leading axes: a placement's cuts move up by one with an axis in front, and

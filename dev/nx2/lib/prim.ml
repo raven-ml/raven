@@ -1189,20 +1189,21 @@ let contract_rule ~batch ~contracting ~segments sa sb init sca scb =
   let ra = Array.length sa in
   let a = operand fst ra (lead + nb) free_a in
   let b = operand snd (Array.length sb) (lead + ra - nc) free_b in
-  (* A scale's axis that becomes the result's reads as the operand's where
-     its extent is the operand's, and regroups into it where a block holds
-     more elements, so that a cut keeps whole blocks; one of one block, and
-     every other, is read whole: partials take the blocks each part of a
-     tile spans ({!Partial}). *)
+  (* A scale's axis reads as the operand's where its extent is the
+     operand's. Where a block holds more elements, one that becomes the
+     result's regroups into it, and one of a contracting pair holds blocks of
+     its factor, so that a cut that keeps whole blocks is read where it lies
+     and partials take the blocks each part of a tile spans ({!Partial}). One
+     of one block, and every other, is read whole. *)
   let scaled row s ss =
     Array.mapi
       (fun d e ->
         match (row.(d) : Route.axis) with
-        | Becomes j ->
-            if e = s.(d) then row.(d)
-            else if e <= 1 then Whole
-            else Regroups { axis = j; extent = s.(d) }
-        | Whole | Reduced _ | Scanned _ | Regroups _ -> Whole)
+        | (Becomes _ | Reduced _) when e = s.(d) -> row.(d)
+        | (Becomes _ | Reduced _) when e <= 1 -> Whole
+        | Becomes j -> Regroups { axis = j; extent = s.(d) }
+        | Reduced p -> Blocks { factor = p; extent = s.(d) }
+        | Whole | Blocks _ | Scanned _ | Regroups _ -> Whole)
       ss
   in
   let some f o = match o with Some x -> [| f x |] | None -> [||] in
@@ -1279,13 +1280,16 @@ let rule : type r. r prim -> Route.rule =
 
 let uncut p = not (Grid.is_cut (Devices.grid p))
 
-(* Where operands lie together ({!Route.common}): [acc] for those before one
-   at [q], then that one. *)
-let join (acc : unit Route.common) q =
+(* Where operands lie together: all of every set, all at one placement
+   physically but those of every set, or otherwise. *)
+type together = Every_set | One of unit Devices.placement | Apart
+
+(* [acc] for the operands before one at [q], then that one. *)
+let join acc q =
   match acc with
-  | Route.Other -> acc
-  | Route.Every_set -> Route.One q
-  | Route.One p -> if p == q then acc else Route.Other
+  | Apart -> acc
+  | Every_set -> One q
+  | One p -> if p == q then acc else Apart
 
 (* [join] of [x], whose placement may be none. It allocates nothing but the
    first placement found. *)
@@ -1313,12 +1317,12 @@ let local_at : type r. r prim -> unit Route.common = function
    the results lie there whatever the rule, so neither [op]'s rule nor its
    operands' shapes are computed. *)
 let route_of (type r) ~by (op : r prim) : unit Route.t option =
-  match fold (fun () acc x -> joined acc x) () Route.Every_set op with
-  | Route.Every_set -> None
-  | Route.One p when uncut p ->
+  match fold (fun () acc x -> joined acc x) () Every_set op with
+  | Every_set -> None
+  | One p when uncut p ->
       let n = fold (fun () n _ -> n + 1) () 0 op in
       Some { Route.operands = Array.make n p; result = p; compute = Windows }
-  | Route.One _ | Route.Other ->
+  | One _ | Apart ->
       let n = fold (fun () n _ -> n + 1) () 0 op in
       let ps = Array.make n None and shapes = Array.make n [||] in
       iteri

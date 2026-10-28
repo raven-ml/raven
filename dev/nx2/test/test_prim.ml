@@ -697,10 +697,17 @@ let partials =
           ("blocks of a second pair", [| 8; 4 |], Some [| 8; 2; 3 |], Partials);
         ]
         (fun (_, ks, blocks, want) -> equal compute want (route ks blocks));
-      cases "a segmented contraction cut along its pairs"
+      (* Segments are computed uncut, so their pairs are read whole, which
+         a device holding its tile of them does not hold. *)
+      cases "a segmented contraction cut along its pairs raises"
         ~name:(fun (n, _) -> n)
         [ ("rows", `Rows); ("contracting", `Contracting) ]
-        (fun (_, g) -> equal compute Windows (route ~segments:g [| 64 |] None));
+        (fun (_, g) ->
+          raises
+            (Invalid_argument
+               "t: operand 0 lies at split ~axis:1 [m0; m1] and is read at on \
+                [m0; m1]; Nx.place (Placement.on s) x")
+            (fun () -> route ~segments:g [| 64 |] None));
     ]
 
 (* One-node programs *)

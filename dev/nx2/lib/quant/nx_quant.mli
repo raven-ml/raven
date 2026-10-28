@@ -18,19 +18,19 @@
     tensor [t], [mxfp4_blocks t] for an [MXFP4] one, whose shape is the weight's
     with its last axis in bytes.
 
-    {b Placement.} A weight's parts may lie at any placement of their set; its
-    values do not depend on where they lie, and {!apply}'s and
-    {!apply_experts}' results are within {!Nx.contract}'s bound wherever they
-    lie, the same on every run for a given placement. Cut along [n]
-    or a leading axis, each device decodes its own rows. Cut along [k] over [t]
-    devices, a weight with values and [b] blocks along [k] decodes on its own
-    devices where [t] divides [b]: {!dequant}'s result is cut along [k] as the
-    parts are, and {!apply} sums the devices' partial products. Any other cut
-    along [k] moves the weight's packed bytes between the devices of its set at
-    each {!dequant} and {!apply}, never its decoded values; with [b] at least 2,
-    each device gathers all of [k] and decodes it, and {!dequant}'s result lies
-    whole on each. A layer cut along its inputs, as a row-parallel layer is,
-    then moves its weight between devices at every step.
+    {b Placement.} A weight's parts may lie at any placement of their set,
+    and each function computes where they lie and moves none of them
+    ({!Nx.section-routing}). Its values do not depend on where they lie, and
+    {!apply}'s and {!apply_experts}' results are within {!Nx.contract}'s
+    bound, the same on every run for a given placement. Cut along [n] or a
+    leading axis, each device decodes its own rows. Cut along [k] over [t]
+    devices, a weight with values and [b] blocks along [k] lies on its
+    blocks' boundaries where [t] divides [b]: each device decodes its own
+    blocks, {!dequant}'s result is cut along [k] as the parts are, and
+    {!apply} sums the devices' partial products. Any other cut along [k]
+    splits a block, which is read whole, so {!dequant} and {!apply} raise as
+    the operation reading it does, naming the {!Nx.place} that puts it whole
+    on each device; a split whose tiles divide the blocks computes too.
 
     {!take} gathers before decoding, so a caller reads a large table's rows
     without decoding the table. Routing positions to a stack of weights, as a
@@ -201,12 +201,12 @@ val apply_experts :
     expert: they do not depend on the other positions' experts, and may
     differ from {!apply}'s. Split along [n]
     ({!Nx.Placement.split} [~axis:1]), each device sums its own columns over
-    every position. Cut
-    along its experts, or along [k] where its tiles do not divide the
-    blocks, the weight's packed bytes move to each device. Cut along [k]
-    where they do, an [Mxfp4] weight read where it lies moves its packed
-    bytes, and a decoded one decodes its own blocks and moves its decoded
-    values. The sum needs kernels that compute a segmented contraction,
+    every position. The sum reads the experts whole, and [k] of each matrix
+    it takes, and routing the positions reads [ids] and [x] whole: a weight
+    cut along its experts or [k], and [ids] or [x] cut across devices, raise
+    as the operation reading them does ({!Nx.section-routing}).
+    [Nx_quant.place (Nx.Placement.on s) w] puts every expert on every
+    device. The sum needs kernels that compute a segmented contraction,
     block-scaled for [Mxfp4], as nx.cpu's do.
 
     Raises [Invalid_argument] if the sum lies on a set whose kernels decline
@@ -222,8 +222,8 @@ val take : axis:int -> 'd Nx.int64_t -> 'd t -> 'd t
     position out of range gathers zero bytes, which decode to zeros.
 
     Raises [Invalid_argument] if [axis] is [w]'s last axis, negative or not,
-    since a gather along it would cut blocks, or if [axis] is not an axis of
-    [w]. *)
+    since a gather along it would cut blocks, if [axis] is not an axis of
+    [w], and as {!Nx.take} does where [w] is cut along [axis]. *)
 
 (** {1:structure Structure} *)
 

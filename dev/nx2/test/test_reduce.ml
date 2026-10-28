@@ -1124,6 +1124,8 @@ type nan_op = {
   rounds : bool;
       (* Computed over a cut axis by partials that round, which state no
          NaN's bits. *)
+  whole : bool;
+      (* Reads its axis whole, so that over a cut axis it raises. *)
   run : 'v 's 'd. ('v, 's, 'd) Nx.t -> string array;
 }
 
@@ -1183,6 +1185,7 @@ let nan_ops =
     {
       oname = "sum";
       rounds = true;
+      whole = false;
       result = Folded;
       floats = false;
       apart = true;
@@ -1191,6 +1194,7 @@ let nan_ops =
     {
       oname = "prod";
       rounds = true;
+      whole = false;
       result = Folded;
       floats = false;
       apart = false;
@@ -1199,6 +1203,7 @@ let nan_ops =
     {
       oname = "max";
       rounds = false;
+      whole = false;
       result = Folded;
       floats = false;
       apart = false;
@@ -1207,6 +1212,7 @@ let nan_ops =
     {
       oname = "min";
       rounds = false;
+      whole = false;
       result = Folded;
       floats = false;
       apart = false;
@@ -1215,6 +1221,7 @@ let nan_ops =
     {
       oname = "cumsum";
       rounds = true;
+      whole = false;
       result = Running;
       floats = false;
       apart = true;
@@ -1223,6 +1230,7 @@ let nan_ops =
     {
       oname = "cumprod";
       rounds = true;
+      whole = false;
       result = Running;
       floats = false;
       apart = false;
@@ -1231,6 +1239,7 @@ let nan_ops =
     {
       oname = "cummax";
       rounds = false;
+      whole = false;
       result = Running;
       floats = false;
       apart = false;
@@ -1239,6 +1248,7 @@ let nan_ops =
     {
       oname = "cummin";
       rounds = false;
+      whole = false;
       result = Running;
       floats = false;
       apart = false;
@@ -1247,6 +1257,7 @@ let nan_ops =
     {
       oname = "argmax";
       rounds = false;
+      whole = false;
       result = Position;
       floats = false;
       apart = false;
@@ -1255,6 +1266,7 @@ let nan_ops =
     {
       oname = "argmin";
       rounds = false;
+      whole = false;
       result = Position;
       floats = false;
       apart = false;
@@ -1263,6 +1275,7 @@ let nan_ops =
     {
       oname = "Arg Max's extreme";
       rounds = false;
+      whole = false;
       result = Folded;
       floats = false;
       apart = false;
@@ -1271,6 +1284,7 @@ let nan_ops =
     {
       oname = "Arg Min's extreme";
       rounds = false;
+      whole = false;
       result = Folded;
       floats = false;
       apart = false;
@@ -1279,6 +1293,7 @@ let nan_ops =
     {
       oname = "running Arg Max's extreme";
       rounds = false;
+      whole = false;
       result = Running;
       floats = false;
       apart = false;
@@ -1288,6 +1303,7 @@ let nan_ops =
     {
       oname = "running Arg Min's extreme";
       rounds = false;
+      whole = false;
       result = Running;
       floats = false;
       apart = false;
@@ -1297,6 +1313,7 @@ let nan_ops =
     {
       oname = "mean";
       rounds = true;
+      whole = false;
       result = Folded;
       floats = true;
       apart = false;
@@ -1305,6 +1322,7 @@ let nan_ops =
     {
       oname = "var";
       rounds = true;
+      whole = false;
       result = Folded;
       floats = true;
       apart = false;
@@ -1313,6 +1331,7 @@ let nan_ops =
     {
       oname = "std";
       rounds = true;
+      whole = false;
       result = Folded;
       floats = true;
       apart = false;
@@ -1321,6 +1340,7 @@ let nan_ops =
     {
       oname = "logsumexp";
       rounds = true;
+      whole = false;
       result = Folded;
       floats = true;
       apart = false;
@@ -1329,6 +1349,7 @@ let nan_ops =
     {
       oname = "running mean";
       rounds = false;
+      whole = true;
       result = Running;
       floats = true;
       apart = false;
@@ -1339,6 +1360,7 @@ let nan_ops =
     {
       oname = "running variance";
       rounds = false;
+      whole = true;
       result = Running;
       floats = true;
       apart = false;
@@ -1469,7 +1491,13 @@ let law_nans (Nan_case { dt; rows; n; bytes }) =
         let want = nan_want o rows n nan host in
         List.iter
           (fun p ->
-            if not (p.cut && o.rounds) then
+            if p.cut && o.whole then
+              raises ~msg:(o.oname ^ ", " ^ p.pname)
+                (Invalid_argument
+                   "t: operand 0 lies at split ~axis:1 [m0; m1; m3] and is \
+                    read at on [m0; m1; m3]; Nx.place (Placement.on s) x")
+                (fun () -> p.go o a)
+            else if not (p.cut && o.rounds) then
               equal ~msg:(o.oname ^ ", " ^ p.pname) (array (array string))
                 want (blinded o dt (p.go o a)))
           placings
@@ -1537,7 +1565,13 @@ let test_carried_cut () =
   let c = value (A.of_array D.Int32 [| 1; 3 |] [| 100l; -7l; 2l |]) in
   let want = A.to_array (host_array (carried x c)) in
   let cut = Nx.place (Cpu3.split ~axis:0) x and on = Nx.place Cpu3.on c in
-  equal (array int32) want (A.to_array (host_array (carried cut on)))
+  raises
+    (Invalid_argument
+       "t: operand 0 lies at split ~axis:0 [m0; m1; m3] and is read at on [m0; \
+        m1; m3]; Nx.place (Placement.on s) x")
+    (fun () -> carried cut on);
+  let whole = Nx.place Cpu3.on cut in
+  equal (array int32) want (A.to_array (host_array (carried whole on)))
 
 (* Nx.logcumsumexp: within nx_cpu.mli's bound of a float64
    log-sum-exp over each prefix, specials and prefixes bit for bit, a NaN as
@@ -1636,8 +1670,11 @@ let law_lcse (Lcse_case (dt, s, axis, strided, xs)) =
 
 (* The logcumsumexp of a prefix of the axis is the prefix of the
    logcumsumexp, bit for bit or both NaN; over the elements, it is the
-   logcumsumexp of the elements in C order. Cut over three devices along any
-   axis, it has the host's bits. *)
+   logcumsumexp of the elements in C order. Cut over three devices along
+   another axis than the one it scans, it has the host's bits. It reads the
+   axis it scans whole, the elements' order included, so a cut along it
+   raises where the value has elements, and placed whole as the refusal
+   writes, it has the host's bits. *)
 let law_lcse_bits ((Lcse_case (dt, s, axis, strided, xs)), cut, keep) =
   let x = transposed value strided (A.of_array dt (Iarray.of_array s) xs) in
   let r = Array.length s in
@@ -1662,7 +1699,19 @@ let law_lcse_bits ((Lcse_case (dt, s, axis, strided, xs)), cut, keep) =
   let c = cut mod r in
   cover "cut along the scanned axis" (axis = Some c);
   cover "cut along another axis" (axis <> None && axis <> Some c);
+  cover "cut, in C order" (axis = None && Array.length xs > 0);
   let placed = Nx.place (Cpu3.split ~axis:c) x in
+  let placed =
+    if (axis = None || axis = Some c) && Array.length xs > 0 then begin
+      raises_match
+        (Exn.invalid_arg
+           ~substring:
+             "and is read at on [m0; m1; m3]; Nx.place (Placement.on s) x")
+        (fun () -> Nx.logcumsumexp ?axis placed);
+      Nx.place Cpu3.on placed
+    end
+    else placed
+  in
   equal ~msg:"cut over three devices" blind_bits (bits_of y)
     (bits_of (Nx.logcumsumexp ?axis placed))
 
@@ -1744,7 +1793,9 @@ let reductions_group =
       test "integer means of extremes and empty axes" test_int_mean;
       test "a complex cumsum adds the parts, a narrow float's rounds once"
         test_scan_parts;
-      test "a carried scan over a value cut along its axis is the whole's"
+      test
+        "a carried scan over a value cut along its axis raises, and placed \
+         whole is the whole's"
         test_carried_cut;
       test "Logsumexp, Moments and Arg's rules raise naming the caller"
         test_optional_rules;

@@ -552,7 +552,7 @@ let keeps (rule : Route.rule) a =
   | Axes t | Into t ->
       let into : Route.axis -> bool = function
         | Becomes b | Scanned b | Regroups { axis = b; _ } -> b = a
-        | Whole | Reduced _ -> false
+        | Whole | Reduced _ | Blocks _ -> false
       in
       not (Array.exists (Array.exists into) t)
 

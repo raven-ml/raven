@@ -1027,13 +1027,21 @@ let placements =
           equal (array float_exact)
             (read (Nx.contract Nx.float32 p a b))
             (read y));
-      test "operands split over two devices give the host's result" (fun () ->
+      (* Rows and columns cut over the same two devices would need four
+         windows of the result: the second operand is read whole, which its
+         devices do not hold. *)
+      test "rows and columns split over the same devices raise" (fun () ->
           let a = x [| 4; 3 |] and b = x [| 3; 2 |] in
           let a' = Nx.place (S2.split ~axis:0) a in
           let b' = Nx.place (S2.split ~axis:1) b in
+          raises
+            (Invalid_argument
+               "Nx.contract: operand 1 lies at split ~axis:1 [m0; m1] and is \
+                read at on [m0; m1]; Nx.place (Placement.on s) y")
+            (fun () -> Nx.contract Nx.float32 p a' b');
           equal (array float_exact)
             (read (Nx.contract Nx.float32 p a b))
-            (read (Nx.contract Nx.float32 p a' b')));
+            (read (Nx.contract Nx.float32 p a' (Nx.place S2.on b'))));
       test "a split operand's rows keep their cut" (fun () ->
           let a = x [| 16; 3 |] and b = x [| 3; 8 |] in
           let split = S2.split ~axis:0 in
@@ -1062,8 +1070,10 @@ let placements =
           let on k =
             Nx.place (Nx.Placement.device S2.v (Nx_support.memory k))
           in
-          raises_match
-            (Exn.invalid_arg ~substring:"alone; place one beside the other")
+          raises
+            (Invalid_argument
+               "Nx.contract: operand 1 lies at m1 and is read at m0; Nx.place \
+                (Placement.device s m0) y")
             (fun () -> Nx.contract Nx.float32 p (on 0 a) (on 1 b)));
     ]
 
@@ -1953,21 +1963,31 @@ module Scaled = struct
             let y = placed S2.on (b_cut (S2.split ~axis:0)) c in
             equal bool ~msg:"the result's columns are cut" true
               (Nx.Placement.equal (S2.split ~axis:1) y));
-        test "a cut inside b's blocks of columns is undone" (fun () ->
+        (* Two columns per device cut b's scale, one value per four
+           columns, inside its blocks: b's columns are read whole. *)
+        test "a cut inside b's blocks of columns raises" (fun () ->
             let c = mx ~m:3 ~k:64 ~n:8 ~per:4 () in
-            let y = placed S4.on (b_cut (S4.split ~axis:0)) c in
-            equal bool ~msg:"the result's columns are cut" false
-              (Nx.Placement.equal (S4.split ~axis:1) y));
+            raises
+              (Invalid_argument
+                 "t: operand 1 lies at split ~axis:1 [m0; m1; m2; m3] and is \
+                  read at on [m0; m1; m2; m3]; Nx.place (Placement.on s) y")
+              (fun () -> placed S4.on (b_cut (S4.split ~axis:0)) c));
         test "a cut over a's rows at its blocks gives exact sums"
           (fun () ->
             let c = mx ~rows:true ~m:4 ~k:32 ~n:2 ~per:1 () in
             let y = placed S2.on (a_cut (S2.split ~axis:0)) c in
             equal bool ~msg:"the result's rows are cut" true
               (Nx.Placement.equal (S2.split ~axis:0) y));
-        test "segmented rows cut over devices give exact sums" (fun () ->
+        (* Segments are computed uncut: their rows are read whole. *)
+        test "segmented rows cut over devices raise" (fun () ->
             let segs = Rows [| 0L; 3L; 3L; 6L |] in
             let c = mx ~segs ~g:3 ~m:6 ~k:32 ~n:4 ~per:2 () in
-            ignore (placed S2.on (a_cut ~scale:false (S2.split ~axis:0)) c));
+            raises
+              (Invalid_argument
+                 "t: operand 0 lies at split ~axis:0 [m0; m1] and is read at \
+                  on [m0; m1]; Nx.place (Placement.on s) x")
+              (fun () ->
+                placed S2.on (a_cut ~scale:false (S2.split ~axis:0)) c));
       ]
 
   (* An output of no products is [init] as the accumulator holds it, rounded
@@ -2112,13 +2132,24 @@ module Scaled = struct
         test "b's scale cut along k as its weight gives one device's bits"
           (fun () ->
             along ~scales:true (module S2) (mx ~m:2 ~k:8256 ~n:2 ~per:1 ()));
-        test "groups of a cut contracted axis give one device's bits" (fun () ->
+        (* A segmented contraction reads its contracting pairs whole. *)
+        test "groups of a cut contracted axis raise" (fun () ->
             let segs = Contracting [| 0L; 40L; 96L |] in
-            along (module S2) (mx ~segs ~g:2 ~m:2 ~k:96 ~n:2 ~per:1 ()));
-        test "rows by groups over a cut contracted axis give one device's bits"
-          (fun () ->
+            raises
+              (Invalid_argument
+                 "t: operand 0 lies at split ~axis:1 [m0; m1] and is read at \
+                  on [m0; m1]; Nx.place (Placement.on s) x")
+              (fun () ->
+                along (module S2) (mx ~segs ~g:2 ~m:2 ~k:96 ~n:2 ~per:1 ())));
+        test "rows by groups over a cut contracted axis raise" (fun () ->
             let segs = Rows [| 0L; 1L; 4L |] in
-            along ~b:2 (module S2) (mx ~segs ~g:2 ~m:4 ~k:64 ~n:2 ~per:2 ()));
+            raises
+              (Invalid_argument
+                 "t: operand 0 lies at split ~axis:1 [m0; m1] and is read at \
+                  on [m0; m1]; Nx.place (Placement.on s) x")
+              (fun () ->
+                along ~b:2 (module S2)
+                  (mx ~segs ~g:2 ~m:4 ~k:64 ~n:2 ~per:2 ())));
       ]
 end
 

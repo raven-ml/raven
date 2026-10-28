@@ -10,7 +10,11 @@
     Nothing changes a value.
 
     A device set is a module: [module Gpu = (val Nx.devices [ d0; d1 ])] mints a
-    brand [Gpu.d], and values of two sets never meet in typed code. *)
+    brand [Gpu.d], and values of two sets never meet in typed code.
+
+    An operation computes where its operands lie and moves none of them:
+    {!place} moves a value, and an operation whose operands do not lie
+    together raises, naming the {!place} to write ({!section-routing}). *)
 
 (** {1:values Values}
 
@@ -446,7 +450,13 @@ val sync : ('v, 's, 'd) t -> unit
     A movement rearranges elements without computing on them. Each says whether
     it makes a {e view}, a value over its operand's memory that costs no copy.
     That is a cost, never part of the result's meaning: a value never changes,
-    so a view and a copy read the same. *)
+    so a view and a copy read the same.
+
+    Over a value cut across devices, a movement keeps the cut of an axis it
+    keeps in order, as a permutation, a broadcast that does not stretch the
+    axis and a slice of all of it do. A reshape keeps the cut of an axis it
+    factors or merges where the tiles divide both extents, each window then
+    holding whole rows. Any other axis it reads whole ({!section-routing}). *)
 
 val ndim : ('v, 's, 'd) t -> int
 (** [ndim x] is [x]'s number of axes. *)
@@ -786,6 +796,14 @@ val set : 'd index list -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     writes the positions where it holds. [v] is checked against its count
     only once the mask is read: a [v] that fits the selection but for that
     count raises with a donated mask consumed.
+
+    Where one entry selects by positions and every other is [A], [N] or a
+    range of its whole axis, the update is a {!scatter} along that axis.
+    Otherwise the positions of each [L], [T] and [D] entry are read
+    broadcast to the selection's shape, beside those of the entries before
+    it, at the union of their cuts in the order of [idx]
+    ({!section-routing}): a refusal names the first entry's positions as
+    operand [0], [x], and each later entry's as operand [1], [y].
 
     Raises [Invalid_argument] as {!slice} does, if [v] does not broadcast to
     the selection's shape, or if an [L] names one position twice, counting
@@ -1604,7 +1622,8 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     for {!cummax} and {!cummin}, it keeps the bits it has on one device;
     {!cumsum} and {!cumprod} of floats and complex numbers keep the bounds
     of a reduction of each result's terms. {!ewma} and {!logcumsumexp} read
-    their axis whole on each device.
+    their axis whole on each device, so a value cut along it raises
+    ({!section-routing}).
 
     A float result that a NaN reaches is a NaN; which NaN, its sign and its
     payload are unspecified. A complex number with a NaN part is a NaN to
@@ -1664,8 +1683,8 @@ val argmax : ?axis:int -> ?keepdims:bool -> ('v, 's, 'd) t -> 'd int64_t
 (** [argmax ~axis x] is the position along [axis] of the first element
     greatest as {!max} orders them: the first NaN where there is one, and
     [1] for [[-0.; 0.]]. Without [axis], the position in C order among all of
-    [x]'s elements, of rank [0], or every axis of extent [1] where
-    [keepdims]. Every dtype.
+    [x]'s elements, read as {!reshape} to one axis reads them, of rank [0],
+    or every axis of extent [1] where [keepdims]. Every dtype.
 
     Raises [Invalid_argument] naming itself for an axis outside [x]'s rank,
     or where the result has an element with no element to choose from: [x]
@@ -1776,12 +1795,11 @@ val ewma : ?axis:int -> alpha:float -> (float, 's, 'd) t -> (float, 's, 'd) t
     without [axis], of its elements in C order, in [x]'s shape.
 
     The average of a prefix of [x] is the prefix of its average, bit for
-    bit. Along an axis cut across devices, each device reads the axis
-    whole. Element [i] passes through at most [max(0, 2⌈log₂(i+1)⌉ - 1)]
-    compositions of the recurrence's affine maps [y ↦ a y + b], in [O(n)]
-    work for [n] elements. A NaN reaches every later element,
-    and an infinity as the recurrence carries it; a finite term whose weight
-    underflows to [0] drops out.
+    bit. Each device reads [axis] whole. Element [i] passes through at
+    most [max(0, 2⌈log₂(i+1)⌉ - 1)] compositions of the recurrence's affine
+    maps [y ↦ a y + b], in [O(n)] work for [n] elements. A NaN reaches every
+    later element, and an infinity as the recurrence carries it; a finite
+    term whose weight underflows to [0] drops out.
 
     Raises [Invalid_argument] naming itself unless [0 < alpha <= 1], or for
     an axis outside [x]'s rank. *)
@@ -1886,13 +1904,13 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
     result compute it together: each contracts the products its windows
     hold, and only these partial sums move, in the accumulator, stacked in
     C order of the windows' first indices and summed over the stack by the
-    kernels, then [init] added and the sum rounded once. Summed axes cut
-    otherwise are read whole on each device. Integer contractions keep the
-    bits they have on one device. A float or complex one may differ from it
-    within the bound {!contract} states, and is the same on every run for a
-    given placement and set of devices: float32 [[1e7; -1e7; 0.1; 0]] by
-    ones gives [0.] on one nx.cpu device and [0.1] cut two ways along its
-    summed axis. *)
+    kernels, then [init] added and the sum rounded once. An operand whole on
+    every device is read at the other's cut; summed axes cut otherwise raise
+    ({!section-routing}). Integer contractions keep the bits they have on
+    one device. A float or complex one may differ from it within the bound
+    {!contract} states, and is the same on every run for a given placement
+    and set of devices: float32 [[1e7; -1e7; 0.1; 0]] by ones gives [0.] on
+    one nx.cpu device and [0.1] cut two ways along its summed axis. *)
 
 val contract :
   ?sizes:(string * int) list ->
@@ -3397,6 +3415,35 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     Raises [Invalid_argument] if [ds] is empty or repeats a device, or if
     [kernels] does not compute on one of [ds]. *)
 
+(** {2:routing Routing}
+
+    Each device computes its window of an operation's result from the
+    windows of the operands it holds. The result lies at the union of the
+    operands' cuts, joined in operand order. A cut of an axis that becomes
+    a result axis cuts that axis over the same devices. A cut of an axis
+    read whole cuts nothing. A cut of an axis that a reduction or a
+    contraction sums makes the devices compute by partials where every
+    operand holding the axis is cut alike, and cuts nothing in the result;
+    one along a scan's axis stays in it. An operand whole on every device
+    is read by a view of each device's window.
+
+    An operation raises [Invalid_argument] where two operands cut one
+    result axis over other devices or tiles, where a device needs a window
+    of an operand it does not hold, and where operands lie alone on two
+    devices or on two sets. The message names the function, the operand,
+    numbered from [0] in the order {!Prim.t} lists them, where it lies,
+    where it is read, and the {!place} that puts it there: the set named
+    [s], a device by its name, a mesh's axes as ["g0"], ["g1"], …, in the
+    read placement's order, and the operands [x], [y], [z], then [x3],
+    [x4], …:
+
+    {v
+Nx.matmul: operand 1 lies at split ~axis:1 [CUDA:0; CUDA:1] and is read
+at split ~axis:0 [CUDA:0; CUDA:1]; Nx.place (Placement.split ~axis:0 s) y
+    v}
+
+    A traced operation raises it as its eager twin does ({!Prim.results}). *)
+
 val place : 'e Placement.t -> ('v, 's, 'd) t -> ('v, 's, 'e) t
 (** [place p x] is [x]'s elements at [p]. Each device of [p] holds its window
     over [x]'s own memory where [x] already lies there, or where the host
@@ -4812,10 +4859,11 @@ module Prim : sig
     'r t ->
     'r
   (** [results ~by m op] is [op]'s result, its value at position [k] made by
-      [m k f], [f] the form eager execution gives it; [()] for [Check].
+      [m k f], [f] the form eager execution gives it, at the placement its
+      route gives ({!section-routing}); [()] for [Check].
 
       Raises [Invalid_argument] naming [by], before [m] is called, where [op]'s
-      operands break its rule. *)
+      operands break its rule or its route, as eager execution raises. *)
 
   val iter_results : ('v 's 'd. ('v, 's, 'd) nx -> unit) -> 'r t -> 'r -> unit
   (** [iter_results f op r] is [f y] for each value [y] of [op]'s result [r]

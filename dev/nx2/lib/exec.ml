@@ -159,7 +159,7 @@ let localize (mv : M.t) shape cuts local : M.t =
         match Route.moved mv shape a with
         | Becomes a' -> s'.(a') <- Iarray.get local a
         | Regroups { axis; extent } -> s'.(axis) <- extent / t
-        | Whole | Reduced _ | Scanned _ -> ())
+        | Whole | Reduced _ | Blocks _ | Scanned _ -> ())
       cuts;
     Iarray.of_array s'
   in
@@ -611,8 +611,23 @@ let place ~by p x =
     (Prim.arrays y);
   y
 
+(* [x] read at [p] by views: each device of [p] views its window of [x] in
+   [x]'s array there, or holds an array of no bytes where the window is
+   empty. The route reads an operand so only where its arrays hold every
+   window ({!Route.route}); [Place.view] raises where one does not. *)
 let placer ~by p x =
-  if Devices.equal (Prim.placement x) p then x else Place.value ~by p x
+  if Devices.equal (Prim.placement x) p then x
+  else
+    let shape = Prim.shape x and set = Devices.set p in
+    let devices = Grid.devices (Devices.grid p) in
+    let view j k =
+      let w = Devices.window ~by p shape j in
+      if Array.exists (fun (r : M.range) -> r.count = 0) w then
+        A.create (Devices.rig set k) (Prim.dtype x)
+          (Iarray.map (fun (r : M.range) -> r.count) (Iarray.of_array w))
+      else Place.view ~by x k w
+    in
+    Prim.of_arrays p ~shape (Iarray.of_array (Array.mapi view devices))
 
 (* The fast path *)
 

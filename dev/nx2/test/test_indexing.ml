@@ -816,10 +816,38 @@ let test_donated_start () =
   let y = Nx.set [ Nx.D (Nx.donate start, 2) ] (Nx.ones Nx.float32 [| 2 |]) x in
   equal (array float_exact) [| 0.; 1.; 1.; 0. |] (elements y)
 
+(* An update of [4; 4; 4] at two positions held in data along each axis, the
+   first entry's split over two memory devices and the others' at [cuts].
+   Each entry's positions, broadcast to the selection [2; 2; 2], are read
+   beside the earlier entries' at the union of their cuts: an entry cut
+   along its own axis of the selection beside the first is refused, named
+   operand 1, [y], whether it is the second or the third. *)
+module Two = (val Nx.devices [ Nx_support.memory 0; Nx_support.memory 1 ])
+
+let set_cut (second, third) =
+  let at p = Nx.T (Nx.place p (held [| 2 |] [| 0; 3 |])) in
+  let x = Nx.place Two.on (Nx.zeros Nx.int32 [| 4; 4; 4 |]) in
+  let v = Nx.place Two.on (Nx.scalar Nx.int32 1l) in
+  Nx.set [ at (Two.split ~axis:0); at second; at third ] v x
+
 let many =
   group "many positions"
     [
       test "an update at a donated window start" test_donated_start;
+      cases "an update reads positions cut over devices at their union"
+        ~name:(fun (n, _, _) -> n)
+        [
+          ( "the second cut beside the first",
+            (Two.split ~axis:0, Two.on),
+            "Nx.set: operand 1 lies at split ~axis:1 [m0; m1] and is read at \
+             split ~axis:0 [m0; m1]; Nx.place (Placement.split ~axis:0 s) y" );
+          ( "the third cut beside the first",
+            (Two.on, Two.split ~axis:0),
+            "Nx.set: operand 1 lies at split ~axis:2 [m0; m1] and is read at \
+             split ~axis:0 [m0; m1]; Nx.place (Placement.split ~axis:0 s) y" );
+        ]
+        (fun (_, cuts, message) ->
+          raises (Invalid_argument message) (fun () -> set_cut cuts));
       cases "an update through positions held in data" ~name:fst
         [
           ("15", (15, 15));
