@@ -697,4 +697,312 @@ let like =
 
     ]
 
-let () = exit (run "nx creation" [ fills; ranges; eye; placements; like ])
+(* Without kernels *)
+
+(* A set no kernel library computes on, as a GPU set is outside a compiler:
+   a memory device and an io device, which does not run on the host. *)
+let io = Nx_array_support.io_device ()
+
+module Bare = (val Nx.devices [ m 3; io ])
+
+(* [Bare]'s placements: whole on each device, cut along an axis, and each
+   device alone. *)
+let bare_placements =
+  [
+    ("on", Bare.on);
+    ("split ~axis:0", Bare.split ~axis:0);
+    ("memory device", Nx.Placement.device Bare.v (m 3));
+    ("io device", Nx.Placement.device Bare.v io);
+  ]
+
+(* Each device's window of [x], as its array's shape. *)
+let windows x =
+  List.map
+    (fun a -> Iarray.to_array (Nx_array.Layout.shape (Nx_array.layout a)))
+    (Iarray.to_list (Nx.Repr.shards x))
+
+(* [y] lies where [want] lies, holding [want]'s windows and elements. *)
+let same_as ~msg dt want y =
+  equal ~msg:(msg ^ ": placement") (placement ()) (Nx.placement want)
+    (Nx.placement y);
+  equal ~msg:(msg ^ ": windows") (list (array int)) (windows want) (windows y);
+  equal ~msg:(msg ^ ": elements") (elements dt)
+    (Array.to_list (Nx.to_array want))
+    (Array.to_list (Nx.to_array y))
+
+(* Each [_at] form on [Bare] is its host form placed there. *)
+let test_bare (Pair { dtype; host; at; lies; _ }) =
+  let h = host () in
+  List.iter
+    (fun (msg, p) -> same_as ~msg dtype (Nx.place (lies p) h) (at p))
+    bare_placements
+
+let bare_gen =
+  Gen.of_list
+    ~pp:(fun ppf (name, _) -> Format.pp_print_string ppf name)
+    (("split ~axis:1", Bare.split ~axis:1) :: bare_placements)
+
+(* The fills and the forms beside a reference, at every dtype and at
+   [Bare]'s placements, are their host values placed there: on no element,
+   on one, and over windows a cut leaves uneven or empty. *)
+let law_bare ((name, p), (D.Any dt, s)) =
+  let axis = if name = "split ~axis:0" then 0 else 1 in
+  let cut = String.starts_with ~prefix:"split" name in
+  let lacks = cut && Array.length s <= axis in
+  cover "cuts an axis the shape lacks" lacks;
+  cover "no element" ((not lacks) && numel s = 0);
+  cover "one element" ((not lacks) && numel s = 1);
+  cover "uneven windows" (cut && (not lacks) && s.(axis) mod 2 = 1);
+  cover "an empty window" (cut && (not lacks) && s.(axis) < 2);
+  if lacks then invalid ~by:"Nx.zeros_at" (fun () -> Nx.zeros_at p dt s)
+  else begin
+    let one = D.one dt in
+    let zeros = Nx.place p (Nx.zeros dt s) in
+    let ones = Nx.place p (Nx.ones dt s) in
+    let scalar = Nx.place (Nx.Placement.uncut p) (Nx.scalar dt one) in
+    same_as ~msg:"zeros_at" dt zeros (Nx.zeros_at p dt s);
+    same_as ~msg:"ones_at" dt ones (Nx.ones_at p dt s);
+    same_as ~msg:"full_at" dt ones (Nx.full_at p dt s one);
+    same_as ~msg:"scalar_at" dt scalar (Nx.scalar_at p dt one);
+    same_as ~msg:"zeros_like" dt zeros (Nx.zeros_like ones);
+    same_as ~msg:"ones_like" dt ones (Nx.ones_like zeros);
+    same_as ~msg:"full_like" dt ones (Nx.full_like zeros one);
+    same_as ~msg:"scalar_like" dt scalar (Nx.scalar_like zeros one)
+  end
+
+(* The operations an extent receives while [f] runs, each as its name and
+   its count of operands: one of no operands computes, and the first that
+   reads an operand ends [f]. *)
+exception Reads
+
+let staged f =
+  let seen = ref [] in
+  let rule (type r) _ ~by (op : r Nx.Prim.t) : r =
+    let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
+    seen := (Nx.Prim.name op, List.length xs) :: !seen;
+    match xs with [] -> Nx.Prim.eval ~by op | _ :: _ -> raise Reads
+  in
+  (match Nx.Prim.interpret ~name:"test.staged" Extent rule (fun _ -> f ()) with
+  | () -> ()
+  | exception Reads -> ());
+  List.rev !seen
+
+let test_bare_computes () =
+  let x = Nx.zeros_at Bare.on Nx.float32 [| 2 |] in
+  raises_match
+    (Exn.invalid_arg ~substring:"has no kernels to compute Map")
+    (fun () -> Nx.add x x);
+  named ~by:"Nx.add" (fun () -> ignore (Nx.add x x))
+
+(* On [Bare], an extent that stages eye_at stages no operation that reads an
+   operand there. *)
+let test_bare_staged () =
+  let ops = staged (fun () -> ignore (Nx.eye_at Bare.on Nx.float32 3)) in
+  equal
+    (list (Windtrap.pair string int))
+    []
+    (List.filter (fun (_, n) -> n > 0) ops)
+
+(* [f ()] under an interpretation of [reach] whose rule computes what it
+   receives now, as a staged program evaluated at once does. *)
+let under reach f =
+  let rule (type r) _ ~by (op : r Nx.Prim.t) : r = Nx.Prim.eval ~by op in
+  Nx.Prim.interpret ~name:"test.now" reach rule (fun _ -> f ())
+
+(* Each [_at] form on [Bare] is its host form placed there under an
+   interpretation that reaches its values alone, and under an extent that
+   computes what it receives. *)
+let test_bare_interpreted (Pair { dtype; host; at; lies; _ }) =
+  let p = Bare.on in
+  let want = Nx.place (lies p) (host ()) in
+  same_as ~msg:"Values" dtype want (under Values (fun () -> at p));
+  same_as ~msg:"Extent" dtype want (under Extent (fun () -> at p))
+
+(* An operation whose result needs no element of its operands, as [f] of
+   values placed at a placement. *)
+type shortcut =
+  | Shortcut : {
+      name : string;
+      dtype : ('w, 'r) D.t;
+      f : 'd. 'd Nx.Placement.t -> ('w, 'r, 'd) Nx.t;
+    }
+      -> shortcut
+
+let shortcut name dtype (f : ('w, 'r) at) = Shortcut { name; dtype; f = f.f }
+
+let shortcuts =
+  let f64 = Nx.float64 in
+  let ints p =
+    Nx.place p (Nx.create Nx.int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |])
+  in
+  let zeros p s = Nx.place p (Nx.zeros f64 s) in
+  [
+    shortcut "isnan of int32" Nx.bool { f = (fun p -> Nx.isnan (ints p)) };
+    shortcut "isinf of int32" Nx.bool { f = (fun p -> Nx.isinf (ints p)) };
+    shortcut "isfinite of bool" Nx.bool
+      { f = (fun p -> Nx.isfinite (Nx.place p (Nx.ones Nx.bool [| 3 |]))) };
+    shortcut "pad of no element" f64
+      { f = (fun p -> Nx.pad [| (1, 2) |] 5. (zeros p [| 0 |])) };
+    shortcut "matrix_power a 0" f64
+      { f = (fun p -> Nx.matrix_power (zeros p [| 2; 3; 3 |]) 0) };
+    shortcut "pinv of an empty matrix" f64
+      { f = (fun p -> Nx.pinv (zeros p [| 0; 3 |])) };
+    shortcut "matrix_rank of empty matrices" Nx.int64
+      { f = (fun p -> Nx.matrix_rank (zeros p [| 2; 3; 0 |])) };
+    shortcut "lstsq of an empty matrix" f64
+      {
+        f =
+          (fun p ->
+            let a = zeros p [| 3; 0 |] and b = zeros p [| 3 |] in
+            let x, _, _, _ = Nx.lstsq f64 a b in
+            x);
+      };
+    shortcut "conv with no tap" f64
+      {
+        f =
+          (fun p ->
+            Nx.conv (zeros p [| 1; 4; 3 |]) (zeros p [| 2; 0; 3 |]));
+      };
+    shortcut "lexsort of rows of no column" Nx.int64
+      { f = (fun p -> Nx.lexsort (zeros p [| 3; 0 |])) };
+    shortcut "array_equal of two shapes" Nx.bool
+      { f = (fun p -> Nx.array_equal (zeros p [| 2 |]) (zeros p [| 3 |])) };
+    shortcut "searchsorted among no key" Nx.int64
+      {
+        f =
+          (fun p ->
+            Nx.searchsorted ~side:`Left (zeros p [| 0 |]) (zeros p [| 3 |]));
+      };
+  ]
+
+(* Each raises on [Bare], naming itself and the missing kernels, and on a set
+   with kernels is its host result placed there. *)
+let test_shortcut (Shortcut { name; dtype; f }) =
+  let by = "Nx." ^ List.hd (String.split_on_char ' ' name) in
+  raises_match
+    (Exn.invalid_arg ~substring:"has no kernels to compute")
+    (fun () -> f Bare.on);
+  named ~by (fun () -> ignore (f Bare.on));
+  same_as ~msg:"with kernels" dtype (Nx.place S2.on (f Nx.Host.on)) (f S2.on)
+
+(* Over operands cut along an axis or read through strided and broadcast
+   views, on a set with kernels, each holds its host result's elements and
+   lies where the routing rule puts it: a cut of an axis the result keeps
+   cuts it alike, and one the result drops closes whole on each device. *)
+let test_shortcut_views () =
+  let f64 = Nx.float64 in
+  let split a x = Nx.place (S2.split ~axis:a) x in
+  let whole x = Nx.place S2.on x in
+  let cut x = split 0 x in
+  let check msg dt at host y =
+    equal ~msg:(msg ^ ": placement") (placement ()) at (Nx.placement y);
+    equal ~msg (elements dt) (Array.to_list (Nx.to_array host))
+      (Array.to_list (Nx.to_array y))
+  in
+  let z s = Nx.zeros f64 s in
+  let a = Nx.create f64 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let row = Nx.create f64 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
+  let ints = Nx.create Nx.int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |] in
+  let rows = S2.split ~axis:0 in
+  check "array_equal, a split operand" Nx.bool S2.on
+    (Nx.array_equal (z [| 4 |]) (z [| 3 |]))
+    (Nx.array_equal (cut (z [| 4 |])) (cut (z [| 3 |])));
+  check "array_equal, uneven windows" Nx.bool S2.on
+    (Nx.array_equal (z [| 3 |]) (z [| 2 |]))
+    (Nx.array_equal (cut (z [| 3 |])) (cut (z [| 2 |])));
+  check "matrix_rank, a split batch" Nx.int64 rows
+    (Nx.matrix_rank (z [| 2; 3; 0 |]))
+    (Nx.matrix_rank (cut (z [| 2; 3; 0 |])));
+  check "pinv, a split batch" f64 rows (Nx.pinv (z [| 2; 0; 3 |]))
+    (Nx.pinv (cut (z [| 2; 0; 3 |])));
+  check "lexsort, split rows of no column" Nx.int64 rows
+    (Nx.lexsort (z [| 4; 0 |]))
+    (Nx.lexsort (cut (z [| 4; 0 |])));
+  let widths = [| (0, 0); (1, 1); (0, 0) |] in
+  check "pad of no element, a cut of a kept axis" f64 (S2.split ~axis:2)
+    (Nx.pad widths 5. (z [| 2; 0; 5 |]))
+    (Nx.pad widths 5. (split 2 (z [| 2; 0; 5 |])));
+  (* The channels, kept after a spatial axis the result changes. *)
+  let x = z [| 1; 4; 3 |] and w = z [| 3; 0; 3 |] in
+  check "conv with no tap, cut channels" f64 (S2.split ~axis:2) (Nx.conv x w)
+    (Nx.conv (split 2 x) (whole w));
+  check "array_equal, a transposed operand" Nx.bool S2.on
+    (Nx.array_equal (Nx.transpose a) (z [| 3; 3 |]))
+    (Nx.array_equal (Nx.transpose (whole a)) (whole (z [| 3; 3 |])));
+  check "array_equal, a broadcast operand" Nx.bool S2.on
+    (Nx.array_equal (Nx.broadcast_to [| 4; 5 |] row) row)
+    (Nx.array_equal (Nx.broadcast_to [| 4; 5 |] (whole row)) (whole row));
+  check "isinf, a split transposed operand" Nx.bool (S2.split ~axis:1)
+    (Nx.isinf (Nx.transpose ints))
+    (Nx.isinf (Nx.transpose (cut ints)))
+
+(* A shortcut whose result's shape is not its operand's loops over one
+   position per lane it keeps, however large the operand: here a broadcast
+   view of 10^8 elements. *)
+let test_shortcut_cost () =
+  let row = Nx.place Count.on (Nx.ones Nx.float32 [| 10_000 |]) in
+  let big = Nx.broadcast_to [| 10_000; 10_000 |] row in
+  C.reset ();
+  let y = Nx.array_equal big row in
+  less ~msg:"positions" int ~than:10 (C.positions ());
+  equal (array bool) [| false |] (Nx.to_array y)
+
+(* Under an extent, a shortcut over a concrete operand on [Bare] reaches
+   the interpretation with its operand. *)
+let test_shortcut_received () =
+  let a = Nx.zeros_at Bare.on Nx.float64 [| 3; 3 |] in
+  equal
+    (list (Windtrap.pair string int))
+    [ ("Map", 1) ]
+    (staged (fun () -> ignore (Nx.matrix_power a 0)))
+
+(* A donated value another operation consumed is dead: a predicate of an
+   integer value, which reads no element of it, still raises, naming
+   itself. *)
+let test_predicate_dead () =
+  let dead () =
+    let x = Nx.create Nx.int32 [| 2 |] [| 1l; 2l |] in
+    let _ = Nx.neg (Nx.donate x) in
+    x
+  in
+  invalid ~by:"Nx.isinf" (fun () -> Nx.isinf (dead ()));
+  invalid ~by:"Nx.isfinite" (fun () -> Nx.isfinite (dead ()))
+
+let bare =
+  group "without kernels"
+    [
+      cases "each _at form is its host form placed"
+        ~name:(fun (Pair { name; _ }) -> name)
+        pairs test_bare;
+      prop "fills and forms beside a reference are host values placed"
+        ~examples:
+          [
+            (("split ~axis:1", Bare.split ~axis:1), (D.Any D.Float32, [| 3 |]));
+            (("on", Bare.on), (D.Any D.Int4, [| 2; 0 |]));
+            (("io device", Nx.Placement.device Bare.v io), (D.Any D.Bit, [||]));
+            (("split ~axis:0", Bare.split ~axis:0), (D.Any D.Uint8, [| 3 |]));
+            (("split ~axis:0", Bare.split ~axis:0), (D.Any D.Bool, [| 1; 2 |]));
+          ]
+        (Gen.pair bare_gen (Gen.pair dtype shape))
+        law_bare;
+      cases "an operation needing no element raises"
+        ~name:(fun (Shortcut { name; _ }) -> name)
+        shortcuts test_shortcut;
+      test "a shortcut over cut and strided operands holds its elements"
+        test_shortcut_views;
+      test "a shortcut's work does not grow with its operand"
+        test_shortcut_cost;
+      test "under an extent, a shortcut is received with its operand"
+        test_shortcut_received;
+      test "a predicate of a dead integer value raises" test_predicate_dead;
+      test "a computation raises naming the set's missing kernels"
+        test_bare_computes;
+      test "under an extent, eye_at stages no operation reading an operand"
+        test_bare_staged;
+      cases "each _at form under an interpretation is its host form placed"
+        ~name:(fun (Pair { name; _ }) -> name)
+        pairs test_bare_interpreted;
+    ]
+
+let () =
+  exit (run "nx creation" [ fills; ranges; eye; placements; like; bare ])

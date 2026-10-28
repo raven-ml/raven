@@ -163,6 +163,7 @@ let mesh ~by m cuts =
 
 let set p = p.set
 let grid p = p.grid
+let bare p = Option.is_none p.set.kernels
 let device p = Grid.one p.grid
 let on_host_set p = p.set.number = host.number
 

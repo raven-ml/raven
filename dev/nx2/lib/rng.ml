@@ -1439,7 +1439,7 @@ let categorical ?key ?(axis = -1) logits =
    whole along it on each device, which then keeps its window. *)
 let permutation_programs = programs ()
 
-let permutation_by ~by p key n =
+let permutation_made ~by p key n =
   if n < 0 then invalid_argf "%s: n is %d, not at least 0" by n;
   let prog =
     lowered permutation_programs D.Uint64 [||] (fun ~key ~j -> block ~key j)
@@ -1453,6 +1453,15 @@ let permutation_by ~by p key n =
       (Value.Sort { axis; descending = false; k = None; x = words })
   in
   if Devices.equal sorted p then positions else Eval.place ~by p positions
+
+(* On a set without kernels the sort would compute there, so a keyless draw,
+   whose words are numbers, is made on the host and placed at [p], under
+   every interpretation: its bits are the host draw's. *)
+let permutation_by ~by p key n =
+  match key with
+  | None when Devices.bare p ->
+      Eval.place ~by p (permutation_made ~by host None n)
+  | None | Some _ -> permutation_made ~by p key n
 
 let permutation ?key n = permutation_by ~by:"Nx.Rng.permutation" host key n
 

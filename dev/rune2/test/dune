@@ -35,6 +35,7 @@
  (libraries
   nx
   nx_array
+  nx_array_support
   nx_kernel
   nx_quant
   nx_support

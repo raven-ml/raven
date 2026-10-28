@@ -105,6 +105,9 @@ val v : by:string -> 'd t -> Grid.t -> 'd placement
 val set : 'd placement -> 'd t
 val grid : 'd placement -> Grid.t
 
+val bare : 'd placement -> bool
+(** [bare p] is [true] iff [p]'s set has no kernels. It reads a field. *)
+
 val device : 'd placement -> int option
 (** [device p] is [Some k] iff [p] is its set's device [k] alone. *)
 

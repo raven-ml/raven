@@ -420,6 +420,40 @@ let viewed : type v s w r d.
       make p ~shape (Iarray.of_array (Array.mapi on devices)))
     op
 
+(* Placing *)
+
+let place ~by p x =
+  let y = Place.value ~by p x in
+  (* A value over [x]'s memory, kept or borrowed, shares it. *)
+  let xs = Prim.arrays x in
+  let overlaps b a = Rig.Buffer.overlaps (A.buffer a) (A.buffer b) in
+  Iarray.iter
+    (fun b ->
+      if Iarray.exists (overlaps b) xs then Rig.Claim.share (A.buffer b))
+    (Prim.arrays y);
+  y
+
+(* Creations *)
+
+(* The creation [op], a map of no loads at [p], whose set has no kernels:
+   its elements come from numbers alone. It is computed whole by the
+   host's kernels, then each result placed at [p], each device holding a
+   copy of its window, or a borrow, which shares the host's memory, where it
+   addresses it ({!place}). Its bits are the host form's. *)
+let created : type r.
+    by:string -> unit Devices.placement -> L.t array -> r Value.prim -> r =
+ fun ~by p layouts op ->
+  let host = Devices.on Devices.host in
+  let set = Devices.set host in
+  let r = Prim.results_at host layouts (fun k f -> alloc ~by k f) op in
+  on_device ~by (kernels_of ~by ~op:(Prim.name op) set) set r 0 0 op;
+  let arrays = Prim.result_arrays op r in
+  Prim.results_at p layouts
+    (fun k (f : _ Value.form) ->
+      let a = A.expect f.dtype arrays.(k).(0) in
+      place ~by p (Value.Array { at = host; a; dead = Value.Live }))
+    op
+
 let windows : type r.
     by:string -> ?into:A.any -> unit Route.t -> L.t array -> r Value.prim -> r
     =
@@ -448,6 +482,9 @@ let windows : type r.
               as_view ~by set A.bitcast dt a))
   | Value.Place _ | Value.Check _ ->
       invalid_arg "Exec.windows: a placement or a check"
+  | Value.Map { at = Some _; loads; _ }
+    when Iarray.length loads = 0 && Devices.bare route.result ->
+      created ~by route.result layouts op
   | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
   | Value.Scatter _ | Value.Sort _ | Value.Fold _ | Value.Fft _ | Value.Linalg _
   | Value.Assemble _ | Value.Contract _ | Value.Copy _ -> (
@@ -484,19 +521,6 @@ let windows : type r.
                 (Prim.local (Prim.mapi view op) w))
             (Grid.devices (Devices.grid p));
           r)
-
-(* Placing *)
-
-let place ~by p x =
-  let y = Place.value ~by p x in
-  (* A value over [x]'s memory, kept or borrowed, shares it. *)
-  let xs = Prim.arrays x in
-  let overlaps b a = Rig.Buffer.overlaps (A.buffer a) (A.buffer b) in
-  Iarray.iter
-    (fun b ->
-      if Iarray.exists (overlaps b) xs then Rig.Claim.share (A.buffer b))
-    (Prim.arrays y);
-  y
 
 (* The fast path *)
 

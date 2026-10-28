@@ -731,9 +731,87 @@ let received p f =
   let x = Nx.Prim.interpret ~name:"test.ops" Extent observe (fun _ -> f ()) in
   (x, List.rev !seen)
 
+(* A set no kernel library computes on, as a GPU set is outside a compiler:
+   a memory device and an io device, which does not run on the host. *)
+let io = Nx_array_support.io_device ()
+
+module Bare = (val Nx.devices [ m 2; io ])
+
+let bare_placements =
+  Gen.of_list
+    ~pp:(fun ppf (name, _) -> Format.pp_print_string ppf name)
+    [
+      ("on", Bare.on);
+      ("split ~axis:0", Bare.split ~axis:0);
+      ("memory device", Nx.Placement.device Bare.v (m 2));
+      ("io device", Nx.Placement.device Bare.v io);
+    ]
+
+(* [f ()] under an interpretation of [reach] whose rule computes what it
+   receives now, as a staged program evaluated at once does. *)
+let under reach f =
+  let rule (type r) _ ~by (op : r Nx.Prim.t) : r = Nx.Prim.eval ~by op in
+  Nx.Prim.interpret ~name:"test.now" reach rule (fun _ -> f ())
+
 let placed_draws =
   group "placed draws"
     [
+      prop "a keyless _at draw in a scope on a set without kernels is the \
+            host draw at its placement"
+        (Gen.quad seeds placed_samplers bare_placements cuttable)
+        (fun (seed, (_, s), (name, p), shape) ->
+          cover "cut" (name = "split ~axis:0");
+          let k = Rng.key seed in
+          equal (pair bool (array float_exact))
+            (true, Rng.with_key k (fun () -> s.host shape))
+            (Rng.with_key k (fun () -> s.at p shape)));
+      test "a keyless _at draw outside every scope on a set without kernels \
+            lies at its placement"
+        (fun () ->
+          let p = Bare.split ~axis:0 in
+          let u = Rng.uniform_at p Nx.float64 [| 5 |] in
+          equal ~msg:"uniform: placement" (placement ()) p (Nx.placement u);
+          Array.iter
+            (fun x ->
+              greater ~msg:"uniform: at least 0" float_exact
+                ~than:(Float.pred 0.) x;
+              less ~msg:"uniform: below 1" float_exact ~than:1. x)
+            (read u);
+          let q = Rng.permutation_at p 7 in
+          equal ~msg:"permutation: placement" (placement ()) p
+            (Nx.placement q);
+          let sorted = Array.copy (read q) in
+          Array.sort compare sorted;
+          equal ~msg:"permutation: a permutation" (array int64)
+            (Array.init 7 Int64.of_int) sorted);
+      test "a keyed _at draw on a set without kernels raises as a computation"
+        (fun () ->
+          let key = Rng.place Bare.on (Rng.key 1) in
+          let computes by f =
+            raises_match (Exn.invalid_arg ~substring:(by ^ ": set ")) f;
+            raises_match
+              (Exn.invalid_arg
+                 ~substring:"has no kernels to compute Map; place the value")
+              f
+          in
+          computes "Nx.Rng.uniform_at" (fun () ->
+              Rng.uniform_at Bare.on ~key Nx.float32 [| 4 |]);
+          computes "Nx.Rng.permutation_at" (fun () ->
+              Rng.permutation_at Bare.on ~key 4));
+      test
+        "under an interpretation, a keyless permutation_at on a set without \
+         kernels is the host draw placed" (fun () ->
+          let p = Bare.split ~axis:0 and k = Rng.key 3 in
+          let draw () = Rng.with_key k (fun () -> Rng.permutation_at p 5) in
+          let want = Rng.with_key k (fun () -> read (Rng.permutation 5)) in
+          List.iter
+            (fun (msg, y) ->
+              equal ~msg (placement ()) p (Nx.placement y);
+              equal ~msg (array int64) want (read y))
+            [
+              ("Values", under Values draw);
+              ("Extent", under Extent draw);
+            ]);
       prop "an _at draw from a key on its devices is the host draw at its \
             placement"
         (Gen.quad seeds placed_samplers placements cuttable)

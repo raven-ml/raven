@@ -1063,6 +1063,32 @@ let test_place () =
     (Nx.Placement.equal (placement y) (Two.split ~axis:1));
   equal ~msg:"its values" codes_t (codes host) (codes (Nx.place Nx.Host.on y))
 
+(* A set no kernel library computes on, as a GPU set is outside a compiler:
+   a memory device and an io device, which does not run on the host. *)
+module Bare =
+  (val Nx.devices [ Nx_support.memory 3; Nx_array_support.io_device () ])
+
+(* A creation in a lane reads no lane, so the map computes it now: on a set
+   without kernels the host makes it, and every lane holds it. *)
+let test_bare () =
+  let xs = Nx.zeros_at Bare.on f64 [| 2; 3 |] in
+  let check msg want f =
+    let y = Rune.vmap' f xs in
+    equal ~msg:(msg ^ ": placement") (Nx_support.placement ()) Bare.on
+      (Nx.placement y);
+    equal ~msg codes_t (codes want) (codes (Nx.place Nx.Host.on y))
+  in
+  check "eye_at" (Nx.stack [ Nx.eye f64 3; Nx.eye f64 3 ]) (fun x ->
+      Nx.eye_at (Nx.placement x) f64 3);
+  check "full_like" (Nx.full f64 [| 2; 3 |] 2.) (fun x -> Nx.full_like x 2.);
+  (* An operation that needs none of its lane's elements still computes
+     beside it, so it raises as it does outside the map. *)
+  invalid ~sub:"has no kernels to compute" (fun () ->
+      Rune.vmap'
+        (fun x ->
+          Nx.matrix_power (Nx.broadcast_to [| 3; 3 |] (Nx.get [ 0 ] x)) 0)
+        xs)
+
 (* A check raises its first failing lane's exception, from that lane's index and
    data. *)
 exception Failed of int array * float
@@ -1146,6 +1172,7 @@ let () =
              test "detach" test_detach;
              test "loops" test_scan;
              test "placements" test_place;
+             test "creations on a set without kernels" test_bare;
              test "checks" test_check;
              test "draws" test_draws;
            ];

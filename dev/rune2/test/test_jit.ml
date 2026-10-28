@@ -2081,6 +2081,19 @@ let test_compositions () =
   totals "a total under grad" (fun f -> Rune.grad' (sum f) x);
   totals "a total under vmap" (fun f -> Rune.vmap' f xs)
 
+(* An operation whose result needs no element of its operand computes beside
+   it, so a compiled function stages it over a captured operand and gives
+   eager's bits. *)
+let test_shortcut_captures () =
+  let c = Nx.place Nx.Host.on (Nx.full f64 [| 2; 3; 3 |] 2.) in
+  let ints = Nx.create Nx.int32 [| 3 |] [| 1l; 2l; 3l |] in
+  let x = Nx.place Nx.Host.on (Nx.ones f64 [| 3 |]) in
+  let f x =
+    Nx.add (Nx.sum ~axes:[ 0; 1 ] (Nx.matrix_power c 0))
+      (Nx.where (Nx.isinf ints) x (Nx.neg x))
+  in
+  equal bits_t (bits (f x)) (bits (Rune.jit' f x))
+
 (* A compiled call inside a remat's function, a loop's step or a custom rule
    stays a call, which runs compiled where the construct evaluates its program:
    the construct gives its function's bits, the compiled sine's, over its
@@ -2329,6 +2342,7 @@ let () =
                test_contract_init;
              test "a scatter's target lends" test_scatter_lends;
              test "checks raise as eagerly" test_checks;
+             test "a shortcut over a capture stages" test_shortcut_captures;
              stateful ~domains:2 ~count:10 ~steps:8
                "a call retraces iff its abstract value is new" cache_commands;
              test "two threads of a domain trace once" test_threads;

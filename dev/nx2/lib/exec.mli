@@ -30,7 +30,9 @@
     program makes, [Nx.place] onto a set whose kernels compute it: nx
     computes no case on the kernels' behalf and moves no data between
     devices on its own. A set without kernels raises [Invalid_argument]
-    naming [by] before any kernel runs.
+    naming [by] before any kernel runs, but for a map of no loads, a
+    creation, which the host's kernels compute whole and {!place} puts at
+    the route's result.
 
     Over devices of one architecture, a result's bits are those of the same
     operation on one device, by the window law ({!Route.window}), wherever

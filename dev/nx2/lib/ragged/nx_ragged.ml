@@ -292,7 +292,9 @@ let quantile qs r =
   let values, offsets = elements r in
   let n = length r and k = Array.length qs in
   let here = Nx.beside values in
-  if k = 0 then Nx.zeros_at here (Nx.dtype values) [| 0; n |]
+  if k = 0 then
+    (* No probability: a gather of no position, beside [values]. *)
+    Nx.reshape [| 0; n |] (Nx.take (Nx.zeros_at here Nx.int64 [| 0 |]) values)
   else
     let marks =
       Nx.scatter ~combine:Add ~axis:0 offsets (Nx.ones_like offsets)

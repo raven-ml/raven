@@ -270,7 +270,17 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
 (** [devices ~kernels ds] mints a new set over [ds], in their order, with a
     brand no other set has, computed eagerly by [kernels]. Without [kernels], a
     set whose every device runs on the host ({!Rig.runs_on_host}) is computed by
-    nx.cpu, and any other set by none.
+    nx.cpu, and any other set by none, as a GPU set is outside a compiler.
+    On a set without kernels, a creation ({!section-creation}), a value whose
+    elements come from numbers, is made on the host and placed at the
+    placement the call names as {!place} places it. Every operation other
+    than a creation raises on such a set where it makes elements, naming
+    the {!place} onto a set with kernels or the compiler that would compute
+    it, even where it needs no element of its operands, as
+    [matrix_power a 0] does. {!place}, a view and a call that gives its
+    operand itself make none.
+    Under a compiler such as [Rune.jit], the compiler receives a creation's
+    operations.
 
     Raises [Invalid_argument] if [ds] is empty or repeats a device, or if
     [kernels] does not compute on one of [ds]. *)
@@ -335,6 +345,9 @@ val beside : ('v, 's, 'd) t -> 'd Placement.t
     [_like] forms make it at a value's placement, or whole on each of its
     devices where the shape has no axis the placement cuts. A
     creation holds its elements from the call on.
+
+    On a set without kernels, a creation is made on the host and placed
+    where the call names ({!val-devices}).
 
     An [_at] form raises as its host form does, and raises
     [Invalid_argument] naming itself where its placement cuts an axis the
@@ -4332,7 +4345,10 @@ module Rng : sig
       value, so that no bytes move. A sampler without an array parameter
       draws on the host, and its [_at] form at the placement it is given,
       each device computing its window: [placement (uniform_at p dt s)] is
-      [p]. An [_at] form raises as its host form does, and raises
+      [p]. On a set without kernels, a draw without [~key] is a creation,
+      the host draw placed there ({!Nx.val-devices}), and a draw from a
+      [~key] there reads the key, a computation, and raises as one. An
+      [_at] form raises as its host form does, and raises
       [Invalid_argument] naming itself where [p] cuts an axis the draw's
       shape lacks, and where a device of [p] does not hold [key], naming the
       {!place} to write. A sampler with array parameters draws where they
@@ -4785,7 +4801,8 @@ end
     [Adopting] one those on the values of the interpretations it adopts. An
     operation no interpretation reaches computes now on its operands' set's
     kernels, and raises if the set has none, but a check of one flag that has
-    bytes ([Check]).
+    bytes ([Check]) and a [Map] of no loads, a creation, which the host
+    computes and copies where it lies ({!val-devices}).
 
     An interpretation's rule receives each operation whole, a [Map] of
     several nodes or outputs included, and gives it its whole meaning,

@@ -665,6 +665,75 @@ let donate x = Donate.donate ~by:"Nx.donate" x
 
 let ndim = Prim.rank
 let numel x = Array.fold_left ( * ) 1 (shape x)
+
+(* The value of [dt] and [shape] whose element at each index is [out], an
+   expression of no operand reading [shape]'s coordinates, computed beside
+   [x]: a map that loads [x] and reads none of it. It is an operation on
+   [x], computed by the kernels of [x]'s set where [x] lies, which every
+   interpretation receives with [x]. Where [shape] is not [x]'s, [x] is
+   first reduced, by a program that reads no element, over each axis whose
+   extent [shape] does not have at that index, so that a cut of one closes
+   by partials and a cut of any other axis stays in the result. Each such
+   axis that no device cuts is sliced to its first element first, a view,
+   so the work grows with the result and with a cut reduced axis's windows
+   alone. The map loads that reduction broadcast to [shape]. *)
+let leaf_beside (type v s w r d) ~by (x : (w, r, d) t) (dt : (v, s) D.t)
+    shape (out : (v, s) E.t) : (v, s, d) t =
+  let layout = contiguous ~by shape in
+  let map (type a b) (y : (a, b, d) t) =
+    let prog = P.of_exprs ~ins:[| D.Any (dtype y) |] [| E.any out |] in
+    let z, () =
+      Eval.eval ~by
+        (Value.Map
+           {
+             layout;
+             prog;
+             outs = Value.[ dt ];
+             loads = [| Plain y |];
+             at = None;
+           })
+    in
+    z
+  in
+  if Prim.has_shape x shape then map x
+  else
+    let xs = Prim.shape x in
+    let r = Array.length xs and n = Array.length shape in
+    let kept a = a < n && xs.(a) = shape.(a) in
+    let dropped = List.filter (fun a -> not (kept a)) (List.init r Fun.id) in
+    let (Value.Any y) =
+      if dropped = [] then Value.Any x
+      else
+        let cuts = Grid.cuts (Devices.grid (placement x)) in
+        let first a d : Nx_array.Move.range =
+          let cut = Array.exists (fun (c, _) -> c = a) cuts in
+          let count = if kept a || cut then d else Stdlib.min 1 d in
+          { start = 0; count; step = 1 }
+        in
+        let ranges = Iarray.of_array (Array.mapi first xs) in
+        let x = Eval.move ~by (Slice ranges) x in
+        let ins = Iarray.of_list [ D.Any (dtype x) ] in
+        let prog = P.of_exprs ~ins [| E.any (E.const D.Int32 0l) |] in
+        let y, () =
+          Eval.eval ~by
+            (Value.Reduce
+               {
+                 layout = contiguous ~by (Prim.shape x);
+                 axes = Iarray.of_list dropped;
+                 prog;
+                 reductions = Value.[ Monoid (Nx_kernel.Sum, 0, D.Int32) ];
+                 loads = [| Plain x |];
+               })
+        in
+        Value.Any y
+    in
+    let ones =
+      Array.init n (fun a -> if a < r && kept a then shape.(a) else 1)
+    in
+    map (Eval.broadcast ~by shape (Eval.reshape ~by ones y))
+
+(* [v] in [dt] and [shape], computed beside [x] ({!leaf_beside}). *)
+let fill_beside ~by x dt shape v = leaf_beside ~by x dt shape (const ~by dt v)
 let nbytes x = ((numel x * D.bits (dtype x)) + 7) / 8
 
 let pp_value = Prim.pp_value
@@ -1083,11 +1152,8 @@ let padded ~by ?interior ~lo ~hi v x =
       (first, Stdlib.max 0 (last - first + 1))
     in
     let ks = Array.mapi (fun a _ -> kept a) s in
-    if Array.exists (fun (_, n) -> n = 0) ks then begin
-      (* No operation reads [x], so it is checked here. *)
-      Prim.alive ~by x;
-      fill ~by (placement x) (dtype x) out v
-    end
+    if Array.exists (fun (_, n) -> n = 0) ks then
+      fill_beside ~by x (dtype x) out v
     else
       let part a : Nx_array.Move.range =
         { start = fst ks.(a); count = snd ks.(a); step = 1 }
@@ -1962,7 +2028,7 @@ let predicate (type v s d) ~by
       elementwise ~by D.Bool [ Any re; Any im ]
         (E.binary k (p f (operand 0 re)) (p f (operand 1 im)))
   | D.Signed | D.Unsigned | D.Boolean ->
-      fill ~by (placement x) D.Bool (shape x) other
+      fill_beside ~by x D.Bool (shape x) other
 
 (* A NaN is the one value unequal to itself. *)
 let isnan_by ~by x = comparison ~by (Compare Not_equal) x x
@@ -2654,22 +2720,29 @@ let on_diagonal ~by dt n m k piece =
   let flat = assemble ~by dt [| n * m |] (D.zero dt) [ ([| along |], piece) ] in
   Eval.reshape ~by [| n; m |] flat
 
+(* One of [dt] where the column less the row is [k] and zero elsewhere, over
+   matrices of shape [s], the last axis the column. *)
+let ones_where_k dt ~k s =
+  let row = Array.length s - 2 and col = Array.length s - 1 in
+  indicator dt E.(coord col - coord row = i64 k)
+
 (* Matrices of [dt] and shape [s] at [p], one where the column less the row
    is [k] and zero elsewhere, the last axis the column: one creation, each
    device of [p] computing its window. *)
-let eyes ~by ~k p dt s =
-  let row = Array.length s - 2 and col = Array.length s - 1 in
-  leaf ~by p dt s (indicator dt E.(coord col - coord row = i64 k))
+let eyes ~by ~k p dt s = leaf ~by p dt s (ones_where_k dt ~k s)
 
 (* One where the column less the row is [k], zero elsewhere. Where [p] cuts no
    axis, the diagonal's ones, made at [p], are written onto zeros there by one
    assembly. Where [p] cuts an axis, each device computes its window from the
    coordinates, since the ones' vector cannot lie at a cut of two axes, and
    the flat's reshape to [n; m] keeps a cut only where the tiles divide both
-   extents. *)
+   extents. On a set without kernels the assembly would be a computation
+   there, so the matrix is one creation, which the host makes under every
+   interpretation that computes it now. *)
 let eye_by ~by ?m ?(k = 0) p dt n =
   let m = Option.value m ~default:n in
-  if Grid.is_cut (Devices.grid p) then eyes ~by ~k p dt [| n; m |]
+  if Grid.is_cut (Devices.grid p) || Devices.bare p then
+    eyes ~by ~k p dt [| n; m |]
   else begin
     (* The shape is checked first, so that a refused one allocates nothing. *)
     ignore (contiguous ~by [| n; m |]);
@@ -3157,7 +3230,9 @@ let matrix_power a n =
   if n < 0 then routine_dtype ~by a;
   Prim.alive ~by a;
   let k = Stdlib.abs n in
-  if n = 0 then eyes ~by ~k:0 (placement a) (dtype a) (shape a)
+  if n = 0 then
+    let s = shape a in
+    leaf_beside ~by a (dtype a) s (ones_where_k (dtype a) ~k:0 s)
   else if n = 1 then copy_by ~by a
   else
     let base =
@@ -3222,10 +3297,10 @@ let lstsq (type v s r d) ?rtol (dt : (float, r) D.t) (a : (v, s, d) t)
   let x, s, rank =
     if Stdlib.min m n = 0 then
       let lead = batch b' in
-      let zero dt s = fill ~by (placement b') dt s (D.zero dt) in
-      ( zero (dtype b') (Array.append lead [| n; dim (-1) b' |]),
-        zero f (Array.append (batch a) [| 0 |]),
-        zero D.Int64 (batch a) )
+      let zero x dt s = fill_beside ~by x dt s (D.zero dt) in
+      ( zero b' (dtype b') (Array.append lead [| n; dim (-1) b' |]),
+        zero a f (Array.append (batch a) [| 0 |]),
+        zero a D.Int64 (batch a) )
     else
       let u, s, vh = svd_by ~by f a in
       let d = reciprocals ~by ~tol s in
@@ -3253,12 +3328,9 @@ let pinv ?rtol ?(hermitian = false) a =
   if hermitian then square_matrices ~by a else matrices ~by a;
   let m = dim (-2) a and n = dim (-1) a in
   let tol = cutoff ~by rtol a in
-  if Stdlib.min m n = 0 then begin
-    (* No operation reads [a], so it is checked here. *)
-    Prim.alive ~by a;
+  if Stdlib.min m n = 0 then
     let dt = dtype a in
-    fill ~by (placement a) dt (Array.append (batch a) [| n; m |]) (D.zero dt)
-  end
+    fill_beside ~by a dt (Array.append (batch a) [| n; m |]) (D.zero dt)
   else if hermitian then begin
     let (Nx_kernel.Any_float f) = real_precision ~by a in
     let w, v = eigh_by ~by f a in
@@ -3433,10 +3505,8 @@ let matrix_rank (type v s d) ?rtol (a : (v, s, d) t) : d int64_t =
   let rank (type w r) (a : (w, r, d) t) : d int64_t =
     matrices ~by a;
     let bound = cutoff ~by rtol a in
-    if Stdlib.min (dim (-2) a) (dim (-1) a) = 0 then begin
-      Prim.alive ~by a;
-      fill ~by (placement a) D.Int64 (batch a) 0L
-    end
+    if Stdlib.min (dim (-2) a) (dim (-1) a) = 0 then
+      fill_beside ~by a D.Int64 (batch a) 0L
     else
       let (Nx_kernel.Any_float f) = real_precision ~by a in
       let _, s, _ = svd_by ~by ~vectors:false f a in
@@ -3630,7 +3700,7 @@ let rows_order ~by keys =
         let q = positions_of ~by (take_axis ~by 0 p (column ~by j keys)) in
         from (j - 1) (take_axis ~by 0 q p)
     in
-    if w = 0 then arange_by ~by (beside keys) D.Int64 0 n 1
+    if w = 0 then leaf_beside ~by keys D.Int64 [| n |] (E.coord 0)
     else from (w - 2) (positions_of ~by (column ~by (w - 1) keys))
 
 let lexsort keys =
@@ -4144,9 +4214,9 @@ let histogram (type s d) ?weights
 let array_equal a b =
   let by = "Nx.array_equal" in
   if not (same_shape a b) then begin
-    (* No operation reads them, so they are checked here. *)
-    alive_all ~by [ Any a; Any b ];
-    scalar_beside ~by a D.Bool false
+    (* No operation reads [b], so it is checked here. *)
+    Prim.alive ~by b;
+    fill_beside ~by a D.Bool [||] false
   end
   else truth ~by Min (comparison ~by (Compare Equal) a b)
 
@@ -4323,11 +4393,8 @@ let combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding p =
 
 
 
-(* +0 of [x]'s dtype and of [shape], where [x] lies: a sum over no term. No
-   operation reads [x], so it is checked here. *)
-let no_term ~by x shape =
-  Prim.alive ~by x;
-  fill ~by (placement x) (dtype x) shape (D.zero (dtype x))
+(* +0 of [x]'s dtype and of [shape], beside [x]: a sum over no term. *)
+let no_term ~by x shape = fill_beside ~by x (dtype x) shape (D.zero (dtype x))
 
 (* The windows of each output channel over [x], [[n; s…; c]], for [w] laid out
    as [[g; oc; ic; k…]] ([g] groups of [oc] output and [ic] input channels),
@@ -4923,15 +4990,14 @@ let map_segments ~segments ids f x =
   in
   let p = numel ids in
   if segments = 0 || p = 0 then
-    let here = beside x in
     let y, out =
       call ~g:0 ~c:1
-        (fill ~by here D.Int64 [| 0 |] 0L)
-        (fill ~by here (dtype x)
+        (fill_beside ~by ids D.Int64 [| 0 |] 0L)
+        (fill_beside ~by x (dtype x)
            (Array.append [| 0; 1 |] row)
            (D.zero (dtype x)))
     in
-    fill ~by (placement ids) (dtype y) (Array.append s out) (D.zero (dtype y))
+    fill_beside ~by ids (dtype y) (Array.append s out) (D.zero (dtype y))
   else
     let j = p / r in
     let ids = Eval.reshape ~by [| r; j |] ids in

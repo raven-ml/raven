@@ -313,6 +313,25 @@ let test_capture () =
   in
   equal bits_t (bits (g false)) (bits (g true))
 
+(* A set no kernel library computes on, as a GPU set is outside a compiler:
+   a memory device and an io device, which does not run on the host. *)
+module Bare =
+  (val Nx.devices [ Nx_support.memory 3; Nx_array_support.io_device () ])
+
+(* A remat's program, evaluated now, makes each creation on a set without
+   kernels as the host does: its host form placed there. *)
+let test_bare () =
+  let x = Nx.zeros_at Bare.on Nx.float64 [| 3 |] in
+  let check msg want f =
+    let y = Rune.remat T.(tensor @-> returns tensor) f x in
+    equal ~msg:(msg ^ ": placement") (Nx_support.placement ()) Bare.on
+      (Nx.placement y);
+    equal ~msg bits_t (bits want) (bits (Nx.place Nx.Host.on y))
+  in
+  check "eye_at" (Nx.eye Nx.float64 3) (fun x ->
+      Nx.eye_at (Nx.placement x) Nx.float64 3);
+  check "full_like" (Nx.full Nx.float64 [| 3 |] 2.) (fun x -> Nx.full_like x 2.)
+
 let () =
   exit
     (run "rune2 remat"
@@ -329,5 +348,6 @@ let () =
            [
              test "traced once, additions once" test_once;
              test "a capture" test_capture;
+             test "creations on a set without kernels" test_bare;
            ];
        ])
