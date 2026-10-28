@@ -35,8 +35,7 @@
     Each operand is read at the union moved back to its axes. Where that is
     its own placement, it is read there. Where its own placement holds on
     each device the window it is read at, as a value whole on every device
-    does, it is read by a view of that window. An operand of every set is
-    read at the union moved back to its axes, computed there.
+    does, it is read by a view of that window.
 
     The route raises [Invalid_argument] where an operand is read neither
     way, so that a device of the results needs a window of it the device
@@ -125,9 +124,7 @@ type rule =
           receives it. *)
   | Into of axis array array
       (** [Axes]' windows, written into the last operand: the results lie
-          where the last operand's cuts put them where it has a placement,
-          and where it is of every set, where the others' union puts the
-          axes the last operand becomes. *)
+          where the last operand's cuts put them. *)
 
 val moved : Nx_array.Move.t -> int array -> int -> axis
 (** [moved m s a] is what [m] makes of axis [a] of a value of shape [s]:
@@ -193,21 +190,15 @@ type 'd t = {
 }
 
 val route :
-  by:string ->
-  rule ->
-  'd Devices.placement option array ->
-  int array array ->
-  'd t option
+  by:string -> rule -> 'd Devices.placement array -> int array array -> 'd t
 (** [route ~by r ps shapes] routes an operation of rule [r] over operands at
-    [ps] of [shapes], [None] for an operand of every set, as the module's
-    preamble states. [ps] and [shapes] are of one positive length, and [r]
-    names each axis of each operand. It is [None] where every operand is: the
-    operation is of every set too. Operands all at one placement are read
-    there and their results lie there, where it cuts no axis or [r] is
-    [Elementwise]. A route reads an operand at a placement other than its
-    own only through views of its arrays. An axis that [r] reduces and that
-    has no element is read whole by every operand; one it scans keeps its
-    cut, and the devices compute by windows.
+    [ps] of [shapes], as the module's preamble states. [ps] and [shapes] are
+    of one positive length, and [r] names each axis of each operand. Operands
+    all at one placement are read there and their results lie there, where it
+    cuts no axis or [r] is [Elementwise]. A route reads an operand at a
+    placement other than its own only through views of its arrays. An axis
+    that [r] reduces and that has no element is read whole by every operand;
+    one it scans keeps its cut, and the devices compute by windows.
 
     Raises [Invalid_argument] naming [by] if an operand's placement cuts an
     axis its shape lacks ({!Grid.window}), and with the preamble's message

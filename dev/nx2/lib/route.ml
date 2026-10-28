@@ -343,16 +343,14 @@ let refuse ~by rule set i p s u =
    axis an operation other than an elementwise one may read whole. *)
 let general ~by rule ps shapes =
   let n = Array.length ps in
-  let placed i = Option.get ps.(i) in
-  let concrete = List.filter (fun i -> ps.(i) <> None) (List.init n Fun.id) in
-  (* An [Into]'s results lie where its last operand lies, when it has a
-     placement; the other operands join in order. *)
-  let into = match rule with Into _ -> ps.(n - 1) <> None | _ -> false in
-  let first = if into then n - 1 else List.hd concrete in
-  let set = Devices.set (placed first) in
-  let other i = Devices.number (Devices.set (placed i)) <> Devices.number set in
-  let lifted i = forward rule i shapes.(i) (Devices.grid (placed i)) in
-  let refuse i u = refuse ~by rule set i (placed i) shapes.(i) u in
+  (* An [Into]'s results lie where its last operand lies; the other operands
+     join in order. *)
+  let into = match rule with Into _ -> true | Elementwise | Axes _ -> false in
+  let first = if into then n - 1 else 0 in
+  let set = Devices.set ps.(first) in
+  let other i = Devices.number (Devices.set ps.(i)) <> Devices.number set in
+  let lifted i = forward rule i shapes.(i) (Devices.grid ps.(i)) in
+  let refuse i u = refuse ~by rule set i ps.(i) shapes.(i) u in
   (* An operand of another set, or whose cuts do not join the union, adds
      none: it is refused below unless it holds what it is read at. *)
   let u =
@@ -361,69 +359,47 @@ let general ~by rule ps shapes =
       List.fold_left
         (fun u i ->
           if other i then u else Option.value (join u (lifted i)) ~default:u)
-        (lifted first) (List.tl concrete)
-  in
-  (* An [Into] of every set lies where the others' union puts the axes its
-     last operand becomes. *)
-  let u =
-    match rule with
-    | Into _ when not into ->
-        let l = n - 1 in
-        forward rule l shapes.(l) (backward rule l shapes.(l) u)
-    | Elementwise | Axes _ | Into _ -> u
+        (lifted first)
+        (List.init (n - 1) succ)
   in
   let u = aligned rule shapes u in
   (* A folded axis of no element is read whole: no device folds a term. *)
   let u = if folds_empty rule shapes then results u else u in
   let operands =
-    Array.init n (fun i ->
+    Array.mapi
+      (fun i p ->
         let q = backward rule i shapes.(i) u in
-        match ps.(i) with
-        | None -> Devices.v ~by set q
-        | Some p ->
-            if other i then refuse i u
-            else if Grid.equal (Devices.grid p) q then p
-            else if holds p shapes.(i) q then Devices.v ~by set q
-            else refuse i u)
+        if other i then refuse i u
+        else if Grid.equal (Devices.grid p) q then p
+        else if holds p shapes.(i) q then Devices.v ~by set q
+        else refuse i u)
+      ps
   in
   (* The results lie at an operand's own placement where it is theirs, so
      that operations chained over one placement keep it physically. *)
   let r = results u in
   let result =
-    let own i = Grid.equal (Devices.grid (placed i)) r in
-    match List.find_opt own concrete with
-    | Some i -> placed i
+    let own p = Grid.equal (Devices.grid p) r in
+    match Array.find_opt own ps with
+    | Some p -> p
     | None -> Devices.v ~by set r
   in
-  Some { operands; result; compute = computed rule shapes operands }
+  { operands; result; compute = computed rule shapes operands }
 
 let route ~by rule ps shapes =
-  Array.iteri
-    (fun i p ->
-      match p with
-      | None -> ()
-      | Some p -> (
-          match Grid.window (Devices.grid p) shapes.(i) 0 with
-          | Ok _ -> ()
-          | Error e -> invalid_argf "%s: %s" by e))
-    ps;
-  match Array.find_opt Option.is_some ps with
-  | None -> None
-  | Some first ->
-      (* Operands at one placement are read there, and the results lie
-         there, where it cuts no axis or the operation is elementwise: each
-         device reads its window of each and computes its window of the
-         results. *)
-      let p = Option.get first in
-      let alone = Array.for_all (function None -> true | Some q -> q == p) ps in
-      let elementwise =
-        match rule with Elementwise -> true | Axes _ | Into _ -> false
-      in
-      if alone && (elementwise || not (Grid.is_cut (Devices.grid p))) then
-        Some
-          {
-            operands = Array.make (Array.length ps) p;
-            result = p;
-            compute = Windows;
-          }
-      else general ~by rule ps shapes
+  for i = 0 to Array.length ps - 1 do
+    match Grid.window (Devices.grid ps.(i)) shapes.(i) 0 with
+    | Ok _ -> ()
+    | Error e -> invalid_argf "%s: %s" by e
+  done;
+  (* Operands at one placement are read there, and the results lie there,
+     where it cuts no axis or the operation is elementwise: each device reads
+     its window of each and computes its window of the results. *)
+  let p = ps.(0) in
+  let alone = Array.for_all (fun q -> q == p) ps in
+  let elementwise =
+    match rule with Elementwise -> true | Axes _ | Into _ -> false
+  in
+  if alone && (elementwise || not (Grid.is_cut (Devices.grid p))) then
+    { operands = Array.make (Array.length ps) p; result = p; compute = Windows }
+  else general ~by rule ps shapes

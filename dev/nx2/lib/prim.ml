@@ -1300,14 +1300,13 @@ let route_of (type r) ~by (op : r prim) : unit Route.t =
       { Route.operands = Array.make n p; result = p; compute = Windows }
   | One _ | Apart ->
       let n = fold (fun () n _ -> n + 1) () 0 op in
-      let ps = Array.make n None and shapes = Array.make n [||] in
+      let ps = Array.make n host and shapes = Array.make n [||] in
       iteri
         (fun i x ->
-          ps.(i) <- Some (placement x);
+          ps.(i) <- placement x;
           shapes.(i) <- shape x)
         op;
-      (* Every operand has a placement, so the operation has a route. *)
-      Option.get (Route.route ~by (rule op) ps shapes)
+      Route.route ~by (rule op) ps shapes
 
 let rec make_outs : type d r.
     ('a 'b 'c. int -> ('a, 'b, 'c) form -> ('a, 'b, 'c) t) ->
