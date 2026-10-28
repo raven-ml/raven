@@ -15,35 +15,25 @@ let quiet () = Atomic.get extents = 0
 
 (* The eager meaning *)
 
-(* Raises unless the operand [x] is alive and concrete or a constant: an
-   interpretation receives every operation on its traced values before eager
-   execution can. *)
+(* Raises unless the operand [x] is alive and concrete: an interpretation
+   receives every operation on its traced values before eager execution
+   can. *)
 let checked (type v s d) ~by (x : (v, s, d) t) =
   match x with
   | Traced { owner; _ } ->
       invalid_argf "%s: a value traced by %s reached eager execution" by
         owner.name
-  | Array _ | Shards _ | Handle _ | Deferred _ -> Prim.alive ~by x
-
-let is_concrete x = not (Prim.is_constant x)
+  | Array _ | Shards _ | Handle _ -> Prim.alive ~by x
 
 (* Whether [p] lies on the host's set. *)
 let on_host_set p = Devices.number (Devices.set p) = Devices.number Devices.host
 
-(* [x] placed at [p]: a constant computed there, a value onto the host from
-   another set waited for first. *)
-let placed : type v s d e.
-    by:string -> e Devices.placement -> (v, s, d) t -> (v, s, e) t =
- fun ~by p x ->
-  match x with
-  | Deferred _ -> Place.value ~by p (Constant.at p x)
-  | Array _ | Shards _ | Handle _ | Traced _ ->
-      if on_host_set p && not (on_host_set (Prim.placement x)) then
-        Check.wait ~by x;
-      Exec.place ~by p x
-
-(* [x] readable at [p]: a constant computed there. *)
-let placer ~by p x = Exec.placer ~by p (Constant.at p x)
+(* [x] placed at [p], a value onto the host from another set waited for
+   first. *)
+let placed ~by p x =
+  if on_host_set p && not (on_host_set (Prim.placement x)) then
+    Check.wait ~by x;
+  Exec.place ~by p x
 
 (* The memory of a handle [c] claimed that [op]'s first result may take
    ({!Donate.reuse}): the handle's buffer, dead from then on, and the array
@@ -56,9 +46,7 @@ let taken c (r : Prim.routed) op =
       let xs = Array.of_list xs in
       let at_result i =
         let (Value.Any x) = xs.(i) in
-        match Prim.at x with
-        | Some p -> Devices.equal p route.result
-        | None -> false
+        Devices.equal (Prim.placement x) route.result
       in
       let own = List.filter at_result own in
       Option.map (fun (b, a) -> (b, A.Any a)) (Donate.reuse c ~own dt layout)
@@ -136,7 +124,7 @@ and donated : type r. by:string -> r prim -> r =
             match y with
             | Array r when A.buffer r.a == b ->
                 Array { r with a = A.v (A.dtype r.a) (A.layout r.a) b' }
-            | Array _ | Shards _ | Handle _ | Deferred _ | Traced _ -> y
+            | Array _ | Shards _ | Handle _ | Traced _ -> y
           in
           let op = Prim.map over op in
           ending ~by c (Some into) (fun () -> routed ~by ~into r op)
@@ -149,244 +137,30 @@ and plain : type r. by:string -> r prim -> r =
   | Check { ok; data; fail } ->
       ignore (Prim.layouts ~by op);
       Check.issue ~by ok data fail
-  | _ ->
-      if not (Prim.exists is_concrete op) then Constant.defer ~by op
-      else routed ~by (Prim.route ~by op) op
+  | _ -> routed ~by (Prim.route ~by op) op
 
-(* [op], a placement, a check, or an operation of a concrete operand, computed
-   as its rule decided [r] ({!Prim.route}): over operands placed where the
-   route reads them, by partials or by windows as it computes, its first
-   result into [into] where it is given. *)
+(* [op], a placement, a check, or another operation, computed as its rule
+   decided [r] ({!Prim.route}): over operands placed where the route reads
+   them, by partials or by windows as it computes, its first result into
+   [into] where it is given. *)
 and routed : type r. by:string -> ?into:A.any -> Prim.routed -> r prim -> r =
  fun ~by ?into r op ->
   match op with
   | Place (p, x) -> placed ~by p x
   | Check { ok; data; fail } -> Check.issue ~by ok data fail
   | _ -> (
-      (* A concrete operand has a placement, so the operation has a route. *)
+      (* Every operation but a placement and a check has a route. *)
       let route = Option.get r.Prim.route in
-      let place i x = placer ~by route.operands.(i) x in
+      let place i x = Exec.placer ~by route.operands.(i) x in
       let op = Prim.mapi place op in
       match route.compute with
       | Partials -> Partial.run ~by route op
       | Windows -> Exec.windows ~by ?into route r.layouts op)
 
-(* The nodes of the formulas [i]'s rule returned. *)
-let add_formula i id =
-  match i.formulas with
-  | Some t -> Hashtbl.replace t id ()
-  | None ->
-      let t = Hashtbl.create 16 in
-      Hashtbl.replace t id ();
-      i.formulas <- Some t
-
-let is_formula i id =
-  match i.formulas with Some t -> Hashtbl.mem t id | None -> false
-
-(* [i]'s rule on [op]. The formulas it returns are [i]'s own: an operation
-   reads them as they are. *)
-let applied i ~by op =
-  let r = i.rule i ~by op in
-  (match i.reach with
-  | Values | Adopting _ -> ()
-  | Extent ->
-      Prim.iter_results
-        (fun y ->
-          match y with
-          | Deferred { node = Node n; _ } -> add_formula i n.id
-          | Array _ | Shards _ | Handle _ | Traced _ -> ())
-        op r);
-  r
-
-(* A formula's operation rebuilt at another brand: a map's dtypes and a loop's
-   reductions, which carry it. *)
-type 'd outs_at = Outs : ('d, 'r) outs -> 'd outs_at
-type 'd reduction_at = Reduction : ('d, 'r) reduction -> 'd reduction_at
-type 'd reductions_at = Reductions : ('d, 'r) reductions -> 'd reductions_at
-
-let rec outs_at : type e r d. (e, r) outs -> d outs_at = function
-  | [] -> Outs []
-  | dt :: rest ->
-      let (Outs o) = outs_at rest in
-      Outs (dt :: o)
-
-let reduction_at : type e r d. (e, r) reduction -> d reduction_at = function
-  | Monoid (m, k, dt) -> Reduction (Monoid (m, k, dt))
-  | Logsumexp (k, dt) -> Reduction (Logsumexp (k, dt))
-  | Moments (k, dt) -> Reduction (Moments (k, dt))
-  | Arg (x, k, dt) -> Reduction (Arg (x, k, dt))
-
-let rec reductions_at : type e r d. (e, r) reductions -> d reductions_at =
-  function
-  | [] -> Reductions []
-  | r :: rest ->
-      let (Reduction r) = reduction_at r in
-      let (Reductions rs) = reductions_at rest in
-      Reductions (r :: rs)
-
-(* [i]'s results on the formula operation [op] rebuilt over [sub] of its
-   operands, in position order. Each constructor names its results at [sub]'s
-   brand. *)
-let replayed : type r d.
-    interpretation ->
-    by:string ->
-    ('v 's 'e. ('v, 's, 'e) t -> ('v, 's, d) t) ->
-    r prim ->
-    d any list =
- fun i ~by sub op ->
-  let load : type e. e load -> d load = function
-    | Plain x -> Plain (sub x)
-    | Padded { x; fill; pad } -> Padded { x = sub x; fill; pad }
-  in
-  let one : type v s. (v, s, d) t prim -> d any list =
-   fun op -> [ Any (applied i ~by op) ]
-  in
-  let two : type v s w q. ((v, s, d) t * (w, q, d) t) prim -> d any list =
-   fun op ->
-    let a, b = applied i ~by op in
-    [ Any a; Any b ]
-  in
-  let three : type v s w q.
-      ((v, s, d) t * (w, q, d) t * (w, q, d) t) prim -> d any list =
-   fun op ->
-    let a, b, c = applied i ~by op in
-    [ Any a; Any b; Any c ]
-  in
-  let all = ref ([] : d any list) in
-  let add y = all := List.cons (Any y) !all in
-  match op with
-  | Map { layout; prog; outs; loads } ->
-      let (Outs outs) = outs_at outs in
-      let op = Map { layout; prog; outs; loads = Iarray.map load loads } in
-      Prim.iter_outs add outs (applied i ~by op);
-      List.rev !all
-  | Reduce { layout; axes; prog; reductions; loads } ->
-      let (Reductions reductions) = reductions_at reductions in
-      let loads = Iarray.map load loads in
-      let op = Reduce { layout; axes; prog; reductions; loads } in
-      Prim.iter_reductions add reductions (applied i ~by op);
-      List.rev !all
-  | Scan { layout; axis; prog; reduction; loads; carry } ->
-      let (Reduction reduction) = reduction_at reduction in
-      let loads = Iarray.map load loads in
-      let carry = Option.map (fun (Any c) -> Any (sub c)) carry in
-      let op = Scan { layout; axis; prog; reduction; loads; carry } in
-      Prim.iter_reduction add reduction (applied i ~by op);
-      List.rev !all
-  | Gather { axis; idx; x } -> one (Gather { axis; idx = sub idx; x = sub x })
-  | Scatter { combine; unique; axis; idx; updates; into } ->
-      let idx = sub idx and updates = sub updates and into = sub into in
-      one (Scatter { combine; unique; axis; idx; updates; into })
-  | Sort { axis; descending; k; x } ->
-      two (Sort { axis; descending; k; x = sub x })
-  | Fold { shape; pad; x } -> one (Fold { shape; pad; x = sub x })
-  | Assemble { dtype; shape; fill; pieces } ->
-      let pieces = List.map (fun (r, x) -> (r, sub x)) pieces in
-      one (Assemble { dtype; shape; fill; pieces })
-  | Contract
-      { batch; contracting; acc; out; a; b; init; a_scale; b_scale; segments }
-      ->
-      let a = sub a and b = sub b and init = Option.map sub init in
-      let scale : type e. e scale -> d scale = function
-        | Exponent x -> Exponent (sub x)
-        | Value x -> Value (sub x)
-      in
-      let a_scale = Option.map scale a_scale in
-      let b_scale = Option.map scale b_scale in
-      let segments =
-        Option.map
-          (fun (g : _ Nx_kernel.segments) : _ Nx_kernel.segments ->
-            match g with
-            | Rows r -> Rows { r with offsets = sub r.offsets }
-            | Contracting r -> Contracting { r with offsets = sub r.offsets })
-          segments
-      in
-      one
-        (Contract
-           { batch; contracting; acc; out; a; b; init; a_scale; b_scale;
-             segments })
-  | Fft (C2c { direction; axes; x }) ->
-      one (Fft (C2c { direction; axes; x = sub x }))
-  | Fft (R2c { dtype; axes; x }) -> one (Fft (R2c { dtype; axes; x = sub x }))
-  | Fft (C2r { dtype; n; axes; x }) ->
-      one (Fft (C2r { dtype; n; axes; x = sub x }))
-  | Linalg (Cholesky { triangle; a }) ->
-      one (Linalg (Cholesky { triangle; a = sub a }))
-  | Linalg (Lu a) -> three (Linalg (Lu (sub a)))
-  | Linalg (Qr { factors; a }) -> two (Linalg (Qr { factors; a = sub a }))
-  | Linalg (Svd_values { dtype; a }) ->
-      one (Linalg (Svd_values { dtype; a = sub a }))
-  | Linalg (Svd { factors; dtype; a }) ->
-      three (Linalg (Svd { factors; dtype; a = sub a }))
-  | Linalg (Eigh_values { dtype; a }) ->
-      one (Linalg (Eigh_values { dtype; a = sub a }))
-  | Linalg (Eigh { dtype; a }) -> two (Linalg (Eigh { dtype; a = sub a }))
-  | Linalg (Eig_values { dtype; a }) ->
-      one (Linalg (Eig_values { dtype; a = sub a }))
-  | Linalg (Eig { dtype; a }) -> two (Linalg (Eig { dtype; a = sub a }))
-  | Linalg (Solve_triangular { triangle; adjoint; unit_diagonal; a; b }) ->
-      let a = sub a and b = sub b in
-      one
-        (Linalg
-           (Solve_triangular { triangle; adjoint; unit_diagonal; a; b }))
-  | Copy x -> one (Copy (sub x))
-  | Move (mv, x) -> one (Move (mv, sub x))
-  | Bitcast (dt, x) -> one (Bitcast (dt, sub x))
-  | Place _ | Check _ ->
-      invalid_arg "Eval: a formula's operation is a placement or a check"
-
-(* [x], a formula [i]'s rule did not return, as [i]'s results on its nodes:
-   each node's operation rebuilt at [x]'s brand and given to [i]'s rule in
-   dependency order, each once. A node of a formula [i]'s rule returned is read
-   as it is. *)
-let replay (type v s d) i (x : (v, s, d) t) : (v, s, d) t =
-  let sub result (type w q e) (y : (w, q, e) t) : (w, q, d) t =
-    match y with
-    | Deferred { form; node = Node n as node; k } ->
-        if is_formula i n.id then
-          Deferred { form = { form with placement = None }; node; k }
-        else Prim.expect form.dtype (result node ()).(k)
-    | Array _ | Shards _ | Handle _ | Traced _ ->
-        invalid_arg "Eval: a formula's operand is a formula"
-  in
-  let reads (Node n) () =
-    let (Prim.Operands xs) = Prim.operands n.op in
-    List.filter_map
-      (fun (Any y) ->
-        match y with
-        | Deferred { node = Node m as node; _ } when not (is_formula i m.id) ->
-            Some (node, ())
-        | Deferred _ | Array _ | Shards _ | Handle _ | Traced _ -> None)
-      xs
-  in
-  let rebuilt result (Node n) () =
-    Array.of_list (replayed i ~by:n.by (fun y -> sub result y) n.op)
-  in
-  match x with
-  | Deferred { form; node; k } ->
-      let same () () = true in
-      Prim.expect form.dtype (Prim.evaluate ~same ~reads rebuilt node ()).(k)
-  | Array _ | Shards _ | Handle _ | Traced _ -> x
-
-(* Whether [i]'s rule receives [x] changed: for an [Extent], a formula its
-   rule did not return replayed. *)
-let changes (type v s d) i (x : (v, s, d) t) =
-  match x with
-  | Deferred { node = Node n; _ } -> (
-      match i.reach with
-      | Extent -> not (is_formula i n.id)
-      | Values | Adopting _ -> false)
-  | Array _ | Shards _ | Handle _ | Traced _ -> false
-
-let received (type v s d) i (x : (v, s, d) t) : (v, s, d) t =
-  match x with
-  | Deferred _ when changes i x -> replay i x
-  | Deferred _ | Array _ | Shards _ | Handle _ | Traced _ -> x
-
 let is_traced (type v s d) (x : (v, s, d) t) =
   match x with
   | Traced _ -> true
-  | Array _ | Shards _ | Handle _ | Deferred _ -> false
+  | Array _ | Shards _ | Handle _ -> false
 
 (* Whether [i] receives [o]'s values as its own: [o] is [i] or what [i]
    adopts. *)
@@ -397,7 +171,7 @@ let rec adopts i o =
 let owns i (type v s d) (x : (v, s, d) t) =
   match x with
   | Traced { owner; _ } -> adopts i owner
-  | Array _ | Shards _ | Handle _ | Deferred _ -> false
+  | Array _ | Shards _ | Handle _ -> false
 
 let refuse ~by o =
   if Atomic.get o.live then
@@ -449,15 +223,13 @@ let deliver i ~by op =
         when (not (adopts i owner)) && not (List.memq owner !checked) ->
           if not (around owner) then refuse ~by owner;
           checked := List.cons owner !checked
-      | Traced _ | Array _ | Shards _ | Handle _ | Deferred _ -> ())
+      | Traced _ | Array _ | Shards _ | Handle _ -> ())
     op;
   Prim.iteri (fun _ x -> Prim.alive ~by x) op;
   let op =
-    if Prim.exists (fun x -> changes i x || Donate.is_handle x) op then
-      Prim.map (fun x -> Donate.lent (received i x)) op
-    else op
+    if Prim.exists Donate.is_handle op then Prim.map Donate.lent op else op
   in
-  applied i ~by op
+  i.rule i ~by op
 
 let reaches i op =
   match i.reach with
@@ -482,7 +254,7 @@ let absent i ~by op =
     (fun _ x ->
       match x with
       | Traced { owner; _ } when adopts i owner -> refuse ~by owner
-      | Traced _ | Array _ | Shards _ | Handle _ | Deferred _ -> ())
+      | Traced _ | Array _ | Shards _ | Handle _ -> ())
     op;
   invalid_arg "Eval.absent: an operation its interpretation does not reach"
 
@@ -536,7 +308,7 @@ let interpret ~name reach
   | Adopting p -> adoptable ~name p
   | Values | Extent -> ());
   let live = Atomic.make true in
-  let i = { name; reach; rule; live; formulas = None } in
+  let i = { name; reach; rule; live } in
   let run () = Effect.Deep.try_with f i (handler i) in
   match reach with
   | Values | Adopting _ ->
@@ -568,12 +340,12 @@ let read_through (type v s d) (x : (v, s, d) t) : (v, s, d) t =
 let payload (type v s d) i (x : (v, s, d) t) =
   match x with
   | Traced { owner; payload; _ } when owner == i -> Some payload
-  | Traced _ | Array _ | Shards _ | Handle _ | Deferred _ -> None
+  | Traced _ | Array _ | Shards _ | Handle _ -> None
 
 let owner (type v s d) (x : (v, s, d) t) =
   match x with
   | Traced { owner; _ } -> Some owner
-  | Array _ | Shards _ | Handle _ | Deferred _ -> None
+  | Array _ | Shards _ | Handle _ -> None
 
 (* An operation no handler answered computes, unless an operand is traced. *)
 let unreached ~by op =
@@ -581,7 +353,7 @@ let unreached ~by op =
     (fun _ x ->
       match x with
       | Traced { owner; _ } -> refuse ~by owner
-      | Array _ | Shards _ | Handle _ | Deferred _ -> ())
+      | Array _ | Shards _ | Handle _ -> ())
     op;
   run ~by op
 
@@ -647,7 +419,7 @@ let fast3 ~by k c x y =
 let apply1 ~by k dt x =
   match x with
   | Traced _ -> eval1 ~by k dt x
-  | Array _ | Shards _ | Handle _ | Deferred _ ->
+  | Array _ | Shards _ | Handle _ ->
       if quiet () then fast1 ~by k dt x else eval1 ~by k dt x
 
 let apply2 ~by k dt x y =
@@ -659,6 +431,19 @@ let apply3 ~by k c x y =
   match (c, x, y) with
   | Traced _, _, _ | _, Traced _, _ | _, _, Traced _ -> eval3 ~by k c x y
   | _ -> if quiet () then fast3 ~by k c x y else eval3 ~by k c x y
+
+(* The map of [prog] over [x], into [dt]. *)
+let map_of prog dt x =
+  let layout = A.Layout.contiguous (Iarray.of_array (Prim.shape x)) in
+  Map { layout; prog; outs = [ dt ]; loads = [| Plain x |]; at = None }
+
+let apply ~by prog dt x =
+  match (x, Exec.live_kernels x) with
+  | Array { at; a; _ }, Some kernels when quiet () ->
+      Exec.map ~by kernels at prog dt a [| Nx_kernel.Plain a |]
+  | _ ->
+      let v, () = eval ~by (map_of prog dt x) in
+      v
 
 let contract ~by ~batch ~contracting ~acc dt a b init =
   let fast =
@@ -689,5 +474,5 @@ let place ~by p x =
       (* A second value over the memory shares it. *)
       Rig.Claim.share (Nx_array.buffer r.a);
       Array { at = p; a = r.a; dead = Live }
-  | Array _ | Shards _ | Handle _ | Deferred _ | Traced _ ->
+  | Array _ | Shards _ | Handle _ | Traced _ ->
       eval ~by (Place (p, x))

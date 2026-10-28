@@ -649,7 +649,9 @@ let check k (wide, es) =
     let args e = String.concat ", " (Array.to_list (Array.map (hex dt) e)) in
     let show i y = Printf.sprintf "%s(%s) = %s" k.name (args es.(i)) y in
     let map out =
-      fst (P.eval ~by:"t" (P.Map { layout; prog; outs = [ out ]; loads }))
+      fst
+        (P.eval ~by:"t"
+           (P.Map { layout; prog; outs = [ out ]; loads; at = None }))
     in
     match k.node with
     | Op2 (Compare _, _, _) ->

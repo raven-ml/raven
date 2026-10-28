@@ -182,7 +182,7 @@ let map (type d) ~by ?into p (vs : d Value.any list) exprs : d Value.any list =
   let layout = L.contiguous (Iarray.of_array (Prim.shape x)) in
   let plain (Value.Any x : d Value.any) = Value.Plain x in
   let loads = Iarray.of_list (List.map plain vs) in
-  read (at ~by ?into p (Value.Map { layout; prog; outs; loads }))
+  read (at ~by ?into p (Value.Map { layout; prog; outs; loads; at = None }))
 
 (* Output [o] of [prog], of [term], over [loads] in the window [w] of a
    loop of [layout], on [here]: the load itself where [prog] is its
@@ -195,7 +195,8 @@ let terms (type d) ~by here layout (prog : P.t) o (D.Any term)
   | _ ->
       let one = P.subst ~outs:[| o |] ~ins:prog.ins (fun _ -> None) prog in
       let map =
-        Value.Map { layout; prog = one; outs = Value.[ term ]; loads }
+        Value.Map
+          { layout; prog = one; outs = Value.[ term ]; loads; at = None }
       in
       Value.Any (fst (at ~by here (Prim.within map w)))
 

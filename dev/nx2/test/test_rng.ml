@@ -22,7 +22,7 @@ let message f =
 let read x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
 
 (* [x]'s elements on the first device of its set. *)
-let shard x = A.to_array (Iarray.get (Option.get (Nx.Repr.shards x)) 0)
+let shard x = A.to_array (Iarray.get (Nx.Repr.shards x) 0)
 
 let host_of dt s xs =
   Nx.Repr.of_array Nx.Host.v (A.of_array dt (Iarray.of_array s) xs)
@@ -163,8 +163,11 @@ let keys_group =
     [
       prop "a seed's words are its high and low halves" seeds (fun s ->
           equal (array int32) [| word (s asr 32); word s |] (words (Rng.key s)));
-      test "a key is a value of every set" (fun () ->
-          is_none (Nx.placement (Rng.to_tensor (Rng.key 7))));
+      test "a key is a host value" (fun () ->
+          equal
+            (Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal)
+            Nx.Host.on
+            (Nx.placement (Rng.to_tensor (Rng.key 7))));
       test "a key's walk is one array at the root, checked on rebuild"
         (fun () ->
           let k = Rng.key 7 and ptree = Nx.Ptree.v Rng.walk in
@@ -213,7 +216,7 @@ let keys_group =
           equal (array int32)
             (words (Rng.fold_in k (Int32.to_int n)))
             (words (Rng.fold_in_tensor k i)));
-      prop "fold_in_tensor of a 0-d index of every set is fold_in of it"
+      prop "fold_in_tensor of a 0-d host index is fold_in of it"
         ~examples:
           [ (3, Int32.min_int); (3, -1l); (3, 0l); (3, Int32.max_int) ]
         (Gen.pair seeds (Gen.int32_range Int32.min_int Int32.max_int))
@@ -251,10 +254,8 @@ let keys_group =
           equal (array int32) each (words y));
       test "a key carried through splits costs a draw what one split does"
         (fun () ->
-          let x =
-            Nx.place Count.on (host_of Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |])
-          in
-          let draw k = Nx.mul x (Rng.uniform ~key:k Nx.float32 [| 4 |]) in
+          let half = Nx.full_at Count.on Nx.float32 [| 4 |] 0.5 in
+          let draw k = Rng.bernoulli ~key:(Rng.place Count.on k) half in
           let rec carried n k =
             if n = 0 then k else carried (n - 1) (Rng.split k).(0)
           in
@@ -265,23 +266,20 @@ let keys_group =
             Nx_support.Counting.calls ()
           in
           equal ~msg:"kernel calls" int (calls 1) (calls 1000);
-          (* The same keys, each placed before it is split. *)
+          (* The same keys, placed once and split where they lie. *)
           let rec placed n k =
-            if n = 0 then k
-            else placed (n - 1) (Rng.split (Rng.place Count.on k)).(0)
+            if n = 0 then k else placed (n - 1) (Rng.split k).(0)
           in
-          equal ~msg:"bits" (array int32)
-            (words (placed 1000 (Rng.key 3)))
+          let on_count = placed 1000 (Rng.place Count.on (Rng.key 3)) in
+          equal ~msg:"bits" (array int32) (words on_count)
             (words (carried 1000 (Rng.key 3)));
-          equal ~msg:"draws" (array float_exact)
-            (read (draw (placed 1000 (Rng.key 3))))
+          equal ~msg:"draws" (array bool)
+            (read (Rng.bernoulli ~key:on_count half))
             (read (draw (carried 1000 (Rng.key 3)))));
       test "a key carried through fold_in_tensor costs a draw what one does"
         (fun () ->
-          let x =
-            Nx.place Count.on (host_of Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |])
-          in
-          let draw k = Nx.mul x (Rng.uniform ~key:k Nx.float32 [| 4 |]) in
+          let half = Nx.full_at Count.on Nx.float32 [| 4 |] 0.5 in
+          let draw k = Rng.bernoulli ~key:(Rng.place Count.on k) half in
           let seven = Nx.scalar Nx.int32 7l in
           let rec carried n k =
             if n = 0 then k else carried (n - 1) (Rng.fold_in_tensor k seven)
@@ -301,10 +299,8 @@ let keys_group =
             (words (carried 1000 (Rng.key 3))));
       test "a placed batch carried through fold_in costs a draw what one does"
         (fun () ->
-          let x =
-            Nx.place Count.on (host_of Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |])
-          in
-          let draw k = Nx.mul x (Rng.uniform ~key:k Nx.float32 [| 4 |]) in
+          let half = Nx.full_at Count.on Nx.float32 [| 4 |] 0.5 in
+          let draw k = Rng.bernoulli ~key:k half in
           let batch = Rng.split_batch ~n:3 (Rng.key 3) in
           let rec carried n k =
             if n = 0 then k else carried (n - 1) (Rng.fold_in k n)
@@ -489,18 +485,22 @@ let draws =
           let k = Rng.key seed in
           let k' = Rng.of_tensor (host_of Nx.int32 [| 2 |] (words k)) in
           equal (array float_exact) (draw k s) (draw k' s));
-      prop "a draw is the same on every set" (Gen.pair seeds shapes)
+      prop "a draw placed whole on each device keeps its bits"
+        (Gen.pair seeds shapes)
         (fun (seed, s) ->
           let k = Rng.key seed in
           let x = Rng.normal ~key:k Nx.float32 s in
           equal (array float_exact) (read x) (shard (Nx.place S2.on x)));
       test "a placed key draws where it lies" (fun () ->
           let k = Rng.place S2.on (Rng.key 9) in
-          let x = Rng.uniform ~key:k Nx.float32 [| 5 |] in
+          let p = Nx.full_at S2.on Nx.float32 [| 5 |] 0.5 in
+          let x = Rng.bernoulli ~key:k p in
           equal bool true
-            (Nx.Placement.equal S2.on (Option.get (Nx.placement x)));
-          equal (array float_exact)
-            (read (Rng.uniform ~key:(Rng.key 9) Nx.float32 [| 5 |]))
+            (Nx.Placement.equal S2.on (Nx.placement x));
+          equal (array bool)
+            (read
+               (Rng.bernoulli ~key:(Rng.key 9)
+                  (Nx.full Nx.float32 [| 5 |] 0.5)))
             (shard x));
       (* A cut of an inner axis has no contiguous image in a draw flattened
          to rows: a draw keeps its parameters' shape, and their placement. *)
@@ -511,8 +511,8 @@ let draws =
           in
           let k = Rng.key 3 in
           let at = S2.split ~axis:1 in
-          let x = Rng.bernoulli ~key:k (Nx.place at p) in
-          equal bool true (Nx.Placement.equal at (Option.get (Nx.placement x)));
+          let x = Rng.bernoulli ~key:(Rng.place S2.on k) (Nx.place at p) in
+          equal bool true (Nx.Placement.equal at (Nx.placement x));
           equal (array bool) (read (Rng.bernoulli ~key:k p)) (read x));
       prop "a batch of keys draws each key's draw"
         (Gen.triple keys (Gen.int_range 1 4) shapes)
@@ -1723,11 +1723,10 @@ let scope =
           let k = Rng.key 203 in
           let key = Rng.with_key k (fun () -> words (Rng.next_key ())) in
           equal (array int32) (words (Rng.fold_in k 0)) key);
-      test "a key with bytes roots no scope" (fun () ->
+      test "a host key with bytes of its own roots a scope" (fun () ->
           let k = Rng.place Nx.Host.on (Rng.key 204) in
-          equal string
-            "Nx.Rng.with_key: the key has bytes; a scope's key is of every set"
-            (message (fun () -> Rng.with_key k ignore)));
+          let key = Rng.with_key k (fun () -> words (Rng.next_key ())) in
+          equal (array int32) (words (Rng.fold_in k 0)) key);
       test "unscoped draws differ" (fun () ->
           let a = read (Rng.bits [| 4 |]) and b = read (Rng.bits [| 4 |]) in
           not_equal (array int32) a b);

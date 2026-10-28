@@ -76,8 +76,8 @@ let test_on_a_set () =
   has_prefix "float32 [2] on set " (printed x);
   equal bool true (String.ends_with ~suffix:"[1, 2]" (printed x))
 
-let test_every_set () =
-  has_prefix "float32 [2; 3] of every set"
+let test_host_creation () =
+  equal string "float32 [2; 3] [[1, 1, 1], [1, 1, 1]]"
     (printed (Nx.add (Nx.zeros Nx.float32 [| 2; 3 |]) (Nx.scalar Nx.float32 1.)))
 
 let test_dead () =
@@ -169,7 +169,7 @@ let () =
          group "values of every kind"
            [
              test "a value on a set names the set" test_on_a_set;
-             test "a value of every set prints as a formula" test_every_set;
+             test "a host creation prints as a host value" test_host_creation;
              test "a dead value names its consumer" test_dead;
              test "a traced value names its interpretation" test_traced;
              test "print is to_string and a newline on stdout" test_print;

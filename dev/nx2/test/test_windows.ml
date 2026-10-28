@@ -114,6 +114,7 @@ let map_op =
          prog = coords;
          outs = Value.[ D.Float32; D.Float32 ];
          loads = [| Plain x; Plain y |];
+         at = None;
        })
 
 (* A pad of an operand of shape [s] along one axis: crops, pads, an interior
@@ -171,6 +172,7 @@ let padded_map_op =
          prog = coords;
          outs = Value.[ D.Float32; D.Float32 ];
          loads = [| load; Plain y |];
+         at = None;
        })
 
 (* The loop's coordinate along [axis], a program of no input. *)
@@ -616,18 +618,13 @@ let any_nan (type v s) (a : (v, s) A.t) : (v, s) A.t =
   | D.Complex128 -> A.of_array D.Complex128 s (Array.map z (A.to_array a))
   | _ -> a
 
-(* [x] computed at [at] where it is a constant and [at] is given. *)
-let reach (type v s d) at (x : (v, s, d) Value.t) =
-  match at with None -> x | Some p -> Constant.at p x
-
 (* Each result's bytes on the host, in C order, at [windows], each NaN made
-   one: a constant result computed at [at], or else on the host. *)
-let bytes (type r) ?at windows (op : r Value.prim) (r : r) =
+   one. *)
+let bytes (type r) windows (op : r Value.prim) (r : r) =
   let host = Devices.one Devices.host 0 in
   let arrays = ref [] in
   Prim.iter_results
     (fun x ->
-      let x = reach at x in
       let x = Eval.run ~by:"t" (Value.Place (host, x)) in
       arrays := A.Any (Iarray.get (Prim.arrays x) 0) :: !arrays)
     op r;

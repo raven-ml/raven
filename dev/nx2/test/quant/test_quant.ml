@@ -1038,7 +1038,7 @@ let placement_law ((_, w), c) =
       (match d with
       | Lies d ->
           equal ~msg:"where dequant's result lies" placement (at d)
-            (Option.get (Nx.placement got))
+            (Nx.placement got)
       | Raises | Unstated -> ());
       let y = run () in
       applied ~at:f32 w x y;
@@ -1046,7 +1046,7 @@ let placement_law ((_, w), c) =
       | Lies d ->
           equal ~msg:"where apply's result lies" placement
             (at (product_at w d))
-            (Option.get (Nx.placement y))
+            (Nx.placement y)
       | Raises | Unstated -> ());
       equal ~msg:"apply's second run" (array int64) (product_bits y)
         (product_bits (run ()))

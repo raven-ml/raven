@@ -20,18 +20,18 @@ let donate (type v s d) ~by (x : (v, s, d) Value.t) : (v, s, d) Value.t =
       Value.Handle { donor = x; at = r.at; shape; arrays = [| r.a |] }
   | Value.Shards r ->
       Value.Handle { donor = x; at = r.at; shape = r.shape; arrays = r.arrays }
-  | Value.Handle _ | Value.Deferred _ | Value.Traced _ -> x
+  | Value.Handle _ | Value.Traced _ -> x
 
 (* A handle's arrays as a live value, which the operation reads. *)
 let live (type v s d) (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   match x with
   | Value.Handle { at; shape; arrays; _ } -> Prim.of_arrays at ~shape arrays
-  | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> x
+  | Value.Array _ | Value.Shards _ | Value.Traced _ -> x
 
 let is_handle (type v s d) (x : (v, s, d) Value.t) =
   match x with
   | Value.Handle _ -> true
-  | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> false
+  | Value.Array _ | Value.Shards _ | Value.Traced _ -> false
 
 (* A handle's arrays, which an interpretation or a function of several
    operations may keep: shared, so that no later donation writes where they
@@ -42,7 +42,7 @@ let lent (type v s d) (x : (v, s, d) Value.t) : (v, s, d) Value.t =
       let y = live x in
       Iarray.iter (fun a -> Rig.Claim.share (A.buffer a)) (Prim.arrays y);
       y
-  | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> x
+  | Value.Array _ | Value.Shards _ | Value.Traced _ -> x
 
 let read ~by x =
   Prim.alive ~by x;
@@ -60,7 +60,7 @@ let same x y = Obj.repr x == Obj.repr y
 let donates (Value.Any h) y =
   match h with
   | Value.Handle { donor; _ } -> same donor y
-  | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> false
+  | Value.Array _ | Value.Shards _ | Value.Traced _ -> false
 
 (* Claims
 
@@ -83,7 +83,7 @@ let word (type v s d) (donor : (v, s, d) Value.t) : Value.death Atomic.Loc.t =
   match donor with
   | Value.Array r -> [%atomic.loc r.dead]
   | Value.Shards r -> [%atomic.loc r.dead]
-  | Value.Handle _ | Value.Deferred _ | Value.Traced _ ->
+  | Value.Handle _ | Value.Traced _ ->
       invalid_arg "Donate.claim: a donor is an array or shards"
 
 (* Sets the donor word [w] of the handle [x] from [Live] to [died], or raises
@@ -110,7 +110,7 @@ let claim ~by xs =
         | Value.Handle { donor; _ } ->
             if not (List.exists (fun s -> donates s donor) seen) then
               kill ~by x (word donor) died
-        | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ ->
+        | Value.Array _ | Value.Shards _ | Value.Traced _ ->
             ());
         kills (h :: seen) rest
   in
@@ -125,7 +125,7 @@ let as_read (type v s d) hs (y : (v, s, d) Value.t) : (v, s, d) Value.t =
   | Value.Handle _ -> live y
   | Value.Array r when ours () -> Value.Array { r with dead = Value.Live }
   | Value.Shards r when ours () -> Value.Shards { r with dead = Value.Live }
-  | Value.Array _ | Value.Shards _ | Value.Deferred _ | Value.Traced _ -> y
+  | Value.Array _ | Value.Shards _ | Value.Traced _ -> y
 
 let called c op = Prim.map (fun y -> as_read c.handles y) op
 
@@ -171,7 +171,7 @@ let take_memory ~by b =
 let has_bytes (type v s d) (x : (v, s, d) Value.t) =
   match x with
   | Value.Array _ | Value.Shards _ | Value.Handle _ -> true
-  | Value.Deferred _ | Value.Traced _ -> false
+  | Value.Traced _ -> false
 
 let reuse (type w r d) (c : d claim) ~own (dt : (w, r) D.t) layout :
     (Rig.Buffer.t * (w, r) A.t) option =
@@ -198,8 +198,7 @@ let reuse (type w r d) (c : d claim) ~own (dt : (w, r) D.t) layout :
           && alone (j + 1)
         in
         if holds dt layout a && unconsumed b && alone 0 then Some b else None
-    | Value.Handle _ | Value.Array _ | Value.Shards _ | Value.Deferred _
-    | Value.Traced _ ->
+    | Value.Handle _ | Value.Array _ | Value.Shards _ | Value.Traced _ ->
         None
   in
   List.find_map
@@ -254,8 +253,7 @@ let with_consumer ~by xs f =
      would return their memory. *)
   Fun.protect ~finally:(fun () -> consumed c) (fun () -> f c)
 
-(* Operand [i], which must have bytes: a constant or a traced value has
-   none. *)
+(* Operand [i], which must have bytes: a traced value has none. *)
 let bytes_at c i =
   let (Value.Any x as y) = operand c i in
   if not (has_bytes x) then

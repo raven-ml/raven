@@ -1049,7 +1049,7 @@ let placements =
             Nx.contract Nx.float32 p (Nx.place split a) (Nx.place S2.on b)
           in
           equal bool ~msg:"the result's cut" true
-            (Nx.Placement.equal split (Option.get (Nx.placement y)));
+            (Nx.Placement.equal split (Nx.placement y));
           equal (array float_exact)
             (read (Nx.contract Nx.float32 p a b))
             (read y));
@@ -1919,7 +1919,7 @@ module Scaled = struct
     let y = P.eval ~by:"t" (op p Nx.float32 Nx.float32 c) in
     let one = P.eval ~by:"t" (op on_host Nx.float32 Nx.float32 c) in
     equal (array float_exact) (read one) (read y);
-    Option.get (Nx.placement y)
+    Nx.placement y
 
   (* A long MXFP4 product of more than one block of 4096, rows in no group,
      alone and rounded into float16 from [init], and a NaN outside every
@@ -2656,7 +2656,9 @@ module Conv = struct
       equal ~msg:"shape" (array int) s (Nx.shape y);
       equal ~msg:"+0" (array float_exact) (Array.make (numel s) 0.)
         (Nx.to_array y);
-      equal ~msg:"on the host" bool true (Option.is_some (Nx.placement y))
+      equal ~msg:"on the host"
+        (Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal)
+        Nx.Host.on (Nx.placement y)
     in
     zeros [| 1; 6; 2 |] (Nx.conv (f32 [| 1; 5; 4 |] 1.) w);
     zeros [| 1; 6; 2 |] (Nx.conv ~dilation:[| 2 |] (f32 [| 1; 5; 4 |] 1.) w);

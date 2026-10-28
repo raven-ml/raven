@@ -373,9 +373,10 @@ let test_quiet () =
       equal ~msg:"on another domain" bool false
         (Domain.join (Domain.spawn Nx.Prim.quiet)))
 
-(* A formula reaches a Values rule as it is, computing nothing. *)
-let test_constants () =
-  let c = Nx.zeros f32 [| 3 |] in
+(* A creation made outside an interpretation is a value with bytes at its
+   placement: a Values rule reads it as it is, and nothing computes again. *)
+let test_creation_values () =
+  let c = Nx.zeros_at Count.on f32 [| 3 |] in
   let x = on_count f32 [| 1.; 2.; 3. |] in
   let placed = ref [] in
   let looking i ~by op =
@@ -383,41 +384,46 @@ let test_constants () =
     List.iter
       (fun (Nx.Prim.Any y) ->
         if Nx.Prim.owner y = None then
-          placed := Option.is_none (Nx.placement y) :: !placed)
+          placed := Nx.Placement.equal Count.on (Nx.placement y) :: !placed)
       xs;
     tagged i ~by op
   in
   C.reset ();
   Nx.Prim.interpret ~name:"test.values" Values looking (fun i ->
       ignore (Nx.add (tag i x) c));
-  equal ~msg:"without a placement" (list bool) [ true ] !placed;
+  equal ~msg:"at its placement" (list bool) [ true ] !placed;
   equal ~msg:"kernel calls" int 0 (C.calls ())
 
 (* The name of an operation, a creation told from a map. *)
 let kind (type r) (op : r Nx.Prim.t) =
   match op with Map { loads = [||]; _ } -> "Creation" | _ -> Nx.Prim.name op
 
-(* A formula made outside an Extent reaches its rule as its operations, once
-   per operand, and the operation reads the rule's results. *)
-let owned_by i y =
-  match Nx.Prim.owner y with Some o -> o == i | None -> false
-
+(* An Extent rule receives a creation as the map of no loads it is, at its
+   placement, which results gives its result; one made outside the extent
+   reaches it as the value it is. *)
 let test_captured () =
-  let c = Nx.zeros f32 [| 2 |] in
-  let log = ref [] and owned = ref [] in
+  let outside = Nx.zeros_at Count.on f32 [| 2 |] in
+  let log = ref [] and named = ref [] and placed = ref [] in
   let looking i ~by op =
     log := kind op :: !log;
-    let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
-    List.iter (fun (Nx.Prim.Any y) -> owned := owned_by i y :: !owned) xs;
-    tagged i ~by op
+    (match op with
+    | Map { loads = [||]; at = Some p; _ } ->
+        named := Nx.Placement.equal p Count.on :: !named
+    | _ -> ());
+    let r = tagged i ~by op in
+    Nx.Prim.iter_results
+      (fun y ->
+        placed := Nx.Placement.equal (Nx.placement y) Count.on :: !placed)
+      op r;
+    r
   in
+  C.reset ();
   Nx.Prim.interpret ~name:"test.extent" Extent looking (fun _ ->
-      ignore (Nx.add c c));
-  equal ~msg:"received" names
-    [ "Creation"; "Creation"; "Map" ]
-    (received log);
-  equal ~msg:"the map reads the rule's results" (list bool) [ true; true ]
-    !owned
+      ignore (Nx.add outside (Nx.zeros_at Count.on f32 [| 2 |])));
+  equal ~msg:"received" names [ "Creation"; "Map" ] (received log);
+  equal ~msg:"the creation names its placement" (list bool) [ true ] !named;
+  equal ~msg:"results lie there" (list bool) [ true; true ] !placed;
+  equal ~msg:"kernel calls" int 0 (C.calls ())
 
 let rule =
   group "rule"
@@ -445,34 +451,35 @@ let rule =
       test "a value refuses another systhread; an extent does not reach one"
         test_systhreads;
       test "quiet is false while an extent lives" test_quiet;
-      test "a formula reaches a values rule as it is" test_constants;
-      test "a captured formula reaches an extent as its operations"
+      test "a creation reaches a values rule as the value it is"
+        test_creation_values;
+      test "an extent receives a creation at its placement"
         test_captured;
     ]
 
 (* Forms: results gives the form eager execution gives (Law 3) *)
 
 type case = Case : string * 'r Nx.Prim.t -> case
-type kind = Concrete | View | Constant
+type kind = Concrete | View | Created
 
 let pp_kind ppf k =
   Format.pp_print_string ppf
     (match k with
     | Concrete -> "concrete"
     | View -> "view"
-    | Constant -> "constant")
+    | Created -> "created")
 
 let pp_shape ppf s =
   Format.fprintf ppf "[%s]"
     (String.concat "; " (Array.to_list (Array.map string_of_int s)))
 
 (* A float32 operand of [shape] on Count's set: an array, a transposed view of
-   one, or a constant. *)
+   one, or a creation there. *)
 let operand kind shape : (float, D.float32_elt, Count.d) Nx.t =
   let n = Array.fold_left ( * ) 1 shape in
   let data = Array.init n (fun i -> Float.of_int i -. 1.5) in
   match kind with
-  | Constant -> Nx.zeros f32 shape
+  | Created -> Nx.zeros_at Count.on f32 shape
   | Concrete ->
       Nx.place Count.on
         (Nx.Repr.of_array Nx.Host.v
@@ -523,6 +530,7 @@ let cases_of shape a b =
             prog = add_prog;
             outs = Nx.Prim.[ f32 ];
             loads = [| Plain x; Plain y |];
+            at = None;
           } );
     Case
       ( "chain",
@@ -532,6 +540,7 @@ let cases_of shape a b =
             prog = chain_prog;
             outs = Nx.Prim.[ f32; f32 ];
             loads = [| Plain x; Plain y |];
+            at = None;
           } );
   ]
 
@@ -539,7 +548,7 @@ let shapes =
   Gen.of_list ~pp:pp_shape
     [ [||]; [| 0 |]; [| 1 |]; [| 3 |]; [| 2; 3 |]; [| 0; 2 |]; [| 2; 1; 3 |] ]
 
-let kinds = Gen.of_list ~pp:pp_kind [ Concrete; View; Constant ]
+let kinds = Gen.of_list ~pp:pp_kind [ Concrete; View; Created ]
 
 let forms_case =
   Gen.with_pp
@@ -555,11 +564,9 @@ let same_form ~msg (x : ('v, 's, 'd) Nx.t) (y : ('v, 's, 'd) Nx.t) =
   equal ~msg:(msg ^ ": layout")
     (Testable.make ~pp:L.pp ~equal:L.equal)
     f.layout g.layout;
-  equal ~msg:(msg ^ ": placement") bool true
-    (match (f.placement, g.placement) with
-    | Some p, Some q -> Nx.Placement.equal p q
-    | None, None -> true
-    | Some _, None | None, Some _ -> false)
+  equal ~msg:(msg ^ ": placement")
+    (Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal)
+    f.placement g.placement
 
 let rec same_outs : type d r. string -> (d, r) Nx.Prim.outs -> r -> r -> unit =
  fun msg outs a b ->
@@ -617,7 +624,7 @@ let same_results : type r. string -> r Nx.Prim.t -> r -> r -> unit =
   | Check _ -> ()
 
 let law_forms (shape, a, b, k) =
-  cover "constant" (a = Constant || b = Constant);
+  cover "a creation" (a = Created || b = Created);
   cover "empty" (Array.mem 0 shape);
   cover "0-d" (shape = [||]);
   let (Case (name, op)) = List.nth (cases_of shape a b) k in
@@ -639,6 +646,7 @@ let ill_formed () =
             prog = add_prog;
             outs = Nx.Prim.[ f32 ];
             loads = [| Plain x; Plain y |];
+            at = None;
           } );
     Case
       ( "a load of another dtype",
@@ -648,6 +656,7 @@ let ill_formed () =
             prog = add_prog;
             outs = Nx.Prim.[ f32 ];
             loads = [| Plain x; Plain (Nx.cast Nx.int32 x) |];
+            at = None;
           } );
     Case ("a permutation of another rank", Move (Permute [| 1; 0 |], x));
     Case ("a wider bitcast of an odd axis", Bitcast (Nx.float64, x));
@@ -776,9 +785,10 @@ let keeps_bits (type v s) (dt : (v, s) D.t) consts =
                    prog = P.of_node ~ins:[||] (Const (D.Any dt, bits));
                    outs = Nx.Prim.[ dt ];
                    loads = [||];
+                   at = Some on;
                  })
           in
-          raw (Nx.place on y)))
+          raw y))
     consts
 
 let test_keeps_bits () =
@@ -1114,7 +1124,7 @@ let bytes x =
   List.fold_left
     (fun n a -> n + D.bytes (A.dtype a) (L.numel (A.layout a)))
     0
-    (Iarray.to_list (Option.get (Nx.Repr.shards x)))
+    (Iarray.to_list (Nx.Repr.shards x))
 
 let staging prog i ~by op =
   let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
@@ -1149,11 +1159,12 @@ let stage f args =
   in
   (outs, prog)
 
-(* A formula made outside the extent reaches the compiler as its operations:
-   the program computes it, and nothing computes now. *)
+(* A creation inside the extent reaches the compiler as the map of no loads
+   it is, and nothing computes now; one made outside is captured with its
+   bytes. *)
 let test_staging () =
   let w = on_count f32 [| 1.; 2.; 3.; 4. |] in
-  let c = Nx.zeros f32 [| 4 |] in
+  let c = Nx.zeros_at Count.on f32 [| 4 |] in
   let x = on_count f32 [| 0.; 1.; 0.; 1. |] in
   C.reset ();
   let outs, prog =
@@ -1161,18 +1172,19 @@ let test_staging () =
       (fun ts ->
         let t = List.hd ts in
         let y = Nx.add (Nx.mul t w) c in
-        [ y; Nx.add (Nx.zeros f32 [| 4 |]) t ])
+        [ y; Nx.add (Nx.zeros_at Count.on f32 [| 4 |]) t ])
       [ x ]
   in
   equal ~msg:"kernel calls" int 0 (C.calls ());
-  equal ~msg:"held bytes: the weight" int 16 prog.held;
+  equal ~msg:"held bytes: the weight and the zeros made outside" int 32
+    prog.held;
   equal ~msg:"operations" names
-    [ "Map"; "Creation"; "Map"; "Creation"; "Map" ]
+    [ "Map"; "Map"; "Creation"; "Map" ]
     (List.rev prog.ops);
   equal ~msg:"results are the program's" bool true
     (List.for_all (fun y -> Nx.Prim.owner y <> None) outs)
 
-(* On a set whose kernels decline [Fill], a captured formula stages as on any
+(* On a set whose kernels decline [Fill], a creation stages as on any
    other. *)
 module Dec =
   (val Nx.devices
@@ -1180,17 +1192,22 @@ module Dec =
          [ Nx_support.memory 1 ])
 
 let test_staging_declining () =
-  let c = Nx.zeros f32 [| 2 |] in
   let x = Nx.place Dec.on (vec f32 [| 1.; 2. |]) in
-  let outs, prog = stage (fun ts -> [ Nx.mul (List.hd ts) c ]) [ x ] in
+  let outs, prog =
+    stage
+      (fun ts ->
+        let t = List.hd ts in
+        [ Nx.mul t (Nx.zeros_like t) ])
+      [ x ]
+  in
   equal ~msg:"operations" names [ "Creation"; "Map" ] (List.rev prog.ops);
   equal ~msg:"held bytes" int 0 prog.held;
   equal ~msg:"results are the program's" bool true
     (List.for_all (fun y -> Nx.Prim.owner y <> None) outs)
 
-(* A forwarding observer gets formulas back from the operations it forwards:
+(* A forwarding observer gets values back from the operations it forwards:
    each operation of a chain reaches it once, under another observer too. A
-   captured start reaches each once per operand that reads it. *)
+   start made outside both is a value, which reaches neither. *)
 let forwarding name log f =
   Nx.Prim.interpret ~name Extent
     (fun _ ~by op ->
@@ -1227,11 +1244,11 @@ let test_forwarding () =
     (nested (fun () -> Nx.ones f32 [| 2 |]));
   let c = Nx.ones f32 [| 2 |] in
   equal ~msg:"nested, from a captured start: inner, outer" (pair int int)
-    (n + 1, n + 1)
+    (n - 1, n - 1)
     (nested (fun () -> c))
 
-(* A captured formula of every operation a formula node can hold reaches a
-   forwarding observer as that operation, and computes as eager. *)
+(* An operation of each kind reaches a forwarding observer as that
+   operation, and computes as eager. *)
 type every = Every : string * (unit -> ('v, 's, 'd) Nx.t) -> every
 
 let every () =
@@ -1277,25 +1294,27 @@ let last_two log =
 let test_every () =
   List.iter
     (fun (Every (name, made)) ->
-      let c = made () in
       let log = ref [] in
-      let y = forwarding "test.forward" log (fun _ -> Nx.copy c) in
+      let y = forwarding "test.forward" log (fun _ -> Nx.copy (made ())) in
       let printed x = Nx.to_string (Nx.place Nx.Host.on x) in
-      equal ~msg:(name ^ ": as eager") string (printed (Nx.copy c)) (printed y);
+      equal ~msg:(name ^ ": as eager") string
+        (printed (Nx.copy (made ())))
+        (printed y);
       equal ~msg:(name ^ ": received") names [ name; "Copy" ] (last_two log))
     (every ());
   (* No kernel of the host computes a factorisation yet: a rule that computes
      nothing receives one. *)
-  let c =
-    let a = Nx.add (Nx.eye f32 3) (Nx.eye f32 3) in
-    Nx.Prim.eval ~by:"test" (Linalg (Cholesky { triangle = Lower; a }))
-  in
   let log = ref [] in
-  logged ~name:"test.extent" Extent log (fun _ -> ignore (Nx.copy c));
+  logged ~name:"test.extent" Extent log (fun _ ->
+      let a = Nx.add (Nx.eye f32 3) (Nx.eye f32 3) in
+      ignore
+        (Nx.copy
+           (Nx.Prim.eval ~by:"test"
+              (Linalg (Cholesky { triangle = Lower; a })))));
   equal ~msg:"Linalg: received" names [ "Linalg"; "Copy" ] (last_two log)
 
 (* A compiler that stages each operation and runs the program after its extent
-   returns: a staged function over captured formulas equals the function
+   returns: a staged function over captured creations equals the function
    computed eagerly, and staging computes nothing. *)
 type ('v, 's, 'd) Nx.Prim.payload +=
   | Later : ('v, 's, 'd) Nx.t Lazy.t -> ('v, 's, 'd) Nx.Prim.payload
@@ -1324,15 +1343,16 @@ let staged_later f x =
   | Some (Later y) -> (calls, Lazy.force y)
   | _ -> fail "a result outside the program"
 
-(* A captured formula: one creation, two, or a creation and a broadcast. *)
+(* A captured value on Count's set: one creation, two, or a creation and a
+   broadcast. *)
 type captured = Full of float | Sum of float * float | Scaled of float * float
 
 let made c =
-  let full a = Nx.full f32 [| 3 |] a in
+  let full a = Nx.full_at Count.on f32 [| 3 |] a in
   match c with
   | Full a -> full a
   | Sum (a, b) -> Nx.add (full a) (full b)
-  | Scaled (a, b) -> Nx.mul (full a) (Nx.scalar f32 b)
+  | Scaled (a, b) -> Nx.mul (full a) (Nx.scalar_at Count.on f32 b)
 
 let captured =
   let v = Gen.float_range (-2.) 2. in
@@ -1342,7 +1362,7 @@ let captured =
     (Gen.triple (Gen.int_range 0 2) v v)
 
 (* Steps of the staged function: an operation of the running value and one of
-   the captured formulas. *)
+   the captured values. *)
 let staged_case =
   Gen.triple
     (Gen.list ~size:(Gen.int_range 1 3) captured)
@@ -1476,117 +1496,6 @@ let test_jvp_cast () =
   equal ~msg:"primal" (array float_exact) [| 1.5; -2. |] (elements y);
   equal ~msg:"tangent" (array float_exact) [| 0.25; 3. |] (elements t)
 
-(* (e) Constants with shared nodes: a DAG of creations and operations on them,
-   read on the host or replayed into an Extent whose rule computes as eager,
-   gives the bits of the same expression over placed creations. *)
-
-type dag_node =
-  | Fill of float
-  | Coords
-  | Flip of int
-  | Binary of int * int * int  (* A kind of [binary], then two nodes. *)
-
-let binary = function
-  | 0 -> Nx.add
-  | 1 -> Nx.sub
-  | 2 -> Nx.mul
-  | 3 -> Nx.div
-  | _ -> Nx.maximum
-
-let fills = [| 0.; -0.; 1.5; -2.; Float.infinity; Float.neg_infinity; nan |]
-let chain_length = 1000
-
-let pp_dag_node ppf = function
-  | Fill v -> Format.fprintf ppf "Fill %h" v
-  | Coords -> Format.fprintf ppf "Coords"
-  | Flip a -> Format.fprintf ppf "Flip %d" a
-  | Binary (k, a, b) -> Format.fprintf ppf "Binary (%d, %d, %d)" k a b
-
-let pp_dag ppf (shape, nodes) =
-  Format.fprintf ppf "%a: %a" pp_shape shape
-    (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_dag_node)
-    (Array.to_list nodes)
-
-(* Node [i] from its draws: a creation, or an operation of earlier nodes. In a
-   chain, each node past the first is an operation whose first operand is node
-   [i - 1]. *)
-let dag_node ~chain i (kind, v, (a, b)) =
-  let first = if chain then i - 1 else a mod max i 1 in
-  if i = 0 then if kind mod 2 = 0 then Coords else Fill fills.(v)
-  else
-    match kind with
-    | 0 when not chain -> Fill fills.(v)
-    | 1 when not chain -> Coords
-    | 0 | 1 | 2 -> Flip first
-    | k -> Binary (k - 3, first, b mod i)
-
-let dag_case =
-  let open Gen in
-  let* chain = frequency [ (3, constant false); (1, constant true) ] in
-  let* n = if chain then constant chain_length else int_range 1 8 in
-  let* shape =
-    of_list [ [||]; [| 0 |]; [| 1 |]; [| 3 |]; [| 2; 0 |]; [| 2; 3 |] ]
-  in
-  let draw = triple (int_range 0 7) (int_range 0 6) (pair nat nat) in
-  with_pp pp_dag
-    (map
-       (fun draws -> (shape, Array.mapi (dag_node ~chain) draws))
-       (array ~size:(constant n) draw))
-
-let dag_operands = function
-  | Fill _ | Coords -> []
-  | Flip a -> [ a ]
-  | Binary (_, a, b) -> List.sort_uniq compare [ a; b ]
-
-(* Whether a node the root reaches is read by two nodes it reaches. *)
-let diamond nodes =
-  let n = Array.length nodes in
-  let reached = Array.make n false and readers = Array.make n 0 in
-  reached.(n - 1) <- true;
-  for i = n - 1 downto 0 do
-    if reached.(i) then
-      List.iter
-        (fun a ->
-          reached.(a) <- true;
-          readers.(a) <- readers.(a) + 1)
-        (dag_operands nodes.(i))
-  done;
-  Array.exists (fun r -> r >= 2) readers
-
-(* The DAG's root, each creation passed through [leaf]. *)
-let dag leaf shape nodes =
-  let numel = Array.fold_left ( * ) 1 shape in
-  let coords () =
-    Nx.reshape shape (Nx.arange_f f32 0. (Float.of_int numel) 1.)
-  in
-  let vs = Array.make (Array.length nodes) (Nx.zeros f32 shape) in
-  Array.iteri
-    (fun i node ->
-      vs.(i) <-
-        (match node with
-        | Fill v -> leaf (Nx.full f32 shape v)
-        | Coords -> leaf (coords ())
-        | Flip a -> Nx.flip vs.(a)
-        | Binary (k, a, b) -> binary k vs.(a) vs.(b)))
-    nodes;
-  vs.(Array.length nodes - 1)
-
-let law_dag (shape, nodes) =
-  cover "a zero-size shape" (Array.mem 0 shape);
-  cover "a node read by two others" (diamond nodes);
-  cover "a chain of a thousand" (Array.length nodes = chain_length);
-  let bits x = Array.map Int64.bits_of_float (elements x) in
-  let eager = bits (dag (Nx.place Nx.Host.on) shape nodes) in
-  let c = dag Fun.id shape nodes in
-  equal ~msg:"of every set" bool true (Option.is_none (Nx.placement c));
-  equal ~msg:"read" (array int64) eager (bits c);
-  let replayed =
-    Nx.Prim.interpret ~name:"test.dag" Extent
-      (fun _ ~by op -> Nx.Prim.eval ~by op)
-      (fun _ -> Nx.place Nx.Host.on c)
-  in
-  equal ~msg:"replayed" (array int64) eager (bits replayed)
-
 let interpreters =
   group "interpreters"
     [
@@ -1598,18 +1507,15 @@ let interpreters =
         law_jvp;
       test "a recording observer computes as eager, and its trips replay"
         test_recording;
-      test "a staging compiler computes nothing and stages captured formulas"
+      test "a staging compiler computes nothing and stages creations"
         test_staging;
-      test "staging a captured formula needs no kernel of the set"
+      test "staging a creation needs no kernel of the set"
         test_staging_declining;
       test "a forwarding observer receives each operation once"
         test_forwarding;
-      test "a captured formula of every operation forwards as eager"
-        test_every;
-      prop ~count:100 "a staged function over captured formulas equals eager"
+      test "an operation of each kind forwards as eager" test_every;
+      prop ~count:100 "a staged function over captured values equals eager"
         staged_case law_staged;
-      prop "a constant with shared nodes, read or replayed, computes as eager"
-        dag_case law_dag;
       test "a capture takes literals from creations" test_capture;
       test "staging hands a call on a derivative's values to it" test_hand_off;
     ]
@@ -2093,17 +1999,6 @@ let memory =
       test "an operation a rule applies keeps no bytes" (fun () ->
           let within () = evaluating "test.extent" (fun _ -> moved ()) in
           equal int 0 (held_after within));
-      test "a constant keeps no bytes once a use of it returns" (fun () ->
-          let kept = ref [] in
-          let use () =
-            let z () = Nx.zeros f32 [| 1024 |] in
-            let c = Nx.add (z ()) (z ()) in
-            let x = Nx.place Mem.on (Nx.zeros f32 [| 1024 |]) in
-            ignore (Sys.opaque_identity (Nx.add x c));
-            kept := c :: !kept
-          in
-          equal int 0 (held_after use);
-          ignore (Sys.opaque_identity !kept));
     ]
 
 (* The rule on two domains: each domain's operations go where the rule says,
@@ -2380,15 +2275,11 @@ let law_forms (k, wx, wy) =
   cover "a refusal" (Result.is_error eager);
   cover "a cut result"
     (match eager with
-    | Ok (Some p) -> not (Nx.Placement.equal p Mem4.on)
-    | Ok None | Error _ -> false);
+    | Ok p -> not (Nx.Placement.equal p Mem4.on)
+    | Error _ -> false);
   match (eager, traced) with
   | Ok p, Ok q ->
-      equal ~msg:"where the result lies" bool true
-        (match (p, q) with
-        | Some p, Some q -> Nx.Placement.equal p q
-        | None, None -> true
-        | Some _, None | None, Some _ -> false)
+      equal ~msg:"where the result lies" bool true (Nx.Placement.equal p q)
   | Error m, Error m' -> equal ~msg:"the refusal" string m m'
   | Ok _, Error m -> fail ("traced alone raises: " ^ m)
   | Error m, Ok _ -> fail ("eager alone raises: " ^ m)

@@ -239,9 +239,11 @@ let test_placement () =
   let x = Nx.place (S2.split ~axis:0) (Nx.zeros Nx.float32 [| 4 |]) in
   let y = Nx.add_s x 1. in
   equal bool true
-    (Nx.Placement.equal (S2.split ~axis:0) (Option.get (Nx.placement y)));
+    (Nx.Placement.equal (S2.split ~axis:0) (Nx.placement y));
   equal (array float_exact) (Array.make 4 1.) (Nx.to_array y);
-  equal bool true (Nx.placement (Nx.add_s (Nx.zeros Nx.float32 [| 2 |]) 1.) = None)
+  equal bool true
+    (Nx.Placement.equal Nx.Host.on
+       (Nx.placement (Nx.add_s (Nx.zeros Nx.float32 [| 2 |]) 1.)))
 
 let test_index_operators () =
   let x = Nx.reshape [| 2; 3 |] (Nx.arange Nx.int32 0 6 1) in

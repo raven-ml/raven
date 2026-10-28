@@ -130,16 +130,6 @@ let window rule ~operand:i shape (w : M.range array) =
           | Whole | Reduced _ | Blocks _ -> full d)
         shape
 
-let keeps rule a' =
-  match rule with
-  | Elementwise -> false
-  | Axes t | Into t ->
-      let into : axis -> bool = function
-        | Becomes b | Scanned b | Regroups { axis = b; _ } -> b = a'
-        | Whole | Reduced _ | Blocks _ -> false
-      in
-      not (Array.exists (Array.exists into) t)
-
 let uncut_all axes g = Array.fold_left (fun g axis -> Grid.uncut g ~axis) g axes
 
 (* The tiles of [g]'s cut axis [a]. *)
@@ -437,26 +427,3 @@ let route ~by rule ps shapes =
             compute = Windows;
           }
       else general ~by rule ps shapes
-
-let at ~by rule shapes p =
-  let kept =
-    Array.of_list
-      (List.filter_map
-         (fun (a', _) -> if keeps rule a' then Some a' else None)
-         (Array.to_list (Grid.cuts (Devices.grid p))))
-  in
-  let set = Devices.set p in
-  let target = aligned rule shapes (uncut_all kept (Devices.grid p)) in
-  let operand i s =
-    let g = backward rule i s target in
-    (match Grid.window g s 0 with
-    | Ok _ -> ()
-    | Error e -> invalid_argf "%s: %s" by e);
-    Devices.v ~by set g
-  in
-  let operands = Array.mapi operand shapes in
-  {
-    operands;
-    result = Devices.v ~by set target;
-    compute = computed rule shapes operands;
-  }

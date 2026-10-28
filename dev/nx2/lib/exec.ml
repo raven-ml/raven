@@ -87,11 +87,7 @@ let fresh ~by p dt shape =
    where it is given. *)
 let alloc (type v s d) ~by ?into k (f : (v, s, d) Value.form) :
     (v, s, d) Value.t =
-  let p =
-    match f.placement with
-    | Some p -> p
-    | None -> invalid_arg "Exec.alloc: a value of every set"
-  in
+  let p = f.placement in
   match into with
   | Some a when k = 0 ->
       Value.Array { at = p; a = A.expect f.dtype a; dead = Value.Live }
@@ -464,7 +460,7 @@ let local : type r. by:string -> r Value.prim -> r =
  fun ~by op ->
   let layouts = Prim.layouts ~by op in
   match op with
-  | Value.Map { layout; prog; outs = [ dt ]; loads } -> (
+  | Value.Map { layout; prog; outs = [ dt ]; loads; _ } -> (
       match Iarray.get loads 0 with
       | Value.Plain (Value.Array { at; a; _ }) ->
           let kernels = kernels_of ~by ~op:"Map" (Devices.set at) in
@@ -481,7 +477,7 @@ let local : type r. by:string -> r Value.prim -> r =
   | Value.Map { loads; _ } -> (
       match Iarray.get loads 0 with
       | Value.Plain (Value.Array { at; a; _ }) ->
-          let p = Some at in
+          let p = at in
           let r = Prim.results_at p layouts (fun k f -> alloc ~by k f) op in
           let kernels = kernels_of ~by ~op:"Map" (Devices.set at) in
           if call ~by kernels op r 0 then r
@@ -523,10 +519,10 @@ let shard_views : type v s d.
     (unit -> (v, s) A.t iarray) ->
     (v, s, d) Value.t =
  fun route layouts op xp views ->
-  Prim.results_at (Some route.result) layouts
+  Prim.results_at route.result layouts
     (fun _ f ->
       let vs = views () in
-      let p = Option.get f.placement in
+      let p = f.placement in
       let shape = Iarray.to_array (L.shape f.layout) in
       if Devices.equal p xp then
         make p ~shape (Iarray.map (fun v -> A.expect f.dtype (A.Any v)) vs)
@@ -573,7 +569,7 @@ let windows : type r.
          window ({!Route.window}). *)
       let p = route.result in
       let r =
-        Prim.results_at (Some p) layouts (fun k f -> alloc ~by ?into k f) op
+        Prim.results_at p layouts (fun k f -> alloc ~by ?into k f) op
       in
       let set = Devices.set p in
       let kernels = kernels_of ~by ~op:(Prim.name op) set in

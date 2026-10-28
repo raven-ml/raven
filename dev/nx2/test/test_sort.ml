@@ -117,10 +117,10 @@ let test_split () =
   let two = sort 1 (Nx.place (Count2.split ~axis:0) x) in
   equal ~msg:"values" (array int32) (read (fst one)) (read (fst two));
   equal ~msg:"positions" (array int64) (read (snd one)) (read (snd two));
-  equal ~msg:"split as its operand" bool true
-    (Option.equal Nx.Placement.equal
-       (Nx.placement (fst two))
-       (Some (Count2.split ~axis:0)))
+  equal ~msg:"split as its operand"
+    (Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal)
+    (Count2.split ~axis:0)
+    (Nx.placement (fst two))
 
 let () =
   exit

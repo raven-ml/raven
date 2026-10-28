@@ -6,16 +6,16 @@
 (** Values and operations: nx's central types, defined together because each
     mentions the other. This module has no implementation.
 
-    A value is concrete, arrays on the devices of its placement; a constant not
-    yet computed, a value of every set; or an interpretation's stand-in. The
-    brand ['d] is phantom: every function that makes a value checks that its
-    arrays lie on its placement's devices, and nothing at run time reads ['d]. A
-    constant has no placement.
+    Every value has a placement. A value is concrete, arrays on the devices
+    of its placement, or an interpretation's stand-in, whose form names the
+    placement its eager twin has. The brand ['d] is phantom: every function
+    that makes a value checks that its arrays lie on its placement's
+    devices, and nothing at run time reads ['d].
 
     [Nx.Prim] re-exports the operations and the types of forms, payloads and
     reaches, and states what each means. This module documents what the
-    engine adds: the representations of values, their deaths, the nodes of
-    constants and the fields of an interpretation. *)
+    engine adds: the representations of values, their deaths and the fields
+    of an interpretation. *)
 
 type ('v, 's) dtype = ('v, 's) Nx_array.Dtype.t
 
@@ -58,8 +58,6 @@ type ('v, 's, 'd) t =
           per device of [at], each its window, or a copy of it a movement made.
           It lives while its donor does, as does every other handle of the
           donor, those a movement passed on included. *)
-  | Deferred of { form : ('v, 's, 'd) form; node : node; k : int }
-      (** Result [k] of the constant operation [node]. *)
   | Traced of {
       form : ('v, 's, 'd) form;
       owner : interpretation;
@@ -72,21 +70,8 @@ type ('v, 's, 'd) t =
 and ('v, 's, 'd) form = {
   dtype : ('v, 's) dtype;
   layout : Nx_array.Layout.t;
-  placement : 'd Devices.placement option;
+  placement : 'd Devices.placement;
 }
-
-and node =
-  | Node : {
-      id : int;  (** Unique among a process's nodes. *)
-      by : string;
-      op : 'r prim;
-      layouts : Nx_array.Layout.t array;
-    }
-      -> node
-      (** An operation whose every operand is a constant, applied by [by].
-          [layouts] are its results', which its rule gave once
-          ({!Prim.layouts}). It holds no results: each evaluation computes
-          them ({!Prim.evaluate}). *)
 
 and 'd any = Any : ('v, 's, 'd) t -> 'd any
 
@@ -100,11 +85,8 @@ and interpretation = {
   rule : 'r. interpretation -> by:string -> 'r prim -> 'r;
       (** What it makes of the operations it receives. *)
   live : bool Atomic.t;  (** Cleared when its extent ends. *)
-  mutable formulas : (int, unit) Hashtbl.t option;
-      (** Nodes of the formulas an [Extent]'s rule returned, made when it
-          returns its first. *)
 }
-(** An interpretation. Only {!Eval} writes its fields. *)
+(** An interpretation. Only {!Eval} makes one and writes [live]. *)
 
 (** {1:operations Operations} *)
 
@@ -161,6 +143,8 @@ and _ prim =
       prog : Nx_kernel.Prog.t;
       outs : ('d, 'r) outs;
       loads : 'd load iarray;
+      at : 'd Devices.placement option;
+          (** Where a map of no loads lies; [None] for a map with loads. *)
     }
       -> 'r prim
   | Reduce : {

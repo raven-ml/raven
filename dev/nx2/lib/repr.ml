@@ -77,22 +77,19 @@ let of_shards ~by p arrays =
 
 (* [x]'s arrays, handed to a caller: their memory leaves the claims for good, so
    that no donation writes what the caller reads. A traced value has no bytes to
-   read; a formula answers [None]. *)
-let crossing (type v s d) ~by (x : (v, s, d) Value.t) :
-    (v, s) A.t iarray option =
+   read. *)
+let crossing (type v s d) ~by (x : (v, s, d) Value.t) : (v, s) A.t iarray =
   Prim.alive ~by x;
   match x with
-  | Value.Deferred _ -> None
   | Value.Traced { owner; _ } ->
       invalid_argf "%s: a value traced by %s has no bytes" by owner.name
   | Value.Array _ | Value.Shards _ | Value.Handle _ ->
       let arrays = Prim.arrays x in
       Iarray.iter (fun a -> Rig.Claim.share (A.buffer a)) arrays;
-      Some arrays
+      arrays
 
 let array x =
-  match crossing ~by:"Nx.Repr.array" x with
-  | Some arrays when Iarray.length arrays = 1 -> Some (Iarray.get arrays 0)
-  | Some _ | None -> None
+  let arrays = crossing ~by:"Nx.Repr.array" x in
+  if Iarray.length arrays = 1 then Some (Iarray.get arrays 0) else None
 
 let shards x = crossing ~by:"Nx.Repr.shards" x

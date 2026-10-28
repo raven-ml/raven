@@ -187,9 +187,7 @@ module Archive : sig
       - if its shape or dtype differs;
       - if an entry [like] owns is named by none of its arrays.
 
-      Raises [Invalid_argument] as {!of_value} does for [like]'s names, and,
-      naming the entry, for an array of [like] of every set, which lies on no
-      device. *)
+      Raises [Invalid_argument] as {!of_value} does for [like]'s names. *)
 end
 
 (** {1:numpy NumPy formats}

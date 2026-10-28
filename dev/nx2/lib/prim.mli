@@ -23,13 +23,9 @@ open Value
 val form : ('v, 's, 'd) t -> ('v, 's, 'd) form
 val dtype : ('v, 's, 'd) t -> ('v, 's) dtype
 
-val at : ('v, 's, 'd) t -> 'd Devices.placement option
-(** [at x] is where [x]'s bytes are, or will be for a traced value: [None] for a
-    value of every set. *)
-
 val placement : ('v, 's, 'd) t -> 'd Devices.placement
-(** [placement x] is [x]'s placement, as {!at} gives it. Raises
-    [Invalid_argument] for a value of every set. *)
+(** [placement x] is where [x]'s bytes are, or will be for a traced value: its
+    form's. It allocates nothing. *)
 
 val of_arrays :
   'd Devices.placement ->
@@ -51,7 +47,7 @@ val alive : by:string -> ('v, 's, 'd) t -> unit
 
 val arrays : ('v, 's, 'd) t -> ('v, 's) Nx_array.t iarray
 (** [arrays x] is [x]'s arrays, one per device of its placement, whether [x]
-    lives or not. Raises [Invalid_argument] for a constant or a traced value. *)
+    lives or not. Raises [Invalid_argument] for a traced value. *)
 
 val any : ('v, 's) Nx_array.t iarray -> Nx_array.any array
 (** [any xs] is [xs] untyped, in order. *)
@@ -195,37 +191,32 @@ val layouts : by:string -> 'r prim -> Nx_array.Layout.t array
     for a [Check]. A [Place]'s is its result's at its own placement.
 
     Raises [Invalid_argument] naming [by] where [op]'s operands break its
-    rule. *)
+    rule, a map of no loads with no placement or one with loads that names
+    one included, and where a map of no loads names a placement that cuts an
+    axis its shape lacks ({!Devices.window}). *)
 
 (** The type for what an operation's rule decides. *)
 type routed = {
   route : unit Route.t option;
       (** Where it reads each operand, in {!operands}' order, where its
-          results lie and how its devices compute them: [None] where every
-          operand is of every set, and for [Place] and [Check], which are not
-          routed. *)
+          results lie and how its devices compute them: [None] for [Place]
+          and [Check], which are not routed. *)
   layouts : Nx_array.Layout.t array;  (** Its results' ({!layouts}). *)
 }
 
-val local_at : 'r prim -> unit Route.common
-(** [local_at op] is [One p] where [op] is no placement or check, has an
-    operand, and every operand is a live array at physically the placement
-    [p], one device's: there {!route} reads them and puts the results,
-    whatever [op]'s rule. It is [Every_set] for no operand and [Other]
-    otherwise. Its walk over the operands allocates only where a
-    factorisation's, a contraction's or a check's are listed. *)
-
 val route : by:string -> 'r prim -> routed
 (** [route ~by op] is what [op]'s rule decides, checked once. Operands that
-    lie at one placement that cuts no axis, the others of every set, are read
-    there and their results lie there; otherwise {!Route.route} of {!rule}
-    decides. A deferred value's placement and its eager twin's come from this
-    one route over the same operands.
+    lie at one placement that cuts no axis are read there and their results
+    lie there; otherwise {!Route.route} of {!rule} decides. An operation of
+    no operands lies where its map names, else on the host, each device of
+    that placement computing its window of the results. A traced value's
+    placement and its eager twin's come from this one route over the same
+    operands.
 
     Raises as {!layouts} does, then as {!Route.route} does. *)
 
 val results_at :
-  unit Devices.placement option ->
+  unit Devices.placement ->
   Nx_array.Layout.t array ->
   ('v 's 'd. int -> ('v, 's, 'd) form -> ('v, 's, 'd) t) ->
   'r prim ->
@@ -282,11 +273,6 @@ val node3 :
     concurrently; two that find its slot empty at once each make an equal
     program. *)
 
-val identity : ('v, 's) dtype -> Nx_kernel.Prog.t
-(** [identity dt] is the program of one operand of [dt] that gives it back
-    ({!Nx_kernel.Prog.is_identity}), a reduction's of its one load. It is
-    kept once made, as {!node1}'s programs are. *)
-
 val op1 :
   by:string ->
   Nx_kernel.Prog.op1 ->
@@ -315,23 +301,21 @@ val op3 :
     Raises [Invalid_argument] naming [by] where [k] does not take the operands'
     dtypes ({!Nx_kernel.Prog.accepts2} and its siblings). *)
 
-val op2_const :
+val literal2 :
   by:string ->
   swapped:bool ->
   Nx_kernel.Prog.op2 ->
-  ('w, 'r) dtype ->
-  ('v, 's, 'd) t ->
+  ('v, 's) dtype ->
   'v ->
-  (('w, 'r, 'd) t * unit) prim
-(** [op2_const ~by ~swapped k dt x c] is the map of [k] over [x] and the
-    constant [c] of [x]'s dtype, [x] first or, where [swapped], [c] first,
-    of [x]'s shape, with result dtype [dt]. Its program holds [c] as a
-    [Const] node, read at every index, so the map has [x] alone as an
-    operand.
+  Nx_kernel.Prog.t
+(** [literal2 ~by ~swapped k dt c] is the program of [k] over one operand of
+    [dt] and the literal [c] of [dt], held in the program: [k x c], or [k c x]
+    where [swapped]. A call that repeats the literal's bits of the last call
+    of its [k], [dt] and side gives that call's program; any other makes
+    one.
 
-    Raises [Invalid_argument] naming [by] if [c] is outside [x]'s dtype
-    ({!check_value}) or [k] does not take two operands of [x]'s dtype, as
-    {!op2} does. *)
+    Raises [Invalid_argument] naming [by] and [c] where [dt] does not hold [c]
+    ({!check_value}), and naming [by] where [k] does not take [dt]. *)
 
 val contract_shape :
   by:string ->
@@ -367,8 +351,6 @@ val load_any : 'd load -> 'd any
 val routine_name : ('d, 'r) linalg -> string
 (** [routine_name l] names [l]'s routine in messages, as ["Cholesky"]. *)
 
-val is_constant : ('v, 's, 'd) t -> bool
-
 (** The outputs of a map whose dtypes are known at run time, and how to read
     its result as values. *)
 type 'd outputs =
@@ -397,21 +379,4 @@ val iter_results : ('v 's 'd. ('v, 's, 'd) t -> unit) -> 'r prim -> 'r -> unit
 val result_arrays : 'r prim -> 'r -> Nx_array.any array array
 (** [result_arrays op r] is, per result of [op] in position order, the arrays
     of [r]'s value there: one per device of its placement. Raises
-    [Invalid_argument] if a result is a constant. *)
-
-(** {1:constants Constants} *)
-
-val evaluate :
-  same:('p -> 'p -> bool) ->
-  reads:(node -> 'p -> (node * 'p) list) ->
-  ((node -> 'p -> 'a) -> node -> 'p -> 'a) ->
-  node ->
-  'p ->
-  'a
-(** [evaluate ~same ~reads f root p] is [f result root p], the results of the
-    constant [root] at [p]. [reads m q] is the constant operands [m] reads at
-    [q], each with where it reads them. Each node read from [(root, p)],
-    transitively, computes once at each place [same] tells apart, as
-    [f result m q], after the nodes it reads, whose results [result] gives. A
-    chain of any length takes no stack depth, and no result outlives the
-    call. *)
+    [Invalid_argument] if a result is traced. *)

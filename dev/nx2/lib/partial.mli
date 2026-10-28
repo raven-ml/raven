@@ -16,8 +16,8 @@
     ({!Exec.windows}) or one move ({!Place.value}). A partial computes on
     its device alone, over a route this module builds that reads every
     operand on that device and puts every result there. This module lies
-    above {!Exec}; {!Constant}, {!Check} and {!Eval} route operations and
-    give it those whose route computes by partials.
+    above {!Exec}; {!Check} and {!Eval} route operations and give it those
+    whose route computes by partials.
 
     A device's windows of the operands along the folded axes are its
     {e tile}. The devices that hold one window of the results form a

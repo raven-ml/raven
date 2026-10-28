@@ -130,69 +130,291 @@ val unpack : ('v, 's) dtype -> 'd packed -> ('v, 's, 'd) t
 
     Raises [Invalid_argument] naming both dtypes otherwise. *)
 
+(** {1:devices Device sets and placement}
+
+    A value lies on a device set, a module minted by {!devices} whose brand ['d]
+    keeps its values apart from other sets'. Within its set a value has a
+    placement: whole on one or every device, or cut into windows across them.
+    {!place} moves a value between sets, and between placements of one. The host
+    is a set like any other, {!Host}. *)
+
+type +'d devices
+(** The type for device sets of brand ['d]: distinct devices, and the kernels
+    that compute on them. *)
+
+val rigs : 'd devices -> Rig.t list
+(** [rigs s] is [s]'s devices in order. *)
+
+(** Named axes over a set's devices. *)
+module Mesh : sig
+  type +'d t
+  (** The type for named axes over a set of brand ['d]. *)
+
+  val v : 'd devices -> (string * int) list -> 'd t
+  (** [v s axes] lays [s]'s devices in row-major order over the named [axes].
+
+      Raises [Invalid_argument] unless the extents are positive and multiply to
+      the number of [s]'s devices and the names are distinct. *)
+end
+
+(** Where a value's elements lie over its set. *)
+module Placement : sig
+  type +'d t
+  (** The type for placements over a set of brand ['d]. *)
+
+  val on : 'd devices -> 'd t
+  (** [on s] holds the whole value on every device of [s]. *)
+
+  val device : 'd devices -> Rig.t -> 'd t
+  (** [device s d] holds the whole value on [d] alone, a device of [s];
+      [on s] where [s] has [d] alone.
+
+      Raises [Invalid_argument] naming [Nx.Placement.device] unless [d]
+      is a device of [s] ({!Rig.equal}). *)
+
+  val split : axis:int -> 'd devices -> 'd t
+  (** [split ~axis s] cuts [axis] into one window per device of [s], in
+      order, as evenly as its extent allows: of [n] elements over [k] devices,
+      the first [n mod k] windows hold [n / k + 1] and the others [n / k]. A
+      window is empty only where [n < k].
+
+      Raises [Invalid_argument] if [axis] is negative or not below
+      {!Nx_array.Layout.max_rank}. *)
+
+  val mesh : 'd Mesh.t -> (int * string list) list -> 'd t
+  (** [mesh m cuts] cuts each axis [a] of [(a, names)] over the mesh axes
+      [names], major first; a mesh axis no cut names holds copies. An axis cut
+      over several mesh axes is cut as {!split} cuts it over as many devices
+      as their extents multiply to, numbered major first: over extents [e1]
+      and [e2], the device at [i1] along the first and [i2] along the second
+      holds window [i1 × e2 + i2].
+      [split ~axis s] is [mesh (Mesh.v s [ ("x", n) ]) [ (axis, [ "x" ]) ]].
+
+      Raises [Invalid_argument] for a name [m] lacks, an axis or a name in two
+      cuts, or an axis that is negative or not below
+      {!Nx_array.Layout.max_rank}. *)
+
+  val devices : 'd t -> 'd devices
+  (** [devices p] is [p]'s set. *)
+
+  val equal : 'd t -> 'e t -> bool
+  (** [equal p q] is [true] iff [p] and [q] are of one set and every device
+      holds the same window of a value at [p] and at [q], whatever their
+      brands. *)
+
+  val uncut : 'd t -> 'd t
+  (** [uncut p] is [p] with every axis whole on each of its devices, each
+      mesh axis that cut one holding copies. It is [p] itself if [p] cuts no
+      axis. *)
+
+  val pp : Format.formatter -> 'd t -> unit
+  (** [pp] formats a placement on one device as the device's name, others as
+      [on [CUDA:0; CUDA:1]], [split ~axis:0 [CUDA:0; CUDA:1]] or a mesh's
+      extents and cuts. *)
+
+  (**/**)
+
+  (** For transformations that map over a leading axis, as a batching
+      interpreter places a lane's operation for all lanes in one
+      operation. *)
+
+  val with_leading_axis : 'd t -> 'd t
+  (** [with_leading_axis p] is the placement of a value of one more axis in
+      front, cut as [p] cuts the others: each device holds the whole of the
+      new axis by its window of the rest. It is [p] itself where [p] cuts no
+      axis.
+
+      Raises [Invalid_argument] if [p] cuts axis
+      [Nx_array.Layout.max_rank - 1], which would become an axis past the
+      most a layout has. *)
+
+  val without_leading_axis : 'd t -> 'd t
+  (** [without_leading_axis p] is the placement of a value without its first
+      axis, cut as [p] cuts the others, each moved down by one: the mesh
+      axes that cut the first axis hold copies. It is [p] itself where [p]
+      cuts no axis. *)
+
+  (**/**)
+end
+
+(** The type for device sets as modules: a brand and its placements. *)
+module type Devices = sig
+  type d
+  (** The set's brand. *)
+
+  val v : d devices
+  (** [v] is the set. *)
+
+  val on : d Placement.t
+  (** [on] is [Placement.on v]. *)
+
+  val split : axis:int -> d Placement.t
+  (** [split ~axis] is [Placement.split ~axis v]. *)
+end
+
+type host
+(** The brand of {!Host}. *)
+
+module Host : Devices with type d = host
+(** The process's host, {!Rig.host}, computed by nx.cpu. *)
+
+val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
+(** [devices ~kernels ds] mints a new set over [ds], in their order, with a
+    brand no other set has, computed eagerly by [kernels]. Without [kernels], a
+    set whose every device runs on the host ({!Rig.runs_on_host}) is computed by
+    nx.cpu, and any other set by none.
+
+    Raises [Invalid_argument] if [ds] is empty or repeats a device, or if
+    [kernels] does not compute on one of [ds]. *)
+
+(** {2:routing Routing}
+
+    Each device computes its window of an operation's result from the
+    windows of the operands it holds. The result lies at the union of the
+    operands' cuts, joined in operand order. A cut of an axis that becomes
+    a result axis cuts that axis over the same devices. A cut of an axis
+    read whole cuts nothing. A cut of an axis that a reduction or a
+    contraction sums makes the devices compute by partials where every
+    operand holding the axis is cut alike, and cuts nothing in the result;
+    one along a scan's axis stays in it. An operand whole on every device
+    is read by a view of each device's window.
+
+    An operation raises [Invalid_argument] where two operands cut one
+    result axis over other devices or tiles, where a device needs a window
+    of an operand it does not hold, and where operands lie alone on two
+    devices or on two sets. The message names the function, the operand,
+    numbered from [0] in the order {!Prim.t} lists them, where it lies,
+    where it is read, and the {!place} that puts it there: the set named
+    [s], a device by its name, a mesh's axes as ["g0"], ["g1"], …, in the
+    read placement's order, and the operands [x], [y], [z], then [x3],
+    [x4], …:
+
+    {v
+Nx.matmul: operand 1 lies at split ~axis:1 [CUDA:0; CUDA:1] and is read
+at split ~axis:0 [CUDA:0; CUDA:1]; Nx.place (Placement.split ~axis:0 s) y
+    v}
+
+    A traced operation raises it as its eager twin does ({!Prim.results}). *)
+
+val place : 'e Placement.t -> ('v, 's, 'd) t -> ('v, 's, 'e) t
+(** [place p x] is [x]'s elements at [p]. Each device of [p] holds its window
+    over [x]'s own memory where [x] already lies there, or where the host
+    addresses both [x]'s memory and that device's ({!Rig.reaches});
+    otherwise it holds a copy of its window, allocating at most the window's
+    bytes. Across sets it changes the brand; within one, the arrangement.
+    Placing onto {!Host} from another set is a {{!section-waiting}wait} on
+    [x]'s set.
+
+    Raises [Invalid_argument] if [p] cuts an axis [x] does not have,
+    {!Rig.Lost} for a lost device, and a failed check as a wait does. *)
+
+val placement : ('v, 's, 'd) t -> 'd Placement.t
+(** [placement x] is where [x]'s bytes are. *)
+
 (** {1:creation Creation}
 
-    A value made from a dtype, a shape and numbers, or by operations from such
-    values alone, is a value of every set: its type is polymorphic in ['d]. It
-    is a formula and holds no bytes. Each operation that needs its elements
-    computes it on that operation's set, {!place} computes it at a placement,
-    and a read computes it on the host. Its {!placement} is [None]. It keeps no
-    elements: each use computes it again, each value it is made from once at
-    each placement that use reads it at. {!place} gives a value memory of its
-    own, which later uses read without computing it. {!zeros_like} and {!copy}
-    make a value from another, where it lies, and of every set from a value of
-    every set. *)
+    A value made from a dtype, a shape and numbers is a host value. The [_at]
+    forms make it at a placement, each device computing its window; the
+    [_like] forms make it beside a value, at that value's placement, or whole
+    on each of its devices where the shape has no axis the placement cuts. A
+    creation holds its elements from the call on.
 
-val zeros : ('v, 's) dtype -> int array -> ('v, 's, 'd) t
-(** [zeros dt s] is the value of shape [s] whose every element is zero, of every
-    set.
+    An [_at] form raises as its host form does, and raises
+    [Invalid_argument] naming itself where its placement cuts an axis the
+    shape lacks. *)
+
+val zeros : ('v, 's) dtype -> int array -> ('v, 's, host) t
+(** [zeros dt s] is the host value of shape [s] whose every element is zero.
 
     Raises [Invalid_argument] if an extent is negative. *)
 
-val ones : ('v, 's) dtype -> int array -> ('v, 's, 'd) t
-(** [ones dt s] is the value of shape [s] whose every element is one ([true]
-    for booleans), of every set.
+val zeros_at : 'd Placement.t -> ('v, 's) dtype -> int array -> ('v, 's, 'd) t
+(** [zeros_at p dt s] is {!zeros}[ dt s] at [p]. *)
+
+val ones : ('v, 's) dtype -> int array -> ('v, 's, host) t
+(** [ones dt s] is the host value of shape [s] whose every element is one
+    ([true] for booleans).
 
     Raises [Invalid_argument] if an extent is negative. *)
 
-val full : ('v, 's) dtype -> int array -> 'v -> ('v, 's, 'd) t
-(** [full dt s v] is the value of shape [s] whose every element is [v], a float
-    stored as {!Dtype.of_float} says, of every set.
+val ones_at : 'd Placement.t -> ('v, 's) dtype -> int array -> ('v, 's, 'd) t
+(** [ones_at p dt s] is {!ones}[ dt s] at [p]. *)
+
+val full : ('v, 's) dtype -> int array -> 'v -> ('v, 's, host) t
+(** [full dt s v] is the host value of shape [s] whose every element is [v], a
+    float stored as {!Dtype.of_float} says.
 
     Raises [Invalid_argument] if an extent is negative or [v] is an [int] outside
     [dt]'s range. *)
 
-val scalar : ('v, 's) dtype -> 'v -> ('v, 's, 'd) t
-(** [scalar dt v] is the 0-d value [v], of every set.
+val full_at :
+  'd Placement.t -> ('v, 's) dtype -> int array -> 'v -> ('v, 's, 'd) t
+(** [full_at p dt s v] is {!full}[ dt s v] at [p]. *)
+
+val scalar : ('v, 's) dtype -> 'v -> ('v, 's, host) t
+(** [scalar dt v] is the 0-d host value [v].
 
     Raises [Invalid_argument] if [v] is an [int] outside [dt]'s range. *)
 
-val arange : ('v, 's) dtype -> int -> int -> int -> ('v, 's, 'd) t
-(** [arange dt start stop step] is the 1-d value [start], [start + step], …
-    before [stop], of every set: empty where [stop] is not past [start] in
-    [step]'s direction. Each value is exact, then stored in [dt] as {!cast}
-    stores an [int64].
+val scalar_at : 'd Placement.t -> ('v, 's) dtype -> 'v -> ('v, 's, 'd) t
+(** [scalar_at p dt v] is {!scalar}[ dt v] at {!Placement.uncut}[ p], whole on
+    each of [p]'s devices however [p] cuts, since a 0-d value has no axis to
+    cut. *)
+
+val arange : ('v, 's) dtype -> int -> int -> int -> ('v, 's, host) t
+(** [arange dt start stop step] is the 1-d host value [start], [start + step],
+    … before [stop], empty where [stop] is not past [start] in [step]'s
+    direction. Each value is exact, then stored in [dt] as {!cast} stores an
+    [int64].
 
     Raises [Invalid_argument] if [step = 0], the range holds more than
     [max_int] values, or a value is outside [dt]'s range for an integer
     dtype, or other than [0] and [1] for a boolean one. *)
 
-val arange_f : (float, 's) dtype -> float -> float -> float -> (float, 's, 'd) t
-(** [arange_f dt start stop step] is the 1-d value of the [⌈(stop - start) /
-    step⌉] values [start + i step], each computed at float64 with one rounding,
-    then stored in [dt], of every set; empty where that count is not positive.
+val arange_at :
+  'd Placement.t -> ('v, 's) dtype -> int -> int -> int -> ('v, 's, 'd) t
+(** [arange_at p dt start stop step] is {!arange}[ dt start stop step] at
+    [p]. *)
+
+val arange_f :
+  (float, 's) dtype -> float -> float -> float -> (float, 's, host) t
+(** [arange_f dt start stop step] is the 1-d host value of the [⌈(stop -
+    start) / step⌉] values [start + i step], each computed at float64 with one
+    rounding, then stored in [dt]; empty where that count is not positive.
 
     Raises [Invalid_argument] if [step = 0.] or the count is not finite. *)
 
+val arange_f_at :
+  'd Placement.t ->
+  (float, 's) dtype ->
+  float ->
+  float ->
+  float ->
+  (float, 's, 'd) t
+(** [arange_f_at p dt start stop step] is {!arange_f}[ dt start stop step] at
+    [p]. *)
+
 val linspace :
-  ('v, 's) dtype -> ?endpoint:bool -> float -> float -> int -> ('v, 's, 'd) t
-(** [linspace dt ~endpoint start stop n] is [n] values evenly spaced from
-    [start] to [stop], [stop] included where [endpoint] (default [true]), of
-    every set. They are computed at float64 and stored in [dt]: the first is
-    [start] and, with [endpoint] and [n >= 2], the last is [stop], each as [dt]
-    stores it, and for finite [start] and [stop] every value lies between them.
+  ('v, 's) dtype -> ?endpoint:bool -> float -> float -> int -> ('v, 's, host) t
+(** [linspace dt ~endpoint start stop n] is the host value of [n] values evenly
+    spaced from [start] to [stop], [stop] included where [endpoint] (default
+    [true]). They are computed at float64 and stored in [dt]: the first is
+    [start] and, with [endpoint] and [n >= 2], the last is [stop], each as
+    [dt] stores it, and for finite [start] and [stop] every value lies between
+    them.
 
     Raises [Invalid_argument] if [n < 0]. *)
+
+val linspace_at :
+  'd Placement.t ->
+  ('v, 's) dtype ->
+  ?endpoint:bool ->
+  float ->
+  float ->
+  int ->
+  ('v, 's, 'd) t
+(** [linspace_at p dt ~endpoint start stop n] is
+    {!linspace}[ dt ~endpoint start stop n] at [p]. *)
 
 val logspace :
   (float, 's) dtype ->
@@ -201,13 +423,25 @@ val logspace :
   float ->
   float ->
   int ->
-  (float, 's, 'd) t
-(** [logspace dt ~endpoint ~base start stop n] is [base] (default [10.]) to the
-    powers [linspace float64 ~endpoint start stop n], each power computed at
-    float64 and stored once in [dt], of every set: [logspace float32 0. 2. 3]
-    is [1], [10] and [100].
+  (float, 's, host) t
+(** [logspace dt ~endpoint ~base start stop n] is the host value of [base]
+    (default [10.]) to the powers [linspace float64 ~endpoint start stop n],
+    each power computed at float64 and stored once in [dt]:
+    [logspace float32 0. 2. 3] is [1], [10] and [100].
 
     Raises [Invalid_argument] if [n < 0]. *)
+
+val logspace_at :
+  'd Placement.t ->
+  (float, 's) dtype ->
+  ?endpoint:bool ->
+  ?base:float ->
+  float ->
+  float ->
+  int ->
+  (float, 's, 'd) t
+(** [logspace_at p dt ~endpoint ~base start stop n] is
+    {!logspace}[ dt ~endpoint ~base start stop n] at [p]. *)
 
 val geomspace :
   (float, 's) dtype ->
@@ -215,29 +449,45 @@ val geomspace :
   float ->
   float ->
   int ->
-  (float, 's, 'd) t
-(** [geomspace dt ~endpoint start stop n] is [n] values in geometric
-    progression from [start] to [stop], [stop] included where [endpoint]
-    (default [true]): the value at [i] is [start (stop / start)^(i / (n - 1))],
-    or [^(i / n)] without [endpoint], of every set. They are computed at
-    float64 and stored in [dt]: the first is [start] and, with [endpoint] and
-    [n >= 2], the last is [stop], each as [dt] stores it.
-    [geomspace float32 1. 1000. 4] is [1], [10], [100] and [1000].
+  (float, 's, host) t
+(** [geomspace dt ~endpoint start stop n] is the host value of [n] values in
+    geometric progression from [start] to [stop], [stop] included where
+    [endpoint] (default [true]): the value at [i] is
+    [start (stop / start)^(i / (n - 1))], or [^(i / n)] without [endpoint].
+    They are computed at float64 and stored in [dt]: the first is [start]
+    and, with [endpoint] and [n >= 2], the last is [stop], each as [dt]
+    stores it. [geomspace float32 1. 1000. 4] is [1], [10], [100] and
+    [1000].
 
     Raises [Invalid_argument] if [n < 0], or if [start] or [stop] is not
     positive and finite. *)
 
-val eye : ?m:int -> ?k:int -> ('v, 's) dtype -> int -> ('v, 's, 'd) t
-(** [eye ~m ~k dt n] is the [n × m] value ([m] defaults to [n]) whose element at
-    row [i] and column [j] is one where [j - i = k] (default [0]) and zero
-    elsewhere, of every set: [k > 0] is a diagonal above the main one.
+val geomspace_at :
+  'd Placement.t ->
+  (float, 's) dtype ->
+  ?endpoint:bool ->
+  float ->
+  float ->
+  int ->
+  (float, 's, 'd) t
+(** [geomspace_at p dt ~endpoint start stop n] is
+    {!geomspace}[ dt ~endpoint start stop n] at [p]. *)
+
+val eye : ?m:int -> ?k:int -> ('v, 's) dtype -> int -> ('v, 's, host) t
+(** [eye ~m ~k dt n] is the [n × m] host value ([m] defaults to [n]) whose
+    element at row [i] and column [j] is one where [j - i = k] (default [0])
+    and zero elsewhere: [k > 0] is a diagonal above the main one.
 
     Raises [Invalid_argument] if [n] or [m] is negative. *)
 
+val eye_at :
+  ?m:int -> ?k:int -> 'd Placement.t -> ('v, 's) dtype -> int -> ('v, 's, 'd) t
+(** [eye_at ~m ~k p dt n] is {!eye}[ ~m ~k dt n] at [p]. *)
+
 (** {2:like From a reference}
 
-    These make a value of their argument's dtype where it lies: beside a value
-    of every set, a value of every set. Its elements are never read. *)
+    These make a value of their argument's dtype where it lies. Its elements
+    are never read. *)
 
 val zeros_like : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [zeros_like x] is zeros of [x]'s dtype and shape, at [x]'s placement. *)
@@ -251,8 +501,8 @@ val full_like : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
     Raises [Invalid_argument] as {!full} does. *)
 
 val scalar_like : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
-(** [scalar_like x v] is {!scalar} of [x]'s dtype, whole on each device of
-    [x]'s placement: a 0-d value has no axis to cut.
+(** [scalar_like x v] is {!scalar_at}[ (placement x) (dtype x) v], whole on
+    each device of [x]'s placement.
 
     Raises [Invalid_argument] as {!scalar} does. *)
 
@@ -315,8 +565,7 @@ val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
     Otherwise the consumer computes into fresh memory, and a value that shares
     the memory keeps it. Its result is the same either way.
 
-    A traced value and a value of every set are returned unchanged: nothing
-    dies.
+    A traced value is returned unchanged, and nothing dies.
 
     Raises [Invalid_argument] if [x] is dead. *)
 
@@ -326,9 +575,6 @@ val copy : ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** {2:ocaml From OCaml values}
 
     A value made from OCaml data lies on the host, the set {!Host}. *)
-
-type host
-(** The brand of {!Host}. *)
 
 val create : ('v, 's) dtype -> int array -> 'v array -> ('v, 's, host) t
 (** [create dt s vs] is the host value of shape [s] holding [vs] in C order,
@@ -374,8 +620,8 @@ val of_bigarray :
     A read gives a value's elements to OCaml. It works at every brand: it is a
     {{!section-waiting}wait} on the value's set, which may raise a failed
     check, then copies the value's elements to the host and leaves every
-    placement as it was. A value of every set is computed on the host. A read
-    is not an operation: no interpretation receives it.
+    placement as it was. A read is not an operation: no interpretation
+    receives it.
 
     Each raises [Invalid_argument] naming itself for a dead value, and for a
     traced one: [Nx.item: the value is traced by Rune.jit], but that
@@ -435,8 +681,7 @@ val to_bigarray :
 
 val sync : ('v, 's, 'd) t -> unit
 (** [sync x] waits for the work [x] depends on, then drains the checks pending
-    on [x]'s set, raising the earliest failure, as stated above. A value of
-    every set has no work to wait for: [sync] returns.
+    on [x]'s set, raising the earliest failure, as stated above.
 
     Raises [Invalid_argument] naming [Nx.sync] for a dead value, and for a
     traced one: [Nx.sync: the value is traced by Rune.jit]. *)
@@ -933,11 +1178,12 @@ val sign : ('v, 's, 'd) t -> ('v, 's, 'd) t
 
 (** {2:scalars Scalar forms}
 
-    [f_s x c] is [f x (scalar (dtype x) c)] and [rf_s c x] is
-    [f (scalar (dtype x) c) x]: the constant takes [x]'s dtype, a float
-    stored as {!Dtype.of_float} says. Each raises as its function does, naming
-    itself, and [Invalid_argument] if [c] is an [int] outside [x]'s dtype's
-    range. *)
+    [f_s x c] is [f x (scalar_like x c)] and [rf_s c x] is
+    [f (scalar_like x c) x], [c] stored in [x]'s dtype as
+    {!Dtype.of_float} says for a float. [c] is written into the program of
+    one operation over [x] alone, as {!full} writes its value. Each raises
+    as its function does, naming itself, and [Invalid_argument] if [c] is an
+    [int] outside [x]'s dtype's range. *)
 
 val add_s : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
 (** [add_s x c] is [add x c]. *)
@@ -2757,22 +3003,32 @@ val idst :
   (float, 's, 'd) t
 (** [idst x] is the inverse of {!dst} under the same [type_] and [norm]. *)
 
-val fftfreq : (float, 's) dtype -> ?d:float -> int -> (float, 's, 'd) t
-(** [fftfreq dt ~d n] is the frequency of each of {!fft}'s [n] bins for
-    samples [d] apart (default [1.]), in cycles per unit of [d]: [i / (d n)]
-    for [i] in [[0, (n - 1) / 2]], then [(i - n) / (d n)] for the rest, the
-    negative frequencies. Each is computed at float64 from [d n] rounded once,
-    then stored in [dt], of every set: [fftfreq float64 4] is [0], [0.25],
+val fftfreq : (float, 's) dtype -> ?d:float -> int -> (float, 's, host) t
+(** [fftfreq dt ~d n] is the host value of the frequency of each of {!fft}'s
+    [n] bins for samples [d] apart (default [1.]), in cycles per unit of [d]:
+    [i / (d n)] for [i] in [[0, (n - 1) / 2]], then [(i - n) / (d n)] for the
+    rest, the negative frequencies. Each is computed at float64 from [d n]
+    rounded once, then stored in [dt]: [fftfreq float64 4] is [0], [0.25],
     [-0.5] and [-0.25].
 
     Raises [Invalid_argument] if [n < 1] or [d] is zero or not finite. *)
 
-val rfftfreq : (float, 's) dtype -> ?d:float -> int -> (float, 's, 'd) t
-(** [rfftfreq dt ~d n] is the frequency of each of {!rfft}'s [n / 2 + 1] bins
-    for [n] samples [d] apart: [i / (d n)] for [i] in [[0, n / 2]], computed
-    as {!fftfreq}'s.
+val fftfreq_at :
+  'd Placement.t -> (float, 's) dtype -> ?d:float -> int -> (float, 's, 'd) t
+(** [fftfreq_at p dt ~d n] is {!fftfreq}[ dt ~d n] at [p], an [_at] form as
+    {!section-creation} states. *)
+
+val rfftfreq : (float, 's) dtype -> ?d:float -> int -> (float, 's, host) t
+(** [rfftfreq dt ~d n] is the host value of the frequency of each of
+    {!rfft}'s [n / 2 + 1] bins for [n] samples [d] apart: [i / (d n)] for [i]
+    in [[0, n / 2]], computed as {!fftfreq}'s.
 
     Raises [Invalid_argument] as {!fftfreq}. *)
+
+val rfftfreq_at :
+  'd Placement.t -> (float, 's) dtype -> ?d:float -> int -> (float, 's, 'd) t
+(** [rfftfreq_at p dt ~d n] is {!rfftfreq}[ dt ~d n] at [p], an [_at] form as
+    {!section-creation} states. *)
 
 val fftshift : ?axes:int list -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [fftshift x] is [x] rolled along each of [axes] (default the last) by
@@ -2791,13 +3047,17 @@ val ifftshift : ?axes:int list -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 
     Raises [Invalid_argument] as {!fftshift}. *)
 
-val hann : (float, 's) dtype -> int -> (float, 's, 'd) t
-(** [hann dt n] is the periodic Hann window of [n] points,
+val hann : (float, 's) dtype -> int -> (float, 's, host) t
+(** [hann dt n] is the host value of the periodic Hann window of [n] points,
     [0.5 - 0.5 cos (2πi / n)], computed at float64 and rounded once: the point
     that would open the next period is dropped, so shifted copies sum to a
-    constant. A value of every set.
+    constant.
 
     Raises [Invalid_argument] if [n] is negative. *)
+
+val hann_at : 'd Placement.t -> (float, 's) dtype -> int -> (float, 's, 'd) t
+(** [hann_at p dt n] is {!hann}[ dt n] at [p], an [_at] form as
+    {!section-creation} states. *)
 
 val stft :
   (Complex.t, 'c) dtype ->
@@ -3286,180 +3546,6 @@ val map_segments :
     as raised, and the operations [f] makes are named by the functions it
     calls. *)
 
-(** {1:devices Device sets and placement}
-
-    A value lies on a device set, a module minted by {!devices} whose brand ['d]
-    keeps its values apart from other sets'. Within its set a value has a
-    placement: whole on one or every device, or cut into windows across them.
-    {!place} moves a value between sets, and between placements of one. The host
-    is a set like any other, {!Host}. *)
-
-type +'d devices
-(** The type for device sets of brand ['d]: distinct devices, and the kernels
-    that compute on them. *)
-
-val rigs : 'd devices -> Rig.t list
-(** [rigs s] is [s]'s devices in order. *)
-
-(** Named axes over a set's devices. *)
-module Mesh : sig
-  type +'d t
-  (** The type for named axes over a set of brand ['d]. *)
-
-  val v : 'd devices -> (string * int) list -> 'd t
-  (** [v s axes] lays [s]'s devices in row-major order over the named [axes].
-
-      Raises [Invalid_argument] unless the extents are positive and multiply to
-      the number of [s]'s devices and the names are distinct. *)
-end
-
-(** Where a value's elements lie over its set. *)
-module Placement : sig
-  type +'d t
-  (** The type for placements over a set of brand ['d]. *)
-
-  val on : 'd devices -> 'd t
-  (** [on s] holds the whole value on every device of [s]. *)
-
-  val device : 'd devices -> Rig.t -> 'd t
-  (** [device s d] holds the whole value on [d] alone, a device of [s];
-      [on s] where [s] has [d] alone.
-
-      Raises [Invalid_argument] naming [Nx.Placement.device] unless [d]
-      is a device of [s] ({!Rig.equal}). *)
-
-  val split : axis:int -> 'd devices -> 'd t
-  (** [split ~axis s] cuts [axis] into one window per device of [s], in
-      order, as evenly as its extent allows: of [n] elements over [k] devices,
-      the first [n mod k] windows hold [n / k + 1] and the others [n / k]. A
-      window is empty only where [n < k].
-
-      Raises [Invalid_argument] if [axis] is negative or not below
-      {!Nx_array.Layout.max_rank}. *)
-
-  val mesh : 'd Mesh.t -> (int * string list) list -> 'd t
-  (** [mesh m cuts] cuts each axis [a] of [(a, names)] over the mesh axes
-      [names], major first; a mesh axis no cut names holds copies. An axis cut
-      over several mesh axes is cut as {!split} cuts it over as many devices
-      as their extents multiply to, numbered major first: over extents [e1]
-      and [e2], the device at [i1] along the first and [i2] along the second
-      holds window [i1 × e2 + i2].
-      [split ~axis s] is [mesh (Mesh.v s [ ("x", n) ]) [ (axis, [ "x" ]) ]].
-
-      Raises [Invalid_argument] for a name [m] lacks, an axis or a name in two
-      cuts, or an axis that is negative or not below
-      {!Nx_array.Layout.max_rank}. *)
-
-  val devices : 'd t -> 'd devices
-  (** [devices p] is [p]'s set. *)
-
-  val equal : 'd t -> 'e t -> bool
-  (** [equal p q] is [true] iff [p] and [q] are of one set and every device
-      holds the same window of a value at [p] and at [q], whatever their
-      brands. *)
-
-  val pp : Format.formatter -> 'd t -> unit
-  (** [pp] formats a placement on one device as the device's name, others as
-      [on [CUDA:0; CUDA:1]], [split ~axis:0 [CUDA:0; CUDA:1]] or a mesh's
-      extents and cuts. *)
-
-  (**/**)
-
-  (** For transformations that map over a leading axis, as a batching
-      interpreter places a lane's operation for all lanes in one
-      operation. *)
-
-  val with_leading_axis : 'd t -> 'd t
-  (** [with_leading_axis p] is the placement of a value of one more axis in
-      front, cut as [p] cuts the others: each device holds the whole of the
-      new axis by its window of the rest. It is [p] itself where [p] cuts no
-      axis.
-
-      Raises [Invalid_argument] if [p] cuts axis
-      [Nx_array.Layout.max_rank - 1], which would become an axis past the
-      most a layout has. *)
-
-  val without_leading_axis : 'd t -> 'd t
-  (** [without_leading_axis p] is the placement of a value without its first
-      axis, cut as [p] cuts the others, each moved down by one: the mesh
-      axes that cut the first axis hold copies. It is [p] itself where [p]
-      cuts no axis. *)
-
-  (**/**)
-end
-
-(** The type for device sets as modules: a brand and its placements. *)
-module type Devices = sig
-  type d
-  (** The set's brand. *)
-
-  val v : d devices
-  (** [v] is the set. *)
-
-  val on : d Placement.t
-  (** [on] is [Placement.on v]. *)
-
-  val split : axis:int -> d Placement.t
-  (** [split ~axis] is [Placement.split ~axis v]. *)
-end
-
-module Host : Devices with type d = host
-(** The process's host, {!Rig.host}, computed by nx.cpu. *)
-
-val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
-(** [devices ~kernels ds] mints a new set over [ds], in their order, with a
-    brand no other set has, computed eagerly by [kernels]. Without [kernels], a
-    set whose every device runs on the host ({!Rig.runs_on_host}) is computed by
-    nx.cpu, and any other set by none.
-
-    Raises [Invalid_argument] if [ds] is empty or repeats a device, or if
-    [kernels] does not compute on one of [ds]. *)
-
-(** {2:routing Routing}
-
-    Each device computes its window of an operation's result from the
-    windows of the operands it holds. The result lies at the union of the
-    operands' cuts, joined in operand order. A cut of an axis that becomes
-    a result axis cuts that axis over the same devices. A cut of an axis
-    read whole cuts nothing. A cut of an axis that a reduction or a
-    contraction sums makes the devices compute by partials where every
-    operand holding the axis is cut alike, and cuts nothing in the result;
-    one along a scan's axis stays in it. An operand whole on every device
-    is read by a view of each device's window.
-
-    An operation raises [Invalid_argument] where two operands cut one
-    result axis over other devices or tiles, where a device needs a window
-    of an operand it does not hold, and where operands lie alone on two
-    devices or on two sets. The message names the function, the operand,
-    numbered from [0] in the order {!Prim.t} lists them, where it lies,
-    where it is read, and the {!place} that puts it there: the set named
-    [s], a device by its name, a mesh's axes as ["g0"], ["g1"], …, in the
-    read placement's order, and the operands [x], [y], [z], then [x3],
-    [x4], …:
-
-    {v
-Nx.matmul: operand 1 lies at split ~axis:1 [CUDA:0; CUDA:1] and is read
-at split ~axis:0 [CUDA:0; CUDA:1]; Nx.place (Placement.split ~axis:0 s) y
-    v}
-
-    A traced operation raises it as its eager twin does ({!Prim.results}). *)
-
-val place : 'e Placement.t -> ('v, 's, 'd) t -> ('v, 's, 'e) t
-(** [place p x] is [x]'s elements at [p]. Each device of [p] holds its window
-    over [x]'s own memory where [x] already lies there, or where the host
-    addresses both [x]'s memory and that device's ({!Rig.reaches});
-    otherwise it holds a copy of its window, allocating at most the window's
-    bytes. A value of every set is computed at [p]. Across sets it changes the
-    brand; within one, the arrangement. Placing onto {!Host} from another set
-    is a {{!section-waiting}wait} on [x]'s set.
-
-    Raises [Invalid_argument] if [p] cuts an axis [x] does not have,
-    {!Rig.Lost} for a lost device, and a failed check as a wait does. *)
-
-val placement : ('v, 's, 'd) t -> 'd Placement.t option
-(** [placement x] is where [x]'s bytes are, or [None] for a value of every set,
-    which has none. *)
-
 (** {1:structures Structures}
 
     A structure is an OCaml type whose values hold arrays: a model's parameters,
@@ -3860,7 +3946,11 @@ module Ptree : sig
       the sum in walk order, over each array [a] of the vector and [y]'s array
       [b] at its path, of [vdot (cast dt a) (cast dt b)] for floats and of the
       same over the real parts, then the imaginary parts, stored in [dt], for
-      complex arrays. *)
+      complex arrays. The [0] it starts from lies whole on each device of the
+      placement of [x]'s first array in walk order.
+
+      Raises [Invalid_argument] naming [Nx.Ptree.dot] if [x] holds no
+      array. *)
 
   val norm : ('s, 'd) t -> (float, 'c) dtype -> 's -> (float, 'c, 'd) tensor
   (** [norm s dt x] is [x]'s Euclidean norm, [sqrt (dot s dt x x)] in exact
@@ -3869,7 +3959,11 @@ module Ptree : sig
       the quotients' sum of squares. It computes in [dt]'s carrier, float32 for
       a narrower float, and rounds once to [dt], so it is finite wherever the
       norm is: [+∞] where a coordinate is infinite and none is NaN, NaN where
-      one is NaN, [0] of no coordinate. *)
+      one is NaN, [0] of no coordinate. Its constants lie as {!dot}'s [0]
+      does.
+
+      Raises [Invalid_argument] naming [Nx.Ptree.norm] if [x] holds no
+      array. *)
 
   val scale : ('s, 'd) t -> (float, 'c, 'd) tensor -> 's -> 's
   (** [scale s k x] is [x] with each array [a] of the vector replaced by
@@ -3972,22 +4066,26 @@ val check :
   ('a, 'd) Ptree.t -> 'd bool_t -> 'a -> (int array -> 'a -> exn) -> unit
 (** [check s ok data fail] raises [fail i d] if an element of [ok] is [false],
     [i] the index of the first in C order and [d] the structure [data] with each
-    array replaced by its element at [i], a 0-d value of every set. Each array
-    of [data] broadcasts to [ok]'s shape; an empty [ok] passes. A check with no
-    data passes {!Ptree.unit} and [()].
+    array replaced by its element at [i], a 0-d value whole on each device of
+    that array's placement ({!scalar_like}). Each array of [data] broadcasts
+    to [ok]'s shape; an empty [ok] passes. A check with no data passes
+    {!Ptree.unit} and [()].
 
     It is a {{!section-waiting}check}: on the host it raises at the call, and on
-    another set at the next wait on that set. It computes on [ok]'s set, or, for
-    an [ok] of every set, on the set of the first array of [data] in walk order
-    that has bytes, or on the host where none has.
+    another set at the next wait on that set. It computes on [ok]'s set.
 
     [s]'s walk must rebuild [data] with each array replaced by a 0-d one, as
     [fail]'s [d] is built; a walk that checks its arrays' shapes, as {!Rng.walk}
-    does, may refuse. [check] tries that rebuild at the call.
+    does, may refuse. [check] tries that rebuild at the call over stand-ins
+    that hold no bytes, so that trying computes nothing on the devices. Each
+    stand-in is 0-d, of its array's dtype, and whole on each device of that
+    array's placement. A walk may read their shapes, dtypes and placements.
+    An operation on a stand-in raises ["a value traced by Nx.check reached
+    eager execution"], and a read of its elements raises too.
 
     Raises [Invalid_argument] naming [Nx.check] at the call if an array of
-    [data] does not broadcast to [ok]'s shape, or if [s]'s walk refuses 0-d
-    arrays. *)
+    [data] does not broadcast to [ok]'s shape, or if [s]'s walk raises it over
+    the stand-ins, with the walk's message. *)
 
 val associative_scan :
   ?axis:int -> ('s, 'd) Ptree.t -> ('s -> 's -> 's) -> 's -> 's
@@ -4026,38 +4124,30 @@ val associative_scan :
 (** Random numbers from one Threefry-2x32 generator.
 
     A key is the generator's whole state: every draw is a function of its key,
-    dtype and shape, the same on every set. Fresh draws come from fresh keys, by
-    {!split} or {!fold_in}. A key is spent once it is used: its own draws, its
-    {!split} keys, its {!fold_in} keys and the keys of a scope rooted at it all
+    dtype and shape, the same at every placement. Fresh draws come from fresh
+    keys, by {!split} or {!fold_in}. A key is spent once it is used: its own
+    draws, its {!split} keys, its {!fold_in} keys and the keys of a scope
+    rooted at it all
     come from one stream of blocks under it, so using a key two of these ways
     can repeat bits. A scope lets one key stand for a region: a sampler called
     without [~key] takes the scope's next key. A scope may instead refuse such
     draws ({!refusing}), so that a region draws only from keys it is given.
 
-    A draw is a value of every set when its key is: a formula that computes on
-    the set of each operation that reads it. *)
+    A draw lies where its key and its parameters lie. {!key} makes a host
+    key, which {!place} moves to another placement once, and {!split},
+    {!fold_in} and {!fold_in_tensor} compute where their key lies. A scope's
+    keys are host keys, computed on the host when a draw takes one; no
+    interpretation receives that computation. *)
 module Rng : sig
   type +'d key = private 'd int32_t
   (** The type for keys, of shape [[|2|]], and batches of keys, of shape
       [[|…; 2|]]: two 32-bit words per key. Arithmetic on a key gives an array,
-      which no sampler takes.
-
-      {!key}'s key is a value of every set, which each draw computes again
-      ({!Nx.section-creation}). {!split} and {!fold_in} of one key of every
-      set, and {!fold_in_tensor} of one by a 0-d index of every set, compute
-      their keys' words on the host, as a read does, and give keys of every
-      set that hold them as numbers: a draw from one costs the same however
-      many keys it came from, so a key carried through a loop needs no
-      {!place}. A batch of every set stays a formula: each {!fold_in} or
-      {!fold_in_tensor} of it adds an operation that every draw from the
-      result computes again, so a batch carried through a loop is placed
-      first, and then each fold computes where it lies. *)
+      which no sampler takes. *)
 
   (** {1:keys Keys} *)
 
-  val key : int -> 'd key
-  (** [key seed] is the key of [seed], a value of every set. Equal seeds give
-      equal keys. *)
+  val key : int -> host key
+  (** [key seed] is the host key of [seed]. Equal seeds give equal keys. *)
 
   val of_tensor : 'd int32_t -> 'd key
   (** [of_tensor t] is the key, or batch of keys, whose words are [t], for words
@@ -4107,10 +4197,13 @@ module Rng : sig
   (** {1:samplers Samplers}
 
       A sampler draws from [~key], or without it from the scope's next key. A
-      key with batch axes [b] draws [b] followed by the draw's shape, one draw
-      per key, each the draw that key alone gives. Float draws compute at
-      float64 for float64 and at float32 for the other floats, and round once to
-      their dtype.
+      sampler without an array parameter draws on the host. One with array
+      parameters draws where they lie, and without [~key] makes its key where
+      its first parameter lies, whole on each of its devices, from the next
+      key's two words, so that no bytes move. A key with batch axes [b] draws
+      [b] followed by the draw's shape, one draw per key, each the draw that
+      key alone gives. Float draws compute at float64 for float64 and at
+      float32 for the other floats, and round once to their dtype.
 
       A sampler reads its key and consumes no donation of it
       ({!Nx.donate}): the key lives on.
@@ -4121,19 +4214,19 @@ module Rng : sig
       index and its value, as in
       [Nx.Rng.bernoulli: p at [3] is 1.5, not in [0, 1]]. The check is a
       {{!Nx.section-waiting}check}: it raises at the call for a parameter on the
-      host or of every set, and for one on another set at the next wait on that
-      set, so that a draw never waits for its parameters. Under an
+      host, and for one on another set at the next wait on that set, so that a
+      draw never waits for its parameters. Under an
       interpretation it is a [Check] operation, which raises where the
       interpretation computes it. *)
 
-  val bits : ?key:'d key -> int array -> 'd int32_t
+  val bits : ?key:host key -> int array -> host int32_t
   (** [bits shape] is uniformly random 32-bit words: word [j] in C order is word
       [j mod 2] of the generator's block [j / 2].
 
       Raises [Invalid_argument] if an extent is negative. *)
 
   val uniform :
-    ?key:'d key -> (float, 's) dtype -> int array -> (float, 's, 'd) t
+    ?key:host key -> (float, 's) dtype -> int array -> (float, 's, host) t
   (** [uniform dt shape] is draws from [\[0, 1)]: multiples of [2{^-p}], each
       equally likely, [p] the largest such that every multiple of [2{^-p}] in
       [\[0, 1)] is a value of [dt]: [dt]'s significand width, from float64's
@@ -4143,7 +4236,7 @@ module Rng : sig
       Raises [Invalid_argument] if an extent is negative. *)
 
   val normal :
-    ?key:'d key -> (float, 's) dtype -> int array -> (float, 's, 'd) t
+    ?key:host key -> (float, 's) dtype -> int array -> (float, 's, host) t
   (** [normal dt shape] is standard normal draws, by the Box-Muller transform:
       draws [2q] and [2q + 1] in C order are the cosine's and the sine's of one
       transform, of the {!uniform} draws [2q] and [2q + 1] at the compute
@@ -4152,14 +4245,14 @@ module Rng : sig
       Raises [Invalid_argument] if an extent is negative. *)
 
   val exponential :
-    ?key:'d key -> (float, 's) dtype -> int array -> (float, 's, 'd) t
+    ?key:host key -> (float, 's) dtype -> int array -> (float, 's, host) t
   (** [exponential dt shape] is exponential draws of rate 1, by inverting the
       distribution at [1 - u] for a uniform [u]: finite, and never negative.
 
       Raises [Invalid_argument] if an extent is negative. *)
 
   val gumbel :
-    ?key:'d key -> (float, 's) dtype -> int array -> (float, 's, 'd) t
+    ?key:host key -> (float, 's) dtype -> int array -> (float, 's, host) t
   (** [gumbel dt shape] is standard Gumbel draws, of distribution
       [exp (-exp (-x))]: [-log e] for an exponential draw [e] of 53 random
       bits at float64 and 32 otherwise, computed so that [e] keeps its
@@ -4172,11 +4265,11 @@ module Rng : sig
       Raises [Invalid_argument] if an extent is negative. *)
 
   val randint :
-    ?key:'d key ->
+    ?key:host key ->
     ?low:int ->
     high:int ->
     int array ->
-    'd int32_t
+    host int32_t
   (** [randint ~low ~high shape] is integers drawn uniformly from
       [\[low, high)] ([low] defaults to [0]): a 64-bit draw times [high - low],
       shifted down by 64 bits, whose biased low part, at most one draw in
@@ -4315,7 +4408,7 @@ module Rng : sig
       element, or if a row's largest logit is not finite: [+inf], NaN, or a row
       of [-inf]. *)
 
-  val permutation : ?key:'d key -> int -> 'd int64_t
+  val permutation : ?key:host key -> int -> host int64_t
   (** [permutation n] is a uniformly random ordering of [0], …, [n - 1]: the
       positions that sort [n] random 64-bit words. Two words collide, and
       their positions keep their order, with probability below
@@ -4325,15 +4418,13 @@ module Rng : sig
 
   (** {1:scope Scope} *)
 
-  val with_key : 'd key -> (unit -> 'a) -> 'a
+  val with_key : host key -> (unit -> 'a) -> 'a
   (** [with_key k f] runs [f] in a scope rooted at [k]: the samplers called in
       [f] without [~key] take successive keys of [k], [fold_in k 0],
       [fold_in k 1], …. Scopes nest, the inner replacing the outer. A scope is
       per fiber and per domain.
 
-      A keyless draw is a value of every set, so its key must be one: raises
-      [Invalid_argument] if [k] has bytes ({!place}d, or made by {!of_tensor}
-      from an array that has). *)
+      Raises [Invalid_argument] if [k] is dead. *)
 
   val refusing : string -> (unit -> 'a) -> 'a
   (** [refusing name f] runs [f] in a scope that gives no keys. Scopes nest
@@ -4343,10 +4434,10 @@ module Rng : sig
       [Invalid_argument] naming themselves and [name], as
       [Nx.Rng.normal: no key inside Rune.scan, which refuses keyless draws]. *)
 
-  val next_key : unit -> 'd key
-  (** [next_key ()] is the scope's next key, a value of every set. Outside every
-      scope, it is the next key of the domain's own, seeded from the system's
-      entropy.
+  val next_key : unit -> host key
+  (** [next_key ()] is the scope's next key, a host key computed at the call.
+      Outside every scope, it is the next key of the domain's own, seeded from
+      the system's entropy.
 
       Raises [Invalid_argument] inside {!refusing}. *)
 end
@@ -4362,9 +4453,9 @@ val pp : Format.formatter -> ('v, 's, 'd) t -> unit
     value with elements is read as {!to_array} reads it, so it raises a failed
     check pending on its set ({!section-waiting}).
 
-    A value of every set prints [of every set] and the operation that makes it;
-    a traced one [traced by] its interpretation; a dead one the function it was
-    donated to; one on a lost device the loss. None of these raises. *)
+    A traced value prints [traced by] its interpretation; a dead one the
+    function it was donated to; one on a lost device the loss. None of these
+    raises. *)
 
 val to_string : ('v, 's, 'd) t -> string
 (** [to_string x] is [x] printed by {!pp}. *)
@@ -4424,18 +4515,21 @@ module Repr : sig
       lies on a device of [s]. *)
 
   val array : ('v, 's, 'd) t -> ('v, 's) Nx_array.t option
-  (** [array x] is [Some a] iff [x] has bytes on one device, [a] its array, and
-      [None] for a value on several devices or of every set. [a] may be strided
-      or offset. It is for reading: writing through it changes [x]. *)
+  (** [array x] is [Some a] iff [x] lies on one device, [a] its array, and
+      [None] for a value on several devices. [a] may be strided or offset. It
+      is for reading: writing through it changes [x].
+
+      Raises [Invalid_argument] naming [Nx.Repr.array] for a dead or a traced
+      [x]. *)
 
   val read : ('v, 's, 'd) t -> (('v, 's) Nx_array.t -> 'a) -> 'a
   (** [read x f] is [f a], [a] an array on the host of [x]'s elements for the
       extent of [f]: over [x]'s own memory where [x] lies on one device whose
       memory the host addresses (the host, a memory device, Metal), and
       otherwise a copy on the host, made for any placement, including a value
-      cut across devices; a value of every set is computed on the host. It is
-      a {{!section-reads}read}: it waits for [x]'s set and raises a failed
-      check pending on it. [a] may be strided or offset.
+      cut across devices. It is a {{!section-reads}read}: it waits for [x]'s
+      set and raises a failed check pending on it. [a] may be strided or
+      offset.
 
       Unlike {!array}, it leaves [x]'s memory unshared, so a donation of [x]
       after [f] returns may write its result there ({!donate}). [a]'s memory
@@ -4460,10 +4554,13 @@ module Repr : sig
       has every axis [p] cuts, and each array is its device's window of that
       shape. *)
 
-  val shards : ('v, 's, 'd) t -> ('v, 's) Nx_array.t iarray option
-  (** [shards x] is [Some arrays], one per device of [x]'s placement, in
-      order: [[| a |]] for a value on one device; [None] for a value of
-      every set. The arrays are for reading, as {!array}'s. *)
+  val shards : ('v, 's, 'd) t -> ('v, 's) Nx_array.t iarray
+  (** [shards x] is [x]'s arrays, one per device of [x]'s placement, in
+      order: [[| a |]] for a value on one device. The arrays are for reading,
+      as {!array}'s.
+
+      Raises [Invalid_argument] naming [Nx.Repr.shards] for a dead or a
+      traced [x]. *)
 end
 
 (**/**)
@@ -4507,18 +4604,17 @@ end
     the interpretation where the interpretation is not around it: after it
     returned, in its own rule, or outside its extent.
 
-    A value of every set reaches a [Values] interpretation's rule as it is, a
-    formula with no placement. An [Extent] interpretation's rule receives the
-    operations that compute a formula operand first, in dependency order, and
-    the operation reads that rule's results in its place; a formula reaches it
-    as it is only where the rule returned it. *)
+    Every value has a placement, a traced one its form's. A creation is a
+    [Map] of no loads that names where it lies, so an [Extent]
+    interpretation's rule receives it at that placement, which {!results}
+    gives its result. *)
 module Prim : sig
   type ('v, 's, 'd) nx := ('v, 's, 'd) t
 
   type ('v, 's, 'd) form = {
     dtype : ('v, 's) dtype;
     layout : Nx_array.Layout.t;
-    placement : 'd Placement.t option;  (** [None] for a value of every set. *)
+    placement : 'd Placement.t;
   }
   (** A value without its bytes. A value cut over devices has the C-contiguous
       layout of the whole. *)
@@ -4688,13 +4784,19 @@ module Prim : sig
         prog : Nx_kernel.Prog.t;
         outs : ('d, 'r) outs;
         loads : 'd load iarray;
+        at : 'd Placement.t option;
+            (** [Some p] exactly for a map of no loads, a creation, which lies
+                at [p], each device of [p] computing its window; [None] for a
+                map with loads, which lies where its operands put it. *)
       }
         -> 'r t
         (** [prog] at every index of [layout]'s shape, reading load [i] as its
             operand [i]; result [k] is its output [k], laid out as [layout],
-            which is C-contiguous. A one-result map is ['v * unit]. With no
-            loads, a creation. Its [Coord] nodes read axes of that shape: a
-            program that reads one past its rank is refused. *)
+            which is C-contiguous. A one-result map is ['v * unit]. Its
+            [Coord] nodes read axes of that shape: a program that reads one
+            past its rank is refused, as are a map of no loads and [None], one
+            with loads and [Some _], and an [at] that cuts an axis the shape
+            lacks. *)
     | Reduce : {
         layout : Nx_array.Layout.t;
         axes : int iarray;
@@ -4820,13 +4922,12 @@ module Prim : sig
         (** Raises [fail i e] at the first index [i], in C order, where [ok]
             is [false], [e] each of [data]'s elements at [i], in order: OCaml
             values, which belong to no device set. Each value of [data] has
-            [ok]'s shape. An empty [ok] passes. It is computed on [ok]'s set,
-            or the first datum's where [ok] is of every set, or the host where
-            every operand is: at the call on the host, and otherwise at the
-            next {{!section-waiting}wait} on that set. A check of one element
+            [ok]'s shape. An empty [ok] passes. It is computed where [ok]'s
+            bytes lie: at the call on the host, and otherwise at the next
+            {{!section-waiting}wait} on [ok]'s set. A check of one element
             reduces nothing: its flag is that element, read on the device
             that holds it, and its first index is [0], so it needs no
-            kernels where [ok] has bytes. A formula [ok] is computed first. *)
+            kernels. *)
 
   type operands = Operands : 'd any list -> operands
 
@@ -5001,9 +5102,8 @@ module Prim : sig
     (** [arrays c i] is the arrays of [c]'s operand [i], one per device of its
         placement, in order.
 
-        Raises [Invalid_argument] naming [c]'s [by] for a constant or a
-        traced operand, a position no operand has, or once {!with_}
-        returned. *)
+        Raises [Invalid_argument] naming [c]'s [by] for a traced operand, a
+        position no operand has, or once {!with_} returned. *)
 
     val take :
       'd t ->
@@ -5030,16 +5130,15 @@ module Prim : sig
   (**/**)
 
   val coerce : ('v, 's, 'd) form -> ('w, 'r, 'e) nx -> ('v, 's, 'd) nx option
-  (** [coerce f x] is [Some x] at [f]'s type if [x]'s dtype is [f]'s and
-      either [x] lies on the set [f]'s placement names or [x] is a value of
-      every set; [None] otherwise, as for a placed [x] and an [f] of every
-      set. Layouts are not compared. Each brand names one set, so a value on
-      that set is a value of the brand.
+  (** [coerce f x] is [Some x] at [f]'s type iff [x]'s dtype is [f]'s and [x]
+      lies on the set [f]'s placement names. Layouts and placements within the
+      set are not compared. Each brand names one set, so a value on that set
+      is a value of the brand.
 
-      A value of every set coerces to any form, so an interpretation that
-      binds its stand-ins reads each binding back at the stand-in's own form,
-      where the check holds. For an interpretation that binds the values it
-      makes where OCaml cannot relate their types. *)
+      For an interpretation that binds the values it makes where OCaml cannot
+      relate their types: one that binds its stand-ins makes each binding at
+      the stand-in's placement, and reads it back at the stand-in's form,
+      where the check holds. *)
 
   (**/**)
 end

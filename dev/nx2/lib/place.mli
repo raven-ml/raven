@@ -31,7 +31,7 @@ val value :
     placement equals [p].
 
     Raises [Invalid_argument] naming [by] if [p] cuts an axis [x] lacks, and if
-    [x] is a constant (the engine computes those), {!Rig.Lost} for a lost
+    [x] is traced or a handle, {!Rig.Lost} for a lost
     device, and what {!Rig.Buffer.copy} raises. *)
 
 val view :
@@ -43,5 +43,5 @@ val view :
 (** [view ~by x k w] is the window [w] of [x]'s whole, from [x]'s array on its
     set's device [k], without a copy.
 
-    Raises [Invalid_argument] if [x] is a constant, or no array of [x] on [k]
-    holds [w]. *)
+    Raises [Invalid_argument] if [x] is traced or a handle, or no array of
+    [x] on [k] holds [w]. *)

@@ -123,15 +123,16 @@ let saving =
           let path = file "old" in
           s.save path (host s);
           equal string (written s (host s)) (read path));
-      cases ~name "a value of another set or of every set saves" saves (fun s ->
+      cases ~name "a value of another set or a host creation saves" saves
+        (fun s ->
           let module M = (val Nx.devices [ Nx_support.memory 0 ]) in
           let expected = written s (host s) in
           equal ~msg:"another set" string expected
             (written s (Nx.place M.on (host s)));
-          let every =
+          let made =
             Nx.reshape s.shape (Nx.arange Nx.uint8 0 (numel s.shape) 1)
           in
-          equal ~msg:"every set" string expected (written s every));
+          equal ~msg:"a host creation" string expected (written s made));
       (let entries live dead =
          Archive.of_list [ ("a", Nx.P live); ("b", Nx.P dead) ]
        in

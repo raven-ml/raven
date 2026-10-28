@@ -218,19 +218,21 @@ let ownership =
           let module M = (val Nx.devices [ device ]) in
           let blocks, scale = model_value in
           let like = (List.map (Nx.place M.on) blocks, Nx.place M.on scale) in
-          (* Entries of every set, which a placement computes on the device: the
-             scale, read last, has another shape. *)
-          let entries scale =
+          (* Donated host entries, which a placement consumes: the scale, read
+             last, has another shape. *)
+          let block () = Nx.full Nx.float32 [| 2 |] 1. in
+          let entries b0 b1 scale =
             Archive.of_list
               [
-                ("blocks.0", Nx.P (Nx.full Nx.float32 [| 2 |] 1.));
-                ("blocks.1", Nx.P (Nx.full Nx.float32 [| 2 |] 2.));
+                ("blocks.0", Nx.P (Nx.donate b0));
+                ("blocks.1", Nx.P (Nx.donate b1));
                 ("scale", Nx.P scale);
               ]
           in
+          let b0 = block () and b1 = block () in
           let failing () =
             Archive.to_value (model_on ()) ~like
-              (entries (Nx.full Nx.float64 [| 2 |] 0.5))
+              (entries b0 b1 (Nx.full Nx.float64 [| 2 |] 0.5))
           in
           (* One uncounted run first: what the device allocates on its first use
              is not the read's. *)
@@ -241,13 +243,17 @@ let ownership =
             failing;
           equal ~msg:"bytes placed by the failed read" int 0
             (Rig.allocated device - before);
+          equal ~msg:"entries placed by the failed read" (array float_exact)
+            [| 1.; 1.; 1.; 1. |]
+            (Array.append (Nx.to_array b0) (Nx.to_array b1));
           let x =
             Archive.to_value (model_on ()) ~like
-              (entries (Nx.full Nx.float64 [||] 0.5))
+              (entries b0 b1 (Nx.full Nx.float64 [||] 0.5))
           in
-          greater ~msg:"bytes placed by a read that succeeds" int ~than:0
-            (Rig.allocated device - before);
-          equal (array float_exact) [| 2.; 2. |]
+          raises_match
+            (Exn.invalid_arg ~substring:"was donated to")
+            (fun () -> Nx.to_array b0);
+          equal (array float_exact) [| 1.; 1. |]
             (Nx.to_array (List.nth (fst x) 1)));
     ]
 
@@ -501,33 +507,26 @@ let entries =
           equal packed (find a "w") w;
           equal memory Over_file (memory_of w));
       group "float agrees with Nx.cast" float_casts;
-      test
-        "to_value places each entry where the value's array lies, and refuses \
-         an array of every set" (fun () ->
+      test "to_value places each entry where the value's array lies"
+        (fun () ->
           let module M = (val Nx.devices [ Nx_support.memory 1 ]) in
           let s = record ("w", P.tensor) ("b", P.tensor) in
           let w = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |]
           and b = Nx.create Nx.float32 [| 1 |] [| 3. |] in
           let host = Archive.of_value s (w, b) in
           let like =
-            (Nx.place M.on (Nx.zeros_like w), Nx.place M.on (Nx.zeros_like b))
+            ( Nx.place M.on (Nx.zeros_like w),
+              Nx.zeros_at M.on Nx.float32 [| 1 |] )
           in
           let w', b' =
             Archive.to_value (record ("w", P.tensor) ("b", P.tensor)) ~like host
           in
           equal
-            (list (option (placement ())))
-            [ Some M.on; Some M.on ]
+            (list (placement ()))
+            [ M.on; M.on ]
             [ Nx.placement w'; Nx.placement b' ];
           equal (array float_exact) [| 1.; 2. |] (Nx.to_array w');
-          raises_match
-            (Exn.invalid_arg
-               ~substring:
-                 "Nx_io.Archive.to_value: b: the array in the value is of \
-                  every set") (fun () ->
-              Archive.to_value s
-                ~like:(Nx.zeros_like w, Nx.zeros Nx.float32 [| 1 |])
-                host));
+          equal (array float_exact) [| 3. |] (Nx.to_array b'));
     ]
 
 let () = exit (run "nx.io archives" [ values; ownership; entries ])

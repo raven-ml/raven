@@ -10,8 +10,7 @@ module P = Nx_kernel.Prog
 
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
-(* The host's device, where a value is read out ({!on_host}) and a check
-   whose operands have no bytes computes. *)
+(* The host's device, where a value is read out ({!on_host}). *)
 let host = Devices.one Devices.host 0
 
 (* Whether [p] lies on the host's set. *)
@@ -20,7 +19,6 @@ let on_host_set p = Devices.number (Devices.set p) = Devices.number Devices.host
 let on_host : type v s d. by:string -> (v, s, d) Value.t -> (v, s) A.t =
  fun ~by x ->
   match x with
-  | Value.Deferred _ -> Iarray.get (Prim.arrays (Constant.at host x)) 0
   | Value.Traced { owner; _ } ->
       invalid_argf "%s: the value is traced by %s" by owner.name
   | Value.Array _ | Value.Shards _ | Value.Handle _ ->
@@ -127,18 +125,11 @@ let unit_view a = Option.get (A.move (Reshape [||]) a)
 let drained n =
   update (fun sets -> (Sets.remove n sets, List.rev (of_set n sets)))
 
-(* The first datum's placement, if a datum has bytes. *)
-let rec data_placement : type d e.
-    (d, e) Value.data -> d Devices.placement option = function
-  | [] -> None
-  | x :: rest -> (
-      match Prim.at x with Some p -> Some p | None -> data_placement rest)
-
 (* [data] with each datum that has bytes a live value of its own over them,
    which no donation of the datum kills. *)
 let rec kept : type d e. (d, e) Value.data -> (d, e) Value.data = function
   | [] -> []
-  | ((Value.Deferred _ | Value.Traced _) as x) :: rest -> x :: kept rest
+  | (Value.Traced _ as x) :: rest -> x :: kept rest
   | x :: rest ->
       let x =
         Prim.of_arrays (Prim.placement x) ~shape:(Prim.shape x) (Prim.arrays x)
@@ -149,7 +140,7 @@ let rec kept : type d e. (d, e) Value.data -> (d, e) Value.data = function
 let rec data_buffers : type d e. (d, e) Value.data -> Rig.Buffer.t list =
   function
   | [] -> []
-  | (Value.Deferred _ | Value.Traced _) :: rest -> data_buffers rest
+  | Value.Traced _ :: rest -> data_buffers rest
   | x :: rest ->
       Iarray.fold_right
         (fun a bs -> A.buffer a :: bs)
@@ -178,17 +169,16 @@ let failed ~by first shape data fail =
   let idx = unravel (Int64.to_int first) shape in
   fail idx (data_at ~by (Iarray.of_array idx) data)
 
-(* [c]'s exception, read on the host, where a flag is false. *)
-let outcome : type d e. by:string -> (d, e) issued -> exn option =
+(* [c]'s exception, its first false flag's position read on the host. *)
+let failure : type d e. by:string -> (d, e) issued -> exn =
  fun ~by c ->
-  if get_on_host c.holds then None
-  else
-    let first =
-      match c.first with
-      | Some f -> A.get (on_host ~by f) [||]
-      | None -> 0L
-    in
-    Some (failed ~by first c.shape c.data c.fail)
+  let first =
+    match c.first with Some f -> A.get (on_host ~by f) [||] | None -> 0L
+  in
+  failed ~by first c.shape c.data c.fail
+
+(* [c]'s exception, read on the host, where a flag is false. *)
+let outcome ~by c = if get_on_host c.holds then None else Some (failure ~by c)
 
 (* Reads [checks], oldest first, up to the first that fails, which raises: the
    later ones go unread. Every check's hold ends then, so that a donation of its
@@ -209,49 +199,66 @@ let settle ~by checks =
    more than it settles. The checks are read outside the update, which then
    takes off those still pending, against a wait on another systhread that
    drains them meanwhile. [ds] are the devices of the check being issued
-   ({!reached}). [false] where the set then holds a failure. *)
+   ({!reached}). [false] where the set then holds a failure.
+
+   A failing check's exception is built once the check is off the list, its
+   hold kept until then: [fail] may read the values it receives, a wait on
+   the set that would otherwise settle the check again. *)
 let settle_reached ~by n ds =
   let earlier = List.rev (of_set n (Atomic.get (Domain.DLS.get checks))) in
+  (* Whether each computed check passes, oldest first, up to the first that
+     fails. *)
   let rec read = function
     | [] | Raised _ :: _ -> []
-    | (Pending (c, _) as p) :: rest -> (
+    | (Pending (c, _) as p) :: rest ->
         if not (reached ds c) then []
-        else
-          match outcome ~by c with
-          | None -> (p, None) :: read rest
-          | Some e -> [ (p, Some e) ])
+        else if get_on_host c.holds then (p, true) :: read rest
+        else [ (p, false) ]
   in
   match read earlier with
   | [] -> not (List.exists raised earlier)
-  | outcomes ->
-      (* Set [n]'s checks after the update, oldest first, and those it
-         ends. *)
+  | outcomes -> (
+      (* Set [n]'s checks after the update, oldest first, those it ends, and
+         the one that fails. *)
       let rec cut = function
-        | [] -> ([], [])
-        | (Raised _ as r) :: rest -> ([ r ], rest)
+        | [] -> ([], [], None)
+        | (Raised _ as r) :: rest -> ([ r ], rest, None)
         | (Pending _ as p) :: rest -> (
             match List.assq_opt p outcomes with
             | None ->
-                let kept, ended = cut rest in
-                (p :: kept, ended)
-            | Some None ->
-                let kept, ended = cut rest in
-                (kept, p :: ended)
-            | Some (Some e) -> ([ Raised e ], p :: rest))
+                let kept, ended, failing = cut rest in
+                (p :: kept, ended, failing)
+            | Some true ->
+                let kept, ended, failing = cut rest in
+                (kept, p :: ended, failing)
+            | Some false -> ([], rest, Some p))
       in
-      let kept, ended =
+      let kept, ended, failing =
         update (fun sets ->
             match cut (List.rev (of_set n sets)) with
-            | [], ended -> (Sets.remove n sets, ([], ended))
-            | kept, ended -> (Sets.add n (List.rev kept) sets, (kept, ended)))
+            | ([], _, _) as r -> (Sets.remove n sets, r)
+            | (kept, _, _) as r -> (Sets.add n (List.rev kept) sets, r))
       in
       List.iter release ended;
-      not (List.exists raised kept)
+      match failing with
+      | None -> not (List.exists raised kept)
+      | Some p ->
+          let e =
+            Fun.protect
+              ~finally:(fun () -> release p)
+              (fun () ->
+                match p with
+                | Pending (c, _) -> failure ~by c
+                | Raised e -> e)
+          in
+          (* The oldest of the set's checks: a later wait raises it first. *)
+          update (fun sets ->
+              (Sets.add n (of_set n sets @ [ Raised e ]) sets, ()));
+          false)
 
 let wait : type v s d. by:string -> (v, s, d) Value.t -> unit =
  fun ~by x ->
   match x with
-  | Value.Deferred _ -> ()
   | Value.Traced { owner; _ } ->
       invalid_argf "%s: the value is traced by %s" by owner.name
   | Value.Array _ | Value.Shards _ | Value.Handle _ ->
@@ -299,14 +306,8 @@ let issue : type d e.
   let shape = Prim.shape ok in
   if Array.mem 0 shape then ()
   else
-    (* The check computes where [ok]'s bytes lie, else where a datum's do, and
-       on the host where none has bytes. A constant [ok] is computed there
-       just before its reduction. *)
-    let p =
-      match Prim.at ok with
-      | Some p -> p
-      | None -> Option.value ~default:host (data_placement data)
-    in
+    (* The check computes where [ok]'s bytes lie. *)
+    let p = Prim.placement ok in
     let scalar x = A.get (on_host ~by x) [||] in
     (* One flag is its own reduction: no kernel reduces it. *)
     let one = Array.for_all (( = ) 1) shape in
@@ -318,7 +319,6 @@ let issue : type d e.
       let n = Devices.number set in
       let ds = Array.map (Devices.rig set) (Grid.devices (Devices.grid p)) in
       if settle_reached ~by n (Array.to_list ds) then begin
-        let ok = Constant.at p ok in
         (* One reduction gives both whether every flag holds and the first
            false, so that the check leaves only scalars to read later. The
            mark follows the copy [readable] submits, which, for one flag,
@@ -339,7 +339,6 @@ let issue : type d e.
       end
     end
     else begin
-      let ok = Constant.at p ok in
       if one then begin
         if not (get_on_host (element ok)) then
           raise (failed ~by 0L shape data fail)

@@ -75,12 +75,12 @@ let values =
       test "a value lies on its array's device" (fun () ->
           let x = Nx.Repr.of_array S2.v (on (m 1) [| 4 |]) in
           equal string "m1"
-            (Format.asprintf "%a" Nx.Placement.pp (Option.get (Nx.placement x))));
+            (Format.asprintf "%a" Nx.Placement.pp (Nx.placement x)));
       test "two values on one device share its placement" (fun () ->
           let x = Nx.Repr.of_array S2.v (on (m 1) [| 4 |])
           and y = Nx.Repr.of_array S2.v (on (m 1) [| 2 |]) in
           equal bool true
-            (Option.get (Nx.placement x) == Option.get (Nx.placement y)));
+            (Nx.placement x == Nx.placement y));
       test "a sharded value's shape is the whole's" (fun () ->
           let x =
             Nx.Repr.of_shards (S2.split ~axis:1)
@@ -143,7 +143,7 @@ let law_shards (s, (_, p)) =
   cover "an odd extent" (Array.exists (fun n -> n mod 2 = 1) s);
   cover "an empty window" (Array.exists (fun n -> n > 0 && n < 4) s);
   let x = Nx.Repr.of_array Nx.Host.v (on Rig.host s) in
-  let y = Nx.Repr.of_shards p (require_some (Nx.Repr.shards (Nx.place p x))) in
+  let y = Nx.Repr.of_shards p ((Nx.Repr.shards (Nx.place p x))) in
   equal (array int) ~msg:"shape" s (Nx.shape y);
   equal (array float_exact) ~msg:"elements" (floats s)
     (A.to_array (require_some (Nx.Repr.array (Nx.place Nx.Host.on y))))
@@ -158,7 +158,7 @@ let repr =
       test "shards of a value from shards are those arrays" (fun () ->
           let a = on (m 0) [| 2 |] and b = on (m 1) [| 2 |] in
           let x = Nx.Repr.of_shards S2.on (Iarray.of_list [ a; b ]) in
-          let s = require_some (Nx.Repr.shards x) in
+          let s = (Nx.Repr.shards x) in
           equal bool true (same a (Iarray.get s 0) && same b (Iarray.get s 1)));
       test "a value on two devices has no single array" (fun () ->
           let x =
@@ -168,7 +168,7 @@ let repr =
           is_none (Nx.Repr.array x));
       test "shards of a value on one device is its array" (fun () ->
           let a = on (m 0) [| 2 |] in
-          let s = require_some (Nx.Repr.shards (Nx.Repr.of_array S2.v a)) in
+          let s = (Nx.Repr.shards (Nx.Repr.of_array S2.v a)) in
           equal int 1 (Iarray.length s);
           equal bool true (same a (Iarray.get s 0)));
       test "shards on one device of a placement make an array value" (fun () ->
@@ -234,7 +234,7 @@ let repr =
             Nx.Repr.of_shards (S2.split ~axis:0)
               (Iarray.of_list [ on (m 0) [| 2 |]; on (m 1) [| 2 |] ])
           in
-          equal placement (S2.split ~axis:0) (Option.get (Nx.placement x)));
+          equal placement (S2.split ~axis:0) (Nx.placement x));
     ]
 
 (* The one message format: every refusal of the interface, called wrongly. *)
@@ -266,21 +266,26 @@ let errors =
           starts_with ~affix:(name ^ ": ") msg;
           greater int ~than:(String.length name + 2) (String.length msg))
 
-(* Values of every set have no placement, and a value placed on a set lies
-   there: a formula never names a set (the external review's program, which no
-   longer type-checks, read a host set at another brand from one). *)
+(* Every value has a placement: a creation from numbers lies on the host, and a
+   value placed on a set lies there (the external review's program, which no
+   longer type-checks, read a host set at another brand from a value of every
+   set). *)
 
 module Host2 = (val Nx.devices [ Rig.host ])
 
 let f32 = Nx.float32
 
-let test_every_set_unplaced () =
+let test_host_creations () =
   let c = Nx.zeros f32 [| 2 |] in
-  let none ~msg x = equal ~msg bool true (Nx.placement x = None) in
-  none ~msg:"zeros" c;
-  none ~msg:"scalar" (Nx.scalar f32 1.);
-  none ~msg:"an operation over formulas" (Nx.add c c);
-  none ~msg:"a movement of one" (Nx.reshape [| 1; 2 |] c)
+  let host ~msg x =
+    equal ~msg
+      (Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal)
+      Nx.Host.on (Nx.placement x)
+  in
+  host ~msg:"zeros" c;
+  host ~msg:"scalar" (Nx.scalar f32 1.);
+  host ~msg:"an operation over creations" (Nx.add c c);
+  host ~msg:"a movement of one" (Nx.reshape [| 1; 2 |] c)
 
 let test_two_values_of_a_host_set () =
   let x = Nx.place Host2.on (Nx.zeros f32 [| 2 |]) in
@@ -289,7 +294,7 @@ let test_two_values_of_a_host_set () =
   equal ~msg:"lies on its set" (list string)
     [ Rig.name Rig.host ]
     (List.map Rig.name
-       (Nx.rigs (Nx.Placement.devices (Option.get (Nx.placement z)))))
+       (Nx.rigs (Nx.Placement.devices (Nx.placement z))))
 
 (* A placement over a set of two memory devices, drawn. *)
 let placements =
@@ -304,23 +309,24 @@ let placements =
 let law_placed ((_, p), shape) =
   assume (Array.length shape > 0);
   let x = Nx.place p (Nx.zeros f32 shape) in
-  let q = Option.get (Nx.placement x) in
+  let q = Nx.placement x in
   equal placement p q;
   equal (list string)
     (List.map Rig.name (Nx.rigs (Nx.Placement.devices p)))
     (List.map Rig.name (Nx.rigs (Nx.Placement.devices q)))
 
-(* A formula has no bytes for Repr to hand out. *)
-let test_repr_of_formula () =
-  let c = Nx.add (Nx.zeros f32 [| 2 |]) (Nx.scalar f32 1.) in
-  equal ~msg:"array" bool true (Nx.Repr.array c = None);
-  equal ~msg:"shards" bool true (Nx.Repr.shards c = None)
+(* A creation holds bytes from the call on, which Repr hands out. *)
+let test_repr_of_creation () =
+  let c = Nx.add (Nx.zeros f32 [| 2 |]) (Nx.full f32 [| 2 |] 1.) in
+  equal ~msg:"array" (option (array float_exact)) (Some [| 1.; 1. |])
+    (Option.map A.to_array (Nx.Repr.array c));
+  equal ~msg:"shards" int 1 (Iarray.length (Nx.Repr.shards c))
 
 let every_set =
-  group "every set"
+  group "placements"
     [
-      test "Repr reads no array of a value of every set" test_repr_of_formula;
-      test "a value of every set has no placement" test_every_set_unplaced;
+      test "Repr reads a creation's bytes" test_repr_of_creation;
+      test "a creation from numbers lies on the host" test_host_creations;
       test "values placed on a set over the host meet"
         test_two_values_of_a_host_set;
       prop "a placed value lies where it was placed"

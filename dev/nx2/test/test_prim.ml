@@ -46,7 +46,7 @@ let forms (Op op) =
 
 let one_form op =
   match forms op with
-  | [ (_, dt, l, (p : b Devices.placement option)) ] -> (dt, l, p)
+  | [ (_, dt, l, (p : b Devices.placement)) ] -> (dt, l, p)
   | fs -> failf "%d results where one was expected" (List.length fs)
 
 let refuses (Op op) = invalid (fun () -> Prim.results ~by:"Nx.f" refusing op)
@@ -61,6 +61,9 @@ let add_mul =
     ~outs:[| 2; 3 |]
 
 let two = Value.[ D.Float32; D.Float32 ]
+
+(* The coordinate along axis 0: a program of no input. *)
+let coordinate = P.v ~ins:[||] [| Coord 0 |] ~outs:[| 0 |]
 
 let split_x () : (float, D.float32_elt, b) Value.t =
   Value.Shards
@@ -95,21 +98,21 @@ let maps =
                       prog = add_mul;
                       outs = two;
                       loads = [| Plain x; Plain y |];
+                      at = None;
                     }))
           in
           equal (list int) [ 0; 1 ] (List.map (fun (k, _, _, _) -> k) fs);
           List.iter
             (fun (_, _, l, p) ->
               equal layout (L.contiguous [| 2; 3 |]) l;
-              equal bool true (Devices.equal (Option.get p) at0))
+              equal bool true (Devices.equal p at0))
             fs);
       test "a map over split loads is split" (fun () ->
           let x = split_x () in
           List.iter
             (fun (_, _, _, p) ->
               equal bool true
-                (Devices.equal (Option.get p)
-                   (Devices.split ~by:"t" ~axis:0 s2)))
+                (Devices.equal p (Devices.split ~by:"t" ~axis:0 s2)))
             (forms
                (Op
                   (Map
@@ -118,25 +121,31 @@ let maps =
                        prog = add_mul;
                        outs = two;
                        loads = [| Plain x; Plain x |];
+                       at = None;
                      }))));
-      test "a creation is of every set" (fun () ->
+      test "a creation lies where its map names" (fun () ->
           let one =
             P.v ~ins:[||]
               [| Const (D.Any D.Float32, P.bits D.Float32 1.) |]
               ~outs:[| 0 |]
           in
-          let _, _, p =
-            one_form
-              (Op
-                 (Map
-                    {
-                      layout = L.contiguous [| 3 |];
-                      prog = one;
-                      outs = [ D.Float32 ];
-                      loads = [||];
-                    }))
+          let lies at =
+            let _, _, p =
+              one_form
+                (Op
+                   (Map
+                      {
+                        layout = L.contiguous [| 4 |];
+                        prog = one;
+                        outs = [ D.Float32 ];
+                        loads = [||];
+                        at = Some at;
+                      }))
+            in
+            equal bool true (Devices.equal p at)
           in
-          equal bool true (p = None));
+          lies at0;
+          lies (Devices.split ~by:"t" ~axis:0 s2));
       cases "a map refuses, before any result is made" ~name:fst
         [
           ( "one load for two operands",
@@ -147,6 +156,7 @@ let maps =
                    prog = add_mul;
                    outs = two;
                    loads = [| Plain (f32 [| 2 |]) |];
+                   at = None;
                  }) );
           ( "a load of another dtype",
             Op
@@ -156,6 +166,7 @@ let maps =
                    prog = add_mul;
                    outs = two;
                    loads = [| Plain (f32 [| 2 |]); Plain i32 |];
+                   at = None;
                  }) );
           ( "loads of another shape",
             Op
@@ -165,6 +176,7 @@ let maps =
                    prog = add_mul;
                    outs = two;
                    loads = [| Plain (f32 [| 2 |]); Plain (f32 [| 2 |]) |];
+                   at = None;
                  }) );
           ( "a result of another dtype",
             Op
@@ -174,6 +186,7 @@ let maps =
                    prog = add_mul;
                    outs = [ D.Float32; D.Float64 ];
                    loads = [| Plain (f32 [| 2 |]); Plain (f32 [| 2 |]) |];
+                   at = None;
                  }) );
           ( "one result for two outputs",
             Op
@@ -183,15 +196,47 @@ let maps =
                    prog = add_mul;
                    outs = [ D.Float32 ];
                    loads = [| Plain (f32 [| 2 |]); Plain (f32 [| 2 |]) |];
+                   at = None;
                  }) );
           ( "a layout that is not C-contiguous",
             Op
               (Map
                  {
                    layout = L.v ~offset:0 ~strides:[| 2 |] [| 2 |];
+                   prog = coordinate;
+                   outs = [ D.Int64 ];
+                   loads = [||];
+                   at = Some at0;
+                 }) );
+          ( "a map of no loads that names no placement",
+            Op
+              (Map
+                 {
+                   layout = L.contiguous [| 2 |];
+                   prog = coordinate;
+                   outs = [ D.Int64 ];
+                   loads = [||];
+                   at = None;
+                 }) );
+          ( "a map with loads that names a placement",
+            Op
+              (Map
+                 {
+                   layout = L.contiguous [| 2 |];
                    prog = add_mul;
                    outs = two;
+                   loads = [| Plain (f32 [| 2 |]); Plain (f32 [| 2 |]) |];
+                   at = Some at0;
+                 }) );
+          ( "a creation at a placement that cuts an axis its shape lacks",
+            Op
+              (Map
+                 {
+                   layout = L.contiguous [| 2 |];
+                   prog = coordinate;
+                   outs = [ D.Int64 ];
                    loads = [||];
+                   at = Some (Devices.split ~by:"t" ~axis:1 s2);
                  }) );
         ]
         (fun (_, op) -> refuses op);
@@ -207,6 +252,7 @@ let maps =
                     prog = add_mul;
                     outs = two;
                     loads = [| Plain x; Plain x |];
+                    at = None;
                   })));
       test "a node read twice prints once, named by its index" (fun () ->
           let prog =
@@ -226,6 +272,7 @@ let maps =
                     prog;
                     outs = Value.[ D.Float32 ];
                     loads = [| Plain x; Plain x |];
+                    at = None;
                   })));
       test "a chain of shared nodes prints in its program's size" (fun () ->
           (* Inline, 12 adds print about 36 KiB: a failure stays cheap. *)
@@ -243,6 +290,7 @@ let maps =
                    prog;
                    outs = Value.[ D.Float32 ];
                    loads = [| Plain (f32 [| 2 |]) |];
+                   at = None;
                  })
           in
           less ~than:2_000 int (String.length printed));
@@ -325,14 +373,14 @@ let array_of (type v s) (x : (v, s, b) Value.t) =
     ~pp:(fun ppf _ -> Format.pp_print_string ppf "a value on two devices")
     (function
       | Value.Array { a; _ } -> Some a
-      | Shards _ | Handle _ | Deferred _ | Traced _ -> None)
+      | Shards _ | Handle _ | Traced _ -> None)
     x
 
 let moved_by mv x =
   match x with
   | Value.Array { at; a; _ } ->
       Value.Array { at; a = Option.get (A.move mv a); dead = Value.Live }
-  | Shards _ | Handle _ | Deferred _ | Traced _ -> x
+  | Shards _ | Handle _ | Traced _ -> x
 
 let movements =
   group "movements"
@@ -353,7 +401,7 @@ let movements =
               refuses (Op (Move (mv, x)))
           | s' -> (
               let _, l, p = one_form (Op (Move (mv, x))) in
-              equal bool true (Devices.equal (Option.get p) at0);
+              equal bool true (Devices.equal p at0);
               match A.move mv (array_of x) with
               | Some a' ->
                   cover "a view" true;
@@ -381,10 +429,10 @@ let movements =
               let _, l, p = one_form (Op (Move (mv, x))) in
               let f = Prim.form y in
               cover "on two devices"
-                (Devices.device (Option.get f.placement) = None);
+                (Devices.device f.placement = None);
               equal layout f.layout l;
               equal bool true
-                (Devices.equal (Option.get f.placement) (Option.get p)));
+                (Devices.equal f.placement p));
     ]
 
 (* A bitcast of [x] to [dt]: its form's layout against nx.array's bitcast of
@@ -400,7 +448,7 @@ let bitcast (type v s w r) (dt : (w, r) D.t) (x : (v, s, b) Value.t) () =
           (* No view and no shape: a trailing axis that is not the ratio. *)
           is_none ~msg expected
       | _, l, p -> (
-          equal bool true (Devices.equal (Option.get p) at0);
+          equal bool true (Devices.equal p at0);
           match expected with
           | Some a' -> equal layout (A.layout a') l
           | None -> equal bool true (L.is_contiguous l)))
@@ -461,12 +509,12 @@ let others =
         (fun () ->
           let x = moved_by (M.Permute [| 1; 0 |]) (f32 [| 3; 2 |]) in
           let _, l, p = one_form (Op (Place (Devices.one s2 1, x))) in
-          equal bool true (Devices.equal (Option.get p) (Devices.one s2 1));
+          equal bool true (Devices.equal p (Devices.one s2 1));
           equal layout (A.layout (array_of x)) l);
       test "a place split over two devices is C order of the whole" (fun () ->
           let split = Devices.split ~by:"t" ~axis:0 s2 in
           let _, l, p = one_form (Op (Place (split, f32 [| 4; 2 |]))) in
-          equal bool true (Devices.equal (Option.get p) split);
+          equal bool true (Devices.equal p split);
           equal layout (L.contiguous [| 4; 2 |]) l);
       test "a place that splits an axis the value lacks raises" (fun () ->
           refuses (Op (Place (Devices.split ~by:"t" ~axis:1 s2, f32 [| 3 |]))));
@@ -510,6 +558,7 @@ let ops () =
              prog = add_mul;
              outs = two;
              loads = [| Plain x; Plain x |];
+             at = None;
            }),
       2 );
     ("Copy", Op (Copy x), 1);
@@ -882,6 +931,85 @@ let cache_commands =
       model system;
   ]
 
+(* Literal programs *)
+
+(* What prim.mli states [literal2 ~swapped k dt c] gives: [k] of the operand
+   and [c]'s bits. *)
+let literal_prog (type v s) ~swapped k (dt : (v, s) D.t) (c : v) : P.t =
+  let op : P.node = if swapped then Op2 (k, 1, 0) else Op2 (k, 0, 1) in
+  P.v ~ins:[| D.Any dt |]
+    [| In 0; Const (D.Any dt, P.bits dt c); op |]
+    ~outs:[| 2 |]
+
+let program = Testable.structural ~pp:pp_prog
+let literal ~swapped c = Prim.literal2 ~by:"t" ~swapped (Binary Add) D.Float32 c
+
+(* Literals one slot holds in turn: each equal to the one before as a float,
+   or of other bits than it. *)
+let literals =
+  [
+    0.; -0.; 0.; Float.nan; Int32.float_of_bits 0x7fc00001l; Float.nan;
+    Float.infinity; 1.; 1.;
+  ]
+
+let law_literal_slot (swapped, c) =
+  let want = literal_prog ~swapped (Binary Add) D.Float32 c in
+  equal program want (literal ~swapped c)
+
+let slot = abstract "s"
+
+let literal_commands =
+  let a = Array.of_list literals in
+  let value =
+    Gen.with_pp
+      (fun ppf c -> Format.fprintf ppf "%h" c)
+      (Gen.map (Array.get a) (Gen.int_range 0 (Array.length a - 1)))
+  in
+  let model () (swapped, c) =
+    literal_prog ~swapped (Binary Add) D.Float32 c
+  in
+  let system () (swapped, c) = literal ~swapped c in
+  [
+    command "start" (Gen.unit @-> makes slot) Fun.id Fun.id;
+    command "literal2"
+      (slot ^-> Gen.pair Gen.bool value @-> returns program)
+      model system;
+  ]
+
+let literal_programs =
+  group "literal programs"
+    [
+      test "each literal's program holds its bits, after any other"
+        (fun () ->
+          List.iter
+            (fun c ->
+              law_literal_slot (false, c);
+              law_literal_slot (true, c))
+            literals);
+      test "a repeated literal gives the last call of its slot's program"
+        (fun () ->
+          let p = literal ~swapped:false 1. in
+          let q = literal ~swapped:true 1. in
+          equal ~msg:"repeated" bool true (literal ~swapped:false 1. == p);
+          equal ~msg:"repeated, swapped" bool true
+            (literal ~swapped:true 1. == q);
+          equal ~msg:"one side's slot" bool false (p == q);
+          ignore (literal ~swapped:false 2.);
+          equal ~msg:"after another literal" bool false
+            (literal ~swapped:false 1. == p));
+      test "a literal outside its dtype raises naming the caller" (fun () ->
+          raises_match (Exn.invalid_arg ~substring:"t: 300")
+            (fun () ->
+              Prim.literal2 ~by:"t" ~swapped:false (Binary Add) D.Int8 300));
+      test "a kind refusing the dtype raises naming the caller" (fun () ->
+          raises_match (Exn.invalid_arg ~substring:"t: ")
+            (fun () ->
+              Prim.literal2 ~by:"t" ~swapped:false (Binary Threefry)
+                D.Float32 1.));
+      stateful ~domains:2 ~count:20 ~steps:8
+        "literals on two domains give each call's bits" literal_commands;
+    ]
+
 let one_node_programs =
   group "one-node programs"
     [
@@ -929,6 +1057,7 @@ let operations =
                 prog = add_mul;
                 outs = two;
                 loads = [| Plain x; Plain x |];
+                at = None;
               }
           in
           let r =
@@ -953,4 +1082,5 @@ let () =
          partials;
          operations;
          one_node_programs;
+         literal_programs;
        ])

@@ -855,10 +855,9 @@ let sets =
       (on_set (Nx_ragged.values r))
   in
   let lies_on_set x =
-    equal ~msg:"placement" bool true
-      (match Nx.placement x with
-      | Some p -> Nx.Placement.equal p M.on
-      | None -> false)
+    equal ~msg:"placement"
+      (Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal)
+      M.on (Nx.placement x)
   in
   group "sets"
     [

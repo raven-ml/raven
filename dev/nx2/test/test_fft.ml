@@ -187,9 +187,9 @@ let test_split () =
   let x = Nx.place (Two.split ~axis:0) (Nx.Repr.of_array Nx.Host.v a) in
   let two = fft (C2c { direction = Forward; axes = [| 1 |]; x }) in
   equal ~msg:"as on one device" (array complex) (read one) (read two);
-  equal ~msg:"split as its operand" bool true
-    (Option.equal Nx.Placement.equal (Nx.placement two)
-       (Some (Two.split ~axis:0)))
+  equal ~msg:"split as its operand"
+    (Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal)
+    (Two.split ~axis:0) (Nx.placement two)
 
 let test_rules () =
   let x = on (A.of_array D.Float32 [| 4 |] [| 1.; 2.; 3.; 4. |]) in

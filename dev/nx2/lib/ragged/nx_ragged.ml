@@ -202,7 +202,10 @@ let take ~indices r =
   else
     let row = Nx.positions ~size:total lens in
     let shift = Nx.sub (Nx.take indices (starts r.offsets)) (starts offsets) in
-    let at = Nx.add (Nx.arange Nx.int64 0 total 1) (Nx.take row shift) in
+    let here = Nx.Placement.uncut (Nx.placement row) in
+    let at =
+      Nx.add (Nx.arange_at here Nx.int64 0 total 1) (Nx.take row shift)
+    in
     { offsets; values = Nx.take ~axis:0 at r.values }
 
 let cells r = Array.sub (Nx.shape r.values) 1 (Nx.ndim r.values - 1)
@@ -288,11 +291,12 @@ let quantile qs r =
     qs;
   let values, offsets = elements r in
   let n = length r and k = Array.length qs in
-  if k = 0 then Nx.zeros (Nx.dtype values) [| 0; n |]
+  let here = Nx.Placement.uncut (Nx.placement values) in
+  if k = 0 then Nx.zeros_at here (Nx.dtype values) [| 0; n |]
   else
     let marks =
       Nx.scatter ~combine:Add ~axis:0 offsets (Nx.ones_like offsets)
-        (Nx.zeros Nx.int64 [| Nx.dim 0 values |])
+        (Nx.zeros_at here Nx.int64 [| Nx.dim 0 values |])
     in
     let row = Nx.sub_s (Nx.cumsum marks) 1L in
     let key x = Nx.order_key Nx.uint64 x in
@@ -370,7 +374,9 @@ let codes fn r =
          so each word's keys are reversed before they join into it. *)
       let reversed x = Nx.flip ~axes:[ -1 ] x in
       let position =
-        reversed (Nx.reshape [| 1; words; q |] (Nx.arange Nx.int64 0 e 1))
+        let here = Nx.Placement.uncut (Nx.placement chunk) in
+        reversed
+          (Nx.reshape [| 1; words; q |] (Nx.arange_at here Nx.int64 0 e 1))
       in
       let chunk = reversed (Nx.reshape [| m; words; q |] chunk) in
       let chunk =
@@ -399,7 +405,9 @@ let codes fn r =
              (Nx.not_equal (Nx.slice [ R (1, m) ] x) (Nx.slice [ R (0, -1) ] x)))
       in
       let runs = differs (Nx.any ~axes:[ 1 ]) sorted in
-      let at = Nx.arange Nx.int64 0 m 1 in
+      let at =
+        Nx.arange_at (Nx.Placement.uncut (Nx.placement sorted)) Nx.int64 0 m 1
+      in
       let first_of starts = Nx.cummax (Nx.where starts at (Nx.zeros_like at)) in
       let fresh =
         Nx.add own (Nx.sub (first_of runs) (first_of (differs Fun.id own)))
@@ -433,21 +441,21 @@ let codes fn r =
           ~shortest:(Int64.to_int read.(2))
           code
   in
-  if n = 0 then Nx.zeros Nx.int64 [| 0 |]
+  let here = Nx.Placement.uncut (Nx.placement len) in
+  if n = 0 then Nx.zeros_at here Nx.int64 [| 0 |]
   else
     let read = ints fn [ Nx.max len; Nx.min len ] in
-    round ~seen:0 ~active:(Nx.arange Nx.int64 0 n 1) ~m:n
+    round ~seen:0 ~active:(Nx.arange_at here Nx.int64 0 n 1) ~m:n
       ~longest:(Int64.to_int read.(0))
       ~shortest:(Int64.to_int read.(1))
-      (Nx.zeros Nx.int64 [| n |])
+      (Nx.zeros_at here Nx.int64 [| n |])
 
 (* The codes of distinct rows, marked at their positions, count the distinct
    rows before each. *)
 let rank r =
   let code = codes "rank" r in
-  let n = Nx.dim 0 code in
   let marks =
-    Nx.scatter ~axis:0 code (Nx.ones_like code) (Nx.zeros Nx.int64 [| n |])
+    Nx.scatter ~axis:0 code (Nx.ones_like code) (Nx.zeros_like code)
   in
   Nx.sub_s (Nx.take code (Nx.cumsum marks)) 1L
 

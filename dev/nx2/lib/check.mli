@@ -10,9 +10,8 @@
     A {e check} is a [Check] operation: boolean {e flags} [ok] of one shape,
     {e data} that broadcast to it, and [fail], which makes the exception of
     the first false flag in C order from its index and the data's elements
-    there. A check computes on the set where its flags lie, else where its
-    first datum with bytes lies, else on the host; a constant [ok] is
-    computed there first ({!Constant.at}). An empty [ok] passes.
+    there. A check computes on the set where its flags lie. An empty [ok]
+    passes.
 
     A check reduces its flags where they lie, by windows or by partials, to
     whether all hold and the first false position in C order. One flag is
@@ -52,8 +51,8 @@
     there; no rig read avoids that yet. A failing check's elements are read
     on the host, through a copy where the host does not address them.
 
-    This module lies above {!Exec}, {!Partial} and {!Constant}, which
-    compute what it reads, and below {!Eval}, [Rng] and [Nx]. {!Eval.run}
+    This module lies above {!Exec} and {!Partial}, which compute what it
+    reads, and below {!Eval}, [Rng] and [Nx]. {!Eval.run}
     issues each check, and waits on a value's set before it places the
     value onto the host from another set. [Nx]'s reads of a value on the
     host wait on its set first. [Nx] and [Rng] read values on the host
@@ -79,14 +78,14 @@ val wait : by:string -> ('v, 's, 'd) Value.t -> unit
     checks the calling domain issued on [x]'s set: it reads them in issue
     order up to the first that fails, which raises its exception, and drops
     the later ones unread. Each drained check's hold on its data ends then
-    ({!Rig.Claim.release}). A constant has no set: it returns.
+    ({!Rig.Claim.release}).
 
     Raises [Invalid_argument] naming [by] for a traced [x]. *)
 
 val on_host : by:string -> ('v, 's, 'd) Value.t -> ('v, 's) Nx_array.t
-(** [on_host ~by x] is an array on the host holding [x]'s elements: a
-    constant computed there, any other value placed there ({!Place.value}),
-    over [x]'s own array where it is the host's. No interpretation receives
+(** [on_host ~by x] is an array on the host holding [x]'s elements, [x]
+    placed there ({!Place.value}), which is [x]'s own array where [x] lies
+    on the host. No interpretation receives
     it, and it settles no check.
 
     Raises [Invalid_argument] naming [by] for a traced [x], and what

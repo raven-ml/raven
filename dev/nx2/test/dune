@@ -94,7 +94,7 @@
 
 (copy_files
  (files
-  ../lib/{grid,devices,route,prim,place,partial,donate,exec,constant,check,eval,repr}.{ml,mli}))
+  ../lib/{grid,devices,route,prim,place,partial,donate,exec,check,eval,repr}.{ml,mli}))
 
 (copy_files
  (files ../lib/value.mli))
@@ -117,7 +117,6 @@
   partial
   donate
   exec
-  constant
   check
   eval
   repr)
@@ -129,11 +128,4 @@
   nx_kernels_support
   nx_support
   rig
-  windtrap)
- ; A stack of 2 MiB: a walk that recurses once per node overflows on a long
- ; chain of constants.
- (action
-  (setenv
-   OCAMLRUNPARAM
-   l=256k
-   (run %{test}))))
+  windtrap))

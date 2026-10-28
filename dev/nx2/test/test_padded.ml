@@ -62,6 +62,7 @@ let load x ~fill pad =
            prog = identity (Nx.dtype x);
            outs = [ Nx.dtype x ];
            loads = [| Padded { x; fill; pad } |];
+           at = None;
          })
   in
   y
@@ -178,6 +179,7 @@ let test_rules () =
              prog = identity D.Float32;
              outs = [ Nx.float32 ];
              loads = [| Padded { x; fill = 0.; pad = pad ~lo:[| 1 |] [||] } |];
+             at = None;
            }));
   raises (fun () ->
       Nx.Prim.eval ~by:"t"
@@ -223,7 +225,7 @@ let test_split_kept () =
   let one = sum_of (Nx.place Count.on (host a)) ~fill:0. p in
   let two = sum_of (Nx.place split (host a)) ~fill:0. p in
   equal ~msg:"the load keeps the cut" bool true
-    (Nx.Placement.equal split (Option.get (Nx.placement two)));
+    (Nx.Placement.equal split (Nx.placement two));
   equal ~msg:"as on one device" (array float_exact) (read one) (read two);
   let fold x = Nx.Prim.eval ~by:"t" (Fold { shape = [| 2; 4 |]; pad = p; x }) in
   let x =
@@ -232,7 +234,7 @@ let test_split_kept () =
   let one = fold (Nx.place Count.on (host x)) in
   let two = fold (Nx.place split (host x)) in
   equal ~msg:"the fold keeps the cut" bool true
-    (Nx.Placement.equal split (Option.get (Nx.placement two)));
+    (Nx.Placement.equal split (Nx.placement two));
   equal ~msg:"as on one device" (array float_exact) (read one) (read two)
 
 (* Loads *)

@@ -353,7 +353,10 @@ let eval (type s) (dt : (Complex.t, s) D.t) k es =
   let prog = K.of_node ~ins node in
   let layout = Nx_array.Layout.contiguous [| n |] in
   let loads = Iarray.of_array (Array.map (fun x -> P.Plain x) xs) in
-  fun () -> fst (P.eval ~by:"t" (P.Map { layout; prog; outs = [ dt ]; loads }))
+  fun () ->
+    fst
+      (P.eval ~by:"t"
+         (P.Map { layout; prog; outs = [ dt ]; loads; at = None }))
 
 (* Whether [got] meets the reference [r] at operands [e]: where every operand
    part is finite and in the kind's domain, a NaN part where [r] has one, and

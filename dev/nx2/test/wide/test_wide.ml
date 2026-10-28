@@ -499,10 +499,10 @@ let walks =
           let w = Nx_wide.v ~lo:(f (Float.ldexp 1. (-60))) (f 1.) in
           let placed = Nx.Ptree.place (module Number) M.on w in
           let s = Nx_wide.add placed placed in
-          equal ~msg:"placement" bool true
-            (match Nx.placement (Nx_wide.hi s) with
-            | Some p -> Nx.Placement.equal p M.on
-            | None -> false);
+          equal ~msg:"placement"
+            (Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal)
+            M.on
+            (Nx.placement (Nx_wide.hi s));
           equal ~msg:"value" same (2., Float.ldexp 1. (-59)) (scalar s));
     ]
 

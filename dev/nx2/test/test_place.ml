@@ -149,7 +149,7 @@ let expected xs shape b =
   go 0 0;
   List.rev !out
 
-let shards (V x) = Iarray.to_array (require_some (Nx.Repr.shards x))
+let shards (V x) = Iarray.to_array ((Nx.Repr.shards x))
 
 (* [a]'s elements, read on the host. *)
 let elements a =
@@ -300,8 +300,8 @@ let sharing =
     [
       test "a value already at a placement keeps its arrays" (fun () ->
           let (V x) = place On (host [| 4 |]) in
-          let a = require_some (Nx.Repr.shards x) in
-          let b = require_some (Nx.Repr.shards (Nx.place S4.on x)) in
+          let a = (Nx.Repr.shards x) in
+          let b = (Nx.Repr.shards (Nx.place S4.on x)) in
           equal bool true (Iarray.for_all2 ( == ) a b));
       test "a set over the host's device reads the host's array" (fun () ->
           let module Fast =
@@ -314,14 +314,14 @@ let sharing =
       test "a device that maps the host's memory borrows it" (fun () ->
           let (V x) = host [| 1024 |] in
           let a = require_some (Nx.Repr.array x) in
-          let b = require_some (Nx.Repr.shards (Nx.place S4.on x)) in
+          let b = (Nx.Repr.shards (Nx.place S4.on x)) in
           equal bool true
             (Rig.Buffer.overlaps (A.buffer a) (A.buffer (Iarray.get b 1))));
       test "an empty window holds no memory of the value's" (fun () ->
           let (V x) = host [| 1 |] in
           let a = require_some (Nx.Repr.array x) in
           let b =
-            require_some (Nx.Repr.shards (Nx.place (S4.split ~axis:0) x))
+            (Nx.Repr.shards (Nx.place (S4.split ~axis:0) x))
           in
           for j = 1 to 3 do
             let e = A.buffer (Iarray.get b j) in
@@ -353,7 +353,7 @@ let refusals =
             (fun () -> Nx.place Nx.Host.on x);
           equal (array int) [| 4 |] (Nx.shape x);
           equal string "nx-place-lost"
-            (Format.asprintf "%a" Nx.Placement.pp (Option.get (Nx.placement x))));
+            (Format.asprintf "%a" Nx.Placement.pp (Nx.placement x)));
       test "every kind of operation raises a lost device, and a live one answers"
         (fun () ->
           let d = Result.get_ok (Rig.memory_device "nx-place-lost-ops") in
@@ -584,29 +584,16 @@ let law_reshape c =
     end
   in
   let y = Nx.reshape c.s' x in
-  equal placement (on_mem w') (Option.get (Nx.placement y));
+  equal placement (on_mem w') (Nx.placement y);
   holds ~dev:Nx_support.memory (A.to_array a) c.s' w' (V y)
 
-(* A reshape of a value of every set, wanted at a placement: each device
-   computes its window there. *)
+(* A reshape of a host creation, placed: each device holds its window of the
+   reshaped elements. *)
 let law_wanted c =
-  (* The wanted cuts of an axis of [s'] that [s]'s regroups into: in tiles
-     that divide both extents, kept, or else undone. *)
-  let regrouped kept =
-    List.exists
-      (fun (a', t) ->
-        match lands c.s' c.s a' 1 with
-        | Some a when c.s.(a) <> c.s'.(a') ->
-            lands c.s' c.s a' t <> None = kept
-        | Some _ | None -> false)
-      (cuts c.wanted)
-  in
-  cover "a wanted cut kept along a regrouped axis" (regrouped true);
-  cover "a wanted cut across rows undone" (regrouped false);
   let n = Array.fold_left ( * ) 1 c.s in
   let x = Nx.reshape c.s (Nx.arange Nx.float32 0 n 1) in
   let y = Nx.place (on_mem c.wanted) (Nx.reshape c.s' x) in
-  equal placement (on_mem c.wanted) (Option.get (Nx.placement y));
+  equal placement (on_mem c.wanted) (Nx.placement y);
   holds ~dev:Nx_support.memory (floats c.s) c.s' c.wanted (V y)
 
 (* gpt-oss's 2880 inputs are 90 blocks of 32: four devices divide the
@@ -618,14 +605,14 @@ let blocks n =
       (A.of_array A.Dtype.Float32 (Iarray.of_array s) (floats s))
   in
   let y = Nx.reshape [| 2; n * 32 |] (Nx.place (Mem.split ~axis:1) x) in
-  (Option.get (Nx.placement y), y)
+  (Nx.placement y, y)
 
 let reshapes =
   group "reshapes"
     [
       prop ~count:1000 "a reshape keeps a cut that holds whole rows"
         reshape_case law_reshape;
-      prop "a reshape of a value of every set is computed where it is wanted"
+      prop "a reshaped host creation, placed, holds each window there"
         reshape_case law_wanted;
       (* A unit axis the result drops keeps no cut: a device past the first
          tile holds none of its rows, so the reshape raises, and read where
@@ -653,7 +640,7 @@ let reshapes =
                       (on_mem r)))
               (fun () -> Nx.reshape s' x);
           let y = Nx.reshape s' (Nx.place (on_mem r) x) in
-          equal placement (on_mem w') (Option.get (Nx.placement y));
+          equal placement (on_mem w') (Nx.placement y);
           holds ~dev:Nx_support.memory (floats s) s' w' (V y));
       test "blocks that four devices divide stay cut when merged" (fun () ->
           let p, y = blocks 92 in

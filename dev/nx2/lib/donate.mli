@@ -50,8 +50,8 @@ val donate : by:string -> ('v, 's, 'd) Value.t -> ('v, 's, 'd) Value.t
     dies naming the consumer, which reads [x] as it was when called. An
     operation may write its first result into the memory ({!reuse}). A
     movement passes a new handle of [x] on instead and kills nothing: the
-    handle it read and the one it passed on die with [x]. A handle, a constant
-    or a traced [x] is [x].
+    handle it read and the one it passed on die with [x]. A handle or a
+    traced [x] is [x].
 
     Raises [Invalid_argument] naming [by] if [x] is dead. *)
 
@@ -152,7 +152,7 @@ val with_consumer : by:string -> 'd Value.any list -> ('d claim -> 'a) -> 'a
 val arrays : 'd claim -> int -> Nx_array.any array
 (** [arrays c i] is operand [i]'s arrays, one per device, shared with nothing.
 
-    Raises [Invalid_argument] naming [c]'s consumer for a constant or a traced
+    Raises [Invalid_argument] naming [c]'s consumer for a traced
     operand, a position no operand has, and once {!consumed} returned. *)
 
 val take :

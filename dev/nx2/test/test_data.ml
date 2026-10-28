@@ -215,13 +215,13 @@ let test_read_split () =
     (let b = Nx.to_bigarray Bigarray.float32 x in
      Array.init 12 (fun j -> Bigarray.Genarray.get b [| j / 3; j mod 3 |]));
   equal bool true
-    (Nx.Placement.equal (S2.split ~axis:0) (Option.get (Nx.placement x)))
+    (Nx.Placement.equal (S2.split ~axis:0) (Nx.placement x))
 
-let test_read_every_set () =
+let test_read_created () =
   let x = Nx.add (Nx.zeros f32 [| 3 |]) (Nx.scalar f32 2.) in
   equal (array float_exact) [| 2.; 2.; 2. |] (Nx.to_array x);
   equal float_exact 2. (Nx.item [ -1 ] x);
-  equal bool true (Nx.placement x = None)
+  equal bool true (Nx.Placement.equal Nx.Host.on (Nx.placement x))
 
 let test_read_view () =
   let x = Nx.transpose (Nx.create Nx.int16 [| 2; 3 |] [| 1; 2; 3; 4; 5; 6 |]) in
@@ -266,7 +266,7 @@ let reads =
   group "reads"
     [
       test "a split value reads whole and stays split" test_read_split;
-      test "a value of every set reads computed on the host" test_read_every_set;
+      test "a host creation reads its elements" test_read_created;
       test "a view reads in its own C order" test_read_view;
       test "a dead value raises naming the read" test_read_dead;
       test "a traced value raises naming the read" test_read_traced;
@@ -306,7 +306,7 @@ let test_map_range () =
   invalid ~by:"Nx.map_item" (fun () ->
       Nx.map_item (fun _ -> 300) (Nx.zeros Nx.uint8 [| 2 |]))
 
-let test_map_every_set () =
+let test_map_creation () =
   let x = Nx.add (Nx.zeros f32 [| 3 |]) (Nx.scalar f32 2.) in
   equal (array float_exact) [| 4.; 4.; 4. |]
     (Nx.to_array (Nx.map_item (fun v -> v *. 2.) x))
@@ -342,7 +342,7 @@ let maps =
         test_map_values;
       test "f runs once per element in C order" test_map_order;
       test "an int outside the dtype raises" test_map_range;
-      test "a value of every set is computed on the host" test_map_every_set;
+      test "a host creation maps as any host value" test_map_creation;
       test "a value on a device set gives a host value" test_map_device;
       test "a dead value raises" test_map_dead;
       test "a traced value raises" test_map_traced;

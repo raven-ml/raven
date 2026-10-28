@@ -599,7 +599,10 @@ let test_map_errors () =
   invalid ~by (fun () -> Nx.map_segments ~segments:2 ids (fun _ r -> Nx.reshape [| -1 |] r) x);
   invalid ~by (fun () ->
       let split = Nx.place (S2.split ~axis:1) in
-      Nx.map_segments ~segments:2 (Nx.zeros Nx.int64 [| 2; 2 |]) (fun _ r -> r) (split (Nx.zeros Nx.float32 [| 2; 2 |])))
+      Nx.map_segments ~segments:2
+        (Nx.zeros_at S2.on Nx.int64 [| 2; 2 |])
+        (fun _ r -> r)
+        (split (Nx.zeros Nx.float32 [| 2; 2 |])))
 
 (* [f] is the user's function: a refusal of an nx function it calls reaches
    the caller as raised, and what it donates dies naming the function it

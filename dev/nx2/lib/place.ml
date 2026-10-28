@@ -119,8 +119,6 @@ let value (type v s d e) ~by (p : e Devices.placement) (x : (v, s, d) Value.t) :
     match x with
     | Value.Array { a; _ } -> ([| a |] : _ iarray)
     | Value.Shards { arrays; _ } -> arrays
-    | Value.Deferred _ ->
-        invalid_arg "Place.value: a constant is placed computed"
     | Value.Traced _ ->
         invalid_arg "Place.value: a traced value is placed by its owner"
     | Value.Handle _ ->
@@ -160,7 +158,6 @@ let held (type v s d) ~by (x : (v, s, d) Value.t) k w : (v, s) A.t =
     match x with
     | Value.Array { a; _ } -> ([| a |] : _ iarray)
     | Value.Shards { arrays; _ } -> arrays
-    | Value.Deferred _ -> invalid_arg "Place.view: a constant has no arrays"
     | Value.Traced _ -> invalid_arg "Place.view: a traced value has no arrays"
     | Value.Handle _ ->
         invalid_arg "Place.view: a donated value is viewed live"
@@ -181,5 +178,5 @@ let view (type v s d) ~by (x : (v, s, d) Value.t) k w : (v, s) A.t =
       match Grid.one (Devices.grid at) with
       | Some j when j = k -> slice a w
       | Some _ | None -> held ~by x k w)
-  | Value.Shards _ | Value.Handle _ | Value.Deferred _ | Value.Traced _ ->
+  | Value.Shards _ | Value.Handle _ | Value.Traced _ ->
       held ~by x k w

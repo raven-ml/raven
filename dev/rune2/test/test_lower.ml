@@ -36,6 +36,7 @@ let smoke =
                      prog;
                      outs = [ D.Int64 ];
                      loads = Iarray.of_array [||];
+                     at = Some Nx.Host.on;
                    })
             in
             y
@@ -263,6 +264,7 @@ let padded (type v s) (x : (v, s, _) Nx.t) (fill : v) pad shape =
            prog = identity dt;
            outs = [ dt ];
            loads = Iarray.of_array [| P.Padded { x; fill; pad } |];
+           at = None;
          })
   in
   y

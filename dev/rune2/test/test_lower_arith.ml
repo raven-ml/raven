@@ -417,6 +417,7 @@ let check ?(tol = 0) d p labels ops =
              prog = p;
              outs = [ r ];
              loads = Iarray.of_list loads;
+             at = None;
            })
     in
     y
@@ -671,6 +672,7 @@ let into_complex128 =
                       (Op1 (Cast, D.Any D.Complex128, 0));
                   outs = [ D.Complex128 ];
                   loads = Iarray.of_list [ P.Plain x ];
+                  at = None;
                 }))
       in
       let bits xs =
@@ -696,6 +698,7 @@ let map2 p (D.Any a) (D.Any b) shape loads =
            prog = p;
            outs = [ a; b ];
            loads = Iarray.of_list loads;
+           at = None;
          })
   in
   let first () = fst (map ()) and second () = fst (snd (map ())) in
@@ -733,6 +736,7 @@ let bool_bytes () =
                   ~outs:(Iarray.of_list [ List.length p - 1 ]);
               outs = [ out ];
               loads = Iarray.of_list [ P.Plain x ];
+              at = None;
             }))
   in
   let x = Nx.create D.Uint8 [| 4 |] [| 0; 1; 2; 255 |] in

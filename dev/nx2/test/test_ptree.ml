@@ -54,7 +54,7 @@ let leaves =
 
 let leaf = Testable.make ~pp:pp_leaf ~equal:(fun a b -> same [ a ] [ b ])
 let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
-let is_on p a = equal (option placement) (Some p) (Nx.placement a)
+let is_on p a = equal placement p (Nx.placement a)
 
 let visit_equal a b =
   match (a, b) with
@@ -669,18 +669,25 @@ let law_vector (arrays, k) =
         acc +. Array.fold_left ( +. ) 0. (Array.map2 ( *. ) a b))
       0. arrays
   in
-  equal ~msg:"dot" float_exact dot (Nx.item [] (P.dot s Nx.float64 x y));
-  let norm = Nx.item [] (P.norm s Nx.float64 x) in
-  if List.exists Float.is_nan all then
-    equal ~msg:"norm" float_exact Float.nan norm
-  else if List.exists (fun v -> Float.abs v = Float.infinity) all then
-    equal ~msg:"norm" float_exact Float.infinity norm
-  else
-    (* The scaled norm rounds each quotient, square and the product. *)
-    equal ~msg:"norm"
-      (float_rel ~rel:(16. *. epsilon_float) ~abs:0.)
-      (Float.sqrt (List.fold_left (fun acc v -> acc +. (v *. v)) 0. all))
-      norm;
+  (* A structure of no array gives its sums no placement to lie at. *)
+  if arrays = [] then begin
+    invalid ~by:"Nx.Ptree.dot" (fun () -> P.dot s Nx.float64 x y);
+    invalid ~by:"Nx.Ptree.norm" (fun () -> P.norm s Nx.float64 x)
+  end
+  else begin
+    equal ~msg:"dot" float_exact dot (Nx.item [] (P.dot s Nx.float64 x y));
+    let norm = Nx.item [] (P.norm s Nx.float64 x) in
+    if List.exists Float.is_nan all then
+      equal ~msg:"norm" float_exact Float.nan norm
+    else if List.exists (fun v -> Float.abs v = Float.infinity) all then
+      equal ~msg:"norm" float_exact Float.infinity norm
+    else
+      (* The scaled norm rounds each quotient, square and the product. *)
+      equal ~msg:"norm"
+        (float_rel ~rel:(16. *. epsilon_float) ~abs:0.)
+        (Float.sqrt (List.fold_left (fun acc v -> acc +. (v *. v)) 0. all))
+        norm
+  end;
   let kv = Nx.scalar Nx.float64 k in
   let scaled = P.scale s kv x in
   List.iter2
@@ -723,8 +730,8 @@ let arithmetic =
             (Nx.item [] (P.norm s32 Nx.float32 [ f32 [| big; big |] ]));
           equal ~msg:"zeros" float_exact 0.
             (Nx.item [] (P.norm s32 Nx.float32 [ f32 [| 0.; 0. |]; f32 [||] ]));
-          equal ~msg:"none" float_exact 0.
-            (Nx.item [] (P.norm s32 Nx.float32 []));
+          invalid ~by:"Nx.Ptree.norm" (fun () -> P.norm s32 Nx.float32 []);
+          invalid ~by:"Nx.Ptree.dot" (fun () -> P.dot s32 Nx.float32 [] []);
           equal ~msg:"infinity" float_exact Float.infinity
             (Nx.item []
                (P.norm s32 Nx.float32 [ f32 [| 1.; Float.neg_infinity |] ]));

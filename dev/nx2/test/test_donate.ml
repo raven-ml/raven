@@ -460,6 +460,7 @@ let test_rule_refused () =
              prog;
              outs = [ f32 ];
              loads = [| Plain (Nx.donate x); Plain (fresh [| 1.; 2.; 3. |]) |];
+             at = None;
            }));
   equal ~msg:"the map's load lives" (array float_exact) [| 1.; 2. |]
     (elements (Nx.copy x))
@@ -476,13 +477,15 @@ let test_aligned_refusal () =
   equal ~msg:"the other donor lives" (array float_exact) [| 10. |]
     (elements (Nx.add x1 x1))
 
-let test_left_alone () =
+(* A creation has bytes from the call on, so a donation of one dies as any
+   value's does. *)
+let test_creation_dies () =
   let c = Nx.zeros f32 [| 2 |] in
   let d = Nx.donate c in
-  equal ~msg:"a value of every set, read twice" (array float_exact) [| 0.; 0. |]
+  equal ~msg:"a creation, read twice" (array float_exact) [| 0.; 0. |]
     (elements (Nx.add d d));
-  equal ~msg:"and still usable" (array float_exact) [| 0.; 0. |]
-    (elements (Nx.add c c))
+  invalid ~sub:"Nx.add: float32 [2] was donated to Nx.add" (fun () ->
+      Nx.add c c)
 
 (* A placement onto memory devices borrows the host's memory: the shards of a
    value placed there lie in one allocation, apart or interleaved, and a
@@ -514,7 +517,7 @@ let test_is_handle () =
   equal ~msg:"its donor" bool false (Nx.Prim.donated x);
   equal ~msg:"a handle passed on" bool true
     (Nx.Prim.donated (Nx.reshape [| 1; 2 |] (Nx.donate (fresh [| 1.; 2. |]))));
-  equal ~msg:"a value of every set" bool false
+  equal ~msg:"a donated creation" bool true
     (Nx.Prim.donated (Nx.donate (Nx.zeros f32 [| 2 |])));
   ignore (Nx.copy d);
   equal ~msg:"a consumed handle" bool true (Nx.Prim.donated d)
@@ -1723,7 +1726,7 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
                (Option.get (Nx.Repr.array (d 0 (x [| 2; 3 |]))))));
       c "Repr.shards" 1 (fun d ->
           string_of_int
-            (Iarray.length (Option.get (Nx.Repr.shards (d 0 (x [| 2; 3 |]))))));
+            (Iarray.length (Nx.Repr.shards (d 0 (x [| 2; 3 |])))));
       c "reshape" 1 (fun d -> show (Nx.reshape [| 3; 2 |] (d 0 (x [| 2; 3 |]))));
       c "broadcast_to" 1 (fun d ->
           show (Nx.broadcast_to [| 2; 2; 3 |] (d 0 (x [| 2; 3 |]))));
@@ -2800,13 +2803,14 @@ let test_consumer_checks_first () =
 let test_consumer_refuses () =
   let x = fresh [| 1. |] in
   C.with_ ~by:"test.call" [ Any x; Any (Nx.zeros f32 [| 2 |]) ] (fun c ->
-      invalid ~sub:"test.call: operand 1" (fun () -> C.arrays c 1);
+      equal ~msg:"a creation's bytes" (array float_exact) [| 0.; 0. |]
+        (host_floats (C.arrays c 1).(0));
       invalid ~sub:"test.call: no operand 2" (fun () -> C.arrays c 2))
 
 let layout_of n = A.Layout.contiguous [| n |]
 
 (* A consumer reads operands with bytes alone: [arrays] and [take] raise
-   naming it for a constant and for a traced value. *)
+   naming it for a traced value. *)
 let test_consumer_no_bytes =
   let traced k =
     Nx.Prim.interpret ~name:"test.tracer" Values
@@ -2814,12 +2818,7 @@ let test_consumer_no_bytes =
         Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form Tag) op)
       (fun i -> k (Nx.Prim.traced i (Nx.Prim.form (fresh [| 1.; 2. |])) Tag))
   in
-  let operands =
-    [
-      ("a constant", fun k -> k (Nx.zeros f32 [| 2 |]));
-      ("a traced value", traced);
-    ]
-  in
+  let operands = [ ("a traced value", traced) ] in
   let readers =
     [
       ("arrays", fun c -> ignore (C.arrays c 0));
@@ -2958,7 +2957,7 @@ let () =
              test "a refused broadcast kills no donor" test_broadcast_refused;
              test "an aligning consumer checks before it consumes"
                test_aligned_refusal;
-             test "a value of every set is not donated" test_left_alone;
+             test "a donated creation dies" test_creation_dies;
              test "a value whose shards lie in one allocation is donated"
                test_shards_of_one_allocation;
              test "a function of several operations kills nothing"
@@ -2985,7 +2984,7 @@ let () =
                test_consumer_kills;
              test "a consumer checks every operand before it claims"
                test_consumer_checks_first;
-             test "a consumer reads arrays at positions with bytes"
+             test "a consumer reads its operands' arrays by position"
                test_consumer_refuses;
              test_consumer_no_bytes;
              test "a consumer takes memory nothing else reads"

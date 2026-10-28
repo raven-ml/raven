@@ -120,9 +120,9 @@ type rule =
   | Axes of axis array array
       (** Axis [a] of operand [i] is [t.(i).(a)] of [Axes t]. No two axes of
           an operand become one. A loop of no load has one row and no operand
-          behind it: the loop's space, which {!at} and {!window} read as an
-          operand of the loop's shape. {!at} routes it over no operand;
-          {!route}, which takes a row per operand, never receives it. *)
+          behind it: the loop's space, which {!window} reads as an operand of
+          the loop's shape. {!route}, which takes a row per operand, never
+          receives it. *)
   | Into of axis array array
       (** [Axes]' windows, written into the last operand: the results lie
           where the last operand's cuts put them where it has a placement,
@@ -212,15 +212,3 @@ val route :
     Raises [Invalid_argument] naming [by] if an operand's placement cuts an
     axis its shape lacks ({!Grid.window}), and with the preamble's message
     where an operand cannot be read where it lies. *)
-
-val at : by:string -> rule -> int array array -> 'd Devices.placement -> 'd t
-(** [at ~by r shapes p] routes an operation of rule [r] over operands of
-    [shapes] whose results are wanted at [p]: the result lies at [p], whole
-    along each axis no row's axis becomes or regroups into, and with each cut
-    an operand regroups across rows undone ({!Regroups}); each operand is read
-    at that target moved back to its axes. It computes by partials where an
-    operand is then read cut along an axis [r] scans, each such axis holding
-    elements, as {!route} decides.
-
-    Raises [Invalid_argument] naming [by] if a placement an operand is read at
-    cuts an axis its shape lacks. *)

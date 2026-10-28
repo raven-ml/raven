@@ -105,6 +105,7 @@ module Placement = struct
   let mesh m cuts = Devices.mesh ~by:"Nx.Placement.mesh" m cuts
   let devices = Devices.set
   let equal = Devices.equal
+  let uncut = Devices.uncut
   let pp = Devices.pp_placement
 
   let with_leading_axis p =
@@ -154,7 +155,7 @@ let devices ?kernels ds : (module Devices) =
   end)
 
 let place p x = Eval.place ~by:"Nx.place" p x
-let placement = Prim.at
+let placement = Prim.placement
 
 module Rng = Rng
 
@@ -178,48 +179,41 @@ let contiguous ~by s =
 
 module E = P.E
 
-(* The value of [dt] and [shape] whose element at each index is [out], an
-   expression of no operand, reading the index through [Coord]. *)
-let leaf (type v s) ~by (dt : (v, s) D.t) shape (out : (v, s) E.t) =
+(* The value of [dt] and [shape] at [p] whose element at each index is [out],
+   an expression of no operand, reading the index through [Coord]: one map of
+   no loads, each device of [p] computing its window. *)
+let leaf (type v s) ~by p (dt : (v, s) D.t) shape (out : (v, s) E.t) =
   let layout = contiguous ~by shape in
   let prog = P.of_exprs ~ins:[||] [| E.any out |] in
   let x, () =
     Eval.eval ~by
-      (Value.Map { layout; prog; outs = Value.[ dt ]; loads = [||] })
+      (Value.Map
+         { layout; prog; outs = Value.[ dt ]; loads = [||]; at = Some p })
   in
   x
 
-let fill ~by dt shape v = leaf ~by dt shape (const ~by dt v)
+let fill ~by p dt shape v = leaf ~by p dt shape (const ~by dt v)
 
-let zeros dt shape = fill ~by:"Nx.zeros" dt shape (D.zero dt)
-let ones dt shape = fill ~by:"Nx.ones" dt shape (D.one dt)
-let full dt shape v = fill ~by:"Nx.full" dt shape v
-let scalar dt v = fill ~by:"Nx.scalar" dt [||] v
+let zeros dt shape = fill ~by:"Nx.zeros" Host.on dt shape (D.zero dt)
+let ones dt shape = fill ~by:"Nx.ones" Host.on dt shape (D.one dt)
+let full dt shape v = fill ~by:"Nx.full" Host.on dt shape v
+let scalar dt v = fill ~by:"Nx.scalar" Host.on dt [||] v
+let zeros_at p dt shape = fill ~by:"Nx.zeros_at" p dt shape (D.zero dt)
+let ones_at p dt shape = fill ~by:"Nx.ones_at" p dt shape (D.one dt)
+let full_at p dt shape v = fill ~by:"Nx.full_at" p dt shape v
 
-(* [c] where [x] lies: [x]'s elements are never read. *)
-let beside ~by x c =
-  match Prim.at x with
-  | None -> c
-  | Some p -> Eval.eval ~by (Value.Place (p, c))
+(* A 0-d value has no axis to cut: at a cut [p] it is whole on each of [p]'s
+   devices. *)
+let scalar_at p dt v = fill ~by:"Nx.scalar_at" (Devices.uncut p) dt [||] v
 
 (* [v] in [x]'s dtype and shape, where [x] lies. *)
-let like ~by x v = beside ~by x (fill ~by (dtype x) (shape x) v)
+let like ~by x v = fill ~by (placement x) (dtype x) (shape x) v
 let full_like x v = like ~by:"Nx.full_like" x v
 let zeros_like x = like ~by:"Nx.zeros_like" x (D.zero (dtype x))
 let ones_like x = like ~by:"Nx.ones_like" x (D.one (dtype x))
 
-(* The constant [c] placed beside [x], for a function that reads [c], or what
-   it computes from [c] alone, in several operations with [x]: each would
-   compute it again. Whole on each device, it serves [x] however [x] is cut,
-   whatever [c]'s rank. [c] itself where it is not a constant or [x] is. *)
-let held_beside ~by x c =
-  match Prim.at x with
-  | Some p when Prim.is_constant c -> Eval.place ~by (Devices.uncut p) c
-  | Some _ | None -> c
-
-(* The 0-d [v] of [dt] beside [x]. A 0-d value has no axis to cut: beside a
-   cut [x] it is whole on each of [x]'s devices. *)
-let scalar_beside ~by x dt v = held_beside ~by x (fill ~by dt [||] v)
+(* The 0-d [v] of [dt] beside [x], whole on each of [x]'s devices. *)
+let scalar_beside ~by x dt v = fill ~by (Devices.uncut (placement x)) dt [||] v
 
 let scalar_like x v = scalar_beside ~by:"Nx.scalar_like" x (dtype x) v
 
@@ -245,7 +239,7 @@ let int_bounds (type v s) (dt : (v, s) D.t) =
   | D.Float8_e5m2 | D.Float4_e2m1fn | D.Complex128 | D.Complex64 ->
       None
 
-let arange_by ~by dt start stop step =
+let arange_by ~by p dt start stop step =
   if step = 0 then invalid_argf "%s: step 0" by;
   let n =
     if (step > 0 && stop <= start) || (step < 0 && stop >= start) then 0
@@ -277,23 +271,32 @@ let arange_by ~by dt start stop step =
                  (D.name dt) lo hi)
            [ start; last ]);
   let int64 n = E.const D.Int64 (Int64.of_int n) in
-  leaf ~by dt [| n |] E.(cast dt ((coord 0 * int64 step) + int64 start))
+  leaf ~by p dt [| n |] E.(cast dt ((coord 0 * int64 step) + int64 start))
 
-let arange dt start stop step = arange_by ~by:"Nx.arange" dt start stop step
+let arange dt start stop step =
+  arange_by ~by:"Nx.arange" Host.on dt start stop step
+
+let arange_at p dt start stop step =
+  arange_by ~by:"Nx.arange_at" p dt start stop step
 
 (* [start + i step] for the index [i], by one fused multiply-add at float64. *)
 let ramp ~start ~step =
   let f64 = E.const D.Float64 in
   E.(fma (cast D.Float64 (coord 0)) (f64 step) (f64 start))
 
-let arange_f dt start stop step =
-  let by = "Nx.arange_f" in
+let arange_f_by ~by p dt start stop step =
   if step = 0. then invalid_argf "%s: step 0" by;
   let length = Float.ceil ((stop -. start) /. step) in
   if (not (Float.is_finite length)) || length >= Float.of_int max_int then
     invalid_argf "%s: [%g, %g) by %g has no finite length" by start stop step;
   let n = if length > 0. then Float.to_int length else 0 in
-  leaf ~by dt [| n |] (E.cast dt (ramp ~start ~step))
+  leaf ~by p dt [| n |] (E.cast dt (ramp ~start ~step))
+
+let arange_f dt start stop step =
+  arange_f_by ~by:"Nx.arange_f" Host.on dt start stop step
+
+let arange_f_at p dt start stop step =
+  arange_f_by ~by:"Nx.arange_f_at" p dt start stop step
 
 (* [n] values from [start] to [stop] at float64: [stop] itself last with
    [endpoint], so the ends are exact. *)
@@ -307,21 +310,30 @@ let spaced ~by ~endpoint start stop n =
     let final = E.const D.Int64 (Int64.of_int (n - 1)) in
     E.(where (coord 0 = final) (const D.Float64 stop) v)
 
-let linspace dt ?(endpoint = true) start stop n =
-  let by = "Nx.linspace" in
+let linspace_by ~by p dt ~endpoint start stop n =
   let v = spaced ~by ~endpoint start stop n in
-  leaf ~by dt [| Stdlib.max n 0 |] (E.cast dt v)
+  leaf ~by p dt [| Stdlib.max n 0 |] (E.cast dt v)
+
+let linspace dt ?(endpoint = true) start stop n =
+  linspace_by ~by:"Nx.linspace" Host.on dt ~endpoint start stop n
+
+let linspace_at p dt ?(endpoint = true) start stop n =
+  linspace_by ~by:"Nx.linspace_at" p dt ~endpoint start stop n
+
+let logspace_by ~by p dt ~endpoint ~base start stop n =
+  let e = spaced ~by ~endpoint start stop n in
+  leaf ~by p dt [| Stdlib.max n 0 |] E.(cast dt (const D.Float64 base ** e))
 
 let logspace dt ?(endpoint = true) ?(base = 10.) start stop n =
-  let by = "Nx.logspace" in
-  let e = spaced ~by ~endpoint start stop n in
-  leaf ~by dt [| Stdlib.max n 0 |] E.(cast dt (const D.Float64 base ** e))
+  logspace_by ~by:"Nx.logspace" Host.on dt ~endpoint ~base start stop n
+
+let logspace_at p dt ?(endpoint = true) ?(base = 10.) start stop n =
+  logspace_by ~by:"Nx.logspace_at" p dt ~endpoint ~base start stop n
 
 (* [start (stop / start)^e] for [e] spaced from [0] to [1], or, where the
    ratio leaves float64's normal range, [e^(log start + e (log stop - log
    start))]; [start] and [stop] are set at their ends, so these are exact. *)
-let geomspace dt ?(endpoint = true) start stop n =
-  let by = "Nx.geomspace" in
+let geomspace_by ~by p dt ~endpoint start stop n =
   let usable x = x > 0. && Float.is_finite x in
   if not (usable start && usable stop) then
     invalid_argf "%s: %g and %g are not both positive and finite" by start stop;
@@ -340,7 +352,13 @@ let geomspace dt ?(endpoint = true) start stop n =
   let v =
     if endpoint && n >= 2 then E.(where (coord 0 = last) (f64 stop) v) else v
   in
-  leaf ~by dt [| Stdlib.max n 0 |] (E.cast dt v)
+  leaf ~by p dt [| Stdlib.max n 0 |] (E.cast dt v)
+
+let geomspace dt ?(endpoint = true) start stop n =
+  geomspace_by ~by:"Nx.geomspace" Host.on dt ~endpoint start stop n
+
+let geomspace_at p dt ?(endpoint = true) start stop n =
+  geomspace_by ~by:"Nx.geomspace_at" p dt ~endpoint start stop n
 
 (* Data in and out *)
 
@@ -488,7 +506,7 @@ let item i x =
         let at = Devices.one (Devices.set p) ks.(j) in
         let v = Value.Array { at; a; dead = Value.Live } in
         Nx_array.get (Check.on_host ~by v) (Iarray.init r (fun _ -> 0))
-    | Value.Deferred _ | Value.Traced _ ->
+    | Value.Traced _ ->
         let v = Eval.run ~by (Value.Move (Slice (Iarray.of_list one), live)) in
         Nx_array.get (Check.on_host ~by v) (Iarray.init r (fun _ -> 0))
   in
@@ -549,15 +567,14 @@ let swapped ~by k a b = comparison ~by k b a
 let greater a b = swapped ~by:"Nx.greater" (Compare Less) a b
 let greater_equal a b = swapped ~by:"Nx.greater_equal" (Compare Less_equal) a b
 
-(* Scalar forms: one map of [x] whose program holds [c] ({!Prim.op2_const}).
-   A constant read at every index needs no value of its own: building,
-   broadcasting and computing one costs several times the map. *)
+(* Scalar forms: the literal [c], of [x]'s dtype, written into the program of
+   one map over [x], as [full] writes its value, read second or, [swapped],
+   first. No value holds it, and the map takes {!Eval.apply}'s fast path. *)
 
-let scalar_map ~by ~swapped k out x c =
-  let y, () = Eval.eval ~by (Prim.op2_const ~by ~swapped k out x c) in
-  y
+let literal ~by ~swapped k dt x c =
+  Eval.apply ~by (Prim.literal2 ~by ~swapped k (dtype x) c) dt x
 
-let scalar_binary ~by k x c = scalar_map ~by ~swapped:false k (dtype x) x c
+let scalar_binary ~by k x c = literal ~by ~swapped:false k (dtype x) x c
 let add_s x c = scalar_binary ~by:"Nx.add_s" (Binary Add) x c
 let sub_s x c = scalar_binary ~by:"Nx.sub_s" (Binary Sub) x c
 let mul_s x c = scalar_binary ~by:"Nx.mul_s" (Binary Mul) x c
@@ -567,13 +584,13 @@ let mod_s x c = scalar_binary ~by:"Nx.mod_s" (Binary Mod) x c
 let maximum_s x c = scalar_binary ~by:"Nx.maximum_s" (Binary Maximum) x c
 let minimum_s x c = scalar_binary ~by:"Nx.minimum_s" (Binary Minimum) x c
 
-let reversed ~by k c x = scalar_map ~by ~swapped:true k (dtype x) x c
+let reversed ~by k c x = literal ~by ~swapped:true k (dtype x) x c
 let rsub_s c x = reversed ~by:"Nx.rsub_s" (Binary Sub) c x
 let rdiv_s c x = reversed ~by:"Nx.rdiv_s" (Binary (quotient (dtype x))) c x
 let rpow_s c x = reversed ~by:"Nx.rpow_s" (Binary Pow) c x
 
-let compared ~by k x c = scalar_map ~by ~swapped:false k D.Bool x c
-let compared_by ~by k c x = scalar_map ~by ~swapped:true k D.Bool x c
+let compared ~by k x c = literal ~by ~swapped:false k D.Bool x c
+let compared_by ~by k c x = literal ~by ~swapped:true k D.Bool x c
 let equal_s x c = compared ~by:"Nx.equal_s" (Compare Equal) x c
 let not_equal_s x c = compared ~by:"Nx.not_equal_s" (Compare Not_equal) x c
 let less_s x c = compared ~by:"Nx.less_s" (Compare Less) x c
@@ -1047,7 +1064,7 @@ let padded ~by ?interior ~lo ~hi v x =
     if Array.exists (fun (_, n) -> n = 0) ks then begin
       (* No operation reads [x], so it is checked here. *)
       Prim.alive ~by x;
-      beside ~by x (fill ~by (dtype x) out v)
+      fill ~by (placement x) (dtype x) out v
     end
     else
       let part a : Nx_array.Move.range =
@@ -1275,15 +1292,17 @@ let selection x picks =
     (List.map (fun (p, _) -> extents_of p) picks
     @ [ Array.sub s used (Array.length s - used) ])
 
-(* The int64 value of written positions [ps]: a value of every set. *)
-let written ~by ps =
+(* The int64 value of written positions [ps] beside [x], whole on each of
+   [x]'s devices. *)
+let written ~by x ps =
+  let p = Devices.uncut (placement x) in
   assemble ~by D.Int64
     [| List.length ps |]
     0L
     (List.mapi
-       (fun j p ->
+       (fun j i ->
          ( ([| { Nx_array.Move.start = j; count = 1; step = 1 } |] : _ iarray),
-           fill ~by D.Int64 [| 1 |] (Int64.of_int p) ))
+           fill ~by p D.Int64 [| 1 |] (Int64.of_int i) ))
        ps)
 
 (* A window's start [st], of [n] positions along an axis of extent [d],
@@ -1306,6 +1325,7 @@ let window ~by start n d =
            prog;
            outs = Value.[ D.Int64 ];
            loads = [| Plain (broadcast ~by [| n |] start) |];
+           at = None;
          })
   in
   v
@@ -1388,7 +1408,7 @@ let selected ~by picks x =
     List.fold_left
       (fun y (p, a) ->
         match (p, a) with
-        | Rows ps, Some a -> gather_axis ~by a (written ~by ps) y
+        | Rows ps, Some a -> gather_axis ~by a (written ~by y ps) y
         | Held p, Some a -> gather_axis ~by a p y
         | From (start, n, d), Some a ->
             gather_axis ~by a (window ~by start n d) y
@@ -1483,7 +1503,7 @@ let targets ~by x picks =
             incr j;
             []
         | Rows ps, Some _ ->
-            let v = held !j (written ~by ps) in
+            let v = held !j (written ~by x ps) in
             incr j;
             [ v ]
         | Held p, Some _ ->
@@ -1528,6 +1548,7 @@ let targets ~by x picks =
              prog;
              outs = Value.[ D.Int64 ];
              loads;
+             at = None;
            })
     in
     v
@@ -1585,9 +1606,9 @@ let targets ~by x picks =
 
 (* The positions a pick held in data, or written as a list, gives its axis, of
    their own shape: [None] for a pick of the program's ranges. *)
-let positions ~by = function
+let positions ~by x = function
   | Held p -> Some p
-  | Rows ps -> Some (written ~by ps)
+  | Rows ps -> Some (written ~by x ps)
   | From (start, n, d) -> Some (window ~by start n d)
   | At _ | Span _ | New -> None
 
@@ -1638,7 +1659,7 @@ let replaced ~by sel picks v x =
     when List.for_all (whole_axis s) ranges ->
       (* One axis selected by positions, every other whole: a scatter along it,
          the positions broadcast across the others. *)
-      let p = Option.get (positions ~by data) in
+      let p = Option.get (positions ~by x data) in
       let n = numel p in
       let wide = Array.mapi (fun i d -> if i = a then n else d) s in
       let col = Array.mapi (fun i _ -> if i = a then n else 1) s in
@@ -1721,15 +1742,9 @@ let reduce_by ~by s axes xs rs out =
          loads = Iarray.of_list (List.map load xs);
        })
 
-(* The one-operand reduction [r] of [x] along [axes]: of its one load, by
-   the identity program, kept. *)
+(* The one-operand reduction [r] of [x] along [axes]. *)
 let reduce_by_one ~by r axes x =
-  let layout = Nx_array.Layout.contiguous (Iarray.of_array (shape x)) in
-  let prog = Prim.identity (dtype x) in
-  fst
-    (Eval.eval ~by
-       (Value.Reduce
-          { layout; axes; prog; reductions = [ r ]; loads = [| Plain x |] }))
+  fst (reduce_by ~by (shape x) axes [ Any x ] [ r ] (E.input 0 (dtype x)))
 
 (* The one-operand reduction [m] of [x] along [axes], rounded to [dt]. *)
 let reduce ~by m dt axes x = reduce_by_one ~by (Monoid (m, 0, dt)) axes x
@@ -1825,7 +1840,8 @@ let elementwise (type v s) ~by (dt : (v, s) D.t) xs (out : (v, s) E.t) =
   let load (Value.Any x) = Value.Plain (broadcast ~by s x) in
   let loads = Iarray.of_list (List.map load xs) in
   let y, () =
-    Eval.eval ~by (Value.Map { layout; prog; outs = Value.[ dt ]; loads })
+    Eval.eval ~by
+      (Value.Map { layout; prog; outs = Value.[ dt ]; loads; at = None })
   in
   y
 
@@ -1965,7 +1981,7 @@ let predicate (type v s d) ~by
       elementwise ~by D.Bool [ Any re; Any im ]
         (E.binary k (p f (operand 0 re)) (p f (operand 1 im)))
   | D.Signed | D.Unsigned | D.Boolean ->
-      beside ~by x (fill ~by D.Bool (shape x) other)
+      fill ~by (placement x) D.Bool (shape x) other
 
 (* A NaN is the one value unequal to itself. *)
 let isnan_by ~by x = comparison ~by (Compare Not_equal) x x
@@ -2208,7 +2224,11 @@ let arg ~by e ?axis:along ?(keepdims = false) x =
     | None -> (reshaped ~by [| numel x |] x, 0)
     | Some a -> (x, axis ~by x a)
   in
-  let _, i = reduce_by_one ~by (Arg (e, 0, dtype x)) [| a |] x in
+  let (_, i), () =
+    reduce_by ~by (shape x) [| a |] [ Any x ]
+      Value.[ Arg (e, 0, dtype x) ]
+      (operand 0 x)
+  in
   match along with
   | None ->
       reshaped ~by (if keepdims then Array.map (fun _ -> 1) s else [||]) i
@@ -2274,9 +2294,10 @@ let mean (type v s d) ?axes ?(keepdims = false) (x : (v, s, d) t) :
   let s = shape x and dt = dtype x in
   let axes = reduced_axes ~by x axes in
   let n = reduced_count s axes in
-  let within (type w r) (acc : (w, r) D.t) (count : (w, r, d) t) =
+  let within (type w r) (acc : (w, r) D.t) (count : w) =
     let sum = reduce ~by Sum acc axes x in
-    cast_by ~by dt (binary ~by (Binary (quotient acc)) sum count)
+    let k : P.op2 = Binary (quotient acc) in
+    cast_by ~by dt (literal ~by ~swapped:false k acc sum count)
   in
   (* An integer mean of no term has no value, where the result has an
      element to hold it. *)
@@ -2291,9 +2312,8 @@ let mean (type v s d) ?axes ?(keepdims = false) (x : (v, s, d) t) :
     match D.kind dt with
     | D.Float ->
         let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
-        within w (fill ~by w [||] (Float.of_int n))
-    | D.Complex ->
-        within dt (fill ~by dt [||] { Complex.re = Float.of_int n; im = 0. })
+        within w (Float.of_int n)
+    | D.Complex -> within dt { Complex.re = Float.of_int n; im = 0. }
     | D.Signed -> integer D.Int64
     | D.Unsigned -> integer D.Uint64
     | D.Boolean ->
@@ -2312,7 +2332,11 @@ let spread (type s d) ~by ~root ?axes ?(keepdims = false) ?(ddof = 0)
   if ddof < 0 || (n > 0 && ddof >= n) then
     invalid_argf "%s: ddof %d for %d elements" by ddof n;
   let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
-  let _, v = reduce_by_one ~by (Moments (0, w)) axes x in
+  let (_, v), () =
+    reduce_by ~by s axes [ Any x ]
+      Value.[ Moments (0, w) ]
+      (operand 0 x)
+  in
   let y =
     if ddof = 0 && not root then cast_by ~by dt v
     else
@@ -2366,7 +2390,8 @@ let average (type s d) ~by ~alpha axis (x : (float, s, d) t) : (float, s, d) t =
       let layout = Nx_array.Layout.contiguous (Iarray.of_array s) in
       let a, (c, ()) =
         let loads : _ Value.load iarray = [| Value.Plain (cast_by ~by w x) |] in
-        Eval.eval ~by (Value.Map { layout; prog; outs = Value.[ w; w ]; loads })
+        let outs = Value.[ w; w ] in
+        Eval.eval ~by (Value.Map { layout; prog; outs; loads; at = None })
       in
       [| Value.Any a; Value.Any c |]
     in
@@ -2636,15 +2661,16 @@ let on_diagonal ~by dt n m k piece =
   let flat = assemble ~by dt [| n * m |] (D.zero dt) [ ([| along |], piece) ] in
   move ~by (Reshape [| n; m |]) flat
 
-let eye_by ~by ?m ?(k = 0) dt n =
+(* One where the column less the row is [k], zero elsewhere: a creation, so
+   each device of [p] computes its window. *)
+let eye_by ~by ?m ?(k = 0) p dt n =
   let m = Option.value m ~default:n in
-  let count =
-    Stdlib.max 0
-      (if k >= 0 then Stdlib.min n (m - k) else Stdlib.min (n + k) m)
-  in
-  on_diagonal ~by dt n m k (fill ~by dt [| count |] (D.one dt))
+  let on = E.(coord 1 - coord 0 = i64 k) in
+  let out = E.where on (E.const dt (D.one dt)) (E.const dt (D.zero dt)) in
+  leaf ~by p dt [| n; m |] out
 
-let eye ?m ?k dt n = eye_by ~by:"Nx.eye" ?m ?k dt n
+let eye ?m ?k dt n = eye_by ~by:"Nx.eye" ?m ?k Host.on dt n
+let eye_at ?m ?k p dt n = eye_by ~by:"Nx.eye_at" ?m ?k p dt n
 
 let diag ?(k = 0) v =
   let by = "Nx.diag" in
@@ -2855,7 +2881,7 @@ let batch x = Array.sub (shape x) 0 (ndim x - 2)
 
 (* An empty value of [dt] where [x] lies: the vectors a routine did not
    compute. *)
-let uncomputed ~by dt x s = beside ~by x (fill ~by dt s (D.zero dt))
+let uncomputed ~by dt x s = fill ~by (placement x) dt s (D.zero dt)
 
 (* The first [rows] rows and [cols] columns of [x]'s matrices. *)
 let corner ~by rows cols x =
@@ -3002,9 +3028,10 @@ let eigh ?vectors ?triangle dt a =
    zero [+0]. *)
 let pivots ~by a =
   let f, steps, _ = routine ~by (Lu a) in
-  let k = dim (-1) steps in
+  (* Step [i] moved a row where its pivot is not [i]. *)
+  let last = ndim steps - 1 in
   let moved =
-    comparison ~by (Compare Not_equal) steps (arange_by ~by D.Int64 0 k 1)
+    elementwise ~by D.Bool [ Any steps ] E.(operand 0 steps <> coord last)
   in
   let interchanges = count_by ~by ~axes:[ -1 ] moved in
   let signed x =
@@ -3077,7 +3104,6 @@ let solve_triangular ?(triangle = Lower) ?transpose ?(unit_diag = false) a b =
    factors' two triangles, read from the one matrix. *)
 let solve_by ~by a b =
   square_matrices ~by a;
-  let a = held_beside ~by b a in
   let f, _, perm = routine ~by (Lu a) in
   let perm = reshaped ~by (Array.append (shape perm) [| 1 |]) perm in
   let f, b, vector = columns ~by ~rows:(dim (-1) a) f b in
@@ -3090,10 +3116,16 @@ let solve_by ~by a b =
 
 let solve a b = solve_by ~by:"Nx.solve" a b
 
+(* Identity matrices of [dt] and shape [s] at [p]: one creation, each device
+   of [p] computing its window. *)
+let eyes ~by p dt s =
+  let row = Array.length s - 2 and col = Array.length s - 1 in
+  let on = E.(coord col - coord row = i64 0) in
+  leaf ~by p dt s (E.where on (E.const dt (D.one dt)) (E.const dt (D.zero dt)))
+
 let inv_by ~by a =
   square_matrices ~by a;
-  let n = dim (-1) a in
-  solve_by ~by a (broadcast ~by (shape a) (eye_by ~by (dtype a) n))
+  solve_by ~by a (eyes ~by (placement a) (dtype a) (shape a))
 
 let inv a = inv_by ~by:"Nx.inv" a
 
@@ -3113,9 +3145,7 @@ let matrix_power a n =
   if n < 0 then routine_dtype ~by a;
   Prim.alive ~by a;
   let k = Stdlib.abs n in
-  if n = 0 then
-    beside ~by a
-      (broadcast ~by (shape a) (eye_by ~by (dtype a) (dim (-1) a)))
+  if n = 0 then eyes ~by (placement a) (dtype a) (shape a)
   else if n = 1 then copy_by ~by a
   else
     let base =
@@ -3165,7 +3195,6 @@ let lstsq (type v s r d) ?rtol (dt : (float, r) D.t) (a : (v, s, d) t)
   let a = Donate.read ~by a in
   let b = Donate.read ~by b in
   matrices ~by a;
-  let a = held_beside ~by b a and b = held_beside ~by a b in
   let m = dim (-2) a and n = dim (-1) a in
   let tol = cutoff ~by rtol a in
   let a', b', vector = columns ~by ~rows:m a b in
@@ -3173,7 +3202,7 @@ let lstsq (type v s r d) ?rtol (dt : (float, r) D.t) (a : (v, s, d) t)
   let x, s, rank =
     if Stdlib.min m n = 0 then
       let lead = batch b' in
-      let zero dt s = beside ~by b' (fill ~by dt s (D.zero dt)) in
+      let zero dt s = fill ~by (placement b') dt s (D.zero dt) in
       ( zero (dtype b') (Array.append lead [| n; dim (-1) b' |]),
         zero f (Array.append (batch a) [| 0 |]),
         zero D.Int64 (batch a) )
@@ -3208,7 +3237,7 @@ let pinv ?rtol ?(hermitian = false) a =
     (* No operation reads [a], so it is checked here. *)
     Prim.alive ~by a;
     let dt = dtype a in
-    beside ~by a (fill ~by dt (Array.append (batch a) [| n; m |]) (D.zero dt))
+    fill ~by (placement a) dt (Array.append (batch a) [| n; m |]) (D.zero dt)
   end
   else if hermitian then begin
     let (Nx_kernel.Any_float f) = real_precision ~by a in
@@ -3384,7 +3413,7 @@ let matrix_rank (type v s d) ?rtol (a : (v, s, d) t) : d int64_t =
     let bound = cutoff ~by rtol a in
     if Stdlib.min (dim (-2) a) (dim (-1) a) = 0 then begin
       Prim.alive ~by a;
-      beside ~by a (fill ~by D.Int64 (batch a) 0L)
+      fill ~by (placement a) D.Int64 (batch a) 0L
     end
     else
       let (Nx_kernel.Any_float f) = real_precision ~by a in
@@ -3578,7 +3607,7 @@ let rows_order ~by keys =
         let q = positions_of ~by (take_axis ~by 0 p (column ~by j keys)) in
         from (j - 1) (take_axis ~by 0 q p)
     in
-    if w = 0 then arange_by ~by D.Int64 0 n 1
+    if w = 0 then arange_by ~by (Devices.uncut (placement keys)) D.Int64 0 n 1
     else from (w - 2) (positions_of ~by (column ~by (w - 1) keys))
 
 let lexsort keys =
@@ -3605,12 +3634,12 @@ let code k x =
    Rows compare as their first column that differs. *)
 let search ~by side s v =
   let ks = keys64 ~by ~merge:true s and kv = keys64 ~by ~merge:true v in
-  (* Each round reads both. *)
-  let ks = held_beside ~by kv ks and kv = held_beside ~by ks kv in
   let m = Prim.dim s 0 in
   let rows = ndim s = 2 in
   let lead = if rows then [| Prim.dim v 0 |] else shape v in
   let before = match side with `Left -> 0 | `Right -> 1 in
+  (* The counts lie where [v] lies, whole on each of its devices. *)
+  let at = Devices.uncut (placement v) in
   let r = rounds m in
   let step i = 1 lsl (r - 1 - i) in
   let compared probe =
@@ -3619,7 +3648,7 @@ let search ~by side s v =
         (code (operand 0 probe) (operand 1 kv))
     in
     if not rows then c
-    else if Prim.dim s 1 = 0 then fill ~by D.Uint8 lead 1
+    else if Prim.dim s 1 = 0 then fill ~by at D.Uint8 lead 1
     else
       let differs =
         elementwise ~by D.Bool [ Any c ] E.(operand 0 c <> const D.Uint8 1)
@@ -3640,8 +3669,8 @@ let search ~by side s v =
     in
     if last then q else round (i + 1) q
   in
-  if r = 0 then fill ~by D.Int64 lead 0L
-  else round 0 (fill ~by D.Int64 lead (Int64.of_int (step 0 - 1)))
+  if r = 0 then fill ~by at D.Int64 lead 0L
+  else round 0 (fill ~by at D.Int64 lead (Int64.of_int (step 0 - 1)))
 
 let searchsorted ~side s v =
   let by = "Nx.searchsorted" in
@@ -3683,7 +3712,9 @@ let unique ?size keys =
   let n = Prim.dim keys 0 in
   let p = rows_order ~by keys in
   let k = take_axis ~by 0 p (keys64 ~by ~merge:false keys) in
-  let i = arange_by ~by D.Int64 0 n 1 in
+  (* Its counters lie where [keys] lies, whole on each of its devices. *)
+  let at = Devices.uncut (placement keys) in
+  let i = arange_by ~by at D.Int64 0 n 1 in
   let before =
     take_axis ~by 0
       (elementwise ~by D.Int64 [ Any i ] E.(operand 0 i - i64 1))
@@ -3699,7 +3730,7 @@ let unique ?size keys =
   in
   let start = scan_along ~by Max 0 (binary ~by (Binary Mul) fresh i) in
   let from = take_axis ~by 0 start p in
-  let zeros = fill ~by D.Int64 [| n |] 0L in
+  let zeros = fill ~by at D.Int64 [| n |] 0L in
   let flags = scattered ~by ~unique:true Set p fresh zeros in
   let rank = scan_along ~by Sum 0 flags in
   let of_sorted =
@@ -3712,9 +3743,9 @@ let unique ?size keys =
       E.(where (operand 0 flags = i64 1) (operand 1 rank - i64 1) (i64 (-1)))
   in
   let first =
-    scattered ~by Set target i (fill ~by D.Int64 [| n |] (Int64.of_int n))
+    scattered ~by Set target i (fill ~by at D.Int64 [| n |] (Int64.of_int n))
   in
-  let counts = scattered ~by Add ids (fill ~by D.Int64 [| n |] 1L) zeros in
+  let counts = scattered ~by Add ids (fill ~by at D.Int64 [| n |] 1L) zeros in
   let count = reduce ~by Sum D.Int64 [| 0 |] fresh in
   let l = match size with Some l -> l | None -> length ~by count in
   {
@@ -3737,7 +3768,8 @@ let positions_by ~by ?size c =
   in
   let total = reduce ~by Sum D.Int64 [| 0 |] counts in
   let l = match size with Some l -> l | None -> length ~by total in
-  let i = arange_by ~by D.Int64 0 n 1 in
+  let at = Devices.uncut (placement c) in
+  let i = arange_by ~by at D.Int64 0 n 1 in
   (* An index of no count goes to its own position below zero, which writes
      nothing, so the targets are distinct. *)
   let starts =
@@ -3748,9 +3780,10 @@ let positions_by ~by ?size c =
       E.(where (i64 0 < count) (operand 0 ends - count) below)
   in
   let runs =
-    scattered ~by ~unique:true Set starts i (fill ~by D.Int64 [| l |] (-1L))
+    scattered ~by ~unique:true Set starts i (fill ~by at D.Int64 [| l |] (-1L))
   in
-  let starts = scan_along ~by Max 0 runs and j = arange_by ~by D.Int64 0 l 1 in
+  let starts = scan_along ~by Max 0 runs
+  and j = arange_by ~by at D.Int64 0 l 1 in
   elementwise ~by D.Int64 [ Any starts; Any j; Any total ]
     E.(where (operand 1 j < operand 2 total) (operand 0 starts) (i64 n))
 
@@ -3769,7 +3802,7 @@ let argwhere_by ~by ?size t =
   in
   let p = positions_by ~by ?size (reshaped ~by [| n |] held) in
   let k = Prim.dim p 0 in
-  if r = 0 then beside ~by p (fill ~by D.Int64 [| k; 0 |] 0L)
+  if r = 0 then fill ~by (placement p) D.Int64 [| k; 0 |] 0L
   else
     let stride = Array.make r 1 in
     for j = r - 2 downto 0 do
@@ -3932,7 +3965,7 @@ let slice idx x =
 (* Refuses a [v] that fits the selection at no count of its masks: the
    masks' axes, their counts unknown until read, take any extent. *)
 let fits_masks ~by entries v x =
-  let one = fill ~by D.Int64 [| 1 |] 0L in
+  let one = fill ~by (Devices.uncut (placement x)) D.Int64 [| 1 |] 0L in
   let dry = List.map (function Some e -> e | None -> T one) entries in
   let ps = picks ~by dry x in
   let sel = selection x ps in
@@ -3968,12 +4001,12 @@ let set idx v x =
 
 (* Quantiles and histograms *)
 
-(* The 1-d value of [vs], a value of every set. *)
-let vector ~by dt vs =
+(* The 1-d value of [vs] at [p]. *)
+let vector ~by p dt vs =
   let n = Array.length vs in
   let piece j v =
     ( ([| { Nx_array.Move.start = j; count = 1; step = 1 } |] : _ iarray),
-      move ~by (Reshape [| 1 |]) (fill ~by dt [||] v) )
+      move ~by (Reshape [| 1 |]) (fill ~by p dt [||] v) )
   in
   assemble ~by dt [| n |] (D.zero dt) (Array.to_list (Array.mapi piece vs))
 
@@ -3998,7 +4031,8 @@ let quantile (type s d) ?axis:along qs (x : (float, s, d) t) : (float, s, d) t =
   let h = Array.map (fun q -> q *. Float.of_int (n - 1)) qs in
   let lo = Array.map (fun h -> Float.to_int (Float.floor h)) h in
   let hi = Array.map (fun l -> Stdlib.min (l + 1) (n - 1)) lo in
-  let index l = vector ~by D.Int64 (Array.map Int64.of_int l) in
+  let here = Devices.uncut (placement x) in
+  let index l = vector ~by here D.Int64 (Array.map Int64.of_int l) in
   let below = take_axis ~by a (index lo) s
   and above = take_axis ~by a (index hi) s in
   let dt = dtype x in
@@ -4008,7 +4042,7 @@ let quantile (type s d) ?axis:along qs (x : (float, s, d) t) : (float, s, d) t =
   in
   let frac =
     reshaped ~by along
-      (vector ~by w (Array.map (fun h -> h -. Float.floor h) h))
+      (vector ~by here w (Array.map (fun h -> h -. Float.floor h) h))
   in
   let y =
     let lo = at w (operand 0 below) and hi = at w (operand 1 above) in
@@ -4090,12 +4124,12 @@ let histogram (type s d) ?weights
     | None ->
         cast_by ~by dt
           (scattered ~by Add flat
-             (fill ~by D.Int64 [| numel flat |] 1L)
-             (fill ~by D.Int64 [| cells |] 0L))
+             (fill ~by (placement flat) D.Int64 [| numel flat |] 1L)
+             (fill ~by (Devices.uncut (placement flat)) D.Int64 [| cells |] 0L))
     | Some w ->
         scattered ~by Add flat
           (move ~by (Reshape [| numel w |]) w)
-          (fill ~by dt [| cells |] 0.)
+          (fill ~by (Devices.uncut (placement flat)) dt [| cells |] 0.)
   in
   reshaped ~by bins h
 
@@ -4287,14 +4321,11 @@ let combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding p =
 
 
 
-(* +0 of [x]'s dtype and of [shape], where [x] lies, or [w] for a constant
-   [x]: a sum over no term. No operation reads [x], so it is checked here. *)
-let no_term ~by x w shape =
+(* +0 of [x]'s dtype and of [shape], where [x] lies: a sum over no term. No
+   operation reads [x], so it is checked here. *)
+let no_term ~by x shape =
   Prim.alive ~by x;
-  let zeros = fill ~by (dtype x) shape (D.zero (dtype x)) in
-  match Prim.at x with
-  | Some _ -> beside ~by x zeros
-  | None -> beside ~by w zeros
+  fill ~by (placement x) (dtype x) shape (D.zero (dtype x))
 
 (* The windows of each output channel over [x], [[n; s…; c]], for [w] laid out
    as [[g; oc; ic; k…]] ([g] groups of [oc] output and [ic] input channels),
@@ -4327,7 +4358,7 @@ let windows_of ~by ~stride ~lo ~hi ~interior ~dilation x w =
           dilation.(i))
   in
   let out = Array.concat [ [| n |]; counts; [| g * oc |] ] in
-  if Array.mem 0 taps then no_term ~by x w out
+  if Array.mem 0 taps then no_term ~by x out
   else
     let hi =
       Array.init k (fun i -> Stdlib.max hi.(i) (-(extent i + lo.(i))))
@@ -4488,7 +4519,7 @@ let reduce_segments c ~segments ids x =
   let into = Array.mapi (fun a d -> if a = 0 then segments else d) s in
   let along = Array.mapi (fun a d -> if a = 0 then d else 1) s in
   let idx = broadcast ~by s (reshaped ~by along ids) in
-  scattered ~by c idx x (fill ~by dt into start)
+  scattered ~by c idx x (fill ~by (placement x) dt into start)
 
 (* [a] then [b] combined by [c], [a]'s rows before [b]'s. *)
 let combined ~by (c : combine) a b =
@@ -4590,9 +4621,6 @@ let reduce_ranges c ~lo ~hi x =
   if ndim lo <> 1 || not (same_shape lo hi) then
     invalid_argf "%s: bounds %a and %a, not one of each per range" by pp_value
       lo pp_value hi;
-  (* Each level of the ranges reads the bounds and [x]'s table. *)
-  let x = held_beside ~by lo (held_beside ~by hi x) in
-  let lo = held_beside ~by x lo and hi = held_beside ~by x hi in
   let dt = dtype x and n = Prim.dim x 0 and m = Prim.dim lo 0 in
   let rows = Array.sub (shape x) 1 (ndim x - 1) in
   let start = identity ~by c dt in
@@ -4602,7 +4630,7 @@ let reduce_ranges c ~lo ~hi x =
   in
   let l = clip lo and h = clip hi in
   let r = elementwise ~by D.Int64 [ Any h ] E.(operand 0 h - i64 1) in
-  let empty dt v = fill ~by dt (Array.append [| m |] rows) v in
+  let empty dt v = fill ~by (placement x) dt (Array.append [| m |] rows) v in
   match c with
   | Set ->
       let some =
@@ -4619,7 +4647,7 @@ let reduce_ranges c ~lo ~hi x =
       let (D.Any w) = summed dt in
       let zero = D.zero w in
       let s = ranges ~by c ~l ~r (cast_by ~by w x) (empty w zero) in
-      cast_by ~by dt (binary ~by (Binary Add) s (fill ~by w [||] zero))
+      cast_by ~by dt (literal ~by ~swapped:false (Binary Add) w s zero)
 
 (* Maps over segments
 
@@ -4655,16 +4683,13 @@ let block ~segments j =
 (* The number of windows of devices that cut [t]'s first axis, which must be
    a position axis. *)
 let device_windows ~by what ~positional t =
-  match Prim.at t with
-  | None -> 1
-  | Some p ->
-      Array.fold_left
-        (fun r (a, n) ->
-          if a <> 0 || not positional then
-            invalid_argf "%s: %s is split over devices along axis %d" by what a;
-          r * n)
-        1
-        (Grid.cuts (Devices.grid p))
+  Array.fold_left
+    (fun r (a, n) ->
+      if a <> 0 || not positional then
+        invalid_argf "%s: %s is split over devices along axis %d" by what a;
+      r * n)
+    1
+    (Grid.cuts (Devices.grid (placement t)))
 
 (* [x] with each axis of [axes] kept of extent 1. *)
 let keep_axes ~by s axes y =
@@ -4681,13 +4706,16 @@ let first_named ~by ~axes named =
   let r = s.(0) in
   let j = numel named / r in
   let last = j - 1 in
+  let here = Devices.uncut (placement named) in
   let after =
-    reshaped ~by s (leaf ~by D.Int64 [| r; j |] E.(i64 last - coord 1))
+    reshaped ~by s (leaf ~by here D.Int64 [| r; j |] E.(i64 last - coord 1))
+  in
+  let kept =
+    elementwise ~by D.Int64 [ Any named; Any after ]
+      E.(where (operand 0 named) (operand 1 after) (i64 (-1)))
   in
   let most =
-    keep_axes ~by s axes
-      (reduce ~by Max D.Int64 (Iarray.of_list axes)
-         (ternary ~by Where named after (fill ~by D.Int64 [||] (-1L))))
+    keep_axes ~by s axes (reduce ~by Max D.Int64 (Iarray.of_list axes) kept)
   in
   ( elementwise ~by D.Int64 [ Any most ] E.(i64 last - operand 0 most),
     elementwise ~by D.Bool [ Any most ] E.(i64 0 <= operand 0 most) )
@@ -4763,12 +4791,20 @@ let grouped ~by ~segments ~c ~call ~named ids x =
   let r = Prim.dim ids 0 and j = Prim.dim ids 1 in
   let row = Array.sub (shape x) 2 (ndim x - 2) in
   let where c a b = ternary ~by Where c a b in
-  let int64 v = fill ~by D.Int64 [||] (Int64.of_int v) in
+  (* The counters lie where [ids] lies, whole on each of its devices, and
+     values of [r] rows as [ids]'s rows do, so that a scatter into one reads
+     [ids]'s rows where they lie. *)
+  let here = Devices.uncut (placement ids) in
+  let by_rows =
+    let p = placement ids in
+    Devices.v ~by (Devices.set p) (Grid.uncut (Devices.grid p) ~axis:1)
+  in
+  let int64 v = fill ~by here D.Int64 [||] (Int64.of_int v) in
   let along t p = take_along ~by 1 p t in
   let arith2 f a b =
     elementwise ~by D.Int64 [ Any a; Any b ] (f (operand 0 a) (operand 1 b))
   in
-  let iota n step = leaf ~by D.Int64 [| n |] E.(coord 0 * i64 step) in
+  let iota n step = leaf ~by here D.Int64 [| n |] E.(coord 0 * i64 step) in
   let at, any = first_named ~by ~axes:[ 1 ] named in
   let id = along ids at in
   (* Out-of-range positions sort last, as segment [segments], and take no
@@ -4779,8 +4815,8 @@ let grouped ~by ~segments ~c ~call ~named ids x =
      position, and slots padded to whole blocks. *)
   let count =
     scattered ~by ~axis:1 Add key
-      (fill ~by D.Int64 [| r; j |] 1L)
-      (fill ~by D.Int64 [| r; segments |] 0L)
+      (fill ~by by_rows D.Int64 [| r; j |] 1L)
+      (fill ~by by_rows D.Int64 [| r; segments |] 0L)
   in
   let sub = arith2 E.( - ) in
   let first = sub (scan_along ~by Sum 1 count) count in
@@ -4846,7 +4882,7 @@ let grouped ~by ~segments ~c ~call ~named ids x =
   let rank =
     scattered ~by ~unique:true ~axis:1 Set order
       (broadcast ~by [| r; j |] (iota j 1))
-      (fill ~by D.Int64 [| r; j |] 0L)
+      (fill ~by by_rows D.Int64 [| r; j |] 0L)
   in
   let slot = arith2 E.( + ) (along starts key) (sub rank (along first key)) in
   let slot = where named slot (int64 (-1)) in
@@ -4869,8 +4905,6 @@ let map_segments ~segments ids f x =
   then
     invalid_argf "%s: %a does not broadcast to the ids %a" by pp_value x
       pp_value ids;
-  (* The groups of [ids] are read by every operation of [f] over them. *)
-  let ids = held_beside ~by x ids in
   let row = Array.sub xs ns (Array.length xs - ns) in
   let positional = ns > 0 in
   let r =
@@ -4891,12 +4925,15 @@ let map_segments ~segments ids f x =
   in
   let p = numel ids in
   if segments = 0 || p = 0 then
+    let here = Devices.uncut (placement x) in
     let y, out =
       call ~g:0 ~c:1
-        (fill ~by D.Int64 [| 0 |] 0L)
-        (fill ~by (dtype x) (Array.append [| 0; 1 |] row) (D.zero (dtype x)))
+        (fill ~by here D.Int64 [| 0 |] 0L)
+        (fill ~by here (dtype x)
+           (Array.append [| 0; 1 |] row)
+           (D.zero (dtype x)))
     in
-    fill ~by (dtype y) (Array.append s out) (D.zero (dtype y))
+    fill ~by (placement ids) (dtype y) (Array.append s out) (D.zero (dtype y))
   else
     let j = p / r in
     let ids = move ~by (Reshape [| r; j |]) ids in
@@ -4929,7 +4966,8 @@ let map_segments ~segments ids f x =
     in
     move ~by
       (Reshape (Iarray.of_array (Array.append s out)))
-      (ternary ~by Where named y (fill ~by (dtype y) [||] (D.zero (dtype y))))
+      (ternary ~by Where named y
+         (scalar_beside ~by y (dtype y) (D.zero (dtype y))))
 
 (* Convolution *)
 
@@ -5153,15 +5191,15 @@ let record (type r) st i ~by (op : r Value.prim) : r =
           Eval.traced i (Prim.form y) (Cell (n, cs)))
   | _ -> refuse by
 
-(* [mask] and [score] applied to stand-ins: the recording, and each one's
-   cell, captures and shape. A result that no stand-in reaches is a
+(* [mask] and [score] applied to stand-ins at [at]: the recording, and each
+   one's cell, captures and shape. A result that no stand-in reaches is a
    capture. *)
-let recorded (type d) ~tq ?mask ?score () =
+let recorded (type d) ~(at : d Devices.placement) ~tq ?mask ?score () =
   let st = { cells = []; count = 0; captures = 0 } in
   let stand_in i dt leaf =
     let layout = Nx_array.Layout.contiguous [||] in
     let form : (_, _, d) Value.form =
-      { dtype = dt; layout; placement = None }
+      { dtype = dt; layout; placement = at }
     in
     Eval.traced i form (Cell (push st (Leaf leaf), []))
   in
@@ -5351,7 +5389,8 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
         invalid_argf "%s: keys of no dimension need a scale" by
     | None -> 1. /. Float.sqrt (Float.of_int dk)
   in
-  let st, mask, score = recorded ~tq ?mask ?score () in
+  let at = Devices.uncut (placement q) in
+  let st, mask, score = recorded ~at ~tq ?mask ?score () in
   let captures =
     List.filter_map Fun.id [ mask; score ]
     |> List.concat_map (fun (_, cs, _) -> cs)
@@ -5397,7 +5436,7 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
   in
   let length =
     match lengths with
-    | None -> fill ~by D.Int64 [||] (Int64.of_int tk)
+    | None -> scalar_beside ~by q D.Int64 (Int64.of_int tk)
     | Some l -> reshaped ~by (with_lead [| 1; 1; 1 |]) (read l)
   in
   (* Values past a row's length are zeroed: a hidden NaN there would reach
@@ -5429,11 +5468,8 @@ let attention (type v s d) ?scale ?lengths ?mask ?score ~(kv : (v, s, d) kv)
   let layout = Nx_array.Layout.contiguous (Iarray.of_array f) in
   let m, () =
     let outs = Value.[ D.Float32 ] in
-    Eval.eval ~by (Value.Map { layout; prog; outs; loads })
+    Eval.eval ~by (Value.Map { layout; prog; outs; loads; at = None })
   in
-  (* Constant queries and keys give constant scores, which the contraction
-     with the values and the last select both read. *)
-  let m = held_beside ~by v m in
   let lse = reduce_by_one ~by (Logsumexp (0, D.Float32)) [| r - 1 |] m in
   (* A row whose [lse] is [-∞] has no visible key, or only [-∞] scores: its
      weights and [o] are zero, whatever its values hold. *)
@@ -5511,8 +5547,22 @@ let times_real (type v s r d) ~by (k : (float, r, d) t) (x : (v, s, d) t) :
   | D.Complex128 -> parts D.Float64
   | dt -> mul_by ~by x (cast_by ~by dt k)
 
-let scaled ~by c x =
-  if c = 1. then x else times_real ~by (fill ~by D.Float64 [||] c) x
+(* [x] times [c], stored in [x]'s format and written into the product's
+   program, a complex [x] part by part, as {!times_real} does. *)
+let scaled (type v s d) ~by c (x : (v, s, d) t) : (v, s, d) t =
+  let times (type f) (f : (float, f) D.t) y =
+    literal ~by ~swapped:false (Binary Mul) f y (D.of_float f c)
+  in
+  let parts (type f) (f : (float, f) D.t) =
+    let p = Eval.eval ~by (Value.Bitcast (f, x)) in
+    Eval.eval ~by (Value.Bitcast (dtype x, times f p))
+  in
+  if c = 1. then x
+  else
+    match dtype x with
+    | D.Complex64 -> parts D.Float32
+    | D.Complex128 -> parts D.Float64
+    | dt -> literal ~by ~swapped:false (Binary Mul) dt x (D.of_float dt c)
 
 (* The other axes, ascending, the real one, the last of [axes], and whether it
    is past the others: the kernels' real transforms run along the last of
@@ -5626,12 +5676,14 @@ let extended_by ~by x n =
   padded ~by ~lo:(Array.make r 0) ~hi (D.zero (dtype x)) x
 
 let odd_bins ~by x n =
-  take_by ~by ~axis:(-1) (arange_by ~by D.Int64 1 (2 * n) 2) x
+  let at = Devices.uncut (placement x) in
+  take_by ~by ~axis:(-1) (arange_by ~by at D.Int64 1 (2 * n) 2) x
 
-(* The [n] elements of [dt] along one axis, [f k] at [k], computed at
-   float64. *)
-let along_axis ~by dt n f =
-  leaf ~by dt [| n |] (at dt (f E.(cast D.Float64 (coord 0))))
+(* The [n] elements of [dt] along one axis beside [x], whole on each of its
+   devices, [f k] at [k], computed at float64. *)
+let along_axis ~by x dt n f =
+  let p = Devices.uncut (placement x) in
+  leaf ~by p dt [| n |] (at dt (f E.(cast D.Float64 (coord 0))))
 
 (* [x]'s last axis's first element, or its last, times [c]. *)
 let scale_end ~by ~first c x =
@@ -5639,7 +5691,7 @@ let scale_end ~by ~first c x =
   let k = Float.of_int (if first then 0 else n - 1) in
   let lit = E.const D.Float64 in
   let factors i = E.(where (i = lit k) (lit c) (lit 1.)) in
-  mul_by ~by x (along_axis ~by (dtype x) n factors)
+  mul_by ~by x (along_axis ~by x (dtype x) n factors)
 
 let rec cosine : type r c d.
     by:string ->
@@ -5665,7 +5717,7 @@ let rec cosine : type r c d.
       let z = spectrum (joined ~by [ even; odd ]) in
       let step = Float.pi /. (2. *. Float.of_int n) in
       let theta =
-        along_axis ~by f n (fun k -> E.(k * const D.Float64 step))
+        along_axis ~by x f n (fun k -> E.(k * const D.Float64 step))
       in
       let re = mul_by ~by (real_by ~by f z) (unary ~by Cos theta) in
       let im = mul_by ~by (imag_by ~by f z) (unary ~by Sin theta) in
@@ -5681,7 +5733,7 @@ let sine (type r c d) ~by kind (f : (float, r) D.t) (c : (Complex.t, c) D.t)
   let n = dim (-1) x in
   let lit = E.const D.Float64 in
   let signs =
-    along_axis ~by f n (fun k ->
+    along_axis ~by x f n (fun k ->
         E.(where (rem k (lit 2.) = lit 0.) (lit 1.) (lit (-1.))))
   in
   let neg x = unary ~by Neg x in
@@ -5689,7 +5741,7 @@ let sine (type r c d) ~by kind (f : (float, r) D.t) (c : (Complex.t, c) D.t)
   | Type_1 ->
       let s = Array.copy (shape x) in
       s.(Array.length s - 1) <- 1;
-      let zero = fill ~by f s 0. in
+      let zero = fill ~by (placement x) f s 0. in
       let odd = joined ~by [ zero; x; zero; neg (flipped ~by x) ] in
       let z = complex_by ~by Nx_kernel.Forward (cast_by ~by c odd) in
       neg (imag_by ~by f (along_last ~by z (R (1, n + 1))))
@@ -5782,7 +5834,7 @@ let idst ?type_ ?axes ?norm x =
 
 (* The frequencies of [count] bins of an [n]-point transform at spacing [d]:
    [i / (d n)] for bin [i], or [i - n] from the middle on where [wrap]. *)
-let frequencies ~by ~wrap dt ~d n count =
+let frequencies ~by ~wrap p dt ~d n count =
   if n < 1 then invalid_argf "%s: %d points" by n;
   if not (Float.is_finite d && d <> 0.) then invalid_argf "%s: spacing %g" by d;
   let i64 i = E.const D.Int64 (Int64.of_int i) in
@@ -5790,13 +5842,19 @@ let frequencies ~by ~wrap dt ~d n count =
   let middle = i64 ((n + 1) / 2) and n' = i64 n in
   let i = if wrap then E.(where (i < middle) i (i - n')) else i in
   let span = E.const D.Float64 (d *. Float.of_int n) in
-  leaf ~by dt [| count |] E.(cast dt (cast D.Float64 i / span))
+  leaf ~by p dt [| count |] E.(cast dt (cast D.Float64 i / span))
 
 let fftfreq dt ?(d = 1.) n =
-  frequencies ~by:"Nx.fftfreq" ~wrap:true dt ~d n n
+  frequencies ~by:"Nx.fftfreq" ~wrap:true Host.on dt ~d n n
+
+let fftfreq_at p dt ?(d = 1.) n =
+  frequencies ~by:"Nx.fftfreq_at" ~wrap:true p dt ~d n n
 
 let rfftfreq dt ?(d = 1.) n =
-  frequencies ~by:"Nx.rfftfreq" ~wrap:false dt ~d n ((n / 2) + 1)
+  frequencies ~by:"Nx.rfftfreq" ~wrap:false Host.on dt ~d n ((n / 2) + 1)
+
+let rfftfreq_at p dt ?(d = 1.) n =
+  frequencies ~by:"Nx.rfftfreq_at" ~wrap:false p dt ~d n ((n / 2) + 1)
 
 (* [x] rolled along each of [axes] by half its extent: rounded down toward the
    end, or toward the start where [inverse], so each undoes the other. *)
@@ -5811,22 +5869,24 @@ let ifftshift ?axes x = shifted ~by:"Nx.ifftshift" ~inverse:true ?axes x
 
 (* Short-time transforms *)
 
-let hann_by ~by dt n =
+let hann_by ~by p dt n =
   if n < 0 then invalid_argf "%s: %d points" by n;
   let step = 2. *. Float.pi /. Float.of_int n in
   let lit = E.const D.Float64 in
-  leaf ~by dt [| n |]
+  leaf ~by p dt [| n |]
     (at dt E.(lit 0.5 - (lit 0.5 * cos (cast D.Float64 (coord 0) * lit step))))
 
-let hann dt n = hann_by ~by:"Nx.hann" dt n
+let hann dt n = hann_by ~by:"Nx.hann" Host.on dt n
+let hann_at p dt n = hann_by ~by:"Nx.hann_at" p dt n
 
 let frame_step ~window = function
   | Some s -> s
   | None -> Stdlib.max 1 (window / 4)
 
-(* [win], or the Hann window, of [window] points. *)
-let taper ~by dt ~window = function
-  | None -> hann_by ~by dt window
+(* [win], or the Hann window, of [window] points beside [x], whole on each of
+   its devices. *)
+let taper ~by x dt ~window = function
+  | None -> hann_by ~by (Devices.uncut (placement x)) dt window
   | Some w ->
       if not (Prim.has_shape w [| window |]) then
         invalid_argf "%s: win %a is not [%d]" by pp_value w window;
@@ -5841,7 +5901,7 @@ let stft dt ~window ?step ?win x =
   if window > dim (-1) x then
     invalid_argf "%s: window %d exceeds the last axis of %a" by window pp_value
       x;
-  let w = taper ~by (dtype x) ~window win in
+  let w = taper ~by x (dtype x) ~window win in
   let frames = sliding_window_by ~by ~window ~step x in
   rfft_by ~by dt (mul_by ~by frames w)
 
@@ -5863,7 +5923,7 @@ let istft dt ~window ?step ?win ?length z =
   | _ -> ());
   let frames = dim (-2) z in
   let points = ((frames - 1) * step) + window in
-  let w = taper ~by dt ~window win in
+  let w = taper ~by z dt ~window win in
   (* Overlap-add is the adjoint of taking the frames. *)
   let added t =
     combine_patches_by ~by ~output_size:[| points |] ~kernel_size:[| window |]
@@ -5926,8 +5986,6 @@ let pp ppf x =
     match x with
     | Value.Traced { owner; _ } ->
         fun ppf -> Format.fprintf ppf " traced by %s" owner.name
-    | Value.Deferred { node = Value.Node n; _ } ->
-        fun ppf -> Format.fprintf ppf " of every set,@ %a" Prim.pp n.op
     | Value.Array _ | Value.Shards _ | Value.Handle _ -> (
         match Prim.death x with
         | Value.Died f -> fun ppf -> Format.fprintf ppf ", donated to %s" f
@@ -5946,7 +6004,7 @@ let pp ppf x =
                 | exception Invalid_argument why -> unread why)))
   in
   Format.fprintf ppf "@[<hv 2>%s %a" (D.name (dtype x)) pp_shape (shape x);
-  Option.iter (set ppf) (Prim.at x);
+  set ppf (placement x);
   rest ppf;
   Format.fprintf ppf "@]"
 
@@ -6003,11 +6061,18 @@ module Ptree = struct
       invalid_argf "%s: %a: %a in the first value, %a in the second" by pp_path
         p pp_shape (shape a) pp_shape (shape b)
 
+  (* Where a 0-d result over [x]'s arrays lies: at the first array's
+     placement in walk order, whole on each of its devices. *)
+  let first_placement (type d) ~by s x : d Devices.placement =
+    match (operands s x : d Value.any list) with
+    | Value.Any a :: _ -> Devices.uncut (placement a)
+    | [] -> invalid_argf "%s: the structure holds no array to lie beside" by
+
   let dot (type c d) s (dt : (float, c) dtype) x y : (float, c, d) tensor =
     let by = "Nx.Ptree.dot" in
     alive_all ~by (operands s x @ operands s y);
     let read = Donate.lent in
-    let acc = ref (fill ~by dt [||] 0.) in
+    let acc = ref (fill ~by (first_placement ~by s x) dt [||] 0.) in
     let term : type v r.
         Path.t -> (v, r, d) tensor -> (v, r, d) tensor -> (v, r, d) tensor =
      fun p a b ->
@@ -6035,7 +6100,8 @@ module Ptree = struct
     let xs =
       fold s add_components x [] |> List.filter (fun u -> numel u > 0)
     in
-    let zero = fill ~by w [||] 0. and one = fill ~by w [||] 1. in
+    let p = first_placement ~by s x in
+    let zero = fill ~by p w [||] 0. and one = fill ~by p w [||] 1. in
     let largest m u =
       binary ~by (Binary Maximum) m (reduction ~by Max (unary ~by Abs u))
     in
@@ -6122,6 +6188,9 @@ end
 type 'd datum =
   | Datum : ('d, 'e) Value.data * ('e -> 'd packed list) -> 'd datum
 
+(* What [Nx.check] keeps of a stand-in of its rebuild at the call: nothing. *)
+type ('v, 's, 'd) Value.payload += Stand_in : ('v, 's, 'd) Value.payload
+
 let check s ok data fail =
   let by = "Nx.check" in
   let target = shape ok in
@@ -6138,9 +6207,23 @@ let check s ok data fail =
           target)
     leaves;
   (* [fail]'s structure is rebuilt from 0-d arrays when the failure is found,
-     maybe at a later check's issue: a walk that refuses them raises now. *)
-  let zero (P x) = P (fill ~by (dtype x) [||] (D.zero (dtype x))) in
-  (match Ptree.rebuild s ~like:data (List.map zero leaves) with
+     maybe at a later check's issue: a walk that refuses them raises now. It
+     is tried over stand-ins of no bytes where the 0-d arrays would lie, so
+     that it computes nothing. The interpretation that owns them gives an
+     operation its eager meaning, which refuses them. *)
+  let stand_in i (P x) =
+    let form =
+      {
+        Value.dtype = dtype x;
+        layout = Nx_array.Layout.contiguous [||];
+        placement = Devices.uncut (placement x);
+      }
+    in
+    P (Eval.traced i form Stand_in)
+  in
+  let rebuild i = Ptree.rebuild s ~like:data (List.map (stand_in i) leaves) in
+  let eager _ ~by op = Eval.run ~by op in
+  (match Eval.interpret ~name:by Values eager rebuild with
   | _ -> ()
   | exception Invalid_argument m ->
       invalid_argf "%s: the structure's walk refuses 0-d arrays: %s" by m);
@@ -6149,7 +6232,7 @@ let check s ok data fail =
     | P x :: rest ->
         let (Datum (d, read)) = datum rest in
         let x = broadcast ~by target x in
-        let read (v, e) = P (fill ~by (dtype x) [||] v) :: read e in
+        let read (v, e) = P (scalar_beside ~by x (dtype x) v) :: read e in
         Datum (Value.( :: ) (x, d), read)
   in
   let (Datum (d, read)) = datum leaves in
@@ -6170,16 +6253,6 @@ let associative_scan ?axis:(a = 0) s f x =
       (Array.to_list (Array.map (fun (Value.Any t) -> P t) states))
   in
   let states, skeleton = flat x in
-  (* A constant state is placed beside a placed one: each level reads its
-     scan so far. *)
-  let states =
-    match
-      Array.find_opt (fun (Value.Any t) -> not (Prim.is_constant t)) states
-    with
-    | None -> states
-    | Some (Value.Any p) ->
-        Array.map (fun (Value.Any t) -> Value.Any (held_beside ~by p t)) states
-  in
   let axes = Array.map (fun (Value.Any t) -> axis ~by t a) states in
   Array.iteri
     (fun k (Value.Any t) ->
@@ -6221,7 +6294,7 @@ module Prim = struct
   type ('v, 's, 'd) form = ('v, 's, 'd) Value.form = {
     dtype : ('v, 's) dtype;
     layout : Nx_array.Layout.t;
-    placement : 'd Placement.t option;
+    placement : 'd Placement.t;
   }
 
   type 'd any = 'd Value.any = Any : ('v, 's, 'd) t -> 'd any
@@ -6357,6 +6430,7 @@ module Prim = struct
         prog : Nx_kernel.Prog.t;
         outs : ('d, 'r) outs;
         loads : 'd load iarray;
+        at : 'd Placement.t option;
       }
         -> 'r t
     | Reduce : {
@@ -6473,23 +6547,16 @@ module Prim = struct
 
   (* [x] at [f]'s type where run-time facts allow it: a dtype is its own
      witness, and a brand names one set, so a value on the set [f]'s
-     placement names is a value of [f]'s brand. A value with no placement is
-     of every set. *)
+     placement names is a value of [f]'s brand. *)
   let coerce (type v s d w r e) (f : (v, s, d) Value.form)
       (x : (w, r, e) Value.t) : (v, s, d) Value.t option =
     match D.equal_witness (dtype x) f.dtype with
     | None -> None
-    | Some Type.Equal -> (
-        let on_set =
-          match (placement x, f.placement) with
-          | None, _ -> true
-          | Some p, Some q ->
-              Devices.number (Devices.set p) = Devices.number (Devices.set q)
-          | Some _, None -> false
-        in
-        match on_set with
-        | true -> Some (Obj.magic x : (v, s, d) Value.t)
-        | false -> None)
+    | Some Type.Equal ->
+        let p = placement x and q = f.placement in
+        if Devices.number (Devices.set p) = Devices.number (Devices.set q) then
+          Some (Obj.magic x : (v, s, d) Value.t)
+        else None
 end
 
 (* Operators *)

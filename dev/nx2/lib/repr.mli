@@ -20,4 +20,4 @@ val of_shards :
   ('v, 's) Nx_array.t iarray ->
   ('v, 's, 'd) Value.t
 
-val shards : ('v, 's, 'd) Value.t -> ('v, 's) Nx_array.t iarray option
+val shards : ('v, 's, 'd) Value.t -> ('v, 's) Nx_array.t iarray

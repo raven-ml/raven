@@ -146,12 +146,7 @@ let to_value ?(prefix = "") s ~like t =
           Fail.failf "Nx_io.Archive.%s: %s: %s in the archive, %s in the value"
             fn name
             (D.name (Nx.dtype x))
-            (D.name (Nx.dtype a)));
-    if Nx.placement a = None then
-      Fail.invalid_argf
-        "Nx_io.Archive.%s: %s: the array in the value is of every set, with no \
-         placement for the entry"
-        fn name
+            (D.name (Nx.dtype a)))
   in
   Nx.Ptree.fold s check like ();
   Names.iter
@@ -161,9 +156,9 @@ let to_value ?(prefix = "") s ~like t =
           "Nx_io.Archive.%s: %s: an entry in the archive, no array in the value"
           fn entry)
     t;
-  (* The checks above make the dtype and the placement there. *)
+  (* The checks above make the dtype there. *)
   let read path a =
     let x = Nx.unpack (Nx.dtype a) (Names.find (full prefix path) t) in
-    Nx.place (Option.get (Nx.placement a)) x
+    Nx.place (Nx.placement a) x
   in
   Nx.Ptree.map s read like

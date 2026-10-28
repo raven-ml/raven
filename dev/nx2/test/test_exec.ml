@@ -5,7 +5,7 @@
 
 (* Computing through a set's kernels, through Nx: each function against a
    reference over nx.array's elements, refusals before any kernel, declines,
-   constants and allocation. *)
+   creations and allocation. *)
 
 open Windtrap
 module A = Nx_array
@@ -197,7 +197,7 @@ let run_map (type w r) node ins (dt : (w, r) D.t) shape loads =
   let prog = Nx_kernel.Prog.of_node ~ins node in
   let op : ((w, r, Nx.host) Nx.t * unit) Nx.Prim.t =
     let layout = A.Layout.contiguous (Iarray.of_array shape) in
-    Map { layout; prog; outs = [ dt ]; loads }
+    Map { layout; prog; outs = [ dt ]; loads; at = None }
   in
   fst (Nx.Prim.eval ~by:"test" op)
 
@@ -271,11 +271,18 @@ let fused_maps x y =
   let loads : Nx.host Nx.Prim.load iarray = [| Plain x; Plain y |] in
   let s, (p, ()) =
     Nx.Prim.eval ~by:"test"
-      (Map { layout; prog = chain; outs = [ D.Float32; D.Float32 ]; loads })
+      (Map
+         {
+           layout;
+           prog = chain;
+           outs = [ D.Float32; D.Float32 ];
+           loads;
+           at = None;
+         })
   in
   let q, () =
     Nx.Prim.eval ~by:"test"
-      (Map { layout; prog = fused; outs = [ D.Float32 ]; loads })
+      (Map { layout; prog = fused; outs = [ D.Float32 ]; loads; at = None })
   in
   (bytes s, bytes p, bytes q)
 
@@ -488,7 +495,13 @@ let declines =
           let loads = Iarray.init n (fun _ : Nx.host Nx.Prim.load -> Plain x) in
           let op : ((float, D.float32_elt, Nx.host) Nx.t * unit) Nx.Prim.t =
             Map
-              { layout = A.Layout.contiguous [| 3 |]; prog; outs = [ D.Float32 ]; loads }
+              {
+                layout = A.Layout.contiguous [| 3 |];
+                prog;
+                outs = [ D.Float32 ];
+                loads;
+                at = None;
+              }
           in
           equal (array float_exact) [| 2.; 4.; 6. |]
             (elements (fst (Nx.Prim.eval ~by:"test" op))));
@@ -501,7 +514,14 @@ let declines =
           let eval p =
             fst
               (Nx.Prim.eval ~by:"test"
-                 (Map { layout; prog = p; outs = [ D.Float32 ]; loads }))
+                 (Map
+                    {
+                      layout;
+                      prog = p;
+                      outs = [ D.Float32 ];
+                      loads;
+                      at = None;
+                    }))
           in
           refused_once "test" "Add" "float32, float32, float32" (fun () ->
               eval (prog [| In 0; In 1; Op2 (Binary Add, 0, 1) |] [| 2 |]));
@@ -523,6 +543,7 @@ let declines =
                      prog = prog nodes [| 3 |];
                      outs = [ D.Float32 ];
                      loads = [| Plain g; Plain g |];
+                     at = None;
                    })));
       test "a declined copy raises once" (fun () ->
           let x = refused [| 4.; 3.; 2.; 1. |] in
@@ -677,11 +698,11 @@ let seen_outcomes = pair outcomes (option string)
 let add_sys = then_seen (fun h -> Nx.add h (twos ()))
 let less_sys = then_seen (fun h -> Nx.cast D.Float32 (Nx.less h (twos ())))
 
-(* Beside a constant, off the fast path. *)
-let add_off_sys = then_seen (fun h -> Nx.add h (Nx.scalar Nx.float32 2.))
+(* Beside a scalar broadcast to its shape. *)
+let add_scalar_sys = then_seen (fun h -> Nx.add h (Nx.scalar_like h 2.))
 
-let less_off_sys =
-  then_seen (fun h -> Nx.cast D.Float32 (Nx.less h (Nx.scalar Nx.float32 2.)))
+let less_scalar_sys =
+  then_seen (fun h -> Nx.cast D.Float32 (Nx.less h (Nx.scalar_like h 2.)))
 
 (* A kind refusing [h]'s dtype, on the fast path, where its result would fit
    [h]'s memory: it kills nothing. *)
@@ -801,15 +822,15 @@ let donations =
     command "add"
       (handle ^-> judges seen_outcomes)
       (declined "Nx.add") add_sys;
-    command "add off the fast path"
+    command "add beside a scalar"
       (handle ^-> judges seen_outcomes)
-      (declined "Nx.add") add_off_sys;
+      (declined "Nx.add") add_scalar_sys;
     command "less"
       (handle ^-> judges seen_outcomes)
       (declined "Nx.less") less_sys;
-    command "less off the fast path"
+    command "less beside a scalar"
       (handle ^-> judges seen_outcomes)
-      (declined "Nx.less") less_off_sys;
+      (declined "Nx.less") less_scalar_sys;
     command "bitwise_and" (handle ^-> judges seen_outcomes) and_ref and_sys;
     command "add broadcast"
       (handle ^-> judges seen_outcomes)
@@ -875,19 +896,19 @@ let raced =
       (handle ^-> judges outcomes)
       (raced_decline "Nx.add")
       (raced_sys (fun h -> Nx.add h (twos ())));
-    command "add off the fast path"
+    command "add beside a scalar"
       (handle ^-> judges outcomes)
       (raced_decline "Nx.add")
-      (raced_sys (fun h -> Nx.add h (Nx.scalar Nx.float32 2.)));
+      (raced_sys (fun h -> Nx.add h (Nx.scalar_like h 2.)));
     command "less"
       (handle ^-> judges outcomes)
       (raced_decline "Nx.less")
       (raced_sys (fun h -> Nx.cast D.Float32 (Nx.less h (twos ()))));
-    command "less off the fast path"
+    command "less beside a scalar"
       (handle ^-> judges outcomes)
       (raced_decline "Nx.less")
       (raced_sys (fun h ->
-           Nx.cast D.Float32 (Nx.less h (Nx.scalar Nx.float32 2.))));
+           Nx.cast D.Float32 (Nx.less h (Nx.scalar_like h 2.))));
     command "mul"
       (handle ^-> judges outcomes)
       (consumer lost_raced "Nx.mul" double)
@@ -1021,9 +1042,9 @@ let kernels =
           C.reset ();
           invalid ~by:"Nx.add" (fun () -> Nx.add a b);
           equal int 0 (C.calls ()));
-      test "a refused operation beside a constant calls no kernel" (fun () ->
+      test "a refused operation beside a creation calls no kernel" (fun () ->
           let a = to_count (on_host Plain D.Bool [| 2 |] [| true; false |]) in
-          let c = Nx.zeros D.Bool [| 2 |] in
+          let c = Nx.zeros_like a in
           C.reset ();
           invalid ~by:"Nx.add" (fun () -> Nx.add a c);
           equal int 0 (C.calls ()));
@@ -1083,37 +1104,43 @@ let kernels =
           equal (array bits) [| 2.; 4.; 6.; 8. |] (elements y));
     ]
 
-let constants =
-  group "constants"
+let creations =
+  group "creations"
     [
-      test "a constant takes the brand of what it meets" (fun () ->
-          let c = Nx.scalar D.Float32 2. in
-          let a = to_count (on_host Plain D.Float32 [| 2 |] [| 1.; 2. |]) in
-          let h = on_host Plain D.Float32 [| 2 |] [| 1.; 2. |] in
-          equal (array bits) [| 3.; 4. |] (elements (Nx.add a c));
-          equal (array bits) [| 2.; 4. |] (elements (Nx.mul h c)));
-      test "a constant computes on its set at each use" (fun () ->
-          let c = Nx.zeros D.Float32 [| 2 |] in
+      test "a creation computes once, at the call, where it is made" (fun () ->
           let a = to_count (on_host Plain D.Float32 [| 2 |] [| 1.; 2. |]) in
           C.reset ();
-          ignore (Nx.add a c);
-          equal ~msg:"kernel calls: the zeros, then the add" int 2 (C.calls ());
+          let c = Nx.zeros_at Count.on D.Float32 [| 2 |] in
+          equal ~msg:"kernel calls: the fill" int 1 (C.calls ());
           C.reset ();
           ignore (Nx.add a c);
-          equal ~msg:"kernel calls: both again" int 2 (C.calls ()));
-      test "a movement of a constant costs no kernel of its own" (fun () ->
-          let c = Nx.scalar D.Float32 2. in
+          equal ~msg:"kernel calls: the add alone" int 1 (C.calls ());
+          C.reset ();
+          ignore (Nx.add a c);
+          equal ~msg:"kernel calls: the add alone, again" int 1 (C.calls ()));
+      test "a scalar beside a value broadcasts as a view" (fun () ->
           let a = to_count (on_host Plain D.Float32 [| 2 |] [| 1.; 2. |]) in
+          let c = Nx.scalar_like a 2. in
           C.reset ();
           let y = Nx.add a c in
-          equal ~msg:"kernel calls: the fill, then the add" int 2 (C.calls ());
+          equal ~msg:"kernel calls: the add" int 1 (C.calls ());
           equal (array bits) [| 3.; 4. |] (elements y);
           let w = Nx.where (Nx.less a c) c a in
           equal (array bits) [| 2.; 2. |] (elements w));
-      test "solve and lstsq of a constant beside a placed value factor it once"
-        (fun () ->
-          let a () =
-            Nx.add (Nx.eye D.Float64 3) (Nx.full D.Float64 [| 3; 3 |] 0.5)
+      test "a scalar form computes in one kernel call" (fun () ->
+          let a = to_count (on_host Plain D.Float32 [| 2 |] [| 1.; 2. |]) in
+          C.reset ();
+          let y = Nx.add_s a 2. and z = Nx.rsub_s 2. a and l = Nx.less_s a 2. in
+          equal ~msg:"kernel calls: one each" int 3 (C.calls ());
+          equal (array bits) [| 3.; 4. |] (elements y);
+          equal (array bits) [| 1.; 0. |] (elements z);
+          equal (array bool) [| true; false |] (elements l));
+      test
+        "solve and lstsq of a matrix whole on each device factor it once \
+         per device" (fun () ->
+          let a p =
+            Nx.add (Nx.eye_at p D.Float64 3)
+              (Nx.full_at p D.Float64 [| 3; 3 |] 0.5)
           in
           let data =
             on_host Plain D.Float64 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
@@ -1129,13 +1156,11 @@ let constants =
                 elements s;
               ]
           in
-          let placed f =
-            f (Nx.place Factor.on (a ())) (Nx.place Factor.on data)
-          in
+          let placed f = f (a Factor.on) (Nx.place Factor.on data) in
           let one = Nx.place Factor.on data in
           let check name ~factored want f b =
             Atomic.set Factoring.factored 0;
-            let y = f (a ()) b in
+            let y = f (a (Nx.Placement.uncut (Nx.placement b))) b in
             equal ~msg:(name ^ ": factorizations") int factored
               (Atomic.get Factoring.factored);
             equal ~msg:(name ^ ": bits") (array bits) want y
@@ -1160,52 +1185,44 @@ let constants =
                       "Nx.solve: operand 1 lies at split ~axis:%d [m2; m3] and \
                        is read at on [m2; m3]; Nx.place (Placement.on s) y"
                       axis))
-                (fun () -> solve (a ()) b))
+                (fun () -> solve (a (Nx.Placement.uncut (Nx.placement b))) b))
             [ (0, rows); (1, columns) ]);
-      test "placing a constant computes it at the placement, each time"
+      test "placing a host creation copies its bytes and computes nothing"
         (fun () ->
           let z = Nx.zeros D.Float32 [| 2 |] in
           let c = Nx.add z z in
-          equal (array bits) [| 0.; 0. |] (elements (Nx.place Nx.Host.on c));
           C.reset ();
           let y = Nx.place Count.on c in
-          equal ~msg:"kernel calls: the zeros, then the add" int 2 (C.calls ());
-          ignore (Nx.place Count.on c);
-          equal ~msg:"kernel calls: both again, into memory of its own" int 4
-            (C.calls ());
+          equal ~msg:"kernel calls" int 0 (C.calls ());
           equal (array bits) [| 0.; 0. |] (elements y));
-      test "a constant of a sub-byte dtype computes on the host" (fun () ->
-          let host x = Nx.place Nx.Host.on x in
-          let get x = A.to_array (Option.get (Nx.Repr.array (host x))) in
+      test "a creation of a sub-byte dtype holds its elements" (fun () ->
+          let get x = A.to_array (Option.get (Nx.Repr.array x)) in
           equal ~msg:"int4" (array int) [| -3; -3; -3 |]
-            (get (Nx.add (Nx.zeros D.Int4 [| 3 |]) (Nx.scalar D.Int4 (-3))));
+            (get
+               (Nx.add
+                  (Nx.zeros D.Int4 [| 3 |])
+                  (Nx.full D.Int4 [| 3 |] (-3))));
           equal ~msg:"uint4" (array int) [| 0; 0 |]
             (get (Nx.zeros D.Uint4 [| 2 |]));
           equal ~msg:"float4_e2m1fn" (array float_exact) [| 1.5 |]
             (get (Nx.reshape [| 1 |] (Nx.scalar D.Float4_e2m1fn 1.5)));
           equal ~msg:"bit" (array bool) [| true |]
             (get (Nx.reshape [| 1 |] (Nx.scalar D.Bit true))));
-      test "a constant beside a split value is split with it" (fun () ->
+      test "a creation beside a split value is split with it" (fun () ->
           let x =
             Nx.place (Count2.split ~axis:0)
               (on_host Plain D.Float32 [| 4 |] [| 1.; 2.; 3.; 4. |])
           in
-          let y = Nx.add x (Nx.zeros D.Float32 [| 4 |]) in
+          let y = Nx.add x (Nx.zeros_like x) in
           equal bool true
-            (Nx.Placement.equal (Count2.split ~axis:0)
-               (Option.get (Nx.placement y))));
-      test "a rule error in a constant raises at the call" (fun () ->
+            (Nx.Placement.equal (Count2.split ~axis:0) (Nx.placement y)));
+      test "a rule error in a creation raises at the call" (fun () ->
           invalid ~by:"Nx.zeros" (fun () -> Nx.zeros D.Float32 [| -1 |]));
-      test "a decline in a constant raises at its first use, naming its maker"
-        (fun () ->
-          let c = Nx.zeros D.Float32 [| 2 |] in
-          let a =
-            Nx.place Dec.on (on_host Plain D.Float32 [| 2 |] [| 1.; 2. |])
-          in
+      test "a decline in a creation raises at the call, naming it" (fun () ->
           raises_match
             (Exn.invalid_arg
-               ~substring:"Nx.zeros: nx.test does not compute Fill") (fun () ->
-              Nx.mul a c));
+               ~substring:"Nx.zeros_at: nx.test does not compute Fill")
+            (fun () -> Nx.zeros_at Dec.on D.Float32 [| 2 |]));
       test "zeros_like is zeros where its argument lies" (fun () ->
           let x =
             Nx.place (Count2.split ~axis:0)
@@ -1213,9 +1230,7 @@ let constants =
           in
           let z = Nx.zeros_like x in
           equal bool true
-            (Nx.Placement.equal
-               (Option.get (Nx.placement x))
-               (Option.get (Nx.placement z)));
+            (Nx.Placement.equal (Nx.placement x) (Nx.placement z));
           equal (array bits) [| 0.; 0.; 0.; 0. |] (elements z));
     ]
 
@@ -1234,20 +1249,16 @@ let test_zeros_like_reads_nothing () =
   equal ~msg:"kernel calls: one fill" int 1 (C.calls ());
   equal (array bits) [| 0.; 0. |] (elements z)
 
-(* Every public function takes a value of every set, a constant included, and
-   gives what it gives on the host. *)
-let every_function (type d) ?(every_set = false) name
-    (x : (float, D.float32_elt, d) Nx.t) =
+(* Every public function takes a value at any placement and gives what it
+   gives on the host. *)
+let every_function (type d) name (x : (float, D.float32_elt, d) Nx.t) =
   let msg f = name ^ ": " ^ f in
   let xs = elements x in
   let ys f = Array.map f xs in
   equal ~msg:(msg "shape") (array int) [| 2; 2 |] (Nx.shape x);
   equal ~msg:(msg "dtype") string "float32" (D.name (Nx.dtype x));
-  equal ~msg:(msg "placement") bool every_set (Nx.placement x = None);
-  Option.iter
-    (fun p ->
-      equal ~msg:(msg "place") (array bits) xs (elements (Nx.place p x)))
-    (Nx.placement x);
+  equal ~msg:(msg "place") (array bits) xs
+    (elements (Nx.place (Nx.placement x) x));
   equal ~msg:(msg "zeros_like") (array bits)
     (ys (fun _ -> 0.))
     (elements (Nx.zeros_like x));
@@ -1259,7 +1270,10 @@ let every_function (type d) ?(every_set = false) name
     (elements (Nx.mul x x));
   equal ~msg:(msg "add a scalar") (array bits)
     (ys (fun v -> v +. 1.))
-    (elements (Nx.add x (Nx.scalar D.Float32 1.)));
+    (elements (Nx.add x (Nx.scalar_like x 1.)));
+  equal ~msg:(msg "add_s") (array bits)
+    (ys (fun v -> v +. 1.))
+    (elements (Nx.add_s x 1.));
   let less = Nx.less x (Nx.zeros_like x) in
   equal ~msg:(msg "less") (array bool) (ys (fun v -> v < 0.)) (elements less);
   equal ~msg:(msg "where") (array bits)
@@ -1269,16 +1283,22 @@ let every_function (type d) ?(every_set = false) name
   equal ~msg:(msg "reshape") (array bits) xs (elements (Nx.reshape [| 4 |] x));
   equal ~msg:(msg "copy") (array bits) xs (elements (Nx.copy x));
   ignore (Nx.Repr.array x);
-  equal ~msg:(msg "shards") bool (not every_set) (Nx.Repr.shards x <> None)
+  equal ~msg:(msg "shards") int
+    (List.length (Nx.rigs (Nx.Placement.devices (Nx.placement x))))
+    (Iarray.length (Nx.Repr.shards x))
 
-let test_every_set () =
+let test_every_placement () =
   let host = on_host Plain D.Float32 [| 2; 2 |] [| 1.; -2.; 3.; -4. |] in
   every_function "host" host;
+  every_function "a host creation"
+    (Nx.add
+       (Nx.zeros D.Float32 [| 2; 2 |])
+       (Nx.full D.Float32 [| 2; 2 |] (-1.5)));
   every_function "one memory device" (Nx.place Count.on host);
   every_function "two, whole on each" (Nx.place Count2.on host);
   every_function "two, split" (Nx.place (Count2.split ~axis:0) host);
-  every_function ~every_set:true "a value of every set"
-    (Nx.add (Nx.zeros D.Float32 [| 2; 2 |]) (Nx.scalar D.Float32 (-1.5)))
+  every_function "a creation at a split"
+    (Nx.full_at (Count2.split ~axis:0) D.Float32 [| 2; 2 |] 2.5)
 
 (* An operation keeps nothing of its caller's arrays: overwriting an int-array
    argument after the call changes neither the value's shape nor its elements
@@ -1292,8 +1312,8 @@ let test_zeros_shape_owned () =
   equal ~msg:"read" (array bits) [| 0.; 0. |]
     (elements (Nx.add x (Nx.place Nx.Host.on (Nx.zeros D.Float32 [| 2 |]))))
 
-(* Every public function taking an int array, over a value of every set and a
-   value with bytes, the argument overwritten after the call. *)
+(* Every public function taking an int array, over a creation and a value
+   with bytes, the argument overwritten after the call. *)
 let law_arguments_owned (junk, s) =
   let overwrite a =
     Array.iteri (fun i _ -> a.(i) <- junk.(i mod Array.length junk)) a
@@ -1312,38 +1332,15 @@ let law_arguments_owned (junk, s) =
   in
   let host = on_host Plain D.Float32 [| n |] (Array.init n Float.of_int) in
   call "zeros" (fun a -> Nx.zeros D.Float32 a);
-  call "reshape of a formula" (fun a ->
-      Nx.reshape a
-        (Nx.add (Nx.zeros D.Float32 [| n |]) (Nx.scalar D.Float32 1.)));
+  call "zeros_at" (fun a -> Nx.zeros_at Count2.on D.Float32 a);
+  call "reshape of a creation" (fun a ->
+      Nx.reshape a (Nx.add_s (Nx.zeros D.Float32 [| n |]) 1.));
   call "reshape" (fun a -> Nx.reshape a host)
 
 let int_arrays =
   Gen.pair
     (Gen.array ~size:(Gen.int_range 1 3) (Gen.int_range (-2) 5))
     (Gen.array ~size:(Gen.int_range 0 3) (Gen.int_range 0 3))
-
-(* A placed value of every set is memory of its own: writing it reaches neither
-   another placement of the formula nor a later operation on it. *)
-let test_placed_owns () =
-  let c = Nx.add (Nx.zeros D.Float32 [| 2 |]) (Nx.scalar D.Float32 1.) in
-  let first = Option.get (Nx.Repr.array (Nx.place Nx.Host.on c)) in
-  let second = Option.get (Nx.Repr.array (Nx.place Nx.Host.on c)) in
-  equal ~msg:"two placements share no memory" bool false
-    (Rig.Buffer.overlaps (A.buffer first) (A.buffer second));
-  A.set first [| 0 |] 42.;
-  equal ~msg:"a later use" (array bits) [| 2.; 2. |] (elements (Nx.add c c))
-
-(* A movement of a formula placed after an operation read the formula: memory of
-   its own, which the formula's later uses never see. *)
-let test_placed_view_owns () =
-  let c = Nx.add (Nx.zeros D.Float32 [| 2 |]) (Nx.scalar D.Float32 1.) in
-  let h = on_host Plain D.Float32 [| 2 |] [| 1.; 1. |] in
-  equal ~msg:"a first use" (array bits) [| 2.; 2. |] (elements (Nx.add h c));
-  let v =
-    Option.get (Nx.Repr.array (Nx.place Nx.Host.on (Nx.reshape [| 2; 1 |] c)))
-  in
-  A.set v [| 0; 0 |] 42.;
-  equal ~msg:"a later use" (array bits) [| 2.; 2. |] (elements (Nx.add h c))
 
 exception Failed of int array * float * int32
 
@@ -1375,7 +1372,7 @@ exception One of int array * float
 (* A check of one element reduces nothing: its flag is read where it lies, on
    its device or on the one of a cut placement that holds it, and the check
    holds the flag's memory until a wait reads it, so a donation of the flag
-   computes afresh. A flag of every set is computed there first, as alone. *)
+   computes afresh. *)
 let test_check_one () =
   let shape = [| 1; 1 |] in
   let host dt v =
@@ -1412,15 +1409,11 @@ let test_check_one () =
   donated Count.on;
   donated (Count2.split ~axis:0);
   donated (Count2.split ~axis:1);
-  let on_count dt v = Nx.place Count.on (host dt v) in
-  let x = on_count D.Float32 5. in
-  let formula () = Nx.equal_s (Nx.zeros D.Float32 shape) 1. in
+  let x = Nx.place Count.on (host D.Float32 5.) in
+  let flag = Nx.equal_s (Nx.zeros_at Count.on D.Float32 shape) 1. in
   C.reset ();
-  ignore (Nx.place Count.on (formula ()));
-  let alone = C.calls () in
-  C.reset ();
-  check (formula ()) x;
-  equal ~msg:"a formula flag's kernel calls" int alone (C.calls ());
+  check flag x;
+  equal ~msg:"a created flag's kernel calls" int 0 (C.calls ());
   raises failed (fun () -> Nx.sync x)
 
 let sets =
@@ -1431,11 +1424,8 @@ let sets =
       test "a check of one element reduces nothing" test_check_one;
       test "zeros_like reads none of its argument's elements"
         test_zeros_like_reads_nothing;
-      test "every function takes a value of every set" test_every_set;
+      test "every function takes a value at any placement" test_every_placement;
       test "zeros keeps nothing of its shape argument" test_zeros_shape_owned;
-      test "a placed formula is memory of its own" test_placed_owns;
-      test "a placed movement of a formula is memory of its own"
-        test_placed_view_owns;
       prop "an int-array argument overwritten after the call changes nothing"
         int_arrays law_arguments_owned;
     ]
@@ -1475,6 +1465,16 @@ let words f =
   done;
   (Gc.minor_words () -. before) /. Float.of_int n
 
+(* [f ()] under a handler that fails on any effect [f] performs. *)
+let effectless f =
+  let effc (type a) (e : a Effect.t) =
+    ignore e;
+    Some
+      (fun (_ : (a, _) Effect.Deep.continuation) ->
+        fail "an effect was performed")
+  in
+  Effect.Deep.match_with f () { retc = Fun.id; exnc = raise; effc }
+
 let allocation =
   group "allocation"
     [
@@ -1483,6 +1483,18 @@ let allocation =
       test "an add of one-element host values allocates its budget" (fun () ->
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
           at_most (float 0.5) ~than:51. (words (fun () -> Nx.add a a)));
+      test "an add_s of a one-element host value allocates its budget"
+        (fun () ->
+          let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
+          at_most (float 0.5) ~than:51. (words (fun () -> Nx.add_s a 1.)));
+      test "an add of host values performs no effect" (fun () ->
+          let a = on_host Plain D.Float32 [| 3 |] [| 1.; 2.; 3. |] in
+          equal (array bits) [| 2.; 4.; 6. |]
+            (elements (effectless (fun () -> Nx.add a a))));
+      test "an add_s of a host value performs no effect" (fun () ->
+          let a = on_host Plain D.Float32 [| 3 |] [| 1.; 2.; 3. |] in
+          equal (array bits) [| 2.; 3.; 4. |]
+            (elements (effectless (fun () -> Nx.add_s a 1.))));
       test "a copy of a one-element host value allocates its budget"
         (fun () ->
           let a = on_host Plain D.Float32 [| 1 |] [| 1. |] in
@@ -1640,8 +1652,8 @@ let kinds =
 type movement = Unit_axis | Reversed | Leading | Sliced
 
 (* An operation over [x]: [combine x x]; a fold along an axis; a movement,
-   then the moved value combined with itself; and [x] combined with a constant
-   of its shape: an arange's cumulative sum along an axis, cast. *)
+   then the moved value combined with itself; and [x] combined with a ramp of
+   its shape where it lies: an arange's cumulative sum along an axis, cast. *)
 type op = Combine | Fold of int | Moved of movement | Beside of int
 
 let pp_op ppf = function
@@ -1651,7 +1663,7 @@ let pp_op ppf = function
   | Moved Reversed -> Format.pp_print_string ppf "transposed"
   | Moved Leading -> Format.pp_print_string ppf "broadcast along a new axis"
   | Moved Sliced -> Format.pp_print_string ppf "sliced along its last axis"
-  | Beside a -> Format.fprintf ppf "beside a constant scanned along %d" a
+  | Beside a -> Format.fprintf ppf "beside a ramp scanned along %d" a
 
 let apply (type v s d) (k : (v, s) kind) op (x : (v, s, d) Nx.t) :
     (v, s, d) Nx.t =
@@ -1672,8 +1684,11 @@ let apply (type v s d) (k : (v, s) kind) op (x : (v, s, d) Nx.t) :
       in
       k.combine y y
   | Beside a ->
+      (* The ramp made whole on each of [x]'s devices, then cut as [x] is. *)
       let n = Array.fold_left ( * ) 1 s in
-      let c = Nx.cumsum ~axis:a (Nx.reshape s (Nx.arange D.Int32 0 n 1)) in
+      let p = Nx.placement x in
+      let ramp = Nx.arange_at (Nx.Placement.uncut p) D.Int32 0 n 1 in
+      let c = Nx.cumsum ~axis:a (Nx.place p (Nx.reshape s ramp)) in
       k.combine x (Nx.cast k.dtype c)
 
 type case =
@@ -1727,8 +1742,8 @@ let law_placed (Case (k, s, data, w, op)) =
         (not (List.mem (Array.length s - 1) cut))
   | Moved _ -> cover "a movement of a cut value" true
   | Beside a ->
-      cover "a constant scanned along a cut axis" (List.mem a cut);
-      cover "a constant computed whole along an axis, beside another cut"
+      cover "a ramp scanned along a cut axis" (List.mem a cut);
+      cover "a ramp scanned along a cut axis, beside another cut"
         (List.mem a cut && List.length cut > 1)
   | Combine -> ());
   cover "a signalling NaN" (signals k.dtype data);
@@ -3764,7 +3779,7 @@ let () =
          kernels;
          declines;
          donation;
-         constants;
+         creations;
          sets;
          allocation;
          placements;

@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Leaves, values of every set made from numbers, each against the elements its
-   doc states, at every dtype; and the creations beside a reference, at its
-   placement. *)
+(* Leaves, host values made from numbers, each against the elements its doc
+   states, at every dtype; their [_at] forms at their placements; and the
+   creations beside a reference, at its placement. *)
 
 open Windtrap
 module D = Nx_array.Dtype
@@ -17,7 +17,8 @@ module C = Nx_support.Counting
 module Count = (val Nx.devices ~kernels:(module C) [ m 2 ])
 
 let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
-let placement = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
+(* Placements of one brand, compared as {!Nx.Placement.equal} does. *)
+let placement () = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
 
 let pp_ints ppf a =
   Format.fprintf ppf "[%s]"
@@ -450,24 +451,183 @@ let eye =
             (Nx.to_array (Nx.eye Nx.int32 2)));
     ]
 
+(* Placements *)
+
+(* A creation's host form and its [_at] form: [lies p] is where the [_at]
+   form at [p] lies, [p] itself but for a 0-d value. *)
+type pair =
+  | Pair : {
+      name : string;
+      dtype : ('v, 's) D.t;
+      host : unit -> ('v, 's, Nx.host) Nx.t;
+      at : 'd. 'd Nx.Placement.t -> ('v, 's, 'd) Nx.t;
+      lies : 'd. 'd Nx.Placement.t -> 'd Nx.Placement.t;
+    }
+      -> pair
+
+(* An [_at] form, polymorphic in its brand. *)
+type ('v, 's) at = { f : 'd. 'd Nx.Placement.t -> ('v, 's, 'd) Nx.t }
+
+let pair name dtype host at =
+  Pair { name; dtype; host; at = at.f; lies = Fun.id }
+
+let pairs =
+  let f32 = Nx.float32 in
+  [
+    pair "zeros" f32
+      (fun () -> Nx.zeros f32 [| 4; 3 |])
+      { f = (fun p -> Nx.zeros_at p f32 [| 4; 3 |]) };
+    pair "ones" Nx.int8
+      (fun () -> Nx.ones Nx.int8 [| 4; 3 |])
+      { f = (fun p -> Nx.ones_at p Nx.int8 [| 4; 3 |]) };
+    pair "full" f32
+      (fun () -> Nx.full f32 [| 4; 3 |] 2.5)
+      { f = (fun p -> Nx.full_at p f32 [| 4; 3 |] 2.5) };
+    Pair
+      {
+        name = "scalar";
+        dtype = Nx.int32;
+        host = (fun () -> Nx.scalar Nx.int32 7l);
+        at = (fun p -> Nx.scalar_at p Nx.int32 7l);
+        lies = Nx.Placement.uncut;
+      };
+    pair "arange" Nx.int64
+      (fun () -> Nx.arange Nx.int64 3 19 2)
+      { f = (fun p -> Nx.arange_at p Nx.int64 3 19 2) };
+    pair "arange_f" f32
+      (fun () -> Nx.arange_f f32 0.5 4.5 0.5)
+      { f = (fun p -> Nx.arange_f_at p f32 0.5 4.5 0.5) };
+    pair "linspace" Nx.float64
+      (fun () -> Nx.linspace Nx.float64 (-1.) 2. 7)
+      { f = (fun p -> Nx.linspace_at p Nx.float64 (-1.) 2. 7) };
+    pair "logspace" f32
+      (fun () -> Nx.logspace f32 ~base:2. 0. 5. 6)
+      { f = (fun p -> Nx.logspace_at p f32 ~base:2. 0. 5. 6) };
+    pair "geomspace" Nx.float64
+      (fun () -> Nx.geomspace Nx.float64 1. 1000. 5)
+      { f = (fun p -> Nx.geomspace_at p Nx.float64 1. 1000. 5) };
+    pair "eye" Nx.uint8
+      (fun () -> Nx.eye ~m:5 ~k:1 Nx.uint8 4)
+      { f = (fun p -> Nx.eye_at ~m:5 ~k:1 p Nx.uint8 4) };
+    pair "fftfreq" Nx.float64
+      (fun () -> Nx.fftfreq Nx.float64 ~d:0.5 9)
+      { f = (fun p -> Nx.fftfreq_at p Nx.float64 ~d:0.5 9) };
+    pair "rfftfreq" f32
+      (fun () -> Nx.rfftfreq f32 8)
+      { f = (fun p -> Nx.rfftfreq_at p f32 8) };
+    pair "hann" Nx.float64
+      (fun () -> Nx.hann Nx.float64 6)
+      { f = (fun p -> Nx.hann_at p Nx.float64 6) };
+  ]
+
+(* The host form lies on the host; the [_at] form at a split lies there,
+   each device holding its window, and holds the host form's elements. *)
+let test_pair (Pair { dtype; host; at; lies; _ }) =
+  let h = host () in
+  equal ~msg:"host form" (placement ()) Nx.Host.on (Nx.placement h);
+  let p = S2.split ~axis:0 in
+  let y = at p in
+  equal ~msg:"_at form" (placement ()) (lies p) (Nx.placement y);
+  (* A split of [n] elements over two devices gives the first [n / 2] rounded
+     up; a 0-d value lies whole on each. *)
+  let window j =
+    let s = Array.copy (Nx.shape y) in
+    if Array.length s > 0 then begin
+      let n = s.(0) in
+      s.(0) <- (if j < n mod 2 then (n / 2) + 1 else n / 2)
+    end;
+    s
+  in
+  Iarray.iteri
+    (fun j a ->
+      equal ~msg:(Printf.sprintf "device %d's window" j) (array int) (window j)
+        (Iarray.to_array (Nx_array.Layout.shape (Nx_array.layout a))))
+    (Nx.Repr.shards y);
+  equal_elements dtype (Nx.to_array h) (Nx.to_array y)
+
+(* Placements over two devices, and shapes of up to three axes: an [_at]
+   form lies at its placement where the shape has every axis it cuts, and
+   raises naming itself elsewhere. *)
+let placement_gen =
+  Gen.of_list ~pp:Nx.Placement.pp
+    [
+      S2.on;
+      S2.split ~axis:0;
+      S2.split ~axis:1;
+      S2.split ~axis:2;
+      Nx.Placement.device S2.v (m 1);
+    ]
+
+let law_at (p, (s, v)) =
+  let cut = not (Nx.Placement.equal (Nx.Placement.uncut p) p) in
+  let lacks =
+    List.exists
+      (fun a -> Nx.Placement.equal p (S2.split ~axis:a) && a >= Array.length s)
+      [ 0; 1; 2 ]
+  in
+  cover "cuts an axis the shape lacks" lacks;
+  cover "cuts an axis the shape has" (cut && not lacks);
+  if lacks then invalid ~by:"Nx.full_at" (fun () -> Nx.full_at p Nx.float32 s v)
+  else
+    let y = Nx.full_at p Nx.float32 s v in
+    equal (placement ()) p (Nx.placement y);
+    let stored = D.of_float D.Float32 v in
+    equal_elements D.Float32 (Array.make (numel s) stored) (Nx.to_array y)
+
+let test_scalar_at_uncut () =
+  let mesh = Nx.Mesh.v S2.v [ ("x", 2) ] in
+  List.iter
+    (fun p ->
+      let y = Nx.scalar_at p Nx.float32 1.5 in
+      equal (placement ()) S2.on (Nx.placement y);
+      equal (array float_exact) [| 1.5 |] (Nx.to_array y))
+    [
+      S2.split ~axis:0;
+      S2.split ~axis:3;
+      Nx.Placement.mesh mesh [ (1, [ "x" ]) ];
+    ]
+
+let placements =
+  group "placements"
+    [
+      cases "each creation's host form and _at form"
+        ~name:(fun (Pair { name; _ }) -> name)
+        pairs test_pair;
+      prop "full_at lies at its placement"
+        (Gen.pair placement_gen (Gen.pair shape (Gen.float_range (-4.) 4.)))
+        law_at;
+      test "scalar_at at a cut placement lies whole on each device"
+        test_scalar_at_uncut;
+      refusals
+        [
+          ( "Nx.zeros_at",
+            fun () ->
+              ignore (Nx.zeros_at (S2.split ~axis:1) Nx.float32 [| 4 |]) );
+          ( "Nx.arange_at",
+            fun () -> ignore (Nx.arange_at (S2.split ~axis:1) Nx.int32 0 4 1) );
+          ( "Nx.eye_at",
+            fun () -> ignore (Nx.eye_at (S2.split ~axis:2) Nx.float32 3) );
+          ( "Nx.hann_at",
+            fun () -> ignore (Nx.hann_at (S2.split ~axis:1) Nx.float32 8) );
+          ( "Nx.ones_at",
+            fun () -> ignore (Nx.ones_at S2.on Nx.float32 [| -1 |]) );
+          ( "Nx.full_at",
+            fun () -> ignore (Nx.full_at S2.on Nx.uint8 [| 2 |] 256) );
+        ];
+    ]
+
 (* Beside a reference *)
 
 let test_like_placement () =
   let s = [| 4; 2 |] in
   let x = Nx.place (S2.split ~axis:0) (Nx.zeros Nx.float32 s) in
-  let at y = Option.get (Nx.placement y) in
-  equal placement (S2.split ~axis:0) (at (Nx.ones_like x));
-  equal placement (S2.split ~axis:0) (at (Nx.full_like x 2.));
-  equal placement S2.on (at (Nx.scalar_like x 2.));
+  let at y = Nx.placement y in
+  equal (placement ()) (S2.split ~axis:0) (at (Nx.ones_like x));
+  equal (placement ()) (S2.split ~axis:0) (at (Nx.full_like x 2.));
+  equal (placement ()) S2.on (at (Nx.scalar_like x 2.));
   equal (array float_exact) (Array.make 8 2.) (Nx.to_array (Nx.full_like x 2.));
   equal (array float_exact) (Array.make 8 1.) (Nx.to_array (Nx.ones_like x));
   equal (array float_exact) [| 2. |] (Nx.to_array (Nx.scalar_like x 2.))
-
-let test_like_every_set () =
-  let x = Nx.zeros Nx.int8 [| 3 |] in
-  equal bool true (Nx.placement (Nx.full_like x 5) = None);
-  equal bool true (Nx.placement (Nx.scalar_like x 5) = None);
-  equal (array int) [| 1; 1; 1 |] (Nx.to_array (Nx.ones_like x))
 
 (* A sub-byte fill is one kernel call on a device of nx.cpu's kernels. *)
 let test_like_sub_byte () =
@@ -487,7 +647,7 @@ let test_like_sub_byte () =
 let test_like_host () =
   let x = Nx.create Nx.bool [| 2 |] [| false; false |] in
   equal bool true
-    (Nx.Placement.equal Nx.Host.on (Option.get (Nx.placement (Nx.ones_like x))));
+    (Nx.Placement.equal Nx.Host.on (Nx.placement (Nx.ones_like x)));
   equal (array bool) [| true; true |] (Nx.to_array (Nx.ones_like x))
 
 let like =
@@ -495,8 +655,6 @@ let like =
     [
       test "a split reference: like is split, scalar_like whole on each"
         test_like_placement;
-      test "a reference of every set gives values of every set"
-        test_like_every_set;
       test "a host reference gives host values" test_like_host;
       test "a sub-byte reference fills in one kernel call" test_like_sub_byte;
       refusals
@@ -507,4 +665,4 @@ let like =
 
     ]
 
-let () = exit (run "nx creation" [ fills; ranges; eye; like ])
+let () = exit (run "nx creation" [ fills; ranges; eye; placements; like ])

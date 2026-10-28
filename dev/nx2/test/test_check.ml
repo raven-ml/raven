@@ -14,6 +14,9 @@ module P = Nx.Ptree
 let m = Nx_support.memory
 
 module S = (val Nx.devices [ m 0 ])
+module S2 = (val Nx.devices [ m 0; m 1 ])
+module C = Nx_support.Counting
+module Count = (val Nx.devices ~kernels:(module C) [ m 1 ])
 
 exception At of int array * float * int32 * float
 exception Flag of int array
@@ -21,6 +24,10 @@ exception Element of string
 
 let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
 let numel s = Array.fold_left ( * ) 1 s
+
+(* Placements over any one set. *)
+let placement () = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
+let pass _ _ = Failure "the check passed its data"
 
 let pp_ints ppf a =
   Format.fprintf ppf "[%s]"
@@ -125,13 +132,19 @@ let elsewhere =
           Nx.check P.unit ok () (fun i () -> Flag i);
           raises (Flag [| 1 |]) (fun () -> Nx.sync ok);
           Nx.sync ok);
-      test "flags of every set compute where the data has bytes" (fun () ->
-          let ok = Nx.full Nx.bool [| 2 |] false in
+      test "a failure's 0-d values lie where their data lies" (fun () ->
+          let ok = Nx.full_at S.on Nx.bool [| 2 |] false in
           let data =
             Nx.place S.on (Nx.create Nx.float32 [| 2 |] [| 5.; 6. |])
           in
-          Nx.check P.tensor ok data (fun i x -> At (i, Nx.item [] x, 0l, 0.));
-          raises (At ([| 0 |], 5., 0l, 0.)) (fun () -> Nx.sync data));
+          let lies = ref None in
+          Nx.check P.tensor ok data (fun i x ->
+              lies := Some (Nx.placement x);
+              At (i, Nx.item [] x, 0l, 0.));
+          raises (At ([| 0 |], 5., 0l, 0.)) (fun () -> Nx.sync data);
+          equal ~msg:"the 0-d value's placement"
+            (option (placement ()))
+            (Some S.on) !lies);
       test "a failure found at a later check's issue raises at the next wait"
         (fun () ->
           let ok b = Nx.place S.on (Nx.create Nx.bool [| 2 |] [| true; b |]) in
@@ -152,9 +165,57 @@ let elsewhere =
           Nx.sync (fst data));
     ]
 
+(* One array, whose walk passes the array it is given through [f]. *)
+let through f = P.v (fun c x -> f (P.Walk.tensor c x))
+
+let tried =
+  group "the rebuild tried at the call"
+    [
+      test "is over 0-d stand-ins at each array's placement, uncut" (fun () ->
+          let at = S2.split ~axis:0 in
+          let ok = Nx.full_at at Nx.bool [| 2 |] true in
+          let x = Nx.place at (Nx.create Nx.float32 [| 2 |] [| 1.; 2. |]) in
+          let seen = ref [] in
+          let record y =
+            seen := (Nx.shape y, Nx.placement y) :: !seen;
+            y
+          in
+          Nx.check (through record) ok x pass;
+          Nx.sync ok;
+          match !seen with
+          | [] -> fail "the walk saw no array"
+          | (shape, lies) :: _ ->
+              equal ~msg:"the stand-in's shape" (array int) [||] shape;
+              equal ~msg:"the stand-in's placement" (placement ()) S2.on lies);
+      test "computes nothing on the devices" (fun () ->
+          let ok = Nx.full_at Count.on Nx.bool [| 4 |] true in
+          let data =
+            ( Nx.full_at Count.on Nx.float32 [| 4 |] 1.,
+              Nx.full_at Count.on Nx.int32 [| 4 |] 2l )
+          in
+          let calls f =
+            C.reset ();
+            f ();
+            Nx.sync ok;
+            C.calls ()
+          in
+          let bare = calls (fun () -> Nx.check P.unit ok () pass) in
+          let full =
+            calls (fun () -> Nx.check P.(pair tensor tensor) ok data pass)
+          in
+          equal ~msg:"kernel calls with data, as without" int bare full);
+      test "raises where the walk computes on a stand-in" (fun () ->
+          let ok = Nx.create Nx.bool [| 2 |] [| true; false |] in
+          let x = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |] in
+          raises
+            (Invalid_argument
+               "Nx.check: the structure's walk refuses 0-d arrays: Nx.add: a \
+                value traced by Nx.check reached eager execution") (fun () ->
+              Nx.check (through (fun y -> Nx.add y y)) ok x pass));
+    ]
+
 let walks =
   let key () = Nx.Rng.key 7 and keys () = P.v Nx.Rng.walk in
-  let pass _ _ = Failure "the check passed its data" in
   group "walks that refuse 0-d arrays"
     [
       test "raise at the call on the host, naming Nx.check" (fun () ->
@@ -165,7 +226,8 @@ let walks =
           let ok =
             Nx.place S.on (Nx.create Nx.bool [| 2 |] [| true; false |])
           in
-          invalid ~by:"Nx.check" (fun () -> Nx.check (keys ()) ok (key ()) pass);
+          let key = Nx.Rng.place S.on (key ()) in
+          invalid ~by:"Nx.check" (fun () -> Nx.check (keys ()) ok key pass);
           Nx.sync ok;
           Nx.check P.unit
             (Nx.place S.on (Nx.create Nx.bool [| 1 |] [| true |]))
@@ -174,4 +236,4 @@ let walks =
           Nx.sync ok);
     ]
 
-let () = exit (run "nx check" [ host; elsewhere; walks ])
+let () = exit (run "nx check" [ host; elsewhere; tried; walks ])

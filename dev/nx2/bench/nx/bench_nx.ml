@@ -5,7 +5,7 @@
 
 (* nx's per-call costs above the array layer, each row what a user calls: an
    operation on one-element host values, its kernel called as nx calls it and
-   directly, a decode step's cache update, a view, constants, an operation
+   directly, a decode step's cache update, a view, creations, an operation
    over two devices, reading a value's shape, placing, and operations beside
    and under interpretations.
 
@@ -74,6 +74,7 @@ let sin_op x : ((float, D.float32_elt, Nx.host) Nx.t * unit) Nx.Prim.t =
       prog;
       outs = Nx.Prim.[ D.Float32 ];
       loads = [| Plain x |];
+      at = None;
     }
 
 (* The sum of [xs], float32 arrays of one shape, built as one map of an
@@ -99,6 +100,7 @@ let sum_op xs : ((float, D.float32_elt, Nx.host) Nx.t * unit) Nx.Prim.t =
       prog;
       outs = Nx.Prim.[ D.Float32 ];
       loads = Iarray.map (fun x -> Nx.Prim.Plain x) (Iarray.of_array xs);
+      at = None;
     }
 
 let dispatch_rows =
@@ -143,6 +145,7 @@ let dispatch_rows =
           Nx.cast D.Float64 (Nx.donate (Nx.add x x)));
       Thumper.bench_with_setup "add-scalar-1" ~setup:one (fun x ->
           Nx.add x (Nx.scalar D.Float32 1.));
+      Thumper.bench_with_setup "add_s-1" ~setup:one (fun x -> Nx.add_s x 1.);
       Thumper.bench_with_setup "add-held-scalar-1"
         ~setup:(fun () -> (one (), half ()))
         (fun (x, half) -> Nx.add x half);
@@ -186,8 +189,8 @@ let small_rows =
     ]
 
 (* Elementwise operations of one element to past the caches: an add at
-   float32, float16 and bfloat16, a where, constants placed on the host (a
-   fill and two ranges), and adds of a transposed and of a broadcast
+   float32, float16 and bfloat16, a where, host creations (a fill and two
+   ranges), and adds of a transposed and of a broadcast
    operand. *)
 let elementwise_rows =
   let m = 1 lsl 20 in

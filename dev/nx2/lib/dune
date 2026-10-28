@@ -14,7 +14,6 @@
   partial
   donate
   exec
-  constant
   check
   eval
   repr
@@ -36,7 +35,6 @@
   partial
   donate
   exec
-  constant
   check
   eval
   repr

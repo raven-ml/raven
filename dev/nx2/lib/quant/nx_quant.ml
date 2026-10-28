@@ -151,13 +151,15 @@ let per g n t = Nx.reshape (Array.append g [| n; 1 |]) t
    along that axis, so each device computes its own blocks' fields, where
    [Nx.stack] would assemble the fields whole on each device. *)
 let pick n f =
-  let index = Nx.reshape [| n; 1 |] (Nx.arange Nx.int32 0 n 1) in
   let field i = Nx.unsqueeze ~axes:[ -2 ] (f i) in
+  let first = field 0 in
+  let at = Nx.Placement.uncut (Nx.placement first) in
+  let index = Nx.reshape [| n; 1 |] (Nx.arange_at at Nx.int32 0 n 1) in
   let rec go i acc =
     if i = n then acc
     else go (i + 1) (Nx.where (Nx.equal_s index (Int32.of_int i)) (field i) acc)
   in
-  go 1 (field 0)
+  go 1 first
 
 (* MXFP4. A code is an e2m1 float, a nibble that float4_e2m1fn reads as it is: a
    sign bit, two exponent bits and a mantissa bit. A scale byte is an e8m0
@@ -510,7 +512,8 @@ let route ids =
 (* Group [g] of the experts [[| e; n; k |]] is expert [g]'s rows: the ids
    below [g] counted. *)
 let by_expert r e =
-  Nx.searchsorted ~side:`Left r.sorted (Nx.arange Nx.int64 0 (e + 1) 1)
+  let at = Nx.Placement.uncut (Nx.placement r.sorted) in
+  Nx.searchsorted ~side:`Left r.sorted (Nx.arange_at at Nx.int64 0 (e + 1) 1)
 
 (* The experts the sorted ids name, in range, each once: [min p e] slots, slot
    [j] the [j]-th distinct id, and [e], which gathers zero bytes, where fewer
@@ -532,7 +535,10 @@ let slots r e =
          (Nx.less_s sorted (Int64.of_int e)))
   in
   let rank = Nx.cumsum (Nx.cast Nx.int64 first) in
-  let at = Nx.searchsorted ~side:`Left rank (Nx.arange Nx.int64 1 (s + 2) 1) in
+  let here = Nx.Placement.uncut (Nx.placement rank) in
+  let at =
+    Nx.searchsorted ~side:`Left rank (Nx.arange_at here Nx.int64 1 (s + 2) 1)
+  in
   let past = Nx.scalar_like sorted (Int64.of_int e) in
   let below = Nx.searchsorted ~side:`Left sorted past in
   let offsets = Nx.minimum at below in
@@ -553,10 +559,9 @@ let segmented (type b) r (x : (float, b, _) Nx.t) b scale offsets =
   (* Each position's row of [x], whose leading axes broadcast to the ids'. *)
   let xs = Array.sub (Nx.shape x) 0 (Array.length r.lead) in
   let m = Array.fold_left ( * ) 1 xs in
-  let source =
-    Nx.reshape [| r.p |]
-      (Nx.broadcast_to r.lead (Nx.reshape xs (Nx.arange Nx.int64 0 m 1)))
-  in
+  let here = Nx.Placement.uncut (Nx.placement x) in
+  let positions = Nx.reshape xs (Nx.arange_at here Nx.int64 0 m 1) in
+  let source = Nx.reshape [| r.p |] (Nx.broadcast_to r.lead positions) in
   let rows =
     Nx.take ~axis:0 (Nx.take r.order source) (Nx.reshape [| m; k |] x)
   in

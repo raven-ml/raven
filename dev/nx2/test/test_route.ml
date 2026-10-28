@@ -827,46 +827,6 @@ let keeps =
           equal placement p r.result
       | _ -> ())
 
-(* A constant computed for results at [p]: its route keeps [p]'s devices, keeps
-   every cut of [p] its rule allows, and reads each operand where each device's
-   window of the results depends on it. It computes by partials where it reads
-   an operand cut along an axis the rule scans, as {!computes} states for any
-   route: a scan read so would otherwise scan each window from its start. *)
-let at_law =
-  let wanted =
-    let open Gen in
-    with_pp
-      (fun ppf (c, p) ->
-        Format.fprintf ppf "%a wanted at %a" pp_case c Devices.pp_placement p)
-      (let* c = case in
-       let+ p = placement_of (Array.length c.result) in
-       (c, Option.value ~default:(Devices.on s4) p))
-  in
-  prop ~count:500 "a constant's results are computed where it reads operands"
-    wanted (fun (c, p) ->
-      let r = Route.at ~by:"Nx.f" c.rule c.shapes p in
-      let rs = c.result in
-      equal (list int) ~msg:"the devices wanted" (devices_of p)
-        (devices_of r.result);
-      cover "a cut kept" (Grid.cuts (Devices.grid r.result) <> [||]);
-      let partials = cut_fold c r.operands && not (empty_fold c) in
-      cover "by partials" partials;
-      equal bool ~msg:"by partials" partials (r.compute = Route.Partials);
-      Array.iteri
-        (fun j k ->
-          let w = Devices.window ~by:"t" r.result rs j in
-          let wp = Devices.window ~by:"t" p rs (require_some (position p k)) in
-          equal bool ~msg:"the window holds the one wanted" true
-            (contains w wp);
-          Array.iteri
-            (fun i q ->
-              let pos = require_some (position q k) in
-              let have = Devices.window ~by:"t" q c.shapes.(i) pos in
-              equal bool ~msg:"the operand's window holds what it reads" true
-                (contains have (depends c i w)))
-            r.operands)
-        (Grid.devices (Devices.grid r.result)))
-
 let cases_ =
   group "routes"
     [
@@ -1274,6 +1234,6 @@ let () =
     (run "nx route"
        [
          group "laws"
-           [ law; refusals; exact; computes; keeps; at_law; move_law ];
+           [ law; refusals; exact; computes; keeps; move_law ];
          cases_;
        ])

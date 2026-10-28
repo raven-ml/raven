@@ -214,7 +214,7 @@ let at_call =
     [
       ( "on the host",
         fun () -> check (host_of Nx.bool [| 3 |] ok) [] (fun _ () -> Failed 0) );
-      ( "of every set",
+      ( "of a host creation",
         fun () ->
           check (Nx.Infix.(Nx.arange Nx.int32 0 3 1 <>$ 1l)) [] (fun _ () ->
               Failed 0) );
@@ -361,7 +361,7 @@ let others =
           let ok = Nx.place S.on (host_of Nx.bool [| 0; 2 |] [||]) in
           check ok [] (fun _ () -> Failed 0);
           Nx.sync ok);
-      test "sync returns for a value of every set" (fun () ->
+      test "sync returns for a host creation" (fun () ->
           Nx.sync (Nx.arange Nx.int32 0 3 1));
       test "sync refuses a dead value" (fun () ->
           let x = Nx.place S.on (host_of Nx.float32 [| 2 |] [| 1.; 2. |]) in

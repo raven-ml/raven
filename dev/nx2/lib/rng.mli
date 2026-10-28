@@ -4,11 +4,14 @@
   ---------------------------------------------------------------------------*)
 
 (** [Nx.Rng]: keys, samplers and the scope. Each draw is one map whose elements
-    compute their Threefry blocks from their positions. *)
+    compute their Threefry blocks from their positions. The scope's keys are
+    host keys, computed when drawn and received by no interpretation; a
+    keyless draw with a parameter makes its key where the parameter lies, from
+    the two words of the scope's next key. *)
 
 type +'d key = private (int32, Nx_array.Dtype.int32_elt, 'd) Value.t
 
-val key : int -> 'd key
+val key : int -> Devices.host key
 val of_tensor : (int32, Nx_array.Dtype.int32_elt, 'd) Value.t -> 'd key
 val to_tensor : 'd key -> (int32, Nx_array.Dtype.int32_elt, 'd) Value.t
 val place : 'e Devices.placement -> 'd key -> 'e key
@@ -21,38 +24,40 @@ val fold_in_tensor :
   'd key -> (int32, Nx_array.Dtype.int32_elt, 'd) Value.t -> 'd key
 
 val bits :
-  ?key:'d key -> int array -> (int32, Nx_array.Dtype.int32_elt, 'd) Value.t
+  ?key:Devices.host key ->
+  int array ->
+  (int32, Nx_array.Dtype.int32_elt, Devices.host) Value.t
 
 val uniform :
-  ?key:'d key ->
+  ?key:Devices.host key ->
   (float, 's) Nx_array.Dtype.t ->
   int array ->
-  (float, 's, 'd) Value.t
+  (float, 's, Devices.host) Value.t
 
 val normal :
-  ?key:'d key ->
+  ?key:Devices.host key ->
   (float, 's) Nx_array.Dtype.t ->
   int array ->
-  (float, 's, 'd) Value.t
+  (float, 's, Devices.host) Value.t
 
 val exponential :
-  ?key:'d key ->
+  ?key:Devices.host key ->
   (float, 's) Nx_array.Dtype.t ->
   int array ->
-  (float, 's, 'd) Value.t
+  (float, 's, Devices.host) Value.t
 
 val gumbel :
-  ?key:'d key ->
+  ?key:Devices.host key ->
   (float, 's) Nx_array.Dtype.t ->
   int array ->
-  (float, 's, 'd) Value.t
+  (float, 's, Devices.host) Value.t
 
 val randint :
-  ?key:'d key ->
+  ?key:Devices.host key ->
   ?low:int ->
   high:int ->
   int array ->
-  (int32, Nx_array.Dtype.int32_elt, 'd) Value.t
+  (int32, Nx_array.Dtype.int32_elt, Devices.host) Value.t
 
 val bernoulli :
   ?key:'d key ->
@@ -97,8 +102,10 @@ val categorical :
   (int64, Nx_array.Dtype.int64_elt, 'd) Value.t
 
 val permutation :
-  ?key:'d key -> int -> (int64, Nx_array.Dtype.int64_elt, 'd) Value.t
+  ?key:Devices.host key ->
+  int ->
+  (int64, Nx_array.Dtype.int64_elt, Devices.host) Value.t
 
-val with_key : 'd key -> (unit -> 'a) -> 'a
+val with_key : Devices.host key -> (unit -> 'a) -> 'a
 val refusing : string -> (unit -> 'a) -> 'a
-val next_key : unit -> 'd key
+val next_key : unit -> Devices.host key

@@ -65,7 +65,7 @@ let placements =
           equal (list string) [ "m2" ]
             (List.map
                (fun a -> Rig.name (Nx_array.device a))
-               (Iarray.to_list (Option.get (Nx.Repr.shards x)))));
+               (Iarray.to_list (Nx.Repr.shards x))));
       test "a placement on the one device of a set is the set's whole"
         (fun () ->
           let module S1 = (val Nx.devices [ m 2 ]) in
@@ -118,8 +118,8 @@ let meshes =
               Nx.Placement.mesh mesh cuts));
     ]
 
-(* Coercions: a dtype and a set are each checked, and a value of every set
-   is at any set. Two mints of one device list are two sets. *)
+(* Coercions: a dtype and a set are each checked. Two mints of one device list
+   are two sets. *)
 let coercions =
   let module Twin = (val Nx.devices [ m 0; m 1 ]) in
   let on2 = Nx.place S2.on (Nx.zeros Nx.float32 [| 2 |]) in
@@ -135,10 +135,7 @@ let coercions =
       test "a value coerces to its own form" (fun () ->
           some ~msg:"placed" (Nx.Prim.form on2) on2;
           let c = Nx.zeros Nx.float32 [| 2 |] in
-          some ~msg:"of every set" (Nx.Prim.form c) c);
-      test "a value of every set coerces to any set" (fun () ->
-          some ~msg:"onto S2's form" (Nx.Prim.form on2)
-            (Nx.zeros Nx.float32 [| 5 |]));
+          some ~msg:"a host creation" (Nx.Prim.form c) c);
       test "a placement of the same set, at either name of its brand"
         (fun () ->
           some ~msg:"split against whole"
@@ -151,13 +148,14 @@ let coercions =
           some ~msg:"one set unpacked twice"
             (Nx.Prim.form (Nx.place A.on (Nx.zeros Nx.float32 [| 2 |])))
             (Nx.place B.on (Nx.zeros Nx.float32 [| 2 |])));
-      test "another set, another dtype or a placed value to every set fail"
-        (fun () ->
+      test "another set or another dtype fails" (fun () ->
           let twin = Nx.place Twin.on (Nx.zeros Nx.float32 [| 2 |]) in
           none ~msg:"a twin set of the same devices" (Nx.Prim.form on2) twin;
           none ~msg:"another dtype" (Nx.Prim.form on2)
             (Nx.place S2.on (Nx.zeros Nx.float64 [| 2 |]));
-          none ~msg:"a placed value where every set is asked"
+          none ~msg:"a host creation where a set is asked" (Nx.Prim.form on2)
+            (Nx.zeros Nx.float32 [| 2 |]);
+          none ~msg:"a placed value where the host is asked"
             (Nx.Prim.form (Nx.zeros Nx.float32 [| 2 |])) on2);
     ]
 

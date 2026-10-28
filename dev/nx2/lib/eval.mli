@@ -7,23 +7,21 @@
 
     An operation's {e eager meaning} is {!run}'s. Its operands must be alive,
     and none may be traced. Its rule is checked and routed once
-    ({!Prim.route}) before anything is allocated, claimed or computed. An
-    operation whose every operand is a constant, a creation included, gives
-    constants ({!Constant.defer}). Otherwise each
-    constant operand is computed where the route reads it ({!Constant.at}),
-    each other operand is read there, by views where it lies
+    ({!Prim.route}) before anything is allocated, claimed or computed. Each
+    operand is read where the route reads it, by views where it lies
     ({!Exec.placer}), and the operation computes by partials ({!Partial}) or
-    by windows ({!Exec.windows}), as the route says. The operation consumes
-    the donated handles among its operands as {!Donate} states: it claims
-    them after the route ({!Donate.claim}), its first result takes the
-    memory of a handle that may hold it and lies where the route puts the
-    results ({!Donate.reuse}), and the claim ends once the operation returns
-    or raises ({!Donate.consumed}). One that raises frees the memory its
-    first result took. A movement of a handle claims nothing. It passes on a
-    handle of the same donor over the moved arrays.
-    A [Place] of a constant computes it at the placement; one of another
-    value onto the host from another set first waits on that set
-    ({!Check.wait}), then places it ({!Exec.place}). A [Check] is issued
+    by windows ({!Exec.windows}), as the route says. An operation of no
+    operands, a creation, computes at the placement its map names, each
+    device its window, and other operations of no operands on the host. The
+    operation consumes the donated handles among its operands as {!Donate}
+    states: it claims them after the route ({!Donate.claim}), its first
+    result takes the memory of a handle that may hold it and lies where the
+    route puts the results ({!Donate.reuse}), and the claim ends once the
+    operation returns or raises ({!Donate.consumed}). One that raises frees
+    the memory its first result took. A movement of a handle claims nothing.
+    It passes on a handle of the same donor over the moved arrays. A [Place]
+    onto the host from another set first waits on that set ({!Check.wait}),
+    then places the value ({!Exec.place}). A [Check] is issued
     ({!Check.issue}).
 
     Each interpretation's extent runs under a handler of its own. An operation
@@ -45,12 +43,9 @@
     interpretation between them, and an [Extent] handler in between answers
     it [false]. Where that handler is absent, either answer is [false].
 
-    An [Extent] receiver first receives the operations of each formula operand
-    its rule did not return, rebuilt at the operand's brand, in dependency
-    order, each node once per operand; the operation reads its results. Each
-    donated handle reaches a rule as its arrays, lent ({!Donate.lent}), and
-    its donor lives on: a rule kills nothing. Other operands reach
-    the rule as they are.
+    Each donated handle reaches a rule as its arrays, lent ({!Donate.lent}),
+    and its donor lives on: a rule kills nothing. Other operands reach the
+    rule as they are.
 
     One atomic counts the live [Extent] interpretations of the process, on
     every domain: a continuation may resume on any domain, so no domain's own
@@ -61,9 +56,8 @@
     changes no result; a continuation dropped inside an extent keeps the count
     high for the life of the process.
 
-    This module lies above the rest of the engine: {!Exec}, {!Partial},
-    {!Constant} and {!Check} compute what it dispatches, and nx's functions
-    call it. *)
+    This module lies above the rest of the engine: {!Exec}, {!Partial} and
+    {!Check} compute what it dispatches, and nx's functions call it. *)
 
 open Value
 
@@ -149,6 +143,15 @@ val apply3 :
     keep, which builds no operation and may share the layout of [x]
     ([apply3]'s second operand). Other operands compute by {!run} of the
     operation, whose rule raises on operands it does not take. *)
+
+val apply :
+  by:string -> Nx_kernel.Prog.t -> ('w, 'r) dtype -> ('v, 's, 'd) t ->
+  ('w, 'r, 'd) t
+(** [apply ~by p dt x] is {!eval} of the map of the program [p] over [x], of
+    [x]'s shape, with result dtype [dt]; [p] must read one operand of [x]'s
+    dtype and give [dt], as {!Prim.literal2}'s programs do. With no live
+    [Extent], a live array whose set has kernels computes by one
+    {!Exec.map}, which builds no operation, as {!apply1} does. *)
 
 val contract :
   by:string ->
