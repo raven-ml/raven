@@ -108,6 +108,9 @@ val grid : 'd placement -> Grid.t
 val device : 'd placement -> int option
 (** [device p] is [Some k] iff [p] is its set's device [k] alone. *)
 
+val on_host_set : 'd placement -> bool
+(** [on_host_set p] is [true] iff [set p] is {!val-host}. *)
+
 val equal : 'd placement -> 'e placement -> bool
 (** [equal p q] compares physically, then sets by number and grids. *)
 

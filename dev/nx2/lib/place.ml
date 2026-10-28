@@ -7,24 +7,6 @@ module A = Nx_array
 module L = Nx_array.Layout
 module M = Nx_array.Move
 
-(* Whether [w] holds no element. A loop: every view asks it, and
-   [Array.exists] allocates its own loop. *)
-let empty (w : M.range array) =
-  let i = ref 0 in
-  while !i < Array.length w && (w.(!i) : M.range).count > 0 do
-    incr i
-  done;
-  !i < Array.length w
-
-let extents (w : M.range array) =
-  Iarray.init (Array.length w) (fun i -> (w.(i) : M.range).count)
-
-let contains (outer : M.range array) (inner : M.range array) =
-  Array.for_all2
-    (fun (o : M.range) (i : M.range) ->
-      i.start >= o.start && i.start + i.count <= o.start + o.count)
-    outer inner
-
 (* [inner], a window of the whole, as a window of the array holding [outer]. *)
 let relative (outer : M.range array) (inner : M.range array) =
   Array.map2
@@ -78,7 +60,7 @@ let from_one d w sources =
   let views =
     Array.fold_right
       (fun (sw, a) vs ->
-        if contains sw w then slice a (relative sw w) :: vs else vs)
+        if Route.contains sw w then slice a (relative sw w) :: vs else vs)
       sources []
   in
   match List.find_opt (fun v -> Rig.equal (A.device v) d) views with
@@ -97,7 +79,7 @@ let gather d dt w sources =
   let on =
     if A.Dtype.bits dt mod 8 = 0 || Rig.reaches Rig.host d then d else Rig.host
   in
-  let dst = A.create on dt (extents w) in
+  let dst = A.create on dt (Route.extents w) in
   let seen = ref [] in
   Array.iter
     (fun (sw, a) ->
@@ -148,7 +130,7 @@ let value (type v s d e) ~by (p : e Devices.placement) (x : (v, s, d) Value.t) :
       (Iarray.init (Array.length devices) (fun j ->
            let w = Devices.window ~by p shape j
            and d = Devices.rig set devices.(j) in
-           if empty w then A.create d dt (extents w)
+           if Route.empty w then A.create d dt (Route.extents w)
            else
              match from_one d w sources with
              | Some a -> a
@@ -163,7 +145,7 @@ let held ~by at shape arrays k w =
   | None -> invalid_arg "Place.view: no array on the device"
   | Some j ->
       let held = Devices.window ~by at shape j in
-      if not (contains held w) then
+      if not (Route.contains held w) then
         invalid_arg "Place.view: the window is not held";
       slice (Iarray.get arrays j) (relative held w)
 
@@ -171,11 +153,11 @@ let view (type v s d) ~by (x : (v, s, d) Value.t) k w : (v, s) A.t =
   match x with
   | Value.Traced _ -> invalid_arg "Place.view: a traced value has no arrays"
   | Value.Handle _ -> invalid_arg "Place.view: a donated value is viewed live"
-  | (Value.Array _ | Value.Shards _) when empty w ->
+  | (Value.Array _ | Value.Shards _) when Route.empty w ->
       (* A device may hold no array of a value whose window there is
          empty. *)
       A.create (Devices.rig (Devices.set (Prim.placement x)) k) (Prim.dtype x)
-        (extents w)
+        (Route.extents w)
   | Value.Array { at; a; _ } -> (
       (* On one device the array is the whole. *)
       match Grid.one (Devices.grid at) with

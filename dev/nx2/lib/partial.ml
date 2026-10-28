@@ -11,17 +11,16 @@ module P = Nx_kernel.Prog
 module E = P.E
 
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
-let full d = { M.start = 0; count = d; step = 1 }
 let numel = Array.fold_left ( * ) 1
+
+(* A window's extents as a value's shape, which {!reshape} and {!spread}
+   take; {!Route.extents} gives an array's. *)
 let counts w = Array.map (fun (r : M.range) -> r.count) w
-let is_empty w = Array.exists (fun (r : M.range) -> r.count = 0) w
 
 let floats (D.Any dt) =
   match D.kind dt with
   | D.Float | D.Complex -> true
   | D.Signed | D.Unsigned | D.Boolean -> false
-
-let identity d = P.of_node ~ins:[| d |] (In 0)
 
 let binary : Nx_kernel.monoid -> P.binary = function
   | Sum -> Add
@@ -140,7 +139,7 @@ let reshape (type v s d) ~by shape (x : (v, s, d) Value.t) : (v, s, d) Value.t
    names. *)
 let slice (type v s d) ~by axis start count (x : (v, s, d) Value.t) :
     (v, s, d) Value.t =
-  let r = Array.map full (Prim.shape x) in
+  let r = Array.map Route.full (Prim.shape x) in
   if start = 0 && count = r.(axis).count then x
   else begin
     r.(axis) <- { M.start; count; step = 1 };
@@ -151,7 +150,7 @@ let slice (type v s d) ~by axis start count (x : (v, s, d) Value.t) :
    order. *)
 let backwards (type v s d) ~by axis start count (x : (v, s, d) Value.t) :
     (v, s, d) Value.t =
-  let r = Array.map full (Prim.shape x) in
+  let r = Array.map Route.full (Prim.shape x) in
   r.(axis) <- { M.start; count; step = -1 };
   on ~by x (Value.Move (Slice (Iarray.of_array r), x))
 
@@ -425,9 +424,10 @@ let stack (type v s d) ~by c (dt : (v, s) D.t) shape
   and ks = Grid.devices (Devices.grid c.stacked) in
   let shape = Array.append (Array.of_list c.held) shape in
   let slot j =
-    let s = counts (Devices.window ~by c.stacked shape j) in
-    if numel s = 0 then A.create (Devices.rig set ks.(j)) dt (Iarray.of_array s)
-    else moved (M.Reshape (Iarray.of_array s)) (partial j)
+    let w = Devices.window ~by c.stacked shape j in
+    let s = Route.extents w in
+    if Route.empty w then A.create (Devices.rig set ks.(j)) dt s
+    else moved (M.Reshape s) (partial j)
   in
   Prim.of_arrays c.stacked ~shape (Iarray.init (Array.length ks) slot)
 
@@ -441,7 +441,7 @@ let reduced (type v s d a) ~by c (r : (d, a) Value.reduction)
       {
         layout = L.contiguous (Iarray.of_array (Prim.shape s));
         axes = Iarray.init (List.length c.held) Fun.id;
-        prog = identity (D.Any (Prim.dtype s));
+        prog = Prim.identity (Prim.dtype s);
         reductions = Value.[ r ];
         loads = [| Plain s |];
       }
@@ -462,7 +462,7 @@ let slot (type v s d) ~by c index (x : (v, s, d) Value.t) : (v, s, d) Value.t
   let out = Array.sub shape lead (Array.length shape - lead) in
   let one j a =
     let w = counts (Devices.window ~by c.placed shape j) in
-    let r = Array.map full w in
+    let r = Array.map Route.full w in
     List.iteri (fun i k -> r.(i) <- { M.start = k; count = 1; step = 1 }) index;
     let part = Array.sub w lead (Array.length out) in
     moved (Reshape (Iarray.of_array part)) (moved (Slice (Iarray.of_array r)) a)
@@ -581,7 +581,7 @@ let reduce (type d r) ~by (route : unit Route.t) rule layout axes prog
         let sum s = reduced ~by cl (Monoid (Sum, 0, c)) s in
         let total j =
           let s, () =
-            over j (identity (D.Any t)) Value.[ Monoid (Sum, 0, c) ]
+            over j (Prim.identity t) Value.[ Monoid (Sum, 0, c) ]
               [| Plain (x j) |]
           in
           array s
@@ -684,8 +684,8 @@ let scan (type d a) ~by (route : unit Route.t) rule layout axis prog
       match slot j with
       | Some a -> a
       | None ->
-          let s = counts (Devices.window ~by stacked stack_shape j) in
-          A.create (Devices.rig set ks.(j)) dt (Iarray.of_array s)
+          let w = Devices.window ~by stacked stack_shape j in
+          A.create (Devices.rig set ks.(j)) dt (Route.extents w)
     in
     Prim.of_arrays stacked ~shape:stack_shape (Iarray.init n one)
   in
@@ -701,9 +701,9 @@ let scan (type d a) ~by (route : unit Route.t) rule layout axis prog
     Value.Any (spread ~by (counts (win j)) x)
   in
   let fresh (type v s) (dt : (v, s) D.t) j =
-    A.create (Devices.rig set ks.(j)) dt (Iarray.of_array (counts (win j)))
+    A.create (Devices.rig set ks.(j)) dt (Route.extents (win j))
   in
-  let held j = not (is_empty (win j)) in
+  let held j = not (Route.empty (win j)) in
   match r with
   | Monoid (m, o, dt) ->
       (* Each tile scans alone into the carrier; the totals' scan gives each
@@ -724,7 +724,7 @@ let scan (type d a) ~by (route : unit Route.t) rule layout axis prog
             {
               layout = L.contiguous (Iarray.of_array stack_shape);
               axis = 0;
-              prog = identity (D.Any c);
+              prog = Prim.identity c;
               reduction = Monoid (m, 0, c);
               loads = [| Plain x |];
               carry = None;
@@ -878,7 +878,7 @@ let contract (type v s d a b c e) ~by (route : unit Route.t) rule ~batch
     match segments with
     | None -> tiles.(j)
     | Some _ ->
-        let whole (x, _) = full (Prim.dim a x) in
+        let whole (x, _) = Route.full (Prim.dim a x) in
         Array.append (Array.map whole pairs) tiles.(j)
   in
   (* Operand [i] on device [j], its factors' ranges [r]. *)

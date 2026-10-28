@@ -53,9 +53,6 @@ let make = Prim.of_arrays
    reads. *)
 let view_of a = Rig.Claim.share (A.buffer a)
 
-let extents (w : M.range array) =
-  Iarray.init (Array.length w) (fun i -> (w.(i) : M.range).count)
-
 (* Fresh C-contiguous arrays of a value of [shape] at [p]: each device's
    window. *)
 let fresh ~by p dt shape =
@@ -67,7 +64,7 @@ let fresh ~by p dt shape =
       let shape = Iarray.to_array shape in
       Iarray.init (Array.length devices) (fun j ->
           A.create (Devices.rig set devices.(j)) dt
-            (extents (Devices.window ~by p shape j)))
+            (Route.extents (Devices.window ~by p shape j)))
 
 (* A maker of fresh results at their form's placement: the first into [into]
    where it is given. *)
@@ -101,26 +98,18 @@ let copy_array ~by kernels a =
       (A.device a) [ D.Any (A.dtype a) ];
   dst
 
-(* [a] moved by [mv]: a view over [a]'s memory where a layout expresses it, a
-   copy moved otherwise. *)
-let moved ~by set mv a =
-  match A.move mv a with
+(* [f m a] for [f] of [A.move] and [A.bitcast]: a view over [a]'s memory
+   where a layout expresses it, and over a fresh copy of [a] otherwise,
+   whose layout always does. [f] and [m] are passed apart, so a call
+   allocates no closure. *)
+let as_view ~by set f m a =
+  match f m a with
   | Some v ->
       view_of a;
       v
   | None ->
       let kernels = kernels_of ~by ~op:"Copy" set in
-      Option.get (A.move mv (copy_array ~by kernels a))
-
-(* [a] bitcast to [dt], as {!moved}. *)
-let cast ~by set dt a =
-  match A.bitcast dt a with
-  | Some v ->
-      view_of a;
-      v
-  | None ->
-      let kernels = kernels_of ~by ~op:"Copy" set in
-      Option.get (A.bitcast dt (copy_array ~by kernels a))
+      Option.get (f m (copy_array ~by kernels a))
 
 (* The one array of [x], a value on one device. *)
 let one (type v s d) (x : (v, s, d) Value.t) = Iarray.get (Prim.arrays x) 0
@@ -399,8 +388,7 @@ let on_device : type r.
 (* [x] read whole on [p]'s one device: a view of its array there. *)
 let whole (type v s d) ~by p (x : (v, s, d) Value.t) : (v, s, d) Value.t =
   let k = Option.get (Devices.device p) in
-  let full d = { M.start = 0; count = d; step = 1 } in
-  let a = Place.view ~by x k (Array.map full (Prim.shape x)) in
+  let a = Place.view ~by x k (Array.map Route.full (Prim.shape x)) in
   Value.Array { at = p; a; dead = Value.Live }
 
 (* The one result of [op], a movement or a bitcast of [x], at [route]'s
@@ -441,16 +429,19 @@ let windows : type r.
       match x with
       | Value.Array { at; a; _ } when Devices.equal at route.result ->
           (* One array, moved where it lies: its view is the result. *)
-          Value.Array { at; a = moved ~by set mv a; dead = Value.Live }
+          Value.Array { at; a = as_view ~by set A.move mv a; dead = Value.Live }
       | _ ->
           viewed ~by route layouts op x (fun w a ->
-              moved ~by set (Prim.local_move mv w) a))
+              as_view ~by set A.move (Prim.local_move mv w) a))
   | Value.Bitcast (dt, x) -> (
       let set = Devices.set (Prim.placement x) in
       match x with
       | Value.Array { at; a; _ } when Devices.equal at route.result ->
-          Value.Array { at; a = cast ~by set dt a; dead = Value.Live }
-      | _ -> viewed ~by route layouts op x (fun _ a -> cast ~by set dt a))
+          Value.Array
+            { at; a = as_view ~by set A.bitcast dt a; dead = Value.Live }
+      | _ ->
+          viewed ~by route layouts op x (fun _ a ->
+              as_view ~by set A.bitcast dt a))
   | Value.Place _ | Value.Check _ ->
       invalid_arg "Exec.windows: a placement or a check"
   | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _

@@ -167,6 +167,24 @@ val window :
     {!Nx_kernel.S.contract} and the same on every run for a given placement
     and set of devices. *)
 
+val full : int -> Nx_array.Move.range
+(** [full d] is the range of all [d] elements of an axis: from [0], by step
+    [1]. *)
+
+val extents : Nx_array.Move.range array -> int iarray
+(** [extents w] is the shape of the window [w]: each range's count. *)
+
+val empty : Nx_array.Move.range array -> bool
+(** [empty w] is [true] iff a range of [w] counts no element. It allocates
+    nothing. *)
+
+val contains : Nx_array.Move.range array -> Nx_array.Move.range array -> bool
+(** [contains o w] is [true] iff each range of [w] lies within [o]'s along
+    its axis, for windows of one rank whose ranges step by [1], as
+    {!Grid.window}'s do.
+
+    Raises [Invalid_argument] if [o] and [w] differ in rank. *)
+
 (** The type for how the devices of a route compute its results. *)
 type compute =
   | Windows

@@ -6,15 +6,11 @@
 module A = Nx_array
 module D = Nx_array.Dtype
 module L = Nx_array.Layout
-module P = Nx_kernel.Prog
 
 let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 
 (* The host's device, where a value is read out ({!on_host}). *)
 let host = Devices.one Devices.host 0
-
-(* Whether [p] lies on the host's set. *)
-let on_host_set p = Devices.number (Devices.set p) = Devices.number Devices.host
 
 let on_host : type v s d. by:string -> (v, s, d) Value.t -> (v, s) A.t =
  fun ~by x ->
@@ -344,7 +340,7 @@ let reduce ~by ok r =
       {
         layout = L.contiguous (Iarray.of_array shape);
         axes = Iarray.init (Array.length shape) Fun.id;
-        prog = P.of_node ~ins:[| D.Any D.Bool |] (In 0);
+        prog = Prim.identity D.Bool;
         reductions = Value.[ r ];
         loads = [| Plain ok |];
       }
@@ -377,7 +373,7 @@ let issue : type d e.
     let scalar x = A.get (on_host ~by x) [||] in
     (* One flag is its own reduction: no kernel reduces it. *)
     let one = Array.for_all (( = ) 1) shape in
-    if not (on_host_set p) then begin
+    if not (Devices.on_host_set p) then begin
       (* The set's earlier checks settle first, so that a raise there leaves
          this check unissued and none of its data held. A set that holds a
          failure keeps no later check, which then computes nothing. *)

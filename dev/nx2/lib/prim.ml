@@ -636,74 +636,80 @@ let map : type r.
     ('v 's 'd. ('v, 's, 'd) t -> ('v, 's, 'd) t) -> r prim -> r prim =
  fun m op -> mapi (fun _ x -> m x) op
 
-(* Printing *)
+(* Kinds *)
 
-let unary_name : P.unary -> string = function
-  | Neg -> "neg"
-  | Recip -> "recip"
-  | Abs -> "abs"
-  | Sign -> "sign"
-  | Sqrt -> "sqrt"
-  | Exp -> "exp"
-  | Exp2 -> "exp2"
-  | Log -> "log"
-  | Log2 -> "log2"
-  | Log1p -> "log1p"
-  | Expm1 -> "expm1"
-  | Sin -> "sin"
-  | Cos -> "cos"
-  | Tan -> "tan"
-  | Asin -> "asin"
-  | Acos -> "acos"
-  | Atan -> "atan"
-  | Sinh -> "sinh"
-  | Cosh -> "cosh"
-  | Tanh -> "tanh"
-  | Asinh -> "asinh"
-  | Acosh -> "acosh"
-  | Atanh -> "atanh"
-  | Erf -> "erf"
-  | Floor -> "floor"
-  | Ceil -> "ceil"
-  | Round -> "round"
-  | Trunc -> "trunc"
+(* Each kind's code among the nodes of its arity, and its name in
+   messages and printed programs. The codes of an arity are dense from 0,
+   [Copy], [Cast] and [Bitcast] taking one operand's first three: they
+   index the one-node programs kept below. *)
+let unary_kind : P.unary -> int * string = function
+  | Neg -> (3, "neg")
+  | Recip -> (4, "recip")
+  | Abs -> (5, "abs")
+  | Sign -> (6, "sign")
+  | Sqrt -> (7, "sqrt")
+  | Exp -> (8, "exp")
+  | Exp2 -> (9, "exp2")
+  | Log -> (10, "log")
+  | Log2 -> (11, "log2")
+  | Log1p -> (12, "log1p")
+  | Expm1 -> (13, "expm1")
+  | Sin -> (14, "sin")
+  | Cos -> (15, "cos")
+  | Tan -> (16, "tan")
+  | Asin -> (17, "asin")
+  | Acos -> (18, "acos")
+  | Atan -> (19, "atan")
+  | Sinh -> (20, "sinh")
+  | Cosh -> (21, "cosh")
+  | Tanh -> (22, "tanh")
+  | Asinh -> (23, "asinh")
+  | Acosh -> (24, "acosh")
+  | Atanh -> (25, "atanh")
+  | Erf -> (26, "erf")
+  | Floor -> (27, "floor")
+  | Ceil -> (28, "ceil")
+  | Round -> (29, "round")
+  | Trunc -> (30, "trunc")
 
-let binary_name : P.binary -> string = function
-  | Add -> "add"
-  | Sub -> "sub"
-  | Mul -> "mul"
-  | Fdiv -> "fdiv"
-  | Idiv -> "idiv"
-  | Mod -> "mod"
-  | Pow -> "pow"
-  | Atan2 -> "atan2"
-  | Maximum -> "maximum"
-  | Minimum -> "minimum"
-  | And -> "and"
-  | Or -> "or"
-  | Xor -> "xor"
-  | Threefry -> "threefry"
+let binary_kind : P.binary -> int * string = function
+  | Add -> (0, "add")
+  | Sub -> (1, "sub")
+  | Mul -> (2, "mul")
+  | Fdiv -> (3, "fdiv")
+  | Idiv -> (4, "idiv")
+  | Mod -> (5, "mod")
+  | Pow -> (6, "pow")
+  | Atan2 -> (7, "atan2")
+  | Maximum -> (8, "maximum")
+  | Minimum -> (9, "minimum")
+  | And -> (10, "and")
+  | Or -> (11, "or")
+  | Xor -> (12, "xor")
+  | Threefry -> (13, "threefry")
 
-let compare_name : P.compare -> string = function
-  | Equal -> "equal"
-  | Not_equal -> "not_equal"
-  | Less -> "less"
-  | Less_equal -> "less_equal"
-
-let any_name (D.Any dt) = D.name dt
+let compare_kind : P.compare -> int * string = function
+  | Equal -> (14, "equal")
+  | Not_equal -> (15, "not_equal")
+  | Less -> (16, "less")
+  | Less_equal -> (17, "less_equal")
 
 let kind : P.node -> string = function
   | In _ -> "In"
   | Coord _ -> "Iota"
   | Const _ -> "Fill"
   | Op1 (Copy, _, _) -> "Copy"
-  | Op1 (Unary k, _, _) -> String.capitalize_ascii (unary_name k)
+  | Op1 (Unary k, _, _) -> String.capitalize_ascii (snd (unary_kind k))
   | Op1 (Cast, _, _) -> "Cast"
   | Op1 (Bitcast, _, _) -> "Bitcast"
-  | Op2 (Binary k, _, _) -> String.capitalize_ascii (binary_name k)
-  | Op2 (Compare k, _, _) -> String.capitalize_ascii (compare_name k)
+  | Op2 (Binary k, _, _) -> String.capitalize_ascii (snd (binary_kind k))
+  | Op2 (Compare k, _, _) -> String.capitalize_ascii (snd (compare_kind k))
   | Op3 (Where, _, _, _) -> "Where"
   | Op3 (Fma, _, _, _) -> "Fma"
+
+(* Printing *)
+
+let any_name (D.Any dt) = D.name dt
 
 let hex bits =
   String.concat ""
@@ -750,14 +756,15 @@ let printer (p : P.t) roots =
     | Coord a -> Format.fprintf ppf "coord%d" a
     | Const (dt, bits) -> Format.fprintf ppf "%s:0x%s" (any_name dt) (hex bits)
     | Op1 (Copy, _, j) -> Format.fprintf ppf "copy(%a)" expr j
-    | Op1 (Unary k, _, j) -> Format.fprintf ppf "%s(%a)" (unary_name k) expr j
+    | Op1 (Unary k, _, j) ->
+        Format.fprintf ppf "%s(%a)" (snd (unary_kind k)) expr j
     | Op1 (Cast, dt, j) -> Format.fprintf ppf "cast_%s(%a)" (any_name dt) expr j
     | Op1 (Bitcast, dt, j) ->
         Format.fprintf ppf "bitcast_%s(%a)" (any_name dt) expr j
     | Op2 (Binary k, j, l) ->
-        Format.fprintf ppf "%s(%a, %a)" (binary_name k) expr j expr l
+        Format.fprintf ppf "%s(%a, %a)" (snd (binary_kind k)) expr j expr l
     | Op2 (Compare k, j, l) ->
-        Format.fprintf ppf "%s(%a, %a)" (compare_name k) expr j expr l
+        Format.fprintf ppf "%s(%a, %a)" (snd (compare_kind k)) expr j expr l
     | Op3 (Where, j, l, n) ->
         Format.fprintf ppf "where(%a, %a, %a)" expr j expr l expr n
     | Op3 (Fma, j, l, n) ->
@@ -1408,12 +1415,10 @@ let with_offsets (prog : P.t) (first : int array) =
     P.subst ~ins:prog.ins offset prog
 
 let starts w = Array.map (fun (r : Nx_array.Move.range) -> r.start) w
-let extents w =
-  Iarray.init (Array.length w) (fun i -> (w.(i) : Nx_array.Move.range).count)
 
 let within : type r. r prim -> Nx_array.Move.range array -> r prim =
  fun op l ->
-  let layout = L.contiguous (extents l) in
+  let layout = L.contiguous (Route.extents l) in
   match op with
   | Map m -> Map { m with layout; prog = with_offsets m.prog (starts l) }
   | Reduce m -> Reduce { m with layout; prog = with_offsets m.prog (starts l) }
@@ -1429,8 +1434,8 @@ let within : type r. r prim -> Nx_array.Move.range array -> r prim =
    whole. *)
 let local_move (mv : Nx_array.Move.t) w : Nx_array.Move.t =
   match mv with
-  | Reshape _ -> Reshape (extents w)
-  | Broadcast _ -> Broadcast (extents w)
+  | Reshape _ -> Reshape (Route.extents w)
+  | Broadcast _ -> Broadcast (Route.extents w)
   | Slice rs ->
       Slice
         (Iarray.mapi
@@ -1454,10 +1459,10 @@ let local : type r. r prim -> Nx_array.Move.range array -> r prim =
   | Map m -> within op (loop m.layout)
   | Reduce m -> within op (loop m.layout)
   | Scan m -> within op (loop m.layout)
-  | Fold f -> Fold { f with shape = extents w }
+  | Fold f -> Fold { f with shape = Route.extents w }
   | Move (mv, x) -> Move (local_move mv w, x)
   | Assemble a ->
-      if extents w <> a.shape then
+      if Route.extents w <> a.shape then
         invalid_arg "Prim.local: an assembly is computed whole";
       op
   | Gather _ | Scatter _ | Sort _ | Fft _ | Linalg _ | Contract _ | Copy _
@@ -1784,66 +1789,17 @@ let refused ~by node ins =
 
 (* One-node programs *)
 
-(* Each kind's code, distinct among its arity's kinds, which places its
-   programs in the cache below. *)
-let unary_code : P.unary -> int = function
-  | Neg -> 0
-  | Recip -> 1
-  | Abs -> 2
-  | Sign -> 3
-  | Sqrt -> 4
-  | Exp -> 5
-  | Exp2 -> 6
-  | Log -> 7
-  | Log2 -> 8
-  | Log1p -> 9
-  | Expm1 -> 10
-  | Sin -> 11
-  | Cos -> 12
-  | Tan -> 13
-  | Asin -> 14
-  | Acos -> 15
-  | Atan -> 16
-  | Sinh -> 17
-  | Cosh -> 18
-  | Tanh -> 19
-  | Asinh -> 20
-  | Acosh -> 21
-  | Atanh -> 22
-  | Erf -> 23
-  | Floor -> 24
-  | Ceil -> 25
-  | Round -> 26
-  | Trunc -> 27
-
+(* A node's code among its arity's, which places its programs in the tables
+   below. *)
 let code1 : P.op1 -> int = function
   | Copy -> 0
   | Cast -> 1
   | Bitcast -> 2
-  | Unary u -> 3 + unary_code u
-
-let binary_code : P.binary -> int = function
-  | Add -> 0
-  | Sub -> 1
-  | Mul -> 2
-  | Fdiv -> 3
-  | Idiv -> 4
-  | Mod -> 5
-  | Pow -> 6
-  | Atan2 -> 7
-  | Maximum -> 8
-  | Minimum -> 9
-  | And -> 10
-  | Or -> 11
-  | Xor -> 12
-  | Threefry -> 13
+  | Unary u -> fst (unary_kind u)
 
 let code2 : P.op2 -> int = function
-  | Binary b -> binary_code b
-  | Compare Equal -> 14
-  | Compare Not_equal -> 15
-  | Compare Less -> 16
-  | Compare Less_equal -> 17
+  | Binary b -> fst (binary_kind b)
+  | Compare c -> fst (compare_kind c)
 
 let code3 : P.op3 -> int = function Where -> 0 | Fma -> 1
 

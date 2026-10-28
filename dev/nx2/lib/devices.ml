@@ -164,6 +164,7 @@ let mesh ~by m cuts =
 let set p = p.set
 let grid p = p.grid
 let device p = Grid.one p.grid
+let on_host_set p = p.set.number = host.number
 
 let equal p q =
   p == q || (p.set.number = q.set.number && Grid.equal p.grid q.grid)

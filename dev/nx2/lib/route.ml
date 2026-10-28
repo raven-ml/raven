@@ -115,6 +115,23 @@ let moved (m : M.t) s a : axis =
 
 let full d = { M.start = 0; count = d; step = 1 }
 
+let extents (w : M.range array) =
+  Iarray.init (Array.length w) (fun i -> (w.(i) : M.range).count)
+
+(* A loop: every view asks it, and [Array.exists] allocates its own loop. *)
+let empty (w : M.range array) =
+  let i = ref 0 in
+  while !i < Array.length w && (w.(!i) : M.range).count > 0 do
+    incr i
+  done;
+  !i < Array.length w
+
+let contains (outer : M.range array) (inner : M.range array) =
+  Array.for_all2
+    (fun (o : M.range) (i : M.range) ->
+      i.start >= o.start && i.start + i.count <= o.start + o.count)
+    outer inner
+
 let window rule ~operand:i shape (w : M.range array) =
   match rule with
   | Elementwise -> w
@@ -253,15 +270,6 @@ let join u l =
   if (not (Grid.is_cut l)) && among u l then Some u
   else if (not (Grid.is_cut u)) && among l u then Some l
   else Grid.union u l
-
-let empty (w : M.range array) =
-  Array.exists (fun (r : M.range) -> r.count = 0) w
-
-let contains (outer : M.range array) (inner : M.range array) =
-  Array.for_all2
-    (fun (o : M.range) (i : M.range) ->
-      i.start >= o.start && i.start + i.count <= o.start + o.count)
-    outer inner
 
 (* Whether an operand of shape [s] at [p] holds, on each device of the grid
    [q], the window [q] gives that device. An empty window reads nothing. *)

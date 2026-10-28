@@ -25,13 +25,10 @@ let checked (type v s d) ~by (x : (v, s, d) t) =
         owner.name
   | Array _ | Shards _ | Handle _ -> Prim.alive ~by x
 
-(* Whether [p] lies on the host's set. *)
-let on_host_set p = Devices.number (Devices.set p) = Devices.number Devices.host
-
 (* [x] placed at [p], a value onto the host from another set waited for
    first. *)
 let placed ~by p x =
-  if on_host_set p && not (on_host_set (Prim.placement x)) then
+  if Devices.on_host_set p && not (Devices.on_host_set (Prim.placement x)) then
     Check.wait ~by x;
   Exec.place ~by p x
 
