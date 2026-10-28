@@ -29,7 +29,7 @@ let kernels = ref 0
 
 (* The beam widths the lowering searches a new kernel with, with BEAM at
    [width]. *)
-let searched width =
+let searched ?beam width =
   incr kernels;
   let widths = ref [] in
   let search w s =
@@ -41,7 +41,7 @@ let searched width =
     [ B (Setting.beam, width) ]
     (fun () ->
       ignore
-        (Jit.jit_lower ~search
+        (Jit.jit_lower ?beam ~search
            ~targets:(fun n -> Tolk_engine.target (devices n))
            ~held_bufs:[ out ] ~inputs:[ x ] linear));
   !widths
@@ -53,9 +53,25 @@ let under value name f =
         skip ~reason:"runs under its own JITBEAM" ()
       else f ())
 
+(* Two lowerings, each [(beam, width)] at an explicit width or none under BEAM
+   at [width]: their settings are equal and they search at one width. *)
+let alike (beam, width) (beam', width') =
+  let at beam width =
+    let shaping =
+      Setting.context [ B (Setting.beam, width) ] (fun () ->
+          Jit.shaping ?beam ())
+    in
+    (shaping, searched ?beam width)
+  in
+  let s, w = at beam width and s', w' = at beam' width' in
+  equal (list (pair string string)) ~msg:"settings" s s';
+  equal (list int) ~msg:"widths" w w'
+
 let unset =
   group "JITBEAM unset"
     [
+      under None "a width given and BEAM's alike compile alike" (fun () ->
+          alike (Some 2, 5) (None, 2));
       under None "BEAM at 0 searches no kernel" (fun () ->
           equal (list int) [] (searched 0));
       under None "a kernel is searched with BEAM's width" (fun () ->
@@ -65,6 +81,8 @@ let unset =
 let three =
   group "JITBEAM=3"
     [
+      under (Some "3") "a width given and JITBEAM's alike compile alike"
+        (fun () -> alike (Some 3, 1) (None, 0));
       under (Some "3") "a kernel is searched with JITBEAM's width, not BEAM's"
         (fun () -> equal (list int) [ 3 ] (searched 2));
       under (Some "3") "a kernel is searched with BEAM at 0" (fun () ->

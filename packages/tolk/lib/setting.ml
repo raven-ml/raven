@@ -223,6 +223,21 @@ let set v x =
 
 type binding = B : 'a t * 'a -> binding
 
+(* The entries with each binding of a setting of reach [Output] shown, the later
+   binding of a setting winning, as a context would show them. *)
+let shaping_under bindings =
+  let shown e (B (v, x)) =
+    match v.reach with
+    | Process -> e
+    | Output ->
+        let text = v.show x in
+        List.map
+          (fun ((key, _) as entry) ->
+            if String.equal key v.key then (key, text) else entry)
+          e
+  in
+  List.fold_left shown (shaping ()) bindings
+
 (* A context that ends puts back the entries it found where the restored ones
    show the same text, so that a context changes no list a cache compares
    physically once it returns. *)

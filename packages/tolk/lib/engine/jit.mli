@@ -13,6 +13,13 @@
     intermediates share a few arenas, and its kernels are compiled. The engine
     links the result once and runs it on each call. *)
 
+val shaping : ?beam:int -> unit -> (string * string) list
+(** [shaping ~beam ()] is {!Setting.shaping} as {!jit_lower} [~beam]
+    compiles under it: with [BEAM] at the width the lowering searches, and
+    [JITBEAM], which the lowering has read by then, unset
+    ({!Setting.shaping_under}). Two lowerings whose [shaping] is equal compile
+    alike, whatever [BEAM] and [JITBEAM] were. It binds no setting. *)
+
 val jit_lower :
   ?beam:int ->
   ?search:(int -> Postrange.Scheduler.t -> Postrange.Scheduler.t) ->
@@ -31,6 +38,6 @@ val jit_lower :
       keeps or that hold constants;
     + it is compiled ({!Realize.compile_linear}, with [search] and [targets]),
       with the beam width [beam], or else {!Setting.jitbeam}'s, or else
-      {!Setting.beam}'s.
+      {!Setting.beam}'s, as [BEAM], and [JITBEAM] unset.
 
     Raises as {!Realize.compile_linear} does. *)

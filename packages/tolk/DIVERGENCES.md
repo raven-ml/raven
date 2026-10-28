@@ -4148,3 +4148,31 @@ submission, and a range a loop of rig's program (D146).
 - **Pinned by:** the `Rangeify` suite (`test/schedule/rangeify`):
   `get_kernel_graph › dead reads › a staged value read only in padding reads
   0 there`.
+
+## D159. A captured schedule tells the settings it compiles under
+
+- **tinygrad:** `engine/jit.py:29-37` (`jit_lower`), which reads `JITBEAM`,
+  or else `BEAM`, at `:35` and passes the width to `compile_linear` as its
+  `beam`, binding no setting; its search cache keys on no setting
+  (`codegen/opt/search.py:107`).
+- **tolk:** `lib/engine/jit.ml:8-23` (`width`, `bindings`, `shaping`), and
+  `jit_lower`, which compiles under `bindings`; `lib/setting.ml`
+  (`shaping_under`).
+- **Differs:** `jit_lower ~beam` compiles with `BEAM` at its width and
+  `JITBEAM`, read by then, unset, so the caches of what it compiles key on
+  the width alone. `Jit.shaping ~beam` is `Setting.shaping` under those
+  bindings, read without binding them (`Setting.shaping_under`): two
+  lowerings whose `shaping` is equal compile alike, whatever `BEAM` and
+  `JITBEAM` were. tinygrad has no such value. tolk's caches key on every
+  setting that shapes compilation (`Setting.shaping`), so they keyed on
+  `JITBEAM` after the lowering had read it; unset, they key on the width
+  alone.
+- **Reason:** (b). rune2's `Rune.jit ~beam` (`dev/rune2/lib/compile.ml`,
+  `shaping`) keys a compiled function's variants on the settings that shape
+  its programs, and with an explicit width neither `BEAM` nor `JITBEAM`
+  does; it read the lowering's rule by repeating it.
+- **Pinned by:** the `Jit JITBEAM` suite (`test/engine/jit/test_jitbeam.ml`):
+  `JITBEAM unset › a width given and BEAM's alike compile alike` and
+  `JITBEAM=3 › a width given and JITBEAM's alike compile alike`; and the
+  `Tolk.Setting` suite: `shaping › under bindings is shaping in their
+  context, and binds nothing`.

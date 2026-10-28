@@ -104,6 +104,12 @@ val context : binding list -> (unit -> 'a) -> 'a
     the domains it spawns meanwhile, which start with its values. Other domains
     do not see them, so domains override settings independently. *)
 
+val shaping_under : binding list -> (string * string) list
+(** [shaping_under bindings] is {!shaping} as it is in [context bindings]:
+    each setting of [bindings] whose reach is {!Output} shown at its bound
+    value, the later binding of a setting winning. It binds nothing: what runs
+    meanwhile on the calling domain sees the settings as they are. *)
+
 val shaping : unit -> (string * string) list
 (** [shaping ()] is the name and the current value on the calling domain, as
     text, of each setting whose reach is {!Output}, sorted by name: what the

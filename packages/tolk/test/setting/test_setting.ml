@@ -656,6 +656,14 @@ let shown_as value make =
 let cache_keys =
   group "shaping"
     [
+      test "under bindings is shaping in their context, and binds nothing"
+        (fun () ->
+          let v = Setting.int ~reach:Output (fresh ()) 1 in
+          let p = Setting.int ~reach:Process (fresh ()) 1 in
+          let bs = Setting.[ B (v, 4); B (p, 3); B (v, 5) ] in
+          equal entries (context bs shaping) (Setting.shaping_under bs);
+          unchanged_by (fun () -> ignore (Setting.shaping_under bs));
+          equal int ~msg:"the value" 1 (Setting.value v));
       test "holds a setting's current value on the calling domain" (fun () ->
           let key = fresh () in
           let v = Setting.int ~reach:Output key 1 in
