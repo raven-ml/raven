@@ -396,7 +396,7 @@ let test_nonfinite () =
 let test_lanes_in_step () =
   let a = Rune.axis () in
   let x = vec [| 1.; 4. |] in
-  invalid ~sub:"Rune.lanes: the lanes of the map stand at different steps"
+  invalid ~sub:"Rune.lanes: the lanes of the map are held apart"
     (fun () ->
       Rune.vmap' ~axis:a
         (Rune.iterate' ~max:10

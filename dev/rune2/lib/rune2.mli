@@ -11,22 +11,22 @@
     constant of the transformation.
 
     {b Functions of a construct are traced.} The functions that {!scan},
-    {!iterate}, {!root}, {!remat}, {!jit}, {!custom_jvp}, {!custom_vjp} and
-    {!custom_transpose} receive are {e traced} at the call: their OCaml code
-    runs over stand-ins of their arguments' arrays, values with a dtype, a shape
-    and a placement but no elements, and what it computes from them is recorded
-    as a program, which the construct then evaluates. A loop's step is traced
-    once, so its code runs once whatever the number of steps, as do its side
-    effects, and inside it {!Nx.item} of a stand-in, or of a value computed from
-    one, raises ([Nx.item: the value is traced by Rune.scan]); a branch on a
-    value is {!Nx.where} or a nested {!iterate}. An operation that reads no
-    stand-in computes at the call, once, but in {!remat} and {!jit}, which stage
-    every operation their function applies. A draw without [~key] inside a
-    traced
-    function raises, naming the construct, so a step draws from a key in its
-    carry or its rows. Outside every transformation a construct is its program
-    evaluated: a {!scan} is the fold of its step, bit for bit but for a NaN
-    result's sign and payload, which nx leaves unspecified.
+    {!iterate}, {!switch}, {!root}, {!remat}, {!jit}, {!custom_jvp},
+    {!custom_vjp} and {!custom_transpose} receive are {e traced} at the call:
+    their OCaml code runs over stand-ins of their arguments' arrays, values with
+    a dtype, a shape and a placement but no elements, and what it computes from
+    them is recorded as a program, which the construct then evaluates. A loop's
+    step is traced once, so its code runs once whatever the number of steps, as
+    do its side effects, and inside it {!Nx.item} of a stand-in, or of a value
+    computed from one, raises ([Nx.item: the value is traced by Rune.scan]); a
+    branch on a value is a {!switch}, {!Nx.where} or a nested {!iterate}. An
+    operation that reads no stand-in computes at the call, once, but in
+    {!switch}, {!remat} and {!jit}, which stage every operation their functions
+    apply. A draw without [~key] inside a traced function raises, naming the
+    construct, so a step draws from a key in its carry or its rows. Outside
+    every transformation a construct is its program evaluated: a {!scan} is the
+    fold of its step, bit for bit but for a NaN result's sign and payload, which
+    nx leaves unspecified.
 
     {b Extents.} A transformation, a map or a {!Total.collect} is around the
     code its function runs, on whatever domain that code resumes, and the fibers
@@ -75,6 +75,13 @@
     next takes a zero from it, so the derivative may receive zeros of either
     sign, and NaN where such a zero meets an infinite partial derivative, where
     the steps written out one after another give none.
+
+    {b Selections.} Under reverse mode the cotangent of the operand {!Nx.where}
+    does not select is [+0.] there; where that operand's derivative is infinite
+    or NaN, as {!Nx.log}'s at [0.], the gradient is NaN, [0 × ∞]. Compute such
+    an operand on its domain, as [Nx.log (Nx.where c x one)], or as
+    [Nx.where c x (detach x)] on its input, or branch with {!cond}, per element
+    under {!val-vmap}.
 
     {b Placement.} A cotangent lies where the transposed operations put it,
     as {!Nx} routes them: at its array's placement where every value it meets
@@ -518,7 +525,16 @@ val check_transpose :
     lane, and so is a draw without [~key]. A lane's values have no elements to
     read: {!Nx.item} of one raises
     ([Nx.item: the value is traced by Rune.vmap]), so an OCaml [if] cannot take
-    one branch per lane, and {!Nx.where} selects per lane.
+    one branch per lane: {!switch} does, and {!Nx.where} selects per lane.
+
+    {b Held lanes.} Where an {!iterate}'s lanes stop apart, or a {!switch}'s
+    lanes take different branches, a lane may be {e held}: it computes at its
+    {e donor}, the first lane that runs, on the donor's values detached, its own
+    discarded, so that no code runs at a point no lane reached. A held lane's
+    {!Nx.check}s pass, its {!lane_index} is its donor's, its additions to a
+    {!Total} are dropped, and {!lanes} of the map raises. A captured array every
+    lane shares receives, under reverse mode, a held lane's zero cotangent times
+    its donor's partial derivative, which turns an infinite gradient into NaN.
 
     A map's lanes are named by an axis, so that code inside nested maps reads
     the lanes of the map it names: {!lanes} gathers every lane's value and
@@ -689,19 +705,11 @@ val iterate :
 
     {b Maps.} Under {!vmap}, where [until] depends on the lanes, each lane stops
     on its own [until], and the loop runs until the last lane stops. A lane that
-    has stopped keeps its carry bit for bit and computes the step of the first
-    lane still running, its {e donor}, on the donor's carry and its row of every
-    array the step captures with lanes, its own discarded: the step never runs
-    at a point no lane reached. Inside the step a stopped lane's {!Nx.check}s
-    pass, its {!lane_index} is its donor's, its additions to a {!Total} are
-    dropped, and {!lanes} of the map raises, the lanes standing at different
-    steps. A captured array every lane shares receives, under reverse mode, a
-    stopped lane's zero cotangent times its donor's partial derivative, which
-    turns an infinite gradient into NaN. Each lane's additions depend on its
-    values, so a {!Total.collect} around the map must hold a running value on
-    their set; with no [collect] open, they do nothing. Where [until] does not
-    depend on the lanes, they stop together. The error at [max] names the first
-    lane still running, as in
+    has stopped keeps its carry bit for bit and is held
+    ({{!section-maps}held lanes}) on the step of its donor, the first lane still
+    running, and its row of every array the step captures with lanes. Where
+    [until] does not depend on the lanes, they stop together. The error at [max]
+    names the first lane still running, as in
     ["Rune.iterate: until is still false after max = 50 steps, in lane 3"].
 
     Raises [Invalid_argument] if [max < 0]
@@ -709,6 +717,46 @@ val iterate :
     element, at the trace if [f]'s carry differs from the one it received as
     {!scan} says, and if [until] is still false after [max] steps
     (["Rune.iterate: until is still false after max = 50 steps"]). *)
+
+(** {1:branches Branches} *)
+
+val switch : ('b, 'd) Nx.Ptree.t -> 'd Nx.int32_t -> (unit -> 'b) list -> 'b
+(** [switch b i branches] is [f ()], [f] the branch at position [i] of
+    [branches], a 0-d [int32]: that branch alone computes. Every branch is
+    traced at the call, each operation it applies staged, those on values it
+    captures included, so a branch not taken computes nothing: no work, no
+    check, no addition to a {!Total}, no NaN reaching a value or a derivative.
+    Each branch's code runs once per call; {!Nx.item} inside one raises. Outside
+    every transformation and construct [switch] reads [i], a wait on its set.
+
+    {[
+    let safe_log x =
+      Rune.cond' (Nx.greater_s x 0.) (fun () -> Nx.log x) (fun () -> x)
+    ]}
+
+    The derivative is the taken branch's, [i] having none, at a boundary too:
+    the comparison that computes [i] chooses the side. Under {!val-vmap} with
+    [i] the same in every lane, the branch runs over the lanes. With [i] per
+    lane, the lanes' indices are read once where they are values, and otherwise
+    each branch reads whether some lane takes it; each branch some lane takes
+    runs over every lane, a lane that did not take it held
+    ({{!section-maps}held lanes}) on the first lane that did, and each lane
+    receives its own branch's results and derivatives. A branch no lane takes
+    runs nothing. Under {!jit} a switch is evaluated at each call, as a custom
+    rule is, and reads [i] there.
+
+    Raises [Invalid_argument] if [branches] is empty, if [i] is not 0-d, at the
+    call if two branches' results differ in their visits, dtypes, shapes or
+    sets, naming the first path where they differ, as in
+    ["Rune.switch: 0: shape [3] in branch 1, [2] in branch 0"], and if [i] is
+    outside [0 .. n-1], as in ["Rune.switch: index 3 outside 0 .. 2"], naming
+    the lane under a map. *)
+
+val cond :
+  ('b, 'd) Nx.Ptree.t -> 'd Nx.bool_t -> (unit -> 'b) -> (unit -> 'b) -> 'b
+(** [cond b p t f] is [t ()] where the 0-d [p] holds and [f ()] where it does
+    not, as {!switch} on [p]. A NaN compares false:
+    [cond b (Nx.greater_s x 0.) t f] takes [f] at NaN and at [0.]. *)
 
 (** {1:roots Roots} *)
 
@@ -992,6 +1040,13 @@ val scan' :
   ('a, 'b, 'd) Nx.t * ('g, 'h, 'd) Nx.t
 (** [scan' ~f ~init xs] is {!scan} of one array each for the carry, the rows and
     the outputs. *)
+
+val cond' :
+  'd Nx.bool_t ->
+  (unit -> ('v, 's, 'd) Nx.t) ->
+  (unit -> ('v, 's, 'd) Nx.t) ->
+  ('v, 's, 'd) Nx.t
+(** [cond' p t f] is {!cond} over one array. *)
 
 val iterate' :
   max:int ->

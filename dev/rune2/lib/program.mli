@@ -225,6 +225,11 @@ and construct =
       (** [body] applied to [args], the function's arguments then its captures,
           whose reverse mode keeps [args] alone and computes [body] again; its
           sums start from [seeds], as a scan's. *)
+  | Switch : switch -> construct
+      (** The branch at [index] applied to [captures]; the others run nothing.
+          Its sums are every branch's, as a loop's: a branch that does not run
+          leaves its own where they start. Its default reads [index] and raises
+          [Invalid_argument] where no branch has it. *)
   | Operator : {
       id : int;  (** The operator's number. *)
       transposed : bool;  (** Whether it applies the operator's transpose. *)
@@ -280,6 +285,17 @@ and system = {
       (** The linear solve against the operator [id], over the right-hand side,
           the solution, [theta], then its captures. *)
 }
+
+and switch = {
+  name : string;  (** The entry point, in messages. *)
+  index : value;  (** A 0-d [int32]: the branch that runs. *)
+  branches : t array;
+      (** Each over [captures], then its totals' running values in; to the
+          results, of one form in every branch, then its running totals out. *)
+  captures : value array;
+  seeds : value array;  (** As a scan's. *)
+}
+
 (** A root's programs, at the level of the construct that holds them: a map of
     the construct maps them. [operator] gives the programs of [J] and [Jᵀ] at
     one lane, over the maps an operator lies under ({!fill}). *)
@@ -544,6 +560,20 @@ type _ Effect.t +=
 val mentions : axis -> t -> bool
 (** [mentions a p] is [true] iff [p] or a program its constructs carry reads the
     lanes or the lane index of the map named [a]. *)
+
+val switched : t array -> form array
+(** [switched branches] is the forms of a switch's results over [branches]: each
+    the placed of the branches', where nx would compute a constant beside the
+    others. *)
+
+val widen : t -> at:int array -> int -> t
+(** [widen p ~at n] is [p] over [n] arguments, its [k]th the [at.(k)]th of them,
+    the others unread, then its totals' running values in. *)
+
+val unite : (t * value array) array -> params:int -> t array * value array
+(** [unite traced ~params] is the programs [traced], each over [params]
+    parameters then its captures, each over those parameters then the captures
+    of them all, each value once; and those captures. *)
 
 val fill :
   t ->

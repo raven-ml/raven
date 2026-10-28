@@ -197,6 +197,7 @@ and construct =
     }
       -> construct
   | Remat : { body : t; args : value array; seeds : value array } -> construct
+  | Switch : switch -> construct
   | Operator : {
       id : int;
       transposed : bool;
@@ -223,6 +224,14 @@ and construct =
       captures : value array;
     }
       -> construct
+
+and switch = {
+  name : string;
+  index : value;
+  branches : t array;
+  captures : value array;
+  seeds : value array;
+}
 
 and system = {
   id : int;
@@ -282,6 +291,7 @@ let carried = function
   | Scan { step; _ } -> [ step ]
   | Iterate { until; step; _ } -> [ until; step ]
   | Call { body; _ } | Remat { body; _ } -> [ body ]
+  | Switch { branches; _ } -> Array.to_list branches
   | Custom { primal; derivative = Tangent d | Pullback d; _ } -> [ primal; d ]
   | Linear { apply; transpose; _ } -> Option.to_list apply @ [ transpose ]
   | Root { system; _ } | Solve { system; _ } ->
@@ -433,6 +443,16 @@ let map_operands m = function
           data = map_values m s.data;
           captures = map_values m s.captures;
         }
+  | Switch s ->
+      Switch
+        {
+          s with
+          index =
+            (let (V i) = s.index in
+             V (m.f i));
+          captures = map_values m s.captures;
+          seeds = map_values m s.seeds;
+        }
 
 let operands = function
   | Detach x -> [ V x ]
@@ -456,6 +476,8 @@ let operands = function
       Array.to_list (Array.concat [ solution; theta; captures ])
   | Solve { b; data; captures; _ } ->
       Array.to_list (Array.concat [ b; data; captures ])
+  | Switch { index; captures; seeds; _ } ->
+      index :: Array.to_list (Array.append captures seeds)
 
 let rec map_programs f = function
   | (Detach _ | Lanes _ | Lane_index _ | Add _ | Operator _) as c -> c
@@ -476,6 +498,7 @@ let rec map_programs f = function
   | Remat r -> Remat { r with body = f r.body }
   | Root r -> Root { r with system = map_system f r.system }
   | Solve s -> Solve { s with system = map_system f s.system }
+  | Switch s -> Switch { s with branches = Array.map f s.branches }
 
 (* A system's programs at its construct's level; the operator's, a lane's,
    stay. *)
@@ -552,6 +575,9 @@ let additions = function
   | Iterate { step; until; _ } ->
       let adds, _, _ = sums [ until; step ] in
       adds
+  | Switch { branches; _ } ->
+      let adds, _, _ = sums (Array.to_list branches) in
+      adds
   | Custom { primal; derivative = Tangent t; _ } ->
       let adds, _, _ = sums [ primal ] in
       Array.append adds t.adds
@@ -576,6 +602,7 @@ let with_seeds c seeds =
   | Iterate s -> Iterate { s with seeds }
   | Call s -> Call { s with seeds }
   | Remat s -> Remat { s with seeds }
+  | Switch s -> Switch { s with seeds }
   | Custom s -> Custom { s with seeds }
   | c -> c
 
@@ -641,6 +668,15 @@ let rec forms = function
   | Root { solution; _ } -> Array.map form solution
   | Solve { system; b; _ } ->
       Array.map form (slice system.solve.outputs 0 (Array.length b))
+  | Switch { branches; _ } ->
+      let _, sums, _ = sums (Array.to_list branches) in
+      Array.append (switched branches) sums
+
+(* A switch's results' forms, its first branch's: every branch's agree. *)
+and switched branches =
+  let p = branches.(0) in
+  Array.map form
+    (slice p.outputs 0 (Array.length p.outputs - Array.length p.adds))
 
 (* The forms of [p]'s results, then its sums'. *)
 and results p =
@@ -825,6 +861,18 @@ and default = function
           custom_jvp rule")
   | Remat { body; args; seeds } ->
       from_seeds body seeds (fun totals -> eval ~totals body args)
+  | Switch { name; index; branches; captures; seeds } ->
+      let n = Array.length branches in
+      let k = count index in
+      if k < 0 || k >= n then
+        invalid_arg
+          (Printf.sprintf "%s: index %d outside 0 .. %d" name k (n - 1));
+      let _, forms, feeds = sums (Array.to_list branches) in
+      let acc = accumulators forms seeds in
+      let p = branches.(k) in
+      let out = evaluate p (List.nth feeds k) acc captures in
+      let results = slice out 0 (Array.length out - Array.length p.adds) in
+      Array.append results acc
   | Operator _ ->
       invalid_arg
         "Rune.root: linear_solve's operator was applied after linear_solve \
@@ -1211,6 +1259,47 @@ let rec mentions a (p : t) =
       | Do { c; _ } -> List.exists (mentions a) (carried c))
     p.eqns
 
+let widen (p : t) ~at n =
+  let np = Array.length p.params - Array.length p.adds in
+  let slot = Array.make n (-1) in
+  Array.iteri (fun k j -> slot.(j) <- p.params.(k)) at;
+  let next = ref p.slots in
+  let fresh s =
+    if s >= 0 then s
+    else begin
+      incr next;
+      !next - 1
+    end
+  in
+  let params = Array.map fresh slot in
+  {
+    p with
+    params = Array.append params (slice p.params np (Array.length p.params));
+    slots = !next;
+  }
+
+let unite traced ~params =
+  let union = ref [] in
+  let position v =
+    let rec go j = function
+      | [] ->
+          union := !union @ [ v ];
+          j
+      | u :: rest -> if same u v then j else go (j + 1) rest
+    in
+    go 0 !union
+  in
+  let ats =
+    Array.map
+      (fun (_, own) ->
+        Array.append (Array.init params Fun.id)
+          (Array.map (fun v -> params + position v) own))
+      traced
+  in
+  let captures = Array.of_list !union in
+  let n = params + Array.length captures in
+  (Array.map2 (fun (p, _) at -> widen p ~at n) traced ats, captures)
+
 let rec reads_lanes ?(index = true) (p : t) =
   Array.exists
     (function
@@ -1448,6 +1537,12 @@ and pp_construct names ~indent (p : t) ppf c =
   | Remat { body; args; seeds } ->
       Format.fprintf ppf "remat (%a)%a@\n%s  body%a" values (Array.to_list args)
         seeded_from seeds pad program body
+  | Switch { index; branches; captures; seeds; _ } ->
+      Format.fprintf ppf "switch %a (%a)%a" values [ index ] values
+        (Array.to_list captures) seeded_from seeds;
+      Array.iteri
+        (fun k b -> Format.fprintf ppf "@\n%s  branch %d%a" pad k program b)
+        branches
   | Operator { transposed; lanes; args; data; _ } ->
       Format.fprintf ppf "operator%s%s (%a) of (%a)"
         (if transposed then " transposed" else "")

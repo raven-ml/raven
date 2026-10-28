@@ -599,6 +599,68 @@ let iterate_named name c ~max ~until ~f init =
 let iterate c ~max ~until ~f init =
   iterate_named "Rune.iterate" c ~max ~until ~f init
 
+(* Branches *)
+
+(* Every branch traced at the call, every operation staged, each over every
+   branch's captures; the taken one evaluated. *)
+let switch_named name s (index : _ Nx.int32_t) branches =
+  let branches = Array.of_list branches in
+  let n = Array.length branches in
+  if n = 0 then invalid_argf "%s: no branches" name;
+  if Nx.ndim index <> 0 then
+    invalid_argf "%s: the index has shape %s, not []" name
+      (Format.asprintf "%a" pp_shape (Nx.shape index));
+  let likes = Array.make n None in
+  let traced =
+    Array.mapi
+      (fun k b ->
+        Trace.trace Staged ~name [||] (fun _ ->
+            let y = b () in
+            likes.(k) <- Some y;
+            values s y))
+      branches
+  in
+  let likes = Array.map Option.get likes in
+  Array.iteri
+    (fun k y ->
+      if k > 0 then
+        same_leaves name s
+          ~this:(Printf.sprintf "in branch %d" k)
+          y ~that:"in branch 0" likes.(0))
+    likes;
+  (* Each result lies where branch 0's does. *)
+  let leaves = Array.map (fun y -> fst (Ptree.flatten s y)) likes in
+  let paths =
+    List.rev (Ptree.fold s (fun p _ acc -> path_name p :: acc) likes.(0) [])
+  in
+  List.iteri
+    (fun j path ->
+      let at k =
+        let (Nx.P l) = List.nth leaves.(k) j in
+        Nx.placement l
+      in
+      for k = 1 to n - 1 do
+        if not (Nx.Placement.equal (at k) (at 0)) then
+          invalid_argf "%s: %s: on %s in branch %d, on %s in branch 0" name path
+            (Format.asprintf "%a" Nx.Placement.pp (at k))
+            k
+            (Format.asprintf "%a" Nx.Placement.pp (at 0))
+      done)
+    paths;
+  let like = likes.(0) in
+  let programs, captures = Program.unite traced ~params:0 in
+  let r =
+    run
+      (Switch
+         { name; index = V index; branches = programs; captures; seeds = [||] })
+  in
+  rebuild s ~like (slice r 0 (Array.length (values s like)))
+
+let switch s index branches = switch_named "Rune.switch" s index branches
+let cond_named name s p t f = switch_named name s (Nx.cast Nx.int32 p) [ f; t ]
+let cond s p t f = cond_named "Rune.cond" s p t f
+let cond' p t f = cond_named "Rune.cond'" Ptree.tensor p t f
+
 (* Roots *)
 
 let operators = Atomic.make 0

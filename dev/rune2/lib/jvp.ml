@@ -1347,6 +1347,13 @@ let rec answer ~name ~tape i (c : Program.construct) k =
   | Call { body; args; site; seeds } ->
       Effect.Deep.continue k (call ~name ~tape i body args site seeds)
   | Iterate _ -> Effect.Deep.continue k (iterate ~name ~tape i c)
+  (* An index no interpretation traces picks the branch here: it runs inside
+     this differentiation, as if written inline. *)
+  | Switch { index; _ }
+    when let (V x) = pv i index in
+         Option.is_none (Nx.Prim.owner x) ->
+      Effect.Deep.discontinue k Program.Evaluate
+  | Switch _ -> Effect.Deep.continue k (switch ~name ~tape i c)
   (* An operator is linear in its arguments: its tangent is the operator of
      their tangents. Its data are values outside the transformations the linear
      solve opens, which track none of them. *)
@@ -1660,6 +1667,122 @@ and call ~name ~tape i (body : Program.t) args site seeds =
   | [ y; t; adds ] ->
       Array.map2 (dualv i ~fresh:false) (Array.append y adds) (spread d.flags t)
   | _ -> invalid_arg "Rune: a call's derivative"
+
+(* A switch's derivative is the switch, on the same index, of its branches'
+   derivatives, as JAX derives a cond: each branch's results and their tangents,
+   a zero where another branch has one and this one none, and its sums'
+   tangents, those its branch does not add to their seeds'. The index has no
+   tangent. *)
+and switch ~name ~tape i (c : Program.construct) =
+  match c with
+  | Switch sw -> (
+      let branches = sw.branches in
+      let pcaps = Array.map (pv i) sw.captures
+      and tcaps = Array.map (tv i) sw.captures in
+      let tseeds = Array.map (tv i) sw.seeds in
+      let _, sum_forms, feeds = Program.sums (Array.to_list branches) in
+      let ns = Array.length sum_forms in
+      let results = Program.switched branches in
+      let no = Array.length results in
+      let mask = Array.map Option.is_some tcaps in
+      let forms =
+        Array.concat
+          [
+            Array.map Program.form pcaps;
+            Array.map Program.form (somes tcaps);
+            Array.map Program.form (somes tseeds);
+          ]
+      in
+      let count m = Array.length (somes m) in
+      (* Branch [k]'s results, their tangents, and its sums' tangents, the
+         primals' additions made on the running values; [keep] the tangents
+         every branch outputs, a zero where this one has none. *)
+      let derive k ~keep vs =
+        match
+          Loops.split [ Array.length pcaps; count tcaps; count tseeds ] vs
+        with
+        | [ ps; ts; tss ] ->
+            let b = branches.(k) and feeds = List.nth feeds k in
+            let tss =
+              if sw.seeds = [||] then Array.make ns None
+              else spread (Array.map Option.is_some tseeds) tss
+            in
+            let out = ref [||] and has = ref [||] in
+            let (_ : Program.value array) =
+              Program.threaded b (fun totals ->
+                  run ~name ?tape (fun j ->
+                      let args = Array.map2 (seeded j) ps (spread mask ts) in
+                      let na = Array.length b.adds in
+                      let totals =
+                        Array.mapi
+                          (fun a t -> seeded j t tss.(feeds.(a)))
+                          totals
+                      in
+                      let p, t = parts j (Program.eval ~totals b args) in
+                      let st = Array.copy tss in
+                      Array.iteri (fun a s -> st.(s) <- t.(no + a)) feeds;
+                      let t = Array.append (Array.sub t 0 no) st in
+                      has := Array.map Option.is_some t;
+                      let zero k =
+                        Loops.filled ~zero:true
+                          (if k < no then results.(k) else sum_forms.(k - no))
+                      in
+                      out :=
+                        Array.append (Array.sub p 0 no)
+                          (somes
+                             (Array.mapi
+                                (fun k t ->
+                                  if not keep.(k) then None
+                                  else
+                                    Some
+                                      (match t with
+                                      | Some t -> t
+                                      | None -> zero k))
+                                t));
+                      Array.sub p no na))
+            in
+            (!out, !has)
+        | _ -> invalid_arg "Rune: a switch's derivative"
+      in
+      (* The tangents some branch has, from a first trace of each. *)
+      let all = Array.make (no + ns) true in
+      let keep =
+        Array.fold_left
+          (fun acc k ->
+            let _ =
+              Trace.trace Staged ~name forms (fun vs ->
+                  let out, has = derive k ~keep:all vs in
+                  Array.iteri (fun j h -> if h then acc.(j) <- true) has;
+                  out)
+            in
+            acc)
+          (Array.make (no + ns) false)
+          (Array.init (Array.length branches) Fun.id)
+      in
+      let traced =
+        Array.mapi
+          (fun k _ ->
+            Trace.trace Staged ~name forms (fun vs -> fst (derive k ~keep vs)))
+          branches
+      in
+      let progs, own = Program.unite traced ~params:(Array.length forms) in
+      let r =
+        Program.perform
+          (Switch
+             {
+               sw with
+               branches = progs;
+               captures = Array.concat [ pcaps; somes tcaps; somes tseeds; own ];
+               seeds = Array.map (pv i) sw.seeds;
+             })
+      in
+      let nt = Array.length (Loops.pick keep keep) in
+      match Loops.split [ no; nt; ns ] r with
+      | [ y; t; sums ] ->
+          Array.map2 (dualv i ~fresh:false) (Array.append y sums)
+            (spread keep t)
+      | _ -> invalid_arg "Rune: a switch's derivative")
+  | _ -> invalid_arg "Rune: a switch's derivative"
 
 (* An iterate's derivative is an iterate whose carry holds the primal carry, the
    tangents of the carries that have one or a step gives one, a fixpoint, the

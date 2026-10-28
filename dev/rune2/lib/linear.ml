@@ -1186,6 +1186,9 @@ let rec walk ~name ~fn (p : Program.t) consts cts =
     | Do { c = Call { body; args; site; _ }; base } ->
         let n = next.(e) - base in
         if reached base n then call_rule env body args site (cts_at base n)
+    | Do { c = Switch _ as c; base } ->
+        let n = next.(e) - base in
+        if reached base n then switch_rule env c (cts_at base n)
     | Do { base; _ } ->
         if reached base (next.(e) - base) then
           invalid_arg (name ^ ": a loop has no transpose yet")
@@ -1365,6 +1368,78 @@ and scan_rule env (step : Program.t) ~length ~trips ~reverse ~init ~xs ~captures
     Array.iteri
       (fun j (V x) -> if has_row.(j) then env.give x (held (take ())))
       lxs
+
+(* A linear switch's transpose is the switch, on the same index, of its
+   branches' transposes, as JAX transposes a cond: each branch's over the
+   constants and the results' cotangents, to the linear captures'. *)
+and switch_rule env (sw : construct) cts =
+  match sw with
+  | Switch { name; index; branches; captures; _ } ->
+      let la = Array.map (fun (V x) -> env.lin x) captures in
+      let consts =
+        Array.map
+          (fun (V x) -> V (env.const x))
+          (Loops.pick (Array.map not la) captures)
+      in
+      let lins = Loops.pick la captures in
+      let no = Array.length (Program.switched branches) in
+      let ct_y = Array.init no cts in
+      let gy = Array.map Option.is_some ct_y in
+      let ys = Array.map Option.get (Loops.pick gy ct_y) in
+      let nc = Array.length consts and ny = Array.length ys in
+      let forms = Array.map form (Array.append consts ys) in
+      let lforms = Array.map form lins in
+      let transposed (b : Program.t) vs =
+        let cs = Array.sub vs 0 nc and gs = Array.sub vs nc ny in
+        let tape, tcaps =
+          Trace.trace Tape ~name:env.name lforms (fun ts ->
+              eval b (Loops.merge la ts cs))
+        in
+        let nl = Array.length lins in
+        let tconsts =
+          Array.append (Array.make nl None) (Array.map Option.some tcaps)
+        in
+        let gys =
+          let n = ref (-1) in
+          Array.map
+            (fun g ->
+              if g then begin
+                incr n;
+                Some gs.(!n)
+              end
+              else None)
+            gy
+        in
+        let r =
+          walk ~name:env.name ~fn:env.fn tape tconsts
+            (Array.init (Array.length tape.outputs) (fun j ->
+                 if j < no then gys.(j) else None))
+        in
+        Array.mapi
+          (fun k f ->
+            match r.(k) with Some c -> c.v | None -> Loops.filled ~zero:true f)
+          lforms
+      in
+      let traced =
+        Array.map
+          (fun b -> Trace.trace Staged ~name:env.name forms (transposed b))
+          branches
+      in
+      let progs, own = unite traced ~params:(Array.length forms) in
+      let (V ix) = index in
+      let r =
+        Program.perform
+          (Switch
+             {
+               name;
+               index = V (env.const ix);
+               branches = progs;
+               captures = Array.concat [ consts; ys; own ];
+               seeds = [||];
+             })
+      in
+      Array.iteri (fun k (V x) -> env.give x (fresh r.(k))) lins
+  | _ -> invalid_arg "Rune: a switch's transpose"
 
 (* A remat's transpose linearizes its function again at its constant arguments,
    then transposes that, so that the forward pass kept its arguments alone. *)

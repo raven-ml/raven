@@ -488,6 +488,7 @@ let rec answer st i c =
   | Tape, Call { body; args; site; seeds } ->
       call_parts st i body args site ~seeds
   | Tape, Iterate _ -> iterate_parts st i c
+  | Tape, Switch _ -> switch_parts st i c
   | _ -> record st i c
 
 (* A scan over the tape's variables is two scans, as JAX's partial evaluation of
@@ -903,6 +904,144 @@ and iterate_parts st i (c : construct) =
         let ys = Array.map (fun u -> if u then un () else kn ()) uy in
         Array.concat [ carry; [| trips |]; ys; sums ]
   | _ -> invalid_arg "Rune: an iterate's parts"
+
+(* A switch over the tape's variables is two switches on its index, as JAX's
+   partial evaluation of a cond gives: a known switch, computed at the call, of
+   the results no branch computes from them and every branch's residuals; and a
+   recorded linear switch of the others over the residuals. The branches'
+   residuals share slots by form, only the taken branch's being live, and a
+   branch leaves the slots it does not fill zeros. Each branch is split traced
+   as the switch's are, every operation staged. *)
+and switch_parts st i (c : construct) =
+  match c with
+  | Switch sw ->
+      let name = st.name in
+      let branches = sw.branches in
+      let ucap = Array.map (owned i) sw.captures in
+      let cforms = Array.map form sw.captures in
+      let kforms = Loops.pick (nots ucap) cforms
+      and uforms = Loops.pick ucap cforms in
+      let no = Array.length (switched branches) in
+      (* Branch [b] split, the results [unknown] says unknown so: its known
+         program over the known captures, to its known results, its residuals
+         and its running totals out, and its own captures; its linear program
+         over the unknown captures then its residuals; which results it leaves
+         unknown; and how many residuals it has. With [fill = (at, slots)],
+         the known program's residuals are the [slots] instead, residual [r]
+         at slot [at.(r)], each slot it leaves zeros made in its trace. *)
+      let split ?fill (b : Program.t) ~unknown =
+        let lin = ref None and uy = ref [||] and nr = ref 0 in
+        let known kvs =
+          let kn = ref [||] in
+          let p, res =
+            trace_in Tape ~name uforms (fun inner uvs ->
+                let args = Loops.merge ucap uvs kvs in
+                let out = threaded b (fun totals -> eval ~totals b args) in
+                let y = Array.sub out 0 no in
+                uy := Array.mapi (fun j (V v) -> unknown.(j) || owns inner v) y;
+                kn := Loops.pick (nots !uy) y;
+                Loops.pick !uy y)
+          in
+          lin := Some p;
+          nr := Array.length res;
+          match fill with
+          | None -> Array.append !kn res
+          | Some (at, slots) ->
+              let filled = Array.make (Array.length slots) None in
+              Array.iteri (fun r j -> filled.(j) <- Some res.(r)) at;
+              Array.append !kn
+                (Array.mapi
+                   (fun j v ->
+                     match v with
+                     | Some v -> v
+                     | None -> Loops.filled ~zero:true slots.(j))
+                   filled)
+        in
+        let kprog, own = trace Staged ~name kforms known in
+        (kprog, own, Option.get !lin, !uy, !nr)
+      in
+      let none = Array.make no false in
+      let unknown =
+        Array.fold_left
+          (fun acc b ->
+            let _, _, _, uy, _ = split b ~unknown:none in
+            Array.map2 ( || ) acc uy)
+          none branches
+      in
+      let parts = Array.map (fun b -> split b ~unknown) branches in
+      let nk = Array.length (Loops.pick (nots unknown) unknown) in
+      (* The residual slots: each a form, a branch's residual taking the first
+         slot of its form it has not filled. *)
+      let slots = ref [] in
+      let same_form (F a) (F b) =
+        Nx.Dtype.equal a.dtype b.dtype
+        && Nx_array.Layout.shape a.layout = Nx_array.Layout.shape b.layout
+        && Nx.Placement.equal a.placement b.placement
+      in
+      let assign (kprog, _, _, _, nr) =
+        let used = ref [] in
+        Array.init nr (fun r ->
+            let f = form kprog.outputs.(nk + r) in
+            let rec go j = function
+              | [] ->
+                  slots := !slots @ [ f ];
+                  j
+              | g :: rest ->
+                  if same_form f g && not (List.mem j !used) then j
+                  else go (j + 1) rest
+            in
+            let j = go 0 !slots in
+            used := j :: !used;
+            j)
+      in
+      let at = Array.map assign parts in
+      let slots = Array.of_list !slots in
+      let nslot = Array.length slots in
+      (* Each known program to its known results, the slots, then its running
+         totals out; each linear one over the unknown captures then the
+         slots. *)
+      let parts =
+        Array.mapi (fun k b -> split ~fill:(at.(k), slots) b ~unknown) branches
+      in
+      let known = Array.map (fun (kprog, own, _, _, _) -> (kprog, own)) parts in
+      let kprogs, kown = unite known ~params:(Array.length kforms) in
+      let kcaps = Loops.pick (nots ucap) sw.captures in
+      let kr =
+        perform
+          (Switch
+             { sw with branches = kprogs; captures = Array.append kcaps kown })
+      in
+      let ky = Array.sub kr 0 nk and sv = Array.sub kr nk nslot in
+      let sums = Array.sub kr (nk + nslot) (Array.length kr - nk - nslot) in
+      let nu = Array.length uforms in
+      let results =
+        if nk = no then ky
+        else
+          let lins =
+            Array.mapi
+              (fun k (_, _, lin, _, _) ->
+                widen lin
+                  ~at:
+                    (Array.append (Array.init nu Fun.id)
+                       (Array.map (fun j -> nu + j) at.(k)))
+                  (nu + nslot))
+              parts
+          in
+          let lr =
+            record st i
+              (Switch
+                 {
+                   name = sw.name;
+                   index = sw.index;
+                   branches = lins;
+                   captures = Array.append (Loops.pick ucap sw.captures) sv;
+                   seeds = [||];
+                 })
+          in
+          Loops.merge unknown lr ky
+      in
+      Array.append results sums
+  | _ -> invalid_arg "Rune: a switch's parts"
 
 (* A remat over the tape's variables computes at the call the outputs that read
    none of them, its function partially evaluated once, and records itself over

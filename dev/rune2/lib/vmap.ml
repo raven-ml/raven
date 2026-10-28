@@ -609,9 +609,7 @@ let flags_at (type v s d) ~what (Program.V running) (x : (v, s, d) Nx.t) :
   | Some r -> r
   | None ->
       invalid_arg
-        (what
-       ^ ": a value of every set inside the step of an iterate whose lanes \
-          stop apart, beside lanes on a set")
+        (what ^ ": a value on another set than the lanes held apart beside it")
 
 (* A batch of additions whose held lanes' values are the identity. *)
 let dropped running b =
@@ -716,6 +714,8 @@ let claims i axis : Program.construct -> bool = function
   (* An iterate whose programs read the map's lanes may stop them apart. *)
   | Iterate { step; until; _ }
     when Program.mentions axis step || Program.mentions axis until ->
+      true
+  | Switch { branches; _ } when Array.exists (Program.mentions axis) branches ->
       true
   | Lane_index (a, _) -> Program.same_axis a axis
   | Add _ -> true
@@ -925,16 +925,15 @@ let lanes_of w mask vs =
 (* [Lanes] of this map is every lane's value, the batch, a constant; of another
    map, every lane's batch, a lane value. An addition adds the sum of its lanes'
    values, once, and nothing with no lane. Where lanes are held, a held lane's
-   index is its donor's, its additions are dropped, and the map's lanes
-   raise. *)
+   additions are dropped and the map's lanes raise. *)
 let rec answer ~name ?held i axis n (c : Program.construct) k =
   let one x = Effect.Deep.continue k [| Program.V x |] in
   match c with
   | Lanes (a, _) when Program.same_axis a axis && Option.is_some held ->
       Effect.Deep.discontinue k
         (Invalid_argument
-           "Rune.lanes: the lanes of the map stand at different steps of an \
-            iterate whose lanes stop apart")
+           "Rune.lanes: the lanes of the map are held apart, at an iterate's \
+            different steps or a switch's different branches")
   | Lanes (a, x) when Program.same_axis a axis -> one (batch i n x)
   | Lanes (a, x) ->
       let b = batch i n x in
@@ -972,6 +971,7 @@ let rec answer ~name ?held i axis n (c : Program.construct) k =
   | Call { body; args; site; seeds } ->
       Effect.Deep.continue k (call ~name i axis n body args site seeds)
   | Iterate _ -> Effect.Deep.continue k (iterate ~name ?held i axis n c)
+  | Switch _ -> Effect.Deep.continue k (switch ~name ?held i axis n c)
   (* An operator over lane values applies over the lanes: its arguments' and
      those of its data that hold them. *)
   | Operator o ->
@@ -1650,6 +1650,170 @@ and root ~name i axis n (c : Program.construct) =
     | _ -> invalid_arg "Rune: a root's map"
   in
   Array.map (lane_v i) r
+
+(* A switch whose index every lane shares is the switch of its branches' maps;
+   one whose index is per lane runs its branches apart. *)
+and switch ~name ?held i axis n (c : Program.construct) =
+  match c with
+  | Switch sw ->
+      let (Program.V idx) = sw.index in
+      let lcap = Array.map (owned_v i) sw.captures in
+      let bcaps =
+        Array.map2 (fun l v -> if l then batch_v i n v else v) lcap sw.captures
+      in
+      if owned i idx then switch_apart ~name ?held i axis n sw ~lcap ~bcaps
+      else switch_shared ~name ?held i axis n sw ~lcap ~bcaps
+  | _ -> invalid_arg "Rune: a switch's map"
+
+and switch_shared ~name ?held i axis n (sw : Program.switch) ~lcap ~bcaps =
+  let mapped (b : Program.t) vs =
+    Program.threaded ~lanes:n b (fun running ->
+        interpret ~name ~axis ?held n (fun w ->
+            let totals = Array.map (lane_v w) running in
+            let out = Program.eval ~totals b (lanes_of w lcap vs) in
+            Array.map (batch_v w n) out))
+  in
+  let traced =
+    Array.map
+      (fun b ->
+        Trace.trace Staged ~name (Array.map Program.form bcaps) (mapped b))
+      sw.branches
+  in
+  let progs, own = Program.unite traced ~params:(Array.length bcaps) in
+  let r =
+    Program.perform
+      (Switch
+         {
+           sw with
+           branches = progs;
+           captures = Array.append bcaps own;
+           seeds = Array.map (batch_v i n) sw.seeds;
+         })
+  in
+  Array.map (lane_v i) r
+
+(* Each branch some lane takes runs over every lane, a lane that did not take it
+   held at its donor, as an iterate's stopped lanes are, and each lane takes its
+   own branch's results, a lane an outer mask holds its donor's. The lanes'
+   indices are read once where they are values, and otherwise each branch runs
+   under a switch on whether a lane takes it, a flag the device can gate on. *)
+and switch_apart ~name ?held i axis n (sw : Program.switch) ~lcap ~bcaps =
+  let (Program.V idx) = sw.index in
+  let branches = sw.branches in
+  let nb = Array.length branches in
+  let results = Program.switched branches in
+  let no = Array.length results in
+  let sum_adds, sum_forms, feeds = Program.sums (Array.to_list branches) in
+  let ns = Array.length sum_forms in
+  let b = as_int32 (batch i n idx) in
+  let seeded = sw.seeds <> [||] in
+  let acc0 =
+    if seeded then Array.map (batch_v i n) sw.seeds
+    else
+      Array.map
+        (fun f -> Loops.filled ~zero:false (Program.stacked n f))
+        sum_forms
+  in
+  let zeros () =
+    Array.map (fun f -> Loops.filled ~zero:true (Program.stacked n f)) results
+  in
+  (* Each running lane's index in range, a check, naming the first lane
+     outside. *)
+  let inside =
+    Nx.logical_and (Nx.greater_equal_s b 0l) (Nx.less_s b (Int32.of_int nb))
+  in
+  let ok =
+    match held with
+    | None -> inside
+    | Some h ->
+        Nx.logical_or inside
+          (Nx.logical_not (flags_at ~what:sw.name h.running b))
+  in
+  Nx.check Nx.Ptree.tensor ok b (fun at k ->
+      Invalid_argument
+        (Printf.sprintf "%s: index %ld outside 0 .. %d, in lane %d" sw.name
+           (Nx.item [] k) (nb - 1) at.(0)));
+  let chose k = Program.V (Nx.equal_s b (Int32.of_int k)) in
+  (* The lanes that run branch [k]: those that chose it, of those running. *)
+  let takes k =
+    match held with None -> chose k | Some h -> and_flags h.running (chose k)
+  in
+  let run k running vs acc =
+    let h = { running; donors = donors n running } in
+    let caps = Array.map2 (fun l v -> if l then lend h v else v) lcap vs in
+    evaluated ~name ~axis ~held:h n branches.(k) (List.nth feeds k) lcap caps
+      acc
+  in
+  (* Each lane's results, its own branch's: a lane an outer mask holds chose its
+     donor's. *)
+  let merge runs =
+    let res = zeros () in
+    List.iter
+      (fun (k, out) ->
+        Array.iteri (fun j o -> res.(j) <- hold (chose k) o res.(j)) out)
+      runs;
+    res
+  in
+  let res, acc =
+    if Option.is_none (Prim.owner b) then begin
+      (* Every lane's index, read once. *)
+      let ks = if n = 0 then [||] else Nx.to_array b in
+      let taken =
+        List.filter
+          (fun k -> Array.exists (fun x -> Int32.to_int x = k) ks)
+          (List.init nb Fun.id)
+      in
+      let acc = ref acc0 and runs = ref [] in
+      List.iter
+        (fun k ->
+          let out, a = run k (takes k) bcaps !acc in
+          acc := a;
+          runs := (k, out) :: !runs)
+        taken;
+      (merge (List.rev !runs), !acc)
+    end
+    else begin
+      let acc = ref acc0 and runs = ref [] in
+      for k = 0 to nb - 1 do
+        let running = takes k in
+        let (Program.V r) = running in
+        let any = Nx.cast Nx.int32 (Nx.any (as_bool r)) in
+        let forms =
+          Array.map Program.form (Array.concat [ [| running |]; bcaps; !acc ])
+        in
+        let nc = Array.length bcaps in
+        let skip vs = Array.append (zeros ()) (Array.sub vs (1 + nc) ns) in
+        let go vs =
+          let out, a =
+            run k vs.(0) (Array.sub vs 1 nc) (Array.sub vs (1 + nc) ns)
+          in
+          Array.append out a
+        in
+        let traced =
+          [|
+            Trace.trace Staged ~name forms skip;
+            Trace.trace Staged ~name forms go;
+          |]
+        in
+        let progs, own = Program.unite traced ~params:(Array.length forms) in
+        let r =
+          Program.perform
+            (Switch
+               {
+                 name = sw.name;
+                 index = Program.V any;
+                 branches = progs;
+                 captures = Array.concat [ [| running |]; bcaps; !acc; own ];
+                 seeds = [||];
+               })
+        in
+        acc := Array.sub r no ns;
+        runs := (k, Array.sub r 0 no) :: !runs
+      done;
+      (merge (List.rev !runs), !acc)
+    end
+  in
+  Array.append (Array.map (lane_v i) res) (held_sums n sum_adds ~seeded i acc)
 
 (* A remat's map is the remat of its function's map, as JAX's checkpoint
    batches, so that a reverse mode around the map sees the remat. *)

@@ -269,6 +269,7 @@ let construct_name = function
   | Operator _ -> "Rune.root's operator"
   | Root { name; _ } -> name
   | Solve { name; _ } -> name ^ "'s linear solve"
+  | Switch { name; _ } -> name
   | Add _ -> "an addition"
   | Detach _ -> "Rune.detach"
   | Custom { name; _ } | Linear { name; _ } -> name
