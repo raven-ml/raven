@@ -153,9 +153,9 @@ let kink_props =
    gradient NaN there. Over every tuple of a grid of each function's
    boundaries, wherever forward mode's tangent along an operand is finite at
    operands other than NaN, so is the gradient along it; the adjoint law
-   checks its value on each domain. lgamma, digamma, lbeta and the incomplete
-   gamma functions and their inverses are left out: their gradients are still
-   NaN at some of these points. *)
+   checks its value on each domain. lbeta and the incomplete gamma functions
+   and their inverses are left out: their gradients are still NaN at some of
+   these points. *)
 
 type 's ft = (float, 's, Nx.host) Nx.t
 
@@ -189,6 +189,8 @@ let composed =
     One { fname = "i1e"; f1 = Nx.i1e };
     One { fname = "sigmoid"; f1 = Nx.sigmoid };
     One { fname = "softplus"; f1 = Nx.softplus };
+    One { fname = "lgamma"; f1 = Nx.lgamma };
+    One { fname = "digamma"; f1 = Nx.digamma };
     Two { fname = "hypot"; f2 = Nx.hypot };
     Two { fname = "atan2"; f2 = Nx.atan2 };
     Three { fname = "lerp"; f3 = Nx.lerp };
@@ -270,8 +272,34 @@ let finite_law (type s) ((w : (float, s) D.t), fmt) c =
   equal ~msg:"gradients not finite where the tangent is" (list string) []
     (List.rev !bad)
 
+(* [pinv] drops a singular value or eigenvalue below its cutoff; the gradient
+   at a matrix with one must stay finite wherever forward mode's tangent
+   along an element is. *)
+let pinv_law hermitian () =
+  let a = Nx.create f64 [| 2; 2 |] [| 1.; 0.; 0.; 0. |] in
+  let f a = Nx.pinv ~hermitian a in
+  let g = Nx.to_array (Rune.grad' (fun a -> Nx.sum (f a)) a) in
+  let bad = ref [] in
+  for i = 0 to 3 do
+    let e = Array.init 4 (fun j -> if i = j then 1. else 0.) in
+    let t = Nx.to_array (snd (Rune.jvp' f a (Nx.create f64 [| 2; 2 |] e))) in
+    let tangent = Array.fold_left ( +. ) 0. t in
+    if Float.is_finite tangent && not (Float.is_finite g.(i)) then
+      bad :=
+        Printf.sprintf "element %d: tangent %h, gradient %h" i tangent g.(i)
+        :: !bad
+  done;
+  equal ~msg:"gradients not finite where the tangent is" (list string) []
+    (List.rev !bad);
+  (* Of pinv at fixed rank, [d sum (pinv a) = -da00 + da01 + da10] here; under
+     [~hermitian] [a] is its lower triangle, so [da01] is [da10]. *)
+  let want = if hermitian then [| -1.; 0.; 2.; 0. |] else [| -1.; 1.; 1.; 0. |] in
+  equal ~msg:"the fixed-rank gradient" (array (float 1e-12)) want g
+
 let finite_cases =
   [
+    test "pinv of a singular matrix" (pinv_law false);
+    test "pinv of a singular Hermitian matrix" (pinv_law true);
     cases "float64" ~name:fname composed (finite_law (f64, f64_format));
     cases "float32" ~name:fname composed (finite_law (Nx.float32, f32_format));
     cases "float16" ~name:fname composed (finite_law (Nx.float16, f16_format));

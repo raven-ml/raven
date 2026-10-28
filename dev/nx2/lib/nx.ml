@@ -3185,8 +3185,12 @@ let reciprocals ~by ~tol s =
   let top = reduction ~by Max ~axes:[ -1 ] ~keepdims:true s in
   let dt = dtype s in
   let v = operand 0 s and cut = E.(operand 1 top * const dt tol) in
+  (* A dropped value's reciprocal reads [1], so that [recip 0] does not reach
+     the gradient. *)
+  let kept = E.(cut < v) in
+  let safe = E.(where kept v (const dt 1.)) in
   elementwise ~by dt [ Any s; Any top ]
-    E.(where (v <> v) v (where (cut < v) (recip v) (const dt 0.)))
+    E.(where (v <> v) v (where kept (recip safe) (const dt 0.)))
 
 (* The cutoff of a singular value relative to its matrix's greatest: [rtol],
    by default the dtype's machine epsilon times [max m n]. *)
@@ -3262,8 +3266,10 @@ let pinv ?rtol ?(hermitian = false) a =
     let kept = reciprocals ~by ~tol w in
     let k = operand 0 kept and dt = dtype a in
     let w' =
+      let dropped = E.(k = const f 0.) in
+      let safe = E.(where dropped (const f 1.) (operand 1 w)) in
       elementwise ~by dt [ Any kept; Any w ]
-        (at dt E.(where (k = const f 0.) k (recip (operand 1 w))))
+        (at dt E.(where dropped k (recip safe)))
     in
     let scaled = mul_by ~by v (unsqueeze_by ~by ~axes:[ -2 ] w') in
     matmul_by ~by scaled (adjoint ~by v)

@@ -476,7 +476,7 @@ let lgamma_at x =
   let regular = logical_and (isfinite x) (logical_not (is x 0.)) in
   let y = clamp regular (where negative (rsub_s 1. x) x) 1. in
   let r = lgamma_pos y in
-  let s = sinpi_abs (clamp negative x (-0.5)) in
+  let s = sinpi_abs (clamp (logical_and negative regular) x (-0.5)) in
   let pole = is s 0. in
   let reflected =
     sub (rsub_s log_pi (log (where pole (ones_like s) s))) r
@@ -534,7 +534,8 @@ let digamma_at x =
       1.
   in
   let r = digamma_pos y in
-  let xn = clamp (logical_and negative (logical_not tiny)) x (-0.5) in
+  let reflect = logical_and regular (logical_and negative (logical_not tiny)) in
+  let xn = clamp reflect x (-0.5) in
   let reduced, folded, f = fold_pi xn in
   let sin_f = sinpi_half f in
   let cos_f = sinpi_half (rsub_s 0.5 f) in
