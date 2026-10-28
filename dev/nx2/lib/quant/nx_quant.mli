@@ -24,15 +24,14 @@
     {!apply}'s and {!apply_experts}' results are within {!Nx.contract}'s bound,
     the same on every run for a given placement. Cut along [n] or a leading
     axis, each device decodes its own rows. Cut along [k] over [t] devices, a
-    weight with values and [b] blocks along [k] lies on its blocks' boundaries
-    where [t] divides [b]: each device decodes its own blocks, {!dequant}'s
-    result is cut along [k] as the parts are, and {!apply} sums the devices'
-    partial products. {!apply}'s product of an [Mxfp4] weight read where it
-    lies reads the codes where they lie, at either cut, each device decoding
-    its own blocks as it sums them. Any other cut along [k] splits a block,
-    which is read whole, so {!dequant} and {!apply} raise as the operation
-    reading it does, naming the {!Nx.place} that puts it whole on each device;
-    a split whose tiles divide the blocks computes too.
+    weight of [b] blocks along [k] is cut at its blocks' boundaries where [t]
+    divides [b]: each device decodes its own blocks, {!dequant}'s result is
+    cut along [k] as the parts are, and {!apply} sums the devices' partial
+    products. {!apply}'s product of an [Mxfp4] weight read where it lies
+    reads the codes where they lie, at either cut, each device decoding its
+    own blocks as it sums them. Any other cut along [k] splits a block, which
+    is read whole, so {!dequant} and {!apply} raise as the operation reading
+    it does, naming the {!Nx.place} that puts it whole on each device.
 
     {!take} gathers before decoding, so a caller reads a large table's rows
     without decoding the table. Routing positions to a stack of weights, as a
