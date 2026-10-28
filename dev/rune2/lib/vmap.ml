@@ -9,6 +9,10 @@ module L = Nx_array.Layout
 module M = Nx_array.Move
 module Prim = Nx.Prim
 
+(* Re-raised with the backtrace of its raise, which a plain [raise] would
+   restart at the handler. *)
+let reraise e = Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+
 type ('v, 's, 'd) Prim.payload +=
   | Lane : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Prim.payload
 
@@ -1980,7 +1984,7 @@ and interpret :
           owner := Some i;
           f i))
     ()
-    { retc = Fun.id; exnc = raise; effc }
+    { retc = Fun.id; exnc = reraise; effc }
 
 (* A map's sites offer once each, every lane's rows merged. *)
 let run ~name ~axis n f =

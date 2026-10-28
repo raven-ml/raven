@@ -8,6 +8,10 @@ module D = Nx_array.Dtype
 module L = Nx_array.Layout
 module Prim = Nx.Prim
 
+(* Re-raised with the backtrace of its raise, which a plain [raise] would
+   restart at the handler. *)
+let reraise e = Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+
 type ('v, 's, 'd) Prim.payload +=
   | Dual : {
       primal : ('v, 's, 'd) Nx.t;
@@ -2226,7 +2230,7 @@ and run :
           owner := Some i;
           f i))
     ()
-    { retc = Fun.id; exnc = raise; effc }
+    { retc = Fun.id; exnc = reraise; effc }
 
 let tangent i x =
   match Prim.payload i x with

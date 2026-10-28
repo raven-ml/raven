@@ -7,6 +7,10 @@ open Program
 module P = Nx_kernel.Prog
 module Prim = Nx.Prim
 
+(* Re-raised with the backtrace of its raise, which a plain [raise] would
+   restart at the handler. *)
+let reraise e = Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+
 type kind = Body | Jit | Tape | Staged
 
 (* A total the program threads: the variable of its running value in, and its
@@ -1240,7 +1244,7 @@ and trace_in ?(totals = [||]) ?asked kind ~name inputs f =
       (fun () ->
         Nx.Prim.interpret ~name reach (fun i ~by op -> rule st i ~by op) body)
       ()
-      { retc = Fun.id; exnc = raise; effc }
+      { retc = Fun.id; exnc = reraise; effc }
   in
   (* A tape's primal computes at the call, so its draws are the scope's. *)
   let outs =

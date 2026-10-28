@@ -734,7 +734,8 @@ module Total : sig
     'r * ('v, 's, 'd) Nx.t
   (** [collect t ~zero f] is [(f (), total)], [total] being [zero] plus each
       addition to [t] that reaches it, in the order they reach it. If [f]
-      raises, [collect] raises the same exception. *)
+      raises, [collect] raises the same exception, with the backtrace of its
+      raise. *)
 end
 
 (** {1:probes Probes} *)

@@ -7,6 +7,11 @@ open Program
 module Ptree = Nx.Ptree
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+
+(* Re-raised with the backtrace of its raise, which a plain [raise] would
+   restart at the handler. *)
+let reraise e = Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+
 let pp_shape = Nx.pp_shape
 
 (* Structures as values *)
@@ -513,7 +518,7 @@ module Total = struct
           | None -> None)
       | _ -> None
     in
-    let r = Effect.Deep.match_with f () { retc = Fun.id; exnc = raise; effc } in
+    let r = Effect.Deep.match_with f () { retc = Fun.id; exnc = reraise; effc } in
     (r, !sum)
 end
 

@@ -625,6 +625,23 @@ let error_tests =
           Rune.custom_jvp tensor tensor (fun x -> (x, fun _ -> failwith "map"))
         in
         raises (Failure "map") (fun () -> f (v3 ())));
+    test "an exception of the rule keeps the backtrace of its raise"
+      (fun () ->
+        let raise_exit () = raise (Sys.opaque_identity Exit) in
+        let f =
+          Rune.custom_jvp tensor tensor (fun _ -> (raise_exit (), Fun.id))
+        in
+        let check msg g =
+          equal ~msg string "test_custom.ml"
+            (Nx_support.raised_in (fun () -> g (v3 ())))
+        in
+        check "eagerly" f;
+        check "under jvp" (fun x -> Rune.jvp' f x (along ()));
+        check "under grad" (Rune.grad' (fun x -> Nx.sum (f x)));
+        check "under a map" (Rune.vmap' f);
+        check "under jit" (Rune.jit' f);
+        check "in a collect" (fun x ->
+            Total.collect total ~zero:(scalar 0.) (fun () -> f x)));
     test "a rule that uses a value its differentiation tracks raises" (fun () ->
         let uses rule x =
           let w = Nx.mul x x in
