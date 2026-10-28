@@ -60,14 +60,13 @@ type ct = {
 }
 (** The type for cotangents. *)
 
-val transpose :
-  ?witness:Program.value -> t -> Program.value option array -> ct option array
-(** [transpose ~witness l cts] is the cotangent of each tangent parameter of
-    [l], [None] where it receives no contribution, given [cts], the cotangent of
-    each output of the linearized function, [None] for zero, each of its
-    output's dtype and shape. [witness], a placed value of the brand of the
-    function's arguments, gives the set of a cotangent of a value of every set
-    that the function placed.
+val transpose : t -> Program.value option array -> ct option array
+(** [transpose l cts] is the cotangent of each tangent parameter of [l], [None]
+    where it receives no contribution, given [cts], the cotangent of each output
+    of the linearized function, [None] for zero, each of its output's dtype and
+    shape. A value a transpose makes beside a cotangent, such as the zeros a
+    gather's transpose scatters into, lies at its operand's placement, or whole
+    on each device of the value it meets.
 
     A [Lanes] over tangents, of the map its axis names, gives the calling lane
     its row of the sum over the lanes of their cotangents. A scan over tangents
@@ -75,6 +74,5 @@ val transpose :
     remat by linearizing its function again at its constant arguments.
 
     Raises [Invalid_argument] naming the tape's entry point for an equation that
-    is not linear in its tangents, for another construct over tangents than
-    [Lanes] and a linear call ({!Program.Linear}), and for a cotangent of a
-    value of every set that lies on a set without [witness]. *)
+    is not linear in its tangents, and for another construct over tangents
+    than [Lanes] and a linear call ({!Program.Linear}). *)

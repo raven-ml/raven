@@ -11,13 +11,16 @@ module Prim = Nx.Prim
 let lit x v = Nx.scalar_like x (D.of_float (Nx.dtype x) v)
 let adjoint x = Nx.conjugate (Nx.matrix_transpose x)
 
+(* The identity of [n] rows in [dt], whole on each of [x]'s devices. *)
+let eye_beside x dt n = Nx.eye_at (Nx.Placement.uncut (Nx.placement x)) dt n
+
 (* [x]'s real part in its own dtype. *)
 let real_part x = Nx.mul (Nx.add x (Nx.conjugate x)) (lit x 0.5)
 
 (* [d] as the diagonal of a stack of matrices. *)
 let diag_matrix d =
   let n = Nx.dim (-1) d and r = Nx.ndim d in
-  Nx.mul (Nx.eye (Nx.dtype d) n) (Nx.unsqueeze ~axes:[ r - 1 ] d)
+  Nx.mul (eye_beside d (Nx.dtype d) n) (Nx.unsqueeze ~axes:[ r - 1 ] d)
 
 (* The Hermitian matrix that the strict lower triangle of [x] and the real parts
    of its diagonal name. *)
@@ -48,7 +51,7 @@ let padded x rows cols =
    [d] are equal. *)
 let gaps d =
   let r = Nx.ndim d in
-  let eye = Nx.eye (Nx.dtype d) (Nx.dim (-1) d) in
+  let eye = eye_beside d (Nx.dtype d) (Nx.dim (-1) d) in
   let diffs =
     Nx.sub (Nx.unsqueeze ~axes:[ r - 1 ] d) (Nx.unsqueeze ~axes:[ r ] d)
   in
@@ -84,12 +87,12 @@ let lu packed perm da =
   let l =
     Nx.add
       (padded (Nx.tril ~k:(-1) (block packed (0, m) (0, k))) (0, 0) (0, m - k))
-      (Nx.eye dt m)
+      (eye_beside packed dt m)
   in
   let u =
     Nx.add
       (padded (Nx.triu (block packed (0, k) (0, n))) (0, n - k) (0, 0))
-      (padded (Nx.eye dt (n - k)) (k, 0) (k, 0))
+      (padded (eye_beside packed dt (n - k)) (k, 0) (k, 0))
   in
   let y = Nx.solve_triangular ~triangle:Lower ~unit_diag:true l pda in
   let x =

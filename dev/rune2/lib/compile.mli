@@ -35,17 +35,13 @@ val make : name:string -> Program.t -> Program.form array -> (t, string) result
     or a map's construct ({!Program.Scan}, {!Program.Iterate},
     {!Program.Lanes}, {!Program.Lane_index}), an operation that {!Lower.op}
     does not lower, a value on another device than the others or over several,
-    a result of every set computed from the arguments, which has no
-    storage, or a check off the host. [name] is the entry point messages
-    name. *)
+    or a check off the host. [name] is the entry point messages name. *)
 
 val run : t -> Program.value array -> Program.value array
 (** [run t args] is the outputs of [t]'s program applied to [args], values of
     the forms [t] was made for that no interpretation traces: each result
-    fresh, C-contiguous, at its output's form's placement. A result that is a
-    constant of every set is that constant. An argument of every set is
-    computed at the call, where an operation that reads it would compute it.
-    The first call at a new variant links the program for it.
+    fresh, C-contiguous, at its output's form's placement. The first call at a
+    new variant links the program for it.
 
     The call is a consumer of [args] ({!Nx.Prim.Consumer}): it claims the
     donated handles among them, whose donors die, and reads each argument as
@@ -62,6 +58,6 @@ val evaluate :
   name:string -> Program.t -> Program.value array -> Program.value array
 (** [evaluate ~name p args] is [p]'s outputs evaluated by nx over [args], none
     of them traced: an output that is an argument is a copy of it. Where
-    [args] hold donated handles, it claims every placed argument first, as
-    {!run} does, and evaluates [p] over the arrays they hold, copying each
+    [args] hold donated handles, it claims every argument first, as {!run}
+    does, and evaluates [p] over the arrays they hold, copying each
     result. *)

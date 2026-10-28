@@ -536,9 +536,8 @@ let test_structures () =
   ignore (Nx.add (Nx.donate t) x);
   equal floats [| 3.; 4. |] (Nx.to_array dx)
 
-(* A parameter of every set, a constant, with a placed tangent: the dual takes
-   the constant's form, and a loop over it is traced again where its step places
-   the carry. *)
+(* A constant parameter, zeros, with a tangent: the dual takes the parameter's
+   form, in a loop too. *)
 let test_constant_primal () =
   let zero = Nx.zeros f64 [| 2 |] and t = v [| 1.; 2. |] in
   let y, dy = Rune.jvp' (fun x -> Nx.add (Nx.mul x x) x) zero t in

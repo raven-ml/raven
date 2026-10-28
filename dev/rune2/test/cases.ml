@@ -176,6 +176,7 @@ let multi x =
            prog;
            outs = [ f64; f64 ];
            loads = [| Plain x0; Padded { x; fill = 0.25; pad } |];
+           at = None;
          })
   in
   Nx.concatenate ~axis:0 [ y; z ]
@@ -196,6 +197,7 @@ let kinds x =
             prog;
             outs = [ f64 ];
             loads = [| Plain x |];
+            at = None;
           }))
 
 (* A program of twenty operands, [Σ_k x_k Π_(j<k) sin x_j], past the arrays one
@@ -224,6 +226,7 @@ let wide_map x =
             prog = wide_prog;
             outs = [ f64 ];
             loads = wide_loads x;
+            at = None;
           }))
 
 let wide_reduce reduction x =

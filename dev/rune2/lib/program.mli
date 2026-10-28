@@ -11,7 +11,7 @@
     is an [Nx.Prim] operation over variables and constants, or a {e construct}
     over them: a call that a transformation around it may answer, such as a loop
     carrying its step's program. A constant is a value the tracer received and
-    did not own: an array, a formula, a donated handle read as its arrays.
+    did not own: an array, or a donated handle read as its arrays.
 
     {!eval} issues each equation again, an operation through [Nx.Prim.eval] and
     a construct through {!perform}, under whatever interpretations are around
@@ -103,9 +103,9 @@ and construct =
   | Lanes : axis * ('v, 's, 'd) Nx.t -> construct
       (** Every lane's operand stacked along a new axis 0, in the map named by
           the axis; one result. *)
-  | Lane_index : axis -> construct
+  | Lane_index : axis * 'd Nx.Placement.t -> construct
       (** The calling lane's index in the map named by the axis: one 0-d [int32]
-          result. *)
+          result at the placement, which must cut no axis. *)
   | Add : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t -> construct
       (** The operand added to the total; no result. *)
   | Scan : {
@@ -299,8 +299,8 @@ val staging : unit -> bool
 
 val pp : Format.formatter -> t -> unit
 (** [pp] formats a program: first each constant it or a program it carries
-    reads, as [cK : dtype shape at placement] or [… of every set], numbered in
-    the order they are first read; then [program (%0, %1, …)], its parameters,
+    reads, as [cK : dtype shape at placement], numbered in the order they are
+    first read; then [program (%0, %1, …)], its parameters,
     each equation, and [return] with its outputs, then [adds] with its
     additions. Each program's variables are numbered from where the previous
     one's end, so no two programs share a name. An operation is its results,

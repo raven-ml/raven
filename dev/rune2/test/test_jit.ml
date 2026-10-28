@@ -291,10 +291,9 @@ let test_structures () =
   equal bits_t (bits p') (bits p);
   equal bits_t (bits q') (bits q)
 
-(* Values of every set: an argument of every set is computed for the call, so
-   one key serves its values; a function of such arguments alone gives a value
-   of every set, as eagerly. *)
-let test_every_set () =
+(* Host arguments: their values do not change the key, and a function of host
+   arguments gives host values, as eagerly. *)
+let test_host_values () =
   let traces = ref 0 in
   let g =
     Rune.jit (pair_fn ()) (fun x y ->
@@ -310,7 +309,8 @@ let test_every_set () =
     (bits (g x (Nx.full f32 [| 2 |] 3.)));
   equal ~msg:"one trace" int 1 !traces;
   let y = Rune.jit' (fun x -> Nx.add x x) (Nx.full f32 [| 2 |] 1.5) in
-  equal ~msg:"of every set" bool true (Option.is_none (Nx.placement y));
+  equal ~msg:"on the host" bool true
+    (Nx.Placement.equal (Nx.placement y) Nx.Host.on);
   equal bits_t (bits (Nx.full f32 [| 2 |] 3.)) (bits y)
 
 (* A jit inside a jit is staged into the outer program, a call over constants
@@ -732,7 +732,7 @@ let () =
              test "a constant key draws the same each call" test_constant_key;
              test "the function runs once per key" test_runs_once;
              test "structures in and out" test_structures;
-             test "values of every set" test_every_set;
+             test "host arguments" test_host_values;
              test "a jit inside a jit" test_nested;
              test "results are fresh" test_fresh;
              test "an argument off 16 bytes" test_phase;

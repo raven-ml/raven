@@ -833,10 +833,8 @@ let map_tests =
         in
         exact ~msg:"one pullback" (vec [| 1. |])
           (Rune.grad' outside (vec [| 1.5 |]));
-        invalid
-          ~sub:
-            "Rune.grad': Rune.custom_vjp: the cotangent of a result of every \
-             set lies on" (fun () -> Rune.grad' outside (scalar 1.5)));
+        exact ~msg:"one pullback of a scalar" (scalar 1.)
+          (Rune.grad' outside (scalar 1.5)));
     test "a pullback's additions inside a map count each lane" (fun () ->
         let t = Total.make () in
         let f =

@@ -16,14 +16,13 @@
     runs over stand-ins of their arguments' arrays, values with a dtype, a shape
     and a placement but no elements, and what it computes from them is recorded
     as a program, which the construct then evaluates. A loop's step is traced
-    once, and again where it places a carry array it received of every set
-    ({!scan}). So a step's code runs once or a few times whatever the number of
-    steps, as do its side effects, and inside it {!Nx.item} of a stand-in, or of
-    a value computed from one, raises
-    ([Nx.item: the value is traced by Rune.scan]); a branch on a value is
-    {!Nx.where} or a nested {!iterate}. An operation that reads no stand-in
-    computes at the call, once, but in {!remat} and {!jit}, which stage every
-    operation their function applies. A draw without [~key] inside a traced
+    once, so its code runs once whatever the number of steps, as do its side
+    effects, and inside it {!Nx.item} of a stand-in, or of a value computed from
+    one, raises ([Nx.item: the value is traced by Rune.scan]); a branch on a
+    value is {!Nx.where} or a nested {!iterate}. An operation that reads no
+    stand-in computes at the call, once, but in {!remat} and {!jit}, which stage
+    every operation their function applies. A draw without [~key] inside a
+    traced
     function raises, naming the construct, so a step draws from a key in its
     carry or its rows. Outside every transformation a construct is its program
     evaluated: a {!scan} is the fold of its step, bit for bit but for a NaN
@@ -77,10 +76,12 @@
     such a zero meets an infinite partial derivative, where the steps written
     out one after another give none.
 
-    {b Placement.} A cotangent lies where its array does. That of an array of
-    every set is of every set where every value it meets is, and otherwise lies
-    on the set of the first placed argument or result; with none placed it
-    raises [Invalid_argument].
+    {b Placement.} A cotangent lies where the transposed operations put it,
+    as {!Nx} routes them: at its array's placement where every value it meets
+    lies there, and otherwise at the union of their cuts. A {!Nx.place}'s
+    cotangent is moved back to its operand's placement. So
+    [grad' (fun x -> Nx.sum (Nx.mul x w)) x] lies cut along axis 0 where [x]
+    is whole on each device of a set and [w] is cut along axis 0 across them.
 
     {b Kinks.} Where an operation has no derivative: [Nx.abs] passes the tangent
     at [0.] and [-0.]; where the operands of [Nx.maximum] or [Nx.minimum] tie,
@@ -364,9 +365,7 @@ val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
      map must be linear in its tangents"]. Reverse mode transposes the linear
     part: a value a tangent map adds to a tangent, or selects beside one with
     {!Nx.where}, counts as zero. A pullback or a transpose reads a result's
-    cotangent at the result's set, so where a result of every set meets placed
-    values, its placed cotangent raises [Invalid_argument] in the backward pass:
-    place the call's arguments.
+    cotangent at the result's set.
 
     {b Maps.} {!vmap} batches a custom rule: the rule and its derivative are
     evaluated over the lanes, and a differentiation around the map applies the
@@ -560,9 +559,10 @@ val lanes : axis -> ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
     Raises [Invalid_argument] with no map named [a] around the call
     (["Rune.lanes: no map named by the axis is around the call"]). *)
 
-val lane_index : axis -> unit -> 'd Nx.int32_t
-(** [lane_index a ()], inside the map named [a], is the calling lane's index in
-    it, a 0-d [int32] from [0] to the map's number of lanes minus one.
+val lane_index : axis -> ('v, 's, 'd) Nx.t -> 'd Nx.int32_t
+(** [lane_index a x], inside the map named [a], is the calling lane's index in
+    it, a 0-d [int32] from [0] to the map's number of lanes minus one, whole on
+    each of [x]'s devices.
 
     Raises [Invalid_argument] with no map named [a] around the call. *)
 
@@ -633,12 +633,11 @@ val scan :
     step [i] passes [f] row [i] of every array. [f carry row] returns the next
     carry, of structure [c], and the step's outputs, of structure [y]; the
     result is the final carry and the outputs, each array stacked along a new
-    axis 0. With [n = 0] the result is [init] and outputs of leading length [0].
+    axis 0, where [f] returns them. The final carry lies where [f] returns it.
+    With [n = 0] the result is [init] and outputs of leading length [0].
 
-    [f] is traced at the call over stand-ins of [init]'s arrays and of [xs]'s
-    arrays without axis 0. It is traced again while it returns placed an array
-    of the carry that it received of every set, such as a constant [init] it
-    adds a placed value to, each array at most once.
+    [f] is traced once, at the call, over stand-ins of [init]'s arrays and of
+    [xs]'s arrays without axis 0.
 
     A transformation of a scan is a scan of its step's transformation, whose
     carry gains a tangent, under {!jvp}, or lanes, under {!vmap}, only for the
@@ -669,10 +668,10 @@ val iterate :
   'c ->
   'c
 (** [iterate c ~max ~until ~f init] applies the step [f] to a carry of structure
-    [c], from [init], until [until carry] holds, and returns that carry. [until]
-    returns one boolean and is tested before each step, so an [init] that
-    satisfies it is returned unchanged. [f] and [until] are traced at the call,
-    [f] as {!scan}'s step is.
+    [c], from [init], until [until carry] holds, and returns that carry, where
+    the last step returns it. [until] returns one boolean and is tested before
+    each step, so an [init] that satisfies it is returned unchanged. [f] and
+    [until] are traced at the call, [f] as {!scan}'s step is.
 
     Raises [Invalid_argument] if [max < 0]
     (["Rune.iterate: max = -1 is negative"]), if [until] returns other than one
@@ -724,10 +723,7 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     the search widths [BEAM] and [JITBEAM] among them. A view thus reads in
     place, without a copy, from a program compiled for its layout. Each result
     array is fresh: memory of its own in C order, at the placement eager
-    computation gives it. An argument of every set ({!Nx.zeros}) is computed at
-    the call, on the set where an operation that reads it computes, so its
-    values do not change the key; a constant of every set that [f] returns is
-    that constant.
+    computation gives it.
 
     {b Donation.} A call consumes the donated handles among its arguments
     ({!Nx.donate}), as one operation consumes its operands: their donors die
@@ -764,8 +760,8 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     {b Evaluated programs.} A program that holds a {!scan} or an {!iterate}, a
     map's {!lanes} or {!lane_index}, a {!custom_jvp}, {!custom_vjp} or
     {!custom_transpose}, an operation the compiler does not lower, values on
-    several devices, or a result of every set computed from the arguments, or
-    one tolk cannot compile, runs as its operations evaluated by nx, giving
+    several devices, or one tolk cannot compile, runs as its operations
+    evaluated by nx, giving
     eager's values; a result that is an argument is a copy of it, and a call
     with donated arguments claims them first, consumes them and lends nothing.
     So does a call whose arguments a transformation around it traces, or that an

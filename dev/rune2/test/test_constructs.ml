@@ -31,12 +31,12 @@ let test_no_map () =
     "Rune.lane_index: no map named by the axis is around the call"
   in
   invalid ~sub:no_lanes (fun () -> Rune.lanes a (v [| 1. |]));
-  invalid ~sub:no_index (fun () -> Rune.lane_index a ());
+  invalid ~sub:no_index (fun () -> Rune.lane_index a (v [| 1. |]));
   invalid ~sub:no_lanes (fun () ->
       Rune.jit' (fun x -> Rune.lanes a x) (v [| 1. |]));
   invalid ~sub:no_index (fun () ->
       Rune.jit'
-        (fun x -> Nx.add x (Nx.cast f32 (Rune.lane_index a ())))
+        (fun x -> Nx.add x (Nx.cast f32 (Rune.lane_index a x)))
         (v [| 1. |]))
 
 (* Totals *)

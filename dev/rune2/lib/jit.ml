@@ -11,7 +11,7 @@ let report = Compile.report
 
 (* Keys *)
 
-type place = Every | At : 'd Nx.Placement.t -> place
+type place = At : 'd Nx.Placement.t -> place
 
 (* What a trace depends on of a leaf: its abstract value. *)
 type leaf = { dtype : D.any; shape : int array; at : place }
@@ -21,14 +21,10 @@ let leaf (Nx.P x) =
   {
     dtype = D.Any f.dtype;
     shape = Nx.shape x;
-    at = (match f.placement with None -> Every | Some p -> At p);
+    at = At f.placement;
   }
 
-let same_place a b =
-  match (a, b) with
-  | Every, Every -> true
-  | At p, At q -> Nx.Placement.equal p q
-  | Every, At _ | At _, Every -> false
+let same_place (At p) (At q) = Nx.Placement.equal p q
 
 let same_leaf a b =
   (match (a.dtype, b.dtype) with D.Any x, D.Any y -> D.equal x y)
@@ -53,9 +49,8 @@ let parts l =
   [
     D.name dt;
     Format.asprintf "shape %a" Nx.pp_shape l.shape;
-    (match l.at with
-    | Every -> "of every set"
-    | At p -> Format.asprintf "at %a" Nx.Placement.pp p);
+    (let (At p) = l.at in
+     Format.asprintf "at %a" Nx.Placement.pp p);
   ]
 
 (* The first difference between the key [k] and the previous key [k']. *)

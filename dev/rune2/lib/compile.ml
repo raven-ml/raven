@@ -183,13 +183,6 @@ let storage ~device ~phase (type v s) (dt : (v, s) D.t) l =
     let flat = if parts dt = 2 then Shape.reshape b (ints [ n; 2 ]) else b in
     (b, viewed dt flat (within dt l))
 
-(* A value of every set computed on the host, then on [rig] in C order. *)
-let computed rig x =
-  Nx.Repr.read x (fun a ->
-      let l = A.layout a in
-      let a = if L.is_contiguous l && L.offset l = 0 then a else A.copy a in
-      A.Any (A.to_device rig a))
-
 (* [store dt o u] is the buffer [o] once the node [u] of a value of [dt] is
    stored into it, packed for a sub-byte [dt]. *)
 let store dt o u =
@@ -206,7 +199,6 @@ type out =
   | Lent of int  (** Stored into argument [k]'s storage, which it takes. *)
   | Taken of int  (** Argument [k] unchanged, its storage taken. *)
   | Empty  (** No element. *)
-  | Kept of value  (** A constant of every set, returned as it is. *)
 
 (* A check: the buffers its first failure's index and each of its data there are
    stored into, one element each, and its failure. *)
@@ -253,21 +245,16 @@ let bind st (A.Any a) =
     st.bound <- (buffer, [ Rig.Buffer.view b ~first ~length ]) :: st.bound;
     u
 
-(* The node of a constant: its arrays, or a value of every set computed on the
-   host and copied to the program's device. *)
+(* The node of a constant: its one array, bound once. *)
 let capture (type v s d) st (x : (v, s, d) Nx.t) =
   match List.find_opt (fun (v, _) -> same v (V x)) st.captures with
   | Some (_, u) -> u
   | None ->
-      let a =
-        match Nx.Repr.shards x with
-        | None -> computed st.rig x
-        | Some arrays when Iarray.length arrays = 1 ->
-            on_rig st (Option.get (Nx.placement x)) "a constant";
-            A.Any (Iarray.get arrays 0)
-        | Some _ -> decline "a constant over several devices"
-      in
-      let u = bind st a in
+      let arrays = Nx.Repr.shards x in
+      if Iarray.length arrays <> 1 then
+        decline "a constant over several devices";
+      on_rig st (Nx.placement x) "a constant";
+      let u = bind st (A.Any (Iarray.get arrays 0)) in
       st.captures <- (V x, u) :: st.captures;
       u
 
@@ -400,7 +387,7 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
           None
         end
         else begin
-          Option.iter (fun q -> on_rig st q "an argument") f.placement;
+          on_rig st f.placement "an argument";
           let b, u =
             storage ~device:st.device ~phase:phases.(k) f.dtype layouts.(k)
           in
@@ -519,9 +506,7 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
     && (not read_elsewhere)
     && Nx.Dtype.equal f.dtype g.dtype
     && numel (shape_of f) = numel (shape_of g)
-    && (match (f.placement, g.placement) with
-      | Some a, Some b -> Nx.Placement.equal a b
-      | _ -> false)
+    && Nx.Placement.equal f.placement g.placement
     && L.is_contiguous layouts.(k)
     && L.offset layouts.(k) = 0
     && phases.(k) = 0
@@ -534,15 +519,15 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
   in
   let lent = lend ~donated ~computed ~reaches ~scattered:scattered_out ~fits in
   let stores = ref [] in
-  let buffer (F f) =
-    let n = numel (shape_of f) in
-    if packed f.dtype then Ops.new_buffer st.device (D.bytes f.dtype n) Uint8
-    else Ops.new_buffer st.device (n * parts f.dtype) (tdtype f.dtype)
+  let buffer dt n =
+    if packed dt then Ops.new_buffer st.device (D.bytes dt n) Uint8
+    else Ops.new_buffer st.device (n * parts dt) (tdtype dt)
   in
-  let stored (F f as form) u =
-    if numel (shape_of f) = 0 then Empty
+  let stored (F f) u =
+    let n = numel (shape_of f) in
+    if n = 0 then Empty
     else
-      let o = buffer form in
+      let o = buffer f.dtype n in
       stores := store f.dtype o u :: !stores;
       Stored o
   in
@@ -552,30 +537,19 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
         let f = Nx.Prim.form y in
         match Nx.Prim.payload p.owner y with
         | Some (Var v) -> (
-            match f.placement with
-            | None -> decline "a result of every set"
-            | Some q -> (
-                on_rig st q "a result";
-                match lent.(j) with
-                | k when k >= 0 && v = p.params.(k) -> Taken k
-                | k when k >= 0 ->
-                    let b = Option.get params.(k) in
-                    stores := store f.dtype b (node y) :: !stores;
-                    Lent k
-                | _ -> stored (F f) (node y)))
-        | _ when Option.is_none f.placement -> Kept (V y)
+            on_rig st f.placement "a result";
+            match lent.(j) with
+            | k when k >= 0 && v = p.params.(k) -> Taken k
+            | k when k >= 0 ->
+                let b = Option.get params.(k) in
+                stores := store f.dtype b (node y) :: !stores;
+                Lent k
+            | _ -> stored (F f) (node y))
         | _ -> stored (F f) (capture st y))
       p.outputs
   in
-  let one (type v s) (dt : (v, s) D.t) u =
-    let f : (v, s, _) Nx.Prim.form =
-      {
-        dtype = dt;
-        layout = L.contiguous (Iarray.of_list [ 1 ]);
-        placement = None;
-      }
-    in
-    let o = buffer (F f) in
+  let one dt u =
+    let o = buffer dt 1 in
     stores := store dt o u :: !stores;
     o
   in
@@ -682,7 +656,7 @@ let link rig l =
       let out_slots =
         Array.map
           (function
-            | Stored o -> slot o | Lent _ | Taken _ | Empty | Kept _ -> -1)
+            | Stored o -> slot o | Lent _ | Taken _ | Empty -> -1)
           l.outs
       in
       let checks =
@@ -715,35 +689,32 @@ let link rig l =
 type t = {
   name : string;
   rig : Rig.t;
-  home : form;
-      (** A placed form on [rig], at whose set arguments of every set are
-          placed. *)
   program : Program.t;
   forms : form array;
   lock : Mutex.t;
   variants : variant list Atomic.t;
 }
 
-(* The program's device, and a form placed whole on it: its arguments', or else
-   its results'. *)
+(* The program's device: the one its first argument, or else its first result,
+   lies whole on. *)
 let device (p : Program.t) forms =
   let first = ref None in
-  let consider (F f as form) =
-    match (!first, f.placement) with
-    | None, Some q -> (
-        match device_of q with
-        | Some r -> first := Some (r, form)
+  let consider (F f) =
+    match !first with
+    | None -> (
+        match device_of f.placement with
+        | Some r -> first := Some r
         | None ->
             decline "a value placed at %s, over several devices"
-              (Format.asprintf "%a" Nx.Placement.pp q))
-    | _ -> ()
+              (Format.asprintf "%a" Nx.Placement.pp f.placement))
+    | Some _ -> ()
   in
   Array.iter consider forms;
   Array.iter (fun v -> consider (form v)) p.outputs;
   match !first with
-  | Some (r, home) when Rig.computes r -> (r, home)
-  | Some (r, _) -> decline "a value on %s, which computes nothing" (Rig.name r)
-  | None -> decline "no value placed"
+  | Some r when Rig.computes r -> r
+  | Some r -> decline "a value on %s, which computes nothing" (Rig.name r)
+  | None -> decline "no value"
 
 (* What a program the compiler takes must not raise to compile: an operation it
    does not lower, or tolk refusing the graph, as a target whose compiler is
@@ -791,7 +762,7 @@ let variant t layouts phases donated settings =
 
 let make ~name p forms =
   match
-    let rig, home = device p forms in
+    let rig = device p forms in
     let layouts =
       Array.map
         (fun (F f) -> within f.dtype (L.contiguous (L.shape f.layout)))
@@ -803,7 +774,6 @@ let make ~name p forms =
     {
       name;
       rig;
-      home;
       program = p;
       forms;
       lock = Mutex.create ();
@@ -816,21 +786,15 @@ let make ~name p forms =
 
 (* Calls *)
 
-(* [consumed ~by args f] is [f arrays take] under a consumer of the placed
-   values of [args], [arrays k] the arrays of placed argument [k] and [take k a]
-   the memory of its array [a] for a result, if it may take it
-   ({!Nx.Prim.Consumer.take}). *)
+(* [consumed ~by args f] is [f arrays take] under a consumer of [args],
+   [arrays k] the arrays of argument [k] and [take k a] the memory of its array
+   [a] for a result, if it may take it ({!Nx.Prim.Consumer.take}). *)
 let consumed ~by args f =
-  let placed =
-    List.filter
-      (fun k -> match args.(k) with V x -> Option.is_some (Nx.placement x))
-      (List.init (Array.length args) Fun.id)
-  in
-  match placed with
+  match List.init (Array.length args) Fun.id with
   | [] ->
-      let none _ = invalid_arg (by ^ ": no argument is placed") in
+      let none _ = invalid_arg (by ^ ": no argument") in
       f none (fun k _ -> none k)
-  | k0 :: _ ->
+  | k0 :: _ as all ->
       let (V x0) = args.(k0) in
       let f0 = Nx.Prim.form x0 in
       let any k =
@@ -839,28 +803,12 @@ let consumed ~by args f =
         | Some y -> Nx.Prim.Any y
         | None -> invalid_arg (by ^ ": arguments on several sets")
       in
-      let position = Array.make (Array.length args) (-1) in
-      List.iteri (fun i k -> position.(k) <- i) placed;
-      Nx.Prim.Consumer.with_ ~by (List.map any placed) (fun c ->
+      Nx.Prim.Consumer.with_ ~by (List.map any all) (fun c ->
           f
-            (fun k -> Nx.Prim.Consumer.arrays c position.(k))
+            (fun k -> Nx.Prim.Consumer.arrays c k)
             (fun k (A.Any a) ->
               Option.map A.buffer
-                (Nx.Prim.Consumer.take c position.(k) (A.dtype a) (A.layout a))))
-
-(* [x], of every set, computed whole on [rig] at [home]'s set, where an
-   operation that reads it computes it. *)
-let placed rig (F home) (V x as v) =
-  match (Nx.placement x, home.placement) with
-  | None, Some q -> (
-      let f =
-        { home with dtype = Nx.dtype x; layout = (Nx.Prim.form x).layout }
-      in
-      match Nx.Prim.coerce f x with
-      | Some x ->
-          V (Nx.place (Nx.Placement.device (Nx.Placement.devices q) rig) x)
-      | None -> v)
-  | _ -> v
+                (Nx.Prim.Consumer.take c k (A.dtype a) (A.layout a))))
 
 let result rig (F f) buffer =
   let shape = shape_of f in
@@ -869,9 +817,8 @@ let result rig (F f) buffer =
     | Some b -> b
     | None -> Rig.Buffer.create rig (D.bytes f.dtype (numel shape))
   in
-  let q = Option.get f.placement in
   V
-    (Nx.Repr.unsafe_of_array (Nx.Placement.devices q)
+    (Nx.Repr.unsafe_of_array (Nx.Placement.devices f.placement)
        (A.v f.dtype (L.contiguous (Iarray.of_array shape)) buffer))
 
 (* Evaluation *)
@@ -879,15 +826,12 @@ let result rig (F f) buffer =
 (* [x] as a value over [arrays], its arrays under a consumer. *)
 let over (V x) arrays =
   let f = Nx.Prim.form x in
-  match f.placement with
-  | None -> V x
-  | Some q ->
-      V
-        (Nx.Repr.of_shards q
-           (Iarray.of_array (Array.map (A.expect f.dtype) arrays)))
+  V
+    (Nx.Repr.of_shards f.placement
+       (Iarray.of_array (Array.map (A.expect f.dtype) arrays)))
 
 (* [p] evaluated over the arrays of a consumer of [args]: the donors it claimed
-   are dead, so the arrays of every placed argument stand for it, a donor beside
+   are dead, so the arrays of every argument stand for it, a donor beside
    its handle included. Each result is copied, since no value over the arrays
    may outlive the consumer. A value over an argument's memory shares it for
    good, so a later donation of that argument computes into fresh memory: the
@@ -895,8 +839,7 @@ let over (V x) arrays =
 let evaluated p args arrays =
   let values =
     Array.mapi
-      (fun k (V x as v) ->
-        if Option.is_some (Nx.placement x) then over v (arrays k) else v)
+      (fun k v -> over v (arrays k))
       args
   in
   Array.map (fun (V y) -> V (Nx.copy y)) (eval p values)
@@ -943,7 +886,6 @@ let one rig (type v s) (dt : (v, s) D.t) = Rig.Buffer.create rig (D.bytes dt 1)
 
 let rec run t args =
   let p = t.program in
-  let args = Array.map (placed t.rig t.home) args in
   let donated = Array.map (fun (V x) -> Nx.Prim.donated x) args in
   consumed ~by:t.name args @@ fun arrays take ->
   let leaves = Array.mapi (fun k _ -> (arrays k).(0)) args in
@@ -1012,7 +954,7 @@ and linked t v args leaves take =
             let b = fresh outputs.(j) in
             slots.(s) <- [ b ];
             Some b
-        | Empty | Kept _ -> None)
+        | Empty -> None)
       v.out_slots
   in
   List.iter
@@ -1024,11 +966,4 @@ and linked t v args leaves take =
     v.checks;
   Option.iter (fun (l, vars) -> Engine.run ~vars l slots) v.schedule;
   List.iter (answer slots) v.checks;
-  (* A result of every set is a constant: the program declines one it
-     computes. *)
-  Array.mapi
-    (fun j (F f as o) ->
-      match f.placement with
-      | None -> p.outputs.(j)
-      | Some _ -> result t.rig o buffers.(j))
-    outputs
+  Array.mapi (fun j o -> result t.rig o buffers.(j)) outputs

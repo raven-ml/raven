@@ -87,14 +87,9 @@ let apply l ts =
 (* Brands
 
    A cotangent is held as a value of any brand and read back at the brand of the
-   values it meets: where one of them is placed, at its set, as nx computes a
-   value of every set beside a placed one. *)
+   values it meets, which lie on its set. *)
 
 let scalar = L.contiguous (Iarray.of_list [])
-
-let pp_placement ppf = function
-  | None -> Format.pp_print_string ppf "every set"
-  | Some p -> Nx.Placement.pp ppf p
 
 (* [x] at [r]'s brand. *)
 let rebrand (type v s w t d e) (r : (w, t, e) Nx.t) (x : (v, s, d) Nx.t) :
@@ -107,7 +102,7 @@ let rebrand (type v s w t d e) (r : (w, t, e) Nx.t) (x : (v, s, d) Nx.t) :
   | None ->
       invalid_arg
         (Format.asprintf "Rune: a cotangent on %a meets a value on %a"
-           pp_placement (Nx.placement x) pp_placement (Nx.placement r))
+           Nx.Placement.pp (Nx.placement x) Nx.Placement.pp (Nx.placement r))
 
 (* [x] at [dt]. *)
 let with_dtype (type v s w t e) (dt : (v, s) D.t) (x : (w, t, e) Nx.t) :
@@ -119,13 +114,8 @@ let with_dtype (type v s w t e) (dt : (v, s) D.t) (x : (w, t, e) Nx.t) :
         (Format.asprintf "Rune: a %a cotangent where %a was expected"
            Nx.pp_dtype (Nx.dtype x) Nx.pp_dtype dt)
 
-let placed (V x) = Option.is_some (Nx.placement x)
-
-(* The first placed of [vs], else the first. *)
-let reference = function
-  | [] -> invalid_arg "Rune: no value"
-  | v :: _ as vs -> (
-      match List.find_opt placed vs with Some r -> r | None -> v)
+(* The value whose brand [vs] meet at: the first. *)
+let reference = function [] -> invalid_arg "Rune: no value" | v :: _ -> v
 
 (* A contribution, and whether it is memory of its own in C order. *)
 type ct = { v : value; fresh : bool }
@@ -157,14 +147,12 @@ let rec out_dtypes : type d r. (d, r) Prim.outs -> D.any list = function
 (* Transposes *)
 
 (* What a rule reads: whether an operand is linear, a constant operand's value,
-   where a contribution goes, and a value placed where the differentiated
-   function's arguments and results lie, if one is. *)
+   and where a contribution goes. *)
 type env = {
   name : string;
   lin : 'v 's 'd. ('v, 's, 'd) Nx.t -> bool;
   const : 'v 's 'd. ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t;
   give : 'v 's 'd. ('v, 's, 'd) Nx.t -> ct -> unit;
-  witness : value option;
   fn : bool;
 }
 
@@ -282,17 +270,15 @@ let sweep (type d) env layout prog (loads : d Prim.load iarray) cts =
   match transposed env prog linear spec with
   | { tp = None; _ } -> ()
   | { tp = Some tp; constants; received } -> (
-      (* The first placed of the constants and the cotangents, else the
-         first. *)
-      let r = ref None in
-      let see v =
-        match !r with
-        | None -> r := Some v
-        | Some u -> if (not (placed u)) && placed v then r := Some v
+      (* The constants and the cotangents meet at the first one's brand. *)
+      let first =
+        if Array.length constants > 0 then
+          load_value env (Iarray.get loads constants.(0))
+        else
+          let _, _, c = cts.(0) in
+          c
       in
-      Array.iter (fun j -> see (load_value env (Iarray.get loads j))) constants;
-      Array.iter (fun (_, _, c) -> see c) cts;
-      match Option.get !r with
+      match first with
       | V r -> (
           let nc = Array.length constants in
           let loads' =
@@ -312,7 +298,9 @@ let sweep (type d) env layout prog (loads : d Prim.load iarray) cts =
                 let y = Prim.eval ~by:env.name (Fold { shape; pad; x = y }) in
                 env.give x (fresh (V y))
           in
-          let map outs = Prim.Map { layout; prog = tp; outs; loads = loads' } in
+          let map outs =
+            Prim.Map { layout; prog = tp; outs; loads = loads'; at = None }
+          in
           match received with
           | [| j |] -> (
               (* One contribution, the common case, without a list. *)
@@ -392,7 +380,8 @@ let from_each (type v s e) ~by ~axis (w : (v, s, e) Nx.t) : (v, s, e) Nx.t =
   let shape = Nx.shape reversed in
   let one = Array.mapi (fun a d -> if a = axis then 1 else d) shape in
   let (D.Any c) = Nx_kernel.carrier (D.Any dt) in
-  let carry = rebrand w (Nx.full c one (neg_zero c)) in
+  let here = Nx.Placement.uncut (Nx.placement w) in
+  let carry = Nx.full_at here c one (neg_zero c) in
   let r =
     Prim.eval ~by
       (Scan
@@ -440,7 +429,8 @@ let scan_rule (type d r) env layout axis prog
         (fun (V w) ->
           let n = Nx.dim axis w and r = Nx.ndim w in
           let along = Array.init r (fun a -> if a = axis then n else 1) in
-          let count = Nx.arange Nx.int32 1 (n + 1) 1 in
+          let here = Nx.Placement.uncut (Nx.placement w) in
+          let count = Nx.arange_at here Nx.int32 1 (n + 1) 1 in
           let count = Nx.reshape along (Nx.cast (Nx.dtype w) count) in
           ignore (running k (D.Any dt) (Nx.div w count)))
         (cts 0)
@@ -450,10 +440,12 @@ let scan_rule (type d r) env layout axis prog
 
 (* Indexing *)
 
-(* The positions of [x]'s elements in C order, in its shape. *)
+(* The positions of [x]'s elements in C order, in its shape, whole on each of
+   its devices. *)
 let iota x =
+  let here = Nx.Placement.uncut (Nx.placement x) in
   Nx.reshape (Nx.shape x)
-    (Nx.arange Nx.int64 0 (Array.fold_left ( * ) 1 (Nx.shape x)) 1)
+    (Nx.arange_at here Nx.int64 0 (Array.fold_left ( * ) 1 (Nx.shape x)) 1)
 
 let gather ~by ~axis idx x = Prim.eval ~by (Gather { axis; idx; x })
 
@@ -465,7 +457,7 @@ let gather_rule env ~axis idx x (V w) =
   | V r ->
       let idx = rebrand r (env.const idx) in
       let ct = rebrand r (with_dtype (Nx.dtype x) w) in
-      let into = rebrand r (Nx.zeros (Nx.dtype x) (Nx.shape x)) in
+      let into = rebrand r (Nx.zeros_like x) in
       let y = scatter ~by:env.name Add ~unique:false ~axis idx ct into in
       env.give x (fresh (V y))
 
@@ -476,7 +468,7 @@ let scatter_rule env (combine : Nx_kernel.combine) ~unique ~axis idx updates
       let by = env.name in
       let idx = rebrand r (env.const idx) in
       let ct = rebrand r (with_dtype (Nx.dtype into) w) in
-      let zeros x = rebrand r (Nx.zeros (Nx.dtype x) (Nx.shape x)) in
+      let zeros x = rebrand r (Nx.zeros_like x) in
       match combine with
       | Add ->
           if env.lin updates then
@@ -493,7 +485,8 @@ let scatter_rule env (combine : Nx_kernel.combine) ~unique ~axis idx updates
             else
               (* Of the updates to one target, the last in C order wins. *)
               let iota = rebrand r (iota updates) in
-              let none = rebrand r (Nx.full Nx.int64 (Nx.shape into) (-1L)) in
+              let at = Nx.placement into and s = Nx.shape into in
+              let none = rebrand r (Nx.full_at at Nx.int64 s (-1L)) in
               let won = scatter ~by Set ~unique:false ~axis idx iota none in
               let wins = Nx.equal (gather ~by ~axis idx won) iota in
               env.give updates (fresh (V (Nx.where wins g (Nx.zeros_like g))))
@@ -615,9 +608,8 @@ let assemble_rule (type v s) env (dtype : (v, s) D.t) shape pieces (V w) =
         let running =
           if List.exists (fun (r, _) -> overlap r region) earlier then
             let counts = Iarray.map (fun (r : Move.range) -> r.count) region in
-            let zeros =
-              rebrand running (Nx.zeros dtype (Iarray.to_array counts))
-            in
+            let here = Nx.Placement.uncut (Nx.placement running) in
+            let zeros = Nx.zeros_at here dtype (Iarray.to_array counts) in
             Prim.eval ~by:env.name
               (Assemble
                  {
@@ -733,7 +725,8 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
         match segments with
         | Some (Nx_kernel.Rows s) -> rebrand r (env.const s.offsets)
         | Some (Contracting s) -> rebrand r (env.const s.offsets)
-        | None -> rebrand r (Nx.zeros Nx.int64 [| 0 |])
+        | None ->
+            Nx.zeros_at (Nx.Placement.uncut (Nx.placement r)) Nx.int64 [| 0 |]
       in
       let contract ~batch ~contracting ~segments x x_scale y y_scale out =
         Prim.eval ~by
@@ -850,11 +843,14 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
    0 and, for an even [n], bin [n/2], [c] at the others. *)
 let bins (type v s d) ~axis (x : (v, s, d) Nx.t) n c : (v, s, d) Nx.t =
   let k = (n / 2) + 1 and r = Nx.ndim x in
-  let j = Nx.arange Nx.int32 0 k 1 in
-  let at b = Nx.equal j (Nx.scalar Nx.int32 (Int32.of_int b)) in
+  let here = Nx.Placement.uncut (Nx.placement x) in
+  let j = Nx.arange_at here Nx.int32 0 k 1 in
+  let at b = Nx.equal_s j (Int32.of_int b) in
   let ends = if n mod 2 = 0 then Nx.logical_or (at 0) (at (n / 2)) else at 0 in
   let w =
-    Nx.where ends (Nx.ones Nx.float64 [| k |]) (Nx.full Nx.float64 [| k |] c)
+    Nx.where ends
+      (Nx.ones_at here Nx.float64 [| k |])
+      (Nx.full_at here Nx.float64 [| k |] c)
   in
   let shape = Array.init r (fun a -> if a = axis then k else 1) in
   Nx.reshape shape (Nx.cast (Nx.dtype x) w)
@@ -903,7 +899,7 @@ let rule (type r) env (op : r Prim.t) (cts : int -> value option) =
   let by = env.name in
   let first f = Option.iter f (cts 0) in
   match op with
-  | Map { layout; prog; outs; loads } ->
+  | Map { layout; prog; outs; loads; _ } ->
       let dts = Array.of_list (out_dtypes outs) in
       let given =
         List.filter_map
@@ -937,6 +933,7 @@ let rule (type r) env (op : r Prim.t) (cts : int -> value option) =
                      prog = identity (D.Any dt);
                      outs = [ dt ];
                      loads = [| Padded { x = ct; fill = D.zero dt; pad } |];
+                     at = None;
                    })
             in
             env.give x (fresh (V y)))
@@ -1014,21 +1011,8 @@ let rule (type r) env (op : r Prim.t) (cts : int -> value option) =
   | Place (_, x) ->
       first (fun (V w) ->
           if env.lin x then
-            match (Nx.placement x, Nx.placement w, env.witness) with
-            | Some p, _, _ ->
-                env.give x (held (V (Prim.eval ~by (Place (p, w)))))
-            | None, None, _ -> env.give x (held (V w))
-            | None, Some _, Some (V r) ->
-                (* A value of every set: its cotangent lies where the function's
-                   arguments and results do. *)
-                let p = Option.get (Nx.placement r) in
-                env.give x (held (V (Prim.eval ~by (Place (p, w)))))
-            | None, Some q, None ->
-                invalid_arg
-                  (Format.asprintf
-                     "%s: the cotangent of a value of every set lies on %a, \
-                      and no argument or result is placed"
-                     env.name Nx.Placement.pp q))
+            let p = Nx.placement x in
+            env.give x (held (V (Prim.eval ~by (Place (p, w))))))
   | Check _ -> ()
 
 (* [lanes a]'s transpose, as JAX's all_gather's: the calling lane's row of the
@@ -1038,10 +1022,11 @@ let lanes_transpose a (x : ('v, 's, 'd) Nx.t) (V w) =
   let total =
     Nx.sum ~axes:[ 0 ] (like w (Program.perform (Lanes (a, w))).(0))
   in
+  let placement = Nx.Placement.uncut (Nx.placement w) in
   let index : (int32, Nx.int32_elt, _) Prim.form =
-    { dtype = Nx.int32; layout = scalar; placement = None }
+    { dtype = Nx.int32; layout = scalar; placement }
   in
-  let own = cast index (Program.perform (Lane_index a)).(0) in
+  let own = cast index (Program.perform (Lane_index (a, placement))).(0) in
   let row = Nx.reshape [| 1 |] (Nx.cast Nx.int64 own) in
   V (Nx.reshape (Nx.shape x) (Nx.take ~axis:0 row total))
 
@@ -1058,18 +1043,8 @@ let linear_call env ~name ~apply ~transpose ~args ~captures ~residuals ~forms
     | Some (V c) -> (
         match Prim.coerce f c with
         | Some c -> V c
-        | None when Option.is_none f.placement ->
-            (* The transpose was traced over a result of every set, which its
-               program cannot read back on a set. *)
-            invalid_arg
-              (Format.asprintf
-                 "%s: %s: the cotangent of a result of every set lies on %a; \
-                  place the call's arguments"
-                 env.name name pp_placement (Nx.placement c))
         | None -> V (cast f (V c)))
-    | None ->
-        let z = Nx.zeros f.dtype (shape_of f.layout) in
-        V (match f.placement with Some p -> Nx.place p z | None -> z)
+    | None -> V (Nx.zeros_at f.placement f.dtype (shape_of f.layout))
   in
   let cts = Array.mapi ct forms in
   let const = Array.map (fun (V r) -> V (env.const r)) in
@@ -1108,7 +1083,7 @@ let next_bases (p : Program.t) =
 (* [p]'s parameters' cotangents, given its outputs' [cts]: [None] for a
    parameter bound to a constant ([consts.(k) = Some v]) or one that receives no
    contribution. *)
-let rec walk ~name ~witness ~fn (p : Program.t) consts cts =
+let rec walk ~name ~fn (p : Program.t) consts cts =
   let owner = p.owner in
   let bound = Array.make p.slots None in
   Array.iteri (fun k c -> bound.(p.params.(k)) <- c) consts;
@@ -1130,7 +1105,7 @@ let rec walk ~name ~witness ~fn (p : Program.t) consts cts =
     let n = var x in
     acc.(n) <- Some (match acc.(n) with None -> c | Some a -> sum a c)
   in
-  let env = { name; lin; const; give; witness; fn } in
+  let env = { name; lin; const; give; fn } in
   Array.iteri
     (fun k c ->
       match (c, p.outputs.(k)) with
@@ -1215,7 +1190,7 @@ and scan_rule env (step : Program.t) ~length ~init ~xs ~captures cts =
     let rec fix m a (cf : form array) (af : form array) =
       let gained = Array.make nc false and gained_a = Array.make nlk false in
       let got = Array.make nc false in
-      let has_row = ref [||] and outs = ref [||] and aouts = ref [||] in
+      let has_row = ref [||] in
       let forms =
         Array.concat
           [
@@ -1256,8 +1231,7 @@ and scan_rule env (step : Program.t) ~length ~init ~xs ~captures cts =
                 ]
             in
             let r =
-              walk ~name:env.name ~witness:env.witness ~fn:env.fn step consts
-                out_cts
+              walk ~name:env.name ~fn:env.fn step consts out_cts
             in
             let carry =
               Array.init nc (fun k ->
@@ -1288,8 +1262,6 @@ and scan_rule env (step : Program.t) ~length ~init ~xs ~captures cts =
             let caps' = Array.map Option.get (Loops.pick a caps') in
             let rrows = Loops.pick lx (Array.sub r nc nx) in
             has_row := Array.map Option.is_some rrows;
-            outs := Array.map form carry;
-            aouts := Array.map form caps';
             Array.concat
               [
                 carry;
@@ -1301,31 +1273,9 @@ and scan_rule env (step : Program.t) ~length ~init ~xs ~captures cts =
         | _ -> invalid_arg "Rune: a scan's transpose"
       in
       let prog, own = Trace.trace Body ~name:env.name forms transposed in
-      let cf' = Array.copy cf in
-      let settled = Loops.settle (Loops.pick m cf) !outs in
-      let j = ref (-1) in
-      Array.iteri
-        (fun k h ->
-          if h then begin
-            incr j;
-            cf'.(k) <- settled.(!j)
-          end)
-        m;
-      let af' = Array.copy af in
-      let settled = Loops.settle (Loops.pick a af) !aouts in
-      let j = ref (-1) in
-      Array.iteri
-        (fun k h ->
-          if h then begin
-            incr j;
-            af'.(k) <- settled.(!j)
-          end)
-        a;
       if Array.exists Fun.id gained || Array.exists Fun.id gained_a then
-        fix (Array.map2 ( || ) m gained) (Array.map2 ( || ) a gained_a) cf' af'
-      else if not (Loops.same_forms cf cf' && Loops.same_forms af af') then
-        fix m a cf' af'
-      else (prog, own, m, got, a, !has_row, cf')
+        fix (Array.map2 ( || ) m gained) (Array.map2 ( || ) a gained_a) cf af
+      else (prog, own, m, got, a, !has_row, cf)
     in
     let m = Array.map Option.is_some ct_c and a = Array.make nlk false in
     let cf = Array.init nc (fun k -> form (start k)) in
@@ -1392,12 +1342,12 @@ and remat_rule env (body : Program.t) args cts =
     Array.append (Array.make n None) (Array.map Option.some captures)
   in
   let r =
-    walk ~name:env.name ~witness:env.witness ~fn:env.fn tape tconsts
+    walk ~name:env.name ~fn:env.fn tape tconsts
       (Array.init (Array.length tape.outputs) cts)
   in
   Array.iteri (fun k (V x) -> Option.iter (fun c -> env.give x c) r.(k)) lins
 
-let transpose ?witness l cts =
+let transpose l cts =
   let p = l.tape in
   let consts =
     Array.init (Array.length p.params) (fun k ->
@@ -1410,4 +1360,4 @@ let transpose ?witness l cts =
       | Some j, Some c -> out_cts.(j) <- Some c
       | _ -> ())
     cts;
-  Array.sub (walk ~name:l.name ~witness ~fn:l.fn l.tape consts out_cts) 0 l.ins
+  Array.sub (walk ~name:l.name ~fn:l.fn l.tape consts out_cts) 0 l.ins

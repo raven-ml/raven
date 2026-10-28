@@ -7,8 +7,8 @@
    captures an array, with a carry of two arrays whose second starts constant
    and gains a tangent or lanes from the first, against the OCaml fold of the
    same step, eagerly and under jit: bit for bit, but for the zeros a loop holds
-   where the fold has none (Compose.lenient). Each leaf is drawn of every set or
-   placed on one of two devices of one set. *)
+   where the fold has none (Compose.lenient). Each leaf is drawn whole on both
+   devices of one set or on one of them. *)
 
 open Windtrap
 open Compose
@@ -17,14 +17,14 @@ module T = Nx.Ptree
 module D = Nx.Dtype
 module Two = (val Nx.devices [ Nx_support.memory 0; Nx_support.memory 1 ])
 
-type where = Every | Dev of int
+type where = Whole | Dev of int
 
 let pp_where ppf = function
-  | Every -> Format.pp_print_string ppf "every set"
+  | Whole -> Format.pp_print_string ppf "both devices"
   | Dev k -> Format.fprintf ppf "device %d" k
 
-(* A leaf of shape [s]: a host operand's values placed on a device, or of every
-   set a formula, [a + i b] at the element [i] in C order, [a] and [b] the
+(* A leaf of shape [s]: a host operand's values placed on a device, or whole on
+   both a formula, [a + i b] at the element [i] in C order, [a] and [b] the
    operand's first values. *)
 let put (type s) w (dt : (float, s) Nx.dtype) shape o : (float, s, Two.d) Nx.t =
   match w with
@@ -32,12 +32,12 @@ let put (type s) w (dt : (float, s) Nx.dtype) shape o : (float, s, Two.d) Nx.t =
       Nx.place
         (Nx.Placement.device Two.v (Nx_support.memory k))
         (make dt shape o)
-  | Every ->
+  | Whole ->
       let at j = if j < Array.length o.values then o.values.(j) else 1. in
-      let i =
-        Nx.reshape shape (Nx.arange_f dt 0. (Float.of_int (numel shape)) 1.)
-      in
-      Nx.add (Nx.full dt shape (at 0)) (Nx.mul_s i (at 1))
+      let here = Nx.Placement.on Two.v in
+      let n = Float.of_int (numel shape) in
+      let i = Nx.reshape shape (Nx.arange_f_at here dt 0. n 1.) in
+      Nx.add (Nx.full_at here dt shape (at 0)) (Nx.mul_s i (at 1))
 
 let fold step ~init xs =
   let n = (Nx.shape xs).(0) in
@@ -89,7 +89,7 @@ let cases =
    (* One device of the set's two per case: values on two devices meet only
       where the program places one beside the other. *)
    let* d = int_range 0 1 in
-   let where = frequency [ (1, constant Every); (1, constant (Dev d)) ] in
+   let where = frequency [ (1, constant Whole); (1, constant (Dev d)) ] in
    let* at = array ~size:(constant 7) where in
    let* free = bool in
    let+ (D.Any dt) = of_list [ D.Any Nx.float32; Any Nx.float64 ] in
@@ -147,24 +147,16 @@ let functions (type s) ?(nested = false) ~free (dt : (float, s) Nx.dtype) s n g
   in
   let step w = inner ~scan:false w in
   let folded c1 (c0, (xs, w)) =
-    (* The step is traced at the call, so with no row its errors raise, and
-       traced again where it places a carry leaf of every set. *)
-    let row = Nx.zeros dt s in
-    let row =
-      match Nx.placement xs with Some p -> Nx.place p row | None -> row
-    in
-    let placed x = Option.is_some (Nx.placement x) in
-    let rec settle k (a, b) =
-      let (a', b'), _ = step w (a, b) row in
-      let ma = (not (placed a)) && placed a' in
-      let mb = (not (placed b)) && placed b' in
-      if k > 0 && (ma || mb) then
-        settle (k - 1) ((if ma then a' else a), if mb then b' else b)
-    in
-    settle 2 (c0, c1);
+    (* The step is traced at the call, so with no row its errors raise. *)
+    let here = Nx.Placement.without_leading_axis (Nx.placement xs) in
+    ignore (step w (c0, c1) (Nx.zeros_at here dt s));
     let (c0, c1), ys = fold (step w) ~init:(c0, c1) xs in
     let rows = Array.append [| n |] s in
-    (c0, (c1, if n = 0 then Nx.zeros dt rows else Nx.stack ~axis:0 ys))
+    let ys =
+      if n = 0 then Nx.zeros_at (Nx.placement xs) dt rows
+      else Nx.stack ~axis:0 ys
+    in
+    (c0, (c1, ys))
   in
   (scanned, folded c1, folded)
 
@@ -212,9 +204,9 @@ let unread (Case c) =
 let covers (Case c) =
   cover "no row" (c.n = 0);
   cover "several rows" (c.n > 1);
-  cover "a placed leaf" (Array.exists (fun w -> w <> Every) c.at);
+  cover "a placed leaf" (Array.exists (fun w -> w <> Whole) c.at);
   cover "the second device" (Array.exists (fun w -> w = Dev 1) c.at);
-  cover "a constant leaf" (Array.exists (fun w -> w = Every) c.at)
+  cover "a leaf on both devices" (Array.exists (fun w -> w = Whole) c.at)
 
 let law_jvp (Case c as case) =
   covers case;
@@ -223,7 +215,7 @@ let law_jvp (Case c as case) =
   let rows = Array.append [| c.n |] c.s in
   let tan k sh = put c.at.(4 + k) c.dt sh c.tans.(k) in
   let t = (tan 0 c.s, (tan 1 rows, tan 2 c.s)) in
-  cover "a placed tangent" (Array.exists (( <> ) Every) (Array.sub c.at 4 3));
+  cover "a placed tangent" (Array.exists (( <> ) Whole) (Array.sub c.at 4 3));
   let scanned, folded, from =
     functions ~free:c.free c.dt c.s c.n c.g c.k c.h c1
   in
@@ -241,7 +233,7 @@ let law_jvp (Case c as case) =
             Rune.jvp p p
               (fun (c1, x) -> (c1, from c1 x))
               (c1, (c0, (xs, w)))
-              (Nx.full c.dt c.s (-0.), t)
+              (Nx.full_at (Nx.placement c1) c.dt c.s (-0.), t)
           in
           both (snd y, t))
   in
@@ -403,8 +395,8 @@ let law_compose (Case c as case) =
   let x = (c0, (xs, w)) in
   let rows = Array.append [| c.n |] c.s in
   let t =
-    ( put Every c.dt c.s c.tans.(0),
-      (put Every c.dt rows c.tans.(1), put Every c.dt c.s c.tans.(2)) )
+    ( put Whole c.dt c.s c.tans.(0),
+      (put Whole c.dt rows c.tans.(1), put Whole c.dt c.s c.tans.(2)) )
   in
   let p = triple () in
   let objective f p =
@@ -458,7 +450,7 @@ let law_compose (Case c as case) =
             Rune.jvp q q
               (fun (c1, x) -> (c1, nested_from c1 x))
               (c1, x)
-              (Nx.full c.dt c.s (-0.), t)
+              (Nx.full_at (Nx.placement c1) c.dt c.s (-0.), t)
           in
           bits3 t)
   in
@@ -498,7 +490,7 @@ let law_compose (Case c as case) =
   let o2 = operands c.dt c.s c.n (Array.map moderated c.ops) c.at in
   let x2 = (o2.(0), (o2.(2), o2.(3))) in
   let t2 =
-    let m k sh = put Every c.dt sh (moderated c.tans.(k)) in
+    let m k sh = put Whole c.dt sh (moderated c.tans.(k)) in
     (m 0 c.s, (m 1 rows, m 2 c.s))
   in
   let s2, f2, _ =

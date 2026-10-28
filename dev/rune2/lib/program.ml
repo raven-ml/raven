@@ -20,13 +20,10 @@ let cast (type v s d) (f : (v, s, d) Nx.Prim.form) (V y) : (v, s, d) Nx.t =
   match Nx.Prim.coerce f y with
   | Some y -> y
   | None when D.equal (Nx.dtype y) f.dtype ->
-      let pp ppf = function
-        | None -> Format.pp_print_string ppf "every set"
-        | Some p -> Nx.Placement.pp ppf p
-      in
       invalid_arg
         (Format.asprintf "Rune: a %a value on %a where one on %a was expected"
-           Nx.pp_dtype f.dtype pp (Nx.placement y) pp f.placement)
+           Nx.pp_dtype f.dtype Nx.Placement.pp (Nx.placement y) Nx.Placement.pp
+           f.placement)
   | None ->
       invalid_arg
         (Format.asprintf "Rune: a %a value where %a was expected" Nx.pp_dtype
@@ -78,7 +75,7 @@ and eqn =
 and construct =
   | Detach : ('v, 's, 'd) Nx.t -> construct
   | Lanes : axis * ('v, 's, 'd) Nx.t -> construct
-  | Lane_index : axis -> construct
+  | Lane_index : axis * 'd Nx.Placement.t -> construct
   | Add : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t -> construct
   | Scan : {
       step : t;
@@ -246,7 +243,7 @@ let stacked n (F f) =
     {
       f with
       layout = contiguous (Array.append [| n |] (shape_of f));
-      placement = Option.map Nx.Placement.with_leading_axis f.placement;
+      placement = Nx.Placement.with_leading_axis f.placement;
     }
 
 let computed (F f) = F { f with layout = contiguous (shape_of f) }
@@ -262,9 +259,7 @@ let tail p =
    program's additions, the sum each feeds. *)
 let sums programs =
   let found = ref [] in
-  (* A sum's addition and form are its first placed addition's, where one is: an
-     addition of every set joins it at its placement, as nx adds a constant
-     where its other operand lies. *)
+  (* A sum's addition and form are its first addition's. *)
   let index (Addition (t, _) as a) (F f) =
     let shape = shape_of f in
     let rec go k = function
@@ -272,12 +267,7 @@ let sums programs =
           found := !found @ [ (a, F f) ];
           k
       | (Addition (u, _), F g) :: rest ->
-          if Option.is_some (same_total t u) && shape_of g = shape then begin
-            if Option.is_none g.placement && Option.is_some f.placement then
-              found :=
-                List.mapi (fun j e -> if j = k then (a, F f) else e) !found;
-            k
-          end
+          if Option.is_some (same_total t u) && shape_of g = shape then k
           else go (k + 1) rest
     in
     go 0 !found
@@ -314,18 +304,6 @@ let additions = function
   | Linear { apply = None; _ } -> [||]
   | Remat { body; _ } -> body.adds
 
-(* A loop's sums' forms where it starts them from [seeds]: the placed of each
-   sum's and its seed's. *)
-let seeded sums seeds =
-  if seeds = [||] then sums
-  else
-    Array.map2
-      (fun (F f as ff) (F g) ->
-        match (f.placement, g.placement) with
-        | None, Some _ -> F { g with layout = f.layout }
-        | _ -> ff)
-      sums (Array.map form seeds)
-
 let no_map name =
   invalid_arg (name ^ ": no map named by the axis is around the call")
 
@@ -335,10 +313,10 @@ let forms = function
       match bound a with
       | Some n -> [| stacked n (form (V x)) |]
       | None -> no_map "Rune.lanes")
-  | Lane_index _ ->
-      [| F { dtype = Nx.int32; layout = contiguous [||]; placement = None } |]
+  | Lane_index (_, placement) ->
+      [| F { dtype = Nx.int32; layout = contiguous [||]; placement } |]
   | Add _ -> [||]
-  | Scan { step; length; init; seeds; _ } ->
+  | Scan { step; length; init; _ } ->
       let nc = Array.length init and no = Array.length step.outputs in
       let na = Array.length step.adds in
       let carry =
@@ -347,20 +325,10 @@ let forms = function
       in
       let ys = Array.map form (slice step.outputs nc (no - na)) in
       let _, sums, _ = sums [ step ] in
-      Array.concat [ carry; Array.map (stacked length) ys; seeded sums seeds ]
-  | Iterate { step; until; init; seeds; _ } ->
+      Array.concat [ carry; Array.map (stacked length) ys; sums ]
+  | Iterate { step; until; init; _ } ->
       let _, sums, _ = sums [ until; step ] in
-      let sums = seeded sums seeds in
-      (* [init] where no step runs, the step's carry otherwise: the placed of
-         the two forms, where nx would compute a constant beside the other. *)
-      let placed (F i as fi) (F o as fo) =
-        match (i.placement, o.placement) with None, Some _ -> fo | _ -> fi
-      in
-      let carry = slice step.outputs 0 (Array.length init) in
-      let carry =
-        Array.map2 placed (Array.map form init) (Array.map form carry)
-      in
-      Array.append carry sums
+      Array.append (Array.map form init) sums
   | Call { body; _ } -> Array.map form body.outputs
   | Custom { primal; derivative = Tangent t; _ } ->
       Array.map form (Array.append primal.outputs (tail t))
@@ -381,18 +349,11 @@ let neg_zero (type v s) (dt : (v, s) Nx.dtype) : v =
   | Complex -> { Complex.re = -0.; im = -0. }
   | Signed | Unsigned | Boolean -> D.zero dt
 
-let place (f : _ Nx.Prim.form) x =
-  match f.placement with Some p -> Nx.place p x | None -> x
-
 let filled ~zero (F f) =
   let v = if zero then D.zero f.dtype else neg_zero f.dtype in
-  V (place f (Nx.full f.dtype (shape_of f) v))
+  V (Nx.full_at f.placement f.dtype (shape_of f) v)
 
-(* [a + b] where the placed one lies, as nx adds a value of every set. *)
-let add (V a as va) (V b as vb) =
-  match (Nx.placement a, Nx.placement b) with
-  | None, Some _ -> V (Nx.add (like b va) b)
-  | _ -> V (Nx.add a (like a vb))
+let add (V a) b = V (Nx.add a (like a b))
 
 (* Rows each read at [f], the form their output was traced at. *)
 let stack (F f) vs = V (Nx.stack ~axis:0 (List.map (cast f) vs))
@@ -719,7 +680,7 @@ let rec register names (p : t) =
           let (Operands xs) = Nx.Prim.operands op in
           List.iter (fun (Nx.Prim.Any x) -> see (V x)) xs
       | Do { c; _ } ->
-          (match c with Lanes (a, _) | Lane_index a -> axis a | _ -> ());
+          (match c with Lanes (a, _) | Lane_index (a, _) -> axis a | _ -> ());
           List.iter see (operands c);
           List.iter (register names) (carried c))
     p.eqns;
@@ -752,10 +713,8 @@ let pp_names names p ppf vs =
 
 let pp_form ppf (F f) =
   let shape = Iarray.to_array (Nx_array.Layout.shape f.layout) in
-  Format.fprintf ppf "%a %a" Nx.pp_dtype f.dtype Nx.pp_shape shape;
-  match f.placement with
-  | None -> Format.pp_print_string ppf " of every set"
-  | Some q -> Format.fprintf ppf " at %a" Nx.Placement.pp q
+  Format.fprintf ppf "%a %a at %a" Nx.pp_dtype f.dtype Nx.pp_shape shape
+    Nx.Placement.pp f.placement
 
 (* The forms of an operation's results, as eager computation gives them. *)
 let result_forms (p : t) ~by op =
@@ -857,7 +816,7 @@ and pp_construct names ~indent (p : t) ppf c =
   | Detach x -> Format.fprintf ppf "detach %a" value (V x)
   | Lanes (a, x) ->
       Format.fprintf ppf "lanes of map %d %a" (map_number names a) value (V x)
-  | Lane_index a ->
+  | Lane_index (a, _) ->
       Format.fprintf ppf "lane_index of map %d" (map_number names a)
   | Add (_, x) -> Format.fprintf ppf "add %a" value (V x)
   | Scan { step; length; init; xs; captures; seeds } ->

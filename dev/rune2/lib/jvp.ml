@@ -64,32 +64,6 @@ let jvp_loads i loads =
   let ts = List.filter_map (tangent_load i) (Iarray.to_list loads) in
   Iarray.of_list (ps @ ts)
 
-let tangent_placed i x =
-  match Prim.payload i x with
-  | Some (Dual d) -> Option.is_some (Nx.placement d.tangent)
-  | _ -> false
-
-let constant i x = Option.is_none (Nx.placement (primal i x))
-
-let rec any_placed i loads j =
-  j < Iarray.length loads
-  && ((match Iarray.get loads j with
-        | Prim.Plain x -> tangent_placed i x
-        | Padded { x; _ } -> tangent_placed i x)
-     || any_placed i loads (j + 1))
-
-let rec all_constant i loads j =
-  j >= Iarray.length loads
-  || (match Iarray.get loads j with
-       | Prim.Plain x -> constant i x
-       | Padded { x; _ } -> constant i x)
-     && all_constant i loads (j + 1)
-
-(* Whether a loop's primal loads are all of every set and a tangent is placed:
-   one loop computing both would place the primal, which must keep its operands'
-   form, so the primal computes apart. *)
-let apart i loads = any_placed i loads 0 && all_constant i loads 0
-
 (* Which loads have a tangent. *)
 let has i loads =
   Array.init (Iarray.length loads) (fun j -> load_has i (Iarray.get loads j))
@@ -120,7 +94,8 @@ let run_map (type d) ~by layout (p : P.t) (loads : d Prim.load iarray) :
     d Prim.any array =
   let dts k = P.dtype p (Iarray.get p.outs k) in
   let (Outs (outs, read)) = outs_of (List.init (Iarray.length p.outs) dts) in
-  Array.of_list (read (Prim.eval ~by (Map { layout; prog = p; outs; loads })))
+  Array.of_list
+    (read (Prim.eval ~by (Map { layout; prog = p; outs; loads; at = None })))
 
 (* Maps *)
 
@@ -194,19 +169,6 @@ let rec jouts : type d r.
         J (dt :: dt :: o, fun (y, (t, q)) -> (dual i ~fresh:true y t, f q))
       else J (dt :: o, fun (y, q) -> (y, f q))
 
-(* The results [a], their primals replaced by [b]'s. *)
-let rec regraft : type d r.
-    Prim.interpretation -> (d, r) Prim.outs -> r -> r -> r =
- fun i outs a b ->
-  match outs with
-  | [] -> ()
-  | _ :: rest ->
-      let x, xs = a and y, ys = b in
-      let x =
-        match tangent i x with Some t -> dual i ~fresh:true y t | None -> y
-      in
-      (x, regraft i rest xs ys)
-
 let map_rule (type d r) i ~by layout prog (outs : (d, r) Prim.outs)
     (loads : d Prim.load iarray) : r =
   let p =
@@ -215,28 +177,28 @@ let map_rule (type d r) i ~by layout prog (outs : (d, r) Prim.outs)
   in
   if not p.any then
     Prim.eval ~by
-      (Map { layout; prog; outs; loads = Iarray.map (primal_load i) loads })
+      (Map
+         {
+           layout;
+           prog;
+           outs;
+           loads = Iarray.map (primal_load i) loads;
+           at = None;
+         })
   else
     let jl = jvp_loads i loads in
-    let r : r =
-      match outs with
+    match outs with
       | [ dt ] ->
           let y, (t, ()) =
             Prim.eval ~by
-              (Map { layout; prog = p.prog; outs = [ dt; dt ]; loads = jl })
+              (Map { layout; prog = p.prog; outs = [ dt; dt ]; loads = jl; at = None })
           in
           (dual i ~fresh:true y t, ())
       | _ ->
           let (J (o, f)) = jouts i outs p.flags 0 in
           f
             (Prim.eval ~by
-               (Map { layout; prog = p.prog; outs = o; loads = jl }))
-    in
-    if not (apart i loads) then r
-    else
-      regraft i outs r
-        (Prim.eval ~by
-           (Map { layout; prog; outs; loads = Iarray.map (primal_load i) loads }))
+               (Map { layout; prog = p.prog; outs = o; loads = jl; at = None }))
 
 (* Reductions *)
 
@@ -549,7 +511,7 @@ let reduce_rule (type d r) i ~by layout axes (prog : P.t)
   let b = Scalar.start prog ~tangents ~extra:[||] in
   let k = Scalar.outputs b in
   let touts = sum_tangents b reductions in
-  if sums_only b reductions && not (apart i loads) then
+  if sums_only b reductions then
     let (JR (rs, f)) = jreds i b reductions (ref k) in
     let outs =
       Array.append (Array.init k (Scalar.value b)) (Array.of_list touts)
@@ -704,7 +666,8 @@ let scan_rule (type d r) i ~by layout axis (prog : P.t)
         let first =
           match pcarry with
           | Some x -> cast_any c x
-          | None -> Nx.ones c (shape1 ())
+          | None ->
+              Nx.ones_at (Nx.Placement.uncut (Nx.placement v)) c (shape1 ())
         in
         let tan = linear_scan ~axis v (Nx.mul (after ~axis first (up y)) t) in
         match ct with
@@ -727,7 +690,10 @@ let scan_rule (type d r) i ~by layout axis (prog : P.t)
          the weights' change from [y_(i-1)] to [y_i]. *)
       let f c up v t =
         let y = up y in
-        let lowest = Nx.full c (shape1 ()) (D.of_float c Float.neg_infinity) in
+        let here = Nx.Placement.uncut (Nx.placement y) in
+        let lowest =
+          Nx.full_at here c (shape1 ()) (D.of_float c Float.neg_infinity)
+        in
         let a = weights (after ~axis lowest y) y and u = weights v y in
         [ Nx.div (linear_scan ~axis a (Nx.mul u t)) (linear_scan ~axis a u) ]
       in
@@ -744,7 +710,8 @@ let scan_rule (type d r) i ~by layout axis (prog : P.t)
       let f c up v t =
         let m = up m in
         let dm, _ = scan1 t (Moments (0, c)) None in
-        let zero = Nx.zeros c (shape1 ()) in
+        let here = Nx.Placement.uncut (Nx.placement v) in
+        let zero = Nx.zeros_at here c (shape1 ()) in
         let centred t =
           let s = Nx.cumsum ~axis t in
           Nx.cumsum ~axis
@@ -755,7 +722,7 @@ let scan_rule (type d r) i ~by layout axis (prog : P.t)
         let n = Nx.dim axis v and r = Nx.ndim v in
         let along = Array.init r (fun a -> if a = axis then n else 1) in
         let count =
-          Nx.reshape along (Nx.cast c (Nx.arange Nx.int32 1 (n + 1) 1))
+          Nx.reshape along (Nx.cast c (Nx.arange_at here Nx.int32 1 (n + 1) 1))
         in
         let two = Nx.scalar_like v (D.of_float c 2.) in
         let spread =
@@ -887,7 +854,8 @@ let rule (type r) name i ~by (op : r Prim.t) : r =
     match tangent i x with Some t -> dual i ~fresh y (f t) | None -> y
   in
   match op with
-  | Map { layout; prog; outs; loads } -> map_rule i ~by layout prog outs loads
+  | Map { layout; prog; outs; loads; _ } ->
+      map_rule i ~by layout prog outs loads
   | Reduce { layout; axes; prog; reductions; loads } ->
       reduce_rule i ~by layout axes prog reductions loads
   | Scan { layout; axis; prog; reduction; loads; carry } ->
@@ -1270,8 +1238,8 @@ let spread mask vs =
       else None)
     mask
 
-(* [k x t] with [x] and [t] at one type: [x]'s, or [t]'s where [x] is of every
-   set and [t] placed, as a constant's primal with a placed tangent. *)
+(* [k x t] with [x] and [t] at one type: [x]'s where [t] reads at it, else
+   [t]'s. *)
 type both = {
   k : 'v 's 'd. ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t -> Program.value;
 }
@@ -1371,11 +1339,10 @@ and scan ~name ~tape i (step : Program.t) ~length ~init ~xs ~captures ~seeds =
     | None -> Loops.filled ~zero:false sum_forms.(s)
   in
   (* [has] and [hs] are the carries and sums with a tangent; [pf], [tf] and [sf]
-     the forms of the primal and tangent carries and the sums' tangents,
-     settled. *)
+     the forms of the primal and tangent carries and the sums' tangents. *)
   let rec fix has hs pf tf sf =
     let gained = Array.make nc false and gained_s = Array.make ns false in
-    let has_y = ref [||] and outs = ref [||] in
+    let has_y = ref [||] in
     let rows = Array.map Loops.row in
     let forms =
       Array.concat
@@ -1447,31 +1414,14 @@ and scan ~name ~tape i (step : Program.t) ~length ~init ~xs ~captures ~seeds =
             tadds;
           let sums = somes (Loops.pick hs sums) in
           has_y := Array.map Option.is_some ty;
-          outs := Array.map Program.form (Array.concat [ c; tc'; sums ]);
           add_all step adds;
           Array.concat [ c; tc'; sums; y; somes ty ]
       | _ -> invalid_arg "Rune: a scan's derivative"
     in
     let prog, own = Trace.trace Body ~name forms derive in
-    let carried = Array.concat [ pf; Loops.pick has tf; Loops.pick hs sf ] in
-    let settled = Loops.settle carried !outs in
-    let back a mask base =
-      let k = ref (base - 1) in
-      Array.mapi
-        (fun j f ->
-          if mask.(j) then begin
-            incr k;
-            settled.(!k)
-          end
-          else f)
-        a
-    in
-    let pf' = Array.sub settled 0 nc in
-    let tf' = back tf has nc and sf' = back sf hs (nc + count has) in
     if Array.exists Fun.id gained || Array.exists Fun.id gained_s then
       let has = Array.map2 ( || ) has gained in
-      fix has (Array.map2 ( || ) hs gained_s) pf' tf' sf'
-    else if not (Loops.same_forms carried settled) then fix has hs pf' tf' sf'
+      fix has (Array.map2 ( || ) hs gained_s) pf tf sf
     else (prog, own, has, hs, !has_y)
   in
   let has = Array.map (fun v -> Option.is_some (tv i v)) init in

@@ -29,7 +29,7 @@ let lane_form (type v s d) (b : (v, s, d) Nx.t) : (v, s, d) Prim.form =
     dtype = f.dtype;
     layout =
       L.v ~offset:(L.offset l) ~strides:(tail (L.strides l)) (tail (L.shape l));
-    placement = Option.map Nx.Placement.without_leading_axis f.placement;
+    placement = Nx.Placement.without_leading_axis f.placement;
   }
 
 let lane i b = Prim.traced i (lane_form b) (Lane b)
@@ -112,7 +112,9 @@ let every n = { M.start = 0; count = n; step = 1 }
    unbatched operands unbatched: forward mode under a map of tangents keeps its
    primal shared, so it computes once and a read of it reads. A loop is cut into
    a part over the lanes and a part every lane shares, each its program's
-   outputs over the loads they read. *)
+   outputs over the loads they read. Where the shared part reads no load it
+   would be a creation with no operand to lie beside, so the loop stays whole
+   over the lanes. *)
 
 (* Whether each of [loads] holds lanes. *)
 let laned_loads i loads =
@@ -195,22 +197,24 @@ let plan (p : P.t) laned_load =
     nodes;
   let laned = Array.map (fun o -> reads.(o)) (Iarray.to_array p.outs) in
   let nout = Array.length laned in
-  if Array.for_all Fun.id laned then
-    let whole =
-      {
-        prog = p;
-        loads = Array.init (Array.length laned_load) Fun.id;
-        index = Array.init nout Fun.id;
-      }
-    in
-    { laned; lanes = Some whole; shared = None }
-  else
-    let part flag =
-      match List.filter (fun k -> laned.(k) = flag) (List.init nout Fun.id) with
-      | [] -> None
-      | outs -> Some (restrict p outs)
-    in
-    { laned; lanes = part true; shared = part false }
+  let part flag =
+    match List.filter (fun k -> laned.(k) = flag) (List.init nout Fun.id) with
+    | [] -> None
+    | outs -> Some (restrict p outs)
+  in
+  match part false with
+  | None | Some { loads = [||]; _ } ->
+      (* Outputs that read no load would lie on no operand's devices: they
+         compute with the lanes, every lane's alike. *)
+      let whole =
+        {
+          prog = p;
+          loads = Array.init (Array.length laned_load) Fun.id;
+          index = Array.init nout Fun.id;
+        }
+      in
+      { laned = Array.make nout true; lanes = Some whole; shared = None }
+  | Some _ as shared -> { laned; lanes = part true; shared }
 
 type 'd outs = Outs : ('d, 'r) Prim.outs -> 'd outs
 
@@ -269,10 +273,18 @@ let map_rule (type r) i n ~by (op : r Prim.t) : r =
                  prog = shift_coords part.prog;
                  outs = o;
                  loads;
+                 at = None;
                })
         else
           values ~by
-            (Map { layout = m.layout; prog = part.prog; outs = o; loads })
+            (Map
+               {
+                 layout = m.layout;
+                 prog = part.prog;
+                 outs = o;
+                 loads;
+                 at = None;
+               })
       in
       results i ~by op (fun () ->
           let lv = Option.map (issue ~laned:true) pl.lanes in
@@ -465,9 +477,7 @@ let place (type v s d e) i n ~by (q : e Nx.Placement.t) (x : (v, s, d) Nx.t) ()
     =
   let b = batch i n x in
   let through =
-    match Nx.placement b with
-    | Some p -> Nx.Placement.(equal (without_leading_axis p) q)
-    | None -> false
+    Nx.Placement.(equal (without_leading_axis (Nx.placement b)) q)
   in
   if through then [| Batch (Program.V b) |]
   else
@@ -558,7 +568,7 @@ let operand i (Program.V x) = owned i x
 
 let claims i axis : Program.construct -> bool = function
   | Lanes (a, x) -> Program.same_axis a axis || owned i x
-  | Lane_index a -> Program.same_axis a axis
+  | Lane_index (a, _) -> Program.same_axis a axis
   | Add _ -> true
   | c -> List.exists (operand i) (Program.operands c)
 
@@ -591,7 +601,7 @@ module Rules = struct
       layout =
         Nx_array.Layout.contiguous
           (Iarray.of_array (Array.append [| n |] shape));
-      placement = Option.map Nx.Placement.with_leading_axis f.placement;
+      placement = Nx.Placement.with_leading_axis f.placement;
     }
 
   (* The additions of [p], every lane's [vs]: as batches, which the call's
@@ -737,7 +747,9 @@ let rec answer ~name i axis n (c : Program.construct) k =
       let b = batch i n x in
       let r = Program.like b (Program.perform (Lanes (a, b))).(0) in
       one (lane i (Nx.swapaxes 0 1 r))
-  | Lane_index _ -> one (lane i (Nx.arange Nx.int32 0 n 1))
+  | Lane_index (_, p) ->
+      (* [p] cuts no axis, so the indices' batch at [p] gives lanes at [p]. *)
+      one (lane i (Nx.arange_at p Nx.int32 0 n 1))
   | Add (t, x) ->
       if n > 0 then
         ignore (Program.perform (Add (t, Nx.sum ~axes:[ 0 ] (batch i n x))));
@@ -778,7 +790,7 @@ and scan ~name i axis n (step : Program.t) ~length ~init ~xs ~captures ~seeds =
   let lcap = Array.map (owned_v i) captures in
   let carry lc k = if lc.(k) then batch_v i n init.(k) else init.(k) in
   let rec fix lc (cf : Program.form array) =
-    let gained = Array.make nc false and outs = ref [||] in
+    let gained = Array.make nc false in
     let ly = ref [||] in
     let forms =
       Array.concat [ cf; Array.map Loops.row bxs; Array.map Program.form bcaps ]
@@ -801,7 +813,6 @@ and scan ~name i axis n (step : Program.t) ~length ~init ~xs ~captures ~seeds =
                 in
                 let y = Array.sub out nc ny in
                 ly := Array.map (owned_v w) y;
-                outs := Array.map Program.form c';
                 let y =
                   Array.map
                     (fun v -> if owned_v w v then batch_v w n v else v)
@@ -820,14 +831,12 @@ and scan ~name i axis n (step : Program.t) ~length ~init ~xs ~captures ~seeds =
       | _ -> invalid_arg "Rune: a scan's map"
     in
     let prog, own = Trace.trace Body ~name forms mapped in
-    let cf' = Loops.settle cf !outs in
     if Array.exists Fun.id gained then
       let lc = Array.map2 ( || ) lc gained in
       fix lc
         (Array.mapi
            (fun k f -> if gained.(k) then Program.form (carry lc k) else f)
-           cf')
-    else if not (Loops.same_forms cf cf') then fix lc cf'
+           cf)
     else (prog, own, lc, !ly)
   in
   let lc = Array.map (owned_v i) init in

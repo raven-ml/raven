@@ -17,30 +17,8 @@ let row (V x) =
     {
       dtype = Nx.dtype x;
       layout = contiguous (Array.sub s 1 (Array.length s - 1));
-      placement = Option.map Nx.Placement.without_leading_axis (Nx.placement x);
+      placement = Nx.Placement.without_leading_axis (Nx.placement x);
     }
-
-(* Settling *)
-
-let settled (F p as fp) (F o) =
-  match (p.placement, o.placement) with
-  | None, Some _ -> F { o with layout = p.layout }
-  | _ -> fp
-
-let settle params outs =
-  Array.mapi
-    (fun k p -> if k < Array.length outs then settled p outs.(k) else p)
-    params
-
-let same_forms a b =
-  Array.length a = Array.length b
-  && Array.for_all2
-       (fun (F f) (F g) ->
-         match (f.placement, g.placement) with
-         | None, None -> true
-         | Some p, Some q -> Nx.Placement.equal p q
-         | _ -> false)
-       a b
 
 (* Values *)
 
@@ -52,16 +30,12 @@ let neg_zero (type v s) (dt : (v, s) D.t) : v =
 
 let filled ~zero (F f) =
   let v = if zero then D.zero f.dtype else neg_zero f.dtype in
-  let x = Nx.full f.dtype (shape_of f) v in
-  V (match f.placement with Some p -> Nx.place p x | None -> x)
+  V (Nx.full_at f.placement f.dtype (shape_of f) v)
 
 let zeros_like (V x) = V (Nx.zeros_like x)
 let flip (V x) = V (Nx.flip ~axes:[ 0 ] x)
 
-let add (V a as va) (V b as vb) =
-  match (Nx.placement a, Nx.placement b) with
-  | None, Some _ -> V (Nx.add (like b va) b)
-  | _ -> V (Nx.add a (like a vb))
+let add (V a) b = V (Nx.add a (like a b))
 
 let rec holds_iterate (p : Program.t) =
   Array.exists

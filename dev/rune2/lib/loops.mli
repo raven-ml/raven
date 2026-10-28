@@ -9,27 +9,12 @@
     A scan's step takes its parameters in three runs: the carry, a row of each
     of the rows' arrays, and the captures; it returns the carry, the outputs,
     then the additions. A rule derives another step from it, whose parameters
-    and outputs are laid out in the same three runs.
-
-    {e Settling.} A step's carry parameter of every set may be returned placed
-    by the step, as when it adds a placed value to a constant [init]. Evaluating
-    the step again binds that placed value to the parameter, which a value of
-    every set's form refuses, so a derived step is traced again with the
-    parameter at the placement its output took ({!settle}), as the step itself
-    was. *)
+    and outputs are laid out in the same three runs. *)
 
 val row : Program.value -> Program.form
 (** [row x] is the form of [x]'s rows along axis 0: [x]'s dtype, a contiguous
     layout of its shape without axis 0, its placement without its leading axis.
 *)
-
-val settle : Program.form array -> Program.form array -> Program.form array
-(** [settle params outs] is [params] with each parameter of every set that
-    [outs] returns placed at that placement, keeping its layout. *)
-
-val same_forms : Program.form array -> Program.form array -> bool
-(** [same_forms a b] is [true] iff [a] and [b] are placed alike, element by
-    element. *)
 
 val filled : zero:bool -> Program.form -> Program.value
 (** [filled ~zero f] is a value of [f]'s dtype, shape and placement, every
@@ -40,8 +25,7 @@ val zeros_like : Program.value -> Program.value
 (** [zeros_like x] is [Nx.zeros_like x]. *)
 
 val add : Program.value -> Program.value -> Program.value
-(** [add a b] is [Nx.add a b], at the placed one's form where one of them is of
-    every set. *)
+(** [add a b] is [Nx.add a b], [b] read at [a]'s form. *)
 
 val holds_iterate : Program.t -> bool
 (** [holds_iterate p] is [true] iff [p] or a program its constructs carry has an

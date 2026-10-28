@@ -149,6 +149,7 @@ let multi x =
            prog;
            outs = [ f64; f64 ];
            loads = [| Plain x0; Padded { x; fill = 0.25; pad } |];
+           at = None;
          })
   in
   Nx.concatenate ~axis:0 [ y; z ]
@@ -617,19 +618,20 @@ let lanes_of_two = Nx.create f64 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
 let nested ?(outer = Rune.axis ()) ?(inner = Rune.axis ()) f =
   Rune.vmap' ~axis:outer (Rune.vmap' ~axis:inner (f outer inner)) lanes_of_two
 
-let index a = Nx.cast f64 (Rune.lane_index a ())
+let index a x = Nx.cast f64 (Rune.lane_index a x)
 
 let test_named () =
   let y =
     nested (fun a b x ->
-        Nx.add x (Nx.add (Nx.mul_s (index a) 10.) (Nx.mul_s (index b) 100.)))
+        let tens = Nx.mul_s (index a x) 10. in
+        Nx.add x (Nx.add tens (Nx.mul_s (index b x) 100.)))
   in
   equal ~msg:"indices" floats
     [| 1.; 102.; 203.; 14.; 115.; 216. |]
     (Nx.to_array y);
   (* An inner map of the outer's name hides it. *)
   let a = Rune.axis () in
-  let y = nested ~outer:a ~inner:a (fun a _ x -> Nx.add x (index a)) in
+  let y = nested ~outer:a ~inner:a (fun a _ x -> Nx.add x (index a x)) in
   equal ~msg:"hidden" floats [| 1.; 3.; 5.; 4.; 6.; 8. |] (Nx.to_array y);
   (* [lanes] of the outer map gathers each inner lane across the outer's: at [i;
      j], column [j]. Of the inner, row [i]. *)
@@ -650,7 +652,7 @@ let test_named () =
     [| 2.; 3.; 4.; 5.; 6.; 7. |]
     (Nx.to_array y);
   (* The sum over a map's lanes of a lane's own index. *)
-  let y = nested (fun a _ x -> Nx.add x (Nx.sum (Rune.lanes a (index a)))) in
+  let y = nested (fun a _ x -> Nx.add x (Nx.sum (Rune.lanes a (index a x)))) in
   equal ~msg:"lanes of the index" floats
     [| 2.; 3.; 4.; 5.; 6.; 7. |]
     (Nx.to_array y)
@@ -666,16 +668,16 @@ let test_reads () =
   invalid ~sub:("Rune.lanes:" ^ no) (fun () ->
       Rune.vmap' ~axis:a (fun x -> Rune.lanes b x) xs);
   invalid ~sub:("Rune.lane_index:" ^ no) (fun () ->
-      Rune.vmap' ~axis:a (fun x -> Nx.add x (index b)) xs);
+      Rune.vmap' ~axis:a (fun x -> Nx.add x (index b x)) xs);
   (* An anonymous map is read by no name. *)
   invalid ~sub:("Rune.lane_index:" ^ no) (fun () ->
-      Rune.vmap' (fun x -> Nx.add x (index a)) xs);
+      Rune.vmap' (fun x -> Nx.add x (index a x)) xs);
   (* After the map returned. *)
   let escaped = ref (fun () -> Nx.zeros f64 [||]) in
   ignore
     (Rune.vmap' ~axis:a
        (fun x ->
-         (escaped := fun () -> index a);
+         (escaped := fun () -> index a x);
          x)
        xs);
   invalid ~sub:("Rune.lane_index:" ^ no) (fun () -> !escaped ());
@@ -683,7 +685,7 @@ let test_reads () =
      it. *)
   let y =
     Rune.vmap' ~axis:a
-      (Rune.jit' (fun x -> Nx.add x (Nx.sum (Rune.lanes a (index a)))))
+      (Rune.jit' (fun x -> Nx.add x (Nx.sum (Rune.lanes a (index a x)))))
       xs
   in
   equal ~msg:"under jit" floats [| 2.; 3. |] (Nx.to_array y);
@@ -692,7 +694,7 @@ let test_reads () =
       (fun x ->
         fst
           (Rune.scan' ~init:x
-             ~f:(fun c r -> (Nx.add c (Nx.mul r (index a)), r))
+             ~f:(fun c r -> (Nx.add c (Nx.mul r (index a r)), r))
              (v [| 1.; 10. |])))
       xs
   in
@@ -930,7 +932,7 @@ let test_grad_lanes () =
   let xs = Nx.create f64 [| 3; 2 |] [| 0.5; -1.; 2.; 0.; 1.5; -0.25 |] in
   let w = Nx.create f64 [| 3; 2 |] [| 1.; -2.; 0.5; 3.; -1.5; 4. |] in
   let a = Rune.axis () in
-  let weight () = Nx.mul w (Nx.add_s (index a) 1.) in
+  let weight () = Nx.mul w (Nx.add_s (index a w) 1.) in
   let f x = Nx.sum (Nx.mul (Rune.lanes a (Nx.mul x x)) (weight ())) in
   let expected = Nx.to_array (Nx.mul_s (Nx.mul xs w) 12.) in
   equal ~msg:"in the map" floats expected
@@ -943,7 +945,7 @@ let test_grad_lanes () =
   in
   let zs = Nx.complex c128 ~re:xs ~im:(Nx.neg xs) in
   let g z =
-    let k = Nx.cast c128 (Nx.add_s (index a) 1.) in
+    let k = Nx.cast c128 (Nx.add_s (index a z) 1.) in
     Nx.real f64 (Nx.sum (Nx.mul (Rune.lanes a z) (Nx.mul c k)))
   in
   let parts z =
@@ -1024,7 +1026,7 @@ let test_scan () =
 let test_place () =
   let host = Nx.create f64 [| 4; 3 |] (Array.init 12 Float.of_int) in
   let cut = Nx.place (Two.split ~axis:0) host in
-  let placement y = Option.get (Nx.placement y) in
+  let placement y = Nx.placement y in
   (* A lane of a batch cut along axis 0 lies whole on each device. *)
   let seen = ref None in
   let y =
@@ -1075,7 +1077,9 @@ let test_draws () =
     (Nx.to_array (Nx.get [ 0 ] y))
     (Nx.to_array (Nx.get [ 2 ] y));
   let a = Rune.axis () and k = Nx.Rng.key 7 in
-  let own () = Nx.Rng.fold_in_tensor k (Rune.lane_index a ()) in
+  let own () =
+    Nx.Rng.fold_in_tensor k (Rune.lane_index a (Nx.Rng.to_tensor k))
+  in
   let y =
     Rune.vmap' ~axis:a
       (fun x -> Nx.add x (Nx.Rng.uniform ~key:(own ()) f64 [| 2 |]))

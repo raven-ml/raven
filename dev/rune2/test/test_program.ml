@@ -72,21 +72,19 @@ let test_constructs () =
         with x0 = %0, x1 = c0
       %2 : float32 [] at CPU = Reduce [Sum x0] over [0] (x0: float32 [2] at CPU)
         with x0 = %1
-      %3 : float32 [] of every set = Map [float32:0x0000803f]
-      %4 : float32 [] at CPU = Place (x0: float32 [] of every set)
+      %3 : float32 [] at CPU = Map [float32:0x0000803f] at CPU
+      %4 : float32 [1] at CPU = Move (x0: float32 [] at CPU)
         with x0 = %3
-      %5 : float32 [1] at CPU = Move (x0: float32 [] at CPU)
+      %5 : float32 [2] at CPU = Move (x0: float32 [1] at CPU)
         with x0 = %4
-      %6 : float32 [2] at CPU = Move (x0: float32 [1] at CPU)
+      %6 : float32 [2] at CPU = Map [x0] (x0: float32 [2] at CPU)
         with x0 = %5
-      %7 : float32 [2] at CPU = Map [x0] (x0: float32 [2] at CPU)
-        with x0 = %6
-      %8 : float32 [2] at CPU = Map [mul(x1, x0)] (x0: float32 [2] at CPU) (x1: float32 [2] at CPU)
-        with x0 = c0, x1 = %7
-      %9 : float32 [2] at CPU = detach %0
-      %10 : float32 [2] at CPU = Map [add(x0, x1)] (x0: float32 [2] at CPU) (x1: float32 [2] at CPU)
-        with x0 = %9, x1 = %8
-      return %10
+      %7 : float32 [2] at CPU = Map [mul(x1, x0)] (x0: float32 [2] at CPU) (x1: float32 [2] at CPU)
+        with x0 = c0, x1 = %6
+      %8 : float32 [2] at CPU = detach %0
+      %9 : float32 [2] at CPU = Map [add(x0, x1)] (x0: float32 [2] at CPU) (x1: float32 [2] at CPU)
+        with x0 = %8, x1 = %7
+      return %9
       adds %0
     |}
 
@@ -102,8 +100,8 @@ let test_iterate () =
   print_string (print (Rune.program T.tensor T.tensor f (v [| 1.; 2. |])));
   expect (output ()) @@ __POS_OF__ {|
     program (%0)
-      %1 : float32 [] of every set = Map [float32:0x00000040]
-      %2 : float32 [2] of every set = Move (x0: float32 [] of every set)
+      %1 : float32 [] at CPU = Map [float32:0x00000040] at CPU
+      %2 : float32 [2] at CPU = Move (x0: float32 [] at CPU)
         with x0 = %1
       %3 : float32 [2] at CPU = iterate at most 4, init (%0), captures () and (%2)
         until
@@ -115,7 +113,7 @@ let test_iterate () =
             return %6
         step
           program (%7, %8)
-            %9 : float32 [2] at CPU = Map [mul(x0, x1)] (x0: float32 [2] at CPU) (x1: float32 [2] of every set)
+            %9 : float32 [2] at CPU = Map [mul(x0, x1)] (x0: float32 [2] at CPU) (x1: float32 [2] at CPU)
               with x0 = %7, x1 = %8
             return %9
       return %3
@@ -135,33 +133,31 @@ let test_custom () =
     program (%0)
       %1 : float32 [2] at CPU, %2 : float32 [2] at CPU = Rune.custom_vjp (%0), captures ()
         primal
-          program (%11)
-            %12 : float32 [2] at CPU = Map [sin(x0)] (x0: float32 [2] at CPU)
-              with x0 = %11
-            %13 : float32 [2] at CPU = Map [cos(x0)] (x0: float32 [2] at CPU)
-              with x0 = %11
-            return %12, %13
+          program (%10)
+            %11 : float32 [2] at CPU = Map [sin(x0)] (x0: float32 [2] at CPU)
+              with x0 = %10
+            %12 : float32 [2] at CPU = Map [cos(x0)] (x0: float32 [2] at CPU)
+              with x0 = %10
+            return %11, %12
         pullback
-          program (%14, %15)
-            %16 : float32 [2] at CPU = Map [mul(x0, x1)] (x0: float32 [2] at CPU) (x1: float32 [2] at CPU)
-              with x0 = %14, x1 = %15
-            return %16
+          program (%13, %14)
+            %15 : float32 [2] at CPU = Map [mul(x0, x1)] (x0: float32 [2] at CPU) (x1: float32 [2] at CPU)
+              with x0 = %13, x1 = %14
+            return %15
       %3 : float32 [] at CPU = Reduce [Sum x0] over [0] (x0: float32 [2] at CPU)
         with x0 = %1
-      %4 : float32 [] of every set = Map [float32:0x0000803f]
-      %5 : float32 [] at CPU = Place (x0: float32 [] of every set)
+      %4 : float32 [] at CPU = Map [float32:0x0000803f] at CPU
+      %5 : float32 [1] at CPU = Move (x0: float32 [] at CPU)
         with x0 = %4
-      %6 : float32 [1] at CPU = Move (x0: float32 [] at CPU)
+      %6 : float32 [2] at CPU = Move (x0: float32 [1] at CPU)
         with x0 = %5
-      %7 : float32 [2] at CPU = Move (x0: float32 [1] at CPU)
+      %7 : float32 [2] at CPU = Map [x0] (x0: float32 [2] at CPU)
         with x0 = %6
-      %8 : float32 [2] at CPU = Map [x0] (x0: float32 [2] at CPU)
-        with x0 = %7
-      %9 : float32 [2] at CPU = Map [mul(x0, x1)] (x0: float32 [2] at CPU) (x1: float32 [2] at CPU)
-        with x0 = %8, x1 = %2
-      %10 : float32 [2] at CPU = Copy (x0: float32 [2] at CPU)
-        with x0 = %9
-      return %10
+      %8 : float32 [2] at CPU = Map [mul(x0, x1)] (x0: float32 [2] at CPU) (x1: float32 [2] at CPU)
+        with x0 = %7, x1 = %2
+      %9 : float32 [2] at CPU = Copy (x0: float32 [2] at CPU)
+        with x0 = %8
+      return %9
     |}
 
 let test_linear () =
@@ -181,47 +177,45 @@ let test_linear () =
     program (%0)
       %1 : float32 [2] at CPU = Rune.custom_jvp (%0), captures ()
         primal
-          program (%10)
-            return %10
+          program (%9)
+            return %9
         tangent map
-          program (%11)
-            %12 : float32 [2] at CPU = linear Rune.custom_transpose (%11), captures (), residuals ()
+          program (%10)
+            %11 : float32 [2] at CPU = linear Rune.custom_transpose (%10), captures (), residuals ()
               function
-                program (%13)
-                  %14 : float32 [2] at CPU = Map [mul(x0, float32:0x00000040)] (x0: float32 [2] at CPU)
-                    with x0 = %13
-                  return %14
+                program (%12)
+                  %13 : float32 [2] at CPU = Map [mul(x0, float32:0x00000040)] (x0: float32 [2] at CPU)
+                    with x0 = %12
+                  return %13
               transpose
-                program (%15)
-                  %16 : float32 [2] at CPU = Map [mul(x0, float32:0x00004040)] (x0: float32 [2] at CPU)
-                    with x0 = %15
-                  return %16
-            return %12
+                program (%14)
+                  %15 : float32 [2] at CPU = Map [mul(x0, float32:0x00004040)] (x0: float32 [2] at CPU)
+                    with x0 = %14
+                  return %15
+            return %11
       %2 : float32 [] at CPU = Reduce [Sum x0] over [0] (x0: float32 [2] at CPU)
         with x0 = %1
-      %3 : float32 [] of every set = Map [float32:0x0000803f]
-      %4 : float32 [] at CPU = Place (x0: float32 [] of every set)
+      %3 : float32 [] at CPU = Map [float32:0x0000803f] at CPU
+      %4 : float32 [1] at CPU = Move (x0: float32 [] at CPU)
         with x0 = %3
-      %5 : float32 [1] at CPU = Move (x0: float32 [] at CPU)
+      %5 : float32 [2] at CPU = Move (x0: float32 [1] at CPU)
         with x0 = %4
-      %6 : float32 [2] at CPU = Move (x0: float32 [1] at CPU)
+      %6 : float32 [2] at CPU = Map [x0] (x0: float32 [2] at CPU)
         with x0 = %5
-      %7 : float32 [2] at CPU = Map [x0] (x0: float32 [2] at CPU)
-        with x0 = %6
-      %8 : float32 [2] at CPU = linear Rune.custom_transpose (%7), captures (), residuals ()
+      %7 : float32 [2] at CPU = linear Rune.custom_transpose (%6), captures (), residuals ()
         function
-          program (%15)
-            %16 : float32 [2] at CPU = Map [mul(x0, float32:0x00004040)] (x0: float32 [2] at CPU)
-              with x0 = %15
-            return %16
+          program (%14)
+            %15 : float32 [2] at CPU = Map [mul(x0, float32:0x00004040)] (x0: float32 [2] at CPU)
+              with x0 = %14
+            return %15
         transpose
-          program (%13)
-            %14 : float32 [2] at CPU = Map [mul(x0, float32:0x00000040)] (x0: float32 [2] at CPU)
-              with x0 = %13
-            return %14
-      %9 : float32 [2] at CPU = Copy (x0: float32 [2] at CPU)
-        with x0 = %8
-      return %9
+          program (%12)
+            %13 : float32 [2] at CPU = Map [mul(x0, float32:0x00000040)] (x0: float32 [2] at CPU)
+              with x0 = %12
+            return %13
+      %8 : float32 [2] at CPU = Copy (x0: float32 [2] at CPU)
+        with x0 = %7
+      return %8
     |}
 
 (* Two traces of one function print alike. *)
@@ -245,7 +239,7 @@ let test_eval_shape () =
   equal (array int) [| 3 |] (Nx.shape s);
   equal (array int) [| 2; 3 |] (Nx.shape c);
   equal ~msg:"dtype" string "int32" (Nx.Dtype.name (Nx.dtype c));
-  let at y = Format.asprintf "%a" Nx.Placement.pp (Option.get (Nx.placement y)) in
+  let at y = Format.asprintf "%a" Nx.Placement.pp (Nx.placement y) in
   equal ~msg:"placement" string (at x) (at s);
   invalid ~sub:"Rune.eval_shape" (fun () -> Nx.to_array s)
 

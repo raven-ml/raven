@@ -389,7 +389,7 @@ let test_no_map () =
             (Nx.zeros f32 [| n; 2 |]));
       invalid ~sub:no_index (fun () ->
           Rune.scan'
-            ~f:(fun c x -> (Nx.add c (Nx.cast f32 (Rune.lane_index a ())), x))
+            ~f:(fun c x -> (Nx.add c (Nx.cast f32 (Rune.lane_index a c)), x))
             ~init:(v [| 0.; 0. |])
             (Nx.zeros f32 [| n; 2 |])))
     [ 0; 2 ]
@@ -539,9 +539,9 @@ let test_scopes_inside () =
   equal bits_t (bits (Nx.scalar f32 21.)) (bits c);
   equal bits_t (bits (v [| 3.; 7.; 11. |])) (bits ys)
 
-(* Carries, rows and additions of every set beside placed ones: a value is read
-   back at the form it was traced at, and where forms meet the placed one wins,
-   as nx computes a constant where its other operand lies. *)
+(* Carries, rows and additions that creations make: a value is read back at
+   the form it was traced at, and a step is traced once. A step that returns
+   a carry on another set than its init's does not type. *)
 let placement =
   Testable.make ~pp:Nx.Placement.pp ~equal:(fun p q -> Nx.Placement.equal p q)
 
@@ -557,8 +557,7 @@ let test_constant_carry () =
       (Nx.scalar f32 0.)
   in
   equal bits_t (bits three) (bits c);
-  equal ~msg:"where the step put it" (option placement) (Some Nx.Host.on)
-    (Nx.placement c);
+  equal ~msg:"where the step returns it" placement Nx.Host.on (Nx.placement c);
   let c, _ =
     Rune.scan t t t
       ~f:(fun c x -> (Nx.add c x, x))
@@ -567,7 +566,7 @@ let test_constant_carry () =
   in
   equal bits_t (bits three) (bits c)
 
-(* One leaf placed by its step, the other made a constant by it. *)
+(* One leaf computed by its step, the other a creation of it. *)
 let test_crossing_carry () =
   let one = host (Nx.scalar f32 1.) in
   let a, b =
@@ -579,7 +578,7 @@ let test_crossing_carry () =
   equal bits_t (bits three) (bits a);
   equal bits_t (bits (Nx.scalar f32 0.)) (bits b)
 
-(* [b] takes [a]'s placement a trace after [a] does: three traces. *)
+(* A carry of two leaves, one computed from the other: one trace. *)
 let test_chain () =
   let one = host (Nx.scalar f32 1.) and traces = ref 0 in
   let a, b =
@@ -590,7 +589,7 @@ let test_chain () =
         (Nx.add a one, a))
       (Nx.scalar f32 0., Nx.scalar f32 0.)
   in
-  equal ~msg:"traces" int 3 !traces;
+  equal ~msg:"traces" int 1 !traces;
   equal bits_t (bits three) (bits a);
   equal bits_t (bits (Nx.scalar f32 2.)) (bits b)
 
@@ -705,9 +704,9 @@ let () =
              prop "iterate gives the while loop's bits" iterate_cases
                law_iterate;
              test "misuse raises" test_iterate_refused;
-             test "a constant carry the step places" test_constant_carry;
-             test "a carry whose leaves cross" test_crossing_carry;
-             test "a carry that settles in three traces" test_chain;
+             test "a carry lies where its step returns it" test_constant_carry;
+             test "a step that returns a creation" test_crossing_carry;
+             test "a step is traced once" test_chain;
              test "a constant first row" test_constant_row;
              test "a constant addition before a placed one"
                test_constant_addition;

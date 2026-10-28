@@ -91,43 +91,12 @@ let jvp p q f params tangents = jvp_named "Rune.jvp" p q f params tangents
 
 (* Reverse mode *)
 
-(* The placement of [x]'s first placed leaf, which names the set of every value
-   of the brand [s]'s values have. *)
-let placement_of s x =
-  Ptree.fold s
-    (fun _ y acc -> match acc with Some _ -> acc | None -> Nx.placement y)
-    x None
-
-let placed_leaf s x =
-  Ptree.fold s
-    (fun _ y acc ->
-      match acc with
-      | Some _ -> acc
-      | None -> if Option.is_some (Nx.placement y) then Some (V y) else None)
-    x None
-
-(* A cotangent at [x]'s type: a placed one beside a parameter of every set lies
-   on the set [at] names. *)
-let gradient (type v s d) name path (at : d Nx.Placement.t option)
-    (x : (v, s, d) Nx.t) (c : Linear.ct option) : (v, s, d) Nx.t =
+(* A cotangent at [x]'s type, memory of its own. *)
+let gradient x (c : Linear.ct option) =
   match c with
   | None -> Nx.zeros_like x
-  | Some { v = V c; fresh } ->
-      let g =
-        match (Nx.Prim.coerce (Nx.Prim.form x) c, at) with
-        | Some g, _ -> g
-        | None, Some p -> (
-            let f = { (Nx.Prim.form x) with placement = Some p } in
-            match Nx.Prim.coerce f c with Some g -> g | None -> like x (V c))
-        | None, None ->
-            invalid_argf
-              "%s: %s: the gradient of a parameter of every set lies on %s, \
-               and no parameter or result is placed"
-              name (path_name path)
-              (Format.asprintf "%a"
-                 (Format.pp_print_option Nx.Placement.pp)
-                 (Nx.placement c))
-      in
+  | Some { v; fresh } ->
+      let g = like x v in
       if fresh then g else Nx.copy g
 
 (* [f params]'s primal outputs as [f]'s result [like], and the function from
@@ -142,22 +111,16 @@ let reverse name p f params =
         result := Some r;
         outs)
   in
-  (* [at] and [witness] name the set of the result's placed values, where no
-     parameter is placed. *)
-  let pullback ~at ~witness cts =
-    let witness =
-      match placed_leaf p params with Some _ as w -> w | None -> witness
-    in
-    let at = match placement_of p params with Some _ as a -> a | None -> at in
-    let gs = Linear.transpose ?witness l cts in
+  let pullback cts =
+    let gs = Linear.transpose l cts in
     let k = ref 0 in
     Ptree.map p
-      (fun path x ->
+      (fun _ x ->
         if not (tangible x) then Nx.zeros_like x
         else begin
           let g = gs.(!k) in
           incr k;
-          gradient name path at x g
+          gradient x g
         end)
       params
   in
@@ -172,10 +135,9 @@ let vjp_named name p q f params =
       params
   in
   let y = rebuild q ~like ys in
-  let at = placement_of q y and witness = placed_leaf q y in
   let back cts =
     same_leaves name q ~this:"in the result" y ~that:"in the cotangents" cts;
-    pullback ~at ~witness
+    pullback
       (Array.map
          (fun (V c) -> if tangible c then Some (V c) else None)
          (values q cts))
@@ -225,35 +187,23 @@ let linear_transpose_named name p q f params =
     Linear.trace ~name (values p params) (fun vs ->
         let y = f (rebuild p ~like:params vs) in
         shapes :=
-          Some (Ptree.map q (fun _ y -> Nx.zeros (Nx.dtype y) (Nx.shape y)) y);
+          Some (Ptree.map q (fun _ y -> Nx.zeros_like y) y);
         values q y)
   in
   let like = Option.get !shapes in
   fun cts ->
     same_leaves name q ~this:"in the result" like ~that:"in the cotangents" cts;
-    (* A gradient of a parameter of every set lies where the first placed
-       parameter or cotangent does. *)
-    let at =
-      match placement_of p params with
-      | Some _ as a -> a
-      | None -> placement_of q cts
-    in
-    let witness =
-      match placed_leaf p params with
-      | Some _ as w -> w
-      | None -> placed_leaf q cts
-    in
     let gs =
-      Linear.transpose ?witness l
+      Linear.transpose l
         (Array.map
            (fun (V c) -> if tangible c then Some (V c) else None)
            (values q cts))
     in
     let k = ref (-1) in
     Ptree.map p
-      (fun path x ->
+      (fun _ x ->
         incr k;
-        if tangible x then gradient name path at x gs.(!k) else Nx.zeros_like x)
+        if tangible x then gradient x gs.(!k) else Nx.zeros_like x)
       params
 
 let linear_transpose p q f params =
@@ -278,8 +228,7 @@ let value_and_grad_aux_named name p x f params =
   let aux = rebuild x ~like:aux (Array.sub ys 1 (Array.length ys - 1)) in
   let cts = Array.make (Array.length ys) None in
   cts.(0) <- Some (V (Nx.ones_like y));
-  let witness = if Option.is_some (Nx.placement y) then Some (V y) else None in
-  (y, pullback ~at:(Nx.placement y) ~witness cts, aux)
+  (y, pullback cts, aux)
 
 let value_and_grad_named name p f params =
   let y, g, () =
@@ -387,20 +336,13 @@ let same_placements name s ~this x ~that y =
   let placements v =
     List.rev (Ptree.fold s (fun p y acc -> (p, Nx.placement y) :: acc) v [])
   in
-  let pp = Format.pp_print_option Nx.Placement.pp in
   List.iter2
     (fun (p, a) (_, b) ->
-      let equal =
-        match (a, b) with
-        | None, None -> true
-        | Some a, Some b -> Nx.Placement.equal a b
-        | _ -> false
-      in
-      if not equal then
+      if not (Nx.Placement.equal a b) then
         invalid_argf "%s: %s: placed on %s %s, on %s %s" name (path_name p)
-          (Format.asprintf "%a" pp a)
+          (Format.asprintf "%a" Nx.Placement.pp a)
           this
-          (Format.asprintf "%a" pp b)
+          (Format.asprintf "%a" Nx.Placement.pp b)
           that)
     (placements x) (placements y)
 
@@ -427,7 +369,7 @@ let custom_transpose p q f ~transpose args =
 (* A draw like [x], from the key [k]: standard normal parts. *)
 let draw (type v s d) k (x : (v, s, d) Nx.t) : (v, s, d) Nx.t =
   let normal k = Nx.Rng.normal ~key:(Nx.Rng.key k) Nx.float64 (Nx.shape x) in
-  let v : (v, s, d) Nx.t =
+  let v =
     if Nx.Dtype.is Complex (Nx.dtype x) then
       Nx.cast (Nx.dtype x)
         (Nx.complex Nx.complex128
@@ -435,7 +377,7 @@ let draw (type v s d) k (x : (v, s, d) Nx.t) : (v, s, d) Nx.t =
            ~im:(normal ((2 * k) + 1)))
     else Nx.cast (Nx.dtype x) (normal (2 * k))
   in
-  match Nx.placement x with Some p -> Nx.place p v | None -> v
+  Nx.place (Nx.placement x) v
 
 let check_transpose ?(tol = 1e-5) p q f ~transpose args =
   let name = "Rune.check_transpose" in
@@ -495,16 +437,17 @@ type nonrec axis = axis
 let axis = axis
 let lanes a x = like x (first (perform (Lanes (a, x))))
 
-(* A lane's index is of every set, so it reads back at any. *)
-let lane_index a () =
+(* A lane's index lies whole on each of [x]'s devices. *)
+let lane_index a x =
+  let placement = Nx.Placement.uncut (Nx.placement x) in
   let f : (int32, Nx.int32_elt, _) Nx.Prim.form =
     {
       dtype = Nx.int32;
       layout = Nx_array.Layout.contiguous (Iarray.of_list []);
-      placement = None;
+      placement;
     }
   in
-  cast f (first (perform (Lane_index a)))
+  cast f (first (perform (Lane_index (a, placement))))
 
 module Total = struct
   type ('v, 's, 'd) t = ('v, 's, 'd) total
@@ -558,42 +501,6 @@ end
 
 (* Loops *)
 
-(* Whether a carry leaf traced at [r] is traced again at [t], the form its step
-   returned it at: traced of every set and returned placed. A value is read back
-   by its set, so a leaf placed elsewhere on one set, or returned of every set,
-   binds as traced. *)
-let moved (F r) (F t) =
-  match (r.placement, t.placement) with None, Some _ -> true | _ -> false
-
-(* [trace like forms] traced until its carry, its first [nc] forms, settles.
-   Each trace rebuilds the step's carry like [like]. A leaf of every set the
-   step returns placed is traced again at the form it was returned at, as JAX
-   traces a loop again whose weakly typed carry its step promotes: its leaf of
-   [like] becomes the returned one, the others stay. A placed leaf stays placed,
-   so at most [nc] traces follow the first. With the [like] and the forms it
-   settled at. *)
-let settling c ~nc trace like forms =
-  let rec go like forms =
-    let ((_, _, returned, carry') as traced) = trace like forms in
-    let moves = Array.init nc (fun i -> moved forms.(i) returned.(i)) in
-    if not (Array.exists Fun.id moves) then (traced, like, forms)
-    else
-      let forms =
-        Array.mapi
-          (fun i (F r as fr) ->
-            if i < nc && moves.(i) then
-              match returned.(i) with F t -> F { t with layout = r.layout }
-            else fr)
-          forms
-      in
-      let before = Array.of_list (fst (Ptree.flatten c like)) in
-      let after = Array.of_list (fst (Ptree.flatten c carry')) in
-      let leaves =
-        List.init nc (fun i -> if moves.(i) then after.(i) else before.(i))
-      in
-      go (Ptree.rebuild c ~like leaves) forms
-  in
-  go like forms
 
 let scan_named name c x y ~f ~init xs =
   let init_v = values c init and xs_v = values x xs in
@@ -615,24 +522,17 @@ let scan_named name c x y ~f ~init xs =
     lengths;
   let nc = Array.length init_v and nx = Array.length xs_v in
   let ys_like = ref None in
-  let trace like forms =
-    let returned = ref None in
-    let step, captures =
-      Trace.trace Body ~name forms (fun vs ->
-          let carry = rebuild c ~like (slice vs 0 nc) in
-          let r = rebuild x ~like:xs (slice vs nc (nc + nx)) in
-          let carry', ys = f carry r in
-          same_carry name c ~received:carry carry';
-          ys_like := Some ys;
-          returned := Some carry';
-          Array.append (values c carry') (values y ys))
-    in
-    let carry' = Option.get !returned in
-    (step, captures, Array.map form (values c carry'), carry')
+  let forms =
+    Array.append (Array.map form init_v) (Array.map Loops.row xs_v)
   in
-  let (step, captures, _, _), like, _ =
-    settling c ~nc trace init
-      (Array.append (Array.map form init_v) (Array.map Loops.row xs_v))
+  let step, captures =
+    Trace.trace Body ~name forms (fun vs ->
+        let carry = rebuild c ~like:init (slice vs 0 nc) in
+        let r = rebuild x ~like:xs (slice vs nc (nc + nx)) in
+        let carry', ys = f carry r in
+        same_carry name c ~received:carry carry';
+        ys_like := Some ys;
+        Array.append (values c carry') (values y ys))
   in
   let ys_like = Option.get !ys_like in
   let ny = Array.length (values y ys_like) in
@@ -640,7 +540,7 @@ let scan_named name c x y ~f ~init xs =
     run
       (Scan { step; length; init = init_v; xs = xs_v; captures; seeds = [||] })
   in
-  ( rebuild c ~like (slice r 0 nc),
+  ( rebuild c ~like:init (slice r 0 nc),
     rebuild y ~like:ys_like (slice r nc (nc + ny)) )
 
 let scan c x y ~f ~init xs = scan_named "Rune.scan" c x y ~f ~init xs
@@ -649,25 +549,17 @@ let iterate_named name c ~max ~until ~f init =
   if max < 0 then invalid_argf "%s: max = %d is negative" name max;
   let init_v = values c init in
   let nc = Array.length init_v in
-  let trace like forms =
-    let returned = ref None in
-    let step, captures =
-      Trace.trace Body ~name forms (fun vs ->
-          let carry = rebuild c ~like vs in
-          let carry' = f carry in
-          same_carry name c ~received:carry carry';
-          returned := Some carry';
-          values c carry')
-    in
-    let carry' = Option.get !returned in
-    (step, captures, Array.map form (values c carry'), carry')
-  in
-  let (step, step_captures, _, _), like, forms =
-    settling c ~nc trace init (Array.map form init_v)
+  let forms = Array.map form init_v in
+  let step, step_captures =
+    Trace.trace Body ~name forms (fun vs ->
+        let carry = rebuild c ~like:init vs in
+        let carry' = f carry in
+        same_carry name c ~received:carry carry';
+        values c carry')
   in
   let until, until_captures =
     Trace.trace Body ~name forms (fun vs ->
-        let stop = until (rebuild c ~like vs) in
+        let stop = until (rebuild c ~like:init vs) in
         let s = Nx.shape stop in
         if Array.fold_left ( * ) 1 s <> 1 then
           invalid_argf "%s: until must return one boolean, got shape %s" name
@@ -688,7 +580,7 @@ let iterate_named name c ~max ~until ~f init =
            seeds = [||];
          })
   in
-  rebuild c ~like (slice r 0 nc)
+  rebuild c ~like:init (slice r 0 nc)
 
 let iterate c ~max ~until ~f init =
   iterate_named "Rune.iterate" c ~max ~until ~f init
@@ -857,7 +749,8 @@ let vmap' ?axis f x =
 let jacfwd' f x =
   let name = "Rune.jacfwd'" in
   let sx = Nx.shape x and n = Nx.numel x in
-  let iota = Nx.arange Nx.int32 0 n 1 in
+  let here = Nx.Placement.uncut (Nx.placement x) in
+  let iota = Nx.arange_at here Nx.int32 0 n 1 in
   let e = Nx.equal (Nx.reshape [| n; 1 |] iota) (Nx.reshape [| 1; n |] iota) in
   let basis = Nx.reshape (Array.append [| n |] sx) (Nx.cast (Nx.dtype x) e) in
   let column t = snd (jvp_named name Ptree.tensor Ptree.tensor f x t) in
@@ -885,7 +778,8 @@ let jacrev' f x =
        place in the argument's dtype; use Rune.jacfwd'"
       name;
   let sy = Nx.shape y and n = Nx.numel y in
-  let iota = Nx.arange Nx.int32 0 n 1 in
+  let here = Nx.Placement.uncut (Nx.placement y) in
+  let iota = Nx.arange_at here Nx.int32 0 n 1 in
   let e = Nx.equal (Nx.reshape [| n; 1 |] iota) (Nx.reshape [| 1; n |] iota) in
   let basis = Nx.reshape (Array.append [| n |] sy) (Nx.cast (Nx.dtype y) e) in
   let rows = vmap_named name Ptree.(tensor @-> returns tensor) pullback basis in

@@ -266,6 +266,7 @@ let computed (type v s) (x : (v, s, _) Nx.t) =
            prog;
            outs = [ dt ];
            loads = Iarray.of_list [ P.Plain x; P.Plain (Nx.flip x) ];
+           at = None;
          })
   in
   y

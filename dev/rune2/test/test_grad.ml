@@ -315,20 +315,17 @@ let test_total () =
   in
   equal floats [| 2. |] (Nx.to_array sum)
 
-(* A gradient lies where its parameter does, and that of a parameter of every
-   set where the result does. *)
+(* A gradient lies where its parameter does when every value it meets lies
+   there, a placed creation's included. *)
 let test_placement () =
-  let where x =
-    Format.asprintf "%a"
-      (Format.pp_print_option Nx.Placement.pp)
-      (Nx.placement x)
-  in
+  let where x = Format.asprintf "%a" Nx.Placement.pp (Nx.placement x) in
   let x = Nx.place Count.on (v [| 1.; 2. |]) in
   let g = Rune.grad' (fun x -> Nx.sum (Nx.sin x)) x in
   equal ~msg:"placed" string (where x) (where g);
   let w = Nx.place Count.on (v [| 3.; 4. |]) in
-  let g = Rune.grad' (fun x -> Nx.sum (Nx.mul x w)) (Nx.zeros f64 [| 2 |]) in
-  equal ~msg:"of every set" string (where w) (where g);
+  let z = Nx.zeros_at Count.on f64 [| 2 |] in
+  let g = Rune.grad' (fun x -> Nx.sum (Nx.mul x w)) z in
+  equal ~msg:"a creation's" string (where z) (where g);
   equal ~msg:"its values" floats [| 3.; 4. |]
     (Nx.to_array (Nx.place Nx.Host.on g))
 
@@ -536,6 +533,7 @@ let fused x =
             prog;
             outs = [ Nx.float32 ];
             loads = [| Plain x |];
+            at = None;
           }))
 
 let test_residuals () =
