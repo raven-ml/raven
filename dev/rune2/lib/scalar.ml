@@ -117,7 +117,11 @@ let unary_tangent b (k : P.unary) ~x ~y t =
   | Neg -> Some (neg t)
   | Recip -> Some (neg (mul t (mul y y)))
   | Abs ->
-      Some (where b (node b (Op2 (Compare Less_equal, lit 0., x))) t (neg t))
+      (* [t] times [±1], not a selection between [t] and [-t]: transposed, a
+         selection adds the unselected branch's [+0.] to the cotangent and loses
+         a [-0.]. *)
+      let nonnegative = node b (Op2 (Compare Less_equal, lit 0., x)) in
+      Some (mul t (where b nonnegative (lit 1.) (lit (-1.))))
   | Sign -> if is_complex b.dts.(x) then Some (complex_sign b x y t) else None
   | Sqrt -> Some (mul t (div (lit 0.5) y))
   | Exp -> Some (mul t y)

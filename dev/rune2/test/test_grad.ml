@@ -190,6 +190,12 @@ let test_zeros () =
     with_signs (Rune.grad' f (v xs))
   in
   equal ~msg:"a map and a sum" signed [| (true, -0.) |] (g Nx.sin [| 0. |]);
+  equal ~msg:"abs of a negative, from +0." signed
+    [| (true, -0.) |]
+    (with_signs
+       (Rune.grad'
+          (fun x -> Nx.sum (Nx.mul (Nx.abs x) (Nx.zeros_like x)))
+          (v [| -1. |])));
   equal ~msg:"a pad" signed
     [| (true, -0.) |]
     (g (Nx.pad [| (1, 2) |] 3.) [| 1. |]);
