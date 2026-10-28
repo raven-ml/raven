@@ -347,7 +347,12 @@ let reduce_cts (type d r) env layout axes (rs : (d, r) Prim.reductions) cts =
         match cts pos with
         | None -> rest
         | Some (V c) ->
-            let mean = Nx.div_s c (D.of_float (Nx.dtype c) (Float.of_int n)) in
+            (* Divided in the carrier of [c]'s dtype, which counts more terms
+               than a narrow float holds, and rounded once. *)
+            let cd = Nx.dtype c in
+            let (D.Any w) = Nx_kernel.carrier (D.Any cd) in
+            let count = D.of_float w (Float.of_int n) in
+            let mean = Nx.cast cd (Nx.div_s (Nx.cast w c) count) in
             (k, D.Any dt, spread layout axes (V mean)) :: rest)
     | Monoid (Prod, _, _) :: rest -> skip "a product" rest pos 1
     | Monoid ((Max | Min), _, _) :: rest -> skip "an extreme" rest pos 1
@@ -426,9 +431,16 @@ let scan_rule (type d r) env layout axis prog
           let n = Nx.dim axis w and r = Nx.ndim w in
           let along = Array.init r (fun a -> if a = axis then n else 1) in
           let here = Nx.beside w in
+          (* Each cotangent divided by its count and summed from each index on
+             in the carrier of its dtype, which counts more terms than a
+             narrow float holds, and rounded once. *)
+          let cd = Nx.dtype w in
+          let (D.Any c) = Nx_kernel.carrier (D.Any cd) in
           let count = Nx.arange_at here Nx.int32 1 (n + 1) 1 in
-          let count = Nx.reshape along (Nx.cast (Nx.dtype w) count) in
-          ignore (running k (D.Any dt) (Nx.div w count)))
+          let count = Nx.reshape along (Nx.cast c count) in
+          let mean = Nx.div (Nx.cast c w) count in
+          let r = Nx.cast cd (from_each ~by:env.name ~axis mean) in
+          sweep env layout prog loads [| (k, D.Any dt, V r) |])
         (cts 0)
   | Monoid ((Prod | Max | Min), _, _) | Logsumexp _ | Arg _ ->
       if Option.is_some (cts 0) then

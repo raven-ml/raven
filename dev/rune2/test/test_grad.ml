@@ -379,7 +379,83 @@ let test_kinks () =
     (ends Nx.float16 65536);
   equal ~msg:"max's 257 ties, bfloat16" floats
     [| 255. *. 0x1p-16; 255. *. 0x1p-16 |]
-    (ends Nx.bfloat16 257)
+    (ends Nx.bfloat16 257);
+  (* A mean of moments divides its cotangent by more terms than a narrow float
+     counts, as the running mean at the last of as many, under reverse mode and
+     as a linear function's transpose: 65536 float16 terms each take 2^-16, and
+     257 bfloat16 ones 1/257 rounded, 255 2^-16. *)
+  let moments ?(all = false) ~scan ~transpose dt n =
+    let any = D.Any dt in
+    let prog = P.of_node ~ins:[| any |] (Op1 (Copy, any, 0)) in
+    let layout = L.contiguous (Iarray.of_list [ 1; n ]) in
+    let mean x =
+      let x = Nx.reshape [| 1; n |] x in
+      if scan then
+        fst
+          (Nx.Prim.eval ~by:"test"
+             (Scan
+                {
+                  layout;
+                  axis = 1;
+                  prog;
+                  reduction = Moments (0, dt);
+                  loads = [| Plain x |];
+                  carry = None;
+                }))
+      else
+        let (m, _), () =
+          Nx.Prim.eval ~by:"test"
+            (Reduce
+               {
+                 layout;
+                 axes = [| 1 |];
+                 prog;
+                 reductions = [ Moments (0, dt) ];
+                 loads = [| Plain x |];
+               })
+        in
+        m
+    in
+    (* The cotangent of the means: each 1 / n where [all], else 1 at the
+       last. *)
+    let ct m =
+      if all then Nx.full_like m (D.of_float dt (1. /. Float.of_int n))
+      else if scan then
+        let zero = D.of_float dt 0. in
+        Nx.pad [| (0, 0); (n - 1, 0) |] zero (Nx.ones dt [| 1; 1 |])
+      else Nx.ones_like m
+    in
+    let x = Nx.ones dt [| n |] in
+    let g =
+      if transpose then
+        Rune.linear_transpose T.tensor T.tensor mean x (ct (mean x))
+      else Rune.grad' (fun x -> let m = mean x in Nx.sum (Nx.mul m (ct m))) x
+    in
+    Nx.to_array (Nx.cast Nx.float64 (Nx.stack [ Nx.min g; Nx.max g ]))
+  in
+  List.iter
+    (fun (scan, transpose) ->
+      let what =
+        (if scan then "a running mean" else "a mean")
+        ^ if transpose then ", transposed" else ""
+      in
+      equal ~msg:(what ^ " of 65536, float16") floats [| 0x1p-16; 0x1p-16 |]
+        (moments ~scan ~transpose Nx.float16 65536);
+      equal ~msg:(what ^ " of 257, bfloat16") floats
+        [| 255. *. 0x1p-16; 255. *. 0x1p-16 |]
+        (moments ~scan ~transpose Nx.bfloat16 257))
+    [ (false, false); (true, false); (false, true); (true, true) ];
+  (* The mean of 65536 float16 running means: element 0's gradient is 2^-16
+     H(65536) rounded once, 0x1.754p-13, the last's 2^-32, which rounds to 0.
+     That lies 0.05 float16 ulp below a tie, and the sum may take its terms in
+     any order: within one float16 ulp, 2^-23. *)
+  List.iter
+    (fun transpose ->
+      equal ~msg:"the mean of running means, float16"
+        (array (float 0x1p-23))
+        [| 0.; 0x1.754p-13 |]
+        (moments ~all:true ~scan:true ~transpose Nx.float16 65536))
+    [ false; true ]
 
 (* The operand [Nx.where] does not select takes [+0.], so an infinite derivative
    there makes the gradient NaN; an operand computed on its domain, or from a
