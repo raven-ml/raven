@@ -21,11 +21,11 @@ let lr = 0.001
    the Nx.Ptree.S contract that also names checkpoint entries. *)
 
 module Cnn = struct
-  type 'a t = {
-    c1 : 'a Conv.t;
-    c2 : 'a Conv.t;
-    l1 : 'a Linear.t;
-    l2 : 'a Linear.t;
+  type ('a, 'd) t = {
+    c1 : ('a, 'd) Conv.t;
+    c2 : ('a, 'd) Conv.t;
+    l1 : ('a, 'd) Linear.t;
+    l2 : ('a, 'd) Linear.t;
   }
 
   let walk c { c1; c2; l1; l2 } =
@@ -82,10 +82,16 @@ let () =
   let params =
     ref
       {
-        Cnn.c1 = Conv.init ~in_channels:1 ~out_channels:16 ~kernel_size:(3, 3);
-        c2 = Conv.init ~in_channels:16 ~out_channels:32 ~kernel_size:(3, 3);
-        l1 = Linear.init ~inputs:(32 * 7 * 7) ~outputs:128;
-        l2 = Linear.init ~inputs:128 ~outputs:10;
+        Cnn.c1 =
+          Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:1 ~out_channels:16
+            ~kernel_size:(3, 3);
+        c2 =
+          Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:16 ~out_channels:32
+            ~kernel_size:(3, 3);
+        l1 =
+          Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:(32 * 7 * 7)
+            ~outputs:128;
+        l2 = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:128 ~outputs:10;
       }
   in
   let ostate = ref (Vega.adam_init cnn !params) in

@@ -45,11 +45,11 @@ let speclist =
    the Nx.Ptree.S contract that also names checkpoint entries. *)
 
 module Cnn = struct
-  type 'a t = {
-    c1 : 'a Conv.t;
-    c2 : 'a Conv.t;
-    l1 : 'a Linear.t;
-    l2 : 'a Linear.t;
+  type ('a, 'd) t = {
+    c1 : ('a, 'd) Conv.t;
+    c2 : ('a, 'd) Conv.t;
+    l1 : ('a, 'd) Linear.t;
+    l2 : ('a, 'd) Linear.t;
   }
 
   let walk c { c1; c2; l1; l2 } =
@@ -69,8 +69,6 @@ module Cnn = struct
     Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
 end
 
-let cnn = Nx.Ptree.instantiate (module Cnn)
-
 let () =
   Arg.parse speclist
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
@@ -79,19 +77,26 @@ let () =
   (* Model parameters and a one-time optimizer state (momentum is 0, so the zero
      velocity is never read and the state needs no threading through the jitted
      step). *)
-  let params =
-    ref
-      {
-        Cnn.c1 = Conv.init ~in_channels:1 ~out_channels:16 ~kernel_size:(3, 3);
-        c2 = Conv.init ~in_channels:16 ~out_channels:32 ~kernel_size:(3, 3);
-        l1 = Linear.init ~inputs:(32 * 7 * 7) ~outputs:128;
-        l2 = Linear.init ~inputs:128 ~outputs:10;
-      }
+  let host =
+    let key () = Nx.Rng.next_key () in
+    {
+      Cnn.c1 =
+        Conv.init ~key:(key ()) ~in_channels:1 ~out_channels:16
+          ~kernel_size:(3, 3);
+      c2 =
+        Conv.init ~key:(key ()) ~in_channels:16 ~out_channels:32
+          ~kernel_size:(3, 3);
+      l1 = Linear.init ~key:(key ()) ~inputs:(32 * 7 * 7) ~outputs:128;
+      l2 = Linear.init ~key:(key ()) ~inputs:128 ~outputs:10;
+    }
   in
   (* The parameters start on the device, so the compiled step runs there and
-     keeps them there. *)
-  let on_device = Nx.Placement.on (Devices.first !device) in
-  params := Nx.Ptree.map cnn (fun _ t -> Nx.place on_device t) !params;
+     keeps them there. A set of GPUs computes under [Rune.jit] alone: every
+     step, evaluation and metric reads its arrays there or back on the host. *)
+  let module Set = (val Nx.devices [ Devices.first !device ]) in
+  let cnn = Nx.Ptree.instantiate (module Cnn) in
+  let on x = Nx.place Set.on x in
+  let params = ref (Nx.Ptree.place (module Cnn) Set.on host) in
   let state = Vega.sgd_init cnn !params in
   let n_params = Nx.Ptree.fold cnn (fun _ t n -> n + Nx.numel t) !params 0 in
 
@@ -134,19 +139,22 @@ let () =
   Printf.printf "  train: %d  test: %d\n%!" n_train (Nx.shape x_test).(0);
 
   (* The whole training step (forward, backward, SGD update) compiles into one
-     program, which reads the batch and consumes the parameters: it writes the
-     updated parameters over their storage and returns the loss beside them, so
-     training never round-trips them through the host. Values that change
-     between calls are arguments, never captures. *)
+     program, which reads the batch and is given the parameters donated: it
+     returns the updated parameters and the loss beside them, so training never
+     round-trips them through the host. Values that change between calls are
+     arguments, never captures. *)
   let train_step x y params =
     let loss_fn p = Loss.softmax_cross_entropy_sparse (Cnn.apply p x) y in
     let loss, grads = Rune.value_and_grad cnn loss_fn params in
     (loss, fst (Vega.sgd_step cnn ~lr:(Vega.lr !lr) state ~params ~grads))
   in
   let step =
-    Rune.jit
-      Nx.Ptree.(tensor @-> tensor @-> consumes cnn @@ returns (pair tensor cnn))
-      train_step
+    let step =
+      Rune.jit
+        Nx.Ptree.(tensor @-> tensor @-> cnn @-> returns (pair tensor cnn))
+        train_step
+    in
+    fun x y params -> step (on x) (on y) (Nx.Ptree.donate cnn params)
   in
   let forward =
     Rune.jit Nx.Ptree.(cnn @-> tensor @-> returns tensor) Cnn.apply
@@ -156,7 +164,8 @@ let () =
       Data.batches2 ~batch_size:500 (x_test, y_test)
       |> Seq.fold_left
            (fun (correct, total) (x, y) ->
-             let acc = Metric.accuracy (forward params x) y in
+             let logits = Nx.place Nx.Host.on (forward params (on x)) in
+             let acc = Metric.accuracy logits y in
              let n = (Nx.shape x).(0) in
              (correct +. (acc *. float_of_int n), total + n))
            (0., 0)

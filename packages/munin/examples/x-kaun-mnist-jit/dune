@@ -2,7 +2,6 @@
  (name main)
  (libraries
   nx
-  nx.amd
   rig
   rig.metal
   rig.cuda
