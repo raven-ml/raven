@@ -1104,7 +1104,9 @@ let kernels =
 let creations =
   group "creations"
     [
-      test "a creation computes once, at the call, where it is made" (fun () ->
+      test
+        "a creation and an operation compute once, at the call, and a read \
+         computes nothing" (fun () ->
           let a = to_count (on_host Plain D.Float32 [| 2 |] [| 1.; 2. |]) in
           C.reset ();
           let c = Nx.zeros_at Count.on D.Float32 [| 2 |] in
@@ -1113,8 +1115,11 @@ let creations =
           ignore (Nx.add a c);
           equal ~msg:"kernel calls: the add alone" int 1 (C.calls ());
           C.reset ();
-          ignore (Nx.add a c);
-          equal ~msg:"kernel calls: the add alone, again" int 1 (C.calls ()));
+          let y = Nx.add a c in
+          equal ~msg:"kernel calls: the add alone, again" int 1 (C.calls ());
+          C.reset ();
+          equal (array bits) [| 1.; 2. |] (elements y);
+          equal ~msg:"kernel calls: the read" int 0 (C.calls ()));
       test "a scalar beside a value broadcasts as a view" (fun () ->
           let a = to_count (on_host Plain D.Float32 [| 2 |] [| 1.; 2. |]) in
           let c = Nx.scalar_like a 2. in

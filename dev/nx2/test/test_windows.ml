@@ -962,6 +962,39 @@ let cut_law c =
       equal (array int) ~msg:(msg ^ ", run again") actual.(i) again.(i))
     expected
 
+(* Views *)
+
+let pair : b Devices.t = Devices.mint ~by:"t" [ m 0; m 1 ]
+
+(* A device's view of an empty window is an array of no bytes of its own on that
+   device, whether or not the value has an array there; a nonempty window on a
+   device without one raises. *)
+let test_empty_view () =
+  let x : (float, D.float32_elt, b) Value.t =
+    Value.Array
+      {
+        at = Devices.one pair 0;
+        a = A.to_device (m 0) (A.of_array D.Float32 [| 2 |] [| 1.; 2. |]);
+        dead = Value.Live;
+      }
+  in
+  let rig = Testable.make ~pp:Rig.pp ~equal:Rig.equal in
+  let empty = [| { Nx_array.Move.start = 1; count = 0; step = 1 } |] in
+  List.iter
+    (fun k ->
+      let v = Place.view ~by:"t" x k empty in
+      let b = A.buffer v in
+      let msg what = Printf.sprintf "device %d: %s" k what in
+      equal ~msg:(msg "shape") (array int) [| 0 |]
+        (Iarray.to_array (Nx_array.Layout.shape (A.layout v)));
+      equal ~msg:(msg "device") rig (Devices.rig pair k) (A.device v);
+      equal ~msg:(msg "bytes") int 0 (Rig.Buffer.length b);
+      equal ~msg:(msg "all of its memory") bool true (Rig.Buffer.spans b))
+    [ 0; 1 ];
+  raises_match (Exn.invalid_arg ~substring:"Place.view: ") (fun () ->
+      Place.view ~by:"t" x 1
+        [| { Nx_array.Move.start = 0; count = 1; step = 1 } |])
+
 let () =
   exit
     (run "nx windows"
@@ -986,4 +1019,6 @@ let () =
                 kind's bits on one device, each kind's on every run"
                cut_case cut_law;
            ];
+         group "views"
+           [ test "an empty window is an array of its own" test_empty_view ];
        ])

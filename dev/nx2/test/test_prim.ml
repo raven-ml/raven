@@ -4,7 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (* Operations as data, through the engine's private Prim, copied here: each rule
-   against the array layer that computes what it states. *)
+   against the array layer that computes what it states, and what the engine
+   computes of maps of several nodes and of operations of no operand. *)
 
 open Windtrap
 open Nx_support
@@ -1149,11 +1150,254 @@ let operations =
           equal bool true (same arrays.(0).(0) u && same arrays.(1).(0) v));
     ]
 
+(* Computed operations *)
+
+module C = Counting
+
+(* Sets whose nx.cpu counts its calls, of one device and of two. *)
+let counted1 : b Devices.t = Devices.mint ~by:"t" ~kernels:(module C) [ m 0 ]
+
+let counted2 : b Devices.t =
+  Devices.mint ~by:"t" ~kernels:(module C) [ m 0; m 1 ]
+
+let at1 = Devices.one counted1 0
+let split = Devices.split ~by:"t" ~axis:0 counted2
+
+let bits =
+  Testable.make ~pp:Format.pp_print_float ~equal:(fun a b ->
+      Int64.equal (Int64.bits_of_float a) (Int64.bits_of_float b))
+
+let vec32 data : (float, D.float32_elt, b) Value.t =
+  Value.Array
+    {
+      at = at1;
+      a = A.to_device (m 0) (A.of_array D.Float32 [| Array.length data |] data);
+      dead = Value.Live;
+    }
+
+let read (type v s) (x : (v, s, b) Value.t) : v array =
+  match Repr.array (Place.value ~by:"t" (Devices.one Devices.host 0) x) with
+  | Some a -> A.to_array a
+  | None -> fail "no array"
+
+let first (x, ()) = x
+
+(* The map [prog] of one float32 output over [loads], of shape [n]. *)
+let map1 n prog loads =
+  first
+    (Eval.run ~by:"t"
+       (Value.Map
+          {
+            layout = Nx_array.Layout.contiguous [| n |];
+            prog;
+            outs = Value.[ D.Float32 ];
+            loads;
+            at = None;
+          }))
+
+(* A map of [w] arrays, an output and [w - 1] loads, gives the bits of the same
+   sum computed in pieces of two loads: Σ x_k · c_k in order of k, each product
+   rounded, then each sum. *)
+let test_wide_maps () =
+  let n = 5 and f = D.Any D.Float32 in
+  let c k = P.Const (f, P.bits D.Float32 (1. /. Float.of_int (k + 3))) in
+  let x k = vec32 (Array.init n (fun i -> Float.of_int ((7 * k) + i) /. 10.)) in
+  List.iter
+    (fun w ->
+      let nl = w - 1 in
+      let xs = Array.init nl x in
+      (* Loads 0 to nl - 1, then per load its constant and product, then the
+         sums. *)
+      let nodes =
+        List.init nl (fun k -> P.In k)
+        @ List.concat
+            (List.init nl (fun k ->
+                 [ c k; P.Op2 (Binary Mul, k, nl + (2 * k)) ]))
+        @ List.init (nl - 1) (fun i ->
+            let prod k = nl + (2 * k) + 1 in
+            let acc = if i = 0 then prod 0 else (3 * nl) + i - 1 in
+            P.Op2 (Binary Add, acc, prod (i + 1)))
+      in
+      let prog =
+        P.v
+          ~ins:(Iarray.init nl (fun _ -> f))
+          (Iarray.of_list nodes)
+          ~outs:[| List.length nodes - 1 |]
+      in
+      let whole =
+        map1 n prog (Iarray.map (fun x -> Value.Plain x) (Iarray.of_array xs))
+      in
+      (* The pieces: x_0 · c_0, then acc + x_k · c_k for each next load. *)
+      let first_piece =
+        map1 n
+          (P.v ~ins:[| f |]
+             [| In 0; c 0; Op2 (Binary Mul, 0, 1) |]
+             ~outs:[| 2 |])
+          [| Plain xs.(0) |]
+      in
+      let step acc k =
+        map1 n
+          (P.v ~ins:[| f; f |]
+             [|
+               In 0; In 1; c k; Op2 (Binary Mul, 1, 2); Op2 (Binary Add, 0, 3);
+             |]
+             ~outs:[| 4 |])
+          [| Plain acc; Plain xs.(k) |]
+      in
+      let pieces = ref first_piece in
+      for k = 1 to nl - 1 do
+        pieces := step !pieces k
+      done;
+      equal
+        ~msg:(Printf.sprintf "%d arrays" w)
+        (array bits) (read !pieces) (read whole))
+    [ 17; 18; 19; 32; 100 ]
+
+let computed =
+  group "maps computed"
+    [
+      test "a map of several nodes computes each node" (fun () ->
+          (* x0 * x1 + x0 *)
+          let prog =
+            P.v
+              ~ins:[| D.Any D.Float32; D.Any D.Float32 |]
+              [| In 0; In 1; Op2 (Binary Mul, 0, 1); Op2 (Binary Add, 2, 0) |]
+              ~outs:[| 3 |]
+          in
+          let x = vec32 [| 1.; 2.; 3. |] and y = vec32 [| 4.; 5.; 6. |] in
+          let z =
+            first
+              (Eval.run ~by:"t"
+                 (Value.Map
+                    {
+                      layout = Nx_array.Layout.contiguous [| 3 |];
+                      prog;
+                      outs = Value.[ D.Float32 ];
+                      loads = [| Plain x; Plain y |];
+                      at = None;
+                    }))
+          in
+          equal (array bits) [| 5.; 12.; 21. |] (read z));
+      test "a map of no loads computes each device's window where it lies"
+        (fun () ->
+          let prog =
+            P.v ~ins:[||]
+              [| Coord 0; Op1 (Cast, D.Any D.Float32, 0) |]
+              ~outs:[| 1 |]
+          in
+          C.reset ();
+          let c =
+            first
+              (Eval.run ~by:"t"
+                 (Value.Map
+                    {
+                      layout = Nx_array.Layout.contiguous [| 4 |];
+                      prog;
+                      outs = Value.[ D.Float32 ];
+                      loads = [||];
+                      at = Some split;
+                    }))
+          in
+          equal ~msg:"positions" int 4 (C.positions ());
+          equal bool true (Devices.equal (Prim.placement c) split);
+          equal
+            (array (array bits))
+            [| [| 0.; 1. |]; [| 2.; 3. |] |]
+            (Iarray.to_array (Iarray.map A.to_array (Repr.shards c))));
+      test "a map of any number of arrays computes as its pieces do"
+        test_wide_maps;
+    ]
+
+(* The coordinate along [axis], as a float32: a program of a coordinate
+   alone. *)
+let coords axis =
+  P.v ~ins:[||] [| Coord axis; Op1 (Cast, D.Any D.Float32, 0) |] ~outs:[| 1 |]
+
+(* Operations of no operand other than a map: an assembly of no piece and loops
+   of no load lie on the host, and an assembly of pieces where they lie, each
+   against the elements the definition gives. *)
+
+let d0 = Devices.one counted2 0
+let on_host = Devices.on Devices.host
+
+let assembly pieces : (float, D.float32_elt, b) Value.t =
+  Eval.run ~by:"t"
+    (Value.Assemble { dtype = D.Float32; shape = [| 4 |]; fill = 7.; pieces })
+
+let ones p n : (float, D.float32_elt, b) Value.t =
+  first
+    (Eval.run ~by:"t"
+       (Value.Map
+          {
+            layout = Nx_array.Layout.contiguous [| n |];
+            prog =
+              P.of_node ~ins:[||] (Const (D.Any D.Float32, P.bits D.Float32 1.));
+            outs = Value.[ D.Float32 ];
+            loads = [||];
+            at = Some p;
+          }))
+
+(* The sum and the running sum, along the last axis, of [[0; 1; 2]] repeated
+   over four rows. *)
+let row_sums () : (float, D.float32_elt, b) Value.t =
+  let s, () =
+    Eval.run ~by:"t"
+      (Value.Reduce
+         {
+           layout = Nx_array.Layout.contiguous [| 4; 3 |];
+           axes = [| 1 |];
+           prog = coords 1;
+           reductions = Value.[ Monoid (Sum, 0, D.Float32) ];
+           loads = [||];
+         })
+  in
+  s
+
+let row_scans () : (float, D.float32_elt, b) Value.t =
+  Eval.run ~by:"t"
+    (Value.Scan
+       {
+         layout = Nx_array.Layout.contiguous [| 4; 3 |];
+         axis = 1;
+         prog = coords 1;
+         reduction = Monoid (Sum, 0, D.Float32);
+         loads = [||];
+         carry = None;
+       })
+
+let unloaded =
+  group "operations of no operand"
+    [
+      test "an empty assembly lies on the host, filled" (fun () ->
+          let y = assembly [] in
+          equal bool true (Devices.equal (Prim.placement y) on_host);
+          equal (array bits) [| 7.; 7.; 7.; 7. |] (read y));
+      test "pieces on one device assemble there" (fun () ->
+          let r : _ iarray =
+            [| { Nx_array.Move.start = 1; count = 2; step = 1 } |]
+          in
+          let y = assembly [ (r, ones d0 2) ] in
+          equal bool true (Devices.equal (Prim.placement y) d0);
+          equal (array bits) [| 7.; 1.; 1.; 7. |] (read y));
+      test "a sum of coordinates lies on the host" (fun () ->
+          let y = row_sums () in
+          equal bool true (Devices.equal (Prim.placement y) on_host);
+          equal (array bits) [| 3.; 3.; 3.; 3. |] (read y));
+      test "a running sum of coordinates lies on the host" (fun () ->
+          let y = row_scans () in
+          equal bool true (Devices.equal (Prim.placement y) on_host);
+          equal (array bits)
+            [| 0.; 1.; 3.; 0.; 1.; 3.; 0.; 1.; 3.; 0.; 1.; 3. |]
+            (read y));
+    ]
+
 let () =
   exit
     (run "nx prim"
        [
          maps;
+         computed;
+         unloaded;
          movements;
          bitcasts;
          others;
