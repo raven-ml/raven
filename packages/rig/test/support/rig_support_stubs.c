@@ -1374,8 +1374,9 @@ value rig_test_poke(value unit) {
 }
 
 /* A fill of 8,192 bytes of argument that stores the 64-bit word at byte
-   4,096 at the address the last 8 bytes hold. */
-static int far(void *queue, void *arg, uint64_t v) {
+   4,096 at the address the last 8 bytes hold. Windows' headers define
+   [far] as a macro. */
+static int far_fill(void *queue, void *arg, uint64_t v) {
   (void)queue;
   (void)v;
   uint64_t x, at;
@@ -1387,7 +1388,7 @@ static int far(void *queue, void *arg, uint64_t v) {
 
 value rig_test_far(value unit) {
   (void)unit;
-  return caml_copy_nativeint((intnat)&far);
+  return caml_copy_nativeint((intnat)&far_fill);
 }
 
 /* The parked thread: one that blocks outside OCaml, holding no runtime lock,
