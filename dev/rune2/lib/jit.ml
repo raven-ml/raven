@@ -148,13 +148,34 @@ let lanes axes =
     (fun a -> match Program.bound a with Some n -> n | None -> -1)
     axes
 
-(* [last] is the latest call's key and entry, on any domain. A call whose key
-   equals it, where that call found its program without lanes, reads the entry
-   without the table's lock. *)
+(* The key of the latest call that looked one up in the table, without lanes
+   or probes, and the entry the table holds for it; then, where that call's
+   lanes differed from the entry's, those lanes and the entry they keyed; then,
+   where its probes' collects differed from that entry's, the lanes of the
+   entry they refined, the collects and the entry they keyed. A call that finds
+   each it needs there reads it without the table's lock. *)
+type 'y last = {
+  key : key;
+  base : 'y entry;
+  laned : (int list * 'y entry) option;
+  probed : (int list option * (int * bool) list * 'y entry) option;
+}
+
+(* Whether a call's [stage] is one it looked up: not the [stored] one. *)
+let made stage stored = Option.is_some stage && stage != stored
+
+(* Whether a probes stage stored over the lanes [l] refines the stage
+   [laned]. *)
+let refines l laned =
+  match (l, laned) with
+  | None, None -> true
+  | Some a, Some (b, _) -> a = b
+  | None, Some _ | Some _, None -> false
+
 type 'y t = {
   name : string;
   table : 'y entry Programs.t;
-  last : (key * 'y entry) option Atomic.t;
+  last : 'y last option Atomic.t;
 }
 
 let create ~name () =
@@ -389,7 +410,7 @@ let find ?(totals = [||]) t leaves skeleton ~paths trace =
   in
   let miss () =
     Option.iter
-      (fun (k, _) -> report "retrace: %s" (difference (paths ()) key k))
+      (fun l -> report "retrace: %s" (difference (paths ()) key l.key))
       (Atomic.get t.last)
   in
   let make () =
@@ -421,31 +442,51 @@ let find ?(totals = [||]) t leaves skeleton ~paths trace =
     in
     { body; like; site; lanes = lanes (Program.axes site); probes; asked }
   in
-  let e =
+  let last =
     match Atomic.get t.last with
-    | Some (k, e) when same_key k key -> e
-    | _ -> Programs.find t.table key ~miss make
+    | Some l as last when same_key l.key key -> last
+    | _ -> None
   in
-  let now = lanes (Program.axes e.site) in
-  let key, e =
-    if now = e.lanes then (key, e)
+  let base =
+    match last with
+    | Some l -> l.base
+    | None -> Programs.find t.table key ~miss make
+  in
+  let now = lanes (Program.axes base.site) in
+  let laned =
+    if now = base.lanes then None
     else
-      let key = { key with lanes = Some now } in
-      let miss () = report "retrace: a map's lanes differ" in
-      (key, Programs.find t.table key ~miss make)
+      match last with
+      | Some { laned = Some (l, _) as laned; _ } when l = now -> laned
+      | _ ->
+          let miss () = report "retrace: a map's lanes differ" in
+          let key = { key with lanes = Some now } in
+          Some (now, Programs.find t.table key ~miss make)
   in
+  let e = match laned with Some (_, e) -> e | None -> base in
   (* A collect of a probe the trace asked about, open or closed otherwise. *)
-  let now =
+  let opened =
     List.map
       (fun (Program.Asked (p, _)) -> (Program.probe_id p, Program.opened p))
       e.asked
   in
-  let key, e =
-    if now = e.probes then (key, e)
+  let probed =
+    if opened = e.probes then None
     else
-      let key = { key with probes = Some now } in
-      let miss () = report "retrace: a probe's collect is open or closed" in
-      (key, Programs.find t.table key ~miss make)
+      match last with
+      | Some { probed = Some (l, o, _) as probed; _ }
+        when refines l laned && o = opened ->
+          probed
+      | _ ->
+          let miss () = report "retrace: a probe's collect is open or closed" in
+          let at = Option.map fst laned in
+          let key = { key with lanes = at; probes = Some opened } in
+          Some (at, opened, Programs.find t.table key ~miss make)
   in
-  Atomic.set t.last (Some (key, e));
-  e
+  (* Only a call that looked a stage up writes [last], so one that reads it
+     leaves it as it stands, a stage it did not use included: calls
+     alternating between the traced lane count and one other both read it. *)
+  (match last with
+  | Some l when not (made laned l.laned || made probed l.probed) -> ()
+  | _ -> Atomic.set t.last (Some { key; base; laned; probed }));
+  match probed with Some (_, _, p) -> p | None -> e

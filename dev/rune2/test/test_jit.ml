@@ -1445,7 +1445,8 @@ let test_named_maps () =
   check a b
 
 (* A program that stacks a map's lanes is traced again where that map's lanes
-   change. *)
+   change, once per lane count, and each call runs its count's program: one
+   repeated, one met again after another, one new. *)
 let test_map_lanes () =
   let a = Rune.axis () in
   let traces = ref 0 in
@@ -1462,8 +1463,8 @@ let test_map_lanes () =
       equal bits_t
         (bits (Rune.vmap' ~axis:a f xs))
         (bits (Rune.vmap' ~axis:a g xs)))
-    [ 2; 3; 2 ];
-  equal ~msg:"one trace per lane count" int 2 !traces
+    [ 2; 3; 3; 2; 4; 3; 2 ];
+  equal ~msg:"one trace per lane count" int 3 !traces
 
 (* The function runs once per key, whatever is derived from it. *)
 let test_once_per_key () =

@@ -719,7 +719,41 @@ let test_jit_keys () =
     (offers p (fun () ->
          ignore (f x);
          ignore (f x)));
-  equal ~msg:"closed again" bits_t y (bits (f x))
+  equal ~msg:"closed again" bits_t y (bits (f x));
+  (* Under maps of several lane counts, with two probes, each call offers what
+     the function does eagerly: collects open or closed, lanes repeated, met
+     again or new, in turn. *)
+  let a = Rune.axis () and q = Probe.make (tagged ()) in
+  let g x =
+    let s = Nx.sum (Rune.lanes a x) in
+    Probe.emit p (tag 1, Nx.add x s);
+    Probe.emit q (tag 2, s);
+    Nx.mul x s
+  in
+  let jg = Rune.jit' g in
+  let collect_if opened pr f =
+    if not opened then (f (), [])
+    else
+      let r, o = Probe.collect pr f in
+      ((match r with Ok v -> v | Error (e, _) -> raise e), List.map seen o)
+  in
+  let call f (on_p, on_q, n) =
+    let xs = Nx.reshape [| n; 2 |] (Nx.arange_f f64 0. (Float.of_int (2 * n)) 1.) in
+    let (y, at_p), at_q =
+      collect_if on_q q (fun () ->
+          collect_if on_p p (fun () -> bits (Rune.vmap' ~axis:a f xs)))
+    in
+    (y, at_p, at_q)
+  in
+  List.iter
+    (fun ((on_p, on_q, n) as c) ->
+      let msg = Printf.sprintf "%d lanes, collects %b %b" n on_p on_q in
+      equal ~msg (triple bits_t offers_t offers_t) (call g c) (call jg c))
+    [
+      (false, false, 2); (true, false, 2); (true, false, 3); (true, false, 2);
+      (true, true, 2); (true, false, 2); (true, true, 3); (false, false, 3);
+      (false, true, 3); (true, true, 3); (false, false, 2);
+    ]
 
 (* A compiled program offers its scan's rows as more results: nx evaluates
    nothing. *)

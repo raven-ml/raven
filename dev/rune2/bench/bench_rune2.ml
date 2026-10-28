@@ -269,6 +269,15 @@ let jit_rows () =
               ~residual:(fun r -> Nx.sub r y)
               (fun () -> y)))
       (fun f -> synced (f x));
+    (* A call that stacks a map's lanes, under a map of other lanes than
+       those it was first traced in. *)
+    warm "lanes-3-after-2-hit"
+      (fun () ->
+        let a = Rune.axis () in
+        let g = Rune.jit' (fun x -> Nx.add x (Nx.sum (Rune.lanes a x))) in
+        ignore (Rune.vmap' ~axis:a g (host (Nx.ones f32 [| 2; 1 |])));
+        (Rune.vmap' ~axis:a g, host (Nx.ones f32 [| 3; 1 |])))
+      (fun (f, xs) -> synced (f xs));
     Thumper.bench "chain-100-eager" (fun () -> synced (chain x));
     warm "add-1-hit" (fun () -> Rune.jit (pair_fn ()) Nx.add) (fun f -> synced (f a b));
     Thumper.bench_with_setup "donated-step-4096"
