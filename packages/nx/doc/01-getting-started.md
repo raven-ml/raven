@@ -26,36 +26,50 @@ Add to your `dune` file:
  (libraries nx))
 ```
 
+## Operators and Opens
+
+The examples on these pages name every function with its module, `Nx.zeros`.
+`Nx` also defines the arithmetic operators `+`, `-`, `*`, `/` and `**` on
+arrays, so `open Nx` would hide OCaml's integer arithmetic for the rest of
+the file. A local open, `Nx.(a * b + c)`, applies them to arrays inside the
+parentheses alone.
+
 ## Creating Arrays
 
-```ocaml
-open Nx
+An array made from a dtype, a shape and numbers is a host array: it lies in
+the host's memory, and the host computes on it.
 
+```ocaml
 let () =
   (* From explicit values: provide dtype, shape, and flat data *)
-  let a = create Float32 [|2; 3|] [|1.; 2.; 3.; 4.; 5.; 6.|] in
-  Printf.printf "%s\n" (to_string a);
+  let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  Nx.print a;
 
   (* Filled arrays *)
-  let z = zeros Float32 [|3; 3|] in
-  let o = ones Int32 [|5|] in
-  let f = full Float64 [|2; 2|] 3.14 in
+  let z = Nx.zeros Nx.float32 [| 3; 3 |] in
+  let o = Nx.ones Nx.int32 [| 5 |] in
+  let f = Nx.full Nx.float64 [| 2; 2 |] 3.14 in
   ignore (z, o, f);
 
   (* Ranges and sequences *)
-  let r = arange Int32 0 10 1 in          (* [0, 1, ..., 9] *)
-  let l = linspace Float32 0. 1. 5 in     (* 5 points in [0, 1] *)
+  let r = Nx.arange Nx.int32 0 10 1 in        (* [0, 1, ..., 9] *)
+  let l = Nx.linspace Nx.float32 0. 1. 5 in   (* 5 points in [0, 1] *)
   ignore (r, l);
 
-  (* Random arrays *)
-  let x = rand Float32 [|3; 4|] in
-  let y = randn Float32 [|3; 4|] in
-  ignore (x, y);
+  (* Random arrays, drawn from the keys of a scope rooted at seed 42 *)
+  Nx.Rng.with_key (Nx.Rng.key 42) (fun () ->
+      let x = Nx.Rng.uniform Nx.float32 [| 3; 4 |] in
+      let y = Nx.Rng.normal Nx.float32 [| 3; 4 |] in
+      ignore (x, y));
 
   (* Special matrices *)
-  let i = eye Float32 3 in               (* 3×3 identity *)
-  Printf.printf "%s\n" (to_string i)
+  let i = Nx.eye Nx.float32 3 in              (* 3×3 identity *)
+  Nx.print i
 ```
+
+A sampler such as `Nx.Rng.uniform` draws from the key it is given as `~key`,
+or else from the next key of the enclosing `Nx.Rng.with_key` scope, so a
+program that fixes its keys draws the same numbers on every run.
 
 ## Data Types
 
@@ -63,35 +77,32 @@ Every array has a `dtype` that determines its element type. Common dtypes:
 
 | Dtype | OCaml type | Typical use |
 |-------|-----------|-------------|
-| `Float32` | `float` | Neural networks, images |
-| `Float64` | `float` | Scientific computing |
-| `Int32` | `int32` | Integer data |
-| `Int64` | `int64` | Indices, large integers |
-| `Bool` | `bool` | Masks, conditions |
-| `Complex128` | `Complex.t` | Signal processing |
+| `Nx.float32` | `float` | Neural networks, images |
+| `Nx.float64` | `float` | Scientific computing |
+| `Nx.int32` | `int32` | Integer data |
+| `Nx.int64` | `int64` | Indices, large integers |
+| `Nx.bool` | `bool` | Masks, conditions |
+| `Nx.complex128` | `Complex.t` | Signal processing |
 
-Nx does not automatically cast between types. Convert explicitly with `cast`:
+The operands of an operation share a dtype by their types, so Nx never
+converts one implicitly. Convert explicitly with `cast`:
 
 ```ocaml
-open Nx
-
 let () =
-  let x = create Int32 [|3|] [|1l; 2l; 3l|] in
-  let y = cast Float32 x in
-  Printf.printf "%s\n" (to_string y)   (* [1. 2. 3.] as float32 *)
+  let x = Nx.create Nx.int32 [| 3 |] [| 1l; 2l; 3l |] in
+  let y = Nx.cast Nx.float32 x in
+  Nx.print y   (* float32 [3] [1, 2, 3] *)
 ```
 
 ## Array Properties
 
 ```ocaml
-open Nx
-
 let () =
-  let x = rand Float32 [|2; 3; 4|] in
-  Format.printf "shape: %a@." pp_shape (shape x);
-  Printf.printf "ndim: %d\n" (ndim x);         (* 3 *)
-  Printf.printf "size: %d\n" (numel x);          (* 24 *)
-  Printf.printf "dtype: %s\n" (Format.asprintf "%a" pp_dtype (dtype x))
+  let x = Nx.Rng.uniform Nx.float32 [| 2; 3; 4 |] in
+  Format.printf "shape: %a@." Nx.pp_shape (Nx.shape x);   (* [2; 3; 4] *)
+  Printf.printf "ndim: %d\n" (Nx.ndim x);                  (* 3 *)
+  Printf.printf "size: %d\n" (Nx.numel x);                 (* 24 *)
+  Format.printf "dtype: %a@." Nx.pp_dtype (Nx.dtype x)     (* float32 *)
 ```
 
 ## Element-wise Operations
@@ -99,45 +110,45 @@ let () =
 Binary operations work element-wise and support broadcasting:
 
 ```ocaml
-open Nx
-
 let () =
-  let a = create Float32 [|3|] [|1.; 2.; 3.|] in
-  let b = create Float32 [|3|] [|4.; 5.; 6.|] in
+  let a = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  let b = Nx.create Nx.float32 [| 3 |] [| 4.; 5.; 6. |] in
 
-  let _ = add a b in       (* [5. 7. 9.] *)
-  let _ = mul a b in       (* [4. 10. 18.] *)
-  let _ = sub a b in       (* [-3. -3. -3.] *)
-  let _ = div a b in       (* [0.25 0.4 0.5] *)
+  let _ = Nx.add a b in       (* [5, 7, 9] *)
+  let _ = Nx.mul a b in       (* [4, 10, 18] *)
+  let _ = Nx.sub a b in       (* [-3, -3, -3] *)
+  let _ = Nx.div a b in       (* [0.25, 0.4, 0.5] *)
+
+  (* The same with operators, inside a local open *)
+  let _ = Nx.((a + b) * a) in (* [5, 14, 27] *)
 
   (* Scalar operations *)
-  let _ = add a (scalar Float32 10.) in   (* [11. 12. 13.] *)
+  let _ = Nx.add a (Nx.scalar Nx.float32 10.) in   (* [11, 12, 13] *)
+  let _ = Nx.(a +$ 10.) in                         (* the same *)
 
   (* Math functions *)
-  let _ = sin a in
-  let _ = exp a in
-  let _ = sqrt (abs a) in
+  let _ = Nx.sin a in
+  let _ = Nx.exp a in
+  let _ = Nx.sqrt (Nx.abs a) in
   ()
 ```
 
 ## Reductions
 
 ```ocaml
-open Nx
-
 let () =
-  let x = create Float32 [|2; 3|] [|1.; 2.; 3.; 4.; 5.; 6.|] in
+  let x = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
 
-  (* Reduce all elements *)
-  Printf.printf "sum = %.1f\n" (item [] (sum x));
-  Printf.printf "mean = %.1f\n" (item [] (mean x));
+  (* Reduce all elements to a 0-d array, read by [item []] *)
+  Printf.printf "sum = %.1f\n" (Nx.item [] (Nx.sum x));
+  Printf.printf "mean = %.1f\n" (Nx.item [] (Nx.mean x));
 
   (* Reduce along an axis *)
-  let col_sums = sum ~axes:[0] x in    (* sum each column *)
-  Printf.printf "%s\n" (to_string col_sums);   (* [5. 7. 9.] *)
+  let col_sums = Nx.sum ~axes:[ 0 ] x in    (* sum each column *)
+  Nx.print col_sums;                         (* [5, 7, 9] *)
 
-  let row_sums = sum ~axes:[1] x in    (* sum each row *)
-  Printf.printf "%s\n" (to_string row_sums)    (* [6. 15.] *)
+  let row_sums = Nx.sum ~axes:[ 1 ] x in    (* sum each row *)
+  Nx.print row_sums                          (* [6, 15] *)
 ```
 
 ## Slicing and Indexing
@@ -145,74 +156,73 @@ let () =
 ### Basic indexing
 
 ```ocaml
-open Nx
-
 let () =
-  let x = create Int32 [|3; 3|] [|1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l|] in
+  let x =
+    Nx.create Nx.int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |]
+  in
 
   (* Get a row *)
-  let row = get [1] x in           (* [4, 5, 6] *)
-  Printf.printf "%s\n" (to_string row);
+  let row = Nx.get [ 1 ] x in           (* [4, 5, 6] *)
+  Nx.print row;
 
   (* Get a scalar *)
-  let v = item [1; 2] x in        (* 6l *)
+  let v = Nx.item [ 1; 2 ] x in         (* 6l *)
   Printf.printf "x[1,2] = %ld\n" v
 ```
 
 ### Advanced slicing
 
-```ocaml
-open Nx
+The index constructors, such as `R` and `A`, are `Nx`'s, so a slice is
+written inside a local open:
 
+```ocaml
 let () =
-  let x = create Int32 [|4; 4|]
-    [|1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l;
-      9l; 10l; 11l; 12l; 13l; 14l; 15l; 16l|] in
+  let x =
+    Nx.create Nx.int32 [| 4; 4 |]
+      [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l;
+         9l; 10l; 11l; 12l; 13l; 14l; 15l; 16l |]
+  in
 
   (* Range: rows 0 to 2 (exclusive), all columns *)
-  let sub = slice [R (0, 2); A] x in
-  Printf.printf "%s\n" (to_string sub);
+  let sub = Nx.(slice [ R (0, 2); A ] x) in
+  Nx.print sub;
 
   (* Single index on one axis, range on another *)
-  let row1_cols = slice [I 1; R (0, 3)] x in
-  Printf.printf "%s\n" (to_string row1_cols);
+  let row1_cols = Nx.(slice [ I 1; R (0, 3) ] x) in
+  Nx.print row1_cols;
 
   (* Gather specific indices *)
-  let picked = slice [L [0; 3]; L [1; 2]] x in
-  Printf.printf "%s\n" (to_string picked)
+  let picked = Nx.(slice [ L [ 0; 3 ]; L [ 1; 2 ] ] x) in
+  Nx.print picked
 ```
 
-Index types: `I i` (single index), `R (start, stop)` (half-open range), `Rs (start, stop, step)` (strided range), `L indices` (gather), `A` (all), `N` (new axis).
+Index types: `I i` (single index), `R (start, stop)` (half-open range), `Rs (start, stop, step)` (strided range), `L indices` (gather), `T positions` (gather at positions held in an array), `M mask` (gather where a boolean mask holds), `A` (all), `N` (new axis).
 
 ## Broadcasting
 
 Operations automatically broadcast arrays with compatible shapes. Dimensions are aligned from the right, and each pair must be equal or one must be 1:
 
 ```ocaml
-open Nx
-
 let () =
-  let matrix = ones Float32 [|3; 4|] in
-  let row = create Float32 [|1; 4|] [|10.; 20.; 30.; 40.|] in
-  let result = add matrix row in    (* row added to every row *)
-  Printf.printf "%s\n" (to_string result)
+  let matrix = Nx.ones Nx.float32 [| 3; 4 |] in
+  let row = Nx.create Nx.float32 [| 1; 4 |] [| 10.; 20.; 30.; 40. |] in
+  let result = Nx.add matrix row in    (* row added to every row *)
+  Nx.print result
 ```
 
 ## Matrix Multiplication
 
 ```ocaml
-open Nx
-
 let () =
-  let a = rand Float32 [|3; 4|] in
-  let b = rand Float32 [|4; 2|] in
-  let c = matmul a b in
+  let a = Nx.Rng.uniform Nx.float32 [| 3; 4 |] in
+  let b = Nx.Rng.uniform Nx.float32 [| 4; 2 |] in
+  let c = Nx.matmul a b in
   Printf.printf "(%d×%d) × (%d×%d) = (%d×%d)\n"
-    (dim 0 a) (dim 1 a) (dim 0 b) (dim 1 b) (dim 0 c) (dim 1 c)
+    (Nx.dim 0 a) (Nx.dim 1 a) (Nx.dim 0 b) (Nx.dim 1 b) (Nx.dim 0 c) (Nx.dim 1 c)
 ```
 
 ## Next Steps
 
-- [Array Operations](02-array-operations.md) — reshaping, views, joining, transposing
-- [Linear Algebra](03-linear-algebra.md) — decompositions, solvers, FFT
-- [NumPy Comparison](05-numpy-comparison.md) — side-by-side reference if you're coming from Python
+- [Array Operations](02-array-operations.md): reshaping, views, joining, transposing
+- [Linear Algebra](03-linear-algebra.md): decompositions, solvers, FFT
+- [NumPy Comparison](05-numpy-comparison.md): side-by-side reference if you're coming from Python

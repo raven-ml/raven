@@ -21,14 +21,15 @@ This document compares the Nx library (OCaml) with NumPy (Python), highlighting 
 
 ## 1. Overview
 
-Nx is a numerical computing library for OCaml. It takes heavy inspiration from NumPy and aims to be as familiar as possible to NumPy users. That said, there are some phyilosophical differences between the two.
+Nx is a numerical computing library for OCaml, close to NumPy in its names and its broadcasting rules. The two differ in these ways:
 
-- **Pure OCaml Implementation:** Nx is fully native OCaml without C bindings. For that reason, it typically doesn't match NumPy's raw performances. But it is not trying to: while we care about performance, we prioritize the local development experience, where performance is not critical. That said, Nx uses a backend architecture under the hood, so it can easily be extended to use C or CUDA backends. This is what libraries like Rune are doing, implementing custom backends for Nx, making them suitable for production use cases.
-- **Portable Compilation:** In return for a pure OCaml implementation, you get to compile Nx to JavaScript, WebAssembly, or even unikernels. Making it suitable for a wide range of application.
-- **Type Safety First:** Nx leverages OCaml's strong type system and doesn't perform automatic type casting between array types. You can still use the `cast` function for explicit type conversions.
-- **Bigarray Foundation:** Built on OCaml's Bigarray, Nx uses uint8 instead of boolean arrays and doesn't support string arrays.
+- **Arrays are values:** an Nx operation returns a new array and never changes its operands. Where NumPy assigns into an array, Nx's `set` and `scatter` return the updated array. Giving an array up with `donate` lets the operation that reads it write its result into the array's memory.
+- **Arrays lie on device sets:** an array made from numbers is a host array, computed by Nx's C kernels. An array may also lie on the devices of a set, and an operation computes where its operands lie.
+- **Types fix dtypes:** the operands of an operation share a dtype by their types, and Nx never promotes or casts one implicitly. `cast` converts explicitly. Nx has boolean and bit arrays, and no string arrays.
+- **Randomness comes from keys:** every draw is a function of a key, given as `~key` or taken from the enclosing `Rng.with_key` scope. There is no global generator state to seed.
+- **Operators come from a local open:** `Nx.(a * b + c)` applies Nx's arithmetic operators to arrays inside the parentheses, and `*$`, `+$` take a scalar operand.
 
-Apart from the above, Nx is designed to be as close to NumPy as possible. The broadcasting rules are the same, and most functions behave similarly. If you notice an undocumented difference, please open an issue; it's probably a bug.
+If you notice an undocumented difference, please open an issue; it's probably a bug.
 
 ## 2. Array Creation
 
@@ -166,8 +167,8 @@ concat = np.concatenate([arr1, arr2], axis=0)
 (* Get a single element *)
 let element = Nx.item [0; 1] arr
 
-(* A tensor with one element replaced (tensors are values) *)
-let arr' = Nx.set [I 0; I 1] (Nx.scalar Nx.float32 5.0) arr
+(* An array with one element replaced (arrays are values) *)
+let arr' = Nx.(set [ I 0; I 1 ] (scalar float32 5.0) arr)
 
 (* Get a slice/subarray *)
 let row = Nx.get [0] arr
@@ -204,7 +205,7 @@ let min_val = Nx.min arr
 let max_val = Nx.max arr
 
 (* Sum along an axis *)
-let axis_sum = Nx.sum ~axes:[|0|] arr
+let axis_sum = Nx.sum ~axes:[ 0 ] arr
 
 (* Quartiles along an axis, one row per probability *)
 let quartiles = Nx.quantile ~axis:0 [| 0.25; 0.5; 0.75 |] arr
@@ -240,11 +241,11 @@ let inv_a = Nx.inv a
 (* Solve linear system Ax = b *)
 let x = Nx.solve a b
 
-(* SVD decomposition *)
-let u, s, vt = Nx.svd a
+(* SVD decomposition, singular values in float64 *)
+let u, s, vt = Nx.svd Nx.float64 a
 
-(* Eigenvalue decomposition *)
-let eigenvalues, eigenvectors = Nx.eig a
+(* Eigenvalue decomposition, in complex128 *)
+let eigenvalues, eigenvectors = Nx.eig Nx.complex128 a
 ```
 
 **NumPy:**
@@ -289,7 +290,7 @@ result = matrix + vector
 <!-- $MDX skip -->
 ```ocaml
 (* Create a boolean mask *)
-let mask = Nx.greater arr (Nx.scalar Nx.float64 0.5)
+let mask = Nx.greater_s arr 0.5
 
 (* Apply condition with where *)
 let result = Nx.where mask arr1 arr2
@@ -315,7 +316,7 @@ first. `Nx.unique` numbers groups in order of first appearance, where
 ```ocaml
 (* Positions where a mask holds, and the elements there *)
 let hits = Nx.positions mask
-let kept = Nx.slice [M mask] x
+let kept = Nx.(slice [ M mask ] x)
 
 (* Sort by a, then by b descending *)
 let perm =
@@ -330,9 +331,9 @@ let bins = Nx.searchsorted ~side:`Right knots q
 let g = Nx.unique keys
 
 (* Maxima at indices, and counts per id *)
-let m = Nx.scatter ~mode:`Max ~axis:0 ~indices ~values base
+let m = Nx.scatter ~combine:Nx.Max ~axis:0 indices values base
 let counts =
-  Nx.reduce_segments `Add ~segments:k ids (Nx.ones Nx.int64 [| Nx.dim 0 ids |])
+  Nx.reduce_segments Nx.Add ~segments:k ids (Nx.ones Nx.int64 [| Nx.dim 0 ids |])
 ```
 
 **NumPy:**
@@ -361,15 +362,23 @@ counts = np.bincount(ids, minlength=k)
 **Nx:**
 ```ocaml
 (* Generate uniform random numbers *)
-let random = Nx.rand Nx.float64 [|3; 3|]
+let random = Nx.Rng.uniform Nx.float64 [| 3; 3 |]
 
 (* Generate normal distributed random numbers *)
-let normal = Nx.randn Nx.float64 [|3; 3|]
+let normal = Nx.Rng.normal Nx.float64 [| 3; 3 |]
 
-(* For reproducibility, wrap in Rng.with_key *)
+(* For reproducibility, draw inside a scope rooted at a key *)
 let reproducible =
   Nx.Rng.with_key (Nx.Rng.key 42) (fun () ->
-    Nx.rand Nx.float64 [|3; 3|])
+    Nx.Rng.uniform Nx.float64 [| 3; 3 |])
+
+(* Or give each draw its own key *)
+let keys = Nx.Rng.split ~n:2 (Nx.Rng.key 42)
+let a = Nx.Rng.normal ~key:keys.(0) Nx.float64 [| 3 |]
+let b = Nx.Rng.normal ~key:keys.(1) Nx.float64 [| 3 |]
+
+(* A shuffle gathers at a random permutation *)
+let shuffled = Nx.take (Nx.Rng.permutation 3) a
 ```
 
 **NumPy:**
@@ -379,6 +388,17 @@ random = np.random.rand(3, 3)
 
 # Generate normal distributed random numbers
 normal = np.random.randn(3, 3)
+
+# For reproducibility, seed a generator
+rng = np.random.default_rng(42)
+reproducible = rng.random((3, 3))
+
+# Each generator holds its own state
+a = rng.standard_normal(3)
+b = rng.standard_normal(3)
+
+# Shuffle
+shuffled = rng.permutation(a)
 ```
 
 ## 10. Real-World Example: Linear Regression
@@ -387,18 +407,15 @@ normal = np.random.randn(3, 3)
 ```ocaml
 (* Generate sample data *)
 let x = Nx.linspace Nx.float64 0.0 10.0 100
-let y =
-  Nx.(
-    add (mul_s x 2.0)
-      (randn Nx.float64 [|100|]))
+let y = Nx.((x *$ 2.0) + Rng.normal float64 [| 100 |])
 
 (* Reshape x for design matrix *)
-let x_design = Nx.(concatenate ~axis:1 [ones Nx.float64 [|100; 1|];
-                                           reshape [|100; 1|] x])
+let x_design =
+  Nx.(concatenate ~axis:1 [ ones float64 [| 100; 1 |]; reshape [| 100; 1 |] x ])
 
 (* Compute coefficients using normal equation *)
 let xtx = Nx.matmul (Nx.transpose x_design) x_design
-let xty = Nx.matmul (Nx.transpose x_design) (Nx.reshape [|100; 1|] y)
+let xty = Nx.matmul (Nx.transpose x_design) (Nx.reshape [| 100; 1 |] y)
 let coeffs = Nx.solve xtx xty
 
 (* Make predictions *)

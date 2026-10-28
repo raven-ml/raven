@@ -1,6 +1,8 @@
 # Linear Algebra
 
-Nx provides a comprehensive linear algebra suite and FFT operations. This guide covers the most commonly used operations.
+Nx provides linear algebra over batches of matrices and Fourier transforms. This guide covers the most commonly used operations.
+
+A function whose result is real while its operand may be complex, such as singular values, the eigenvalues of a Hermitian matrix, a norm or a log-determinant, takes that result's dtype first: `Nx.svd Nx.float64 a`. So does a function whose result is complex while its operand may be real, such as `Nx.eig` or `Nx.rfft`.
 
 ## Matrix Multiplication
 
@@ -9,56 +11,65 @@ Nx provides a comprehensive linear algebra suite and FFT operations. This guide 
 General matrix multiplication supporting batched inputs:
 
 ```ocaml
-open Nx
-
 let () =
-  let a = rand Float32 [|3; 4|] in
-  let b = rand Float32 [|4; 2|] in
-  let c = matmul a b in   (* [|3; 2|] *)
-  Printf.printf "result shape: [|%d; %d|]\n" (dim 0 c) (dim 1 c)
+  let a = Nx.Rng.uniform Nx.float32 [| 3; 4 |] in
+  let b = Nx.Rng.uniform Nx.float32 [| 4; 2 |] in
+  let c = Nx.matmul a b in   (* [|3; 2|] *)
+  Printf.printf "result shape: [|%d; %d|]\n" (Nx.dim 0 c) (Nx.dim 1 c)
 ```
 
 `matmul` supports batched matrix multiplication: leading dimensions are broadcast.
 
-<!-- $MDX skip -->
 ```ocaml
-(* Batched: [|batch; m; k|] × [|batch; k; n|] → [|batch; m; n|] *)
-let a = Nx.rand Nx.Float32 [|10; 3; 4|] in
-let b = Nx.rand Nx.Float32 [|10; 4; 2|] in
-let c = Nx.matmul a b   (* [|10; 3; 2|] *)
+let () =
+  (* Batched: [|batch; m; k|] × [|batch; k; n|] → [|batch; m; n|] *)
+  let a = Nx.Rng.uniform Nx.float32 [| 10; 3; 4 |] in
+  let b = Nx.Rng.uniform Nx.float32 [| 10; 4; 2 |] in
+  let c = Nx.matmul a b in   (* [|10; 3; 2|] *)
+  ignore c
 ```
+
+Inside a local open, `Nx.(a *@ b)` is `Nx.matmul a b`.
 
 ### Related products
 
 | Function | Purpose |
 |----------|---------|
-| `dot` | Inner product (flattened inputs) |
-| `vdot` | Complex-conjugate inner product |
+| `dot` | Sum over the last axis of one operand and an axis of the other |
+| `vdot` | Complex-conjugate inner product of flattened operands |
 | `inner` | Inner product over last axes |
-| `outer` | Outer product of 1-D tensors |
+| `outer` | Outer product of flattened operands |
 | `tensordot` | Contraction over specified axes |
-| `einsum` | Einstein summation notation |
+| `einsum` | Products and sums named by an axis pattern |
 | `kron` | Kronecker product |
 | `cross` | Cross product of 3-element vectors |
+| `multi_dot` | Chain of matrix products, in the cheapest order |
 
 ### einsum
 
-Einstein summation provides a compact notation for many tensor operations:
+A pattern names each operand's axes. Names are words separated by spaces. A name in the result keeps its axis, and the names after `|` are summed; each summed name appears in two operands or more and not in the result:
 
 <!-- $MDX skip -->
 ```ocaml
-(* Matrix multiplication: ij,jk->ik *)
-let c = Nx.einsum "ij,jk->ik" [|a; b|]
+(* Matrix multiplication: j is summed *)
+let c = Nx.einsum (Nx.Pattern.v "i j, j k -> i k | j") [ a; b ]
 
-(* Batch matrix multiply: bij,bjk->bik *)
-let c = Nx.einsum "bij,bjk->bik" [|a; b|]
+(* Batch matrix multiply: b is in both operands and the result *)
+let c = Nx.einsum (Nx.Pattern.v "b i j, b j k -> b i k | j") [ a; b ]
 
-(* Trace: ii-> *)
-let tr = Nx.einsum "ii->" [|m|]
-
-(* Transpose: ij->ji *)
-let t = Nx.einsum "ij->ji" [|m|]
+(* Matrix times matrix times vector, in the order of fewest products *)
+let y = Nx.einsum (Nx.Pattern.v "i j, j k, k -> i | j k") [ a; b; v ]
 ```
+
+A name appears once in each operand, so a diagonal is read with `Nx.trace m` or `Nx.diagonal m`. A pattern of one operand rearranges it, with `Nx.rearrange`:
+
+<!-- $MDX skip -->
+```ocaml
+(* Transpose *)
+let t = Nx.rearrange (Nx.Pattern.v "i j -> j i") m
+```
+
+`Nx.Pattern.v` parses a pattern each time it is called, so a pattern used in a loop is bound once, outside it.
 
 ## Decompositions
 
@@ -68,8 +79,8 @@ Factor a symmetric positive-definite matrix: A = L·Lᵀ
 
 <!-- $MDX skip -->
 ```ocaml
-let l = Nx.cholesky a               (* lower triangular by default *)
-let u = Nx.cholesky ~upper:true a   (* upper triangular *)
+let l = Nx.cholesky a                        (* lower triangular by default *)
+let u = Nx.cholesky ~triangle:Nx.Upper a        (* upper triangular *)
 ```
 
 ### QR
@@ -78,8 +89,8 @@ Factor A = Q·R where Q is orthogonal and R is upper triangular:
 
 <!-- $MDX skip -->
 ```ocaml
-let q, r = Nx.qr a                        (* reduced by default *)
-let q_full, r_full = Nx.qr ~mode:`Complete a
+let q, r = Nx.qr a                           (* reduced by default *)
+let q_full, r_full = Nx.qr ~factors:Nx.Complete a
 ```
 
 ### LU
@@ -96,25 +107,25 @@ let perm, l, u = Nx.lu a
 
 ### SVD
 
-Singular value decomposition A = U·Σ·Vᵀ:
+Singular value decomposition A = U·Σ·Vᴴ, the singular values in the dtype given first:
 
 <!-- $MDX skip -->
 ```ocaml
-let u, s, vt = Nx.svd a
-let s_only = Nx.svdvals a   (* singular values only, more efficient *)
+let u, s, vh = Nx.svd Nx.float64 a                  (* reduced factors *)
+let _, s_only, _ = Nx.svd ~vectors:false Nx.float64 a  (* singular values only *)
 ```
 
 ### Eigendecomposition
 
 <!-- $MDX skip -->
 ```ocaml
-(* General: returns complex eigenvalues and eigenvectors *)
-let eigenvalues, eigenvectors = Nx.eig a
-let eigenvalues_only = Nx.eigvals a
+(* General: complex eigenvalues and eigenvectors *)
+let eigenvalues, eigenvectors = Nx.eig Nx.complex128 a
+let eigenvalues_only, _ = Nx.eig ~vectors:false Nx.complex128 a
 
-(* Symmetric/Hermitian: returns real eigenvalues *)
-let eigenvalues, eigenvectors = Nx.eigh a
-let eigenvalues_only = Nx.eigvalsh a
+(* Symmetric/Hermitian: real eigenvalues, ascending *)
+let eigenvalues, eigenvectors = Nx.eigh Nx.float64 a
+let eigenvalues_only, _ = Nx.eigh ~vectors:false Nx.float64 a
 ```
 
 ## Solving Linear Systems
@@ -131,20 +142,21 @@ let x = Nx.solve a b
 ### solve_triangular
 
 Solve a triangular system directly, skipping the factorization. Only the
-triangle named by `upper` is read:
+triangle named by `triangle` is read:
 
 <!-- $MDX skip -->
 ```ocaml
-let x = Nx.solve_triangular ~upper:true r b
+let x = Nx.solve_triangular ~triangle:Nx.Upper r b
 ```
 
 ### lstsq
 
-The least-squares solution of least norm, for a matrix of any shape and rank:
+The least-squares solution of least norm, for a matrix of any shape and rank,
+with the residuals, the rank and the singular values:
 
 <!-- $MDX skip -->
 ```ocaml
-let x, residuals, rank, sv = Nx.lstsq a b
+let x, residuals, rank, sv = Nx.lstsq Nx.float64 a b
 ```
 
 ### inv and pinv
@@ -179,39 +191,40 @@ Outside a function's stated precondition, NaN or an infinity in an operand propa
 
 ## Norms and Properties
 
-### norm
+### Norms
 
-Compute various matrix and vector norms:
+`vector_norm` takes the norm of the vectors along some axes, all of them by default, and `matrix_norm` that of each matrix of a batch. Both take the result's dtype first:
 
 <!-- $MDX skip -->
 ```ocaml
 (* Vector norms *)
-let l2 = Nx.norm v                            (* L2 by default *)
-let l1 = Nx.norm ~ord:(`Float 1.) v           (* L1 norm *)
-let linf = Nx.norm ~ord:`Inf v                (* max absolute value *)
+let l2 = Nx.vector_norm Nx.float64 v                    (* L2 by default *)
+let l1 = Nx.vector_norm Nx.float64 ~ord:1. v            (* L1 norm *)
+let linf = Nx.vector_norm Nx.float64 ~ord:infinity v    (* max absolute value *)
 
 (* Matrix norms *)
-let fro = Nx.norm ~ord:`Fro m                 (* Frobenius norm *)
+let fro = Nx.matrix_norm Nx.float64 m                   (* Frobenius by default *)
+let spectral = Nx.matrix_norm Nx.float64 ~ord:`Two m    (* largest singular value *)
 
 (* Along specific axes *)
-let row_norms = Nx.norm ~axis:[1] m           (* per-row L2 norm *)
+let row_norms = Nx.vector_norm Nx.float64 ~axes:[ 1 ] m (* per-row L2 norm *)
 ```
 
 ### Other properties
 
 <!-- $MDX skip -->
 ```ocaml
-let d = Nx.det m                    (* determinant *)
-let sign, logdet = Nx.slogdet m    (* sign, and log |det| as float64 *)
-let tr = Nx.trace m                (* sum of diagonal elements *)
-let r = Nx.matrix_rank m           (* numerical rank *)
-let c = Nx.cond m                  (* condition number *)
-let diag = Nx.diagonal m           (* extract diagonal *)
+let d = Nx.det m                              (* determinant *)
+let sign, logdet = Nx.slogdet Nx.float64 m    (* sign, and log |det| in float64 *)
+let tr = Nx.trace m                           (* sum of diagonal elements *)
+let r = Nx.matrix_rank m                      (* numerical rank, int64 *)
+let c = Nx.cond Nx.float64 m                  (* condition number *)
+let diag = Nx.diagonal m                      (* extract diagonal *)
 ```
 
 ## FFT
 
-Nx provides the full suite of discrete Fourier transforms.
+Nx provides complex, real and Hermitian discrete Fourier transforms, and the cosine and sine transforms. A transform runs along `~axes`, the last axis by default, so a transform along several axes is the same function with more axes.
 
 ### Basic FFT
 
@@ -221,27 +234,31 @@ Nx provides the full suite of discrete Fourier transforms.
 let spectrum = Nx.fft x
 let reconstructed = Nx.ifft spectrum
 
-(* 2-D FFT *)
-let spectrum_2d = Nx.fft2 image
+(* 2-D FFT, along the last two axes *)
+let spectrum_2d = Nx.fft ~axes:[ -2; -1 ] image
 
 (* N-D FFT *)
-let spectrum_nd = Nx.fftn ~axes:[0; 1; 2] volume
+let spectrum_nd = Nx.fft ~axes:[ 0; 1; 2 ] volume
 ```
 
 ### Real FFT
 
-For real-valued inputs, `rfft` is more efficient — it exploits conjugate symmetry and returns only the positive-frequency half:
+For real-valued inputs, `rfft` keeps only the bins from 0 to n/2 of the last
+axis, since the others are their conjugates:
 
 <!-- $MDX skip -->
 ```ocaml
 (* The first argument picks the output dtype, independent of the input's.
    Pair float32 with complex64 to keep a single-precision spectrum. *)
-let spectrum = Nx.rfft Nx.complex64 signal    (* n/2+1 complex outputs *)
-let signal_back = Nx.irfft Nx.float32 spectrum (* back to real *)
+let spectrum = Nx.rfft Nx.complex64 signal      (* n/2+1 complex outputs *)
+let signal_back = Nx.irfft Nx.float32 spectrum  (* back to real *)
 
-let spectrum_2d = Nx.rfft2 Nx.complex64 image
-let spectrum_nd = Nx.rfftn Nx.complex64 ~axes:[0; 1] data
+let spectrum_2d = Nx.rfft Nx.complex64 ~axes:[ -2; -1 ] image
+let spectrum_nd = Nx.rfft Nx.complex64 ~axes:[ 0; 1 ] data
 ```
+
+Without `~s`, `irfft` of m bins gives 2 (m - 1) points; `~s:[ n ]` asks for
+the n points of an odd-length signal.
 
 ### Frequency axes
 
@@ -257,8 +274,8 @@ let shifted = Nx.fftshift spectrum     (* shift zero-frequency to center *)
 ### Magnitude and phase
 
 A spectrum is complex. `magnitude` and `angle` extract its polar components as
-float tensors, and `complex` reassembles one. The first argument picks the
-result dtype, since leaving the complex domain has to name what to land in —
+float arrays, and `complex` reassembles one. The first argument picks the
+result dtype, since leaving the complex domain has to name what to land in;
 this is why `magnitude` is not called `abs`, which preserves the dtype:
 
 <!-- $MDX skip -->
@@ -273,10 +290,10 @@ let rebuilt =
     ~im:Nx.(mul mags (sin phase))
 ```
 
-`real`, `imag`, and `conjugate` give the cartesian view of the same tensor.
+`real`, `imag`, and `conjugate` give the cartesian view of the same array.
 
 ## Next Steps
 
-- [Array Operations](02-array-operations.md) — reshaping, broadcasting, slicing
-- [Input/Output](04-io.md) — reading and writing files
-- [NumPy Comparison](05-numpy-comparison.md) — side-by-side reference
+- [Array Operations](02-array-operations.md): reshaping, broadcasting, slicing
+- [Input/Output](04-io.md): reading and writing files
+- [NumPy Comparison](05-numpy-comparison.md): side-by-side reference
