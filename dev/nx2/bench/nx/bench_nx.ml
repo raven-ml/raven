@@ -353,10 +353,15 @@ let place_rows =
     ]
 
 (* Movements: a view costs the same at one element and at a million, and a
-   movement no stride expresses costs a copy of its result, as copy-1M does. *)
+   movement no stride expresses costs a copy of its result, as copy-1M does.
+   broadcast-shapes-1K folds 1024 shapes that broadcast together, which
+   costs time linear in their count. *)
 
 let split_heads = Nx.Pattern.v "b t (h d) -> b h t d"
 let rows () = Nx.reshape [| 1; 1024; 1024 |] (square ())
+
+let shapes_1k () =
+  List.init 1024 (fun i -> if i mod 2 = 0 then [| 1; 8 |] else [| 8; 1 |])
 
 let move_rows =
   Thumper.group "move"
@@ -375,6 +380,8 @@ let move_rows =
       Thumper.bench_with_setup "copy-1M"
         ~setup:(fun () -> host (1 lsl 20))
         Nx.copy;
+      Thumper.bench_with_setup "broadcast-shapes-1K" ~setup:shapes_1k
+        Nx.broadcast_shapes;
     ]
 
 (* Random draws computed on the host: each row places a draw of a fixed key,

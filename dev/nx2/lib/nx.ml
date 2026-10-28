@@ -763,21 +763,18 @@ let broadcast_all ~by shapes =
       ~pp_sep:(fun ppf () -> Format.pp_print_string ppf ", ")
       pp_shape ppf l
   in
-  (* CR: Appending copies the growing diagnostic prefix on every valid shape.
-     Cons s' onto before and reverse only for pp_list on failure, keeping
-     the ordered message while making this bookkeeping linear. Add a
-     broadcast_shapes bench over prebuilt compatible shapes. *)
+  (* The shapes before [s'], last first: put in order only for a refusal. *)
   let step (s, before) s' =
     if Array.exists (fun e -> e < 0) s' then
       invalid_argf "%s: %a has a negative extent" by pp_shape s';
     match Prim.merge s s' with
-    | Ok s -> (s, before @ [ s' ])
+    | Ok s -> (s, s' :: before)
     | Error (a, e, e') ->
         (* The axis counted from the end, where every shape aligns. *)
         let a = a - max (Array.length s) (Array.length s') in
         invalid_argf
           "%s: %a does not broadcast with %a: axis %d has %d, neither 1 nor %d"
-          by pp_shape s' pp_list before a e' e
+          by pp_shape s' pp_list (List.rev before) a e' e
   in
   fst (List.fold_left step ([||], []) shapes)
 
