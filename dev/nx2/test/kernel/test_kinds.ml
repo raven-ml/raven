@@ -769,6 +769,38 @@ let test_complex_smith =
         (c128_call "fdiv" [ (0., 0x1p-50); (0., -.Float.ldexp 1. (-1074)) ]);
       equal t want (c64_call "fdiv" [ (0., 0x1p-20); (0., -0x1p-149) ]))
 
+(* Dividends whose parts are subnormal over divisors whose larger part is
+   within 8 times the least normal: the quotients are normal, within 4u. The
+   exact quotient is taken of both operands scaled by 2^600, the same
+   quotient, so that no product of the reference underflows. *)
+let test_complex_subnormal =
+  let scaled (re, im) = (Float.ldexp re 600, Float.ldexp im 600) in
+  let check name u least call round =
+    prop (strf "fdiv %s of subnormal dividends within 4u" name) ~count:2000
+      Gen.(
+        let signed m =
+          let+ v = float_range 0. m and+ s = bool in
+          if s then -.v else v
+        in
+        let* a = pair (signed least) (signed least) in
+        let* p = float_range least (8. *. least)
+        and+ q = signed (8. *. least) in
+        let+ swap = bool in
+        (a, if swap then (q, p) else (p, q)))
+      (fun (a, (br, bi)) ->
+        cover "the real part the larger" (Float.abs br >= Float.abs bi);
+        cover "the imaginary part the larger" (Float.abs br < Float.abs bi);
+        let a = round a and b = round (br, bi) in
+        let z = exact_div (scaled a) (scaled b) in
+        at_most float_exact ~than:4. (normwise u (call a b) z))
+  in
+  [
+    check "c64" 0x1p-24 0x1p-126 (fun a b -> c64_call "fdiv" [ a; b ]) f32_pair;
+    check "c128" 0x1p-53 Float.min_float
+      (fun a b -> c128_call "fdiv" [ a; b ])
+      Fun.id;
+  ]
+
 (* The order: by the real part, then the imaginary part, -0 below +0 for the
    extremes; a NaN part ranks as NaN. *)
 let test_complex_order =
@@ -1520,7 +1552,8 @@ let () =
          group ~timeout:10. "Annex F's special values" [ test_annex_f ];
          group ~timeout:10. "the header's bits on every target" [ test_digests ];
          group ~timeout:10. "complex arithmetic within its bounds"
-           (test_complex_bounds @ test_complex_parts @ test_complex_order
+           (test_complex_bounds @ test_complex_subnormal @ test_complex_parts
+           @ test_complex_order
            @ [ test_complex_nan; test_complex_smith ]);
          group ~timeout:10. "complex kinds at their special values"
            [ test_complex_special; test_complex_signalling ];

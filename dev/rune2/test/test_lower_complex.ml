@@ -434,6 +434,27 @@ let check k (wide, es) =
   List.iter (fun (label, f) -> cover_some label f) k.covers;
   equal (list string) [] (List.rev !bad)
 
+(* Dividends whose parts are subnormal, over divisors whose larger part is
+   between the least normal and 8 times it: the quotients are normal, and a
+   bit a subnormal intermediate drops is magnified into them. *)
+let subnormal_dividends wide =
+  let st = Random.State.make [| 3 |] in
+  let lo = least wide in
+  let draw scale =
+    let v = round wide (Random.State.float st scale) in
+    if Random.State.bool st then v else -.v
+  in
+  let element _ =
+    let a = { Complex.re = draw lo; im = draw lo } in
+    let re = round wide (lo *. (1. +. Random.State.float st 7.)) in
+    [| a; { Complex.re; im = draw (8. *. lo) } |]
+  in
+  (wide, Array.init n element)
+
+let examples k =
+  if k.name <> "fdiv" then examples k
+  else examples k @ List.map subnormal_dividends [ false; true ]
+
 let prop_of k = prop ~count:20 ~examples:(examples k) k.name (case k) (check k)
 
 let () =

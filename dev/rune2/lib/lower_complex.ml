@@ -318,7 +318,16 @@ let mul (ar, ai) (br, bi) =
   let ii = ai *: bi and ir = ai *: br in
   (mulacc ar br (negated ii), mulacc ar bi ir)
 
-let fdiv (ar, ai) (br, bi) =
+(* A dividend whose parts are below the least normal over u, 2^-102 (float32)
+   or 2^-969 (float64), is scaled by 2^25 or 2^54 first, and the quotient back:
+   unscaled, a fused multiply-add of its parts lands subnormal and drops bits,
+   which a small divisor magnifies into a normal quotient. The scaling back is
+   exact where the quotient is normal. *)
+let tiny_dividend = (0x1p-102, 0x1p-969)
+let dividend_up = (0x1p25, 0x1p54)
+let dividend_down = (0x1p-25, 0x1p-54)
+
+let smith (ar, ai) (br, bi) =
   let big = ge (magnitude br) (magnitude bi) in
   let p = where big br bi and q = where big bi br in
   let x = where big ar ai and y = where big ai ar in
@@ -326,6 +335,16 @@ let fdiv (ar, ai) (br, bi) =
   let d = mulacc r q p in
   let im = where big (mulacc (negated r) x y) (mulacc r x (negated y)) in
   (mulacc r y x /: d, im /: d)
+
+let fdiv (ar, ai) b =
+  let tiny =
+    lt (magnitude ar) (num ar (R.pick ar tiny_dividend))
+    &&: lt (magnitude ai) (num ai (R.pick ai tiny_dividend))
+  in
+  let scale v = where tiny (num ar (R.pick ar v)) (one ar) in
+  let up = scale dividend_up and down = scale dividend_down in
+  let re, im = smith (ar *: up, ai *: up) b in
+  (re *: down, im *: down)
 
 let has_nan (re, im) = is_nan re ||: is_nan im
 

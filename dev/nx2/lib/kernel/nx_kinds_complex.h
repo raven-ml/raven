@@ -56,14 +56,23 @@ NX_INLINE NX_CT NX_Z(nx_mul)(NX_CT a, NX_CT b) {
 /* Smith's algorithm with selects for its branch, which vectorise: p is the
    divisor's larger part, q the other, x and y the dividend's parts in the
    same roles. Where the real part is the larger, the quotient is
-   ((x + r y) + (y - r x) i) / d, else ((x + r y) + (r x - y) i) / d. */
+   ((x + r y) + (y - r x) i) / d, else ((x + r y) + (r x - y) i) / d. A
+   dividend whose parts are below the least normal over u is scaled up first,
+   and the quotient back: unscaled, a fused multiply-add of its parts lands
+   subnormal and drops bits, which a small divisor magnifies into a normal
+   quotient. The scaling back is exact where the quotient is normal. */
 NX_INLINE NX_CT NX_Z(nx_fdiv)(NX_CT a, NX_CT b) {
+  int tiny = NX_(nx_abs_bits)(a.re) < NX_C(TINY_DIVIDEND) &&
+             NX_(nx_abs_bits)(a.im) < NX_C(TINY_DIVIDEND);
+  NX_T up = tiny ? NX_C(DIVIDEND_UP) : NX_ONE;
+  NX_T down = tiny ? NX_C(DIVIDEND_DOWN) : NX_ONE;
+  a = NX_MK(a.re * up, a.im * up);
   int big = NX_(nx_abs_bits)(b.re) >= NX_(nx_abs_bits)(b.im);
   NX_T p = big ? b.re : b.im, q = big ? b.im : b.re;
   NX_T x = big ? a.re : a.im, y = big ? a.im : a.re;
   NX_T r = q / p, d = NX_FMA(r, q, p);
   NX_T im = big ? NX_FMA(-r, x, y) : NX_FMA(r, x, -y);
-  return NX_MK(NX_FMA(r, y, x) / d, im / d);
+  return NX_MK(NX_FMA(r, y, x) / d * down, im / d * down);
 }
 NX_INLINE NX_CT NX_Z(nx_recip)(NX_CT a) {
   return NX_Z(nx_fdiv)(NX_MK(NX_ONE, (NX_T)0), a);

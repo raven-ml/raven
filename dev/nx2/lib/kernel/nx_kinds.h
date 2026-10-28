@@ -297,6 +297,11 @@ NX_INLINE uint32_t nx_bits_at(NX_TABLE_PTR t, int32_t g) {
 #define NX_HYP_BIG_F32 12.0f
 #define NX_ASIN_BIG_F32 0x1p13f
 #define NX_ATANH_BIG_F32 0x1p62f
+/* A complex dividend below the least normal over u is scaled by 2^25 first,
+   and its quotient back. */
+#define NX_TINY_DIVIDEND_F32 0x1p-102f
+#define NX_DIVIDEND_UP_F32 0x1p25f
+#define NX_DIVIDEND_DOWN_F32 0x1p-25f
 
 /* The polynomials. Each is a minimax fit on the interval its kind reduces
    to, with its error relative to the function unless absolute is said. */
@@ -618,6 +623,9 @@ NX_INLINE float nx_atan2_f32(float y, float x) {
 #define NX_HYP_BIG_F64 22.0
 #define NX_ASIN_BIG_F64 0x1p28
 #define NX_ATANH_BIG_F64 0x1p510
+#define NX_TINY_DIVIDEND_F64 0x1p-969
+#define NX_DIVIDEND_UP_F64 0x1p54
+#define NX_DIVIDEND_DOWN_F64 0x1p-54
 
 /* expm1 r = r + r^2 Q(r) on |r| <= ln2/2 + 2^-13, 2^-56.4 (expQ). */
 NX_INLINE double nx_exp_q_f64(double r) {

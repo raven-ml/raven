@@ -260,8 +260,11 @@ val accepts3 :
     or underflows only where a part of the quotient does, and
     [(0 + 2{^-50} i) / (0 - 2{^-1074} i)] is [-inf + 0 i]. Each of its
     products that feeds a sum is a fused multiply-add, and it is within
-    [4u]. [Recip] is [(1 + 0 i) / x] by [Fdiv]. A NaN part in an operand of
-    [Mul], [Fdiv] or [Recip] makes both parts of the result NaN.
+    [4u], also where the dividend's parts are subnormal: a dividend whose
+    parts are below the least normal over [u] is scaled by [2{^25}] or
+    [2{^54}] first, and the quotient back. [Recip] is [(1 + 0 i) / x] by
+    [Fdiv]. A NaN part in an operand of [Mul], [Fdiv] or [Recip] makes both
+    parts of the result NaN.
 
     [Exp], [Exp2], [Log], [Log2], [Sqrt], [Sin], [Cos], [Tan], [Asin],
     [Acos], [Atan], [Sinh], [Cosh], [Tanh], [Asinh], [Acosh], [Atanh] and

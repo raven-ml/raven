@@ -21,10 +21,11 @@
 
     {1:bounded Other kinds}
 
-    [Fdiv] is Smith's algorithm, which divides by the divisor's larger part, and
-    [Recip] is [(1 + 0i) / z] by [Fdiv]. The transcendental kinds are the
-    principal values of C99 7.3 (ISO/IEC 9899), each part's sign choosing the
-    side of a branch cut as there. [Sign] is [z / |z|]. [Exp] overflows only
+    [Fdiv] is Smith's algorithm, which divides by the divisor's larger part,
+    over a dividend scaled by [2{^25}] or [2{^54}] where its parts are below
+    the least normal over [u], and [Recip] is [(1 + 0i) / z] by [Fdiv]. The
+    transcendental kinds are the principal values of C99 7.3 (ISO/IEC 9899),
+    each part's sign choosing the side of a branch cut as there. [Sign] is [z / |z|]. [Exp] overflows only
     where its result does.
 
     Each holds a {e normwise} bound, in the sense that a result [z'] of exact
