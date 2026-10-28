@@ -4,11 +4,11 @@
   ---------------------------------------------------------------------------*)
 
 (* The float kinds, lowered and compiled on the host. An exact kind gives nx's
-   eager bits, any NaN for a NaN. A transcendental kind is within its bound of a
-   reference: at float32, OCaml's float64 functions rounded once; at float64,
-   nx's eager kernels, within the sum of both bounds. Each case is one compiled
-   map over a few hundred values of float32 or float64, drawn to reach the
-   kind's special values and the edges of its ranges. *)
+   eager bits, any NaN for a NaN. A transcendental kind is within its host bound
+   of a reference: at float32, OCaml's float64 functions rounded once; at
+   float64, nx's eager kernels, within the sum of both bounds. Each case is one
+   compiled map over a few hundred values of float32 or float64, drawn to reach
+   the kind's special values and the edges of its ranges. *)
 
 open Windtrap
 module D = Nx_array.Dtype
@@ -256,7 +256,7 @@ let unary =
     u "trunc" (Op1 (Unary Trunc, D.Any D.Float32, 0)) [ rounding ];
     kind "exp"
       (Op1 (Unary Exp, D.Any D.Float32, 0))
-      ?within:(f1 Float.exp (9., 9.))
+      ?within:(f1 Float.exp (2., 2.))
       [ exp_points ]
       ~range:(by32 (-120., 120.) (-800., 800.))
       ~covers:
@@ -299,11 +299,15 @@ let unary =
         ];
     kind "log"
       (Op1 (Unary Log, D.Any D.Float32, 0))
-      ?within:(f1 Float.log (9., 9.))
+      ?within:(f1 Float.log (1., 1.))
       [ log_points ]
       ~range:(fixed (-2., 1e4))
       ~covers:
-        [ ("negative", on (fun _ x -> x < 0.)); ("a subnormal", on is_sub) ];
+        [
+          ("negative", on (fun _ x -> x < 0.));
+          ("a subnormal", on is_sub);
+          ("a negative subnormal", on (fun w x -> x < 0. && is_sub w x));
+        ];
     kind "log2"
       (Op1 (Unary Log2, D.Any D.Float32, 0))
       ?within:(f1 Float.log2 (4., 4.))
@@ -343,8 +347,8 @@ let unary =
                     x <> 0. && Float.abs x < if w then 0x1p-27 else 0x1p-12) );
             ])
       [
-        ("sin", K.Sin, f1 Float.sin (4., 4.));
-        ("cos", K.Cos, f1 Float.cos (9., 9.));
+        ("sin", K.Sin, f1 Float.sin (2., 2.));
+        ("cos", K.Cos, f1 Float.cos (2., 2.));
         ("tan", K.Tan, f1 Float.tan (19., 19.));
       ]
   @ List.map
@@ -705,11 +709,53 @@ let check k (wide, es) =
 
 let prop_of k = prop ~count:20 k.name (case k) (check k)
 
+(* float64 operands and their correctly rounded results, from mpmath at 200
+   bits: the drawn float64 cases meet eager's results within the sum of both
+   bounds, which cannot see a bound of one. *)
+let pinned name k bound pairs =
+  test name (fun () ->
+      let xs =
+        Array.of_list (List.map (fun (x, _) -> Float.of_string x) pairs)
+      in
+      let n = Array.length xs in
+      let x = Nx.create D.Float64 [| n |] xs in
+      let ins = Iarray.of_array [| D.Any D.Float64 |] in
+      let prog = K.of_node ~ins (Op1 (Unary k, D.Any D.Float64, 0)) in
+      let layout = Nx_array.Layout.contiguous [| n |] in
+      let loads = Iarray.of_array [| P.Plain x |] in
+      let op () =
+        fst
+          (P.eval ~by:"t"
+             (P.Map { layout; prog; outs = [ D.Float64 ]; loads; at = None }))
+      in
+      let got = Lowered.run op in
+      let far =
+        List.concat
+          (List.mapi
+             (fun i (x, r) ->
+               let d = ulps true (Float.of_string r) got.(i) in
+               if d <= bound then []
+               else [ Printf.sprintf "%s: %h, %g ulps from %s" x got.(i) d r ])
+             pairs)
+      in
+      equal (list string) [] far)
+
+(* Where tolk's log2 times ln 2 is two ulps off. *)
+let log_near_one =
+  pinned "log within one ulp near 1" K.Log 1.
+    [
+      ("0x1.481e0a20c684p+0", "0x1.fc4d0ea863fa9p-3");
+      ("0x1.203eace7848f4p+0", "0x1.e5eb7824a1d0cp-4");
+      ("0x1.936dc3c250523p-1", "-0x1.e816c6150210cp-3");
+      ("0x1.67372bc172382p-1", "-0x1.6ae862c1635bdp-2");
+      ("0x1.410308102a104p+0", "0x1.cf76ac1e049dfp-3");
+    ]
+
 let () =
   exit
     (run "Lower_real"
        [
-         group "unary" (List.map prop_of unary);
+         group "unary" (List.map prop_of unary @ [ log_near_one ]);
          group "binary" (List.map prop_of binary);
          group "compare" (List.map prop_of compare);
          group "fma" [ prop_of fma ];

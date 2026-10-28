@@ -15,22 +15,24 @@
 
     {1:transcendental Transcendental kinds}
 
-    The other kinds compose tolk's [exp2], [log2] and [sin] ({!Tolk.Ops.exp2},
-    {!Tolk.Ops.log2}, {!Tolk.Op.Sin}) and its argument reductions
-    ({!Tolk.Transcendental}) with the exact kinds, in forms that cancel nowhere.
-    Taking [exp2], [log2] and [sin] within 4 ulps, as tolk's targets compute
-    them, and division and the square root correctly rounded, each kind is
-    within these bounds in ulps, the distance in ordered-bit ranks from the
-    correctly rounded result, [-0] and [+0] one rank apart:
+    [log] is fdlibm's, of the exact kinds alone. The other kinds compose tolk's
+    [exp2], [log2] and [sin] ({!Tolk.Ops.exp2}, {!Tolk.Ops.log2},
+    {!Tolk.Op.Sin}) and its argument reductions ({!Tolk.Transcendental}) with
+    the exact kinds and [log], in forms that cancel nowhere. Taking [exp2],
+    [log2] and [sin] within 4 ulps, as tolk's targets compute them, and division
+    and the square root correctly rounded, each kind is within these bounds in
+    ulps, the distance in ordered-bit ranks from the correctly rounded result,
+    [-0] and [+0] one rank apart:
 
     {v
       kind                        float32  float64
+      log                            1        1
       exp2, log2, sin                4        4
       erf                            2        3
       atan                           2        7
       asin, acos                     5        9
       atan2                          6        8
-      exp, log, cos                  9        9
+      exp, cos                       9        9
       cosh                          10       10
       log1p                         12       12
       tanh                          18       18
@@ -42,14 +44,17 @@
     The bounds are derived to first order in the unit roundoff [u] ([2{^-24}] or
     [2{^-53}]), an error of [n] ulps taken as a relative error of [2 n u] and a
     relative error [d] as [d / u + 1/2] ulps after the last rounding; erf's
-    polynomials and float32 atan's carry their measured bounds. pow is
+    polynomials and float32 atan's carry their measured bounds. log, which
+    reads none of tolk's kinds, holds its bound on every target. On the host,
+    whose [exp2], [log2] and [sin] are tolk's own, within one ulp, exp, sin and
+    cos are within 2 ulps at both types. pow is
     [2{^y log2 |x|}], so the bound grows with its exponent: [log2 |x|]'s error
     is that of a [y] perturbed by a few [u]. [exp2] is not promised exact at
     integers, nor [log2] at powers of two: they hold their bounds there as
-    elsewhere. The bounds hold at tolk's default
-    {!Tolk.Setting.transcendental}, for every operand on a target that keeps
-    subnormals; a target that flushes them, as Metal's float32 does, differs
-    where an operand, a result or an intermediate is below the least normal.
+    elsewhere. The bounds hold at tolk's default {!Tolk.Setting.transcendental},
+    for every operand on a target that keeps subnormals; a target that flushes
+    them, as Metal's float32 does, differs where an operand, a result or an
+    intermediate is below the least normal.
 
     Where every operand is [±0], [±inf] or NaN and C99 Annex F (ISO/IEC 9899,
     F.9) gives a zero, an infinity, [±1] or a NaN, a kind gives it, a zero's

@@ -755,12 +755,13 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     casts, extremes, integer and boolean arithmetic, and the correctly rounded
     float operations of IEEE 754 ([Nx.add], [Nx.sub], [Nx.mul], [Nx.div],
     [Nx.sqrt]). Another float function is within a bound in ulps of the
-    correctly rounded result, from 2 to 21 by function at [float32] and
-    [float64] (exp 9, sin 4, tanh 18, expm1 21), and a power's bound grows with
-    its exponent; special values are exact. A float sum, product or contraction
-    adds its terms in an order the compiler chooses, a sum of [n] terms within
-    [γ(n - 1) Σ|x|] of the exact one, [γ(k) = k u / (1 - k u)]. Narrow floats
-    compute at [float32] and round once.
+    correctly rounded result, from 1 to 21 by function at [float32] and
+    [float64] (log 1, exp 9, sin 4, tanh 18, expm1 21; on the host exp, sin and
+    cos 2), and a power's bound grows with its exponent; special values are
+    exact. A float sum, product or contraction adds its terms in an order the
+    compiler chooses, a sum of [n] terms within [γ(n - 1) Σ|x|] of the exact
+    one, [γ(k) = k u / (1 - k u)]. Narrow floats compute at [float32] and round
+    once.
 
     {b Transformations.} Under {!jvp}, {!vmap} and reverse mode, a call is a
     call of a program derived from its key's: under {!jvp} the program's

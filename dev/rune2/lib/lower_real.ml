@@ -1,6 +1,6 @@
 (*---------------------------------------------------------------------------
   Copyright (c) 2026 The Raven authors. All rights reserved.
-  SPDX-License-Identifier: ISC
+  SPDX-License-Identifier: ISC AND SunPro
   ---------------------------------------------------------------------------*)
 
 (* The exact kinds are bit manipulations and IEEE's correctly rounded
@@ -230,7 +230,73 @@ let exp x =
   let hi, lo = exp_parts x in
   exp2_split hi lo
 
-let log x = Ops.log2 x *: con x ln2
+(* fdlibm's log (e_log.c, e_logf.c). With x = m 2^e, m in (1/sqrt 2, sqrt 2],
+   log x is e ln2 + log(1 + f), f = m - 1 exact, and log(1 + f) is f - (h - s (h
+   + R)) with h = f^2 / 2, s = f / (2 + f) and R a minimax polynomial in s^2 for
+   2 atanh(s) / s - 2: every term but f is small, so only the last sum rounds at
+   the result's scale. ln2 is in two parts, the first of few enough bits that
+   its product by e is exact. It reads no log2: a product of one by ln 2 would
+   add its rounding to log2's error. Every positive float32 is within one ulp of
+   libm's log rounded, as are drawn float64 operands of libm's; on the host exp
+   and cos are within two, sin within one, over the same operands. The
+   coefficients and the parts carry this notice:
+
+   Copyright (C) 1993 by Sun Microsystems, Inc. All rights reserved. Developed
+   at SunPro, a Sun Microsystems, Inc. business. Permission to use, copy,
+   modify, and distribute this software is freely granted, provided that this
+   notice is preserved. *)
+
+let log_poly =
+  ( [ 0xf89e26.0p-26; 0x91e9ee.0p-25; 0xccce13.0p-25; 0xaaaaaa.0p-24 ],
+    [
+      1.479819860511658591e-01;
+      1.531383769920937332e-01;
+      1.818357216161805012e-01;
+      2.222219843214978396e-01;
+      2.857142874366239149e-01;
+      3.999999999940941908e-01;
+      6.666666666666735130e-01;
+    ] )
+
+let ln2_hi = (6.9313812256e-01, 6.93147180369123816490e-01)
+let ln2_lo = (9.0580006145e-06, 1.90821492927058770002e-10)
+let sqrt2 = (0x1.6a09e6p+0, 0x1.6a09e667f3bcdp+0)
+
+(* (m, e) with a = m 2^e, m in (1/sqrt 2, sqrt 2] and e an integer of a's type,
+   for a finite a > 0: a subnormal is scaled into the normals first. *)
+let normalized a =
+  let sub = lt (bits a) (word (bits a) (pick a min_normal_bits)) in
+  let s = where sub (a *: con a sub_scale) a in
+  let mb = pick a mbits in
+  let one_bits = Int64.shift_left (Int64.of_int (pick a bias)) mb in
+  let m =
+    of_bits
+      (bor
+         (band (bits s) (word (bits s) (pick a mmask)))
+         (word (bits s) one_bits))
+  in
+  let e = Ops.cast (ilogb a) (Ops.dtype a) in
+  let high = gt m (con a sqrt2) in
+  (where high (m *: half a) m, where high (e +: one a) e)
+
+let log x =
+  let positive = gt x (zero x) &&: lt x (inf x) in
+  let m, e = normalized (where positive x (one x)) in
+  let f = m -: one x in
+  let s = f /: (two x +: f) in
+  let z = s *: s in
+  let h = half x *: f *: f in
+  let r = z *: horner z (pick x log_poly) in
+  let l =
+    (e *: con x ln2_hi) -: (h -: ((s *: (h +: r)) +: (e *: con x ln2_lo)) -: f)
+  in
+  (* The sign is read from the bits: a target that flushes subnormals takes a
+     negative one for -0. *)
+  let below = negative x &&: ne (bits (magnitude x)) (word (bits x) 0L) in
+  let special =
+    where (eq x (zero x)) (negated (inf x)) (where (is_nan x) x (inf x))
+  in
+  where below (nan x) (where positive l special)
 
 (* Kahan's expm1: with w = e^x rounded, (w - 1) x / log w. w - 1 is expm1 at log
    w exactly, and expm1(t) / t varies slowly, so w's error cancels to first
