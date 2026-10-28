@@ -5,8 +5,8 @@
 
 (* Nx.Ptree: what a walk visits; the laws between flatten, rebuild, map and
    fold, at every dtype; the messages of two values that differ; payload maps,
-   casts and placement through a structure's module; and the vector arithmetic
-   of a value's float arrays. *)
+   casts and placement through a structure's module; structures nested across
+   sets; and the vector arithmetic of a value's float arrays. *)
 
 open Windtrap
 open Nx_support
@@ -146,29 +146,36 @@ let example =
     ends = (f32 [| 4. |], f32 [| 5.; 6. |]);
   }
 
-let blocks =
+let floats =
   let open Gen in
-  let array =
-    let+ n = int_range 0 3 in
-    f32 (Array.init n float_of_int)
-  in
+  let+ n = int_range 0 3 in
+  f32 (Array.init n float_of_int)
+
+(* A block whose positions are drawn by [position]. *)
+let block_of position =
+  let open Gen in
   let linear =
-    let+ w = array and+ b = option array in
+    let+ w = position and+ b = option position in
     { w; b }
   in
   let kind =
     frequency
       [ (1, constant Dense); (1, map (fun k -> Sparse k) (int_range 0 1)) ]
   in
-  (let+ layers = list ~size:(int_range 0 3) linear
-   and+ window = int_range 0 1
-   and+ kind = kind
-   and+ a = array
-   and+ b = array in
-   { layers; steps = i32 [| 0l |]; window; kind; ends = (a, b) })
-  |> with_pp (fun ppf x ->
-      Format.pp_print_list ~pp_sep:Format.pp_print_space P.pp_visit ppf
-        (P.visits block x))
+  let+ layers = list ~size:(int_range 0 3) linear
+  and+ steps = int_range 0 2
+  and+ window = int_range 0 1
+  and+ kind = kind
+  and+ a = position
+  and+ b = position in
+  let steps = i32 (Array.init steps Int32.of_int) in
+  { layers; steps; window; kind; ends = (a, b) }
+
+let pp_visits s ppf x =
+  Format.pp_print_list ~pp_sep:Format.pp_print_space P.pp_visit ppf
+    (P.visits s x)
+
+let blocks = block_of floats |> Gen.with_pp (pp_visits block)
 
 let segs =
   let open Gen in
@@ -550,6 +557,224 @@ let payloads =
           equal ~msg:"steps" (array int32) [| 7l |] (Nx.to_array y.steps));
     ]
 
+(* Structures nested across sets *)
+
+(* A block whose positions hold blocks, and a list of blocks, which may hold no
+   position: each walked as one structure by [under]. *)
+module Blocks = struct
+  type ('a, 'd) t = (('a, 'd) block, 'd) block
+
+  let walk c x = P.Walk.under Block.walk Block.walk c x
+end
+
+module Block_list = struct
+  type ('a, 'd) t = ('a, 'd) block list
+
+  let walk c x = P.Walk.(under (list leaf) Block.walk) c x
+end
+
+type nested = ((f32, host) block, host) block
+
+let nested_ref : (nested, host) P.t =
+  P.nest (module Block) (P.instantiate (module Block))
+
+(* The positions' arrays as fixed arrays. *)
+let nested_fixed : (nested, host) P.t =
+  P.v (fun c x -> P.Walk.(under Block.walk (under Block.walk tensor)) c x)
+
+let nested_module : (nested, host) P.t = P.instantiate (module Blocks)
+let list_ref : ((f32, host) block list, host) P.t = P.(list block)
+
+let list_fixed : ((f32, host) block list, host) P.t =
+  P.v (fun c x -> P.Walk.(under (list leaf) (under Block.walk tensor)) c x)
+
+let list_module : ((f32, host) block list, host) P.t =
+  P.instantiate (module Block_list)
+
+(* Each array as its dtype, shape and elements. *)
+let contents s x =
+  List.map
+    (fun (Nx.P a) -> Format.asprintf "%a %s" pp_leaf (Nx.P a) (Nx.to_string a))
+    (fst (P.flatten s x))
+
+(* [s] visits, folds and maps [x] as [reference] does. *)
+let agree ~msg reference s x =
+  let msg what = msg ^ ": " ^ what in
+  equal ~msg:(msg "visits") (list visit) (P.visits reference x) (P.visits s x);
+  let folded s =
+    P.fold s (fun p a acc -> (P.Path.to_string p, Nx.P a) :: acc) x []
+    |> List.rev
+  in
+  equal ~msg:(msg "fold's paths") (list string)
+    (List.map fst (folded reference))
+    (List.map fst (folded s));
+  equal ~msg:(msg "fold's arrays") leaves
+    (List.map snd (folded reference))
+    (List.map snd (folded s));
+  let mapped s =
+    let paths = ref [] in
+    let y =
+      P.map s
+        (fun p a ->
+          paths := P.Path.to_string p :: !paths;
+          Nx.neg a)
+        x
+    in
+    (List.rev !paths, contents s y)
+  in
+  equal ~msg:(msg "map")
+    (pair (list string) (list string))
+    (mapped reference) (mapped s)
+
+let nested_blocks =
+  block_of (block_of floats) |> Gen.with_pp (pp_visits nested_ref)
+
+let block_lists =
+  Gen.list ~size:(Gen.int_range 0 3) (block_of floats)
+  |> Gen.with_pp (pp_visits list_ref)
+
+(* A state whose model nests blocks in a block and whose frozen layer holds
+   fixed arrays at its positions. *)
+type ('a, 'd) state = {
+  model : (('a, 'd) block, 'd) block;
+  frozen : 'd Nx.float32_t linear;
+}
+
+module State = struct
+  type ('a, 'd) t = ('a, 'd) state
+
+  let walk c x =
+    let open P.Walk in
+    let model = field c "model" (under Block.walk Block.walk) x.model in
+    let frozen = field c "frozen" (under Linear.walk tensor) x.frozen in
+    { model; frozen }
+end
+
+let state : ((f32, host) state, host) P.t = P.instantiate (module State)
+
+let states =
+  let open Gen in
+  (let+ model = block_of (block_of floats)
+   and+ w = floats
+   and+ b = option floats
+   and+ split = bool in
+   ({ model; frozen = { w; b } }, split))
+  |> with_pp (fun ppf (x, split) ->
+      Format.fprintf ppf "%s, %a"
+        (if split then "split" else "on")
+        (pp_visits state) x)
+
+let law_round_trip (x, split) =
+  cover "split" split;
+  cover "whole on each device" (not split);
+  cover "an absent frozen bias" (Option.is_none x.frozen.b);
+  cover "an empty inner block" ((fst x.model.ends).layers = []);
+  let p = if split then S2.split ~axis:0 else S2.on in
+  let y = P.place (module State) p x in
+  let on_s2 : ((S2.d Nx.float32_t, S2.d) state, S2.d) P.t =
+    P.instantiate (module State)
+  in
+  let placements = P.fold on_s2 (fun _ a acc -> Nx.placement a :: acc) y [] in
+  equal ~msg:"placed"
+    (list (placement ()))
+    (List.map (fun _ -> p) placements)
+    placements;
+  let back = P.place (module State) Nx.Host.on y in
+  equal ~msg:"visits" (list visit) (P.visits state x) (P.visits state back);
+  equal ~msg:"contents" (list string) (contents state x) (contents state back);
+  let placements =
+    P.fold state (fun _ a acc -> Nx.placement a :: acc) back []
+  in
+  equal ~msg:"on the host"
+    (list (placement ()))
+    (List.map (fun _ -> Nx.Host.on) placements)
+    placements
+
+let nesting =
+  group "nesting"
+    [
+      prop "a block of blocks walked with under is a nested description"
+        nested_blocks (fun x ->
+          cover "an outer block with no layer" (x.layers = []);
+          cover "an inner block with no layer" ((fst x.ends).layers = []);
+          cover "an inner sparse kind" ((snd x.ends).kind <> Dense);
+          cover "an absent outer position"
+            (List.exists (fun l -> Option.is_none l.b) x.layers);
+          cover "an absent inner bias"
+            (List.exists (fun l -> Option.is_none l.b) (fst x.ends).layers);
+          agree ~msg:"fixed" nested_ref nested_fixed x;
+          agree ~msg:"module" nested_ref nested_module x);
+      prop "a list of blocks walked with under is a nested description"
+        block_lists (fun x ->
+          cover "no block" (x = []);
+          cover "blocks" (x <> []);
+          agree ~msg:"fixed" list_ref list_fixed x;
+          agree ~msg:"module" list_ref list_module x);
+      prop "place takes a state walked with under to a set and back" states
+        law_round_trip;
+      test "a frozen layer's arrays are fixed arrays at its paths" (fun () ->
+          let inner =
+            {
+              layers = [];
+              steps = i32 [| 1l |];
+              window = 0;
+              kind = Dense;
+              ends = (f32 [| 1. |], f32 [| 2. |]);
+            }
+          in
+          let x =
+            {
+              model =
+                {
+                  layers = [];
+                  steps = i32 [| 1l |];
+                  window = 0;
+                  kind = Dense;
+                  ends = (inner, inner);
+                };
+              frozen = { w = f32 [| 3. |]; b = Some (f32 [| 4. |]) };
+            }
+          in
+          let inner_at p =
+            List.map
+              (fun v -> p ^ "." ^ v)
+              [
+                "layers: length 0";
+                "steps: a leaf";
+                "window: int 0";
+                "kind: case \"dense\"";
+                "ends.0: a leaf";
+                "ends.1: a leaf";
+              ]
+          in
+          equal (list string)
+            ([
+               "model.layers: length 0";
+               "model.steps: a leaf";
+               "model.window: int 0";
+               "model.kind: case \"dense\"";
+             ]
+            @ inner_at "model.ends.0" @ inner_at "model.ends.1"
+            @ [ "frozen.w: a leaf"; "frozen.b: Some"; "frozen.b: a leaf" ])
+            (words state x);
+          let y = P.place (module State) S.on x in
+          is_on S.on y.frozen.w;
+          is_on S.on (Option.get y.frozen.b);
+          is_on S.on y.model.steps;
+          is_on S.on (fst y.model.ends).steps;
+          is_on S.on (fst (fst y.model.ends).ends);
+          let z = P.cast (module State) Nx.float64 x in
+          equal ~msg:"cast keeps the frozen layer" leaf (Nx.P x.frozen.w)
+            (Nx.P z.frozen.w);
+          equal ~msg:"cast keeps the model's fixed array" leaf
+            (Nx.P x.model.steps) (Nx.P z.model.steps);
+          equal ~msg:"cast keeps an inner fixed array" leaf
+            (Nx.P (fst x.model.ends).steps) (Nx.P (fst z.model.ends).steps);
+          let w = fst (fst z.model.ends).ends in
+          equal ~msg:"dtype" string "float64" (D.name (Nx.dtype w));
+          equal ~msg:"values" (array float_exact) [| 1. |] (Nx.to_array w));
+    ]
+
 (* Arithmetic *)
 
 (* A list of arrays of any dtype, each walked as a fixed array. *)
@@ -846,4 +1071,13 @@ let donation =
 let () =
   exit
     (run "nx ptree"
-       [ walks; laws; messages; payloads; arithmetic; signatures; donation ])
+       [
+         walks;
+         laws;
+         messages;
+         payloads;
+         nesting;
+         arithmetic;
+         signatures;
+         donation;
+       ])

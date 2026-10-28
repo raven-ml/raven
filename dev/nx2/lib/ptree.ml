@@ -88,6 +88,12 @@ module Walk = struct
     in
     go 0 l
 
+  (* [outer]'s positions are walked by [inner] at their paths with [c]'s
+     visitor, as [nest] walks them. *)
+  let under outer inner c x =
+    let leaf path y = inner { c with path } y in
+    outer { path = c.path; leaf; visitor = c.visitor } x
+
   let structure s c x = s c.visitor c.path x
 end
 

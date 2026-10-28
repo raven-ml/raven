@@ -3749,6 +3749,44 @@ module Ptree : sig
         [i]-th element with [walk] at [c]'s path then [Index i], from the first.
     *)
 
+    val under :
+      (('p, 'q, 'd, 'e) cursor -> 'u -> 'w) ->
+      (('a, 'b, 'd, 'e) cursor -> 'p -> 'q) ->
+      ('a, 'b, 'd, 'e) cursor ->
+      'u ->
+      'w
+    (** [under outer inner c x] walks [x] with [outer] at [c]'s path, and each
+        position of [outer]'s parameter with [inner] at that position's path,
+        [inner]'s paths after the position's as {!nest} makes them. Its visits
+        are [outer]'s in walk order, with [inner]'s visits of each position
+        where [outer] reaches it. The fixed arrays of [outer] and of [inner] go
+        from ['d] to ['e] alike, so [under U.walk V.walk] walks
+        [(('a, 'd) V.t, 'd) U.t] as a structure's [walk], and {!place} moves
+        every array it walks.
+
+        A frozen layer is [Linear] ({!Ptree}) with a fixed array at each
+        position:
+
+        {[
+        type ('a, 'd) tuned = {
+          head : 'a linear;
+          base : 'd Nx.float32_t linear;
+        }
+
+        module Tuned = struct
+          type ('a, 'd) t = ('a, 'd) tuned
+
+          let walk c x =
+            let open Nx.Ptree.Walk in
+            let head = field c "head" Linear.walk x.head in
+            let base = field c "base" (under Linear.walk tensor) x.base in
+            { head; base }
+        end
+        ]}
+
+        [Nx.Ptree.place (module Tuned) Gpu.on x] places [head] and [base], and
+        [Nx.Ptree.cast (module Tuned) dt x] casts [head] alone. *)
+
     val structure : ('s, 'd) t -> ('a, 'b, 'd, 'd) cursor -> 's -> 's
     (** [structure s c x] walks [x], a value of the description [s], at [c]'s
         path: each of its arrays as {!val-tensor} walks one, each of its
@@ -3757,8 +3795,9 @@ module Ptree : sig
 
         A description is at one set, so a walk that calls [structure] is too: it
         makes a description with {!v}, never a structure's module, and {!place}
-        cannot move what it walks. A part of a fixed type that moves between
-        sets is walked by its own walk, as {!Rng.walk} walks a key:
+        cannot move what it walks. A structure at the positions of another's
+        parameter is walked by {!under}, and a part of a fixed type that moves
+        between sets by its own walk, as {!Rng.walk} walks a key:
 
         {[
         type ('a, 'd) state = {

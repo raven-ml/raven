@@ -68,6 +68,13 @@ module Walk : sig
     'u list ->
     'w list
 
+  val under :
+    (('p, 'q, 'd, 'e) cursor -> 'u -> 'w) ->
+    (('a, 'b, 'd, 'e) cursor -> 'p -> 'q) ->
+    ('a, 'b, 'd, 'e) cursor ->
+    'u ->
+    'w
+
   val structure : ('s, 'd) t -> ('a, 'b, 'd, 'd) cursor -> 's -> 's
 end
 
