@@ -20,7 +20,10 @@
     from a source on the device where one holds it, each box stored by
     {!Nx_array.transfer}. An element narrower than a byte gathers on the host
     where the host does not address the device's memory, and the window is then
-    brought to it. Nothing holds the whole value unless the destination does. *)
+    brought to it. Nothing holds the whole value unless the destination does.
+
+    This module lies above {!Prim}; {!Exec}, {!Partial} and {!Check} place
+    values by it, and [Nx] views a device's window by it. *)
 
 val value :
   by:string ->

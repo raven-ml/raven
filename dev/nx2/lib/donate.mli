@@ -8,10 +8,8 @@
 
     A {e donor} is the [Array] or [Shards] value that {!donate} gives up. A
     {e handle} is a value over a donor's memory that one consumer reads
-    ({!Value.Handle}). Every handle of every donation of a donor holds it, and
-    two handles of one donor are told by [==] on it. A handle lives while its
-    donor does. A donor dies once, when a compare-and-set changes its word
-    from [Live] to [Died].
+    ({!Value.Handle}). A donor dies once, at the first claim of a handle of
+    it ({!Value.death}).
 
     A {e consumer} is the function the deaths name: an eager operation, which
     [Eval.run] computes, or a function of several operations, which
@@ -39,8 +37,8 @@
     several domains for one donor is a misuse, after which any of them may
     have raised and any of the donors they claimed may be dead.
 
-    This module calls {!Prim}. [Eval], [Nx] and the modules [Nx] is made of
-    call it. *)
+    This module lies above {!Prim}; {!Eval}, [Nx] and the modules [Nx] is
+    made of call it. *)
 
 (** {1:handles Handles} *)
 
@@ -89,9 +87,9 @@ type 'd claim
 
 val claim : by:string -> 'd Value.any list -> 'd claim
 (** [claim ~by xs] claims every handle among [xs] for their consumer [by], in
-    their order, and each kills its donor naming [by], for good. Two handles
-    of one donor (the same handle twice, two donations of one value, a handle
-    and one a movement passed on) are read as the donor beside its handle is,
+    their order, and each kills its donor naming [by]. Two handles of one
+    donor (the same handle twice, two donations of one value, a handle and
+    one a movement passed on) are read as the donor beside its handle is,
     and the donor dies once, at the first.
 
     Raises [Invalid_argument] naming [by] and the earlier consumer for a donor
