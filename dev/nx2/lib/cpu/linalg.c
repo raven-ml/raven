@@ -494,6 +494,61 @@ static double threaded(const arena *s, int64_t units, int64_t bytes,
   return nx_cpu_threads(bytes, cost) > 1 ? cost : 0;
 }
 
+/* Steps
+
+   A factorisation's step whose units its call's threads share: its units,
+   the bytes it touches and its real flops, as threaded prices them. The
+   loops of linalg_body.h take their steps' shapes from here, and run asks
+   a matrix's first step whether a batch shares the threads a matrix a
+   unit or step by step. */
+typedef struct {
+  int64_t units, bytes;
+  double flops;
+} job_shape;
+
+/* Cholesky's update of the trailing triangle past the block at [k] of a
+   factor of order [n], of elements of [w] bytes: its order [h], in tiles
+   of CHOL_NB, a unit each of the lower triangle; none past the last
+   block. */
+typedef struct {
+  int64_t h;
+  job_shape job;
+} chol_update;
+
+static chol_update chol_update_at(int64_t n, int64_t k, int64_t w) {
+  int64_t h = n - k - CHOL_NB > 0 ? n - k - CHOL_NB : 0;
+  int64_t tiles = (h + CHOL_NB - 1) / CHOL_NB;
+  return (chol_update){h,
+                       {tiles * (tiles + 1) / 2,
+                        (h * h / 2 + 2 * h * CHOL_NB) * w,
+                        (double)h * h * CHOL_NB}};
+}
+
+/* The width of an m × n LU's blocks. */
+static int64_t lu_width(int64_t m, int64_t n) {
+  int64_t kk = m < n ? m : n;
+  return kk >= LU_BLOCKS * LU_NB ? LU_NB : LU_NB / 2;
+}
+
+/* LU's step at the block at [k] of an m × n matrix of elements of [w]
+   bytes: the block's [kb] columns up to [next], the next block's [nb],
+   the [rest] past them, and its job, the next block a unit and the rest's
+   columns at most one each. */
+typedef struct {
+  int64_t kb, next, nb, rest;
+  job_shape job;
+} lu_step_shape;
+
+static lu_step_shape lu_step_at(int64_t m, int64_t n, int64_t k,
+                                int64_t w) {
+  int64_t kk = m < n ? m : n, bw = lu_width(m, n);
+  int64_t kb = kk - k < bw ? kk - k : bw, next = k + kb;
+  int64_t nb = kk - next < bw ? kk - next : bw, rest = n - next - nb;
+  return (lu_step_shape){kb, next, nb, rest,
+                         {1 + rest, (m - k) * (n - k) * w,
+                          2.0 * (m - next) * (n - next) * kb}};
+}
+
 /* Runs [body] over the [units] of a copy of [bytes]: on the call's
    threads where [s] holds them and the copy pays for them, since a matrix
    the call computes alone is copied while the threads wait. */
@@ -716,6 +771,27 @@ static double flops(const call *c) {
   }
 }
 
+/* Whether [c]'s batch runs as one unit of all, whose steps take the
+   threads, rather than a matrix a unit, the call costing [cost] over
+   [bytes] at [factor]. A Cholesky factor's or an LU's steps take threads
+   one by one, so its batch is one unit where a matrix's first step takes
+   more threads than there are matrices, at most the step's units: a
+   batch of complex128 factors that one block each holds ran slower as
+   one unit, its steps too small to split. Any other routine's batch is
+   one unit where the call asks for more threads than it has matrices. */
+static int whole_batch(const call *c, int64_t bytes, double cost,
+                       double factor, int cplx) {
+  if (c->routine != CHOLESKY && c->routine != LU)
+    return c->matrices < nx_cpu_threads(bytes, cost);
+  job_shape st = c->routine == CHOLESKY
+                     ? chol_update_at(c->n, 0, c->w).job
+                     : lu_step_at(c->m, c->n, 0, c->w).job;
+  double step =
+      work_cost(factor, (double)st.bytes, (cplx ? 4 : 1) * st.flops);
+  int64_t t = nx_cpu_threads(st.bytes, step);
+  return c->matrices < (t < st.units ? t : st.units);
+}
+
 /* The elements of scratch a matrix of [c] takes besides its products':
    a solve's triangle; QR's factored matrix, its τ and qr_scratch; eigh's
    reduced matrix, its τ, eigh_work, the bulge chase's reflectors, then as
@@ -874,11 +950,8 @@ static value run(call c, const value *arrays) {
                           (cplx ? 4 : 1) * (double)c.matrices * flops(&c)) +
                 (double)c.matrices * matrix;
   int released = nx_cpu_release(cost);
-  /* A matrix a unit where there are enough for the threads, else one unit
-     of all, whose GEMM updates and own jobs take the threads where the
-     call asks for more than one. */
-  int t = nx_cpu_threads(bytes, cost);
-  c.per = c.matrices >= t ? 1 : c.matrices;
+  int whole = whole_batch(&c, bytes, cost, factor, cplx);
+  c.per = whole ? c.matrices : 1;
   int cores = rig_pool_cores();
   c.packs = calloc((size_t)cores, sizeof(arena));
   c.copies = calloc((size_t)cores, sizeof(arena));
@@ -892,7 +965,7 @@ static value run(call c, const value *arrays) {
   for (int i = 0; i < cores; i++) {
     c.packs[i].copy = &c.copies[i];
     c.packs[i].factor = c.copies[i].factor = factor;
-    if (c.matrices < t) c.packs[i].workers = c.packs;
+    if (whole) c.packs[i].workers = c.packs;
   }
   if (c.matrices > 0) {
     int64_t units = c.matrices / c.per;

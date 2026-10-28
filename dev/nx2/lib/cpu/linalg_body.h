@@ -628,7 +628,8 @@ static void F(trailing_unit)(int64_t lo, int64_t hi, int worker, void *ctx) {
 static int F(cholesky)(T *a, int64_t n, int64_t ld, arena *s) {
   int ok = F(potf2)(a, n < CHOL_NB ? n : CHOL_NB, ld, s);
   for (int64_t k = 0; ok > 0 && k + CHOL_NB < n; k += CHOL_NB) {
-    int64_t h = n - k - CHOL_NB, tiles = (h + CHOL_NB - 1) / CHOL_NB;
+    chol_update u = chol_update_at(n, k, (int64_t)sizeof(T));
+    int64_t h = u.h;
     T *akk = a + k * ld + k, *l = akk + CHOL_NB * ld;
     T *neg = room(s->copy, h * CHOL_NB * (int64_t)sizeof(T));
     if (neg == NULL ||
@@ -636,12 +637,10 @@ static int F(cholesky)(T *a, int64_t n, int64_t ld, arena *s) {
       return -1;
     F(trailing) t = {.n = neg, .l = l, .c = l + CHOL_NB, .ld = ld, .h = h,
                      .kb = CHOL_NB, .workers = s->workers};
-    int64_t units = tiles * (tiles + 1) / 2;
-    int64_t bytes = (h * h / 2 + 2 * h * CHOL_NB) * (int64_t)sizeof(T);
-    double cost =
-        threaded(s, units, bytes, (double)h * h * CHOL_NB, CPLX);
-    if (cost == 0) F(tiles)(&t, 0, units, s);
-    else nx_cpu_job(units, bytes, cost, F(trailing_unit), &t);
+    job_shape j = u.job;
+    double cost = threaded(s, j.units, j.bytes, j.flops, CPLX);
+    if (cost == 0) F(tiles)(&t, 0, j.units, s);
+    else nx_cpu_job(j.units, j.bytes, cost, F(trailing_unit), &t);
     if (t.failed) return -1;
     ok = t.next;
   }
@@ -936,19 +935,16 @@ static void F(lu_unit)(int64_t lo, int64_t hi, int worker, void *ctx) {
 
 static int F(lu)(T *a, int64_t m, int64_t n, int64_t ld, int64_t *pivots,
                  int64_t *perm, arena *s) {
-  int64_t kk = m < n ? m : n;
-  int64_t bw = kk >= LU_BLOCKS * LU_NB ? LU_NB : LU_NB / 2;
+  int64_t kk = m < n ? m : n, bw = lu_width(m, n);
   for (int64_t i = 0; i < m; i++) perm[i] = i;
   if (kk == 0) return 1;
   int64_t nb0 = kk < bw ? kk : bw;
   if (!F(panel)(a, m, 0, nb0, ld, 0, nb0, pivots, perm, s)) return 0;
   for (int64_t k = 0; k < kk; k += bw) {
-    int64_t kb = kk - k < bw ? kk - k : bw, next = k + kb;
-    int64_t nb = kk - next < bw ? kk - next : bw, rest = n - next - nb;
-    int64_t bytes = (m - k) * (n - k) * (int64_t)sizeof(T);
-    /* The next block a unit, and the rest's columns at most one each. */
-    double cost = threaded(s, 1 + rest, bytes,
-                           2.0 * (m - next) * (n - next) * kb, CPLX);
+    lu_step_shape b = lu_step_at(m, n, k, (int64_t)sizeof(T));
+    int64_t kb = b.kb, next = b.next, nb = b.nb, rest = b.rest;
+    int64_t bytes = b.job.bytes;
+    double cost = threaded(s, b.job.units, bytes, b.job.flops, CPLX);
     int64_t threads = cost > 0 ? nx_cpu_threads(bytes, cost) : 1;
     int64_t tile = rest / (threads > 1 ? threads - 1 : 1);
     tile = tile < bw ? bw : tile;

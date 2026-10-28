@@ -1253,6 +1253,7 @@ let linalg_rows =
     cholesky f64 ~batch:1024 32;
     cholesky f64 ~batch:32 32;
     cholesky D.Complex128 ~batch:8 32;
+    cholesky D.Complex128 ~batch:4 48;
     solve 256 16;
     solve 1024 1024;
     lu f64 256;
