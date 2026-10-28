@@ -371,7 +371,9 @@ val vjp :
     result's cotangents to [params]' ({!section-derivatives}). Its argument has
     the result's structure [q], one cotangent per array, of that array's dtype
     and shape, and the cotangent of an integer or boolean array is ignored.
-    [pullback] runs no part of [f] again. When [vjp] runs outside every
+    [pullback] runs no part of [f] again, except the pullbacks of the
+    {!custom_vjp} rules [f] calls on values ({!section-custom}), each at every
+    application, on the domain applying it. When [vjp] runs outside every
     transformation, [pullback] may be applied any number of times, from any
     domain.
 
@@ -456,8 +458,12 @@ val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
     runs where the differentiation applies it. A tangent map runs at the call,
     on the tangents: values under {!jvp}, so it may read them too, and reverse
     mode's stand-ins under {!grad}, where a read raises. A pullback runs in each
-    backward pass, on that pass's cotangents, which it may read: a {!vjp}
-    pullback applied twice runs it twice. Elsewhere the rule is traced at the
+    backward pass, on that pass's cotangents: a {!vjp} pullback applied twice
+    runs it twice. They are values where the backward pass runs outside every
+    transformation, so the pullback may read them; under one, as
+    {!jacrev}'s map of the pullback, a read raises. The backward pass runs after
+    the differentiation returns, so such a pullback may neither use nor read a
+    value that differentiation tracks: read it in the rule. Elsewhere the rule is traced at the
     call with its derivative: inside a construct that stages it; where a map,
     a loop's step, a {!root}'s function or a second differentiation tracks an
     argument; and where any transformation lies between the call and the
@@ -576,7 +582,10 @@ val custom_vjp :
     tracks, as {!custom_jvp} does; and under forward mode around no such reverse
     mode, if the result has a float or complex array
     (["Rune.jvp: a custom_vjp rule has no forward derivative; give the function
-      a custom_jvp rule"]). *)
+      a custom_jvp rule"]). Where [pb] runs on values, the check of its result
+    raises in the backward pass, as does a [pb] that uses or reads a value its
+    differentiation tracks (["Nx.mul: a value of Rune.grad', used after
+    Rune.grad' returned"]). *)
 
 val custom_transpose :
   ('p, 'd) Nx.Ptree.t ->

@@ -1333,7 +1333,8 @@ module Rules = struct
     | Forward | Reverse when reverse && not tangible -> ys
     | Forward ->
         let ts = tangents c args in
-        let dys = if reverse then taped_map c d ts else d ts in
+        let map ts = Nx.Rng.refusing name (fun () -> d ts) in
+        let dys = if reverse then taped_map c map ts else map ts in
         tracks c ~name dys;
         with_tangents c ys dys
     | Reverse ->
@@ -1343,7 +1344,7 @@ module Rules = struct
                {
                  name;
                  apply = None;
-                 transpose = Host d;
+                 transpose = Host (fun cts -> Nx.Rng.refusing name (fun () -> d cts));
                  args = tangents c args;
                  captures = [||];
                  residuals = [||];

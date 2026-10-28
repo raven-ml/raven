@@ -426,9 +426,9 @@ and transpose =
   | Host of (value array -> value array)
       (** A custom rule's pullback run on values ({!Jvp}): from a cotangent per
           result to a cotangent per argument, its additions made where it runs.
-          Only a tape holds one, and only its backward pass ({!Linear}) runs it;
-          a pass that needs the transpose's program raises
-          [Invalid_argument]. *)
+          A tape holds one, and a trace of that tape's application; only its
+          backward pass ({!Linear}) runs it, and a pass that needs the
+          transpose's program raises [Invalid_argument]. *)
 
 and site
 (** The type for a call's {e site}: its program, compiled where the site is made

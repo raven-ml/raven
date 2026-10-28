@@ -909,8 +909,11 @@ module Rules = struct
           match transpose with
           | Traced t -> t
           | Host _ ->
+              (* Only a tape's forward application, which has none, maps it. *)
               invalid_arg
-                (name ^ ": a pullback run on values is mapped after its call")
+                (name
+               ^ ": a custom_vjp rule has no forward derivative; give the \
+                  function a custom_jvp rule")
         in
         let transpose, more =
           Trace.trace Body ~name

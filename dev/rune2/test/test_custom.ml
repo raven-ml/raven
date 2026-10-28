@@ -845,7 +845,31 @@ let error_tests =
         raises ~msg:"under grad" (Invalid_argument message) (fun () ->
             Rune.grad' (fun x -> Nx.sum (f x)) (v3 ()));
         raises ~msg:"under jit" (Invalid_argument message) (fun () ->
-            Rune.jit' f (v3 ())));
+            Rune.jit' f (v3 ()));
+        let drawing t = Nx.add t (Nx.Rng.uniform f64 [| 3 |]) in
+        let g = Rune.custom_jvp tensor tensor (fun x -> (x, drawing))
+        and h = Rune.custom_vjp tensor tensor (fun x -> (x, drawing)) in
+        raises ~msg:"in a tangent map under jvp" (Invalid_argument message)
+          (fun () -> Rune.jvp' g (v3 ()) (along ()));
+        raises ~msg:"in a pullback under grad"
+          (Invalid_argument
+             "Nx.Rng.uniform: no key inside Rune.custom_vjp, which refuses \
+              keyless draws") (fun () ->
+            Rune.grad' (fun x -> Nx.sum (h x)) (v3 ())));
+    test "a pullback on values may not take a value its differentiation tracks"
+      (fun () ->
+        (* It runs in the backward pass, after the differentiation returns. *)
+        let through pb x =
+          let w = Nx.mul x x in
+          Nx.sum (Rune.custom_vjp tensor tensor (fun y -> (y, pb w)) x)
+        in
+        let returned = "used after Rune.grad' returned" in
+        invalid ~sub:returned (fun () ->
+            Rune.grad' (through (fun w g -> Nx.mul g w)) (v3 ()));
+        invalid ~sub:"Nx.item: the value is traced by Rune.grad'" (fun () ->
+            Rune.grad'
+              (through (fun w g -> Nx.mul_s g (Nx.item [ 0 ] w)))
+              (v3 ())));
     test "an exception of the tangent map reaches the call that applies it"
       (fun () ->
         let f =
