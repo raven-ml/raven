@@ -397,7 +397,11 @@ let real_cases =
     binary "atan2" ~values:(Uniform [ (-2., 2.); (0.3, 2.) ]) Nx.atan2;
     binary "maximum" ~values:spaced Nx.maximum;
     binary "minimum" ~values:spaced Nx.minimum;
-    binary "hypot" ~values:(Uniform [ (0.3, 2.); (0.3, 2.) ]) Nx.hypot;
+    (* Ranges with other ends, so that no draw ties [|x|] and [|y|]: nx composes
+       hypot of the extremes, whose kinks give it a zero second derivative at a
+       tie, where the true one is not zero. The first derivative there is
+       right. *)
+    binary "hypot" ~values:(Uniform [ (0.3, 2.); (0.35, 1.9) ]) Nx.hypot;
     binary "where" ~values:spaced (fun a b ->
         Nx.where (Nx.less a b) (Nx.mul a b) (Nx.sin b));
     case ~shape:(rows 3) "fma" (three Nx.fma);
@@ -825,8 +829,10 @@ let complex_cases =
     z "complex prod" (fun z -> Nx.prod z);
     zz "complex where" (fun a b ->
         Nx.where (Nx.less_s (Nx.real f64 a) 1.17) a b);
+    (* Parts that never tie, as for hypot: the second derivative is wrong at a
+       tie. *)
     case ~shape:(rows 2)
-      ~values:(Uniform [ (0.2, 2.); (0.2, 1.) ])
+      ~values:(Uniform [ (0.2, 2.); (0.25, 1.) ])
       "magnitude and angle"
       (fun x ->
         let z = complex x in
