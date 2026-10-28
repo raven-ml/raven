@@ -1009,7 +1009,7 @@ let rec answer ~name ?held i axis n (c : Program.construct) k =
   | Remat { body; args; seeds } ->
       Effect.Deep.continue k (remat ~name ?held i axis n body args seeds)
   | Call { body; args; site; seeds } ->
-      Effect.Deep.continue k (call ~name i axis n body args site seeds)
+      Effect.Deep.continue k (call ~name ?held i axis n body args site seeds)
   | Iterate _ -> Effect.Deep.continue k (iterate ~name ?held i axis n c)
   | Switch _ -> Effect.Deep.continue k (switch ~name ?held i axis n c)
   (* An operator over lane values applies over the lanes: its arguments' and
@@ -1907,19 +1907,31 @@ and remat ~name ?held i axis n (body : Program.t) args seeds =
    compiled function is, and compiled. The map's name enters the derivation
    only where the program names it, so maps of other names share the program
    otherwise. *)
-and call ~name i axis n (body : Program.t) args site seeds =
+and call ~name ?held i axis n (body : Program.t) args site seeds =
   let la = Array.map (owned_v i) args in
   let bargs =
     Array.map (fun v -> if owned_v i v then batch_v i n v else v) args
   in
+  (* Where lanes are held, two more arguments, every lane's: which lanes run
+     and each lane's donor, so that the derived program holds them apart as
+     the map around it does. *)
+  let m = Array.length bargs in
+  let extra =
+    match held with Some h -> [| h.running; h.donors |] | None -> [||]
+  in
+  let bargs = Array.append bargs extra in
   let named = List.exists (Program.same_axis axis) (Program.axes site) in
   let forms = Array.map Program.form bargs in
   let no = Array.length body.outputs - Array.length body.adds in
   let made () =
     let laned = ref [||] in
     let mapped vs =
+      let held =
+        Option.map (fun _ -> { running = vs.(m); donors = vs.(m + 1) }) held
+      in
+      let vs = Array.sub vs 0 m in
       Program.threaded ~lanes:n body (fun running ->
-          interpret ~name ~axis n (fun w ->
+          interpret ~name ~axis ?held n (fun w ->
               let totals = Array.map (lane_v w) running in
               let out = Program.eval ~totals body (lanes_of w la vs) in
               laned := Array.sub (Array.map (owned_v w) out) 0 no;
@@ -1933,7 +1945,8 @@ and call ~name i axis n (body : Program.t) args site seeds =
     in
     ((prog, Array.append forms totals), !laned, None)
   in
-  let derivation = Program.Vmap { lanes = la; n; named } in
+  let lanes = Array.append la (Array.map (fun _ -> true) extra) in
+  let derivation = Program.Vmap { lanes; n; named } in
   let d = Program.derive ~map:(axis, n) site derivation forms made in
   let r =
     Program.perform

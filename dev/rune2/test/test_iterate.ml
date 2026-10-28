@@ -417,7 +417,51 @@ let test_lanes_in_step () =
       (Nx.reshape [| 2; 1 |] x)
   in
   (* [1; 4] -> [6; 9] -> [21; 24]. *)
-  equal bits_t (bits (Nx.create f64 [| 2; 1 |] [| 21.; 24. |])) (bits y)
+  equal bits_t (bits (Nx.create f64 [| 2; 1 |] [| 21.; 24. |])) (bits y);
+  (* A call in the step: its lanes raise, and a held lane's index is its
+     donor's. Lane 2 starts stopped, so its own index, outside the switch's
+     branches, is never computed. *)
+  invalid ~sub:"Rune.lanes: the lanes of the map are held apart" (fun () ->
+      Rune.vmap' ~axis:a
+        (Rune.iterate' ~max:10
+           ~until:(fun x -> Nx.greater_s (Nx.sum x) 5.)
+           ~f:(Rune.jit' (fun x -> Nx.add x (Nx.sum (Rune.lanes a x)))))
+        (Nx.reshape [| 2; 1 |] x));
+  let by_index x =
+    Rune.switch T.tensor (Rune.lane_index a x)
+      [ (fun () -> Nx.add_s x 1.); (fun () -> Nx.add_s x 2.) ]
+  in
+  let stepped f =
+    Rune.vmap' ~axis:a
+      (Rune.iterate' ~max:10
+         ~until:(fun x -> Nx.greater_equal_s (Nx.sum x) 3.)
+         ~f)
+      (Nx.reshape [| 3; 1 |] (vec [| 0.; 0.; 5. |]))
+  in
+  equal ~msg:"eager" bits_t
+    (bits (Nx.create f64 [| 3; 1 |] [| 3.; 4.; 5. |]))
+    (bits (stepped by_index));
+  let called = Rune.jit' by_index in
+  equal ~msg:"a call" bits_t
+    (bits (Nx.create f64 [| 3; 1 |] [| 3.; 4.; 5. |]))
+    (bits (stepped called));
+  (* The same call under lanes that stop together, then held again: each
+     reads the lanes it runs under. *)
+  equal ~msg:"a call, lanes together" bits_t
+    (bits (Nx.create f64 [| 2; 1 |] [| 1.; 2. |]))
+    (bits (Rune.vmap' ~axis:a called (Nx.reshape [| 2; 1 |] (vec [| 0.; 0. |]))));
+  equal ~msg:"a call, held again" bits_t
+    (bits (Nx.create f64 [| 3; 1 |] [| 3.; 4.; 5. |]))
+    (bits (stepped called));
+  (* Each lane's gradient through a called step, x -> 1.5 x + 1 until 3: lanes
+     from 0.5, 2 and 4 take two, one and no steps. *)
+  let affine = Rune.jit' (fun x -> Nx.add_s (Nx.mul_s x 1.5) 1.) in
+  let f x =
+    Rune.iterate' ~max:10 ~until:(fun x -> Nx.greater_equal_s x 3.) ~f:affine x
+  in
+  equal ~msg:"a call's gradient" bits_t
+    (bits (vec [| 2.25; 1.5; 1. |]))
+    (bits (Rune.vmap' (Rune.grad' f) (vec [| 0.5; 2.; 4. |])))
 
 (* An iterate in a step whose lanes stop apart: an outer lane that has stopped
    starts the inner loop stopped. *)
@@ -496,6 +540,21 @@ let test_totals () =
     (bits
        (total (fun () ->
             ignore (Rune.vmap' (Rune.vmap' f) (Nx.reshape [| 1; 3; 1 |] x)))));
+  (* A call's additions in a step whose lanes stop apart: a held lane's are
+     dropped. *)
+  let g =
+    Rune.jit' (fun x ->
+        Total.add t (Nx.scalar f64 1.);
+        Nx.add_s x 1.)
+  in
+  let called x =
+    Rune.iterate' ~max:10
+      ~until:(fun x -> Nx.greater_equal (Nx.max x) (Nx.scalar f64 3.))
+      ~f:g x
+  in
+  equal ~msg:"a call's, around the map" bits_t
+    (bits (Nx.scalar f64 4.))
+    (bits (total (fun () -> ignore (Rune.vmap' called x))));
   equal ~msg:"around grad of the map" bits_t
     (bits (Nx.scalar f64 704.))
     (bits
