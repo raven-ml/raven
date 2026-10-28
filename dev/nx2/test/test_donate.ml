@@ -52,37 +52,6 @@ let test_dies_at_its_consumer () =
       Nx.copy d);
   equal ~msg:"its shape answers" (array int) [| 2 |] (Nx.shape x)
 
-(* Two handles of one donor reaching one operation, the same handle twice, two
-   donations of one value, or a handle and one a movement passed on, view or
-   copy, are read as the donor beside its handle is: as the donor was, and the
-   donor dies once, naming the operation. *)
-let test_one_donor_twice () =
-  let dies by x =
-    invalid ~sub:(dead_in "Nx.copy" x by) (fun () -> Nx.copy x)
-  in
-  let x = fresh [| 1.; 2. |] in
-  let d = Nx.donate x in
-  equal ~msg:"the same handle" (array float_exact) [| 1.; 4. |]
-    (elements (Nx.mul d d));
-  dies "Nx.mul" x;
-  dies "Nx.mul" d;
-  let x = fresh [| 1.; 2. |] in
-  equal ~msg:"two donations" (array float_exact) [| 2.; 4. |]
-    (elements (Nx.add (Nx.donate x) (Nx.donate x)));
-  dies "Nx.add" x;
-  let x = fresh [| 1.; 2. |] in
-  let d = Nx.donate x in
-  equal ~msg:"a view passed on" (array float_exact) [| 1.; 4. |]
-    (elements (Nx.mul d (Nx.reshape [| 2 |] d)));
-  dies "Nx.mul" x;
-  (* A reshape of a transpose copies: the two handles share no memory. *)
-  let x = fresh_at [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-  let c = Nx.reshape [| 4 |] (Nx.transpose (Nx.donate x)) in
-  equal ~msg:"a copy passed on" (array float_exact) [| 2.; 5.; 5.; 8. |]
-    (elements (Nx.add (Nx.reshape [| 4 |] (Nx.donate x)) c));
-  dies "Nx.add" x;
-  dies "Nx.add" c
-
 let test_passed_on () =
   let x = fresh [| 1.; 2.; 3.; 4. |] in
   let d = Nx.reshape [| 2; 2 |] (Nx.donate x) in
@@ -777,6 +746,55 @@ let test_init_in_place () =
   copied ~msg:"contract, transposed" ~bytes:size grew;
   equal (array float_exact) plus_two (elements y)
 
+(* A handle a movement passes on as a view reads the donor's memory at the
+   result's own index, C-contiguous: its consumer writes there. *)
+let test_view_in_place () =
+  let y, grew =
+    grown cache (fun c -> Nx.neg (Nx.reshape [| rows * width |] (Nx.donate c)))
+  in
+  in_place ~msg:"through a reshape" ~bytes:size grew;
+  equal (array float_exact) (Array.map Float.neg original) (elements y)
+
+(* where writes into its donated second or third operand; a donated condition,
+   of another dtype than the result, dies naming it. *)
+let test_where_in_place () =
+  let n = rows * width in
+  let even () =
+    Nx.place Mem.on (Nx.init Nx.bool [| n |] (fun i -> i.(0) mod 2 = 0))
+  in
+  let ones () = on_mem [| n |] (Array.make n 1.) in
+  let twos () = on_mem [| n |] (Array.make n 2.) in
+  let chosen = Array.init n (fun i -> if i mod 2 = 0 then 1. else 2.) in
+  let donated ~msg f =
+    let y, grew = grown (fun () -> (even (), ones (), twos ())) f in
+    in_place ~msg ~bytes:(4 * n) grew;
+    equal ~msg (array float_exact) chosen (elements y)
+  in
+  donated ~msg:"the second" (fun (c, a, b) -> Nx.where c (Nx.donate a) b);
+  donated ~msg:"the third" (fun (c, a, b) -> Nx.where c a (Nx.donate b));
+  let c = even () in
+  equal ~msg:"a donated condition" (array float_exact) chosen
+    (elements (Nx.where (Nx.donate c) (ones ()) (twos ())));
+  invalid ~sub:"donated to Nx.where" (fun () -> Nx.copy c)
+
+(* A value over every other element of an array its caller gives up owns
+   that memory, which is not C-contiguous: its donation computes into fresh
+   memory. *)
+let test_strided_copied () =
+  let n = 1 lsl 16 in
+  let make () =
+    let a =
+      A.of_array D.Float32
+        [| 2 * n |]
+        (Array.init (2 * n) (fun i -> Float.of_int (i mod 2)))
+    in
+    let odd = A.move (Slice [| { start = 1; count = n; step = 2 } |]) a in
+    Nx.Repr.unsafe_of_array Nx.Host.v (Option.get odd)
+  in
+  let y, grew = grown_on Rig.host make (fun x -> Nx.neg (Nx.donate x)) in
+  copied ~msg:"every other element" ~bytes:(4 * n) grew;
+  equal (array float_exact) (Array.make n (-1.)) (elements y)
+
 (* A value that is not donated, or that shares the donated memory, keeps its
    elements, and the result is the same. *)
 let test_kept () =
@@ -1017,10 +1035,11 @@ let law_scatter_bits =
       let given = Nx.scatter ~combine ~axis:0 p u (Nx.donate (fresh c.target)) in
       equal (array int32) (bits32 kept) (bits32 given))
 
-(* Two handles of one donor in one operation give what the operation gives
-   two undonated copies, and kill the donor naming it: a product, which may
-   write into the memory, a sum beside the transpose, which reads it in
-   another layout, a matrix product, which reads it at other indices than the
+(* Two handles of one donor in one operation, the same handle twice or two
+   donations of one value, give what the operation gives two undonated copies,
+   and kill the donor and the handles naming it: a product, which may write
+   into the memory, a sum beside the transpose, which reads it in another
+   layout, a matrix product, which reads it at other indices than the
    result's own, and a scatter of a matrix into itself. *)
 let square =
   Gen.with_pp
@@ -1051,11 +1070,22 @@ let law_one_donor_twice =
       in
       List.iter
         (fun (by, f) ->
+          let dies y =
+            invalid ~sub:(dead_in "Nx.copy" y by) (fun () -> Nx.copy y)
+          in
           let kept = f (fresh_at s xs) (fresh_at s xs) in
           let x = fresh_at s xs in
           let h = Nx.donate x in
-          equal ~msg:by (array int32) (bits32 kept) (bits32 (f h h));
-          invalid ~sub:(dead_in "Nx.copy" x by) (fun () -> Nx.copy x))
+          equal
+            ~msg:(by ^ ", one handle twice")
+            (array int32) (bits32 kept)
+            (bits32 (f h h));
+          List.iter dies [ x; h ];
+          let x = fresh_at s xs in
+          let h = Nx.donate x and h' = Nx.donate x in
+          equal ~msg:(by ^ ", two donations") (array int32) (bits32 kept)
+            (bits32 (f h h'));
+          List.iter dies [ x; h; h' ])
         ops)
 
 (* Two handles of one donor, each through a chain of movements, or a handle
@@ -2952,8 +2982,6 @@ let () =
            [
              test "a donor and its handle die at the consumer, naming it"
                test_dies_at_its_consumer;
-             test "two handles of one donor are read as one"
-               test_one_donor_twice;
              law_one_donor_twice;
              law_moved_twice;
              stateful "donors and handles across calls" lives;
@@ -3020,6 +3048,12 @@ let () =
              test
                "a donation on another domain during Repr.read computes into \
                 fresh memory" test_read_donated_across;
+             test "a handle a view passes on is written in place"
+               test_view_in_place;
+             test "where writes into a donated value operand"
+               test_where_in_place;
+             test "a strided operand computes into fresh memory"
+               test_strided_copied;
              test "an undonated or shared operand keeps its elements" test_kept;
              test "an operation may read the donor beside its handle"
                test_donor_beside;

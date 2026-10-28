@@ -783,27 +783,7 @@ let refusals =
           invalid ~by:"Nx.split" (fun () -> Nx.split ~axis:0 0 x));
     ]
 
-let donation =
-  group "donation"
-    [
-      test "a one-to-one movement passes the handle to the final consumer"
-        (fun () ->
-          let x =
-            Nx.add (operand_of [| 2; 3 |] Plain).x
-              (Nx.zeros Nx.int32 [| 2; 3 |])
-          in
-          let d = Nx.flip (Nx.transpose (Nx.donate x)) in
-          equal ~msg:"the donor lives" (array int32)
-            [| 1l; 2l; 3l; 4l; 5l; 6l |]
-            (elements x);
-          equal (array int32)
-            [| 6l; 3l; 5l; 2l; 4l; 1l |]
-            (elements (Nx.copy d));
-          raises_match (Exn.invalid_arg ~substring:"was donated to Nx.copy")
-            (fun () -> Nx.copy x));
-    ]
-
 let () =
   exit
     (run "nx shapes"
-       [ laws; joins; properties; grids; views; dtypes; refusals; donation ])
+       [ laws; joins; properties; grids; views; dtypes; refusals ])

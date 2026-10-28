@@ -4,8 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (* Gather, Scatter and Assemble through the engine's private modules, copied
-   here: a split placement computes what one device does, and a donated target
-   takes the result. *)
+   here: a split placement computes what one device does. *)
 
 open Windtrap
 module A = Nx_array
@@ -37,12 +36,6 @@ let elements (type v s) (x : (v, s, b) Value.t) : v array =
   with
   | Some a -> A.to_array a
   | None -> fail "no array"
-
-let array_of (type v s) (x : (v, s, b) Value.t) : (v, s) A.t =
-  match x with
-  | Value.Array { a; _ } -> a
-  | Value.Shards _ | Value.Handle _ | Value.Traced _ ->
-      fail "not on one device"
 
 let ints = array int32
 let x23 () = on D.Int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]
@@ -100,25 +93,4 @@ let placements =
             (elements (Eval.run ~by:"t" a)));
     ]
 
-let donation =
-  group "donation"
-    [
-      test "a target whose memory a view shares is copied" (fun () ->
-          let x = x23 () in
-          let v = Eval.run ~by:"t" (Value.Move (Reshape [| 6 |], x)) in
-          let y =
-            scatter Set 1
-              (positions [| 2; 1 |] [| 2; 0 |])
-              (on D.Int32 [| 2; 1 |] [| 9l; 8l |])
-              (Donate.donate ~by:"t" x)
-          in
-          equal ~msg:"a copy" bool false
-            (Rig.Buffer.overlaps
-               (A.buffer (array_of v))
-               (A.buffer (array_of y)));
-          equal ~msg:"the view keeps its elements" ints
-            [| 1l; 2l; 3l; 4l; 5l; 6l |]
-            (elements v));
-    ]
-
-let () = exit (run "nx index ops" [ placements; donation ])
+let () = exit (run "nx index ops" [ placements ])
