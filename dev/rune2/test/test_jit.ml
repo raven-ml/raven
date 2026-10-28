@@ -99,6 +99,168 @@ let law_any (Any_case (dt, s, xo, yo, e)) =
   let jitted = outcome (fun () -> codes (Rune.jit (pair_fn ()) f x y)) in
   equal (outcome_t codes_t) eager jitted
 
+(* Bitcasts
+
+   A compiled bitcast gives eager's bits for every pair of dtypes, a narrower
+   dtype splitting each element along a new last axis and a wider one joining
+   the last axis's, over operands of random bits in every view, from the
+   start of their storage or one element into it, inside a byte for a sub-byte
+   dtype. It compiles whole: no call is evaluated. *)
+
+type bitcast_case =
+  | Bitcast_case :
+      ('v, 's) Nx.dtype * ('w, 'r) Nx.dtype * view * bool * int
+      -> bitcast_case
+
+(* [random_bits dt s st] is a value of [dt] and shape [s] of random bits. *)
+let random_bits (type v s) (dt : (v, s) Nx.dtype) s st : (v, s, Nx.host) Nx.t =
+  let n = numel s in
+  let byte () = Random.State.int st 256 in
+  match Nx.Dtype.bits dt with
+  | 1 ->
+      Nx.bitcast dt
+        (Nx.create Nx.bit s (Array.init n (fun _ -> Random.State.bool st)))
+  | 4 ->
+      Nx.bitcast dt
+        (Nx.create Nx.uint4 s (Array.init n (fun _ -> Random.State.int st 16)))
+  | 8 -> Nx.bitcast dt (Nx.create Nx.uint8 s (Array.init n (fun _ -> byte ())))
+  | b ->
+      let w = b / 8 in
+      Nx.bitcast dt
+        (Nx.create Nx.uint8 (Array.append s [| w |])
+           (Array.init (n * w) (fun _ -> byte ())))
+
+(* [viewed v ~offset s make] is a value of shape [s] as the view [v] of one
+   [make] gives: its last axis stepped by 2 where strided, its first broadcast,
+   its storage's first element skipped where [offset]. *)
+let viewed v ~offset s make =
+  let r = Array.length s in
+  let make s =
+    if not offset then make s
+    else
+      let n = numel s in
+      Nx.reshape s (Nx.slice [ Nx.R (1, n + 1) ] (make [| n + 1 |]))
+  in
+  match v with
+  | Flipped -> Nx.flip (make s)
+  | Strided when r > 0 ->
+      let s' = Array.copy s in
+      s'.(r - 1) <- 2 * s.(r - 1);
+      let step i = if i = r - 1 then Nx.Rs (0, s'.(i), 2) else Nx.A in
+      Nx.slice (List.init r step) (make s')
+  | Broadcast when r > 0 && s.(0) > 0 ->
+      let s1 = Array.copy s in
+      s1.(0) <- 1;
+      Nx.broadcast_to s (make s1)
+  | Plain | Strided | Broadcast -> make s
+
+(* [raw x] is [x]'s shape and each element's bits, read through a bitcast to
+   the unsigned integers of its width, a complex128's as two [uint64]s. *)
+let raw (type v s d) (x : (v, s, d) Nx.t) =
+  let each f y = Array.map f (Nx.to_array y) in
+  let elements =
+    match Nx.Dtype.bits (Nx.dtype x) with
+    | 1 -> each (fun b -> if b then "1" else "0") (Nx.bitcast Nx.bit x)
+    | 4 -> each string_of_int (Nx.bitcast Nx.uint4 x)
+    | 8 -> each string_of_int (Nx.bitcast Nx.uint8 x)
+    | 16 -> each string_of_int (Nx.bitcast Nx.uint16 x)
+    | 32 -> each (Printf.sprintf "%lx") (Nx.bitcast Nx.uint32 x)
+    | _ -> each (Printf.sprintf "%Lx") (Nx.bitcast Nx.uint64 x)
+  in
+  (Nx.shape x, elements)
+
+let views = [ Plain; Flipped; Strided; Broadcast ]
+
+(* Every pair of dtypes, the views and offsets in turn. *)
+let bitcast_examples =
+  List.concat_map
+    (fun src -> List.map (fun dt -> (src, dt)) Nx.Dtype.all)
+    Nx.Dtype.all
+  |> List.mapi (fun i (Nx.Dtype.Any src, Nx.Dtype.Any dt) ->
+      Bitcast_case (src, dt, List.nth views (i mod 4), i / 4 mod 2 = 1, i))
+
+let bitcast_cases =
+  let open Gen in
+  (let* (Nx.Dtype.Any src) = of_list Nx.Dtype.all
+   and+ (Nx.Dtype.Any dt) = of_list Nx.Dtype.all in
+   let+ view = of_list views
+   and+ offset = bool
+   and+ seed = int_range 0 1_000_000 in
+   Bitcast_case (src, dt, view, offset, seed))
+  |> with_pp (fun ppf (Bitcast_case (src, dt, v, offset, seed)) ->
+      Format.fprintf ppf "%a to %a, %a%s, seed %d" Nx.pp_dtype src Nx.pp_dtype
+        dt pp_view v
+        (if offset then " at an offset" else "")
+        seed)
+
+let law_bitcast (Bitcast_case (src, dt, view, offset, seed)) =
+  let st = Random.State.make [| seed |] in
+  let bs = Nx.Dtype.bits src and bt = Nx.Dtype.bits dt in
+  let dim () = Random.State.int st 4 in
+  let s =
+    if bt > bs then
+      Array.append
+        (Array.init (Random.State.int st 3) (fun _ -> dim ()))
+        [| bt / bs |]
+    else Array.init (Random.State.int st 4) (fun _ -> dim ())
+  in
+  let x = viewed view ~offset s (fun s -> random_bits src s st) in
+  let sub_byte d = Nx.Dtype.bits d < 8 in
+  cover "a narrowing" (bt < bs);
+  cover "a widening" (bt > bs);
+  cover "one width" (bt = bs);
+  cover "a sub-byte narrowing" (bt < bs && sub_byte dt);
+  cover "a sub-byte widening" (bt > bs && sub_byte src);
+  cover "between sub-byte dtypes" (bt <> bs && sub_byte src && sub_byte dt);
+  cover "a complex dtype"
+    (bt <> bs && (Nx.Dtype.is Complex src || Nx.Dtype.is Complex dt));
+  cover "a zero-size operand" (numel s = 0);
+  cover "a 0-d operand" (Array.length s = 0);
+  cover "a sub-byte operand inside a byte" (offset && bs < 8 && numel s > 0);
+  List.iter
+    (fun v ->
+      cover
+        (Format.asprintf "a %a operand" pp_view v)
+        (view = v && numel s > 1))
+    views;
+  let before = Rune.evaluations () in
+  let y = Rune.jit' (Nx.bitcast dt) x in
+  equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
+  equal codes_t (raw (Nx.bitcast dt x)) (raw y)
+
+(* Each nx.quant format's decode compiles whole and gives eager's values. *)
+let test_quant_decodes () =
+  let st = Random.State.make [| 7 |] in
+  let bytes s =
+    Nx.create Nx.uint8 s
+      (Array.init (numel s) (fun _ -> Random.State.int st 256))
+  in
+  let n = 3 and k = 256 in
+  let compiled name f =
+    let before = Rune.evaluations () in
+    let y = f () in
+    equal ~msg:(name ^ ": compiled") int 0 (Rune.evaluations () - before);
+    y
+  in
+  let blocks name make (values, size) =
+    let b = bytes [| n; k / values * size |] in
+    let decode b = Nx_quant.dequant f32 (make b) in
+    let y = compiled name (fun () -> Rune.jit' decode b) in
+    equal ~msg:name bits_t (bits (decode b)) (bits y)
+  in
+  blocks "q8_0" Nx_quant.q8_0 (32, 34);
+  blocks "q4_k" Nx_quant.q4_k (256, 144);
+  blocks "q6_k" Nx_quant.q6_k (256, 210);
+  blocks "mxfp4_blocks" Nx_quant.mxfp4_blocks (32, 17);
+  let codes = bytes [| n; k / 2 |] and scales = bytes [| n; k / 32 |] in
+  let decode scales codes =
+    Nx_quant.dequant f32 (Nx_quant.mxfp4 ~scales codes)
+  in
+  let y =
+    compiled "mxfp4" (fun () -> Rune.jit (pair_fn ()) decode scales codes)
+  in
+  equal ~msg:"mxfp4" bits_t (bits (decode scales codes)) (bits y)
+
 (* Bounded functions
 
    A function of one kind is within the sum of its compiled bound and its
@@ -1539,6 +1701,9 @@ let () =
              prop "a function of one kind is within its bounds" unary_cases
                law_unary;
              prop "a sum is within its bound" sum_cases law_sum;
+             prop ~count:20 ~examples:bitcast_examples
+               "a bitcast gives eager's bits" bitcast_cases law_bitcast;
+             test "nx.quant's decodes compile" test_quant_decodes;
            ];
          group "jit"
            [

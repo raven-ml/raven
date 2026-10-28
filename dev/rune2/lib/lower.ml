@@ -206,14 +206,8 @@ let move m x u =
   let d = D.Any (Nx.dtype x) in
   Arith.of_parts d (List.map (movement m) (Arith.parts d u))
 
-(* A bitcast of one width is the program of its one kind. *)
 let bitcast dt x u =
-  let src = Nx.dtype x in
-  if D.bits src <> D.bits dt then unlowered "a Bitcast that changes width";
-  let prog =
-    Nx_kernel.Prog.of_node ~ins:[| D.Any src |] (Op1 (Bitcast, D.Any dt, 0))
-  in
-  (Arith.prog prog (Nx.shape x) [| u |]).(0)
+  Arith.bitcast ~src:(D.Any (Nx.dtype x)) (D.Any dt) (Nx.shape x) u
 
 (* Transforms: a result of another precision than its operand's is not
    lowered. *)

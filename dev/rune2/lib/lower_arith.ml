@@ -672,3 +672,82 @@ let prog (p : P.t) s ins =
   |> Array.map (fun o -> of_parts (dtype_of o) values.(o))
 
 let cast ~src dt x = of_parts dt (cast_parts ~src dt (parts src x))
+
+(* Bitcasts across widths
+
+   A value's elements lie in bytes in C order: an element of a byte or more as
+   its bytes, low first, and a sub-byte one [8 / bits] to a byte, the first in
+   the low bits. A bitcast reads those bits in another dtype. Nodes of a byte or
+   more are read through tolk's bitcast, which resizes the last axis by the
+   ratio of its types' sizes; sub-byte codes are split from their bytes and
+   joined into them by shifts. *)
+
+(* The shifts [0; b; ...; (k - 1) b] along the last axis, of [k], of the
+   unsigned [u]'s shape. *)
+let shifts b u =
+  let s = Shape.shape u in
+  let r = List.length s in
+  let k = extent u Stdlib.(r - 1) in
+  let along =
+    List.init r (fun i -> Ops.Int (if Stdlib.(i = r - 1) then k else 1))
+  in
+  Shape.expand
+    (Shape.reshape
+       (Shape.arange ~step:b ~dtype:(Ops.dtype u) Stdlib.(k * b))
+       along)
+    s
+
+(* [split b k c] is each element of the unsigned codes [c] as [k] codes of [b]
+   bits along a new last axis, the first from the low bits. Codes and bytes
+   stay [Uint8]: a node of a sub-byte dtype holds its code masked, so no shift
+   or sum of disjoint fields passes 255, and C's promotion to [int] changes
+   nothing. *)
+let split b k c =
+  let s = Shape.shape c in
+  let wide = Shape.expand (Shape.unsqueeze c (-1)) (s @ [ Ops.Int k ]) in
+  Ops.shr wide (shifts b wide) land Stdlib.((1 lsl b) - 1)
+
+(* [join b c] is [split]'s inverse: the codes of [b] bits along [c]'s last axis
+   as one code, the first in the low bits, of [c]'s shape without that axis. *)
+let join b c =
+  let s = Shape.shape c in
+  let r = List.length s in
+  Shape.reshape
+    (Shape.rop (Ops.shl c (shifts b c)) Op.Add [ Stdlib.(r - 1) ])
+    (List.filteri (fun i _ -> Stdlib.(i < r - 1)) s)
+
+let bitcast ~src:(D.Any s as src) (D.Any t as d) shape x =
+  let open Stdlib in
+  let bs = D.bits s and bt = D.bits t in
+  if bs = bt then of_parts d (bitcast_parts ~src d (parts src x))
+  else
+    let ints l = List.map (fun n -> Ops.Int n) l in
+    let shape = Array.to_list shape in
+    let r = List.length shape in
+    (* Each element of [front] holds [per] bits: the operand's elements of a
+       narrowing, a widening's result's. *)
+    let front =
+      if bs > bt then shape else List.filteri (fun i _ -> i < r - 1) shape
+    in
+    let out = if bs > bt then shape @ [ bs / bt ] else front in
+    let per = Int.max bs bt in
+    let size d = Dtype.itemsize (dtype d) * 8 in
+    let code y = one (of_raw d y) in
+    let node =
+      if bs < 8 && bt < 8 then
+        let c = raw src [ x ] in
+        if bs > bt then code (split bt (bs / bt) c) else code (join bs c)
+      else
+        let bytes =
+          if bs >= 8 then
+            Ops.bitcast
+              (Shape.reshape x (ints (front @ [ per / size src ])))
+              Uint8
+          else
+            let c = raw src [ x ] in
+            join bs (Shape.reshape c (ints (front @ [ per / 8; 8 / bs ])))
+        in
+        if bt >= 8 then Ops.bitcast bytes (dtype d)
+        else code (split bt (8 / bt) bytes)
+    in
+    Shape.reshape node (dims d (Array.of_list out))

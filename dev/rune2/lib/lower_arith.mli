@@ -71,3 +71,11 @@ val prog : Nx_kernel.Prog.t -> int array -> Ops.t array -> Ops.t array
 val cast : src:Nx_array.Dtype.any -> Nx_array.Dtype.any -> Ops.t -> Ops.t
 (** [cast ~src dt x] is the node [x] of a value of [src] stored into [dt], as
     {!Nx_kernel.Prog.Cast} stores it. *)
+
+val bitcast :
+  src:Nx_array.Dtype.any -> Nx_array.Dtype.any -> int array -> Ops.t -> Ops.t
+(** [bitcast ~src dt s x] is the node [x] of a value of [src] and shape [s] read
+    as [dt], as {!Nx.bitcast} reads it: of [s] at one width, with an axis of the
+    ratio appended for a narrower [dt], and [s]'s last axis, of the ratio, read
+    as one element for a wider one. Its bits are the bytes the host stores, each
+    element's low byte first and a sub-byte element's first in the low bits. *)

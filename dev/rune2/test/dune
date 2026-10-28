@@ -31,7 +31,7 @@
   test_grad
   test_vmap
   test_custom)
- (libraries nx nx_array nx_kernel nx_support rig rune2 windtrap))
+ (libraries nx nx_array nx_kernel nx_quant nx_support rig rune2 windtrap))
 
 ; nx's special functions' derivatives, against goldens gen/special_grad.py
 ; writes from correctly rounded references.
