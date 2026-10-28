@@ -95,9 +95,10 @@ raven / llama.cpp (Vulkan; ROCm):
   (the compute route itself starts at 2 MiB): name the row, explain it or
   revert the wait change for small copies
 - rig.disk: each transfer pays about 220 ns for blocking signals below
-  rig's core (5493c9821): two sigmask calls and a runtime release around
-  the call. read/4K went 246 to 481 ns, write/4K 315 to 547 ns on fudge.
-  Find a mask that a short transfer does not pay twice
+  rig's core (5493c9821): two sigmask calls, and a runtime release at the
+  call's end, about 14 ns of read/4K's cost. read/4K went 246 to 481 ns,
+  write/4K 315 to 547 ns on fudge. Find a mask that a short transfer does
+  not pay twice
 - rig.disk's open/many-128 counts the frees of earlier rounds' buffers,
   which `of_io`'s drain runs when the GC has collected them, so its
   `exact` word count moves with `OCAMLRUNPARAM` and the rows run beside

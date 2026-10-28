@@ -13,17 +13,9 @@
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
 #include <caml/fail.h>
-#include <caml/mlvalues.h>
-
-/* rearm () below needs caml_check_pending_signals and
-   caml_set_action_pending, which caml/signals.h declares only for the
-   runtime's own code and its libraries. memory.h includes signals.h, so it
-   comes after. */
-#define CAML_INTERNALS
-#include <caml/signals.h>
-#undef CAML_INTERNALS
-
 #include <caml/memory.h>
+#include <caml/mlvalues.h>
+#include <caml/signals.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -206,18 +198,16 @@ value caml_rig_edge_mask(value unit) {
   return Val_unit;
 }
 
-/* The outermost end also makes the next poll point look at the signals
-   the runtime recorded: one recorded while the thread blocked it was
+/* The outermost end also leaves a blocking section, as Unix.sigprocmask
+   does: a signal the runtime recorded while the thread blocked it was
    skipped by the poll points since, each clearing what makes the next one
-   look. rearm () sets that again while any is recorded, the step with which
-   caml_leave_blocking_section ends, without releasing the runtime, which
-   was there only for that step. systhreads' Thread.yield does the same
-   after its switch (otherlibs/systhreads/st_stubs.c, thread_yield). The
-   external is not noalloc, so its return arms the next poll point to run
-   the handler. A wait's end needs none of this: its blocking step leaves a
+   look, and the leave sets that again while any is recorded. The external
+   is not noalloc, so its return arms the next poll point to run the
+   handler. A wait's end needs none of this: its blocking step leaves a
    blocking section, and caml_rig_edge_block runs the handlers. */
 static void rearm(void) {
-  if (caml_check_pending_signals()) caml_set_action_pending(Caml_state);
+  caml_enter_blocking_section_no_pending();
+  caml_leave_blocking_section();
 }
 
 value caml_rig_edge_unmask(value unit) {
