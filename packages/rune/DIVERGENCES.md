@@ -2,841 +2,676 @@
 
 ## Lowering
 
-rune lowers each nx operation to tolk's UOps (`packages/rune/lib/`). Where
-tinygrad's `Tensor` builds the same operation, the lowering builds tinygrad's
-decomposition if it computes what nx documents. This section lists every place
-where it builds something else, or builds what tinygrad has no source for.
+rune lowers each nx kernel operation to tolk's UOps (`packages/rune/lib/`).
+Where tinygrad's `Tensor` builds the same operation, the lowering builds
+tinygrad's decomposition if it computes what nx states. This section lists
+every place where it builds something else, or builds what tinygrad has no
+source for, except these, not yet recorded: the complex kinds
+(`lower_complex.ml`), the transforms (`lower_fft.ml`), `eigh`, logsumexp and
+moments, `expm1` and `log1p`, and scaled and segmented contractions.
 
 An entry is admitted for one of three reasons only:
 
 - **(a) an OCaml constraint;**
-- **(b) nx's documented meaning:** the operation's contract in `nx.mli` or
-  `nx_backend_intf.mli`, which nx.cpu computes;
+- **(b) nx's stated meaning:** the operation's contract in `Nx_kernel`
+  (`packages/nx/lib/kernel/nx_kernel.mli`, `prog.mli`), which nx's eager
+  kernels compute;
 - **(c) the engine's contract:** rig's submission protocol.
 
 Each entry gives the reference (tinygrad `79af1ca70`, or none), the raven
-lines, what differs, nx's meaning, the agreement class (RFC 0012: exact, exact
-up to the sign of a zero result, rounded sum, ulp per target, measured bound),
-the reason, and the test that pins it. An entry without its test is rejected at review. An entry goes when
-its reason goes.
+lines, what differs, nx's meaning, the agreement class (exact, a NaN result
+being any NaN; an ulp bound; a rounded sum; a stated bound), the reason, and
+the test that pins it. An entry without its test is rejected at review. An
+entry goes when its reason goes, and its number is not reused.
 
 A test is named by its module's suite (`packages/rune/test/test_<module>.ml`)
-and its path in it. An ulp row is measured against correctly rounded results
-over its sweep, and the measured maxima per target are recorded as each
-target's run lands.
+and its path in it. An ulp bound is the one `lower_real.mli` states, which
+`Lower_real`'s suite holds on the host; a rounded sum's is
+`lower_reduce.mli`'s; a matrix routine's is `lower_linalg.mli`'s.
 
 ### A1. Narrow floats compute at float32
 
 - **Reference:** `mixin/elementwise.py`, each operation at the operands' dtype.
-- **Raven:** `lower_arith.ml:27` (`float1`, `float2`).
-- **Differs:** an operation on `float16`, `bfloat16` or an 8-bit float is a
-  cast to `float32`, the operation, and one cast back. A renderer's
-  half-precision intrinsics never apply.
-- **nx:** `nx.mli`, Arithmetic: narrow floats compute at `float32` and round
-  once.
-- **Class:** as the operation's; the ulp rows hold to 1 ulp.
+- **Raven:** `lower_arith.ml:93` (`narrow`), `:128` (`decode`), `:185`
+  (`encode`), `:554` (`narrowed`).
+- **Differs:** an operation or comparison on `float16`, `bfloat16`, an 8-bit
+  float or `float4_e2m1fn` decodes its operands exactly to `float32` by integer
+  formulas on their bits, computes, and encodes the result once, to nearest
+  with ties to even. Neither a renderer's half-precision intrinsics nor a
+  target's own conversions apply, so no target decides a tie, a subnormal or a
+  NaN's bits.
+- **nx:** `prog.mli`, Results: floats narrower than `float32` compute in
+  `float32` and round once to their dtype.
+- **Class:** as the operation's; a transcendental kind within one rank of the
+  correctly rounded result.
 - **Reason:** (b).
-- **Pinned by:** `exact unary floats › * › float16`, `› bfloat16`;
-  `transcendental functions › * › float16`, `› bfloat16`.
+- **Pinned by:** `Lower_arith › exact unary kinds give eager's bits`, `› exact
+  binary kinds, comparisons, where and fma give eager's bits`, `› narrow
+  floats' transcendental kinds are within two ranks of eager's`.
 
 ### A2. Integer arithmetic wraps
 
 - **Reference:** `mixin/elementwise.py:74,84,103,125` (`neg`, `add`, `sub`,
   `mul`) and `pow`.
-- **Raven:** `lower_arith.ml:56` (`lift`, `wrapping1`, `wrapping2`), `:79`
-  (`abs`), `:638` (`pow_int`).
-- **Differs:** signed `Neg`, `Abs`, `Add`, `Sub`, `Mul` and integer `Pow`
-  compute on the unsigned bit pattern: `uint32` for widths below 32 bits (C,
-  Metal and CUDA promote them to `int`, whose products overflow), the unsigned
-  type of the width otherwise. tinygrad computes in the signed type, whose
-  overflow C leaves undefined. Integer `Pow` squares over the exponent's bits;
-  tinygrad refuses an exponent that is not a constant.
-- **nx:** modular arithmetic (`nx_backend_intf.mli`; nx.cpu computes in the
-  unsigned width); a negative integer exponent gives the integer quotient of 1.
+- **Raven:** `lower_arith.ml:253` (`lift`), `:264` (`store`), `:283`
+  (`int_unary`), `:300` (`int_pow`), `:363` (`int_binary`).
+- **Differs:** signed `Neg`, `Abs`, `Add`, `Sub`, `Mul`, `Fma` and integer
+  `Pow` compute on the unsigned bit pattern: `uint32` for widths below 32 bits
+  (C, Metal and CUDA promote them to `int`, whose products overflow), the
+  unsigned type of the width otherwise. tinygrad computes in the signed type,
+  whose overflow C leaves undefined. Integer `Pow` squares over the exponent's
+  bits; tinygrad refuses an exponent that is not a constant.
+- **nx:** `prog.mli`, `binary`: integers wrap; `Pow` of a negative exponent is
+  0, but 1 for a base of 1 and `±1` for a base of -1.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `exact binary integers › {add,sub,mul,pow} › *`,
-  `exact unary integers › {neg,abs} › *`,
-  `exact operations on the host › integers › *` (slow).
+- **Pinned by:** `Lower_arith › exact unary kinds give eager's bits`, `› exact
+  binary kinds, comparisons, where and fma give eager's bits`.
 
 ### A3. Integer reciprocal
 
 - **Reference:** `mixin/elementwise.py:460` (`reciprocal`).
-- **Raven:** `lower_arith.ml:68` (`recip`).
-- **Differs:** on integers, `1 / x` truncated: 1 at 1, -1 at -1, 0 elsewhere
-  and at 0. tinygrad's reciprocal is a float operation.
-- **nx:** integer division by zero is zero (`nx.mli`, `div`).
+- **Raven:** `lower_arith.ml:283` (`int_unary`, `Recip`).
+- **Differs:** on integers, `x` at 1 and -1, 0 elsewhere and at 0. tinygrad's
+  reciprocal is a float operation.
+- **nx:** `prog.mli`, `Recip`.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `exact unary integers › recip › *`.
+- **Pinned by:** `Lower_arith › exact unary kinds give eager's bits`.
 
 ### A4. Absolute value
 
 - **Reference:** `mixin/elementwise.py:911` (`x * sign x`).
-- **Raven:** `lower_arith.ml:79` (`abs`).
-- **Differs:** a float's sign bit is cleared, so `abs (-0.)` is `0.` and
-  `abs nan` a NaN; tinygrad's product gives `-0.` at `-0.`. A signed integer is
-  negated modularly (A2).
-- **nx:** `abs`, C's `fabs` and the modular negation.
+- **Raven:** `lower_bits.ml:42` (`magnitude`), through `lower_real.ml:589`
+  (`unary`); `lower_arith.ml:283` (`int_unary`).
+- **Differs:** a float's sign bit is cleared, so `abs (-0.)` is `0.` and a
+  NaN keeps its payload; tinygrad's product gives `-0.` at `-0.`. A signed
+  integer is negated modularly (A2).
+- **nx:** `prog.mli`, Results: `Abs` sets a NaN's sign bit as a number's, its
+  payload kept.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `exact unary floats › abs › *`, `exact unary integers › abs`.
+- **Pinned by:** `Lower_real › unary › abs`, `Lower_arith › exact unary kinds
+  give eager's bits`.
 
 ### A5. Sign of NaN
 
 - **Reference:** `mixin/elementwise.py:901` (`sign`).
-- **Raven:** `lower_arith.ml:84` (`sign`).
+- **Raven:** `lower_real.ml:130` (`sign`).
 - **Differs:** `sign nan` is NaN; tinygrad gives 1.
-- **nx:** `nx_backend_intf.mli`, `Sign`: NaN for a NaN.
+- **nx:** `prog.mli`, `Sign`: NaN for a NaN.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `exact unary floats › sign › *`.
+- **Pinned by:** `Lower_real › unary › sign`.
 
 ### A6. Rounding half away from zero
 
 - **Reference:** `mixin/elementwise.py:890` (`round`, half to even).
-- **Raven:** `lower_arith.ml:101` (`round`).
+- **Raven:** `lower_real.ml:152` (`round`).
 - **Differs:** a half rounds away from zero, decided on the exact rest
   `x - trunc x`.
-- **nx:** `nx_backend_intf.mli`, `Round`: C's `round`.
+- **nx:** `prog.mli`, `Round`.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `exact unary floats › round › *`.
+- **Pinned by:** `Lower_real › unary › round`.
 
 ### A7. Exponential in two parts
 
 - **Reference:** `mixin/elementwise.py:511` (`exp2 (x * 1/ln 2)`).
-- **Raven:** `lower_arith.ml:186` (`exp_parts`, `exp`).
+- **Raven:** `lower_real.ml:225` (`exp_parts`), `:217` (`exp2_split`), `:229`
+  (`exp`).
 - **Differs:** rounding the product `x log2 e` costs up to about `|x|` ulps.
-  The product is kept in two parts (Dekker), `2^(t+e)` is `2^t (1 + e ln 2)`,
-  and `2^t` is taken of `t` moved by a power of two multiplied in last, so that
-  results near the dtype's extremes neither overflow early nor round twice in
-  the subnormals.
-- **nx:** `exp`, libm's `expf` and `exp`.
-- **Class:** ulp, per target; budget 4.
+  The product is kept in two parts, its error exact from an fma, and
+  `2^(hi + lo)` is `2^hi (1 + lo ln 2)`. A positive `hi` takes `2^(hi - 1)`,
+  doubled after the product, since `hi` may round up to where `2^hi`
+  overflows while the result does not.
+- **nx:** `prog.mli`, Results, `Exp`.
+- **Class:** ulp bound: 9 at `float32` and `float64`.
 - **Reason:** (b).
-- **Pinned by:** `transcendental functions › exp › *`.
+- **Pinned by:** `Lower_real › unary › exp`.
 
-### A8. Sine and cosine reduced by a quarter turn
+### A8. Cosine reduced by a quarter turn
 
-- **Reference:** `mixin/elementwise.py:490` (`Ops.SIN`), `:500`
-  (`sin (pi/2 - x)`).
-- **Raven:** `lower_arith.ml:256` (`quarter_turns`, `by_quadrant`, `sin`, `cos`).
+- **Reference:** `mixin/elementwise.py:500` (`sin (pi/2 - x)`).
+- **Raven:** `lower_real.ml:323` (`reduce`), `:332` (`sin_cos`), `:339`
+  (`cos`).
 - **Differs:** `pi/2 - x` rounds first, so tinygrad's cosine is 0 at
-  `f32(pi/2)`, where it is `-4.4e-8`; and the sine of a large argument is only
-  as good as the target's own reduction, which on Clang loses the remainder
-  near multiples of `pi/2` (336 ulps at `1445.1` in `float32`). The lowering
-  reduces `|x|` to `q pi/2 + r`, `|r|` about `pi/4`: by `pi/2` in exact parts
-  (12 bits below `2^12` in `float32`, 30 bits below `2^22` in `float64`),
-  and by the bits of `2/pi` beyond. The quadrant picks `sin r`, or
-  `cos r = 1 - 2 sin^2 (r/2)`, and the target's sine sees only `r`.
-- **nx:** `sin`, `cos`, libm's.
-- **Class:** ulp, per target; budget 4, up to the greatest double.
+  `f32(pi/2)`, where it is `-4.4e-8`. The lowering reduces `|x|` to
+  `q pi/2 + r`, `|r| <= pi/4`, by tolk's Cody-Waite reduction below 30 and its
+  Payne-Hanek reduction from there, and picks `sin r` or
+  `cos r = 1 - 2 sin^2 (r/2)` by the quadrant: the target's sine sees only `r`.
+  The sine itself is tolk's `Sin`, as tinygrad's.
+- **nx:** `prog.mli`, Results, `Cos`.
+- **Class:** ulp bound: 9.
 - **Reason:** (b).
-- **Pinned by:** `transcendental functions › {sin,cos} › *` and
-  `› {sin,cos} of large arguments › *`, and the same on the host (slow).
+- **Pinned by:** `Lower_real › unary › cos`.
 
-### A9. Tangent of the accurate sine and cosine
+### A9. Tangent of the reduced argument
 
 - **Reference:** `mixin/elementwise.py:921` (`sin / cos`).
-- **Raven:** `lower_arith.ml:288` (`tan`).
-- **Differs:** through the sine and cosine (A8) only.
-- **nx:** `tan`, libm's.
-- **Class:** ulp, per target; budget 8.
+- **Raven:** `lower_real.ml:346` (`tan`).
+- **Differs:** A8's reduction, then `sin r / cos r` or `-cos r / sin r` by the
+  quadrant's parity, with `x`'s sign.
+- **nx:** `prog.mli`, Results, `Tan`.
+- **Class:** ulp bound: 19.
 - **Reason:** (b).
-- **Pinned by:** `transcendental functions › tan › *`.
+- **Pinned by:** `Lower_real › unary › tan`.
 
-### A10. Arcsine and arccosine
+### A10. Arcsine and arccosine by the arctangent
 
 - **Reference:** `mixin/elementwise.py:931,944` (Abramowitz-Stegun 4.4.46,
   `acos = pi/2 - asin`).
-- **Raven:** `lower_arith.ml:310` (`asin_small`, `half`), `:328` (`asin`),
-  `:337` (`acos`).
+- **Raven:** `lower_real.ml:403` (`asin`), `:404` (`acos`).
 - **Differs:** tinygrad's polynomial is float32-grade, has no relative accuracy
-  near 0, and `pi/2 - asin` cancels near 1. The lowering refines the
-  polynomial with Newton's steps on `sin y = t` (one in `float32`, two in
-  `float64`) on `|t| <= 0.71`, and reduces the rest by the half-angle forms:
-  `asin a = pi/2 - 2 asin (sqrt ((1 - a)/2))`, `acos` as twice that or `pi`
-  less it.
-- **nx:** `asin`, `acos`, libm's.
-- **Class:** ulp, per target; budget 8.
+  near 0, and `pi/2 - asin` cancels near 1. The lowering takes
+  `asin x = atan (x / sqrt (1 - x^2))`, `1 - x^2` by an fma, and
+  `acos x = 2 atan (sqrt ((1 - x) / (1 + x)))`, through A11.
+- **nx:** `prog.mli`, Results, `Asin`, `Acos`.
+- **Class:** ulp bound: 5 at `float32`, 9 at `float64`.
 - **Reason:** (b).
-- **Pinned by:** `transcendental functions › {asin,acos} › *`.
+- **Pinned by:** `Lower_real › unary › asin`, `› acos`.
 
 ### A11. Arctangent
 
 - **Reference:** `mixin/elementwise.py:954` (`asin (x / sqrt (1 + x^2))`).
-- **Raven:** `lower_arith.ml:348` (`atan_positive`, `atan`).
+- **Raven:** `lower_real.ml:357` (`atan_unit`), `:397` (`angle`), `:402`
+  (`atan`).
 - **Differs:** `x^2` overflows past `1.8e19` in `float32`, where tinygrad's
-  arctangent is 0. The lowering takes the arcsine form of `min (|x|, 1/|x|)`
-  only, and `pi/2` less it past 1.
-- **nx:** `atan`, libm's.
-- **Class:** ulp, per target; budget 8.
+  arctangent is 0. The lowering takes the arctangent of `min (|x|, 1/|x|)`,
+  in `[0, 1]`, by a polynomial (at `float64` after the half-angle step), and
+  `pi/2` in two parts less it past 1, with `x`'s sign.
+- **nx:** `prog.mli`, Results, `Atan`.
+- **Class:** ulp bound: 2 at `float32`, 7 at `float64`.
 - **Reason:** (b).
-- **Pinned by:** `transcendental functions › atan › *`.
+- **Pinned by:** `Lower_real › unary › atan`.
 
 ### A12. Two-argument arctangent
 
 - **Reference:** none.
-- **Raven:** `lower_arith.ml:356` (`atan2`).
-- **Differs:** a raven composition: the arctangent of `|y| / |x|`, `pi` less it
-  for a negative `x` (its sign bit), the sign of `y`, and C's values for both
-  zeros and both infinities.
-- **nx:** `atan2`, libm's.
-- **Class:** ulp, per target; budget 8.
+- **Raven:** `lower_real.ml:408` (`atan2`).
+- **Differs:** a raven composition: A11's angle of `|y|` over `|x|`, `pi` in two
+  parts less it where `x`'s sign bit is set, `y`'s sign, and C's values for
+  both zeros and both infinities.
+- **nx:** `prog.mli`, `Atan2`.
+- **Class:** ulp bound: 6 at `float32`, 8 at `float64`.
 - **Reason:** (b).
-- **Pinned by:** `transcendental functions › atan2 › *`.
+- **Pinned by:** `Lower_real › binary › atan2`.
 
 ### A13. Hyperbolic functions
 
 - **Reference:** `mixin/elementwise.py:1034,1046` (`(e^x -+ e^-x) / 2`), `:757`
   (`2 sigmoid (2x) - 1`).
-- **Raven:** `lower_arith.ml:406` (`sinh`), `:415` (`cosh`), `:426` (`tanh`).
+- **Raven:** `lower_real.ml:421` (`half_exp`), `:425` (`cosh`), `:430`
+  (`sinh`), `:436` (`tanh`).
 - **Differs:** `sinh` and `tanh` cancel near 0 (`tanh` is 0 below about
   `6e-8`), and `sinh` and `cosh` overflow for `x` in `(88.72, 89.42]` in
-  `float32`. The lowering computes `e^|x| / 2 +- e^-|x| / 2` with the halving in
-  the exponential's last scaling (A7), `sinh` below 1 as its Taylor series, and
-  `tanh` as fdlibm's `-t / (t + 2)` with `t = e^(-2|x|) - 1`, its Taylor series
-  below `|x| = 1/4`, which does not cancel.
-- **nx:** `sinh`, `cosh`, `tanh`, libm's.
-- **Class:** ulp, per target; budget 8.
+  `float32`. Below `|x| = 20` the lowering takes `cosh` as
+  `(e^|x| + 1/e^|x|) / 2`, `sinh` as `(t + t / (t + 1)) / 2` and `tanh` as
+  `t / (t + 2)`, `t` the `expm1` of `|x|` or `2|x|`, which do not cancel. From
+  20 `cosh` and `|sinh|` are `2^(|x| log2 e - 1)`, which overflows only with
+  the result, and `|tanh|` is 1.
+- **nx:** `prog.mli`, Results, `Sinh`, `Cosh`, `Tanh`.
+- **Class:** ulp bound: `sinh` 21, `cosh` 10, `tanh` 18.
 - **Reason:** (b).
-- **Pinned by:** `transcendental functions › {sinh,cosh,tanh} › *`.
+- **Pinned by:** `Lower_real › unary › sinh`, `› cosh`, `› tanh`.
 
 ### A14. Error function
 
 - **Reference:** `mixin/elementwise.py:1058` (Abramowitz-Stegun 7.1.26).
-- **Raven:** `lower_arith.ml:552` (`erf`).
+- **Raven:** `lower_real.ml:457` (`erf32`), `:503` (`erf_near64`), `:560`
+  (`erf_far64`), `:583` (`erf`).
 - **Differs:** tinygrad's approximation has an absolute error of `1.5e-7` and
-  no relative accuracy near 0. The lowering builds fdlibm's rational
-  approximations on four intervals, the coefficients of its double precision
-  `erf`, rounded to the dtype.
-- **nx:** `erf`, libm's.
-- **Class:** ulp, per target; budget 8.
+  no relative accuracy near 0. The lowering takes a polynomial per range: at
+  `float32`, one in `x^2` below 1 and one in `|x| - 2.5` to 4; at `float64`,
+  two up to 2.5, then `1 - e^(G(a) - a^2)`, `a` held at 5.95, where `erf`
+  rounds to 1.
+- **nx:** `prog.mli`, Results, `Erf`.
+- **Class:** ulp bound: 2 at `float32`, 3 at `float64`, measured.
 - **Reason:** (b).
-- **Pinned by:** `transcendental functions › erf › *`.
+- **Pinned by:** `Lower_real › unary › erf`.
 
 ### A15. True division
 
 - **Reference:** `mixin/elementwise.py:229` (`a * (1/b)`).
-- **Raven:** `lower_arith.ml:133` (`( /: )`).
+- **Raven:** `lower_real.ml:39` (`( /: )`), through `:620` (`binary`).
 - **Differs:** one rounding: `Ops.FDIV`, which tolk renders as `a / b`
   (tolk's ledger). tinygrad multiplies by the reciprocal, two roundings.
-- **nx:** `nx_backend_intf.mli`, `Fdiv`: the IEEE 754 quotient.
+- **nx:** `prog.mli`, `Fdiv`: the IEEE 754 quotient.
 - **Class:** exact where the target's division is correctly rounded.
 - **Reason:** (b).
-- **Pinned by:** `exact binary floats › div › *`,
-  `exact operations on the host › floats › div` (slow).
+- **Pinned by:** `Lower_real › binary › fdiv`.
 
 ### A16. Integer quotient and remainder by 0 and -1
 
 - **Reference:** `mixin/elementwise.py:229,216` (`Ops.CDIV`, `Ops.CMOD`).
-- **Raven:** `lower_arith.ml:738` (`idiv`), `:745` (`rem`).
-- **Differs:** a quotient or remainder by 0 is 0, a remainder by -1 is 0, and
-  the quotient of the least integer by -1 wraps. The divisor is made 1 in those
-  lanes before dividing, since a kernel computes both sides of a selection and
-  C traps or leaves them undefined.
-- **nx:** `nx.mli`, `div` and `mod_`: by zero is zero.
+- **Raven:** `lower_arith.ml:322` (`int_div`).
+- **Differs:** a quotient by 0 is 0 and a remainder by 0 the dividend; a
+  quotient by -1 is the modular negation, so the least integer's is itself,
+  and a remainder by -1 is 0. The divisor is made 1 in those lanes before
+  dividing, since a kernel computes both sides of a selection and C traps or
+  leaves them undefined.
+- **nx:** `prog.mli`, `Idiv`, `Mod`.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `exact binary integers › {div,mod} › *`,
-  `exact operations on the host › integers › {div,mod}` (slow).
+- **Pinned by:** `Lower_arith › exact binary kinds, comparisons, where and fma
+  give eager's bits`.
 
 ### A17. Exact float remainder
 
 - **Reference:** `mixin/elementwise.py:216` (`x - trunc (x * (1/y)) * y`).
-- **Raven:** `lower_arith.ml:673` (`fmod`).
+- **Raven:** `lower_real.ml:174` (`fmod`).
 - **Differs:** tinygrad's composition rounds three times and fails for
   `|x/y| >= 2^24`. The lowering computes C's exact `fmod` on the significands
   as integers: `(mx 2^d) mod my`, `d` the exponent difference, reduced 40 bits
-  of `d` at a time in `float32` (7 steps) and 11 in `float64` (187 steps), each
+  of `d` at a time in `float32` (7 steps) and 11 in `float64` (186 steps), each
   shifted remainder in 64 bits, then scaled by `y`'s exponent in two exact
-  steps. The steps are unrolled, not a loop (RFC 0012, Unresolved 3).
-- **nx:** `nx.mli`, `mod_`: C's `fmod` on floats.
+  steps. The steps are unrolled.
+- **nx:** `prog.mli`, `Mod`: `fmod` on floats.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `exact binary floats › mod › *`,
-  `exact operations on the host › floats › mod` (slow).
+- **Pinned by:** `Lower_real › binary › mod`.
 
-### A18. Power in two parts
+### A18. Power with its product in two parts
 
 - **Reference:** `mixin/elementwise.py:548` (`Ops.POW`, `xpow` =
   `exp2 (y log2 |x|)`).
-- **Raven:** `lower_arith.ml:566` (`log2_parts`), `:597` (`pow_float`).
-- **Differs:** `y log2 |x|` carries `y` times the logarithm's error. The
-  lowering takes `log2 |x|` to twice the precision (`|x| = m 2^e`,
-  `ln m = 2 atanh s` with its leading term in two parts), keeps the product in
-  two parts, and exponentiates as A7. The special values are C's `pow`'s.
-- **nx:** `pow`, libm's.
-- **Class:** ulp, per target; budget 16.
+- **Raven:** `lower_real.ml:443` (`pow`).
+- **Differs:** rounding `y log2 |x|` costs up to about its magnitude in ulps.
+  The product's error, exact from an fma, is kept, and the two parts are
+  exponentiated as A7's. A negative base takes the sign of an odd integral
+  exponent and is NaN for a fractional one, and the special values are C99
+  F.9.4.4's.
+- **nx:** `prog.mli`, `Pow` and Results.
+- **Class:** ulp bound: `9 + 6 |y log2 |x||`.
 - **Reason:** (b).
-- **Pinned by:** `transcendental functions › pow › *`,
-  `transcendental functions › pow of negative bases and integral exponents › *`.
+- **Pinned by:** `Lower_real › binary › pow`.
 
 ### A19. Maximum and minimum
 
 - **Reference:** `mixin/elementwise.py:378,393` (`Ops.MAX`; `minimum` as
   `-max(-x, -y)`).
-- **Raven:** `lower_arith.ml:758` (`extreme`).
-- **Differs:** NaN when an operand is NaN, and otherwise the target's `MAX`, or
-  its `MAX` of the negated operands for a minimum. tinygrad's `MAX` keeps the
-  larger operand by comparison, which a NaN never is. A zero result's sign is
-  the target's.
-- **nx:** `nx.mli`, `maximum`, `minimum`: NaN propagates; compiled, a zero
-  result's sign is the target's.
-- **Class:** exact up to the sign of a zero result.
+- **Raven:** `lower_real.ml:159` (`maximum`), `:164` (`minimum`).
+- **Differs:** NaN where an operand is NaN; otherwise the greater (lesser)
+  operand, and of equal operands the AND (OR) of their bits, so that `-0.`
+  orders below `0.`. tinygrad's `MAX` keeps the larger operand by comparison,
+  which a NaN never is, and leaves a zero's sign to the target.
+- **nx:** `prog.mli`, `Maximum`, `Minimum`: NaN propagates and `-0` orders
+  below `+0`.
+- **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `extremes of NaN`, `extremes › the maximum and the minimum of
-  zeros are a zero`, `extremes › relu, the maximum and the minimum read no sign
-  bit`.
+- **Pinned by:** `Lower_real › binary › maximum`, `› minimum`.
 
 ### A20. Less than or equal
 
 - **Reference:** `mixin/elementwise.py:330` (`not (x > y)`).
-- **Raven:** `lower_arith.ml:824` (`compare`, `at_most`).
+- **Raven:** `lower_real.ml:49` (`le`), through `:634` (`compare`).
 - **Differs:** `x < y or x = y`, false on NaN; tinygrad's is true on NaN.
-- **nx:** `nx.mli`, `less_equal`.
+- **nx:** `prog.mli`, Domains: every comparison with a NaN is false but
+  `Not_equal`.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `comparisons › less_equal`,
-  `exact operations on the host › floats › less_equal` (slow).
+- **Pinned by:** `Lower_real › compare › less_equal`.
 
 ### A21. Saturating conversion to integers
 
 - **Reference:** `mixin/dtype.py:19` (`cast`).
-- **Raven:** `lower_arith.ml:837` (`saturate`).
+- **Raven:** `lower_arith.ml:462` (`truncate`).
 - **Differs:** a float converted to an integer is held at the integer's range
   and NaN is 0; the conversion itself sees only values in range. C leaves both
   undefined.
-- **nx:** `nx.mli`, `cast`.
+- **nx:** `dtype.mli`, Stores: integers truncate toward zero and saturate to
+  their range.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `conversions › a float saturates at an integer's range, NaN
-  at 0 › *`, `exact operations on the host › conversions › *` (slow).
-
-### A22. Threefry on packed words
-
-- **Reference:** `mixin/rand.py:14` (the key packed as `uint64`),
-  `mixin/elementwise.py:457` (`Ops.THREEFRY`).
-- **Raven:** `lower_arith.ml:882` (`threefry`).
-- **Differs:** nx's words are `int32` pairs along the last axis, the low word
-  first; the lowering packs each pair into a `uint64`, hashes, and unpacks.
-- **nx:** `nx_backend_intf.mli`, `threefry`: Threefry-2x32-20, bit-identical
-  under every lowering.
-- **Class:** exact.
-- **Reason:** (b).
-- **Pinned by:** `random bits › a traced key draws eager's words, compiled for
-  the host`.
+- **Pinned by:** `Lower_arith › casts give eager's bits`.
 
 ### A23. A double narrows through float32 rounded to odd
 
 - **Reference:** `mixin/dtype.py:19` (`cast`).
-- **Raven:** `lower_arith.ml:857` (`to_float32_odd`, `cast`).
-- **Differs:** a `float64` converted to `float16`, `bfloat16` or an 8-bit float
-  is first narrowed to `float32` rounded to odd (truncated, its last bit set
-  when a discarded bit was), so that the conversion rounds once. tinygrad's
-  host conversion goes through `float32` rounded to nearest and rounds twice
-  near a tie: `bfloat16 (1 + 2^-8 + 2^-30)` comes out 1.
-- **nx:** `nx.mli`, `cast`: one rounding (nx.cpu's `double_to_float_odd`).
+- **Raven:** `lower_arith.ml:216` (`float_odd`), `:236` (`odd64`), `:489`
+  (`store_real`).
+- **Differs:** a `float64` converted to a narrow float is first narrowed to
+  `float32` rounded to odd (truncated, its last bit set when a discarded bit
+  was), so that the conversion rounds once; a 64-bit integer goes through its
+  `float64` rounded to odd, from its two exact halves. tinygrad's host
+  conversion goes through `float32` rounded to nearest and rounds twice near a
+  tie: `bfloat16 (1 + 2^-8 + 2^-30)` comes out 1.
+- **nx:** `prog.mli`, `Cast`: an integer's exact value, or a float, rounded
+  once.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `conversions › a double rounds to bfloat16 once`,
-  `exact operations on the host › conversions › a double near a bfloat16 tie
-  rounds once` (slow).
+- **Pinned by:** `Lower_arith › casts give eager's bits`, whose `float64`
+  operands lie one ulp around each narrow format's ties.
 
-### A24. Logarithm below zero
+### A24. Logarithm by fdlibm, NaN below zero
 
 - **Reference:** `mixin/elementwise.py:830` (`log2 (x) * ln 2`), whose `log2`
   is `codegen/decomp/transcendental.py:219` (`xlog2`) on a target without it.
-- **Raven:** `lower_arith.ml:222` (`log`).
-- **Differs:** `xlog2` takes `x` for `-0.` where its reciprocal is `-inf`,
-  which it is for a negative subnormal whose reciprocal overflows, so the
-  logarithm is `-inf`. A target that flushes subnormals takes every negative
-  subnormal for `-0.`. The lowering selects NaN where the bits of `x` have the
-  sign bit and a magnitude, before any target reads the value.
-- **nx:** `log`, libm's `logf` and `log`: NaN below zero, `-inf` at either
-  zero.
-- **Class:** exact.
+- **Raven:** `lower_real.ml:282` (`log`).
+- **Differs:** the product by `ln 2` adds its rounding to `log2`'s error, two
+  ulps near 1. The lowering builds fdlibm's `log` of the exact kinds, reading
+  no `log2`. `xlog2` takes `x` for `-0.` where its reciprocal is `-inf`, as for
+  a negative subnormal whose reciprocal overflows, and a target that flushes
+  subnormals takes every negative subnormal for `-0.`: the lowering selects
+  NaN where the bits of `x` have the sign bit and a magnitude.
+- **nx:** `prog.mli`, Results, `Log`: NaN below zero, `-inf` at either zero.
+- **Class:** ulp bound: 1, on every target.
 - **Reason:** (b).
-- **Pinned by:** `logarithms › log and log2 are NaN below zero and -inf at
-  -0.`, `logarithms › * › * has libm's classes`, and the same on the host
-  (slow).
+- **Pinned by:** `Lower_real › unary › log`, `› log within one ulp near 1`.
 
 ### R1. A float sum adds +0.
 
 - **Reference:** `mixin/reduce.py:20` (`sum`), `mixin/op.py:758`
   (`_split_cumalu`).
-- **Raven:** `lower_reduce.ml:64` (`accumulated`).
+- **Raven:** `lower_reduce.ml:79` (`arith`), `:287` (`negative_zeros`).
 - **Differs:** the lowering adds `+0.` to each float sum it computes, once per
-  output, for `Reduce` and `Scan` with `Sum`. A kernel starts a loop's
-  accumulator from `+0.`, but sums the terms alone when no loop is left (an
-  axis of one element, or one it unrolls whole), so tinygrad's sum of `[-0.]`
-  is `-0.`.
-- **nx:** `nx.mli`, `sum` and `cumsum`: a float sum is `0.` plus its terms, so
-  a sum that is exactly zero is `0.`.
+  output, for reductions and scans. A kernel starts a loop's accumulator from
+  `+0.`, but sums the terms alone when no loop is left (an axis of one
+  element, or one it unrolls whole), so tinygrad's sum of `[-0.]` is `-0.`. A
+  running sum from a carry is `-0.` where every term so far and the carry are.
+- **nx:** `lower_reduce.mli`: a sum whose terms are all `-0` is `+0`, and the
+  sum of no term `+0`.
 - **Class:** rounded sum.
 - **Reason:** (b).
-- **Pinned by:** `sums and products › a zero sum is +0. › *`,
-  `scans › a running sum starts from +0.`, and through tolk's rewrites
-  `compiled for the host › a zero sum is +0. › *` (slow).
+- **Pinned by:** `Lower_reduce › reductions › float sums hold their bound`,
+  `› scans › float running sums and products hold their bound`.
 
-### R2. Sums and products accumulate wide and unsigned, and name their dtype
+### R2. Sums and products accumulate in the carrier, integers unsigned
 
 - **Reference:** `mixin/reduce.py:20` (`sum`: the `sum_acc_dtype`
   accumulator, converted back for the narrow floats only), `:47` (`prod`: at
   the operand's dtype).
-- **Raven:** `lower_reduce.ml:64` (`accumulated`).
-- **Differs:** a sum and a product both accumulate in `Dtype.sum_acc`'s type,
-  unsigned for the signed integers, and convert once to the operand's dtype.
-  tinygrad accumulates signed integers in a signed type, whose overflow C,
-  Metal and CUDA leave undefined; returns an integer sum in its accumulator's
-  dtype; and multiplies narrow floats and narrow integers at their own width.
-- **nx:** `nx_backend_intf.mli`, `reduce` and `scan`: the result has the
-  operand's dtype; integers wrap; `nx.mli`, Arithmetic: narrow floats compute at
-  `float32` and round once.
+- **Raven:** `lower_reduce.ml:39` (`folded`, `lift`, `store`), `:79`
+  (`arith`), `:254` (`reduce`), `:378` (`scan`).
+- **Differs:** a sum and a product both accumulate in `Nx_kernel.carrier`'s
+  dtype, integers on the unsigned pattern of 32 or 64 bits, and convert once
+  to the destination's dtype. tinygrad accumulates signed integers in a signed
+  type, whose overflow C, Metal and CUDA leave undefined; returns an integer
+  sum in its accumulator's dtype; and multiplies narrow floats and narrow
+  integers at their own width.
+- **nx:** `nx_kernel.mli`, `carrier` and Reductions: each result rounds once
+  into its destination; integers wrap.
 - **Class:** exact on integers, rounded sum on floats.
 - **Reason:** (b).
-- **Pinned by:** `sums and products › integer sums wrap › *`,
-  `› integer products wrap › *`, `› narrow floats round once`,
-  `scans › integer scans are exact › *`,
-  `compiled for the host › integer sums and products wrap` (slow).
+- **Pinned by:** `Lower_reduce › reductions › integer sums and products wrap
+  as eager's`, `› float sums hold their bound`, `› scans › integer running
+  sums and products wrap as eager's`, `› cases › a uint16 product wraps past
+  int`, `› a uint16 running product wraps past int`.
 
-### R3. Extremes of reductions and scans propagate NaN
+### R3. Extremes of reductions and scans order keys
 
 - **Reference:** `mixin/reduce.py:73` (`max`, `Ops.MAX`), `mixin/op.py:473`
   (`min`, `-max(-x)`), `:798`, `:816` (`cummax`, `cummin`).
-- **Raven:** `lower_reduce.ml:74` (`extreme`).
-- **Differs:** a float extreme is NaN where the same reduction or scan of
-  `x <> x` is true, and otherwise tinygrad's: `Ops.MAX`, of the negated
-  elements for a minimum. tinygrad's `MAX` keeps the larger operand by
-  comparison, which a NaN never is. A zero result's sign is the target's.
-  Integers agree (`graph parity › max_int`, `min_int`, `cummax_int`,
-  `cummin_int`).
-- **nx:** `nx.mli`, `max`, `min`, `cummax`, `cummin`: NaN propagates;
-  compiled, a zero result's sign is the target's.
-- **Class:** exact up to the sign of a zero result.
-- **Reason:** (b).
-- **Pinned by:** `extremes › *`, `scans › float running extremes are exact up
-  to a zero's sign › *`, `scans › a running extreme is NaN from the first NaN
-  on`, `compiled for the host › extremes of NaN and both zeros` (slow).
-
-### R4. Arg-reductions order keys
-
-- **Reference:** `mixin/op.py:863` (`argmax`), `:890` (`argmin`).
-- **Raven:** `lower_reduce.ml:37` (`keys`), `:96` (`argmax`), `:108`
-  (`arg_reduce`).
-- **Differs:** tinygrad's decomposition runs over order keys, the bits with a
-  negative float's magnitude flipped and every NaN at the greatest key, or the
-  least for `argmin`: the first element equal to the maximum of the keys, the
-  first NaN if there is one, and `-0.` below `0.`. Over floats, tinygrad's equality with the maximum never holds for
-  a NaN. Integers agree (`graph parity › argmax_int`, `argmin_int`).
-- **nx:** `nx.mli`, `argmax`, `argmin`: the first NaN, else the first element
-  extreme in `maximum`'s order, where `-0.` is below `0.`.
+- **Raven:** `lower_reduce.ml:102` (`order`), `:109` (`extreme`).
+- **Differs:** a float extreme is the `Max` of order keys: the signed integer
+  of the bits with a negative float's magnitude flipped, complemented for a
+  minimum, and the greatest key for a NaN term, which reads back as a NaN.
+  `-0.` orders below `0.`. tinygrad's `MAX` of the values keeps the larger
+  operand by comparison, which a NaN never is, and leaves a zero's sign to the
+  target. Integers take tinygrad's `MAX`.
+- **nx:** `nx_kernel.mli`, Reductions; `prog.mli`, `Maximum`.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `arg-reductions › *`.
+- **Pinned by:** `Lower_reduce › reductions › extremes give eager's values`,
+  `› scans › extreme scans give eager's values`.
+
+### R4. Arg-reductions match bits
+
+- **Reference:** `mixin/op.py:863` (`argmax`), `:890` (`argmin`).
+- **Raven:** `lower_reduce.ml:213` (`same`), `:226` (`position`), `:246`
+  (`changes`).
+- **Differs:** the extreme is R3's; its position is that of the first term
+  with its bits, or with a NaN where it is a NaN. tinygrad's equality with the
+  maximum never holds for a NaN and holds for both zeros. A running arg, which
+  tinygrad has no source for, is at each position the last one up to it where
+  the running extreme changes its bits.
+- **nx:** `nx_kernel.mli`, `Arg`: the first NaN, else the first extreme term.
+- **Class:** exact.
+- **Reason:** (b).
+- **Pinned by:** `Lower_reduce › logsumexp, moments and arg › an arg gives
+  eager's values and positions`, `› a running arg gives eager's values and
+  positions`.
 
 ### R5. Stable sorts of packed keys
 
 - **Reference:** `mixin/op.py:913` (`sort`: a bitonic network of the values,
   each position recovered by matching equal values and their counts), `:965`
   (`argsort`).
-- **Raven:** `lower_reduce.ml:130` (`bitonic`), `:192` (`positions`), `:244`
-  (`take`), `:300` (`argsort`), `:320` (`sort`).
-- **Differs:** tinygrad's network sorts R4's keys, NaN at the greatest key in
-  both directions, each read as the unsigned integer of its width and packed in
-  an `int64` above its position, complemented for a descending sort. Packed
-  integers are distinct, so the network gives the stable order, and the
-  positions are their low bits. A 64-bit key sorts in two such passes, its low
-  half first. The sorted values are the operand's elements at those positions,
-  read by a gather (I3). tinygrad's recovery never matches a NaN, and its
-  network compares floats.
-- **nx:** `nx_backend_intf.mli`, `sort`, `argsort`: stable, in nx's sort order
-  or its exact reverse when descending (NaN last ascending and first descending,
-  `-0.` before `0.` ascending), and `sort` is the operand taken along `argsort`,
-  bit for bit.
+- **Raven:** `lower_index.ml:429` (`bitonic`), `:471` (`ranked`), `:488`
+  (`key`), `:502` (`keys`), `:533` (`sort`).
+- **Differs:** tinygrad's network sorts order keys, each the unsigned integer
+  of its width with R3's ordering, every NaN the greatest, complemented for a
+  descending sort, packed in an `int64` above its position. Packed integers
+  are distinct, so the network gives the stable order, and the positions are
+  their low bits. A key of more than 32 bits sorts in passes of 32, the least
+  significant first. The sorted values are the operand's elements at those
+  positions, read by I3's gather. tinygrad's recovery never matches a NaN, and
+  its network compares floats.
+- **nx:** `nx_kernel.mli`, `sort`: stable, `-0` below `+0` and every NaN above
+  `+inf`, reversed when descending, bits unchanged.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `sorts › *`; the network's kernels by `graph parity ›
-  argsort_int`, `argsort_int_descending`.
+- **Pinned by:** `Lower_index › sorts › sorts give eager's values and
+  positions`.
 
-### I1. A pad of `-0.`
-
-- **Reference:** `mixin/op.py:289` (`_pad_constant`: a fill equal to 0 is the
-  movement's zeros).
-- **Raven:** `lower_index.ml:37` (`pad`).
-- **Differs:** a fill of `-0.` is selected on the padding with `where`, as the
-  reference fills any other value; the reference takes `-0.` for 0 and pads
-  `+0.`.
-- **nx:** `nx_backend_intf.mli`, `pad`: the padding holds the value given.
-- **Class:** exact.
-- **Reason:** (b).
-- **Pinned by:** `assembly › a pad of -0. keeps its sign`.
-
-### I2. Pieces of different lengths are selected
+### I2. Pieces are selected as their bits
 
 - **Reference:** `mixin/op.py:750` (`cat`: each piece zero-padded to the whole,
   the pieces summed).
-- **Raven:** `lower_index.ml:51` (`cat`).
-- **Differs:** each piece is selected with `where` on the stretch it fills; the
-  reference's sum turns a `-0.` into `+0.` and quiets a signalling NaN. Empty
-  pieces are dropped first, and pieces of one length are stacked as the
-  reference stacks them.
-- **nx:** `nx_backend_intf.mli`, `cat`: the arrays' elements, one after the
-  other.
+- **Raven:** `lower_index.ml:375` (`assemble`), `:332` (`placed`), `:50`
+  (`joined`).
+- **Differs:** an assembly places each piece at its region and selects it with
+  `where` over the pieces before it, floats as their bits; empty pieces are
+  dropped first. The reference's sum turns a `-0.` into `+0.` and quiets a
+  signalling NaN. An assembly whose selections exceed 16 times eager's work is
+  refused, and the program runs uncompiled.
+- **nx:** `nx_kernel.mli`, `assemble`: the last piece holding each index, or
+  the fill, bits copied.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `assembly › pieces of different lengths keep -0.`,
-  `assembly › cat › *`.
+- **Pinned by:** `Lower_index › folds and assemblies › an assembly gives
+  eager's bits`, `Lower_index › work bounds › a scatter and an assembly past
+  16 times eager's work are refused`.
 
 ### I3. Gather by an index
 
 - **Reference:** `mixin/op.py:1041` (`gather`: a one-hot selection summed).
-- **Raven:** `lower_index.ml:79` (`gather`); `lower_reduce.ml:226` (`varies`),
-  `:244` (`take`).
-- **Differs:** a gather is one tolk INDEX of the operand by an index with axes.
-  The operand's axes that the index varies along, a split one first, then the
-  gathered axis, are flattened into rows; the index, clamped into the axis,
-  names a row, and the axes it is broadcast along are read whole. Where the
-  index lies outside the axis, an unsigned comparison selects `0`. The read
-  is a load, so each element keeps its bits; the reference sums the values,
-  which turns a gathered `-0.` into `+0.`, and costs a reduction over the
-  axis per element.
-- **nx:** `nx_backend_intf.mli`, `gather`: the element at the index; an index
-  outside the axis reads zero.
+- **Raven:** `lower_index.ml:70` (`take`), `:97` (`gather`).
+- **Differs:** a gather is one tolk INDEX of the operand, flattened, at each
+  element's offset. A position outside the axis, found by an unsigned
+  comparison, is read at 0 and selected as zero. The read is a load, so each
+  element keeps its bits; the reference sums the values, which turns a
+  gathered `-0.` into `+0.`, and costs a reduction over the axis per element.
+- **nx:** `nx_kernel.mli`, `gather`: a position outside the axis reads the
+  element of zero bits.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `indexed access › a gathered -0. keeps its sign`,
-  `› an index out of range reads +0.`, `› gather › *`; Jit's `gathers › *`
-  and `gathers across devices › *`.
+- **Pinned by:** `Lower_index › gathers and scatters › gathers give eager's
+  bits`.
 
 ### I4. Scatter keeps unreached positions and sets bits
 
 - **Reference:** `mixin/op.py:1077` (`_pre_scatter`), `:1127`
   (`scatter_reduce` sum: the masked updates summed, then `x` added), `:1168`
   (`scatter` through `_masked_merge`, one `where` per update along the axis).
-- **Raven:** `lower_index.ml:87` (`scatter`);
-  `lower_reduce.ml:88` (`reduce`).
-- **Differs:**
-  - `Add`: a position no update reaches is `x`'s element, selected on the
-    mask of reached positions; the reference adds `x` to a sum of zeros there,
-    which turns a `-0.` into `+0.`. A reached position is `x` and its updates
-    summed from `+0.`, at `float32` or wider and rounded once; integers wrap
-    on the unsigned bit pattern (A2).
-  - `Set`: the bits of the last update that reaches a position, the one of
-    highest index along the axis (every reaching update with `unique`), are
-    selected by a one-hot sum over their bit patterns, as unsigned integers
-    of their width, in one reduction. The
-    meaning agrees with the reference's `_masked_merge`, which also keeps the
-    last update; its construction, a chain of one `where` per update along the
-    axis, grows the graph with the number of updates.
-- **nx:** `nx_backend_intf.mli`, `scatter`: `x` where no update lands, the last
-  duplicate wins under `Set`, every update adds under `Add`.
+- **Raven:** `lower_index.ml:133` (`scatter`), `:111` (`summed`).
+- **Differs:** each element meets each update along the axis in a mask.
+  - A position no update reaches is `x`'s element, selected on the mask of
+    reached positions; the reference adds `x` to a sum of zeros there, which
+    turns a `-0.` into `+0.`.
+  - `Add`: `x` and its updates summed in the carrier and rounded once, `-0.`
+    where every term is; integers wrap on the unsigned pattern (R2).
+  - `Set`: the bits of the update of highest position along the axis that
+    reaches a position, picked among zeros by an unsigned `Max` in one
+    reduction. The reference's chain of one `where` per update grows the graph
+    with the updates.
+  - `Max`, `Min`: R3's extreme of `x` and the updates that reach it.
+  - A scatter whose mask exceeds 16 times eager's work is refused, and the
+    program runs uncompiled.
+- **nx:** `nx_kernel.mli`, `scatter`: `into` where no update lands, bits
+  unchanged.
 - **Class:** exact; rounded sum for float `Add`.
-- **Reason:** (b); for `Set`'s construction, the consumer is `Nx.set`, whose
-  flat scatter carries one update per selected position, thousands of them,
-  where a graph that grows with the updates is unusable.
-- **Pinned by:** `indexed access › a position no update reaches keeps -0.`,
-  `› the last of duplicate positions is set`, `› scatter set › *`,
-  `› scatter set unique › *`, `› scatter add › *`.
-
-### I5. A window at a corner read at run time
-
-- **Reference:** `tensor.py:502` (`__setitem__`), `mixin/op.py:146` (advanced
-  setitem through `_masked_merge`). The reference's windows start at constants;
-  a corner computed by the program is only reachable as advanced indexing, a
-  mask of every window position against every position of `x`, merged by one
-  `where` per window position.
-- **Raven:** `lower_index.ml:131` (`update`).
-- **Differs:** along each axis `v` does not fill, `v` is moved to its start by a
-  one-hot selection over bit patterns, as unsigned integers of their width,
-  and the moved `v` is selected on
-  the window's mask; along an axis `v` fills, the start is 0.
-- **nx:** `nx_backend_intf.mli`, `update`: `starts` is read when the kernel
-  runs, already clamped so that the window fits.
-- **Class:** exact.
-- **Reason:** (b); the consumer is kaun's decode, whose `Cache_index` (RFC
-  0002) writes a window at a position known only at run time, every step.
-- **Pinned by:** `indexed access › update › *`,
-  `› a window at constant starts`.
+- **Reason:** (b).
+- **Pinned by:** `Lower_index › gathers and scatters › a scatter by Set, Max
+  or Min gives eager's bits`, `› a scatter by Add wraps integers and holds its
+  float bound`; `Lower_index › work bounds › a scatter and an assembly past 16
+  times eager's work are refused`.
 
 ### I6. Fold
 
 - **Reference:** none.
-- **Raven:** `lower_index.ml:358` (`fold`), `:344` (`cut`), `:282`
-  (`reads_image`);
-  `lower_reduce.ml:88` (`reduce`).
-- **No source:** the transpose of the unfold: each movement of `Shape.pool` undone
-  in reverse order, a shrink by a pad of zeros, and the copies of the input
-  summed, which sums the windows where they overlap, from `+0.`, at `float32`
-  or wider and rounded once. Integers wrap; booleans are whether any window
-  holds. A fold without a window along some axis, or whose windows along it
-  read only padding, is zeros, a constant: no element of its input lands in
-  the output, and the kernel that sums nothing is one whose every lane reads
-  an `Invalid` index, which tolk cannot lower.
-- **nx:** `nx_backend_intf.mli`, `fold`: the windows put back, summed where they
-  overlap.
+- **Raven:** `lower_index.ml:278` (`fold`), `:228` (`unwindow`), `:254`
+  (`unends`), `:265` (`uninterior`).
+- **No source:** the adjoint of a padded load: each of its movements undone in
+  reverse by its adjoint, the windows' copies summed where they overlap, in
+  the carrier and rounded once. Integers wrap on the unsigned pattern of 32 or
+  64 bits. The same movements over a mark per term, folded by their maximum,
+  find where every term is `-0.`, which the sum from `+0.` would make `+0.`.
+  A boolean fold is refused.
+- **nx:** `nx_kernel.mli`, `fold`: the terms summed with no `+0` before the
+  first, `+0` where there is none.
 - **Class:** rounded sum.
 - **Reason:** (b).
-- **Pinned by:** `windows › fold › *`,
-  `windows › overlapping windows of -0. fold to +0.`,
-  `› a single window of -0. folds to +0.`, `› a fold whose windows along an
-  axis read only padding is zeros`, `› a fold with no window is zeros`;
-  `Compiled › edges › a fold whose windows along an axis read only padding is
-  zeros`, `› a fold and an unfold with no window are zeros and empty`.
+- **Pinned by:** `Lower_index › folds and assemblies › a fold wraps integers
+  and holds its float bound`.
 
-### I7. An unfold whose windows along an axis read only padding
+### I7. A window longer than its axis gives none
 
-- **Reference:** `mixin/op.py:1323` (`pool` of the padded operand).
-- **Raven:** `lower_index.ml:292` (`unfold`), `:282` (`reads_image`).
-- **Differs:** where every window along some axis reads only padding, or the
-  axis has no window, every patch is the pad's zeros, and the lowering gives
-  zeros of the patches' shape without a kernel. tinygrad pools the padded
-  operand: upcast, every lane of the gated read is `Invalid`, and tolk's
-  lowering of the kernel fails (a `float16` unfold of a gapped operand,
-  kernel `[2; 1]`, stride `[1; 2]`, padding `[(0, 0); (1, 0)]`, raised a
-  `CAST` of a vector `STACK` at verification).
-- **nx:** `nx_backend_intf.mli`, `unfold`: the windows of the operand padded
-  with zeros.
+- **Reference:** `mixin/op.py:1323` (`pool`).
+- **Raven:** `lower.ml:81` (`window`).
+- **Differs:** a window whose span exceeds its axis gives an axis of no
+  windows; tinygrad's pool refuses it.
+- **nx:** `nx_kernel.mli`, `Shape.padded`: a window longer than its axis
+  gives it no window.
 - **Class:** exact.
 - **Reason:** (b).
-- **Pinned by:** `windows › an unfold whose windows along an axis read only
-  padding is zeros`, `› an unfold with no window is empty`; `Compiled › edges
-  › an unfold whose windows along an axis read only padding is zeros`, `› a
-  fold and an unfold with no window are zeros and empty`.
+- **Pinned by:** `Lower › movements give eager's bits`, `› padded loads give
+  eager's bits`, which draw window spans of up to 5 over axes of up to 4; no
+  `cover` holds the case.
 
 ### L1. Products widen before they multiply
 
 - **Reference:** `mixin/op.py:367` (`dot`: `(x * w).sum(-1)`, the products at
   the operands' dtype, summed in `sum_acc_dtype`'s).
-- **Raven:** `lower_linalg.ml:59` (`matmul`), `:55` (`dot`);
-  `lower_reduce.ml:60` (`accumulator`).
-- **Differs:** the operands are converted to `Lower_reduce.accumulator`'s type
-  before they are multiplied, and the products summed by `Lower_reduce.reduce`
-  (R1, R2) and converted once to the operands' dtype. tinygrad rounds each
-  product of `float16`, `bfloat16` and the 8-bit floats to their dtype before
-  the `float32` sum, and multiplies and sums signed integers in a signed type.
-  The widened product is exact, and CUDA and HIP apply their narrow-in,
-  `float32`-out tensor cores to it through tolk's D29; Metal takes its
-  `float32` core, which comes first. A `float32` product agrees (`graph parity
-  › matmul`, `› matmul_batched`).
-- **nx:** `nx.mli`, Arithmetic: narrow floats compute at `float32` and round
-  once; nx.cpu's GEMM converts narrow floats to `float32` as it packs them,
-  accumulates integers in 64 bits, and wraps on the store.
+- **Raven:** `lower_reduce.ml:522` (`entered`), `:453` (`sum`), `:650`
+  (`contract`).
+- **Differs:** each operand is stored into the accumulator's dtype, times its
+  block's scale where it has one, before it is multiplied; the products and
+  the init are summed there, integers on the unsigned pattern (R2), and
+  rounded once to the output's dtype. A contraction of no products is its
+  init, a `-0.` included. tinygrad rounds each product of `float16`,
+  `bfloat16` and the 8-bit floats to their dtype before the `float32` sum, and
+  multiplies and sums signed integers in a signed type.
+- **nx:** `nx_kernel.mli`, `contract`.
 - **Class:** rounded sum on floats, exact on integers.
 - **Reason:** (b).
-- **Pinned by:** `products › *`, `products › narrow products are exact before
-  they are summed`, `products › a zero product is +0. › *`, `tensor cores ›
-  metal › *`, `tensor cores › cuda › *`, `compiled for the host › *` (slow).
+- **Pinned by:** `Lower_reduce › contractions › integer contractions wrap as
+  eager's`, `› float contractions hold their bound`, `Lower_reduce › cases ›
+  an int16 contraction wraps at the extremes`, `› a float16 contraction of no
+  products in float32 is its init`.
 
 ### L2. QR by Householder reflections, R triangular
 
 - **Reference:** `mixin/op.py:1799` (`qr`).
-- **Raven:** `lower_linalg.ml:78` (`householder`), `:144` (`triu`), `:148`
+- **Raven:** `lower_linalg.ml:276` (`householder`), `:343` (`triu`), `:347`
   (`qr`).
-- **Differs:** tinygrad's reflections, with LAPACK's choice of which columns
-  to reflect: a column already zero below the diagonal takes no reflection
-  and keeps its diagonal element's sign, where tinygrad reflects every column
-  that is not all zero, flipping it. A reflected column's diagonal element has
-  the opposite sign of the element it replaces, as in both. The factors are
-  then nx.cpu's, signs included. `r`'s elements below the diagonal are selected
-  as `+0.`: tinygrad leaves there the rounding error of the zeros the
-  reflections make. Each quotient is `Ops.FDIV`, rounded once, where tinygrad
-  multiplies by the reciprocal and rounds twice: IEEE division is the rule of
-  every rune composition, as of tolk's arithmetic (D9, D24). `float16` computes
-  at `float32`, and the reduced factors are the leading columns of `q` and
-  rows of `r`. As LAPACK's, a column's reflector is built from the column
-  divided by its largest magnitude, so that no square, sum or quotient
-  overflows or underflows; the column is reflected when any element below its
-  diagonal is nonzero; its diagonal element, the opposite of its first
-  element's sign times its norm, is written with zeros below it; and the
-  reflection is applied to the rows from the diagonal on of the columns to
-  its right. A column that takes no reflection leaves `q` and `r` as they
-  are, whatever it holds. A norm above the largest float gives an infinite
-  diagonal element and a finite `q`, as eager's does; a later column whose
-  elements are near the largest float can still overflow the product that
-  applies an earlier reflection to it, at `float32`, where eager's stays
-  finite (`[[1, 2, 3]; [4, 3e38, 6]; [7, 3e38, 9]]`): scaling that product
-  too would cost another reduction per column. This takes one more
-  reduction per column than tinygrad's. On a target that flushes subnormals, a column whose only
-  nonzero elements below the diagonal are subnormal takes no reflection (T1).
-- **nx:** `nx_backend_intf.mli`, `qr`: `q` orthonormal, `r` upper triangular,
-  the factors nx.cpu's LAPACK reflectors give.
-- **Class:** measured bound: within `16 max(m, n) u` of the largest element of
-  eager's factors, signs included, for well-conditioned matrices of up to
-  5 x 5; measured maxima over 300 such matrices, in units of `max(m, n) u`:
-  2.1 (`float32`), 2.0 (`float64`), 0.04 (`float16`, `u` its own).
+- **Differs:** tinygrad's reflections, with LAPACK's choice of columns: a
+  column already zero below the diagonal takes no reflection and keeps its
+  diagonal element's sign, and leaves `q` and `r` as they are, so that a NaN
+  or an infinity in it does not spread; tinygrad reflects every column that is
+  not all zero. Each reflector is built from its column divided by its largest
+  magnitude, so that no square, sum or quotient overflows or underflows. `r`'s
+  elements below the diagonal are selected as `+0.`, where tinygrad leaves the
+  rounding error of the zeros the reflections make. Each quotient is
+  `Ops.FDIV`, rounded once, where tinygrad multiplies by the reciprocal. The
+  columns run as one step of a tolk loop (`Loop.repeat`), where tinygrad
+  unrolls them.
+- **nx:** `nx_kernel.mli`, `qr`: `q` orthonormal, `r` upper triangular with
+  `+0` below its diagonal.
+- **Class:** stated bound: `Qr`'s.
 - **Reason:** (b).
-- **Pinned by:** `qr › matrices › *`, `qr › a zero column takes no
-  reflection`, `› one element`, `› no column: q is the identity`, `› batch
-  axes`, `› the factors take eager's signs`, `› a column whose squares
-  underflow reflects as eager's does`, `› a column whose squares overflow
-  reflects as eager's does`, `› a column that takes no reflection leaves q as
-  eager's, whatever it holds`; `Compiled › linear algebra › qr`, `› edges ›
-  QR's factors take eager's signs and reflect columns whose squares underflow
-  or overflow` and `› QR's q is eager's where a column that takes no
-  reflection holds a NaN or an infinity`; the construction, its
-  single-rounding quotients included, by `graph parity › qr_q`, `› qr_r`,
-  whose generator builds tinygrad's reflections with `Ops.FDIV` and LAPACK's
-  choice of columns.
+- **Pinned by:** `Lower_linalg › qr › q r reconstructs a`.
 
 ### L3. SVD sweeps to the roundoff and completes its vectors
 
 - **Reference:** `mixin/op.py:1817` (`svd`: `4 num` rounds of one-sided Jacobi
   rotations over a round-robin pairing, the singular values sorted by
   `sort`, `U`'s columns divided by them).
-- **Raven:** `lower_linalg.ml:169` (`pairs`), `:176` (`next_pairs`), `:188`
-  (`rounds`), `:192` (`rotate`), `:240` (`svd`).
+- **Raven:** `lower_linalg.ml:481` (`sweeps`), `:484` (`rounds`), `:512`
+  (`converged`), `:539` (`svd`).
 - **Differs:**
-  - the rotations run `ceil (log2 num) + 3` sweeps of `num - 1` rounds (`num`
-    for an odd `num`). tinygrad's `4 num` rounds are about four sweeps, which
-    leave `float64` values of random 9 x 9 matrices `3.4e5 num u` from
-    eager's and of 16 x 16 ones `5.6e10 num u`; the sweeps needed grow with
-    `num` (8 at 48 in `float64`), and these reach `1.8 num u` to 48;
+  - the rotations act on the `r` of the operand's QR (L2), scaled by the
+    power of two of its largest magnitude, which the values take back;
+  - they run `⌈p (⌈log2 num⌉ + 1) / 10⌉` sweeps of `num - 1` rounds (`num` for
+    an odd `num`), `p` the dtype's precision; tinygrad's `4 num` rounds are
+    about four sweeps, and the sweeps needed grow with `num`;
+  - a pair whose inner product is within the roundoff of the product of its
+    norms takes no rotation;
   - `u`'s columns are the reflections that triangularize the sorted rotated
     columns, each with the sign of its diagonal element. tinygrad divides each
     column by its singular value, which leaves a column of zeros for a zero
-    singular value and an inaccurate one for a small one. The columns are
-    sorted by `Lower_reduce.argsort`, which is stable;
-  - each quotient of the rotations is `Ops.FDIV`, rounded once, as in L2;
-  - the values are `float64`, refused (`Jit_error`) on a target without it,
-    such as Metal;
-  - a matrix holding NaN or an infinity, or whose rotated columns' inner
-    products off the diagonal are not within `16 num u` of their norm after
-    the fixed sweeps, has `u`, `s` and `vt` of NaN in every element, as eager
-    gives a matrix it cannot factor. tinygrad returns what its rounds reach.
-- **nx:** `nx.mli`, `svd`: `a = U diag(S) Vh`, `S` descending, non-negative,
-  a zero one `+0`; `nx_backend_intf.mli`: `u` and `vt` orthonormal.
-- **Class:** measured bound: within `16 max(m, n) u` of the largest singular
-  value for the values, and of one for the orthonormality of the vectors and
-  the reconstruction, for well-conditioned matrices of up to 4 x 4; measured
-  maxima, in units of `max(m, n) u`: 3.1 (`float32`), 4.0 (`float64`), 0.5
-  (`float16`, `u` its own).
+    singular value and an inaccurate one for a small one;
+  - each quotient is `Ops.FDIV`, and the rounds run as one step of a tolk
+    loop, as in L2;
+  - a matrix holding NaN or an infinity, or whose rotated columns are not
+    orthogonal within `16 num u` after the sweeps, is NaN in every result.
+    tinygrad returns what its rounds reach.
+- **nx:** `nx_kernel.mli`, `svd`: `s` descending and not negative, a zero one
+  `+0`; NaN for a matrix that fails.
+- **Class:** stated bound: `Svd`'s.
 - **Reason:** (b).
-- **Pinned by:** `svd › matrices › *`, `svd › float64 values of a 12 x 12
-  matrix reach its roundoff` (which fails under `4 num` rounds), `› a
-  rank-deficient matrix has orthonormal vectors and +0. values`, `› a matrix
-  holding NaN or an infinity has eager's factors, NaN in every element`, `› a
-  matrix holding NaN is NaN alone in its batch`, `› one element`, `› no
-  element: the full factors are identities`, `› a target without float64
-  refuses it`, `› batch axes`.
+- **Pinned by:** `Lower_linalg › svd › u diag s vh reconstructs a`, `› a
+  matrix with an infinity is NaN`, `› graded and repeated spectra converge`,
+  `› squares past the dtype's range`, `› a zero singular value is +0`.
 
 ### L4. Cholesky
 
 - **Reference:** none.
-- **Raven:** `lower_linalg.ml:367` (`cholesky`).
-- **No source:** a right-looking composition, one column per step: the
-  column's diagonal element's square root heads it, the rest is divided by
-  that root, and the working matrix loses the column's product with itself.
-  Only the lower triangle is read, and `upper` is the transpose. A matrix
-  with a pivot that is not positive, NaN included, has a factor of NaN in
-  every element, as eager's: one flag per matrix, from the pivots the steps
-  already hold, selects NaN.
-- **nx:** `nx.mli`, `cholesky`.
-- **Class:** measured bound: within `4 n u` of the largest element of eager's
-  factor for well-conditioned positive-definite matrices of up to 5 x 5;
-  measured maxima, in units of `n u`: 0.4 (`float32`), 0.6 (`float64`), 0
-  (`float16`); exact, all NaN, where the matrix is not positive-definite.
+- **Raven:** `lower_linalg.ml:768` (`cholesky`).
+- **No source:** a right-looking composition, one column per step of a tolk
+  loop: the column's diagonal element's square root heads it, the rest is
+  divided by that root, and the trailing rows lose the column's product with
+  itself. Only the lower triangle is read, and `Upper`'s factor is the
+  transpose. A matrix with a pivot that is not positive, NaN included, has a
+  factor of NaN in every element: one flag per matrix, from the diagonal,
+  selects NaN.
+- **nx:** `nx_kernel.mli`, `cholesky`.
+- **Class:** stated bound: `Cholesky`'s; exact, all NaN, where the matrix is
+  not positive definite.
 - **Reason:** (b).
-- **Pinned by:** `cholesky › positive-definite matrices › *`, `cholesky › a
-  matrix that is not positive-definite has eager's factor, NaN in every
-  element › *`, `› a matrix that is not positive-definite is NaN alone in its
-  batch`, `› one element`, `› no element`.
+- **Pinned by:** `Lower_linalg › cholesky › L Lᵀ reconstructs a`, `› a matrix
+  that is not positive definite is NaN`, `› a zero pivot of either sign is
+  NaN`.
 
 ### L5. Triangular solve
 
 - **Reference:** none.
-- **Raven:** `lower_linalg.ml:402` (`solve_triangular`).
+- **Raven:** `lower_linalg.ml:806` (`solve_triangular`).
 - **No source:** the system is made lower triangular, transposed under
-  `transpose` and reversed along both axes when the triangle read is the upper
-  one, and solved by substitution, one row a step, from the strictly lower
-  triangle and the diagonal; the other triangle, and the diagonal under
-  `unit_diag`, are never read. A zero on the diagonal read makes the
-  solution NaN in every element, as eager's: one flag per matrix, from the
-  diagonal elements the steps divide by, selects NaN.
-- **nx:** `nx.mli`, `solve_triangular`.
-- **Class:** measured bound: within `4 n u` of the largest element of eager's
-  solution for diagonally dominant matrices of up to 5 x 5; measured maxima,
-  in units of `n u`: 0.9 (`float32`, `float64`), 0 (`float16`); exact, all
-  NaN, where the matrix is singular.
+  `adjoint` and reversed along both axes when the triangle read is the upper
+  one, and solved by substitution, one row a step of a tolk loop; the other
+  triangle, and the diagonal under `unit_diagonal`, are never read. A zero on
+  the diagonal read makes the solution NaN in every element: one flag per
+  matrix selects NaN.
+- **nx:** `nx_kernel.mli`, `solve_triangular`.
+- **Class:** stated bound: `Solve_triangular`'s; exact, all NaN, where the
+  matrix is singular.
 - **Reason:** (b).
-- **Pinned by:** `triangular solves › dominant matrices › *`, `triangular
-  solves › a zero on the diagonal it reads gives eager's solution, NaN in
-  every element`, `› solve and inv of a singular matrix are eager's, NaN in
-  every element`, `› a singular matrix is NaN alone in its batch`, `› no
-  element`.
+- **Pinned by:** `Lower_linalg › solve_triangular › x solves op(a) x = b`,
+  `› a zero diagonal is NaN`.
 
 ### L6. LU with partial pivoting
 
 - **Reference:** none.
-- **Raven:** `lower_linalg.ml:303` (`lu`).
-- **No source:** one column a step. The pivot is the first element of largest
-  magnitude on or below the diagonal, found by `Lower_reduce.arg_reduce` over
-  magnitudes in which a NaN on the diagonal is the greatest and one below it
-  the least; the rows are exchanged with `Lower_index.gather`, bit for bit.
-  The column below a nonzero pivot is divided by it, and the trailing rows take
-  the rank-one update. It raises in neither eager nor compiled code: a zero
-  pivot leaves its column unscaled, as eager does.
-- **nx:** `nx_backend_intf.mli`, `lu`.
-- **Class:** measured bound, with eager's pivots and row order: within
-  `4 max(m, n) u` of the largest element of eager's factors for
-  well-conditioned matrices of up to 5 x 5 with shuffled rows; measured maxima,
-  in units of `max(m, n) u`: 0.7 (`float32`), 0.2 (`float64`), 0
-  (`float16`). The kernel rounds the update's product and difference apart
-  (tolk's D25), where nx.cpu's C, built with Clang's default contraction, may
-  fuse them.
+- **Raven:** `lower_linalg.ml:702` (`lu`), `:125` (`first_max`).
+- **No source:** one column a step of a tolk loop. The pivot is the first
+  element of largest magnitude on or below the diagonal, over magnitudes in
+  which a NaN on the diagonal is the greatest and one below it the least; the
+  rows are exchanged by an indexed read, bit for bit. The column below a
+  nonzero pivot is divided by it, and the trailing rows take the rank-one
+  update; a zero pivot leaves its column unscaled.
+- **nx:** `nx_kernel.mli`, `lu`.
+- **Class:** stated bound: `Lu`'s, the pivots exact.
 - **Reason:** (b).
-- **Pinned by:** `lu › matrices › *`, `lu › the first of equal magnitudes is
-  the pivot`, `› a zero column leaves its column unscaled`, `› a NaN below the
-  diagonal is never the pivot`, `› a NaN on the diagonal is the pivot`, `› one
-  element`, `› no element`.
-
-
-### P1. A result lies as nx places it
-
-- **Reference:** none: tinygrad's multi-device rules decide a result's
-  sharding from its operands'.
-- **Raven:** `lower.ml:348` (`settled`).
-- **Differs:** each lowered result is laid out as nx places it. A value tolk
-  computes split over the devices where nx places the result whole on each is
-  joined whole on each, by its elements' bits; one tolk computes whole, or
-  split along another axis, where nx splits it, is split as nx splits it.
-  Without it, a gather of rows split over devices by indices split over them
-  was split while nx places it whole, and each device's copy of the result
-  held only its own part.
-- **nx:** the placement of each operation's result, which a traced value
-  reports.
-- **Class:** exact.
-- **Reason:** (b).
-- **Pinned by:** Jit's `gathers across devices › rows taken by indices split
-  over two devices from rows split over them keep their bits`.
-
-## Targets
-
-A target computes what its hardware computes where that differs from nx's
-meaning and no lowering recovers it. Each entry gives the targets, what
-differs, nx's meaning, and the test that pins it.
-
-### T1. Subnormals flush to zeros of their sign
-
-- **Targets:** Metal, for `float32` and for `bfloat16`, which computes at
-  `float32`.
-- **Differs:** arithmetic reads a subnormal operand as a zero of its sign and
-  writes a subnormal result as a zero of its sign: `recip (-0x1.fffffep127)`
-  is `-0.`, where nx.cpu gives `-0x1p-128`, and `atan2 (-4) 0x1.fffffep127`
-  is `-0.`. A kernel that moves or orders values without computing on them,
-  a copy, a gather or a sort, keeps every bit. `maximum` and `minimum`, and
-  their reductions and scans, compare a subnormal as a zero of its sign and
-  return the operand they pick with its bits, so `relu` of a negative
-  subnormal is that subnormal and `cummax` may keep the smaller of two
-  positive subnormals (A19, R3). QR takes no reflection of a
-  column whose only nonzero elements below the diagonal are subnormal, as
-  `[[1, 0]; [1e-40, 1]]`'s, where nx.cpu reflects it (L2).
-- **nx:** `nx_backend_intf.mli`: IEEE 754 binary arithmetic, with gradual
-  underflow.
-- **Pinned by:** `Compiled › metal › elementwise › exact unary`, `› exact
-  binary`, `› transcendental unary`, `› transcendental binary` and `› cast`
-  (slow), which draw operands without subnormals on a flushing target and
-  compare with eager's result flushed the same way; `› reductions › sort`
-  keeps subnormals; `› edges › extremes of subnormals are their zeros'
-  extremes` flushes both sides.
+- **Pinned by:** `Lower_linalg › lu › L U reconstructs P a`, `› pivots follow
+  the rule`.
