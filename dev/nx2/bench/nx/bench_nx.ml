@@ -793,8 +793,9 @@ let conv_rows =
 
 (* Indexing: a row take reads its rows, an add-scatter its updates at
    positions drawn at random, as a histogram's or a gradient's land, a set
-   writes its row into a copy of the cache, and concatenate copies its result
-   once. *)
+   writes its row into a copy of the cache, a set by positions held in data
+   along each axis addresses every element it writes from three of them, and
+   concatenate copies its result once. *)
 
 let take_1k () =
   let ids =
@@ -821,6 +822,16 @@ let set_8m () =
   in
   let pos = Nx.Repr.of_array Nx.Host.v (A.of_array D.Int64 [||] [| 1000L |]) in
   (cache, filled D.Float32 [| 1; 8; 1; 64 |] 1., pos)
+
+(* A 32x32x32 value, the 16x16x16 elements a set writes into it, and the 16
+   even positions held in data that select them along each axis. *)
+let set_held () =
+  let at =
+    A.of_array D.Int64 [| 16 |] (Array.init 16 (fun i -> Int64.of_int (2 * i)))
+  in
+  ( filled D.Float32 [| 32; 32; 32 |] 0.,
+    filled D.Float32 [| 16; 16; 16 |] 1.,
+    Nx.Repr.of_array Nx.Host.v at )
 
 (* An embedding's gradient, the adjoint of a take of its rows: the rows of
    8192 tokens, 4096 wide, added into a table of 128256 rows, each call into
@@ -901,6 +912,8 @@ let index_rows =
           Nx.scatter ~combine:Add ~axis:0 ids updates sums);
       Thumper.bench_with_setup "set-row-8M" ~setup:set_8m
         (fun (cache, row, pos) -> Nx.set Nx.[ A; A; D (pos, 1); A ] row cache);
+      Thumper.bench_with_setup "set-held-3-axes-4K-of-32K" ~setup:set_held
+        (fun (x, v, at) -> Nx.set Nx.[ T at; T at; T at ] v x);
       Thumper.bench_with_setup "concatenate-2x512K"
         ~setup:(fun () -> host (1 lsl 19))
         (fun x -> Nx.concatenate ~axis:0 [ x; x ]);

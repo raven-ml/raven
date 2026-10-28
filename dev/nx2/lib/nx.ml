@@ -1443,14 +1443,9 @@ let take_along_axis ~axis p x = take_along ~by:"Nx.take_along_axis" axis p x
 (* Functional updates *)
 
 (* The flat position in [x] of each element of the selection [picks], [-1] where
-   a position held in data lies outside its axis: a map over the selection's
-   shape, reading each position held in data broadcast to it. A kernel
-   library may decline a map of many loads, so each map reads two: the first
-   two positions held in data, then the address so far, [-1] once invalid,
-   and the next position. A library that computes a map of two loads then
-   computes any selection. Each map reads the address so far beside the next
-   position, each where it lies, so the address lies at the union of the
-   inputs' cuts in pick order, where one map of them all would put it. *)
+   a position held in data lies outside its axis: one map over the selection's
+   shape, reading each position held in data broadcast to it, in pick order,
+   so the address lies at the union of their cuts. *)
 let targets ~by x picks =
   let s = shape x in
   let r = Array.length s in
@@ -1494,58 +1489,17 @@ let targets ~by x picks =
         | (At _ | Span _ | Rows _ | Held _ | From _), None -> [])
       picks
   in
-  let room = 2 in
-  let inputs = ref inputs in
-  (* The current map's loads and their dtypes, last first. *)
-  let loads = ref [] and dtypes = ref [] in
-  let ins () = Iarray.of_list (List.rev !dtypes) in
-  let read v =
-    loads := Value.Plain v :: !loads;
-    dtypes := D.Any (dtype v) :: !dtypes;
-    E.input (List.length !dtypes - 1) (dtype v)
+  (* The next position held in data: the next of [inputs], the map's operands
+     in their order. *)
+  let read = ref 0 in
+  let next () =
+    let i = E.input !read D.Int64 in
+    incr read;
+    i
   in
   let sum = ref (i64 0) and valid = ref None in
   let both ok =
     valid := match !valid with None -> Some ok | Some v -> Some E.(v && ok)
-  in
-  (* The address so far: the current map's output. *)
-  let address () =
-    let out =
-      match !valid with
-      | None -> !sum
-      | Some ok -> E.(where ok !sum (i64 (-1)))
-    in
-    let loads = Iarray.of_list (List.rev !loads) in
-    let prog = P.of_exprs ~ins:(ins ()) [| E.any out |] in
-    let v, () =
-      Eval.eval ~by
-        (Value.Map
-           {
-             layout = Nx_array.Layout.contiguous (Iarray.of_array sel);
-             prog;
-             outs = Value.[ D.Int64 ];
-             loads;
-             at = None;
-           })
-    in
-    v
-  in
-  (* The next position held in data, in a map with room to read it: a full
-     map's address carries into a new one, valid where it is not [-1]. *)
-  let next () =
-    if List.length !loads = room then begin
-      let carry = address () in
-      loads := [];
-      dtypes := [];
-      valid := None;
-      sum := read carry;
-      both E.(i64 0 <= !sum)
-    end;
-    match !inputs with
-    | v :: rest ->
-        inputs := rest;
-        read v
-    | [] -> assert false (* [inputs] holds one per position held in data. *)
   in
   let add a index = sum := E.(!sum + (index * i64 (Iarray.get strides a))) in
   (* A position held in data, and whether it lies in [0, d). *)
@@ -1579,7 +1533,23 @@ let targets ~by x picks =
     add a (E.coord !j);
     incr j
   done;
-  address ()
+  let out =
+    match !valid with None -> !sum | Some ok -> E.(where ok !sum (i64 (-1)))
+  in
+  let ins = Iarray.of_list (List.map (fun _ -> D.Any D.Int64) inputs) in
+  let loads = Iarray.of_list (List.map (fun v -> Value.Plain v) inputs) in
+  let v, () =
+    Eval.eval ~by
+      (Value.Map
+         {
+           layout = Nx_array.Layout.contiguous (Iarray.of_array sel);
+           prog = P.of_exprs ~ins [| E.any out |];
+           outs = Value.[ D.Int64 ];
+           loads;
+           at = None;
+         })
+  in
+  v
 
 (* The positions a pick held in data, or written as a list, gives its axis, of
    their own shape: [None] for a pick of the program's ranges. *)

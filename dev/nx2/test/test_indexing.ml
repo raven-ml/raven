@@ -744,9 +744,8 @@ let declines =
         test_declined_scatter_raises;
     ]
 
-(* An update through more positions held in data than one program reads:
-   [n] scalar positions into a value of [n] unit axes, the [k]th (if any)
-   outside its axis. *)
+(* An update through [n] positions held in data: [n] scalar positions into a
+   value of [n] unit axes, the [k]th (if any) outside its axis. *)
 let test_many_held n k () =
   let x = Nx.zeros Nx.float32 (Array.make n 1) in
   let at i = Nx.T (Nx.scalar Nx.int64 (if i = k then 1L else 0L)) in
@@ -819,9 +818,10 @@ let test_donated_start () =
 (* An update of [4; 4; 4] at two positions held in data along each axis, the
    first entry's split over two memory devices and the others' at [cuts].
    Each entry's positions, broadcast to the selection [2; 2; 2], are read
-   beside the earlier entries' at the union of their cuts: an entry cut
-   along its own axis of the selection beside the first is refused, named
-   operand 1, [y], whether it is the second or the third. *)
+   beside the others' at the union of their cuts: an entry cut along its own
+   axis of the selection beside the first is refused, named as the operand
+   its place among the entries makes it, the second [y] and the third
+   [z]. *)
 module Two = (val Nx.devices [ Nx_support.memory 0; Nx_support.memory 1 ])
 
 let set_cut (second, third) =
@@ -843,8 +843,8 @@ let many =
              split ~axis:0 [m0; m1]; Nx.place (Placement.split ~axis:0 s) y" );
           ( "the third cut beside the first",
             (Two.on, Two.split ~axis:0),
-            "Nx.set: operand 1 lies at split ~axis:2 [m0; m1] and is read at \
-             split ~axis:0 [m0; m1]; Nx.place (Placement.split ~axis:0 s) y" );
+            "Nx.set: operand 2 lies at split ~axis:2 [m0; m1] and is read at \
+             split ~axis:0 [m0; m1]; Nx.place (Placement.split ~axis:0 s) z" );
         ]
         (fun (_, cuts, message) ->
           raises (Invalid_argument message) (fun () -> set_cut cuts));
@@ -858,10 +858,9 @@ let many =
         ]
         (fun (_, (n, k)) -> test_many_held n k ());
       (* Written positions, positions held in data and a window over three
-         axes: past two of them the address so far carries into the next
-         map, so a position outside its axis read before the carry still
-         keeps its index from being written, and a window's start read
-         after it is still clamped. *)
+         axes in one update: a position outside its axis keeps its index
+         from being written whichever entry holds it, and a window's start
+         is clamped. *)
       cases "set mixes written, held and window positions"
         ~name:(Format.asprintf "%a" pp_case)
         [
