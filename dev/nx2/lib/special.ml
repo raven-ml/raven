@@ -82,13 +82,14 @@ let tables (type w) (x : (float, w) E.t) =
 
 (* Logarithms rounded to a double, written out: [Stdlib.log] calls the C
    library, whose last bit may differ by system, and on Windows by domain.
-   [log_two_over_sqrt_pi] is the logarithm of [2. /. Float.sqrt Float.pi]. *)
+   [log_0_9] and [log_0_01] are the logarithms of the doubles [0.9] and [0.01],
+   the values they stand for. *)
 let ln2 = 0x1.62e42fefa39efp-1
 let ln10 = 0x1.26bb1bbb55516p+1
 let log_pi = 0x1.250d048e7a1bdp+0
 let log_2pi = 0x1.d67f1c864beb5p+0
 let log_sqrt_2pi = 0.5 *. log_2pi
-let log_two_over_sqrt_pi = 0x1.eeb95b094c190p-4
+let log_two_over_sqrt_pi = 0x1.eeb95b094c191p-4
 let log_0_9 = -0x1.af8e8210a415cp-4
 let log_0_01 = -0x1.26bb1bbb55515p+2
 
