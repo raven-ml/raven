@@ -634,13 +634,11 @@ val of_bigarray :
     A read gives a value's elements to OCaml. It works at every brand: it is a
     {{!section-waiting}wait} on the value's set, which may raise a failed
     check, then copies the value's elements to the host and leaves every
-    placement as it was. A read is not an operation: no interpretation
-    receives it.
+    placement as it was. A read reaches no interpretation.
 
     Each raises [Invalid_argument] naming itself for a dead value, and for a
-    traced one: [Nx.item: the value is traced by Rune.jit], but that
-    {!item} may read the twin of a traced value made with one, as {!item}
-    says. *)
+    traced one, as [Nx.item: the value is traced by Rune.jit]; {!item} alone
+    reads a traced value that has a twin, as its contract says. *)
 
 val to_array : ('v, 's, 'd) t -> 'v array
 (** [to_array x] is [x]'s elements in C order. *)
@@ -667,7 +665,7 @@ val to_bigarray :
 (** {1:waiting Waiting and checks}
 
     A set's devices may compute while the caller goes on: an operation returns
-    once its work is asked for. The host waits for a set only at a wait:
+    once its work is submitted. The host waits for a set only at a wait:
     {!sync}, a {{!section-reads}read}, or {!place} onto {!Host}.
 
     A check is a condition on data whose failure raises the caller's exception:
@@ -688,10 +686,11 @@ val to_bigarray :
     submissions late while work is submitted on it ({!Rig.section-timeline}),
     and a check on a device that gets no more work is found computed when the
     next check is issued, so the checks of a loop that never waits keep the
-    data of a bounded window of steps. A failing check's data is read when its failure is found, at a
-    wait or at a later check's issue, and that read may wait for the set.
-    Once a check is known to fail, the checks after it release their data,
-    and a check issued later on its set is not kept. *)
+    data of a bounded window of steps. A failing check's data is read when
+    its failure is found, at a wait or at a later check's issue, and that
+    read may wait for the set. Once a check is known to fail, the checks
+    after it release their data, and a check issued later on its set is not
+    kept. *)
 
 val sync : ('v, 's, 'd) t -> unit
 (** [sync x] waits for the work [x] depends on, then drains the checks pending
@@ -1347,8 +1346,8 @@ module Infix : sig
   (** [x >=$ c] is [greater_equal_s x c]. *)
 
   val ( && ) : 'd bool_t -> 'd bool_t -> 'd bool_t
-  (** [a && b] is [logical_and a b]. Both operands are computed: it is no
-      short circuit. *)
+  (** [a && b] is [logical_and a b]. Both operands are computed, whatever
+      [a] holds. *)
 
   val ( || ) : 'd bool_t -> 'd bool_t -> 'd bool_t
   (** [a || b] is [logical_or a b], as [( && )]. *)
