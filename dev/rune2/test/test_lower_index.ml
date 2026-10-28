@@ -914,10 +914,19 @@ let pad_gen r =
 let fraction (D.Any dt) =
   match D.kind dt with D.Float -> Some (snd (format dt)) | _ -> None
 
+(* A fold's shape. A third of them have an empty axis, which [shape] draws too
+   rarely for every run to reach an empty result. *)
+let fold_shape =
+  let open Gen in
+  let* s = shape in
+  let* empty = frequency [ (1, constant true); (2, constant false) ] in
+  let+ axis = int_range 0 (Array.length s - 1) in
+  if empty then Array.mapi (fun i n -> if i = axis then 0 else n) s else s
+
 let fold_case dts =
   let open Gen in
   let* d = among dts in
-  let* s = shape in
+  let* s = fold_shape in
   let* pad = pad_gen (Array.length s) in
   match K.Shape.padded pad s with
   | Error _ -> reject ()
