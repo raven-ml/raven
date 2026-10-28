@@ -383,10 +383,14 @@ let landing c i p =
     (Array.to_list (Grid.cuts (Devices.grid p)))
 
 
+(* The devices of [p], in increasing order. *)
+let devices_of p =
+  List.sort Int.compare (Array.to_list (Grid.devices (Devices.grid p)))
+
 let law =
   prop ~count:2000
-    "each operand is read where it lies, and each result window on its own \
-     device"
+    "each operand is read where it lies, on the result's devices, and each \
+     result window on its own device"
     case (fun c ->
       match route c.rule c.ps c.shapes with
       | exception Invalid_argument _ -> cover "a refusal" true
@@ -433,7 +437,10 @@ let law =
           cover "a cut across rows of an axis that regroups"
             (regrouped c.ps false);
           (* Each operand is read where it lies: at its own placement, or
-             at one whose window on each device its own holds there. *)
+             at one whose window on each device its own holds there, over
+             the result's devices alone. *)
+          cover "an operand moved off a device the result lacks"
+            (Array.exists (fun p -> devices_of p <> devices_of r.result) c.ps);
           Array.iteri
             (fun i q ->
               let p = c.ps.(i) in
@@ -441,7 +448,10 @@ let law =
                 (not (Devices.equal p q));
               equal bool ~msg:"the operand holds each window it is read at"
                 true
-                (holds p c.shapes.(i) q))
+                (holds p c.shapes.(i) q);
+              equal (list int)
+                ~msg:"the operand is read on the result's devices"
+                (devices_of r.result) (devices_of q))
             r.operands;
           (* The forward union: each cut of the results is a cut of an
              operand that lands there, tile for tile, and the first
@@ -714,23 +724,6 @@ let refusals =
                 end
           in
           settle (2 * Array.length ps))
-
-(* The devices of [p], in increasing order. *)
-let devices_of p =
-  List.sort Int.compare (Array.to_list (Grid.devices (Devices.grid p)))
-
-let exact =
-  prop ~count:500 "every operand is read on the target's devices alone" case
-    (fun c ->
-      match route c.rule c.ps c.shapes with
-      | exception Invalid_argument _ -> ()
-      | r ->
-          let target = devices_of r.result in
-          cover "an operand moved off a device the target lacks"
-            (Array.exists (fun p -> devices_of p <> target) c.ps);
-          Array.iter
-            (fun p -> equal (list int) target (devices_of p))
-            r.operands)
 
 (* Whether [c]'s rule folds axis [a] of operand [i]: reduces or scans it. *)
 let folded c i a =
@@ -1274,6 +1267,6 @@ let () =
     (run "nx route"
        [
          group "laws"
-           [ law; refusals; exact; computes; keeps; move_law; local_move_law ];
+           [ law; refusals; computes; keeps; move_law; local_move_law ];
          cases_;
        ])

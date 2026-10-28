@@ -432,37 +432,26 @@ let lands s s' a t =
       | Some _ | None -> None)
   | None -> None
 
-let reshaped s s' w =
+(* [w] with each cut that lands on no axis of [s'] undone and, [~moved], each
+   other moved to the axis it lands on: where a reshape of [s] to [s'] reads
+   a value at [w], and where its result lies. *)
+let landed ~moved s s' w =
+  let at a t =
+    Option.map (fun a' -> if moved then a' else a) (lands s s' a t)
+  in
   match w with
   | Host | One | On -> w
-  | Split a -> ( match lands s s' a 4 with Some a' -> Split a' | None -> On)
+  | Split a -> ( match at a 4 with Some a -> Split a | None -> On)
   | Cuts (x, y) when x = y -> (
-      match lands s s' x 4 with Some x' -> Cuts (x', x') | None -> On)
+      match at x 4 with Some x -> Cuts (x, x) | None -> On)
   | Cuts (x, y) -> (
-      match (lands s s' x 2, lands s s' y 2) with
-      | Some x', Some y' -> Cuts (x', y')
-      | Some x', None -> Major x'
-      | None, Some y' -> Minor y'
+      match (at x 2, at y 2) with
+      | Some x, Some y -> Cuts (x, y)
+      | Some x, None -> Major x
+      | None, Some y -> Minor y
       | None, None -> On)
-  | Major x -> ( match lands s s' x 2 with Some x' -> Major x' | None -> On)
-  | Minor y -> ( match lands s s' y 2 with Some y' -> Minor y' | None -> On)
-
-(* The placement a reshape of [s] to [s'] reads a value at [w] at: [w] with
-   each cut that keeps no axis undone. *)
-let read s s' w =
-  let kept a t = lands s s' a t <> None in
-  match w with
-  | Host | One | On -> w
-  | Split a -> if kept a 4 then w else On
-  | Cuts (x, y) when x = y -> if kept x 4 then w else On
-  | Cuts (x, y) -> (
-      match (kept x 2, kept y 2) with
-      | true, true -> w
-      | true, false -> Major x
-      | false, true -> Minor y
-      | false, false -> On)
-  | Major x -> if kept x 2 then w else On
-  | Minor y -> if kept y 2 then w else On
+  | Major x -> ( match at x 2 with Some x -> Major x | None -> On)
+  | Minor y -> ( match at y 2 with Some y -> Minor y | None -> On)
 
 (* A reshape of [s] to [s'] that merges or factors the axis [cut] of [s], past a
    unit axis or not, of a value laid out as [layout] at [w]; [wanted] is a
@@ -545,7 +534,7 @@ let law_reshape c =
     | Some a' when c.s'.(a') <> c.s.(c.cut) -> Some a'
     | Some _ | None -> None
   in
-  let w' = reshaped c.s c.s' c.w in
+  let w' = landed ~moved:true c.s c.s' c.w in
   let kept =
     into <> None
     && List.exists
@@ -569,7 +558,7 @@ let law_reshape c =
        (cuts c.w));
   cover "two cuts kept" (match w' with Cuts (x, y) -> x <> y | _ -> false);
   cover "no element" (Array.mem 0 c.s);
-  let r = read c.s c.s' c.w in
+  let r = landed ~moved:false c.s c.s' c.w in
   let refused = r <> c.w && not (Array.mem 0 c.s) in
   cover "a cut kept beside one that raises"
     (refused && match r with Major _ | Minor _ -> true | _ -> false);
