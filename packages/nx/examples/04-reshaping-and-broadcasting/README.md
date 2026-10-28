@@ -55,7 +55,7 @@ the mean shape `[1; 3]` instead of `[3]`, which broadcasts against `[4; 3]`:
 
 ```ocaml
 let col_means = Nx.mean ~axes:[ 0 ] ~keepdims:true data in
-let centered = Nx.(data - col_means)
+let centered = Nx.Infix.(data - col_means)
 ```
 
 ### Outer product via broadcasting
@@ -63,7 +63,7 @@ let centered = Nx.(data - col_means)
 Reshape vectors into compatible shapes and multiply, with no loop:
 
 ```ocaml
-let outer = Nx.(reshape [| 4; 1 |] x * reshape [| 1; 3 |] y)
+let outer = Nx.(Infix.(reshape [| 4; 1 |] x * reshape [| 1; 3 |] y))
 ```
 
 ```

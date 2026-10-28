@@ -8,7 +8,7 @@ previous one, progressing from array creation to machine learning.
 | #   | Example                                                      | What You'll Learn                                                    |
 | --- | ------------------------------------------------------------ | -------------------------------------------------------------------- |
 | 01  | [Creating Arrays](01-creating-arrays/)                       | `zeros`, `ones`, `arange`, `linspace`, `init`, `meshgrid`, dtypes    |
-| 02  | [Infix and Arithmetic](02-infix-and-arithmetic/)             | Operators in `Nx.( … )` (`+`, `*$`, `/`), `abs`, `sqrt`, `clamp`     |
+| 02  | [Infix and Arithmetic](02-infix-and-arithmetic/)             | Operators in `Nx.Infix.( … )` (`+`, `*$`, `/`), `abs`, `sqrt`, `clamp`     |
 | 03  | [Indexing and Slicing](03-indexing-and-slicing/)             | `I`, `R`, `Rs`, `A`, `.${[...]}`, `M`, `T`, `where`              |
 | 04  | [Reshaping and Broadcasting](04-reshaping-and-broadcasting/) | `reshape`, `flatten`, `transpose`, `concatenate`, broadcasting rules |
 | 05  | [Reductions and Statistics](05-reductions-and-statistics/)   | `mean`, `std`, `argmax`, `cumsum`, `all`, `any`, axis parameter      |

@@ -42,7 +42,7 @@ matrix or singular values, takes that result's dtype first.
 ```ocaml
 let a = Nx.create Nx.float64 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
 let b = Nx.create Nx.float64 [| 3; 2 |] [| 7.; 8.; 9.; 10.; 11.; 12. |] in
-Nx.(a *@ b)    (* [2; 2] result *)
+Nx.Infix.(a *@ b)    (* [2; 2] result *)
 ```
 
 ### Solving linear systems
@@ -61,7 +61,7 @@ x: float64 [3] [2.0000000000000004, 2.9999999999999996, -0.9999999999999991]
 
 ```ocaml
 let m_inv = Nx.inv m in
-Nx.(m *@ m_inv)    (* ≈ identity matrix *)
+Nx.Infix.(m *@ m_inv)    (* ≈ identity matrix *)
 ```
 
 ### Least squares fitting
@@ -83,14 +83,14 @@ holds 2 singular values and Vt is 2×2.
 
 ```ocaml
 let u_mat, s_vec, vt = Nx.svd Nx.float64 data in
-let reconstructed = Nx.(u_mat *@ diag s_vec *@ vt)
+let reconstructed = Nx.(Infix.(u_mat *@ diag s_vec *@ vt))
 (* reconstructed ≈ original *)
 ```
 
 ## Try It
 
 1. Solve a different 3×3 system and verify the solution by computing
-   `Nx.(coeff *@ x)`: it should match the right-hand side.
+   `Nx.Infix.(coeff *@ x)`: it should match the right-hand side.
 2. Extend the least squares example to fit a quadratic by adding an x^2
    column to the design matrix.
 3. Use SVD for low-rank approximation: zero out the smallest singular value,

@@ -36,7 +36,7 @@ let b = Nx.full Nx.float32 [| 2; 3 |] 1.0
 
 (* Element-wise addition, as a function or inside a local open *)
 let c = Nx.add a b
-let c' = Nx.(a + b)
+let c' = Nx.Infix.(a + b)
 
 (* Matrix multiplication *)
 let x = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]

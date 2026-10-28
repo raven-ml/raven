@@ -21,11 +21,11 @@ let () =
   (* Build signal: 5 Hz sine + 20 Hz sine + noise. *)
   let pi2 = 2.0 *. Float.pi in
   let signal =
-    Nx.(
+    Nx.(Infix.(
       let noise = Rng.normal float32 [| n |] *$ 0.3 in
       let signal_5hz = sin (t *$ (pi2 *. 5.0)) in
       let signal_20hz = sin (t *$ (pi2 *. 20.0)) *$ 0.5 in
-      signal_5hz + signal_20hz + noise)
+      signal_5hz + signal_20hz + noise))
   in
 
   Printf.printf "Signal: %d samples at %.0f Hz\n" n sample_rate;
@@ -42,7 +42,7 @@ let () =
 
   (* Magnitudes |z| (scaled by 2/N for single-sided spectrum). *)
   let magnitudes =
-    Nx.(magnitude float32 spectrum *$ (2.0 /. Float.of_int n))
+    Nx.(Infix.(magnitude float32 spectrum *$ (2.0 /. Float.of_int n)))
   in
 
   (* Find the dominant frequencies (magnitude > 0.3). *)

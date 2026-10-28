@@ -2,9 +2,9 @@
 
     A grade book of 5 students across 4 subjects. We'll pull out individual
     scores, entire rows and columns, ranges, and use boolean masks to find top
-    performers. The indexing operators [.%{}] and [.${}] and the index
-    constructors [A], [I], [R], [Rs], [M] and [T] are [Nx]'s, used inside a
-    local open [Nx.( … )]. *)
+    performers. The indexing operators [.%{}] and [.${}] are [Nx.Infix]'s and
+    the index constructors [A], [I], [R], [Rs], [M] and [T] are [Nx]'s, used
+    together inside [Nx.(Infix.( … ))]. *)
 
 let () =
   (* Grade book: 5 students × 4 subjects (Math, Science, English, Art). *)
@@ -41,26 +41,26 @@ let () =
   Printf.printf "Student 0, Science: %.0f\n\n" score;
 
   (* Entire row: all of student 2's grades. *)
-  let student_2 = Nx.(grades.%{[ 2 ]}) in
+  let student_2 = Nx.Infix.(grades.%{[ 2 ]}) in
   Printf.printf "Student 2 (all subjects): %s\n\n" (Nx.to_string student_2);
 
   (* Entire column: everyone's Math scores (column 0). *)
-  let math = Nx.(grades.${[ A; I 0 ]}) in
+  let math = Nx.(Infix.(grades.${[ A; I 0 ]})) in
   Printf.printf "Math scores (all students): %s\n\n" (Nx.to_string math);
 
   (* Range: students 1-3, first two subjects. *)
-  let subset = Nx.(grades.${[ R (1, 4); R (0, 2) ]}) in
+  let subset = Nx.(Infix.(grades.${[ R (1, 4); R (0, 2) ]})) in
   Printf.printf "Students 1-3, Math & Science:\n%s\n\n" (Nx.to_string subset);
 
   (* Strided: every other student, every other subject. *)
-  let strided = Nx.(grades.${[ Rs (0, 5, 2); Rs (0, 4, 2) ]}) in
+  let strided = Nx.(Infix.(grades.${[ Rs (0, 5, 2); Rs (0, 4, 2) ]})) in
   Printf.printf "Every other student & subject:\n%s\n\n" (Nx.to_string strided);
 
   (* Boolean mask: which students scored above 85 in Math? *)
   let high_math = Nx.greater_s math 85.0 in
   Printf.printf "Math > 85 mask: %s\n" (Nx.to_string high_math);
 
-  let top_students = Nx.(grades.${[ M high_math ]}) in
+  let top_students = Nx.(Infix.(grades.${[ M high_math ]})) in
   Printf.printf "Students with Math > 85:\n%s\n\n" (Nx.to_string top_students);
 
   (* where: replace failing grades (<60) with 60. *)
@@ -71,5 +71,5 @@ let () =
 
   (* T: select students by positions held in a tensor. *)
   let rows = Nx.create Nx.int64 [| 3 |] [| 0L; 2L; 4L |] in
-  let picks = Nx.(grades.${[ T rows ]}) in
+  let picks = Nx.(Infix.(grades.${[ T rows ]})) in
   Printf.printf "Students 0, 2, 4:\n%s\n" (Nx.to_string picks)

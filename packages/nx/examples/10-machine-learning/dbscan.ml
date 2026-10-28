@@ -9,11 +9,11 @@ let () =
 
   (* Two tight blobs plus uniform noise *)
   let data =
-    Nx.(
+    Nx.(Infix.(
       let c1 = (Rng.normal float64 [| 80; 2 |] *$ 0.6) +$ 3.0 in
       let c2 = (Rng.normal float64 [| 80; 2 |] *$ 0.6) -$ 3.0 in
       let noise = (Rng.uniform float64 [| 20; 2 |] *$ 14.0) -$ 7.0 in
-      concatenate ~axis:0 [ c1; c2; noise ])
+      concatenate ~axis:0 [ c1; c2; noise ]))
   in
   let n = Nx.dim 0 data in
   Printf.printf "Data: %d points (eps=%.1f, min_samples=%d)\n\n" n eps

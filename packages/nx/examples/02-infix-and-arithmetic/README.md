@@ -1,6 +1,6 @@
 # `02-infix-and-arithmetic`
 
-Element-wise math with operators: inside `Nx.( … )`, array code reads like
+Element-wise math with operators: inside `Nx.Infix.( … )`, array code reads like
 algebra.
 
 ```bash
@@ -9,7 +9,7 @@ dune exec packages/nx/examples/02-infix-and-arithmetic/main.exe
 
 ## What You'll Learn
 
-- Writing array math with `Nx`'s operators inside a local open `Nx.( … )`
+- Writing array math with `Nx`'s operators inside a local open `Nx.Infix.( … )`
 - Scalar arithmetic: `*$`, `+$`, `-$`, `/$` (array op scalar)
 - Element-wise operations: `*`, `/`, `+`, `-` (array op array)
 - Math functions: `abs`, `sqrt`, `square`, `exp`, `sign`
@@ -18,11 +18,13 @@ dune exec packages/nx/examples/02-infix-and-arithmetic/main.exe
 
 ## Operators and Local Opens
 
-`Nx` defines `+`, `-`, `*`, `/` and `**` on arrays, at its top level. Inside
-`Nx.( … )` they apply to arrays; outside, OCaml's integer operators are
-unchanged. `open Nx` at the top of a file would hide the integer ones
-everywhere below it, so the examples use local opens. Comparisons that
-return a boolean array, such as `<` and `=$`, are in `Nx.Infix`.
+`Nx.Infix` defines `+`, `-`, `*`, `/` and `**` on arrays, their scalar forms
+such as `+$`, and the comparisons that return a boolean array, such as `<`
+and `=$`. Inside `Nx.Infix.( … )` they apply to arrays; outside, OCaml's
+integer operators are unchanged, and `open Nx` leaves them alone too.
+`Nx.(Infix.( … ))` reaches `Nx`'s functions as well. Inside such an open,
+integer arithmetic is `Stdlib.( + )` (the Operators section of
+[`nx.mli`](../../lib/nx.mli)).
 
 ## Key Functions
 
@@ -58,7 +60,7 @@ Temperature conversion uses scalar arithmetic, `*$` for multiplication and
 `+$` for addition:
 
 ```ocaml
-let fahrenheit = Nx.((celsius *$ 1.8) +$ 32.0) in
+let fahrenheit = Nx.Infix.((celsius *$ 1.8) +$ 32.0) in
 ```
 
 This reads like the formula `F = C × 1.8 + 32` and operates on the whole
@@ -80,7 +82,7 @@ BMI:          float64 [4]
 The formula `BMI = weight / height²` becomes:
 
 ```ocaml
-let bmi = Nx.(weight_kg / (height_m * height_m)) in
+let bmi = Nx.Infix.(weight_kg / (height_m * height_m)) in
 ```
 
 Both `*` and `/` work element by element, computing BMI for every individual.
@@ -104,7 +106,7 @@ against the scores, then applies the normalization formula:
 ```ocaml
 let lo = Nx.min scores in
 let hi = Nx.max scores in
-let normalized = Nx.((scores - lo) / (hi - lo)) in
+let normalized = Nx.Infix.((scores - lo) / (hi - lo)) in
 ```
 
 Math functions apply element-wise to transform arrays:

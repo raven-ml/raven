@@ -2,8 +2,9 @@
 
 Select, slice, and mask: extract exactly the data you need. This example uses
 a grade book to demonstrate every way Nx lets you reach into an array. The
-indexing operators and the index constructors are `Nx`'s, written inside a
-local open `Nx.( … )`.
+indexing operators `.%{}` and `.${}` are `Nx.Infix`'s and the index
+constructors `A`, `I`, `R`, `Rs`, `M` and `T` are `Nx`'s, used together
+inside `Nx.(Infix.( … ))`.
 
 ```bash
 dune exec packages/nx/examples/03-indexing-and-slicing/main.exe
@@ -60,8 +61,8 @@ Nx.item [ 0; 1 ] grades           (* → 72.0 *)
 picks one index, `A` keeps the full axis:
 
 ```ocaml
-Nx.(grades.%{[ 2 ]})        (* student 2, all subjects → [92, 85, 91, 70] *)
-Nx.(grades.${[ A; I 0 ]})   (* all students, Math → [88, 45, 92, 76, 60] *)
+Nx.Infix.(grades.%{[ 2 ]})        (* student 2, all subjects → [92, 85, 91, 70] *)
+Nx.(Infix.(grades.${[ A; I 0 ]}))   (* all students, Math → [88, 45, 92, 76, 60] *)
 ```
 
 ### Range and strided slicing
@@ -69,8 +70,8 @@ Nx.(grades.${[ A; I 0 ]})   (* all students, Math → [88, 45, 92, 76, 60] *)
 `R (start, stop)` is a half-open range. `Rs (start, stop, step)` adds a stride:
 
 ```ocaml
-Nx.(grades.${[ R (1, 4); R (0, 2) ]})          (* students 1-3, Math & Science *)
-Nx.(grades.${[ Rs (0, 5, 2); Rs (0, 4, 2) ]})  (* every other student & subject *)
+Nx.(Infix.(grades.${[ R (1, 4); R (0, 2) ]}))          (* students 1-3, Math & Science *)
+Nx.(Infix.(grades.${[ Rs (0, 5, 2); Rs (0, 4, 2) ]}))  (* every other student & subject *)
 ```
 
 ### Boolean masks
@@ -79,7 +80,7 @@ Build a boolean mask, then index with `M` to filter rows:
 
 ```ocaml
 let high_math = Nx.greater_s math 85.0 in
-Nx.(grades.${[ M high_math ]})
+Nx.(Infix.(grades.${[ M high_math ]}))
 ```
 
 ```

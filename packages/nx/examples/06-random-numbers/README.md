@@ -44,7 +44,7 @@ approximates pi/4, and `count` counts the points where the mask holds:
 ```ocaml
 let xs = Nx.Rng.uniform Nx.float64 [| n |] in
 let ys = Nx.Rng.uniform Nx.float64 [| n |] in
-let inside = Nx.(less_s ((xs * xs) + (ys * ys)) 1.0) in
+let inside = Nx.(Infix.(less_s ((xs * xs) + (ys * ys)) 1.0)) in
 let count = Int64.to_float (Nx.item [] (Nx.count inside)) in
 let pi_est = count *. 4.0 /. Float.of_int n
 ```

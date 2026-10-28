@@ -1,24 +1,24 @@
-(** Element-wise math with operators: inside [Nx.( … )], array code reads like
-    algebra.
+(** Element-wise math with operators: inside [Nx.Infix.( … )], array code
+    reads like algebra.
 
     Temperature conversions, BMI calculations, and score normalization, all
-    written with infix operators. [Nx] defines [+], [-], [*] and [/] on
-    arrays, so a local open [Nx.( … )] applies them to arrays and leaves
-    OCaml's integer arithmetic as it is outside the parentheses. *)
+    written with infix operators. [Nx.Infix] defines [+], [-], [*] and [/] on
+    arrays, so a local open [Nx.Infix.( … )] applies them to arrays and
+    leaves OCaml's integer arithmetic as it is outside the parentheses. *)
 
 let () =
   (* --- Temperature conversion: C → F --- *)
   let celsius =
     Nx.create Nx.float64 [| 5 |] [| 0.0; 20.0; 37.0; 100.0; -40.0 |]
   in
-  let fahrenheit = Nx.((celsius *$ 1.8) +$ 32.0) in
+  let fahrenheit = Nx.Infix.((celsius *$ 1.8) +$ 32.0) in
   Printf.printf "Celsius:    %s\n" (Nx.to_string celsius);
   Printf.printf "Fahrenheit: %s\n\n" (Nx.to_string fahrenheit);
 
   (* --- BMI from height and weight arrays --- *)
   let height_m = Nx.create Nx.float64 [| 4 |] [| 1.65; 1.80; 1.72; 1.55 |] in
   let weight_kg = Nx.create Nx.float64 [| 4 |] [| 68.0; 90.0; 75.0; 52.0 |] in
-  let bmi = Nx.(weight_kg / (height_m * height_m)) in
+  let bmi = Nx.Infix.(weight_kg / (height_m * height_m)) in
   Printf.printf "Heights (m): %s\n" (Nx.to_string height_m);
   Printf.printf "Weights (kg): %s\n" (Nx.to_string weight_kg);
   Printf.printf "BMI:          %s\n\n" (Nx.to_string bmi);
@@ -29,7 +29,7 @@ let () =
   in
   let lo = Nx.min scores in
   let hi = Nx.max scores in
-  let normalized = Nx.((scores - lo) / (hi - lo)) in
+  let normalized = Nx.Infix.((scores - lo) / (hi - lo)) in
   Printf.printf "Raw scores:  %s\n" (Nx.to_string scores);
   Printf.printf "Normalized:  %s\n\n" (Nx.to_string normalized);
 

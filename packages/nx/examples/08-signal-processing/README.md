@@ -29,7 +29,7 @@ dune exec packages/nx/examples/08-signal-processing/main.exe
 | `linspace dtype start stop n` | Evenly spaced time samples                        |
 | `sin t`                       | Element-wise sine                                 |
 | `Rng.normal dtype shape`      | Gaussian noise from the domain's own key         |
-| `Nx.( … )` (`+`, `*`, `*$`)   | Arithmetic on arrays inside a local open          |
+| `Nx.Infix.( … )` (`+`, `*`, `*$`) | Arithmetic on arrays inside a local open          |
 
 ## Output Walkthrough
 

@@ -59,7 +59,7 @@ let () =
   in
   let gx = Nx.correlate ~padding:`Same img_f sobel_x in
   let gy = Nx.correlate ~padding:`Same img_f sobel_y in
-  let edges = Nx.(sqrt ((gx * gx) + (gy * gy))) in
+  let edges = Nx.(Infix.(sqrt ((gx * gx) + (gy * gy)))) in
   save "edges.png" edges;
 
   (* --- Max pooling: 2x downsample ---

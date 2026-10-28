@@ -27,7 +27,7 @@ Nx is a numerical computing library for OCaml, close to NumPy in its names and i
 - **Arrays lie on device sets:** an array made from numbers is a host array, computed by Nx's C kernels. An array may also lie on the devices of a set, and an operation computes where its operands lie.
 - **Types fix dtypes:** the operands of an operation share a dtype by their types, and Nx never promotes or casts one implicitly. `cast` converts explicitly. Nx has boolean and bit arrays, and no string arrays.
 - **Randomness comes from keys:** every draw is a function of a key, given as `~key` or taken from the enclosing `Rng.with_key` scope. Outside every scope a draw takes the next key of the domain's own, seeded from the system's entropy.
-- **Operators come from a local open:** `Nx.(a * b + c)` applies Nx's arithmetic operators to arrays inside the parentheses, and `*$`, `+$` take a scalar operand.
+- **Operators live in `Nx.Infix`:** a local open, `Nx.Infix.(a * b + c)`, applies them to arrays inside the parentheses, where integer arithmetic is `Stdlib.( + )`, and `*$`, `+$` take a scalar operand ([nx.mli, Operators](../lib/nx.mli)).
 
 If you notice an undocumented difference, please open an issue; it's probably a bug.
 
@@ -407,7 +407,7 @@ shuffled = rng.permutation(a)
 ```ocaml
 (* Generate sample data *)
 let x = Nx.linspace Nx.float64 0.0 10.0 100
-let y = Nx.((x *$ 2.0) + Rng.normal float64 [| 100 |])
+let y = Nx.(Infix.((x *$ 2.0) + Rng.normal float64 [| 100 |]))
 
 (* Reshape x for design matrix *)
 let x_design =

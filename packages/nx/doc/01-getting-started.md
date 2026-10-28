@@ -29,10 +29,12 @@ Add to your `dune` file:
 ## Operators and Opens
 
 The examples on these pages name every function with its module, `Nx.zeros`.
-`Nx` also defines the arithmetic operators `+`, `-`, `*`, `/` and `**` on
-arrays, so `open Nx` would hide OCaml's integer arithmetic for the rest of
-the file. A local open, `Nx.(a * b + c)`, applies them to arrays inside the
-parentheses alone.
+The arithmetic operators on arrays, `+`, `-`, `*`, `/`, `**` and their scalar
+forms such as `+$`, live in `Nx.Infix`, so `open Nx` keeps OCaml's integer
+arithmetic. A local open, `Nx.Infix.(a * b + c)`, applies them to arrays
+inside the parentheses alone, and `Nx.(Infix.(sin x * x +$ 1.))` also
+reaches `Nx`'s functions. Inside such an open, integer arithmetic is
+`Stdlib.( + )` ([nx.mli, Operators](../lib/nx.mli)).
 
 ## Creating Arrays
 
@@ -120,11 +122,11 @@ let () =
   let _ = Nx.div a b in       (* [0.25, 0.4, 0.5] *)
 
   (* The same with operators, inside a local open *)
-  let _ = Nx.((a + b) * a) in (* [5, 14, 27] *)
+  let _ = Nx.Infix.((a + b) * a) in (* [5, 14, 27] *)
 
   (* Scalar operations *)
   let _ = Nx.add a (Nx.scalar Nx.float32 10.) in   (* [11, 12, 13] *)
-  let _ = Nx.(a +$ 10.) in                         (* the same *)
+  let _ = Nx.Infix.(a +$ 10.) in                         (* the same *)
 
   (* Math functions *)
   let _ = Nx.sin a in

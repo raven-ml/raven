@@ -71,7 +71,7 @@ let () =
   Printf.printf "Coldest reading: %.1f°C\n\n" (Nx.item [] (Nx.min temps));
 
   (* --- Cumulative sum: running total of Cairo's temperatures --- *)
-  let cairo = Nx.(temps.${[ I 1; A ]}) in
+  let cairo = Nx.(Infix.(temps.${[ I 1; A ]})) in
   let cumulative = Nx.cumsum ~axis:0 cairo in
   Printf.printf "Cairo daily:      %s\n" (Nx.to_string cairo);
   Printf.printf "Cairo cumulative: %s\n\n" (Nx.to_string cumulative);
@@ -79,7 +79,7 @@ let () =
   (* --- Outlier detection with z-scores --- *)
   let mu = Nx.mean ~axes:[ 1 ] ~keepdims:true temps in
   let sigma = Nx.std ~axes:[ 1 ] ~keepdims:true temps in
-  let z_scores = Nx.((temps - mu) / sigma) in
+  let z_scores = Nx.Infix.((temps - mu) / sigma) in
   let outlier_mask = Nx.greater_s (Nx.abs z_scores) 1.5 in
   Printf.printf "Z-scores:\n%s\n" (Nx.to_string z_scores);
   Printf.printf "Outliers (|z| > 1.5): %s\n\n" (Nx.to_string outlier_mask);

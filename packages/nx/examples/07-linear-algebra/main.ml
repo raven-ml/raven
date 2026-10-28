@@ -16,7 +16,7 @@ let () =
   in
   Printf.printf "A (2×3):\n%s\n" (Nx.to_string a);
   Printf.printf "B (3×2):\n%s\n" (Nx.to_string b);
-  Printf.printf "A *@ B:\n%s\n\n" (Nx.to_string Nx.(a *@ b));
+  Printf.printf "A *@ B:\n%s\n\n" (Nx.to_string Nx.Infix.(a *@ b));
 
   (* --- Dot product --- *)
   let u = Nx.create Nx.float64 [| 3 |] [| 1.0; 2.0; 3.0 |] in
@@ -38,7 +38,7 @@ let () =
   (* --- Inverse: verify A *@ inv(A) ≈ I --- *)
   let m = Nx.create Nx.float64 [| 2; 2 |] [| 4.0; 7.0; 2.0; 6.0 |] in
   let m_inv = Nx.inv m in
-  let product = Nx.(m *@ m_inv) in
+  let product = Nx.Infix.(m *@ m_inv) in
   Printf.printf "M:\n%s\n" (Nx.to_string m);
   Printf.printf "M⁻¹:\n%s\n" (Nx.to_string m_inv);
   Printf.printf "M × M⁻¹ ≈ I:\n%s\n\n" (Nx.to_string product);
@@ -85,7 +85,7 @@ let () =
   (* The reduced factors: U is 3×2, S holds 2 values and Vt is 2×2. *)
   let u_mat, s_vec, vt = Nx.svd Nx.float64 data in
   (* Reconstruct: U @ diag(S) @ Vt *)
-  let reconstructed = Nx.(u_mat *@ diag s_vec *@ vt) in
+  let reconstructed = Nx.(Infix.(u_mat *@ diag s_vec *@ vt)) in
   Printf.printf "Original:\n%s\n" (Nx.to_string data);
   Printf.printf "Singular values: %s\n" (Nx.to_string s_vec);
   Printf.printf "Reconstructed (U·S·Vt):\n%s\n" (Nx.to_string reconstructed)

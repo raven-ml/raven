@@ -27,7 +27,7 @@ let () =
   let n = 100_000 in
   let xs = Nx.Rng.uniform Nx.float64 [| n |] in
   let ys = Nx.Rng.uniform Nx.float64 [| n |] in
-  let inside = Nx.(less_s ((xs * xs) + (ys * ys)) 1.0) in
+  let inside = Nx.(Infix.(less_s ((xs * xs) + (ys * ys)) 1.0)) in
   let count = Int64.to_float (Nx.item [] (Nx.count inside)) in
   let pi_est = count *. 4.0 /. Float.of_int n in
   Printf.printf "Monte Carlo pi (%d points): %.4f  (actual: %.4f)\n\n" n pi_est
@@ -35,8 +35,8 @@ let () =
 
   (* --- Synthetic training data: y = 3x + 2 + noise --- *)
   let x = Nx.Rng.uniform Nx.float64 [| 8 |] in
-  let noise = Nx.(Rng.normal float64 [| 8 |] *$ 0.1) in
-  let y = Nx.((x *$ 3.0) +$ 2.0 + noise) in
+  let noise = Nx.(Infix.(Rng.normal float64 [| 8 |] *$ 0.1)) in
+  let y = Nx.Infix.((x *$ 3.0) +$ 2.0 + noise) in
   Printf.printf "x:     %s\n" (Nx.to_string x);
   Printf.printf "y ~ 3x+2: %s\n\n" (Nx.to_string y);
 

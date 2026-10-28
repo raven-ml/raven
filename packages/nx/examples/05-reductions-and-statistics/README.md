@@ -62,7 +62,7 @@ Using `keepdims:true` to broadcast the mean and std against the original data:
 ```ocaml
 let mu = Nx.mean ~axes:[ 1 ] ~keepdims:true temps in
 let sigma = Nx.std ~axes:[ 1 ] ~keepdims:true temps in
-let z_scores = Nx.((temps - mu) / sigma) in
+let z_scores = Nx.Infix.((temps - mu) / sigma) in
 let outlier_mask = Nx.greater_s (Nx.abs z_scores) 1.5
 ```
 

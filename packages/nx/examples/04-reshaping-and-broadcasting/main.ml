@@ -54,7 +54,7 @@ let () =
   let col_means = Nx.mean ~axes:[ 0 ] ~keepdims:true data in
   Printf.printf "Column means: %s\n" (Nx.to_string col_means);
 
-  let centered = Nx.(data - col_means) in
+  let centered = Nx.Infix.(data - col_means) in
   Printf.printf "Centered (zero-mean columns):\n%s\n\n" (Nx.to_string centered);
 
   (* --- Outer product via broadcasting --- *)
@@ -62,7 +62,7 @@ let () =
   let y = Nx.create Nx.float64 [| 3 |] [| 10.0; 20.0; 30.0 |] in
 
   (* x as column [4;1], y as row [1;3] → result is [4;3]. *)
-  let outer = Nx.(reshape [| 4; 1 |] x * reshape [| 1; 3 |] y) in
+  let outer = Nx.(Infix.(reshape [| 4; 1 |] x * reshape [| 1; 3 |] y)) in
   Printf.printf "x = %s\n" (Nx.to_string x);
   Printf.printf "y = %s\n" (Nx.to_string y);
   Printf.printf "Outer product (x × y):\n%s\n\n" (Nx.to_string outer);

@@ -68,7 +68,7 @@ Combines horizontal and vertical gradient magnitudes:
 ```ocaml
 let gx = Nx.correlate ~padding:`Same img_f sobel_x in
 let gy = Nx.correlate ~padding:`Same img_f sobel_y in
-let edges = Nx.(sqrt ((gx * gx) + (gy * gy)))
+let edges = Nx.(Infix.(sqrt ((gx * gx) + (gy * gy))))
 ```
 
 ### Max pooling

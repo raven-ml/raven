@@ -29,7 +29,7 @@ let () =
   ignore c
 ```
 
-Inside a local open, `Nx.(a *@ b)` is `Nx.matmul a b`.
+Inside a local open, `Nx.Infix.(a *@ b)` is `Nx.matmul a b`.
 
 ### Related products
 

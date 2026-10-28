@@ -25,7 +25,7 @@ the Raven ecosystem.
 let () =
   (* Five evenly spaced float32 values from 0 to 10, and their squares. *)
   let x = Nx.linspace Nx.float32 0. 10. 5 in
-  let y = Nx.(x * x) in
+  let y = Nx.Infix.(x * x) in
   Nx.print x;
   Nx.print y;
 
@@ -47,7 +47,7 @@ matmul shape: [3; 3]
 
 `Nx.linspace Nx.float32 0. 10. 5` takes the dtype `Nx.float32`, the first and
 last values, and the number of values. Like every array made from numbers, it
-is a host array. Inside `Nx.( … )`, `*` multiplies arrays element by element;
+is a host array. Inside `Nx.Infix.( … )`, `*` multiplies arrays element by element;
 outside, it is OCaml's integer product. `Nx.print` prints an array's dtype,
 shape and elements.
 
