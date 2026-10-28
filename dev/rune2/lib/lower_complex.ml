@@ -4,7 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (* Each kind composes Lower_real's float kinds over pairs of nodes, in a form
-   that cancels nowhere and overflows only where its result does. *)
+   that cancels nowhere and overflows only where its result does. The bounds
+   [lower_complex.mli] states are derived to first order from Lower_real's. *)
 
 open Tolk
 open Lower_bits
@@ -310,8 +311,8 @@ let atanh_raw x y =
 (* Arithmetic
 
    Mul is the textbook product, each part one fused multiply-add over the other
-   product; Fdiv is Smith's algorithm, the divisor's larger part dividing its
-   smaller. *)
+   product; Fdiv is Smith's algorithm (1962), the divisor's smaller part divided
+   by its larger. *)
 
 let mul (ar, ai) (br, bi) =
   let ii = ai *: bi and ir = ai *: br in
