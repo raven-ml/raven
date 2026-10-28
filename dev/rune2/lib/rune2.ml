@@ -790,6 +790,4 @@ let jacrev' f x =
 module Lower = Lower
 module Lower_arith = Lower_arith
 
-module Private = struct
-  let derivations = Program.derivations
-end
+let derivations = Program.derivations

@@ -1304,10 +1304,10 @@ let rec answer ~name ~tape i (c : Program.construct) k =
   (* An iterate has no rule before stage 6, and evaluating it inside a trace
      would read its stop: a construct whose programs hold one runs its default,
      step by step. *)
-  | ( Scan { step; _ }
-    | Remat { body = step; _ }
-    | Call { body = step; _ } )
-    when Loops.holds_iterate step ->
+  | (Scan { step; _ } | Remat { body = step; _ }) when Loops.holds_iterate step
+    ->
+      Effect.Deep.discontinue k Program.Evaluate
+  | Call { site; _ } when Program.iterates site ->
       Effect.Deep.discontinue k Program.Evaluate
   | Scan { step; length; init; xs; captures; seeds } ->
       Effect.Deep.continue k
@@ -1315,7 +1315,7 @@ let rec answer ~name ~tape i (c : Program.construct) k =
   | Remat { body; args } ->
       Effect.Deep.continue k (remat ~name ~tape i body args)
   | Call { body; args; site } ->
-      Effect.Deep.continue k (call ~tape i body args site)
+      Effect.Deep.continue k (call ~name ~tape i body args site)
   | Lane_index _ | Iterate _ -> Effect.Deep.discontinue k Program.Evaluate
 
 (* A scan's derivative is the scan of its step's derivative, whose carry has a
@@ -1513,8 +1513,7 @@ and remat ~name ~tape i (body : Program.t) args =
    differentiates a compiled call's jaxpr: derived once per derivation at the
    call's site, traced as a compiled function is, and compiled. Its additions
    are duals, as a remat's are. *)
-and call ~tape i (body : Program.t) args site =
-  let name = Program.site_name site in
+and call ~name ~tape i (body : Program.t) args site =
   let pargs = Array.map (pv i) args and targs = Array.map (tv i) args in
   let mask = Array.map Option.is_some targs in
   let ins = Array.append pargs (somes targs) in
@@ -1539,9 +1538,8 @@ and call ~tape i (body : Program.t) args site =
     let prog, _ = Trace.trace Jit ~name forms derive in
     ((prog, forms), !has_y, None)
   in
-  let derivation =
-    Program.Jvp { tangents = mask; reverse = Option.is_some tape }
-  in
+  let reverse = Option.is_some tape && Program.customs site in
+  let derivation = Program.Jvp { tangents = mask; reverse } in
   let d = Program.derive site derivation forms made in
   let r =
     Program.perform (Call { body = d.program; args = ins; site = d.at })

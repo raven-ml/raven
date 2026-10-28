@@ -180,6 +180,8 @@ and site = {
   compile : t -> form array -> value array -> value array;
   compiled : (value array -> value array) option;
   axes : axis list;
+  iterates : bool;
+  customs : bool;
   table : derived Table.t;
 }
 
@@ -239,10 +241,28 @@ let named p =
   go p;
   !found
 
+(* Whether [p] or a program it carries holds a construct [pred] holds of. *)
+let rec holds pred (p : t) =
+  Array.exists
+    (function
+      | Op _ -> false
+      | Do { c; _ } -> pred c || List.exists (holds pred) (carried c))
+    p.eqns
+
+let iterate = function Iterate _ -> true | _ -> false
+let custom = function Custom _ | Linear _ -> true | _ -> false
+
 (* A site of [body] with the compiling of [s], no compiled form and no derived
    program. *)
 let bare s body =
-  { s with compiled = None; axes = named body; table = Table.create () }
+  {
+    s with
+    compiled = None;
+    axes = named body;
+    iterates = holds iterate body;
+    customs = holds custom body;
+    table = Table.create ();
+  }
 
 let site ~name ~compile p forms =
   {
@@ -250,11 +270,14 @@ let site ~name ~compile p forms =
     compile;
     compiled = Some (compile p forms);
     axes = named p;
+    iterates = holds iterate p;
+    customs = holds custom p;
     table = Table.create ();
   }
 
-let site_name s = s.name
 let axes s = s.axes
+let iterates s = s.iterates
+let customs s = s.customs
 let made = Domain.DLS.new_key (fun () -> ref 0)
 let derivations () = !(Domain.DLS.get made)
 

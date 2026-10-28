@@ -626,7 +626,7 @@ and remat_parts st i (body : Program.t) args =
    over them and the residuals. Both are derived once per derivation at the
    call's site and compiled. *)
 and call_parts st i (body : Program.t) args site =
-  let name = Program.site_name site in
+  let name = st.name in
   let ua = Array.map (owned i) args in
   let kargs = Loops.pick (nots ua) args and uargs = Loops.pick ua args in
   let na = Array.length body.adds in
@@ -707,8 +707,8 @@ and trace_in kind ~name inputs f =
            one to its tangents: its primal runs where it was performed, and its
            operations are recorded. *)
         Some (fun k -> Effect.Deep.discontinue k Evaluate)
-    | Construct (Call { body; _ } as c), Some i
-      when claims st i c && (st.kind <> Tape || Loops.holds_iterate body) ->
+    | Construct (Call { site; _ } as c), Some i
+      when claims st i c && (st.kind <> Tape || Program.iterates site) ->
         (* Inlined: the default runs where the call was performed. *)
         Some (fun k -> Effect.Deep.discontinue k Evaluate)
     | Construct c, Some i when claims st i c ->
@@ -722,7 +722,7 @@ and trace_in kind ~name inputs f =
         Some
           (fun k ->
             Effect.Deep.continue k (Array.map (Loops.filled ~zero:false) forms))
-    | Staging, Some _ when st.kind = Jit ->
+    | Staging, Some _ when st.kind = Jit || st.kind = Staged ->
         Some (fun k -> Effect.Deep.continue k true)
     (* A traced program cannot read a total: a loop in it adds its sum. *)
     | Running _, Some _ when st.kind <> Tape ->

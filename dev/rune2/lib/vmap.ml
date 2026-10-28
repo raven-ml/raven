@@ -767,10 +767,10 @@ let rec answer ~name i axis n (c : Program.construct) k =
   (* An iterate has no rule before stage 6, and evaluating it inside a trace
      would read its stop: a construct whose programs hold one runs its default,
      step by step. *)
-  | ( Scan { step; _ }
-    | Remat { body = step; _ }
-    | Call { body = step; _ } )
-    when Loops.holds_iterate step ->
+  | (Scan { step; _ } | Remat { body = step; _ }) when Loops.holds_iterate step
+    ->
+      Effect.Deep.discontinue k Program.Evaluate
+  | Call { site; _ } when Program.iterates site ->
       Effect.Deep.discontinue k Program.Evaluate
   | Scan { step; length; init; xs; captures; seeds } ->
       Effect.Deep.continue k
@@ -778,7 +778,7 @@ let rec answer ~name i axis n (c : Program.construct) k =
   | Remat { body; args } ->
       Effect.Deep.continue k (remat ~name i axis n body args)
   | Call { body; args; site } ->
-      Effect.Deep.continue k (call i axis n body args site)
+      Effect.Deep.continue k (call ~name i axis n body args site)
   | Iterate _ -> Effect.Deep.discontinue k Program.Evaluate
 
 (* A scan's map is the scan of its step's map, whose carry has lanes for each
@@ -911,8 +911,7 @@ and remat ~name i axis n (body : Program.t) args =
    compiled function is, and compiled. The map's name enters the derivation
    only where the program names it, so maps of other names share the program
    otherwise. *)
-and call i axis n (body : Program.t) args site =
-  let name = Program.site_name site in
+and call ~name i axis n (body : Program.t) args site =
   let la = Array.map (owned_v i) args in
   let bargs =
     Array.map (fun v -> if owned_v i v then batch_v i n v else v) args

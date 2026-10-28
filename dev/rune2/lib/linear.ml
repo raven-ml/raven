@@ -1355,7 +1355,7 @@ and remat_rule env (body : Program.t) args cts =
    call's site, over the constant arguments and the cotangents given, traced as
    a compiled function is, and compiled. *)
 and call_rule env (body : Program.t) args site cts =
-  let name = Program.site_name site in
+  let name = env.name in
   let la = Array.map (fun (V x) -> env.lin x) args in
   let nl = Array.map not la in
   let consts = Array.map (fun (V x) -> V (env.const x)) (Loops.pick nl args) in

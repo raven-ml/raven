@@ -42,15 +42,7 @@ let rec holds_iterate (p : Program.t) =
     (function
       | Op _ -> false
       | Do { c = Iterate _; _ } -> true
-      | Do { c; _ } ->
-          let found = ref false in
-          ignore
-            (map_programs
-               (fun q ->
-                 if holds_iterate q then found := true;
-                 q)
-               c);
-          !found)
+      | Do { c; _ } -> List.exists holds_iterate (carried c))
     p.eqns
 
 (* Programs *)

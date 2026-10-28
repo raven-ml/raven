@@ -766,7 +766,7 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     derivative, under {!vmap} its map, and under reverse mode the part that
     reads no tangent, which computes at the call and returns the values the
     rest reads, and the rest, linear in the tangents, which the backward pass
-    transposes into one more program, as JAX transforms a compiled function.
+    transposes into one more program.
     Each derived program compiles as the key's does. A {e derivation} is a
     value: its kind, which arguments have a tangent or lanes, their dtypes,
     shapes and placements, the number of lanes of each map the program reads,
@@ -922,11 +922,8 @@ val jit' :
 module Lower = Lower
 module Lower_arith = Lower_arith
 
-(** Counts, for the suites. *)
-module Private : sig
-  val derivations : unit -> int
-  (** [derivations ()] is the number of programs that transformations of
-      compiled calls derived on the calling domain. *)
-end
+val derivations : unit -> int
+(** [derivations ()] is the number of programs that transformations of
+    compiled calls derived on the calling domain, for the suites. *)
 
 (**/**)

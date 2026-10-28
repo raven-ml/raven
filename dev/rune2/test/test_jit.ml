@@ -835,10 +835,11 @@ let cache_commands =
    Under a transformation a call is a call of a program derived from its key's,
    once per derivation: its kind, which arguments have a tangent or lanes,
    their abstract values, and the maps the program reads. The model is the set
-   of derivations met: a call under a new one derives its programs, three under
-   reverse mode (the derivative, its part known at the call, and the transpose
-   of the rest), one otherwise; a call at a new shape traces. Each result is
-   checked against eager's within the compiled sine's bound. *)
+   of derivations met: a call under a new one derives its program, and reverse
+   mode two more (the derivative's part known at the call, and the transpose of
+   the rest), the derivative being forward mode's, as the program holds no
+   custom rule; a call at a new shape traces. Each result is checked against
+   eager's within the compiled sine's bound. *)
 
 type mask = bool * bool
 type how = Plain | Jvp of mask | Grad of mask | Map of mask
@@ -918,22 +919,19 @@ let apply f d x y =
 let derived_call g d =
   let x = Nx.linspace f64 0.5 1.5 d.n and y = Nx.linspace f64 (-1.) 2. d.n in
   Domain.DLS.set derived_traced false;
-  let before = Rune.Private.derivations () in
+  let before = Rune.derivations () in
   let got = apply g d x y in
-  let made = Rune.Private.derivations () - before in
+  let made = Rune.derivations () - before in
   let traced = Domain.DLS.get derived_traced in
-  let expected = apply product d x y in
-  let close =
-    Nx.item []
-      (Nx.all
-         (Nx.less_equal (Nx.abs (Nx.sub got expected))
-            (Nx.add_s (Nx.mul_s (Nx.abs expected) 1e-14) 1e-300)))
-  in
-  if not close then failwith "a wrong value";
+  (* The compiled sine within 4 ulps, its derivative within its cosine's. *)
+  equal ~msg:"value"
+    (array (float_rel ~rel:1e-14 ~abs:1e-300))
+    (Nx.to_array (apply product d x y))
+    (Nx.to_array got);
   (traced, made)
 
 module Seen = Set.Make (struct
-  type t = how * int
+  type t = string * mask * int
 
   let compare = compare
 end)
@@ -943,13 +941,17 @@ let derivation_commands =
   and model (seen, shapes) d =
     let traced = not (List.mem d.n !shapes) in
     if traced then shapes := d.n :: !shapes;
-    let fresh = not (Seen.mem (d.how, d.n) !seen) in
-    seen := Seen.add (d.how, d.n) !seen;
+    let meet k =
+      let fresh = not (Seen.mem k !seen) in
+      seen := Seen.add k !seen;
+      Bool.to_int fresh
+    in
     let made =
       match d.how with
       | Plain -> 0
-      | Grad _ -> if fresh then 3 else 0
-      | Jvp _ | Map _ -> if fresh then 1 else 0
+      | Jvp m -> meet ("jvp", m, d.n)
+      | Grad m -> meet ("jvp", m, d.n) + (2 * meet ("grad", m, d.n))
+      | Map m -> meet ("vmap", m, d.n)
     in
     (traced, made)
   in
@@ -1045,7 +1047,7 @@ let test_once_per_key () =
   ignore (Rune.jacfwd' (Rune.grad' (sum g)) x);
   equal ~msg:"one key" int 1 !traces;
   ignore (Rune.vmap' g xs);
-  equal ~msg:"the map's lanes are another key's" int 1 !traces
+  equal ~msg:"a map over arguments of the key's forms" int 1 !traces
 
 (* Under an enclosing jit, a derived call is staged: the printed program calls
    no other. *)
@@ -1060,6 +1062,104 @@ let test_inlined () =
   equal (array (float_rel ~rel:1e-14 ~abs:1e-300))
     (Nx.to_array (Rune.grad' (fun x -> Nx.sum (Nx.mul x (Nx.sin x))) x))
     (Nx.to_array (Rune.jit' f x))
+
+(* A scan's step inlines a call over its variables: the map around the scan
+   answers the lane index that the call's program reads, as it answers the
+   step's own. *)
+let test_inlined_in_step () =
+  let a = Rune.axis () in
+  let lane x = Nx.add x (Nx.cast f64 (Rune.lane_index a x)) in
+  let g = Rune.jit' lane in
+  let xs = Nx.reshape [| 2; 3 |] (Nx.linspace f64 0. 1. 6) in
+  let run f x =
+    fst
+      (Rune.scan' ~f:(fun c r -> (Nx.mul (f c) r, Nx.neg c)) ~init:x
+         (Nx.reshape [| 3; 1 |] x))
+  in
+  equal bits_t
+    (bits (Rune.vmap' ~axis:a (run lane) xs))
+    (bits (Rune.vmap' ~axis:a (run g) xs))
+
+(* Compositions of transformations around a compiled call give eager's values,
+   the compiled sine and cosine within their bounds. *)
+let test_compositions () =
+  let close ~msg a b =
+    equal ~msg
+      (array (float_rel ~rel:1e-13 ~abs:1e-13))
+      (Nx.to_array (Nx.flatten a))
+      (Nx.to_array (Nx.flatten b))
+  in
+  let f x = Nx.mul (Nx.sin x) (Nx.cos (Nx.mul x x)) in
+  let g = Rune.jit' f in
+  let sum h x = Nx.sum (h x) in
+  let x = Nx.linspace f64 (-1.) 1.5 4 in
+  let xs = Nx.reshape [| 3; 4 |] (Nx.linspace f64 (-1.) 2. 12) in
+  let both msg t = close ~msg (t f) (t g) in
+  both "grad of grad" (fun f -> Rune.grad' (sum (Rune.grad' (sum f))) x);
+  both "jvp of grad" (fun f -> snd (Rune.jvp' (Rune.grad' (sum f)) x x));
+  both "grad of jvp" (fun f ->
+      Rune.grad' (fun x -> Nx.sum (snd (Rune.jvp' f x x))) x);
+  both "jacfwd of grad" (fun f -> Rune.jacfwd' (Rune.grad' (sum f)) x);
+  both "jacrev" (fun f -> Rune.jacrev' f x);
+  both "vmap of grad" (fun f -> Rune.vmap' (Rune.grad' (sum f)) xs);
+  both "grad of vmap" (fun f -> Rune.grad' (sum (Rune.vmap' f)) xs);
+  both "vjp applied twice" (fun f ->
+      let _, pb = Rune.vjp' f x in
+      Nx.add (pb x) (pb (Nx.neg x)));
+  both "linearize" (fun f ->
+      let _, l = Rune.linearize T.tensor T.tensor f x in
+      Nx.add (l x) (l (Nx.ones f64 [| 4 |])));
+  both "linear_transpose" (fun f ->
+      let l =
+        Rune.linear_transpose T.tensor T.tensor (fun v -> Nx.mul v (f x)) x
+      in
+      l x);
+  let remat = Rune.remat T.(tensor @-> returns tensor) f in
+  close ~msg:"grad of a remat in a jit" (Rune.grad' (sum f) x)
+    (Rune.grad' (sum (Rune.jit' remat)) x);
+  (* Lanes and lane indices through a derived transpose. *)
+  let a = Rune.axis () in
+  let laned x =
+    Nx.mul (f x)
+      (Nx.add (Nx.cast f64 (Rune.lane_index a x)) (Nx.sum (Rune.lanes a x)))
+  in
+  let lg = Rune.jit' laned in
+  close ~msg:"vmap of grad, reading the map"
+    (Rune.vmap' ~axis:a (Rune.grad' (sum laned)) xs)
+    (Rune.vmap' ~axis:a (Rune.grad' (sum lg)) xs);
+  close ~msg:"grad of vmap, reading the map"
+    (Rune.grad' (sum (Rune.vmap' ~axis:a laned)) xs)
+    (Rune.grad' (sum (Rune.vmap' ~axis:a lg)) xs);
+  (* An addition counts once per execution, under each derivation. *)
+  let t = Rune.Total.make () in
+  let adding f x =
+    Rune.Total.add t (Nx.sum (Nx.mul x x));
+    f x
+  in
+  let collected h =
+    let zero = Nx.scalar f64 0. in
+    snd (Rune.Total.collect t ~zero (fun () -> ignore (h ())))
+  in
+  let totals msg h =
+    close ~msg (collected (fun () -> h (adding f)))
+      (collected (fun () -> h (Rune.jit' (adding f))))
+  in
+  totals "a total under jvp" (fun f -> Rune.jvp' f x x);
+  totals "a total under grad" (fun f -> Rune.grad' (sum f) x);
+  totals "a total under vmap" (fun f -> Rune.vmap' f xs)
+
+(* A remat stages every operation its function applies, a compiled call's over
+   its captures included: evaluated, the remat runs their kernels. *)
+let test_remat_stages () =
+  let c = count (v [| 0.5; 2. |]) in
+  let g = Rune.jit' (fun c -> Nx.mul c c) in
+  let r = Rune.remat T.(tensor @-> returns tensor) (fun x -> Nx.add x (g c)) in
+  let x = count (v [| 1.; -1. |]) in
+  ignore (r x);
+  C.reset ();
+  let y = r x in
+  equal ~msg:"the call's kernel and the addition's" int 2 (C.calls ());
+  equal bits_t (bits (Nx.add x (Nx.mul c c))) (bits y)
 
 let () =
   exit
@@ -1123,5 +1223,10 @@ let () =
                test_once_per_key;
              test "a derived call is staged under an enclosing jit"
                test_inlined;
+             test "a step inlines a call over its variables"
+               test_inlined_in_step;
+             test "compositions around a call give eager's values"
+               test_compositions;
+             test "a remat stages a call over its captures" test_remat_stages;
            ];
        ])
