@@ -225,6 +225,64 @@ and construct =
       (** [body] applied to [args], the function's arguments then its captures,
           whose reverse mode keeps [args] alone and computes [body] again; its
           sums start from [seeds], as a scan's. *)
+  | Operator : {
+      id : int;  (** The operator's number. *)
+      transposed : bool;  (** Whether it applies the operator's transpose. *)
+      lanes : (int * bool array) list;
+          (** The maps it applies the operator over, outermost first, each with
+              which of [data] hold its lanes: its arguments hold every lane's
+              along leading axes of these lengths, and those data too. *)
+      args : value array;
+      data : value array;
+          (** The values the operator is made from, on which it does not act
+              linearly. *)
+      forms : form array;  (** The results', the arguments' forms. *)
+    }
+      -> construct
+      (** An abstract linear operator applied to [args], a value per array of
+          the space it acts on, as a linear solve is traced against: a program
+          holding it is evaluated once {!fill} has given it a body. Its default
+          raises [Invalid_argument]. *)
+  | Root : {
+      name : string;  (** The entry point, in messages. *)
+      system : system;
+      solution : value array;  (** The solution's arrays. *)
+      theta : value array;
+          (** The values from outside the residual reads, which the solution
+              depends on. *)
+      captures : value array;  (** The linear solve's captures. *)
+    }
+      -> construct
+      (** [solution], stated to be a zero of [system.residual] over it and
+          [theta]. Its default is [solution]; its derivative solves the system's
+          derivative ({!Solve}). *)
+  | Solve : {
+      name : string;
+      system : system;
+      transposed : bool;  (** Whether it solves the transposed system. *)
+      b : value array;  (** The right-hand side, an array per solution's. *)
+      data : value array;  (** The solution, then [theta]. *)
+      captures : value array;  (** The linear solve's captures. *)
+    }
+      -> construct
+      (** The [v] with [J v = b], [J] the residual's derivative along the
+          solution at [data], or [Jᵀ v = b]: the system's linear solve with its
+          operator filled ({!fill}) by [J] or [Jᵀ]. Linear in [b]. *)
+
+and system = {
+  id : int;  (** The linear solve's operator. *)
+  operator :
+    transposed:bool -> lanes:(int * bool array) list -> t * value array;
+  residual : t;  (** Over the solution then [theta]. *)
+  jacobian : t;  (** [J v], over [v], the solution then [theta]. *)
+  transpose : t;  (** [Jᵀ w], over [w], the solution then [theta]. *)
+  solve : t;
+      (** The linear solve against the operator [id], over the right-hand side,
+          the solution, [theta], then its captures. *)
+}
+(** A root's programs, at the level of the construct that holds them: a map of
+    the construct maps them. [operator] gives the programs of [J] and [Jᵀ] at
+    one lane, over the maps an operator lies under ({!fill}). *)
 
 and rows =
   | Taken
@@ -487,9 +545,19 @@ val mentions : axis -> t -> bool
 (** [mentions a p] is [true] iff [p] or a program its constructs carry reads the
     lanes or the lane index of the map named [a]. *)
 
-val reads_lanes : t -> bool
+val fill :
+  t ->
+  id:int ->
+  (transposed:bool -> lanes:(int * bool array) list -> t * value array) ->
+  t
+(** [fill p ~id body] is [p] with each application of the operator [id] in it
+    and in the programs its constructs carry a call of [q] over the
+    application's arguments, its data, then [captures], where
+    [(q, captures) = body ~transposed ~lanes]. *)
+
+val reads_lanes : ?index:bool -> t -> bool
 (** [reads_lanes p] is [true] iff [p] or a program its constructs carry reads
-    the lanes or the lane index of a map. *)
+    the lanes of a map, or its lane index unless [index] is [false]. *)
 
 val reads_params : t -> bool array -> bool
 (** [reads_params p mask] is [true] iff one of [p]'s arguments [k] with

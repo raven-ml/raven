@@ -1134,6 +1134,52 @@ let rec walk ~name ~fn (p : Program.t) consts cts =
         if reached base n then
           scan_rule env step ~length ~trips ~reverse ~init ~xs ~captures
             (cts_at base n)
+    | Do { c = Operator o; base } ->
+        (* An operator's transpose is its transposed operator. *)
+        let n = Array.length o.forms in
+        if reached base n then begin
+          let cts =
+            Array.mapi
+              (fun k f ->
+                match acc_at base k with
+                | Some c -> c
+                | None -> Loops.filled ~zero:true f)
+              o.forms
+          in
+          let data = Array.map (fun (V d) -> V (const d)) o.data in
+          let r =
+            Program.perform
+              (Operator
+                 { o with transposed = not o.transposed; args = cts; data })
+          in
+          Array.iteri (fun k (V a) -> if lin a then give a (fresh r.(k))) o.args
+        end
+    | Do { c = Solve sv; base } ->
+        (* A linear solve's transpose solves the transposed system. *)
+        let n = Array.length sv.b in
+        if reached base n then begin
+          let cts =
+            Array.mapi
+              (fun k (V b) ->
+                match acc_at base k with
+                | Some c -> c
+                | None -> Loops.filled ~zero:true (form (V b)))
+              sv.b
+          in
+          let const = Array.map (fun (V d) -> V (env.const d)) in
+          let r =
+            Program.perform
+              (Solve
+                 {
+                   sv with
+                   transposed = not sv.transposed;
+                   b = cts;
+                   data = const sv.data;
+                   captures = const sv.captures;
+                 })
+          in
+          Array.iteri (fun k (V b) -> if lin b then give b (fresh r.(k))) sv.b
+        end
     | Do { c = Remat { body; args; _ }; base } ->
         let n = next.(e) - base in
         if reached base n then remat_rule env body args (cts_at base n)

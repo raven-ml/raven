@@ -197,6 +197,42 @@ and construct =
     }
       -> construct
   | Remat : { body : t; args : value array; seeds : value array } -> construct
+  | Operator : {
+      id : int;
+      transposed : bool;
+      lanes : (int * bool array) list;
+      args : value array;
+      data : value array;
+      forms : form array;
+    }
+      -> construct
+  | Root : {
+      name : string;
+      system : system;
+      solution : value array;
+      theta : value array;
+      captures : value array;
+    }
+      -> construct
+  | Solve : {
+      name : string;
+      system : system;
+      transposed : bool;
+      b : value array;
+      data : value array;
+      captures : value array;
+    }
+      -> construct
+
+and system = {
+  id : int;
+  operator :
+    transposed:bool -> lanes:(int * bool array) list -> t * value array;
+  residual : t;
+  jacobian : t;
+  transpose : t;
+  solve : t;
+}
 
 and derivative = Tangent of t | Pullback of t
 and rows = Taken | Max
@@ -248,7 +284,9 @@ let carried = function
   | Call { body; _ } | Remat { body; _ } -> [ body ]
   | Custom { primal; derivative = Tangent d | Pullback d; _ } -> [ primal; d ]
   | Linear { apply; transpose; _ } -> Option.to_list apply @ [ transpose ]
-  | Detach _ | Lanes _ | Lane_index _ | Add _ -> []
+  | Root { system; _ } | Solve { system; _ } ->
+      [ system.residual; system.jacobian; system.transpose; system.solve ]
+  | Detach _ | Lanes _ | Lane_index _ | Add _ | Operator _ -> []
 
 (* The maps [p] names, and those the programs it carries name, in the order
    first named. *)
@@ -377,6 +415,24 @@ let map_operands m = function
         }
   | Remat r ->
       Remat { r with args = map_values m r.args; seeds = map_values m r.seeds }
+  | Operator o ->
+      Operator { o with args = map_values m o.args; data = map_values m o.data }
+  | Root r ->
+      Root
+        {
+          r with
+          solution = map_values m r.solution;
+          theta = map_values m r.theta;
+          captures = map_values m r.captures;
+        }
+  | Solve s ->
+      Solve
+        {
+          s with
+          b = map_values m s.b;
+          data = map_values m s.data;
+          captures = map_values m s.captures;
+        }
 
 let operands = function
   | Detach x -> [ V x ]
@@ -395,9 +451,14 @@ let operands = function
       Array.to_list (Array.concat [ args; captures; seeds ])
   | Linear { args; captures; residuals; _ } ->
       Array.to_list (Array.concat [ args; captures; residuals ])
+  | Operator { args; data; _ } -> Array.to_list (Array.append args data)
+  | Root { solution; theta; captures; _ } ->
+      Array.to_list (Array.concat [ solution; theta; captures ])
+  | Solve { b; data; captures; _ } ->
+      Array.to_list (Array.concat [ b; data; captures ])
 
-let map_programs f = function
-  | (Detach _ | Lanes _ | Lane_index _ | Add _) as c -> c
+let rec map_programs f = function
+  | (Detach _ | Lanes _ | Lane_index _ | Add _ | Operator _) as c -> c
   | Scan s -> Scan { s with step = f s.step }
   | Iterate s -> Iterate { s with step = f s.step; until = f s.until }
   | Call c ->
@@ -413,6 +474,19 @@ let map_programs f = function
   | Linear c ->
       Linear { c with apply = Option.map f c.apply; transpose = f c.transpose }
   | Remat r -> Remat { r with body = f r.body }
+  | Root r -> Root { r with system = map_system f r.system }
+  | Solve s -> Solve { s with system = map_system f s.system }
+
+(* A system's programs at its construct's level; the operator's, a lane's,
+   stay. *)
+and map_system f s =
+  {
+    s with
+    residual = f s.residual;
+    jacobian = f s.jacobian;
+    transpose = f s.transpose;
+    solve = f s.solve;
+  }
 
 (* Forms *)
 
@@ -470,7 +544,8 @@ let feeds step =
    shape its programs thread, which it starts from its seeds; then for a custom
    rule its tangent map's running totals out, chains from the identity. *)
 let additions = function
-  | Detach _ | Lanes _ | Lane_index _ | Add _ -> [||]
+  | Detach _ | Lanes _ | Lane_index _ | Add _ | Operator _ | Root _ | Solve _ ->
+      [||]
   | Scan { step = p; _ } | Call { body = p; _ } | Remat { body = p; _ } ->
       let adds, _, _ = sums [ p ] in
       adds
@@ -562,6 +637,10 @@ let rec forms = function
   | Linear { apply = Some a; forms; _ } ->
       Array.append forms (Array.map form (tail a))
   | Linear { apply = None; forms; _ } -> forms
+  | Operator { forms; _ } -> forms
+  | Root { solution; _ } -> Array.map form solution
+  | Solve { system; b; _ } ->
+      Array.map form (slice system.solve.outputs 0 (Array.length b))
 
 (* The forms of [p]'s results, then its sums'. *)
 and results p =
@@ -746,6 +825,47 @@ and default = function
           custom_jvp rule")
   | Remat { body; args; seeds } ->
       from_seeds body seeds (fun totals -> eval ~totals body args)
+  | Operator _ ->
+      invalid_arg
+        "Rune.root: linear_solve's operator was applied after linear_solve \
+         returned"
+  | Root { solution; _ } -> solution
+  | Solve { system; transposed; b; data; captures; _ } ->
+      let body ~transposed:t ~lanes =
+        system.operator ~transposed:(t <> transposed) ~lanes
+      in
+      let p = fill system.solve ~id:system.id body in
+      slice (eval p (Array.concat [ b; data; captures ])) 0 (Array.length b)
+
+(* [p] with the operator [id]'s applications calls of [body]'s programs. *)
+and fill (p : t) ~id body =
+  let eqn = function
+    | Do { c = Operator o; base } when o.id = id ->
+        let body, captures = body ~transposed:o.transposed ~lanes:o.lanes in
+        let args = Array.concat [ o.args; o.data; captures ] in
+        let site = evaluated ~name:"Rune.root" body in
+        Do { c = Call { body; args; site; seeds = [||] }; base }
+    | Do { c; base } ->
+        Do { c = map_programs (fun q -> fill q ~id body) c; base }
+    | e -> e
+  in
+  { p with eqns = Array.map eqn p.eqns }
+
+(* A site of [body] that evaluates it, as each program derived from it. *)
+and evaluated ~name body =
+  let compile p _ vs =
+    let n = Array.length vs - Array.length p.adds in
+    eval ~totals:(slice vs n (Array.length vs)) p (slice vs 0 n)
+  in
+  {
+    name;
+    compile;
+    compiled = None;
+    axes = named body;
+    iterates = holds (function Iterate _ -> true | _ -> false) body;
+    customs = holds custom body;
+    table = Table.create ();
+  }
 
 and eval_seeded p ~seeds args =
   from_seeds p seeds (fun totals -> eval ~totals p args)
@@ -1091,12 +1211,13 @@ let rec mentions a (p : t) =
       | Do { c; _ } -> List.exists (mentions a) (carried c))
     p.eqns
 
-let rec reads_lanes (p : t) =
+let rec reads_lanes ?(index = true) (p : t) =
   Array.exists
     (function
       | Op _ -> false
-      | Do { c = Lanes _ | Lane_index _; _ } -> true
-      | Do { c; _ } -> List.exists reads_lanes (carried c))
+      | Do { c = Lanes _; _ } -> true
+      | Do { c = Lane_index _; _ } -> index
+      | Do { c; _ } -> List.exists (reads_lanes ~index) (carried c))
     p.eqns
 
 let reads_params p mask =
@@ -1327,6 +1448,22 @@ and pp_construct names ~indent (p : t) ppf c =
   | Remat { body; args; seeds } ->
       Format.fprintf ppf "remat (%a)%a@\n%s  body%a" values (Array.to_list args)
         seeded_from seeds pad program body
+  | Operator { transposed; lanes; args; data; _ } ->
+      Format.fprintf ppf "operator%s%s (%a) of (%a)"
+        (if transposed then " transposed" else "")
+        (String.concat ""
+           (List.map (fun (n, _) -> Printf.sprintf " over %d lanes" n) lanes))
+        values (Array.to_list args) values (Array.to_list data)
+  | Root { name; system; solution; theta; captures } ->
+      Format.fprintf ppf "%s (%a) of (%a), captures (%a)@\n%s  residual%a" name
+        values (Array.to_list solution) values (Array.to_list theta) values
+        (Array.to_list captures) pad program system.residual
+  | Solve { name; system; transposed; b; data; captures } ->
+      Format.fprintf ppf "%s solve%s (%a) of (%a), captures (%a)@\n%s  solve%a"
+        name
+        (if transposed then " transposed" else "")
+        values (Array.to_list b) values (Array.to_list data) values
+        (Array.to_list captures) pad program system.solve
   | Custom { name; primal; derivative; args; captures; seeds; _ } ->
       let kind, d =
         match derivative with

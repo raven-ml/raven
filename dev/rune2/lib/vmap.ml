@@ -972,6 +972,26 @@ let rec answer ~name ?held i axis n (c : Program.construct) k =
   | Call { body; args; site; seeds } ->
       Effect.Deep.continue k (call ~name i axis n body args site seeds)
   | Iterate _ -> Effect.Deep.continue k (iterate ~name ?held i axis n c)
+  (* An operator over lane values applies over the lanes: its arguments' and
+     those of its data that hold them. *)
+  | Operator o ->
+      let mask = Array.map (owned_v i) o.data in
+      let r =
+        Program.perform
+          (Operator
+             {
+               o with
+               lanes = (n, mask) :: o.lanes;
+               args = Array.map (batch_v i n) o.args;
+               data =
+                 Array.map2
+                   (fun l v -> if l then batch_v i n v else v)
+                   mask o.data;
+               forms = Array.map (Program.stacked n) o.forms;
+             })
+      in
+      Effect.Deep.continue k (Array.map (lane_v i) r)
+  | Root _ | Solve _ -> Effect.Deep.continue k (root ~name i axis n c)
 
 (* A scan's map is the scan of its step's map, whose carry has lanes for each
    carry that has them at the call or gains them from the step: a fixpoint, as
@@ -1572,6 +1592,64 @@ and masked_scan ~name ?held i axis n (c : Program.construct) =
         (held_sums n sum_adds ~seeded i
            (unheld n live sum_forms (Array.sub r base ns)))
   | _ -> invalid_arg "Rune: a scan's map"
+
+(* A root or a linear solve over lane values is performed outward over every
+   lane's values, its system's programs mapped: a lane's operator stays, which
+   the linear solve's map applies over the lanes. *)
+and root ~name i axis n (c : Program.construct) =
+  let batched = Array.map (batch_v i n) in
+  let forms = Array.map Program.form in
+  let mapped (p : Program.t) vs =
+    let q, own =
+      Trace.trace Body ~name (forms vs) (fun bs ->
+          interpret ~name ~axis n (fun w ->
+              let out = Program.eval p (Array.map (lane_v w) bs) in
+              Array.map (batch_v w n) out))
+    in
+    if own <> [||] then invalid_arg (name ^ ": a root's program captures");
+    q
+  in
+  let system (s : Program.system) x th caps =
+    {
+      s with
+      residual = mapped s.residual (Array.append x th);
+      jacobian = mapped s.jacobian (Array.concat [ x; x; th ]);
+      transpose = mapped s.transpose (Array.concat [ x; x; th ]);
+      solve = mapped s.solve (Array.concat [ x; x; th; caps ]);
+    }
+  in
+  let r =
+    match c with
+    | Root rt ->
+        let x = batched rt.solution and th = batched rt.theta in
+        let caps = batched rt.captures in
+        Program.perform
+          (Root
+             {
+               rt with
+               system = system rt.system x th caps;
+               solution = x;
+               theta = th;
+               captures = caps;
+             })
+    | Solve sv ->
+        let b = batched sv.b and data = batched sv.data in
+        let nx = Array.length b in
+        let x = Array.sub data 0 nx
+        and th = Array.sub data nx (Array.length data - nx) in
+        let caps = batched sv.captures in
+        Program.perform
+          (Solve
+             {
+               sv with
+               system = system sv.system x th caps;
+               b;
+               data;
+               captures = caps;
+             })
+    | _ -> invalid_arg "Rune: a root's map"
+  in
+  Array.map (lane_v i) r
 
 (* A remat's map is the remat of its function's map, as JAX's checkpoint
    batches, so that a reverse mode around the map sees the remat. *)

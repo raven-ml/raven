@@ -599,6 +599,256 @@ let iterate_named name c ~max ~until ~f init =
 let iterate c ~max ~until ~f init =
   iterate_named "Rune.iterate" c ~max ~until ~f init
 
+(* Roots *)
+
+let operators = Atomic.make 0
+
+(* [p] over its [nargs] arguments then its data, of [forms], with its captures
+   [caps], mapped over [lanes] maps, outermost first: the arguments hold every
+   lane's along leading axes of those lengths, and a datum where its map's mask
+   says. *)
+let rec mapped name (p, caps) ~nargs forms lanes =
+  match lanes with
+  | [] -> (p, caps)
+  | (n, mask) :: rest ->
+      let inner, icaps = mapped name (p, caps) ~nargs forms rest in
+      let laned m k = k < nargs || m.(k - nargs) in
+      let stack k f =
+        List.fold_right
+          (fun (n, m) f -> if laned m k then Program.stacked n f else f)
+          lanes f
+      in
+      Trace.trace Body ~name (Array.mapi stack forms) (fun bs ->
+          Vmap.run ~name ~axis:(Program.axis ()) n (fun w ->
+              let vs =
+                Array.mapi
+                  (fun k (V b as v) ->
+                    if laned mask k then V (Vmap.lane w b) else v)
+                  bs
+              in
+              let out = Program.eval inner (Array.append vs icaps) in
+              Array.map (fun (V y) -> V (Vmap.batch w n y)) out))
+
+(* The default linear solve: the operator's matrix, its columns the operator of
+   the unit vectors, computed in one map over them, solved by [Nx.solve]. The
+   arrays are flattened into one vector, so they share a dtype. A complex
+   operator need only be real-linear: its matrix is of the real system over the
+   parts, the operator of the real and the imaginary unit vectors. *)
+let dense name forms op bs =
+  let (V b0) = bs.(0) in
+  Array.iter
+    (fun (V b) ->
+      if not (Nx.Dtype.equal (Nx.dtype b) (Nx.dtype b0)) then
+        invalid_argf
+          "%s: the default linear solve takes arrays of one dtype, not %s and \
+           %s"
+          name
+          (Nx.Dtype.name (Nx.dtype b0))
+          (Nx.Dtype.name (Nx.dtype b)))
+    bs;
+  let sizes = Array.map (fun (V b) -> Nx.numel b) bs in
+  let n = Array.fold_left ( + ) 0 sizes in
+  let flat vs =
+    Nx.concatenate ~axis:0
+      (Array.to_list
+         (Array.map (fun v -> Nx.reshape [| -1 |] (Program.like b0 v)) vs))
+  in
+  let unflat v =
+    let at = ref 0 in
+    Array.mapi
+      (fun k (F f) ->
+        let piece = Nx.slice [ Nx.R (!at, !at + sizes.(k)) ] v in
+        at := !at + sizes.(k);
+        V (Nx.reshape (Iarray.to_array (Nx_array.Layout.shape f.layout)) piece))
+      forms
+  in
+  (* A complex operator's real system: a vector of [n] complex numbers as its
+     [2n] parts, real then imaginary. *)
+  let parts (type c q d) (z0 : (Complex.t, c, d) Nx.t)
+      (cdt : (Complex.t, c) Nx.dtype) (fdt : (float, q) Nx.dtype) =
+    let flatc vs =
+      Nx.concatenate ~axis:0
+        (Array.to_list
+           (Array.map (fun v -> Nx.reshape [| -1 |] (Program.like z0 v)) vs))
+    in
+    let real z = Nx.concatenate ~axis:0 [ Nx.real fdt z; Nx.imag fdt z ] in
+    let whole r =
+      Nx.complex cdt
+        ~re:(Nx.slice [ Nx.R (0, n) ] r)
+        ~im:(Nx.slice [ Nx.R (n, 2 * n) ] r)
+    in
+    let m = 2 * n in
+    let iota = Nx.arange Nx.int32 0 m 1 in
+    let eye =
+      Nx.cast fdt
+        (Nx.equal (Nx.reshape [| m; 1 |] iota) (Nx.reshape [| 1; m |] iota))
+    in
+    let rows =
+      Vmap.run ~name ~axis:(Program.axis ()) m (fun w ->
+          Vmap.batch w m (real (flatc (op (unflat (whole (Vmap.lane w eye)))))))
+    in
+    unflat (whole (Nx.solve (Nx.matrix_transpose rows) (real (flatc bs))))
+  in
+  if n = 0 then bs
+  else
+    match Nx.Dtype.equal_witness (Nx.dtype b0) Nx.complex64 with
+    | Some Type.Equal -> parts b0 Nx.complex64 Nx.float32
+    | None -> (
+        match Nx.Dtype.equal_witness (Nx.dtype b0) Nx.complex128 with
+        | Some Type.Equal -> parts b0 Nx.complex128 Nx.float64
+        | None ->
+            let iota = Nx.arange Nx.int32 0 n 1 in
+            let eye =
+              Nx.cast (Nx.dtype b0)
+                (Nx.equal
+                   (Nx.reshape [| n; 1 |] iota)
+                   (Nx.reshape [| 1; n |] iota))
+            in
+            let rows =
+              Vmap.run ~name ~axis:(Program.axis ()) n (fun w ->
+                  let column = flat (op (unflat (Vmap.lane w eye))) in
+                  Vmap.batch w n column)
+            in
+            unflat (Nx.solve (Nx.matrix_transpose rows) (flat bs)))
+
+let root_named name ?linear_solve x ~residual solve =
+  (* The solution, of [solve]'s code with no derivative: every operation staged,
+     so that it computes on its captures detached. *)
+  let like = ref None in
+  let sprog, scaps =
+    Trace.trace Staged ~name [||] (fun _ ->
+        let y = solve () in
+        like := Some y;
+        values x y)
+  in
+  let y0 = Option.get !like in
+  (* The space the operators act on: the solution's arrays, contiguous. *)
+  let y_like = y0 in
+  let scaps = Array.map (fun (V c) -> V (detach c)) scaps in
+  let forms =
+    Array.map
+      (fun v ->
+        let (F f) = form v in
+        let shape = Nx_array.Layout.shape f.layout in
+        F { f with layout = Nx_array.Layout.contiguous shape })
+      (values x y_like)
+  in
+  let nx = Array.length forms in
+  let point vs = rebuild x ~like:y_like vs in
+  (* The residual, whose values from outside are what the root depends on. *)
+  let residual_p, theta =
+    Trace.trace Body ~name forms (fun vs ->
+        let r = residual (point vs) in
+        same_leaves name x ~this:"in the residual's result" r
+          ~that:"in the solution" (point vs);
+        values x r)
+  in
+  if Program.reads_lanes ~index:false residual_p then
+    invalid_argf
+      "%s: the residual reads the lanes of a map, which joins the lanes' \
+       systems"
+      name;
+  let nt = Array.length theta in
+  let data_forms = Array.append forms (Array.map form theta) in
+  let operand_forms = Array.append forms data_forms in
+  let split vs =
+    (Array.sub vs 0 nx, Array.sub vs nx nx, Array.sub vs (2 * nx) nt)
+  in
+  let closed (p, caps) =
+    if caps <> [||] then invalid_argf "%s: a root's program captures" name;
+    p
+  in
+  (* [J v], the residual's derivative along the solution, and [Jᵀ w]. *)
+  let tangents i out =
+    Array.init nx (fun k ->
+        let (V y) = out.(k) in
+        match Jvp.tangent_of i y with
+        | Some t -> V t
+        | None -> V (Nx.zeros_like (Jvp.primal i y)))
+  in
+  let jacobian =
+    closed
+      (Trace.trace Body ~name operand_forms (fun vs ->
+           let v, xs, th = split vs in
+           Jvp.run ~name (fun i ->
+               let xd =
+                 Array.map2
+                   (fun (V x) v -> V (Jvp.seed i x (Program.like x v)))
+                   xs v
+               in
+               tangents i (Program.eval residual_p (Array.append xd th)))))
+  in
+  let transpose =
+    closed
+      (Trace.trace Body ~name operand_forms (fun vs ->
+           let ws, xs, th = split vs in
+           let l =
+             Linear.trace ~name
+               (Array.map (Loops.filled ~zero:true) forms)
+               (fun v -> Program.eval jacobian (Array.concat [ v; xs; th ]))
+           in
+           let cts = Linear.transpose l (Array.map Option.some ws) in
+           Array.mapi
+             (fun k c ->
+               match c with
+               | Some (c : Linear.ct) -> c.v
+               | None -> Loops.filled ~zero:true forms.(k))
+             cts))
+  in
+  (* The linear solve, traced once against an abstract operator. *)
+  let id = Atomic.fetch_and_add operators 1 in
+  let solve_p, lcaps =
+    Trace.trace Body ~name operand_forms (fun vs ->
+        let bs = Array.sub vs 0 nx and data = Array.sub vs nx (nx + nt) in
+        let op args =
+          Program.perform
+            (Operator { id; transposed = false; lanes = []; args; data; forms })
+        in
+        match linear_solve with
+        | Some solve ->
+            values x (solve (fun v -> point (op (values x v))) (point bs))
+        | None -> dense name forms op bs)
+  in
+  (* Each operator traced once per maps it lies under, as each evaluation of a
+     solve, a backward loop's per row, fills it again; a compiled program
+     holding the solve may run on several domains. *)
+  let filled = Hashtbl.create 4 and lock = Mutex.create () in
+  let operator ~transposed ~lanes =
+    Mutex.protect lock (fun () ->
+        let key = (transposed, lanes) in
+        match Hashtbl.find_opt filled key with
+        | Some p -> p
+        | None ->
+            let p =
+              mapped name
+                ((if transposed then transpose else jacobian), [||])
+                ~nargs:nx operand_forms lanes
+            in
+            Hashtbl.add filled key p;
+            p)
+  in
+  let system =
+    {
+      Program.id;
+      operator;
+      residual = residual_p;
+      jacobian;
+      transpose;
+      solve = solve_p;
+    }
+  in
+  let solution =
+    Array.map2
+      (fun (F f) v -> V (Program.cast_at f v))
+      forms
+      (Program.threaded sprog (fun totals -> Program.eval ~totals sprog scaps))
+  in
+  let ys = run (Root { name; system; solution; theta; captures = lcaps }) in
+  rebuild x ~like:y0 ys
+
+let root ?linear_solve x ~residual solve =
+  root_named "Rune.root" ?linear_solve x ~residual solve
+
 (* Compilation *)
 
 (* A signature as one structure of its arguments, numbered from [0]. *)

@@ -7,6 +7,7 @@
   test_loops
   test_loop_rules
   test_iterate
+  test_root
   test_remat
   test_linear
   test_jvp
@@ -21,6 +22,7 @@
   test_loops
   test_loop_rules
   test_iterate
+  test_root
   test_remat
   test_linear
   test_jvp

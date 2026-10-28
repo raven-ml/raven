@@ -371,6 +371,8 @@ let owned i (V x) = owns i x
    ({!thread}). *)
 let claims st i = function
   | Add (_, x) -> st.kind = Tape && owns i x
+  (* An abstract operator is recorded, to be filled in, whatever it reads. *)
+  | Operator _ -> true
   | (Lanes (a, _) | Lane_index (a, _)) when bound a = None -> false
   | c -> st.kind = Jit || st.kind = Staged || List.exists (owned i) (operands c)
 

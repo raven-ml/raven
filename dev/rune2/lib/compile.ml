@@ -266,6 +266,9 @@ let construct_name = function
   | Lane_index _ -> "Rune.lane_index"
   | Call _ -> "a call"
   | Remat _ -> "Rune.remat"
+  | Operator _ -> "Rune.root's operator"
+  | Root { name; _ } -> name
+  | Solve { name; _ } -> name ^ "'s linear solve"
   | Add _ -> "an addition"
   | Detach _ -> "Rune.detach"
   | Custom { name; _ } | Linear { name; _ } -> name

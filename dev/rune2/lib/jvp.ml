@@ -1347,6 +1347,24 @@ let rec answer ~name ~tape i (c : Program.construct) k =
   | Call { body; args; site; seeds } ->
       Effect.Deep.continue k (call ~name ~tape i body args site seeds)
   | Iterate _ -> Effect.Deep.continue k (iterate ~name ~tape i c)
+  (* An operator is linear in its arguments: its tangent is the operator of
+     their tangents. Its data are values outside the transformations the linear
+     solve opens, which track none of them. *)
+  | Operator o ->
+      let data = Array.map (pv i) o.data in
+      let apply args = Program.perform (Operator { o with args; data }) in
+      let p = apply (Array.map (pv i) o.args) in
+      let ts =
+        Array.map2
+          (fun a f ->
+            match tv i a with Some t -> t | None -> Loops.filled ~zero:true f)
+          o.args o.forms
+      in
+      let t = apply ts in
+      Effect.Deep.continue k
+        (Array.map2 (fun p t -> dualv i ~fresh:false p (Some t)) p t)
+  | Root _ -> Effect.Deep.continue k (root ~name ~tape i c)
+  | Solve _ -> Effect.Deep.continue k (solve ~name ~tape i c)
   | Lane_index _ -> Effect.Deep.discontinue k Program.Evaluate
 
 (* A scan's derivative is the scan of its step's derivative, whose carry has a
@@ -1843,6 +1861,113 @@ and iterate ~name ~tape i (c : Program.construct) =
             ]
       | _ -> invalid_arg "Rune: an iterate's derivative")
   | _ -> invalid_arg "Rune: an iterate's derivative"
+
+(* The tangents [outs] hold where they have one, zeros of the primals' forms
+   elsewhere. *)
+and tangents_or_zeros outs =
+  Array.map
+    (fun (y, t) ->
+      match t with
+      | Some t -> t
+      | None -> Loops.filled ~zero:true (Program.form y))
+    outs
+
+(* A root's derivative, as the implicit function theorem gives it at the
+   solution, whether or not it is a zero: the [u] with [J u = -r], [r] the
+   residual's tangent along the values it reads from outside, the solution held,
+   and [J] its derivative along the solution. The solution is the root performed
+   outward, so that a differentiation around takes this rule again, and [u] a
+   linear solve, linear in [r], performed outward. *)
+and root ~name ~tape i (r : Program.construct) =
+  match r with
+  | Root ({ system; solution; theta; captures; _ } as rt) ->
+      let pth = Array.map (pv i) theta and pcaps = Array.map (pv i) captures in
+      let ys =
+        Program.perform
+          (Root
+             {
+               rt with
+               solution = Array.map (pv i) solution;
+               theta = pth;
+               captures = pcaps;
+             })
+      in
+      let nx = Array.length ys in
+      if not (Array.exists (owned i) theta) then ys
+      else
+        let r =
+          Array.sub
+            (derive ~name ~tape i system.residual (Array.append ys theta))
+            0 nx
+        in
+        let b =
+          Array.map
+            (fun (Program.V t) -> Program.V (Nx.neg t))
+            (tangents_or_zeros r)
+        in
+        let u =
+          Program.perform
+            (Solve
+               {
+                 name = rt.name;
+                 system;
+                 transposed = false;
+                 b;
+                 data = Array.append ys pth;
+                 captures = pcaps;
+               })
+        in
+        Array.map2 (fun y u -> dualv i ~fresh:false y (Some u)) ys u
+  | _ -> invalid_arg "Rune: a root's derivative"
+
+(* A linear solve's derivative, as JAX's custom_linear_solve's: of [x = S b],
+   [S] solving [J x = b] at the data, [S (db - dJ x)], [dJ] the operator's
+   derivative along the data's tangents, its argument [x] held. Both solves are
+   performed outward, so that a differentiation around takes this rule again,
+   and never differentiates the linear solve's code. *)
+and solve ~name ~tape i (s : Program.construct) =
+  match s with
+  | Solve ({ system; transposed; b; data; captures; _ } as sv) ->
+      let pdata = Array.map (pv i) data and pcaps = Array.map (pv i) captures in
+      let x =
+        Program.perform
+          (Solve
+             { sv with b = Array.map (pv i) b; data = pdata; captures = pcaps })
+      in
+      let nx = Array.length x in
+      let db =
+        Array.map2
+          (fun v y ->
+            match tv i v with
+            | Some t -> t
+            | None -> Loops.filled ~zero:true (Program.form y))
+          b x
+      in
+      let along_data = Array.exists (owned i) data in
+      if (not along_data) && not (Array.exists (owned i) b) then x
+      else
+        let rhs =
+          if not along_data then db
+          else
+            let jacobian =
+              if transposed then system.transpose else system.jacobian
+            in
+            let dj =
+              tangents_or_zeros
+                (Array.sub
+                   (derive ~name ~tape i jacobian (Array.append x data))
+                   0 nx)
+            in
+            Array.map2
+              (fun d (Program.V j) -> Loops.add d (Program.V (Nx.neg j)))
+              db dj
+        in
+        let u =
+          Program.perform
+            (Solve { sv with b = rhs; data = pdata; captures = pcaps })
+        in
+        Array.map2 (fun y u -> dualv i ~fresh:false y (Some u)) x u
+  | _ -> invalid_arg "Rune: a linear solve's derivative"
 
 (* [p]'s outputs over [xs], each with its tangent, from a differentiation [j]
    like [i] seeded from [i]'s tangents of [xs]. *)

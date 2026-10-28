@@ -11,7 +11,7 @@
     constant of the transformation.
 
     {b Functions of a construct are traced.} The functions that {!scan},
-    {!iterate}, {!remat}, {!jit}, {!custom_jvp}, {!custom_vjp} and
+    {!iterate}, {!root}, {!remat}, {!jit}, {!custom_jvp}, {!custom_vjp} and
     {!custom_transpose} receive are {e traced} at the call: their OCaml code
     runs over stand-ins of their arguments' arrays, values with a dtype, a shape
     and a placement but no elements, and what it computes from them is recorded
@@ -709,6 +709,69 @@ val iterate :
     element, at the trace if [f]'s carry differs from the one it received as
     {!scan} says, and if [until] is still false after [max] steps
     (["Rune.iterate: until is still false after max = 50 steps"]). *)
+
+(** {1:roots Roots} *)
+
+val root :
+  ?linear_solve:(('x -> 'x) -> 'x -> 'x) ->
+  ('x, 'd) Nx.Ptree.t ->
+  residual:('x -> 'x) ->
+  (unit -> 'x) ->
+  'x
+(** [root x ~residual solve] is [solve ()], a value of structure [x] stated to
+    be a zero of [residual]. The system is square: [residual]'s result has [x]'s
+    structure, dtypes and shapes.
+
+    {[
+    (* [x] such that [a x = b], found by conjugate gradients *)
+    let solve_spd a b =
+      Rune.root Nx.Ptree.tensor ~linear_solve:cg
+        ~residual:(fun x -> Nx.sub (Nx.matmul a x) b)
+        (fun () -> cg (Nx.matmul a) b)
+    ]}
+
+    Under differentiation the result's tangent is the [u] with [J u + r = 0],
+    [J] the derivative of [residual] at the result and [r] the tangent of
+    [residual] there with the result held: every tracked value [residual]
+    captures contributes to [r]. The derivative is taken at the returned point,
+    whether or not [residual] vanishes there. [solve] has no derivative: a
+    tracked value it reads is its value alone.
+
+    [solve], [residual] and [linear_solve] are traced at the call: {!Nx.item} of
+    a value [residual] or [linear_solve] computes from its argument raises.
+    [solve] stages every operation it applies, as a {!remat}'s function does,
+    over the values it captures detached; {!Nx.item} inside it of a value a
+    transformation around tracks raises. [linear_solve op b] returns a [v] with
+    [op v = b] for the linear [op]; it is traced once, against an abstract [op],
+    which a derivative fills in with [J], and reverse mode with [J]'s transpose:
+    the solve is linear in [b], and its transpose solves the transposed system.
+    It may apply [op] under {!jvp}, {!grad} or {!val-vmap} opened inside it, as
+    in [Nx.solve (Rune.jacfwd' op b) b], but not under a {!jit}, whose function
+    may not capture [op]'s stand-ins. Without it, a derivative builds [J]'s
+    matrix, its columns [J] of the unit vectors in one map, and solves it with
+    {!Nx.solve}, which suits small systems; the arrays of [x] then share a
+    dtype. A complex [J] need only be real-linear: its matrix is then the real
+    system's over the real and imaginary parts. Under {!val-vmap}, each lane
+    solves its own system: [op] gives each lane its own product, whatever maps
+    [linear_solve] opens.
+
+    The derivative of the solve itself, along [J]'s dependence on the solution
+    and the values [residual] captures, is the solve of the system's derivative,
+    never the derivative of [linear_solve]'s code: of [v = S b],
+    [S (db - dJ v)]. So a second derivative solves twice more, whatever
+    [linear_solve] iterates; a tracked value [linear_solve] captures has no
+    derivative. Additions to a {!Total} that [solve] makes count once per call;
+    those of [residual] and [linear_solve], which only derivatives evaluate, are
+    dropped. With the default linear solve, a singular [J] at the result, as
+    {!Nx.solve} defines it, gives a NaN derivative.
+
+    Raises [Invalid_argument] at the call if [residual]'s result differs from
+    the solution, naming the first path where they differ, as in
+    ["Rune.root: 0: shape [3] in the residual's result, [4] in the solution"];
+    without [linear_solve], if [x]'s arrays differ in dtype; if [residual] reads
+    the {!lanes} of a map, which joins the lanes' systems; if [linear_solve]
+    applies [op] after it returned; and, naming [Rune.jit], if it applies [op]
+    inside a {!jit}. *)
 
 (** {1:remat Rematerialization} *)
 
