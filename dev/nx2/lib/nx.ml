@@ -702,6 +702,13 @@ let move ~by mv x = Eval.eval ~by (Value.Move (mv, x))
 let reshaped ~by s x = move ~by (Reshape (Iarray.of_array s)) x
 let sliced ~by rs x = move ~by (Slice (Iarray.of_array rs)) x
 
+(* What an operation along an optional axis reads, and the axis: [x] and its
+   axis [a], or [x] flattened and its one axis without [a]. *)
+let along ~by a x =
+  match a with
+  | None -> (reshaped ~by [| numel x |] x, 0)
+  | Some a -> (x, axis ~by x a)
+
 (* [a * b] for extents, or raises naming [by] past an [int]. *)
 let times ~by x a b =
   if a <> 0 && b > max_int / a then
@@ -1081,12 +1088,8 @@ let padded ~by ?interior ~lo ~hi v x =
         in
         assemble ~by (dtype x) out v [ (region, piece) ]
 
-let roll_by ~by ?axis:along k x =
-  let y, a =
-    match along with
-    | None -> (move ~by (Reshape [| numel x |]) x, 0)
-    | Some a -> (x, axis ~by x a)
-  in
+let roll_by ~by ?axis k x =
+  let y, a = along ~by axis x in
   let s = shape y in
   let d = s.(a) in
   let k = if d = 0 then 0 else k mod d in
@@ -1102,7 +1105,7 @@ let roll_by ~by ?axis:along k x =
           (region s a k (d - k), part 0 (d - k));
         ]
   in
-  match along with
+  match axis with
   | Some _ -> rolled
   | None -> reshaped ~by (shape x) rolled
 
@@ -1143,14 +1146,10 @@ let tile reps x =
   let x = if r = k then x else reshaped ~by lead x in
   stretch ~by ~outer:true reps x
 
-let repeat ?axis:a n x =
+let repeat ?axis n x =
   let by = "Nx.repeat" in
   if n < 0 then invalid_argf "%s: count %d is negative" by n;
-  let x, a =
-    match a with
-    | None -> (move ~by (Reshape [| numel x |]) x, 0)
-    | Some a -> (x, axis ~by x a)
-  in
+  let x, a = along ~by axis x in
   stretch ~by ~outer:false
     (Array.init (ndim x) (fun i -> if i = a then n else 1))
     x
@@ -1431,10 +1430,9 @@ let slice_by ~by idx x =
 
 let get p x = slice_by ~by:"Nx.get" (List.map (fun i -> I i) p) x
 
-let take_by ~by ?axis:along p x =
-  match along with
-  | None -> take_axis ~by 0 p (move ~by (Reshape [| numel x |]) x)
-  | Some a -> take_axis ~by (axis ~by x a) p x
+let take_by ~by ?axis p x =
+  let x, a = along ~by axis x in
+  take_axis ~by a p x
 
 let take ?axis p x = take_by ~by:"Nx.take" ?axis p x
 
@@ -1789,15 +1787,11 @@ let scan_by ~by r axis x =
 (* The inclusive prefix of [m] along [axis] of [x]. *)
 let scan_along ~by m axis x = scan_by ~by (Monoid (m, 0, dtype x)) axis x
 
-(* Over the elements in C order, keeping [x]'s shape. *)
-let scan_flat ~by r x =
-  reshaped ~by (shape x) (scan_by ~by r 0 (reshaped ~by [| numel x |] x))
-
 (* Along [axis], or over the elements in C order, keeping [x]'s shape. *)
-let scan ~by r ?axis:along x =
-  match along with
-  | None -> scan_flat ~by r x
-  | Some a -> scan_by ~by r (axis ~by x a) x
+let scan ~by r ?axis x =
+  let y, a = along ~by axis x in
+  let z = scan_by ~by r a y in
+  match axis with Some _ -> z | None -> reshaped ~by (shape x) z
 
 let monoid_scan ~by m ?axis x = scan ~by (Monoid (m, 0, dtype x)) ?axis x
 let cumsum ?axis x = monoid_scan ~by:"Nx.cumsum" Sum ?axis x
@@ -2223,15 +2217,11 @@ let count ?axes ?keepdims m = count_by ~by:"Nx.count" ?axes ?keepdims m
 
 (* The first position of the extreme [e] along [axis], or among all the elements
    in C order. *)
-let arg ~by e ?axis:along ?(keepdims = false) x =
+let arg ~by e ?axis ?(keepdims = false) x =
   let s = shape x in
-  let x, a =
-    match along with
-    | None -> (reshaped ~by [| numel x |] x, 0)
-    | Some a -> (x, axis ~by x a)
-  in
+  let x, a = along ~by axis x in
   let _, i = reduce_by_one ~by (Arg (e, 0, dtype x)) [| a |] x in
-  match along with
+  match axis with
   | None ->
       reshaped ~by (if keepdims then Array.map (fun _ -> 1) s else [||]) i
   | Some _ -> kept ~by ~keepdims s [| a |] i
@@ -2405,15 +2395,13 @@ let average (type s d) ~by ~alpha axis (x : (float, s, d) t) : (float, s, d) t =
   let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
   go w
 
-let ewma ?axis:along ~alpha x =
+let ewma ?axis ~alpha x =
   let by = "Nx.ewma" in
   if not (alpha > 0. && alpha <= 1.) then
     invalid_argf "%s: alpha %g is outside (0, 1]" by alpha;
-  match along with
-  | None ->
-      let flat = reshaped ~by [| numel x |] x in
-      reshaped ~by (shape x) (average ~by ~alpha 0 flat)
-  | Some a -> average ~by ~alpha (axis ~by x a) x
+  let y, a = along ~by axis x in
+  let z = average ~by ~alpha a y in
+  match axis with Some _ -> z | None -> reshaped ~by (shape x) z
 
 (* Activations *)
 
@@ -4024,18 +4012,14 @@ let vector ~by p dt vs =
 
 (* One sort; per probability the order statistics around [h = q (n - 1)] and one
    map interpolating between them in the compute dtype. *)
-let quantile (type s d) ?axis:along qs (x : (float, s, d) t) : (float, s, d) t =
+let quantile (type s d) ?axis qs (x : (float, s, d) t) : (float, s, d) t =
   let by = "Nx.quantile" in
   Array.iter
     (fun q ->
       if not (q >= 0. && q <= 1.) then
         invalid_argf "%s: probability %h is outside [0, 1]" by q)
     qs;
-  let x, a =
-    match along with
-    | None -> (move ~by (Reshape [| numel x |]) x, 0)
-    | Some a -> (x, axis ~by x a)
-  in
+  let x, a = along ~by axis x in
   let n = Prim.dim x a in
   if n = 0 then
     invalid_argf "%s: no element along axis %d of %a" by a pp_value x;
