@@ -1,0 +1,10 @@
+; Off under sanitize and tsan, as the root dune says.
+
+(mdx
+ (files
+  index.md)
+ (enabled_if
+  (and
+   (<> %{profile} sanitize)
+   (<> %{profile} tsan)))
+ (libraries nx rune2))
