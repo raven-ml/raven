@@ -4113,3 +4113,26 @@ submission, and a range a loop of rig's program (D146).
   a bounded number of brackets`, which renders chains of 1 to 300 steps with
   each renderer, and `execution on the host › computes a chain too deep for
   one expression`, which runs 300 steps on the host against a fold in OCaml.
+
+## D158. A dead read of a staged value is 0
+
+- **tinygrad:** `schedule/rangeify.py:100-102` (`remove_bufferize`), which
+  inlines a stage's value at a read and leaves each range whose index is
+  `Invalid` in place.
+- **tolk:** `lib/schedule/rangeify.ml:141-151` (`remove_bufferize`);
+  `test/gen/tinygrad.patch`, which makes tinygrad's rule the same before
+  the goldens are generated.
+- **Differs:** a read of a stage that would be inlined, at indices of which
+  one is `Invalid`, is 0, as a load at an `Invalid` index is. tinygrad inlines
+  the stage's value there with the stage's own ranges, which no kernel ends,
+  so a value that a gate around the read does not fold away leaves a free
+  range in the kernel graph, which its specification refuses: "UOp
+  verification failed … RANGE … AxisType.WEAK".
+- **Reason:** (b). rune's compiled Fold (`dev/rune2/lib/lower_index.ml`,
+  `fold`) of a complex128 `[2; 3; 1]` by `lo [0; 1; 2]`, `interior [0; 1;
+  0]` and a window of size 2 and step 2 on its last axis, whose every term
+  the crop drops, stages its operand to read its two parts and raised
+  there: rune2's `a fold wraps integers and holds its float bound` failed.
+- **Pinned by:** the `Rangeify` suite (`test/schedule/rangeify`):
+  `get_kernel_graph › dead reads › a staged value read only in padding reads
+  0 there`.

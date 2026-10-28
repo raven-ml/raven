@@ -2567,7 +2567,7 @@ index a5cf57d..dff4198 100644
 +  tsink = graph_rewrite(tsink, pm_tensor_mops+earliest_rewrites, bottom_up=True, name="earliest rewrites")
    return tsink
 diff --git a/tinygrad/schedule/rangeify.py b/tinygrad/schedule/rangeify.py
-index 0239aa4..d96d398 100644
+index 0239aa4..bbbda13 100644
 --- a/tinygrad/schedule/rangeify.py
 +++ b/tinygrad/schedule/rangeify.py
 @@ -1,7 +1,7 @@
@@ -2604,7 +2604,21 @@ index 0239aa4..d96d398 100644
    # if any reduces access a buffer, don't remove this buffer
    buffer_in_reduce = False
    def buf_gate(x:UOp):
-@@ -227,10 +237,20 @@ def bufferize_to_store(ctx:itertools.count, x:UOp, idx:UOp):
+@@ -97,8 +107,11 @@ def remove_bufferize(src:UOp, buf:UOp, idx:UOp):
+ 
+   # if it makes it here, the bufferize is removed
+   # this is the ranges replaced
+-  # NOTE: if buf src is a const, we don't replace it. if idx is Invalid (dead load), don't replace it either
+-  replaced = {k:v for k,v in zip(buf.src[1:], idx.src[1:]) if k.op is not Ops.CONST and not (v.op is Ops.CONST and v.val is Invalid)}
++  # a read at an invalid index is dead, and reads 0 as a load at one does: the value inlined there would keep the stage's
++  # ranges, which no index replaces and no kernel ends
++  if any(v.op is Ops.CONST and v.val is Invalid for v in idx.src[1:]): return idx.const_like(0)
++  # NOTE: if buf src is a const, we don't replace it
++  replaced = {k:v for k,v in zip(buf.src[1:], idx.src[1:]) if k.op is not Ops.CONST}
+   return src.substitute(replaced, extra_pm=pm_gate_substitute)
+ 
+ def remove_noop_bufferize(idx,b2):
+@@ -227,10 +240,20 @@ def bufferize_to_store(ctx:itertools.count, x:UOp, idx:UOp):
      return buf.after(*ended_stores)
  
    if x.arg.addrspace == AddrSpace.GLOBAL:
@@ -2627,7 +2641,7 @@ index 0239aa4..d96d398 100644
  # collapse any BUFFERIZE to single input BUFFERIZE
  def flatten_bufferize(x:UOp):
    if len(x.src) == 2: return None
-@@ -258,6 +278,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
+@@ -258,6 +281,9 @@ pm_add_buffers = pm_mops+pm_flatten_bufferize+PatternMatcher([
    # this must run in the same rewrite that adds the cast, or the expander expands the whole casted buffer into one big VECTORIZE
    (UPat(Ops.INDEX, src=(UPat(Ops.CAST, dtype=dtypes.weaks, src=(UPat.var("buf"),)),), allow_any_len=True, name="u"),
     lambda u,buf: u.replace(src=(buf,)+u.src[1:]).cast(u.dtype)),
@@ -2637,7 +2651,7 @@ index 0239aa4..d96d398 100644
  
    # move RESHAPEs through MSELECT/MSTACK
    (UPat((Ops.MSELECT, Ops.MSTACK), src=UPat(Ops.RESHAPE), name="m"),
-@@ -281,7 +304,9 @@ class LocalAddBufferContext:
+@@ -281,7 +307,9 @@ class LocalAddBufferContext:
    range:int = 0
  
  def debuf(ctx:LocalAddBufferContext, buf:UOp):

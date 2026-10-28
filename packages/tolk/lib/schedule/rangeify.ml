@@ -138,14 +138,22 @@ let remove_bufferize src buf idx =
         op_in_backward_slice_with_self ~calls:Skip (nth r 0)
           Op.[ Param; Stage; After ]
       in
+      let dead =
+        List.exists
+          (fun v -> op v = Op.Const && is_invalid v)
+          (List.tl (Ops.src idx))
+      in
       if List.exists reads_buffer reduces then None
+      else if dead then
+        (* A read at an invalid index is dead, and reads 0 as a load at one
+           does. The value inlined there would keep the stage's ranges, which
+           no index replaces and no kernel ends. *)
+        Some (const_like idx (`Int Bigint.zero))
       else
-        (* A constant range is not replaced, nor is a range read by a dead
-           load. *)
+        (* A constant range is not replaced. *)
         let replaced =
           List.filter
-            (fun (k, v) ->
-              op k <> Op.Const && not (op v = Op.Const && is_invalid v))
+            (fun (k, _) -> op k <> Op.Const)
             (zip (List.tl (Ops.src buf)) (List.tl (Ops.src idx)))
         in
         Some

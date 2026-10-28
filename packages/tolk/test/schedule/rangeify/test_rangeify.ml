@@ -1052,6 +1052,38 @@ let cost =
           less float_exact ~than:(2.2 *. short) long);
     ]
 
+(* Dead reads
+
+   A staged value read at an index in padding is read nowhere. Here [s]'s two
+   elements are summed into positions [0] and [1] of three, and only position
+   [2] is kept: the sum there reads [s] at no index, beside a read of [s] at
+   [0] that stages it. *)
+
+let dead_read_sink () =
+  let s = Ops.O.(input ~shape:[ 2 ] 1 * input ~shape:[ 2 ] 1) in
+  let pad_end u n =
+    let r = List.length (Shape.shape u) in
+    let at i = if i = r - 1 then Some (Ops.Int 0, Ops.Int n) else None in
+    Shape.pad u (List.init r at)
+  in
+  let x = Shape.reshape s (ints [ 2; 1; 1 ]) in
+  let x = Shape.reshape (pad_end x 1) (ints [ 2; 2 ]) in
+  let x = Shape.reshape (pad_end x 2) (ints [ 8 ]) in
+  let x = Shape.reshape (pad_end x 1) (ints [ 3; 3 ]) in
+  let x = Shape.rop x Add [ 0 ] in
+  let x = Shape.shrink x [ Some (Ops.Int 2, Ops.Int 3) ] in
+  let total = Ops.O.(x + Shape.shrink s [ Some (Ops.Int 0, Ops.Int 1) ]) in
+  let o = Call.param ~device:cpu ~shape:[ Int 1 ] 0 Float32 in
+  Ops.sink
+    [ Ops.after o [ Ops.store (Shape.reshape o (Shape.shape total)) total ] ]
+
+let dead_reads =
+  group "get_kernel_graph › dead reads"
+    [
+      test "a staged value read only in padding reads 0 there" (fun () ->
+          writes (dead_read_sink ()));
+    ]
+
 let () =
   exit
     (run "Tolk.Rangeify"
@@ -1070,4 +1102,5 @@ let () =
          loops;
          states;
          cost;
+         dead_reads;
        ])
