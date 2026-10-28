@@ -73,17 +73,18 @@
 
 (** {1:tracing Tracing}
 
-    A construct traces its functions each time it is called: at each call
-    outside a {!jit}, and inside one at each trace of the {!jit}. A
+    A construct other than {!jit} traces its functions each time it is called:
+    at each call outside a {!jit}, and inside one at each trace of the {!jit}. A
     {!custom_jvp}'s or {!custom_vjp}'s rule is traced only where
     {!section-custom} says so, and otherwise runs on its arguments' values. A
     {!jit} itself traces once per key. A loop's step is traced once per trace of
     the loop, whatever its number of steps, so its code and its side effects run
     once per trace too. Inside a traced function {!Nx.item} of a stand-in, or of
-    a value computed from one, raises, naming the construct
-    ([Nx.item: the value is traced by Rune.scan]), so a branch on a value is a
-    {!switch}, {!Nx.where} or a nested {!iterate}. A draw without [~key] raises,
-    naming the construct, so a step draws from a key in its carry or its rows.
+    a value computed from one, raises, naming the construct, as
+    [Nx.item: the value is traced by Rune.scan] in a {!scan}'s step, so a branch
+    on a value is a {!switch}, {!Nx.where} or a nested {!iterate}. A draw
+    without [~key] raises, naming the construct, so a step draws from a key in
+    its carry or its rows.
 
     An operation that reads no stand-in computes once, at the call, except in
     {!switch}, {!remat}, a {!root}'s [solve] and {!jit}. These {e stage} every
@@ -104,8 +105,9 @@
 (** {1:errors Errors}
 
     Every message starts with the entry point the caller applied, under the
-    module name [Rune], as ["Rune.scan"] for {!scan}. Misuse of an entry point
-    raises [Invalid_argument] at one of four moments:
+    module name [Rune], as ["Rune.scan"] for {!scan} and ["Rune.scan'"] for
+    {!scan'}. Misuse of an entry point raises [Invalid_argument] at one of four
+    moments:
     - when a signature is applied, as [jit s], [vmap s] or [remat s] with an [s]
       of no argument;
     - at the call, for arguments that do not fit the entry point;
@@ -118,15 +120,16 @@
     A failure that depends on the values, as an {!iterate} still running after
     [max] steps or a {!switch} index out of range, raises at the call, and under
     a {!jit} as the call returns, as a check does ({!section-checks}). A later
-    operation on an argument a {!jit} consumed raises in nx, naming [Rune.jit]
-    ({!section-donation}). A {!jit} whose trace raises keeps no program for the
-    key. *)
+    operation on an argument a {!jit} consumed raises in nx, naming the entry
+    point that consumed it ({!section-donation}). A {!jit} whose trace raises
+    keeps no program for the key. *)
 
 (** {1:derivatives Derivatives}
 
     A {e differentiation} ({!jvp}, {!grad}, {!vjp}, {!linearize} and the
     functions built on them) {e tracks} the float and complex arrays of its
-    arguments and the values computed from them. Every operation nx computes has
+    arguments and the values computed from them. A tracked value's {e primal} is
+    its array without the derivative it carries. Every operation nx computes has
     a derivative, except a block scale of {!Nx.contract} that depends on the
     parameters and the complete factors that {!section-kinks} names, whose
     tangents raise [Invalid_argument].
@@ -136,8 +139,8 @@
     captures the value reads it so too, and takes that path wherever its program
     runs: a loop's step at every step. A custom rule may read so a value its
     differentiation tracks: a read is not one of the uses {!section-custom}
-    refuses. Where a {!remat} or a {!jit} lies between the read and the
-    differentiation, it stages the read, which raises.
+    refuses. Where a construct that stages ({!section-tracing}) lies between the
+    read and the differentiation, it stages the read, which raises.
 
     {b Nesting.} Each differentiation tracks the values of its own function
     alone: in
@@ -498,11 +501,12 @@ val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
     operations it applies to the lanes it captures. One over an argument a
     differentiation outside the map tracks is traced, as {b Values} says.
 
-    {b Totals.} The additions a rule makes reach the scopes around the call once
-    per call. A tangent map's are made once per differentiation that applies it,
-    none without one; a pullback's once per backward pass that applies it, to
-    the scopes around that pass. Under reverse mode a tangent map that adds a
-    tangent raises at the call. *)
+    {b Totals.} The additions a rule makes reach the innermost open
+    {!Total.collect} of their total around the call, once per call. A tangent
+    map's are made once per differentiation that applies it, none without one; a
+    pullback's once per backward pass that applies it, to the {!Total.collect}
+    around that pass. Under reverse mode a tangent map that adds a tangent
+    raises at the call. *)
 
 val custom_jvp :
   ('p, 'd) Nx.Ptree.t ->
@@ -1017,8 +1021,8 @@ val root :
     ["Rune.root: 0: shape [3] in the residual's result, [4] in the solution"];
     without [linear_solve], if [x]'s arrays differ in dtype; if [residual] reads
     the {!lanes} of a map, which joins the lanes' systems; if [linear_solve]
-    applies [op] after it returned; and, naming [Rune.jit], if it applies [op]
-    inside a {!jit}. *)
+    applies [op] after it returned; and, naming the {!jit}'s entry point, if it
+    applies [op] inside a {!jit}. *)
 
 (** {1:remat Rematerialization} *)
 
