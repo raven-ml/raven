@@ -34,25 +34,28 @@
       over its variables, and raises [Invalid_argument] for an addition of one
       to a total. A draw without a key in its function is the scope's.
 
-    The body, jit and staged tracers turn each addition to a total made in their
-    extent and not taken by a scope inside it into an output, and answer
-    {!Program.Running} with [None]; the tape tracer refuses a {!Program.Replace}
-    of one of its variables, as an addition. A call ({!Program.Call}) over the
-    body or staged tracer's variables, and every call in the staged tracer's
-    extent, is recorded as an equation, which evaluates compiled; every call in
-    the jit tracer's extent is inlined: it runs its default where it was
-    performed ({!Program.Evaluate}), which issues the call's equations to the
-    tracer. The tape tracer answers a call over its variables, but one whose
-    program holds an iterate, which it inlines, with two calls derived at its
-    site
-    ({!Program.derive}): the known part, performed at the call, of the results
-    that read none of its variables, also returning the residuals the rest
-    reads, and a recorded call of the rest over its variables and the
-    residuals. The tape tracer answers a custom rule ({!Program.Custom}) over
-    its variables with {!Program.Evaluate}, so that its primal runs where it
-    was performed and is recorded, and a pullback's tangents (a
-    {!Program.Linear} call without a function) over none of its variables with
-    zeros: they are linear in tangents it does not hold.
+    The body, jit and staged tracers thread each total their extent adds to and
+    no scope inside it takes ({!Program.t}): they answer {!Program.Running} with
+    a variable holding the total's running value where the call is, its first
+    one a parameter, and {!Program.Replace} by making the value given the
+    running value, which the program returns once the function has. An addition
+    is thus an operation on the running value. The tape tracer refuses a
+    {!Program.Replace} of one of its variables, as an addition. A call
+    ({!Program.Call}) over the body or staged tracer's variables, and every call
+    in the staged tracer's extent, is recorded as an equation, which evaluates
+    compiled; every call in the jit tracer's extent is inlined: it runs its
+    default where it was performed ({!Program.Evaluate}), which issues the
+    call's equations to the tracer. The tape tracer answers a call over its
+    variables, but one whose program holds an iterate, which it inlines, with
+    two calls derived at its site ({!Program.derive}): the known part,
+    performed at the call, of the results that read none of its variables, also
+    returning the residuals the rest reads and threading the call's totals, and
+    a recorded call of the rest over its variables and the residuals. The tape
+    tracer answers a custom rule ({!Program.Custom}) over its variables with
+    {!Program.Evaluate}, so that its primal runs where it was performed and is
+    recorded, and a pullback's tangents (a {!Program.Linear} call without a
+    function) over none of its variables with zeros: they are linear in tangents
+    it does not hold.
 
     {e Closure conversion.} A value of another interpretation that an equation
     or an output reads is a {e capture}: the body and tape tracers bind it to a
@@ -69,11 +72,15 @@ type kind =
           tracer, and captures as the body tracer. *)
 
 val trace :
+  ?totals:Program.addition array ->
   kind ->
   name:string ->
   Program.form array ->
   (Program.value array -> Program.value array) ->
   Program.t * Program.value array
-(** [trace k ~name forms f] is the program of [f] over variables of [forms], and
-    its captures, in order. The interpretation is named [name] in messages, as
-    ["Rune.scan"]. Raises what [f] raises. *)
+(** [trace ~totals k ~name forms f] is the program of [f] over variables of
+    [forms], and its captures, in order. The interpretation is named [name] in
+    messages, as ["Rune.scan"]. A total's running value in lies where [totals]
+    places it, else where the value it is first asked at or added does, else
+    where the total's running value around the trace does. Raises what [f]
+    raises. *)

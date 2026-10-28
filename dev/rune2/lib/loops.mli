@@ -35,8 +35,8 @@ val flip : Program.value -> Program.value
 (** [flip x] is [x] with its axis 0 reversed, a view. *)
 
 val reorder : Program.t -> int array -> Program.t
-(** [reorder p order] is [p] whose parameter [k] is [p]'s parameter [order.(k)].
-*)
+(** [reorder p order] is [p] whose argument [k] is [p]'s argument [order.(k)],
+    its totals' running values in last as in [p]. *)
 
 val pick : bool array -> 'a array -> 'a array
 (** [pick mask a] is the elements of [a] where [mask] holds, in order. *)

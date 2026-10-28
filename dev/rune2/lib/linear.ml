@@ -1054,14 +1054,8 @@ let linear_call env ~name ~apply ~transpose ~args ~captures ~residuals ~forms
                forms = Array.map form args;
              })
     | None ->
-        let out = Program.eval transpose (Array.append cts (const residuals)) in
-        let base = Array.length out - Array.length transpose.adds in
-        Array.iteri
-          (fun k (Addition (t, f)) ->
-            let set = Nx.Placement.devices f.placement in
-            ignore (Program.perform (Add (t, cast f.dtype set out.(base + k)))))
-          transpose.adds;
-        out
+        Program.threaded transpose (fun totals ->
+            Program.eval ~totals transpose (Array.append cts (const residuals)))
   in
   Array.iteri (fun k (V a) -> if env.lin a then env.give a (held out.(k))) args
 
@@ -1135,10 +1129,10 @@ let rec walk ~name ~fn (p : Program.t) consts cts =
         let n = next.(e) - base in
         if reached base n then
           scan_rule env step ~length ~init ~xs ~captures (cts_at base n)
-    | Do { c = Remat { body; args }; base } ->
+    | Do { c = Remat { body; args; _ }; base } ->
         let n = next.(e) - base in
         if reached base n then remat_rule env body args (cts_at base n)
-    | Do { c = Call { body; args; site }; base } ->
+    | Do { c = Call { body; args; site; _ }; base } ->
         let n = next.(e) - base in
         if reached base n then call_rule env body args site (cts_at base n)
     | Do { base; _ } ->
@@ -1391,7 +1385,9 @@ and call_rule env (body : Program.t) args site cts =
     Program.Transpose { linear = la; cts = gc }
   in
   let d = Program.derive site derivation forms made in
-  let r = Program.run (Call { body = d.program; args = ins; site = d.at }) in
+  let r =
+    Program.run (Call { body = d.program; args = ins; site = d.at; seeds = [||] })
+  in
   let next = ref 0 in
   Array.iteri
     (fun k (V x) ->

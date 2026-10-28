@@ -21,8 +21,9 @@ type 'y entry = {
   like : 'y;  (** The result the trace returned, for its structure. *)
   site : Program.site;
       (** [body] compiled ({!Compile.run}), or evaluated where the compiler
-          declines it ({!Compile.evaluate}), over untraced arguments, and the
-          programs derived from it, compiled alike. *)
+          declines it ({!Compile.evaluate}), over untraced arguments then its
+          totals' running values in, and the programs derived from it, compiled
+          alike. *)
   lanes : int list;
       (** The lanes of each map [body] names ({!Program.axes}) at the trace,
           [-1] for one not around it. *)

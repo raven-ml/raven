@@ -48,8 +48,13 @@ let rec holds_iterate (p : Program.t) =
 (* Programs *)
 
 let reorder (p : Program.t) order =
+  let na = Array.length p.adds in
+  let ni = Array.length p.params - na in
   Program.make ~owner:p.owner
-    ~params:(Array.map (fun k -> p.params.(k)) order)
+    ~params:
+      (Array.append
+         (Array.map (fun k -> p.params.(k)) order)
+         (Array.sub p.params ni na))
     (Array.to_list p.eqns) ~outputs:p.outputs ~adds:p.adds ~slots:p.slots
 
 let pick mask a =

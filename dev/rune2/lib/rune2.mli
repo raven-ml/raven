@@ -587,19 +587,19 @@ val lane_index : axis -> ('v, 's, 'd) Nx.t -> 'd Nx.int32_t
     function makes reach it when the construct that traced the function returns,
     so a construct that raises adds none: a {!jit} adds its function's additions
     once per call, as the call returns. A step of {!scan} or {!iterate}, and an
-    [until] once per test, makes its additions once per step: a loop chains each
-    total's additions in the order they are made, starting from the running
+    [until] once per test, makes its additions once per step. A construct chains
+    each total's additions in the order they are made, starting from the running
     value of the [collect] they reach, which the chain's end replaces as the
-    loop returns. So the total is the one the steps' additions give made in
-    turn, under every differentiation too. Where they reach the [collect]
-    through a traced function or a map, as from a loop inside another loop's
-    step, a {!jit} or a {!vmap}, the chain starts from an identity that changes
-    no sum (a negative zero) and reaches the [collect] as one addition. A loop
-    that takes no step leaves a running value as it is, and otherwise adds that
-    identity. Inside a {!vmap}, each lane makes the additions of the code it
-    runs: a [collect] inside the map receives its lane's, and one outside it
-    receives, as one addition, their sum over the lanes as {!Nx.sum} computes it
-    along the stacked axis, or nothing from a map of no lane. *)
+    construct returns, at any depth: a loop inside another loop's step, a
+    {!remat} or a custom rule in a step, and a {!jit}, which computes the chain
+    in its program. So the total is the one the additions give made in turn, as
+    written out, under every differentiation too. A construct that makes no
+    addition leaves a running value as it is. Inside a {!vmap}, each lane makes
+    the additions of the code it runs: a [collect] inside the map receives its
+    lane's, and one outside it receives, as one addition, their sum over the
+    lanes as {!Nx.sum} computes it along the stacked axis, or nothing from a map
+    of no lane; a construct inside the map chains its additions there from an
+    identity that changes no sum (a negative zero). *)
 module Total : sig
   type ('v, 's, 'd) t
   (** The type for totals of [('v, 's, 'd) Nx.t] values. *)

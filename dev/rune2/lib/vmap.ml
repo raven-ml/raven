@@ -601,17 +601,32 @@ module Rules = struct
      backward pass runs outside it. *)
   let additions m ~summed (p : Program.t) vs =
     Array.iteri
-      (fun k (Addition (t, f)) ->
+      (fun k (Addition (t, _, f)) ->
         let v = cast f.dtype (Nx.Placement.devices f.placement) vs.(k) in
-        if not summed then ignore (perform (Add (t, v)))
-        else if m.n > 0 then ignore (perform (Add (t, Nx.sum ~axes:[ 0 ] v))))
+        if not summed then add_to t v
+        else if m.n > 0 then add_to t (Nx.sum ~axes:[ 0 ] v))
       p.adds
 
-  (* [p] over the lanes of [vs], its results' batches, its additions made. *)
+  (* [p] over the lanes of [vs], its results' batches, its additions made: as
+     every lane's running totals, or summed. *)
   let over m ~summed ~results (p : Program.t) vs =
-    let out = m.map (eval p) vs in
-    additions m ~summed p (sub out results (Array.length out - results));
-    sub out 0 results
+    if summed then begin
+      let out = m.map (eval p) vs in
+      additions m ~summed p (sub out results (Array.length out - results));
+      sub out 0 results
+    end
+    else
+      let nv = Array.length vs in
+      let out =
+        Program.threaded ~lanes:m.n p (fun running ->
+            m.map
+              (fun lanes ->
+                eval
+                  ~totals:(sub lanes nv (Array.length lanes - nv))
+                  p (sub lanes 0 nv))
+              (Array.append vs running))
+      in
+      sub out 0 results
 
   (* A custom rule over a map's values: the rule traced again over its operands'
      batches, every program evaluated over their lanes, so that the
@@ -643,7 +658,17 @@ module Rules = struct
     in
     match c with
     | Custom
-        { name; primal; derivative; ny; args; captures; residuals; applied } ->
+        {
+          name;
+          primal;
+          derivative;
+          ny;
+          args;
+          captures;
+          residuals;
+          applied;
+          seeds;
+        } ->
         let na = Array.length args in
         let ops = Array.append (batched args) (batched captures) in
         let derivative, more =
@@ -672,7 +697,17 @@ module Rules = struct
         let args = sub ops 0 na in
         let c =
           Custom
-            { name; primal; derivative; ny; args; captures; residuals; applied }
+            {
+              name;
+              primal;
+              derivative;
+              ny;
+              args;
+              captures;
+              residuals;
+              applied;
+              seeds = batched seeds;
+            }
         in
         (* Unused residuals hold nothing to take lanes of. *)
         let unused k =
@@ -743,8 +778,7 @@ let rec answer ~name i axis n (c : Program.construct) k =
       (* [p] cuts no axis, so the indices' batch at [p] gives lanes at [p]. *)
       one (lane i (Nx.arange_at p Nx.int32 0 n 1))
   | Add (t, x) ->
-      if n > 0 then
-        ignore (Program.perform (Add (t, Nx.sum ~axes:[ 0 ] (batch i n x))));
+      if n > 0 then Program.add_to t (Nx.sum ~axes:[ 0 ] (batch i n x));
       Effect.Deep.continue k [||]
   | Detach x ->
       let b = batch i n x in
@@ -763,10 +797,10 @@ let rec answer ~name i axis n (c : Program.construct) k =
   | Scan { step; length; init; xs; captures; seeds } ->
       Effect.Deep.continue k
         (scan ~name i axis n step ~length ~init ~xs ~captures ~seeds)
-  | Remat { body; args } ->
-      Effect.Deep.continue k (remat ~name i axis n body args)
-  | Call { body; args; site } ->
-      Effect.Deep.continue k (call ~name i axis n body args site)
+  | Remat { body; args; seeds } ->
+      Effect.Deep.continue k (remat ~name i axis n body args seeds)
+  | Call { body; args; site; seeds } ->
+      Effect.Deep.continue k (call ~name i axis n body args site seeds)
   | Iterate _ -> Effect.Deep.discontinue k Program.Evaluate
 
 (* A scan's map is the scan of its step's map, whose carry has lanes for each
@@ -794,38 +828,38 @@ and scan ~name i axis n (step : Program.t) ~length ~init ~xs ~captures ~seeds =
     let mapped vs =
       match Loops.split [ nc; nx; ncap ] vs with
       | [ c; r; cap ] ->
-          let ys, adds =
-            run ~name ~axis n (fun w ->
-                let args =
-                  Array.concat
-                    [ lanes_of w lc c; lanes_of w lx r; lanes_of w lcap cap ]
-                in
-                let out = Program.eval step args in
-                let c' =
-                  Array.init nc (fun k ->
-                      let laned = owned_v w out.(k) in
-                      gained.(k) <- laned && not lc.(k);
-                      if lc.(k) then batch_v w n out.(k) else out.(k))
-                in
-                let y = Array.sub out nc ny in
-                ly := Array.map (owned_v w) y;
-                let y =
-                  Array.map
-                    (fun v -> if owned_v w v then batch_v w n v else v)
-                    y
-                in
-                let adds =
-                  Array.sub out (nc + ny) (Array.length out - nc - ny)
-                in
-                (Array.append c' y, Array.map (batch_v w n) adds))
+          let ys = ref [||] in
+          let (_ : Program.value array) =
+            Program.threaded ~lanes:n step (fun running ->
+                run ~name ~axis n (fun w ->
+                    let args =
+                      Array.concat
+                        [
+                          lanes_of w lc c; lanes_of w lx r; lanes_of w lcap cap;
+                        ]
+                    in
+                    let totals = Array.map (lane_v w) running in
+                    let out = Program.eval ~totals step args in
+                    let c' =
+                      Array.init nc (fun k ->
+                          let laned = owned_v w out.(k) in
+                          gained.(k) <- laned && not lc.(k);
+                          if lc.(k) then batch_v w n out.(k) else out.(k))
+                    in
+                    let y = Array.sub out nc ny in
+                    ly := Array.map (owned_v w) y;
+                    let y =
+                      Array.map
+                        (fun v -> if owned_v w v then batch_v w n v else v)
+                        y
+                    in
+                    let adds =
+                      Array.sub out (nc + ny) (Array.length out - nc - ny)
+                    in
+                    ys := Array.append c' y;
+                    Array.map (batch_v w n) adds))
           in
-          Array.iteri
-            (fun k (Program.Addition (t, f)) ->
-              let set = Nx.Placement.devices f.placement in
-              let v = Program.cast f.dtype set adds.(k) in
-              ignore (Program.perform (Add (t, v))))
-            step.adds;
-          ys
+          !ys
       | _ -> invalid_arg "Rune: a scan's map"
     in
     let prog, own = Trace.trace Body ~name forms mapped in
@@ -867,43 +901,44 @@ and scan ~name i axis n (step : Program.t) ~length ~init ~xs ~captures ~seeds =
 
 (* A remat's map is the remat of its function's map, as JAX's checkpoint
    batches, so that a reverse mode around the map sees the remat. *)
-and remat ~name i axis n (body : Program.t) args =
+and remat ~name i axis n (body : Program.t) args seeds =
   let la = Array.map (owned_v i) args in
   let bargs =
     Array.map (fun v -> if owned_v i v then batch_v i n v else v) args
   in
   let laned = ref [||] in
+  let no = Array.length body.outputs - Array.length body.adds in
   let mapped vs =
-    let outs =
-      run ~name ~axis n (fun w ->
-          let out = Program.eval body (lanes_of w la vs) in
-          laned := Array.map (owned_v w) out;
-          Array.map (fun v -> if owned_v w v then batch_v w n v else v) out)
-    in
-    let no = Array.length body.outputs - Array.length body.adds in
-    Array.iteri
-      (fun k (Program.Addition (t, f)) ->
-        let set = Nx.Placement.devices f.placement in
-        ignore
-          (Program.perform (Add (t, Program.cast f.dtype set outs.(no + k)))))
-      body.adds;
-    Array.sub outs 0 no
+    Program.threaded ~lanes:n body (fun running ->
+        run ~name ~axis n (fun w ->
+            let totals = Array.map (lane_v w) running in
+            let out = Program.eval ~totals body (lanes_of w la vs) in
+            laned := Array.sub (Array.map (owned_v w) out) 0 no;
+            Array.mapi
+              (fun k v -> if k >= no || owned_v w v then batch_v w n v else v)
+              out))
   in
   let prog, own =
     (* Traced as the remat's function was: every operation staged. *)
     Trace.trace Staged ~name (Array.map Program.form bargs) mapped
   in
   let r =
-    Program.perform (Remat { body = prog; args = Array.append bargs own })
+    Program.perform
+      (Remat
+         {
+           body = prog;
+           args = Array.append bargs own;
+           seeds = Array.map (batch_v i n) seeds;
+         })
   in
-  Array.mapi (fun k v -> if !laned.(k) then lane_v i v else v) r
+  Array.mapi (fun k v -> if k >= no || !laned.(k) then lane_v i v else v) r
 
 (* A call's map is the call of its program's map, as JAX batches a compiled
    call's jaxpr: derived once per derivation at the call's site, traced as a
    compiled function is, and compiled. The map's name enters the derivation
    only where the program names it, so maps of other names share the program
    otherwise. *)
-and call ~name i axis n (body : Program.t) args site =
+and call ~name i axis n (body : Program.t) args site seeds =
   let la = Array.map (owned_v i) args in
   let bargs =
     Array.map (fun v -> if owned_v i v then batch_v i n v else v) args
@@ -914,29 +949,34 @@ and call ~name i axis n (body : Program.t) args site =
   let made () =
     let laned = ref [||] in
     let mapped vs =
-      let outs =
-        run ~name ~axis n (fun w ->
-            let out = Program.eval body (lanes_of w la vs) in
-            laned := Array.map (owned_v w) out;
-            Array.map (fun v -> if owned_v w v then batch_v w n v else v) out)
-      in
-      Array.iteri
-        (fun k (Program.Addition (t, f)) ->
-          let set = Nx.Placement.devices f.placement in
-          let v = Program.cast f.dtype set outs.(no + k) in
-          ignore (Program.perform (Add (t, v))))
-        body.adds;
-      Array.sub outs 0 no
+      Program.threaded ~lanes:n body (fun running ->
+          run ~name ~axis n (fun w ->
+              let totals = Array.map (lane_v w) running in
+              let out = Program.eval ~totals body (lanes_of w la vs) in
+              laned := Array.sub (Array.map (owned_v w) out) 0 no;
+              Array.mapi
+                (fun k v -> if k >= no || owned_v w v then batch_v w n v else v)
+                out))
     in
     let prog, _ = Trace.trace Jit ~name forms mapped in
-    ((prog, forms), !laned, None)
+    let totals = Array.map (fun (Program.Addition (_, f, _)) -> Program.F f) prog.adds in
+    ((prog, Array.append forms totals), !laned, None)
   in
   let derivation = Program.Vmap { lanes = la; n; named } in
   let d = Program.derive ~map:(axis, n) site derivation forms made in
   let r =
-    Program.perform (Call { body = d.program; args = bargs; site = d.at })
+    Program.perform
+      (Call
+         {
+           body = d.program;
+           args = bargs;
+           site = d.at;
+           seeds = Array.map (batch_v i n) seeds;
+         })
   in
-  Array.mapi (fun k v -> if d.flags.(k) then lane_v i v else v) r
+  Array.mapi
+    (fun k v -> if k >= no || d.flags.(k) then lane_v i v else v)
+    r
 
 (* [f]'s results' batches over the lanes of the batches [bs], in a map of this
    one's name and size. *)

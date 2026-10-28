@@ -440,7 +440,7 @@ let test_no_map () =
 let zero () = Nx.scalar f32 (-0.)
 
 (* Each addition a step makes counts once per step taken, a constant's too,
-   summed in step order from -0 and added once. *)
+   chained in step order from the collect's running value. *)
 let test_in_loops () =
   let t = Total.make () in
   let xs = xs3 () in

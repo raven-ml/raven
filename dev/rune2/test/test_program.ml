@@ -67,25 +67,27 @@ let test_constructs () =
   print_string (print p);
   expect (output ()) @@ __POS_OF__ {|
     c0 : float32 [2] at CPU
-    program (%0)
-      %1 : float32 [2] at CPU = Map [mul(x0, x1)] (x0: float32 [2] at CPU) (x1: float32 [2] at CPU)
+    program (%0), totals (%1)
+      %2 : float32 [2] at CPU = Map [add(x0, x1)] (x0: float32 [2] at CPU) (x1: float32 [2] at CPU)
+        with x0 = %1, x1 = %0
+      %3 : float32 [2] at CPU = Map [mul(x0, x1)] (x0: float32 [2] at CPU) (x1: float32 [2] at CPU)
         with x0 = %0, x1 = c0
-      %2 : float32 [] at CPU = Reduce [Sum x0] over [0] (x0: float32 [2] at CPU)
-        with x0 = %1
-      %3 : float32 [] at CPU = Map [float32:0x0000803f] at CPU
-      %4 : float32 [1] at CPU = Move (x0: float32 [] at CPU)
+      %4 : float32 [] at CPU = Reduce [Sum x0] over [0] (x0: float32 [2] at CPU)
         with x0 = %3
-      %5 : float32 [2] at CPU = Move (x0: float32 [1] at CPU)
-        with x0 = %4
-      %6 : float32 [2] at CPU = Map [x0] (x0: float32 [2] at CPU)
+      %5 : float32 [] at CPU = Map [float32:0x0000803f] at CPU
+      %6 : float32 [1] at CPU = Move (x0: float32 [] at CPU)
         with x0 = %5
-      %7 : float32 [2] at CPU = Map [mul(x1, x0)] (x0: float32 [2] at CPU) (x1: float32 [2] at CPU)
-        with x0 = c0, x1 = %6
-      %8 : float32 [2] at CPU = detach %0
-      %9 : float32 [2] at CPU = Map [add(x0, x1)] (x0: float32 [2] at CPU) (x1: float32 [2] at CPU)
-        with x0 = %8, x1 = %7
-      return %9
-      adds %0
+      %7 : float32 [2] at CPU = Move (x0: float32 [1] at CPU)
+        with x0 = %6
+      %8 : float32 [2] at CPU = Map [x0] (x0: float32 [2] at CPU)
+        with x0 = %7
+      %9 : float32 [2] at CPU = Map [mul(x1, x0)] (x0: float32 [2] at CPU) (x1: float32 [2] at CPU)
+        with x0 = c0, x1 = %8
+      %10 : float32 [2] at CPU = detach %0
+      %11 : float32 [2] at CPU = Map [add(x0, x1)] (x0: float32 [2] at CPU) (x1: float32 [2] at CPU)
+        with x0 = %10, x1 = %9
+      return %11
+      totals %2
     |}
 
 (* An iterate carries its test and its step; nested programs number their

@@ -447,7 +447,7 @@ module Total = struct
   type ('v, 's, 'd) t = ('v, 's, 'd) total
 
   let make = total
-  let add t x = ignore (perform (Add (t, x)))
+  let add t x = add_to t x
 
   let collect (type v s d) (t : (v, s, d) t) ~(zero : (v, s, d) Nx.t) f =
     let sum = ref zero in
@@ -471,9 +471,10 @@ module Total = struct
                     sum := Nx.add !sum x;
                     Effect.Deep.continue k [||]
                   end))
-      | Running (u, shape) -> (
+      | Running (u, f) -> (
           match same_total u t with
           | Some Type.Equal ->
+              let shape = Iarray.to_array (Nx_array.Layout.shape f.layout) in
               Some
                 (fun k ->
                   Effect.Deep.continue k
@@ -657,7 +658,7 @@ let call name t a r f args =
   in
   let e = Jit.find t leaves skeleton ~paths trace in
   let out =
-    run (Call { body = e.body; args = args_v; site = e.site })
+    run (Call { body = e.body; args = args_v; site = e.site; seeds = [||] })
   in
   let y = e.like.rebuild out in y
 
@@ -686,7 +687,10 @@ let remat_named name s =
               values u.result y)
         in
         let y = Option.get !like in
-        let out = run (Remat { body; args = Array.append args_v captures }) in
+        let out =
+          run
+            (Remat { body; args = Array.append args_v captures; seeds = [||] })
+        in
         rebuild u.result ~like:y
           (slice out 0 (Array.length (values u.result y))))
 

@@ -15,9 +15,11 @@
 
     {!eval} issues each equation again, an operation through [Nx.Prim.eval] and
     a construct through {!perform}, under whatever interpretations are around
-    the call. A program's last outputs are its {e additions}: values it adds to
-    totals, which its construct sums and adds once it has run ({!run}), so that
-    evaluating a program adds nothing.
+    the call. A program {e threads} each total it adds to: its last parameters
+    are the totals' running values in, which its additions add to in the order
+    they were made, and its last outputs their running values out. Its construct
+    feeds it the running values of the collects around its call and hands them
+    the ends ({!run}), so that evaluating a program adds nothing.
 
     Constructs are performed as one effect. A handler of a transformation or a
     tracer answers the constructs over its own values; one no handler answers
@@ -44,6 +46,12 @@ val cast : ('v, 's) Nx.dtype -> 'd Nx.devices -> value -> ('v, 's, 'd) Nx.t
 
     Raises [Invalid_argument] if [v]'s dtype is not [dt] or [v] does not lie on
     [s]. *)
+
+val coerce_at : ('v, 's, 'd) Nx.Prim.form -> ('w, 'r, 'e) Nx.t -> ('v, 's, 'd) Nx.t option
+(** [coerce_at f x] is {!Nx.Prim.coerce} at [f]'s dtype and set. *)
+
+val cast_at : ('v, 's, 'd) Nx.Prim.form -> value -> ('v, 's, 'd) Nx.t
+(** [cast_at f v] is {!cast} at [f]'s dtype and set. *)
 
 val like : ('v, 's, 'd) Nx.t -> value -> ('v, 's, 'd) Nx.t
 (** [like x v] is [v] at [x]'s type: {!cast} at [x]'s dtype and set. *)
@@ -80,15 +88,21 @@ type ('v, 's, 'd) Nx.Prim.payload +=
   | Var : int -> ('v, 's, 'd) Nx.Prim.payload  (** A variable's number. *)
 
 type addition =
-  | Addition : ('v, 's, 'd) total * ('v, 's, 'd) Nx.Prim.form -> addition
-      (** The total an addition output adds to, and the output's form. *)
+  | Addition :
+      ('v, 's, 'd) total * ('v, 's, 'd) Nx.Prim.form * ('v, 's, 'd) Nx.Prim.form
+      -> addition
+      (** A total a program threads, and the forms of its running value in and
+          out. *)
 
 type t = private {
   owner : Nx.Prim.interpretation;  (** The tracer whose variables it has. *)
-  params : int array;  (** The variables its arguments bind, in order. *)
+  params : int array;
+      (** The variables its arguments bind, in order, then each total's running
+          value in. *)
   eqns : eqn array;  (** In the order they are issued. *)
-  outputs : value array;  (** Variables or constants, additions last. *)
-  adds : addition array;  (** The totals of the last outputs, in order. *)
+  outputs : value array;
+      (** Variables or constants, each total's running value out last. *)
+  adds : addition array;  (** The totals it threads, in order. *)
   slots : int;  (** The number of variables. *)
 }
 
@@ -133,10 +147,17 @@ and construct =
       seeds : value array;  (** As a scan's. *)
     }
       -> construct
-  | Call : { body : t; args : value array; site : site } -> construct
-      (** [body] applied to [args], [site] its compiled form and the programs
-          derived from it. Its default runs the compiled form where no operand
-          is traced and no tracer stages the operations around the call
+  | Call : {
+      body : t;
+      args : value array;
+      site : site;
+          (** [body]'s compiled form, applied to arguments of [args]' forms then
+              its totals' running values in, and the programs derived from it. *)
+      seeds : value array;  (** As a scan's. *)
+    }
+      -> construct
+      (** [body] applied to [args]. Its default runs the compiled form where no
+          operand is traced and no tracer stages the operations around the call
           ({!staging}), and evaluates [body] otherwise. *)
   | Custom : {
       name : string;  (** The entry point, in messages. *)
@@ -155,12 +176,14 @@ and construct =
       applied : bool;
           (** Whether a reverse mode inside the call applies its {!Pullback},
               which a forward mode around then has no rule to answer. *)
+      seeds : value array;  (** Where [primal]'s sums start, as a scan's. *)
     }
       -> construct
       (** A call of a function with a custom derivative: the results, the
-          residuals (unused where [residuals] is [false]), [primal]'s additions,
-          then a tangent map's. The default evaluates [primal] without what only
-          the residuals read, and adds nothing for a tangent map. *)
+          residuals (unused where [residuals] is [false]), [primal]'s sums, then
+          a tangent map's running totals out. The default evaluates [primal]
+          without what only the residuals read, and adds nothing for a tangent
+          map. *)
   | Linear : {
       name : string;
       apply : t option;
@@ -180,9 +203,10 @@ and construct =
           [apply]'s results, then its additions. Without [apply], it is the
           tangents of a {!Pullback} rule's results, which only a tape takes: its
           default raises [Invalid_argument]. *)
-  | Remat : { body : t; args : value array } -> construct
+  | Remat : { body : t; args : value array; seeds : value array } -> construct
       (** [body] applied to [args], the function's arguments then its captures,
-          whose reverse mode keeps [args] alone and computes [body] again. *)
+          whose reverse mode keeps [args] alone and computes [body] again; its
+          sums start from [seeds], as a scan's. *)
 
 and derivative =
   | Tangent of t
@@ -208,21 +232,30 @@ val make :
     equations [eqns], in order. *)
 
 val sums : t list -> addition array * form array * int array list
-(** [sums ps] is the sums of a loop of the programs [ps], as {!feeds} gives
-    them, with the sum each addition of each program feeds, in order. *)
+(** [sums ps] is the sums of a loop of the programs [ps]: one per total and
+    shape they thread, in the order they first take them, each with its first
+    addition, their forms, and for each program the sum each of its totals
+    feeds, in order. *)
 
 val feeds : t -> addition array * form array * int array
 (** [feeds step] is the sums of a loop of the step [step]: one per total and
-    shape its additions add to, in the order of their first additions, their
-    forms, and the sum each of [step]'s additions feeds, in order. *)
+    shape it threads, in order, their forms, and the sum each of [step]'s totals
+    feeds, in order. *)
 
-val eval : t -> value array -> value array
-(** [eval p args] is [p]'s outputs with its parameters bound to [args], in
-    order. Raises what an equation raises. *)
+val eval : ?totals:value array -> t -> value array -> value array
+(** [eval ~totals p args] is [p]'s outputs with its arguments bound to [args]
+    and its totals' running values in to [totals], in order, each the additive
+    identity that keeps every sign ([-0.]) without [totals], so that its running
+    values out are the sums of its additions. Raises what an equation raises. *)
+
+val eval_seeded : t -> seeds:value array -> value array -> value array
+(** [eval_seeded p ~seeds args] is [p]'s outputs over [args], its sums, one per
+    total and shape it threads, started from [seeds] as a scan's are. *)
 
 val prune : t -> outputs:int array -> t
-(** [prune p ~outputs] is [p] with its outputs [outputs], in order, and no
-    addition, keeping the equations they read and every check. *)
+(** [prune p ~outputs] is [p] with its outputs [outputs], in order, then its
+    totals' running values out, keeping the equations they read and every check.
+*)
 
 (** {1:sites Sites}
 
@@ -319,22 +352,44 @@ val perform : construct -> value array
 
 val run : construct -> value array
 (** [run c] is [perform c] after which each addition of [c]'s results is added
-    to its total, as {!perform} of [Add]. A loop first asks each total it adds
-    to for its running value ({!Running}): where one answers, the loop's sum
-    starts from it and its end replaces it ({!Replace}), so that the total is
-    the one its additions give made in turn. *)
+    to its total ({!add_to}). A loop first asks each total it adds to for its
+    running value ({!Running}): where one answers, the loop's sum starts from it
+    and its end replaces it ({!Replace}), so that the total is the one its
+    additions give made in turn. A call ({!Call}) does so as its default. *)
 
 type _ Effect.t +=
   | Running :
-      ('v, 's, 'd) total * int array
+      ('v, 's, 'd) total * ('v, 's, 'd) Nx.Prim.form
       -> ('v, 's, 'd) Nx.t option Effect.t
         (** Answered by the innermost collect of the total around the call with
-            its running value, if it has the shape given. A tracer or a map
+            its running value, if it has the shape of the form given, and by a
+            tracer between with a variable holding the total's running value
+            where the call is, which the program it traces threads. A map
             between answers [None], so that a loop whose additions reach a
             collect through it adds its sum. *)
   | Replace : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t -> unit Effect.t
-        (** Answered by the collect that answered {!Running}, whose running
-            value becomes the value given. *)
+        (** Answered by the collect or tracer that answered {!Running}, whose
+            running value becomes the value given. *)
+
+val threaded : ?lanes:int -> t -> (value array -> value array) -> value array
+(** [threaded ~lanes p f] is [f totals], an evaluation of [p] from its totals'
+    running values in [totals], without its running values out, which are handed
+    back to the totals: of [p]'s forms, or with a leading axis of [lanes], every
+    lane's of a map, where given. Each running value in is that of the innermost
+    collect or tracer answering for its total ({!Running}), which takes the
+    running value out ({!Replace}); where none answers, or [p] cannot take its
+    value at the form it was traced at, it is the identity, and the running
+    value out is added to the total ({!add_to}). *)
+
+val running :
+  ('v, 's, 'd) total -> ('v, 's, 'd) Nx.Prim.form -> ('v, 's, 'd) Nx.t option
+(** [running t f] is the answer to {!Running} of [t] at [f]'s shape, [None] with
+    none around. *)
+
+val add_to : ('v, 's, 'd) total -> ('v, 's, 'd) Nx.t -> unit
+(** [add_to t x] adds [x] to [t]: the running value of the innermost collect or
+    tracer that answers for [t] ({!Running}) becomes itself plus [x], and with
+    none [Add] of [x] is performed. *)
 
 type _ Effect.t +=
   | Construct : construct -> value array Effect.t

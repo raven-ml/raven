@@ -43,6 +43,7 @@ let jvp_call ~name args rule =
         captures;
         residuals = false;
         applied = false;
+        seeds = [||];
       }
   in
   sub (run c) 0 ny
@@ -65,6 +66,7 @@ let vjp_call ~name args rule =
         captures;
         residuals = false;
         applied = false;
+        seeds = [||];
       }
   in
   sub (run c) 0 ny

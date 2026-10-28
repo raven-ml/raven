@@ -644,16 +644,6 @@ let check_finals cs (made : made list) finals =
       note cs { m with first; data })
     made
 
-(* [a + b], nodes of values of [f]'s form. *)
-let sum (F f) a b =
-  let dt = D.Any f.dtype in
-  let add =
-    Nx_kernel.Prog.of_node
-      ~ins:(Iarray.of_list [ dt; dt ])
-      (Op2 (Binary Add, 0, 1))
-  in
-  (Arith.prog add (shape_of f) [| a; b |]).(0)
-
 let empty u = Shape.max_numel u = 0
 
 let rec program st cs env =
@@ -674,14 +664,14 @@ and construct st cs env c base =
   in
   match c with
   | Detach x -> bind [| (node st env x, reach env x, scattered_at env x) |]
-  | Call { body; args; _ } | Remat { body; args } ->
-      bind (inline st cs env body args)
+  | Call { body; args; seeds; _ } | Remat { body; args; seeds } ->
+      bind (threaded st cs env body args seeds)
   | Linear { apply = Some a; args; captures; _ } ->
       bind (inline st cs env a (Array.append args captures))
-  | Custom { primal; derivative; args; captures; _ } ->
+  | Custom { primal; derivative; args; captures; seeds; _ } ->
       (* The default's results: the primal's, its residuals computed, then a
          tangent map's additions, which no differentiation made. *)
-      let out = inline st cs env primal (Array.append args captures) in
+      let out = threaded st cs env primal (Array.append args captures) seeds in
       let tadds =
         match derivative with
         | Tangent t ->
@@ -701,7 +691,7 @@ and loop st cs env c =
       let forms = Program.forms c in
       let nc = Array.length init and na = Array.length step.adds in
       let ny = Array.length step.outputs - nc - na in
-      let _, sum_forms, feeds = Program.feeds step in
+      let _, _, feeds = Program.feeds step in
       let inits = Array.map (fun (V x) -> node st env x) init in
       let starts = starts st env forms ~at:(nc + ny) seeds in
       let finals =
@@ -719,15 +709,20 @@ and loop st cs env c =
           let trip inner carried rows =
             let sub = env_of step in
             let caps = Array.map (fun (V x) -> node st env x) captures in
+            let sums = Array.sub carried nc ns in
+            (* The step's totals run from the sums they feed, which their
+               running values out then are. *)
             let out =
               outputs st inner ~reach:(loop_reach env c) sub
-                (Array.concat [ Array.sub carried 0 nc; rows; caps ])
+                (Array.concat
+                   [
+                     Array.sub carried 0 nc;
+                     rows;
+                     caps;
+                     Array.map (fun j -> sums.(j)) feeds;
+                   ])
             in
-            let sums = Array.sub carried nc ns in
-            let add k j =
-              sums.(j) <- sum sum_forms.(j) sums.(j) out.(nc + ny + k)
-            in
-            Array.iteri add feeds;
+            Array.iteri (fun k j -> sums.(j) <- out.(nc + ny + k)) feeds;
             (Array.append (Array.sub out 0 nc) sums, Array.sub out nc ny)
           in
           let carried, ys =
@@ -744,7 +739,7 @@ and loop st cs env c =
       { name; step; until; max; init; step_captures; until_captures; seeds } ->
       let forms = Program.forms c in
       let nc = Array.length init in
-      let _, sum_forms, feeds = Program.sums [ until; step ] in
+      let _, _, feeds = Program.sums [ until; step ] in
       let until_feeds = List.nth feeds 0 and step_feeds = List.nth feeds 1 in
       let ucaps = Array.map (fun (V x) -> node st env x) until_captures in
       let scaps = Array.map (fun (V x) -> node st env x) step_captures in
@@ -754,12 +749,12 @@ and loop st cs env c =
       let reach = loop_reach env c in
       let test cs carry sums =
         let out =
-          outputs st cs ~reach (env_of until) (Array.append carry ucaps)
+          outputs st cs ~reach (env_of until)
+            (Array.concat
+               [ carry; ucaps; Array.map (fun j -> sums.(j)) until_feeds ])
         in
         let base = Array.length out - Array.length until_feeds in
-        Array.iteri
-          (fun k j -> sums.(j) <- sum sum_forms.(j) sums.(j) out.(base + k))
-          until_feeds;
+        Array.iteri (fun k j -> sums.(j) <- out.(base + k)) until_feeds;
         let stop = Shape.reshape out.(0) (ints [ 1 ]) in
         let no = Ops.ne (int64 0) (int64 0) in
         Ops.where (Ops.ne cs.failed (int64 0)) no (Ops.eq stop (uint8 stop 0))
@@ -775,13 +770,13 @@ and loop st cs env c =
             let carry = Array.sub carried 0 nc in
             let sums = Array.sub carried nc ns in
             let out =
-              outputs st inner ~reach (env_of step) (Array.append carry scaps)
+              outputs st inner ~reach (env_of step)
+                (Array.concat
+                   [ carry; scaps; Array.map (fun j -> sums.(j)) step_feeds ])
             in
             let carry = Array.sub out 0 nc in
             let base = Array.length out - Array.length step_feeds in
-            Array.iteri
-              (fun k j -> sums.(j) <- sum sum_forms.(j) sums.(j) out.(base + k))
-              step_feeds;
+            Array.iteri (fun k j -> sums.(j) <- out.(base + k)) step_feeds;
             let go = test inner carry sums in
             (Array.concat [ carry; sums; [| go |] ], [||])
           in
@@ -1068,6 +1063,39 @@ and repeat st cs ~n ~stop inits xs trip =
     cs.failed <- Ops.maximum cs.failed finals.(ncarried);
   check_finals cs made (Array.sub finals (ncarried + 1) (k - ncarried - 1));
   (Array.sub finals 0 ncarried, Array.map (fun f -> f e) ys)
+
+(* [q], a program threading its totals, over [args]: its totals run from the
+   sums of [c]'s results, each from its seed or the identity, which their
+   running values out then are; its results, then the sums. *)
+and threaded st cs env (q : Program.t) args seeds =
+  let _, sum_forms, feeds = Program.feeds q in
+  let no = Array.length q.outputs - Array.length q.adds in
+  let sums = starts st env sum_forms ~at:0 seeds in
+  let sub = env_of q in
+  let reached = Array.map (fun (V x) -> reach env x) args in
+  Array.iteri
+    (fun k (V x) ->
+      let v = q.params.(k) in
+      sub.nodes.(v) <- Some (node st env x);
+      sub.reaches.(v) <- reached.(k);
+      sub.scattered.(v) <- scattered_at env x)
+    args;
+  let na = Array.length args in
+  Array.iteri
+    (fun k j ->
+      let v = q.params.(na + k) in
+      sub.nodes.(v) <- Some sums.(j);
+      sub.reaches.(v) <- nothing;
+      sub.scattered.(v) <- false)
+    feeds;
+  program st cs sub;
+  let out =
+    Array.map (fun (V y) -> (node st sub y, reach sub y, scattered_at sub y))
+      q.outputs
+  in
+  let ends = Array.map (fun u -> (u, nothing, false)) sums in
+  Array.iteri (fun k j -> ends.(j) <- out.(no + k)) feeds;
+  Array.append (Array.sub out 0 no) ends
 
 (* [q]'s outputs over the operands [args] of [env]'s program: each one's node,
    reach, and whether a scatter computes it. *)
@@ -1482,13 +1510,14 @@ let over (V x) arrays =
    may outlive the consumer. A value over an argument's memory shares it for
    good, so a later donation of that argument computes into fresh memory: the
    cost of this path. *)
+(* [p] over [args], its arguments then its totals' running values in. *)
+let eval_all (p : Program.t) args =
+  let n = Array.length args - Array.length p.adds in
+  eval ~totals:(Array.sub args n (Array.length p.adds)) p (Array.sub args 0 n)
+
 let evaluated p args arrays =
-  let values =
-    Array.mapi
-      (fun k v -> over v (arrays k))
-      args
-  in
-  Array.map (fun (V y) -> V (Nx.copy y)) (eval p values)
+  let values = Array.mapi (fun k v -> over v (arrays k)) args in
+  Array.map (fun (V y) -> V (Nx.copy y)) (eval_all p values)
 
 let evaluate ~name p args =
   if Array.exists (fun (V x) -> Nx.Prim.donated x) args then
@@ -1498,7 +1527,7 @@ let evaluate ~name p args =
     Array.map
       (fun (V y as r) ->
         if Array.exists (same r) args then V (Nx.copy y) else r)
-      (eval p args)
+      (eval_all p args)
 
 (* The element of the one-element array over [b], read on the host. *)
 let element (type v s) (dt : (v, s) D.t) b : A.any =

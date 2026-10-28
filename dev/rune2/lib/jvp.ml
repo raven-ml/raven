@@ -1053,8 +1053,26 @@ module Rules = struct
      for its own, the residuals are derived again, as the primal's code computes
      them. Forward mode has no rule for a pullback's results: where a reverse
      mode inside applies the pullback, it differentiates the rule's code. *)
-  let custom c ~name ~primal:p ~derivative ~ny ~args ~captures ~residuals
-      ~applied =
+  let rec custom c ~name ~primal:p ~derivative ~ny ~args ~captures ~residuals
+      ~applied ~seeds =
+    let r =
+      applied_rule c ~name ~primal:p ~derivative ~ny ~args ~captures ~residuals
+        ~applied ~seeds
+    in
+    (* A sum runs from its seed, with the seed's tangent: the primal's additions
+       have none. *)
+    let base = ny + residual_count p ~ny in
+    Array.mapi
+      (fun k v ->
+        if k < base || k >= base + Array.length seeds then v
+        else
+          match tangent_v c.i seeds.(k - base) with
+          | Some t -> dual_v c.i v t
+          | None -> v)
+      r
+
+  and applied_rule c ~name ~primal:p ~derivative ~ny ~args ~captures ~residuals
+      ~applied ~seeds =
     tracks c ~name captures;
     let pargs = Array.map (primal_v c.i) args in
     let na = Array.length p.adds and nr = residual_count p ~ny in
@@ -1070,6 +1088,7 @@ module Rules = struct
              captures;
              residuals;
              applied;
+             seeds = Array.map (primal_v c.i) seeds;
            })
     in
     let reverse = Option.is_some c.tape in
@@ -1105,7 +1124,9 @@ module Rules = struct
         let ys, res, res_out, adds =
           if residuals then
             let derived =
-              derive (prune p ~outputs:(Array.init nr (fun k -> ny + k)))
+              sub
+                (derive (prune p ~outputs:(Array.init nr (fun k -> ny + k))))
+                0 nr
             in
             let out = outward ~residuals:false ~applied:pullback in
             ( sub out 0 ny,
@@ -1208,12 +1229,22 @@ module Rules = struct
      code where it was performed. *)
   let rule c = function
     | Custom
-        { name; primal; derivative; ny; args; captures; residuals; applied } ->
+        {
+          name;
+          primal;
+          derivative;
+          ny;
+          args;
+          captures;
+          residuals;
+          applied;
+          seeds;
+        } ->
         if not (Array.exists (owned c.i) args) then None
         else
           Some
             (custom c ~name ~primal ~derivative ~ny ~args ~captures ~residuals
-               ~applied)
+               ~applied ~seeds)
     | Linear
         {
           name;
@@ -1279,14 +1310,6 @@ let dualv i ~fresh v = function
 (* [ys]'s primals and tangents as [j] holds them. *)
 let parts j ys = (Array.map (pv j) ys, Array.map (tv j) ys)
 
-(* [p]'s additions, of the values [adds]. *)
-let add_all (p : Program.t) adds =
-  Array.iteri
-    (fun k (Program.Addition (t, f)) ->
-      let set = Nx.Placement.devices f.placement in
-      ignore (Program.perform (Add (t, Program.cast f.dtype set adds.(k)))))
-    p.adds
-
 (* A construct over duals: [Detach] and an addition are performed outward on the
    primal, so that every differentiation around detaches the value and a total
    receives the primal. [Lanes] is linear: its tangent is the lanes of the
@@ -1298,7 +1321,7 @@ let rec answer ~name ~tape i (c : Program.construct) k =
   match c with
   | Detach x -> Effect.Deep.continue k (Program.perform (Detach (primal i x)))
   | Add (t, x) ->
-      ignore (Program.perform (Add (t, primal i x)));
+      Program.add_to t (primal i x);
       Effect.Deep.continue k [||]
   | Lanes (a, x) ->
       let lanes x = Program.like x (Program.perform (Lanes (a, x))).(0) in
@@ -1326,10 +1349,10 @@ let rec answer ~name ~tape i (c : Program.construct) k =
   | Scan { step; length; init; xs; captures; seeds } ->
       Effect.Deep.continue k
         (scan ~name ~tape i step ~length ~init ~xs ~captures ~seeds)
-  | Remat { body; args } ->
-      Effect.Deep.continue k (remat ~name ~tape i body args)
-  | Call { body; args; site } ->
-      Effect.Deep.continue k (call ~name ~tape i body args site)
+  | Remat { body; args; seeds } ->
+      Effect.Deep.continue k (remat ~name ~tape i body args seeds)
+  | Call { body; args; site; seeds } ->
+      Effect.Deep.continue k (call ~name ~tape i body args site seeds)
   | Lane_index _ | Iterate _ -> Effect.Deep.discontinue k Program.Evaluate
 
 (* A scan's derivative is the scan of its step's derivative, whose carry has a
@@ -1391,28 +1414,43 @@ and scan ~name ~tape i (step : Program.t) ~length ~init ~xs ~captures ~seeds =
     let derive vs =
       match Loops.split lengths vs with
       | [ pc; tc; ts; px; tx; pk; tk ] ->
-          let (c, tc, y, ty), (adds, tadds) =
-            run ~name ?tape (fun j ->
-                let duals ps ts mask =
-                  Array.map2 (seeded j) ps
-                    (spread (Array.map Option.is_some mask) ts)
-                in
-                let args =
-                  Array.concat
-                    [
-                      Array.map2 (seeded j) pc (spread has tc);
-                      duals px tx txs;
-                      duals pk tk tcaps;
-                    ]
-                in
-                let p, t = parts j (Program.eval step args) in
-                let n = Array.length p - nc - ny in
-                ( ( Array.sub p 0 nc,
-                    Array.sub t 0 nc,
-                    Array.sub p nc ny,
-                    Array.sub t nc ny ),
-                  (Array.sub p (nc + ny) n, Array.sub t (nc + ny) n) ))
+          (* The step's totals run from the trace's running values, a sum with a
+             tangent from that tangent's carry, so that its additions chain onto
+             it in turn. *)
+          let tsums = spread hs ts and derived = ref None in
+          let (_ : Program.value array) =
+            Program.threaded step (fun running ->
+                run ~name ?tape (fun j ->
+                    let duals ps ts mask =
+                      Array.map2 (seeded j) ps
+                        (spread (Array.map Option.is_some mask) ts)
+                    in
+                    let args =
+                      Array.concat
+                        [
+                          Array.map2 (seeded j) pc (spread has tc);
+                          duals px tx txs;
+                          duals pk tk tcaps;
+                        ]
+                    in
+                    let totals =
+                      Array.mapi
+                        (fun k v -> seeded j v tsums.(feeds.(k)))
+                        running
+                    in
+                    let p, t = parts j (Program.eval ~totals step args) in
+                    let n = Array.length p - nc - ny in
+                    derived :=
+                      Some
+                        ( Array.sub p 0 nc,
+                          Array.sub t 0 nc,
+                          Array.sub p nc ny,
+                          Array.sub t nc ny,
+                          Array.sub p (nc + ny) n,
+                          Array.sub t (nc + ny) n );
+                    Array.sub p (nc + ny) n))
           in
+          let c, tc, y, ty, sums, tsums' = Option.get !derived in
           (* A carry with a tangent whose step gives it none takes a zero. *)
           let tc' =
             Array.init nc (fun k ->
@@ -1422,20 +1460,21 @@ and scan ~name ~tape i (step : Program.t) ~length ~init ~xs ~captures ~seeds =
                 | None -> if has.(k) then Some (zero c.(k)) else None)
           in
           let tc' = somes (Loops.pick has tc') in
-          (* Each sum's tangent, chained in the order its additions are made. *)
-          let sums = spread hs ts in
+          (* Each sum's tangent, its running value's: the carry's, plus the
+             tangents of the additions made onto it. *)
+          let sums_t = Array.make ns None in
           Array.iteri
             (fun k t ->
               let s = feeds.(k) in
-              match (t, sums.(s)) with
-              | Some t, Some acc -> sums.(s) <- Some (Loops.add acc t)
-              | Some _, None -> gained_s.(s) <- true
-              | None, _ -> ())
-            tadds;
-          let sums = somes (Loops.pick hs sums) in
+              sums_t.(s) <-
+                (match t with
+                | Some _ -> t
+                | None -> if hs.(s) then Some (zero sums.(k)) else None);
+              if Option.is_some t && not hs.(s) then gained_s.(s) <- true)
+            tsums';
+          let sums_t = somes (Loops.pick hs sums_t) in
           has_y := Array.map Option.is_some ty;
-          add_all step adds;
-          Array.concat [ c; tc'; sums; y; somes ty ]
+          Array.concat [ c; tc'; sums_t; y; somes ty ]
       | _ -> invalid_arg "Rune: a scan's derivative"
     in
     let prog, own = Trace.trace Body ~name forms derive in
@@ -1485,37 +1524,55 @@ and scan ~name ~tape i (step : Program.t) ~length ~init ~xs ~captures ~seeds =
 
 (* A remat's derivative is the remat of its function's, as JAX's checkpoint
    differentiates, so that a reverse mode around it sees the remat. The tangents
-   of its additions are more outputs: its additions are duals, as its function's
-   would be. *)
-and remat ~name ~tape i (body : Program.t) args =
+   of its sums are more outputs: its sums are duals, as its function's running
+   totals would be, each from its seed's tangent. *)
+and remat ~name ~tape i (body : Program.t) args seeds =
   let pargs = Array.map (pv i) args and targs = Array.map (tv i) args in
+  let tseeds = Array.map (tv i) seeds in
   let na = Array.length body.adds in
   let no = Array.length body.outputs - na in
   let has_y = ref [||] in
   let forms =
-    Array.append
-      (Array.map Program.form pargs)
-      (Array.map Program.form (somes targs))
+    Array.concat
+      [
+        Array.map Program.form pargs;
+        Array.map Program.form (somes targs);
+        Array.map Program.form (somes tseeds);
+      ]
   in
+  let count m = Array.length (somes m) in
   let derive vs =
-    let n = Array.length pargs in
-    let ps = Array.sub vs 0 n and ts = Array.sub vs n (Array.length vs - n) in
-    let ys, adds =
-      run ~name ?tape (fun j ->
-          let mask = Array.map Option.is_some targs in
-          let args = Array.map2 (seeded j) ps (spread mask ts) in
-          let p, t = parts j (Program.eval body args) in
-          has_y := Array.map Option.is_some t;
-          (Array.append (Array.sub p 0 no) (somes t), Array.sub p no na))
-    in
-    add_all body adds;
-    ys
+    match Loops.split [ Array.length pargs; count targs; count tseeds ] vs with
+    | [ ps; ts; tss ] ->
+        let ys = ref [||] in
+        let tss =
+          if seeds = [||] then Array.make na None
+          else spread (Array.map Option.is_some tseeds) tss
+        in
+        let (_ : Program.value array) =
+          Program.threaded body (fun totals ->
+              run ~name ?tape (fun j ->
+                  let mask = Array.map Option.is_some targs in
+                  let args = Array.map2 (seeded j) ps (spread mask ts) in
+                  let totals = Array.map2 (seeded j) totals tss in
+                  let p, t = parts j (Program.eval ~totals body args) in
+                  has_y := Array.map Option.is_some t;
+                  ys := Array.append (Array.sub p 0 no) (somes t);
+                  Array.sub p no na))
+        in
+        !ys
+    | _ -> invalid_arg "Rune: a remat's derivative"
   in
   (* Traced as the remat's function was: every operation staged. *)
   let prog, own = Trace.trace Staged ~name forms derive in
   let r =
     Program.perform
-      (Remat { body = prog; args = Array.concat [ pargs; somes targs; own ] })
+      (Remat
+         {
+           body = prog;
+           args = Array.concat [ pargs; somes targs; somes tseeds; own ];
+           seeds = Array.map (pv i) seeds;
+         })
   in
   let nt = Array.length (Loops.pick !has_y !has_y) in
   match Loops.split [ no; nt; na ] r with
@@ -1527,36 +1584,57 @@ and remat ~name ~tape i (body : Program.t) args =
    differentiates a compiled call's jaxpr: derived once per derivation at the
    call's site, traced as a compiled function is, and compiled. Its additions
    are duals, as a remat's are. *)
-and call ~name ~tape i (body : Program.t) args site =
+and call ~name ~tape i (body : Program.t) args site seeds =
   let pargs = Array.map (pv i) args and targs = Array.map (tv i) args in
+  let tseeds = Array.map (tv i) seeds in
   let mask = Array.map Option.is_some targs in
-  let ins = Array.append pargs (somes targs) in
+  let smask = Array.map Option.is_some tseeds in
+  let ins = Array.concat [ pargs; somes targs; somes tseeds ] in
   let forms = Array.map Program.form ins in
   let na = Array.length body.adds in
   let no = Array.length body.outputs - na in
+  let count m = Array.length (somes m) in
   let made () =
     let has_y = ref [||] in
     let derive vs =
-      let n = Array.length pargs in
-      let ps = Array.sub vs 0 n and ts = Array.sub vs n (Array.length vs - n) in
-      let ys, adds =
-        run ~name ?tape (fun j ->
-            let args = Array.map2 (seeded j) ps (spread mask ts) in
-            let p, t = parts j (Program.eval body args) in
-            has_y := Array.map Option.is_some t;
-            (Array.append (Array.sub p 0 no) (somes t), Array.sub p no na))
-      in
-      add_all body adds;
-      ys
+      match Loops.split [ Array.length pargs; count targs; count tseeds ] vs with
+      | [ ps; ts; tss ] ->
+          let ys = ref [||] in
+          let tss = if seeds = [||] then Array.make na None else spread smask tss in
+          let (_ : Program.value array) =
+            Program.threaded body (fun totals ->
+                run ~name ?tape (fun j ->
+                    let args = Array.map2 (seeded j) ps (spread mask ts) in
+                    let totals = Array.map2 (seeded j) totals tss in
+                    let p, t = parts j (Program.eval ~totals body args) in
+                    has_y := Array.map Option.is_some t;
+                    ys := Array.append (Array.sub p 0 no) (somes t);
+                    Array.sub p no na))
+          in
+          !ys
+      | _ -> invalid_arg "Rune: a call's derivative"
     in
     let prog, _ = Trace.trace Jit ~name forms derive in
-    ((prog, forms), !has_y, None)
+    let totals =
+      Array.map (fun (Program.Addition (_, f, _)) -> Program.F f) prog.adds
+    in
+    ((prog, Array.append forms totals), !has_y, None)
   in
   let reverse = Option.is_some tape && Program.customs site in
-  let derivation = Program.Jvp { tangents = mask; reverse } in
+  (* The seeds' tangents enter the derivation beside the arguments'. *)
+  let derivation =
+    Program.Jvp { tangents = Array.append mask smask; reverse }
+  in
   let d = Program.derive site derivation forms made in
   let r =
-    Program.perform (Call { body = d.program; args = ins; site = d.at })
+    Program.perform
+      (Call
+         {
+           body = d.program;
+           args = ins;
+           site = d.at;
+           seeds = Array.map (pv i) seeds;
+         })
   in
   let nt = Array.length (Loops.pick d.flags d.flags) in
   match Loops.split [ no; nt; na ] r with

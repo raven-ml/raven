@@ -30,6 +30,15 @@ let cast (type v s d) (dt : (v, s) D.t) (set : d Nx.devices) (V y) :
         (Format.asprintf "Rune: a %a value where %a was expected" Nx.pp_dtype
            (Nx.dtype y) Nx.pp_dtype dt)
 
+(* [x] at [f]'s type where it has [f]'s dtype and lies on its set, and [v] at
+   [f]'s type, which raises where it does not. *)
+let coerce_at (type v s d) (f : (v, s, d) Nx.Prim.form) x :
+    (v, s, d) Nx.t option =
+  Nx.Prim.coerce f.dtype (Nx.Placement.devices f.placement) x
+
+let cast_at (type v s d) (f : (v, s, d) Nx.Prim.form) v : (v, s, d) Nx.t =
+  cast f.dtype (Nx.Placement.devices f.placement) v
+
 (* [v] at [x]'s type. *)
 let like x v = cast (Nx.dtype x) (Nx.Placement.devices (Nx.placement x)) v
 
@@ -111,7 +120,9 @@ end)
 type ('v, 's, 'd) Nx.Prim.payload += Var : int -> ('v, 's, 'd) Nx.Prim.payload
 
 type addition =
-  | Addition : ('v, 's, 'd) total * ('v, 's, 'd) Nx.Prim.form -> addition
+  | Addition :
+      ('v, 's, 'd) total * ('v, 's, 'd) Nx.Prim.form * ('v, 's, 'd) Nx.Prim.form
+      -> addition
 
 type t = {
   owner : Nx.Prim.interpretation;
@@ -151,7 +162,8 @@ and construct =
       seeds : value array;
     }
       -> construct
-  | Call : { body : t; args : value array; site : site } -> construct
+  | Call : { body : t; args : value array; site : site; seeds : value array }
+      -> construct
   | Custom : {
       name : string;
       primal : t;
@@ -161,6 +173,7 @@ and construct =
       captures : value array;
       residuals : bool;
       applied : bool;
+      seeds : value array;
     }
       -> construct
   | Linear : {
@@ -173,7 +186,7 @@ and construct =
       forms : form array;
     }
       -> construct
-  | Remat : { body : t; args : value array } -> construct
+  | Remat : { body : t; args : value array; seeds : value array } -> construct
 
 and derivative = Tangent of t | Pullback of t
 
@@ -332,13 +345,15 @@ let map_operands m = function
           until_captures = map_values m s.until_captures;
           seeds = map_values m s.seeds;
         }
-  | Call c -> Call { c with args = map_values m c.args }
+  | Call c ->
+      Call { c with args = map_values m c.args; seeds = map_values m c.seeds }
   | Custom c ->
       Custom
         {
           c with
           args = map_values m c.args;
           captures = map_values m c.captures;
+          seeds = map_values m c.seeds;
         }
   | Linear c ->
       Linear
@@ -348,7 +363,8 @@ let map_operands m = function
           captures = map_values m c.captures;
           residuals = map_values m c.residuals;
         }
-  | Remat r -> Remat { r with args = map_values m r.args }
+  | Remat r ->
+      Remat { r with args = map_values m r.args; seeds = map_values m r.seeds }
 
 let operands = function
   | Detach x -> [ V x ]
@@ -360,11 +376,12 @@ let operands = function
   | Iterate { init; step_captures; until_captures; seeds; _ } ->
       Array.to_list
         (Array.concat [ init; step_captures; until_captures; seeds ])
-  | Call { args; _ } -> Array.to_list args
-  | Custom { args; captures; _ } -> Array.to_list (Array.append args captures)
+  | Call { args; seeds; _ } | Remat { args; seeds; _ } ->
+      Array.to_list (Array.append args seeds)
+  | Custom { args; captures; seeds; _ } ->
+      Array.to_list (Array.concat [ args; captures; seeds ])
   | Linear { args; captures; residuals; _ } ->
       Array.to_list (Array.concat [ args; captures; residuals ])
-  | Remat { args; _ } -> Array.to_list args
 
 let map_programs f = function
   | (Detach _ | Lanes _ | Lane_index _ | Add _) as c -> c
@@ -402,38 +419,32 @@ let stacked n (F f) =
       placement = Nx.Placement.with_leading_axis f.placement;
     }
 
-let computed (F f) = F { f with layout = contiguous (shape_of f) }
-
-(* The additions [p]'s outputs end with. *)
+(* The running totals out [p]'s outputs end with. *)
 let tail p =
   let n = Array.length p.outputs in
   slice p.outputs (n - Array.length p.adds) n
 
 (* A loop's sums: one per total and shape its programs add to, in the order
-   their first additions are made, each the chain of that total's additions in
+   their programs first take them, each the chain of that total's additions in
    the order they are made, as an eager loop would make them. With each
-   program's additions, the sum each feeds. *)
+   program's totals, the sum each feeds. *)
 let sums programs =
   let found = ref [] in
   (* A sum's addition and form are its first addition's. *)
-  let index (Addition (t, _) as a) (F f) =
+  let index (Addition (t, _, out) as a) =
+    let f = { out with layout = contiguous (shape_of out) } in
     let shape = shape_of f in
     let rec go k = function
       | [] ->
           found := !found @ [ (a, F f) ];
           k
-      | (Addition (u, _), F g) :: rest ->
+      | (Addition (u, _, _), F g) :: rest ->
           if Option.is_some (same_total t u) && shape_of g = shape then k
           else go (k + 1) rest
     in
     go 0 !found
   in
-  let feeds =
-    List.map
-      (fun p ->
-        Array.mapi (fun k a -> index a (computed (form (tail p).(k)))) p.adds)
-      programs
-  in
+  let feeds = List.map (fun p -> Array.map index p.adds) programs in
   let adds, forms = List.split !found in
   (Array.of_list adds, Array.of_list forms, feeds)
 
@@ -442,28 +453,48 @@ let feeds step =
   | adds, forms, [ feeds ] -> (adds, forms, feeds)
   | _ -> invalid_arg "Rune: a step's sums"
 
-(* The additions a construct's results end with: a loop's sums, and a call's
-   additions. *)
+(* The additions a construct's results end with: its sums, one per total and
+   shape its programs thread, which it starts from its seeds; then for a custom
+   rule its tangent map's running totals out, chains from the identity. *)
 let additions = function
   | Detach _ | Lanes _ | Lane_index _ | Add _ -> [||]
-  | Scan { step; _ } ->
-      let adds, _, _ = sums [ step ] in
+  | Scan { step = p; _ } | Call { body = p; _ } | Remat { body = p; _ } ->
+      let adds, _, _ = sums [ p ] in
       adds
   | Iterate { step; until; _ } ->
       let adds, _, _ = sums [ until; step ] in
       adds
-  | Call { body; _ } -> body.adds
   | Custom { primal; derivative = Tangent t; _ } ->
-      Array.append primal.adds t.adds
-  | Custom { primal; derivative = Pullback _; _ } -> primal.adds
+      let adds, _, _ = sums [ primal ] in
+      Array.append adds t.adds
+  | Custom { primal; derivative = Pullback _; _ } ->
+      let adds, _, _ = sums [ primal ] in
+      adds
   | Linear { apply = Some a; _ } -> a.adds
   | Linear { apply = None; _ } -> [||]
-  | Remat { body; _ } -> body.adds
+
+(* How many of a construct's additions it starts from its seeds. *)
+let seeded_count = function
+  | Custom { primal; _ } ->
+      let adds, _, _ = sums [ primal ] in
+      Array.length adds
+  | Linear _ -> 0
+  | c -> Array.length (additions c)
+
+(* [c] starting its sums from [seeds]. *)
+let with_seeds c seeds =
+  match c with
+  | Scan s -> Scan { s with seeds }
+  | Iterate s -> Iterate { s with seeds }
+  | Call s -> Call { s with seeds }
+  | Remat s -> Remat { s with seeds }
+  | Custom s -> Custom { s with seeds }
+  | c -> c
 
 let no_map name =
   invalid_arg (name ^ ": no map named by the axis is around the call")
 
-let forms = function
+let rec forms = function
   | Detach x -> [| form (V x) |]
   | Lanes (a, x) -> (
       match bound a with
@@ -485,15 +516,19 @@ let forms = function
   | Iterate { step; until; init; _ } ->
       let _, sums, _ = sums [ until; step ] in
       Array.append (Array.map form init) sums
-  | Call { body; _ } -> Array.map form body.outputs
+  | Call { body = p; _ } | Remat { body = p; _ } -> results p
   | Custom { primal; derivative = Tangent t; _ } ->
-      Array.map form (Array.append primal.outputs (tail t))
-  | Custom { primal; derivative = Pullback _; _ } ->
-      Array.map form primal.outputs
+      Array.append (results primal) (Array.map form (tail t))
+  | Custom { primal; derivative = Pullback _; _ } -> results primal
   | Linear { apply = Some a; forms; _ } ->
       Array.append forms (Array.map form (tail a))
   | Linear { apply = None; forms; _ } -> forms
-  | Remat { body; _ } -> Array.map form body.outputs
+
+(* The forms of [p]'s results, then its sums'. *)
+and results p =
+  let n = Array.length p.outputs - Array.length p.adds in
+  let _, sums, _ = sums [ p ] in
+  Array.append (Array.map form (slice p.outputs 0 n)) sums
 
 (* Values of a form *)
 
@@ -516,6 +551,21 @@ let stack (F f) vs =
   let set = Nx.Placement.devices f.placement in
   V (Nx.stack ~axis:0 (List.map (cast f.dtype set) vs))
 
+(* Running totals *)
+
+type _ Effect.t +=
+  | Running :
+      ('v, 's, 'd) total * ('v, 's, 'd) Nx.Prim.form
+      -> ('v, 's, 'd) Nx.t option Effect.t
+  | Replace : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t -> unit Effect.t
+
+let running t f =
+  match Effect.perform (Running (t, f)) with
+  | r -> r
+  | exception Effect.Unhandled (Running _) -> None
+
+let replace t x = Effect.perform (Replace (t, x))
+
 (* Evaluation *)
 
 (* An unbound slot. *)
@@ -530,8 +580,17 @@ let stops (V y) =
         (Format.asprintf "Rune: until gave a %a value, not a boolean"
            Nx.pp_dtype (Nx.dtype y))
 
-let rec eval p args =
-  if Array.length args <> Array.length p.params then
+let rec eval ?totals p args =
+  let na = Array.length p.adds in
+  let totals =
+    match totals with
+    | Some ts -> ts
+    | None ->
+        Array.map (fun (Addition (_, f, _)) -> filled ~zero:false (F f)) p.adds
+  in
+  let args = Array.append args totals in
+  if Array.length args <> Array.length p.params || Array.length totals <> na
+  then
     invalid_arg
       (Printf.sprintf "Rune: a program of %d parameters applied to %d values"
          (Array.length p.params) (Array.length args));
@@ -576,13 +635,17 @@ and default = function
   | Iterate
       { name; step; until; max; init; step_captures; until_captures; seeds } ->
       iterate name step ~until ~max ~init ~step_captures ~until_captures ~seeds
-  | Call { body; args; site } -> (
+  | Call { body; args; site; seeds } ->
       let untraced (V x) = Option.is_none (Nx.Prim.owner x) in
-      match site.compiled with
-      | Some run when Array.for_all untraced args && not (staging ()) ->
-          run args
-      | _ -> eval body args)
-  | Custom { primal; derivative; ny; args; captures; residuals; _ } ->
+      from_seeds body seeds (fun totals ->
+          match site.compiled with
+          | Some run
+            when Array.for_all untraced args
+                 && Array.for_all untraced totals
+                 && not (staging ()) ->
+              run (Array.append args totals)
+          | _ -> eval ~totals body args)
+  | Custom { primal; derivative; ny; args; captures; residuals; seeds; _ } ->
       let args = Array.append args captures in
       let nr = Array.length primal.outputs - ny - Array.length primal.adds in
       (* A tangent map's additions, which no differentiation made. *)
@@ -591,9 +654,13 @@ and default = function
         | Tangent t -> Array.map (fun v -> filled ~zero:false (form v)) (tail t)
         | Pullback _ -> [||]
       in
-      if residuals then Array.append (eval primal args) tadds
+      if residuals then
+        Array.append
+          (from_seeds primal seeds (fun totals -> eval ~totals primal args))
+          tadds
       else
-        let out = eval (values_only primal ~ny) args in
+        let p = values_only primal ~ny in
+        let out = from_seeds p seeds (fun totals -> eval ~totals p args) in
         Array.concat
           [
             slice out 0 ny;
@@ -608,11 +675,65 @@ and default = function
         (name
        ^ ": a custom_vjp rule has no forward derivative; give the function a \
           custom_jvp rule")
-  | Remat { body; args } -> eval body args
+  | Remat { body; args; seeds } ->
+      from_seeds body seeds (fun totals -> eval ~totals body args)
 
-(* [p], a custom rule's primal, with its results and additions alone. Where its
-   residuals are its parameters, constants or results, nothing reads only them,
-   and every equation is kept. *)
+and eval_seeded p ~seeds args =
+  from_seeds p seeds (fun totals -> eval ~totals p args)
+
+(* [f totals], [p]'s outputs from its totals' running values in [totals], its
+   sums started from [seeds] and ended where its running values out are. *)
+and from_seeds p seeds f =
+  let _, forms, feeds = sums [ p ] in
+  let feeds = List.hd feeds and acc = accumulators forms seeds in
+  let out = feeding p feeds acc f in
+  Array.append (slice out 0 (Array.length out - Array.length feeds)) acc
+
+(* [f totals], [p]'s outputs from its running totals in [totals], each taken
+   from the innermost collect or tracer that answers for its total and handed
+   back its running value out, the results alone. A total none answers for, or
+   whose running value [p] cannot take, starts from the identity, and its end is
+   added to it. *)
+and threaded ?lanes p f =
+  let at (type v s d) (f : (v, s, d) Nx.Prim.form) : (v, s, d) Nx.Prim.form =
+    match lanes with
+    | None -> f
+    | Some n ->
+        {
+          f with
+          layout = contiguous (Array.append [| n |] (shape_of f));
+          placement = Nx.Placement.with_leading_axis f.placement;
+        }
+  in
+  let ins =
+    Array.map
+      (fun (Addition (t, into, _)) ->
+        let into = at into in
+        match running t into with
+        | Some r when Option.is_some (coerce_at into r) -> (V r, true)
+        | _ -> (filled ~zero:false (F into), false))
+      p.adds
+  in
+  let out = f (Array.map fst ins) in
+  let n = Array.length out - Array.length p.adds in
+  Array.iteri
+    (fun k (Addition (t, _, out_form)) ->
+      let y = cast_at (at out_form) out.(n + k) in
+      if snd ins.(k) then replace t y else add_to t y)
+    p.adds;
+  slice out 0 n
+
+(* [x] added to the innermost collect or tracer that answers for [t], as its
+   running value plus [x], and otherwise performed as an addition. *)
+and add_to : type v s d. (v, s, d) total -> (v, s, d) Nx.t -> unit =
+ fun t x ->
+  match running t (Nx.Prim.form x) with
+  | Some r -> replace t (Nx.add r x)
+  | None -> ignore (perform (Add (t, x)))
+
+(* [p], a custom rule's primal, with its results and running totals alone. Where
+   its residuals are its parameters, constants or results, nothing reads only
+   them, and every equation is kept. *)
 and values_only p ~ny =
   let no = Array.length p.outputs and na = Array.length p.adds in
   let owner = p.owner in
@@ -623,12 +744,9 @@ and values_only p ~ny =
         || Array.exists (fun y -> same y (V r)) (slice p.outputs 0 ny)
     | _ -> true
   in
-  let kept =
-    Array.append (Array.init ny Fun.id) (Array.init na (fun k -> no - na + k))
-  in
   if Array.for_all free (slice p.outputs ny (no - na)) then
-    { p with outputs = Array.map (fun k -> p.outputs.(k)) kept; adds = [||] }
-  else prune p ~outputs:kept
+    { p with outputs = Array.append (slice p.outputs 0 ny) (tail p) }
+  else prune p ~outputs:(Array.init ny Fun.id)
 
 (* A loop's sums start from its seeds, the running totals of the collects they
    reach, or else at the identity, so that a loop that runs no step adds nothing
@@ -637,11 +755,31 @@ and accumulators forms seeds =
   if seeds = [||] then Array.map (filled ~zero:false) forms
   else Array.copy seeds
 
-(* [acc] plus the additions [p]'s outputs [out] end with, each to the sum it
-   feeds. *)
-and accumulate acc feeds out =
+(* [f totals], [p]'s outputs from its totals' running values in [totals], which
+   run from the sums [acc] they feed, each sum's end in [acc] once it has run. A
+   total starts from its sum where [p]'s running value in can take it, and
+   otherwise from the identity, its end then added to the sum. *)
+and feeding p feeds acc f =
+  let ins =
+    Array.mapi
+      (fun k (Addition (_, into, _)) ->
+        let (V a as v) = acc.(feeds.(k)) in
+        match coerce_at into a with
+        | Some _ -> (v, true)
+        | None -> (filled ~zero:false (F into), false))
+      p.adds
+  in
+  let out = f (Array.map fst ins) in
   let base = Array.length out - Array.length feeds in
-  Array.iteri (fun k j -> acc.(j) <- add acc.(j) out.(base + k)) feeds
+  Array.iteri
+    (fun k j ->
+      let o = out.(base + k) in
+      acc.(j) <- (if snd ins.(k) then o else add acc.(j) o))
+    feeds;
+  out
+
+and evaluate p feeds acc args =
+  feeding p feeds acc (fun totals -> eval ~totals p args)
 
 and scan step ~length ~init ~xs ~captures ~seeds =
   let nc = Array.length init in
@@ -652,12 +790,13 @@ and scan step ~length ~init ~xs ~captures ~seeds =
   let carry = ref init and ys = Array.make ny [] in
   for i = 0 to length - 1 do
     let row = Array.map (fun (V x) -> V (Nx.get [ i ] x)) xs in
-    let out = eval step (Array.concat [ !carry; row; captures ]) in
+    let out =
+      evaluate step feeds acc (Array.concat [ !carry; row; captures ])
+    in
     carry := slice out 0 nc;
     for j = 0 to ny - 1 do
       ys.(j) <- out.(nc + j) :: ys.(j)
-    done;
-    accumulate acc feeds out
+    done
   done;
   let ys =
     if length = 0 then
@@ -674,17 +813,18 @@ and iterate name step ~until ~max ~init ~step_captures ~until_captures ~seeds =
   let until_feeds = List.nth feeds 0 and step_feeds = List.nth feeds 1 in
   let acc = accumulators forms seeds in
   let rec go k carry =
-    let out = eval until (Array.append carry until_captures) in
-    accumulate acc until_feeds out;
+    let out =
+      evaluate until until_feeds acc (Array.append carry until_captures)
+    in
     if stops out.(0) then carry
     else if k = max then
       invalid_arg
         (Printf.sprintf "%s: until is still false after max = %d steps" name max)
-    else begin
-      let out = eval step (Array.append carry step_captures) in
-      accumulate acc step_feeds out;
+    else
+      let out =
+        evaluate step step_feeds acc (Array.append carry step_captures)
+      in
       go (k + 1) (slice out 0 (Array.length carry))
-    end
   in
   let carry = go 0 init in
   Array.append carry acc
@@ -699,7 +839,9 @@ and prune p ~outputs =
     | Some (Var n) -> live.(n) <- true
     | _ -> ()
   in
-  let outputs = Array.map (fun k -> p.outputs.(k)) outputs in
+  let outputs =
+    Array.append (Array.map (fun k -> p.outputs.(k)) outputs) (tail p)
+  in
   Array.iter (fun (V y) -> mark y) outputs;
   let n = Array.length p.eqns in
   let base = function Op { base; _ } | Do { base; _ } -> base in
@@ -724,68 +866,49 @@ and prune p ~outputs =
       | Do { c; _ } -> List.iter (fun (V x) -> mark x) (operands c)
     end
   done;
-  { p with eqns = Array.of_list !kept; outputs; adds = [||] }
+  { p with eqns = Array.of_list !kept; outputs }
 
-type _ Effect.t +=
-  | Running :
-      ('v, 's, 'd) total * int array
-      -> ('v, 's, 'd) Nx.t option Effect.t
-  | Replace : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t -> unit Effect.t
-
-let running t shape =
-  match Effect.perform (Running (t, shape)) with
-  | r -> r
-  | exception Effect.Unhandled (Running _) -> None
-
-(* A total's running value, where a collect answers for it. *)
+(* A total's running value, where a collect or a tracer answers for it. *)
 type seed = Seed : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t -> seed | Unseeded
 
 (* A loop asks each total it adds to for its running value and chains its
-   additions from it, then hands the collect the chain's end; a total no collect
-   answers for receives the chain as one addition. *)
+   additions from it, then hands the chain's end back; a total none answers for
+   receives the chain as one addition. Another construct's running totals out,
+   chains from the identity, are added to their totals. *)
 let run c =
   let adds = additions c in
+  let ns = seeded_count c in
   let seeds =
-    match c with
-    | (Scan _ | Iterate _) when adds <> [||] ->
-        Array.map
-          (fun (Addition (t, f)) ->
-            match running t (shape_of f) with
-            | Some v -> Seed (t, v)
-            | None -> Unseeded)
-          adds
-    | _ -> Array.map (fun _ -> Unseeded) adds
+    Array.mapi
+      (fun k (Addition (t, _, f)) ->
+        if k >= ns then Unseeded
+        else match running t f with Some v -> Seed (t, v) | None -> Unseeded)
+      adds
   in
   let c =
     if Array.for_all (fun s -> s = Unseeded) seeds then c
     else
       let fs = forms c in
       let base = Array.length fs - Array.length adds in
-      let seeds =
-        Array.mapi
-          (fun k -> function
-            | Seed (_, v) -> V v | Unseeded -> filled ~zero:false fs.(base + k))
-          seeds
-      in
-      match c with
-      | Scan s -> Scan { s with seeds }
-      | Iterate s -> Iterate { s with seeds }
-      | c -> c
+      with_seeds c
+        (Array.init ns (fun k ->
+             match seeds.(k) with
+             | Seed (_, v) -> V v
+             | Unseeded -> filled ~zero:false fs.(base + k)))
   in
   let r = perform c in
   let base = Array.length r - Array.length adds in
   Array.iteri
-    (fun k (Addition (t, f)) ->
+    (fun k (Addition (t, _, f)) ->
       let set = Nx.Placement.devices f.placement in
       match seeds.(k) with
-      | Seed (u, _) -> (
-          (* The chain's end lies where its seed does, or where its additions
-             do, the placed of the two: on their one set. *)
+      | Seed (u, v) -> (
+          (* The chain's end lies where its seed does. *)
           match same_total u t with
           | Some Type.Equal ->
-              Effect.perform (Replace (t, cast f.dtype set r.(base + k)))
+              replace t (like v r.(base + k))
           | None -> invalid_arg "Rune: a seed of another total")
-      | Unseeded -> ignore (perform (Add (t, cast f.dtype set r.(base + k)))))
+      | Unseeded -> add_to t (cast f.dtype set r.(base + k)))
     adds;
   r
 
@@ -888,16 +1011,23 @@ let rec pp_program names ~indent ppf (p : t) =
   let pad = String.make indent ' ' in
   let b = base names p in
   let var ppf n = Format.fprintf ppf "%%%d" (b + n) in
+  let na = Array.length p.adds in
+  let ni = Array.length p.params - na in
+  let params = Array.to_list p.params in
   Format.fprintf ppf "%sprogram (%a)" pad
     (Format.pp_print_list ~pp_sep:comma var)
-    (Array.to_list p.params);
+    (List.filteri (fun i _ -> i < ni) params);
+  if na > 0 then
+    Format.fprintf ppf ", totals (%a)"
+      (Format.pp_print_list ~pp_sep:comma var)
+      (List.filteri (fun i _ -> i >= ni) params);
   Array.iteri (fun i e -> pp_eqn names ~indent p i ppf e) p.eqns;
   let outs = Array.to_list p.outputs in
-  let n = List.length outs - Array.length p.adds in
+  let n = List.length outs - na in
   Format.fprintf ppf "@\n%s  return %a" pad (pp_names names p)
     (List.filteri (fun i _ -> i < n) outs);
-  if Array.length p.adds > 0 then
-    Format.fprintf ppf "@\n%s  adds %a" pad (pp_names names p)
+  if na > 0 then
+    Format.fprintf ppf "@\n%s  totals %a" pad (pp_names names p)
       (List.filteri (fun i _ -> i >= n) outs)
 
 and pp_eqn names ~indent (p : t) i ppf eqn =
@@ -957,6 +1087,10 @@ and pp_construct names ~indent (p : t) ppf c =
   let program ppf q =
     Format.fprintf ppf "@\n%a" (pp_program names ~indent:(indent + 4)) q
   in
+  let seeded_from ppf seeds =
+    if seeds <> [||] then
+      Format.fprintf ppf ", seeds (%a)" values (Array.to_list seeds)
+  in
   match c with
   | Detach x -> Format.fprintf ppf "detach %a" value (V x)
   | Lanes (a, x) ->
@@ -968,8 +1102,7 @@ and pp_construct names ~indent (p : t) ppf c =
       Format.fprintf ppf "scan %d rows, init (%a), xs (%a), captures (%a)"
         length values (Array.to_list init) values (Array.to_list xs) values
         (Array.to_list captures);
-      if seeds <> [||] then
-        Format.fprintf ppf ", seeds (%a)" values (Array.to_list seeds);
+      seeded_from ppf seeds;
       Format.fprintf ppf "@\n%s  step%a" pad program step
   | Iterate { step; until; max; init; step_captures; until_captures; _ } ->
       Format.fprintf ppf
@@ -981,21 +1114,21 @@ and pp_construct names ~indent (p : t) ppf c =
         values
         (Array.to_list step_captures)
         pad program until pad program step
-  | Call { body; args; _ } ->
-      Format.fprintf ppf "call (%a)@\n%s  body%a" values (Array.to_list args)
-        pad program body
-  | Remat { body; args } ->
-      Format.fprintf ppf "remat (%a)@\n%s  body%a" values (Array.to_list args)
-        pad program body
-  | Custom { name; primal; derivative; args; captures; _ } ->
+  | Call { body; args; seeds; _ } ->
+      Format.fprintf ppf "call (%a)%a@\n%s  body%a" values (Array.to_list args)
+        seeded_from seeds pad program body
+  | Remat { body; args; seeds } ->
+      Format.fprintf ppf "remat (%a)%a@\n%s  body%a" values (Array.to_list args)
+        seeded_from seeds pad program body
+  | Custom { name; primal; derivative; args; captures; seeds; _ } ->
       let kind, d =
         match derivative with
         | Tangent d -> ("tangent map", d)
         | Pullback d -> ("pullback", d)
       in
-      Format.fprintf ppf "%s (%a), captures (%a)@\n%s  primal%a@\n%s  %s%a" name
-        values (Array.to_list args) values (Array.to_list captures) pad program
-        primal pad kind program d
+      Format.fprintf ppf "%s (%a), captures (%a)%a@\n%s  primal%a@\n%s  %s%a"
+        name values (Array.to_list args) values (Array.to_list captures)
+        seeded_from seeds pad program primal pad kind program d
   | Linear { name; apply; transpose; args; captures; residuals; _ } ->
       Format.fprintf ppf "linear %s (%a), captures (%a), residuals (%a)" name
         values (Array.to_list args) values (Array.to_list captures) values

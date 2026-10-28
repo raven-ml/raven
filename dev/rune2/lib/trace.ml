@@ -9,6 +9,17 @@ module Prim = Nx.Prim
 
 type kind = Body | Jit | Tape | Staged
 
+(* A total the program threads: the variable of its running value in, and its
+   running value where the trace is. *)
+type thread =
+  | Thread : {
+      total : ('v, 's, 'd) total;
+      into : ('v, 's, 'd) Nx.Prim.form;
+      var : int;
+      mutable now : ('v, 's, 'd) Nx.t;
+    }
+      -> thread
+
 type state = {
   kind : kind;
   name : string;
@@ -16,7 +27,9 @@ type state = {
   mutable eqns : eqn list;  (** Newest first. *)
   mutable captures : (value * int) list;
       (** Each capture and its variable's number, newest first. *)
-  mutable adds : (addition * value) list;  (** Newest first. *)
+  mutable threads : thread list;  (** Newest first. *)
+  hints : addition array;
+      (** Where a total's running value in lies, where the caller knows. *)
 }
 
 let fresh st i form =
@@ -353,19 +366,78 @@ let owned i (V x) = owns i x
 
 (* Whether [i]'s handler answers [c]: a construct over its variables, or any of
    the extent of a tracer that stages every operation. A map's operation with
-   no such map around is left to its default, which raises. *)
+   no such map around is left to its default, which raises. An addition reaches
+   only a tape: the others answer for the totals' running values
+   ({!thread}). *)
 let claims st i = function
-  | Add (_, x) -> st.kind <> Tape || owns i x
+  | Add (_, x) -> st.kind = Tape && owns i x
   | (Lanes (a, _) | Lane_index (a, _)) when bound a = None -> false
   | c -> st.kind = Jit || st.kind = Staged || List.exists (owned i) (operands c)
 
+(* The running value of [t] at the shape of [f] where the trace is: its
+   thread's, made where the trace has none, its running value in a parameter of
+   [f]'s shape. The parameter lies where the trace's hints place it, as a jit
+   does where a call found the running value, and otherwise where [f], the
+   first addition, does. *)
+let thread (type v s d) st i (t : (v, s, d) total) (f : (v, s, d) Nx.Prim.form)
+    : (v, s, d) Nx.t =
+  let shape = Iarray.to_array (Nx_array.Layout.shape f.layout) in
+  let rec find : thread list -> (v, s, d) Nx.t option = function
+    | [] -> None
+    | Thread th :: rest -> (
+        match same_total th.total t with
+        | Some Type.Equal
+          when Iarray.to_array (Nx_array.Layout.shape th.into.layout) = shape ->
+            Some th.now
+        | _ -> find rest)
+  in
+  match find st.threads with
+  | Some x -> x
+  | None ->
+      let rec hinted : addition list -> d Nx.Placement.t option = function
+        | [] -> None
+        | Addition (u, into, _) :: rest -> (
+            match same_total u t with
+            | Some Type.Equal
+              when Iarray.to_array (Nx_array.Layout.shape into.layout) = shape
+              ->
+                Some into.placement
+            | _ -> hinted rest)
+      in
+      let placement =
+        match hinted (Array.to_list st.hints) with
+        | Some p -> p
+        | None -> f.placement
+      in
+      let into =
+        {
+          f with
+          layout = Nx_array.Layout.contiguous (Iarray.of_array shape);
+          placement;
+        }
+      in
+      let var = st.next in
+      let now = fresh st i into in
+      st.threads <- Thread { total = t; into; var; now } :: st.threads;
+      now
+
+(* [t]'s running value becomes [x], [x] as the trace reads it. *)
+let replace (type v s d) st i (t : (v, s, d) total) (x : (v, s, d) Nx.t) =
+  let shape = Nx.shape x in
+  let rec find = function
+    | [] ->
+        invalid_arg "Rune: a running value of a total the trace does not hold"
+    | Thread th :: rest -> (
+        match same_total th.total t with
+        | Some Type.Equal
+          when Iarray.to_array (Nx_array.Layout.shape th.into.layout) = shape ->
+            th.now <- operand st i x
+        | _ -> find rest)
+  in
+  find st.threads
+
 let record st i = function
-  | Add _ when st.kind = Tape ->
-      invalid_arg (st.name ^ ": a tangent is added to a total")
-  | Add (t, x) ->
-      let x = operand st i x in
-      st.adds <- (Addition (t, Nx.Prim.form x), V x) :: st.adds;
-      [||]
+  | Add _ -> invalid_arg (st.name ^ ": a tangent is added to a total")
   | c ->
       let c = map_operands { f = (fun x -> operand st i x) } c in
       let forms = forms c in
@@ -394,8 +466,9 @@ let rec answer st i c =
   match (st.kind, c) with
   | Tape, Scan { step; length; init; xs; captures; seeds } ->
       scan_parts st i step ~length ~init ~xs ~captures ~seeds
-  | Tape, Remat { body; args } -> remat_parts st i body args
-  | Tape, Call { body; args; site } -> call_parts st i body args site
+  | Tape, Remat { body; args; seeds } -> remat_parts st i body args ~seeds
+  | Tape, Call { body; args; site; seeds } ->
+      call_parts st i body args site ~seeds
   | _ -> record st i c
 
 (* A scan over the tape's variables is two scans, as JAX's partial evaluation of
@@ -446,14 +519,13 @@ and scan_parts st i (step : Program.t) ~length ~init ~xs ~captures ~seeds =
                           Loops.merge ucap uk kk;
                         ]
                     in
-                    let out = eval step args in
+                    (* The totals' running values are the known trace's: a
+                       tangent added to one raises as it is handed back. *)
+                    let out =
+                      threaded step (fun totals -> eval ~totals step args)
+                    in
                     let mine (V y) = owns inner y in
                     let c = Array.sub out 0 nc and y = Array.sub out nc ny in
-                    let adds =
-                      Array.sub out (nc + ny) (Array.length out - nc - ny)
-                    in
-                    if Array.exists mine adds then
-                      invalid_arg (name ^ ": a tangent is added to a total");
                     Array.iteri
                       (fun k v -> gained.(k) <- (not u.(k)) && mine v)
                       c;
@@ -466,10 +538,9 @@ and scan_parts st i (step : Program.t) ~length ~init ~xs ~captures ~seeds =
                         c
                     in
                     stash :=
-                      Array.concat
-                        [
-                          Loops.pick (nots u) kc'; Loops.pick (nots !uy) y; adds;
-                        ];
+                      Array.append
+                        (Loops.pick (nots u) kc')
+                        (Loops.pick (nots !uy) y);
                     Array.append (Loops.pick u c) (Loops.pick !uy y)
                 | _ -> invalid_arg "Rune: a scan's parts")
           in
@@ -485,14 +556,7 @@ and scan_parts st i (step : Program.t) ~length ~init ~xs ~captures ~seeds =
           let stacked =
             Loops.pick (Array.map (fun k -> k = Stacked) !kinds) res
           in
-          let nk = Array.length !stash - Array.length step.adds in
-          let adds = Array.sub !stash nk (Array.length step.adds) in
-          Array.iteri
-            (fun k (Addition (t, f)) ->
-              let set = Nx.Placement.devices f.placement in
-              ignore (perform (Add (t, cast f.dtype set adds.(k)))))
-            step.adds;
-          Array.append (Array.sub !stash 0 nk) stacked
+          Array.append !stash stacked
       | _ -> invalid_arg "Rune: a scan's parts"
     in
     let kprog, own = trace Body ~name kforms known in
@@ -598,14 +662,17 @@ and scan_parts st i (step : Program.t) ~length ~init ~xs ~captures ~seeds =
    its arguments: transposing it evaluates its function again, as JAX's
    checkpoint keeps its inputs as residuals. The record of that first evaluation
    is dropped, so the tape keeps the arguments alone. *)
-and remat_parts st i (body : Program.t) args =
+and remat_parts st i (body : Program.t) args ~seeds =
   let ua = Array.map (owned i) args in
   let known = ref [||] in
   let _ =
     trace_in Tape ~name:st.name
       (Array.map form (Loops.pick ua args))
       (fun inner uvs ->
-        let out = eval body (Loops.merge ua uvs (Loops.pick (nots ua) args)) in
+        let out =
+          eval_seeded body ~seeds
+            (Loops.merge ua uvs (Loops.pick (nots ua) args))
+        in
         known :=
           Array.map
             (fun (V y as v) -> if owns inner y then None else Some v)
@@ -614,44 +681,38 @@ and remat_parts st i (body : Program.t) args =
   in
   if Array.for_all Option.is_some !known then Array.map Option.get !known
   else
-    let r = record st i (Remat { body; args }) in
+    let r = record st i (Remat { body; args; seeds }) in
     Array.mapi (fun k v -> match v with Some v -> v | None -> r.(k)) !known
 
 (* A call over the tape's variables is two calls, as JAX's partial evaluation
    of a compiled call gives: a known call, computed at the call, of the results
    that read none of them, which returns the residuals the rest reads as more
-   results; and a recorded call of the rest, linear in the tape's variables,
-   over them and the residuals. Both are derived once per derivation at the
-   call's site and compiled. *)
-and call_parts st i (body : Program.t) args site =
+   results and threads the call's totals; and a recorded call of the rest,
+   linear in the tape's variables, over them and the residuals. Both are
+   derived once per derivation at the call's site and compiled. *)
+and call_parts st i (body : Program.t) args site ~seeds =
   let name = st.name in
   let ua = Array.map (owned i) args in
   let kargs = Loops.pick (nots ua) args and uargs = Loops.pick ua args in
-  let na = Array.length body.adds in
-  let no = Array.length body.outputs - na in
   let made () =
     let unknown = ref [||] and linear = ref None in
     let known kvs =
-      let kys = ref [||] and adds = ref [||] in
+      let kys = ref [||] in
       let tape, res =
         trace_in Tape ~name (Array.map form uargs) (fun inner uvs ->
-            let out = eval body (Loops.merge ua uvs kvs) in
+            (* The totals' running values are the known trace's: a tangent
+               added to one raises as it is handed back. *)
+            let ys =
+              threaded body (fun totals ->
+                  eval ~totals body (Loops.merge ua uvs kvs))
+            in
             let mine (V y) = owns inner y in
-            let ys = Array.sub out 0 no in
-            adds := Array.sub out no na;
-            if Array.exists mine !adds then
-              invalid_arg (st.name ^ ": a tangent is added to a total");
             unknown := Array.map mine ys;
             kys := Loops.pick (nots !unknown) ys;
             Loops.pick !unknown ys)
       in
       linear :=
         Some (tape, Array.append (Array.map form uargs) (Array.map form res));
-      Array.iteri
-        (fun k (Addition (t, f)) ->
-          let set = Nx.Placement.devices f.placement in
-          ignore (perform (Add (t, cast f.dtype set !adds.(k)))))
-        body.adds;
       Array.append !kys res
     in
     let kprog, _ = trace Jit ~name (Array.map form kargs) known in
@@ -660,22 +721,26 @@ and call_parts st i (body : Program.t) args site =
   let d =
     Program.derive site (Known { unknown = ua }) (Array.map form args) made
   in
-  let kr = perform (Call { body = d.program; args = kargs; site = d.at }) in
+  let kr =
+    perform (Call { body = d.program; args = kargs; site = d.at; seeds })
+  in
   let nk = Array.length (Loops.pick (nots d.flags) d.flags) in
-  let nres = Array.length kr - nk - na in
-  let res = Array.sub kr nk nres and adds = Array.sub kr (nk + nres) na in
+  let ns = Array.length d.program.adds in
+  let nres = Array.length kr - nk - ns in
+  let res = Array.sub kr nk nres and sums = Array.sub kr (nk + nres) ns in
   let ur =
     match d.linear with
     | Some (l, at) when Array.exists Fun.id d.flags ->
         let args = Array.append uargs res in
-        record st i (Call { body = l; args; site = at })
+        record st i (Call { body = l; args; site = at; seeds = [||] })
     | _ -> [||]
   in
-  Array.append (Loops.merge d.flags ur (Array.sub kr 0 nk)) adds
+  Array.append (Loops.merge d.flags ur (Array.sub kr 0 nk)) sums
 
-and trace kind ~name inputs f = trace_in kind ~name inputs (fun _ vs -> f vs)
+and trace ?totals kind ~name inputs f =
+  trace_in ?totals kind ~name inputs (fun _ vs -> f vs)
 
-and trace_in kind ~name inputs f =
+and trace_in ?(totals = [||]) kind ~name inputs f =
   let st =
     {
       kind;
@@ -683,7 +748,8 @@ and trace_in kind ~name inputs f =
       next = Array.length inputs;
       eqns = [];
       captures = [];
-      adds = [];
+      threads = [];
+      hints = totals;
     }
   in
   let owner = ref None in
@@ -725,9 +791,14 @@ and trace_in kind ~name inputs f =
             Effect.Deep.continue k (Array.map (Loops.filled ~zero:false) forms))
     | Staging, Some _ when st.kind = Jit || st.kind = Staged ->
         Some (fun k -> Effect.Deep.continue k true)
-    (* A traced program cannot read a total: a loop in it adds its sum. *)
-    | Running _, Some _ when st.kind <> Tape ->
-        Some (fun k -> Effect.Deep.continue k None)
+    (* A traced program threads the totals its extent adds to. *)
+    | Running (t, f), Some i when st.kind <> Tape ->
+        Some (fun k -> Effect.Deep.continue k (Some (thread st i t f)))
+    | Replace (t, x), Some i when st.kind <> Tape ->
+        Some
+          (fun k ->
+            replace st i t x;
+            Effect.Deep.continue k ())
     | Replace (_, x), Some i when st.kind = Tape && owns i x ->
         Some
           (fun k ->
@@ -752,16 +823,36 @@ and trace_in kind ~name inputs f =
     | Body | Jit | Staged -> Nx.Rng.refusing name traced
   in
   let owner = Option.get !owner in
-  let captures = List.rev st.captures and adds = List.rev st.adds in
+  let captures = List.rev st.captures and threads = List.rev st.threads in
   let params =
-    Array.append
-      (Array.init (Array.length inputs) Fun.id)
-      (Array.of_list (List.map snd captures))
+    Array.concat
+      [
+        Array.init (Array.length inputs) Fun.id;
+        Array.of_list (List.map snd captures);
+        Array.of_list (List.map (fun (Thread th) -> th.var) threads);
+      ]
+  in
+  let outs =
+    Array.append outs
+      (Array.of_list (List.map (fun (Thread th) -> V th.now) threads))
+  in
+  let adds =
+    Array.of_list
+      (List.map
+         (fun (Thread th) ->
+           let out = Nx.Prim.form th.now in
+           Addition
+             ( th.total,
+               th.into,
+               {
+                 out with
+                 layout =
+                   Nx_array.Layout.contiguous (Nx_array.Layout.shape out.layout);
+               } ))
+         threads)
   in
   let program =
-    Program.make ~owner ~params (List.rev st.eqns)
-      ~outputs:(Array.append outs (Array.of_list (List.map snd adds)))
-      ~adds:(Array.of_list (List.map fst adds))
+    Program.make ~owner ~params (List.rev st.eqns) ~outputs:outs ~adds
       ~slots:st.next
   in
   (program, Array.of_list (List.map fst captures))
