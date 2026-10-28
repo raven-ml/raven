@@ -64,6 +64,18 @@ let total () = { id = Type.Id.make () }
 let same_total t u = Type.Id.provably_equal t.id u.id
 let total_id t = Type.Id.uid t.id
 
+type 'a probe =
+  | Probe : { id : 'a Type.Id.t; tree : ('a, 'd) Nx.Ptree.t } -> 'a probe
+
+let probe tree = Probe { id = Type.Id.make (); tree }
+let probe_id (Probe p) = Type.Id.uid p.id
+let same_probe (Probe p) (Probe q) = Type.Id.provably_equal p.id q.id
+
+type asked = Asked : 'a probe * bool -> asked
+
+let sites = Atomic.make 0
+let fresh_site () = Atomic.fetch_and_add sites 1
+
 (* Derivations
 
    A site keeps a program per derivation, keyed by the derivation, the
@@ -132,6 +144,7 @@ type t = {
   outputs : value array;
   adds : addition array;
   slots : int;
+  emits : bool;
 }
 
 and eqn =
@@ -143,6 +156,7 @@ and construct =
   | Lanes : axis * ('v, 's, 'd) Nx.t -> construct
   | Lane_index : axis * 'd Nx.Placement.t -> construct
   | Add : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t -> construct
+  | Emit : emission -> construct
   | Scan : {
       step : t;
       length : int;
@@ -233,6 +247,17 @@ and switch = {
   seeds : value array;
 }
 
+and emission =
+  | Emission : {
+      probe : 'a probe;
+      like : 'a;
+      site : int;
+      lead : int;
+      values : value array;
+      mask : value option;
+    }
+      -> emission
+
 and system = {
   id : int;
   operator :
@@ -262,8 +287,27 @@ and derived = {
   linear : (t * site) option;
 }
 
+(* Whether an equation emits, itself or in a program it carries. *)
+let rec emitting = function
+  | Do { c = Emit _; _ } -> true
+  | Do { c; _ } -> List.exists (fun p -> p.emits) (carried_by c)
+  | Op _ -> false
+
+and carried_by = function
+  | Scan { step; _ } -> [ step ]
+  | Iterate { until; step; _ } -> [ until; step ]
+  | Call { body; _ } | Remat { body; _ } -> [ body ]
+  | Switch { branches; _ } -> Array.to_list branches
+  | Custom { primal; derivative = Tangent d | Pullback d; _ } -> [ primal; d ]
+  | Linear { apply; transpose; _ } -> Option.to_list apply @ [ transpose ]
+  | Root { system; _ } | Solve { system; _ } ->
+      [ system.residual; system.jacobian; system.transpose; system.solve ]
+  | Detach _ | Lanes _ | Lane_index _ | Add _ | Emit _ | Operator _ -> []
+
 let make ~owner ~params eqns ~outputs ~adds ~slots =
-  { owner; params; eqns = Array.of_list eqns; outputs; adds; slots }
+  let eqns = Array.of_list eqns in
+  let emits = Array.exists emitting eqns in
+  { owner; params; eqns; outputs; adds; slots; emits }
 
 type _ Effect.t += Construct : construct -> value array Effect.t
 
@@ -286,16 +330,7 @@ let staging () =
 (* Sites *)
 
 (* The programs [c] carries. *)
-let carried = function
-  | Scan { step; _ } -> [ step ]
-  | Iterate { until; step; _ } -> [ until; step ]
-  | Call { body; _ } | Remat { body; _ } -> [ body ]
-  | Switch { branches; _ } -> Array.to_list branches
-  | Custom { primal; derivative = Tangent d | Pullback d; _ } -> [ primal; d ]
-  | Linear { apply; transpose; _ } -> Option.to_list apply @ [ transpose ]
-  | Root { system; _ } | Solve { system; _ } ->
-      [ system.residual; system.jacobian; system.transpose; system.solve ]
-  | Detach _ | Lanes _ | Lane_index _ | Add _ | Operator _ -> []
+let carried = carried_by
 
 (* The maps [p] names, and those the programs it carries name, in the order
    first named. *)
@@ -381,6 +416,9 @@ let map_operands m = function
   | Lanes (a, x) -> Lanes (a, m.f x)
   | Lane_index _ as c -> c
   | Add (t, x) -> Add (t, m.f x)
+  | Emit (Emission e) ->
+      let mask = Option.map (fun (V x) -> V (m.f x)) e.mask in
+      Emit (Emission { e with values = map_values m e.values; mask })
   | Scan s ->
       Scan
         {
@@ -453,6 +491,7 @@ let operands = function
   | Detach x -> [ V x ]
   | Lanes (_, x) -> [ V x ]
   | Add (_, x) -> [ V x ]
+  | Emit (Emission e) -> Array.to_list e.values @ Option.to_list e.mask
   | Lane_index _ -> []
   | Scan { trips; init; xs; captures; seeds; _ } ->
       Option.to_list trips
@@ -475,7 +514,7 @@ let operands = function
       index :: Array.to_list (Array.append captures seeds)
 
 let rec map_programs f = function
-  | (Detach _ | Lanes _ | Lane_index _ | Add _ | Operator _) as c -> c
+  | (Detach _ | Lanes _ | Lane_index _ | Add _ | Emit _ | Operator _) as c -> c
   | Scan s -> Scan { s with step = f s.step }
   | Iterate s -> Iterate { s with step = f s.step; until = f s.until }
   | Call c ->
@@ -562,7 +601,8 @@ let feeds step =
    shape its programs thread, which it starts from its seeds; then for a custom
    rule its tangent map's running totals out, chains from the identity. *)
 let additions = function
-  | Detach _ | Lanes _ | Lane_index _ | Add _ | Operator _ | Root _ | Solve _ ->
+  | Detach _ | Lanes _ | Lane_index _ | Add _ | Emit _ | Operator _ | Root _
+  | Solve _ ->
       [||]
   | Scan { step = p; _ } | Call { body = p; _ } | Remat { body = p; _ } ->
       let adds, _, _ = sums [ p ] in
@@ -606,6 +646,7 @@ let no_map name =
 
 let rec forms = function
   | Detach x -> [| form (V x) |]
+  | Emit _ -> [||]
   | Lanes (a, x) -> (
       match bound a with
       | Some n -> [| stacked n (form (V x)) |]
@@ -715,6 +756,35 @@ let running t f =
 
 let replace t x = Effect.perform (Replace (t, x))
 
+(* Probes *)
+
+type _ Effect.t += Open : 'a probe -> bool Effect.t
+type _ Effect.t += Within : bool Effect.t
+
+let within () =
+  match Effect.perform Within with
+  | b -> b
+  | exception Effect.Unhandled Within -> false
+
+let opened p =
+  match Effect.perform (Open p) with
+  | b -> b
+  | exception Effect.Unhandled (Open _) -> false
+
+(* [p] without its emissions, nor those of the programs it carries. *)
+let rec unobserved p =
+  if not p.emits then p
+  else
+    let keep = function Do { c = Emit _; _ } -> false | _ -> true in
+    let eqn = function
+      | Do { c; base } -> Do { c = map_programs unobserved c; base }
+      | e -> e
+    in
+    let eqns =
+      Array.map eqn (Array.of_list (List.filter keep (Array.to_list p.eqns)))
+    in
+    { p with eqns; emits = false }
+
 type 'd where = Nowhere | At of 'd Nx.Placement.t option
 type _ Effect.t += Where : ('v, 's, 'd) total -> 'd where Effect.t
 
@@ -801,14 +871,107 @@ let rec eval ?totals p args =
 and perform c =
   match Effect.perform (Construct c) with
   | r -> r
-  | exception Effect.Unhandled (Construct c') when c' == c -> default c
-  | exception Evaluate -> default c
+  | exception Effect.Unhandled (Construct c') when c' == c -> fallback c
+  | exception Evaluate -> fallback c
+
+(* A construct whose programs emit gathers each site's rows as its default runs,
+   and offers them once per site when it returns or raises. *)
+and fallback c =
+  if List.exists (fun p -> p.emits) (carried c) then
+    gathering (fun () -> default c)
+  else default c
+
+and gathering : 'a. ?lanes:bool -> (unit -> 'a) -> 'a =
+ fun ?(lanes = false) f ->
+  let sites = ref [] in
+  let keep (Emission e as em) =
+    match List.assoc_opt e.site !sites with
+    | Some rows -> rows := em :: !rows
+    | None -> sites := (e.site, ref [ em ]) :: !sites
+  in
+  (* The sites in the order their emits were traced. *)
+  let flush () =
+    List.iter
+      (fun (_, rows) ->
+        let em = merge (List.rev !rows) in
+        ignore (perform (Emit (if lanes then unlaned em else em))))
+      (List.sort (fun (a, _) (b, _) -> Int.compare a b) !sites)
+  in
+  let effc (type a) (e : a Effect.t) :
+      ((a, _) Effect.Deep.continuation -> _) option =
+    match e with
+    | Construct (Emit em) ->
+        Some
+          (fun k ->
+            keep em;
+            Effect.Deep.continue k [||])
+    | _ -> None
+  in
+  let exnc x =
+    let bt = Printexc.get_raw_backtrace () in
+    flush ();
+    Printexc.raise_with_backtrace x bt
+  in
+  Effect.Deep.match_with f ()
+    {
+      retc =
+        (fun r ->
+          flush ();
+          r);
+      exnc;
+      effc;
+    }
+
+(* One site's rows, in order, as one emission: its arrays concatenated along the
+   axis after its lanes, and their masks where one has a mask. *)
+and merge = function
+  | [ em ] -> em
+  | Emission e :: _ as ems ->
+      let cat (V x) vs =
+        V (Nx.concatenate ~axis:e.lead (List.map (like x) vs))
+      in
+      let values =
+        Array.mapi
+          (fun j v -> cat v (List.map (fun (Emission f) -> f.values.(j)) ems))
+          e.values
+      in
+      let masked = List.filter_map (fun (Emission f) -> f.mask) ems in
+      let mask =
+        match masked with
+        | [] -> None
+        | m :: _ -> Some (cat m (List.map (rows_mask m) ems))
+      in
+      Emission { e with values; mask }
+  | [] -> invalid_arg "Rune: a site of no rows"
+
+(* [em]'s mask, or one that holds for each of its rows, at [m]'s set. *)
+and rows_mask (V m) (Emission f) =
+  match (f.mask, f.values) with
+  | Some v, _ -> v
+  | None, [||] -> V m
+  | None, vs ->
+      let (V x) = vs.(0) in
+      let shape = Array.sub (Nx.shape x) 0 (f.lead + 1) in
+      let at = Nx.Placement.uncut (Nx.placement m) in
+      V (Nx.ones_at at (Nx.dtype m) shape)
+
+(* A map's emission, its lanes the first axis, with its lanes merged into the
+   next one: lane-major. *)
+and unlaned (Emission e) =
+  if e.lead < 1 then invalid_arg "Rune: an emission without its map's lanes";
+  let merged (V x) =
+    let s = Nx.shape x in
+    let rest = Array.sub s 2 (Array.length s - 2) in
+    V (Nx.reshape (Array.append [| s.(0) * s.(1) |] rest) x)
+  in
+  let values = Array.map merged e.values in
+  Emission { e with lead = e.lead - 1; values; mask = Option.map merged e.mask }
 
 and default = function
   | Detach x -> [| V x |]
   | Lanes _ -> no_map "Rune.lanes"
   | Lane_index _ -> no_map "Rune.lane_index"
-  | Add _ -> [||]
+  | Add _ | Emit _ -> [||]
   | Scan { step; length; trips; reverse; init; xs; captures; seeds } ->
       scan step ~length ~trips ~reverse ~init ~xs ~captures ~seeds
   | Iterate
@@ -904,7 +1067,8 @@ and fill (p : t) ~id body =
         Do { c = map_programs (fun q -> fill q ~id body) c; base }
     | e -> e
   in
-  { p with eqns = Array.map eqn p.eqns }
+  let eqns = Array.map eqn p.eqns in
+  { p with eqns; emits = Array.exists emitting eqns }
 
 (* A site of [body] that evaluates it, as each program derived from it. *)
 and evaluated ~name body =
@@ -1196,7 +1360,10 @@ and prune p ~outputs =
       if live.(v) then read := true
     done;
     let keep =
-      match eq with Op { op = Check _; _ } -> true | Op _ | Do _ -> !read
+      match eq with
+      | Op { op = Check _; _ } -> true
+      | Do _ when emitting eq -> true
+      | Op _ | Do _ -> !read
     in
     if keep then begin
       kept := eq :: !kept;
@@ -1529,6 +1696,9 @@ and pp_construct names ~indent (p : t) ppf c =
   in
   match c with
   | Detach x -> Format.fprintf ppf "detach %a" value (V x)
+  | Emit (Emission e) ->
+      Format.fprintf ppf "emit to probe %d at site %d, %d lanes (%a)"
+        (probe_id e.probe) e.site e.lead values (Array.to_list e.values)
   | Lanes (a, x) ->
       Format.fprintf ppf "lanes of map %d %a" (map_number names a) value (V x)
   | Lane_index (a, _) ->
@@ -1614,3 +1784,75 @@ let pp ppf p =
     (fun k v -> Format.fprintf ppf "c%d : %a@\n" k pp_form (form v))
     names.constants;
   pp_program names ~indent:0 ppf p
+
+(* Probes silenced *)
+
+(* A construct leaving the extent is answered outside it, where its emissions
+   would offer: it is performed without them. *)
+let silenced f =
+  let effc (type a) (e : a Effect.t) :
+      ((a, _) Effect.Deep.continuation -> _) option =
+    match e with
+    | Open _ -> Some (fun k -> Effect.Deep.continue k false)
+    | Construct (Emit _) -> Some (fun k -> Effect.Deep.continue k [||])
+    | Construct c when List.exists (fun p -> p.emits) (carried c) ->
+        Some
+          (fun k ->
+            Effect.Deep.continue k (perform (map_programs unobserved c)))
+    | _ -> None
+  in
+  Effect.Deep.try_with f () { effc }
+
+(* Whether [p] or a program it carries emits to a probe a collect of which is
+   open. *)
+let rec observed p =
+  p.emits
+  && Array.exists
+       (function
+         | Do { c = Emit (Emission e); _ } -> opened e.probe
+         | Do { c; _ } -> List.exists observed (carried c)
+         | Op _ -> false)
+       p.eqns
+
+(* Whether an emission in [p] reads a value computed from one of the parameters
+   [from] marks: a construct reading one whose programs emit is taken to. *)
+let emits_from p from =
+  p.emits
+  &&
+  let tainted = Array.make p.slots false and param = Array.make p.slots false in
+  Array.iter (fun s -> param.(s) <- true) p.params;
+  Array.iteri
+    (fun k s -> if k < Array.length from && from.(k) then tainted.(s) <- true)
+    p.params;
+  let reads (type v s d) (x : (v, s, d) Nx.t) =
+    match Nx.Prim.payload p.owner x with
+    | Some (Var n) -> tainted.(n)
+    | _ -> false
+  in
+  let n = Array.length p.eqns in
+  let base = function Op { base; _ } | Do { base; _ } -> base in
+  let found = ref false in
+  Array.iteri
+    (fun e eq ->
+      let read =
+        match eq with
+        | Op { op; _ } ->
+            let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
+            List.exists (fun (Nx.Prim.Any x) -> reads x) xs
+        | Do { c; _ } -> List.exists (fun (V x) -> reads x) (operands c)
+      in
+      (match eq with
+      | Do { c = Emit _; _ } when read -> found := true
+      | Do { c; _ } when read && List.exists (fun q -> q.emits) (carried c) ->
+          found := true
+      | _ -> ());
+      (* A capture's parameter may take a slot between two equations'
+         results. *)
+      if read then begin
+        let next = if e + 1 < n then base p.eqns.(e + 1) else p.slots in
+        for v = base eq to next - 1 do
+          if not param.(v) then tainted.(v) <- true
+        done
+      end)
+    p.eqns;
+  !found

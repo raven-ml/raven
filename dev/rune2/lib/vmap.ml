@@ -617,6 +617,19 @@ let dropped running b =
   Nx.where (along r b) b
     (Program.like b (Loops.filled ~zero:false (Program.form (Program.V b))))
 
+(* The rows of an emission's batch [x] that ran, over its lanes and its first
+   [lead] axes: those of the lanes [running] holds, where [mask] holds. *)
+let held_rows h (Program.V x) ~lead mask =
+  let r = flags_at ~what:"Rune.Probe.emit" h.running x in
+  let shape = Array.sub (Nx.shape x) 0 (lead + 1) in
+  let r =
+    Nx.broadcast_to shape
+      (Nx.reshape (Array.append [| Nx.numel r |] (Array.make lead 1)) r)
+  in
+  match mask with
+  | None -> Program.V r
+  | Some m -> Program.V (Nx.logical_and r (Program.like r m))
+
 let rule (type r) n held i ~by (op : r Prim.t) : r =
   let b x = batch i n x in
   let loads ls = Iarray.map (load i n) ls in
@@ -718,7 +731,7 @@ let claims i axis : Program.construct -> bool = function
   | Switch { branches; _ } when Array.exists (Program.mentions axis) branches ->
       true
   | Lane_index (a, _) -> Program.same_axis a axis
-  | Add _ -> true
+  | Add _ | Emit _ -> true
   | Call { args; site; _ } ->
       Array.exists (operand i) args
       || List.exists (Program.same_axis axis) (Program.axes site)
@@ -963,6 +976,19 @@ let rec answer ~name ?held i axis n (c : Program.construct) k =
         let b = match held with Some h -> dropped h.running b | None -> b in
         Program.add_to t (Nx.sum ~axes:[ 0 ] b)
       end;
+      Effect.Deep.continue k [||]
+  | Emit (Emission e) ->
+      (* The map's lanes lead the lanes the emission has, and a held lane's rows
+         did not run. *)
+      let values = Array.map (batch_v i n) e.values in
+      let mask = Option.map (batch_v i n) e.mask in
+      let mask =
+        match (held, values) with
+        | None, _ | _, [||] -> mask
+        | Some h, _ -> Some (held_rows h values.(0) ~lead:(e.lead + 1) mask)
+      in
+      let e = Program.Emission { e with lead = e.lead + 1; values; mask } in
+      ignore (Program.perform (Emit e));
       Effect.Deep.continue k [||]
   | Detach x ->
       let b = batch i n x in
@@ -1939,6 +1965,7 @@ and interpret :
     match (e, !owner) with
     | Program.Construct c, Some i when claims i axis c ->
         Some (answer ~name ?held i axis n c)
+    | Program.Within, _ -> Some (fun k -> Effect.Deep.continue k true)
     | Program.Bound a, _ when Program.same_axis a axis ->
         Some (fun k -> Effect.Deep.continue k (Some n))
     (* A collect around the map receives the lanes' sum as one addition. *)
@@ -1955,4 +1982,6 @@ and interpret :
     ()
     { retc = Fun.id; exnc = raise; effc }
 
-let run ~name ~axis n f = interpret ~name ~axis n f
+(* A map's sites offer once each, every lane's rows merged. *)
+let run ~name ~axis n f =
+  Program.gathering ~lanes:true (fun () -> interpret ~name ~axis n f)

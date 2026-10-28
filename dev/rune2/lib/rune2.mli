@@ -28,12 +28,13 @@
     fold of its step, bit for bit but for a NaN result's sign and payload, which
     nx leaves unspecified.
 
-    {b Extents.} A transformation, a map or a {!Total.collect} is around the
-    code its function runs, on whatever domain that code resumes, and the fibers
-    a scheduler installed in the function runs on the domain the function runs
-    on. It is not around a systhread or a domain the function starts, nor a
-    fiber such a scheduler resumes on another domain: there {!lanes} and
-    {!lane_index} raise, and an addition to a total is dropped.
+    {b Extents.} A transformation, a map, a {!Total.collect} or a
+    {!Probe.collect} is around the code its function runs, on whatever domain
+    that code resumes, and the fibers a scheduler installed in the function runs
+    on the domain the function runs on. It is not around a systhread or a domain
+    the function starts, nor a fiber such a scheduler resumes on another domain:
+    there {!lanes} and {!lane_index} raise, and an addition to a total and an
+    emission are dropped.
 
     {b Errors.} Every message starts with the entry point the caller applied, as
     ["Rune.scan"] for {!scan}. *)
@@ -642,6 +643,70 @@ module Total : sig
       raises, [collect] raises the same exception. *)
 end
 
+(** {1:probes Probes} *)
+
+(** Values observed inside functions.
+
+    A probe receives values that code anywhere inside a function emits, and the
+    caller reads them when the function returns or raises:
+    {!Probe.collect}[ p f] is [f ()]'s outcome beside the {e offers} that
+    reached it. Nothing reads an offer before [collect] returns, so an emission
+    never changes a value the function computes.
+
+    {b Sites and offers.} An emission's {e site} is an [emit] call. Outside
+    every traced function each call is a site run once, its offer the value with
+    each array given a leading axis of one row. Inside a traced function each
+    [emit] made as the function is traced is a site, and each call of the
+    outermost construct or map inside the [collect] offers once per site that
+    ran, one row per execution along a new axis 0. Enclosing rows, steps and
+    lanes merge into that axis, the outer one major: a {!scan} of [n] rows whose
+    step emits a [[3]] value offers [[n; 3]]; a {!vmap} of [4] lanes around it
+    offers [[4n; 3]], lane [0]'s rows first. A step or branch not taken and a
+    held lane ({{!section-maps}held lanes}) offer no row, and a site with no row
+    no offer.
+
+    {b Differentiation.} Emissions offer primals, once per execution: under
+    reverse mode those of the forward pass. A backward pass, a transpose, a
+    {!remat}'s computing again, a {!root}'s derivative, and a custom rule's
+    function derived again or applied to tangents offer nothing. A {!custom_jvp}
+    tangent map's emissions are offered under forward mode. *)
+module Probe : sig
+  type 'a t
+  (** The type for probes of ['a] values. *)
+
+  val make : ('a, 'd) Nx.Ptree.t -> 'a t
+  (** [make s] is a fresh probe of values of [s]'s structure, distinct from
+      every other. *)
+
+  val emit : 'a t -> 'a -> unit
+  (** [emit p v] offers [v] to the innermost open {!collect} of [p]. With none
+      open it does nothing, at the cost of one effect, walking nothing; one that
+      reaches a [collect] reshapes [v]'s arrays.
+
+      Raises [Invalid_argument] while a [collect] of [p] is open: naming
+      [Rune.Probe.emit] for a tangent under reverse mode, and naming the entry
+      point in an {!iterate}'s [until], whose tests transformations make apart.
+  *)
+
+  val collect :
+    'a t -> (unit -> 'r) -> ('r, exn * Printexc.raw_backtrace) result * 'a list
+  (** [collect p f] is [f ()]'s result, or the exception it raised with its
+      backtrace, and the offers to [p] that reached it. Outside every
+      transformation they reach it in the order their emits and constructs
+      return, a construct's in the order its sites were made; a transformation
+      around a map may deliver a site's offer before another's. When [f] raises,
+      the offers are those of the emits that ran before the raise: an
+      {!Nx.check} failing in row [k] of a scan's step offers the rows up to [k],
+      row [k]'s emits before the check included.
+
+      Offers are arrays left unread on the sets their values lie on, except
+      where lanes were held: [collect] then reads on the host which rows ran,
+      once per offer, and gathers them.
+
+      Raises [Invalid_argument] inside a traced function, a map or a
+      differentiation, where a construct could be answered outside it. *)
+end
+
 (** {1:loops Loops} *)
 
 val scan :
@@ -852,17 +917,17 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     {b Keys.} [jit s f] keeps a program per {e key}, the abstract value of a
     call's arguments: their {!Nx.Ptree.val-visits} and reports, the static data
     of a call, each array's dtype, shape and placement, and the number of lanes
-    of each map whose name the program reads through {!lanes} or
-    {!lane_index}; and where the running value of a {!Total} [f] adds to lies,
-    where a call finds it on another set than the trace without it took it. A
-    call retraces exactly when its key is new to [jit s f], over stand-ins in C
-    order: [f]'s code, and its side effects, run once per key. A call that
-    raises while it traces keeps no program for its key. Calls on several
-    domains share the programs; a key being traced makes its other callers
-    wait, but on the domain that traces it, where a call traces again for
-    itself. With [RUNE_JIT_DEBUG=1] in the environment, each retrace prints on
-    standard error the first difference between its key and the previous
-    call's.
+    of each map whose name the program reads through {!lanes} or {!lane_index};
+    where the running value of a {!Total} [f] adds to lies, where a call finds
+    it on another set than the trace without it took it; and whether a
+    {!Probe.collect} of each probe [f] emitted to is open. A call retraces
+    exactly when its key is new to [jit s f], over stand-ins in C order: [f]'s
+    code, and its side effects, run once per key. A call that raises while it
+    traces keeps no program for its key. Calls on several domains share the
+    programs; a key being traced makes its other callers wait, but on the domain
+    that traces it, where a call traces again for itself. With
+    [RUNE_JIT_DEBUG=1] in the environment, each retrace prints on standard error
+    the first difference between its key and the previous call's.
 
     {b Compiled programs.} A program compiles the first time a call runs it,
     then once per {e variant}: each argument's strides and offset from where its
@@ -938,12 +1003,19 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     {!custom_transpose} compile as their function's operations, the program's
     own.
 
+    {b Probes.} A call offers its function's emissions ({!Probe}) once it
+    returns. A compiled program returns them as more results: those its function
+    makes, and those of a {!scan}'s step, a call, a {!remat} and a custom rule
+    inside it, a scan's stacked over its rows. A program whose emissions lie in
+    another construct, or that both emits and checks, is evaluated, so that a
+    failing check keeps the offers made before it.
+
     {b Evaluated programs.} A program that holds a map's {!lanes} or
-    {!lane_index}, an operation the compiler does not lower, values on several
-    devices, or one tolk cannot compile, runs as its operations evaluated by nx,
-    giving eager's values; a result that is an argument or a value [f] captures
-    is a copy of it, and a call with donated arguments claims them first,
-    consumes them and lends nothing.
+    {!lane_index}, an emission as {b Probes} states, an operation the compiler
+    does not lower, values on several devices, or one tolk cannot compile, runs
+    as its operations evaluated by nx, giving eager's values; a result that is
+    an argument or a value [f] captures is a copy of it, and a call with donated
+    arguments claims them first, consumes them and lends nothing.
 
     Raises [Invalid_argument] when applied to [s] if [s] has no argument, and at
     a call if [f] captures a value that another transformation traces. *)

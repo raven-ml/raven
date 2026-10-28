@@ -14,7 +14,8 @@
   test_jvp
   test_grad
   test_vmap
-  test_custom)
+  test_custom
+  test_probe)
  (modules
   compose
   test_jit
@@ -29,7 +30,8 @@
   test_jvp
   test_grad
   test_vmap
-  test_custom)
+  test_custom
+  test_probe)
  (libraries
   nx
   nx_array

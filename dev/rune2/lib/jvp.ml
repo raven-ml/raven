@@ -1095,7 +1095,11 @@ module Rules = struct
     let pullback =
       match derivative with Pullback _ -> true | Tangent _ -> false
     in
-    let derive p = c.derive p (Array.append args captures) in
+    (* The primal derived again computes what the call performed outward
+       computed: it offers nothing. *)
+    let derive p =
+      Program.silenced (fun () -> c.derive p (Array.append args captures))
+    in
     let dual (y, t) = match t with Some t -> dual_v c.i y t | None -> y in
     match derivative with
     | Pullback _ when (not reverse) && not applied ->
@@ -1145,6 +1149,15 @@ module Rules = struct
                and a tape has none to observe. *)
             Array.concat [ ys; res_out; adds ]
         | Tangent t ->
+            (* A tangent under reverse mode has no value to offer. *)
+            if
+              reverse && Program.observed t
+              && Program.emits_from t
+                   (Array.init (Array.length t.params) (fun k ->
+                        k < Array.length ts))
+            then
+              invalid_arg
+                "Rune.Probe.emit: a tangent is emitted under reverse mode";
             let out = eval t (Array.append ts res) in
             let own = sub out ny nt in
             if reverse then no_tangent_added c own;
@@ -1201,13 +1214,18 @@ module Rules = struct
     let out = call (Array.map (primal_v c.i) args) in
     let along_args =
       if not (Array.exists (owned c.i) args) then None
-      else Some (sub (call (tangents c args)) 0 ny)
+      else
+        (* The function applied to tangents and derived again computes what the
+           call over primals did: it offers nothing more. *)
+        Some (sub (Program.silenced (fun () -> call (tangents c args))) 0 ny)
     in
     let along_captures =
       if not (Array.exists (owned c.i) captures) then None
       else
         let derived =
-          c.derive apply (Array.append (Array.map (primal_v c.i) args) captures)
+          Program.silenced (fun () ->
+              c.derive apply
+                (Array.append (Array.map (primal_v c.i) args) captures))
         in
         Some (Array.map snd (sub derived 0 ny))
     in
@@ -1310,17 +1328,21 @@ let dualv i ~fresh v = function
 (* [ys]'s primals and tangents as [j] holds them. *)
 let parts j ys = (Array.map (pv j) ys, Array.map (tv j) ys)
 
-(* A construct over duals: [Detach] and an addition are performed outward on the
-   primal, so that every differentiation around detaches the value and a total
-   receives the primal. [Lanes] is linear: its tangent is the lanes of the
-   tangent. A custom rule or a linear call applies its rule ([Rules]). A scan,
-   a remat, a call, an iterate, a switch, a root and a solve are performed with
-   their programs' derivatives. *)
+(* A construct over duals: [Detach], an addition and an emission are performed
+   outward on the primal, so that every differentiation around detaches the
+   value, a total receives the primal and a probe is offered it. [Lanes] is
+   linear: its tangent is the lanes of the tangent. A custom rule or a linear
+   call applies its rule ([Rules]). A scan, a remat, a call, an iterate, a
+   switch, a root and a solve are performed with their programs' derivatives. *)
 let rec answer ~name ~tape i (c : Program.construct) k =
   match c with
   | Detach x -> Effect.Deep.continue k (Program.perform (Detach (primal i x)))
   | Add (t, x) ->
       Program.add_to t (primal i x);
+      Effect.Deep.continue k [||]
+  | Emit _ ->
+      let primals = Program.map_operands { f = (fun x -> primal i x) } c in
+      ignore (Program.perform primals);
       Effect.Deep.continue k [||]
   | Lanes (a, x) ->
       let lanes x = Program.like x (Program.perform (Lanes (a, x))).(0) in
@@ -1369,8 +1391,12 @@ let rec answer ~name ~tape i (c : Program.construct) k =
       let t = apply ts in
       Effect.Deep.continue k
         (Array.map2 (fun p t -> dualv i ~fresh:false p (Some t)) p t)
-  | Root _ -> Effect.Deep.continue k (root ~name ~tape i c)
-  | Solve _ -> Effect.Deep.continue k (solve ~name ~tape i c)
+  (* A root's derivative offers nothing. *)
+  | Root _ ->
+      Effect.Deep.continue k (Program.silenced (fun () -> root ~name ~tape i c))
+  | Solve _ ->
+      Effect.Deep.continue k
+        (Program.silenced (fun () -> solve ~name ~tape i c))
   | Lane_index _ -> Effect.Deep.discontinue k Program.Evaluate
 
 (* A scan's derivative is the scan of its step's derivative, whose carry has a
@@ -2120,6 +2146,7 @@ and run :
   let effc (type a) (e : a Effect.t) :
       ((a, _) Effect.Deep.continuation -> _) option =
     match (e, !owner) with
+    | Program.Within, _ -> Some (fun k -> Effect.Deep.continue k true)
     | Program.Construct c, Some i
       when List.exists (owned i) (Program.operands c) ->
         Some (answer ~name ~tape i c)

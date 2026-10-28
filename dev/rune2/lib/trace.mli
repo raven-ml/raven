@@ -18,7 +18,14 @@
     Every kind receives an operator ({!Program.Operator}), whatever it reads. A
     map's [Lanes] and [Lane_index] reach a tracer only inside that map. Outside
     it their default raises. The jit and staged tracers answer
-    {!Program.Staging} with [true]. *)
+    {!Program.Staging} with [true].
+
+    The body, jit and staged tracers record every emission ({!Program.Emit}) of
+    their extent, so that the program offers it each time it runs. The tape
+    tracer raises [Invalid_argument] for an emission of one of its variables
+    while a collect of its probe is open, and drops it otherwise; it passes the
+    others on. Every tracer passes {!Program.Open} on, and answers
+    {!Program.Within}. *)
 
 type kind =
   | Body
@@ -75,6 +82,7 @@ type kind =
 
 val trace :
   ?totals:Program.addition array ->
+  ?asked:Program.asked list ref ->
   kind ->
   name:string ->
   Program.form array ->
@@ -84,4 +92,6 @@ val trace :
     [forms], and its captures, in order. The interpretation is named [name] in
     messages, as ["Rune.scan"]. A total's running value in lies where [totals]
     places it. Without that, it lies where the first value asked of it
-    ({!Program.Running}) or added to it lies. Raises what [f] raises. *)
+    ({!Program.Running}) or added to it lies. [asked] receives, in order,
+    each probe [f] asked about ({!Program.Open}), which the tracer passes on,
+    and the answer. Raises what [f] raises. *)

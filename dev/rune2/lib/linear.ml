@@ -1539,4 +1539,6 @@ let transpose l cts =
       | Some j, Some c -> out_cts.(j) <- Some c
       | _ -> ())
     cts;
-  Array.sub (walk ~name:l.name ~fn:l.fn l.tape consts out_cts) 0 l.ins
+  (* A backward pass offers nothing. *)
+  Program.silenced (fun () ->
+      Array.sub (walk ~name:l.name ~fn:l.fn l.tape consts out_cts) 0 l.ins)

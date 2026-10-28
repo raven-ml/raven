@@ -271,6 +271,7 @@ let construct_name = function
   | Solve { name; _ } -> name ^ "'s linear solve"
   | Switch { name; _ } -> name
   | Add _ -> "an addition"
+  | Emit _ -> "an emission"
   | Detach _ -> "Rune.detach"
   | Custom { name; _ } | Linear { name; _ } -> name
 

@@ -30,6 +30,9 @@ type state = {
   mutable threads : thread list;  (** Newest first. *)
   hints : addition array;
       (** Where a total's running value in lies, where the caller knows. *)
+  mutable asked : Program.asked list;
+      (** Each probe a site asked about, whether a collect of it was open,
+          newest first. *)
 }
 
 let fresh st i form =
@@ -1123,10 +1126,10 @@ and call_parts st i (body : Program.t) args site ~seeds =
   in
   Array.append (Loops.merge d.flags ur (Array.sub kr 0 nk)) sums
 
-and trace ?totals kind ~name inputs f =
-  trace_in ?totals kind ~name inputs (fun _ vs -> f vs)
+and trace ?totals ?asked kind ~name inputs f =
+  trace_in ?totals ?asked kind ~name inputs (fun _ vs -> f vs)
 
-and trace_in ?(totals = [||]) kind ~name inputs f =
+and trace_in ?(totals = [||]) ?asked kind ~name inputs f =
   let st =
     {
       kind;
@@ -1136,6 +1139,7 @@ and trace_in ?(totals = [||]) kind ~name inputs f =
       captures = [];
       threads = [];
       hints = totals;
+      asked = [];
     }
   in
   let owner = ref None in
@@ -1152,6 +1156,32 @@ and trace_in ?(totals = [||]) kind ~name inputs f =
   let effc (type a) (e : a Effect.t) :
       ((a, _) Effect.Deep.continuation -> _) option =
     match (e, !owner) with
+    | Within, _ -> Some (fun k -> Effect.Deep.continue k true)
+    | Open p, Some _ ->
+        (* Whether a collect of the probe is open around the trace, which a
+           jit's key records. *)
+        Some
+          (fun k ->
+            let opened = Program.opened p in
+            st.asked <- Asked (p, opened) :: st.asked;
+            Effect.Deep.continue k opened)
+    | Construct (Emit (Emission em) as c), Some i -> (
+        match st.kind with
+        | Tape when List.exists (owned i) (operands c) ->
+            (* A tangent under reverse mode has no value to offer. *)
+            Some
+              (fun k ->
+                if Program.opened em.probe then
+                  Effect.Deep.discontinue k
+                    (Invalid_argument
+                       "Rune.Probe.emit: a tangent is emitted under reverse \
+                        mode")
+                else Effect.Deep.continue k [||])
+        | Tape -> None
+        | Body | Jit | Staged ->
+            (* A site of the traced function, offered each time its program
+               runs. *)
+            Some (fun k -> Effect.Deep.continue k (record st i c)))
     | Construct (Custom _ as c), Some i
       when st.kind = Tape && List.exists (owned i) (operands c) ->
         (* A custom rule over a tape's variables, as a tangent map that applies
@@ -1219,6 +1249,7 @@ and trace_in ?(totals = [||]) kind ~name inputs f =
     | Body | Jit | Staged -> Nx.Rng.refusing name traced
   in
   let owner = Option.get !owner in
+  Option.iter (fun r -> r := List.rev st.asked) asked;
   let captures = List.rev st.captures and threads = List.rev st.threads in
   let params =
     Array.concat

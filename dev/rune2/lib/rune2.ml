@@ -185,7 +185,8 @@ let linear_transpose_named name p q f params =
   let shapes = ref None in
   let l =
     Linear.trace ~name (values p params) (fun vs ->
-        let y = f (rebuild p ~like:params vs) in
+        (* A transpose offers nothing. *)
+        let y = Program.silenced (fun () -> f (rebuild p ~like:params vs)) in
         shapes :=
           Some (Ptree.map q (fun _ y -> Nx.zeros_like y) y);
         values q y)
@@ -516,6 +517,101 @@ module Total = struct
     (r, !sum)
 end
 
+(* Probes *)
+
+module Probe = struct
+  type 'a t = 'a Program.probe
+
+  let make s = Program.probe s
+
+  (* Nothing is walked or allocated before the one query. *)
+  let emit p v =
+    if Program.opened p then begin
+      let (Program.Probe { tree; _ }) = p in
+      let row (Nx.P x) = V (Nx.reshape (Array.append [| 1 |] (Nx.shape x)) x) in
+      let values = Array.of_list (List.map row (fst (Ptree.flatten tree v))) in
+      let site = Program.fresh_site () in
+      let e =
+        Program.Emission
+          { probe = p; like = v; site; lead = 0; values; mask = None }
+      in
+      ignore (Program.perform (Emit e))
+    end
+
+  (* [x] with its first [n] axes merged into one. *)
+  let merged n (V x) =
+    let s = Nx.shape x in
+    let k = Array.fold_left ( * ) 1 (Array.sub s 0 n) in
+    V (Nx.reshape (Array.append [| k |] (Array.sub s n (Array.length s - n))) x)
+
+  (* The rows of [vs] that [mask] holds, the mask read once on the host. *)
+  let compact (V mask) vs =
+    let ran : bool array =
+      match Nx.Dtype.equal_witness (Nx.dtype mask) Nx.bool with
+      | Some Type.Equal -> Nx.to_array mask
+      | None -> invalid_arg "Rune.Probe.collect: a mask that is not a boolean"
+    in
+    if Array.for_all Fun.id ran then vs
+    else
+      let rows = ref [] in
+      Array.iteri (fun j b -> if b then rows := Int64.of_int j :: !rows) ran;
+      let rows = Array.of_list (List.rev !rows) in
+      let at = Nx.create Nx.int64 [| Array.length rows |] rows in
+      Array.map
+        (fun (V x) ->
+          let at = Nx.place (Nx.Placement.uncut (Nx.placement x)) at in
+          V (Nx.take ~axis:0 at x))
+        vs
+
+  let rows (V x) = (Nx.shape x).(0)
+
+  (* An offer's lanes and rows merged into its first axis, the rows that did not
+     run dropped. *)
+  let offer (type a) (p : a t) (Program.Emission e) : a option =
+    match Program.same_probe e.probe p with
+    | None -> invalid_arg "Rune.Probe.collect: an emission of another probe"
+    | Some Type.Equal ->
+        let (Program.Probe { tree; _ }) = p in
+        let values = Array.map (merged (e.lead + 1)) e.values in
+        let values =
+          match e.mask with
+          | None -> values
+          | Some m -> compact (merged (e.lead + 1) m) values
+        in
+        (* A site that ran no row offers nothing. *)
+        let ran = match values with [||] -> true | vs -> rows vs.(0) > 0 in
+        if ran then Some (rebuild tree ~like:e.like values) else None
+
+  let collect p f =
+    (* A construct inside an interpretation may be answered outside the collect,
+       where its emissions would pass it by. *)
+    if Program.within () then
+      invalid_arg
+        "Rune.Probe.collect: inside a traced function, a map or a \
+         differentiation";
+    let offers = ref [] in
+    let effc (type a) (e : a Effect.t) :
+        ((a, _) Effect.Deep.continuation -> _) option =
+      match e with
+      | Program.Open q when Option.is_some (Program.same_probe q p) ->
+          Some (fun k -> Effect.Deep.continue k true)
+      | Construct (Emit (Emission em as m))
+        when Option.is_some (Program.same_probe em.probe p) ->
+          Some
+            (fun k ->
+              offers := m :: !offers;
+              Effect.Deep.continue k [||])
+      | _ -> None
+    in
+    let body () =
+      match f () with
+      | r -> Ok r
+      | exception x -> Error (x, Printexc.get_raw_backtrace ())
+    in
+    let r = Effect.Deep.try_with body () { effc } in
+    (r, List.filter_map (offer p) (List.rev !offers))
+end
+
 (* Loops *)
 
 
@@ -593,6 +689,9 @@ let iterate_named name c ~max ~until ~f init =
             (Format.asprintf "%a" pp_shape s);
         [| V stop |])
   in
+  (* Transformations test the stop before the loop and inside it apart, which
+     would offer one site's tests apart. *)
+  if until.emits then invalid_argf "%s: until emits to a probe; emit in f" name;
   let r =
     run
       (Iterate
@@ -815,6 +914,9 @@ let root_named name ?linear_solve x ~residual solve =
   (* The residual, whose values from outside are what the root depends on. *)
   let residual_p, theta =
     Trace.trace Body ~name forms (fun vs ->
+        (* The residual and the linear solve compute derivatives alone, which
+           offer nothing. *)
+        Program.silenced @@ fun () ->
         let r = residual (point vs) in
         same_leaves name x ~this:"in the residual's result" r
           ~that:"in the solution" (point vs);
@@ -845,7 +947,9 @@ let root_named name ?linear_solve x ~residual solve =
   in
   let jacobian =
     closed
+      (* A root's derivative offers nothing. *)
       (Trace.trace Body ~name operand_forms (fun vs ->
+           Program.silenced @@ fun () ->
            let v, xs, th = split vs in
            Jvp.run ~name (fun i ->
                let xd =
@@ -858,6 +962,7 @@ let root_named name ?linear_solve x ~residual solve =
   let transpose =
     closed
       (Trace.trace Body ~name operand_forms (fun vs ->
+           Program.silenced @@ fun () ->
            let ws, xs, th = split vs in
            let l =
              Linear.trace ~name
@@ -876,6 +981,7 @@ let root_named name ?linear_solve x ~residual solve =
   let id = Atomic.fetch_and_add operators 1 in
   let solve_p, lcaps =
     Trace.trace Body ~name operand_forms (fun vs ->
+        Program.silenced @@ fun () ->
         let bs = Array.sub vs 0 nx and data = Array.sub vs nx (nx + nt) in
         let op args =
           Program.perform
@@ -967,14 +1073,14 @@ let rec spine : type f d. string -> int -> (f, d) Ptree.fn -> (f, d) spine =
 (* [traced name a r f args forms] is [f]'s program over stand-ins of [forms] for
    [args]' leaves, and the result it returned, as jit traces it. *)
 let traced name a r f args forms totals =
-  let like = ref None in
+  let like = ref None and asked = ref [] in
   let body, _ =
-    Trace.trace ~totals Jit ~name forms (fun vs ->
+    Trace.trace ~totals ~asked Jit ~name forms (fun vs ->
         let y = f (rebuild a ~like:args vs) in
         like := Some y;
         values r y)
   in
-  (body, Option.get !like)
+  (body, Option.get !like, !asked)
 
 (* A result's structure, rebuilt from a call's outputs, its leaves read once
    at the trace. *)
@@ -999,8 +1105,8 @@ let call name t a r f args =
     List.rev (Ptree.fold a (fun p _ acc -> path_name p :: acc) args [])
   in
   let trace forms totals =
-    let body, like = traced name a r f args forms totals in
-    (body, results r like)
+    let body, like, asked = traced name a r f args forms totals in
+    (body, results r like, asked)
   in
   let e = Jit.find t leaves skeleton ~paths trace in
   (* A program takes a total's running value where its trace found it; a call
@@ -1101,7 +1207,8 @@ type program = Program.t
 (* [f]'s trace at [args], as jit's: over C-order stand-ins. *)
 let staged name a r f args =
   let leaves, _ = Ptree.flatten a args in
-  traced name a r f args (Jit.stand_ins leaves) [||]
+  let body, like, _ = traced name a r f args (Jit.stand_ins leaves) [||] in
+  (body, like)
 
 let program a r f args = fst (staged "Rune.program" a r f args)
 let pp_program = Program.pp

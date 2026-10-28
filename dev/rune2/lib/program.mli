@@ -109,6 +109,26 @@ val same_total :
 val total_id : ('v, 's, 'd) total -> int
 (** [total_id t] is a number no other total has. *)
 
+type 'a probe =
+  | Probe : { id : 'a Type.Id.t; tree : ('a, 'd) Nx.Ptree.t } -> 'a probe
+      (** A probe of values of [tree]'s structure. *)
+
+val probe : ('a, 'd) Nx.Ptree.t -> 'a probe
+(** [probe s] is a fresh probe of values of [s]'s structure. *)
+
+val probe_id : 'a probe -> int
+(** [probe_id p] is a number no other probe has. *)
+
+val same_probe : 'a probe -> 'b probe -> ('a, 'b) Type.eq option
+(** [same_probe p q] is [Some Equal] iff [p] and [q] are one probe. *)
+
+val fresh_site : unit -> int
+(** [fresh_site ()] is a number no other site has. *)
+
+type asked =
+  | Asked : 'a probe * bool -> asked
+      (** A probe a trace asked about, and whether a collect of it was open. *)
+
 (** {1:programs Programs}
 
     A program's equations are in the order they were issued, and each reads only
@@ -134,6 +154,9 @@ type t = private {
       (** Variables or constants, each total's running value out last. *)
   adds : addition array;  (** The totals it threads, in order. *)
   slots : int;  (** The number of variables. *)
+  emits : bool;
+      (** Whether an equation emits ({!Emit}), or a program its constructs carry
+          does. *)
 }
 
 and eqn =
@@ -158,6 +181,9 @@ and construct =
   | Add : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t -> construct
       (** The operand added to the total; no result. Its default does nothing.
       *)
+  | Emit : emission -> construct
+      (** An emission offered to the innermost collect of its probe; no result.
+          Its default does nothing. *)
   | Scan : {
       step : t;
           (** Over the carry, a row and the captures; to the carry, the outputs
@@ -355,6 +381,22 @@ and switch = {
   seeds : value array;  (** As a scan's. *)
 }
 
+(** An emission of one site: [values] are the arrays of a value of [like]'s
+    structure, each with [lead] axes of lanes, then one of rows, one per
+    execution of the site, then the value's shape. *)
+and emission =
+  | Emission : {
+      probe : 'a probe;
+      like : 'a;  (** Of the emitted structure, its arrays unread. *)
+      site : int;  (** The site: one per [emit] call, kept by a trace. *)
+      lead : int;
+      values : value array;
+      mask : value option;
+          (** A boolean over the first [lead + 1] axes of [values]: the rows
+              that ran, where some did not, as a held lane's. *)
+    }
+      -> emission
+
 and rows =
   | Taken
       (** As many rows as steps taken. No tracer can stage such an iterate. *)
@@ -508,7 +550,10 @@ exception Evaluate
     handler outside sees the construct. *)
 
 val perform : construct -> value array
-(** [perform c] performs {!Construct} [c] and returns its results. *)
+(** [perform c] performs {!Construct} [c] and returns its results. A default
+    whose programs emit gathers each site's rows and, as it returns or raises,
+    performs one {!Emit} per site, its rows in order concatenated along the
+    axis after their lanes. *)
 
 val run : construct -> value array
 (** [run c] performs [c] and delivers its sums to their totals. A sum starts
@@ -586,6 +631,46 @@ type _ Effect.t +=
             holder around it answers [At]. Otherwise a tracer answers as the
             holder around it does, and the jit tracer [At None] where none is
             around. A map passes it on. *)
+
+type _ Effect.t +=
+  | Open : 'a probe -> bool Effect.t
+        (** Answered [true] by a collect of the probe around the call, and
+            [false] by an evaluation that offers nothing ({!silenced}); a tracer
+            passes it on and records the answer. *)
+
+val opened : 'a probe -> bool
+(** [opened p] is the answer to {!Open}, [false] with none around. *)
+
+type _ Effect.t +=
+  | Within : bool Effect.t
+        (** Answered [true] by every tracer, map and forward mode: an
+            interpretation that may answer a construct outside a handler between
+            it and the construct. *)
+
+val within : unit -> bool
+(** [within ()] is the answer to {!Within}, [false] with none around. *)
+
+val emits_from : t -> bool array -> bool
+(** [emits_from p from] is [true] iff an emission in [p] reads a value computed
+    from an argument [k] with [from.(k)], a construct over one whose programs
+    emit counting as one. *)
+
+val observed : t -> bool
+(** [observed p] is [true] iff [p] or a program it carries emits to a probe with
+    a collect open ({!opened}). *)
+
+val gathering : ?lanes:bool -> (unit -> 'a) -> 'a
+(** [gathering ~lanes f] is [f ()], each site's emissions in it gathered and, as
+    [f] returns or raises, performed as one {!Emit} per site in the order the
+    sites first emitted, as {!perform} does. With [lanes], a map's: the first
+    axis of each, the map's lanes, is merged with the next. *)
+
+val silenced : (unit -> 'a) -> 'a
+(** [silenced f] is [f ()] with every emission inside it dropped, every probe
+    closed ({!Open}), and every construct that leaves it, answered by a handler
+    around it, performed without the emissions of its programs: as a backward
+    pass, a remat's replay, a root's derivative and a custom rule's primal
+    derived again evaluate their programs, which offer nothing. *)
 
 val where : ('v, 's, 'd) total -> 'd where
 (** [where t] is the answer to {!Where}, [Nowhere] with none around. *)

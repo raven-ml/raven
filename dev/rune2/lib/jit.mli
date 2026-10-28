@@ -31,6 +31,10 @@ type 'y entry = {
   lanes : int list;
       (** The lanes of each map [body] names ({!Program.axes}) at the trace,
           [-1] for one not around it. *)
+  probes : (int * bool) list;
+      (** Each probe a site of the trace asked about ({!Program.Open}), once,
+          and whether a collect of it was open. *)
+  asked : Program.asked list;  (** The same, each probe once. *)
 }
 (** The type for a key's program. *)
 
@@ -51,13 +55,17 @@ val find :
   'd Nx.packed list ->
   Nx.Ptree.Skeleton.t ->
   paths:(unit -> string list) ->
-  (Program.form array -> Program.addition array -> Program.t * 'y) ->
+  (Program.form array ->
+  Program.addition array ->
+  Program.t * 'y * Program.asked list) ->
   'y entry
 (** [find ~totals t leaves skeleton ~paths trace] is the program of the call
     whose arguments' leaves are [leaves], in walk order, with skeleton
     [skeleton] and its totals' running values in lying at the placements
     [totals] gives. The first time [t] meets its key, [trace forms totals] makes
-    it, where [forms] is the leaves' stand-ins. Calls on several domains wait
+    it, where [forms] is the leaves' stand-ins, and gives the probes it asked
+    about. A call where a collect of one of those is open or closed otherwise
+    than at the trace has a program of its own. Calls on several domains wait
     for each other as {!Cache} states. A [trace] that raises installs nothing,
     and the next call with the key traces again. [paths ()] names the leaves in
     reports. *)
