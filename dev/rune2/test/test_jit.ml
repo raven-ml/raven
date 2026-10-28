@@ -476,6 +476,36 @@ let test_host_values () =
     (Nx.Placement.equal (Nx.placement y) Nx.Host.on);
   equal bits_t (bits (Nx.full f32 [| 2 |] 3.)) (bits y)
 
+(* A function searched at a width gives eager's bits, as do the programs
+   derived from it, over operands drawn to break it: -0., infinities, NaN.
+   The operands share a shape, so each kernel is searched once. *)
+let searched_f =
+  Rune.jit ~beam:1 ~parallel:2 (pair_fn ()) (fun x y -> Nx.sub (Nx.mul x x) y)
+
+let searched_cases =
+  let open Gen in
+  let element =
+    frequency
+      [
+        (3, map (fun i -> pool.(i)) (int_range 0 (Array.length pool - 1)));
+        (2, float_range (-4.) 4.);
+      ]
+  in
+  let four = array ~size:(constant 4) element in
+  pair four four
+
+let law_searched (xs, ys) =
+  let has p = Array.exists p xs || Array.exists p ys in
+  cover "a -0." (has (fun e -> e = 0. && 1. /. e < 0.));
+  cover "an infinity" (has (fun e -> Float.abs e = Float.infinity));
+  cover "a NaN" (has Float.is_nan);
+  let x = v xs and y = v ys in
+  let f x y = Nx.sub (Nx.mul x x) y in
+  equal bits_t (bits (f x y)) (bits (searched_f x y));
+  equal ~msg:"its gradient" bits_t
+    (bits (Rune.grad' (fun x -> Nx.sum (f x y)) x))
+    (bits (Rune.grad' (fun x -> Nx.sum (searched_f x y)) x))
+
 (* A constant on another device that the function places where it computes is
    copied there: the call compiles and gives eager's bits, at every dtype and
    for views of the constant, an offset one included. A result that is such a
@@ -2268,6 +2298,7 @@ let () =
              test "the function runs once per key" test_runs_once;
              test "structures in and out" test_structures;
              test "host arguments" test_host_values;
+             prop "a function searched at a width" searched_cases law_searched;
              prop "a constant placed where the program computes" placed_cases
                law_placed;
              test "a constant result off the program's device"

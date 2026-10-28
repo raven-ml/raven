@@ -1648,8 +1648,9 @@ let report fmt =
   else Printf.ifprintf stderr fmt
 
 (* A kernel searched at width [width], each candidate timed on [rig], on the
-   slots of the first one timed. *)
-let search rig width k =
+   slots of the first one timed, compiled on [parallel] domains, or as many as
+   the [PARALLEL] setting gives. *)
+let search rig ~parallel width k =
   report "searched a kernel at width %d" width;
   let slots = ref None in
   let link call = Engine.link_call ~devices:(fun _ -> rig) call in
@@ -1664,15 +1665,35 @@ let search rig width k =
     in
     Engine.time ~vars s slots
   in
-  Tolk.Search.beam_search ~link ~time ~clock:Engine.clock width k
+  let search () =
+    Tolk.Search.beam_search ~link ~time ~clock:Engine.clock width k
+  in
+  match parallel with
+  | None -> search ()
+  | Some p -> Tolk.Setting.context [ B (Tolk.Setting.parallel, p) ] search
 
 (* The settings a caller may change around a call that change what tolk
    compiles: each setting that shapes it, and whether the engine links each
    kernel as a submission of its own, as it does for its reports. *)
 type settings = (string * string) list * bool
 
-let settings () =
-  (Tolk.Setting.shaping (), Tolk.Setting.value Tolk.Setting.debug >= 2)
+(* [shaping beam] is tolk's settings that shape a program lowered at the width
+   [beam], or at the settings' ({!Tolk.Jit.shaping}). It is made again only
+   when tolk's settings change, so that reading it, as a call does to find its
+   variant, allocates no list. *)
+let shaping beam =
+  let last = Atomic.make ([], []) in
+  fun () ->
+    let entries = Tolk.Setting.shaping () in
+    let seen, shaped = Atomic.get last in
+    if seen == entries then shaped
+    else
+      let shaped = Tolk.Jit.shaping ?beam () in
+      Atomic.set last (entries, shaped);
+      shaped
+
+let settings shaping =
+  (shaping (), Tolk.Setting.value Tolk.Setting.debug >= 2)
 
 (* A program linked for one layout and phase of each argument and one value of
    the settings: the linked schedule, its variables, and the slot of each
@@ -1697,7 +1718,7 @@ type variant = {
           then evaluates. *)
 }
 
-let link rig l =
+let link ~beam ~parallel rig l =
   match l.sink with
   | None ->
       {
@@ -1742,7 +1763,7 @@ let link rig l =
         Tolk.Schedule.create_linear_with_vars ~capturing:true sink
       in
       let linear =
-        Tolk.Jit.jit_lower ~search:(search rig)
+        Tolk.Jit.jit_lower ?beam ~search:(search rig ~parallel)
           ~targets:(fun _ -> Engine.target rig)
           ~held_bufs:(List.map fst l.bound) ~inputs:(List.rev !order) linear
       in
@@ -1778,6 +1799,9 @@ type t = {
   program : Program.t;
   forms : form array;
   results : output array;  (** Each output's, read once. *)
+  beam : int option;  (** The search width the caller gave. *)
+  parallel : int option;
+  shaping : unit -> (string * string) list;  (** {!shaping} at [beam]. *)
   lock : Mutex.t;
   variants : variant list Atomic.t;
   uploads : (value * A.any) list ref;
@@ -1845,7 +1869,7 @@ let variant t layouts phases donated settings =
              search, keeps nothing. *)
           let linked =
             match
-              link t.rig
+              link ~beam:t.beam ~parallel:t.parallel t.rig
                 (lower ~rig:t.rig ~uploads:t.uploads t.program t.forms ~layouts
                    ~phases ~donated)
             with
@@ -1862,7 +1886,7 @@ let variant t layouts phases donated settings =
           incr (Domain.DLS.get variants_made);
           v)
 
-let make ~name p forms =
+let make ~name ?beam ?parallel p forms =
   match
     let rig = device p forms in
     let layouts =
@@ -1880,6 +1904,9 @@ let make ~name p forms =
       program = p;
       forms;
       results = Array.map (fun v -> output_of (form v)) p.outputs;
+      beam;
+      parallel;
+      shaping = shaping beam;
       lock = Mutex.create ();
       variants = Atomic.make [];
       uploads;
@@ -2006,7 +2033,7 @@ let rec run t args =
         else phase (A.buffer a) (fst (run_bytes (A.dtype a) l)))
       leaves
   in
-  match (variant t layouts phases donated (settings ())).linked with
+  match (variant t layouts phases donated (settings t.shaping)).linked with
   | Error _ ->
       evaluated_call ();
       evaluated p args arrays

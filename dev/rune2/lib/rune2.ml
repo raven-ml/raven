@@ -1136,14 +1136,14 @@ let call name t a r f args =
   in
   let y = e.like.rebuild out in y
 
-let jit_named name s =
+let jit_named ?beam ?parallel name s =
   let (Spine u) = spine name 0 s in
   let a = Ptree.v u.walk.walk in
   fun f ->
-    let t = Jit.create ~name () in
+    let t = Jit.create ~name ?beam ?parallel () in
     u.curry (fun args -> call name t a u.result (u.apply f) args)
 
-let jit s = jit_named "Rune.jit" s
+let jit ?beam ?parallel s = jit_named ?beam ?parallel "Rune.jit" s
 
 (* Rematerialization *)
 
@@ -1233,7 +1233,8 @@ let scan' ~f ~init xs =
 let iterate' ~max ~until ~f x =
   iterate_named "Rune.iterate'" Ptree.tensor ~max ~until ~f x
 
-let jit' f = jit_named "Rune.jit'" Ptree.(tensor @-> returns tensor) f
+let jit' ?beam ?parallel f =
+  jit_named ?beam ?parallel "Rune.jit'" Ptree.(tensor @-> returns tensor) f
 let jvp' f x t = jvp_named "Rune.jvp'" Ptree.tensor Ptree.tensor f x t
 
 let vmap' ?axis f x =

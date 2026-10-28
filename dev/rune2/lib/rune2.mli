@@ -1054,8 +1054,15 @@ val remat : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     key and variant runs the compiled program without tracing [f] or compiling.
 *)
 
-val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
-(** [jit s f] is [f] compiled, [s] its signature. Its results are fresh, at the
+val jit :
+  ?beam:int ->
+  ?parallel:int ->
+  ('a -> 'b, 'd) Nx.Ptree.fn ->
+  ('a -> 'b) ->
+  'a ->
+  'b
+(** [jit ~beam ~parallel s f] is [f] compiled, [s] its signature, its kernels
+    searched as {!section-search} states. Its results are fresh, at the
     placement eager computation gives them ({!section-compiled}), except a
     result that takes a donated argument's memory ({!section-donation}).
 
@@ -1097,12 +1104,27 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     boundary (the number of bytes by which it lies past an address that is a
     multiple of 16), and whether the caller donated it; together with tolk's
     settings that shape what it compiles, the search widths [BEAM] and [JITBEAM]
-    among them, and whether tolk's [DEBUG] is 2 or more. A view thus reads in
+    among them where no [beam] is given, and whether tolk's [DEBUG] is 2 or
+    more. A view thus reads in
     place, without a copy, from a program compiled for its layout. Each result
     that takes no donated argument's memory is fresh, at the placement eager
     computation gives it. A value [f] captures on another device, which [f]
     places where the program computes, is copied there once per program, which
     holds the copy. *)
+
+(** {2:search Search}
+
+    A [beam] above [0] searches each kernel of a program, and of the programs
+    derived from it, for the optimisations that run it fastest, keeping the
+    [beam] fastest candidates of each round and timing them on its device,
+    which makes the first call of a variant much longer; [0] searches none.
+    [parallel] compiles the candidates on at most that many domains, and on one
+    where it is below [2]. An explicit [beam] stands for the [BEAM] and
+    [JITBEAM] settings, and [parallel] for the [PARALLEL] setting, which decide
+    otherwise: a change of [BEAM] or [JITBEAM] around a call of a function given
+    [beam] compiles nothing, and functions given different widths share no
+    program. A call inlined in an enclosing [jit] compiles as that one's program
+    does. *)
 
 (** {2:donation Donation}
 
@@ -1510,10 +1532,12 @@ val vmap' :
 (** [vmap' ?axis f x] is {!vmap} of a function of one array. *)
 
 val jit' :
+  ?beam:int ->
+  ?parallel:int ->
   (('v, 's, 'd) Nx.t -> ('w, 'r, 'd) Nx.t) ->
   ('v, 's, 'd) Nx.t ->
   ('w, 'r, 'd) Nx.t
-(** [jit' f] is {!jit} of a function of one array. *)
+(** [jit' ~beam ~parallel f] is {!jit} of a function of one array. *)
 
 (**/**)
 

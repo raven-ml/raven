@@ -174,12 +174,20 @@ let refines l laned =
 
 type 'y t = {
   name : string;
+  beam : int option;
+  parallel : int option;
   table : 'y entry Programs.t;
   last : 'y last option Atomic.t;
 }
 
-let create ~name () =
-  { name; table = Programs.create (); last = Atomic.make None }
+let create ~name ?beam ?parallel () =
+  {
+    name;
+    beam;
+    parallel;
+    table = Programs.create ();
+    last = Atomic.make None;
+  }
 
 (* The stand-in of a leaf: its abstract value, in C order. *)
 let stand_in (Nx.P x) =
@@ -363,7 +371,7 @@ let delivered (body : Program.t) ems out =
 
 (* [compiled name body forms] runs [body] compiled, made the first time it runs,
    or evaluated where the compiler declines it. *)
-let compiled name body forms =
+let compiled ~beam ~parallel name body forms =
   let made = Atomic.make None and lock = Mutex.create () in
   let get () =
     match Atomic.get made with
@@ -378,7 +386,7 @@ let compiled name body forms =
               | Some (p, ems) -> (p, ems)
               | None -> (body, [])
             in
-            let c = Compile.make ~name p forms in
+            let c = Compile.make ~name ?beam ?parallel p forms in
             Result.iter_error (report "evaluates its program uncompiled: %s") c;
             Atomic.set made (Some (p, ems, c));
             (p, ems, c))
@@ -436,7 +444,7 @@ let find ?(totals = [||]) t leaves skeleton ~paths trace =
     let totals =
       Array.map (fun (Program.Addition (_, f, _)) -> Program.F f) body.Program.adds
     in
-    let compile = compiled t.name in
+    let compile = compiled ~beam:t.beam ~parallel:t.parallel t.name in
     let site =
       Program.site ~name:t.name ~compile body (Array.append forms totals)
     in

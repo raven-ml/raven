@@ -82,3 +82,14 @@
   test_lower_linalg
   test_lower_fft)
  (libraries nx nx_array nx_kernel rune2 lowered windtrap))
+
+; search.t pins the searches a function given a width reports.
+
+(executable
+ (name search)
+ (modules search)
+ (libraries nx rune2 tolk))
+
+(cram
+ (applies_to search)
+ (deps search.exe))

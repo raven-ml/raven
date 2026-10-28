@@ -30,7 +30,8 @@
 
     A {e variant} of a program is, for each argument, its layout over its run,
     its run's phase and whether it is donated, together with the value of tolk's
-    settings that shape what it compiles ({!Tolk.Setting.shaping}) and whether
+    settings that shape what it compiles at its search width
+    ({!Tolk.Jit.shaping}) and whether
     {!Tolk.Setting.debug} is 2 or more. The life cycle of a compiled program
     goes like this:
     + {!make} lowers the program once, over C-contiguous arguments, to find
@@ -58,8 +59,16 @@ val report : ('a, out_channel, unit) format -> 'a
     error and flushes it, if the variable [RUNE_JIT_DEBUG] held a nonzero
     integer when the module was initialised. Otherwise it prints nothing. *)
 
-val make : name:string -> Program.t -> Program.form array -> (t, string) result
-(** [make ~name p forms] is [p] ready to run over arguments of [forms], or
+val make :
+  name:string ->
+  ?beam:int ->
+  ?parallel:int ->
+  Program.t ->
+  Program.form array ->
+  (t, string) result
+(** [make ~name ~beam ~parallel p forms] is [p] ready to run over arguments of
+    [forms], its kernels searched at the width [beam], or else the one tolk's
+    settings give, on [parallel] domains, or else as many as they give; or
     [Error why] where lowering declines it, where [why] names the value,
     construct or failure. [name] is the entry point that {!run}'s messages name.
 

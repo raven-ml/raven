@@ -41,8 +41,10 @@ type 'y t
 (** The type for the programs of one compiled function whose results are of
     type ['y]. *)
 
-val create : name:string -> unit -> 'y t
-(** [create ~name ()] is an empty table, for the entry point [name]. *)
+val create : name:string -> ?beam:int -> ?parallel:int -> unit -> 'y t
+(** [create ~name ~beam ~parallel ()] is an empty table, for the entry point
+    [name], whose programs, and those derived from them, compile with
+    {!Compile.make}'s [beam] and [parallel]. *)
 
 val stand_ins : 'd Nx.packed list -> Program.form array
 (** [stand_ins leaves] is the forms a call traces [leaves] at. Each has its
