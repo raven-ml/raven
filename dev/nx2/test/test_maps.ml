@@ -542,6 +542,23 @@ let test_one_donor_twice () =
   equal ~msg:"the first's memory" bool true (takes [ 0; 1 ] [| 2; 2 |]);
   Donate.consumed c
 
+(* A consumer reads an operation's handles as their arrays through its claim,
+   until the claim ends. *)
+let test_called () =
+  let h = Donate.donate ~by:"t" (f32 [| 1.; 2. |]) in
+  let op = Value.Copy h in
+  let kept =
+    Donate.with_consumer ~by:"t" [ Value.Any h ] (fun c ->
+        (match Donate.called c op with
+        | Value.Copy y ->
+            equal ~msg:"the handle's arrays" (array bits) [| 1.; 2. |]
+              (elements y)
+        | _ -> fail "not the copy");
+        c)
+  in
+  raises (Invalid_argument "t: the consumer ended its handles") (fun () ->
+      ignore (Donate.called kept op))
+
 let donation =
   group "donation"
     [
@@ -557,6 +574,8 @@ let donation =
       test "a strided operand is not written" test_no_reuse_strided;
       test "two handles of one donor are one to their consumer"
         test_one_donor_twice;
+      test "a consumer reads handles through its claim until it ends"
+        test_called;
     ]
 
 (* A Logsumexp's terms: shifts from the maximum about the least integers whose

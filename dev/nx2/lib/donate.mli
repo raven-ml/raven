@@ -21,8 +21,9 @@
       run in an order it fixes.
     + {!val-claim} claims the handles, which kills their donors for good, naming
       the consumer.
-    + The consumer reads each handle as its arrays and each donor beside one
-      as live ({!called}, {!arrays}).
+    + The consumer reads each handle as its arrays ({!called}, {!arrays}). A
+      donor beside one stays dead, and the consumer reads it by its arrays
+      alone.
     + {!reuse} gives a result the memory of a claimed handle that nothing
       else reads.
     + {!consumed} ends the claim when the consumer returns or raises, which
@@ -96,9 +97,12 @@ val claim : by:string -> 'd Value.any list -> 'd claim
     that died first, on any domain; the donors claimed before it stay dead. *)
 
 val called : 'd claim -> 'r Value.prim -> 'r Value.prim
-(** [called c op] is [op] with each operand as [c]'s consumer reads it: a
-    handle as its arrays, a donor of one of [c]'s handles as a live value, and
-    any other value as it is. [op]'s operands must be those [c] claimed. *)
+(** [called c op] is [op] with each handle as its arrays, a live value
+    ({!live}), and any other operand as it is, a dead donor beside a handle
+    included. [op]'s operands must be those [c] claimed.
+
+    Raises [Invalid_argument] naming [c]'s consumer once {!consumed}
+    returned. *)
 
 val reuse :
   'd claim ->

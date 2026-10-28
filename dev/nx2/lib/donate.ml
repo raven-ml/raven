@@ -116,20 +116,18 @@ let claim ~by xs =
   kills [] handles;
   { by; operands = Array.of_list xs; handles; ended = false }
 
-(* [y] as the consumer of the handles [hs] reads it: a handle as its arrays, a
-   donor of one of [hs] as a live value, and any other value as it is. *)
-let as_read (type v s d) hs (y : (v, s, d) Value.t) : (v, s, d) Value.t =
-  let ours () = List.exists (fun h -> donates h y) hs in
-  match y with
-  | Value.Handle _ -> live y
-  | Value.Array r when ours () -> Value.Array { r with dead = Value.Live }
-  | Value.Shards r when ours () -> Value.Shards { r with dead = Value.Live }
-  | Value.Array _ | Value.Shards _ | Value.Traced _ -> y
+(* Raises once [c] ended, whose handles' memory may then be freed. *)
+let unended c =
+  if c.ended then invalid_argf "%s: the consumer ended its handles" c.by
 
-let called c op = Prim.map (fun y -> as_read c.handles y) op
+(* A donor beside a handle stays dead. What reads the operation after the
+   claim reads its operands' arrays alone. *)
+let called c op =
+  unended c;
+  Prim.map live op
 
 let operand c i =
-  if c.ended then invalid_argf "%s: the consumer ended its handles" c.by;
+  unended c;
   if i < 0 || i >= Array.length c.operands then
     invalid_argf "%s: no operand %d of %d" c.by i (Array.length c.operands);
   c.operands.(i)
