@@ -149,7 +149,9 @@ let compiled name body forms =
   fun args ->
     match get () with
     | Ok c -> Compile.run c args
-    | Error _ -> Compile.evaluate ~name body args
+    | Error _ ->
+        Compile.evaluated_call ();
+        Compile.evaluate ~name body args
 
 let find t leaves skeleton ~paths trace =
   let key =

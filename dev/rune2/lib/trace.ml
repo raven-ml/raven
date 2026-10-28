@@ -351,13 +351,10 @@ let rule (type r) st i ~by (op : r Nx.Prim.t) : r =
 
 let owned i (V x) = owns i x
 
-(* Whether [i]'s handler answers [c]. A call over a variable, or in the extent
-   of a tracer that stages every operation, is inlined: its default issues its
-   equations here; a map's operation with no such map around is left to its
-   default, which raises. *)
+(* Whether [i]'s handler answers [c]: a construct over its variables, or any of
+   the extent of a tracer that stages every operation. A map's operation with
+   no such map around is left to its default, which raises. *)
 let claims st i = function
-  | Call { args; _ } ->
-      st.kind = Jit || st.kind = Staged || Array.exists (owned i) args
   | Add (_, x) -> st.kind <> Tape || owns i x
   | (Lanes (a, _) | Lane_index (a, _)) when bound a = None -> false
   | c -> st.kind = Jit || st.kind = Staged || List.exists (owned i) (operands c)
@@ -708,8 +705,10 @@ and trace_in kind ~name inputs f =
            operations are recorded. *)
         Some (fun k -> Effect.Deep.discontinue k Evaluate)
     | Construct (Call { site; _ } as c), Some i
-      when claims st i c && (st.kind <> Tape || Program.iterates site) ->
-        (* Inlined: the default runs where the call was performed. *)
+      when claims st i c
+           && (st.kind = Jit || (st.kind = Tape && Program.iterates site)) ->
+        (* Inlined: the default runs where the call was performed, which issues
+           the call's equations here. *)
         Some (fun k -> Effect.Deep.discontinue k Evaluate)
     | Construct c, Some i when claims st i c ->
         Some (fun k -> Effect.Deep.continue k (answer st i c))

@@ -63,6 +63,13 @@ val run : t -> Program.value array -> Program.value array
     {!Nx.Prim.Consumer.with_} does, and what linking a variant raises when it
     does not decline it. *)
 
+val evaluations : unit -> int
+(** [evaluations ()] is the number of compiled calls on the calling domain
+    whose program or variant the compiler declined, so that nx evaluated it. *)
+
+val evaluated_call : unit -> unit
+(** [evaluated_call ()] counts a call that {!evaluate} evaluates. *)
+
 val evaluate :
   name:string -> Program.t -> Program.value array -> Program.value array
 (** [evaluate ~name p args] is [p]'s outputs evaluated by nx over [args], none

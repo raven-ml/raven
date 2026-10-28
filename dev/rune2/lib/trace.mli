@@ -37,12 +37,14 @@
     The body, jit and staged tracers turn each addition to a total made in their
     extent and not taken by a scope inside it into an output, and answer
     {!Program.Running} with [None]; the tape tracer refuses a {!Program.Replace}
-    of one of its variables, as an addition. A call ({!Program.Call}) over a
-    tracer's variables, and every call in the extent of the jit and staged
-    tracers, is inlined: it runs its default where it was performed
-    ({!Program.Evaluate}), which issues the call's equations to the tracer. The
-    tape tracer instead answers a call over its variables, but one whose
-    program holds an iterate, with two calls derived at its site
+    of one of its variables, as an addition. A call ({!Program.Call}) over the
+    body or staged tracer's variables, and every call in the staged tracer's
+    extent, is recorded as an equation, which evaluates compiled; every call in
+    the jit tracer's extent is inlined: it runs its default where it was
+    performed ({!Program.Evaluate}), which issues the call's equations to the
+    tracer. The tape tracer answers a call over its variables, but one whose
+    program holds an iterate, which it inlines, with two calls derived at its
+    site
     ({!Program.derive}): the known part, performed at the call, of the results
     that read none of its variables, also returning the residuals the rest
     reads, and a recorded call of the rest over its variables and the

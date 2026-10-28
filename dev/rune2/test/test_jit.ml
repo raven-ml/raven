@@ -18,6 +18,7 @@ let f32 = Nx.float32
 let f64 = Nx.float64
 let v xs = Nx.create f32 [| Array.length xs |] xs
 let pair_fn () = T.(tensor @-> tensor @-> returns tensor)
+let v64 xs = Nx.create f64 [| Array.length xs |] xs
 
 (* Exact compositions *)
 
@@ -679,13 +680,18 @@ let checked x =
     (fun i (n, b) -> Signed (i, Nx.item [] n, Nx.item [] b));
   Nx.neg x
 
-type failure = None_raised | Small_at of int list * float | Signed_at of int list * int32 * bool
+type failure =
+  | None_raised
+  | Small_at of int list * float
+  | Signed_at of int list * int32 * bool
+  | Refused of string
 
 let raised f =
   match f () with
   | _ -> None_raised
   | exception Small (i, d) -> Small_at (Array.to_list i, d)
   | exception Signed (i, n, b) -> Signed_at (Array.to_list i, n, b)
+  | exception Invalid_argument m -> Refused m
 
 let failure =
   Testable.make
@@ -696,8 +702,12 @@ let failure =
             (String.concat "; " (List.map string_of_int i)) d
       | Signed_at (i, n, b) ->
           Format.fprintf ppf "Signed at [%s] %ld %b"
-            (String.concat "; " (List.map string_of_int i)) n b)
-    ~equal:( = )
+            (String.concat "; " (List.map string_of_int i)) n b
+      | Refused m -> Format.fprintf ppf "Invalid_argument %S" m)
+    ~equal:(fun a b ->
+      match (a, b) with
+      | Small_at (i, d), Small_at (j, e) -> i = j && Float.equal d e
+      | _ -> a = b)
 
 let test_checks () =
   let g = Rune.jit' checked in
@@ -766,7 +776,93 @@ let test_loop_checks () =
   let at xs = Nx.create f32 [| 2 |] xs in
   equal ~msg:"an iterate's step" failure
     (raised (fun () -> iterate (at [| 0.5; -2. |])))
-    (raised (fun () -> h (at [| 0.5; -2. |])))
+    (raised (fun () -> h (at [| 0.5; -2. |])));
+  (* A check reads its data, so a step's check of a donated argument's rows
+     keeps that argument from lending. *)
+  let read =
+    Rune.jit
+      T.(tensor @-> returns (pair tensor tensor))
+      (fun w -> (Nx.sub w (Nx.scalar_like w 10.), scan w))
+  in
+  let w = rows [| 1.; 2.; 0.; 2.5; 1.; 1. |] in
+  let b = Nx.Repr.read w Nx_array.buffer in
+  let nw, _ = read (Nx.donate w) in
+  let a = Option.get (Nx.Repr.array nw) in
+  equal ~msg:"read by a step's check: no lending" bool false
+    (Rig.Buffer.overlaps b (Nx_array.buffer a));
+  (* An iterate stops at the step that fails, as written out: a million more
+     steps would run otherwise. *)
+  let failing x =
+    Rune.iterate' ~max:1_000_000
+      ~until:(fun x -> Nx.less (Nx.sum x) (Nx.scalar f32 (-1.)))
+      ~f:(fun x -> Nx.add (checked x) (Nx.scalar_like x 4.))
+      x
+  in
+  equal ~msg:"stops at the failure" failure
+    (raised (fun () -> failing (at [| 1.; 2. |])))
+    (raised (fun () -> Rune.jit' failing (at [| 1.; 2. |])))
+
+(* Loops whose steps check, drawn: rows of values that pass or fail each check,
+   a check of no element beside them, and an iterate whose until checks too;
+   compiled and eager raise the same failure, with its index and data. *)
+type checked_loop = { rows : float array array; max : int; stop : float }
+
+let checked_loops =
+  let open Gen in
+  let value = of_list [ 1.; 2.; 0.; -0.; 2.5; 4.; 5.; -1.; Float.nan ] in
+  (let* n = int_range 0 4 in
+   let* rows = array ~size:(constant n) (array ~size:(constant 2) value) in
+   let+ max = int_range 0 4 and+ stop = of_list [ 0.; 2.; 6.; 50. ] in
+   { rows; max; stop })
+  |> with_pp (fun ppf c ->
+      Format.fprintf ppf "rows [%s], max %d, stop at %g"
+        (String.concat "; "
+           (Array.to_list
+              (Array.map
+                 (fun r ->
+                   String.concat " "
+                     (Array.to_list (Array.map string_of_float r)))
+                 c.rows)))
+        c.max c.stop)
+
+let law_checked_loop c =
+  let n = Array.length c.rows in
+  let xs =
+    Nx.create f32 [| n; 2 |] (Array.concat (Array.to_list c.rows))
+  in
+  let none = Nx.create f32 [| 0 |] [||] in
+  let step c r =
+    Nx.check T.tensor (Nx.less none none) none (fun i _ -> Small (i, 0.));
+    (Nx.add c (checked r), Nx.neg c)
+  in
+  let scan xs =
+    fst (Rune.scan' ~init:(Nx.zeros f32 [| 2 |]) ~f:step xs)
+  in
+  let iterate x =
+    Rune.iterate' ~max:c.max
+      ~until:(fun x ->
+        let s = Nx.sum (Nx.abs x) in
+        Nx.check T.tensor
+          (Nx.less (Nx.reshape [| 1 |] s) (Nx.scalar f32 30.))
+          s
+          (fun i d -> Small (i, Nx.item [] d));
+        Nx.greater s (Nx.scalar f32 c.stop))
+      ~f:(fun x -> Nx.add (checked x) (Nx.scalar_like x 1.5))
+      x
+  in
+  let eager = raised (fun () -> scan xs) in
+  cover "no row" (n = 0);
+  cover "a step fails" (eager <> None_raised);
+  cover "every step passes" (n > 0 && eager = None_raised);
+  equal ~msg:"scan" failure eager (raised (fun () -> Rune.jit' scan xs));
+  let x =
+    if n = 0 then Nx.create f32 [| 2 |] [| 1.; 0.5 |] else Nx.get [ 0 ] xs
+  in
+  let e = raised (fun () -> iterate x) in
+  cover "an iterate's check fails"
+    (match e with Small_at _ | Signed_at _ -> true | _ -> false);
+  cover "an iterate reaches max" (match e with Refused _ -> true | _ -> false);
+  equal ~msg:"iterate" failure e (raised (fun () -> Rune.jit' iterate x))
 
 (* The cache
 
@@ -1194,18 +1290,112 @@ let test_compositions () =
   totals "a total under grad" (fun f -> Rune.grad' (sum f) x);
   totals "a total under vmap" (fun f -> Rune.vmap' f xs)
 
-(* A remat stages every operation its function applies, a compiled call's over
-   its captures included: evaluated, the remat runs their kernels. *)
-let test_remat_stages () =
-  let c = count (v [| 0.5; 2. |]) in
-  let g = Rune.jit' (fun c -> Nx.mul c c) in
-  let r = Rune.remat T.(tensor @-> returns tensor) (fun x -> Nx.add x (g c)) in
-  let x = count (v [| 1.; -1. |]) in
-  ignore (r x);
-  C.reset ();
-  let y = r x in
-  equal ~msg:"the call's kernel and the addition's" int 2 (C.calls ());
-  equal bits_t (bits (Nx.add x (Nx.mul c c))) (bits y)
+(* A compiled call inside a remat's function, a loop's step or a custom rule
+   stays a call, which runs compiled where the construct evaluates its program:
+   the construct gives its function's bits, the compiled sine's, over its
+   arguments and its captures alike. *)
+let test_calls_stay () =
+  let g = Rune.jit' Nx.sin in
+  let host x = Nx.place Nx.Host.on x in
+  let x = host (Nx.linspace f64 (-3.) 3. 1024) in
+  let c = host (Nx.linspace f64 0. 7. 1024) in
+  let f x = Nx.add (g x) (g c) in
+  equal ~msg:"the compiled sine differs from eager's here" bool false
+    (bits (g x) = bits (Nx.sin x));
+  let expected = bits (f x) in
+  let r = Rune.remat T.(tensor @-> returns tensor) f in
+  equal ~msg:"remat" bits_t expected (bits (r x));
+  let rows = Nx.reshape [| 1; 1024 |] x in
+  let scanned =
+    fst
+      (Rune.scan' ~f:(fun _ r -> (f r, Nx.neg r)) ~init:(Nx.zeros_like x) rows)
+  in
+  equal ~msg:"a scan's step" bits_t expected (bits scanned);
+  let rule =
+    Rune.custom_jvp T.tensor T.tensor (fun x -> (f x, fun dx -> dx))
+  in
+  equal ~msg:"a custom rule" bits_t expected (bits (rule x))
+
+(* Totals in a compiled loop: each step's additions chained from the running
+   total in turn, as eagerly, bit for bit for exact functions; a loop of no step
+   leaves the running total, a negative zero included. *)
+let test_loop_totals () =
+  let t = Rune.Total.make () and u = Rune.Total.make () in
+  let rows n =
+    Nx.place Nx.Host.on
+      (Nx.reshape [| n; 3 |] (Nx.linspace f64 (-1.) 1. (3 * n)))
+  in
+  let scan xs =
+    fst
+      (Rune.scan' ~init:(Nx.zeros f64 [| 3 |])
+         ~f:(fun c r ->
+           Rune.Total.add t (Nx.sum (Nx.mul r r));
+           Rune.Total.add u (Nx.mul_s r 0.1);
+           let inner, _ =
+             Rune.scan' ~init:c
+               ~f:(fun d s ->
+                 Rune.Total.add t (Nx.sum (Nx.abs s));
+                 (Nx.add d s, Nx.neg d))
+               (Nx.reshape [| 3; 1 |] r)
+           in
+           (Nx.add c inner, Nx.neg c))
+         xs)
+  in
+  let iterate x =
+    Rune.iterate' ~max:20
+      ~until:(fun x ->
+        Rune.Total.add t (Nx.sum x);
+        Nx.less (Nx.sum (Nx.abs x)) (Nx.scalar f64 0.1))
+      ~f:(fun x ->
+        Rune.Total.add u (Nx.neg x);
+        Nx.mul_s x 0.5)
+      x
+  in
+  let collected f x =
+    let zero = Nx.scalar f64 (-0.) and zu = Nx.full f64 [| 3 |] (-0.) in
+    let (y, a), b =
+      Rune.Total.collect u ~zero:zu (fun () ->
+          Rune.Total.collect t ~zero (fun () -> f x))
+    in
+    (bits y, bits a, bits b)
+  in
+  (* A scan of no row returns its init, here of every set, which no program
+     computes: that one is evaluated. *)
+  let same ?(compiles = true) msg f x =
+    let before = Rune.evaluations () in
+    let compiled = collected (Rune.jit' f) x in
+    if compiles then
+      equal ~msg:(msg ^ ": compiled") int 0 (Rune.evaluations () - before);
+    equal ~msg (Testable.triple bits_t bits_t bits_t) (collected f x) compiled
+  in
+  same "scan" scan (rows 4);
+  same ~compiles:false "no row" scan (rows 0);
+  same "iterate" iterate (v64 [| 1.; -2.; 0.5 |]);
+  same "iterate of no step" iterate (v64 [| 0.; 0.01; 0. |])
+
+(* A loop's step that runs an iterate compiles whole: the inner loop's failure
+   after its steps is a check of the outer step's. *)
+let test_nested_iterate () =
+  let halve x = Nx.mul_s x 0.5 in
+  let small x = Nx.less (Nx.sum (Nx.abs x)) (Nx.scalar f64 0.01) in
+  let scan xs =
+    fst
+      (Rune.scan' ~init:(Nx.zeros f64 [| 3 |])
+         ~f:(fun c r ->
+           let d = Rune.iterate' ~max:12 ~until:small ~f:halve (Nx.add r c) in
+           (Nx.add c d, d))
+         xs)
+  in
+  let xs =
+    Nx.place Nx.Host.on (Nx.reshape [| 2; 3 |] (Nx.linspace f64 (-1.) 1. 6))
+  in
+  let before = Rune.evaluations () in
+  let y = Rune.jit' scan xs in
+  equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
+  equal bits_t (bits (scan xs)) (bits y);
+  let big = Nx.mul_s xs 1e6 in
+  invalid ~sub:"Rune.iterate': until is still false after max = 12 steps"
+    (fun () -> Rune.jit' scan big)
 
 let () =
   exit
@@ -1255,6 +1445,8 @@ let () =
                test_constructs;
              test "a loop's checks raise as the steps written out"
                test_loop_checks;
+             prop "drawn loops' checks raise as the steps written out"
+               checked_loops law_checked_loop;
            ];
          group "derived"
            [
@@ -1275,6 +1467,9 @@ let () =
                test_inlined_in_step;
              test "compositions around a call give eager's values"
                test_compositions;
-             test "a remat stages a call over its captures" test_remat_stages;
+             test "a call in a construct stays a call" test_calls_stay;
+             test "totals in compiled loops" test_loop_totals;
+             test "an iterate in a step compiles with the loop"
+               test_nested_iterate;
            ];
        ])

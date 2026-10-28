@@ -351,9 +351,14 @@ let law_iterate (Iterate_case (dt, s, trips, max, co, g)) =
       Nx.Ptree.(tensor @-> tensor @-> returns tensor)
       (fun init k0 -> iterate exact_step (init, k0))
   in
+  let before = Rune.evaluations () in
+  let compiled = outcome (fun () -> codes (jitted init k0)) in
+  cover "the compiled call compiled"
+    ((match compiled with Raised _ -> false | _ -> true)
+    && Rune.evaluations () = before);
   equal ~msg:"compiled" (outcome_t codes_t)
     (outcome (fun () -> codes (iterate exact_step (init, k0))))
-    (outcome (fun () -> codes (jitted init k0)))
+    compiled
 
 let test_iterate_refused () =
   invalid ~sub:"Rune.iterate': until is still false after max = 2 steps"

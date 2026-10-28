@@ -774,15 +774,16 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     call keeps one program per derivation of its key's, so two calls share a
     derived program only when their derivations are equal, and [f] runs once
     per key, whatever is derived from it. Inside an enclosing [jit], a
-    {!scan}'s step or another traced function, a call over the values it
-    traces is inlined: its program's operations, or its derived program's, are
-    staged there. A program that holds an {!iterate} is evaluated under a
+    call is inlined: its program's operations, or its derived program's, are
+    staged there. Inside a {!scan}'s or an {!iterate}'s step, a {!remat}'s
+    function or a custom rule, a call stays one: evaluated, it runs compiled,
+    so the construct gives its function's bits. A program that holds an {!iterate} is evaluated under a
     transformation, which receives its operations.
 
     {b Loops and rules.} A {!scan} or an {!iterate} compiles as one loop of the
-    program, its step compiled once whatever its number of steps; a step reads
-    its rows and writes its outputs in place, and the carry is updated in place
-    each step. A check in a step raises, once the call returns, the first
+    program, its step compiled once whatever its number of steps: each step
+    reads its row, writes its outputs' row, and updates the carry in its own
+    storage, rows a copy where theirs do not lie 16 bytes apart. A check in a step raises, once the call returns, the first
     failure of the first step that fails, as the steps written out would. A
     {!remat}, a {!custom_jvp}, a {!custom_vjp} and a
     {!custom_transpose} compile as their function's operations, the program's
@@ -927,5 +928,10 @@ module Lower_arith = Lower_arith
 val derivations : unit -> int
 (** [derivations ()] is the number of programs that transformations of
     compiled calls derived on the calling domain, for the suites. *)
+
+val evaluations : unit -> int
+(** [evaluations ()] is the number of compiled calls on the calling domain
+    that ran their program evaluated by nx, the compiler having declined it,
+    for the suites. *)
 
 (**/**)
