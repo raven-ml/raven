@@ -1757,7 +1757,7 @@ let scan_by ~by r axis x =
        {
          layout = Nx_array.Layout.contiguous (Iarray.of_array (shape x));
          axis;
-         prog = P.of_node ~ins:[| D.Any (dtype x) |] (In 0);
+         prog = Prim.identity (dtype x);
          reduction = r;
          loads = [| Plain x |];
          carry = None;
