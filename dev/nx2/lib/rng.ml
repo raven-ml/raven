@@ -56,6 +56,20 @@ let precision (type s) (dt : (float, s) D.t) =
    in ({!Nx_kernel.float_carrier}). *)
 let lit c x = E.const c (D.of_float c x)
 
+(* What a float sampler of dtype [dt] computes in: the compute dtype [c], the
+   random bits [p] of its draws in [0, 1) there, and its constants [lit]. *)
+type carrier =
+  | Carrier : {
+      c : (float, 's) D.t;
+      p : int;
+      lit : float -> (float, 's) E.t;
+    }
+      -> carrier
+
+let carrier dt =
+  let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
+  Carrier { c; p = precision c; lit = lit c }
+
 (* [x] rounded once to [dt]. *)
 let rounded (type v s w r) (dt : (v, s) D.t) (x : (w, r) E.t) : (v, s) E.t =
   match D.equal_witness (E.dtype x) dt with
@@ -507,7 +521,8 @@ let uniform_programs = programs ()
 let uniform_by ~by p key dt s =
   let prog =
     lowered uniform_programs dt [||] (fun ~key ~j ->
-        let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
+        let (Carrier { c; _ }) = carrier dt in
+        (* [dt]'s bits, at most the carrier's: every draw is a value of [dt]. *)
         rounded dt (unit ~key ~p:(precision dt) c j))
   in
   draw ~by ~at:p (resolve ~by key) dt s prog
@@ -534,8 +549,7 @@ let normal_programs = programs ()
 let normal_by ~by p key dt s =
   let prog =
     lowered normal_programs dt [||] (fun ~key ~j ->
-        let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
-        let p = precision c in
+        let (Carrier { c; p; _ }) = carrier dt in
         let u = uniforms ~key ~p c E.(j / u64 2L) 2 in
         let x, y = box_muller ~p c u.(0) u.(1) in
         rounded dt E.(where (j land u64 1L = u64 0L) x y))
@@ -552,9 +566,9 @@ let exponential_programs = programs ()
 let exponential_by ~by p key dt s =
   let prog =
     lowered exponential_programs dt [||] (fun ~key ~j ->
-        let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
-        let u = unit ~key ~p:(precision c) c j in
-        rounded dt E.(lit c 0. - log (lit c 1. - u)))
+        let (Carrier { c; p; lit }) = carrier dt in
+        let u = unit ~key ~p c j in
+        rounded dt E.(lit 0. - log (lit 1. - u)))
   in
   draw ~by ~at:p (resolve ~by key) dt s prog
 
@@ -667,7 +681,7 @@ let refuse (type v s) ~by name text ~show (p : (v, s, 'd) Value.t)
 
 (* Checks the float parameter [p] of a sampler computing at [c] against [d]. *)
 let require ~by name d (p : (float, 's, 'd) Value.t) =
-  let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier (Prim.dtype p) in
+  let (Carrier { c; _ }) = carrier (Prim.dtype p) in
   refuse ~by name d.text ~show:(Printf.sprintf "%g") p (fun x ->
       d.inside c (rounded c x))
 
@@ -687,8 +701,8 @@ let bernoulli ?key p =
   let dt = Prim.dtype p in
   let prog =
     lowered bernoulli_programs dt [| D.Any dt |] (fun ~key ~j ->
-        let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
-        let scaled = E.(param c 0 dt * lit c (Float.ldexp 1. 53)) in
+        let (Carrier { c; lit; _ }) = carrier dt in
+        let scaled = E.(param c 0 dt * lit (Float.ldexp 1. 53)) in
         E.(bits53 (block ~key j) < cast D.Uint64 (ceil scaled)))
   in
   let key = resolve ~by key in
@@ -780,8 +794,7 @@ let gamma ?key a =
   let dt = Prim.dtype a in
   let prog =
     lowered gamma_programs dt [| D.Any dt |] (fun ~key ~j ->
-        let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
-        let p = precision c in
+        let (Carrier { c; p; _ }) = carrier dt in
         let a = param c 0 dt in
         let u = uniforms ~key ~p c j gamma_uniforms in
         let acc, below, boost = marsaglia ~p c a u in
@@ -814,8 +827,7 @@ let beta ?key a b =
   let s = Prim.broadcast_shape ~by (Prim.shape a) (Prim.shape b) in
   let prog =
     lowered beta_programs dt [| D.Any dt; D.Any dt |] (fun ~key ~j ->
-        let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
-        let p = precision c and lit = lit c in
+        let (Carrier { c; p; lit }) = carrier dt in
         let a = param c 0 dt and b = param c 1 dt in
         let even = E.(j * u64 2L) in
         let la, qa = log_gamma ~key ~p c even a in
@@ -885,8 +897,7 @@ let von_mises ?key kappa =
   let dt = Prim.dtype kappa in
   let prog =
     lowered von_mises_programs dt [| D.Any dt |] (fun ~key ~j ->
-        let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
-        let p = precision c and lit = lit c in
+        let (Carrier { c; p; lit }) = carrier dt in
         let rho, one_minus_rho, a = wrapped_cauchy c (param c 0 dt) in
         let one_plus_rho = E.(lit 1. + rho) in
         let lift = E.(a * (one_plus_rho * one_plus_rho)) in
@@ -1012,8 +1023,7 @@ let poisson ?key rate =
   let dt = Prim.dtype rate in
   let prog =
     lowered poisson_programs dt [| D.Any dt |] (fun ~key ~j ->
-        let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
-        let p = precision c and lit = lit c in
+        let (Carrier { c; p; lit }) = carrier dt in
         let rate = param c 0 dt in
         let draws = uniforms ~key ~p c j (1 + (2 * poisson_rejection_rounds)) in
         let small = not_ E.(lit 10.0 <= rate) in
@@ -1085,8 +1095,7 @@ let binomial ?key (count : (int32, D.int32_elt, 'd) Value.t) prob =
   let s = Prim.broadcast_shape ~by (Prim.shape count) (Prim.shape prob) in
   let prog =
     lowered binomial_programs dt [| D.Any D.Int32; D.Any dt |] (fun ~key ~j ->
-        let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
-        let bits = precision c and lit = lit c in
+        let (Carrier { c; p = bits; lit }) = carrier dt in
         let count = operand 0 D.Int32 in
         let n = E.cast c count in
         let p = param c 1 dt in
@@ -1180,12 +1189,12 @@ let mass_programs = programs ()
 
 let masses ~by (b : (float, 's, 'd) Value.t) =
   let dt = Prim.dtype b in
-  let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
+  let (Carrier { c; lit; _ }) = carrier dt in
   let prog =
     cached mass_programs dt (fun () ->
         let x = rounded c (E.input 0 dt) in
         let positive, n, log_n, log_m = Special.ndtr_halves x in
-        let m = E.(lit c 1. - n) in
+        let m = E.(lit 1. - n) in
         let side y z = E.(any (where positive y z)) in
         P.of_exprs ~ins:[| D.Any dt |]
           [| side m n; side n m; side log_m log_n; side log_n log_m |])
@@ -1222,13 +1231,12 @@ let truncated_normal ?key lower upper =
   let dt = Prim.dtype lower in
   let s = Prim.broadcast_shape ~by (Prim.shape lower) (Prim.shape upper) in
   let ins =
-    let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
+    let (Carrier { c; _ }) = carrier dt in
     Array.append [| D.Any dt; D.Any dt |] (Array.make 8 (D.Any c))
   in
   let prog =
     lowered truncated_normal_programs dt ins (fun ~key ~j ->
-        let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
-        let p = precision c and lit = lit c in
+        let (Carrier { c; p; lit }) = carrier dt in
         let mass i = operand i c in
         let below_lo = mass 2 and above_lo = mass 3 in
         let log_below_lo = mass 4 and log_above_lo = mass 5 in
@@ -1315,7 +1323,7 @@ let dirichlet ?key a =
   require ~by "a" positive a;
   let key = resolve ~by key in
   let dt = Prim.dtype a in
-  let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
+  let (Carrier { c; p; lit }) = carrier dt in
   let shape = Array.append (source_batch key) s in
   if s.(r - 1) = 0 then
     (* No element: zeros where [a] lies, whole on each of its devices. *)
@@ -1324,14 +1332,13 @@ let dirichlet ?key a =
     map ~by ~at shape prog dt [||]
   else
     let least =
-      let x = E.minimum (rounded c (E.input 0 dt)) (lit c 1.) in
+      let x = E.minimum (rounded c (E.input 0 dt)) (lit 1.) in
       along_last ~by s
         (P.of_exprs ~ins:[| D.Any dt |] [| E.any x |])
         Nx_kernel.Min c [| Value.Any a |]
     in
     let prog =
       lowered dirichlet_programs dt [| D.Any dt; D.Any c |] (fun ~key ~j ->
-          let p = precision c in
           let a = param c 0 dt and least = operand 1 c in
           let la, q = log_gamma ~key ~p c j a in
           E.((least * la) + (least / a * q)))
@@ -1390,7 +1397,7 @@ let gumbel_programs = programs ()
 let gumbel_by ~by p key dt s =
   let prog =
     lowered gumbel_programs dt [||] (fun ~key ~j ->
-        let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
+        let (Carrier { c; _ }) = carrier dt in
         rounded dt (gumbel_noise ~key c j))
   in
   draw ~by ~at:p (resolve ~by key) dt s prog
@@ -1414,7 +1421,7 @@ let categorical ?key ?(axis = -1) logits =
   (* Before the key, which may be the next of the stream. *)
   Prim.alive ~by logits;
   let key = resolve ~by key in
-  let (Nx_kernel.Any_float c) = Nx_kernel.float_carrier dt in
+  let (Carrier { c; _ }) = carrier dt in
   let prog =
     lowered categorical_programs dt [| D.Any dt |] (fun ~key ~j ->
         E.(param c 0 dt + gumbel_noise ~key c j))
