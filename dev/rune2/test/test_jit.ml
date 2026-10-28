@@ -1441,6 +1441,92 @@ let test_nested_iterate () =
   invalid ~sub:"Rune.iterate': until is still false after max = 12 steps"
     (fun () -> Rune.jit' scan big)
 
+(* The loops a derivative or a map makes of an iterate compile: under jvp,
+   and under a map whose lanes stop together, with eager's values and the
+   first failure of the steps written out. *)
+let test_derived_iterates () =
+  let double x = Nx.mul_s x 2. in
+  let large x = Nx.greater_s (Nx.sum x) 50. in
+  let iterate x = Rune.iterate' ~max:8 ~until:large ~f:double x in
+  let jvp x = Rune.jvp' iterate x (Nx.ones_like x) in
+  let x = Nx.place Nx.Host.on (v64 [| 1.; 0.5 |]) in
+  let compiled msg f x =
+    let before = Rune.evaluations () in
+    let y = f x in
+    equal ~msg:(msg ^ ": compiled") int 0 (Rune.evaluations () - before);
+    y
+  in
+  let y, t =
+    compiled "jvp" (Rune.jit T.(tensor @-> returns (pair tensor tensor)) jvp) x
+  in
+  let y', t' = jvp x in
+  equal ~msg:"jvp value" bits_t (bits y') (bits y);
+  equal ~msg:"jvp tangent" bits_t (bits t') (bits t);
+  (* A count no lane reads stops every lane at once. *)
+  let counted x =
+    fst
+      (Rune.iterate
+         T.(pair tensor tensor)
+         ~max:8
+         ~until:(fun (_, k) -> Nx.greater_equal_s k 3.)
+         ~f:(fun (x, k) -> (double x, Nx.add_s k 1.))
+         (x, Nx.place Nx.Host.on (Nx.scalar f64 0.)))
+  in
+  let xs =
+    Nx.place Nx.Host.on (Nx.reshape [| 2; 2 |] (v64 [| 1.; 2.; 3.; 4. |]))
+  in
+  equal ~msg:"vmap" bits_t
+    (bits (Rune.vmap' counted xs))
+    (bits (compiled "vmap" (Rune.jit' (Rune.vmap' counted)) xs));
+  (* A check in the step fails at its fifth step, before [max] does. *)
+  let checked x =
+    Rune.iterate' ~max:6
+      ~until:(fun x -> Nx.greater_s (Nx.sum x) 1e9)
+      ~f:(fun x ->
+        Nx.check T.tensor (Nx.less_s x 10.) x (fun _ _ -> Exit);
+        double x)
+      x
+  in
+  let jvp_checked x = snd (Rune.jvp' checked x (Nx.ones_like x)) in
+  raises Exit (fun () -> jvp_checked x);
+  let before = Rune.evaluations () in
+  raises Exit (fun () -> Rune.jit' jvp_checked x);
+  invalid ~sub:"until is still false after max = 6 steps" (fun () ->
+      Rune.jit' jvp_checked (Nx.mul_s x 1e-3));
+  equal ~msg:"checked: compiled" int 0 (Rune.evaluations () - before)
+
+(* A call under jvp derives apart for which totals' running values carry a
+   tangent: two calls of one key, the tangent on the first total's running
+   value, then on the second's, each give their own sums' tangents. *)
+let test_seed_tangents () =
+  let t1 = Rune.Total.make () and t2 = Rune.Total.make () in
+  let g =
+    Rune.jit' (fun c ->
+        Rune.Total.add t1 (Nx.mul_s c 2.);
+        Rune.Total.add t2 (Nx.mul_s c 3.);
+        c)
+  in
+  let c = v64 [| 1.; 2. |] in
+  let sums first x =
+    let zero = Nx.zeros f64 [| 2 |] in
+    let (_, s1), s2 =
+      Rune.Total.collect t2 ~zero (fun () ->
+          Rune.Total.collect t1 ~zero (fun () ->
+              Rune.Total.add (if first then t1 else t2) x;
+              g c))
+    in
+    Nx.stack [ s1; s2 ]
+  in
+  let x = v64 [| 5.; 7. |] and dx = v64 [| 1.; 1. |] in
+  let tangent first = bits (snd (Rune.jvp' (sums first) x dx)) in
+  let ones = Nx.ones f64 [| 2 |] and zeros = Nx.zeros f64 [| 2 |] in
+  equal ~msg:"the first's" bits_t
+    (bits (Nx.stack [ ones; zeros ]))
+    (tangent true);
+  equal ~msg:"the second's" bits_t
+    (bits (Nx.stack [ zeros; ones ]))
+    (tangent false)
+
 let () =
   exit
     (run "rune2 jit"
@@ -1517,5 +1603,8 @@ let () =
              test "totals in compiled loops" test_loop_totals;
              test "an iterate in a step compiles with the loop"
                test_nested_iterate;
+             test "an iterate's derived loops compile" test_derived_iterates;
+             test "a call derives apart for its seeds' tangents"
+               test_seed_tangents;
            ];
        ])

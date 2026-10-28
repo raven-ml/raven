@@ -276,7 +276,15 @@ type chained = {
   mode : mode;
 }
 
-and mode = Eager | Jitted | Forward | Reverse | Mapped
+and mode =
+  | Eager
+  | Jitted
+  | Forward
+  | Reverse
+  | Mapped
+  | Jit_forward
+  | Jit_reverse
+  | Jit_mapped
 
 let pp_mode ppf m =
   Format.pp_print_string ppf
@@ -285,7 +293,10 @@ let pp_mode ppf m =
     | Jitted -> "under jit"
     | Forward -> "under jvp"
     | Reverse -> "under grad"
-    | Mapped -> "under vmap")
+    | Mapped -> "under vmap"
+    | Jit_forward -> "under jit of jvp"
+    | Jit_reverse -> "under jit of grad"
+    | Jit_mapped -> "under jit of vmap")
 
 let chained =
   let open Gen in
@@ -298,7 +309,19 @@ let chained =
      of_list [ Plain; Scan_in; Iterate_in; Remat_in; Custom_in; Jit_in ]
    in
    let* adds = array ~size:(constant 4) value
-   and+ mode = of_list [ Eager; Jitted; Forward; Reverse; Mapped ] in
+   and+ mode =
+     of_list
+       [
+         Eager;
+         Jitted;
+         Forward;
+         Reverse;
+         Mapped;
+         Jit_forward;
+         Jit_reverse;
+         Jit_mapped;
+       ]
+   in
    constant { zero; pre; rows; inner; trips; adds; mode })
   |> with_pp (fun ppf c ->
       let value ppf (x, placed) =
@@ -313,6 +336,10 @@ let chained =
 let law_chained c =
   cover "an inner construct" (c.inner <> Plain);
   cover "under a transformation" (c.mode <> Eager);
+  cover "under a jit of a transformation"
+    (match c.mode with
+    | Jit_forward | Jit_reverse | Jit_mapped -> true
+    | Eager | Jitted | Forward | Reverse | Mapped -> false);
   let t = Total.make () in
   (* A placed value is computed; one of every set is a formula. An addition
      scales its value by the carry's sum, one, so that it has a tangent. *)
@@ -412,17 +439,26 @@ let law_chained c =
   let init = v [| 1. |] and p = Nx.Ptree.(pair tensor tensor) in
   let both (y, s) = (bits y, bits s) in
   let pair = Testable.pair bits_t bits_t in
-  match c.mode with
+  let before = Rune.evaluations () in
+  (match c.mode with
   | Eager -> equal pair (both (written init)) (both (run init))
   | Jitted ->
       equal pair
         (both (written init))
         (both (Rune.jit Nx.Ptree.(tensor @-> returns p) run init))
-  | Forward ->
+  | Forward | Jit_forward ->
       (* The total's tangent too, a collect inside the differentiation receiving
          the additions' tangents. *)
       let jvp f = Rune.jvp Nx.Ptree.tensor p f init init in
-      equal pair (both (fst (jvp written))) (both (fst (jvp run)));
+      let jvp_run =
+        if c.mode = Forward then jvp run
+        else
+          Rune.jit
+            Nx.Ptree.(tensor @-> returns (pair p p))
+            (fun x -> Rune.jvp Nx.Ptree.tensor p run x x)
+            init
+      in
+      equal pair (both (fst (jvp written))) (both (fst jvp_run));
       (* A loop's sums hold a tangent at every step once one has, a zero of
          either sign where the additions written out give none. A custom rule's
          additions are its primal's, which forward mode runs on the primals. *)
@@ -430,20 +466,34 @@ let law_chained c =
         let l = lenient ~nan:false in
         equal (Testable.pair l l)
           (both (snd (jvp written)))
-          (both (snd (jvp run)))
-  | Reverse ->
-      let aux f =
+          (both (snd jvp_run))
+  | Reverse | Jit_reverse ->
+      let aux f x =
         let _, g, s =
-          Rune.value_and_grad_aux Nx.Ptree.tensor Nx.Ptree.tensor f init
+          Rune.value_and_grad_aux Nx.Ptree.tensor Nx.Ptree.tensor f x
         in
-        (bits g, bits s)
+        (g, s)
       in
-      equal pair (aux written) (aux run)
-  | Mapped ->
+      let aux_run =
+        if c.mode = Reverse then aux run init
+        else Rune.jit Nx.Ptree.(tensor @-> returns p) (aux run) init
+      in
+      equal pair (both (aux written init)) (both aux_run)
+  | Mapped | Jit_mapped ->
       (* A collect inside the map: each lane's total. *)
       let lanes = Nx.reshape [| 2; 1 |] (v [| 1.; 2. |]) in
-      let map f = Rune.vmap Nx.Ptree.(tensor @-> returns p) f lanes in
-      equal pair (both (map written)) (both (map run))
+      let map f = Rune.vmap Nx.Ptree.(tensor @-> returns p) f in
+      let map_run =
+        if c.mode = Mapped then map run lanes
+        else Rune.jit Nx.Ptree.(tensor @-> returns p) (map run) lanes
+      in
+      equal pair (both (map written lanes)) (both map_run));
+  (* A jit around a transformation compiles its derived programs. *)
+  let compiled = Rune.evaluations () = before in
+  List.iter
+    (fun m ->
+      cover (Format.asprintf "%a compiled" pp_mode m) (c.mode = m && compiled))
+    [ Jitted; Jit_forward; Jit_reverse; Jit_mapped ]
 
 (* A jit called again under a collect whose running value lies elsewhere than at
    its first call chains its additions as eagerly: the program takes the running
