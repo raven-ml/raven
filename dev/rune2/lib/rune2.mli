@@ -21,16 +21,15 @@
     runs inside it, as the function of a transformation runs inside the
     transformation. Transformations nest ({!section-derivatives}).
 
-    A {e construct} ({!scan}, {!iterate}, {!switch}, {!root}, {!remat}, {!jit}
-    and the rules of {!section-custom}) {e traces} its functions. Their OCaml
-    code runs over {e stand-ins}, values with a dtype, a shape and a placement
-    but no elements. What they compute from them is recorded as a {e program},
-    which the construct then runs ({!section-tracing}). {!linear_transpose},
-    {!program} and {!eval_shape} trace their function too. A transformation of a
-    loop, a {!switch}, a {!remat} or a {!jit} is that construct over the
-    transformation of its program: the derivative of a {!scan} is a scan of its
-    step's derivative. A custom rule and a {!root} have the derivatives their
-    sections state.
+    A {e construct} ({!scan}, {!iterate}, {!switch}, {!root}, {!remat} and
+    {!jit}) {e traces} its functions. Their OCaml code runs over {e stand-ins},
+    values with a dtype, a shape and a placement but no elements. What they
+    compute from them is recorded as a {e program}, which the construct then
+    runs ({!section-tracing}). {!linear_transpose}, {!program} and {!eval_shape}
+    trace their function too. A transformation of a loop, a {!switch}, a
+    {!remat} or a {!jit} is that construct over the transformation of its
+    program: the derivative of a {!scan} is a scan of its step's derivative. A
+    custom rule and a {!root} have the derivatives their sections state.
 
     Two arrays agree {e bit for bit} when their elements have the same bits,
     except for a NaN's sign and payload, which nx leaves unspecified. Outside
@@ -75,16 +74,15 @@
 
     A construct other than {!jit} traces its functions each time it is called:
     at each call outside a {!jit}, and inside one at each trace of the {!jit}. A
-    {!custom_jvp}'s or {!custom_vjp}'s rule is traced only where
-    {!section-custom} says so, and otherwise runs on its arguments' values. A
-    {!jit} itself traces once per key. A loop's step is traced once per trace of
-    the loop, whatever its number of steps, so its code and its side effects run
-    once per trace too. Inside a traced function {!Nx.item} of a stand-in, or of
-    a value computed from one, raises, naming the construct, as
-    [Nx.item: the value is traced by Rune.scan] in a {!scan}'s step, so a branch
-    on a value is a {!switch}, {!Nx.where} or a nested {!iterate}. A draw
-    without [~key] raises, naming the construct, so a step draws from a key in
-    its carry or its rows.
+    custom rule's functions run on values where {!section-custom} says so, and
+    are traced elsewhere. A {!jit} itself traces once per key. A loop's step is
+    traced once per trace of the loop, whatever its number of steps, so its code
+    and its side effects run once per trace too. Inside a traced function
+    {!Nx.item} of a stand-in, or of a value computed from one, raises, naming
+    the construct, as [Nx.item: the value is traced by Rune.scan] in a {!scan}'s
+    step, so a branch on a value is a {!switch}, {!Nx.where} or a nested
+    {!iterate}. A draw without [~key] raises, naming the construct, so a step
+    draws from a key in its carry or its rows.
 
     An operation that reads no stand-in computes once, at the call, except in
     {!switch}, {!remat}, a {!root}'s [solve] and {!jit}. These {e stage} every
@@ -139,9 +137,9 @@
     captures the value reads it so too, and takes that path wherever its program
     runs: a loop's step at every step. A custom rule may read so a value its
     differentiation tracks: a read is not one of the uses {!section-custom}
-    refuses. A pullback that runs in the backward pass may not
-    ({!section-custom}). Where a construct that stages ({!section-tracing}) lies between the
-    read and the differentiation, it stages the read, which raises.
+    refuses. A pullback that runs in the backward pass may not read such a value
+    ({!section-custom}). Where a construct that stages ({!section-tracing}) lies
+    between the read and the differentiation, it stages the read, which raises.
 
     {b Nesting.} Each differentiation tracks the values of its own function
     alone: in
@@ -448,37 +446,54 @@ val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
     in the form of that differentiation's answer: a tangent map for forward
     mode, a pullback for reverse mode, or a linear function's transpose.
 
-    {b Values.} A {!custom_jvp} or {!custom_vjp} runs its rule on the
-    arguments' values where it can. Where no transformation around the call
-    tracks an argument, and none stages it ({!jit}, {!remat}, {!switch}, a
-    {!root}'s [solve]), the call is [fst (rule args)] and the derivative never
-    runs. Under one differentiation tracking an argument, with no
-    transformation between it and the call and none around it tracking the
-    arguments too, the rule runs on the arguments' values, so it may read them
-    with {!Nx.item}, as an iteration tests its tolerance. Its derivative then
-    runs where the differentiation applies it. A tangent map runs at the call,
-    on the tangents: values under {!jvp}, so it may read them too, and reverse
-    mode's stand-ins under {!grad}, where a read raises. A pullback runs in each
-    backward pass, on that pass's cotangents: a {!vjp} pullback applied twice
-    runs it twice. They are values where the backward pass runs outside every
-    transformation, so the pullback may read them. Under a differentiation a
-    read gives their primals; under a map or a construct that stages, as
-    {!jacrev}'s map of the pullback, it raises. The backward pass runs after
-    the differentiation returns, so such a pullback may neither use nor read a
-    value that differentiation tracks: read it in the rule. Elsewhere the rule
-    is traced at the call with its derivative: inside a construct that stages
-    it; where a map, a loop's step, a {!root}'s function or a second
-    differentiation tracks an argument; and where any transformation lies
-    between the call and the differentiation tracking an argument, as a
-    {!grad} over values the rule does not take, or a map or a loop's step that
-    captures the argument. There
-    a read of an argument raises
-    ([Nx.item: the value is traced by Rune.custom_jvp]), and the derivative's
-    code runs once whether a differentiation applies it or not, so a tangent
-    map reading a map's {!lanes} raises there outside that map. A draw without
-    [~key] in the rule or its derivative raises in every case. An error the derivative raises
-    reaches the code that runs it: the call for a tangent map and a traced
-    pullback, the backward pass for a pullback on values.
+    A value {e belongs} to a differentiation that tracks it, to a map whose
+    lanes it holds, and, as a stand-in or a value computed from one, to the
+    function traced over it.
+
+    {b Values.} A {!custom_jvp} or {!custom_vjp} runs its rule {e on values},
+    its arguments' or their primals', in two cases, so the rule may read them
+    with {!Nx.item}, as an iteration tests its tolerance. Where no argument
+    belongs to any code and no construct stages the call ({!jit}, {!remat},
+    {!switch}, a {!root}'s [solve]), the call is [fst (rule args)] and the
+    derivative never runs. Under one differentiation that tracks an argument,
+    where the arguments' primals belong to no other code and no transformation
+    or traced function lies between the differentiation and the call, the rule
+    runs on the primals and the derivative runs where the differentiation
+    applies it. The rule's code runs once per call. Without a differentiation
+    the derivative's closure never runs, so work only the derivative needs goes
+    in it.
+
+    {b Derivatives on values.} A tangent map runs at the call, once per
+    differentiation that applies it, on the tangents: values under {!jvp}, so it
+    may read them too. Under {!grad} reverse mode traces it to transpose it, so
+    its tangents are stand-ins and a read of one raises. A pullback runs in each
+    backward pass that applies it, on that pass's cotangents, so a {!vjp}
+    pullback applied twice runs it twice. The cotangents are values where the
+    backward pass runs outside every transformation, so the pullback may read
+    them. Where a differentiation tracks them, as a {!grad} of a {!vjp}
+    pullback, a read gives their primals. Where a construct stages the read, or
+    the cotangents belong to a map or a traced function, as in {!jacrev'}'s map
+    of the pullback, a read raises. The backward pass runs after the
+    differentiation has returned, so such a pullback must neither use nor read a
+    value that differentiation tracks. The rule may read such a value, and the
+    pullback may use what it read.
+
+    {b Traced rules.} Elsewhere the rule is traced at the call with its
+    derivative. That is the case inside a construct that stages the call, and
+    where an argument belongs to a map, a traced function or a second
+    differentiation. It is the case too where a transformation or a traced
+    function lies between the call and the differentiation that tracks an
+    argument: an inner {!grad} over other values, or a map or a loop's step that
+    captures the argument. There a read of an argument raises, naming the entry
+    point, as [Nx.item: the value is traced by Rune.custom_jvp]. The
+    derivative's code runs once per trace, whether a differentiation applies it
+    or not, so a tangent map that calls {!lanes} of a map it does not run in
+    raises at every trace.
+
+    {b Errors.} A draw without [~key] in the rule or its derivative raises
+    wherever it runs. An error the derivative raises reaches the code that runs
+    it: the call for a tangent map and a traced pullback, the backward pass for
+    a pullback on values.
 
     {b Arguments.} A differentiation applies the rule where it tracks one of the
     rule's arguments. The rule receives them without their derivatives, and must
@@ -492,10 +507,11 @@ val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
     code, with the arrays it reads, which the rule computes: the second
     derivative of a {!custom_jvp} is the derivative of its tangent map along the
     arguments, and that of a {!custom_vjp} the derivative of its rule and
-    pullback. A custom rule that a tangent map applies to its tangents runs its
-    function under reverse mode, which records the function's operations, so a
-    differentiation around reverse mode differentiates that function's code,
-    where one around forward mode applies the rule.
+    pullback. A {!custom_jvp} or {!custom_vjp} called in a tangent map on its
+    tangents is, under reverse mode, its function: reverse mode records the
+    function's operations, and a differentiation around reverse mode
+    differentiates their code. Around forward mode, a differentiation applies
+    that rule.
 
     {b Reverse mode} transposes a tangent map's operations on tangents, so a
     tangent map must be linear in its tangents: one applying [Nx.exp] to a
@@ -507,19 +523,19 @@ val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
     {!Nx.where}, counts as zero. A pullback or a transpose reads a result's
     cotangent at the result's set.
 
-    {b Maps.} {!vmap} batches a custom rule over its lanes: the rule and its
-    derivative are evaluated over the lanes, and a differentiation around the
-    map applies the rule to every lane. A rule over arguments no
-    transformation tracks runs on them inside the map, which batches the
-    operations it applies to the lanes it captures. One over an argument a
-    differentiation outside the map tracks is traced, as {b Values} says.
+    {b Maps.} {!vmap} batches a rule over an argument that belongs to the map:
+    the rule and its derivative are traced and evaluated over the lanes, and a
+    differentiation around the map applies the rule to every lane. A rule whose
+    arguments belong to no code runs on them inside the map, which batches the
+    operations it applies to the lanes it captures. One over an argument that a
+    differentiation outside the map tracks is traced, as {b Traced rules} says.
 
     {b Totals.} The additions a rule makes reach the innermost open
     {!Total.collect} of their total around the call, once per call. A tangent
     map's are made once per differentiation that applies it, none without one; a
     pullback's once per backward pass that applies it, to the {!Total.collect}
-    around that pass. Under reverse mode a tangent map that adds a tangent
-    raises at the call. *)
+    around that pass. Under reverse mode a tangent map that adds a tangent to a
+    total raises at the call. *)
 
 val custom_jvp :
   ('p, 'd) Nx.Ptree.t ->
@@ -545,7 +561,7 @@ val custom_jvp :
     Where the result has no float or complex array, reverse mode does not apply
     [map], so such a rule observes the tangents under forward mode alone.
 
-    Raises [Invalid_argument] at the call where [map] is traced
+    Raises [Invalid_argument] at the call where [map] runs or is traced
     ({!section-custom}) if its result differs from the result in its
     {!Nx.Ptree.val-visits}, dtypes or shapes, naming the first path where they
     differ, as in
@@ -575,8 +591,8 @@ val custom_vjp :
     ]}
 
     Every reverse mode tracking one of [args] applies [pb]. Forward mode has no
-    rule for the result: around a reverse mode that applies it, as in a
-    Hessian-vector product, it differentiates [rule]'s code.
+    rule for the result: around a reverse mode that applies [pb], as in a
+    Hessian-vector product, it differentiates the code of [rule] and [pb].
 
     Raises [Invalid_argument] at the call where [pb] is traced
     ({!section-custom}) if its result differs from [args] in its
@@ -621,15 +637,17 @@ val custom_transpose :
           (x, fun (da, db) -> along Nx.Infix.(db - Nx.matmul da x)))
     ]}
 
-    Where no transformation tracks or stages an argument, [f] runs on the
-    arguments' values, so it may read them with {!Nx.item}, and [transpose]
-    never runs. That is the case eagerly, and in a {!custom_jvp} tangent map
-    that {!jvp} runs on its tangents. Elsewhere, as in a tangent map that
-    {!grad} runs on its stand-ins, [f] and [transpose] are traced at the call,
-    apart, and a read of an argument raises. A differentiation applies [f] to
-    the tangents and differentiates [f]'s code along the residuals. Reverse mode
-    transposes the first by applying [transpose], never [f]'s operations, and
-    transposing that again applies [f]. A draw without [~key] in either raises.
+    Where no argument belongs to any code ({!section-custom}) and no construct
+    stages the call, [f] runs on the arguments' values, so it may read them with
+    {!Nx.item}, and [transpose] never runs. That is the case eagerly, and in a
+    {!custom_jvp} tangent map that {!jvp} runs on its tangents. Elsewhere, as in
+    a tangent map that {!grad} runs on its stand-ins, [f] and [transpose] are
+    traced at the call, apart, and a read of an argument raises. A
+    differentiation applies [f] to the tangents, and differentiates [f]'s code
+    along the values [f] captures. Reverse mode transposes the application to
+    the tangents by applying [transpose], never by transposing [f]'s operations,
+    and a transpose of [transpose] applies [f]. A draw without [~key] in either
+    raises.
 
     Raises [Invalid_argument] where [transpose] is traced, if its result differs
     from [args] in its {!Nx.Ptree.val-visits}, dtypes, shapes or placements,
@@ -637,8 +655,8 @@ val custom_transpose :
     ["Rune.custom_transpose: the root: shape [2] in the transpose's result, [3]
      in the arguments"]. Raises it too if [f] or [transpose] adds to a total, at
     the addition where [f] runs on values and at the call where they are traced:
-    each also runs as the other's transpose, where its additions would have no
-    single place. *)
+    each also runs as the other's transpose, away from the call, so its
+    additions would have no single place. *)
 
 val check_transpose :
   ?tol:float ->

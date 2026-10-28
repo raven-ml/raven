@@ -38,9 +38,9 @@
     reverse mode, where an addition of one raises at the addition. A pullback
     under reverse mode is a linear call ({!Program.Linear}) whose transpose is
     the pullback itself ({!Program.Host}), which the tape records and each
-    backward pass runs on that pass's cotangents. Neither runs under reverse
-    mode where no result has a float or complex array, nor a pullback where
-    forward mode runs alone.
+    backward pass runs on that pass's cotangents. Under reverse mode neither
+    runs where no result has a float or complex array, and a pullback never runs
+    where forward mode runs alone.
 
     A traced rule ({!Program.Custom}) over an argument this differentiation
     tracks is performed outward on the arguments' primals, so that each
