@@ -3,49 +3,147 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Transformations of functions over nx values: derivatives, loops, totals and
-    compilation.
+(** Derivatives, maps, loops and compilation of functions over nx values.
 
-    A transformation takes the structure ({!Nx.Ptree.t}) of each value whose
-    arrays it enumerates; everything else the function uses is captured and is a
-    constant of the transformation.
+    rune2 transforms OCaml functions whose arguments and results hold nx arrays.
+    A {e structure} ({!Nx.Ptree.t}) enumerates the arrays of a value, so each
+    transformation and construct takes one for each value whose arrays it reads,
+    and a {e signature} ({!Nx.Ptree.fn}) is one structure per argument of a
+    function and one for its result. A value a function uses without receiving
+    it is {e captured}. An array is {e fresh} when it has memory of its own in C
+    order, from the start of its buffer, and is no view of another.
 
-    {b Functions of a construct are traced.} The functions that {!scan},
-    {!iterate}, {!switch}, {!root}, {!remat}, {!jit}, {!custom_jvp},
-    {!custom_vjp} and {!custom_transpose} receive are {e traced} at the call:
-    their OCaml code runs over stand-ins of their arguments' arrays, values with
-    a dtype, a shape and a placement but no elements, and what it computes from
-    them is recorded as a program, which the construct then evaluates. A loop's
-    step is traced once, so its code runs once whatever the number of steps, as
-    do its side effects, and inside it {!Nx.item} of a stand-in, or of a value
-    computed from one, raises ([Nx.item: the value is traced by Rune.scan]); a
-    branch on a value is a {!switch}, {!Nx.where} or a nested {!iterate}. An
-    operation that reads no stand-in computes at the call, once, but in
-    {!switch}, {!remat} and {!jit}, which stage every operation their functions
-    apply. A draw without [~key] inside a traced function raises, naming the
-    construct, so a step draws from a key in its carry or its rows. Outside
-    every transformation a construct is its program evaluated: a {!scan} is the
-    fold of its step, bit for bit but for a NaN result's sign and payload, which
-    nx leaves unspecified.
+    A {e transformation} ({!jvp}, {!grad}, {!vjp}, {!linearize}, {!vmap} and the
+    functions built on them, {!check_grads} aside) runs its function once per
+    call, over values that carry more than their elements. Under {!jvp} each
+    value carries a tangent ({!section-tangents}), and under {!vmap} one row per
+    lane of a map ({!section-maps}). Code is {e around} a call when the call
+    runs inside it, as the function of a transformation runs inside the
+    transformation. Transformations nest ({!section-derivatives}).
 
-    {b Extents.} A transformation, a map, a {!Total.collect} or a
-    {!Probe.collect} is around the code its function runs, on whatever domain
-    that code resumes, and the fibers a scheduler installed in the function runs
-    on the domain the function runs on. It is not around a systhread or a domain
-    the function starts, nor a fiber such a scheduler resumes on another domain:
-    there {!lanes} and {!lane_index} raise, and an addition to a total and an
-    emission are dropped.
+    A {e construct} ({!scan}, {!iterate}, {!switch}, {!root}, {!remat}, {!jit}
+    and the rules of {!section-custom}) {e traces} its functions. Their OCaml
+    code runs over {e stand-ins}, values with a dtype, a shape and a placement
+    but no elements. What they compute from them is recorded as a {e program},
+    which the construct then runs ({!section-tracing}). {!linear_transpose},
+    {!program} and {!eval_shape} trace their function too. A transformation of a
+    loop, a {!switch}, a {!remat} or a {!jit} is that construct over the
+    transformation of its program: the derivative of a {!scan} is a scan of its
+    step's derivative. A custom rule and a {!root} have the derivatives their
+    sections state.
 
-    {b Errors.} Every message starts with the entry point the caller applied, as
-    ["Rune.scan"] for {!scan}. *)
+    Two arrays agree {e bit for bit} when their elements have the same bits,
+    except for a NaN's sign and payload, which nx leaves unspecified. Outside
+    every transformation a construct other than {!jit} agrees bit for bit with
+    its functions applied eagerly: a {!scan} is the fold of its step. A {!jit}
+    computes to the accuracy {!section-numerics} states. A value rune2 makes
+    lies where nx places it ({!Nx.section-routing}): a zero beside an array lies
+    at that array's placement, and an operation's result where nx routes it.
+
+    The life cycle of a compiled function goes like this:
+    + [let g = jit s f] makes a compiled function with no program. [g] must be
+      bound once: [jit s f x] written at each call makes a new [g] and traces
+      every call.
+    + The first call of [g] with a new key ({!section-keys}), the dtypes, shapes
+      and placements of its arguments among others, traces [f] into a program.
+    + The first call that runs the program compiles it for the call's variant
+      ({!section-compiled}), the layout of its arguments in memory among others.
+    + Later calls with that key and variant run the compiled program.
+    + A transformation around a call derives programs from its key's, once per
+      derivation ({!section-derived}), and compiles them as it does the key's.
+
+    Unless a function's doc says otherwise:
+    - any domain may call it, concurrently with other domains;
+    - misuse raises [Invalid_argument] with a message that starts with the entry
+      point, at a moment {!section-errors} names;
+    - an exception the function it transforms raises passes through it
+      unchanged;
+    - a tangent, a gradient and a pullback's result are fresh, and under another
+      transformation they are that transformation's values;
+    - integer and boolean arrays have no derivative, so a derivative is zero
+      there.
+
+    Here [loss] is traced once for the key of [w], and {!grad'} derives and
+    compiles its reverse programs from that trace:
+
+    {[
+    let loss = Rune2.jit' (fun w -> Nx.sum Nx.Infix.(w * w))
+    let g = Rune2.grad' loss (Nx.create Nx.float64 [| 3 |] [| 1.; 2.; 3. |])
+    ]} *)
+
+(** {1:tracing Tracing}
+
+    A construct traces its functions each time it is called: at each call
+    outside a {!jit}, and inside one at each trace of the {!jit}. A {!jit}
+    itself traces once per key. A loop's step is traced once per trace of the
+    loop, whatever its number of steps, so its code and its side effects run
+    once per trace too. Inside a traced function {!Nx.item} of a stand-in, or of
+    a value computed from one, raises, naming the construct
+    ([Nx.item: the value is traced by Rune.scan]), so a branch on a value is a
+    {!switch}, {!Nx.where} or a nested {!iterate}. A draw without [~key] raises,
+    naming the construct, so a step draws from a key in its carry or its rows.
+
+    An operation that reads no stand-in computes once, at the call, except in
+    {!switch}, {!remat}, a {!root}'s [solve] and {!jit}. These {e stage} every
+    operation their functions apply: they record it in the program, operations
+    on captured values included. A traced function reads what it captures when
+    it is traced, so it sees a [ref]'s contents at the trace: under {!jit}, at
+    the first call of each key.
+
+    {b Extents.} A transformation, a {!Total.collect} or a {!Probe.collect} is
+    around all code its function runs, on whichever domain that code resumes,
+    including the fibers of a scheduler the function installs while they run on
+    its domain. It is not around a systhread or a domain the function starts,
+    nor around a fiber such a scheduler resumes on another domain: there
+    {!lanes} and {!lane_index} raise, and an addition to a
+    {{!section-totals}total} and an emission to a {{!section-probes}probe} are
+    dropped. *)
+
+(** {1:errors Errors}
+
+    Every message starts with the entry point the caller applied, under the
+    module name [Rune], as ["Rune.scan"] for {!scan}. Misuse of an entry point
+    raises [Invalid_argument] at one of four moments:
+    - when a signature is applied, as [jit s], [vmap s] or [remat s] with an [s]
+      of no argument;
+    - at the call, for arguments that do not fit the entry point;
+    - at the trace, for a traced function's misuse, as a step's carry that
+      changes shape ({!section-tracing} says when each construct traces);
+    - when a function rune2 hands out is applied after its call, as {!vjp}'s
+      pullback, {!linearize}'s tangent map or the [op] a {!root} passes to its
+      [linear_solve].
+
+    A failure that depends on the values, as an {!iterate} still running after
+    [max] steps or a {!switch} index out of range, raises at the call, and under
+    a {!jit} as the call returns, as a check does ({!section-checks}). A later
+    operation on an argument a {!jit} consumed raises in nx, naming [Rune.jit]
+    ({!section-donation}). A {!jit} whose trace raises keeps no program for the
+    key. *)
 
 (** {1:derivatives Derivatives}
 
-    A differentiation tracks the float and complex arrays of its arguments;
-    integer and boolean arrays have no derivative. Every operation nx computes
-    has a derivative but a block scale of [Nx.contract] that depends on the
-    parameters and the complete factors that {b Factorisations} below names,
-    whose tangents raise [Invalid_argument].
+    A {e differentiation} ({!jvp}, {!grad}, {!vjp}, {!linearize} and the
+    functions built on them) {e tracks} the float and complex arrays of its
+    arguments and the values computed from them. Every operation nx computes has
+    a derivative, except a block scale of {!Nx.contract} that depends on the
+    parameters and the complete factors that {!section-kinks} names, whose
+    tangents raise [Invalid_argument].
+
+    {b Reads.} {!Nx.item} of a value a differentiation tracks reads its primal,
+    so an OCaml [if] on it differentiates the path taken. A traced function that
+    captures the value reads it so too, and takes that path wherever its program
+    runs: a loop's step at every step. A custom rule may read so a value its
+    differentiation tracks: a read is not one of the uses {!section-custom}
+    refuses. Where a {!remat} or a {!jit} lies between the read and the
+    differentiation, it stages the read, which raises.
+
+    {b Nesting.} Each differentiation tracks the values of its own function
+    alone: in
+    [jvp' (fun x -> Nx.mul x (snd (jvp' (fun y -> Nx.add x y) one one))) one
+     one], the inner tangent is a constant to the outer differentiation, and the
+    result's tangent is [1]. *)
+
+(** {2:tangents Tangents and cotangents}
 
     {b Tangents.} A {e tangent} is a displacement: move the parameters by [h]
     times the tangent and the result moves by [h] times its tangent, to first
@@ -84,12 +182,14 @@
     [Nx.where c x (detach x)] on its input, or branch with {!cond}, per element
     under {!val-vmap}.
 
-    {b Placement.} A cotangent lies where the transposed operations put it,
-    as {!Nx} routes them: at its array's placement where every value it meets
-    lies there, and otherwise at the union of their cuts. A {!Nx.place}'s
-    cotangent is moved back to its operand's placement. So
-    [grad' (fun x -> Nx.sum (Nx.mul x w)) x] lies cut along axis 0 where [x]
-    is whole on each device of a set and [w] is cut along axis 0 across them.
+    {b Placement.} A cotangent lies where the transposed operations put it, as
+    nx routes them ({!Nx.section-routing}): at its array's placement where every
+    value it meets lies there, and otherwise at the union of their cuts. A
+    {!Nx.place}'s cotangent is moved back to its operand's placement. So
+    [grad' (fun x -> Nx.sum (Nx.mul x w)) x] lies cut along axis 0 where [x] is
+    whole on each device of a set and [w] is cut along axis 0 across them. *)
+
+(** {2:kinks Kinks and factorisations}
 
     {b Kinks.} Where an operation has no derivative: [Nx.abs] passes the tangent
     at [0.] and [-0.]; where the operands of [Nx.maximum] or [Nx.minimum] tie,
@@ -118,26 +218,9 @@
     orthogonal to it, the left one carrying the change of phase that keeps
     [a = u diag(s) vh]. A factorisation's values alone, as
     [Nx.svd ~vectors:false]'s, take their tangents from the vectors the full
-    routine computes.
+    routine computes. *)
 
-    {b Reads.} {!Nx.item} of a value a differentiation tracks reads its
-    primal, so an OCaml [if] on it differentiates the path taken. A traced
-    function that captures the value reads it so too, and takes that path
-    wherever its program runs: a loop's step at every step. A custom rule's
-    read is not a use its construct refuses. Where a {!remat} or a {!jit} lies
-    between the read and the differentiation, it stages the read, which
-    raises.
-
-    {b Nesting.} Each differentiation tracks the values of its own function
-    alone: in
-    [jvp' (fun x -> Nx.mul x (snd (jvp' (fun y -> Nx.add x y) one one))) one
-     one], the inner tangent is a constant to the outer differentiation, and the
-    result's tangent is [1].
-
-    {b Derivatives are fresh.} A tangent, a gradient and a pullback's result are
-    values of their own, in C order from the start of their memory, never a view
-    of an argument or of the movement their computation ends with. Under another
-    transformation each is that transformation's value. *)
+(** {2:forward Forward mode} *)
 
 val jvp :
   ('p, 'd) Nx.Ptree.t ->
@@ -163,7 +246,7 @@ val jvp :
 
 (** {1:special Derivatives of nx's special functions}
 
-    Rune differentiates {!Nx.erfinv}, {!Nx.erfc}, {!Nx.ndtr}, {!Nx.log_ndtr},
+    rune2 differentiates {!Nx.erfinv}, {!Nx.erfc}, {!Nx.ndtr}, {!Nx.log_ndtr},
     {!Nx.ndtri}, {!Nx.lgamma}, {!Nx.digamma}, {!Nx.lbeta}, {!Nx.i0e}, {!Nx.i1e},
     the incomplete gamma family ({!Nx.gammainc}, {!Nx.gammaincc}, their
     logarithms and their inverses) and the incomplete beta family
@@ -174,30 +257,36 @@ val jvp :
     finite, which leaves out such points as {!Nx.erfinv} at [±1] and {!Nx.ndtri}
     at [0] and [1]. At [±0], {!Nx.i0e}'s derivative is its right-hand one, [-1];
     {!Nx.i1e}'s is [1/2]. [ε] is the distance from 1 to the next float of the
-    dtype.
+    dtype. The budgets of the first derivatives are:
 
-    {t
-      | Function                                             | First derivative                                                                                                                  |
-      |------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
-      | {!Nx.erfinv}                                         | 64 ulps                                                                                                                           |
-      | {!Nx.erfc}                                           | 128 ulps                                                                                                                          |
-      | {!Nx.ndtr}                                           | 256 ulps                                                                                                                          |
-      | {!Nx.log_ndtr}                                       | 512 ulps                                                                                                                          |
-      | {!Nx.ndtri}                                          | 64 ulps                                                                                                                           |
-      | {!Nx.lgamma}                                         | for [x > 0], 256 ulps, or [256ε] absolutely where below 1; below 0, 256 ulps or [256ε (1 + |ψ(1 - x)| + |π cot (πx)|)] absolutely |
-      | {!Nx.digamma}                                        | for [x > 0], 256 ulps; below 0, 256 ulps or [256ε (1 + ψ'(1 - x) + π² / sin² (πx))] absolutely                                    |
-      | {!Nx.lbeta}, in either argument                      | 4096 ulps, or [8192ε] absolutely where below 1                                                                                    |
-      | {!Nx.i0e}                                            | 128 ulps                                                                                                                          |
-      | {!Nx.i1e}                                            | 128 ulps, or [128ε] absolutely for [1 ≤ |x| ≤ 2], about its zero at [±1.545]                                                      |
-      | {!Nx.gammainc}, {!Nx.gammaincc}, in [x]              | [512 (1 + |log f|) + 64] ulps                                                                                                     |
-      | {!Nx.log_gammainc}, {!Nx.log_gammaincc}, in [x]      | 256 ulps, or [256ε] absolutely where below 1                                                                                      |
-      | the four, in [a]                                     | [2^-40 (1 + |log f|)] relative at [float64], [2^-16 (1 + |log f|)] at [float32]                                                   |
-      | {!Nx.gammaincinv}, {!Nx.gammainccinv}, in [p] or [q] | [64 + 16κ (32 (1 + |log p|) + 4)] ulps, [q] in place of [p] for {!Nx.gammainccinv}                                                |
-      | the two, in [a]                                      | [2^-40] relative at [float64], [2^-16] at [float32]                                                                               |
-      | {!Nx.betainc}, {!Nx.betaincc}, in [x]                | [1024 (1 + |log f|) + 64] ulps                                                                                                    |
-      | {!Nx.log_betainc}, {!Nx.log_betaincc}, in [x]        | 512 ulps, or [512ε] absolutely where below 1                                                                                      |
-      | the four, in [a] or [b]                              | [2^-40 (1 + |log f|)] relative at [float64], [2^-16 (1 + |log f|)] at [float32]                                                   |
-    }
+    - {!Nx.erfinv}: 64 ulps.
+    - {!Nx.erfc}: 128 ulps.
+    - {!Nx.ndtr}: 256 ulps.
+    - {!Nx.log_ndtr}: 512 ulps.
+    - {!Nx.ndtri}: 64 ulps.
+    - {!Nx.lgamma}: for [x > 0], 256 ulps, or [256ε] absolutely where below 1;
+      below 0, 256 ulps or [256ε (1 + |ψ(1 - x)| + |π cot (πx)|)] absolutely.
+    - {!Nx.digamma}: for [x > 0], 256 ulps; below 0, 256 ulps or
+      [256ε (1 + ψ'(1 - x) + π² / sin² (πx))] absolutely.
+    - {!Nx.lbeta}, in either argument: 4096 ulps, or [8192ε] absolutely where
+      below 1.
+    - {!Nx.i0e}: 128 ulps.
+    - {!Nx.i1e}: 128 ulps, or [128ε] absolutely for [1 ≤ |x| ≤ 2], about its
+      zero at [±1.545].
+    - {!Nx.gammainc}, {!Nx.gammaincc}, in [x]: [512 (1 + |log f|) + 64] ulps.
+    - {!Nx.log_gammainc}, {!Nx.log_gammaincc}, in [x]: 256 ulps, or [256ε]
+      absolutely where below 1.
+    - The four, in [a]: [2^-40 (1 + |log f|)] relative at [float64],
+      [2^-16 (1 + |log f|)] at [float32].
+    - {!Nx.gammaincinv}, {!Nx.gammainccinv}, in [p] or [q]:
+      [64 + 16κ (32 (1 + |log p|) + 4)] ulps, [q] in place of [p] for
+      {!Nx.gammainccinv}.
+    - The two, in [a]: [2^-40] relative at [float64], [2^-16] at [float32].
+    - {!Nx.betainc}, {!Nx.betaincc}, in [x]: [1024 (1 + |log f|) + 64] ulps.
+    - {!Nx.log_betainc}, {!Nx.log_betaincc}, in [x]: 512 ulps, or [512ε]
+      absolutely where below 1.
+    - The four, in [a] or [b]: [2^-40 (1 + |log f|)] relative at [float64],
+      [2^-16 (1 + |log f|)] at [float32].
 
     [f] is the smaller of [P] and [Q], or of [I_x(a, b)] and its complement: a
     tail and its complement share one derivative up to sign, computed from the
@@ -316,8 +405,8 @@ val linear_transpose :
     dropped. The cotangent of an integer or boolean array is zero.
 
     Raises [Invalid_argument] as {!vjp}'s pullback does for its argument, and,
-    when the transpose is applied, naming an operation of [f] that is not linear
-    in its argument, as in
+    when the transpose is applied, for an {!iterate} over the argument and
+    naming an operation of [f] that is not linear in its argument, as in
     ["Rune.linear_transpose: Sin is not linear in the function's argument"]. *)
 
 val check_grads :
@@ -405,9 +494,11 @@ val custom_jvp :
     of [softplus] below is [Nx.sigmoid x] whatever [stable] computes.
 
     {[
+    let stable x = Nx.Infix.(Nx.maximum_s x 0. + Nx.log1p (Nx.exp (-Nx.abs x)))
+
     let softplus =
-      Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
-          (stable x, fun dx -> Nx.mul (Nx.sigmoid x) dx))
+      Rune2.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+          (stable x, fun dx -> Nx.Infix.(Nx.sigmoid x * dx)))
     ]}
 
     Where the result has no float or complex array, reverse mode does not apply
@@ -437,7 +528,7 @@ val custom_vjp :
 
     {[
     let clip_grad c =
-      Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+      Rune2.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
           (x, fun g -> Nx.clamp ~min:(-.c) ~max:c g))
     ]}
 
@@ -470,18 +561,18 @@ val custom_transpose :
 
     {[
     let solve =
-      Rune.custom_jvp
+      Rune2.custom_jvp
         Nx.Ptree.(pair tensor tensor)
         Nx.Ptree.tensor
         (fun (a, b) ->
           let x = Nx.solve a b in
           let along v =
-            Rune.custom_transpose Nx.Ptree.tensor Nx.Ptree.tensor
+            Rune2.custom_transpose Nx.Ptree.tensor Nx.Ptree.tensor
               (fun v -> Nx.solve a v)
               ~transpose:(fun w -> Nx.solve (Nx.matrix_transpose a) w)
               v
           in
-          (x, fun (da, db) -> along (Nx.sub db (Nx.matmul da x))))
+          (x, fun (da, db) -> along Nx.Infix.(db - Nx.matmul da x)))
     ]}
 
     [f] and [transpose] are traced at the call, apart. A differentiation applies
@@ -540,7 +631,8 @@ val check_transpose :
     A map's lanes are named by an axis, so that code inside nested maps reads
     the lanes of the map it names: {!lanes} gathers every lane's value and
     {!lane_index} gives the calling lane's position. An inner map of the same
-    name hides an outer one, and a map without a name is read by neither. *)
+    name hides an outer one. A map applied without [~axis] has a fresh name, so
+    no code reads its lanes. *)
 
 type axis
 (** The type for names of maps. *)
@@ -589,36 +681,38 @@ val lane_index : axis -> ('v, 's, 'd) Nx.t -> 'd Nx.int32_t
 
     Raises [Invalid_argument] with no map named [a] around the call. *)
 
-(** {1:totals Totals} *)
+(** {1:totals Totals}
 
-(** Write-only sums.
-
-    A total is a sum that code anywhere inside a function adds to and that the
-    caller reads when the function returns: {!Total.collect}[ t ~zero f] is
-    [f ()] with [zero] plus the additions to [t] that reach it. Nothing reads a
-    total before its [collect] returns, so an addition never changes a value the
-    function computes, and with no [collect] of [t] open it does nothing.
+    A {e total} is a write-only sum, which code anywhere inside a function adds
+    to and the caller reads when the function returns:
+    {!Total.collect}[ t ~zero f] is [f ()] with [zero] plus the additions to [t]
+    that reach it. Nothing reads a total before its [collect] returns, so an
+    addition never changes a value the function computes, and with no [collect]
+    of [t] open it does nothing.
 
     An addition reaches the innermost open [collect] of its total around the
-    call, once per execution of the code that makes it. The additions a traced
-    function makes reach it when the construct that traced the function returns,
-    so a construct that raises adds none: a {!jit} adds its function's additions
-    once per call, as the call returns. An addition of another shape than its
-    [collect]'s zero raises where it is made, inside a traced function as the
-    function is traced. A step of {!scan} or {!iterate},
-    and an [until] once per test, makes its additions once per step. A construct
-    chains each total's additions in the order they are made, starting from the
-    running value of the [collect] they reach, which the chain's end replaces as
-    the construct returns, at any depth: a loop inside another loop's step, a
-    {!remat} or a custom rule in a step, and a {!jit}, which computes the chain
-    in its program. So the total is the one the additions give made in turn, as
-    written out, under every differentiation too. A construct that makes no
-    addition leaves a running value as it is. Inside a {!vmap}, each lane makes
-    the additions of the code it runs: a [collect] inside the map receives its
-    lane's, and one outside it receives, as one addition, their sum over the
-    lanes as {!Nx.sum} computes it along the stacked axis, or nothing from a map
-    of no lane; a construct inside the map chains its additions there from an
-    identity that changes no sum (a negative zero). *)
+    call, once per execution of the code that makes it. A [collect]'s
+    {e running value} is its [zero] plus the additions that have reached it so
+    far. The additions a traced function makes reach it when the construct that
+    traced the function returns, so a construct that raises adds none: a {!jit}
+    adds its function's additions once per call, as the call returns. An
+    addition of another shape than its [collect]'s zero raises where it is made,
+    inside a traced function as the function is traced. A step of {!scan} or
+    {!iterate}, and an [until] once per test, makes its additions once per step.
+    A construct adds its additions to the running value in the order they are
+    made, at any depth: a loop inside another loop's step, a {!remat} or a
+    custom rule in a step, and a {!jit}, which computes the sums in its program.
+    So the total equals the sum of the same additions made one after another,
+    under every differentiation too. Under a differentiation an addition adds
+    its value's primal. A construct that makes no addition leaves a running
+    value as it is. Inside a {!vmap}, each lane makes the additions of the code
+    it runs: a [collect] inside the map receives its lane's, and one outside it
+    receives, as one addition, their sum over the lanes as {!Nx.sum} computes it
+    along the stacked axis, or nothing from a map of no lane; a construct inside
+    the map sums its additions there starting from an identity that changes no
+    sum (a negative zero). *)
+
+(** Write-only sums. *)
 module Total : sig
   type ('v, 's, 'd) t
   (** The type for totals of [('v, 's, 'd) Nx.t] values. *)
@@ -707,7 +801,40 @@ module Probe : sig
       differentiation, where a construct could be answered outside it. *)
 end
 
-(** {1:loops Loops} *)
+(** {1:loops Loops}
+
+    A loop applies a {e step} [f] to a {e carry}, a value of structure [c], from
+    [init]. A {!scan} passes each step a row of its [xs] as well and stacks the
+    outputs the steps return, and an {!iterate} runs until a test holds. The
+    step is traced once, at the call, over stand-ins of [init]'s arrays and of a
+    row's ({!section-tracing}). The carry the step returns must have the
+    received carry's {!Nx.Ptree.val-visits}, dtypes and shapes, and lies where
+    the step returns it.
+
+    A transformation of a loop is a loop of its step's transformation, whose
+    carry gains a tangent, under {!jvp}, or lanes, under {!vmap}, only for the
+    carry arrays that have one at the call or that a step gives one. Reverse
+    mode runs the loop once forward, keeping of each step the values its
+    tangent's operations read (of an elementwise function computed in one loop,
+    its operands) and none of the rows' or captures' own, then runs the step's
+    transpose in reverse. A captured array's cotangent is the sum over the steps
+    of each step's, added in reverse order of the steps.
+
+    {b Iterates.} The derivative of an {!iterate} is that of the steps taken;
+    its test has none. Where the loop runs at the call and reads no value of
+    another transformation, reverse mode keeps the steps taken. Inside a traced
+    function ({!jit}, a {!scan}'s step, a {!remat}), a map, or forward mode
+    around it, it keeps room for [max] steps and transposes only the steps
+    taken, but a value the step captures receives a zero cotangent where the
+    loop takes no step, NaN where that zero meets an infinite partial
+    derivative.
+
+    Under {!vmap}, where the test depends on the lanes, each lane stops on its
+    own test, and the loop runs until the last lane stops. A lane that has
+    stopped keeps its carry bit for bit and is held
+    ({{!section-maps}held lanes}) on the step of its donor, the first lane still
+    running, and its row of every array the step captures with lanes. Where the
+    test does not depend on the lanes, they stop together. *)
 
 val scan :
   ('c, 'd) Nx.Ptree.t ->
@@ -718,32 +845,18 @@ val scan :
   'x ->
   'c * 'y
 (** [scan c x y ~f ~init xs] folds the step [f] over the rows of [xs], a value
-    of structure [x]: every array of [xs] has the same leading length [n], and
-    step [i] passes [f] row [i] of every array. [f carry row] returns the next
-    carry, of structure [c], and the step's outputs, of structure [y]; the
-    result is the final carry and the outputs, each array stacked along a new
-    axis 0, where [f] returns them. The final carry lies where [f] returns it.
-    With [n = 0] the result is [init] and outputs of leading length [0].
-
-    [f] is traced once, at the call, over stand-ins of [init]'s arrays and of
-    [xs]'s arrays without axis 0.
-
-    A transformation of a scan is a scan of its step's transformation, whose
-    carry gains a tangent, under {!jvp}, or lanes, under {!vmap}, only for the
-    carry arrays that have one at the call or that a step gives one. Reverse
-    mode runs the scan once forward, keeping of each step the values its
-    tangent's operations read (of an elementwise function computed in one loop,
-    its operands) and none of the rows' or captures' own, then runs the step's
-    transpose over the rows in reverse. A row's cotangent is stacked like the
-    outputs, and a captured array's is the sum over the steps of each step's,
-    added in reverse order of the steps.
+    of structure [x] whose arrays share a leading length [n]: step [i] passes
+    [f] row [i] of every array. [f carry row] returns the next carry and the
+    step's outputs, of structure [y]. The result is the final carry and the
+    outputs, each array stacked along a new axis 0 and lying where [f] returns
+    it. With [n = 0] it is [init] and outputs of leading length [0]. Under
+    reverse mode a row's cotangent is stacked as the outputs are.
 
     Raises [Invalid_argument] if [xs] has no array
     (["Rune.scan: xs has no leaf"]), a 0-d array, or arrays of different leading
     lengths, naming their paths (["Rune.scan: xs: 1: 3 rows, 0: 2"]), and, at
-    the trace, if the carry [f] returns differs from the one it received in its
-    {!Nx.Ptree.val-visits}, dtypes or shapes, naming the first path where they
-    differ, as in
+    the trace, if the carry [f] returns differs from the one it received, naming
+    the first path where they differ, as in
     ["Rune.scan: 0: shape [3] in the carry the step returned, [2] in the carry
      it received"]. *)
 
@@ -754,36 +867,18 @@ val iterate :
   f:('c -> 'c) ->
   'c ->
   'c
-(** [iterate c ~max ~until ~f init] applies the step [f] to a carry of structure
-    [c], from [init], until [until carry] holds, and returns that carry. [until]
-    returns one boolean and is tested before each step, so an [init] that
-    satisfies it is returned unchanged. [f] and [until] are traced at the call,
-    [f] as {!scan}'s step is.
-
-    {b Derivatives.} The derivative is that of the steps taken; [until] has
-    none. Reverse mode runs the loop forward, keeping of each step the values
-    its tangent's operations read, then the steps' transposes in reverse. It
-    keeps the steps taken where the loop runs at the call, the values it reads
-    no other transformation's. Inside a traced function ({!jit}, a {!scan}'s
-    step, a {!remat}), a map, or forward mode around it, it keeps room for [max]
-    steps and transposes only the steps taken, but a value the step captures
-    receives a zero cotangent where the loop takes no step, NaN where that zero
-    meets an infinite partial derivative.
-
-    {b Maps.} Under {!vmap}, where [until] depends on the lanes, each lane stops
-    on its own [until], and the loop runs until the last lane stops. A lane that
-    has stopped keeps its carry bit for bit and is held
-    ({{!section-maps}held lanes}) on the step of its donor, the first lane still
-    running, and its row of every array the step captures with lanes. Where
-    [until] does not depend on the lanes, they stop together. The error at [max]
-    names the first lane still running, as in
-    ["Rune.iterate: until is still false after max = 50 steps, in lane 3"].
+(** [iterate c ~max ~until ~f init] applies the step [f] to the carry, from
+    [init], until [until carry] holds, and returns that carry. [until] returns
+    one boolean and is tested before each step, so an [init] that satisfies it
+    is returned unchanged. [until] is traced as [f] is.
 
     Raises [Invalid_argument] if [max < 0]
     (["Rune.iterate: max = -1 is negative"]), if [until] returns other than one
     element, at the trace if [f]'s carry differs from the one it received as
     {!scan} says, and if [until] is still false after [max] steps
-    (["Rune.iterate: until is still false after max = 50 steps"]). *)
+    (["Rune.iterate: until is still false after max = 50 steps"]), naming under
+    a map the first lane still running
+    (["Rune.iterate: until is still false after max = 50 steps, in lane 3"]). *)
 
 (** {1:branches Branches} *)
 
@@ -794,11 +889,12 @@ val switch : ('b, 'd) Nx.Ptree.t -> 'd Nx.int32_t -> (unit -> 'b) list -> 'b
     captures included, so a branch not taken computes nothing: no work, no
     check, no addition to a {!Total}, no NaN reaching a value or a derivative.
     Each branch's code runs once per call; {!Nx.item} inside one raises. Outside
-    every transformation and construct [switch] reads [i], a wait on its set.
+    every construct [switch] reads [i], a wait on its device set
+    ({!Nx.section-devices}).
 
     {[
     let safe_log x =
-      Rune.cond' (Nx.greater_s x 0.) (fun () -> Nx.log x) (fun () -> x)
+      Rune2.cond' (Nx.greater_s x 0.) (fun () -> Nx.log x) (fun () -> x)
     ]}
 
     The derivative is the taken branch's, [i] having none, at a boundary too:
@@ -813,7 +909,7 @@ val switch : ('b, 'd) Nx.Ptree.t -> 'd Nx.int32_t -> (unit -> 'b) list -> 'b
 
     Raises [Invalid_argument] if [branches] is empty, if [i] is not 0-d, at the
     call if two branches' results differ in their visits, dtypes, shapes or
-    sets, naming the first path where they differ, as in
+    device sets, naming the first path where they differ, as in
     ["Rune.switch: 0: shape [3] in branch 1, [2] in branch 0"], and if [i] is
     outside [0 .. n-1], as in ["Rune.switch: index 3 outside 0 .. 2"], naming
     the lane under a map. *)
@@ -824,7 +920,48 @@ val cond :
     not, as {!switch} on [p]. A NaN compares false:
     [cond b (Nx.greater_s x 0.) t f] takes [f] at NaN and at [0.]. *)
 
-(** {1:roots Roots} *)
+(** {1:roots Roots}
+
+    A {!root} states that the value its [solve] returns is a zero of a
+    [residual], and differentiates that statement. Under differentiation the
+    result's tangent is the [u] with [J u + r = 0], [J] the derivative of
+    [residual] at the result and [r] the tangent of [residual] there with the
+    result held: every tracked value [residual] captures contributes to [r]. The
+    derivative is taken at the returned point, whether or not [residual]
+    vanishes there. [solve] has no derivative: a tracked value it reads is its
+    value alone.
+
+    [solve], [residual] and [linear_solve] are traced at the call: {!Nx.item} of
+    a value [residual] or [linear_solve] computes from its argument raises.
+    [solve] stages every operation it applies ({!section-tracing}), over the
+    values it captures detached, so {!Nx.item} inside it of a value a
+    transformation around tracks raises.
+
+    {b Linear solves.} [linear_solve op b] returns a [v] with [op v = b] for the
+    linear [op]. It is traced once, against an abstract [op], which a derivative
+    fills in with [J], and reverse mode with [J]'s transpose: the solve is
+    linear in [b], and its transpose solves the transposed system. It may apply
+    [op] under {!jvp}, {!grad} or {!val-vmap} opened inside it, as in
+    [Nx.solve (Rune2.jacfwd' op b) b], but not under a {!jit}, whose function
+    may not capture [op]'s stand-ins. Without it, a derivative builds [J]'s
+    matrix, its columns [J] of the unit vectors in one map, and solves it with
+    {!Nx.solve}, which suits small systems; the arrays of [x] must then share a
+    dtype. A complex [J] need only be real-linear: its matrix is then the real
+    system's over the real and imaginary parts. Under {!val-vmap}, each lane
+    solves its own system: [op] gives each lane its own product, whatever maps
+    [linear_solve] opens.
+
+    The derivative of the solve itself, along [J]'s dependence on the solution
+    and the values [residual] captures, is the solve of the system's derivative:
+    of [v = S b], [S (db - dJ v)]. A derivative never differentiates
+    [linear_solve]'s code. So a second derivative solves twice more, whatever
+    [linear_solve] iterates; a tracked value [linear_solve] captures has no
+    derivative. With the default linear solve, a singular [J] at the result, as
+    {!Nx.solve} defines it, gives a NaN derivative.
+
+    Additions to a {!Total} that [solve] makes count once per call; those of
+    [residual] and [linear_solve], which only derivatives evaluate, are dropped.
+*)
 
 val root :
   ?linear_solve:(('x -> 'x) -> 'x -> 'x) ->
@@ -833,51 +970,20 @@ val root :
   (unit -> 'x) ->
   'x
 (** [root x ~residual solve] is [solve ()], a value of structure [x] stated to
-    be a zero of [residual]. The system is square: [residual]'s result has [x]'s
-    structure, dtypes and shapes.
+    be a zero of [residual]. The system must be square: [residual]'s result has
+    [x]'s structure, dtypes and shapes.
 
     {[
-    (* [x] such that [a x = b], found by conjugate gradients *)
-    let solve_spd a b =
-      Rune.root Nx.Ptree.tensor ~linear_solve:cg
-        ~residual:(fun x -> Nx.sub (Nx.matmul a x) b)
-        (fun () -> cg (Nx.matmul a) b)
+    (* The square root of [a] by Newton's method, whose derivative [1 / (2 sqrt
+       a)] comes from the residual *)
+    let sqrt_newton a =
+      let residual x = Nx.Infix.((x * x) - a) in
+      Rune2.root Nx.Ptree.tensor ~residual (fun () ->
+          Rune2.iterate' ~max:50
+            ~until:(fun x -> Nx.all (Nx.less_s (Nx.abs (residual x)) 1e-12))
+            ~f:(fun x -> Nx.Infix.((x + (a / x)) /$ 2.))
+            a)
     ]}
-
-    Under differentiation the result's tangent is the [u] with [J u + r = 0],
-    [J] the derivative of [residual] at the result and [r] the tangent of
-    [residual] there with the result held: every tracked value [residual]
-    captures contributes to [r]. The derivative is taken at the returned point,
-    whether or not [residual] vanishes there. [solve] has no derivative: a
-    tracked value it reads is its value alone.
-
-    [solve], [residual] and [linear_solve] are traced at the call: {!Nx.item} of
-    a value [residual] or [linear_solve] computes from its argument raises.
-    [solve] stages every operation it applies, as a {!remat}'s function does,
-    over the values it captures detached; {!Nx.item} inside it of a value a
-    transformation around tracks raises. [linear_solve op b] returns a [v] with
-    [op v = b] for the linear [op]; it is traced once, against an abstract [op],
-    which a derivative fills in with [J], and reverse mode with [J]'s transpose:
-    the solve is linear in [b], and its transpose solves the transposed system.
-    It may apply [op] under {!jvp}, {!grad} or {!val-vmap} opened inside it, as
-    in [Nx.solve (Rune.jacfwd' op b) b], but not under a {!jit}, whose function
-    may not capture [op]'s stand-ins. Without it, a derivative builds [J]'s
-    matrix, its columns [J] of the unit vectors in one map, and solves it with
-    {!Nx.solve}, which suits small systems; the arrays of [x] then share a
-    dtype. A complex [J] need only be real-linear: its matrix is then the real
-    system's over the real and imaginary parts. Under {!val-vmap}, each lane
-    solves its own system: [op] gives each lane its own product, whatever maps
-    [linear_solve] opens.
-
-    The derivative of the solve itself, along [J]'s dependence on the solution
-    and the values [residual] captures, is the solve of the system's derivative,
-    never the derivative of [linear_solve]'s code: of [v = S b],
-    [S (db - dJ v)]. So a second derivative solves twice more, whatever
-    [linear_solve] iterates; a tracked value [linear_solve] captures has no
-    derivative. Additions to a {!Total} that [solve] makes count once per call;
-    those of [residual] and [linear_solve], which only derivatives evaluate, are
-    dropped. With the default linear solve, a singular [J] at the result, as
-    {!Nx.solve} defines it, gives a NaN derivative.
 
     Raises [Invalid_argument] at the call if [residual]'s result differs from
     the solution, naming the first path where they differ, as in
@@ -905,120 +1011,339 @@ val remat : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
 
     Raises [Invalid_argument] when applied to [s] if [s] has no argument. *)
 
-(** {1:jit Compilation} *)
+(** {1:jit Compilation}
+
+    A {e compiled function} [jit s f] runs [f] as a program compiled through
+    tolk, raven's compiler. A call traces [f] over stand-ins of its arguments'
+    arrays, staging every operation [f] applies ({!section-tracing}), and runs
+    the program compiled. The compiled function keeps the programs of its calls,
+    one per key, and compiles each once per variant, so a call that finds its
+    key and variant runs the compiled program without tracing [f] or compiling.
+*)
 
 val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
-(** [jit s f] is [f] compiled, [s] its signature, one structure per argument and
-    one for the result. A call traces [f] over stand-ins of its arguments'
-    arrays into a program and runs it compiled. Every operation [f] applies is
-    staged, those over values [f] captures included, which the program reads as
-    they are when it is traced.
-
-    {b Keys.} [jit s f] keeps a program per {e key}, the abstract value of a
-    call's arguments: their {!Nx.Ptree.val-visits} and reports, the static data
-    of a call, each array's dtype, shape and placement, and the number of lanes
-    of each map whose name the program reads through {!lanes} or {!lane_index};
-    where the running value of a {!Total} [f] adds to lies, where a call finds
-    it on another set than the trace without it took it; and whether a
-    {!Probe.collect} of each probe [f] emitted to is open. A call retraces
-    exactly when its key is new to [jit s f], over stand-ins in C order: [f]'s
-    code, and its side effects, run once per key. A call that raises while it
-    traces keeps no program for its key. Calls on several domains share the
-    programs; a key being traced makes its other callers wait, but on the domain
-    that traces it, where a call traces again for itself. With
-    [RUNE_JIT_DEBUG=1] in the environment, each retrace prints on standard error
-    the first difference between its key and the previous call's.
-
-    {b Compiled programs.} A program compiles the first time a call runs it,
-    then once per {e variant}: each argument's strides and offset from where its
-    16 bytes of memory start, which arguments the caller donated, and tolk's
-    settings that shape what it compiles, the search widths [BEAM] and
-    [JITBEAM] among them. A view thus reads in
-    place, without a copy, from a program compiled for its layout. Each result
-    array is fresh: memory of its own in C order, at the placement eager
-    computation gives it.
-
-    {b Donation.} A call consumes the donated handles among its arguments
-    ({!Nx.donate}), as one operation consumes its operands: their donors die
-    when the call claims them, and a later use of one raises [Invalid_argument]
-    naming [Rune.jit]. A result may take a donated argument's memory instead of
-    fresh memory: where it has the argument's dtype, element count and
-    placement, reads it only at each element's own index (through elementwise
-    functions, casts and bitcasts that keep the width, reshapes in C order,
-    copies, placements, a scatter's target or a contraction's [init]) or is the
-    argument itself, and no other result or check reads it; or where it reads no
-    donated argument and nothing reads that one. A donor whose memory another
-    value reads, or that is a view off 16 bytes or out of C order, lends
-    nothing, and its result is fresh. Each donated argument lends to one result
-    at most, the results of a scatter first. Its values are the same either way.
-
-    {b Checks.} A check the function makes ({!Nx.check}) on the host is computed
-    with the program, and the first that fails, in the order the function made
-    them, raises its exception when the call returns, with the data at its first
-    failing index, as eagerly; the call's results are then lost. A program with
-    a check on another set, which raises at a later wait there, is evaluated.
-
-    {b Numerics.} A compiled call gives eager's bits, but for a NaN's sign and
-    payload, where both compute exactly: movements, selections, comparisons,
-    casts, extremes, integer and boolean arithmetic, and the correctly rounded
-    float operations of IEEE 754 ([Nx.add], [Nx.sub], [Nx.mul], [Nx.div],
-    [Nx.sqrt]). Another float function is within a bound in ulps of the
-    correctly rounded result, from 1 to 21 by function at [float32] and
-    [float64] (log 1, exp 9, sin 4, tanh 18, expm1 21; on the host exp, sin and
-    cos 2), and a power's bound grows with its exponent; special values are
-    exact. A float sum, product or contraction adds its terms in an order the
-    compiler chooses, a sum of [n] terms within [γ(n - 1) Σ|x|] of the exact
-    one, [γ(k) = k u / (1 - k u)]. Narrow floats compute at [float32] and round
-    once.
-
-    {b Transformations.} Under {!jvp}, {!vmap} and reverse mode, a call is a
-    call of a program derived from its key's: under {!jvp} the program's
-    derivative, under {!vmap} its map, and under reverse mode the part that
-    reads no tangent, which computes at the call and returns the values the
-    rest reads, and the rest, linear in the tangents, which the backward pass
-    transposes into one more program.
-    Each derived program compiles as the key's does. A {e derivation} is a
-    value: its kind, which arguments have a tangent or lanes, their dtypes,
-    shapes and placements, the number of lanes of each map the program reads,
-    and the name of the map it is derived under where it reads that name. A
-    call keeps one program per derivation of its key's, so two calls share a
-    derived program only when their derivations are equal, and [f] runs once
-    per key, whatever is derived from it. Inside an enclosing [jit], a
-    call is inlined: its program's operations, or its derived program's, are
-    staged there. Inside a {!scan}'s or an {!iterate}'s step, a {!remat}'s
-    function or a custom rule, a call stays one: evaluated, it runs compiled,
-    so the construct gives its function's bits.
-
-    {b Loops and rules.} A {!scan} or an {!iterate} compiles as one loop of the
-    program, its step compiled once whatever its number of steps: each step
-    reads its row, writes its outputs' row, and updates the carry in its own
-    storage, rows a copy where theirs do not lie 16 bytes apart. A check in a
-    step raises, once the call returns, the first failure of the first step
-    that fails, as the steps written out would, and an {!iterate} stops at the
-    first failure. A loop a derivative or a map makes of an {!iterate} is
-    evaluated: one that runs a count of its rows, stacks its steps or holds
-    lanes apart. A {!switch} compiles as one loop per branch of at most one
-    trip, which runs where the index names its branch, so a branch not taken
-    computes nothing. A {!remat}, a {!custom_jvp}, a {!custom_vjp} and a
-    {!custom_transpose} compile as their function's operations, the program's
-    own.
-
-    {b Probes.} A call offers its function's emissions ({!Probe}) once it
-    returns. A compiled program returns them as more results: those its function
-    makes, and those of a {!scan}'s step, a call, a {!remat} and a custom rule
-    inside it, a scan's stacked over its rows. A program whose emissions lie in
-    another construct, or that both emits and checks, is evaluated, so that a
-    failing check keeps the offers made before it.
-
-    {b Evaluated programs.} A program that holds a map's {!lanes} or
-    {!lane_index}, an emission as {b Probes} states, an operation the compiler
-    does not lower, values on several devices, or one tolk cannot compile, runs
-    as its operations evaluated by nx, giving eager's values; each result array
-    is fresh, memory of its own, and a call with donated arguments claims them
-    first, consumes them and lends nothing.
+(** [jit s f] is [f] compiled, [s] its signature. Its results are fresh, at the
+    placement eager computation gives them ({!section-compiled}), except a
+    result that takes a donated argument's memory ({!section-donation}).
 
     Raises [Invalid_argument] when applied to [s] if [s] has no argument, and at
-    a call if [f] captures a value that another transformation traces. *)
+    a trace if [f] captures a value that another transformation tracks
+    (["Rune.jit: the function captures a value another transformation traces;
+      pass it as an argument"]). *)
+
+(** {2:keys Keys}
+
+    [jit s f] keeps a program per {e key}, the abstract value of a call's
+    arguments:
+    - their {!Nx.Ptree.val-visits}, the integers and cases their walk reports
+      included;
+    - each array's dtype, shape and placement;
+    - the number of lanes of each map whose name the program reads through
+      {!lanes} or {!lane_index};
+    - the placement of the running value of each {!Total} [f] adds to, where a
+      call finds it elsewhere than the key's first trace did;
+    - whether a {!Probe.collect} of each probe [f] emitted to is open.
+
+    Whether an argument is donated is not part of the key. A call retraces
+    exactly when its key is new to [jit s f], over stand-ins in C order, so
+    [f]'s code and its side effects run once per key. Domains share the
+    programs. A call whose key is being traced waits for that trace, except on
+    the tracing domain, where it traces again.
+
+    With the variable [RUNE_JIT_DEBUG] holding a nonzero integer in the
+    environment when rune2 is initialised, each retrace prints on standard error
+    the first difference between its key and that of the latest call that
+    returned, on any domain, and the first call to find its program or a variant
+    of it declined ({!section-evaluated}) prints why. *)
+
+(** {2:compiled Compiled programs}
+
+    A program compiles the first time a call runs it, then once per {e variant}:
+    for each argument, its strides and its offset counted from the last 16-byte
+    boundary of its buffer at or below its lowest element, the {e phase} of that
+    boundary (the number of bytes by which it lies past an address that is a
+    multiple of 16), and whether the caller donated it; together with tolk's
+    settings that shape what it compiles, the search widths [BEAM] and [JITBEAM]
+    among them, and whether tolk's [DEBUG] is 2 or more. A view thus reads in
+    place, without a copy, from a program compiled for its layout. Each result
+    that takes no donated argument's memory is fresh, at the placement eager
+    computation gives it. *)
+
+(** {2:donation Donation}
+
+    A call consumes the donated handles among its arguments
+    ({!Nx.section-moving}), as one operation consumes its operands: the values
+    they give up die once the call has checked its arguments, and a later use of
+    one raises [Invalid_argument] naming [Rune.jit]. A result may take a donated
+    argument's memory instead of fresh memory where the two have one dtype,
+    element count and placement, no other result or check reads the argument,
+    and the result either reads it only at each element's own index (through
+    elementwise functions, casts and bitcasts that keep the width, reshapes in C
+    order, copies, placements, a scatter's target or a contraction's [init]), is
+    the argument itself, or reads no donated argument at all. A donated argument
+    whose memory another value shares, or that is a view off 16 bytes or out of
+    C order, lends nothing. Each donated argument lends to one result at most,
+    the results of a scatter first. A result's values are the same either way.
+
+    A traced function reads a donated value it captures as its arrays and
+    consumes nothing: the value is lent ({!Nx.section-moving}), its memory
+    shared from then on, so its program reads that value at every evaluation. *)
+
+(** {2:checks Checks}
+
+    A check the function makes ({!Nx.check}) on the host is computed with the
+    program, and the first that fails, in the order the function made them,
+    raises its exception when the call returns, with the data at its first
+    failing index, as eagerly; the call's results are then lost. A program with
+    a check on a device other than the host, which raises at a later wait there,
+    is evaluated ({!section-evaluated}). *)
+
+(** {2:numerics Numerics}
+
+    A compiled call computes each nx function to the accuracy below, so a float
+    result may differ from eager's within it. The {e unit roundoff} [u] of a
+    float dtype is [2{^-24}] for [float32] and [2{^-53}] for [float64], that of
+    its parts for a complex one. An {e ulp} is one rank in the order of a
+    dtype's bit patterns, [-0.] and [+0.] one rank apart, and an error of [n]
+    ulps is a distance of [n] ranks from the correctly rounded result. [γ(k)] is
+    [k u / (1 - k u)]. A function is {e exact} when it gives eager's bits, a NaN
+    result's sign and payload excepted.
+
+    Moves of elements, such as {!Nx.take}, {!Nx.concatenate}, {!Nx.sort} and a
+    {!Nx.scatter} by [Set], keep a NaN's bits too. Casts, bitcasts, {!Nx.where},
+    comparisons, extremes ({!Nx.max}, {!Nx.argmax}) and integer and boolean
+    arithmetic are exact, as are {!Nx.neg}, {!Nx.abs}, {!Nx.sign}, {!Nx.floor},
+    {!Nx.ceil}, {!Nx.round}, {!Nx.trunc}, {!Nx.mod_}, {!Nx.maximum},
+    {!Nx.minimum} and IEEE 754's correctly rounded {!Nx.add}, {!Nx.sub},
+    {!Nx.mul} and {!Nx.fma}. {!Nx.div}, {!Nx.recip} and {!Nx.sqrt} are exact on
+    a device that rounds division and the square root correctly. Of the complex
+    functions, {!Nx.neg}, {!Nx.add}, {!Nx.sub}, the extremes and the comparisons
+    are exact.
+
+    A float narrower than [float32] computes at [float32] and rounds once, so
+    each real function of the table below is within one ulp of the correctly
+    rounded result there, {!Nx.pow} where its result is finite in that dtype. On
+    a device that flushes subnormals, as Metal does at [float32], a function may
+    be inexact or break its bound where an operand, a result or an intermediate
+    is below the least normal float.
+
+    {b Real functions.} Where the device computes [exp2], [log2] and [sin]
+    within 4 ulps and rounds division and the square root correctly, at the
+    default of the [TRANSCENDENTAL] setting, each function is within these ulps
+    of the correctly rounded result, to first order in [u]:
+
+    {v
+      function                      float32  float64
+      Nx.log                           1        1
+      Nx.exp2, Nx.log2, Nx.sin         4        4
+      Nx.erf                           2        3
+      Nx.atan                          2        7
+      Nx.asin, Nx.acos                 5        9
+      Nx.atan2                         6        8
+      Nx.exp, Nx.cos                   9        9
+      Nx.cosh                         10       10
+      Nx.log1p                        12       12
+      Nx.tanh                         18       18
+      Nx.tan                          19       19
+      Nx.expm1, Nx.sinh               21       21
+      Nx.pow x y                9 + 6 |y log2 |x||
+    v}
+
+    {!Nx.log} needs only correctly rounded division. On the host CPU, {!Nx.exp},
+    {!Nx.sin} and {!Nx.cos} are within 2 ulps at [float32]. Where every operand
+    is [±0.], [±inf] or a NaN, a function gives the value of C99 Annex F
+    (ISO/IEC 9899, F.9), a zero's sign included: [sin (-0.)] is [-0.] and
+    [log 0.] is [-inf]. {!Nx.pow} is [1.] where [y] is [±0.] or [x] is [1.], NaN
+    included, and where [x] is [-1.] and [y] is infinite. A function nx composes
+    from these, such as {!Nx.asinh} or {!Nx.softmax}, computes as nx composes
+    it.
+
+    {b Complex functions.} A result [z'] of exact value [z] holds a {e normwise}
+    bound [c] in the sense that [|z' - z| / |z| <= c u], to first order, for the
+    operand [x + iy] and the exponent [w]:
+
+    {v
+      function                                      c
+      Nx.mul                                        2
+      Nx.div, Nx.recip, Nx.sqrt, Nx.sign            4
+      Nx.log                                       15
+      Nx.log2                                      16
+      Nx.atan, Nx.atanh                            18
+      Nx.exp                                       20
+      Nx.asin, Nx.acos, Nx.asinh, Nx.acosh         28
+      Nx.sin, Nx.cos, Nx.sinh, Nx.cosh             33
+      Nx.tan, Nx.tanh                              77
+      Nx.exp2                                 19 + |y|
+      Nx.pow z w                       20 + 17 |w log z|
+    v}
+
+    A bound holds where the operands' parts are finite and the result's modulus
+    is normal. {!Nx.div} and {!Nx.recip} also need the parts below half the
+    greatest float and the divisor's larger part normal, and {!Nx.pow} needs
+    [|w| |log z|] below the greatest float. A NaN part and no infinite one give
+    a NaN part, except [z{^w}] at [w = 0], which is [1]. At an infinite part,
+    each part of a transcendental function's result is a NaN, an infinity, a
+    zero or finite as Annex G (G.6) gives it, an infinite part with Annex G's
+    sign. There, where no part is a NaN, {!Nx.sign} gives the direction of the
+    infinite parts, one of [±1], [±i] and [(±1 ± i) / √2], and {!Nx.recip} the
+    sorts of [(1 + 0i) / z] by Smith's division, which divides by the divisor's
+    larger part. Zeros' signs are unspecified, and so is an infinity's sign that
+    comes from a NaN part or that Annex G leaves open. {!Nx.mul}, {!Nx.div} and
+    {!Nx.pow} are unspecified at an infinite part. {!Nx.exp2} at [x = +inf] may
+    give an infinite part the wrong sign where [y ln 2] lies within a relative
+    [2u] of a non-zero multiple of [π/2].
+
+    {b Reductions.} A float reduction, scan, contraction or scatter by [Add]
+    computes in its {e accumulator}, [float32] for a narrower float, the dtype
+    otherwise, or a contraction's [acc] ({!Nx.contract}), and [u] is the
+    accumulator's. It combines terms in an order the compiler chooses and rounds
+    once into its dtype, which adds its own error. Barring overflow and
+    underflow, a result of [n] terms is within this bound of the exact one:
+
+    {v
+      function             bound
+      Nx.sum, Nx.cumsum    γ(n - 1) Σ|x|
+      Nx.prod, Nx.cumprod  relative γ(n - 1)
+      Nx.matmul, ...       γ(n + 1 + s) (|init| + Σ|a b|)
+        complex real       γ(n + 2) (|init| + Σ(|ar br| + |ai bi|))
+        complex imaginary  γ(n + 2) (|init| + Σ(|ar bi| + |ai br|))
+      Nx.scatter by Add    γ(n) (|x| + Σ|ui|)
+      Nx.combine_patches   γ(n - 1) Σ|x|
+      Nx.logsumexp r       (1.37 (n - 1) + 2E + 1 + (2L + 1) ln n) u + u|r|
+      Nx.logcumsumexp r    ((2E + 3) D + (2L + 2) ln n) u + u|r|
+      Nx.var V             (n + 4) u V + 2 n u B √V + 3 (n + 2) u B²
+    v}
+
+    A cumulative output's [n] counts the terms up to it, a contraction's its
+    products ({!Nx.matmul}, {!Nx.dot}, {!Nx.einsum}, {!Nx.contract}), and [s]
+    its operands with a block scale. A scatter adds [n] updates [ui] to [x]. [E]
+    and [L] are the ulp bounds of {!Nx.exp} and {!Nx.log},
+    [D = max 0 (2⌈log₂ n⌉ - 1)], [B = (n + 1) u M] for [M] the mean of the
+    terms' magnitudes. {!Nx.logcumsumexp}'s bound needs [n] exact in the
+    accumulator, and {!Nx.var}'s [V] precedes its [ddof] scale, which rounds
+    once more. A complex sum adds each part as a real one. A sum, product or
+    extreme with a NaN term is NaN. Terms all [-0.] sum to [+0.], or to [-0.] in
+    a scatter and {!Nx.combine_patches}. Special values are eager's, and a
+    variance is never negative.
+
+    {b Matrices.} A routine computes each matrix of a [float32] or [float64]
+    operand, of [m] rows, [n] columns and [k = min m n], to first order in [u]
+    barring overflow and underflow. [|·|] is elementwise and [‖·‖_F] the
+    Frobenius norm. [a] is the matrix read, symmetric from its triangle for
+    {!Nx.cholesky} and {!Nx.eigh}, and for {!Nx.solve_triangular} the triangle,
+    transposed under [adjoint], unit on its diagonal under [unit_diagonal]. [P]
+    is {!Nx.lu}'s permutation, its rule applied to the computed columns. For [b]
+    the dtype's bits of precision, [R] is [S] times [k - 1] for an even [k] or
+    [k] for an odd one, [0] for [k < 2], where [S = ⌈b ⌈log₂ k⌉ / 10⌉] for
+    {!Nx.eigh} and [S = ⌈b (⌈log₂ k⌉ + 1) / 10⌉] for {!Nx.svd}:
+
+    {v
+      Nx.cholesky          L Lᵀ = a + Δ, |Δ| <= γ(n + 1) |L| |Lᵀ|
+      Nx.lu                L U = P a + Δ, |Δ| <= γ(k) |L| |U|
+      Nx.solve_triangular  |a x - b| <= γ(n) |a| |x| for each column
+      Nx.qr                ‖a_j - q r_j‖₂ <= g ‖a_j‖₂ for each column,
+                           each element of qᵀ q - I at most g,
+                           g = γ(k (2m + 10))
+      Nx.eigh              each eigenvalue within γ(16 (R + n)) ‖a‖_F,
+                           ‖a - v diag w vᵀ‖_F <= g ‖a‖_F,
+                           ‖vᵀ v - I‖_F <= g,
+                           g = γ(16 (R + n) (1 + √n))
+      Nx.svd               ‖a - u diag s vh‖_F <= g ‖a‖_F,
+                           ‖uᵀ u - I‖_F <= g, ‖vh vhᵀ - I‖_F <= g,
+                           each singular value within 3 g ‖a‖_F,
+                           g = γ(8 k (p (p + 6) + 8 R)), p = max m n
+    v}
+
+    {!Nx.svd}'s bound is over [u]'s first [k] columns and [vh]'s first [k] rows,
+    and is vacuous from [k = p = 68] at [float32] and [k = p = 82313] at
+    [float64], and at a smaller [k] where [p > k]. {!Nx.cholesky}'s [Upper]
+    factor is the transpose of [Lower]'s, bit for bit, and {!Nx.qr}'s [r] has a
+    diagonal of either sign. A matrix that holds NaN or an infinity, or whose
+    iteration does not converge, makes only its own results NaN.
+
+    {b Fourier transforms.} A transform [ŷ] of [N] points in all, before
+    [norm]'s scaling, which rounds once more, has [‖ŷ - y‖₂ <= ε u √N ‖x‖₂] for
+    the exact transform [y] and the operand's norm [‖x‖₂], [√2] times that for
+    {!Nx.irfft} and {!Nx.hfft}. [ε] is the sum over [axes] of [e(n)] for an axis
+    of [n] points:
+
+    {v
+      e(n) = Σ c(p) + 15 (r - 1)   over n's r prime factors p, repeated
+      c(2) = 1
+      c(p) = (2p + 15) √p          for 2 < p <= 250
+      c(p) = (2 e(m) + 18) m / √p + (e(m) + 12) √m + 15   for p > 250
+    v}
+
+    where [m] is the least power of two at least [2p - 1], so
+    [e(m) = 16 log₂ m - 15]. A NaN or infinite point makes the results it enters
+    NaN. *)
+
+(** {2:derived Transformations of compiled calls}
+
+    Under {!jvp}, {!vmap} and reverse mode, a call is a call of a program
+    derived from its key's program. Under {!jvp} it is that program's
+    derivative, and under {!vmap} its map. Under reverse mode it is the part
+    that reads no tangent, which computes at the call and returns the values the
+    rest reads; the backward pass transposes the rest, linear in the tangents,
+    into one more program. Each derived program compiles as the key's does. A
+    {e derivation} is a value: its kind, which arguments have a tangent or
+    lanes, their dtypes, shapes and placements, the number of lanes of each map
+    the program reads, and the name of the map it is derived under where it
+    reads that name. A call keeps one program per derivation of its key's, so
+    two calls share a derived program only when their derivations are equal, and
+    [f] runs once per key, whatever is derived from it.
+
+    Inside an enclosing [jit], a call is inlined: its program's operations, or
+    its derived program's, are staged there. Inside a {!scan}'s or an
+    {!iterate}'s step, a {!remat}'s function or a custom rule, the call stays a
+    compiled call of its own, which computes the bits it computes outside the
+    construct. *)
+
+(** {2:rules Loops and rules}
+
+    A {!scan} or an {!iterate} compiles as one loop of the program, its step
+    compiled once whatever its number of steps: each step reads its row, writes
+    its outputs' row, and updates the carry in its own storage. Where the rows
+    of an array do not lie a multiple of 16 bytes apart, the step reads them
+    from a copy whose rows do. A check in a step raises, once the call returns,
+    the first failure of the first step that fails, as the steps written out
+    would, and an {!iterate} stops at the first failure. An {!iterate}'s
+    derivative or map is evaluated where it runs a count of rows, stacks its
+    steps or holds lanes apart. A {!switch} compiles as one loop per branch of
+    at most one trip, which runs where the index names its branch, so a branch
+    not taken computes nothing. A {!remat}, a {!custom_jvp}, a {!custom_vjp} and
+    a {!custom_transpose} compile as their function's operations, the program's
+    own. *)
+
+(** {2:emissions Emissions}
+
+    A call offers its function's emissions ({!Probe}) once it returns. A
+    compiled program returns them as more results: those its function makes, and
+    those of a {!scan}'s step, a call, a {!remat} and a custom rule inside it, a
+    scan's stacked over its rows. A program whose emissions lie in another
+    construct, or that both emits and checks, is evaluated, so that a failing
+    check keeps the offers made before it. *)
+
+(** {2:evaluated Evaluated programs}
+
+    An {e evaluated} program runs as its operations evaluated by nx, giving
+    eager's values. A program's {e device} is the one its first argument, or
+    else its first result, lies whole on. The compiler declines, and so
+    evaluates, a program that holds:
+    - a map's {!lanes} or {!lane_index}, or a {!root};
+    - an emission {!section-emissions} names as evaluated;
+    - the tangents of a {!custom_vjp}'s results, which a {!jvp} of it makes and
+      which then raise as eagerly;
+    - a loop {!section-rules} names as evaluated, or an operation the compiler
+      does not lower;
+    - a check on a device other than the host;
+    - no value, or a value with an element on a device other than the program's
+      or over several devices.
+
+    It also declines a program whose device computes nothing ({!Rig.computes}),
+    and one tolk cannot compile. An evaluated call's results are fresh, as a
+    compiled call's are, and a call with donated arguments consumes them and
+    lends nothing. *)
 
 (** {2:inspect Inspecting a trace} *)
 
@@ -1029,10 +1354,10 @@ val program :
   ('a, 'd) Nx.Ptree.t -> ('b, 'd) Nx.Ptree.t -> ('a -> 'b) -> 'a -> program
 (** [program a b f x] is the program that {!jit} traces of [f], a function of
     structure [a] to structure [b], at a call over [x], without compiling or
-    computing it: [f] runs once, over stand-ins of [x]'s arrays in C order. What
-    [f] stages from {!jvp}, a {!scan}'s step or another construct is in it, a
-    construct with the programs it carries, for reading what a function
-    computes.
+    computing it: [f] runs once, over stand-ins of [x]'s arrays in C order. The
+    program holds what [f] stages, from {!jvp}, a {!scan}'s step or another
+    construct, every construct with the programs it carries. [program] is for
+    reading what a function computes.
 
     Raises what {!jit} raises at a call that traces. *)
 
@@ -1047,11 +1372,10 @@ val pp_program : Format.formatter -> program -> unit
 val eval_shape :
   ('a, 'd) Nx.Ptree.t -> ('b, 'd) Nx.Ptree.t -> ('a -> 'b) -> 'a -> 'b
 (** [eval_shape a b f x] is [f x]'s structure with each array a stand-in of its
-    dtype, shape and placement, as {!jit} traces it, computing nothing: its
-    shape, dtype and placement answer ({!Nx.shape}, {!Nx.dtype},
-    {!Nx.placement}), and an operation on it or a read raises
-    [Invalid_argument]. An array [f] captured and returns unchanged is that
-    array.
+    dtype, shape and placement, as {!jit} traces it, computing nothing:
+    {!Nx.shape}, {!Nx.dtype} and {!Nx.placement} work on it, and an operation on
+    it or a read raises [Invalid_argument]. An array [f] captured and returns
+    unchanged is that array.
 
     Raises what {!jit} raises at a call that traces. *)
 
@@ -1163,9 +1487,9 @@ val evaluations : unit -> int
     for the suites. *)
 
 val variants : unit -> int
-(** [variants ()] is the number of compiled variants that calls on the
-    calling domain lowered and linked, or that the compiler declined, for
-    the suites. A compiled program makes one variant per layout, phase and
-    donation of its arguments and value of tolk's settings. *)
+(** [variants ()] is the number of compiled variants that calls on the calling
+    domain lowered and linked, or that the compiler declined, for the suites. A
+    compiled program makes one variant per layout, phase and donation of its
+    arguments and value of tolk's settings and its [DEBUG]. *)
 
 (**/**)
