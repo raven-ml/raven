@@ -566,10 +566,14 @@ let rule (type r) n i ~by (op : r Prim.t) : r =
 
 let operand i (Program.V x) = owned i x
 
+(* A call answers whose program names the map, a lane value read or none. *)
 let claims i axis : Program.construct -> bool = function
   | Lanes (a, x) -> Program.same_axis a axis || owned i x
   | Lane_index (a, _) -> Program.same_axis a axis
   | Add _ -> true
+  | Call { args; site; _ } ->
+      Array.exists (operand i) args
+      || List.exists (Program.same_axis axis) (Program.axes site)
   | c -> List.exists (operand i) (Program.operands c)
 
 (* Custom rules
@@ -763,15 +767,19 @@ let rec answer ~name i axis n (c : Program.construct) k =
   (* An iterate has no rule before stage 6, and evaluating it inside a trace
      would read its stop: a construct whose programs hold one runs its default,
      step by step. *)
-  | (Scan { step; _ } | Remat { body = step; _ }) when Loops.holds_iterate step
-    ->
+  | ( Scan { step; _ }
+    | Remat { body = step; _ }
+    | Call { body = step; _ } )
+    when Loops.holds_iterate step ->
       Effect.Deep.discontinue k Program.Evaluate
   | Scan { step; length; init; xs; captures; seeds } ->
       Effect.Deep.continue k
         (scan ~name i axis n step ~length ~init ~xs ~captures ~seeds)
   | Remat { body; args } ->
       Effect.Deep.continue k (remat ~name i axis n body args)
-  | Iterate _ | Call _ -> Effect.Deep.discontinue k Program.Evaluate
+  | Call { body; args; site } ->
+      Effect.Deep.continue k (call i axis n body args site)
+  | Iterate _ -> Effect.Deep.discontinue k Program.Evaluate
 
 (* A scan's map is the scan of its step's map, whose carry has lanes for each
    carry that has them at the call or gains them from the step: a fixpoint, as
@@ -897,6 +905,45 @@ and remat ~name i axis n (body : Program.t) args =
     Program.perform (Remat { body = prog; args = Array.append bargs own })
   in
   Array.mapi (fun k v -> if !laned.(k) then lane_v i v else v) r
+
+(* A call's map is the call of its program's map, as JAX batches a compiled
+   call's jaxpr: derived once per derivation at the call's site, traced as a
+   compiled function is, and compiled. The map's name enters the derivation
+   only where the program names it, so maps of other names share the program
+   otherwise. *)
+and call i axis n (body : Program.t) args site =
+  let name = Program.site_name site in
+  let la = Array.map (owned_v i) args in
+  let bargs =
+    Array.map (fun v -> if owned_v i v then batch_v i n v else v) args
+  in
+  let named = List.exists (Program.same_axis axis) (Program.axes site) in
+  let forms = Array.map Program.form bargs in
+  let no = Array.length body.outputs - Array.length body.adds in
+  let made () =
+    let laned = ref [||] in
+    let mapped vs =
+      let outs =
+        run ~name ~axis n (fun w ->
+            let out = Program.eval body (lanes_of w la vs) in
+            laned := Array.map (owned_v w) out;
+            Array.map (fun v -> if owned_v w v then batch_v w n v else v) out)
+      in
+      Array.iteri
+        (fun k (Program.Addition (t, f)) ->
+          ignore (Program.perform (Add (t, Program.cast f outs.(no + k)))))
+        body.adds;
+      Array.sub outs 0 no
+    in
+    let prog, _ = Trace.trace Jit ~name forms mapped in
+    ((prog, forms), !laned, None)
+  in
+  let derivation = Program.Vmap { lanes = la; n; named } in
+  let d = Program.derive ~map:(axis, n) site derivation forms made in
+  let r =
+    Program.perform (Call { body = d.program; args = bargs; site = d.at })
+  in
+  Array.mapi (fun k v -> if d.flags.(k) then lane_v i v else v) r
 
 (* [f]'s results' batches over the lanes of the batches [bs], in a map of this
    one's name and size. *)

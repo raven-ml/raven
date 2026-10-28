@@ -374,11 +374,6 @@ let law_jit (Test_case (dt, s, xo, yo, txo, tyo, e)) =
     outcome (fun () ->
         both (Rune.jvp pair T.tensor (fun (x, y) -> f x y) (x, y) (tx, ty)))
   in
-  let jitted =
-    let g = Rune.jit T.(tensor @-> tensor @-> returns tensor) f in
-    outcome (fun () ->
-        both (Rune.jvp pair T.tensor (fun (x, y) -> g x y) (x, y) (tx, ty)))
-  in
   (* Compiled, the derivative gives jvp's bits where every function of it is
      exact. *)
   let e' = elementwise (exact e) in
@@ -386,6 +381,11 @@ let law_jit (Test_case (dt, s, xo, yo, txo, tyo, e)) =
   let exact_eager =
     outcome (fun () ->
         both (Rune.jvp pair T.tensor (fun (x, y) -> f' x y) (x, y) (tx, ty)))
+  in
+  let jitted =
+    let g = Rune.jit T.(tensor @-> tensor @-> returns tensor) f' in
+    outcome (fun () ->
+        both (Rune.jvp pair T.tensor (fun (x, y) -> g x y) (x, y) (tx, ty)))
   in
   let staged =
     let g =
@@ -399,7 +399,9 @@ let law_jit (Test_case (dt, s, xo, yo, txo, tyo, e)) =
     outcome (fun () -> both (g x y tx ty))
   in
   cover "a refused operation" (match eager with Raised _ -> true | _ -> false);
-  equal ~msg:"jvp of jit" (outcome_t (Testable.pair bits_t bits_t)) eager jitted;
+  equal ~msg:"jvp of jit"
+    (outcome_t (Testable.pair bits_t bits_t))
+    exact_eager jitted;
   equal ~msg:"jit of jvp"
     (outcome_t (Testable.pair bits_t bits_t))
     exact_eager staged
@@ -438,23 +440,18 @@ let law_jit_any (Any_case (dt, s, xo, yo, txo, tyo, e)) =
   cover "a narrow float dtype"
     (D.is Float dt && not (D.equal dt f64 || D.equal dt Nx.float32));
   cover "an integer dtype" (D.is Signed dt || D.is Unsigned dt);
-  let f x y = eval_any x y e in
   let pair = T.(pair tensor tensor) in
   let both (p, t) = (codes p, codes t) in
-  let eager =
-    outcome (fun () ->
-        both (Rune.jvp pair T.tensor (fun (x, y) -> f x y) (x, y) (tx, ty)))
-  in
-  let jitted =
-    let g = Rune.jit T.(tensor @-> tensor @-> returns tensor) f in
-    outcome (fun () ->
-        both (Rune.jvp pair T.tensor (fun (x, y) -> g x y) (x, y) (tx, ty)))
-  in
   let e' = elementwise (exact_any dt e) in
   let f' x y = eval_any x y e' in
   let exact_eager =
     outcome (fun () ->
         both (Rune.jvp pair T.tensor (fun (x, y) -> f' x y) (x, y) (tx, ty)))
+  in
+  let jitted =
+    let g = Rune.jit T.(tensor @-> tensor @-> returns tensor) f' in
+    outcome (fun () ->
+        both (Rune.jvp pair T.tensor (fun (x, y) -> g x y) (x, y) (tx, ty)))
   in
   let staged =
     let g =
@@ -468,7 +465,7 @@ let law_jit_any (Any_case (dt, s, xo, yo, txo, tyo, e)) =
     outcome (fun () -> both (g x y tx ty))
   in
   let t = outcome_t (Testable.pair codes_t codes_t) in
-  equal ~msg:"jvp of jit" t eager jitted;
+  equal ~msg:"jvp of jit" t exact_eager jitted;
   equal ~msg:"jit of jvp" t exact_eager staged
 
 (* One kernel per map *)

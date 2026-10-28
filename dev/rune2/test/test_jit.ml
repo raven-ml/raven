@@ -712,6 +712,242 @@ let cache_commands =
     command "call" (compiled ^-> args @-> returns bool) model system_call;
   ]
 
+(* Derived programs
+
+   Under a transformation a call is a call of a program derived from its key's,
+   once per derivation: its kind, which arguments have a tangent or lanes,
+   their abstract values, and the maps the program reads. The model is the set
+   of derivations met: a call under a new one derives its programs, three under
+   reverse mode (the derivative, its part known at the call, and the transpose
+   of the rest), one otherwise; a call at a new shape traces. Each result is
+   checked against eager's within the compiled sine's bound. *)
+
+type mask = bool * bool
+type how = Plain | Jvp of mask | Grad of mask | Map of mask
+type derivation = { how : how; n : int }
+
+let pp_mask ppf (a, b) =
+  Format.fprintf ppf "%s"
+    (match (a, b) with
+    | true, true -> "x, y"
+    | true, false -> "x"
+    | false, true -> "y"
+    | false, false -> "none")
+
+let pp_derivation ppf d =
+  (match d.how with
+  | Plain -> Format.fprintf ppf "plain"
+  | Jvp m -> Format.fprintf ppf "jvp along %a" pp_mask m
+  | Grad m -> Format.fprintf ppf "grad of %a" pp_mask m
+  | Map m -> Format.fprintf ppf "vmap of %a" pp_mask m);
+  Format.fprintf ppf " at [%d]" d.n
+
+let derivations =
+  let open Gen in
+  let mask = of_list [ (true, false); (false, true); (true, true) ] in
+  (let* n = int_range 2 3 in
+   let+ how =
+     frequency
+       [
+         (1, constant Plain);
+         (2, map (fun m -> Jvp m) mask);
+         (2, map (fun m -> Grad m) mask);
+         (2, map (fun m -> Map m) mask);
+       ]
+   in
+   { how; n })
+  |> with_pp pp_derivation
+
+let derived_traced = Domain.DLS.new_key (fun () -> false)
+
+let product x y =
+  Domain.DLS.set derived_traced true;
+  Nx.mul x (Nx.sin y)
+
+(* [d] of [f] at [x] and [y], as one array. *)
+let apply f d x y =
+  let pair = T.(pair tensor tensor) in
+  let flat = Nx.flatten in
+  match d.how with
+  | Plain -> f x y
+  | Jvp (a, b) -> (
+      let ones = Nx.ones f64 [| d.n |] in
+      match (a, b) with
+      | true, true ->
+          snd (Rune.jvp pair T.tensor (fun (x, y) -> f x y) (x, y) (ones, ones))
+      | true, false -> snd (Rune.jvp' (fun x -> f x y) x ones)
+      | _ -> snd (Rune.jvp' (fun y -> f x y) y ones))
+  | Grad (a, b) -> (
+      let loss x y = Nx.sum (f x y) in
+      match (a, b) with
+      | true, true ->
+          let gx, gy = Rune.grad pair (fun (x, y) -> loss x y) (x, y) in
+          Nx.concatenate ~axis:0 [ gx; gy ]
+      | true, false -> Rune.grad' (fun x -> loss x y) x
+      | _ -> Rune.grad' (fun y -> loss x y) y)
+  | Map (a, b) -> (
+      let rows v = Nx.stack ~axis:0 [ v; Nx.neg v ] in
+      match (a, b) with
+      | true, true ->
+          flat
+            (Rune.vmap
+               T.(pair tensor tensor @-> returns tensor)
+               (fun (x, y) -> f x y)
+               (rows x, rows y))
+      | true, false -> flat (Rune.vmap' (fun x -> f x y) (rows x))
+      | _ -> flat (Rune.vmap' (fun y -> f x y) (rows y)))
+
+let derived_call g d =
+  let x = Nx.linspace f64 0.5 1.5 d.n and y = Nx.linspace f64 (-1.) 2. d.n in
+  Domain.DLS.set derived_traced false;
+  let before = Rune.Private.derivations () in
+  let got = apply g d x y in
+  let made = Rune.Private.derivations () - before in
+  let traced = Domain.DLS.get derived_traced in
+  let expected = apply product d x y in
+  let close =
+    Nx.item []
+      (Nx.all
+         (Nx.less_equal (Nx.abs (Nx.sub got expected))
+            (Nx.add_s (Nx.mul_s (Nx.abs expected) 1e-14) 1e-300)))
+  in
+  if not close then failwith "a wrong value";
+  (traced, made)
+
+module Seen = Set.Make (struct
+  type t = how * int
+
+  let compare = compare
+end)
+
+let derivation_commands =
+  let start () = (ref Seen.empty, ref [])
+  and model (seen, shapes) d =
+    let traced = not (List.mem d.n !shapes) in
+    if traced then shapes := d.n :: !shapes;
+    let fresh = not (Seen.mem (d.how, d.n) !seen) in
+    seen := Seen.add (d.how, d.n) !seen;
+    let made =
+      match d.how with
+      | Plain -> 0
+      | Grad _ -> if fresh then 3 else 0
+      | Jvp _ | Map _ -> if fresh then 1 else 0
+    in
+    (traced, made)
+  in
+  let system () = Rune.jit T.(tensor @-> tensor @-> returns tensor) product in
+  let fn = abstract "jit" in
+  [
+    command "start" (Gen.unit @-> makes fn) start system;
+    command "call"
+      (fn ^-> derivations @-> returns (pair bool int))
+      model derived_call;
+  ]
+
+(* On two domains a call's derivations may be made by either domain's calls,
+   so a call shows whether it traced, and its values. *)
+let shared_commands =
+  let start () = ref [] in
+  let model shapes d =
+    let traced = not (List.mem d.n !shapes) in
+    if traced then shapes := d.n :: !shapes;
+    traced
+  in
+  let system () = Rune.jit T.(tensor @-> tensor @-> returns tensor) product in
+  let fn = abstract "jit" in
+  [
+    command "start" (Gen.unit @-> makes fn) start system;
+    command "call"
+      (fn ^-> derivations @-> returns bool)
+      model
+      (fun g d -> fst (derived_call g d));
+  ]
+
+(* A program reading a map's lane index, mapped under a map of another name
+   inside that map and under the map itself inside another: equal masks, lanes
+   and shapes, so only the name read tells the derivations apart. *)
+let test_named_maps () =
+  let a = Rune.axis () and b = Rune.axis () in
+  let f x = Nx.add x (Nx.cast f64 (Rune.lane_index a x)) in
+  let g = Rune.jit' f in
+  let xs = Nx.reshape [| 2; 2; 2 |] (Nx.arange_f f64 0. 8. 1.) in
+  let nested f ~outer ~inner =
+    Rune.vmap' ~axis:outer (fun x -> Rune.vmap' ~axis:inner f x) xs
+  in
+  let check outer inner =
+    equal
+      ~msg:
+        (if inner == a then "the map read inside" else "the map read outside")
+      bits_t
+      (bits (nested f ~outer ~inner))
+      (bits (nested g ~outer ~inner))
+  in
+  check a b;
+  check b a;
+  check a b
+
+(* A program that stacks a map's lanes is traced again where that map's lanes
+   change. *)
+let test_map_lanes () =
+  let a = Rune.axis () in
+  let traces = ref 0 in
+  let f x = Nx.sum ~axes:[ 0 ] (Rune.lanes a x) in
+  let g =
+    Rune.jit' (fun x ->
+        incr traces;
+        f x)
+  in
+  List.iter
+    (fun n ->
+      let m = Float.of_int (3 * n) in
+      let xs = Nx.reshape [| n; 3 |] (Nx.arange_f f64 0. m 1.) in
+      equal bits_t
+        (bits (Rune.vmap' ~axis:a f xs))
+        (bits (Rune.vmap' ~axis:a g xs)))
+    [ 2; 3; 2 ];
+  equal ~msg:"one trace per lane count" int 2 !traces
+
+(* The function runs once per key, whatever is derived from it. *)
+let test_once_per_key () =
+  let traces = ref 0 in
+  let g =
+    Rune.jit' (fun x ->
+        incr traces;
+        Nx.mul x (Nx.sin x))
+  in
+  let x = Nx.linspace f64 0. 1. 3 in
+  let xs = Nx.reshape [| 2; 3 |] (Nx.linspace f64 0. 1. 6) in
+  let sum f x = Nx.sum (f x) in
+  ignore (g x);
+  ignore (Rune.jvp' g x x);
+  ignore (Rune.grad' (sum g) x);
+  ignore (Rune.grad' (sum (Rune.grad' (sum g))) x);
+  ignore (Rune.vmap' (Rune.grad' (sum g)) xs);
+  ignore (Rune.jit' (Rune.grad' (sum g)) x);
+  ignore (Rune.jacfwd' (Rune.grad' (sum g)) x);
+  equal ~msg:"one key" int 1 !traces;
+  ignore (Rune.vmap' g xs);
+  equal ~msg:"the map's lanes are another key's" int 1 !traces
+
+(* Under an enclosing jit, a derived call is staged: the printed program calls
+   no other. *)
+let test_inlined () =
+  let g = Rune.jit' (fun x -> Nx.mul x (Nx.sin x)) in
+  let f x = Rune.grad' (fun x -> Nx.sum (g x)) x in
+  let x = Nx.linspace f64 0. 1. 3 in
+  let printed =
+    Format.asprintf "%a" Rune.pp_program (Rune.program T.tensor T.tensor f x)
+  in
+  let calls = ref 0 and i = ref 0 in
+  while !i + 4 <= String.length printed do
+    if String.sub printed !i 4 = "call" then incr calls;
+    incr i
+  done;
+  equal ~msg:"calls" int 0 !calls;
+  equal (array (float_rel ~rel:1e-14 ~abs:1e-300))
+    (Nx.to_array (Rune.grad' (fun x -> Nx.sum (Nx.mul x (Nx.sin x))) x))
+    (Nx.to_array (Rune.jit' f x))
+
 let () =
   exit
     (run "rune2 jit"
@@ -750,5 +986,21 @@ let () =
              test "checks raise as eagerly" test_checks;
              stateful ~domains:2 ~count:10 ~steps:8
                "a call retraces iff its abstract value is new" cache_commands;
+           ];
+         group "derived"
+           [
+             stateful ~count:20 ~steps:8
+               "a derived program is made iff its derivation is new"
+               derivation_commands;
+             stateful ~domains:2 ~count:10 ~steps:8
+               "derivations on two domains trace once per key" shared_commands;
+             test "a program reading a map's name derives apart"
+               test_named_maps;
+             test "a program stacking lanes retraces per lane count"
+               test_map_lanes;
+             test "the function runs once per key under every derivation"
+               test_once_per_key;
+             test "a derived call is staged under an enclosing jit"
+               test_inlined;
            ];
        ])

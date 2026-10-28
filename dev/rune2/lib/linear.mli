@@ -70,9 +70,10 @@ val transpose : t -> Program.value option array -> ct option array
 
     A [Lanes] over tangents, of the map its axis names, gives the calling lane
     its row of the sum over the lanes of their cotangents. A scan over tangents
-    transposes as a scan of its step's transpose over the rows in reverse, and a
-    remat by linearizing its function again at its constant arguments.
+    transposes as a scan of its step's transpose over the rows in reverse, a
+    remat by linearizing its function again at its constant arguments, and a
+    call as the call of its program's transpose, derived once per derivation at
+    its site ({!Program.derive}).
 
     Raises [Invalid_argument] naming the tape's entry point for an equation that
-    is not linear in its tangents, and for another construct over tangents
-    than [Lanes] and a linear call ({!Program.Linear}). *)
+    is not linear in its tangents, and for an iterate over tangents. *)

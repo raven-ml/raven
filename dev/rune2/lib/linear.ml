@@ -1146,9 +1146,12 @@ let rec walk ~name ~fn (p : Program.t) consts cts =
     | Do { c = Remat { body; args }; base } ->
         let n = next.(e) - base in
         if reached base n then remat_rule env body args (cts_at base n)
+    | Do { c = Call { body; args; site }; base } ->
+        let n = next.(e) - base in
+        if reached base n then call_rule env body args site (cts_at base n)
     | Do { base; _ } ->
         if reached base (next.(e) - base) then
-          invalid_arg (name ^ ": a loop or call has no transpose yet")
+          invalid_arg (name ^ ": a loop has no transpose yet")
   done;
   Array.mapi
     (fun k c -> if Option.is_none c then acc.(p.params.(k)) else None)
@@ -1346,6 +1349,65 @@ and remat_rule env (body : Program.t) args cts =
       (Array.init (Array.length tape.outputs) cts)
   in
   Array.iteri (fun k (V x) -> Option.iter (fun c -> env.give x c) r.(k)) lins
+
+(* A linear call's transpose is the call of its program's transpose, as JAX
+   transposes a compiled call's jaxpr: derived once per derivation at the
+   call's site, over the constant arguments and the cotangents given, traced as
+   a compiled function is, and compiled. *)
+and call_rule env (body : Program.t) args site cts =
+  let name = Program.site_name site in
+  let la = Array.map (fun (V x) -> env.lin x) args in
+  let nl = Array.map not la in
+  let consts = Array.map (fun (V x) -> V (env.const x)) (Loops.pick nl args) in
+  let na = Array.length body.adds in
+  let no = Array.length body.outputs - na in
+  let given = Array.init no cts in
+  let gc = Array.map Option.is_some given in
+  let ws = Array.map Option.get (Loops.pick gc given) in
+  let ins = Array.append consts ws in
+  let forms = Array.map form ins in
+  let made () =
+    let got = ref [||] in
+    let transposed vs =
+      let nc = Array.length consts in
+      let cs = Array.sub vs 0 nc in
+      let ws = Array.sub vs nc (Array.length vs - nc) in
+      let none n = Array.make n None in
+      let bound =
+        Loops.merge la
+          (none (Array.length args - nc))
+          (Array.map Option.some cs)
+      in
+      let out_cts =
+        Array.append
+          (Loops.merge gc
+             (Array.map Option.some ws)
+             (none (no - Array.length ws)))
+          (none na)
+      in
+      let r =
+        walk ~name:env.name ~fn:env.fn body bound out_cts
+      in
+      let lin = Loops.pick la r in
+      got := Array.map Option.is_some lin;
+      Array.map (fun c -> (Option.get c).v) (Loops.pick !got lin)
+    in
+    let prog, _ = Trace.trace Jit ~name forms transposed in
+    ((prog, forms), !got, None)
+  in
+  let derivation =
+    Program.Transpose { linear = la; cts = gc }
+  in
+  let d = Program.derive site derivation forms made in
+  let r = Program.run (Call { body = d.program; args = ins; site = d.at }) in
+  let next = ref 0 in
+  Array.iteri
+    (fun k (V x) ->
+      if d.flags.(k) then begin
+        env.give x (held r.(!next));
+        incr next
+      end)
+    (Loops.pick la args)
 
 let transpose l cts =
   let p = l.tape in

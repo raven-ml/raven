@@ -1276,10 +1276,10 @@ let add_all (p : Program.t) adds =
 (* A construct over duals: [Detach] and an addition are performed outward on the
    primal, so that every differentiation around detaches the value and a total
    receives the primal. [Lanes] is linear: its tangent is the lanes of the
-   tangent. A custom rule or a linear call applies its rule ([Rules]). A scan
-   and a remat are performed with their programs' derivatives. Iterates and
-   calls have no rule of their own yet: they run where they were performed,
-   inside the interpretation, which receives their programs' operations. *)
+   tangent. A custom rule or a linear call applies its rule ([Rules]). A scan,
+   a remat and a call are performed with their programs' derivatives. Iterates
+   have no rule of their own yet: they run where they were performed, inside
+   the interpretation, which receives their programs' operations. *)
 let rec answer ~name ~tape i (c : Program.construct) k =
   match c with
   | Detach x -> Effect.Deep.continue k (Program.perform (Detach (primal i x)))
@@ -1304,16 +1304,19 @@ let rec answer ~name ~tape i (c : Program.construct) k =
   (* An iterate has no rule before stage 6, and evaluating it inside a trace
      would read its stop: a construct whose programs hold one runs its default,
      step by step. *)
-  | (Scan { step; _ } | Remat { body = step; _ }) when Loops.holds_iterate step
-    ->
+  | ( Scan { step; _ }
+    | Remat { body = step; _ }
+    | Call { body = step; _ } )
+    when Loops.holds_iterate step ->
       Effect.Deep.discontinue k Program.Evaluate
   | Scan { step; length; init; xs; captures; seeds } ->
       Effect.Deep.continue k
         (scan ~name ~tape i step ~length ~init ~xs ~captures ~seeds)
   | Remat { body; args } ->
       Effect.Deep.continue k (remat ~name ~tape i body args)
-  | Lane_index _ | Iterate _ | Call _ ->
-      Effect.Deep.discontinue k Program.Evaluate
+  | Call { body; args; site } ->
+      Effect.Deep.continue k (call ~tape i body args site)
+  | Lane_index _ | Iterate _ -> Effect.Deep.discontinue k Program.Evaluate
 
 (* A scan's derivative is the scan of its step's derivative, whose carry has a
    tangent for each carry that has one at the call or gains one from the step: a
@@ -1505,6 +1508,49 @@ and remat ~name ~tape i (body : Program.t) args =
   | [ y; t; adds ] ->
       Array.map2 (dualv i ~fresh:false) (Array.append y adds) (spread !has_y t)
   | _ -> invalid_arg "Rune: a remat's derivative"
+
+(* A call's derivative is the call of its program's derivative, as JAX
+   differentiates a compiled call's jaxpr: derived once per derivation at the
+   call's site, traced as a compiled function is, and compiled. Its additions
+   are duals, as a remat's are. *)
+and call ~tape i (body : Program.t) args site =
+  let name = Program.site_name site in
+  let pargs = Array.map (pv i) args and targs = Array.map (tv i) args in
+  let mask = Array.map Option.is_some targs in
+  let ins = Array.append pargs (somes targs) in
+  let forms = Array.map Program.form ins in
+  let na = Array.length body.adds in
+  let no = Array.length body.outputs - na in
+  let made () =
+    let has_y = ref [||] in
+    let derive vs =
+      let n = Array.length pargs in
+      let ps = Array.sub vs 0 n and ts = Array.sub vs n (Array.length vs - n) in
+      let ys, adds =
+        run ~name ?tape (fun j ->
+            let args = Array.map2 (seeded j) ps (spread mask ts) in
+            let p, t = parts j (Program.eval body args) in
+            has_y := Array.map Option.is_some t;
+            (Array.append (Array.sub p 0 no) (somes t), Array.sub p no na))
+      in
+      add_all body adds;
+      ys
+    in
+    let prog, _ = Trace.trace Jit ~name forms derive in
+    ((prog, forms), !has_y, None)
+  in
+  let derivation =
+    Program.Jvp { tangents = mask; reverse = Option.is_some tape }
+  in
+  let d = Program.derive site derivation forms made in
+  let r =
+    Program.perform (Call { body = d.program; args = ins; site = d.at })
+  in
+  let nt = Array.length (Loops.pick d.flags d.flags) in
+  match Loops.split [ no; nt; na ] r with
+  | [ y; t; adds ] ->
+      Array.map2 (dualv i ~fresh:false) (Array.append y adds) (spread d.flags t)
+  | _ -> invalid_arg "Rune: a call's derivative"
 
 (* [p]'s outputs over [xs], each with its tangent, from a differentiation [j]
    like [i] seeded from [i]'s tangents of [xs]. *)

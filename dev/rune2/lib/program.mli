@@ -131,16 +131,11 @@ and construct =
       seeds : value array;  (** As a scan's. *)
     }
       -> construct
-  | Call : {
-      body : t;
-      args : value array;
-      compiled : (value array -> value array) option;
-          (** [body] compiled, applied to arguments of [args]' forms. *)
-    }
-      -> construct
-      (** [body] applied to [args]. Its default runs [compiled] where it has
-          one, no operand is traced and no tracer stages the operations around
-          the call ({!staging}), and evaluates [body] otherwise. *)
+  | Call : { body : t; args : value array; site : site } -> construct
+      (** [body] applied to [args], [site] its compiled form and the programs
+          derived from it. Its default runs the compiled form where no operand
+          is traced and no tracer stages the operations around the call
+          ({!staging}), and evaluates [body] otherwise. *)
   | Custom : {
       name : string;  (** The entry point, in messages. *)
       primal : t;
@@ -195,6 +190,10 @@ and derivative =
       (** A pullback: over a cotangent per result and the residuals; to a
           cotangent per argument and the additions. *)
 
+and site
+(** The type for a call's {e site}: its program compiled, made at its first
+    run, and the programs a transformation derives from it ({!derive}). *)
+
 val make :
   owner:Nx.Prim.interpretation ->
   params:int array ->
@@ -218,6 +217,85 @@ val eval : t -> value array -> value array
 val prune : t -> outputs:int array -> t
 (** [prune p ~outputs] is [p] with its outputs [outputs], in order, and no
     addition, keeping the equations they read and every check. *)
+
+(** {1:sites Sites}
+
+    A transformation of a call derives a program from the call's ({!derive}):
+    its forward-mode derivative, its map, its parts known and unknown to a
+    tape, or its transpose. A derivation is a value, and a site keeps one
+    program per derivation, so that two calls share a derived program only
+    when their derivations are equal, and a derived program compiles once. *)
+
+val site :
+  name:string ->
+  compile:(t -> form array -> value array -> value array) ->
+  t ->
+  form array ->
+  site
+(** [site ~name ~compile p forms] is the site of [p] over arguments of [forms],
+    for the entry point [name]: its compiled form is [compile p forms], applied
+    to arguments of [forms], and each program derived from [p] is compiled by
+    [compile] too. *)
+
+val site_name : site -> string
+(** [site_name s] is the entry point [s] was made for. *)
+
+val axes : site -> axis list
+(** [axes s] is the maps that [s]'s program or a program it carries names
+    through [Lanes] or [Lane_index], in the order first named. *)
+
+type derivation =
+  | Jvp of { tangents : bool array; reverse : bool }
+      (** Forward mode, [tangents.(k)] whether argument [k] has a tangent;
+          [reverse] whether the tangents are a tape's. Over the primals, then
+          the tangents there are; to the results, the tangents there are, then
+          the additions. *)
+  | Vmap of { lanes : bool array; n : int; named : bool }
+      (** A map of [n] lanes, [lanes.(k)] whether argument [k] has them;
+          [named] whether the program names the map. Over the batches and the
+          shared arguments; to the results, a batch where it has lanes, then
+          the additions, every lane's. *)
+  | Known of { unknown : bool array }
+      (** The part of the program that reads no argument where [unknown] holds,
+          computed at the call: over the other arguments; to its results, the
+          residuals, then the additions. Its linear part: over the unknown
+          arguments then the residuals, to the unknown results. *)
+  | Transpose of { linear : bool array; cts : bool array }
+      (** The transpose of a linear program over the arguments where [linear]
+          holds, given a cotangent of each result where [cts] holds: over the
+          other arguments and the cotangents; to the cotangents of the linear
+          arguments that receive one, then the additions. *)
+
+type derived = {
+  program : t;
+  at : site;  (** [program]'s site. *)
+  flags : bool array;
+      (** By derivation: which results have a tangent, which have lanes, which
+          results are unknown, or which linear arguments receive a
+          cotangent. *)
+  linear : (t * site) option;  (** A [Known] derivation's linear part. *)
+}
+(** The type for derived programs. *)
+
+val derive :
+  ?map:axis * int ->
+  site ->
+  derivation ->
+  form array ->
+  (unit -> (t * form array) * bool array * (t * form array) option) ->
+  derived
+(** [derive ~map s d forms make] is the program of [s] derived by [d] from
+    arguments of [forms], made by [make ()] the first time [s] meets [d] with
+    arguments of [forms]' dtypes, shapes and placements and with the maps that
+    [s]'s program names of the same lanes. [make ()] gives the program and its
+    arguments' forms, its flags, and a linear part with its arguments' forms.
+    [map] is a map that the derivation runs in, [(axis, n)], whose lanes no
+    handler around answers. Calls on several domains share the derived
+    programs, as {!Jit} shares its programs. *)
+
+val derivations : unit -> int
+(** [derivations ()] is the number of programs [derive] made on the calling
+    domain. *)
 
 (** {1:constructs Constructs} *)
 
@@ -267,7 +345,8 @@ val map_operands : map -> construct -> construct
 
 val map_programs : (t -> t) -> construct -> construct
 (** [map_programs f c] is [c] with each program [p] it carries replaced by
-    [f p], and a call without its compiled form. *)
+    [f p], and a call with a site of no compiled form and no derived
+    program. *)
 
 val stacked : int -> form -> form
 (** [stacked n f] is the form of a value of [f]'s with a leading axis of [n], in

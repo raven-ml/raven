@@ -351,11 +351,13 @@ let rule (type r) st i ~by (op : r Nx.Prim.t) : r =
 
 let owned i (V x) = owns i x
 
-(* Whether [i]'s handler answers [c]. A call is left to its default, which
-   issues its equations here; a map's operation with no such map around is left
-   to its default, which raises. *)
+(* Whether [i]'s handler answers [c]. A call over a variable, or in the extent
+   of a tracer that stages every operation, is inlined: its default issues its
+   equations here; a map's operation with no such map around is left to its
+   default, which raises. *)
 let claims st i = function
-  | Call _ -> false
+  | Call { args; _ } ->
+      st.kind = Jit || st.kind = Staged || Array.exists (owned i) args
   | Add (_, x) -> st.kind <> Tape || owns i x
   | (Lanes (a, _) | Lane_index (a, _)) when bound a = None -> false
   | c -> st.kind = Jit || st.kind = Staged || List.exists (owned i) (operands c)
@@ -396,6 +398,7 @@ let rec answer st i c =
   | Tape, Scan { step; length; init; xs; captures; seeds } ->
       scan_parts st i step ~length ~init ~xs ~captures ~seeds
   | Tape, Remat { body; args } -> remat_parts st i body args
+  | Tape, Call { body; args; site } -> call_parts st i body args site
   | _ -> record st i c
 
 (* A scan over the tape's variables is two scans, as JAX's partial evaluation of
@@ -616,6 +619,61 @@ and remat_parts st i (body : Program.t) args =
     let r = record st i (Remat { body; args }) in
     Array.mapi (fun k v -> match v with Some v -> v | None -> r.(k)) !known
 
+(* A call over the tape's variables is two calls, as JAX's partial evaluation
+   of a compiled call gives: a known call, computed at the call, of the results
+   that read none of them, which returns the residuals the rest reads as more
+   results; and a recorded call of the rest, linear in the tape's variables,
+   over them and the residuals. Both are derived once per derivation at the
+   call's site and compiled. *)
+and call_parts st i (body : Program.t) args site =
+  let name = Program.site_name site in
+  let ua = Array.map (owned i) args in
+  let kargs = Loops.pick (nots ua) args and uargs = Loops.pick ua args in
+  let na = Array.length body.adds in
+  let no = Array.length body.outputs - na in
+  let made () =
+    let unknown = ref [||] and linear = ref None in
+    let known kvs =
+      let kys = ref [||] and adds = ref [||] in
+      let tape, res =
+        trace_in Tape ~name (Array.map form uargs) (fun inner uvs ->
+            let out = eval body (Loops.merge ua uvs kvs) in
+            let mine (V y) = owns inner y in
+            let ys = Array.sub out 0 no in
+            adds := Array.sub out no na;
+            if Array.exists mine !adds then
+              invalid_arg (st.name ^ ": a tangent is added to a total");
+            unknown := Array.map mine ys;
+            kys := Loops.pick (nots !unknown) ys;
+            Loops.pick !unknown ys)
+      in
+      linear :=
+        Some (tape, Array.append (Array.map form uargs) (Array.map form res));
+      Array.iteri
+        (fun k (Addition (t, f)) ->
+          ignore (perform (Add (t, cast f !adds.(k)))))
+        body.adds;
+      Array.append !kys res
+    in
+    let kprog, _ = trace Jit ~name (Array.map form kargs) known in
+    ((kprog, Array.map form kargs), !unknown, !linear)
+  in
+  let d =
+    Program.derive site (Known { unknown = ua }) (Array.map form args) made
+  in
+  let kr = perform (Call { body = d.program; args = kargs; site = d.at }) in
+  let nk = Array.length (Loops.pick (nots d.flags) d.flags) in
+  let nres = Array.length kr - nk - na in
+  let res = Array.sub kr nk nres and adds = Array.sub kr (nk + nres) na in
+  let ur =
+    match d.linear with
+    | Some (l, at) when Array.exists Fun.id d.flags ->
+        let args = Array.append uargs res in
+        record st i (Call { body = l; args; site = at })
+    | _ -> [||]
+  in
+  Array.append (Loops.merge d.flags ur (Array.sub kr 0 nk)) adds
+
 and trace kind ~name inputs f = trace_in kind ~name inputs (fun _ vs -> f vs)
 
 and trace_in kind ~name inputs f =
@@ -648,6 +706,10 @@ and trace_in kind ~name inputs f =
         (* A custom rule over a tape's variables, as a tangent map that applies
            one to its tangents: its primal runs where it was performed, and its
            operations are recorded. *)
+        Some (fun k -> Effect.Deep.discontinue k Evaluate)
+    | Construct (Call { body; _ } as c), Some i
+      when claims st i c && (st.kind <> Tape || Loops.holds_iterate body) ->
+        (* Inlined: the default runs where the call was performed. *)
         Some (fun k -> Effect.Deep.discontinue k Evaluate)
     | Construct c, Some i when claims st i c ->
         Some (fun k -> Effect.Deep.continue k (answer st i c))

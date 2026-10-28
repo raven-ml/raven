@@ -647,7 +647,7 @@ let call name t a r f args =
   in
   let e = Jit.find t leaves skeleton ~paths (traced name a r f args) in
   let out =
-    run (Call { body = e.body; args = args_v; compiled = Some e.compiled })
+    run (Call { body = e.body; args = args_v; site = e.site })
   in
   rebuild r ~like:e.like (slice out 0 (Array.length (values r e.like)))
 
@@ -789,3 +789,7 @@ let jacrev' f x =
 
 module Lower = Lower
 module Lower_arith = Lower_arith
+
+module Private = struct
+  let derivations = Program.derivations
+end

@@ -52,6 +52,58 @@ type ('v, 's, 'd) total = { id : ('v, 's, 'd) Nx.t Type.Id.t }
 let total () = { id = Type.Id.make () }
 let same_total t u = Type.Id.provably_equal t.id u.id
 
+(* Derivations
+
+   A site keeps a program per derivation, keyed by the derivation, the
+   abstract values of the derived program's arguments, and the lanes of each
+   map the site's program names, which its derived programs' forms depend
+   on. *)
+
+type derivation =
+  | Jvp of { tangents : bool array; reverse : bool }
+  | Vmap of { lanes : bool array; n : int; named : bool }
+  | Known of { unknown : bool array }
+  | Transpose of { linear : bool array; cts : bool array }
+
+(* A form's abstract value: its dtype, shape and placement. *)
+let same_abstract (F f) (F g) =
+  D.equal f.dtype g.dtype
+  && Nx_array.Layout.shape f.layout = Nx_array.Layout.shape g.layout
+  && Nx.Placement.equal f.placement g.placement
+
+let same_derivation a b =
+  match (a, b) with
+  | Jvp a, Jvp b -> a.tangents = b.tangents && a.reverse = b.reverse
+  | Vmap a, Vmap b -> a.lanes = b.lanes && a.n = b.n && a.named = b.named
+  | Known a, Known b -> a.unknown = b.unknown
+  | Transpose a, Transpose b -> a.linear = b.linear && a.cts = b.cts
+  | (Jvp _ | Vmap _ | Known _ | Transpose _), _ -> false
+
+type key = { derivation : derivation; forms : form array; lanes : int list }
+
+module Table = Cache.Make (struct
+  type t = key
+
+  let equal a b =
+    same_derivation a.derivation b.derivation
+    && Array.length a.forms = Array.length b.forms
+    && Array.for_all2 same_abstract a.forms b.forms
+    && a.lanes = b.lanes
+
+  let hash k =
+    let tag =
+      match k.derivation with
+      | Jvp { tangents; _ } -> Hashtbl.hash (0, tangents)
+      | Vmap { lanes; n; _ } -> Hashtbl.hash (1, lanes, n)
+      | Known { unknown } -> Hashtbl.hash (2, unknown)
+      | Transpose { linear; cts; _ } -> Hashtbl.hash (3, linear, cts)
+    in
+    Array.fold_left
+      (fun h (F f) ->
+        (h * 31) + Hashtbl.hash (Nx_array.Layout.shape f.layout))
+      tag k.forms
+end)
+
 (* Programs *)
 
 type ('v, 's, 'd) Nx.Prim.payload += Var : int -> ('v, 's, 'd) Nx.Prim.payload
@@ -97,12 +149,7 @@ and construct =
       seeds : value array;
     }
       -> construct
-  | Call : {
-      body : t;
-      args : value array;
-      compiled : (value array -> value array) option;
-    }
-      -> construct
+  | Call : { body : t; args : value array; site : site } -> construct
   | Custom : {
       name : string;
       primal : t;
@@ -128,6 +175,21 @@ and construct =
 
 and derivative = Tangent of t | Pullback of t
 
+and site = {
+  name : string;
+  compile : t -> form array -> value array -> value array;
+  compiled : (value array -> value array) option;
+  axes : axis list;
+  table : derived Table.t;
+}
+
+and derived = {
+  program : t;
+  at : site;
+  flags : bool array;
+  linear : (t * site) option;
+}
+
 let make ~owner ~params eqns ~outputs ~adds ~slots =
   { owner; params; eqns = Array.of_list eqns; outputs; adds; slots }
 
@@ -148,6 +210,73 @@ let staging () =
   match Effect.perform Staging with
   | b -> b
   | exception Effect.Unhandled Staging -> false
+
+(* Sites *)
+
+(* The programs [c] carries. *)
+let carried = function
+  | Scan { step; _ } -> [ step ]
+  | Iterate { until; step; _ } -> [ until; step ]
+  | Call { body; _ } | Remat { body; _ } -> [ body ]
+  | Custom { primal; derivative = Tangent d | Pullback d; _ } -> [ primal; d ]
+  | Linear { apply; transpose; _ } -> Option.to_list apply @ [ transpose ]
+  | Detach _ | Lanes _ | Lane_index _ | Add _ -> []
+
+(* The maps [p] names, and those the programs it carries name, in the order
+   first named. *)
+let named p =
+  let found = ref [] in
+  let see a = if not (List.mem a !found) then found := !found @ [ a ] in
+  let rec go (p : t) =
+    Array.iter
+      (function
+        | Op _ -> ()
+        | Do { c; _ } ->
+            (match c with Lanes (a, _) | Lane_index (a, _) -> see a | _ -> ());
+            List.iter go (carried c))
+      p.eqns
+  in
+  go p;
+  !found
+
+(* A site of [body] with the compiling of [s], no compiled form and no derived
+   program. *)
+let bare s body =
+  { s with compiled = None; axes = named body; table = Table.create () }
+
+let site ~name ~compile p forms =
+  {
+    name;
+    compile;
+    compiled = Some (compile p forms);
+    axes = named p;
+    table = Table.create ();
+  }
+
+let site_name s = s.name
+let axes s = s.axes
+let made = Domain.DLS.new_key (fun () -> ref 0)
+let derivations () = !(Domain.DLS.get made)
+
+let derive ?map s derivation forms make =
+  let lanes =
+    List.map
+      (fun a ->
+        let n =
+          match map with
+          | Some (b, n) when same_axis a b -> Some n
+          | _ -> bound a
+        in
+        match n with Some n -> n | None -> -1)
+      s.axes
+  in
+  let key = { derivation; forms; lanes } in
+  Table.find s.table key ~miss:ignore (fun () ->
+      let (program, pf), flags, linear = make () in
+      incr (Domain.DLS.get made);
+      let sub (p, forms) = (p, site ~name:s.name ~compile:s.compile p forms) in
+      let program, at = sub (program, pf) in
+      { program; at; flags; linear = Option.map sub linear })
 
 (* Operands *)
 
@@ -216,7 +345,9 @@ let map_programs f = function
   | (Detach _ | Lanes _ | Lane_index _ | Add _) as c -> c
   | Scan s -> Scan { s with step = f s.step }
   | Iterate s -> Iterate { s with step = f s.step; until = f s.until }
-  | Call c -> Call { c with body = f c.body; compiled = None }
+  | Call c ->
+      let body = f c.body in
+      Call { c with body; site = bare c.site body }
   | Custom c ->
       let derivative =
         match c.derivative with
@@ -418,9 +549,9 @@ and default = function
   | Iterate
       { name; step; until; max; init; step_captures; until_captures; seeds } ->
       iterate name step ~until ~max ~init ~step_captures ~until_captures ~seeds
-  | Call { body; args; compiled } -> (
+  | Call { body; args; site } -> (
       let untraced (V x) = Option.is_none (Nx.Prim.owner x) in
-      match compiled with
+      match site.compiled with
       | Some run when Array.for_all untraced args && not (staging ()) ->
           run args
       | _ -> eval body args)
@@ -649,14 +780,6 @@ type names = {
   mutable next : int;
   mutable bases : (t * int) list;
 }
-
-let carried = function
-  | Scan { step; _ } -> [ step ]
-  | Iterate { until; step; _ } -> [ until; step ]
-  | Call { body; _ } | Remat { body; _ } -> [ body ]
-  | Custom { primal; derivative = Tangent d | Pullback d; _ } -> [ primal; d ]
-  | Linear { apply; transpose; _ } -> Option.to_list apply @ [ transpose ]
-  | Detach _ | Lanes _ | Lane_index _ | Add _ -> []
 
 let owned (p : t) (V x) =
   match Nx.Prim.payload p.owner x with Some (Var _) -> true | _ -> false

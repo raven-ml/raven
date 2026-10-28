@@ -708,9 +708,11 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
 
     {b Keys.} [jit s f] keeps a program per {e key}, the abstract value of a
     call's arguments: their {!Nx.Ptree.val-visits} and reports, the static data
-    of a call, and each array's dtype, shape and placement. A call retraces
-    exactly when its key is new to [jit s f], over stand-ins in C order: [f]'s
-    code, and its side effects, run once per key. A call that raises while it
+    of a call, each array's dtype, shape and placement, and the number of lanes
+    of each map whose name the program reads through {!lanes} or
+    {!lane_index}. A call retraces exactly when its key is new to [jit s f],
+    over stand-ins in C order: [f]'s code, and its side effects, run once per
+    key. A call that raises while it
     traces keeps no program for its key. Calls on several domains share the
     programs; a key being traced makes its other callers wait, but on the domain
     that traces it, where a call traces again for itself. With
@@ -757,6 +759,24 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     [γ(n - 1) Σ|x|] of the exact one, [γ(k) = k u / (1 - k u)]. Narrow floats
     compute at [float32] and round once.
 
+    {b Transformations.} Under {!jvp}, {!vmap} and reverse mode, a call is a
+    call of a program derived from its key's: under {!jvp} the program's
+    derivative, under {!vmap} its map, and under reverse mode the part that
+    reads no tangent, which computes at the call and returns the values the
+    rest reads, and the rest, linear in the tangents, which the backward pass
+    transposes into one more program, as JAX transforms a compiled function.
+    Each derived program compiles as the key's does. A {e derivation} is a
+    value: its kind, which arguments have a tangent or lanes, their dtypes,
+    shapes and placements, the number of lanes of each map the program reads,
+    and the name of the map it is derived under where it reads that name. A
+    call keeps one program per derivation of its key's, so two calls share a
+    derived program only when their derivations are equal, and [f] runs once
+    per key, whatever is derived from it. Inside an enclosing [jit], a
+    {!scan}'s step or another traced function, a call over the values it
+    traces is inlined: its program's operations, or its derived program's, are
+    staged there. A program that holds an {!iterate} is evaluated under a
+    transformation, which receives its operations.
+
     {b Evaluated programs.} A program that holds a {!scan} or an {!iterate}, a
     map's {!lanes} or {!lane_index}, a {!custom_jvp}, {!custom_vjp} or
     {!custom_transpose}, an operation the compiler does not lower, values on
@@ -764,9 +784,6 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     evaluated by nx, giving
     eager's values; a result that is an argument is a copy of it, and a call
     with donated arguments claims them first, consumes them and lends nothing.
-    So does a call whose arguments a transformation around it traces, or that an
-    enclosing [jit] traces: the transformation receives its program's
-    operations, and the enclosing [jit] stages them.
 
     Raises [Invalid_argument] when applied to [s] if [s] has no argument, and at
     a call if [f] captures a value that another transformation traces. *)
@@ -896,5 +913,12 @@ val jit' :
 
 module Lower = Lower
 module Lower_arith = Lower_arith
+
+(** Counts, for the suites. *)
+module Private : sig
+  val derivations : unit -> int
+  (** [derivations ()] is the number of programs that transformations of
+      compiled calls derived on the calling domain. *)
+end
 
 (**/**)

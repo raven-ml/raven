@@ -30,17 +30,25 @@ let same_leaf a b =
   (match (a.dtype, b.dtype) with D.Any x, D.Any y -> D.equal x y)
   && a.shape = b.shape && same_place a.at b.at
 
-type key = { skeleton : Ptree.Skeleton.t; leaves : leaf array }
+(* A key's lanes are those of each map its program names, where they differ
+   from the ones it was first traced at: a [Lanes] result's shape holds
+   them. *)
+type key = {
+  skeleton : Ptree.Skeleton.t;
+  leaves : leaf array;
+  lanes : int list option;
+}
 
 let same_key k k' =
   Ptree.Skeleton.equal k.skeleton k'.skeleton
   && Array.length k.leaves = Array.length k'.leaves
   && Array.for_all2 same_leaf k.leaves k'.leaves
+  && k.lanes = k'.lanes
 
 let hash k =
   Array.fold_left
     (fun h l -> (h * 31) + Hashtbl.hash l.shape)
-    (Ptree.Skeleton.hash k.skeleton)
+    (Ptree.Skeleton.hash k.skeleton + Hashtbl.hash k.lanes)
     k.leaves
 
 (* A leaf's parts, in the order a retrace names the first that differs. *)
@@ -93,8 +101,15 @@ end)
 type 'y entry = {
   body : Program.t;
   like : 'y;
-  compiled : Program.value array -> Program.value array;
+  site : Program.site;
+  lanes : int list;
 }
+
+(* The lanes of each map of [axes] around the call, [-1] for none. *)
+let lanes axes =
+  List.map
+    (fun a -> match Program.bound a with Some n -> n | None -> -1)
+    axes
 
 type 'y t = {
   name : string;
@@ -135,7 +150,9 @@ let compiled name body forms =
     | Error _ -> Compile.evaluate ~name body args
 
 let find t leaves skeleton ~paths trace =
-  let key = { skeleton; leaves = Array.of_list (List.map leaf leaves) } in
+  let key =
+    { skeleton; leaves = Array.of_list (List.map leaf leaves); lanes = None }
+  in
   let miss () =
     Option.iter
       (fun k -> report "retrace: %s" (difference (paths ()) key k))
@@ -144,8 +161,18 @@ let find t leaves skeleton ~paths trace =
   let forms = stand_ins leaves in
   let make () =
     let body, like = trace forms in
-    { body; like; compiled = compiled t.name body forms }
+    let compile = compiled t.name in
+    let site = Program.site ~name:t.name ~compile body forms in
+    { body; like; site; lanes = lanes (Program.axes site) }
   in
   let e = Programs.find t.table key ~miss make in
+  let now = lanes (Program.axes e.site) in
+  let e =
+    if now = e.lanes then e
+    else
+      let key = { key with lanes = Some now } in
+      let miss () = report "retrace: a map's lanes differ" in
+      Programs.find t.table key ~miss make
+  in
   Atomic.set t.last (Some key);
   e

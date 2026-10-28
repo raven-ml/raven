@@ -6,10 +6,11 @@
 (** A compiled function's programs, one per key.
 
     A call's {e key} is the abstract value of its arguments: their skeleton
-    ({!Nx.Ptree.Skeleton}), and each leaf's dtype, shape and placement. A key
-    is traced once, over stand-ins in C order; its program is compiled the
-    first time it runs compiled, then once per variant of its arguments'
-    layouts, phases and tolk's settings ({!Compile}).
+    ({!Nx.Ptree.Skeleton}), and each leaf's dtype, shape and placement, and
+    the lanes of each map its program names, where they differ from those it
+    was first traced at. A key is traced once, over stand-ins in C order; its
+    program is compiled the first time it runs compiled, then once per variant
+    of its arguments' layouts, phases and tolk's settings ({!Compile}).
 
     With [RUNE_JIT_DEBUG=1] in the environment, a call prints on standard
     error each retrace, with the first difference between its key and the
@@ -18,9 +19,13 @@
 type 'y entry = {
   body : Program.t;  (** The function traced. *)
   like : 'y;  (** The result the trace returned, for its structure. *)
-  compiled : Program.value array -> Program.value array;
+  site : Program.site;
       (** [body] compiled ({!Compile.run}), or evaluated where the compiler
-          declines it ({!Compile.evaluate}), over untraced arguments. *)
+          declines it ({!Compile.evaluate}), over untraced arguments, and the
+          programs derived from it, compiled alike. *)
+  lanes : int list;
+      (** The lanes of each map [body] names ({!Program.axes}) at the trace,
+          [-1] for one not around it. *)
 }
 (** The type for a key's program. *)
 
