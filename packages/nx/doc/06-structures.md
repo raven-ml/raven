@@ -226,6 +226,27 @@ window: int 4
 
 A structure's test checks these lines for each shape its values take: a present and an absent option, each case of a variant, an empty and a non-empty list. It also checks the round trip: `Nx.Ptree.rebuild s ~like:x (fst (Nx.Ptree.flatten s x))` is `x`.
 
+## Deriving a Walk
+
+The `ppx_ptree` package writes `walk` from the type. `[@@deriving ptree]` reads the type's parameters by position, the payload then the set, and walks each field under its name and each part by its type: the payload with `leaf`, a tensor type on the set with `tensor`, a key with `Nx.Rng.walk`, a module's `('a, 'd) M.t` with `M.walk`, options, lists and tuples as above, and a variant's case under the constructor's name. An `int` or a `bool` must say whether a compiled program depends on it: `[@ptree.int]` reports it, and `[@ptree.skip]` leaves data such as a name out of the walk.
+
+<!-- Not run: these pages are nx's tests, and the ppx_ptree package depends on nx, so running this block would make nx depend on ppx_ptree. -->
+<!-- $MDX skip -->
+```ocaml
+module Block = struct
+  type ('a, 'd) t = {
+    proj : ('a, 'd) Linear.t;
+    steps : 'd Nx.int32_t;
+    window : int option; [@ptree.int]
+  }
+  [@@deriving ptree]
+end
+
+let block = Nx.Ptree.instantiate (module Block)
+```
+
+This `Block` visits what the hand-written one visits, and its test is the same; ppx_ptree's own tests compare the two. The deriver generates the walk and no description: `Nx.Ptree.instantiate (module Block)` makes one where it is used, as for a hand-written module, and a type of fixed arrays alone, `'d t`, is described by `Nx.Ptree.v walk`. A structure nested at the positions of another, such as an optimizer state over a model, `(('a, 'd) Mlp.t, 'd) Vega.Adam_state.t`, is walked with `under Vega.Adam_state.walk Mlp.walk`, so `Nx.Ptree.place` moves the whole state. The declarations, the rules for each part, the attributes and the errors are in the Declarations, How a part is walked, Attributes and Errors sections of [`ppx_ptree.mli`](../../ppx_ptree/lib/ppx_ptree.mli).
+
 ## Next Steps
 
 - [Rune's transformations](../../rune/doc/02-transformations.md) take structures, and `Rune.jit` takes a signature built from them, such as `Nx.Ptree.(tensor @-> caches @-> returns (pair tensor caches))`. A caller gives up an argument's arrays by donating them at the call, `Nx.Ptree.donate caches c`.
