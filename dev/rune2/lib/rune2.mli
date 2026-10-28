@@ -1013,9 +1013,9 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     {b Evaluated programs.} A program that holds a map's {!lanes} or
     {!lane_index}, an emission as {b Probes} states, an operation the compiler
     does not lower, values on several devices, or one tolk cannot compile, runs
-    as its operations evaluated by nx, giving eager's values; a result that is
-    an argument or a value [f] captures is a copy of it, and a call with donated
-    arguments claims them first, consumes them and lends nothing.
+    as its operations evaluated by nx, giving eager's values; each result array
+    is fresh, memory of its own, and a call with donated arguments claims them
+    first, consumes them and lends nothing.
 
     Raises [Invalid_argument] when applied to [s] if [s] has no argument, and at
     a call if [f] captures a value that another transformation traces. *)

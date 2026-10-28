@@ -87,7 +87,6 @@ val evaluated_call : unit -> unit
 val evaluate :
   name:string -> Program.t -> Program.value array -> Program.value array
 (** [evaluate ~name p args] is [p]'s outputs evaluated by nx over [args], none
-    of them traced: an output that is an argument is a copy of it. Where
-    [args] hold donated handles, it claims every argument first, as {!run}
-    does, and evaluates [p] over the arrays they hold, copying each
-    result. *)
+    of them traced, each a copy in memory of its own. Where [args] hold
+    donated handles, it claims every argument first, as {!run} does, and
+    evaluates [p] over the arrays they hold. *)

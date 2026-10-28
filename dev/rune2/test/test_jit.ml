@@ -503,8 +503,8 @@ let test_wrapped_max () =
   in
   List.iter case Nx.Dtype.all
 
-(* Fresh results: a result that is an argument or a capture is a copy, compiled
-   and evaluated. *)
+(* Fresh results: compiled and evaluated, a result has memory of its own, apart
+   from the arguments', the captures' and the other results'. *)
 let test_fresh () =
   let x = v [| 1.; 2. |] in
   let b = Nx.Repr.read x Nx_array.buffer in
@@ -534,7 +534,61 @@ let test_fresh () =
   in
   equal ~msg:"evaluated, a captured result" bool false (held_by k);
   equal bits_t (bits x) (bits r);
-  equal bits_t (bits c) (bits k)
+  equal bits_t (bits c) (bits k);
+  (* A result that is a view of an argument or a capture. *)
+  let viewed =
+    Rune.jit
+      T.(tensor @-> returns (pair tensor (pair tensor tensor)))
+      (fun x ->
+        let r =
+          Rune.root T.tensor ~residual:(fun y -> Nx.sub y x) (fun () -> x)
+        in
+        (r, (Nx.reshape [| 2; 1 |] x, Nx.reshape [| 1; 2 |] c)))
+  in
+  let _, (vx, vc) = viewed x in
+  equal ~msg:"evaluated, a view of an argument" bool false (shares vx);
+  equal ~msg:"evaluated, a view of a capture" bool false (held_by vc);
+  equal bits_t (bits x) (bits (Nx.reshape [| 2 |] vx));
+  equal bits_t (bits c) (bits (Nx.reshape [| 2 |] vc));
+  (* A capture a construct's function returns: a scan's carry, a branch. *)
+  let carried =
+    Rune.jit
+      T.(tensor @-> returns (pair tensor (pair tensor tensor)))
+      (fun x ->
+        let r =
+          Rune.root T.tensor ~residual:(fun y -> Nx.sub y x) (fun () -> x)
+        in
+        let s =
+          fst
+            (Rune.scan' ~f:(fun _ r -> (c, r)) ~init:x (Nx.reshape [| 2; 1 |] x))
+        in
+        let b =
+          Rune.cond' (Nx.greater_s (Nx.sum x) 0.) (fun () -> c) (fun () -> x)
+        in
+        (r, (s, b)))
+  in
+  let _, (s, b) = carried x in
+  equal ~msg:"evaluated, a scan's captured carry" bool false (held_by s);
+  equal ~msg:"evaluated, a captured branch" bool false (held_by b);
+  equal bits_t (bits c) (bits s);
+  equal bits_t (bits c) (bits b);
+  (* A result and a view of it. *)
+  let twice =
+    Rune.jit
+      T.(tensor @-> returns (pair tensor tensor))
+      (fun x ->
+        let r =
+          Rune.root T.tensor ~residual:(fun y -> Nx.sub y x) (fun () ->
+              Nx.add_s x 1.)
+        in
+        (r, Nx.reshape [| 2; 1 |] r))
+  in
+  let r, w = twice x in
+  let mem y = Nx_array.buffer (Option.get (Nx.Repr.array y)) in
+  equal ~msg:"evaluated, a view of a result" bool false
+    (Rig.Buffer.overlaps (mem r) (mem w));
+  equal bits_t (bits (Nx.add_s x 1.)) (bits r);
+  equal bits_t (bits r) (bits (Nx.reshape [| 2 |] w))
 
 (* An argument whose memory starts off 16 bytes binds where it lies, through a
    program compiled for that phase. *)

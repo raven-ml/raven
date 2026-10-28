@@ -1665,13 +1665,9 @@ let evaluate ~name p args =
   if Array.exists (fun (V x) -> Nx.Prim.donated x) args then
     consumed ~by:name args (fun arrays _ -> evaluated p args arrays)
   else
-    (* A result that is an argument or a constant, which [eval] returns as
-       itself, is a copy of it. *)
-    Array.mapi
-      (fun j (V y as r) ->
-        if same r p.outputs.(j) || Array.exists (same r) args then V (Nx.copy y)
-        else r)
-      (eval_all p args)
+    (* Each result is a copy. [eval] returns an argument or a constant as
+       itself, and a reshape of one lies over its memory. *)
+    Array.map (fun (V y) -> V (Nx.copy y)) (eval_all p args)
 
 (* The element of the one-element array over [b], read on the host. *)
 let element (type v s) (dt : (v, s) D.t) b : A.any =
