@@ -3,7 +3,9 @@
 ## Design
 
 - A rule written for one operation: would the general mechanism (a linear
-  function's transpose, a jvp) cover it?
+  function's transpose, a jvp, a program's derivation) cover it?
+- A construct handled outside programs: every construct traces its
+  functions at the call, and its rules transform those programs.
 - A fix in the lowering: does the fact belong in nx's documented meaning or
   in tolk instead?
 - A fix to a compiled call's cache key: does the key need the input, or
@@ -31,4 +33,4 @@ stream that differs between eager and compiled.
 
 ## Skip
 
-`test/golden/`, `bench/rune.thumper`.
+`test/golden/`, `bench/rune2.thumper`.

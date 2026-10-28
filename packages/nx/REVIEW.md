@@ -5,9 +5,9 @@
 - A new operation: does it compose from existing ones? A composite enters
   the interface only when composing it correctly takes knowledge the caller
   lacks, such as a stable form.
-- A fix inside one kernel or one backend: is the fact it handles missing from
-  the dtype, the view or the route, so that every kernel would need the same
-  fix?
+- A fix inside one kernel or one kernel library: is the fact it handles
+  missing from the dtype, the layout, the route or `Nx_kernel`'s contract,
+  so that every library would need the same fix?
 - A per-dtype or per-device branch in frontend code: which layer should know
   that fact?
 - An operation that would compute on the host for a device that lacks the
@@ -30,7 +30,6 @@ computes at its own width, a float prints or parses rounded twice.
 - NaN quieting, signed zeros and infinities through reductions and scans.
 - A call into libm or libc on a result path. nx computes these with its own
   code.
-- Allocation pins in `test_allocation.ml` when a hot path changes.
 
 ## Skip
 
