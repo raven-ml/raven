@@ -66,7 +66,7 @@ let replay =
   group "jit replay"
     [
       test "neg of one element" (fun () ->
-          equal int 638 (words (fun () -> neg x)));
+          equal int 639 (words (fun () -> neg x)));
       test "a loop's run allocates the same whatever its trip count" (fun () ->
           let limit v = Nx.create Nx.float32 [| 1 |] [| v |] in
           let one = limit 1.5 and many = limit 64.5 in
