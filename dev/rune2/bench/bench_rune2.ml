@@ -603,6 +603,17 @@ let train_rows () =
         synced l);
   ]
 
+(* Probes: [ops] emits of a pair with no collect open, which do nothing. *)
+let probe_rows () =
+  let p = Rune.Probe.make Nx.Ptree.(pair tensor tensor) in
+  let v = (one (), one ()) in
+  [
+    Thumper.bench "emit-100-closed" (fun () ->
+        for _ = 1 to ops do
+          Rune.Probe.emit p v
+        done);
+  ]
+
 let () =
   exit
     (Thumper.run "rune2"
@@ -623,4 +634,5 @@ let () =
          Thumper.group "TrainStep" (train_rows ());
          Thumper.group "Bodies" (body_rows ());
          Thumper.group "Roots" (root_rows ());
+         Thumper.group "Probes" (probe_rows ());
        ])
