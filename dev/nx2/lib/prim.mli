@@ -187,7 +187,10 @@ val local_move :
     axis whose range starts at [0] by step [1], and keeps any other range; a
     permutation or a sliding window unchanged. [w] must be a window a route
     gives a device ({!Route.route}), which holds whole rows of both extents
-    along an axis [mv] regroups ({!Route.Regroups}). *)
+    along an axis [mv] regroups ({!Route.Regroups}).
+
+    [Exec] moves each device's array by it, since {!local}'s type does not
+    say that it gives a movement back for a movement. *)
 
 val within : 'r prim -> Nx_array.Move.range array -> 'r prim
 (** [within op l] is the loop [op], a map, a reduction or a scan, over the
