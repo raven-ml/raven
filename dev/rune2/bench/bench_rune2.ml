@@ -238,9 +238,12 @@ let hmc_rows () =
   [ Thumper.bench "leapfrog" (fun () -> synced2 (leapfrog q0 p0)) ]
 
 (* Jit: a compiled call's hit path, and rune's chain compiled; a training
-   step's update of donated state, written in place; and compiled operations
-   of the index family, an FFT and a matrix product. *)
+   step's update of donated state, written in place; the gradient of a
+   compiled call; and compiled operations whose lowering a past fix made
+   cheap: indexing, sorting, an FFT, products, dense linear algebra and
+   transcendental functions. *)
 let n = 4096
+let f64 = Nx.float64
 
 let positions k bound =
   host
@@ -261,6 +264,109 @@ let warm name make run =
     run
 
 let pair_fn () = Nx.Ptree.(tensor @-> tensor @-> returns tensor)
+let split_fn () = Nx.Ptree.(tensor @-> returns (pair tensor tensor))
+
+(* Uniform host values of [dt] in [[lo, hi)]. *)
+let between dt k lo hi shape =
+  host
+    (Nx.add_s
+       (Nx.mul_s (Nx.Rng.uniform ~key:(Nx.Rng.key k) dt shape) (hi -. lo))
+       lo)
+
+(* A two-layer perceptron's loss over a batch of 32 rows of 64 inputs, 128
+   hidden units and 10 outputs (rune's workload). *)
+let small_mlp = Nx.Ptree.(pair (pair tensor tensor) (pair tensor tensor))
+
+let small_loss ((w1, b1), (w2, b2)) x =
+  let h = Nx.tanh (Nx.add (Nx.matmul x w1) b1) in
+  let y = Nx.add (Nx.matmul h w2) b2 in
+  Nx.mean (Nx.mul y y)
+
+let grad_of_jit () =
+  let p =
+    ( (between f32 30 (-0.1) 0.1 [| 64; 128 |], host (Nx.zeros f32 [| 128 |])),
+      (between f32 31 (-0.1) 0.1 [| 128; 10 |], host (Nx.zeros f32 [| 10 |])) )
+  and x = between f32 32 (-1.) 1. [| 32; 64 |] in
+  warm "grad-of-jit-mlp-float32"
+    (fun () ->
+      let l =
+        Rune.jit Nx.Ptree.(small_mlp @-> tensor @-> returns tensor) small_loss
+      in
+      fun p -> Rune.grad small_mlp (fun p -> l p x) p)
+    (fun g -> synced_all small_mlp (g p))
+
+(* 16 rows of 64 written into a donated table of 4096 rows, each call taking
+   the last one's result. A store of the rows alone over the donated memory
+   costs about the eager call's 2 us; a pass over the table costs 50 times
+   that. *)
+let donated_scatter () =
+  let k = 16 and slots = 4096 and width = 64 in
+  Thumper.bench_with_setup
+    (Printf.sprintf "scatter-%d-rows-into-donated-%dx%d" k slots width)
+    ~setup:(fun () ->
+      let write cache u i =
+        let p = Nx.broadcast_to [| k; width |] (Nx.reshape [| k; 1 |] i) in
+        Nx.scatter ~axis:0 p u cache
+      in
+      let g =
+        Rune.jit
+          Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
+          write
+      in
+      let u = between f32 33 (-1.) 1. [| k; width |] in
+      let i =
+        host
+          (Nx.create Nx.int64 [| k |]
+             (Array.init k (fun r -> Int64.of_int (r * (slots / k)))))
+      in
+      let table = host (Nx.zeros f32 [| slots; width |]) in
+      (g, ref (g (Nx.donate table) u i), u, i))
+    (fun (g, table, u, i) ->
+      table := g (Nx.donate !table) u i;
+      synced !table)
+
+(* The log density of 8 Gaussian processes at 11 points and its gradient in
+   each process's values and log length scale and amplitude, in float64: a
+   Cholesky factor of each covariance, a triangular solve and the log of the
+   factor's diagonal (rune's workload). *)
+let gaussian () =
+  let chains = 8 and m = 11 in
+  let params = Nx.Ptree.(pair tensor tensor) in
+  let pts =
+    host (Nx.init f64 [| m |] (fun i -> Float.of_int (i.(0) - (m / 2))))
+  in
+  let sq =
+    Nx.square (Nx.sub (Nx.reshape [| m; 1 |] pts) (Nx.reshape [| 1; m |] pts))
+  in
+  let jitter = Nx.mul_s (Nx.eye f64 m) 1e-6 in
+  let density (h, f) =
+    let scale i =
+      Nx.reshape [| chains; 1; 1 |] (Nx.exp (Nx.slice [ Nx.A; Nx.I i ] h))
+    in
+    let rho = scale 0 and alpha = scale 1 in
+    let cov =
+      Nx.add jitter
+        (Nx.mul (Nx.square alpha)
+           (Nx.exp (Nx.div sq (Nx.mul_s (Nx.square rho) (-2.)))))
+    in
+    let l = Nx.cholesky cov in
+    let w = Nx.solve_triangular l f in
+    Nx.sub
+      (Nx.mul_s (Nx.sum (Nx.square w)) (-0.5))
+      (Nx.sum (Nx.log (Nx.diagonal l)))
+  in
+  let p =
+    ( between f64 34 0. 1. [| chains; 2 |],
+      between f64 35 (-1.) 1. [| chains; m |] )
+  in
+  let out = Nx.Ptree.pair Nx.Ptree.tensor params in
+  warm
+    (Printf.sprintf "gaussian-process-grad-float64-%dx%d" chains m)
+    (fun () ->
+      Rune.jit
+        Nx.Ptree.(params @-> returns out)
+        (Rune.value_and_grad params density))
+    (fun g -> synced_all out (g p))
 
 let jit_rows () =
   let x = x64 () and a = one () and b = one () in
@@ -268,9 +374,27 @@ let jit_rows () =
   let into = floats 1024 and us = floats 16 and qs = positions 16 1024 in
   let zs = host (Nx.cast Nx.complex64 xs) in
   let m = Nx.reshape [| 64; 64 |] xs in
+  let pm = between f32 36 (-1.) 1. [| 64; 64 |] in
+  let table = between f32 37 (-1.) 1. [| 4096; 64 |]
+  and tokens = positions 1024 4096 in
+  let sa =
+    host
+      (Nx.add
+         (between f64 38 0. 1. [| 32; 32 |])
+         (Nx.mul_s (Nx.eye f64 32) 32.))
+  and sb = between f64 39 0. 1. [| 32 |] in
+  let sym =
+    let a = between f32 40 (-1.) 1. [| 64; 8; 8 |] in
+    host (Nx.add a (Nx.matrix_transpose a))
+  in
+  let angles = between f32 41 (-30.) 30. [| 65536 |] in
   [
-    warm "add-1-hit" (fun () -> Rune.jit (pair_fn ()) Nx.add) (fun f -> synced (f a b));
-    warm "jit run chain" (fun () -> Rune.jit' chain_sum) (fun f -> synced (f x));
+    warm "add-1-hit"
+      (fun () -> Rune.jit (pair_fn ()) Nx.add)
+      (fun f -> synced (f a b));
+    warm "jit run chain"
+      (fun () -> Rune.jit' chain_sum)
+      (fun f -> synced (f x));
     (* A root, which the compiler declines: the program is evaluated. *)
     warm "chain-100-rooted-hit"
       (fun () ->
@@ -289,6 +413,7 @@ let jit_rows () =
         ignore (Rune.vmap' ~axis:a g (host (Nx.ones f32 [| 2; 1 |])));
         (Rune.vmap' ~axis:a g, host (Nx.ones f32 [| 3; 1 |])))
       (fun (f, xs) -> synced (f xs));
+    grad_of_jit ();
     Thumper.bench_with_setup "donated-step-4096"
       ~setup:(fun () ->
         let step =
@@ -309,9 +434,57 @@ let jit_rows () =
           Nx.Ptree.(tensor @-> tensor @-> tensor @-> returns tensor)
           (fun p u into -> Nx.scatter ~axis:0 p u into))
       (fun f -> synced (f qs us into));
-    warm "sort-4096" (fun () -> Rune.jit' (fun x -> fst (Nx.sort x))) (fun f -> synced (f xs));
-    warm "fft-4096" (fun () -> Rune.jit' (fun x -> Nx.fft x)) (fun f -> synced (f zs));
-    warm "matmul-64" (fun () -> Rune.jit (pair_fn ()) Nx.matmul) (fun f -> synced (f m m));
+    donated_scatter ();
+    (* An embedding's gradient: 1024 tokens' rows added into a table of
+       zeros. *)
+    warm "take-grad-1024-of-4096x64"
+      (fun () ->
+        Rune.jit (pair_fn ()) (fun i table ->
+            Rune.grad'
+              (fun t ->
+                let e = Nx.take ~axis:0 i t in
+                Nx.sum (Nx.mul e e))
+              table))
+      (fun f -> synced (f tokens table));
+    (* A sort keeping its positions: keys and positions sorted together. *)
+    warm "sort-with-positions-4096"
+      (fun () -> Rune.jit (split_fn ()) (fun x -> Nx.sort x))
+      (fun f -> synced2 (f xs));
+    warm "fft-4096"
+      (fun () -> Rune.jit' (fun x -> Nx.fft x))
+      (fun f -> synced (f zs));
+    warm "matmul-64"
+      (fun () -> Rune.jit (pair_fn ()) Nx.matmul)
+      (fun f -> synced (f m m));
+    (* A product of a value's positive part, whose maximum the product reads
+       once per column. *)
+    warm "maximum-matmul-float32-64"
+      (fun () ->
+        Rune.jit (pair_fn ()) (fun x w ->
+            Nx.matmul (Nx.maximum x (Nx.zeros_like x)) w))
+      (fun f -> synced (f pm m));
+    (* An LU factorization with partial pivoting and two triangular solves,
+       each a loop of one step per row. *)
+    warm "solve-float64-32"
+      (fun () -> Rune.jit (pair_fn ()) Nx.solve)
+      (fun f -> synced (f sa sb));
+    (* 56 rounds of Jacobi rotations, held in a loop. *)
+    warm "eigh-float32-64x8x8"
+      (fun () -> Rune.jit (split_fn ()) (fun a -> Nx.eigh f32 a))
+      (fun f -> synced2 (f sym));
+    gaussian ();
+    (* Sines of a buffer's angles in [[-30, 30]]; sines of angles a tanh
+       bounds to [[-30, 30]], which need no long reduction, read net of the
+       tanh row; and tanh, one exponential each. *)
+    warm "sin-float32-64K"
+      (fun () -> Rune.jit' Nx.sin)
+      (fun f -> synced (f angles));
+    warm "sin-bounded-float32-64K"
+      (fun () -> Rune.jit' (fun x -> Nx.sin (Nx.mul_s (Nx.tanh x) 30.)))
+      (fun f -> synced (f angles));
+    warm "tanh-float32-64K"
+      (fun () -> Rune.jit' Nx.tanh)
+      (fun f -> synced (f angles));
   ]
 
 (* Loops whose lanes stop apart: Newton's iteration for one value's square root,
@@ -327,10 +500,9 @@ let lane_newton a =
     (Nx.add_s a 1.)
 
 let lane_rows () =
+  let spread i = Float.of_int i.(0) /. Float.of_int (lanes - 1) in
   let a =
-    host
-      (Nx.init f32 [| lanes |] (fun i ->
-           0.5 *. (20_000. ** (Float.of_int i.(0) /. Float.of_int (lanes - 1)))))
+    host (Nx.init f32 [| lanes |] (fun i -> 0.5 *. (20_000. ** spread i)))
   in
   let mapped = Rune.vmap' lane_newton in
   [
@@ -552,13 +724,35 @@ let footprint_rows () =
     rnn_row "rnn-grad h20 replay" 20 grad;
   ]
 
+(* Newton's iteration for the square roots of 1024 values in [[0.5, 4.5)],
+   until every residual is small: the condition is tested in the loop, with
+   no wait on the host per trip (rune's workload). *)
+let newton a =
+  Rune.iterate' ~max:64
+    ~until:(fun x -> Nx.less_s (Nx.max (Nx.abs (Nx.sub (Nx.mul x x) a))) 1e-3)
+    ~f:(fun x -> Nx.mul_s (Nx.add x (Nx.div a x)) 0.5)
+    (Nx.add_s a 1.)
+
 let jit_loop_rows () =
   let state k = normal k [| 64 |] in
   let s = { lx = state 13; ly = state 14; lz = state 15 } in
+  let a = between f32 42 0.5 4.5 [| 1024 |] in
   [
     warm "lorenz-scan-n100-replay"
-      (fun () -> Rune.jit Nx.Ptree.(lorenz_t @-> returns tensor) (lorenz_scan 100))
+      (fun () ->
+        Rune.jit Nx.Ptree.(lorenz_t @-> returns tensor) (lorenz_scan 100))
       (fun g -> synced (g s));
+    (* The scan's gradient: a known loop stacking residuals, then a reversed
+       one. *)
+    warm "lorenz-scan-grad-n100-replay"
+      (fun () ->
+        Rune.jit
+          Nx.Ptree.(lorenz_t @-> returns lorenz_t)
+          (Rune.grad lorenz_t (lorenz_scan 100)))
+      (fun g -> synced_all lorenz_t (g s));
+    warm "newton-1024-replay"
+      (fun () -> Rune.jit' newton)
+      (fun g -> synced (g a));
   ]
 
 (* TrainStep: one compiled training step of a perceptron 784 -> 256 -> 128 ->
