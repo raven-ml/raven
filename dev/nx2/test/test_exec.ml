@@ -2479,6 +2479,36 @@ let test_scatter_union () =
     (Nx.Placement.equal split (Nx.placement y));
   equal (array bits) host (elements y)
 
+(* A gather and a scatter over operands split along their first axis, and an
+   assembly of pieces on one device of a set and whole on each, give the
+   elements the host gives. *)
+let test_index_split () =
+  let split = Count2.split ~axis:0 in
+  let at = Nx.place in
+  let x = on_host Plain D.Int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |] in
+  let p = on_host Plain D.Int64 [| 2; 2 |] [| 2L; 0L; 1L; 1L |] in
+  let u = on_host Plain D.Int32 [| 2; 2 |] [| 10l; 20l; 30l; 40l |] in
+  let gather p x = Nx.take_along_axis ~axis:1 p x in
+  let taken = [| 3l; 1l; 5l; 5l |] in
+  equal ~msg:"gather" (array int32) taken (elements (gather p x));
+  equal ~msg:"gather, split" (array int32) taken
+    (elements (gather (at split p) (at split x)));
+  let scatter p u x = Nx.scatter ~combine:Add ~axis:1 p u x in
+  let added = [| 21l; 2l; 13l; 4l; 75l; 6l |] in
+  equal ~msg:"scatter" (array int32) added (elements (scatter p u x));
+  equal ~msg:"scatter, split" (array int32) added
+    (elements (scatter (at split p) (at split u) (at split x)));
+  let one = Nx.Placement.device Count2.v (m 1) in
+  let row v = on_host Plain D.Int32 [| 1; 3 |] v in
+  let top = at one (row [| 7l; 8l; 9l |]) in
+  equal ~msg:"an assembly" (array int32)
+    [| 7l; 8l; 9l; 1l; 2l; 3l |]
+    (elements
+       (Nx.concatenate ~axis:0 [ top; at Count2.on (row [| 1l; 2l; 3l |]) ]));
+  equal ~msg:"an assembly with a fill" (array int32)
+    [| -1l; -1l; -1l; 7l; 8l; 9l; -1l; -1l; -1l |]
+    (elements (Nx.pad [| (1, 1); (0, 0) |] (-1l) top))
+
 (* The minor words a float32 sum along an axis cut across three devices
    allocates: each device's partial, their stack, its move, the reduction
    of it, and the move of the parts to the result. It counts 12,108 words
@@ -3930,6 +3960,10 @@ let placements =
       test "a scatter's updates cut beside a target whole on each device \
             scatter at their cut"
         test_scatter_union;
+      test
+        "a gather, scatter and assembly of split or placed operands give the \
+         host's elements"
+        test_index_split;
       prop ~count:300
         "a float reduction over cut axes of many terms reduces its tiles' \
          stacked partials"
