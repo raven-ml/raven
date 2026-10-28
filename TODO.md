@@ -34,8 +34,11 @@ raven / llama.cpp (Vulkan; ROCm):
 - rig.pci: a peer GPU's memory mapped through its BAR is given back by
   its owner's free while a peer that may still master can write it; a
   fix needs the two GPUs' locks taken together
-- rig.nv: from the 22nd loss in one process, each lost device keeps
-  568 MiB of GPU memory (RTX 5000, kernel path); cause not isolated
+- rig.nv: an asynchronous exception that is no signal's (a Gc.Memprof
+  callback's, `Out_of_memory`) between `Rm.alloc` and `alloc_video`'s
+  rollback keeps that video memory for the process, as rig.mli allows:
+  its RM device outlives the lost device (568 MiB per interrupted growth
+  of local memory on the RTX 5000, kernel path)
 - rig.nv: memory a failed `make` could not free stays for the process,
   and the open's `Error` does not say so (the kernel path keeps its
   client)
