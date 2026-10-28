@@ -174,10 +174,20 @@ val local : 'r prim -> Nx_array.Move.range array -> 'r prim
 (** [local op w] is [op] computing the window [w] of its first result, over
     operands the caller gives at their windows ({!Route.window}): a loop over
     its window of its shape, its programs' coordinates offset by that window's
-    start, and a fold of [w]'s shape.
+    start, a fold of [w]'s shape, and a movement by {!local_move}.
 
     Raises [Invalid_argument] for a window of an assembly that is not the whole:
     its rule computes it whole. *)
+
+val local_move :
+  Nx_array.Move.t -> Nx_array.Move.range array -> Nx_array.Move.t
+(** [local_move mv w] is the movement that gives the window [w] of [mv]'s
+    result from the operand's window [w] reads: a reshape or a broadcast to
+    [w]'s extents; a slice that takes all of the operand's window along each
+    axis whose range starts at [0] by step [1], and keeps any other range; a
+    permutation or a sliding window unchanged. [w] must be a window a route
+    gives a device ({!Route.route}), which holds whole rows of both extents
+    along an axis [mv] regroups ({!Route.Regroups}). *)
 
 val within : 'r prim -> Nx_array.Move.range array -> 'r prim
 (** [within op l] is the loop [op], a map, a reduction or a scan, over the

@@ -1280,6 +1280,27 @@ let every_function (type d) name (x : (float, D.float32_elt, d) Nx.t) =
     (ys (fun v -> if v < 0. then v else 0.))
     (elements (Nx.where less x (Nx.zeros_like x)));
   equal ~msg:(msg "cast") (array bits) xs (elements (Nx.cast D.Float64 x));
+  equal ~msg:(msg "bitcast") (array int32)
+    (ys Int32.bits_of_float)
+    (elements (Nx.bitcast D.Int32 x));
+  (* A narrower dtype appends an axis of each element's bytes, in the host's
+     byte order, and keeps [x]'s cuts. *)
+  let bytes = Nx.bitcast D.Uint8 x in
+  let byte v k =
+    let k = if Sys.big_endian then 3 - k else k in
+    let b = Int32.shift_right_logical (Int32.bits_of_float v) (8 * k) in
+    Int32.to_int (Int32.logand b 0xffl)
+  in
+  equal ~msg:(msg "bitcast to bytes: shape") (array int) [| 2; 2; 4 |]
+    (Nx.shape bytes);
+  equal ~msg:(msg "bitcast to bytes") (array int)
+    (Array.concat (Array.to_list (ys (fun v -> Array.init 4 (byte v)))))
+    (elements bytes);
+  let placement =
+    Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
+  in
+  equal ~msg:(msg "bitcast to bytes: placement") placement (Nx.placement x)
+    (Nx.placement bytes);
   equal ~msg:(msg "reshape") (array bits) xs (elements (Nx.reshape [| 4 |] x));
   equal ~msg:(msg "copy") (array bits) xs (elements (Nx.copy x));
   ignore (Nx.Repr.array x);

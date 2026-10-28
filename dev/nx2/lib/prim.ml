@@ -1227,9 +1227,13 @@ let move_rule m x =
   let s = shape x in
   Route.Axes [| Array.init (Array.length s) (Route.moved m s) |]
 
+(* A bitcast to a wider dtype reads its operand's last axis whole, which it
+   removes; one to a narrower dtype keeps each axis and appends one that no
+   axis of its operand becomes. *)
 let bitcast_rule dt x =
-  if D.bits dt > D.bits (dtype x) then
-    Route.Axes [| reading [| rank x - 1 |] (rank x) |]
+  let bits = D.bits dt and from = D.bits (dtype x) in
+  if bits > from then Route.Axes [| reading [| rank x - 1 |] (rank x) |]
+  else if bits < from then Route.Axes [| reading [||] (rank x) |]
   else Route.Elementwise
 
 let rule : type r. r prim -> Route.rule =
@@ -1418,6 +1422,24 @@ let within : type r. r prim -> Nx_array.Move.range array -> r prim =
   | Contract _ | Copy _ | Move _ | Bitcast _ | Place _ | Check _ ->
       invalid_arg "Prim.within: not a loop"
 
+(* A movement's window: a reshape's and a broadcast's operand window holds
+   [w]'s elements in order, a cut keeping whole rows ({!Route.moved}); a
+   slice takes all of its operand's window along an axis it keeps from 0 by
+   step 1, and keeps its range along any other, which its result holds
+   whole. *)
+let local_move (mv : Nx_array.Move.t) w : Nx_array.Move.t =
+  match mv with
+  | Reshape _ -> Reshape (extents w)
+  | Broadcast _ -> Broadcast (extents w)
+  | Slice rs ->
+      Slice
+        (Iarray.mapi
+           (fun a (r : Nx_array.Move.range) ->
+             if r.start = 0 && r.step = 1 then { r with count = w.(a).count }
+             else r)
+           rs)
+  | Permute _ | Window _ -> mv
+
 let local : type r. r prim -> Nx_array.Move.range array -> r prim =
  fun op w ->
   (* A loop's window: the window of a load of its shape. *)
@@ -1433,12 +1455,13 @@ let local : type r. r prim -> Nx_array.Move.range array -> r prim =
   | Reduce m -> within op (loop m.layout)
   | Scan m -> within op (loop m.layout)
   | Fold f -> Fold { f with shape = extents w }
+  | Move (mv, x) -> Move (local_move mv w, x)
   | Assemble a ->
       if extents w <> a.shape then
         invalid_arg "Prim.local: an assembly is computed whole";
       op
   | Gather _ | Scatter _ | Sort _ | Fft _ | Linalg _ | Contract _ | Copy _
-  | Move _ | Bitcast _ | Place _ | Check _ ->
+  | Bitcast _ | Place _ | Check _ ->
       op
 
 (* A bitcast's layout and shape: one width keeps them; a narrower dtype appends

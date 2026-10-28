@@ -1227,11 +1227,80 @@ let move_law =
             walk 0 [])
           (Grid.devices (Devices.grid r.result)))
 
+(* [s]'s elements on [m 0], each its own index in C order. *)
+let ramp s =
+  let n = Array.fold_left ( * ) 1 s in
+  Nx_array.to_device (m 0)
+    (Nx_array.of_array Nx_array.Dtype.Float32 (Iarray.of_array s)
+       (Array.init n Float.of_int))
+
+(* [a]'s elements in its window [w], in C order. *)
+let elements_at w a =
+  let v = Option.get (Nx_array.move (Slice (Iarray.of_array w)) a) in
+  Nx_array.to_array (Nx_array.copy v)
+
+let array_of x = Iarray.get (Prim.arrays x) 0
+
+let movement_kind : R.t -> string = function
+  | Reshape _ -> "reshape"
+  | Broadcast _ -> "broadcast"
+  | Slice _ -> "slice"
+  | Permute _ -> "permutation"
+  | Window _ -> "sliding window"
+
+(* Each device's window of a moved result, computed as {!Prim.local} gives
+   the movement over the operand's window there, holds the elements that
+   window holds of the movement of the whole operand. *)
+let local_move_law =
+  prop ~count:500 "each moved result window is its operand window moved there"
+    move_case (fun (s, p, mv) ->
+      let a = ramp s in
+      let x = Value.Array { at = Devices.one s4 0; a; dead = Value.Live } in
+      let rule = Prim.rule (Value.Move (mv, x)) in
+      let routed =
+        match route rule [| p |] [| s |] with
+        | r -> Some r
+        | exception Invalid_argument _ -> None
+      in
+      let cut kind =
+        match routed with
+        | Some r ->
+            Grid.is_cut (Devices.grid r.result) && movement_kind mv = kind
+        | None -> false
+      in
+      cover "a reshape of a cut result" (cut "reshape");
+      cover "a broadcast of a cut result" (cut "broadcast");
+      cover "a slice of a cut result" (cut "slice");
+      match routed with
+      | None -> ()
+      | Some r ->
+          let whole = array_of (Eval.run ~by:"t" (Value.Move (mv, x))) in
+          let s' = Iarray.to_array (R.shape mv (Iarray.of_array s)) in
+          Array.iteri
+            (fun j _ ->
+              let w = Devices.window ~by:"t" r.result s' j in
+              let w' = Route.window rule ~operand:0 s w in
+              let window =
+                Option.get (Nx_array.move (Slice (Iarray.of_array w')) a)
+              in
+              let x' =
+                Value.Array
+                  { at = Devices.one s4 0; a = window; dead = Value.Live }
+              in
+              let local =
+                Eval.run ~by:"t" (Prim.local (Value.Move (mv, x')) w)
+              in
+              equal (array float_exact)
+                ~msg:(Printf.sprintf "device %d's window" j)
+                (elements_at w whole)
+                (Nx_array.to_array (Nx_array.copy (array_of local))))
+            (Grid.devices (Devices.grid r.result)))
+
 let () =
   exit
     (run "nx route"
        [
          group "laws"
-           [ law; refusals; exact; computes; keeps; move_law ];
+           [ law; refusals; exact; computes; keeps; move_law; local_move_law ];
          cases_;
        ])

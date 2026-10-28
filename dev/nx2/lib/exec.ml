@@ -122,39 +122,6 @@ let cast ~by set dt a =
       let kernels = kernels_of ~by ~op:"Copy" set in
       Option.get (A.bitcast dt (copy_array ~by kernels a))
 
-(* [mv] on one shard of a value of [shape] cut as [cuts], the shard of shape
-   [local]: a cut axis is one the movement keeps in order or regroups in tiles
-   that divide both extents ({!Route.moved}), so where the movement names its
-   extent, the shard's own extent along it, or its tile of the regrouped
-   extent, replaces it. *)
-let localize (mv : M.t) shape cuts local : M.t =
-  let cut a = Array.exists (fun (c, _) -> c = a) cuts in
-  let target s' =
-    let s' = Iarray.to_array s' in
-    Array.iter
-      (fun (a, t) ->
-        match Route.moved mv shape a with
-        | Becomes a' -> s'.(a') <- Iarray.get local a
-        | Regroups { axis; extent } -> s'.(axis) <- extent / t
-        | Whole | Reduced _ | Blocks _ | Scanned _ -> ())
-      cuts;
-    Iarray.of_array s'
-  in
-  match mv with
-  | Permute _ | Window _ -> mv
-  | Reshape s' -> Reshape (target s')
-  | Broadcast s' -> Broadcast (target s')
-  | Slice rs ->
-      Slice
-        (Iarray.mapi
-           (fun a (r : M.range) ->
-             if cut a then { M.start = 0; count = Iarray.get local a; step = 1 }
-             else r)
-           rs)
-
-(* Whether [p] cuts no axis: one device, or the whole on each. *)
-let uncut p = not (Grid.is_cut (Devices.grid p))
-
 (* The one array of [x], a value on one device. *)
 let one (type v s d) (x : (v, s, d) Value.t) = Iarray.get (Prim.arrays x) 0
 
@@ -429,30 +396,29 @@ let on_device : type r.
     let (module K : Nx_kernel.S) = kernels in
     refused ~by ~kernels:K.name (Devices.rig set k) local
 
-(* The one result of [op] over the arrays [views ()], one per device of [xp] in
-   order: at [route]'s result, whose devices hold them. *)
-let shard_views : type v s d.
+(* The one result of [op], a movement or a bitcast of [x], at [route]'s
+   result: on each device, [f w a] of [a], the view of [x]'s window there
+   that the result's window [w] reads ({!Route.window}). *)
+let viewed : type v s w r d.
+    by:string ->
     unit Route.t ->
     L.t array ->
-    (v, s, d) Value.t Value.prim ->
-    d Devices.placement ->
-    (unit -> (v, s) A.t iarray) ->
-    (v, s, d) Value.t =
- fun route layouts op xp views ->
-  Prim.results_at route.result layouts
-    (fun _ f ->
-      let vs = views () in
-      let p = f.placement in
-      let shape = Iarray.to_array (L.shape f.layout) in
-      if Devices.equal p xp then
-        make p ~shape (Iarray.map (fun v -> A.expect f.dtype (A.Any v)) vs)
-      else
-        let xdev = Grid.devices (Devices.grid xp) in
-        let devices = Grid.devices (Devices.grid p) in
-        make p ~shape
-          (Iarray.init (Array.length devices) (fun i ->
-               let j = Option.get (Array.find_index (( = ) devices.(i)) xdev) in
-               A.expect f.dtype (A.Any (Iarray.get vs j)))))
+    (w, r, d) Value.t Value.prim ->
+    (v, s, d) Value.t ->
+    (M.range array -> (v, s) A.t -> (w, r) A.t) ->
+    (w, r, d) Value.t =
+ fun ~by route layouts op x f ->
+  let p = route.result and rule = Prim.rule op in
+  let devices = Grid.devices (Devices.grid p) in
+  Prim.results_at p layouts
+    (fun _ form ->
+      let shape = Iarray.to_array (L.shape form.layout) in
+      let on j k =
+        let w = Devices.window ~by p shape j in
+        let w' = Route.window rule ~operand:0 (Prim.shape x) w in
+        A.expect form.dtype (A.Any (f w (Place.view ~by x k w')))
+      in
+      make p ~shape (Iarray.of_array (Array.mapi on devices)))
     op
 
 let windows : type r.
@@ -464,31 +430,20 @@ let windows : type r.
   | Partials -> invalid_arg "Exec.windows: a route that computes by partials");
   match op with
   | Value.Move (mv, x) -> (
-      let xp = Prim.placement x in
-      let set = Devices.set xp in
-      let move =
-        if uncut xp then moved ~by set mv
-        else
-          let shape = Prim.shape x and cuts = Grid.cuts (Devices.grid xp) in
-          fun a ->
-            moved ~by set (localize mv shape cuts (L.shape (A.layout a))) a
-      in
+      let set = Devices.set (Prim.placement x) in
       match x with
       | Value.Array { at; a; _ } when Devices.equal at route.result ->
           (* One array, moved where it lies: its view is the result. *)
-          Value.Array { at; a = move a; dead = Value.Live }
+          Value.Array { at; a = moved ~by set mv a; dead = Value.Live }
       | _ ->
-          shard_views route layouts op xp (fun () ->
-              Iarray.map move (Prim.arrays x)))
+          viewed ~by route layouts op x (fun w a ->
+              moved ~by set (Prim.local_move mv w) a))
   | Value.Bitcast (dt, x) -> (
-      let xp = Prim.placement x in
-      let set = Devices.set xp in
+      let set = Devices.set (Prim.placement x) in
       match x with
       | Value.Array { at; a; _ } when Devices.equal at route.result ->
           Value.Array { at; a = cast ~by set dt a; dead = Value.Live }
-      | _ ->
-          shard_views route layouts op xp (fun () ->
-              Iarray.map (cast ~by set dt) (Prim.arrays x)))
+      | _ -> viewed ~by route layouts op x (fun _ a -> cast ~by set dt a))
   | Value.Place _ | Value.Check _ ->
       invalid_arg "Exec.windows: a placement or a check"
   | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _
