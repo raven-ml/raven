@@ -27,6 +27,6 @@ table 2 rows × 5 columns
 
 lima: 22.0°C
 pune: 31.5°C
-float32 [2,2] 
+float32 [2; 2]
 [[22, 71.6],
  [31.5, 88.7]]

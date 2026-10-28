@@ -1,6 +1,5 @@
-lengths [3, 0, 2]
-values int32 [5] 
-[5, 17, ..., 9, 9]
+lengths int64 [3] [3, 0, 2]
+values int32 [5] [5, 17, 2, 9, 9]
 
 id int8, tokens list[int32], image tensor[float32, 2×2], point record[x float64, y float64], length ext[example.metres, float64]
 
@@ -14,9 +13,9 @@ table 3 rows × 5 columns
 id 1: 1.5 m
 id 3: 12 m
 
-image 2: float32 [2,2] 
-[[4, 5],
- [6, 7]]
+image 2: float32 [2; 2]
+         [[4, 5],
+          [6, 7]]
 [5; 17; 2]
 []
 [9; 9]

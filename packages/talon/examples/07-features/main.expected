@@ -1,13 +1,13 @@
 table 59 rows × 4 columns
  distance   carrier_delay  month  late
  float64    float64        int64  bool
+ -0.227057        8.00000     12  true
   1.902254       11.72727     12  false
- -0.563264        5.40000     12  true
- -0.563264        5.40000      8  false
+  0.314293       23.60000     12  false
  ⋮
- -1.134373        6.00000      5  true
- -0.770307       23.60000      9  true
+  1.902254       11.72727     10  false
+ -0.793734        4.28571     12  false
  54 rows not shown
 
-x: [59,3]
+x: [59; 3]
 y: [59]

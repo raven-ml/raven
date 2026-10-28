@@ -24,7 +24,9 @@ let main () =
   let* t = Query.run (features flights) in
 
   (* Shuffle every column at once, then copy the features into one matrix. *)
-  let t = Talon.take (Nx.Rng.permutation (Nx.Rng.key 0) (Talon.rows t)) t in
+  let t =
+    Talon.take (Nx.Rng.permutation ~key:(Nx.Rng.key 0) (Talon.rows t)) t
+  in
   Format.printf "%a@.@."
     (Talon.pp_with { Talon.limits with head = 3; tail = 2 })
     t;

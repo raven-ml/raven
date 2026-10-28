@@ -207,7 +207,7 @@ problem: talon adds no suffixes, so rename one side first.
 |---|---|
 | `df[["a", "b"]].to_numpy(dtype="float32")` | `Talon.to_tensor Nx.float32 [ "a"; "b" ] t` |
 | `df.a.to_numpy()` | `Column.to_tensor Nx.int64 (Talon.column t "a")` |
-| `df.sample(frac=1, random_state=0)` | `Talon.take (Nx.Rng.permutation (Nx.Rng.key 0) (Talon.rows t)) t` |
+| `df.sample(frac=1, random_state=0)` | `Talon.take (Nx.Rng.permutation ~key:(Nx.Rng.key 0) (Talon.rows t)) t` |
 | `df.a.tolist()` | `Column.options Kind.int (Talon.column t "a")` |
 
 `Column.to_tensor` shares the column's buffer without a copy, and refuses a
