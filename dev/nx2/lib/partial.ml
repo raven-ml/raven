@@ -344,8 +344,9 @@ type closing = {
   held : int list;
 }
 
-(* The closing of a fold over the folded [axes] of operand [0], each of
-   [extent a] elements, into results of [shape] at [route]'s result. *)
+(* The closing of a fold over the folded [axes] of operand [0], in any
+   order, each of [extent a] elements, into results of [shape] at
+   [route]'s result. *)
 let closing ~by (route : unit Route.t) ~axes ~extent shape =
   let r = route.result in
   let like = Devices.grid route.operands.(0) and g = Devices.grid r in
@@ -355,7 +356,12 @@ let closing ~by (route : unit Route.t) ~axes ~extent shape =
       (fun (b, t) -> if a = b then Some t else None)
       (Grid.cuts like)
   in
-  let cut = List.filter (fun a -> Option.is_some (cut_tiles a)) axes in
+  (* Sorted, so that the slots lie in C order of the tiles' first indices
+     whatever the order of [axes], as a contraction's pairs give them. *)
+  let cut =
+    List.sort Int.compare
+      (List.filter (fun a -> Option.is_some (cut_tiles a)) axes)
+  in
   let tiles = List.map (fun a -> Option.get (cut_tiles a)) cut in
   let held = List.map2 (fun a t -> Int.min (extent a) t) cut tiles in
   let group = List.fold_left ( * ) 1 tiles in

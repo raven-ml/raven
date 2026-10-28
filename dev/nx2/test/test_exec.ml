@@ -3253,6 +3253,23 @@ let test_contractions_move () =
   counted 2 2 6000;
   counted 8 8 6000
 
+(* A float32 contraction over two pairs, each cut over one axis of a 2 x 2
+   mesh, so that each device holds one product. Its four sums, stacked in
+   C order of the tiles' first indices, are [1e7; -1e7; 0.1; 0]: nx.cpu
+   adds lanes 0 and 2, 1 and 3, then the two, which gives [0.]. Stacked
+   with the second pair's tiles major, they would give [0.1]. The pairs'
+   order leaves the stack's alone. *)
+let test_contract_pair_order () =
+  let a =
+    Nx.place
+      (Nx.Placement.mesh mesh4 [ (0, [ "a" ]); (1, [ "b" ]) ])
+      (Nx.create Nx.float32 [| 2; 2 |] [| 1e7; -1e7; 0.1; 0. |])
+  in
+  let b = Nx.ones_like a in
+  let sum axes = (elements (Nx.tensordot ~axes a b)).(0) in
+  equal ~msg:"pairs in order" float_exact 0. (sum ([ 0; 1 ], [ 0; 1 ]));
+  equal ~msg:"pairs reversed" float_exact 0. (sum ([ 1; 0 ], [ 1; 0 ]))
+
 (* Scans along cut axes *)
 
 type scan = Cumsum | Cumprod | Cummax | Cummin
@@ -3654,6 +3671,8 @@ let placements =
       test "a contraction over a cut axis contracts each window, not the \
             operands"
         test_contractions_move;
+      test "a contraction cut along two pairs stacks its tiles in C order"
+        test_contract_pair_order;
       prop ~count:500
         "a scan along cut axes gives an exact one's bits on one device, a \
          float sum's or product's each window's scan from its totals' scan"

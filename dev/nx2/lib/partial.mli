@@ -26,12 +26,13 @@
     [N] devices. A tile is empty only where a folded axis has fewer
     elements than tiles, and the tiles that {e hold terms} come first along
     each cut axis. A group's partials are {e stacked} into one value of a
-    new leading axis per cut folded axis, in order, each of as many
-    elements as its folded axis has tiles holding terms. A device whose
-    tile holds terms holds its partial, its {e slot}, at its tile's number
-    along each cut folded axis: the stack's placement cuts each leading
-    axis over the grid axes that cut its folded axis and every other axis
-    as the result is cut, so a device whose tile is empty holds no slot.
+    new leading axis per cut folded axis, in the order of the first
+    operand's axes, each of as many elements as its folded axis has tiles
+    holding terms. A device whose tile holds terms holds its partial, its
+    {e slot}, at its tile's number along each cut folded axis: the stack's
+    placement cuts each leading axis over the grid axes that cut its
+    folded axis and every other axis as the result is cut, so a device
+    whose tile is empty holds no slot.
 
     A partial is in the {e carrier} of the result's terms
     ({!Nx_kernel.carrier}), a contraction's accumulator, or an [Arg]'s
