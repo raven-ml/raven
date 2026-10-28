@@ -6,8 +6,8 @@
 (** Mountain car with sparse reward, the implementation of
     {!Fehu_envs.Mountain_car}. *)
 
-type obs = (float, Nx.float32_elt) Nx.t
-type act = (int32, Nx.int32_elt) Nx.t
+type obs = Nx.host Nx.float32_t
+type act = Nx.host Nx.int32_t
 type render = string
 
 val make :

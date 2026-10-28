@@ -5,8 +5,8 @@
 
 open Fehu
 
-type obs = (float, Nx.float32_elt) Nx.t
-type act = (int32, Nx.int32_elt) Nx.t
+type obs = Nx.host Nx.float32_t
+type act = Nx.host Nx.int32_t
 type render = string
 
 (* Physics constants matching Gymnasium CartPole-v1 *)
@@ -47,7 +47,7 @@ let make ?render_mode () =
   let steps = ref 0 in
   let reset _env ?options:_ () =
     let random_state () =
-      let r = Nx.rand Nx.float32 [| 1 |] in
+      let r = Nx.Rng.uniform Nx.float32 [| 1 |] in
       let v = (Nx.to_array r).(0) in
       (v -. 0.5) *. 0.1
     in

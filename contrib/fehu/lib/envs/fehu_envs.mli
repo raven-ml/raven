@@ -25,8 +25,8 @@ module Random_walk : sig
 
       {b Render modes}: [ansi]. *)
 
-  type obs = (float, Nx.float32_elt) Nx.t
-  type act = (int32, Nx.int32_elt) Nx.t
+  type obs = Nx.host Nx.float32_t
+  type act = Nx.host Nx.int32_t
   type render = string
 
   val make :
@@ -50,8 +50,8 @@ module Cartpole : sig
 
       {b Render modes}: [ansi]. *)
 
-  type obs = (float, Nx.float32_elt) Nx.t
-  type act = (int32, Nx.int32_elt) Nx.t
+  type obs = Nx.host Nx.float32_t
+  type act = Nx.host Nx.int32_t
   type render = string
 
   val make :
@@ -74,8 +74,8 @@ module Grid_world : sig
 
       {b Render modes}: [ansi], [rgb_array]. *)
 
-  type obs = (int32, Nx.int32_elt) Nx.t
-  type act = (int32, Nx.int32_elt) Nx.t
+  type obs = Nx.host Nx.int32_t
+  type act = Nx.host Nx.int32_t
   type render = Text of string | Image of Fehu.Render.image
 
   val make :
@@ -100,8 +100,8 @@ module Mountain_car : sig
 
       {b Render modes}: [ansi]. *)
 
-  type obs = (float, Nx.float32_elt) Nx.t
-  type act = (int32, Nx.int32_elt) Nx.t
+  type obs = Nx.host Nx.float32_t
+  type act = Nx.host Nx.int32_t
   type render = string
 
   val make :

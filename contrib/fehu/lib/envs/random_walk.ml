@@ -5,8 +5,8 @@
 
 open Fehu
 
-type obs = (float, Nx.float32_elt) Nx.t
-type act = (int32, Nx.int32_elt) Nx.t
+type obs = Nx.host Nx.float32_t
+type act = Nx.host Nx.int32_t
 type render = string
 
 let step_size = 1.0

@@ -9,8 +9,8 @@
     Rendering draws an [Image] when the render mode is [`Rgb_array] and a
     [Text] otherwise. *)
 
-type obs = (int32, Nx.int32_elt) Nx.t
-type act = (int32, Nx.int32_elt) Nx.t
+type obs = Nx.host Nx.int32_t
+type act = Nx.host Nx.int32_t
 type render = Text of string | Image of Fehu.Render.image
 
 val make :

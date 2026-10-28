@@ -5,6 +5,9 @@ All notable changes to Fehu are documented in this file. Releases up to
 
 ## Unreleased
 
+- **Breaking:** spaces, observations and buffers hold host tensors, as
+  `Nx.host Nx.float32_t`, and draw from `Nx.Rng`: samples for a seed differ
+  from before.
 - Fehu is a contrib package: it has its own version and changelog, and
   `opam install raven` no longer installs it.
 - `Space.Box.sample` and `Space.Multi_discrete.sample` draw every dimension

@@ -5,6 +5,11 @@
 
 (** Reinforcement learning environments and utilities.
 
+    Environments are host data: observations, actions, rewards and stored
+    transitions are host values ({!Nx.host}), and samples draw from
+    [Nx.Rng]'s scope ({!Nx.Rng.with_key}). A policy on another device set
+    places what it reads ({!Nx.place}).
+
     {1 Core}
     {!modules: Value Info Space Env}
 

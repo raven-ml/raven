@@ -82,7 +82,7 @@ let boundary_values s = s.boundaries
 (* Discrete *)
 
 module Discrete = struct
-  type element = (int32, Nx.int32_elt) Nx.t
+  type element = Nx.host Nx.int32_t
 
   let to_int tensor =
     let reshaped = Nx.reshape [| 1 |] tensor in
@@ -103,7 +103,7 @@ module Discrete = struct
       v >= start && v < hi
     in
     let sample () =
-      let tensor = Nx.randint ~low:start ~high:hi [| 1 |] in
+      let tensor = Nx.Rng.randint ~low:start ~high:hi [| 1 |] in
       let arr : Int32.t array = Nx.to_array tensor in
       Nx.scalar Nx.int32 arr.(0)
     in
@@ -147,7 +147,7 @@ end
 (* Box *)
 
 module Box = struct
-  type element = (float, Nx.float32_elt) Nx.t
+  type element = Nx.host Nx.float32_t
 
   let create ~low ~high =
     let arity = Array.length low in
@@ -182,7 +182,7 @@ module Box = struct
     let span = Nx.sub high_t low_t in
     let finite = Nx.isfinite span in
     let sample () =
-      let u = Nx.rand Nx.float32 [| arity |] in
+      let u = Nx.Rng.uniform Nx.float32 [| arity |] in
       let inside = Nx.add low_t (Nx.mul u span) in
       let wide = Nx.add_s (Nx.mul_s u 2e6) (-1e6) in
       Nx.where finite inside (Nx.minimum high_t (Nx.maximum low_t wide))
@@ -237,7 +237,7 @@ end
 (* Multi_binary *)
 
 module Multi_binary = struct
-  type element = (int32, Nx.int32_elt) Nx.t
+  type element = Nx.host Nx.int32_t
 
   let create n =
     if n <= 0 then invalid_arg err_mb_n;
@@ -249,7 +249,7 @@ module Multi_binary = struct
       let arr : Int32.t array = Nx.to_array tensor in
       Array.for_all (fun v -> v = Int32.zero || v = Int32.one) arr
     in
-    let sample () = Nx.randint ~high:2 [| n |] in
+    let sample () = Nx.Rng.randint ~high:2 [| n |] in
     let pack tensor =
       let arr : Int32.t array = Nx.to_array tensor in
       Value.Bool_array
@@ -290,7 +290,7 @@ end
 (* Multi_discrete *)
 
 module Multi_discrete = struct
-  type element = (int32, Nx.int32_elt) Nx.t
+  type element = Nx.host Nx.int32_t
 
   let create nvec =
     let arity = Array.length nvec in
@@ -322,7 +322,7 @@ module Multi_discrete = struct
       Nx.create Nx.float32 [| arity |] (Array.map float_of_int nvec)
     in
     let sample () =
-      Nx.cast Nx.int32 (Nx.mul (Nx.rand Nx.float32 [| arity |]) bounds)
+      Nx.cast Nx.int32 (Nx.mul (Nx.Rng.uniform Nx.float32 [| arity |]) bounds)
     in
     let pack tensor =
       let arr : Int32.t array = Nx.to_array tensor in
@@ -517,7 +517,7 @@ module Sequence = struct
             if max_len = min_length then min_length
             else
               let tensor =
-                Nx.randint ~low:min_length ~high:(max_len + 1) [| 1 |]
+                Nx.Rng.randint ~low:min_length ~high:(max_len + 1) [| 1 |]
               in
               let arr = Nx.to_array tensor in
               Int32.to_int arr.(0)
@@ -596,13 +596,13 @@ module Text = struct
       let length =
         if max_length = 1 then 1
         else
-          let tensor = Nx.randint ~low:1 ~high:(max_length + 1) [| 1 |] in
+          let tensor = Nx.Rng.randint ~low:1 ~high:(max_length + 1) [| 1 |] in
           let arr = Nx.to_array tensor in
           Int32.to_int arr.(0)
       in
       if length = 0 then ""
       else
-        let idxs = Nx.randint ~high:charset_len [| length |] in
+        let idxs = Nx.Rng.randint ~high:charset_len [| length |] in
         let arr = Nx.to_array idxs in
         Bytes.init length (fun i -> charset.[Int32.to_int arr.(i)])
         |> Bytes.to_string

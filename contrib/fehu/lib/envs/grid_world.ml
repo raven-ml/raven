@@ -5,8 +5,8 @@
 
 open Fehu
 
-type obs = (int32, Nx.int32_elt) Nx.t
-type act = (int32, Nx.int32_elt) Nx.t
+type obs = Nx.host Nx.int32_t
+type act = Nx.host Nx.int32_t
 type render = Text of string | Image of Render.image
 
 let grid_size = 5
