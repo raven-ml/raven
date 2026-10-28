@@ -227,10 +227,20 @@ let packed a s w =
       n > 0 && hi - lo > n
   | _ -> false
 
+(* [x] placed at [w] lies there. *)
+let lies w (V x) =
+  let at_p p =
+    equal ~msg:"where it lies" (placement ()) p (Nx.placement (Nx.place p x))
+  in
+  match w with
+  | Host -> at_p Nx.Host.on
+  | One -> at_p One.on
+  | On | Split _ | Cuts _ | Major _ | Minor _ -> at_p (at w)
+
 let laws =
   group "laws"
     [
-      prop "each device holds its window of a host value placed" case
+      prop "a host value placed lies there, each device holding its window" case
         (fun (s, l, w, _) ->
           cover "split" (split w);
           let counts a = List.map (fun (_, b) -> snd b.(a)) (windows w s) in
@@ -247,6 +257,7 @@ let laws =
           cover "a window packed into memory the host does not address"
             (packed a s w);
           let x = V (Nx.Repr.of_array Nx.Host.v a) in
+          lies w x;
           holds (A.to_array a) s w (place w x));
       prop ~count:500 "each device holds its window after a second placement"
         case (fun (s, l, w, w') ->

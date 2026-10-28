@@ -590,9 +590,18 @@ let test_scalar_at_uncut () =
       Nx.Placement.mesh mesh [ (1, [ "x" ]) ];
     ]
 
+(* An operation over host creations, and a movement of one, lie on the host. *)
+let test_host_computed () =
+  let c = Nx.zeros Nx.float32 [| 2 |] in
+  equal ~msg:"an operation" (placement ()) Nx.Host.on
+    (Nx.placement (Nx.add c c));
+  equal ~msg:"a movement" (placement ()) Nx.Host.on
+    (Nx.placement (Nx.reshape [| 1; 2 |] c))
+
 let placements =
   group "placements"
     [
+      test "what host creations compute lies on the host" test_host_computed;
       cases "each creation's host form and _at form"
         ~name:(fun (Pair { name; _ }) -> name)
         pairs test_pair;
@@ -625,9 +634,11 @@ let test_like_placement () =
   let s = [| 4; 2 |] in
   let x = Nx.place (S2.split ~axis:0) (Nx.zeros Nx.float32 s) in
   let at y = Nx.placement y in
+  equal (placement ()) (S2.split ~axis:0) (at (Nx.zeros_like x));
   equal (placement ()) (S2.split ~axis:0) (at (Nx.ones_like x));
   equal (placement ()) (S2.split ~axis:0) (at (Nx.full_like x 2.));
   equal (placement ()) S2.on (at (Nx.scalar_like x 2.));
+  equal (array float_exact) (Array.make 8 0.) (Nx.to_array (Nx.zeros_like x));
   equal (array float_exact) (Array.make 8 2.) (Nx.to_array (Nx.full_like x 2.));
   equal (array float_exact) (Array.make 8 1.) (Nx.to_array (Nx.ones_like x));
   equal (array float_exact) [| 2. |] (Nx.to_array (Nx.scalar_like x 2.))
@@ -656,7 +667,7 @@ let test_like_host () =
 let like =
   group "beside a reference"
     [
-      test "a split reference: like is split, scalar_like whole on each"
+      test "a split reference: a like is split, scalar_like whole on each"
         test_like_placement;
       test "a host reference gives host values" test_like_host;
       test "a sub-byte reference fills in one kernel call" test_like_sub_byte;

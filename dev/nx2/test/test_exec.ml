@@ -1210,15 +1210,6 @@ let creations =
             (Exn.invalid_arg
                ~substring:"Nx.zeros_at: nx.test does not compute Fill")
             (fun () -> Nx.zeros_at Dec.on D.Float32 [| 2 |]));
-      test "zeros_like is zeros where its argument lies" (fun () ->
-          let x =
-            Nx.place (Count2.split ~axis:0)
-              (on_host Plain D.Float32 [| 4 |] [| 1.; 2.; 3.; 4. |])
-          in
-          let z = Nx.zeros_like x in
-          equal bool true
-            (Nx.Placement.equal (Nx.placement x) (Nx.placement z));
-          equal (array bits) [| 0.; 0.; 0.; 0. |] (elements z));
     ]
 
 (* Kills [x]'s memory, as a donation consumes it. *)

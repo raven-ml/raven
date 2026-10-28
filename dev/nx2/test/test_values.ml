@@ -266,26 +266,11 @@ let errors =
           starts_with ~affix:(name ^ ": ") msg;
           greater int ~than:(String.length name + 2) (String.length msg))
 
-(* Every value has a placement: a creation from numbers lies on the host, and a
-   value placed on a set lies there (the external review's program, which no
-   longer type-checks, read a host set at another brand from a value of every
-   set). *)
+(* Values on sets: two over the host meet, and Repr reads a creation's bytes. *)
 
 module Host2 = (val Nx.devices [ Rig.host ])
 
 let f32 = Nx.float32
-
-let test_host_creations () =
-  let c = Nx.zeros f32 [| 2 |] in
-  let host ~msg x =
-    equal ~msg
-      (Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal)
-      Nx.Host.on (Nx.placement x)
-  in
-  host ~msg:"zeros" c;
-  host ~msg:"scalar" (Nx.scalar f32 1.);
-  host ~msg:"an operation over creations" (Nx.add c c);
-  host ~msg:"a movement of one" (Nx.reshape [| 1; 2 |] c)
 
 let test_two_values_of_a_host_set () =
   let x = Nx.place Host2.on (Nx.zeros f32 [| 2 |]) in
@@ -295,25 +280,6 @@ let test_two_values_of_a_host_set () =
     [ Rig.name Rig.host ]
     (List.map Rig.name
        (Nx.rigs (Nx.Placement.devices (Nx.placement z))))
-
-(* A placement over a set of two memory devices, drawn. *)
-let placements =
-  Gen.of_list
-    ~pp:(fun ppf (name, _) -> Format.pp_print_string ppf name)
-    [
-      ("on", S2.on);
-      ("split 0", S2.split ~axis:0);
-      ("first", Nx.Placement.mesh (Nx.Mesh.v S2.v [ ("x", 2) ]) []);
-    ]
-
-let law_placed ((_, p), shape) =
-  assume (Array.length shape > 0);
-  let x = Nx.place p (Nx.zeros f32 shape) in
-  let q = Nx.placement x in
-  equal (placement ()) p q;
-  equal (list string)
-    (List.map Rig.name (Nx.rigs (Nx.Placement.devices p)))
-    (List.map Rig.name (Nx.rigs (Nx.Placement.devices q)))
 
 (* A creation holds bytes from the call on, which Repr hands out. *)
 let test_repr_of_creation () =
@@ -326,12 +292,8 @@ let every_set =
   group "placements"
     [
       test "Repr reads a creation's bytes" test_repr_of_creation;
-      test "a creation from numbers lies on the host" test_host_creations;
       test "values placed on a set over the host meet"
         test_two_values_of_a_host_set;
-      prop "a placed value lies where it was placed"
-        (Gen.pair placements shapes)
-        law_placed;
     ]
 
 let () = exit (run "nx values" [ values; repr; errors; every_set ])
