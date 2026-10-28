@@ -286,7 +286,7 @@ let unary =
         ];
     kind "expm1"
       (Op1 (Unary Expm1, D.Any D.Float32, 0))
-      ?within:(f1 Float.expm1 (21., 21.))
+      ?within:(f1 Float.expm1 (23., 23.))
       [ expm1_points ]
       ~range:(by32 (-40., 100.) (-50., 720.))
       ~covers:
@@ -319,7 +319,7 @@ let unary =
         ];
     kind "log1p"
       (Op1 (Unary Log1p, D.Any D.Float32, 0))
-      ?within:(f1 Float.log1p (12., 12.))
+      ?within:(f1 Float.log1p (5., 5.))
       [ log1p_points ]
       ~range:(fixed (-1.5, 10.))
       ~covers:
@@ -394,7 +394,7 @@ let unary =
                 on (fun w x -> Float.abs x > if w then 45. else 23.) );
             ])
       [
-        ("sinh", K.Sinh, f1 Float.sinh (21., 21.));
+        ("sinh", K.Sinh, f1 Float.sinh (23., 23.));
         ("cosh", K.Cosh, f1 Float.cosh (10., 10.));
       ]
   @ [

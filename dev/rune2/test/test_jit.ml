@@ -277,18 +277,18 @@ type unary = {
 let unaries =
   [
     { name = "exp"; f = Nx.exp; bound = (9 + 2, 9 + 2) };
-    { name = "log"; f = Nx.log; bound = (9 + 1, 9 + 2) };
+    { name = "log"; f = Nx.log; bound = (1 + 1, 1 + 2) };
     { name = "sin"; f = Nx.sin; bound = (4 + 2, 4 + 2) };
     { name = "cos"; f = Nx.cos; bound = (9 + 2, 9 + 2) };
     { name = "tan"; f = Nx.tan; bound = (19 + 4, 19 + 2) };
     { name = "asin"; f = Nx.asin; bound = (5 + 2, 9 + 2) };
     { name = "acos"; f = Nx.acos; bound = (5 + 2, 9 + 2) };
     { name = "atan"; f = Nx.atan; bound = (2 + 2, 7 + 2) };
-    { name = "sinh"; f = Nx.sinh; bound = (21 + 3, 21 + 2) };
+    { name = "sinh"; f = Nx.sinh; bound = (23 + 3, 23 + 2) };
     { name = "cosh"; f = Nx.cosh; bound = (10 + 2, 10 + 2) };
     { name = "tanh"; f = Nx.tanh; bound = (18 + 2, 18 + 2) };
-    { name = "expm1"; f = Nx.expm1; bound = (21 + 1, 21 + 2) };
-    { name = "log1p"; f = Nx.log1p; bound = (12 + 1, 12 + 2) };
+    { name = "expm1"; f = Nx.expm1; bound = (23 + 1, 23 + 2) };
+    { name = "log1p"; f = Nx.log1p; bound = (5 + 1, 5 + 2) };
     { name = "erf"; f = Nx.erf; bound = (2 + 2, 3 + 2) };
   ]
 

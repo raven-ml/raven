@@ -1180,13 +1180,13 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
       Nx.erf                           2        3
       Nx.atan                          2        7
       Nx.asin, Nx.acos                 5        9
+      Nx.log1p                         5        5
       Nx.atan2                         6        8
       Nx.exp, Nx.cos                   9        9
       Nx.cosh                         10       10
-      Nx.log1p                        12       12
       Nx.tanh                         18       18
       Nx.tan                          19       19
-      Nx.expm1, Nx.sinh               21       21
+      Nx.expm1, Nx.sinh               23       23
       Nx.pow x y                9 + 6 |y log2 |x||
     v}
 

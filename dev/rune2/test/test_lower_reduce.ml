@@ -817,7 +817,7 @@ let complex_scans =
 (* [E] and [L], the bounds in ulps Lower_real states for [Exp] and [Log] at
    float32 and float64. *)
 let exp_ulps = 9.
-let log_ulps = 9.
+let log_ulps = 1.
 let u64 = Float.ldexp 1. (-53)
 
 (* The loop of [x]'s identity by [r]: reduced along [c]'s axes, or scanned

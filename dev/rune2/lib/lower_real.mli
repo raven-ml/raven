@@ -44,13 +44,13 @@
       erf                            2        3
       atan                           2        7
       asin, acos                     5        9
+      log1p                          5        5
       atan2                          6        8
       exp, cos                       9        9
       cosh                          10       10
-      log1p                         12       12
-      tanh                          18       18
       tan                           19       19
-      expm1, sinh                   21       21
+      tanh                          18       18
+      expm1, sinh                   23       23
       pow                     9 + 6 |y log2 |x||
     v}
 

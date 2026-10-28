@@ -303,9 +303,10 @@ let log x =
   in
   where below (nan x) (where positive l special)
 
-(* Kahan's expm1: with w = e^x rounded, (w - 1) x / log w. w - 1 is expm1 at log
-   w exactly, and expm1(t) / t varies slowly, so w's error cancels to first
-   order. *)
+(* Kahan's expm1: with w = e^x rounded, (w - 1) x / log w, which is x g(w) for
+   g(w) = (w - 1) / log w, exactly expm1(x) / x at w = e^x. w's relative error
+   reaches the result scaled by w g'(w) / g(w), which is 1/2 near 0 and below 1
+   everywhere, so exp's error passes through, halved near 0. *)
 let expm1 x =
   let w = exp x in
   let wm = w -: one x in
