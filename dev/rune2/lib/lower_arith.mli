@@ -3,12 +3,16 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Scalar programs as tolk expressions, and how a graph holds nx's elements.
+(** Scalar programs as tolk nodes, and the nodes that hold nx's elements.
+
+    {!prog} lowers a program of {!Nx_kernel.Prog} to tolk nodes, one per output,
+    and {!cast} lowers one conversion. {!Lower_real} and {!Lower_complex} lower
+    the float and complex kinds a program applies.
 
     {1:elements Elements}
 
-    A value's node is a tolk tensor of the value's shape holding one element of
-    {!dtype} per element of the value:
+    A value's {e node} is a tolk node of the shape {!dims} gives, holding one
+    element of {!dtype} per element of the value:
     - [float64], [float32], [float16] and [bfloat16] as tolk's types of the same
       format;
     - [float8_e4m3fn], [float8_e5m2] and [float4_e2m1fn] as their codes, the
@@ -17,54 +21,61 @@
       signedness; [int4] as an [Int8] and [uint4] as a [Uint8] holding its
       value;
     - [bool] and [bit] as a [Uint8] holding the element's byte, true where it is
-      not zero: a [bit]'s is [0] or [1];
+      not zero; a [bit]'s byte is [0] or [1];
     - [complex64] and [complex128] as [Float32] and [Float64] with one more
-      axis, last, of extent [2]: the real part, then the imaginary part.
+      axis, last, of extent [2], the real part then the imaginary part.
 
-    So a sub-byte value's node holds one element per element; packing it into
-    bytes is the storage's business.
+    A node holds each sub-byte element in a byte of its own. Only stored arrays
+    pack them.
 
     {1:numerics Numerics}
 
-    A node computes what {!Nx_kernel.Prog} states of its kind, at the compute
-    type nx's kinds state: a float narrower than [float32] computes in [float32]
-    and rounds once to its dtype, an integer narrower than 32 bits in the 32-bit
-    integer of its signedness. An exact kind gives the bits nx's kernels give,
-    but where a float or complex kind gives a NaN, which is a NaN of no
-    promised sign or payload: the integer and boolean kinds, comparisons,
-    [Where], casts, bitcasts, and the float and complex kinds {!Lower_real} and
-    {!Lower_complex} state exact. Every other float or complex kind holds the
-    bound and the special values they state; at a float narrower than
-    [float32], whose rounding absorbs [float32]'s error, it is within one rank
-    of the correctly rounded result. *)
+    Each kind ({!Nx_kernel.Prog}) computes what [Prog] states for it, in its
+    {e compute type}: a float narrower than [float32] computes in [float32] and
+    rounds once to its dtype, an integer narrower than 32 bits in the 32-bit
+    integer of its signedness, and every other dtype in itself.
+
+    The integer and boolean kinds, the comparisons, [Where], casts and bitcasts
+    are exact in {!Lower_real}'s sense, as are the float and complex kinds that
+    {!Lower_real} and {!Lower_complex} state exact. Every other float or complex
+    kind holds the bound and the special values those modules state for it. Such
+    a kind at a dtype narrower than [float32] is within one ulp ({!Lower_real})
+    of the correctly rounded result, since its [float32] error is below one ulp
+    of the dtype. For [pow] this holds wherever the result is finite in that
+    dtype. These rules are the elementwise part of {!Rune2.section-numerics}. *)
 
 open Tolk
+
+(** {1:lowering Lowering} *)
 
 val dtype : Nx_array.Dtype.any -> Dtype.t
 (** [dtype dt] is the type of a node's elements for a value of [dt]. *)
 
 val dims : Nx_array.Dtype.any -> int array -> Ops.sint list
-(** [dims dt s] is the shape of the node of a value of [dt] and shape [s]: [s],
-    and an axis of [2] after it for a complex [dt]. *)
+(** [dims dt s] is [s], with an axis of extent [2] appended for a complex [dt].
+*)
 
 val parts : Nx_array.Dtype.any -> Ops.t -> Ops.t list
 (** [parts dt u] is the node [u] of a value of [dt] as nodes of the value's
-    shape, one per element of its node: [[u]], or a complex value's real parts,
-    then its imaginary parts. *)
+    shape: [[u]], or for a complex [dt] the node of its real parts then that of
+    its imaginary parts. *)
 
 val of_parts : Nx_array.Dtype.any -> Ops.t list -> Ops.t
-(** [of_parts dt us] is the node of a value of [dt] whose {!parts} are [us]. *)
+(** [of_parts dt us] is the node of a value of [dt] whose {!parts} are [us].
+
+    Raises [Invalid_argument] unless [us] is one node, or two for a complex
+    [dt]. *)
 
 val fill : ('v, 's) Nx_array.Dtype.t -> 'v -> Dtype.const list
 (** [fill dt x] is the element [x] of [dt] as the constant of each of its
-    {!parts}. Each holds the bits {!Nx_kernel.Prog.bits} gives [x], as a
-    constant of a program does: a NaN keeps its sign and payload. *)
+    {!parts}. Each holds the bits {!Nx_kernel.Prog.bits} gives [x], as for a
+    program's constants, so a NaN keeps its sign and payload. *)
 
 val prog : Nx_kernel.Prog.t -> int array -> Ops.t array -> Ops.t array
 (** [prog p s ins] is the node of each output of [p] run at every index of the
-    shape [s], its operand [i] read from the node [ins.(i)], a value of shape
-    [s] and of operand [i]'s dtype. A [Coord i] is the index along axis [i] of
-    [s].
+    shape [s], its operand [i] read from the node [ins.(i)]. A [Coord i] is the
+    index along axis [i] of [s]. Each [ins.(i)] must be the node of a value of
+    shape [s] and of operand [i]'s dtype.
 
     Raises [Invalid_argument] unless [ins] has one node per operand of [p]. *)
 
