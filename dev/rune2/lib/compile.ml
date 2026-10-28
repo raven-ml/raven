@@ -1660,10 +1660,12 @@ let evaluate ~name p args =
   if Array.exists (fun (V x) -> Nx.Prim.donated x) args then
     consumed ~by:name args (fun arrays _ -> evaluated p args arrays)
   else
-    (* A result that is an argument is a copy of it. *)
-    Array.map
-      (fun (V y as r) ->
-        if Array.exists (same r) args then V (Nx.copy y) else r)
+    (* A result that is an argument or a constant, which [eval] returns as
+       itself, is a copy of it. *)
+    Array.mapi
+      (fun j (V y as r) ->
+        if same r p.outputs.(j) || Array.exists (same r) args then V (Nx.copy y)
+        else r)
       (eval_all p args)
 
 (* The element of the one-element array over [b], read on the host. *)

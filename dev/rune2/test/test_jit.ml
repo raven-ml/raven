@@ -485,8 +485,8 @@ let test_nested () =
   let x = v [| 1.; 2. |] in
   equal bits_t (bits (Nx.add (Nx.mul x x) (Nx.mul c c))) (bits (outer x))
 
-(* Fresh results: a result that is an argument is a copy, compiled and
-   evaluated. *)
+(* Fresh results: a result that is an argument or a capture is a copy, compiled
+   and evaluated. *)
 let test_fresh () =
   let x = v [| 1.; 2. |] in
   let b = Nx.Repr.read x Nx_array.buffer in
@@ -498,7 +498,25 @@ let test_fresh () =
     Rune.jit' (fun x -> fst (Rune.scan' ~f:(fun c r -> (c, r)) ~init:x (Nx.reshape [| 2; 1 |] x))) x
   in
   equal ~msg:"evaluated" bool false (shares looped);
-  equal bits_t (bits x) (bits looped)
+  equal bits_t (bits x) (bits looped);
+  let c = v [| 5.; -0. |] in
+  let rooted =
+    Rune.jit
+      T.(tensor @-> returns (pair tensor tensor))
+      (fun x ->
+        let r =
+          Rune.root T.tensor ~residual:(fun y -> Nx.sub y x) (fun () -> x)
+        in
+        (r, c))
+  in
+  let r, k = rooted x in
+  let held = Nx.Repr.read c Nx_array.buffer in
+  let held_by y =
+    Rig.Buffer.overlaps held (Nx_array.buffer (Option.get (Nx.Repr.array y)))
+  in
+  equal ~msg:"evaluated, a captured result" bool false (held_by k);
+  equal bits_t (bits x) (bits r);
+  equal bits_t (bits c) (bits k)
 
 (* An argument whose memory starts off 16 bytes binds where it lies, through a
    program compiled for that phase. *)
