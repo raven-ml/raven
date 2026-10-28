@@ -1,6 +1,0 @@
-(test
- (name test_quant)
- (package nx)
- (libraries nx rig nx.dtype nx.io nx.quant nx_test windtrap)
- (deps
-  (glob_files golden/*)))

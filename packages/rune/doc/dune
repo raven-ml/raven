@@ -1,8 +1,0 @@
-(mdx
- (files *.md)
- (package rune)
- (enabled_if
-  (and
-   (<> %{profile} sanitize)
-   (<> %{profile} tsan)))
- (libraries rune nx unix))

@@ -1,8 +1,0 @@
-(library
- (name nx_dtype)
- (public_name nx.dtype)
- (install_c_headers nx_dtype)
- (foreign_stubs
-  (language c)
-  (names nx_dtype_stubs))
- (libraries))

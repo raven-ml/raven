@@ -1,6 +1,0 @@
-(library
- (name nx_test)
- (foreign_stubs
-  (language c)
-  (names accuracy_stubs))
- (libraries nx nx.array nx.backend nx.cpu rig rig.disk nx.dtype windtrap))

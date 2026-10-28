@@ -1,8 +1,0 @@
-; On the machine's GPUs that rig opens through a vendor's runtime or kernel
-; driver; skips without one.
-
-(test
- (name test_gpu)
- (package nx)
- (locks %{workspace_root}/gpu)
- (libraries nx rig rig.gpus nx_test windtrap))

@@ -1,5 +1,0 @@
-(library
- (name nx_backend)
- (public_name nx.backend)
- (modules_without_implementation nx_backend_intf)
- (libraries nx_dtype rig nx_array))
