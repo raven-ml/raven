@@ -1242,10 +1242,64 @@ module Rules = struct
         else match tangent k with Some t -> dual_v c.i y t | None -> y)
       out
 
+  (* A custom rule under a differentiation that tracks values it captures and
+     none of its arguments. The call is performed outward on the captures'
+     primals, so that a differentiation around tracking an argument applies
+     the rule; this one's tangents are the derivative of the primal's code
+     along the captures, the residuals' too where they are asked for. A sum's
+     tangent is its seed's plus those of the additions made onto it, which the
+     derived code makes from the identity. *)
+  let captured c ~name ~primal:p ~derivative ~ny ~args ~captures ~residuals
+      ~applied ~seeds =
+    let out =
+      perform
+        (Custom
+           {
+             name;
+             primal = p;
+             derivative;
+             ny;
+             args;
+             captures = Array.map (primal_v c.i) captures;
+             residuals;
+             applied;
+             seeds = Array.map (primal_v c.i) seeds;
+           })
+    in
+    let base = ny + residual_count p ~ny in
+    let slice = if residuals then base else ny in
+    let derived =
+      c.derive (prune p ~outputs:(Array.init slice Fun.id))
+        (Array.append args captures)
+    in
+    let _, forms, feeds = sums [ p ] in
+    let sum =
+      Array.init (Array.length forms) (fun j ->
+          if seeds = [||] then None else tangent_v c.i seeds.(j))
+    in
+    Array.iteri
+      (fun k j ->
+        match (sum.(j), snd derived.(slice + k)) with
+        | Some a, Some b -> sum.(j) <- Some (add a b)
+        | None, b -> sum.(j) <- b
+        | Some _, None -> ())
+      (List.hd feeds);
+    let along k =
+      if k < slice then snd derived.(k)
+      else if k < base || k >= base + Array.length sum then None
+      else sum.(k - base)
+    in
+    Array.mapi
+      (fun k v -> match along k with Some t -> dual_v c.i v t | None -> v)
+      out
+
   (* A rule applies under a differentiation that tracks one of its arguments.
      One that tracks only values the rule captures differentiates the rule's
-     code where it was performed. *)
-  let rule c = function
+     code: where it is evaluated, or, where some differentiation around may
+     track an argument, as [captured] does. *)
+  let rule c =
+    let traced (V x) = Option.is_some (Nx.Prim.owner x) in
+    function
     | Custom
         {
           name;
@@ -1258,11 +1312,16 @@ module Rules = struct
           applied;
           seeds;
         } ->
-        if not (Array.exists (owned c.i) args) then None
-        else
+        if Array.exists (owned c.i) args then
           Some
             (custom c ~name ~primal ~derivative ~ny ~args ~captures ~residuals
                ~applied ~seeds)
+        else if Array.exists (owned c.i) captures && Array.exists traced args
+        then
+          Some
+            (captured c ~name ~primal ~derivative ~ny ~args ~captures
+               ~residuals ~applied ~seeds)
+        else None
     | Linear
         {
           name;

@@ -424,6 +424,114 @@ let order_tests =
         near ~msg:"forward over reverse differentiates the rule's code"
           (scalar (Float.cos x))
           (snd (Rune.jvp' primal (scalar x) (scalar 1.))));
+    test "a differentiation of a capture leaves the rule to the argument's"
+      (fun () ->
+        (* s sin x with a tangent map of 100 s along x: the differentiation
+           over s differentiates the code, the one over x applies the rule. *)
+        let rule s =
+          Rune.custom_jvp tensor tensor (fun x ->
+              let c = Nx.mul_s s 100. in
+              (Nx.mul s (Nx.sin x), fun dx -> Nx.mul c dx))
+        in
+        let s = scalar 1.5 and dx = scalar 3. in
+        let reverse x = Rune.value_and_grad' (fun s -> Nx.sum (rule s x)) s in
+        let forward x = Rune.jvp' (fun s -> rule s x) s (scalar 1.) in
+        let jvp f = snd (Rune.jvp' f (scalar x) dx) in
+        near ~msg:"jvp over reverse" (scalar 450.)
+          (jvp (fun x -> fst (reverse x)));
+        near ~msg:"jvp over forward" (scalar 450.)
+          (jvp (fun x -> fst (forward x)));
+        near ~msg:"under jit" (scalar 450.)
+          (Rune.jit' (fun x -> snd (Rune.jvp' (fun x -> fst (reverse x)) x dx))
+             (scalar x));
+        near ~msg:"under a map" (vec [| 450.; 450. |])
+          (Rune.vmap'
+             (fun x -> snd (Rune.jvp' (fun x -> fst (reverse x)) x dx))
+             (vec [| x; 0.1 |]));
+        near ~msg:"grad over reverse" (scalar 150.)
+          (Rune.grad' (fun x -> fst (reverse x)) (scalar x));
+        near ~msg:"grad over forward" (scalar 150.)
+          (Rune.grad' (fun x -> fst (forward x)) (scalar x));
+        near ~msg:"the derivative along s"
+          (scalar (Float.sin x))
+          (snd (reverse (scalar x)));
+        near ~msg:"its derivative along x"
+          (scalar (3. *. Float.cos x))
+          (jvp (fun x -> snd (reverse x)));
+        (* The rule applied inside, its tangent map's code along s outside. *)
+        let applied s = Rune.grad' (fun x -> Nx.sum (rule s x)) (scalar x) in
+        near ~msg:"jvp of the rule's derivative" (scalar 100.)
+          (snd (Rune.jvp' applied s (scalar 1.)));
+        near ~msg:"grad of the rule's derivative" (scalar 100.)
+          (Rune.grad' (fun s -> Nx.sum (applied s)) s);
+        (* A capture whose primal the differentiation of x tracks. *)
+        invalid ~sub:"its own differentiation tracks; pass it as an argument"
+          (fun () ->
+            jvp (fun x ->
+                fst
+                  (Rune.value_and_grad'
+                     (fun s -> Nx.sum (rule s x))
+                     (Nx.mul_s x 2.)))));
+    test "a differentiation of a capture differentiates the rule's additions"
+      (fun () ->
+        (* The rule adds s² to [total]: from a zero of s, the total's
+           derivative along s is 1 + 2 s = 4. *)
+        let rule s =
+          Rune.custom_jvp tensor tensor (fun x ->
+              Total.add total (Nx.mul s s);
+              (Nx.mul s x, fun dx -> dx))
+        in
+        let collected ~zero x s =
+          snd
+            (Total.collect total ~zero:(zero s) (fun () -> ignore (rule s x)))
+        in
+        let s = scalar 1.5 and x = scalar 2. in
+        let at_zero _ = scalar 0. in
+        near ~msg:"an untraced argument" (scalar 3.)
+          (Rune.grad' (collected ~zero:at_zero x) s);
+        near ~msg:"from a zero of s" (scalar 4.)
+          (Rune.grad' (collected ~zero:Fun.id x) s);
+        near ~msg:"under jvp of the argument" (scalar 3.)
+          (fst
+             (Rune.jvp'
+                (fun x -> Rune.grad' (collected ~zero:at_zero x) s)
+                x (scalar 1.)));
+        near ~msg:"under jvp of the argument, from a zero of s" (scalar 4.)
+          (fst
+             (Rune.jvp'
+                (fun x -> Rune.grad' (collected ~zero:Fun.id x) s)
+                x (scalar 1.)));
+        near ~msg:"under grad of the argument" (scalar 4.)
+          (fst
+             (Rune.value_and_grad'
+                (fun x ->
+                  snd (Rune.jvp' (collected ~zero:Fun.id x) s (scalar 1.)))
+                x)));
+    test "a custom_vjp under a differentiation of a capture" (fun () ->
+        let rule s =
+          Rune.custom_vjp tensor tensor (fun x ->
+              let c = Nx.mul_s s 100. in
+              (Nx.mul s (Nx.sin x), fun g -> Nx.mul c g))
+        in
+        let s = scalar 1.5 in
+        let reverse x = Rune.value_and_grad' (fun s -> Nx.sum (rule s x)) s in
+        let forward x = Rune.jvp' (fun s -> rule s x) s (scalar 1.) in
+        near ~msg:"grad over reverse" (scalar 150.)
+          (Rune.grad' (fun x -> fst (reverse x)) (scalar x));
+        near ~msg:"grad over forward" (scalar 150.)
+          (Rune.grad' (fun x -> fst (forward x)) (scalar x));
+        near ~msg:"the derivative along s"
+          (scalar (Float.sin x))
+          (snd (reverse (scalar x)));
+        (* The pullback applied inside, its code along s outside. *)
+        near ~msg:"jvp of the pullback" (scalar 100.)
+          (snd
+             (Rune.jvp'
+                (fun s -> Rune.grad' (fun x -> Nx.sum (rule s x)) (scalar x))
+                s (scalar 1.)));
+        (* No reverse mode over x applies the pullback. *)
+        raises (Invalid_argument no_forward) (fun () ->
+            Rune.jvp' (fun x -> fst (reverse x)) (scalar x) (scalar 1.)));
     test "a rule's addition counts once in every pair of modes" (fun () ->
         let x = scalar 0.5 in
         let check msg f =
@@ -437,6 +545,21 @@ let order_tests =
             Rune.grad' (fun x -> snd (Rune.jvp' f x (scalar 1.))) x);
         check "jvp ∘ grad" (fun () -> hvp f x);
         check "grad ∘ grad" (fun () -> d2 f x);
+        (* A rule that captures s, under a differentiation of s alone. *)
+        let scaled s =
+          Rune.custom_jvp tensor tensor (fun x ->
+              Total.add total (Nx.sum x);
+              (Nx.mul s x, fun dx -> Nx.mul s dx))
+        in
+        let s = scalar 1.5 in
+        let g s x = Nx.sum (scaled s x) in
+        check "grad of a capture" (fun () -> Rune.grad' (fun s -> g s x) s);
+        check "jvp ∘ grad of a capture" (fun () ->
+            Rune.jvp' (fun x -> Rune.grad' (fun s -> g s x) s) x (scalar 1.));
+        check "grad ∘ jvp of a capture" (fun () ->
+            Rune.grad'
+              (fun x -> snd (Rune.jvp' (fun s -> g s x) s (scalar 1.)))
+              x);
         near ~msg:"the third derivative" (scalar 6.)
           (d2 (fun x -> Nx.sum (Rune.grad' f x)) x));
     test "a rule with no tensor result is not applied under grad" (fun () ->
@@ -1175,8 +1298,32 @@ let adjoint_law (xs, vs, ws) =
   let dot a b = Nx.item [] (Nx.sum (Nx.mul a b)) in
   equal ~msg:"<w, J v> = <Jᵀ w, v>" (float 1e-12) (dot w dy) (dot g v)
 
+(* s sin x with a tangent map of 100 s along x: a differentiation of x
+   applies the rule, one of s alone differentiates the code. *)
+let capture_law (xs, ss, vs) =
+  cover "no element" (Array.length xs = 0);
+  cover "several elements" (Array.length xs > 1);
+  let x = vec xs and s = vec ss and v = vec vs in
+  let rule s =
+    Rune.custom_jvp tensor tensor (fun x ->
+        let c = Nx.mul_s s 100. in
+        (Nx.mul s (Nx.sin x), fun dx -> Nx.mul c dx))
+  in
+  let reverse x = Rune.value_and_grad' (fun s -> Nx.sum (rule s x)) s in
+  near ~tol:1e-9 ~msg:"the rule along x"
+    (Nx.sum (Nx.mul (Nx.mul_s s 100.) v))
+    (snd (Rune.jvp' (fun x -> fst (reverse x)) x v));
+  near ~tol:1e-9 ~msg:"the code along s" (Nx.sin x) (snd (reverse x));
+  near ~tol:1e-9 ~msg:"the code's derivative along x"
+    (Nx.mul (Nx.cos x) v)
+    (snd (Rune.jvp' (fun x -> snd (reverse x)) x v))
+
 let law_tests =
-  [ prop "the pullback is the tangent map's adjoint" gen_vecs adjoint_law ]
+  [
+    prop "the pullback is the tangent map's adjoint" gen_vecs adjoint_law;
+    prop "a differentiation of a capture leaves the rule to the argument's"
+      gen_vecs capture_law;
+  ]
 
 let () =
   exit
