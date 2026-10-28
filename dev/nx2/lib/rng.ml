@@ -136,16 +136,6 @@ let lowered table dt ins body =
 
 (* Draws *)
 
-let move ~by mv x = Eval.eval ~by (Value.Move (mv, x))
-
-let reshape ~by s x =
-  if Prim.has_shape x s then x else move ~by (M.Reshape (Iarray.of_array s)) x
-
-(* [x] at the shape [s], with leading axes: [x]'s own shape [t] aligned
-   right. *)
-let stretch ~by s x =
-  if Prim.has_shape x s then x else move ~by (M.Broadcast (Iarray.of_array s)) x
-
 (* A key's batch shape: its shape without the last axis, which holds the two
    words. Every key has that axis: [of_tensor] checks it, and the other
    constructors make it. *)
@@ -255,7 +245,9 @@ let draw ~by ?(params = [||]) ?at source dt s prog =
   let shape = Array.append batch s in
   Prim.check_shape ~by (Iarray.of_array shape);
   let params =
-    Array.map (fun (Value.Any x) -> Value.Any (stretch ~by shape x)) params
+    Array.map
+      (fun (Value.Any x) -> Value.Any (Eval.broadcast ~by shape x))
+      params
   in
   let position = position ~rank:(Array.length shape) s in
   let prog = bind prog position_operand (E.any position) in
@@ -265,8 +257,8 @@ let draw ~by ?(params = [||]) ?at source dt s prog =
       map ~by ?at shape prog dt params
   | Key k ->
       let ones = Array.make (Array.length s) 1 in
-      let w = reshape ~by (Array.append batch ones) (pack ~by k) in
-      let w = stretch ~by shape w in
+      let w = Eval.reshape ~by (Array.append batch ones) (pack ~by k) in
+      let w = Eval.broadcast ~by shape w in
       let w = match at with None -> w | Some p -> read_at ~by p w in
       map ~by shape prog dt (Array.append [| Value.Any w |] params)
 
@@ -316,7 +308,7 @@ let walk c k = of_tensor (Ptree.Walk.tensor c k)
 let keys ~by (k : 'd key) shape f : 'd key =
   let ins : D.any iarray = [| D.Any D.Uint64 |] in
   let out = f ~key:(E.input 0 D.Uint64) in
-  let w = stretch ~by shape (pack ~by k) in
+  let w = Eval.broadcast ~by shape (pack ~by k) in
   let u : (int64, D.uint64_elt, 'd) Value.t =
     map ~by shape (P.of_exprs ~ins [| E.any out |]) D.Uint64 [| Value.Any w |]
   in
@@ -346,7 +338,7 @@ let split ?(n = 2) k =
             { start = 0; count = 2; step = 1 };
           |]
       in
-      reshape ~by [| 2 |] (move ~by row all))
+      Eval.reshape ~by [| 2 |] (Eval.move ~by row all))
 
 (* The counter a uint64 [v] folds in: its words [(v lsr 32, v)], the high
    word first. *)
@@ -372,7 +364,10 @@ let fold_in_tensor (k : 'd key) (i : (int32, D.int32_elt, 'd) Value.t) : 'd key
   let v = E.(bitcast D.Uint64 (cast D.Int64 (input 1 D.Int32))) in
   let out = E.threefry (counter v) (E.input 0 D.Uint64) in
   let loads =
-    [| Value.Any (stretch ~by shape w); Value.Any (stretch ~by shape i) |]
+    [|
+      Value.Any (Eval.broadcast ~by shape w);
+      Value.Any (Eval.broadcast ~by shape i);
+    |]
   in
   let u : (int64, D.uint64_elt, 'd) Value.t =
     map ~by shape (P.of_exprs ~ins [| E.any out |]) D.Uint64 loads
@@ -1285,7 +1280,7 @@ let along_last ~by shape prog monoid c loads =
   let loads =
     Iarray.init (Array.length loads) (fun i ->
         let (Value.Any x) = loads.(i) in
-        Value.Plain (stretch ~by shape x))
+        Value.Plain (Eval.broadcast ~by shape x))
   in
   let x, () =
     Eval.eval ~by
@@ -1298,7 +1293,7 @@ let along_last ~by shape prog monoid c loads =
            loads;
          })
   in
-  reshape ~by (Array.mapi (fun a e -> if a = r - 1 then 1 else e) shape) x
+  Eval.reshape ~by (Array.mapi (fun a e -> if a = r - 1 then 1 else e) shape) x
 
 (* Dirichlet *)
 
@@ -1358,7 +1353,7 @@ let dirichlet ?key a =
     let out = rounded dt E.(e / input 3 c) in
     let loads =
       Array.map
-        (fun (Value.Any x) -> Value.Any (stretch ~by shape x))
+        (fun (Value.Any x) -> Value.Any (Eval.broadcast ~by shape x))
         (Array.append loads [| Value.Any sum |])
     in
     map ~by shape

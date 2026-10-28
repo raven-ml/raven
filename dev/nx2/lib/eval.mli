@@ -170,3 +170,18 @@ val place :
 (** [place ~by p x] is {!eval} of [Place (p, x)]. With no live [Extent], a
     live value on one device already at [p] answers at once, over its array,
     whose memory it marks shared ({!Rig.Claim.share}). *)
+
+val move : by:string -> Nx_array.Move.t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [move ~by mv x] is {!eval} of [Move (mv, x)]. *)
+
+val reshape : by:string -> int array -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [reshape ~by s x] is [x] itself where [x] has shape [s], and {!move} of
+    [Reshape s] otherwise. Returned as itself, [x] keeps its memory unshared,
+    so an operation consuming a donation of [x] may write there.
+
+    Raises [Invalid_argument] naming [by] if [x] is dead, and as {!move}
+    does. *)
+
+val broadcast : by:string -> int array -> ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [broadcast ~by s x] is [x] itself where [x] has shape [s], and {!move}
+    of [Broadcast s] otherwise, as {!reshape} is. *)

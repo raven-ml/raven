@@ -142,12 +142,7 @@ let accumulator (type v s) ~by ?acc (dt : (v, s) D.t) (D.Any a) (D.Any b) =
 
 (* Evaluation *)
 
-let move ~by mv x = Eval.eval ~by (Value.Move (mv, x))
-
-let reshape ~by s x =
-  if Prim.has_shape x s then x else move ~by (M.Reshape (Iarray.of_array s)) x
-
-let permute ~by order x = move ~by (M.Permute (Iarray.of_array order)) x
+let permute ~by order x = Eval.move ~by (M.Permute (Iarray.of_array order)) x
 
 let identity order =
   let rec go i = i = Array.length order || (order.(i) = i && go (i + 1)) in
@@ -174,17 +169,17 @@ let run (type v s a b c e d) ~by ?acc ?init (dt : (v, s) D.t) pl
         if not (Prim.has_shape i pl.shape) then
           invalid_argf "%s: ~init is %a where the result is %a" by pp_shape
             (Prim.shape i) pp_shape pl.shape;
-        let i = reshape ~by pl.names i in
+        let i = Eval.reshape ~by pl.names i in
         if identity pl.order then i else permute ~by (inverse pl.order) i)
       init
   in
   let batch = pl.batch and contracting = pl.contracting in
   let y =
     Eval.contract ~by ~batch ~contracting ~acc dt
-      (reshape ~by pl.a a) (reshape ~by pl.b b) init
+      (Eval.reshape ~by pl.a a) (Eval.reshape ~by pl.b b) init
   in
   let y = if identity pl.order then y else permute ~by pl.order y in
-  reshape ~by pl.shape y
+  Eval.reshape ~by pl.shape y
 
 let contract ~by ?(sizes = []) ?acc ?init dt p a b =
   run ~by ?acc ?init dt (plan ~by ~sizes p (operand a) (operand b)) a b

@@ -450,3 +450,23 @@ let place ~by p x =
       Array { at = p; a = r.a; dead = Live }
   | Array _ | Shards _ | Handle _ | Traced _ ->
       eval ~by (Place (p, x))
+
+(* Movements *)
+
+let move ~by mv x = eval ~by (Move (mv, x))
+
+(* A movement to the shape [x] holds makes no view: [x]'s memory stays
+   unshared, so a later donation of [x] may still write into it. *)
+let reshape ~by s x =
+  if Prim.has_shape x s then begin
+    Prim.alive ~by x;
+    x
+  end
+  else move ~by (A.Move.Reshape (Iarray.of_array s)) x
+
+let broadcast ~by s x =
+  if Prim.has_shape x s then begin
+    Prim.alive ~by x;
+    x
+  end
+  else move ~by (A.Move.Broadcast (Iarray.of_array s)) x
