@@ -3,9 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* rune2's costs per operation over one-element float32 values, where the
-   overhead of tracing and evaluating dominates kernel time. Each row's time
-   divided by its operations is the cost per operation. *)
+(* rune2's costs, each row a call a user makes. Every input is a host value
+   and every row waits for what it computes: an operation over values of every
+   set builds a formula and computes nothing, so a row over them would time
+   the formula. The rows that share a workload with packages/rune's suite
+   keep its code and id. *)
 
 module Rune = Rune2
 
@@ -19,100 +21,116 @@ let chain x =
   done;
   !t
 
-let one () = Nx.copy (Nx.Rng.uniform ~key:(Nx.Rng.key 0) f32 [| 1 |])
+(* rune's chain: [ops] sines and their sum. *)
+let chain_sum x = Nx.sum (chain x)
+
+(* Values placed on the host, which compute where they are made and are read
+   from their memory. *)
+let host x = Nx.place Nx.Host.on x
+let one () = host (Nx.Rng.uniform ~key:(Nx.Rng.key 0) f32 [| 1 |])
+let floats k = host (Nx.Rng.uniform ~key:(Nx.Rng.key 1) f32 [| k |])
+
+(* rune's chain input: 64 elements. *)
+let x64 () = host (Nx.Rng.uniform ~key:(Nx.Rng.key 12) f32 [| 64 |])
+
+(* [y] once the work that computes it is done. *)
+let synced y =
+  Nx.sync y;
+  y
+
+let synced2 (y, z) = (synced y, synced z)
+
+(* [y] once the work that computes each of its arrays is done. *)
+let synced_all s y =
+  Nx.Ptree.fold s (fun _ x () -> Nx.sync x) y ();
+  y
+
+let t = Nx.Ptree.tensor
 
 (* Trace: a step of [ops] sines traced over no row, which evaluates nothing. *)
 let trace_rows () =
-  let init = one () and none = Nx.zeros f32 [| 0; 1 |] in
+  let init = one () and none = host (Nx.zeros f32 [| 0; 1 |]) in
   let step c _ = (chain c, ()) in
-  let t = Nx.Ptree.tensor in
   [
     Thumper.bench "chain-100" (fun () ->
-        Rune.scan t t Nx.Ptree.unit ~f:step ~init none);
+        synced (fst (Rune.scan t t Nx.Ptree.unit ~f:step ~init none)));
   ]
 
-(* Loops: a step of [ops] sines over [rows] rows, against the OCaml fold of the
-   same step. *)
-let rows = 1000
+(* Loops: a step of [ops] sines over [rows] rows, eagerly and under forward
+   and reverse mode. A cost per operation or per row shows at 100 rows as at
+   1000, and one quadratic in the rows a hundredfold. *)
+let rows = 100
 
 let loop_rows () =
-  let init = one () and xs = Nx.copy (Nx.zeros f32 [| rows; 1 |]) in
+  let init = one () and xs = host (Nx.zeros f32 [| rows; 1 |]) in
   let step c _ = (chain c, ()) in
-  let t = Nx.Ptree.tensor in
+  let scan c = fst (Rune.scan t t Nx.Ptree.unit ~f:step ~init:c xs) in
+  let id = Printf.sprintf "%dx%d" ops rows in
   [
-    Thumper.bench "scan-eager-100x1000" (fun () ->
-        Rune.scan t t Nx.Ptree.unit ~f:step ~init xs);
-    Thumper.bench "fold-eager-100x1000" (fun () ->
-        let c = ref init in
-        for i = 0 to rows - 1 do
-          c := fst (step !c (Nx.get [ i ] xs))
-        done;
-        !c);
-    (* Under forward and reverse mode: one scan of the step's derivative, and a
-       scan stacking its residuals then a reversed scan of its transpose. *)
-    Thumper.bench "scan-jvp-100x1000" (fun () ->
-        Rune.jvp'
-          (fun c -> fst (Rune.scan t t Nx.Ptree.unit ~f:step ~init:c xs))
-          init init);
-    Thumper.bench "scan-grad-100x1000" (fun () ->
-        Rune.grad'
-          (fun c ->
-            Nx.sum (fst (Rune.scan t t Nx.Ptree.unit ~f:step ~init:c xs)))
-          init);
+    Thumper.bench ("scan-" ^ id) (fun () -> synced (scan init));
+    (* One scan of the step's derivative, and a scan stacking its residuals
+       then a reversed scan of its transpose. *)
+    Thumper.bench ("scan-jvp-" ^ id) (fun () ->
+        synced2 (Rune.jvp' scan init init));
+    Thumper.bench ("scan-grad-" ^ id) (fun () ->
+        synced (Rune.grad' (fun c -> Nx.sum (scan c)) init));
   ]
 
 (* Declined: [ops] adds of constants in a traced step, under reverse mode and in
    a map, which reach neither the tracer nor the map and compute at the call,
-   against the same adds eagerly. *)
+   against the same adds eagerly. Each add is waited for. *)
 let adds a b =
   for _ = 1 to ops do
-    ignore (Sys.opaque_identity (Nx.add a b))
+    Nx.sync (Nx.add a b)
   done
 
 let declined_rows () =
-  let a = one () and b = one () and xs = Nx.copy (Nx.zeros f32 [| 1; 1 |]) in
-  let t = Nx.Ptree.tensor in
+  let a = one () and b = one () and xs = host (Nx.zeros f32 [| 1; 1 |]) in
   [
-    Thumper.bench "add-1" (fun () -> adds a b);
+    Thumper.bench "add-1-nx-eager" (fun () -> adds a b);
     Thumper.bench "add-1-under-grad" (fun () ->
-        Rune.grad'
-          (fun x ->
-            adds a b;
-            Nx.sum x)
-          a);
+        synced
+          (Rune.grad'
+             (fun x ->
+               adds a b;
+               Nx.sum x)
+             a));
     Thumper.bench "add-1-under-scan" (fun () ->
-        Rune.scan t t Nx.Ptree.unit
-          ~f:(fun c _ ->
-            adds a b;
-            (c, ()))
-          ~init:a xs);
+        synced
+          (fst
+             (Rune.scan t t Nx.Ptree.unit
+                ~f:(fun c _ ->
+                  adds a b;
+                  (c, ()))
+                ~init:a xs)));
     Thumper.bench "add-1-under-vmap" (fun () ->
-        Rune.vmap'
-          (fun x ->
-            adds a b;
-            x)
-          xs);
+        synced
+          (Rune.vmap'
+             (fun x ->
+               adds a b;
+               x)
+             xs));
   ]
 
-(* DeepChain: [ops] sines and a sum, the shape of rune's row, eagerly and under
-   forward and reverse mode. *)
+(* DeepChain: rune's chain over 64 elements, eagerly and under forward and
+   reverse mode. *)
 let deep_rows () =
-  let x = one () in
-  let v = Nx.copy (Nx.ones_like x) in
-  let f x = Nx.sum (chain x) in
+  let x = x64 () in
+  let v = host (Nx.ones_like x) in
   [
-    Thumper.bench "chain-fwd" (fun () -> f x);
-    Thumper.bench "chain-jvp" (fun () -> Rune.jvp' f x v);
-    Thumper.bench "chain-grad" (fun () -> Rune.grad' f x);
+    Thumper.bench "chain-fwd-nx-eager" (fun () -> synced (chain_sum x));
+    Thumper.bench "chain-jvp" (fun () -> synced2 (Rune.jvp' chain_sum x v));
+    Thumper.bench "chain-grad" (fun () -> synced (Rune.grad' chain_sum x));
   ]
 
 (* Remat: DeepChain's gradient through a remat, whose backward pass computes the
    chain again. *)
 let remat_rows () =
-  let x = one () in
+  let x = x64 () in
   let f = Rune.remat Nx.Ptree.(tensor @-> returns tensor) chain in
   [
-    Thumper.bench "chain-grad" (fun () -> Rune.grad' (fun x -> Nx.sum (f x)) x);
+    Thumper.bench "chain-grad" (fun () ->
+        synced (Rune.grad' (fun x -> Nx.sum (f x)) x));
   ]
 
 (* MlpGrad: one step's loss and gradient of a three-layer perceptron, 784 to 256
@@ -139,7 +157,10 @@ let mlp = Nx.Ptree.instantiate (module Mlp)
 let normal k shape =
   Nx.place Nx.Host.on (Nx.Rng.normal ~key:(Nx.Rng.key k) f32 shape)
 
-let relu x = Nx.maximum x (Nx.zeros_like x)
+(* rune's relu. *)
+let relu x =
+  let zero = Nx.scalar_like x 0. in
+  Nx.where (Nx.less_equal x zero) zero x
 
 let forward p x =
   let h1 = relu (Nx.add (Nx.matmul x p.w1) p.b1) in
@@ -162,9 +183,10 @@ let mlp_rows () =
   let x = normal 4 [| 128; 784 |] and y = normal 5 [| 128; 10 |] in
   let loss p = Nx.mean (Nx.square (Nx.sub (forward p x) y)) in
   [
-    Thumper.bench "mlp-forward" (fun () -> loss params);
-    Thumper.bench "mlp-value-and-grad" (fun () ->
-        Rune.value_and_grad mlp loss params);
+    Thumper.bench "mlp forward (nx eager)" (fun () -> synced (loss params));
+    Thumper.bench "mlp value_and_grad" (fun () ->
+        let l, g = Rune.value_and_grad mlp loss params in
+        (synced l, synced_all mlp g));
   ]
 
 (* PerSampleGrads: a gradient per example of a batch of 128, one map of reverse
@@ -178,20 +200,19 @@ let per_sample_rows () =
     Nx.sum (Nx.square (forward { params with w3 } (Nx.reshape [| 1; 784 |] xi)))
   in
   [
-    Thumper.bench "ew" (fun () -> Rune.vmap' (Rune.grad' ew) x);
-    Thumper.bench "mlp-w3" (fun () ->
-        Rune.vmap' (fun xi -> Rune.grad' (w3_loss xi) params.w3) x);
+    Thumper.bench "per-sample grads ew" (fun () ->
+        synced (Rune.vmap' (Rune.grad' ew) x));
+    Thumper.bench "per-sample mlp w3 grads" (fun () ->
+        synced (Rune.vmap' (fun xi -> Rune.grad' (w3_loss xi) params.w3) x));
   ]
 
 (* Jacobians: of a chain of [ops] sines over 64 float32 elements, each one map
    of forward or reverse mode over the elements. *)
 let jacobian_rows () =
-  let x =
-    Nx.place Nx.Host.on (Nx.Rng.uniform ~key:(Nx.Rng.key 12) f32 [| 64 |])
-  in
+  let x = x64 () in
   [
-    Thumper.bench "jacfwd-64" (fun () -> Rune.jacfwd' chain x);
-    Thumper.bench "jacrev-64" (fun () -> Rune.jacrev' chain x);
+    Thumper.bench "jacfwd-64" (fun () -> synced (Rune.jacfwd' chain x));
+    Thumper.bench "jacrev-64" (fun () -> synced (Rune.jacrev' chain x));
   ]
 
 (* Hmc: one leapfrog trajectory of 20 steps on a Gaussian over 16 floats, as a
@@ -214,18 +235,12 @@ let hmc_rows () =
     (!q, !p)
   in
   let q0 = normal 8 [| 16 |] and p0 = normal 9 [| 16 |] in
-  [ Thumper.bench "leapfrog" (fun () -> leapfrog q0 p0) ]
+  [ Thumper.bench "leapfrog" (fun () -> synced2 (leapfrog q0 p0)) ]
 
-(* Jit: a compiled call's hit path, a key traced and compiled, against the
-   same work eagerly; a training step's update of donated state, written in
-   place; and compiled operations of the index family, an FFT and a matrix
-   product. *)
+(* Jit: a compiled call's hit path, and rune's chain compiled; a training
+   step's update of donated state, written in place; and compiled operations
+   of the index family, an FFT and a matrix product. *)
 let n = 4096
-
-(* Values placed on the host: a value of every set computes where it is
-   read, so a program of them alone computes nothing to compile. *)
-let host x = Nx.place Nx.Host.on x
-let floats k = host (Nx.Rng.uniform ~key:(Nx.Rng.key 1) f32 [| k |])
 
 let positions k bound =
   host
@@ -247,19 +262,15 @@ let warm name make run =
 
 let pair_fn () = Nx.Ptree.(tensor @-> tensor @-> returns tensor)
 
-(* [y] once the work that computes it is done. *)
-let synced y =
-  Nx.sync y;
-  y
-
 let jit_rows () =
-  let x = host (one ()) and a = host (one ()) and b = host (one ()) in
+  let x = x64 () and a = one () and b = one () in
   let xs = floats n and ps = positions n n and g = floats n in
   let into = floats 1024 and us = floats 16 and qs = positions 16 1024 in
   let zs = host (Nx.cast Nx.complex64 xs) in
   let m = Nx.reshape [| 64; 64 |] xs in
   [
-    warm "chain-100-hit" (fun () -> Rune.jit' chain) (fun f -> synced (f x));
+    warm "add-1-hit" (fun () -> Rune.jit (pair_fn ()) Nx.add) (fun f -> synced (f a b));
+    warm "jit run chain" (fun () -> Rune.jit' chain_sum) (fun f -> synced (f x));
     (* A root, which the compiler declines: the program is evaluated. *)
     warm "chain-100-rooted-hit"
       (fun () ->
@@ -278,8 +289,6 @@ let jit_rows () =
         ignore (Rune.vmap' ~axis:a g (host (Nx.ones f32 [| 2; 1 |])));
         (Rune.vmap' ~axis:a g, host (Nx.ones f32 [| 3; 1 |])))
       (fun (f, xs) -> synced (f xs));
-    Thumper.bench "chain-100-eager" (fun () -> synced (chain x));
-    warm "add-1-hit" (fun () -> Rune.jit (pair_fn ()) Nx.add) (fun f -> synced (f a b));
     Thumper.bench_with_setup "donated-step-4096"
       ~setup:(fun () ->
         let step =
@@ -319,8 +328,9 @@ let lane_newton a =
 
 let lane_rows () =
   let a =
-    Nx.init f32 [| lanes |] (fun i ->
-        0.5 *. (20_000. ** (Float.of_int i.(0) /. Float.of_int (lanes - 1))))
+    host
+      (Nx.init f32 [| lanes |] (fun i ->
+           0.5 *. (20_000. ** (Float.of_int i.(0) /. Float.of_int (lanes - 1)))))
   in
   let mapped = Rune.vmap' lane_newton in
   [
@@ -395,7 +405,7 @@ let root_rows () =
 (* WarmStart: a compiled function's first call, its trace, lowering and link,
    with tolk's caches warm, as a fresh process's would be. *)
 let warm_rows () =
-  let x = host (one ()) in
+  let x = one () in
   [
     Thumper.bench_with_setup "chain-100"
       ~setup:(fun () -> ignore (Rune.jit' chain x))
@@ -408,7 +418,7 @@ let warm_rows () =
    traced, then the rule's value evaluated. And a second derivative through such
    a rule. *)
 let custom_rows () =
-  let x = one () in
+  let x = x64 () in
   let density =
     Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
         let y = chain x in
@@ -425,15 +435,15 @@ let custom_rows () =
     Rune.grad' (fun x -> Nx.sum (Rune.grad' rule x)) x
   in
   [
-    Thumper.bench "custom-jvp-call" (fun () -> density x);
-    Thumper.bench "custom-vjp-grad-grad" (fun () -> grad_grad x);
+    Thumper.bench "custom-jvp-call" (fun () -> synced (density x));
+    Thumper.bench "custom-vjp-grad-grad" (fun () -> synced (grad_grad x));
   ]
 
-(* Compiled: replays of compiled programs, each compiled in its setup's first
-   call: [lorenz] an Euler integration of 64 states, its steps written out or
-   as one scan; [rnn] an affine recurrence h <- x_t W + h U over a batch of 32
-   with a sum-of-squares loss, its value and its gradient; and the gradient of
-   a compiled call, the program derived from the key's. *)
+(* JitFootprint and JitLoops: replays of compiled programs, each compiled in
+   its setup's first call: [lorenz] an Euler integration of 64 states, its
+   steps written out or as one scan; [rnn] an affine recurrence
+   h <- x_t W + h U over a batch of 32 with a sum-of-squares loss, its value
+   and its gradient. *)
 
 type 'a lorenz = { lx : 'a; ly : 'a; lz : 'a }
 
@@ -512,12 +522,7 @@ let rnn_params horizon =
     xs = List.init horizon (fun _ -> draw [| 32; 32 |]);
   }
 
-(* [y] once the work that computes each of its arrays is done. *)
-let synced_all s y =
-  Nx.Ptree.fold s (fun _ x () -> Nx.sync x) y ();
-  y
-
-let compiled_rows () =
+let footprint_rows () =
   let state k = normal k [| 64 |] in
   let s = { lx = state 13; ly = state 14; lz = state 15 } in
   let lorenz_row name f =
@@ -539,22 +544,21 @@ let compiled_rows () =
     in
     fun p -> synced_all rnn_t (g p)
   in
-  let x = host (Nx.Rng.uniform ~key:(Nx.Rng.key 16) f32 [| 4096 |]) in
-  let h = Rune.jit' (fun x -> Nx.mul (Nx.sin x) x) in
   [
-    lorenz_row "lorenz-n10-replay" (lorenz 10);
-    lorenz_row "lorenz-n50-replay" (lorenz 50);
-    lorenz_row "lorenz-n100-replay" (lorenz 100);
-    lorenz_row "lorenz-scan-n100-replay" (lorenz_scan 100);
-    rnn_row "rnn-fwd-h2-replay" 2 fwd;
-    rnn_row "rnn-fwd-h10-replay" 10 fwd;
-    rnn_row "rnn-fwd-h20-replay" 20 fwd;
-    rnn_row "rnn-grad-h2-replay" 2 grad;
-    rnn_row "rnn-grad-h10-replay" 10 grad;
-    rnn_row "rnn-grad-h20-replay" 20 grad;
-    warm "grad-of-jit-4096"
-      (fun () -> Rune.grad' (fun x -> Nx.sum (h x)))
-      (fun g -> synced (g x));
+    lorenz_row "lorenz n10 replay" (lorenz 10);
+    lorenz_row "lorenz n100 replay" (lorenz 100);
+    rnn_row "rnn-fwd h2 replay" 2 fwd;
+    rnn_row "rnn-fwd h20 replay" 20 fwd;
+    rnn_row "rnn-grad h20 replay" 20 grad;
+  ]
+
+let jit_loop_rows () =
+  let state k = normal k [| 64 |] in
+  let s = { lx = state 13; ly = state 14; lz = state 15 } in
+  [
+    warm "lorenz-scan-n100-replay"
+      (fun () -> Rune.jit Nx.Ptree.(lorenz_t @-> returns tensor) (lorenz_scan 100))
+      (fun g -> synced (g s));
   ]
 
 (* TrainStep: one compiled training step of a perceptron 784 -> 256 -> 128 ->
@@ -632,9 +636,13 @@ let probe_rows () =
         done);
   ]
 
+(* A trial's setup compiles its programs: a cold tolk cache takes seconds for
+   the largest, which the default 10 s deadline would kill. *)
+let config = Thumper.Config.(default |> deadline 60.)
+
 let () =
   exit
-    (Thumper.run "rune2"
+    (Thumper.run "rune2" ~config
        [
          Thumper.group "Trace" (trace_rows ());
          Thumper.group "Loops" (loop_rows () @ lane_rows ());
@@ -648,7 +656,8 @@ let () =
          Thumper.group "Jacobians" (jacobian_rows ());
          Thumper.group "Hmc" (hmc_rows ());
          Thumper.group "Custom" (custom_rows ());
-         Thumper.group "Compiled" (compiled_rows ());
+         Thumper.group "JitLoops" (jit_loop_rows ());
+         Thumper.group "JitFootprint" (footprint_rows ());
          Thumper.group "TrainStep" (train_rows ());
          Thumper.group "Bodies" (body_rows ());
          Thumper.group "Roots" (root_rows ());
