@@ -500,7 +500,14 @@ let rounds ?(extra = 0) n dt =
    turn mixes the pair's products with other columns: those the round's other
    rotations zeroed with those they had not. A [float64] 16 x 16 matrix of
    singular values [1] and [0.9], each repeated, took 13 sweeps to bring its
-   values within [16 n u] of an eager [svd]'s without it, and 11 with it. *)
+   values within [16 n u] of an eager [svd]'s without it, and 11 with it.
+
+   The interface's [g] sums three terms. The QRs of [a] and of the rotated
+   columns give [q]s orthogonal to [k (2p + 10) u] an element. The rounds move
+   the columns by at most [8 R u] of their norm, as each rotation of two columns
+   moves them by at most [8 u] of it. The columns the convergence test exempts
+   have norms up to [8 R (1 + √k) u ‖a‖_F]. As [g = γ(c)], the bound is vacuous
+   once [c u >= 1/2], which the sizes the interface names reach. *)
 
 (* [converged ~tol ~noise u] is whether each pair of columns of the matrices of
    [u] of norms [s_i] and [s_j] above [noise] times the matrix's norm has an
