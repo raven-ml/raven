@@ -260,6 +260,15 @@ let jit_rows () =
   let m = Nx.reshape [| 64; 64 |] xs in
   [
     warm "chain-100-hit" (fun () -> Rune.jit' chain) (fun f -> synced (f x));
+    (* A root, which the compiler declines: the program is evaluated. *)
+    warm "chain-100-rooted-hit"
+      (fun () ->
+        Rune.jit' (fun x ->
+            let y = chain x in
+            Rune.root Nx.Ptree.tensor
+              ~residual:(fun r -> Nx.sub r y)
+              (fun () -> y)))
+      (fun f -> synced (f x));
     Thumper.bench "chain-100-eager" (fun () -> synced (chain x));
     warm "add-1-hit" (fun () -> Rune.jit (pair_fn ()) Nx.add) (fun f -> synced (f a b));
     Thumper.bench_with_setup "donated-step-4096"
