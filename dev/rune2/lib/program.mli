@@ -296,10 +296,21 @@ and construct =
           [apply]. Without [apply], it is the tangents of a {!Pullback} rule's
           results, which only a tape receives, and its default raises
           [Invalid_argument]. *)
-  | Remat : { body : t; args : value array; seeds : value array } -> construct
+  | Remat : {
+      body : t;
+      args : value array;
+      seeds : value array;
+      differentiated : bool;
+    }
+      -> construct
       (** [body] applied to [args], the function's arguments then its captures.
           Its reverse mode keeps [args] alone and computes [body] again. Its
-          sums start from [seeds], as a scan's. Its default evaluates [body]. *)
+          sums start from [seeds], as a scan's. Its default evaluates [body].
+          [differentiated] is whether [body] is a part a differentiation
+          derived, which computes the function's values again: compiled, it
+          reads those of [args] the program computes through a barrier, so
+          that what it computes from them shares no value with the program
+          around it and runs once every one of them is computed. *)
   | Switch : switch -> construct
       (** The branch at [index] applied to [captures]; the others run nothing.
           Its sums are every branch's, as a loop's. A branch that does not run

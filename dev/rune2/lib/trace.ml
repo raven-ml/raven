@@ -491,7 +491,7 @@ let rec answer st i c =
   match (st.kind, c) with
   | Tape, Scan { step; length; trips; reverse; init; xs; captures; seeds } ->
       scan_parts st i step ~length ~trips ~reverse ~init ~xs ~captures ~seeds
-  | Tape, Remat { body; args; seeds } -> remat_parts st i body args ~seeds
+  | Tape, Remat { body; args; seeds; _ } -> remat_parts st i body args ~seeds
   | Tape, Call { body; args; site; seeds } ->
       call_parts st i body args site ~seeds
   | Tape, Iterate _ -> iterate_parts st i c
@@ -1074,7 +1074,9 @@ and remat_parts st i (body : Program.t) args ~seeds =
   in
   if Array.for_all Option.is_some !known then Array.map Option.get !known
   else
-    let r = record st i (Remat { body; args; seeds }) in
+    let r =
+      record st i (Remat { body; args; seeds; differentiated = true })
+    in
     Array.mapi (fun k v -> match v with Some v -> v | None -> r.(k)) !known
 
 (* A call over the tape's variables is two calls, as JAX's partial evaluation

@@ -223,7 +223,13 @@ type state = {
   device : Ops.device;
   mutable captures : (value * Ops.t) list;
   mutable bound : (Ops.t * Rig.Buffer.t list) list;
+  views : unit Ops.Tbl.t;
+      (** The nodes of the arguments and captures, without their movements:
+          views of storage. *)
+  mutable loops : int;  (** The loops' steps being lowered. *)
 }
+
+let view_of st u = Ops.Tbl.replace st.views (Ops.base u) ()
 
 let on_rig st p what =
   match device_of p with
@@ -244,6 +250,7 @@ let bind st (A.Any a) =
     let b = A.buffer a in
     let buffer, u = storage ~device:st.device ~phase:(phase b first) dt l in
     st.bound <- (buffer, [ Rig.Buffer.view b ~first ~length ]) :: st.bound;
+    view_of st u;
     u
 
 (* The node of a constant: its one array, bound once. *)
@@ -677,6 +684,47 @@ let names (p : Program.t) n =
          | Do { c; _ } -> List.exists named (operands c))
        p.eqns
 
+(* A value's node, reach, and whether a scatter computes it. *)
+let operand st env (V x) = (node st env x, reach env x, scattered_at env x)
+
+let on_device st u =
+  if Option.is_none (Ops.device u) then Ops.copy_to_device u st.device else u
+
+(* A differentiated remat's operands through a barrier, as JAX lowers one
+   through an optimization barrier: each operand the program computes is stored
+   into storage of its own, which the remat reads once every such operand is
+   stored. Its values over those operands are then none the program has
+   elsewhere, so the compiler merges none of them with the forward pass's, and
+   they wait for the cotangents among the operands, so they compute in the
+   backward pass. An operand that is a view of storage, as an argument or a
+   capture moved or not, is read in place, uncopied: what the remat computes
+   from such operands alone is the forward pass's. *)
+let barrier st operands =
+  let computed (u, _, _) =
+    (not (empty u)) && not (Ops.Tbl.mem st.views (Ops.base u))
+  in
+  let stored =
+    Array.map
+      (fun ((u, _, _) as o) ->
+        if not (computed o) then None
+        else
+          let b = Ops.new_buffer st.device (Shape.max_numel u) (Ops.dtype u) in
+          let view = Shape.reshape b (Shape.shape u) in
+          Some (Ops.after b [ Ops.store view (on_device st u) ]))
+      operands
+  in
+  Array.mapi
+    (fun i ((u, r, _) as o) ->
+      match stored.(i) with
+      | None -> o
+      | Some s ->
+          let others =
+            List.filteri (fun j _ -> j <> i) (Array.to_list stored)
+          in
+          let s = Ops.after s (List.filter_map Fun.id others) in
+          (Shape.reshape s (Shape.shape u), r, false))
+    operands
+
 let rec program st cs env =
   Array.iter
     (function
@@ -694,8 +742,13 @@ and construct st cs env c base =
       outs
   in
   match c with
-  | Detach x -> bind [| (node st env x, reach env x, scattered_at env x) |]
-  | Call { body; args; seeds; _ } | Remat { body; args; seeds } ->
+  | Detach x -> bind [| operand st env (V x) |]
+  | Remat { body; args; seeds; differentiated = true } when st.loops = 0 ->
+      (* Inside a loop's step, the remat is a call body's, which shares no node
+         with the forward loop. *)
+      let operands = barrier st (Array.map (operand st env) args) in
+      bind (threaded_over st cs env body operands seeds)
+  | Call { body; args; seeds; _ } | Remat { body; args; seeds; _ } ->
       bind (threaded st cs env body args seeds)
   | Linear { apply = Some a; args; captures; _ } ->
       bind (inline st cs env a (Array.append args captures))
@@ -1068,7 +1121,10 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
   let before = Shape.reshape flag_param (ints [ 1 ]) in
   let inner = fresh_checks before in
   let nexts, ys =
-    trip inner (Array.init ncarried (view_of inits carried)) rows
+    st.loops <- st.loops + 1;
+    Fun.protect
+      ~finally:(fun () -> st.loops <- st.loops - 1)
+      (fun () -> trip inner (Array.init ncarried (view_of inits carried)) rows)
   in
   let made = List.rev inner.made in
   (* The flag is carried where the trip reads it or checks. *)
@@ -1216,19 +1272,21 @@ and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
    sums of [c]'s results, each from its seed or the identity, which their
    running values out then are; its results, then the sums. *)
 and threaded st cs env (q : Program.t) args seeds =
+  threaded_over st cs env q (Array.map (operand st env) args) seeds
+
+and threaded_over st cs env (q : Program.t) operands seeds =
   let _, sum_forms, feeds = Program.feeds q in
   let no = Array.length q.outputs - Array.length q.adds in
   let sums = starts st env sum_forms ~at:0 seeds in
   let sub = env_of q in
-  let reached = Array.map (fun (V x) -> reach env x) args in
   Array.iteri
-    (fun k (V x) ->
+    (fun k (u, r, sc) ->
       let v = q.params.(k) in
-      sub.nodes.(v) <- Some (node st env x);
-      sub.reaches.(v) <- reached.(k);
-      sub.scattered.(v) <- scattered_at env x)
-    args;
-  let na = Array.length args in
+      sub.nodes.(v) <- Some u;
+      sub.reaches.(v) <- r;
+      sub.scattered.(v) <- sc)
+    operands;
+  let na = Array.length operands in
   Array.iteri
     (fun k j ->
       let v = q.params.(na + k) in
@@ -1248,18 +1306,19 @@ and threaded st cs env (q : Program.t) args seeds =
 (* [q]'s outputs over the operands [args] of [env]'s program: each one's node,
    reach, and whether a scatter computes it. *)
 and inline st cs env (q : Program.t) args =
+  inline_over st cs q (Array.map (operand st env) args)
+
+and inline_over st cs (q : Program.t) operands =
   let sub = env_of q in
   Array.iteri
-    (fun k (V x) ->
+    (fun k (u, r, sc) ->
       let v = q.params.(k) in
-      sub.nodes.(v) <- Some (node st env x);
-      sub.reaches.(v) <- reach env x;
-      sub.scattered.(v) <- scattered_at env x)
-    args;
+      sub.nodes.(v) <- Some u;
+      sub.reaches.(v) <- r;
+      sub.scattered.(v) <- sc)
+    operands;
   program st cs sub;
-  Array.map
-    (fun (V y) -> (node st sub y, reach sub y, scattered_at sub y))
-    q.outputs
+  Array.map (operand st sub) q.outputs
 
 (* [lower ~rig p forms ~layouts ~phases ~donated] is [p] over arguments of
    [forms], each laid out over its run as [layouts] says, its run at [phases],
@@ -1267,7 +1326,14 @@ and inline st cs env (q : Program.t) args =
    it. *)
 let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
   let st =
-    { rig; device = Ops.Single (Rig.name rig); captures = []; bound = [] }
+    {
+      rig;
+      device = Ops.Single (Rig.name rig);
+      captures = [];
+      bound = [];
+      views = Ops.Tbl.create 8;
+      loops = 0;
+    }
   in
   let env = env_of p in
   let params =
@@ -1286,6 +1352,7 @@ let lower ~rig (p : Program.t) (forms : form array) ~layouts ~phases ~donated =
             storage ~device:st.device ~phase:phases.(k) f.dtype layouts.(k)
           in
           env.nodes.(var) <- Some u;
+          view_of st u;
           Some b
         end)
       forms

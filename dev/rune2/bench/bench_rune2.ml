@@ -456,6 +456,17 @@ let jit_rows () =
     warm "matmul-64"
       (fun () -> Rune.jit (pair_fn ()) Nx.matmul)
       (fun f -> synced (f m m));
+    (* The gradient of 8 sines through a remat, compiled: the backward pass
+       stores the remat's computed argument and computes the sines again. A
+       longer chain takes too long to compile. *)
+    warm "remat-chain-8-grad-hit"
+      (fun () ->
+        let sines x =
+          List.fold_left (fun t _ -> Nx.sin t) x (List.init 8 Fun.id)
+        in
+        let f = Rune.remat Nx.Ptree.(tensor @-> returns tensor) sines in
+        Rune.jit' (Rune.grad' (fun x -> Nx.sum (f (Nx.neg x)))))
+      (fun g -> synced (g x));
     (* A product of a value's positive part, whose maximum the product reads
        once per column. *)
     warm "maximum-matmul-float32-64"

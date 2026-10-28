@@ -1006,8 +1006,9 @@ let rec answer ~name ?held i axis n (c : Program.construct) k =
       Effect.Deep.continue k
         (scan ~name ?held i axis n step ~length ~trips ~reverse ~init ~xs
            ~captures ~seeds)
-  | Remat { body; args; seeds } ->
-      Effect.Deep.continue k (remat ~name ?held i axis n body args seeds)
+  | Remat { body; args; seeds; differentiated } ->
+      Effect.Deep.continue k
+        (remat ~name ?held i axis n body args seeds ~differentiated)
   | Call { body; args; site; seeds } ->
       Effect.Deep.continue k (call ~name ?held i axis n body args site seeds)
   | Iterate _ -> Effect.Deep.continue k (iterate ~name ?held i axis n c)
@@ -1870,7 +1871,8 @@ and switch_apart ~name ?held i axis n (sw : Program.switch) ~lcap ~bcaps =
 
 (* A remat's map is the remat of its function's map, as JAX's checkpoint
    batches, so that a reverse mode around the map sees the remat. *)
-and remat ~name ?held i axis n (body : Program.t) args seeds =
+and remat ~name ?held i axis n (body : Program.t) args seeds ~differentiated
+    =
   let la = Array.map (owned_v i) args in
   let bargs =
     Array.map (fun v -> if owned_v i v then batch_v i n v else v) args
@@ -1898,6 +1900,7 @@ and remat ~name ?held i axis n (body : Program.t) args seeds =
            body = prog;
            args = Array.append bargs own;
            seeds = Array.map (batch_v i n) seeds;
+           differentiated;
          })
   in
   Array.mapi (fun k v -> if k >= no || !laned.(k) then lane_v i v else v) r

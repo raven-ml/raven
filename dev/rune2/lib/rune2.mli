@@ -1032,9 +1032,15 @@ val remat : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     [f x], bit for bit but for a NaN's sign and payload. Every transformation
     sees [remat s f] as it sees [f]: its derivatives in either mode, and its
     map, are [f]'s. An addition to a {!Total} that [f] makes counts once,
-    however often the backward pass computes [f] again. Inside a {!jit}, [f]'s
-    operations compile with the program's, and the compiler may keep their
-    values for the backward pass instead of computing them again.
+    however often the backward pass computes [f] again. Inside a {!jit}, the
+    backward pass computes again each of [f]'s intermediate values that reads
+    a value the program computes, among [f]'s arguments and captures, once the
+    cotangents of [f]'s results are computed, so the program keeps none of
+    them from one pass to the other. A value [f] computes from the program's
+    arguments and constants alone is the forward pass's, kept for the
+    backward pass, and so is one [f] computes in a {!scan}'s or an
+    {!iterate}'s step from the step's captures alone, which the loop computes
+    once.
 
     Raises [Invalid_argument] when applied to [s] if [s] has no argument. *)
 

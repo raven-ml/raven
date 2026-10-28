@@ -210,7 +210,13 @@ and construct =
       forms : form array;
     }
       -> construct
-  | Remat : { body : t; args : value array; seeds : value array } -> construct
+  | Remat : {
+      body : t;
+      args : value array;
+      seeds : value array;
+      differentiated : bool;
+    }
+      -> construct
   | Switch : switch -> construct
   | Operator : {
       id : int;
@@ -1045,7 +1051,7 @@ and default = function
         (name
        ^ ": a custom_vjp rule has no forward derivative; give the function a \
           custom_jvp rule")
-  | Remat { body; args; seeds } ->
+  | Remat { body; args; seeds; _ } ->
       from_seeds body seeds (fun totals -> eval ~totals body args)
   | Switch { name; index; branches; captures; seeds } ->
       let n = Array.length branches in
@@ -1750,9 +1756,10 @@ and pp_construct names ~indent (p : t) ppf c =
   | Call { body; args; seeds; _ } ->
       Format.fprintf ppf "call (%a)%a@\n%s  body%a" values (Array.to_list args)
         seeded_from seeds pad program body
-  | Remat { body; args; seeds } ->
-      Format.fprintf ppf "remat (%a)%a@\n%s  body%a" values (Array.to_list args)
-        seeded_from seeds pad program body
+  | Remat { body; args; seeds; differentiated } ->
+      Format.fprintf ppf "%s (%a)%a@\n%s  body%a"
+        (if differentiated then "differentiated remat" else "remat")
+        values (Array.to_list args) seeded_from seeds pad program body
   | Switch { index; branches; captures; seeds; _ } ->
       Format.fprintf ppf "switch %a (%a)%a" values [ index ] values
         (Array.to_list captures) seeded_from seeds;

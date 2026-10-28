@@ -1163,7 +1163,13 @@ let remat_named name s =
         let y = Option.get !like in
         let out =
           run
-            (Remat { body; args = Array.append args_v captures; seeds = [||] })
+            (Remat
+               {
+                 body;
+                 args = Array.append args_v captures;
+                 seeds = [||];
+                 differentiated = false;
+               })
         in
         rebuild u.result ~like:y
           (slice out 0 (Array.length (values u.result y))))

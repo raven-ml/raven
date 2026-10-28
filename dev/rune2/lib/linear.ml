@@ -1442,8 +1442,14 @@ and switch_rule env (sw : construct) cts =
   | _ -> invalid_arg "Rune: a switch's transpose"
 
 (* A remat's transpose linearizes its function again at its constant arguments,
-   then transposes that, so that the forward pass kept its arguments alone. *)
+   then transposes that, so that the forward pass kept its arguments alone.
+   Where a tracer stages it, it is the remat of that transpose over the
+   constant arguments and the cotangents given, differentiated, as JAX
+   transposes a checkpoint: compiled, it computes the function's values again
+   apart from the forward pass's, once the cotangents are computed. Elsewhere it
+   computes where it is, as that remat would. *)
 and remat_rule env (body : Program.t) args cts =
+  let name = env.name in
   let la = Array.map (fun (V x) -> env.lin x) args in
   let consts =
     Array.map
@@ -1451,19 +1457,58 @@ and remat_rule env (body : Program.t) args cts =
       (Loops.pick (Array.map not la) args)
   in
   let lins = Loops.pick la args in
-  let tape, captures =
-    Trace.trace Tape ~name:env.name (Array.map form lins) (fun ts ->
-        eval body (Loops.merge la ts consts))
-  in
   let n = Array.length lins in
-  let tconsts =
-    Array.append (Array.make n None) (Array.map Option.some captures)
+  let given = Array.init (Array.length body.outputs) cts in
+  let gc = Array.map Option.is_some given in
+  (* The linear arguments' cotangents at the constant arguments [cs], given the
+     cotangents [ws]. *)
+  let transposed cs ws =
+    let tape, captures =
+      Trace.trace Tape ~name (Array.map form lins) (fun ts ->
+          eval body (Loops.merge la ts cs))
+    in
+    let tconsts =
+      Array.append (Array.make n None) (Array.map Option.some captures)
+    in
+    let out_cts =
+      Loops.merge gc (Array.map Option.some ws)
+        (Array.make (Array.length gc - Array.length ws) None)
+    in
+    Array.sub (walk ~name ~fn:env.fn tape tconsts out_cts) 0 n
   in
-  let r =
-    walk ~name:env.name ~fn:env.fn tape tconsts
-      (Array.init (Array.length tape.outputs) cts)
-  in
-  Array.iteri (fun k (V x) -> Option.iter (fun c -> env.give x c) r.(k)) lins
+  let ws = Array.map Option.get (Loops.pick gc given) in
+  if not (Program.staging ()) then
+    let r = transposed consts ws in
+    Array.iteri (fun k (V x) -> Option.iter (env.give x) r.(k)) lins
+  else
+    let nc = Array.length consts and got = ref [||] in
+    let staged vs =
+      let r =
+        transposed (Array.sub vs 0 nc) (Array.sub vs nc (Array.length vs - nc))
+      in
+      got := Array.map Option.is_some r;
+      Array.map (fun c -> (Option.get c).v) (Loops.pick !got r)
+    in
+    let ins = Array.append consts ws in
+    let prog, own = Trace.trace Staged ~name (Array.map form ins) staged in
+    let r =
+      Program.perform
+        (Remat
+           {
+             body = prog;
+             args = Array.append ins own;
+             seeds = [||];
+             differentiated = true;
+           })
+    in
+    let next = ref 0 in
+    Array.iteri
+      (fun k (V x) ->
+        if !got.(k) then begin
+          env.give x (held r.(!next));
+          incr next
+        end)
+      lins
 
 (* A linear call's transpose is the call of its program's transpose, as JAX
    transposes a compiled call's jaxpr: derived once per derivation at the

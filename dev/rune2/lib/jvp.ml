@@ -1489,8 +1489,9 @@ let rec answer ~name ~tape i (c : Program.construct) k =
       Effect.Deep.continue k
         (scan ~name ~tape i step ~length ~trips ~reverse ~init ~xs ~captures
            ~seeds)
-  | Remat { body; args; seeds } ->
-      Effect.Deep.continue k (remat ~name ~tape i body args seeds)
+  | Remat { body; args; seeds; differentiated } ->
+      Effect.Deep.continue k
+        (remat ~name ~tape i body args seeds ~differentiated)
   | Call { body; args; site; seeds } ->
       Effect.Deep.continue k (call ~name ~tape i body args site seeds)
   | Iterate _ -> Effect.Deep.continue k (iterate ~name ~tape i c)
@@ -1699,7 +1700,7 @@ and scan ~name ~tape i (step : Program.t) ~length ~trips ~reverse ~init ~xs
    differentiates, so that a reverse mode around it sees the remat. The tangents
    of its sums are more outputs: its sums are duals, as its function's running
    totals would be, each from its seed's tangent. *)
-and remat ~name ~tape i (body : Program.t) args seeds =
+and remat ~name ~tape i (body : Program.t) args seeds ~differentiated =
   let pargs = Array.map (pv i) args and targs = Array.map (tv i) args in
   let tseeds = Array.map (tv i) seeds in
   let na = Array.length body.adds in
@@ -1745,6 +1746,7 @@ and remat ~name ~tape i (body : Program.t) args seeds =
            body = prog;
            args = Array.concat [ pargs; somes targs; somes tseeds; own ];
            seeds = Array.map (pv i) seeds;
+           differentiated;
          })
   in
   let nt = Array.length (Loops.pick !has_y !has_y) in
