@@ -514,66 +514,72 @@ val scalar_like : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
 
     Raises [Invalid_argument] as {!scalar} does. *)
 
-(** {2:moving Donation and copies} *)
+(** {2:moving Donation and copies}
 
-val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [donate x] is [x], given up by its owner: a handle that one operation reads.
-    [x] stays usable until an operation consumes a handle of [x]. Then [x] and
-    every handle of [x] die: a later operation on any of them raises
-    [Invalid_argument] naming the consumer, and its shape, dtype and placement
-    still answer. An operation checks every operand before it consumes any:
-    one refused by its checks kills nothing. Once its checks pass, [x] and its
-    handles are dead, whatever its set's kernels then answer: one that
-    declines raises with them dead and returns their memory to its device, as
-    a consumer that raises does ({!Prim.Consumer.with_}).
+    A program gives a value up with {!donate}, which makes a {e handle} of
+    it: a value that one operation reads and may write its result over. The
+    value given up is the handle's {e donor}. The operation that reads a
+    handle {e consumes} it and is its {e consumer}: once the operation has
+    checked every operand, the donor and every handle of it are {e dead},
+    whatever its set's kernels then answer, and a later operation on any of
+    them raises [Invalid_argument] naming the consumer, while their shape,
+    dtype and placement still answer. An operation refused by its checks
+    kills nothing. One whose kernels decline raises with them dead and
+    returns their memory to its device, as a consumer that raises does
+    ({!Prim.Consumer.with_}).
 
     A movement, which rearranges elements without computing them
     ({!reshape}, {!transpose}, {!flip}, {!broadcast_to}, slicing by ranges,
-    {!sliding_window}), passes a new handle of [x] to its result, whether it
-    makes a view or a copy, and kills nothing; the deaths wait for the final
-    consumer. The handle it read stays a handle of [x]: once an operation
-    consumes either, the other raises naming that consumer.
+    {!sliding_window}), passes a new handle of the donor to its result,
+    whether it makes a view or a copy, and kills nothing; the deaths wait
+    for the final consumer. The handle it read stays a handle of the donor:
+    once an operation consumes either, the other raises naming that
+    consumer.
 
     A call consumes each operand that reaches one operation, through
     movements: the call is the consumer the deaths name, as {!trace} is for
-    the diagonal it sums. An operand that several operations read is lent:
-    the call reads it as a value over [x]'s memory, which is shared from then
-    on, and [x] and its handles live on, as [a] does in [lstsq dt (donate a) b].
-    That memory returns to its device once no value holds it. A sampler's key
-    is lent ({!Rng}). Two handles of one donor reaching one operation, the
-    same handle twice, two donations of one value or a handle and one a
-    movement passed on, are read as the donor beside its handle is: as [x]
-    was when called, and [x] dies once. So [add (donate x) x] is [x + x], and
-    [mul h h] is [x * x] for [h = donate x]. Where they reach different
-    operations of a call, which run in an order the call fixes, one that
-    reads [x] or a handle after another consumed it raises naming the call.
+    the diagonal it sums. An operand that several operations read is
+    {e lent}: the call reads it as a value over the donor's memory, which is
+    shared from then on, and the donor and its handles live on, as [a] does
+    in [lstsq dt (donate a) b]. That memory returns to its device once no
+    value holds it. A sampler's key is lent ({!Rng}). Two handles of one
+    donor reaching one operation, the same handle twice, two donations of
+    one value or a handle and one a movement passed on, are read as the
+    donor beside its handle is: as the donor was when called, and it dies
+    once. So [add (donate x) x] is [x + x], and [mul h h] is [x * x] for
+    [h = donate x]. Where they reach different operations of a call, which
+    run in an order the call fixes, one that reads the donor or a handle
+    after another consumed it raises naming the call.
 
     An interpretation that receives an operation ({!Prim.interpret}) reads
-    each handle as its arrays and kills nothing: [x] lives on, and its memory
-    is shared from then on.
+    each handle as its arrays and kills nothing: the donor lives on, and its
+    memory is shared from then on.
 
     On any number of domains, no value is consumed twice, and a call on
-    another domain that overlaps the consumer of [x] either reads [x]'s
+    another domain that overlaps a donor's consumer either reads the donor's
     elements as they were or raises [Invalid_argument]; it never reads the
-    consumer's result. No
-    consumer overwrites elements another call is reading: one that claims a
-    handle while a call reads its memory computes into fresh memory. Racing
-    consumers on several domains for the handles of one donor is a misuse:
-    any of them may raise, naming another, and leave dead the other donors it
-    claimed.
+    consumer's result. No consumer overwrites elements another call is
+    reading: one that claims a handle while a call reads its memory computes
+    into fresh memory. Racing consumers on several domains for the handles
+    of one donor is a misuse: any of them may raise, naming another, and
+    leave dead the other donors it claimed.
 
     The consumer may write its result into the donated memory when it reads
-    that memory only at the result's own index, through the handle or through
-    [x] itself (an elementwise operand, the target of {!set} or {!scatter},
-    {!contract}'s [init]), the memory is C-contiguous with the result's shape
-    and dtype, and the memory is not shared. Memory is shared once a value
-    outside the donor's handles has been made over it (a view, a borrow by
-    {!place}, a {!Repr} crossing, an interpretation's read, a read by a
-    function of several operations), and stays shared.
-    Otherwise the consumer computes into fresh memory, and a value that shares
-    the memory keeps it. Its result is the same either way.
+    that memory only at the result's own index, through the handle or
+    through the donor itself (an elementwise operand, the target of {!set}
+    or {!scatter}, {!contract}'s [init]), the memory is C-contiguous with
+    the result's shape and dtype, and the memory is not shared. Memory is
+    {e shared} once a value outside the donor's handles has been made over
+    it (a view, a borrow by {!place}, a {!Repr} crossing, an
+    interpretation's read, a read by a function of several operations), and
+    stays shared. Otherwise the consumer computes into fresh memory, and a
+    value that shares the memory keeps it. Its result is the same either
+    way. *)
 
-    A traced value is returned unchanged, and nothing dies.
+val donate : ('v, 's, 'd) t -> ('v, 's, 'd) t
+(** [donate x] is a handle of [x] ({!section-moving}). [x] stays usable
+    until an operation consumes a handle of [x]; then [x] and every handle
+    of [x] are dead. A traced [x] is returned unchanged, and nothing dies.
 
     Raises [Invalid_argument] if [x] is dead. *)
 
