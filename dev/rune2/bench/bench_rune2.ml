@@ -277,6 +277,19 @@ let warm_rows () =
       (fun () -> synced (Rune.jit' chain x));
   ]
 
+(* Custom: a custom_jvp call outside every transformation, the shape of a log
+   density with its gradient: a rule of [ops] sines and a sum, whose tangent map
+   pairs the tangent with a value the rule computes. The rule and its map are
+   traced, then the rule's value evaluated. *)
+let custom_rows () =
+  let x = one () in
+  let density =
+    Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+        let y = chain x in
+        (Nx.sum y, fun dx -> Nx.sum (Nx.mul y dx)))
+  in
+  [ Thumper.bench "custom-jvp-call" (fun () -> density x) ]
+
 let () =
   exit
     (Thumper.run "rune2"
@@ -291,4 +304,5 @@ let () =
          Thumper.group "PerSampleGrads" (per_sample_rows ());
          Thumper.group "Jacobians" (jacobian_rows ());
          Thumper.group "Hmc" (hmc_rows ());
+         Thumper.group "Custom" (custom_rows ());
        ])
