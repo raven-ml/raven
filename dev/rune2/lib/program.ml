@@ -539,7 +539,8 @@ let rec forms = function
         | Some Max ->
             let nc = Array.length init in
             let no = Array.length step.outputs - Array.length step.adds in
-            (* The count lies where the stop does. *)
+            (* The count lies where the stop does, where a map whose lanes stop
+               apart counts each lane's steps. *)
             let (F u) = form until.outputs.(0) in
             let trips =
               F

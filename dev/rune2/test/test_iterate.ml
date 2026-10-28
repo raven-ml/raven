@@ -441,6 +441,27 @@ let test_nested () =
        (one_by_one (fun (x, _) -> outer x) n (x, Nx.zeros Nx.int32 [| n |])))
     (codes (Rune.vmap' outer x))
 
+(* A map of the derivative of an iterate in a loop's step: the step's tape
+   stacks every step the loop may take, and counts those each lane takes. *)
+let test_nested_derivative () =
+  let halve c =
+    Rune.iterate' ~max:50
+      ~until:(fun y -> Nx.less_s (Nx.abs y) 0.1)
+      ~f:(fun y -> Nx.mul_s y 0.5)
+      c
+  in
+  let f x =
+    fst (Rune.scan' ~init:x ~f:(fun c _ -> (halve c, c)) (Nx.zeros f64 [| 2 |]))
+  in
+  (* Each row halves [x] [k] times, the [k] that brings it below 0.1. *)
+  let points = [| 0.05; 0.7; -3. |] in
+  let rec slope x d =
+    if Float.abs x < 0.1 then d else slope (x *. 0.5) (d *. 0.5)
+  in
+  let xs = vec points
+  and expected = vec (Array.map (fun x -> slope x 1.) points) in
+  equal (near f64) (bits expected) (bits (Rune.vmap' (Rune.grad' f) xs))
+
 (* Totals: each lane adds once per step it takes, and per test of its stop. *)
 let test_totals () =
   let t = Total.make () in
@@ -640,6 +661,8 @@ let () =
              test "a constant init" test_constant_init;
              test "lanes in a step" test_lanes_in_step;
              test "an iterate in a step" test_nested;
+             test "an iterate's derivative in a loop's step"
+               test_nested_derivative;
              test "totals count each lane's steps" test_totals;
              test "carries" test_carries;
            ];
