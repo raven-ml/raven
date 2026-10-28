@@ -3609,10 +3609,6 @@ val map_segments :
     an optimiser's state, a cache. {!Ptree} describes one by the function that
     walks it, and {!check} and {!associative_scan} take its description. *)
 
-type ('v, 's, 'd) tensor = ('v, 's, 'd) t
-(** [tensor] is {!t}, named for {!Ptree}'s signatures, in which [t] is a
-    description. *)
-
 (** Structures of arrays.
 
     A structure is a type [('a, 'd) t] with one function, [walk], that walks
@@ -3655,6 +3651,10 @@ type ('v, 's, 'd) tensor = ('v, 's, 'd) t
     let on_gpu = Nx.Ptree.place (module Linear) Gpu.on params
     ]} *)
 module Ptree : sig
+  type ('v, 's, 'd) tensor := ('v, 's, 'd) t
+  (* {!t} under a name the signature keeps, where [t] is a description. A
+     substitution, so that types print as [Nx.t]. *)
+
   (** {1:paths Paths} *)
 
   (** Paths from a value's root to one of its parts. *)
