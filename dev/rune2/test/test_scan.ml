@@ -1307,6 +1307,153 @@ let test_empty_carry () =
 
 (* Interface *)
 
+(* Compiled, the step is traced once and the scan is one loop of the program,
+   which runs no eager kernel, whatever its number of rows. *)
+module C = Nx_support.Counting
+module Count = (val Nx.devices ~kernels:(module C) [ Nx_support.memory 0 ])
+
+let count (type d) (x : (float, Nx.float32_elt, d) Nx.t) = Nx.place Count.on x
+
+(* The occurrences of [word] in [s]. *)
+let occurrences word s =
+  let n = String.length word and k = ref 0 in
+  for i = 0 to String.length s - n do
+    if String.sub s i n = word then incr k
+  done;
+  !k
+
+let test_staged () =
+  let traces = ref 0 in
+  let step c r =
+    incr traces;
+    (Nx.add c (Nx.mul c r), Nx.mul_s c 2.)
+  in
+  let rows n =
+    count (Nx.reshape [| n; 2 |] (Nx.linspace f32 (-0.01) 0.01 (2 * n)))
+  in
+  let xs = rows 100 in
+  let init = count (v [| 0.5; -0. |]) in
+  let f init xs = Rune.scan' ~f:step ~init xs in
+  let printed xs =
+    Format.asprintf "%a" Rune.pp_program
+      (Rune.program
+         T.(pair tensor tensor)
+         T.(pair tensor tensor)
+         (fun (a, b) -> f a b)
+         (init, xs))
+  in
+  let short = printed (rows 3) and long = printed xs in
+  equal ~msg:"one scan" int 1 (occurrences "scan" long);
+  equal ~msg:"its step once" int (occurrences "Map" short)
+    (occurrences "Map" long);
+  let g = Rune.jit T.(tensor @-> tensor @-> returns (pair tensor tensor)) f in
+  traces := 0;
+  ignore (g init xs);
+  equal ~msg:"one trace" int 1 !traces;
+  traces := 0;
+  C.reset ();
+  let c, ys = g init xs in
+  equal ~msg:"no retrace" int 0 !traces;
+  equal ~msg:"no eager kernel" int 0 (C.calls ());
+  let c', ys' = f init xs in
+  equal ~msg:"carry" bits_t (bits c') (bits c);
+  equal ~msg:"outputs" bits_t (bits ys') (bits ys)
+
+(* A compiled call in a step stays a call, which computes on each row the bits
+   it computes on that row outside the loop, over rows in every view and a
+   capture. *)
+type call =
+  | Call : {
+      dt : (float, 's) Nx.dtype;
+      sine : (float, 's, Nx.host) Nx.t -> (float, 's, Nx.host) Nx.t;
+      s : int array;
+      n : int;
+      xs : Operand.t;
+      c : Operand.t;
+    }
+      -> call
+
+let sine32 = Rune.jit' (Nx.sin : (float, Nx.float32_elt, Nx.host) Nx.t -> _)
+let sine64 = Rune.jit' (Nx.sin : (float, Nx.float64_elt, Nx.host) Nx.t -> _)
+
+let call_cases =
+  let open Gen in
+  (let* s = Operand.shape in
+   let* n = of_list [ 1; 2; 5 ] in
+   let* xs = Operand.draw (Array.append [| n |] s) and+ c = Operand.draw s in
+   let+ wide = bool in
+   if wide then Call { dt = Nx.float64; sine = sine64; s; n; xs; c }
+   else Call { dt = Nx.float32; sine = sine32; s; n; xs; c })
+  |> with_pp (fun ppf (Call c) ->
+      Format.fprintf ppf "%a %a, %d rows in %a" Nx.pp_dtype c.dt
+        Operand.pp_shape c.s c.n Operand.pp_view c.xs.view)
+
+let law_call (Call c) =
+  cover "a view" (c.xs.view <> Operand.Plain);
+  cover "a zero-size row" (Operand.numel c.s = 0);
+  let xs = Operand.make c.dt (Array.append [| c.n |] c.s) c.xs in
+  let w = Operand.make c.dt c.s c.c in
+  (* Each call reads the carry or the row, so that it computes in the step. *)
+  let step c' r =
+    let y = c.sine (Nx.maximum c' r) in
+    (y, Nx.add y (c.sine (Nx.maximum w r)))
+  in
+  let rows = List.init c.n (fun i -> Nx.get [ i ] xs) in
+  cover "a row the call computes apart from eager"
+    (List.exists (fun r -> bits (c.sine r) <> bits (Nx.sin r)) rows);
+  let init = Nx.zeros c.dt c.s in
+  let folded, ys = fold step ~init xs in
+  let scanned, ys' = Rune.scan' ~f:step ~init xs in
+  equal ~msg:"carry" bits_t (bits folded) (bits scanned);
+  equal ~msg:"outputs" bits_t (bits (Nx.stack ys)) (bits ys')
+
+(* Constants and placements *)
+
+let host x = Nx.place Nx.Host.on x
+
+(* Row 0 of the outputs is the constant [init], the others are placed. *)
+let test_constant_row () =
+  let c, ys =
+    Rune.scan t t t
+      ~f:(fun c x -> (Nx.add c x, c))
+      ~init:(Nx.scalar f32 0.)
+      (host (v [| 1.; 2.; 3. |]))
+  in
+  equal bits_t (bits (Nx.scalar f32 6.)) (bits c);
+  equal bits_t (bits (v [| 0.; 1.; 3. |])) (bits ys)
+
+(* A constant addition, then a placed one, to one total in a step. *)
+let test_constant_addition () =
+  let u = Total.make () in
+  let (), total =
+    Total.collect u ~zero:(Nx.scalar f32 0.) (fun () ->
+        ignore
+          (Rune.scan t t Nx.Ptree.unit
+             ~f:(fun c x ->
+               Total.add u (Nx.scalar f32 1.);
+               Total.add u (Nx.sum x);
+               (c, ()))
+             ~init:(Nx.scalar f32 0.)
+             (host (v [| 1.; 2.; 3. |]))))
+  in
+  equal bits_t (bits (Nx.scalar f32 9.)) (bits total)
+
+(* Leaves that swap devices of one set bind as traced: one trace. *)
+let test_swap () =
+  let on k x = Nx.place (Nx.Placement.device Two.v (Nx_support.memory k)) x in
+  let traces = ref 0 in
+  let (a, b), _ =
+    Rune.scan (Nx.Ptree.pair t t) t t
+      ~f:(fun (a, b) x ->
+        incr traces;
+        ((b, a), x))
+      ~init:(on 0 (Nx.scalar f32 1.), on 1 (Nx.scalar f32 2.))
+      (on 0 (v [| 0. |]))
+  in
+  equal ~msg:"traces" int 1 !traces;
+  equal bits_t (bits (Nx.scalar f32 2.)) (bits a);
+  equal bits_t (bits (Nx.scalar f32 1.)) (bits b)
+
 let f64 = Nx.float64
 let vec xs = Nx.create f64 [| Array.length xs |] xs
 let floats = Testable.array Testable.float_exact
@@ -1577,6 +1724,16 @@ let () =
              test "constant and empty outputs" test_constant_outputs;
              test "a take at constant indices" test_constant_take;
              test "an empty carry beside rows" test_empty_carry;
+             test "a step traces once and compiles one loop" test_staged;
+             prop "a compiled call in a step computes its own bits" call_cases
+               law_call;
+           ];
+         group "constants and placements"
+           [
+             test "a constant first row" test_constant_row;
+             test "a constant addition before a placed one"
+               test_constant_addition;
+             test "leaves that swap devices of one set" test_swap;
            ];
          group "memory" [ test "what reverse mode keeps" test_residuals ];
        ])

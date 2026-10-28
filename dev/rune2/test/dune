@@ -4,7 +4,6 @@
  (names
   test_jit
   test_constructs
-  test_loops
   test_scan
   test_iterate
   test_root
@@ -20,7 +19,6 @@
   compose
   test_jit
   test_constructs
-  test_loops
   test_scan
   test_iterate
   test_root
