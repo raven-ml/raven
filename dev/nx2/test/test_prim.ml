@@ -669,7 +669,8 @@ let contractions =
     ]
 
 (* Partials take a contraction cut along its contracting pairs, scaled in
-   blocks of any shape or not; they never take a segmented one. *)
+   blocks of any shape or not, and one of rows by groups cut along [b]'s
+   groups; a segmented one cut along its pairs raises. *)
 let partials =
   let compute =
     Testable.make
@@ -757,6 +758,50 @@ let partials =
                "t: operand 0 lies at split ~axis:1 [m0; m1] and is read at on \
                 [m0; m1]; Nx.place (Placement.on s) x")
             (fun () -> route ~segments:g [| 64 |] None));
+      (* [a] [[2; 4]] by [b] [[3; 4; 2]] split along its 3 groups, [b]'s
+         scale a code per group and column too, the offsets whole on each
+         device: [b]'s groups are a factor no axis of [a] shares. *)
+      cases "rows by groups of b cut along them" ~name:fst
+        [ ("unscaled", None); ("scaled per group", Some [| 3; 1; 2 |]) ]
+        (fun (_, blocks) ->
+          let a = placed every (f32 [| 2; 4 |]) in
+          let b = placed (split 0) (f32 [| 3; 4; 2 |]) in
+          let offsets =
+            placed every
+              (value 0 (A.of_array D.Int64 [| 4 |] [| 0L; 1L; 1L; 2L |]))
+          in
+          let b_scale =
+            Option.map
+              (fun s ->
+                let n = Array.fold_left ( * ) 1 s in
+                Value.Exponent
+                  (placed (split 0)
+                     (value 0
+                        (A.of_array D.Uint8 (Iarray.of_array s)
+                           (Array.make n 127)))))
+              blocks
+          in
+          let op =
+            Value.Contract
+              {
+                batch = [||];
+                contracting = [| (1, 1) |];
+                acc = D.Any D.Float32;
+                out = D.Float32;
+                a;
+                b;
+                init = None;
+                a_scale = None;
+                b_scale;
+                segments = Some (Rows { offsets; a_axis = 0; b_axis = 0 });
+              }
+          in
+          match (Prim.route ~by:"t" op).route with
+          | Some r ->
+              equal compute Route.Partials r.compute;
+              equal bool ~msg:"the results whole on each device" true
+                (Devices.equal every r.result)
+          | None -> fail "a contraction of no route");
     ]
 
 (* One-node programs *)

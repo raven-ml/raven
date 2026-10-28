@@ -165,8 +165,10 @@ val rule : 'r prim -> Route.rule
     loop of no load has the rule of one load of its shape: each device of its
     placement computes its window of the loop. A contraction's scale is read
     at its operand's windows where a cut keeps its blocks whole, and whole
-    elsewhere; its segmented axes are read whole. A segmented contraction
-    is read whole along its contracting pairs. *)
+    elsewhere. [Rows]' axis of [a] and its offsets are read whole, and [b]'s
+    axis of its groups is reduced, a factor after the pairs that no axis of
+    [a] shares, whose fences the offsets hold ({!Partial}). A segmented
+    contraction is read whole along its contracting pairs. *)
 
 val local : 'r prim -> Nx_array.Move.range array -> 'r prim
 (** [local op w] is [op] computing the window [w] of its first result, over

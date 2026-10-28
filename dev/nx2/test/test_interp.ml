@@ -2263,26 +2263,72 @@ let where =
       map (fun a -> Minor a) axis;
     ]
 
-let law_forms (k, wx, wy) =
-  let f = snd (List.nth binaries k) in
-  let value i = Nx.reshape [| 4; 4 |] (Nx.arange f32 i (i + 16) 1) in
-  let x = Nx.place (at wx) (value 0) and y = Nx.place (at wy) (value 16) in
+(* Checks that [f x y] lies where it does traced, or raises one message both
+   ways, and gives where it lies eagerly or its refusal. *)
+let agrees f x y =
   let outcome g =
     match g () with p -> Ok p | exception Invalid_argument m -> Error m
   in
   let eager = outcome (fun () -> Nx.placement (f x y)) in
   let traced = outcome (fun () -> traced_placement f x y) in
-  cover "a refusal" (Result.is_error eager);
-  cover "a cut result"
-    (match eager with
-    | Ok p -> not (Nx.Placement.equal p Mem4.on)
-    | Error _ -> false);
-  match (eager, traced) with
+  (match (eager, traced) with
   | Ok p, Ok q ->
       equal ~msg:"where the result lies" bool true (Nx.Placement.equal p q)
   | Error m, Error m' -> equal ~msg:"the refusal" string m m'
   | Ok _, Error m -> fail ("traced alone raises: " ^ m)
-  | Error m, Ok _ -> fail ("eager alone raises: " ^ m)
+  | Error m, Ok _ -> fail ("eager alone raises: " ^ m));
+  eager
+
+let cut_result = function
+  | Ok p -> not (Nx.Placement.equal p Mem4.on)
+  | Error _ -> false
+
+let law_forms (k, wx, wy) =
+  let f = snd (List.nth binaries k) in
+  let value i = Nx.reshape [| 4; 4 |] (Nx.arange f32 i (i + 16) 1) in
+  let x = Nx.place (at wx) (value 0) and y = Nx.place (at wy) (value 16) in
+  let eager = agrees f x y in
+  cover "a refusal" (Result.is_error eager);
+  cover "a cut result" (cut_result eager)
+
+(* Rows of [x], [[4; 4]], each by the matrix of [y], [[4; 4; 4]], that its
+   group names, the offsets at [wo]: [[0; 1; 1; 3; 4]] put row 0 in group
+   0, no row in group 1, rows 1 and 2 in group 2 and row 3 in group 3. *)
+let by_groups wo x y =
+  let offsets =
+    Nx.place (at wo) (Nx.create Nx.int64 [| 5 |] [| 0L; 1L; 1L; 3L; 4L |])
+  in
+  Nx.Prim.eval ~by:"test.by_groups"
+    (Contract
+       {
+         batch = Iarray.of_list [];
+         contracting = Iarray.of_list [ (1, 2) ];
+         acc = D.Any f32;
+         out = f32;
+         a = x;
+         b = y;
+         init = None;
+         a_scale = None;
+         b_scale = None;
+         segments = Some (Rows { offsets; a_axis = 0; b_axis = 0 });
+       })
+
+let along_groups = function
+  | Split 0 | Minor 0 -> true
+  | Cuts (x, y) -> x = 0 || y = 0
+  | On | Device _ | Split _ | Minor _ -> false
+
+let law_by_groups (wo, wx, wy) =
+  let x = Nx.place (at wx) (Nx.reshape [| 4; 4 |] (Nx.arange f32 0 16 1)) in
+  let y =
+    Nx.place (at wy) (Nx.reshape [| 4; 4; 4 |] (Nx.arange f32 16 80 1))
+  in
+  let eager = agrees (by_groups wo) x y in
+  cover "a refusal" (Result.is_error eager);
+  cover "offsets cut" (wo <> On);
+  cover "b cut along its groups, computed"
+    (along_groups wy && Result.is_ok eager);
+  cover "a cut result" (cut_result eager)
 
 let forms =
   group "placements"
@@ -2297,6 +2343,19 @@ let forms =
                pp_where wx pp_where wy)
            Gen.(triple (int_range 0 (List.length binaries - 1)) where where))
         law_forms;
+      prop
+        "a traced product of rows by groups lies where its eager twin does, \
+         and a refusal is the same message"
+        (Gen.with_pp
+           (fun ppf (wo, wx, wy) ->
+             Format.fprintf ppf "offsets at %a, a at %a, b at %a" pp_where wo
+               pp_where wx pp_where wy)
+           Gen.(
+             triple
+               (frequency [ (3, constant On); (1, constant (Split 0)) ])
+               (frequency [ (3, constant On); (1, where) ])
+               where))
+        law_by_groups;
       test "a product cut unlike raises one message eagerly and traced"
         (fun () ->
           let value = Nx.reshape [| 4; 4 |] (Nx.arange f32 0 16 1) in

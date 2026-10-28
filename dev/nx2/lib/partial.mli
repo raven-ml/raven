@@ -7,7 +7,8 @@
     ({!Route.Partials}).
 
     A {e fold} is a reduction, a scan without carry or a contraction, and
-    its {e folded} axes are those it reduces, scans or contracts. Its route
+    its {e folded} axes are those it reduces, scans or contracts, and [b]'s
+    axis of [Rows]' groups ({!Nx_kernel.type-segments}). Its route
     reads an operand cut along a folded axis, so no device holds every term
     of its window of the results. Each device computes a {e partial}, the
     fold of the terms its operands' windows hold, and the partials
@@ -27,12 +28,12 @@
     elements than tiles, and the tiles that {e hold terms} come first along
     each cut axis. A group's partials are {e stacked} into one value of a
     new leading axis per cut folded axis, in the order of the first
-    operand's axes, each of as many elements as its folded axis has tiles
-    holding terms. A device whose tile holds terms holds its partial, its
-    {e slot}, at its tile's number along each cut folded axis: the stack's
-    placement cuts each leading axis over the grid axes that cut its
-    folded axis and every other axis as the result is cut, so a device
-    whose tile is empty holds no slot.
+    operand's axes, or one for [b]'s groups, each of as many elements as
+    its folded axis has tiles holding terms. A device whose tile holds
+    terms holds its partial, its {e slot}, at its tile's number along each
+    cut folded axis: the stack's placement cuts each leading axis over the
+    grid axes that cut its folded axis and every other axis as the result
+    is cut, so a device whose tile is empty holds no slot.
 
     A partial is in the {e carrier} of the result's terms
     ({!Nx_kernel.carrier}), a contraction's accumulator, or an [Arg]'s
@@ -113,18 +114,40 @@
     [Σ|d| <= n (√V + A)] by Cauchy-Schwarz.
 
     A contraction's tile is its windows of [a] and [b] along the contracting
-    pairs, alike. A scale is read whole along the pairs. Along each pair, a
-    tile is cut at its scales' block edges into {e pieces}, each within one
-    block of every scale there or from an edge they all share to another:
-    a tile of no scale is one piece, and a library that sums blocks of its
-    own sums them within each piece. A device contracts its tile's pieces
-    in C order of their first indices by its kernels, the first from no
-    [init] and each other from the sum of those before it as its [init],
-    into the accumulator, each scale read at the blocks the piece spans.
-    The closing sums the slots; [init], as the accumulator holds it, is
-    added once to each part, and the result rounds once into its dtype. A
-    segmented contraction never computes so. An integer contraction has
-    the bits it has on one device. A float or complex one is within
+    pairs, alike, or, for [Rows] whose [b] is cut along its groups, its
+    window of the groups, the pairs whole. A scale is read whole along the
+    pairs and the groups. Along each, a tile is cut at its scales' block
+    edges into {e pieces}, each within one block of every scale there or
+    from an edge they all share to another: a tile of no scale is one
+    piece, and a library that sums blocks of its own sums them within each
+    piece. A device contracts its tile's pieces in C order of their first
+    indices by its kernels, the first from no [init] and each other from
+    the sum of those before it as its [init], into the accumulator, each
+    scale read at the blocks the piece spans. The closing sums the slots;
+    [init], as the accumulator holds it, is added once to each part, and
+    the result rounds once into its dtype. A segmented contraction cut
+    along a pair never computes so, nor one of [Contracting] groups.
+
+    A piece of groups [lo] to [hi - 1] of [Rows]' offsets [o], [g + 1] of
+    them, is bounded by fences [lo] to [hi] of [F e], the least of
+    [max o.(0) o.(i)] for [i] from [e] to [g], which its device computes
+    from the offsets it holds whole. Group [e] of
+    {!Nx_kernel.type-segments} is the rows [r] with
+    [F e <= r < F (e + 1)], so each group of the piece is the whole's,
+    whatever the offsets, and offsets that do not decrease are their own
+    [F]. A device multiplies the rows of its groups. Every other row has
+    no products there and holds [+0], or the sum before it in a later
+    piece. An output's slots so hold its sum on its group's device and
+    [+0] on the others, and a sum from [+0] is never [-0]. Without
+    [init] the closing adds exact zeros, and each output has the bits it
+    has with [b]'s groups whole on each device, NaNs and infinities
+    included, where the kernels' association does not depend on the count
+    of [b]'s groups, as nx.cpu's ({!Nx_cpu}). With [init], an output whose
+    slots sum to zero takes [init] alone, so that one without products
+    keeps [init]'s bits.
+
+    An integer contraction has the bits it has on one device. A float or
+    complex one is within
     [γ(2K + 2) (|init| + Σ|a||b|)] of the exact sum, a complex one in
     modulus, [K] an output's products and [u] the accumulator's unit
     roundoff, that of its parts' dtype for a complex one,
@@ -184,7 +207,8 @@
     A [Scan] runs one loop over each device's loads, then one map over its
     results on each device but the first, and on the first where the
     carrier is not the result's dtype. A tile cut into pieces reads each of
-    its scales once per piece. *)
+    its scales once per piece, and a piece of [Rows]' groups runs one
+    [Scan] over its device's offsets. *)
 
 val run : by:string -> unit Route.t -> 'r Value.prim -> 'r
 (** [run ~by route op] is [op], its operands lying where [route], its route,
@@ -192,6 +216,7 @@ val run : by:string -> unit Route.t -> 'r Value.prim -> 'r
 
     Raises as {!Exec} states for the kernels, naming [by], and
     [Invalid_argument] as an internal fault for an operation other than a
-    [Reduce], a [Scan] of no carry or a [Contract], since no route computes
-    another by partials, and where the result's grid and the first
-    operand's are not of one mesh ({!Grid.cut_like}). *)
+    [Reduce], a [Scan] of no carry or a [Contract] of no segments or of
+    [Rows], since no route computes another by partials, and where the
+    result's grid and the folded operand's are not of one mesh
+    ({!Grid.cut_like}). *)

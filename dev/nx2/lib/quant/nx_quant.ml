@@ -492,7 +492,9 @@ let check_experts ws ids xs =
    out of range falls in no group and its row has no products, [+0]. The
    result's rows are gathered back to the ids' order. A weight split along
    [n], the result's free columns, is computed by each device for its columns
-   over every row, in the whole's order. *)
+   over every row, in the whole's order. A weight cut along its experts is
+   computed by each device for the rows of its own experts, [+0] in the
+   others, and the devices' sums close by partials. *)
 
 (* The positions sorted by id, the permutation that sorts them, their count
    and the ids' shape. *)
@@ -590,12 +592,28 @@ let segmented (type b) r (x : (float, b, _) Nx.t) b scale offsets =
   let back = Nx.argsort r.order in
   Nx.reshape (Array.append r.lead [| n |]) (Nx.take ~axis:0 back y)
 
+(* Whether a part of [w] is cut along its first axis, a stack's experts: its
+   placement is not that axis made whole. *)
+let experts_cut w =
+  let cut t =
+    let p = Nx.placement t in
+    let whole = Nx.Placement.(with_leading_axis (without_leading_axis p)) in
+    not (Nx.Placement.equal p whole)
+  in
+  match w with
+  | Mxfp4 { codes; scales } -> cut codes || cut scales
+  | Mxfp4_blocks { blocks } | Q8_0 { blocks } | Q4_K { blocks }
+  | Q6_K { blocks } ->
+      cut blocks
+
 (* An MXFP4 weight summed at float32 enters as its codes read as float4 values
    and its scales as their blocks' exponents, each element exact at float32,
    read where it lies, a group per expert. Any other weight, and one summed at
    float64, where a value past float32's range would be finite, enters as its
-   values at [x]'s dtype, of the experts the ids name alone, a group per slot.
-   A segmented contraction's association does not depend on its offsets
+   values at [x]'s dtype: cut along its experts, all of them, each device
+   decoding its own, a group per expert; else the experts the ids name alone,
+   a group per slot, which a gather along the experts reads whole. A
+   segmented contraction's association does not depend on its offsets
    (Nx_kernel.S.contract), so a row's bits depend on the shapes, its row and
    its expert. *)
 let experts ~ids w x =
@@ -604,6 +622,8 @@ let experts ~ids w x =
   | Mxfp4 { codes; scales } when at_float32 x ->
       let b = Nx.reshape (shape w) (Nx.bitcast Nx.float4_e2m1fn codes) in
       segmented r x b (Some (Nx.Prim.Exponent scales)) (by_expert r e)
+  | _ when experts_cut w ->
+      segmented r x (dequant (Nx.dtype x) w) None (by_expert r e)
   | _ ->
       let named, offsets = slots r e in
       segmented r x (dequant (Nx.dtype x) (take ~axis:0 named w)) None offsets

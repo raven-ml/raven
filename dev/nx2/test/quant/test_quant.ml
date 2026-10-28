@@ -1390,10 +1390,10 @@ let expert_products =
         experts_law;
     ]
 
-(* Four experts of [format], twelve positions' ids in range and past both
-   bounds, and their rows. *)
-let experts_of format =
-  let w = random_weight ~format [| 4; 3; 256 |] in
+(* [e] experts of [format], four by default, twelve positions' ids in range
+   and past both bounds, and their rows. *)
+let experts_of ?(e = 4) format =
+  let w = random_weight ~format [| e; 3; 256 |] in
   let ids =
     Nx.create Nx.int64 [| 12 |]
       (Array.init 12 (fun i -> Int64.of_int ((i * 5 mod 6) - 1)))
@@ -1442,10 +1442,11 @@ let experts_at ?(split = false) c w ids x =
    first axis, gives rows within their bound, the same on every run, where
    each operation reads its operands where they lie. Routing the positions
    sorts the ids and gathers the input's rows, which reads both whole, and
-   the sum reads its experts and [k] whole: ids or an input split with
-   elements, and a weight with values cut along its experts or [k], raise. *)
+   the sum reads [k] whole: ids or an input split with elements, and a
+   weight with values cut along [k], raise. Cut along its experts, a weight
+   gives the bits it gives whole. *)
 let cut_experts_law (c, split, (_, w, ids, X { at; x })) =
-  let _, n, _ = dims w in
+  let lead, n, _ = dims w in
   cover "ids and input split" (split && Nx.dim 0 ids > 1);
   cover "ids split, one input row for every position"
     (split && Nx.dim 0 ids > 1 && Nx.dim 0 x = 1);
@@ -1460,11 +1461,20 @@ let cut_experts_law (c, split, (_, w, ids, X { at; x })) =
   cover "a GGUF weight split along k"
     ((not mxfp4) && c = Split { axis = 2; over = 4 });
   cover "a weight split along experts" (c = Split { axis = 0; over = 4 });
+  let along_experts =
+    match c with Split { axis = 0; _ } -> true | Split _ | Mesh_n -> false
+  in
+  cover "a weight split along experts over two"
+    (c = Split { axis = 0; over = 2 });
+  cover "experts split in tiles of unequal extents"
+    (match c with
+    | Split { axis = 0; over } -> lead.(0) mod over <> 0
+    | Split _ | Mesh_n -> false);
   cover "a weight cut along n over a mesh" (c = Mesh_n);
   let numel t = Array.fold_left ( * ) 1 (Nx.shape t) in
-  (* A weight read where it lies is summed whole along its experts and [k].
-     A decoded one gathers [min p e] matrices, which reads its experts
-     whole, and then sums them whole along [k]: none, for no position. *)
+  (* A weight is summed whole along [k]: one read where it lies always, a
+     decoded one as the [min p e] matrices it gathers, none for no
+     position. *)
   let values = Array.fold_left ( * ) 1 (Nx_quant.shape w) > 0 in
   let wide = match Nx.dtype x with D.Float64 -> true | _ -> false in
   let summed = (format_of w = Mxfp4 && not wide) || numel ids > 0 in
@@ -1472,7 +1482,6 @@ let cut_experts_law (c, split, (_, w, ids, X { at; x })) =
     values
     &&
     match c with
-    | Split { axis = 0; _ } -> true
     | Split { axis = 2; _ } -> summed
     | Split _ | Mesh_n -> false
   in
@@ -1485,7 +1494,11 @@ let cut_experts_law (c, split, (_, w, ids, X { at; x })) =
     let got, b = experts_at ~split c w ids x in
     routed_rows ~at w ids x got;
     equal ~msg:"a second run" (array int64) b
-      (snd (experts_at ~split c w ids x))
+      (snd (experts_at ~split c w ids x));
+    if along_experts then
+      equal ~msg:"the whole weight's bits" (array int64)
+        (product_bits (Nx_quant.apply_experts ~ids w x))
+        b
 
 (* [apply_experts] of {!experts_of}'s case with its weight at [p] and the
    ids and input whole on each device: rows within their bound, the same on
@@ -1538,22 +1551,48 @@ let placements =
                (if split then ", ids and x split" else ""))
            cut_experts)
         cut_experts_law;
-      cases ~name:format_name
-        "experts split over four devices raise, writing the weight's \
-         placement whole"
-        formats
-        (fun format ->
-          let w, ids, x = experts_of format in
-          let on t = Nx.place Mem.on t in
-          raises_match
-            (Exn.invalid_arg
-               ~substring:
-                 "operand 1 lies at split ~axis:0 [m0; m1; m2; m3] and is \
-                  read at on [m0; m1; m2; m3]; Nx.place (Placement.on s) y")
-            (fun () ->
-              Nx_quant.apply_experts ~ids:(on ids)
-                (Nx_quant.place (Mem.split ~axis:0) w)
-                (on x)));
+      cases
+        ~name:(fun (f, e, t) ->
+          Printf.sprintf "%s, %d experts over %d" (format_name f) e t)
+        "experts split along their experts give the whole weight's bits, \
+         whole on each device"
+        (List.concat_map
+           (fun f -> [ (f, 4, 4); (f, 5, 4); (f, 3, 4); (f, 3, 2) ])
+           formats)
+        (fun (format, e, t) ->
+          let w, ids, x = experts_of ~e format in
+          let at (module S : Nx.Devices) =
+            let on v = Nx.place S.on v in
+            let run p =
+              Nx_quant.apply_experts ~ids:(on ids) (Nx_quant.place p w) (on x)
+            in
+            let y = run (S.split ~axis:0) in
+            equal ~msg:"the bits" (array int64) (product_bits (run S.on))
+              (product_bits y);
+            equal ~msg:"where the result lies" bool true
+              (Nx.Placement.equal S.on (Nx.placement y))
+          in
+          if t = 4 then at (module Mem) else at (module Mem_two));
+      (* The experts over the mesh's axis [a] and [n] over its axis [b]: each
+         device sums its own experts' rows at its own columns. *)
+      cases
+        ~name:(fun (f, e) -> Printf.sprintf "%s, %d experts" (format_name f) e)
+        "experts cut along their experts and n over a mesh give the bits and \
+         placement they give cut along n alone"
+        (List.concat_map (fun f -> [ (f, 4); (f, 3) ]) formats)
+        (fun (format, e) ->
+          let w, ids, x = experts_of ~e format in
+          let on v = Nx.place Mem.on v in
+          let run p =
+            Nx_quant.apply_experts ~ids:(on ids) (Nx_quant.place p w) (on x)
+          in
+          let along_n = Nx.Placement.mesh mesh [ (1, [ "b" ]) ] in
+          let whole = run along_n in
+          let y = run (Nx.Placement.mesh mesh [ (0, [ "a" ]); (1, [ "b" ]) ]) in
+          equal ~msg:"the bits" (array int64) (product_bits whole)
+            (product_bits y);
+          equal ~msg:"where the result lies" bool true
+            (Nx.Placement.equal (Nx.placement whole) (Nx.placement y)));
       cases ~name:format_name
         "experts whole on each device give rows within their bound, the same \
          on every run"

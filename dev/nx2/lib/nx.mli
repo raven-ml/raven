@@ -2171,11 +2171,14 @@ val bitcast : ('w, 'r) dtype -> ('v, 's, 'd) t -> ('w, 'r, 'd) t
     C order of the windows' first indices and summed over the stack by the
     kernels, then [init] added and the sum rounded once. An operand whole on
     every device is read at the other's cut; summed axes cut otherwise raise
-    ({!section-routing}). Integer contractions keep the bits they have on
-    one device. A float or complex one may differ from it within the bound
-    {!contract} states, and is the same on every run for a given placement
-    and set of devices: float32 [[1e7; -1e7; 0.1; 0]] by ones gives [0.] on
-    one nx.cpu device and [0.1] cut two ways along its summed axis. *)
+    ({!section-routing}). A contraction of rows by [b]'s groups
+    ({!Nx_kernel.type-segments}) with [b] cut along its groups computes so
+    too, and an output without products keeps [init]'s bits. Integer
+    contractions keep the bits they have on one device. A float or complex
+    one may differ from it within the bound {!contract} states, and is the
+    same on every run for a given placement and set of devices: float32
+    [[1e7; -1e7; 0.1; 0]] by ones gives [0.] on one nx.cpu device and
+    [0.1] cut two ways along its summed axis. *)
 
 val contract :
   ?sizes:(string * int) list ->

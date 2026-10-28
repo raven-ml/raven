@@ -250,7 +250,40 @@ let scaled =
   in
   { rule; ps; shapes; result = [| m; n |] }
 
-let case = Gen.with_pp pp_case (Gen.frequency [ (3, case); (1, scaled) ])
+(* A product of rows by groups: [a] [[m; k]], each row by the matrix
+   [[n; k]] of [b] [[g; n; k]] its group names, the [g + 1] offsets the
+   groups' fences. Half the time [b] is split along its groups over the four
+   devices beside [a] and the offsets whole on each; else each lies
+   anywhere. *)
+let segmented =
+  let open Gen in
+  let* m = of_list [ 1; 3; 4 ]
+  and+ n = of_list [ 1; 2; 4 ]
+  and+ k = of_list [ 2; 8 ]
+  and+ g = of_list [ 0; 1; 3; 4; 8 ]
+  and+ grouped = bool in
+  let rule =
+    Route.Axes
+      [|
+        [| Whole; Whole |]; [| Reduced 1; Becomes 1; Whole |]; [| Whole |];
+      |]
+  in
+  let shapes = [| [| m; k |]; [| g; n; k |]; [| g + 1 |] |] in
+  let+ ps =
+    if grouped then
+      let on = Devices.on s4 in
+      constant [| on; Devices.split ~by:"t" ~axis:0 s4; on |]
+    else
+      let+ pa = placement_of 2
+      and+ pb = placement_of 3
+      and+ po = placement_of 1 in
+      [| pa; pb; po |]
+  in
+  { rule; ps; shapes; result = [| m; n |] }
+
+let case =
+  Gen.with_pp pp_case
+    (Gen.frequency [ (3, case); (1, scaled); (1, segmented) ])
 
 (* The part of operand [i] that result window [w] depends on. Along an axis of
    [d] that regroups into one of [e], the rows of [d / e] the window's range
@@ -973,6 +1006,30 @@ let cases_ =
              read at split ~axis:0 [m0; m1; m2; m3]; Nx.place \
              (Placement.split ~axis:0 s) y"
             (fun () -> route matrix_product [| x; x |] shapes));
+      (* Rows of [a] [[6; 4]] by the groups of [b] [[5; 3; 4]], the offsets
+         [[6]] their fences, as a segmented contraction's rule reads them. *)
+      test
+        "a product by groups cut along them computes by partials, its fences \
+         read whole on each device"
+        (fun () ->
+          let rule =
+            Route.Axes
+              [|
+                [| Whole; Whole |];
+                [| Reduced 1; Becomes 1; Whole |];
+                [| Whole |];
+              |]
+          in
+          let shapes = [| [| 6; 4 |]; [| 5; 3; 4 |]; [| 6 |] |] in
+          let on = Devices.on s4 and b = Devices.split ~by:"t" ~axis:0 s4 in
+          let r = route rule [| on; b; on |] shapes in
+          equal (array placement) [| on; b; on |] r.operands;
+          equal placement on r.result;
+          equal bool ~msg:"by partials" true (r.compute = Route.Partials);
+          refused
+            "Nx.f: operand 2 lies at split ~axis:0 [m0; m1; m2; m3] and is \
+             read at on [m0; m1; m2; m3]; Nx.place (Placement.on s) z"
+            (fun () -> route rule [| on; b; b |] shapes));
       test "operands cut by two mesh axes join, each read by views" (fun () ->
           let x = Devices.mesh ~by:"t" mesh [ (0, [ "a" ]) ] in
           let y = Devices.mesh ~by:"t" mesh [ (1, [ "b" ]) ] in

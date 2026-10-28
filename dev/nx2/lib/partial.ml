@@ -35,8 +35,9 @@ let position p k =
 
 (* The window of operand [i], of [shape], that a device reads by [rule]: the
    window its window [w] of the results reads ({!Route.window}), but [tile f]
-   along an axis of the folded factor [f]. An axis of blocks of [f] is whole:
-   its reader takes the blocks a tile spans. *)
+   along an axis of the folded factor [f]. An axis of blocks of [f], or of
+   its fences, is whole: its reader takes the blocks a tile spans, or the
+   fences that bound it. *)
 let reads rule i shape (w : M.range array) tile =
   match (rule : Route.rule) with
   | Elementwise -> w
@@ -50,10 +51,10 @@ let reads rule i shape (w : M.range array) tile =
         window
 
 (* The tile of each device of [route]'s result, in order: its window along
-   [axes] of operand [0], of [shape], where [route] reads it. The route
-   reads every operand alike along them. *)
-let tiles ~by (route : unit Route.t) shape axes =
-  let q = route.operands.(0) in
+   [axes] of [operand], of [shape], where [route] reads it. The route reads
+   every operand that holds them alike along them. *)
+let tiles ~by (route : unit Route.t) ~operand shape axes =
+  let q = route.operands.(operand) in
   Array.map
     (fun k ->
       let w = Devices.window ~by q shape (position q k) in
@@ -66,7 +67,7 @@ let rec gcd a b = if b = 0 then a else gcd b (a mod b)
 
 (* The ranges [lo, hi) splits into, in order, each within one block of
    every length of [rs] or from one of their common edges to another:
-   [lo, hi) itself where [rs] is empty. *)
+   [lo, hi) itself where [rs] is empty or [lo, hi) holds no element. *)
 let pieces rs lo hi =
   let l = List.fold_left (fun l r -> l / gcd l r * r) 1 rs in
   let rec from x =
@@ -79,11 +80,11 @@ let pieces rs lo hi =
       in
       { M.start = x; count = y - x; step = 1 } :: from y
   in
-  from lo
+  if lo >= hi then [ { M.start = lo; count = 0; step = 1 } ] else from lo
 
-(* The pieces of [tile], its ranges along the contracting pairs, each
-   pair's range cut by {!pieces} at [runs], the pair's scale blocks'
-   lengths, in C order. *)
+(* The pieces of [tile], its ranges of the folded factors, each factor's
+   range cut by {!pieces} at [runs], its scale blocks' lengths, in C
+   order. *)
 let tile_pieces runs (tile : M.range array) =
   let rec from p =
     if p = Array.length tile then [ [] ]
@@ -145,6 +146,14 @@ let slice (type v s d) ~by axis start count (x : (v, s, d) Value.t) :
     r.(axis) <- { M.start; count; step = 1 };
     on ~by x (Value.Move (Slice (Iarray.of_array r), x))
   end
+
+(* Elements [start] down to [start - count + 1] of [x] along [axis], in that
+   order. *)
+let backwards (type v s d) ~by axis start count (x : (v, s, d) Value.t) :
+    (v, s, d) Value.t =
+  let r = Array.map full (Prim.shape x) in
+  r.(axis) <- { M.start; count; step = -1 };
+  on ~by x (Value.Move (Slice (Iarray.of_array r), x))
 
 (* [x] of [shape], its axes of extent 1 stretched. *)
 let spread (type v s d) ~by shape (x : (v, s, d) Value.t) : (v, s, d) Value.t
@@ -346,12 +355,12 @@ type closing = {
   held : int list;
 }
 
-(* The closing of a fold over the folded [axes] of operand [0], in any
-   order, each of [extent a] elements, into results of [shape] at
-   [route]'s result. *)
-let closing ~by (route : unit Route.t) ~axes ~extent shape =
+(* The closing of a fold over the folded [axes] of [operand], in any order,
+   each of [extent a] elements, into results of [shape] at [route]'s
+   result. *)
+let closing ~by (route : unit Route.t) ~operand ~axes ~extent shape =
   let r = route.result in
-  let like = Devices.grid route.operands.(0) and g = Devices.grid r in
+  let like = Devices.grid route.operands.(operand) and g = Devices.grid r in
   let set = Devices.set r in
   let cut_tiles a =
     Array.find_map
@@ -474,10 +483,10 @@ let reduce (type d r) ~by (route : unit Route.t) rule layout axes prog
   let here j = Devices.one set ks.(j) in
   let tiles =
     let (Value.Any x) = Prim.load_any (Iarray.get loads 0) in
-    tiles ~by route (Prim.shape x) ax
+    tiles ~by route ~operand:0 (Prim.shape x) ax
   in
   let cl =
-    closing ~by route ~axes:(Array.to_list ax)
+    closing ~by route ~operand:0 ~axes:(Array.to_list ax)
       ~extent:(fun a -> shape.(a))
       out
   in
@@ -793,13 +802,55 @@ let scan (type d a) ~by (route : unit Route.t) rule layout axis prog
 
 (* Contractions *)
 
+(* The fences of a device's tile [q] of [Rows]' groups, from the offsets
+   [o], [g + 1] along their last axis, in the window [w] the device [k]
+   holds whole along it, at [here]: fences [q.start] to [q.start + q.count]
+   of [F e], the least of [max o.(0) o.(i)] for [i] from [e] to [g].
+   {!Nx_kernel.type-segments} puts index [r] in group [e] where
+   [max o.(0) o.(e) <= r] and [r] is below each of [o.(e + 1)] to
+   [o.(g)]: that is [F e <= r < F (e + 1)], so the tile's groups are the
+   whole's, whatever the offsets, and offsets that do not decrease are
+   their own [F]. One scan of [Min] over [o.(g)] down to [o.(q.start)]
+   gives them. *)
+let fences (type d) ~by k (here : d Devices.placement) w (q : M.range)
+    (o : d Value.index) : d Value.index =
+  let last = Array.length w - 1 in
+  let tail = (Prim.shape o).(last) - q.start in
+  let along r =
+    let w = Array.copy w in
+    w.(last) <- r;
+    view ~by k here w o
+  in
+  let down =
+    backwards ~by last (tail - 1) tail
+      (along { M.start = q.start; count = tail; step = 1 })
+  in
+  let first =
+    spread ~by (Prim.shape down) (along { M.start = 0; count = 1; step = 1 })
+  in
+  let ins : D.any iarray = [| D.Any D.Int64; D.Any D.Int64 |] in
+  let term = E.maximum (E.input 0 D.Int64) (E.input 1 D.Int64) in
+  let least =
+    at ~by here
+      (Value.Scan
+         {
+           layout = L.contiguous (Iarray.of_array (Prim.shape down));
+           axis = last;
+           prog = P.of_exprs ~ins [| E.any term |];
+           reduction = Monoid (Min, 0, D.Int64);
+           loads = [| Plain down; Plain first |];
+           carry = None;
+         })
+  in
+  backwards ~by last (tail - 1) (q.count + 1) least
+
 let contract (type v s d a b c e) ~by (route : unit Route.t) rule ~batch
-    ~contracting ~acc (out : (v, s) D.t) (a : (a, b, d) Value.t)
+    ~contracting ~acc ~segments (out : (v, s) D.t) (a : (a, b, d) Value.t)
     (b : (c, e, d) Value.t) (init : (v, s, d) Value.t option)
     (a_scale : d Value.scale option) (b_scale : d Value.scale option) :
     (v, s, d) Value.t =
   let shape =
-    Prim.contract_shape ~by ~batch ~contracting ~segments:None ~acc a b init
+    Prim.contract_shape ~by ~batch ~contracting ~segments ~acc a b init
       a_scale b_scale
   in
   let pairs = Iarray.to_array contracting in
@@ -807,29 +858,50 @@ let contract (type v s d a b c e) ~by (route : unit Route.t) rule ~batch
   let set = Devices.set p and ks = Grid.devices (Devices.grid p) in
   let resw j = Devices.window ~by p shape j in
   let here j = Devices.one set ks.(j) in
-  let axes = Array.map fst pairs in
-  let tiles = tiles ~by route (Prim.shape a) axes in
-  let cl =
-    closing ~by route ~axes:(Array.to_list axes) ~extent:(Prim.dim a) shape
+  (* The folded axes: [a]'s of the pairs, or [b]'s of [Rows]' groups, the
+     factor after the pairs, which are then read whole. *)
+  let operand, folded, of_folded =
+    match (segments : d Value.index Nx_kernel.segments option) with
+    | None -> (0, Array.map fst pairs, Prim.shape a)
+    | Some (Rows { b_axis; _ }) -> (1, [| b_axis |], Prim.shape b)
+    | Some (Contracting _) ->
+        invalid_arg "Partial.contract: groups of a contracting pair"
   in
-  (* Operand [i] on device [j], its window along the pairs [r]. *)
+  let tiles = tiles ~by route ~operand of_folded folded in
+  let cl =
+    closing ~by route ~operand ~axes:(Array.to_list folded)
+      ~extent:(Array.get of_folded) shape
+  in
+  (* Device [j]'s tile: its ranges of the folded factors, the pairs' in
+     order, then [Rows]' groups', the pairs then whole. *)
+  let tile j =
+    match segments with
+    | None -> tiles.(j)
+    | Some _ ->
+        let whole (x, _) = full (Prim.dim a x) in
+        Array.append (Array.map whole pairs) tiles.(j)
+  in
+  (* Operand [i] on device [j], its factors' ranges [r]. *)
   let read (type w q) j i r (x : (w, q, d) Value.t) =
     let w = reads rule i (Prim.shape x) (resw j) (Array.get r) in
     view ~by ks.(j) (here j) w x
   in
-  (* The scale [sc] of [x], operand [i], on device [j]: the blocks that
-     [x]'s window along the pairs [r] spans, [side] naming [x]'s axis of a
-     pair. *)
-  let scale j i side x r (sc : d Value.scale) : d Value.scale =
+  (* The scale [sc] of [x], operand [i], on device [j]: along an axis of
+     blocks of a factor, the blocks that [x]'s range of it in [r] spans. *)
+  let scale j i x r (sc : d Value.scale) : d Value.scale =
     let blocks (type w q) (v : (w, q, d) Value.t) =
       let w = reads rule i (Prim.shape v) (resw j) (Array.get r) in
-      Array.iteri
-        (fun k pr ->
-          let ax = side pr in
-          let n = Prim.dim x ax / Prim.dim v ax and q = r.(k) in
-          let lo = q.M.start / n and hi = (q.start + q.count + n - 1) / n in
-          w.(ax) <- { M.start = lo; count = hi - lo; step = 1 })
-        pairs;
+      let narrow ax (kind : Route.axis) =
+        match kind with
+        | Blocks { factor; _ } ->
+            let n = Prim.dim x ax / Prim.dim v ax and q = r.(factor) in
+            let lo = q.M.start / n and hi = (q.start + q.count + n - 1) / n in
+            w.(ax) <- { M.start = lo; count = hi - lo; step = 1 }
+        | Becomes _ | Whole | Reduced _ | Scanned _ | Regroups _ -> ()
+      in
+      (match rule with
+      | Axes t | Into t -> Array.iteri narrow t.(i)
+      | Elementwise -> ());
       view ~by ks.(j) (here j) w v
     in
     match sc with
@@ -838,12 +910,33 @@ let contract (type v s d a b c e) ~by (route : unit Route.t) rule ~batch
   in
   let first = if Option.is_some init then 3 else 2 in
   let b_at = first + Bool.to_int (Option.is_some a_scale) in
+  (* Each factor's scale blocks' lengths: [a]'s and [b]'s along a pair,
+     [b]'s along [Rows]' groups. A scale of an empty axis has none. *)
   let run x ax = function
-    | Some sc -> [ Prim.dim x ax / (Prim.scale_shape sc).(ax) ]
-    | None -> []
+    | Some sc when (Prim.scale_shape sc).(ax) > 0 ->
+        [ Prim.dim x ax / (Prim.scale_shape sc).(ax) ]
+    | Some _ | None -> []
   in
   let runs =
-    Array.map (fun (i, k) -> run a i a_scale @ run b k b_scale) pairs
+    Array.append
+      (Array.map (fun (i, k) -> run a i a_scale @ run b k b_scale) pairs)
+      (Array.map (fun x -> run b x b_scale)
+         (match segments with Some _ -> folded | None -> [||]))
+  in
+  (* The groups of a piece [r] on device [j]: [Rows] bounded by the fences
+     of its range of them. *)
+  let groups j r =
+    match segments with
+    | None -> None
+    | Some (Rows g) ->
+        let i = b_at + Bool.to_int (Option.is_some b_scale) in
+        let o = g.offsets in
+        let w = reads rule i (Prim.shape o) (resw j) (Array.get r) in
+        let q = r.(Array.length pairs) in
+        let offsets = fences ~by ks.(j) (here j) w q o in
+        Some (Nx_kernel.Rows { g with offsets })
+    | Some (Contracting _) ->
+        invalid_arg "Partial.contract: groups of a contracting pair"
   in
   let (D.Any ad) = acc in
   (* The contraction of a piece [r] of a tile on device [j] into the
@@ -859,15 +952,17 @@ let contract (type v s d a b c e) ~by (route : unit Route.t) rule ~batch
            a = read j 0 r a;
            b = read j 1 r b;
            init = from;
-           a_scale = Option.map (scale j first fst a r) a_scale;
-           b_scale = Option.map (scale j b_at snd b r) b_scale;
-           segments = None;
+           a_scale = Option.map (scale j first a r) a_scale;
+           b_scale = Option.map (scale j b_at b r) b_scale;
+           segments = groups j r;
          })
   in
   (* A device's partial: its tile's pieces in C order, the first from no
-     [init] and each other from the sum of those before it. *)
+     [init] and each other from the sum of those before it. A piece of
+     [Rows]' groups gives no products to a row of another group, which so
+     keeps the sum before it, bit for bit. *)
   let partial j =
-    match tile_pieces runs tiles.(j) with
+    match tile_pieces runs (tile j) with
     | r :: rs ->
         let from s r = piece j (Some s) r in
         array (List.fold_left from (piece j None r) rs)
@@ -878,10 +973,19 @@ let contract (type v s d a b c e) ~by (route : unit Route.t) rule ~batch
   | None -> gathered ~by cl (reduced ~by cl (Monoid (Sum, 0, out)) s)
   | Some i ->
       (* The sums in the accumulator, then [init] as it holds it, rounded
-         once. *)
+         once. A segmented contraction's output without products sums to
+         [+0] in every slot and takes [init] alone, as on one device. *)
       let y = reduced ~by cl (Monoid (Sum, 0, ad)) s in
-      let e = E.(cast out (input 0 ad + cast ad (input 1 out))) in
-      let z = map ~by cl.parts [ Value.Any y; Value.Any i ] [ E.any e ] in
+      let total = E.input 0 ad and initial = E.cast ad (E.input 1 out) in
+      let e =
+        match segments with
+        | None -> E.(total + initial)
+        | Some _ ->
+            E.(where (total = const ad (D.zero ad)) initial (total + initial))
+      in
+      let z =
+        map ~by cl.parts [ Value.Any y; Value.Any i ] [ E.any (E.cast out e) ]
+      in
       gathered ~by cl (Prim.expect out (List.hd z))
 
 let run (type r) ~by route (op : r Value.prim) : r =
@@ -902,12 +1006,12 @@ let run (type r) ~by route (op : r Value.prim) : r =
         init;
         a_scale;
         b_scale;
-        segments = None;
+        segments = (None | Some (Rows _)) as segments;
       } ->
-      contract ~by route rule ~batch ~contracting ~acc out a b init a_scale
-        b_scale
-  | Value.Contract { segments = Some _; _ } ->
-      invalid_arg "Partial.run: a segmented contraction by partials"
+      contract ~by route rule ~batch ~contracting ~acc ~segments out a b init
+        a_scale b_scale
+  | Value.Contract { segments = Some (Contracting _); _ } ->
+      invalid_arg "Partial.run: groups of a contracting pair by partials"
   | Value.Scan { carry = Some _; _ }
   | Value.Map _ | Value.Gather _ | Value.Scatter _ | Value.Sort _
   | Value.Fft _ | Value.Linalg _ | Value.Fold _ | Value.Assemble _

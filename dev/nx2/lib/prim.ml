@@ -1136,13 +1136,16 @@ let linalg_rule l =
 
 (* A contraction's result has the batch pairs' axes, then [a]'s other axes, then
    [b]'s; [init] has its shape. A contracting pair's two axes share its index as
-   their factor. Segments are computed uncut: [Rows]' two axes and the result's
+   their factor. [Rows]' axis of [b]'s groups is the factor after the pairs,
+   reduced in [b] alone, [Σ_e [r in group e] a_r · b_e]. The offsets are
+   its fences, read whole, and {!Partial} computes each tile's from them.
+   Groups are otherwise computed uncut: [Rows]' axis of [a] and the result's
    axis of rows are read whole, as is the result's leading axis of
    [Contracting]'s groups. A segmented contraction is read whole along its
    contracting pairs. *)
 let contract_rule ~batch ~contracting ~segments sa sb init sca scb =
   let nb = Iarray.length batch and nc = Iarray.length contracting in
-  let lead, whole_a, whole_b =
+  let lead, whole_a, groups =
     match (segments : _ Nx_kernel.segments option) with
     | Some (Rows { a_axis; b_axis; _ }) -> (0, a_axis, b_axis)
     | Some (Contracting _) -> (1, -1, -1)
@@ -1169,7 +1172,7 @@ let contract_rule ~batch ~contracting ~segments sa sb init sca scb =
     end
   in
   let free_b next x =
-    if x = whole_b then Route.Whole
+    if x = groups then Route.Reduced nc
     else begin
       incr next;
       Becomes (!next - 1)
@@ -1180,10 +1183,11 @@ let contract_rule ~batch ~contracting ~segments sa sb init sca scb =
   let b = operand snd (Array.length sb) (lead + ra - nc) free_b in
   (* A scale's axis reads as the operand's where its extent is the
      operand's. Where a block holds more elements, one that becomes the
-     result's regroups into it, and one of a contracting pair holds blocks of
-     its factor, so that a cut that keeps whole blocks is read where it lies
-     and partials take the blocks each part of a tile spans ({!Partial}). One
-     of one block, and every other, is read whole. *)
+     result's regroups into it, and one of a factor, a contracting pair's or
+     [b]'s groups', holds blocks of it, so that a cut that keeps whole blocks
+     is read where it lies and partials take the blocks each part of a tile
+     spans ({!Partial}). One of one block, and every other, is read
+     whole. *)
   let scaled row s ss =
     Array.mapi
       (fun d e ->

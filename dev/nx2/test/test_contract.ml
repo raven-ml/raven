@@ -1579,8 +1579,9 @@ module Scaled = struct
      which the bound bars. Rounded into
      float16, each sum takes one more rounding of float16's [2^-11]
      relative and half its least subnormal, [2^-25], an output near
-     float16's largest, [65504], overflowing. *)
-  let check (type r) (acc : (float, r) Nx.dtype) c =
+     float16's largest, [65504], overflowing. Each operand lies where [p]
+     places it. *)
+  let check (type r e) (p : e put) (acc : (float, r) Nx.dtype) c =
     let read y = Nx.to_array (Nx.cast Nx.float64 y) in
     let run out =
       let init =
@@ -1588,7 +1589,7 @@ module Scaled = struct
           (fun xs -> read (Nx.cast out (Nx.create Nx.float64 (result_shape c) xs)))
           c.init
       in
-      (read (P.eval ~by:"t" (op on_host acc out c)), init)
+      (read (P.eval ~by:"t" (op p acc out c)), init)
     in
     let y, init = if c.half then run Nx.float16 else run acc in
     let want, mag = reference c init in
@@ -1738,7 +1739,8 @@ module Scaled = struct
         { c with a = { c.a with xs }; segs = Some (Contracting os) }
     | _ -> c
 
-  let case =
+  (* A case of one of [kinds], of [groups] groups. *)
+  let drawn ~groups kinds =
     let open Gen in
     let* batch =
       frequency [ (3, constant None); (1, map Option.some (int_range 0 2)) ]
@@ -1750,8 +1752,8 @@ module Scaled = struct
       if mx then of_list [ 32; 64; 96 ]
       else of_list [ 0; 1; 2; 3; 4; 6; 32; 64 ]
     in
-    let* kind = of_list [ `None; `Rows; `Contracting ] in
-    let* g = int_range 0 3 in
+    let* kind = of_list kinds in
+    let* g = groups in
     let lead = Option.to_list batch in
     let groups = if kind = `Rows then [ g ] else [] in
     let av = Array.of_list (lead @ [ m; k ]) in
@@ -1788,7 +1790,9 @@ module Scaled = struct
     in
     { c with init }
 
-  let case = Gen.with_pp pp_case case
+  let case =
+    Gen.with_pp pp_case
+      (drawn ~groups:(Gen.int_range 0 3) [ `None; `Rows; `Contracting ])
 
   (* The element of [s] at the view's index [idx]. *)
   let value_at s idx =
@@ -1861,7 +1865,9 @@ module Scaled = struct
     cover "a result rounded into float16" c.half;
     cover "an init cast into the accumulator" (c.half && c.init <> None);
     cover "a row in no group rounded into float16" (c.half && row_alone c);
-    let y, mag = if c.f64 then check Nx.float64 c else check Nx.float32 c in
+    let y, mag =
+      if c.f64 then check on_host Nx.float64 c else check on_host Nx.float32 c
+    in
     cover "a NaN output" (Array.exists Float.is_nan y);
     cover "a NaN in no group kept out"
       (nan_alone c && Array.exists Float.is_finite mag)
@@ -2040,7 +2046,7 @@ module Scaled = struct
     let bits y =
       Array.map Int64.bits_of_float (Nx.to_array (Nx.cast Nx.float64 y))
     in
-    let run (type o) (out : (float, o) Nx.dtype) c =
+    let run (type o e) (p : e put) (out : (float, o) Nx.dtype) c =
       let xs = Option.get c.init in
       let init = Nx.cast out (Nx.create Nx.float64 (result_shape c) xs) in
       let pick y =
@@ -2051,11 +2057,13 @@ module Scaled = struct
       in
       let want = pick init in
       equal bool ~msg:"some output has no products" true (want <> []);
-      let op = op on_host Nx.float32 out c in
+      let op = op p Nx.float32 out c in
       equal (list int64) ~msg:"nx.cpu" want (pick (P.eval ~by:"t" op))
     in
-    cases "an output of no products is its init's bits"
-      ~name:(fun (n, _) -> n)
+    let half_or_not p (_, c) =
+      if c.half then run p Nx.float16 c else run p Nx.float32 c
+    in
+    let cases_ =
       [
         ("k = 0", c ~m:2 ~k:0 ());
         ("k = 0, into float16", c ~half:true ~m:2 ~k:0 ());
@@ -2088,8 +2096,32 @@ module Scaled = struct
         ( "an empty group of k into float16",
           c ~half:true ~segs:(Contracting [| 0L; 3L; 1L; 4L |]) ~g:3 ~m:2
             ~k:4 () );
+        ( "rows in no group of decreasing offsets",
+          c ~segs:(Rows [| 0L; 3L; 1L |]) ~g:2 ~m:3 ~k:4 () );
       ]
-      (fun (_, c) -> if c.half then run Nx.float16 c else run Nx.float32 c)
+    in
+    (* [b] split along its groups over two devices, the rest whole on
+       each. *)
+    let grouped ((_, c) as named) =
+      let nb = List.length (lead c) in
+      let at = function
+        | B -> S2.split ~axis:nb
+        | A | A_scale | B_scale | Offsets | Init -> S2.on
+      in
+      half_or_not { put = (fun role x -> Nx.place (at role) x) } named
+    in
+    let rows (_, c) = match c.segs with Some (Rows _) -> true | _ -> false in
+    group "no products"
+      [
+        cases "an output of no products is its init's bits"
+          ~name:(fun (n, _) -> n)
+          cases_ (half_or_not on_host);
+        cases
+          "an output of no products keeps its init's bits with b split \
+           along its groups"
+          ~name:(fun (n, _) -> n)
+          (List.filter rows cases_) grouped;
+      ]
 
   (* Contractions cut along [k]: [a] [[m; k]] and [b], stored [[…; n; k]],
      along their last stored axis, the offsets and [init] on every device,
@@ -2151,6 +2183,85 @@ module Scaled = struct
                 along ~b:2 (module S2)
                   (mx ~segs ~g:2 ~m:4 ~k:64 ~n:2 ~per:2 ())));
       ]
+
+  (* Rows by groups cut along b's groups *)
+
+  module S3 = (val Nx.devices (List.init 3 Nx_support.memory))
+
+  (* Rows by up to seven groups. *)
+  let grouped =
+    Gen.with_pp pp_case (drawn ~groups:(Gen.int_range 0 7) [ `Rows ])
+
+  (* Whether some batch index's offsets decrease. *)
+  let decreasing c =
+    match c.segs with
+    | Some (Rows os) ->
+        List.exists
+          (fun bt ->
+            let o = offsets_at c os (Option.value ~default:0 bt) in
+            List.exists (fun e -> o.(e + 1) < o.(e)) (range c.g))
+          (batches c)
+    | _ -> false
+
+  (* Whether [b]'s scale, beside [b] split along its groups over [t]
+     devices, is cut alike: one scale per group, or blocks of groups in
+     tiles that divide both extents. *)
+  let follows c t =
+    match c.b.scale with
+    | None -> false
+    | Some (sv, _) ->
+        let e = sv.(List.length (lead c)) in
+        e = c.g || (e > 1 && c.g mod t = 0 && e mod t = 0)
+
+  (* [b] split along its groups over two devices and over three, its scale
+     too where it follows the cut and whole on each device otherwise, [a],
+     the offsets and [init] whole on each: one device's bits, with the
+     results whole on each device, or, from [init], within the bound of the
+     exact sum. *)
+  let grouped_law c =
+    let nb = List.length (lead c) in
+    let negative_zero x = Int64.bits_of_float x = Int64.min_int in
+    cover "a row in no group" (row_alone c);
+    cover "offsets that decrease" (decreasing c);
+    cover "fewer groups than devices" (c.g > 0 && c.g < 3);
+    cover "more groups than devices" (c.g > 3);
+    cover "a NaN in a" (Array.exists Float.is_nan c.a.xs);
+    cover "a -0 in a" (Array.exists negative_zero c.a.xs);
+    cover "an MXFP4 b" (c.b.dt = F4 && c.k >= 32);
+    cover "from init" (c.init <> None);
+    cover "a row in no group, from init" (c.init <> None && row_alone c);
+    List.iter
+      (fun ((module S : Nx.Devices), t) ->
+        let alike = follows c t in
+        cover "b's scale cut alike" alike;
+        cover "b's scale whole beside b's cut" (c.b.scale <> None && not alike);
+        cover "b's scale in blocks of groups, whole beside b's cut"
+          (match c.b.scale with
+          | Some (sv, _) -> (not alike) && sv.(nb) > 1 && sv.(nb) < c.g
+          | None -> false);
+        let where = function
+          | B -> Some (S.split ~axis:nb)
+          | B_scale when alike -> Some (S.split ~axis:nb)
+          | A | A_scale | B_scale | Offsets | Init -> None
+        in
+        match c.init with
+        | None ->
+            let y = placed S.on where c in
+            equal bool ~msg:"the results whole on each device" true
+              (Nx.Placement.equal S.on y)
+        | Some _ ->
+            let at role = Option.value ~default:S.on (where role) in
+            let p = { put = (fun role x -> Nx.place (at role) x) } in
+            ignore
+              (if c.f64 then check p Nx.float64 c else check p Nx.float32 c))
+      [ ((module S2 : Nx.Devices), 2); ((module S3 : Nx.Devices), 3) ]
+
+  let by_groups =
+    prop ~count:300
+      "rows by groups cut along b's groups over two or three devices have \
+       one device's bits, or from init are within the bound of their exact \
+       sum"
+      grouped grouped_law
 end
 
 (* Convolution: Nx.conv against its sum over the taps computed in OCaml, on
@@ -2771,6 +2882,7 @@ let () =
              Scaled.no_products;
              Scaled.placements;
              Scaled.partials;
+             Scaled.by_groups;
            ];
          Conv.group;
        ])
