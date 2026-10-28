@@ -515,6 +515,19 @@ let solving =
                 (Interpreter.eval ~params u)
                 (Interpreter.eval ~params (collapse u)))
             [ -1.; Float.infinity ]);
+      test "a float sum lifted past a parameter is +0. where it is false"
+        (fun () ->
+          let r = reduce_range 4 0
+          and x = Call.param 0 Float32
+          and g = Call.param 1 Bool in
+          let u = sum (Ops.where Ops.O.(g land (r < Ops.int 3)) x zero) [ r ] in
+          List.iter
+            (fun xv ->
+              let params = [ (0, `Float xv); (1, `Bool false) ] in
+              equal Dtypes.const
+                (Interpreter.eval ~params u)
+                (Interpreter.eval ~params (collapse u)))
+            [ -1.; Float.infinity ]);
       test "x + y <> c under a narrowing cast is left" (fun () ->
           let r = reduce_range 10 0 and y = var ~dtype:Int32 "y" 250 260 in
           let x = Ops.cast r Int32 in

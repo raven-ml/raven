@@ -92,14 +92,13 @@
 90 Ops.MUL dtypes.float [89, 36]
 91 Ops.ADD dtypes.float [85, 90]
 92 Ops.PARAM dtypes.bool [] ParamArg(slot=0, dtype=dtypes.bool)
-93 Ops.CAST dtypes.float [92] dtypes.float
-94 Ops.MUL dtypes.float [0, 93]
-95 Ops.CAST dtypes.float [41] dtypes.float
-96 Ops.MUL dtypes.float [15, 95]
-97 Ops.REDUCE dtypes.float [96, 39] (Ops.ADD, 0)
-98 Ops.CAST dtypes.int [51] dtypes.int
-99 Ops.CAST dtypes.float [17] dtypes.float
-100 Ops.WHERE dtypes.float [41, 76, 99]
-101 Ops.REDUCE dtypes.float [100, 39] (Ops.ADD, 0)
-102 Ops.SINK dtypes.void [1, 3, 5, 18, 27, 33, 35, 38, 44, 50, 52, 55, 61, 52, 66, 68, 71, 5, 78, 5, 80, 91, 94, 96, 97, 98, 101]
+93 Ops.WHERE dtypes.float [92, 1, 17]
+94 Ops.CAST dtypes.float [41] dtypes.float
+95 Ops.MUL dtypes.float [15, 94]
+96 Ops.REDUCE dtypes.float [95, 39] (Ops.ADD, 0)
+97 Ops.CAST dtypes.int [51] dtypes.int
+98 Ops.CAST dtypes.float [17] dtypes.float
+99 Ops.WHERE dtypes.float [41, 76, 98]
+100 Ops.REDUCE dtypes.float [99, 39] (Ops.ADD, 0)
+101 Ops.SINK dtypes.void [1, 3, 5, 18, 27, 33, 35, 38, 44, 50, 52, 55, 61, 52, 66, 68, 71, 5, 78, 5, 80, 91, 93, 95, 96, 97, 100]
 

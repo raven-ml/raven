@@ -1468,7 +1468,7 @@ index 4136f84..98af487 100644
    return ret
  
  pm_reduce_unparented = PatternMatcher([
-@@ -97,30 +121,33 @@ pm_reduce_unparented = PatternMatcher([
+@@ -97,30 +121,34 @@ pm_reduce_unparented = PatternMatcher([
  
  pm_reduce_collapse = pm_reduce_unparented + PatternMatcher([
    # lift x+y out of reduce on lt
@@ -1493,7 +1493,9 @@ index 4136f84..98af487 100644
     lambda x,y,r: x.reduce(*r.src[1:], arg=Ops.ADD) + y.reduce(*r.src[1:],arg=Ops.ADD)),
    # AND on WHERE
    ((UPat(Ops.PARAM, name="x") & UPat.var("y")).where(UPat.var("c"), 0).reduce(arg=Ops.ADD, allow_any_len=True, name="r"),
-     lambda x,y,c,r: y.where(c, 0).reduce(*r.src[1:], arg=Ops.ADD)*x),
+-    lambda x,y,c,r: y.where(c, 0).reduce(*r.src[1:], arg=Ops.ADD)*x),
++    # as a selection: a float product by the cast is -0.0 at a negative sum and nan at an infinite one
++    lambda x,y,c,r: x.where(y.where(c, 0).reduce(*r.src[1:], arg=Ops.ADD), 0)),
    # MUL casted bool
 -  ((UPat.var("x") * UPat.var("gate", dtype=dtypes.bool).cast()), lambda x,gate: gate.where(x, 0)),
 +  # for integers: a float product by 0 is nan at inf and -0.0 at a negative x

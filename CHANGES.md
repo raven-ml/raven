@@ -1551,6 +1551,9 @@ thread.
 
 ### Tolk (new)
 
+- A compiled sum over a selection with a conjunct free of its range, as rune's
+  `Fold` of a padded float builds, is `+0` where that conjunct is false. The sum
+  times the conjunct's cast gave `-0` at a negative sum and NaN at an infinity.
 - The C-style renderers (`Cstyle`) declare a value read once when its
   expression would nest past 64 brackets, so a long chain of operations, such
   as rune's float64 `fmod`, compiles where Clang and Metal rejected it.

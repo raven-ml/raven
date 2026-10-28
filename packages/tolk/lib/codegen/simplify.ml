@@ -365,14 +365,17 @@ let pm_reduce_collapse =
             (fun m ->
               let r = m "r" in
               Some O.(over r (m "x") + over r (m "y")));
-          (* AND on a selection. *)
+          (* A conjunct without the range moves out of a sum on a selection
+             as a selection: the product by its cast is -0. at a negative sum
+             and NaN at an infinite one. *)
           rule
             (sum_any
                (Upat.where
                   Upat.O.(Upat.op Op.Param ~name:"x" land var "y")
                   (var "c") zero))
             (fun m ->
-              Some O.(over (m "r") (where (m "y") (m "c") (int 0)) * m "x"));
+              let inner = over (m "r") (where (m "y") (m "c") (int 0)) in
+              Some (where (m "x") inner (int 0)));
           (* A multiplication by a boolean cast, for integers: a float product
              by 0 is NaN at an infinity and -0. at a negative x. *)
           rule

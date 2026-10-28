@@ -752,12 +752,16 @@ stamps nothing (D146).
     goes to `xpow` for `c = inf`: `inf ** 0` is `1.`, where
     `exp2 (0 * log2 inf)` is NaN.
   - **Simplify's reductions.** tinygrad: `codegen/simplify.py:104-111`
-    (`sum_between`) and `:118` (a product by a boolean cast). tolk:
-    `lib/codegen/simplify.ml:231,326`. A float sum counted in closed form is
-    `+0.` over an empty part of its range, where `0 * inf` is NaN; a product by
-    a boolean cast is a selection for integers only (`-1. * 0.` is `-0.` and
-    `inf * 0.` NaN, where the selection gives `+0.`). A sum over a range its
-    value does not use, `x * n`, and a sum of a sum split in two stay: each is
+    (`sum_between`), `:115-116` (a parameter lifted out of a sum) and `:118`
+    (a product by a boolean cast). tolk: `lib/codegen/simplify.ml:281,368,379`.
+    A float sum counted in closed form is `+0.` over an empty part of its
+    range, where `0 * inf` is NaN; a product by a boolean cast is a selection
+    for integers only (`-1. * 0.` is `-0.` and `inf * 0.` NaN, where the
+    selection gives `+0.`); a parameter conjunct is lifted out of a sum on a
+    selection as a selection: tinygrad lifts it as a product by its cast,
+    which its product rule turns back into a selection, and tolk's product
+    rule does so for integers only. A sum over a range its value does not
+    use, `x * n`, and a sum of a sum split in two stay: each is
     the sum of the same terms in another association, which RFC 0012's rounded
     sum class allows; a sum of `-0.` terms computed as `-0. * n` is `+0.` once
     the lowering adds `+0.` to every float sum's result, which the `x + 0` fold
@@ -807,8 +811,9 @@ stamps nothing (D146).
     `Tolk.Symbolic › laws › sym keeps a float expression's value bit for
     bit at special values`;
   - Simplify's reductions: `Tolk.Simplify › keeping values › a
-    float sum over an empty part of a range is +0., whatever the value` and
-    `› a float product by a boolean mask keeps its value`, and
+    float sum over an empty part of a range is +0., whatever the value`,
+    `› a float product by a boolean mask keeps its value` and `› a float sum
+    lifted past a parameter is +0. where it is false`, and
     `Tolk.Simplify › pm_reduce_collapse › a float product by a comparison
     cast from a boolean stays`;
   - transcendental polynomials: the `Tolk.Transcendental` goldens,

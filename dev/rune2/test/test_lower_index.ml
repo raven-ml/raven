@@ -1000,9 +1000,30 @@ let fold_examples =
       f_raws = Array.make (numel out) 0x80000000L;
     }
   in
+  (* A float64 fold of a negative term beside an element no term reaches,
+     which is [+0]. *)
+  let beside =
+    let pad =
+      {
+        K.lo = a [ 1 ];
+        hi = a [ 0 ];
+        interior = a [ 0 ];
+        windows = a [ { M.axis = 0; size = 1; step = 2; dilation = 1 } ];
+      }
+    in
+    let s = [| 2 |] in
+    {
+      f_dt = D.Any D.Float64;
+      f_shape = s;
+      f_pad = pad;
+      f_padded = Result.get_ok (K.Shape.padded pad s);
+      f_raws = [| 0xbfb0000000000000L; 0x3fb0000000000000L |];
+    }
+  in
   unreached (D.Any D.Int64)
   :: unreached (D.Any D.Float32)
   :: negative
+  :: beside
   :: List.mapi
        (fun i d ->
          {

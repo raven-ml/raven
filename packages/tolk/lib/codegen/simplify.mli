@@ -66,7 +66,9 @@ val pm_reduce_collapse : (unit, Ops.t) Ops.Pattern_matcher.t
     value wraps ({!Ops.exact}); the sum of a value over the part of a range
     where it is selected by bounds on the range, as the size of that part times
     the value, and [+0.] for a float over an empty part; sums distributed over
-    additions; an integer product by a boolean cast as a selection; and
+    additions; an integer product by a boolean cast as a selection; a sum over a
+    selection whose condition has a conjunct free of the range, as that conjunct
+    selecting the sum over the rest, [0] where it is false; and
     {!Shape.val-symbolic}. A float sum so computed is its terms added in another
     order, which rounds differently.
 
