@@ -1290,18 +1290,20 @@ let selection x picks =
     (List.map (fun (p, _) -> extents_of p) picks
     @ [ Array.sub s used (Array.length s - used) ])
 
+(* The 1-d value of [vs] at [p]: one assembly of their fills. *)
+let vector_at ~by p dt vs =
+  let piece j v =
+    ( ([| { Nx_array.Move.start = j; count = 1; step = 1 } |] : _ iarray),
+      fill ~by p dt [| 1 |] v )
+  in
+  let pieces = Array.to_list (Array.mapi piece vs) in
+  assemble ~by dt [| Array.length vs |] (D.zero dt) pieces
+
 (* The int64 value of written positions [ps] beside [x], whole on each of
    [x]'s devices. *)
 let written ~by x ps =
-  let p = Devices.uncut (placement x) in
-  assemble ~by D.Int64
-    [| List.length ps |]
-    0L
-    (List.mapi
-       (fun j i ->
-         ( ([| { Nx_array.Move.start = j; count = 1; step = 1 } |] : _ iarray),
-           fill ~by p D.Int64 [| 1 |] (Int64.of_int i) ))
-       ps)
+  let vs = Array.of_list (List.map Int64.of_int ps) in
+  vector_at ~by (Devices.uncut (placement x)) D.Int64 vs
 
 (* A window's start [st], of [n] positions along an axis of extent [d],
    clamped into [0, d - n]. *)
@@ -1749,8 +1751,8 @@ let reduce_by_one ~by r axes x =
        (Value.Reduce
           { layout; axes; prog; reductions = [ r ]; loads = [| Plain x |] }))
 
-(* The one-operand reduction [m] of [x] along [axes], rounded to [dt]. *)
-let reduce ~by m dt axes x = reduce_by_one ~by (Monoid (m, 0, dt)) axes x
+(* The one-operand reduction [m] of [x] along [axes], in [x]'s dtype. *)
+let reduce ~by m axes x = reduce_by_one ~by (Monoid (m, 0, dtype x)) axes x
 
 (* [y], reduced from a value of shape [s] along [axes], with each reduced axis
    kept of extent 1 where [keepdims]. *)
@@ -1763,7 +1765,7 @@ let kept ~by ~keepdims s axes y =
 let reduction ~by m ?axes ?(keepdims = false) x =
   let s = shape x in
   let axes = reduced_axes ~by x axes in
-  kept ~by ~keepdims s axes (reduce ~by m (dtype x) axes x)
+  kept ~by ~keepdims s axes (reduce ~by m axes x)
 
 let sum ?axes ?keepdims x = reduction ~by:"Nx.sum" Sum ?axes ?keepdims x
 let prod ?axes ?keepdims x = reduction ~by:"Nx.prod" Prod ?axes ?keepdims x
@@ -2181,7 +2183,7 @@ let truth (type v s d) ~by m ?axes ?(keepdims = false) (x : (v, s, d) t) =
   let y =
     if reduced_count s axes > 0 then
       match D.equal_witness (dtype x) D.Bool with
-      | Some Type.Equal -> reduce ~by m D.Bool axes x
+      | Some Type.Equal -> (reduce ~by m axes x : d bool_t)
       | None ->
           fst
             (reduce_by ~by s axes [ Any x ]
@@ -2286,7 +2288,7 @@ let mean (type v s d) ?axes ?(keepdims = false) (x : (v, s, d) t) :
   let axes = reduced_axes ~by x axes in
   let n = reduced_count s axes in
   let within (type w r) (acc : (w, r) D.t) (count : w) =
-    let sum = reduce ~by Sum acc axes x in
+    let sum = reduce_by_one ~by (Monoid (Sum, 0, acc)) axes x in
     let k : P.op2 = Binary (quotient acc) in
     cast_by ~by dt (literal ~by ~swapped:false k acc sum count)
   in
@@ -2646,6 +2648,13 @@ let on_diagonal ~by dt n m k piece =
   let flat = assemble ~by dt [| n * m |] (D.zero dt) [ ([| along |], piece) ] in
   move ~by (Reshape [| n; m |]) flat
 
+(* Matrices of [dt] and shape [s] at [p], one where the column less the row
+   is [k] and zero elsewhere, the last axis the column: one creation, each
+   device of [p] computing its window. *)
+let eyes ~by ~k p dt s =
+  let row = Array.length s - 2 and col = Array.length s - 1 in
+  leaf ~by p dt s (indicator dt E.(coord col - coord row = i64 k))
+
 (* One where the column less the row is [k], zero elsewhere. Where [p] cuts no
    axis, the diagonal's ones, made at [p], are written onto zeros there by one
    assembly. Where [p] cuts an axis, each device computes its window from the
@@ -2654,8 +2663,7 @@ let on_diagonal ~by dt n m k piece =
    extents. *)
 let eye_by ~by ?m ?(k = 0) p dt n =
   let m = Option.value m ~default:n in
-  if Grid.is_cut (Devices.grid p) then
-    leaf ~by p dt [| n; m |] (indicator dt E.(coord 1 - coord 0 = i64 k))
+  if Grid.is_cut (Devices.grid p) then eyes ~by ~k p dt [| n; m |]
   else begin
     (* The shape is checked first, so that a refused one allocates nothing. *)
     ignore (contiguous ~by [| n; m |]);
@@ -3118,15 +3126,9 @@ let solve_by ~by a b =
 
 let solve a b = solve_by ~by:"Nx.solve" a b
 
-(* Identity matrices of [dt] and shape [s] at [p]: one creation, each device
-   of [p] computing its window. *)
-let eyes ~by p dt s =
-  let row = Array.length s - 2 and col = Array.length s - 1 in
-  leaf ~by p dt s (indicator dt E.(coord col - coord row = i64 0))
-
 let inv_by ~by a =
   square_matrices ~by a;
-  solve_by ~by a (eyes ~by (placement a) (dtype a) (shape a))
+  solve_by ~by a (eyes ~by ~k:0 (placement a) (dtype a) (shape a))
 
 let inv a = inv_by ~by:"Nx.inv" a
 
@@ -3145,7 +3147,7 @@ let matrix_power a n =
   if n < 0 then routine_dtype ~by a;
   Prim.alive ~by a;
   let k = Stdlib.abs n in
-  if n = 0 then eyes ~by (placement a) (dtype a) (shape a)
+  if n = 0 then eyes ~by ~k:0 (placement a) (dtype a) (shape a)
   else if n = 1 then copy_by ~by a
   else
     let base =
@@ -3745,7 +3747,7 @@ let unique ?size keys =
     scattered ~by Set target i (fill ~by at D.Int64 [| n |] (Int64.of_int n))
   in
   let counts = scattered ~by Add ids (fill ~by at D.Int64 [| n |] 1L) zeros in
-  let count = reduce ~by Sum D.Int64 [| 0 |] fresh in
+  let count = reduce ~by Sum [| 0 |] fresh in
   let l = match size with Some l -> l | None -> length ~by count in
   {
     ids;
@@ -3765,7 +3767,7 @@ let positions_by ~by ?size c =
   let counts =
     elementwise ~by D.Int64 [ Any c ] E.(maximum (cast D.Int64 (operand 0 c)) (i64 0))
   in
-  let total = reduce ~by Sum D.Int64 [| 0 |] counts in
+  let total = reduce ~by Sum [| 0 |] counts in
   let l = match size with Some l -> l | None -> length ~by total in
   let at = Devices.uncut (placement c) in
   let i = arange_by ~by at D.Int64 0 n 1 in
@@ -4000,15 +4002,6 @@ let set idx v x =
 
 (* Quantiles and histograms *)
 
-(* The 1-d value of [vs] at [p]. *)
-let vector ~by p dt vs =
-  let n = Array.length vs in
-  let piece j v =
-    ( ([| { Nx_array.Move.start = j; count = 1; step = 1 } |] : _ iarray),
-      move ~by (Reshape [| 1 |]) (fill ~by p dt [||] v) )
-  in
-  assemble ~by dt [| n |] (D.zero dt) (Array.to_list (Array.mapi piece vs))
-
 (* One sort; per probability the order statistics around [h = q (n - 1)] and one
    map interpolating between them in the compute dtype. *)
 let quantile (type s d) ?axis qs (x : (float, s, d) t) : (float, s, d) t =
@@ -4027,7 +4020,7 @@ let quantile (type s d) ?axis qs (x : (float, s, d) t) : (float, s, d) t =
   let lo = Array.map (fun h -> Float.to_int (Float.floor h)) h in
   let hi = Array.map (fun l -> Stdlib.min (l + 1) (n - 1)) lo in
   let here = Devices.uncut (placement x) in
-  let index l = vector ~by here D.Int64 (Array.map Int64.of_int l) in
+  let index l = vector_at ~by here D.Int64 (Array.map Int64.of_int l) in
   let below = take_axis ~by a (index lo) s
   and above = take_axis ~by a (index hi) s in
   let dt = dtype x in
@@ -4037,7 +4030,7 @@ let quantile (type s d) ?axis qs (x : (float, s, d) t) : (float, s, d) t =
   in
   let frac =
     reshaped ~by along
-      (vector ~by here w (Array.map (fun h -> h -. Float.floor h) h))
+      (vector_at ~by here w (Array.map (fun h -> h -. Float.floor h) h))
   in
   let y =
     let lo = at w (operand 0 below) and hi = at w (operand 1 above) in
@@ -4210,11 +4203,6 @@ let spatial ~by k x =
 let windowed ~by ~kernel_size ~stride ~dilation ~padding x =
   let k = Array.length kernel_size and s = shape x in
   let lead = Array.length s - k in
-  let counts =
-    Array.init k (fun i ->
-        windows_along s.(lead + i) padding.(i) kernel_size.(i) stride.(i)
-          dilation.(i))
-  in
   let width f =
     Array.mapi (fun a _ -> if a < lead then 0 else f padding.(a - lead)) s
   in
@@ -4228,7 +4216,8 @@ let windowed ~by ~kernel_size ~stride ~dilation ~padding x =
           dilation = dilation.(i);
         })
   in
-  (move ~by (Window ws) xp, counts)
+  let y = move ~by (Window ws) xp in
+  (y, Array.sub (shape y) lead k)
 
 let product = Array.fold_left ( * ) 1
 
@@ -4516,14 +4505,6 @@ let reduce_segments c ~segments ids x =
   let idx = broadcast ~by s (reshaped ~by along ids) in
   scattered ~by c idx x (fill ~by (placement x) dt into start)
 
-(* [a] then [b] combined by [c], [a]'s rows before [b]'s. *)
-let combined ~by (c : combine) a b =
-  match c with
-  | Set -> b
-  | Add -> binary ~by (Binary Add) a b
-  | Max -> binary ~by (Binary Maximum) a b
-  | Min -> binary ~by (Binary Minimum) a b
-
 (* The disjoint sparse table: level [k] holds, at each row, its chunk of [2^k]
    rows combined from that row to the chunk's end, its suffix, and from the
    chunk's start to that row, its prefix. A range from [l] to [r] inclusive,
@@ -4534,8 +4515,11 @@ let combined ~by (c : combine) a b =
    suffix goes on through the second half's total, the suffix of its first
    row, and a second half's prefix starts from the first half's total, the
    prefix of its last row. Rows are padded to whole chunks of the top level;
-   no answer reads the padding. *)
-let ranges (type v s d) ~by c ~l ~r (x : (v, s, d) t) (none : (v, s, d) t) =
+   no answer reads the padding. [a ++ b] combines [a]'s rows, the earlier,
+   with [b]'s by [c]. *)
+let ranges (type v s d) ~by (c : P.binary) ~l ~r (x : (v, s, d) t)
+    (none : (v, s, d) t) =
+  let ( ++ ) a b = binary ~by (Binary c) a b in
   let n = Prim.dim x 0 and dt = dtype x in
   let rows = Array.sub (shape x) 1 (ndim x - 1) in
   let m = Prim.dim l 0 in
@@ -4586,7 +4570,6 @@ let ranges (type v s d) ~by c ~l ~r (x : (v, s, d) t) (none : (v, s, d) t) =
           (assemble ~by dt halves (D.zero dt)
              [ (half 0, first); (half 1, second) ])
       in
-      let ( ++ ) a b = combined ~by c a b in
       ( joined (part 0 0 h suf ++ part 1 0 1 suf) (part 1 0 h suf),
         joined (part 0 0 h pre) (part 0 (h - 1) 1 pre ++ part 1 0 h pre) )
     in
@@ -4598,7 +4581,7 @@ let ranges (type v s d) ~by c ~l ~r (x : (v, s, d) t) (none : (v, s, d) t) =
             li < ri
             && binary Xor (binary Idiv li span) (binary Idiv ri span) = i64 1)
       in
-      let v = combined ~by c (take_axis ~by 0 l suf) (take_axis ~by 0 r pre) in
+      let v = take_axis ~by 0 l suf ++ take_axis ~by 0 r pre in
       let res = where here v res in
       if k = top then res
       else
@@ -4635,13 +4618,14 @@ let reduce_ranges c ~lo ~hi x =
         reshaped ~by (Array.append [| m |] (Array.map (fun _ -> 1) rows)) some
       in
       ternary ~by Where some (take_axis ~by 0 r x) (empty dt start)
-  | Max | Min -> ranges ~by c ~l ~r x (empty dt start)
+  | Max -> ranges ~by Maximum ~l ~r x (empty dt start)
+  | Min -> ranges ~by Minimum ~l ~r x (empty dt start)
   | Add ->
       (* Narrow floats sum at float32; [+0] then makes a sum of [-0.] terms
          [+0.], as {!sum}'s is. *)
       let (D.Any w) = summed dt in
       let zero = D.zero w in
-      let s = ranges ~by c ~l ~r (cast_by ~by w x) (empty w zero) in
+      let s = ranges ~by Add ~l ~r (cast_by ~by w x) (empty w zero) in
       cast_by ~by dt (literal ~by ~swapped:false (Binary Add) w s zero)
 
 (* Maps over segments
@@ -4706,7 +4690,7 @@ let first_named ~by ~axes named =
   in
   let axes = Iarray.of_list axes in
   let most =
-    kept ~by ~keepdims:true s axes (reduce ~by Max D.Int64 axes remaining)
+    kept ~by ~keepdims:true s axes (reduce ~by Max axes remaining)
   in
   ( elementwise ~by D.Int64 [ Any most ] E.(i64 last - operand 0 most),
     elementwise ~by D.Bool [ Any most ] E.(i64 0 <= operand 0 most) )
