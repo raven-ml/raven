@@ -10,7 +10,7 @@ The structure that the transformations and optimizers take, `Nx.Ptree.instantiat
 open Kaun
 
 module Mlp = struct
-  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
+  type ('a, 'd) t = { l1 : ('a, 'd) Linear.t; l2 : ('a, 'd) Linear.t }
 
   let walk c { l1; l2 } =
     let open Nx.Ptree.Walk in
@@ -24,40 +24,39 @@ end
 let mlp = Nx.Ptree.instantiate (module Mlp)
 ```
 
-Each layer's `walk` names its own fields (`w`, and `b` when the layer has a bias), so `mlp`'s tensors are `l1.w`, `l1.b`, `l2.w` and `l2.b`. A list element adds its index, so a model's third block is under `blocks.2`. `Nx.Ptree.field` puts a whole structure under a name: `Nx.Ptree.field "model" mlp` names the same tensors `model.l1.w`, ..., `model.l2.b`. Tensors may have different dtypes: each keeps its own in the file, and loading checks it. A tensor of a fixed type, walked with `Nx.Ptree.Walk.tensor`, is saved like the others.
+Each layer's `walk` names its own fields (`w`, and `b` when the layer has a bias), so `mlp`'s tensors are `l1.w`, `l1.b`, `l2.w` and `l2.b`. A list element adds its index, so a model's third block is under `blocks.2`. An archive puts a whole structure under a prefix: `Nx_io.Archive.of_value ~prefix:"model" mlp` names the same tensors `model.l1.w`, ..., `model.l2.b`. Tensors may have different dtypes: each keeps its own in the file, and loading checks it. A tensor of a fixed type, walked with `Nx.Ptree.Walk.tensor`, is saved like the others.
 
 ## Saving and Loading
 
-`Nx_io.Archive.of_value` turns a value into the archive of its tensors, and `Nx_io.save_safetensors` writes it. Reading back takes a value of the same shape, which a restart already holds: `Nx_io.Archive.to_value ~like` replaces its tensors with the archive's entries of the same names. `like` supplies the record, the list lengths, the options that are present, and each tensor's dtype and shape; its tensors are discarded:
+`Nx_io.Archive.of_value` turns a value into the archive of its tensors, and `Nx_io.save_safetensors` writes it. Reading back takes a value of the same shape, which a restart already holds: `Nx_io.Archive.to_value ~like` replaces its tensors with the archive's entries of the same names. `like` supplies the record, the list lengths, the options that are present, and each tensor's dtype, shape and placement, where the entry is placed; its tensors' elements are not read:
 
 ```ocaml
 let () =
-  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   let init () =
+    let keys = Nx.Rng.split (Nx.Rng.key 0) in
     {
-      Mlp.l1 = Linear.init ~inputs:4 ~outputs:8;
-      l2 = Linear.init ~inputs:8 ~outputs:2;
+      Mlp.l1 = Linear.init ~key:keys.(0) ~inputs:4 ~outputs:8;
+      l2 = Linear.init ~key:keys.(1) ~inputs:8 ~outputs:2;
     }
   in
   let params = init () in
-  let model = Nx.Ptree.field "model" mlp in
 
   let path = Filename.temp_file "kaun-doc" ".safetensors" in
-  Nx_io.save_safetensors path (Nx_io.Archive.of_value model params);
+  Nx_io.save_safetensors path (Nx_io.Archive.of_value ~prefix:"model" mlp params);
 
   let file = Nx_io.load_safetensors path in
   List.iter print_endline (Nx_io.Archive.names file);
   (* model.l1.b, model.l1.w, model.l2.b, model.l2.w *)
 
-  let restored = Nx_io.Archive.to_value model ~like:(init ()) file in
+  let restored = Nx_io.Archive.to_value ~prefix:"model" mlp ~like:(init ()) file in
 
   (* The restored parameters equal the saved ones. *)
-  let x = Nx.randn Nx.float32 [| 2; 4 |] in
+  let x = Nx.Rng.normal ~key:(Nx.Rng.key 1) Nx.float32 [| 2; 4 |] in
   let d = Nx.max (Nx.abs (Nx.sub (Mlp.apply params x) (Mlp.apply restored x))) in
   Printf.printf "max difference: %g\n" (Nx.item [] d)
 ```
 
-A structure owns the names under its outermost fields, `model` here, and every name when it has none. Within them, reading back is strict, and fails with `Failure`, naming the entry, before any tensor is read:
+A value owns the names under its prefix, `model` here, and every name when it has none. Within them, reading back is strict, and fails with `Failure`, naming the entry, before any tensor is read:
 
 - when a tensor of `like` has no entry;
 - when an entry has another dtype or shape, as in `model.l1.w: shape [8; 4] in the archive, [4; 8] in the value`;
@@ -67,50 +66,50 @@ Nothing is converted: `like` states the dtype it expects, so a restart that name
 
 ## The Rule About Files
 
-Loading reads the file's header. Each entry stays in the file, on the disk device, and is read when it is first used. Loading a 2.5 GB file takes milliseconds and allocates nothing.
+Loading reads the file's header. Where the system can map the file, each aligned entry is a host value over the file's pages, read when it is first used. Loading a 2.5 GB file takes milliseconds and allocates nothing.
 
 **A file must not change while a tensor read from it is alive.** Truncating or rewriting it in place changes the tensors' values or kills the process. Replace a file by writing a new one and renaming it over the old one, which is what `Nx_io.save_safetensors` does: saving over the path you loaded from is safe. `Nx.copy` gives a tensor that no longer depends on its file. The file stays mapped until the garbage collector has collected the last tensor over it, which can be later than the last use; on Windows it cannot be deleted until then. Keep weight files on a local disk.
 
 ## One File, Several Sections
 
-Entries outside a structure's names are ignored, so one file holds model parameters and optimizer state side by side, each under its own field, and `Nx_io.Archive.union` puts their archives together. An optimizer state is a structure too, `Vega.adam_ptree mlp`, whose tensors are `mu.l1.w`, ..., `nu.l2.b` and `step`. Saving and restoring the full training state:
+Entries outside a value's prefix are ignored, so one file holds model parameters and optimizer state side by side, each under its own prefix, and `Nx_io.Archive.union` puts their archives together. An optimizer state is a structure too, `Vega.adam_ptree mlp`, whose tensors are `mu.l1.w`, ..., `nu.l2.b` and `step`. Saving and restoring the full training state:
 
 ```ocaml
 let () =
-  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   let init () =
+    let keys = Nx.Rng.split (Nx.Rng.key 0) in
     {
-      Mlp.l1 = Linear.init ~inputs:4 ~outputs:8;
-      l2 = Linear.init ~inputs:8 ~outputs:2;
+      Mlp.l1 = Linear.init ~key:keys.(0) ~inputs:4 ~outputs:8;
+      l2 = Linear.init ~key:keys.(1) ~inputs:8 ~outputs:2;
     }
   in
   let params = init () in
   let ostate = Vega.adam_init mlp params in
-  let model = Nx.Ptree.field "model" mlp in
-  let optim = Nx.Ptree.field "optim" (Vega.adam_ptree mlp) in
+  let optim = Vega.adam_ptree mlp in
 
   let path = Filename.temp_file "kaun-doc" ".safetensors" in
   Nx_io.save_safetensors path
     (Nx_io.Archive.union
        [
-         Nx_io.Archive.of_value model params;
-         Nx_io.Archive.of_value optim ostate;
+         Nx_io.Archive.of_value ~prefix:"model" mlp params;
+         Nx_io.Archive.of_value ~prefix:"optim" optim ostate;
        ]);
 
   (* Resuming: each section is read with its own structure. *)
   let file = Nx_io.load_safetensors path in
   let like = init () in
-  let params = Nx_io.Archive.to_value model ~like file in
+  let params = Nx_io.Archive.to_value ~prefix:"model" mlp ~like file in
   let ostate =
-    Nx_io.Archive.to_value optim ~like:(Vega.adam_init mlp like) file
+    Nx_io.Archive.to_value ~prefix:"optim" optim
+      ~like:(Vega.adam_init mlp like) file
   in
   ignore params;
   Printf.printf "resumed at step %d\n" (Int32.to_int (Nx.item [] ostate.step))
 ```
 
-The optimizer moments are named after the model's paths because their structure nests the model's. `Batch_norm` running statistics are saved the same way, under their own field, with `Nx.Ptree.instantiate (module Batch_norm.Stats)`. A training state saved as one value is a module whose `walk` visits each part with `Nx.Ptree.Walk.structure`, so its paths are `params.…` and `opt.mu.…`; see [Writing structures](../../nx/doc/06-structures.md).
+The optimizer moments are named after the model's paths because their structure nests the model's. `Batch_norm` running statistics are saved the same way, under their own prefix, with `Nx.Ptree.instantiate (module Batch_norm.Stats)`. A training state saved as one value is a module whose `walk` visits each part with `Nx.Ptree.Walk.structure`, so its paths are `params.…` and `opt.mu.…`; see [Writing structures](../../nx/doc/06-structures.md).
 
-A section can be read into part of a model. A classifier saved under `model`, with fields `backbone` and `head`, gives its backbone to a new model through `Nx.Ptree.field "model" (Nx.Ptree.field "backbone" backbone)`: that structure owns the names under `model.backbone`, and the old head's entries are left alone.
+A section can be read into part of a model. A classifier saved under `model`, with fields `backbone` and `head`, gives its backbone to a new model through `Nx_io.Archive.to_value ~prefix:"model.backbone" backbone`: that value owns the names under `model.backbone`, and the old head's entries are left alone.
 
 ## Pretrained Weights
 
@@ -160,11 +159,11 @@ Each name is written at the field it fills. A rename is a different string at th
 
 ## Placing Weights on a Device
 
-A compiled function that captures host weights uploads them at its first call, once per compiled function, and the host copy stays alive beside the device copy. `Nx.place` copies a tensor into a device buffer and returns the copy, a value with the same elements, on a device (an `Nx.Device.t`, such as `Nx.Device.make` of the GPU `Rig.open_ (Rig_metal.gpu 0)` opens); the source is unchanged. A compiled function that captures such a value uses its buffer directly: nothing is uploaded, and prefill, decode and any other compiled function over the model share one copy. An importer places each leaf as it builds it, through a let-bound `place` that serves leaves of any dtype:
+A loaded archive holds host values. `Nx.place p x` is `x` at the placement `p` of a device set, a value with the same elements; the source is unchanged. A set is minted from rig devices with `Nx.devices`, as `module Gpu = (val Nx.devices [ gpu ])` for the GPU `Rig.open_ (Rig_metal.gpu 0)` opens, and its brand types every value placed there, so a model on the GPU cannot be mixed with host values by mistake. A GPU set computes under `Rune.jit`: prefill, decode and any other compiled function over the placed model read its arrays in place and share one copy. An importer places each leaf as it builds it:
 
 ```ocaml
-let mlp_of_file ?placement dt weights =
-  let place x = match placement with None -> x | Some p -> Nx.place p x in
+let mlp_of_file at dt weights =
+  let place x = Nx.place at x in
   let linear ~inputs ~outputs name =
     let float ~shape leaf =
       Nx_io.Archive.float ~shape dt (name ^ leaf) weights
@@ -181,7 +180,7 @@ let mlp_of_file ?placement dt weights =
   }
 ```
 
-Each leaf is read, cast if asked, transposed and placed before the next is touched, so the host holds at most one leaf's cast at a time and the model ends up as one copy, on the device. Placing on the GPU `gpu`, an `Nx.Device.t`, is `mlp_of_file ~placement:(Nx.Placement.on gpu) dt weights`. The examples' importers take `?placement` as a function of each leaf's role (a column or row projection, or experts) and of the axis that role's cut runs along in the leaf, so a placement that splits a model over several devices can cut each weight where it belongs. One device is `fun _ ~axis:_ -> p`. Their cache builders take the same function, with a `Kv_heads` role for the pools. A view of a placed value, such as a transpose or a slice, stays placed and a compiled function reads it in place; any other nx operation on a GPU value outside a compiled function raises, so place the final form of each leaf.
+Each leaf is read, cast if asked, transposed and placed before the next is touched, so the host holds at most one leaf's cast at a time and the model ends up as one copy, on the device. Placing on the GPU set is `mlp_of_file Gpu.on dt weights`, and keeping it on the host `mlp_of_file Nx.Host.on dt weights`. The examples' importers take the placement as a function of each leaf's role (a column or row projection, or experts) and of the axis that role's cut runs along in the leaf, so a placement that splits a model over several devices can cut each weight where it belongs. One device is `fun _ ~axis:_ -> p`. Their cache builders take the same function, with a `Kv_heads` role for the pools. Outside a compiled function, a GPU set without kernels computes nothing, so transpose and cast each leaf on the host and place its final form.
 
 ## Fetching From the Hub: kaun.hf
 

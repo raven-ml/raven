@@ -6,8 +6,8 @@ Kaun has no layer abstraction. A layer is a plain record of tensors with an `app
 
 Every parameterized layer module follows the same shape, with `Linear` as the reference:
 
-- a parameter record with a payload hole — `'a Linear.t` is `{ w; b }`, at tensor payloads `w : [| inputs; outputs |]` and an optional bias;
-- constructors — `Linear.init ~inputs ~outputs` for the float32 defaults, `Linear.make` for initializer, bias, and dtype control;
+- a parameter record with a payload hole — `('a, 'd) Linear.t` is `{ w; b }`, at tensor payloads `w : [| inputs; outputs |]` and an optional bias, on the device set `'d`;
+- constructors — `Linear.init ~key ~inputs ~outputs` for the float32 defaults, `Linear.make` for initializer, bias, and dtype control, each drawing from `key` and placing the parameters where it lies;
 - an `apply` function — `Linear.apply p x` is `x @ p.w + p.b`, treating leading axes as batch axes;
 - a structure — one `walk` over the record's fields with an `Nx.Ptree.Walk` cursor, satisfying `Nx.Ptree.S`.
 
@@ -16,8 +16,8 @@ open Kaun
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
-  let layer = Linear.init ~inputs:4 ~outputs:2 in
-  let x = Nx.randn Nx.float32 [| 8; 4 |] in
+  let layer = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:4 ~outputs:2 in
+  let x = Nx.Rng.normal Nx.float32 [| 8; 4 |] in
   let y = Linear.apply layer x in
   Format.printf "y has shape %a@." Nx.pp_shape (Nx.shape y)
   (* [8; 2] *)
@@ -53,7 +53,7 @@ Records nest into records. A model's `walk` visits each field with the field's o
 
 ```ocaml
 module Mlp = struct
-  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
+  type ('a, 'd) t = { l1 : ('a, 'd) Linear.t; l2 : ('a, 'd) Linear.t }
 
   let walk c { l1; l2 } =
     let open Nx.Ptree.Walk in
@@ -73,7 +73,11 @@ A CNN mixes parameterized and stateless pieces freely, since a forward pass is j
 
 ```ocaml
 module Cnn = struct
-  type 'a t = { c1 : 'a Conv.t; c2 : 'a Conv.t; fc : 'a Linear.t }
+  type ('a, 'd) t = {
+    c1 : ('a, 'd) Conv.t;
+    c2 : ('a, 'd) Conv.t;
+    fc : ('a, 'd) Linear.t;
+  }
 
   let walk c { c1; c2; fc } =
     let open Nx.Ptree.Walk in
@@ -97,18 +101,22 @@ let () =
   Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   let params =
     {
-      Cnn.c1 = Conv.init ~in_channels:1 ~out_channels:8 ~kernel_size:(3, 3);
-      c2 = Conv.init ~in_channels:8 ~out_channels:16 ~kernel_size:(3, 3);
-      fc = Linear.init ~inputs:(16 * 5 * 5) ~outputs:10;
+      Cnn.c1 =
+        Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:1 ~out_channels:8
+          ~kernel_size:(3, 3);
+      c2 =
+        Conv.init ~key:(Nx.Rng.next_key ()) ~in_channels:8 ~out_channels:16
+          ~kernel_size:(3, 3);
+      fc = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:(16 * 5 * 5) ~outputs:10;
     }
   in
-  let x = Nx.randn Nx.float32 [| 2; 1; 28; 28 |] in
+  let x = Nx.Rng.normal Nx.float32 [| 2; 1; 28; 28 |] in
   let logits = Cnn.apply params ~training:false x in
   Format.printf "logits: %a@." Nx.pp_shape (Nx.shape logits)
   (* [2; 10] *)
 ```
 
-Note the `~training` flag threaded to `Dropout.apply`: mode is an argument, not a mutable model state. This is [`examples/03-mnist-cnn`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/03-mnist-cnn)'s model.
+Note the `~training` flag threaded to `Dropout.apply`: mode is an argument, not a mutable model state. Without `~key`, dropout draws from the scope `Nx.Rng.with_key` opens, which a host computation reads; a compiled step passes its own `~key`. This is [`examples/03-mnist-cnn`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/03-mnist-cnn)'s model.
 
 ## Attention
 
@@ -117,10 +125,10 @@ Note the `~training` flag threaded to `Dropout.apply`: mode is an argument, not 
 ```ocaml
 let () =
   Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
-  let attn = Attention.init ~embed_dim:16 in
-  let x = Nx.randn Nx.float32 [| 2; 5; 16 |] in
+  let attn = Attention.init ~key:(Nx.Rng.next_key ()) ~embed_dim:16 in
+  let x = Nx.Rng.normal Nx.float32 [| 2; 5; 16 |] in
   (* batch 2, sequence 5 *)
-  let mask = Attention.causal_mask ~seq:5 () in
+  let mask = Attention.causal_mask ~seq:5 Nx.Host.on in
   let y = Attention.apply ~head_dim:4 ~mask attn x in
   Format.printf "y: %a@." Nx.pp_shape (Nx.shape y)
   (* [2; 5; 16] — same shape; the mask hides future positions *)
@@ -131,17 +139,17 @@ let () =
 ```ocaml
 let () =
   Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
-  let q = Nx.randn Nx.float32 [| 3; 8 |] in
-  let k = Nx.randn Nx.float32 [| 5; 8 |] in
-  let v = Nx.randn Nx.float32 [| 5; 4 |] in
+  let q = Nx.Rng.normal Nx.float32 [| 3; 8 |] in
+  let k = Nx.Rng.normal Nx.float32 [| 5; 8 |] in
+  let v = Nx.Rng.normal Nx.float32 [| 5; 4 |] in
   let y = Attention.scaled_dot_product_attention q k v in
   Format.printf "y: %a@." Nx.pp_shape (Nx.shape y)
   (* [3; 4] — one weighted average of value rows per query row *)
 ```
 
-`?mask` says which keys each query may see; `causal_mask ~seq ?valid ()` builds the causal triangle, optionally hiding padded keys. A query that sees no key, a padded one for instance, yields zero and never `nan`. `?rope` takes a `Rope.t` schedule and rotates queries and keys by position.
+`?mask` says which keys each query may see; `causal_mask ~seq ?valid at` builds the causal triangle at the placement `at`, optionally hiding padded keys. A query that sees no key, a padded one for instance, yields zero and never `nan`. `?rope` takes a `Rope.t` schedule, built on the host and moved beside the model with `Rope.place`, and rotates queries and keys by position.
 
-For autoregressive decoding, `Attention.cached` runs causal self-attention of a few new tokens over a functional key-value cache. The cache (`Attention.Cache`) is a flat pool of slots with no batch axis, and a `Cache_index.t` says where the call's tokens sit: each token's position and the slot holding each position of each sequence. One contiguous run per sequence (`Cache_index.rows`), paged allocation and a prefix shared by two sequences are all values of a cache index, and the layer is the same for each. Over `Cache_index.whole`, which reads and keeps nothing, the same function is plain causal attention, so a model has one forward pass for training and decoding. Positions and slots enter as tensors, so a generation step keeps fixed shapes and compiles once; compiled with `Rune.jit` on a signature that consumes the caches, `Nx.Ptree.(tensor @-> Cache_index.ptree @-> consumes caches @@ returns (pair tensor caches))`, each cache is written in its own storage. A prompt fed whole, in chunks or token by token gives the same outputs.
+For autoregressive decoding, `Attention.cached` runs causal self-attention of a few new tokens over a functional key-value cache. The cache (`Attention.Cache`) is a flat pool of slots with no batch axis, and a `Cache_index.t`, built on the host and moved with `Cache_index.place`, says where the call's tokens sit: each token's position and the slot holding each position of each sequence. One contiguous run per sequence (`Cache_index.rows`), paged allocation and a prefix shared by two sequences are all values of a cache index, and the layer is the same for each. Over `Cache_index.whole`, which reads and keeps nothing, the same function is plain causal attention, so a model has one forward pass for training and decoding. Positions and slots enter as tensors, so a generation step keeps fixed shapes and compiles once; compiled with `Rune.jit` on `Nx.Ptree.(tensor @-> v Cache_index.walk @-> caches @-> returns (pair tensor caches))` and called with the caches donated (`Nx.Ptree.donate`), the old caches are consumed. A prompt fed whole, in chunks or token by token gives the same outputs.
 
 ## Stateful Layers: Batch_norm
 
@@ -151,7 +159,11 @@ For autoregressive decoding, `Attention.cached` runs causal self-attention of a 
 
 ```ocaml
 module Net = struct
-  type 'a t = { l1 : 'a Linear.t; bn : 'a Batch_norm.t; l2 : 'a Linear.t }
+  type ('a, 'd) t = {
+    l1 : ('a, 'd) Linear.t;
+    bn : ('a, 'd) Batch_norm.t;
+    l2 : ('a, 'd) Linear.t;
+  }
 
   let walk c { l1; bn; l2 } =
     let open Nx.Ptree.Walk in
@@ -170,14 +182,14 @@ let net = Nx.Ptree.instantiate (module Net)
 
 let () =
   Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
-  let x = Nx.randn Nx.float32 [| 16; 4 |] in
-  let y = Nx.randn Nx.float32 [| 16; 1 |] in
-  let bn, stats = Batch_norm.init ~features:8 in
+  let x = Nx.Rng.normal Nx.float32 [| 16; 4 |] in
+  let y = Nx.Rng.normal Nx.float32 [| 16; 1 |] in
+  let bn, stats = Batch_norm.init ~features:8 Nx.Host.on in
   let params =
     {
-      Net.l1 = Linear.init ~inputs:4 ~outputs:8;
+      Net.l1 = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:4 ~outputs:8;
       bn;
-      l2 = Linear.init ~inputs:8 ~outputs:1;
+      l2 = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:8 ~outputs:1;
     }
   in
 
@@ -216,20 +228,19 @@ The loss never depends on `stats'`: training mode normalizes with the batch's st
 
 ## Initializers
 
-An initializer is a plain function from fan geometry, dtype, and shape to a fresh tensor — `Init.t`. Layers accept one as `?w_init`/`?bias_init` and supply the fans from their own geometry:
+An initializer is a plain function from a key, fan geometry, dtype, and shape to a fresh tensor at the key's placement — `Init.t`. Layers accept one as `?w_init`/`?bias_init` and supply the fans from their own geometry:
 
 ```ocaml
 let () =
-  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   (* He-normal weights for a ReLU network, no bias. *)
   let layer =
-    Linear.make ~w_init:Init.he_normal ~bias:false ~inputs:64 ~outputs:64
-      Nx.float32
+    Linear.make ~w_init:Init.he_normal ~bias:false ~key:(Nx.Rng.key 0)
+      ~inputs:64 ~outputs:64 Nx.float32
   in
   ignore layer
 ```
 
-The named families (Glorot/Xavier, He/Kaiming, LeCun) are instances of `Init.variance_scaling`; any function of the right type is an initializer, so custom schemes need no registration. Random initializers draw from the implicit RNG scope — wrap model construction in `Nx.Rng.with_key` for reproducibility.
+The named families (Glorot/Xavier, He/Kaiming, LeCun) are instances of `Init.variance_scaling`; any function of the right type is an initializer, so custom schemes need no registration. Random initializers draw from the key they are given, so equal keys give equal parameters.
 
 ## Next Steps
 

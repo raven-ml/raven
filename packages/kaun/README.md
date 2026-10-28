@@ -26,7 +26,7 @@ and saving (`Nx_io.Archive`):
 open Kaun
 
 module Mlp = struct
-  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
+  type ('a, 'd) t = { l1 : ('a, 'd) Linear.t; l2 : ('a, 'd) Linear.t }
 
   let walk c { l1; l2 } =
     let open Nx.Ptree.Walk in
@@ -117,15 +117,15 @@ let () =
   let y = Nx.create Nx.float32 [| 4; 1 |] [| 0.; 1.; 1.; 0. |] in
   let params =
     {
-      Mlp.l1 = Linear.init ~inputs:2 ~outputs:8;
-      l2 = Linear.init ~inputs:8 ~outputs:1;
+      Mlp.l1 = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:2 ~outputs:8;
+      l2 = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:8 ~outputs:1;
     }
   in
   let loss p = Loss.sigmoid_bce (Mlp.apply p x) y in
   let step (params, ostate) =
     let l, grads = Rune.value_and_grad mlp loss params in
     let params, ostate =
-      Vega.adam_step mlp ~lr:0.05 ostate ~params ~grads
+      Vega.adam_step mlp ~lr:(Vega.lr 0.05) ostate ~params ~grads
     in
     ((params, ostate), Nx.item [] l)
   in
@@ -186,9 +186,9 @@ weights, and generates text through a key-value cache.
 
 ## Scope and Limitations
 
-- Eager execution runs on CPU through [Nx](../nx/). For GPU, place the
-  weights on a GPU that [rig](../rig/) opens (`Nx.Device.make` of
-  `Rig.open_ (Rig_metal.gpu 0)` or `Rig_cuda.gpu 0`) and
+- Eager execution runs on the CPU through [Nx](../nx/). For GPU, place the
+  weights on a device set over a GPU that [rig](../rig/) opens
+  (`Nx.devices` of `Rig.open_ (Rig_metal.gpu 0)` or `Rig_cuda.gpu 0`) and
   compile a step with [`Rune.jit`](../rune/), which runs where its values are;
   the `04-gpt2` example does this behind a `--jit` flag. `jit` compiles
   `Rune.scan` as a loop, so a recurrence's compile time is independent of its

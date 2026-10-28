@@ -27,8 +27,8 @@ The main shift is from mutable objects to immutable records: a PyTorch model is 
 | Data loading | `DataLoader` | `Data.batches2` returning a `Seq.t` |
 | Saving | `state_dict()` + `torch.save` (pickle) | named entries + safetensors via `Nx_io.Archive` |
 | Pretrained models | `from_pretrained` per architecture | `kaun.hf` + an importer you write with `Nx_io.Archive.float` |
-| RNG | global `torch.manual_seed` | scoped `Nx.Rng.with_key` |
-| Device | `model.to("cuda")` | `Nx.Ptree.place` of the weights; GPU via `Rune.jit` |
+| RNG | global `torch.manual_seed` | explicit keys (`~key`), and a scope `Nx.Rng.with_key` opens |
+| Device | `model.to("cuda")` | `Nx.Ptree.place` of the weights on a device set; GPU via `Rune.jit` |
 
 ---
 
@@ -57,7 +57,7 @@ model = MLP()
 open Kaun
 
 module Mlp = struct
-  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
+  type ('a, 'd) t = { l1 : ('a, 'd) Linear.t; l2 : ('a, 'd) Linear.t }
 
   let walk c { l1; l2 } =
     let open Nx.Ptree.Walk in
@@ -71,14 +71,14 @@ end
 let mlp = Nx.Ptree.instantiate (module Mlp)
 
 let () =
-  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
+  let keys = Nx.Rng.split ~n:3 (Nx.Rng.key 0) in
   let model =
     {
-      Mlp.l1 = Linear.init ~inputs:4 ~outputs:8;
-      l2 = Linear.init ~inputs:8 ~outputs:1;
+      Mlp.l1 = Linear.init ~key:keys.(0) ~inputs:4 ~outputs:8;
+      l2 = Linear.init ~key:keys.(1) ~inputs:8 ~outputs:1;
     }
   in
-  let y = Mlp.apply model (Nx.randn Nx.float32 [| 2; 4 |]) in
+  let y = Mlp.apply model (Nx.Rng.normal ~key:keys.(2) Nx.float32 [| 2; 4 |]) in
   ignore y
 ```
 
@@ -121,7 +121,7 @@ Point-by-point:
 - `opt.zero_grad()` → nothing. Gradients are fresh values, never accumulated in place.
 - `opt.step()` → `Vega.adamw_step`. The optimizer holds no reference to the model; its state (`mu`, `nu`, `step`) is a record of parameter-shaped values your loop threads explicitly.
 - `torch.nn.utils.clip_grad_norm_` → `Vega.clip_by_global_norm mlp ~max_norm grads`, a pure function applied between the two.
-- LR schedulers → a `Vega.Schedule.t` is `int -> float`; evaluate it at your own step counter and pass `~lr`.
+- LR schedulers → a `Vega.Schedule.t` maps a step counter to a rate; pass it as `~lr` and the step applies it to the state's counter.
 
 Note the layering: `Vega` is an independent package composed in user code — kaun's library does not depend on it.
 
@@ -191,22 +191,22 @@ model.load_state_dict(ckpt["model"])
 
 <!-- $MDX skip -->
 ```ocaml
-let model = Nx.Ptree.field "model" mlp
-let optim = Nx.Ptree.field "optim" (Vega.adam_ptree mlp)
+let optim = Vega.adam_ptree mlp
 
 let () =
   Nx_io.save_safetensors path
     (Nx_io.Archive.union
        [
-         Nx_io.Archive.of_value model params;
-         Nx_io.Archive.of_value optim ostate;
+         Nx_io.Archive.of_value ~prefix:"model" mlp params;
+         Nx_io.Archive.of_value ~prefix:"optim" optim ostate;
        ])
 
 let params =
-  Nx_io.load_safetensors path |> Nx_io.Archive.to_value model ~like:template
+  Nx_io.load_safetensors path
+  |> Nx_io.Archive.to_value ~prefix:"model" mlp ~like:template
 ```
 
-`load_state_dict`'s in-place mutation becomes reading into a value of the same shape: `~like` supplies structure, dtypes, and shapes, and a fresh value comes back. Nothing is converted on the way, and a file that differs from the value under `model` fails, naming the entry: a missing or extra entry, or another dtype or shape. The optimizer state's structure, `Vega.adam_ptree mlp`, nests the model's, so its entries are named after the model's paths. See [Saving and Pretrained Weights](04-saving-and-pretrained.md).
+`load_state_dict`'s in-place mutation becomes reading into a value of the same shape: `~like` supplies structure, dtypes, shapes and placements, and a fresh value comes back. Nothing is converted on the way, and a file that differs from the value under `model` fails, naming the entry: a missing or extra entry, or another dtype or shape. The optimizer state's structure, `Vega.adam_ptree mlp`, nests the model's, so its entries are named after the model's paths. See [Saving and Pretrained Weights](04-saving-and-pretrained.md).
 
 ---
 
@@ -234,12 +234,12 @@ Inside the importer a rename is the file's name at the field it fills, `Nx.matri
 
 | PyTorch feature | Status in kaun |
 | --- | --- |
-| GPU / `model.to("cuda")` | Place the weights with `Nx.Ptree.place` on a device (`Nx.Device.make` of a GPU that rig opens, such as `Rig_cuda.gpu 0` from rig.cuda or `Rig_metal.gpu 0` from rig.metal); a step compiled with `Rune.jit` runs there, and an eager operation on a GPU value raises. |
+| GPU / `model.to("cuda")` | Place the weights with `Nx.Ptree.place` on a device set minted with `Nx.devices` from a GPU that rig opens, such as `Rig_cuda.gpu 0` from rig.cuda or `Rig_metal.gpu 0` from rig.metal; a step compiled with `Rune.jit` runs there, and nx computes nothing on a GPU set outside one. |
 | `torch.compile` / JIT | `Rune.jit` compiles a step, and a `Rune.scan` in it as a loop. |
 | Layer coverage | Deliberately small: no recurrent layers; `Attention` covers grouped queries, rotary embeddings (`Rope`) and cached decoding (`Attention.cached`) and nothing beyond, no sliding windows or cross-attention layer; `Conv` is im2col-based and not tuned for large inputs. |
 | Mixed precision / AMP | Manual: cast with `Nx.Ptree.cast (module M) dt` and scale losses with `Vega.Loss_scale`; there is no automatic wrapper. |
 | `DataLoader` workers | No; data is in-memory tensors and a `Seq.t`. |
-| Distributed (`DDP`) | Not available. |
+| Distributed (`DDP`) | Within one process: a batch placed `split ~axis:0` over a device set's devices computes data-parallel. No multi-process training. |
 
 ---
 
@@ -248,18 +248,18 @@ Inside the importer a rename is the file's name at the field it fills, `Nx.matri
 | Task | PyTorch | kaun |
 | --- | --- | --- |
 | Define a model | `nn.Module` subclass | record + `apply` + one-line traversals |
-| Construct | `MLP()` | `{ l1 = Linear.init ~inputs ~outputs; ... }` |
+| Construct | `MLP()` | `{ l1 = Linear.init ~key ~inputs ~outputs; ... }` |
 | Forward | `model(x)` | `Mlp.apply params x` |
 | Backward | `loss.backward()` | `Rune.value_and_grad mlp loss params` |
 | Zero grads | `opt.zero_grad()` | not needed |
 | Optimizer step | `opt.step()` | `Vega.adamw_step mlp ~lr st ~params ~grads` |
 | Clip gradients | `clip_grad_norm_` | `Vega.clip_by_global_norm` |
-| LR schedule | `lr_scheduler` object | `Vega.Schedule.t`, evaluated at your counter |
+| LR schedule | `lr_scheduler` object | `Vega.Schedule.t`, applied to the optimizer's counter |
 | Train mode | `model.train()` | `~training:true` arguments |
 | Running stats | hidden buffers | explicit `Stats.t` + `value_and_grad_aux` |
 | Batches | `DataLoader` | `Data.batches2` |
 | Save | `torch.save(model.state_dict())` | `Nx_io.save_safetensors` + `Archive.of_value` |
 | Load | `load_state_dict` | `Nx_io.Archive.to_value ~like` |
 | Pretrained | `from_pretrained("gpt2")` | `Kaun_hf.load_safetensors` + `Nx_io.Archive.float` per entry |
-| Seed | `torch.manual_seed(42)` | `Nx.Rng.with_key (Nx.Rng.key 42)` |
+| Seed | `torch.manual_seed(42)` | `Nx.Rng.key 42`, split into each constructor's `~key` |
 | Per-sample grads | `torch.func.vmap(grad(...))` | `Rune.vmap` of `Rune.grad` |

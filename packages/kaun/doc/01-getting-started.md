@@ -30,13 +30,13 @@ Note the layering: kaun's library depends only on nx. Differentiation comes from
 
 ## A Model Is a Record
 
-A kaun layer is a plain record with a payload hole and an `apply` function; `'a Linear.t` holds a weight matrix and an optional bias. A model is a record of layers with one function, `walk`, that visits each field with the field's own `walk` and names it. `Nx.Ptree.instantiate` turns the module into a structure at its tensor type, which every Raven transformation, optimizer and saved file takes:
+A kaun layer is a plain record with a payload hole and an `apply` function; `('a, 'd) Linear.t` holds a weight matrix and an optional bias, arrays of type `'a` on the device set `'d` ([`Nx.host`](../../nx/doc/index.md) for the process's own memory). A model is a record of layers with one function, `walk`, that visits each field with the field's own `walk` and names it. `Nx.Ptree.instantiate` turns the module into a structure at its tensor type, which every Raven transformation, optimizer and saved file takes:
 
 ```ocaml
 open Kaun
 
 module Mlp = struct
-  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
+  type ('a, 'd) t = { l1 : ('a, 'd) Linear.t; l2 : ('a, 'd) Linear.t }
 
   let walk c { l1; l2 } =
     let open Nx.Ptree.Walk in
@@ -54,11 +54,11 @@ let mlp = Nx.Ptree.instantiate (module Mlp)
 
 ## Initialize Parameters
 
-Constructors draw from the implicit RNG scope; wrap the program in `Nx.Rng.with_key` for reproducibility. `Linear.init` gives Glorot-uniform weights and zero bias:
+Constructors take `~key`, an `Nx.Rng.key`, and draw from it: equal keys give equal parameters, and the parameters lie where the key lies. `Nx.Rng.split` derives independent keys from one. `Linear.init` gives Glorot-uniform weights and zero bias:
 
 ```ocaml
 let () =
-  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
+  let keys = Nx.Rng.split (Nx.Rng.key 42) in
   (* XOR dataset. *)
   let x =
     Nx.create Nx.float32 [| 4; 2 |] [| 0.; 0.; 0.; 1.; 1.; 0.; 1.; 1. |]
@@ -67,8 +67,8 @@ let () =
 
   let params =
     {
-      Mlp.l1 = Linear.init ~inputs:2 ~outputs:8;
-      l2 = Linear.init ~inputs:8 ~outputs:1;
+      Mlp.l1 = Linear.init ~key:keys.(0) ~inputs:2 ~outputs:8;
+      l2 = Linear.init ~key:keys.(1) ~inputs:8 ~outputs:1;
     }
   in
 
@@ -106,16 +106,17 @@ let () =
 
 This is the complete program — it is [`examples/01-xor`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/01-xor) nearly verbatim. Three things to notice:
 
-- **Every piece of training state is a value of your type.** Parameters, gradients, and the Adam moments (`ostate.mu`, `ostate.nu`) are all `Nx.float32_t Mlp.t` values you can print, inspect, save, or swap.
+- **Every piece of training state is a value of your type.** Parameters, gradients, and the Adam moments (`ostate.mu`, `ostate.nu`) are all `(Nx.host Nx.float32_t, Nx.host) Mlp.t` values you can print, inspect, save, or swap.
 - **The step is yours.** Want gradient clipping? Insert `Vega.clip_by_global_norm mlp ~max_norm:1.0 grads` before the update. A learning-rate schedule? Evaluate one at your step counter. Nothing is hidden behind a trainer.
 - **`Nx.Ptree.instantiate (module Mlp)` is the only plumbing.** Bind the structure once; it drives differentiation, optimization and saving.
 
 ## Scaling Up: Minibatches
 
-For real datasets, `Data.batches2` cuts paired tensors into a `Seq.t` of minibatches, and the epoch loop is ordinary `Seq` iteration. With `~shuffle:true`, each traversal of the sequence draws a fresh permutation from the RNG scope, so iterating once per epoch reshuffles every epoch:
+For real datasets, `Data.batches2` cuts paired tensors into a `Seq.t` of minibatches, and the epoch loop is ordinary `Seq` iteration. With `~shuffle:true`, each traversal of the sequence draws a fresh permutation from the RNG scope that `Nx.Rng.with_key` opens, so iterating once per epoch reshuffles every epoch:
 
 <!-- $MDX skip -->
 ```ocaml
+Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
 let train_x, train_y, test_x, test_y = Kaun_datasets.mnist () in
 let batches = Data.batches2 ~shuffle:true ~batch_size:128 (train_x, train_y) in
 let state = ref (params, Vega.adamw_init mlp params) in

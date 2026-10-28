@@ -14,7 +14,7 @@ Every training step in kaun has the same three lines: a loss closing over the ba
 open Kaun
 
 module Mlp = struct
-  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
+  type ('a, 'd) t = { l1 : ('a, 'd) Linear.t; l2 : ('a, 'd) Linear.t }
 
   let walk c { l1; l2 } =
     let open Nx.Ptree.Walk in
@@ -36,7 +36,7 @@ let step (params, ostate) (x, y) =
   ((params, ostate), Nx.item [] l)
 ```
 
-The state is a pair `(params, ostate)` of ordinary values — parameters of type `Nx.float32_t Mlp.t`, optimizer state a record of like-shaped moments. Nothing is hidden: print a gradient leaf, swap the optimizer, or save everything mid-run.
+The state is a pair `(params, ostate)` of ordinary values — parameters of type `(Nx.host Nx.float32_t, Nx.host) Mlp.t` on the host, optimizer state a record of like-shaped moments. Nothing is hidden: print a gradient leaf, swap the optimizer, or save everything mid-run.
 
 Because the step is yours, extensions are insertions, not configuration. Gradient clipping goes between the backward pass and the update:
 
@@ -45,7 +45,7 @@ Because the step is yours, extensions are insertions, not configuration. Gradien
 let grads = Vega.clip_by_global_norm mlp ~max_norm:1.0 grads in
 ```
 
-A learning-rate schedule maps the state's step counter to that step's rate, in tensor arithmetic — so the same line works in an eager loop and inside a jitted step, where the rate derives from the state's own counter leaf:
+A learning-rate schedule maps a step counter to that step's rate, in tensor arithmetic, and the step applies it to the state's own counter — so the same line works in an eager loop and inside a jitted step:
 
 <!-- $MDX skip -->
 ```ocaml
@@ -54,7 +54,7 @@ let sched =
 in
 let step (params, ostate) (x, y) =
   ...
-  Vega.adamw_step mlp ~lr:(sched ostate.step) ostate ~params ~grads
+  Vega.adamw_step mlp ~lr:sched ostate ~params ~grads
 ```
 
 ## Optimizers
@@ -74,8 +74,8 @@ let () =
   Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   let params =
     {
-      Mlp.l1 = Linear.init ~inputs:4 ~outputs:16;
-      l2 = Linear.init ~inputs:16 ~outputs:3;
+      Mlp.l1 = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:4 ~outputs:16;
+      l2 = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:16 ~outputs:3;
     }
   in
   let ostate = Vega.adamw_init mlp params in
@@ -125,7 +125,7 @@ let () =
      pass ~drop_last:true to drop it. *)
 ```
 
-Without shuffling, batches are views of the data, not copies, in order. With `~shuffle:true`, each *traversal* of the sequence draws a fresh permutation from the ambient RNG scope — so iterating the same sequence once per epoch reshuffles every epoch, `batches2` permutes inputs and targets together, and running the loop under `Nx.Rng.with_key` makes the whole schedule of permutations reproducible:
+Without shuffling, batches are views of the data, not copies, in order. With `~shuffle:true`, each *traversal* of the sequence draws a fresh permutation from the RNG scope, where the data lies, so iterating the same sequence once per epoch reshuffles every epoch, `batches2` permutes inputs and targets together, and running the loop under `Nx.Rng.with_key` makes the whole schedule of permutations reproducible:
 
 <!-- $MDX skip -->
 ```ocaml
@@ -163,11 +163,11 @@ let () =
   Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   let params =
     {
-      Mlp.l1 = Linear.init ~inputs:4 ~outputs:16;
-      l2 = Linear.init ~inputs:16 ~outputs:3;
+      Mlp.l1 = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:4 ~outputs:16;
+      l2 = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:16 ~outputs:3;
     }
   in
-  let test_x = Nx.randn Nx.float32 [| 100; 4 |] in
+  let test_x = Nx.Rng.normal Nx.float32 [| 100; 4 |] in
   let test_y = Nx.create Nx.int64 [| 100 |] (Array.init 100 (fun i -> Int64.of_int (i mod 3))) in
   let correct, total =
     Data.batches2 ~batch_size:32 (test_x, test_y)
@@ -188,7 +188,7 @@ let () =
 
 There is no `model.train()`/`model.eval()`; mode is an explicit `~training` argument on the functions that care:
 
-- `Dropout.apply ~rate ~training` — training draws a fresh mask and rescales; eval is the identity.
+- `Dropout.apply ?key ~rate ~training` — training draws a fresh mask, from `key` or the RNG scope, and rescales; eval is the identity. A jitted step passes `~key`, since a keyless draw cannot be traced.
 - `Batch_norm.apply p stats ~training` — training normalizes with batch statistics and returns updated running statistics; eval uses the running statistics. Return the statistics from the objective with `Rune.value_and_grad_aux`, which takes their structure — see [Layers and Models](02-layers-and-models.md) for the full pattern.
 
 A model forward that takes `~training` serves both phases; evaluation is the same function with `~training:false`.
