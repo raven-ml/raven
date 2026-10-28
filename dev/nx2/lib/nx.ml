@@ -270,8 +270,7 @@ let arange_by ~by p dt start stop step =
                invalid_argf "%s: %d is outside %s's range [%d, %d]" by v
                  (D.name dt) lo hi)
            [ start; last ]);
-  let int64 n = E.const D.Int64 (Int64.of_int n) in
-  leaf ~by p dt [| n |] E.(cast dt ((coord 0 * int64 step) + int64 start))
+  leaf ~by p dt [| n |] E.(cast dt ((coord 0 * i64 step) + i64 start))
 
 let arange dt start stop step =
   arange_by ~by:"Nx.arange" Host.on dt start stop step
@@ -307,7 +306,7 @@ let spaced ~by ~endpoint start stop n =
   let v = ramp ~start ~step in
   if not (endpoint && n >= 2) then v
   else
-    let final = E.const D.Int64 (Int64.of_int (n - 1)) in
+    let final = i64 (n - 1) in
     E.(where (coord 0 = final) (const D.Float64 stop) v)
 
 let linspace_by ~by p dt ~endpoint start stop n =
@@ -338,7 +337,7 @@ let geomspace_by ~by p dt ~endpoint start stop n =
   if not (usable start && usable stop) then
     invalid_argf "%s: %g and %g are not both positive and finite" by start stop;
   let e = spaced ~by ~endpoint 0. 1. n in
-  let f64 = E.const D.Float64 and i64 i = E.const D.Int64 (Int64.of_int i) in
+  let f64 = E.const D.Float64 in
   let ratio = stop /. start in
   let v =
     if Float.is_finite ratio && ratio >= Float.min_float then
@@ -2595,7 +2594,7 @@ let triangle ~by keep k x =
   let dt = dtype x in
   let r = ndim x in
   let column = E.coord (r - 1) and row = E.coord (r - 2) in
-  let d = E.(column - row) and kk = E.const D.Int64 (Int64.of_int k) in
+  let d = E.(column - row) and kk = i64 k in
   let inside = match keep with `Below -> E.(d <= kk) | `Above -> E.(kk <= d) in
   elementwise ~by dt [ Any x ] E.(where inside (operand 0 x) (const dt (D.zero dt)))
 
@@ -2656,9 +2655,7 @@ let on_diagonal ~by dt n m k piece =
 let eye_by ~by ?m ?(k = 0) p dt n =
   let m = Option.value m ~default:n in
   if Grid.is_cut (Devices.grid p) then
-    let on = E.(coord 1 - coord 0 = i64 k) in
-    let out = E.where on (E.const dt (D.one dt)) (E.const dt (D.zero dt)) in
-    leaf ~by p dt [| n; m |] out
+    leaf ~by p dt [| n; m |] (indicator dt E.(coord 1 - coord 0 = i64 k))
   else begin
     (* The shape is checked first, so that a refused one allocates nothing. *)
     ignore (contiguous ~by [| n; m |]);
@@ -2867,10 +2864,15 @@ let matrices ~by x =
   matrix ~by x;
   routine_dtype ~by x
 
-let square_matrices ~by x =
-  matrices ~by x;
+(* Refuses [x] unless its matrices are square: its last two axes of one
+   extent. *)
+let square_shaped ~by x =
   if dim (-1) x <> dim (-2) x then
     invalid_argf "%s: %a is not square" by pp_value x
+
+let square_matrices ~by x =
+  matrices ~by x;
+  square_shaped ~by x
 
 (* The machine epsilon of the four dtypes the routines take. *)
 let epsilon (type v s) (dt : (v, s) D.t) =
@@ -3120,8 +3122,7 @@ let solve a b = solve_by ~by:"Nx.solve" a b
    of [p] computing its window. *)
 let eyes ~by p dt s =
   let row = Array.length s - 2 and col = Array.length s - 1 in
-  let on = E.(coord col - coord row = i64 0) in
-  leaf ~by p dt s (E.where on (E.const dt (D.one dt)) (E.const dt (D.zero dt)))
+  leaf ~by p dt s (indicator dt E.(coord col - coord row = i64 0))
 
 let inv_by ~by a =
   square_matrices ~by a;
@@ -3138,8 +3139,7 @@ let inv a = inv_by ~by:"Nx.inv" a
 let matrix_power a n =
   let by = "Nx.matrix_power" in
   matrix ~by a;
-  if dim (-1) a <> dim (-2) a then
-    invalid_argf "%s: %a is not square" by pp_value a;
+  square_shaped ~by a;
   if D.is D.Boolean (dtype a) then
     invalid_argf "%s: %a is boolean" by pp_value a;
   if n < 0 then routine_dtype ~by a;
@@ -3460,8 +3460,7 @@ let cond (type v s r d) (dt : (float, r) D.t) ?(p = `Two) (a : (v, s, d) t) :
   extremes ~by `Two a;
   if not (D.float_format dt).infinities then
     invalid_argf "%s: %s has no infinity" by (D.name dt);
-  if p <> `Two && dim (-1) a <> dim (-2) a then
-    invalid_argf "%s: %a is not square" by pp_value a;
+  if p <> `Two then square_shaped ~by a;
   widened ~by dt a (fun w a ->
       let inf = E.const w Float.infinity in
       match p with
@@ -4687,11 +4686,6 @@ let device_windows ~by what ~positional t =
     1
     (Grid.cuts (Devices.grid (placement t)))
 
-(* [x] with each axis of [axes] kept of extent 1. *)
-let keep_axes ~by s axes y =
-  let kept a d = if List.mem a axes then 1 else d in
-  reshaped ~by (Array.mapi kept s) y
-
 (* Per group of [named] along [axes], its first in-range position as a
    position of the group, and whether it has one. [named] has a group's shape,
    [[| r; ... |]] for [r] groups of [j] positions; with no in-range position
@@ -4706,12 +4700,13 @@ let first_named ~by ~axes named =
   let after =
     reshaped ~by s (leaf ~by here D.Int64 [| r; j |] E.(i64 last - coord 1))
   in
-  let kept =
+  let remaining =
     elementwise ~by D.Int64 [ Any named; Any after ]
       E.(where (operand 0 named) (operand 1 after) (i64 (-1)))
   in
+  let axes = Iarray.of_list axes in
   let most =
-    keep_axes ~by s axes (reduce ~by Max D.Int64 (Iarray.of_list axes) kept)
+    kept ~by ~keepdims:true s axes (reduce ~by Max D.Int64 axes remaining)
   in
   ( elementwise ~by D.Int64 [ Any most ] E.(i64 last - operand 0 most),
     elementwise ~by D.Bool [ Any most ] E.(i64 0 <= operand 0 most) )
@@ -5833,7 +5828,6 @@ let idst ?type_ ?axes ?norm x =
 let frequencies ~by ~wrap p dt ~d n count =
   if n < 1 then invalid_argf "%s: %d points" by n;
   if not (Float.is_finite d && d <> 0.) then invalid_argf "%s: spacing %g" by d;
-  let i64 i = E.const D.Int64 (Int64.of_int i) in
   let i = E.coord 0 in
   let middle = i64 ((n + 1) / 2) and n' = i64 n in
   let i = if wrap then E.(where (i < middle) i (i - n')) else i in
