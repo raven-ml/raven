@@ -2542,24 +2542,34 @@ let complex_of (type c a d) ~by (dt : (Complex.t, c) D.t)
 
 let complex dt ~re ~im = complex_of ~by:"Nx.complex" dt ~re ~im
 
-(* A complex value's imaginary parts negated: the odd elements of its pairs
-   of parts, in one map. Any other value is itself. *)
-let conjugate_by (type v s d) ~by (x : (v, s, d) t) : (v, s, d) t =
-  let negated (type f) (f : (float, f) D.t) =
-    let pairs = Eval.eval ~by (Value.Bitcast (f, x)) in
-    let last = ndim pairs - 1 and e = operand 0 pairs in
-    let y =
-      elementwise ~by f [ Any pairs ]
-        E.(where (coord last = const D.Int64 1L) (-e) e)
-    in
-    Eval.eval ~by (Value.Bitcast (dtype x, y))
+(* [f] of a complex [x]'s parts, as pairs of its parts' format bitcast
+   back to [x]'s dtype, so that [f]'s elementwise operation meets each part
+   alone; [f x] of any other [x]. *)
+let complex_parts (type v s d) ~by
+    (f : 'w 'r. ('w, 'r, d) t -> ('w, 'r, d) t) (x : (v, s, d) t) :
+    (v, s, d) t =
+  let parts (type p) (p : (float, p) D.t) =
+    let pairs = Eval.eval ~by (Value.Bitcast (p, x)) in
+    Eval.eval ~by (Value.Bitcast (dtype x, f pairs))
   in
   match dtype x with
-  | D.Complex64 -> negated D.Float32
-  | D.Complex128 -> negated D.Float64
-  | _ ->
-      Prim.alive ~by x;
-      x
+  | D.Complex64 -> parts D.Float32
+  | D.Complex128 -> parts D.Float64
+  | _ -> f x
+
+(* A complex value's imaginary parts negated: the odd elements of its pairs
+   of parts, in one map. Any other value is itself. *)
+let conjugate_by ~by x =
+  let negated pairs =
+    let last = ndim pairs - 1 and e = operand 0 pairs in
+    elementwise ~by (dtype pairs) [ Any pairs ]
+      E.(where (coord last = const D.Int64 1L) (-e) e)
+  in
+  if D.is D.Complex (dtype x) then complex_parts ~by negated x
+  else begin
+    Prim.alive ~by x;
+    x
+  end
 
 let conjugate x = conjugate_by ~by:"Nx.conjugate" x
 
@@ -5500,33 +5510,16 @@ let factor norm ~forward n =
 
 (* [x] times the real 0-d [k] cast to [x]'s format, a complex [x] part by
    part: a complex product by [k + 0i] makes a NaN part of an infinite one. *)
-let times_real (type v s r d) ~by (k : (float, r, d) t) (x : (v, s, d) t) :
-    (v, s, d) t =
-  let parts (type f) (f : (float, f) D.t) =
-    let p = Eval.eval ~by (Value.Bitcast (f, x)) in
-    Eval.eval ~by (Value.Bitcast (dtype x, mul_by ~by p (cast_by ~by f k)))
-  in
-  match dtype x with
-  | D.Complex64 -> parts D.Float32
-  | D.Complex128 -> parts D.Float64
-  | dt -> mul_by ~by x (cast_by ~by dt k)
+let times_real ~by k x =
+  complex_parts ~by (fun y -> mul_by ~by y (cast_by ~by (dtype y) k)) x
 
 (* [x] times [c], stored in [x]'s format and written into the product's
    program, a complex [x] part by part, as {!times_real} does. *)
-let scaled (type v s d) ~by c (x : (v, s, d) t) : (v, s, d) t =
-  let times (type f) (f : (float, f) D.t) y =
-    literal ~by ~swapped:false (Binary Mul) f y (D.of_float f c)
+let scaled ~by c x =
+  let times y =
+    literal ~by ~swapped:false (Binary Mul) (dtype y) y (D.of_float (dtype y) c)
   in
-  let parts (type f) (f : (float, f) D.t) =
-    let p = Eval.eval ~by (Value.Bitcast (f, x)) in
-    Eval.eval ~by (Value.Bitcast (dtype x, times f p))
-  in
-  if c = 1. then x
-  else
-    match dtype x with
-    | D.Complex64 -> parts D.Float32
-    | D.Complex128 -> parts D.Float64
-    | dt -> literal ~by ~swapped:false (Binary Mul) dt x (D.of_float dt c)
+  if c = 1. then x else complex_parts ~by times x
 
 (* The other axes, ascending, the real one, the last of [axes], and whether it
    is past the others: the kernels' real transforms run along the last of
