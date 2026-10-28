@@ -143,7 +143,34 @@ let test_read () =
   invalid ~sub:"Nx.item: the value is traced by Rune.iterate" (fun () ->
       Rune.iterate' ~max:3
         ~until:(fun x -> Nx.less x (Nx.scalar f32 (Nx.item [ 0 ] x)))
-        ~f:Nx.neg (v [| 1. |]))
+        ~f:Nx.neg (v [| 1. |]));
+  (* A captured value a differentiation tracks reads its primal in a step, the
+     same at every step, and raises in remat, which stages the read. *)
+  let step a c r =
+    if Nx.item [] a > 1. then (Nx.add c (Nx.mul r a), c) else (c, c)
+  in
+  let sum a =
+    fst (Rune.scan' ~f:(step a) ~init:(Nx.scalar f32 0.) (Nx.ones f32 [| 3 |]))
+  in
+  let two = Nx.scalar f32 2. and one = Nx.scalar f32 1. in
+  equal ~msg:"jvp" float_exact 3. (Nx.item [] (snd (Rune.jvp' sum two one)));
+  equal ~msg:"grad" float_exact 3. (Nx.item [] (Rune.grad' sum two));
+  let count a =
+    Rune.iterate' ~max:4
+      ~until:(fun c -> Nx.greater c (Nx.scalar f32 (Nx.item [] a)))
+      ~f:(fun c -> if Nx.item [] a > 1. then Nx.add c a else c)
+      (Nx.scalar f32 0.)
+  in
+  equal ~msg:"iterate" float_exact 2.
+    (Nx.item [] (snd (Rune.jvp' count two one)));
+  invalid ~sub:"Nx.item: the value is traced by Rune.jvp'" (fun () ->
+      Rune.jvp'
+        (fun a ->
+          Rune.remat
+            Nx.Ptree.(tensor @-> returns tensor)
+            (fun x -> if Nx.item [] a > 1. then Nx.mul x a else x)
+            one)
+        two one)
 
 let test_keyless () =
   invalid ~sub:"no key inside Rune.scan" (fun () ->

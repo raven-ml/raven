@@ -112,9 +112,13 @@
     [Nx.svd ~vectors:false]'s, take their tangents from the vectors the full
     routine computes.
 
-    {b Reads.} Outside constructs, {!Nx.item} of a value a differentiation
-    tracks reads its primal, so an OCaml [if] on it differentiates the path
-    taken. Inside a construct it raises.
+    {b Reads.} {!Nx.item} of a value a differentiation tracks reads its
+    primal, so an OCaml [if] on it differentiates the path taken. A traced
+    function that captures the value reads it so too, and takes that path
+    wherever its program runs: a loop's step at every step. A custom rule's
+    read is not a use its construct refuses. Where a {!remat} or a {!jit} lies
+    between the read and the differentiation, it stages the read, which
+    raises.
 
     {b Nesting.} Each differentiation tracks the values of its own function
     alone: in
@@ -345,8 +349,10 @@ val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
     {b Arguments.} A differentiation applies the rule where it tracks one of the
     rule's arguments. The rule receives them without their derivatives, and must
     not use another value that differentiation tracks: pass such a value as an
-    argument. A differentiation that tracks only values the rule captures
-    differentiates the rule's code, as it does any other code.
+    argument. A read of one with {!Nx.item} is not a use: it reads the primal,
+    as {!section-derivatives} states under Reads. A differentiation that
+    tracks only values the rule captures differentiates the rule's code, as it
+    does any other code.
 
     {b Orders.} A differentiation around another differentiates the derivative's
     code, with the arrays it reads, which the rule computes: the second
