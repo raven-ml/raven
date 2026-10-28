@@ -12,11 +12,19 @@ let invalid_argf fmt = Format.kasprintf invalid_arg fmt
 (* The host's device, where a value is read out ({!on_host}). *)
 let host = Devices.one Devices.host 0
 
+(* A read of a value [owner] traces, which has no elements while [owner] runs
+   and none once it has returned. *)
+let traced ~by (owner : Value.interpretation) =
+  if Atomic.get owner.live then
+    invalid_argf "%s: the value is traced by %s" by owner.name
+  else
+    invalid_argf "%s: a value of %s, used after %s returned" by owner.name
+      owner.name
+
 let on_host : type v s d. by:string -> (v, s, d) Value.t -> (v, s) A.t =
  fun ~by x ->
   match x with
-  | Value.Traced { owner; _ } ->
-      invalid_argf "%s: the value is traced by %s" by owner.name
+  | Value.Traced { owner; _ } -> traced ~by owner
   | Value.Array _ | Value.Shards _ | Value.Handle _ ->
       Iarray.get (Prim.arrays (Place.value ~by host x)) 0
 
@@ -331,8 +339,7 @@ let settle_reached ~by n ds =
 let wait : type v s d. by:string -> (v, s, d) Value.t -> unit =
  fun ~by x ->
   match x with
-  | Value.Traced { owner; _ } ->
-      invalid_argf "%s: the value is traced by %s" by owner.name
+  | Value.Traced { owner; _ } -> traced ~by owner
   | Value.Array _ | Value.Shards _ | Value.Handle _ ->
       Iarray.iter (fun a -> Rig.Buffer.wait (A.buffer a) Read) (Prim.arrays x);
       settle ~by (drained (Devices.number (Devices.set (Prim.placement x))))

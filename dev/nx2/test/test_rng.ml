@@ -2012,9 +2012,19 @@ let scope =
       test "with_key refuses a key traced by an interpretation" (fun () ->
           Nx.Prim.interpret ~name:"test.trace" Extent tracing (fun _ ->
               let k = Rng.key 206 in
-              equal string "Nx.Rng.with_key: the key is traced by test.trace"
+              equal string "Nx.Rng.with_key: the value is traced by test.trace"
                 (message (fun () ->
                      Rng.with_key k (fun () -> ignore (Rng.bits [| 2 |]))))));
+      test "with_key refuses a key whose interpretation returned" (fun () ->
+          let k =
+            Nx.Prim.interpret ~name:"test.trace" Extent tracing (fun _ ->
+                Rng.key 207)
+          in
+          equal string
+            "Nx.Rng.with_key: a value of test.trace, used after test.trace \
+             returned"
+            (message (fun () ->
+                 Rng.with_key k (fun () -> ignore (Rng.bits [| 2 |])))));
       test "a scoped keyless draw under a tracing extent is traced" (fun () ->
           let k = Rng.key 205 in
           Nx.Prim.interpret ~name:"test.trace" Extent tracing (fun i ->

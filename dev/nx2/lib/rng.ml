@@ -421,10 +421,7 @@ let with_key k f =
   let root = Donate.read ~by k in
   (* The scope computes its keys from [root] by {!subkey}, outside any
      interpretation, which a traced root cannot reach. *)
-  Option.iter
-    (fun (o : Value.interpretation) ->
-      invalid_argf "%s: the key is traced by %s" by o.name)
-    (Eval.owner root);
+  Option.iter (Check.traced ~by) (Eval.owner root);
   let count = ref 0 in
   let effc (type a) (e : a Effect.t) =
     match e with

@@ -2189,6 +2189,11 @@ let twin i x = Nx.Prim.twinned i x (Tag 0)
 let refused_read ~by name =
   invalid ~sub:(by ^ ": the value is traced by " ^ name)
 
+let read_after ~by name =
+  invalid
+    ~sub:
+      (Printf.sprintf "%s: a value of %s, used after %s returned" by name name)
+
 let specials =
   Gen.with_pp
     (fun ppf a ->
@@ -2232,7 +2237,7 @@ let twins =
           let t =
             logged ~name:"test.twin" Values (ref []) (fun i -> twin i (x3 ()))
           in
-          refused_read ~by:"Nx.item" "test.twin" (fun () -> Nx.item [ 0 ] t));
+          read_after ~by:"Nx.item" "test.twin" (fun () -> Nx.item [ 0 ] t));
       test "item in the interpretation's own rule raises" (fun () ->
           let reads = ref "" in
           let rule i ~by op =
@@ -2277,7 +2282,7 @@ let twins =
                       (Nx.item [ 1 ] inner);
                     inner)
               in
-              refused_read ~by:"Nx.item" "test.inner" (fun () ->
+              read_after ~by:"Nx.item" "test.inner" (fun () ->
                   Nx.item [ 1 ] inner);
               equal ~msg:"the outer twin" float_exact 2.
                 (Nx.item [ 1 ] outer)));

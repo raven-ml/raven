@@ -672,8 +672,10 @@ val of_bigarray :
     placement as it was. A read reaches no interpretation.
 
     Each raises [Invalid_argument] naming itself for a dead value, and for a
-    traced one, as [Nx.item: the value is traced by Rune.jit]; {!item} alone
-    reads a traced value that has a twin, as its contract says. *)
+    traced one, as [Nx.item: the value is traced by Rune.jit], or as
+    [Nx.item: a value of Rune.grad, used after Rune.grad returned] once its
+    interpretation has returned; {!item} alone reads a traced value that has a
+    twin, as its contract says. *)
 
 val to_array : ('v, 's, 'd) t -> 'v array
 (** [to_array x] is [x]'s elements in C order. *)
@@ -732,7 +734,9 @@ val sync : ('v, 's, 'd) t -> unit
     on [x]'s set, raising the earliest failure, as stated above.
 
     Raises [Invalid_argument] naming [Nx.sync] for a dead value, and for a
-    traced one: [Nx.sync: the value is traced by Rune.jit]. *)
+    traced one, as {!item} does: [Nx.sync: the value is traced by Rune.jit], or
+    [Nx.sync: a value of Rune.grad, used after Rune.grad returned] once its
+    interpretation has returned. *)
 
 (** {1:shapes Shapes, broadcasting and movements}
 

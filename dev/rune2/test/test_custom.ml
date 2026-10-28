@@ -872,7 +872,7 @@ let error_tests =
         let returned = "used after Rune.grad' returned" in
         invalid ~sub:returned (fun () ->
             Rune.grad' (through (fun w g -> Nx.mul g w)) (v3 ()));
-        invalid ~sub:"Nx.item: the value is traced by Rune.grad'" (fun () ->
+        invalid ~sub:returned (fun () ->
             Rune.grad'
               (through (fun w g -> Nx.mul_s g (Nx.item [ 0 ] w)))
               (v3 ())));

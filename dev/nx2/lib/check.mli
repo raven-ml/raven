@@ -76,6 +76,12 @@ val issue :
     while it settles, such as {!Rig.Lost}; and what a refusal or decline of
     the flags' reduction raises, naming [by]. *)
 
+val traced : by:string -> Value.interpretation -> 'a
+(** [traced ~by owner] refuses a read of a value [owner] traces, which has no
+    elements. It raises [Invalid_argument] as [by: the value is traced by name]
+    while [owner] runs, and as [by: a value of name, used after name returned]
+    once it has returned, where [name] is [owner]'s. *)
+
 val wait : by:string -> ('v, 's, 'd) Value.t -> unit
 (** [wait ~by x] waits for the work [x]'s arrays depend on, then drains the
     calling domain's pending checks on [x]'s set as stated above. Each
