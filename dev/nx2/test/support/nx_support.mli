@@ -73,6 +73,13 @@ val words : (unit -> 'a) -> float
 (** [words f] is the minor words one call of [f] allocates, the mean over a
     thousand calls after a first uncounted one. *)
 
+(** {1:backtraces Backtraces} *)
+
+val raised_in : (unit -> 'a) -> string
+(** [raised_in f] is the base name of the file whose code raised what [f ()]
+    raises, the first frame of its backtrace, with backtraces recorded while [f]
+    runs; ["no exception"] if [f] returns. *)
+
 (** {1:witnesses Witnesses and indices} *)
 
 val pp_ints : Format.formatter -> int array -> unit

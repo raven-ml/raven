@@ -4174,7 +4174,8 @@ val check :
     {!Ptree.unit} and [()].
 
     It is a {{!section-waiting}check}: on the host it raises at the call, and on
-    another set at the next wait on that set. It computes on [ok]'s set.
+    another set at the next wait on that set. It computes on [ok]'s set. What
+    [fail] raises passes on, there, with the backtrace of its raise.
 
     [s]'s walk must rebuild [data] with each array replaced by a 0-d one, as
     [fail]'s [d] is built; a walk that checks its arrays' shapes, as {!Rng.walk}
@@ -4588,7 +4589,8 @@ module Rng : sig
   (** [with_key k f] runs [f] in a scope rooted at [k]: the samplers called in
       [f] without [~key] take successive keys of [k], [fold_in k 0],
       [fold_in k 1], …. Scopes nest, the inner replacing the outer. A scope is
-      per fiber and per domain.
+      per fiber and per domain. What [f] raises passes on with the backtrace
+      of its raise.
 
       Raises [Invalid_argument] if [k] is dead or traced: a scope's keys are
       host values computed outside any interpretation. *)
@@ -4599,7 +4601,8 @@ module Rng : sig
 
       A sampler called in [f] without [~key], and {!next_key}, raise
       [Invalid_argument] naming themselves and [name], as
-      [Nx.Rng.normal: no key inside Rune.scan, which refuses keyless draws]. *)
+      [Nx.Rng.normal: no key inside Rune.scan, which refuses keyless draws].
+      What [f] raises passes on with the backtrace of its raise. *)
 
   val next_key : unit -> host key
   (** [next_key ()] is the scope's next key, a host key computed at the call.
@@ -5192,7 +5195,7 @@ module Prim : sig
       computes through: each operation of {!trace} reaches [rule] as
       ["Nx.trace"]. [rule] is the user's function: the operations it makes are
       named by the functions it calls, and what it raises reaches the caller
-      as raised.
+      as raised. What [f] and [rule] raise keeps the backtrace of its raise.
 
       [rule] receives a donated handle ({!Nx.donate}) as a live value over
       its arrays, whose memory is shared from then on, so that [rule] may keep

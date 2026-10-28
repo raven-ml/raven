@@ -412,6 +412,10 @@ type scope = Root of Devices.host key * int | Refused of string
 
 type _ Effect.t += Next : scope Effect.t
 
+(* Re-raised with the backtrace of its raise, which a plain [raise] would
+   restart at the handler. *)
+let reraise e = Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+
 let with_key k f =
   let by = "Nx.Rng.with_key" in
   let root = Donate.read ~by k in
@@ -432,7 +436,7 @@ let with_key k f =
             Effect.Deep.continue kont (Root (root, c)))
     | _ -> None
   in
-  Effect.Deep.match_with f () { retc = Fun.id; exnc = raise; effc }
+  Effect.Deep.match_with f () { retc = Fun.id; exnc = reraise; effc }
 
 let refusing name f =
   let effc (type a) (e : a Effect.t) =
@@ -443,7 +447,7 @@ let refusing name f =
             Effect.Deep.continue kont (Refused name))
     | _ -> None
   in
-  Effect.Deep.match_with f () { retc = Fun.id; exnc = raise; effc }
+  Effect.Deep.match_with f () { retc = Fun.id; exnc = reraise; effc }
 
 (* Outside every scope a domain draws from a seed of system entropy: OCaml's
    default [Random] state is seeded alike in every run. The domain keeps the

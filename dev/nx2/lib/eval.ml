@@ -232,10 +232,16 @@ let absent i ~by op =
     op;
   invalid_arg "Eval.absent: an operation its interpretation does not reach"
 
+(* Re-raised with the backtrace of its raise, which a plain [raise] would
+   restart at the handler. *)
+let reraise e = Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+
 let handler i =
   let here = (Domain.self () :> int) in
   {
-    Effect.Deep.effc =
+    Effect.Deep.retc = Fun.id;
+    exnc = reraise;
+    effc =
       (fun (type a) (e : a Effect.t) ->
         match e with
         | Receive { by; op = Some op } when reaches i op ->
@@ -283,7 +289,7 @@ let interpret ~name reach
   | Values | Extent -> ());
   let live = Atomic.make true in
   let i = { name; reach; rule; live } in
-  let run () = Effect.Deep.try_with f i (handler i) in
+  let run () = Effect.Deep.match_with f i (handler i) in
   match reach with
   | Values | Adopting _ ->
       Fun.protect ~finally:(fun () -> Atomic.set live false) run

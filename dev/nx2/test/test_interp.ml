@@ -197,6 +197,22 @@ let test_rule_calls_named () =
       Nx.Prim.interpret ~name:"test.reshaping" Extent reshaping (fun _ ->
           Nx.lstsq f64 a b))
 
+(* What the function and the rule raise reach the caller with the backtrace
+   of their raise. *)
+let test_raised_backtrace () =
+  let raise_exit () = raise (Sys.opaque_identity Exit) in
+  let x = vec f64 [| 1.; 2. |] in
+  equal ~msg:"the function" string "test_interp.ml"
+    (Nx_support.raised_in (fun () ->
+         Nx.Prim.interpret ~name:"test.raise" Values
+           (fun _ ~by op -> Nx.Prim.eval ~by op)
+           (fun _ -> raise_exit ())));
+  equal ~msg:"the rule" string "test_interp.ml"
+    (Nx_support.raised_in (fun () ->
+         Nx.Prim.interpret ~name:"test.raise" Extent
+           (fun _ ~by:_ _ -> raise_exit ())
+           (fun _ -> Nx.neg x)))
+
 (* What a rule donates dies naming the function the rule called, inside a
    composite too. *)
 let test_rule_donates () =
@@ -439,6 +455,8 @@ let rule =
         test_refusal_named;
       test "a rule's calls keep their names inside a composite"
         test_rule_calls_named;
+      test "what the function and the rule raise keep their backtrace"
+        test_raised_backtrace;
       test "what a rule donates dies naming the rule's call" test_rule_donates;
       test "a plain operation after a call resumed on another domain"
         test_names_after_hop;

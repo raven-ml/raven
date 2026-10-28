@@ -181,6 +181,21 @@ let elsewhere =
           Nx.check P.unit ok () (fun i () -> Flag i);
           raises (Flag [| 1 |]) (fun () -> Nx.sync ok);
           Nx.sync ok);
+      test "what fail raises keeps the backtrace of its raise" (fun () ->
+          let raise_exit _ () = raise (Sys.opaque_identity Exit) in
+          let ok b = Nx.place S.on (Nx.create Nx.bool [| 2 |] [| true; b |]) in
+          let at_wait () =
+            Nx.check P.unit (ok false) () raise_exit;
+            Nx.sync (ok true)
+          in
+          (* The failure is found, and [fail] runs, at the second issue. *)
+          let at_issue () =
+            Nx.check P.unit (ok false) () raise_exit;
+            Nx.check P.unit (ok true) () raise_exit;
+            Nx.sync (ok true)
+          in
+          equal ~msg:"at a wait" string "test_check.ml" (raised_in at_wait);
+          equal ~msg:"at an issue" string "test_check.ml" (raised_in at_issue));
       test "a failure's 0-d values lie where their data lies" (fun () ->
           let ok = Nx.full_at S.on Nx.bool [| 2 |] false in
           let data =

@@ -196,7 +196,12 @@ let building f =
   | b -> b
   | exception Effect.Unhandled (Building _) -> false
 
-(* [f]'s exception, built inside a build of [f]. *)
+(* Re-raised with the backtrace of its raise, which a plain [raise] would
+   restart at the handler. *)
+let reraise e = Printexc.raise_with_backtrace e (Printexc.get_raw_backtrace ())
+
+(* [f]'s exception, built inside a build of [f]. What [fail] raises keeps its
+   backtrace. *)
 let built ~by f =
   let effc (type a) (e : a Effect.t) =
     match e with
@@ -208,7 +213,10 @@ let built ~by f =
   in
   match f with
   | Failing (c, _) ->
-      Effect.Deep.try_with (fun () -> failure ~by c) () { Effect.Deep.effc }
+      Effect.Deep.match_with
+        (fun () -> failure ~by c)
+        ()
+        { retc = Fun.id; exnc = reraise; effc }
 
 (* Set [n]'s pending checks, oldest first, taken off the list up to a mark
    whose build runs around the caller: the build's own reads leave it, and

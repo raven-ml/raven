@@ -2152,6 +2152,12 @@ let refusals =
       test "the function's result and exceptions pass through" (fun () ->
           equal int 3 (refusing (fun () -> 3));
           raises Exit (fun () -> refusing (fun () -> raise Exit)));
+      test "an exception keeps the backtrace of its raise" (fun () ->
+          let raise_exit () = raise (Sys.opaque_identity Exit) in
+          equal ~msg:"refusing" string "test_rng.ml"
+            (raised_in (fun () -> refusing raise_exit));
+          equal ~msg:"with_key" string "test_rng.ml"
+            (raised_in (fun () -> Rng.with_key (Rng.key 403) raise_exit)));
     ]
 
 (* Goldens *)

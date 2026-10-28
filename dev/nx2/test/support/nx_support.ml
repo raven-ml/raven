@@ -250,6 +250,24 @@ let words f =
   done;
   (Gc.minor_words () -. before) /. Float.of_int n
 
+(* Backtraces *)
+
+let raised_in f =
+  let recording = Printexc.backtrace_status () in
+  Printexc.record_backtrace true;
+  Fun.protect ~finally:(fun () -> Printexc.record_backtrace recording)
+  @@ fun () ->
+  match f () with
+  | _ -> "no exception"
+  | exception _ -> (
+      let bt = Printexc.get_raw_backtrace () in
+      match Printexc.backtrace_slots bt with
+      | None | Some [||] -> "no backtrace"
+      | Some slots -> (
+          match Printexc.Slot.location slots.(0) with
+          | Some l -> Filename.basename l.filename
+          | None -> "no location"))
+
 (* Witnesses and indices *)
 
 let pp_ints ppf a =
