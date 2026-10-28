@@ -838,6 +838,17 @@ val split : axis:int -> int -> ('v, 's, 'd) t -> ('v, 's, 'd) t list
 
     Raises [Invalid_argument] if [axis] is not [x]'s or [n < 1]. *)
 
+val split_at : axis:int -> int list -> ('v, 's, 'd) t -> ('v, 's, 'd) t list
+(** [split_at ~axis offsets x] is [x] cut along [axis] before each of
+    [offsets], in order. There is one run more than there are offsets; the
+    first starts at [0] and the last ends at the extent [d]. A negative offset
+    counts from the end; then each clips into [\[0, d\]], so that one past the
+    end cuts at [d]. [split_at ~axis:0 [ 2; 3 ]] of [[w; x; y; z]] is
+    [[[w; x]; [y]; [z]]]. Views.
+
+    Raises [Invalid_argument] if [axis] is not [x]'s or an offset cuts before
+    the offset preceding it in [offsets]. *)
+
 val concatenate : axis:int -> ('v, 's, 'd) t list -> ('v, 's, 'd) t
 (** [concatenate ~axis xs] is [xs] joined along their axis [axis], in order. A
     copy. Joining two or more values reads [axis] whole on each device, so a

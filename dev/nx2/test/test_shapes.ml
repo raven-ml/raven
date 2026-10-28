@@ -315,6 +315,57 @@ let laws =
                 y;
               start := !start + count)
             parts);
+      prop "split_at cuts before each offset"
+        Gen.(
+          let* o = operand ~min_rank:1 () in
+          let* a = axis_of o in
+          let d = o.s.(a) in
+          let* offsets =
+            list ~size:(int_range 0 3) (int_range (-d - 2) (d + 2))
+          in
+          let+ neg = bool in
+          (o, a, offsets, neg))
+        (fun (o, a, offsets, neg) ->
+          covers o;
+          let d = o.s.(a) in
+          (* Where each offset cuts: counted from the end if negative, then
+             clipped into [0, d]. *)
+          let place k =
+            Stdlib.max 0 (Stdlib.min d (if k < 0 then k + d else k))
+          in
+          let by_place j k = compare (place j) (place k) in
+          let ordered = List.stable_sort by_place offsets = offsets in
+          cover "offsets in order" ordered;
+          cover "offsets out of order" (not ordered);
+          let axis = spell o neg a in
+          if not ordered then
+            raises_match
+              (Exn.invalid_arg ~substring:"Nx.split_at: offset ")
+              (fun () -> Nx.split_at ~axis offsets o.x)
+          else begin
+            cover "no offset" (offsets = []);
+            cover "a negative offset" (List.exists (fun k -> k < 0) offsets);
+            cover "an offset outside the axis"
+              (List.exists (fun k -> k < -d || k > d) offsets);
+            let cuts = (0 :: List.map place offsets) @ [ d ] in
+            cover "an empty run"
+              (List.exists2 ( = ) (List.filteri (fun i _ -> i > 0) cuts)
+                 (List.filteri (fun i _ -> i < List.length cuts - 1) cuts));
+            let parts = Nx.split_at ~axis offsets o.x in
+            equal ~msg:"runs" int (List.length offsets + 1) (List.length parts);
+            List.iteri
+              (fun k y ->
+                let first = List.nth cuts k in
+                let s' = Array.copy o.s in
+                s'.(a) <- List.nth cuts (k + 1) - first;
+                is s'
+                  (fun i ->
+                    let j = Array.copy i in
+                    j.(a) <- first + i.(a);
+                    at o j)
+                  y)
+              parts
+          end);
       prop "tile repeats whole axes end to end"
         Gen.(
           let* o = operand () in
@@ -366,6 +417,16 @@ let joins =
         (fun (o, a, n) ->
           covers o;
           is o.s (at o) (Nx.concatenate ~axis:a (Nx.split ~axis:a n o.x)));
+      prop "concatenate undoes split_at"
+        Gen.(
+          let* o = operand ~min_rank:1 () in
+          let* a = axis_of o in
+          let+ offsets = list ~size:(int_range 0 3) (int_range 0 o.s.(a)) in
+          (o, a, List.sort compare offsets))
+        (fun (o, a, offsets) ->
+          covers o;
+          is o.s (at o)
+            (Nx.concatenate ~axis:a (Nx.split_at ~axis:a offsets o.x)));
       prop "stack puts each value at its position along the new axis"
         Gen.(
           let* o = operand () in
@@ -598,6 +659,7 @@ let views =
           each "flip" (Nx.flip ~axes:[ 1 ] x);
           each "sliding_window" (Nx.sliding_window ~window:2 x);
           each "split" (List.nth (Nx.split ~axis:2 3 x) 2);
+          each "split_at" (List.nth (Nx.split_at ~axis:2 [ 1; 3 ] x) 1);
           each "tile of a unit axis"
             (Nx.tile [| 3; 1 |] (Nx.reshape [| 1; 24 |] x));
           each "repeat of a unit axis"
@@ -618,7 +680,8 @@ let views =
           each "swapaxes" (Nx.swapaxes 0 (-1) x);
           each "flip" (Nx.flip x);
           each "sliding_window" (Nx.sliding_window ~axis:1 ~window:2 x);
-          each "split" (List.nth (Nx.split ~axis:(-1) 3 x) 1));
+          each "split" (List.nth (Nx.split ~axis:(-1) 3 x) 1);
+          each "split_at" (List.nth (Nx.split_at ~axis:(-1) [ -2 ] x) 1));
       test "a reshape no stride expresses copies" (fun () ->
           let x = Nx.transpose (operand_of [| 2; 3 |] Plain).x in
           let y = Nx.reshape [| 6 |] x in
@@ -781,6 +844,17 @@ let refusals =
           named ~by f);
       test "split refuses no runs" (fun () ->
           invalid ~by:"Nx.split" (fun () -> Nx.split ~axis:0 0 x));
+      test "split_at refuses decreasing offsets" (fun () ->
+          raises
+            (Invalid_argument
+               "Nx.split_at: offset 1 cuts at 1, before offset 2 at 2, along \
+                axis 1 of int32 [2; 3]") (fun () ->
+              Nx.split_at ~axis:1 [ 2; 1 ] x);
+          raises
+            (Invalid_argument
+               "Nx.split_at: offset 1 cuts at 1, before offset -1 at 2, along \
+                axis 1 of int32 [2; 3]") (fun () ->
+              Nx.split_at ~axis:1 [ -1; 1 ] x));
     ]
 
 let () =

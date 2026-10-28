@@ -1634,6 +1634,8 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
       c "sliding_window" 1 (fun d ->
           show (Nx.sliding_window ~window:2 (d 0 (x [| 5 |]))));
       c "split" 1 (fun d -> showl (Nx.split ~axis:0 2 (d 0 (x [| 4; 2 |]))));
+      c "split_at" 1 (fun d ->
+          showl (Nx.split_at ~axis:0 [ 1; -1 ] (d 0 (x [| 4; 2 |]))));
       c "concatenate" 2 (fun d ->
           show
             (Nx.concatenate ~axis:0 [ d 0 (x [| 2; 3 |]); d 1 (x [| 1; 3 |]) ]));

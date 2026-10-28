@@ -923,21 +923,46 @@ let sliding_window_by ~by ?axis:(a = -1) ~window ?(step = 1) x =
 let sliding_window ?axis ~window ?step x =
   sliding_window_by ~by:"Nx.sliding_window" ?axis ~window ?step x
 
+(* [x] cut along [a] into runs of [counts] elements, in order: views. *)
+let runs ~by a counts x =
+  let s = shape x in
+  let start = ref 0 in
+  List.map
+    (fun count ->
+      let rs = Array.map whole s in
+      rs.(a) <- { start = !start; count; step = 1 };
+      start := !start + count;
+      sliced ~by rs x)
+    counts
+
 let split ~axis:a n x =
   let by = "Nx.split" in
   let x = Donate.read ~by x in
   let a = axis ~by x a in
   if n < 1 then
     invalid_argf "%s: %d runs of %a; give at least 1" by n pp_value x;
-  let s = shape x in
-  let d = s.(a) in
-  let start = ref 0 in
-  List.init n (fun k ->
-      let count = (d / n) + if k < d mod n then 1 else 0 in
-      let rs = Array.map whole s in
-      rs.(a) <- { start = !start; count; step = 1 };
-      start := !start + count;
-      sliced ~by rs x)
+  let d = dim a x in
+  runs ~by a (List.init n (fun k -> (d / n) + if k < d mod n then 1 else 0)) x
+
+let split_at ~axis:a offsets x =
+  let by = "Nx.split_at" in
+  let x = Donate.read ~by x in
+  let a = axis ~by x a in
+  let d = dim a x in
+  let place k = Stdlib.max 0 (Stdlib.min d (if k < 0 then k + d else k)) in
+  (* The runs' lengths, [before] the last offset given and [at] its place. *)
+  let rec counts before at = function
+    | [] -> [ d - at ]
+    | k :: ks ->
+        let p = place k in
+        if p < at then
+          invalid_argf
+            "%s: offset %d cuts at %d, before offset %d at %d, along axis %d \
+             of %a"
+            by k p before at a pp_value x;
+        (p - at) :: counts k p ks
+  in
+  runs ~by a (counts 0 0 offsets) x
 
 let assemble ~by dtype shape fill pieces =
   let shape = Iarray.of_array shape in
