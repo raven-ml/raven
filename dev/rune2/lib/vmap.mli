@@ -3,20 +3,22 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Maps: the interpretation whose values stand for one value per lane.
+(** The map interpretation, whose values stand for one value per lane.
 
     A map has [n] lanes and a name ({!Program.axis}). A {e lane value} is a
     value of the interpretation that holds a {e batch}, every lane's value
     stacked along a new axis 0 of length [n]. Its form is one lane's. Every
-    other value is {e shared} by the lanes. Nothing reads a lane value's
-    elements.
+    other value is {e shared} by the lanes. A read of a lane value raises
+    [Invalid_argument] naming the read and the map's entry point, as
+    [Nx.item: the value is traced by Rune.vmap].
 
-    The rule of each operation over lane values checks it as one lane's, then
-    issues it once outward, under the interpretations around this one, over the
-    batches, with the operation's axes, pads, regions and coordinates moved past
-    the lane axis. Its results have the forms one lane's operation gives, and
-    are lane values except where every lane shares them, as below. A shared
-    operand is broadcast along a new axis 0, except in a contraction.
+    The rule of each operation over lane values checks it as one lane's. It then
+    issues the operation once outward, under the interpretations around this
+    one, over the batches, with the operation's axes, pads, regions and
+    coordinates moved past the lane axis. Its results have the forms one lane's
+    operation gives, and are lane values except where every lane shares them, as
+    below. A shared operand is broadcast along a new axis 0, except in a
+    contraction.
 
     In a contraction ([Nx.Prim.Contract]), an operand or its scale with lanes
     gives the lane axis. Where both operands have lanes, or the offsets of its
@@ -36,13 +38,13 @@
     outside it. It answers {!Program.Bound} for its name, [Lanes] and
     [Lane_index] of its name, a call, an iterate or a switch whose programs name
     the map, every addition, and each other construct over lane values. It
-    performs a construct outward over the batches with its programs mapped, a
-    call's map derived at its site ({!Program.derive}). An addition adds the sum
-    of its lanes' values outward once, so a shared value adds [n] copies. The
-    handler answers {!Program.Running} with [None]. Where an iterate or a switch
-    runs the lanes apart, the additions of a lane that has stopped or taken
-    another branch are dropped, and [Lanes] of the map raises
-    [Invalid_argument]. *)
+    performs a construct outward over the batches with its programs batched over
+    the lanes, a call's batched program derived at its site ({!Program.derive}).
+    An addition adds the sum of its lanes' values outward once, so a shared
+    value adds [n] copies. The handler answers {!Program.Running} with [None].
+    Where an iterate or a switch runs the lanes apart, the additions of a lane
+    that has stopped or taken another branch are dropped, and [Lanes] of the map
+    raises [Invalid_argument]. *)
 
 val run :
   name:string ->

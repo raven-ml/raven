@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Forward mode: the interpretation whose values carry tangents.
+(** The forward-mode interpretation, whose values carry tangents.
 
     A {e dual} is a value of the interpretation holding a primal and a tangent
     of the primal's dtype and shape. A value that is not a dual is its own

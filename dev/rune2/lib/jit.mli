@@ -11,13 +11,12 @@
     variant ({!Compile}). A call first finds the program of its key without the
     number of lanes of any map. Where the number of lanes of a map the program
     names differs from those at its trace, the call then finds the program of
-    its key with them, tracing it the first time. A call whose key equals the
-    previous call's, where that call found its program without lanes, reads that
-    program without the table's lock.
+    its key with them, tracing it the first time.
 
-    With [RUNE_JIT_DEBUG=1] in the environment ({!Compile.report}), a call
-    reports each retrace, with the first difference between its key and the
-    previous call's or the line [a map's lanes differ], and why its program
+    With [RUNE_JIT_DEBUG] a nonzero integer in the environment
+    ({!Compile.report}), a call reports each retrace, with the first difference
+    between its key and that of the latest call that returned, on any domain, or
+    the line [a map's lanes differ], and, the first time, why its program
     evaluates uncompiled. *)
 
 type 'y entry = {

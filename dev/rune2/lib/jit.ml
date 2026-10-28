@@ -148,7 +148,8 @@ let lanes axes =
     (fun a -> match Program.bound a with Some n -> n | None -> -1)
     axes
 
-(* [last] is the latest call's key and entry, which a call with the key reads
+(* [last] is the latest call's key and entry, on any domain. A call whose key
+   equals it, where that call found its program without lanes, reads the entry
    without the table's lock. *)
 type 'y t = {
   name : string;

@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Reverse mode: a function linearized into a tape, and the tape transposed.
-    This module implements the derivatives of {!Rune2.section-reverse}.
+(** Reverse mode, which linearizes a function into a tape and transposes the
+    tape. This module implements the derivatives of {!Rune2.section-reverse}.
 
     {e Linearizing} a function runs it under forward mode ({!Jvp}) whose
     tangents are the variables of a tape tracer ({!Trace.Tape}). The primal
@@ -66,12 +66,14 @@ type ct = {
 (** The type for cotangents. *)
 
 val transpose : t -> Program.value option array -> ct option array
-(** [transpose l cts] is the cotangent of each tangent parameter of [l], [None]
-    where it receives no contribution, given [cts], the cotangent of each output
-    of the linearized function, [None] for zero. Each cotangent must have its
-    output's dtype and shape. A value a transpose makes beside a cotangent, such
-    as the zeros a gather's transpose scatters into, lies at its operand's
-    placement, or whole on each device of the value it meets.
+(** [transpose l cts] is the cotangent of each tangent parameter of [l], given
+    [cts], the cotangent of each output of the linearized function. [None] in
+    [cts] stands for zero, and [None] in the result for a parameter that
+    receives no contribution. Each cotangent must have its output's dtype and
+    shape. A value a transpose makes beside a cotangent lies at the placement of
+    the operand it stands for, as the zeros a gather's transpose scatters into
+    do, or else whole on each device of the cotangent, as the zeros an
+    assembly's transpose puts over an overlapped region do.
 
     Raises [Invalid_argument] naming the tape's entry point for an equation that
     is not linear in its tangents, and for an iterate over tangents. *)

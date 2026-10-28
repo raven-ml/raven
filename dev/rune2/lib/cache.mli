@@ -24,9 +24,12 @@ module Make (K : Hashtbl.HashedType) : sig
   (** [create ()] is an empty table. *)
 
   val find : 'v t -> K.t -> miss:(unit -> unit) -> (unit -> 'v) -> 'v
-  (** [find t k ~miss make] is [k]'s value in [t], made with [make ()] by the
-      first call that reads it. The first time [t] meets [k], [miss ()] runs
-      under [t]'s lock, and [k] is added only if it returns. If [make] raises,
-      the exception reaches its caller, and the next call for [k], a waiting one
+  (** [find t k ~miss make] is [k]'s value in [t]. The first call for [k] runs
+      [miss ()] under [t]'s lock and adds [k] to [t] only if [miss] returns. The
+      value is made with [make ()] by the first call that takes [k]'s latch
+      while [k] has none: that first call, unless another call for [k] takes the
+      latch first. A call made while its own domain makes [k]'s value runs
+      [make ()] itself, and that value is not kept. If [make] raises, the
+      exception reaches its caller, and the next call for [k], a waiting one
       included, makes the value again. *)
 end
