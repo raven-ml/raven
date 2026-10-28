@@ -18,13 +18,14 @@
     lie on its placement's devices whatever its brand. A brand names one
     set, and a set's module unpacked twice gives it two brand names. A
     placement is a {!place} at every brand, so the engine holds placements
-    at [unit] in routes and constants' evaluations, and reads them at an
-    operation's brand, without a conversion. {!set} then gives a
-    placement's set at whatever brand its caller names. [Nx] keeps its
-    placements' brand abstract, which ties a program's placement to its
-    set's brand, and [Nx.Prim.coerce] gives a value another brand only where
-    that brand names the value's set. This module is nx's one site that
-    names nx.cpu.
+    at [unit] in routes and reads them at an operation's brand, without a
+    conversion. {!set} then gives a placement's set at whatever brand its
+    caller names. [Nx] keeps its placements' brand abstract, which ties a
+    program's placement to its set's brand, and [Nx.Prim.coerce] gives a
+    value another brand only where that brand names the value's set.
+
+    This module lies above {!Grid} alone, and is nx's one site that names
+    nx.cpu.
 
     Errors are [Invalid_argument] naming the [by] the caller passes. *)
 

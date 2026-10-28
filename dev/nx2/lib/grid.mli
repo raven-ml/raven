@@ -8,10 +8,14 @@
     A grid is one device, or distinct devices in row-major order over the grid's
     extents, with, for each cut axis of a value, the grid axes that cut it,
     major first. A grid axis that no cut names holds copies. Devices are
-    positions in a set. A grid is kept in normal form: extents are at least 2,
-    adjacent grid axes merge when no cut names either or one cut names both in
-    order, and a grid of one device is that device. So two grids that give each
-    device the same window are equal. *)
+    positions in a set. A grid is kept in normal form, in which extents are at
+    least 2, adjacent grid axes merge when no cut names either or one cut
+    names both in order, and a grid of one device is that device. So two
+    grids that give each device the same window are equal. A grid is
+    immutable, and any domain reads it.
+
+    Nothing of the engine lies below this module; {!Devices} lays a grid
+    over a set's devices. *)
 
 type t
 
