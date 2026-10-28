@@ -116,6 +116,8 @@ and construct =
       init : value array;
       xs : value array;  (** Rows along axis 0. *)
       captures : value array;
+      seeds : value array;
+          (** Where each sum starts, or none: each starts at the identity. *)
     }
       -> construct
   | Iterate : {
@@ -126,6 +128,7 @@ and construct =
       init : value array;
       step_captures : value array;
       until_captures : value array;
+      seeds : value array;  (** As a scan's. *)
     }
       -> construct
   | Call : {
@@ -200,6 +203,11 @@ val make :
 (** [make ~owner ~params eqns ~outputs ~adds ~slots] is the program of the
     equations [eqns], in order. *)
 
+val feeds : t -> addition array * form array * int array
+(** [feeds step] is the sums of a loop of the step [step]: one per total and
+    shape its additions add to, in the order of their first additions, their
+    forms, and the sum each of [step]'s additions feeds, in order. *)
+
 val eval : t -> value array -> value array
 (** [eval p args] is [p]'s outputs with its parameters bound to [args], in
     order. Raises what an equation raises. *)
@@ -217,7 +225,22 @@ val perform : construct -> value array
 
 val run : construct -> value array
 (** [run c] is [perform c] after which each addition of [c]'s results is added
-    to its total, as {!perform} of [Add]. *)
+    to its total, as {!perform} of [Add]. A loop first asks each total it adds
+    to for its running value ({!Running}): where one answers, the loop's sum
+    starts from it and its end replaces it ({!Replace}), so that the total is
+    the one its additions give made in turn. *)
+
+type _ Effect.t +=
+  | Running :
+      ('v, 's, 'd) total * int array
+      -> ('v, 's, 'd) Nx.t option Effect.t
+        (** Answered by the innermost collect of the total around the call with
+            its running value, if it has the shape given. A tracer or a map
+            between answers [None], so that a loop whose additions reach a
+            collect through it adds its sum. *)
+  | Replace : ('v, 's, 'd) total * ('v, 's, 'd) Nx.t -> unit Effect.t
+        (** Answered by the collect that answered {!Running}, whose running
+            value becomes the value given. *)
 
 type _ Effect.t +=
   | Construct : construct -> value array Effect.t

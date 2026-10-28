@@ -413,8 +413,9 @@ let law_jit (Jit_case (dt, s, xo, yo, e)) =
   in
   equal ~msg:"jit of grad" t (grad f') (outcome (fun () -> both (staged x y)))
 
-(* Loops under reverse mode: a scan's gradient is its fold's, bit for bit,
-   eagerly and under jit. *)
+(* Loops under reverse mode: a scan's gradient is its fold's, eagerly and under
+   jit, bit for bit but for the zeros a loop holds where the fold has none
+   (Compose.lenient). *)
 let fold step ~init xs =
   let n = (Nx.shape xs).(0) in
   let rec go i c ys =
@@ -465,7 +466,9 @@ let law_scan (Loop_case (dt, s, n, co, xso, g, h)) =
   let grad f = outcome (fun () -> both (Rune.grad p f (init, xs))) in
   let expected = grad folded in
   cover "a refused step" (match expected with Raised _ -> true | _ -> false);
-  let t = outcome_t (Testable.pair bits_t bits_t) in
+  (* The carry's cotangent is a zero where the step reads no carry. *)
+  let l = lenient ~nan:(not (reads_x g || reads_x h)) in
+  let t = outcome_t (Testable.pair l l) in
   equal ~msg:"eager" t expected (grad scanned);
   (* Compiled, the gradient gives the fold's bits where every function of the
      step is exact. *)

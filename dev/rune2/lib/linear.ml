@@ -1080,11 +1080,13 @@ let next_bases (p : Program.t) =
   let base = function Op { base; _ } | Do { base; _ } -> base in
   Array.init n (fun e -> if e + 1 < n then base p.eqns.(e + 1) else p.slots)
 
-let transpose ?witness l cts =
-  let p = l.tape in
+(* [p]'s parameters' cotangents, given its outputs' [cts]: [None] for a
+   parameter bound to a constant ([consts.(k) = Some v]) or one that receives no
+   contribution. *)
+let rec walk ~name ~witness (p : Program.t) consts cts =
   let owner = p.owner in
   let bound = Array.make p.slots None in
-  Array.iteri (fun k v -> bound.(p.params.(l.ins + k)) <- Some v) l.captures;
+  Array.iteri (fun k c -> bound.(p.params.(k)) <- c) consts;
   let acc = Array.make p.slots None in
   let var x = match Prim.payload owner x with Some (Var n) -> n | _ -> -1 in
   let lin x =
@@ -1097,19 +1099,18 @@ let transpose ?witness l cts =
     else
       match bound.(n) with
       | Some v -> like x v
-      | None -> invalid_arg (l.name ^ ": a tangent is read as a constant")
+      | None -> invalid_arg (name ^ ": a tangent is read as a constant")
   in
   let give x c =
     let n = var x in
     acc.(n) <- Some (match acc.(n) with None -> c | Some a -> sum a c)
   in
-  let env = { name = l.name; lin; const; give; witness } in
+  let env = { name; lin; const; give; witness } in
   Array.iteri
     (fun k c ->
-      match (l.outs.(k), c) with
-      | Some j, Some c -> (
-          match p.outputs.(j) with V y -> if lin y then give y (held c))
-      | _ -> ())
+      match (c, p.outputs.(k)) with
+      | Some c, V y -> if lin y then give y (held c)
+      | None, _ -> ())
     cts;
   let acc_at base k = Option.map (fun c -> c.v) acc.(base + k) in
   let next = next_bases p in
@@ -1117,13 +1118,14 @@ let transpose ?witness l cts =
     let rec go k = k < n && (Option.is_some acc.(base + k) || go (k + 1)) in
     go 0
   in
+  let cts_at base n k =
+    if k < n then Option.map (fun c -> c.v) acc.(base + k) else None
+  in
   for e = Array.length p.eqns - 1 downto 0 do
     match p.eqns.(e) with
     | Op { op; base; _ } ->
         let n = next.(e) - base in
-        if reached base n then
-          rule env op (fun k ->
-              if k < n then Option.map (fun c -> c.v) acc.(base + k) else None)
+        if reached base n then rule env op (cts_at base n)
     | Do { c = Lanes (a, x); base } -> (
         match acc.(base) with
         | Some c when lin x -> give x (fresh (lanes_transpose a x c.v))
@@ -1137,8 +1139,222 @@ let transpose ?witness l cts =
         if reached base (Array.length forms) then
           linear_call env ~name ~apply ~transpose ~args ~captures ~residuals
             ~forms (acc_at base)
+    | Do { c = Scan { step; length; init; xs; captures; _ }; base } ->
+        let n = next.(e) - base in
+        if reached base n then
+          scan_rule env step ~length ~init ~xs ~captures (cts_at base n)
     | Do { base; _ } ->
         if reached base (next.(e) - base) then
-          invalid_arg (l.name ^ ": a loop or call has no transpose yet")
+          invalid_arg (name ^ ": a loop or call has no transpose yet")
   done;
-  Array.init l.ins (fun k -> acc.(p.params.(k)))
+  Array.mapi
+    (fun k c -> if Option.is_none c then acc.(p.params.(k)) else None)
+    consts
+
+(* A linear scan's transpose is the scan of its step's transpose over the rows
+   in reverse, as JAX transposes a scan: its carry holds the cotangents of the
+   carries that receive one, a fixpoint, and the running sums of the linear
+   captures' cotangents; its rows are the constant rows and the outputs'
+   cotangents. A carry or a sum starts from the identity that keeps every sign,
+   so that a single contribution is itself. *)
+and scan_rule env (step : Program.t) ~length ~init ~xs ~captures cts =
+  let nc = Array.length init and nx = Array.length xs in
+  let ncap = Array.length captures in
+  let ny = Array.length step.outputs - nc - Array.length step.adds in
+  let lin (V x) = env.lin x and const (V x) = V (env.const x) in
+  let ct_c = Array.init nc cts
+  and ct_y = Array.init ny (fun j -> cts (nc + j)) in
+  if length = 0 then
+    Array.iteri
+      (fun k (V x) ->
+        match ct_c.(k) with
+        | Some c when env.lin x -> env.give x (held c)
+        | _ -> ())
+      init
+  else
+    let lx = Array.map lin xs and lk = Array.map lin captures in
+    let cxs = Array.map const (Loops.pick (Array.map not lx) xs) in
+    let ckk = Array.map const (Loops.pick (Array.map not lk) captures) in
+    let gy = Array.map Option.is_some ct_y in
+    let ys = Array.map Option.get (Loops.pick gy ct_y) in
+    let nlk = Array.length (Loops.pick lk lk) in
+    let caps = Loops.pick lk captures in
+    let start k =
+      match ct_c.(k) with
+      | Some c -> c
+      | None -> Loops.filled ~zero:false (form init.(k))
+    in
+    let rec fix m a (cf : form array) (af : form array) =
+      let gained = Array.make nc false and gained_a = Array.make nlk false in
+      let got = Array.make nc false in
+      let has_row = ref [||] and outs = ref [||] and aouts = ref [||] in
+      let forms =
+        Array.concat
+          [
+            Loops.pick m cf;
+            Loops.pick a af;
+            Array.map Loops.row cxs;
+            Array.map Loops.row ys;
+            Array.map form ckk;
+          ]
+      in
+      let count m = Array.length (Loops.pick m m) in
+      let lengths =
+        [
+          count m; count a; Array.length cxs; Array.length ys; Array.length ckk;
+        ]
+      in
+      let transposed vs =
+        match Loops.split lengths vs with
+        | [ cc; ca; rx; ry; kk ] ->
+            let some = Array.map Option.some in
+            let none n = Array.make n None in
+            let consts =
+              Array.concat
+                [
+                  none nc;
+                  Loops.merge lx
+                    (none (Array.length (Loops.pick lx lx)))
+                    (some rx);
+                  Loops.merge lk (none nlk) (some kk);
+                ]
+            in
+            let out_cts =
+              Array.concat
+                [
+                  Loops.merge m (some cc) (none (nc - Array.length cc));
+                  Loops.merge gy (some ry) (none (ny - Array.length ry));
+                  none (Array.length step.adds);
+                ]
+            in
+            let r =
+              walk ~name:env.name ~witness:env.witness step consts out_cts
+            in
+            let carry =
+              Array.init nc (fun k ->
+                  gained.(k) <- (not m.(k)) && Option.is_some r.(k);
+                  got.(k) <- Option.is_some r.(k);
+                  match r.(k) with
+                  | Some c -> Some c.v
+                  | None ->
+                      if m.(k) then Some (Loops.filled ~zero:false cf.(k))
+                      else None)
+            in
+            let carry = Array.map Option.get (Loops.pick m carry) in
+            let rcaps = Loops.pick lk (Array.sub r (nc + nx) ncap) in
+            let accs = ref (Array.to_list ca) in
+            let caps' =
+              Array.mapi
+                (fun j rc ->
+                  gained_a.(j) <- (not a.(j)) && Option.is_some rc;
+                  if not a.(j) then None
+                  else
+                    let acc = List.hd !accs in
+                    accs := List.tl !accs;
+                    match rc with
+                    | Some c -> Some (sum (fresh acc) c).v
+                    | None -> Some acc)
+                rcaps
+            in
+            let caps' = Array.map Option.get (Loops.pick a caps') in
+            let rrows = Loops.pick lx (Array.sub r nc nx) in
+            has_row := Array.map Option.is_some rrows;
+            outs := Array.map form carry;
+            aouts := Array.map form caps';
+            Array.concat
+              [
+                carry;
+                caps';
+                Array.map
+                  (fun c -> (Option.get c).v)
+                  (Loops.pick !has_row rrows);
+              ]
+        | _ -> invalid_arg "Rune: a scan's transpose"
+      in
+      let prog, own = Trace.trace Body ~name:env.name forms transposed in
+      let cf' = Array.copy cf in
+      let settled = Loops.settle (Loops.pick m cf) !outs in
+      let j = ref (-1) in
+      Array.iteri
+        (fun k h ->
+          if h then begin
+            incr j;
+            cf'.(k) <- settled.(!j)
+          end)
+        m;
+      let af' = Array.copy af in
+      let settled = Loops.settle (Loops.pick a af) !aouts in
+      let j = ref (-1) in
+      Array.iteri
+        (fun k h ->
+          if h then begin
+            incr j;
+            af'.(k) <- settled.(!j)
+          end)
+        a;
+      if Array.exists Fun.id gained || Array.exists Fun.id gained_a then
+        fix (Array.map2 ( || ) m gained) (Array.map2 ( || ) a gained_a) cf' af'
+      else if not (Loops.same_forms cf cf' && Loops.same_forms af af') then
+        fix m a cf' af'
+      else (prog, own, m, got, a, !has_row, cf')
+    in
+    let m = Array.map Option.is_some ct_c and a = Array.make nlk false in
+    let cf = Array.init nc (fun k -> form (start k)) in
+    let af = Array.map form caps in
+    let prog, own, m, got, a, has_row, cf = fix m a cf af in
+    let init' =
+      Array.mapi
+        (fun k f ->
+          match ct_c.(k) with Some c -> c | None -> Loops.filled ~zero:false f)
+        cf
+    in
+    let r =
+      Program.perform
+        (Scan
+           {
+             step = prog;
+             length;
+             init =
+               Array.append (Loops.pick m init')
+                 (Array.map (Loops.filled ~zero:false)
+                    (Loops.pick a (Array.map form caps)));
+             xs =
+               Array.append (Array.map Loops.flip cxs) (Array.map Loops.flip ys);
+             captures = Array.append ckk own;
+             seeds = [||];
+           })
+    in
+    let next = ref (-1) in
+    let take () =
+      incr next;
+      r.(!next)
+    in
+    (* A carry's init receives no cotangent where the step's transpose gives the
+       carry none: only the last row's could, and it is a zero. *)
+    Array.iteri
+      (fun k (V x) ->
+        if m.(k) then
+          let c = take () in
+          if got.(k) && env.lin x then env.give x (held c))
+      init;
+    Array.iteri (fun j (V x) -> if a.(j) then env.give x (held (take ()))) caps;
+    let lxs = Loops.pick lx xs in
+    Array.iteri
+      (fun j (V x) ->
+        if has_row.(j) then env.give x (held (Loops.flip (take ()))))
+      lxs
+
+let transpose ?witness l cts =
+  let p = l.tape in
+  let consts =
+    Array.init (Array.length p.params) (fun k ->
+        if k < l.ins then None else Some l.captures.(k - l.ins))
+  in
+  let out_cts = Array.make (Array.length p.outputs) None in
+  Array.iteri
+    (fun k c ->
+      match (l.outs.(k), c) with
+      | Some j, Some c -> out_cts.(j) <- Some c
+      | _ -> ())
+    cts;
+  Array.sub (walk ~name:l.name ~witness l.tape consts out_cts) 0 l.ins

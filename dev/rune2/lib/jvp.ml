@@ -64,6 +64,32 @@ let jvp_loads i loads =
   let ts = List.filter_map (tangent_load i) (Iarray.to_list loads) in
   Iarray.of_list (ps @ ts)
 
+let tangent_placed i x =
+  match Prim.payload i x with
+  | Some (Dual d) -> Option.is_some (Nx.placement d.tangent)
+  | _ -> false
+
+let constant i x = Option.is_none (Nx.placement (primal i x))
+
+let rec any_placed i loads j =
+  j < Iarray.length loads
+  && ((match Iarray.get loads j with
+        | Prim.Plain x -> tangent_placed i x
+        | Padded { x; _ } -> tangent_placed i x)
+     || any_placed i loads (j + 1))
+
+let rec all_constant i loads j =
+  j >= Iarray.length loads
+  || (match Iarray.get loads j with
+       | Prim.Plain x -> constant i x
+       | Padded { x; _ } -> constant i x)
+     && all_constant i loads (j + 1)
+
+(* Whether a loop's primal loads are all of every set and a tangent is placed:
+   one loop computing both would place the primal, which must keep its operands'
+   form, so the primal computes apart. *)
+let apart i loads = any_placed i loads 0 && all_constant i loads 0
+
 (* Which loads have a tangent. *)
 let has i loads =
   Array.init (Iarray.length loads) (fun j -> load_has i (Iarray.get loads j))
@@ -168,6 +194,19 @@ let rec jouts : type d r.
         J (dt :: dt :: o, fun (y, (t, q)) -> (dual i ~fresh:true y t, f q))
       else J (dt :: o, fun (y, q) -> (y, f q))
 
+(* The results [a], their primals replaced by [b]'s. *)
+let rec regraft : type d r.
+    Prim.interpretation -> (d, r) Prim.outs -> r -> r -> r =
+ fun i outs a b ->
+  match outs with
+  | [] -> ()
+  | _ :: rest ->
+      let x, xs = a and y, ys = b in
+      let x =
+        match tangent i x with Some t -> dual i ~fresh:true y t | None -> y
+      in
+      (x, regraft i rest xs ys)
+
 let map_rule (type d r) i ~by layout prog (outs : (d, r) Prim.outs)
     (loads : d Prim.load iarray) : r =
   let p =
@@ -179,16 +218,25 @@ let map_rule (type d r) i ~by layout prog (outs : (d, r) Prim.outs)
       (Map { layout; prog; outs; loads = Iarray.map (primal_load i) loads })
   else
     let jl = jvp_loads i loads in
-    match outs with
-    | [ dt ] ->
-        let y, (t, ()) =
-          Prim.eval ~by
-            (Map { layout; prog = p.prog; outs = [ dt; dt ]; loads = jl })
-        in
-        (dual i ~fresh:true y t, ())
-    | _ ->
-        let (J (o, f)) = jouts i outs p.flags 0 in
-        f (Prim.eval ~by (Map { layout; prog = p.prog; outs = o; loads = jl }))
+    let r : r =
+      match outs with
+      | [ dt ] ->
+          let y, (t, ()) =
+            Prim.eval ~by
+              (Map { layout; prog = p.prog; outs = [ dt; dt ]; loads = jl })
+          in
+          (dual i ~fresh:true y t, ())
+      | _ ->
+          let (J (o, f)) = jouts i outs p.flags 0 in
+          f
+            (Prim.eval ~by
+               (Map { layout; prog = p.prog; outs = o; loads = jl }))
+    in
+    if not (apart i loads) then r
+    else
+      regraft i outs r
+        (Prim.eval ~by
+           (Map { layout; prog; outs; loads = Iarray.map (primal_load i) loads }))
 
 (* Reductions *)
 
@@ -501,7 +549,7 @@ let reduce_rule (type d r) i ~by layout axes (prog : P.t)
   let b = Scalar.start prog ~tangents ~extra:[||] in
   let k = Scalar.outputs b in
   let touts = sum_tangents b reductions in
-  if sums_only b reductions then
+  if sums_only b reductions && not (apart i loads) then
     let (JR (rs, f)) = jreds i b reductions (ref k) in
     let outs =
       Array.append (Array.init k (Scalar.value b)) (Array.of_list touts)
@@ -1198,12 +1246,69 @@ module Rules = struct
     | _ -> None
 end
 
+(* Programs' derivatives
+
+   A loop over duals is performed outward over its primals and tangents with its
+   program's derivative: [eval p] traced under a forward-mode interpretation of
+   its own, as JAX derives a jaxpr's. The derivative's additions are its
+   primal's, made once that interpretation has returned, so a total receives
+   primals, as [Add] of a dual gives it. *)
+
+let pv i (Program.V x) = Program.V (primal i x)
+let tv i (Program.V x) = Option.map (fun t -> Program.V t) (tangent i x)
+let somes a = Array.of_list (List.filter_map Fun.id (Array.to_list a))
+
+(* The values [vs] put back at the positions where [mask] holds. *)
+let spread mask vs =
+  let n = ref (-1) in
+  Array.map
+    (fun h ->
+      if h then begin
+        incr n;
+        Some vs.(!n)
+      end
+      else None)
+    mask
+
+(* [k x t] with [x] and [t] at one type: [x]'s, or [t]'s where [x] is of every
+   set and [t] placed, as a constant's primal with a placed tangent. *)
+type both = {
+  k : 'v 's 'd. ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t -> Program.value;
+}
+
+let both (Program.V x) (Program.V t) b =
+  match Prim.coerce (Prim.form x) t with
+  | Some t -> b.k x t
+  | None -> (
+      match Prim.coerce (Prim.form t) x with
+      | Some x -> b.k x t
+      | None -> invalid_arg "Rune: a tangent of another dtype or set")
+
+let seeded j v = function
+  | Some t -> both v t { k = (fun x t -> Program.V (seed j x t)) }
+  | None -> v
+
+let dualv i ~fresh v = function
+  | Some t -> both v t { k = (fun y t -> Program.V (dual i ~fresh y t)) }
+  | None -> v
+
+(* [ys]'s primals and tangents as [j] holds them. *)
+let parts j ys = (Array.map (pv j) ys, Array.map (tv j) ys)
+
+(* [p]'s additions, of the values [adds]. *)
+let add_all (p : Program.t) adds =
+  Array.iteri
+    (fun k (Program.Addition (t, f)) ->
+      ignore (Program.perform (Add (t, Program.cast f adds.(k)))))
+    p.adds
+
 (* A construct over duals: [Detach] and an addition are performed outward on the
    primal, so that every differentiation around detaches the value and a total
    receives the primal. [Lanes] is linear: its tangent is the lanes of the
-   tangent. A custom rule or a linear call applies its rule ([Rules]). Loops and
-   calls have no rule of their own yet: they run where they were performed,
-   inside the interpretation, which receives their programs' operations. *)
+   tangent. A custom rule or a linear call applies its rule ([Rules]). A scan is
+   performed with its program's derivative. Iterates and calls have no rule of
+   their own yet: they run where they were performed, inside the interpretation,
+   which receives their programs' operations. *)
 let rec answer ~name ~tape i (c : Program.construct) k =
   match c with
   | Detach x -> Effect.Deep.continue k (Program.perform (Detach (primal i x)))
@@ -1225,8 +1330,185 @@ let rec answer ~name ~tape i (c : Program.construct) k =
       with
       | Some r -> Effect.Deep.continue k r
       | None -> Effect.Deep.discontinue k Program.Evaluate)
-  | Lane_index _ | Scan _ | Iterate _ | Call _ ->
+  (* An iterate has no rule before stage 6, and evaluating it inside a trace
+     would read its stop: a construct whose programs hold one runs its default,
+     step by step. *)
+  | Scan { step; _ } when Loops.holds_iterate step ->
       Effect.Deep.discontinue k Program.Evaluate
+  | Scan { step; length; init; xs; captures; seeds } ->
+      Effect.Deep.continue k
+        (scan ~name ~tape i step ~length ~init ~xs ~captures ~seeds)
+  | Lane_index _ | Iterate _ | Call _ ->
+      Effect.Deep.discontinue k Program.Evaluate
+
+(* A scan's derivative is the scan of its step's derivative, whose carry has a
+   tangent for each carry that has one at the call or gains one from the step: a
+   fixpoint, as JAX's scan finds its nonzero tangents. A carry that gains one
+   starts from a zero, [-0.], which keeps the sign of what is added to it. Each
+   run of the derived step's parameters, the carry, the row and the captures,
+   holds the primals then the tangents. The tangents of a sum's additions are
+   one more carry, the sum's tangent, from its seed's: the derived step's
+   additions are primals, which a total outside the differentiation receives,
+   and a total inside it receives the sums as duals. *)
+and scan ~name ~tape i (step : Program.t) ~length ~init ~xs ~captures ~seeds =
+  let nc = Array.length init in
+  let ny = Array.length step.outputs - nc - Array.length step.adds in
+  let _, sum_forms, feeds = Program.feeds step in
+  let ns = Array.length sum_forms in
+  let pinit = Array.map (pv i) init and pxs = Array.map (pv i) xs in
+  let pcaps = Array.map (pv i) captures in
+  let txs = Array.map (tv i) xs and tcaps = Array.map (tv i) captures in
+  let zero v = Loops.filled ~zero:false (Program.form v) in
+  let tinit k =
+    match tv i init.(k) with Some t -> t | None -> zero pinit.(k)
+  in
+  let tseed s =
+    match if seeds = [||] then None else tv i seeds.(s) with
+    | Some t -> t
+    | None -> Loops.filled ~zero:false sum_forms.(s)
+  in
+  (* [has] and [hs] are the carries and sums with a tangent; [pf], [tf] and [sf]
+     the forms of the primal and tangent carries and the sums' tangents,
+     settled. *)
+  let rec fix has hs pf tf sf =
+    let gained = Array.make nc false and gained_s = Array.make ns false in
+    let has_y = ref [||] and outs = ref [||] in
+    let rows = Array.map Loops.row in
+    let forms =
+      Array.concat
+        [
+          pf;
+          Loops.pick has tf;
+          Loops.pick hs sf;
+          rows pxs;
+          rows (somes txs);
+          Array.map Program.form pcaps;
+          Array.map Program.form (somes tcaps);
+        ]
+    in
+    let count m = Array.length (Loops.pick m m) in
+    let lengths =
+      [
+        nc;
+        count has;
+        count hs;
+        Array.length pxs;
+        Array.length (somes txs);
+        Array.length pcaps;
+        Array.length (somes tcaps);
+      ]
+    in
+    let derive vs =
+      match Loops.split lengths vs with
+      | [ pc; tc; ts; px; tx; pk; tk ] ->
+          let (c, tc, y, ty), (adds, tadds) =
+            run ~name ?tape (fun j ->
+                let duals ps ts mask =
+                  Array.map2 (seeded j) ps
+                    (spread (Array.map Option.is_some mask) ts)
+                in
+                let args =
+                  Array.concat
+                    [
+                      Array.map2 (seeded j) pc (spread has tc);
+                      duals px tx txs;
+                      duals pk tk tcaps;
+                    ]
+                in
+                let p, t = parts j (Program.eval step args) in
+                let n = Array.length p - nc - ny in
+                ( ( Array.sub p 0 nc,
+                    Array.sub t 0 nc,
+                    Array.sub p nc ny,
+                    Array.sub t nc ny ),
+                  (Array.sub p (nc + ny) n, Array.sub t (nc + ny) n) ))
+          in
+          (* A carry with a tangent whose step gives it none takes a zero. *)
+          let tc' =
+            Array.init nc (fun k ->
+                gained.(k) <- (not has.(k)) && Option.is_some tc.(k);
+                match tc.(k) with
+                | Some t -> Some t
+                | None -> if has.(k) then Some (zero c.(k)) else None)
+          in
+          let tc' = somes (Loops.pick has tc') in
+          (* Each sum's tangent, chained in the order its additions are made. *)
+          let sums = spread hs ts in
+          Array.iteri
+            (fun k t ->
+              let s = feeds.(k) in
+              match (t, sums.(s)) with
+              | Some t, Some acc -> sums.(s) <- Some (Loops.add acc t)
+              | Some _, None -> gained_s.(s) <- true
+              | None, _ -> ())
+            tadds;
+          let sums = somes (Loops.pick hs sums) in
+          has_y := Array.map Option.is_some ty;
+          outs := Array.map Program.form (Array.concat [ c; tc'; sums ]);
+          add_all step adds;
+          Array.concat [ c; tc'; sums; y; somes ty ]
+      | _ -> invalid_arg "Rune: a scan's derivative"
+    in
+    let prog, own = Trace.trace Body ~name forms derive in
+    let carried = Array.concat [ pf; Loops.pick has tf; Loops.pick hs sf ] in
+    let settled = Loops.settle carried !outs in
+    let back a mask base =
+      let k = ref (base - 1) in
+      Array.mapi
+        (fun j f ->
+          if mask.(j) then begin
+            incr k;
+            settled.(!k)
+          end
+          else f)
+        a
+    in
+    let pf' = Array.sub settled 0 nc in
+    let tf' = back tf has nc and sf' = back sf hs (nc + count has) in
+    if Array.exists Fun.id gained || Array.exists Fun.id gained_s then
+      let has = Array.map2 ( || ) has gained in
+      fix has (Array.map2 ( || ) hs gained_s) pf' tf' sf'
+    else if not (Loops.same_forms carried settled) then fix has hs pf' tf' sf'
+    else (prog, own, has, hs, !has_y)
+  in
+  let has = Array.map (fun v -> Option.is_some (tv i v)) init in
+  let hs =
+    Array.init ns (fun s -> seeds <> [||] && Option.is_some (tv i seeds.(s)))
+  in
+  let tf = Array.init nc (fun k -> Program.form (tinit k)) in
+  let sf = Array.init ns (fun s -> Program.form (tseed s)) in
+  let prog, own, has, hs, has_y =
+    fix has hs (Array.map Program.form pinit) tf sf
+  in
+  let r =
+    Program.perform
+      (Scan
+         {
+           step = prog;
+           length;
+           init =
+             Array.concat
+               [
+                 pinit;
+                 Loops.pick has (Array.init nc tinit);
+                 Loops.pick hs (Array.init ns tseed);
+               ];
+           xs = Array.append pxs (somes txs);
+           captures = Array.concat [ pcaps; somes tcaps; own ];
+           seeds = Array.map (pv i) seeds;
+         })
+  in
+  let count m = Array.length (Loops.pick m m) in
+  let nt = count has and nts = count hs and nty = count has_y in
+  match Loops.split [ nc; nt; nts; ny; nty; ns ] r with
+  | [ c; tc; ts; y; ty; sums ] ->
+      Array.concat
+        [
+          Array.map2 (dualv i ~fresh:false) c (spread has tc);
+          Array.map2 (dualv i ~fresh:true) y (spread has_y ty);
+          Array.map2 (dualv i ~fresh:false) sums (spread hs ts);
+        ]
+  | _ -> invalid_arg "Rune: a scan's derivative"
 
 (* [p]'s outputs over [xs], each with its tangent, from a differentiation [j]
    like [i] seeded from [i]'s tangents of [xs]. *)
@@ -1259,6 +1541,13 @@ and run :
     | Program.Construct c, Some i
       when List.exists (owned i) (Program.operands c) ->
         Some (answer ~name ~tape i c)
+    (* A loop hands a total its chain's end as an addition gives it: the
+       primal. *)
+    | Program.Replace (t, x), Some i when owned i (Program.V x) ->
+        Some
+          (fun k ->
+            Effect.perform (Program.Replace (t, primal i x));
+            Effect.Deep.continue k ())
     | _ -> None
   in
   Effect.Deep.match_with

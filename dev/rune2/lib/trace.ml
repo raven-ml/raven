@@ -346,7 +346,228 @@ let record st i = function
       st.eqns <- Do { c; base } :: st.eqns;
       r
 
-let trace kind ~name inputs f =
+(* Partial evaluation of programs
+
+   The tape tracer splits a loop over its variables as it splits a map: what
+   reads none of them computes at the call, the rest is recorded. *)
+
+let nots = Array.map not
+
+(* A residual of a scan's step: a capture of the step, a row, or a value of a
+   step that the known loop stacks. *)
+type residual = Capture of int | Row of int | Stacked
+
+let index_of v vs =
+  let r = ref None in
+  Array.iteri (fun j w -> if !r = None && same v w then r := Some j) vs;
+  !r
+
+let rec answer st i c =
+  match (st.kind, c) with
+  | Tape, Scan { step; length; init; xs; captures; seeds } ->
+      scan_parts st i step ~length ~init ~xs ~captures ~seeds
+  | _ -> record st i c
+
+(* A scan over the tape's variables is two scans, as JAX's partial evaluation of
+   a scan gives: a known scan, computed at the call, of the carries and outputs
+   that read none of them, which stacks the step's residuals as more outputs;
+   and a recorded linear scan of the others, reading the residuals as rows. A
+   carry is unknown where its init is or where the step makes it so, a fixpoint.
+   A residual that is a capture or a row of the step is read where it lies, not
+   stacked. *)
+and scan_parts st i (step : Program.t) ~length ~init ~xs ~captures ~seeds =
+  let name = st.name in
+  let nc = Array.length init and nx = Array.length xs in
+  let ny = Array.length step.outputs - nc - Array.length step.adds in
+  let ux = Array.map (owned i) xs and ucap = Array.map (owned i) captures in
+  let rows = Array.map Loops.row xs and cforms = Array.map form captures in
+  let rec fix u (cf : form array) =
+    let gained = Array.make nc false and uy = ref [||] in
+    let outs = ref [||] and kinds = ref [||] and tape = ref None in
+    let kforms =
+      Array.concat
+        [
+          Loops.pick (nots u) cf;
+          Loops.pick (nots ux) rows;
+          Loops.pick (nots ucap) cforms;
+        ]
+    and uforms =
+      Array.concat
+        [ Loops.pick u cf; Loops.pick ux rows; Loops.pick ucap cforms ]
+    in
+    let count m = Array.length (Loops.pick m m) in
+    let known kvs =
+      match
+        Loops.split
+          [ nc - count u; nx - count ux; Array.length captures - count ucap ]
+          kvs
+      with
+      | [ kc; kr; kk ] ->
+          let stash = ref [||] in
+          let p, res =
+            trace_in Tape ~name uforms (fun inner uvs ->
+                match Loops.split [ count u; count ux; count ucap ] uvs with
+                | [ uc; ur; uk ] ->
+                    let args =
+                      Array.concat
+                        [
+                          Loops.merge u uc kc;
+                          Loops.merge ux ur kr;
+                          Loops.merge ucap uk kk;
+                        ]
+                    in
+                    let out = eval step args in
+                    let mine (V y) = owns inner y in
+                    let c = Array.sub out 0 nc and y = Array.sub out nc ny in
+                    let adds =
+                      Array.sub out (nc + ny) (Array.length out - nc - ny)
+                    in
+                    if Array.exists mine adds then
+                      invalid_arg (name ^ ": a tangent is added to a total");
+                    Array.iteri
+                      (fun k v -> gained.(k) <- (not u.(k)) && mine v)
+                      c;
+                    uy := Array.map mine y;
+                    outs := Array.map form c;
+                    (* A carry that gained a variable is traced again: its known
+                       output stands in meanwhile. *)
+                    let kc' =
+                      Array.mapi
+                        (fun k v -> if gained.(k) then args.(k) else v)
+                        c
+                    in
+                    stash :=
+                      Array.concat
+                        [
+                          Loops.pick (nots u) kc'; Loops.pick (nots !uy) y; adds;
+                        ];
+                    Array.append (Loops.pick u c) (Loops.pick !uy y)
+                | _ -> invalid_arg "Rune: a scan's parts")
+          in
+          tape := Some p;
+          kinds :=
+            Array.map
+              (fun r ->
+                match index_of r kk with
+                | Some j -> Capture j
+                | None -> (
+                    match index_of r kr with Some j -> Row j | None -> Stacked))
+              res;
+          let stacked =
+            Loops.pick (Array.map (fun k -> k = Stacked) !kinds) res
+          in
+          let nk = Array.length !stash - Array.length step.adds in
+          let adds = Array.sub !stash nk (Array.length step.adds) in
+          Array.iteri
+            (fun k (Addition (t, f)) ->
+              ignore (perform (Add (t, cast f adds.(k)))))
+            step.adds;
+          Array.append (Array.sub !stash 0 nk) stacked
+      | _ -> invalid_arg "Rune: a scan's parts"
+    in
+    let kprog, own = trace Body ~name kforms known in
+    let cf' = Loops.settle cf !outs in
+    if Array.exists Fun.id gained then fix (Array.map2 ( || ) u gained) cf'
+    else if not (Loops.same_forms cf cf') then fix u cf'
+    else (u, !uy, kprog, own, Option.get !tape, !kinds)
+  in
+  let u = Array.map (owned i) init in
+  let u, uy, kprog, own, tape, kinds = fix u (Array.map form init) in
+  let ku = nots u and kuy = nots uy in
+  let kcaps = Loops.pick (nots ucap) captures in
+  let kxs = Loops.pick (nots ux) xs in
+  let kr =
+    perform
+      (Scan
+         {
+           step = kprog;
+           length;
+           init = Loops.pick ku init;
+           xs = kxs;
+           captures = Array.append kcaps own;
+           seeds;
+         })
+  in
+  let nkc = Array.length (Loops.pick ku ku)
+  and nky = Array.length (Loops.pick kuy kuy) in
+  let is k = Array.map (fun r -> r = k) kinds in
+  let nst = Array.length (Loops.pick (is Stacked) kinds) in
+  let stacked = Array.sub kr (nkc + nky) nst in
+  let sums =
+    Array.sub kr (nkc + nky + nst) (Array.length kr - nkc - nky - nst)
+  in
+  let nuc = Array.length (Loops.pick u u)
+  and nuy = Array.length (Loops.pick uy uy) in
+  let lr =
+    if nuc + nuy = 0 then [||]
+    else begin
+      (* The tape's parameters: its unknown carries, rows and captures, then the
+         residuals; the linear step's: the carries, the stacked residuals, the
+         residual rows and the unknown rows, then the unknown captures and the
+         residual captures. *)
+      let nur = Array.length (Loops.pick ux ux) in
+      let nuk = Array.length (Loops.pick ucap ucap) in
+      let nu = nuc + nur + nuk in
+      let res p =
+        List.filter
+          (fun j -> p kinds.(j))
+          (List.init (Array.length kinds) Fun.id)
+      in
+      let stacked_r = res (fun k -> k = Stacked) in
+      let rows_r = res (function Row _ -> true | _ -> false) in
+      let caps_r = res (function Capture _ -> true | _ -> false) in
+      let range a n = List.init n (fun j -> a + j) in
+      let order =
+        List.concat
+          [
+            range 0 nuc;
+            List.map (fun j -> nu + j) stacked_r;
+            List.map (fun j -> nu + j) rows_r;
+            range nuc nur;
+            range (nuc + nur) nuk;
+            List.map (fun j -> nu + j) caps_r;
+          ]
+      in
+      let at j =
+        match kinds.(j) with
+        | Row r -> kxs.(r)
+        | Capture c -> kcaps.(c)
+        | Stacked -> invalid_arg "Rune: a stacked residual"
+      in
+      let linear =
+        Scan
+          {
+            step = Loops.reorder tape (Array.of_list order);
+            length;
+            init = Loops.pick u init;
+            xs =
+              Array.concat
+                [
+                  stacked; Array.of_list (List.map at rows_r); Loops.pick ux xs;
+                ];
+            captures =
+              Array.append (Loops.pick ucap captures)
+                (Array.of_list (List.map at caps_r));
+            seeds = [||];
+          }
+      in
+      record st i linear
+    end
+  in
+  let next a =
+    let k = ref (-1) in
+    fun () ->
+      incr k;
+      a.(!k)
+  in
+  let kn = next kr and un = next lr in
+  let carry = Array.map (fun u -> if u then un () else kn ()) u in
+  let ys = Array.map (fun u -> if u then un () else kn ()) uy in
+  Array.concat [ carry; ys; sums ]
+
+and trace kind ~name inputs f = trace_in kind ~name inputs (fun _ vs -> f vs)
+
+and trace_in kind ~name inputs f =
   let st =
     {
       kind;
@@ -363,7 +584,7 @@ let trace kind ~name inputs f =
     let params =
       Array.mapi (fun k (F form) -> V (Nx.Prim.traced i form (Var k))) inputs
     in
-    let outs = f params in
+    let outs = f i params in
     Array.map (fun (V y) -> V (operand st i y)) outs
   in
   (* The handler lies outside the interpretation, as its rule does: what it
@@ -378,9 +599,17 @@ let trace kind ~name inputs f =
            operations are recorded. *)
         Some (fun k -> Effect.Deep.discontinue k Evaluate)
     | Construct c, Some i when claims st i c ->
-        Some (fun k -> Effect.Deep.continue k (record st i c))
+        Some (fun k -> Effect.Deep.continue k (answer st i c))
     | Staging, Some _ when st.kind = Jit ->
         Some (fun k -> Effect.Deep.continue k true)
+    (* A traced program cannot read a total: a loop in it adds its sum. *)
+    | Running _, Some _ when st.kind <> Tape ->
+        Some (fun k -> Effect.Deep.continue k None)
+    | Replace (_, x), Some i when st.kind = Tape && owns i x ->
+        Some
+          (fun k ->
+            Effect.Deep.discontinue k
+              (Invalid_argument (st.name ^ ": a tangent is added to a total")))
     | _ -> None
   in
   let reach = match kind with Body | Tape -> Nx.Prim.Values | Jit -> Extent in

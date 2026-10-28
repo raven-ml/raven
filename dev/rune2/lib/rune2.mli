@@ -21,7 +21,8 @@
     effects, and inside it {!Nx.item} of a stand-in, or of a value computed from
     one, raises ([Nx.item: the value is traced by Rune.scan]); a branch on a
     value is {!Nx.where} or a nested {!iterate}. An operation that reads no
-    stand-in computes at the call, once. A draw without [~key] inside a traced
+    stand-in computes at the call, once, but in {!jit}, which stages every
+    operation its function applies. A draw without [~key] inside a traced
     function raises, naming the construct, so a step draws from a key in its
     carry or its rows. Outside every transformation a construct is its program
     evaluated: a {!scan} is the fold of its step, bit for bit but for a NaN
@@ -69,7 +70,11 @@
     contribution, sign of zero included: [grad' (fun x -> Nx.sum (Nx.mul x x))]
     at [-0.] is [-0.]. The contributions through a gather, as [Nx.take]'s, and
     the copies of a broadcast are summed from [+0.], as [Nx.sum] sums. An
-    element that receives none is [+0.].
+    element that receives none is [+0.]. A {!scan}'s carry holds a derivative at
+    every step: where a step gives a carry array none, the next takes a zero
+    from it, so the derivative may receive zeros of either sign, and NaN where
+    such a zero meets an infinite partial derivative, where the steps written
+    out one after another give none.
 
     {b Placement.} A cotangent lies where its array does. That of an array of
     every set is of every set where every value it meets is, and otherwise lies
@@ -542,11 +547,14 @@ val lane_index : axis -> unit -> 'd Nx.int32_t
     so a construct that raises adds none: a {!jit} adds its function's additions
     once per call, as the call returns. A step of {!scan} or {!iterate}, and an
     [until] once per test, makes its additions once per step: a loop chains each
-    total's additions in the order they are made, from an identity that changes
-    no sum (a negative zero), and that chain reaches the [collect] as one
-    addition, as the loop returns. So the total is the one the steps' additions
-    give made in turn where the [zero] is [0.] or [-0.] and the loop's are the
-    first additions the [collect] receives. A loop that takes no step adds that
+    total's additions in the order they are made, starting from the running
+    value of the [collect] they reach, which the chain's end replaces as the
+    loop returns. So the total is the one the steps' additions give made in
+    turn, under every differentiation too. Where they reach the [collect]
+    through a traced function or a map, as from a loop inside another loop's
+    step, a {!jit} or a {!vmap}, the chain starts from an identity that changes
+    no sum (a negative zero) and reaches the [collect] as one addition. A loop
+    that takes no step leaves a running value as it is, and otherwise adds that
     identity. Inside a {!vmap}, each lane makes the additions of the code it
     runs: a [collect] inside the map receives its lane's, and one outside it
     receives, as one addition, their sum over the lanes as {!Nx.sum} computes it
@@ -597,6 +605,18 @@ val scan :
     of the carry that it received of every set, such as a constant [init] it
     adds a placed value to, each array at most once.
 
+    A transformation of a scan is a scan of its step's transformation, whose
+    carry gains a tangent, under {!jvp}, or lanes, under {!vmap}, only for the
+    carry arrays that have one at the call or that a step gives one. Reverse
+    mode runs the scan once forward, keeping of each step the values its
+    tangent's operations read (of an elementwise function computed in one loop,
+    its operands) and none of the rows' or captures' own, then runs the step's
+    transpose over the rows in reverse. A row's cotangent is stacked like the
+    outputs, and a captured array's is the sum over the steps of each step's,
+    added in reverse order of the steps. Where the step runs an {!iterate}, a
+    transformation runs the scan's steps one by one where it is called, and
+    reverse mode keeps each step's values as it would the steps written out.
+
     Raises [Invalid_argument] if [xs] has no array
     (["Rune.scan: xs has no leaf"]), a 0-d array, or arrays of different leading
     lengths, naming their paths (["Rune.scan: xs: 1: 3 rows, 0: 2"]), and, at
@@ -628,56 +648,53 @@ val iterate :
 (** {1:jit Compilation} *)
 
 val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
-(** [jit s f] is [f] compiled, [s] its signature, one structure per argument
-    and one for the result. A call traces [f] over stand-ins of its arguments'
+(** [jit s f] is [f] compiled, [s] its signature, one structure per argument and
+    one for the result. A call traces [f] over stand-ins of its arguments'
     arrays into a program and runs it compiled. Every operation [f] applies is
-    staged, those over values [f] captures included, which the program reads
-    as they are when it is traced.
+    staged, those over values [f] captures included, which the program reads as
+    they are when it is traced.
 
     {b Keys.} [jit s f] keeps a program per {e key}, the abstract value of a
-    call's arguments: their {!Nx.Ptree.val-visits} and reports, the static
-    data of a call, and each array's dtype, shape and placement. A call
-    retraces exactly when its key is new to [jit s f], over stand-ins in C
-    order: [f]'s code, and its side effects, run once per key. A call that
-    raises while it traces keeps no program for its key. Calls on several
-    domains share the programs; a key being traced makes its other callers
-    wait, but on the domain that traces it, where a call traces again for
-    itself. With [RUNE_JIT_DEBUG=1] in the environment, each retrace prints on
-    standard error the first difference between its key and the previous
-    call's.
+    call's arguments: their {!Nx.Ptree.val-visits} and reports, the static data
+    of a call, and each array's dtype, shape and placement. A call retraces
+    exactly when its key is new to [jit s f], over stand-ins in C order: [f]'s
+    code, and its side effects, run once per key. A call that raises while it
+    traces keeps no program for its key. Calls on several domains share the
+    programs; a key being traced makes its other callers wait, but on the domain
+    that traces it, where a call traces again for itself. With
+    [RUNE_JIT_DEBUG=1] in the environment, each retrace prints on standard error
+    the first difference between its key and the previous call's.
 
     {b Compiled programs.} A program compiles the first time a call runs it,
-    then once per {e variant}: each argument's strides and offset from where
-    its 16 bytes of memory start, and tolk's settings that shape what it
-    compiles, the search widths [BEAM] and [JITBEAM] among them. A view thus
-    reads in place, without a copy, from a program compiled for its layout.
-    Each result array is fresh: memory of its own in C order, at the placement
-    eager computation gives it. An argument of every set ({!Nx.zeros}) is
-    computed at the call, on the set where an operation that reads it
-    computes, so its values do not change the key; a constant of every set
-    that [f] returns is that constant.
+    then once per {e variant}: each argument's strides and offset from where its
+    16 bytes of memory start, and tolk's settings that shape what it compiles,
+    the search widths [BEAM] and [JITBEAM] among them. A view thus reads in
+    place, without a copy, from a program compiled for its layout. Each result
+    array is fresh: memory of its own in C order, at the placement eager
+    computation gives it. An argument of every set ({!Nx.zeros}) is computed at
+    the call, on the set where an operation that reads it computes, so its
+    values do not change the key; a constant of every set that [f] returns is
+    that constant.
 
     {b Donation.} A call consumes the donated handles among its arguments
     ({!Nx.donate}), as one operation consumes its operands: their donors die
-    when the call claims them, and a later use of one raises
-    [Invalid_argument] naming [Rune.jit]. A result may take a donated
-    argument's memory instead of fresh memory: where it has the argument's
-    dtype, element count and placement, reads it only at each element's own
-    index (through elementwise functions, casts and bitcasts that keep the
-    width, reshapes in C order, copies, placements, a scatter's target or a
-    contraction's [init]) or is the argument itself, and no other result or
-    check reads it; or where it reads no donated argument and nothing reads
-    that one. A donor whose memory another value reads, or that is a view
-    off 16 bytes or out of C order, lends nothing, and its result is fresh.
-    Each donated argument lends to one result at most, the results of a
-    scatter first. Its values are the same either way.
+    when the call claims them, and a later use of one raises [Invalid_argument]
+    naming [Rune.jit]. A result may take a donated argument's memory instead of
+    fresh memory: where it has the argument's dtype, element count and
+    placement, reads it only at each element's own index (through elementwise
+    functions, casts and bitcasts that keep the width, reshapes in C order,
+    copies, placements, a scatter's target or a contraction's [init]) or is the
+    argument itself, and no other result or check reads it; or where it reads no
+    donated argument and nothing reads that one. A donor whose memory another
+    value reads, or that is a view off 16 bytes or out of C order, lends
+    nothing, and its result is fresh. Each donated argument lends to one result
+    at most, the results of a scatter first. Its values are the same either way.
 
-    {b Checks.} A check the function makes ({!Nx.check}) on the host is
-    computed with the program, and the first that fails, in the order the
-    function made them, raises its exception when the call returns, with the
-    data at its first failing index, as eagerly; the call's results are then
-    lost. A program with a check on another set, which raises at a later wait
-    there, is evaluated.
+    {b Checks.} A check the function makes ({!Nx.check}) on the host is computed
+    with the program, and the first that fails, in the order the function made
+    them, raises its exception when the call returns, with the data at its first
+    failing index, as eagerly; the call's results are then lost. A program with
+    a check on another set, which raises at a later wait there, is evaluated.
 
     {b Numerics.} A compiled call gives eager's bits, but for a NaN's sign and
     payload, where both compute exactly: movements, selections, comparisons,
@@ -685,23 +702,22 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     float operations of IEEE 754 ([Nx.add], [Nx.sub], [Nx.mul], [Nx.div],
     [Nx.sqrt]). Another float function is within a bound in ulps of the
     correctly rounded result, from 2 to 21 by function at [float32] and
-    [float64] (exp 9, sin 4, tanh 18, expm1 21), and a power's bound grows
-    with its exponent; special values are exact. A float sum, product or
-    contraction adds its terms in an order the compiler chooses, a sum of [n]
-    terms within [γ(n - 1) Σ|x|] of the exact one, [γ(k) = k u / (1 - k u)].
-    Narrow floats compute at [float32] and round once.
+    [float64] (exp 9, sin 4, tanh 18, expm1 21), and a power's bound grows with
+    its exponent; special values are exact. A float sum, product or contraction
+    adds its terms in an order the compiler chooses, a sum of [n] terms within
+    [γ(n - 1) Σ|x|] of the exact one, [γ(k) = k u / (1 - k u)]. Narrow floats
+    compute at [float32] and round once.
 
     {b Evaluated programs.} A program that holds a {!scan} or an {!iterate}, a
     map's {!lanes} or {!lane_index}, a {!custom_jvp}, {!custom_vjp} or
-    {!custom_transpose}, an operation the compiler does not lower,
-    values on several devices, or a result of every set computed from the
-    arguments, or one tolk cannot compile, runs as its operations evaluated by
-    nx, giving eager's values; a result that is an argument is a copy of
-    it, and a call with donated arguments claims them first, consumes them
-    and lends nothing. So does a call whose
-    arguments a transformation around it traces, or that an enclosing [jit]
-    traces: the transformation receives its program's operations, and the
-    enclosing [jit] stages them.
+    {!custom_transpose}, an operation the compiler does not lower, values on
+    several devices, or a result of every set computed from the arguments, or
+    one tolk cannot compile, runs as its operations evaluated by nx, giving
+    eager's values; a result that is an argument is a copy of it, and a call
+    with donated arguments claims them first, consumes them and lends nothing.
+    So does a call whose arguments a transformation around it traces, or that an
+    enclosing [jit] traces: the transformation receives its program's
+    operations, and the enclosing [jit] stages them.
 
     Raises [Invalid_argument] when applied to [s] if [s] has no argument, and at
     a call if [f] captures a value that another transformation traces. *)
@@ -715,26 +731,26 @@ val program :
   ('a, 'd) Nx.Ptree.t -> ('b, 'd) Nx.Ptree.t -> ('a -> 'b) -> 'a -> program
 (** [program a b f x] is the program that {!jit} traces of [f], a function of
     structure [a] to structure [b], at a call over [x], without compiling or
-    computing it: [f] runs once, over stand-ins of [x]'s arrays in C order.
-    What [f] stages from {!jvp}, a {!scan}'s step or another construct is in
-    it, a construct with the programs it carries, for reading what a
-    function computes.
+    computing it: [f] runs once, over stand-ins of [x]'s arrays in C order. What
+    [f] stages from {!jvp}, a {!scan}'s step or another construct is in it, a
+    construct with the programs it carries, for reading what a function
+    computes.
 
     Raises what {!jit} raises at a call that traces. *)
 
 val pp_program : Format.formatter -> program -> unit
 (** [pp_program] formats a program: the dtype, shape and placement of each
-    constant it reads, its parameters, each equation with its results'
-    dtypes, shapes and placements and its operands, a construct with the
-    programs it carries indented, and its outputs. The top program's
-    variables are numbered as traced, and each carried program's follow its
-    parent's, so a function prints alike at every trace. *)
+    constant it reads, its parameters, each equation with its results' dtypes,
+    shapes and placements and its operands, a construct with the programs it
+    carries indented, and its outputs. The top program's variables are numbered
+    as traced, and each carried program's follow its parent's, so a function
+    prints alike at every trace. *)
 
 val eval_shape :
   ('a, 'd) Nx.Ptree.t -> ('b, 'd) Nx.Ptree.t -> ('a -> 'b) -> 'a -> 'b
-(** [eval_shape a b f x] is [f x]'s structure with each array a stand-in of
-    its dtype, shape and placement, as {!jit} traces it, computing nothing:
-    its shape, dtype and placement answer ({!Nx.shape}, {!Nx.dtype},
+(** [eval_shape a b f x] is [f x]'s structure with each array a stand-in of its
+    dtype, shape and placement, as {!jit} traces it, computing nothing: its
+    shape, dtype and placement answer ({!Nx.shape}, {!Nx.dtype},
     {!Nx.placement}), and an operation on it or a read raises
     [Invalid_argument]. An array [f] captured and returns unchanged is that
     array.

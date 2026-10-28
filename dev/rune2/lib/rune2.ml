@@ -459,6 +459,22 @@ module Total = struct
                     sum := Nx.add !sum x;
                     Effect.Deep.continue k [||]
                   end))
+      | Running (u, shape) -> (
+          match same_total u t with
+          | Some Type.Equal ->
+              Some
+                (fun k ->
+                  Effect.Deep.continue k
+                    (if shape = Nx.shape zero then Some !sum else None))
+          | None -> None)
+      | Replace (u, x) -> (
+          match same_total u t with
+          | Some Type.Equal ->
+              Some
+                (fun k ->
+                  sum := x;
+                  Effect.Deep.continue k ())
+          | None -> None)
       | _ -> None
     in
     let r = Effect.Deep.match_with f () { retc = Fun.id; exnc = raise; effc } in
@@ -466,18 +482,6 @@ module Total = struct
 end
 
 (* Loops *)
-
-(* The form of [x]'s rows along axis 0. *)
-let row (V x) =
-  let s = Nx.shape x in
-  F
-    {
-      dtype = Nx.dtype x;
-      layout =
-        Nx_array.Layout.contiguous
-          (Iarray.of_array (Array.sub s 1 (Array.length s - 1)));
-      placement = Option.map Nx.Placement.without_leading_axis (Nx.placement x);
-    }
 
 (* Whether a carry leaf traced at [r] is traced again at [t], the form its step
    returned it at: traced of every set and returned placed. A value is read back
@@ -553,11 +557,14 @@ let scan_named name c x y ~f ~init xs =
   in
   let (step, captures, _, _), like, _ =
     settling c ~nc trace init
-      (Array.append (Array.map form init_v) (Array.map row xs_v))
+      (Array.append (Array.map form init_v) (Array.map Loops.row xs_v))
   in
   let ys_like = Option.get !ys_like in
   let ny = Array.length (values y ys_like) in
-  let r = run (Scan { step; length; init = init_v; xs = xs_v; captures }) in
+  let r =
+    run
+      (Scan { step; length; init = init_v; xs = xs_v; captures; seeds = [||] })
+  in
   ( rebuild c ~like (slice r 0 nc),
     rebuild y ~like:ys_like (slice r nc (nc + ny)) )
 
@@ -603,6 +610,7 @@ let iterate_named name c ~max ~until ~f init =
            init = init_v;
            step_captures;
            until_captures;
+           seeds = [||];
          })
   in
   rebuild c ~like (slice r 0 nc)

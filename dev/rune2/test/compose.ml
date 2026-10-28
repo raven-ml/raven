@@ -412,3 +412,43 @@ let codes_t =
       Format.fprintf ppf "%a [%s]" pp_shape s
         (String.concat " " (Array.to_list c)))
     ~equal:( = )
+
+(* Bits, but for zeros' signs, and with [nan] NaNs the second value has: a
+   loop's derivative holds a tangent or cotangent of a carry at every step, a
+   zero where a step gives none, whose products are zeros of either sign, and
+   NaNs with an infinite partial derivative, where the steps written out have no
+   term; and it sums a row's contributions as stacked rows, where the steps
+   written out add each row's slice padded with [+0.]. *)
+let lenient ~nan =
+  let zero x = x = 0L || x = Int64.min_int in
+  Testable.make ~pp:(Testable.pp bits_t) ~equal:(fun (s, a) (s', b) ->
+      s = s'
+      && Array.length a = Array.length b
+      && Array.for_all2
+           (fun x y ->
+             x = y || (nan && y = Int64.minus_one) || (zero x && zero y))
+           a b)
+
+(* Whether [e] reads [X]. *)
+let rec reads_x = function
+  | X -> true
+  | Y | K _ -> false
+  | Un (_, e) -> reads_x e
+  | Bin (_, e, e') -> reads_x e || reads_x e'
+
+(* Whether [e] reads [Y]. *)
+let rec reads_y = function
+  | Y -> true
+  | X | K _ -> false
+  | Un (_, e) -> reads_y e
+  | Bin (_, e, e') -> reads_y e || reads_y e'
+
+(* Whether [e] reads neither [X] nor [Y]. *)
+let constant e =
+  let rec reads = function
+    | X | Y -> true
+    | K _ -> false
+    | Un (_, e) -> reads e
+    | Bin (_, e, e') -> reads e || reads e'
+  in
+  not (reads e)

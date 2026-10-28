@@ -1,7 +1,14 @@
 ; rune2's suites, through its interface.
 
 (tests
- (names test_jit test_constructs test_loops test_jvp test_grad test_vmap
+ (names
+  test_jit
+  test_constructs
+  test_loops
+  test_loop_rules
+  test_jvp
+  test_grad
+  test_vmap
   test_custom)
  (modules
   compose
@@ -9,6 +16,7 @@
   test_jit
   test_constructs
   test_loops
+  test_loop_rules
   test_jvp
   test_grad
   test_vmap

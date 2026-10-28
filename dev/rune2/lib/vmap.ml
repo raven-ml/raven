@@ -708,6 +708,24 @@ module Rules = struct
     | _ -> None
 end
 
+(* Programs' maps
+
+   A loop over lane values is performed outward with its program mapped: [eval
+   p] traced under a map of its own, of the same name and lanes, over the
+   batches and the shared values, as JAX batches a jaxpr. *)
+
+let lane_v i (Program.V x) = Program.V (lane i x)
+let batch_v i n (Program.V x) = Program.V (batch i n x)
+let owned_v i (Program.V x) = owned i x
+
+(* A batch [n; length; ...] read row by row: [length; n; ...]. *)
+let rows_of i (Program.V x as v) =
+  match batched i x with Some b -> Program.V (Nx.moveaxis 0 1 b) | None -> v
+
+(* [vs], lane values of [w] where [mask] holds. *)
+let lanes_of w mask vs =
+  Array.map2 (fun m v -> if m then lane_v w v else v) mask vs
+
 (* [Lanes] of this map is every lane's value, the batch, a constant; of another
    map, every lane's batch, a lane value. An addition adds the sum of its lanes'
    values, once, and nothing with no lane. *)
@@ -730,7 +748,112 @@ let rec answer ~name i axis n (c : Program.construct) k =
   | Custom _ | Linear _ ->
       let r = Rules.rule { i; n; map = map ~name axis n } c in
       Effect.Deep.continue k (Option.get r)
-  | Scan _ | Iterate _ | Call _ -> Effect.Deep.discontinue k Program.Evaluate
+  (* An iterate has no rule before stage 6, and evaluating it inside a trace
+     would read its stop: a construct whose programs hold one runs its default,
+     step by step. *)
+  | Scan { step; _ } when Loops.holds_iterate step ->
+      Effect.Deep.discontinue k Program.Evaluate
+  | Scan { step; length; init; xs; captures; seeds } ->
+      Effect.Deep.continue k
+        (scan ~name i axis n step ~length ~init ~xs ~captures ~seeds)
+  | Iterate _ | Call _ -> Effect.Deep.discontinue k Program.Evaluate
+
+(* A scan's map is the scan of its step's map, whose carry has lanes for each
+   carry that has them at the call or gains them from the step: a fixpoint, as
+   JAX's scan batches its carry. A carry that gains lanes starts from its init
+   broadcast; a row with lanes is read along the batch's axis 1. Additions are
+   every lane's, a shared one broadcast, so that a total around the map receives
+   each lane's chain. *)
+and scan ~name i axis n (step : Program.t) ~length ~init ~xs ~captures ~seeds =
+  let nc = Array.length init and nx = Array.length xs in
+  let ncap = Array.length captures in
+  let ny = Array.length step.outputs - nc - Array.length step.adds in
+  let bxs = Array.map (rows_of i) xs and lx = Array.map (owned_v i) xs in
+  let bcaps =
+    Array.map (fun v -> if owned_v i v then batch_v i n v else v) captures
+  in
+  let lcap = Array.map (owned_v i) captures in
+  let carry lc k = if lc.(k) then batch_v i n init.(k) else init.(k) in
+  let rec fix lc (cf : Program.form array) =
+    let gained = Array.make nc false and outs = ref [||] in
+    let ly = ref [||] in
+    let forms =
+      Array.concat [ cf; Array.map Loops.row bxs; Array.map Program.form bcaps ]
+    in
+    let mapped vs =
+      match Loops.split [ nc; nx; ncap ] vs with
+      | [ c; r; cap ] ->
+          let ys, adds =
+            run ~name ~axis n (fun w ->
+                let args =
+                  Array.concat
+                    [ lanes_of w lc c; lanes_of w lx r; lanes_of w lcap cap ]
+                in
+                let out = Program.eval step args in
+                let c' =
+                  Array.init nc (fun k ->
+                      let laned = owned_v w out.(k) in
+                      gained.(k) <- laned && not lc.(k);
+                      if lc.(k) then batch_v w n out.(k) else out.(k))
+                in
+                let y = Array.sub out nc ny in
+                ly := Array.map (owned_v w) y;
+                outs := Array.map Program.form c';
+                let y =
+                  Array.map
+                    (fun v -> if owned_v w v then batch_v w n v else v)
+                    y
+                in
+                let adds =
+                  Array.sub out (nc + ny) (Array.length out - nc - ny)
+                in
+                (Array.append c' y, Array.map (batch_v w n) adds))
+          in
+          Array.iteri
+            (fun k (Program.Addition (t, f)) ->
+              ignore (Program.perform (Add (t, Program.cast f adds.(k)))))
+            step.adds;
+          ys
+      | _ -> invalid_arg "Rune: a scan's map"
+    in
+    let prog, own = Trace.trace Body ~name forms mapped in
+    let cf' = Loops.settle cf !outs in
+    if Array.exists Fun.id gained then
+      let lc = Array.map2 ( || ) lc gained in
+      fix lc
+        (Array.mapi
+           (fun k f -> if gained.(k) then Program.form (carry lc k) else f)
+           cf')
+    else if not (Loops.same_forms cf cf') then fix lc cf'
+    else (prog, own, lc, !ly)
+  in
+  let lc = Array.map (owned_v i) init in
+  let prog, own, lc, ly =
+    fix lc (Array.init nc (fun k -> Program.form (carry lc k)))
+  in
+  let r =
+    Program.perform
+      (Scan
+         {
+           step = prog;
+           length;
+           init = Array.init nc (carry lc);
+           xs = bxs;
+           captures = Array.append bcaps own;
+           (* Every lane's sum starts from its seed. *)
+           seeds = Array.map (batch_v i n) seeds;
+         })
+  in
+  Array.mapi
+    (fun k v ->
+      if k < nc then if lc.(k) then lane_v i v else v
+      else if k < nc + ny then
+        if ly.(k - nc) then
+          let (Program.V y) = v in
+          Program.V (lane i (Nx.moveaxis 1 0 y))
+        else v
+      else lane_v i v)
+    r
 
 (* [f]'s results' batches over the lanes of the batches [bs], in a map of this
    one's name and size. *)
@@ -752,6 +875,8 @@ and run :
         Some (answer ~name i axis n c)
     | Program.Bound a, _ when Program.same_axis a axis ->
         Some (fun k -> Effect.Deep.continue k (Some n))
+    (* A collect around the map receives the lanes' sum as one addition. *)
+    | Program.Running _, Some _ -> Some (fun k -> Effect.Deep.continue k None)
     | _ -> None
   in
   Effect.Deep.match_with

@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Rune.scan and Rune.iterate: traced at the call, eagerly; a scan is the
-   OCaml fold of its step bit for bit, every NaN read as one, zero rows
-   included; reads and keyless draws in a step raise naming the loop. *)
+(* Rune.scan and Rune.iterate: traced at the call, eagerly; a scan is the OCaml
+   fold of its step bit for bit, every NaN read as one, zero rows included;
+   reads and keyless draws in a step raise naming the loop. *)
 
 open Windtrap
 open Compose
@@ -433,8 +433,8 @@ let test_in_loops () =
        (total (fun () ->
             Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.unit ~f:big
               ~init:(v [| 0. |]) three)));
-  (* The chain reaches the collect as one addition: after 1e8, three 12s give
-     1e8 + 36, rounded once. *)
+  (* The chain starts from the collect's running total: after 1e8, three 12s are
+     added in turn, each rounded, as the fold adds them. *)
   let after =
     total (fun () ->
         Total.add t (Nx.scalar f32 1e8);
@@ -444,8 +444,11 @@ let test_in_loops () =
             (c, ()))
           ~init:(v [| 0. |]) three)
   in
+  let twelve = Nx.scalar f32 12. in
   equal bits_t
-    (bits Nx.(add (add (zero ()) (scalar f32 1e8)) (scalar f32 36.)))
+    (bits
+       Nx.(
+         add (add (add (add (zero ()) (scalar f32 1e8)) twelve) twelve) twelve))
     (bits after);
   (* Per trip of an iterate, and per test of its stop. *)
   let trips =
@@ -478,6 +481,7 @@ let total_cases =
 let law_totals (n, z, adds) =
   cover "no row" (n = 0);
   cover "two additions to one total" (List.length adds >= 2);
+  cover "an addition before the loop" (List.exists fst adds);
   let t = Total.make () and u = Total.make () in
   let step c x =
     List.iter
@@ -497,9 +501,21 @@ let law_totals (n, z, adds) =
     in
     (bits a, bits b)
   in
-  let eager = totals (fun () -> ignore (fold step ~init xs)) in
+  (* [u]'s additions are made once before the loop too, so its chain starts from
+     a running total that is not its zero. *)
+  let before () =
+    List.iter
+      (fun (to_u, k) -> if to_u then Total.add u (Nx.scalar f32 (k *. 1e7)))
+      adds
+  in
+  let eager =
+    totals (fun () ->
+        before ();
+        ignore (fold step ~init xs))
+  in
   let scanned =
     totals (fun () ->
+        before ();
         ignore
           (Rune.scan Nx.Ptree.tensor Nx.Ptree.tensor Nx.Ptree.unit ~f:step ~init
              xs))
@@ -523,9 +539,9 @@ let test_scopes_inside () =
   equal bits_t (bits (Nx.scalar f32 21.)) (bits c);
   equal bits_t (bits (v [| 3.; 7.; 11. |])) (bits ys)
 
-(* Carries, rows and additions of every set beside placed ones: a value is
-   read back at the form it was traced at, and where forms meet the placed
-   one wins, as nx computes a constant where its other operand lies. *)
+(* Carries, rows and additions of every set beside placed ones: a value is read
+   back at the form it was traced at, and where forms meet the placed one wins,
+   as nx computes a constant where its other operand lies. *)
 let placement =
   Testable.make ~pp:Nx.Placement.pp ~equal:(fun p q -> Nx.Placement.equal p q)
 
@@ -544,7 +560,9 @@ let test_constant_carry () =
   equal ~msg:"where the step put it" (option placement) (Some Nx.Host.on)
     (Nx.placement c);
   let c, _ =
-    Rune.scan t t t ~f:(fun c x -> (Nx.add c x, x)) ~init:(Nx.scalar f32 0.)
+    Rune.scan t t t
+      ~f:(fun c x -> (Nx.add c x, x))
+      ~init:(Nx.scalar f32 0.)
       (host (v [| 1.; 2. |]))
   in
   equal bits_t (bits three) (bits c)
@@ -623,8 +641,8 @@ let test_swap () =
   equal bits_t (bits (Nx.scalar f32 2.)) (bits a);
   equal bits_t (bits (Nx.scalar f32 1.)) (bits b)
 
-(* An iterate whose step returns a constant and whose [init] is placed: no
-   step or one, under jit and inside a scan's step. *)
+(* An iterate whose step returns a constant and whose [init] is placed: no step
+   or one, under jit and inside a scan's step. *)
 let test_placed_init () =
   let zero = Nx.scalar f32 0. in
   let loop a =
@@ -633,7 +651,8 @@ let test_placed_init () =
       ~f:(fun _ -> Nx.zeros f32 [||])
       a
   in
-  equal ~msg:"no step" bits_t (bits (Nx.scalar f32 1.))
+  equal ~msg:"no step" bits_t
+    (bits (Nx.scalar f32 1.))
     (bits (Rune.jit' loop (host (Nx.scalar f32 1.))));
   equal ~msg:"one step" bits_t (bits zero)
     (bits (Rune.jit' loop (host (Nx.scalar f32 (-1.)))));
