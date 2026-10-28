@@ -17,7 +17,7 @@ let steps = Nx.linspace Nx.float64 0. 1. 200
 
 let losses =
   let rates = Nx.create Nx.float64 [| 5; 1 |] [| 2.; 2.5; 3.; 3.5; 4. |] in
-  let noise = Nx.Rng.normal (Nx.Rng.key 0) Nx.float64 [| 5; 200 |] in
+  let noise = Nx.Rng.normal ~key:(Nx.Rng.key 0) Nx.float64 [| 5; 200 |] in
   Nx.add (Nx.exp (Nx.neg (Nx.mul rates steps))) (Nx.mul_s noise 0.01)
 
 let () =

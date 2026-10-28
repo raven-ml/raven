@@ -13,7 +13,7 @@ let () =
     Nx.add floor (Nx.exp (Nx.mul (Nx.neg t) rates))
     |> Nx.add
          (Nx.mul_s
-            (Nx.Rng.normal (Nx.Rng.key 16) Nx.float64 [| 3; steps |])
+            (Nx.Rng.normal ~key:(Nx.Rng.key 16) Nx.float64 [| 3; steps |])
             0.01)
   in
   let optimiser = Scale.band ~name:"optimiser" () in

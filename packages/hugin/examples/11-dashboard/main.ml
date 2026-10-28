@@ -9,7 +9,7 @@ let epoch = 500
 
 let history () =
   let step = Nx.linspace Nx.float64 0. (float (steps - 1)) steps in
-  let noise = Nx.Rng.normal (Nx.Rng.key 11) Nx.float64 [| steps |] in
+  let noise = Nx.Rng.normal ~key:(Nx.Rng.key 11) Nx.float64 [| steps |] in
   let loss =
     Nx.mul
       (Nx.add_s (Nx.exp (Nx.mul_s step (-0.0015))) 0.05)
@@ -28,7 +28,7 @@ let history () =
 
 let () =
   let step, loss, vstep, acc, epochs = history () in
-  let at t = Nx.take ~indices:(Nx.reshape [| 1 |] (Nx.argmax acc)) t in
+  let at t = Nx.take (Nx.reshape [| 1 |] (Nx.argmax acc)) t in
   let losses =
     layer
       [

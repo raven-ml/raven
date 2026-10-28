@@ -8,7 +8,7 @@ let () =
   let base = Nx.create Nx.float64 [| 4; 1 |] [| 0.71; 0.74; 0.76; 0.8 |] in
   let runs =
     Nx.add base
-      (Nx.mul_s (Nx.Rng.normal (Nx.Rng.key 15) Nx.float64 [| 4; 5 |]) 0.02)
+      (Nx.mul_s (Nx.Rng.normal ~key:(Nx.Rng.key 15) Nx.float64 [| 4; 5 |]) 0.02)
   in
   let mean = Nx.mean ~axes:[ 1 ] runs and std = Nx.std ~axes:[ 1 ] runs in
   let x = strings ~title:"method" methods in

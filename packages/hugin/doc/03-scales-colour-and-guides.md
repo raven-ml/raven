@@ -142,7 +142,7 @@ palettes (`tableau10`, `okabe_ito`, `set2`, ...):
 
 ```ocaml
 let () =
-  let z = Nx.Rng.normal (Nx.Rng.key 1) Nx.float64 [| 10; 10 |] in
+  let z = Nx.Rng.normal ~key:(Nx.Rng.key 1) Nx.float64 [| 10; 10 |] in
   rect ~x:(dim 1) ~y:(dim 0)
     ~fill:(num ~scale:(Scale.linear ~domain:(-3., 3.) ~scheme:Scheme.rdbu ()) z)
     ()

@@ -8,11 +8,15 @@ let () =
   let t = Nx.linspace Nx.float64 0. 1. steps in
   let rates =
     Nx.add_s
-      (Nx.mul_s (Nx.Rng.uniform (Nx.Rng.key 14) Nx.float64 [| seeds; 1 |]) 2.)
+      (Nx.mul_s
+         (Nx.Rng.uniform ~key:(Nx.Rng.key 14) Nx.float64 [| seeds; 1 |])
+         2.)
       3.
   in
   let noise =
-    Nx.mul_s (Nx.Rng.normal (Nx.Rng.key 15) Nx.float64 [| seeds; steps |]) 0.02
+    Nx.mul_s
+      (Nx.Rng.normal ~key:(Nx.Rng.key 15) Nx.float64 [| seeds; steps |])
+      0.02
   in
   let losses = Nx.add (Nx.exp (Nx.mul (Nx.neg t) rates)) (Nx.add_s noise 0.1) in
   let progress = num ~title:"progress" t in

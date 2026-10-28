@@ -10,7 +10,7 @@ let () =
     Nx.reshape [| 3; 1 |] (Nx.create Nx.float64 [| 3 |] [| 1.; 1.3; 1.7 |])
   in
   let noise =
-    Nx.mul_s (Nx.Rng.normal (Nx.Rng.key 1) Nx.float64 [| 3; steps |]) 0.03
+    Nx.mul_s (Nx.Rng.normal ~key:(Nx.Rng.key 1) Nx.float64 [| 3; steps |]) 0.03
   in
   let losses = Nx.add (Nx.exp (Nx.mul (Nx.neg t) (Nx.mul_s seeds 4.))) noise in
   let f =

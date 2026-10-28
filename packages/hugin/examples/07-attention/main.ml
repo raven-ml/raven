@@ -6,7 +6,7 @@ let tokens = [| "the"; "cat"; "sat"; "on"; "the"; "mat" |]
 
 let () =
   let t = Array.length tokens in
-  let logits = Nx.Rng.normal (Nx.Rng.key 7) Nx.float32 [| 3; 4; t; t |] in
+  let logits = Nx.Rng.normal ~key:(Nx.Rng.key 7) Nx.float32 [| 3; 4; t; t |] in
   let causal = Nx.init Nx.bool [| t; t |] (fun i -> i.(1) <= i.(0)) in
   let masked =
     Nx.where

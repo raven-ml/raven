@@ -40,12 +40,12 @@ let () =
   let n = 200 in
   let keys = Nx.Rng.split ~n:3 (key 1) in
   let group = Nx.cast Nx.int32 (Nx.div_s (Nx.arange Nx.int32 0 n 1) 100l) in
-  let px = Nx.Rng.normal keys.(0) Nx.float64 [| n |] in
-  let py = Nx.add (Nx.mul_s (Nx.cast Nx.float64 group) 2.) (Nx.Rng.normal keys.(1) Nx.float64 [| n |]) in
+  let px = Nx.Rng.normal ~key:keys.(0) Nx.float64 [| n |] in
+  let py = Nx.add (Nx.mul_s (Nx.cast Nx.float64 group) 2.) (Nx.Rng.normal ~key:keys.(1) Nx.float64 [| n |]) in
   let labels = [| "control"; "treated" |] in
   dot ~x:(num px) ~y:(num py)
     ~fill:(cat ~title:"group" ~labels group)
-    ~size:(num ~title:"weight" (Nx.Rng.uniform keys.(2) Nx.float64 [| n |]))
+    ~size:(num ~title:"weight" (Nx.Rng.uniform ~key:keys.(2) Nx.float64 [| n |]))
     ()
   |> save "dots.png"
 ```
@@ -103,7 +103,7 @@ baseline is zero; with it, the area is a band between two curves:
 let () =
   let runs =
     Nx.add (Nx.reshape [| 1; 11 |] (Nx.sin t))
-      (Nx.mul_s (Nx.Rng.normal (key 2) Nx.float64 [| 8; 11 |]) 0.2)
+      (Nx.mul_s (Nx.Rng.normal ~key:(key 2) Nx.float64 [| 8; 11 |]) 0.2)
   in
   let lo = Nx.min ~axes:[ 0 ] runs and hi = Nx.max ~axes:[ 0 ] runs in
   layer
@@ -141,7 +141,7 @@ through `~fill`, and a continuous colour scale yields a colour bar:
 
 ```ocaml
 let () =
-  let z = Nx.Rng.normal (key 3) Nx.float64 [| 12; 16 |] in
+  let z = Nx.Rng.normal ~key:(key 3) Nx.float64 [| 12; 16 |] in
   rect ~x:(dim 1) ~y:(dim 0) ~fill:(num ~title:"z" z) ()
   |> save "heatmap.png"
 ```
@@ -152,7 +152,7 @@ edge:
 
 ```ocaml
 let () =
-  let h = Stats.histogram ~bins:30 (Nx.Rng.normal (key 4) Nx.float64 [| 2_000 |]) in
+  let h = Stats.histogram ~bins:30 (Nx.Rng.normal ~key:(key 4) Nx.float64 [| 2_000 |]) in
   rect ~x:(num h.x) ~x2:(num h.x2) ~y:(num ~title:"count" h.count) ()
   |> save "histogram.png"
 ```
@@ -213,8 +213,8 @@ domains the data fits:
 
 ```ocaml
 let () =
-  let xs = Nx.Rng.uniform (key 6) Nx.float64 [| 50 |] in
-  let ys = Nx.add (Nx.mul_s xs 2.) (Nx.mul_s (Nx.Rng.normal (key 7) Nx.float64 [| 50 |]) 0.2) in
+  let xs = Nx.Rng.uniform ~key:(key 6) Nx.float64 [| 50 |] in
+  let ys = Nx.add (Nx.mul_s xs 2.) (Nx.mul_s (Nx.Rng.normal ~key:(key 7) Nx.float64 [| 50 |]) 0.2) in
   layer
     [
       dot ~x:(num xs) ~y:(num ys) ();
@@ -256,7 +256,7 @@ several images, which the facet channels put in panels of their own:
 
 ```ocaml
 let () =
-  let batch = Nx.Rng.uniform (key 5) Nx.float32 [| 6; 16; 16; 3 |] in
+  let batch = Nx.Rng.uniform ~key:(key 5) Nx.float32 [| 6; 16; 16; 3 |] in
   image ~fx:(dim ~scale:(Scale.band ~wrap:3 ()) 0) batch
   |> save "images.png"
 ```

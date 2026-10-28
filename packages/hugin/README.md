@@ -18,8 +18,8 @@ facets, and render to PNG, SVG and PDF with a bundled font.
 - Facets, grids with aligned data areas, spans, titles and fixed aspect ratios
 - Sequential, diverging and qualitative colour schemes, and colours mixed in
   Oklab
-- Large data reduced where it lives: dense lines, scatters and images draw
-  only what the output's pixels can show
+- Large data reduced with nx before it is read: dense lines, scatters and
+  images draw only what the output's pixels can show
 - PNG, SVG and PDF written in pure OCaml, the same bytes on every run
 - Display in Quill notebooks through `Hugin.pp`
 

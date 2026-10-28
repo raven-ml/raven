@@ -7,12 +7,12 @@ let digits = Array.init 10 string_of_int
 
 let embedding n =
   let keys = Nx.Rng.split ~n:2 (Nx.Rng.key 8) in
-  let labels = Nx.Rng.randint keys.(0) ~high:10 [| n |] in
+  let labels = Nx.Rng.randint ~key:keys.(0) ~high:10 [| n |] in
   let angle = Nx.mul_s (Nx.cast Nx.float32 labels) (2. *. Float.pi /. 10.) in
   let centre =
     Nx.stack ~axis:1 [ Nx.mul_s (Nx.cos angle) 6.; Nx.mul_s (Nx.sin angle) 6. ]
   in
-  let e = Nx.add centre (Nx.Rng.normal keys.(1) Nx.float32 [| n; 2 |]) in
+  let e = Nx.add centre (Nx.Rng.normal ~key:keys.(1) Nx.float32 [| n; 2 |]) in
   (e, labels)
 
 let figure n =

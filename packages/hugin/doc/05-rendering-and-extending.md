@@ -92,7 +92,7 @@ figure that reads it:
 let smoothing = View.number "smoothing" ~init:0.5
 
 let noisy =
-  Nx.mul loss (Nx.exp (Nx.mul_s (Nx.Rng.normal (Nx.Rng.key 0) Nx.float64 [| 101 |]) 0.2))
+  Nx.mul loss (Nx.exp (Nx.mul_s (Nx.Rng.normal ~key:(Nx.Rng.key 0) Nx.float64 [| 101 |]) 0.2))
 
 let live =
   bind smoothing (fun alpha -> line ~y:(num (Nx.ewma ~alpha noisy)) ())
