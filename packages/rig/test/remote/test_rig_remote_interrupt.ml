@@ -218,14 +218,20 @@ let raise_in_devices () =
 (* Connects *)
 
 (* An address of the loopback where nothing listens: a connect to it answers
-   [Error] once it has made the process's job, and gives the job back. *)
+   [Error] once it has made the process's job, and gives the job back. The
+   port's socket is closed before the connect: macOS drops a connect to a
+   bound socket that does not listen, so the connect would wait out its
+   bound, and a closed port refuses it at once. *)
 let with_silent_address f =
   let fd = Unix.socket ~cloexec:true Unix.PF_INET Unix.SOCK_STREAM 0 in
-  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
-  Unix.bind fd (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
-  match Unix.getsockname fd with
-  | Unix.ADDR_INET (_, p) -> f ("127.0.0.1", p)
-  | Unix.ADDR_UNIX _ -> fail "no port"
+  let port =
+    Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
+    Unix.bind fd (Unix.ADDR_INET (Unix.inet_addr_loopback, 0));
+    match Unix.getsockname fd with
+    | Unix.ADDR_INET (_, p) -> p
+    | Unix.ADDR_UNIX _ -> fail "no port"
+  in
+  f ("127.0.0.1", port)
 
 (* A connect after a connect that raised: it answers [Error] for an address
    where nothing listens, which it can only once the process's job of the
