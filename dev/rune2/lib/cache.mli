@@ -5,8 +5,15 @@
 
 (** Values made once per key, from any domain.
 
-    A compiled function makes its program the first time it meets a key, and
-    reads it without making it again. *)
+    A table makes a key's value the first time a call reads it, and later calls
+    from every domain read that value.
+
+    A table's lock guards its keys, and each key has a {e latch}, a lock held
+    while the key's value is made, so the values of distinct keys may be made
+    concurrently. Other calls for a key block until its value is made. A call
+    for a key whose value its own domain is making, from inside [make] or from a
+    fiber the domain resumes meanwhile, returns [make ()] without waiting. The
+    table does not keep that value. *)
 
 (** Tables whose values are made once per key. *)
 module Make (K : Hashtbl.HashedType) : sig
@@ -17,12 +24,9 @@ module Make (K : Hashtbl.HashedType) : sig
   (** [create ()] is an empty table. *)
 
   val find : 'v t -> K.t -> miss:(unit -> unit) -> (unit -> 'v) -> 'v
-  (** [find t k ~miss make] is [k]'s value in [t]. The first time [t] meets [k],
-      [miss ()] runs under [t]'s lock, and [k] is added only if it returns; the
-      first call that reads [k]'s value then makes it with [make ()] under [k]'s
-      own latch, so that the values of distinct keys are made concurrently and
-      each key's once. A call on the domain making [k]'s value, from inside
-      [make] or from a fiber the domain resumes meanwhile, makes a value with
-      [make ()] for itself, which [t] does not keep, where waiting would wait
-      for itself. If [make] raises, the next call for [k] makes it again. *)
+  (** [find t k ~miss make] is [k]'s value in [t], made with [make ()] by the
+      first call that reads it. The first time [t] meets [k], [miss ()] runs
+      under [t]'s lock, and [k] is added only if it returns. If [make] raises,
+      the exception reaches its caller, and the next call for [k], a waiting one
+      included, makes the value again. *)
 end
