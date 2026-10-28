@@ -48,6 +48,17 @@ let loop_rows () =
           c := fst (step !c (Nx.get [ i ] xs))
         done;
         !c);
+    (* Under forward and reverse mode: one scan of the step's derivative, and a
+       scan stacking its residuals then a reversed scan of its transpose. *)
+    Thumper.bench "scan-jvp-100x1000" (fun () ->
+        Rune.jvp'
+          (fun c -> fst (Rune.scan t t Nx.Ptree.unit ~f:step ~init:c xs))
+          init init);
+    Thumper.bench "scan-grad-100x1000" (fun () ->
+        Rune.grad'
+          (fun c ->
+            Nx.sum (fst (Rune.scan t t Nx.Ptree.unit ~f:step ~init:c xs)))
+          init);
   ]
 
 (* Declined: [ops] adds of constants in a traced step, under reverse mode and in
@@ -93,6 +104,15 @@ let deep_rows () =
     Thumper.bench "chain-fwd" (fun () -> f x);
     Thumper.bench "chain-jvp" (fun () -> Rune.jvp' f x v);
     Thumper.bench "chain-grad" (fun () -> Rune.grad' f x);
+  ]
+
+(* Remat: DeepChain's gradient through a remat, whose backward pass computes the
+   chain again. *)
+let remat_rows () =
+  let x = one () in
+  let f = Rune.remat Nx.Ptree.(tensor @-> returns tensor) chain in
+  [
+    Thumper.bench "chain-grad" (fun () -> Rune.grad' (fun x -> Nx.sum (f x)) x);
   ]
 
 (* MlpGrad: one step's loss and gradient of a three-layer perceptron, 784 to 256
@@ -312,6 +332,7 @@ let () =
          Thumper.group "Loops" (loop_rows ());
          Thumper.group "Declined" (declined_rows ());
          Thumper.group "DeepChain" (deep_rows ());
+         Thumper.group "Remat" (remat_rows ());
          Thumper.group "Jit" (jit_rows ());
          Thumper.group "WarmStart" (warm_rows ());
          Thumper.group "MlpGrad" (mlp_rows ());
