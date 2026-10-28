@@ -1329,9 +1329,7 @@ let dirichlet ?key a =
     in
     let z = draw ~by ~params:[| Value.Any a; Value.Any least |] key c s prog in
     let top =
-      along_last ~by shape
-        (P.of_node ~ins:[| D.Any c |] (In 0))
-        Nx_kernel.Max c [| Value.Any z |]
+      along_last ~by shape (Prim.identity c) Nx_kernel.Max c [| Value.Any z |]
     in
     let ins : D.any iarray = [| D.Any c; D.Any c; D.Any c |] in
     let e = E.(exp ((input 0 c - input 1 c) / input 2 c)) in
@@ -1418,7 +1416,7 @@ let categorical ?key ?(axis = -1) logits =
          {
            layout = Nx_array.Layout.contiguous (Iarray.of_array shape);
            axes = [| Array.length (source_batch key) + a |];
-           prog = P.of_node ~ins:[| D.Any c |] (In 0);
+           prog = Prim.identity c;
            reductions = Value.[ Arg (Nx_kernel.Max, 0, c) ];
            loads = [| Value.Plain noisy |];
          })
