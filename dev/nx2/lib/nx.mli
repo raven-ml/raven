@@ -5175,7 +5175,9 @@ module Prim : sig
       or a handle and its donor, are read as the donor and kill it once. The
       arrays it reads are its own until it returns: it must not keep one, or
       a value over one, past that. The arrays {!Consumer.take} gives are the
-      exception: their memory is the consumer's from then on. *)
+      exception: their memory is the consumer's from then on, unless it
+      raises. The end of its handles then frees that memory too, since no
+      result holds it. *)
 
   module Consumer : sig
     type 'd t
@@ -5197,7 +5199,7 @@ module Prim : sig
         placement, in order.
 
         Raises [Invalid_argument] naming [c]'s [by] for a traced operand, a
-        position no operand has, or once {!with_} returned. *)
+        position no operand has, or once {!with_} has returned or raised. *)
 
     val take :
       'd t ->

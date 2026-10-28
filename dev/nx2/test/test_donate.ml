@@ -2875,7 +2875,8 @@ let test_consumer_takes () =
 (* An update in place, [y = x + 1] over [x]'s taken memory: the taken array
    holds [x]'s elements until it is written, and needs no memory of the
    result's size. A consumer that takes none returns the donor's memory
-   when it ends, even when it raises. *)
+   when it ends, even when it raises, and one that raises returns the memory
+   it took, though the taken array stays reachable. *)
 let test_consumer_memory () =
   let n = 1 lsl 16 in
   let bytes = 4 * n in
@@ -2908,7 +2909,15 @@ let test_consumer_memory () =
          C.with_ ~by:"test.call" [ Any (Nx.donate x) ] (fun _ -> ())));
   at_least ~msg:"and when the consumer raises" int ~than:bytes
     (freed (fun x ->
-         C.with_ ~by:"test.call" [ Any (Nx.donate x) ] (fun _ -> raise Exit)))
+         C.with_ ~by:"test.call" [ Any (Nx.donate x) ] (fun _ -> raise Exit)));
+  let kept = ref None in
+  at_least ~msg:"the memory it took, when the consumer raises" int ~than:bytes
+    (freed (fun x ->
+         C.with_ ~by:"test.call" [ Any (Nx.donate x) ] (fun c ->
+             kept := C.take c 0 D.Float32 (layout_of n);
+             raise Exit)));
+  equal ~msg:"it took the memory" bool true (Option.is_some !kept);
+  ignore (Sys.opaque_identity !kept)
 
 (* A consumer that ends returns the memory of every handle it claimed, in
    either order of its operands: the donor's, which a view passed on reads,

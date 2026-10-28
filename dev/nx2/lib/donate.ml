@@ -68,12 +68,14 @@ let donates (Value.Any h) y =
    on any domain, raises naming its consumer. Two consumers racing for one
    donor is a misuse: one of them raises, possibly both, and a donor a loser
    claimed before it raised stays dead. [handles] holds every handle among
-   [operands], in their order, and [ended] guards the steps after
-   {!consumed}. *)
+   [operands], in their order, [taken] the live buffers {!reuse} gave results,
+   which a consumer that raises leaves to no result, and [ended] guards the
+   steps after {!consumed}. *)
 type 'd claim = {
   by : string;
   operands : 'd Value.any array;
   handles : 'd Value.any list;
+  mutable taken : Rig.Buffer.t list;
   mutable ended : bool;
 }
 
@@ -114,7 +116,7 @@ let claim ~by xs =
         kills (h :: seen) rest
   in
   kills [] handles;
-  { by; operands = Array.of_list xs; handles; ended = false }
+  { by; operands = Array.of_list xs; handles; taken = []; ended = false }
 
 (* Raises once [c] ended, whose handles' memory may then be freed. *)
 let unended c =
@@ -172,6 +174,7 @@ let has_bytes (type v s d) (x : (v, s, d) Value.t) =
 
 let reuse (type w r d) (c : d claim) ~own (dt : (w, r) D.t) layout :
     (Rig.Buffer.t * (w, r) A.t) option =
+  unended c;
   let n = Array.length c.operands in
   (* The buffer of operand [i], a handle on one device whose array holds the
      result over memory no earlier reuse took, if every operand lies apart
@@ -203,7 +206,9 @@ let reuse (type w r d) (c : d claim) ~own (dt : (w, r) D.t) layout :
       | None -> None
       | Some b -> (
           match take_memory ~by:c.by b with
-          | Some b' -> Some (b, A.v dt layout b')
+          | Some b' ->
+              c.taken <- b' :: c.taken;
+              Some (b, A.v dt layout b')
           | None -> None))
     own
 
@@ -245,9 +250,21 @@ let consumed c =
 let with_consumer ~by xs f =
   List.iter (fun (Value.Any x) -> Prim.alive ~by x) xs;
   let c = claim ~by xs in
-  (* The claim ends on a raise too: its donors are dead, so nothing else
-     would return their memory. *)
-  Fun.protect ~finally:(fun () -> consumed c) (fun () -> f c)
+  match f c with
+  | y ->
+      consumed c;
+      y
+  | exception e ->
+      (* The claim ends on a raise too: its donors are dead, so nothing else
+         would return their memory. No result holds the memory a reuse took
+         for one, which is freed unless a later consumption killed it. *)
+      let bt = Printexc.get_raw_backtrace () in
+      consumed c;
+      let why = "donated to " ^ by in
+      List.iter
+        (fun b -> if unconsumed b then ignore (Rig.Buffer.free ~why b : bool))
+        c.taken;
+      Printexc.raise_with_backtrace e bt
 
 (* Operand [i], which must have bytes: a traced value has none. *)
 let bytes_at c i =

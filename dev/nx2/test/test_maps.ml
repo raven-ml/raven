@@ -531,16 +531,17 @@ let test_one_donor_twice () =
     moved (Reshape [| 4 |])
       (moved (Permute [| 1; 0 |]) (Donate.donate ~by:"t" x))
   in
-  let c = Donate.claim ~by:"t" [ Value.Any x; Value.Any h1; Value.Any h2 ] in
-  raises_match (Exn.invalid_arg ~substring:"t: float32 [2; 2] was donated to t")
-    (fun () -> Prim.alive ~by:"t" x);
-  let takes own s =
-    Option.is_some (Donate.reuse c ~own D.Float32 (A.Layout.contiguous s))
-  in
-  equal ~msg:"the copy's memory" bool true (takes [ 2 ] [| 4 |]);
-  equal ~msg:"taken once" bool false (takes [ 2 ] [| 4 |]);
-  equal ~msg:"the first's memory" bool true (takes [ 0; 1 ] [| 2; 2 |]);
-  Donate.consumed c
+  Donate.with_consumer ~by:"t" [ Value.Any x; Value.Any h1; Value.Any h2 ]
+    (fun c ->
+      raises_match
+        (Exn.invalid_arg ~substring:"t: float32 [2; 2] was donated to t")
+        (fun () -> Prim.alive ~by:"t" x);
+      let takes own s =
+        Option.is_some (Donate.reuse c ~own D.Float32 (A.Layout.contiguous s))
+      in
+      equal ~msg:"the copy's memory" bool true (takes [ 2 ] [| 4 |]);
+      equal ~msg:"taken once" bool false (takes [ 2 ] [| 4 |]);
+      equal ~msg:"the first's memory" bool true (takes [ 0; 1 ] [| 2; 2 |]))
 
 (* A consumer reads an operation's handles as their arrays through its claim,
    until the claim ends. *)
@@ -556,8 +557,10 @@ let test_called () =
         | _ -> fail "not the copy");
         c)
   in
-  raises (Invalid_argument "t: the consumer ended its handles") (fun () ->
-      ignore (Donate.called kept op))
+  let ended = Invalid_argument "t: the consumer ended its handles" in
+  raises ended (fun () -> ignore (Donate.called kept op));
+  let l = A.Layout.contiguous [| 2 |] in
+  raises ended (fun () -> ignore (Donate.reuse kept ~own:[] D.Float32 l))
 
 let donation =
   group "donation"

@@ -13,11 +13,10 @@
     ({!Exec.windows}), as the route says. An operation of no operands
     computes where {!Prim.val-route} puts it, each device its window.
     The operation consumes the donated handles among its operands as {!Donate}
-    states: it claims them after the route ({!Donate.val-claim}), its first
-    result takes the memory of a handle that may hold it and lies where the
-    route puts the results ({!Donate.reuse}), and the claim ends once the
-    operation returns or raises ({!Donate.consumed}). One that raises frees
-    the memory its first result took. A movement of a handle claims nothing.
+    states, after the route ({!Donate.with_consumer}): its first result takes
+    the memory of a handle that may hold it and lies where the route puts the
+    results ({!Donate.reuse}), and one that raises frees that memory when its
+    claim ends. A movement of a handle claims nothing.
     It passes on a handle of the same donor over the moved arrays. A [Place]
     onto the host from another set first waits on that set ({!Check.wait}),
     then places the value ({!Exec.place}). A [Check] is issued
@@ -105,7 +104,7 @@ val run : by:string -> 'r prim -> 'r
 
     Raises [Invalid_argument] naming [by] for a dead or traced operand and
     where [op]'s operands break its rule, before any handle is claimed, and
-    as {!Donate.val-claim}, {!Exec} and {!Check.issue} state. *)
+    as {!Donate.with_consumer}, {!Exec} and {!Check.issue} state. *)
 
 val eval : by:string -> 'r prim -> 'r
 (** [eval ~by op] is [op]'s meaning, as stated above: {!run}'s where no

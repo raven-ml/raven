@@ -49,23 +49,6 @@ let taken c (r : Prim.routed) op =
       Option.map (fun (b, a) -> (b, A.Any a)) (Donate.reuse c ~own dt layout)
   | Some _, None | None, _ -> None
 
-(* [f ()], the claim [c] ended once it returns or raises. Where it raises, the
-   memory [into] took for its result is freed too, since no result holds
-   it. *)
-let ending ~by c into f =
-  match f () with
-  | y ->
-      Donate.consumed c;
-      y
-  | exception e ->
-      let bt = Printexc.get_raw_backtrace () in
-      Donate.consumed c;
-      let why = "donated to " ^ by in
-      Option.iter
-        (fun (A.Any a) -> ignore (Rig.Buffer.free ~why (A.buffer a) : bool))
-        into;
-      Printexc.raise_with_backtrace e bt
-
 let rec run : type r. by:string -> r prim -> r =
  fun ~by op -> if Exec.is_local op then Exec.local ~by op else general ~by op
 
@@ -75,9 +58,9 @@ and general : type r. by:string -> r prim -> r =
   if Prim.exists Donate.is_handle op then donated ~by op else plain ~by op
 
 (* [op] over donated operands: a movement that maps elements one to one passes
-   a new handle on; any other operation checks its rule, claims the handles,
-   reads their memory, writes its first result into a handle's memory where it
-   may, and ends the claim when it returns or raises. *)
+   a new handle on; any other operation checks its rule and its route, then
+   consumes the handles as {!Donate.with_consumer} does, reading their memory
+   and writing its first result into a handle's memory where it may. *)
 and donated : type r. by:string -> r prim -> r =
  fun ~by op ->
   match op with
@@ -102,27 +85,27 @@ and donated : type r. by:string -> r prim -> r =
   | Map _ | Reduce _ | Scan _ | Gather _ | Scatter _ | Sort _ | Fft _
   | Linalg _ | Fold _ | Assemble _ | Contract _ | Copy _ | Move _ | Bitcast _
   | Place _ | Check _ -> (
-      (* Checked before the claim: an operation its rule refuses neither takes
+      (* Routed before the claim: an operation its rule refuses neither takes
          a handle's memory nor shows another domain a handle dead. Once
          claimed, the donors stay dead whatever the kernels answer. *)
       let r = Prim.route ~by op in
       let (Prim.Operands xs) = Prim.operands op in
-      let c = Donate.claim ~by xs in
-      let op = Donate.called c op in
-      match taken c r op with
-      | Some (b, (A.Any a as into)) ->
-          (* The handle's memory is the result's, now over [b']: the kernel
-             reads each index of it before it writes the result there. *)
-          let b' = A.buffer a in
-          let as_taken (type v s d) (y : (v, s, d) t) : (v, s, d) t =
-            match y with
-            | Array r when A.buffer r.a == b ->
-                Array { r with a = A.v (A.dtype r.a) (A.layout r.a) b' }
-            | Array _ | Shards _ | Handle _ | Traced _ -> y
-          in
-          let op = Prim.map as_taken op in
-          ending ~by c (Some into) (fun () -> routed ~by ~into r op)
-      | None -> ending ~by c None (fun () -> routed ~by r op))
+      Donate.with_consumer ~by xs (fun c ->
+          let op = Donate.called c op in
+          match taken c r op with
+          | Some (b, (A.Any a as into)) ->
+              (* The handle's memory is the result's, now over [b']: the
+                 kernel reads each index of it before it writes the result
+                 there. *)
+              let b' = A.buffer a in
+              let as_taken (type v s d) (y : (v, s, d) t) : (v, s, d) t =
+                match y with
+                | Array r when A.buffer r.a == b ->
+                    Array { r with a = A.v (A.dtype r.a) (A.layout r.a) b' }
+                | Array _ | Shards _ | Handle _ | Traced _ -> y
+              in
+              routed ~by ~into r (Prim.map as_taken op)
+          | None -> routed ~by r op))
 
 and plain : type r. by:string -> r prim -> r =
  fun ~by op ->
