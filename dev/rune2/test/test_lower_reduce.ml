@@ -1473,6 +1473,25 @@ let magnitudes c a b init =
       ]
   | _ -> invalid_arg "magnitudes: not a float"
 
+(* Each output's count of products whose operands are both nonzero. Where it has
+   none, its sum is of exact zeros, [+0] from a start of [+0]. Elsewhere a zero
+   result's sign is open: a product that underflows keeps its sign fused into
+   the sum and is [+0] once rounded and added to [+0], and a narrow output
+   rounds a tiny sum of either sign to zero. *)
+let nonzero_products c a b =
+  let nonzero x =
+    let m =
+      List.fold_left Nx.add (Nx.scalar D.Float64 0.)
+        (List.map Nx.abs (parts64 x))
+    in
+    Nx.cast D.Float64 (Nx.not_equal_s m 0.)
+  in
+  Nx.to_array
+    (P.eval ~by:"t"
+       (contraction_op
+          { c with sa = None; sb = None }
+          ~acc:(D.Any D.Float64) D.Float64 (nonzero a) (nonzero b) None))
+
 (* The least positive subnormal of a float accumulator's parts. *)
 let subnormal (D.Any dt) =
   match dt with
@@ -1482,10 +1501,11 @@ let subnormal (D.Any dt) =
 (* Integers give eager's bits. A float result of [K] contracted terms is within
    [γ(K + 1 + s) (|init| + Σ|a·b|)] of the exact one on each side, [s] its
    scaled operands, a complex result's part within [γ(K + 2)] of that part's
-   magnitudes, and each of its roundings errs by half a subnormal more where
-   it underflows. With an init, a zero result's sign follows the order of
+   magnitudes, and each of its roundings errs by half a subnormal more where it
+   underflows. With an init, a zero result's sign follows the order of
    summation, which the bound leaves open: [+0] added last, or a [-0] init
-   first. A NaN result's bits are unspecified. *)
+   first; so does that of a result with a nonzero product, by whether tolk fuses
+   it ([nonzero_products]). A NaN result's bits are unspecified. *)
 let contract_check c =
   let (D.Any dt) = c.cdt in
   let a, b, init, e, l = contract_results dt c in
@@ -1497,11 +1517,14 @@ let contract_check c =
       let g = gamma (carrier_roundoff c.acc) depth in
       let under = Float.of_int (depth + 1) *. subnormal c.acc in
       let bits = part_bits dt and round = rounding_of dt in
+      let products = nonzero_products c a b in
       let check (e, l) mags =
         let mags = Nx.to_array mags in
         Array.iteri
           (fun o e ->
-            near ~zeros:(c.init = None) ~bits
+            near
+              ~zeros:(c.init = None && products.(o) = 0.)
+              ~bits
               ~bound:((2. *. g *. mags.(o)) +. under +. round e l.(o))
               e l.(o))
           e
