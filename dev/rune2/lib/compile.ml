@@ -339,11 +339,12 @@ let operand_reaches (type r) rc (op : r Nx.Prim.t) =
       rest l
 
 (* [lend ~donated ~computed ~reaches ~scattered ~fits] is the argument each
-   result takes the storage of, or [-1], in three passes as RFC 0006 orders
-   them: the results of a scatter that read an argument at their own index, then
-   the other results that do, then the results that read no donated argument,
-   each taking one that nothing reads. [donated.(k)] is whether argument [k] is
-   donated, [computed.(j)] whether the program computes result [j],
+   result takes the storage of, or [-1], in three passes: the results of a
+   scatter that read an argument at their own index, then the other results that
+   do, then the results that read no donated argument, each taking one that
+   nothing reads. An argument that a result reads fits no other result, so the
+   first two passes never compete for one. [donated.(k)] is whether argument [k]
+   is donated, [computed.(j)] whether the program computes result [j],
    [reaches.(j)] its reach, [scattered.(j)] whether a scatter computes it, and
    [fits k j] whether argument [k] may lend to result [j]: of its dtype, size
    and placement, and read by no other result or check. An argument lends
