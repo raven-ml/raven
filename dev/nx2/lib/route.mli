@@ -8,9 +8,10 @@
     A route is plain data from placements and shapes; it computes nothing. The
     engine takes placements from it alone, for traced results and eager ones, so
     a traced result lies where its eager twin does, and a route that raises
-    raises at trace time as it would eagerly.
+    raises at trace time as it would eagerly. This module lies above {!Grid}
+    and {!Devices}; {!Prim} builds each operation's route by it.
 
-    The rule: each operand is read where it lies, and the results lie at the
+    Each operand is read where it lies, and the results lie at the
     {e forward union} of the operands' cuts. A cut of an operand's axis that
     becomes a result axis, is scanned along it, or regroups into one in tiles
     that divide both extents, cuts that result axis over the same devices,
@@ -45,8 +46,8 @@
     devices, and one alone on another device than the results. It raises
     too where an operand lies on another set. The message names the
     function, the operand, its placement, the placement it is read at, and
-    the [Nx.place] to write, the set named [s] and the operand [x], [y],
-    [z], then [x3], [x4], …:
+    the [Nx.place] to write, writing the set as [s] and the operand as [x],
+    [y], [z], then [x3], [x4], …:
 
     {v
 Nx.matmul: operand 1 lies at split ~axis:1 [CUDA:0; CUDA:1] and is read
@@ -207,6 +208,6 @@ val route :
 val pp_call :
   by:string -> 'd Devices.t -> Format.formatter -> Grid.t -> unit
 (** [pp_call ~by s ppf q] formats the [Nx.Placement] expression that makes
-    [q] over [s], as the preamble's message writes it, the set named [s].
-    [by] is given to {!Devices.split}, which does not raise for an axis [q]
-    cuts. *)
+    [q] over [s], as the preamble's message writes it, writing the set as
+    [s]. [by] is given to {!Devices.split}, which does not raise for an axis
+    [q] cuts. *)
