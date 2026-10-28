@@ -54,9 +54,13 @@ val transpose_call :
   value array
 (** [transpose_call ~name args f] is the results of [fst (f args)], a function
     linear in [args] whose transpose is [snd (f args)], from a cotangent per
-    result to one per argument. The two are traced apart, at the call. Raises
-    what they raise, at the trace, and [Invalid_argument] if either adds to a
-    total. *)
+    result to one per argument. Where no tracer stages the call and no
+    interpretation traces an argument, the function runs on [args] under
+    [Nx.Rng.refusing], and the transpose never runs. Elsewhere the two are
+    traced apart, at the call, and the call is a construct ({!Program.Linear}).
+    Raises what they raise where they run, and [Invalid_argument] if either adds
+    to a total: at the addition where the function runs on [args], at the call
+    where they are traced. *)
 
 val residual_count : Program.t -> ny:int -> int
 (** [residual_count p ~ny] is the number of residuals of a rule's primal [p] of

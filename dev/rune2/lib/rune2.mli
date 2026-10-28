@@ -621,18 +621,24 @@ val custom_transpose :
           (x, fun (da, db) -> along Nx.Infix.(db - Nx.matmul da x)))
     ]}
 
-    [f] and [transpose] are traced at the call, apart. A differentiation applies
-    [f] to the tangents and differentiates [f]'s code along the residuals.
-    Reverse mode transposes the first by applying [transpose], never [f]'s
-    operations, and transposing that again applies [f].
+    Where no transformation tracks or stages an argument, [f] runs on the
+    arguments' values, so it may read them with {!Nx.item}, and [transpose]
+    never runs. That is the case eagerly, and in a {!custom_jvp} tangent map
+    that {!jvp} runs on its tangents. Elsewhere, as in a tangent map that
+    {!grad} runs on its stand-ins, [f] and [transpose] are traced at the call,
+    apart, and a read of an argument raises. A differentiation applies [f] to
+    the tangents and differentiates [f]'s code along the residuals. Reverse mode
+    transposes the first by applying [transpose], never [f]'s operations, and
+    transposing that again applies [f]. A draw without [~key] in either raises.
 
-    Raises [Invalid_argument] at the call if [transpose]'s result differs from
-    [args] in its {!Nx.Ptree.val-visits}, dtypes, shapes or placements, naming
-    the first path where they differ, as in
+    Raises [Invalid_argument] where [transpose] is traced, if its result differs
+    from [args] in its {!Nx.Ptree.val-visits}, dtypes, shapes or placements,
+    naming the first path where they differ, as in
     ["Rune.custom_transpose: the root: shape [2] in the transpose's result, [3]
-     in the arguments"], and if [f] or [transpose] adds to a total: each also
-    runs as the other's transpose, where its additions would have no single
-    place. *)
+     in the arguments"]. Raises it too if [f] or [transpose] adds to a total, at
+    the addition where [f] runs on values and at the call where they are traced:
+    each also runs as the other's transpose, where its additions would have no
+    single place. *)
 
 val check_transpose :
   ?tol:float ->

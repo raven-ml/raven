@@ -29,7 +29,7 @@ let near ?(tol = 1e-12) ?msg expected actual =
 let exact ?msg expected actual =
   equal ?msg (array float_exact) (values expected) (values actual)
 
-let invalid ~sub f = raises_match (Exn.invalid_arg ~substring:sub) f
+let invalid ?msg ~sub f = raises_match ?msg (Exn.invalid_arg ~substring:sub) f
 
 (* sin with its true pullback, and with a pullback of 100 to show it is used. *)
 let my_sin =
@@ -1437,12 +1437,73 @@ let transpose_tests =
                      (fun x -> (Nx.mul_s x 2., twice))
                      x))
               one));
-    test "the transpose is traced once per call" (fun () ->
+    test "the transpose does not run where the function runs on values"
+      (fun () ->
         transposes := 0;
         ignore (Rune.grad pair (loss solve) (a, b));
         equal ~msg:"grad" int 1 !transposes;
         ignore (inverse a b);
-        equal ~msg:"no differentiation" int 2 !transposes);
+        equal ~msg:"no differentiation" int 1 !transposes;
+        ignore (Rune.jvp pair tensor solve (a, b) (a, b));
+        equal ~msg:"forward mode" int 1 !transposes);
+    test "the function runs on values eagerly and on forward mode's tangents"
+      (fun () ->
+        (* v ↦ 2 v, which reads whether v is zero. *)
+        let reading v =
+          if Nx.item [] (Nx.max (Nx.abs v)) = 0. then Nx.zeros_like v
+          else Nx.mul_s v 2.
+        in
+        let linear =
+          Rune.custom_transpose tensor tensor reading ~transpose:(fun w ->
+              Nx.mul_s w 2.)
+        in
+        let rule =
+          Rune.custom_jvp tensor tensor (fun x -> (Nx.mul_s x 2., linear))
+        in
+        let x = vec [| 0.5; -1.; 2. |] in
+        exact ~msg:"eagerly" (Nx.mul_s x 2.) (linear x);
+        exact ~msg:"under jvp" (Nx.mul_s x 2.) (snd (Rune.jvp' rule x x));
+        invalid ~sub:"Nx.item: the value is traced by Rune.custom_transpose"
+          ~msg:"traced under grad" (fun () ->
+            Rune.grad' (fun x -> Nx.sum (rule x)) x);
+        raises ~msg:"a draw without a key"
+          (Invalid_argument
+             "Nx.Rng.uniform: no key inside Rune.custom_transpose, which \
+              refuses keyless draws") (fun () ->
+            Rune.custom_transpose tensor tensor
+              (fun v -> Nx.add v (Nx.Rng.uniform f64 [| 3 |]))
+              ~transpose:Fun.id x));
+    test "the function runs on values whose captures are tracked" (fun () ->
+        (* [b] is untracked, so [inverse a] runs on it, and grad and vmap follow
+           [Nx.solve] through the captured [a]. *)
+        let solved a = half_sum (inverse a b) in
+        near ~tol:1e-12 ~msg:"grad over the capture"
+          (Rune.grad' (fun a -> half_sum (Nx.solve a b)) a)
+          (Rune.grad' solved a);
+        let stacked = Nx.stack [ a; Nx.mul_s a 2. ] in
+        near ~tol:1e-12 ~msg:"vmap over the capture"
+          (Nx.stack [ Nx.solve a b; Nx.solve (Nx.mul_s a 2.) b ])
+          (Rune.vmap' (fun a -> inverse a b) stacked);
+        invalid ~sub:"Nx.item: the value is traced by Rune.vmap"
+          ~msg:"a read of the mapped capture" (fun () ->
+            Rune.vmap'
+              (fun a ->
+                Rune.custom_transpose tensor tensor
+                  (fun v -> Nx.mul_s v (Nx.item [ 0; 0 ] a))
+                  ~transpose:Fun.id b)
+              stacked));
+    test "a total collected inside the function keeps its additions" (fun () ->
+        (* v ↦ v + sum v, symmetric, its sum collected in a total. *)
+        let t = Total.make () in
+        let summed v =
+          let _, s =
+            Total.collect t ~zero:(scalar 0.) (fun () -> Total.add t (Nx.sum v))
+          in
+          Nx.add v (Nx.broadcast_to [| 3 |] s)
+        in
+        let direct v = Nx.add v (Nx.broadcast_to [| 3 |] (Nx.sum v)) in
+        exact (direct b)
+          (Rune.custom_transpose tensor tensor summed ~transpose:direct b));
     test "the transpose's transpose is the function" (fun () ->
         let u = vec [| 0.4 |] and v0 = vec [| 1. |] in
         let pullback w = snd (Rune.vjp' declared v0) w in
@@ -1490,27 +1551,36 @@ let transpose_tests =
           "Rune.custom_transpose: the function or its transpose adds to a \
            total; a linear call makes no addition"
         in
-        invalid ~sub:message (fun () ->
-            Rune.custom_transpose tensor tensor
+        let adding v =
+          Total.add t (Nx.sum v);
+          v
+        in
+        invalid ~sub:message ~msg:"the function, eagerly" (fun () ->
+            Rune.custom_transpose tensor tensor adding ~transpose:Fun.id b);
+        invalid ~sub:message ~msg:"the function, under jit" (fun () ->
+            Rune.jit'
+              (Rune.custom_transpose tensor tensor adding ~transpose:Fun.id)
+              b);
+        invalid ~sub:message ~msg:"the transpose, under grad" (fun () ->
+            Rune.grad'
               (fun v ->
-                Total.add t (Nx.sum v);
-                v)
-              ~transpose:Fun.id b);
-        invalid ~sub:message (fun () ->
-            Rune.custom_transpose tensor tensor Fun.id
-              ~transpose:(fun w ->
-                Total.add t (Nx.sum w);
-                w)
-              b));
+                Nx.sum
+                  (Rune.custom_transpose tensor tensor Fun.id ~transpose:adding
+                     v))
+              b);
+        exact ~msg:"eagerly the transpose does not run" b
+          (Rune.custom_transpose tensor tensor Fun.id ~transpose:adding b));
     test "a transpose of another shape than the arguments is refused" (fun () ->
+        let short =
+          Rune.custom_transpose tensor tensor Fun.id ~transpose:(fun w ->
+              Nx.slice [ Nx.R (0, 2) ] w)
+        in
         invalid
           ~sub:
             "Rune.custom_transpose: the root: shape [2] in the transpose's \
              result, [3] in the arguments" (fun () ->
-            Rune.custom_transpose tensor tensor
-              (fun v -> v)
-              ~transpose:(fun w -> Nx.slice [ Nx.R (0, 2) ] w)
-              b));
+            Rune.grad' (fun v -> Nx.sum (short v)) b);
+        exact ~msg:"eagerly the transpose does not run" b (short b));
     test "check_transpose holds the adjoint law" (fun () ->
         equal ~msg:"a true transpose" (result unit string) (Ok ())
           (Rune.check_transpose tensor tensor
