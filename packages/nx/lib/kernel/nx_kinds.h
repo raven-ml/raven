@@ -50,7 +50,7 @@
    Metal's fmod rounds.
 
    The polynomials' coefficients are minimax fits, written by
-   dev/nx2/test/kernel/gen/kinds.py with the fit's error.
+   packages/nx/test/kernel/gen/kinds.py with the fit's error.
 
    A vector library runs a kind's function on its lanes. sin, cos, tan and
    exp also have a near function, nx_sin_near_* and so on, which gives the

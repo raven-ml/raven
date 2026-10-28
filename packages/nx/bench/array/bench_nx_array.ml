@@ -324,7 +324,7 @@ let door_rows =
       Thumper.bench_with_setup ~budgets:no_alloc
         ~setup:(fun () ->
           incr lates;
-          let name = Printf.sprintf "nx2-bench-late-door:%d" !lates in
+          let name = Printf.sprintf "nx-bench-late-door:%d" !lates in
           let d, _ = Nx_array_support.Late.open_ name in
           let z = A.create d f32 rank4 and x = A.create d f32 rank4 in
           let y = A.create d f32 rank4 in
@@ -476,7 +476,7 @@ let kernel_rows =
   let opened = ref 0 in
   let late () =
     incr opened;
-    let name = Printf.sprintf "nx2-bench-late:%d" !opened in
+    let name = Printf.sprintf "nx-bench-late:%d" !opened in
     let d, _ = Nx_array_support.Late.open_ name in
     let z = A.create d f32 [| 1 |] and x = A.create d f32 [| 1 |] in
     let y = A.create d f32 [| 1 |] in

@@ -767,7 +767,7 @@ let test_compiled () =
 
 let () =
   exit
-    (run "rune2 probe"
+    (run "rune probe"
        [
          group "eager"
            [

@@ -9,7 +9,7 @@
     {!Nx_kernel.S} states of its operation. Every shape must be static.
 
     {b Numerics.} These bounds implement the indexing rows of
-    {!Rune2.section-numerics}. A gather, a scatter by [Set], an assembly and a
+    {!Rune.section-numerics}. A gather, a scatter by [Set], an assembly and a
     sort move elements, so they give the bits of nx's kernels, a NaN's sign and
     payload included. So does a scatter where no update lands. A scatter by
     [Max] or [Min] gives nx's bits except at a NaN result, whose sign and

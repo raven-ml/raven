@@ -3,13 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Rune.jit: a compiled call computes eager's values within rune2.mli's classes,
+(* Rune.jit: a compiled call computes eager's values within rune.mli's classes,
    exact functions bit for bit, every NaN read as one, and the others within
    their bounds; a call retraces exactly when its key changes; inside it reads
    and keyless draws raise, naming Rune.jit. *)
 
 open Windtrap
-open Rune2_support
+open Rune_support
 open Operand
 open Witness
 module T = Nx.Ptree
@@ -23,7 +23,7 @@ let v64 xs = Nx.create f64 [| Array.length xs |] xs
 let offset (o : Operand.t) = match o.view with Offset _ -> true | _ -> false
 
 (* [compiled f] is [f ()]'s outcome, once it ran its compiled calls compiled. No
-   program here holds what rune2.mli lists as evaluated, so an evaluated call is
+   program here holds what rune.mli lists as evaluated, so an evaluated call is
    a declined lowering, and fails. *)
 let compiled f =
   let before = Rune.evaluations () in
@@ -338,7 +338,7 @@ type unary = {
   bound : int * int;  (** At float32, at float64. *)
 }
 
-(* rune2.mli's bound, then nx's. *)
+(* rune.mli's bound, then nx's. *)
 let unaries =
   [
     { name = "exp"; f = Nx.exp; bound = (9 + 2, 9 + 2) };
@@ -3034,7 +3034,7 @@ let law_strided_sort xs =
 
 let () =
   exit
-    (run "rune2 jit"
+    (run "rune jit"
        [
          group "classes"
            [

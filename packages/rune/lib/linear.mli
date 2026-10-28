@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (** Reverse mode, which linearizes a function into a tape and transposes the
-    tape. This module implements the derivatives of {!Rune2.section-reverse}.
+    tape. This module implements the derivatives of {!Rune.section-reverse}.
 
     {e Linearizing} a function runs it under forward mode ({!Jvp}) whose
     tangents are the variables of a tape tracer ({!Trace.Tape}). The primal
@@ -19,7 +19,7 @@
     equation's transpose under the interpretations around the call, so that a
     transformation around the call transforms the pullback. Each transpose is
     the plain transpose of its operation's real-linear map in the pairing of
-    {!Rune2.section-derivatives}, unconjugated on complex values. A variable's
+    {!Rune.section-derivatives}, unconjugated on complex values. A variable's
     cotangent sums its contributions in the order the walk makes them, by the
     rule of that section's sums.
 

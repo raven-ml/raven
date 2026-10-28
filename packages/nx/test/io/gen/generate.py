@@ -18,7 +18,7 @@ have jpeg_zrl_progressive.jpg and jpeg_zrl_baseline.jpg, which decode to the
 same pixels.
 
 Usage:
-    cd dev/nx2/test/io/support
+    cd packages/nx/test/io/support
     uv run --with numpy --with safetensors --with torch --with pillow \\
       python ../gen/generate.py
 """

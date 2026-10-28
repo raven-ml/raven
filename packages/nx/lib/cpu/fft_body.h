@@ -1,6 +1,6 @@
 /*---------------------------------------------------------------------------
    Copyright (C) 2010-2019 Max-Planck-Society (pocketfft). BSD-3-Clause (see
-   dev/nx2/LICENSE-pocketfft).
+   packages/nx/LICENSE-pocketfft).
    Copyright (c) 2026 The Raven authors. All rights reserved.
 
    SPDX-License-Identifier: BSD-3-Clause AND ISC

@@ -91,7 +91,7 @@ let io =
   lazy
     (match
        Rig.open_io
-         { name = "nx2-io"; io = (module Io); make = (fun () -> Ok ()) }
+         { name = "nx-io"; io = (module Io); make = (fun () -> Ok ()) }
      with
     | Ok d -> d
     | Error e -> failwith e)
@@ -109,7 +109,7 @@ let mapped =
   lazy
     (match
        Rig.open_io
-         { name = "nx2-io-mapped"; io = (module Mapped); make = (fun () -> Ok ()) }
+         { name = "nx-io-mapped"; io = (module Mapped); make = (fun () -> Ok ()) }
      with
     | Ok d -> d
     | Error e -> failwith e)

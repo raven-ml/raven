@@ -8,7 +8,7 @@
    where the step's functions are exact; each lane of a map stops on its own. *)
 
 open Windtrap
-open Rune2_support
+open Rune_support
 open Witness
 open Expr
 module T = Nx.Ptree
@@ -1491,7 +1491,7 @@ let test_memory () =
 
 let () =
   exit
-    (run "rune2 iterate"
+    (run "rune iterate"
        [
          (* First, so that its collections run over a small heap. *)
          group "memory"

@@ -8,7 +8,7 @@
     Each function takes nodes as {!Lower_arith} holds elements and computes what
     {!Nx_kernel.type-reduction}, {!Nx_kernel.S.scan} and {!Nx_kernel.S.contract}
     state, within the bounds below. These bounds implement the reduction rows of
-    {!Rune2.section-numerics}.
+    {!Rune.section-numerics}.
 
     A float result computes in its {e accumulator}, which is the carrier
     ({!Nx_kernel.carrier}) of a reduction or a scan and [acc] of a contraction.

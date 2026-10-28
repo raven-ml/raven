@@ -3,10 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* rune2's costs, each row a call a user makes. Every input is a host value
+(* rune's costs, each row a call a user makes. Every input is a host value
    and every row waits for what it computes: an operation over values of every
    set builds a formula and computes nothing, so a row over them would time
-   the formula. The rows that share a workload with packages/rune's suite
+   the formula. The rows that share a workload with the former rune's suite
    keep its code and id. *)
 
 let f32 = Nx.float32

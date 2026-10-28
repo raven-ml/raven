@@ -1,4 +1,4 @@
-; What nx2's suites and benches share: the C tables, read from the headers,
+; What nx's suites and benches share: the C tables, read from the headers,
 ; that the suites check the library's OCaml tables against, and the devices
 ; and kernels they call.
 

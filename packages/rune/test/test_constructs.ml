@@ -359,7 +359,7 @@ let test_elsewhere () =
 
 let () =
   exit
-    (run "rune2 constructs"
+    (run "rune constructs"
        [
          test "detach is its operand" test_detach;
          test "lanes and lane_index raise with no map" test_no_map;

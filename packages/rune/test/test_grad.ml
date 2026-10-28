@@ -11,7 +11,7 @@
    tape keeps. *)
 
 open Windtrap
-open Rune2_support
+open Rune_support
 open Cases
 open Witness
 
@@ -1001,7 +1001,7 @@ let test_residuals () =
 
 let () =
   exit
-    (run "rune2 grad"
+    (run "rune grad"
        [
          group "adjoint" adjoint_props;
          group "complex adjoint" complex_props;

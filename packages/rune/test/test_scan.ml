@@ -9,7 +9,7 @@
    a step raise naming the loop. *)
 
 open Windtrap
-open Rune2_support
+open Rune_support
 open Witness
 open Expr
 module T = Nx.Ptree
@@ -689,7 +689,7 @@ let functions (type s) ?(nested = false) ~free (dt : (float, s) Nx.dtype) s n g
         if scan then Rune.scan cs T.tensor T.tensor ~f:(step w) ~init:c two
         else
           (* A copy of [w] per step, whose cotangent sums the inner steps'
-             before the outer loop adds it, in the order rune2.mli states for
+             before the outer loop adds it, in the order rune.mli states for
              the scan. *)
           let w = Nx.copy w in
           let c, ys = fold (step w) ~init:c two in
@@ -1021,7 +1021,7 @@ let moderated o =
 
 (* The majorant of a {!smoothed} [e]: over operands [t >= |x|], its value and
    its partial derivatives of the first two orders are non-negative and at least
-   the sums of magnitudes of the terms rune2's rules compute [e]'s with at [x].
+   the sums of magnitudes of the terms rune's rules compute [e]'s with at [x].
    Negation and [abs] keep their operand, a difference and the selections become
    sums, and a running maximum a sum. Sin, whose rules read cos and sin, each at
    most 1, becomes [1 + t + t^2 / 2]. Tanh's tangent is [(t + t y) (1 - y)],
@@ -1794,7 +1794,7 @@ let test_signs () =
 
 let () =
   exit
-    (run "rune2 scan"
+    (run "rune scan"
        [
          group "eagerly"
            [

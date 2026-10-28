@@ -1383,7 +1383,7 @@ let compiled_tests =
 
 let () =
   exit
-    (run "rune2 root"
+    (run "rune root"
        [
          group "derivatives" (derivative_tests @ second_order_tests);
          group "where the derivative is stated" stated_tests;

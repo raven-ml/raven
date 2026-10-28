@@ -6,7 +6,7 @@
 (* Scalar programs compiled by Rune.jit give the bits nx's eager kernels give
    for every exact kind, any NaN for a NaN, and compile whole: no call is
    evaluated. A narrow float's transcendental kind, computed at float32 and
-   rounded once, is within one ulp of the correctly rounded result (rune2.mli,
+   rounded once, is within one ulp of the correctly rounded result (rune.mli,
    Numerics). Lower_real's and Lower_complex's suites hold the bounds at
    float32, float64 and the complex dtypes.
 

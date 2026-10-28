@@ -10,7 +10,7 @@
    compiled function at every dtype; a map's tangent in one kernel. *)
 
 open Windtrap
-open Rune2_support
+open Rune_support
 open Cases
 open Witness
 
@@ -932,7 +932,7 @@ let test_one_kernel () =
 
 let () =
   exit
-    (run "rune2 jvp"
+    (run "rune jvp"
        [
          group "tangents" tangent_props;
          group "second derivatives" second_props;

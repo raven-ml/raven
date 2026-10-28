@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (** A compiled function's programs, one per key. This module implements the keys
-    of {!Rune2.section-jit}.
+    of {!Rune.section-jit}.
 
     A compiled function is traced once per key, over stand-ins ({!stand_ins}).
     Its program compiles the first time a call runs it compiled, then once per

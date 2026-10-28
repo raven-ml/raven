@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Layouts and movements drawn for nx2's suites, their positions by brute force,
+(* Layouts and movements drawn for nx's suites, their positions by brute force,
    and the witnesses and references the array suites share. *)
 
 open Windtrap
@@ -367,7 +367,7 @@ let lates = Atomic.make 0
 (* A fresh Late device and its driver. *)
 let late () =
   Nx_array_support.Late.open_
-    (Printf.sprintf "nx2-test-late:%d" (Atomic.fetch_and_add lates 1))
+    (Printf.sprintf "nx-test-late:%d" (Atomic.fetch_and_add lates 1))
 
 (* The little-endian binary32 bytes of [xs]. *)
 let f32_bytes xs =

@@ -42,7 +42,7 @@
     a kind at a dtype narrower than [float32] is within one ulp ({!Lower_real})
     of the correctly rounded result, since its [float32] error is below one ulp
     of the dtype. For [pow] this holds wherever the result is finite in that
-    dtype. These rules are the elementwise part of {!Rune2.section-numerics}. *)
+    dtype. These rules are the elementwise part of {!Rune.section-numerics}. *)
 
 open Tolk
 

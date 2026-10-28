@@ -22,7 +22,7 @@ let ulps64 a b =
     if Int64.compare d (Int64.of_int max_int) >= 0 then max_int
     else Int64.to_int d
 
-(* The rows of golden/kinds/<kind>.golden, from dev/nx2/test/kernel:
+(* The rows of golden/kinds/<kind>.golden, from packages/nx/test/kernel:
    operands, then the value correctly rounded and its remainder. *)
 let golden kind =
   let ic = open_in (Filename.concat "golden/kinds" (kind ^ ".golden")) in

@@ -43,7 +43,7 @@
   nx_support
   rig
   rune
-  rune2_support
+  rune_support
   threads.posix
   windtrap))
 
@@ -53,7 +53,7 @@
  (name test_jit_gpu)
  (modules test_jit_gpu)
  (locks %{workspace_root}/gpu)
- (libraries nx rig.gpus rune rune2_support tolk windtrap))
+ (libraries nx rig.gpus rune rune_support tolk windtrap))
 
 ; nx's special functions' derivatives, against goldens gen/special_grad.py
 ; writes from correctly rounded references.

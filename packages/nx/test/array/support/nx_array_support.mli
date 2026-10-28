@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** What nx2's suites and benches share. *)
+(** What nx's suites and benches share. *)
 
 val row : int -> (string * int * int) option
 (** [row code] is the row of the dtype [code] in [nx_dtype.h], as its name, bits

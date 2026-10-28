@@ -245,7 +245,7 @@ let test_eval_shape () =
 
 let () =
   exit
-    (run "rune2 program"
+    (run "rune program"
        [
          group "program"
            [

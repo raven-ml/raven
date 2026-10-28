@@ -18,7 +18,7 @@
     transform of its points, twice a real one's work.
 
     {b Error bound.} This bound implements the transform rows of
-    {!Rune2.section-numerics}. Barring overflow and underflow, and to first
+    {!Rune.section-numerics}. Barring overflow and underflow, and to first
     order in the unit roundoff [u] of the parts, a transform [ŷ] of [N] points,
     [N] the product of the extents along [axes], has [‖ŷ - y‖₂ <= ε u √N ‖x‖₂],
     where [y] is the exact transform. [‖x‖₂] is its operand's norm, or [√2]

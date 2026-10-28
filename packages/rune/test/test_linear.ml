@@ -11,7 +11,7 @@
    the errors of both. *)
 
 open Windtrap
-open Rune2_support
+open Rune_support
 open Witness
 module T = Nx.Ptree
 module D = Nx.Dtype
@@ -435,7 +435,7 @@ let test_error (_, message, f) =
 
 let () =
   exit
-    (run "rune2 linear"
+    (run "rune linear"
        [
          group "linearize"
            [

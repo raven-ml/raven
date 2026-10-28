@@ -8,7 +8,7 @@
    the GPU's kernels need. *)
 
 open Windtrap
-open Rune2_support
+open Rune_support
 
 let gpu =
   lazy

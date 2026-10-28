@@ -5,7 +5,7 @@
 
 (** Derivatives, maps, loops and compilation of functions over nx values.
 
-    rune2 transforms OCaml functions whose arguments and results hold nx arrays.
+    rune transforms OCaml functions whose arguments and results hold nx arrays.
     A {e structure} ({!Nx.Ptree.t}) enumerates the arrays of a value, so each
     transformation and construct takes one for each value whose arrays it reads,
     and a {e signature} ({!Nx.Ptree.fn}) is one structure per argument of a
@@ -37,7 +37,7 @@
     except for a NaN's sign and payload, which nx leaves unspecified. Outside
     every transformation a construct other than {!jit} agrees bit for bit with
     its functions applied eagerly: a {!scan} is the fold of its step. A {!jit}
-    computes to the accuracy {!section-numerics} states. A value rune2 makes
+    computes to the accuracy {!section-numerics} states. A value rune makes
     lies where nx places it ({!Nx.section-routing}): a zero beside an array lies
     at that array's placement, and an operation's result where nx routes it.
 
@@ -68,8 +68,8 @@
     compiles its reverse programs from that trace:
 
     {[
-    let loss = Rune2.jit' (fun w -> Nx.sum Nx.Infix.(w * w))
-    let g = Rune2.grad' loss (Nx.create Nx.float64 [| 3 |] [| 1.; 2.; 3. |])
+    let loss = Rune.jit' (fun w -> Nx.sum Nx.Infix.(w * w))
+    let g = Rune.grad' loss (Nx.create Nx.float64 [| 3 |] [| 1.; 2.; 3. |])
     ]} *)
 
 (** {1:tracing Tracing}
@@ -113,7 +113,7 @@
     - at the call, for arguments that do not fit the entry point;
     - at the trace, for a traced function's misuse, as a step's carry that
       changes shape ({!section-tracing} says when each construct traces);
-    - when a function rune2 hands out is applied after its call, as {!vjp}'s
+    - when a function rune hands out is applied after its call, as {!vjp}'s
       pullback, {!linearize}'s tangent map or the [op] a {!root} passes to its
       [linear_solve].
 
@@ -253,7 +253,7 @@ val jvp :
 
 (** {1:special Derivatives of nx's special functions}
 
-    rune2 differentiates {!Nx.erfinv}, {!Nx.erfc}, {!Nx.ndtr}, {!Nx.log_ndtr},
+    rune differentiates {!Nx.erfinv}, {!Nx.erfc}, {!Nx.ndtr}, {!Nx.log_ndtr},
     {!Nx.ndtri}, {!Nx.lgamma}, {!Nx.digamma}, {!Nx.lbeta}, {!Nx.i0e}, {!Nx.i1e},
     the incomplete gamma family ({!Nx.gammainc}, {!Nx.gammaincc}, their
     logarithms and their inverses) and the incomplete beta family
@@ -572,7 +572,7 @@ val custom_jvp :
     let stable x = Nx.Infix.(Nx.maximum_s x 0. + Nx.log1p (Nx.exp (-Nx.abs x)))
 
     let softplus =
-      Rune2.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+      Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
           (stable x, fun dx -> Nx.Infix.(Nx.sigmoid x * dx)))
     ]}
 
@@ -604,7 +604,7 @@ val custom_vjp :
 
     {[
     let clip_grad c =
-      Rune2.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+      Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
           (x, fun g -> Nx.clamp ~min:(-.c) ~max:c g))
     ]}
 
@@ -641,13 +641,13 @@ val custom_transpose :
 
     {[
     let solve =
-      Rune2.custom_jvp
+      Rune.custom_jvp
         Nx.Ptree.(pair tensor tensor)
         Nx.Ptree.tensor
         (fun (a, b) ->
           let x = Nx.solve a b in
           let along v =
-            Rune2.custom_transpose Nx.Ptree.tensor Nx.Ptree.tensor
+            Rune.custom_transpose Nx.Ptree.tensor Nx.Ptree.tensor
               (fun v -> Nx.solve a v)
               ~transpose:(fun w -> Nx.solve (Nx.matrix_transpose a) w)
               v
@@ -813,7 +813,7 @@ module Total : sig
   type ('v, 's, +'d) t
   (** The type for totals of [('v, 's, 'd) Nx.t] values. ['d] is covariant, so a
       total made at a library's top level serves every device set:
-      [let t : (float, Nx.float64_elt, 'd) Rune2.Total.t = Rune2.Total.make ()].
+      [let t : (float, Nx.float64_elt, 'd) Rune.Total.t = Rune.Total.make ()].
       A collect's [init] fixes the set of the additions it receives. *)
 
   val make : unit -> ('v, 's, 'd) t
@@ -995,7 +995,7 @@ val switch : ('b, 'd) Nx.Ptree.t -> 'd Nx.int32_t -> (unit -> 'b) list -> 'b
 
     {[
     let safe_log x =
-      Rune2.cond' (Nx.greater_s x 0.) (fun () -> Nx.log x) (fun () -> x)
+      Rune.cond' (Nx.greater_s x 0.) (fun () -> Nx.log x) (fun () -> x)
     ]}
 
     The derivative is the taken branch's, [i] having none, at a boundary too:
@@ -1048,7 +1048,7 @@ val cond :
     fills in with [J], and reverse mode with [J]'s transpose: the solve is
     linear in [b], and its transpose solves the transposed system. It may apply
     [op] under {!jvp}, {!grad} or {!val-vmap} opened inside it, as in
-    [Nx.solve (Rune2.jacfwd' op b) b], but not under a {!jit}, whose function
+    [Nx.solve (Rune.jacfwd' op b) b], but not under a {!jit}, whose function
     may not capture [op]'s stand-ins. Without it, a derivative builds [J]'s
     matrix, its columns [J] of the unit vectors in one map, and solves it with
     {!Nx.solve}, which suits small systems; the arrays of [x] must then share a
@@ -1084,8 +1084,8 @@ val root :
        a)] comes from the residual *)
     let sqrt_newton a =
       let residual x = Nx.Infix.((x * x) - a) in
-      Rune2.root Nx.Ptree.tensor ~residual (fun () ->
-          Rune2.iterate' ~max:50
+      Rune.root Nx.Ptree.tensor ~residual (fun () ->
+          Rune.iterate' ~max:50
             ~until:(fun x -> Nx.all (Nx.less_s (Nx.abs (residual x)) 1e-12))
             ~f:(fun x -> Nx.Infix.((x + (a / x)) /$ 2.))
             a)
@@ -1101,7 +1101,7 @@ val root :
 
 (** {1:callbacks Callbacks}
 
-    A {e callback} runs an OCaml function on the values of a function that rune2
+    A {e callback} runs an OCaml function on the values of a function that rune
     traces or transforms. The function receives arrays with elements, each where
     it lies. A call {e executes} at the points {!section-executions} lists, and
     the function runs once per execution, in the order of the executions, so it
@@ -1239,7 +1239,7 @@ val jit :
     the tracing domain, where it traces again.
 
     With the variable [RUNE_JIT_DEBUG] holding a nonzero integer in the
-    environment when rune2 is initialised, each retrace prints on standard error
+    environment when rune is initialised, each retrace prints on standard error
     the first difference between its key and that of the latest call that
     returned, on any domain, and the first call to find its program or a variant
     of it declined ({!section-evaluated}) prints why. *)

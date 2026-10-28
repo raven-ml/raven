@@ -1171,7 +1171,7 @@ let test_tangent_sign () =
 
 let () =
   exit
-    (run "rune2 total"
+    (run "rune total"
        [
          test "collect sums each addition once" test_collect;
          test "the innermost scope of a total" test_same_total;

@@ -761,7 +761,7 @@ let law_remat_vmap xs =
 
 (* Memory *)
 
-module Memory = Rune2_support.Memory
+module Memory = Rune_support.Memory
 
 (* Under reverse mode a remat keeps its arguments and its callbacks' results
    and computes the rest again, so a pullback holds the result's bytes and the
@@ -937,7 +937,7 @@ let test_raise () =
 
 let () =
   exit
-    (run "rune2 callback"
+    (run "rune callback"
        [
          group "runs"
            [

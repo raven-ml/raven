@@ -5,7 +5,7 @@
 """Generate the goldens of nx.wide: double-word operands and mpmath's exact
 results of them.
 
-    uv run dev/nx2/test/wide/gen/generate.py [--check]
+    uv run packages/nx/test/wide/gen/generate.py [--check]
 
 Without --check, golden/*.golden are written. With --check, nothing is
 written and the run fails when a file differs from what it would write.

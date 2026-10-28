@@ -18,7 +18,7 @@
     at every size.
 
     {b Numerics.} These bounds implement the matrix rows of
-    {!Rune2.section-numerics}. They hold to first order in the dtype's unit
+    {!Rune.section-numerics}. They hold to first order in the dtype's unit
     roundoff [u], barring overflow and underflow, with [γ(c) = c u / (1 - c u)]
     ({!Nx_kernel.section-bounds}), [|·|] taken elementwise and [‖·‖_F] the
     Frobenius norm. [R] is the number of rounds of rotations of [k] columns. It

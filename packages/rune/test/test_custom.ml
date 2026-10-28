@@ -1857,7 +1857,7 @@ let law_tests =
 
 let () =
   exit
-  @@ run "rune2 custom rules"
+  @@ run "rune custom rules"
        [
          group "custom_vjp" vjp_tests;
          group "custom_jvp" jvp_tests;

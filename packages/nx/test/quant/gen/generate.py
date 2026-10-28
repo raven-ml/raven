@@ -12,7 +12,7 @@ which ggml reads as 2^128 and the OCP format as NaN.
 
 Usage:
     uv run --no-project --with gguf --with numpy \\
-      python dev/nx2/test/quant/gen/generate.py
+      python packages/nx/test/quant/gen/generate.py
 """
 
 import os

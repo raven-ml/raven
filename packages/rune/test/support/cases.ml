@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* The operations rune2 differentiates, each as a function of a float64 value
+(* The operations rune differentiates, each as a function of a float64 value
    whose elements a case draws: every kind of scalar program and every
    operation, real and complex. *)
 

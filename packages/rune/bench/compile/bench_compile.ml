@@ -10,7 +10,7 @@
    function: tracing, lowering, tolk's passes and the kernel compiler, and the
    process's start. A warm process cannot hold this cost: tolk's disk cache
    serves a program after its first compile. A case takes three samples. The
-   cases are those whose compile time rune2's lowering or tolk's vectors
+   cases are those whose compile time rune's lowering or tolk's vectors
    decide.
 
    [--cold ID] runs one case's first call and prints its milliseconds: run it

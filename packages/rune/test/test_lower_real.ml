@@ -7,7 +7,7 @@
    Rune.jit, which must compile them whole: no call is evaluated. An exact kind
    gives the bits of nx's eager kernel, any NaN for a NaN, over operands drawn
    to reach its special values and the edges of its range. A transcendental kind
-   is within its host bound in ulps of the correctly rounded result (rune2.mli,
+   is within its host bound in ulps of the correctly rounded result (rune.mli,
    Numerics) at the points of golden/lower_real, which gen/lower_real.py writes
    from mpmath; where every operand is a zero, an infinity or a NaN, it gives
    Annex F's zero, infinity, ±1 or NaN, stated below. *)
@@ -520,7 +520,7 @@ let accurate name node (b32, b64) annex =
         (at D.Float32 false (Float.of_int b32)
         @ at D.Float64 true (Float.of_int b64)))
 
-(* Each kind's host bound at float32 and float64 (rune2.mli, Numerics). *)
+(* Each kind's host bound at float32 and float64 (rune.mli, Numerics). *)
 let transcendental =
   List.map
     (fun (name, k, bound) ->

@@ -5,7 +5,7 @@
 
 (* The complex kinds that are not exact, at complex64 and complex128, as maps of
    one kind compiled by Rune.jit, which must compile them whole: no call is
-   evaluated. Each holds its normwise bound (rune2.mli, Numerics) of the exact
+   evaluated. Each holds its normwise bound (rune.mli, Numerics) of the exact
    value at the points of golden/lower_complex, which gen/lower_complex.py
    writes from mpmath, each part correctly rounded with its remainder. At an
    operand with an infinite or a NaN part, each gives what lower_complex.mli's
@@ -234,7 +234,7 @@ let wlog (e : Complex.t array) =
   let p = Complex.norm (Complex.mul e.(1) (Complex.log e.(0))) in
   if Float.is_nan p then 0. else p
 
-(* Each kind's bound (rune2.mli, Numerics). *)
+(* Each kind's bound (rune.mli, Numerics). *)
 let unaries =
   K.
     [

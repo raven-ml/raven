@@ -1268,7 +1268,7 @@ let test_transfer_refusals () =
       A.transfer ~src:(part 0) ~dst:(part 1))
 
 (* A bitcast is a view on any device: it keeps the buffer and moves no byte. *)
-let memory = lazy (Result.get_ok (Rig.memory_device "nx2-test-memory"))
+let memory = lazy (Result.get_ok (Rig.memory_device "nx-test-memory"))
 
 (* A borrow shares its source's memory, dtype and layout, on any device that
    maps it, and back. *)
@@ -1304,7 +1304,7 @@ let test_borrow_cases () =
   kill (A.buffer dead);
   raises_match ~msg:"dead" (Exn.invalid_arg ~substring:"dead") (fun () ->
       A.borrow (Lazy.force memory) dead);
-  let closed = Result.get_ok (Rig.memory_device "nx2-test-borrow-closed") in
+  let closed = Result.get_ok (Rig.memory_device "nx-test-borrow-closed") in
   let on_closed = A.to_device closed a in
   Rig.close closed;
   raises_match ~msg:"lost"

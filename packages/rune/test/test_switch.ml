@@ -432,7 +432,7 @@ let test_stated () =
       Rune.switch T.tensor (Nx.zeros Nx.int32 [| 2 |]) [ (fun () -> scalar 0.) ]);
   ()
 
-(* rune2.mli's examples: the safe logarithm, and where's idiom on its input. *)
+(* rune.mli's examples: the safe logarithm, and where's idiom on its input. *)
 let safe_log x =
   Rune.cond' (Nx.greater_s x 0.) (fun () -> Nx.log x) (fun () -> x)
 
@@ -630,7 +630,7 @@ let test_compiled () =
 
 let () =
   exit
-    (run "rune2 switch"
+    (run "rune switch"
        [
          test "the taken branch's values" test_values;
          test "switch picks its branch" test_switch;

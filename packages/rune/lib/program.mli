@@ -21,7 +21,7 @@
     {!eval} issues each equation again, an operation through [Nx.Prim.eval] and
     a construct through {!perform}, under the interpretations around the call. A
     total's {e running value} is its start plus the additions made to it so far
-    within the innermost collect ({!Rune2.Total.collect}) or tracer that holds
+    within the innermost collect ({!Rune.Total.collect}) or tracer that holds
     it, where a collect starts from its zero and a tracer from a parameter. A
     program {e threads} each total it adds to: its last parameters are the
     totals' running values in, its additions add to them in the order they were
@@ -94,7 +94,7 @@ val same_axis : axis -> axis -> bool
 type ('v, 's, +'d) total
 (** The type for totals of [('v, 's, 'd) Nx.t] values. A {e total} names a sum
     that additions ({!add_to}) accumulate within a collect
-    ({!Rune2.Total.collect}). It names no set: ['d] is the set of the values one
+    ({!Rune.Total.collect}). It names no set: ['d] is the set of the values one
     use of it reads, which every comparison of totals checks at run time. *)
 
 val total : unit -> ('v, 's, 'd) total
@@ -951,13 +951,13 @@ type rule = {
 
 type _ Effect.t +=
   | Rule : { mutable r : rule option } -> (unit -> value array) option Effect.t
-        (** Answered by each interpretation of rune2, the rule in [r], which
+        (** Answered by each interpretation of rune, the rule in [r], which
             is [None] once none answered. A differentiation that tracks one of
             the arguments, whose primals no interpretation traces, answers with
             the function the call applies where it was performed: it runs the
             rule on those primals and returns the call's results. Every other
-            interpretation of rune2 answers [None]. An interpretation outside
-            rune2 ([Nx.Prim.interpret]) never answers the effect, so one between
+            interpretation of rune answers [None]. An interpretation outside
+            rune ([Nx.Prim.interpret]) never answers the effect, so one between
             the call and the differentiation does not keep the rule from
             running in place; a rule that captures its values then raises, as a
             value used outside its owner's extent. *)

@@ -11,7 +11,7 @@
     [x + iy], and [w] is the second operand of a binary kind. Each kind is
     composed from {!Lower_real}'s float kinds, and [u] is the unit roundoff
     ({!Lower_real}) of the parts' type. The kinds and bounds here are the
-    complex rows of {!Rune2.section-numerics}.
+    complex rows of {!Rune.section-numerics}.
 
     {1:exact Exact kinds}
 

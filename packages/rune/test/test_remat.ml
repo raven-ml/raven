@@ -333,7 +333,7 @@ let test_bare () =
 
 let () =
   exit
-    (run "rune2 remat"
+    (run "rune remat"
        [
          group "modes" [ prop "remat is its function in every mode" cases law ];
          group "memory"

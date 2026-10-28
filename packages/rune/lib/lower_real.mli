@@ -18,7 +18,7 @@
     them, as Metal's [float32] does, a kind may be inexact or break its bound
     where an operand, a result or an intermediate is below the least normal.
     This module's kinds and bounds are the float rows of
-    {!Rune2.section-numerics}.
+    {!Rune.section-numerics}.
 
     {1:exact Exact kinds}
 

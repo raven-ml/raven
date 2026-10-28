@@ -6,10 +6,10 @@
 (** Compiled programs, each lowered through tolk and linked once per variant of
     its arguments.
 
-    This module implements the compiled programs of {!Rune2.jit}
-    ({!Rune2.section-compiled}). The rules a caller sees, on donation
-    ({!Rune2.section-donation}), checks ({!Rune2.section-checks}) and evaluated
-    programs ({!Rune2.section-evaluated}), are stated there.
+    This module implements the compiled programs of {!Rune.jit}
+    ({!Rune.section-compiled}). The rules a caller sees, on donation
+    ({!Rune.section-donation}), checks ({!Rune.section-checks}) and evaluated
+    programs ({!Rune.section-evaluated}), are stated there.
 
     To {e lower} a program is to translate it into a tolk graph, and to {e link}
     it is to compile that graph into a schedule tolk's engine runs. Lowering or
@@ -85,7 +85,7 @@ val run : t -> Program.value array -> Program.value array
 (** [run t args] is the outputs of [t]'s program applied to [args], which must
     be untraced values of the forms [t] was made for. Each result is fresh
     memory in C order at its output's form's placement, or the memory of a
-    donated argument it takes ({!Rune2.section-donation}).
+    donated argument it takes ({!Rune.section-donation}).
 
     The call is a consumer of [args] ({!Nx.Prim.Consumer}). It claims the
     donated handles among them, and reads each argument as it was at the claim.

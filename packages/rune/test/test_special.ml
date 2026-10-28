@@ -40,7 +40,7 @@ let log_ulps k f =
 (* Derivatives
 
    Each derivative is held to golden/special_grad/ (written by
-   gen/special_grad.py) eagerly and compiled, at the budgets rune2's derivatives
+   gen/special_grad.py) eagerly and compiled, at the budgets rune's derivatives
    of special functions promise: first derivatives within 16 times the
    function's bound, second derivatives within [2^-40] relative at float64 and
    [2^-16] at float32. *)
@@ -456,4 +456,4 @@ let derivatives =
     ]
 
 let () =
-  exit (run "rune2 special" [ derivatives; incomplete_gamma_derivatives ])
+  exit (run "rune special" [ derivatives; incomplete_gamma_derivatives ])

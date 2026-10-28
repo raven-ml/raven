@@ -2,9 +2,9 @@
    Copyright (c) 1992-2025 The University of Tennessee and The University of
    Tennessee Research Foundation, The University of California Berkeley,
    The University of Colorado Denver (LAPACK). BSD-3-Clause-Open-MPI (see
-   dev/nx2/LICENSE-lapack).
+   packages/nx/LICENSE-lapack).
    Copyright (c) 2016 Elmar Peise (ReLAPACK). MIT (see
-   dev/nx2/LICENSE-relapack).
+   packages/nx/LICENSE-relapack).
    Copyright (c) 2026 The Raven authors. All rights reserved.
 
    SPDX-License-Identifier: BSD-3-Clause-Open-MPI AND MIT AND ISC
@@ -31,8 +31,8 @@
    The routines follow LAPACK's (BSD) and ReLAPACK's recursive ones (MIT),
    named at each.
 
-   No C file of nx2 contracts a product into an fma it does not name
-   (dev/nx2/dune), so every target's results have the same bits. */
+   No C file of nx contracts a product into an fma it does not name
+   (packages/nx/dune), so every target's results have the same bits. */
 
 #include <complex.h>
 #include <float.h>

@@ -24,7 +24,7 @@
 
     {b Numerics.} A result is what {!Nx.Prim.t} states of its operation, within
     the bounds the modules above state. Those bounds implement
-    {!Rune2.section-numerics}. *)
+    {!Rune.section-numerics}. *)
 
 open Tolk
 

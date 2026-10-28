@@ -972,7 +972,7 @@ let test_jacrev_one_pass () =
 
 (* Compiled functions *)
 
-(* A compiled call is eager's within rune2.mli's classes: bit for bit where
+(* A compiled call is eager's within rune.mli's classes: bit for bit where
    each function is exact at the dtype, as test_jit's laws state it. *)
 let law_jit (Pair (dt, s, xo, _, _, e)) =
   let e = exact_any dt e in
@@ -1131,7 +1131,7 @@ let test_draws () =
 
 let () =
   exit
-  @@ run "rune2 vmap"
+  @@ run "rune vmap"
        [
          group "operations" operation_props;
          group "contractions"
