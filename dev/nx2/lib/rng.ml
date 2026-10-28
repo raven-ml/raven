@@ -157,14 +157,23 @@ let batch (k : 'd key) =
   let s = Prim.shape k in
   Array.sub s 0 (Array.length s - 1)
 
+(* How the operations that make keys and draws are evaluated: [dispatched] by
+   {!Eval.eval}, which the interpretations around the caller receive, and
+   [eager] by {!Eval.run}, which computes them now and none receives, as the
+   scope computes its own keys ({!subkey}). *)
+type evaluator = { eval : 'r. by:string -> 'r Value.prim -> 'r }
+
+let dispatched = { eval = Eval.eval }
+let eager = { eval = Eval.run }
+
 (* A key's words as one uint64 per key: an operation, so a dead key raises
    here. *)
-let pack ~by (k : 'd key) : (int64, D.uint64_elt, 'd) Value.t =
-  Eval.eval ~by (Value.Bitcast (D.Uint64, k))
+let pack ev ~by (k : 'd key) : (int64, D.uint64_elt, 'd) Value.t =
+  ev.eval ~by (Value.Bitcast (D.Uint64, k))
 
 (* The map of [prog] over [loads], of [shape], into [dt]; with no loads, a
    creation at [at]. *)
-let map ~by ?at shape prog dt loads =
+let map ev ~by ?at shape prog dt loads =
   let layout = Nx_array.Layout.contiguous (Iarray.of_array shape) in
   let loads =
     Iarray.init (Array.length loads) (fun i ->
@@ -172,7 +181,7 @@ let map ~by ?at shape prog dt loads =
         Value.Plain x)
   in
   let x, () =
-    Eval.eval ~by (Value.Map { layout; prog; outs = Value.[ dt ]; loads; at })
+    ev.eval ~by (Value.Map { layout; prog; outs = Value.[ dt ]; loads; at })
   in
   x
 
@@ -268,13 +277,15 @@ let draw ~by ?(params = [||]) ?at source dt s prog =
   match source with
   | Words w ->
       let prog = bind prog key_operand (E.any (u64 w)) in
-      map ~by ?at shape prog dt params
+      map dispatched ~by ?at shape prog dt params
   | Key k ->
       let ones = Array.make (Array.length s) 1 in
-      let w = Eval.reshape ~by (Array.append batch ones) (pack ~by k) in
+      let w =
+        Eval.reshape ~by (Array.append batch ones) (pack dispatched ~by k)
+      in
       let w = Eval.broadcast ~by shape w in
       let w = match at with None -> w | Some p -> read_at ~by p w in
-      map ~by shape prog dt (Array.append [| Value.Any w |] params)
+      map dispatched ~by shape prog dt (Array.append [| Value.Any w |] params)
 
 (* Parameter [i] of a draw, of dtype [dt], as a node of its program. *)
 let operand i dt = E.input (first_param + i) dt
@@ -283,17 +294,18 @@ let operand i dt = E.input (first_param + i) dt
 
 (* The key of the words [hi] and [lo] at [p]: a map that reads nothing, its
    words written into its program. *)
-let of_words ~by p hi lo : 'd key =
+let of_words ev ~by p hi lo : 'd key =
   let hi = E.const D.Int32 hi and lo = E.const D.Int32 lo in
   let out = E.(where (coord 0 = const D.Int64 0L) hi lo) in
-  map ~by ~at:p [| 2 |] (P.of_exprs ~ins:[||] [| E.any out |]) D.Int32 [||]
+  map ev ~by ~at:p [| 2 |] (P.of_exprs ~ins:[||] [| E.any out |]) D.Int32 [||]
 
 let host = Devices.on Devices.host
 
-let key_by ~by seed : Devices.host key =
-  of_words ~by host (Int32.of_int (seed asr 32)) (Int32.of_int seed)
+(* The host key of [seed], whose words are [(seed asr 32, seed)]. *)
+let key_by ev ~by seed : Devices.host key =
+  of_words ev ~by host (Int32.of_int (seed asr 32)) (Int32.of_int seed)
 
-let key seed = key_by ~by:"Nx.Rng.key" seed
+let key seed = key_by dispatched ~by:"Nx.Rng.key" seed
 
 (* Raises naming [by] where [p] cuts the last axis of keys of rank [r], their
    words': a key's two words lie whole on one device, which reads them as one
@@ -318,15 +330,18 @@ let to_tensor (k : 'd key) : (int32, D.int32_elt, 'd) Value.t = k
 let walk c k = of_tensor (Ptree.Walk.tensor c k)
 
 (* The keys [f ~key] gives at each element of [shape], whose last axes follow
-   [k]'s batch: one map over [k], where [k] lies. *)
-let keys ~by (k : 'd key) shape f : 'd key =
+   [k]'s batch: one map over [k], where [k] lies. The broadcast is dispatched;
+   where [shape] is [k]'s batch, as for {!subkey}, it moves nothing. *)
+let keys ev ~by (k : 'd key) shape f : 'd key =
   let ins : D.any iarray = [| D.Any D.Uint64 |] in
   let out = f ~key:(E.input 0 D.Uint64) in
-  let w = Eval.broadcast ~by shape (pack ~by k) in
+  let w = Eval.broadcast ~by shape (pack ev ~by k) in
   let u : (int64, D.uint64_elt, 'd) Value.t =
-    map ~by shape (P.of_exprs ~ins [| E.any out |]) D.Uint64 [| Value.Any w |]
+    map ev ~by shape
+      (P.of_exprs ~ins [| E.any out |])
+      D.Uint64 [| Value.Any w |]
   in
-  Eval.eval ~by (Value.Bitcast (D.Int32, u))
+  ev.eval ~by (Value.Bitcast (D.Int32, u))
 
 let one ~by k =
   if batch k <> [||] then
@@ -337,7 +352,8 @@ let one ~by k =
 let blocks ~by n k =
   if n < 1 then invalid_argf "%s: n is %d, not at least 1" by n;
   one ~by k;
-  keys ~by k [| n |] (fun ~key -> block ~key (E.bitcast D.Uint64 (E.coord 0)))
+  keys dispatched ~by k [| n |] (fun ~key ->
+      block ~key (E.bitcast D.Uint64 (E.coord 0)))
 
 let split_batch ~n k = blocks ~by:"Nx.Rng.split_batch" n k
 
@@ -361,18 +377,18 @@ let counter v =
   E.((v / w32) + (v mod w32 * w32))
 
 (* The counter [data] folds in: the words [(data asr 32, data)]. *)
-let fold_in_by ~by (k : 'd key) data : 'd key =
+let fold_in_by ev ~by (k : 'd key) data : 'd key =
   let v = u64 (Int64.of_int data) in
-  keys ~by k (batch k) (fun ~key -> E.threefry (counter v) key)
+  keys ev ~by k (batch k) (fun ~key -> E.threefry (counter v) key)
 
-let fold_in k data = fold_in_by ~by:"Nx.Rng.fold_in" k data
+let fold_in k data = fold_in_by dispatched ~by:"Nx.Rng.fold_in" k data
 
 (* [fold_in] of an index held in data: [i]'s words [(i asr 32, i)] as the
    sign-extended [i] gives them. A batch of indices gives a batch of keys. *)
 let fold_in_tensor (k : 'd key) (i : (int32, D.int32_elt, 'd) Value.t) : 'd key
     =
   let by = "Nx.Rng.fold_in_tensor" in
-  let w = pack ~by k in
+  let w = pack dispatched ~by k in
   let shape = Prim.broadcast_shape ~by (batch k) (Prim.shape i) in
   let ins : D.any iarray = [| D.Any D.Uint64; D.Any D.Int32 |] in
   let v = E.(bitcast D.Uint64 (cast D.Int64 (input 1 D.Int32))) in
@@ -384,7 +400,7 @@ let fold_in_tensor (k : 'd key) (i : (int32, D.int32_elt, 'd) Value.t) : 'd key
     |]
   in
   let u : (int64, D.uint64_elt, 'd) Value.t =
-    map ~by shape (P.of_exprs ~ins [| E.any out |]) D.Uint64 loads
+    map dispatched ~by shape (P.of_exprs ~ins [| E.any out |]) D.Uint64 loads
   in
   Eval.eval ~by (Value.Bitcast (D.Int32, u))
 
@@ -439,36 +455,8 @@ let unscoped =
       (Int64.to_int seed, ref 0))
 
 (* The subkey [c] of the host key [root], {!fold_in}'s, computed now on the
-   host by {!Eval.run}: the scope's own bookkeeping, which no interpretation
-   receives. *)
-let subkey ~by (root : Devices.host key) c : Devices.host key =
-  let v = u64 (Int64.of_int c) in
-  let ins : D.any iarray = [| D.Any D.Uint64 |] in
-  let prog =
-    P.of_exprs ~ins [| E.any (E.threefry (counter v) (E.input 0 D.Uint64)) |]
-  in
-  let w = Eval.run ~by (Value.Bitcast (D.Uint64, root)) in
-  let layout = Nx_array.Layout.contiguous [||] in
-  let u, () =
-    Eval.run ~by
-      (Value.Map
-         { layout; prog; outs = Value.[ D.Uint64 ]; loads = [| Plain w |];
-           at = None })
-  in
-  Eval.run ~by (Value.Bitcast (D.Int32, u))
-
-(* The key of [seed] on the host, computed now as {!subkey} is. *)
-let seeded ~by seed : Devices.host key =
-  let hi = E.const D.Int32 (Int32.of_int (seed asr 32)) in
-  let lo = E.const D.Int32 (Int32.of_int seed) in
-  let out = E.(where (coord 0 = const D.Int64 0L) hi lo) in
-  let layout = Nx_array.Layout.contiguous [| 2 |] in
-  let prog = P.of_exprs ~ins:[||] [| E.any out |] in
-  fst
-    (Eval.run ~by
-       (Value.Map
-          { layout; prog; outs = Value.[ D.Int32 ]; loads = [||];
-            at = Some host }))
+   host: the scope's own bookkeeping, which no interpretation receives. *)
+let subkey ~by (root : Devices.host key) c = fold_in_by eager ~by root c
 
 let next_key_by ~by : Devices.host key =
   match Effect.perform Next with
@@ -479,7 +467,7 @@ let next_key_by ~by : Devices.host key =
       let seed, count = Domain.DLS.get unscoped in
       let c = !count in
       incr count;
-      subkey ~by (seeded ~by seed) c
+      subkey ~by (key_by eager ~by seed) c
 
 let next_key () = next_key_by ~by:"Nx.Rng.next_key"
 
@@ -671,7 +659,7 @@ let refuse (type v s) ~by name text ~show (p : (v, s, 'd) Value.t)
   let dt = Prim.dtype p in
   let ins : D.any iarray = [| D.Any dt |] in
   let prog = P.of_exprs ~ins [| E.any (inside (E.input 0 dt)) |] in
-  let ok = map ~by (Prim.shape p) prog D.Bool [| Value.Any p |] in
+  let ok = map dispatched ~by (Prim.shape p) prog D.Bool [| Value.Any p |] in
   let fail i (v, ()) =
     Invalid_argument
       (Format.asprintf "%s: %s at %a is %s, not in %s" by name pp_shape i
@@ -1329,7 +1317,7 @@ let dirichlet ?key a =
     (* No element: zeros where [a] lies, whole on each of its devices. *)
     let at = Devices.uncut (Prim.placement a) in
     let prog = P.of_exprs ~ins:[||] [| E.(any (const dt 0.)) |] in
-    map ~by ~at shape prog dt [||]
+    map dispatched ~by ~at shape prog dt [||]
   else
     let least =
       let x = E.minimum (rounded c (E.input 0 dt)) (lit 1.) in
@@ -1363,7 +1351,7 @@ let dirichlet ?key a =
         (fun (Value.Any x) -> Value.Any (Eval.broadcast ~by shape x))
         (Array.append loads [| Value.Any sum |])
     in
-    map ~by shape
+    map dispatched ~by shape
       (P.of_exprs ~ins:[| D.Any c; D.Any c; D.Any c; D.Any c |] [| E.any out |])
       dt loads
 
