@@ -164,7 +164,18 @@ let test_kinks () =
       (v [| 1.; 2. |], v [| 1.; 0. |])
   in
   equal ~msg:"maximum's ties" floats [| 0.5; 1.; 0.5; 0. |]
-    (Array.append (Nx.to_array a) (Nx.to_array b))
+    (Array.append (Nx.to_array a) (Nx.to_array b));
+  (* More ties than a narrow float counts: 65536 float16 ones each take 2^-16,
+     and 257 bfloat16 ones 1/257 rounded, 255 2^-16. *)
+  let ends dt n =
+    let g = Rune.grad' Nx.max (Nx.ones dt [| n |]) in
+    Nx.to_array (Nx.cast Nx.float64 (Nx.stack [ Nx.min g; Nx.max g ]))
+  in
+  equal ~msg:"max's 65536 ties, float16" floats [| 0x1p-16; 0x1p-16 |]
+    (ends Nx.float16 65536);
+  equal ~msg:"max's 257 ties, bfloat16" floats
+    [| 255. *. 0x1p-16; 255. *. 0x1p-16 |]
+    (ends Nx.bfloat16 257)
 
 (* A single contribution keeps a zero's sign through maps, reductions, pads,
    windows and slices; through a gather it is added to [+0.]. An element that

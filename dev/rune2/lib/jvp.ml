@@ -346,21 +346,24 @@ let reduce_part (type d a) i ~by ~layout ~axes (r : (d, a) Prim.reduction)
     { extra; emit }
   in
   (* Tied extremes share the tangent: [v] rounded into [dt] is the extreme where
-     it is [y]'s, as rounding keeps order. *)
+     it is [y]'s, as rounding keeps order. The ties are counted and their
+     tangents summed in [dt]'s carrier, which counts more than a narrow float
+     holds. *)
   let ties (type v s) (dt : (v, s) D.t) k (y : (v, s, d) Nx.t)
       (wrap : (v, s, d) Nx.t -> a) : (d, a) part =
-    reduces dt k
+    let (D.Any c) = Nx_kernel.carrier (D.Any dt) in
+    reduces c k
       [ spread y ]
       (fun b v t es ->
         let dk = Scalar.dtype b t in
         let at = Scalar.equal b (in_dtype b (D.Any dt) v) (List.hd es) in
         let zero = Scalar.const b dk 0. and one = Scalar.const b dk 1. in
         [
-          (Scalar.where b at t zero, sum dt);
-          (Scalar.where b at one zero, sum dt);
+          (Scalar.where b at t zero, sum c); (Scalar.where b at one zero, sum c);
         ])
       (function
-        | [ n; c ] -> wrap (dual i ~fresh:true y (Nx.div n c)) | _ -> wrap y)
+        | [ n; m ] -> wrap (dual i ~fresh:true y (Nx.cast dt (Nx.div n m)))
+        | _ -> wrap y)
   in
   (* The nodes of [v], [t] and [e] in the wider of [v]'s dtype and [dt]. *)
   let widened b dt v t e =
@@ -398,18 +401,21 @@ let reduce_part (type d a) i ~by ~layout ~axes (r : (d, a) Prim.reduction)
       ties dt k v (fun v -> (v, pos))
   | Logsumexp (k, dt) ->
       (* The softmax-weighted mean of the tangents, [Σ w t / Σ w], the weights
-         [exp (v - y)]: the rounding of [y] scales both sums. *)
-      reduces dt k
+         [exp (v - y)]: the rounding of [y] scales both sums, taken in [dt]'s
+         carrier, which a narrow float's count of infinite terms fits. *)
+      let (D.Any c) = Nx_kernel.carrier (D.Any dt) in
+      reduces c k
         [ spread y ]
         (fun b v t es ->
-          let v, t, e, w = widened b dt v t (List.hd es) in
+          let v, t, e, w = widened b c v t (List.hd es) in
           let one = Scalar.const b w 1. in
           let u =
             Scalar.where b (Scalar.equal b v e) one
               (Scalar.exp b (Scalar.sub b v e))
           in
-          [ (Scalar.mul b u t, sum dt); (u, sum dt) ])
-        (function [ n; d ] -> dual i ~fresh:true y (Nx.div n d) | _ -> y)
+          [ (Scalar.mul b u t, sum c); (u, sum c) ])
+        (function
+          | [ n; d ] -> dual i ~fresh:true y (Nx.cast dt (Nx.div n d)) | _ -> y)
   | Moments (k, dt) ->
       (* The variance's tangent is twice the mean of [(v - m) (t - dm)], [mean
          ((v - m) t) - mean (v - m) dm], exact to first order whatever [m]'s
@@ -735,7 +741,9 @@ let scan_rule (type d r) i ~by layout axis (prog : P.t)
       | _ -> y)
 
 (* Scatters by extreme: each target's tangent is the mean of the tangents of the
-   elements that tie at its extreme, its own and its updates'. *)
+   elements that tie at its extreme, its own and its updates', counted and
+   summed in the carrier of their dtype, which counts more than a narrow float
+   holds. *)
 let scatter_extreme (type v s d) i ~by ~unique ~axis
     (combine : Nx_kernel.combine) (idx : d Nx.int64_t)
     (updates : (v, s, d) Nx.t) (into : (v, s, d) Nx.t) =
@@ -746,17 +754,21 @@ let scatter_extreme (type v s d) i ~by ~unique ~axis
   in
   let at = Prim.eval ~by (Gather { axis; idx; x = y }) in
   let won = Nx.equal pu at and kept = Nx.equal pi y in
-  let tu = Option.value (tangent i updates) ~default:(Nx.zeros_like pu) in
-  let ti = Option.value (tangent i into) ~default:(Nx.zeros_like pi) in
+  let dt = Nx.dtype pu in
+  let (D.Any c) = Nx_kernel.carrier (D.Any dt) in
+  let wide x =
+    Nx.cast c (Option.value (tangent i x) ~default:(Nx.zeros_like (primal i x)))
+  in
+  let tu = wide updates and ti = wide into in
   let zero x = Nx.zeros_like x and one x = Nx.ones_like x in
   let add updates into =
     Prim.eval ~by (Scatter { combine = Add; unique; axis; idx; updates; into })
   in
   let count =
-    add (Nx.where won (one pu) (zero pu)) (Nx.where kept (one pi) (zero pi))
+    add (Nx.where won (one tu) (zero tu)) (Nx.where kept (one ti) (zero ti))
   in
-  let sum = add (Nx.where won tu (zero pu)) (Nx.where kept ti (zero pi)) in
-  dual i ~fresh:true y (Nx.div sum count)
+  let sum = add (Nx.where won tu (zero tu)) (Nx.where kept ti (zero ti)) in
+  dual i ~fresh:true y (Nx.cast dt (Nx.div sum count))
 
 (* Complex values and their parts' pairs: bitcasts between them are linear. *)
 let same_coordinates (D.Any a) (D.Any b) =

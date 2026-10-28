@@ -150,6 +150,24 @@ let test_edges () =
        (fun x -> Nx.reshape [| 1 |] (Nx.var x))
        (narrow h [| 2000.; 2001. |])
        (narrow h [| 0.; 1. |]));
+  (* More ties than float16 counts: their tangents' mean is taken in float32. *)
+  let ones = Nx.ones h [| 65536 |] in
+  equal ~msg:"max's 65536 ties, float16" (array float_exact) [| 1. |]
+    (tangent' (fun x -> Nx.reshape [| 1 |] (Nx.max x)) ones ones);
+  equal ~msg:"logsumexp's 65536 infinite terms, float16" (array float_exact)
+    [| 1. |]
+    (tangent'
+       (fun x -> Nx.reshape [| 1 |] (Nx.logsumexp x))
+       (Nx.full h [| 65536 |] Float.infinity)
+       ones);
+  equal ~msg:"a scatter's 65536 tied updates, float16" (array float_exact)
+    [| 1. |]
+    (tangent'
+       (fun u ->
+         Nx.scatter ~combine:Max ~axis:0
+           (Nx.zeros Nx.int64 [| 65536 |])
+           u (Nx.zeros h [| 1 |]))
+       ones ones);
   equal ~msg:"prod in its carrier, float16" (close 1.) [| 300. |]
     (tangent'
        (fun x -> Nx.reshape [| 1 |] (Nx.prod x))
