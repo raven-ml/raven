@@ -727,7 +727,10 @@ let claims i axis : Program.construct -> bool = function
 (* Custom rules
 
    A custom rule ({!Program.Custom}) or a linear call ({!Program.Linear}) over
-   lane values, as {!Custom} calls trace them. *)
+   lane values, as {!Custom} calls trace them. It is performed outward with each
+   of its programs traced again at its signature over the batches and evaluated
+   over their lanes, and the additions of a pullback or a transpose are summed
+   over the lanes. *)
 
 module Rules = struct
   open Program
