@@ -90,13 +90,28 @@ let test_kinks () =
        (fun y -> Nx.pow (v [| 0.; 0.; 0. |]) y)
        (v [| -1.; 2.; 0.5 |])
        (v [| 1.; 1.; 1. |]));
-  equal ~msg:"pow at a zero exponent" floats [| 0. |]
+  equal ~msg:"pow at a zero exponent" floats [| 0.; 0.; 0. |]
     (Nx.to_array
        (snd
           (Rune.jvp pair T.tensor
              (fun (a, b) -> Nx.pow a b)
-             (v [| 0. |], v [| 0. |])
-             (v [| 1. |], v [| 0. |]))));
+             (v [| 0.; 1e-310; 2. |], v [| 0.; 0.; 0. |])
+             (v [| 1.; 1.; 1. |], v [| 0.; 0.; 0. |]))));
+  (* The tangent along the base is [b a^(b - 1)] at [b = 0] too: its derivative
+     along the exponent there is [1 / a], and along the base [0]. *)
+  let a = v [| 0.1; 0.5; 2.; 1e-310; Float.infinity |] in
+  let ones = v [| 1.; 1.; 1.; 1.; 1. |]
+  and zeros = v [| 0.; 0.; 0.; 0.; 0. |] in
+  let along_base a b = snd (Rune.jvp' (fun a -> Nx.pow a b) a ones) in
+  equal ~msg:"pow's mixed second derivative at a zero exponent" floats
+    [| 10.; 2.; 0.5; Float.infinity; 0. |]
+    (tangent (along_base a) zeros ones);
+  equal ~msg:"pow's second derivative along the base at a zero exponent" floats
+    [| 0.; 0.; 0.; 0.; 0. |]
+    (tangent
+       (fun a -> along_base a zeros)
+       (v [| 1e-200; 0.5; 2.; 1e-310; Float.infinity |])
+       ones);
   equal ~msg:"a real sign" floats [| 0.; 0. |]
     (tangent Nx.sign (v [| 0.; 2. |]) (v [| 1.; 1. |]))
 

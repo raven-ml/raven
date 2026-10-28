@@ -169,8 +169,18 @@ let binary_tangent b (k : P.binary) ~x ~z ~y tx tz =
   | Mul -> plus b (scaled b tx z) (Option.map (mul x) tz)
   | Fdiv -> minus b (Option.map (fun t -> div t z) tx) (scaled b tz (div y z))
   | Pow ->
+      (* [z x^(z - 1)]; where [z] is 0, the same function as [(z / x) x^z],
+         whose [z / x] is exactly 0, so that no zero meets an infinite power at
+         any order, and 0 where [x] is 0 or not finite ([x - x] is not 0): the
+         tangent along [x] is 0 where [z] is, and its derivatives are those of
+         [z x^(z - 1)]. *)
+      let quotient = mul (div z x) y in
+      let at_zero =
+        where b (zero_at x) (lit 0.)
+          (where b (zero_at (sub b x x)) quotient (lit 0.))
+      in
       let base =
-        where b (zero_at z) (lit 0.) (mul z (binary b Pow x (sub b z (lit 1.))))
+        where b (zero_at z) at_zero (mul z (binary b Pow x (sub b z (lit 1.))))
       in
       let exponent = where b (zero_at x) (lit 0.) (mul (unary b Log x) y) in
       plus b (scaled b tx base) (scaled b tz exponent)
