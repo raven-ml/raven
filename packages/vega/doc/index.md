@@ -55,29 +55,32 @@ let sched = Vega.Schedule.cosine_decay ~init_value:1e-3 ~decay_steps:1000 ()
 
 let step =
   Rune.jit
-    Nx.Ptree.(tensor @-> tensor @-> consumes state @@ returns (pair tensor state))
+    Nx.Ptree.(tensor @-> tensor @-> state @-> returns (pair tensor state))
     (fun inputs targets (params, opt) ->
       let loss, grads =
         Rune.value_and_grad model (objective inputs targets) params
       in
       let grads = Vega.clip_by_global_norm model ~max_norm:1.0 grads in
       let params, opt =
-        Vega.adamw_step model ~lr:(sched opt.step) opt ~params ~grads
+        Vega.adamw_step model ~lr:sched opt ~params ~grads
       in
       (loss, (params, opt)))
+
+let loss, s = step inputs targets (Nx.Ptree.donate state s)
 ```
 
-Looping `step` over batches compiles once and replays. Each call consumes the
-state it is given and returns the next one beside the loss, and the schedule
-reads the state's own counter inside the program. The loss is a fresh result,
+Looping `step` over batches compiles once and replays. Each call returns the
+next state beside the loss, and the schedule reads the state's own counter
+inside the program. Donating the state at the call (`Nx.Ptree.donate`) lets the
+program write the next state into its memory. The loss is a fresh result,
 readable after later calls.
 
 A step checks that the parameters, the gradients and the state share one
 skeleton, and raises `Invalid_argument` naming the first path at which they
 differ, for example
 `Vega.adam_step: the root: length 1 in the gradients, length 2 in the parameters`.
-A structure may carry leaves that are not floats (an RNG key, a counter); a
-step passes them through unchanged.
+A structure may carry leaves that are neither floats nor complex (an RNG key,
+a counter); a step passes them through unchanged.
 
 Schedules are tensor arithmetic over the counter, so the same schedule drives an
 eager loop; `Schedule.eval` reads one at a host step number for logging.

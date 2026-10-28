@@ -17,7 +17,7 @@ let step (params, st) =
   let loss, grads = Rune.value_and_grad model objective params in
   let grads = Vega.clip_by_global_norm model ~max_norm:1.0 grads in
   let params, st =
-    Vega.adamw_step model ~lr:(sched st.step) ~weight_decay:0.01 st ~params
+    Vega.adamw_step model ~lr:sched ~weight_decay:0.01 st ~params
       ~grads
   in
   (loss, (params, st))
@@ -94,8 +94,8 @@ Nx.Ptree.visits (Vega.adam_ptree model) st
 ```
 
 Those names are the ones a saved file stores, and the structure is what a
-compiled step takes. With the state an argument the step consumes, a whole
-training step is one program that replays on every call:
+compiled step takes. With the state an argument of the step, donated at each
+call, a whole training step is one program that replays on every call:
 
 <!-- $MDX skip -->
 ```ocaml
@@ -103,19 +103,26 @@ let state = Nx.Ptree.pair model (Vega.adam_ptree model)
 
 let step =
   Rune.jit
-    Nx.Ptree.(tensor @-> tensor @-> consumes state @@ returns (pair tensor state))
+    Nx.Ptree.(tensor @-> tensor @-> state @-> returns (pair tensor state))
     (fun inputs targets (params, opt) ->
       let loss, grads =
         Rune.value_and_grad model (objective inputs targets) params
       in
       let grads = Vega.clip_by_global_norm model ~max_norm:1.0 grads in
-      let params, opt = Vega.adamw_step model ~lr:(sched opt.step) opt ~params ~grads in
+      let params, opt = Vega.adamw_step model ~lr:sched opt ~params ~grads in
       (loss, (params, opt)))
+
+let loss, s = step inputs targets (Nx.Ptree.donate state s)
 ```
 
 A structure may carry tensors that are not parameters, such as an RNG key or a
-batch of indices. A step passes every leaf whose dtype is not a float through
-unchanged, in the parameters and in the state.
+batch of indices. A step passes every leaf whose dtype is neither a float nor a
+complex one through unchanged, in the parameters and in the state.
+
+A complex parameter steps as its two real coordinates, the real and imaginary
+parts, each with its own state, against the conjugate of `Rune.grad`'s
+gradient: `sgd_step` moves `z` to `z - lr * conj g`, which descends the real
+objective.
 
 ## Skipping Overflowed Steps
 
@@ -135,8 +142,9 @@ let (params, st), ls =
     (params, st)
 ```
 
-The step is tensor arithmetic, so it compiles. With `Loss_scale.static 1.0`
-it only skips the steps whose gradients are not finite.
+The step is tensor arithmetic, so it compiles. A scale is made where the
+parameters lie, `Vega.Loss_scale.dynamic Nx.Host.on` on the host. With
+`Loss_scale.static at 1.0` it only skips the steps whose gradients are not finite.
 
 ## Next Steps
 

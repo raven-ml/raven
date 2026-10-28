@@ -57,5 +57,5 @@ let sched =
     ~init_value:0.0 ~peak_value:0.001
     ~warmup_steps:1000 ~decay_steps:9000 ()
 in
-Vega.adam_step model ~lr:(sched st.step) st ~params ~grads
+Vega.adam_step model ~lr:sched st ~params ~grads
 ```

@@ -91,8 +91,8 @@ Transformations of the gradients are functions applied before the step.
 | `clip_by_global_norm(max)` | `clip_by_global_norm p ~max_norm g` |
 | `clip(delta)` | `clip_by_value p ~max:delta g` |
 | `global_norm(g)` | `Nx.Ptree.norm p Nx.float32 g` |
-| `apply_if_finite(tx)` | `Loss_scale.step p s (Loss_scale.static 1.0) ~grads update x` |
-| `scale_by_schedule(fn)`, `scale_by_learning_rate(lr)` | `~lr:(sched st.step)` |
+| `apply_if_finite(tx)` | `Loss_scale.step p s (Loss_scale.static at 1.0) ~grads update x` |
+| `scale_by_schedule(fn)`, `scale_by_learning_rate(lr)` | `~lr:sched` |
 
 ## Schedules
 
@@ -116,5 +116,6 @@ Transformations of the gradients are functions applied before the step.
 | Optimizer | A `GradientTransformation` of `init` and `update` | An `*_init` and a `*_step` function |
 | Composition | `optax.chain` | Function application |
 | State type | Pytree of arrays | A record per optimizer (`adam_state`, ...) with its structure (`adam_ptree`, ...) |
-| Learning rate | Float or schedule | Scalar tensor `~lr`: `Vega.lr v`, or a schedule at `st.step` |
+| Learning rate | Float or schedule | A schedule `~lr`, which the step applies to its counter: `Vega.lr v` for a constant |
 | Parameter trees | Built-in (JAX pytrees) | Any structure, an `Nx.Ptree.t` |
+| Complex parameters | Second moments of `abs_sq(g)`, the squared magnitude | Each part a real coordinate with its own moments, the step along the conjugate of `Rune.grad` |

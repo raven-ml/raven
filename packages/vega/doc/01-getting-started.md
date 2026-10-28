@@ -62,7 +62,8 @@ Key points:
   `Nx.Ptree.tensor`
 - `sgd_init p params` creates the state: a zero velocity shaped like the
   parameters, and a step counter
-- `Vega.lr 0.1` is the learning rate as the scalar tensor steps take
+- `Vega.lr 0.1` is the constant rate 0.1; a step takes its rate as a function
+  of its state's step counter, as a schedule is
 - The step returns both the updated parameters and the new state; the loop
   threads them
 
@@ -75,7 +76,7 @@ into the `Nx.Ptree.t` every optimizer takes:
 <!-- $MDX skip -->
 ```ocaml
 module Linear = struct
-  type 'a t = { w : 'a; b : 'a }
+  type ('a, _) t = { w : 'a; b : 'a }
 
   let walk c { w; b } =
     let open Nx.Ptree.Walk in
@@ -84,7 +85,7 @@ module Linear = struct
     { w; b }
 end
 
-let model : Nx.float32_t Linear.t Nx.Ptree.t =
+let model : ((Nx.host Nx.float32_t, Nx.host) Linear.t, Nx.host) Nx.Ptree.t =
   Nx.Ptree.instantiate (module Linear)
 ```
 
@@ -128,7 +129,7 @@ advances it. Several share a state type.
 | `adafactor_step` | Factored second moments, for memory | `adafactor_state` | `~decay_rate`, `~eps`, `~clipping_threshold` |
 | `lbfgs_step` | L-BFGS at a fixed rate | `lbfgs_state` | `~history` (on `lbfgs_init`) |
 
-Every step takes `~lr`, a scalar tensor, first after the structure. A
+Every step takes `~lr`, a function of its counter, first after the structure. A
 deterministic objective minimised to a tolerance, such as a full-batch fit or
 a maximum a posteriori estimate, is jera's `Jera.Minimize`, whose L-BFGS
 searches its step length and whose minimum has a derivative.

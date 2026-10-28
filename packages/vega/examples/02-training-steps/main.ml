@@ -19,7 +19,7 @@
    computes them from the loss alone. *)
 
 module Linear = struct
-  type 'a t = { w : 'a; b : 'a }
+  type ('a, _) t = { w : 'a; b : 'a }
 
   let walk c { w; b } =
     let open Nx.Ptree.Walk in
@@ -28,9 +28,9 @@ module Linear = struct
     { w; b }
 end
 
-type params = Nx.float32_t Linear.t
+type params = (Nx.host Nx.float32_t, Nx.host) Linear.t
 
-let model : params Nx.Ptree.t = Nx.Ptree.instantiate (module Linear)
+let model : (params, Nx.host) Nx.Ptree.t = Nx.Ptree.instantiate (module Linear)
 
 let x =
   Nx.create Nx.float32 [| 16; 3 |]

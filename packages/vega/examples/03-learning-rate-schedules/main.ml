@@ -60,7 +60,7 @@ let () =
 
   (* Use warmup + cosine decay in an optimization loop. The rate is the schedule
      applied to the state's own step counter, a tensor, so the same code runs
-     inside a compiled step. *)
+     inside a compiled step; [lr] reads it for the log. *)
   Printf.printf "--- Adam with warmup_cosine_decay (100 steps) ---\n";
   let sched =
     S.warmup_cosine_decay ~init_value:0.0 ~peak_value:0.01 ~warmup_steps:20
@@ -72,7 +72,7 @@ let () =
   for i = 1 to 100 do
     let lr = sched !st.step in
     let params', st' =
-      Vega.adam_step p ~lr !st ~params:!params ~grads:!params
+      Vega.adam_step p ~lr:sched !st ~params:!params ~grads:!params
     in
     params := params';
     st := st';

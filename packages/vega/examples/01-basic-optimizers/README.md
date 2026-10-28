@@ -19,7 +19,7 @@ dune exec packages/vega/examples/01-basic-optimizers/main.exe
 
 | Function     | Purpose                                                        |
 | ------------ | -------------------------------------------------------------- |
-| `lr`         | A constant learning rate, as the scalar tensor the steps take  |
+| `lr`         | A constant learning rate, as the schedule the steps take       |
 | `sgd_init`   | SGD state: a zero velocity and a step counter                  |
 | `sgd_step`   | Stochastic gradient descent with optional momentum             |
 | `adam_step`  | Adam with bias-corrected moment estimates                      |

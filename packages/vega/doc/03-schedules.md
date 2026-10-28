@@ -19,12 +19,12 @@ Printf.printf "step 1:   %f\n" (Vega.Schedule.eval lr 1);    (* 0.001 *)
 Printf.printf "step 100: %f\n" (Vega.Schedule.eval lr 100)   (* 0.001 *)
 ```
 
-A step takes the schedule's value at the state's counter as its `~lr`:
+A step takes a schedule as its `~lr` and applies it to its state's counter:
 
 <!-- $MDX skip -->
 ```ocaml
 let sched = Vega.Schedule.cosine_decay ~init_value:1e-3 ~decay_steps:10000 () in
-Vega.adam_step model ~lr:(sched st.step) st ~params ~grads
+Vega.adam_step model ~lr:sched st ~params ~grads
 ```
 
 ## Basic Schedules
@@ -195,9 +195,8 @@ let step_decay : Vega.Schedule.t = fun step ->
 
 ## Using Schedules with Optimizers
 
-Every step takes its learning rate as `~lr`, a scalar tensor. A schedule
-applied to the state's `step` counter gives one, inside the step's own
-arithmetic:
+Every step takes its learning rate as `~lr`, a function of the state's `step`
+counter, as a schedule is; the step applies it inside its own arithmetic:
 
 <!-- $MDX skip -->
 ```ocaml
@@ -208,7 +207,7 @@ let sched =
 in
 let step (params, st) =
   let grads = gradients params in
-  Vega.adamw_step model ~lr:(sched st.step) ~weight_decay:0.01 st ~params ~grads
+  Vega.adamw_step model ~lr:sched ~weight_decay:0.01 st ~params ~grads
 ```
 
 The counter is a tensor leaf of the state, so under `Rune.jit` the rate is
@@ -223,7 +222,7 @@ decay is applied after the step, decoupled from the adaptive scaling as
 ```ocaml
 let wd = Vega.Schedule.cosine_decay ~init_value:0.01 ~decay_steps:10000 () in
 let lr = sched st.step in
-let params', st' = Vega.adam_step model ~lr st ~params ~grads in
+let params', st' = Vega.adam_step model ~lr:sched st ~params ~grads in
 let decay = Nx.mul lr (wd st.step) in
 let params' =
   Nx.Ptree.map2 model
