@@ -3,73 +3,75 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Tracers: a function run once over variables, recorded as a program.
+(** Interpretations that record a function as a program.
 
-    A tracer is an [Nx.Prim] interpretation whose traced values are a program's
-    variables ({!Program}), with a handler of constructs just outside it. The
-    body, jit and staged tracers run the function under [Nx.Rng.refusing], so a
-    draw without a key raises naming the tracer.
+    A {e tracer} is an [Nx.Prim] interpretation whose traced values are a
+    program's variables ({!Program}), with a handler of constructs just outside
+    it, so that what the handler computes goes to the interpretations around the
+    tracer. {!trace} runs a function once over variables of the forms given and
+    returns its program and its captures. The trace's {e extent} is the code
+    that runs while the function runs. A tracer {e receives} an operation or a
+    construct when it takes it instead of letting it run, to record it as an
+    equation or, for a call or a custom rule, to run its default inside the
+    trace. The four kinds ({!kind}) differ in what they receive.
 
-    - The {e body} tracer ([Values]) traces a construct's functions. It receives
-      the operations and constructs over its variables; one that reads none of
-      them runs at the call, under the interpretations around the tracer, so a
-      body holds only what depends on its parameters.
-    - The {e jit} tracer ([Extent]) traces a compiled function. It receives
-      every operation and construct of its extent, those over constants
-      included, and answers {!Program.Staging}, so that a compiled call in its
-      extent is inlined.
-    - The {e staged} tracer ([Extent]) traces a remat's function as the jit
-      tracer does, so that what the function computes from its captures or
-      constants alone is computed again too, and answers {!Program.Staging} as
-      it does.
-    - The {e tape} tracer ([Values]) records the linear part of a function whose
-      other part computes at the call, as a forward-mode derivative over its
-      variables does: of a loop it receives, the outputs that read none of its
-      variables compute at the call, outward, over the loads they read, and the
-      others are recorded over the loads they read, which hold the values they
-      compute again. Of a scan over its variables, a known scan computes at the
-      call what reads none of them, stacking those values the rest reads that
-      are not its rows or captures, and the rest is recorded as a linear scan
-      over them; a remat over its variables computes its known outputs at the
-      call and is recorded over its arguments. It answers only the constructs
-      over its variables, and raises [Invalid_argument] for an addition of one
-      to a total. A draw without a key in its function is the scope's.
-
-    The body, jit and staged tracers thread each total their extent adds to and
-    no scope inside it takes ({!Program.t}): they answer {!Program.Running} with
-    a variable holding the total's running value where the call is, its first
-    one a parameter, and {!Program.Replace} by making the value given the
-    running value, which the program returns once the function has. An addition
-    is thus an operation on the running value. The tape tracer refuses a
-    {!Program.Replace} of one of its variables, as an addition. A call
-    ({!Program.Call}) over the body or staged tracer's variables, and every call
-    in the staged tracer's extent, is recorded as an equation, which evaluates
-    compiled; every call in the jit tracer's extent is inlined: it runs its
-    default where it was performed ({!Program.Evaluate}), which issues the
-    call's equations to the tracer. The tape tracer answers a call over its
-    variables with two calls derived at its site ({!Program.derive}): the known part,
-    performed at the call, of the results that read none of its variables, also
-    returning the residuals the rest reads and threading the call's totals, and
-    a recorded call of the rest over its variables and the residuals. The tape
-    tracer answers a custom rule ({!Program.Custom}) over its variables with
-    {!Program.Evaluate}, so that its primal runs where it was performed and is
-    recorded, and a pullback's tangents (a {!Program.Linear} call without a
-    function) over none of its variables with zeros: they are linear in tangents
-    it does not hold.
-
-    {e Closure conversion.} A value of another interpretation that an equation
-    or an output reads is a {e capture}: the body and tape tracers bind it to a
-    parameter after the function's, once per value, and return it so the
-    construct names it as an operand and its owner sees it; so does the staged
-    tracer. The jit tracer raises [Invalid_argument] for one. *)
+    Every kind receives an operator ({!Program.Operator}), whatever it reads. A
+    map's [Lanes] and [Lane_index] reach a tracer only inside that map. Outside
+    it their default raises. The jit and staged tracers answer
+    {!Program.Staging} with [true]. *)
 
 type kind =
-  | Body  (** Traces a construct's functions. *)
-  | Jit  (** Traces a compiled function. *)
-  | Tape  (** Records a linear part. *)
+  | Body
+      (** The tracer of a construct's functions. It receives the operations and
+          constructs that read its variables. One that reads none runs at the
+          call, under the interpretations around the tracer, so a body holds
+          only what depends on its parameters. A call over its variables is
+          recorded as an equation, which runs its default ({!Program.Call})
+          where the program is evaluated. *)
+  | Jit
+      (** The tracer of a compiled function. It receives every operation and
+          construct of its extent, those over constants included, and inlines
+          each call. The call runs its default where it was performed
+          ({!Program.Evaluate}), which issues the call's equations to the
+          tracer. *)
+  | Tape
+      (** The tracer of the linear part of a function whose other part runs at
+          the call, as linearization and reverse mode need. What reads none of
+          its variables runs at the call, and the rest is recorded over the
+          values it reads. A loop, a switch, a remat or a call over its
+          variables is split in two the same way, a call's two parts derived at
+          its site ({!Program.derive}). A custom rule over its variables runs
+          its primal where it was performed, so that its operations are
+          recorded. The tangents of a pullback ({!Program.Linear} without
+          [apply]) that read none of its variables are zeros. *)
   | Staged
-      (** Traces a remat's function: every operation of its extent, as the jit
-          tracer, and captures as the body tracer. *)
+      (** The tracer of a function whose every operation is recorded, such as a
+          remat's function, a switch's branches or a root's [solve]. It receives
+          every operation and construct of its extent, as the jit tracer does,
+          and records each call as an equation. *)
+
+(** {1:tracing Tracing}
+
+    {e Captures.} A value of another interpretation that an equation or an
+    output reads is a {e capture}. The body, staged and tape tracers bind each
+    to a parameter after the function's arguments, once per value, and return
+    it, so that the construct names it as an operand and its owner sees it. The
+    jit tracer raises [Invalid_argument] for one, since a compiled function must
+    receive other transformations' values as its arguments.
+
+    {e Totals.} The body, jit and staged tracers thread each total that their
+    extent adds to and that no collect inside the extent takes ({!Program.t}).
+    They answer {!Program.Running} with a variable holding the total's running
+    value where the call is, the running value in being a parameter, and
+    {!Program.Replace} by making the value given the running value, which the
+    program returns once the function has returned. The tape tracer raises
+    [Invalid_argument] where a running value would become one of its variables,
+    as for a tangent added to a total.
+
+    {e Draws.} The body, jit and staged tracers run the function under
+    [Nx.Rng.refusing], so a draw without a key raises [Invalid_argument] with a
+    message naming the tracer. A tape's draws are those of the code around it,
+    since its known part runs at the call. *)
 
 val trace :
   ?totals:Program.addition array ->
@@ -81,6 +83,5 @@ val trace :
 (** [trace ~totals k ~name forms f] is the program of [f] over variables of
     [forms], and its captures, in order. The interpretation is named [name] in
     messages, as ["Rune.scan"]. A total's running value in lies where [totals]
-    places it, else where the value it is first asked at or added does, else
-    where the total's running value around the trace does. Raises what [f]
-    raises. *)
+    places it. Without that, it lies where the first value asked of it
+    ({!Program.Running}) or added to it lies. Raises what [f] raises. *)
