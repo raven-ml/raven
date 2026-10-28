@@ -47,10 +47,15 @@ type ('d, 'e) issued = {
   fail : int array -> 'e -> exn;
 }
 
-(* A check and the hold on its data's memory, or the exception of one that
-   failed before any wait read it. *)
+(* A check found failing, and the hold on its data's memory, while its
+   exception is built ({!built}). *)
+type failing = Failing : ('d, 'e) issued * Rig.Claim.hold -> failing
+
+(* A check and the hold on its data's memory, a check found failing, or the
+   exception of one that failed before any wait read it. *)
 type pending =
   | Pending : ('d, 'e) issued * Rig.Claim.hold -> pending
+  | Marked of failing
   | Raised : exn -> pending
 
 module Sets = Map.Make (Int)
@@ -71,19 +76,20 @@ let rec update f =
 
 let of_set n sets = Option.value ~default:[] (Sets.find_opt n sets)
 
-let raised = function Raised _ -> true | Pending _ -> false
+(* Whether [p] is a failure the set holds. *)
+let fails = function Marked _ | Raised _ -> true | Pending _ -> false
 
 (* Adds [p] to set [n]'s pending checks, unless an earlier one failed, whose
    exception the next wait raises in place of any later one's: [false] then. *)
 let pend n p =
   update (fun sets ->
       let l = of_set n sets in
-      if List.exists raised l then (sets, false)
+      if List.exists fails l then (sets, false)
       else (Sets.add n (p :: l) sets, true))
 
 (* Ends a check's hold. *)
 let release = function
-  | Pending (_, h) -> Rig.Claim.release h
+  | Pending (_, h) | Marked (Failing (_, h)) -> Rig.Claim.release h
   | Raised _ -> ()
 
 (* [a] in memory the host addresses where its device is of this machine:
@@ -120,10 +126,6 @@ let get_on_host a =
 
 (* The one element of [a], as a 0-d view. *)
 let unit_view a = Option.get (A.move (Reshape [||]) a)
-
-(* Set [n]'s pending checks, oldest first, taken off the list. *)
-let drained n =
-  update (fun sets -> (Sets.remove n sets, List.rev (of_set n sets)))
 
 (* [data] with each datum that has bytes a live value of its own over them,
    which no donation of the datum kills. *)
@@ -180,16 +182,92 @@ let failure : type d e. by:string -> (d, e) issued -> exn =
 (* [c]'s exception, read on the host, where a flag is false. *)
 let outcome ~by c = if get_on_host c.holds then None else Some (failure ~by c)
 
+(* Builds of failures
+
+   A check found failing stays on its set's list, marked, while its [fail]
+   builds the exception. [fail] may read the values it receives, and such a
+   read waits on the set: the build runs under a handler that answers
+   [Building f] for its mark [f], so that a wait inside it leaves the mark
+   alone. A wait on another systhread meanwhile takes the mark off and
+   builds the exception itself, inside a build of its own, then raises it.
+   Whoever takes the mark off the list, under {!update}, ends the hold, once:
+   the builder that puts the exception in the mark's place, or a wait. *)
+type _ Effect.t += Building : failing -> bool Effect.t
+
+(* Whether the caller runs inside a build of [f]'s exception. *)
+let building f =
+  match Effect.perform (Building f) with
+  | b -> b
+  | exception Effect.Unhandled (Building _) -> false
+
+(* [f]'s exception, built inside a build of [f]. *)
+let built ~by f =
+  let effc (type a) (e : a Effect.t) =
+    match e with
+    | Building g when g == f ->
+        Some
+          (fun (k : (a, _) Effect.Deep.continuation) ->
+            Effect.Deep.continue k true)
+    | _ -> None
+  in
+  match f with
+  | Failing (c, _) ->
+      Effect.Deep.try_with (fun () -> failure ~by c) () { Effect.Deep.effc }
+
+(* Set [n]'s pending checks, oldest first, taken off the list up to a mark
+   whose build runs around the caller: the build's own reads leave it, and
+   the checks after it, which no wait reads before it. *)
+let drained n =
+  let own = function Marked f -> building f | Pending _ | Raised _ -> false in
+  let rec split = function
+    | [] -> ([], [])
+    | p :: rest when own p -> ([], p :: rest)
+    | p :: rest ->
+        let taken, left = split rest in
+        (p :: taken, left)
+  in
+  update (fun sets ->
+      match split (List.rev (of_set n sets)) with
+      | taken, [] -> (Sets.remove n sets, taken)
+      | taken, left -> (Sets.add n (List.rev left) sets, taken))
+
 (* Reads [checks], oldest first, up to the first that fails, which raises: the
    later ones go unread. Every check's hold ends then, so that a donation of its
    data right after the wait may reuse the memory. *)
 let settle ~by checks =
   let failure = function
     | Pending (c, _) -> outcome ~by c
+    | Marked f -> Some (built ~by f)
     | Raised e -> Some e
   in
   Fun.protect ~finally:(fun () -> List.iter release checks) (fun () ->
       Option.iter raise (List.find_map failure checks))
+
+(* Builds the exception of [f], marked on set [n], and puts it in the mark's
+   place, where the next wait raises it, ending the hold. A wait on another
+   systhread that took the mark off meanwhile raises its own build and ends
+   the hold, and this build's exception goes. A [fail] that raises takes the
+   mark off, if it is still there, and its exception passes on. *)
+let record ~by n f =
+  (* Replaces the mark by [r], or takes it off for [None]: [true] where it
+     was still there. *)
+  let resolve r =
+    let mine = function Marked g -> g == f | Pending _ | Raised _ -> false in
+    update (fun sets ->
+        let l = of_set n sets in
+        if not (List.exists mine l) then (sets, false)
+        else
+          let at p = if mine p then Option.to_list r else [ p ] in
+          match List.concat_map at l with
+          | [] -> (Sets.remove n sets, true)
+          | l -> (Sets.add n l sets, true))
+  in
+  match built ~by f with
+  | e -> if resolve (Some (Raised e)) then release (Marked f)
+  | exception x ->
+      let bt = Printexc.get_raw_backtrace () in
+      if resolve None then release (Marked f);
+      Printexc.raise_with_backtrace x bt
 
 (* Settles set [n]'s earlier checks whose flags are computed, so that a domain
    that never waits on the set holds only the data of the checks still
@@ -199,31 +277,29 @@ let settle ~by checks =
    more than it settles. The checks are read outside the update, which then
    takes off those still pending, against a wait on another systhread that
    drains them meanwhile. [ds] are the devices of the check being issued
-   ({!reached}). [false] where the set then holds a failure.
-
-   A failing check's exception is built once the check is off the list, its
-   hold kept until then: [fail] may read the values it receives, a wait on
-   the set that would otherwise settle the check again. *)
+   ({!reached}). [false] where the set then holds a failure. A failing check
+   is marked while its exception is built, then holds the exception where no
+   wait took the mark meanwhile ({!record}). *)
 let settle_reached ~by n ds =
   let earlier = List.rev (of_set n (Atomic.get (Domain.DLS.get checks))) in
   (* Whether each computed check passes, oldest first, up to the first that
      fails. *)
   let rec read = function
-    | [] | Raised _ :: _ -> []
+    | [] | (Marked _ | Raised _) :: _ -> []
     | (Pending (c, _) as p) :: rest ->
         if not (reached ds c) then []
         else if get_on_host c.holds then (p, true) :: read rest
         else [ (p, false) ]
   in
   match read earlier with
-  | [] -> not (List.exists raised earlier)
+  | [] -> not (List.exists fails earlier)
   | outcomes -> (
       (* Set [n]'s checks after the update, oldest first, those it ends, and
-         the one that fails. *)
+         the one it marks failing. *)
       let rec cut = function
         | [] -> ([], [], None)
-        | (Raised _ as r) :: rest -> ([ r ], rest, None)
-        | (Pending _ as p) :: rest -> (
+        | ((Marked _ | Raised _) as r) :: rest -> ([ r ], rest, None)
+        | (Pending (c, h) as p) :: rest -> (
             match List.assq_opt p outcomes with
             | None ->
                 let kept, ended, failing = cut rest in
@@ -231,7 +307,9 @@ let settle_reached ~by n ds =
             | Some true ->
                 let kept, ended, failing = cut rest in
                 (kept, p :: ended, failing)
-            | Some false -> ([], rest, Some p))
+            | Some false ->
+                let f = Failing (c, h) in
+                ([ Marked f ], rest, Some f))
       in
       let kept, ended, failing =
         update (fun sets ->
@@ -241,19 +319,9 @@ let settle_reached ~by n ds =
       in
       List.iter release ended;
       match failing with
-      | None -> not (List.exists raised kept)
-      | Some p ->
-          let e =
-            Fun.protect
-              ~finally:(fun () -> release p)
-              (fun () ->
-                match p with
-                | Pending (c, _) -> failure ~by c
-                | Raised e -> e)
-          in
-          (* The oldest of the set's checks: a later wait raises it first. *)
-          update (fun sets ->
-              (Sets.add n (of_set n sets @ [ Raised e ]) sets, ()));
+      | None -> not (List.exists fails kept)
+      | Some f ->
+          record ~by n f;
           false)
 
 let wait : type v s d. by:string -> (v, s, d) Value.t -> unit =

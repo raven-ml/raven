@@ -165,6 +165,63 @@ let elsewhere =
           Nx.sync (fst data));
     ]
 
+(* Two systhreads of one domain share its pending checks. The order below is
+   held by two semaphores: the issuing thread builds a failure found at its
+   second issue and stops inside [fail], where the other thread waits on the
+   set, then resumes once that wait returns. *)
+let threads =
+  group "from two systhreads"
+    [
+      test "a wait while another thread builds a failure raises it, once"
+        (fun () ->
+          let ok b = Nx.place S.on (Nx.create Nx.bool [| 2 |] [| true; b |]) in
+          let data =
+            Nx.place S.on (Nx.create Nx.float32 [| 2 |] [| 1.; 2. |])
+          in
+          let go = Semaphore.Binary.make false in
+          let waited = Semaphore.Binary.make false in
+          let builder = Thread.id (Thread.self ()) and stopped = ref false in
+          let failing i x =
+            let e = At (i, Nx.item [] x, 0l, 0.) in
+            if Thread.id (Thread.self ()) = builder && not !stopped then begin
+              stopped := true;
+              Semaphore.Binary.release go;
+              Semaphore.Binary.acquire waited
+            end;
+            e
+          in
+          let raised = ref None in
+          let other =
+            Thread.create
+              (fun () ->
+                Semaphore.Binary.acquire go;
+                (raised :=
+                   match Nx.sync data with () -> None | exception e -> Some e);
+                Semaphore.Binary.release waited)
+              ()
+          in
+          Nx.check P.tensor (ok false) data failing;
+          Nx.check P.tensor (ok true) data failing;
+          (* Without the stop the other thread waits after the issues. *)
+          if not !stopped then Semaphore.Binary.release go;
+          Thread.join other;
+          let again =
+            match Nx.sync data with () -> None | exception e -> Some e
+          in
+          equal ~msg:"the failure is built at the second issue" bool true
+            !stopped;
+          (match !raised with
+          | Some (At (i, v, _, _)) ->
+              equal ~msg:"the index" (array int) [| 1 |] i;
+              equal ~msg:"the element" float_exact 2. v
+          | Some e -> raise e
+          | None -> fail "the other thread's wait passed a failed check");
+          match again with
+          | None -> ()
+          | Some (At _) -> fail "a later wait raised the failure again"
+          | Some e -> raise e);
+    ]
+
 (* One array, whose walk passes the array it is given through [f]. *)
 let through f = P.v (fun c x -> f (P.Walk.tensor c x))
 
@@ -236,4 +293,4 @@ let walks =
           Nx.sync ok);
     ]
 
-let () = exit (run "nx check" [ host; elsewhere; tried; walks ])
+let () = exit (run "nx check" [ host; elsewhere; threads; tried; walks ])
