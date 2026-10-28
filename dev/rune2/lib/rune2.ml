@@ -184,6 +184,81 @@ let vjp_named name p q f params =
 
 let vjp p q f params = vjp_named "Rune.vjp" p q f params
 
+let linearize_named name p q f params =
+  if not (Ptree.fold p (fun _ x acc -> acc || tangible x) params false) then
+    invalid_argf "%s: the parameters hold no real or complex tensor" name;
+  let like = ref None in
+  let ys, l =
+    Linear.linearize ~name (values p params) (fun vs ->
+        let y = f (rebuild p ~like:params vs) in
+        like := Some y;
+        values q y)
+  in
+  let y = rebuild q ~like:(Option.get !like) ys in
+  let apply tangents =
+    same_leaves name p ~this:"in the parameters" params ~that:"in the tangents"
+      tangents;
+    let ts =
+      Array.of_list
+        (List.filter
+           (fun (V x) -> tangible x)
+           (Array.to_list (values p tangents)))
+    in
+    let out = Linear.apply l ts in
+    (* A tangent is a value of its own: the function may return a tangent it
+       received, or a view of one. *)
+    rebuild q ~like:y
+      (Array.mapi
+         (fun k (V y) ->
+           match out.(k) with
+           | Some (V t) -> V (Nx.copy (Program.like y (V t)))
+           | None -> V (Nx.zeros_like y))
+         ys)
+  in
+  (y, apply)
+
+let linearize p q f params = linearize_named "Rune.linearize" p q f params
+
+let linear_transpose_named name p q f params =
+  let shapes = ref None in
+  let l =
+    Linear.trace ~name (values p params) (fun vs ->
+        let y = f (rebuild p ~like:params vs) in
+        shapes :=
+          Some (Ptree.map q (fun _ y -> Nx.zeros (Nx.dtype y) (Nx.shape y)) y);
+        values q y)
+  in
+  let like = Option.get !shapes in
+  fun cts ->
+    same_leaves name q ~this:"in the result" like ~that:"in the cotangents" cts;
+    (* A gradient of a parameter of every set lies where the first placed
+       parameter or cotangent does. *)
+    let at =
+      match placement_of p params with
+      | Some _ as a -> a
+      | None -> placement_of q cts
+    in
+    let witness =
+      match placed_leaf p params with
+      | Some _ as w -> w
+      | None -> placed_leaf q cts
+    in
+    let gs =
+      Linear.transpose ?witness l
+        (Array.map
+           (fun (V c) -> if tangible c then Some (V c) else None)
+           (values q cts))
+    in
+    let k = ref (-1) in
+    Ptree.map p
+      (fun path x ->
+        incr k;
+        if tangible x then gradient name path at x gs.(!k) else Nx.zeros_like x)
+      params
+
+let linear_transpose p q f params =
+  linear_transpose_named "Rune.linear_transpose" p q f params
+
 let objective name y =
   if not (Nx.Dtype.is Float (Nx.dtype y) && Nx.numel y = 1) then
     invalid_argf "%s: the objective must return a real scalar, got %s %s" name

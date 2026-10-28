@@ -39,6 +39,21 @@ val linearize :
     of [f]'s outputs. [name] names the entry point in messages. Raises what [f]
     raises. *)
 
+val trace :
+  name:string ->
+  Program.value array ->
+  (Program.value array -> Program.value array) ->
+  t
+(** [trace ~name xs f] is [f] recorded as a tape over stand-ins of [xs]'s forms,
+    in order: their values are not read, and the tape is [f] itself where [f] is
+    linear in them. Raises what [f] raises. *)
+
+val apply : t -> Program.value array -> Program.value option array
+(** [apply l ts] evaluates [l] at the tangents [ts] of its parameters: the
+    tangent of each output of the linearized function, [None] for zero.
+
+    Raises [Invalid_argument] unless [ts] has one value per parameter. *)
+
 type ct = {
   v : Program.value;
   fresh : bool;  (** Whether [v] is memory of its own, in C order. *)

@@ -16,6 +16,9 @@ type t = {
   ins : int;
   captures : value array;
   outs : int option array;
+  fn : bool;
+      (** Whether the tape is a function traced as it is ({!trace}), not a
+          derivative. *)
 }
 
 let tangible x = Scalar.tangible (D.Any (Nx.dtype x))
@@ -63,7 +66,23 @@ let linearize ~name xs f =
                 ys;
             Array.of_list (List.rev !tangents)))
   in
-  (!primals, { name; tape; ins = Array.length forms; captures; outs = !outs })
+  ( !primals,
+    { name; tape; ins = Array.length forms; captures; outs = !outs; fn = false }
+  )
+
+(* [f] traced over stand-ins of [xs]: linear in them where it is linear. *)
+let trace ~name xs f =
+  let tape, captures = Trace.trace Tape ~name (Array.map form xs) f in
+  let outs = Array.init (Array.length tape.outputs) Option.some in
+  { name; tape; ins = Array.length xs; captures; outs; fn = true }
+
+let apply l ts =
+  if Array.length ts <> l.ins then
+    invalid_arg
+      (Printf.sprintf "%s: %d tangents for %d parameters" l.name
+         (Array.length ts) l.ins);
+  let out = eval l.tape (Array.append ts l.captures) in
+  Array.map (Option.map (fun j -> out.(j))) l.outs
 
 (* Brands
 
@@ -146,16 +165,22 @@ type env = {
   const : 'v 's 'd. ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t;
   give : 'v 's 'd. ('v, 's, 'd) Nx.t -> ct -> unit;
   witness : value option;
+  fn : bool;
 }
 
-(* Only a custom_jvp tangent map puts on a tape an operation that is not linear
-   in its tangents. *)
+(* Only a custom_jvp tangent map puts on a derivative's tape an operation that
+   is not linear in its tangents; on a function's, the function does. *)
 let nonlinear env what =
-  invalid_arg
-    (Printf.sprintf
-       "%s: a custom_jvp tangent map applies %s to a tangent; a tangent map \
-        must be linear in its tangents"
-       env.name what)
+  if env.fn then
+    invalid_arg
+      (Printf.sprintf "%s: %s is not linear in the function's argument" env.name
+         what)
+  else
+    invalid_arg
+      (Printf.sprintf
+         "%s: a custom_jvp tangent map applies %s to a tangent; a tangent map \
+          must be linear in its tangents"
+         env.name what)
 
 let shape_of layout = Iarray.to_array (L.shape layout)
 let identity dt = P.of_node ~ins:[| dt |] (Op1 (Copy, dt, 0))
@@ -1083,7 +1108,7 @@ let next_bases (p : Program.t) =
 (* [p]'s parameters' cotangents, given its outputs' [cts]: [None] for a
    parameter bound to a constant ([consts.(k) = Some v]) or one that receives no
    contribution. *)
-let rec walk ~name ~witness (p : Program.t) consts cts =
+let rec walk ~name ~witness ~fn (p : Program.t) consts cts =
   let owner = p.owner in
   let bound = Array.make p.slots None in
   Array.iteri (fun k c -> bound.(p.params.(k)) <- c) consts;
@@ -1105,7 +1130,7 @@ let rec walk ~name ~witness (p : Program.t) consts cts =
     let n = var x in
     acc.(n) <- Some (match acc.(n) with None -> c | Some a -> sum a c)
   in
-  let env = { name; lin; const; give; witness } in
+  let env = { name; lin; const; give; witness; fn } in
   Array.iteri
     (fun k c ->
       match (c, p.outputs.(k)) with
@@ -1231,7 +1256,8 @@ and scan_rule env (step : Program.t) ~length ~init ~xs ~captures cts =
                 ]
             in
             let r =
-              walk ~name:env.name ~witness:env.witness step consts out_cts
+              walk ~name:env.name ~witness:env.witness ~fn:env.fn step consts
+                out_cts
             in
             let carry =
               Array.init nc (fun k ->
@@ -1366,7 +1392,7 @@ and remat_rule env (body : Program.t) args cts =
     Array.append (Array.make n None) (Array.map Option.some captures)
   in
   let r =
-    walk ~name:env.name ~witness:env.witness tape tconsts
+    walk ~name:env.name ~witness:env.witness ~fn:env.fn tape tconsts
       (Array.init (Array.length tape.outputs) cts)
   in
   Array.iteri (fun k (V x) -> Option.iter (fun c -> env.give x c) r.(k)) lins
@@ -1384,4 +1410,4 @@ let transpose ?witness l cts =
       | Some j, Some c -> out_cts.(j) <- Some c
       | _ -> ())
     cts;
-  Array.sub (walk ~name:l.name ~witness l.tape consts out_cts) 0 l.ins
+  Array.sub (walk ~name:l.name ~witness ~fn:l.fn l.tape consts out_cts) 0 l.ins

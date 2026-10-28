@@ -273,6 +273,40 @@ val vjp :
     {!Nx.Ptree.val-visits}, dtypes or shapes, naming the first path where they
     differ (["Rune.vjp: 0: shape [2] in the result, [3] in the cotangents"]). *)
 
+val linearize :
+  ('p, 'd) Nx.Ptree.t ->
+  ('q, 'd) Nx.Ptree.t ->
+  ('p -> 'q) ->
+  'p ->
+  'q * ('p -> 'q)
+(** [linearize p q f params] is [(f params, jvp_at)], [jvp_at] mapping a tangent
+    of [params] to the result's tangent, as {!jvp} computes it at [params]: [f]
+    runs once, in forward mode, recording the operations on tangents, and
+    [jvp_at] evaluates that record, as often as it is applied, without running
+    [f] again. Its argument has [params]' structure, dtypes and shapes; the
+    tangent of an integer or boolean parameter is ignored. When [linearize] runs
+    outside every transformation, [jvp_at] may be applied any number of times,
+    from any domain.
+
+    Raises [Invalid_argument] as {!jvp} does for [params], and [jvp_at] as
+    {!jvp} does for its tangents. *)
+
+val linear_transpose :
+  ('p, 'd) Nx.Ptree.t -> ('q, 'd) Nx.Ptree.t -> ('p -> 'q) -> 'p -> 'q -> 'p
+(** [linear_transpose p q f params] is the transpose of [f], a function linear
+    in its argument: the function that maps a cotangent [w] of the result to [u]
+    such that [<u, v> = <w, f v>] for every [v] ({!section-derivatives}).
+    [params] gives the argument's structure, dtypes, shapes and placements; no
+    element of it is read. [f] runs once, at the call, over stand-ins of its
+    arrays, so a value [f] uses as a constant is one it captures. A term [f]
+    adds that does not depend on its argument, as an affine function has, is
+    dropped. The cotangent of an integer or boolean array is zero.
+
+    Raises [Invalid_argument] as {!vjp}'s pullback does for its argument, and,
+    when the transpose is applied, naming an operation of [f] that is not linear
+    in its argument, as in
+    ["Rune.linear_transpose: Sin is not linear in the function's argument"]. *)
+
 val check_grads :
   ?eps:float ->
   ?tol:float ->
