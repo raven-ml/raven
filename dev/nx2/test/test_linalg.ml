@@ -538,27 +538,108 @@ let least_singular (type r) (r : (float, r) D.t) n a w =
   let x = Nx.concatenate ~axis:(-2) [ row [ xr; Nx.neg xi ]; row [ xi; xr ] ] in
   Nx.matrix_norm r ~ord:`NegTwo x
 
+(* [re] and [im] of square matrices of shape [s], each element below the
+   diagonal given the magnitude of its mirror above and the signs of its own
+   parts: a matrix balancing leaves alone, as nx_cpu.mli states for one with
+   [|a_ij| = |a_ji|]. *)
+let mirrored s re im =
+  let n = s.(Array.length s - 1) in
+  let re = Array.copy re and im = Array.copy im in
+  if n > 0 then
+    for b = 0 to (Array.length re / (n * n)) - 1 do
+      for i = 0 to n - 1 do
+        for j = i + 1 to n - 1 do
+          let up = (b * n * n) + (i * n) + j
+          and down = (b * n * n) + (j * n) + i in
+          re.(down) <- Float.copy_sign (Float.abs re.(up)) re.(down);
+          im.(down) <- Float.copy_sign (Float.abs im.(up)) im.(down)
+        done
+      done
+    done;
+  (re, im)
+
+let gamma u k =
+  let ku = Float.of_int k *. u in
+  ku /. (1. -. ku)
+
+(* eig's bounds on a matrix balancing leaves alone, as nx_cpu.mli states them:
+   with [g = γ(16n)] and [h = ε(16n)], [k] doubled on complex [a], each column
+   [v_j] has [|‖v_j‖₂ - 1| <= g] and [‖a v_j - w_j v_j‖₂ <= (g ‖a‖_F + h)
+   ‖v_j‖₂]. Computing them here in float64 adds [γ(4n + 4)] at float64's
+   roundoff, of [‖v_j‖₂] and of [(‖a‖_F + |w_j|) ‖v_j‖₂]. *)
+let eig_bounded (type v s) (dt : (v, s) D.t) n a w v =
+  let u, eta =
+    match dt with
+    | D.Float32 | D.Complex64 -> (0x1p-24, 0x1p-149)
+    | _ -> (0x1p-53, 0x1p-1074)
+  in
+  let k = (match D.kind dt with D.Complex -> 32 | _ -> 16) * n in
+  let g = gamma u k and h = Float.of_int k *. eta in
+  let here = gamma 0x1p-53 ((4 * n) + 4) in
+  let z x = Nx.to_array (Nx.cast Nx.complex128 x) in
+  let a = z a and w = z w and v = z v in
+  let norm f =
+    Float.sqrt
+      (Seq.fold_left
+         (fun t i -> t +. Complex.norm2 (f i))
+         0. (Seq.init n Fun.id))
+  in
+  for b = 0 to (Array.length w / Int.max 1 n) - 1 do
+    let at i j = a.((b * n * n) + (i * n) + j)
+    and vat i j = v.((b * n * n) + (i * n) + j) in
+    let fro =
+      Float.sqrt
+        (Seq.fold_left
+           (fun t i -> t +. (norm (at i) ** 2.))
+           0. (Seq.init n Fun.id))
+    in
+    for j = 0 to n - 1 do
+      let wj = w.((b * n) + j) in
+      let vj = norm (fun i -> vat i j) in
+      let r i =
+        let av =
+          Seq.fold_left
+            (fun t k -> Complex.add t (Complex.mul (at i k) (vat k j)))
+            Complex.zero (Seq.init n Fun.id)
+        in
+        Complex.sub av (Complex.mul wj (vat i j))
+      in
+      let msg what = Printf.sprintf "matrix %d, column %d: %s" b j what in
+      at_most ~msg:(msg "|‖v_j‖₂ - 1|") float_exact
+        ~than:(g +. (here *. vj))
+        (Float.abs (vj -. 1.));
+      at_most
+        ~msg:(msg "‖a v_j - w_j v_j‖₂")
+        float_exact
+        ~than:
+          ((((g *. fro) +. h) *. vj) +. (here *. (fro +. Complex.norm wj) *. vj))
+        (norm r)
+    done
+  done
+
 let test_eig =
-  prop "eig: a v is v diag w, of a real or complex a, its values with v or without"
-    (matrices ~square:true ())
-    (fun (Case (dt, s, re, im)) ->
+  prop
+    "eig: a v is v diag w within its bound, of a real or complex a balancing \
+     leaves alone, its values with v or without"
+    (matrices ~square:true ()) (fun (Case (dt, s, re, im)) ->
       cover_shapes ~square:true s;
       let n = s.(Array.length s - 1) in
+      let re, im = mirrored s re im in
       let a = value dt s re im in
       let (Cplx c) = complex_of dt in
       let (Real r) = real_of dt in
       let w, v = Nx.eig c a in
       let w', v' = Nx.eig ~vectors:false c a in
-      equal ~msg:"no v" (array int) (Array.append (lead s) [| n; 0 |]) (Nx.shape v');
+      equal ~msg:"no v" (array int)
+        (Array.append (lead s) [| n; 0 |])
+        (Nx.shape v');
+      eig_bounded dt n a w v;
       let a = Nx.cast c a in
-      near ~msg:"a v" (Nx.matmul a v) (columns_by v w);
-      near ~msg:"‖v_j‖"
-        (Nx.vector_norm r ~axes:[ -2 ] v)
-        (Nx.ones r (Array.append (lead s) [| n |]));
       if n > 0 then
         List.iter
           (fun (msg, w) ->
-            below ~msg:("σ_min (a - w_j I), " ^ msg)
+            below
+              ~msg:("σ_min (a - w_j I), " ^ msg)
               ~than:(tolerance r *. Float.max 1. (worst a))
               (worst (least_singular r n a w)))
           [ ("with v", w); ("alone", w') ])
