@@ -485,6 +485,24 @@ let test_nested () =
   let x = v [| 1.; 2. |] in
   equal bits_t (bits (Nx.add (Nx.mul x x) (Nx.mul c c))) (bits (outer x))
 
+(* An integer running sum wraps at its type: over the greatest value [m] twice,
+   it is [m] then [m + m] wrapped, whose maximum is [m]. *)
+let test_wrapped_max () =
+  let case (Nx.Dtype.Any dt) =
+    match Nx.Dtype.kind dt with
+    | Signed | Unsigned ->
+        let m = Nx.Dtype.max_value dt in
+        let x = Nx.broadcast_to [| 2 |] (Nx.create dt [| 1 |] [| m |]) in
+        let f x = Nx.max ~axes:[ 0 ] (Nx.cumsum ~axis:0 x) in
+        equal
+          ~msg:(Format.asprintf "%a" Nx.pp_dtype dt)
+          codes_t
+          (codes (Nx.scalar dt m))
+          (codes (Rune.jit' f x))
+    | Float | Complex | Boolean -> ()
+  in
+  List.iter case Nx.Dtype.all
+
 (* Fresh results: a result that is an argument or a capture is a copy, compiled
    and evaluated. *)
 let test_fresh () =
@@ -1732,6 +1750,8 @@ let () =
              test "structures in and out" test_structures;
              test "host arguments" test_host_values;
              test "a jit inside a jit" test_nested;
+             test "an integer maximum of a running sum wraps"
+               test_wrapped_max;
              test "results are fresh" test_fresh;
              test "an argument off 16 bytes" test_phase;
              test "a program with a loop" test_loop;
