@@ -826,7 +826,7 @@ type rule = {
   args : value array;
   rule : value array -> value array * (value array -> value array);
       (** The user's rule: the results and the derivative, for arguments of
-          [args]' forms. *)
+          [args]' forms. Each runs under [Nx.Rng.refusing], named [name]. *)
 }
 
 type _ Effect.t +=

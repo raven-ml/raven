@@ -139,7 +139,8 @@
     captures the value reads it so too, and takes that path wherever its program
     runs: a loop's step at every step. A custom rule may read so a value its
     differentiation tracks: a read is not one of the uses {!section-custom}
-    refuses. Where a construct that stages ({!section-tracing}) lies between the
+    refuses. A pullback that runs in the backward pass may not
+    ({!section-custom}). Where a construct that stages ({!section-tracing}) lies between the
     read and the differentiation, it stages the read, which raises.
 
     {b Nesting.} Each differentiation tracks the values of its own function
@@ -460,20 +461,22 @@ val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
     mode's stand-ins under {!grad}, where a read raises. A pullback runs in each
     backward pass, on that pass's cotangents: a {!vjp} pullback applied twice
     runs it twice. They are values where the backward pass runs outside every
-    transformation, so the pullback may read them; under one, as
-    {!jacrev}'s map of the pullback, a read raises. The backward pass runs after
+    transformation, so the pullback may read them. Under a differentiation a
+    read gives their primals; under a map or a construct that stages, as
+    {!jacrev}'s map of the pullback, it raises. The backward pass runs after
     the differentiation returns, so such a pullback may neither use nor read a
-    value that differentiation tracks: read it in the rule. Elsewhere the rule is traced at the
-    call with its derivative: inside a construct that stages it; where a map,
-    a loop's step, a {!root}'s function or a second differentiation tracks an
-    argument; and where any transformation lies between the call and the
-    differentiation tracking an argument, as a {!grad} over values the rule
-    does not take, or a map or a loop's step that captures the argument. There
+    value that differentiation tracks: read it in the rule. Elsewhere the rule
+    is traced at the call with its derivative: inside a construct that stages
+    it; where a map, a loop's step, a {!root}'s function or a second
+    differentiation tracks an argument; and where any transformation lies
+    between the call and the differentiation tracking an argument, as a
+    {!grad} over values the rule does not take, or a map or a loop's step that
+    captures the argument. There
     a read of an argument raises
     ([Nx.item: the value is traced by Rune.custom_jvp]), and the derivative's
     code runs once whether a differentiation applies it or not, so a tangent
     map reading a map's {!lanes} raises there outside that map. A draw without
-    [~key] in the rule raises in every case. An error the derivative raises
+    [~key] in the rule or its derivative raises in every case. An error the derivative raises
     reaches the code that runs it: the call for a tangent map and a traced
     pullback, the backward pass for a pullback on values.
 

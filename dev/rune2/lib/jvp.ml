@@ -1322,7 +1322,7 @@ module Rules = struct
      applies it: under reverse mode where no result has a tangent, and a
      pullback under forward mode. *)
   let in_place c ({ name; mode; args; rule } : Program.rule) pargs =
-    let ys, d = Nx.Rng.refusing name (fun () -> rule pargs) in
+    let ys, d = rule pargs in
     tracks c ~name ys;
     let reverse = Option.is_some c.tape in
     let tangible = Array.exists tangible_v ys in
@@ -1333,8 +1333,7 @@ module Rules = struct
     | Forward | Reverse when reverse && not tangible -> ys
     | Forward ->
         let ts = tangents c args in
-        let map ts = Nx.Rng.refusing name (fun () -> d ts) in
-        let dys = if reverse then taped_map c map ts else map ts in
+        let dys = if reverse then taped_map c d ts else d ts in
         tracks c ~name dys;
         with_tangents c ys dys
     | Reverse ->
@@ -1344,7 +1343,7 @@ module Rules = struct
                {
                  name;
                  apply = None;
-                 transpose = Host (fun cts -> Nx.Rng.refusing name (fun () -> d cts));
+                 transpose = Host d;
                  args = tangents c args;
                  captures = [||];
                  residuals = [||];

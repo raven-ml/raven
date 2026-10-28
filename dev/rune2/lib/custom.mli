@@ -14,8 +14,8 @@
     differentiation applies it ({!Jvp}): a tangent map at the call, a pullback
     in each backward pass. Where no interpretation answers
     so and none traces an argument, the call is [fst (rule args)], and the
-    derivative never runs. The rule runs under [Nx.Rng.refusing], named by the
-    entry point, in both cases.
+    derivative never runs. In both cases the rule, and its derivative where it
+    runs, run under [Nx.Rng.refusing], named by the entry point.
 
     Every other call is {e traced} with the body tracer ({!Trace.Body}): the
     rule's {e primal} computes the results, and the derivative it returns, a

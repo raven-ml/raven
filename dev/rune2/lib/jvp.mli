@@ -65,12 +65,12 @@
     The interpretation raises [Invalid_argument] for a contraction whose scale
     has a tangent, and for a rule that captures a value this differentiation
     tracks beside one of its arguments, where the rule is traced or its
-    results or tangent map's results are that value's. A pullback run on
-    values that uses such a value raises in the backward pass, as a value used
-    after its interpretation returned. Running alone, forward mode raises for a
-    rule with a pullback that no reverse mode inside applies, where a result is
-    float or complex. Under reverse mode it raises for a tangent map that adds a
-    tangent to a total. *)
+    results or tangent map's results are values of this differentiation. A
+    pullback run on values that uses such a value raises in the backward pass,
+    as a value used after its interpretation returned. Running alone, forward
+    mode raises for a rule with a pullback that no reverse mode inside applies,
+    where a result is float or complex. Under reverse mode it raises for a
+    tangent map that adds a tangent to a total. *)
 
 val run :
   name:string ->

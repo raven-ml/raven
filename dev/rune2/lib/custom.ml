@@ -33,10 +33,15 @@ let call ~name mode args rule trace_call =
   let untraced (V x) = Option.is_none (Nx.Prim.owner x) in
   if staging () then trace_call ()
   else
+    (* A draw without a key in the rule or its derivative raises where either
+       runs, as it does where they are traced. *)
+    let rule args =
+      let ys, d = Nx.Rng.refusing name (fun () -> rule args) in
+      (ys, fun ts -> Nx.Rng.refusing name (fun () -> d ts))
+    in
     match Program.rule { name; mode; args; rule } with
     | Some run -> run ()
-    | None when Array.for_all untraced args ->
-        fst (Nx.Rng.refusing name (fun () -> rule args))
+    | None when Array.for_all untraced args -> fst (rule args)
     | None -> trace_call ()
 
 let jvp_call ~name args rule =

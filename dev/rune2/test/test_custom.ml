@@ -851,6 +851,12 @@ let error_tests =
         and h = Rune.custom_vjp tensor tensor (fun x -> (x, drawing)) in
         raises ~msg:"in a tangent map under jvp" (Invalid_argument message)
           (fun () -> Rune.jvp' g (v3 ()) (along ()));
+        let scaling =
+          Rune.custom_jvp tensor tensor (fun x ->
+              (x, fun t -> Nx.mul t (Nx.Rng.uniform f64 [| 3 |])))
+        in
+        raises ~msg:"in a tangent map under grad" (Invalid_argument message)
+          (fun () -> Rune.grad' (fun x -> Nx.sum (scaling x)) (v3 ()));
         raises ~msg:"in a pullback under grad"
           (Invalid_argument
              "Nx.Rng.uniform: no key inside Rune.custom_vjp, which refuses \
