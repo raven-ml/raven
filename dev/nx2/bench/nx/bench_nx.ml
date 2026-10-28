@@ -331,6 +331,9 @@ let placed_rows =
          (fun (Value two) -> Value (Nx.add two two));
        Thumper.bench_with_setup "matmul-f32-64-rows-two-memory-devices"
          ~setup:rows_two (fun (Operands (a, b)) -> Value (Nx.matmul a b));
+       Thumper.bench_with_setup "item-f32-1M-split4"
+         ~setup:(split_over 4 ~axis:0 [| 1 lsl 20 |])
+         (fun (Value x) -> Nx.item [ 524_287 ] x);
      ]
     @ partial_rows)
 

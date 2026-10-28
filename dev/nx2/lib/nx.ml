@@ -464,12 +464,31 @@ let item i x =
     { Nx_array.Move.start = q; count = 1; step = 1 }
   in
   let one = List.mapi at i in
+  let start (w : Nx_array.Move.range) = w.start in
+  let index = Array.of_list (List.map start one) in
   let get live =
     match live with
     | Value.Array { a; _ } when Rig.reaches Rig.host (Nx_array.device a) ->
-        let start (w : Nx_array.Move.range) = w.start in
-        Nx_array.get a (Iarray.of_list (List.map start one))
-    | live ->
+        Nx_array.get a (Iarray.of_array index)
+    | Value.Array _ | Value.Shards _ | Value.Handle _ ->
+        (* The element from the first device whose window holds it: a read
+           moves what it reads, and a value cut over devices holds the
+           element on some of them alone. *)
+        let p = Prim.placement live in
+        let ks = Grid.devices (Devices.grid p) in
+        let holds j =
+          let w = Devices.window ~by p s j in
+          Array.for_all2
+            (fun (r : Nx_array.Move.range) i ->
+              i >= r.start && i < r.start + r.count)
+            w index
+        in
+        let j = List.find holds (List.init (Array.length ks) Fun.id) in
+        let a = Place.view ~by live ks.(j) (Array.of_list one) in
+        let at = Devices.one (Devices.set p) ks.(j) in
+        let v = Value.Array { at; a; dead = Value.Live } in
+        Nx_array.get (Check.on_host ~by v) (Iarray.init r (fun _ -> 0))
+    | Value.Deferred _ | Value.Traced _ ->
         let v = Eval.run ~by (Value.Move (Slice (Iarray.of_list one), live)) in
         Nx_array.get (Check.on_host ~by v) (Iarray.init r (fun _ -> 0))
   in
