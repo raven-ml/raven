@@ -3,9 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Scans by an associative combination, as simpler operations evaluated
-    eagerly or by the interpretation around them ({!Eval.eval}): Nx's
-    recurrences, which no kernel offers. *)
+(** Scans by an associative combination, which no kernel offers, as maps,
+    movements and assemblies evaluated eagerly or by the interpretation
+    around them ({!Eval.eval}). [Nx] builds its recurrences and its scans of
+    structures on them. This module lies above {!Eval}. *)
 
 val circuit :
   by:string ->

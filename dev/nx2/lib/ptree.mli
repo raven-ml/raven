@@ -4,7 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (** [Nx.Ptree]'s walks: paths, cursors, descriptions and the operations derived
-    from one walk. [Nx.Ptree] adds those that compute with arrays. *)
+    from one walk. [Nx.Ptree] adds those that compute with arrays. This module
+    lies above {!Prim}. *)
 
 module Path : sig
   type seg = Field of string | Index of int

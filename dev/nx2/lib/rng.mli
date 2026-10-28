@@ -3,13 +3,14 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** [Nx.Rng]: keys, samplers and the scope, as [nx.mli] states them. Each
+(** [Nx.Rng]: keys, samplers and the scope, as [Nx.Rng] states them. Each
     draw is one map whose elements compute their Threefry blocks from their
     positions. A keyed draw reads its key as the map's first operand. A
     keyless draw reads the scope's next key on the host, where no
     interpretation receives it, and binds its two words into the map's
     program, so the map reads its parameters alone. Without parameters it
-    is a creation at its placement. *)
+    is a creation at its placement. This module lies above {!Eval},
+    {!Check}, {!Ptree} and {!Special}. *)
 
 type +'d key = private (int32, Nx_array.Dtype.int32_elt, 'd) Value.t
 

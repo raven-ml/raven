@@ -6,7 +6,8 @@
 (** Contractions: two-operand patterns and matrix products lowered to one
     {!Value.Contract} between movements, and patterns of more operands to a
     tree of them. Each function raises [Invalid_argument] naming [by] as
-    [Nx.contract], [Nx.einsum], [Nx.matmul] and [Nx.dot] state. *)
+    [Nx.contract], [Nx.einsum], [Nx.matmul] and [Nx.dot] state. This module
+    lies above {!Pattern}, {!Donate} and {!Eval}. *)
 
 val contract :
   by:string ->

@@ -9,7 +9,10 @@
 
     A pattern is checked when parsed: its grammar, its names' places, its sums.
     Extents are checked where a pattern meets shapes. Messages start with the
-    [by] the caller passes, then the pattern's text in quotes. *)
+    [by] the caller passes, then the pattern's text in quotes.
+
+    This module depends on nothing of the engine; {!Contraction} and [Nx]
+    parse patterns by it. *)
 
 (** {1:patterns Patterns} *)
 

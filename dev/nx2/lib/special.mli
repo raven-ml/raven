@@ -8,7 +8,10 @@
     Each value is the expression of the function {!Nx} names alike, over
     expressions of one dtype, which must be float32 or float64. Its contract,
     the domain, edges and bound, is {!Nx}'s. Its arguments are in {!Nx}'s
-    order, parameters first and the variable last. *)
+    order, parameters first and the variable last.
+
+    This module lies above [Special_tables], which holds its coefficients;
+    {!Rng} and {!Nx} build programs from it. *)
 
 type 'w e := (float, 'w) Nx_kernel.Prog.E.t
 

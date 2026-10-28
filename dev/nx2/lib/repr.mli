@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (** Values from arrays and arrays from values: the implementation of [Nx.Repr].
-    Errors name [by]. *)
+    Errors name [by]. This module lies above {!Prim}. *)
 
 val of_array :
   by:string -> 'd Devices.t -> ('v, 's) Nx_array.t -> ('v, 's, 'd) Value.t
