@@ -839,21 +839,26 @@ val split : axis:int -> int -> ('v, 's, 'd) t -> ('v, 's, 'd) t list
 
 val concatenate : axis:int -> ('v, 's, 'd) t list -> ('v, 's, 'd) t
 (** [concatenate ~axis xs] is [xs] joined along their axis [axis], in order. A
-    copy.
+    copy. Joining two or more values reads [axis] whole on each device, so a
+    value cut along it raises ({!section-routing}); a cut of another axis cuts
+    the result alike.
 
     Raises [Invalid_argument] if [xs] is empty, [axis] is not an axis of its
     first value, or their shapes differ off [axis]. *)
 
 val stack : ?axis:int -> ('v, 's, 'd) t list -> ('v, 's, 'd) t
 (** [stack ~axis xs] is [xs] joined along a new axis at position [axis] of the
-    result (default [0]), in order. A copy.
+    result (default [0]), in order. A copy. A cut of an axis of [xs] cuts the
+    result's axis it becomes ({!section-routing}).
 
     Raises [Invalid_argument] if [xs] is empty, their shapes differ, or [axis]
     is not an axis of the result. *)
 
 val pad : (int * int) array -> 'v -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [pad widths v x] is [x] with [fst widths.(i)] elements [v] before its axis
-    [i] and [snd widths.(i)] after it. A copy.
+    [i] and [snd widths.(i)] after it. A copy. It reads each axis it widens
+    whole on each device, so a value cut along it raises
+    ({!section-routing}); a cut of another axis cuts the result alike.
 
     Raises [Invalid_argument] if [widths] does not have one pair per axis of
     [x], a width is negative, or [v] is an [int] outside [x]'s dtype's range. *)

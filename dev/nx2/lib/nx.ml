@@ -1000,7 +1000,17 @@ let stack ?axis:(a = 0) xs =
       in
       let s' = Array.copy unit in
       s'.(a) <- List.length xs;
-      let lift x = Eval.reshape ~by unit x in
+      (* A leading unit axis broadcast, then moved to [a], so that each
+         axis keeps its cut: a reshape inserting it at [a] would give the
+         cut of a one-element axis there to the unit axis. *)
+      let lead = Array.append [| 1 |] s0 in
+      let order =
+        Array.init r (fun i -> if i < a then i + 1 else if i = a then 0 else i)
+      in
+      let lift x =
+        let y = Eval.broadcast ~by lead x in
+        if a = 0 then y else permute ~by order y
+      in
       let pieces = List.mapi (fun k x -> (region unit a k 1, lift x)) xs in
       assemble ~by (dtype x0) s' (D.zero (dtype x0)) pieces
 

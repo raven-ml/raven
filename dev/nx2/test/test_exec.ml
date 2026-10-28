@@ -1810,6 +1810,149 @@ let law_placed (Case (k, s, data, w, op)) =
   in
   equal (array string) expected actual
 
+(* Assemblies of cut values *)
+
+(* A concatenation with a value of the given extent along an axis, a stack
+   of two values along a new axis, or a pad by widths per axis. *)
+type assembly = Concat of int * int | Stack of int | Pad of (int * int) array
+
+let pp_assembly ppf = function
+  | Concat (a, e) ->
+      Format.fprintf ppf "concatenated along %d with %d more" a e
+  | Stack a -> Format.fprintf ppf "stacked along %d" a
+  | Pad ws ->
+      Format.fprintf ppf "padded by [%s]"
+        (String.concat "; "
+           (Array.to_list
+              (Array.map (fun (b, e) -> Printf.sprintf "(%d, %d)" b e) ws)))
+
+(* The second operand's shape: [s], or [s] of [e] elements along [a]. *)
+let second_shape s = function
+  | Concat (a, e) ->
+      let s = Array.copy s in
+      s.(a) <- e;
+      s
+  | Stack _ | Pad _ -> s
+
+(* A value of shape [s] at [w], the assembly, its second operand's elements
+   and whether that operand lies whole on each device of the first's set. *)
+type acase =
+  | Acase :
+      ('v, 's) kind * int array * 'v array * where * assembly * 'v array * bool
+      -> acase
+
+let pp_acase ppf (Acase (k, s, data, w, asm, data', beside)) =
+  let show d = String.concat "; " (Array.to_list (Array.map k.show d)) in
+  Format.fprintf ppf "%s %a [%s] at %a, %a [%s]%s" (D.name k.dtype) pp_ints s
+    (show data) pp_where w pp_assembly asm (show data')
+    (if beside then " whole on each device" else "")
+
+let assembled_case =
+  let open Gen in
+  with_pp pp_acase
+    (let* rank = int_range 1 3 in
+     let* s = array ~size:(constant rank) (of_list [ 0; 1; 2; 3; 5; 7 ]) in
+     let* w = where_of rank in
+     let cut = List.map fst (tiles w) in
+     let free =
+       List.filter (fun a -> not (List.mem a cut)) (List.init rank Fun.id)
+     in
+     let width = pair (int_range 0 2) (int_range 0 2) in
+     let pad ws =
+       Pad (Array.mapi (fun a w -> if List.mem a cut then (0, 0) else w) ws)
+     in
+     let concat =
+       if free = [] then []
+       else
+         [
+           map
+             (fun (a, e) -> Concat (a, e))
+             (pair (of_list free) (of_list [ 0; 1; 3 ]));
+         ]
+     in
+     let* asm =
+       one_of
+         ([
+            map (fun a -> Stack a) (int_range 0 rank);
+            map pad (array ~size:(constant rank) width);
+          ]
+         @ concat)
+     in
+     let* beside = bool in
+     let* (Kind k) = of_list kinds in
+     let n = Array.fold_left ( * ) 1 s in
+     let n' = Array.fold_left ( * ) 1 (second_shape s asm) in
+     let* data = array ~size:(constant n) (of_list k.values) in
+     let+ data' = array ~size:(constant n') (of_list k.values) in
+     Acase (k, s, data, w, asm, data', beside))
+
+(* An assembly that leaves a cut axis whole gives its result cut along that
+   axis over the same devices, each device assembling its window. *)
+let law_assembled (Acase (k, s, data, w, asm, data', beside)) =
+  let ts = tiles w in
+  let cut = List.map fst ts in
+  cover "an uneven cut" (List.exists (fun (a, t) -> s.(a) mod t <> 0) ts);
+  cover "an empty window"
+    (List.exists (fun (a, t) -> s.(a) > 0 && s.(a) < t) ts);
+  cover "a cut of an empty axis" (List.exists (fun a -> s.(a) = 0) cut);
+  cover "a cut of a one-element axis" (List.exists (fun a -> s.(a) = 1) cut);
+  cover "a cut over several mesh axes"
+    (match w with Cuts (x, y) -> x = y | _ -> false);
+  (match asm with
+  | Concat (_, e) ->
+      cover "a concatenation beside a cut" true;
+      cover "a concatenation of nothing more" (e = 0);
+      cover "a concatenation with a value whole on each device" beside
+  | Stack a ->
+      cover "a stack that moves a cut axis" (List.exists (fun c -> c >= a) cut);
+      cover "a stack after every cut axis" (List.for_all (fun c -> c < a) cut);
+      cover "a stack at or before a cut one-element axis"
+        (List.exists (fun c -> c >= a && s.(c) = 1) cut);
+      cover "a stack with a value whole on each device" beside
+  | Pad ws ->
+      cover "a pad beside a cut" (Array.exists (fun (b, e) -> b + e > 0) ws));
+  let fill = List.hd k.values in
+  let assemble (type d) (x : (_, _, d) Nx.t) (y : (_, _, d) Nx.t) =
+    match asm with
+    | Concat (a, _) -> Nx.concatenate ~axis:a [ x; y ]
+    | Stack a -> Nx.stack ~axis:a [ x; y ]
+    | Pad ws -> Nx.pad ws fill x
+  in
+  let x = signalling k.dtype s data in
+  let y = signalling k.dtype (second_shape s asm) data' in
+  let expected = bytes (assemble x y) in
+  (* The result's axis that axis [c] of the operands becomes. *)
+  let lift c = match asm with Stack a when c >= a -> c + 1 | _ -> c in
+  let at (type d) (p : d Nx.Placement.t) (q : d Nx.Placement.t) =
+    let placed = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal in
+    let y = Nx.place (if beside then Nx.Placement.uncut p else p) y in
+    let r = assemble (Nx.place p x) y in
+    equal placed q (Nx.placement r);
+    bytes r
+  in
+  let mesh cuts = Nx.Placement.mesh mesh4 cuts in
+  let cuts a b =
+    if a = b then mesh [ (a, [ "a"; "b" ]) ]
+    else mesh [ (a, [ "a" ]); (b, [ "b" ]) ]
+  in
+  let actual =
+    match w with
+    | Split3 a -> at (Set3.split ~axis:a) (Set3.split ~axis:(lift a))
+    | Split4 a -> at (Set4.split ~axis:a) (Set4.split ~axis:(lift a))
+    | Cuts (a, b) -> at (cuts a b) (cuts (lift a) (lift b))
+    | Minor a -> at (mesh [ (a, [ "b" ]) ]) (mesh [ (lift a, [ "b" ]) ])
+  in
+  equal (array int) expected actual
+
+(* A concatenation reads the axis it joins along whole. *)
+let test_concat_cut () =
+  let x = Nx.place (Set4.split ~axis:0) (Nx.zeros D.Float32 [| 4; 2 |]) in
+  raises
+    (Invalid_argument
+       "Nx.concatenate: operand 0 lies at split ~axis:0 [m0; m1; m2; m3] and \
+        is read at on [m0; m1; m2; m3]; Nx.place (Placement.on s) x")
+    (fun () -> Nx.concatenate ~axis:0 [ x; x ])
+
 (* Reductions over cut axes *)
 
 (* A dtype, the elements drawn for it, how their bits print, and which are
@@ -3765,6 +3908,11 @@ let placements =
         "an operation over a value at any placement gives its bits on one \
          device"
         placed_case law_placed;
+      prop ~count:500
+        "an assembly of values cut along axes it leaves whole gives their \
+         bits, cut along those axes over the same devices"
+        assembled_case law_assembled;
+      test "a concatenation along a cut axis reads it whole" test_concat_cut;
       prop ~count:2000
         "a reduction over cut axes gives an exact one's bits on one device, \
          a float one the reduction of its tiles' stacked partials"

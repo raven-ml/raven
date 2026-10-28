@@ -170,16 +170,21 @@ val rule : 'r prim -> Route.rule
     elsewhere. [Rows]' axis of [a] and its offsets are read whole, and [b]'s
     axis of its groups is reduced, a factor after the pairs that no axis of
     [a] shares, whose fences the offsets hold ({!Partial}). A segmented
-    contraction is read whole along its contracting pairs. *)
+    contraction is read whole along its contracting pairs. An assembly's
+    axis becomes the result's where every piece's region covers all of it in
+    order, and is read whole elsewhere. *)
 
 val local : 'r prim -> Nx_array.Move.range array -> 'r prim
 (** [local op w] is [op] computing the window [w] of its first result, over
     operands the caller gives at their windows ({!Route.window}): a loop over
     its window of its shape, its programs' coordinates offset by that window's
-    start, a fold of [w]'s shape, and a movement by {!local_move}.
+    start, a fold of [w]'s shape, a movement by {!local_move}, and an
+    assembly into [w]'s shape, each region covering all of [w]'s range in
+    order along an axis [w] cuts.
 
-    Raises [Invalid_argument] for a window of an assembly that is not the whole:
-    its rule computes it whole. *)
+    Raises [Invalid_argument] for a window of an assembly that cuts an axis a
+    piece's region does not cover all of in order: its rule reads that axis
+    whole. *)
 
 val local_move :
   Nx_array.Move.t -> Nx_array.Move.range array -> Nx_array.Move.t

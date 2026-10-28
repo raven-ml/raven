@@ -65,8 +65,8 @@ type axis =
   | Whole
       (** Read whole on each device: an axis the operation acts along, as a
           [Moments] or [Logsumexp] scan's, a sort's, a transform's or a
-          gather's source axis, and one a padded load pads, crops or
-          windows. *)
+          gather's source axis, one a padded load pads, crops or windows,
+          and one an assembly joins or pads along. *)
   | Reduced of int
       (** Gone from the results: a reduction's axes, a contraction's
           contracting pairs and [b]'s axis of [Rows]' groups

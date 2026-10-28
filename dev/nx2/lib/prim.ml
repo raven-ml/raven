@@ -385,14 +385,23 @@ let operands : type r. r prim -> operands = function
   | Place (_, x) -> Operands [ Any x ]
   | Check { ok; data; _ } -> Operands (Any ok :: data_any data)
 
+(* Whether [r] covers all [d] elements of an axis in order. *)
+let fills (r : Nx_array.Move.range) d =
+  r.start = 0 && r.count = d && (r.step = 1 || r.count <= 1)
+
 (* Whether [region] covers all of [shape] in order, as a kernel's in-place
    first piece of an assembly must. *)
 let whole_region (region : Nx_array.Move.range iarray) shape =
   Iarray.length region = Iarray.length shape
-  && Iarray.for_all2
-       (fun (r : Nx_array.Move.range) d ->
-         r.start = 0 && r.count = d && (r.step = 1 || r.count <= 1))
-       region shape
+  && Iarray.for_all2 fills region shape
+
+(* Whether every piece of an assembly into [shape] fills its axis [a]: the
+   axis then becomes the result's, a window of the result assembling the
+   pieces' windows along it. *)
+let filled shape pieces a =
+  List.for_all
+    (fun (region, _) -> fills (Iarray.get region a) (Iarray.get shape a))
+    pieces
 
 (* The positions are [operands]' above: a scatter's [into] after [idx] and
    [updates], a contraction's [init] after [a] and [b], an assembly's first
@@ -1282,10 +1291,11 @@ let rule : type r. r prim -> Route.rule =
       let (Any x) = fft_operand f in
       Axes [| reading (fft_axes f) (rank x) |]
   | Linalg l -> linalg_rule l
-  | Assemble { pieces; _ } ->
+  | Assemble { shape; pieces; _ } ->
+      let axis a = if filled shape pieces a then Route.Becomes a else Whole in
       Axes
         (Array.of_list
-           (List.map (fun (_, x) -> Array.make (rank x) Route.Whole) pieces))
+           (List.map (fun (_, x) -> Array.init (rank x) axis) pieces))
   | Contract
       { batch; contracting; a; b; init; a_scale; b_scale; segments; _ } ->
       contract_rule ~batch ~contracting ~segments (shape a) (shape b)
@@ -1472,9 +1482,21 @@ let local : type r. r prim -> Nx_array.Move.range array -> r prim =
   | Fold f -> Fold { f with shape = Route.extents w }
   | Move (mv, x) -> Move (local_move mv w, x)
   | Assemble a ->
-      if Route.extents w <> a.shape then
-        invalid_arg "Prim.local: an assembly is computed whole";
-      op
+      (* Each piece's region along an axis the window cuts, which every
+         piece fills, fills the window's; the window holds any other
+         whole. *)
+      let range i (r : Nx_array.Move.range) =
+        let d = Iarray.get a.shape i and c = w.(i).count in
+        if c = d then r
+        else if filled a.shape a.pieces i then
+          { start = 0; count = c; step = 1 }
+        else
+          invalid_arg
+            "Prim.local: an assembly cut along an axis a piece covers part of"
+      in
+      let piece (region, x) = (Iarray.mapi range region, x) in
+      Assemble
+        { a with shape = Route.extents w; pieces = List.map piece a.pieces }
   | Gather _ | Scatter _ | Sort _ | Fft _ | Linalg _ | Contract _ | Copy _
   | Bitcast _ | Place _ | Check _ ->
       op
