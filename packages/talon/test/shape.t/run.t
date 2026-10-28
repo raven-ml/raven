@@ -6,8 +6,7 @@ with the message the RFC promises, and the forms that should compile do.
   >   if [ -f "$d/talon/META" ]; then talon=$d/talon; fi
   > done
   $ ocamlc_talon () {
-  >   ocamlc -I $talon -I $nx -I $nx/effect -I $nx/array -I $nx/backend \
-  >     -I $nx/cpu -I $nx/device -I $nx/dtype -c "$1"
+  >   ocamlc -I $talon -I $nx -I $nx/array -I $nx/kernel -c "$1"
   > }
   $ compile () { ocamlc_talon "$1" 2>&1 | grep -A3 Error; }
 

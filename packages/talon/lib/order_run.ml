@@ -41,8 +41,8 @@ let top_k ~offset ~length ks b =
     let greatest, _ = Nx.top_k ~k (Nx.bitwise_not first) in
     let kth = Nx.bitwise_not (Nx.slice [ R (k - 1, k) ] greatest) in
     let candidates = Nx.positions (Nx.less_equal first kth) in
-    let order = Nx.lexsort (Nx.take ~axis:0 ~indices:candidates w) in
-    let idx = Nx.take ~indices:order candidates in
+    let order = Nx.lexsort (Nx.take ~axis:0 candidates w) in
+    let idx = Nx.take order candidates in
     rows (Nx.slice [ Nx.R (offset, k) ] idx) b
 
 (* A row is out of order where, at the first word where it differs from the row

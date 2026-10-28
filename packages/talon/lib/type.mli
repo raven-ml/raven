@@ -34,7 +34,7 @@ type 'a t = private
   | Datetime : { unit_ : unit_; zone : string option } -> Time.instant t
   | List : 'a t -> 'a array t
   | Record : (string * any) list -> Record.t t
-  | Tensor : ('a, 'b) Nx.dtype * int iarray -> ('a, 'b) Nx.t t
+  | Tensor : ('a, 'b) Nx.dtype * int iarray -> ('a, 'b, Nx.host) Nx.t t
   | Ext : { name : string; metadata : string; storage : 's t } -> ext t
 
 and any = Any : 'a t -> any
@@ -60,7 +60,7 @@ val duration : unit_ -> Time.span t
 val datetime : ?zone:string -> unit_ -> Time.instant t
 val list : 'a t -> 'a array t
 val record : (string * any) list -> Record.t t
-val tensor : ('a, 'b) Nx.dtype -> int array -> ('a, 'b) Nx.t t
+val tensor : ('a, 'b) Nx.dtype -> int array -> ('a, 'b, Nx.host) Nx.t t
 val ext : name:string -> ?metadata:string -> 'a t -> ext t
 val kind : 'a t -> 'a Kind.t
 val holds : 'a t -> 'a -> bool

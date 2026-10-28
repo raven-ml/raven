@@ -112,7 +112,7 @@ let within bound x =
 
 (* [numeric from into c] is [c]'s values, of [from], converted to [into], and
    where they are exact. *)
-let numeric from into c : Nx.packed * Nx.bool_t =
+let numeric from into c : Nx.host Nx.packed * Nx.host Nx.bool_t =
   match (from, into) with
   | Integer (df, _, _), Integer (dt, _, _) ->
       let x = tensor df c in
@@ -177,7 +177,7 @@ let earliest f g =
 (* [convert from into ~live c] casts [c], whose rows outside [live] do not fail:
    list elements and record fields under a null. *)
 let rec convert (Type.Any from) (Type.Any into as t) :
-    live:Nx.bool_t -> Column.t -> checked =
+    live:Nx.host Nx.bool_t -> Column.t -> checked =
   let cannot c row = error "cannot cast %t to %a" (cell c row) Type.pp into in
   let units = (unit_of from, unit_of into) in
   match (from, into, number from, number into) with
@@ -206,7 +206,7 @@ let rec convert (Type.Any from) (Type.Any into as t) :
         let rows, inside = rows_of offsets (Column.length child) in
         let held = Nx.broadcast_to [| Column.length c |] live in
         let held = both held (holding c) in
-        let live = Nx.logical_and inside (Nx.take ~indices:rows held) in
+        let live = Nx.logical_and inside (Nx.take rows held) in
         let child, f = element ~live child in
         let row (j, e) = (Int64.to_int (Nx.item [ j ] rows), e) in
         (Column.with_data t (List { offsets; child }) c, Option.map row f)
@@ -351,7 +351,7 @@ let month_days =
     [| 31L; 28L; 31L; 30L; 31L; 30L; 31L; 31L; 30L; 31L; 30L; 31L |]
 
 let days_in_month y m =
-  let d = Nx.take ~indices:(Nx.sub_s m 1L) month_days in
+  let d = Nx.take (Nx.sub_s m 1L) month_days in
   let leap_day = Nx.logical_and (Nx.equal_s m 2L) (is_leap y) in
   Nx.add d (Nx.cast Nx.int64 leap_day)
 

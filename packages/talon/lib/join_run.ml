@@ -115,12 +115,10 @@ let left_pairs counts matched =
   let one = Nx.maximum_s counts 1L in
   let li = Nx.positions one and inner = Nx.positions counts in
   let rank =
-    Nx.sub (arange (Nx.dim 0 inner)) (Nx.take ~indices:inner (exclusive counts))
+    Nx.sub (arange (Nx.dim 0 inner)) (Nx.take inner (exclusive counts))
   in
-  let at = Nx.add (Nx.take ~indices:inner (exclusive one)) rank in
-  let ri =
-    Nx.scatter ~axis:0 ~indices:at ~values:matched (none (Nx.dim 0 li))
-  in
+  let at = Nx.add (Nx.take inner (exclusive one)) rank in
+  let ri = Nx.scatter ~axis:0 at matched (none (Nx.dim 0 li)) in
   (li, ri)
 
 let equality q kind (each_left, each_right) left right eqs =
@@ -147,7 +145,8 @@ let equality q kind (each_left, each_right) left right eqs =
     let hits = Nx_ragged.take ~indices:(ids 0 n) runs in
     let counts = Nx_ragged.lengths hits and matched = Nx_ragged.values hits in
     let rcounts =
-      lazy (Nx.reduce_segments `Add ~segments:m matched (Nx.ones_like matched))
+      lazy
+        (Nx.reduce_segments Nx.Add ~segments:m matched (Nx.ones_like matched))
     in
     let* () =
       check "left" each_left (named l (List.map fst eqs)) (lazy counts)

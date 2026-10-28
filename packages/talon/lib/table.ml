@@ -108,7 +108,7 @@ let numeric : type a. a Type.t -> bool = function
       true
   | _ -> false
 
-let to_tensor (type a b) (dt : (a, b) Nx.dtype) names t : (a, b) Nx.t =
+let to_tensor (type a b) (dt : (a, b) Nx.dtype) names t : (a, b, Nx.host) Nx.t =
   let column name =
     let c = Column.concat (parts t (index "to_tensor" t name)) in
     let (Any ty) = Column.type_ c in

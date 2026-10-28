@@ -5,14 +5,40 @@
 
 module A = Bigarray.Array1
 
-type bytes = (int, Nx.uint8_elt) Nx_ragged.t
+type bytes = (int, Nx.int8_unsigned_elt, Nx.host) Nx_ragged.t
 
 (* Every helper takes its bytes at this type, so that the compiler reads each
    byte inline rather than through the runtime's generic accessor. *)
 type buf = (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) A.t
 type int64s = (int64, Bigarray.int64_elt, Bigarray.c_layout) A.t
 
-let reading ~by x k f = Rig.Buffer.read (Nx.Op.eval (Read { by; x })) k f
+(* [array_bytes a k f] is [f b], [b] the bytes of the host array [a]'s elements
+   in C order as elements of [k]: a view of its buffer where its elements lie
+   there in order from a byte that [k] aligns, a copy's otherwise. *)
+let array_bytes a k f =
+  let module L = Nx_array.Layout in
+  let dt = Nx_array.dtype a and l = Nx_array.layout a in
+  let size = Bigarray.kind_size_in_bytes k in
+  let n = Nx_array.Dtype.bytes dt (L.numel l) / size in
+  let first = L.offset l * Nx_array.Dtype.bits dt in
+  if L.is_contiguous l && first mod (8 * size) = 0 then
+    Rig.Buffer.read (Nx_array.buffer a) k (fun b ->
+        f (A.sub b (first / (8 * size)) n))
+  else
+    Rig.Buffer.read
+      (Nx_array.buffer (Nx_array.copy a))
+      k
+      (fun b -> f (A.sub b 0 n))
+
+(* A value nx cannot read, a traced one, fails naming [by]; [f]'s own failures
+   pass as they are. *)
+let reading ~by x k f =
+  let entered = ref false in
+  try
+    Nx.Repr.read x (fun a ->
+        entered := true;
+        array_bytes a k f)
+  with Invalid_argument m when not !entered -> invalid_arg (by ^ ": " ^ m)
 
 (* Host bytes *)
 
@@ -75,7 +101,15 @@ let utf_8 ~by ?mask r =
 
 (* Scalar values *)
 
-let tensor a = Nx.of_bigarray (Bigarray.genarray_of_array1 a)
+(* [Nx.of_bigarray] copies; a bigarray that talon fills and gives up becomes the
+   value's own memory instead, so that no column pays a second pass. *)
+let adopt (type v s) (a : (v, s, Bigarray.c_layout) A.t) : (v, s, Nx.host) Nx.t
+    =
+  match Nx.Dtype.of_bigarray_kind (A.kind a) with
+  | Some dt ->
+      let b = Bigarray.genarray_of_array1 a in
+      Nx.Repr.unsafe_of_array Nx.Host.v (Nx_array.of_bigarray dt b)
+  | None -> invalid_arg "Strings.adopt: no dtype stores the bigarray's kind"
 
 (* [blit src lo dst at len] copies the bytes [lo, lo + len) of [src] to [dst]
    from [at]. A loop: [A.blit] of [A.sub]s allocates two proxies per row. *)
@@ -105,7 +139,7 @@ let length ~by ?mask r =
   A.fill ns 0L;
   rows ~by ?mask r (fun i v first stop ->
       A.unsafe_set ns i (Int64.of_int (count v first stop)));
-  tensor ns
+  adopt ns
 
 let slice ~by ?mask ~offset ~length r =
   let n = Nx_ragged.length r in
@@ -131,7 +165,7 @@ let slice ~by ?mask ~offset ~length r =
         let at = Int64.to_int (A.unsafe_get offsets i) in
         blit v lo.(i) bytes at (hi.(i) - lo.(i))
       done);
-  Nx_ragged.v ~offsets:(tensor offsets) (tensor bytes)
+  Nx_ragged.v ~offsets:(adopt offsets) (adopt bytes)
 
 type pattern =
   | Literal of string
@@ -180,7 +214,7 @@ let matches ~by ?mask p r =
   rows ~by ?mask r (fun i v first stop -> if matches v first stop then hit i);
   Nx.slice
     [ Nx.R (0, n) ]
-    (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit (tensor hits)))
+    (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit (adopt hits)))
 
 (* Literals
 
@@ -237,7 +271,7 @@ let split ~by ?mask sep r =
             go (j + m)
       in
       go first);
-  (tensor lists, Nx_ragged.v ~offsets:(tensor pieces) (tensor bytes))
+  (adopt lists, Nx_ragged.v ~offsets:(adopt pieces) (adopt bytes))
 
 let replace ~by ?mask ~sub ~into r =
   let n = Nx_ragged.length r
@@ -268,7 +302,7 @@ let replace ~by ?mask ~sub ~into r =
             go (h + String.length sub)
       in
       go first);
-  Nx_ragged.v ~offsets:(tensor offsets) (tensor bytes)
+  Nx_ragged.v ~offsets:(adopt offsets) (adopt bytes)
 
 (* [compare_rows v o n s signs] writes to [signs] -1, 0 or 1 where each of the
    [n] rows of [v], cut by [o], orders before, as or after [s]. *)
@@ -290,4 +324,4 @@ let compare ~by r one =
   let n = Nx_ragged.length r in
   let signs = A.create Bigarray.int8_signed Bigarray.c_layout n in
   host ~by r (fun o v _ -> compare_rows v o n !s signs);
-  tensor signs
+  adopt signs

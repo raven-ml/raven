@@ -77,7 +77,7 @@ module Kind : sig
   val list : 'a t -> 'a array t
   (** [list k] reads list columns whose elements [k] reads. *)
 
-  val tensor : ('a, 'b) Nx.dtype -> ('a, 'b) Nx.t t
+  val tensor : ('a, 'b) Nx.dtype -> ('a, 'b, Nx.host) Nx.t t
   (** [tensor dt] reads tensor columns of dtype [dt] and any cell shape. *)
 
   (** {1:comparing Comparing and formatting} *)
@@ -211,7 +211,7 @@ module Type : sig
     | Record : (string * any) list -> Record.t t
         (** Records with the given fields in order, Arrow's struct. Field names
             are distinct UTF-8 strings. *)
-    | Tensor : ('a, 'b) Nx.dtype * int iarray -> ('a, 'b) Nx.t t
+    | Tensor : ('a, 'b) Nx.dtype * int iarray -> ('a, 'b, Nx.host) Nx.t t
         (** Tensors of one dtype and one shape, one per cell, stored as Arrow's
             canonical [arrow.fixed_shape_tensor]. The shape has at least one
             dimension, and no dimension is negative. *)
@@ -298,7 +298,7 @@ module Type : sig
       Raises [Invalid_argument] if two fields have the same name, or a name is
       not valid UTF-8. *)
 
-  val tensor : ('a, 'b) Nx.dtype -> int array -> ('a, 'b) Nx.t t
+  val tensor : ('a, 'b) Nx.dtype -> int array -> ('a, 'b, Nx.host) Nx.t t
   (** [tensor dt shape] is {!Tensor} of [dt] with a copy of [shape].
 
       Raises [Invalid_argument] if [shape] is empty or holds a negative
@@ -527,14 +527,23 @@ module Column : sig
       An extension column is laid out as its storage. The values under a null
       are unspecified and deterministic: a reader that needs defined values
       masks them with the validity, as Arrow requires. Columns are immutable,
-      and share their buffers with the tensors and layouts that read them.
+      and share their buffers with the tensors and layouts that read them: a
+      column holds values of its own over that memory, so donating a tensor it
+      took or gave ends that tensor alone, and the donation computes into fresh
+      memory ({!Nx.donate}).
 
       A column is {e canonical} when its buffers hold exactly its rows: offsets
       from [0], values exactly the rows', a validity only when a row is null,
       and every buffer of elements narrower than a byte ({!Nx.bit}, the int4
       dtypes) from the first bit of its storage with every bit past its last
       element clear. Two canonical columns whose rows hold the same values,
-      those under their nulls included, have the same layout, byte for byte. *)
+      those under their nulls included, have the same layout, byte for byte.
+
+      A column's buffers are bytes on the host, which formats, text kernels and
+      C stubs read in place: every nx value a column takes or gives, tensors,
+      validities, offsets and positions, is a host value ({!Nx.host}). A caller
+      places a value of another device set on the host first, with
+      {!Nx.place}[ Nx.Host.on]. *)
 
   type t
   (** The type for columns. *)
@@ -579,7 +588,7 @@ module Column : sig
 
   (** {1:tensors Tensors and ragged arrays} *)
 
-  val of_tensor : ?validity:Nx.bit_t -> ('a, 'b) Nx.t -> t
+  val of_tensor : ?validity:Nx.host Nx.bit_t -> ('a, 'b, Nx.host) Nx.t -> t
   (** [of_tensor ?validity x] is the column of [x]'s rows:
       - for a 1-D [x], of the type of [x]'s dtype: [bool] for [bit] and [bool],
         [int8] to [uint64], [float16] to [float64];
@@ -595,7 +604,7 @@ module Column : sig
       that no scalar type stores ([bfloat16], the float8 and int4 dtypes,
       complex), or if [validity]'s shape is not [x]'s rows. *)
 
-  val to_tensor : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx.t
+  val to_tensor : ('a, 'b) Nx.dtype -> t -> ('a, 'b, Nx.host) Nx.t
   (** [to_tensor dt c] is [c]'s values as stored, in O(1) after one read of the
       null count the first time: numbers, booleans as {!Nx.bit}, the days or
       ticks of temporal values, the codes of a categorical (its dictionary is in
@@ -606,11 +615,11 @@ module Column : sig
       converts the result), if [c] is not stored one element per row, or if [c]
       has a null. *)
 
-  val validity : t -> Nx.bit_t option
+  val validity : t -> Nx.host Nx.bit_t option
   (** [validity c] is true at row [i] iff row [i] of [c] holds a value. [None]
       means no row is null. [Some v] may be true everywhere. *)
 
-  val ragged : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx_ragged.t
+  val ragged : ('a, 'b) Nx.dtype -> t -> ('a, 'b, Nx.host) Nx_ragged.t
   (** [ragged dt c] is [c]'s rows as a ragged array without a copy, one row per
       row of [c]: a list column's offsets and its elements, stored as [dt], or a
       [string] or [binary] column's offsets and bytes, [dt] being {!Nx.uint8}.
@@ -622,7 +631,8 @@ module Column : sig
       stored as [dt] nor text or bytes with [dt] {!Nx.uint8}, or if a row of [c]
       or an element of a row is null. *)
 
-  val of_ragged : ?validity:Nx.bit_t -> ('a, 'b) Nx_ragged.t -> t
+  val of_ragged :
+    ?validity:Nx.host Nx.bit_t -> ('a, 'b, Nx.host) Nx_ragged.t -> t
   (** [of_ragged ?validity r] is the list column whose rows are [r]'s rows, null
       where [validity] is false: a [list] of the element type {!of_tensor} gives
       [r]'s values, such as [list[int32]] for {!Nx.int32} values, and of a
@@ -640,14 +650,20 @@ module Column : sig
 
   (** The type for layouts. *)
   type layout =
-    | Fixed of { validity : Nx.bit_t option; values : Nx.packed }
-        (** One element per row, or one cell for a tensor column. *)
-    | Varsize of { validity : Nx.bit_t option; offsets : Nx.int64_t; child : t }
+    | Fixed of {
+        validity : Nx.host Nx.bit_t option;
+        values : Nx.host Nx.packed;
+      }  (** One element per row, or one cell for a tensor column. *)
+    | Varsize of {
+        validity : Nx.host Nx.bit_t option;
+        offsets : Nx.host Nx.int64_t;
+        child : t;
+      }
         (** Row [r] is the child's rows [offsets.{r}] to [offsets.{r + 1} - 1]:
             the elements of a list, or, for [string] and [binary], the bytes, a
             [uint8] child without nulls. *)
     | Children of {
-        validity : Nx.bit_t option;
+        validity : Nx.host Nx.bit_t option;
         length : int;
         fields : (string * t) list;
       }
@@ -752,14 +768,14 @@ val column : t -> string -> Column.t
 
     Raises [Invalid_argument] if [t] has no column [name]. *)
 
-val take : Nx.int64_t -> t -> t
+val take : Nx.host Nx.int64_t -> t -> t
 (** [take indices t] is the rows of [t] at [indices], in order, as one batch:
-    [take (Nx.Rng.permutation key (rows t)) t] shuffles every column.
+    [take (Nx.Rng.permutation ~key (rows t)) t] shuffles every column.
 
     Raises [Invalid_argument] if [indices] is not 1-D or holds an index outside
     \[[0];[rows t - 1]\]. *)
 
-val to_tensor : ('a, 'b) Nx.dtype -> string list -> t -> ('a, 'b) Nx.t
+val to_tensor : ('a, 'b) Nx.dtype -> string list -> t -> ('a, 'b, Nx.host) Nx.t
 (** [to_tensor dt names t] is the [(rows t, List.length names)] matrix whose
     column [j] is the column [List.nth names j] of [t], each value converted to
     [dt] as {!Nx.cast} converts it. It is the one copy a columnar layout forces.
@@ -1210,9 +1226,9 @@ module Expr : sig
       {!Temporal.format} for dates, clocks and datetimes to text. [a] needs a
       column type. *)
 
-  type fn = { f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
+  type fn = { f : 'a 'b. ('a, 'b, Nx.host) Nx.t -> ('a, 'b, Nx.host) Nx.t }
   (** The type for elementwise nx functions of one argument that preserve its
-      dtype, such as [Nx.exp]. *)
+      dtype, such as [Nx.exp], on host values as columns hold. *)
 
   val nx : fn -> ('a, 's) t -> ('a, 's) t
   (** [nx { f } a] applies [f] to [a]'s values with nx's semantics, IEEE's for
@@ -1223,7 +1239,11 @@ module Expr : sig
       argument is a problem, and so is one that ignores it, which would lose its
       nulls. *)
 
-  type fn2 = { f2 : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
+  type fn2 = {
+    f2 :
+      'a 'b.
+      ('a, 'b, Nx.host) Nx.t -> ('a, 'b, Nx.host) Nx.t -> ('a, 'b, Nx.host) Nx.t;
+  }
   (** The type for elementwise nx functions of two arguments of one dtype that
       preserve it, such as [Nx.atan2]. *)
 

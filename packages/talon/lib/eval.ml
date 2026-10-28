@@ -71,7 +71,7 @@ let fixed ty ?valid x =
   let validity = Option.map (Nx.broadcast_to [| length |]) valid in
   Column.make ty ?validity ~length (Fixed (P x))
 
-let boolean ?valid (x : Nx.bit_t) = fixed (Type.Any Type.bool) ?valid x
+let boolean ?valid (x : Nx.host Nx.bit_t) = fixed (Type.Any Type.bool) ?valid x
 
 (* [column t vs] is the column of the literals [vs] at the typing [t]. *)
 let column : type a. a Expr.typing -> a option array -> Column.t =
@@ -172,7 +172,8 @@ let arithmetic : type a.
 
 (* [ordered op x y] compares [x] and [y] by talon's total order: floats with
    every NaN equal, and after every other value. *)
-let ordered (type a b) (op : Expr.compare) (x : (a, b) Nx.t) (y : (a, b) Nx.t) =
+let ordered (type a b) (op : Expr.compare) (x : (a, b, Nx.host) Nx.t)
+    (y : (a, b, Nx.host) Nx.t) =
   let r =
     match op with
     | `Eq -> Nx.equal x y
@@ -182,7 +183,7 @@ let ordered (type a b) (op : Expr.compare) (x : (a, b) Nx.t) (y : (a, b) Nx.t) =
     | `Gt -> Nx.greater x y
     | `Ge -> Nx.greater_equal x y
   in
-  if not (Nx_dtype.is Float (Nx.dtype x)) then r
+  if not (Nx.Dtype.is Float (Nx.dtype x)) then r
   else
     let nan_x = Nx.isnan x and nan_y = Nx.isnan y in
     let only a b = Nx.logical_and a (Nx.logical_not b) in
@@ -308,9 +309,7 @@ let is_in vs =
   let m = Column.length vs in
   let found s x a =
     let i = Nx.searchsorted ~side:`Left s x in
-    let hit =
-      Nx.equal (Nx.take ~indices:(Nx.minimum_s i (Int64.of_int (m - 1))) s) x
-    in
+    let hit = Nx.equal (Nx.take (Nx.minimum_s i (Int64.of_int (m - 1))) s) x in
     let hit = Nx.cast Nx.bit hit in
     boolean
       (Option.fold ~none:hit ~some:(Nx.logical_and hit) (Column.validity a))
@@ -328,20 +327,41 @@ let is_in vs =
 (* [lifted ty cs x] is the column of [ty] stored as [x], which an nx operation
    computes over the columns [cs]: null where one of them is. A [bool] [x] is
    packed into bits. *)
-let lifted : type a b c. a Type.t -> Column.t list -> (b, c) Nx.t -> Column.t =
+let lifted : type a b c.
+    a Type.t -> Column.t list -> (b, c, Nx.host) Nx.t -> Column.t =
  fun ty cs x ->
   match ty with
   | Bool -> boolean ?valid:(valid cs) (Nx.cast Nx.bit x)
   | _ -> fixed (Any ty) ?valid:(valid cs) x
 
-(* [width cs] is the rows that the columns [cs] broadcast to, and [wide cs dt c]
-   is [c]'s values cast to [dt] and broadcast to them. *)
+(* [width cs] is the rows that the columns [cs] broadcast to. *)
 let width cs =
   List.fold_left
     (fun n c -> if Column.length c = 1 then n else Column.length c)
     1 cs
 
-let wide cs dt c = Nx.broadcast_to [| width cs |] (tensor dt c)
+(* [map ty p cs] is the column of [ty] that the program [p] of one output
+   computes in one pass over the columns [cs], each read in its operand's dtype
+   and broadcast to the rows: the map a lift recorded, with nx's semantics. *)
+let map ty (p : Nx_kernel.Prog.t) cs =
+  let n = width cs in
+  let load j c =
+    let (Nx.Dtype.Any dt) = Iarray.get p.ins j in
+    Nx.Prim.Plain (Nx.broadcast_to [| n |] (tensor dt c))
+  in
+  let (Any out) = Nx_kernel.Prog.dtype p (Iarray.get p.outs 0) in
+  let y, () =
+    Nx.Prim.eval ~by:"Talon.Expr.nx"
+      (Map
+         {
+           layout = Nx_array.Layout.contiguous [| n |];
+           prog = p;
+           outs = [ out ];
+           loads = Iarray.of_list (List.mapi load cs);
+           at = None;
+         })
+  in
+  lifted ty cs y
 
 (* Compiling
 
@@ -476,11 +496,6 @@ let store : type a. env -> a Expr.typing -> a option array -> Column.t =
       Column.with_data (Any d.type_) (Column.data c) c
   | Value -> assert false (* An OCaml value is no column. *)
 
-let operand_dtype e =
-  match Expr.typing e with
-  | Column ty -> Option.get (dtype ty)
-  | _ -> assert false (* A lift's operand has a column type. *)
-
 let rec compile : type a s. state -> (a, s) Expr.t -> node =
  fun st e ->
   match List.find_opt (fun (Expr.Packed e', _) -> Expr.same e e') st.nodes with
@@ -573,31 +588,11 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
   | (App _ | Of_option _), _ ->
       let vs = ocaml st e in
       fun env -> store env typing (vs env)
-  | Nx_unary (op, a), Column ty ->
-      let (Dtype dt) = Option.get (dtype ty) in
-      unary a (fun a -> lifted ty [ a ] (Nx.Op.eval (Unary (op, tensor dt a))))
-  | Nx_binary (op, a, b), Column ty ->
-      let (Dtype dt) = Option.get (dtype ty) in
-      binary a b (fun a b ->
-          let cs = [ a; b ] in
-          lifted ty cs (Nx.Op.eval (Binary (op, wide cs dt a, wide cs dt b))))
-  | Nx_compare (op, a, b), _ ->
-      let (Dtype dt) = operand_dtype a in
-      binary a b (fun a b ->
-          let cs = [ a; b ] in
-          lifted Type.bool cs
-            (Nx.Op.eval (Compare (op, wide cs dt a, wide cs dt b))))
-  | Nx_where (c, a, b), Column ty ->
-      let (Dtype dt) = Option.get (dtype ty) in
-      ternary c a b (fun c a b ->
-          let cs = [ c; a; b ] in
-          lifted ty cs
-            (Nx.Op.eval (Where (wide cs Nx.bool c, wide cs dt a, wide cs dt b))))
-  | Nx_cast (ty, a), _ ->
-      let (Dtype dt) = Option.get (dtype ty) in
-      let (Dtype from) = operand_dtype a in
-      unary a (fun a ->
-          lifted ty [ a ] (Nx.Op.eval (Convert (Cast, dt, tensor from a))))
+  | Nx_map (p, es), Column ty ->
+      let es = List.map (fun (Expr.Packed e) -> compile st e) es in
+      fun env ->
+        let cs = List.map (get env) es in
+        map ty p cs
   | Rows, _ -> fun env -> Reduce.rows env.frame.segments
   | Reduce (r, a), _ ->
       let a = compile st a and ty = type_of typing in
@@ -653,8 +648,7 @@ and lower : type a s. state -> (a, s) Expr.t -> env -> Column.t =
   (* Binding traces lifts away, an option stands only where [ocaml] reads it,
      and arithmetic and nx operations have a column type. *)
   | (Lift _ | Lift2 _ | Option _), _
-  | ( (Int _ | Float _ | Nx_unary _ | Nx_binary _ | Nx_where _),
-      (Extension _ | Value) ) ->
+  | (Int _ | Float _ | Nx_map _), (Extension _ | Value) ->
       invalid_arg (Format.asprintf "Eval: %a is not bound" Expr.pp e)
 
 (* [ocaml st e] computes [e]'s values as OCaml values, [None] where [e] is

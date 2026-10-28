@@ -6,10 +6,10 @@
 (* Rows [i] of segment [ids.{i}], in the order [order] lists them, row order
    where it is [None]. [first] is each segment's first row. *)
 type segments = {
-  ids : Nx.int64_t;
+  ids : Nx.host Nx.int64_t;
   count : int;
-  first : Nx.int64_t;
-  order : Nx.int64_t option;
+  first : Nx.host Nx.int64_t;
+  order : Nx.host Nx.int64_t option;
 }
 
 let positions n = Nx.arange Nx.int64 0 n 1
@@ -25,7 +25,7 @@ let one n =
     order = None;
   }
 
-let of_groups (g : Nx.groups) order =
+let of_groups (g : Nx.host Nx.groups) order =
   { ids = g.ids; count = Nx.dim 0 g.first; first = g.first; order }
 
 let group cs = of_groups (Key.groups cs) None
@@ -50,8 +50,7 @@ let refine s ~by ~order =
       let order =
         match s.order with
         | None -> Nx.lexsort k
-        | Some p ->
-            Nx.take ~indices:(Nx.lexsort (Nx.take ~axis:0 ~indices:p k)) p
+        | Some p -> Nx.take (Nx.lexsort (Nx.take ~axis:0 p k)) p
       in
       { s with order = Some order }
 
@@ -60,7 +59,7 @@ let broadcast s c = Column.gather s.ids c
 (* [view s] is the rows of each segment in its order. *)
 let view s =
   let p = Option.value s.order ~default:(positions (Nx.dim 0 s.ids)) in
-  Nx_ragged.of_ids ~segments:s.count (Nx.take ~indices:p s.ids) p
+  Nx_ragged.of_ids ~segments:s.count (Nx.take p s.ids) p
 
 (* [fixed ty ?valid x] is the column of [ty] stored as [x], null where [valid]
    is [false]. *)
@@ -76,7 +75,7 @@ let rows_at rows c =
 let tensor dt c =
   match Column.data c with Fixed (P x) -> Nx.cast dt x | _ -> assert false
 
-let segment_sum s ids x = Nx.reduce_segments `Add ~segments:s.count ids x
+let segment_sum s ids x = Nx.reduce_segments Nx.Add ~segments:s.count ids x
 
 let rows s =
   fixed int64 (segment_sum s s.ids (Nx.ones Nx.int64 [| Nx.dim 0 s.ids |]))
@@ -87,10 +86,10 @@ let at s =
   let n = Nx.dim 0 s.ids in
   match s.order with
   | None -> positions n
-  | Some p -> Nx.scatter ~axis:0 ~indices:p ~values:(positions n) (none n)
+  | Some p -> Nx.scatter ~axis:0 p (positions n) (none n)
 
 (* [pick s op hit] is, in each segment, the row where [hit] holds, or any row
-   when it is [None], that comes first ([`Min]) or last ([`Max]) in the
+   when it is [None], that comes first ([Nx.Min]) or last ([Nx.Max]) in the
    segment's order, [-1] where no row does: the row of least or greatest
    {!at}. *)
 let pick s op hit =
@@ -102,15 +101,15 @@ let pick s op hit =
   let found =
     Nx.logical_and (Nx.greater_equal_s j 0L) (Nx.less_s j (Int64.of_int n))
   in
-  let row = match s.order with None -> j | Some p -> Nx.take ~indices:j p in
+  let row = match s.order with None -> j | Some p -> Nx.take j p in
   Nx.where found row (none s.count)
 
 (* [place s rows] is the place of each segment's row [rows], or [-1], among the
    segment's rows in its order: the number of them before it. *)
 let place s rows =
   let at = at s in
-  let mark = Nx.take ~indices:rows at in
-  let before = Nx.less at (Nx.take ~indices:s.ids mark) in
+  let mark = Nx.take rows at in
+  let before = Nx.less at (Nx.take s.ids mark) in
   let p = segment_sum s s.ids (Nx.cast Nx.int64 before) in
   Nx.where (Nx.greater_equal_s rows 0L) p (none s.count)
 
@@ -155,7 +154,7 @@ let reduce : type a b.
   let sum dt = segment_sum s ids (tensor dt c) in
   let mean () = Nx.div (sum Nx.float64) (Nx.cast Nx.float64 count) in
   let var () =
-    let d = Nx.sub (tensor Nx.float64 c) (Nx.take ~indices:s.ids (mean ())) in
+    let d = Nx.sub (tensor Nx.float64 c) (Nx.take s.ids (mean ())) in
     let k = Nx.cast Nx.float64 (Nx.sub_s count 1L) in
     Nx.div (segment_sum s ids (Nx.mul d d)) k
   in
@@ -169,8 +168,8 @@ let reduce : type a b.
     Nx.reduce_segments op ~segments:s.count ids (Lazy.force words)
   in
   let first_at e =
-    let hit = Nx.equal (Lazy.force words) (Nx.take ~indices:s.ids e) in
-    pick s `Min (Some (valid hit))
+    let hit = Nx.equal (Lazy.force words) (Nx.take s.ids e) in
+    pick s Nx.Min (Some (valid hit))
   in
   let place row =
     let p = place s row in
@@ -191,33 +190,33 @@ let reduce : type a b.
   | Std -> ok (fixed ty ~valid:(at_least 2) (Nx.sqrt (var ())))
   | Median -> ok (quantile 0.5)
   | Quantile p -> ok (quantile p)
-  | Min -> ok (value (first_at (extreme `Min)))
-  | Max -> ok (value (first_at (extreme `Max)))
-  | Arg_min -> ok (place (first_at (extreme `Min)))
-  | Arg_max -> ok (place (first_at (extreme `Max)))
-  | First -> ok (value (pick s `Min held))
-  | Last -> ok (value (pick s `Max held))
+  | Min -> ok (value (first_at (extreme Nx.Min)))
+  | Max -> ok (value (first_at (extreme Nx.Max)))
+  | Arg_min -> ok (place (first_at (extreme Nx.Min)))
+  | Arg_max -> ok (place (first_at (extreme Nx.Max)))
+  | First -> ok (value (pick s Nx.Min held))
+  | Last -> ok (value (pick s Nx.Max held))
   | Only ->
-      let lo = extreme `Min in
+      let lo = extreme Nx.Min in
       let several =
-        Nx.logical_and (at_least 1) (Nx.not_equal lo (extreme `Max))
+        Nx.logical_and (at_least 1) (Nx.not_equal lo (extreme Nx.Max))
       in
       (value (first_at lo), first_where several "only finds several values")
   | N_unique ->
       let g = Nx.unique (keyed s (Key.identity [ c ])) in
       let ones = Nx.ones Nx.int64 [| Nx.dim 0 g.first |] in
-      ok (fixed int64 (segment_sum s (Nx.take ~indices:g.first s.ids) ones))
+      ok (fixed int64 (segment_sum s (Nx.take g.first s.ids) ones))
 
 let shift s k c =
   let r = view s and n = Column.length c in
   let v = Nx_ragged.values r and offsets = Nx_ragged.offsets r in
-  let segment = Nx.take ~indices:v s.ids in
-  let start = Nx.take ~indices:segment offsets in
-  let stop = Nx.take ~indices:(Nx.add_s segment 1L) offsets in
+  let segment = Nx.take v s.ids in
+  let start = Nx.take segment offsets in
+  let stop = Nx.take (Nx.add_s segment 1L) offsets in
   let j = Nx.sub_s (positions n) (Int64.of_int k) in
   let inside = Nx.logical_and (Nx.greater_equal j start) (Nx.less j stop) in
-  let from = Nx.where inside (Nx.take ~indices:j v) (none n) in
-  rows_at (Nx.scatter ~axis:0 ~indices:v ~values:from (none n)) c
+  let from = Nx.where inside (Nx.take j v) (none n) in
+  rows_at (Nx.scatter ~axis:0 v from (none n)) c
 
 (* A row's rank is its place in its segment's rows sorted by value, at the start
    of its run of equal values: [1] plus the number of rows before the run, which
@@ -228,7 +227,7 @@ let rank s c =
   else
     let k = keyed s (Key.order [ (c, Order.asc "") ]) in
     let p = Nx.lexsort k in
-    let k = Nx.take ~axis:0 ~indices:p k in
+    let k = Nx.take ~axis:0 p k in
     let w = Nx.dim 1 k and i = positions n in
     let differs =
       Nx.not_equal
@@ -247,7 +246,5 @@ let rank s c =
            (Nx.slice [ Nx.R (0, n - 1); Nx.R (0, 1) ] differs))
     in
     let r = Nx.add_s (Nx.sub run segment) 1L in
-    let ranks =
-      Nx.scatter ~axis:0 ~indices:p ~values:r (Nx.zeros Nx.int64 [| n |])
-    in
+    let ranks = Nx.scatter ~axis:0 p r (Nx.zeros Nx.int64 [| n |]) in
     Column.with_data int64 (Fixed (P ranks)) c

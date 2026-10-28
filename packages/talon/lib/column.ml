@@ -8,7 +8,7 @@
    lives with them: a column that keeps a validity keeps its count, columns that
    share one count it once, and a column with new bits has a new count. Two
    domains that read the count at once store the same number. *)
-type validity = { bits : Nx.bit_t; nulls : int Atomic.t }
+type validity = { bits : Nx.host Nx.bit_t; nulls : int Atomic.t }
 
 type t = {
   type_ : Type.any;
@@ -18,9 +18,9 @@ type t = {
 }
 
 and data =
-  | Fixed of Nx.packed
-  | Bytes of (int, Nx.uint8_elt) Nx_ragged.t
-  | List of { offsets : Nx.int64_t; child : t }
+  | Fixed of Nx.host Nx.packed
+  | Bytes of (int, Nx.int8_unsigned_elt, Nx.host) Nx_ragged.t
+  | List of { offsets : Nx.host Nx.int64_t; child : t }
   | Fields of t list
 
 let err fmt = Format.kasprintf invalid_arg fmt
@@ -51,7 +51,17 @@ let known c =
   | None -> Some 0
   | Some v -> ( match Atomic.get v.nulls with -1 -> None | n -> Some n)
 
-let validity c = Option.map (fun v -> v.bits) c.validity
+(* Columns are immutable, so a column keeps, and gives, a value of its own over
+   the memory of each value it takes or gives: a donation of the caller's value
+   then ends that value alone, and computes into fresh memory since the memory
+   is shared ({!Nx.Repr.of_array}). A traced value dies with no donation, so it
+   is kept as it is. *)
+let own x =
+  if Option.is_some (Nx.Prim.owner x) then x
+  else Nx.Repr.of_array Nx.Host.v (Option.get (Nx.Repr.array x))
+
+let own_packed (Nx.P x) = Nx.P (own x)
+let validity c = Option.map (fun v -> own v.bits) c.validity
 let data c = c.data
 let has_type ty c = match c.type_ with Any t -> Type.equal t ty
 
@@ -172,12 +182,12 @@ let rec stores : type a. a Type.t -> int -> data -> bool =
            (fun (_, Type.Any t) c -> has_type t c && c.length = n)
            fields cs
   | Tensor (dt, cell), Fixed (P x) ->
-      Nx_dtype.equal dt (Nx.dtype x)
+      Nx.Dtype.equal dt (Nx.dtype x)
       && Nx.shape x = Array.append [| n |] (Iarray.to_array cell)
   | _, Fixed (P x) -> (
       match scalar ty with
       | Some (Scalar s) ->
-          Nx_dtype.equal s.dtype (Nx.dtype x) && Nx.shape x = [| n |]
+          Nx.Dtype.equal s.dtype (Nx.dtype x) && Nx.shape x = [| n |]
       | None -> false)
   | _ -> false
 
@@ -276,7 +286,7 @@ let rows ty ~null ~add ~data =
 let uint8_of_string s =
   let a = Bigarray.(Array1.create int8_unsigned c_layout (String.length s)) in
   String.iteri (fun i c -> Bigarray.Array1.unsafe_set a i (Char.code c)) s;
-  Nx.of_bigarray (Bigarray.genarray_of_array1 a)
+  Strings.adopt a
 
 let bytes_builder ty raw =
   let check = check ty and bytes = Buffer.create 256 and offsets = buf 0L in
@@ -294,7 +304,7 @@ let bytes_builder ty raw =
   rows ty ~null:next ~add ~data
 
 let scalar_builder ty (Scalar s) =
-  let check = check ty and zero = Nx_dtype.zero s.dtype in
+  let check = check ty and zero = Nx.Dtype.zero s.dtype in
   let values = buf zero in
   let add v =
     check v;
@@ -391,7 +401,10 @@ and stored_field : type a b.
   { add; finish = (fun () -> retype ft (b.finish ())) }
 
 and tensor_builder : type a b.
-    (a, b) Nx.t Type.t -> (a, b) Nx.dtype -> int array -> (a, b) Nx.t builder =
+    (a, b, Nx.host) Nx.t Type.t ->
+    (a, b) Nx.dtype ->
+    int array ->
+    (a, b, Nx.host) Nx.t builder =
  fun ty dt cell ->
   let check = check ty and zero = Nx.zeros dt cell in
   let cells = buf zero in
@@ -431,7 +444,10 @@ let int_offsets o = Array.map Int64.to_int (Nx.to_array o)
 
 let bytes_reader (r : Strings.bytes) =
   let o = int_offsets (Nx_ragged.offsets r) in
-  let a = Bigarray.array1_of_genarray (Nx.to_bigarray (Nx_ragged.values r)) in
+  let a =
+    Bigarray.array1_of_genarray
+      (Nx.to_bigarray Bigarray.int8_unsigned (Nx_ragged.values r))
+  in
   let get i =
     String.init (o.(i + 1) - o.(i)) (fun k -> Char.unsafe_chr a.{o.(i) + k})
   in
@@ -575,7 +591,8 @@ let first_null c =
 (* [cells fn x] is the type of the rows of [x] and their storage: its dtype's
    scalar type for a 1-D [x], whose [bool] values are packed into bits, and a
    tensor type of its cells otherwise. *)
-let cells : type a b. string -> (a, b) Nx.t -> Type.any * Nx.packed =
+let cells : type a b.
+    string -> (a, b, Nx.host) Nx.t -> Type.any * Nx.host Nx.packed =
  fun fn x ->
   let shape = Nx.shape x and dt = Nx.dtype x in
   let shared ty = (Type.Any ty, Nx.P x) in
@@ -589,32 +606,33 @@ let cells : type a b. string -> (a, b) Nx.t -> Type.any * Nx.packed =
     | Int16 -> shared Type.int16
     | Int32 -> shared Type.int32
     | Int64 -> shared Type.int64
-    | UInt8 -> shared Type.uint8
-    | UInt16 -> shared Type.uint16
-    | UInt32 -> shared Type.uint32
-    | UInt64 -> shared Type.uint64
+    | Uint8 -> shared Type.uint8
+    | Uint16 -> shared Type.uint16
+    | Uint32 -> shared Type.uint32
+    | Uint64 -> shared Type.uint64
     | Float16 -> shared Type.float16
     | Float32 -> shared Type.float32
     | Float64 -> shared Type.float64
-    | BFloat16 | Float8_e4m3 | Float8_e5m2 | Int4 | UInt4 | Complex64
-    | Complex128 ->
-        err "Column.%s: no scalar type stores %a; make it 2-D" fn Nx_dtype.pp dt
+    | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn | Int4 | Uint4
+    | Complex64 | Complex128 ->
+        err "Column.%s: no scalar type stores %a; make it 2-D" fn Nx.Dtype.pp dt
 
 let of_tensor ?validity x =
+  let x = own x and validity = Option.map own validity in
   let shape = Nx.shape x in
   if shape = [||] then err "Column.of_tensor: a scalar has no rows";
   let type_, values = cells "of_tensor" x in
   with_bits "of_tensor" type_ validity ~length:shape.(0) (Fixed values)
 
-let to_tensor (type a b) (dt : (a, b) Nx.dtype) c : (a, b) Nx.t =
+let to_tensor (type a b) (dt : (a, b) Nx.dtype) c : (a, b, Nx.host) Nx.t =
   let (Any ty) = c.type_ in
   match c.data with
-  | Fixed (P x) when not (Nx_dtype.equal dt (Nx.dtype x)) ->
-      err "Column.to_tensor: %a is stored as %a, not %a" Type.pp ty Nx_dtype.pp
-        (Nx.dtype x) Nx_dtype.pp dt
+  | Fixed (P x) when not (Nx.Dtype.equal dt (Nx.dtype x)) ->
+      err "Column.to_tensor: %a is stored as %a, not %a" Type.pp ty Nx.Dtype.pp
+        (Nx.dtype x) Nx.Dtype.pp dt
   | Fixed _ when null_count c > 0 ->
       err "Column.to_tensor: row %d is null" (first_null c)
-  | Fixed p -> Nx.unpack dt p
+  | Fixed p -> own (Nx.unpack dt p)
   | _ -> err "Column.to_tensor: %a is not stored one element per row" Type.pp ty
 
 (* Structural operations *)
@@ -648,21 +666,24 @@ let rec sub c ~offset ~length =
 
 (* Ragged arrays *)
 
-let ragged (type a b) (dt : (a, b) Nx.dtype) c : (a, b) Nx_ragged.t =
+let ragged (type a b) (dt : (a, b) Nx.dtype) c : (a, b, Nx.host) Nx_ragged.t =
   let (Any ty) = c.type_ in
   let mismatch stored =
-    err "Column.ragged: %a is stored as %a, not %a" Type.pp ty Nx_dtype.pp
-      stored Nx_dtype.pp dt
+    err "Column.ragged: %a is stored as %a, not %a" Type.pp ty Nx.Dtype.pp
+      stored Nx.Dtype.pp dt
   in
   if null_count c > 0 then err "Column.ragged: row %d is null" (first_null c);
   match c.data with
   | Bytes r -> (
-      match Nx_dtype.equal_witness Nx.uint8 dt with
-      | Some Equal -> r
+      match Nx.Dtype.equal_witness Nx.uint8 dt with
+      | Some Equal ->
+          Nx_ragged.v
+            ~offsets:(own (Nx_ragged.offsets r))
+            (own (Nx_ragged.values r))
       | None -> mismatch Nx.uint8)
   | List { offsets; child = { data = Fixed (P x); _ } as child } ->
-      if not (Nx_dtype.equal dt (Nx.dtype x)) then mismatch (Nx.dtype x);
-      let r = Nx_ragged.v ~offsets (Nx.unpack dt (P x)) in
+      if not (Nx.Dtype.equal dt (Nx.dtype x)) then mismatch (Nx.dtype x);
+      let r = Nx_ragged.v ~offsets:(own offsets) (own (Nx.unpack dt (P x))) in
       (* Only the elements of the rows count: values outside the offsets are not
          the column's. *)
       (if null_count child > 0 then
@@ -679,10 +700,11 @@ let ragged (type a b) (dt : (a, b) Nx.dtype) c : (a, b) Nx_ragged.t =
       r
   | _ ->
       err "Column.ragged: %a is not a list of %a, text or bytes" Type.pp ty
-        Nx_dtype.pp dt
+        Nx.Dtype.pp dt
 
 let of_ragged ?validity r =
-  let values = Nx_ragged.values r in
+  let validity = Option.map own validity in
+  let values = own (Nx_ragged.values r) in
   let (Type.Any e as cell), stored = cells "of_ragged" values in
   let child =
     {
@@ -696,13 +718,13 @@ let of_ragged ?validity r =
   with_bits "of_ragged"
     (Any (Type.list e))
     validity ~length
-    (List { offsets = Nx_ragged.offsets r; child })
+    (List { offsets = own (Nx_ragged.offsets r); child })
 
 (* [gather_data indices c] is the data of [c]'s rows at [indices], zeros and
    empty rows outside [c]'s rows. *)
 let rec gather_data indices c =
   match c.data with
-  | Fixed (P x) -> Fixed (P (Nx.take ~axis:0 ~indices x))
+  | Fixed (P x) -> Fixed (P (Nx.take ~axis:0 indices x))
   | Bytes r -> Bytes (Nx_ragged.take ~indices r)
   | List { offsets; child } ->
       let elements = Nx.arange Nx.int64 0 child.length 1 in
@@ -716,7 +738,7 @@ let rec gather_data indices c =
 
 and gather indices c =
   let validity =
-    Option.map (fun v -> unread (Nx.take ~indices v.bits)) c.validity
+    Option.map (fun v -> unread (Nx.take indices v.bits)) c.validity
   in
   {
     type_ = c.type_;
@@ -729,7 +751,7 @@ and gather indices c =
 let permute p c =
   let validity =
     Option.map
-      (fun v -> counted (Nx.take ~indices:p v.bits) (Atomic.get v.nulls))
+      (fun v -> counted (Nx.take p v.bits) (Atomic.get v.nulls))
       c.validity
   in
   { c with validity; data = gather_data p c }
@@ -739,10 +761,26 @@ let bounds offsets =
   let last = Nx.dim 0 offsets - 1 in
   (Int64.to_int (Nx.item [ 0 ] offsets), Int64.to_int (Nx.item [ last ] offsets))
 
+(* Layout is a cost nx keeps to its arrays, so the storage of a column's
+   buffers, which formats read byte for byte, shows through [Nx.Repr] alone. *)
+
+(* [in_order x] is [true] iff [x]'s elements lie in one buffer in C order, and
+   [at_start x] iff they lie there from its first bit. *)
+let layout x = Option.map Nx_array.layout (Nx.Repr.array x)
+
+let in_order x =
+  Option.fold ~none:false ~some:Nx_array.Layout.is_contiguous (layout x)
+
+let at_start x =
+  in_order x && Nx_array.Layout.offset (Option.get (layout x)) = 0
+
+(* [stored x] is [x] over C-contiguous storage: [x] itself where it lies so, a
+   copy otherwise. *)
+let stored x = if in_order x then x else Nx.copy x
+
 (* [rebase offsets first] is [offsets] less [first], over contiguous storage. *)
 let rebase offsets first =
-  if first = 0 then Nx.contiguous offsets
-  else Nx.sub_s offsets (Int64.of_int first)
+  if first = 0 then stored offsets else Nx.sub_s offsets (Int64.of_int first)
 
 (* [exact offsets child] is [offsets] from [0] and the rows of [child] they
    cut. *)
@@ -755,14 +793,14 @@ let exact offsets child =
   (rebase offsets first, child)
 
 (* [bitsize x] is the size in bits of an element of [x]. *)
-let bitsize x = Nx_dtype.Scalar.(bitsize (of_dtype (Nx.dtype x)))
+let bitsize x = Nx.Dtype.bits (Nx.dtype x)
 
 (* Canonical packed storage, a validity's, [bool] values' or int4 cells', starts
    at element [0] and leaves the bits past its last element clear, so that equal
    elements have equal bytes. The check reads one byte. *)
 let canonical_packed x =
   let used = Nx.numel x * bitsize x in
-  Nx.contiguous x == x
+  at_start x
   && (used land 7 = 0
      || Strings.reading ~by:"Column.canonical" x Bigarray.int8_unsigned
           (fun bytes ->
@@ -780,16 +818,14 @@ let rec canonical c =
     match c.data with
     | Fixed (P x) as d when bitsize x < 8 ->
         if canonical_packed x then d else Fixed (P (Nx.copy x))
-    | Fixed (P x) as d ->
-        let y = Nx.contiguous x in
-        if y == x then d else Fixed (P y)
+    | Fixed (P x) as d -> if in_order x then d else Fixed (P (Nx.copy x))
     | Bytes r as d ->
         let offsets = Nx_ragged.offsets r and values = Nx_ragged.values r in
         let first, last = bounds offsets in
         let offsets' = rebase offsets first in
         let values' =
-          if first = 0 && last = Nx.dim 0 values then Nx.contiguous values
-          else Nx.contiguous (Nx.slice [ Nx.R (first, last) ] values)
+          if first = 0 && last = Nx.dim 0 values then stored values
+          else stored (Nx.slice [ Nx.R (first, last) ] values)
         in
         if offsets' == offsets && values' == values then d
         else Bytes (Nx_ragged.v ~offsets:offsets' values')
@@ -868,10 +904,14 @@ and join cs = function
 (* Layouts *)
 
 type layout =
-  | Fixed of { validity : Nx.bit_t option; values : Nx.packed }
-  | Varsize of { validity : Nx.bit_t option; offsets : Nx.int64_t; child : t }
+  | Fixed of { validity : Nx.host Nx.bit_t option; values : Nx.host Nx.packed }
+  | Varsize of {
+      validity : Nx.host Nx.bit_t option;
+      offsets : Nx.host Nx.int64_t;
+      child : t;
+    }
   | Children of {
-      validity : Nx.bit_t option;
+      validity : Nx.host Nx.bit_t option;
       length : int;
       fields : (string * t) list;
     }
@@ -885,7 +925,7 @@ let fields_of ty =
 let layout c =
   let validity = validity c in
   match c.data with
-  | Fixed values -> Fixed { validity; values }
+  | Fixed values -> Fixed { validity; values = own_packed values }
   | Bytes r ->
       let values = Nx_ragged.values r in
       let child =
@@ -896,8 +936,9 @@ let layout c =
           data = Fixed (P values);
         }
       in
-      Varsize { validity; offsets = Nx_ragged.offsets r; child }
-  | List { offsets; child } -> Varsize { validity; offsets; child }
+      Varsize { validity; offsets = own (Nx_ragged.offsets r); child }
+  | List { offsets; child } ->
+      Varsize { validity; offsets = own offsets; child }
   | Fields cs ->
       let (Any ty) = c.type_ in
       let fields = List.map2 (fun (n, _) c -> (n, c)) (fields_of ty) cs in
@@ -914,11 +955,11 @@ let of_bits type_ validity ~length data =
 
 (* [rows_of offsets child] is the number of rows that [offsets] cut from the
    rows of [child]. *)
-let rows_of (offsets : Nx.int64_t) child =
+let rows_of (offsets : Nx.host Nx.int64_t) child =
   let shape = Nx.shape offsets in
   if Array.length shape <> 1 || shape.(0) = 0 then
     refuse "offsets of shape %a, not 1-D with an entry" Nx.pp_shape shape;
-  let o = Bigarray.array1_of_genarray (Nx.to_bigarray offsets) in
+  let o = Bigarray.array1_of_genarray (Nx.to_bigarray Bigarray.int64 offsets) in
   let n = shape.(0) - 1 in
   if Int64.compare o.{0} 0L < 0 then refuse "offsets start at %Ld" o.{0};
   for r = 0 to n - 1 do
@@ -931,11 +972,11 @@ let rows_of (offsets : Nx.int64_t) child =
 
 (* [rows_of_values ty x] is the rows of [x] if it lays out [ty], a scalar or
    tensor type. *)
-let rows_of_values : type a. a Type.t -> Nx.packed -> int =
+let rows_of_values : type a. a Type.t -> Nx.host Nx.packed -> int =
  fun ty (P x) ->
   let shape = Nx.shape x in
   let lays_out dt cell =
-    Nx_dtype.equal dt (Nx.dtype x)
+    Nx.Dtype.equal dt (Nx.dtype x)
     && Array.length shape > 0
     && Array.sub shape 1 (Array.length shape - 1) = cell
   in
@@ -948,7 +989,7 @@ let rows_of_values : type a. a Type.t -> Nx.packed -> int =
         | None -> false)
   in
   if not ok then
-    refuse "%a values of shape %a do not lay out %a" Nx_dtype.pp (Nx.dtype x)
+    refuse "%a values of shape %a do not lay out %a" Nx.Dtype.pp (Nx.dtype x)
       Nx.pp_shape shape Type.pp ty;
   shape.(0)
 
@@ -1036,4 +1077,18 @@ let rec of_layout : type a. a Type.t -> layout -> (t, int * string) result =
   | _, Varsize _ -> refuse "offsets and a child do not lay out %a" Type.pp ty
   | _, Children _ -> refuse "fields do not lay out %a" Type.pp ty
 
-let of_layout (Type.Any ty) l = of_layout ty l
+let of_layout (Type.Any ty) l =
+  let l =
+    match l with
+    | Fixed { validity; values } ->
+        Fixed { validity = Option.map own validity; values = own_packed values }
+    | Varsize v ->
+        Varsize
+          {
+            v with
+            validity = Option.map own v.validity;
+            offsets = own v.offsets;
+          }
+    | Children c -> Children { c with validity = Option.map own c.validity }
+  in
+  of_layout ty l

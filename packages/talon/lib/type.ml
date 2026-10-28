@@ -28,7 +28,7 @@ type 'a t =
   | Datetime : { unit_ : unit_; zone : string option } -> Time.instant t
   | List : 'a t -> 'a array t
   | Record : (string * any) list -> Record.t t
-  | Tensor : ('a, 'b) Nx.dtype * int iarray -> ('a, 'b) Nx.t t
+  | Tensor : ('a, 'b) Nx.dtype * int iarray -> ('a, 'b, Nx.host) Nx.t t
   | Ext : { name : string; metadata : string; storage : 's t } -> ext t
 
 and any = Any : 'a t -> any
@@ -146,11 +146,11 @@ let rec has_float : type a. a t -> bool = function
   | Record fields -> List.exists (fun (_, Any t) -> has_float t) fields
   | Tensor (dt, _) -> (
       match dt with
-      | Float16 | Float32 | Float64 | BFloat16 | Float8_e4m3 | Float8_e5m2
-      | Complex64 | Complex128 ->
+      | Float16 | Float32 | Float64 | Bfloat16 | Float8_e4m3fn | Float8_e5m2
+      | Float4_e2m1fn | Complex64 | Complex128 ->
           true
-      | Int4 | UInt4 | Int8 | UInt8 | Int16 | UInt16 | Int32 | UInt32 | Int64
-      | UInt64 | Bool | Bit ->
+      | Int4 | Uint4 | Int8 | Uint8 | Int16 | Uint16 | Int32 | Uint32 | Int64
+      | Uint64 | Bool | Bit ->
           false)
   | Ext { storage; _ } -> has_float storage
   | _ -> false
@@ -369,19 +369,20 @@ let compare_element : type a b. (a, b) Nx.dtype -> a -> a -> int = function
   | Float16 -> compare_float
   | Float32 -> compare_float
   | Float64 -> compare_float
-  | BFloat16 -> compare_float
-  | Float8_e4m3 -> compare_float
+  | Bfloat16 -> compare_float
+  | Float8_e4m3fn -> compare_float
   | Float8_e5m2 -> compare_float
+  | Float4_e2m1fn -> compare_float
   | Int4 -> Int.compare
-  | UInt4 -> Int.compare
+  | Uint4 -> Int.compare
   | Int8 -> Int.compare
-  | UInt8 -> Int.compare
+  | Uint8 -> Int.compare
   | Int16 -> Int.compare
-  | UInt16 -> Int.compare
+  | Uint16 -> Int.compare
   | Int32 -> Int32.compare
-  | UInt32 -> Int32.unsigned_compare
+  | Uint32 -> Int32.unsigned_compare
   | Int64 -> Int64.compare
-  | UInt64 -> Int64.unsigned_compare
+  | Uint64 -> Int64.unsigned_compare
   | Complex64 -> compare_complex
   | Complex128 -> compare_complex
   | Bool -> Bool.compare
@@ -549,7 +550,7 @@ let rec equal : type a b. a t -> b t -> bool =
       let field (n0, Any t0) (n1, Any t1) = String.equal n0 n1 && equal t0 t1 in
       List.equal field f0 f1
   | Tensor (dt0, s0), Tensor (dt1, s1) ->
-      Nx_dtype.equal dt0 dt1 && Iarray.equal Int.equal s0 s1
+      Nx.Dtype.equal dt0 dt1 && Iarray.equal Int.equal s0 s1
   | Ext e0, Ext e1 ->
       String.equal e0.name e1.name
       && String.equal e0.metadata e1.metadata
@@ -676,7 +677,7 @@ let rec pp : type a. Format.formatter -> a t -> unit =
         fields
   | Tensor (dt, shape) ->
       let dims = Iarray.to_list (Iarray.map string_of_int shape) in
-      Format.fprintf ppf "tensor[%s, %s]" (Nx_dtype.to_string dt)
+      Format.fprintf ppf "tensor[%s, %s]" (Nx.Dtype.name dt)
         (String.concat "×" dims)
   | Ext { name; metadata; storage } ->
       Format.fprintf ppf "ext[%a" pp_name name;

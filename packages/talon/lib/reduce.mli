@@ -27,7 +27,7 @@ val group : Column.t list -> segments
 val count : segments -> int
 (** [count s] is the number of segments of [s]. *)
 
-val first : segments -> Nx.int64_t
+val first : segments -> Nx.host Nx.int64_t
 (** [first s] is the first row of each segment of [s], ascending: [0] for a
     segment without rows. *)
 

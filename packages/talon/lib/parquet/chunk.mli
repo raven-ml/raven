@@ -36,15 +36,15 @@
 (** The type for decoded columns. A row's value is zero, or the empty byte
     string, under a null. *)
 type t =
-  | Fixed of { valid : Nx.bit_t option; values : Nx.packed }
+  | Fixed of { valid : Nx.host Nx.bit_t option; values : Nx.host Nx.packed }
       (** One value per row, in the storage of the column's type: [bit],
           integers of the type's width, [float16] to [float64], [int32] days,
           [int64] ticks, [int32] codes of a categorical. [valid] is [true] at
           the rows that hold a value, and [None] when every row does. *)
   | Varsize of {
-      valid : Nx.bit_t option;
-      offsets : Nx.int64_t;
-      data : Nx.uint8_t;
+      valid : Nx.host Nx.bit_t option;
+      offsets : Nx.host Nx.int64_t;
+      data : Nx.host Nx.uint8_t;
     }
       (** Byte strings, for [string] and [binary]: row [i] is [data] from
           [offsets.{i}] to [offsets.{i + 1}], and [offsets.{0}] is [0]. Text is

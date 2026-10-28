@@ -446,14 +446,15 @@ type width = { p : int; emin : int; max : float }
 (* The width of the float dtype [dt], read from its limits: [emin] is the
    exponent of its least normal value. *)
 let float_width dt =
+  let f = Nx.Dtype.float_format dt in
   {
-    p = Nx_dtype.precision dt;
-    emin = snd (Float.frexp (Nx_dtype.min_normal dt)) - 1;
-    max = Nx_dtype.max_finite dt;
+    p = f.fraction_bits + 1;
+    emin = snd (Float.frexp f.min_normal) - 1;
+    max = f.max_finite;
   }
 
-let half = float_width Nx_dtype.float16
-let single = float_width Nx_dtype.float32
+let half = float_width Nx.float16
+let single = float_width Nx.float32
 
 (* [nearest w v] is the value of width [w] nearest to [v], ties to even. *)
 let nearest w v =
@@ -801,7 +802,7 @@ let fixed kind zero r valid read =
   A1.fill a zero;
   match rows r valid (fun b pos len i -> read b pos len a i) with
   | Some e -> Error e
-  | None -> Ok (Nx.of_bigarray (Bigarray.genarray_of_array1 a))
+  | None -> Ok (Strings.adopt a)
 
 let text_rows c =
   match (Column.type_ c, Column.data c) with
@@ -937,7 +938,7 @@ let format_with fmt c =
 
 let pp_text ppf s = Format.pp_print_string ppf s
 
-let double = float_width Nx_dtype.float64
+let double = float_width Nx.float64
 
 let width : type a. a Type.t -> width = function
   | Float16 -> half
@@ -1003,7 +1004,7 @@ let pp : type a. a Type.t -> Format.formatter -> a -> unit =
 (* Writing *)
 
 let fixed_writer : type a b c.
-    a Type.t -> (b, c) Nx.t -> Buffer.t -> int -> unit =
+    a Type.t -> (b, c, Nx.host) Nx.t -> Buffer.t -> int -> unit =
  fun ty x ->
   let ints () = Nx.to_array (Nx.cast Nx.int64 x) in
   match ty with
@@ -1052,7 +1053,7 @@ let print c =
       let r =
         Nx_ragged.v
           ~offsets:(Nx.create Nx.int64 [| n + 1 |] offsets)
-          (Nx.of_bigarray (Bigarray.genarray_of_array1 values))
+          (Strings.adopt values)
       in
       Column.with_data (Any Type.string) (Bytes r) c
   | _ -> err "Column.print: %a is not a type that Column.parse reads" Type.pp ty

@@ -10,8 +10,14 @@ let err fmt = Format.kasprintf invalid_arg fmt
 
 type row
 type agg
-type fn = { f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
-type fn2 = { f2 : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
+type fn = { f : 'a 'b. ('a, 'b, Nx.host) Nx.t -> ('a, 'b, Nx.host) Nx.t }
+
+type fn2 = {
+  f2 :
+    'a 'b.
+    ('a, 'b, Nx.host) Nx.t -> ('a, 'b, Nx.host) Nx.t -> ('a, 'b, Nx.host) Nx.t;
+}
+
 type arith = Add | Sub | Mul | Div | Mod | Pow
 type compare = [ `Eq | `Ne | `Lt | `Le | `Gt | `Ge ]
 type logic = And | Or
@@ -94,11 +100,7 @@ and 'a node =
   | Cast : 'a Type.t * ('b, 's) t -> 'a node
   | Lift : fn * ('a, 's) t -> 'a node
   | Lift2 : fn2 * ('a, 's0) t * ('a, 's1) t -> 'a node
-  | Nx_unary : Nx_backend.unary * ('a, 's) t -> 'a node
-  | Nx_binary : Nx_backend.binary * ('a, 's0) t * ('a, 's1) t -> 'a node
-  | Nx_compare : Nx_backend.compare * ('a, 's0) t * ('a, 's1) t -> bool node
-  | Nx_where : (bool, 's0) t * ('a, 's1) t * ('a, 's2) t -> 'a node
-  | Nx_cast : 'a Type.t * ('b, 's) t -> 'a node
+  | Nx_map : Nx_kernel.Prog.t * packed list -> 'a node
   | Reduce : ('a, 'b) reduction * ('a, 's) t -> 'b node
   | Over : { by : string list; order : Order.t list; e : ('a, 's) t } -> 'a node
   | Shift : int * ('a, 's) t -> 'a node
@@ -137,12 +139,10 @@ let operands : type a. a node -> packed list = function
   | Float (_, a, b) -> [ Packed a; Packed b ]
   | Compare (_, a, b) -> [ Packed a; Packed b ]
   | Logic (_, a, b) -> [ Packed a; Packed b ]
-  | Nx_binary (_, a, b) -> [ Packed a; Packed b ]
-  | Nx_compare (_, a, b) -> [ Packed a; Packed b ]
   | Lift2 (_, a, b) -> [ Packed a; Packed b ]
+  | Nx_map (_, es) -> es
   | App (f, a) -> [ Packed f; Packed a ]
   | If (c, a, b) -> [ Packed c; Packed a; Packed b ]
-  | Nx_where (c, a, b) -> [ Packed c; Packed a; Packed b ]
   | Coalesce es -> List.map (fun e -> Packed e) es
   | Not a -> [ Packed a ]
   | Is_null a -> [ Packed a ]
@@ -151,10 +151,8 @@ let operands : type a. a node -> packed list = function
   | Of_option a -> [ Packed a ]
   | Is_in (_, a) -> [ Packed a ]
   | Lift (_, a) -> [ Packed a ]
-  | Nx_unary (_, a) -> [ Packed a ]
   | Shift (_, a) -> [ Packed a ]
   | Cast (_, a) -> [ Packed a ]
-  | Nx_cast (_, a) -> [ Packed a ]
   | Reduce (_, a) -> [ Packed a ]
   | Store (_, a) -> [ Packed a ]
   | Text (_, a) -> [ Packed a ]
@@ -328,14 +326,10 @@ let node_equal : type a b. a node -> b node -> bool =
       o0 = o1
   | Compare (o0, _, _), Compare (o1, _, _) -> o0 = o1
   | Logic (o0, _, _), Logic (o1, _, _) -> o0 = o1
-  | Nx_unary (o0, _), Nx_unary (o1, _) -> o0 = o1
-  | Nx_binary (o0, _, _), Nx_binary (o1, _, _) -> o0 = o1
-  | Nx_compare (o0, _, _), Nx_compare (o1, _, _) -> o0 = o1
+  | Nx_map (p0, _), Nx_map (p1, _) -> p0 = p1
   | Is_in (vs0, a0), Is_in (vs1, a1) ->
       same_value vs0 vs1 || values_equal a0 vs0 a1 vs1
-  | Cast (ty0, _), Cast (ty1, _)
-  | Nx_cast (ty0, _), Nx_cast (ty1, _)
-  | Store (ty0, _), Store (ty1, _) ->
+  | Cast (ty0, _), Cast (ty1, _) | Store (ty0, _), Store (ty1, _) ->
       Type.equal ty0 ty1
   | Lift (f0, _), Lift (f1, _) -> same_value f0.f f1.f
   | Lift2 (f0, _, _), Lift2 (f1, _, _) -> same_value f0.f2 f1.f2
@@ -352,7 +346,6 @@ let node_equal : type a b. a node -> b node -> bool =
   | If _, If _
   | Is_null _, Is_null _
   | Coalesce _, Coalesce _
-  | Nx_where _, Nx_where _
   | Rank _, Rank _
   | App _, App _
   | Option _, Option _
@@ -360,9 +353,9 @@ let node_equal : type a b. a node -> b node -> bool =
       true
   | ( ( Handle _ | Ext_handle _ | Read _ | Lit _ | Null | Rows | Int _ | Float _
       | Compare _ | Logic _ | Not _ | If _ | Is_null _ | Coalesce _ | Is_in _
-      | Cast _ | Lift _ | Lift2 _ | Nx_unary _ | Nx_binary _ | Nx_compare _
-      | Nx_where _ | Nx_cast _ | Reduce _ | Over _ | Shift _ | Rank _ | Const _
-      | App _ | Option _ | Of_option _ | Store _ | Text _ | Calendar _ ),
+      | Cast _ | Lift _ | Lift2 _ | Nx_map _ | Reduce _ | Over _ | Shift _
+      | Rank _ | Const _ | App _ | Option _ | Of_option _ | Store _ | Text _
+      | Calendar _ ),
       _ ) ->
       false
 
@@ -482,14 +475,16 @@ let field_name : field -> string = function
   | `Weekday -> "`Weekday"
   | `Yearday -> "`Yearday"
 
-let unary_name : Nx_backend.unary -> string = function
+let unary_name : Nx_kernel.Prog.unary -> string = function
   | Neg -> "neg"
   | Recip -> "recip"
   | Abs -> "abs"
   | Sqrt -> "sqrt"
   | Sign -> "sign"
   | Exp -> "exp"
+  | Exp2 -> "exp2"
   | Log -> "log"
+  | Log2 -> "log2"
   | Log1p -> "log1p"
   | Expm1 -> "expm1"
   | Sin -> "sin"
@@ -501,13 +496,16 @@ let unary_name : Nx_backend.unary -> string = function
   | Sinh -> "sinh"
   | Cosh -> "cosh"
   | Tanh -> "tanh"
+  | Asinh -> "asinh"
+  | Acosh -> "acosh"
+  | Atanh -> "atanh"
   | Trunc -> "trunc"
   | Ceil -> "ceil"
   | Floor -> "floor"
   | Round -> "round"
   | Erf -> "erf"
 
-let binary_name : Nx_backend.binary -> string = function
+let binary_name : Nx_kernel.Prog.binary -> string = function
   | Add -> "add"
   | Sub -> "sub"
   | Mul -> "mul"
@@ -518,11 +516,12 @@ let binary_name : Nx_backend.binary -> string = function
   | Atan2 -> "atan2"
   | Maximum -> "maximum"
   | Minimum -> "minimum"
-  | And -> "logical_and"
-  | Or -> "logical_or"
-  | Xor -> "logical_xor"
+  | And -> "bitwise_and"
+  | Or -> "bitwise_or"
+  | Xor -> "bitwise_xor"
+  | Threefry -> "threefry"
 
-let compare_name : Nx_backend.compare -> string = function
+let compare_name : Nx_kernel.Prog.compare -> string = function
   | Equal -> "equal"
   | Not_equal -> "not_equal"
   | Less -> "less"
@@ -561,6 +560,35 @@ let is_negative : type a. a Kind.t -> a -> bool =
   | _ -> false
 
 let signed n = if n < 0 then Printf.sprintf "(%d)" n else string_of_int n
+
+(* [pp_map ctx ppf p operand] formats the output of the program [p] as the nx
+   functions of its kinds applied to its operands, which [operand ctx ppf j]
+   formats: [exp f]. *)
+let pp_map ctx ppf (p : Nx_kernel.Prog.t) operand =
+  let rec node ctx ppf i =
+    let app name args =
+      wrap ctx 7 ppf (fun ppf ->
+          Format.fprintf ppf "@[<hov 2>%s" name;
+          List.iter (fun arg -> Format.fprintf ppf "@ %t" arg) args;
+          Format.fprintf ppf "@]")
+    in
+    let arg j ppf = node 8 ppf j in
+    let dtype (Nx.Dtype.Any dt) ppf = Nx.Dtype.pp ppf dt in
+    match Iarray.get p.nodes i with
+    | In j -> operand ctx ppf j
+    | Coord a -> app "coord" [ (fun ppf -> Format.pp_print_int ppf a) ]
+    | Const (dt, _) -> app "const" [ dtype dt ]
+    | Op1 (Copy, _, j) -> node ctx ppf j
+    | Op1 (Unary k, _, j) -> app (unary_name k) [ arg j ]
+    | Op1 (Cast, dt, j) -> app "cast" [ dtype dt; arg j ]
+    | Op1 (Bitcast, dt, j) -> app "bitcast" [ dtype dt; arg j ]
+    | Op2 (Binary k, j, l) -> app (binary_name k) [ arg j; arg l ]
+    | Op2 (Compare k, j, l) -> app (compare_name k) [ arg j; arg l ]
+    | Op3 (Where, c, j, l) -> app "where" [ arg c; arg j; arg l ]
+    | Op3 (Fma, j, l, n) -> app "fma" [ arg j; arg l; arg n ]
+  in
+  node ctx ppf (Iarray.get p.outs 0)
+
 let pattern p ppf = Format.fprintf ppf "(%a)" pp_pattern p
 
 let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
@@ -608,11 +636,11 @@ let rec pp_at : type a s. int -> Format.formatter -> (a, s) t -> unit =
   | Cast (ty, a) -> app "cast" [ (fun ppf -> Type.pp ppf ty); arg a ]
   | Lift (_, a) -> app "nx" [ str "<fn>"; arg a ]
   | Lift2 (_, a, b) -> app "nx2" [ str "<fn>"; arg a; arg b ]
-  | Nx_unary (op, a) -> app (unary_name op) [ arg a ]
-  | Nx_binary (op, a, b) -> app (binary_name op) [ arg a; arg b ]
-  | Nx_compare (op, a, b) -> app (compare_name op) [ arg a; arg b ]
-  | Nx_where (c, a, b) -> app "where" [ arg c; arg a; arg b ]
-  | Nx_cast (ty, a) -> app "convert" [ (fun ppf -> Type.pp ppf ty); arg a ]
+  | Nx_map (p, es) ->
+      let es = Array.of_list es in
+      pp_map ctx ppf p (fun ctx ppf j ->
+          let (Packed e) = es.(j) in
+          pp_at ctx ppf e)
   | Reduce (Quantile p, a) ->
       app "quantile" [ (fun ppf -> Type.pp_lit Float ppf p); arg a ]
   | Reduce (r, a) -> app (reduction_name r) [ arg a ]
@@ -1087,12 +1115,24 @@ let calendar_step : type a. env -> string -> a Type.t -> Time.step -> unit =
           Time.Span.pp (Time.Span.of_ns tick) Time.Span.pp s
   | _ -> ()
 
-(* Lifts *)
+(* Lifts
 
-type (_, _) Nx.Repr.node +=
-  | Traced : 'c Type.t * ('c, erased) t -> ('a, 'b) Nx.Repr.node
+   A lift's function runs once under an nx interpretation that reaches every
+   operation of its extent. An operation on a traced value is either a map,
+   which becomes one node that runs its program, a copy, or a movement that
+   moves nothing; any other is refused. An operation on no traced value computes
+   now, so that a value the function builds from no operand becomes a literal
+   where a traced operation reads it. *)
+
+module Prog = Nx_kernel.Prog
+
+type (_, _, _) Nx.Prim.payload +=
+  | Traced : 'c Type.t * ('c, erased) t -> ('v, 's, 'd) Nx.Prim.payload
 
 exception Not_elementwise of string
+
+let not_elementwise by =
+  Not_elementwise (strf "performs %s, which is not elementwise" by)
 
 type dtype = Dtype : ('a, 'b) Nx.dtype -> dtype
 
@@ -1120,32 +1160,32 @@ let int64_value v =
   if Int64.equal (Int64.of_int i) v then Some i else None
 
 let scalar_of : type a b. (a, b) Nx.dtype -> a scalar option = function
-  | Nx.Bool -> Some (Scalar (Type.bool, Kind.bool, Option.some))
-  | Nx.Bit -> Some (Scalar (Type.bool, Kind.bool, Option.some))
-  | Nx.Int8 -> Some (Scalar (Type.int8, Kind.int, Option.some))
-  | Nx.Int16 -> Some (Scalar (Type.int16, Kind.int, Option.some))
-  | Nx.Int32 ->
+  | Bool -> Some (Scalar (Type.bool, Kind.bool, Option.some))
+  | Bit -> Some (Scalar (Type.bool, Kind.bool, Option.some))
+  | Int8 -> Some (Scalar (Type.int8, Kind.int, Option.some))
+  | Int16 -> Some (Scalar (Type.int16, Kind.int, Option.some))
+  | Int32 ->
       Some (Scalar (Type.int32, Kind.int, fun v -> Some (Int32.to_int v)))
-  | Nx.Int64 -> Some (Scalar (Type.int64, Kind.int, int64_value))
-  | Nx.UInt8 -> Some (Scalar (Type.uint8, Kind.int, Option.some))
-  | Nx.UInt16 -> Some (Scalar (Type.uint16, Kind.int, Option.some))
-  | Nx.UInt32 ->
+  | Int64 -> Some (Scalar (Type.int64, Kind.int, int64_value))
+  | Uint8 -> Some (Scalar (Type.uint8, Kind.int, Option.some))
+  | Uint16 -> Some (Scalar (Type.uint16, Kind.int, Option.some))
+  | Uint32 ->
       Some
         (Scalar
            ( Type.uint32,
              Kind.int,
              fun v -> Some (Int32.to_int v land 0xFFFF_FFFF) ))
-  | Nx.UInt64 ->
+  | Uint64 ->
       Some
         (Scalar
            ( Type.uint64,
              Kind.int,
              fun v -> if Int64.compare v 0L < 0 then None else int64_value v ))
-  | Nx.Float16 -> Some (Scalar (Type.float16, Kind.float, Option.some))
-  | Nx.Float32 -> Some (Scalar (Type.float32, Kind.float, Option.some))
-  | Nx.Float64 -> Some (Scalar (Type.float64, Kind.float, Option.some))
-  | Nx.BFloat16 | Nx.Float8_e4m3 | Nx.Float8_e5m2 | Nx.Int4 | Nx.UInt4
-  | Nx.Complex64 | Nx.Complex128 ->
+  | Float16 -> Some (Scalar (Type.float16, Kind.float, Option.some))
+  | Float32 -> Some (Scalar (Type.float32, Kind.float, Option.some))
+  | Float64 -> Some (Scalar (Type.float64, Kind.float, Option.some))
+  | Bfloat16 | Float8_e4m3fn | Float8_e5m2 | Float4_e2m1fn | Int4 | Uint4
+  | Complex64 | Complex128 ->
       None
 
 type traced = Expr_of : 'c Type.t * ('c, erased) t -> traced
@@ -1154,92 +1194,134 @@ let no_type dt =
   Not_elementwise
     (strf "computes in %a, which talon has no type for" Nx.pp_dtype dt)
 
-(* [traced x] is the expression that the value [x] traces, a constant becoming a
-   literal. *)
-let traced : type a b. (a, b) Nx.t -> traced =
- fun x ->
-  match Nx.Repr.v x with
-  | Traced tr -> (
-      match Nx.Repr.Traced.node tr with
-      | Traced (ty, e) -> Expr_of (ty, e)
-      | _ ->
-          raise
-            (Not_elementwise "reads a value traced by another transformation"))
-  | Host _ | Placed _ -> (
-      let dt = Nx.dtype x in
-      match scalar_of dt with
-      | None -> raise (no_type dt)
-      | Some (Scalar (ty, k, value)) -> (
-          let v =
-            Nx.item (List.map (fun _ -> 0) (Array.to_list (Nx.shape x))) x
-          in
-          match value v with
-          | Some c -> Expr_of (ty, typed (Column ty) (Lit (k, c)))
-          | None ->
-              raise (Not_elementwise "creates a constant outside OCaml's int")))
+let bound ty n = Expr_of (ty, typed (Column ty) n)
 
-let result dt ty n =
-  Nx.Repr.Traced.v ~context:Nx.Placement.host Nx.Placement.host dt [||]
-    (Traced (ty, typed (Column ty) n))
+(* [literal x] is the literal of [x]'s first element, a value no traced
+   operation made. *)
+let literal (type v s d) (x : (v, s, d) Nx.t) =
+  let dt = Nx.dtype x in
+  match scalar_of dt with
+  | None -> raise (no_type dt)
+  | Some (Scalar (ty, k, value)) -> (
+      let v = Nx.item (List.map (fun _ -> 0) (Array.to_list (Nx.shape x))) x in
+      match value v with
+      | Some c -> bound ty (Lit (k, c))
+      | None -> raise (Not_elementwise "creates a constant outside OCaml's int")
+      )
 
-(* [same_type tx ty] is a witness that the traced types [tx] and [ty], of one
-   dtype, are equal. *)
-let same_type : type a b. a Type.t -> b Type.t -> (a, b) Stdlib.Type.eq =
- fun tx ty ->
-  match Kind.equal_witness (Type.kind tx) (Type.kind ty) with
-  | Some Equal when Type.equal tx ty -> Equal
-  | _ -> raise (Not_elementwise "mixes dtypes")
+(* [traced i x] is the expression that the value [x] traces under [i], a value
+   computed outside it becoming a literal. *)
+let traced i x =
+  match Nx.Prim.payload i x with
+  | Some (Traced (ty, e)) -> Expr_of (ty, e)
+  | _ when Option.is_some (Nx.Prim.owner x) ->
+      raise (Not_elementwise "reads a value traced by another transformation")
+  | _ -> literal x
 
-let moves_nothing : Nx.Op.move -> bool = function
-  | Reshape s | Expand s -> Array.length s = 0
-  | Permute p -> Array.length p = 0
-  | Shrink s -> Array.length s = 0
-  | Flip f -> Array.length f = 0
-  | Window _ -> false
-
-let run : type r. r Nx.Op.t -> r =
- fun op ->
-  let is_traced (Nx.P x) =
-    match Nx.Repr.v x with Traced _ -> true | _ -> false
+(* [of_bits ~by dt bits] is the literal of the element of [dt] whose bits are
+   [bits], computed by a map of the one node. *)
+let of_bits ~by (Nx.Dtype.Any dt as any) bits =
+  let prog = Prog.of_node ~ins:[||] (Const (any, bits)) in
+  let x, () =
+    Nx.Prim.eval ~by
+      (Map
+         {
+           layout = Nx_array.Layout.contiguous [||];
+           prog;
+           outs = [ dt ];
+           loads = [||];
+           at = Some Nx.Host.on;
+         })
   in
-  if not (List.exists is_traced (Nx.Op.operands op)) then Nx.Op.eval op
+  literal x
+
+(* [program i ~by prog loads] is the expression of each output of the map [prog]
+   over [loads]: one node that runs the output's program over the loads'
+   expressions, each constant of [prog] read from a literal operand after
+   them. *)
+let program i ~by (prog : Prog.t) loads =
+  let load j =
+    match Iarray.get loads j with
+    | Nx.Prim.Plain x ->
+        let (Expr_of (_, e)) = traced i x in
+        Packed e
+    | Padded _ -> raise (not_elementwise by)
+  in
+  let consts =
+    Iarray.fold_left
+      (fun cs (n : Prog.node) ->
+        match n with
+        | Const (dt, bits) when not (List.mem (dt, bits) cs) -> (dt, bits) :: cs
+        | _ -> cs)
+      [] prog.nodes
+    |> List.rev
+  in
+  let first = Iarray.length prog.ins in
+  let ins = Iarray.append prog.ins (Iarray.of_list (List.map fst consts)) in
+  let operands =
+    List.init first load
+    @ List.map
+        (fun (dt, bits) ->
+          let (Expr_of (_, e)) = of_bits ~by dt bits in
+          Packed e)
+        consts
+  in
+  let leaf : Prog.node -> Prog.E.any option = function
+    | Const ((Any dt as any), bits) ->
+        let k = Option.get (List.find_index (( = ) (any, bits)) consts) in
+        Some (Prog.E.any (Prog.E.input (first + k) dt))
+    | Coord _ -> raise (not_elementwise by)
+    | _ -> None
+  in
+  let output k =
+    let p = Prog.subst ~outs:[| k |] ~ins leaf prog in
+    let (Any dt) = Prog.dtype p (Iarray.get p.outs 0) in
+    match scalar_of dt with
+    | Some (Scalar (ty, _, _)) -> bound ty (Nx_map (p, operands))
+    | None -> raise (no_type dt)
+  in
+  Iarray.init (Iarray.length prog.outs) output
+
+(* [reads_of p es] is the operands of [es] that the program [p] reads. *)
+let reads_of (p : Prog.t) es =
+  List.filteri
+    (fun j _ -> Iarray.exists (fun (n : Prog.node) -> n = In j) p.nodes)
+    es
+
+(* [moves_nothing m x] is [true] iff the movement [m] of [x] is [x]. *)
+let moves_nothing m x =
+  let l = Nx_array.Layout.contiguous (Iarray.of_array (Nx.shape x)) in
+  match Nx_array.Layout.move m l with
+  | Some l' -> Nx_array.Layout.equal l l'
+  | None -> false
+
+let rule : type r. Nx.Prim.interpretation -> by:string -> r Nx.Prim.t -> r =
+ fun i ~by op ->
+  let mine (Nx.Prim.Any x) = Option.is_some (Nx.Prim.payload i x) in
+  let (Operands xs) = Nx.Prim.operands op in
+  if not (List.exists mine xs) then Nx.Prim.eval ~by op
   else
     match op with
-    | Unary (u, x) ->
-        let (Expr_of (tx, ex)) = traced x in
-        result (Nx.dtype x) tx (Nx_unary (u, ex))
-    | Binary (b, x, y) ->
-        let (Expr_of (tx, ex)) = traced x in
-        let (Expr_of (ty, ey)) = traced y in
-        let Equal = same_type tx ty in
-        result (Nx.dtype x) tx (Nx_binary (b, ex, ey))
-    | Compare (c, x, y) ->
-        let (Expr_of (tx, ex)) = traced x in
-        let (Expr_of (ty, ey)) = traced y in
-        let Equal = same_type tx ty in
-        result Nx.bool Type.bool (Nx_compare (c, ex, ey))
-    | Where (c, x, y) ->
-        let (Expr_of (tc, ec)) = traced c in
-        let (Expr_of (tx, ex)) = traced x in
-        let (Expr_of (ty, ey)) = traced y in
-        let Equal = same_type tc Type.bool in
-        let Equal = same_type tx ty in
-        result (Nx.dtype x) tx (Nx_where (ec, ex, ey))
-    | Convert (Cast, dt, x) -> (
-        let (Expr_of (_, ex)) = traced x in
-        match scalar_of dt with
-        | Some (Scalar (ty, _, _)) -> result dt ty (Nx_cast (ty, ex))
-        | None -> raise (no_type dt))
-    | Move (x, move) when moves_nothing move -> x
-    | Contiguous x -> x
-    | op ->
-        raise
-          (Not_elementwise
-             (strf "performs %s, which is not elementwise" (Nx.Op.name op)))
+    | Map { prog; loads; _ } ->
+        let es = program i ~by prog loads in
+        let out k f =
+          let (Expr_of (ty, e)) = Iarray.get es k in
+          Nx.Prim.traced i f (Traced (ty, e))
+        in
+        Nx.Prim.results ~by out op
+    | Copy x -> x
+    | Move (m, x) when moves_nothing m x -> x
+    | _ -> raise (not_elementwise by)
 
-let input dt ty e =
-  Nx.Repr.Traced.v ~context:Nx.Placement.host Nx.Placement.host dt [||]
-    (Traced (ty, e))
+let input i dt ty e =
+  let form : _ Nx.Prim.form =
+    {
+      dtype = dt;
+      layout = Nx_array.Layout.contiguous [||];
+      placement = Nx.Host.on;
+    }
+  in
+  Nx.Prim.traced i form (Traced (ty, e))
 
 (* [uses ids e] is [true] iff the traced expression [e] uses each expression
    whose identity is in [ids]. *)
@@ -1250,30 +1332,27 @@ let uses ids e =
     if not (Hashtbl.mem seen e.id) then begin
       Hashtbl.add seen e.id ();
       match e.node with
-      | Nx_unary _ | Nx_binary _ | Nx_compare _ | Nx_where _ | Nx_cast _ ->
-          List.iter (fun (Packed e) -> walk e) (operands e.node)
+      | Nx_map (p, es) -> List.iter (fun (Packed e) -> walk e) (reads_of p es)
       | _ -> ()
     end
   in
   walk e;
   List.for_all (Hashtbl.mem seen) ids
 
-(* [lift env name ty ids f] is the expression that [f], the function of the lift
-   [name], computes under the tracer on the expressions of identities [ids],
-   traced at the type [ty], which its result must keep. A result that does not
-   read one of them would drop its nulls. *)
+(* [lift env name ty ids f] is the expression that [f i], the function of the
+   lift [name], computes under the interpretation [i] on the expressions of
+   identities [ids], traced at the type [ty], which its result must keep. A
+   result that does not read one of them would drop its nulls. *)
 let lift : type a c d.
     env ->
     string ->
     a Type.t ->
     int list ->
-    (unit -> (c, d) Nx.t) ->
+    (Nx.Prim.interpretation -> (c, d, Nx.host) Nx.t) ->
     (a, erased) t option =
  fun env name ty ids f ->
-  (* The tracer takes every operation [f] performs, so that a value [f] builds
-     from no operand is a literal of the expression. *)
-  let claims _ = true in
-  match traced (Nx.Op.intercept { run; claims } f) with
+  let trace i = traced i (f i) in
+  match Nx.Prim.interpret ~name:("Talon.Expr." ^ name) Extent rule trace with
   | exception Not_elementwise what ->
       report env "the function of %s %s." name what;
       None
@@ -1300,15 +1379,14 @@ let trace1 env (fn : fn) ty a =
   match dtype_of ty with
   | None -> no_dtype env "nx" ty
   | Some (Dtype dt) ->
-      let x = input dt ty a in
-      lift env "nx" ty [ a.id ] (fun () -> fn.f x)
+      lift env "nx" ty [ a.id ] (fun i -> fn.f (input i dt ty a))
 
 let trace2 env (fn : fn2) ty a b =
   match dtype_of ty with
   | None -> no_dtype env "nx2" ty
   | Some (Dtype dt) ->
-      let x = input dt ty a and y = input dt ty b in
-      lift env "nx2" ty [ a.id; b.id ] (fun () -> fn.f2 x y)
+      lift env "nx2" ty [ a.id; b.id ] (fun i ->
+          fn.f2 (input i dt ty a) (input i dt ty b))
 
 (* Expressions *)
 
@@ -1316,8 +1394,7 @@ let rec elab : type a s. env -> (a, s) t -> a elab =
  fun env e ->
   match e.node with
   | _ when Option.is_some e.typing -> err "Expr: %a is bound" pp e
-  | Nx_unary _ | Nx_binary _ | Nx_compare _ | Nx_where _ | Nx_cast _ ->
-      err "Expr: %a is bound" pp e
+  | Nx_map _ -> err "Expr: %a is bound" pp e
   | Handle (k, n) -> (
       match Schema.find env.schema n with
       | None ->
@@ -1868,11 +1945,7 @@ let map_node : type a. mapper -> a node -> a node =
   | Cast (ty, a) -> Cast (ty, map a)
   | Lift (fn, a) -> Lift (fn, map a)
   | Lift2 (fn, a, b) -> Lift2 (fn, map a, map b)
-  | Nx_unary (op, a) -> Nx_unary (op, map a)
-  | Nx_binary (op, a, b) -> Nx_binary (op, map a, map b)
-  | Nx_compare (op, a, b) -> Nx_compare (op, map a, map b)
-  | Nx_where (c, a, b) -> Nx_where (map c, map a, map b)
-  | Nx_cast (ty, a) -> Nx_cast (ty, map a)
+  | Nx_map (p, es) -> Nx_map (p, List.map (fun (Packed e) -> Packed (map e)) es)
   | Reduce (r, a) -> Reduce (r, map a)
   | Over { by; order; e } -> Over { by; order; e = map e }
   | Shift (k, a) -> Shift (k, map a)

@@ -13,10 +13,14 @@
 type t
 
 type layout =
-  | Fixed of { validity : Nx.bit_t option; values : Nx.packed }
-  | Varsize of { validity : Nx.bit_t option; offsets : Nx.int64_t; child : t }
+  | Fixed of { validity : Nx.host Nx.bit_t option; values : Nx.host Nx.packed }
+  | Varsize of {
+      validity : Nx.host Nx.bit_t option;
+      offsets : Nx.host Nx.int64_t;
+      child : t;
+    }
   | Children of {
-      validity : Nx.bit_t option;
+      validity : Nx.host Nx.bit_t option;
       length : int;
       fields : (string * t) list;
     }
@@ -28,11 +32,11 @@ val v : 'a Type.t -> 'a array -> t
 val of_options : 'a Type.t -> 'a option array -> t
 val values : 'a Kind.t -> t -> 'a array
 val options : 'a Kind.t -> t -> 'a option array
-val of_tensor : ?validity:Nx.bit_t -> ('a, 'b) Nx.t -> t
-val to_tensor : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx.t
-val validity : t -> Nx.bit_t option
-val ragged : ('a, 'b) Nx.dtype -> t -> ('a, 'b) Nx_ragged.t
-val of_ragged : ?validity:Nx.bit_t -> ('a, 'b) Nx_ragged.t -> t
+val of_tensor : ?validity:Nx.host Nx.bit_t -> ('a, 'b, Nx.host) Nx.t -> t
+val to_tensor : ('a, 'b) Nx.dtype -> t -> ('a, 'b, Nx.host) Nx.t
+val validity : t -> Nx.host Nx.bit_t option
+val ragged : ('a, 'b) Nx.dtype -> t -> ('a, 'b, Nx.host) Nx_ragged.t
+val of_ragged : ?validity:Nx.host Nx.bit_t -> ('a, 'b, Nx.host) Nx_ragged.t -> t
 val layout : t -> layout
 val of_layout : Type.any -> layout -> (t, int * string) result
 
@@ -50,9 +54,9 @@ val of_layout : Type.any -> layout -> (t, int * string) result
 
     An extension column has its storage's data. *)
 type data =
-  | Fixed of Nx.packed
-  | Bytes of (int, Nx.uint8_elt) Nx_ragged.t
-  | List of { offsets : Nx.int64_t; child : t }
+  | Fixed of Nx.host Nx.packed
+  | Bytes of (int, Nx.int8_unsigned_elt, Nx.host) Nx_ragged.t
+  | List of { offsets : Nx.host Nx.int64_t; child : t }
   | Fields of t list
 
 val data : t -> data
@@ -73,7 +77,7 @@ val known_zero : t -> bool
     [0]. It reads nothing: fast paths consult it, and the absence of a validity
     implies no null, not the reverse. *)
 
-val make : Type.any -> ?validity:Nx.bit_t -> length:int -> data -> t
+val make : Type.any -> ?validity:Nx.host Nx.bit_t -> length:int -> data -> t
 (** [make ty ?validity ~length d] is the column of type [ty] with values [d] and
     a null wherever [validity] is clear, its count not yet read. It checks that
     [d] is [ty]'s storage and that every part has [length] rows, and nothing
@@ -96,7 +100,7 @@ type mask
 (** The type for validities that columns share: bits, and their count read once
     for all of them. *)
 
-val mask : Nx.bit_t -> mask
+val mask : Nx.host Nx.bit_t -> mask
 (** [mask b] is the validity [b], its count not yet read. *)
 
 val restrict : mask -> t -> t
@@ -139,13 +143,13 @@ val sub : t -> offset:int -> length:int -> t
 
     Raises [Invalid_argument] if the rows are not rows of [c]. *)
 
-val gather : Nx.int64_t -> t -> t
+val gather : Nx.host Nx.int64_t -> t -> t
 (** [gather indices c] is the rows of [c] at the 1-D [indices], in order, with
     no range check: an index outside \[[0];[length c - 1]\] reads zero values, a
     clear validity bit, and an empty row of variable size. Its count is not yet
     read. *)
 
-val permute : Nx.int64_t -> t -> t
+val permute : Nx.host Nx.int64_t -> t -> t
 (** [permute p c] is [gather p c] for a permutation [p] of [c]'s rows. Its null
     count is [c]'s, read or not. *)
 

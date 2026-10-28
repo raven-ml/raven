@@ -180,7 +180,15 @@ let is_null nulls s r j =
   let len = Scan.len s r j in
   len = 0 || is_token (Scan.bytes s) (Scan.pos s r j) len nulls
 
-let tensor a = Nx.of_bigarray (Bigarray.genarray_of_array1 a)
+(* [tensor a] is the host value over [a]'s memory, which the decoder filled and
+   gives up: [Nx.of_bigarray] would copy it. *)
+let tensor (type v s) (a : (v, s, Bigarray.c_layout) Bigarray.Array1.t) :
+    (v, s, Nx.host) Nx.t =
+  match Nx.Dtype.of_bigarray_kind (Bigarray.Array1.kind a) with
+  | Some dt ->
+      let b = Bigarray.genarray_of_array1 a in
+      Nx.Repr.unsafe_of_array Nx.Host.v (Nx_array.of_bigarray dt b)
+  | None -> invalid_arg "Talon_csv.tensor: no dtype stores the bigarray's kind"
 
 (* A binary column has no value to check, so [of_layout] cannot fail. Its
    validity is the bits of [length] rows in the bytes [validity]. *)
@@ -704,7 +712,8 @@ let cells c =
       and o = Nx.to_array offsets
       and a =
         Bigarray.array1_of_genarray
-          (Nx.to_bigarray (Column.to_tensor Nx.uint8 child))
+          (Nx.to_bigarray Bigarray.int8_unsigned
+             (Column.to_tensor Nx.uint8 child))
       in
       fun i ->
         if Option.fold ~none:false ~some:(fun v -> not v.(i)) valid then None

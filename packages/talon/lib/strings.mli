@@ -14,23 +14,31 @@
     Rows are those of an [Nx_ragged.t]; a row outside [mask], a bit mask, where
     one is given, is not read. *)
 
-type bytes = (int, Nx.uint8_elt) Nx_ragged.t
+type bytes = (int, Nx.int8_unsigned_elt, Nx.host) Nx_ragged.t
 (** The type for rows of bytes. *)
 
 val reading :
   by:string ->
-  ('a, 'b) Nx.t ->
+  ('a, 'b, Nx.host) Nx.t ->
   ('c, 'd) Bigarray.kind ->
   (('c, 'd, Bigarray.c_layout) Bigarray.Array1.t -> 'e) ->
   'e
 (** [reading ~by x k f] is [f a] for [a] the bytes of a host buffer of [x]'s
     elements in C order, as elements of [k], under a read claim so that no
-    compiled call lends its memory while [f] reads it ({!Rig.Buffer.read}).
+    donation writes their memory while [f] reads it ({!Nx.Repr.read}).
 
-    Raises [Invalid_argument] starting with [by] if [x] cannot be read, as under
-    a compiled function. *)
+    Raises [Invalid_argument] starting with [by] if nx cannot read [x], as a
+    traced [x]. *)
 
-val utf_8 : by:string -> ?mask:Nx.bit_t -> bytes -> (int * string) option
+val adopt :
+  ('v, 's, Bigarray.c_layout) Bigarray.Array1.t -> ('v, 's, Nx.host) Nx.t
+(** [adopt a] is the host value over [a]'s memory, which the caller gives up: it
+    must not read, write or keep [a] afterwards ({!Nx.Repr.unsafe_of_array}).
+
+    Raises [Invalid_argument] if no dtype stores [a]'s kind. *)
+
+val utf_8 :
+  by:string -> ?mask:Nx.host Nx.bit_t -> bytes -> (int * string) option
 (** [utf_8 ~by b] is [None] if every row of [b] is valid UTF-8, and otherwise
     [Some (row, reason)] for the first row that is not, [reason] naming the
     first byte that starts no valid sequence, as in [invalid UTF-8 at byte 3].
@@ -40,12 +48,17 @@ val utf_8 : by:string -> ?mask:Nx.bit_t -> bytes -> (int * string) option
     Raises [Invalid_argument] starting with [by] if the bytes cannot be read, as
     under a compiled function. *)
 
-val length : by:string -> ?mask:Nx.bit_t -> bytes -> Nx.int64_t
+val length : by:string -> ?mask:Nx.host Nx.bit_t -> bytes -> Nx.host Nx.int64_t
 (** [length ~by b] is the number of Unicode scalar values of each row of [b],
     valid UTF-8, and [0] outside [mask]. *)
 
 val slice :
-  by:string -> ?mask:Nx.bit_t -> offset:int -> length:int -> bytes -> bytes
+  by:string ->
+  ?mask:Nx.host Nx.bit_t ->
+  offset:int ->
+  length:int ->
+  bytes ->
+  bytes
 (** [slice ~by ~offset ~length b] is the scalar values of each row of [b], valid
     UTF-8, at the positions [p] to [p + length - 1] that it has, [p] being
     [offset], or the row's length plus [offset] when [offset] is negative. A row
@@ -59,11 +72,17 @@ type pattern =
   | Suffix of string  (** At its end. *)
   | Pieces of string list  (** Anywhere, in order, without overlap. *)
 
-val matches : by:string -> ?mask:Nx.bit_t -> pattern -> bytes -> Nx.bit_t
+val matches :
+  by:string -> ?mask:Nx.host Nx.bit_t -> pattern -> bytes -> Nx.host Nx.bit_t
 (** [matches ~by p b] is [true] where [p] matches the row of [b], and [false]
     outside [mask]. *)
 
-val split : by:string -> ?mask:Nx.bit_t -> string -> bytes -> Nx.int64_t * bytes
+val split :
+  by:string ->
+  ?mask:Nx.host Nx.bit_t ->
+  string ->
+  bytes ->
+  Nx.host Nx.int64_t * bytes
 (** [split ~by sep b] is [(lists, pieces)]: the pieces of each row of [b], valid
     UTF-8, between the matches of [sep], valid UTF-8 and not empty, left to
     right without overlap, so a row of k matches has k + 1 pieces; row [i]'s
@@ -71,12 +90,17 @@ val split : by:string -> ?mask:Nx.bit_t -> string -> bytes -> Nx.int64_t * bytes
     outside [mask] has no piece. *)
 
 val replace :
-  by:string -> ?mask:Nx.bit_t -> sub:string -> into:string -> bytes -> bytes
+  by:string ->
+  ?mask:Nx.host Nx.bit_t ->
+  sub:string ->
+  into:string ->
+  bytes ->
+  bytes
 (** [replace ~by ~sub ~into b] is each row of [b], valid UTF-8, with each match
     of [sub], valid UTF-8 and not empty, replaced by [into], left to right
     without overlap. A row outside [mask] is empty. *)
 
-val compare : by:string -> bytes -> bytes -> Nx.int8_t
+val compare : by:string -> bytes -> bytes -> Nx.host Nx.int8_t
 (** [compare ~by b one] is [-1], [0] or [1] where the row of [b] orders before,
     as or after [one]'s row, [one] of one row: bytes compare as unsigned
     numbers, and a row orders before every row it is a prefix of. *)

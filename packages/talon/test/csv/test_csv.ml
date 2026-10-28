@@ -28,7 +28,7 @@ let all_columns t = List.map (column t) (names t)
 
 (* [float_text x] is the fewest digits that read back as the float64 [x], as nx
    writes them on every system. *)
-let float_text x = Nx.to_string (Nx.scalar Nx.float64 x)
+let float_text x = Format.asprintf "%a" (Nx.Dtype.pp_value Nx.float64) x
 
 let valid c =
   match Column.validity c with
@@ -704,7 +704,8 @@ let nulls =
           in
           let v = Option.get (Column.validity (column t "c1")) in
           equal (array bool) (Array.init 13 (fun i -> i <> 4)) (Nx.to_array v);
-          Rig.Buffer.read (Nx.to_buffer v) Bigarray.int8_unsigned (fun raw ->
+          Nx.Repr.read v @@ fun a ->
+          Rig.Buffer.read (Nx_array.buffer a) Bigarray.int8_unsigned (fun raw ->
               equal int 0 (raw.{1} lsr 5)));
       test "every row valid has no validity" (fun () ->
           let t = Error.get_ok (read (columns [ any Type.int64 ]) "1\n2\n") in

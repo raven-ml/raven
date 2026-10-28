@@ -879,13 +879,14 @@ let agrees p =
 
 (* Elements narrower than a byte are read from their storage, the bits past
    their last element included. *)
-let hex (type a b) (x : (a, b) Nx.t) =
-  let bits = Nx_dtype.Scalar.(bitsize (of_dtype (Nx.dtype x))) in
+let hex (type a b) (x : (a, b, Nx.host) Nx.t) =
+  let bits = Nx.Dtype.bits (Nx.dtype x) in
   let bytes =
     match Nx.dtype x with
     | Bool -> Nx.to_array (Nx.cast Nx.uint8 x)
     | _ when bits < 8 ->
-        Rig.Buffer.read (Nx.to_buffer x) Bigarray.int8_unsigned (fun raw ->
+        Nx.Repr.read x @@ fun a ->
+        Rig.Buffer.read (Nx_array.buffer a) Bigarray.int8_unsigned (fun raw ->
             Array.init (((Nx.numel x * bits) + 7) / 8) (fun i -> raw.{i}))
     | _ -> Nx.to_array (Nx.flatten (Nx.bitcast Nx.uint8 x))
   in
@@ -1675,6 +1676,8 @@ let unary_lifts =
         { f = (fun x -> Nx.where (Nx.less x (Nx.sub x x)) (Nx.neg x) x) } );
       ( "through float64",
         { f = (fun x -> Nx.cast (Nx.dtype x) (Nx.cast Nx.float64 x)) } );
+      ("fused multiply-add", { f = (fun x -> Nx.fma x x x) });
+      ("plus a created one", { f = (fun x -> Nx.add x (Nx.ones_like x)) });
     ]
 
 (* Lifts that take booleans, which nx computes through bytes. *)
@@ -1733,6 +1736,29 @@ let lifts =
       test "nx2 f x literal broadcasts the literal" (fun () ->
           rows_are Type.int16 [| Some 1; None; Some 0 |]
             (ints Expr.(nx2 maximum x (int 0)) t));
+      test "nx lifts a function nx computes with a fused multiply-add"
+        (fun () ->
+          let x = Col.float "f" in
+          let t =
+            v
+              [
+                ( "f",
+                  Column.of_options Type.float64 [| Some 1.; None; Some 10. |]
+                );
+              ]
+          in
+          let at f =
+            let e =
+              Nx.to_array (f (Nx.create Nx.float64 [| 2 |] [| 1.; 10. |]))
+            in
+            [| Some e.(0); None; Some e.(1) |]
+          in
+          let lifted e = Column.options Kind.float (result e t) in
+          rows_are Type.float64 (at Nx.acosh)
+            (lifted Expr.(nx { f = Nx.acosh } x));
+          rows_are Type.float64
+            (at (fun x -> Nx.hypot x x))
+            (lifted Expr.(nx2 { f2 = Nx.hypot } x x)));
       test "nx of literals alone is on every row" (fun () ->
           rows_are Type.int64
             [| Some 2; Some 2; Some 2 |]
@@ -2861,7 +2887,8 @@ let validity_bytes c =
   | None -> None
   | Some b ->
       let n = Nx.numel b in
-      Rig.Buffer.read (Nx.to_buffer b) Bigarray.int8_unsigned (fun raw ->
+      Nx.Repr.read b @@ fun a ->
+      Rig.Buffer.read (Nx_array.buffer a) Bigarray.int8_unsigned (fun raw ->
           Some (Array.init ((n + 7) / 8) (fun i -> raw.{i})))
 
 let under_nulls_cases =

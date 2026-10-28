@@ -7281,6 +7281,12 @@ thread.
 
 ### Talon
 
+- **Breaking:** `Column.of_tensor`, `to_tensor`, `validity`, `ragged`,
+  `of_ragged`, `layout`, `Talon.take`, `Talon.to_tensor`, `Kind.tensor`,
+  `Type.tensor` and `Expr.fn` use `Nx.host` values, as columns are host data.
+- `Expr.nx` and `nx2` run each map nx performs in one pass, so fused functions
+  such as `Nx.fma`, `Nx.hypot` and `Nx.acosh` lift. A refusal names the
+  function: `performs Nx.sum`.
 - `Talon_parquet` reads compressed pages with `lz`. A page that fails to
   decompress reports the kind of error (malformed, truncated, output too
   long, unsupported) and the byte of the page's compressed data where it

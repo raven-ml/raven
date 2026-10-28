@@ -10,11 +10,11 @@ type bigbytes = Meta.bigbytes
 type int64s = (int64, Bigarray.int64_elt, Bigarray.c_layout) A1.t
 
 type t =
-  | Fixed of { valid : Nx.bit_t option; values : Nx.packed }
+  | Fixed of { valid : Nx.host Nx.bit_t option; values : Nx.host Nx.packed }
   | Varsize of {
-      valid : Nx.bit_t option;
-      offsets : Nx.int64_t;
-      data : Nx.uint8_t;
+      valid : Nx.host Nx.bit_t option;
+      offsets : Nx.host Nx.int64_t;
+      data : Nx.host Nx.uint8_t;
     }
 
 external hybrid :
@@ -86,7 +86,17 @@ external gather_byte_arrays :
 
 let bytes n = A1.create Bigarray.int8_unsigned Bigarray.c_layout n
 let int64s n = A1.create Bigarray.int64 Bigarray.c_layout n
-let tensor a = Nx.of_bigarray (Bigarray.genarray_of_array1 a)
+
+(* [tensor a] is the host value over [a]'s memory, which the decoder filled and
+   gives up: [Nx.of_bigarray] would copy it. *)
+let tensor (type v s) (a : (v, s, Bigarray.c_layout) Bigarray.Array1.t) :
+    (v, s, Nx.host) Nx.t =
+  match Nx.Dtype.of_bigarray_kind (Bigarray.Array1.kind a) with
+  | Some dt ->
+      let b = Bigarray.genarray_of_array1 a in
+      Nx.Repr.unsafe_of_array Nx.Host.v (Nx_array.of_bigarray dt b)
+  | None ->
+      invalid_arg "Talon_parquet.tensor: no dtype stores the bigarray's kind"
 
 (* [zeros_for_bits n] is the bytes of a bit array of [n] elements, all clear,
    which its writers fill bit by bit. *)
@@ -100,10 +110,19 @@ let bits b n =
   Nx.slice [ Nx.R (0, n) ] (Nx.reshape [| -1 |] (Nx.bitcast Nx.bit (tensor b)))
 
 (* [reading x f] is [f b] for [b] the bytes of [x]'s elements in C order, under
-   a read claim. *)
+   a read claim: a view of its buffer where they lie there in order from a byte,
+   a copy's otherwise. *)
 let reading x f =
-  let b = Nx.Op.eval (Read { by = "Talon_parquet.source"; x }) in
-  Rig.Buffer.read b Bigarray.int8_unsigned f
+  Nx.Repr.read x @@ fun a ->
+  let l = Nx_array.layout a and dt = Nx_array.dtype a in
+  let n = Nx_array.Dtype.bytes dt (Nx_array.Layout.numel l) in
+  let first = Nx_array.Layout.offset l * Nx_array.Dtype.bits dt in
+  let a, first =
+    if Nx_array.Layout.is_contiguous l && first land 7 = 0 then (a, first / 8)
+    else (Nx_array.copy a, 0)
+  in
+  Rig.Buffer.read (Nx_array.buffer a) Bigarray.int8_unsigned (fun b ->
+      f (A1.sub b first n))
 
 let type_name (Type.Any t) = Format.asprintf "%a" Type.pp t
 
@@ -226,7 +245,7 @@ let ensure t n =
    widths, or byte strings as [offsets], one more than the values, and
    [data]. *)
 type stored =
-  | Values of Nx.packed
+  | Values of Nx.host Nx.packed
   | Strings of { offsets : int64s; data : bigbytes }
 
 let le b pos n =
@@ -430,7 +449,7 @@ let convert (type a) ~row_group (l : Leaf.t) (ty : a Type.t) t =
 (* [gather s idx] is the values of [s] at the positions [idx]. *)
 let gather s (idx : int64s) =
   match s with
-  | Values (P v) -> Values (P (Nx.take ~indices:(tensor idx) v))
+  | Values (P v) -> Values (P (Nx.take (tensor idx) v))
   | Strings { offsets; data } ->
       let m = A1.dim idx in
       let out = int64s (m + 1) in
@@ -455,16 +474,14 @@ let kernel_error = function
 
 (* [spread_values v ~valid ~rows] is the values [v] at the rows the bit array
    [valid] marks, zero under the others, and the number of values it took. *)
-let spread_values (type a b) (v : (a, b) Nx.t) ~valid ~rows =
+let spread_values (type a b) (v : (a, b, Nx.host) Nx.t) ~valid ~rows =
   let dt = Nx.dtype v in
-  let s = Nx_dtype.Scalar.of_dtype dt in
-  let out = Nx_array.Elements.create dt rows in
+  let out = Nx_array.create Rig.host dt [| rows |] in
   let taken =
-    Rig.Buffer.write out Bigarray.int8_unsigned @@ fun dst ->
-    reading v (fun src ->
-        spread_fixed valid src (Nx_dtype.Scalar.bitsize s) rows dst)
+    Rig.Buffer.write (Nx_array.buffer out) Bigarray.int8_unsigned @@ fun dst ->
+    reading v (fun src -> spread_fixed valid src (Nx.Dtype.bits dt) rows dst)
   in
-  (Nx.of_buffer dt [| rows |] out, taken)
+  (Nx.Repr.unsafe_of_array Nx.Host.v out, taken)
 
 (* [spread s ~valid ~rows ~present] puts the [present] values of [s] at the rows
    the bit array [valid] marks, zero under the others. *)
@@ -475,7 +492,7 @@ let spread ~row_group s ~valid ~rows ~present =
     | Strings { offsets; data } ->
         Varsize { valid = None; offsets = tensor offsets; data = tensor data }
   else
-    let mask = bits valid rows in
+    (* [valid] becomes the mask's memory only once the kernels have read it. *)
     let took n =
       if n < 0 then Meta.fail ~row_group "the spread: %s" (kernel_error n);
       assert (n = present)
@@ -484,10 +501,11 @@ let spread ~row_group s ~valid ~rows ~present =
     | Values (P v) ->
         let values, n = spread_values v ~valid ~rows in
         took n;
-        Fixed { valid = Some mask; values = P values }
+        Fixed { valid = Some (bits valid rows); values = P values }
     | Strings { offsets; data } ->
         let o = int64s (rows + 1) in
         took (spread_offsets valid offsets rows o);
+        let mask = bits valid rows in
         Varsize { valid = Some mask; offsets = tensor o; data = tensor data }
 
 (* [narrow ~row_group ty c] is [c], whose values are int32s, in the storage of

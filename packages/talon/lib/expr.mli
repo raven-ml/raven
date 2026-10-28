@@ -57,11 +57,15 @@ val coalesce : ('a, 's) t list -> ('a, 's) t
 val is_in : 'a list -> ('a, 's) t -> (bool, 's) t
 val cast : 'b Type.t -> ('a, 's) t -> ('b, 's) t
 
-type fn = { f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
+type fn = { f : 'a 'b. ('a, 'b, Nx.host) Nx.t -> ('a, 'b, Nx.host) Nx.t }
 
 val nx : fn -> ('a, 's) t -> ('a, 's) t
 
-type fn2 = { f2 : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
+type fn2 = {
+  f2 :
+    'a 'b.
+    ('a, 'b, Nx.host) Nx.t -> ('a, 'b, Nx.host) Nx.t -> ('a, 'b, Nx.host) Nx.t;
+}
 
 val nx2 : fn2 -> ('a, 's) t -> ('a, 's) t -> ('a, 's) t
 val rows : (int, agg) t
@@ -221,13 +225,11 @@ type 'a node =
   | Cast : 'a Type.t * ('b, 's) t -> 'a node
   | Lift : fn * ('a, 's) t -> 'a node
   | Lift2 : fn2 * ('a, 's0) t * ('a, 's1) t -> 'a node
-  | Nx_unary : Nx_backend.unary * ('a, 's) t -> 'a node
-      (** An elementwise nx operation that a lift performs, with nx's semantics,
-          as are the four below. *)
-  | Nx_binary : Nx_backend.binary * ('a, 's0) t * ('a, 's1) t -> 'a node
-  | Nx_compare : Nx_backend.compare * ('a, 's0) t * ('a, 's1) t -> bool node
-  | Nx_where : (bool, 's0) t * ('a, 's1) t * ('a, 's2) t -> 'a node
-  | Nx_cast : 'a Type.t * ('b, 's) t -> 'a node
+  | Nx_map : Nx_kernel.Prog.t * packed list -> 'a node
+      (** [Nx_map (p, es)] is a map that a lift performs, with nx's semantics:
+          the program [p] of one output, run once over the rows, reading its
+          operand [j] from [es]'s expression [j] stored in [p]'s operand dtype
+          [j]. *)
   | Reduce : ('a, 'b) reduction * ('a, 's) t -> 'b node
   | Over : { by : string list; order : Order.t list; e : ('a, 's) t } -> 'a node
   | Shift : int * ('a, 's) t -> 'a node
@@ -282,9 +284,12 @@ val same : ('a, 's0) t -> ('b, 's1) t -> bool
     expression, infers the type of each of its values, and rewrites it into a
     {e bound} expression, every node of which has a {!typing} that follows from
     its operands' alone: each {!Lift} and {!Lift2} is replaced by the operations
-    it records: [f] runs once under [Nx.Op.intercept] on a traced value of the
-    operand's dtype, and the constants it creates become literals. An [f] that
-    performs any other operation on its argument, or computes in a dtype that
+    it records: [f] runs once under an [Nx.Prim] interpretation that reaches
+    every operation of its extent, on a traced host value of the operand's
+    dtype. Each map it performs becomes one {!Nx_map} node that runs the map's
+    program, and the constants it reads or [f] creates become literal operands.
+    An [f] that performs any other operation on its argument, reads a value
+    another interpretation traces, or gives or reads a constant of a dtype that
     talon has no type for, is a problem. *)
 
 val bind_predicate :

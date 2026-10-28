@@ -135,13 +135,14 @@ let equality =
 
 (* Elements narrower than a byte are read from their storage, the bits past
    their last element included. *)
-let hex (type a b) (x : (a, b) Nx.t) =
-  let bits = Nx_dtype.Scalar.(bitsize (of_dtype (Nx.dtype x))) in
+let hex (type a b) (x : (a, b, Nx.host) Nx.t) =
+  let bits = Nx.Dtype.bits (Nx.dtype x) in
   let bytes =
     match Nx.dtype x with
     | Bool -> Nx.to_array (Nx.flatten (Nx.cast Nx.uint8 x))
     | _ when bits < 8 ->
-        Rig.Buffer.read (Nx.to_buffer x) Bigarray.int8_unsigned (fun raw ->
+        Nx.Repr.read x @@ fun a ->
+        Rig.Buffer.read (Nx_array.buffer a) Bigarray.int8_unsigned (fun raw ->
             Array.init (((Nx.numel x * bits) + 7) / 8) (fun i -> raw.{i}))
     | _ -> Nx.to_array (Nx.flatten (Nx.bitcast Nx.uint8 x))
   in
@@ -192,7 +193,7 @@ let rec view c =
     | Fixed { validity; values = P x } ->
         let ends i _ = if i = 0 then (1, 1) else (0, 0) in
         let padded =
-          Nx.pad (Array.mapi ends (Nx.shape x)) (Nx_dtype.one (Nx.dtype x)) x
+          Nx.pad (Array.mapi ends (Nx.shape x)) (Nx.Dtype.one (Nx.dtype x)) x
         in
         let values = Nx.P (Nx.slice [ Nx.R (1, -1) ] padded) in
         Fixed { validity = shifted_bits validity; values }
@@ -321,7 +322,7 @@ let refusals =
     @@ __POS_OF__ {| Talon.take: index -1 of a table of 2 rows |};
     refuse "take of 2-D indices" (fun () ->
         take (Nx.zeros Nx.int64 [| 1; 1 |]) numbers)
-    @@ __POS_OF__ {| Talon.take: indices of shape [1,1], not 1-D |};
+    @@ __POS_OF__ {| Talon.take: indices of shape [1; 1], not 1-D |};
     refuse "to_tensor of text" (fun () -> to_tensor Nx.float32 [ "s" ] numbers)
     @@ __POS_OF__
          {| Talon.to_tensor: "s" is string, neither numeric nor boolean |};

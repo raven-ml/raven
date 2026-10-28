@@ -303,7 +303,7 @@ let binding () =
 
     derive: 1 problem
       "k" := nx <fn> f
-        the function of nx performs sum, which is not elementwise.
+        the function of nx performs Nx.sum, which is not elementwise.
       input (13 columns): x8 int8, u8 uint8, f float64, f32 float32, n int64, g string, d date, b bool, …
 
     derive: 1 problem

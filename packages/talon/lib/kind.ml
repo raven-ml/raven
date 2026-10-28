@@ -16,7 +16,7 @@ type _ t =
   | Span : Time.span t
   | List : 'a t -> 'a array t
   | Record : record t
-  | Tensor : ('a, 'b) Nx.dtype -> ('a, 'b) Nx.t t
+  | Tensor : ('a, 'b) Nx.dtype -> ('a, 'b, Nx.host) Nx.t t
   | Ext : ext t
 
 and record = { fields : (string * field) iarray }
@@ -52,7 +52,7 @@ let rec equal_witness : type a b. a t -> b t -> (a, b) Stdlib.Type.eq option =
   | List e0, List e1 -> (
       match equal_witness e0 e1 with Some Equal -> Some Equal | None -> None)
   | Tensor dt0, Tensor dt1 -> (
-      match Nx_dtype.equal_witness dt0 dt1 with
+      match Nx.Dtype.equal_witness dt0 dt1 with
       | Some Equal -> Some Equal
       | None -> None)
   | _ -> None
@@ -77,4 +77,4 @@ let rec pp : type a. Format.formatter -> a t -> unit =
   | Record -> Format.pp_print_string ppf "record"
   | Ext -> Format.pp_print_string ppf "ext"
   | List e -> Format.fprintf ppf "list[%a]" pp e
-  | Tensor dt -> Format.fprintf ppf "tensor[%s]" (Nx_dtype.to_string dt)
+  | Tensor dt -> Format.fprintf ppf "tensor[%s]" (Nx.Dtype.name dt)

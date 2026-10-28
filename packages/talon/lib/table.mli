@@ -18,8 +18,8 @@ val batches : t -> t list
 val schema : t -> Schema.t
 val rows : t -> int
 val column : t -> string -> Column.t
-val take : Nx.int64_t -> t -> t
-val to_tensor : ('a, 'b) Nx.dtype -> string list -> t -> ('a, 'b) Nx.t
+val take : Nx.host Nx.int64_t -> t -> t
+val to_tensor : ('a, 'b) Nx.dtype -> string list -> t -> ('a, 'b, Nx.host) Nx.t
 val equal : t -> t -> bool
 
 (** {1:batches Batches} *)

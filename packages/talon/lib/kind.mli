@@ -29,7 +29,7 @@ type _ t =
   | Span : Time.span t
   | List : 'a t -> 'a array t
   | Record : record t
-  | Tensor : ('a, 'b) Nx.dtype -> ('a, 'b) Nx.t t
+  | Tensor : ('a, 'b) Nx.dtype -> ('a, 'b, Nx.host) Nx.t t
   | Ext : ext t  (** The kind of every extension type. It reads nothing. *)
 
 and record = { fields : (string * field) iarray }
@@ -57,7 +57,7 @@ val date : Time.date t
 val instant : Time.instant t
 val span : Time.span t
 val list : 'a t -> 'a array t
-val tensor : ('a, 'b) Nx.dtype -> ('a, 'b) Nx.t t
+val tensor : ('a, 'b) Nx.dtype -> ('a, 'b, Nx.host) Nx.t t
 val provably_equal : 'a t -> 'b t -> ('a, 'b) Stdlib.Type.eq option
 
 val equal_witness : 'a t -> 'b t -> ('a, 'b) Stdlib.Type.eq option

@@ -70,7 +70,10 @@ val outputs :
     any. *)
 
 val predicate :
-  Schema.t -> (bool, Expr.row) Expr.t -> frame -> Nx.bit_t * failure option
+  Schema.t ->
+  (bool, Expr.row) Expr.t ->
+  frame ->
+  Nx.host Nx.bit_t * failure option
 (** [predicate s p] compiles [p]; on a frame it is [true] at the rows where [p]
     is [true], and [false] where it is [false] or null. *)
 

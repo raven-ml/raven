@@ -14,9 +14,9 @@ let float x =
    axis. *)
 let parts re im = Nx.stack ~axis:(Nx.ndim re) [ float re; float im ]
 
-let element : type a b. (a, b) Nx.t -> Nx.uint64_t =
+let element : type a b. (a, b, Nx.host) Nx.t -> Nx.host Nx.uint64_t =
  fun x ->
-  match (Nx_dtype.kind (Nx.dtype x), Nx.dtype x) with
+  match (Nx.Dtype.kind (Nx.dtype x), Nx.dtype x) with
   | Float, _ -> float x
   | _, Complex64 -> parts (Nx.real Nx.float32 x) (Nx.imag Nx.float32 x)
   | _, Complex128 -> parts (Nx.real Nx.float64 x) (Nx.imag Nx.float64 x)
@@ -67,15 +67,15 @@ let identity = function
 (* [of_ids ids] is the groups that [ids], numbered in order of first appearance
    from 0, give their rows. A scatter keeps the last update in index order, so
    over the rows reversed it keeps each group's first row. *)
-let of_ids ids : Nx.groups =
+let of_ids ids : Nx.host Nx.groups =
   let n = Nx.dim 0 ids in
   let k = if n = 0 then 0 else Int64.to_int (Nx.item [] (Nx.max ids)) + 1 in
   let first =
-    Nx.scatter ~axis:0 ~indices:(Nx.flip ids)
-      ~values:(Nx.flip (Nx.arange Nx.int64 0 n 1))
+    Nx.scatter ~axis:0 (Nx.flip ids)
+      (Nx.flip (Nx.arange Nx.int64 0 n 1))
       (Nx.zeros Nx.int64 [| k |])
-  and counts = Nx.reduce_segments `Add ~segments:k ids (Nx.ones_like ids) in
-  { ids; first; counts }
+  and counts = Nx.reduce_segments Nx.Add ~segments:k ids (Nx.ones_like ids) in
+  { ids; first; counts; count = Nx.scalar Nx.int64 (Int64.of_int k) }
 
 let groups cs =
   match cs with

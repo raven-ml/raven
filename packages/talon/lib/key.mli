@@ -34,12 +34,12 @@ type use =
   | Identity  (** Words equal iff the values are the same key. *)
   | Order  (** Words ordered as talon's total order orders the values. *)
 
-val value : use -> Column.t -> Nx.uint64_t
+val value : use -> Column.t -> Nx.host Nx.uint64_t
 (** [value u c] is the value word of each row of [c], zero under a null. Its
     unsigned order is talon's total order for [Order]. For a fixed-width column
     the two uses give the same words. *)
 
-val identity : Column.t list -> Nx.uint64_t
+val identity : Column.t list -> Nx.host Nx.uint64_t
 (** [identity cs] is the [[n; w]] matrix of the keys of the rows of [cs],
     columns of [n] rows: two rows are equal iff their values are the same keys
     in every column, by key identity ({!Type.compare_value}, null being one more
@@ -47,14 +47,14 @@ val identity : Column.t list -> Nx.uint64_t
 
     Raises [Invalid_argument] if [cs] is empty. *)
 
-val groups : Column.t list -> Nx.groups
+val groups : Column.t list -> Nx.host Nx.groups
 (** [groups cs] is [Nx.unique (identity cs)]: the rows of [cs] grouped by their
     keys, numbered in order of first appearance. A single compound column
     without a null is grouped once, its code being those numbers already.
 
     Raises [Invalid_argument] if [cs] is empty. *)
 
-val order : (Column.t * Order.t) list -> Nx.uint64_t
+val order : (Column.t * Order.t) list -> Nx.host Nx.uint64_t
 (** [order ks] is the [[n; w]] matrix whose rows, compared as unsigned words in
     lexicographic order, order as the keys [ks] order their columns: each column
     by talon's total order, its value word complemented for a descending key,

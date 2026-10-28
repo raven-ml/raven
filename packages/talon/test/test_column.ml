@@ -19,6 +19,13 @@ let rows ty = array (option (G.witness ty))
 let nulls vs = List.length (List.filter Option.is_none (Array.to_list vs))
 let rejects f = raises_match Exn.invalid_arg f
 
+(* [shares x y] is [true] iff [x] and [y] read the same memory. A column holds a
+   value of its own over a tensor's memory, so that a donation of the tensor
+   leaves it. *)
+let shares x y =
+  let buffer v = Nx_array.buffer (Option.get (Nx.Repr.array v)) in
+  Rig.Buffer.overlaps (buffer x) (buffer y)
+
 let message f =
   match f () with _ -> fail "no exception" | exception Invalid_argument m -> m
 
@@ -217,8 +224,7 @@ let storage =
           let x = Nx.create Nx.bit [| 3 |] [| true; false; true |] in
           let c = Column.of_tensor x in
           equal any_w (Any Type.bool) (Column.type_ c);
-          satisfies ~claim:"the same tensor" pass
-            (fun y -> y == x)
+          satisfies ~claim:"the tensor's memory" pass (shares x)
             (Column.to_tensor Nx.bit c));
       prop "of_tensor of a 1-D bool tensor is the bool column of its values"
         (Gen.pair (Gen.array Gen.bool) (Gen.int_range 0 9))
@@ -238,10 +244,9 @@ let storage =
           equal any_w (Any (Type.tensor Nx.float32 [| 2 |])) (Column.type_ c);
           equal (array float_exact) [| 1.; 2.; 3.; 4. |]
             (Nx.to_array (Column.to_tensor Nx.float32 c)));
-      test "to_tensor of of_tensor is the tensor itself" (fun () ->
+      test "to_tensor of of_tensor reads the tensor's memory" (fun () ->
           let x = Nx.create Nx.float64 [| 2 |] [| 1.; 2. |] in
-          satisfies ~claim:"the same tensor" pass
-            (fun y -> y == x)
+          satisfies ~claim:"the tensor's memory" pass (shares x)
             (Column.to_tensor Nx.float64 (Column.of_tensor x)));
       test "of_tensor reads strided, broadcast and transposed views" (fun () ->
           let x = Nx.create Nx.int32 [| 6 |] [| 0l; 1l; 2l; 3l; 4l; 5l |] in
@@ -500,7 +505,7 @@ let rec pp_layout ppf c =
         fields
 
 let same_values (Nx.P x) (Nx.P y) =
-  match Nx_dtype.equal_witness (Nx.dtype x) (Nx.dtype y) with
+  match Nx.Dtype.equal_witness (Nx.dtype x) (Nx.dtype y) with
   | Some Equal ->
       Nx.shape x = Nx.shape y && compare (Nx.to_array x) (Nx.to_array y) = 0
   | None -> false
@@ -717,9 +722,9 @@ let layouts =
             Column.of_layout (Any Type.date)
               (Fixed { validity = None; values = P x })
           in
-          satisfies ~claim:"x itself"
+          satisfies ~claim:"x's memory"
             (Testable.make ~pp:Nx.pp ~equal:( == ))
-            (fun y -> y == x)
+            (shares x)
             (Column.to_tensor Nx.int32 (require_ok c)));
       unheld_cases;
     ]
@@ -744,7 +749,7 @@ let layout_refusals =
       (of_layout (tensor Nx.int8 [| 3 |])
          (Fixed { validity = None; values = P (Nx.zeros Nx.int8 [| 2; 2 |]) }))
     @@ __POS_OF__
-         {| Column.of_layout: int8 values of shape [2,2] do not lay out tensor[int8, 3] |};
+         {| Column.of_layout: int8 values of shape [2; 2] do not lay out tensor[int8, 3] |};
     refuse "a scalar for a scalar type"
       (of_layout int8
          (Fixed { validity = None; values = P (Nx.scalar Nx.int8 1) }))
@@ -758,7 +763,7 @@ let layout_refusals =
          (Varsize
             { validity = None; offsets = Nx.zeros Nx.int64 [| 1; 1 |]; child }))
     @@ __POS_OF__
-         {| Column.of_layout: offsets of shape [1,1], not 1-D with an entry |};
+         {| Column.of_layout: offsets of shape [1; 1], not 1-D with an entry |};
     refuse "no offsets" (of_layout (list int8) (varsize [||] child))
     @@ __POS_OF__
          {| Column.of_layout: offsets of shape [0], not 1-D with an entry |};
@@ -865,7 +870,8 @@ let ragged_gen (type a b) (dt : (a, b) Nx.dtype) (v : a Gen.t) =
   in
   Nx_ragged.v ~offsets:(n offsets) (Nx.create dt [| total |] values)
 
-let ragged_w (type a b) (eq : a -> a -> bool) : (a, b) Nx_ragged.t Testable.t =
+let ragged_w (type a b) (eq : a -> a -> bool) :
+    (a, b, Nx.host) Nx_ragged.t Testable.t =
   let rows r =
     let o = Nx.to_array (Nx_ragged.offsets r)
     and v = Nx.to_array (Nx_ragged.values r) in
@@ -930,11 +936,11 @@ let ragged =
               [| Some [| 1; 2 |]; Some [||] |]
               (Column.options Kind.(list int) c);
             let back = Column.ragged Nx.int32 c in
-            satisfies ~claim:"the same values" pass
-              (fun v -> v == Nx_ragged.values r)
+            satisfies ~claim:"the values' memory" pass
+              (shares (Nx_ragged.values r))
               (Nx_ragged.values back);
-            satisfies ~claim:"the same offsets" pass
-              (fun o -> o == Nx_ragged.offsets r)
+            satisfies ~claim:"the offsets' memory" pass
+              (shares (Nx_ragged.offsets r))
               (Nx_ragged.offsets back));
         test "of_ragged's validity makes rows null" (fun () ->
             let r =
@@ -1129,12 +1135,60 @@ let nulls_cases =
           equal int 1 (Column.null_count c);
           let t = Error.get_ok Query.(run (of_table (v [ ("x", c) ]))) in
           let b = Option.get (Column.validity (column t "x")) in
-          Rig.Buffer.read (Nx.to_buffer b) Bigarray.int8_unsigned (fun raw ->
+          Nx.Repr.read b @@ fun a ->
+          Rig.Buffer.read (Nx_array.buffer a) Bigarray.int8_unsigned (fun raw ->
               equal int 0 (raw.{1} lsr 5)));
       test "run drops a validity with no null" (fun () ->
           let c = column_of [| true; true |] in
           let t = Error.get_ok Query.(run (of_table (v [ ("x", c) ]))) in
           is_none (Column.validity (column t "x")));
+    ]
+
+(* Donation *)
+
+(* [consume x] donates [x] to an addition, whose consumer may write its sum over
+   [x]'s memory. *)
+let consume x = ignore (Nx.add (Nx.donate x) x)
+let floats () = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |]
+let bits () = Nx.cast Nx.bit (Nx.create Nx.bool [| 3 |] [| true; false; true |])
+let expected = [| Some 1.; None; Some 3. |]
+let holds c = equal (rows Type.float32) expected (Column.options Kind.float c)
+
+let donation_cases =
+  group "Donation"
+    [
+      test "donating the tensor and validity a column took leaves the column"
+        (fun () ->
+          let x = floats () and v = bits () in
+          let c = Column.of_tensor ~validity:v x in
+          consume x;
+          ignore (Nx.logical_not (Nx.donate v));
+          holds c);
+      test "donating the tensors a column gave leaves the column" (fun () ->
+          let c = Column.of_tensor ~validity:(bits ()) (floats ()) in
+          ignore (Nx.logical_not (Nx.donate (Option.get (Column.validity c))));
+          (match Column.layout c with
+          | Fixed { values = P x; _ } -> consume x
+          | _ -> fail "a fixed layout");
+          holds c;
+          let d = Column.of_tensor (floats ()) in
+          consume (Column.to_tensor Nx.float32 d);
+          equal (array float_exact) [| 1.; 2.; 3. |]
+            (Column.values Kind.float d));
+      test "donating the ragged array a list column took or gave leaves it"
+        (fun () ->
+          let offsets = Nx.create Nx.int64 [| 3 |] [| 0L; 2L; 3L |] in
+          let r = Nx_ragged.v ~offsets (floats ()) in
+          let c = Column.of_ragged r in
+          consume (Nx_ragged.values r);
+          consume (Nx_ragged.offsets r);
+          let given = Column.ragged Nx.float32 c in
+          consume (Nx_ragged.values given);
+          consume (Nx_ragged.offsets given);
+          equal
+            (array (array float_exact))
+            [| [| 1.; 2. |]; [| 3. |] |]
+            (Column.values (Kind.list Kind.float) c));
     ]
 
 let () =
@@ -1151,4 +1205,5 @@ let () =
          layouts;
          layout_refusal_cases;
          nulls_cases;
+         donation_cases;
        ])
