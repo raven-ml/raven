@@ -174,7 +174,13 @@ let log = Lower_real.unary Log
    [c + log Σ exp (x - c)], [c] the maximum [m] where finite and [0] elsewhere,
    so that no term is shifted by an infinity. The sum is [0] for no term or
    terms all [-∞], [+∞] with a [+∞] term and a NaN with a NaN term, so the
-   result is [-∞], [+∞] or a NaN there. *)
+   result is [-∞], [+∞] or a NaN there.
+
+   For the bound in [lower_reduce.mli], an error of [E] ulps is a relative [(2E
+   + 1) u]. [s] takes [(n - 1) u] from its sum, [(2E + 1) u] from [exp], and at
+   most [(n - 1) u / e] from the rounding of the shifts [x - c], as [|x - c| exp
+   (x - c) <= 1/e], so [1 + 1/e < 1.37]; its log, of a sum within [[1, n]], adds
+   [(2L + 1) u ln n]. *)
 let logsumexp f axes x =
   let c = shift (List.hd (fold Max f axes [ x ])) in
   let s = List.hd (fold Sum f axes [ exp (Ops.sub x (back x axes c)) ]) in
@@ -186,9 +192,11 @@ let logsumexp f axes x =
    (Chan, Golub and LeVeque, "Algorithms for computing the sample variance",
    1983): [(Σ d² - Σ d (Σ d / n)) / n], [d = x - mean]. [Σ (x - c)² - (Σ (x -
    c))² / n] is [Σ (x - μ)²] for any [c], so the mean's rounding reaches the
-   variance at second order. [Σ d (Σ d / n)] is at most [Σ d²], so it
-   overflows only where [Σ d²] does, which gives [+∞]. Rounding may make the
-   difference negative: [+0]. A NaN mean makes every [d] a NaN. *)
+   variance at second order. [Σ d (Σ d / n)] is at most [Σ d²], so it overflows
+   only where [Σ d²] does, which gives [+∞]. Where rounding makes the difference
+   negative, the variance is [+0]. A NaN mean makes every [d] a NaN. Since the
+   correction removes the mean's error to second order, the mean's bound [B]
+   enters the variance's only through its products with [u]. *)
 let moments f axes n x =
   let sum u = List.hd (fold Sum f axes [ u ]) in
   let s = sum x in
@@ -348,7 +356,14 @@ let rec network axis combine xs =
     List.map2 interleave evens q
 
 (* A Logsumexp state is a maximum [m] and a sum [s] of [exp (x - c)], [c] being
-   [m] where finite and [0] elsewhere; a term [x] is [(x, exp (x - c))]. *)
+   [m] where finite and [0] elsewhere; a term [x] is [(x, exp (x - c))].
+
+   For the scan's bound in [lower_reduce.mli], a combination rescales each sum
+   by an [exp], within [(2E + 1) u], or by [exp 0 = 1] exactly, multiplies,
+   within [u], and adds, within [u]. Along a term's path, the rescales'
+   arguments round within [u (X - x)], where [X] is the terms' maximum, which
+   moves [s] by a relative [u ln N] at most. [c + log s] adds the [log]'s [(2L +
+   1) u ln N] and its own rounding. *)
 let lse_terms x = [ x; exp (Ops.sub x (shift x)) ]
 
 let lse_combine a b =
@@ -361,9 +376,15 @@ let lse_combine a b =
   | _ -> invalid_arg "Lower_reduce: a state of another arity"
 
 (* A Moments state is a mean [μ] of terms shifted by [c], a sum [S] of squared
-   deviations and a count [n], combined by Chan, Golub and LeVeque's (1.5b),
-   the mean weighted; [c] is the slice's first term where finite, else [0],
-   and a term [x] is [(x - c, 0, 1)]. *)
+   deviations and a count [n], combined by Chan, Golub and LeVeque's (1.5b), the
+   mean weighted; [c] is the slice's first term where finite, else [0], and a
+   term [x] is [(x - c, 0, 1)].
+
+   For the scan's bound in [lower_reduce.mli], a combination's mean errs by its
+   states' largest error and [3 u R] at most, its sum by a relative [7 u], and
+   the means' errors reach the variance through each [δ²], [δ] the difference of
+   the states' means. At each depth the Cauchy-Schwarz inequality bounds their
+   weighted sum by [N √V / 2]. *)
 let moments_combine a b =
   match (a, b) with
   | [ ma; sa; na ], [ mb; sb; nb ] ->
@@ -385,6 +406,8 @@ let scan r axis ~carry ~src dt x =
       refuse m ~scan:true src;
       [ out (running m axis ~carry c xs) ]
   | Arg e ->
+      (* The running extreme by its Max or Min scan, and each position as the
+         last position up to it where the extreme changes. *)
       let m = of_extreme e in
       refuse m ~scan:true src;
       let ys = running m axis ~carry:None c xs in
@@ -408,7 +431,12 @@ let scan r axis ~carry ~src dt x =
    order, [a]'s free axes, [b]'s, its contracted axes in pair order; [a] of
    extent [1] along [J] and [b] along [I], expanded. A REDUCE Add over [K] sums
    the products; tolk lays out the reduce of a product itself. A complex product
-   is [(ar br - ai bi) + i (ar bi + ai br)]. *)
+   is [(ar br - ai bi) + i (ar bi + ai br)].
+
+   For the bound in [lower_reduce.mli], tolk may fuse a product into the sum
+   that takes it, and an element times its scale rounds once, so a float result
+   takes [γ(K + 1 + s)]. A complex part takes two products and a difference or a
+   sum per term, so [γ(K + 2)]. *)
 
 type scale = Exponent of Ops.t | Value of D.any * Ops.t
 type operand = { dtype : D.any; node : Ops.t; scale : scale option }
