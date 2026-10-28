@@ -1209,6 +1209,9 @@ and trace_in ?(totals = [||]) ?asked kind ~name inputs f =
             Effect.Deep.continue k (Array.map (Loops.filled ~zero:false) forms))
     | Staging, Some _ when st.kind = Jit || st.kind = Staged ->
         Some (fun k -> Effect.Deep.continue k true)
+    (* No differentiation around the tracer runs a custom rule called inside
+       it: the rule may capture stand-ins, which its traced call records. *)
+    | Rule _, Some _ -> Some (fun k -> Effect.Deep.continue k None)
     (* A traced program threads the totals its extent adds to. *)
     | Running (t, f), Some i when st.kind <> Tape ->
         Some (fun k -> Effect.Deep.continue k (Some (thread st i t f)))

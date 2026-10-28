@@ -5,8 +5,10 @@
 
 (* Custom differentiation rules: a rule replaces the derivative of its function
    in both modes and at every order, a custom_vjp has no forward derivative, the
-   rule is traced at the call, and compiled functions apply it as eager code
-   does. Deliberately wrong rules show which derivative is used. *)
+   rule runs on its arguments' values where no transformation but the
+   differentiation applying it tracks them and is traced elsewhere, and compiled
+   functions apply it as eager code does. Deliberately wrong rules show which
+   derivative is used. *)
 
 open Windtrap
 module Rune = Rune2
@@ -98,8 +100,10 @@ let vjp_tests =
             tensor
             (fun p -> (Nx.sum (List.hd p), fun ct -> [ ct ]))
         in
+        let args = [ v3 (); vec [| 1. |] ] in
+        exact ~msg:"no differentiation applies it" (Nx.sum (v3 ())) (f args);
         invalid ~sub:"Rune.custom_vjp: the root: length" (fun () ->
-            f [ v3 (); vec [| 1. |] ]));
+            Rune.grad Nx.Ptree.(list tensor) (fun p -> f p) args));
     test "a structured result" (fun () ->
         let f =
           Rune.custom_vjp tensor pair (fun x ->
@@ -192,10 +196,14 @@ let jvp_tests =
           Rune.custom_jvp tensor tensor (fun x ->
               (Nx.sin x, fun dx -> Nx.sum dx))
         in
-        invalid
-          ~sub:
-            "Rune.custom_jvp: the root: shape [] in the tangent map's result, \
-             [3] in the result" (fun () -> f (v3 ())));
+        let message =
+          "Rune.custom_jvp: the root: shape [] in the tangent map's result, \
+           [3] in the result"
+        in
+        exact ~msg:"no differentiation applies it" (Nx.sin (v3 ())) (f (v3 ()));
+        invalid ~sub:message (fun () -> Rune.jvp' f (v3 ()) (along ()));
+        invalid ~sub:message (fun () ->
+            Rune.grad' (fun x -> Nx.sum (f x)) (v3 ())));
     test "under reverse mode the tangent map is transposed" (fun () ->
         near ~msg:"a true map"
           (Nx.cos (v3 ()))
@@ -204,21 +212,39 @@ let jvp_tests =
           (Rune.grad' (fun x -> Nx.sum (fake_jvp_sin x)) (v3 ())));
     test "with no differentiation the call is its rule's value" (fun () ->
         exact (Nx.sin (v3 ())) (my_sin_fwd (v3 ())));
-    test "the rule and its map run once per call" (fun () ->
-        let rules = ref 0 and maps = ref 0 in
+    test "the rule runs once per call, its derivative once where applied"
+      (fun () ->
+        let rules = ref 0 and derivatives = ref 0 in
+        let counted y d =
+          incr rules;
+          ( y,
+            fun t ->
+              incr derivatives;
+              d t )
+        in
         let f =
           Rune.custom_jvp tensor tensor (fun x ->
-              incr rules;
-              ( Nx.sin x,
-                fun dx ->
-                  incr maps;
-                  Nx.mul dx (Nx.cos x) ))
+              counted (Nx.sin x) (fun dx -> Nx.mul dx (Nx.cos x)))
+        and g =
+          Rune.custom_vjp tensor tensor (fun x ->
+              counted (Nx.sin x) (fun ct -> Nx.mul ct (Nx.cos x)))
         in
-        ignore (f (v3 ()));
-        ignore (Rune.jvp' f (v3 ()) (along ()));
-        ignore (Rune.grad' (fun x -> Nx.sum (f x)) (v3 ()));
-        equal ~msg:"rule" int 3 !rules;
-        equal ~msg:"map" int 3 !maps);
+        let runs ~derivatives:n msg h =
+          rules := 0;
+          derivatives := 0;
+          ignore (h (v3 ()));
+          equal ~msg (Windtrap.pair int int) (1, n) (!rules, !derivatives)
+        in
+        let grad f = Rune.grad' (fun x -> Nx.sum (f x)) in
+        runs ~derivatives:0 "eagerly" f;
+        runs ~derivatives:1 "under jvp" (fun x -> Rune.jvp' f x (along ()));
+        runs ~derivatives:1 "under grad" (grad f);
+        runs ~derivatives:1 "under a vjp" (fun x ->
+            snd (Rune.vjp' f x) (along ()));
+        runs ~derivatives:1 "under jit"
+          (Rune.jit' (fun x -> snd (Rune.jvp' f x (along ()))));
+        runs ~derivatives:0 "a custom_vjp eagerly" g;
+        runs ~derivatives:1 "a custom_vjp under grad" (grad g));
     test "a custom_jvp with no float result runs once under reverse mode"
       (fun () ->
         let runs = ref 0 in
@@ -587,6 +613,133 @@ let order_tests =
         exact (scalar 2.) t);
   ]
 
+(* Reads *)
+
+(* √x by Newton's iteration from x, which stops once the residual it reads
+   with [Nx.item] is small: the number of steps depends on the argument's
+   values. [steps] counts them. *)
+let steps = ref 0
+
+let newton x =
+  let rec go y n =
+    let r = Nx.item [] (Nx.max (Nx.abs (Nx.sub (Nx.mul y y) x))) in
+    if r <= 1e-12 || n = 100 then y
+    else begin
+      incr steps;
+      go (Nx.mul_s (Nx.add y (Nx.div x y)) 0.5) (n + 1)
+    end
+  in
+  go x 0
+
+let newton_jvp =
+  Rune.custom_jvp tensor tensor (fun x ->
+      let y = newton x in
+      (y, fun dx -> Nx.div dx (Nx.mul_s y 2.)))
+
+let newton_vjp =
+  Rune.custom_vjp tensor tensor (fun x ->
+      let y = newton x in
+      (y, fun g -> Nx.div g (Nx.mul_s y 2.)))
+
+let read_tests =
+  let x = vec [| 4.; 9.; 2. |] in
+  let root = Nx.sqrt x in
+  let half = Nx.div (Nx.ones f64 [| 3 |]) (Nx.mul_s root 2.) in
+  let sum f x = Nx.sum (f x) in
+  [
+    test "a rule reads its arguments eagerly and under one differentiation"
+      (fun () ->
+        (* The steps the iteration takes outside every rule. *)
+        steps := 0;
+        ignore (newton x);
+        let expected = !steps in
+        not_equal ~msg:"steps" int 0 expected;
+        let counted msg f =
+          steps := 0;
+          let r = f () in
+          equal ~msg:(msg ^ ", steps") int expected !steps;
+          r
+        in
+        near ~msg:"eagerly" root (counted "eagerly" (fun () -> newton_jvp x));
+        near ~msg:"a custom_vjp eagerly" root
+          (counted "a custom_vjp eagerly" (fun () -> newton_vjp x));
+        near ~msg:"jvp"
+          (Nx.mul (along ()) half)
+          (counted "jvp" (fun () -> snd (Rune.jvp' newton_jvp x (along ()))));
+        near ~msg:"grad" half
+          (counted "grad" (fun () -> Rune.grad' (sum newton_jvp) x));
+        near ~msg:"grad of a custom_vjp" half
+          (counted "grad of a custom_vjp" (fun () ->
+               Rune.grad' (sum newton_vjp) x));
+        steps := 0;
+        near ~msg:"at a root" (Nx.ones f64 [| 3 |])
+          (newton_jvp (Nx.ones f64 [| 3 |]));
+        equal ~msg:"at a root, steps" int 0 !steps;
+        (* A map and a loop step that capture the argument alone run the rule
+           as written: the step once per loop call. *)
+        let cs = Nx.create f64 [| 2; 1 |] [| 0.5; -2. |] in
+        near ~msg:"a map over captures" (Nx.mul cs (Nx.reshape [| 1; 3 |] root))
+          (counted "a map over captures" (fun () ->
+               Rune.vmap' (fun c -> Nx.mul c (newton_jvp x)) cs));
+        near ~msg:"a loop step over captures"
+          (Nx.mul cs (Nx.reshape [| 1; 3 |] root))
+          (counted "a loop step over captures" (fun () ->
+               snd
+                 (Rune.scan Nx.Ptree.unit tensor tensor
+                    ~f:(fun () c -> ((), Nx.mul c (newton_jvp x)))
+                    ~init:() cs))));
+    test "a read in the rule raises where the rule is traced" (fun () ->
+        let traced = "Nx.item: the value is traced by Rune.custom_jvp" in
+        let rows = Nx.reshape [| 3; 1 |] x in
+        invalid ~sub:traced (fun () -> Rune.jit' newton_jvp x);
+        invalid ~sub:traced (fun () -> Rune.vmap' newton_jvp rows);
+        invalid ~sub:traced (fun () ->
+            Rune.scan Nx.Ptree.unit tensor tensor
+              ~f:(fun () r -> ((), newton_jvp r))
+              ~init:() rows);
+        invalid ~sub:traced (fun () ->
+            Rune.grad' (fun x -> Nx.sum (Rune.grad' (sum newton_jvp) x)) x);
+        invalid ~sub:traced (fun () ->
+            Rune.remat Nx.Ptree.(tensor @-> returns tensor) newton_jvp x);
+        invalid ~sub:traced (fun () ->
+            Rune.switch tensor (Nx.scalar Nx.int32 0l)
+              [ (fun () -> newton_jvp x) ]);
+        invalid ~sub:traced (fun () ->
+            Rune.root tensor
+              ~residual:(fun y -> Nx.sub (Nx.mul y y) x)
+              (fun () -> newton_jvp x));
+        (* A map over captures alone, under a differentiation of the
+           argument. *)
+        invalid ~sub:traced (fun () ->
+            Rune.grad'
+              (fun x ->
+                let each c = Nx.mul c (newton_jvp x) in
+                Nx.sum (Rune.vmap' each (vec [| 1. |])))
+              x);
+        (* A loop step that captures an argument a differentiation tracks. *)
+        invalid ~sub:traced (fun () ->
+            Rune.grad'
+              (fun x ->
+                Nx.sum
+                  (snd
+                     (Rune.scan Nx.Ptree.unit tensor tensor
+                        ~f:(fun () c -> ((), Nx.mul c (newton_jvp x)))
+                        ~init:() (vec [| 1. |]))))
+              x);
+        (* A differentiation between the call and the one tracking the
+           argument. *)
+        invalid ~sub:traced (fun () ->
+            Rune.jvp'
+              (fun x ->
+                Rune.grad'
+                  (fun s -> Nx.sum (Nx.mul s (newton_jvp x)))
+                  (scalar 1.))
+              x (along ()));
+        invalid ~sub:"Nx.item: the value is traced by Rune.custom_vjp"
+          (fun () ->
+            Rune.grad' (fun x -> Nx.sum (Rune.grad' (sum newton_vjp) x)) x));
+  ]
+
 (* Errors *)
 
 let tracked =
@@ -596,35 +749,43 @@ let nonlinear f = Rune.custom_jvp tensor tensor (fun x -> (Nx.sin x, f))
 
 let error_tests =
   [
-    test "a read in the rule raises" (fun () ->
-        let f =
-          Rune.custom_jvp tensor tensor (fun x ->
-              if Nx.item [ 0 ] x > 0. then (x, Fun.id) else (x, Fun.id))
-        in
-        invalid ~sub:"traced by Rune.custom_jvp" (fun () -> f (v3 ())));
-    test "a read in the tangent map raises" (fun () ->
+    test "a read in the tangent map raises where it applies" (fun () ->
         let f =
           Rune.custom_jvp tensor tensor (fun x ->
               (x, fun dx -> if Nx.item [ 0 ] dx > 0. then dx else dx))
         in
-        invalid ~sub:"traced by Rune.custom_jvp" (fun () -> f (v3 ())));
-    test "a read in the pullback raises" (fun () ->
+        exact ~msg:"no differentiation applies it" (v3 ()) (f (v3 ()));
+        invalid ~sub:"traced by Rune.custom_jvp" (fun () ->
+            Rune.jvp' f (v3 ()) (along ())));
+    test "a read in the pullback raises where it applies" (fun () ->
         let f =
           Rune.custom_vjp tensor tensor (fun x ->
               (x, fun g -> if Nx.item [ 0 ] g > 0. then g else g))
         in
-        invalid ~sub:"traced by Rune.custom_vjp" (fun () -> f (v3 ())));
+        exact ~msg:"no differentiation applies it" (v3 ()) (f (v3 ()));
+        invalid ~sub:"traced by Rune.custom_vjp" (fun () ->
+            Rune.grad' (fun x -> Nx.sum (f x)) (v3 ())));
     test "a draw without a key in the rule raises" (fun () ->
         let f =
           Rune.custom_jvp tensor tensor (fun x ->
               (Nx.add x (Nx.Rng.uniform f64 [| 3 |]), Fun.id))
         in
-        invalid ~sub:"Rune.custom_jvp" (fun () -> f (v3 ())));
-    test "an exception of the tangent map reaches the call" (fun () ->
+        let message =
+          "Nx.Rng.uniform: no key inside Rune.custom_jvp, which refuses \
+           keyless draws"
+        in
+        raises ~msg:"eagerly" (Invalid_argument message) (fun () -> f (v3 ()));
+        raises ~msg:"under grad" (Invalid_argument message) (fun () ->
+            Rune.grad' (fun x -> Nx.sum (f x)) (v3 ()));
+        raises ~msg:"under jit" (Invalid_argument message) (fun () ->
+            Rune.jit' f (v3 ())));
+    test "an exception of the tangent map reaches the call that applies it"
+      (fun () ->
         let f =
           Rune.custom_jvp tensor tensor (fun x -> (x, fun _ -> failwith "map"))
         in
-        raises (Failure "map") (fun () -> f (v3 ())));
+        exact ~msg:"no differentiation applies it" (v3 ()) (f (v3 ()));
+        raises (Failure "map") (fun () -> Rune.jvp' f (v3 ()) (along ())));
     test "an exception of the rule keeps the backtrace of its raise"
       (fun () ->
         let raise_exit () = raise (Sys.opaque_identity Exit) in
@@ -1078,6 +1239,21 @@ let map_tests =
           (array (Windtrap.pair (float 1e-12) (float 1e-12)))
           (pairs (snd (Rune.jvp' (fun z -> Nx.mul z z) z t)))
           (pairs (snd (Rune.jvp' (Rune.vmap' square) z t))));
+    test "a tangent map that reads a map's lanes runs where a differentiation \
+          applies it" (fun () ->
+        let axis = Rune.axis () in
+        let mark =
+          Rune.custom_jvp tensor Nx.Ptree.unit (fun _ ->
+              ((), fun dy -> ignore (Rune.lanes axis dy)))
+        in
+        let loss x =
+          mark x;
+          Nx.sum (Nx.mul x x)
+        in
+        let x = v3 () in
+        exact ~msg:"eagerly" (Nx.sum (Nx.mul x x)) (loss x);
+        exact ~msg:"under grad" (Nx.mul_s x 2.) (Rune.grad' loss x);
+        invalid ~sub:"Rune.lanes" (fun () -> Rune.jvp' loss x (along ())));
     test "grad of a map of a custom_transpose applies its transpose" (fun () ->
         let declared =
           Rune.custom_transpose tensor tensor
@@ -1335,8 +1511,77 @@ let capture_law (xs, ss, vs) =
     (Nx.mul (Nx.cos x) v)
     (snd (Rune.jvp' (fun x -> snd (reverse x)) x v))
 
+(* [f x] computed in a scan's step over one row, where [f]'s rule is traced. *)
+let in_step f x =
+  let n = Nx.numel x in
+  let _, ys =
+    Rune.scan Nx.Ptree.unit tensor tensor
+      ~f:(fun () r -> ((), f r))
+      ~init:() (Nx.reshape [| 1; n |] x)
+  in
+  Nx.reshape [| n |] ys
+
+(* f x = sin x · x with its derivative, as a tangent map and as a pullback, at
+   any float or complex dtype. *)
+let rules () =
+  let d x = Nx.add (Nx.mul (Nx.cos x) x) (Nx.sin x) in
+  ( Rune.custom_jvp tensor tensor (fun x ->
+        (Nx.mul (Nx.sin x) x, fun dx -> Nx.mul (d x) dx)),
+    Rune.custom_vjp tensor tensor (fun x ->
+        (Nx.mul (Nx.sin x) x, fun g -> Nx.mul (d x) g)) )
+
+let specials = [ Float.nan; Float.infinity; Float.neg_infinity; -0.; 0. ]
+
+let gen_breaking =
+  let open Gen in
+  let* n = int_range 0 6 in
+  let element =
+    frequency [ (3, float_range (-3.) 3.); (1, of_list specials) ]
+  in
+  let v = array ~size:(constant n) element in
+  triple (pair v v) (pair v v) (pair v v)
+
+let special x = (not (Float.is_finite x)) || x = 0.
+
+(* A rule computed on its arguments' values gives the bits of the rule traced,
+   [bits] reading a value's floats. *)
+let agree bits (x, v, w) =
+  let same msg a b = equal ~msg (array float_exact) (bits a) (bits b) in
+  let jvp_rule, vjp_rule = rules () in
+  let pulled f = snd (Rune.vjp' f x) w in
+  List.iter
+    (fun (msg, f) ->
+      same (msg ^ ", value") (in_step f x) (f x);
+      same (msg ^ ", pullback") (pulled (in_step f)) (pulled f);
+      same (msg ^ ", jacrev") (Rune.jacrev' (in_step f) x) (Rune.jacrev' f x))
+    [ ("custom_jvp", jvp_rule); ("custom_vjp", vjp_rule) ];
+  same "custom_jvp, tangent"
+    (snd (Rune.jvp' (in_step jvp_rule) x v))
+    (snd (Rune.jvp' jvp_rule x v));
+  same "custom_jvp, jacfwd"
+    (Rune.jacfwd' (in_step jvp_rule) x)
+    (Rune.jacfwd' jvp_rule x)
+
+let real_law ((xs, _), (vs, _), (ws, _)) =
+  cover "no element" (Array.length xs = 0);
+  cover "several elements" (Array.length xs > 1);
+  cover "a special value" (Array.exists special xs);
+  agree values (vec xs, vec vs, vec ws)
+
+let complex_law ((xr, xi), (vr, vi), (wr, wi)) =
+  cover "no element" (Array.length xr = 0);
+  cover "several elements" (Array.length xr > 1);
+  cover "a special part" (Array.exists special xr || Array.exists special xi);
+  let z re im = Nx.complex Nx.complex128 ~re:(vec re) ~im:(vec im) in
+  let bits a = Array.append (values (Nx.real f64 a)) (values (Nx.imag f64 a)) in
+  agree bits (z xr xi, z vr vi, z wr wi)
+
 let law_tests =
   [
+    prop "a rule on values gives the traced rule's bits" gen_breaking
+      real_law;
+    prop "a complex rule on values gives the traced rule's bits" gen_breaking
+      complex_law;
     prop "the pullback is the tangent map's adjoint" gen_vecs adjoint_law;
     prop "a differentiation of a capture leaves the rule to the argument's"
       gen_vecs capture_law;
@@ -1350,6 +1595,7 @@ let () =
          group "custom_jvp" jvp_tests;
          group "integer result leaves" int_tests;
          group "second order" order_tests;
+         group "reads" read_tests;
          group "errors" error_tests;
          group "inside constructs" compiled_tests;
          group "rules in a tangent map" nested_tests;

@@ -25,7 +25,22 @@ let traced ~name args f =
   in
   (primal, Option.get !inner, !ny, captures)
 
+(* The innermost interpretation around the call says how the rule runs. Where
+   none runs it and no interpretation traces an argument, the call is the
+   rule's results and its derivative never runs. A call a tracer stages is
+   traced whatever its arguments. *)
+let call ~name mode args rule trace_call =
+  let untraced (V x) = Option.is_none (Nx.Prim.owner x) in
+  if staging () then trace_call ()
+  else
+    match Program.rule { name; mode; args; rule } with
+    | Some run -> run ()
+    | None when Array.for_all untraced args ->
+        fst (Nx.Rng.refusing name (fun () -> rule args))
+    | None -> trace_call ()
+
 let jvp_call ~name args rule =
+  call ~name Forward args rule @@ fun () ->
   let primal, tangent, ny, captures =
     traced ~name args (fun vs ->
         let ys, map = rule vs in
@@ -49,6 +64,7 @@ let jvp_call ~name args rule =
   sub (run c) 0 ny
 
 let vjp_call ~name args rule =
+  call ~name Reverse args rule @@ fun () ->
   let primal, pullback, ny, captures =
     traced ~name args (fun vs ->
         let ys, pb = rule vs in

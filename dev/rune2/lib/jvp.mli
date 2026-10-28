@@ -29,21 +29,35 @@
     performed ({!Program.Evaluate}), so that its branch's operations reach the
     rules.
 
-    A custom rule ({!Program.Custom}) over an argument this differentiation
+    A custom rule's call ({!Program.Rule}) asks the innermost interpretation
+    around it. This one answers with [None] unless it tracks one of the
+    arguments and no interpretation traces their primals. Then the rule runs on
+    the primals where the call was performed, and no interpretation inside this
+    one holds a value it captures. Its derivative is traced over stand-ins of
+    the tangents, or of the results' cotangents for a pullback, and applied as a
+    traced rule's is below, a tangent map's additions made to the totals around
+    the call. It is not traced under reverse mode where no result has a float or
+    complex array, nor for a pullback where forward mode runs alone.
+
+    A traced rule ({!Program.Custom}) over an argument this differentiation
     tracks is performed outward on the arguments' primals, so that each
-    differentiation around applies it too. A rule over no such argument runs its
-    default where it was performed, so that its code is differentiated. For a
-    rule with a tangent map, its results' tangents are the map evaluated outward
-    over the arguments' tangents (zeros for one without) and the residuals. A
-    differentiation around thus differentiates the map's code. Under reverse
-    mode, the map is not evaluated where no result has a float or complex array.
-    For a rule with a pullback under reverse mode, the results' tangents are a
-    linear call of the pullback over the arguments' tangents, which the tape
-    records. Where forward mode runs alone and a reverse mode inside applies the
-    pullback ([applied]), the tangents are the derivative of the rule's primal
-    code. The rule of a linear call ({!Program.Linear}) issues the call on the
-    primals and the call on the tangents, which a tape records as one operation.
-    Its tangent adds the derivative of its function's code along the captures.
+    differentiation around applies it too. A rule over values it captures alone
+    runs its default where it was performed if no argument is traced, so that
+    its code is differentiated. If one is, it is performed outward on the
+    captures' primals, so that a differentiation around tracking the argument
+    applies the rule, and its results' tangents are the derivative of its
+    primal's code along the captures. For a rule with a tangent map, its
+    results' tangents are the map evaluated outward over the arguments'
+    tangents (zeros for one without) and the residuals. A differentiation
+    around thus differentiates the map's code. Under reverse mode, the map is
+    not evaluated where no result has a float or complex array. For a rule with
+    a pullback under reverse mode, the results' tangents are a linear call of
+    the pullback over the arguments' tangents, which the tape records. Where
+    forward mode runs alone and a reverse mode inside applies the pullback
+    ([applied]), the tangents are the derivative of the rule's primal code. The
+    rule of a linear call ({!Program.Linear}) issues the call on the primals and
+    the call on the tangents, which a tape records as one operation. Its tangent
+    adds the derivative of its function's code along the captures.
 
     The interpretation raises [Invalid_argument] for a contraction whose scale
     has a tangent, and for a rule that captures a value this differentiation

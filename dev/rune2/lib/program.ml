@@ -327,6 +327,22 @@ let staging () =
   | b -> b
   | exception Effect.Unhandled Staging -> false
 
+type mode = Forward | Reverse
+
+type rule = {
+  name : string;
+  mode : mode;
+  args : value array;
+  rule : value array -> value array * (value array -> value array);
+}
+
+type _ Effect.t += Rule : rule -> (unit -> value array) option Effect.t
+
+let rule r =
+  match Effect.perform (Rule r) with
+  | a -> a
+  | exception Effect.Unhandled (Rule _) -> None
+
 (* Sites *)
 
 (* The programs [c] carries. *)

@@ -6,12 +6,23 @@
 (** Custom differentiation rules: a function with the derivative its caller
     gives.
 
-    A rule is traced at the call with the body tracer ({!Trace.Body}): its
-    {e primal} computes the results, and the derivative it returns, a tangent
-    map or a pullback, is traced inside that trace, so that what it reads of the
-    primal's values are the primal's further outputs, its {e residuals}. The
-    call is a construct ({!Program.Custom}); with no differentiation around, it
-    is its primal evaluated. *)
+    A call that no tracer stages ({!Program.staging}) first asks the innermost
+    interpretation around it how the rule runs ({!Program.Rule}). A
+    differentiation that tracks one of the arguments, whose primals no
+    interpretation traces, answers: the rule runs on those primals where the
+    call was performed, and its derivative is traced and applied there where
+    that differentiation applies it ({!Jvp}). Where no interpretation answers
+    so and none traces an argument, the call is [fst (rule args)], and the
+    derivative never runs. The rule runs under [Nx.Rng.refusing], named by the
+    entry point, in both cases.
+
+    Every other call is {e traced} with the body tracer ({!Trace.Body}): the
+    rule's {e primal} computes the results, and the derivative it returns, a
+    tangent map or a pullback, is traced inside that trace, so that what it
+    reads of the primal's values are the primal's further outputs, its
+    {e residuals}. The call is then a construct ({!Program.Custom}); with no
+    differentiation around, it is its primal evaluated. A traced call runs the
+    derivative's code once, whether or not a differentiation applies it. *)
 
 open Program
 
@@ -22,8 +33,8 @@ val jvp_call :
   value array
 (** [jvp_call ~name args rule] is the results of [rule args], whose tangents are
     those [snd (rule args)] maps the arguments' tangents to, one per argument.
-    [name] names the entry point. Raises what [rule] and its tangent map raise,
-    at the trace. *)
+    [name] names the entry point. Raises what [rule] raises, and what its
+    tangent map raises where it runs, at the call. *)
 
 val vjp_call :
   name:string ->

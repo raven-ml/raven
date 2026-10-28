@@ -1297,6 +1297,69 @@ module Rules = struct
       (fun k v -> match along k with Some t -> dual_v c.i v t | None -> v)
       out
 
+  (* A custom rule run on the arguments' primals where the call was performed,
+     under a differentiation that tracks one of them and is the innermost
+     interpretation there, so that no interpretation inside it holds a value
+     the rule captures. The derivative is traced over stand-ins of the tangents
+     or the cotangents, what it reads of the rule's values constants, then
+     applied as [applied_rule] applies a traced one. Neither is traced where no
+     differentiation applies it: under reverse mode where no result has a
+     tangent, and a pullback under forward mode. *)
+  let in_place c ({ name; mode; args; rule } : Program.rule) pargs =
+    let ys, d = Nx.Rng.refusing name (fun () -> rule pargs) in
+    tracks c ~name ys;
+    let reverse = Option.is_some c.tape in
+    let tangible = Array.exists tangible_v ys in
+    let derivative over =
+      let p, residuals = Trace.trace Body ~name (Array.map form over) d in
+      tracks c ~name residuals;
+      (p, residuals)
+    in
+    match mode with
+    | Reverse when not reverse ->
+        if tangible then no_forward c;
+        ys
+    | Forward | Reverse when reverse && not tangible -> ys
+    | Forward ->
+        let t, residuals = derivative pargs in
+        let ts = tangents c args in
+        let ny = Array.length ys in
+        let dys =
+          threaded t (fun totals ->
+              let out = eval ~totals t (Array.append ts residuals) in
+              if reverse then
+                no_tangent_added c (sub out ny (Array.length out - ny));
+              out)
+        in
+        with_tangents c ys dys
+    | Reverse ->
+        let b, residuals = derivative ys in
+        let dys =
+          perform
+            (Linear
+               {
+                 name;
+                 apply = None;
+                 transpose = b;
+                 args = tangents c args;
+                 captures = [||];
+                 residuals;
+                 forms = Array.map form ys;
+               })
+        in
+        with_tangents c ys dys
+
+  (* How a differentiation answers a custom rule's call ({!Program.Rule}): in
+     place where it tracks an argument whose primal, as every other argument,
+     no interpretation traces. *)
+  let on_values c (r : Program.rule) =
+    let untraced (V x) = Option.is_none (Nx.Prim.owner x) in
+    if not (Array.exists (owned c.i) r.args) then None
+    else
+      let pargs = Array.map (primal_v c.i) r.args in
+      if not (Array.for_all untraced pargs) then None
+      else Some (fun () -> in_place c r pargs)
+
   (* A rule applies under a differentiation that tracks one of its arguments.
      One that tracks only values the rule captures differentiates the rule's
      code: where it is evaluated, or, where some differentiation around may
@@ -2213,6 +2276,11 @@ and run :
     | Program.Construct c, Some i
       when List.exists (owned i) (Program.operands c) ->
         Some (answer ~name ~tape i c)
+    | Program.Rule r, Some i ->
+        let c =
+          { Rules.i; entry = name; tape; derive = derive ~name ~tape i }
+        in
+        Some (fun k -> Effect.Deep.continue k (Rules.on_values c r))
     (* A loop hands a total its chain's end as an addition gives it: the
        primal. *)
     | Program.Replace (t, x), Some i when owned i (Program.V x) ->

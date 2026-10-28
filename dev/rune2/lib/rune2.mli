@@ -74,9 +74,11 @@
 (** {1:tracing Tracing}
 
     A construct traces its functions each time it is called: at each call
-    outside a {!jit}, and inside one at each trace of the {!jit}. A {!jit}
-    itself traces once per key. A loop's step is traced once per trace of the
-    loop, whatever its number of steps, so its code and its side effects run
+    outside a {!jit}, and inside one at each trace of the {!jit}. A
+    {!custom_jvp}'s or {!custom_vjp}'s rule is traced only where
+    {!section-custom} says so, and otherwise runs on its arguments' values. A
+    {!jit} itself traces once per key. A loop's step is traced once per trace of
+    the loop, whatever its number of steps, so its code and its side effects run
     once per trace too. Inside a traced function {!Nx.item} of a stand-in, or of
     a value computed from one, raises, naming the construct
     ([Nx.item: the value is traced by Rune.scan]), so a branch on a value is a
@@ -438,10 +440,29 @@ val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
 
     A custom rule gives a function the derivative a differentiation uses for it,
     in the form of that differentiation's answer: a tangent map for forward
-    mode, a pullback for reverse mode, or a linear function's transpose. The
-    rule is traced at the call, and the derivative it returns is traced inside
-    it, so the derivative's code runs once per call, whatever differentiation
-    applies it, and an error it raises reaches the call.
+    mode, a pullback for reverse mode, or a linear function's transpose.
+
+    {b Values.} A {!custom_jvp} or {!custom_vjp} runs its rule on the
+    arguments' values where it can. Where no transformation around the call
+    tracks an argument, and none stages it ({!jit}, {!remat}, {!switch}, a
+    {!root}'s [solve]), the call is [fst (rule args)] and the derivative never
+    runs. Under one differentiation tracking an argument, with no
+    transformation between it and the call and none around it tracking the
+    arguments too, the rule runs on the arguments' values, so it may read them
+    with {!Nx.item}, as an iteration tests its tolerance. Its derivative is
+    then traced at the call, over stand-ins of the tangents or the cotangents,
+    where the differentiation applies it. Elsewhere the rule is traced at the
+    call with its derivative: inside a construct that stages it; where a map,
+    a loop's step, a {!root}'s function or a second differentiation tracks an
+    argument; and where any transformation lies between the call and the
+    differentiation tracking an argument, as a {!grad} over values the rule
+    does not take, or a map or a loop's step that captures the argument. There
+    a read of an argument raises
+    ([Nx.item: the value is traced by Rune.custom_jvp]), and the derivative's
+    code runs once whether a differentiation applies it or not, so a tangent
+    map reading a map's {!lanes} raises there outside that map. A draw without
+    [~key] in the rule raises in every case. An error the derivative raises
+    reaches the call.
 
     {b Arguments.} A differentiation applies the rule where it tracks one of the
     rule's arguments. The rule receives them without their derivatives, and must
@@ -470,9 +491,12 @@ val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
     {!Nx.where}, counts as zero. A pullback or a transpose reads a result's
     cotangent at the result's set.
 
-    {b Maps.} {!vmap} batches a custom rule: the rule and its derivative are
-    evaluated over the lanes, and a differentiation around the map applies the
-    rule to every lane.
+    {b Maps.} {!vmap} batches a custom rule over its lanes: the rule and its
+    derivative are evaluated over the lanes, and a differentiation around the
+    map applies the rule to every lane. A rule over arguments no
+    transformation tracks runs on them inside the map, which batches the
+    operations it applies to the lanes it captures. One over an argument a
+    differentiation outside the map tracks is traced, as {b Values} says.
 
     {b Totals.} The additions a rule makes reach the scopes around the call once
     per call. A tangent map's are made once per differentiation that applies it,
@@ -504,9 +528,10 @@ val custom_jvp :
     Where the result has no float or complex array, reverse mode does not apply
     [map], so such a rule observes the tangents under forward mode alone.
 
-    Raises [Invalid_argument] at the call if [map]'s result differs from the
-    result in its {!Nx.Ptree.val-visits}, dtypes or shapes, naming the first
-    path where they differ, as in
+    Raises [Invalid_argument] at the call where [map] is traced
+    ({!section-custom}) if its result differs from the result in its
+    {!Nx.Ptree.val-visits}, dtypes or shapes, naming the first path where they
+    differ, as in
     ["Rune.custom_jvp: the root: shape [] in the tangent map's result, [3] in
      the result"], and if [rule] uses a value that a differentiation applying it
     tracks
@@ -536,9 +561,10 @@ val custom_vjp :
     rule for the result: around a reverse mode that applies it, as in a
     Hessian-vector product, it differentiates [rule]'s code.
 
-    Raises [Invalid_argument] at the call if [pb]'s result differs from [args]
-    in its {!Nx.Ptree.val-visits}, dtypes or shapes, naming the first path where
-    they differ; if [rule] uses a value that a differentiation applying it
+    Raises [Invalid_argument] at the call where [pb] is traced
+    ({!section-custom}) if its result differs from [args] in its
+    {!Nx.Ptree.val-visits}, dtypes or shapes, naming the first path where they
+    differ; if [rule] uses a value that a differentiation applying it
     tracks, as {!custom_jvp} does; and under forward mode around no such reverse
     mode, if the result has a float or complex array
     (["Rune.jvp: a custom_vjp rule has no forward derivative; give the function

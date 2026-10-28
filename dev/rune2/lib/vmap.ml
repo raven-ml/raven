@@ -1972,6 +1972,9 @@ and interpret :
     | Program.Within, _ -> Some (fun k -> Effect.Deep.continue k true)
     | Program.Bound a, _ when Program.same_axis a axis ->
         Some (fun k -> Effect.Deep.continue k (Some n))
+    (* No differentiation around the map runs a custom rule called inside it:
+       the rule may capture lanes, which only its traced call batches. *)
+    | Program.Rule _, Some _ -> Some (fun k -> Effect.Deep.continue k None)
     (* A collect around the map receives the lanes' sum as one addition. *)
     | Program.Running _, Some _ -> Some (fun k -> Effect.Deep.continue k None)
     | _ -> None

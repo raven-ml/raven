@@ -783,6 +783,39 @@ val staging : unit -> bool
     applied there. A call's default there evaluates its body and does not run
     its compiled form. *)
 
+(** {2:rules Custom rules on values}
+
+    A custom rule's call ([Custom.jvp_call]) that no tracer stages first asks
+    the innermost interpretation around it how the rule runs. *)
+
+type mode =
+  | Forward  (** The rule's derivative is a tangent map. *)
+  | Reverse  (** The rule's derivative is a pullback. *)
+
+type rule = {
+  name : string;  (** The entry point, in messages. *)
+  mode : mode;
+  args : value array;
+  rule : value array -> value array * (value array -> value array);
+      (** The user's rule: the results and the derivative, for arguments of
+          [args]' forms. *)
+}
+
+type _ Effect.t +=
+  | Rule : rule -> (unit -> value array) option Effect.t
+        (** Answered by each interpretation of rune2. A differentiation that
+            tracks one of the arguments, whose primals no interpretation traces,
+            answers with the function the call applies where it was performed:
+            it runs the rule on those primals and returns the call's results.
+            Every other interpretation of rune2 answers [None]. An
+            interpretation outside rune2 ([Nx.Prim.interpret]) never answers
+            the effect, so one between the call and the differentiation does
+            not keep the rule from running in place; a rule that captures its
+            values then raises, as a value used outside its owner's extent. *)
+
+val rule : rule -> (unit -> value array) option
+(** [rule r] is the answer to [Rule r], [None] with no interpretation around. *)
+
 (** {1:printing Printing}
 
     A program prints as each constant it or a program it carries reads, as
