@@ -1,6 +1,6 @@
-type 'a t =
+type ('a, 'd) t =
   | Float of 'a
-  | Mxfp4 of { blocks : Nx.uint8_t; scales : Nx.uint8_t }
-  | Scaled of 'a * Nx.float32_t
+  | Mxfp4 of { blocks : 'd Nx.uint8_t; scales : 'd Nx.uint8_t }
+  | Scaled of 'a * 'd Nx.float32_t
   | Tied
 [@@deriving ptree]

@@ -2,7 +2,7 @@
  (name test_ptree)
  (package ppx_ptree)
  (modules test_ptree test_signature)
- (libraries nx rune vega kaun windtrap)
+ (libraries nx nx.array nx.quant nx.wide rig rune vega kaun windtrap)
  (preprocess
   (pps ppx_ptree)))
 
@@ -68,10 +68,12 @@
    (<> %{system} win64)))
  (targets
   missing_walk.actual
-  missing_ptree.actual
+  missing_plain_walk.actual
+  walk_other_type.actual
+  closed_payload.actual
   walk_mistyped.actual
   walk_wrong_type.actual
-  ptree_other_type.actual)
+  walk_one_set.actual)
  (deps
   (:pp pp.exe))
  (action
@@ -91,7 +93,7 @@
       -o
       missing_walk.cmo)))
    (with-stderr-to
-    missing_ptree.actual
+    missing_plain_walk.actual
     (with-accepted-exit-codes
      2
      (run
@@ -101,9 +103,37 @@
       -c
       -ppx
       "./%{pp} --as-ppx"
-      %{dep:golden/compiler_cases/missing_ptree.ml}
+      %{dep:golden/compiler_cases/missing_plain_walk.ml}
       -o
-      missing_ptree.cmo)))
+      missing_plain_walk.cmo)))
+   (with-stderr-to
+    walk_other_type.actual
+    (with-accepted-exit-codes
+     2
+     (run
+      %{ocamlc}
+      -color
+      never
+      -c
+      -ppx
+      "./%{pp} --as-ppx"
+      %{dep:golden/compiler_cases/walk_other_type.ml}
+      -o
+      walk_other_type.cmo)))
+   (with-stderr-to
+    closed_payload.actual
+    (with-accepted-exit-codes
+     2
+     (run
+      %{ocamlc}
+      -color
+      never
+      -c
+      -ppx
+      "./%{pp} --as-ppx"
+      %{dep:golden/compiler_cases/closed_payload.ml}
+      -o
+      closed_payload.cmo)))
    (with-stderr-to
     walk_mistyped.actual
     (with-accepted-exit-codes
@@ -133,7 +163,7 @@
       -o
       walk_wrong_type.cmo)))
    (with-stderr-to
-    ptree_other_type.actual
+    walk_one_set.actual
     (with-accepted-exit-codes
      2
      (run
@@ -143,11 +173,19 @@
       -c
       -ppx
       "./%{pp} --as-ppx"
-      %{dep:golden/compiler_cases/ptree_other_type.ml}
+      %{dep:golden/compiler_cases/walk_one_set.ml}
       -o
-      ptree_other_type.cmo)))
+      walk_one_set.cmo)))
    (diff golden/compiler_cases/missing_walk.expected missing_walk.actual)
-   (diff golden/compiler_cases/missing_ptree.expected missing_ptree.actual)
+   (diff
+    golden/compiler_cases/missing_plain_walk.expected
+    missing_plain_walk.actual)
+   (diff
+    golden/compiler_cases/walk_other_type.expected
+    walk_other_type.actual)
+   (diff golden/compiler_cases/closed_payload.expected closed_payload.actual)
    (diff golden/compiler_cases/walk_mistyped.expected walk_mistyped.actual)
-   (diff golden/compiler_cases/walk_wrong_type.expected walk_wrong_type.actual)
-   (diff golden/compiler_cases/ptree_other_type.expected ptree_other_type.actual))))
+   (diff
+    golden/compiler_cases/walk_wrong_type.expected
+    walk_wrong_type.actual)
+   (diff golden/compiler_cases/walk_one_set.expected walk_one_set.actual))))

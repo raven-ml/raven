@@ -1,1 +1,1 @@
-type 'a t = { w : 'a; count : int } [@@deriving ptree]
+type ('a, _) t = { w : 'a; count : int } [@@deriving ptree]

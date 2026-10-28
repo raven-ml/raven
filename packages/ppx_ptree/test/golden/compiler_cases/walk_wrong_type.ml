@@ -1,18 +1,21 @@
 module Nx = struct
-  type float32_t = float array
+  type 'd float32_t
 
   module Ptree = struct
-    type _ t = Structure
+    type ('s, 'd) t = Structure
 
     module Walk = struct
-      type ('a, 'b) cursor = Cursor
+      type ('a, 'b, 'd, 'e) cursor = Cursor
 
-      let field (c : ('a, 'b) cursor) (_ : string) walk x = walk c x
-      let leaf (_ : ('a, 'b) cursor) (_ : 'a) : 'b = assert false
-      let structure _ (_ : ('a, 'b) cursor) x = x
+      let field (c : ('a, 'b, 'd, 'e) cursor) (_ : string) walk x = walk c x
+      let leaf (_ : ('a, 'b, 'd, 'e) cursor) (_ : 'a) : 'b = assert false
+      let structure (_ : ('s, 'd) t) (_ : ('a, 'b, 'd, 'd) cursor) (x : 's) = x
     end
   end
 end
 
-type 'a t = { w : 'a; x : Nx.float32_t [@ptree.walk Nx.Ptree.Walk.leaf] }
+type ('a, 'd) t = {
+  w : 'a;
+  x : 'd Nx.float32_t; [@ptree.walk Nx.Ptree.Walk.leaf]
+}
 [@@deriving ptree]

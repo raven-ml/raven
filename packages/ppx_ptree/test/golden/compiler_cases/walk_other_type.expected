@@ -1,0 +1,10 @@
+File "golden/compiler_cases/walk_other_type.ml", line 23, characters 34-42:
+23 | type ('a, 'd) t = { w : 'a; cfg : Config.t } [@@deriving ptree]
+                                       ^^^^^^^^
+Error: The value Config.walk has type
+         (ptree_a, ptree_b, ptree_d, ptree_e) Nx.Ptree.Walk.cursor ->
+         int -> int
+       but an expression was expected of type
+         (ptree_a, ptree_b, ptree_d, ptree_e) Nx.Ptree.Walk.cursor ->
+         Config.t -> Config.t
+       Type int is not compatible with type Config.t

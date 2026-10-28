@@ -1,1 +1,1 @@
-type 'a t = { w : 'a; causal : bool } [@@deriving ptree]
+type ('a, _) t = { w : 'a; causal : bool } [@@deriving ptree]

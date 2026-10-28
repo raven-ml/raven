@@ -1,0 +1,10 @@
+File "golden/compiler_cases/walk_one_set.ml", line 22, characters 24-57:
+22 |   n : int; [@ptree.walk Nx.Ptree.Walk.structure (ints ())]
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: This expression has type
+         (ptree_a, ptree_b, ptree_d, ptree_d) Nx.Ptree.Walk.cursor ->
+         int -> int
+       but an expression was expected of type
+         (ptree_a, ptree_b, ptree_d, ptree_e) Nx.Ptree.Walk.cursor ->
+         int -> int
+       Type ptree_d is not compatible with type ptree_e

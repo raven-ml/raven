@@ -1,0 +1,10 @@
+File "golden/compiler_cases/closed_payload.ml", line 23, characters 37-55:
+23 | type ('a, 'd) t = { w : 'a; frozen : (int, 'd) Linear.t } [@@deriving ptree]
+                                          ^^^^^^^^^^^^^^^^^^
+Error: The value Linear.walk has type
+         (ptree_a, ptree_b, ptree_d, ptree_e) Nx.Ptree.Walk.cursor ->
+         (ptree_a, 'a) Linear.t -> (ptree_b, 'b) Linear.t
+       but an expression was expected of type
+         (ptree_a, ptree_b, ptree_d, ptree_e) Nx.Ptree.Walk.cursor ->
+         (int, ptree_d) Linear.t -> (int, ptree_e) Linear.t
+       Type ptree_a is not compatible with type int

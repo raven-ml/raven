@@ -1,2 +1,5 @@
-type 'a t = { w : 'a; b : 'a option } [@@deriving ptree]
-type state = { scale : Nx.float32_t } [@@deriving ptree]
+type ('a, 'd) t = { w : 'a; b : 'a option; steps : 'd Nx.int32_t }
+[@@deriving ptree]
+
+type 'd state = { scale : 'd Nx.float32_t } [@@deriving ptree]
+type config = { depth : int [@ptree.int] } [@@deriving ptree]

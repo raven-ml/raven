@@ -12,13 +12,13 @@ open Windtrap
 
 let source =
   {|module Nested = struct
-  type 'a t = 'a
+  type ('a, 'd) t = 'a
 end
 
-type 'a t = {
+type ('a, 'd) t = {
   weight : 'a;
   optional : 'a option;
-  nested : 'a Nested.t;
+  nested : ('a, 'd) Nested.t;
 }
 [@@deriving ptree]
 |}
@@ -145,7 +145,6 @@ let test_diagnostic_locations () =
       ("abstract.ml", [ 1 ]);
       ("alias.ml", [ 1 ]);
       ("any.ml", [ 1 ]);
-      ("applied_parameter.ml", [ 1 ]);
       ("arrow.ml", [ 1 ]);
       ("bad_alias_arity.ml", [ 1 ]);
       ("bad_container_arity.ml", [ 1 ]);
@@ -161,29 +160,35 @@ let test_diagnostic_locations () =
       ("existential.ml", [ 1 ]);
       ("extensible.ml", [ 1 ]);
       ("extension.ml", [ 1 ]);
-      ("fixed_data.ml", [ 1 ]);
       ("functor_path.ml", [ 1 ]);
       ("gadt.ml", [ 1 ]);
+      ("host_tensor.ml", [ 1 ]);
       ("int.ml", [ 1 ]);
       ("int_on_string.ml", [ 1 ]);
       ("lazy.ml", [ 1 ]);
-      ("local_fixed.ml", [ 2 ]);
       ("local_open.ml", [ 1 ]);
       ("metadata.ml", [ 1 ]);
+      ("missing_alias.ml", [ 1 ]);
+      ("nx_index.ml", [ 1 ]);
       ("object.ml", [ 1 ]);
+      ("one_parameter.ml", [ 1 ]);
       ("package.ml", [ 3 ]);
+      ("payload_set.ml", [ 1 ]);
+      ("placement.ml", [ 1 ]);
       ("polymorphic_field.ml", [ 1 ]);
       ("polymorphic_variant.ml", [ 1 ]);
       ("private.ml", [ 1 ]);
       ("ref.ml", [ 1 ]);
       ("result.ml", [ 1 ]);
+      ("set_part.ml", [ 1 ]);
       ("short_attribute.ml", [ 1 ]);
       ("short_int.ml", [ 1 ]);
       ("short_walk.ml", [ 1 ]);
       ("skip_parameter.ml", [ 1 ]);
       ("tensor_parameter.ml", [ 1 ]);
-      ("two_parameters.ml", [ 1 ]);
+      ("three_parameters.ml", [ 1 ]);
       ("type_variable.ml", [ 1 ]);
+      ("unnamed_set.ml", [ 1 ]);
       ("walk_payload.ml", [ 1 ]);
     ]
   in

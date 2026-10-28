@@ -1,1 +1,1 @@
-type 'a t = { w : 'a } constraint 'a = int [@@deriving ptree]
+type ('a, _) t = { w : 'a } constraint 'a = int [@@deriving ptree]

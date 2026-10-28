@@ -1515,20 +1515,15 @@ All notable changes to this project will be documented in this file.
 
 ### Ppx_ptree (new)
 
-- A mistyped `[@ptree.walk f]` and a `ptree` of another type are reported at
-  the part instead of at the declaration or a generated name. Every
-  diagnostic names its part, and a fixed instance can nest a type derived
-  earlier in the module (`state Kaun.Linear.t` with `ptree_state`).
-- `[@ptree.int]`, `[@ptree.skip]` and `[@ptree.walk f]` after a constructor's
-  single argument apply to it. They were ignored there, so
-  `Frozen of Nx.float32_t [@ptree.skip]` still walked the tensor. On a
-  constructor with no argument or several, and on a type declaration, they
-  are errors.
-- Add the `ppx_ptree` deriver: `[@@deriving ptree]` writes a type's `walk`,
-  the one function of `Nx.Ptree.S`, and a type without a parameter's
-  structure, `ptree`. `[@ptree.int]` marks an integer a compiled program
-  depends on, `[@ptree.skip]` data no program reads, and `[@ptree.walk f]` a
-  part walked with `f`.
+- Add the `ppx_ptree` deriver: `[@@deriving ptree]` writes the `walk` of an
+  `('a, 'd) t`, `'d t` or `t` (payload, then set), one of `Nx.Ptree.S`, and no
+  description: use `Nx.Ptree.instantiate (module M)` or `Nx.Ptree.v M.walk`.
+- A structure nested at another's payload, `(('a, 'd) Mlp.t, 'd) M.t`, is
+  walked with `Nx.Ptree.Walk.under M.walk Mlp.walk`; a tensor, key or packed
+  part lies on the set parameter.
+- `[@ptree.int]` marks an integer a compiled program depends on,
+  `[@ptree.skip]` data no program reads, and `[@ptree.walk f]` a part walked
+  with `f`, after a field or a constructor's single argument.
 - Add a runnable linear-regression example that trains a derived structure
   with `Rune.grad` under `Rune.jit`.
 

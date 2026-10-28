@@ -1,0 +1,4 @@
+File "golden/compiler_cases/missing_plain_walk.ml", line 23, characters 36-45:
+23 | type ('a, 'd) t = { w : 'a; index : Missing.t } [@@deriving ptree]
+                                         ^^^^^^^^^
+Error: Unbound value Missing.walk

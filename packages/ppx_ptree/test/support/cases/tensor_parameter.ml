@@ -1,1 +1,1 @@
-type 'a t = { w : (float, 'a) Nx.t } [@@deriving ptree]
+type ('a, 'd) t = { w : (float, 'a, 'd) Nx.t } [@@deriving ptree]

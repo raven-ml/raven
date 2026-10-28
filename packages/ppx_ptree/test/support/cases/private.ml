@@ -1,1 +1,1 @@
-type t = private { value : Nx.float32_t } [@@deriving ptree]
+type 'd t = private { value : 'd Nx.float32_t } [@@deriving ptree]

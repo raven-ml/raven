@@ -1,1 +1,1 @@
-type t = { value : Nx.float32_t [@ptree.walk] } [@@deriving ptree]
+type 'd t = { value : 'd Nx.float32_t [@ptree.walk] } [@@deriving ptree]

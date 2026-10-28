@@ -1,19 +1,21 @@
 module Nx = struct
+  type 'd float32_t
+
   module Ptree = struct
-    type _ t = Structure
+    type ('s, 'd) t = Structure
 
     module Walk = struct
-      type ('a, 'b) cursor = Cursor
+      type ('a, 'b, 'd, 'e) cursor = Cursor
 
-      let field (c : ('a, 'b) cursor) (_ : string) walk x = walk c x
-      let leaf (_ : ('a, 'b) cursor) (_ : 'a) : 'b = assert false
-      let structure _ (_ : ('a, 'b) cursor) x = x
+      let field (c : ('a, 'b, 'd, 'e) cursor) (_ : string) walk x = walk c x
+      let leaf (_ : ('a, 'b, 'd, 'e) cursor) (_ : 'a) : 'b = assert false
+      let structure (_ : ('s, 'd) t) (_ : ('a, 'b, 'd, 'd) cursor) (x : 's) = x
     end
   end
 end
 
 module Missing = struct
-  type 'a t = { x : 'a }
+  type ('a, 'd) t = { x : 'a }
 end
 
-type 'a t = { sub : 'a Missing.t } [@@deriving ptree]
+type ('a, 'd) t = { sub : ('a, 'd) Missing.t } [@@deriving ptree]

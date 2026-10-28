@@ -1,15 +1,17 @@
-type 'a t =
+type ('a, 'd) t =
   | Float of 'a 
   | Mxfp4 of {
-  blocks: Nx.uint8_t ;
-  scales: Nx.uint8_t } 
-  | Scaled of 'a * Nx.float32_t 
+  blocks: 'd Nx.uint8_t ;
+  scales: 'd Nx.uint8_t } 
+  | Scaled of 'a * 'd Nx.float32_t 
   | Tied [@@deriving ptree]
 include
   struct
-    let _ = fun (_ : 'a t) -> ()
-    let walk : type ptree_a ptree_b.
-      (ptree_a, ptree_b) Nx.Ptree.Walk.cursor -> ptree_a t -> ptree_b t =
+    let _ = fun (_ : ('a, 'd) t) -> ()
+    let walk : type ptree_a ptree_b ptree_d ptree_e.
+      (ptree_a, ptree_b, ptree_d, ptree_e) Nx.Ptree.Walk.cursor ->
+        (ptree_a, ptree_d) t -> (ptree_b, ptree_e) t
+      =
       fun ptree__c ->
         function
         | Float ptree__0 ->

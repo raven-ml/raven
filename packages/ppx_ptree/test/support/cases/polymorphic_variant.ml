@@ -1,1 +1,1 @@
-type t = { choice : [ `A of Nx.float32_t ] } [@@deriving ptree]
+type 'd t = { choice : [ `A of 'd Nx.float32_t ] } [@@deriving ptree]

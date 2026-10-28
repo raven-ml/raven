@@ -1,1 +1,1 @@
-type 'a t = { w : 'a [@ptree.skip] } [@@deriving ptree]
+type ('a, _) t = { w : 'a [@ptree.skip] } [@@deriving ptree]

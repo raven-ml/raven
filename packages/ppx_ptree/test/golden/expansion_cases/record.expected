@@ -1,12 +1,16 @@
-type 'a t = {
+type ('a, 'd) t =
+  {
   w: 'a ;
   b: 'a option ;
-  layers: 'a Linear.t list }[@@deriving ptree]
+  layers: ('a, 'd) Linear.t list ;
+  steps: 'd Nx.int32_t }[@@deriving ptree]
 include
   struct
-    let _ = fun (_ : 'a t) -> ()
-    let walk : type ptree_a ptree_b.
-      (ptree_a, ptree_b) Nx.Ptree.Walk.cursor -> ptree_a t -> ptree_b t =
+    let _ = fun (_ : ('a, 'd) t) -> ()
+    let walk : type ptree_a ptree_b ptree_d ptree_e.
+      (ptree_a, ptree_b, ptree_d, ptree_e) Nx.Ptree.Walk.cursor ->
+        (ptree_a, ptree_d) t -> (ptree_b, ptree_e) t
+      =
       fun ptree__c ptree__x ->
         let ptree__f_w =
           Nx.Ptree.Walk.field ptree__c "w" Nx.Ptree.Walk.leaf ptree__x.w in
@@ -15,7 +19,20 @@ include
             (Nx.Ptree.Walk.option Nx.Ptree.Walk.leaf) ptree__x.b in
         let ptree__f_layers =
           Nx.Ptree.Walk.field ptree__c "layers"
-            (Nx.Ptree.Walk.list Linear.walk) ptree__x.layers in
-        { w = ptree__f_w; b = ptree__f_b; layers = ptree__f_layers }
+            (Nx.Ptree.Walk.list
+               (Linear.walk : (ptree_a, ptree_b, ptree_d, ptree_e)
+                                Nx.Ptree.Walk.cursor ->
+                                (ptree_a, ptree_d) Linear.t ->
+                                  (ptree_b, ptree_e) Linear.t))
+            ptree__x.layers in
+        let ptree__f_steps =
+          Nx.Ptree.Walk.field ptree__c "steps" Nx.Ptree.Walk.tensor
+            ptree__x.steps in
+        {
+          w = ptree__f_w;
+          b = ptree__f_b;
+          layers = ptree__f_layers;
+          steps = ptree__f_steps
+        }
     let _ = walk
   end[@@ocaml.doc "@inline"][@@merlin.hide ]
