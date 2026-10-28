@@ -86,7 +86,7 @@ let fresh_site () = Atomic.fetch_and_add sites 1
 type derivation =
   | Jvp of { tangents : bool array; reverse : bool }
   | Vmap of { lanes : bool array; n : int; named : bool }
-  | Known of { unknown : bool array }
+  | Known of { unknown : bool array; donated : bool array }
   | Transpose of { linear : bool array; cts : bool array }
 
 (* A form's abstract value: its dtype, shape and placement. *)
@@ -99,7 +99,7 @@ let same_derivation a b =
   match (a, b) with
   | Jvp a, Jvp b -> a.tangents = b.tangents && a.reverse = b.reverse
   | Vmap a, Vmap b -> a.lanes = b.lanes && a.n = b.n && a.named = b.named
-  | Known a, Known b -> a.unknown = b.unknown
+  | Known a, Known b -> a.unknown = b.unknown && a.donated = b.donated
   | Transpose a, Transpose b -> a.linear = b.linear && a.cts = b.cts
   | (Jvp _ | Vmap _ | Known _ | Transpose _), _ -> false
 
@@ -119,7 +119,7 @@ module Table = Cache.Make (struct
       match k.derivation with
       | Jvp { tangents; _ } -> Hashtbl.hash (0, tangents)
       | Vmap { lanes; n; _ } -> Hashtbl.hash (1, lanes, n)
-      | Known { unknown } -> Hashtbl.hash (2, unknown)
+      | Known { unknown; donated } -> Hashtbl.hash (2, unknown, donated)
       | Transpose { linear; cts; _ } -> Hashtbl.hash (3, linear, cts)
     in
     Array.fold_left
@@ -290,7 +290,7 @@ and derived = {
   program : t;
   at : site;
   flags : bool array;
-  linear : (t * site) option;
+  linear : (t * site * int option array) option;
 }
 
 (* Whether an equation emits, itself or in a program it carries. *)
@@ -425,7 +425,14 @@ let derive ?map s derivation forms make =
       incr (Domain.DLS.get made);
       let sub (p, forms) = (p, site ~name:s.name ~compile:s.compile p forms) in
       let program, at = sub (program, pf) in
-      { program; at; flags; linear = Option.map sub linear })
+      let linear =
+        Option.map
+          (fun (l, lf, forwarded) ->
+            let l, at = sub (l, lf) in
+            (l, at, forwarded))
+          linear
+      in
+      { program; at; flags; linear })
 
 (* Operands *)
 

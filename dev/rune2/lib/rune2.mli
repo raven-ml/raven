@@ -1324,13 +1324,17 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     derivative, and under {!vmap} its map. Under reverse mode it is the part
     that reads no tangent, which computes at the call and returns the values the
     rest reads; the backward pass transposes the rest, linear in the tangents,
-    into one more program. Each derived program compiles as the key's does. A
+    into one more program. The rest reads an argument without a tangent, or a
+    value [f] captures, as it is, uncopied, unless the call has a donated
+    argument. The part computed at the call consumes it and then returns each
+    value the rest reads. Each derived program compiles as the key's does. A
     {e derivation} is a value: its kind, which arguments have a tangent or
-    lanes, their dtypes, shapes and placements, the number of lanes of each map
-    the program reads, and the name of the map it is derived under where it
-    reads that name. A call keeps one program per derivation of its key's, so
-    two calls share a derived program only when their derivations are equal, and
-    [f] runs once per key, whatever is derived from it.
+    lanes, which are donated under reverse mode, their dtypes, shapes and
+    placements, the number of lanes of each map the program reads, and the name
+    of the map it is derived under where it reads that name. A call keeps one
+    program per derivation of its key's, so two calls share a derived program
+    only when their derivations are equal, and [f] runs once per key, whatever
+    is derived from it.
 
     Inside an enclosing [jit], a call is inlined: its program's operations, or
     its derived program's, are staged there. Inside a {!scan}'s or an

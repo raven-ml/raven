@@ -1822,6 +1822,84 @@ let test_inlined_in_step () =
     (bits (Rune.vmap' ~axis:a (run lane) xs))
     (bits (Rune.vmap' ~axis:a (run g) xs))
 
+(* Under reverse mode, the part of a compiled call computed at the call returns
+   the residuals it computes, and the rest reads an argument, which the caller
+   holds, as it is: a pullback over the call holds the bytes the call's result
+   does, where it would hold a copy of the argument too. *)
+let test_forwarded () =
+  let host = Rig.host in
+  let settled () =
+    for _ = 1 to 4 do
+      Gc.full_major ();
+      ignore (Rig.Buffer.create host 0);
+      Rig.free_cache host
+    done;
+    Rig.allocated host
+  in
+  let n = 65536 in
+  let w = Nx.full f32 [| n |] 0.5 in
+  let f x = Nx.mul (Nx.mul x x) w in
+  let x = Nx.linspace f32 (-1.) 1. n in
+  (* The bytes [keep ()] holds, with a compiled function of its own, whose
+     program keeps its last call's buffers; after one uncounted run. *)
+  let held keep =
+    ignore (Sys.opaque_identity (keep ()));
+    let before = settled () in
+    let kept = keep () in
+    let held = settled () - before in
+    ignore (Sys.opaque_identity kept);
+    held
+  in
+  let calls = Rune.evaluations () in
+  let both f =
+    let plain = held (fun () -> let g = Rune.jit' f in Obj.repr (g, g x)) in
+    let pullback =
+      held (fun () -> let g = Rune.jit' f in Obj.repr (g, Rune.vjp' g x))
+    in
+    (plain, pullback)
+  in
+  let plain, pullback = both f in
+  equal ~msg:"the result" int (4 * n) plain;
+  equal ~msg:"the result and the pullback" int plain pullback;
+  equal ~msg:"evaluated calls" int 0 (Rune.evaluations () - calls);
+  ignore (Sys.opaque_identity (x, w))
+
+(* A donated argument that the linear part of a compiled call reads is
+   consumed by the part computed at the call, which returns it for the
+   pullback, as one handle or two of one donor. *)
+let test_forwarded_donation () =
+  let g = Rune.jit (pair_fn ()) (fun x w -> Nx.mul x w) in
+  let x = fresh [| 1.; 2.; -0.5 |] in
+  let w = fresh [| 3.; -0.5; 0.25 |] in
+  let y, pb = Rune.vjp' (fun x -> g x (Nx.donate w)) x in
+  equal bits_t (bits (fresh [| 3.; -1.; -0.125 |])) (bits y);
+  equal bits_t
+    (bits (fresh [| 3.; -0.5; 0.25 |]))
+    (bits (pb (fresh [| 1.; 1.; 1. |])));
+  dead w;
+  let g3 =
+    Rune.jit
+      T.(tensor @-> tensor @-> tensor @-> returns tensor)
+      (fun x a b -> Nx.mul x (Nx.mul a b))
+  in
+  let w = fresh [| 3.; -0.5; 0.25 |] in
+  let _, pb = Rune.vjp' (fun x -> g3 x (Nx.donate w) (Nx.donate w)) x in
+  equal ~msg:"two handles of one donor" bits_t
+    (bits (fresh [| 9.; 0.25; 0.0625 |]))
+    (bits (pb (fresh [| 1.; 1.; 1. |])));
+  (* Each of [a] and [b] a residual: the handle's returned, its donor
+     beside it read from the call too. *)
+  let g3 =
+    Rune.jit
+      T.(tensor @-> tensor @-> tensor @-> returns tensor)
+      (fun x a b -> Nx.add (Nx.mul x a) (Nx.mul x b))
+  in
+  let w = fresh [| 3.; -0.5; 0.25 |] in
+  let _, pb = Rune.vjp' (fun x -> g3 x (Nx.donate w) w) x in
+  equal ~msg:"a handle beside its donor" bits_t
+    (bits (fresh [| 6.; -1.; 0.5 |]))
+    (bits (pb (fresh [| 1.; 1.; 1. |])))
+
 (* Compositions of transformations around a compiled call give eager's values,
    the compiled sine and cosine within their bounds. *)
 let test_compositions () =
@@ -2168,6 +2246,10 @@ let () =
                test_inlined;
              test "a step inlines a call over its variables"
                test_inlined_in_step;
+             test "the known part of a call forwards its arguments"
+               test_forwarded;
+             test "a forwarded donated argument lives on for the pullback"
+               test_forwarded_donation;
              test "compositions around a call give eager's values"
                test_compositions;
              test "a call in a construct stays a call" test_calls_stay;

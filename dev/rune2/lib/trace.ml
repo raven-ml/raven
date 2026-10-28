@@ -1089,6 +1089,8 @@ and call_parts st i (body : Program.t) args site ~seeds =
   let name = st.name in
   let ua = Array.map (owned i) args in
   let kargs = Loops.pick (nots ua) args and uargs = Loops.pick ua args in
+  let donated = Array.map (fun (V x) -> Nx.Prim.donated x) args in
+  let kdonated = Loops.pick (nots ua) donated in
   let made () =
     let unknown = ref [||] and linear = ref None in
     let known kvs =
@@ -1106,15 +1108,30 @@ and call_parts st i (body : Program.t) args site ~seeds =
             kys := Loops.pick (nots !unknown) ys;
             Loops.pick !unknown ys)
       in
+      (* A residual that is an argument of the known part is that argument,
+         as JAX's partial evaluation forwards a known input: the known part
+         would return a copy of it. Where the known part consumes a donated
+         argument, it returns every residual: no value tells which other
+         argument shares the donated one's donor, which dies with it. *)
+      let consumes = Array.exists Fun.id kdonated in
+      let forwarded =
+        Array.map (fun r -> if consumes then None else index_of r kvs) res
+      in
       linear :=
-        Some (tape, Array.append (Array.map form uargs) (Array.map form res));
-      Array.append !kys res
+        Some
+          ( tape,
+            Array.append (Array.map form uargs) (Array.map form res),
+            forwarded );
+      let computed = Array.map Option.is_none forwarded in
+      Array.append !kys (Loops.pick computed res)
     in
     let kprog, _ = trace Jit ~name (Array.map form kargs) known in
     ((kprog, Array.map form kargs), !unknown, !linear)
   in
   let d =
-    Program.derive site (Known { unknown = ua }) (Array.map form args) made
+    Program.derive site
+      (Known { unknown = ua; donated })
+      (Array.map form args) made
   in
   let kr =
     perform (Call { body = d.program; args = kargs; site = d.at; seeds })
@@ -1125,8 +1142,15 @@ and call_parts st i (body : Program.t) args site ~seeds =
   let res = Array.sub kr nk nres and sums = Array.sub kr (nk + nres) ns in
   let ur =
     match d.linear with
-    | Some (l, at) when Array.exists Fun.id d.flags ->
-        let args = Array.append uargs res in
+    | Some (l, at, forwarded) when Array.exists Fun.id d.flags ->
+        let next = ref (-1) in
+        let residual = function
+          | Some k -> kargs.(k)
+          | None ->
+              incr next;
+              res.(!next)
+        in
+        let args = Array.append uargs (Array.map residual forwarded) in
         record st i (Call { body = l; args; site = at; seeds = [||] })
     | _ -> [||]
   in

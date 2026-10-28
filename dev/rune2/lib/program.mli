@@ -503,11 +503,15 @@ type derivation =
           lane's along a leading axis of [n]; [named] whether the program names
           the map. Over the arguments; to the results, each with that leading
           axis where it has lanes, then the running values out, every lane's. *)
-  | Known of { unknown : bool array }
+  | Known of { unknown : bool array; donated : bool array }
       (** The part of the program that reads no argument where [unknown] holds,
           computed at the call. Over the other arguments; to its results, the
-          residuals, then the running values out. Its linear part is over the
-          unknown arguments then the residuals, to the unknown results. *)
+          residuals it computes, then the running values out. Its linear part
+          is over the unknown arguments then the residuals, to the unknown
+          results. A residual that is an argument of the known part is that
+          argument, unless [donated] holds of one of the known part's
+          arguments. The known part consumes a donated argument and then
+          returns every residual. *)
   | Transpose of { linear : bool array; cts : bool array }
       (** The transpose of a linear program over the arguments where [linear]
           holds, given a cotangent of each result where [cts] holds: over the
@@ -521,7 +525,10 @@ type derived = {
       (** By derivation: which results have a tangent, which have lanes, which
           results are unknown, or which linear arguments receive a
           cotangent. *)
-  linear : (t * site) option;  (** A [Known] derivation's linear part. *)
+  linear : (t * site * int option array) option;
+      (** A [Known] derivation's linear part, and for each residual the
+          argument of the known part it is, which the known part does not
+          return, or [None] for one it computes and returns. *)
 }
 (** The type for derived programs. *)
 
@@ -530,14 +537,15 @@ val derive :
   site ->
   derivation ->
   form array ->
-  (unit -> (t * form array) * bool array * (t * form array) option) ->
+  (unit ->
+  (t * form array) * bool array * (t * form array * int option array) option) ->
   derived
 (** [derive ~map s d forms make] is the program of [s] derived by [d] from
     arguments of [forms], made by [make ()] the first time [s] meets [d] and
     [forms]. [make ()] gives the program and its arguments' forms, its flags,
-    and a linear part with its arguments' forms. [map] is a map that the
-    derivation runs in, [(axis, n)], whose lanes no handler around answers. The
-    site's key takes [n] as that map's lanes. *)
+    and a linear part with its arguments' forms and its residuals' sources.
+    [map] is a map that the derivation runs in, [(axis, n)], whose lanes no
+    handler around answers. The site's key takes [n] as that map's lanes. *)
 
 val derivations : unit -> int
 (** [derivations ()] is the number of programs [derive] made on the calling
