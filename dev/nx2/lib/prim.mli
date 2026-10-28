@@ -12,20 +12,23 @@
     placement, from {!Route}; {!results_at} makes the results' forms from what
     it decided. The eager engine routes, places and allocates destinations
     through them, and interpretations make traced results through {!results},
-    so the two agree in dtype, layout and placement.
-    A sharded value's shape is the whole's, which it holds; each shard is its
-    device's window of it. *)
+    so the two agree in dtype, layout and placement. A sharded value's shape
+    is the whole's, which it holds; each shard is its device's window of it.
+    This module lies above {!Value} and {!Route}. *)
 
 open Value
 
-(** {1:facts Values' facts} *)
+(** {1:facts Values' facts}
+
+    [placement] allocates nothing, and so do [dtype], [rank] and [dim] of a
+    value on one device. *)
 
 val form : ('v, 's, 'd) t -> ('v, 's, 'd) form
 val dtype : ('v, 's, 'd) t -> ('v, 's) dtype
 
 val placement : ('v, 's, 'd) t -> 'd Devices.placement
 (** [placement x] is where [x]'s bytes are, or will be for a traced value: its
-    form's. It allocates nothing. *)
+    form's. *)
 
 val of_arrays :
   'd Devices.placement ->
@@ -61,8 +64,7 @@ val same_shape : ('v, 's, 'd) t -> ('w, 'r, 'd) t -> bool
 (** [same_shape x y] is [shape x = shape y]. It allocates nothing. *)
 
 val shape : ('v, 's, 'd) t -> int array
-(** [shape x] is a fresh array. [dtype], [placement], [rank] and [dim] of a
-    value on one device allocate nothing. *)
+(** [shape x] is a fresh array. *)
 
 val has_shape : ('v, 's, 'd) t -> int array -> bool
 (** [has_shape x s] is [shape x = s]. It allocates nothing. *)
@@ -144,9 +146,9 @@ val iteri : ('v 's 'd. int -> ('v, 's, 'd) t -> unit) -> 'r prim -> unit
     {!operands}. *)
 
 val exists : ('v 's 'd. ('v, 's, 'd) t -> bool) -> 'r prim -> bool
-(** [exists f op] is whether [f x] for some operand [x] of [op]. Neither
-    allocates for an operation other than a factorisation, a contraction or
-    a check. *)
+(** [exists f op] is whether [f x] for some operand [x] of [op]. Neither it
+    nor {!iteri} allocates for an operation other than a factorisation, a
+    contraction or a check. *)
 
 val map : ('v 's 'd. ('v, 's, 'd) t -> ('v, 's, 'd) t) -> 'r prim -> 'r prim
 (** [map m op] is [op] with each operand [x] replaced by [m x]. *)
@@ -209,9 +211,7 @@ val route : by:string -> 'r prim -> routed
     lie at one placement that cuts no axis are read there and their results
     lie there; otherwise {!Route.route} of {!rule} decides. An operation of
     no operands lies where its map names, else on the host, each device of
-    that placement computing its window of the results. A traced value's
-    placement and its eager twin's come from this one route over the same
-    operands.
+    that placement computing its window of the results.
 
     Raises as {!layouts} does, then as {!Route.route} does. *)
 
@@ -350,6 +350,8 @@ val load_any : 'd load -> 'd any
 
 val routine_name : ('d, 'r) linalg -> string
 (** [routine_name l] names [l]'s routine in messages, as ["Cholesky"]. *)
+
+(** {1:results Results} *)
 
 (** The outputs of a map whose dtypes are known at run time, and how to read
     its result as values. *)

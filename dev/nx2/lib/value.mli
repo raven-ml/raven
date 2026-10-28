@@ -8,14 +8,15 @@
 
     Every value has a placement. A value is concrete, arrays on the devices
     of its placement, or an interpretation's stand-in, whose form names the
-    placement its eager twin has. The brand ['d] is phantom: every function
-    that makes a value checks that its arrays lie on its placement's
-    devices, and nothing at run time reads ['d].
+    placement its eager twin has. The brand ['d] is phantom ({!Devices}),
+    and every function that makes a value checks that its arrays lie on its
+    placement's devices.
 
     [Nx.Prim] re-exports the operations and the types of forms, payloads and
     reaches, and states what each means. This module documents what the
     engine adds: the representations of values, their deaths and the fields
-    of an interpretation. *)
+    of an interpretation. It lies above {!Devices}; {!Prim} holds the
+    functions over its types. *)
 
 type ('v, 's) dtype = ('v, 's) Nx_array.Dtype.t
 
@@ -34,8 +35,7 @@ type ('v, 's, 'd) t =
       a : ('v, 's) Nx_array.t;
       mutable dead : death; [@atomic]
     }
-      (** On [at]'s one device. [dead] is [Died] once the value was donated
-          to a function that consumed it ({!Donate.donate}). *)
+      (** On [at]'s one device. *)
   | Shards of {
       at : 'd Devices.placement;
       shape : int array;  (** The whole's. *)
