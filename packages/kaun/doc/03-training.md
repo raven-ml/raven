@@ -195,7 +195,7 @@ A model forward that takes `~training` serves both phases; evaluation is the sam
 
 ## Going Further
 
-Because the step is an ordinary function of ordinary values, rune's other transformations apply directly: per-sample gradients are `Rune.vmap` of `Rune.grad` over the batch (see the [rune transformations guide](../../rune/doc/02-transformations.md)), and `Rune.value_and_grad_aux` returns any auxiliary output of the objective (predictions for logging, updated statistics), given its structure.
+Because the step is an ordinary function of ordinary values, rune's other transformations apply directly: per-sample gradients are `Rune.vmap` of `Rune.grad` over the batch (see the [maps page of rune's guide](../../rune/doc/03-maps.md)), and `Rune.value_and_grad_aux` returns any auxiliary output of the objective (predictions for logging, updated statistics), given its structure.
 
 For complete programs, see [`examples/02-mnist`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/02-mnist) (MLP, AdamW, accuracy evaluation) and [`examples/03-mnist-cnn`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/03-mnist-cnn) (CNN, dropout, saving the training state).
 

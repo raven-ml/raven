@@ -166,11 +166,11 @@ let () =
 
 The Predict block is unchanged. A donated value is dead once the call has read it, and a later use of the old state raises ([nx.mli, Donation](../packages/nx/lib/nx.mli)).
 
-The same step runs on a GPU. `Nx.devices` mints a device set from a GPU that rig opens, `Nx.place` and `Nx.Ptree.place` put the data and the parameters there, and the step compiles for that device. A set minted without `~kernels` over GPUs computes nothing eagerly, and an operation there raises, so work there runs under `Rune.jit`, one device per compiled program. [Compilation](../packages/rune/doc/05-compilation.md) covers devices.
+The same step runs on a GPU. `Nx.devices` mints a device set from a GPU that rig opens, `Nx.place` and `Nx.Ptree.place` put the data and the parameters there, and the step compiles for that device. A set minted without `~kernels` over GPUs computes nothing eagerly, and an operation there raises, so work there runs under `Rune.jit`, one device per compiled program. [Compilation](../packages/rune/doc/06-compilation.md) covers devices.
 
 ## Next Steps
 
 - **[Nx](../packages/nx/doc/01-getting-started.md)** — full guide to arrays, slicing, broadcasting, linear algebra
-- **[Rune](../packages/rune/doc/01-getting-started.md)** — all transformations: grad, jvp, vmap, and more
+- **[Rune](../packages/rune/doc/index.md)** — all transformations: grad, jvp, vmap, and more
 - **[Kaun](../packages/kaun/doc/01-getting-started.md)** — layers, losses, data, metrics, pretrained models
 - **[Ecosystem Overview](ecosystem-overview.md)** — how the libraries fit together

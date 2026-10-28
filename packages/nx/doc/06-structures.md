@@ -249,5 +249,5 @@ This `Block` visits what the hand-written one visits, and its test is the same; 
 
 ## Next Steps
 
-- [Rune's transformations](../../rune/doc/02-transformations.md) take structures, and `Rune.jit` takes a signature built from them, such as `Nx.Ptree.(tensor @-> caches @-> returns (pair tensor caches))`. A caller gives up an argument's arrays by donating them at the call, `Nx.Ptree.donate caches c`.
+- [Rune's transformations](../../rune/doc/02-derivatives.md) take structures, and `Rune.jit` takes a signature built from them, such as `Nx.Ptree.(tensor @-> caches @-> returns (pair tensor caches))`. A caller gives up an argument's arrays by donating them at the call, `Nx.Ptree.donate caches c`.
 - [Kaun's layers](../../kaun/doc/02-layers-and-models.md) each have a `walk`, and a model's is one line per field.

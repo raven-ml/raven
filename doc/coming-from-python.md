@@ -203,7 +203,6 @@ let with_bmi df =
 Each library has a dedicated comparison page with side-by-side code examples:
 
 - [Nx vs NumPy](../packages/nx/doc/05-numpy-comparison.md)
-- [Rune vs JAX](../packages/rune/doc/04-jax-comparison.md)
 - [Kaun vs PyTorch/Flax](../packages/kaun/doc/05-pytorch-comparison.md)
 - [Vega vs Optax](../packages/vega/doc/04-optax-comparison.md)
 - [Brot vs HuggingFace Tokenizers](../packages/brot/doc/06-hf-tokenizers-comparison.md)
