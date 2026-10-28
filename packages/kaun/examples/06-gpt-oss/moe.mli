@@ -20,38 +20,39 @@
 (** {1:params Parameters} *)
 
 (** The type for the weights of one projection of every expert. *)
-type 'a weight =
+type ('a, 'd) weight =
   | Float of 'a  (** [[| experts; inputs; outputs |]]. *)
-  | Quant of Nx_quant.t
+  | Quant of 'd Nx_quant.t
       (** The checkpoint's packed form, of shape
           [[| experts; outputs; inputs |]]. *)
 
-type 'a t = {
-  gate_up : 'a weight;  (** Model width to [2 * intermediate]. *)
+type ('a, 'd) t = {
+  gate_up : ('a, 'd) weight;  (** Model width to [2 * intermediate]. *)
   gate_up_bias : 'a;  (** [[| experts; 2 * intermediate |]]. *)
-  down : 'a weight;  (** [intermediate] to model width. *)
+  down : ('a, 'd) weight;  (** [intermediate] to model width. *)
   down_bias : 'a;  (** [[| experts; model width |]]. *)
 }
 (** The type for the experts' parameters over payload ['a]. *)
 
-val walk : ('a, 'b) Nx.Ptree.Walk.cursor -> 'a t -> 'b t
+val walk : ('a, 'b, 'd, 'e) Nx.Ptree.Walk.cursor -> ('a, 'd) t -> ('b, 'e) t
 (** [walk c p] walks [p]'s parts at [gate_up], [gate_up_bias], [down] and
     [down_bias], in that order. A weight reports its case at its path, ["float"]
     or ["quant"]: a float weight is a position of the parameter, and a packed
-    one is walked by {!Nx_quant.ptree}, its codes and scales fixed tensors. So
+    one is walked by {!Nx_quant.walk}, its codes and scales fixed tensors. So
     [Nx.Ptree.cast (module Moe) dt p] converts precision and keeps the packed
     weights. *)
 
 (** {1:forward Forward} *)
 
-val route : k:int -> (float, 'b) Nx.t -> Nx.int64_t * (float, 'b) Nx.t
+val route :
+  k:int -> (float, 'b, 'd) Nx.t -> 'd Nx.int64_t * (float, 'b, 'd) Nx.t
 (** [route ~k logits] is gpt-oss's routing [(experts, weights)] for router
     logits of shape [[| ...; experts |]], both of shape [[| ...; k |]]: the [k]
     experts with the greatest logits, greatest first, and the softmax of those
     [k] logits. Exactly [k] distinct experts are selected whatever the logits:
     among equal logits the lowest expert comes first, as for {!Nx.top_k}. *)
 
-val activation : limit:float -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+val activation : limit:float -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
 (** [activation ~limit h] splits the last axis of [h] into interleaved [gate]
     (even) and [linear] (odd) features and is
     [gate' * sigmoid (1.702 * gate') * (linear' + 1)], with [gate'] the gate
@@ -60,10 +61,10 @@ val activation : limit:float -> (float, 'b) Nx.t -> (float, 'b) Nx.t
 
 val apply :
   limit:float ->
-  (float, 'b) Nx.t t ->
-  Nx.int64_t * (float, 'b) Nx.t ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t
+  ((float, 'b, 'd) Nx.t, 'd) t ->
+  'd Nx.int64_t * (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t
 (** [apply ~limit p (experts, weights) x] is the experts applied to [x], whose
     last axis is the model width, and mixed by the routing [(experts, weights)]:
     for each token of [x], the experts to use and their weights, with shape

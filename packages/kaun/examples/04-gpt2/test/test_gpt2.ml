@@ -42,7 +42,7 @@ let block i =
 
 let test_params () =
   let params = Nx.Ptree.instantiate (module Gpt2.Params) in
-  let p = Gpt2.make cfg in
+  let p = Gpt2.make ~key:(Nx.Rng.key 0) cfg in
   equal ~msg:"visits" (list string)
     (List.concat
        [
@@ -84,7 +84,10 @@ let test_cache () =
       leaf "1.keys";
       leaf "1.values";
     ]
-    (visits caches (Gpt2.cache cfg ~slots:3 Nx.float32))
+    (visits caches
+       (Gpt2.cache
+          ~placement:(fun _ ~axis:_ -> Nx.Host.on)
+          cfg ~slots:3 Nx.float32))
 
 let () =
   exit

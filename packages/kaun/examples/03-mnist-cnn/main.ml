@@ -20,7 +20,11 @@ let lr = 3e-3
 (* conv(1->8) -> relu -> pool -> conv(8->16) -> relu -> pool -> dropout ->
    linear(400->10). Images are NCHW [n; 1; 28; 28]. *)
 module Cnn = struct
-  type 'a t = { c1 : 'a Conv.t; c2 : 'a Conv.t; fc : 'a Linear.t }
+  type ('a, 'd) t = {
+    c1 : ('a, 'd) Conv.t;
+    c2 : ('a, 'd) Conv.t;
+    fc : ('a, 'd) Linear.t;
+  }
 
   let walk c { c1; c2; fc } =
     let open Nx.Ptree.Walk in
@@ -29,11 +33,14 @@ module Cnn = struct
     let fc = field c "fc" Linear.walk fc in
     { c1; c2; fc }
 
-  let init () =
+  let init key =
+    let k = Nx.Rng.split ~n:3 key in
     {
-      c1 = Conv.init ~in_channels:1 ~out_channels:8 ~kernel_size:(3, 3);
-      c2 = Conv.init ~in_channels:8 ~out_channels:16 ~kernel_size:(3, 3);
-      fc = Linear.init ~inputs:(16 * 5 * 5) ~outputs:10;
+      c1 =
+        Conv.init ~key:k.(0) ~in_channels:1 ~out_channels:8 ~kernel_size:(3, 3);
+      c2 =
+        Conv.init ~key:k.(1) ~in_channels:8 ~out_channels:16 ~kernel_size:(3, 3);
+      fc = Linear.init ~key:k.(2) ~inputs:(16 * 5 * 5) ~outputs:10;
     }
 
   let apply p ~training x =
@@ -54,24 +61,19 @@ let accuracy params (x, y) =
 
 (* The training state: the model's tensors under [model] and AdamW's under
    [optim]. *)
-module State = struct
-  type _ t = Nx.float32_t Cnn.t * Nx.float32_t Cnn.t Vega.adam_state
-
-  let walk c (params, ostate) =
-    let open Nx.Ptree.Walk in
-    let params = field c "model" (structure cnn) params in
-    let ostate = field c "optim" (structure (Vega.adam_ptree cnn)) ostate in
-    (params, ostate)
-end
-
-let state = Nx.Ptree.instantiate (module State)
+let state =
+  Nx.Ptree.v (fun c (params, ostate) ->
+      let open Nx.Ptree.Walk in
+      let params = field c "model" (structure cnn) params in
+      let ostate = field c "optim" (structure (Vega.adam_ptree cnn)) ostate in
+      (params, ostate))
 
 let save_training_state path s =
   Nx_io.save_safetensors path (Nx_io.Archive.of_value state s)
 
 (* A fresh state gives the shapes and dtypes the file is read into. *)
 let load_training_state path =
-  let params = Cnn.init () in
+  let params = Cnn.init (Nx.Rng.key 0) in
   let like = (params, Vega.adamw_init cnn params) in
   Nx_io.Archive.to_value state ~like (Nx_io.load_safetensors path)
 
@@ -87,7 +89,7 @@ let () =
       and train_y = take train_examples train_y
       and test = (take test_examples test_x, take test_examples test_y) in
 
-      let params = Cnn.init () in
+      let params = Cnn.init (Nx.Rng.next_key ()) in
 
       (* Training step: value_and_grad + one AdamW update. *)
       let step (params, ostate) (x, y) =

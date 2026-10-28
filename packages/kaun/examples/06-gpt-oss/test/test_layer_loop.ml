@@ -4,9 +4,10 @@
   ---------------------------------------------------------------------------*)
 
 (* The layer loop at gpt-oss's depth, on small random weights placed on CPU:1, a
-   device with storage of its own: each block program reads its layer's weights
-   and the cache index and writes the layer's cache in the cache's own
-   storage. *)
+   device with storage of its own in memory the host addresses: each block
+   program compiles and reads its layer's weights and the cache index where they
+   lie, writes each pool in its own storage, and a call copies nothing onto
+   CPU:1. *)
 
 open Windtrap
 open Kaun
@@ -33,12 +34,16 @@ let cfg =
     tied = false;
   }
 
-let cpu1_device = Nx.Device.cpu 1
-let cpu1 = Nx.Placement.on cpu1_device
+let cpu1_device = Result.get_ok (Rig.memory_device "CPU:1")
+
+module Cpu1 = (val Nx.devices [ cpu1_device ])
+
+let cpu1 = Cpu1.on
+let placed_cfg = Gpt_oss.place_config cpu1 cfg
 
 let params () =
   Nx.Rng.with_key (Nx.Rng.key 7) @@ fun () ->
-  let f shape = Nx.place cpu1 (Nx.mul_s (Nx.randn Nx.float32 shape) 0.1) in
+  let f shape = Nx.place cpu1 (Nx.mul_s (Nx.Rng.normal Nx.float32 shape) 0.1) in
   let linear ?(bias = true) i o =
     { Linear.w = f [| i; o |]; b = (if bias then Some (f [| o |]) else None) }
   in
@@ -76,13 +81,10 @@ let params () =
     head = Some (linear ~bias:false d cfg.vocab_size);
   }
 
-(* Each pool's storage. *)
+(* Each pool's storage, read without sharing it: a value over its memory
+   would keep the next call from taking it. *)
 let storage caches =
-  let of_leaf x =
-    match Nx.Repr.v x with
-    | Placed p -> Nx.Repr.Storage.buffers (Nx.Repr.Placed.storage p)
-    | Host _ | Traced _ -> invalid_arg "storage: not a placed value"
-  in
+  let of_leaf x = [ Nx.Repr.read x Nx_array.buffer ] in
   List.concat_map
     (fun (c : _ Attention.Cache.t) -> of_leaf c.keys @ of_leaf c.values)
     caches
@@ -108,7 +110,16 @@ let received m f =
   in
   (y, List.fold_left count 0 events)
 
-let test_blocks_read_weights_and_reuse_caches () =
+let placement =
+  Testable.make ~pp:Nx.Placement.pp ~equal:(fun a b -> Nx.Placement.equal a b)
+
+type claim = Placed | In_place | No_copy
+
+(* [test_blocks claim] runs the loop and checks [claim]: [Placed] that every
+   program compiles and the weights, the pools and the output lie on CPU:1,
+   [In_place] that every pool is written in its own storage, [No_copy] that a
+   call after the first copies nothing onto CPU:1. *)
+let test_blocks claim () =
   let p = params () in
   let n0 = 5 and steps = 3 in
   let context = n0 + steps + 1 in
@@ -119,10 +130,10 @@ let test_blocks_read_weights_and_reuse_caches () =
   in
   List.iter
     (fun c ->
-      is_true ~msg:"the builder places each pool"
-        (Nx.Placement.equal cpu1 (Nx.placement c.Attention.Cache.keys)))
+      equal ~msg:"the builder places each pool" placement cpu1
+        (Nx.placement c.Attention.Cache.keys))
     caches;
-  let cached = Layer_loop.cached ~placement:cpu1 cfg p in
+  let cached = Layer_loop.cached ~placement:cpu1 placed_cfg p in
   let index = Cache_index.rows ~context [| n0 |] in
   let ids = Nx.create Nx.int64 [| 1; n0 |] (Array.init n0 Int64.of_int) in
   let x, caches = cached caches index ids in
@@ -131,35 +142,37 @@ let test_blocks_read_weights_and_reuse_caches () =
     let msg = Printf.sprintf "step %d" step in
     let token = Nx.create Nx.int64 [| 1; 1 |] [| Int64.of_int step |] in
     index := Cache_index.advance !index;
-    let index_bytes =
-      Nx.Ptree.fold Cache_index.ptree (fun _ t n -> n + Nx.nbytes t) !index 0
-    in
     let before = storage !caches in
+    let evaluated = Rune.evaluations () in
     let (x', caches'), uploaded =
-      received (Nx.Device.memory cpu1_device) (fun () ->
-          cached !caches !index token)
+      received cpu1_device (fun () -> cached !caches !index token)
     in
-    equal
-      ~msg:(msg ^ ": every pool is written in its own storage")
-      (list at) before (storage caches');
-    (* The first single-token call compiles its programs, which upload their
-       host constants once. After it, a call uploads the index, which the layer
-       loop places on CPU:1, and the token, a host argument, which every call
-       uploads. *)
-    if step > 1 then
-      equal
-        ~msg:(msg ^ ": only the index and the token are uploaded")
-        int
-        (index_bytes + Nx.nbytes token)
-        uploaded;
+    (match claim with
+    | Placed ->
+        (* Every block program compiles: an evaluated one would compute by
+           nx's operations. *)
+        equal ~msg:(msg ^ ": no program is evaluated") int evaluated
+          (Rune.evaluations ())
+    | In_place ->
+        equal
+          ~msg:(msg ^ ": every pool is written in its own storage")
+          (list at) before (storage caches')
+    | No_copy ->
+        (* The first single-token call compiles its programs. After it, the
+           index and the token, host values the layer loop places on CPU:1,
+           are placed over their own memory, which CPU:1 reaches (Nx.place),
+           and the weights and caches are there already. *)
+        if step > 1 then
+          equal ~msg:(msg ^ ": nothing is copied onto CPU:1") int 0 uploaded);
     x := x';
     caches := caches'
   done;
-  is_true ~msg:"the weights stay placed and readable"
-    (Nx.Placement.equal cpu1 (Nx.placement (List.hd p.blocks).attn_norm.gamma)
-    && Nx.item [ 0 ] (List.hd p.blocks).attn_norm.gamma = 1.0);
-  is_true ~msg:"the output is on CPU:1"
-    (Nx.Placement.equal cpu1 (Nx.placement !x))
+  if claim = Placed then begin
+    let gamma = (List.hd p.blocks).attn_norm.gamma in
+    equal ~msg:"the weights stay placed" placement cpu1 (Nx.placement gamma);
+    equal ~msg:"the weights stay readable" float_exact 1.0 (Nx.item [ 0 ] gamma);
+    equal ~msg:"the output is on CPU:1" placement cpu1 (Nx.placement !x)
+  end
 
 let () =
   exit
@@ -167,7 +180,11 @@ let () =
        [
          group "block programs"
            [
-             test "each reads its weights and index and reuses its cache"
-               test_blocks_read_weights_and_reuse_caches;
+             test "each compiles and reads its weights and index where they lie"
+               (test_blocks Placed);
+             test "each writes its cache in the cache's own storage"
+               (test_blocks In_place);
+             test "a call after the first copies nothing onto CPU:1"
+               (test_blocks No_copy);
            ];
        ])

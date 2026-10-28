@@ -14,16 +14,19 @@
    accumulates from both of its uses.
 
    The whole step (forward, backward, update) compiles as one [Rune.jit]
-   program, which reads the dropout key, consumes the parameters and returns the
-   loss beside the updated parameters, so each step writes the new parameters
-   over the previous generation's storage. The loss recorded at step i is
-   computed before update i.
+   program, which reads the dropout key, is given the parameters, donated, and
+   returns the loss beside the updated parameters, so a step frees the previous
+   generation's storage. The loss recorded at step i is computed before update
+   i. The parameters are read from the file on the host and placed on the device
+   once, before the first step.
 
    [--devices] runs the same [Rune.jit] step data-parallel, with the batch split
-   on axis 0 across the devices: the parameters enter from the host as a copy on
-   each device and come back there, and the gradients of the mean loss sum
-   across the devices by construction, with the same numbers as the
-   single-device step up to fp32 reduction order.
+   on axis 0 across the devices: the parameters lie whole on each device, and
+   the gradients of the mean loss sum across the devices by construction, with
+   the same numbers as the single-device step up to fp32 reduction order. That
+   run raises today: the embedding gradient scatters a cut batch into a whole
+   table, which nx's scatter refuses, and rune compiles a program for one device
+   only, so a set of GPUs raises before it.
 
    [--dropout RATE] (default 0, the reference protocol's dropout-free graph)
    enables the GPT-2 dropout sites in [Gpt2.hidden]. The per-step mask key is an
@@ -42,8 +45,6 @@
    untouched h.N.attn.bias mask buffers copied from the input). *)
 
 open Kaun
-
-let gpt2_tree = Nx.Ptree.instantiate (module Gpt2.Params)
 
 let gpt2_124m : Gpt2.config =
   {
@@ -158,7 +159,7 @@ let loss_fn_half compute inputs targets ?dropout params =
   Nx.cast Nx.float32 (Loss.softmax_cross_entropy_sparse logits targets)
 
 (* A step returns the pre-update loss and the updated parameters. *)
-let train_step objective params =
+let train_step gpt2_tree objective params =
   let loss, grads = Rune.value_and_grad gpt2_tree objective params in
   (* Plain SGD: momentum is 0, so the zero velocity from [sgd_init] leaves the
      update exactly [w - lr * g] and needs no threading across steps. *)
@@ -168,26 +169,23 @@ let train_step objective params =
 (* The step's dropout key is an optional argument: [Some key] when [--dropout]
    is positive, [None] otherwise. [None] holds no tensor, so dropout-free runs
    trace the exact reference graph. *)
-let key = Nx.Ptree.option Nx.Rng.ptree
+let key () = Nx.Ptree.option (Nx.Ptree.v Nx.Rng.walk)
 
 (* Float16 compute needs loss scaling: float16 gradients underflow below 2^-24.
-   The scale state is consumed and returned by the jitted step as tensor leaves,
-   so the dynamic scale really updates across compiled calls. Overflowed steps
-   keep the previous parameters. *)
+   The scale state is donated to and returned by the jitted step as tensor
+   leaves, so the dynamic scale really updates across compiled calls. Overflowed
+   steps keep the previous parameters. *)
 
-type scaled = { params : Gpt2.t; ls : Vega.Loss_scale.t }
+type 'd scaled = { params : 'd Gpt2.t; ls : 'd Vega.Loss_scale.t }
 
-module Scaled = struct
-  type _ t = scaled
+let scaled gpt2_tree =
+  Nx.Ptree.v (fun c t ->
+      let open Nx.Ptree.Walk in
+      let params = field c "params" (structure gpt2_tree) t.params in
+      let ls = field c "ls" Vega.Loss_scale.walk t.ls in
+      { params; ls })
 
-  let walk c t =
-    let open Nx.Ptree.Walk in
-    let params = field c "params" (structure gpt2_tree) t.params in
-    let ls = field c "ls" (structure Vega.Loss_scale.ptree) t.ls in
-    { params; ls }
-end
-
-let train_step_scaled objective key { params; ls } =
+let train_step_scaled gpt2_tree objective key { params; ls } =
   (* The scale enters as the backward seed: the pullback of the scale cotangent
      is exactly [grad (fun p -> Loss_scale.scale ls (objective p))] — every
      float16 cotangent downstream carries the scale, which is the underflow
@@ -236,7 +234,7 @@ let fingerprint t =
   let n = Nx.numel t in
   let a =
     Bigarray.array1_of_genarray
-      (Bigarray.reshape (Nx.to_bigarray (Nx.contiguous t)) [| n |])
+      (Bigarray.reshape (Nx.to_bigarray Bigarray.float32 t) [| n |])
   in
   let first8 =
     List.init (min 8 n) (fun i -> repr_float (Bigarray.Array1.get a i))
@@ -250,8 +248,8 @@ let fingerprint t =
    2304] matrix, then — like c_fc and c_proj — transposed from kaun's [inputs;
    outputs] to [outputs; inputs]. The parameters live where the step left them,
    so each tensor is read back to the host before it is combined. *)
-let fingerprint_tensors (p : Gpt2.t) =
-  let host = Nx.place Nx.Placement.host in
+let fingerprint_tensors (p : _ Gpt2.t) =
+  let host = Nx.place Nx.Host.on in
   let b0 = List.nth p.blocks 0 and b11 = List.nth p.blocks 11 in
   let c_attn =
     Nx.concatenate ~axis:1
@@ -273,11 +271,11 @@ let bias name = function
   | Some b -> b
   | None -> failwith (name ^ ": expected a bias")
 
-let weights_of_params original (p : Gpt2.t) =
+let weights_of_params original (p : Nx.host Gpt2.t) =
   let tensor name t = (name, Nx.P t) in
-  let block i (b : Nx.float32_t Gpt2.block) =
+  let block i (b : (Nx.host Nx.float32_t, Nx.host) Gpt2.block) =
     let key leaf = Printf.sprintf "h.%d.%s" i leaf in
-    let linear leaf (l : Nx.float32_t Linear.t) =
+    let linear leaf (l : (Nx.host Nx.float32_t, Nx.host) Linear.t) =
       [
         tensor (key (leaf ^ ".weight")) l.w;
         tensor (key (leaf ^ ".bias")) (bias (key leaf) l.b);
@@ -403,59 +401,79 @@ let () =
 
   let inputs, targets = batch_of_ids (load_ids !tokens) in
   let original = Nx_io.load_safetensors !model in
-  let params = ref (Gpt2.of_hf gpt2_124m Nx.float32 original) in
-  let n_params = Nx.Ptree.fold gpt2_tree (fun _ _ n -> n + 1) !params 0 in
+  let host_params =
+    Gpt2.of_hf
+      ~placement:(fun _ ~axis:_ -> Nx.Host.on)
+      gpt2_124m Nx.float32 original
+  in
+  let n_params =
+    Nx.Ptree.fold
+      (Nx.Ptree.instantiate (module Gpt2.Params))
+      (fun _ _ n -> n + 1)
+      host_params 0
+  in
 
-  (* Untrained-loss probe, eagerly on the C backend: independent of the jit, the
+  (* Untrained-loss probe, eagerly on the host: independent of the jit, the
      optimizer and the backward pass. *)
-  let initial_loss = repr_float (Nx.item [] (loss_fn inputs targets !params)) in
+  let initial_loss =
+    repr_float (Nx.item [] (loss_fn inputs targets host_params))
+  in
   Printf.printf "initial loss (before step 1): %s\n%!" initial_loss;
 
-  (* The per-shard objective, from the compute dtype. *)
-  let objective =
-    match !compute_dtype with
-    | "float32" -> loss_fn
-    | "bfloat16" -> loss_fn_half Nx.bfloat16
-    | "float16" -> loss_fn_half Nx.float16
-    | d ->
-        failwith
-          ("--compute-dtype must be float32, bfloat16 or float16, got " ^ d)
-  in
-  (* [obj key inputs targets] is the shard objective for one step's dropout key;
-     [None] (the default rate 0) is the dropout-free reference graph. *)
   let rate = !dropout in
   if rate < 0.0 || rate >= 1.0 then failwith "--dropout must be in [0, 1)";
-  let obj key inputs targets params =
-    objective inputs targets
-      ?dropout:(Option.map (fun k -> (rate, k)) key)
-      params
-  in
-  (* The per-step mask key, [fold_in]-derived from the root seed so the run is
-     reproducible; it enters the jitted step as an input leaf, never a
-     capture. *)
-  let root = Nx.Rng.key !seed in
-  let key_at i = if rate = 0.0 then None else Some (Nx.Rng.fold_in root i) in
-  (* [step i] maps parameters to updated parameters and the pre-update loss; the
-     float16 variant additionally threads its loss-scale state, hidden in the
-     closure. *)
-  let step : int -> Gpt2.t -> Gpt2.t * float =
-    if !devices = "" then
-      (* The batch, the same every step, is placed on the device once, so the
-         step runs there; the parameters start on the host and stay on the
-         device after the first step. *)
-      let on_device = Nx.Placement.on (Devices.first !device) in
-      let inputs = Nx.place on_device inputs
-      and targets = Nx.place on_device targets in
+  let train (type d) ~(params_at : d Nx.Placement.t)
+      ~(batch_at : d Nx.Placement.t) =
+    let gpt2_tree = Nx.Ptree.instantiate (module Gpt2.Params) in
+    let key = key () in
+    (* The batch, the same every step, is placed once; the parameters are placed
+       before the first step and stay where the step leaves them. *)
+    let inputs = Nx.place batch_at inputs
+    and targets = Nx.place batch_at targets in
+    let params = Nx.Ptree.place (module Gpt2.Params) params_at host_params in
+    (* The per-shard objective, from the compute dtype. *)
+    let objective =
+      match !compute_dtype with
+      | "float32" -> loss_fn
+      | "bfloat16" -> loss_fn_half Nx.bfloat16
+      | "float16" -> loss_fn_half Nx.float16
+      | d ->
+          failwith
+            ("--compute-dtype must be float32, bfloat16 or float16, got " ^ d)
+    in
+    (* [obj key inputs targets] is the shard objective for one step's dropout
+       key; [None] (the default rate 0) is the dropout-free reference graph. *)
+    let obj key inputs targets params =
+      objective inputs targets
+        ?dropout:(Option.map (fun k -> (rate, k)) key)
+        params
+    in
+    (* The per-step mask key, [fold_in]-derived from the root seed so the run is
+       reproducible; it enters the jitted step as an input leaf, never a
+       capture, whole on each device. *)
+    let root = Nx.Rng.key !seed in
+    let key_at i =
+      if rate = 0.0 then None
+      else
+        Some
+          (Nx.Rng.place (Nx.Placement.uncut params_at) (Nx.Rng.fold_in root i))
+    in
+    (* [step i] maps parameters to updated parameters and the pre-update loss;
+       the float16 variant additionally threads its loss-scale state, hidden in
+       the closure. *)
+    let step : int -> d Gpt2.t -> d Gpt2.t * float =
       if !compute_dtype = "float16" then begin
-        let scaled = Nx.Ptree.instantiate (module Scaled) in
+        let scaled = scaled gpt2_tree in
         let f =
           Rune.jit
-            Nx.Ptree.(key @-> consumes scaled @@ returns (pair tensor scaled))
-            (train_step_scaled (fun key -> obj key inputs targets))
+            Nx.Ptree.(key @-> scaled @-> returns (pair tensor scaled))
+            (train_step_scaled gpt2_tree (fun key -> obj key inputs targets))
         in
-        let ls = ref (Vega.Loss_scale.dynamic ()) in
+        let ls = ref (Vega.Loss_scale.dynamic (Nx.Placement.uncut params_at)) in
         fun i params ->
-          let loss, s = f (key_at i) { params; ls = !ls } in
+          let loss, s =
+            f (key_at i) (Nx.Ptree.donate scaled { params; ls = !ls })
+          in
           ls := s.ls;
           (s.params, Nx.item [] loss)
       end
@@ -463,51 +481,54 @@ let () =
         let f =
           Rune.jit
             Nx.Ptree.(
-              key @-> consumes gpt2_tree @@ returns (pair tensor gpt2_tree))
-            (fun key params -> train_step (obj key inputs targets) params)
+              tensor @-> tensor @-> key @-> gpt2_tree
+              @-> returns (pair tensor gpt2_tree))
+            (fun inputs targets key params ->
+              train_step gpt2_tree (obj key inputs targets) params)
         in
         fun i params ->
-          let loss, params = f (key_at i) params in
+          let loss, params =
+            f inputs targets (key_at i) (Nx.Ptree.donate gpt2_tree params)
+          in
           (params, Nx.item [] loss)
+    in
+    let params = ref params in
+    let records = ref [] in
+    for i = 1 to !steps do
+      let t0 = Unix.gettimeofday () in
+      let params', loss = step i !params in
+      let ms = (Unix.gettimeofday () -. t0) *. 1e3 in
+      params := params';
+      Printf.printf "step %3d  loss %s  %9.2f ms\n%!" i (repr_float loss) ms;
+      let weights =
+        List.map
+          (fun (n, t) -> (n, fingerprint t))
+          (fingerprint_tensors !params)
+      in
+      records := (i, repr_float loss, ms, weights) :: !records
+    done;
+    (Nx.Ptree.place (module Gpt2.Params) Nx.Host.on !params, List.rev !records)
+  in
+  let params, records =
+    if !devices = "" then
+      let module D = (val Nx.devices [ Devices.first !device ]) in
+      train ~params_at:D.on ~batch_at:D.on
     else begin
       if !compute_dtype = "float16" then
         failwith "--compute-dtype float16 does not support --devices";
       let devs = Devices.all !devices in
-      device := String.concat "," (List.map Nx.Device.name devs);
-      (* The batch, the same every step, is split on axis 0 once; the key and
-         the parameters start on the host and enter as a copy on each device. *)
-      let split = Nx.Placement.sharded ~axis:0 devs in
-      let inputs = Nx.place split inputs and targets = Nx.place split targets in
-      let f =
-        Rune.jit
-          Nx.Ptree.(
-            tensor @-> tensor @-> key @-> consumes gpt2_tree
-            @@ returns (pair tensor gpt2_tree))
-          (fun inputs targets key params ->
-            train_step (obj key inputs targets) params)
-      in
-      fun i params ->
-        let loss, params = f inputs targets (key_at i) params in
-        (params, Nx.item [] loss)
+      device := String.concat "," (List.map Rig.name devs);
+      (* The batch is split on axis 0; the parameters lie whole on each
+         device. *)
+      let module D = (val Nx.devices devs) in
+      train ~params_at:D.on ~batch_at:(D.split ~axis:0)
     end
   in
-  let records = ref [] in
-  for i = 1 to !steps do
-    let t0 = Unix.gettimeofday () in
-    let params', loss = step i !params in
-    let ms = (Unix.gettimeofday () -. t0) *. 1e3 in
-    params := params';
-    Printf.printf "step %3d  loss %s  %9.2f ms\n%!" i (repr_float loss) ms;
-    let weights =
-      List.map (fun (n, t) -> (n, fingerprint t)) (fingerprint_tensors !params)
-    in
-    records := (i, repr_float loss, ms, weights) :: !records
-  done;
 
   if !metrics_out <> "" then begin
     let buf = Buffer.create (1 lsl 16) in
     emit_metrics buf ~device:!device ~steps:!steps ~n_params ~initial_loss
-      (List.rev !records);
+      records;
     let oc = open_out !metrics_out in
     Fun.protect
       ~finally:(fun () -> close_out oc)
@@ -516,9 +537,6 @@ let () =
   end;
 
   if !save_weights <> "" then begin
-    let params =
-      Nx.Ptree.map gpt2_tree (fun _ t -> Nx.place Nx.Placement.host t) !params
-    in
     Nx_io.save_safetensors !save_weights (weights_of_params original params);
     Printf.printf "wrote %s\n%!" !save_weights
   end

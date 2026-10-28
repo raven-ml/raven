@@ -22,8 +22,9 @@
 
    [--dtype bfloat16] or [float16] runs the model at half precision against the
    same float32 reference, to the tolerance half precision allows. [--jit
-   DEVICE] compiles the forward passes; the per-block streams are then checked
-   at the last block only, each block being its own compilation.
+   DEVICE] places the model on DEVICE and compiles the forward passes for it;
+   the per-block streams are then checked at the last block only, each block
+   being its own compilation.
 
    Usage: validate.exe [--fixture FILE] [--weights FILE --config FILE] [--dtype
    DT] [--jit DEVICE] Without [--weights] the files come from the fixture's
@@ -100,18 +101,16 @@ let ids_tensor rows =
 
 let flat t = Nx.to_array (Nx.reshape [| -1 |] t)
 
-let validate (type b) ~device ~tol ~exact fx cfg
-    (p : (float, b) Nx.t Llama.params) (dt : (float, b) Nx.dtype) =
-  (* With [device], the parameters are placed there, so the compiled functions
-     run there too, and their results are read back to the host, where the
-     checks compute. *)
-  let compiled f x =
-    if device = None then f x else Nx.place Nx.Placement.host (Rune.jit' f x)
-  in
+let validate (type b d) ~jit ~tol ~exact fx cfg
+    (p : ((float, b, d) Nx.t, d) Llama.params) (dt : (float, b) Nx.dtype) =
+  (* The functions run where the parameters are, compiled with [jit], and their
+     results are read back to the host, where the checks compute. *)
+  let on = Nx.placement p.norm.gamma in
+  let compiled f x = Nx.place Nx.Host.on (if jit then Rune.jit' f x else f x) in
   let to32 t = Nx.cast Nx.float32 t in
   let tokens = ints (mem "ids" fx) in
   let n = Array.length tokens in
-  let ids = ids_tensor [| tokens |] in
+  let ids = Nx.place on (ids_tensor [| tokens |]) in
   let logits =
     compiled (fun ids -> to32 (Llama.logits cfg p (Llama.hidden cfg p ids))) ids
   in
@@ -159,7 +158,7 @@ let validate (type b) ~device ~tol ~exact fx cfg
     Nx.to_array (compiled f ids)
   in
   let blocks =
-    if device = None then List.init cfg.n_layers (fun i -> i + 1)
+    if not jit then List.init cfg.n_layers (fun i -> i + 1)
     else [ cfg.n_layers ]
   in
   let worst_block = ref 0 and ok = ref true in
@@ -176,26 +175,28 @@ let validate (type b) ~device ~tol ~exact fx cfg
       end)
     blocks;
   if not !ok then Printf.printf "first disagreement: block %d\n%!" !worst_block;
-  (* The decode contract on real weights: chunks through the caches. *)
+  (* The decode contract on real weights: chunks through the caches. The
+     positions, the slots and the caches are made where the ids lie. *)
   let chunked ids =
-    let slots = Nx.create Nx.int64 [| 1; n |] (Array.init n Int64.of_int) in
+    let here = Nx.placement ids in
+    let range lo hi =
+      Nx.reshape [| 1; hi - lo |] (Nx.arange_at here Nx.int64 lo hi 1)
+    in
+    let slots = range 0 n in
     let _, hs, _ =
       List.fold_left
         (fun (at, hs, caches) len ->
           let len = min len (n - at) in
           if len = 0 then (at, hs, caches)
           else
-            let pos =
-              Nx.create Nx.int64 [| 1; len |]
-                (Array.init len (fun i -> Int64.of_int (at + i)))
-            in
+            let pos = range at (at + len) in
             let h, caches =
               Llama.cached cfg p caches
                 (Cache_index.make ~pos ~table:slots ())
                 (Nx.slice [ A; R (at, at + len) ] ids)
             in
             (at + len, h :: hs, caches))
-        (0, [], Llama.cache cfg ~slots:n dt)
+        (0, [], Llama.cache ~placement:(fun _ ~axis:_ -> here) cfg ~slots:n dt)
         [ 1; 7; n ]
     in
     to32 (Llama.logits cfg p (Nx.concatenate ~axis:1 (List.rev hs)))
@@ -208,14 +209,17 @@ let validate (type b) ~device ~tol ~exact fx cfg
   let m = Array.length short in
   let padded = Array.append (Array.make (n - m) 0) short in
   let context = n in
-  let index = Cache_index.rows ~context [| n; m |] in
+  let index = Cache_index.place on (Cache_index.rows ~context [| n; m |]) in
   let batch ids =
-    let h, _ =
-      Llama.cached cfg p (Llama.cache cfg ~slots:(2 * context) dt) index ids
+    let caches =
+      Llama.cache
+        ~placement:(fun _ ~axis:_ -> Nx.placement ids)
+        cfg ~slots:(2 * context) dt
     in
+    let h, _ = Llama.cached cfg p caches index ids in
     to32 (Llama.logits cfg p (Nx.slice [ A; I (n - 1) ] h))
   in
-  let both = compiled batch (ids_tensor [| tokens; padded |]) in
+  let both = compiled batch (Nx.place on (ids_tensor [| tokens; padded |])) in
   let row r ids_key =
     Array.map (fun i -> Nx.item [ r; i ] both) (ints (mem ids_key fx))
   in
@@ -247,17 +251,27 @@ let () =
   let repo = string (mem "repo" fx) in
   Printf.printf "%s, reference recorded from sha256 %s\n%!" repo
     (string (mem "weights_sha256" fx));
-  let device = if !jit = "" then None else Some (Devices.first !jit) in
-  let placement = Option.map (fun d _ ~axis:_ -> Nx.Placement.on d) device in
   let (Llama.Dtype dt) = Llama.dtype_of_string !dtype in
-  let cfg, p =
-    if !weights = "" then Llama.from_pretrained ?placement ~repo_id:repo dt
-    else
-      let cfg = Llama.config_of_json (json_of_file !config) in
-      (cfg, Llama.from_file ?placement cfg dt !weights)
-  in
   (* Float32 against float32 with different kernels agrees to a few parts in a
      million eagerly; half precision keeps about three digits. *)
   let exact = !dtype = "float32" in
-  validate ~device ~tol:(if exact then 1e-4 else 5e-2) ~exact fx cfg p dt;
+  let run ~jit at =
+    let placement _ ~axis:_ = at in
+    let cfg, p =
+      if !weights = "" then Llama.from_pretrained ~placement ~repo_id:repo dt
+      else
+        let cfg = Llama.config_of_json (json_of_file !config) in
+        (cfg, Llama.from_file ~placement cfg dt !weights)
+    in
+    validate ~jit
+      ~tol:(if exact then 1e-4 else 5e-2)
+      ~exact fx
+      (Llama.place_config at cfg)
+      p dt
+  in
+  if !jit = "" then run ~jit:false Nx.Host.on
+  else begin
+    let module D = (val Nx.devices [ Devices.first !jit ]) in
+    run ~jit:true D.on
+  end;
   if !failures > 0 then exit 1

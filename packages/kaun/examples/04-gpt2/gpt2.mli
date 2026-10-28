@@ -22,28 +22,29 @@ type config = {
 }
 (** The type for GPT-2 hyperparameters, as in HuggingFace's [config.json]. *)
 
-type 'a block = {
-  ln1 : 'a Kaun.Layer_norm.t;
-  attn : 'a Kaun.Attention.t;
-  ln2 : 'a Kaun.Layer_norm.t;
-  fc : 'a Kaun.Linear.t;  (** MLP up projection, [n_embd → n_inner]. *)
-  proj : 'a Kaun.Linear.t;  (** MLP down projection, [n_inner → n_embd]. *)
+type ('a, 'd) block = {
+  ln1 : ('a, 'd) Kaun.Layer_norm.t;
+  attn : ('a, 'd) Kaun.Attention.t;
+  ln2 : ('a, 'd) Kaun.Layer_norm.t;
+  fc : ('a, 'd) Kaun.Linear.t;  (** MLP up projection, [n_embd → n_inner]. *)
+  proj : ('a, 'd) Kaun.Linear.t;  (** MLP down projection, [n_inner → n_embd]. *)
 }
 (** The type for one pre-norm transformer block over payload ['a]. *)
 
-type 'a params = {
-  wte : 'a Kaun.Embedding.t;  (** Token embeddings, also the tied LM head. *)
-  wpe : 'a Kaun.Embedding.t;  (** Learned position embeddings. *)
-  blocks : 'a block list;
-  ln_f : 'a Kaun.Layer_norm.t;
+type ('a, 'd) params = {
+  wte : ('a, 'd) Kaun.Embedding.t;
+      (** Token embeddings, also the tied LM head. *)
+  wpe : ('a, 'd) Kaun.Embedding.t;  (** Learned position embeddings. *)
+  blocks : ('a, 'd) block list;
+  ln_f : ('a, 'd) Kaun.Layer_norm.t;
 }
 (** The type for GPT-2 parameters over payload ['a]. *)
 
-type t = Nx.float32_t params
-(** The type for single-precision GPT-2 parameters, the dtype of the published
-    weights. *)
+type 'd t = ('d Nx.float32_t, 'd) params
+(** The type for single-precision GPT-2 parameters on the set ['d], the dtype of
+    the published weights. *)
 
-module Params : Nx.Ptree.S with type 'a t = 'a params
+module Params : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) params
 (** The parameters' structure: [Nx.Ptree.instantiate (module Params)] is what
     the transformations, the optimisers and {!Nx_io.Archive.of_value} take.
     Leaves are at [wte.table], [wpe.table], [blocks.0.ln1.gamma],
@@ -55,16 +56,20 @@ module Params : Nx.Ptree.S with type 'a t = 'a params
     gradients. The kaun layers keep their attention-score and layer-norm
     statistics in float32 islands whatever [dt]. *)
 
-val make : config -> t
-(** [make cfg] is a zero-initialized model, the [~like] template for
-    {!Nx_io.Archive.to_value}. *)
+val make : key:'d Nx.Rng.key -> config -> 'd t
+(** [make ~key cfg] is a zero-initialized model where [key] lies, the [~like]
+    template for {!Nx_io.Archive.to_value}. *)
 
 (** {1:placement Placement}
 
-    {!of_hf} and {!cache} place each leaf they build with
+    {!of_hf} and {!cache} make the arrays a model starts from, the file's
+    entries and empty pools, and place each leaf they build with
     [placement role ~axis]: [role] is the cut a tensor-parallel placement makes
     in the leaf and [axis] the axis of the leaf that cut runs along, [0] for
-    [Whole]. One device ignores both: [fun _ ~axis:_ -> p]. *)
+    [Whole]. One device ignores both: [fun _ ~axis:_ -> p], and the host is
+    [fun _ ~axis:_ -> Nx.Host.on]. A program over several devices is evaluated
+    by nx, so a step over a set of several GPUs, which computes only compiled
+    programs, raises. *)
 
 (** The type for the cuts of a tensor-parallel placement. *)
 type role =
@@ -86,28 +91,30 @@ type role =
     and keeps nothing, and {!logits} is the head applied to either. *)
 
 val cache :
-  ?placement:(role -> axis:int -> Nx.Placement.t) ->
+  placement:(role -> axis:int -> 'd Nx.Placement.t) ->
   config ->
   slots:int ->
   (float, 'b) Nx.dtype ->
-  (float, 'b) Nx.t Kaun.Attention.Cache.t list
-(** [cache cfg ~slots dtype] is an empty decoding state: one key-value cache per
-    block, in block order, each of [slots] slots. Its structure is
+  ((float, 'b, 'd) Nx.t, 'd) Kaun.Attention.Cache.t list
+(** [cache ~placement cfg ~slots dtype] is an empty decoding state: one
+    key-value cache per block, in block order, each of [slots] slots. Its
+    structure is
     [Nx.Ptree.list (Nx.Ptree.instantiate (module Kaun.Attention.Cache))].
     [Kaun.Cache_index.rows ~context lens] needs [Array.length lens * context] of
     them. [dtype] is the parameters' dtype.
 
-    With [placement], each pool is placed with [placement Kv_heads ~axis:1], so
-    a compiled step finds the caches where the model is from its first call. *)
+    Each pool is made at [placement Kv_heads ~axis:1], so
+    a compiled step finds the caches where the model is from its first call, on
+    a set that computes under [Rune.jit] alone too. *)
 
 val cached :
   config ->
-  ?dropout:float * Nx.Rng.t ->
-  (float, 'b) Nx.t params ->
-  (float, 'b) Nx.t Kaun.Attention.Cache.t list ->
-  Kaun.Cache_index.t ->
-  Nx.int64_t ->
-  (float, 'b) Nx.t * (float, 'b) Nx.t Kaun.Attention.Cache.t list
+  ?dropout:float * 'd Nx.Rng.key ->
+  ((float, 'b, 'd) Nx.t, 'd) params ->
+  ((float, 'b, 'd) Nx.t, 'd) Kaun.Attention.Cache.t list ->
+  'd Kaun.Cache_index.t ->
+  'd Nx.int64_t ->
+  (float, 'b, 'd) Nx.t * ((float, 'b, 'd) Nx.t, 'd) Kaun.Attention.Cache.t list
 (** [cached cfg p caches index ids] is the residual stream of the tokens [ids] —
     shape [[| batch; seq; n_embd |]] — which sit where [index] says and attend
     through [caches], and the caches with their keys and values written. A
@@ -129,10 +136,10 @@ val cached :
 
 val hidden :
   config ->
-  ?dropout:float * Nx.Rng.t ->
-  (float, 'b) Nx.t params ->
-  Nx.int64_t ->
-  (float, 'b) Nx.t
+  ?dropout:float * 'd Nx.Rng.key ->
+  ((float, 'b, 'd) Nx.t, 'd) params ->
+  'd Nx.int64_t ->
+  (float, 'b, 'd) Nx.t
 (** [hidden cfg ?dropout p ids] is the residual stream after the last block for
     the [[| batch; seq |]] id tensor [ids], of shape [[| batch; seq; n_embd |]],
     at the parameters' dtype. Every token attends to the tokens before it.
@@ -141,7 +148,10 @@ val hidden :
     positions. *)
 
 val logits :
-  config -> (float, 'b) Nx.t params -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+  config ->
+  ((float, 'b, 'd) Nx.t, 'd) params ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t
 (** [logits cfg p h] is the final layer norm and the language-model head applied
     to a residual stream: [[| ...; n_embd |]] to [[| ...; vocab_size |]]. The
     head is tied to [p.wte]. Both act per position, so select the positions of
@@ -153,34 +163,35 @@ val config_of_json : Jsont.json -> config
     Raises [Failure] on a missing field. *)
 
 val of_hf :
-  ?placement:(role -> axis:int -> Nx.Placement.t) ->
+  placement:(role -> axis:int -> 'd Nx.Placement.t) ->
   config ->
   (float, 'b) Nx.dtype ->
-  Nx_io.Archive.t ->
-  (float, 'b) Nx.t params
-(** [of_hf cfg dt weights] is the model of the HuggingFace GPT-2 [weights], at
-    [dt]. Each entry is read by its name in the file with the shape [cfg] gives
-    it. The file's weights are already [inputs × outputs]; each block's fused
-    [c_attn] weight and bias are cut into the [q], [k] and [v] projections with
-    [Nx.split], which copies nothing. At the file's own dtype the leaves are the
-    file's entries; at another one each leaf is cast. Entries the model does not
-    use (attention mask buffers) are never read.
+  'e Nx_io.Archive.t ->
+  ((float, 'b, 'd) Nx.t, 'd) params
+(** [of_hf ~placement cfg dt weights] is the model of the HuggingFace GPT-2
+    [weights], at [dt]. Each entry is read by its name in the file with the
+    shape [cfg] gives it. The file's weights are already [inputs × outputs];
+    each block's fused [c_attn] weight and bias are cut into the [q], [k] and
+    [v] projections with [Nx.split], which copies nothing. At the file's own
+    dtype the leaves are the file's entries; at another one each leaf is cast.
+    Entries the model does not use (attention mask buffers) are never read.
 
-    With [placement], each leaf is placed with [Nx.place (placement role ~axis)]
-    as it is built (see {!role}), so a function compiled where the model is that
-    captures it uploads nothing.
+    Each leaf is placed with [Nx.place (placement role ~axis)] as it is built
+    (see {!role}), so a function compiled where the model is that captures it
+    uploads nothing.
 
     Raises [Failure], naming the entry, if one is missing, has another shape
     than [cfg] says, or is not a float16, bfloat16, float32 or float64 entry. *)
 
 val from_file :
-  ?placement:(role -> axis:int -> Nx.Placement.t) ->
+  placement:(role -> axis:int -> 'd Nx.Placement.t) ->
   config ->
   (float, 'b) Nx.dtype ->
   string ->
-  (float, 'b) Nx.t params
-(** [from_file cfg dt path] is [of_hf cfg dt (Nx_io.load_safetensors path)]: the
-    parameters of a local HuggingFace-layout safetensors file.
+  ((float, 'b, 'd) Nx.t, 'd) params
+(** [from_file ~placement cfg dt path] is
+    [of_hf ~placement cfg dt (Nx_io.load_safetensors path)]: the parameters of a
+    local HuggingFace-layout safetensors file.
 
     Raises [Failure] on I/O or format errors, and as {!of_hf}. *)
 
@@ -192,7 +203,7 @@ val dtype_of_string : string -> dtype
 (** [dtype_of_string s] is the dtype named ["float32"], ["float16"] or
     ["bfloat16"]. Raises [Failure] on another name. *)
 
-val stored_dtype : Nx_io.Archive.t -> dtype
+val stored_dtype : 'd Nx_io.Archive.t -> dtype
 (** [stored_dtype weights] is the dtype [weights] stores its token table at, the
     dtype at which {!of_hf} casts nothing.
 
@@ -200,12 +211,12 @@ val stored_dtype : Nx_io.Archive.t -> dtype
     float32 entry. *)
 
 val from_pretrained :
-  ?placement:(role -> axis:int -> Nx.Placement.t) ->
+  placement:(role -> axis:int -> 'd Nx.Placement.t) ->
   ?repo_id:string ->
   (float, 'b) Nx.dtype ->
-  config * (float, 'b) Nx.t params
-(** [from_pretrained dt] downloads [repo_id] (defaults to ["gpt2"]) from the
-    HuggingFace Hub, config and weights, and is the parsed configuration with
-    the pretrained parameters at [dt].
+  config * ((float, 'b, 'd) Nx.t, 'd) params
+(** [from_pretrained ~placement dt] downloads [repo_id] (defaults to ["gpt2"])
+    from the HuggingFace Hub, config and weights, and is the parsed
+    configuration with the pretrained parameters at [dt].
 
     Raises [Failure] on download or parse errors. *)

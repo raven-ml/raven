@@ -9,7 +9,7 @@
 open Kaun
 
 module Mlp = struct
-  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
+  type ('a, 'd) t = { l1 : ('a, 'd) Linear.t; l2 : ('a, 'd) Linear.t }
 
   let walk c { l1; l2 } =
     let open Nx.Ptree.Walk in
@@ -23,7 +23,6 @@ end
 let mlp = Nx.Ptree.instantiate (module Mlp)
 
 let () =
-  Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   (* XOR dataset *)
   let x =
     Nx.create Nx.float32 [| 4; 2 |] [| 0.; 0.; 0.; 1.; 1.; 0.; 1.; 1. |]
@@ -31,10 +30,11 @@ let () =
   let y = Nx.create Nx.float32 [| 4; 1 |] [| 0.; 1.; 1.; 0. |] in
 
   (* Model parameters *)
+  let k = Nx.Rng.split (Nx.Rng.key 42) in
   let params =
     {
-      Mlp.l1 = Linear.init ~inputs:2 ~outputs:8;
-      l2 = Linear.init ~inputs:8 ~outputs:1;
+      Mlp.l1 = Linear.init ~key:k.(0) ~inputs:2 ~outputs:8;
+      l2 = Linear.init ~key:k.(1) ~inputs:8 ~outputs:1;
     }
   in
 

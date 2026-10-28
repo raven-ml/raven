@@ -180,8 +180,10 @@ let routing ~k ~margin recorded experts =
       "experts: %d of %d tokens differ as sets, %d in order, margin %.1e" !sets
       tokens (!orders - !sets) margin )
 
-let run (type c) ~tol ~logits_tol ~exact ~blocks ~only ~device fx
-    (dt : (float, c) Nx.dtype) =
+(* The model is imported on the host, where everything but the compiled blocks
+   runs; each compiled block runs at [on]. *)
+let run (type c d) ~tol ~logits_tol ~exact ~blocks ~only
+    ~(on : d Nx.Placement.t) fx (dt : (float, c) Nx.dtype) =
   let repo = string (mem "repo" fx) in
   List.iter
     (fun (file, sha) ->
@@ -191,7 +193,9 @@ let run (type c) ~tol ~logits_tol ~exact ~blocks ~only ~device fx
   let cfg = Gpt_oss.config_of_json (Kaun_hf.load_config repo) in
   let weights = Kaun_hf.load_safetensors repo in
   let (Gpt_oss.Dtype stored) = Gpt_oss.stored_dtype weights in
-  let p = Gpt_oss.of_hf cfg stored weights in
+  let p =
+    Gpt_oss.of_hf ~placement:(fun _ ~axis:_ -> Nx.Host.on) cfg stored weights
+  in
   let dim = cfg.dim and k = cfg.experts_per_token in
   let layers = List.length cfg.layers in
   let depth = match blocks with None -> layers | Some n -> min n layers in
@@ -209,11 +213,12 @@ let run (type c) ~tol ~logits_tol ~exact ~blocks ~only ~device fx
     { m with tok = { Embedding.table = x } }
   in
   let hidden =
+    let placed = Gpt_oss.place_config on cfg in
     let compiled layer =
       Rune.jit
         Nx.Ptree.(
           instantiate (module Gpt_oss.Params) @-> tensor @-> returns tensor)
-        (Gpt_oss.hidden { cfg with Gpt_oss.layers = [ layer ] })
+        (Gpt_oss.hidden { placed with Gpt_oss.layers = [ layer ] })
     in
     let sliding = compiled Gpt_oss.Sliding and full = compiled Gpt_oss.Full in
     function Gpt_oss.Sliding -> sliding | Full -> full
@@ -247,7 +252,10 @@ let run (type c) ~tol ~logits_tol ~exact ~blocks ~only ~device fx
           let x3 = Nx.reshape [| 1; tokens; dim |] !x in
           let attended, _ =
             Gpt_oss.attention cfg layer b'
-              (List.hd (Gpt_oss.cache one ~slots:0 dt))
+              (List.hd
+                 (Gpt_oss.cache
+                    ~placement:(fun _ ~axis:_ -> Nx.Host.on)
+                    one ~slots:0 dt))
               index
               (Rms_norm.apply ~eps:cfg.norm_eps b'.attn_norm x3)
           in
@@ -259,16 +267,10 @@ let run (type c) ~tol ~logits_tol ~exact ~blocks ~only ~device fx
                     (Rms_norm.apply ~eps:cfg.norm_eps b'.ffn_norm middle)))
           in
           let y =
-            match device with
-            | None -> hidden layer m rows
-            | Some d ->
-                let on = Nx.Placement.on d in
-                Nx.place Nx.Placement.host
-                  (hidden layer
-                     (Nx.Ptree.place
-                        (Nx.Ptree.instantiate (module Gpt_oss.Params))
-                        on m)
-                     (Nx.place on rows))
+            Nx.place Nx.Host.on
+              (hidden layer
+                 (Nx.Ptree.place (module Gpt_oss.Params) on m)
+                 (Nx.place on rows))
           in
           let y = Nx.reshape [| tokens; dim |] y in
           let block = Printf.sprintf "block %d" i in
@@ -415,10 +417,13 @@ let () =
   let tol = if given then !tol else if exact then 2e-4 else 1.0 in
   let logits_tol = if given || exact then tol else 0.25 in
   let (Gpt_oss.Dtype dt) = Gpt_oss.dtype_of_string !dtype in
-  let device = if !device = "" then None else Some (Devices.first !device) in
-  run ~tol ~logits_tol ~exact ~device
-    ~blocks:(if !blocks > 0 then Some !blocks else None)
-    ~only:!only fx dt;
+  let blocks = if !blocks > 0 then Some !blocks else None in
+  if !device = "" then
+    run ~tol ~logits_tol ~exact ~on:Nx.Host.on ~blocks ~only:!only fx dt
+  else begin
+    let module D = (val Nx.devices [ Devices.first !device ]) in
+    run ~tol ~logits_tol ~exact ~on:D.on ~blocks ~only:!only fx dt
+  end;
   match !first_failure with
   | None -> Printf.printf "all checks passed (tolerance %.0e)\n" tol
   | Some name ->

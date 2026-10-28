@@ -9,13 +9,12 @@
   jsont.bytesrw
   brot
   nx
-  nx.amd
   rig
   rig.metal
   rig.cuda
   rig.nv.nvidia
   rig.amd.amdgpu
-  nx.dtype
+  nx.array
   nx.io
   rune
   unix))

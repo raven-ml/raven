@@ -8,7 +8,6 @@
  (modules bench_gpt_oss moe gpt_oss layer_loop)
  (libraries
   nx
-  nx.amd
   rig
   rig.cuda
   rig.amd.amdgpu

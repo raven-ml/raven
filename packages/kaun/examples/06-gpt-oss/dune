@@ -1,7 +1,17 @@
 (executables
  (names main validate validate_text validate_stream bench bench_step)
- (modules moe gpt_oss layer_loop harmony devices main validate
-  validate_text validate_stream bench bench_step)
+ (modules
+  moe
+  gpt_oss
+  layer_loop
+  harmony
+  devices
+  main
+  validate
+  validate_text
+  validate_stream
+  bench
+  bench_step)
  (libraries
   kaun
   kaun.hf
@@ -9,7 +19,6 @@
   jsont.bytesrw
   brot
   nx
-  nx.amd
   rig
   rig.metal
   rig.cuda

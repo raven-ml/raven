@@ -18,7 +18,7 @@
 
 type layer = Sliding | Full  (** The type for attention kinds. *)
 
-type config = {
+type 'd config = {
   vocab_size : int;
   dim : int;
   layers : layer list;  (** One per block. *)
@@ -31,7 +31,7 @@ type config = {
   experts_per_token : int;
   swiglu_limit : float;
   norm_eps : float;
-  rope : Kaun.Rope.t;  (** {!Kaun.Rope.yarn}. *)
+  rope : 'd Kaun.Rope.t;  (** {!Kaun.Rope.yarn}, where the model reads it. *)
   attention_scale : float;
       (** YaRN's temperature, [(0.1 * ln factor + 1) ^ 2 / sqrt head_dim], in
           place of [1 / sqrt head_dim]. The reference scales its cosines and
@@ -39,37 +39,43 @@ type config = {
       *)
   tied : bool;  (** Whether the head is the token table. *)
 }
-(** The type for gpt-oss hyperparameters. The expert count and widths are read
-    from the parameters. *)
+(** The type for gpt-oss hyperparameters, with the rotary schedule on the set
+    ['d]. The expert count and widths are read from the parameters. *)
 
-type 'a block = {
-  attn_norm : 'a Kaun.Rms_norm.t;
-  attn : 'a Kaun.Attention.t;  (** Every projection has a bias. *)
+val place_config : 'e Nx.Placement.t -> 'd config -> 'e config
+(** [place_config at cfg] is [cfg] with its rotary schedule at [at]
+    ({!Kaun.Rope.place}). {!config_of_json} makes it on the host; a model on
+    other devices places it once, where its parameters lie. *)
+
+type ('a, 'd) block = {
+  attn_norm : ('a, 'd) Kaun.Rms_norm.t;
+  attn : ('a, 'd) Kaun.Attention.t;  (** Every projection has a bias. *)
   sinks : 'a;  (** [[| n_heads |]]. *)
-  ffn_norm : 'a Kaun.Rms_norm.t;
-  router : 'a Kaun.Linear.t;  (** Model width to experts, with a bias. *)
-  moe : 'a Moe.t;
+  ffn_norm : ('a, 'd) Kaun.Rms_norm.t;
+  router : ('a, 'd) Kaun.Linear.t;  (** Model width to experts, with a bias. *)
+  moe : ('a, 'd) Moe.t;
 }
 (** The type for one block over payload ['a]. Packed expert weights are uint8
     tensors whatever ['a]. *)
 
-type 'a params = {
-  tok : 'a Kaun.Embedding.t;
-  blocks : 'a block list;
-  norm : 'a Kaun.Rms_norm.t;
-  head : 'a Kaun.Linear.t option;  (** [None]: tied to [tok]. *)
+type ('a, 'd) params = {
+  tok : ('a, 'd) Kaun.Embedding.t;
+  blocks : ('a, 'd) block list;
+  norm : ('a, 'd) Kaun.Rms_norm.t;
+  head : ('a, 'd) Kaun.Linear.t option;  (** [None]: tied to [tok]. *)
 }
 (** The type for gpt-oss parameters over payload ['a]. *)
 
-type t = Nx.float32_t params
+type 'd t = ('d Nx.float32_t, 'd) params
+(** The type for single-precision gpt-oss parameters on the set ['d]. *)
 
-module Block : Nx.Ptree.S with type 'a t = 'a block
+module Block : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) block
 (** A block's structure. It walks [attn_norm], [attn], [sinks], [ffn_norm],
     [router] and [moe], whose weights report their case (see {!Moe.walk}):
     [Nx.Ptree.instantiate (module Block)] is what a compiled block program takes
     its weights as. *)
 
-module Params : Nx.Ptree.S with type 'a t = 'a params
+module Params : Nx.Ptree.S with type ('a, 'd) t = ('a, 'd) params
 (** The parameters' structure: [tok], each block at [blocks.i] as {!Block} walks
     it, [norm], then [head] when it is present. The packed expert weights are
     fixed tensors, so [Nx.Ptree.instantiate (module Params)] walks every tensor
@@ -78,11 +84,14 @@ module Params : Nx.Ptree.S with type 'a t = 'a params
 
 (** {1:placement Placement}
 
-    {!of_hf} and {!cache} place each leaf they build with
+    {!of_hf} and {!cache} make the arrays a model starts from, the file's
+    entries and empty pools, and place each leaf they build with
     [placement role ~axis]: [role] is the cut a tensor-parallel or
     expert-parallel placement makes in the leaf and [axis] the axis of the leaf
     that cut runs along, [0] for [Whole]. One device ignores both:
-    [fun _ ~axis:_ -> p]. *)
+    [fun _ ~axis:_ -> p], and the host is [fun _ ~axis:_ -> Nx.Host.on]. A
+    program over several devices is evaluated by nx, so a step over a set of
+    several GPUs, which computes only compiled programs, raises. *)
 
 (** The type for the cuts of a tensor-parallel or expert-parallel placement. *)
 type role =
@@ -98,22 +107,23 @@ type role =
           and their biases. *)
   | Kv_heads  (** Cut along its heads: a cache pool. *)
 
-val expert_parallel : Nx.Device.t list -> role -> axis:int -> Nx.Placement.t
-(** [expert_parallel ds] splits the experts over [ds] along their expert axis
-    and keeps every other leaf, and the caches, a copy on each device: the
+val expert_parallel : 'd Nx.devices -> role -> axis:int -> 'd Nx.Placement.t
+(** [expert_parallel s] splits the experts over [s] along their expert axis and
+    keeps every other leaf, and the caches, a copy on each device: the
     [placement] of {!of_hf} and {!cache} for expert parallelism. Over one device
-    every leaf is whole there. *)
+    every leaf is whole there. Over several, the mixture's take from the cut
+    experts raises today: nx's take reads the axis it takes from whole. *)
 
 (** {1:attention Attention} *)
 
 val attention :
-  config ->
+  'd config ->
   layer ->
-  (float, 'b) Nx.t block ->
-  (float, 'b) Nx.t Kaun.Attention.Cache.t ->
-  Kaun.Cache_index.t ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t * (float, 'b) Nx.t Kaun.Attention.Cache.t
+  ((float, 'b, 'd) Nx.t, 'd) block ->
+  ((float, 'b, 'd) Nx.t, 'd) Kaun.Attention.Cache.t ->
+  'd Kaun.Cache_index.t ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t * ((float, 'b, 'd) Nx.t, 'd) Kaun.Attention.Cache.t
 (** [attention cfg layer b cache index x] is causal self-attention of the
     normalised tokens [x], of shape [[| batch; seq; dim |]], through [cache],
     and the cache with their keys and values written: {!Kaun.Attention.cached}
@@ -128,92 +138,100 @@ val attention :
     reads and keeps nothing. *)
 
 val block :
-  config ->
+  'd config ->
   layer ->
-  (float, 'b) Nx.t block ->
-  (float, 'b) Nx.t Kaun.Attention.Cache.t ->
-  Kaun.Cache_index.t ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t * (float, 'b) Nx.t Kaun.Attention.Cache.t
+  ((float, 'b, 'd) Nx.t, 'd) block ->
+  ((float, 'b, 'd) Nx.t, 'd) Kaun.Attention.Cache.t ->
+  'd Kaun.Cache_index.t ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t * ((float, 'b, 'd) Nx.t, 'd) Kaun.Attention.Cache.t
 (** [block cfg layer b cache index x] is one pre-norm block of kind [layer]
     applied to the residual stream [x], of shape [[| batch; seq; dim |]],
     through [cache], and the cache with the tokens' keys and values written.
     {!cached} folds it over the blocks; a driver that runs each block as its own
     compiled program calls it directly. *)
 
-val hidden : config -> (float, 'b) Nx.t params -> Nx.int64_t -> (float, 'b) Nx.t
+val hidden :
+  'd config ->
+  ((float, 'b, 'd) Nx.t, 'd) params ->
+  'd Nx.int64_t ->
+  (float, 'b, 'd) Nx.t
 (** [hidden cfg p ids] is the residual stream after the last block for the
     [[| batch; seq |]] id tensor [ids], of shape [[| batch; seq; dim |]]. Every
     token attends to the tokens before it. *)
 
 val cache :
-  ?placement:(role -> axis:int -> Nx.Placement.t) ->
-  config ->
+  placement:(role -> axis:int -> 'd Nx.Placement.t) ->
+  'e config ->
   slots:int ->
   (float, 'b) Nx.dtype ->
-  (float, 'b) Nx.t Kaun.Attention.Cache.t list
-(** [cache cfg ~slots dtype] is an empty decoding state: one key-value cache per
-    block, in block order, each of [slots] slots, at the parameters' dtype. Its
-    structure is
+  ((float, 'b, 'd) Nx.t, 'd) Kaun.Attention.Cache.t list
+(** [cache ~placement cfg ~slots dtype] is an empty decoding state: one
+    key-value cache per block, in block order, each of [slots] slots, at the
+    parameters' dtype. Its structure is
     [Nx.Ptree.list (Nx.Ptree.instantiate (module Kaun.Attention.Cache))].
 
-    With [placement], each pool is placed with [placement Kv_heads ~axis:1], so
-    a compiled step finds the caches where the model is from its first call. *)
+    Each pool is made at [placement Kv_heads ~axis:1], so
+    a compiled step finds the caches where the model is from its first call, on
+    a set that computes under [Rune.jit] alone too. *)
 
 val cached :
-  config ->
-  (float, 'b) Nx.t params ->
-  (float, 'b) Nx.t Kaun.Attention.Cache.t list ->
-  Kaun.Cache_index.t ->
-  Nx.int64_t ->
-  (float, 'b) Nx.t * (float, 'b) Nx.t Kaun.Attention.Cache.t list
+  'd config ->
+  ((float, 'b, 'd) Nx.t, 'd) params ->
+  ((float, 'b, 'd) Nx.t, 'd) Kaun.Attention.Cache.t list ->
+  'd Kaun.Cache_index.t ->
+  'd Nx.int64_t ->
+  (float, 'b, 'd) Nx.t * ((float, 'b, 'd) Nx.t, 'd) Kaun.Attention.Cache.t list
 (** [cached cfg p caches index ids] is the residual stream of the tokens [ids],
     which sit where [index] says and attend through [caches], and the caches
     with their keys and values written. See {!Kaun.Attention.cached}. *)
 
 val logits :
-  config -> (float, 'b) Nx.t params -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+  'e config ->
+  ((float, 'b, 'd) Nx.t, 'd) params ->
+  (float, 'b, 'd) Nx.t ->
+  (float, 'b, 'd) Nx.t
 (** [logits cfg p h] is the final norm and the language-model head applied to a
     residual stream, per position. Select positions first. *)
 
 (** {1:loading Pretrained weights} *)
 
-val config_of_json : Jsont.json -> config
+val config_of_json : Jsont.json -> Nx.host config
 (** [config_of_json json] reads HuggingFace's [config.json].
 
     Raises [Failure] on a missing field or a rotary scaling other than YaRN
     without truncation. *)
 
 val of_hf :
-  ?placement:(role -> axis:int -> Nx.Placement.t) ->
-  config ->
+  placement:(role -> axis:int -> 'd Nx.Placement.t) ->
+  'c config ->
   (float, 'b) Nx.dtype ->
-  Nx_io.Archive.t ->
-  (float, 'b) Nx.t params
-(** [of_hf cfg dt weights] is the model of the HuggingFace gpt-oss [weights],
-    with its float leaves at [dt]. Each entry is read by its name in the file
-    with the shape [cfg] gives it. Projections are transposed to
+  'e Nx_io.Archive.t ->
+  ((float, 'b, 'd) Nx.t, 'd) params
+(** [of_hf ~placement cfg dt weights] is the model of the HuggingFace gpt-oss
+    [weights], with its float leaves at [dt]. Each entry is read by its name in
+    the file with the shape [cfg] gives it. Projections are transposed to
     [inputs × outputs], a view. Experts stored as [_blocks] and [_scales] are an
     {!Nx_quant.mxfp4} weight over the file's bytes, whatever [dt]. At the file's
     own dtype nothing is copied; at another one each float leaf is cast.
 
-    With [placement], each float leaf is placed with
-    [Nx.place (placement role ~axis)] as it is built (see {!role}), and each
-    packed weight with
-    [Nx.Ptree.place Nx_quant.ptree (placement Experts ~axis:0)], so a function
-    compiled where the model is that captures it uploads nothing and the host
-    holds one leaf at a time.
+    Each float leaf is placed with [Nx.place (placement role ~axis)] as it is
+    built (see {!role}), and each packed weight with
+    [Nx_quant.place (placement Experts ~axis:0)], so a function compiled where
+    the model is that captures it uploads nothing and the host holds one leaf at
+    a time.
 
     Raises [Failure], naming the entry, if one is missing, has another shape
     than [cfg] says, or has a dtype the leaf cannot take. *)
 
 val from_file :
-  ?placement:(role -> axis:int -> Nx.Placement.t) ->
-  config ->
+  placement:(role -> axis:int -> 'd Nx.Placement.t) ->
+  'c config ->
   (float, 'b) Nx.dtype ->
   string ->
-  (float, 'b) Nx.t params
-(** [from_file cfg dt path] is {!of_hf} on the safetensors file [path]. *)
+  ((float, 'b, 'd) Nx.t, 'd) params
+(** [from_file ~placement cfg dt path] is {!of_hf} on the safetensors file
+    [path]. *)
 
 type dtype =
   | Dtype : (float, 'b) Nx.dtype -> dtype
@@ -223,7 +241,7 @@ val dtype_of_string : string -> dtype
 (** [dtype_of_string s] is the dtype named ["float32"] or ["bfloat16"]. Raises
     [Failure] on another name. *)
 
-val stored_dtype : Nx_io.Archive.t -> dtype
+val stored_dtype : 'd Nx_io.Archive.t -> dtype
 (** [stored_dtype weights] is the dtype [weights] stores its embedding table at,
     the dtype at which {!of_hf} casts nothing.
 
@@ -231,10 +249,10 @@ val stored_dtype : Nx_io.Archive.t -> dtype
     entry. *)
 
 val from_pretrained :
-  ?placement:(role -> axis:int -> Nx.Placement.t) ->
+  placement:(role -> axis:int -> 'd Nx.Placement.t) ->
   string ->
   (float, 'b) Nx.dtype ->
-  config * (float, 'b) Nx.t params
-(** [from_pretrained repo_id dt] downloads the repository's configuration and
-    weights, single-file or sharded (cached afterwards), and is the model at
-    [dt]. *)
+  Nx.host config * ((float, 'b, 'd) Nx.t, 'd) params
+(** [from_pretrained ~placement repo_id dt] downloads the repository's
+    configuration and weights, single-file or sharded (cached afterwards), and
+    is the model at [dt]. *)

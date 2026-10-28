@@ -8,7 +8,7 @@
 
 open Windtrap
 
-let cfg ~tied : Llama.config =
+let cfg ~tied : Nx.host Llama.config =
   {
     vocab_size = 11;
     dim = 8;
@@ -55,10 +55,10 @@ let body =
 let test_params () =
   let params = Nx.Ptree.instantiate (module Llama.Params) in
   equal ~msg:"a tied head" (list string) (body @ [ "head: None" ])
-    (visits params (Llama.make (cfg ~tied:true)));
+    (visits params (Llama.make ~key:(Nx.Rng.key 0) (cfg ~tied:true)));
   equal ~msg:"an untied head" (list string)
     (body @ ("head: Some" :: linear "head"))
-    (visits params (Llama.make (cfg ~tied:false)))
+    (visits params (Llama.make ~key:(Nx.Rng.key 0) (cfg ~tied:false)))
 
 let () =
   exit

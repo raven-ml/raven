@@ -25,11 +25,13 @@
    against the whole-sequence one; a ragged batch of two prompts against each
    prompt's own reference.
 
-   [--devices LIST] compiles every function under test; the per-block streams
-   are then checked at the last block only. Over several devices the experts are
-   split among them and the rest is a copy on each. [--dtype bfloat16] runs the
-   whole model at half precision against the same float32 reference and skips
-   the building blocks.
+   Without [--devices] every function under test runs eagerly on the host.
+   [--devices LIST] places the model on those devices and compiles every
+   function under test for them; the per-block streams are then checked at the
+   last block only. Over several devices the experts are split among them and
+   the rest is a copy on each; that run raises today, as nx's take refuses
+   experts cut along the axis it takes from. [--dtype bfloat16] runs the whole model at half
+   precision against the same float32 reference and skips the building blocks.
 
    Usage: validate.exe [--fixtures DIR] [--float-weights FILE] [--mxfp4-weights
    FILE] [--devices LIST] [--dtype DT]. Without the weight files they come from
@@ -128,15 +130,12 @@ let identical ?(flushed = fun _ -> false) name expected actual =
     (Printf.sprintf "  (%d of %d values differ%s%s)" !differing
        (Array.length expected) !first zeroed)
 
-(* [compiled devices f x] is [f x], compiled over [devices] when given: [x] is
-   placed there, a copy on each, and the result is read back to the host, where
-   the checks compute on it eagerly. *)
-let compiled devices f x =
-  match devices with
-  | None -> f x
-  | Some ds ->
-      Nx.place Nx.Placement.host
-        (Rune.jit' f (Nx.place (Nx.Placement.replicated ds) x))
+(* [compiled ~jit s f x] is [f x] over the set [s], compiled with [jit]: [x] is
+   placed there, a copy on each device, and the result is read back to the host,
+   where the checks compute on it eagerly. *)
+let compiled ~jit s f x =
+  let x = Nx.place (Nx.Placement.on s) x in
+  Nx.place Nx.Host.on (if jit then Rune.jit' f x else f x)
 
 let number j =
   match j with
@@ -180,21 +179,19 @@ let moe_params archive ~layer ~weight =
 
 let float_weight archive name = Moe.Float (tensor archive name)
 
-let place_experts devices (p : _ Moe.t) =
-  match devices with
-  | None -> p
-  | Some ds ->
-      let split = Nx.Placement.sharded ~axis:0 ds in
-      let weight = function
-        | Moe.Float w -> Moe.Float (Nx.place split w)
-        | Moe.Quant w -> Moe.Quant (Nx.Ptree.place Nx_quant.ptree split w)
-      in
-      {
-        gate_up = weight p.gate_up;
-        gate_up_bias = Nx.place split p.gate_up_bias;
-        down = weight p.down;
-        down_bias = Nx.place split p.down_bias;
-      }
+(* The experts split along their expert axis over [s]. *)
+let place_experts s (p : (_, Nx.host) Moe.t) =
+  let split = Nx.Placement.split ~axis:0 s in
+  let weight = function
+    | Moe.Float w -> Moe.Float (Nx.place split w)
+    | Moe.Quant w -> Moe.Quant (Nx_quant.place split w)
+  in
+  {
+    Moe.gate_up = weight p.gate_up;
+    gate_up_bias = Nx.place split p.gate_up_bias;
+    down = weight p.down;
+    down_bias = Nx.place split p.down_bias;
+  }
 
 (* The checkpoint's [[| ...; groups; 16 |]] blocks as [[| ...; inputs / 2 |]]
    codes. *)
@@ -209,9 +206,7 @@ let mxfp4 ~scales blocks =
 let packed_weight archive ~offset name =
   let scales = bytes archive (name ^ "_scales") in
   Moe.Quant
-    (mxfp4
-       ~scales:(Nx.add scales (Nx.scalar Nx.uint8 offset))
-       (bytes archive (name ^ "_blocks")))
+    (mxfp4 ~scales:(Nx.add_s scales offset) (bytes archive (name ^ "_blocks")))
 
 (* Checks *)
 
@@ -220,42 +215,43 @@ let packed_weight archive ~offset name =
    little else. *)
 let min_normal = Float.ldexp 1.0 (-126)
 
-let dequant ~devices fx =
+let dequant ~jit s fx =
+  let on = Nx.Placement.on s in
+  let metal = List.exists (fun d -> Rig.name d = "METAL") (Nx.rigs s) in
   List.iter
     (fun (name, case) ->
       let shape = ints (mem "blocks_shape" case) in
       let blocks = uint8 shape (ints (mem "blocks" case)) in
       let scale_bytes = ints (mem "scales" case) in
       let scales =
-        uint8 (Array.sub shape 0 (Array.length shape - 1)) scale_bytes
+        Nx.place on
+          (uint8 (Array.sub shape 0 (Array.length shape - 1)) scale_bytes)
       in
       let weight b = mxfp4 ~scales b in
       let expected = floats (mem "values" case) in
       let flushed i =
-        List.exists
-          (fun d -> Nx.Device.name d = "METAL")
-          (Option.value devices ~default:[])
+        metal
         && (scale_bytes.(i / 32) = 0 || Float.abs expected.(i) < min_normal)
       in
       identical ~flushed
         (Printf.sprintf "dequant %s, float32" name)
         expected
         (flat
-           (compiled devices
+           (compiled ~jit s
               (fun b -> Nx_quant.dequant Nx.float32 (weight b))
               blocks));
       identical ~flushed
         (Printf.sprintf "dequant %s, bfloat16" name)
         expected
         (flat
-           (compiled devices
+           (compiled ~jit s
               (fun b ->
                 Nx.cast Nx.float32 (Nx_quant.dequant Nx.bfloat16 (weight b)))
               blocks)))
     (members (mem "dequant" fx));
-  let nan_scale = uint8 [| 1; 1 |] [| 255 |] in
+  let nan_scale = Nx.place on (uint8 [| 1; 1 |] [| 255 |]) in
   let group =
-    compiled devices
+    compiled ~jit s
       (fun b ->
         Nx_quant.dequant Nx.float32 (Nx_quant.mxfp4 ~scales:nan_scale b))
       (uint8 [| 1; 16 |] (Array.make 16 0x21))
@@ -264,7 +260,7 @@ let dequant ~devices fx =
     (Array.for_all Float.is_nan (flat group))
     ""
 
-let ties ~devices fx =
+let ties ~jit s fx =
   let k = int_of_float (number (mem "num_experts_per_tok" (mem "config" fx))) in
   let case = mem "ties" fx in
   let logits = floats (mem "logits" case) in
@@ -272,9 +268,9 @@ let ties ~devices fx =
   let x = float32 [| 3; experts |] logits in
   let ids =
     Array.map Int64.to_int
-      (flat (compiled devices (fun x -> fst (Moe.route ~k x)) x))
+      (flat (compiled ~jit s (fun x -> fst (Moe.route ~k x)) x))
   in
-  let weights = flat (compiled devices (fun x -> snd (Moe.route ~k x)) x) in
+  let weights = flat (compiled ~jit s (fun x -> snd (Moe.route ~k x)) x) in
   let row a r = Array.sub a (r * k) k in
   let lowest_first =
     [| [| 0; 1; 2; 3 |]; [| 6; 13; 20; 27 |]; [| 5; 9; 20; 21 |] |]
@@ -303,7 +299,7 @@ let ties ~devices fx =
      %!"
     same_sets
 
-let block ~devices ~tol ~k ~limit label (router, p) case =
+let block ~jit s ~tol ~k ~limit label (router, p) case =
   let shape = ints (mem "shape" case) in
   let width = shape.(Array.length shape - 1) in
   let x = float32 shape (floats (mem "hidden" case)) in
@@ -311,17 +307,17 @@ let block ~devices ~tol ~k ~limit label (router, p) case =
   let name what = Printf.sprintf "%s: %s" label what in
   close ~tol (name "router logits")
     (floats (mem "router_logits" case))
-    (flat (compiled devices (fun x -> Linear.apply router x) tokens));
+    (flat (compiled ~jit s (fun x -> Linear.apply router x) tokens));
   let route x = Moe.route ~k (Linear.apply router x) in
-  let ids = compiled devices (fun x -> fst (route x)) tokens in
+  let ids = compiled ~jit s (fun x -> fst (route x)) tokens in
   check (name "selected experts")
     (Array.map Int64.to_int (flat ids) = ints (mem "experts" case))
     "";
   close ~tol (name "expert weights")
     (floats (mem "expert_weights" case))
-    (flat (compiled devices (fun x -> snd (route x)) tokens));
+    (flat (compiled ~jit s (fun x -> snd (route x)) tokens));
   let last = Nx.dim 0 tokens - 1 in
-  let apply x = compiled devices (fun x -> Moe.apply ~limit p (route x) x) x in
+  let apply x = compiled ~jit s (fun x -> Moe.apply ~limit p (route x) x) x in
   let whole = apply tokens in
   close ~tol (name "output") (floats (mem "output" case)) (flat whole);
   close ~tol
@@ -329,7 +325,7 @@ let block ~devices ~tol ~k ~limit label (router, p) case =
     (flat (Nx.slice [ I last ] whole))
     (flat (apply (Nx.slice [ R (last, last + 1) ] tokens)))
 
-let blocks ~devices ~tol fx ~label ~weight archive =
+let blocks ~jit s ~tol fx ~label ~weight archive =
   let config = mem "config" fx in
   let k = int_of_float (number (mem "num_experts_per_tok" config)) in
   let limit = number (mem "swiglu_limit" config) in
@@ -338,14 +334,15 @@ let blocks ~devices ~tol fx ~label ~weight archive =
     (fun (offset, cases) ->
       let weight = weight archive ~offset:(int_of_string offset) in
       let router, experts = moe_params archive ~layer ~weight in
-      let p = (router, place_experts devices experts) in
+      let router = Nx.Ptree.place (module Linear) (Nx.Placement.on s) router in
+      let p = (router, place_experts s experts) in
       List.iter
         (fun (case_name, case) ->
           let label =
             if offset = "0" then Printf.sprintf "%s %s" label case_name
             else Printf.sprintf "%s scales+%s %s" label offset case_name
           in
-          block ~devices ~tol ~k ~limit label p case)
+          block ~jit s ~tol ~k ~limit label p case)
         (members cases))
     (members (mem "cases" fx))
 
@@ -357,23 +354,15 @@ let ids_tensor rows =
     (Array.map Int64.of_int (Array.concat (Array.to_list rows)))
 
 (* The scales, an MXFP4 weight's uint8 part, stay where they are placed: the
-   addition is compiled, so it runs there. *)
-let with_scale_offset offset (p : _ Gpt_oss.params) =
-  let add (type a b) _ (t : (a, b) Nx.t) : (a, b) Nx.t =
-    match Nx.dtype t with
-    | UInt8 ->
-        let scales : Nx.uint8_t = t in
-        let shifted : Nx.uint8_t =
-          Rune.jit' (fun s -> Nx.add s (Nx.scalar Nx.uint8 offset)) scales
-        in
-        shifted
-    | _ -> t
-  in
+   addition runs there, compiled with [jit]. *)
+let with_scale_offset ~jit offset (p : _ Gpt_oss.params) =
+  let add s = Nx.add_s s offset in
+  let add s = if jit then Rune.jit' add s else add s in
   let shift = function
     | Moe.Float w -> Moe.Float w
-    | Moe.Quant (Nx_quant.Mxfp4 _ as w) ->
-        Moe.Quant (Nx.Ptree.map Nx_quant.ptree add w)
-    | Moe.Quant (Q8_0 _ | Q4_K _ | Q6_K _) ->
+    | Moe.Quant (Nx_quant.Mxfp4 { codes; scales }) ->
+        Moe.Quant (Nx_quant.mxfp4 ~scales:(add scales) codes)
+    | Moe.Quant (Mxfp4_blocks _ | Q8_0 _ | Q4_K _ | Q6_K _) ->
         invalid_arg "with_scale_offset: gpt-oss's experts are MXFP4"
   in
   let block (b : _ Gpt_oss.block) =
@@ -384,7 +373,7 @@ let with_scale_offset offset (p : _ Gpt_oss.params) =
   in
   { p with blocks = List.map block p.blocks }
 
-let rotary fx (cfg : Gpt_oss.config) =
+let rotary fx (cfg : Nx.host Gpt_oss.config) =
   let r = mem "rotary" fx in
   close ~tol:1e-6 "rotary frequencies"
     (floats (mem "inv_freq" r))
@@ -421,20 +410,24 @@ let rotary fx (cfg : Gpt_oss.config) =
     (part half)
 
 (* [Gpt_oss.cached cfg p] compiled as one program for the whole model. *)
-let compiled_cached cfg (p : (float, 'b) Nx.t Gpt_oss.params) =
+let compiled_cached cfg (p : ((float, 'b, 'd) Nx.t, 'd) Gpt_oss.params) =
   let caches = Nx.Ptree.list (Nx.Ptree.instantiate (module Attention.Cache)) in
   Rune.jit
     Nx.Ptree.(
-      caches @-> Cache_index.ptree @-> tensor @-> returns (pair tensor caches))
+      caches @-> v Cache_index.walk @-> tensor @-> returns (pair tensor caches))
     (Gpt_oss.cached cfg p)
 
-let model (type b) ~devices ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
-    (p : (float, b) Nx.t Gpt_oss.params) (dt : (float, b) Nx.dtype) =
+let model (type b d) ~jit (s : d Nx.devices) ~tol ~exact ~label fx case
+    (cfg : d Gpt_oss.config) (p : ((float, b, d) Nx.t, d) Gpt_oss.params)
+    (dt : (float, b) Nx.dtype) =
   let name what = Printf.sprintf "%s: %s" label what in
   let to32 t = Nx.cast Nx.float32 t in
+  let on = Nx.Placement.on s in
+  let compiled f x = compiled ~jit s f x in
   let tokens = ints (mem "ids" fx) in
   let n = Array.length tokens in
   let ids = ids_tensor [| tokens |] in
+  let placed_ids = Nx.place on ids in
   List.iteri
     (fun i (layer, (b : _ Gpt_oss.block)) ->
       let recorded = mem (string_of_int i) (mem "attention" case) in
@@ -442,14 +435,15 @@ let model (type b) ~devices ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
         match layer with Gpt_oss.Sliding -> "sliding" | Gpt_oss.Full -> "full"
       in
       let attend layer x =
+        let at = Nx.placement x in
         let cache =
           Attention.Cache.make ~slots:0 ~kv_heads:cfg.n_kv_heads
-            ~head_dim:cfg.head_dim dt
+            ~head_dim:cfg.head_dim dt at
         in
         to32
           (fst
              (Gpt_oss.attention cfg layer b cache
-                (Cache_index.whole ~batch:1 ~seq:n ())
+                (Cache_index.place at (Cache_index.whole ~batch:1 ~seq:n ()))
                 (Nx.cast dt x)))
       in
       let x = float32 [| 1; n; cfg.dim |] (floats (mem "input" recorded)) in
@@ -457,9 +451,9 @@ let model (type b) ~devices ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
       close ~tol
         (name (Printf.sprintf "attention of block %d (%s) alone" i kind))
         expected
-        (flat (compiled devices (attend layer) x));
+        (flat (compiled (attend layer) x));
       if layer = Gpt_oss.Sliding && exact then begin
-        let unbound = flat (compiled devices (attend Gpt_oss.Full) x) in
+        let unbound = flat (compiled (attend Gpt_oss.Full) x) in
         let gap = ref 0.0 in
         Array.iteri
           (fun j e -> gap := Float.max !gap (Float.abs (e -. unbound.(j))))
@@ -471,7 +465,7 @@ let model (type b) ~devices ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
       end)
     (List.combine cfg.layers p.blocks);
   let logits =
-    compiled devices
+    compiled
       (fun ids -> to32 (Gpt_oss.logits cfg p (Gpt_oss.hidden cfg p ids)))
       ids
   in
@@ -505,11 +499,11 @@ let model (type b) ~devices ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
     (name "the first logits of the last position")
     (floats (mem "last_first_values" case))
     (Array.init 8 at);
-  if devices <> None then begin
+  if jit then begin
     let as_inputs =
       Rune.jit
         Nx.Ptree.(instantiate (module Gpt_oss.Params) @-> returns tensor)
-        (fun p -> to32 (Gpt_oss.logits cfg p (Gpt_oss.hidden cfg p ids)))
+        (fun p -> to32 (Gpt_oss.logits cfg p (Gpt_oss.hidden cfg p placed_ids)))
         p
     in
     close ~tol
@@ -528,7 +522,7 @@ let model (type b) ~devices ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
       in
       to32 (Nx.slice [ I 0; I (n - 1); R (0, 8) ] h)
     in
-    Nx.to_array (compiled devices f ids)
+    Nx.to_array (compiled f ids)
   in
   List.iter
     (fun k ->
@@ -536,9 +530,8 @@ let model (type b) ~devices ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
         (name (Printf.sprintf "residual stream after block %d" k))
         (floats (mem (string_of_int k) (mem "hidden" case)))
         (stream k))
-    (if devices = None then List.init n_layers (fun i -> i + 1)
-     else [ n_layers ]);
-  let slots = Nx.create Nx.int64 [| 1; n |] (Array.init n Int64.of_int) in
+    (if not jit then List.init n_layers (fun i -> i + 1) else [ n_layers ]);
+  let slots = Nx.reshape [| 1; n |] (Nx.arange_at on Nx.int64 0 n 1) in
   let chunked cached =
     let _, hs, _ =
       List.fold_left
@@ -547,49 +540,49 @@ let model (type b) ~devices ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
           if len = 0 then (at, hs, caches)
           else
             let pos =
-              Nx.create Nx.int64 [| 1; len |]
-                (Array.init len (fun i -> Int64.of_int (at + i)))
+              Nx.reshape [| 1; len |] (Nx.arange_at on Nx.int64 at (at + len) 1)
             in
             let h, caches =
               cached caches
                 (Cache_index.make ~pos ~table:slots ())
-                (Nx.slice [ A; R (at, at + len) ] ids)
+                (Nx.slice [ A; R (at, at + len) ] placed_ids)
             in
             (at + len, h :: hs, caches))
-        (0, [], Gpt_oss.cache cfg ~slots:n dt)
+        (0, [], Gpt_oss.cache ~placement:(fun _ ~axis:_ -> on) cfg ~slots:n dt)
         [ 1; 7; n ]
     in
-    compiled devices
+    compiled
       (fun h -> to32 (Gpt_oss.logits cfg p h))
-      (Nx.concatenate ~axis:1 (List.rev_map (Nx.place Nx.Placement.host) hs))
+      (Nx.concatenate ~axis:1 (List.rev_map (Nx.place Nx.Host.on) hs))
   in
   let cached =
-    if devices = None then Gpt_oss.cached cfg p else compiled_cached cfg p
+    if not jit then Gpt_oss.cached cfg p else compiled_cached cfg p
   in
   close ~tol
     (name "cached, in chunks of 1, 7 and the rest, every position")
     (flat logits)
     (flat (chunked cached));
-  Option.iter
-    (fun devices ->
-      let whole = compiled_cached cfg p
-      and placement = Nx.Placement.replicated devices in
-      close ~tol:1e-6
-        (name "one program per layer kind is the whole-model program")
-        (flat (chunked whole))
-        (flat (chunked (Layer_loop.cached ~placement cfg p))))
-    devices;
+  if jit then begin
+    let whole = compiled_cached cfg p in
+    close ~tol:1e-6
+      (name "one program per layer kind is the whole-model program")
+      (flat (chunked whole))
+      (flat (chunked (Layer_loop.cached ~placement:on cfg p)))
+  end;
   let short = ints (mem "short_ids" fx) in
   let m = Array.length short in
   let padded = Array.append (Array.make (n - m) 0) short in
-  let index = Cache_index.rows ~context:n [| n; m |] in
+  let index = Cache_index.place on (Cache_index.rows ~context:n [| n; m |]) in
   let batch ids =
-    let h, _ =
-      Gpt_oss.cached cfg p (Gpt_oss.cache cfg ~slots:(2 * n) dt) index ids
+    let caches =
+      Gpt_oss.cache
+        ~placement:(fun _ ~axis:_ -> Nx.placement ids)
+        cfg ~slots:(2 * n) dt
     in
+    let h, _ = Gpt_oss.cached cfg p caches index ids in
     to32 (Gpt_oss.logits cfg p (Nx.slice [ A; I (n - 1) ] h))
   in
-  let both = compiled devices batch (ids_tensor [| tokens; padded |]) in
+  let both = compiled batch (ids_tensor [| tokens; padded |]) in
   let row r ids_key =
     Array.map (fun i -> Nx.item [ r; i ] both) (ints (mem ids_key case))
   in
@@ -601,16 +594,18 @@ let model (type b) ~devices ~tol ~exact ~label fx case (cfg : Gpt_oss.config)
     (floats (mem "short_top_values" case))
     (row 1 "short_top_ids")
 
-let models ~devices ~dtype ~label fx path =
+let models ~jit s ~dtype ~label fx path =
   let repo = string (mem "repo" fx) in
   let cfg = Gpt_oss.config_of_json (Kaun_hf.load_config repo) in
   let cfg =
     { cfg with window = int_of_float (number (mem "sliding_window" fx)) }
   in
   let (Gpt_oss.Dtype dt) = Gpt_oss.dtype_of_string dtype in
-  let placement = Option.map Gpt_oss.expert_parallel devices in
-  let p = Gpt_oss.from_file ?placement cfg dt path in
+  let p =
+    Gpt_oss.from_file ~placement:(Gpt_oss.expert_parallel s) cfg dt path
+  in
   rotary fx cfg;
+  let placed = Gpt_oss.place_config (Nx.Placement.on s) cfg in
   List.iteri
     (fun i (b : _ Gpt_oss.block) ->
       identical
@@ -620,7 +615,7 @@ let models ~devices ~dtype ~label fx path =
     p.blocks;
   List.iter
     (fun (offset, case) ->
-      let p = with_scale_offset (int_of_string offset) p in
+      let p = with_scale_offset ~jit (int_of_string offset) p in
       let label =
         if offset = "0" then label
         else Printf.sprintf "%s scales+%s" label offset
@@ -629,9 +624,9 @@ let models ~devices ~dtype ~label fx path =
          precision keeps about three digits: the reference's softmax also ran at
          float32 here, so the gap is that of the weights and activations. *)
       let exact = dtype = "float32" in
-      model ~devices
+      model ~jit s
         ~tol:(if exact then 1e-5 else 5e-2)
-        ~exact ~label fx case cfg p dt)
+        ~exact ~label fx case placed p dt)
     (members (mem "cases" fx))
 
 let () =
@@ -657,7 +652,6 @@ let () =
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
     "validate.exe [--fixtures DIR] [--float-weights FILE] [--mxfp4-weights \
      FILE] [--devices LIST] [--dtype DT]";
-  let devices = if !devices = "" then None else Some (Devices.all !devices) in
   let weights fx given =
     let repo = string (mem "repo" fx) in
     Printf.printf "%s, reference recorded from sha256 %s\n%!" repo
@@ -668,25 +662,32 @@ let () =
   let fixture name =
     json_of_file (Filename.concat !fixtures (name ^ ".json"))
   in
-  if !dtype = "float32" then begin
-    (* Float32 against float32 with different kernels and a different order of
-       accumulation over the experts. *)
-    let tol = 1e-5 in
-    let fx = fixture "gpt-oss-bf16" in
-    let archive = Nx_io.load_safetensors (weights fx !float_weights) in
-    blocks ~devices ~tol fx ~label:"float"
-      ~weight:(fun archive ~offset:_ name -> float_weight archive name)
-      archive;
-    ties ~devices fx;
-    let fx = fixture "gpt-oss-mxfp4" in
-    let archive = Nx_io.load_safetensors (weights fx !mxfp4_weights) in
-    dequant ~devices fx;
-    blocks ~devices ~tol fx ~label:"mxfp4" ~weight:packed_weight archive
+  let run ~jit s =
+    if !dtype = "float32" then begin
+      (* Float32 against float32 with different kernels and a different order of
+         accumulation over the experts. *)
+      let tol = 1e-5 in
+      let fx = fixture "gpt-oss-bf16" in
+      let archive = Nx_io.load_safetensors (weights fx !float_weights) in
+      blocks ~jit s ~tol fx ~label:"float"
+        ~weight:(fun archive ~offset:_ name -> float_weight archive name)
+        archive;
+      ties ~jit s fx;
+      let fx = fixture "gpt-oss-mxfp4" in
+      let archive = Nx_io.load_safetensors (weights fx !mxfp4_weights) in
+      dequant ~jit s fx;
+      blocks ~jit s ~tol fx ~label:"mxfp4" ~weight:packed_weight archive
+    end;
+    let fx = fixture "gpt-oss-bf16-model" in
+    models ~jit s ~dtype:!dtype ~label:"float model" fx
+      (weights fx !float_weights);
+    let fx = fixture "gpt-oss-mxfp4-model" in
+    models ~jit s ~dtype:!dtype ~label:"mxfp4 model" fx
+      (weights fx !mxfp4_weights)
+  in
+  if !devices = "" then run ~jit:false Nx.Host.v
+  else begin
+    let module D = (val Nx.devices (Devices.all !devices)) in
+    run ~jit:true D.v
   end;
-  let fx = fixture "gpt-oss-bf16-model" in
-  models ~devices ~dtype:!dtype ~label:"float model" fx
-    (weights fx !float_weights);
-  let fx = fixture "gpt-oss-mxfp4-model" in
-  models ~devices ~dtype:!dtype ~label:"mxfp4 model" fx
-    (weights fx !mxfp4_weights);
   if !failures > 0 then exit 1

@@ -12,7 +12,7 @@ let batch_size = 128
 let lr = 1e-3
 
 module Mlp = struct
-  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
+  type ('a, 'd) t = { l1 : ('a, 'd) Linear.t; l2 : ('a, 'd) Linear.t }
 
   let walk c { l1; l2 } =
     let open Nx.Ptree.Walk in
@@ -40,8 +40,9 @@ let () =
 
       let params =
         {
-          Mlp.l1 = Linear.init ~inputs:(28 * 28) ~outputs:128;
-          l2 = Linear.init ~inputs:128 ~outputs:10;
+          Mlp.l1 =
+            Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:(28 * 28) ~outputs:128;
+          l2 = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:128 ~outputs:10;
         }
       in
 

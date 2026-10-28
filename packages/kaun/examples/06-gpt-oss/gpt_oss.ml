@@ -8,7 +8,7 @@ module Hf = Kaun_hf
 
 type layer = Sliding | Full
 
-type config = {
+type 'd config = {
   vocab_size : int;
   dim : int;
   layers : layer list;
@@ -21,39 +21,41 @@ type config = {
   experts_per_token : int;
   swiglu_limit : float;
   norm_eps : float;
-  rope : Rope.t;
+  rope : 'd Rope.t;
   attention_scale : float;
   tied : bool;
 }
 
-type 'a block = {
-  attn_norm : 'a Rms_norm.t;
-  attn : 'a Attention.t;
+let place_config at cfg = { cfg with rope = Rope.place at cfg.rope }
+
+type ('a, 'd) block = {
+  attn_norm : ('a, 'd) Rms_norm.t;
+  attn : ('a, 'd) Attention.t;
   sinks : 'a;
-  ffn_norm : 'a Rms_norm.t;
-  router : 'a Linear.t;
-  moe : 'a Moe.t;
+  ffn_norm : ('a, 'd) Rms_norm.t;
+  router : ('a, 'd) Linear.t;
+  moe : ('a, 'd) Moe.t;
 }
 
-type 'a params = {
-  tok : 'a Embedding.t;
-  blocks : 'a block list;
-  norm : 'a Rms_norm.t;
-  head : 'a Linear.t option;
+type ('a, 'd) params = {
+  tok : ('a, 'd) Embedding.t;
+  blocks : ('a, 'd) block list;
+  norm : ('a, 'd) Rms_norm.t;
+  head : ('a, 'd) Linear.t option;
 }
 
-type t = Nx.float32_t params
+type 'd t = ('d Nx.float32_t, 'd) params
 type role = Whole | Column | Row | Experts | Kv_heads
 
-let expert_parallel ds role ~axis =
+let expert_parallel s role ~axis =
   match role with
-  | Experts -> Nx.Placement.sharded ~axis ds
-  | Whole | Column | Row | Kv_heads -> Nx.Placement.replicated ds
+  | Experts -> Nx.Placement.split ~axis s
+  | Whole | Column | Row | Kv_heads -> Nx.Placement.on s
 
 (* Structures *)
 
 module Block = struct
-  type nonrec 'a t = 'a block
+  type nonrec ('a, 'd) t = ('a, 'd) block
 
   let walk c b =
     let open Nx.Ptree.Walk in
@@ -67,7 +69,7 @@ module Block = struct
 end
 
 module Params = struct
-  type nonrec 'a t = 'a params
+  type nonrec ('a, 'd) t = ('a, 'd) params
 
   let walk c p =
     let open Nx.Ptree.Walk in
@@ -110,17 +112,13 @@ let block cfg layer b cache index x =
   let experts = Moe.apply ~limit:cfg.swiglu_limit b.moe routing h in
   (Nx.add x experts, cache)
 
-let cache ?placement cfg ~slots dtype =
-  let place _ x =
-    match placement with None -> x | Some p -> Nx.place (p Kv_heads ~axis:1) x
-  in
+(* The pools, made where the kv-heads role places them. *)
+let cache ~placement cfg ~slots dtype =
+  let at = placement Kv_heads ~axis:1 in
   List.map
     (fun _ ->
-      Nx.Ptree.Payload.map
-        (module Attention.Cache)
-        place
-        (Attention.Cache.make ~slots ~kv_heads:cfg.n_kv_heads
-           ~head_dim:cfg.head_dim dtype))
+      Attention.Cache.make ~slots ~kv_heads:cfg.n_kv_heads
+           ~head_dim:cfg.head_dim dtype at)
     cfg.layers
 
 let cached cfg p caches index ids =
@@ -137,10 +135,20 @@ let cached cfg p caches index ids =
   in
   go (Embedding.apply p.tok ids) [] cfg.layers p.blocks caches
 
+(* The whole index reads no cache, so its empty pools lie whole beside the ids,
+   and its positions where the ids are. *)
 let hidden cfg p ids =
   let batch = Nx.dim 0 ids and seq = Nx.dim 1 ids in
-  let nothing = cache cfg ~slots:0 (Nx.dtype p.norm.Rms_norm.gamma) in
-  fst (cached cfg p nothing (Cache_index.whole ~batch ~seq ()) ids)
+  let at = Nx.placement ids in
+  let whole = Nx.Placement.uncut at in
+  let nothing =
+    cache
+      ~placement:(fun _ ~axis:_ -> whole)
+      cfg ~slots:0
+      (Nx.dtype p.norm.Rms_norm.gamma)
+  in
+  let index = Cache_index.place at (Cache_index.whole ~batch ~seq ()) in
+  fst (cached cfg p nothing index ids)
 
 let logits cfg p h =
   let h = Rms_norm.apply ~eps:cfg.norm_eps p.norm h in
@@ -225,10 +233,8 @@ let config_of_json json =
    exponents under the [_blocks] and [_scales] suffixes, which stay uint8:
    [Nx_io.Archive.float] refuses them. A tied model has no lm_head entry. *)
 
-let of_hf ?placement cfg dt weights =
-  let place role ~axis x =
-    match placement with None -> x | Some p -> Nx.place (p role ~axis) x
-  in
+let of_hf ~placement cfg dt weights =
+  let place role ~axis x = Nx.place (placement role ~axis) x in
   let whole x = place Whole ~axis:0 x in
   let float ~shape name = Nx_io.Archive.float ~shape dt name weights in
   let norm name =
@@ -274,10 +280,7 @@ let of_hf ?placement cfg dt weights =
                  (name ^ "_scales"))
             (Nx.reshape [| cfg.experts; outputs; inputs / 2 |] codes)
         in
-        Moe.Quant
-          (match placement with
-          | None -> w
-          | Some p -> Nx.Ptree.place Nx_quant.ptree (p Experts ~axis:0) w)
+        Moe.Quant (Nx_quant.place (placement Experts ~axis:0) w)
   in
   let q_dim = cfg.n_heads * cfg.head_dim in
   let kv_dim = cfg.n_kv_heads * cfg.head_dim in
@@ -334,22 +337,21 @@ let of_hf ?placement cfg dt weights =
     head =
       (if cfg.tied then None
        else
-         (* Contiguous: through the transpose, tolk's bfloat16 matrix-vector
-            kernel reads the head 3 to 4 times slower (its heuristic does not
-            see through casts). A placed head is copied where it is placed: a
-            host copy walks the file's pages in transposed order, 4 s cold
-            against 0.4 s. *)
+         (* A copy: through the transpose, tolk's bfloat16 matrix-vector kernel
+            reads the head 3 to 4 times slower (its heuristic does not see
+            through casts). The head is copied where it is placed: a host copy
+            walks the file's pages in transposed order, 4 s cold against 0.4 s.
+            The copy is compiled, so a set that computes under [Rune.jit]
+            alone makes it too. *)
+         let at = placement Column ~axis:1 in
          let w =
-           place Column ~axis:1
+           Nx.place at
              (Nx.matrix_transpose
                 (float ~shape:[| cfg.vocab_size; cfg.dim |] "lm_head.weight"))
          in
          Some
            {
-             Linear.w =
-               (match placement with
-               | None -> Nx.contiguous w
-               | Some _ -> Rune.jit' Nx.copy w);
+             Linear.w = Rune.jit' Nx.copy w;
              b = None;
            });
   }
@@ -367,13 +369,13 @@ let stored_dtype weights =
   | None -> failwith (name ^ ": no entry in the archive")
   | Some (Nx.P table) -> (
       match Nx.dtype table with
-      | Nx.BFloat16 -> Dtype Nx.bfloat16
-      | Nx.Float32 -> Dtype Nx.float32
+      | Nx.Dtype.Bfloat16 -> Dtype Nx.bfloat16
+      | Nx.Dtype.Float32 -> Dtype Nx.float32
       | _ -> failwith (name ^ " is not a bfloat16 or float32 entry"))
 
-let from_file ?placement cfg dt path =
-  of_hf ?placement cfg dt (Nx_io.load_safetensors path)
+let from_file ~placement cfg dt path =
+  of_hf ~placement cfg dt (Nx_io.load_safetensors path)
 
-let from_pretrained ?placement repo_id dt =
+let from_pretrained ~placement repo_id dt =
   let cfg = config_of_json (Hf.load_config repo_id) in
-  (cfg, of_hf ?placement cfg dt (Hf.load_safetensors repo_id))
+  (cfg, of_hf ~placement cfg dt (Hf.load_safetensors repo_id))

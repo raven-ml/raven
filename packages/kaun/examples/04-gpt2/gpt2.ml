@@ -22,26 +22,26 @@ type config = {
 
 (* Model: plain records of kaun layers, generic over the float dtype *)
 
-type 'a block = {
-  ln1 : 'a Layer_norm.t;
-  attn : 'a Attention.t;
-  ln2 : 'a Layer_norm.t;
-  fc : 'a Linear.t;
-  proj : 'a Linear.t;
+type ('a, 'd) block = {
+  ln1 : ('a, 'd) Layer_norm.t;
+  attn : ('a, 'd) Attention.t;
+  ln2 : ('a, 'd) Layer_norm.t;
+  fc : ('a, 'd) Linear.t;
+  proj : ('a, 'd) Linear.t;
 }
 
-type 'a params = {
-  wte : 'a Embedding.t;
-  wpe : 'a Embedding.t;
-  blocks : 'a block list;
-  ln_f : 'a Layer_norm.t;
+type ('a, 'd) params = {
+  wte : ('a, 'd) Embedding.t;
+  wpe : ('a, 'd) Embedding.t;
+  blocks : ('a, 'd) block list;
+  ln_f : ('a, 'd) Layer_norm.t;
 }
 
-type t = Nx.float32_t params
+type 'd t = ('d Nx.float32_t, 'd) params
 type role = Whole | Column | Row | Kv_heads
 
 module Params = struct
-  type nonrec 'a t = 'a params
+  type nonrec ('a, 'd) t = ('a, 'd) params
 
   let walk_block c b =
     let open Nx.Ptree.Walk in
@@ -61,19 +61,23 @@ module Params = struct
     { wte; wpe; blocks; ln_f }
 end
 
-let make cfg =
+(* Every initializer is zeros, so [key] only says where the model lies. *)
+let make ~key cfg =
   let zeros = Init.zeros in
+  let at = Nx.placement (Nx.Rng.to_tensor key) in
   let linear ~inputs ~outputs =
-    Linear.make ~w_init:zeros ~bias_init:zeros ~inputs ~outputs Nx.float32
+    Linear.make ~w_init:zeros ~bias_init:zeros ~key ~inputs ~outputs Nx.float32
   in
-  let embedding ~vocab = Embedding.make ~init:zeros ~vocab ~dim:cfg.n_embd in
+  let embedding ~vocab =
+    Embedding.make ~init:zeros ~key ~vocab ~dim:cfg.n_embd
+  in
   let block () =
     {
-      ln1 = Layer_norm.init ~dim:cfg.n_embd;
+      ln1 = Layer_norm.init ~dim:cfg.n_embd at;
       attn =
-        Attention.make ~w_init:zeros ~bias_init:zeros ~embed_dim:cfg.n_embd
+        Attention.make ~w_init:zeros ~bias_init:zeros ~key ~embed_dim:cfg.n_embd
           Nx.float32;
-      ln2 = Layer_norm.init ~dim:cfg.n_embd;
+      ln2 = Layer_norm.init ~dim:cfg.n_embd at;
       fc = linear ~inputs:cfg.n_embd ~outputs:cfg.n_inner;
       proj = linear ~inputs:cfg.n_inner ~outputs:cfg.n_embd;
     }
@@ -82,7 +86,7 @@ let make cfg =
     wte = embedding ~vocab:cfg.vocab_size Nx.float32;
     wpe = embedding ~vocab:cfg.n_positions Nx.float32;
     blocks = List.init cfg.n_layer (fun _ -> block ());
-    ln_f = Layer_norm.init ~dim:cfg.n_embd;
+    ln_f = Layer_norm.init ~dim:cfg.n_embd at;
   }
 
 (* Forward pass. Training passes [?dropout] — a rate and a [Nx.Rng] key — to
@@ -118,16 +122,12 @@ let embed p ids pos =
 
 (* One fold over the blocks, which threads the caches along the index. *)
 
-let cache ?placement cfg ~slots dtype =
-  let place _ x =
-    match placement with None -> x | Some p -> Nx.place (p Kv_heads ~axis:1) x
-  in
+(* The pools, made where the kv-heads role places them. *)
+let cache ~placement cfg ~slots dtype =
+  let at = placement Kv_heads ~axis:1 in
   List.init cfg.n_layer (fun _ ->
-      Nx.Ptree.Payload.map
-        (module Attention.Cache)
-        place
-        (Attention.Cache.make ~slots ~kv_heads:cfg.n_head
-           ~head_dim:(head_dim cfg) dtype))
+      Attention.Cache.make ~slots ~kv_heads:cfg.n_head
+           ~head_dim:(head_dim cfg) dtype at)
 
 let cached cfg ?dropout p caches index ids =
   if Cache_index.context index > cfg.n_positions then
@@ -149,10 +149,20 @@ let cached cfg ?dropout p caches index ids =
   in
   (x, List.rev rev_caches)
 
+(* The whole index reads no cache, so its empty pools lie whole beside the ids,
+   and its positions where the ids are. *)
 let hidden cfg ?dropout p ids =
   let batch = Nx.dim 0 ids and seq = Nx.dim 1 ids in
-  let nothing = cache cfg ~slots:0 (Nx.dtype p.ln_f.Layer_norm.gamma) in
-  fst (cached cfg ?dropout p nothing (Cache_index.whole ~batch ~seq ()) ids)
+  let at = Nx.placement ids in
+  let whole = Nx.Placement.uncut at in
+  let nothing =
+    cache
+      ~placement:(fun _ ~axis:_ -> whole)
+      cfg ~slots:0
+      (Nx.dtype p.ln_f.Layer_norm.gamma)
+  in
+  let index = Cache_index.place at (Cache_index.whole ~batch ~seq ()) in
+  fst (cached cfg ?dropout p nothing index ids)
 
 let logits cfg p h =
   (* Tied LM head: logits = h @ wteᵀ. *)
@@ -167,10 +177,8 @@ let logits cfg p h =
    weights are already [inputs; outputs], so only the fused projection is cut,
    with [Nx.split], into three views. *)
 
-let of_hf ?placement cfg dt weights =
-  let place role ~axis x =
-    match placement with None -> x | Some p -> Nx.place (p role ~axis) x
-  in
+let of_hf ~placement cfg dt weights =
+  let place role ~axis x = Nx.place (placement role ~axis) x in
   let whole x = place Whole ~axis:0 x in
   let float ~shape name = Nx_io.Archive.float ~shape dt name weights in
   let d = cfg.n_embd in
@@ -248,9 +256,9 @@ let stored_dtype weights =
   | None -> failwith "wte.weight: no entry in the archive"
   | Some (Nx.P table) -> (
       match Nx.dtype table with
-      | Nx.Float16 -> Dtype Nx.float16
-      | Nx.BFloat16 -> Dtype Nx.bfloat16
-      | Nx.Float32 -> Dtype Nx.float32
+      | Nx.Dtype.Float16 -> Dtype Nx.float16
+      | Nx.Dtype.Bfloat16 -> Dtype Nx.bfloat16
+      | Nx.Dtype.Float32 -> Dtype Nx.float32
       | _ -> failwith not_float)
 
 (* Pretrained loading *)
@@ -287,9 +295,9 @@ let config_of_json json =
       | _ -> 1e-5);
   }
 
-let from_file ?placement cfg dt path =
-  of_hf ?placement cfg dt (Nx_io.load_safetensors path)
+let from_file ~placement cfg dt path =
+  of_hf ~placement cfg dt (Nx_io.load_safetensors path)
 
-let from_pretrained ?placement ?(repo_id = "gpt2") dt =
+let from_pretrained ~placement ?(repo_id = "gpt2") dt =
   let cfg = config_of_json (Hf.load_config repo_id) in
-  (cfg, of_hf ?placement cfg dt (Hf.load_safetensors repo_id))
+  (cfg, of_hf ~placement cfg dt (Hf.load_safetensors repo_id))

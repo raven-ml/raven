@@ -5,11 +5,15 @@
 
 (* Greedy decoding with gpt-oss through key-value caches. It shows the decode
    loop and times it: one step function serves the prefill and every
-   single-token step. Under [--devices LIST] the step is {!Layer_loop.greedy}:
-   each layer kind is compiled once per call shape and the host calls it once
-   per layer, so the whole prompt goes through in one call. Over several devices
-   it runs expert-parallel: each device holds an equal share of the experts, and
-   the mixture sums their products across the devices.
+   single-token step. Without [--devices] the step runs eagerly on the host.
+   Under [--devices LIST] the model is placed on those devices and the step is
+   {!Layer_loop.greedy} compiled: each layer kind is compiled once per call
+   shape and the host calls it once per layer, so the whole prompt goes through
+   in one call. Over several devices it runs expert-parallel: each device holds
+   an equal share of the experts, and the mixture sums their products across the
+   devices. That run raises today: nx's take refuses experts cut along the axis
+   it takes from, and rune compiles a program for one device only, so a set of
+   GPUs, which computes only compiled programs, raises too.
 
    With [--prompt TEXT] the text becomes the user's turn of a harmony
    conversation, [--system TEXT] its instructions and [--reasoning EFFORT] how
@@ -63,11 +67,11 @@ let profiled file f =
       r
 
 (* [on_token] sees every generated token as it arrives and says whether to stop.
-   With [devices], the step compiles for them and the caches are placed there as
-   the parameters are. Under [profile], the prompt's call is profiled. *)
-let generate ?devices ?profile cfg params dt ~log ~count ~on_token prompt =
-  let placement = Option.map Nx.Placement.replicated devices in
-  let step = Layer_loop.greedy ?placement cfg params in
+   The step runs over the set [s], compiled with [jit], and the caches are
+   placed there as the parameters are. Under [profile], the prompt's call is
+   profiled. *)
+let generate ~jit s ?profile cfg params dt ~log ~count ~on_token prompt =
+  let step = Layer_loop.greedy ~jit ~placement:(Nx.Placement.on s) cfg params in
   let timed caches index ids =
     let t0 = Unix.gettimeofday () in
     let token, caches = step caches index ids in
@@ -81,7 +85,7 @@ let generate ?devices ?profile cfg params dt ~log ~count ~on_token prompt =
     profiled profile (fun () ->
         timed
           (Gpt_oss.cache
-             ?placement:(Option.map Gpt_oss.expert_parallel devices)
+             ~placement:(Gpt_oss.expert_parallel s)
              cfg ~slots:context dt)
           index
           (Nx.create Nx.int64 [| 1; n0 |] prompt))
@@ -185,40 +189,43 @@ let () =
     if !dtype = "" then Gpt_oss.stored_dtype weights
     else Gpt_oss.dtype_of_string !dtype
   in
-  let devices = if !devices = "" then None else Some (Devices.all !devices) in
   let count default = if !count > 0 then !count else default in
   let profile = if !profile = "" then None else Some !profile in
   let log = if !prompt = "" then stdout else stderr in
-  let t0 = Unix.gettimeofday () in
-  let params =
-    Gpt_oss.of_hf
-      ?placement:(Option.map Gpt_oss.expert_parallel devices)
-      cfg dt weights
+  let run ~jit s =
+    let t0 = Unix.gettimeofday () in
+    let placement = Gpt_oss.expert_parallel s in
+    let params = Gpt_oss.of_hf ~placement cfg dt weights in
+    let cfg = Gpt_oss.place_config (Nx.Placement.on s) cfg in
+    Printf.fprintf log "weights imported in %.1f s\n%!"
+      (Unix.gettimeofday () -. t0);
+    if !prompt = "" then
+      let out =
+        generate ~jit s ?profile cfg params dt ~log ~count:(count 16)
+          ~on_token:(fun _ -> false)
+          fixed_prompt
+      in
+      print_endline
+        (String.concat " " (Array.to_list (Array.map Int64.to_string out)))
+    else begin
+      let harmony =
+        Harmony.of_file (Kaun_hf.download_file ~file:"tokenizer.json" !repo)
+      in
+      let instructions = if !system = "" then None else Some !system in
+      let ids =
+        Harmony.render harmony ~date:(today ()) ?instructions ~effort
+          [ User !prompt ]
+      in
+      let on_token = printer harmony ~show_analysis:!show_analysis in
+      let out =
+        generate ~jit s ?profile cfg params dt ~log ~count:(count 256) ~on_token
+          (Array.map Int64.of_int ids)
+      in
+      print_newline ();
+      Printf.eprintf "%d tokens generated\n" (Array.length out)
+    end
   in
-  Printf.fprintf log "weights imported in %.1f s\n%!"
-    (Unix.gettimeofday () -. t0);
-  if !prompt = "" then
-    let out =
-      generate ?devices ?profile cfg params dt ~log ~count:(count 16)
-        ~on_token:(fun _ -> false)
-        fixed_prompt
-    in
-    print_endline
-      (String.concat " " (Array.to_list (Array.map Int64.to_string out)))
-  else begin
-    let harmony =
-      Harmony.of_file (Kaun_hf.download_file ~file:"tokenizer.json" !repo)
-    in
-    let instructions = if !system = "" then None else Some !system in
-    let ids =
-      Harmony.render harmony ~date:(today ()) ?instructions ~effort
-        [ User !prompt ]
-    in
-    let on_token = printer harmony ~show_analysis:!show_analysis in
-    let out =
-      generate ?devices ?profile cfg params dt ~log ~count:(count 256) ~on_token
-        (Array.map Int64.of_int ids)
-    in
-    print_newline ();
-    Printf.eprintf "%d tokens generated\n" (Array.length out)
-  end
+  if !devices = "" then run ~jit:false Nx.Host.v
+  else
+    let module D = (val Nx.devices (Devices.all !devices)) in
+    run ~jit:true D.v

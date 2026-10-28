@@ -8,7 +8,7 @@ module Hf = Kaun_hf
 
 (* Configuration *)
 
-type config = {
+type 'd config = {
   vocab_size : int;
   dim : int;
   n_layers : int;
@@ -17,33 +17,35 @@ type config = {
   head_dim : int;
   hidden_dim : int;
   norm_eps : float;
-  rope : Rope.t;
+  rope : 'd Rope.t;
   tied : bool;
 }
 
+let place_config at cfg = { cfg with rope = Rope.place at cfg.rope }
+
 (* Model: plain records of kaun layers, generic over the float dtype *)
 
-type 'a block = {
-  attn_norm : 'a Rms_norm.t;
-  attn : 'a Attention.t;
-  ffn_norm : 'a Rms_norm.t;
-  gate : 'a Linear.t;
-  up : 'a Linear.t;
-  down : 'a Linear.t;
+type ('a, 'd) block = {
+  attn_norm : ('a, 'd) Rms_norm.t;
+  attn : ('a, 'd) Attention.t;
+  ffn_norm : ('a, 'd) Rms_norm.t;
+  gate : ('a, 'd) Linear.t;
+  up : ('a, 'd) Linear.t;
+  down : ('a, 'd) Linear.t;
 }
 
-type 'a params = {
-  tok : 'a Embedding.t;
-  blocks : 'a block list;
-  norm : 'a Rms_norm.t;
-  head : 'a Linear.t option;
+type ('a, 'd) params = {
+  tok : ('a, 'd) Embedding.t;
+  blocks : ('a, 'd) block list;
+  norm : ('a, 'd) Rms_norm.t;
+  head : ('a, 'd) Linear.t option;
 }
 
-type t = Nx.float32_t params
+type 'd t = ('d Nx.float32_t, 'd) params
 type role = Whole | Column | Row | Kv_heads
 
 module Params = struct
-  type nonrec 'a t = 'a params
+  type nonrec ('a, 'd) t = ('a, 'd) params
 
   let walk_block c b =
     let open Nx.Ptree.Walk in
@@ -64,20 +66,22 @@ module Params = struct
     { tok; blocks; norm; head }
 end
 
-let make cfg =
+(* Every initializer is zeros, so [key] only says where the model lies. *)
+let make ~key cfg =
   let zeros = Init.zeros in
+  let at = Nx.placement (Nx.Rng.to_tensor key) in
   let linear ~inputs ~outputs =
-    Linear.make ~bias:false ~w_init:zeros ~inputs ~outputs Nx.float32
+    Linear.make ~bias:false ~w_init:zeros ~key ~inputs ~outputs Nx.float32
   in
   let block () =
     {
-      attn_norm = Rms_norm.init ~dim:cfg.dim;
+      attn_norm = Rms_norm.init ~dim:cfg.dim at;
       attn =
-        Attention.make ~bias:false ~w_init:zeros
+        Attention.make ~bias:false ~w_init:zeros ~key
           ~q_dim:(cfg.n_heads * cfg.head_dim)
           ~kv_dim:(cfg.n_kv_heads * cfg.head_dim)
           ~embed_dim:cfg.dim Nx.float32;
-      ffn_norm = Rms_norm.init ~dim:cfg.dim;
+      ffn_norm = Rms_norm.init ~dim:cfg.dim at;
       gate = linear ~inputs:cfg.dim ~outputs:cfg.hidden_dim;
       up = linear ~inputs:cfg.dim ~outputs:cfg.hidden_dim;
       down = linear ~inputs:cfg.hidden_dim ~outputs:cfg.dim;
@@ -85,9 +89,10 @@ let make cfg =
   in
   {
     tok =
-      Embedding.make ~init:zeros ~vocab:cfg.vocab_size ~dim:cfg.dim Nx.float32;
+      Embedding.make ~init:zeros ~key ~vocab:cfg.vocab_size ~dim:cfg.dim
+        Nx.float32;
     blocks = List.init cfg.n_layers (fun _ -> block ());
-    norm = Rms_norm.init ~dim:cfg.dim;
+    norm = Rms_norm.init ~dim:cfg.dim at;
     head =
       (if cfg.tied then None
        else Some (linear ~inputs:cfg.dim ~outputs:cfg.vocab_size));
@@ -110,16 +115,12 @@ let block cfg b cache index x =
   in
   (Nx.add x mlp, cache)
 
-let cache ?placement cfg ~slots dtype =
-  let place _ x =
-    match placement with None -> x | Some p -> Nx.place (p Kv_heads ~axis:1) x
-  in
+(* The pools, made where the kv-heads role places them. *)
+let cache ~placement cfg ~slots dtype =
+  let at = placement Kv_heads ~axis:1 in
   List.init cfg.n_layers (fun _ ->
-      Nx.Ptree.Payload.map
-        (module Attention.Cache)
-        place
-        (Attention.Cache.make ~slots ~kv_heads:cfg.n_kv_heads
-           ~head_dim:cfg.head_dim dtype))
+      Attention.Cache.make ~slots ~kv_heads:cfg.n_kv_heads
+           ~head_dim:cfg.head_dim dtype at)
 
 let cached cfg p caches index ids =
   let x, rev =
@@ -132,10 +133,20 @@ let cached cfg p caches index ids =
   in
   (x, List.rev rev)
 
+(* The whole index reads no cache, so its empty pools lie whole beside the ids,
+   and its positions where the ids are. *)
 let hidden cfg p ids =
   let batch = Nx.dim 0 ids and seq = Nx.dim 1 ids in
-  let nothing = cache cfg ~slots:0 (Nx.dtype p.norm.Rms_norm.gamma) in
-  fst (cached cfg p nothing (Cache_index.whole ~batch ~seq ()) ids)
+  let at = Nx.placement ids in
+  let whole = Nx.Placement.uncut at in
+  let nothing =
+    cache
+      ~placement:(fun _ ~axis:_ -> whole)
+      cfg ~slots:0
+      (Nx.dtype p.norm.Rms_norm.gamma)
+  in
+  let index = Cache_index.place at (Cache_index.whole ~batch ~seq ()) in
+  fst (cached cfg p nothing index ids)
 
 let logits cfg p h =
   let h = Rms_norm.apply ~eps:cfg.norm_eps p.norm h in
@@ -151,10 +162,8 @@ let logits cfg p h =
    i with i + head_dim / 2, which is [Rope]'s. A tied model has no lm_head
    entry. *)
 
-let of_hf ?placement cfg dt weights =
-  let place role ~axis x =
-    match placement with None -> x | Some p -> Nx.place (p role ~axis) x
-  in
+let of_hf ~placement cfg dt weights =
+  let place role ~axis x = Nx.place (placement role ~axis) x in
   let weight ~shape name =
     Nx_io.Archive.float ~shape dt (name ^ ".weight") weights
   in
@@ -215,9 +224,9 @@ let stored_dtype weights =
   | None -> failwith (name ^ ": no entry in the archive")
   | Some (Nx.P table) -> (
       match Nx.dtype table with
-      | Nx.Float16 -> Dtype Nx.float16
-      | Nx.BFloat16 -> Dtype Nx.bfloat16
-      | Nx.Float32 -> Dtype Nx.float32
+      | Nx.Dtype.Float16 -> Dtype Nx.float16
+      | Nx.Dtype.Bfloat16 -> Dtype Nx.bfloat16
+      | Nx.Dtype.Float32 -> Dtype Nx.float32
       | _ -> failwith (name ^ " is not a float16, bfloat16 or float32 entry"))
 
 (* Configuration from HuggingFace's config.json *)
@@ -289,12 +298,12 @@ let config_of_json json =
 
 (* Pretrained loading *)
 
-let from_file ?placement cfg dt path =
-  of_hf ?placement cfg dt (Nx_io.load_safetensors path)
+let from_file ~placement cfg dt path =
+  of_hf ~placement cfg dt (Nx_io.load_safetensors path)
 
 (* An ungated mirror whose weight files are byte-identical to Meta's. *)
 let default_repo = "NousResearch/Llama-3.2-1B"
 
-let from_pretrained ?placement ?(repo_id = default_repo) dt =
+let from_pretrained ~placement ?(repo_id = default_repo) dt =
   let cfg = config_of_json (Hf.load_config repo_id) in
-  (cfg, of_hf ?placement cfg dt (Hf.load_safetensors repo_id))
+  (cfg, of_hf ~placement cfg dt (Hf.load_safetensors repo_id))

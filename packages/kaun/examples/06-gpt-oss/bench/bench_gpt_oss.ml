@@ -63,14 +63,16 @@ let floats ~scale shape =
   let base =
     Nx.cast Nx.bfloat16
       (Nx.mul_s
-         (Nx.sub_s (Nx.rand Nx.float32 (Array.append [| base_rows |] rest)) 0.5)
+         (Nx.sub_s
+            (Nx.Rng.uniform Nx.float32 (Array.append [| base_rows |] rest))
+            0.5)
          (2.0 *. scale))
   in
   if base_rows = rows then base
   else
     let reps = (rows + base_rows - 1) / base_rows in
     let tiled = Nx.concatenate ~axis:0 (List.init reps (fun _ -> base)) in
-    Nx.contiguous (Nx.slice [ R (0, rows) ] tiled)
+    Nx.copy (Nx.slice [ R (0, rows) ] tiled)
 
 (* The weights on the host. *)
 let weights () =
@@ -119,13 +121,13 @@ let weights () =
     head = Some (linear ~bias:false c.dim c.vocab_size);
   }
 
-let params = Nx.Ptree.instantiate (module Gpt_oss.Params)
-let opened ?backend o = Result.map (Nx.Device.make ?backend) (Rig.open_ o)
-let amd () = opened ~backend:Nx_amd.backend (Rig_amd_amdgpu.gpu 0)
+let cuda () = Rig.open_ (Rig_cuda.gpu 0)
+let amd () = Rig.open_ (Rig_amd_amdgpu.gpu 0)
 
-(* The GPU: CUDA's first, else AMD's first. *)
+(* The GPU: CUDA's first, else AMD's first. A set of it computes under
+   [Rune.jit] alone. *)
 let gpu () =
-  match opened (Rig_cuda.gpu 0) with
+  match cuda () with
   | Ok d -> d
   | Error _ -> ( match amd () with Ok d -> d | Error e -> failwith e)
 
@@ -134,9 +136,14 @@ let gpu () =
    runs the [prompt] tokens at positions 0 onwards. Each call takes the caches
    of the one before and reads its token back on the host. *)
 let step weights kind =
-  let placement = Nx.Placement.on (gpu ()) in
-  let p = Nx.Ptree.place params placement weights in
-  let step = Layer_loop.greedy ~placement config p in
+  let module G = (val Nx.devices [ gpu () ]) in
+  let placement = G.on in
+  let p = Nx.Ptree.place (module Gpt_oss.Params) placement weights in
+  let step =
+    Layer_loop.greedy ~jit:true ~placement
+      (Gpt_oss.place_config placement config)
+      p
+  in
   let caches =
     ref
       (Gpt_oss.cache
@@ -178,7 +185,7 @@ let case weights kind =
     name
     (fun call -> call ())
 
-let opens () = Result.is_ok (opened (Rig_cuda.gpu 0)) || Result.is_ok (amd ())
+let opens () = Result.is_ok (cuda ()) || Result.is_ok (amd ())
 
 (* Whether a GPU opens, asked of a fresh process: the driver must not be
    initialized before the fork that isolates a case. *)

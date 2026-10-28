@@ -75,15 +75,16 @@ let () =
   in
   Printf.printf "random weights built in %.1f s\n%!" building;
   let device = Devices.first !jit in
+  let module D = (val Nx.devices [ device ]) in
+  (* Built on the host and placed: the set computes under [Rune.jit] alone. *)
+  let router = Nx.Ptree.place (module Kaun.Linear) D.on router
+  and p = Nx.Ptree.place (module Moe) D.on p in
   let f =
     Rune.jit' (fun x ->
         Moe.apply ~limit p (Moe.route ~k (Kaun.Linear.apply router x)) x)
   in
   let run () =
-    let x =
-      Nx.place (Nx.Placement.on device)
-        (random_floats ~scale:1.0 [| !tokens; width |])
-    in
+    let x = Nx.place D.on (random_floats ~scale:1.0 [| !tokens; width |]) in
     let y, t = seconds (fun () -> Nx.to_array (f x)) in
     if not (Array.for_all Float.is_finite y) then failwith "non-finite output";
     t

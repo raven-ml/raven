@@ -4,7 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 (* Time of the compiled decode step, [Layer_loop.greedy], at the widths of
-   gpt-oss-20b, on random weights placed on the device: no checkpoint is read.
+   gpt-oss-20b, on random weights drawn on the host and placed on the device: no
+   checkpoint is read. Without [--jit] the step runs eagerly on the host.
    [--layers] sets the depth, so a few layers give the cost of one before the
    13.8 GB of the full 24 are built; [--small-vocab] leaves out the 201088-row
    tables.
@@ -59,18 +60,19 @@ let floats dt ~scale shape =
   let base =
     Nx.cast dt
       (Nx.mul_s
-         (Nx.sub_s (Nx.rand Nx.float32 (Array.append [| base_rows |] rest)) 0.5)
+         (Nx.sub_s
+            (Nx.Rng.uniform Nx.float32 (Array.append [| base_rows |] rest))
+            0.5)
          (2.0 *. scale))
   in
   if base_rows = rows then base
   else
     let reps = (rows + base_rows - 1) / base_rows in
     let tiled = Nx.concatenate ~axis:0 (List.init reps (fun _ -> base)) in
-    Nx.contiguous (Nx.slice [ R (0, rows) ] tiled)
+    Nx.copy (Nx.slice [ R (0, rows) ] tiled)
 
-let params (type b) ?device c (dt : (float, b) Nx.dtype) ~skip_tables =
-  let placement = Option.map (fun d -> Nx.Placement.on d) device in
-  let place x = match placement with None -> x | Some p -> Nx.place p x in
+let params (type b) ~on c (dt : (float, b) Nx.dtype) ~skip_tables =
+  let place x = Nx.place on x in
   let f ~scale shape = place (floats dt ~scale shape) in
   let linear ?(bias = true) i o =
     {
@@ -85,10 +87,7 @@ let params (type b) ?device c (dt : (float, b) Nx.dtype) ~skip_tables =
       Nx_quant.mxfp4 ~scales
         (random_bytes [| c.experts; outputs; inputs / 2 |] 0 256)
     in
-    Moe.Quant
-      (match placement with
-      | None -> w
-      | Some p -> Nx.Ptree.place Nx_quant.ptree p w)
+    Moe.Quant (Nx_quant.place on w)
   in
   let gamma () = { Rms_norm.gamma = f ~scale:1.0 [| c.dim |] } in
   let q_dim = c.n_heads * c.head_dim and kv = c.n_kv_heads * c.head_dim in
@@ -126,12 +125,11 @@ let params (type b) ?device c (dt : (float, b) Nx.dtype) ~skip_tables =
     head = Some (linear ~bias:false c.dim vocab);
   }
 
-let run ?device c params dt ~tokens ~steps ~context =
-  let placement = Option.map (fun d _ ~axis:_ -> Nx.Placement.on d) device in
+let run ?device ~on c params dt ~tokens ~steps ~context =
   let step =
-    Layer_loop.greedy
-      ?placement:(Option.map (fun d -> Nx.Placement.on d) device)
-      c params
+    Layer_loop.greedy ~jit:(device <> None) ~placement:on
+      (Gpt_oss.place_config on c)
+      params
   in
   let timed (caches, index, ids) =
     let t0 = Unix.gettimeofday () in
@@ -144,13 +142,12 @@ let run ?device c params dt ~tokens ~steps ~context =
   let report name t =
     match device with
     | Some d ->
-        Printf.printf "%s: %.3f s  (allocated %d)\n%!" name t
-          (Rig.allocated (Nx.Device.memory d))
+        Printf.printf "%s: %.3f s  (allocated %d)\n%!" name t (Rig.allocated d)
     | None -> Printf.printf "%s: %.3f s\n%!" name t
   in
   let state, t =
     timed
-      ( Gpt_oss.cache ?placement c ~slots:context dt,
+      ( Gpt_oss.cache ~placement:(fun _ ~axis:_ -> on) c ~slots:context dt,
         Cache_index.rows ~context [| tokens |],
         Nx.create Nx.int64 [| 1; tokens |]
           (Array.init tokens (fun i -> Int64.of_int (17 + i))) )
@@ -199,9 +196,15 @@ let () =
      [--context N] [--dtype DT] [--small-vocab]";
   let c = cfg !layers in
   let c = if !skip_tables then { c with Gpt_oss.vocab_size = 1024 } else c in
-  let device = if !jit = "" then None else Some (Devices.first !jit) in
   let (Gpt_oss.Dtype dt) = Gpt_oss.dtype_of_string !dtype in
-  let t0 = Unix.gettimeofday () in
-  let p = params ?device c dt ~skip_tables:!skip_tables in
-  Printf.printf "weights built in %.1f s\n%!" (Unix.gettimeofday () -. t0);
-  run ?device c p dt ~tokens:!tokens ~steps:!steps ~context:!context
+  let bench ?device on =
+    let t0 = Unix.gettimeofday () in
+    let p = params ~on c dt ~skip_tables:!skip_tables in
+    Printf.printf "weights built in %.1f s\n%!" (Unix.gettimeofday () -. t0);
+    run ?device ~on c p dt ~tokens:!tokens ~steps:!steps ~context:!context
+  in
+  if !jit = "" then bench Nx.Host.on
+  else
+    let device = Devices.first !jit in
+    let module D = (val Nx.devices [ device ]) in
+    bench ~device D.on

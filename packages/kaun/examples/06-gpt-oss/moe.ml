@@ -3,12 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type 'a weight = Float of 'a | Quant of Nx_quant.t
+type ('a, 'd) weight = Float of 'a | Quant of 'd Nx_quant.t
 
-type 'a t = {
-  gate_up : 'a weight;
+type ('a, 'd) t = {
+  gate_up : ('a, 'd) weight;
   gate_up_bias : 'a;
-  down : 'a weight;
+  down : ('a, 'd) weight;
   down_bias : 'a;
 }
 
@@ -20,7 +20,7 @@ let walk_weight c =
       Float (leaf c w)
   | Quant w ->
       case c "quant";
-      Quant (structure Nx_quant.ptree c w)
+      Quant (Nx_quant.walk c w)
 
 let walk c p =
   let open Nx.Ptree.Walk in
@@ -51,10 +51,10 @@ let activation ~limit h =
 let linear w b e x =
   let y =
     match w with
-    | Quant w -> Nx_quant.apply (Nx_quant.take ~axis:0 ~indices:e w) x
-    | Float w -> Nx.matmul x (Nx.take ~axis:0 ~indices:e w)
+    | Quant w -> Nx_quant.apply (Nx_quant.take ~axis:0 e w) x
+    | Float w -> Nx.matmul x (Nx.take ~axis:0 e w)
   in
-  Nx.add y (Nx.unsqueeze ~axes:[ 1 ] (Nx.take ~axis:0 ~indices:e b))
+  Nx.add y (Nx.unsqueeze ~axes:[ 1 ] (Nx.take ~axis:0 e b))
 
 let expert ~limit p e x =
   linear p.down p.down_bias e
