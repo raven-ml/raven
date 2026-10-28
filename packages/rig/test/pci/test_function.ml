@@ -2089,12 +2089,12 @@ let dma_domains =
        else
          test dma_law (fun () ->
              skip ~reason:"system memory for a function needs Linux" ()));
-      (if flocks then
+      (if on_linux then
          stateful release_law ~timeout:(3. *. patience) ~domains:2 ~count:25
            ~steps:release_steps release_commands
        else
          test release_law (fun () ->
-             skip ~reason:"locking a function's file needs flock" ()));
+             skip ~reason:"finding a descriptor needs Linux" ()));
     ]
 
 (* A release that finds a descriptor of its take closed behind its back, as
