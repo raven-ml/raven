@@ -144,6 +144,90 @@ let test_shape_refused () =
     (fun () ->
       Total.collect t ~zero:(zero ()) (fun () -> Total.add t (v [| 1.; 2. |])))
 
+(* A construct whose delivery to one total raises delivers to none: the
+   additions of a construct that raises reach no total. *)
+let test_delivery_raises () =
+  let refused
+      ?(sub = "Rune.Total.add: shape [3], where the total's zero has [2]") f =
+    invalid ~sub (fun () -> ignore (f ()))
+  in
+  let t1 = Total.make () and t2 = Total.make () in
+  let z n = Nx.zeros f32 [| n |] in
+  let (), s1 =
+    Total.collect t1 ~zero:(z 2) (fun () ->
+        refused (fun () ->
+            Total.collect t2 ~zero:(z 2) (fun () ->
+                Rune.scan' ~init:(Nx.zeros f32 [||])
+                  ~f:(fun c r ->
+                    Total.add t1 (Nx.add (z 2) r);
+                    Total.add t2 (Nx.add (z 3) r);
+                    (c, c))
+                  (Nx.ones f32 [| 4 |]))))
+  in
+  equal bits_t (bits (z 2)) (bits s1);
+  (* Under a map, and in a root's solve. *)
+  let (), s1 =
+    Total.collect t1 ~zero:(z 2) (fun () ->
+        refused (fun () ->
+            Total.collect t2 ~zero:(z 2) (fun () ->
+                Rune.vmap'
+                  (fun x ->
+                    fst
+                    @@ Rune.scan' ~init:(Nx.zeros f32 [||])
+                         ~f:(fun c r ->
+                           Total.add t1 (Nx.add (z 2) r);
+                           Total.add t2 (Nx.add (z 3) r);
+                           (c, c))
+                         x)
+                  (Nx.ones f32 [| 2; 4 |]))))
+  in
+  equal ~msg:"under a map" bits_t (bits (z 2)) (bits s1);
+  let (), s1 =
+    Total.collect t1 ~zero:(z 2) (fun () ->
+        refused (fun () ->
+            Total.collect t2 ~zero:(z 2) (fun () ->
+                Rune.vmap'
+                  (Rune.iterate' ~max:4
+                     ~until:(fun x -> Nx.greater_equal_s x 3.)
+                     ~f:(fun x ->
+                       Total.add t1 (Nx.add (z 2) x);
+                       Total.add t2 (Nx.add (z 3) x);
+                       Nx.add_s x 1.))
+                  (v [| 0.; 2. |]))))
+  in
+  equal ~msg:"under a map whose lanes stop apart" bits_t (bits (z 2)) (bits s1);
+  let (), s1 =
+    Total.collect t1 ~zero:(z 2) (fun () ->
+        refused (fun () ->
+            Total.collect t2 ~zero:(z 2) (fun () ->
+                Rune.root Nx.Ptree.tensor
+                  ~residual:(fun x -> Nx.sub x (v [| 1. |]))
+                  (fun () ->
+                    Total.add t1 (z 2);
+                    Total.add t2 (z 3);
+                    v [| 1. |]))))
+  in
+  equal ~msg:"in a root's solve" bits_t (bits (z 2)) (bits s1);
+  (* A compiled call run again at its key traces nothing: its delivery checks
+     each total first. *)
+  let f =
+    Rune.jit' (fun x ->
+        Total.add t1 x;
+        Total.add t2 x;
+        x)
+  in
+  let x = Nx.ones f32 [| 2 |] in
+  let call n =
+    Total.collect t1 ~zero:(z 2) (fun () ->
+        if n = 2 then ignore (Total.collect t2 ~zero:(z n) (fun () -> f x))
+        else
+          refused
+            ~sub:"Rune.Total.add: shape [2], where the total's zero has [3]"
+            (fun () -> Total.collect t2 ~zero:(z n) (fun () -> f x)))
+  in
+  equal ~msg:"a compiled call" bits_t (bits x) (bits (snd (call 2)));
+  equal ~msg:"a compiled call refused" bits_t (bits (z 2)) (bits (snd (call 3)))
+
 let test_raises () =
   let t = Total.make () in
   raises Exit (fun () ->
@@ -401,6 +485,8 @@ let () =
              test "a jit that raises adds nothing" test_raising_jit;
              test "an addition of another shape raises" test_shape_refused;
              test "an exception passes through collect" test_raises;
+             test "a construct whose delivery raises delivers nothing"
+               test_delivery_raises;
              test "a jit adds once per call" test_jit_scope;
              prop "additions chain wherever they are made" chained law_chained;
              test "a jit takes the running value where it lies" test_jit_running;

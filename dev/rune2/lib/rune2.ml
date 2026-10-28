@@ -447,10 +447,20 @@ module Total = struct
   type ('v, 's, 'd) t = ('v, 's, 'd) total
 
   let make = total
-  let add t x = add_to t x
+  (* An addition the collect would refuse raises where it is made, also in a
+     traced function, so that a construct that raises has delivered nothing. *)
+  let add t x =
+    accepts t (Nx.Prim.form x);
+    add_to t x
 
   let collect (type v s d) (t : (v, s, d) t) ~(zero : (v, s, d) Nx.t) f =
     let sum = ref zero in
+    let refused shape =
+      Invalid_argument
+        (Format.asprintf
+           "Rune.Total.add: shape %a, where the total's zero has %a"
+           pp_shape shape pp_shape (Nx.shape zero))
+    in
     let effc (type a) (e : a Effect.t) :
         ((a, _) Effect.Deep.continuation -> _) option =
       match e with
@@ -461,16 +471,21 @@ module Total = struct
               Some
                 (fun k ->
                   if Nx.shape x <> Nx.shape zero then
-                    Effect.Deep.discontinue k
-                      (Invalid_argument
-                         (Format.asprintf
-                            "Rune.Total.add: shape %a, where the total's zero \
-                             has %a"
-                            pp_shape (Nx.shape x) pp_shape (Nx.shape zero)))
+                    Effect.Deep.discontinue k (refused (Nx.shape x))
                   else begin
                     sum := Nx.add !sum x;
                     Effect.Deep.continue k [||]
                   end))
+      | Accepts (u, f) -> (
+          match same_total u t with
+          | None -> None
+          | Some Type.Equal ->
+              let shape = Iarray.to_array (Nx_array.Layout.shape f.layout) in
+              Some
+                (fun k ->
+                  if shape <> Nx.shape zero then
+                    Effect.Deep.discontinue k (refused shape)
+                  else Effect.Deep.continue k ()))
       | Running (u, f) -> (
           match same_total u t with
           | Some Type.Equal ->

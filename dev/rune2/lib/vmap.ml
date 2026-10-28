@@ -748,12 +748,19 @@ module Rules = struct
      results carry back into the map, or summed over the lanes, for a program a
      backward pass runs outside it. *)
   let additions m ~summed (p : Program.t) vs =
-    Array.iteri
-      (fun k (Addition (t, _, f)) ->
-        let v = cast f.dtype (Nx.Placement.devices f.placement) vs.(k) in
-        if not summed then add_to t v
-        else if m.n > 0 then add_to t (Nx.sum ~axes:[ 0 ] v))
-      p.adds
+    (* Every value is read back before any is delivered. *)
+    let deliveries =
+      Array.mapi
+        (fun k (Addition (t, _, f)) ->
+          let v = cast f.dtype (Nx.Placement.devices f.placement) vs.(k) in
+          if not summed then fun () -> add_to t v
+          else if m.n > 0 then
+            let y = Nx.sum ~axes:[ 0 ] v in
+            fun () -> add_to t y
+          else Fun.id)
+        p.adds
+    in
+    Array.iter (fun deliver -> deliver ()) deliveries
 
   (* [p] over the lanes of [vs], its results' batches, its additions made: as
      every lane's running totals, or summed. *)
@@ -1404,20 +1411,33 @@ and unheld n live forms sums =
 and held_sums n adds ~seeded i sums =
   if seeded then Array.map (lane_v i) sums
   else
-    Array.mapi
-      (fun k (Program.Addition (t, _, out)) ->
-        let (Program.V b) = sums.(k) in
-        (* With nothing holding the total, an addition does nothing. *)
-        (match (n, Program.where t) with
-        | 0, _ | _, Nowhere -> ()
-        | _, At None -> (
-            match Program.coerce_at out b with
-            | Some b -> Program.add_to t (Nx.sum ~axes:[ 0 ] b)
-            | None -> Program.unset (Program.V b))
-        | _, At (Some p) -> (
-            match Prim.coerce out.dtype (Nx.Placement.devices p) b with
-            | Some b -> Program.add_to t (Nx.sum ~axes:[ 0 ] b)
-            | None -> Program.unset (Program.V b)));
+    (* Every sum is read back before any is delivered, so that one that
+       raises delivers none. *)
+    let deliveries =
+      Array.mapi
+        (fun k (Program.Addition (t, _, out)) ->
+          let (Program.V b) = sums.(k) in
+          let deliver b =
+            let y = Nx.sum ~axes:[ 0 ] b in
+            Program.admits t (Nx.Prim.form y);
+            fun () -> Program.add_to t y
+          in
+          (* With nothing holding the total, an addition does nothing. *)
+          match (n, Program.where t) with
+          | 0, _ | _, Nowhere -> Fun.id
+          | _, At None -> (
+              match Program.coerce_at out b with
+              | Some b -> deliver b
+              | None -> Program.unset (Program.V b))
+          | _, At (Some p) -> (
+              match Prim.coerce out.dtype (Nx.Placement.devices p) b with
+              | Some b -> deliver b
+              | None -> Program.unset (Program.V b)))
+        adds
+    in
+    Array.iter (fun deliver -> deliver ()) deliveries;
+    Array.map
+      (fun (Program.Addition (_, _, out)) ->
         lane_v i (Loops.filled ~zero:false (Program.stacked n (Program.F out))))
       adds
 

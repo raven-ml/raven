@@ -602,11 +602,13 @@ val lane_index : axis -> ('v, 's, 'd) Nx.t -> 'd Nx.int32_t
     call, once per execution of the code that makes it. The additions a traced
     function makes reach it when the construct that traced the function returns,
     so a construct that raises adds none: a {!jit} adds its function's additions
-    once per call, as the call returns. A step of {!scan} or {!iterate}, and an
-    [until] once per test, makes its additions once per step. A construct chains
-    each total's additions in the order they are made, starting from the running
-    value of the [collect] they reach, which the chain's end replaces as the
-    construct returns, at any depth: a loop inside another loop's step, a
+    once per call, as the call returns. An addition of another shape than its
+    [collect]'s zero raises where it is made, inside a traced function as the
+    function is traced. A step of {!scan} or {!iterate},
+    and an [until] once per test, makes its additions once per step. A construct
+    chains each total's additions in the order they are made, starting from the
+    running value of the [collect] they reach, which the chain's end replaces as
+    the construct returns, at any depth: a loop inside another loop's step, a
     {!remat} or a custom rule in a step, and a {!jit}, which computes the chain
     in its program. So the total is the one the additions give made in turn, as
     written out, under every differentiation too. A construct that makes no

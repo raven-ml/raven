@@ -496,6 +496,20 @@ type _ Effect.t +=
 val where : ('v, 's, 'd) total -> 'd where
 (** [where t] is the answer to {!Where}, [Nowhere] with none around. *)
 
+type _ Effect.t +=
+  | Accepts : ('v, 's, 'd) total * ('v, 's, 'd) Nx.Prim.form -> unit Effect.t
+        (** Answered by the innermost collect of the total around the call,
+            which raises [Invalid_argument] where it would refuse an addition of
+            the form's shape; tracers and maps pass it on. *)
+
+val accepts : ('v, 's, 'd) total -> ('v, 's, 'd) Nx.Prim.form -> unit
+(** [accepts t f] performs {!Accepts}, nothing with none around. *)
+
+val admits : ('v, 's, 'd) total -> ('v, 's, 'd) Nx.Prim.form -> unit
+(** [admits t f] raises [Invalid_argument] where {!add_to} of a value of [f]'s
+    shape would be refused: where nothing answers {!Running} of [t] at [f], as
+    {!accepts}. *)
+
 val running :
   ('v, 's, 'd) total -> ('v, 's, 'd) Nx.Prim.form -> ('v, 's, 'd) Nx.t option
 (** [running t f] is the answer to {!Running} of [t] at [f]'s shape, [None] with

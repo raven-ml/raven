@@ -728,6 +728,18 @@ let where t =
   | w -> w
   | exception Effect.Unhandled (Where _) -> Nowhere
 
+type _ Effect.t +=
+  | Accepts : ('v, 's, 'd) total * ('v, 's, 'd) Nx.Prim.form -> unit Effect.t
+
+let accepts t f =
+  match Effect.perform (Accepts (t, f)) with
+  | () -> ()
+  | exception Effect.Unhandled (Accepts _) -> ()
+
+(* What answers for a running value takes any addition to it; otherwise the
+   addition reaches a collect, which may refuse it. *)
+let admits t f = if Option.is_none (running t f) then accepts t f
+
 (* Evaluation *)
 
 (* An unbound slot. *)
@@ -972,12 +984,23 @@ and threading :
         in
         match r with
         | Some r when Option.is_some (coerce_at into r) ->
-            (V r, fun v -> replace t (typed v))
-        | _ -> (filled ~zero:false (F into), fun v -> add_to t (typed v)))
+            ( V r,
+              fun v ->
+                let y = typed v in
+                fun () -> replace t y )
+        | _ ->
+            if Option.is_none r then accepts t out;
+            ( filled ~zero:false (F into),
+              fun v ->
+                let y = typed v in
+                fun () -> add_to t y ))
       adds
   in
   let outs, r = f (Array.map fst ins) in
-  Array.iteri (fun k (_, back) -> back outs.(k)) ins;
+  (* Every running value out is read back before any is delivered, so that
+     one that raises delivers none. *)
+  let deliveries = Array.mapi (fun k (_, back) -> back outs.(k)) ins in
+  Array.iter (fun deliver -> deliver ()) deliveries;
   r
 
 (* [x] added to the innermost collect or tracer that answers for [t], as its
@@ -1209,6 +1232,12 @@ let run c =
         else match running t f with Some v -> Seed (t, v) | None -> Unseeded)
       adds
   in
+  (* An addition a collect would refuse raises before the construct runs, so
+     that it delivers none, also where no trace met the addition. *)
+  Array.iteri
+    (fun k (Addition (t, _, f)) ->
+      match seeds.(k) with Unseeded -> admits t f | Seed _ -> ())
+    adds;
   let c =
     if Array.for_all (fun s -> s = Unseeded) seeds then c
     else
@@ -1222,18 +1251,25 @@ let run c =
   in
   let r = perform c in
   let base = Array.length r - Array.length adds in
-  Array.iteri
-    (fun k (Addition (t, _, f)) ->
-      let set = Nx.Placement.devices f.placement in
-      match seeds.(k) with
-      | Seed (u, v) -> (
-          (* The chain's end lies where its seed does. *)
-          match same_total u t with
-          | Some Type.Equal ->
-              replace t (like v r.(base + k))
-          | None -> invalid_arg "Rune: a seed of another total")
-      | Unseeded -> add_to t (cast f.dtype set r.(base + k)))
-    adds;
+  (* Every sum is read back before any is delivered. *)
+  let deliveries =
+    Array.mapi
+      (fun k (Addition (t, _, f)) ->
+        let set = Nx.Placement.devices f.placement in
+        match seeds.(k) with
+        | Seed (u, v) -> (
+            (* The chain's end lies where its seed does. *)
+            match same_total u t with
+            | Some Type.Equal ->
+                let y = like v r.(base + k) in
+                fun () -> replace t y
+            | None -> invalid_arg "Rune: a seed of another total")
+        | Unseeded ->
+            let y = cast f.dtype set r.(base + k) in
+            fun () -> add_to t y)
+      adds
+  in
+  Array.iter (fun deliver -> deliver ()) deliveries;
   r
 
 (* Printing
