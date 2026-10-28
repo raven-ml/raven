@@ -4,16 +4,16 @@
   ---------------------------------------------------------------------------*)
 
 (* A bijector is its maps as closures, with the name [pp] prints. *)
-type 'f t = {
+type ('f, 'd) t = {
   name : string;
   image : Support.t -> int array -> Support.t;
       (* the image of a support of coordinates, for values of a shape *)
   bounds :
-    (float, 'f) Nx.t * (float, 'f) Nx.t -> (float, 'f) Nx.t * (float, 'f) Nx.t;
+    (float, 'f, 'd) Nx.t * (float, 'f, 'd) Nx.t -> (float, 'f, 'd) Nx.t * (float, 'f, 'd) Nx.t;
       (* the least and greatest values, elementwise, of coordinates within
          bounds *)
-  forward : (float, 'f) Nx.t -> (float, 'f) Nx.t * (float, 'f) Nx.t;
-  inverse : (float, 'f) Nx.t -> (float, 'f) Nx.t;
+  forward : (float, 'f, 'd) Nx.t -> (float, 'f, 'd) Nx.t * (float, 'f, 'd) Nx.t;
+  inverse : (float, 'f, 'd) Nx.t -> (float, 'f, 'd) Nx.t;
   shape : int array -> int array;
 }
 
@@ -31,7 +31,7 @@ let pp ppf b = Format.pp_print_string ppf b.name
 (* Helpers *)
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
-let const x v = Nx.scalar (Nx.dtype x) v
+let const x v = Nx.scalar_like x v
 let last x = Nx.ndim x - 1
 
 (* [nudge x] is one or two units in the last place of [x], at least the smallest
@@ -154,7 +154,7 @@ let interval ~low ~high =
   let image s _ =
     let low = Nx.cast Nx.float64 low and high = Nx.cast Nx.float64 high in
     let at x =
-      let sigmoid = Nx.scalar Nx.float64 (1. /. (1. +. Float.exp (-.x))) in
+      let sigmoid = Nx.scalar_like low (1. /. (1. +. Float.exp (-.x))) in
       Nx.add low (Nx.mul (Nx.sub high low) sigmoid)
     in
     match s with
@@ -240,7 +240,7 @@ let affine_tril ~loc ~scale_tril =
    the map costs two cumulative sums. *)
 
 let helmert_scales x n =
-  let i = Nx.arange_f (Nx.dtype x) 1. (float_of_int (n + 1)) 1. in
+  let i = Nx.arange_f_at (Nx.beside x) (Nx.dtype x) 1. (float_of_int (n + 1)) 1. in
   (i, Nx.rsqrt (Nx.mul i (Nx.add_s i 1.)))
 
 let helmert u =
@@ -292,7 +292,7 @@ let sum_to_zero =
     let batch = Array.sub (Nx.shape u) 0 (last u) in
     (* The map onto the first [K - 1] components has determinant [1 / sqrt
        K]. *)
-    (helmert u, saturate ok (Nx.full (Nx.dtype u) batch (-0.5 *. Float.log k)))
+    (helmert u, saturate ok (Nx.full_at (Nx.beside u) (Nx.dtype u) batch (-0.5 *. Float.log k)))
   in
   {
     name = "sum_to_zero";
@@ -398,10 +398,10 @@ let corr_dim m =
       "Norn.Bij.forward: cholesky_corr: %d coordinates is no n (n - 1) / 2" m;
   n
 
-(* [lower_indices n] is, for each element of an [n × n] matrix, its index in the
-   strict lower triangle read row by row, or [n (n - 1) / 2], which [Nx.take]
-   reads as zero, off it. *)
-let lower_indices n =
+(* [lower_indices p n] is, for each element of an [n × n] matrix, its index in
+   the strict lower triangle read row by row, or [n (n - 1) / 2], which
+   [Nx.take] reads as zero, off it, at [p]. *)
+let lower_indices p n =
   let m = n * (n - 1) / 2 in
   let idx = Array.make (n * n) (Int64.of_int m) in
   let k = ref 0 in
@@ -411,11 +411,11 @@ let lower_indices n =
       incr k
     done
   done;
-  Nx.create Nx.int64 [| n; n |] idx
+  Nx.place p (Nx.create Nx.int64 [| n; n |] idx)
 
-(* [lower_positions n] is the C-order position of each element of the strict
-   lower triangle, read row by row. *)
-let lower_positions n =
+(* [lower_positions p n] is the C-order position of each element of the strict
+   lower triangle, read row by row, at [p]. *)
+let lower_positions p n =
   let pos = ref [] in
   for i = 0 to n - 1 do
     for j = 0 to i - 1 do
@@ -423,7 +423,7 @@ let lower_positions n =
     done
   done;
   let pos = Array.of_list (List.rev !pos) in
-  Nx.create Nx.int64 [| Array.length pos |] pos
+  Nx.place p (Nx.create Nx.int64 [| Array.length pos |] pos)
 
 let cholesky_corr =
   let forward u =
@@ -434,15 +434,15 @@ let cholesky_corr =
     let z = Nx.tanh u in
     let ok = Nx.all ~axes:[ ax ] (Nx.less_equal (Nx.abs z) (const z edge)) in
     let z = Nx.clamp ~min:(-.edge) ~max:edge z in
-    let z = Nx.take ~axis:ax ~indices:(lower_indices n) z in
+    let z = Nx.take ~axis:ax (lower_indices (Nx.beside z) n) z in
     let q = Nx.log1p (Nx.neg (Nx.square z)) in
     let s = Nx.cumsum ~axis:(ax + 1) q in
     let excl = Nx.sub s q in
     let diag = Nx.exp (Nx.mul_s s 0.5) in
     let l =
-      Nx.add (Nx.mul z (Nx.exp (Nx.mul_s excl 0.5))) (Nx.mul (Nx.eye dt n) diag)
+      Nx.add (Nx.mul z (Nx.exp (Nx.mul_s excl 0.5))) (Nx.mul (Nx.eye_at (Nx.beside u) dt n) diag)
     in
-    let strict = Nx.tril ~k:(-1) (Nx.ones dt [| n; n |]) in
+    let strict = Nx.tril ~k:(-1) (Nx.ones_at (Nx.beside u) dt [| n; n |]) in
     let ld =
       Nx.sum ~axes:[ ax; ax + 1 ] (Nx.mul strict (Nx.add q (Nx.mul_s excl 0.5)))
     in
@@ -464,7 +464,7 @@ let cholesky_corr =
     let excl = Nx.sub (Nx.cumsum ~axis:ax sq) sq in
     let z = Nx.div l (Nx.sqrt (Nx.sub (const l 1.) excl)) in
     let z = Nx.reshape (Array.append batch [| n * n |]) z in
-    Nx.atanh (Nx.take ~axis:(ax - 1) ~indices:(lower_positions n) z)
+    Nx.atanh (Nx.take ~axis:(ax - 1) (lower_positions (Nx.beside z) n) z)
   in
   let shape s =
     shape_with_last 2

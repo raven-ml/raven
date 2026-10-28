@@ -5,55 +5,55 @@
 
 (** The implementation of {!Norn.Nested}. *)
 
-type ('u, 'f) state = private {
+type ('u, 'f, 'd) state = private {
   live : 'u;
-  prior : (float, 'f) Nx.t;
-  likelihood : (float, 'f) Nx.t;
-  rank : (float, 'f) Nx.t;
-  lineage : Nx.int32_t;
+  prior : (float, 'f, 'd) Nx.t;
+  likelihood : (float, 'f, 'd) Nx.t;
+  rank : (float, 'f, 'd) Nx.t;
+  lineage : 'd Nx.int32_t;
   dead : 'u;
-  dead_likelihood : (float, 'f) Nx.t;
-  shrinkage : (float, 'f) Nx.t;
-  dead_lineage : Nx.int32_t;
-  deaths : Nx.int32_t;
-  log_volume : (float, 'f) Nx.t;
-  log_evidence : (float, 'f) Nx.t;
-  steps : Nx.int32_t;
-  tolerance : (float, 'f) Nx.t;
+  dead_likelihood : (float, 'f, 'd) Nx.t;
+  shrinkage : (float, 'f, 'd) Nx.t;
+  dead_lineage : 'd Nx.int32_t;
+  deaths : 'd Nx.int32_t;
+  log_volume : (float, 'f, 'd) Nx.t;
+  log_evidence : (float, 'f, 'd) Nx.t;
+  steps : 'd Nx.int32_t;
+  tolerance : (float, 'f, 'd) Nx.t;
   batch : int;
   budget : int;
 }
 
-val ptree : 'u Nx.Ptree.t -> ('u, 'f) state Nx.Ptree.t
+val ptree : ('u, 'd) Nx.Ptree.t -> (('u, 'f, 'd) state, 'd) Nx.Ptree.t
 
 val init :
-  'u Nx.Ptree.t ->
+  ('u, 'd) Nx.Ptree.t ->
   ?batch:int ->
   ?tolerance:float ->
   budget:int ->
-  prior:('u -> (float, 'f) Nx.t) ->
-  likelihood:('u -> (float, 'f) Nx.t) ->
+  prior:('u -> (float, 'f, 'd) Nx.t) ->
+  likelihood:('u -> (float, 'f, 'd) Nx.t) ->
   'u ->
-  ('u, 'f) state
+  ('u, 'f, 'd) state
 
 val step :
-  'u Nx.Ptree.t ->
-  prior:('u -> (float, 'f) Nx.t) ->
-  likelihood:('u -> (float, 'f) Nx.t) ->
-  Nx.Rng.t ->
-  ('u, 'f) state ->
-  ('u, 'f) state
+  ('u, 'd) Nx.Ptree.t ->
+  prior:('u -> (float, 'f, 'd) Nx.t) ->
+  likelihood:('u -> (float, 'f, 'd) Nx.t) ->
+  'd Nx.Rng.key ->
+  ('u, 'f, 'd) state ->
+  ('u, 'f, 'd) state
 
 val evidence :
-  'u Nx.Ptree.t -> Nx.Rng.t -> ('u, 'f) state -> ('u, 'f) Evidence.t
+  ('u, 'd) Nx.Ptree.t -> 'd Nx.Rng.key -> ('u, 'f, 'd) state -> ('u, 'f, 'd) Evidence.t
 
 val run :
-  'u Nx.Ptree.t ->
+  ('u, 'd) Nx.Ptree.t ->
   ?batch:int ->
   ?tolerance:float ->
   budget:int ->
-  prior:('u -> (float, 'f) Nx.t) ->
-  likelihood:('u -> (float, 'f) Nx.t) ->
-  Nx.Rng.t ->
+  prior:('u -> (float, 'f, 'd) Nx.t) ->
+  likelihood:('u -> (float, 'f, 'd) Nx.t) ->
+  'd Nx.Rng.key ->
   'u ->
-  ('u, 'f) Evidence.t
+  ('u, 'f, 'd) Evidence.t

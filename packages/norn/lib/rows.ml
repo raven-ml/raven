@@ -10,7 +10,10 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 let shape_string s =
   String.concat "; " (Array.to_list (Array.map string_of_int s))
 
-let float_leaf x = Nx_dtype.is Float (Nx.dtype x)
+let float_leaf x = Nx.Dtype.is Float (Nx.dtype x)
+
+let element v =
+  Format.asprintf "%a" (Nx.Dtype.pp_value (Nx.dtype v)) (Nx.item [] v)
 
 (* Arithmetic over chains
 
@@ -18,13 +21,13 @@ let float_leaf x = Nx_dtype.is Float (Nx.dtype x)
    is each chain's inner product over every float tensor, and a per-chain scalar
    broadcasts against a tensor's trailing axes. *)
 
-let column (type f) (h : (float, f) Nx.t) x =
+let column (type f) (h : (float, f, 'd) Nx.t) x =
   let c = (Nx.shape h).(0) in
   Nx.reshape
     (Array.append [| c |] (Array.make (Nx.ndim x - 1) 1))
     (Nx.cast (Nx.dtype x) h)
 
-let dot (type f) u (like : (float, f) Nx.t) a b : (float, f) Nx.t =
+let dot (type f) u (like : (float, f, 'd) Nx.t) a b : (float, f, 'd) Nx.t =
   let c = (Nx.shape like).(0) in
   P.fold u
     (fun _ t acc ->
@@ -51,6 +54,30 @@ let choose u mask a b =
       Nx.where m x y)
     a b
 
+(* [beside context ~what u x] is the placement whole on the devices of [x]'s
+   first tensor. *)
+let beside context ~what u x =
+  let at =
+    P.fold u
+      (fun _ t at -> match at with None -> Some (Nx.beside t) | at -> at)
+      x None
+  in
+  match at with
+  | Some at -> at
+  | None -> invalid_argf "%s: %s holds no tensor" context what
+
+let whole_chains context ~reads u x =
+  P.fold u
+    (fun p t () ->
+      if not (Nx.Placement.equal (Nx.placement t) (Nx.beside t)) then
+        invalid_argf
+          "%s: %s is cut across devices; %s, so each device must hold \
+           whole chains: Nx.place (Nx.beside x) x"
+          context
+          (match P.Path.to_string p with "" -> "the position" | s -> s)
+          reads)
+    x ()
+
 let finite u x =
   let c = P.fold u (fun _ t _ -> (Nx.shape t).(0)) x 0 in
   P.fold u
@@ -59,7 +86,8 @@ let finite u x =
       else
         Nx.logical_and acc
           (Nx.all ~axes:[ 1 ] (Nx.reshape [| c; -1 |] (Nx.isfinite t))))
-    x (Nx.ones Nx.bool [| c |])
+    x
+    (Nx.ones_at (beside "Norn" ~what:"the position" u x) Nx.bool [| c |])
 
 let add u a b = P.map2 u (fun _ x y -> Nx.add x y) a b
 let zeros u x = P.map u (fun _ t -> Nx.zeros_like t) x
@@ -76,7 +104,7 @@ let elements u c x =
    matrix costs a kernel where arithmetic on a structure costs one per
    tensor. *)
 
-let ravel (type f) u (like : (float, f) Nx.t) x : (float, f) Nx.t =
+let ravel (type f) u (like : (float, f, 'd) Nx.t) x : (float, f, 'd) Nx.t =
   let c = (Nx.shape like).(0) in
   let rows =
     P.fold u
@@ -87,7 +115,7 @@ let ravel (type f) u (like : (float, f) Nx.t) x : (float, f) Nx.t =
       x []
   in
   match List.rev rows with
-  | [] -> Nx.zeros (Nx.dtype like) [| c; 0 |]
+  | [] -> Nx.zeros_at (Nx.beside like) (Nx.dtype like) [| c; 0 |]
   | [ r ] -> r
   | rows -> Nx.concatenate ~axis:1 rows
 
@@ -131,7 +159,7 @@ let evaluate u lp x =
 (* The density's value is finite or -inf at a finite position. *)
 let check_range context l =
   let c = (Nx.shape l).(0) in
-  let chain = Nx.arange Nx.int32 0 c 1 in
+  let chain = Nx.arange_at (Nx.beside l) Nx.int32 0 c 1 in
   let ok =
     Nx.logical_not
       (Nx.logical_or (Nx.isnan l)
@@ -143,22 +171,24 @@ let check_range context l =
     (fun _ (v, chain) ->
       Invalid_argument
         (Printf.sprintf "%s: the density is %s at chain %ld, a finite position"
-           context (Nx.to_string v) (Nx.item [] chain)))
+           context (element v) (Nx.item [] chain)))
 
 (* [check_rows context u lp x l] refuses a density whose rows read each other:
    evaluated on the chains reversed, its result is not reversed. *)
 let check_rows context u lp x l =
   let c = (Nx.shape l).(0) in
   if c > 1 then begin
-    let flip = P.map u (fun _ t -> Nx.flip ~axes:[ 0 ] t) x in
-    let r = Nx.flip ~axes:[ 0 ] (lp flip) in
+    (* The flips read the chain axis whole, on every device chains lie on. *)
+    let whole t = Nx.place (Nx.beside t) t in
+    let flip = P.map u (fun _ t -> Nx.flip ~axes:[ 0 ] (whole t)) x in
+    let r = Nx.flip ~axes:[ 0 ] (whole (lp flip)) in
     let same =
       Nx.logical_or (Nx.equal l r)
         (Nx.less_equal
            (Nx.abs (Nx.sub l r))
            (Nx.mul_s (Nx.add_s (Nx.abs l) 1.) 1e-5))
     in
-    Nx.check P.tensor same (Nx.arange Nx.int32 0 c 1) (fun _ row ->
+    Nx.check P.tensor same (Nx.arange_at (Nx.beside l) Nx.int32 0 c 1) (fun _ row ->
         Invalid_argument
           (Printf.sprintf
              "%s: the density's row %ld changes when the chains are reversed; \

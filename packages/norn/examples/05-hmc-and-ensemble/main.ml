@@ -23,8 +23,8 @@ let log_density x =
   in
   Nx.mul_s q (-0.5 /. (1. -. (rho *. rho)))
 
-let report name (draws : Nx.float64_t Norn.Draws.t) =
-  let d = (draws :> Nx.float64_t) in
+let report name (draws : Nx.host Nx.float64_t Norn.Draws.t) =
+  let d = (draws :> Nx.host Nx.float64_t) in
   let flat = Nx.reshape [| -1; 2 |] d in
   let sd = Nx.std ~axes:[ 0 ] flat in
   let centred = Nx.sub flat (Nx.mean ~axes:[ 0 ] ~keepdims:true flat) in
@@ -40,22 +40,22 @@ let () =
   let key = Nx.Rng.key 0 in
 
   (* HMC over 8 chains. *)
-  let start = Nx.Rng.normal (Nx.Rng.key 1) f64 [| 8; 2 |] in
+  let start = Nx.Rng.normal ~key:(Nx.Rng.key 1) f64 [| 8; 2 |] in
   let s = Norn.Hmc.init t log_density start in
   let s = Norn.Hmc.warmup t log_density key ~steps:200 s in
   Printf.printf "hmc: step size %.3f, trajectory length %.3f\n"
     (Nx.item [] s.step_size) (Nx.item [] s.length);
   let _, draws, stats = Norn.Hmc.sample t log_density key ~draws:200 s in
   Printf.printf "hmc: mean acceptance %.2f\n"
-    (Nx.item [] (Nx.mean (stats :> Nx.float64_elt Norn.Stats.t).acceptance));
+    (Nx.item [] (Nx.mean (stats :> (Nx.float64_elt, Nx.host) Norn.Stats.t).acceptance));
   report "hmc" draws;
 
   (* An ensemble of 16 walkers, each walker a chain of the draws. *)
-  let start = Nx.Rng.normal (Nx.Rng.key 2) f64 [| 16; 2 |] in
+  let start = Nx.Rng.normal ~key:(Nx.Rng.key 2) f64 [| 16; 2 |] in
   let s = Norn.Ensemble.init t log_density start in
   let s = Norn.Ensemble.warmup t log_density key ~steps:300 s in
   let _, draws, stats = Norn.Ensemble.sample t log_density key ~draws:500 s in
   Printf.printf "ensemble: mean acceptance %.2f\n"
     (Nx.item []
-       (Nx.mean (stats :> Nx.float64_elt Norn.Ensemble.stats).acceptance));
+       (Nx.mean (stats :> (Nx.float64_elt, Nx.host) Norn.Ensemble.stats).acceptance));
   report "ensemble" draws

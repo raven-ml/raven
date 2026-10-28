@@ -12,10 +12,10 @@ let item x = Nx.item [] x
 
 (* The cases of gen/dist.py, at its parameters. *)
 type case =
-  | Real of (Nx.float64_t, Nx.float64_elt) D.t
-  | Count of (Nx.int32_t, Nx.float64_elt) D.t
-  | Flag of (Nx.bool_t, Nx.float64_elt) D.t
-  | Index of (Nx.int64_t, Nx.float64_elt) D.t
+  | Real of (Nx.host Nx.float64_t, Nx.float64_elt, Nx.host) D.t
+  | Count of (Nx.host Nx.int32_t, Nx.float64_elt, Nx.host) D.t
+  | Flag of (Nx.host Nx.bool_t, Nx.float64_elt, Nx.host) D.t
+  | Index of (Nx.host Nx.int64_t, Nx.float64_elt, Nx.host) D.t
 
 let reals =
   [

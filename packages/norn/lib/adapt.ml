@@ -32,12 +32,12 @@ let schedule n =
       (fun (n, _) -> n > 0)
       ([ (first, false) ] @ slow first base [] @ [ (last, false) ])
 
-let windows schedule =
+let windows on schedule =
   let n = List.length schedule in
   let lengths = List.map (fun (n, _) -> Int32.of_int n) schedule in
   let refits = List.map (fun (_, r) -> if r then 1l else 0l) schedule in
-  ( Nx.create Nx.int32 [| n |] (Array.of_list lengths),
-    Nx.create Nx.int32 [| n |] (Array.of_list refits) )
+  ( Nx.place on (Nx.create Nx.int32 [| n |] (Array.of_list lengths)),
+    Nx.place on (Nx.create Nx.int32 [| n |] (Array.of_list refits)) )
 
 (* Dual averaging (Hoffman and Gelman 2014), Stan's constants. *)
 
@@ -45,39 +45,34 @@ let da_gamma = 0.05
 let da_kappa = 0.75
 let da_t0 = 10.
 
-type 'f averaging = {
-  mu : (float, 'f) Nx.t;
-  s_bar : (float, 'f) Nx.t;
-  x_bar : (float, 'f) Nx.t;
-  count : (float, 'f) Nx.t; (* steps since the last restart *)
+type ('f, 'd) averaging = {
+  mu : (float, 'f, 'd) Nx.t;
+  s_bar : (float, 'f, 'd) Nx.t;
+  x_bar : (float, 'f, 'd) Nx.t;
+  count : (float, 'f, 'd) Nx.t; (* steps since the last restart *)
 }
 
-type 'f averaging' = 'f averaging
 
-let averaging_ptree (type f) () : f averaging P.t =
-  let module S = struct
-    type _ t = f averaging'
-
-    let walk c (a : f averaging) : f averaging =
-      let open P.Walk in
-      let mu = field c "mu" tensor a.mu in
-      let s_bar = field c "s_bar" tensor a.s_bar in
-      let x_bar = field c "x_bar" tensor a.x_bar in
-      let count = field c "count" tensor a.count in
-      { mu; s_bar; x_bar; count }
-  end in
-  P.nest (module S) P.unit
+let averaging_ptree (type f) () : ((f, 'd) averaging, 'd) P.t =
+  let walk c (a : (f, 'd) averaging) : (f, 'd) averaging =
+    let open P.Walk in
+    let mu = field c "mu" tensor a.mu in
+    let s_bar = field c "s_bar" tensor a.s_bar in
+    let x_bar = field c "x_bar" tensor a.x_bar in
+    let count = field c "count" tensor a.count in
+    { mu; s_bar; x_bar; count }
+  in
+  P.v walk
 
 let restart eps =
   {
     mu = Nx.log (Nx.mul_s eps 10.);
     s_bar = Nx.zeros_like eps;
     x_bar = Nx.zeros_like eps;
-    count = Nx.zeros (Nx.dtype eps) [||];
+    count = Nx.scalar_like eps 0.;
   }
 
 let average a ~target stat =
-  let dt = Nx.dtype a.mu in
   let count = Nx.add_s a.count 1. in
   let eta = Nx.recip (Nx.add_s count da_t0) in
   let s_bar =
@@ -86,9 +81,9 @@ let average a ~target stat =
       (Nx.mul eta (Nx.sub target stat))
   in
   let x =
-    Nx.sub a.mu (Nx.div (Nx.mul s_bar (Nx.sqrt count)) (Nx.scalar dt da_gamma))
+    Nx.sub a.mu (Nx.div_s (Nx.mul s_bar (Nx.sqrt count)) da_gamma)
   in
-  let x_eta = Nx.pow count (Nx.scalar dt (-.da_kappa)) in
+  let x_eta = Nx.pow_s count (-.da_kappa) in
   let x_bar =
     Nx.add (Nx.mul (Nx.sub (Nx.ones_like x_eta) x_eta) a.x_bar) (Nx.mul x_eta x)
   in
@@ -98,8 +93,8 @@ let final a = Nx.exp a.x_bar
 
 (* A window's draws and scores *)
 
-type 'u window = {
-  n : Nx.int32_t; (* the window's draws so far *)
+type ('u, 'd) window = {
+  n : 'd Nx.int32_t; (* the window's draws so far *)
   shift : 'u; (* the window's first position *)
   sx : 'u;
   sxx : 'u;
@@ -109,39 +104,35 @@ type 'u window = {
   gs : 'u;
 }
 
-type 'u window' = 'u window
 
-let window_ptree (type u) (u : u P.t) : u window P.t =
-  let module S = struct
-    type _ t = u window'
-
-    let walk c (w : u window) : u window =
-      let open P.Walk in
-      let n = field c "n" tensor w.n in
-      let shift = field c "shift" (structure u) w.shift in
-      let sx = field c "sx" (structure u) w.sx in
-      let sxx = field c "sxx" (structure u) w.sxx in
-      let sg = field c "sg" (structure u) w.sg in
-      let sgg = field c "sgg" (structure u) w.sgg in
-      let xs = field c "xs" (structure u) w.xs in
-      let gs = field c "gs" (structure u) w.gs in
-      { n; shift; sx; sxx; sg; sgg; xs; gs }
-  end in
-  P.nest (module S) P.unit
+let window_ptree (type u) (u : (u, 'd) P.t) : ((u, 'd) window, 'd) P.t =
+  let walk c (w : (u, 'd) window) : (u, 'd) window =
+    let open P.Walk in
+    let n = field c "n" tensor w.n in
+    let shift = field c "shift" (structure u) w.shift in
+    let sx = field c "sx" (structure u) w.sx in
+    let sxx = field c "sxx" (structure u) w.sxx in
+    let sg = field c "sg" (structure u) w.sg in
+    let sgg = field c "sgg" (structure u) w.sgg in
+    let xs = field c "xs" (structure u) w.xs in
+    let gs = field c "gs" (structure u) w.gs in
+    { n; shift; sx; sxx; sg; sgg; xs; gs }
+  in
+  P.v walk
 
 let empty u ~buffer x =
   let buffers =
     P.map u
       (fun _ t ->
         let sh = Nx.shape t in
-        Nx.zeros (Nx.dtype t)
+        Nx.zeros_at (Nx.beside t) (Nx.dtype t)
           (Array.concat
              [ [| sh.(0); buffer |]; Array.sub sh 1 (Array.length sh - 1) ]))
       x
   in
   let z = Rows.zeros u x in
   {
-    n = Nx.scalar Nx.int32 0l;
+    n = Nx.scalar_at (Rows.beside "Norn" ~what:"the position" u x) Nx.int32 0l;
     shift = x;
     sx = z;
     sxx = z;
@@ -154,7 +145,7 @@ let empty u ~buffer x =
 let reopen u w x =
   {
     w with
-    n = Nx.scalar Nx.int32 0l;
+    n = Nx.zeros_like w.n;
     shift = x;
     sx = Rows.zeros u w.sx;
     sxx = Rows.zeros u w.sxx;
@@ -180,7 +171,7 @@ let record u w x g =
       buf v
   in
   {
-    n = Nx.add w.n (Nx.scalar Nx.int32 1l);
+    n = Nx.add_s w.n 1l;
     shift = w.shift;
     sx = Rows.add u w.sx dx;
     sxx = Rows.add u w.sxx (sq u dx);
@@ -205,8 +196,8 @@ let variance_high = 1e20
 let clip x =
   let dt = Nx.dtype x in
   Nx.clamp
-    ~min:(Nx_dtype.of_float dt variance_low)
-    ~max:(Nx_dtype.of_float dt variance_high)
+    ~min:(Nx.Dtype.of_float dt variance_low)
+    ~max:(Nx.Dtype.of_float dt variance_high)
     x
 
 let scale u vx vg =
@@ -219,7 +210,7 @@ let scale u vx vg =
 (* [rows_matrix u dt x] is [x], each tensor with a leading axis of [L], as an
    [[L; d]] matrix of the float elements; [matrix_rows u like m] reads the [k]
    rows of an [[k; d]] matrix back into [like]'s structure. *)
-let rows_matrix (type f) u (dt : (float, f) Nx.dtype) x : (float, f) Nx.t =
+let rows_matrix (type f) u (dt : (float, f) Nx.dtype) x : (float, f, 'd) Nx.t =
   let rows =
     P.fold u
       (fun _ t acc ->
@@ -240,7 +231,7 @@ let matrix_rows u like m =
   P.map u
     (fun _ t ->
       let shape = Array.append [| k |] (Nx.shape t) in
-      if not (Rows.float_leaf t) then Nx.zeros (Nx.dtype t) shape
+      if not (Rows.float_leaf t) then Nx.zeros_at (Nx.beside t) (Nx.dtype t) shape
       else
         let n = Nx.numel t in
         let cols = Nx.slice [ Nx.R (0, k); Nx.R (!offset, !offset + n) ] m in
@@ -272,35 +263,38 @@ let low_rank (type f) u (dt : (float, f) Nx.dtype) ~rank valid m s xs gs =
   let g = Nx.mul valid (Nx.mul (Nx.sub g g_mean) (row s)) in
   let q, _ = Nx.qr (Nx.transpose (Nx.concatenate ~axis:0 [ x; g ])) in
   let r = (Nx.shape q).(1) in
-  let ridge = Nx.mul_s (Nx.eye dt r) low_rank_ridge in
+  let ridge = Nx.mul_s (Nx.eye_at (Nx.beside q) dt r) low_rank_ridge in
   let cov a =
     let p = Nx.matmul a q in
     Nx.add (Nx.div (Nx.matmul (Nx.transpose p) p) count) ridge
   in
   let cx = cov x and cg = cov g in
   let power m e =
-    let w, v = Nx.eigh m in
-    let w = Nx.pow (Nx.cast dt w) (Nx.scalar dt e) in
+    let w, v = Nx.eigh dt m in
+    let w = Nx.pow_s w e in
     Nx.matmul (Nx.mul v (Nx.unsqueeze ~axes:[ 0 ] w)) (Nx.transpose v)
   in
   let half = power cg 0.5 and inv_half = power cg (-0.5) in
   let inner = power (Nx.matmul half (Nx.matmul cx half)) 0.5 in
   let sigma = Nx.matmul inv_half (Nx.matmul inner inv_half) in
-  let w, v = Nx.eigh sigma in
-  let w = Nx.cast dt w in
+  let w, v = Nx.eigh dt sigma in
   let order = Nx.argsort ~descending:true (Nx.abs (Nx.log w)) in
   let keep = Nx.slice [ Nx.R (0, min rank r) ] order in
-  let variances = Nx.take ~indices:keep w in
+  let variances = Nx.take keep w in
   let directions =
-    Nx.transpose (Nx.matmul q (Nx.take ~axis:1 ~indices:keep v))
+    Nx.transpose (Nx.matmul q (Nx.take ~axis:1 keep v))
   in
   let directions, variances =
     if rank <= r then (directions, variances)
     else
       (* Fewer independent draws than directions: the rest change nothing. *)
       ( Nx.concatenate ~axis:0
-          [ directions; Nx.zeros dt [| rank - r; (Nx.shape q).(0) |] ],
-        Nx.concatenate ~axis:0 [ variances; Nx.ones dt [| rank - r |] ] )
+          [
+            directions;
+            Nx.zeros_at (Nx.beside q) dt [| rank - r; (Nx.shape q).(0) |];
+          ],
+        Nx.concatenate ~axis:0
+          [ variances; Nx.ones_at (Nx.beside q) dt [| rank - r |] ] )
   in
   Gaussian.low_rank u ~mean:m ~scale:s
     ~directions:(matrix_rows u m directions)
@@ -324,8 +318,8 @@ let moments u n shift s ss =
   in
   (mean, var)
 
-let per_chain (type u f) (u : u P.t) (dt : (float, f) Nx.dtype) ~rank
-    (w : u window) : (u, f) Gaussian.t =
+let per_chain (type u f) (u : (u, 'd) P.t) (dt : (float, f) Nx.dtype) ~rank
+    (w : (u, 'd) window) : (u, f, 'd) Gaussian.t =
   let mean, vx = moments u w.n w.shift w.sx w.sxx in
   let _, vg = moments u w.n (Rows.zeros u w.sg) w.sg w.sgg in
   let s = scale u vx vg in
@@ -337,7 +331,7 @@ let per_chain (type u f) (u : u P.t) (dt : (float, f) Nx.dtype) ~rank
       mean s
   else
     let buffer = P.fold u (fun _ t _ -> (Nx.shape t).(1)) w.xs 0 in
-    let valid = Nx.less (Nx.arange Nx.int32 0 buffer 1) w.n in
+    let valid = Nx.less (Nx.arange_at (Nx.beside w.n) Nx.int32 0 buffer 1) w.n in
     Rune.vmap
       P.(u @-> u @-> u @-> u @-> returns gp)
       (fun m s xs gs -> low_rank u dt ~rank valid m s xs gs)
@@ -345,8 +339,8 @@ let per_chain (type u f) (u : u P.t) (dt : (float, f) Nx.dtype) ~rank
 
 (* The chains' draws pooled: the variance across them is the mean of the chains'
    variances plus the variance of their means. *)
-let pooled (type u f) (u : u P.t) (dt : (float, f) Nx.dtype) ~rank
-    (w : u window) : (u, f) Gaussian.t =
+let pooled (type u f) (u : (u, 'd) P.t) (dt : (float, f) Nx.dtype) ~rank
+    (w : (u, 'd) window) : (u, f, 'd) Gaussian.t =
   let pool (mean, var) =
     let m = P.map u (fun _ t -> Nx.mean ~axes:[ 0 ] t) mean in
     let v =
@@ -377,10 +371,8 @@ let pooled (type u f) (u : u P.t) (dt : (float, f) Nx.dtype) ~rank
             t)
         x
     in
-    let draw = Nx.arange Nx.int32 0 (c * buffer) 1 in
-    let valid =
-      Nx.less (Nx.mod_ draw (Nx.scalar Nx.int32 (Int32.of_int buffer))) w.n
-    in
+    let draw = Nx.arange_at (Nx.beside w.n) Nx.int32 0 (c * buffer) 1 in
+    let valid = Nx.less (Nx.mod_s draw (Int32.of_int buffer)) w.n in
     low_rank u dt ~rank valid mean s (flat w.xs) (flat w.gs)
 
 (* Population fits *)
@@ -392,7 +384,7 @@ let pooled (type u f) (u : u P.t) (dt : (float, f) Nx.dtype) ~rank
    the [n × n] Gram matrix of the whitened draws; a direction outside their span
    keeps the diagonal's variance, and a factorisation that fails leaves the
    diagonal. *)
-let population (type f) u (dt : (float, f) Nx.dtype) lw x : (_, f) Gaussian.t =
+let population (type f) u (dt : (float, f) Nx.dtype) lw x : (_, f, 'd) Gaussian.t =
   let w = Nx.exp (Nx.sub lw (Nx.logsumexp lw)) in
   let n = (Nx.shape w).(0) in
   let mean =
@@ -433,13 +425,12 @@ let population (type f) u (dt : (float, f) Nx.dtype) lw x : (_, f) Gaussian.t =
   let d = (Nx.shape y).(1) in
   let lambda, directions =
     if d <= n then
-      let lambda, v = Nx.eigh (Nx.matmul (Nx.transpose y) y) in
-      (Nx.cast dt lambda, Nx.transpose v)
+      let lambda, v = Nx.eigh dt (Nx.matmul (Nx.transpose y) y) in
+      (lambda, Nx.transpose v)
     else
       (* [Y Yᵀ v = λ v] gives [Yᵀ Y (Yᵀ v) = λ (Yᵀ v)], of norm [sqrt λ]. *)
-      let lambda, v = Nx.eigh (Nx.matmul y (Nx.transpose y)) in
-      let lambda = Nx.cast dt lambda in
-      let norm = Nx.sqrt (Nx.maximum lambda (Nx.scalar dt (Prec.tiny dt))) in
+      let lambda, v = Nx.eigh dt (Nx.matmul y (Nx.transpose y)) in
+      let norm = Nx.sqrt (Nx.maximum_s lambda (Prec.tiny dt)) in
       (lambda, Nx.transpose (Nx.div (Nx.matmul (Nx.transpose y) v) norm))
   in
   (* Largest first: the directions outside the span, zeroed below, come last, so

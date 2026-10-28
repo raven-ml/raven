@@ -9,63 +9,60 @@ let invalid_argf = Rows.invalid_argf
 
 type move = Hmc | Slice
 
-type ('u, 'f) state = {
+type ('u, 'f, 'd) state = {
   particles : 'u;
-  prior : (float, 'f) Nx.t;
-  likelihood : (float, 'f) Nx.t;
-  beta : (float, 'f) Nx.t;
-  log_evidence : (float, 'f) Nx.t;
-  variance : (float, 'f) Nx.t;
-  steps : Nx.int32_t;
-  step_size : (float, 'f) Nx.t;
-  length : (float, 'f) Nx.t;
-  length_moment : (float, 'f) Nx.t;
+  prior : (float, 'f, 'd) Nx.t;
+  likelihood : (float, 'f, 'd) Nx.t;
+  beta : (float, 'f, 'd) Nx.t;
+  log_evidence : (float, 'f, 'd) Nx.t;
+  variance : (float, 'f, 'd) Nx.t;
+  steps : 'd Nx.int32_t;
+  step_size : (float, 'f, 'd) Nx.t;
+  length : (float, 'f, 'd) Nx.t;
+  length_moment : (float, 'f, 'd) Nx.t;
   resampled : int;
   move : move;
 }
 
-type ('u, 'f) smc = ('u, 'f) state
+type ('u, 'f, 'd) smc = ('u, 'f, 'd) state
 
-let ptree (type u f) (u : u P.t) : (u, f) state P.t =
-  let module S = struct
-    type _ t = (u, f) smc
-
-    let walk c s =
-      let open P.Walk in
-      let particles = field c "particles" (structure u) s.particles in
-      let prior = field c "prior" tensor s.prior in
-      let likelihood = field c "likelihood" tensor s.likelihood in
-      let beta = field c "beta" tensor s.beta in
-      let log_evidence = field c "log_evidence" tensor s.log_evidence in
-      let variance = field c "variance" tensor s.variance in
-      let steps = field c "steps" tensor s.steps in
-      let step_size = field c "step_size" tensor s.step_size in
-      let length = field c "length" tensor s.length in
-      let length_moment = field c "length_moment" tensor s.length_moment in
-      let resampled = field c "resampled" int s.resampled in
-      let move =
-        match
-          field c "move" int (match s.move with Hmc -> 0 | Slice -> 1)
-        with
-        | 0 -> Hmc
-        | _ -> Slice
-      in
-      {
-        particles;
-        prior;
-        likelihood;
-        beta;
-        log_evidence;
-        variance;
-        steps;
-        step_size;
-        length;
-        length_moment;
-        resampled;
-        move;
-      }
-  end in
-  P.nest (module S) P.unit
+let ptree (type u f) (u : (u, 'd) P.t) : ((u, f, 'd) state, 'd) P.t =
+  let walk c (s : (u, f, 'd) smc) : (u, f, 'd) smc =
+    let open P.Walk in
+    let particles = field c "particles" (structure u) s.particles in
+    let prior = field c "prior" tensor s.prior in
+    let likelihood = field c "likelihood" tensor s.likelihood in
+    let beta = field c "beta" tensor s.beta in
+    let log_evidence = field c "log_evidence" tensor s.log_evidence in
+    let variance = field c "variance" tensor s.variance in
+    let steps = field c "steps" tensor s.steps in
+    let step_size = field c "step_size" tensor s.step_size in
+    let length = field c "length" tensor s.length in
+    let length_moment = field c "length_moment" tensor s.length_moment in
+    let resampled = field c "resampled" int s.resampled in
+    let move =
+      match
+        field c "move" int (match s.move with Hmc -> 0 | Slice -> 1)
+      with
+      | 0 -> Hmc
+      | _ -> Slice
+    in
+    {
+      particles;
+      prior;
+      likelihood;
+      beta;
+      log_evidence;
+      variance;
+      steps;
+      step_size;
+      length;
+      length_moment;
+      resampled;
+      move;
+    }
+  in
+  P.v walk
 
 (* Temperatures *)
 
@@ -83,7 +80,7 @@ let beta_tol = Jera.Tol.rel 1e-3
 (* [next s] is the next temperature: [1] if the incremental weights to it keep
    an ESS of half the particles, else the temperature in (beta, 1] where the ESS
    is half the particles. *)
-let next (type f) (s : (_, f) state) : (float, f) Nx.t =
+let next (type f) (s : (_, f, 'd) state) : (float, f, 'd) Nx.t =
   let n = float_of_int (Nx.shape s.likelihood).(0) in
   let half = Nx.scalar_like s.beta (Float.log (n /. 2.)) in
   let f b = Nx.sub (log_ess (increments s.likelihood (Nx.sub b s.beta))) half in
@@ -116,7 +113,10 @@ let chain_variance m v =
     Nx.reshape
       [| p; p + 1 |]
       (Nx.concatenate ~axis:0
-         [ Nx.reshape [| p * p |] upper; Nx.zeros (Nx.dtype v) [| p |] ])
+         [
+           Nx.reshape [| p * p |] upper;
+           Nx.zeros_at (Nx.beside v) (Nx.dtype v) [| p |];
+         ])
   in
   let gamma =
     Nx.div_s
@@ -162,7 +162,7 @@ let slice_moves context u ~prior ~likelihood keys g ~m moves tempered x0 pl0 ll0
   let move (x, (lp, aux)) j =
     let ks =
       Rune.vmap
-        P.(Nx.Rng.ptree @-> returns Nx.Rng.ptree)
+        P.((Nx.Ptree.v Nx.Rng.walk) @-> returns (Nx.Ptree.v Nx.Rng.walk))
         (fun k -> Nx.Rng.fold_in_tensor k j)
         keys
     in
@@ -242,7 +242,8 @@ let hamiltonian_moves context u ~prior ~likelihood keys g moves tempered x0
   in
   (xs, pls, lls, Nx.exp log_eps, (Nx.exp chees.log_length, chees.second))
 
-let step (type f) u ~prior ~likelihood k (s : (_, f) state) =
+let step (type f) u ~prior ~likelihood k (s : (_, f, 'd) state) =
+  let k = Nx.Rng.place (Nx.beside s.likelihood) k in
   let context = "Norn.Smc.step" in
   let dt = Nx.dtype s.beta in
   let n = (Nx.shape s.likelihood).(0) and m = s.resampled in
@@ -262,7 +263,7 @@ let step (type f) u ~prior ~likelihood k (s : (_, f) state) =
   let g = Adapt.population u dt lw s.particles in
   let tempered pl ll = Nx.add pl (increments ll beta) in
   let move_keys = Nx.Rng.fold_in k 1 in
-  let moves = Nx.arange Nx.int32 0 (p - 1) 1 in
+  let moves = Nx.arange_at (Nx.beside lw) Nx.int32 0 (p - 1) 1 in
   let xs, pls, lls, step_size, (length, length_moment) =
     match s.move with
     | Slice ->
@@ -297,7 +298,7 @@ let step (type f) u ~prior ~likelihood k (s : (_, f) state) =
     beta;
     log_evidence;
     variance;
-    steps = Nx.add s.steps (Nx.scalar Nx.int32 1l);
+    steps = Nx.add_s s.steps 1l;
     step_size;
     length;
     length_moment;
@@ -314,6 +315,7 @@ let chains n =
 let init u ?(move = Hmc) ?resampled ~prior ~likelihood start =
   let context = "Norn.Smc.init" in
   let n = Rows.count context u start in
+  Rows.whole_chains context ~reads:"a step resamples the particles" u start;
   let resampled = Option.value resampled ~default:(chains n) in
   if resampled < 1 || n mod resampled <> 0 || n / resampled < 2 then
     invalid_argf
@@ -323,8 +325,8 @@ let init u ?(move = Hmc) ?resampled ~prior ~likelihood start =
   let pl = prior start and ll = likelihood start in
   Rows.check_density context u prior start pl;
   Rows.check_density context u likelihood start ll;
-  let dt = Nx.dtype pl in
-  let zero = Nx.zeros dt [||] in
+  let dt = Nx.dtype pl and on = Nx.beside pl in
+  let zero = Nx.scalar_at on dt 0. in
   {
     particles = start;
     prior = pl;
@@ -332,44 +334,44 @@ let init u ?(move = Hmc) ?resampled ~prior ~likelihood start =
     beta = zero;
     log_evidence = zero;
     variance = zero;
-    steps = Nx.scalar Nx.int32 0l;
-    step_size = Nx.scalar dt 1.;
-    length = Nx.scalar dt 1.;
+    steps = Nx.scalar_at on Nx.int32 0l;
+    step_size = Nx.scalar_at on dt 1.;
+    length = Nx.scalar_at on dt 1.;
     length_moment = zero;
     resampled;
     move;
   }
 
-let finished (s : (_, _) state) = Nx.greater_equal s.beta (Nx.ones_like s.beta)
+let finished (s : (_, _, 'd) state) = Nx.greater_equal s.beta (Nx.ones_like s.beta)
 
-let evidence (type f) (s : (_, f) state) =
-  let dt = Nx.dtype s.beta in
+let evidence (type f) (s : (_, f, 'd) state) =
+  let dt = Nx.dtype s.beta and on = Nx.beside s.beta in
   let n = (Nx.shape s.likelihood).(0) in
-  let log_weights = Nx.full dt [| n |] (-.Float.log (float_of_int n)) in
+  let log_weights = Nx.full_at on dt [| n |] (-.Float.log (float_of_int n)) in
   Evidence.v
     ~sample:{ Weighted.values = s.particles; log_weights }
     ~log_evidence:s.log_evidence ~error:(Nx.sqrt s.variance)
     ~information:(Nx.sub (Nx.mean s.likelihood) s.log_evidence)
     ~stop:
       (Nx.where (finished s)
-         (Nx.scalar Nx.int32 Evidence.converged)
-         (Nx.scalar Nx.int32 Evidence.temperature))
+         (Nx.scalar_at on Nx.int32 Evidence.converged)
+         (Nx.scalar_at on Nx.int32 Evidence.temperature))
     ~reached:s.beta
     ~replicates:(Nx.reshape [| 1; n |] log_weights)
     ~groups:
-      (Nx.mod_ (Nx.arange Nx.int32 0 n 1)
-         (Nx.scalar Nx.int32 (Int32.of_int s.resampled)))
+      (Nx.mod_s (Nx.arange_at on Nx.int32 0 n 1) (Int32.of_int s.resampled))
     ~group_count:s.resampled
 
 let run u ?move ?resampled ~budget ~prior ~likelihood k start =
   if budget < 1 then
     invalid_argf "Norn.Smc.run: budget = %d is not positive" budget;
   let s = init u ?move ?resampled ~prior ~likelihood start in
+  let k = Nx.Rng.place (Nx.beside s.likelihood) k in
   let s =
     Rune.iterate (ptree u) ~max:budget
       ~until:(fun s ->
         Nx.logical_or (finished s)
-          (Nx.greater_equal s.steps (Nx.scalar Nx.int32 (Int32.of_int budget))))
+          (Nx.greater_equal_s s.steps (Int32.of_int budget)))
       ~f:(fun s ->
         step u ~prior ~likelihood (Nx.Rng.fold_in_tensor k s.steps) s)
       s

@@ -3,20 +3,17 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type ('u, 'f) t = { values : 'u; log_weights : (float, 'f) Nx.t }
-type ('u, 'f) weighted = ('u, 'f) t
+type ('u, 'f, 'd) t = { values : 'u; log_weights : (float, 'f, 'd) Nx.t }
+type ('u, 'f, 'd) weighted = ('u, 'f, 'd) t
 
-let ptree (type u f) (u : u Nx.Ptree.t) : (u, f) t Nx.Ptree.t =
-  let module S = struct
-    type _ t = (u, f) weighted
-
-    let walk c w =
-      let open Nx.Ptree.Walk in
-      let values = field c "values" (structure u) w.values in
-      let log_weights = field c "log_weights" tensor w.log_weights in
-      { values; log_weights }
-  end in
-  Nx.Ptree.nest (module S) Nx.Ptree.unit
+let ptree (type u f) (u : (u, 'd) Nx.Ptree.t) : ((u, f, 'd) t, 'd) Nx.Ptree.t =
+  let walk c (w : (u, f, 'd) weighted) : (u, f, 'd) weighted =
+    let open Nx.Ptree.Walk in
+    let values = field c "values" (structure u) w.values in
+    let log_weights = field c "log_weights" tensor w.log_weights in
+    { values; log_weights }
+  in
+  Nx.Ptree.v walk
 
 let ess w =
   let l = w.log_weights in
@@ -25,6 +22,7 @@ let ess w =
 (* Systematic resampling: one uniform [u] places the [n] points [(i + u) / n] on
    the cumulative normalised weights. *)
 let resample u k ~n w =
+  let k = Nx.Rng.place (Nx.beside w.log_weights) k in
   if n < 1 then
     Rows.invalid_argf "Norn.Weighted.resample: n = %d is not positive" n;
   let l = w.log_weights in
@@ -34,14 +32,14 @@ let resample u k ~n w =
   let points =
     Nx.div_s
       (Nx.add
-         (Nx.arange_f dt 0. (float_of_int n) 1.)
-         (Nx.Rng.uniform k dt [||]))
+         (Nx.arange_f_at (Nx.beside l) dt 0. (float_of_int n) 1.)
+         (Noise.uniform k dt [||]))
       (float_of_int n)
   in
   (* Rounding can leave the last cumulative weight below a point near 1. *)
   let indices =
-    Nx.minimum
+    Nx.minimum_s
       (Nx.searchsorted ~side:`Right cdf points)
-      (Nx.scalar Nx.int64 (Int64.of_int (m - 1)))
+      (Int64.of_int (m - 1))
   in
-  Nx.Ptree.map u (fun _ x -> Nx.take ~axis:0 ~indices x) w.values
+  Nx.Ptree.map u (fun _ x -> Nx.take ~axis:0 indices x) w.values

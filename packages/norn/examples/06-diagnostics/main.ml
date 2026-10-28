@@ -27,7 +27,7 @@ let () =
   Printf.printf "one mode:  R-hat %.3f, ESS %.0f, mean %.2f\n"
     (Nx.item [ 0 ] (Norn.Diag.rhat t draws))
     (Nx.item [ 0 ] (Norn.Diag.ess_bulk t draws))
-    (Nx.item [] (Nx.mean (draws :> Nx.float64_t)));
+    (Nx.item [] (Nx.mean (draws :> Nx.host Nx.float64_t)));
   Printf.printf "           E-BFMI per chain: %s\n"
     (String.concat " "
        (List.map (Printf.sprintf "%.2f")
@@ -39,7 +39,7 @@ let () =
   Printf.printf "two modes: R-hat %.3f, ESS %.0f, mean %.2f\n"
     (Nx.item [ 0 ] (Norn.Diag.rhat t draws))
     (Nx.item [ 0 ] (Norn.Diag.ess_bulk t draws))
-    (Nx.item [] (Nx.mean (draws :> Nx.float64_t)));
+    (Nx.item [] (Nx.mean (draws :> Nx.host Nx.float64_t)));
 
   (* The summary's findings, as values and as sentences. *)
   let summary = Norn.Summary.v t ~stats draws in

@@ -60,6 +60,19 @@ All notable changes to this project will be documented in this file.
 
 ### Norn
 
+- Every type carries its values' device set: `('u, 'f, 'd) Nuts.state`,
+  `('f, 'd) Bij.t`, `('x, 'f, 'd) Dist.t` and the like. Samplers make their
+  state beside the position; `Dist.placement` is where a distribution makes
+  its values, and a model lies where its run's values do, refusing a site or
+  a factor on another set.
+- `Nuts` runs chains cut across devices. `Hmc`, `Ensemble`, `Nested` and
+  `Smc` raise on a position cut across devices, since they read across chains.
+- `Gaussian.diagonal`, and `of_precision` without `~low_rank`, raise when the
+  mean holds no tensor, as they have no set to make the variances on.
+- `Summary.columns` are host values.
+- **Breaking:** a density from `with_gradient` whose function reads its values
+  no longer runs in any sampler. Samplers trace their transitions, and a rule
+  reads values only where `Rune.custom_jvp` runs it on values.
 - `Dist.support` of `Dist.transform (Bij.interval ~low ~high)` with
   per-element bounds holds every element's values. It mapped the base's
   support through the lowest `low` and the highest `high`.

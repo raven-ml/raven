@@ -47,16 +47,16 @@
 
 (** {1:models Models} *)
 
-type ('p, 'y, 'f) t
+type ('p, 'y, 'f, 'd) t
 (** The type for models with latent values ['p], observed values ['y] and log
     densities of element type ['f]. *)
 
 val v :
   (float, 'f) Nx.dtype ->
-  'p Nx.Ptree.t ->
-  'y Nx.Ptree.t ->
+  ('p, 'd) Nx.Ptree.t ->
+  ('y, 'd) Nx.Ptree.t ->
   (unit -> 'p * 'y) ->
-  ('p, 'y, 'f) t
+  ('p, 'y, 'f, 'd) t
 (** [v dtype latent observed gen] is the model [gen] describes. [gen] performs
     {!sample} once per random variable and returns every sampled value
     unchanged: the latent ones in the first component, of structure [latent],
@@ -70,15 +70,21 @@ val v :
     sites learned so far; any other exception propagates unchanged, with its
     backtrace. Raises [Invalid_argument] naming the site if a sampled value is
     missing from the result or appears twice, if a result tensor is not a
-    sampled value, or if a latent site is discrete. *)
+    sampled value, or if a latent site is discrete, and [Invalid_argument] if
+    [gen] samples nothing.
+
+    The model lies on the device set of that run's values, where its sites'
+    distributions make them ({!Norn.Dist.placement}). Every interpreter raises
+    [Invalid_argument] naming the site where a site's distribution, or a
+    factor, lies on another set. *)
 
 (** {1:effects Effects} *)
 
-val sample : ('x, 'f) Norn.Dist.t -> 'x
+val sample : ('x, 'f, 'd) Norn.Dist.t -> 'x
 (** [sample d] is a value of [d] at a new site. Only an interpreter answers it;
     outside one it raises [Effect.Unhandled]. *)
 
-val factor : (float, 'f) Nx.t -> unit
+val factor : (float, 'f, 'd) Nx.t -> unit
 (** [factor l] adds [l] to the log likelihood. Axis 0 of [l] indexes its points;
     a scalar is one point. Interpreters that simulate ignore it, so its data
     take no part in {!simulate} and {!predict}. *)
@@ -92,14 +98,14 @@ type 'p coords = private 'p
     ({!Norn.Dist.coords}), or the one {!reparam} gives. [(c :> 'p)] reads
     coordinates as a structure. *)
 
-val coords : ('p, 'y, 'f) t -> 'p coords Nx.Ptree.t
-(** [coords m] is the structure of [m]'s coordinates: [m]'s latent structure. *)
+val coords : ('p, 'y, 'f, 'd) t -> ('p coords, 'd) Nx.Ptree.t
+(** [coords m] is the structure of [m]'s coordinates: [m]('s, 'd) latent structure. *)
 
-val constrain : ('p, 'y, 'f) t -> 'p coords -> 'p
+val constrain : ('p, 'y, 'f, 'd) t -> 'p coords -> 'p
 (** [constrain m c] is the latent values at the coordinates [c]. It runs the
     model, so a bijector that depends on other sites sees their values. *)
 
-val unconstrain : ('p, 'y, 'f) t -> 'p -> 'p coords
+val unconstrain : ('p, 'y, 'f, 'd) t -> 'p -> 'p coords
 (** [unconstrain m p] is the coordinates of the latent values [p]. *)
 
 (** {1:batched Batched interpreters}
@@ -108,7 +114,7 @@ val unconstrain : ('p, 'y, 'f) t -> 'p -> 'p coords
     the single-instance interpretation with [Rune.vmap] over that axis, so the
     rows of a density are independent by construction. *)
 
-val log_density : ('p, 'y, 'f) t -> 'y -> ('p coords, 'f) Norn.density
+val log_density : ('p, 'y, 'f, 'd) t -> 'y -> ('p coords, 'f, 'd) Norn.density
 (** [log_density m y] is the log density of the coordinates conditioned on [y]:
     the prior of the latent values, each site's log-determinant and the
     likelihood of [y], factors included.
@@ -122,19 +128,19 @@ val log_density : ('p, 'y, 'f) t -> 'y -> ('p coords, 'f) Norn.density
     model's numbers diverges. A term that is NaN or [+inf] with its parameters
     in their domain raises naming the site. *)
 
-val log_prior : ('p, 'y, 'f) t -> ('p coords, 'f) Norn.density
+val log_prior : ('p, 'y, 'f, 'd) t -> ('p coords, 'f, 'd) Norn.density
 (** [log_prior m] is the prior density of the coordinates: the latent sites'
     terms and log-determinants. Observed sites are answered with zeros: a latent
     site whose distribution depends on an observed value has its prior evaluated
     at zero data. *)
 
-val log_likelihood : ('p, 'y, 'f) t -> 'y -> ('p coords, 'f) Norn.density
+val log_likelihood : ('p, 'y, 'f, 'd) t -> 'y -> ('p coords, 'f, 'd) Norn.density
 (** [log_likelihood m y] is the log likelihood of [y], factors included:
     [log_density m y c = log_prior m c + log_likelihood m y c].
 
     Raises as {!log_density} does. *)
 
-val from_prior : ('p, 'y, 'f) t -> n:int -> Nx.Rng.t -> 'p coords
+val from_prior : ('p, 'y, 'f, 'd) t -> n:int -> 'd Nx.Rng.key -> 'p coords
 (** [from_prior m ~n k] is [n] prior draws of the coordinates, stacked on a
     leading axis. Draw [i] has the key of row [i] of [Nx.Rng.split_batch ~n k],
     so it does not depend on [n].
@@ -143,22 +149,22 @@ val from_prior : ('p, 'y, 'f) t -> n:int -> Nx.Rng.t -> 'p coords
 
 (** Initialisation strategies. *)
 module Init : sig
-  type 'p t
+  type ('p, 'd) t
   (** The type for strategies over latent values ['p]. *)
 
-  val uniform : 'p t
+  val uniform : ('p, 'd) t
   (** [uniform] draws each coordinate uniformly in [(-2, 2)]. *)
 
-  val prior : 'p t
+  val prior : ('p, 'd) t
   (** [prior] draws coordinates from the prior. *)
 
-  val near : 'p -> 'p t
+  val near : 'p -> ('p, 'd) t
   (** [near p] is the coordinates of the values [p], each moved uniformly in
       [(-0.1, 0.1)]. *)
 end
 
 val init :
-  ?from:'p Init.t -> ('p, 'y, 'f) t -> 'y -> chains:int -> Nx.Rng.t -> 'p coords
+  ?from:('p, 'd) Init.t -> ('p, 'y, 'f, 'd) t -> 'y -> chains:int -> 'd Nx.Rng.key -> 'p coords
 (** [init ?from m y ~chains k] is a start of [chains] chains with a finite log
     density. Chain [i] has the key of row [i] of
     [Nx.Rng.split_batch ~n:chains k], so its start does not depend on [chains];
@@ -180,7 +186,7 @@ val init :
     These take values with no chain axis. They reach draws through
     {!Norn.Draws.map} and {!Norn.Draws.simulate}. *)
 
-val log_joint : ('p, 'y, 'f) t -> 'y -> 'p -> (float, 'f) Nx.t
+val log_joint : ('p, 'y, 'f, 'd) t -> 'y -> 'p -> (float, 'f, 'd) Nx.t
 (** [log_joint m y p] is the log density of the values [p] and the observations
     [y], with no log-determinant: the argument's type says which.
 
@@ -191,27 +197,27 @@ val log_joint : ('p, 'y, 'f) t -> 'y -> 'p -> (float, 'f) Nx.t
     already [-inf]: there the site's term is [-inf]. {!pointwise} raises the
     same way. *)
 
-val pointwise : ('p, 'y, 'f) t -> 'y -> 'p -> (float, 'f) Nx.t
+val pointwise : ('p, 'y, 'f, 'd) t -> 'y -> 'p -> (float, 'f, 'd) Nx.t
 (** [pointwise m y p] is the log likelihood of every point, in the order the
     observed sites and factors are performed: the points of a site are axis 0 of
     its factors ({!Norn.Dist.factors}), and a scalar is one point. It sums to
     the likelihood that {!log_likelihood} gives at [unconstrain m p]. It reads
     values, so a model rebuilt on new covariates takes a posterior's values. *)
 
-val simulate : ('p, 'y, 'f) t -> Nx.Rng.t -> 'p * 'y
+val simulate : ('p, 'y, 'f, 'd) t -> 'd Nx.Rng.key -> 'p * 'y
 (** [simulate m k] is a draw of every site from the model: latent values and
     data. Site [i] draws from [Nx.Rng.fold_in k i]. *)
 
-val predict : ('p, 'y, 'f) t -> Nx.Rng.t -> 'p -> 'y
+val predict : ('p, 'y, 'f, 'd) t -> 'd Nx.Rng.key -> 'p -> 'y
 (** [predict m k p] is data drawn given the latent values [p]. *)
 
 (** {1:transformations Transformations of a model} *)
 
 val reparam :
-  ('p -> (float, 'f) Nx.t) ->
-  (((float, 'f) Nx.t, 'f) Norn.Dist.t -> 'f Norn.Bij.t) ->
-  ('p, 'y, 'f) t ->
-  ('p, 'y, 'f) t
+  ('p -> (float, 'f, 'd) Nx.t) ->
+  (((float, 'f, 'd) Nx.t, 'f, 'd) Norn.Dist.t -> ('f, 'd) Norn.Bij.t) ->
+  ('p, 'y, 'f, 'd) t ->
+  ('p, 'y, 'f, 'd) t
 (** [reparam sel b m] is [m] whose site at [sel] has the coordinates its value
     has under [b d], [d] being the site's distribution on each run. The density
     of the values is unchanged.
@@ -220,11 +226,11 @@ val reparam :
     It is applied to fresh tensors and must return one of them. Raises
     [Invalid_argument] if it computes, or if the site's dtype is not [m]'s. *)
 
-val noncentre : ('p -> (float, 'f) Nx.t) -> ('p, 'y, 'f) t -> ('p, 'y, 'f) t
+val noncentre : ('p -> (float, 'f, 'd) Nx.t) -> ('p, 'y, 'f, 'd) t -> ('p, 'y, 'f, 'd) t
 (** [noncentre sel m] is [reparam sel Norn.Dist.standardize m]. *)
 
 val fix :
-  ('p -> ('a, 'b) Nx.t) -> ('a, 'b) Nx.t -> ('p, 'y, 'f) t -> ('p, 'y, 'f) t
+  ('p -> ('a, 'b, 'd) Nx.t) -> ('a, 'b, 'd) Nx.t -> ('p, 'y, 'f, 'd) t -> ('p, 'y, 'f, 'd) t
 (** [fix sel v m] is [m] whose site at [sel] is the constant [v], with no
     density term. Its coordinates have no element: shape [[0]].
 
@@ -234,14 +240,14 @@ val fix :
 (** {1:sites Sites} *)
 
 val terms :
-  ('p, 'y, 'f) t ->
+  ('p, 'y, 'f, 'd) t ->
   'y ->
   'p coords ->
-  (string * (float, 'f) Nx.t) list * (float, 'f) Nx.t
+  (string * (float, 'f, 'd) Nx.t) list * (float, 'f, 'd) Nx.t
 (** [terms m y c] is each site's term of [log_density m y] at the position [c],
     of shape [[chain]], by name in the order the model performs them, then the
     factors' sum, zeros when there is none. *)
 
-val pp : Format.formatter -> ('p, 'y, 'f) t -> unit
+val pp : Format.formatter -> ('p, 'y, 'f, 'd) t -> unit
 (** [pp ppf m] formats [m]'s site table: each site's name, role, family, shape,
     points and coordinates. *)

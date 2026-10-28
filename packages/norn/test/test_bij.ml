@@ -18,7 +18,7 @@ let pp_floats ppf xs =
    its support's membership test at the tolerance [tol] of the dtype. *)
 type 'f case = {
   name : string;
-  b : 'f B.t;
+  b : ('f, Nx.host) B.t;
   dim : int;
   inside : tol:float -> float array -> bool;
 }
@@ -185,7 +185,7 @@ let free c x =
   | "simplex" | "sum_to_zero" -> Nx.slice [ Nx.R (0, 3) ] x
   | "cholesky_corr" | "compose cholesky_corr affine" ->
       Nx.take
-        ~indices:(Nx.create Nx.int64 [| 6 |] [| 4L; 8L; 9L; 12L; 13L; 14L |])
+        (Nx.create Nx.int64 [| 6 |] [| 4L; 8L; 9L; 12L; 13L; 14L |])
         (Nx.reshape [| 16 |] x)
   | _ -> x
 
@@ -198,14 +198,14 @@ let log_det c =
       let _, ld = B.forward c.b u in
       let ld = Nx.item [] (Nx.sum ld) in
       let jac = Rune.jacfwd' (fun u -> free c (fst (B.forward c.b u))) u in
-      let expected = Nx.item [] (snd (Nx.slogdet jac)) in
+      let expected = Nx.item [] (snd (Nx.slogdet Nx.float64 jac)) in
       equal (float 1e-9) expected ld)
 
 let total (type f) (dt : (float, f) Nx.dtype) ~tol ~huge (c : f case) =
   let clip x = Float.min huge (Float.max (-.huge) x) in
   prop ~count:300
     (Printf.sprintf "%s: every finite %s coordinate lands in the open support"
-       c.name (Nx_dtype.to_string dt))
+       c.name (Nx.Dtype.name dt))
     (extreme_vec c.dim)
     (fun u ->
       let x, ld = B.forward c.b (Nx.create dt [| c.dim |] (Array.map clip u)) in

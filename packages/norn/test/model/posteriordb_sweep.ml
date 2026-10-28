@@ -64,7 +64,7 @@ let ensemble_cell (P.Posterior p as post) =
 type 'a funnel = { v : 'a; x : 'a }
 
 module Funnel = struct
-  type 'a t = 'a funnel
+  type ('a, _) t = 'a funnel
 
   let walk c { v; x } =
     let open Nx.Ptree.Walk in
@@ -73,7 +73,7 @@ module Funnel = struct
     { v; x }
 end
 
-let funnel_latent : Nx.float64_t funnel Nx.Ptree.t =
+let funnel_latent : (Nx.host Nx.float64_t funnel, Nx.host) Nx.Ptree.t =
   Nx.Ptree.instantiate (module Funnel)
 
 let funnel =
@@ -105,7 +105,7 @@ let funnel_cell =
     verdict =
       (fun k ->
         let d, stats = run k in
-        let value name (f : Nx.float64_t funnel) =
+        let value name (f : Nx.host Nx.float64_t funnel) =
           if name = "v" then f.v else f.x
         in
         R.judge_chains funnel_latent ~superchains:kernel.superchains funnel_refs

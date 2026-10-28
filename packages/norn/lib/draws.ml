@@ -43,14 +43,16 @@ let draws u d =
 
 let simulate a b f k d =
   let n = draws a d in
-  let chain = Rune.axis () in
+  let k = Nx.Rng.place (Rows.beside "Norn.Draws.simulate" ~what:"the draws" a (d :> _)) k in
+  let chain = Rune.axis () and draw = Rune.axis () in
   let s = Nx.Ptree.(a @-> returns b) in
   let one x =
-    let i = Rune.lane_index ~axis:chain () and j = Rune.lane_index () in
+    let at = Nx.Rng.to_tensor k in
+    let i = Rune.lane_index chain at and j = Rune.lane_index draw at in
     let idx = Nx.add (Nx.mul_s i (Int32.of_int n)) j in
     f (Nx.Rng.fold_in_tensor k idx) x
   in
-  Rune.vmap ~axis:chain s (Rune.vmap s one) d
+  Rune.vmap ~axis:chain s (Rune.vmap ~axis:draw s one) d
 
 let append u d d' =
   let shape_s s =

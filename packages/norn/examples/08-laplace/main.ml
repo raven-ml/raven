@@ -55,7 +55,7 @@ let () =
   let _, draws, stats = Norn.Nuts.sample t lp (Nx.Rng.key 2) ~draws:200 s in
   (* The first rate's posterior is skewed, which the Gaussian misses. *)
   Format.printf "NUTS sd    %a@." Nx.pp
-    (Nx.std ~axes:[ 0; 1 ] (draws :> Nx.float64_t));
+    (Nx.std ~axes:[ 0; 1 ] (draws :> Nx.host Nx.float64_t));
   Format.printf "mean leapfrog steps %.1f@."
     (Nx.item []
-       (Nx.mean (Nx.cast f64 (stats :> Nx.float64_elt Norn.Stats.t).n_steps)))
+       (Nx.mean (Nx.cast f64 (stats :> (Nx.float64_elt, Nx.host) Norn.Stats.t).n_steps)))

@@ -13,7 +13,7 @@ let f64 = Nx.float64
 type 'a params = { loc : 'a; log_scale : 'a }
 
 module Params = struct
-  type 'a t = 'a params
+  type ('a, _) t = 'a params
 
   let walk c { loc; log_scale } =
     let open Nx.Ptree.Walk in
@@ -22,7 +22,7 @@ module Params = struct
     { loc; log_scale }
 end
 
-let params : Nx.float64_t params Nx.Ptree.t =
+let params : (Nx.host Nx.float64_t params, Nx.host) Nx.Ptree.t =
   Nx.Ptree.instantiate (module Params)
 
 (* Twenty observations from a normal of location 3 and scale 2. *)
@@ -66,7 +66,7 @@ let () =
   in
 
   (* Draws have your structure, with [chain; draw] axes. *)
-  let d = (draws :> Nx.float64_t params) in
+  let d = (draws :> Nx.host Nx.float64_t params) in
   Printf.printf "posterior mean of loc %.3f, of exp log_scale %.3f\n"
     (Nx.item [] (Nx.mean d.loc))
     (Nx.item [] (Nx.mean (Nx.exp d.log_scale)));

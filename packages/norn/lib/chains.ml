@@ -85,9 +85,9 @@ let autocov m =
             m))
   in
   let x = Nx.create Nx.float64 [| r; n |] centred in
-  let f = Nx.rfft Nx.complex128 ~axis:1 ~n:(2 * n) x in
+  let f = Nx.rfft Nx.complex128 ~axes:[ 1 ] ~s:[ 2 * n ] x in
   let power =
-    Nx.irfft Nx.float64 ~axis:1 ~n:(2 * n) (Nx.mul f (Nx.conjugate f))
+    Nx.irfft Nx.float64 ~axes:[ 1 ] ~s:[ 2 * n ] (Nx.mul f (Nx.conjugate f))
   in
   let ac =
     Nx.to_array (Nx.copy (Nx.slice [ Nx.R (0, r); Nx.R (0, n) ] power))

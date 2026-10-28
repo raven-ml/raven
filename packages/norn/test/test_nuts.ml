@@ -23,8 +23,8 @@ let smoke =
       let t0 = Unix.gettimeofday () in
       let _, d, st = N.sample t normal (Nx.Rng.key 1) ~draws:500 s in
       Printf.printf "time %.2fs\n" (Unix.gettimeofday () -. t0);
-      let d = (d :> Nx.float64_t) in
-      let st = (st :> Nx.float64_elt Norn.Stats.t) in
+      let d = (d :> Nx.host Nx.float64_t) in
+      let st = (st :> (Nx.float64_elt, Nx.host) Norn.Stats.t) in
       Printf.printf "mean %s var %s steps %s acc %s\n"
         (Nx.to_string (Nx.mean ~axes:[ 0; 1 ] d))
         (Nx.to_string (Nx.var ~axes:[ 0; 1 ] d))
@@ -54,9 +54,9 @@ let banana x =
    grow deep, and one wider, so that they diverge and turn early. *)
 (* A diagonal geometry: its color map is [m + s z]. *)
 type geometry = {
-  g : (Nx.float64_t, Nx.float64_elt) Norn.Gaussian.t;
-  m : Nx.float64_t;
-  s : Nx.float64_t;
+  g : (Nx.host Nx.float64_t, Nx.float64_elt, Nx.host) Norn.Gaussian.t;
+  m : Nx.host Nx.float64_t;
+  s : Nx.host Nx.float64_t;
 }
 
 let geometry_of scale =
@@ -105,12 +105,12 @@ let stan geometry ~max_depth ~eps key (z0 : float array) =
   let key = (Nx.Rng.split ~n:1 key).(0) in
   let uniform j id =
     let k = Nx.Rng.fold_in (Nx.Rng.fold_in (Nx.Rng.fold_in key 1) j) id in
-    Nx.item [] (Nx.Rng.uniform k Nx.float64 [||])
+    Nx.item [] (Nx.Rng.uniform ~key:k Nx.float64 [||])
   in
   let p0 =
     floats
       (Nx.Rng.normal
-         (Nx.Rng.fold_in (Nx.Rng.fold_in key 0) 0)
+         ~key:(Nx.Rng.fold_in (Nx.Rng.fold_in key 0) 0)
          Nx.float64 [| dim |])
   in
   let lp0, g0 = eval z0 in
@@ -216,7 +216,7 @@ let law_12 =
     test (Printf.sprintf "transition %d" seed) (fun () ->
         let key = Nx.Rng.key (1000 + seed) in
         let start =
-          Nx.Rng.normal (Nx.Rng.fold_in key 7) Nx.float64 [| 1; dim |]
+          Nx.Rng.normal ~key:(Nx.Rng.fold_in key 7) Nx.float64 [| 1; dim |]
         in
         let max_depth = 1 + (seed mod 8) in
         let geometry = if seed mod 2 = 0 then narrow else wide in
@@ -251,7 +251,7 @@ let scaled x =
 
 let warmed =
   lazy
-    (let start = Nx.Rng.normal (Nx.Rng.key 3) Nx.float64 [| 4; 2 |] in
+    (let start = Nx.Rng.normal ~key:(Nx.Rng.key 3) Nx.float64 [| 4; 2 |] in
      N.warmup t scaled (Nx.Rng.key 4) ~steps:300 (N.init t scaled start))
 
 let warmup =
@@ -279,13 +279,13 @@ let warmup =
           let s = Lazy.force warmed in
           let _, _, st = N.sample t scaled (Nx.Rng.key 5) ~draws:200 s in
           let acc =
-            Nx.item [] (Nx.mean (st :> Nx.float64_elt Norn.Stats.t).acceptance)
+            Nx.item [] (Nx.mean (st :> (Nx.float64_elt, Nx.host) Norn.Stats.t).acceptance)
           in
           satisfies ~claim:"in (0.65, 0.95)" (float 1e-12)
             (fun a -> a > 0.65 && a < 0.95)
             acc);
       slow "a low-rank warmup keeps its rank and finite step sizes" (fun () ->
-          let start = Nx.Rng.normal (Nx.Rng.key 3) Nx.float64 [| 2; 2 |] in
+          let start = Nx.Rng.normal ~key:(Nx.Rng.key 3) Nx.float64 [| 2; 2 |] in
           let s =
             N.warmup t scaled (Nx.Rng.key 4) ~steps:150
               (N.init t ~rank:1 scaled start)
@@ -327,12 +327,12 @@ let warmup =
           let next = N.step t scaled (Nx.Rng.fold_in k 10) w in
           equal (array float_exact)
             (Nx.to_array next.position)
-            (Nx.to_array (d :> Nx.float64_t)));
+            (Nx.to_array (d :> Nx.host Nx.float64_t)));
     ]
 
 (* Law 9: reproducibility *)
 
-let start c = Nx.Rng.normal (Nx.Rng.key 21) Nx.float64 [| c; dim |]
+let start c = Nx.Rng.normal ~key:(Nx.Rng.key 21) Nx.float64 [| c; dim |]
 let row0 x = Nx.to_array (Nx.slice [ Nx.I 0 ] x)
 
 let reproducible =
@@ -356,21 +356,21 @@ let reproducible =
           let _, b, _ = N.sample t banana (Nx.Rng.key 8) ~draws:3 s' in
           let joined = Norn.Draws.append t a b in
           equal (array float_exact)
-            (Nx.to_array (ab :> Nx.float64_t))
-            (Nx.to_array (joined :> Nx.float64_t)));
+            (Nx.to_array (ab :> Nx.host Nx.float64_t))
+            (Nx.to_array (joined :> Nx.host Nx.float64_t)));
       test "a run repeated with one key gives the same draws" (fun () ->
           let s = N.init t ~geometry:narrow.g banana (start 2) in
           let _, a, _ = N.sample t banana (Nx.Rng.key 8) ~draws:4 s in
           let _, b, _ = N.sample t banana (Nx.Rng.key 8) ~draws:4 s in
           equal (array float_exact)
-            (Nx.to_array (a :> Nx.float64_t))
-            (Nx.to_array (b :> Nx.float64_t)));
+            (Nx.to_array (a :> Nx.host Nx.float64_t))
+            (Nx.to_array (b :> Nx.host Nx.float64_t)));
       test "a compiled transition is the eager one" (fun () ->
           let s = N.init t ~geometry:narrow.g banana (start 4) in
           let sp = N.ptree t in
           let step =
             Rune.jit
-              Nx.Ptree.(Nx.Rng.ptree @-> sp @-> returns sp)
+              Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> sp @-> returns sp)
               (N.step t banana)
           in
           let compiled = step (Nx.Rng.key 3) s in
@@ -449,8 +449,8 @@ let max_deviation xs sd =
 let invariance name geometry =
   slow (name ^ " geometry leaves the banana invariant") (fun () ->
       let k = Nx.Rng.key 31 in
-      let a = Nx.Rng.normal (Nx.Rng.fold_in k 0) Nx.float64 [| chains |] in
-      let z = Nx.Rng.normal (Nx.Rng.fold_in k 1) Nx.float64 [| chains |] in
+      let a = Nx.Rng.normal ~key:(Nx.Rng.fold_in k 0) Nx.float64 [| chains |] in
+      let z = Nx.Rng.normal ~key:(Nx.Rng.fold_in k 1) Nx.float64 [| chains |] in
       let b = Nx.add (Nx.mul_s (Nx.square a) 0.3) (Nx.mul_s z 0.5) in
       let s = N.init t ~geometry banana (Nx.stack ~axis:1 [ a; b ]) in
       let s = ref s in

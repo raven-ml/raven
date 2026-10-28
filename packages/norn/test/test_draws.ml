@@ -9,7 +9,7 @@ module D = Norn.Draws
 type 'a pos = { a : 'a; b : 'a }
 
 module Pos = struct
-  type 'a t = 'a pos
+  type ('a, _) t = 'a pos
 
   let walk c { a; b } =
     let open Nx.Ptree.Walk in
@@ -18,7 +18,7 @@ module Pos = struct
     { a; b }
 end
 
-let pos : Nx.float64_t pos Nx.Ptree.t = Nx.Ptree.instantiate (module Pos)
+let pos : (Nx.host Nx.float64_t pos, Nx.host) Nx.Ptree.t = Nx.Ptree.instantiate (module Pos)
 let floats x = Nx.to_array x
 
 (* Draws of 2 chains of 3: [a] scalar per draw, [b] a vector of 2. Element [(i,
@@ -71,7 +71,7 @@ let maps =
           let k = Nx.Rng.key 7 in
           let d =
             D.simulate pos Nx.Ptree.tensor
-              (fun k _ -> Nx.Rng.uniform k Nx.float64 [||])
+              (fun k _ -> Nx.Rng.uniform ~key:k Nx.float64 [||])
               k draws
           in
           let d = !!d in
@@ -80,7 +80,7 @@ let maps =
               let expected =
                 Nx.item []
                   (Nx.Rng.uniform
-                     (Nx.Rng.fold_in k ((i * 3) + j))
+                     ~key:(Nx.Rng.fold_in k ((i * 3) + j))
                      Nx.float64 [||])
               in
               equal

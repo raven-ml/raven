@@ -10,7 +10,7 @@ module Draws = Norn.Draws
 type 'a p = { mu : 'a; theta : 'a }
 
 module P = struct
-  type 'a t = 'a p
+  type ('a, _) t = 'a p
 
   let walk c { mu; theta } =
     let open Nx.Ptree.Walk in
@@ -19,13 +19,13 @@ module P = struct
     { mu; theta }
 end
 
-let p : Nx.float64_t p Nx.Ptree.t = Nx.Ptree.instantiate (module P)
+let p : (Nx.host Nx.float64_t p, Nx.host) Nx.Ptree.t = Nx.Ptree.instantiate (module P)
 
 (* 4 chains of 200 seeded normal draws: [mu] mixes, [theta.(0)] is shifted by
    chain, [theta.(1)] is constant. *)
 let draws =
   let k = Nx.Rng.key 3 in
-  let z = Nx.Rng.normal k Nx.float64 [| 4; 200; 2 |] in
+  let z = Nx.Rng.normal ~key:k Nx.float64 [| 4; 200; 2 |] in
   let shift = Nx.reshape [| 4; 1 |] (Nx.arange_f Nx.float64 0. 4. 1.) in
   let theta0 = Nx.add (Nx.slice [ Nx.A; Nx.A; Nx.I 1 ] z) (Nx.mul_s shift 3.) in
   let theta1 = Nx.full Nx.float64 [| 4; 200 |] 2. in
@@ -134,17 +134,17 @@ let findings =
       test "mixed draws raise no finding" (fun () ->
           let s =
             S.v Nx.Ptree.tensor
-              (Draws.v Nx.Ptree.tensor (draws :> Nx.float64_t p).mu)
+              (Draws.v Nx.Ptree.tensor (draws :> Nx.host Nx.float64_t p).mu)
           in
           equal int 0 (List.length (S.findings s)));
       test "divergences gather where their draws stand apart" (fun () ->
-          let mu = (draws :> Nx.float64_t p).mu in
+          let mu = (draws :> Nx.host Nx.float64_t p).mu in
           (* The transitions whose draw of mu is above 1.5 diverged. *)
           let diverging = Nx.greater_s mu 1.5 in
           let st =
             stats ~diverging
               ~saturated:(Nx.zeros Nx.bool [| 4; 200 |])
-              ~energy:(Nx.Rng.normal (Nx.Rng.key 4) Nx.float64 [| 4; 200 |])
+              ~energy:(Nx.Rng.normal ~key:(Nx.Rng.key 4) Nx.float64 [| 4; 200 |])
           in
           let s = S.v Nx.Ptree.tensor ~stats:st (Draws.v Nx.Ptree.tensor mu) in
           let count =
@@ -166,9 +166,9 @@ let findings =
           (* Energy that follows a slow random walk on chain 2. *)
           let walk =
             Nx.cumsum ~axis:1
-              (Nx.Rng.normal (Nx.Rng.key 5) Nx.float64 [| 4; 200 |])
+              (Nx.Rng.normal ~key:(Nx.Rng.key 5) Nx.float64 [| 4; 200 |])
           in
-          let white = Nx.Rng.normal (Nx.Rng.key 6) Nx.float64 [| 4; 200 |] in
+          let white = Nx.Rng.normal ~key:(Nx.Rng.key 6) Nx.float64 [| 4; 200 |] in
           let chain2 =
             Nx.reshape [| 4; 1 |]
               (Nx.create Nx.bool [| 4 |] [| false; false; true; false |])
@@ -176,7 +176,7 @@ let findings =
           let energy = Nx.where chain2 walk white in
           let zb = Nx.zeros Nx.bool [| 4; 200 |] in
           let st = stats ~diverging:zb ~saturated:zb ~energy in
-          let mu = (draws :> Nx.float64_t p).mu in
+          let mu = (draws :> Nx.host Nx.float64_t p).mu in
           let s = S.v Nx.Ptree.tensor ~stats:st (Draws.v Nx.Ptree.tensor mu) in
           equal (list int) [ 2 ]
             (List.filter_map
@@ -189,9 +189,9 @@ let findings =
           in
           let st =
             stats ~diverging:zb ~saturated
-              ~energy:(Nx.Rng.normal (Nx.Rng.key 4) Nx.float64 [| 4; 200 |])
+              ~energy:(Nx.Rng.normal ~key:(Nx.Rng.key 4) Nx.float64 [| 4; 200 |])
           in
-          let mu = (draws :> Nx.float64_t p).mu in
+          let mu = (draws :> Nx.host Nx.float64_t p).mu in
           let s = S.v Nx.Ptree.tensor ~stats:st (Draws.v Nx.Ptree.tensor mu) in
           equal bool true
             (has_finding s (function

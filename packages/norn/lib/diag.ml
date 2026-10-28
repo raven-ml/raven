@@ -9,15 +9,17 @@ open Chains
 
 (* Leaves *)
 
+let not_float fn p x =
+  invalid_argf "Norn.Diag.%s: %s: %s draws; diagnostics take float draws" fn
+    (Nx.Ptree.Path.to_string p)
+    (Nx.Dtype.name (Nx.dtype x))
+
 let float_leaf fn p x =
-  if not (Nx_dtype.is Float (Nx.dtype x)) then
-    invalid_argf "Norn.Diag.%s: %s: %s draws; diagnostics take float draws" fn
-      (Nx.Ptree.Path.to_string p)
-      (Nx_dtype.to_string (Nx.dtype x))
+  if not (Nx.Dtype.is Float (Nx.dtype x)) then not_float fn p x
 
 (* [per_element fn u stat d] is [stat] of each element's chains, at the
    element's dtype, NaN where the draws have no diagnostic. *)
-let per_element (type u) fn (u : u Nx.Ptree.t) stat (d : u Draws.t) =
+let per_element (type u) fn (u : (u, 'd) Nx.Ptree.t) stat (d : u Draws.t) =
   Nx.Ptree.map u
     (fun p x ->
       float_leaf fn p x;
@@ -25,7 +27,8 @@ let per_element (type u) fn (u : u Nx.Ptree.t) stat (d : u Draws.t) =
       let es = Array.sub s 2 (Array.length s - 2) in
       let one (_, m) = if Chains.undefined m then Float.nan else stat m in
       Nx.cast (Nx.dtype x)
-        (Nx.create Nx.float64 es (Array.map one (Chains.leaf x))))
+        (Nx.place (Nx.beside x)
+           (Nx.create Nx.float64 es (Array.map one (Chains.leaf x)))))
     (d :> u)
 
 let rhat u d = per_element "rhat" u (rank_rhat rhat_of) d
@@ -33,7 +36,7 @@ let ess_bulk u d = per_element "ess_bulk" u ess_bulk_of d
 let ess_tail u d = per_element "ess_tail" u ess_tail_of d
 let mcse_mean u d = per_element "mcse_mean" u mcse_mean_of d
 
-let nested_rhat (type u) (u : u Nx.Ptree.t) ~superchains (d : u Draws.t) =
+let nested_rhat (type u) (u : (u, 'd) Nx.Ptree.t) ~superchains (d : u Draws.t) =
   if superchains < 2 then
     invalid_argf "Norn.Diag.nested_rhat: superchains = %d is fewer than 2"
       superchains;
@@ -46,8 +49,8 @@ let nested_rhat (type u) (u : u Nx.Ptree.t) ~superchains (d : u Draws.t) =
 
 (* Hamiltonian transitions *)
 
-let ebfmi (type f) (s : f Stats.t Draws.t) =
-  let e = (s :> f Stats.t).energy in
+let ebfmi (type f) (s : (f, 'd) Stats.t Draws.t) =
+  let e = (s : (f, 'd) Stats.t Draws.t :> (f, 'd) Stats.t).energy in
   let n = (Nx.shape e).(1) in
   if n < 2 then invalid_arg "Norn.Diag.ebfmi: chains of fewer than two draws";
   let diff =
@@ -57,12 +60,13 @@ let ebfmi (type f) (s : f Stats.t Draws.t) =
   in
   Nx.div (Nx.mean ~axes:[ 1 ] (Nx.square diff)) (Nx.var ~axes:[ 1 ] ~ddof:1 e)
 
-let divergent_shift (type u f) (u : u Nx.Ptree.t) (s : f Stats.t Draws.t)
+let divergent_shift (type u f) (u : (u, 'd) Nx.Ptree.t) (s : (f, 'd) Stats.t Draws.t)
     (d : u Draws.t) =
-  let diverging = (s :> f Stats.t).diverging in
+  let diverging = (s : (f, 'd) Stats.t Draws.t :> (f, 'd) Stats.t).diverging in
   Nx.Ptree.map u
-    (fun p x ->
-      float_leaf "divergent_shift" p x;
+    (fun (type v r) p (x : (v, r, _) Nx.t) : (v, r, _) Nx.t ->
+      match Nx.Dtype.kind (Nx.dtype x) with
+      | Nx.Dtype.Float ->
       let s = Nx.shape x in
       if Array.sub s 0 2 <> Nx.shape diverging then
         invalid_argf
@@ -82,7 +86,8 @@ let divergent_shift (type u f) (u : u Nx.Ptree.t) (s : f Stats.t Draws.t)
         Nx.div (Nx.sum ~axes (Nx.mul x m)) (Nx.sum ~axes m)
       in
       let sd = Nx.std ~axes ~ddof:1 x in
-      Nx.div (Nx.sub at_divergences (Nx.mean ~axes x)) sd)
+      Nx.div (Nx.sub at_divergences (Nx.mean ~axes x)) sd
+      | _ -> not_float "divergent_shift" p x)
     (d :> u)
 
 (* Calibration *)
@@ -90,15 +95,15 @@ let divergent_shift (type u f) (u : u Nx.Ptree.t) (s : f Stats.t Draws.t)
 (* [exact_integers dt] is the count up to which [dt] holds every integer. *)
 let exact_integers (type a b) (dt : (a, b) Nx.dtype) =
   match dt with
-  | Nx_dtype.Float64 -> Some (1 lsl 53)
-  | Nx_dtype.Float32 -> Some (1 lsl 24)
-  | Nx_dtype.Float16 -> Some (1 lsl 11)
-  | Nx_dtype.BFloat16 -> Some (1 lsl 8)
-  | Nx_dtype.Float8_e4m3 -> Some (1 lsl 4)
-  | Nx_dtype.Float8_e5m2 -> Some (1 lsl 3)
+  | Nx.Dtype.Float64 -> Some (1 lsl 53)
+  | Nx.Dtype.Float32 -> Some (1 lsl 24)
+  | Nx.Dtype.Float16 -> Some (1 lsl 11)
+  | Nx.Dtype.Bfloat16 -> Some (1 lsl 8)
+  | Nx.Dtype.Float8_e4m3fn -> Some (1 lsl 4)
+  | Nx.Dtype.Float8_e5m2 -> Some (1 lsl 3)
   | _ -> None
 
-let rank (type u) (u : u Nx.Ptree.t) ~truth (d : u Draws.t) =
+let rank (type u) (u : (u, 'd) Nx.Ptree.t) ~truth (d : u Draws.t) =
   Nx.Ptree.map2 u
     (fun p x t ->
       float_leaf "rank" p x;
@@ -110,7 +115,7 @@ let rank (type u) (u : u Nx.Ptree.t) ~truth (d : u Draws.t) =
             "Norn.Diag.rank: %s: %d draws exceed %s's exact integers, %d"
             (Nx.Ptree.Path.to_string p)
             draws
-            (Nx_dtype.to_string (Nx.dtype x))
+            (Nx.Dtype.name (Nx.dtype x))
             m
       | _ -> ());
       Nx.sum ~axes:[ 0; 1 ] (Nx.cast (Nx.dtype x) (Nx.less x t)))
@@ -249,5 +254,6 @@ let rank_uniformity u ~draws ranks =
         p_value counts
       in
       Nx.cast (Nx.dtype x)
-        (Nx.create Nx.float64 (Nx.shape x) (Array.init (Nx.numel x) one)))
+        (Nx.place (Nx.beside x)
+           (Nx.create Nx.float64 (Nx.shape x) (Array.init (Nx.numel x) one))))
     first

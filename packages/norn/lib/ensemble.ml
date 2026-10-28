@@ -7,45 +7,38 @@ module P = Nx.Ptree
 
 let invalid_argf = Rows.invalid_argf
 
-type 'f stats = { lp : (float, 'f) Nx.t; acceptance : (float, 'f) Nx.t }
-type 'f stats' = 'f stats
+type ('f, 'd) stats = { lp : (float, 'f, 'd) Nx.t; acceptance : (float, 'f, 'd) Nx.t }
 
-let stats (type f) (_ : (float, f) Nx.dtype) : f stats P.t =
-  let module S = struct
-    type _ t = f stats'
+let stats (type f) (_ : (float, f) Nx.dtype) : ((f, 'd) stats, 'd) P.t =
+  let walk c (s : (f, 'd) stats) : (f, 'd) stats =
+    let open P.Walk in
+    let lp = field c "lp" tensor s.lp in
+    let acceptance = field c "acceptance" tensor s.acceptance in
+    { lp; acceptance }
+  in
+  P.v walk
 
-    let walk c (s : f stats) : f stats =
-      let open P.Walk in
-      let lp = field c "lp" tensor s.lp in
-      let acceptance = field c "acceptance" tensor s.acceptance in
-      { lp; acceptance }
-  end in
-  P.nest (module S) P.unit
-
-type ('u, 'f) state = {
+type ('u, 'f, 'd) state = {
   position : 'u;
-  lp : (float, 'f) Nx.t;
-  stats : 'f stats;
-  draw : Nx.int32_t;
+  lp : (float, 'f, 'd) Nx.t;
+  stats : ('f, 'd) stats;
+  draw : 'd Nx.int32_t;
   ensembles : int;
 }
 
-type ('u, 'f) ensemble = ('u, 'f) state
+type ('u, 'f, 'd) ensemble = ('u, 'f, 'd) state
 
-let ptree (type u f) (u : u P.t) : (u, f) state P.t =
-  let module S = struct
-    type _ t = (u, f) ensemble
-
-    let walk c s =
-      let open P.Walk in
-      let position = field c "position" (structure u) s.position in
-      let lp = field c "lp" tensor s.lp in
-      let stats = field c "stats" (structure (stats (Nx.dtype s.lp))) s.stats in
-      let draw = field c "draw" tensor s.draw in
-      let ensembles = field c "ensembles" int s.ensembles in
-      { position; lp; stats; draw; ensembles }
-  end in
-  P.nest (module S) P.unit
+let ptree (type u f) (u : (u, 'd) P.t) : ((u, f, 'd) state, 'd) P.t =
+  let walk c (s : (u, f, 'd) ensemble) : (u, f, 'd) ensemble =
+    let open P.Walk in
+    let position = field c "position" (structure u) s.position in
+    let lp = field c "lp" tensor s.lp in
+    let stats = field c "stats" (structure (stats (Nx.dtype s.lp))) s.stats in
+    let draw = field c "draw" tensor s.draw in
+    let ensembles = field c "ensembles" int s.ensembles in
+    { position; lp; stats; draw; ensembles }
+  in
+  P.v walk
 
 (* Groups
 
@@ -89,7 +82,7 @@ let scale = 2.
    toward or away from a walker of the group's other half, the density evaluated
    on the moving half only, and is the walkers' positions, log densities and
    acceptance probabilities, [0] in the held half. *)
-let half (type f) u lp e keys j position (lp0 : (float, f) Nx.t) =
+let half (type f) u lp e keys j position (lp0 : (float, f, 'd) Nx.t) =
   let dt = Nx.dtype lp0 in
   let n = (Nx.shape lp0).(0) / e in
   let h = n / 2 in
@@ -101,28 +94,30 @@ let half (type f) u lp e keys j position (lp0 : (float, f) Nx.t) =
   in
   let x, others = split u position in
   let l, held_lp = split P.tensor lp0 in
-  let keys, _ = split Nx.Rng.ptree keys in
+  let keys, _ = split (Nx.Ptree.v Nx.Rng.walk) keys in
   let x = ungrouped u x and l = ungrouped P.tensor l in
   let draw i =
     Rune.vmap
-      P.(Nx.Rng.ptree @-> returns tensor)
-      (fun k -> Nx.Rng.uniform (Nx.Rng.fold_in (Nx.Rng.fold_in k j) i) dt [||])
-      (ungrouped Nx.Rng.ptree keys)
+      P.((Nx.Ptree.v Nx.Rng.walk) @-> returns tensor)
+      (fun k -> Noise.uniform (Nx.Rng.fold_in (Nx.Rng.fold_in k j) i) dt [||])
+      (ungrouped (Nx.Ptree.v Nx.Rng.walk) keys)
   in
   (* A partner drawn from the held half of the walker's own group. *)
   let pick =
-    Nx.minimum
+    Nx.minimum_s
       (Nx.cast Nx.int64 (Nx.floor (Nx.mul_s (draw 0) (float_of_int o))))
-      (Nx.scalar Nx.int64 (Int64.of_int (o - 1)))
+      (Int64.of_int (o - 1))
   in
-  let first = Nx.mul_s (Nx.arange Nx.int64 0 e 1) (Int64.of_int o) in
+  let first =
+    Nx.mul_s (Nx.arange_at (Nx.beside pick) Nx.int64 0 e 1) (Int64.of_int o)
+  in
   let index =
     Nx.reshape
       [| e * m |]
       (Nx.add (Nx.reshape [| e; 1 |] first) (Nx.reshape [| e; m |] pick))
   in
   let partner =
-    P.map u (fun _ t -> Nx.take ~axis:0 ~indices:index t) (ungrouped u others)
+    P.map u (fun _ t -> Nx.take ~axis:0 index t) (ungrouped u others)
   in
   let z =
     Nx.div_s (Nx.square (Nx.add_s (Nx.mul_s (draw 1) (scale -. 1.)) 1.)) scale
@@ -153,7 +148,7 @@ let half (type f) u lp e keys j position (lp0 : (float, f) Nx.t) =
       a b
     |> ungrouped p
   in
-  let none = Nx.zeros dt [| e; o |] in
+  let none = Nx.zeros_at (Nx.beside alpha) dt [| e; o |] in
   (join u x others, join P.tensor l held_lp, join P.tensor alpha none)
 
 (* Starting *)
@@ -163,6 +158,7 @@ let init u ?(ensembles = 1) lp position =
   if ensembles < 1 then
     invalid_argf "%s: ensembles = %d is not positive" context ensembles;
   let c = Rows.count context u position in
+  Rows.whole_chains context ~reads:"a walker moves along others" u position;
   if c mod ensembles <> 0 then
     invalid_argf "%s: %d walkers do not split into %d ensembles" context c
       ensembles;
@@ -177,8 +173,8 @@ let init u ?(ensembles = 1) lp position =
   {
     position;
     lp = l;
-    stats = { lp = l; acceptance = Nx.zeros (Nx.dtype l) [| c |] };
-    draw = Nx.scalar Nx.int32 0l;
+    stats = { lp = l; acceptance = Nx.zeros_like l };
+    draw = Nx.scalar_at (Nx.beside l) Nx.int32 0l;
     ensembles;
   }
 
@@ -189,32 +185,35 @@ let init u ?(ensembles = 1) lp position =
    the number of groups. Splitting the shuffled groups in halves splits each
    group at random, which mixes faster than fixed halves. *)
 let split e keys =
-  let c = (Nx.shape (keys : Nx.Rng.t :> Nx.int32_t)).(0) in
+  let c = (Nx.shape (keys : 'd Nx.Rng.key :> 'd Nx.int32_t)).(0) in
   let n = c / e in
   let firsts =
     Nx.Rng.of_tensor
       (Nx.slice [ Nx.A; Nx.I 0 ]
-         (Nx.reshape [| e; n; 2 |] (keys : Nx.Rng.t :> Nx.int32_t)))
+         (Nx.reshape [| e; n; 2 |] (keys : 'd Nx.Rng.key :> 'd Nx.int32_t)))
   in
   let order =
     Rune.vmap
-      P.(Nx.Rng.ptree @-> returns tensor)
+      P.((Nx.Ptree.v Nx.Rng.walk) @-> returns tensor)
       (fun k ->
-        Nx.argsort (Nx.Rng.uniform (Nx.Rng.fold_in k 2) Nx.float32 [| n |]))
+        Nx.argsort (Noise.uniform (Nx.Rng.fold_in k 2) Nx.float32 [| n |]))
       firsts
   in
-  let first = Nx.mul_s (Nx.arange Nx.int64 0 e 1) (Int64.of_int n) in
+  let first =
+    Nx.mul_s (Nx.arange_at (Nx.beside order) Nx.int64 0 e 1) (Int64.of_int n)
+  in
   Nx.reshape [| c |]
     (Nx.add (Nx.reshape [| e; 1 |] first) (Nx.cast Nx.int64 order))
 
-let step u lp k (s : (_, _) state) =
+let step u lp k (s : (_, _, 'd) state) =
+  let k = Nx.Rng.place (Nx.beside s.lp) k in
   let c = (Nx.shape s.lp).(0) in
   let keys = Nx.Rng.split_batch ~n:c k in
   let perm = split s.ensembles keys in
   let back = Nx.cast Nx.int64 (Nx.argsort perm) in
-  let take p v = P.map p (fun _ t -> Nx.take ~axis:0 ~indices:perm t) v in
-  let untake p v = P.map p (fun _ t -> Nx.take ~axis:0 ~indices:back t) v in
-  let keys' = take Nx.Rng.ptree keys in
+  let take p v = P.map p (fun _ t -> Nx.take ~axis:0 perm t) v in
+  let untake p v = P.map p (fun _ t -> Nx.take ~axis:0 back t) v in
+  let keys' = take (Nx.Ptree.v Nx.Rng.walk) keys in
   let x, l, first =
     half u lp s.ensembles keys' 0 (take u s.position) (take P.tensor s.lp)
   in
@@ -225,33 +224,35 @@ let step u lp k (s : (_, _) state) =
     position = untake u x;
     lp = l;
     stats = { lp = l; acceptance = untake P.tensor (Nx.add first second) };
-    draw = Nx.add s.draw (Nx.scalar Nx.int32 1l);
+    draw = Nx.add_s s.draw 1l;
   }
 
-let warmup u lp k ~steps (s : (_, _) state) =
+let warmup u lp k ~steps (s : (_, _, 'd) state) =
+  let k = Nx.Rng.place (Nx.beside s.lp) k in
   if steps < 0 then
     invalid_argf "Norn.Ensemble.warmup: steps = %d is negative" steps;
   if steps = 0 then s
   else
     fst
       (Rune.scan (ptree u) P.tensor P.unit
-         ~f:(fun (s : (_, _) state) _ ->
+         ~f:(fun (s : (_, _, 'd) state) _ ->
            (step u lp (Nx.Rng.fold_in_tensor k s.draw) s, ()))
          ~init:s
-         (Nx.zeros Nx.int32 [| steps |]))
+         (Nx.zeros_at (Nx.beside s.lp) Nx.int32 [| steps |]))
 
-let sample u lp k ~draws (s : (_, _) state) =
+let sample u lp k ~draws (s : (_, _, 'd) state) =
+  let k = Nx.Rng.place (Nx.beside s.lp) k in
   if draws < 1 then
     invalid_argf "Norn.Ensemble.sample: draws = %d is not positive" draws;
   let st = stats (Nx.dtype s.lp) in
   let s, (xs, ss) =
     Rune.scan (ptree u) P.tensor
       P.(pair u st)
-      ~f:(fun (s : (_, _) state) _ ->
+      ~f:(fun (s : (_, _, 'd) state) _ ->
         let s = step u lp (Nx.Rng.fold_in_tensor k s.draw) s in
         (s, (s.position, s.stats)))
       ~init:s
-      (Nx.zeros Nx.int32 [| draws |])
+      (Nx.zeros_at (Nx.beside s.lp) Nx.int32 [| draws |])
   in
   let swap x = Nx.moveaxis 0 1 x in
   let xs = P.map u (fun _ t -> swap t) xs in

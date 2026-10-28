@@ -13,7 +13,7 @@ let f64 = Nx.scalar Nx.float64
 type 'a schools = { mu : 'a; tau : 'a; theta : 'a }
 
 module Schools = struct
-  type 'a t = 'a schools
+  type ('a, _) t = 'a schools
 
   let walk c { mu; tau; theta } =
     let open Nx.Ptree.Walk in
@@ -23,7 +23,7 @@ module Schools = struct
     { mu; tau; theta }
 end
 
-let schools : Nx.float64_t schools Nx.Ptree.t =
+let schools : (Nx.host Nx.float64_t schools, Nx.host) Nx.Ptree.t =
   Nx.Ptree.instantiate (module Schools)
 
 let y = Nx.create Nx.float64 [| 8 |] [| 28.; 8.; -3.; 7.; -1.; 1.; 18.; 12. |]
@@ -56,7 +56,7 @@ let nuts_step chains =
     let sp = Norn.Nuts.ptree u in
     let step =
       Rune.jit
-        Nx.Ptree.(Nx.Rng.ptree @-> sp @-> returns sp)
+        Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> sp @-> returns sp)
         (Norn.Nuts.step u lp)
     in
     let k = Nx.Rng.key 2 in
@@ -76,7 +76,7 @@ let hmc_step chains =
     let sp = Norn.Hmc.ptree u in
     let step =
       Rune.jit
-        Nx.Ptree.(Nx.Rng.ptree @-> sp @-> returns sp)
+        Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> sp @-> returns sp)
         (Norn.Hmc.step u lp)
     in
     let k = Nx.Rng.key 2 in
@@ -95,7 +95,7 @@ let ensemble_step =
     let sp = Norn.Ensemble.ptree u in
     let step =
       Rune.jit
-        Nx.Ptree.(Nx.Rng.ptree @-> sp @-> returns sp)
+        Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> sp @-> returns sp)
         (Norn.Ensemble.step u lp)
     in
     let k = Nx.Rng.key 2 in
@@ -121,7 +121,7 @@ let gaussian x =
     (5. *. (Float.log 0.5 +. (0.5 *. Float.log (2. *. Float.pi))))
 
 let points k =
-  Nx.mul_s (Nx.sub_s (Nx.Rng.uniform k Nx.float64 [| 400; 5 |]) 0.5) 10.
+  Nx.mul_s (Nx.sub_s (Nx.Rng.uniform ~key:k Nx.float64 [| 400; 5 |]) 0.5) 10.
 
 (* A nested sampling step, compiled: 200 points replaced. *)
 let nested_step =
@@ -134,7 +134,7 @@ let nested_step =
     let sp = Norn.Nested.ptree t in
     let step =
       Rune.jit
-        Nx.Ptree.(Nx.Rng.ptree @-> sp @-> returns sp)
+        Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> sp @-> returns sp)
         (Norn.Nested.step t ~prior:cube_prior ~likelihood:gaussian)
     in
     let k = Nx.Rng.key 2 in
@@ -154,7 +154,7 @@ let smc_step move name =
     let sp = Norn.Smc.ptree t in
     let step =
       Rune.jit
-        Nx.Ptree.(Nx.Rng.ptree @-> sp @-> returns sp)
+        Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> sp @-> returns sp)
         (Norn.Smc.step t ~prior:cube_prior ~likelihood:gaussian)
     in
     let k = Nx.Rng.key 2 in
@@ -177,7 +177,7 @@ let factors =
       D.iid [| 100_000 |]
         (D.student_t ~df:(f64 4.) ~loc:(f64 0.) ~scale:(f64 1.))
     in
-    (d, Nx.Rng.normal (Nx.Rng.key 3) Nx.float64 [| 100_000 |])
+    (d, Nx.Rng.normal ~key:(Nx.Rng.key 3) Nx.float64 [| 100_000 |])
   in
   Thumper.bench_with_setup ~setup "student_t/100000" (fun (d, x) ->
       D.factors d x)
@@ -185,7 +185,7 @@ let factors =
 let rhat =
   let setup () =
     Norn.Draws.v Nx.Ptree.tensor
-      (Nx.Rng.normal (Nx.Rng.key 4) Nx.float64 [| 4; 1000; 10 |])
+      (Nx.Rng.normal ~key:(Nx.Rng.key 4) Nx.float64 [| 4; 1000; 10 |])
   in
   Thumper.bench_with_setup ~setup "rhat/4x1000x10" (fun d ->
       Norn.Diag.rhat Nx.Ptree.tensor d)

@@ -11,40 +11,40 @@ val schedule : int -> (int * bool) list
 (** [schedule n] is Stan's windows for [n] warmup steps scaled to [n]: each
     window's length and whether the geometry is refitted at its end. *)
 
-val windows : (int * bool) list -> Nx.int32_t * Nx.int32_t
-(** [windows s] is [s]'s lengths and refits ([1] or [0]) as tensors. *)
+val windows : 'd Nx.Placement.t -> (int * bool) list -> 'd Nx.int32_t * 'd Nx.int32_t
+(** [windows p s] is [s]'s lengths and refits ([1] or [0]) as tensors at [p]. *)
 
 (** {1:averaging Dual averaging} *)
 
-type 'f averaging = {
-  mu : (float, 'f) Nx.t;
-  s_bar : (float, 'f) Nx.t;
-  x_bar : (float, 'f) Nx.t;
-  count : (float, 'f) Nx.t;
+type ('f, 'd) averaging = {
+  mu : (float, 'f, 'd) Nx.t;
+  s_bar : (float, 'f, 'd) Nx.t;
+  x_bar : (float, 'f, 'd) Nx.t;
+  count : (float, 'f, 'd) Nx.t;
 }
 (** The state of dual averaging (Nesterov 2009; Hoffman and Gelman 2014) of log
     step sizes, of any shape. *)
 
-val averaging_ptree : unit -> 'f averaging Nx.Ptree.t
+val averaging_ptree : unit -> (('f, 'd) averaging, 'd) Nx.Ptree.t
 
-val restart : (float, 'f) Nx.t -> 'f averaging
+val restart : (float, 'f, 'd) Nx.t -> ('f, 'd) averaging
 (** [restart eps] averages anew from the step sizes [eps]. *)
 
 val average :
-  'f averaging ->
-  target:(float, 'f) Nx.t ->
-  (float, 'f) Nx.t ->
-  'f averaging * (float, 'f) Nx.t
+  ('f, 'd) averaging ->
+  target:(float, 'f, 'd) Nx.t ->
+  (float, 'f, 'd) Nx.t ->
+  ('f, 'd) averaging * (float, 'f, 'd) Nx.t
 (** [average a ~target stat] is the averaging after an acceptance [stat], and
     the next step sizes. *)
 
-val final : 'f averaging -> (float, 'f) Nx.t
+val final : ('f, 'd) averaging -> (float, 'f, 'd) Nx.t
 (** [final a] is the averaged step sizes. *)
 
 (** {1:windows Windows} *)
 
-type 'u window = {
-  n : Nx.int32_t;
+type ('u, 'd) window = {
+  n : 'd Nx.int32_t;
   shift : 'u;
   sx : 'u;
   sxx : 'u;
@@ -56,29 +56,29 @@ type 'u window = {
 (** A window's draws and scores of every chain: their count, sums shifted by the
     window's first position, and a buffer of them per chain. *)
 
-val window_ptree : 'u Nx.Ptree.t -> 'u window Nx.Ptree.t
+val window_ptree : ('u, 'd) Nx.Ptree.t -> (('u, 'd) window, 'd) Nx.Ptree.t
 
-val empty : 'u Nx.Ptree.t -> buffer:int -> 'u -> 'u window
+val empty : ('u, 'd) Nx.Ptree.t -> buffer:int -> 'u -> ('u, 'd) window
 (** [empty u ~buffer x] is a window opened at the position [x] that buffers
     [buffer] draws per chain, none if [buffer = 0]. *)
 
-val reopen : 'u Nx.Ptree.t -> 'u window -> 'u -> 'u window
+val reopen : ('u, 'd) Nx.Ptree.t -> ('u, 'd) window -> 'u -> ('u, 'd) window
 (** [reopen u w x] is [w] emptied and opened at [x], keeping its buffers. *)
 
-val record : 'u Nx.Ptree.t -> 'u window -> 'u -> 'u -> 'u window
+val record : ('u, 'd) Nx.Ptree.t -> ('u, 'd) window -> 'u -> 'u -> ('u, 'd) window
 (** [record u w x g] is [w] with the draw [x] and its score [g]. *)
 
 (** {1:fits Fisher fits} *)
 
-val clip : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+val clip : ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
 (** [clip v] is the variances [v] clipped to [[1e-20, 1e20]]. *)
 
 val per_chain :
-  'u Nx.Ptree.t ->
+  ('u, 'd) Nx.Ptree.t ->
   (float, 'f) Nx.dtype ->
   rank:int ->
-  'u window ->
-  ('u, 'f) Gaussian.t
+  ('u, 'd) window ->
+  ('u, 'f, 'd) Gaussian.t
 (** [per_chain u dt ~rank w] is each chain's Gaussian fitted to its draws and
     scores in [w] by the Fisher divergence (Seyboldt, Carlson and Carpenter
     2026), stacked on the chain axis: a diagonal scale [sqrt (sd x / sd score)]
@@ -86,20 +86,20 @@ val per_chain :
     draws. *)
 
 val pooled :
-  'u Nx.Ptree.t ->
+  ('u, 'd) Nx.Ptree.t ->
   (float, 'f) Nx.dtype ->
   rank:int ->
-  'u window ->
-  ('u, 'f) Gaussian.t
+  ('u, 'd) window ->
+  ('u, 'f, 'd) Gaussian.t
 (** [pooled u dt ~rank w] is one Gaussian fitted as {!per_chain} to every
     chain's draws together. *)
 
 val population :
-  'u Nx.Ptree.t ->
+  ('u, 'd) Nx.Ptree.t ->
   (float, 'f) Nx.dtype ->
-  (float, 'f) Nx.t ->
+  (float, 'f, 'd) Nx.t ->
   'u ->
-  ('u, 'f) Gaussian.t
+  ('u, 'f, 'd) Gaussian.t
 (** [population u dt lw x] is the Gaussian of the draws [x], on a leading axis,
     weighted by [exp lw]: their weighted mean and covariance, the covariance as
     a diagonal and every direction of its whitened form. A direction outside the

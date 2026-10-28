@@ -37,7 +37,7 @@ type cell = {
   sampler : string;
   comparisons : int;
   quantile : float -> float;
-  verdict : Nx.Rng.t -> verdict;
+  verdict : Nx.host Nx.Rng.key -> verdict;
 }
 
 let normal_quantile p =
@@ -95,11 +95,11 @@ type kernel = {
   superchains : int;
   run :
     'u.
-    'u Nx.Ptree.t ->
-    ('u -> Nx.float64_t) ->
-    Nx.Rng.t ->
+    ('u, Nx.host) Nx.Ptree.t ->
+    ('u -> Nx.host Nx.float64_t) ->
+    Nx.host Nx.Rng.key ->
     'u ->
-    'u Norn.Draws.t * Nx.float64_elt Norn.Stats.t Norn.Draws.t option;
+    'u Norn.Draws.t * (Nx.float64_elt, Nx.host) Norn.Stats.t Norn.Draws.t option;
 }
 
 let nuts ?accept ~draws () =
@@ -151,14 +151,14 @@ let ensemble ~ensembles ~draws =
         (d, None));
   }
 
-let fit (type p y) kernel (m : (p, y, Nx.float64_elt) M.t)
-    (latent : p Nx.Ptree.t) (y : y) =
+let fit (type p y) kernel (m : (p, y, Nx.float64_elt, Nx.host) M.t)
+    (latent : (p, 'd) Nx.Ptree.t) (y : y) =
   let u = M.coords m in
   let lp = M.log_density m y in
   let run =
     Rune.jit
       Nx.Ptree.(
-        Nx.Rng.ptree
+        (Nx.Ptree.v Nx.Rng.walk)
         @-> returns (pair (Norn.Draws.ptree u) (option stats_ptree)))
       (fun k -> kernel.run u lp k (M.init m y ~chains:kernel.chains k))
   in
@@ -205,8 +205,8 @@ let compared what est ~ref ~se ~se_ref =
 (* The verdict of chains of draws [d]: flagged by a finding of their summary,
    with nested R-hat over [superchains], else each reference element's mean and
    standard deviation compared. *)
-let judge_chains (type l) (latent : l Nx.Ptree.t) ~superchains
-    (refs : P.reference list) (value : string -> l -> Nx.float64_t) stats
+let judge_chains (type l) (latent : (l, 'd) Nx.Ptree.t) ~superchains
+    (refs : P.reference list) (value : string -> l -> Nx.host Nx.float64_t) stats
     (d : l Norn.Draws.t) =
   let s = Norn.Summary.v latent ?stats ~superchains d in
   match Norn.Summary.findings s with
@@ -247,7 +247,7 @@ let judge_chains (type l) (latent : l Nx.Ptree.t) ~superchains
            refs)
 
 (* A posteriordb parameter of draws: the tensor at its position. *)
-let param (params : string list) name (values : Nx.float64_t list) =
+let param (params : string list) name (values : Nx.host Nx.float64_t list) =
   List.nth values (Option.get (List.find_index (String.equal name) params))
 
 let chain_cell kernel (P.Posterior p) =
@@ -277,12 +277,12 @@ type replicated = {
   draws : int;
   evidence :
     'u.
-    'u Nx.Ptree.t ->
-    prior:('u -> Nx.float64_t) ->
-    likelihood:('u -> Nx.float64_t) ->
-    Nx.Rng.t ->
+    ('u, Nx.host) Nx.Ptree.t ->
+    prior:('u -> Nx.host Nx.float64_t) ->
+    likelihood:('u -> Nx.host Nx.float64_t) ->
+    Nx.host Nx.Rng.key ->
     'u ->
-    ('u, Nx.float64_elt) Norn.Evidence.t;
+    ('u, Nx.float64_elt, Nx.host) Norn.Evidence.t;
 }
 
 (* Tempering from [draws] prior draws, in [replicates] replicates. *)
@@ -313,17 +313,17 @@ let replicated_cell sampler (P.Posterior p) =
   let flat x =
     let v =
       Nx.concatenate ~axis:0
-        (List.map (Nx.reshape [| -1 |]) (M.constrain m x :> Nx.float64_t list))
+        (List.map (Nx.reshape [| -1 |]) (M.constrain m x :> Nx.host Nx.float64_t list))
     in
     Nx.concatenate ~axis:0 [ v; Nx.square v ]
   in
   let ez = Norn.Evidence.ptree u in
   let run =
     Rune.jit
-      Nx.Ptree.(Nx.Rng.ptree @-> returns (pair ez tensor))
+      Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> returns (pair ez tensor))
       (fun ks ->
         Rune.vmap
-          Nx.Ptree.(Nx.Rng.ptree @-> returns (pair ez tensor))
+          Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> returns (pair ez tensor))
           (fun k ->
             let z =
               sampler.evidence u ~prior:(M.log_prior m)
@@ -377,7 +377,7 @@ let replicated_cell sampler (P.Posterior p) =
                    (fun (acc, at) name v ->
                      ((name, at) :: acc, at + Nx.numel v))
                    ([], 0) p.params
-                   (one :> Nx.float64_t list))
+                   (one :> Nx.host Nx.float64_t list))
             in
             Compared
               (List.concat_map

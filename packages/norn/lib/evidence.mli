@@ -6,21 +6,21 @@
 (** The implementation of {!Norn.Evidence}, with the constructor {!Nested}
     and {!Smc} build their estimates with. *)
 
-type ('u, 'f) t
+type ('u, 'f, 'd) t
 
-val log_evidence : ('u, 'f) t -> (float, 'f) Nx.t
+val log_evidence : ('u, 'f, 'd) t -> (float, 'f, 'd) Nx.t
 
-val error : ('u, 'f) t -> (float, 'f) Nx.t
+val error : ('u, 'f, 'd) t -> (float, 'f, 'd) Nx.t
 
-val information : ('u, 'f) t -> (float, 'f) Nx.t
+val information : ('u, 'f, 'd) t -> (float, 'f, 'd) Nx.t
 
-val sample : ('u, 'f) t -> ('u, 'f) Weighted.t
+val sample : ('u, 'f, 'd) t -> ('u, 'f, 'd) Weighted.t
 
 val expectation :
-  'u Nx.Ptree.t ->
-  ('u -> (float, 'f) Nx.t) ->
-  ('u, 'f) t ->
-  (float, 'f) Nx.t * (float, 'f) Nx.t
+  ('u, 'd) Nx.Ptree.t ->
+  ('u -> (float, 'f, 'd) Nx.t) ->
+  ('u, 'f, 'd) t ->
+  (float, 'f, 'd) Nx.t * (float, 'f, 'd) Nx.t
 
 (** {1:stop Why a run stopped} *)
 
@@ -29,13 +29,13 @@ type stop =
   | Remaining of float
   | Temperature of float
 
-val stop : ('u, 'f) t -> stop
+val stop : ('u, 'f, 'd) t -> stop
 
 (** {1:structure Structure and formatting} *)
 
-val ptree : 'u Nx.Ptree.t -> ('u, 'f) t Nx.Ptree.t
+val ptree : ('u, 'd) Nx.Ptree.t -> (('u, 'f, 'd) t, 'd) Nx.Ptree.t
 
-val pp : Format.formatter -> ('u, 'f) t -> unit
+val pp : Format.formatter -> ('u, 'f, 'd) t -> unit
 
 (** {1:construct Construction} *)
 
@@ -49,16 +49,16 @@ val temperature : int32
 (** [temperature] is the code of {!Temperature}. *)
 
 val v :
-  sample:('u, 'f) Weighted.t ->
-  log_evidence:(float, 'f) Nx.t ->
-  error:(float, 'f) Nx.t ->
-  information:(float, 'f) Nx.t ->
-  stop:Nx.int32_t ->
-  reached:(float, 'f) Nx.t ->
-  replicates:(float, 'f) Nx.t ->
-  groups:Nx.int32_t ->
+  sample:('u, 'f, 'd) Weighted.t ->
+  log_evidence:(float, 'f, 'd) Nx.t ->
+  error:(float, 'f, 'd) Nx.t ->
+  information:(float, 'f, 'd) Nx.t ->
+  stop:'d Nx.int32_t ->
+  reached:(float, 'f, 'd) Nx.t ->
+  replicates:(float, 'f, 'd) Nx.t ->
+  groups:'d Nx.int32_t ->
   group_count:int ->
-  ('u, 'f) t
+  ('u, 'f, 'd) t
 (** [v ~sample ~log_evidence ~error ~information ~stop ~reached ~replicates
     ~groups ~group_count] is the estimate that stopped as the scalar code
     [stop] says, {!converged}, {!remaining} or {!temperature}, the latter two

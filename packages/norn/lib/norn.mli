@@ -15,23 +15,34 @@
     samplers differentiate the density with {!Rune}; a density with a gradient
     of its own states it with {!with_gradient}. Continuous values live in
     supports ({!Support}), and samplers move in unconstrained coordinates that a
-    bijector ({!Bij}) maps onto them. *)
+    bijector ({!Bij}) maps onto them.
+
+    {b Device sets.} A position lies on one device set, ['d]. A sampler's
+    state and draws lie where its start does, and a key may lie anywhere on the
+    set: each draw is made where the state lies. {!Nuts} runs chains cut across
+    devices along the chain axis. {!Hmc}, {!Ensemble}, {!Nested} and {!Smc}
+    read across chains, so each device must hold whole tensors of the
+    position, as {!Nx.beside} places them; they raise naming the tensor
+    otherwise. *)
 
 (** {1:densities Densities} *)
 
-type ('u, 'f) density = 'u -> (float, 'f) Nx.t
+type ('u, 'f, 'd) density = 'u -> (float, 'f, 'd) Nx.t
 (** The type for log densities over positions of ['u]. For a position of [c]
     chains the result has shape [[c]], each element finite or [-inf], and its
     row [i] depends only on row [i] of the position. *)
 
 val with_gradient :
-  'u Nx.Ptree.t -> ('u -> (float, 'f) Nx.t * 'u) -> ('u, 'f) density
+  ('u, 'd) Nx.Ptree.t -> ('u -> (float, 'f, 'd) Nx.t * 'u) -> ('u, 'f, 'd) density
 (** [with_gradient u f] is the density [fun x -> fst (f x)] whose gradient, row
     by row, is [snd (f x)]: a tangent [dx] moves chain [i]'s log density by the
     inner product of row [i] of the gradient with row [i] of [dx], over every
-    float tensor. [f] receives values with no derivative attached, so code
-    outside nx, such as an adjoint solver, may read them. {!Rune.grad} and
-    {!Rune.jvp} both follow it. *)
+    float tensor. {!Rune.grad} and {!Rune.jvp} both follow it.
+
+    [f] is a {!Rune.custom_jvp} rule: it receives values where
+    {!Rune.section-custom} says a rule runs on values, and there code outside
+    nx, such as an adjoint solver, may read them. A sampler traces its
+    transitions, so inside one a read raises. *)
 
 (** {1:modules Modules} *)
 
@@ -93,75 +104,75 @@ module Bij : sig
       counts no value twice: its mass is the target's mass between the
       saturation points. *)
 
-  type 'f t
+  type ('f, 'd) t
   (** The type for bijectors over tensors of element type ['f]. *)
 
   (** {1:constructors Constructors} *)
 
-  val identity : 'f t
+  val identity : ('f, 'd) t
   (** [identity] maps [u] to [u], onto the reals. *)
 
-  val exp : 'f t
+  val exp : ('f, 'd) t
   (** [exp] maps [u] to [exp u], onto [(0, inf)]. It saturates at the dtype's
       smallest positive normal number and at its largest finite one. *)
 
-  val greater : low:(float, 'f) Nx.t -> 'f t
+  val greater : low:(float, 'f, 'd) Nx.t -> ('f, 'd) t
   (** [greater ~low] maps [u] to [low + exp u], onto [(low, inf)]. [low]
       broadcasts against the coordinates. *)
 
-  val interval : low:(float, 'f) Nx.t -> high:(float, 'f) Nx.t -> 'f t
+  val interval : low:(float, 'f, 'd) Nx.t -> high:(float, 'f, 'd) Nx.t -> ('f, 'd) t
   (** [interval ~low ~high] maps [u] to [low + (high - low) sigmoid u], onto
       [(low, high)]. The bounds broadcast against the coordinates. *)
 
-  val affine : loc:(float, 'f) Nx.t -> scale:(float, 'f) Nx.t -> 'f t
+  val affine : loc:(float, 'f, 'd) Nx.t -> scale:(float, 'f, 'd) Nx.t -> ('f, 'd) t
   (** [affine ~loc ~scale] maps [u] to [loc + scale u], onto the reals. The
       parameters broadcast against the coordinates; [scale] must have no zero
       element. *)
 
-  val affine_tril : loc:(float, 'f) Nx.t -> scale_tril:(float, 'f) Nx.t -> 'f t
+  val affine_tril : loc:(float, 'f, 'd) Nx.t -> scale_tril:(float, 'f, 'd) Nx.t -> ('f, 'd) t
   (** [affine_tril ~loc ~scale_tril] maps a vector [u] to [loc + L u], [L] the
       lower triangle of [scale_tril], onto the reals. [scale_tril]'s last two
       axes are a matrix, its leading axes batch axes; its diagonal must have no
       zero element. Its log-determinant is the sum of the logarithms of
       [|L(i,i)|]. *)
 
-  val simplex : 'f t
+  val simplex : ('f, 'd) t
   (** [simplex] maps a vector of [K - 1] coordinates to a vector of [K] positive
       components summing to one, by the isometric log-ratio: the coordinates are
       the value's centred logarithms in an orthonormal basis of the vectors
       summing to zero. *)
 
-  val ordered : 'f t
+  val ordered : ('f, 'd) t
   (** [ordered] maps a vector [u] of [K] coordinates to the strictly increasing
       vector [x] with [x0 = u0] and [xk = x(k-1) + exp uk]. *)
 
-  val cholesky_corr : 'f t
+  val cholesky_corr : ('f, 'd) t
   (** [cholesky_corr] maps a vector of [n (n - 1) / 2] coordinates to the
       Cholesky factor of an [n × n] correlation matrix. Coordinate [k] is the
       hyperbolic arctangent of the canonical partial correlation of the [k]-th
       element of the strict lower triangle, read row by row. *)
 
-  val sum_to_zero : 'f t
+  val sum_to_zero : ('f, 'd) t
   (** [sum_to_zero] maps a vector of [K - 1] coordinates to a vector of [K]
       components summing to zero, by an orthonormal basis of that subspace. *)
 
-  val compose : 'f t -> 'f t -> 'f t
+  val compose : ('f, 'd) t -> ('f, 'd) t -> ('f, 'd) t
   (** [compose b c] maps [u] to [b]'s image of [c]'s image of [u]. Its
       log-determinant is the sum of theirs, the one with finer units summed to
       the other's units. *)
 
   (** {1:maps Maps} *)
 
-  val forward : 'f t -> (float, 'f) Nx.t -> (float, 'f) Nx.t * (float, 'f) Nx.t
+  val forward : ('f, 'd) t -> (float, 'f, 'd) Nx.t -> (float, 'f, 'd) Nx.t * (float, 'f, 'd) Nx.t
   (** [forward b u] is [(x, ld)]: the value [x] that [b] maps the coordinates
       [u] to, and [log |det J|] of the map at [u], one element per unit. Both
       come from one computation. *)
 
-  val inverse : 'f t -> (float, 'f) Nx.t -> (float, 'f) Nx.t
+  val inverse : ('f, 'd) t -> (float, 'f, 'd) Nx.t -> (float, 'f, 'd) Nx.t
   (** [inverse b x] is the coordinates that [b] maps to [x], for [x] in the
       support. *)
 
-  val shape : 'f t -> int array -> int array
+  val shape : ('f, 'd) t -> int array -> int array
   (** [shape b s] is the shape of the coordinates of a value of shape [s]: [s]
       for the elementwise bijectors and {!ordered}, [s] with its last axis one
       shorter for {!simplex} and {!sum_to_zero}, and [s] with its last two axes
@@ -170,7 +181,7 @@ module Bij : sig
       Raises [Invalid_argument] if [s] has fewer axes than a unit, or a last
       axis of length [0] where coordinates have one fewer element. *)
 
-  val pp : Format.formatter -> 'f t -> unit
+  val pp : Format.formatter -> ('f, 'd) t -> unit
   (** [pp ppf b] formats [b]'s name, such as [exp] or [compose(exp, affine)]. *)
 end
 
@@ -181,28 +192,28 @@ module Stats : sig
       describes: a sampler's state holds [[chain]], and its draws
       [[chain; draw]]. *)
 
-  type 'f t = {
-    lp : (float, 'f) Nx.t;  (** The log density at the transition's end. *)
-    acceptance : (float, 'f) Nx.t;
+  type ('f, 'd) t = {
+    lp : (float, 'f, 'd) Nx.t;  (** The log density at the transition's end. *)
+    acceptance : (float, 'f, 'd) Nx.t;
         (** The acceptance statistic warmup aims for, of
             [min (1, exp (H0 - H))], [H0] the Hamiltonian after the momentum
             draw: its mean over the trajectory for {!Norn.Nuts}, its value at
             the trajectory's end, the Metropolis probability, for {!Norn.Hmc}.
         *)
-    step_size : (float, 'f) Nx.t;  (** The step size the transition took. *)
-    n_steps : Nx.int32_t;  (** The leapfrog steps it took. *)
-    diverging : Nx.bool_t;
+    step_size : (float, 'f, 'd) Nx.t;  (** The step size the transition took. *)
+    n_steps : 'd Nx.int32_t;  (** The leapfrog steps it took. *)
+    diverging : 'd Nx.bool_t;
         (** Whether the energy error exceeded 1000 or a position was not finite.
         *)
-    saturated : Nx.bool_t;
+    saturated : 'd Nx.bool_t;
         (** Whether the trajectory reached its maximum length before it turned.
         *)
-    energy : (float, 'f) Nx.t;
+    energy : (float, 'f, 'd) Nx.t;
         (** The Hamiltonian after the momentum draw, [H0]. *)
   }
   (** The type for statistics of transitions over element type ['f]. *)
 
-  val ptree : (float, 'f) Nx.dtype -> 'f t Nx.Ptree.t
+  val ptree : (float, 'f) Nx.dtype -> (('f, 'd) t, 'd) Nx.Ptree.t
   (** [ptree dtype] is the structure of statistics at [dtype], with tensors at
       [lp], [acceptance], [step_size], [n_steps], [diverging], [saturated] and
       [energy]. *)
@@ -219,40 +230,40 @@ module Draws : sig
   type 'u t = private 'u
   (** The type for draws of ['u]. [(d :> 'u)] reads draws as a value. *)
 
-  val v : 'u Nx.Ptree.t -> 'u -> 'u t
+  val v : ('u, 'd) Nx.Ptree.t -> 'u -> 'u t
   (** [v u x] is [x] as draws.
 
       Raises [Invalid_argument] if a tensor of [x] has fewer than two axes, or
       if two tensors differ in the length of one of their first two axes, naming
       the path. *)
 
-  val ptree : 'u Nx.Ptree.t -> 'u t Nx.Ptree.t
+  val ptree : ('u, 'd) Nx.Ptree.t -> ('u t, 'd) Nx.Ptree.t
   (** [ptree u] is the structure of draws of [u]: [u]'s, with the same paths. *)
 
-  val map : 'a Nx.Ptree.t -> 'b Nx.Ptree.t -> ('a -> 'b) -> 'a t -> 'b t
+  val map : ('a, 'd) Nx.Ptree.t -> ('b, 'd) Nx.Ptree.t -> ('a -> 'b) -> 'a t -> 'b t
   (** [map a b f d] is [f] applied to every draw of [d], a value of ['a] without
       the two leading axes, the results stacked on them. [f] runs under
       {!Rune.val-vmap}, once for all draws. *)
 
   val simulate :
-    'a Nx.Ptree.t ->
-    'b Nx.Ptree.t ->
-    (Nx.Rng.t -> 'a -> 'b) ->
-    Nx.Rng.t ->
+    ('a, 'd) Nx.Ptree.t ->
+    ('b, 'd) Nx.Ptree.t ->
+    ('d Nx.Rng.key -> 'a -> 'b) ->
+    'd Nx.Rng.key ->
     'a t ->
     'b t
   (** [simulate a b f k d] is [map a b] of [f k_ij] over [d], where the draw [j]
       of chain [i] has the key [Nx.Rng.fold_in k (i * n + j)], [n] being the
       number of draws per chain. *)
 
-  val append : 'u Nx.Ptree.t -> 'u t -> 'u t -> 'u t
+  val append : ('u, 'd) Nx.Ptree.t -> 'u t -> 'u t -> 'u t
   (** [append u d d'] is the draws of [d] followed, in every chain, by those of
       [d'].
 
       Raises [Invalid_argument] if [d] and [d'] differ in their visits
       ({!Nx.Ptree.val-visits}) or in their number of chains. *)
 
-  val thin : 'u Nx.Ptree.t -> every:int -> 'u t -> 'u t
+  val thin : ('u, 'd) Nx.Ptree.t -> every:int -> 'u t -> 'u t
   (** [thin u ~every d] is every [every]-th draw of each chain of [d], from the
       first.
 
@@ -279,13 +290,13 @@ module Diag : sig
 
   (** {1:convergence Convergence} *)
 
-  val rhat : 'u Nx.Ptree.t -> 'u Draws.t -> 'u
+  val rhat : ('u, 'd) Nx.Ptree.t -> 'u Draws.t -> 'u
   (** [rhat u d] is the rank-normalised split R-hat of each element: the larger
       of the R-hat of the split chains' normal scores (bulk) and of the normal
       scores of their distance to the median (tails). Near [1] the chains agree;
       above [1.01] they have not mixed. *)
 
-  val nested_rhat : 'u Nx.Ptree.t -> superchains:int -> 'u Draws.t -> 'u
+  val nested_rhat : ('u, 'd) Nx.Ptree.t -> superchains:int -> 'u Draws.t -> 'u
   (** [nested_rhat u ~superchains d] is the rank-normalised nested R-hat
       (Margossian, Hoffman, Sountsov, Riou-Durand, Vehtari and Gelman 2024) of
       each element, for many short chains: the chains form [superchains]
@@ -296,25 +307,25 @@ module Diag : sig
       Raises [Invalid_argument] if [superchains < 2] or if it does not divide
       the number of chains. *)
 
-  val ess_bulk : 'u Nx.Ptree.t -> 'u Draws.t -> 'u
+  val ess_bulk : ('u, 'd) Nx.Ptree.t -> 'u Draws.t -> 'u
   (** [ess_bulk u d] is the effective sample size of each element's normal
       scores, by Geyer's initial monotone sequence over the autocorrelations of
       the split chains. It measures how well the draws estimate the centre of
       the distribution. *)
 
-  val ess_tail : 'u Nx.Ptree.t -> 'u Draws.t -> 'u
+  val ess_tail : ('u, 'd) Nx.Ptree.t -> 'u Draws.t -> 'u
   (** [ess_tail u d] is the smaller of the effective sample sizes of the
       indicators of each element being at most its 5% and its 95% quantile. It
       measures how well the draws estimate the tails. *)
 
-  val mcse_mean : 'u Nx.Ptree.t -> 'u Draws.t -> 'u
+  val mcse_mean : ('u, 'd) Nx.Ptree.t -> 'u Draws.t -> 'u
   (** [mcse_mean u d] is the Monte Carlo standard error of each element's mean:
       its standard deviation over the square root of the effective sample size
       of the split chains' draws. *)
 
   (** {1:hamiltonian Hamiltonian transitions} *)
 
-  val ebfmi : 'f Stats.t Draws.t -> (float, 'f) Nx.t
+  val ebfmi : ('f, 'd) Stats.t Draws.t -> (float, 'f, 'd) Nx.t
   (** [ebfmi s] is each chain's energy Bayesian fraction of missing information,
       shape [[chain]]: the mean squared change of the energy between draws over
       the energy's variance. Below [0.3] the momentum resampling explores the
@@ -322,7 +333,7 @@ module Diag : sig
 
       Raises [Invalid_argument] if the chains have fewer than two draws. *)
 
-  val divergent_shift : 'u Nx.Ptree.t -> 'f Stats.t Draws.t -> 'u Draws.t -> 'u
+  val divergent_shift : ('u, 'd) Nx.Ptree.t -> ('f, 'd) Stats.t Draws.t -> 'u Draws.t -> 'u
   (** [divergent_shift u s d] is, for each element, the mean of the draws whose
       transition diverged minus the mean of all draws, in standard deviations of
       all draws. Where divergences gather, it is far from [0]; with no
@@ -333,7 +344,7 @@ module Diag : sig
 
   (** {1:calibration Calibration} *)
 
-  val rank : 'u Nx.Ptree.t -> truth:'u -> 'u Draws.t -> 'u
+  val rank : ('u, 'd) Nx.Ptree.t -> truth:'u -> 'u Draws.t -> 'u
   (** [rank u ~truth d] is, for each element, the number of draws of [d] below
       the element of [truth]: from [0] to the number of draws. With [truth]
       drawn from the prior, data simulated from it and [d] exact posterior
@@ -343,7 +354,7 @@ module Diag : sig
       Raises [Invalid_argument] naming the path if there are more draws than the
       element's dtype holds exact integers. *)
 
-  val rank_uniformity : 'u Nx.Ptree.t -> draws:int -> 'u list -> 'u
+  val rank_uniformity : ('u, 'd) Nx.Ptree.t -> draws:int -> 'u list -> 'u
   (** [rank_uniformity u ~draws ranks] is, for each element, the simultaneous
       p-value of its ranks against the uniform distribution on [0], ..., [draws]
       (Säilynoja, Bürkner and Vehtari 2022), computed exactly, with no
@@ -407,8 +418,8 @@ module Summary : sig
       mean, by more than one ({!Norn.Diag.divergent_shift}). *)
 
   val v :
-    'u Nx.Ptree.t ->
-    ?stats:'f Stats.t Draws.t ->
+    ('u, 'd) Nx.Ptree.t ->
+    ?stats:('f, 'd) Stats.t Draws.t ->
     ?superchains:int ->
     'u Draws.t ->
     t
@@ -437,7 +448,7 @@ module Summary : sig
       the root path, a tensor is labelled by its index alone, and a scalar
       [value]. *)
 
-  val columns : t -> (string * Nx.float64_t) list
+  val columns : t -> (string * Nx.host Nx.float64_t) list
   (** [columns s] is [s]'s columns, each a vector with one element per row:
       [mean], [sd], [q5], [median], [q95], [mcse], [ess_bulk], [ess_tail] and
       [rhat]. *)
@@ -478,87 +489,88 @@ module Dist : sig
       Nx.where ok (Norn.Dist.log_density d x) (Nx.scalar dt Float.neg_infinity)
       ]} *)
 
-  type ('x, 'f) t
+  type ('x, 'f, 'd) t
   (** The type for distributions over values ['x] whose log densities have
-      element type ['f]. ['x] is [(float, 'f) Nx.t] for continuous families,
-      {!Nx.int32_t} for counts, {!Nx.int64_t} for categories and {!Nx.bool_t}
-      for {!bernoulli}. *)
+      element type ['f]. ['x] is [(float, 'f, 'd) Nx.t] for continuous families,
+      {{!Nx.int32_t}['d Nx.int32_t]} for counts,
+      {{!Nx.int64_t}['d Nx.int64_t]} for categories and
+      {{!Nx.bool_t}['d Nx.bool_t]} for {!bernoulli}. *)
 
   (** The type for the values of a distribution: a witness of ['x]. *)
-  type ('x, 'f) kind =
-    | Continuous : ((float, 'f) Nx.t, 'f) kind  (** Float tensors. *)
-    | Counts : (Nx.int32_t, 'f) kind  (** Counts, from [0]. *)
-    | Categories : (Nx.int64_t, 'f) kind  (** Category indices, from [0]. *)
-    | Booleans : (Nx.bool_t, 'f) kind  (** Booleans. *)
+  type ('x, 'f, 'd) kind =
+    | Continuous : ((float, 'f, 'd) Nx.t, 'f, 'd) kind  (** Float tensors. *)
+    | Counts : ('d Nx.int32_t, 'f, 'd) kind  (** Counts, from [0]. *)
+    | Categories : ('d Nx.int64_t, 'f, 'd) kind  (** Category indices, from [0]. *)
+    | Booleans : ('d Nx.bool_t, 'f, 'd) kind  (** Booleans. *)
 
   (** {1:continuous Continuous families} *)
 
   val normal :
-    loc:(float, 'f) Nx.t -> scale:(float, 'f) Nx.t -> ((float, 'f) Nx.t, 'f) t
+    loc:(float, 'f, 'd) Nx.t -> scale:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
   (** [normal ~loc ~scale] has density [exp (-z²/2) / (scale sqrt (2π))],
       [z = (x - loc) / scale]. [scale] is in [(0, inf)] and [loc] finite. *)
 
-  val half_normal : scale:(float, 'f) Nx.t -> ((float, 'f) Nx.t, 'f) t
+  val half_normal : scale:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
   (** [half_normal ~scale] is the distribution of [|x|], [x] normal with
       location [0], on [(0, inf)]. *)
 
   val lognormal :
-    loc:(float, 'f) Nx.t -> scale:(float, 'f) Nx.t -> ((float, 'f) Nx.t, 'f) t
+    loc:(float, 'f, 'd) Nx.t -> scale:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
   (** [lognormal ~loc ~scale] is the distribution of [exp x], [x] normal. *)
 
   val student_t :
-    df:(float, 'f) Nx.t ->
-    loc:(float, 'f) Nx.t ->
-    scale:(float, 'f) Nx.t ->
-    ((float, 'f) Nx.t, 'f) t
+    df:(float, 'f, 'd) Nx.t ->
+    loc:(float, 'f, 'd) Nx.t ->
+    scale:(float, 'f, 'd) Nx.t ->
+    ((float, 'f, 'd) Nx.t, 'f, 'd) t
   (** [student_t ~df ~loc ~scale] is Student's t with [df] degrees of freedom,
       in [(0, inf)], located and scaled. *)
 
   val cauchy :
-    loc:(float, 'f) Nx.t -> scale:(float, 'f) Nx.t -> ((float, 'f) Nx.t, 'f) t
+    loc:(float, 'f, 'd) Nx.t -> scale:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
   (** [cauchy ~loc ~scale] has density [1 / (π scale (1 + z²))]. *)
 
-  val half_cauchy : scale:(float, 'f) Nx.t -> ((float, 'f) Nx.t, 'f) t
+  val half_cauchy : scale:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
   (** [half_cauchy ~scale] is the distribution of [|x|], [x] Cauchy with
       location [0], on [(0, inf)]. *)
 
   val laplace :
-    loc:(float, 'f) Nx.t -> scale:(float, 'f) Nx.t -> ((float, 'f) Nx.t, 'f) t
+    loc:(float, 'f, 'd) Nx.t -> scale:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
   (** [laplace ~loc ~scale] has density [exp (-|z|) / (2 scale)]. *)
 
   val logistic :
-    loc:(float, 'f) Nx.t -> scale:(float, 'f) Nx.t -> ((float, 'f) Nx.t, 'f) t
+    loc:(float, 'f, 'd) Nx.t -> scale:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
   (** [logistic ~loc ~scale] has density [exp (-z) / (scale (1 + exp (-z))²)].
   *)
 
-  val exponential : rate:(float, 'f) Nx.t -> ((float, 'f) Nx.t, 'f) t
+  val exponential : rate:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
   (** [exponential ~rate] has density [rate exp (-rate x)] on [(0, inf)]. *)
 
   val gamma :
-    concentration:(float, 'f) Nx.t ->
-    rate:(float, 'f) Nx.t ->
-    ((float, 'f) Nx.t, 'f) t
+    concentration:(float, 'f, 'd) Nx.t ->
+    rate:(float, 'f, 'd) Nx.t ->
+    ((float, 'f, 'd) Nx.t, 'f, 'd) t
   (** [gamma ~concentration ~rate] has density proportional to
       [x^(α - 1) exp (-rate x)] on [(0, inf)], [α] the concentration. *)
 
   val inverse_gamma :
-    concentration:(float, 'f) Nx.t ->
-    scale:(float, 'f) Nx.t ->
-    ((float, 'f) Nx.t, 'f) t
+    concentration:(float, 'f, 'd) Nx.t ->
+    scale:(float, 'f, 'd) Nx.t ->
+    ((float, 'f, 'd) Nx.t, 'f, 'd) t
   (** [inverse_gamma ~concentration ~scale] is the distribution of [1 / x], [x]
       gamma with rate [scale]. *)
 
   val beta :
-    a:(float, 'f) Nx.t -> b:(float, 'f) Nx.t -> ((float, 'f) Nx.t, 'f) t
+    a:(float, 'f, 'd) Nx.t -> b:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
   (** [beta ~a ~b] has density proportional to [x^(a - 1) (1 - x)^(b - 1)] on
       [(0, 1)]. *)
 
   val uniform :
-    low:(float, 'f) Nx.t -> high:(float, 'f) Nx.t -> ((float, 'f) Nx.t, 'f) t
+    low:(float, 'f, 'd) Nx.t -> high:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
   (** [uniform ~low ~high] has density [1 / (high - low)] on [(low, high)]. Each
       element of [high - low] is in [(0, inf)]. *)
 
-  val dirichlet : concentration:(float, 'f) Nx.t -> ((float, 'f) Nx.t, 'f) t
+  val dirichlet : concentration:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
   (** [dirichlet ~concentration] is over vectors along the last axis of
       [concentration], of positive components summing to one, with density
       proportional to [prod_k x_k^(α_k - 1)]. A matrix of concentrations is
@@ -568,9 +580,9 @@ module Dist : sig
   *)
 
   val mvn :
-    loc:(float, 'f) Nx.t ->
-    scale_tril:(float, 'f) Nx.t ->
-    ((float, 'f) Nx.t, 'f) t
+    loc:(float, 'f, 'd) Nx.t ->
+    scale_tril:(float, 'f, 'd) Nx.t ->
+    ((float, 'f, 'd) Nx.t, 'f, 'd) t
   (** [mvn ~loc ~scale_tril] is the multivariate normal of vectors along the
       last axis, with mean [loc] and covariance [L Lᵀ], [L] the lower triangle
       of [scale_tril]. [L] is finite, its diagonal in [(0, inf)].
@@ -580,22 +592,22 @@ module Dist : sig
 
   (** {1:discrete Discrete families} *)
 
-  val bernoulli : logits:(float, 'f) Nx.t -> (Nx.bool_t, 'f) t
+  val bernoulli : logits:(float, 'f, 'd) Nx.t -> ('d Nx.bool_t, 'f, 'd) t
   (** [bernoulli ~logits] is [true] with probability [sigmoid logits]. A logit
       may be infinite. *)
 
-  val poisson : rate:(float, 'f) Nx.t -> (Nx.int32_t, 'f) t
+  val poisson : rate:(float, 'f, 'd) Nx.t -> ('d Nx.int32_t, 'f, 'd) t
   (** [poisson ~rate] is the count with probability [rate^x exp (-rate) / x!],
       [rate] non-negative and finite. *)
 
   val neg_binomial :
-    mean:(float, 'f) Nx.t -> dispersion:(float, 'f) Nx.t -> (Nx.int32_t, 'f) t
+    mean:(float, 'f, 'd) Nx.t -> dispersion:(float, 'f, 'd) Nx.t -> ('d Nx.int32_t, 'f, 'd) t
   (** [neg_binomial ~mean ~dispersion] is the count of mean [mean] and variance
       [mean + mean² / dispersion], a Poisson whose rate is gamma with
       concentration [dispersion]. [mean] is non-negative and finite,
       [dispersion] in [(0, inf)]. *)
 
-  val categorical : logits:(float, 'f) Nx.t -> (Nx.int64_t, 'f) t
+  val categorical : logits:(float, 'f, 'd) Nx.t -> ('d Nx.int64_t, 'f, 'd) t
   (** [categorical ~logits] is the index [k] with probability [softmax logits]
       along the last axis. A logit may be [-inf], a category of probability
       zero.
@@ -605,11 +617,11 @@ module Dist : sig
 
   (** {1:combinators Combinators} *)
 
-  val iid : int array -> ('x, 'f) t -> ('x, 'f) t
+  val iid : int array -> ('x, 'f, 'd) t -> ('x, 'f, 'd) t
   (** [iid s d] is [s] independent draws of [d], its value of shape [s] followed
       by [d]'s. *)
 
-  val sorted : int -> ((float, 'f) Nx.t, 'f) t -> ((float, 'f) Nx.t, 'f) t
+  val sorted : int -> ((float, 'f, 'd) Nx.t, 'f, 'd) t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
   (** [sorted n d] is [n] independent draws of the scalar [d] sorted along a new
       last axis, with the exact density [n!] times the product of [d]'s on
       nondecreasing vectors.
@@ -617,12 +629,12 @@ module Dist : sig
       Raises [Invalid_argument] if [d] is not over scalars or [n < 1]. *)
 
   val transform :
-    'f Bij.t -> ((float, 'f) Nx.t, 'f) t -> ((float, 'f) Nx.t, 'f) t
+    ('f, 'd) Bij.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
   (** [transform b d] is the distribution of [b]'s image of a draw of [d], with
       the density of [d] at the preimage less [b]'s log-determinant there. A
       value outside [b]'s image has density [-inf]. *)
 
-  val mixture : logits:(float, 'f) Nx.t -> ('x, 'f) t -> ('x, 'f) t
+  val mixture : logits:(float, 'f, 'd) Nx.t -> ('x, 'f, 'd) t -> ('x, 'f, 'd) t
   (** [mixture ~logits d] draws one component [k] with probability
       [softmax logits] for the whole value, then the value from [d_k], the slice
       of [d] at [k] on its leading axis: the log density is
@@ -635,36 +647,36 @@ module Dist : sig
 
   (** {1:eliminators Eliminators} *)
 
-  val log_density : ('x, 'f) t -> 'x -> (float, 'f) Nx.t
+  val log_density : ('x, 'f, 'd) t -> 'x -> (float, 'f, 'd) Nx.t
   (** [log_density d x] is [Nx.sum (factors d x)], a scalar. *)
 
-  val factors : ('x, 'f) t -> 'x -> (float, 'f) Nx.t
+  val factors : ('x, 'f, 'd) t -> 'x -> (float, 'f, 'd) Nx.t
   (** [factors d x] is the log density of each independent unit of [x]: one per
       element for the elementwise families, per row for {!dirichlet} and {!mvn},
       one for {!sorted} and {!mixture}, with {!iid}'s axes in front. [x]
       broadcasts against the parameters. A unit outside the support has factor
       [-inf]. *)
 
-  val sample : Nx.Rng.t -> ('x, 'f) t -> 'x
+  val sample : 'd Nx.Rng.key -> ('x, 'f, 'd) t -> 'x
   (** [sample k d] is a draw of [d] from the key [k]. It is reparameterised,
       differentiable in the parameters, wherever rune differentiates the
       {!Nx.Rng} sampler it uses. *)
 
   val quantile :
-    ((float, 'f) Nx.t, 'f) t -> (float, 'f) Nx.t -> (float, 'f) Nx.t
+    ((float, 'f, 'd) Nx.t, 'f, 'd) t -> (float, 'f, 'd) Nx.t -> (float, 'f, 'd) Nx.t
   (** [quantile d p] is the value whose CDF is [p], elementwise.
 
       Raises [Invalid_argument] for a family whose quantile nx does not compute:
       {!student_t}, {!gamma}, {!inverse_gamma}, {!beta}, the vector families and
       the combinators but {!iid}. *)
 
-  val coords : ((float, 'f) Nx.t, 'f) t -> 'f Bij.t
+  val coords : ((float, 'f, 'd) Nx.t, 'f, 'd) t -> ('f, 'd) Bij.t
   (** [coords d] is the bijector onto [d]'s support, from coordinates in which
       samplers and optimisers move: {!Bij.identity} on the reals, {!Bij.exp} on
       [(0, inf)], {!Bij.interval} for {!beta} and {!uniform}, {!Bij.simplex} for
       {!dirichlet}, and for {!sorted} [d]'s bijector after {!Bij.ordered}. *)
 
-  val standardize : ((float, 'f) Nx.t, 'f) t -> 'f Bij.t
+  val standardize : ((float, 'f, 'd) Nx.t, 'f, 'd) t -> ('f, 'd) Bij.t
   (** [standardize d] is the bijector whose coordinates are [d]'s draws
       standardised: [(x - loc) / scale] for {!normal}, {!student_t}, {!cauchy},
       {!laplace} and {!logistic}, [(log x - loc) / scale] for {!lognormal},
@@ -672,7 +684,7 @@ module Dist : sig
 
       Raises [Invalid_argument] naming another family. *)
 
-  val mixture_membership : ('x, 'f) t -> 'x -> (float, 'f) Nx.t
+  val mixture_membership : ('x, 'f, 'd) t -> 'x -> (float, 'f, 'd) Nx.t
   (** [mixture_membership d x] is each component's posterior probability given
       [x], of shape [[k]] for a {!mixture} of [k] components and [s @ [k]] for
       [iid s] of one.
@@ -681,40 +693,46 @@ module Dist : sig
 
   (** {1:observers Observers} *)
 
-  val family : ('x, 'f) t -> string
+  val family : ('x, 'f, 'd) t -> string
   (** [family d] is [d]'s family, such as ["normal"]. {!iid} keeps its
       argument's. *)
 
-  val kind : ('x, 'f) t -> ('x, 'f) kind
+  val kind : ('x, 'f, 'd) t -> ('x, 'f, 'd) kind
   (** [kind d] is the type of [d]'s values. *)
 
-  val dtype : ('x, 'f) t -> (float, 'f) Nx.dtype
+  val dtype : ('x, 'f, 'd) t -> (float, 'f) Nx.dtype
   (** [dtype d] is the dtype of [d]'s log densities, and of its values for a
       continuous [d]. *)
 
-  val shape : ('x, 'f) t -> int array
+  val shape : ('x, 'f, 'd) t -> int array
   (** [shape d] is the shape of [d]'s values. *)
 
-  val support : ('x, 'f) t -> Support.t
+  val placement : ('x, 'f, 'd) t -> 'd Nx.Placement.t
+  (** [placement d] is {!Nx.beside} of [d]'s first parameter: where its bounds
+      lie, and where {!sample} places its key, so a draw lies where the
+      parameters do whatever the key's placement. A transformation, a mixture
+      or [iid] keeps its base's. *)
+
+  val support : ('x, 'f, 'd) t -> Support.t
   (** [support d] is the set of [d]'s values. Bounds given by parameters are
       read on the host, as the interval holding every element's support: inside
       a compiled or mapped function, a bound that depends on the function's
       arguments raises, {!Rune.Jit_error} or [Invalid_argument]. {!bounds} reads
       nothing. *)
 
-  val bounds : ('x, 'f) t -> (float, 'f) Nx.t * (float, 'f) Nx.t
+  val bounds : ('x, 'f, 'd) t -> (float, 'f, 'd) Nx.t * (float, 'f, 'd) Nx.t
   (** [bounds d] is the least and greatest value each element of [d]'s values
       may take, of [d]'s shape: [-inf] and [inf] where unbounded, the support's
       interval for an element of a vector. It reads nothing on the host, so it
       serves inside compiled and mapped functions. *)
 
-  val pp : Format.formatter -> ('x, 'f) t -> unit
+  val pp : Format.formatter -> ('x, 'f, 'd) t -> unit
   (** [pp ppf d] formats [d]'s family and its parameters' dtypes and shapes, as
       [normal(loc: float64 [], scale: float64 [8])]. *)
 
   (** {1:checks Checks} *)
 
-  val check : ?unless:Nx.bool_t -> string -> ('x, 'f) t -> ('x, 'f) t
+  val check : ?unless:'d Nx.bool_t -> string -> ('x, 'f, 'd) t -> ('x, 'f, 'd) t
   (** [check ?unless what d] is [d] whose parameters are checked now, and whose
       eliminators then check none: a caller that computes parameters names
       itself in the refusal. A parameter outside its domain raises
@@ -723,7 +741,7 @@ module Dist : sig
       parameter is taken whatever its value: [unless] broadcasts against the
       parameters. *)
 
-  val valid : ('x, 'f) t -> Nx.bool_t
+  val valid : ('x, 'f, 'd) t -> 'd Nx.bool_t
   (** [valid d] is whether every element of every parameter of [d] is in its
       domain, a scalar over all of [d]'s parameters: under {!Rune.val-vmap}, one
       per lane. NaN is in no domain. It reads the checks {!check} runs, raises
@@ -750,25 +768,27 @@ module Gaussian : sig
       [z] to the Gaussian. A kernel moving with unit metric on
       [fun z -> lp (color z) + log |det|] moves with covariance [Σ] on [lp]. *)
 
-  type ('u, 'f) t
+  type ('u, 'f, 'd) t
   (** The type for Gaussians over ['u] whose log densities have element type
       ['f]. *)
 
   (** {1:constructors Constructors} *)
 
   val diagonal :
-    'u Nx.Ptree.t -> (float, 'f) Nx.dtype -> mean:'u -> scale:'u -> ('u, 'f) t
+    ('u, 'd) Nx.Ptree.t -> (float, 'f) Nx.dtype -> mean:'u -> scale:'u -> ('u, 'f, 'd) t
   (** [diagonal u dtype ~mean ~scale] is the Gaussian of mean [mean] and
       standard deviation [scale], element by element. [scale]'s elements are
-      positive. *)
+      positive.
+
+      Raises [Invalid_argument] if [mean] holds no tensor. *)
 
   val low_rank :
-    'u Nx.Ptree.t ->
+    ('u, 'd) Nx.Ptree.t ->
     mean:'u ->
     scale:'u ->
     directions:'u ->
-    variances:(float, 'f) Nx.t ->
-    ('u, 'f) t
+    variances:(float, 'f, 'd) Nx.t ->
+    ('u, 'f, 'd) t
   (** [low_rank u ~mean ~scale ~directions ~variances] is the Gaussian whose
       directions are [directions], each tensor with a leading axis of [k], from
       [0] to the number of elements, orthonormalised, and whose variances along
@@ -778,12 +798,12 @@ module Gaussian : sig
       through {!Nx.check} if one is not positive and finite. *)
 
   val of_precision :
-    'u Nx.Ptree.t ->
+    ('u, 'd) Nx.Ptree.t ->
     (float, 'f) Nx.dtype ->
-    ?low_rank:'u * (float, 'f) Nx.t ->
+    ?low_rank:'u * (float, 'f, 'd) Nx.t ->
     mean:'u ->
     'u ->
-    ('u, 'f) t
+    ('u, 'f, 'd) t
   (** [of_precision u dtype ?low_rank ~mean p] is the Gaussian of mean [mean]
       whose precision is the diagonal [p] plus, with [~low_rank:(w, l)], the sum
       of [l_j w_j w_jᵀ] over the directions [w_j], the leading axis of [w]'s
@@ -791,30 +811,31 @@ module Gaussian : sig
       the precision at a mode.
 
       Raises [Invalid_argument] naming the path at an element of [p] that is not
-      positive and finite, or at an [l_j] that is negative or not finite. *)
+      positive and finite, or at an [l_j] that is negative or not finite, and
+      [Invalid_argument] if [low_rank] is absent and [mean] holds no tensor. *)
 
   (** {1:eliminators Eliminators} *)
 
-  val sample : 'u Nx.Ptree.t -> Nx.Rng.t -> n:int -> ('u, 'f) t -> 'u
+  val sample : ('u, 'd) Nx.Ptree.t -> 'd Nx.Rng.key -> n:int -> ('u, 'f, 'd) t -> 'u
   (** [sample u k ~n g] is [n] draws of [g] on a new leading axis.
 
       Raises [Invalid_argument] if [n < 0]. *)
 
-  val log_density : 'u Nx.Ptree.t -> ('u, 'f) t -> 'u -> (float, 'f) Nx.t
+  val log_density : ('u, 'd) Nx.Ptree.t -> ('u, 'f, 'd) t -> 'u -> (float, 'f, 'd) Nx.t
   (** [log_density u g] is [g]'s log density at a position: one value per row of
       the leading axis. *)
 
-  val mean : 'u Nx.Ptree.t -> ('u, 'f) t -> 'u
+  val mean : ('u, 'd) Nx.Ptree.t -> ('u, 'f, 'd) t -> 'u
   (** [mean u g] is [g]'s mean. *)
 
-  val variance : 'u Nx.Ptree.t -> ('u, 'f) t -> 'u
+  val variance : ('u, 'd) Nx.Ptree.t -> ('u, 'f, 'd) t -> 'u
   (** [variance u g] is the diagonal of [g]'s covariance, element by element. *)
 
-  val ptree : 'u Nx.Ptree.t -> ('u, 'f) t Nx.Ptree.t
+  val ptree : ('u, 'd) Nx.Ptree.t -> (('u, 'f, 'd) t, 'd) Nx.Ptree.t
   (** [ptree u] is the structure of Gaussians over [u]: [mean], [scale] and
       [directions], each walked as [u], and [variances]. *)
 
-  val pp : 'u Nx.Ptree.t -> Format.formatter -> ('u, 'f) t -> unit
+  val pp : ('u, 'd) Nx.Ptree.t -> Format.formatter -> ('u, 'f, 'd) t -> unit
   (** [pp u ppf g] formats [g]'s dimension and rank. *)
 end
 
@@ -841,35 +862,35 @@ module Nuts : sig
       into their key and advance it, so [a + b] draws are [a] draws then [b],
       and no two transitions of a run share a key. *)
 
-  type ('u, 'f) state = private {
+  type ('u, 'f, 'd) state = private {
     position : 'u;  (** Each chain's position. *)
-    lp : (float, 'f) Nx.t;  (** The log density there, shape [[chain]]. *)
+    lp : (float, 'f, 'd) Nx.t;  (** The log density there, shape [[chain]]. *)
     grad : 'u;  (** Its gradient there. *)
-    step_size : (float, 'f) Nx.t;  (** Each chain's step size. *)
-    geometry : ('u, 'f) Gaussian.t;
+    step_size : (float, 'f, 'd) Nx.t;  (** Each chain's step size. *)
+    geometry : ('u, 'f, 'd) Gaussian.t;
         (** Each chain's Gaussian, stacked on the chain axis. *)
-    stats : 'f Stats.t;  (** The last transition's statistics. *)
-    draw : Nx.int32_t;  (** The number of transitions taken. *)
-    accept : (float, 'f) Nx.t;  (** The acceptance warmup aims for. *)
+    stats : ('f, 'd) Stats.t;  (** The last transition's statistics. *)
+    draw : 'd Nx.int32_t;  (** The number of transitions taken. *)
+    accept : (float, 'f, 'd) Nx.t;  (** The acceptance warmup aims for. *)
     max_depth : int;  (** The deepest tree a transition builds. *)
   }
   (** The type for states of chains over positions ['u]. *)
 
-  val ptree : 'u Nx.Ptree.t -> ('u, 'f) state Nx.Ptree.t
+  val ptree : ('u, 'd) Nx.Ptree.t -> (('u, 'f, 'd) state, 'd) Nx.Ptree.t
   (** [ptree u] is the structure of states over [u]. It reports [max_depth]. *)
 
-  val stats : (float, 'f) Nx.dtype -> 'f Stats.t Nx.Ptree.t
+  val stats : (float, 'f) Nx.dtype -> (('f, 'd) Stats.t, 'd) Nx.Ptree.t
   (** [stats dtype] is {!Stats.ptree}[ dtype]. *)
 
   val init :
-    'u Nx.Ptree.t ->
+    ('u, 'd) Nx.Ptree.t ->
     ?max_depth:int ->
     ?accept:float ->
     ?rank:int ->
-    ?geometry:('u, 'f) Gaussian.t ->
-    ('u -> (float, 'f) Nx.t) ->
+    ?geometry:('u, 'f, 'd) Gaussian.t ->
+    ('u -> (float, 'f, 'd) Nx.t) ->
     'u ->
-    ('u, 'f) state
+    ('u, 'f, 'd) state
   (** [init u ?max_depth ?accept ?rank ?geometry lp start] is the state of
       chains at [start], a position. [max_depth] defaults to [10], [accept], the
       acceptance warmup aims for, to [0.8], and [rank], the directions warmup
@@ -889,23 +910,23 @@ module Nuts : sig
       only its own row. *)
 
   val step :
-    'u Nx.Ptree.t ->
-    ('u -> (float, 'f) Nx.t) ->
-    Nx.Rng.t ->
-    ('u, 'f) state ->
-    ('u, 'f) state
+    ('u, 'd) Nx.Ptree.t ->
+    ('u -> (float, 'f, 'd) Nx.t) ->
+    'd Nx.Rng.key ->
+    ('u, 'f, 'd) state ->
+    ('u, 'f, 'd) state
   (** [step u lp k s] is one transition of every chain from [s].
 
       Raises [Invalid_argument] if [lp] is NaN or [+inf] at a finite position,
       naming the chain. *)
 
   val warmup :
-    'u Nx.Ptree.t ->
-    ('u -> (float, 'f) Nx.t) ->
-    Nx.Rng.t ->
+    ('u, 'd) Nx.Ptree.t ->
+    ('u -> (float, 'f, 'd) Nx.t) ->
+    'd Nx.Rng.key ->
     steps:int ->
-    ('u, 'f) state ->
-    ('u, 'f) state
+    ('u, 'f, 'd) state ->
+    ('u, 'f, 'd) state
   (** [warmup u lp k ~steps s] is [s] after [steps] transitions that tune each
       chain's step size and geometry, by Stan's schedule scaled to [steps]: an
       initial buffer, windows that double in length, and a final buffer. Dual
@@ -920,12 +941,12 @@ module Nuts : sig
       Raises [Invalid_argument] if [steps < 0]. *)
 
   val sample :
-    'u Nx.Ptree.t ->
-    ('u -> (float, 'f) Nx.t) ->
-    Nx.Rng.t ->
+    ('u, 'd) Nx.Ptree.t ->
+    ('u -> (float, 'f, 'd) Nx.t) ->
+    'd Nx.Rng.key ->
     draws:int ->
-    ('u, 'f) state ->
-    ('u, 'f) state * 'u Draws.t * 'f Stats.t Draws.t
+    ('u, 'f, 'd) state ->
+    ('u, 'f, 'd) state * 'u Draws.t * ('f, 'd) Stats.t Draws.t
   (** [sample u lp k ~draws s] is the state after [draws] transitions, their
       positions and their statistics. Transition [n] of the run, counted by
       [s.draw], has the key [Nx.Rng.fold_in k n].
@@ -955,39 +976,39 @@ module Hmc : sig
       counter into their key and advance it, so [a + b] draws are [a] draws then
       [b], and no two transitions of a run share a key. *)
 
-  type ('u, 'f) state = private {
+  type ('u, 'f, 'd) state = private {
     position : 'u;  (** Each chain's position. *)
-    lp : (float, 'f) Nx.t;  (** The log density there, shape [[chain]]. *)
+    lp : (float, 'f, 'd) Nx.t;  (** The log density there, shape [[chain]]. *)
     grad : 'u;  (** Its gradient there. *)
-    step_size : (float, 'f) Nx.t;  (** The step size, a scalar. *)
-    length : (float, 'f) Nx.t;
+    step_size : (float, 'f, 'd) Nx.t;  (** The step size, a scalar. *)
+    length : (float, 'f, 'd) Nx.t;
         (** The trajectory length in whitened coordinates, a scalar. *)
-    geometry : ('u, 'f) Gaussian.t;  (** The chains' Gaussian. *)
-    stats : 'f Stats.t;  (** The last transition's statistics. *)
-    draw : Nx.int32_t;  (** The number of transitions taken. *)
-    accept : (float, 'f) Nx.t;  (** The acceptance warmup aims for. *)
+    geometry : ('u, 'f, 'd) Gaussian.t;  (** The chains' Gaussian. *)
+    stats : ('f, 'd) Stats.t;  (** The last transition's statistics. *)
+    draw : 'd Nx.int32_t;  (** The number of transitions taken. *)
+    accept : (float, 'f, 'd) Nx.t;  (** The acceptance warmup aims for. *)
   }
   (** The type for states of chains over positions ['u]. *)
 
-  type 'f stats = 'f Stats.t
+  type ('f, 'd) stats = ('f, 'd) Stats.t
   (** The type for statistics of transitions. [acceptance] is the Metropolis
       probability of the trajectory's end, [0] at a divergence, and [saturated]
       is [false]. *)
 
-  val ptree : 'u Nx.Ptree.t -> ('u, 'f) state Nx.Ptree.t
+  val ptree : ('u, 'd) Nx.Ptree.t -> (('u, 'f, 'd) state, 'd) Nx.Ptree.t
   (** [ptree u] is the structure of states over [u]. *)
 
-  val stats : (float, 'f) Nx.dtype -> 'f stats Nx.Ptree.t
+  val stats : (float, 'f) Nx.dtype -> (('f, 'd) stats, 'd) Nx.Ptree.t
   (** [stats dtype] is {!Stats.ptree}[ dtype]. *)
 
   val init :
-    'u Nx.Ptree.t ->
+    ('u, 'd) Nx.Ptree.t ->
     ?accept:float ->
     ?rank:int ->
-    ?geometry:('u, 'f) Gaussian.t ->
-    ('u -> (float, 'f) Nx.t) ->
+    ?geometry:('u, 'f, 'd) Gaussian.t ->
+    ('u -> (float, 'f, 'd) Nx.t) ->
     'u ->
-    ('u, 'f) state
+    ('u, 'f, 'd) state
   (** [init u ?accept ?rank ?geometry lp start] is the state of chains at
       [start], a position. [accept], the harmonic mean acceptance warmup aims
       for, defaults to [0.8], and [rank], the directions warmup fits beside the
@@ -1004,23 +1025,23 @@ module Hmc : sig
       naming the first row whose log density differs. *)
 
   val step :
-    'u Nx.Ptree.t ->
-    ('u -> (float, 'f) Nx.t) ->
-    Nx.Rng.t ->
-    ('u, 'f) state ->
-    ('u, 'f) state
+    ('u, 'd) Nx.Ptree.t ->
+    ('u -> (float, 'f, 'd) Nx.t) ->
+    'd Nx.Rng.key ->
+    ('u, 'f, 'd) state ->
+    ('u, 'f, 'd) state
   (** [step u lp k s] is one transition of every chain from [s].
 
       Raises [Invalid_argument] if [lp] is NaN or [+inf] at a finite position,
       naming the chain. *)
 
   val warmup :
-    'u Nx.Ptree.t ->
-    ('u -> (float, 'f) Nx.t) ->
-    Nx.Rng.t ->
+    ('u, 'd) Nx.Ptree.t ->
+    ('u -> (float, 'f, 'd) Nx.t) ->
+    'd Nx.Rng.key ->
     steps:int ->
-    ('u, 'f) state ->
-    ('u, 'f) state
+    ('u, 'f, 'd) state ->
+    ('u, 'f, 'd) state
   (** [warmup u lp k ~steps s] is [s] after [steps] transitions that tune the
       step size, the length and the geometry, by Stan's schedule scaled to
       [steps]: an initial buffer, windows that double in length, and a final
@@ -1047,12 +1068,12 @@ module Hmc : sig
       Raises [Invalid_argument] if [steps < 0]. *)
 
   val sample :
-    'u Nx.Ptree.t ->
-    ('u -> (float, 'f) Nx.t) ->
-    Nx.Rng.t ->
+    ('u, 'd) Nx.Ptree.t ->
+    ('u -> (float, 'f, 'd) Nx.t) ->
+    'd Nx.Rng.key ->
     draws:int ->
-    ('u, 'f) state ->
-    ('u, 'f) state * 'u Draws.t * 'f stats Draws.t
+    ('u, 'f, 'd) state ->
+    ('u, 'f, 'd) state * 'u Draws.t * ('f, 'd) stats Draws.t
   (** [sample u lp k ~draws s] is the state after [draws] transitions, their
       positions and their statistics. Transition [n] of the run, counted by
       [s.draw], has the key [Nx.Rng.fold_in k n].
@@ -1091,34 +1112,34 @@ module Ensemble : sig
       {!warmup} and {!sample} fold the state's draw counter into their key and
       advance it, so [a + b] draws are [a] draws then [b]. *)
 
-  type 'f stats = {
-    lp : (float, 'f) Nx.t;  (** The log density at the transition's end. *)
-    acceptance : (float, 'f) Nx.t;
+  type ('f, 'd) stats = {
+    lp : (float, 'f, 'd) Nx.t;  (** The log density at the transition's end. *)
+    acceptance : (float, 'f, 'd) Nx.t;
         (** The probability with which the walker's move was accepted. *)
   }
   (** The type for statistics of transitions, one element per walker. *)
 
-  type ('u, 'f) state = private {
+  type ('u, 'f, 'd) state = private {
     position : 'u;  (** Each walker's position. *)
-    lp : (float, 'f) Nx.t;  (** The log density there, shape [[walker]]. *)
-    stats : 'f stats;  (** The last transition's statistics. *)
-    draw : Nx.int32_t;  (** The number of transitions taken. *)
+    lp : (float, 'f, 'd) Nx.t;  (** The log density there, shape [[walker]]. *)
+    stats : ('f, 'd) stats;  (** The last transition's statistics. *)
+    draw : 'd Nx.int32_t;  (** The number of transitions taken. *)
     ensembles : int;  (** The number of ensembles. *)
   }
   (** The type for states of walkers over positions ['u]. *)
 
-  val ptree : 'u Nx.Ptree.t -> ('u, 'f) state Nx.Ptree.t
+  val ptree : ('u, 'd) Nx.Ptree.t -> (('u, 'f, 'd) state, 'd) Nx.Ptree.t
   (** [ptree u] is the structure of states over [u]. It reports [ensembles]. *)
 
-  val stats : (float, 'f) Nx.dtype -> 'f stats Nx.Ptree.t
+  val stats : (float, 'f) Nx.dtype -> (('f, 'd) stats, 'd) Nx.Ptree.t
   (** [stats dtype] is the structure of statistics at [dtype]. *)
 
   val init :
-    'u Nx.Ptree.t ->
+    ('u, 'd) Nx.Ptree.t ->
     ?ensembles:int ->
-    ('u -> (float, 'f) Nx.t) ->
+    ('u -> (float, 'f, 'd) Nx.t) ->
     'u ->
-    ('u, 'f) state
+    ('u, 'f, 'd) state
   (** [init u ?ensembles lp start] is the state of walkers at [start], a
       position, in [ensembles] ensembles, by default [1].
 
@@ -1128,22 +1149,22 @@ module Ensemble : sig
       density per walker, each read from its own row. *)
 
   val step :
-    'u Nx.Ptree.t ->
-    ('u -> (float, 'f) Nx.t) ->
-    Nx.Rng.t ->
-    ('u, 'f) state ->
-    ('u, 'f) state
+    ('u, 'd) Nx.Ptree.t ->
+    ('u -> (float, 'f, 'd) Nx.t) ->
+    'd Nx.Rng.key ->
+    ('u, 'f, 'd) state ->
+    ('u, 'f, 'd) state
   (** [step u lp k s] is one transition of every walker from [s].
 
       Raises [Invalid_argument] if [lp] is NaN or [+inf] at a walker. *)
 
   val warmup :
-    'u Nx.Ptree.t ->
-    ('u -> (float, 'f) Nx.t) ->
-    Nx.Rng.t ->
+    ('u, 'd) Nx.Ptree.t ->
+    ('u -> (float, 'f, 'd) Nx.t) ->
+    'd Nx.Rng.key ->
     steps:int ->
-    ('u, 'f) state ->
-    ('u, 'f) state
+    ('u, 'f, 'd) state ->
+    ('u, 'f, 'd) state
   (** [warmup u lp k ~steps s] is [s] after [steps] transitions, whose draws are
       discarded. Transition [n] of the run, counted by [s.draw], has the key
       [Nx.Rng.fold_in k n], as in {!sample}.
@@ -1151,12 +1172,12 @@ module Ensemble : sig
       Raises [Invalid_argument] if [steps < 0]. *)
 
   val sample :
-    'u Nx.Ptree.t ->
-    ('u -> (float, 'f) Nx.t) ->
-    Nx.Rng.t ->
+    ('u, 'd) Nx.Ptree.t ->
+    ('u -> (float, 'f, 'd) Nx.t) ->
+    'd Nx.Rng.key ->
     draws:int ->
-    ('u, 'f) state ->
-    ('u, 'f) state * 'u Draws.t * 'f stats Draws.t
+    ('u, 'f, 'd) state ->
+    ('u, 'f, 'd) state * 'u Draws.t * ('f, 'd) stats Draws.t
   (** [sample u lp k ~draws s] is the state after [draws] transitions, the
       walkers' positions and their statistics, each walker a chain of the draws.
       A walker's moves read the other walkers of its ensemble, so the chains of
@@ -1177,21 +1198,21 @@ module Weighted : sig
       Importance sampling, sequential Monte Carlo and nested sampling return
       them. *)
 
-  type ('u, 'f) t = {
+  type ('u, 'f, 'd) t = {
     values : 'u;  (** The draws, on a leading axis of [n]. *)
-    log_weights : (float, 'f) Nx.t;  (** Their log weights, shape [[n]]. *)
+    log_weights : (float, 'f, 'd) Nx.t;  (** Their log weights, shape [[n]]. *)
   }
   (** The type for weighted draws of ['u]. *)
 
-  val ptree : 'u Nx.Ptree.t -> ('u, 'f) t Nx.Ptree.t
+  val ptree : ('u, 'd) Nx.Ptree.t -> (('u, 'f, 'd) t, 'd) Nx.Ptree.t
   (** [ptree u] is the structure of weighted draws of [u]: [values], walked as
       [u], and [log_weights]. *)
 
-  val ess : ('u, 'f) t -> (float, 'f) Nx.t
+  val ess : ('u, 'f, 'd) t -> (float, 'f, 'd) Nx.t
   (** [ess w] is Kish's effective sample size [(Σ w)² / Σ w²], a scalar from [1]
       to [n]. It is NaN if no weight is positive. *)
 
-  val resample : 'u Nx.Ptree.t -> Nx.Rng.t -> n:int -> ('u, 'f) t -> 'u
+  val resample : ('u, 'd) Nx.Ptree.t -> 'd Nx.Rng.key -> n:int -> ('u, 'f, 'd) t -> 'u
   (** [resample u k ~n w] is [n] equal-weight draws of [w], by systematic
       resampling: one uniform [v] places the points [(i + v) / n] on the
       cumulative normalised weights, so a draw of normalised weight [w_i] is
@@ -1208,29 +1229,29 @@ module Evidence : sig
       {!Norn.Nested} and {!Norn.Smc} estimate it, and their particles weighted
       by the posterior are its {!sample}. *)
 
-  type ('u, 'f) t
+  type ('u, 'f, 'd) t
   (** The type for evidence estimates over positions ['u]. *)
 
-  val log_evidence : ('u, 'f) t -> (float, 'f) Nx.t
+  val log_evidence : ('u, 'f, 'd) t -> (float, 'f, 'd) Nx.t
   (** [log_evidence z] is the estimate of [ln Z], a scalar. *)
 
-  val error : ('u, 'f) t -> (float, 'f) Nx.t
+  val error : ('u, 'f, 'd) t -> (float, 'f, 'd) Nx.t
   (** [error z] is the estimate's standard error in [ln Z], a scalar. *)
 
-  val information : ('u, 'f) t -> (float, 'f) Nx.t
+  val information : ('u, 'f, 'd) t -> (float, 'f, 'd) Nx.t
   (** [information z] is [H], the posterior's Kullback-Leibler divergence from
       the prior in nats, [E_post (ln L) - ln Z]: how much the data narrowed the
       prior. *)
 
-  val sample : ('u, 'f) t -> ('u, 'f) Weighted.t
+  val sample : ('u, 'f, 'd) t -> ('u, 'f, 'd) Weighted.t
   (** [sample z] is draws weighted by the posterior, their log weights
       normalised. *)
 
   val expectation :
-    'u Nx.Ptree.t ->
-    ('u -> (float, 'f) Nx.t) ->
-    ('u, 'f) t ->
-    (float, 'f) Nx.t * (float, 'f) Nx.t
+    ('u, 'd) Nx.Ptree.t ->
+    ('u -> (float, 'f, 'd) Nx.t) ->
+    ('u, 'f, 'd) t ->
+    (float, 'f, 'd) Nx.t * (float, 'f, 'd) Nx.t
   (** [expectation u f z] is the posterior expectation of [f], a map of one draw
       to a tensor, under [z]'s {!sample}, and its standard error, element by
       element. The error counts the noise of the weights over the shrinkage
@@ -1258,17 +1279,17 @@ module Evidence : sig
         (** Tempering's budget ran out at this temperature [β < 1]: the estimate
             is of [ln ∫ L^β π], the sample of its tempered posterior. *)
 
-  val stop : ('u, 'f) t -> stop
+  val stop : ('u, 'f, 'd) t -> stop
   (** [stop z] is why the run that gave [z] stopped. It reads [z]'s tensors, so
       it waits for a computation that produces them. *)
 
   (** {1:structure Structure and formatting} *)
 
-  val ptree : 'u Nx.Ptree.t -> ('u, 'f) t Nx.Ptree.t
+  val ptree : ('u, 'd) Nx.Ptree.t -> (('u, 'f, 'd) t, 'd) Nx.Ptree.t
   (** [ptree u] is the structure of evidence estimates over [u], so a compiled
       function may return one. *)
 
-  val pp : Format.formatter -> ('u, 'f) t -> unit
+  val pp : Format.formatter -> ('u, 'f, 'd) t -> unit
   (** [pp] formats an estimate as [ln Z = -412.31 ± 0.08, H = 5.20 nats],
       followed, for a spent budget, by [, budget spent with 0.52 nats left] or
       [, budget spent at β = 0.73]. *)
@@ -1311,47 +1332,47 @@ module Nested : sig
       [Nx.Rng.fold_in k 1]. A step's replacement [i] has row [i] of
       [Nx.Rng.split_batch ~n:batch] of the step's key. *)
 
-  type ('u, 'f) state = private {
+  type ('u, 'f, 'd) state = private {
     live : 'u;  (** The live points, on a leading axis of [n]. *)
-    prior : (float, 'f) Nx.t;  (** Their prior log densities, shape [[n]]. *)
-    likelihood : (float, 'f) Nx.t;  (** Their log likelihoods. *)
-    rank : (float, 'f) Nx.t;  (** Their ranks, in [(0, 1)]. *)
-    lineage : Nx.int32_t;
+    prior : (float, 'f, 'd) Nx.t;  (** Their prior log densities, shape [[n]]. *)
+    likelihood : (float, 'f, 'd) Nx.t;  (** Their log likelihoods. *)
+    rank : (float, 'f, 'd) Nx.t;  (** Their ranks, in [(0, 1)]. *)
+    lineage : 'd Nx.int32_t;
         (** The starting point each descends from, by the slice moves that
             replaced its ancestors: an index of the initial live points. *)
     dead : 'u;
         (** The dead points, lowest first, on a leading axis of
             [budget * batch]; the rows past [deaths] are padding. *)
-    dead_likelihood : (float, 'f) Nx.t;
+    dead_likelihood : (float, 'f, 'd) Nx.t;
         (** Their log likelihoods, [-inf] in the padding. *)
-    shrinkage : (float, 'f) Nx.t;
+    shrinkage : (float, 'f, 'd) Nx.t;
         (** The expected fall in [ln X] at each, [0] in the padding. *)
-    dead_lineage : Nx.int32_t;  (** Their lineages. *)
-    deaths : Nx.int32_t;  (** The number of dead points. *)
-    log_volume : (float, 'f) Nx.t;  (** The expected [ln X] left. *)
-    log_evidence : (float, 'f) Nx.t;  (** [ln Z] of the dead points. *)
-    steps : Nx.int32_t;
+    dead_lineage : 'd Nx.int32_t;  (** Their lineages. *)
+    deaths : 'd Nx.int32_t;  (** The number of dead points. *)
+    log_volume : (float, 'f, 'd) Nx.t;  (** The expected [ln X] left. *)
+    log_evidence : (float, 'f, 'd) Nx.t;  (** [ln Z] of the dead points. *)
+    steps : 'd Nx.int32_t;
         (** The steps taken, at most [budget]: at [budget] the dead buffer is
             full and {!step} leaves the state as it is. *)
-    tolerance : (float, 'f) Nx.t;  (** The stopping tolerance in [ln Z]. *)
+    tolerance : (float, 'f, 'd) Nx.t;  (** The stopping tolerance in [ln Z]. *)
     batch : int;  (** The points a step deletes. *)
     budget : int;  (** The steps the dead buffer holds. *)
   }
   (** The type for states of nested sampling over positions ['u]. *)
 
-  val ptree : 'u Nx.Ptree.t -> ('u, 'f) state Nx.Ptree.t
+  val ptree : ('u, 'd) Nx.Ptree.t -> (('u, 'f, 'd) state, 'd) Nx.Ptree.t
   (** [ptree u] is the structure of states over [u]. It reports [batch] and
       [budget]. *)
 
   val init :
-    'u Nx.Ptree.t ->
+    ('u, 'd) Nx.Ptree.t ->
     ?batch:int ->
     ?tolerance:float ->
     budget:int ->
-    prior:('u -> (float, 'f) Nx.t) ->
-    likelihood:('u -> (float, 'f) Nx.t) ->
+    prior:('u -> (float, 'f, 'd) Nx.t) ->
+    likelihood:('u -> (float, 'f, 'd) Nx.t) ->
     'u ->
-    ('u, 'f) state
+    ('u, 'f, 'd) state
   (** [init u ?batch ?tolerance ~budget ~prior ~likelihood live] is the state
       with the live points [live], [n] independent draws of the prior. [batch]
       defaults to [n / 2] and [tolerance] to [1e-3]; the dead buffer holds
@@ -1362,12 +1383,12 @@ module Nested : sig
       density per point, each read from its own row. *)
 
   val step :
-    'u Nx.Ptree.t ->
-    prior:('u -> (float, 'f) Nx.t) ->
-    likelihood:('u -> (float, 'f) Nx.t) ->
-    Nx.Rng.t ->
-    ('u, 'f) state ->
-    ('u, 'f) state
+    ('u, 'd) Nx.Ptree.t ->
+    prior:('u -> (float, 'f, 'd) Nx.t) ->
+    likelihood:('u -> (float, 'f, 'd) Nx.t) ->
+    'd Nx.Rng.key ->
+    ('u, 'f, 'd) state ->
+    ('u, 'f, 'd) state
   (** [step u ~prior ~likelihood k s] deletes [s.batch] live points and replaces
       them, or is [s] if [s] has taken [s.budget] steps.
 
@@ -1375,7 +1396,7 @@ module Nested : sig
       [+inf] at a point. *)
 
   val evidence :
-    'u Nx.Ptree.t -> Nx.Rng.t -> ('u, 'f) state -> ('u, 'f) Evidence.t
+    ('u, 'd) Nx.Ptree.t -> 'd Nx.Rng.key -> ('u, 'f, 'd) state -> ('u, 'f, 'd) Evidence.t
   (** [evidence u k s] is the evidence of the dead points of [s] and of its live
       points added as dead, [k] simulating the shrinkage sequences of its error.
       Its {!Evidence.sample} is every dead point, padding included at weight
@@ -1383,15 +1404,15 @@ module Nested : sig
       live points could still add [r] nats, the tolerance or more, to [ln Z]. *)
 
   val run :
-    'u Nx.Ptree.t ->
+    ('u, 'd) Nx.Ptree.t ->
     ?batch:int ->
     ?tolerance:float ->
     budget:int ->
-    prior:('u -> (float, 'f) Nx.t) ->
-    likelihood:('u -> (float, 'f) Nx.t) ->
-    Nx.Rng.t ->
+    prior:('u -> (float, 'f, 'd) Nx.t) ->
+    likelihood:('u -> (float, 'f, 'd) Nx.t) ->
+    'd Nx.Rng.key ->
     'u ->
-    ('u, 'f) Evidence.t
+    ('u, 'f, 'd) Evidence.t
   (** [run u ?batch ?tolerance ~budget ~prior ~likelihood k live] steps from
       [init] until the live points' largest possible contribution changes [ln Z]
       by less than [tolerance], or for [budget] steps, and is the evidence then.
@@ -1456,37 +1477,37 @@ module Smc : sig
     | Hmc  (** Hamiltonian transitions; the densities need a gradient. *)
     | Slice  (** Hit-and-run slice steps; no derivative. *)
 
-  type ('u, 'f) state = private {
+  type ('u, 'f, 'd) state = private {
     particles : 'u;  (** The particles, on a leading axis of [N]. *)
-    prior : (float, 'f) Nx.t;  (** Their prior log densities, shape [[N]]. *)
-    likelihood : (float, 'f) Nx.t;  (** Their log likelihoods. *)
-    beta : (float, 'f) Nx.t;  (** The temperature, a scalar in [[0, 1]]. *)
-    log_evidence : (float, 'f) Nx.t;  (** [ln Z] of the tempered density. *)
-    variance : (float, 'f) Nx.t;  (** The variance of [log_evidence]. *)
-    steps : Nx.int32_t;  (** The temperatures taken. *)
-    step_size : (float, 'f) Nx.t;
+    prior : (float, 'f, 'd) Nx.t;  (** Their prior log densities, shape [[N]]. *)
+    likelihood : (float, 'f, 'd) Nx.t;  (** Their log likelihoods. *)
+    beta : (float, 'f, 'd) Nx.t;  (** The temperature, a scalar in [[0, 1]]. *)
+    log_evidence : (float, 'f, 'd) Nx.t;  (** [ln Z] of the tempered density. *)
+    variance : (float, 'f, 'd) Nx.t;  (** The variance of [log_evidence]. *)
+    steps : 'd Nx.int32_t;  (** The temperatures taken. *)
+    step_size : (float, 'f, 'd) Nx.t;
         (** The Hamiltonian moves' step size in whitened coordinates, a scalar.
         *)
-    length : (float, 'f) Nx.t;
+    length : (float, 'f, 'd) Nx.t;
         (** Their trajectory length in whitened coordinates, a scalar. *)
-    length_moment : (float, 'f) Nx.t;
+    length_moment : (float, 'f, 'd) Nx.t;
         (** The second moment of the length's Adam search, a scalar. *)
     resampled : int;  (** [M], the chains of a step. *)
     move : move;  (** The kernel that moves the particles. *)
   }
   (** The type for states of tempering over positions ['u]. *)
 
-  val ptree : 'u Nx.Ptree.t -> ('u, 'f) state Nx.Ptree.t
+  val ptree : ('u, 'd) Nx.Ptree.t -> (('u, 'f, 'd) state, 'd) Nx.Ptree.t
   (** [ptree u] is the structure of states over [u]. It reports [resampled]. *)
 
   val init :
-    'u Nx.Ptree.t ->
+    ('u, 'd) Nx.Ptree.t ->
     ?move:move ->
     ?resampled:int ->
-    prior:('u -> (float, 'f) Nx.t) ->
-    likelihood:('u -> (float, 'f) Nx.t) ->
+    prior:('u -> (float, 'f, 'd) Nx.t) ->
+    likelihood:('u -> (float, 'f, 'd) Nx.t) ->
     'u ->
-    ('u, 'f) state
+    ('u, 'f, 'd) state
   (** [init u ?move ?resampled ~prior ~likelihood start] is the state at [β = 0]
       of the particles [start], [N] independent draws of the prior. [move]
       defaults to [Hmc]. [resampled] defaults to the largest divisor of [N] not
@@ -1499,12 +1520,12 @@ module Smc : sig
       particle, each read from its own row. *)
 
   val step :
-    'u Nx.Ptree.t ->
-    prior:('u -> (float, 'f) Nx.t) ->
-    likelihood:('u -> (float, 'f) Nx.t) ->
-    Nx.Rng.t ->
-    ('u, 'f) state ->
-    ('u, 'f) state
+    ('u, 'd) Nx.Ptree.t ->
+    prior:('u -> (float, 'f, 'd) Nx.t) ->
+    likelihood:('u -> (float, 'f, 'd) Nx.t) ->
+    'd Nx.Rng.key ->
+    ('u, 'f, 'd) state ->
+    ('u, 'f, 'd) state
   (** [step u ~prior ~likelihood k s] moves the particles of [s] to the next
       temperature. At [β = 1] it moves them on the posterior and leaves the
       evidence as it is.
@@ -1512,22 +1533,22 @@ module Smc : sig
       Raises [Invalid_argument] through {!Nx.check} if a density is NaN or
       [+inf] at a particle. *)
 
-  val evidence : ('u, 'f) state -> ('u, 'f) Evidence.t
+  val evidence : ('u, 'f, 'd) state -> ('u, 'f, 'd) Evidence.t
   (** [evidence s] is the evidence of the tempered density at [s.beta], the
       posterior's at [β = 1], with the particles as its sample. Its
       {!Evidence.val-stop} is [Converged] at [β = 1], else [Temperature s.beta].
   *)
 
   val run :
-    'u Nx.Ptree.t ->
+    ('u, 'd) Nx.Ptree.t ->
     ?move:move ->
     ?resampled:int ->
     budget:int ->
-    prior:('u -> (float, 'f) Nx.t) ->
-    likelihood:('u -> (float, 'f) Nx.t) ->
-    Nx.Rng.t ->
+    prior:('u -> (float, 'f, 'd) Nx.t) ->
+    likelihood:('u -> (float, 'f, 'd) Nx.t) ->
+    'd Nx.Rng.key ->
     'u ->
-    ('u, 'f) Evidence.t
+    ('u, 'f, 'd) Evidence.t
   (** [run u ?move ?resampled ~budget ~prior ~likelihood k start] steps from
       [init] until [β = 1], or for [budget] temperatures, and is the evidence
       then.

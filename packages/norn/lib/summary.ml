@@ -53,7 +53,7 @@ let label path index =
     Printf.sprintf "%s[%s]" name idx
 
 (* [elements u d] is each element of [d], in walk order. *)
-let elements (type u) (u : u Nx.Ptree.t) (d : u Draws.t) =
+let elements (type u) (u : (u, 'd) Nx.Ptree.t) (d : u Draws.t) =
   let leaf path x acc =
     let one (index, chains) =
       { path; index; chains; draws = Chains.pooled chains }
@@ -63,7 +63,7 @@ let elements (type u) (u : u Nx.Ptree.t) (d : u Draws.t) =
   List.rev (Nx.Ptree.fold u leaf (d :> u) [])
 
 (* [values u x] is the elements of [x], a value of [u], in walk order. *)
-let values (type u) (u : u Nx.Ptree.t) (x : u) =
+let values (type u) (u : (u, 'd) Nx.Ptree.t) (x : u) =
   Array.concat
     (List.rev
        (Nx.Ptree.fold u
@@ -108,9 +108,9 @@ let element_findings ~ess_min ~rhat ~bulk ~tail elements =
            r @ s)
        elements)
 
-let transition_findings (type u f) (u : u Nx.Ptree.t) (s : f Stats.t Draws.t)
+let transition_findings (type u f) (u : (u, 'd) Nx.Ptree.t) (s : (f, 'd) Stats.t Draws.t)
     (d : u Draws.t) elements =
-  let st = (s :> f Stats.t) in
+  let st = (s : (f, 'd) Stats.t Draws.t :> (f, 'd) Stats.t) in
   let count b =
     Array.fold_left (fun n b -> if b then n + 1 else n) 0 (Nx.to_array b)
   in
@@ -149,7 +149,7 @@ let transition_findings (type u f) (u : u Nx.Ptree.t) (s : f Stats.t Draws.t)
 
 let minimum_draws = 4
 
-let v (type u) (u : u Nx.Ptree.t) ?stats ?superchains (d : u Draws.t) =
+let v (type u) (u : (u, 'd) Nx.Ptree.t) ?stats ?superchains (d : u Draws.t) =
   let chains, draws =
     Nx.Ptree.fold u
       (fun _ x _ -> ((Nx.shape x).(0), (Nx.shape x).(1)))

@@ -24,18 +24,18 @@ type t =
   | Posterior : {
       name : string;
       params : string list;
-      model : (Nx.float64_t list, 'y, Nx.float64_elt) M.t;
+      model : (Nx.host Nx.float64_t list, 'y, Nx.float64_elt, Nx.host) M.t;
       y : 'y;
       refs : reference list;
     }
       -> t
 
-let latent : Nx.float64_t list Nx.Ptree.t = Nx.Ptree.list Nx.Ptree.tensor
+let latent : (Nx.host Nx.float64_t list, Nx.host) Nx.Ptree.t = Nx.Ptree.list Nx.Ptree.tensor
 let f64 = Nx.scalar Nx.float64
 
 (* Golden *)
 
-type block = { data : (string * Nx.float64_t) list; rows : reference list }
+type block = { data : (string * Nx.host Nx.float64_t) list; rows : reference list }
 
 let read path =
   let ic = open_in path in

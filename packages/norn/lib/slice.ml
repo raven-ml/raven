@@ -36,81 +36,77 @@ let shrink = 3l (* a point drawn in the bracket *)
 let check = 4l (* a midpoint of the drawn point's acceptance check *)
 let finished = 5l
 
-type ('u, 'f, 'a) walk = {
+type ('u, 'f, 'a, 'd) walk = {
   last : 'u; (* the last position each walker evaluated *)
   x : 'u; (* the walker, or the point under check *)
-  lp : (float, 'f) Nx.t;
+  lp : (float, 'f, 'd) Nx.t;
   aux : 'a;
-  lo : (float, 'f) Nx.t; (* the bracket, in steps along the direction *)
-  hi : (float, 'f) Nx.t;
-  left : (float, 'f) Nx.t; (* the doubled bracket's lower end *)
-  home : (float, 'f) Nx.t; (* the walker's cell in it, from 0 *)
-  doublings : Nx.int32_t;
-  in_lo : Nx.bool_t; (* whether the doubled or checked interval's ends lie *)
-  in_hi : Nx.bool_t; (* in the slice *)
-  inner : Nx.bool_t; (* [[walker; bits]]: per doubling, whether the inner and *)
-  outer : Nx.bool_t; (* outer ends of the half it added lie in the slice *)
-  candidate : (float, 'f) Nx.t; (* the point under check *)
-  check_lo : (float, 'f) Nx.t; (* its checked interval's lower end *)
-  levels : Nx.int32_t; (* the halvings left of its check *)
-  phase : Nx.int32_t;
-  evaluations : Nx.int32_t;
-  trip : Nx.int32_t;
+  lo : (float, 'f, 'd) Nx.t; (* the bracket, in steps along the direction *)
+  hi : (float, 'f, 'd) Nx.t;
+  left : (float, 'f, 'd) Nx.t; (* the doubled bracket's lower end *)
+  home : (float, 'f, 'd) Nx.t; (* the walker's cell in it, from 0 *)
+  doublings : 'd Nx.int32_t;
+  in_lo : 'd Nx.bool_t; (* whether the doubled or checked interval's ends lie *)
+  in_hi : 'd Nx.bool_t; (* in the slice *)
+  inner : 'd Nx.bool_t; (* [[walker; bits]]: per doubling, whether the inner and *)
+  outer : 'd Nx.bool_t; (* outer ends of the half it added lie in the slice *)
+  candidate : (float, 'f, 'd) Nx.t; (* the point under check *)
+  check_lo : (float, 'f, 'd) Nx.t; (* its checked interval's lower end *)
+  levels : 'd Nx.int32_t; (* the halvings left of its check *)
+  phase : 'd Nx.int32_t;
+  evaluations : 'd Nx.int32_t;
+  trip : 'd Nx.int32_t;
 }
 
-type ('u, 'f, 'a) walk' = ('u, 'f, 'a) walk
 
-let walk_ptree (type u f a) (u : u P.t) (a : a P.t) : (u, f, a) walk P.t =
-  let module S = struct
-    type _ t = (u, f, a) walk'
-
-    let walk c (w : (u, f, a) walk) : (u, f, a) walk =
-      let open P.Walk in
-      let last = field c "last" (structure u) w.last in
-      let x = field c "x" (structure u) w.x in
-      let lp = field c "lp" tensor w.lp in
-      let aux = field c "aux" (structure a) w.aux in
-      let lo = field c "lo" tensor w.lo in
-      let hi = field c "hi" tensor w.hi in
-      let left = field c "left" tensor w.left in
-      let home = field c "home" tensor w.home in
-      let doublings = field c "doublings" tensor w.doublings in
-      let in_lo = field c "in_lo" tensor w.in_lo in
-      let in_hi = field c "in_hi" tensor w.in_hi in
-      let inner = field c "inner" tensor w.inner in
-      let outer = field c "outer" tensor w.outer in
-      let candidate = field c "candidate" tensor w.candidate in
-      let check_lo = field c "check_lo" tensor w.check_lo in
-      let levels = field c "levels" tensor w.levels in
-      let phase = field c "phase" tensor w.phase in
-      let evaluations = field c "evaluations" tensor w.evaluations in
-      let trip = field c "trip" tensor w.trip in
-      {
-        last;
-        x;
-        lp;
-        aux;
-        lo;
-        hi;
-        left;
-        home;
-        doublings;
-        in_lo;
-        in_hi;
-        inner;
-        outer;
-        candidate;
-        check_lo;
-        levels;
-        phase;
-        evaluations;
-        trip;
-      }
-  end in
-  P.nest (module S) P.unit
+let walk_ptree (type u f a) (u : (u, 'd) P.t) (a : (a, 'd) P.t) : ((u, f, a, 'd) walk, 'd) P.t =
+  let walk c (w : (u, f, a, 'd) walk) : (u, f, a, 'd) walk =
+    let open P.Walk in
+    let last = field c "last" (structure u) w.last in
+    let x = field c "x" (structure u) w.x in
+    let lp = field c "lp" tensor w.lp in
+    let aux = field c "aux" (structure a) w.aux in
+    let lo = field c "lo" tensor w.lo in
+    let hi = field c "hi" tensor w.hi in
+    let left = field c "left" tensor w.left in
+    let home = field c "home" tensor w.home in
+    let doublings = field c "doublings" tensor w.doublings in
+    let in_lo = field c "in_lo" tensor w.in_lo in
+    let in_hi = field c "in_hi" tensor w.in_hi in
+    let inner = field c "inner" tensor w.inner in
+    let outer = field c "outer" tensor w.outer in
+    let candidate = field c "candidate" tensor w.candidate in
+    let check_lo = field c "check_lo" tensor w.check_lo in
+    let levels = field c "levels" tensor w.levels in
+    let phase = field c "phase" tensor w.phase in
+    let evaluations = field c "evaluations" tensor w.evaluations in
+    let trip = field c "trip" tensor w.trip in
+    {
+      last;
+      x;
+      lp;
+      aux;
+      lo;
+      hi;
+      left;
+      home;
+      doublings;
+      in_lo;
+      in_hi;
+      inner;
+      outer;
+      candidate;
+      check_lo;
+      levels;
+      phase;
+      evaluations;
+      trip;
+    }
+  in
+  P.v walk
 
 (* [per_row keys f] is [f k] for each row's key [k]. *)
-let per_row keys f = Rune.vmap P.(Nx.Rng.ptree @-> returns tensor) f keys
+let per_row keys f = Rune.vmap P.((Nx.Ptree.v Nx.Rng.walk) @-> returns tensor) f keys
 
 (* Per-walker flags, [[walker; bits]]: [at flags column i] is row [r]'s flag
    [i.(r)], and [put flags column i mask v] sets it to [v.(r)] where [mask];
@@ -133,28 +129,29 @@ let put flags column i mask v =
    doubling could not have produced this bracket, and accepting it would break
    reversibility. The ends of the half first parted come from the doubling; each
    further level evaluates its midpoint. *)
-let move (type f) context u a eval keys ~direction x0 (lp0 : (float, f) Nx.t)
+let move (type f) context u a eval keys ~direction x0 (lp0 : (float, f, 'd) Nx.t)
     aux0 =
   let dt = Nx.dtype lp0 in
   let c = (Nx.shape lp0).(0) in
   let b = bits dt in
-  let i32 v = Nx.scalar Nx.int32 v in
-  let f v = Nx.scalar dt v in
+  let on = Nx.beside lp0 in
+  let i32 v = Nx.scalar_at on Nx.int32 v in
+  let f v = Nx.scalar_like lp0 v in
   let pow2 e = Nx.pow (f 2.) (Nx.cast dt e) in
   let uniform i =
-    per_row keys (fun k -> Nx.Rng.uniform (Nx.Rng.fold_in k i) dt [||])
+    per_row keys (fun k -> Noise.uniform (Nx.Rng.fold_in k i) dt [||])
   in
   let lo = Nx.mul_s (uniform 0) (-.width) in
   let level = Nx.add lp0 (Nx.log (uniform 2)) in
   let resolution = f (width *. Prec.eps dt) in
   let powers =
     Nx.unsqueeze ~axes:[ 0 ]
-      (Nx.pow (f 2.) (Nx.arange_f dt 0. (float_of_int b) 1.))
+      (Nx.pow (f 2.) (Nx.arange_f_at on dt 0. (float_of_int b) 1.))
   in
-  let column = Nx.unsqueeze ~axes:[ 0 ] (Nx.arange Nx.int32 0 b 1) in
+  let column = Nx.unsqueeze ~axes:[ 0 ] (Nx.arange_at on Nx.int32 0 b 1) in
   let trip_keys =
     Rune.vmap
-      P.(Nx.Rng.ptree @-> returns Nx.Rng.ptree)
+      P.((Nx.Ptree.v Nx.Rng.walk) @-> returns (Nx.Ptree.v Nx.Rng.walk))
       (fun k -> Nx.Rng.fold_in k 3)
       keys
   in
@@ -171,10 +168,10 @@ let move (type f) context u a eval keys ~direction x0 (lp0 : (float, f) Nx.t)
     (* A draw, and a key for the density, per walker and trip. *)
     let draw, eval_keys =
       Rune.vmap
-        P.(Nx.Rng.ptree @-> returns (pair tensor Nx.Rng.ptree))
+        P.((Nx.Ptree.v Nx.Rng.walk) @-> returns (pair tensor (Nx.Ptree.v Nx.Rng.walk)))
         (fun k ->
           let k = Nx.Rng.fold_in_tensor k w.trip in
-          (Nx.Rng.uniform (Nx.Rng.fold_in k 0) dt [||], Nx.Rng.fold_in k 1))
+          (Noise.uniform (Nx.Rng.fold_in k 0) dt [||], Nx.Rng.fold_in k 1))
         trip_keys
     in
     let span = Nx.sub w.hi w.lo in
@@ -311,8 +308,8 @@ let move (type f) context u a eval keys ~direction x0 (lp0 : (float, f) Nx.t)
       trip = Nx.add w.trip one;
     }
   in
-  let no = Nx.zeros Nx.bool [| c |] in
-  let zero = Nx.zeros dt [| c |] in
+  let no = Nx.zeros_at on Nx.bool [| c |] in
+  let zero = Nx.zeros_at on dt [| c |] in
   let w =
     Rune.iterate (walk_ptree u a) ~max:(bound dt)
       ~until:(fun w -> Nx.logical_not (Nx.any (Nx.less w.phase finished')))
@@ -326,16 +323,16 @@ let move (type f) context u a eval keys ~direction x0 (lp0 : (float, f) Nx.t)
         hi = Nx.add_s lo width;
         left = lo;
         home = zero;
-        doublings = Nx.zeros Nx.int32 [| c |];
+        doublings = Nx.zeros_at on Nx.int32 [| c |];
         in_lo = no;
         in_hi = no;
-        inner = Nx.zeros Nx.bool [| c; b |];
-        outer = Nx.zeros Nx.bool [| c; b |];
+        inner = Nx.zeros_at on Nx.bool [| c; b |];
+        outer = Nx.zeros_at on Nx.bool [| c; b |];
         candidate = zero;
         check_lo = zero;
-        levels = Nx.zeros Nx.int32 [| c |];
-        phase = Nx.full Nx.int32 [| c |] lower;
-        evaluations = Nx.zeros Nx.int32 [| c |];
+        levels = Nx.zeros_at on Nx.int32 [| c |];
+        phase = Nx.full_at on Nx.int32 [| c |] lower;
+        evaluations = Nx.zeros_at on Nx.int32 [| c |];
         trip = i32 0l;
       }
   in
@@ -346,7 +343,7 @@ let move (type f) context u a eval keys ~direction x0 (lp0 : (float, f) Nx.t)
 let unit_directions u keys lp like =
   let z =
     Rune.vmap
-      P.(Nx.Rng.ptree @-> u @-> returns u)
+      P.((Nx.Ptree.v Nx.Rng.walk) @-> u @-> returns u)
       (fun k x ->
         let i = ref (-1) in
         P.map u
@@ -368,7 +365,7 @@ let hit_and_run context u a eval keys g x lp aux =
   let z =
     unit_directions P.tensor
       (Rune.vmap
-         P.(Nx.Rng.ptree @-> returns Nx.Rng.ptree)
+         P.((Nx.Ptree.v Nx.Rng.walk) @-> returns (Nx.Ptree.v Nx.Rng.walk))
          (fun k -> Nx.Rng.fold_in k 5)
          keys)
       lp rows

@@ -8,48 +8,45 @@ module H = Hamiltonian
 
 let invalid_argf = Rows.invalid_argf
 
-type ('u, 'f) state = {
+type ('u, 'f, 'd) state = {
   position : 'u;
-  lp : (float, 'f) Nx.t;
+  lp : (float, 'f, 'd) Nx.t;
   grad : 'u;
-  step_size : (float, 'f) Nx.t;
-  length : (float, 'f) Nx.t;
-  geometry : ('u, 'f) Gaussian.t;
-  stats : 'f Stats.t;
-  draw : Nx.int32_t;
-  accept : (float, 'f) Nx.t;
+  step_size : (float, 'f, 'd) Nx.t;
+  length : (float, 'f, 'd) Nx.t;
+  geometry : ('u, 'f, 'd) Gaussian.t;
+  stats : ('f, 'd) Stats.t;
+  draw : 'd Nx.int32_t;
+  accept : (float, 'f, 'd) Nx.t;
 }
 
-type ('u, 'f) hmc = ('u, 'f) state
-type 'f stats = 'f Stats.t
+type ('u, 'f, 'd) hmc = ('u, 'f, 'd) state
+type ('f, 'd) stats = ('f, 'd) Stats.t
 
-let ptree (type u f) (u : u P.t) : (u, f) state P.t =
+let ptree (type u f) (u : (u, 'd) P.t) : ((u, f, 'd) state, 'd) P.t =
   let g = Gaussian.ptree u in
-  let module S = struct
-    type _ t = (u, f) hmc
-
-    let walk c s =
-      let open P.Walk in
-      let position = field c "position" (structure u) s.position in
-      let lp = field c "lp" tensor s.lp in
-      let grad = field c "grad" (structure u) s.grad in
-      let step_size = field c "step_size" tensor s.step_size in
-      let length = field c "length" tensor s.length in
-      let geometry = field c "geometry" (structure g) s.geometry in
-      let stats =
-        field c "stats" (structure (Stats.ptree (Nx.dtype s.lp))) s.stats
-      in
-      let draw = field c "draw" tensor s.draw in
-      let accept = field c "accept" tensor s.accept in
-      { position; lp; grad; step_size; length; geometry; stats; draw; accept }
-  end in
-  P.nest (module S) P.unit
+  let walk c (s : (u, f, 'd) hmc) : (u, f, 'd) hmc =
+    let open P.Walk in
+    let position = field c "position" (structure u) s.position in
+    let lp = field c "lp" tensor s.lp in
+    let grad = field c "grad" (structure u) s.grad in
+    let step_size = field c "step_size" tensor s.step_size in
+    let length = field c "length" tensor s.length in
+    let geometry = field c "geometry" (structure g) s.geometry in
+    let stats =
+      field c "stats" (structure (Stats.ptree (Nx.dtype s.lp))) s.stats
+    in
+    let draw = field c "draw" tensor s.draw in
+    let accept = field c "accept" tensor s.accept in
+    { position; lp; grad; step_size; length; geometry; stats; draw; accept }
+  in
+  P.v walk
 
 let stats = Stats.ptree
 
 (* [transition u lp k s] is one transition of every chain from [s], and what it
    tells warmup. *)
-let transition (type f) u lp k (s : (_, f) state) =
+let transition (type f) u lp k (s : (_, f, 'd) state) =
   let t =
     H.transition "Norn.Hmc.step" u lp k s.geometry ~step_size:s.step_size
       ~length:s.length s.position s.lp s.grad
@@ -63,7 +60,7 @@ let transition (type f) u lp k (s : (_, f) state) =
         step_size = Nx.broadcast_to [| c |] s.step_size;
         n_steps = t.steps;
         diverging = t.diverging;
-        saturated = Nx.zeros Nx.bool [| c |];
+        saturated = Nx.zeros_like t.diverging;
         energy = t.energy;
       }
   in
@@ -73,7 +70,7 @@ let transition (type f) u lp k (s : (_, f) state) =
       lp = t.lp;
       grad = t.grad;
       stats;
-      draw = Nx.add s.draw (Nx.scalar Nx.int32 1l);
+      draw = Nx.add_s s.draw 1l;
     },
     t )
 
@@ -85,9 +82,10 @@ let init u ?(accept = 0.8) ?(rank = 2) ?geometry lp position =
     invalid_argf "%s: accept = %g is not in (0, 1)" context accept;
   if rank < 0 then invalid_argf "%s: rank = %d is negative" context rank;
   let c = Rows.count context u position in
+  Rows.whole_chains context ~reads:"its chains share one step size and geometry" u position;
   let l, g = Rows.evaluate u lp position in
   Rows.check_density context u lp position l;
-  let dt = Nx.dtype l in
+  let dt = Nx.dtype l and on = Nx.beside l in
   (* Orthonormal directions number at most a chain's float elements. *)
   let rank = min rank (Rows.elements u c position) in
   let geometry =
@@ -109,40 +107,43 @@ let init u ?(accept = 0.8) ?(rank = 2) ?geometry lp position =
           let directions =
             P.map u
               (fun _ t ->
-                Nx.zeros (Nx.dtype t) (Array.append [| rank |] (Nx.shape t)))
+                Nx.zeros_at (Nx.beside t) (Nx.dtype t)
+                  (Array.append [| rank |] (Nx.shape t)))
               mean
           in
           Gaussian.low_rank u ~mean ~scale ~directions
-            ~variances:(Nx.ones dt [| rank |])
+            ~variances:(Nx.ones_at on dt [| rank |])
   in
-  let zero = Nx.zeros dt [| c |] and no = Nx.zeros Nx.bool [| c |] in
+  let zero = Nx.zeros_at on dt [| c |] and no = Nx.zeros_at on Nx.bool [| c |] in
   {
     position;
     lp = l;
     grad = g;
-    step_size = Nx.scalar dt 1.;
-    length = Nx.scalar dt 1.;
+    step_size = Nx.scalar_at on dt 1.;
+    length = Nx.scalar_at on dt 1.;
     geometry;
     stats =
       Stats.
         {
           lp = l;
           acceptance = zero;
-          step_size = Nx.ones dt [| c |];
-          n_steps = Nx.zeros Nx.int32 [| c |];
+          step_size = Nx.ones_at on dt [| c |];
+          n_steps = Nx.zeros_at on Nx.int32 [| c |];
           diverging = no;
           saturated = no;
           energy = zero;
         };
-    draw = Nx.scalar Nx.int32 0l;
-    accept = Nx.scalar dt accept;
+    draw = Nx.scalar_at on Nx.int32 0l;
+    accept = Nx.scalar_at on dt accept;
   }
 
 (* Transitions *)
 
-let step u lp k s = fst (transition u lp k s)
+let step u lp k (s : (_, _, 'd) state) =
+  fst (transition u lp (Nx.Rng.place (Nx.beside s.lp) k) s)
 
-let sample u lp k ~draws (s : (_, _) state) =
+let sample u lp k ~draws (s : (_, _, 'd) state) =
+  let k = Nx.Rng.place (Nx.beside s.lp) k in
   if draws < 1 then
     invalid_argf "Norn.Hmc.sample: draws = %d is not positive" draws;
   let dt = Nx.dtype s.lp in
@@ -150,11 +151,11 @@ let sample u lp k ~draws (s : (_, _) state) =
   let s, (xs, ss) =
     Rune.scan sp P.tensor
       P.(pair u st)
-      ~f:(fun (s : (_, _) state) _ ->
+      ~f:(fun (s : (_, _, 'd) state) _ ->
         let s = step u lp (Nx.Rng.fold_in_tensor k s.draw) s in
         (s, (s.position, s.stats)))
       ~init:s
-      (Nx.zeros Nx.int32 [| draws |])
+      (Nx.zeros_at (Nx.beside s.lp) Nx.int32 [| draws |])
   in
   let swap x = Nx.moveaxis 0 1 x in
   let xs = P.map u (fun _ t -> swap t) xs in
@@ -171,33 +172,29 @@ let sample u lp k ~draws (s : (_, _) state) =
    in whitened coordinates, weighted by acceptance; Adam steps it, and the run
    keeps the iterates' polynomial average. *)
 
-type ('u, 'f) adapt = {
-  st : ('u, 'f) state;
-  averaging : 'f Adapt.averaging;
-  chees : 'f H.chees;
-  window : 'u Adapt.window;
+type ('u, 'f, 'd) adapt = {
+  st : ('u, 'f, 'd) state;
+  averaging : ('f, 'd) Adapt.averaging;
+  chees : ('f, 'd) H.chees;
+  window : ('u, 'd) Adapt.window;
 }
 
-type ('u, 'f) adapt' = ('u, 'f) adapt
 
-let adapt_ptree (type u f) (u : u P.t) : (u, f) adapt P.t =
+let adapt_ptree (type u f) (u : (u, 'd) P.t) : ((u, f, 'd) adapt, 'd) P.t =
   let sp = ptree u in
-  let module S = struct
-    type _ t = (u, f) adapt'
-
-    let walk c (a : (u, f) adapt) : (u, f) adapt =
-      let open P.Walk in
-      let st = field c "st" (structure sp) a.st in
-      let averaging =
-        field c "averaging" (structure (Adapt.averaging_ptree ())) a.averaging
-      in
-      let chees = field c "chees" (structure (H.chees_ptree ())) a.chees in
-      let window =
-        field c "window" (structure (Adapt.window_ptree u)) a.window
-      in
-      { st; averaging; chees; window }
-  end in
-  P.nest (module S) P.unit
+  let walk c (a : (u, f, 'd) adapt) : (u, f, 'd) adapt =
+    let open P.Walk in
+    let st = field c "st" (structure sp) a.st in
+    let averaging =
+      field c "averaging" (structure (Adapt.averaging_ptree ())) a.averaging
+    in
+    let chees = field c "chees" (structure (H.chees_ptree ())) a.chees in
+    let window =
+      field c "window" (structure (Adapt.window_ptree u)) a.window
+    in
+    { st; averaging; chees; window }
+  in
+  P.v walk
 
 (* [log_harmonic_mean d] is the log of the chains' harmonic mean acceptance of
    log acceptance ratios [d]. *)
@@ -214,7 +211,7 @@ let harmonic_mean a =
    [s.step_size], until one leapfrog step from every chain's position with a
    fresh momentum crosses a harmonic mean acceptance of 0.8. [k] is the key of
    the transition the search precedes. *)
-let init_step_size u lp k (s : (_, _) state) =
+let init_step_size u lp k (s : (_, _, 'd) state) =
   let c = (Nx.shape s.lp).(0) in
   let f = Gaussian.flat u s.position s.geometry in
   H.search "Norn.Hmc.warmup" P.tensor
@@ -223,7 +220,8 @@ let init_step_size u lp k (s : (_, _) state) =
     (H.enter u f s.position s.lp s.grad)
     s.step_size
 
-let warmup (type f) u lp k ~steps (s : (_, f) state) =
+let warmup (type f) u lp k ~steps (s : (_, f, 'd) state) =
+  let k = Nx.Rng.place (Nx.beside s.lp) k in
   if steps < 0 then invalid_argf "Norn.Hmc.warmup: steps = %d is negative" steps;
   let schedule = Adapt.schedule steps in
   if schedule = [] then s
@@ -233,9 +231,9 @@ let warmup (type f) u lp k ~steps (s : (_, f) state) =
     let longest = List.fold_left (fun m (n, _) -> max m n) 0 schedule in
     (* A low-rank fit reads the window's draws; a diagonal one their sums. *)
     let buffer = if rank = 0 then 0 else longest in
-    let key (st : (_, _) state) = Nx.Rng.fold_in_tensor k st.draw in
+    let key (st : (_, _, 'd) state) = Nx.Rng.fold_in_tensor k st.draw in
     let s0 = { s with step_size = init_step_size u lp (key s) s } in
-    let zero = Nx.zeros dt [||] in
+    let zero = Nx.zeros_like s0.length in
     let a0 =
       {
         st = s0;
@@ -250,7 +248,7 @@ let warmup (type f) u lp k ~steps (s : (_, f) state) =
         window = Adapt.empty u ~buffer s0.position;
       }
     in
-    let one (a : (_, f) adapt) =
+    let one (a : (_, f, 'd) adapt) =
       let st, move = transition u lp (key a.st) a.st in
       let averaging, step_size =
         Adapt.average a.averaging ~target:st.accept (harmonic_mean move.alpha)
@@ -260,7 +258,7 @@ let warmup (type f) u lp k ~steps (s : (_, f) state) =
       let window = Adapt.record u a.window st.position st.grad in
       { st; averaging; chees; window }
     in
-    let window (a : (_, f) adapt) (length, refit) =
+    let window (a : (_, f, 'd) adapt) (length, refit) =
       let a = { a with window = Adapt.reopen u a.window a.st.position } in
       let a =
         Rune.iterate (adapt_ptree u) ~max:longest
@@ -269,7 +267,7 @@ let warmup (type f) u lp k ~steps (s : (_, f) state) =
       in
       (* At a slow window's end: refit the geometry to every chain's draws, find
          a step size for it and restart the averaging there. *)
-      let refit = Nx.not_equal refit (Nx.scalar Nx.int32 0l) in
+      let refit = Nx.not_equal_s refit 0l in
       let geometry = Adapt.pooled u dt ~rank a.window in
       let gp = Gaussian.ptree u in
       let refitted =
@@ -294,7 +292,8 @@ let warmup (type f) u lp k ~steps (s : (_, f) state) =
     let a, () =
       Rune.scan (adapt_ptree u)
         P.(pair tensor tensor)
-        P.unit ~f:window ~init:a0 (Adapt.windows schedule)
+        P.unit ~f:window ~init:a0
+        (Adapt.windows (Nx.beside s0.step_size) schedule)
     in
     {
       a.st with

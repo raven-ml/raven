@@ -9,14 +9,18 @@ module Path = Nx.Ptree.Path
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
+(* [element v] is the one element of [v], as its dtype prints it. *)
+let element v =
+  Format.asprintf "%a" (Nx.Dtype.pp_value (Nx.dtype v)) (Nx.item [] v)
+
 let shape_string s =
   String.concat "; " (Array.to_list (Array.map string_of_int s))
 
 (* Effects *)
 
 type _ Effect.t +=
-  | Sample : ('x, 'f) D.t -> 'x Effect.t
-  | Factor : (float, 'f) Nx.t -> unit Effect.t
+  | Sample : ('x, 'f, 'd) D.t -> 'x Effect.t
+  | Factor : (float, 'f, 'd) Nx.t -> unit Effect.t
 
 let sample d = Effect.perform (Sample d)
 let factor l = Effect.perform (Factor l)
@@ -48,22 +52,23 @@ type learned = {
   support : unit -> Norn.Support.t;
 }
 
-type ('p, 'y, 'f) t = {
+type ('p, 'y, 'f, 'd) t = {
   dtype : (float, 'f) Nx.dtype;
-  latent : 'p Nx.Ptree.t;
-  observed : 'y Nx.Ptree.t;
+  latent : ('p, 'd) Nx.Ptree.t;
+  observed : ('y, 'd) Nx.Ptree.t;
   gen : unit -> 'p * 'y;
   sites : learned array;
   like : 'p; (* the latent value [v] learned, a skeleton for coordinates *)
-  reparams : (int * (((float, 'f) Nx.t, 'f) D.t -> 'f Bij.t)) list;
-  fixed : (int * Nx.packed) list;
+  at : 'd Nx.Placement.t; (* where the values of [v]'s run lie, uncut *)
+  reparams : (int * (((float, 'f, 'd) Nx.t, 'f, 'd) D.t -> ('f, 'd) Bij.t)) list;
+  fixed : (int * 'd Nx.packed) list;
 }
 
 type 'p coords = 'p
 
 (* Values of any kind *)
 
-let pack : type x f. (x, f) D.t -> x -> Nx.packed =
+let pack : type x f d. (x, f, d) D.t -> x -> d Nx.packed =
  fun d x ->
   match D.kind d with
   | D.Continuous -> Nx.P x
@@ -71,7 +76,7 @@ let pack : type x f. (x, f) D.t -> x -> Nx.packed =
   | D.Categories -> Nx.P x
   | D.Booleans -> Nx.P x
 
-let unpack : type x f. (x, f) D.t -> Nx.packed -> x =
+let unpack : type x f d. (x, f, d) D.t -> d Nx.packed -> x =
  fun d p ->
   match D.kind d with
   | D.Continuous -> Nx.unpack (D.dtype d) p
@@ -81,7 +86,7 @@ let unpack : type x f. (x, f) D.t -> Nx.packed -> x =
 
 (* [fresh d x] is [x], or a copy of it if it is [source]: a handed-out value is
    distinct from every coordinate and datum. *)
-let fresh : type x f. (x, f) D.t -> x -> Nx.packed -> x =
+let fresh : type x f d. (x, f, d) D.t -> x -> d Nx.packed -> x =
  fun d x source ->
   let (Nx.P s) = source in
   if Obj.repr x != Obj.repr s then x
@@ -92,17 +97,21 @@ let fresh : type x f. (x, f) D.t -> x -> Nx.packed -> x =
     | D.Categories -> Nx.copy x
     | D.Booleans -> Nx.copy x
 
-let zeros_of : type x f. (x, f) D.t -> int array -> x =
+let zeros_of : type x f d. (x, f, d) D.t -> int array -> x =
  fun d s ->
   match D.kind d with
-  | D.Continuous -> Nx.zeros (D.dtype d) s
-  | D.Counts -> Nx.zeros Nx.int32 s
-  | D.Categories -> Nx.zeros Nx.int64 s
-  | D.Booleans -> Nx.zeros Nx.bool s
+  | D.Continuous -> Nx.zeros_at (D.placement d) (D.dtype d) s
+  | D.Counts -> Nx.zeros_at (D.placement d) Nx.int32 s
+  | D.Categories -> Nx.zeros_at (D.placement d) Nx.int64 s
+  | D.Booleans -> Nx.zeros_at (D.placement d) Nx.bool s
+
+(* A value of a site [v] learned, on the set of the site's distribution. *)
+type any = Any : 'd Nx.packed -> any
 
 let same (Nx.P a) (Nx.P b) = Obj.repr a == Obj.repr b
+let same_any (Any (Nx.P a)) (Nx.P b) = Obj.repr a == Obj.repr b
 let packed_shape (Nx.P x) = Nx.shape x
-let packed_dtype (Nx.P x) = Nx_dtype.to_string (Nx.dtype x)
+let packed_dtype (Nx.P x) = Nx.Dtype.name (Nx.dtype x)
 
 let leaves s x =
   Array.of_list
@@ -125,7 +134,7 @@ let site_name side path = match Path.to_string path with "" -> side | s -> s
 (* Learning *)
 
 type seen = {
-  value : Nx.packed;
+  value : any;
   s_family : string;
   s_shape : int array;
   discrete : bool;
@@ -139,11 +148,12 @@ type seen = {
 
 (* [learn d] answers a site at [v]: a continuous site with its bijector's image
    of zero coordinates, a discrete one with zeros. *)
-let learn : type x f. (x, f) D.t -> x * seen =
+let learn : type x f d. (x, f, d) D.t -> x * seen =
  fun d ->
   let shape = D.shape d in
   let points x =
-    let f = D.factors (D.check ~unless:(Nx.scalar Nx.bool true) "" d) x in
+    let yes = Nx.scalar_at (D.placement d) Nx.bool true in
+    let f = D.factors (D.check ~unless:yes "" d) x in
     if Nx.ndim f = 0 then 1 else (Nx.shape f).(0)
   in
   let seen value ~discrete ~coord_shape ~coordinates x =
@@ -154,7 +164,7 @@ let learn : type x f. (x, f) D.t -> x * seen =
       discrete;
       s_coord_shape = coord_shape;
       s_coordinates = coordinates;
-      s_dtype = packed_dtype value;
+      s_dtype = (match value with Any p -> packed_dtype p);
       s_values =
         (match D.kind d with
         | D.Continuous -> Reals
@@ -169,14 +179,14 @@ let learn : type x f. (x, f) D.t -> x * seen =
   | D.Continuous ->
       let b = D.coords d in
       let cs = Bij.shape b shape in
-      let x, _ = Bij.forward b (Nx.zeros (D.dtype d) cs) in
+      let x, _ = Bij.forward b (Nx.zeros_at (D.placement d) (D.dtype d) cs) in
       ( x,
-        seen (Nx.P x) ~discrete:false ~coord_shape:cs
+        seen (Any (Nx.P x)) ~discrete:false ~coord_shape:cs
           ~coordinates:(Format.asprintf "%a" Bij.pp b)
           x )
   | _ ->
       let x = zeros_of d shape in
-      (x, seen (pack d x) ~discrete:true ~coord_shape:[| 0 |] ~coordinates:"" x)
+      (x, seen (Any (pack d x)) ~discrete:true ~coord_shape:[| 0 |] ~coordinates:"" x)
 
 let v dtype latent observed gen =
   let seen = ref [] in
@@ -219,7 +229,7 @@ let v dtype latent observed gen =
                model returns every sampled value unchanged"
               (if role = Latent then "latent" else "observed")
               name
-          else if same seen.(i).value t then i
+          else if same_any seen.(i).value t then i
           else find (i + 1)
         in
         let i = find 0 in
@@ -270,15 +280,37 @@ let v dtype latent observed gen =
             })
       seen
   in
-  { dtype; latent; observed; gen; sites; like = p; reparams = []; fixed = [] }
+  (* The run's values lie where their distributions' parameters do: the model
+     lies there. *)
+  let first s x =
+    Nx.Ptree.fold s
+      (fun _ t at -> match at with None -> Some (Nx.beside t) | at -> at)
+      x None
+  in
+  let at =
+    match (first latent p, first observed y) with
+    | Some at, _ | None, Some at -> at
+    | None, None -> invalid_arg "Norn_model.v: the model samples nothing"
+  in
+  {
+    dtype;
+    latent;
+    observed;
+    gen;
+    sites;
+    like = p;
+    at;
+    reparams = [];
+    fixed = [];
+  }
 
 (* Running a model *)
 
 (* An answer to a site: [i] its index, [l] what [v] learned of it. *)
-type answer = { answer : 'x 'f. int -> learned -> ('x, 'f) D.t -> 'x }
+type 'd answer = { answer : 'x 'f. int -> learned -> ('x, 'f, 'd) D.t -> 'x }
 
 (* An answer to a factor. *)
-type factor = { factor : 'f. (float, 'f) Nx.t -> unit }
+type 'd factor = { factor : 'f. (float, 'f, 'd) Nx.t -> unit }
 
 let no_factor = { factor = (fun _ -> ()) }
 
@@ -293,9 +325,10 @@ let static_check context l d =
 
 (* [run m context a ~factor] runs [m]'s model, answering each site with [a] and
    each factor with [factor], and checks the result rule. *)
-let run m context a ~factor =
+let run (type d) (m : (_, _, _, d) t) context (a : d answer) ~(factor : d factor)
+    =
   let n = Array.length m.sites in
-  let handed = Array.make n None in
+  let handed : d Nx.packed option array = Array.make n None in
   let next = ref 0 in
   let effc : type b. b Effect.t -> ((b, _) Effect.Deep.continuation -> _) option
       = function
@@ -313,15 +346,28 @@ let run m context a ~factor =
                 n;
             let l = m.sites.(i) in
             static_check context l d;
-            next := i + 1;
-            let x = a.answer i l d in
-            handed.(i) <- Some (pack d x);
-            Effect.Deep.continue k x)
+            match Nx.Placement.same (D.placement d) m.at with
+            | None ->
+                invalid_argf
+                  "%s: site %s: the distribution lies on another device set \
+                   than the model"
+                  context l.site.name
+            | Some Type.Equal ->
+                next := i + 1;
+                let x = a.answer i l d in
+                handed.(i) <- Some (pack d x);
+                Effect.Deep.continue k x)
     | Factor l ->
         Some
           (fun k ->
-            factor.factor l;
-            Effect.Deep.continue k ())
+            match Nx.Placement.same (Nx.placement l) m.at with
+            | None ->
+                invalid_argf
+                  "%s: a factor lies on another device set than the model"
+                  context
+            | Some Type.Equal ->
+                factor.factor l;
+                Effect.Deep.continue k ())
     | _ -> None
   in
   let p, y = Effect.Deep.try_with m.gen () { effc } in
@@ -358,23 +404,24 @@ let reparam_of m i = List.assoc_opt i m.reparams
 let fixed_of m i = List.assoc_opt i m.fixed
 
 (* [bijector m i d] is the coordinates' bijector of the continuous site [i]. *)
-let bijector (type f g) (m : (_, _, f) t) i (d : ((float, g) Nx.t, g) D.t) :
-    g Bij.t =
+let bijector (type f g) (m : (_, _, f, 'd) t) i
+    (d : ((float, g, 'd) Nx.t, g, 'd) D.t) : (g, 'd) Bij.t =
   match reparam_of m i with
   | None -> D.coords d
   | Some b -> (
-      match Nx_dtype.equal_witness (D.dtype d) m.dtype with
+      match Nx.Dtype.equal_witness (D.dtype d) m.dtype with
       | Some Type.Equal -> b d
       | None ->
           invalid_argf "Norn_model.reparam: site %s is %s, the model %s"
             m.sites.(i).site.name
-            (Nx_dtype.to_string (D.dtype d))
-            (Nx_dtype.to_string m.dtype))
+            (Nx.Dtype.name (D.dtype d))
+            (Nx.Dtype.name m.dtype))
 
 (* [forward m i d u] is the continuous site [i]'s value at coordinates [u],
    fresh, and its log-determinant. *)
-let forward : type x g.
-    (_, _, _) t -> int -> (x, g) D.t -> Nx.packed -> x * (float, g) Nx.t =
+let forward : type x g d.
+    (_, _, _, d) t -> int -> (x, g, d) D.t -> d Nx.packed -> x * (float, g, d) Nx.t
+    =
  fun m i d u ->
   match D.kind d with
   | D.Continuous ->
@@ -382,7 +429,7 @@ let forward : type x g.
       (fresh d x u, ld)
   | _ -> assert false (* [v] refuses a discrete latent site *)
 
-let inverse : type x g. (_, _, _) t -> int -> (x, g) D.t -> x -> Nx.packed =
+let inverse : type x g d. (_, _, _, d) t -> int -> (x, g, d) D.t -> x -> d Nx.packed =
  fun m i d x ->
   match D.kind d with
   | D.Continuous -> Nx.P (Bij.inverse (bijector m i d) x)
@@ -393,21 +440,21 @@ let inverse : type x g. (_, _, _) t -> int -> (x, g) D.t -> x -> Nx.packed =
 (* A site's term, and what explains it when it is not finite: its factors'
    shape, the first element whose factor is not finite (flat, or 0), whether
    every factor is finite, and the bounds of the support at that element. *)
-type 'f term = {
+type ('f, 'd) term = {
   name : string;
-  value : (float, 'f) Nx.t;
+  value : (float, 'f, 'd) Nx.t;
   shape : int array;
-  outside : Nx.int32_t;
-  finite : Nx.bool_t;
-  lo : (float, 'f) Nx.t;
-  hi : (float, 'f) Nx.t;
+  outside : 'd Nx.int32_t;
+  finite : 'd Nx.bool_t;
+  lo : (float, 'f, 'd) Nx.t;
+  hi : (float, 'f, 'd) Nx.t;
 }
 
-type 'f score = {
-  mutable total : (float, 'f) Nx.t;
-  mutable terms : 'f term list;
-  mutable points : (float, 'f) Nx.t list;
-  mutable factors : (float, 'f) Nx.t option;
+type ('f, 'd) score = {
+  mutable total : (float, 'f, 'd) Nx.t;
+  mutable terms : ('f, 'd) term list;
+  mutable points : (float, 'f, 'd) Nx.t list;
+  mutable factors : (float, 'f, 'd) Nx.t option;
 }
 
 (* What a scoring run counts: the latent sites' prior, their log-determinants,
@@ -420,14 +467,14 @@ let all_parts = { prior = true; jacobian = true; likelihood = true }
    term is -inf, as a density a sampler explores must be. [Refuse site]: it
    raises with [site name] as the context, except where the density so far is
    -inf or [unless] holds. *)
-type params =
+type 'd params =
   | Total
-  | Refuse of { site : string -> string; unless : Nx.bool_t option }
+  | Refuse of { site : string -> string; unless : 'd Nx.bool_t option }
 
 (* The latent sites' answer: coordinates, or values. *)
-type latent = Coords of Nx.packed array | Values of Nx.packed array
+type 'd latent = Coords of 'd Nx.packed array | Values of 'd Nx.packed array
 
-let neg_inf_like x = Nx.scalar (Nx.dtype x) Float.neg_infinity
+let neg_inf_like x = Nx.scalar_like x Float.neg_infinity
 
 (* [points x] is the log density of each point of [x]: axis 0, every other axis
    summed; a scalar is one point. *)
@@ -438,7 +485,12 @@ let points x =
 
 let score m context params parts latent data =
   let s =
-    { total = Nx.zeros m.dtype [||]; terms = []; points = []; factors = None }
+    {
+      total = Nx.zeros_at m.at m.dtype [||];
+      terms = [];
+      points = [];
+      factors = None;
+    }
   in
   let dead () = Nx.equal s.total (neg_inf_like s.total) in
   (* A term enters where the density so far is finite; where it is -inf the term
@@ -449,12 +501,12 @@ let score m context params parts latent data =
       Nx.logical_or (dead ())
         (Nx.logical_not
            (Nx.logical_or (Nx.isnan term)
-              (Nx.equal term (Nx.scalar m.dtype Float.infinity))))
+              (Nx.equal_s term Float.infinity)))
     in
     Nx.check Nx.Ptree.tensor ok term (fun _ v ->
         Invalid_argument
           (Printf.sprintf "%s: %s: its log density is %s" context source
-             (Nx.to_string v)));
+             (element v)));
     s.total <- Nx.where (dead ()) s.total (Nx.add s.total term);
     term
   in
@@ -462,10 +514,10 @@ let score m context params parts latent data =
      are not, the term is -inf. *)
   let add : type x g.
       string ->
-      Nx.bool_t ->
-      (x, g) D.t ->
-      (float, g) Nx.t ->
-      (float, g) Nx.t ->
+      'd Nx.bool_t ->
+      (x, g, 'd) D.t ->
+      (float, g, 'd) Nx.t ->
+      (float, g, 'd) Nx.t ->
       unit =
    fun name valid d f term ->
     let term = Nx.where valid term (neg_inf_like term) in
@@ -473,7 +525,7 @@ let score m context params parts latent data =
     let flat = Nx.reshape [| Nx.numel f |] (Nx.cast m.dtype f) in
     let bad = Nx.logical_not (Nx.isfinite flat) in
     let outside =
-      if Nx.numel f = 0 then Nx.scalar Nx.int32 0l
+      if Nx.numel f = 0 then Nx.scalar_at m.at Nx.int32 0l
       else Nx.cast Nx.int32 (Nx.argmax ~axis:0 (Nx.cast Nx.int32 bad))
     in
     let lo, hi = D.bounds d in
@@ -484,7 +536,7 @@ let score m context params parts latent data =
         let at x =
           Nx.reshape [||]
             (Nx.take
-               ~indices:(Nx.reshape [| 1 |] (Nx.cast Nx.int64 outside))
+               (Nx.reshape [| 1 |] (Nx.cast Nx.int64 outside))
                (Nx.reshape [| Nx.numel x |] x))
         in
         (at lo, at hi)
@@ -507,7 +559,7 @@ let score m context params parts latent data =
   let checked name d =
     let valid = D.valid d in
     match params with
-    | Total -> (D.check ~unless:(Nx.scalar Nx.bool true) "" d, valid)
+    | Total -> (D.check ~unless:(Nx.scalar_at m.at Nx.bool true) "" d, valid)
     | Refuse { site; unless } ->
         let unless =
           match unless with
@@ -527,7 +579,8 @@ let score m context params parts latent data =
             if parts.prior || parts.jacobian then begin
               let d, valid = checked name d in
               let f =
-                if parts.prior then D.factors d x else Nx.zeros (D.dtype d) [||]
+                if parts.prior then D.factors d x
+                else Nx.zeros_at m.at (D.dtype d) [||]
               in
               let t = Nx.sum f in
               let t = if parts.jacobian then Nx.add t (Nx.sum ld) else t in
@@ -555,7 +608,7 @@ let score m context params parts latent data =
             end;
             x)
   in
-  let factor : type g. (float, g) Nx.t -> unit =
+  let factor : type g. (float, g, 'd) Nx.t -> unit =
    fun l ->
     if parts.likelihood then begin
       let l = Nx.cast m.dtype l in
@@ -684,10 +737,12 @@ let terms m y c =
         let term name =
           match List.find_opt (fun t -> t.name = name) s.terms with
           | Some t -> t.value
-          | None -> Nx.zeros m.dtype [||]
+          | None -> Nx.zeros_at m.at m.dtype [||]
         in
         let factors =
-          match s.factors with Some f -> f | None -> Nx.zeros m.dtype [||]
+          match s.factors with
+          | Some f -> f
+          | None -> Nx.zeros_at m.at m.dtype [||]
         in
         (List.map term names, factors))
       c
@@ -717,7 +772,7 @@ let pointwise m y p =
       (Some ys)
   in
   match List.rev s.points with
-  | [] -> Nx.zeros m.dtype [| 0 |]
+  | [] -> Nx.zeros_at m.at m.dtype [| 0 |]
   | ps -> Nx.concatenate ~axis:0 ps
 
 (* Running forward *)
@@ -729,11 +784,11 @@ let draw context i d k =
 (* [coordinates m like us] is the coordinates [us] of each latent site, in the
    order of [m]'s latent walk, as a value of [m]'s structure. *)
 let coordinates m like us = Nx.Ptree.rebuild m.latent ~like (Array.to_list us)
-let empty_coords (Nx.P x) = Nx.P (Nx.zeros (Nx.dtype x) [| 0 |])
+let empty_coords (Nx.P x) = Nx.P (Nx.zeros_at (Nx.beside x) (Nx.dtype x) [| 0 |])
 
 let prior_draw m context k =
   let n_latent = Array.length (leaves m.latent m.like) in
-  let us = Array.make n_latent (Nx.P (Nx.zeros Nx.float32 [||])) in
+  let us = Array.make n_latent (Nx.P (Nx.zeros_at m.at Nx.float32 [||])) in
   let answer i l d =
     let x =
       match fixed_of m i with
@@ -755,7 +810,7 @@ let from_prior m ~n k =
   let context = "Norn_model.from_prior" in
   if n < 1 then invalid_argf "%s: n = %d is not positive" context n;
   Rune.vmap
-    Nx.Ptree.(Nx.Rng.ptree @-> returns m.latent)
+    Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> returns m.latent)
     (fun k ->
       let p, _, us = prior_draw m context k in
       coordinates m p us)
@@ -819,13 +874,13 @@ let zero_coords m =
   Nx.Ptree.map m.latent
     (fun _ x ->
       incr j;
-      Nx.zeros (Nx.dtype x) shapes.(!j))
+      Nx.zeros_at (Nx.beside x) (Nx.dtype x) shapes.(!j))
     m.like
 
 (* Initialisation *)
 
 module Init = struct
-  type 'p t = Uniform | Prior | Near of 'p
+  type ('p, 'd) t = Uniform | Prior | Near of 'p
 
   let uniform = Uniform
   let prior = Prior
@@ -836,17 +891,17 @@ let candidates = 100
 
 (* [jittered c k half] is [candidates] copies of [c], each element moved
    uniformly in [(-half, half)] by draws from [k]. *)
-let jittered (type a b) (c : (a, b) Nx.t) k half : (a, b) Nx.t =
-  let move (type f) (c : (float, f) Nx.t) =
+let jittered (type a b) (c : (a, b, 'd) Nx.t) k half : (a, b, 'd) Nx.t =
+  let move (type f) (c : (float, f, 'd) Nx.t) =
     let shape = Array.append [| candidates |] (Nx.shape c) in
-    let u = Nx.Rng.uniform k (Nx.dtype c) shape in
+    let u = Nx.Rng.uniform_at (Nx.beside c) ~key:k (Nx.dtype c) shape in
     Nx.add c (Nx.mul_s (Nx.sub_s u 0.5) (2. *. half))
   in
-  match Nx_dtype.kind (Nx.dtype c) with
+  match Nx.Dtype.kind (Nx.dtype c) with
   | Float -> move c
   | _ ->
       invalid_argf "Norn_model.init: a latent site of dtype %s"
-        (Nx_dtype.to_string (Nx.dtype c))
+        (Nx.Dtype.name (Nx.dtype c))
 
 (* [unravel shape k] is the index of the [k]-th element of [shape] in C
    order. *)
@@ -935,6 +990,7 @@ let init ?(from = Init.Uniform) m y ~chains k =
     invalid_argf "%s: chains = %d is not positive" context chains;
   let ys = check_data context m y in
   let lp = log_density m y in
+  let k = Nx.Rng.place m.at k in
   (* [jitter k centre half] is [centre] moved [candidates] times, each tensor
      from its own key. *)
   let jitter k centre half =
@@ -984,15 +1040,17 @@ let init ?(from = Init.Uniform) m y ~chains k =
         s.terms
     in
     let factors =
-      match s.factors with Some f -> f | None -> Nx.zeros m.dtype [||]
+      match s.factors with
+      | Some f -> f
+      | None -> Nx.zeros_at m.at m.dtype [||]
     in
     Nx.check (explain_ptree ()) (Nx.any finite) (sites, factors) (fun _ data ->
         no_start m context terms data);
     let first = Nx.argmax ~axis:0 (Nx.cast Nx.int32 finite) in
-    Nx.Ptree.map m.latent (fun _ x -> Nx.take ~axis:0 ~indices:first x) cands
+    Nx.Ptree.map m.latent (fun _ x -> Nx.take ~axis:0 first x) cands
   in
   Rune.vmap
-    Nx.Ptree.(Nx.Rng.ptree @-> returns m.latent)
+    Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> returns m.latent)
     start
     (Nx.Rng.split_batch ~n:chains k)
 
@@ -1000,7 +1058,9 @@ let init ?(from = Init.Uniform) m y ~chains k =
 
 let select context m sel =
   let fresh =
-    Nx.Ptree.map m.latent (fun _ x -> Nx.zeros (Nx.dtype x) [| 1 |]) m.like
+    Nx.Ptree.map m.latent
+      (fun _ x -> Nx.zeros_at (Nx.beside x) (Nx.dtype x) [| 1 |])
+      m.like
   in
   let r = sel fresh in
   let leaves = leaves m.latent fresh in
@@ -1020,7 +1080,7 @@ let select context m sel =
   in
   site 0
 
-let bijector_name : type x g. (_, _, _) t -> int -> (x, g) D.t -> string =
+let bijector_name : type x g d. (_, _, _, d) t -> int -> (x, g, d) D.t -> string =
  fun m i d ->
   match D.kind d with
   | D.Continuous -> Format.asprintf "%a" Bij.pp (bijector m i d)
@@ -1057,12 +1117,12 @@ let fix sel v m =
   let l = m.sites.(i) in
   if
     Nx.shape v <> l.site.shape
-    || Nx_dtype.to_string (Nx.dtype v) <> l.value_dtype
+    || Nx.Dtype.name (Nx.dtype v) <> l.value_dtype
   then
     invalid_argf "%s: site %s is %s [%s], the value %s [%s]" context l.site.name
       l.value_dtype
       (shape_string l.site.shape)
-      (Nx_dtype.to_string (Nx.dtype v))
+      (Nx.Dtype.name (Nx.dtype v))
       (shape_string (Nx.shape v));
   let sites = Array.copy m.sites in
   sites.(i) <-

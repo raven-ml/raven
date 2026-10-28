@@ -18,7 +18,7 @@ module M = Norn_model
 type 'a params = { loc : 'a; scale : 'a }
 
 module Params = struct
-  type 'a t = 'a params
+  type ('a, _) t = 'a params
 
   let walk c { loc; scale } =
     let open Nx.Ptree.Walk in
@@ -27,7 +27,7 @@ module Params = struct
     { loc; scale }
 end
 
-let params : Nx.float64_t params Nx.Ptree.t =
+let params : (Nx.host Nx.float64_t params, Nx.host) Nx.Ptree.t =
   Nx.Ptree.instantiate (module Params)
 
 let s x = Nx.scalar Nx.float64 x

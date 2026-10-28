@@ -10,9 +10,9 @@ let f64 = Nx.scalar Nx.float64
 
 type model = {
   name : string;
-  prior : Nx.float64_t -> Nx.float64_t;
-  likelihood : Nx.float64_t -> Nx.float64_t;
-  draw : Nx.Rng.t -> int -> Nx.float64_t; (* [n] prior draws *)
+  prior : Nx.host Nx.float64_t -> Nx.host Nx.float64_t;
+  likelihood : Nx.host Nx.float64_t -> Nx.host Nx.float64_t;
+  draw : Nx.host Nx.Rng.key -> int -> Nx.host Nx.float64_t; (* [n] prior draws *)
   log_z : float;
 }
 
@@ -28,7 +28,7 @@ let cube d =
       (Nx.full Nx.float64 [| rows x |] Float.neg_infinity)
   in
   let draw k n =
-    Nx.mul_s (Nx.sub_s (Nx.Rng.uniform k Nx.float64 [| n; d |]) 0.5) 10.
+    Nx.mul_s (Nx.sub_s (Nx.Rng.uniform ~key:k Nx.float64 [| n; d |]) 0.5) 10.
   in
   (prior, draw, log_volume)
 
@@ -92,6 +92,6 @@ let conjugate =
       (fun x ->
         let r = Nx.sum ~axes:[ 1 ] (Nx.square (Nx.sub yt x)) in
         Nx.sub_s (Nx.mul_s r (-0.5)) (0.5 *. m *. Float.log (2. *. Float.pi)));
-    draw = (fun k n -> Nx.Rng.normal k Nx.float64 [| n; 1 |]);
+    draw = (fun k n -> Nx.Rng.normal ~key:k Nx.float64 [| n; 1 |]);
     log_z;
   }

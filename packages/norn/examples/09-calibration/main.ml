@@ -24,7 +24,7 @@ let model =
 let posterior ~widen key y ~draws =
   let mean = Nx.div_s (Nx.sum y) (float_of_int (n + 1)) in
   let sd = widen /. sqrt (float_of_int (n + 1)) in
-  let z = Nx.Rng.normal key f64 [| 1; draws |] in
+  let z = Nx.Rng.normal ~key f64 [| 1; draws |] in
   Norn.Draws.v t (Nx.add mean (Nx.mul_s z sd))
 
 let draws = 99

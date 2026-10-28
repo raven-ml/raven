@@ -5,14 +5,14 @@
 
 (** The implementation of {!Norn.Stats}. *)
 
-type 'f t = {
-  lp : (float, 'f) Nx.t;
-  acceptance : (float, 'f) Nx.t;
-  step_size : (float, 'f) Nx.t;
-  n_steps : Nx.int32_t;
-  diverging : Nx.bool_t;
-  saturated : Nx.bool_t;
-  energy : (float, 'f) Nx.t;
+type ('f, 'd) t = {
+  lp : (float, 'f, 'd) Nx.t;
+  acceptance : (float, 'f, 'd) Nx.t;
+  step_size : (float, 'f, 'd) Nx.t;
+  n_steps : 'd Nx.int32_t;
+  diverging : 'd Nx.bool_t;
+  saturated : 'd Nx.bool_t;
+  energy : (float, 'f, 'd) Nx.t;
 }
 
-val ptree : (float, 'f) Nx.dtype -> 'f t Nx.Ptree.t
+val ptree : (float, 'f) Nx.dtype -> (('f, 'd) t, 'd) Nx.Ptree.t

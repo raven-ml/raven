@@ -3,23 +3,23 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type ('u, 'f) t = {
-  sample : ('u, 'f) Weighted.t;
-  log_evidence : (float, 'f) Nx.t;
-  error : (float, 'f) Nx.t;
-  information : (float, 'f) Nx.t;
-  stop : Nx.int32_t; (* [converged], [remaining] or [temperature] *)
-  reached : (float, 'f) Nx.t; (* the payload of [stop] *)
-  replicates : (float, 'f) Nx.t;
+type ('u, 'f, 'd) t = {
+  sample : ('u, 'f, 'd) Weighted.t;
+  log_evidence : (float, 'f, 'd) Nx.t;
+  error : (float, 'f, 'd) Nx.t;
+  information : (float, 'f, 'd) Nx.t;
+  stop : 'd Nx.int32_t; (* [converged], [remaining] or [temperature] *)
+  reached : (float, 'f, 'd) Nx.t; (* the payload of [stop] *)
+  replicates : (float, 'f, 'd) Nx.t;
       (* the sample's normalised log weights under each simulated shrinkage
          sequence, [[r; n]]; one row, the weights themselves, without one *)
-  groups : Nx.int32_t;
+  groups : 'd Nx.int32_t;
       (* each draw's group, below [group_count]: draws of one group may be
          correlated, draws of two are independent *)
   group_count : int;
 }
 
-type ('u, 'f) evidence = ('u, 'f) t
+type ('u, 'f, 'd) evidence = ('u, 'f, 'd) t
 
 let converged = 0l
 let remaining = 1l
@@ -48,35 +48,32 @@ let error z = z.error
 let information z = z.information
 let sample z = z.sample
 
-let ptree (type u f) (u : u Nx.Ptree.t) : (u, f) t Nx.Ptree.t =
+let ptree (type u f) (u : (u, 'd) Nx.Ptree.t) : ((u, f, 'd) t, 'd) Nx.Ptree.t =
   let w = Weighted.ptree u in
-  let module S = struct
-    type _ t = (u, f) evidence
-
-    let walk c z =
-      let open Nx.Ptree.Walk in
-      let sample = field c "sample" (structure w) z.sample in
-      let log_evidence = field c "log_evidence" tensor z.log_evidence in
-      let error = field c "error" tensor z.error in
-      let information = field c "information" tensor z.information in
-      let stop = field c "stop" tensor z.stop in
-      let reached = field c "reached" tensor z.reached in
-      let replicates = field c "replicates" tensor z.replicates in
-      let groups = field c "groups" tensor z.groups in
-      let group_count = field c "group_count" int z.group_count in
-      {
-        sample;
-        log_evidence;
-        error;
-        information;
-        stop;
-        reached;
-        replicates;
-        groups;
-        group_count;
-      }
-  end in
-  Nx.Ptree.nest (module S) Nx.Ptree.unit
+  let walk c (z : (u, f, 'd) evidence) : (u, f, 'd) evidence =
+    let open Nx.Ptree.Walk in
+    let sample = field c "sample" (structure w) z.sample in
+    let log_evidence = field c "log_evidence" tensor z.log_evidence in
+    let error = field c "error" tensor z.error in
+    let information = field c "information" tensor z.information in
+    let stop = field c "stop" tensor z.stop in
+    let reached = field c "reached" tensor z.reached in
+    let replicates = field c "replicates" tensor z.replicates in
+    let groups = field c "groups" tensor z.groups in
+    let group_count = field c "group_count" int z.group_count in
+    {
+      sample;
+      log_evidence;
+      error;
+      information;
+      stop;
+      reached;
+      replicates;
+      groups;
+      group_count;
+    }
+  in
+  Nx.Ptree.v walk
 
 (* Expectations
 
@@ -88,8 +85,8 @@ let ptree (type u f) (u : u Nx.Ptree.t) : (u, f) t Nx.Ptree.t =
    delta method's [Σ_i w_i² (f_i - m)²], and a group per lineage or chain of
    correlated draws counts their correlation. *)
 
-let expectation (type u f) (u : u Nx.Ptree.t) (f : u -> (float, f) Nx.t)
-    (z : (u, f) t) =
+let expectation (type u f) (u : (u, 'd) Nx.Ptree.t) (f : u -> (float, f, 'd) Nx.t)
+    (z : (u, f, 'd) t) =
   let fx = Rune.vmap Nx.Ptree.(u @-> returns tensor) f z.sample.values in
   let n = (Nx.shape fx).(0) in
   let shape = Array.sub (Nx.shape fx) 1 (Nx.ndim fx - 1) in
@@ -108,17 +105,18 @@ let expectation (type u f) (u : u Nx.Ptree.t) (f : u -> (float, f) Nx.t)
   let e = (Nx.shape fx).(1) in
   let ids = Nx.cast Nx.int64 z.groups in
   let per_group values like =
-    Nx.scatter ~mode:`Add ~axis:0
-      ~indices:(Nx.broadcast_to (Nx.shape values) (Nx.reshape [| n; 1 |] ids))
-      ~values like
+    Nx.scatter ~combine:Add ~axis:0
+      (Nx.broadcast_to (Nx.shape values) (Nx.reshape [| n; 1 |] ids))
+      values like
   in
   let total =
-    per_group (Nx.reshape [| n; 1 |] w) (Nx.zeros (Nx.dtype w) [| g; 1 |])
+    per_group (Nx.reshape [| n; 1 |] w)
+      (Nx.zeros_at (Nx.beside w) (Nx.dtype w) [| g; 1 |])
   in
   let sums =
     per_group
       (Nx.mul (Nx.reshape [| n; 1 |] w) fx)
-      (Nx.zeros (Nx.dtype w) [| g; e |])
+      (Nx.zeros_at (Nx.beside w) (Nx.dtype w) [| g; e |])
   in
   let means =
     Nx.div sums

@@ -9,7 +9,7 @@ module G = Norn.Gaussian
 type 'a pos = { a : 'a; b : 'a }
 
 module Pos = struct
-  type 'a t = 'a pos
+  type ('a, _) t = 'a pos
 
   let walk c { a; b } =
     let open Nx.Ptree.Walk in
@@ -18,7 +18,7 @@ module Pos = struct
     { a; b }
 end
 
-let pos : Nx.float64_t pos Nx.Ptree.t = Nx.Ptree.instantiate (module Pos)
+let pos : (Nx.host Nx.float64_t pos, Nx.host) Nx.Ptree.t = Nx.Ptree.instantiate (module Pos)
 let vec xs = Nx.create Nx.float64 [| Array.length xs |] xs
 let floats x = Nx.to_array x
 let close = float_rel ~rel:1e-10 ~abs:1e-12
@@ -63,7 +63,7 @@ let dense =
 
 let gaussian_log_density x =
   let d = Nx.sub x (to_vec mean) in
-  let _, logdet = Nx.slogdet dense in
+  let _, logdet = Nx.slogdet Nx.float64 dense in
   let q = Nx.item [] (Nx.vdot d (Nx.solve dense d)) in
   (-0.5 *. q) -. (0.5 *. Nx.item [] logdet) -. (2. *. Float.log (2. *. Float.pi))
 
@@ -146,6 +146,14 @@ let laws =
 let errors =
   group "errors"
     [
+      test "a mean of no tensor is refused" (fun () ->
+          raises
+            (Invalid_argument "Norn.Gaussian.diagonal: the mean holds no tensor")
+            (fun () -> G.diagonal Nx.Ptree.unit Nx.float64 ~mean:() ~scale:());
+          raises
+            (Invalid_argument
+               "Norn.Gaussian.of_precision: the mean holds no tensor")
+            (fun () -> G.of_precision Nx.Ptree.unit Nx.float64 ~mean:() ()));
       test "a precision that is not positive names its path" (fun () ->
           raises
             (Invalid_argument

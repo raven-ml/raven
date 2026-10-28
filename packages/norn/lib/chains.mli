@@ -7,7 +7,7 @@
 
     An element's draws are [float array array], a row per chain. *)
 
-val leaf : ('a, 'b) Nx.t -> (int array * float array array) array
+val leaf : ('a, 'b, 'd) Nx.t -> (int array * float array array) array
 (** [leaf x] is the index and chains of each element of the draws [x], of shape
     [[c; n; ...]], in C order. *)
 

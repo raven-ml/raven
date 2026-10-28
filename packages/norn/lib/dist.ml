@@ -8,45 +8,46 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 (* A parameter's domain check, run on use: [run context unless] checks the
    parameter where [unless] does not hold, its message starting with [context];
    [inside ()] is whether every element is in the domain. *)
-type check = {
-  run : string -> Nx.bool_t option -> unit;
-  inside : unit -> Nx.bool_t;
+type 'd check = {
+  run : string -> 'd Nx.bool_t option -> unit;
+  inside : unit -> 'd Nx.bool_t;
 }
 
-type ('x, 'f) kind =
-  | Continuous : ((float, 'f) Nx.t, 'f) kind
-  | Counts : (Nx.int32_t, 'f) kind
-  | Categories : (Nx.int64_t, 'f) kind
-  | Booleans : (Nx.bool_t, 'f) kind
+type ('x, 'f, 'd) kind =
+  | Continuous : ((float, 'f, 'd) Nx.t, 'f, 'd) kind
+  | Counts : ('d Nx.int32_t, 'f, 'd) kind
+  | Categories : ('d Nx.int64_t, 'f, 'd) kind
+  | Booleans : ('d Nx.bool_t, 'f, 'd) kind
 
 (* A distribution is its family's operations as closures, with its domain checks
    and whether they have run ([checked]). [descr] names it in [pp] and in
    errors. *)
-type ('x, 'f) t = {
+type ('x, 'f, 'd) t = {
   family : string;
   descr : string;
   dtype : (float, 'f) Nx.dtype;
   shape : int array;
-  checks : check list;
+  checks : 'd check list;
   checked : bool;
   support : unit -> Support.t;
-  bounds : unit -> (float, 'f) Nx.t * (float, 'f) Nx.t;
+  bounds : unit -> (float, 'f, 'd) Nx.t * (float, 'f, 'd) Nx.t;
       (* each element's least and greatest value, unbroadcast *)
-  factors : 'x -> (float, 'f) Nx.t;
-  draw : Nx.Rng.t -> int array -> 'x; (* at a value shape *)
-  coords : 'f Bij.t option;
-  standardize : 'f Bij.t option;
-  quantile : ((float, 'f) Nx.t -> (float, 'f) Nx.t) option;
-  membership : ('x -> (float, 'f) Nx.t) option;
-  kind : ('x, 'f) kind;
+  factors : 'x -> (float, 'f, 'd) Nx.t;
+  draw : 'd Nx.Rng.key -> int array -> 'x; (* at a value shape *)
+  coords : ('f, 'd) Bij.t option;
+  standardize : ('f, 'd) Bij.t option;
+  quantile : ((float, 'f, 'd) Nx.t -> (float, 'f, 'd) Nx.t) option;
+  membership : ('x -> (float, 'f, 'd) Nx.t) option;
+  kind : ('x, 'f, 'd) kind;
+  at : 'd Nx.Placement.t; (* where the parameters lie, uncut *)
 }
 
 (* A combinator applies tensor operations to values whose type only their family
    knows: [apply k f x] applies [f], polymorphic in the tensor's type, to [x],
    of kind [k]. *)
-type map = { f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t }
+type 'd map = { f : 'a 'b. ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t }
 
-let apply : type x f. (x, f) kind -> map -> x -> x =
+let apply : type x f d. (x, f, d) kind -> d map -> x -> x =
  fun kind m x ->
   match kind with
   | Continuous -> m.f x
@@ -54,7 +55,7 @@ let apply : type x f. (x, f) kind -> map -> x -> x =
   | Categories -> m.f x
   | Booleans -> m.f x
 
-let ndim : type x f. (x, f) kind -> x -> int =
+let ndim : type x f d. (x, f, d) kind -> x -> int =
  fun kind x ->
   match kind with
   | Continuous -> Nx.ndim x
@@ -77,7 +78,7 @@ let select axis i =
             i
         in
         Nx.squeeze ~axes:[ axis ]
-          (Nx.take_along_axis ~axis ~indices:(Nx.broadcast_to shape i) x));
+          (Nx.take_along_axis ~axis (Nx.broadcast_to shape i) x));
   }
 
 (* Shapes *)
@@ -112,11 +113,11 @@ let describe family params =
             Printf.sprintf "%s: %s [%s]" name dt (shape_string s))
           params))
 
-let param name x = (name, Nx_dtype.to_string (Nx.dtype x), Nx.shape x)
+let param name x = (name, Nx.Dtype.name (Nx.dtype x), Nx.shape x)
 
 (* Domains *)
 
-let const x v = Nx.scalar (Nx.dtype x) v
+let const x v = Nx.scalar_like x v
 let neg_inf x = const x Float.neg_infinity
 let positive x = Nx.greater x (const x 0.)
 let non_negative x = Nx.greater_equal x (const x 0.)
@@ -138,7 +139,7 @@ let check family param domain inside x =
         in
         Invalid_argument
           (Printf.sprintf "%s: %s: %s%s is %s, not in %s" context family param
-             at (Nx.to_string v) domain))
+             at (Rows.element v) domain))
   in
   { run; inside = (fun () -> Nx.all (inside x)) }
 
@@ -175,20 +176,22 @@ let xlogy x y =
 let inside ok x safe = Nx.where ok x (const x safe)
 let outside ok f = Nx.where ok f (neg_inf f)
 
-(* [open_unit k dt s] is uniform on [(0, 1)]: a draw of [Nx.Rng.uniform], a
+(* [open_unit k dt s] is uniform on [(0, 1)]: a draw of [Noise.uniform], a
    multiple of [2^-p], moved by half a step, so neither end is reached. *)
-let open_unit k dt s = Nx.add_s (Nx.Rng.uniform k dt s) (Prec.eps dt /. 4.)
+let open_unit k dt s = Nx.add_s (Noise.uniform k dt s) (Prec.eps dt /. 4.)
 let broadcast_to s x = Nx.broadcast_to s x
 
 (* Families *)
 
 (* A continuous value's bounds are its coordinates' image of the reals. *)
-let coord_bounds dtype coords () =
+let coord_bounds at dtype coords () =
   Bij.bounds coords
-    (Nx.scalar dtype Float.neg_infinity, Nx.scalar dtype Float.infinity)
+    ( Nx.scalar_at at dtype Float.neg_infinity,
+      Nx.scalar_at at dtype Float.infinity )
 
 let continuous ~family ~params ~shape ~checks ~support ~factors ~draw ~coords
-    ?standardize ?quantile dtype =
+    ?standardize ?quantile like =
+  let dtype = Nx.dtype like and at = Nx.beside like in
   {
     family;
     descr = describe family params;
@@ -197,7 +200,7 @@ let continuous ~family ~params ~shape ~checks ~support ~factors ~draw ~coords
     checks;
     checked = false;
     support;
-    bounds = coord_bounds dtype coords;
+    bounds = coord_bounds at dtype coords;
     factors;
     draw;
     coords = Some coords;
@@ -205,6 +208,7 @@ let continuous ~family ~params ~shape ~checks ~support ~factors ~draw ~coords
     quantile;
     membership = None;
     kind = Continuous;
+    at;
   }
 
 let location_scale family ~loc ~scale ~density ~draw ?quantile () =
@@ -219,13 +223,13 @@ let location_scale family ~loc ~scale ~density ~draw ?quantile () =
     ~draw:(fun k s -> Nx.add loc (Nx.mul scale (draw k dt s)))
     ~coords:Bij.identity ~standardize:(Bij.affine ~loc ~scale)
     ?quantile:(Option.map (fun q p -> Nx.add loc (Nx.mul scale (q p))) quantile)
-    dt
+    loc
 
 let normal ~loc ~scale =
   location_scale "normal" ~loc ~scale
     ~density:(fun z ->
       Nx.add_s (Nx.mul_s (Nx.square z) (-0.5)) (-.half_log_2pi))
-    ~draw:Nx.Rng.normal ~quantile:Nx.ndtri ()
+    ~draw:Noise.normal ~quantile:Nx.ndtri ()
 
 let cauchy_quantile p = Nx.tan (Nx.mul_s (Nx.sub_s p 0.5) Float.pi)
 
@@ -275,8 +279,8 @@ let student_t ~df ~loc ~scale =
     let k1, k2 =
       match Nx.Rng.split k with [| a; b |] -> (a, b) | _ -> assert false
     in
-    let z = Nx.Rng.normal k1 dt s in
-    let g = Nx.Rng.gamma k2 (broadcast_to s half_df) in
+    let z = Noise.normal k1 dt s in
+    let g = Nx.Rng.gamma ~key:k2 (broadcast_to s half_df) in
     Nx.add loc (Nx.mul scale (Nx.mul z (Nx.sqrt (Nx.div half_df g))))
   in
   continuous ~family
@@ -289,7 +293,7 @@ let student_t ~df ~loc ~scale =
         in_positive family "scale" scale;
       ]
     ~support:(fun () -> Support.Real)
-    ~factors ~draw ~coords:Bij.identity ~standardize:(Bij.affine ~loc ~scale) dt
+    ~factors ~draw ~coords:Bij.identity ~standardize:(Bij.affine ~loc ~scale) df
 
 let lognormal ~loc ~scale =
   let family = "lognormal" in
@@ -309,23 +313,23 @@ let lognormal ~loc ~scale =
     ~checks:[ in_reals family "loc" loc; in_positive family "scale" scale ]
     ~support:(fun () -> Support.Greater 0.)
     ~factors
-    ~draw:(fun k s -> Nx.exp (Nx.add loc (Nx.mul scale (Nx.Rng.normal k dt s))))
+    ~draw:(fun k s -> Nx.exp (Nx.add loc (Nx.mul scale (Noise.normal k dt s))))
     ~coords:Bij.exp
     ~standardize:(Bij.compose Bij.exp (Bij.affine ~loc ~scale))
     ~quantile:(fun p -> Nx.exp (Nx.add loc (Nx.mul scale (Nx.ndtri p))))
-    dt
+    loc
 
 (* A family on [(0, inf)] whose density at [x] is [density x], the value
    replaced by [1] outside before the arithmetic. *)
 let positive_family ~family ~params ~shape ~checks ~density ~draw ?quantile
-    ~closed dt =
+    ~closed like =
   let factors x =
     let ok = if closed then non_negative x else positive x in
     outside ok (density (inside ok x 1.))
   in
   continuous ~family ~params ~shape ~checks
     ~support:(fun () -> Support.Greater 0.)
-    ~factors ~draw ~coords:Bij.exp ?quantile dt
+    ~factors ~draw ~coords:Bij.exp ?quantile like
 
 let half_normal ~scale =
   let family = "half_normal" in
@@ -341,9 +345,9 @@ let half_normal ~scale =
            (Nx.mul_s (Nx.square z) (-0.5))
            (Float.log 2. -. half_log_2pi))
         (Nx.log scale))
-    ~draw:(fun k s -> Nx.mul scale (Nx.abs (Nx.Rng.normal k dt s)))
+    ~draw:(fun k s -> Nx.mul scale (Nx.abs (Noise.normal k dt s)))
     ~quantile:(fun p -> Nx.mul scale (Nx.ndtri (Nx.mul_s (Nx.add_s p 1.) 0.5)))
-    dt
+    scale
 
 let half_cauchy ~scale =
   let family = "half_cauchy" in
@@ -360,7 +364,7 @@ let half_cauchy ~scale =
            (Float.log 2. -. log_pi))
         (Nx.log scale))
     ~draw:(fun k s -> quantile (open_unit k dt s))
-    ~quantile dt
+    ~quantile scale
 
 let exponential ~rate =
   let family = "exponential" in
@@ -370,13 +374,12 @@ let exponential ~rate =
     ~shape:(Nx.shape rate)
     ~checks:[ in_positive family "rate" rate ]
     ~density:(fun x -> Nx.sub (Nx.log rate) (Nx.mul rate x))
-    ~draw:(fun k s -> Nx.div (Nx.Rng.exponential k dt s) rate)
+    ~draw:(fun k s -> Nx.div (Noise.exponential k dt s) rate)
     ~quantile:(fun p -> Nx.div (Nx.neg (Nx.log1p (Nx.neg p))) rate)
-    dt
+    rate
 
 let gamma ~concentration ~rate =
   let family = "gamma" in
-  let dt = Nx.dtype rate in
   let a = concentration in
   positive_family ~family ~closed:false
     ~params:[ param "concentration" a; param "rate" rate ]
@@ -389,12 +392,11 @@ let gamma ~concentration ~rate =
            (Nx.sub (Nx.mul a (Nx.log rate)) (Nx.lgamma a))
            (Nx.mul (Nx.sub_s a 1.) (Nx.log x)))
         (Nx.mul rate x))
-    ~draw:(fun k s -> Nx.div (Nx.Rng.gamma k (broadcast_to s a)) rate)
-    dt
+    ~draw:(fun k s -> Nx.div (Nx.Rng.gamma ~key:k (broadcast_to s a)) rate)
+    a
 
 let inverse_gamma ~concentration ~scale =
   let family = "inverse_gamma" in
-  let dt = Nx.dtype scale in
   let a = concentration in
   positive_family ~family ~closed:false
     ~params:[ param "concentration" a; param "scale" scale ]
@@ -407,12 +409,11 @@ let inverse_gamma ~concentration ~scale =
            (Nx.sub (Nx.mul a (Nx.log scale)) (Nx.lgamma a))
            (Nx.mul (Nx.add_s a 1.) (Nx.log x)))
         (Nx.div scale x))
-    ~draw:(fun k s -> Nx.div scale (Nx.Rng.gamma k (broadcast_to s a)))
-    dt
+    ~draw:(fun k s -> Nx.div scale (Nx.Rng.gamma ~key:k (broadcast_to s a)))
+    a
 
 let beta ~a ~b =
   let family = "beta" in
-  let dt = Nx.dtype a in
   let factors x =
     let ok = Nx.logical_and (positive x) (Nx.less x (const x 1.)) in
     let x = inside ok x 0.5 in
@@ -429,9 +430,9 @@ let beta ~a ~b =
     ~checks:[ in_positive family "a" a; in_positive family "b" b ]
     ~support:(fun () -> Support.Interval (0., 1.))
     ~factors
-    ~draw:(fun k s -> Nx.Rng.beta k (broadcast_to s a) (broadcast_to s b))
-    ~coords:(Bij.interval ~low:(Nx.scalar dt 0.) ~high:(Nx.scalar dt 1.))
-    dt
+    ~draw:(fun k s -> Nx.Rng.beta ~key:k (broadcast_to s a) (broadcast_to s b))
+    ~coords:(Bij.interval ~low:(Nx.scalar_like a 0.) ~high:(Nx.scalar_like a 1.))
+    a
 
 let uniform ~low ~high =
   let family = "uniform" in
@@ -453,10 +454,10 @@ let uniform ~low ~high =
       ]
     ~support:(fun () -> Bij.image coords Support.Real [||])
     ~factors
-    ~draw:(fun k s -> Nx.add low (Nx.mul width (Nx.Rng.uniform k dt s)))
+    ~draw:(fun k s -> Nx.add low (Nx.mul width (Noise.uniform k dt s)))
     ~coords
     ~quantile:(fun p -> Nx.add low (Nx.mul width p))
-    dt
+    low
 
 let dirichlet ~concentration =
   let family = "dirichlet" in
@@ -501,8 +502,8 @@ let dirichlet ~concentration =
     ~checks:[ in_positive family "concentration" a ]
     ~support:(fun () -> Support.Simplex k)
     ~factors
-    ~draw:(fun key shape -> Nx.Rng.dirichlet key (broadcast_to shape a))
-    ~coords:Bij.simplex dt
+    ~draw:(fun key shape -> Nx.Rng.dirichlet ~key:key (broadcast_to shape a))
+    ~coords:Bij.simplex a
 
 let mvn ~loc ~scale_tril =
   let family = "mvn" in
@@ -543,7 +544,7 @@ let mvn ~loc ~scale_tril =
       (Nx.sum ~axes:[ Nx.ndim log_diag - 1 ] log_diag)
   in
   let draw k s =
-    let z = Nx.Rng.normal k dt s in
+    let z = Noise.normal k dt s in
     let n = Array.length s in
     Nx.add loc
       (Nx.squeeze ~axes:[ n ] (Nx.matmul lower (Nx.unsqueeze ~axes:[ n ] z)))
@@ -560,12 +561,13 @@ let mvn ~loc ~scale_tril =
     ~support:(fun () -> Support.Real)
     ~factors ~draw ~coords:Bij.identity
     ~standardize:(Bij.affine_tril ~loc ~scale_tril)
-    dt
+    loc
 
 (* Discrete families *)
 
 let discrete ~family ~kind ~params ~shape ~checks ~support ~bounds ~factors
-    ~draw dtype =
+    ~draw like =
+  let dtype = Nx.dtype like and at = Nx.beside like in
   {
     family;
     descr = describe family params;
@@ -575,7 +577,8 @@ let discrete ~family ~kind ~params ~shape ~checks ~support ~bounds ~factors
     checked = false;
     support = (fun () -> support);
     bounds =
-      (fun () -> (Nx.scalar dtype (fst bounds), Nx.scalar dtype (snd bounds)));
+      (fun () ->
+        (Nx.scalar_at at dtype (fst bounds), Nx.scalar_at at dtype (snd bounds)));
     factors;
     draw;
     coords = None;
@@ -583,6 +586,7 @@ let discrete ~family ~kind ~params ~shape ~checks ~support ~bounds ~factors
     quantile = None;
     membership = None;
     kind;
+    at;
   }
 
 let bernoulli ~logits =
@@ -594,8 +598,8 @@ let bernoulli ~logits =
     ~support:Support.Boolean ~bounds:(0., 1.)
     ~factors:(fun x ->
       Nx.where x (log_sigmoid logits) (log_sigmoid (Nx.neg logits)))
-    ~draw:(fun k s -> Nx.Rng.bernoulli k (Nx.sigmoid (broadcast_to s logits)))
-    (Nx.dtype logits)
+    ~draw:(fun k s -> Nx.Rng.bernoulli ~key:k (Nx.sigmoid (broadcast_to s logits)))
+    logits
 
 let poisson ~rate =
   let family = "poisson" in
@@ -610,12 +614,12 @@ let poisson ~rate =
       ]
     ~support:(Support.Integers_from 0) ~bounds:(0., Float.infinity)
     ~factors:(fun x ->
-      let ok = Nx.greater_equal x (Nx.scalar Nx.int32 0l) in
-      let x = Nx.cast (Nx.dtype rate) (Nx.where ok x (Nx.scalar Nx.int32 0l)) in
+      let ok = Nx.greater_equal x (Nx.scalar_like x 0l) in
+      let x = Nx.cast (Nx.dtype rate) (Nx.where ok x (Nx.scalar_like x 0l)) in
       outside ok
         (Nx.sub (Nx.sub (xlogy x rate) rate) (Nx.lgamma (Nx.add_s x 1.))))
-    ~draw:(fun k s -> Nx.Rng.poisson k (broadcast_to s rate))
-    (Nx.dtype rate)
+    ~draw:(fun k s -> Nx.Rng.poisson ~key:k (broadcast_to s rate))
+    rate
 
 let neg_binomial ~mean ~dispersion =
   let family = "neg_binomial" in
@@ -632,8 +636,8 @@ let neg_binomial ~mean ~dispersion =
       ]
     ~support:(Support.Integers_from 0) ~bounds:(0., Float.infinity)
     ~factors:(fun x ->
-      let ok = Nx.greater_equal x (Nx.scalar Nx.int32 0l) in
-      let x = Nx.cast (Nx.dtype mean) (Nx.where ok x (Nx.scalar Nx.int32 0l)) in
+      let ok = Nx.greater_equal x (Nx.scalar_like x 0l) in
+      let x = Nx.cast (Nx.dtype mean) (Nx.where ok x (Nx.scalar_like x 0l)) in
       let total = Nx.log (Nx.add r mean) in
       let f =
         Nx.add
@@ -649,9 +653,9 @@ let neg_binomial ~mean ~dispersion =
       let k1, k2 =
         match Nx.Rng.split k with [| a; b |] -> (a, b) | _ -> assert false
       in
-      let rate = Nx.mul (Nx.Rng.gamma k1 (broadcast_to s r)) (Nx.div mean r) in
-      Nx.Rng.poisson k2 rate)
-    (Nx.dtype mean)
+      let rate = Nx.mul (Nx.Rng.gamma ~key:k1 (broadcast_to s r)) (Nx.div mean r) in
+      Nx.Rng.poisson ~key:k2 rate)
+    mean
 
 let categorical ~logits =
   let family = "categorical" in
@@ -668,14 +672,14 @@ let categorical ~logits =
     let lp = Nx.broadcast_to (Array.append b [| k |]) lp in
     let ok =
       Nx.logical_and
-        (Nx.greater_equal x (Nx.scalar Nx.int64 0L))
-        (Nx.less x (Nx.scalar Nx.int64 (Int64.of_int k)))
+        (Nx.greater_equal x (Nx.scalar_like x 0L))
+        (Nx.less x (Nx.scalar_like x (Int64.of_int k)))
     in
     let i = Nx.unsqueeze ~axes:[ Array.length b ] (Nx.broadcast_to b x) in
     let f =
       Nx.squeeze
         ~axes:[ Array.length b ]
-        (Nx.take_along_axis ~axis:(Array.length b) ~indices:i lp)
+        (Nx.take_along_axis ~axis:(Array.length b) i lp)
     in
     outside (Nx.broadcast_to b ok) f
   in
@@ -692,8 +696,8 @@ let categorical ~logits =
     ~bounds:(0., float_of_int (k - 1))
     ~factors
     ~draw:(fun key shape ->
-      Nx.Rng.categorical key (broadcast_to (Array.append shape [| k |]) logits))
-    (Nx.dtype logits)
+      Nx.Rng.categorical ~key:key (broadcast_to (Array.append shape [| k |]) logits))
+    logits
 
 (* Combinators *)
 
@@ -742,7 +746,7 @@ let sorted n d =
     factors;
     draw = (fun k s -> fst (Nx.sort ~axis:(Array.length s - 1) (d.draw k s)));
     coords = Some (Bij.compose coords Bij.ordered);
-    bounds = coord_bounds d.dtype (Bij.compose coords Bij.ordered);
+    bounds = coord_bounds d.at d.dtype (Bij.compose coords Bij.ordered);
     standardize = None;
     quantile = None;
     membership = None;
@@ -755,7 +759,7 @@ let sum_trailing k x =
 
 let transform b d =
   let coords = match d.coords with Some c -> c | None -> assert false in
-  let shape = Nx.shape (fst (Bij.forward b (Nx.zeros d.dtype d.shape))) in
+  let shape = Nx.shape (fst (Bij.forward b (Nx.zeros_at d.at d.dtype d.shape))) in
   let factors y =
     let u = Bij.inverse b y in
     let _, ld = Bij.forward b u in
@@ -773,7 +777,7 @@ let transform b d =
     factors;
     draw = (fun k s -> fst (Bij.forward b (d.draw k (Bij.shape b s))));
     coords = Some (Bij.compose b coords);
-    bounds = coord_bounds d.dtype (Bij.compose b coords);
+    bounds = coord_bounds d.at d.dtype (Bij.compose b coords);
     standardize = None;
     quantile = None;
     membership = None;
@@ -785,7 +789,7 @@ let hull_coords family d =
   match d.coords with
   | None -> None
   | Some _ -> (
-      let c v = Nx.scalar d.dtype v in
+      let c v = Nx.scalar_at d.at d.dtype v in
       match d.support () with
       | Support.Real -> Some Bij.identity
       | Support.Greater 0. -> Some Bij.exp
@@ -836,7 +840,7 @@ let mixture ~logits d =
     let r = Array.length batch in
     let all = d.draw k1 (Array.concat [ batch; [| k |]; rest ]) in
     let c =
-      Nx.Rng.categorical k2 (broadcast_to (Array.append batch [| k |]) logits)
+      Nx.Rng.categorical ~key:k2 (broadcast_to (Array.append batch [| k |]) logits)
     in
     apply d.kind (select r c) all
   in
@@ -845,7 +849,7 @@ let mixture ~logits d =
     family;
     descr =
       Printf.sprintf "mixture(logits: %s [%d], %s)"
-        (Nx_dtype.to_string (Nx.dtype logits))
+        (Nx.Dtype.name (Nx.dtype logits))
         k d.descr;
     shape = rest;
     checks =
@@ -859,7 +863,7 @@ let mixture ~logits d =
     draw;
     coords = hull;
     bounds =
-      (match hull with Some h -> coord_bounds d.dtype h | None -> d.bounds);
+      (match hull with Some h -> coord_bounds d.at d.dtype h | None -> d.bounds);
     standardize = None;
     quantile = None;
     membership = Some membership;
@@ -876,6 +880,7 @@ let log_density d x =
   Nx.sum (d.factors x)
 
 let sample k d =
+  let k = Nx.Rng.place d.at k in
   checked "sample" d;
   d.draw k d.shape
 
@@ -909,6 +914,7 @@ let family d = d.family
 let kind d = d.kind
 let dtype d = d.dtype
 let shape d = Array.copy d.shape
+let placement d = d.at
 let support d = d.support ()
 
 let bounds d =
@@ -924,4 +930,4 @@ let check ?unless context d =
 let valid d =
   List.fold_left
     (fun ok c -> Nx.logical_and ok (c.inside ()))
-    (Nx.scalar Nx.bool true) d.checks
+    (Nx.scalar_at d.at Nx.bool true) d.checks

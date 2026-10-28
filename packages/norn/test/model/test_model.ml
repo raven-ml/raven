@@ -17,7 +17,7 @@ let floats x = Nx.to_array (Nx.cast Nx.float64 x)
 type 'a schools = { mu : 'a; tau : 'a; theta : 'a }
 
 module Schools = struct
-  type 'a t = 'a schools
+  type ('a, _) t = 'a schools
 
   let walk c { mu; tau; theta } =
     let open Nx.Ptree.Walk in
@@ -27,7 +27,7 @@ module Schools = struct
     { mu; tau; theta }
 end
 
-let schools : Nx.float64_t schools Nx.Ptree.t =
+let schools : (Nx.host Nx.float64_t schools, Nx.host) Nx.Ptree.t =
   Nx.Ptree.instantiate (module Schools)
 
 let y = vec [| 28.; 8.; -3.; 7.; -1.; 1.; 18.; 12. |]
@@ -47,15 +47,15 @@ let noncentred = M.noncentre (fun p -> p.theta) eight_schools
 let positions c =
   let k = Nx.Rng.key 5 in
   {
-    mu = Nx.Rng.normal (Nx.Rng.fold_in k 0) Nx.float64 [| c |];
-    tau = Nx.Rng.normal (Nx.Rng.fold_in k 1) Nx.float64 [| c |];
-    theta = Nx.Rng.normal (Nx.Rng.fold_in k 2) Nx.float64 [| c; 8 |];
+    mu = Nx.Rng.normal ~key:(Nx.Rng.fold_in k 0) Nx.float64 [| c |];
+    tau = Nx.Rng.normal ~key:(Nx.Rng.fold_in k 1) Nx.float64 [| c |];
+    theta = Nx.Rng.normal ~key:(Nx.Rng.fold_in k 2) Nx.float64 [| c; 8 |];
   }
 
 (* The density's arguments are coordinates; positions built here are taken as
    coordinates through the round trip of a model whose coordinates are its own
    structure. *)
-let as_coords m (x : Nx.float64_t schools) : Nx.float64_t schools M.coords =
+let as_coords m (x : Nx.host Nx.float64_t schools) : Nx.host Nx.float64_t schools M.coords =
   Nx.Ptree.rebuild (M.coords m)
     ~like:(M.from_prior m ~n:1 (Nx.Rng.key 0))
     (fst (Nx.Ptree.flatten schools x))
@@ -99,7 +99,7 @@ let single m c = Nx.Ptree.map (M.coords m) (fun _ t -> Nx.slice [ Nx.I 0 ] t) c
 let unflatten m like v =
   let offset = ref 0 in
   Nx.Ptree.map (M.coords m)
-    (fun _ (type a b) (t : (a, b) Nx.t) : (a, b) Nx.t ->
+    (fun _ (type a b) (t : (a, b, _) Nx.t) : (a, b, _) Nx.t ->
       let n = Nx.numel t in
       let piece = Nx.slice [ Nx.R (!offset, !offset + n) ] v in
       offset := !offset + n;
@@ -122,7 +122,7 @@ let change_of_variables m name =
       let lhs = Nx.item [ 0 ] (M.log_density m y (as_coords m (positions 1))) in
       let values v = flatten schools (M.constrain m (unflatten m c v)) in
       let jac = Rune.jacfwd' values v in
-      let _, logdet = Nx.slogdet jac in
+      let _, logdet = Nx.slogdet Nx.float64 jac in
       let rhs =
         item (M.log_joint eight_schools y (M.constrain m c)) +. item logdet
       in
@@ -152,7 +152,7 @@ let round_trip =
           equal close (item p.tau) (item p'.tau));
       test "non-centred coordinates are the standardised values" (fun () ->
           let p, _ = M.simulate eight_schools (Nx.Rng.key 2) in
-          let c = (M.unconstrain noncentred p :> Nx.float64_t schools) in
+          let c = (M.unconstrain noncentred p :> Nx.host Nx.float64_t schools) in
           let z = Nx.div (Nx.sub p.theta p.mu) p.tau in
           equal (array close) (floats z) (floats c.theta));
       test "simulated values have a finite joint density" (fun () ->
@@ -197,7 +197,7 @@ let gradient =
       let g =
         Rune.grad u (fun c -> Nx.sum (M.log_density eight_schools y c)) c
       in
-      let g = (g :> Nx.float64_t schools) in
+      let g = (g :> Nx.host Nx.float64_t schools) in
       Array.iter
         (fun x -> satisfies ~claim:"finite" float_exact Float.is_finite x)
         (floats g.theta))
@@ -207,7 +207,7 @@ let gradient =
 type 'a two = { a : 'a; b : 'a }
 
 module Two = struct
-  type 'a t = 'a two
+  type ('a, _) t = 'a two
 
   let walk c { a; b } =
     let open Nx.Ptree.Walk in
@@ -216,7 +216,7 @@ module Two = struct
     { a; b }
 end
 
-let two : Nx.float64_t two Nx.Ptree.t = Nx.Ptree.instantiate (module Two)
+let two : (Nx.host Nx.float64_t two, Nx.host) Nx.Ptree.t = Nx.Ptree.instantiate (module Two)
 let std = D.normal ~loc:(f64 0.) ~scale:(f64 1.)
 let model gen = M.v Nx.float64 two Nx.Ptree.tensor gen
 
@@ -413,9 +413,9 @@ let refusals =
           let start =
             Rune.jit
               Nx.Ptree.(
-                Nx.Rng.ptree @-> tensor @-> tensor @-> tensor @-> returns tensor)
+                (Nx.Ptree.v Nx.Rng.walk) @-> tensor @-> tensor @-> tensor @-> returns tensor)
               (fun k low high y ->
-                (M.init (m low high) y ~chains:1 k :> Nx.float64_t))
+                (M.init (m low high) y ~chains:1 k :> Nx.host Nx.float64_t))
           in
           raises_match
             (Exn.invalid_arg
@@ -613,11 +613,11 @@ let inits =
       test "a chain's start does not depend on the chain count" (fun () ->
           let c2 =
             (M.init eight_schools y ~chains:2 (Nx.Rng.key 0)
-              :> Nx.float64_t schools)
+              :> Nx.host Nx.float64_t schools)
           in
           let c4 =
             (M.init eight_schools y ~chains:4 (Nx.Rng.key 0)
-              :> Nx.float64_t schools)
+              :> Nx.host Nx.float64_t schools)
           in
           equal (array float_exact) (floats c2.theta)
             (floats (Nx.slice [ Nx.R (0, 2); Nx.R (0, 8) ] c4.theta)));
@@ -633,9 +633,9 @@ let inits =
           let c =
             (M.init ~from:(M.Init.near p) eight_schools y ~chains:2
                (Nx.Rng.key 4)
-              :> Nx.float64_t schools)
+              :> Nx.host Nx.float64_t schools)
           in
-          let u = (M.unconstrain eight_schools p :> Nx.float64_t schools) in
+          let u = (M.unconstrain eight_schools p :> Nx.host Nx.float64_t schools) in
           less (float 1e-12) ~than:0.1
             (item (Nx.max (Nx.abs (Nx.sub c.mu u.mu)))));
       test "no finite candidate raises" (fun () ->
@@ -654,11 +654,11 @@ let inits =
       test "a prior draw does not depend on the draw count" (fun () ->
           let a =
             (M.from_prior eight_schools ~n:2 (Nx.Rng.key 9)
-              :> Nx.float64_t schools)
+              :> Nx.host Nx.float64_t schools)
           in
           let b =
             (M.from_prior eight_schools ~n:5 (Nx.Rng.key 9)
-              :> Nx.float64_t schools)
+              :> Nx.host Nx.float64_t schools)
           in
           equal (array float_exact) (floats a.mu)
             (floats (Nx.slice [ Nx.R (0, 2) ] b.mu)));
@@ -668,7 +668,7 @@ let fixed =
   test "a fixed site has no coordinates and keeps its value" (fun () ->
       let m = M.fix (fun p -> p.tau) (f64 2.) eight_schools in
       let c = M.from_prior m ~n:3 (Nx.Rng.key 0) in
-      let c' = (c :> Nx.float64_t schools) in
+      let c' = (c :> Nx.host Nx.float64_t schools) in
       equal (array int) [| 3; 0 |] (Nx.shape c'.tau);
       let p = M.constrain m (single m c) in
       equal float_exact 2. (item p.tau);
@@ -693,7 +693,7 @@ let kinds =
                 (rate, counts))
           in
           let rate, counts = M.simulate m (Nx.Rng.key 3) in
-          equal string "int32" (Nx_dtype.to_string (Nx.dtype counts));
+          equal string "int32" (Nx.Dtype.name (Nx.dtype counts));
           satisfies ~claim:"finite" float_exact Float.is_finite
             (item (M.log_joint m counts rate));
           let c = M.init m counts ~chains:2 (Nx.Rng.key 0) in
@@ -707,7 +707,7 @@ let kinds =
                 (w, M.sample (D.iid [| 4 |] (D.categorical ~logits:(Nx.log w)))))
           in
           let c = M.from_prior m ~n:2 (Nx.Rng.key 0) in
-          equal (array int) [| 2; 2 |] (Nx.shape (c :> Nx.float64_t));
+          equal (array int) [| 2; 2 |] (Nx.shape (c :> Nx.host Nx.float64_t));
           let w, _ = M.simulate m (Nx.Rng.key 1) in
           let w' = M.constrain m (M.unconstrain m w) in
           equal (array close) (floats w) (floats w'));
@@ -733,10 +733,74 @@ let printing =
         y      observed  normal       [8]    8       (-inf, inf)
         |})
 
+(* Device sets: a model lies where its run's values do, and refuses a site or a
+   factor on another set. [elsewhere] lies on a set of two memory devices,
+   which compute on the host. *)
+module Pair =
+  (val Nx.devices
+         (List.init 2 (fun k ->
+              Result.get_ok (Rig.memory_device (Printf.sprintf "norn-m%d" k)))))
+
+let elsewhere v = Nx.place Pair.on (f64 v)
+
+let sets =
+  (* A model whose one site is on the host, and whose run first samples a
+     distribution, or adds a factor, on [Pair] when [stray] says so. *)
+  let stray = ref `None in
+  let m =
+    M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.unit (fun () ->
+        (match !stray with
+        | `None -> ()
+        | `Site ->
+            ignore
+              (M.sample (D.normal ~loc:(elsewhere 0.) ~scale:(elsewhere 1.)))
+        | `Factor -> M.factor (elsewhere 0.));
+        (M.sample (D.normal ~loc:(f64 0.) ~scale:(f64 1.)), ()))
+  in
+  let straying s f =
+    stray := s;
+    Fun.protect ~finally:(fun () -> stray := `None) f
+  in
+  group "device sets"
+    [
+      test "a model lies where its sites' distributions are" (fun () ->
+          let on_pair =
+            M.v Nx.float64 Nx.Ptree.tensor Nx.Ptree.unit (fun () ->
+                ( M.sample (D.normal ~loc:(elsewhere 0.) ~scale:(elsewhere 1.)),
+                  () ))
+          in
+          (* A key on one device: the values lie where the model does. *)
+          let one = Nx.Placement.device Pair.v (List.hd (Nx.rigs Pair.v)) in
+          let key = Nx.Rng.place one (Nx.Rng.key 0) in
+          let pp p = Format.asprintf "%a" Nx.Placement.pp p in
+          let x, () = M.simulate on_pair key in
+          equal ~msg:"simulate" string (pp Pair.on) (pp (Nx.placement x));
+          let c = M.from_prior on_pair ~n:2 key in
+          let l = M.log_density on_pair () c in
+          equal ~msg:"log_density" string (pp Pair.on) (pp (Nx.placement l)));
+      test "a model that samples nothing is refused" (fun () ->
+          raises (Invalid_argument "Norn_model.v: the model samples nothing")
+            (fun () ->
+              M.v Nx.float64 Nx.Ptree.unit Nx.Ptree.unit (fun () -> ((), ()))));
+      test "a site on another set is refused, naming it" (fun () ->
+          raises
+            (Invalid_argument
+               "Norn_model.simulate: site p: the distribution lies on another \
+                device set than the model") (fun () ->
+              straying `Site (fun () -> M.simulate m (Nx.Rng.key 0))));
+      test "a factor on another set is refused" (fun () ->
+          raises
+            (Invalid_argument
+               "Norn_model.simulate: a factor lies on another device set \
+                than the model") (fun () ->
+              straying `Factor (fun () -> M.simulate m (Nx.Rng.key 0))));
+    ]
+
 let () =
   exit
     (run "Norn_model"
        [
+         sets;
          laws_1;
          laws_6;
          round_trip;

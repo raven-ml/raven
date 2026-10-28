@@ -8,7 +8,7 @@ open Windtrap
 type 'a pos = { a : 'a; b : 'a }
 
 module Pos = struct
-  type 'a t = 'a pos
+  type ('a, _) t = 'a pos
 
   let walk c { a; b } =
     let open Nx.Ptree.Walk in
@@ -17,7 +17,8 @@ module Pos = struct
     { a; b }
 end
 
-let pos : Nx.float64_t pos Nx.Ptree.t = Nx.Ptree.instantiate (module Pos)
+let pos : (Nx.host Nx.float64_t pos, Nx.host) Nx.Ptree.t =
+  Nx.Ptree.instantiate (module Pos)
 let floats x = Nx.to_array x
 
 (* Three chains: [a] of shape [3], [b] of shape [3; 2]. *)
@@ -37,6 +38,13 @@ let gradient x = { a = Nx.mul_s x.a 2.; b = x.b }
    the derivative follows. *)
 let stated x = { a = Nx.mul_s x.a 3.; b = Nx.neg x.b }
 let density = Norn.with_gradient pos (fun x -> (value x, stated x))
+
+(* A density whose function reads its argument: [value x] plus the first
+   chain's [a], [0.5] at [x0], and the true gradient. *)
+let reads =
+  Norn.with_gradient pos (fun x ->
+      let first = Nx.item [ 0 ] x.a in
+      (Nx.add_s (value x) first, gradient x))
 
 let with_gradient =
   group "with_gradient"
@@ -71,15 +79,22 @@ let with_gradient =
           let eager = grad x0 in
           equal (array (float 1e-15)) (floats eager.a) (floats compiled.a);
           equal (array (float 1e-15)) (floats eager.b) (floats compiled.b));
-      test "the function reads its argument's values under differentiation"
-        (fun () ->
-          let reads =
-            Norn.with_gradient pos (fun x ->
-                let first = Nx.item [ 0 ] x.a in
-                (Nx.add_s (value x) first, gradient x))
-          in
+      test "the function reads its argument's values eagerly" (fun () ->
+          equal (array (float 1e-15))
+            (floats (Nx.add_s (value x0) 0.5))
+            (floats (reads x0)));
+      test "the function reads its argument's values under grad" (fun () ->
           let g = Rune.grad pos (fun x -> Nx.sum (reads x)) x0 in
           equal (array (float 1e-15)) (floats (gradient x0).a) (floats g.a));
+      test "the function reads its argument's values under jvp" (fun () ->
+          let dx = { a = Nx.ones Nx.float64 [| 3 |]; b = Nx.zeros Nx.float64 [| 3; 2 |] } in
+          let _, dy = Rune.jvp pos Nx.Ptree.tensor reads x0 dx in
+          equal (array (float 1e-15)) (floats (gradient x0).a) (floats dy));
+      test "a read under jit raises" (fun () ->
+          raises_match
+            (Exn.invalid_arg ~substring:"traced")
+            (fun () ->
+              Rune.jit Nx.Ptree.(pos @-> returns tensor) reads x0));
     ]
 
 let () = exit (run "Norn.with_gradient" [ with_gradient ])

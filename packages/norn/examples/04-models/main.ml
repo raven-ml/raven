@@ -14,7 +14,7 @@ let s x = Nx.scalar f64 x
 type 'a line = { slope : 'a; intercept : 'a; sigma : 'a }
 
 module Line = struct
-  type 'a t = 'a line
+  type ('a, _) t = 'a line
 
   let walk c { slope; intercept; sigma } =
     let open Nx.Ptree.Walk in
@@ -24,7 +24,7 @@ module Line = struct
     { slope; intercept; sigma }
 end
 
-let line : Nx.float64_t line Nx.Ptree.t = Nx.Ptree.instantiate (module Line)
+let line : (Nx.host Nx.float64_t line, Nx.host) Nx.Ptree.t = Nx.Ptree.instantiate (module Line)
 let x = Nx.linspace f64 (-1.) 1. 30
 
 (* Every random variable is a [sample]; the function returns the latent ones and
@@ -65,7 +65,7 @@ let () =
   let first =
     Nx.Ptree.map line
       (fun _ t -> Nx.get [ 0; 0 ] t)
-      (draws :> Nx.float64_t line)
+      (draws :> Nx.host Nx.float64_t line)
   in
   let y_new = M.predict model (Nx.Rng.key 3) first in
   Printf.printf "predicted y at x = -1, 1: %.3f %.3f\n" (Nx.item [ 0 ] y_new)

@@ -29,7 +29,7 @@ let n = float_of_int points
 let exact_posterior k y ~draws =
   let mean = Nx.div_s (Nx.sum y) (n +. 1.) in
   let sd = 1. /. Float.sqrt (n +. 1.) in
-  let z = Nx.Rng.normal k Nx.float64 [| 1; draws |] in
+  let z = Nx.Rng.normal ~key:k Nx.float64 [| 1; draws |] in
   Norn.Draws.v t (Nx.add mean (Nx.mul_s z sd))
 
 let replications = 200
@@ -57,7 +57,7 @@ let too_wide =
         let d = exact_posterior (Nx.Rng.fold_in k 1) y ~draws in
         let mean = Nx.div_s (Nx.sum y) (n +. 1.) in
         let wide =
-          Nx.add mean (Nx.mul_s (Nx.sub (d :> Nx.float64_t) mean) 2.)
+          Nx.add mean (Nx.mul_s (Nx.sub (d :> Nx.host Nx.float64_t) mean) 2.)
         in
         Norn.Diag.rank t ~truth (Norn.Draws.v t wide)
       in
@@ -71,7 +71,7 @@ let nuts =
       let u = M.coords model in
       let fit =
         Rune.jit
-          Nx.Ptree.(Nx.Rng.ptree @-> tensor @-> returns (Norn.Draws.ptree u))
+          Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> tensor @-> returns (Norn.Draws.ptree u))
           (fun k y ->
             let lp = M.log_density model y in
             let start = M.init model y ~chains:1 (Nx.Rng.fold_in k 0) in
@@ -87,8 +87,8 @@ let nuts =
         let truth, y = M.simulate model (Nx.Rng.fold_in k 0) in
         let d = fit (Nx.Rng.fold_in k 1) y in
         Norn.Diag.rank t
-          ~truth:(M.unconstrain model truth :> Nx.float64_t)
-          (Norn.Draws.v t (d :> Nx.float64_t))
+          ~truth:(M.unconstrain model truth :> Nx.host Nx.float64_t)
+          (Norn.Draws.v t (d :> Nx.host Nx.float64_t))
       in
       let u = Norn.Diag.rank_uniformity t ~draws (List.init 100 rank) in
       at_least (float 1e-12) ~than:alpha (Nx.item [] u))

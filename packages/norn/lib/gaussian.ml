@@ -5,14 +5,14 @@
 
 (* The mean [m], scale [S], directions [u_j] and variances [v_j] of the
    covariance [S (I + Σ_j (v_j - 1) u_j u_jᵀ) S]. *)
-type ('u, 'f) t = {
+type ('u, 'f, 'd) t = {
   mean : 'u;
   scale : 'u;
   directions : 'u; (* each tensor with a leading axis of [k] *)
-  variances : (float, 'f) Nx.t; (* [k] *)
+  variances : (float, 'f, 'd) Nx.t; (* [k] *)
 }
 
-type ('u, 'f) gaussian = ('u, 'f) t
+type ('u, 'f, 'd) gaussian = ('u, 'f, 'd) t
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
@@ -31,14 +31,14 @@ let rows k x =
 
 (* [coefficients u dirs z] is [U z], each direction's inner product with [z], at
    the dtype of [like], shape [[k]]. *)
-let coefficients (type f) u (like : (float, f) Nx.t) dirs z : (float, f) Nx.t =
+let coefficients (type f) u (like : (float, f, 'd) Nx.t) dirs z : (float, f, 'd) Nx.t =
   let k = (Nx.shape like).(0) in
   let products =
     Nx.Ptree.map2 u (fun _ d x -> Nx.mul d (Nx.unsqueeze ~axes:[ 0 ] x)) dirs z
   in
   Nx.Ptree.fold u
     (fun _ p acc ->
-      if not (Nx_dtype.is Float (Nx.dtype p)) then acc
+      if not (Nx.Dtype.is Float (Nx.dtype p)) then acc
       else Nx.add acc (Nx.cast (Nx.dtype like) (Nx.sum ~axes:[ 1 ] (rows k p))))
     products (Nx.zeros_like like)
 
@@ -47,7 +47,7 @@ let combine u dirs c z =
   let k = (Nx.shape c).(0) in
   Nx.Ptree.map2 u
     (fun _ d x ->
-      if not (Nx_dtype.is Float (Nx.dtype x)) then x
+      if not (Nx.Dtype.is Float (Nx.dtype x)) then x
       else
         let c = Nx.reshape [| 1; k |] (Nx.cast (Nx.dtype x) c) in
         let flat = Nx.matmul c (rows k d) in
@@ -75,14 +75,15 @@ let whiten u g x =
   let d = Nx.Ptree.map2 u (fun _ x m -> Nx.sub x m) x g.mean in
   stretch g u (-0.5) (Nx.Ptree.map2 u (fun _ d s -> Nx.div d s) d g.scale)
 
-let log_det (type f) (g : (_, f) t) u : (float, f) Nx.t =
+let log_det (type f) (g : (_, f, 'd) t) u : (float, f, 'd) Nx.t =
   let dt = Nx.dtype g.variances in
   let logs =
     Nx.Ptree.fold u
       (fun _ s acc ->
-        if not (Nx_dtype.is Float (Nx.dtype s)) then acc
+        if not (Nx.Dtype.is Float (Nx.dtype s)) then acc
         else Nx.add acc (Nx.cast dt (Nx.sum (Nx.log s))))
-      g.scale (Nx.zeros dt [||])
+      g.scale
+      (Nx.zeros_at (Nx.beside g.variances) dt [||])
   in
   Nx.add logs (Nx.mul_s (Nx.sum (Nx.log g.variances)) 0.5)
 
@@ -94,18 +95,18 @@ let log_det (type f) (g : (_, f) t) u : (float, f) Nx.t =
    Gaussians stacked on the chain axis and nothing for one: a map is then a few
    operations on one matrix, where over the structure it is a few per tensor. *)
 
-type 'f flat = {
-  m : (float, 'f) Nx.t;
-  s : (float, 'f) Nx.t;
-  dirs : (float, 'f) Nx.t;
-  v : (float, 'f) Nx.t;
+type ('f, 'd) flat = {
+  m : (float, 'f, 'd) Nx.t;
+  s : (float, 'f, 'd) Nx.t;
+  dirs : (float, 'f, 'd) Nx.t;
+  v : (float, 'f, 'd) Nx.t;
 }
 
 (* [flat u x g] is [g] over the rows of [x], a position of chains whose float
    tensors, in walk order, make the rows. A tensor of [g] has the trailing axes
    of [x]'s at its path, after the chain axis for stacked Gaussians and, for the
    directions, the axis of [k]. *)
-let flat (type f) u x (g : (_, f) t) : f flat =
+let flat (type f) u x (g : (_, f, 'd) t) : (f, 'd) flat =
   let dt = Nx.dtype g.variances in
   let vs = Nx.shape g.variances in
   let lead = Array.sub vs 0 (Array.length vs - 1) in
@@ -113,7 +114,7 @@ let flat (type f) u x (g : (_, f) t) : f flat =
     let shaped =
       Nx.Ptree.map2 u
         (fun _ t xl ->
-          if not (Nx_dtype.is Float (Nx.dtype t)) then t
+          if not (Nx.Dtype.is Float (Nx.dtype t)) then t
           else
             let e = Nx.ndim xl - 1 in
             let n = Nx.numel xl / (Nx.shape xl).(0) in
@@ -125,11 +126,11 @@ let flat (type f) u x (g : (_, f) t) : f flat =
     let parts =
       Nx.Ptree.fold u
         (fun _ t acc ->
-          if Nx_dtype.is Float (Nx.dtype t) then Nx.cast dt t :: acc else acc)
+          if Nx.Dtype.is Float (Nx.dtype t) then Nx.cast dt t :: acc else acc)
         shaped []
     in
     match List.rev parts with
-    | [] -> Nx.zeros dt (Array.append empty [| 0 |])
+    | [] -> Nx.zeros_at (Nx.beside g.variances) dt (Array.append empty [| 0 |])
     | [ p ] -> p
     | p :: _ as ps -> Nx.concatenate ~axis:(Nx.ndim p - 1) ps
   in
@@ -164,37 +165,42 @@ let push f gz = Nx.div (stretch_flat f (-0.5) gz) f.s
 
 let elements u x =
   Nx.Ptree.fold u
-    (fun _ t n -> if Nx_dtype.is Float (Nx.dtype t) then n + Nx.numel t else n)
+    (fun _ t n -> if Nx.Dtype.is Float (Nx.dtype t) then n + Nx.numel t else n)
     x 0
 
 (* Constructors *)
 
 let no_directions u like =
   Nx.Ptree.map u
-    (fun _ x -> Nx.zeros (Nx.dtype x) (Array.append [| 0 |] (Nx.shape x)))
+    (fun _ x ->
+      Nx.zeros_at (Nx.beside x) (Nx.dtype x) (Array.append [| 0 |] (Nx.shape x)))
     like
 
-let diagonal u dtype ~mean ~scale =
+let diagonal_in context u dtype ~mean ~scale =
+  let at = Rows.beside context ~what:"the mean" u mean in
   {
     mean;
     scale;
     directions = no_directions u mean;
-    variances = Nx.zeros dtype [| 0 |];
+    variances = Nx.zeros_at at dtype [| 0 |];
   }
+
+let diagonal u dtype ~mean ~scale =
+  diagonal_in "Norn.Gaussian.diagonal" u dtype ~mean ~scale
 
 (* [matrix u like dirs] is the directions [dirs] as the columns of a matrix [[d;
    k]] at [like]'s dtype, and [split] its inverse. *)
-let matrix (type f) u (like : (float, f) Nx.t) dirs : (float, f) Nx.t =
+let matrix (type f) u (like : (float, f, 'd) Nx.t) dirs : (float, f, 'd) Nx.t =
   let k = (Nx.shape like).(0) in
   let columns =
     Nx.Ptree.fold u
       (fun _ d acc ->
-        if not (Nx_dtype.is Float (Nx.dtype d)) then acc
+        if not (Nx.Dtype.is Float (Nx.dtype d)) then acc
         else Nx.cast (Nx.dtype like) (rows k d) :: acc)
       dirs []
   in
   match columns with
-  | [] -> Nx.zeros (Nx.dtype like) [| 0; k |]
+  | [] -> Nx.zeros_at (Nx.beside like) (Nx.dtype like) [| 0; k |]
   | cs -> Nx.transpose (Nx.concatenate ~axis:1 (List.rev cs))
 
 let split u like m =
@@ -202,8 +208,8 @@ let split u like m =
   let offset = ref 0 in
   Nx.Ptree.map u
     (fun _ x ->
-      if not (Nx_dtype.is Float (Nx.dtype x)) then
-        Nx.zeros (Nx.dtype x) (Array.append [| k |] (Nx.shape x))
+      if not (Nx.Dtype.is Float (Nx.dtype x)) then
+        Nx.zeros_at (Nx.beside x) (Nx.dtype x) (Array.append [| k |] (Nx.shape x))
       else
         let n = Nx.numel x in
         let rows = Nx.slice [ Nx.R (!offset, !offset + n); Nx.R (0, k) ] m in
@@ -220,7 +226,7 @@ let check_positive context name v =
     (fun i x ->
       Invalid_argument
         (Printf.sprintf "%s: %s at [%s] is %s, not in (0, inf)" context name
-           (shape_string i) (Nx.to_string x)))
+           (shape_string i) (Rows.element x)))
 
 let low_rank u ~mean ~scale ~directions ~variances =
   let context = "Norn.Gaussian.low_rank" in
@@ -235,11 +241,11 @@ let low_rank u ~mean ~scale ~directions ~variances =
   { mean; scale; directions = split u mean q; variances }
 
 let of_precision (type f) u (dtype : (float, f) Nx.dtype) ?low_rank ~mean p :
-    (_, f) t =
+    (_, f, 'd) t =
   let context = "Norn.Gaussian.of_precision" in
   Nx.Ptree.fold u
     (fun path x () ->
-      if Nx_dtype.is Float (Nx.dtype x) then
+      if Nx.Dtype.is Float (Nx.dtype x) then
         Nx.check Nx.Ptree.tensor
           (Nx.logical_and (Nx.greater x (Nx.zeros_like x)) (Nx.isfinite x))
           x
@@ -247,11 +253,11 @@ let of_precision (type f) u (dtype : (float, f) Nx.dtype) ?low_rank ~mean p :
             Invalid_argument
               (Printf.sprintf "%s: %s at [%s] is %s, not in (0, inf)" context
                  (Nx.Ptree.Path.to_string path)
-                 (shape_string i) (Nx.to_string v))))
+                 (shape_string i) (Rows.element v))))
     p ();
   let scale = Nx.Ptree.map u (fun _ x -> Nx.rsqrt x) p in
   match low_rank with
-  | None -> diagonal u dtype ~mean ~scale
+  | None -> diagonal_in context u dtype ~mean ~scale
   | Some (w, l) ->
       Nx.check Nx.Ptree.tensor
         (Nx.logical_and (Nx.greater_equal l (Nx.zeros_like l)) (Nx.isfinite l))
@@ -260,7 +266,7 @@ let of_precision (type f) u (dtype : (float, f) Nx.dtype) ?low_rank ~mean p :
           Invalid_argument
             (Printf.sprintf
                "%s: the low-rank weights at [%s] are %s, not in [0, inf)"
-               context (shape_string i) (Nx.to_string v)));
+               context (shape_string i) (Rows.element v)));
       (* With [ŵ = S w], the precision is [S⁻¹ (I + Σ l_j ŵ_j ŵ_jᵀ) S⁻¹]: from
          [B = Ŵ diag (sqrt l) = Q R], the inner matrix is [I + Q (R Rᵀ) Qᵀ],
          whose eigenvectors [Q V] carry the covariance's variances [1 / (1 +
@@ -274,8 +280,7 @@ let of_precision (type f) u (dtype : (float, f) Nx.dtype) ?low_rank ~mean p :
         Nx.mul (matrix u l scaled) (Nx.unsqueeze ~axes:[ 0 ] (Nx.sqrt l))
       in
       let q, r = Nx.qr b in
-      let mu, v = Nx.eigh (Nx.matmul r (Nx.transpose r)) in
-      let mu = Nx.cast dtype mu in
+      let mu, v = Nx.eigh dtype (Nx.matmul r (Nx.transpose r)) in
       let variances = Nx.recip (Nx.add_s mu 1.) in
       { mean; scale; directions = split u mean (Nx.matmul q v); variances }
 
@@ -295,15 +300,17 @@ let log_density u g x =
       let sq =
         Nx.Ptree.fold u
           (fun _ t acc ->
-            if Nx_dtype.is Float (Nx.dtype t) then
+            if Nx.Dtype.is Float (Nx.dtype t) then
               Nx.add acc (Nx.cast dt (Nx.sum (Nx.square t)))
             else acc)
-          z (Nx.zeros dt [||])
+          z
+          (Nx.zeros_at (Nx.beside g.variances) dt [||])
       in
       Nx.sub (Nx.mul_s sq (-0.5)) normaliser)
     x
 
 let sample u k ~n g =
+  let k = Nx.Rng.place (Nx.beside g.variances) k in
   if n < 0 then invalid_argf "Norn.Gaussian.sample: n = %d is negative" n;
   let j = ref (-1) in
   let z =
@@ -328,7 +335,7 @@ let variance u g =
   let k = (Nx.shape w).(0) in
   Nx.Ptree.map2 u
     (fun _ s d ->
-      if not (Nx_dtype.is Float (Nx.dtype s)) then s
+      if not (Nx.Dtype.is Float (Nx.dtype s)) then s
       else
         let w =
           Nx.reshape
@@ -339,19 +346,16 @@ let variance u g =
         Nx.mul (Nx.square s) (Nx.add along (Nx.ones_like along)))
     g.scale g.directions
 
-let ptree (type u f) (u : u Nx.Ptree.t) : (u, f) t Nx.Ptree.t =
-  let module S = struct
-    type _ t = (u, f) gaussian
-
-    let walk c g =
-      let open Nx.Ptree.Walk in
-      let mean = field c "mean" (structure u) g.mean in
-      let scale = field c "scale" (structure u) g.scale in
-      let directions = field c "directions" (structure u) g.directions in
-      let variances = field c "variances" tensor g.variances in
-      { mean; scale; directions; variances }
-  end in
-  Nx.Ptree.nest (module S) Nx.Ptree.unit
+let ptree (type u f) (u : (u, 'd) Nx.Ptree.t) : ((u, f, 'd) t, 'd) Nx.Ptree.t =
+  let walk c (g : (u, f, 'd) gaussian) : (u, f, 'd) gaussian =
+    let open Nx.Ptree.Walk in
+    let mean = field c "mean" (structure u) g.mean in
+    let scale = field c "scale" (structure u) g.scale in
+    let directions = field c "directions" (structure u) g.directions in
+    let variances = field c "variances" tensor g.variances in
+    { mean; scale; directions; variances }
+  in
+  Nx.Ptree.v walk
 
 let pp u ppf g =
   Format.fprintf ppf "gaussian(dimension %d, rank %d)" (elements u g.mean)

@@ -15,7 +15,7 @@ let banana x =
   let b' = Nx.sub b (Nx.mul_s (Nx.square a) 0.3) in
   Nx.mul_s (Nx.add (Nx.square a) (Nx.mul_s (Nx.square b') 4.)) (-0.5)
 
-let start c = Nx.Rng.normal (Nx.Rng.key 21) Nx.float64 [| c; dim |]
+let start c = Nx.Rng.normal ~key:(Nx.Rng.key 21) Nx.float64 [| c; dim |]
 let floats x = Nx.to_array x
 
 (* Law 9: reproducibility *)
@@ -33,29 +33,29 @@ let reproducible =
           let _, a, _ = E.sample t banana (Nx.Rng.key 3) ~draws:3 one in
           let _, b, _ = E.sample t banana (Nx.Rng.key 3) ~draws:3 two in
           equal (array float_exact)
-            (floats (a :> Nx.float64_t))
-            (floats (Nx.slice [ Nx.R (0, 8) ] (b :> Nx.float64_t))));
+            (floats (a :> Nx.host Nx.float64_t))
+            (floats (Nx.slice [ Nx.R (0, 8) ] (b :> Nx.host Nx.float64_t))));
       test "a draws then b draws are a + b draws" (fun () ->
           let s = E.init t banana (start 8) in
           let _, ab, _ = E.sample t banana (Nx.Rng.key 8) ~draws:5 s in
           let s', a, _ = E.sample t banana (Nx.Rng.key 8) ~draws:2 s in
           let _, b, _ = E.sample t banana (Nx.Rng.key 8) ~draws:3 s' in
           equal (array float_exact)
-            (floats (ab :> Nx.float64_t))
-            (floats (Norn.Draws.append t a b :> Nx.float64_t)));
+            (floats (ab :> Nx.host Nx.float64_t))
+            (floats (Norn.Draws.append t a b :> Nx.host Nx.float64_t)));
       test "a run repeated with one key gives the same draws" (fun () ->
           let s = E.init t banana (start 8) in
           let _, a, _ = E.sample t banana (Nx.Rng.key 8) ~draws:4 s in
           let _, b, _ = E.sample t banana (Nx.Rng.key 8) ~draws:4 s in
           equal (array float_exact)
-            (floats (a :> Nx.float64_t))
-            (floats (b :> Nx.float64_t)));
+            (floats (a :> Nx.host Nx.float64_t))
+            (floats (b :> Nx.host Nx.float64_t)));
       test "a compiled transition is the eager one" (fun () ->
           let s = E.init t banana (start 8) in
           let sp = E.ptree t in
           let step =
             Rune.jit
-              Nx.Ptree.(Nx.Rng.ptree @-> sp @-> returns sp)
+              Nx.Ptree.((Nx.Ptree.v Nx.Rng.walk) @-> sp @-> returns sp)
               (E.step t banana)
           in
           let compiled = step (Nx.Rng.key 3) s in
@@ -84,7 +84,7 @@ let reproducible =
 let straggler =
   test "a walker 10^3 sds from the posterior returns" (fun () ->
       let lp x = Nx.mul_s (Nx.sum ~axes:[ 1 ] (Nx.square x)) (-0.5) in
-      let x = Nx.Rng.normal (Nx.Rng.key 5) Nx.float64 [| 8; dim |] in
+      let x = Nx.Rng.normal ~key:(Nx.Rng.key 5) Nx.float64 [| 8; dim |] in
       let x = Nx.set [ Nx.I 0; Nx.I 0 ] (Nx.scalar Nx.float64 1e3) x in
       let s = E.warmup t lp (Nx.Rng.key 6) ~steps:70 (E.init t lp x) in
       at_most float_exact ~than:6. (Nx.item [] (Nx.max (Nx.abs s.position))))
@@ -118,7 +118,7 @@ let transitions =
           let _, d, _ =
             E.sample t half (Nx.Rng.key 6) ~draws:20 (E.init t half x)
           in
-          let a = Nx.slice [ Nx.A; Nx.A; Nx.I 0 ] (d :> Nx.float64_t) in
+          let a = Nx.slice [ Nx.A; Nx.A; Nx.I 0 ] (d :> Nx.host Nx.float64_t) in
           Array.iter (fun a -> greater float_exact ~than:0. a) (floats a));
     ]
 
@@ -180,8 +180,8 @@ let normal_cdf sd x = Nx.item [] (Nx.ndtr (Nx.scalar Nx.float64 (x /. sd)))
 let law_11 =
   slow "five transitions leave the banana invariant" (fun () ->
       let k = Nx.Rng.key 31 in
-      let a = Nx.Rng.normal (Nx.Rng.fold_in k 0) Nx.float64 [| chains |] in
-      let z = Nx.Rng.normal (Nx.Rng.fold_in k 1) Nx.float64 [| chains |] in
+      let a = Nx.Rng.normal ~key:(Nx.Rng.fold_in k 0) Nx.float64 [| chains |] in
+      let z = Nx.Rng.normal ~key:(Nx.Rng.fold_in k 1) Nx.float64 [| chains |] in
       let b = Nx.add (Nx.mul_s (Nx.square a) 0.3) (Nx.mul_s z 0.5) in
       let s = ref (E.init t ~ensembles:64 banana (Nx.stack ~axis:1 [ a; b ])) in
       for i = 0 to 4 do

@@ -5,10 +5,10 @@
 
 (** The implementation of {!Norn.Weighted}. *)
 
-type ('u, 'f) t = { values : 'u; log_weights : (float, 'f) Nx.t }
+type ('u, 'f, 'd) t = { values : 'u; log_weights : (float, 'f, 'd) Nx.t }
 
-val ptree : 'u Nx.Ptree.t -> ('u, 'f) t Nx.Ptree.t
+val ptree : ('u, 'd) Nx.Ptree.t -> (('u, 'f, 'd) t, 'd) Nx.Ptree.t
 
-val ess : ('u, 'f) t -> (float, 'f) Nx.t
+val ess : ('u, 'f, 'd) t -> (float, 'f, 'd) Nx.t
 
-val resample : 'u Nx.Ptree.t -> Nx.Rng.t -> n:int -> ('u, 'f) t -> 'u
+val resample : ('u, 'd) Nx.Ptree.t -> 'd Nx.Rng.key -> n:int -> ('u, 'f, 'd) t -> 'u

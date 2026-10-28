@@ -22,15 +22,15 @@ val width : float
 
 val move :
   string ->
-  'u Nx.Ptree.t ->
-  'a Nx.Ptree.t ->
-  (Nx.Rng.t -> 'u -> (float, 'f) Nx.t * 'a) ->
-  Nx.Rng.t ->
+  ('u, 'd) Nx.Ptree.t ->
+  ('a, 'd) Nx.Ptree.t ->
+  ('d Nx.Rng.key -> 'u -> (float, 'f, 'd) Nx.t * 'a) ->
+  'd Nx.Rng.key ->
   direction:'u ->
   'u ->
-  (float, 'f) Nx.t ->
+  (float, 'f, 'd) Nx.t ->
   'a ->
-  'u * (float, 'f) Nx.t * 'a * Nx.int32_t
+  'u * (float, 'f, 'd) Nx.t * 'a * 'd Nx.int32_t
 (** [move context u a eval keys ~direction x lp aux] moves the walkers from [x],
     at log density [lp] with the values [aux], along [direction], and returns
     their positions, log densities, values and each walker's number of
@@ -41,22 +41,22 @@ val move :
 
     Raises through {!Nx.check} if [eval] is NaN or [+inf] at a walker. *)
 
-val unit_directions : 'u Nx.Ptree.t -> Nx.Rng.t -> (float, 'f) Nx.t -> 'u -> 'u
+val unit_directions : ('u, 'd) Nx.Ptree.t -> 'd Nx.Rng.key -> (float, 'f, 'd) Nx.t -> 'u -> 'u
 (** [unit_directions u keys lp like] is a direction per row of [like], uniform
     on the unit sphere of its float elements, row [i]'s drawn from [keys.(i)];
     norms are taken at [lp]'s dtype. *)
 
 val hit_and_run :
   string ->
-  'u Nx.Ptree.t ->
-  'a Nx.Ptree.t ->
-  (Nx.Rng.t -> 'u -> (float, 'f) Nx.t * 'a) ->
-  Nx.Rng.t ->
-  ('u, 'f) Gaussian.t ->
+  ('u, 'd) Nx.Ptree.t ->
+  ('a, 'd) Nx.Ptree.t ->
+  ('d Nx.Rng.key -> 'u -> (float, 'f, 'd) Nx.t * 'a) ->
+  'd Nx.Rng.key ->
+  ('u, 'f, 'd) Gaussian.t ->
   'u ->
-  (float, 'f) Nx.t ->
+  (float, 'f, 'd) Nx.t ->
   'a ->
-  'u * (float, 'f) Nx.t * 'a * Nx.int32_t
+  'u * (float, 'f, 'd) Nx.t * 'a * 'd Nx.int32_t
 (** [hit_and_run context u a eval keys g x lp aux] is {!move} along a direction
     per walker of unit length in [g]'s whitened coordinates, drawn from
     [fold_in keys.(i) 5]. *)

@@ -24,8 +24,8 @@ type finding =
 and region = { path : Nx.Ptree.Path.t; index : int array; shift : float }
 
 val v :
-  'u Nx.Ptree.t ->
-  ?stats:'f Stats.t Draws.t ->
+  ('u, 'd) Nx.Ptree.t ->
+  ?stats:('f, 'd) Stats.t Draws.t ->
   ?superchains:int ->
   'u Draws.t ->
   t
@@ -36,7 +36,7 @@ val findings : t -> finding list
 
 val labels : t -> string array
 
-val columns : t -> (string * Nx.float64_t) list
+val columns : t -> (string * Nx.host Nx.float64_t) list
 
 val pp_finding : Format.formatter -> finding -> unit
 

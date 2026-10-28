@@ -122,7 +122,7 @@ let reference =
 type 'a two = { x : 'a; y : 'a }
 
 module Two = struct
-  type 'a t = 'a two
+  type ('a, _) t = 'a two
 
   let walk c { x; y } =
     let open Nx.Ptree.Walk in
@@ -131,7 +131,7 @@ module Two = struct
     { x; y }
 end
 
-let two : Nx.float64_t two Nx.Ptree.t = Nx.Ptree.instantiate (module Two)
+let two : (Nx.host Nx.float64_t two, Nx.host) Nx.Ptree.t = Nx.Ptree.instantiate (module Two)
 
 let chains_gen =
   Gen.(
@@ -178,8 +178,8 @@ let structures =
           satisfies ~claim:"nan" float_exact Float.is_nan
             (item (Diag.ess_bulk t d)));
       test "a diagnostic keeps the element's dtype" (fun () ->
-          let d = Draws.v t (Nx.rand Nx.float32 [| 2; 10 |]) in
-          equal string "float32" (Nx_dtype.to_string (Nx.dtype (Diag.rhat t d))));
+          let d = Draws.v t (Nx.Rng.uniform ~key:(Nx.Rng.key 0) Nx.float32 [| 2; 10 |]) in
+          equal string "float32" (Nx.Dtype.name (Nx.dtype (Diag.rhat t d))));
       test "integer draws are refused" (fun () ->
           raises_match (Exn.invalid_arg ~substring:"int32 draws") (fun () ->
               Diag.rhat t (Draws.v t (Nx.zeros Nx.int32 [| 2; 10 |]))));
@@ -188,7 +188,7 @@ let structures =
             (Exn.invalid_arg ~substring:"3 superchains do not divide 4")
             (fun () ->
               Diag.nested_rhat t ~superchains:3
-                (Draws.v t (Nx.rand Nx.float64 [| 4; 10 |]))));
+                (Draws.v t (Nx.Rng.uniform ~key:(Nx.Rng.key 0) Nx.float64 [| 4; 10 |]))));
     ]
 
 let divergences =
@@ -262,23 +262,31 @@ let uniformity =
           equal close 1. (item r));
       slow "uniform ranks have a p-value below 5% at most 5% of the time"
         (fun () ->
-          (* 2000 replications as 2000 elements of 40 ranks each, out of 30
-             draws. Rejections are binomial with probability at most 5%; 126 is
-             its 99.5% quantile at 5%. *)
-          let k = Nx.Rng.key 11 in
-          let ranks =
-            List.init 40 (fun i ->
-                Nx.cast Nx.float64
-                  (Nx.Rng.randint (Nx.Rng.fold_in k i) ~high:31 [| 2000 |]))
-          in
-          let stat = Nx.to_array (Diag.rank_uniformity t ~draws:30 ranks) in
+          (* 10000 replications as 2000 elements of 40 ranks each, out of 30
+             draws, at each of five keys. Rejections are binomial with
+             probability at most 5%; 557 is its 99.5% quantile at 5%. *)
           let rejected =
-            Array.fold_left (fun n p -> if p < 0.05 then n + 1 else n) 0 stat
+            List.fold_left
+              (fun n key ->
+                let k = Nx.Rng.key key in
+                let ranks =
+                  List.init 40 (fun i ->
+                      Nx.cast Nx.float64
+                        (Nx.Rng.randint ~key:(Nx.Rng.fold_in k i) ~high:31
+                           [| 2000 |]))
+                in
+                let stat =
+                  Nx.to_array (Diag.rank_uniformity t ~draws:30 ranks)
+                in
+                Array.fold_left
+                  (fun n p -> if p < 0.05 then n + 1 else n)
+                  n stat)
+              0 [ 11; 12; 13; 14; 15 ]
           in
-          at_most int ~than:126 rejected;
-          (* Not so conservative it never rejects: 50 is far below the 0.5%
+          at_most int ~than:557 rejected;
+          (* Not so conservative it never rejects: 340 is below the 0.5%
              quantile at a rate of 4%. *)
-          at_least int ~than:50 rejected);
+          at_least int ~than:340 rejected);
       test "ranks piled at zero are rejected" (fun () ->
           let ranks = List.init 20 (fun _ -> Nx.scalar Nx.float64 0.) in
           less float_exact ~than:1e-6

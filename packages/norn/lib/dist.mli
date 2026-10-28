@@ -5,123 +5,124 @@
 
 (** The implementation of {!Norn.Dist}. *)
 
-type ('x, 'f) t
+type ('x, 'f, 'd) t
 
-type ('x, 'f) kind =
-  | Continuous : ((float, 'f) Nx.t, 'f) kind
-  | Counts : (Nx.int32_t, 'f) kind
-  | Categories : (Nx.int64_t, 'f) kind
-  | Booleans : (Nx.bool_t, 'f) kind
+type ('x, 'f, 'd) kind =
+  | Continuous : ((float, 'f, 'd) Nx.t, 'f, 'd) kind
+  | Counts : ('d Nx.int32_t, 'f, 'd) kind
+  | Categories : ('d Nx.int64_t, 'f, 'd) kind
+  | Booleans : ('d Nx.bool_t, 'f, 'd) kind
 
 (** {1:continuous Continuous families} *)
 
 val normal :
-  loc:(float, 'f) Nx.t -> scale:(float, 'f) Nx.t -> ((float, 'f) Nx.t, 'f) t
+  loc:(float, 'f, 'd) Nx.t -> scale:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
 
-val half_normal : scale:(float, 'f) Nx.t -> ((float, 'f) Nx.t, 'f) t
+val half_normal : scale:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
 
 val lognormal :
-  loc:(float, 'f) Nx.t -> scale:(float, 'f) Nx.t -> ((float, 'f) Nx.t, 'f) t
+  loc:(float, 'f, 'd) Nx.t -> scale:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
 
 val student_t :
-  df:(float, 'f) Nx.t ->
-  loc:(float, 'f) Nx.t ->
-  scale:(float, 'f) Nx.t ->
-  ((float, 'f) Nx.t, 'f) t
+  df:(float, 'f, 'd) Nx.t ->
+  loc:(float, 'f, 'd) Nx.t ->
+  scale:(float, 'f, 'd) Nx.t ->
+  ((float, 'f, 'd) Nx.t, 'f, 'd) t
 
 val cauchy :
-  loc:(float, 'f) Nx.t -> scale:(float, 'f) Nx.t -> ((float, 'f) Nx.t, 'f) t
+  loc:(float, 'f, 'd) Nx.t -> scale:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
 
-val half_cauchy : scale:(float, 'f) Nx.t -> ((float, 'f) Nx.t, 'f) t
+val half_cauchy : scale:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
 
 val laplace :
-  loc:(float, 'f) Nx.t -> scale:(float, 'f) Nx.t -> ((float, 'f) Nx.t, 'f) t
+  loc:(float, 'f, 'd) Nx.t -> scale:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
 
 val logistic :
-  loc:(float, 'f) Nx.t -> scale:(float, 'f) Nx.t -> ((float, 'f) Nx.t, 'f) t
+  loc:(float, 'f, 'd) Nx.t -> scale:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
 
-val exponential : rate:(float, 'f) Nx.t -> ((float, 'f) Nx.t, 'f) t
+val exponential : rate:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
 
 val gamma :
-  concentration:(float, 'f) Nx.t ->
-  rate:(float, 'f) Nx.t ->
-  ((float, 'f) Nx.t, 'f) t
+  concentration:(float, 'f, 'd) Nx.t ->
+  rate:(float, 'f, 'd) Nx.t ->
+  ((float, 'f, 'd) Nx.t, 'f, 'd) t
 
 val inverse_gamma :
-  concentration:(float, 'f) Nx.t ->
-  scale:(float, 'f) Nx.t ->
-  ((float, 'f) Nx.t, 'f) t
+  concentration:(float, 'f, 'd) Nx.t ->
+  scale:(float, 'f, 'd) Nx.t ->
+  ((float, 'f, 'd) Nx.t, 'f, 'd) t
 
 val beta :
-  a:(float, 'f) Nx.t -> b:(float, 'f) Nx.t -> ((float, 'f) Nx.t, 'f) t
+  a:(float, 'f, 'd) Nx.t -> b:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
 
 val uniform :
-  low:(float, 'f) Nx.t -> high:(float, 'f) Nx.t -> ((float, 'f) Nx.t, 'f) t
+  low:(float, 'f, 'd) Nx.t -> high:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
 
-val dirichlet : concentration:(float, 'f) Nx.t -> ((float, 'f) Nx.t, 'f) t
+val dirichlet : concentration:(float, 'f, 'd) Nx.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
 
 val mvn :
-  loc:(float, 'f) Nx.t ->
-  scale_tril:(float, 'f) Nx.t ->
-  ((float, 'f) Nx.t, 'f) t
+  loc:(float, 'f, 'd) Nx.t ->
+  scale_tril:(float, 'f, 'd) Nx.t ->
+  ((float, 'f, 'd) Nx.t, 'f, 'd) t
 
 (** {1:discrete Discrete families} *)
 
-val bernoulli : logits:(float, 'f) Nx.t -> (Nx.bool_t, 'f) t
+val bernoulli : logits:(float, 'f, 'd) Nx.t -> ('d Nx.bool_t, 'f, 'd) t
 
-val poisson : rate:(float, 'f) Nx.t -> (Nx.int32_t, 'f) t
+val poisson : rate:(float, 'f, 'd) Nx.t -> ('d Nx.int32_t, 'f, 'd) t
 
 val neg_binomial :
-  mean:(float, 'f) Nx.t -> dispersion:(float, 'f) Nx.t -> (Nx.int32_t, 'f) t
+  mean:(float, 'f, 'd) Nx.t -> dispersion:(float, 'f, 'd) Nx.t -> ('d Nx.int32_t, 'f, 'd) t
 
-val categorical : logits:(float, 'f) Nx.t -> (Nx.int64_t, 'f) t
+val categorical : logits:(float, 'f, 'd) Nx.t -> ('d Nx.int64_t, 'f, 'd) t
 
 (** {1:combinators Combinators} *)
 
-val iid : int array -> ('x, 'f) t -> ('x, 'f) t
+val iid : int array -> ('x, 'f, 'd) t -> ('x, 'f, 'd) t
 
-val sorted : int -> ((float, 'f) Nx.t, 'f) t -> ((float, 'f) Nx.t, 'f) t
+val sorted : int -> ((float, 'f, 'd) Nx.t, 'f, 'd) t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
 
 val transform :
-  'f Bij.t -> ((float, 'f) Nx.t, 'f) t -> ((float, 'f) Nx.t, 'f) t
+  ('f, 'd) Bij.t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t -> ((float, 'f, 'd) Nx.t, 'f, 'd) t
 
-val mixture : logits:(float, 'f) Nx.t -> ('x, 'f) t -> ('x, 'f) t
+val mixture : logits:(float, 'f, 'd) Nx.t -> ('x, 'f, 'd) t -> ('x, 'f, 'd) t
 
 (** {1:eliminators Eliminators} *)
 
-val log_density : ('x, 'f) t -> 'x -> (float, 'f) Nx.t
+val log_density : ('x, 'f, 'd) t -> 'x -> (float, 'f, 'd) Nx.t
 
-val factors : ('x, 'f) t -> 'x -> (float, 'f) Nx.t
+val factors : ('x, 'f, 'd) t -> 'x -> (float, 'f, 'd) Nx.t
 
-val sample : Nx.Rng.t -> ('x, 'f) t -> 'x
+val sample : 'd Nx.Rng.key -> ('x, 'f, 'd) t -> 'x
 
 val quantile :
-  ((float, 'f) Nx.t, 'f) t -> (float, 'f) Nx.t -> (float, 'f) Nx.t
+  ((float, 'f, 'd) Nx.t, 'f, 'd) t -> (float, 'f, 'd) Nx.t -> (float, 'f, 'd) Nx.t
 
-val coords : ((float, 'f) Nx.t, 'f) t -> 'f Bij.t
+val coords : ((float, 'f, 'd) Nx.t, 'f, 'd) t -> ('f, 'd) Bij.t
 
-val standardize : ((float, 'f) Nx.t, 'f) t -> 'f Bij.t
+val standardize : ((float, 'f, 'd) Nx.t, 'f, 'd) t -> ('f, 'd) Bij.t
 
-val mixture_membership : ('x, 'f) t -> 'x -> (float, 'f) Nx.t
+val mixture_membership : ('x, 'f, 'd) t -> 'x -> (float, 'f, 'd) Nx.t
 
 (** {1:observers Observers} *)
 
-val family : ('x, 'f) t -> string
+val family : ('x, 'f, 'd) t -> string
 
-val kind : ('x, 'f) t -> ('x, 'f) kind
+val kind : ('x, 'f, 'd) t -> ('x, 'f, 'd) kind
 
-val dtype : ('x, 'f) t -> (float, 'f) Nx.dtype
+val dtype : ('x, 'f, 'd) t -> (float, 'f) Nx.dtype
 
-val shape : ('x, 'f) t -> int array
+val shape : ('x, 'f, 'd) t -> int array
+val placement : ('x, 'f, 'd) t -> 'd Nx.Placement.t
 
-val support : ('x, 'f) t -> Support.t
+val support : ('x, 'f, 'd) t -> Support.t
 
-val bounds : ('x, 'f) t -> (float, 'f) Nx.t * (float, 'f) Nx.t
+val bounds : ('x, 'f, 'd) t -> (float, 'f, 'd) Nx.t * (float, 'f, 'd) Nx.t
 
-val pp : Format.formatter -> ('x, 'f) t -> unit
+val pp : Format.formatter -> ('x, 'f, 'd) t -> unit
 
 (** {1:checks Checks} *)
 
-val check : ?unless:Nx.bool_t -> string -> ('x, 'f) t -> ('x, 'f) t
+val check : ?unless:'d Nx.bool_t -> string -> ('x, 'f, 'd) t -> ('x, 'f, 'd) t
 
-val valid : ('x, 'f) t -> Nx.bool_t
+val valid : ('x, 'f, 'd) t -> 'd Nx.bool_t

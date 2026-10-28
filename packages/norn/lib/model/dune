@@ -1,4 +1,4 @@
 (library
  (name norn_model)
  (public_name norn.model)
- (libraries nx.dtype nx norn rune))
+ (libraries nx nx.array norn rune))

@@ -8,25 +8,25 @@
     Chains move in whitened coordinates [z], on a density [lp_z] of them. The
     transitions keep [z] as one flat row per chain ({!Rows.ravel}). *)
 
-type ('u, 'f) point = { z : 'u; p : 'u; g : 'u; lp : (float, 'f) Nx.t }
+type ('u, 'f, 'd) point = { z : 'u; p : 'u; g : 'u; lp : (float, 'f, 'd) Nx.t }
 (** A phase point of each chain: position, momentum, the density's gradient and
     value there. *)
 
-val point_ptree : 'u Nx.Ptree.t -> ('u, 'f) point Nx.Ptree.t
+val point_ptree : ('u, 'd) Nx.Ptree.t -> (('u, 'f, 'd) point, 'd) Nx.Ptree.t
 
 val choose_point :
-  'u Nx.Ptree.t ->
-  Nx.bool_t ->
-  ('u, 'f) point ->
-  ('u, 'f) point ->
-  ('u, 'f) point
+  ('u, 'd) Nx.Ptree.t ->
+  'd Nx.bool_t ->
+  ('u, 'f, 'd) point ->
+  ('u, 'f, 'd) point ->
+  ('u, 'f, 'd) point
 (** [choose_point u mask a b] is [a] in the chains where [mask] holds. *)
 
-val momentum : 'u Nx.Ptree.t -> Nx.Rng.t -> 'u -> 'u
+val momentum : ('u, 'd) Nx.Ptree.t -> 'd Nx.Rng.key -> 'u -> 'u
 (** [momentum u keys like] is a standard normal momentum per chain, chain [i]'s
     drawn from [fold_in keys.(i) 0]. *)
 
-val kinetic : 'u Nx.Ptree.t -> (float, 'f) Nx.t -> 'u -> (float, 'f) Nx.t
+val kinetic : ('u, 'd) Nx.Ptree.t -> (float, 'f, 'd) Nx.t -> 'u -> (float, 'f, 'd) Nx.t
 (** [kinetic u like p] is each chain's [p · p / 2], at [like]'s dtype. *)
 
 val max_energy_error : float
@@ -34,12 +34,12 @@ val max_energy_error : float
 
 val leapfrog :
   string ->
-  'u Nx.Ptree.t ->
-  ('u -> (float, 'f) Nx.t) ->
-  Nx.bool_t ->
-  (float, 'f) Nx.t ->
-  ('u, 'f) point ->
-  ('u, 'f) point * Nx.bool_t
+  ('u, 'd) Nx.Ptree.t ->
+  ('u -> (float, 'f, 'd) Nx.t) ->
+  'd Nx.bool_t ->
+  (float, 'f, 'd) Nx.t ->
+  ('u, 'f, 'd) point ->
+  ('u, 'f, 'd) point * 'd Nx.bool_t
 (** [leapfrog context u lp_z running h s] is one leapfrog step of [h], one per
     chain, from [s] with its cached gradient, by one density evaluation, and
     whether each chain's step stayed finite. A chain held by [running], or whose
@@ -47,13 +47,13 @@ val leapfrog :
 
 val search :
   string ->
-  'u Nx.Ptree.t ->
-  ('u -> (float, 'f) Nx.t) ->
-  reduce:((float, 'f) Nx.t -> (float, 'f) Nx.t) ->
-  Nx.Rng.t ->
-  ('u, 'f) point ->
-  (float, 'f) Nx.t ->
-  (float, 'f) Nx.t
+  ('u, 'd) Nx.Ptree.t ->
+  ('u -> (float, 'f, 'd) Nx.t) ->
+  reduce:((float, 'f, 'd) Nx.t -> (float, 'f, 'd) Nx.t) ->
+  'd Nx.Rng.key ->
+  ('u, 'f, 'd) point ->
+  (float, 'f, 'd) Nx.t ->
+  (float, 'f, 'd) Nx.t
 (** [search context u lp_z ~reduce keys start eps] doubles or halves the step
     sizes [eps] until [reduce] of the chains' log acceptance of one leapfrog
     step from [start] crosses [log 0.8] (Stan's heuristic). [reduce] maps the
@@ -63,30 +63,30 @@ val search :
 (** {1:rows Whitened rows} *)
 
 val rows_density :
-  'u Nx.Ptree.t ->
-  ('u -> (float, 'f) Nx.t) ->
-  'f Gaussian.flat ->
+  ('u, 'd) Nx.Ptree.t ->
+  ('u -> (float, 'f, 'd) Nx.t) ->
+  ('f, 'd) Gaussian.flat ->
   'u ->
-  (float, 'f) Nx.t ->
-  (float, 'f) Nx.t
+  (float, 'f, 'd) Nx.t ->
+  (float, 'f, 'd) Nx.t
 (** [rows_density u lp f x z] is [lp] at the position of [x]'s structure that
     the whitened rows [z] stand for under [f]. *)
 
 val enter :
-  'u Nx.Ptree.t ->
-  'f Gaussian.flat ->
+  ('u, 'd) Nx.Ptree.t ->
+  ('f, 'd) Gaussian.flat ->
   'u ->
-  (float, 'f) Nx.t ->
+  (float, 'f, 'd) Nx.t ->
   'u ->
-  ((float, 'f) Nx.t, 'f) point
+  ((float, 'f, 'd) Nx.t, 'f, 'd) point
 (** [enter u f x l grad] is the point of whitened rows at the position [x], of
     density [l] and gradient [grad]; its momentum is its position. *)
 
 val leave :
-  'u Nx.Ptree.t ->
-  'f Gaussian.flat ->
+  ('u, 'd) Nx.Ptree.t ->
+  ('f, 'd) Gaussian.flat ->
   'u ->
-  ((float, 'f) Nx.t, 'f) point ->
+  ((float, 'f, 'd) Nx.t, 'f, 'd) point ->
   'u * 'u
 (** [leave u f x s] is the position and the gradient at the point [s], in [x]'s
     structure. *)
@@ -99,39 +99,39 @@ val leave :
 val max_steps : int
 (** The longest trajectory, in leapfrog steps. *)
 
-val chain_keys : Nx.Rng.t -> int -> Nx.Rng.t
+val chain_keys : 'd Nx.Rng.key -> int -> 'd Nx.Rng.key
 (** [chain_keys k c] is row [i] of [split_batch ~n:c (fold_in k 0)] for chain
     [i]. *)
 
-type ('u, 'f) transition = {
+type ('u, 'f, 'd) transition = {
   position : 'u;  (** Each chain's position after the transition. *)
-  lp : (float, 'f) Nx.t;  (** The density there. *)
+  lp : (float, 'f, 'd) Nx.t;  (** The density there. *)
   grad : 'u;  (** Its gradient there. *)
-  alpha : (float, 'f) Nx.t;
+  alpha : (float, 'f, 'd) Nx.t;
       (** The Metropolis probability of the trajectory's end, [0] at a
           divergence. *)
-  steps : Nx.int32_t;  (** Each chain's leapfrog steps. *)
-  diverging : Nx.bool_t;
-  energy : (float, 'f) Nx.t;  (** The Hamiltonian after the momentum draw. *)
-  z0 : (float, 'f) Nx.t;  (** The whitened start, a row per chain. *)
-  z1 : (float, 'f) Nx.t;  (** The whitened end of the trajectory. *)
-  p1 : (float, 'f) Nx.t;  (** Its momentum. *)
-  time : (float, 'f) Nx.t;  (** The trajectory's duration. *)
+  steps : 'd Nx.int32_t;  (** Each chain's leapfrog steps. *)
+  diverging : 'd Nx.bool_t;
+  energy : (float, 'f, 'd) Nx.t;  (** The Hamiltonian after the momentum draw. *)
+  z0 : (float, 'f, 'd) Nx.t;  (** The whitened start, a row per chain. *)
+  z1 : (float, 'f, 'd) Nx.t;  (** The whitened end of the trajectory. *)
+  p1 : (float, 'f, 'd) Nx.t;  (** Its momentum. *)
+  time : (float, 'f, 'd) Nx.t;  (** The trajectory's duration. *)
 }
 (** The type for a transition of every chain. *)
 
 val transition :
   string ->
-  'u Nx.Ptree.t ->
-  ('u -> (float, 'f) Nx.t) ->
-  Nx.Rng.t ->
-  ('u, 'f) Gaussian.t ->
-  step_size:(float, 'f) Nx.t ->
-  length:(float, 'f) Nx.t ->
+  ('u, 'd) Nx.Ptree.t ->
+  ('u -> (float, 'f, 'd) Nx.t) ->
+  'd Nx.Rng.key ->
+  ('u, 'f, 'd) Gaussian.t ->
+  step_size:(float, 'f, 'd) Nx.t ->
+  length:(float, 'f, 'd) Nx.t ->
   'u ->
-  (float, 'f) Nx.t ->
+  (float, 'f, 'd) Nx.t ->
   'u ->
-  ('u, 'f) transition
+  ('u, 'f, 'd) transition
 (** [transition context u lp k g ~step_size ~length x l grad] is one transition
     of every chain from [x], at density [l] with gradient [grad]: [n] leapfrog
     steps of [step_size], [n] the [length] jittered uniformly in [(0, 2)] times
@@ -150,21 +150,21 @@ val transition :
     The length that maximises the change in expected squared jumped distance
     (Hoffman, Radul and Sountsov 2021), found by Adam on its log. *)
 
-type 'f chees = {
-  log_length : (float, 'f) Nx.t;  (** The current iterate. *)
-  second : (float, 'f) Nx.t;  (** Adam's second moment. *)
-  bar : (float, 'f) Nx.t;  (** The iterates' polynomial average. *)
-  count : (float, 'f) Nx.t;  (** The steps taken. *)
+type ('f, 'd) chees = {
+  log_length : (float, 'f, 'd) Nx.t;  (** The current iterate. *)
+  second : (float, 'f, 'd) Nx.t;  (** Adam's second moment. *)
+  bar : (float, 'f, 'd) Nx.t;  (** The iterates' polynomial average. *)
+  count : (float, 'f, 'd) Nx.t;  (** The steps taken. *)
 }
 (** The type for the search's state, every field a scalar. *)
 
-val chees_ptree : unit -> 'f chees Nx.Ptree.t
+val chees_ptree : unit -> (('f, 'd) chees, 'd) Nx.Ptree.t
 
-val chees_gradient : ('u, 'f) transition -> (float, 'f) Nx.t
+val chees_gradient : ('u, 'f, 'd) transition -> (float, 'f, 'd) Nx.t
 (** [chees_gradient t] is the acceptance-weighted mean over chains of the
     criterion's derivative in log length at the transition [t], zero when no
     chain accepts. *)
 
-val chees_step : 'f chees -> (float, 'f) Nx.t -> (float, 'f) Nx.t -> 'f chees
+val chees_step : ('f, 'd) chees -> (float, 'f, 'd) Nx.t -> (float, 'f, 'd) Nx.t -> ('f, 'd) chees
 (** [chees_step a eps g] is one Adam step of rate [0.025] up the gradient [g],
     the log length kept where a trajectory fits {!max_steps} steps of [eps]. *)

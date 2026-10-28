@@ -8,51 +8,48 @@ module H = Hamiltonian
 
 let invalid_argf = Rows.invalid_argf
 
-type ('u, 'f) state = {
+type ('u, 'f, 'd) state = {
   position : 'u;
-  lp : (float, 'f) Nx.t;
+  lp : (float, 'f, 'd) Nx.t;
   grad : 'u;
-  step_size : (float, 'f) Nx.t;
-  geometry : ('u, 'f) Gaussian.t;
-  stats : 'f Stats.t;
-  draw : Nx.int32_t;
-  accept : (float, 'f) Nx.t;
+  step_size : (float, 'f, 'd) Nx.t;
+  geometry : ('u, 'f, 'd) Gaussian.t;
+  stats : ('f, 'd) Stats.t;
+  draw : 'd Nx.int32_t;
+  accept : (float, 'f, 'd) Nx.t;
   max_depth : int;
 }
 
-type ('u, 'f) nuts = ('u, 'f) state
+type ('u, 'f, 'd) nuts = ('u, 'f, 'd) state
 
-let ptree (type u f) (u : u P.t) : (u, f) state P.t =
+let ptree (type u f) (u : (u, 'd) P.t) : ((u, f, 'd) state, 'd) P.t =
   let g = Gaussian.ptree u in
-  let module S = struct
-    type _ t = (u, f) nuts
-
-    let walk c s =
-      let open P.Walk in
-      let position = field c "position" (structure u) s.position in
-      let lp = field c "lp" tensor s.lp in
-      let grad = field c "grad" (structure u) s.grad in
-      let step_size = field c "step_size" tensor s.step_size in
-      let geometry = field c "geometry" (structure g) s.geometry in
-      let stats =
-        field c "stats" (structure (Stats.ptree (Nx.dtype s.lp))) s.stats
-      in
-      let draw = field c "draw" tensor s.draw in
-      let accept = field c "accept" tensor s.accept in
-      let max_depth = field c "max_depth" int s.max_depth in
-      {
-        position;
-        lp;
-        grad;
-        step_size;
-        geometry;
-        stats;
-        draw;
-        accept;
-        max_depth;
-      }
-  end in
-  P.nest (module S) P.unit
+  let walk c (s : (u, f, 'd) nuts) : (u, f, 'd) nuts =
+    let open P.Walk in
+    let position = field c "position" (structure u) s.position in
+    let lp = field c "lp" tensor s.lp in
+    let grad = field c "grad" (structure u) s.grad in
+    let step_size = field c "step_size" tensor s.step_size in
+    let geometry = field c "geometry" (structure g) s.geometry in
+    let stats =
+      field c "stats" (structure (Stats.ptree (Nx.dtype s.lp))) s.stats
+    in
+    let draw = field c "draw" tensor s.draw in
+    let accept = field c "accept" tensor s.accept in
+    let max_depth = field c "max_depth" int s.max_depth in
+    {
+      position;
+      lp;
+      grad;
+      step_size;
+      geometry;
+      stats;
+      draw;
+      accept;
+      max_depth;
+    }
+  in
+  P.v walk
 
 let stats = Stats.ptree
 
@@ -80,14 +77,14 @@ let logaddexp a b =
 (* [uniforms dt keys j ids] is each chain's uniform of every id in [ids], shape
    [[c; n]] for [n] ids: chain [i]'s for [id] draws from [fold_in (fold_in
    (fold_in keys.(i) 1) j) id]. *)
-let uniforms (type f) dt keys j ids : (float, f) Nx.t =
+let uniforms (type f) dt keys j ids : (float, f, 'd) Nx.t =
   Rune.vmap
-    P.(Nx.Rng.ptree @-> returns tensor)
+    P.((Nx.Ptree.v Nx.Rng.walk) @-> returns tensor)
     (fun k ->
       let k = Nx.Rng.fold_in_tensor (Nx.Rng.fold_in k 1) j in
       Rune.vmap
         P.(tensor @-> returns tensor)
-        (fun id -> Nx.Rng.uniform (Nx.Rng.fold_in_tensor k id) dt [||])
+        (fun id -> Noise.uniform (Nx.Rng.fold_in_tensor k id) dt [||])
         ids)
     keys
 
@@ -105,109 +102,101 @@ let uniforms (type f) dt keys j ids : (float, f) Nx.t =
    or a momentum is a [[c; d]] matrix, and the slots of every level are one node
    whose tensors lead with an axis of levels. *)
 
-type 'f rows = (float, 'f) Nx.t
+type ('f, 'd) rows = (float, 'f, 'd) Nx.t
 
-type ('u, 'f) point = ('u, 'f) H.point = {
+type ('u, 'f, 'd) point = ('u, 'f, 'd) H.point = {
   z : 'u;
   p : 'u;
   g : 'u;
-  lp : 'f rows;
+  lp : ('f, 'd) rows;
 }
 
 (* A completed subtree: the momenta of its first and last leaf, in the order it
    was built, their sum, its log weight and its proposal. *)
-type 'f node = {
-  first : 'f rows;
-  last : 'f rows;
-  rho : 'f rows;
-  weight : 'f rows;
-  prop : ('f rows, 'f) point;
+type ('f, 'd) node = {
+  first : ('f, 'd) rows;
+  last : ('f, 'd) rows;
+  rho : ('f, 'd) rows;
+  weight : ('f, 'd) rows;
+  prop : (('f, 'd) rows, 'f, 'd) point;
 }
 
-type 'f tree = {
-  back : ('f rows, 'f) point; (* the trajectory's backward end *)
-  front : ('f rows, 'f) point; (* its forward end *)
-  cursor : ('f rows, 'f) point; (* the last leaf *)
-  sample : ('f rows, 'f) point;
-  sum : 'f rows; (* the trajectory's momenta, summed *)
-  total : 'f rows; (* its log weight *)
-  slots : 'f node; (* every level's, stacked *)
-  forward : Nx.bool_t;
-  running : Nx.bool_t;
-  diverging : Nx.bool_t;
-  saturated : Nx.bool_t;
-  depth : Nx.int32_t;
-  steps : Nx.int32_t;
-  accepted : 'f rows; (* the sum of the leaves' acceptance *)
-  doubling : Nx.int32_t; (* [j], shared by the chains *)
-  leaf : Nx.int32_t; (* [i] *)
-  size : Nx.int32_t; (* [2^j] *)
+type ('f, 'd) tree = {
+  back : (('f, 'd) rows, 'f, 'd) point; (* the trajectory's backward end *)
+  front : (('f, 'd) rows, 'f, 'd) point; (* its forward end *)
+  cursor : (('f, 'd) rows, 'f, 'd) point; (* the last leaf *)
+  sample : (('f, 'd) rows, 'f, 'd) point;
+  sum : ('f, 'd) rows; (* the trajectory's momenta, summed *)
+  total : ('f, 'd) rows; (* its log weight *)
+  slots : ('f, 'd) node; (* every level's, stacked *)
+  forward : 'd Nx.bool_t;
+  running : 'd Nx.bool_t;
+  diverging : 'd Nx.bool_t;
+  saturated : 'd Nx.bool_t;
+  depth : 'd Nx.int32_t;
+  steps : 'd Nx.int32_t;
+  accepted : ('f, 'd) rows; (* the sum of the leaves' acceptance *)
+  doubling : 'd Nx.int32_t; (* [j], shared by the chains *)
+  leaf : 'd Nx.int32_t; (* [i] *)
+  size : 'd Nx.int32_t; (* [2^j] *)
 }
 
-type 'f node' = 'f node
-type 'f tree' = 'f tree
 
-let node_ptree (type f) () : f node P.t =
+let node_ptree (type f) () : ((f, 'd) node, 'd) P.t =
   let point = H.point_ptree P.tensor in
-  let module S = struct
-    type _ t = f node'
+  let walk c (s : (f, 'd) node) : (f, 'd) node =
+    let open P.Walk in
+    let first = field c "first" tensor s.first in
+    let last = field c "last" tensor s.last in
+    let rho = field c "rho" tensor s.rho in
+    let weight = field c "weight" tensor s.weight in
+    let prop = field c "prop" (structure point) s.prop in
+    { first; last; rho; weight; prop }
+  in
+  P.v walk
 
-    let walk c (s : f node) : f node =
-      let open P.Walk in
-      let first = field c "first" tensor s.first in
-      let last = field c "last" tensor s.last in
-      let rho = field c "rho" tensor s.rho in
-      let weight = field c "weight" tensor s.weight in
-      let prop = field c "prop" (structure point) s.prop in
-      { first; last; rho; weight; prop }
-  end in
-  P.nest (module S) P.unit
-
-let tree_ptree (type f) () : f tree P.t =
+let tree_ptree (type f) () : ((f, 'd) tree, 'd) P.t =
   let point = H.point_ptree P.tensor and node = node_ptree () in
-  let module S = struct
-    type _ t = f tree'
-
-    let walk c (s : f tree) : f tree =
-      let open P.Walk in
-      let back = field c "back" (structure point) s.back in
-      let front = field c "front" (structure point) s.front in
-      let cursor = field c "cursor" (structure point) s.cursor in
-      let sample = field c "sample" (structure point) s.sample in
-      let sum = field c "sum" tensor s.sum in
-      let total = field c "total" tensor s.total in
-      let slots = field c "slots" (structure node) s.slots in
-      let forward = field c "forward" tensor s.forward in
-      let running = field c "running" tensor s.running in
-      let diverging = field c "diverging" tensor s.diverging in
-      let saturated = field c "saturated" tensor s.saturated in
-      let depth = field c "depth" tensor s.depth in
-      let steps = field c "steps" tensor s.steps in
-      let accepted = field c "accepted" tensor s.accepted in
-      let doubling = field c "doubling" tensor s.doubling in
-      let leaf = field c "leaf" tensor s.leaf in
-      let size = field c "size" tensor s.size in
-      {
-        back;
-        front;
-        cursor;
-        sample;
-        sum;
-        total;
-        slots;
-        forward;
-        running;
-        diverging;
-        saturated;
-        depth;
-        steps;
-        accepted;
-        doubling;
-        leaf;
-        size;
-      }
-  end in
-  P.nest (module S) P.unit
+  let walk c (s : (f, 'd) tree) : (f, 'd) tree =
+    let open P.Walk in
+    let back = field c "back" (structure point) s.back in
+    let front = field c "front" (structure point) s.front in
+    let cursor = field c "cursor" (structure point) s.cursor in
+    let sample = field c "sample" (structure point) s.sample in
+    let sum = field c "sum" tensor s.sum in
+    let total = field c "total" tensor s.total in
+    let slots = field c "slots" (structure node) s.slots in
+    let forward = field c "forward" tensor s.forward in
+    let running = field c "running" tensor s.running in
+    let diverging = field c "diverging" tensor s.diverging in
+    let saturated = field c "saturated" tensor s.saturated in
+    let depth = field c "depth" tensor s.depth in
+    let steps = field c "steps" tensor s.steps in
+    let accepted = field c "accepted" tensor s.accepted in
+    let doubling = field c "doubling" tensor s.doubling in
+    let leaf = field c "leaf" tensor s.leaf in
+    let size = field c "size" tensor s.size in
+    {
+      back;
+      front;
+      cursor;
+      sample;
+      sum;
+      total;
+      slots;
+      forward;
+      running;
+      diverging;
+      saturated;
+      depth;
+      steps;
+      accepted;
+      doubling;
+      leaf;
+      size;
+    }
+  in
+  P.v walk
 
 (* [pick m a b] is [a] where the mask [m] holds and [b] elsewhere, [m]'s axes
    leading [a]'s. *)
@@ -305,14 +294,16 @@ let leapfrog lp_z running h s =
 
 (* [transition u lp max_depth eps keys geometry s] is one transition from the
    position [s] of each chain. *)
-let transition (type f) u lp max_depth (eps : (float, f) Nx.t) keys geometry
+let transition (type f) u lp max_depth (eps : (float, f, 'd) Nx.t) keys geometry
     position lp0 grad =
   let dt = Nx.dtype eps in
   let c = (Nx.shape eps).(0) in
-  let i32 v = Nx.scalar Nx.int32 (Int32.of_int v) in
+  let on = Nx.beside eps in
+  let i32 v = Nx.scalar_at on Nx.int32 (Int32.of_int v) in
   let ints f =
-    Nx.create Nx.int32 [| max_depth |]
-      (Array.init max_depth (fun l -> Int32.of_int (f l)))
+    Nx.place on
+      (Nx.create Nx.int32 [| max_depth |]
+         (Array.init max_depth (fun l -> Int32.of_int (f l))))
   in
   let f = Gaussian.flat u position geometry in
   let lp_z = H.rows_density u lp f position in
@@ -322,7 +313,7 @@ let transition (type f) u lp max_depth (eps : (float, f) Nx.t) keys geometry
   let h0 = Nx.sub (kinetic p0) lp0 in
   let start = { z = z0; p = p0; g = g0; lp = lp0 } in
   let empty = { first = p0; last = p0; rho = p0; weight = lp0; prop = start } in
-  let no = Nx.zeros Nx.bool [| c |] in
+  let no = Nx.zeros_at on Nx.bool [| c |] in
   let init =
     {
       back = start;
@@ -330,19 +321,19 @@ let transition (type f) u lp max_depth (eps : (float, f) Nx.t) keys geometry
       cursor = start;
       sample = start;
       sum = p0;
-      total = Nx.zeros dt [| c |];
+      total = Nx.zeros_at on dt [| c |];
       slots =
         map_node
           (fun x ->
             Nx.broadcast_to (Array.append [| max_depth |] (Nx.shape x)) x)
           empty;
       forward = no;
-      running = Nx.ones Nx.bool [| c |];
+      running = Nx.ones_at on Nx.bool [| c |];
       diverging = no;
       saturated = no;
-      depth = Nx.zeros Nx.int32 [| c |];
-      steps = Nx.zeros Nx.int32 [| c |];
-      accepted = Nx.zeros dt [| c |];
+      depth = Nx.zeros_at on Nx.int32 [| c |];
+      steps = Nx.zeros_at on Nx.int32 [| c |];
+      accepted = Nx.zeros_at on dt [| c |];
       doubling = i32 0;
       leaf = i32 0;
       size = i32 1;
@@ -370,19 +361,19 @@ let transition (type f) u lp max_depth (eps : (float, f) Nx.t) keys geometry
     let uniform k = Nx.slice [ Nx.A; Nx.I k ] us in
     let fresh = Nx.equal t.leaf (i32 0) in
     let forward =
-      Nx.where fresh (Nx.greater (uniform 0) (Nx.scalar dt 0.5)) t.forward
+      Nx.where fresh (Nx.greater_s (uniform 0) 0.5) t.forward
     in
     let from = pick_point forward t.front t.back in
     let cursor = pick_point (Nx.broadcast_to [| c |] fresh) from t.cursor in
     let h = Nx.where forward eps (Nx.neg eps) in
     let leaf, finite = leapfrog lp_z running h cursor in
     let delta = Nx.sub (Nx.sub (kinetic leaf.p) leaf.lp) h0 in
-    let delta = Nx.where (Nx.isnan delta) (Nx.scalar dt Float.infinity) delta in
+    let delta = Nx.where (Nx.isnan delta) (Nx.scalar_like delta Float.infinity) delta in
     let diverged =
       Nx.logical_or (Nx.logical_not finite)
-        (Nx.greater delta (Nx.scalar dt H.max_energy_error))
+        (Nx.greater_s delta H.max_energy_error)
     in
-    let accept = Nx.minimum (Nx.exp (Nx.neg delta)) (Nx.scalar dt 1.) in
+    let accept = Nx.minimum_s (Nx.exp (Nx.neg delta)) 1. in
     let node =
       {
         first = leaf.p;
@@ -520,7 +511,7 @@ let init u ?(max_depth = 10) ?(accept = 0.8) ?(rank = 2) ?geometry lp position =
   let c = Rows.count context u position in
   let l, g = Rows.evaluate u lp position in
   Rows.check_density context u lp position l;
-  let dt = Nx.dtype l in
+  let dt = Nx.dtype l and on = Nx.beside l in
   let gp = Gaussian.ptree u in
   (* Orthonormal directions number at most a chain's float elements. *)
   let rank = min rank (Rows.elements u c position) in
@@ -541,40 +532,42 @@ let init u ?(max_depth = 10) ?(accept = 0.8) ?(rank = 2) ?geometry lp position =
             let directions =
               P.map u
                 (fun _ t ->
-                  Nx.zeros (Nx.dtype t) (Array.append [| rank |] (Nx.shape t)))
+                  Nx.zeros_at (Nx.beside t) (Nx.dtype t)
+                    (Array.append [| rank |] (Nx.shape t)))
                 m
             in
             Gaussian.low_rank u ~mean:m ~scale:s ~directions
-              ~variances:(Nx.ones dt [| rank |])
+              ~variances:(Nx.ones_at on dt [| rank |])
         in
         Rune.vmap P.(u @-> u @-> returns gp) fit position scale
   in
-  let zero = Nx.zeros dt [| c |] and no = Nx.zeros Nx.bool [| c |] in
+  let zero = Nx.zeros_at on dt [| c |] and no = Nx.zeros_at on Nx.bool [| c |] in
   {
     position;
     lp = l;
     grad = g;
-    step_size = Nx.ones dt [| c |];
+    step_size = Nx.ones_at on dt [| c |];
     geometry;
     stats =
       Stats.
         {
           lp = l;
           acceptance = zero;
-          step_size = Nx.ones dt [| c |];
-          n_steps = Nx.zeros Nx.int32 [| c |];
+          step_size = Nx.ones_at on dt [| c |];
+          n_steps = Nx.zeros_at on Nx.int32 [| c |];
           diverging = no;
           saturated = no;
           energy = zero;
         };
-    draw = Nx.scalar Nx.int32 0l;
-    accept = Nx.scalar dt accept;
+    draw = Nx.scalar_at on Nx.int32 0l;
+    accept = Nx.scalar_at on dt accept;
     max_depth;
   }
 
 (* Transitions *)
 
-let step u lp k (s : (_, _) state) =
+let step u lp k (s : (_, _, 'd) state) =
+  let k = Nx.Rng.place (Nx.beside s.lp) k in
   let c = (Nx.shape s.lp).(0) in
   let keys = Nx.Rng.split_batch ~n:c k in
   let position, lp, grad, stats =
@@ -587,13 +580,14 @@ let step u lp k (s : (_, _) state) =
     lp;
     grad;
     stats;
-    draw = Nx.add s.draw (Nx.scalar Nx.int32 1l);
+    draw = Nx.add_s s.draw 1l;
   }
 
 (* [leading_swap x] moves the chain axis before the draw axis. *)
 let leading_swap x = Nx.moveaxis 0 1 x
 
-let sample u lp k ~draws (s : (_, _) state) =
+let sample u lp k ~draws (s : (_, _, 'd) state) =
+  let k = Nx.Rng.place (Nx.beside s.lp) k in
   if draws < 1 then
     invalid_argf "Norn.Nuts.sample: draws = %d is not positive" draws;
   let dt = Nx.dtype s.lp in
@@ -601,11 +595,11 @@ let sample u lp k ~draws (s : (_, _) state) =
   let s, (xs, ss) =
     Rune.scan sp P.tensor
       P.(pair u st)
-      ~f:(fun (s : (_, _) state) _ ->
+      ~f:(fun (s : (_, _, 'd) state) _ ->
         let s = step u lp (Nx.Rng.fold_in_tensor k s.draw) s in
         (s, (s.position, s.stats)))
       ~init:s
-      (Nx.zeros Nx.int32 [| draws |])
+      (Nx.zeros_at (Nx.beside s.lp) Nx.int32 [| draws |])
   in
   let xs = P.map u (fun _ t -> leading_swap t) xs in
   let ss = P.map st (fun _ t -> leading_swap t) ss in
@@ -613,37 +607,33 @@ let sample u lp k ~draws (s : (_, _) state) =
 
 (* Warmup *)
 
-type ('u, 'f) adapt = {
-  st : ('u, 'f) state;
-  averaging : 'f Adapt.averaging;
-  window : 'u Adapt.window;
+type ('u, 'f, 'd) adapt = {
+  st : ('u, 'f, 'd) state;
+  averaging : ('f, 'd) Adapt.averaging;
+  window : ('u, 'd) Adapt.window;
 }
 
-type ('u, 'f) adapt' = ('u, 'f) adapt
 
-let adapt_ptree (type u f) (u : u P.t) : (u, f) adapt P.t =
+let adapt_ptree (type u f) (u : (u, 'd) P.t) : ((u, f, 'd) adapt, 'd) P.t =
   let sp = ptree u in
-  let module S = struct
-    type _ t = (u, f) adapt'
-
-    let walk c (a : (u, f) adapt) : (u, f) adapt =
-      let open P.Walk in
-      let st = field c "st" (structure sp) a.st in
-      let averaging =
-        field c "averaging" (structure (Adapt.averaging_ptree ())) a.averaging
-      in
-      let window =
-        field c "window" (structure (Adapt.window_ptree u)) a.window
-      in
-      { st; averaging; window }
-  end in
-  P.nest (module S) P.unit
+  let walk c (a : (u, f, 'd) adapt) : (u, f, 'd) adapt =
+    let open P.Walk in
+    let st = field c "st" (structure sp) a.st in
+    let averaging =
+      field c "averaging" (structure (Adapt.averaging_ptree ())) a.averaging
+    in
+    let window =
+      field c "window" (structure (Adapt.window_ptree u)) a.window
+    in
+    { st; averaging; window }
+  in
+  P.v walk
 
 (* [init_step_size u lp k s] is each chain's step size doubled or halved, from
    [s.step_size], until one leapfrog step from its position with a fresh
    momentum crosses an acceptance of 0.8. [k] is the key of the transition the
    search precedes. *)
-let init_step_size u lp k (s : (_, _) state) =
+let init_step_size u lp k (s : (_, _, 'd) state) =
   let c = (Nx.shape s.step_size).(0) in
   let f = Gaussian.flat u s.position s.geometry in
   H.search "Norn.Nuts.warmup" P.tensor
@@ -653,7 +643,8 @@ let init_step_size u lp k (s : (_, _) state) =
     (H.enter u f s.position s.lp s.grad)
     s.step_size
 
-let warmup u lp k ~steps (s : (_, _) state) =
+let warmup u lp k ~steps (s : (_, _, 'd) state) =
+  let k = Nx.Rng.place (Nx.beside s.lp) k in
   if steps < 0 then
     invalid_argf "Norn.Nuts.warmup: steps = %d is negative" steps;
   let schedule = Adapt.schedule steps in
@@ -664,7 +655,7 @@ let warmup u lp k ~steps (s : (_, _) state) =
     let longest = List.fold_left (fun m (n, _) -> max m n) 0 schedule in
     (* A low-rank fit reads the window's draws; a diagonal one their sums. *)
     let buffer = if rank = 0 then 0 else longest in
-    let key (st : (_, _) state) = Nx.Rng.fold_in_tensor k st.draw in
+    let key (st : (_, _, 'd) state) = Nx.Rng.fold_in_tensor k st.draw in
     let s0 = { s with step_size = init_step_size u lp (key s) s } in
     let a0 =
       {
@@ -673,7 +664,7 @@ let warmup u lp k ~steps (s : (_, _) state) =
         window = Adapt.empty u ~buffer s0.position;
       }
     in
-    let one (a : (_, _) adapt) =
+    let one (a : (_, _, 'd) adapt) =
       let st = step u lp (key a.st) a.st in
       let stat =
         Nx.minimum st.stats.acceptance (Nx.ones_like st.stats.acceptance)
@@ -684,7 +675,7 @@ let warmup u lp k ~steps (s : (_, _) state) =
       let st = { st with step_size } in
       { st; averaging; window = Adapt.record u a.window st.position st.grad }
     in
-    let window (a : (_, _) adapt) (length, refit) =
+    let window (a : (_, _, 'd) adapt) (length, refit) =
       let a = { a with window = Adapt.reopen u a.window a.st.position } in
       let a =
         Rune.iterate (adapt_ptree u) ~max:longest
@@ -693,7 +684,7 @@ let warmup u lp k ~steps (s : (_, _) state) =
       in
       (* At a slow window's end: refit the geometry, find a step size for it and
          restart the averaging there. *)
-      let refit = Nx.not_equal refit (Nx.scalar Nx.int32 0l) in
+      let refit = Nx.not_equal_s refit 0l in
       let geometry = Adapt.per_chain u dt ~rank a.window in
       let gp = Gaussian.ptree u in
       let refitted =
@@ -717,6 +708,7 @@ let warmup u lp k ~steps (s : (_, _) state) =
     let a, () =
       Rune.scan (adapt_ptree u)
         P.(pair tensor tensor)
-        P.unit ~f:window ~init:a0 (Adapt.windows schedule)
+        P.unit ~f:window ~init:a0
+        (Adapt.windows (Nx.beside s0.step_size) schedule)
     in
     { a.st with step_size = Adapt.final a.averaging }

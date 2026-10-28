@@ -2,4 +2,4 @@
  (name norn)
  (public_name norn)
  (private_modules support bij stats draws diag summary dist gaussian nuts hmc ensemble weighted evidence nested smc prec noise chains rows hamiltonian adapt slice)
- (libraries nx.dtype nx rune jera))
+ (libraries nx nx.array rune jera))

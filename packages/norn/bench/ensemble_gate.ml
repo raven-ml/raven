@@ -56,7 +56,7 @@ let () =
         lp x
       in
       let w = walkers d in
-      let start = Nx.Rng.normal (Nx.Rng.key 1) Nx.float64 [| w; d |] in
+      let start = Nx.Rng.normal ~key:(Nx.Rng.key 1) Nx.float64 [| w; d |] in
       let s = Norn.Ensemble.init t counted start in
       let s = Norn.Ensemble.warmup t counted (Nx.Rng.key 2) ~steps:burn s in
       let rec chunks s n draws =
@@ -66,10 +66,10 @@ let () =
             Norn.Ensemble.sample t counted (Nx.Rng.key 3) ~draws:chunk s
           in
           chunks s (n - chunk)
-            ((Norn.Draws.thin t ~every:thin d :> Nx.float64_t) :: draws)
+            ((Norn.Draws.thin t ~every:thin d :> Nx.host Nx.float64_t) :: draws)
       in
       let draws = chunks s steps [] in
       let x = Nx.moveaxis 0 1 (Nx.concatenate ~axis:1 draws) in
-      Nx_io.save_npy ~overwrite:true (Filename.concat dir (name ^ ".npy")) x;
+      Nx_io.save_npy (Filename.concat dir (name ^ ".npy")) x;
       Printf.printf "%s %d\n%!" name !rows)
     targets
