@@ -234,6 +234,46 @@ let cut_like g ~like ~axes ~axis =
           Error "a grid axis would cut two axes"
         else Ok (normal devices extents ({ axis; over = added } :: cuts))
 
+let extents = function One _ -> [||] | Grid g -> Array.of_list g.extents
+
+let over g axis =
+  match g with
+  | One _ -> [||]
+  | Grid { cuts; _ } -> (
+      match List.find_opt (fun c -> c.axis = axis) cuts with
+      | Some c -> Array.of_list c.over
+      | None -> [||])
+
+let union g g' =
+  match (g, g') with
+  | One k, One k' -> if k = k' then Some g else None
+  | One _, Grid _ | Grid _, One _ -> None
+  | Grid a, Grid b -> (
+      if a.devices <> b.devices then None
+      else
+        match refine a.extents b.extents with
+        | None -> None
+        | Some (extents, sa, sb) ->
+            let spanned spans c =
+              { c with over = List.concat_map (fun h -> spans.(h)) c.over }
+            in
+            let ca = List.map (spanned sa) a.cuts
+            and cb = List.map (spanned sb) b.cuts in
+            (* An axis both cut must be cut over the same grid axes; every
+               other cut takes grid axes no cut takes. *)
+            let alike c =
+              match List.find_opt (fun c' -> c'.axis = c.axis) ca with
+              | Some c' -> c'.over = c.over
+              | None -> true
+            in
+            let fresh c = not (List.exists (fun c' -> c'.axis = c.axis) ca) in
+            let cuts = ca @ List.filter fresh cb in
+            if
+              List.for_all alike cb
+              && distinct (List.concat_map (fun c -> c.over) cuts)
+            then Some (normal a.devices extents cuts)
+            else None)
+
 (* Two grids are equal when every device holds the same window under both,
    whatever the shape: the same tile of the same count along every cut axis. *)
 let equal g g' =

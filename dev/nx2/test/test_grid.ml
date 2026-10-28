@@ -211,9 +211,68 @@ let joined =
 
 let joined = Gen.with_pp pp_joined joined
 
+(* Two grids over four devices of one value's rank, and its shape: any two,
+   or often an axis cut over the mesh's first axis beside one cut over its
+   second. *)
+let united =
+  let open Gen in
+  with_pp
+    (fun ppf (g, g', s) ->
+      Format.fprintf ppf "%a and %a over %a"
+        (Grid.pp Format.pp_print_int)
+        g
+        (Grid.pp Format.pp_print_int)
+        g' pp_shape s)
+    (bind (int_range 1 3) (fun rank ->
+         let axis = int_range 0 (rank - 1) in
+         let halves =
+           map
+             (fun (x, y) -> (mesh [| (x, [| 0 |]) |], mesh [| (y, [| 1 |]) |]))
+             (pair axis axis)
+         in
+         let+ g, g' =
+           frequency [ (2, pair (grid_of rank) (grid_of rank)); (1, halves) ]
+         and+ s = array ~size:(constant rank) (int_range 0 9) in
+         (g, g', s)))
+
+let cuts_axis g a = Array.exists (fun (c, _) -> c = a) (Grid.cuts g)
+
 let laws =
   group "laws"
     [
+      prop ~count:500
+        "a union gives each device its window of each grid along that grid's \
+         cuts, and the whole along any other"
+        united (fun (g, g', s) ->
+          match Grid.union g g' with
+          | None -> cover "no union" true
+          | Some u ->
+              cover "a union of two grids' cuts of other axes"
+                (Array.exists
+                   (fun (a, _) -> not (cuts_axis g a))
+                   (Grid.cuts g')
+                && Grid.is_cut g);
+              Array.iteri
+                (fun j k ->
+                  let w = window u s j in
+                  let of_grid g =
+                    let w' = window g s (position g k) in
+                    Array.iteri
+                      (fun a r ->
+                        if cuts_axis g a then
+                          equal range ~msg:(Printf.sprintf "axis %d" a) r w.(a))
+                      w'
+                  in
+                  of_grid g;
+                  of_grid g';
+                  Array.iteri
+                    (fun a d ->
+                      if not (cuts_axis g a || cuts_axis g' a) then
+                        equal range ~msg:(Printf.sprintf "axis %d, whole" a)
+                          { start = 0; count = d; step = 1 }
+                          w.(a))
+                    s)
+                (Grid.devices u));
       prop
         "each device holds its tile by the balanced rule, numbered major \
          first"
@@ -417,6 +476,23 @@ let operations =
             (require_error
                ~pp:(fun ppf _ -> Format.pp_print_string ppf "a grid")
                r));
+      (* No grid gives two devices alone, one axis two cuts, or two axes the
+         tiles of one grid axis. *)
+      cases "a union no grid makes is none"
+        ~name:(fun (n, _, _) -> n)
+        [
+          ("two devices alone", Grid.device 0, Grid.device 1);
+          ("a device alone beside every device", Grid.device 0, on);
+          ("one axis cut twice", split 0, mesh [| (0, [| 0 |]) |]);
+          ("two axes over one grid axis", split 0, split 1);
+        ]
+        (fun (_, g, g') ->
+          equal (option grid) None (Grid.union g g'));
+      test "a union of the mesh's axes cuts both" (fun () ->
+          equal (option grid)
+            (Some (mesh [| (0, [| 0 |]); (1, [| 1 |]) |]))
+            (Grid.union (mesh [| (0, [| 0 |]) |]) (mesh [| (1, [| 1 |]) |]));
+          equal (option grid) (Some (split 1)) (Grid.union on (split 1)));
       test "a grid prints as the placement that makes it" (fun () ->
           equal string "on [0; 1; 2; 3]" (pp on);
           equal string "split ~axis:1 [0; 1; 2; 3]" (pp (split 1));

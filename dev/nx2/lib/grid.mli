@@ -80,6 +80,23 @@ val cut_like :
     axes, [g] leaves [axis] uncut, and [g] cuts no axis over the grid axes
     it adds. *)
 
+val extents : t -> int array
+(** [extents g] is a fresh array of [g]'s extents in normal form, major
+    first: [[||]] for one device. *)
+
+val over : t -> int -> int array
+(** [over g a] is a fresh array of the grid axes that cut the value's axis
+    [a], major first, numbered as {!extents} orders them: [[||]] where [g]
+    does not cut [a]. *)
+
+val union : t -> t -> t option
+(** [union g g'] is the grid over [g]'s devices that cuts each axis [g] or
+    [g'] cuts, giving each device its window of [g] along [g]'s cut axes
+    and of [g'] along [g']'s. It is [None] where no grid does: where [g] and
+    [g'] list other devices or one order of them, where they cut one axis
+    unlike, and where the tiles of their cuts do not vary independently
+    over the devices, as two axes cut over one grid axis. *)
+
 val equal : t -> t -> bool
 (** [equal g g'] is [true] iff every device holds the same window under [g] and
     [g'], whatever the shape. *)
