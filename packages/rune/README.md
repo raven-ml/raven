@@ -1,8 +1,7 @@
 # Rune
 
 Transformations of OCaml functions over [nx](../nx/) values: automatic
-differentiation, vectorizing maps, loops and compilation, after
-[JAX](https://github.com/jax-ml/jax).
+differentiation, vectorizing maps, loops and compilation.
 
 Rune differentiates ordinary OCaml functions over ordinary OCaml values:
 functions compute with plain `Nx.t` values, and parameters are your own
@@ -26,10 +25,16 @@ module Params = struct
 end
 
 let params_ptree = Nx.Ptree.instantiate (module Params)
-let loss p = Nx.mean (Nx.square (Nx.sub (Nx.add (Nx.matmul x p.w) p.b) y))
 
-(* The gradient of [loss] at [params], a value of the same record type. *)
-let grads = Rune.grad params_ptree loss params
+let loss x y p =
+  Nx.mean (Nx.square (Nx.sub (Nx.add (Nx.matmul x p.w) p.b) y))
+
+let x = Nx.Rng.normal Nx.float32 [| 32; 3 |]
+let y = Nx.Rng.normal Nx.float32 [| 32; 1 |]
+let params = { w = Nx.zeros Nx.float32 [| 3; 1 |]; b = Nx.zeros Nx.float32 [| 1 |] }
+
+(* The gradient of [loss x y] at [params], a value of the same record type. *)
+let grads = Rune.grad params_ptree (loss x y) params
 ```
 
 Leaves may mix dtypes: one forward and one backward pass give a gradient
@@ -87,8 +92,8 @@ let step =
   Rune.jit
     Nx.Ptree.(params_ptree @-> returns (pair params_ptree tensor))
     (fun p ->
-      let l, g = Rune.value_and_grad params_ptree loss p in
-      ({ w = Nx.sub p.w (Nx.mul_s g.w lr); b = Nx.sub p.b (Nx.mul_s g.b lr) }, l))
+      let l, g = Rune.value_and_grad params_ptree (loss x y) p in
+      ({ w = Nx.sub p.w (Nx.mul_s g.w 0.1); b = Nx.sub p.b (Nx.mul_s g.b 0.1) }, l))
 
 let params, l = step (Nx.Ptree.donate params_ptree params)
 ```
@@ -102,7 +107,7 @@ let per_sample =
   Rune.vmap
     Nx.Ptree.(tensor @-> tensor @-> returns params_ptree)
     (fun x y -> Rune.grad params_ptree (loss x y) params)
-    xs ys
+    x y
 ```
 
 A loop's step is traced once per call, eagerly too: it branches with
@@ -146,7 +151,8 @@ Rune raises rather than return a wrong derivative:
   `detach` the input if gradients should not flow through.
 - **A construct's functions read no values.** `scan`, `iterate`,
   `remat`, `jit` and the custom rules trace their functions, so
-  `Nx.item` or a draw without `~key` inside them raises.
+  `Nx.item` of a value computed from their arguments, or a draw without
+  `~key`, inside them raises.
 - **Eager loops over small arrays pay per operation.** An eager `scan`
   evaluates its traced step per row, which costs more per operation than
   computing it directly; `jit` removes that cost.
