@@ -574,6 +574,90 @@ let test_pipeline () =
   done;
   if !white_count = 0 then fail "Pipeline eliminated all features"
 
+(* ───── Device Sets ───── *)
+
+(* A set of one memory device, computed by nx.cpu as the host is: an operation
+   on an image there computes there, its kernels and constants beside the image,
+   and gives the host's elements. *)
+let memory n = Result.get_ok (Rig.memory_device n)
+
+module Memory = (val Nx.devices [ memory "m0" ])
+
+(* Two memory devices, over which a batch is cut: a kernel made at the image's
+   placement itself, and not whole on each device, would be cut with it. *)
+module Two = (val Nx.devices [ memory "m1"; memory "m2" ])
+
+let placement () = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
+
+type op = { op : 'd. 'd Nx.float32_t -> 'd Nx.float32_t }
+
+let gray x = to_grayscale x
+let at_image x k = Nx.place (Nx.beside x) k
+let disk = structuring_element Ellipse (3, 3)
+
+let sharpen =
+  Nx.create Nx.float32 [| 3; 3 |] [| 0.; -1.; 0.; -1.; 5.; -1.; 0.; -1.; 0. |]
+
+let set_ops =
+  [
+    ("to_float of to_uint8", { op = (fun x -> to_float (to_uint8 x)) });
+    ( "normalize",
+      {
+        op =
+          (fun x -> normalize ~mean:[ 0.5; 0.4; 0.3 ] ~std:[ 0.2; 0.3; 0.4 ] x);
+      } );
+    ("threshold", { op = (fun x -> threshold 0.5 x) });
+    ("to_grayscale", { op = gray });
+    ("hsv_to_rgb of rgb_to_hsv", { op = (fun x -> hsv_to_rgb (rgb_to_hsv x)) });
+    ("adjust_contrast", { op = (fun x -> adjust_contrast 0.5 x) });
+    ("gaussian_blur", { op = (fun x -> gaussian_blur ~sigma:1.2 x) });
+    ( "gaussian_blur of a fixed table",
+      { op = (fun x -> gaussian_blur ~sigma:0. ~ksize:5 x) } );
+    ( "gaussian_blur of a derived sigma",
+      { op = (fun x -> gaussian_blur ~sigma:0. ~ksize:11 x) } );
+    ("box_blur", { op = (fun x -> box_blur ~ksize:3 x) });
+    ("median_blur", { op = (fun x -> median_blur ~ksize:3 x) });
+    ("filter2d", { op = (fun x -> filter2d (at_image x sharpen) x) });
+    ("unsharp_mask", { op = (fun x -> unsharp_mask ~sigma:1. x) });
+    ( "resize nearest",
+      { op = (fun x -> resize ~interpolation:Nearest ~height:3 ~width:9 x) } );
+    ("resize bilinear", { op = (fun x -> resize ~height:3 ~width:9 x) });
+    ("resize to one row", { op = (fun x -> resize ~height:1 ~width:4 x) });
+    ("pad", { op = (fun x -> pad ~value:0.5 (1, 0, 2, 1) x) });
+    ("erode", { op = (fun x -> erode ~kernel:disk x) });
+    ( "dilate by a kernel of another set",
+      { op = (fun x -> dilate ~kernel:(Nx.place Memory.on disk) x) } );
+    ("opening", { op = (fun x -> opening ~kernel:disk x) });
+    ("closing", { op = (fun x -> closing ~kernel:disk x) });
+    ( "morphological_gradient",
+      { op = (fun x -> morphological_gradient ~kernel:disk x) } );
+    ("sobel x", { op = (fun x -> fst (sobel (gray x))) });
+    ("sobel y", { op = (fun x -> snd (sobel ~ksize:5 (gray x))) });
+    ("scharr x", { op = (fun x -> fst (scharr (gray x))) });
+    ("laplacian", { op = (fun x -> laplacian ~ksize:3 (gray x)) });
+    ("canny", { op = (fun x -> canny ~low:0.1 ~high:0.3 (gray x)) });
+  ]
+
+let batch () = Nx.Rng.uniform ~key:(Nx.Rng.key 3) Nx.float32 [| 2; 5; 6; 3 |]
+
+let on_another_set (_, { op }) =
+  let img = batch () in
+  let host = op img and there = op (Nx.place Memory.on img) in
+  equal (placement ()) Memory.on (Nx.placement there);
+  equal (array int) (Nx.shape host) (Nx.shape there);
+  equal (array float_exact) (Nx.to_array host) (Nx.to_array there)
+
+(* A batch cut along its images over two devices stays cut so, each device
+   filtering its own images. A reduction over the cut axis sums by partials,
+   in another order than the host's: elements agree within rounding. *)
+let cut_over_two (_, { op }) =
+  let img = batch () in
+  let cut = Two.split ~axis:0 in
+  let host = op img and there = op (Nx.place cut img) in
+  equal (placement ()) cut (Nx.placement there);
+  equal (array int) (Nx.shape host) (Nx.shape there);
+  equal (array (float 1e-6)) (Nx.to_array host) (Nx.to_array there)
+
 (* ───── Test Suite ───── *)
 
 let () =
@@ -660,4 +744,13 @@ let () =
           slow "canny" test_canny;
         ];
       group "integration" [ test "pipeline" test_pipeline ];
+      group "device_sets"
+        [
+          cases "an operation computes on its image's set"
+            ~name:(fun (n, _) -> n)
+            set_ops on_another_set;
+          cases "an operation computes on a batch cut over two devices"
+            ~name:(fun (n, _) -> n)
+            set_ops cut_over_two;
+        ];
     ])

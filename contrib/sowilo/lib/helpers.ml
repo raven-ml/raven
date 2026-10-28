@@ -23,6 +23,9 @@ let with_batch_pair f img =
   | 4 -> f img
   | n -> invalid_arg (err_rank n)
 
+let at img = Nx.beside img
+let beside img k = Nx.place (at img) k
+
 let convolve_per_channel kernel img =
   (* img: (N, H, W, C), kernel: (kH, kW) *)
   let shape = Nx.shape img in

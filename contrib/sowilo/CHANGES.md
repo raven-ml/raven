@@ -5,6 +5,11 @@ All notable changes to Sowilo are documented in this file. Releases up to
 
 ## Unreleased
 
+- **Breaking:** images carry their device set, `('a, 'b, 'd) Nx.t` and
+  `'d Nx.float32_t`. Each operation computes where its image lies and makes
+  its kernels and constants beside it, so it runs on any set and its result
+  lies on the image's. `structuring_element` gives a host value, and the
+  morphological operations take a `~kernel` of any set, read once per call.
 - `gaussian_blur` with a `sigma` of 0 or less takes a fixed kernel for a
   `ksize` up to 9 (`[1 2 1] / 4` for 3) and the Gaussian of sigma
   `0.3 * ((ksize - 1) / 2 - 1) + 0.8` beyond. It raises `Invalid_argument`

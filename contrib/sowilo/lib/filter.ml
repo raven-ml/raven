@@ -3,10 +3,14 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let generate_gaussian_kernel size sigma =
+(* The kernels below are made beside the image [img] they filter. *)
+
+let generate_gaussian_kernel img size sigma =
   let center = float (size / 2) in
   let sigma2_sq = 2.0 *. sigma *. sigma in
-  let positions = Nx.arange_f Nx.float32 0.0 (float size) 1.0 in
+  let positions =
+    Nx.arange_f_at (Helpers.at img) Nx.float32 0.0 (float size) 1.0
+  in
   let x = Nx.sub_s positions center in
   let kernel = Nx.exp (Nx.div_s (Nx.neg (Nx.square x)) sigma2_sq) in
   let sum = Nx.sum kernel in
@@ -34,14 +38,15 @@ let fixed_taps = function
 
 (* The kernel of a sigma of 0 or less, as getGaussianKernel builds it: a fixed
    table, or beyond the tables the sigma derived from [ksize]. *)
-let derived_kernel ksize =
+let derived_kernel img ksize =
   match fixed_taps ksize with
   | Some taps ->
       let sum = Array.fold_left ( +. ) 0.0 taps in
-      Nx.create Nx.float32 [| ksize |] (Array.map (fun t -> t /. sum) taps)
+      Helpers.beside img
+        (Nx.create Nx.float32 [| ksize |] (Array.map (fun t -> t /. sum) taps))
   | None ->
       let sigma = (0.3 *. ((Float.of_int (ksize - 1) *. 0.5) -. 1.0)) +. 0.8 in
-      generate_gaussian_kernel ksize sigma
+      generate_gaussian_kernel img ksize sigma
 
 let gaussian_blur ~sigma ?ksize img =
   if Float.is_nan sigma then invalid_arg "gaussian_blur: sigma is NaN";
@@ -61,8 +66,8 @@ let gaussian_blur ~sigma ?ksize img =
       (Printf.sprintf
          "gaussian_blur: ksize must be a positive odd integer, got %d" ksize);
   let kernel_1d =
-    if positive then generate_gaussian_kernel ksize sigma
-    else derived_kernel ksize
+    if positive then generate_gaussian_kernel img ksize sigma
+    else derived_kernel img ksize
   in
   let kernel_h = Nx.reshape [| 1; ksize |] kernel_1d in
   let kernel_v = Nx.reshape [| ksize; 1 |] kernel_1d in
@@ -75,7 +80,8 @@ let gaussian_blur ~sigma ?ksize img =
 let box_blur ~ksize img =
   if ksize <= 0 then invalid_arg "box_blur: ksize must be positive";
   let value = 1.0 /. float (ksize * ksize) in
-  let kernel = Nx.full Nx.float32 [| ksize; ksize |] value in
+  let at = Helpers.at img in
+  let kernel = Nx.full_at at Nx.float32 [| ksize; ksize |] value in
   Helpers.with_batch (fun img -> Helpers.convolve_per_channel kernel img) img
 
 let median_blur ~ksize img =

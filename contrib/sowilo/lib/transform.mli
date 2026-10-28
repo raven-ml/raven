@@ -16,16 +16,25 @@ val resize :
   ?interpolation:interpolation ->
   height:int ->
   width:int ->
-  ('a, 'b) Nx.t ->
-  ('a, 'b) Nx.t
+  ('a, 'b, 'd) Nx.t ->
+  ('a, 'b, 'd) Nx.t
 
 val crop :
-  y:int -> x:int -> height:int -> width:int -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+  y:int ->
+  x:int ->
+  height:int ->
+  width:int ->
+  ('a, 'b, 'd) Nx.t ->
+  ('a, 'b, 'd) Nx.t
 
-val center_crop : height:int -> width:int -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
-val hflip : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
-val vflip : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
-val rotate90 : ?k:int -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+val center_crop :
+  height:int -> width:int -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
+val hflip : ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
+val vflip : ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
+val rotate90 : ?k:int -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
 
 val pad :
-  ?value:float -> int * int * int * int -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+  ?value:float ->
+  int * int * int * int ->
+  ('a, 'b, 'd) Nx.t ->
+  ('a, 'b, 'd) Nx.t

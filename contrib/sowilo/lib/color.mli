@@ -9,12 +9,12 @@
     The functions take the channels from the last axis. Only [to_grayscale]
     checks the rank. *)
 
-val to_grayscale : Nx.float32_t -> Nx.float32_t
-val rgb_to_hsv : Nx.float32_t -> Nx.float32_t
-val hsv_to_rgb : Nx.float32_t -> Nx.float32_t
-val adjust_brightness : float -> Nx.float32_t -> Nx.float32_t
-val adjust_contrast : float -> Nx.float32_t -> Nx.float32_t
-val adjust_saturation : float -> Nx.float32_t -> Nx.float32_t
-val adjust_hue : float -> Nx.float32_t -> Nx.float32_t
-val adjust_gamma : float -> Nx.float32_t -> Nx.float32_t
-val invert : Nx.float32_t -> Nx.float32_t
+val to_grayscale : 'd Nx.float32_t -> 'd Nx.float32_t
+val rgb_to_hsv : 'd Nx.float32_t -> 'd Nx.float32_t
+val hsv_to_rgb : 'd Nx.float32_t -> 'd Nx.float32_t
+val adjust_brightness : float -> 'd Nx.float32_t -> 'd Nx.float32_t
+val adjust_contrast : float -> 'd Nx.float32_t -> 'd Nx.float32_t
+val adjust_saturation : float -> 'd Nx.float32_t -> 'd Nx.float32_t
+val adjust_hue : float -> 'd Nx.float32_t -> 'd Nx.float32_t
+val adjust_gamma : float -> 'd Nx.float32_t -> 'd Nx.float32_t
+val invert : 'd Nx.float32_t -> 'd Nx.float32_t

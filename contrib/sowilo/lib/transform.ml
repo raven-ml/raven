@@ -13,25 +13,28 @@ let hw_axes rank =
   | 4 -> (1, 2) (* [N; H; W; C] *)
   | n -> invalid_arg (Helpers.err_rank n)
 
-let float_range size = Nx.arange_f Nx.float32 0.0 (float size) 1.0
+(* The sampling positions are made at [at], beside the image. *)
 
-let compute_nearest_indices ~size_in ~size_out =
-  if size_out = 1 || size_in = 1 then Nx.full Nx.int64 [| size_out |] Int64.zero
+let float_range at size = Nx.arange_f_at at Nx.float32 0.0 (float size) 1.0
+
+let compute_nearest_indices at ~size_in ~size_out =
+  if size_out = 1 || size_in = 1 then
+    Nx.full_at at Nx.int64 [| size_out |] Int64.zero
   else
     let scale = float size_in /. float size_out in
-    let coords = float_range size_out in
+    let coords = float_range at size_out in
     let src = Nx.sub_s (Nx.mul_s (Nx.add_s coords 0.5) scale) 0.5 in
     let src_clipped = Nx.clamp ~min:0.0 ~max:(float (size_in - 1)) src in
     Nx.cast Nx.int64 (Nx.round src_clipped)
 
-let compute_linear_axis ~size_in ~size_out =
+let compute_linear_axis at ~size_in ~size_out =
   if size_out = 1 || size_in = 1 then
-    let zeros_i = Nx.full Nx.int64 [| size_out |] Int64.zero in
-    let zeros_f = Nx.full Nx.float32 [| size_out |] 0.0 in
+    let zeros_i = Nx.zeros_at at Nx.int64 [| size_out |] in
+    let zeros_f = Nx.zeros_at at Nx.float32 [| size_out |] in
     (zeros_i, zeros_i, zeros_f)
   else
     let scale = float (size_in - 1) /. float (size_out - 1) in
-    let src = Nx.mul_s (float_range size_out) scale in
+    let src = Nx.mul_s (float_range at size_out) scale in
     let idx0 = src |> Nx.floor |> Nx.cast Nx.int64 in
     let one = Nx.scalar_like idx0 Int64.(of_int 1) in
     let max_idx = Nx.scalar_like idx0 Int64.(of_int (size_in - 1)) in
@@ -39,12 +42,12 @@ let compute_linear_axis ~size_in ~size_out =
     let delta = Nx.sub src (Nx.cast Nx.float32 idx0) in
     (idx0, idx1, delta)
 
-let resize : type a b.
+let resize : type a b d.
     ?interpolation:interpolation ->
     height:int ->
     width:int ->
-    (a, b) Nx.t ->
-    (a, b) Nx.t =
+    (a, b, d) Nx.t ->
+    (a, b, d) Nx.t =
  fun ?(interpolation = Bilinear) ~height:out_h ~width:out_w img ->
   if out_h <= 0 || out_w <= 0 then
     invalid_arg "resize: height and width must be positive";
@@ -52,23 +55,22 @@ let resize : type a b.
   let rank = Array.length shape in
   let h_ax, w_ax = hw_axes rank in
   let in_h = shape.(h_ax) and in_w = shape.(w_ax) in
+  let at = Helpers.at img in
   match interpolation with
   | Nearest ->
-      let y_idx = compute_nearest_indices ~size_in:in_h ~size_out:out_h in
-      let x_idx = compute_nearest_indices ~size_in:in_w ~size_out:out_w in
-      img
-      |> Nx.take ~axis:h_ax ~indices:y_idx
-      |> Nx.take ~axis:w_ax ~indices:x_idx
+      let y_idx = compute_nearest_indices at ~size_in:in_h ~size_out:out_h in
+      let x_idx = compute_nearest_indices at ~size_in:in_w ~size_out:out_w in
+      img |> Nx.take ~axis:h_ax y_idx |> Nx.take ~axis:w_ax x_idx
   | Bilinear ->
       let img_f = Nx.cast Nx.float32 img in
-      let y0, y1, dy = compute_linear_axis ~size_in:in_h ~size_out:out_h in
-      let x0, x1, dx = compute_linear_axis ~size_in:in_w ~size_out:out_w in
-      let top = Nx.take ~axis:h_ax ~indices:y0 img_f in
-      let bottom = Nx.take ~axis:h_ax ~indices:y1 img_f in
-      let top_left = Nx.take ~axis:w_ax ~indices:x0 top in
-      let top_right = Nx.take ~axis:w_ax ~indices:x1 top in
-      let bottom_left = Nx.take ~axis:w_ax ~indices:x0 bottom in
-      let bottom_right = Nx.take ~axis:w_ax ~indices:x1 bottom in
+      let y0, y1, dy = compute_linear_axis at ~size_in:in_h ~size_out:out_h in
+      let x0, x1, dx = compute_linear_axis at ~size_in:in_w ~size_out:out_w in
+      let top = Nx.take ~axis:h_ax y0 img_f in
+      let bottom = Nx.take ~axis:h_ax y1 img_f in
+      let top_left = Nx.take ~axis:w_ax x0 top in
+      let top_right = Nx.take ~axis:w_ax x1 top in
+      let bottom_left = Nx.take ~axis:w_ax x0 bottom in
+      let bottom_right = Nx.take ~axis:w_ax x1 bottom in
       (* Reshape dx and dy for broadcasting *)
       let make_broadcastable ax size =
         let s = Array.make rank 1 in
@@ -154,13 +156,13 @@ let rotate90 ?(k = 1) img =
     done;
     !result
 
-let pad : type a b.
-    ?value:float -> int * int * int * int -> (a, b) Nx.t -> (a, b) Nx.t =
+let pad : type a b d.
+    ?value:float -> int * int * int * int -> (a, b, d) Nx.t -> (a, b, d) Nx.t =
  fun ?(value = 0.0) (top, bottom, left, right) img ->
   let rank = Array.length (Nx.shape img) in
   let h_ax, w_ax = hw_axes rank in
   let padding = Array.make rank (0, 0) in
   padding.(h_ax) <- (top, bottom);
   padding.(w_ax) <- (left, right);
-  let fill : a = Nx_dtype.of_float (Nx.dtype img) value in
+  let fill : a = Nx.Dtype.of_float (Nx.dtype img) value in
   Nx.pad padding fill img

@@ -13,19 +13,30 @@ val err_rank : int -> string
     neither 3 nor 4. *)
 
 val with_batch :
-  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('c, 'd) Nx.t
+  (('a, 'b, 'd) Nx.t -> ('c, 'e, 'd) Nx.t) ->
+  ('a, 'b, 'd) Nx.t ->
+  ('c, 'e, 'd) Nx.t
 (** [with_batch f img] is [f img] for a batch. For a single image it adds a
     batch axis of size 1 before [f] and removes it after.
 
     Raises [Invalid_argument] if [img]'s rank is neither 3 nor 4. *)
 
 val with_batch_pair :
-  (('a, 'b) Nx.t -> ('c, 'd) Nx.t * ('e, 'f) Nx.t) ->
-  ('a, 'b) Nx.t ->
-  ('c, 'd) Nx.t * ('e, 'f) Nx.t
+  (('a, 'b, 'd) Nx.t -> ('c, 'e, 'd) Nx.t * ('f, 'g, 'd) Nx.t) ->
+  ('a, 'b, 'd) Nx.t ->
+  ('c, 'e, 'd) Nx.t * ('f, 'g, 'd) Nx.t
 (** [with_batch_pair f img] is {!with_batch} for an [f] that returns a pair. *)
 
-val convolve_per_channel : ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+val at : ('a, 'b, 'd) Nx.t -> 'd Nx.Placement.t
+(** [at img] is whole on each device of [img]'s placement: where a kernel or a
+    constant made for [img] lies. *)
+
+val beside : ('a, 'b, 'd) Nx.t -> ('c, 'e, Nx.host) Nx.t -> ('c, 'e, 'd) Nx.t
+(** [beside img k] is the host value [k], a kernel or a constant made from OCaml
+    numbers, at {!at}[ img]. *)
+
+val convolve_per_channel :
+  ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
 (** [convolve_per_channel kernel img] correlates each channel of the batch
     [img] with [kernel] of shape [[kH; kW]], without flipping it. The result
     keeps [img]'s shape. Each pixel's window spans [kH / 2] rows and

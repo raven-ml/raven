@@ -33,31 +33,33 @@ let structuring_element shape (kh, kw) =
       in
       Nx.create Nx.uint8 [| kh; kw |] data
 
-(* Find active positions (non-zero) in a kernel *)
-let active_positions kernel =
+(* A kernel's extents and active (non-zero) positions, read once to OCaml: a
+   composite operation reads them once for all its erosions and dilations. *)
+type neighborhood = { kh : int; kw : int; positions : (int * int) list }
+
+let neighborhood kernel =
   let kshape = Nx.shape kernel in
   let kh = kshape.(0) and kw = kshape.(1) in
+  let k = Nx.to_array kernel in
   let positions = ref [] in
   for i = 0 to kh - 1 do
     for j = 0 to kw - 1 do
-      if Nx.item [ i; j ] kernel <> 0 then positions := (i, j) :: !positions
+      if k.((i * kw) + j) <> 0 then positions := (i, j) :: !positions
     done
   done;
   match !positions with
   | [] ->
       invalid_arg "structuring element must have at least one non-zero element"
-  | ps -> List.rev ps
+  | ps -> { kh; kw; positions = List.rev ps }
 
 let morph_reduce op slices =
   match slices with
   | [] -> failwith "empty slice list"
   | first :: rest -> List.fold_left (fun acc s -> op acc s) first rest
 
-let morph_op (type a b) ~op ~kernel (img : (a, b) Nx.t) : (a, b) Nx.t =
-  let kshape = Nx.shape kernel in
-  let kh = kshape.(0) and kw = kshape.(1) in
+let morph_op (type a b d) ~op { kh; kw; positions } (img : (a, b, d) Nx.t) :
+    (a, b, d) Nx.t =
   let pad_h = kh / 2 and pad_w = kw / 2 in
-  let positions = active_positions kernel in
   let reduce =
     match op with
     | `Min -> morph_reduce Nx.minimum
@@ -68,8 +70,8 @@ let morph_op (type a b) ~op ~kernel (img : (a, b) Nx.t) : (a, b) Nx.t =
      dilation, pad with min (zeros). *)
   let pad_val : a =
     match op with
-    | `Max -> Nx_dtype.zero dt
-    | `Min -> Nx_dtype.max_value dt
+    | `Max -> Nx.Dtype.zero dt
+    | `Min -> Nx.Dtype.max_value dt
   in
   Helpers.with_batch
     (fun img ->
@@ -86,10 +88,17 @@ let morph_op (type a b) ~op ~kernel (img : (a, b) Nx.t) : (a, b) Nx.t =
       reduce slices)
     img
 
-let erode ~kernel img = morph_op ~op:`Min ~kernel img
-let dilate ~kernel img = morph_op ~op:`Max ~kernel img
-let opening ~kernel img = dilate ~kernel (erode ~kernel img)
-let closing ~kernel img = erode ~kernel (dilate ~kernel img)
+let erode ~kernel img = morph_op ~op:`Min (neighborhood kernel) img
+let dilate ~kernel img = morph_op ~op:`Max (neighborhood kernel) img
+
+let opening ~kernel img =
+  let n = neighborhood kernel in
+  morph_op ~op:`Max n (morph_op ~op:`Min n img)
+
+let closing ~kernel img =
+  let n = neighborhood kernel in
+  morph_op ~op:`Min n (morph_op ~op:`Max n img)
 
 let morphological_gradient ~kernel img =
-  Nx.sub (dilate ~kernel img) (erode ~kernel img)
+  let n = neighborhood kernel in
+  Nx.sub (morph_op ~op:`Max n img) (morph_op ~op:`Min n img)

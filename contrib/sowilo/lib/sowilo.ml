@@ -22,12 +22,11 @@ let normalize ~mean ~std img =
          (List.length mean) (List.length std) c);
   let ones = Array.make rank 1 in
   ones.(rank - 1) <- c;
-  let mean_t =
-    Nx.reshape ones (Nx.create Nx.float32 [| c |] (Array.of_list mean))
+  let per_channel l =
+    Nx.reshape ones
+      (Helpers.beside img (Nx.create Nx.float32 [| c |] (Array.of_list l)))
   in
-  let std_t =
-    Nx.reshape ones (Nx.create Nx.float32 [| c |] (Array.of_list std))
-  in
+  let mean_t = per_channel mean and std_t = per_channel std in
   Nx.div (Nx.sub img mean_t) std_t
 
 let threshold t img =

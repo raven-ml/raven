@@ -15,10 +15,10 @@
 
 type kernel_shape = Rect | Cross | Ellipse
 
-val structuring_element : kernel_shape -> int * int -> Nx.uint8_t
-val erode : kernel:Nx.uint8_t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
-val dilate : kernel:Nx.uint8_t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
-val opening : kernel:Nx.uint8_t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
-val closing : kernel:Nx.uint8_t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+val structuring_element : kernel_shape -> int * int -> Nx.host Nx.uint8_t
+val erode : kernel:'k Nx.uint8_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
+val dilate : kernel:'k Nx.uint8_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
+val opening : kernel:'k Nx.uint8_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
+val closing : kernel:'k Nx.uint8_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t
 val morphological_gradient :
-  kernel:Nx.uint8_t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+  kernel:'k Nx.uint8_t -> ('a, 'b, 'd) Nx.t -> ('a, 'b, 'd) Nx.t

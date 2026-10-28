@@ -47,24 +47,25 @@ let deriv ~order ksize =
   done;
   k
 
-(* The 2D kernel whose rows follow [ky] and columns follow [kx]. *)
-let outer ky kx =
+(* The 2D kernel whose rows follow [ky] and columns follow [kx], beside
+   [img]. *)
+let outer img ky kx =
   let h = Array.length ky and w = Array.length kx in
-  Nx.create Nx.float32 [| h; w |]
-    (Array.init (h * w) (fun i -> ky.(i / w) *. kx.(i mod w)))
+  Helpers.beside img
+    (Nx.create Nx.float32 [| h; w |]
+       (Array.init (h * w) (fun i -> ky.(i / w) *. kx.(i mod w))))
 
-let scharr_kx =
-  Nx.create Nx.float32 [| 3; 3 |] [| -3.; 0.; 3.; -10.; 0.; 10.; -3.; 0.; 3. |]
-
-let scharr_ky =
-  Nx.create Nx.float32 [| 3; 3 |] [| -3.; -10.; -3.; 0.; 0.; 0.; 3.; 10.; 3. |]
+let scharr_x = [| -3.; 0.; 3.; -10.; 0.; 10.; -3.; 0.; 3. |]
+let scharr_y = [| -3.; -10.; -3.; 0.; 0.; 0.; 3.; 10.; 3. |]
 
 let sobel ?(ksize = 3) img =
   check_sobel_ksize ksize;
   let d = deriv ~order:1 ksize and s = deriv ~order:0 ksize in
-  gradient_pair ~kernel_x:(outer s d) ~kernel_y:(outer d s) img
+  gradient_pair ~kernel_x:(outer img s d) ~kernel_y:(outer img d s) img
 
-let scharr img = gradient_pair ~kernel_x:scharr_kx ~kernel_y:scharr_ky img
+let scharr img =
+  let kernel taps = Helpers.beside img (Nx.create Nx.float32 [| 3; 3 |] taps) in
+  gradient_pair ~kernel_x:(kernel scharr_x) ~kernel_y:(kernel scharr_y) img
 
 (* The sum of the second x and y Sobel derivatives. For aperture 1 the two
    3-tap kernels [1 -2 1] add up to the aperture [0 1 0; 1 -4 1; 0 1 0]. *)
@@ -72,7 +73,7 @@ let laplacian ?(ksize = 1) img =
   check_laplacian_ksize ksize;
   let d = deriv ~order:2 ksize and s = deriv ~order:0 ksize in
   let dxx, dyy =
-    gradient_pair ~kernel_x:(outer s d) ~kernel_y:(outer d s) img
+    gradient_pair ~kernel_x:(outer img s d) ~kernel_y:(outer img d s) img
   in
   Nx.add dxx dyy
 
