@@ -82,6 +82,10 @@ let lower ~ext na nb nr shape =
 
 let plan ~by ~sizes (p : Pattern.t) a b =
   match p.operands with
+  | [ _; _ ] when not p.plain ->
+      invalid_argf
+        "%s: %a takes a diagonal or sums within one operand; use Nx.einsum" by
+        Pattern.pp p
   | [ _; _ ] ->
       let label k = if k = 0 then "a" else "b" in
       let ~extents, ~operands, ~result, ~shape =
@@ -438,12 +442,12 @@ let pair (type x y d) ~by ~ext w (into : (x, y) D.t) names shape (na, l) (nb, r)
   | Value.Any a, Value.Any b ->
       run ~by ~acc:(D.Any w) into (lower ~ext na nb names shape) a b
 
-(* The einsum of [xs], of names [ns], into the result's names [nr] and
-   [shape], through the tree of fewest multiply-adds. *)
+(* The einsum of the operands of names [ns], [leaf i] the [i]th, into the
+   result's names [nr] and [shape], through the tree of fewest
+   multiply-adds. *)
 let tree (type v s d) ~by ~ext p w (dt : (v, s) D.t) ns nr shape
-    (xs : (v, s, d) Value.t array) : (v, s, d) Value.t =
-  let n = Array.length xs in
-  let leaf i = (ns.(i), Value.Any xs.(i)) in
+    (leaf : int -> int list * d Value.any) : (v, s, d) Value.t =
+  let n = Array.length ns in
   let split = order ~ext ~result:nr ns in
   let full = (1 lsl n) - 1 in
   if split.(full) = 0 then
@@ -472,11 +476,80 @@ let tree (type v s d) ~by ~ext p w (dt : (v, s) D.t) ns nr shape
   let t = split.(full) in
   pair ~by ~ext w dt nr shape (value t) (value (full lxor t))
 
+(* Within one operand *)
+
+let rec count (n : int) = function
+  | [] -> 0
+  | x :: l -> (if x = n then 1 else 0) + count n l
+
+let uniq ns = List.fold_left (fun u n -> if mem n u then u else u @ [ n ]) [] ns
+
+(* The names an operand of names [ns] holds once, then those it repeats. *)
+let diagonal_names ns =
+  List.filter (fun n -> count n ns = 1) ns
+  @ List.filter (fun n -> count n ns > 1) (uniq ns)
+
+(* [x], of names [ns], where each name it repeats takes one index on all of
+   its axes: those [k] axes, of extent [e], moved last and merged, then every
+   [1 + e + ⋯ + e^(k-1)]th element of the merged axis taken from the first.
+   Its names are [diagonal_names ns]. *)
+let diagonals ~by ~ext ns x =
+  let x = Eval.reshape ~by (ints (Array.get ext) ns) x in
+  let names = diagonal_names ns in
+  if List.length names = List.length ns then x
+  else
+    let axes = List.init (List.length ns) Fun.id in
+    let places n = List.filter (fun i -> List.nth ns i = n) axes in
+    let order = Array.of_list (List.concat_map places names) in
+    let x = if identity order then x else permute ~by order x in
+    let rec power e k = if k = 0 then 1 else e * power e (k - 1) in
+    let rec step e k = if k = 0 then 0 else power e (k - 1) + step e (k - 1) in
+    let merged n = power ext.(n) (count n ns) in
+    let x = Eval.reshape ~by (ints merged names) x in
+    let range n =
+      { M.start = 0; count = ext.(n); step = step ext.(n) (count n ns) }
+    in
+    Eval.move ~by (M.Slice (Iarray.of_list (List.map range names))) x
+
+(* [x], of names [na], summed in [w] over the names [lone]: one reduction
+   whose program casts each element to [w]. Its names are [na]'s others. *)
+let summed (type w q d) ~by (w : (w, q) D.t) na lone (x : (_, _, d) Value.t) :
+    (w, q, d) Value.t =
+  let module P = Nx_kernel.Prog in
+  let places = List.init (List.length na) Fun.id in
+  let axes = List.filter (fun i -> mem (List.nth na i) lone) places in
+  let dx = Prim.dtype x in
+  let prog =
+    P.of_exprs ~ins:[| D.Any dx |] [| P.E.any (P.E.cast w (P.E.input 0 dx)) |]
+  in
+  let layout = Nx_array.Layout.contiguous (Iarray.of_array (Prim.shape x)) in
+  fst
+    (Eval.eval ~by
+       (Value.Reduce
+          {
+            layout;
+            axes = Iarray.of_list axes;
+            prog;
+            reductions = Value.[ Monoid (Sum, 0, w) ];
+            loads = [| Plain x |];
+          }))
+
+(* [x] rounded once to [dt]: itself at [dt]. *)
+let rounded (type v s w q d) ~by (dt : (v, s) D.t) (x : (w, q, d) Value.t) :
+    (v, s, d) Value.t =
+  match D.equal_witness (Prim.dtype x) dt with
+  | Some Type.Equal -> x
+  | None -> Eval.apply1 ~by Cast dt x
+
+(* [x], of names [na], moved into the result's names [nr] and [shape]. *)
+let arranged ~by na nr shape x =
+  let order = ints (fun nm -> index_of nm na) nr in
+  let x = if identity order then x else permute ~by order x in
+  Eval.reshape ~by shape x
+
 let einsum (type v s d) ~by ?(sizes = []) ?acc (p : Pattern.t)
     (xs : (v, s, d) Value.t list) : (v, s, d) Value.t =
   let k = List.length p.operands and n = List.length xs in
-  if k = 1 then
-    invalid_argf "%s: %a has one operand; use Nx.rearrange" by Pattern.pp p;
   if k > max_operands then
     invalid_argf
       "%s: %a has %d operands; einsum plans at most %d: contract parts in \
@@ -499,16 +572,38 @@ let einsum (type v s d) ~by ?(sizes = []) ?acc (p : Pattern.t)
   let ns = Array.of_list (List.map Array.to_list operands) in
   let nr = Array.to_list result in
   let (D.Any w) = accumulator ~by ?acc dt (D.Any dt) (D.Any dt) in
-  if n = 2 then
-    pair ~by ~ext w dt nr shape
-      (ns.(0), Value.Any xs.(0))
-      (ns.(1), Value.Any xs.(1))
-  else
-    (* Several contractions read the operands. *)
-    let xs =
-      if Array.exists Donate.is_handle xs then Array.map Donate.lent xs else xs
+  (* The summed names each operand alone holds, summed in it first. *)
+  let alone i =
+    let rec elsewhere nm j =
+      j < n && ((j <> i && mem nm ns.(j)) || elsewhere nm (j + 1))
     in
-    tree ~by ~ext p w dt ns nr shape xs
+    List.filter (fun nm -> not (mem nm nr || elsewhere nm 0)) (uniq ns.(i))
+  in
+  let lone = Array.init n alone in
+  let names i =
+    List.filter (fun nm -> not (mem nm lone.(i))) (diagonal_names ns.(i))
+  in
+  (* Several contractions read the operands. *)
+  let xs =
+    if n > 2 && Array.exists Donate.is_handle xs then Array.map Donate.lent xs
+    else xs
+  in
+  let summed_alone i x = summed ~by w (diagonal_names ns.(i)) lone.(i) x in
+  (* Each operand, its diagonals taken and its lone names summed in [w]. *)
+  let leaf i =
+    let x = diagonals ~by ~ext ns.(i) xs.(i) in
+    if lone.(i) = [] then (names i, Value.Any x)
+    else (names i, Value.Any (summed_alone i x))
+  in
+  if n = 1 then
+    let x = diagonals ~by ~ext ns.(0) xs.(0) in
+    (* A copy where nothing is summed: a product by one would turn [-0.]
+       into [+0.] and a complex infinity's zero part into NaN. *)
+    if lone.(0) = [] then
+      Eval.eval ~by (Value.Copy (arranged ~by (names 0) nr shape x))
+    else arranged ~by (names 0) nr shape (rounded ~by dt (summed_alone 0 x))
+  else if n = 2 then pair ~by ~ext w dt nr shape (leaf 0) (leaf 1)
+  else tree ~by ~ext p w dt (Array.init n names) nr shape leaf
 
 (* Chains *)
 

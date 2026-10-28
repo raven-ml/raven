@@ -1750,6 +1750,18 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
                (d 1 (x [| 3; 2 |]))));
       c "einsum" 2 (fun d ->
           show (Nx.einsum ij_jk [ d 0 (x [| 2; 3 |]); d 1 (x [| 3; 2 |]) ]));
+      c ~consumes:true "einsum" 1 (fun d ->
+          show (Nx.einsum (Nx.Pattern.v "i j -> j i") [ d 0 (x [| 2; 3 |]) ]));
+      c ~consumes:true "einsum" 1 (fun d ->
+          show (Nx.einsum (Nx.Pattern.v "i i -> i") [ d 0 (x [| 3; 3 |]) ]));
+      c ~consumes:true "einsum" 1 (fun d ->
+          show
+            (Nx.einsum (Nx.Pattern.v "i j -> i | j") [ d 0 (x [| 2; 3 |]) ]));
+      c ~consumes:true "einsum" 2 (fun d ->
+          show
+            (Nx.einsum
+               (Nx.Pattern.v "i j, k -> i k | j")
+               [ d 0 (x [| 2; 3 |]); d 1 (x [| 2 |]) ]));
       c "einsum" 3 (fun d ->
           show
             (Nx.einsum

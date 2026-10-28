@@ -266,22 +266,22 @@ let pp_problem ppf p =
     (Format.pp_print_list ~pp_sep:Format.pp_print_space pp_shape)
     p.shapes
 
-(* Two to five operands; free names, each held by one operand or more, and
-   summed names, each by two or more; extents from 0 to 3; at times [...]
-   over one or two leading axes, a group in an operand where its extents can
-   be learned, and a group and a [1] in the result. *)
+(* One to five operands; free names and summed names, each held by one
+   operand or more; extents from 0 to 3; at times [...] over one or two
+   leading axes, a group in an operand where its extents can be learned, a
+   name an operand repeats, and a group and a [1] in the result. *)
 let problems =
   let open Gen in
   let extent =
     frequency [ (1, constant 0); (2, constant 1); (6, int_range 2 3) ]
   in
-  let* n = int_range 2 5 in
+  let* n = int_range 1 5 in
   let ops = List.init n Fun.id in
   let held least =
     such_that (fun h -> List.length h >= least) (subsequence ops)
   in
   let* frees = list ~size:(int_range 0 3) (pair extent (held 1)) in
-  let* sums = list ~size:(int_range 0 3) (pair extent (held 2)) in
+  let* sums = list ~size:(int_range 0 3) (pair extent (held 1)) in
   let* dots =
     frequency [ (2, constant []); (1, list ~size:(int_range 1 2) extent) ]
   in
@@ -312,6 +312,8 @@ let problems =
       ops (constant [])
   in
   let* grouped = int_range (-1) (n - 1) in
+  let* repeated = int_range (-1) (n - 1) in
+  let* again = int_range 1 2 in
   let* unit = bool in
   let* result = permutation (List.map (fun (nm, _, _) -> nm) frees) in
   let* result_group, result_unit = pair bool bool in
@@ -331,6 +333,12 @@ let problems =
       (fun i l ->
         let l =
           if i = grouped then group i l else List.map (fun nm -> N nm) l
+        in
+        (* The first name again, once or twice, last. *)
+        let l =
+          match List.concat_map axis_names l with
+          | nm :: _ when i = repeated -> l @ List.init again (fun _ -> N nm)
+          | _ -> l
         in
         if i = 0 && unit then l @ [ U ] else l)
       layouts
@@ -390,7 +398,8 @@ let sum_over_tuples p xs =
     (assignments extent p.out)
 
 (* The least work of a tree of contractions of [p]'s operands, and the
-   greatest [N = Σ (K + 1)] among the trees doing it, by einsum's definitions:
+   greatest [N = Σ (K + 1)] among the trees doing it plus that of the sums
+   within one operand, by einsum's definitions:
    a contraction does the product of the extents of the names its parts'
    values hold, a value holds the names its operands hold that the result or
    an operand outside it needs, and a contraction sums [K] products, the
@@ -449,10 +458,29 @@ let least_work p =
                 (trees t))
           (subsets rest)
   in
+  (* An operand's summed names that no other holds, summed in it first by a
+     contraction with ones that sums [K] products; one operand alone always
+     takes that contraction. *)
+  let alone i =
+    List.filter
+      (fun nm -> (not (List.mem nm p.out)) && not (outside [ i ] nm))
+      (List.filter (fun nm -> List.mem nm ops.(i)) names)
+  in
+  let first =
+    List.fold_left
+      (fun k i ->
+        match alone i with
+        | [] when Array.length ops > 1 -> k
+        | l -> k + product l + 1)
+      0
+      (List.init (Array.length ops) Fun.id)
+  in
   let all = trees (List.init (Array.length ops) Fun.id) in
   let least = List.fold_left (fun w (w', _) -> min w w') max_int all in
   ( least,
-    List.fold_left (fun n (w, n') -> if w = least then max n n' else n) 0 all )
+    first
+    + List.fold_left (fun n (w, n') -> if w = least then max n n' else n) 0 all
+  )
 
 type float_dtype = F : (float, 's) D.t -> float_dtype
 
@@ -484,7 +512,19 @@ let einsum_within_bound =
     (fun (p, F dt, seed) ->
       let n = List.length p.ops in
       let holders nm = List.length (List.filter (List.mem nm) p.ops) in
+      cover "one operand" (n = 1);
       cover "five operands" (n = 5);
+      cover "a name summed in one operand"
+        (List.exists (fun nm -> holders nm = 1) p.sums);
+      let times l nm = List.length (List.filter (( = ) nm) l) in
+      let repeated =
+        List.concat_map (fun l -> List.filter (fun nm -> times l nm > 1) l) p.ops
+      in
+      cover "a name an operand repeats" (repeated <> []);
+      cover "a name an operand repeats three times"
+        (List.exists (fun l -> List.exists (fun nm -> times l nm > 2) l) p.ops);
+      cover "a repeated name of extent 0 or 1"
+        (List.exists (fun nm -> List.assoc nm p.extents <= 1) repeated);
       cover "a name summed across three operands"
         (List.exists (fun nm -> holders nm >= 3) p.sums);
       cover "a batch name" (List.exists (fun nm -> holders nm >= 2) p.out);
@@ -594,6 +634,62 @@ let einsum_order =
                   [ x1; x2; x3 ])));
     ]
 
+let einsum_within =
+  let x s = host D.Float32 s (operand (numel s)) in
+  group "einsum within one operand"
+    [
+      test "a repeated name reads the diagonal" (fun () ->
+          let z = x [| 2; 3; 3 |] in
+          equal (array float_exact)
+            (read (Nx.diagonal ~axis1:1 ~axis2:2 z))
+            (read (Nx.einsum (Nx.Pattern.v "z a a -> z a") [ z ]));
+          let t = x [| 3; 2; 3; 3 |] in
+          equal (array float_exact)
+            (read
+               (Nx.diagonal ~axis1:1 ~axis2:2
+                  (Nx.diagonal ~axis1:2 ~axis2:3
+                     (Nx.transpose ~axes:[ 1; 0; 2; 3 ] t))))
+            (read (Nx.einsum (Nx.Pattern.v "a b a a -> b a") [ t ])));
+      test "a name one operand alone holds is summed in it first" (fun () ->
+          let a = x [| 2; 3 |] and v = x [| 4 |] in
+          let s = Nx.sum ~axes:[ 1 ] a in
+          equal (array float_exact)
+            (read (Nx.mul (Nx.reshape [| 2; 1 |] s) (Nx.reshape [| 1; 4 |] v)))
+            (read (Nx.einsum (Nx.Pattern.v "i j, k -> i k | j") [ a; v ]));
+          let m = x [| 3; 3 |] in
+          equal (array float_exact)
+            (read (Nx.trace m))
+            (read (Nx.einsum (Nx.Pattern.v "i i -> | i") [ m ])));
+      prop "one operand that sums nothing is its elements moved, bit for bit"
+        Gen.(pair (int_range 0 3) (int_range 0 3))
+        (fun (m, n) ->
+          (* Signed zeros, infinities and NaN in both parts. *)
+          let special = [| -0.; 0.; infinity; neg_infinity; nan; 1.5 |] in
+          let pick k = special.(k mod Array.length special) in
+          let c k = { Complex.re = pick k; im = pick (k + 1) } in
+          let a = host D.Complex64 [| m; n; n |] (Array.init (m * n * n) c) in
+          let bits y =
+            Array.map
+              (fun (z : Complex.t) ->
+                (Int64.bits_of_float z.re, Int64.bits_of_float z.im))
+              (read y)
+          in
+          let same msg want y =
+            equal ~msg (array (pair int64 int64)) (bits want) (bits y)
+          in
+          same "transpose" (Nx.transpose ~axes:[ 2; 1; 0 ] a)
+            (Nx.einsum (Nx.Pattern.v "b i j -> j i b") [ a ]);
+          same "diagonal"
+            (Nx.transpose (Nx.diagonal ~axis1:1 ~axis2:2 a))
+            (Nx.einsum (Nx.Pattern.v "b i i -> i b") [ a ]));
+      test "one operand that sums nothing is a copy" (fun () ->
+          let a = x [| 2; 3 |] in
+          let y = Nx.einsum (Nx.Pattern.v "i j -> j i") [ a ] in
+          equal (array float_exact) (read (Nx.transpose a)) (read y);
+          let buffer v = A.buffer (Option.get (Nx.Repr.array v)) in
+          equal bool false (Rig.Buffer.overlaps (buffer a) (buffer y)));
+    ]
+
 let einsum_errors =
   let x s = host D.Float32 s (operand (numel s)) in
   let refuses name want f =
@@ -602,9 +698,9 @@ let einsum_errors =
   let chain = Nx.Pattern.v "i j, j k, k -> i | j k" in
   group "einsum's errors"
     [
-      refuses "a one-operand pattern"
-        {|Nx.einsum: "i j -> j i" has one operand; use Nx.rearrange|} (fun () ->
-          Nx.einsum (Nx.Pattern.v "i j -> j i") [ x [| 2; 3 |] ]);
+      refuses "extents that differ within an operand"
+        {|Nx.einsum: "i i -> i": i is 2 in x1 and 3 in x1|} (fun () ->
+          Nx.einsum (Nx.Pattern.v "i i -> i") [ x [| 2; 3 |] ]);
       refuses "fewer values than operands"
         {|Nx.einsum: "i j, j k, k -> i | j k" has 3 operands but the list holds 2|}
         (fun () -> Nx.einsum chain [ x [| 2; 3 |]; x [| 3; 4 |] ]);
@@ -679,6 +775,20 @@ let einsum_errors =
             (message (fun () ->
                  Nx.einsum (Nx.Pattern.v text)
                    (List.init 4 (fun _ -> x (Array.make 30 1))))));
+      refuses "contract with a diagonal"
+        {|Nx.contract: "i i, i -> i" takes a diagonal or sums within one operand; use Nx.einsum|}
+        (fun () ->
+          Nx.contract Nx.float32
+            (Nx.Pattern.v "i i, i -> i")
+            (x [| 2; 2 |])
+            (x [| 2 |]));
+      refuses "contract with a sum within one operand"
+        {|Nx.contract: "i j, k -> k | i j" takes a diagonal or sums within one operand; use Nx.einsum|}
+        (fun () ->
+          Nx.contract Nx.float32
+            (Nx.Pattern.v "i j, k -> k | i j")
+            (x [| 2; 3 |])
+            (x [| 4 |]));
       refuses "contract with three operands"
         {|Nx.contract: "i j, j k, k -> i | j k" has 3 operands; use Nx.einsum|}
         (fun () -> Nx.contract Nx.float32 chain (x [| 2; 3 |]) (x [| 3; 4 |]));
@@ -2868,6 +2978,7 @@ let () =
          einsum_within_bound;
          einsum_deterministic;
          einsum_order;
+         einsum_within;
          einsum_errors;
          lowering;
          init;

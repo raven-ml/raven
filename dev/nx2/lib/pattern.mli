@@ -30,9 +30,14 @@ type t = private {
   operands : int axis list list;
       (** Each operand's layout, a name numbered by its place in [names]. *)
   result : int axis list;  (** The result's layout, numbered alike. *)
+  plain : bool;
+      (** [true] iff no operand repeats a name and each summed name is in
+          two operands or more, as [Nx.rearrange] and [Nx.contract]
+          require. *)
 }
 (** A pattern whose structure holds the rules of [Nx.Pattern.v]. With two
-    operands or more, an [Ellipsis] leads every layout or none. *)
+    operands or more, or one that repeats or sums a name, an [Ellipsis] leads
+    every layout or none. *)
 
 val v : by:string -> string -> t
 (** [v ~by s] is the pattern [s].
@@ -42,7 +47,8 @@ val v : by:string -> string -> t
 val inverse : by:string -> t -> t
 (** [inverse ~by p] is [p] with its operand and result exchanged.
 
-    Raises [Invalid_argument] naming [by] if [p] has more than one operand. *)
+    Raises [Invalid_argument] naming [by] if [p] has more than one operand or
+    is not [plain]. *)
 
 val pp : Format.formatter -> t -> unit
 (** [pp] formats a pattern as its text, quoted. *)
@@ -90,4 +96,5 @@ val moves :
     [Reshape] that merges groups and adds units, each left out where it changes
     nothing.
 
-    Raises [Invalid_argument] naming [by] as [Nx.rearrange] says. *)
+    Raises [Invalid_argument] naming [by] as [Nx.rearrange] says, and if [p] is
+    not [plain]. *)

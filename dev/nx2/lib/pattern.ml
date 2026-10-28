@@ -10,6 +10,7 @@ type t = {
   names : string array;
   operands : int axis list list;
   result : int axis list;
+  plain : bool;
 }
 
 let pp ppf p = Format.fprintf ppf "%S" p.text
@@ -131,14 +132,21 @@ let once ~by s where ns =
   in
   go [] ns
 
-(* No name twice and [...] at most once in [l], called [where]. *)
-let distinct ~by s where l =
-  once ~by s where (names l);
+(* [...] at most once in [l], called [where]. *)
+let dots ~by s where l =
   if List.length (List.filter (( = ) Ellipsis) l) > 1 then
     fail ~by s "... appears twice %s" where
 
-let check_one ~by s operand result summed =
-  if summed <> [] then fail ~by s "| needs two operands";
+(* No name twice and [...] at most once in [l], called [where]. *)
+let distinct ~by s where l =
+  once ~by s where (names l);
+  dots ~by s where l
+
+let repeats l =
+  let ns = names l in
+  List.length (uniq ns) <> List.length ns
+
+let check_one ~by s operand result =
   distinct ~by s "on the left" operand;
   distinct ~by s "on the right" result;
   let left = names operand and right = names result in
@@ -155,7 +163,7 @@ let check_one ~by s operand result summed =
 
 let check_many ~by s operands result summed =
   List.iteri
-    (fun i l -> distinct ~by s (Printf.sprintf "in operand %d" (i + 1)) l)
+    (fun i l -> dots ~by s (Printf.sprintf "in operand %d" (i + 1)) l)
     operands;
   distinct ~by s "in the result" result;
   once ~by s "after |" summed;
@@ -163,8 +171,7 @@ let check_many ~by s operands result summed =
   let holders n = List.length (List.filter (List.mem n) ns) in
   List.iter
     (fun n ->
-      if holders n < 2 then
-        fail ~by s "%s is summed but in fewer than two operands" n;
+      if holders n = 0 then fail ~by s "%s is summed but in no operand" n;
       if List.mem n nr then fail ~by s "%s is summed and in the result" n)
     summed;
   List.iter
@@ -173,11 +180,9 @@ let check_many ~by s operands result summed =
   List.iter
     (fun n ->
       if not (List.mem n nr || List.mem n summed) then
-        match holders n with
-        | 1 -> fail ~by s "%s is in one operand and not in the result" n
-        | k ->
-            fail ~by s
-              "%s is in %d operands and not in the result; write it after |" n k)
+        let k = holders n in
+        fail ~by s "%s is in %s and not in the result; write it after |" n
+          (if k = 1 then "one operand" else Printf.sprintf "%d operands" k))
     (uniq (List.concat ns));
   let leads l = match l with Ellipsis :: _ -> true | _ -> false in
   let all = result :: operands in
@@ -225,14 +230,23 @@ let words ~by s =
     | _ -> fail ~by s "| appears twice"
   in
   (match operands with
-  | [ operand ] -> check_one ~by s operand result summed
+  | [ operand ] when summed = [] && not (repeats operand) ->
+      check_one ~by s operand result
   | operands -> check_many ~by s operands result summed);
+  (* No diagonal, and each summed name in two operands or more. *)
+  let holders n =
+    List.length (List.filter (fun l -> List.mem n (names l)) operands)
+  in
+  let plain =
+    (not (List.exists repeats operands))
+    && List.for_all (fun n -> holders n > 1) summed
+  in
   let names, operands, result = number operands result in
-  { text = s; names; operands; result }
+  { text = s; names; operands; result; plain }
 
 (* The pattern a string in NumPy's einsum notation means, each letter a name and
-   the names in both operands and not in the result summed; [None] for a string
-   not in that notation. *)
+   the names not in the result summed; [None] for a string not in that
+   notation. *)
 let numpy s =
   let letters l =
     let l = String.trim l in
@@ -261,13 +275,10 @@ let numpy s =
         when List.exists
                (fun l -> List.length (names l) > 1)
                (result :: operands) ->
-          let ns = List.map names operands in
           let summed =
             List.filter
-              (fun n ->
-                List.length (List.filter (List.mem n) ns) >= 2
-                && not (List.mem n (names result)))
-              (uniq (List.concat ns))
+              (fun n -> not (List.mem n (names result)))
+              (uniq (List.concat_map names operands))
           in
           Some (text ~operands ~result ~summed)
       | _ -> None)
@@ -289,6 +300,10 @@ let v ~by s =
 
 let inverse ~by p =
   match p.operands with
+  | [ _ ] when not p.plain ->
+      invalid_arg
+        (Printf.sprintf "%s: %S takes a diagonal or sums within one operand"
+           by p.text)
   | [ operand ] ->
       let named l =
         List.map
@@ -306,6 +321,7 @@ let inverse ~by p =
         names;
         operands;
         result;
+        plain = true;
       }
   | operands ->
       invalid_arg
@@ -625,6 +641,9 @@ let permutes (s : int array) split perm =
    into the result's shape. *)
 let moves ~by ~sizes p x =
   match p.operands with
+  | [ _ ] when not p.plain ->
+      fail ~by p.text
+        "takes a diagonal or sums within one operand; use Nx.einsum"
   | [ _ ] ->
       let label _ = "x" in
       let ~extents, ~operands, ~result, ~shape =

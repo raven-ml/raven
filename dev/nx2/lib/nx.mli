@@ -893,7 +893,7 @@ val repeat : ?axis:int -> int -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     A pattern states a layout in words. Names are words separated by spaces,
     parentheses group axes merged into one, [1] is an axis of extent [1], and
     [...] stands for the axes no name covers. One grammar serves {!rearrange},
-    with one operand, {!contract}, with two, and {!einsum}, with two or more:
+    with one operand, {!contract}, with two, and {!einsum}, with one or more:
 
     {v
     pattern  ::= operands "->" layout [ "|" name { name } ]
@@ -918,18 +918,21 @@ module Pattern : sig
   (** [v s] is the pattern [s]. Each call parses [s]; a pattern bound at a
       module's top level is parsed once, as the module starts.
 
-      With one operand, every name appears once on each side; a group on the
-      left splits an axis and on the right merges axes; [1] drops a unit axis on
-      the left and adds one on the right; [...] is the same axes on both sides.
+      With one operand that repeats no name and sums none, every name appears
+      once on each side; a group on the left splits an axis and on the right
+      merges axes; [1] drops a unit axis on the left and adds one on the right;
+      [...] is the same axes on both sides.
 
-      With two or more, a name in the result is a batch axis where two operands
-      or more hold it and a free axis where one does, and the names after [|]
-      are summed: each is in two operands or more and not in the result. Every
-      operand name is in the result or summed. A group in an operand splits
-      that operand's axis, and an extent a group leaves unknown comes from
-      another operand that holds the name. [...] stands for the same leading
-      axes in every layout, kept as batch axes; [1] drops a unit axis of an
-      operand or adds one to the result.
+      Otherwise, a name in the result is a batch axis where two operands or
+      more hold it and a free axis where one does, and the names after [|] are
+      summed: each is in an operand and not in the result. Every operand name
+      is in the result or summed. A name an operand repeats takes one index
+      on all of its axes there, so ["b i i -> b i"] is the diagonal of each
+      matrix. A group in an operand splits that operand's axis, and an extent a
+      group leaves unknown comes from an axis the name stands on alone, in any
+      operand, or from [sizes].
+      [...] stands for the same leading axes in every layout, kept as batch
+      axes; [1] drops a unit axis of an operand or adds one to the result.
 
       Sums are written out because a name dropped from the result is easy to
       miss. In ["b h q d, b h k d -> h q k | d"], [b] was left out by mistake;
@@ -937,8 +940,8 @@ module Pattern : sig
       the pattern raises.
 
       Raises [Invalid_argument] naming [s] if it is not in the grammar, a name
-      repeats within a layout, [...] appears twice in a layout, or a name breaks
-      the rules above. A string in NumPy's einsum notation, such as
+      repeats in the result or after [|], [...] appears twice in a layout, or a
+      name breaks the rules above. A string in NumPy's einsum notation, such as
       ["bik,bkj->bij"], raises with the pattern it means:
       ["b i k, b k j -> b i j | k"]. *)
 
@@ -946,7 +949,8 @@ module Pattern : sig
   (** [inverse p] is the one-operand pattern that undoes [p]: its sides
       exchanged.
 
-      Raises [Invalid_argument] if [p] has more than one operand. *)
+      Raises [Invalid_argument] if [p] has more than one operand, repeats a
+      name or sums one. *)
 end
 
 val rearrange :
@@ -958,12 +962,12 @@ val rearrange :
     gives, the quotient of its axis by the others. A view where strides express
     it, a copy otherwise.
 
-    Raises [Invalid_argument] if [p] has more than one operand, [p]'s left side
-    names more axes than [x] has or, without [...], other than [x]'s rank, a
-    [1] on the left meets an extent other than [1], a group's extents do not
-    divide or multiply to its axis, a group has two unknown extents, a size
-    disagrees with the extent [x] gives its name, a name in [sizes] is not in
-    [p] or is there twice, or a size is negative. *)
+    Raises [Invalid_argument] if [p] has more than one operand, repeats a name
+    or sums one, [p]'s left side names more axes than [x] has or, without
+    [...], other than [x]'s rank, a [1] on the left meets an extent other than
+    [1], a group's extents do not divide or multiply to its axis, a group has
+    two unknown extents, a size disagrees with the extent [x] gives its name, a
+    name in [sizes] is not in [p] or is there twice, or a size is negative. *)
 
 (** {1:indexing Indexing and slicing}
 
@@ -2222,7 +2226,8 @@ val contract :
     ["n i, n o -> i o | n"]; otherwise the result is fresh.
 
     Raises [Invalid_argument] if [dt] is a boolean; [p] has other than two
-    operands; an operand's rank is not the number of axes [p] gives it, or
+    operands; an operand repeats a name, or a summed name is in one operand
+    alone; an operand's rank is not the number of axes [p] gives it, or
     fewer with [...]; [...] covers different numbers of axes in the two
     operands; paired extents
     differ; a group's extents do not multiply to its axis, or it leaves
@@ -2239,11 +2244,16 @@ val einsum :
   ('v, 's, 'd) t list ->
   ('v, 's, 'd) t
 (** [einsum ~sizes ~acc p [x1; …; xn]] is [round (Σ x1 ⋯ xn)] over [p]'s
-    summed names, for each index of [p]'s result, at the operands' dtype. It
-    is a tree of {!contract}s of two operands, each summing in [acc] and
-    leaving its value in [acc], so that the result rounds once. [acc] defaults
-    as {!contract}'s for two operands of that dtype, and [sizes] is as
-    {!contract}'s.
+    summed names, for each index of [p]'s result, at the operands' dtype, each
+    [xi] read where its names take their indices, so that one that repeats a
+    name reads its diagonal. It is a tree of {!contract}s of two operands, each
+    summing in [acc] and leaving its value in [acc], so that the result rounds
+    once. [acc] defaults as {!contract}'s for two operands of that dtype, and
+    [sizes] is as {!contract}'s.
+
+    The summed names one operand alone holds are summed in it first, in
+    [acc]. One operand that sums nothing gives a copy, as ["i j -> j i"]
+    gives the transpose.
 
     Of the trees whose values have at most {!Nx_array.Layout.max_rank} axes,
     the tree is the one whose contractions do the fewest multiply-adds in
@@ -2266,14 +2276,14 @@ val einsum :
     ]}
 
     Before rounding the result is within [γ(N, 2u) Σ |x1| ⋯ |xn|] of the exact
-    sum, where [N = Σ (K + 1)] over the tree's [n - 1] contractions, each
-    summing [K] products per element, and [γ] and [u] are as {!contract}
-    states.
+    sum, where [N = Σ (K + 1)] over the contractions and the sums within one
+    operand, each summing [K] products or elements per element of its
+    result, and [γ] and [u] are as {!contract} states.
 
-    Raises [Invalid_argument] if [p] has one operand, more than 11, or other
-    than [n]; the dtype is a boolean; an operand's rank is not the number of
+    Raises [Invalid_argument] if [p] has more than 11 operands or other than
+    [n]; the dtype is a boolean; an operand's rank is not the number of
     axes [p] gives it, or fewer with [...]; [...] covers different numbers of
-    axes in two operands; a name's extents differ between operands; every tree
+    axes in two operands; a name's extents differ; every tree
     holds a value of more than {!Nx_array.Layout.max_rank} axes; a group's
     extents do not multiply to its axis, or it leaves two extents unknown; a
     unit axis's extent is not [1]; a name in [sizes] is not in [p] or is there
