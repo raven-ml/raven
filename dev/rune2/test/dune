@@ -41,6 +41,7 @@
   rig
   rune2
   rune2_support
+  threads.posix
   windtrap))
 
 ; nx's special functions' derivatives, against goldens gen/special_grad.py

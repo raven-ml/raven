@@ -10,10 +10,12 @@
 
     A table's lock guards its keys, and each key has a {e latch}, a lock held
     while the key's value is made, so the values of distinct keys may be made
-    concurrently. Other calls for a key block until its value is made. A call
-    for a key whose value its own domain is making, from inside [make] or from a
-    fiber the domain resumes meanwhile, returns [make ()] without waiting. The
-    table does not keep that value. *)
+    concurrently. A call for a key whose value its own thread is making, from
+    inside [make] or from a fiber the thread resumes meanwhile, returns
+    [make ()] without waiting, and the table does not keep that value. Every
+    other call for the key blocks until its value is made, one from another
+    systhread of the making domain included. [make] must return or raise on
+    the thread that called [find]. *)
 
 (** Tables whose values are made once per key. *)
 module Make (K : Hashtbl.HashedType) : sig

@@ -1466,6 +1466,39 @@ let test_map_lanes () =
     [ 2; 3; 3; 2; 4; 3; 2 ];
   equal ~msg:"one trace per lane count" int 3 !traces
 
+(* Two systhreads of one domain meeting a new key: the second waits for the
+   first's trace, and [f] runs once. The first's trace starts the second and
+   waits until it is about to call, so that the second calls while the trace
+   runs: the first resumes once the second blocks, unless the runtime's tick
+   switches threads in the few microseconds before the second's call, which
+   then finds the value made. Either order gives one trace. *)
+let test_threads () =
+  let traces = Atomic.make 0 in
+  let m = Mutex.create () and c = Condition.create () and ready = ref false in
+  let x = Nx.create f64 [| 2 |] [| 3.; -0. |] in
+  let g = ref (fun y -> y) and second = ref None and thread = ref None in
+  let call () =
+    Mutex.protect m (fun () ->
+        ready := true;
+        Condition.signal c);
+    second := Some (!g x)
+  in
+  g :=
+    Rune.jit' (fun y ->
+        if Atomic.fetch_and_add traces 1 = 0 then begin
+          thread := Some (Thread.create call ());
+          Mutex.protect m (fun () ->
+              while not !ready do
+                Condition.wait c m
+              done)
+        end;
+        Nx.mul y y);
+  let first = !g x in
+  Option.iter Thread.join !thread;
+  equal ~msg:"one trace" int 1 (Atomic.get traces);
+  equal bits_t (bits (Nx.mul x x)) (bits first);
+  equal bits_t (bits (Nx.mul x x)) (bits (Option.get !second))
+
 (* The function runs once per key, whatever is derived from it. *)
 let test_once_per_key () =
   let traces = ref 0 in
@@ -1823,6 +1856,7 @@ let () =
              test "checks raise as eagerly" test_checks;
              stateful ~domains:2 ~count:10 ~steps:8
                "a call retraces iff its abstract value is new" cache_commands;
+             test "two threads of a domain trace once" test_threads;
            ];
          group "constructs"
            [
