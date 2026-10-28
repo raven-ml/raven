@@ -271,8 +271,14 @@ let test_square_wraps () =
   List.iter check
     Nx.Dtype.
       [
-        Any Nx.int8; Any Nx.int16; Any Nx.int32; Any Nx.int64; Any Nx.uint8;
-        Any Nx.uint16; Any Nx.uint32; Any Nx.uint64;
+        Any Nx.int8;
+        Any Nx.int16;
+        Any Nx.int32;
+        Any Nx.int64;
+        Any Nx.uint8;
+        Any Nx.uint16;
+        Any Nx.uint32;
+        Any Nx.uint64;
       ];
   let direct (type s) name (dt : (int32, s) Nx.dtype) c =
     let y = Nx.arange dt 0 8 1 in
@@ -570,96 +576,103 @@ let test_placements () =
 let searched_f =
   Rune.jit ~beam:1 ~parallel:2 (pair_fn ()) (fun x y -> Nx.sub (Nx.mul x x) y)
 
-include struct
-  open Compose
+let searched_cases =
+  let open Gen in
+  let pool = Array.map (Operand.value f32) Operand.pool in
+  let element =
+    frequency
+      [
+        (3, map (fun i -> pool.(i)) (int_range 0 (Array.length pool - 1)));
+        (2, float_range (-4.) 4.);
+      ]
+  in
+  let four = array ~size:(constant 4) element in
+  pair four four
 
-  let searched_cases =
-    let open Gen in
-    let element =
-      frequency
-        [
-          (3, map (fun i -> pool.(i)) (int_range 0 (Array.length pool - 1)));
-          (2, float_range (-4.) 4.);
-        ]
-    in
-    let four = array ~size:(constant 4) element in
-    pair four four
+let law_searched (xs, ys) =
+  let has p = Array.exists p xs || Array.exists p ys in
+  cover "a -0." (has (fun e -> e = 0. && 1. /. e < 0.));
+  cover "an infinity" (has (fun e -> Float.abs e = Float.infinity));
+  cover "a NaN" (has Float.is_nan);
+  let x = v xs and y = v ys in
+  let f x y = Nx.sub (Nx.mul x x) y in
+  equal bits_t (bits (f x y)) (bits (searched_f x y));
+  equal ~msg:"its gradient" bits_t
+    (bits (Rune.grad' (fun x -> Nx.sum (f x y)) x))
+    (bits (Rune.grad' (fun x -> Nx.sum (searched_f x y)) x))
 
-  let law_searched (xs, ys) =
-    let has p = Array.exists p xs || Array.exists p ys in
-    cover "a -0." (has (fun e -> e = 0. && 1. /. e < 0.));
-    cover "an infinity" (has (fun e -> Float.abs e = Float.infinity));
-    cover "a NaN" (has Float.is_nan);
-    let x = v xs and y = v ys in
-    let f x y = Nx.sub (Nx.mul x x) y in
-    equal bits_t (bits (f x y)) (bits (searched_f x y));
-    equal ~msg:"its gradient" bits_t
-      (bits (Rune.grad' (fun x -> Nx.sum (f x y)) x))
-      (bits (Rune.grad' (fun x -> Nx.sum (searched_f x y)) x))
+(* A constant on another device that the function places where it computes is
+   copied there: the call compiles and gives eager's bits, at every dtype and
+   for every view of the constant, each also one element into its storage. *)
+module Away = (val Nx.devices [ Nx_support.memory 2 ])
 
-  (* A constant on another device that the function places where it computes is
-     copied there: the call compiles and gives eager's bits, at every dtype and
-     for views of the constant, an offset one included. A result that is such a
-     constant, unplaced, lies on its device: the call evaluates. *)
-  module Away = (val Nx.devices [ Nx_support.memory 2 ])
+type placed_case =
+  | Placed_case :
+      ('v, 's) Nx.dtype * int array * Operand.t * bool
+      -> placed_case
 
-  type placed_case =
-    | Placed_case :
-        ('v, 's) Nx.dtype * int array * operand * bool
-        -> placed_case
+let placed_cases =
+  let open Gen in
+  (let* s = shape in
+   let* o = draw s in
+   let+ (Nx.Dtype.Any dt) = of_list Nx.Dtype.all and+ skip = bool in
+   Placed_case (dt, s, o, skip))
+  |> with_pp (fun ppf (Placed_case (dt, s, o, skip)) ->
+      Format.fprintf ppf "%a %a, %a%s" Nx.pp_dtype dt pp_shape s pp_view o.view
+        (if skip then ", one element in" else ""))
 
-  let placed_cases =
-    let open Gen in
-    (let* s = shape in
-     let* o = operand s in
-     let+ (Nx.Dtype.Any dt) = of_list Nx.Dtype.all and+ offset = bool in
-     Placed_case (dt, s, o, offset))
-    |> with_pp (fun ppf (Placed_case (dt, s, o, offset)) ->
-        Format.fprintf ppf "%a %a, %a%s" Nx.pp_dtype dt pp_shape s pp_view
-          o.view
-          (if offset then ", one element in" else ""))
+(* [o]'s value of [dt] and [s], as {!Operand.make} makes it, over storage on
+   [Away] whose first element it skips where [skip]. *)
+let away (type v s) (dt : (v, s) Nx.dtype) s (o : Operand.t) ~skip :
+    (v, s, Away.d) Nx.t =
+  let r = Array.length s in
+  let create s vs =
+    let vs = Array.map (value dt) vs in
+    if not skip then Nx.place Away.on (Nx.create dt s vs)
+    else
+      let n = Array.length vs in
+      let first = value dt (Operand.F 1.) in
+      let stored = Nx.create dt [| n + 1 |] (Array.append [| first |] vs) in
+      Nx.reshape s (Nx.slice [ R (1, n + 1) ] (Nx.place Away.on stored))
+  in
+  match o.view with
+  | Plain -> create s o.values
+  | Flipped -> Nx.flip (create s o.values)
+  | Permuted ->
+      Nx.transpose (create (Array.init r (fun i -> s.(r - 1 - i))) o.values)
+  | Offset k ->
+      let n = numel s in
+      Nx.reshape s (Nx.slice [ R (k, k + n) ] (create [| k + n |] o.values))
+  | Strided when r = 0 -> create s (Array.sub o.values 0 1)
+  | Strided ->
+      let s' = Array.copy s in
+      s'.(r - 1) <- 2 * s.(r - 1);
+      let every i = if i = r - 1 then Nx.Rs (0, s'.(i), 2) else Nx.A in
+      Nx.slice (List.init r every) (create s' o.values)
+  | Broadcast when r = 0 -> create s o.values
+  | Broadcast ->
+      let s1 = Array.copy s in
+      s1.(0) <- 1;
+      if s.(0) = 0 then create s [||]
+      else Nx.broadcast_to s (create s1 o.values)
 
-  (* [o]'s value of [dt] and [s], as a view of an array on [Away], one element
-     into a longer one where [offset]. *)
-  let away (type v s) (dt : (v, s) Nx.dtype) s o ~offset : (v, s, Away.d) Nx.t =
-    let r = Array.length s in
-    let create s vs =
-      let x = Nx.cast dt (Nx.create Nx.float64 s vs) in
-      if not offset then Nx.place Away.on x
-      else
-        let n = numel s in
-        let longer = Nx.concatenate ~axis:0 [ Nx.flatten x; Nx.flatten x ] in
-        Nx.reshape s (Nx.slice [ Nx.R (1, n + 1) ] (Nx.place Away.on longer))
-    in
-    match o.view with
-    | Plain -> create s o.values
-    | Flipped -> Nx.flip (create s o.values)
-    | Strided when r = 0 -> create s (Array.sub o.values 0 1)
-    | Strided ->
-        let s' = Array.copy s in
-        s'.(r - 1) <- 2 * s.(r - 1);
-        let every i = if i = r - 1 then Nx.Rs (0, s'.(i), 2) else Nx.A in
-        Nx.slice (List.init r every) (create s' o.values)
-    | Broadcast when r = 0 -> create s o.values
-    | Broadcast ->
-        let s1 = Array.copy s in
-        s1.(0) <- 1;
-        if s.(0) = 0 then create s [||]
-        else Nx.broadcast_to s (create s1 o.values)
-
-  let law_placed (Placed_case (dt, s, o, offset)) =
-    cover "a sub-byte dtype" (Nx.Dtype.bits dt < 8);
-    cover "a view" (o.view <> Plain);
-    cover "an offset constant" (offset && numel s > 1);
-    cover "a zero-size shape" (numel s = 0);
-    let c = away dt s o ~offset in
-    let f x = (Nx.neg x, Nx.place Nx.Host.on c) in
-    let x = Nx.ones f32 [| 2 |] in
-    let calls = Rune.evaluations () in
-    let _, y = Rune.jit T.(tensor @-> returns (pair tensor tensor)) f x in
-    equal ~msg:"compiled" int 0 (Rune.evaluations () - calls);
-    equal codes_t (codes (snd (f x))) (codes y)
-end
+let law_placed (Placed_case (dt, s, o, skip)) =
+  cover "a sub-byte dtype" (Nx.Dtype.bits dt < 8);
+  cover "a view" (o.view <> Plain);
+  cover "a permuted constant" (o.view = Permuted);
+  cover "an offset constant" ((offset o || skip) && numel s > 1);
+  cover "an offset view out of C order"
+    (skip
+    && numel s > 1
+    && match o.view with Flipped | Strided | Permuted -> true | _ -> false);
+  cover "a zero-size shape" (numel s = 0);
+  let c = away dt s o ~skip in
+  let f x = (Nx.neg x, Nx.place Nx.Host.on c) in
+  let x = Nx.ones f32 [| 2 |] in
+  let calls = Rune.evaluations () in
+  let _, y = Rune.jit T.(tensor @-> returns (pair tensor tensor)) f x in
+  equal ~msg:"compiled" int 0 (Rune.evaluations () - calls);
+  equal codes_t (codes (snd (f x))) (codes y)
 
 (* Buffers, equal where their memory overlaps, printed as the byte they start
    at. *)
@@ -1124,125 +1137,119 @@ let law_donation (Donation_case (dt, s, xo, yo, e)) =
    (w, v')] where [through], reading the leaf [v] through [v']'s memory, or [e2
    (w, v)] apart, in the order [(w', v')], or [(v', w')] where [swap]; and a
    third result [e3 (w', v')], which reads both. *)
-include struct
-  open Compose
+type state_case =
+  | State_case : {
+      dt : (float, 's) Nx.dtype;
+      s : int array;
+      w : Operand.t;
+      v : Operand.t;
+      e1 : Expr.t;
+      e2 : Expr.t;
+      e3 : Expr.t;
+      through : bool;
+      swap : bool;
+    }
+      -> state_case
 
-  type state_case =
-    | State_case : {
-        dt : (float, 's) Nx.dtype;
-        s : int array;
-        w : operand;
-        v : operand;
-        e1 : expr;
-        e2 : expr;
-        e3 : expr;
-        through : bool;
-        swap : bool;
-      }
-        -> state_case
+let pp_state ppf (State_case c) =
+  Format.fprintf ppf "%a %a, w %a, v %a: v' = %a, w' = %a over %s, %a%s"
+    Nx.pp_dtype c.dt pp_shape c.s pp_view c.w.view pp_view c.v.view Expr.pp c.e1
+    Expr.pp c.e2
+    (if c.through then "v'" else "v")
+    Expr.pp c.e3
+    (if c.swap then ", (v', w')" else "")
 
-  let pp_state ppf (State_case c) =
-    Format.fprintf ppf "%a %a, w %a, v %a: v' = %a, w' = %a over %s, %a%s"
-      Nx.pp_dtype c.dt pp_shape c.s pp_view c.w.view pp_view c.v.view pp c.e1 pp
-      c.e2
-      (if c.through then "v'" else "v")
-      pp c.e3
-      (if c.swap then ", (v', w')" else "")
+let state_cases =
+  let open Gen in
+  (let* s = shape in
+   let rank = Array.length s in
+   let* e1 = Expr.gen ~rank and+ e2 = Expr.gen ~rank and+ e3 = Expr.gen ~rank in
+   let* w = draw s and+ v = draw s in
+   let+ through = bool and+ swap = bool and+ wide = bool in
+   let e1 = Expr.exact e1 and e2 = Expr.exact e2 and e3 = Expr.exact e3 in
+   if wide then State_case { dt = f64; s; w; v; e1; e2; e3; through; swap }
+   else State_case { dt = f32; s; w; v; e1; e2; e3; through; swap })
+  |> with_pp pp_state
 
-  let state_cases =
-    let open Gen in
-    (let* s = shape in
-     let rank = Array.length s in
-     let* e1 = expr ~rank and+ e2 = expr ~rank and+ e3 = expr ~rank in
-     let* w = operand s and+ v = operand s in
-     let+ through = bool and+ swap = bool and+ wide = bool in
-     let e1 = exact e1 and e2 = exact e2 and e3 = exact e3 in
-     if wide then State_case { dt = f64; s; w; v; e1; e2; e3; through; swap }
-     else State_case { dt = f32; s; w; v; e1; e2; e3; through; swap })
-    |> with_pp pp_state
+let state_step (State_case c) w v =
+  let v' = Expr.eval w v c.e1 in
+  let w' = Expr.eval w (if c.through then v' else v) c.e2 in
+  let third = Expr.eval w' v' c.e3 in
+  if c.swap then (v', (w', third)) else (w', (v', third))
 
-  let state_step (State_case c) w v =
-    let v' = eval w v c.e1 in
-    let w' = eval w (if c.through then v' else v) c.e2 in
-    let third = eval w' v' c.e3 in
-    if c.swap then (v', (w', third)) else (w', (v', third))
-
-  let state_examples =
-    let plain = { view = Plain; values = [| 1.; -0.; 2.5; -3. |] } in
-    let case ?(through = true) ?(swap = false) ?(e3 = Bin (Add, X, Y)) e1 e2 =
-      State_case
-        {
-          dt = f32;
-          s = [| 4 |];
-          w = plain;
-          v = plain;
-          e1;
-          e2;
-          e3;
-          through;
-          swap;
-        }
-    in
+let state_examples =
+  let plain = { view = Plain; values = [| F 1.; F (-0.); F 2.5; F (-3.) |] } in
+  let case ?(through = true) ?(swap = false) ?(e3 = Expr.(Bin (Add, X, Y))) e1
+      e2 =
+    State_case
+      { dt = f32; s = [| 4 |]; w = plain; v = plain; e1; e2; e3; through; swap }
+  in
+  Expr.
     [
       (* A momentum step, in either order. *)
       case
-        (Bin (Add, Bin (Mul, Y, K 0.5), Bin (Mul, Bin (Sub, X, K 2.), K 2.)))
-        (Bin (Sub, X, Bin (Mul, Y, K 0.5)));
+        (Bin
+           ( Add,
+             Bin (Mul, Y, K (F 0.5)),
+             Bin (Mul, Bin (Sub, X, K (F 2.)), K (F 2.)) ))
+        (Bin (Sub, X, Bin (Mul, Y, K (F 0.5))));
       case ~swap:true
-        (Bin (Add, Bin (Mul, Y, K 0.5), Bin (Mul, Bin (Sub, X, K 2.), K 2.)))
-        (Bin (Sub, X, Bin (Mul, Y, K 0.5)));
+        (Bin
+           ( Add,
+             Bin (Mul, Y, K (F 0.5)),
+             Bin (Mul, Bin (Sub, X, K (F 2.)), K (F 2.)) ))
+        (Bin (Sub, X, Bin (Mul, Y, K (F 0.5))));
       (* Results that read each other's leaf before their stores. *)
       case ~through:false (Bin (Add, X, Y)) (Bin (Sub, Y, X));
       (* A leaf returned as it is. *)
-      case (Bin (Add, Y, K 1.)) X;
-      case ~swap:true (Bin (Add, Y, K 1.)) (Bin (Mul, X, Y));
+      case (Bin (Add, Y, K (F 1.))) X;
+      case ~swap:true (Bin (Add, Y, K (F 1.))) (Bin (Mul, X, Y));
     ]
 
-  (* A step over two donated leaves gives the bits of one over the leaves kept,
-     whichever results take their memory. *)
-  let law_states (State_case c as case) =
-    let two = T.(pair tensor tensor) in
-    let step (w, v) = state_step case w v in
-    let g = Rune.jit T.(two @-> returns (pair tensor two)) step in
-    let make () = (make c.dt c.s c.w, make c.dt c.s c.v) in
-    let both (a, (b, d)) = (bits a, (bits b, bits d)) in
-    let t = outcome_t Testable.(pair bits_t (pair bits_t bits_t)) in
-    let eager = outcome (fun () -> both (step (make ()))) in
-    let w, v = make () in
-    let memory x =
-      if numel c.s = 0 then None else Some (Nx.Repr.read x Nx_array.buffer)
-    in
-    let leaves = List.filter_map memory [ w; v ] in
-    let result = ref None in
-    let calls = Rune.evaluations () in
-    let jitted =
-      outcome (fun () ->
-          let r = g (Nx.donate w, Nx.donate v) in
-          result := Some r;
-          both r)
-    in
-    (* The stores have an order: the call compiles. *)
-    (match jitted with
-    | Value _ -> equal ~msg:"compiled" int 0 (Rune.evaluations () - calls)
-    | Raised _ -> ());
-    let lent x =
-      match Nx.Repr.array x with
-      | Some a ->
-          List.exists
-            (fun b -> Rig.Buffer.overlaps b (Nx_array.buffer a))
-            leaves
-      | None -> false
-    in
-    let took =
-      match !result with Some (a, (b, _)) -> [ lent a; lent b ] | None -> []
-    in
-    cover "a zero-size shape" (numel c.s = 0);
-    cover "a view operand" (c.w.view <> Plain || c.v.view <> Plain);
-    cover "both results take a leaf's memory" (took = [ true; true ]);
-    cover "one result takes a leaf's memory"
-      (took = [ true; false ] || took = [ false; true ]);
-    equal t eager jitted
-end
+(* A step over two donated leaves gives the bits of one over the leaves kept,
+   whichever results take their memory. *)
+let law_states (State_case c as case) =
+  let two = T.(pair tensor tensor) in
+  let step (w, v) = state_step case w v in
+  let g = Rune.jit T.(two @-> returns (pair tensor two)) step in
+  let make () = (make c.dt c.s c.w, make c.dt c.s c.v) in
+  let both (a, (b, d)) = (bits a, (bits b, bits d)) in
+  let t = outcome_t Testable.(pair bits_t (pair bits_t bits_t)) in
+  let eager = outcome (fun () -> both (step (make ()))) in
+  let w, v = make () in
+  let memory x =
+    if numel c.s = 0 then None else Some (Nx.Repr.read x Nx_array.buffer)
+  in
+  let leaves = List.filter_map memory [ w; v ] in
+  let result = ref None in
+  let calls = Rune.evaluations () in
+  let jitted =
+    outcome (fun () ->
+        let r = g (Nx.donate w, Nx.donate v) in
+        result := Some r;
+        both r)
+  in
+  (* The stores have an order: the call compiles. *)
+  (match jitted with
+  | Value _ -> equal ~msg:"compiled" int 0 (Rune.evaluations () - calls)
+  | Raised _ -> ());
+  let lent x =
+    match Nx.Repr.array x with
+    | Some a ->
+        List.exists (fun b -> Rig.Buffer.overlaps b (Nx_array.buffer a)) leaves
+    | None -> false
+  in
+  let took =
+    match !result with Some (a, (b, _)) -> [ lent a; lent b ] | None -> []
+  in
+  cover "a zero-size shape" (numel c.s = 0);
+  cover "a view operand" (c.w.view <> Plain || c.v.view <> Plain);
+  cover "an offset operand" (offset c.w || offset c.v);
+  cover "a permuted operand" (c.w.view = Permuted || c.v.view = Permuted);
+  cover "both results take a leaf's memory" (took = [ true; true ]);
+  cover "one result takes a leaf's memory"
+    (took = [ true; false ] || took = [ false; true ]);
+  equal t eager jitted
 
 (* A momentum step's results each take a leaf's memory, call after call: the
    parameters' update reads the velocity's from where it was stored, whatever
