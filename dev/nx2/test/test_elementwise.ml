@@ -44,7 +44,13 @@ let shape =
   Gen.array ~size:(Gen.int_range 0 3)
     (Gen.frequency [ (1, Gen.constant 0); (6, Gen.int_range 1 4) ])
 
-let dtype = Gen.of_list ~pp:(fun ppf (D.Any dt) -> D.pp ppf dt) D.all
+(* Every dtype, the complex ones, 2 of [D.all]'s, drawn a quarter of the time
+   so that each run reaches the laws' complex cases. *)
+let dtype =
+  let complex = List.filter (fun (D.Any dt) -> D.is D.Complex dt) D.all in
+  Gen.with_pp
+    (fun ppf (D.Any dt) -> D.pp ppf dt)
+    (Gen.frequency [ (5, Gen.of_list D.all); (1, Gen.of_list complex) ])
 
 (* [s] with some extents [1] and some leading axes dropped: a shape that
    broadcasts to [s]. *)
