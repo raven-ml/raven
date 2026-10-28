@@ -66,11 +66,12 @@ let morph_op (type a b d) ~op { kh; kw; positions } (img : (a, b, d) Nx.t) :
     | `Max -> morph_reduce Nx.maximum
   in
   let dt = Nx.dtype img in
-  (* For erosion, pad with max so boundary doesn't create false minima. For
-     dilation, pad with min (zeros). *)
+  (* The padding is the identity of the reduction, so that no pixel outside
+     the image is an extreme: the dtype's largest value for erosion and its
+     least for dilation. *)
   let pad_val : a =
     match op with
-    | `Max -> Nx.Dtype.zero dt
+    | `Max -> Nx.Dtype.min_value dt
     | `Min -> Nx.Dtype.max_value dt
   in
   Helpers.with_batch

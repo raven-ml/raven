@@ -9,7 +9,7 @@
     A structuring element is a [[kH; kW]] tensor whose non-zero entries
     select the neighbourhood, centred at row [kH / 2] and column [kW / 2].
     Erosion counts pixels outside the image as the dtype's largest value,
-    and dilation counts them as zero. The operations raise [Invalid_argument]
+    and dilation counts them as its least. The operations raise [Invalid_argument]
     for a structuring element with no non-zero entry, or an image whose
     rank is neither 3 nor 4. *)
 

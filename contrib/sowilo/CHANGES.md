@@ -5,6 +5,10 @@ All notable changes to Sowilo are documented in this file. Releases up to
 
 ## Unreleased
 
+- `dilate`, and `opening`, `closing` and `morphological_gradient` through it,
+  count pixels outside the image as the dtype's least value. They counted them
+  as zero, so a border pixel of an image with negative values, as
+  `normalize`'s or `sobel`'s output, dilated to `0`.
 - **Breaking:** images carry their device set, `('a, 'b, 'd) Nx.t` and
   `'d Nx.float32_t`. Each operation computes where its image lies and makes
   its kernels and constants beside it, so it runs on any set and its result

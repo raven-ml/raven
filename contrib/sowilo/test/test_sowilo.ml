@@ -405,6 +405,15 @@ let test_dilation () =
   done;
   equal ~msg:"dilation expands white area" int 36 !white_count
 
+(* The extreme over a neighborhood counts the image's pixels only: a constant
+   image erodes and dilates to itself at its borders too, whatever its sign. *)
+let constant_morphology (type a b) (dt : (a, b) Nx.dtype) (t : a testable) v =
+  let img = Nx.full dt [| 4; 5; 1 |] v in
+  let kernel = structuring_element Rect (3, 3) in
+  let expected = Array.make 20 v in
+  equal ~msg:"dilate" (array t) expected (Nx.to_array (dilate ~kernel img));
+  equal ~msg:"erode" (array t) expected (Nx.to_array (erode ~kernel img))
+
 let test_dilation_kernel_shape () =
   let data = Array.make (5 * 5) 0.0 in
   data.((2 * 5) + 2) <- 1.0;
@@ -727,6 +736,11 @@ let () =
           test "structuring_elements" test_structuring_elements;
           test "erosion" test_erosion;
           test "dilation" test_dilation;
+          cases "constant_int8" ~name:string_of_int [ -128; -5; 0; 127 ]
+            (constant_morphology Nx.int8 int);
+          cases "constant_float32" ~name:string_of_float
+            [ Float.neg_infinity; -0.5; -0.; 1.; Float.infinity ]
+            (constant_morphology Nx.float32 float_exact);
           test "dilation_kernel_shape" test_dilation_kernel_shape;
         ];
       group "edge_detection"
