@@ -32,7 +32,13 @@ let linearize ~name xs f =
   let primals = ref [||] and outs = ref [||] in
   let tape, captures =
     Trace.trace Tape ~name forms (fun ts ->
-        Jvp.run ~name (fun i ->
+        let tape =
+          if Array.length ts = 0 then None
+          else
+            let (V t) = ts.(0) in
+            Nx.Prim.owner t
+        in
+        Jvp.run ~name ?tape (fun i ->
             let next = ref 0 in
             let seed (V x as v) =
               if not (tangible x) then v
@@ -142,8 +148,14 @@ type env = {
   witness : value option;
 }
 
+(* Only a custom_jvp tangent map puts on a tape an operation that is not linear
+   in its tangents. *)
 let nonlinear env what =
-  invalid_arg (Printf.sprintf "%s: %s is not linear in a tangent" env.name what)
+  invalid_arg
+    (Printf.sprintf
+       "%s: a custom_jvp tangent map applies %s to a tangent; a tangent map \
+        must be linear in its tangents"
+       env.name what)
 
 let shape_of layout = Iarray.to_array (L.shape layout)
 let identity dt = P.of_node ~ins:[| dt |] (Op1 (Copy, dt, 0))
@@ -682,7 +694,8 @@ let contract_rule env ~batch ~con ~acc ~a ~b ~a_scale ~b_scale ~segments w =
     | Some (Contracting r) -> [ V (env.const r.offsets) ]
     | None -> []
   in
-  if env.lin a && env.lin b then nonlinear env "a contraction of two tangents";
+  if env.lin a && env.lin b then
+    nonlinear env "a contraction with another tangent";
   let other = if env.lin a then V (env.const b) else V (env.const a) in
   match
     reference
@@ -1007,6 +1020,59 @@ let lanes_transpose a (x : ('v, 's, 'd) Nx.t) (V w) =
   let row = Nx.reshape [| 1 |] (Nx.cast Nx.int64 own) in
   V (Nx.reshape (Nx.shape x) (Nx.take ~axis:0 row total))
 
+(* A linear call's transpose: its transpose program over the results'
+   cotangents, zeros for one with none, and its residuals, its outputs given to
+   the arguments. Where the call has its function, the transpose is itself a
+   linear call whose transpose is that function, so that transposing it again
+   applies the function. The additions reach the scopes around the backward
+   pass. *)
+let linear_call env ~name ~apply ~transpose ~args ~captures ~residuals ~forms
+    cts =
+  let ct k (F f) =
+    match cts k with
+    | Some (V c) -> (
+        match Prim.coerce f c with
+        | Some c -> V c
+        | None when Option.is_none f.placement ->
+            (* The transpose was traced over a result of every set, which its
+               program cannot read back on a set. *)
+            invalid_arg
+              (Format.asprintf
+                 "%s: %s: the cotangent of a result of every set lies on %a; \
+                  place the call's arguments"
+                 env.name name pp_placement (Nx.placement c))
+        | None -> V (cast f (V c)))
+    | None ->
+        let z = Nx.zeros f.dtype (shape_of f.layout) in
+        V (match f.placement with Some p -> Nx.place p z | None -> z)
+  in
+  let cts = Array.mapi ct forms in
+  let const = Array.map (fun (V r) -> V (env.const r)) in
+  let out =
+    match apply with
+    | Some f ->
+        Program.run
+          (Linear
+             {
+               name;
+               apply = Some transpose;
+               transpose = f;
+               args = cts;
+               captures = const residuals;
+               residuals = const captures;
+               forms = Array.map form args;
+             })
+    | None ->
+        let out = Program.eval transpose (Array.append cts (const residuals)) in
+        let base = Array.length out - Array.length transpose.adds in
+        Array.iteri
+          (fun k (Addition (t, f)) ->
+            ignore (Program.perform (Add (t, cast f out.(base + k)))))
+          transpose.adds;
+        out
+  in
+  Array.iteri (fun k (V a) -> if env.lin a then env.give a (held out.(k))) args
+
 (* Transposition *)
 
 let next_bases (p : Program.t) =
@@ -1045,6 +1111,7 @@ let transpose ?witness l cts =
           match p.outputs.(j) with V y -> if lin y then give y (held c))
       | _ -> ())
     cts;
+  let acc_at base k = Option.map (fun c -> c.v) acc.(base + k) in
   let next = next_bases p in
   let reached base n =
     let rec go k = k < n && (Option.is_some acc.(base + k) || go (k + 1)) in
@@ -1061,6 +1128,15 @@ let transpose ?witness l cts =
         match acc.(base) with
         | Some c when lin x -> give x (fresh (lanes_transpose a x c.v))
         | _ -> ())
+    | Do
+        {
+          c =
+            Linear { name; apply; transpose; args; captures; residuals; forms };
+          base;
+        } ->
+        if reached base (Array.length forms) then
+          linear_call env ~name ~apply ~transpose ~args ~captures ~residuals
+            ~forms (acc_at base)
     | Do { base; _ } ->
         if reached base (next.(e) - base) then
           invalid_arg (l.name ^ ": a loop or call has no transpose yet")

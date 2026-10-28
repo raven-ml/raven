@@ -29,7 +29,10 @@
 
     The body and jit tracers turn each addition to a total made in their extent
     and not taken by a scope inside it into an output. Each tracer leaves a call
-    ({!Program.Call}) to its default, which issues the call's equations to it.
+    ({!Program.Call}) to its default, which issues the call's equations to it,
+    and the tape tracer answers a custom rule ({!Program.Custom}) over its
+    variables with {!Program.Evaluate}, so that its primal runs where it was
+    performed and is recorded.
 
     {e Closure conversion.} A value of another interpretation that an equation
     or an output reads is a {e capture}: the body and tape tracers bind it to a

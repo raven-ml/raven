@@ -273,6 +273,7 @@ let construct = function
   | Call _ -> "a call"
   | Add _ -> "an addition"
   | Detach _ -> "Rune.detach"
+  | Custom { name; _ } | Linear { name; _ } -> name
 
 (* Lending
 

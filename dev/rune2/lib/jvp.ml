@@ -944,13 +944,267 @@ let rule (type r) name i ~by (op : r Prim.t) : r =
 let owned i (Program.V x) =
   match Prim.owner x with Some j -> j == i | None -> false
 
+(* Custom rules
+
+   The rules over a custom rule ({!Program.Custom}) and a linear call
+   ({!Program.Linear}), as {!Custom} calls trace them. *)
+
+module Rules = struct
+  open Program
+
+  let sub = Array.sub
+  let add (V a) b = V (Nx.add a (like a b))
+  let tangible_v (V x) = tangible x
+  let primal_v i (V x) = V (primal i x)
+  let residual_count = Custom.residual_count
+
+  let tangent_v i (V x) =
+    match Prim.payload i x with
+    | Some (Dual d) -> Some (V d.tangent)
+    | _ -> None
+
+  let dual_v i (V y) t = V (dual i ~fresh:false y (like y t))
+
+  (* The interpretation, its entry point, its tape under reverse mode, and a
+     forward derivative of a program from its tangents. *)
+  type ctx = {
+    i : Prim.interpretation;
+    entry : string;
+    tape : Prim.interpretation option;
+    derive : Program.t -> value array -> (value * value option) array;
+  }
+
+  let tracks c ~name captures =
+    if Array.exists (owned c.i) captures then
+      invalid_arg
+        (name
+       ^ ": the rule uses a value its own differentiation tracks; pass it as \
+          an argument")
+
+  (* A tangent per argument: the differentiation's, or zeros. *)
+  let tangents c args =
+    Array.map
+      (fun a ->
+        match tangent_v c.i a with
+        | Some t -> t
+        | None ->
+            let (V p) = primal_v c.i a in
+            V (Nx.zeros_like p))
+      args
+
+  (* The results [ys] with their tangents [dys] where they have one. *)
+  let with_tangents c ys dys =
+    Array.map2 (fun y t -> if tangible_v y then dual_v c.i y t else y) ys dys
+
+  (* Under reverse mode the tangents are a tape's variables, which a total
+     cannot take. *)
+  let taped c (V v) =
+    match (Nx.Prim.owner v, c.tape) with
+    | Some o, Some tape -> o == tape
+    | _ -> false
+
+  let no_tangent_added c adds =
+    if Array.exists (taped c) adds then
+      invalid_arg
+        "Rune.Total.add: a custom_jvp tangent map adds a tangent under reverse \
+         mode; a total takes values"
+
+  let no_forward c =
+    invalid_arg
+      (c.entry
+     ^ ": a custom_vjp rule has no forward derivative; give the function a \
+        custom_jvp rule")
+
+  (* A custom rule over the differentiation's values. The results' primals are
+     the call performed outward on the arguments' primals, so that every
+     differentiation around applies the rule too. Their tangents are the tangent
+     map evaluated outward, or a linear call of the pullback over the tangents,
+     which the tape records; so a differentiation around differentiates the
+     derivative's code. That needs the residuals with their derivatives around:
+     the call performed outward is asked for them, and where this call is asked
+     for its own, the residuals are derived again, as the primal's code computes
+     them. Forward mode has no rule for a pullback's results: where reverse mode
+     inside asks it for residuals, it differentiates the rule's code. *)
+  let custom c ~name ~primal:p ~derivative ~ny ~args ~captures ~residuals
+      ~applied =
+    tracks c ~name captures;
+    let pargs = Array.map (primal_v c.i) args in
+    let na = Array.length p.adds and nr = residual_count p ~ny in
+    let outward ~residuals ~applied =
+      perform
+        (Custom
+           {
+             name;
+             primal = p;
+             derivative;
+             ny;
+             args = pargs;
+             captures;
+             residuals;
+             applied;
+           })
+    in
+    let reverse = Option.is_some c.tape in
+    let pullback =
+      match derivative with Pullback _ -> true | Tangent _ -> false
+    in
+    let derive p = c.derive p (Array.append args captures) in
+    let dual (y, t) = match t with Some t -> dual_v c.i y t | None -> y in
+    match derivative with
+    | Pullback _ when (not reverse) && not applied ->
+        if Array.exists tangible_v (sub p.outputs 0 ny) then no_forward c;
+        outward ~residuals ~applied
+    | Pullback _ when not reverse ->
+        (* A reverse mode inside applies the rule. The primals come from the
+           call performed outward, so that the reverse modes around apply it
+           too; this forward mode has no rule, and takes the tangents of the
+           rule's code, the residuals' too where they are asked for. *)
+        let out = outward ~residuals:false ~applied in
+        let slice = if residuals then ny + nr else ny in
+        let derived = derive (prune p ~outputs:(Array.init slice Fun.id)) in
+        let ys = Array.init ny (fun k -> dual (out.(k), snd derived.(k))) in
+        let res =
+          if residuals then Array.map dual (sub derived ny nr)
+          else sub out ny nr
+        in
+        Array.concat [ ys; res; sub out (ny + nr) na ]
+    | _ -> (
+        let nt =
+          match derivative with
+          | Tangent t -> Array.length t.adds
+          | Pullback _ -> 0
+        in
+        let ys, res, res_out, adds =
+          if residuals then
+            let derived =
+              derive (prune p ~outputs:(Array.init nr (fun k -> ny + k)))
+            in
+            let out = outward ~residuals:false ~applied:pullback in
+            ( sub out 0 ny,
+              Array.map fst derived,
+              Array.map dual derived,
+              sub out (ny + nr) (na + nt) )
+          else
+            let out = outward ~residuals:true ~applied:pullback in
+            let res = sub out ny nr in
+            (sub out 0 ny, res, res, sub out (ny + nr) (na + nt))
+        in
+        let ts = tangents c args in
+        match derivative with
+        | Tangent _ when reverse && not (Array.exists tangible_v ys) ->
+            (* No result has a tangent: the tangent map observes tangents only,
+               and a tape has none to observe. *)
+            Array.concat [ ys; res_out; adds ]
+        | Tangent t ->
+            let out = eval t (Array.append ts res) in
+            let own = sub out ny nt in
+            if reverse then no_tangent_added c own;
+            (* The additions of the tangent maps applied outward, then this
+               one's. *)
+            let adds =
+              Array.mapi
+                (fun k v -> if k < na then v else add v own.(k - na))
+                adds
+            in
+            Array.concat [ with_tangents c ys (sub out 0 ny); res_out; adds ]
+        | Pullback b ->
+            (* Tangents the tape does not hold are zeros. *)
+            if not (Array.exists tangible_v ys && Array.exists (taped c) ts)
+            then Array.concat [ ys; res_out; adds ]
+            else
+              let dys =
+                perform
+                  (Linear
+                     {
+                       name;
+                       apply = None;
+                       transpose = b;
+                       args = ts;
+                       captures = [||];
+                       residuals = res;
+                       forms = Array.map form ys;
+                     })
+              in
+              Array.concat [ with_tangents c ys dys; res_out; adds ])
+
+  (* A linear call: its results' primals are the call performed outward on the
+     operands' primals, and their tangents the call on the arguments' tangents,
+     performed outward so that a tape records it as one linear operation, plus
+     the derivative of [apply]'s code along the captures' tangents. *)
+  let linear c ~name ~apply ~transpose ~args ~captures ~residuals ~forms =
+    let ny = Array.length forms in
+    let call args =
+      perform
+        (Linear
+           {
+             name;
+             apply = Some apply;
+             transpose;
+             args;
+             captures = Array.map (primal_v c.i) captures;
+             residuals = Array.map (primal_v c.i) residuals;
+             forms;
+           })
+    in
+    let out = call (Array.map (primal_v c.i) args) in
+    let along_args =
+      if not (Array.exists (owned c.i) args) then None
+      else Some (sub (call (tangents c args)) 0 ny)
+    in
+    let along_captures =
+      if not (Array.exists (owned c.i) captures) then None
+      else
+        let derived =
+          c.derive apply (Array.append (Array.map (primal_v c.i) args) captures)
+        in
+        Some (Array.map snd (sub derived 0 ny))
+    in
+    let tangent k =
+      let of_captures = Option.bind along_captures (fun ts -> ts.(k)) in
+      match (Option.map (fun ts -> ts.(k)) along_args, of_captures) with
+      | Some a, Some c -> Some (add a c)
+      | Some a, None -> Some a
+      | None, c -> c
+    in
+    Array.mapi
+      (fun k y ->
+        if k >= ny || not (tangible_v y) then y
+        else match tangent k with Some t -> dual_v c.i y t | None -> y)
+      out
+
+  (* A rule applies under a differentiation that tracks one of its arguments.
+     One that tracks only values the rule captures differentiates the rule's
+     code where it was performed. *)
+  let rule c = function
+    | Custom
+        { name; primal; derivative; ny; args; captures; residuals; applied } ->
+        if not (Array.exists (owned c.i) args) then None
+        else
+          Some
+            (custom c ~name ~primal ~derivative ~ny ~args ~captures ~residuals
+               ~applied)
+    | Linear
+        {
+          name;
+          apply = Some apply;
+          transpose;
+          args;
+          captures;
+          residuals;
+          forms;
+        } ->
+        Some
+          (linear c ~name ~apply ~transpose ~args ~captures ~residuals ~forms)
+    | _ -> None
+end
+
 (* A construct over duals: [Detach] and an addition are performed outward on the
    primal, so that every differentiation around detaches the value and a total
    receives the primal. [Lanes] is linear: its tangent is the lanes of the
-   tangent. Loops and calls have no rule of their own yet: they run where they
-   were performed, inside the interpretation, which receives their programs'
-   operations. *)
-let answer i (c : Program.construct) k =
+   tangent. A custom rule or a linear call applies its rule ([Rules]). Loops and
+   calls have no rule of their own yet: they run where they were performed,
+   inside the interpretation, which receives their programs' operations. *)
+let rec answer ~name ~tape i (c : Program.construct) k =
   match c with
   | Detach x -> Effect.Deep.continue k (Program.perform (Detach (primal i x)))
   | Add (t, x) ->
@@ -965,17 +1219,46 @@ let answer i (c : Program.construct) k =
         | None -> y
       in
       Effect.Deep.continue k [| Program.V y |]
+  | Custom _ | Linear _ -> (
+      match
+        Rules.rule { i; entry = name; tape; derive = derive ~name ~tape i } c
+      with
+      | Some r -> Effect.Deep.continue k r
+      | None -> Effect.Deep.discontinue k Program.Evaluate)
   | Lane_index _ | Scan _ | Iterate _ | Call _ ->
       Effect.Deep.discontinue k Program.Evaluate
 
-let run ~name f =
+(* [p]'s outputs over [xs], each with its tangent, from a differentiation [j]
+   like [i] seeded from [i]'s tangents of [xs]. *)
+and derive ~name ~tape i p xs =
+  run ~name ?tape (fun j ->
+      let seeded (Program.V x as v) =
+        match Prim.payload i x with
+        | Some (Dual d) -> Program.V (seed j d.primal d.tangent)
+        | _ -> v
+      in
+      let out = Program.eval p (Array.map seeded xs) in
+      Array.map
+        (fun (Program.V y) ->
+          match Prim.payload j y with
+          | Some (Dual d) -> (Program.V d.primal, Some (Program.V d.tangent))
+          | _ -> (Program.V y, None))
+        out)
+
+and run :
+    'a.
+    name:string ->
+    ?tape:Prim.interpretation ->
+    (Prim.interpretation -> 'a) ->
+    'a =
+ fun ~name ?tape f ->
   let owner = ref None in
   let effc (type a) (e : a Effect.t) :
       ((a, _) Effect.Deep.continuation -> _) option =
     match (e, !owner) with
     | Program.Construct c, Some i
       when List.exists (owned i) (Program.operands c) ->
-        Some (answer i c)
+        Some (answer ~name ~tape i c)
     | _ -> None
   in
   Effect.Deep.match_with

@@ -269,6 +269,148 @@ let check_grads ?(eps = 1e-4) ?(tol = 1e-2) p f params =
     (fun acc d -> match acc with Ok () -> check d | Error _ -> acc)
     (Ok ()) directions
 
+(* Custom rules *)
+
+let custom_jvp p q rule args =
+  let name = "Rune.custom_jvp" in
+  let like = ref None in
+  let ys =
+    Custom.jvp_call ~name (values p args) (fun vs ->
+        let x = rebuild p ~like:args vs in
+        let y, map = rule x in
+        like := Some y;
+        let tangent ts =
+          let dy = map (rebuild p ~like:x ts) in
+          same_leaves name q ~this:"in the tangent map's result" dy
+            ~that:"in the result" y;
+          values q dy
+        in
+        (values q y, tangent))
+  in
+  rebuild q ~like:(Option.get !like) ys
+
+let custom_vjp p q rule args =
+  let name = "Rune.custom_vjp" in
+  let like = ref None in
+  let ys =
+    Custom.vjp_call ~name (values p args) (fun vs ->
+        let x = rebuild p ~like:args vs in
+        let y, pb = rule x in
+        like := Some y;
+        let pullback cts =
+          let g = pb (rebuild q ~like:y cts) in
+          same_leaves name p ~this:"in the pullback's result" g
+            ~that:"in the arguments" x;
+          values p g
+        in
+        (values q y, pullback))
+  in
+  rebuild q ~like:(Option.get !like) ys
+
+(* [x] and [y] of structure [s] alike in their placements too. *)
+let same_placements name s ~this x ~that y =
+  let placements v =
+    List.rev (Ptree.fold s (fun p y acc -> (p, Nx.placement y) :: acc) v [])
+  in
+  let pp = Format.pp_print_option Nx.Placement.pp in
+  List.iter2
+    (fun (p, a) (_, b) ->
+      let equal =
+        match (a, b) with
+        | None, None -> true
+        | Some a, Some b -> Nx.Placement.equal a b
+        | _ -> false
+      in
+      if not equal then
+        invalid_argf "%s: %s: placed on %s %s, on %s %s" name (path_name p)
+          (Format.asprintf "%a" pp a)
+          this
+          (Format.asprintf "%a" pp b)
+          that)
+    (placements x) (placements y)
+
+let custom_transpose p q f ~transpose args =
+  let name = "Rune.custom_transpose" in
+  let like = ref None in
+  let ys =
+    Custom.transpose_call ~name (values p args) (fun vs ->
+        let x = rebuild p ~like:args vs in
+        let y = f x in
+        like := Some y;
+        let transposed cts =
+          let g = transpose (rebuild q ~like:y cts) in
+          let this = "in the transpose's result"
+          and that = "in the arguments" in
+          same_leaves name p ~this g ~that x;
+          same_placements name p ~this g ~that x;
+          values p g
+        in
+        (values q y, transposed))
+  in
+  rebuild q ~like:(Option.get !like) ys
+
+(* A draw like [x], from the key [k]: standard normal parts. *)
+let draw (type v s d) k (x : (v, s, d) Nx.t) : (v, s, d) Nx.t =
+  let normal k = Nx.Rng.normal ~key:(Nx.Rng.key k) Nx.float64 (Nx.shape x) in
+  let v : (v, s, d) Nx.t =
+    if Nx.Dtype.is Complex (Nx.dtype x) then
+      Nx.cast (Nx.dtype x)
+        (Nx.complex Nx.complex128
+           ~re:(normal (2 * k))
+           ~im:(normal ((2 * k) + 1)))
+    else Nx.cast (Nx.dtype x) (normal (2 * k))
+  in
+  match Nx.placement x with Some p -> Nx.place p v | None -> v
+
+let check_transpose ?(tol = 1e-5) p q f ~transpose args =
+  let name = "Rune.check_transpose" in
+  let read t = Nx.item [] (Nx.reshape [||] (Nx.cast Nx.float64 t)) in
+  (* [Re Σ a b] over the arrays of [a] and [b], and [Σ |a b|], in complex128, so
+     that no product of a narrow format overflows. A complex value cast to
+     float64 is its real part. *)
+  let pairing s a b =
+    let dot = ref 0. and size = ref 0. in
+    ignore
+      (Ptree.map2 s
+         (fun _ a b ->
+           let wide x = Nx.cast Nx.complex128 x in
+           let ab = Nx.mul (wide a) (wide b) in
+           let modulus =
+             Nx.sqrt (Nx.cast Nx.float64 (Nx.mul ab (Nx.conjugate ab)))
+           in
+           dot := !dot +. read (Nx.sum ab);
+           size := !size +. read (Nx.sum modulus);
+           a)
+         a b);
+    (!dot, !size)
+  in
+  let check pair =
+    let leaf = ref 0 in
+    let random s like =
+      Ptree.map s
+        (fun _ x ->
+          incr leaf;
+          if tangible x then draw ((1000 * pair) + !leaf) x else Nx.zeros_like x)
+        like
+    in
+    let v = random p args in
+    let lv = f v in
+    let w = random q lv in
+    let ltw = transpose w in
+    same_leaves name q ~this:"in the result" lv ~that:"in the cotangents" w;
+    same_leaves name p ~this:"in the transpose's result" ltw
+      ~that:"in the arguments" args;
+    let a, sa = pairing q w lv and b, sb = pairing p ltw v in
+    if Float.abs (a -. b) <= tol *. Float.max 1. (Float.max sa sb) then Ok ()
+    else
+      Error
+        (Printf.sprintf "%s: pair %d: <w, L v> is %g, and <Lᵀ w, v> is %g" name
+           pair a b)
+  in
+  List.fold_left
+    (fun acc pair -> match acc with Ok () -> check pair | Error _ -> acc)
+    (Ok ()) [ 1; 2; 3 ]
+
 (* Constructs without programs *)
 
 let detach x = like x (first (perform (Detach x)))

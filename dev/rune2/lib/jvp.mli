@@ -16,13 +16,41 @@
     The interpretation's handler of constructs ({!Program.construct}) lies just
     outside it and answers those over its duals: [Detach] is the primal, an
     addition adds the primal outward, [Lanes] is the dual of the primal's and
-    the tangent's lanes, and the others run their default where they were
+    the tangent's lanes, a custom rule or a linear call over an argument it
+    tracks applies its rule, and the others run their default where they were
     performed ({!Program.Evaluate}), so that their programs' operations reach
-    the rules. *)
+    the rules.
 
-val run : name:string -> (Nx.Prim.interpretation -> 'a) -> 'a
-(** [run ~name f] is [f i], [i] a new forward-mode interpretation named [name]
-    in messages. Raises what [f] raises. *)
+    A custom rule ({!Program.Custom}) is performed outward on the arguments'
+    primals, so that each differentiation around applies it too. Its results'
+    tangents are its tangent map, evaluated outward over the arguments' tangents
+    (zeros for one without) and the residuals, or, under reverse mode, a linear
+    call of its pullback over the tangents the tape holds; so a differentiation
+    around differentiates the derivative's code. The residuals carry the
+    derivatives around: the call performed outward is asked for them, and a call
+    asked for its own derives them again, the residuals' slice of the primal
+    evaluated under a differentiation seeded from this one's tangents. Forward
+    mode has no rule for a pullback's results: asked for residuals by a reverse
+    mode inside, it takes their tangents from the rule's code; otherwise a float
+    or complex result raises. A linear call ({!Program.Linear}) is the call on
+    the primals and the call on the tangents, which a tape records as one
+    operation, plus the derivative of its function's code along the captures.
+
+    Under reverse mode a tangent map is not evaluated where no result has a
+    float or complex array. The handler raises [Invalid_argument] for a rule
+    that captures a value this differentiation tracks beside one of its
+    arguments, and under reverse mode for a tangent map that adds a tangent to a
+    total. *)
+
+val run :
+  name:string ->
+  ?tape:Nx.Prim.interpretation ->
+  (Nx.Prim.interpretation -> 'a) ->
+  'a
+(** [run ~name ~tape f] is [f i], [i] a new forward-mode interpretation named
+    [name] in messages. [tape], where given, is the tape tracer ({!Trace.Tape})
+    whose variables are the tangents [f] seeds, as reverse mode's are. Raises
+    what [f] raises. *)
 
 val seed :
   Nx.Prim.interpretation ->

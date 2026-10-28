@@ -371,6 +371,12 @@ let trace kind ~name inputs f =
   let effc (type a) (e : a Effect.t) :
       ((a, _) Effect.Deep.continuation -> _) option =
     match (e, !owner) with
+    | Construct (Custom _ as c), Some i
+      when st.kind = Tape && List.exists (owned i) (operands c) ->
+        (* A custom rule over a tape's variables, as a tangent map that applies
+           one to its tangents: its primal runs where it was performed, and its
+           operations are recorded. *)
+        Some (fun k -> Effect.Deep.discontinue k Evaluate)
     | Construct c, Some i when claims st i c ->
         Some (fun k -> Effect.Deep.continue k (record st i c))
     | Staging, Some _ when st.kind = Jit ->

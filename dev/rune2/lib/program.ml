@@ -101,6 +101,29 @@ and construct =
       compiled : (value array -> value array) option;
     }
       -> construct
+  | Custom : {
+      name : string;
+      primal : t;
+      derivative : derivative;
+      ny : int;
+      args : value array;
+      captures : value array;
+      residuals : bool;
+      applied : bool;
+    }
+      -> construct
+  | Linear : {
+      name : string;
+      apply : t option;
+      transpose : t;
+      args : value array;
+      captures : value array;
+      residuals : value array;
+      forms : form array;
+    }
+      -> construct
+
+and derivative = Tangent of t | Pullback of t
 
 let make ~owner ~params eqns ~outputs ~adds ~slots =
   { owner; params; eqns = Array.of_list eqns; outputs; adds; slots }
@@ -151,6 +174,21 @@ let map_operands m = function
           until_captures = map_values m s.until_captures;
         }
   | Call c -> Call { c with args = map_values m c.args }
+  | Custom c ->
+      Custom
+        {
+          c with
+          args = map_values m c.args;
+          captures = map_values m c.captures;
+        }
+  | Linear c ->
+      Linear
+        {
+          c with
+          args = map_values m c.args;
+          captures = map_values m c.captures;
+          residuals = map_values m c.residuals;
+        }
 
 let operands = function
   | Detach x -> [ V x ]
@@ -162,12 +200,25 @@ let operands = function
   | Iterate { init; step_captures; until_captures; _ } ->
       Array.to_list (Array.concat [ init; step_captures; until_captures ])
   | Call { args; _ } -> Array.to_list args
+  | Custom { args; captures; _ } ->
+      Array.to_list (Array.append args captures)
+  | Linear { args; captures; residuals; _ } ->
+      Array.to_list (Array.concat [ args; captures; residuals ])
 
 let map_programs f = function
   | (Detach _ | Lanes _ | Lane_index _ | Add _) as c -> c
   | Scan s -> Scan { s with step = f s.step }
   | Iterate s -> Iterate { s with step = f s.step; until = f s.until }
   | Call c -> Call { c with body = f c.body; compiled = None }
+  | Custom c ->
+      let derivative =
+        match c.derivative with
+        | Tangent t -> Tangent (f t)
+        | Pullback p -> Pullback (f p)
+      in
+      Custom { c with primal = f c.primal; derivative }
+  | Linear c ->
+      Linear { c with apply = Option.map f c.apply; transpose = f c.transpose }
 
 (* Forms *)
 
@@ -240,6 +291,11 @@ let additions = function
       let adds, _, _ = sums [ until; step ] in
       adds
   | Call { body; _ } -> body.adds
+  | Custom { primal; derivative = Tangent t; _ } ->
+      Array.append primal.adds t.adds
+  | Custom { primal; derivative = Pullback _; _ } -> primal.adds
+  | Linear { apply = Some a; _ } -> a.adds
+  | Linear { apply = None; _ } -> [||]
 
 let no_map name =
   invalid_arg (name ^ ": no map named by the axis is around the call")
@@ -274,6 +330,13 @@ let forms = function
       let carry = Array.map2 placed (Array.map form init) (Array.map form carry) in
       Array.append carry sums
   | Call { body; _ } -> Array.map form body.outputs
+  | Custom { primal; derivative = Tangent t; _ } ->
+      Array.map form (Array.append primal.outputs (tail t))
+  | Custom { primal; derivative = Pullback _; _ } ->
+      Array.map form primal.outputs
+  | Linear { apply = Some a; forms; _ } ->
+      Array.append forms (Array.map form (tail a))
+  | Linear { apply = None; forms; _ } -> forms
 
 (* Values of a form *)
 
@@ -362,6 +425,52 @@ and default = function
       | Some run when Array.for_all untraced args && not (staging ()) ->
           run args
       | _ -> eval body args)
+  | Custom { primal; derivative; ny; args; captures; residuals; _ } ->
+      let args = Array.append args captures in
+      let nr = Array.length primal.outputs - ny - Array.length primal.adds in
+      (* A tangent map's additions, which no differentiation made. *)
+      let tadds =
+        match derivative with
+        | Tangent t -> Array.map (fun v -> filled ~zero:false (form v)) (tail t)
+        | Pullback _ -> [||]
+      in
+      if residuals then Array.append (eval primal args) tadds
+      else
+        let out = eval (values_only primal ~ny) args in
+        Array.concat
+          [
+            slice out 0 ny;
+            Array.make nr hole;
+            slice out ny (Array.length out);
+            tadds;
+          ]
+  | Linear { apply = Some a; args; captures; _ } ->
+      eval a (Array.append args captures)
+  | Linear { name; apply = None; _ } ->
+      invalid_arg
+        (name
+       ^ ": a custom_vjp rule has no forward derivative; give the function a \
+          custom_jvp rule")
+
+(* [p], a custom rule's primal, with its results and additions alone. Where its
+   residuals are its parameters, constants or results, nothing reads only them,
+   and every equation is kept. *)
+and values_only p ~ny =
+  let no = Array.length p.outputs and na = Array.length p.adds in
+  let owner = p.owner in
+  let free (V r) =
+    match Nx.Prim.payload owner r with
+    | Some (Var n) ->
+        Array.mem n p.params
+        || Array.exists (fun y -> same y (V r)) (slice p.outputs 0 ny)
+    | _ -> true
+  in
+  let kept =
+    Array.append (Array.init ny Fun.id) (Array.init na (fun k -> no - na + k))
+  in
+  if Array.for_all free (slice p.outputs ny (no - na)) then
+    { p with outputs = Array.map (fun k -> p.outputs.(k)) kept; adds = [||] }
+  else prune p ~outputs:kept
 
 (* A loop's sums start at the identity, so that a loop that runs no step adds
    nothing a total can tell. *)
@@ -422,6 +531,43 @@ and iterate name step ~until ~max ~init ~step_captures ~until_captures =
   let carry = go 0 init in
   Array.append carry acc
 
+(* Pruning *)
+
+and prune p ~outputs =
+  let owner = p.owner in
+  let live = Array.make p.slots false in
+  let mark (type v s d) (x : (v, s, d) Nx.t) =
+    match Nx.Prim.payload owner x with
+    | Some (Var n) -> live.(n) <- true
+    | _ -> ()
+  in
+  let outputs = Array.map (fun k -> p.outputs.(k)) outputs in
+  Array.iter (fun (V y) -> mark y) outputs;
+  let n = Array.length p.eqns in
+  let base = function Op { base; _ } | Do { base; _ } -> base in
+  let kept = ref [] in
+  for e = n - 1 downto 0 do
+    let eq = p.eqns.(e) in
+    let b = base eq in
+    let next = if e + 1 < n then base p.eqns.(e + 1) else p.slots in
+    let read = ref false in
+    for v = b to next - 1 do
+      if live.(v) then read := true
+    done;
+    let keep =
+      match eq with Op { op = Check _; _ } -> true | Op _ | Do _ -> !read
+    in
+    if keep then begin
+      kept := eq :: !kept;
+      match eq with
+      | Op { op; _ } ->
+          let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
+          List.iter (fun (Nx.Prim.Any x) -> mark x) xs
+      | Do { c; _ } -> List.iter (fun (V x) -> mark x) (operands c)
+    end
+  done;
+  { p with eqns = Array.of_list !kept; outputs; adds = [||] }
+
 let run c =
   let r = perform c in
   let adds = additions c in
@@ -450,6 +596,8 @@ let carried = function
   | Scan { step; _ } -> [ step ]
   | Iterate { until; step; _ } -> [ until; step ]
   | Call { body; _ } -> [ body ]
+  | Custom { primal; derivative = Tangent d | Pullback d; _ } -> [ primal; d ]
+  | Linear { apply; transpose; _ } -> Option.to_list apply @ [ transpose ]
   | Detach _ | Lanes _ | Lane_index _ | Add _ -> []
 
 let owned (p : t) (V x) =
@@ -632,6 +780,23 @@ and pp_construct names ~indent (p : t) ppf c =
   | Call { body; args; _ } ->
       Format.fprintf ppf "call (%a)@\n%s  body%a" values (Array.to_list args)
         pad program body
+  | Custom { name; primal; derivative; args; captures; _ } ->
+      let kind, d =
+        match derivative with
+        | Tangent d -> ("tangent map", d)
+        | Pullback d -> ("pullback", d)
+      in
+      Format.fprintf ppf "%s (%a), captures (%a)@\n%s  primal%a@\n%s  %s%a"
+        name values (Array.to_list args) values (Array.to_list captures) pad
+        program primal pad kind program d
+  | Linear { name; apply; transpose; args; captures; residuals; _ } ->
+      Format.fprintf ppf "linear %s (%a), captures (%a), residuals (%a)" name
+        values (Array.to_list args) values (Array.to_list captures) values
+        (Array.to_list residuals);
+      Option.iter
+        (fun a -> Format.fprintf ppf "@\n%s  function%a" pad program a)
+        apply;
+      Format.fprintf ppf "@\n%s  transpose%a" pad program transpose
 
 let pp ppf p =
   let names = { constants = []; axes = []; next = 0; bases = [] } in

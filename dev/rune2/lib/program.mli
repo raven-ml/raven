@@ -138,6 +138,55 @@ and construct =
       (** [body] applied to [args]. Its default runs [compiled] where it has
           one, no operand is traced and no tracer stages the operations
           around the call ({!staging}), and evaluates [body] otherwise. *)
+  | Custom : {
+      name : string;  (** The entry point, in messages. *)
+      primal : t;
+          (** Over the arguments and the captures; to the [ny] results, the
+              residuals and the additions. *)
+      derivative : derivative;
+      ny : int;
+      args : value array;
+      captures : value array;
+      residuals : bool;
+          (** Whether the residuals among the results are used: then they carry
+              the derivatives of every differentiation around the call. A
+              differentiation applying a {!Pullback} asks for them. *)
+      applied : bool;
+          (** Whether a reverse mode inside the call applies its {!Pullback},
+              which a forward mode around then has no rule to answer. *)
+    }
+      -> construct
+      (** A call of a function with a custom derivative: the results, the
+          residuals (unused where [residuals] is [false]), [primal]'s additions,
+          then a tangent map's. The default evaluates [primal] without what only
+          the residuals read, and adds nothing for a tangent map. *)
+  | Linear : {
+      name : string;
+      apply : t option;
+          (** Over the arguments and the captures; to the results and the
+              additions. [None] where only the transpose is known, as for a
+              {!Pullback} rule's tangents. *)
+      transpose : t;
+          (** Over a cotangent per result and the residuals; to a cotangent per
+              argument and the additions. *)
+      args : value array;
+      captures : value array;
+      residuals : value array;
+      forms : form array;  (** The results'. *)
+    }
+      -> construct
+      (** A function linear in its arguments with the transpose [transpose]:
+          [apply]'s results, then its additions. Without [apply], it is the
+          tangents of a {!Pullback} rule's results, which only a tape takes: its
+          default raises [Invalid_argument]. *)
+
+and derivative =
+  | Tangent of t
+      (** A tangent map: over a tangent per argument and the residuals; to the
+          results' tangents and the additions. *)
+  | Pullback of t
+      (** A pullback: over a cotangent per result and the residuals; to a
+          cotangent per argument and the additions. *)
 
 val make :
   owner:Nx.Prim.interpretation ->
@@ -153,6 +202,10 @@ val make :
 val eval : t -> value array -> value array
 (** [eval p args] is [p]'s outputs with its parameters bound to [args], in
     order. Raises what an equation raises. *)
+
+val prune : t -> outputs:int array -> t
+(** [prune p ~outputs] is [p] with its outputs [outputs], in order, and no
+    addition, keeping the equations they read and every check. *)
 
 (** {1:constructs Constructs} *)
 
@@ -188,6 +241,10 @@ val map_operands : map -> construct -> construct
 val map_programs : (t -> t) -> construct -> construct
 (** [map_programs f c] is [c] with each program [p] it carries replaced by
     [f p], and a call without its compiled form. *)
+
+val stacked : int -> form -> form
+(** [stacked n f] is the form of a value of [f]'s with a leading axis of [n], in
+    C order. *)
 
 val forms : construct -> form array
 (** [forms c] is the forms of [c]'s results, as its default gives them. Raises

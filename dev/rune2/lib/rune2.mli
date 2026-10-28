@@ -11,21 +11,21 @@
     constant of the transformation.
 
     {b Functions of a construct are traced.} The functions that {!scan},
-    {!iterate} and {!jit} receive are {e traced} at the call: their OCaml code
-    runs over stand-ins of their arguments' arrays, values with a dtype, a shape
-    and a placement but no elements, and what it computes from them is recorded
-    as a program, which the construct then evaluates. A loop's step is traced
-    once, and again where it places a carry array it received of every set
-    ({!scan}). So a step's code runs once or a few times whatever the number of
-    steps, as do its side effects, and inside it {!Nx.item} of a stand-in, or of
-    a value computed from one, raises
-    ([Nx.item: the value is traced by Rune.scan]); a branch on a value is
-    {!Nx.where} or a nested {!iterate}. An operation that reads no stand-in
-    computes at the call, once. A draw without [~key] inside a traced function
-    raises, naming the construct, so a step draws from a key in its carry or its
-    rows. Outside every transformation a construct is its program evaluated: a
-    {!scan} is the fold of its step, bit for bit but for a NaN result's sign and
-    payload, which nx leaves unspecified.
+    {!iterate}, {!jit}, {!custom_jvp}, {!custom_vjp} and {!custom_transpose}
+    receive are {e traced} at the call: their OCaml code runs over stand-ins of
+    their arguments' arrays, values with a dtype, a shape and a placement but no
+    elements, and what it computes from them is recorded as a program, which the
+    construct then evaluates. A loop's step is traced once, and again where it
+    places a carry array it received of every set ({!scan}). So a step's code
+    runs once or a few times whatever the number of steps, as do its side
+    effects, and inside it {!Nx.item} of a stand-in, or of a value computed from
+    one, raises ([Nx.item: the value is traced by Rune.scan]); a branch on a
+    value is {!Nx.where} or a nested {!iterate}. An operation that reads no
+    stand-in computes at the call, once. A draw without [~key] inside a traced
+    function raises, naming the construct, so a step draws from a key in its
+    carry or its rows. Outside every transformation a construct is its program
+    evaluated: a {!scan} is the fold of its step, bit for bit but for a NaN
+    result's sign and payload, which nx leaves unspecified.
 
     {b Extents.} A transformation, a map or a {!Total.collect} is around the
     code its function runs, on whatever domain that code resumes, and the fibers
@@ -291,6 +291,178 @@ val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
 (** [detach x] is [x] with a zero derivative under every differentiation around
     the call: its tangent is zero. Outside every transformation it is [x]
     itself. *)
+
+(** {1:custom Custom differentiation rules}
+
+    A custom rule gives a function the derivative a differentiation uses for it,
+    in the form of that differentiation's answer: a tangent map for forward
+    mode, a pullback for reverse mode, or a linear function's transpose. The
+    rule is traced at the call, and the derivative it returns is traced inside
+    it, so the derivative's code runs once per call, whatever differentiation
+    applies it, and an error it raises reaches the call.
+
+    {b Arguments.} A differentiation applies the rule where it tracks one of the
+    rule's arguments. The rule receives them without their derivatives, and must
+    not use another value that differentiation tracks: pass such a value as an
+    argument. A differentiation that tracks only values the rule captures
+    differentiates the rule's code, as it does any other code.
+
+    {b Orders.} A differentiation around another differentiates the derivative's
+    code, with the arrays it reads, which the rule computes: the second
+    derivative of a {!custom_jvp} is the derivative of its tangent map along the
+    arguments, and that of a {!custom_vjp} the derivative of its rule and
+    pullback. A custom rule that a tangent map applies to its tangents runs its
+    function under reverse mode, which records the function's operations, so a
+    differentiation around reverse mode differentiates that function's code,
+    where one around forward mode applies the rule.
+
+    {b Reverse mode} transposes a tangent map's operations on tangents, so a
+    tangent map must be linear in its tangents: one applying [Nx.exp] to a
+    tangent raises, naming the entry point, when the derivative is transposed
+    (in {!grad}, or as a {!vjp} pullback is applied), as in
+    ["Rune.grad: a custom_jvp tangent map applies Exp to a tangent; a tangent
+     map must be linear in its tangents"]. Reverse mode transposes the linear
+    part: a value a tangent map adds to a tangent, or selects beside one with
+    {!Nx.where}, counts as zero. A pullback or a transpose reads a result's
+    cotangent at the result's set, so where a result of every set meets placed
+    values, its placed cotangent raises [Invalid_argument] in the backward pass:
+    place the call's arguments.
+
+    {b Maps.} {!vmap} batches a custom rule: the rule and its derivative are
+    evaluated over the lanes, and a differentiation around the map applies the
+    rule to every lane.
+
+    {b Totals.} The additions a rule makes reach the scopes around the call once
+    per call. A tangent map's are made once per differentiation that applies it,
+    none without one; a pullback's once per backward pass that applies it, to
+    the scopes around that pass. Under reverse mode a tangent map that adds a
+    tangent raises at the call. *)
+
+val custom_jvp :
+  ('p, 'd) Nx.Ptree.t ->
+  ('q, 'd) Nx.Ptree.t ->
+  ('p -> 'q * ('p -> 'q)) ->
+  'p ->
+  'q
+(** [custom_jvp p q rule args] is [fst (rule args)], a value of structure [q],
+    whose derivative is the tangent map [map = snd (rule args)]: [map dargs] is
+    the result's tangent for the arguments' tangents [dargs], of structure [p],
+    zeros for an array the differentiation does not track. Forward mode applies
+    [map] and reverse mode transposes it, at every order: the first derivative
+    of [softplus] below is [Nx.sigmoid x] whatever [stable] computes.
+
+    {[
+    let softplus =
+      Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+          (stable x, fun dx -> Nx.mul (Nx.sigmoid x) dx))
+    ]}
+
+    Where the result has no float or complex array, reverse mode does not apply
+    [map], so such a rule observes the tangents under forward mode alone.
+
+    Raises [Invalid_argument] at the call if [map]'s result differs from the
+    result in its {!Nx.Ptree.val-visits}, dtypes or shapes, naming the first
+    path where they differ, as in
+    ["Rune.custom_jvp: the root: shape [] in the tangent map's result, [3] in
+     the result"], and if [rule] uses a value that a differentiation applying it
+    tracks
+    (["Rune.custom_jvp: the rule uses a value its own differentiation tracks;
+      pass it as an argument"]). *)
+
+val custom_vjp :
+  ('p, 'd) Nx.Ptree.t ->
+  ('q, 'd) Nx.Ptree.t ->
+  ('p -> 'q * ('q -> 'p)) ->
+  'p ->
+  'q
+(** [custom_vjp p q rule args] is [fst (rule args)], a value of structure [q],
+    whose reverse-mode derivative is the pullback [pb = snd (rule args)]:
+    [pb cts] is the arguments' cotangents, of structure [p], for the result's
+    cotangents [cts], as {!vjp}'s pullback computes them
+    ({!section-derivatives}). [cts] holds zeros for an array of the result that
+    nothing the differentiation tracks depends on.
+
+    {[
+    let clip_grad c =
+      Rune.custom_vjp Nx.Ptree.tensor Nx.Ptree.tensor (fun x ->
+          (x, fun g -> Nx.clamp ~min:(-.c) ~max:c g))
+    ]}
+
+    Every reverse mode tracking one of [args] applies [pb]. Forward mode has no
+    rule for the result: around a reverse mode that applies it, as in a
+    Hessian-vector product, it differentiates [rule]'s code.
+
+    Raises [Invalid_argument] at the call if [pb]'s result differs from [args]
+    in its {!Nx.Ptree.val-visits}, dtypes or shapes, naming the first path where
+    they differ; if [rule] uses a value that a differentiation applying it
+    tracks, as {!custom_jvp} does; and under forward mode around no such reverse
+    mode, if the result has a float or complex array
+    (["Rune.jvp: a custom_vjp rule has no forward derivative; give the function
+      a custom_jvp rule"]). *)
+
+val custom_transpose :
+  ('p, 'd) Nx.Ptree.t ->
+  ('q, 'd) Nx.Ptree.t ->
+  ('p -> 'q) ->
+  transpose:('q -> 'p) ->
+  'p ->
+  'q
+(** [custom_transpose p q f ~transpose args] is [f args], for an [f] linear in
+    [args] whose transpose is [transpose]: [<w, f v> = <transpose w, v>] for
+    every [v] and [w] ({!section-derivatives}). Both may read other values, the
+    {e residuals}, in which they need not be linear. That they are linear and
+    transposes is the caller's promise, which {!check_transpose} tests. It gives
+    a tangent map whose transpose has a better form than its operations'
+    transposes:
+
+    {[
+    let solve =
+      Rune.custom_jvp
+        Nx.Ptree.(pair tensor tensor)
+        Nx.Ptree.tensor
+        (fun (a, b) ->
+          let x = Nx.solve a b in
+          let along v =
+            Rune.custom_transpose Nx.Ptree.tensor Nx.Ptree.tensor
+              (fun v -> Nx.solve a v)
+              ~transpose:(fun w -> Nx.solve (Nx.matrix_transpose a) w)
+              v
+          in
+          (x, fun (da, db) -> along (Nx.sub db (Nx.matmul da x))))
+    ]}
+
+    [f] and [transpose] are traced at the call, apart. A differentiation applies
+    [f] to the tangents and differentiates [f]'s code along the residuals.
+    Reverse mode transposes the first by applying [transpose], never [f]'s
+    operations, and transposing that again applies [f].
+
+    Raises [Invalid_argument] at the call if [transpose]'s result differs from
+    [args] in its {!Nx.Ptree.val-visits}, dtypes, shapes or placements, naming
+    the first path where they differ, as in
+    ["Rune.custom_transpose: the root: shape [2] in the transpose's result, [3]
+     in the arguments"], and if [f] or [transpose] adds to a total: each also
+    runs as the other's transpose, where its additions would have no single
+    place. *)
+
+val check_transpose :
+  ?tol:float ->
+  ('p, 'd) Nx.Ptree.t ->
+  ('q, 'd) Nx.Ptree.t ->
+  ('p -> 'q) ->
+  transpose:('q -> 'p) ->
+  'p ->
+  (unit, string) result
+(** [check_transpose p q f ~transpose args] tests that [transpose] is [f]'s
+    transpose on three pairs of standard normal [v], of [args]' structure,
+    dtypes, shapes and placements, and [w], of [f v]'s, drawn from fixed keys
+    (both parts of a complex array, zeros in an integer or boolean one): it is
+    [Ok ()] if [<w, f v> = Re Σ w (f v)] is within [tol] (default [1e-5]) of
+    [<transpose w, v>], relative to the larger sum of the products' magnitudes
+    where it is above [1], and [Error msg] naming the pair and both pairings
+    otherwise. It reads the results, so [f] and [transpose] must not be traced.
+
+    Raises [Invalid_argument] if [f v] and [w], or [transpose w] and [args],
+    differ in their {!Nx.Ptree.val-visits}, dtypes or shapes. *)
 
 (** {1:maps Maps}
 

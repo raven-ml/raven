@@ -30,10 +30,13 @@
     outside it. It answers {!Program.Bound} for its name; [Lanes] and
     [Lane_index] of its name, and [Lanes] of a lane value under another name;
     every addition, adding the sum of its lanes' values outward once; [Detach]
-    of a lane value, detaching its batch outward; and the other constructs over
-    lane values by running their default where they were performed
-    ({!Program.Evaluate}), so that their programs' operations reach the rules.
-*)
+    of a lane value, detaching its batch outward; a custom rule or a linear call
+    over lane values by performing it outward with each of its programs traced
+    again at its signature over the batches and evaluated over their lanes, the
+    additions of a pullback or a transpose summed over the lanes; and the other
+    constructs over lane values by running their default where they were
+    performed ({!Program.Evaluate}), so that their programs' operations reach
+    the rules. *)
 
 val run :
   name:string ->

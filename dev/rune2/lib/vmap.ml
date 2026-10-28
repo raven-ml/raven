@@ -562,10 +562,156 @@ let claims i axis : Program.construct -> bool = function
   | Add _ -> true
   | c -> List.exists (operand i) (Program.operands c)
 
+(* Custom rules
+
+   A custom rule ({!Program.Custom}) or a linear call ({!Program.Linear}) over
+   lane values, as {!Custom} calls trace them. *)
+
+module Rules = struct
+  open Program
+
+  let sub = Array.sub
+  let residual_count = Custom.residual_count
+
+  (* The map, its number of lanes, and [map f bs], the batches of [f]'s results
+     over the lanes of the batches [bs] inside a map of the same name and
+     size. *)
+  type ctx = {
+    i : Prim.interpretation;
+    n : int;
+    map : (value array -> value array) -> value array -> value array;
+  }
+
+  (* [f]'s form with a leading axis of [n]. *)
+  let stack (type v s d) n (f : (v, s, d) Nx.Prim.form) : (v, s, d) Nx.Prim.form
+      =
+    let shape = Iarray.to_array (Nx_array.Layout.shape f.layout) in
+    {
+      f with
+      layout =
+        Nx_array.Layout.contiguous
+          (Iarray.of_array (Array.append [| n |] shape));
+      placement = Option.map Nx.Placement.with_leading_axis f.placement;
+    }
+
+  (* The additions of [p], every lane's [vs]: as batches, which the call's
+     results carry back into the map, or summed over the lanes, for a program a
+     backward pass runs outside it. *)
+  let additions m ~summed (p : Program.t) vs =
+    Array.iteri
+      (fun k (Addition (t, f)) ->
+        let v = cast (stack m.n f) vs.(k) in
+        if not summed then ignore (perform (Add (t, v)))
+        else if m.n > 0 then ignore (perform (Add (t, Nx.sum ~axes:[ 0 ] v))))
+      p.adds
+
+  (* [p] over the lanes of [vs], its results' batches, its additions made. *)
+  let over m ~summed ~results (p : Program.t) vs =
+    let out = m.map (eval p) vs in
+    additions m ~summed p (sub out results (Array.length out - results));
+    sub out 0 results
+
+  (* A custom rule over a map's values: the rule traced again over its operands'
+     batches, every program evaluated over their lanes, so that the
+     differentiations around the map apply it; its results are the lanes of the
+     batched call's. A pullback's and a transpose's additions, which a backward
+     pass makes outside the map, are summed over the lanes. *)
+  let rule m c =
+    let batched = Array.map (fun (V x) -> V (batch m.i m.n x)) in
+    let lanes ~keep r =
+      Array.mapi (fun k (V b as v) -> if keep k then v else V (lane m.i b)) r
+    in
+    (* [primal] over the operands' batches, its results and residuals batched in
+       order, then the values the batched derivative [d] captures, which are its
+       further residuals. *)
+    let primal_over ~name ops (p : Program.t) ~ny more =
+      Trace.trace Body ~name (Array.map form ops) (fun vs ->
+          let nr = residual_count p ~ny in
+          Array.append (over m ~summed:false ~results:(ny + nr) p vs) more)
+    in
+    (* Each derivative program is traced at its own signature, its parameters
+       batched in their order. *)
+    let batched_derivative ~name ~summed ~results (d : Program.t) forms
+        (p : Program.t) ~ny =
+      let res = sub p.outputs ny (residual_count p ~ny) in
+      let forms =
+        Array.append forms (Array.map (fun v -> stacked m.n (form v)) res)
+      in
+      Trace.trace Body ~name forms (over m ~summed ~results d)
+    in
+    match c with
+    | Custom
+        { name; primal; derivative; ny; args; captures; residuals; applied } ->
+        let na = Array.length args in
+        let ops = Array.append (batched args) (batched captures) in
+        let derivative, more =
+          match derivative with
+          | Tangent t ->
+              let forms = Array.map form (sub ops 0 na) in
+              let t, more =
+                batched_derivative ~name ~summed:false ~results:ny t forms
+                  primal ~ny
+              in
+              (Tangent t, more)
+          | Pullback b ->
+              let ys = sub primal.outputs 0 ny in
+              let forms = Array.map (fun v -> stacked m.n (form v)) ys in
+              let b, more =
+                batched_derivative ~name ~summed:true ~results:na b forms primal
+                  ~ny
+              in
+              (Pullback b, more)
+        in
+        let nr = residual_count primal ~ny in
+        let primal, captured = primal_over ~name ops primal ~ny more in
+        let captures =
+          Array.append (sub ops na (Array.length ops - na)) captured
+        in
+        let args = sub ops 0 na in
+        let c =
+          Custom
+            { name; primal; derivative; ny; args; captures; residuals; applied }
+        in
+        (* Unused residuals hold nothing to take lanes of. *)
+        let unused k =
+          (not residuals) && k >= ny && k < ny + nr + Array.length more
+        in
+        Some (lanes ~keep:unused (perform c))
+    | Linear { name; apply; transpose; args; captures; residuals; forms } ->
+        let na = Array.length args and ny = Array.length forms in
+        let args = batched args and captures = batched captures in
+        let residuals = batched residuals in
+        let forms = Array.map (stacked m.n) forms in
+        let apply, captures =
+          match apply with
+          | None -> (None, captures)
+          | Some a ->
+              let a, more =
+                Trace.trace Body ~name
+                  (Array.map form (Array.append args captures))
+                  (over m ~summed:false ~results:ny a)
+              in
+              (Some a, Array.append captures more)
+        in
+        let transpose, more =
+          Trace.trace Body ~name
+            (Array.append forms (Array.map form residuals))
+            (over m ~summed:true ~results:na transpose)
+        in
+        let residuals = Array.append residuals more in
+        Some
+          (lanes
+             ~keep:(fun _ -> false)
+             (perform
+                (Linear
+                   { name; apply; transpose; args; captures; residuals; forms })))
+    | _ -> None
+end
+
 (* [Lanes] of this map is every lane's value, the batch, a constant; of another
    map, every lane's batch, a lane value. An addition adds the sum of its lanes'
    values, once, and nothing with no lane. *)
-let answer i axis n (c : Program.construct) k =
+let rec answer ~name i axis n (c : Program.construct) k =
   let one x = Effect.Deep.continue k [| Program.V x |] in
   match c with
   | Lanes (a, x) when Program.same_axis a axis -> one (batch i n x)
@@ -581,15 +727,29 @@ let answer i axis n (c : Program.construct) k =
   | Detach x ->
       let b = batch i n x in
       one (lane i (Program.like b (Program.perform (Detach b)).(0)))
+  | Custom _ | Linear _ ->
+      let r = Rules.rule { i; n; map = map ~name axis n } c in
+      Effect.Deep.continue k (Option.get r)
   | Scan _ | Iterate _ | Call _ -> Effect.Deep.discontinue k Program.Evaluate
 
-let run ~name ~axis n f =
+(* [f]'s results' batches over the lanes of the batches [bs], in a map of this
+   one's name and size. *)
+and map ~name axis n f bs =
+  run ~name ~axis n (fun j ->
+      let lanes = Array.map (fun (Program.V b) -> Program.V (lane j b)) bs in
+      Array.map (fun (Program.V y) -> Program.V (batch j n y)) (f lanes))
+
+and run :
+    'a.
+    name:string -> axis:Program.axis -> int -> (Prim.interpretation -> 'a) -> 'a
+    =
+ fun ~name ~axis n f ->
   let owner = ref None in
   let effc (type a) (e : a Effect.t) :
       ((a, _) Effect.Deep.continuation -> _) option =
     match (e, !owner) with
     | Program.Construct c, Some i when claims i axis c ->
-        Some (answer i axis n c)
+        Some (answer ~name i axis n c)
     | Program.Bound a, _ when Program.same_axis a axis ->
         Some (fun k -> Effect.Deep.continue k (Some n))
     | _ -> None
