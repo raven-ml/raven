@@ -976,6 +976,18 @@ let decoded w = function
 let read_whole f =
   raises_match (Exn.invalid_arg ~substring:"; Nx.place (Placement.on s) ") f
 
+(* Where [apply] puts its product of a weight lying at [c] with an input of
+   [[| m; k |]] whole on each device: cut as the weight is along a leading
+   axis, along its last axis where the weight is cut along [n], and whole
+   where it is cut along [k], whose partial products sum. *)
+let product_at w = function
+  | Whole -> Whole
+  | Cut { axis; tiles } as c ->
+      let r = Array.length (Nx_quant.shape w) in
+      if axis = r - 1 then Whole
+      else if axis = r - 2 then Cut { axis = r - 1; tiles }
+      else c
+
 let placement_law ((_, w), c) =
   let r = Array.length (Nx_quant.shape w) in
   let blocks = (Nx_quant.shape w).(r - 1) / block_values (format_of w) in
@@ -998,6 +1010,14 @@ let placement_law ((_, w), c) =
     (Array.fold_left ( * ) 1 (Nx_quant.shape w) = 0);
   cover "a cut of n or a leading axis"
     (match c with Cut { axis; _ } -> axis < r - 1 | Whole -> false);
+  (* A float32 input reads an MXFP4 weight where it lies: the product's own
+     contraction routes it, and refuses the scales a block-splitting cut
+     leaves, read whole, as its operand 2. *)
+  let in_place = format_of w = Mxfp4 in
+  cover "an MXFP4 weight cut along n or a leading axis, read in place"
+    (in_place && match c with Cut { axis; _ } -> axis < r - 1 | Whole -> false);
+  cover "an MXFP4 weight cut along k at its blocks' boundaries, read in place"
+    (in_place && along_k (fun t -> blocks > 0 && blocks mod t = 0));
   let wp = Nx_quant.place (at c) w in
   let _, _, k = dims w in
   let x = random_floats [| 3; k |] in
@@ -1005,7 +1025,11 @@ let placement_law ((_, w), c) =
   match decoded w c with
   | Raises ->
       read_whole (fun () -> Nx_quant.dequant Nx.float32 wp);
-      read_whole run
+      read_whole run;
+      if in_place then
+        raises_match
+          (Exn.invalid_arg ~substring:"Nx_quant.apply: operand 2 lies at ")
+          run
   | (Lies _ | Unstated) as d ->
       let got = Nx_quant.dequant Nx.float32 wp in
       equal ~msg:"its values" (array int64)
@@ -1018,6 +1042,12 @@ let placement_law ((_, w), c) =
       | Raises | Unstated -> ());
       let y = run () in
       applied ~at:f32 w x y;
+      (match d with
+      | Lies d ->
+          equal ~msg:"where apply's result lies" placement
+            (at (product_at w d))
+            (Option.get (Nx.placement y))
+      | Raises | Unstated -> ());
       equal ~msg:"apply's second run" (array int64) (product_bits y)
         (product_bits (run ()))
 
@@ -1479,6 +1509,18 @@ let placements =
          within its bound, the same on every run, lying where the interface \
          says, or raises where a cut along k splits blocks"
         placed placement_law;
+      (* Two blocks of 32 values over four devices: each holds half a
+         block's codes, and the scales, one per block, are read whole. *)
+      test "an MXFP4 weight cut inside its blocks raises from its product"
+        (fun () ->
+          let w = Nx_quant.place (Mem.split ~axis:1) (random_weight [| 2; 64 |])
+          and x = Nx.place Mem.on (random_floats [| 3; 64 |]) in
+          raises
+            (Invalid_argument
+               "Nx_quant.apply: operand 2 lies at split ~axis:1 [m0; m1; m2; \
+                m3] and is read at on [m0; m1; m2; m3]; Nx.place \
+                (Placement.on s) z")
+            (fun () -> Nx_quant.apply w x));
       prop
         "a cut along k decodes each block once where its tiles divide the \
          blocks, and raises otherwise"

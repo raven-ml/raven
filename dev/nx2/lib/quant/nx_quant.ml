@@ -349,17 +349,6 @@ let exact (type b) (dt : (float, b) Nx.dtype) w =
   | Nx.Dtype.Bfloat16, (Mxfp4 _ | Mxfp4_blocks _) -> true
   | _ -> false
 
-(* Whether every device of [x]'s placement holds all of [x]. *)
-let whole x =
-  match Nx.placement x with
-  | None -> true
-  | Some p ->
-      let s = Nx.Placement.devices p in
-      Nx.Placement.equal p (Nx.Placement.on s)
-      || List.exists
-           (fun d -> Nx.Placement.equal p (Nx.Placement.device s d))
-           (Nx.rigs s)
-
 (* Whether [x]'s dtype sums at float32 with float32 operands. *)
 let at_float32 (type b d) (x : (float, b, d) Nx.t) =
   match Nx.dtype x with
@@ -434,8 +423,7 @@ let apply w x =
   check_input (shape w) (Nx.shape x);
   let dt = Nx.dtype x in
   match w with
-  | Mxfp4 { codes; scales }
-    when at_float32 x && whole x && whole codes && whole scales ->
+  | Mxfp4 { codes; scales } when at_float32 x ->
       if exact dt w then scaled ~by:"Nx_quant.apply" x codes scales
       else
         Nx.cast dt

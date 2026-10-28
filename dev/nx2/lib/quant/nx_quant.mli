@@ -18,19 +18,21 @@
     tensor [t], [mxfp4_blocks t] for an [MXFP4] one, whose shape is the weight's
     with its last axis in bytes.
 
-    {b Placement.} A weight's parts may lie at any placement of their set,
-    and each function computes where they lie and moves none of them
+    {b Placement.} A weight's parts may lie at any placement of their set, and
+    each function computes where they lie and moves none of them
     ({!Nx.section-routing}). Its values do not depend on where they lie, and
-    {!apply}'s and {!apply_experts}' results are within {!Nx.contract}'s
-    bound, the same on every run for a given placement. Cut along [n] or a
-    leading axis, each device decodes its own rows. Cut along [k] over [t]
-    devices, a weight with values and [b] blocks along [k] lies on its
-    blocks' boundaries where [t] divides [b]: each device decodes its own
-    blocks, {!dequant}'s result is cut along [k] as the parts are, and
-    {!apply} sums the devices' partial products. Any other cut along [k]
-    splits a block, which is read whole, so {!dequant} and {!apply} raise as
-    the operation reading it does, naming the {!Nx.place} that puts it whole
-    on each device; a split whose tiles divide the blocks computes too.
+    {!apply}'s and {!apply_experts}' results are within {!Nx.contract}'s bound,
+    the same on every run for a given placement. Cut along [n] or a leading
+    axis, each device decodes its own rows. Cut along [k] over [t] devices, a
+    weight with values and [b] blocks along [k] lies on its blocks' boundaries
+    where [t] divides [b]: each device decodes its own blocks, {!dequant}'s
+    result is cut along [k] as the parts are, and {!apply} sums the devices'
+    partial products. {!apply}'s product of an [Mxfp4] weight read where it
+    lies reads the codes where they lie, at either cut, each device decoding
+    its own blocks as it sums them. Any other cut along [k] splits a block,
+    which is read whole, so {!dequant} and {!apply} raise as the operation
+    reading it does, naming the {!Nx.place} that puts it whole on each device;
+    a split whose tiles divide the blocks computes too.
 
     {!take} gathers before decoding, so a caller reads a large table's rows
     without decoding the table. Routing positions to a stack of weights, as a
@@ -170,12 +172,11 @@ val apply : 'd t -> (float, 'b, 'd) Nx.t -> (float, 'b, 'd) Nx.t
     broadcast as {!Nx.matmul}'s, and the result is [[| …; m; n |]], or
     [[| …; n |]] for a vector.
 
-    An [Mxfp4] weight applied to a float32, bfloat16 or float16 [x], where
-    every device of each placement holds all of its value, is read where it
-    lies: the product decodes each block as it sums it and stores no decoded
-    weight. Any other product first decodes [w] as {!dequant} does, at [x]'s
-    dtype or at float32. Read where it lies, the product needs kernels that
-    compute a block-scaled contraction, as nx.cpu's do.
+    An [Mxfp4] weight applied to a float32, bfloat16 or float16 [x] is read
+    where it lies: the product decodes each block as it sums it and stores
+    no decoded weight. Any other product first decodes [w] as {!dequant}
+    does, at [x]'s dtype or at float32. Read where it lies, the product
+    needs kernels that compute a block-scaled contraction, as nx.cpu's do.
 
     Raises [Invalid_argument] if [w] is read where it lies on a set whose
     kernels decline that contraction, if [x] is 0-d, if [x]'s last axis is

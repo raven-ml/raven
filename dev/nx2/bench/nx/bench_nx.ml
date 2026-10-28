@@ -1340,6 +1340,24 @@ let experts () =
   let ws = mxfp4_weights ~copies:2 [| 32 |] 1024 4096 in
   (ids, filled D.Float32 [| 64; 1; 4096 |] 1., ws, ref 0)
 
+(* Sixteen weights of [4096; 4096] split along [axis] over four memory
+   devices, and an input whole on each: each device sums its own rows, or
+   its own 32 blocks of each row, from the codes where they lie. *)
+type cut_weights =
+  | Cut_weights :
+      (float, D.float32_elt, 'd) Nx.t * 'd Nx_quant.t array * int ref
+      -> cut_weights
+
+let mxfp4_four ~axis () =
+  let module Four = (val Nx.devices [ memory 0; memory 1; memory 2; memory 3 ])
+  in
+  let ws = mxfp4_weights ~copies:16 [||] 4096 4096 in
+  let x = filled D.Float32 [| 1; 4096 |] 1. in
+  Cut_weights
+    ( Nx.place Four.on x,
+      Array.map (Nx_quant.place (Four.split ~axis)) ws,
+      ref 0 )
+
 let quant_rows =
   Thumper.group "quant"
     [
@@ -1348,6 +1366,12 @@ let quant_rows =
           let ws = mxfp4_weights ~copies:16 [||] 4096 4096 in
           (filled D.Float32 [| 1; 4096 |] 1., ws, ref 0))
         (fun (x, ws, turn) -> Nx.Repr.array (Nx_quant.apply (next ws turn) x));
+      Thumper.bench_with_setup "mxfp4-gemv-4096-n-split4"
+        ~setup:(mxfp4_four ~axis:0) (fun (Cut_weights (x, ws, turn)) ->
+          Value (Nx_quant.apply (next ws turn) x));
+      Thumper.bench_with_setup "mxfp4-gemv-4096-k-split4"
+        ~setup:(mxfp4_four ~axis:1) (fun (Cut_weights (x, ws, turn)) ->
+          Value (Nx_quant.apply (next ws turn) x));
       Thumper.bench_with_setup "mxfp4-moe-64x8of32" ~setup:experts
         (fun (ids, x, ws, turn) ->
           let w = next ws turn in
