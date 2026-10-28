@@ -26,8 +26,8 @@ type row = Eager | Compiled | Grad
    grad row differentiates the sum of the result. *)
 type workload = {
   id : string;
-  f : Nx.float64_t -> Nx.float64_t;
-  x : unit -> Nx.float64_t;
+  f : Nx.host Nx.float64_t -> Nx.host Nx.float64_t;
+  x : unit -> Nx.host Nx.float64_t;
   rows : row list;
 }
 
@@ -704,10 +704,16 @@ let workloads =
     nelder_mead;
   ]
 
-let compiled f x =
-  let f = Rune.jit' f in
+(* [checked f x] calls the compiled [f] once, refusing a call that ran
+   evaluated: a compiled row that rune declines to lower would time nx's
+   operations under the compiled label. *)
+let checked f x =
+  let before = Rune.evaluations () in
   ignore (Sys.opaque_identity (f x));
+  if Rune.evaluations () > before then failwith "a compiled call ran evaluated";
   (f, x)
+
+let compiled f x = checked (Rune.jit' f) x
 
 let timed (f, x) = ignore (f x)
 
@@ -731,11 +737,11 @@ let sde () =
       Thumper.bench_with_setup
         ~setup:(fun () ->
           let f =
-            Rune.jit Nx.Ptree.(Sde.Brownian.ptree f64 @-> returns tensor) gbm
+            Rune.jit
+              Nx.Ptree.(Nx.Ptree.v Sde.Brownian.walk @-> returns tensor)
+              gbm
           in
-          let w = path () in
-          ignore (Sys.opaque_identity (f w));
-          (f, w))
+          checked f (path ()))
         "compiled" timed;
     ]
 
@@ -753,11 +759,11 @@ let qmc () =
       Thumper.bench_with_setup
         ~setup:(fun () ->
           let f =
-            Rune.jit Nx.Ptree.(Nx.Rng.ptree @-> returns tensor) mean_exp
+            Rune.jit
+              Nx.Ptree.(Nx.Ptree.v Nx.Rng.walk @-> returns tensor)
+              mean_exp
           in
-          let k = key () in
-          ignore (Sys.opaque_identity (f k));
-          (f, k))
+          checked f (key ()))
         "compiled" timed;
     ]
 
@@ -785,8 +791,7 @@ let cold id =
   let w = List.find (fun w -> String.equal w.id id) workloads in
   let x = w.x () in
   let t0 = Unix.gettimeofday () in
-  let f = Rune.jit' w.f in
-  ignore (Sys.opaque_identity (f x));
+  ignore (compiled w.f x);
   Printf.printf "%.3f\n" ((Unix.gettimeofday () -. t0) *. 1000.)
 
 let suite () = List.map rows workloads @ [ sde (); qmc () ]
