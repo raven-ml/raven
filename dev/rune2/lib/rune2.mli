@@ -783,18 +783,19 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     {b Loops and rules.} A {!scan} or an {!iterate} compiles as one loop of the
     program, its step compiled once whatever its number of steps: each step
     reads its row, writes its outputs' row, and updates the carry in its own
-    storage, rows a copy where theirs do not lie 16 bytes apart. A check in a step raises, once the call returns, the first
-    failure of the first step that fails, as the steps written out would. A
-    {!remat}, a {!custom_jvp}, a {!custom_vjp} and a
+    storage, rows a copy where theirs do not lie 16 bytes apart. A check in a
+    step raises, once the call returns, the first failure of the first step
+    that fails, as the steps written out would, and an {!iterate} stops at the
+    first failure. A {!remat}, a {!custom_jvp}, a {!custom_vjp} and a
     {!custom_transpose} compile as their function's operations, the program's
     own.
 
     {b Evaluated programs.} A program that holds a map's {!lanes} or
-    {!lane_index}, a check in a construct inside a loop's step, an operation
-    the compiler does not lower, values on several devices, or one tolk cannot
-    compile, runs as its operations evaluated by nx, giving eager's values; a
-    result that is an argument is a copy of it, and a call with donated
-    arguments claims them first, consumes them and lends nothing.
+    {!lane_index}, an operation the compiler does not lower, values on several
+    devices, or one tolk cannot compile, runs as its operations evaluated by
+    nx, giving eager's values; a result that is an argument is a copy of it,
+    and a call with donated arguments claims them first, consumes them and
+    lends nothing.
 
     Raises [Invalid_argument] when applied to [s] if [s] has no argument, and at
     a call if [f] captures a value that another transformation traces. *)

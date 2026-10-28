@@ -777,30 +777,65 @@ let test_loop_checks () =
   equal ~msg:"an iterate's step" failure
     (raised (fun () -> iterate (at [| 0.5; -2. |])))
     (raised (fun () -> h (at [| 0.5; -2. |])));
-  (* A check reads its data, so a step's check of a donated argument's rows
-     keeps that argument from lending. *)
-  let read =
-    Rune.jit
-      T.(tensor @-> returns (pair tensor tensor))
-      (fun w -> (Nx.sub w (Nx.scalar_like w 10.), scan w))
+  (* A check reads its data, so a donated argument that a step's or an until's
+     check reads lends nothing, where an unchecked loop over it lets it lend. *)
+  let lends loop =
+    let g =
+      Rune.jit' (fun w ->
+          ignore (loop w);
+          Nx.mul_s w 4.)
+    in
+    let w = rows [| 1.; 2.; 0.; 2.5; 1.; 1. |] in
+    let b = Nx.Repr.read w Nx_array.buffer in
+    let a = Option.get (Nx.Repr.array (g (Nx.donate w))) in
+    Rig.Buffer.overlaps b (Nx_array.buffer a)
   in
-  let w = rows [| 1.; 2.; 0.; 2.5; 1.; 1. |] in
-  let b = Nx.Repr.read w Nx_array.buffer in
-  let nw, _ = read (Nx.donate w) in
-  let a = Option.get (Nx.Repr.array nw) in
-  equal ~msg:"read by a step's check: no lending" bool false
-    (Rig.Buffer.overlaps b (Nx_array.buffer a));
-  (* An iterate stops at the step that fails, as written out: a million more
-     steps would run otherwise. *)
-  let failing x =
-    Rune.iterate' ~max:1_000_000
+  let scan_with f xs =
+    fst (Rune.scan' ~init:(Nx.zeros f32 [| 2 |]) ~f:(fun c r -> (f c r, c)) xs)
+  in
+  let until_with f xs =
+    Rune.iterate' ~max:0
+      ~until:(fun c -> Nx.all (Nx.less (f c) (Nx.scalar f32 9.)))
+      ~f:Fun.id xs
+  in
+  equal ~msg:"an unchecked step lends" bool true
+    (lends (scan_with (fun c r -> Nx.add c r)));
+  equal ~msg:"a step's check: no lending" bool false
+    (lends (scan_with (fun c r -> Nx.add c (checked r))));
+  equal ~msg:"an unchecked until lends" bool true (lends (until_with Fun.id));
+  equal ~msg:"an until's check: no lending" bool false
+    (lends (until_with checked))
+
+(* An iterate stops at the first failure of the program, as the steps written
+   out stop: one in its step, one before it, or one before it in an enclosing
+   step, each starting from a carry its until does not stop. Without that, the
+   compiled iterate runs to its max of 10^9 steps, minutes past the test's
+   limit. *)
+let test_loop_stops () =
+  let at xs = Nx.create f32 [| 2 |] xs in
+  let long ~f x =
+    Rune.iterate' ~max:1_000_000_000
       ~until:(fun x -> Nx.less (Nx.sum x) (Nx.scalar f32 (-1.)))
-      ~f:(fun x -> Nx.add (checked x) (Nx.scalar_like x 4.))
-      x
+      ~f x
   in
-  equal ~msg:"stops at the failure" failure
-    (raised (fun () -> failing (at [| 1.; 2. |])))
-    (raised (fun () -> Rune.jit' failing (at [| 1.; 2. |])))
+  let step x = Nx.add x (Nx.scalar_like x 1.) in
+  let failing x = long ~f:step (checked x) in
+  let in_step x = long ~f:(fun x -> step (step (Nx.neg (checked x)))) x in
+  let in_scan xs =
+    fst
+      (Rune.scan' ~init:(Nx.zeros f32 [| 2 |])
+         ~f:(fun c r -> (Nx.add c (long ~f:step (checked r)), Nx.neg c))
+         xs)
+  in
+  let both msg f x =
+    equal ~msg failure
+      (raised (fun () -> f x))
+      (raised (fun () -> Rune.jit' f x))
+  in
+  both "a failure before the iterate" failing (at [| -1.; -7. |]);
+  both "a failure in its step" in_step (at [| 1.; 2. |]);
+  both "a failure in an enclosing step" in_scan
+    (Nx.create f32 [| 2; 2 |] [| -1.; -2.; 1.; 2. |])
 
 (* Loops whose steps check, drawn: rows of values that pass or fail each check,
    a check of no element beside them, and an iterate whose until checks too;
@@ -830,8 +865,8 @@ let law_checked_loop c =
   let xs =
     Nx.create f32 [| n; 2 |] (Array.concat (Array.to_list c.rows))
   in
-  let none = Nx.create f32 [| 0 |] [||] in
   let step c r =
+    let none = Nx.slice [ Nx.R (0, 0) ] r in
     Nx.check T.tensor (Nx.less none none) none (fun i _ -> Small (i, 0.));
     (Nx.add c (checked r), Nx.neg c)
   in
@@ -851,10 +886,19 @@ let law_checked_loop c =
       x
   in
   let eager = raised (fun () -> scan xs) in
+  (* A scan of no row returns its init, of every set, which no program
+     computes: that one evaluates. *)
+  let compiled ~compiles f x =
+    let before = Rune.evaluations () in
+    let r = raised (fun () -> Rune.jit' f x) in
+    if compiles then
+      equal ~msg:"compiled" int 0 (Rune.evaluations () - before);
+    r
+  in
   cover "no row" (n = 0);
   cover "a step fails" (eager <> None_raised);
   cover "every step passes" (n > 0 && eager = None_raised);
-  equal ~msg:"scan" failure eager (raised (fun () -> Rune.jit' scan xs));
+  equal ~msg:"scan" failure eager (compiled ~compiles:(n > 0) scan xs);
   let x =
     if n = 0 then Nx.create f32 [| 2 |] [| 1.; 0.5 |] else Nx.get [ 0 ] xs
   in
@@ -862,7 +906,7 @@ let law_checked_loop c =
   cover "an iterate's check fails"
     (match e with Small_at _ | Signed_at _ -> true | _ -> false);
   cover "an iterate reaches max" (match e with Refused _ -> true | _ -> false);
-  equal ~msg:"iterate" failure e (raised (fun () -> Rune.jit' iterate x))
+  equal ~msg:"iterate" failure e (compiled ~compiles:true iterate x)
 
 (* The cache
 
@@ -1445,6 +1489,8 @@ let () =
                test_constructs;
              test "a loop's checks raise as the steps written out"
                test_loop_checks;
+             test ~timeout:60. "an iterate stops at the program's first failure"
+               test_loop_stops;
              prop "drawn loops' checks raise as the steps written out"
                checked_loops law_checked_loop;
            ];

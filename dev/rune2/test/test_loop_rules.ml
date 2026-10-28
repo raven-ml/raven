@@ -344,6 +344,39 @@ let law_grad case =
   law_grad' ~jit:false case;
   law_grad' ~jit:true (exactly case)
 
+(* A case whose compiled transpose tolk declines to link, so that the call
+   evaluates over its arguments, a cotangent of every set among them. *)
+let grad_examples =
+  let plain values = { view = Plain; values } in
+  [
+    Case
+      {
+        dt = Nx.float32;
+        s = [| 2 |];
+        n = 1;
+        g = Y;
+        k = Un (Neg, Y);
+        h =
+          Un
+            ( Cumsum 0,
+              Bin
+                ( Add,
+                  Bin
+                    (Add, Y, Bin (Add, Bin (Mul, X, K 0.), Bin (Add, Y, K 0.))),
+                  Un (Cumsum 0, Un (Neg, Bin (Add, Y, X))) ) );
+        ops =
+          [|
+            plain [| 0.5; -1. |];
+            plain [| 2.; 1. |];
+            plain [| 0.25; 3. |];
+            plain [| 1.5; -2. |];
+          |];
+        tans = [| plain [| 1.; 1. |]; plain [| 1.; 1. |]; plain [| 1.; 1. |] |];
+        at = Array.make 7 (Dev 0);
+        free = false;
+      };
+  ]
+
 (* Maps: one of [c0], [xs] and [w] has lanes, the others are captured. *)
 type mapped = Carry | Rows | Capture
 
@@ -836,7 +869,8 @@ let () =
          group "scan"
            [
              prop "jvp of scan is jvp of its fold" cases law_jvp;
-             prop "grad of scan is grad of its fold" cases law_grad;
+             prop ~examples:grad_examples "grad of scan is grad of its fold"
+               cases law_grad;
              prop "vmap of scan is the fold per lane" map_cases law_vmap;
              prop "compositions are the fold's" cases law_compose;
            ];
