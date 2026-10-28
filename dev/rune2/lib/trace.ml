@@ -489,7 +489,8 @@ and scan_parts st i (step : Program.t) ~length ~init ~xs ~captures ~seeds =
           let adds = Array.sub !stash nk (Array.length step.adds) in
           Array.iteri
             (fun k (Addition (t, f)) ->
-              ignore (perform (Add (t, cast f adds.(k)))))
+              let set = Nx.Placement.devices f.placement in
+              ignore (perform (Add (t, cast f.dtype set adds.(k)))))
             step.adds;
           Array.append (Array.sub !stash 0 nk) stacked
       | _ -> invalid_arg "Rune: a scan's parts"
@@ -648,7 +649,8 @@ and call_parts st i (body : Program.t) args site =
         Some (tape, Array.append (Array.map form uargs) (Array.map form res));
       Array.iteri
         (fun k (Addition (t, f)) ->
-          ignore (perform (Add (t, cast f !adds.(k)))))
+          let set = Nx.Placement.devices f.placement in
+          ignore (perform (Add (t, cast f.dtype set !adds.(k)))))
         body.adds;
       Array.append !kys res
     in

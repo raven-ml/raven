@@ -38,13 +38,15 @@ type form =
 val form : value -> form
 (** [form v] is [v]'s form. *)
 
-val cast : ('v, 's, 'd) Nx.Prim.form -> value -> ('v, 's, 'd) Nx.t
-(** [cast f v] is [v] at [f]'s type, as {!Nx.Prim.coerce} checks it.
+val cast : ('v, 's) Nx.dtype -> 'd Nx.devices -> value -> ('v, 's, 'd) Nx.t
+(** [cast dt s v] is [v] at [dt] and [s]'s brand, as {!Nx.Prim.coerce} checks
+    it.
 
-    Raises [Invalid_argument] if [v]'s dtype or set is not [f]'s. *)
+    Raises [Invalid_argument] if [v]'s dtype is not [dt] or [v] does not lie on
+    [s]. *)
 
 val like : ('v, 's, 'd) Nx.t -> value -> ('v, 's, 'd) Nx.t
-(** [like x v] is [cast (Nx.Prim.form x) v]. *)
+(** [like x v] is [v] at [x]'s type: {!cast} at [x]'s dtype and set. *)
 
 val same : value -> value -> bool
 (** [same u v] is [true] iff [u] and [v] are one value. *)

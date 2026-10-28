@@ -1248,10 +1248,11 @@ type both = {
 }
 
 let both (Program.V x) (Program.V t) b =
-  match Prim.coerce (Prim.form x) t with
+  let set y = Nx.Placement.devices (Nx.placement y) in
+  match Prim.coerce (Nx.dtype x) (set x) t with
   | Some t -> b.k x t
   | None -> (
-      match Prim.coerce (Prim.form t) x with
+      match Prim.coerce (Nx.dtype t) (set t) x with
       | Some x -> b.k x t
       | None -> invalid_arg "Rune: a tangent of another dtype or set")
 
@@ -1270,7 +1271,8 @@ let parts j ys = (Array.map (pv j) ys, Array.map (tv j) ys)
 let add_all (p : Program.t) adds =
   Array.iteri
     (fun k (Program.Addition (t, f)) ->
-      ignore (Program.perform (Add (t, Program.cast f adds.(k)))))
+      let set = Nx.Placement.devices f.placement in
+      ignore (Program.perform (Add (t, Program.cast f.dtype set adds.(k)))))
     p.adds
 
 (* A construct over duals: [Detach] and an addition are performed outward on the

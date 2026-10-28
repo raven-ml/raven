@@ -89,15 +89,11 @@ let apply l ts =
    A cotangent is held as a value of any brand and read back at the brand of the
    values it meets, which lie on its set. *)
 
-let scalar = L.contiguous (Iarray.of_list [])
-
 (* [x] at [r]'s brand. *)
 let rebrand (type v s w t d e) (r : (w, t, e) Nx.t) (x : (v, s, d) Nx.t) :
     (v, s, e) Nx.t =
-  let f : (v, s, e) Prim.form =
-    { dtype = Nx.dtype x; layout = scalar; placement = Nx.placement r }
-  in
-  match Prim.coerce f x with
+  let set = Nx.Placement.devices (Nx.placement r) in
+  match Prim.coerce (Nx.dtype x) set x with
   | Some y -> y
   | None ->
       invalid_arg
@@ -1023,10 +1019,8 @@ let lanes_transpose a (x : ('v, 's, 'd) Nx.t) (V w) =
     Nx.sum ~axes:[ 0 ] (like w (Program.perform (Lanes (a, w))).(0))
   in
   let placement = Nx.Placement.uncut (Nx.placement w) in
-  let index : (int32, Nx.int32_elt, _) Prim.form =
-    { dtype = Nx.int32; layout = scalar; placement }
-  in
-  let own = cast index (Program.perform (Lane_index (a, placement))).(0) in
+  let index = (Program.perform (Lane_index (a, placement))).(0) in
+  let own = cast Nx.int32 (Nx.Placement.devices placement) index in
   let row = Nx.reshape [| 1 |] (Nx.cast Nx.int64 own) in
   V (Nx.reshape (Nx.shape x) (Nx.take ~axis:0 row total))
 
@@ -1040,10 +1034,7 @@ let linear_call env ~name ~apply ~transpose ~args ~captures ~residuals ~forms
     cts =
   let ct k (F f) =
     match cts k with
-    | Some (V c) -> (
-        match Prim.coerce f c with
-        | Some c -> V c
-        | None -> V (cast f (V c)))
+    | Some c -> V (cast f.dtype (Nx.Placement.devices f.placement) c)
     | None -> V (Nx.zeros_at f.placement f.dtype (shape_of f.layout))
   in
   let cts = Array.mapi ct forms in
@@ -1067,7 +1058,8 @@ let linear_call env ~name ~apply ~transpose ~args ~captures ~residuals ~forms
         let base = Array.length out - Array.length transpose.adds in
         Array.iteri
           (fun k (Addition (t, f)) ->
-            ignore (Program.perform (Add (t, cast f out.(base + k)))))
+            let set = Nx.Placement.devices f.placement in
+            ignore (Program.perform (Add (t, cast f.dtype set out.(base + k)))))
           transpose.adds;
         out
   in

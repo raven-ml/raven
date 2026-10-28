@@ -1444,10 +1444,10 @@ let consumed ~by args f =
       f none (fun k _ -> none k)
   | k0 :: _ as all ->
       let (V x0) = args.(k0) in
-      let f0 = Nx.Prim.form x0 in
+      let set = Nx.Placement.devices (Nx.placement x0) in
       let any k =
         let (V y) = args.(k) in
-        match Nx.Prim.coerce { f0 with dtype = Nx.dtype y } y with
+        match Nx.Prim.coerce (Nx.dtype y) set y with
         | Some y -> Nx.Prim.Any y
         | None -> invalid_arg (by ^ ": arguments on several sets")
       in

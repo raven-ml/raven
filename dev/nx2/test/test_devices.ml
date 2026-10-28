@@ -123,40 +123,37 @@ let meshes =
 let coercions =
   let module Twin = (val Nx.devices [ m 0; m 1 ]) in
   let on2 = Nx.place S2.on (Nx.zeros Nx.float32 [| 2 |]) in
-  let coerce f x =
-    Option.map (fun y -> Nx.Dtype.name (Nx.dtype y)) (Nx.Prim.coerce f x)
+  let coerce dt s x =
+    Option.map (fun y -> Nx.Dtype.name (Nx.dtype y)) (Nx.Prim.coerce dt s x)
   in
-  let some ~msg (f : (_, _, _) Nx.Prim.form) x =
-    equal ~msg (option string) (Some (Nx.Dtype.name f.dtype)) (coerce f x)
+  let some ~msg dt s x =
+    equal ~msg (option string) (Some (Nx.Dtype.name dt)) (coerce dt s x)
   in
-  let none ~msg f x = equal ~msg (option string) None (coerce f x) in
+  let none ~msg dt s x = equal ~msg (option string) None (coerce dt s x) in
   group "coercions"
     [
-      test "a value coerces to its own form" (fun () ->
-          some ~msg:"placed" (Nx.Prim.form on2) on2;
-          let c = Nx.zeros Nx.float32 [| 2 |] in
-          some ~msg:"a host creation" (Nx.Prim.form c) c);
-      test "a placement of the same set, at either name of its brand"
-        (fun () ->
-          some ~msg:"split against whole"
-            (Nx.Prim.form (Nx.place (Nx.Placement.split ~axis:0 S2.v)
-                             (Nx.zeros Nx.float32 [| 2 |])))
-            on2;
+      test "a value coerces to its own dtype and set" (fun () ->
+          some ~msg:"placed" Nx.float32 S2.v on2;
+          some ~msg:"a host creation" Nx.float32 Nx.Host.v
+            (Nx.zeros Nx.float32 [| 2 |]));
+      test "any placement of the set, at either name of its brand" (fun () ->
+          some ~msg:"split" Nx.float32 S2.v
+            (Nx.place (Nx.Placement.split ~axis:0 S2.v)
+               (Nx.zeros Nx.float32 [| 2 |]));
           let set = Nx.devices [ m 3 ] in
           let module A = (val set) in
           let module B = (val set) in
-          some ~msg:"one set unpacked twice"
-            (Nx.Prim.form (Nx.place A.on (Nx.zeros Nx.float32 [| 2 |])))
+          some ~msg:"one set unpacked twice" Nx.float32 A.v
             (Nx.place B.on (Nx.zeros Nx.float32 [| 2 |])));
       test "another set or another dtype fails" (fun () ->
           let twin = Nx.place Twin.on (Nx.zeros Nx.float32 [| 2 |]) in
-          none ~msg:"a twin set of the same devices" (Nx.Prim.form on2) twin;
-          none ~msg:"another dtype" (Nx.Prim.form on2)
+          none ~msg:"a twin set of the same devices" Nx.float32 S2.v twin;
+          none ~msg:"another dtype" Nx.float32 S2.v
             (Nx.place S2.on (Nx.zeros Nx.float64 [| 2 |]));
-          none ~msg:"a host creation where a set is asked" (Nx.Prim.form on2)
+          none ~msg:"a host creation where a set is asked" Nx.float32 S2.v
             (Nx.zeros Nx.float32 [| 2 |]);
-          none ~msg:"a placed value where the host is asked"
-            (Nx.Prim.form (Nx.zeros Nx.float32 [| 2 |])) on2);
+          none ~msg:"a placed value where the host is asked" Nx.float32
+            Nx.Host.v on2);
     ]
 
 let () = exit (run "nx devices" [ sets; placements; meshes; coercions ])

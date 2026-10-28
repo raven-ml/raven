@@ -57,7 +57,7 @@ let results (type r) i ~by (op : r Prim.t) compute : r =
             os
       in
       let coerce (Program.V x) =
-        match Prim.coerce f x with
+        match Prim.coerce f.dtype (Nx.Placement.devices f.placement) x with
         | Some x -> x
         | None ->
             invalid_arg "Rune: a result of another dtype or set than its lane's"
@@ -596,25 +596,13 @@ module Rules = struct
     map : (value array -> value array) -> value array -> value array;
   }
 
-  (* [f]'s form with a leading axis of [n]. *)
-  let stack (type v s d) n (f : (v, s, d) Nx.Prim.form) : (v, s, d) Nx.Prim.form
-      =
-    let shape = Iarray.to_array (Nx_array.Layout.shape f.layout) in
-    {
-      f with
-      layout =
-        Nx_array.Layout.contiguous
-          (Iarray.of_array (Array.append [| n |] shape));
-      placement = Nx.Placement.with_leading_axis f.placement;
-    }
-
   (* The additions of [p], every lane's [vs]: as batches, which the call's
      results carry back into the map, or summed over the lanes, for a program a
      backward pass runs outside it. *)
   let additions m ~summed (p : Program.t) vs =
     Array.iteri
       (fun k (Addition (t, f)) ->
-        let v = cast (stack m.n f) vs.(k) in
+        let v = cast f.dtype (Nx.Placement.devices f.placement) vs.(k) in
         if not summed then ignore (perform (Add (t, v)))
         else if m.n > 0 then ignore (perform (Add (t, Nx.sum ~axes:[ 0 ] v))))
       p.adds
@@ -833,7 +821,9 @@ and scan ~name i axis n (step : Program.t) ~length ~init ~xs ~captures ~seeds =
           in
           Array.iteri
             (fun k (Program.Addition (t, f)) ->
-              ignore (Program.perform (Add (t, Program.cast f adds.(k)))))
+              let set = Nx.Placement.devices f.placement in
+              let v = Program.cast f.dtype set adds.(k) in
+              ignore (Program.perform (Add (t, v))))
             step.adds;
           ys
       | _ -> invalid_arg "Rune: a scan's map"
@@ -893,7 +883,9 @@ and remat ~name i axis n (body : Program.t) args =
     let no = Array.length body.outputs - Array.length body.adds in
     Array.iteri
       (fun k (Program.Addition (t, f)) ->
-        ignore (Program.perform (Add (t, Program.cast f outs.(no + k)))))
+        let set = Nx.Placement.devices f.placement in
+        ignore
+          (Program.perform (Add (t, Program.cast f.dtype set outs.(no + k)))))
       body.adds;
     Array.sub outs 0 no
   in
@@ -930,7 +922,9 @@ and call ~name i axis n (body : Program.t) args site =
       in
       Array.iteri
         (fun k (Program.Addition (t, f)) ->
-          ignore (Program.perform (Add (t, Program.cast f outs.(no + k)))))
+          let set = Nx.Placement.devices f.placement in
+          let v = Program.cast f.dtype set outs.(no + k) in
+          ignore (Program.perform (Add (t, v))))
         body.adds;
       Array.sub outs 0 no
     in

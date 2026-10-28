@@ -10,31 +10,33 @@ type form = F : ('v, 's, 'd) Nx.Prim.form -> form
 
 let form (V x) = F (Nx.Prim.form x)
 
-(* [v] at [f]'s type. A program binds each variable to a value its equation
-   computed at the variable's type, but holds it as a [value], so the type is
-   read back from the run-time facts nx checks: the dtype and the set. A value
-   is read back at the form its stand-in was traced at, so a failure is a
-   binding at the wrong variable, or a trace at other forms than the
-   evaluation's. *)
-let cast (type v s d) (f : (v, s, d) Nx.Prim.form) (V y) : (v, s, d) Nx.t =
-  match Nx.Prim.coerce f y with
+(* [v] at [dt] and [set]'s brand. A program binds each variable to a value its
+   equation computed at the variable's type, but holds it as a [value], so the
+   type is read back from the run-time facts nx checks: the dtype and the set. A
+   value is read back at the dtype and set of the form its stand-in was traced
+   at, so a failure is a binding at the wrong variable, or a trace at other
+   forms than the evaluation's. *)
+let cast (type v s d) (dt : (v, s) D.t) (set : d Nx.devices) (V y) :
+    (v, s, d) Nx.t =
+  match Nx.Prim.coerce dt set y with
   | Some y -> y
-  | None when D.equal (Nx.dtype y) f.dtype ->
+  | None when D.equal (Nx.dtype y) dt ->
       invalid_arg
         (Format.asprintf "Rune: a %a value on %a where one on %a was expected"
-           Nx.pp_dtype f.dtype Nx.Placement.pp (Nx.placement y) Nx.Placement.pp
-           f.placement)
+           Nx.pp_dtype dt Nx.Placement.pp (Nx.placement y) Nx.Placement.pp
+           (Nx.Placement.on set))
   | None ->
       invalid_arg
         (Format.asprintf "Rune: a %a value where %a was expected" Nx.pp_dtype
-           (Nx.dtype y) Nx.pp_dtype f.dtype)
+           (Nx.dtype y) Nx.pp_dtype dt)
 
 (* [v] at [x]'s type. *)
-let like x v = cast (Nx.Prim.form x) v
+let like x v = cast (Nx.dtype x) (Nx.Placement.devices (Nx.placement x)) v
 
 (* Whether [a] and [b] are one value. *)
 let same (V a) (V b) =
-  match Nx.Prim.coerce (Nx.Prim.form a) b with
+  let set = Nx.Placement.devices (Nx.placement a) in
+  match Nx.Prim.coerce (Nx.dtype a) set b with
   | Some b -> a == b
   | None -> false
 
@@ -510,7 +512,9 @@ let filled ~zero (F f) =
 let add (V a) b = V (Nx.add a (like a b))
 
 (* Rows each read at [f], the form their output was traced at. *)
-let stack (F f) vs = V (Nx.stack ~axis:0 (List.map (cast f) vs))
+let stack (F f) vs =
+  let set = Nx.Placement.devices f.placement in
+  V (Nx.stack ~axis:0 (List.map (cast f.dtype set) vs))
 
 (* Evaluation *)
 
@@ -772,21 +776,16 @@ let run c =
   let base = Array.length r - Array.length adds in
   Array.iteri
     (fun k (Addition (t, f)) ->
+      let set = Nx.Placement.devices f.placement in
       match seeds.(k) with
-      | Seed (u, v) -> (
+      | Seed (u, _) -> (
           (* The chain's end lies where its seed does, or where its additions
-             do, the placed of the two. *)
+             do, the placed of the two: on their one set. *)
           match same_total u t with
           | Some Type.Equal ->
-              let (V y as vy) = r.(base + k) in
-              let y =
-                match Nx.Prim.coerce (Nx.Prim.form v) y with
-                | Some y -> y
-                | None -> cast f vy
-              in
-              Effect.perform (Replace (t, y))
+              Effect.perform (Replace (t, cast f.dtype set r.(base + k)))
           | None -> invalid_arg "Rune: a seed of another total")
-      | Unseeded -> ignore (perform (Add (t, cast f r.(base + k)))))
+      | Unseeded -> ignore (perform (Add (t, cast f.dtype set r.(base + k)))))
     adds;
   r
 

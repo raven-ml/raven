@@ -440,14 +440,8 @@ let lanes a x = like x (first (perform (Lanes (a, x))))
 (* A lane's index lies whole on each of [x]'s devices. *)
 let lane_index a x =
   let placement = Nx.Placement.uncut (Nx.placement x) in
-  let f : (int32, Nx.int32_elt, _) Nx.Prim.form =
-    {
-      dtype = Nx.int32;
-      layout = Nx_array.Layout.contiguous (Iarray.of_list []);
-      placement;
-    }
-  in
-  cast f (first (perform (Lane_index (a, placement))))
+  let index = first (perform (Lane_index (a, placement))) in
+  cast Nx.int32 (Nx.Placement.devices placement) index
 
 module Total = struct
   type ('v, 's, 'd) t = ('v, 's, 'd) total

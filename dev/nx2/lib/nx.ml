@@ -6460,16 +6460,15 @@ module Prim = struct
     let take = Donate.take
   end
 
-  (* [x] at [f]'s type where run-time facts allow it: a dtype is its own
-     witness, and a brand names one set, so a value on the set [f]'s
-     placement names is a value of [f]'s brand. *)
-  let coerce (type v s d w r e) (f : (v, s, d) Value.form)
+  (* [x] at [dt] and [set]'s brand where run-time facts allow it: a dtype is
+     its own witness, and a brand names one set, so a value on [set] is a
+     value of [set]'s brand. *)
+  let coerce (type v s d w r e) (dt : (v, s) dtype) (set : d devices)
       (x : (w, r, e) Value.t) : (v, s, d) Value.t option =
-    match D.equal_witness (dtype x) f.dtype with
+    match D.equal_witness (dtype x) dt with
     | None -> None
     | Some Type.Equal ->
-        let p = placement x and q = f.placement in
-        if Devices.number (Devices.set p) = Devices.number (Devices.set q) then
+        if Devices.number (Devices.set (placement x)) = Devices.number set then
           Some (Obj.magic x : (v, s, d) Value.t)
         else None
 end

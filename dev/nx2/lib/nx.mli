@@ -5225,16 +5225,16 @@ module Prim : sig
 
   (**/**)
 
-  val coerce : ('v, 's, 'd) form -> ('w, 'r, 'e) nx -> ('v, 's, 'd) nx option
-  (** [coerce f x] is [Some x] at [f]'s type iff [x]'s dtype is [f]'s and [x]
-      lies on the set [f]'s placement names. Layouts and placements within the
-      set are not compared. Each brand names one set, so a value on that set
-      is a value of the brand.
+  val coerce :
+    ('v, 's) dtype -> 'd devices -> ('w, 'r, 'e) nx -> ('v, 's, 'd) nx option
+  (** [coerce dt s x] is [Some x] at [dt] and [s]'s brand iff [x]'s dtype is
+      [dt] and [x] lies on [s], at any placement of [s]. Each brand names one
+      set, so a value on [s] is a value of [s]'s brand.
 
       For an interpretation that binds the values it makes where OCaml cannot
       relate their types: one that binds its stand-ins makes each binding at
-      the stand-in's placement, and reads it back at the stand-in's form,
-      where the check holds. *)
+      the stand-in's placement, and reads it back at the stand-in's dtype and
+      set, where the check holds. *)
 
   (**/**)
 end
