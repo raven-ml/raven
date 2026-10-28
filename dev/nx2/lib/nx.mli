@@ -498,13 +498,13 @@ val eye_at :
     are never read. *)
 
 val zeros_like : ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [zeros_like x] is zeros of [x]'s dtype and shape, at [x]'s placement. *)
+(** [zeros_like x] is {!zeros}[ (dtype x) (shape x)]. *)
 
 val ones_like : ('v, 's, 'd) t -> ('v, 's, 'd) t
-(** [ones_like x] is {!ones} of [x]'s dtype and shape, at [x]'s placement. *)
+(** [ones_like x] is {!ones}[ (dtype x) (shape x)]. *)
 
 val full_like : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
-(** [full_like x v] is {!full} of [x]'s dtype and shape, at [x]'s placement.
+(** [full_like x v] is {!full}[ (dtype x) (shape x) v].
 
     Raises [Invalid_argument] as {!full} does. *)
 
