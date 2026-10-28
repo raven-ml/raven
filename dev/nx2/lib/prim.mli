@@ -275,6 +275,11 @@ val node3 :
     concurrently; two that find its slot empty at once each make an equal
     program. *)
 
+val identity : ('v, 's) dtype -> Nx_kernel.Prog.t
+(** [identity dt] is the program of one operand of [dt] that gives it back
+    ({!Nx_kernel.Prog.is_identity}). It is kept once made, as {!node1}'s
+    programs are. *)
+
 val op1 :
   by:string ->
   Nx_kernel.Prog.op1 ->

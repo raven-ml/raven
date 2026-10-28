@@ -1876,6 +1876,18 @@ let node3 k c x =
       kept nodes3 i
         (P.of_node ~ins:[| D.Any c; D.Any x; D.Any x |] (Op3 (k, 0, 1, 2)))
 
+(* The program that gives its one operand back, by the operand's dtype. *)
+let identities : P.t option array = Array.make dtypes None
+
+let identity dt =
+  let i = D.code dt in
+  match identities.(i) with
+  | Some p -> p
+  | None ->
+      let p = P.v ~ins:[| D.Any dt |] [| In 0 |] ~outs:[| 0 |] in
+      identities.(i) <- Some p;
+      p
+
 (* The literal program made last for each kind, dtype and side, beside its
    literal's bits: a scalar form that repeats its literal, as a loop does,
    builds no program and allocates the bits alone. A slot that two domains

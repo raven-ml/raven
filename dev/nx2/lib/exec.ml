@@ -543,8 +543,8 @@ let windows : type r.
   | Windows -> ()
   | Partials -> invalid_arg "Exec.windows: a route that computes by partials");
   match op with
-  | Value.Move (mv, x) ->
-      let xp = Prim.placement x and xs = Prim.arrays x in
+  | Value.Move (mv, x) -> (
+      let xp = Prim.placement x in
       let set = Devices.set xp in
       let move =
         if uncut xp then moved ~by set mv
@@ -553,12 +553,22 @@ let windows : type r.
           fun a ->
             moved ~by set (localize mv shape cuts (L.shape (A.layout a))) a
       in
-      shard_views route layouts op xp (fun () -> Iarray.map move xs)
-  | Value.Bitcast (dt, x) ->
-      let xp = Prim.placement x and xs = Prim.arrays x in
+      match x with
+      | Value.Array { at; a; _ } when Devices.equal at route.result ->
+          (* One array, moved where it lies: its view is the result. *)
+          Value.Array { at; a = move a; dead = Value.Live }
+      | _ ->
+          shard_views route layouts op xp (fun () ->
+              Iarray.map move (Prim.arrays x)))
+  | Value.Bitcast (dt, x) -> (
+      let xp = Prim.placement x in
       let set = Devices.set xp in
-      shard_views route layouts op xp (fun () ->
-          Iarray.map (cast ~by set dt) xs)
+      match x with
+      | Value.Array { at; a; _ } when Devices.equal at route.result ->
+          Value.Array { at; a = cast ~by set dt a; dead = Value.Live }
+      | _ ->
+          shard_views route layouts op xp (fun () ->
+              Iarray.map (cast ~by set dt) (Prim.arrays x)))
   | Value.Place _ | Value.Check _ ->
       invalid_arg "Exec.windows: a placement or a check"
   | Value.Map _ | Value.Reduce _ | Value.Scan _ | Value.Gather _

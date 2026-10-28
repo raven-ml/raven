@@ -2292,10 +2292,10 @@ let test_partials_move () =
 
 (* The minor words a float32 sum along an axis cut across three devices
    allocates: each device's partial, their stack, its move, the reduction
-   of it, and the move of the parts to the result. It counts 12,327 words
-   alone and 12,314 to 12,315 after the tests before it in the process,
-   which move it by up to 13 words, so it is stated rounded to the hundred,
-   23 words from the nearest edge of the rounding. *)
+   of it, and the move of the parts to the result. It counts 12,153 words
+   alone and 12,139 after the tests before it in the process, which move
+   it by up to 14 words, so it is stated as its hundred, 39 words above
+   the lower edge of the truncation and 47 below the upper. *)
 let test_closing_words () =
   let x =
     Nx.place (Set3.split ~axis:0)
@@ -2303,8 +2303,8 @@ let test_closing_words () =
          (A.of_array D.Float32 [| 6; 4 |] (Array.make 24 1.)))
   in
   let w = words (fun () -> Nx.sum ~axes:[ 0 ] x) in
-  let hundreds = Float.round (w /. 100.) *. 100. in
-  expect (Printf.sprintf "%.0f words" hundreds) @@ __POS_OF__ {|12300 words|}
+  let hundreds = Float.trunc (w /. 100.) *. 100. in
+  expect (Printf.sprintf "%.0f words" hundreds) @@ __POS_OF__ {|12100 words|}
 
 (* An extreme's position over two axes of a value cut along the second
    over three devices: the first tile, columns 0 and 1, holds an extreme at

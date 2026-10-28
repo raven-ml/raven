@@ -1742,9 +1742,15 @@ let reduce_by ~by s axes xs rs out =
          loads = Iarray.of_list (List.map load xs);
        })
 
-(* The one-operand reduction [r] of [x] along [axes]. *)
+(* The one-operand reduction [r] of [x] along [axes]: of its one load, by the
+   identity program, kept. *)
 let reduce_by_one ~by r axes x =
-  fst (reduce_by ~by (shape x) axes [ Any x ] [ r ] (E.input 0 (dtype x)))
+  let layout = Nx_array.Layout.contiguous (Iarray.of_array (shape x)) in
+  let prog = Prim.identity (dtype x) in
+  fst
+    (Eval.eval ~by
+       (Value.Reduce
+          { layout; axes; prog; reductions = [ r ]; loads = [| Plain x |] }))
 
 (* The one-operand reduction [m] of [x] along [axes], rounded to [dt]. *)
 let reduce ~by m dt axes x = reduce_by_one ~by (Monoid (m, 0, dt)) axes x
@@ -2224,11 +2230,7 @@ let arg ~by e ?axis:along ?(keepdims = false) x =
     | None -> (reshaped ~by [| numel x |] x, 0)
     | Some a -> (x, axis ~by x a)
   in
-  let (_, i), () =
-    reduce_by ~by (shape x) [| a |] [ Any x ]
-      Value.[ Arg (e, 0, dtype x) ]
-      (operand 0 x)
-  in
+  let _, i = reduce_by_one ~by (Arg (e, 0, dtype x)) [| a |] x in
   match along with
   | None ->
       reshaped ~by (if keepdims then Array.map (fun _ -> 1) s else [||]) i
@@ -2332,11 +2334,7 @@ let spread (type s d) ~by ~root ?axes ?(keepdims = false) ?(ddof = 0)
   if ddof < 0 || (n > 0 && ddof >= n) then
     invalid_argf "%s: ddof %d for %d elements" by ddof n;
   let (Nx_kernel.Any_float w) = Nx_kernel.float_carrier dt in
-  let (_, v), () =
-    reduce_by ~by s axes [ Any x ]
-      Value.[ Moments (0, w) ]
-      (operand 0 x)
-  in
+  let _, v = reduce_by_one ~by (Moments (0, w)) axes x in
   let y =
     if ddof = 0 && not root then cast_by ~by dt v
     else
