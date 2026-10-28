@@ -604,57 +604,105 @@ const nx_cpu_row_table nx_cpu_rows = {
 /* Kinds' costs
 
    What computing a kind at one element takes (cpu.h, Calls and jobs,
-   scalar; M1 Max and fudge, 2026-10-16), its operands' loads and its
-   result's store included, by the element's class: a real one of up to 4
-   bytes, one of 8, and a complex one, each the most any dtype of its
-   class took over 4096 elements on one thread.
-   The worst: pow, 1003 a float64 element (M1); atan2, 658 (M1); mod, 454
-   (fudge); tan, 415 (M1). */
+   scalar), its operands' loads and its result's store included, at the
+   dtype it computes in, by that dtype's class: a real one of up to 4
+   bytes, one of 8, and a complex one. Each is the most any dtype of its
+   class took over 4096 elements on one thread of fudge, on cpu 0, a
+   performance core, or cpu 10, an efficiency core, of values in [-46,
+   46], [0.1, 2] and [-0.9, 0.9] (2026-10-28). A class of 8 bytes or of
+   complex numbers, and copy, cast and bitcast, take the larger of that
+   and the most on the M1 Max and fudge (2026-10-16); the narrow class
+   and the stages below are fudge's alone. 0 where the kind takes no
+   dtype of the class (prog.mli). The worst: acosh, 6183 a complex128
+   element; atan2, 1097 a float64 one; pow, 906 a float32 one, all on the
+   efficiency core. A cast's own is between dtypes that are their
+   carriers, by the wider (nx_cpu_cast_cost). */
 typedef struct {
   uint16_t narrow, wide, complex;
 } kind_cost;
 
 static const kind_cost op1_costs[NX_OP1_COUNT] = {
-    [NX_OP1_COPY] = {16, 32, 64},       [NX_OP1_CAST] = {16, 128, 32},
-    [NX_OP1_BITCAST] = {16, 32, 64},    [NX_OP1_NEG] = {64, 32, 64},
-    [NX_OP1_RECIP] = {64, 64, 256},     [NX_OP1_ABS] = {64, 32, 64},
-    [NX_OP1_SIGN] = {64, 64, 64},       [NX_OP1_SQRT] = {64, 64, 64},
-    [NX_OP1_EXP] = {128, 256, 256},     [NX_OP1_EXP2] = {128, 256, 256},
-    [NX_OP1_LOG] = {256, 512, 512},     [NX_OP1_LOG2] = {256, 512, 512},
-    [NX_OP1_LOG1P] = {256, 512, 512},   [NX_OP1_EXPM1] = {256, 512, 512},
-    [NX_OP1_SIN] = {256, 512, 512},     [NX_OP1_COS] = {256, 512, 512},
-    [NX_OP1_TAN] = {256, 1024, 1024},   [NX_OP1_ASIN] = {256, 512, 512},
-    [NX_OP1_ACOS] = {256, 512, 512},    [NX_OP1_ATAN] = {128, 512, 512},
-    [NX_OP1_SINH] = {512, 1024, 1024},  [NX_OP1_COSH] = {512, 512, 512},
-    [NX_OP1_TANH] = {256, 512, 512},    [NX_OP1_ASINH] = {256, 512, 512},
-    [NX_OP1_ACOSH] = {256, 512, 512},   [NX_OP1_ATANH] = {256, 512, 512},
-    [NX_OP1_ERF] = {256, 512, 512},
-    [NX_OP1_FLOOR] = {64, 128, 128},    [NX_OP1_CEIL] = {64, 128, 128},
-    [NX_OP1_ROUND] = {128, 128, 128},   [NX_OP1_TRUNC] = {64, 64, 64},
+    [NX_OP1_COPY] = {16, 32, 64},      [NX_OP1_CAST] = {32, 256, 128},
+    [NX_OP1_BITCAST] = {16, 32, 64},   [NX_OP1_NEG] = {16, 32, 64},
+    [NX_OP1_RECIP] = {32, 128, 512},   [NX_OP1_ABS] = {16, 32, 0},
+    [NX_OP1_SIGN] = {32, 128, 2048},   [NX_OP1_SQRT] = {64, 256, 2048},
+    [NX_OP1_EXP] = {64, 256, 512},     [NX_OP1_EXP2] = {128, 256, 512},
+    [NX_OP1_LOG] = {128, 512, 4096},   [NX_OP1_LOG2] = {256, 512, 4096},
+    [NX_OP1_LOG1P] = {256, 512, 0},    [NX_OP1_EXPM1] = {128, 512, 0},
+    [NX_OP1_SIN] = {128, 512, 2048},   [NX_OP1_COS] = {128, 512, 2048},
+    [NX_OP1_TAN] = {256, 1024, 4096},  [NX_OP1_ASIN] = {128, 512, 8192},
+    [NX_OP1_ACOS] = {256, 512, 16384}, [NX_OP1_ATAN] = {128, 1024, 8192},
+    [NX_OP1_SINH] = {256, 1024, 2048}, [NX_OP1_COSH] = {256, 512, 2048},
+    [NX_OP1_TANH] = {256, 512, 1024},  [NX_OP1_ASINH] = {0, 0, 8192},
+    [NX_OP1_ACOSH] = {0, 0, 16384},    [NX_OP1_ATANH] = {0, 0, 8192},
+    [NX_OP1_ERF] = {256, 512, 0},      [NX_OP1_FLOOR] = {64, 128, 0},
+    [NX_OP1_CEIL] = {64, 128, 0},      [NX_OP1_ROUND] = {64, 128, 0},
+    [NX_OP1_TRUNC] = {32, 64, 0},
 };
 
 static const kind_cost op2_costs[NX_OP2_COUNT] = {
-    [NX_OP2_ADD] = {64, 32, 128},          [NX_OP2_SUB] = {64, 32, 128},
-    [NX_OP2_MUL] = {64, 64, 128},          [NX_OP2_FDIV] = {64, 64, 256},
-    [NX_OP2_IDIV] = {128, 256, 256},       [NX_OP2_MOD] = {512, 1024, 1024},
-    [NX_OP2_POW] = {1024, 2048, 2048},     [NX_OP2_ATAN2] = {256, 1024, 1024},
-    [NX_OP2_MAXIMUM] = {64, 64, 512},      [NX_OP2_MINIMUM] = {64, 64, 512},
-    [NX_OP2_AND] = {16, 32, 32},           [NX_OP2_OR] = {16, 32, 32},
-    [NX_OP2_XOR] = {16, 32, 32},           [NX_OP2_THREEFRY] = {256, 256, 256},
-    [NX_OP2_EQUAL] = {16, 16, 64},         [NX_OP2_NOT_EQUAL] = {16, 16, 64},
-    [NX_OP2_LESS] = {16, 16, 128},         [NX_OP2_LESS_EQUAL] = {16, 16, 128},
+    [NX_OP2_ADD] = {16, 32, 128},        [NX_OP2_SUB] = {16, 32, 128},
+    [NX_OP2_MUL] = {16, 64, 128},        [NX_OP2_FDIV] = {32, 128, 512},
+    [NX_OP2_IDIV] = {128, 256, 0},       [NX_OP2_MOD] = {256, 2048, 0},
+    [NX_OP2_POW] = {2048, 2048, 4096},   [NX_OP2_ATAN2] = {256, 2048, 0},
+    [NX_OP2_MAXIMUM] = {32, 64, 512},    [NX_OP2_MINIMUM] = {32, 64, 512},
+    [NX_OP2_AND] = {16, 32, 0},          [NX_OP2_OR] = {16, 32, 0},
+    [NX_OP2_XOR] = {16, 32, 0},          [NX_OP2_THREEFRY] = {0, 256, 0},
+    [NX_OP2_EQUAL] = {16, 64, 128},      [NX_OP2_NOT_EQUAL] = {16, 64, 128},
+    [NX_OP2_LESS] = {16, 64, 256},       [NX_OP2_LESS_EQUAL] = {16, 64, 256},
 };
 
 static const kind_cost op3_costs[NX_OP3_COUNT] = {
-    [NX_OP3_WHERE] = {8, 32, 64},
-    [NX_OP3_FMA] = {64, 128, 128},
+    [NX_OP3_WHERE] = {16, 64, 64},
+    [NX_OP3_FMA] = {16, 128, 0},
 };
 
-double nx_cpu_kind_cost(int arity, int k, int dt) {
+/* What an element of a dtype other than its carrier adds where a kind
+   computes it in the carrier: its operands staged and its result brought
+   back (apply.c, map.c). The least power of two that, added to each
+   kind's cost, bounds 1.5 times the kind's time at the dtype, as the
+   kinds' costs were measured, a map's of two kinds, each staged, and a
+   Where's on a bit condition, which stages the condition too.
+   The worst: fma, at float8_e5m2 on the efficiency core. 0 for a dtype
+   that is its carrier. */
+static const uint16_t stage_costs[NX_DTYPE_COUNT] = {
+    [NX_FLOAT16] = 32,      [NX_BFLOAT16] = 64,  [NX_FLOAT8_E4M3FN] = 128,
+    [NX_FLOAT8_E5M2] = 256, [NX_FLOAT4_E2M1FN] = 256,
+    [NX_INT4] = 8,          [NX_UINT4] = 2,      [NX_BIT] = 64,
+};
+
+/* What a cast into a narrow float adds from a dtype whose carrier is not
+   float32: it rounds once from a float64 (convert.c), where a kind's
+   result rounds from a float32. Measured as the stages, over every pair
+   of dtypes: the worst, uint32 to float16, 83 an element. */
+#define ROUND_COST 64
+
+/* [c] at the class of [dt]. */
+static double class_cost(const kind_cost *c, int dt) {
+  nx_dtype_row row = nx_dtype_row_of(dt);
+  if (row.kind == NX_KIND_COMPLEX) return c->complex;
+  return row.bits > 32 ? c->wide : c->narrow;
+}
+
+double nx_cpu_kind_cost(int arity, int k, int dt, int as) {
   const kind_cost *c = arity == 1   ? &op1_costs[k]
                        : arity == 2 ? &op2_costs[k]
                                     : &op3_costs[k];
-  int kind = nx_dtype_row_of(dt).kind;
-  if (kind == NX_KIND_COMPLEX) return c->complex;
-  return nx_dtype_row_of(dt).bits > 32 ? c->wide : c->narrow;
+  return class_cost(c, as) + nx_cpu_stage_cost(dt, as);
+}
+
+double nx_cpu_stage_cost(int dt, int as) {
+  return dt == as ? 0 : stage_costs[dt];
+}
+
+/* Whether [dt] is a narrow float, one that float32 carries. */
+static int narrow_float(int dt) {
+  return dt != NX_FLOAT32 && nx_cpu_carrier(dt) == NX_FLOAT32;
+}
+
+double nx_cpu_cast_cost(int s, int d) {
+  int wide = nx_cpu_width(d) > nx_cpu_width(s) ? d : s;
+  int rounds = narrow_float(d) && nx_cpu_carrier(s) != NX_FLOAT32;
+  return class_cost(&op1_costs[NX_OP1_CAST], wide) + stage_costs[s] +
+         stage_costs[d] + (rounds ? ROUND_COST : 0);
 }

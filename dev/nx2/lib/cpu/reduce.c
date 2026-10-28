@@ -1746,9 +1746,7 @@ static __attribute__((noinline)) void cast(const nx_array *b,
   nx_array pair[2] = {*b, *a};
   nx_loop l;
   nx_coalesce(2, pair, &l);
-  int wide = nx_cpu_width(b->dtype) > nx_cpu_width(a->dtype) ? b->dtype
-                                                              : a->dtype;
-  nx_cpu_cast_loop(b, a, &l, nx_cpu_kind_cost(1, NX_OP1_CAST, wide));
+  nx_cpu_cast_loop(b, a, &l, nx_cpu_cast_cost(a->dtype, b->dtype));
 }
 
 /* As reduce_in, of [x] of any dtype in its carrier, into destinations of

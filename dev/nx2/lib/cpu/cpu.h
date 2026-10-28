@@ -452,7 +452,8 @@ static inline double nx_cpu_bytes(const nx_array *a) {
    and the date they were measured. The values bound their class: each is
    1.5 times the most one core took of its class's members, on the M1 Max
    and fudge under the timing lock, rounded up to a power of two, and
-   names its worst member; a value measured on the M1 alone says so. */
+   names its worst member; a value measured on one of them alone names
+   it. */
 
 /* The most a held call may cost. */
 #define NX_CPU_HOLD_BYTES (1024 * 1024)
@@ -481,8 +482,20 @@ static inline double nx_cpu_bytes(const nx_array *a) {
 #define NX_CPU_LINE 1024
 
 /* The cost of computing the kind [k] of [arity] operands, nx_kernel.h's
-   code, at one element of [dt] (rows.c). */
-double nx_cpu_kind_cost(int arity, int k, int dt);
+   code, at one element of [dt] that it computes in [as]: the kind's at
+   [as], and [dt]'s staging where [as] is another dtype (rows.c). */
+double nx_cpu_kind_cost(int arity, int k, int dt, int as);
+
+/* The cost of casting an element of [s] to [d] as copy.c does, through
+   [s]'s carrier: the cast's at the wider dtype, the staging of each of
+   [s] and [d] that is not its own carrier, and a rounding from float64
+   where [d] is a narrow float and [s]'s carrier is not float32 (rows.c,
+   ROUND_COST). */
+double nx_cpu_cast_cost(int s, int d);
+
+/* What an element of [dt] that a kind computes in [as] adds for its
+   staging: none where [as] is [dt] (rows.c). */
+double nx_cpu_stage_cost(int dt, int as);
 
 /* Whether the calling thread runs a held call's work, whose jobs then run
    on it alone (job.c): nx_cpu_release writes it at every call's entry and

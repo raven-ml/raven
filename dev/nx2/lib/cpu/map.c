@@ -703,15 +703,31 @@ static nx_array index_of(const nx_array *a, int64_t *extent, int64_t *inner) {
   return c;
 }
 
-/* What an element of the nodes [s] costs (cpu.h, Calls, scalar): the
-   kind each node runs that is no alias, at its operand's dtype, a
-   Where's the chosen ones' (nx_cpu_kind_cost). */
+/* What an element of the nodes [s] costs (cpu.h, Calls and jobs,
+   scalar): the kind each node runs that is no alias, at its operand's
+   dtype, a Where's the chosen ones', in the dtype it computes in: a cast
+   from its operand's carrier (nx_cpu_cast_cost), a Where, a copy and a
+   bitcast in the operand's held dtype, any other kind in its carrier. */
 static double element_cost(const step *s, int nn) {
   double c = 0;
-  for (int i = 0; i < nn; i++)
-    if (s[i].arity > 0 && s[i].alias < 0)
-      c += nx_cpu_kind_cost(s[i].arity, s[i].kind,
-                            s[s[i].x[s[i].arity == 3]].dt);
+  for (int i = 0; i < nn; i++) {
+    if (s[i].arity == 0 || s[i].alias >= 0) continue;
+    int k = s[i].kind, x = s[s[i].x[s[i].arity == 3]].dt;
+    int one = s[i].arity == 1;
+    if (one && k == NX_OP1_CAST) {
+      c += nx_cpu_cast_cost(x, s[i].dt);
+      continue;
+    }
+    int moves = one ? k == NX_OP1_COPY || k == NX_OP1_BITCAST
+                    : s[i].arity == 3 && k == NX_OP3_WHERE;
+    int as = moves ? held(x) : nx_cpu_carrier(x);
+    c += nx_cpu_kind_cost(s[i].arity, k, x, as);
+    /* A Where's condition is held in its carrier, a bit's staged. */
+    if (s[i].arity == 3 && k == NX_OP3_WHERE) {
+      int cond = s[s[i].x[0]].dt;
+      c += nx_cpu_stage_cost(cond, held(cond));
+    }
+  }
   return c;
 }
 

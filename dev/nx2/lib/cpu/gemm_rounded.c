@@ -24,12 +24,9 @@ void nx_gemm_runs_of_view(nx_contract_runs *r, const nx_contract_view *v) {
   for (int o = A; o <= DST; o++) r->offset[o] = v->offset[o];
 }
 
-/* What a cast of [x] into [y] costs an element: a cast's kind, in the
-   wider dtype. */
+/* What a cast of [x] into [y] costs an element (nx_cpu_cast_cost). */
 static double cast_cost(const nx_array *y, const nx_array *x) {
-  int wide = nx_cpu_width(y->dtype) > nx_cpu_width(x->dtype) ? y->dtype
-                                                              : x->dtype;
-  return nx_cpu_kind_cost(1, NX_OP1_CAST, wide);
+  return nx_cpu_cast_cost(x->dtype, y->dtype);
 }
 
 /* R's sums [y] into [dst], over the loop of [rank] axes of [extent], dst

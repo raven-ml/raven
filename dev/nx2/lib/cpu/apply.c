@@ -246,7 +246,7 @@ value nx_cpu_apply1(value k, value vd, value vx) {
   int code = NX_OP1_NEG + Int_val(k);
   nx_operand in[2] = {{vd, x, 1}, {vx, x, 0}};
   op j = {.as = {c, c}, .f1 = nx_cpu_rows.op1[code][c]};
-  return walk_operands(2, in, block, &j, nx_cpu_kind_cost(1, code, x));
+  return walk_operands(2, in, block, &j, nx_cpu_kind_cost(1, code, x, c));
 }
 
 value nx_cpu_apply2(value k, value vd, value vx, value vy) {
@@ -255,7 +255,7 @@ value nx_cpu_apply2(value k, value vd, value vx, value vy) {
   int d = code >= NX_OP2_EQUAL ? NX_BOOL : x;
   nx_operand in[3] = {{vd, d, 1}, {vx, x, 0}, {vy, x, 0}};
   op j = {.as = {nx_cpu_carrier(d), c, c}, .f2 = nx_cpu_rows.op2[code][c]};
-  return walk_operands(3, in, block, &j, nx_cpu_kind_cost(2, code, x));
+  return walk_operands(3, in, block, &j, nx_cpu_kind_cost(2, code, x, c));
 }
 
 value nx_cpu_apply3(value k, value vd, value vc, value vx, value vy) {
@@ -272,7 +272,11 @@ value nx_cpu_apply3(value k, value vd, value vc, value vx, value vy) {
     j = (op){.as = {s, s, s, s}, .f3 = nx_cpu_rows.fma[s]};
   }
   nx_operand in[4] = {{vd, x, 1}, {vc, c, 0}, {vx, x, 0}, {vy, x, 0}};
-  return walk_operands(4, in, block, &j, nx_cpu_kind_cost(3, Int_val(k), x));
+  /* A Where's condition stages too where it is a bit. */
+  int where = Int_val(k) == NX_OP3_WHERE;
+  double per = nx_cpu_kind_cost(3, Int_val(k), x, j.as[2]) +
+               (where ? nx_cpu_stage_cost(c, j.as[1]) : 0);
+  return walk_operands(4, in, block, &j, per);
 }
 
 value nx_cpu_fill(value vbits, value vd) {

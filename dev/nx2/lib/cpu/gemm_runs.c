@@ -125,13 +125,11 @@ int nx_gemm_stage_runs(nx_contract_runs *r, int o, const int *gs, int dt,
   x->offset = 0;
   x->alias = 0;
   l.rank = nx_coalesce_dims(2, rank, l.extent, l.step);
-  /* A staged element costs a copy's or a cast's kind, in the wider
-     dtype. */
-  int wide = nx_cpu_width(dt) > nx_cpu_width(src->dtype) ? dt : src->dtype;
+  /* A staged element costs a copy's or a cast's kind. */
   if (dt == src->dtype)
     nx_cpu_copy_loop(base, src->base, bits, &l,
-                     nx_cpu_kind_cost(1, NX_OP1_COPY, dt));
-  else nx_cpu_cast_loop(x, src, &l, nx_cpu_kind_cost(1, NX_OP1_CAST, wide));
+                     nx_cpu_kind_cost(1, NX_OP1_COPY, dt, dt));
+  else nx_cpu_cast_loop(x, src, &l, nx_cpu_cast_cost(src->dtype, dt));
   r->offset[o] = 0;
   if (s) scale_runs(r, gs, dt, s, base);
   return 1;

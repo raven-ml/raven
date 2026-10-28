@@ -619,7 +619,8 @@ void nx_cpu_cast_loop(const nx_array *dst, const nx_array *src,
 
 /* Reads [vd], written, and [vs] of the dtypes [d] and [s] through the door,
    and walks them with [walk], whose element is [kind]'s (nx_kernel.h's
-   code) at the wider dtype. */
+   code): a cast's from [s] to [d], a copy's or a bitcast's at [s], of
+   [d]'s width, which it computes in. */
 static value walk_operands(value vd, value vs, int d, int s, int kind,
                            void (*walk)(nx_array *, const nx_loop *,
                                         double)) {
@@ -629,8 +630,8 @@ static value walk_operands(value vd, value vs, int d, int s, int kind,
   int e = nx_read(2, in, a);
   if (e) return Val_int(e);
   if (!(e = nx_coalesce(2, a, &l))) {
-    int wide = nx_cpu_width(d) > nx_cpu_width(s) ? d : s;
-    double per = nx_cpu_kind_cost(1, kind, wide);
+    double per = kind == NX_OP1_CAST ? nx_cpu_cast_cost(s, d)
+                                     : nx_cpu_kind_cost(1, kind, s, s);
     int released = nx_cpu_release(nx_cpu_loop_cost(2, a, &l, per));
     walk(a, &l, per);
     nx_cpu_reacquire(released);
