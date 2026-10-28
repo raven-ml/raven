@@ -27,9 +27,7 @@
     each next one adds its own where they join the union so far
     ({!Grid.union}), and none where they do not. An operand alone on one
     device beside operands whole on every device of the set puts the
-    results on that device. Where an operation writes into its last operand
-    ({!Into}), the results lie where that operand's cuts put them, and the
-    other operands add none. A cut of the union along an axis that an
+    results on that device. A cut of the union along an axis that an
     operand regroups into in tiles that do not divide both extents is
     undone.
 
@@ -125,9 +123,6 @@ type rule =
           behind it: the loop's space, which {!window} reads as an operand of
           the loop's shape. {!route}, which takes a row per operand, never
           receives it. *)
-  | Into of axis array array
-      (** [Axes]' windows, written into the last operand: the results lie
-          where the last operand's cuts put them. *)
 
 val moved : Nx_array.Move.t -> int array -> int -> axis
 (** [moved m s a] is what [m] makes of axis [a] of a value of shape [s]:

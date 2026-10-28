@@ -2311,6 +2311,29 @@ let test_partials_move () =
   fewer "a reduction of every axis"
     (positions 1 (fun x -> Nx.min x) (ints columns))
 
+(* A scatter's results lie at the union of its operands' cuts, as any
+   operation's: positions and updates cut along columns beside a target
+   whole on each device put them at that cut, each device scattering its
+   columns, with the bits the host gives. *)
+let test_scatter_union () =
+  let x = on_host Plain D.Float32 [| 3; 4 |] (Array.init 12 Float.of_int) in
+  let p =
+    on_host Plain D.Int64 [| 2; 4 |] [| 0L; 1L; 2L; 0L; 2L; 2L; 0L; 1L |]
+  in
+  let u =
+    on_host Plain D.Float32 [| 2; 4 |]
+      (Array.init 8 (fun i -> 100. +. Float.of_int i))
+  in
+  let host = elements (Nx.scatter ~axis:0 p u x) in
+  let split = Count2.split ~axis:1 in
+  let y =
+    Nx.scatter ~axis:0 (Nx.place split p) (Nx.place split u)
+      (Nx.place Count2.on x)
+  in
+  equal bool ~msg:"split as its updates" true
+    (Nx.Placement.equal split (Nx.placement y));
+  equal (array bits) host (elements y)
+
 (* The minor words a float32 sum along an axis cut across three devices
    allocates: each device's partial, their stack, its move, the reduction
    of it, and the move of the parts to the result. It counts 12,108 words
@@ -3754,6 +3777,9 @@ let placements =
         test_closing_words;
       test "a float maximum or minimum over a cut axis is a NaN beside one"
         test_cut_extreme_nan;
+      test "a scatter's updates cut beside a target whole on each device \
+            scatter at their cut"
+        test_scatter_union;
       prop ~count:300
         "a float reduction over cut axes of many terms reduces its tiles' \
          stacked partials"

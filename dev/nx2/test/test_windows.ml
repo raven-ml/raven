@@ -544,14 +544,14 @@ let shape_of_results (Op op) =
 let scans (rule : Route.rule) a =
   match rule with
   | Elementwise -> false
-  | Axes t | Into t -> Array.exists (Array.mem (Route.Scanned a)) t
+  | Axes t -> Array.exists (Array.mem (Route.Scanned a)) t
 
 (* Whether [rule]'s results keep their axis [a] whole: no operand's axis
    becomes it, scans along it or regroups into it. *)
 let keeps (rule : Route.rule) a =
   match rule with
   | Elementwise -> false
-  | Axes t | Into t ->
+  | Axes t ->
       let into : Route.axis -> bool = function
         | Becomes b | Scanned b | Regroups { axis = b; _ } -> b = a
         | Whole | Reduced _ | Blocks _ -> false

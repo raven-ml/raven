@@ -15,7 +15,7 @@ type axis =
   | Scanned of int
   | Regroups of { axis : int; extent : int }
 
-type rule = Elementwise | Axes of axis array array | Into of axis array array
+type rule = Elementwise | Axes of axis array array
 
 type compute = Windows | Partials
 
@@ -39,7 +39,7 @@ let lands rule i s a t =
   let divides extent = s.(a) mod t = 0 && extent mod t = 0 in
   match rule with
   | Elementwise -> Some a
-  | Axes r | Into r -> (
+  | Axes r -> (
       match r.(i).(a) with
       | Becomes a' | Scanned a' -> Some a'
       | Reduced f -> Some (factor_axis f)
@@ -118,7 +118,7 @@ let full d = { M.start = 0; count = d; step = 1 }
 let window rule ~operand:i shape (w : M.range array) =
   match rule with
   | Elementwise -> w
-  | Axes t | Into t ->
+  | Axes t ->
       Array.mapi
         (fun a d ->
           match t.(i).(a) with
@@ -175,7 +175,7 @@ let backward rule i s u =
 let aligned rule shapes target =
   match rule with
   | Elementwise -> target
-  | Axes r | Into r ->
+  | Axes r ->
       let across (a', t) =
         let straddles i s =
           Array.exists
@@ -200,7 +200,7 @@ let aligned rule shapes target =
 let folds rule i rank =
   match rule with
   | Elementwise -> [||]
-  | Axes t | Into t ->
+  | Axes t ->
       Array.of_list
         (List.filter
            (fun a ->
@@ -343,24 +343,19 @@ let refuse ~by rule set i p s u =
    axis an operation other than an elementwise one may read whole. *)
 let general ~by rule ps shapes =
   let n = Array.length ps in
-  (* An [Into]'s results lie where its last operand lies; the other operands
-     join in order. *)
-  let into = match rule with Into _ -> true | Elementwise | Axes _ -> false in
-  let first = if into then n - 1 else 0 in
-  let set = Devices.set ps.(first) in
+  let set = Devices.set ps.(0) in
   let other i = Devices.number (Devices.set ps.(i)) <> Devices.number set in
   let lifted i = forward rule i shapes.(i) (Devices.grid ps.(i)) in
   let refuse i u = refuse ~by rule set i ps.(i) shapes.(i) u in
-  (* An operand of another set, or whose cuts do not join the union, adds
-     none: it is refused below unless it holds what it is read at. *)
+  (* The operands join in order. One of another set adds no cut, and is
+     refused below. One whose cuts do not join the union adds none, and is
+     refused below unless it holds what it is read at. *)
   let u =
-    if into then lifted first
-    else
-      List.fold_left
-        (fun u i ->
-          if other i then u else Option.value (join u (lifted i)) ~default:u)
-        (lifted first)
-        (List.init (n - 1) succ)
+    List.fold_left
+      (fun u i ->
+        if other i then u else Option.value (join u (lifted i)) ~default:u)
+      (lifted 0)
+      (List.init (n - 1) succ)
   in
   let u = aligned rule shapes u in
   (* A folded axis of no element is read whole: no device folds a term. *)
@@ -397,9 +392,7 @@ let route ~by rule ps shapes =
      its window of each and computes its window of the results. *)
   let p = ps.(0) in
   let alone = Array.for_all (fun q -> q == p) ps in
-  let elementwise =
-    match rule with Elementwise -> true | Axes _ | Into _ -> false
-  in
+  let elementwise = match rule with Elementwise -> true | Axes _ -> false in
   if alone && (elementwise || not (Grid.is_cut (Devices.grid p))) then
     { operands = Array.make (Array.length ps) p; result = p; compute = Windows }
   else general ~by rule ps shapes

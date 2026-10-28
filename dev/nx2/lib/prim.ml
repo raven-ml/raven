@@ -1253,11 +1253,11 @@ let rule : type r. r prim -> Route.rule =
       | Axes t ->
           t.(Iarray.length loads).(axis) <- Route.Whole;
           Axes t
-      | Elementwise | Into _ -> invalid_arg "Prim.rule: a loop's rule")
+      | Elementwise -> invalid_arg "Prim.rule: a loop's rule")
   | Gather { axis; idx; x } ->
       Axes [| reading [||] (rank idx); reading [| axis |] (rank x) |]
   | Scatter { axis; idx; updates; into; _ } ->
-      Into
+      Axes
         (Array.map (reading [| axis |]) [| rank idx; rank updates; rank into |])
   | Sort { axis; x; _ } -> Axes [| reading [| axis |] (rank x) |]
   | Fold { pad; x; _ } -> fold_rule pad x

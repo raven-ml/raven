@@ -41,7 +41,7 @@ let position p k =
 let reads rule i shape (w : M.range array) tile =
   match (rule : Route.rule) with
   | Elementwise -> w
-  | Axes t | Into t ->
+  | Axes t ->
       let window = Route.window rule ~operand:i shape w in
       Array.mapi
         (fun a r ->
@@ -900,7 +900,7 @@ let contract (type v s d a b c e) ~by (route : unit Route.t) rule ~batch
         | Becomes _ | Whole | Reduced _ | Scanned _ | Regroups _ -> ()
       in
       (match rule with
-      | Axes t | Into t -> Array.iteri narrow t.(i)
+      | Axes t -> Array.iteri narrow t.(i)
       | Elementwise -> ());
       view ~by ks.(j) (here j) w v
     in

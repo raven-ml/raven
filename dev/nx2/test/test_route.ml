@@ -55,7 +55,6 @@ let pp_table ppf t =
 let pp_rule ppf = function
   | Route.Elementwise -> Format.pp_print_string ppf "Elementwise"
   | Axes t -> Format.fprintf ppf "Axes %a" pp_table t
-  | Into t -> Format.fprintf ppf "Into %a" pp_table t
 
 (* An operation: its rule, its operands' placements and shapes, and its results'
    shape. *)
@@ -147,38 +146,20 @@ let operand_of factors out =
   in
   (Array.mapi axis axes, Array.mapi extent axes)
 
-(* The operand a scatter writes into: the results' shape, each axis becoming
-   itself or read whole. *)
-let into_of out =
-  Gen.map
-    (fun whole ->
-      ( Array.mapi
-          (fun a w : Route.axis -> if w then Whole else Becomes a)
-          whole,
-        Array.copy out ))
-    (Gen.array ~size:(Gen.constant (Array.length out)) Gen.bool)
-
 let case =
   let open Gen in
   let* rank = int_range 1 3 in
   let* out = array ~size:(constant rank) extent in
   let* n = int_range 1 3 in
-  let* kind = int_range 0 2 in
+  (* An elementwise rule a third of the time. *)
+  let* elementwise = frequency [ (1, constant true); (2, constant false) ] in
   let* factors = array ~size:(constant 3) extent in
   let* operands =
-    match kind with
-    | 0 -> constant (Array.make n ([||], out))
-    | 1 -> array ~size:(constant n) (operand_of factors out)
-    | _ ->
-        let+ others = array ~size:(constant (n - 1)) (operand_of factors out)
-        and+ into = into_of out in
-        Array.append others [| into |]
+    if elementwise then constant (Array.make n ([||], out))
+    else array ~size:(constant n) (operand_of factors out)
   in
   let rule =
-    match kind with
-    | 0 -> Route.Elementwise
-    | 1 -> Axes (Array.map fst operands)
-    | _ -> Into (Array.map fst operands)
+    if elementwise then Route.Elementwise else Axes (Array.map fst operands)
   in
   let shapes = Array.map snd operands in
   (* Often each operand's axis of factor 0 split over the four devices: the
@@ -187,7 +168,7 @@ let case =
   let factor0 i =
     match rule with
     | Route.Elementwise -> None
-    | Axes t | Into t ->
+    | Axes t ->
         Array.find_index
           (function
             | Route.Reduced 0 | Blocks { factor = 0; _ } -> true | _ -> false)
@@ -198,7 +179,7 @@ let case =
   let regroup i =
     match rule with
     | Route.Elementwise -> None
-    | Axes t | Into t ->
+    | Axes t ->
         Array.find_index
           (function Route.Regroups _ -> true | _ -> false)
           t.(i)
@@ -291,7 +272,7 @@ let case =
 let depends c i (w : R.range array) =
   match c.rule with
   | Route.Elementwise -> w
-  | Axes t | Into t ->
+  | Axes t ->
       Array.mapi
         (fun a d ->
           match t.(i).(a) with
@@ -327,7 +308,7 @@ let position p k = Array.find_index (( = ) k) (Grid.devices (Devices.grid p))
 let factor_of c i a =
   match c.rule with
   | Route.Elementwise -> None
-  | Axes t | Into t -> (
+  | Axes t -> (
       match t.(i).(a) with
       | Route.Reduced f -> Some f
       | Becomes _ | Whole | Scanned _ | Regroups _ | Blocks _ -> None)
@@ -337,7 +318,7 @@ let factor_of c i a =
 let blocks_of c i a =
   match c.rule with
   | Route.Elementwise -> None
-  | Axes t | Into t -> (
+  | Axes t -> (
       match t.(i).(a) with
       | Route.Blocks { factor; extent } -> Some (factor, extent)
       | Becomes _ | Whole | Scanned _ | Regroups _ | Reduced _ -> None)
@@ -395,7 +376,7 @@ let landing c i p =
     (fun (a, t) ->
       match c.rule with
       | Route.Elementwise -> Some (a, a)
-      | Axes r | Into r -> (
+      | Axes r -> (
           match r.(i).(a) with
           | Route.Becomes a' | Scanned a' -> Some (a, a')
           | Regroups { axis; extent }
@@ -404,12 +385,6 @@ let landing c i p =
           | Regroups _ | Whole | Reduced _ | Blocks _ -> None))
     (Array.to_list (Grid.cuts (Devices.grid p)))
 
-(* The operand whose cuts the results take first: an [Into]'s last, else the
-   first. *)
-let first_cuts c =
-  match c.rule with
-  | Route.Into _ -> Array.length c.ps - 1
-  | Elementwise | Axes _ -> 0
 
 let law =
   prop ~count:2000
@@ -425,7 +400,7 @@ let law =
           let read_whole =
             match c.rule with
             | Route.Elementwise -> false
-            | Axes t | Into t ->
+            | Axes t ->
                 Array.exists
                   (Array.exists (function
                     | Route.Becomes _ | Scanned _ | Regroups _ -> false
@@ -439,7 +414,7 @@ let law =
           let regrouped ps aligned =
             match c.rule with
             | Route.Elementwise -> false
-            | Axes t | Into t ->
+            | Axes t ->
                 Array.exists Fun.id
                   (Array.mapi
                      (fun i p ->
@@ -472,9 +447,9 @@ let law =
                 (holds p c.shapes.(i) q))
             r.operands;
           (* The forward union: each cut of the results is a cut of an
-             operand that lands there, tile for tile, and the cuts of the
-             operand the results take first all stay where it has
-             elements: without, it holds every window it is read at. *)
+             operand that lands there, tile for tile, and the first
+             operand's cuts all stay where it has elements: without, it
+             holds every window it is read at. *)
           let matches i p (a, _) =
             Array.for_all
               (fun k ->
@@ -498,14 +473,13 @@ let law =
               equal bool ~msg true
                 (Array.exists Fun.id (Array.mapi from c.ps)))
             (Grid.cuts target);
-          let f = first_cuts c in
-          let p = c.ps.(f) in
-          if not (Array.mem 0 c.shapes.(f)) then
+          let p = c.ps.(0) in
+          if not (Array.mem 0 c.shapes.(0)) then
             List.iter
               (fun l ->
-                cover "a cut of the operand the results take first" true;
-                equal bool ~msg:"its cut stays" true (matches f p l))
-              (landing c f p);
+                cover "a cut of the first operand" true;
+                equal bool ~msg:"its cut stays" true (matches 0 p l))
+              (landing c 0 p);
           let windows = Grid.devices target in
           Array.iteri
             (fun j k ->
@@ -765,7 +739,7 @@ let exact =
 let folded c i a =
   match c.rule with
   | Route.Elementwise -> false
-  | Axes t | Into t -> (
+  | Axes t -> (
       match t.(i).(a) with
       | Route.Reduced _ | Blocks _ | Scanned _ -> true
       | Becomes _ | Whole | Regroups _ -> false)
@@ -901,10 +875,12 @@ let cases_ =
           in
           equal placement (Devices.split ~by:"t" ~axis:0 s4) r.result;
           equal bool true (r.operands.(0) == x));
-      test "a scatter writes where its target lies" (fun () ->
+      test "a scatter's target cut beside updates whole on each device keeps \
+            its cut"
+        (fun () ->
           let into = Devices.split ~by:"t" ~axis:1 s4 and u = Devices.on s4 in
           let rule =
-            Route.Into [| [| Whole; Becomes 1 |]; [| Whole; Becomes 1 |] |]
+            Route.Axes [| [| Whole; Becomes 1 |]; [| Whole; Becomes 1 |] |]
           in
           let r = route rule [| u; into |] [| [| 4; 8 |]; [| 8; 8 |] |] in
           equal placement into r.result);
@@ -1197,7 +1173,7 @@ let move_law =
                 | Regroups { extent; _ } ->
                     s.(a) mod t <> 0 || extent mod t <> 0
                 | Becomes _ | Scanned _ | Reduced _ | Blocks _ -> false)
-            | Elementwise | Into _ -> false
+            | Elementwise -> false
           in
           cover "a move reading a cut axis whole" true;
           equal bool ~msg:"the operand is cut along an axis read whole" true
