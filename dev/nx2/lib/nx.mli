@@ -10,11 +10,19 @@
     Nothing changes a value.
 
     A device set is a module: [module Gpu = (val Nx.devices [ d0; d1 ])] mints a
-    brand [Gpu.d], and values of two sets never meet in typed code.
+    brand [Gpu.d], and values of two sets never meet in typed code. A value
+    lies at a {e placement}: on the host, on one device of its set, whole on
+    every device of it, or cut into {e windows} across them, where each
+    device holds one window of the value. A value is made where it is asked:
+    on the host, at a placement with an [_at] form, or beside another value
+    with a [_like] form ({!section-creation}).
 
-    An operation computes where its operands lie and moves none of them:
+    An operation computes where its operands lie and moves none of them.
     {!place} moves a value, and an operation whose operands do not lie
-    together raises, naming the {!place} to write ({!section-routing}). *)
+    together raises, naming the {!place} to write ({!section-routing}). The
+    partial results of a fold over a cut axis, and the parts of the result
+    they close into, are the only bytes an operation moves between devices
+    ({!section-reductions}). *)
 
 (** {1:values Values}
 
@@ -133,10 +141,9 @@ val unpack : ('v, 's) dtype -> 'd packed -> ('v, 's, 'd) t
 (** {1:devices Device sets and placement}
 
     A value lies on a device set, a module minted by {!devices} whose brand ['d]
-    keeps its values apart from other sets'. Within its set a value has a
-    placement: whole on one or every device, or cut into windows across them.
-    {!place} moves a value between sets, and between placements of one. The host
-    is a set like any other, {!Host}. *)
+    keeps its values apart from other sets'. {!Placement} says where a value
+    lies within its set, and {!place} moves a value between sets, and
+    between placements of one. The host is a set like any other, {!Host}. *)
 
 type +'d devices
 (** The type for device sets of brand ['d]: distinct devices, and the kernels
@@ -280,21 +287,22 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     is read by a view of each device's window.
 
     An operation raises [Invalid_argument] where two operands cut one
-    result axis over other devices or tiles, where a device needs a window
-    of an operand it does not hold, and where operands lie alone on two
-    devices or on two sets. The message names the function, the operand,
-    numbered from [0] in the order {!Prim.t} lists them, where it lies,
-    where it is read, and the {!place} that puts it there: the set named
-    [s], a device by its name, a mesh's axes as ["g0"], ["g1"], …, in the
-    read placement's order, and the operands [x], [y], [z], then [x3],
-    [x4], …:
+    result axis over different devices or tiles, where a device needs a
+    window of an operand it does not hold, and where operands lie alone on
+    two devices or on two sets. The message names the function, the
+    operand, numbered from [0] in the order {!Prim.t} lists them, where it
+    lies, where it is read, and the {!place} that puts it there, writing
+    the set as [s], a device by its name, a mesh's axes as ["g0"], ["g1"],
+    … in the read placement's order, and the operands as [x], [y], [z],
+    then [x3], [x4], …:
 
     {v
 Nx.matmul: operand 1 lies at split ~axis:1 [CUDA:0; CUDA:1] and is read
 at split ~axis:0 [CUDA:0; CUDA:1]; Nx.place (Placement.split ~axis:0 s) y
     v}
 
-    A traced operation raises it as its eager twin does ({!Prim.results}). *)
+    A traced operation raises it as eager execution would
+    ({!Prim.results}). *)
 
 val place : 'e Placement.t -> ('v, 's, 'd) t -> ('v, 's, 'e) t
 (** [place p x] is [x]'s elements at [p]. Each device of [p] holds its window
@@ -309,7 +317,7 @@ val place : 'e Placement.t -> ('v, 's, 'd) t -> ('v, 's, 'e) t
     {!Rig.Lost} for a lost device, and a failed check as a wait does. *)
 
 val placement : ('v, 's, 'd) t -> 'd Placement.t
-(** [placement x] is where [x]'s bytes are. *)
+(** [placement x] is where [x]'s bytes lie. *)
 
 (** {1:creation Creation}
 
