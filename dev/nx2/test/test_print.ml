@@ -30,7 +30,7 @@ let forms =
   [
     ( "a matrix",
       (fun () -> printed (Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |])),
-      "float32 [2; 3] [[1, 2, 3], [4, 5, 6]]" );
+      "float32 [2; 3]\n[[1, 2, 3],\n [4, 5, 6]]" );
     ( "a 0-d value",
       (fun () -> printed (Nx.create Nx.int64 [||] [| -7L |])),
       "int64 [] -7" );
@@ -51,7 +51,7 @@ let forms =
     ("an empty value", (fun () -> printed (Nx.create Nx.int8 [| 0 |] [||])), "int8 [0] []");
     ( "an empty inner axis",
       (fun () -> printed (Nx.create Nx.int8 [| 2; 0 |] [||])),
-      "int8 [2; 0] [[], []]" );
+      "int8 [2; 0]\n[[],\n []]" );
     ( "1000 elements in full",
       (fun () ->
         let s = printed (Nx.place Nx.Host.on (Nx.arange Nx.int16 0 1000 1)) in
@@ -69,6 +69,103 @@ let form_cases =
   cases "forms" ~name:(fun (n, _, _) -> n) forms (fun (_, f, expected) ->
       equal string expected (f ()))
 
+(* Layouts: a row per line from two axes on, a long row wrapped. *)
+
+let ints s =
+  let n = Array.fold_left ( * ) 1 s in
+  Nx.reshape s (Nx.place Nx.Host.on (Nx.arange Nx.int32 0 n 1))
+
+let test_layouts () =
+  expect (printed (ints [| 2; 2; 3 |])) @@ __POS_OF__ {|
+int32 [2; 2; 3]
+[[[0, 1, 2],
+  [3, 4, 5]],
+ [[6, 7, 8],
+  [9, 10, 11]]]
+|};
+  expect (printed (ints [| 2; 30 |])) @@ __POS_OF__ {|
+int32 [2; 30]
+[[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+  21, 22, 23, 24, 25, 26, 27, 28, 29],
+ [30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
+  49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59]]
+|};
+  expect (printed (ints [| 40; 30 |])) @@ __POS_OF__ {|
+int32 [40; 30]
+[[0, 1, 2, ..., 27, 28, 29],
+ [30, 31, 32, ..., 57, 58, 59],
+ [60, 61, 62, ..., 87, 88, 89],
+ ...,
+ [1110, 1111, 1112, ..., 1137, 1138, 1139],
+ [1140, 1141, 1142, ..., 1167, 1168, 1169],
+ [1170, 1171, 1172, ..., 1197, 1198, 1199]]
+|};
+  expect (printed (ints [| 30 |])) @@ __POS_OF__ {|
+int32 [30]
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
+ 21, 22, 23, 24, 25, 26, 27, 28, 29]
+|};
+  expect (printed (Nx.zeros Nx.int8 [| 0; 3 |])) @@ __POS_OF__ {|
+int8 [0; 3]
+[]
+|};
+  expect (printed (ints [| 1; 1 |])) @@ __POS_OF__ {|
+int32 [1; 1]
+[[0]]
+|};
+  expect (printed (ints [| 1; 3 |])) @@ __POS_OF__ {|
+int32 [1; 3]
+[[0, 1, 2]]
+|};
+  expect (printed (ints [| 3; 1 |])) @@ __POS_OF__ {|
+int32 [3; 1]
+[[0],
+ [1],
+ [2]]
+|}
+
+let test_boxed () =
+  let v = Nx.create Nx.float32 [| 6 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let m = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let s = Nx.scalar Nx.float32 1.5 in
+  let boxed =
+    Format.asprintf "@[<v 2>params:@,w = %a@,b = %a@,m = %a@]" Nx.pp v Nx.pp s
+      Nx.pp m
+  in
+  expect boxed @@ __POS_OF__ {|
+params:
+  w = float32 [6] [1, 2, 3, 4, 5, 6]
+  b = float32 [] 1.5
+  m = float32 [2; 2]
+      [[1, 2],
+       [3, 4]]
+|};
+  equal string "w = float32 [6] [1, 2, 3, 4, 5, 6]"
+    (Format.asprintf "@[<hv 2>w =@ %a@]" Nx.pp v);
+  (* A matrix's rows break inside a box that fits. *)
+  expect (Format.asprintf "@[<hv 2>m =@ %a@]" Nx.pp m) @@ __POS_OF__ {|
+m = float32 [2; 2]
+    [[1, 2],
+     [3, 4]]
+|};
+  expect (Format.asprintf "@[<hov 2>m =@ %a@]" Nx.pp m) @@ __POS_OF__ {|
+m = float32 [2; 2]
+    [[1, 2],
+     [3, 4]]
+|};
+  (* Without room beside the header, the elements still fill one line; a 0-d
+     value's stay beside it, past a margin. *)
+  let pad = String.make 50 '.' in
+  expect (Format.asprintf "@[<hov 2>%s %a@]" pad Nx.pp v) @@ __POS_OF__ {|
+.................................................. float32 [6]
+                                                   [1, 2, 3, 4, 5, 6]
+|};
+  let narrow ppf =
+    Format.pp_set_margin ppf 10;
+    Nx.pp ppf s
+  in
+  equal string "float32 [] 1.5" (Format.asprintf "%t" narrow)
+
 (* Values of every kind *)
 
 let test_on_a_set () =
@@ -77,13 +174,16 @@ let test_on_a_set () =
   equal bool true (String.ends_with ~suffix:"[1, 2]" (printed x))
 
 let test_host_creation () =
-  equal string "float32 [2; 3] [[1, 1, 1], [1, 1, 1]]"
+  equal string "float32 [2; 3]\n[[1, 1, 1],\n [1, 1, 1]]"
     (printed (Nx.add (Nx.zeros Nx.float32 [| 2; 3 |]) (Nx.scalar Nx.float32 1.)))
 
 let test_dead () =
   let x = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |] in
   ignore (Nx.add (Nx.donate x) (Nx.create Nx.float32 [| 2 |] [| 0.; 0. |]));
-  equal string "float32 [2], donated to Nx.add" (printed x)
+  equal string "float32 [2], donated to Nx.add" (printed x);
+  let m = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  ignore (Nx.add (Nx.donate m) (Nx.zeros Nx.float32 [| 2; 2 |]));
+  equal string "float32 [2; 2], donated to Nx.add" (printed m)
 
 type ('v, 's, 'd) Nx.Prim.payload += Mark : ('v, 's, 'd) Nx.Prim.payload
 
@@ -93,7 +193,9 @@ let test_traced () =
     (fun i ~by op -> Nx.Prim.results ~by (fun _ f -> Nx.Prim.traced i f Mark) op)
     (fun i ->
       let t = Nx.Prim.traced i (Nx.Prim.form x) Mark in
-      equal string "int8 [3] traced by test.print" (printed t))
+      equal string "int8 [3] traced by test.print" (printed t);
+      let m = Nx.Prim.traced i (Nx.Prim.form (Nx.reshape [| 3; 1 |] x)) Mark in
+      equal string "int8 [3; 1] traced by test.print" (printed m))
 
 (* Floats read back *)
 
@@ -168,6 +270,8 @@ let () =
          form_cases;
          group "values of every kind"
            [
+             test "a row per line from two axes on" test_layouts;
+             test "inside a box" test_boxed;
              test "a value on a set names the set" test_on_a_set;
              test "a host creation prints as a host value" test_host_creation;
              test "a dead value names its consumer" test_dead;

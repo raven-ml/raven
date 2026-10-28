@@ -4613,12 +4613,24 @@ end
 
 val pp : Format.formatter -> ('v, 's, 'd) t -> unit
 (** [pp ppf x] prints [x]'s dtype and shape, [on] its set off the host, then
-    its elements as nested rows, as [float32 [2; 3] [[1, 2, 3], [4, 5, 6]]].
-    Elements print as {!Dtype.pp_value} does: a float in the shortest form that
-    reads back to it in its format, an unsigned integer unsigned. Past 1000
-    elements an axis longer than 6 shows its first and last 3 around [...]. A
-    value with elements is read as {!to_array} reads it, so it raises a failed
-    check pending on its set ({!section-waiting}).
+    its elements as nested rows, as [float32 [3] [1, 2, 3]] or, 0-d,
+    [float32 [] 1.5]. From two axes on the elements start a line of their
+    own, one entry of each outer axis per line:
+
+    {v
+    float32 [2; 3]
+    [[1, 2, 3],
+     [4, 5, 6]]
+    v}
+
+    A vector starts the line after its header where both do not fit, and a row
+    wider than the margin wraps after its bracket.
+
+    Elements print as {!Dtype.pp_value} does: a float in the shortest form
+    that reads back to it in its format, an unsigned integer unsigned. Past
+    1000 elements an axis longer than 6 shows its first and last 3 around
+    [...]. A value with elements is read as {!to_array} reads it, so it
+    raises a failed check pending on its set ({!section-waiting}).
 
     A traced value prints [traced by] its interpretation; a dead one the
     function it was donated to; one on a lost device the loss. None of these

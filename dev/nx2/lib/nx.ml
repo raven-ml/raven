@@ -5903,7 +5903,9 @@ let pp_dtype = D.pp
 let elided = 1000
 let edge = 3
 
-(* [a]'s elements as nested rows, a 0-d array's as its one element. *)
+(* [a]'s elements as nested rows, a 0-d array's as its one element. The
+   last axis's elements fill lines; each outer axis puts its entries one per
+   line, aligned after its bracket. *)
 let pp_elements (type v s) ppf (a : (v, s) Nx_array.t) =
   let dt = Nx_array.dtype a and s = Nx_array.Layout.shape (Nx_array.layout a) in
   let r = Iarray.length s in
@@ -5914,14 +5916,24 @@ let pp_elements (type v s) ppf (a : (v, s) Nx_array.t) =
     else begin
       let d = Iarray.get s axis in
       let shown j = (not cut) || d <= 2 * edge || j < edge || j >= d - edge in
-      Format.fprintf ppf "@[<hv 1>[";
+      let sep () =
+        Format.pp_print_char ppf ',';
+        if axis = r - 1 then Format.pp_print_space ppf ()
+        else Format.pp_print_cut ppf ()
+      in
+      if axis = r - 1 then Format.pp_open_hovbox ppf 1
+      else Format.pp_open_vbox ppf 1;
+      Format.pp_print_char ppf '[';
       for j = 0 to d - 1 do
         if shown j then begin
-          if j > 0 then Format.fprintf ppf ",@ ";
+          if j > 0 then sep ();
           i.(axis) <- j;
           row (axis + 1)
         end
-        else if j = edge then Format.fprintf ppf ",@ ..."
+        else if j = edge then begin
+          sep ();
+          Format.pp_print_string ppf "..."
+        end
       done;
       Format.fprintf ppf "]@]"
     end
@@ -5936,31 +5948,46 @@ let pp ppf x =
   in
   (* What follows the header, read before anything prints: a failed check
      raises out of the print, as out of any read, with nothing printed. *)
-  let rest : Format.formatter -> unit =
+  let note f = `Note f in
+  let rest =
     match x with
     | Value.Traced { owner; _ } ->
-        fun ppf -> Format.fprintf ppf " traced by %s" owner.name
+        note (fun ppf -> Format.fprintf ppf " traced by %s" owner.name)
     | Value.Array _ | Value.Shards _ | Value.Handle _ -> (
         match Prim.death x with
-        | Value.Died f -> fun ppf -> Format.fprintf ppf ", donated to %s" f
+        | Value.Died f ->
+            note (fun ppf -> Format.fprintf ppf ", donated to %s" f)
         | Value.Live -> (
-            let lost d why ppf =
-              Format.fprintf ppf ", lost with %s: %s" (Rig.name d) why
+            let lost d why =
+              note (fun ppf ->
+                  Format.fprintf ppf ", lost with %s: %s" (Rig.name d) why)
             in
-            let unread why ppf = Format.fprintf ppf ", unread: %s" why in
+            let unread why =
+              note (fun ppf -> Format.fprintf ppf ", unread: %s" why)
+            in
             let live = Donate.live x in
             match Check.wait ~by:"Nx.pp" live with
             | exception Rig.Lost (d, why) -> lost d why
             | () -> (
                 match Check.on_host ~by:"Nx.pp" live with
-                | a -> fun ppf -> Format.fprintf ppf "@ %a" pp_elements a
+                | a -> `Elements a
                 | exception Rig.Lost (d, why) -> lost d why
                 | exception Invalid_argument why -> unread why)))
   in
-  Format.fprintf ppf "@[<hv 2>%s %a" (D.name (dtype x)) pp_shape (shape x);
-  set ppf (placement x);
-  rest ppf;
-  Format.fprintf ppf "@]"
+  let header () =
+    Format.fprintf ppf "%s %a" (D.name (dtype x)) pp_shape (shape x);
+    set ppf (placement x)
+  in
+  (* From two axes on, the elements start a line of their own; a vector's
+     do where it does not fit beside the header; a 0-d value's never. *)
+  if ndim x >= 2 then Format.pp_open_vbox ppf 0
+  else if ndim x = 1 then Format.pp_open_hvbox ppf 0
+  else Format.pp_open_hbox ppf ();
+  header ();
+  (match rest with
+  | `Elements a -> Format.fprintf ppf "@ %a" pp_elements a
+  | `Note f -> f ppf);
+  Format.pp_close_box ppf ()
 
 let to_string x = Format.asprintf "%a" pp x
 let print x = Format.printf "%a@." pp x
