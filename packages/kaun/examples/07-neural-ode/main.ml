@@ -13,7 +13,7 @@ module Solution = Jera.Solution
 module Tol = Jera.Tol
 
 module Mlp = struct
-  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
+  type ('a, 'd) t = { l1 : ('a, 'd) Linear.t; l2 : ('a, 'd) Linear.t }
 
   let walk c { l1; l2 } =
     let open Nx.Ptree.Walk in
@@ -60,14 +60,12 @@ let () =
         (Nx.reshape [| batch; 1 |] starts)
     in
     (* [[window; batch; 2]], as the solve stacks them. *)
-    let target =
-      Nx.transpose ~axes:[ 1; 0; 2 ] (Nx.take ~axis:0 ~indices:rows data)
-    in
+    let target = Nx.transpose ~axes:[ 1; 0; 2 ] (Nx.take ~axis:0 rows data) in
     let s =
       Ode.sample point Ode.tsit5 ~tol ~budget:500
         (fun _ y -> Mlp.apply p y)
         ~at:relative
-        (Nx.take ~axis:0 ~indices:starts data)
+        (Nx.take ~axis:0 starts data)
     in
     (Nx.mean (Nx.abs (Nx.sub (Solution.get s) target)), Solution.evaluations s)
   in
@@ -83,9 +81,7 @@ let () =
         let l, grads, evaluations =
           Rune.value_and_grad_aux mlp Nx.Ptree.tensor (loss starts) params
         in
-        let params, ostate =
-          Vega.adam_step mlp ~lr:(lr ostate.Vega.step) ostate ~params ~grads
-        in
+        let params, ostate = Vega.adam_step mlp ~lr ostate ~params ~grads in
         ((params, ostate), (l, evaluations)))
   in
   let random = Random.State.make [| 0 |] in
@@ -97,8 +93,8 @@ let () =
 
   let params =
     {
-      Mlp.l1 = Linear.init ~inputs:2 ~outputs:50;
-      l2 = Linear.init ~inputs:50 ~outputs:2;
+      Mlp.l1 = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:2 ~outputs:50;
+      l2 = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:50 ~outputs:2;
     }
   in
   let state = ref (params, Vega.adam_init mlp params) in
