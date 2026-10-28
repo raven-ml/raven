@@ -62,6 +62,7 @@ type ('v, 's, 'd) total = { id : ('v, 's, 'd) Nx.t Type.Id.t }
 
 let total () = { id = Type.Id.make () }
 let same_total t u = Type.Id.provably_equal t.id u.id
+let total_id t = Type.Id.uid t.id
 
 (* Derivations
 

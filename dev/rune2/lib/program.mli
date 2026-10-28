@@ -82,6 +82,9 @@ val same_total :
   (('v, 's, 'd) Nx.t, ('w, 'r, 'e) Nx.t) Type.eq option
 (** [same_total t u] is [Some Equal] iff [t] and [u] are one total. *)
 
+val total_id : ('v, 's, 'd) total -> int
+(** [total_id t] is a number no other total has. *)
+
 (** {1:programs Programs} *)
 
 type ('v, 's, 'd) Nx.Prim.payload +=

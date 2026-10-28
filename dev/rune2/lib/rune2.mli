@@ -738,14 +738,16 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     call's arguments: their {!Nx.Ptree.val-visits} and reports, the static data
     of a call, each array's dtype, shape and placement, and the number of lanes
     of each map whose name the program reads through {!lanes} or
-    {!lane_index}. A call retraces exactly when its key is new to [jit s f],
-    over stand-ins in C order: [f]'s code, and its side effects, run once per
-    key. A call that raises while it
-    traces keeps no program for its key. Calls on several domains share the
-    programs; a key being traced makes its other callers wait, but on the domain
-    that traces it, where a call traces again for itself. With
-    [RUNE_JIT_DEBUG=1] in the environment, each retrace prints on standard error
-    the first difference between its key and the previous call's.
+    {!lane_index}; and where the running value of a {!Total} [f] adds to lies,
+    where a call finds it on another set than the trace without it took it. A
+    call retraces exactly when its key is new to [jit s f], over stand-ins in C
+    order: [f]'s code, and its side effects, run once per key. A call that
+    raises while it traces keeps no program for its key. Calls on several
+    domains share the programs; a key being traced makes its other callers
+    wait, but on the domain that traces it, where a call traces again for
+    itself. With [RUNE_JIT_DEBUG=1] in the environment, each retrace prints on
+    standard error the first difference between its key and the previous
+    call's.
 
     {b Compiled programs.} A program compiles the first time a call runs it,
     then once per {e variant}: each argument's strides and offset from where its

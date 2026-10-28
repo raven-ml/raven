@@ -632,10 +632,10 @@ let rec spine : type f d. string -> int -> (f, d) Ptree.fn -> (f, d) spine =
 
 (* [traced name a r f args forms] is [f]'s program over stand-ins of [forms] for
    [args]' leaves, and the result it returned, as jit traces it. *)
-let traced name a r f args forms =
+let traced name a r f args forms totals =
   let like = ref None in
   let body, _ =
-    Trace.trace Jit ~name forms (fun vs ->
+    Trace.trace ~totals Jit ~name forms (fun vs ->
         let y = f (rebuild a ~like:args vs) in
         like := Some y;
         values r y)
@@ -664,11 +664,28 @@ let call name t a r f args =
   let paths () =
     List.rev (Ptree.fold a (fun p _ acc -> path_name p :: acc) args [])
   in
-  let trace forms =
-    let body, like = traced name a r f args forms in
+  let trace forms totals =
+    let body, like = traced name a r f args forms totals in
     (body, results r like)
   in
   let e = Jit.find t leaves skeleton ~paths trace in
+  (* A program takes a total's running value where its trace found it; a call
+     that finds it elsewhere has a program of its own, traced there. *)
+  let moved = ref false in
+  let totals =
+    Array.map
+      (fun (Addition (u, into, out) as a) ->
+        match Program.running u into with
+        | Some v when Option.is_none (Program.coerce_at into v) ->
+            moved := true;
+            let at = Nx.Prim.form v in
+            Addition (u, { into with placement = at.placement }, out)
+        | _ -> a)
+      e.body.adds
+  in
+  let e =
+    if !moved then Jit.find ~totals t leaves skeleton ~paths trace else e
+  in
   let out =
     run (Call { body = e.body; args = args_v; site = e.site; seeds = [||] })
   in
@@ -750,7 +767,7 @@ type program = Program.t
 (* [f]'s trace at [args], as jit's: over C-order stand-ins. *)
 let staged name a r f args =
   let leaves, _ = Ptree.flatten a args in
-  traced name a r f args (Jit.stand_ins leaves)
+  traced name a r f args (Jit.stand_ins leaves) [||]
 
 let program a r f args = fst (staged "Rune.program" a r f args)
 let pp_program = Program.pp

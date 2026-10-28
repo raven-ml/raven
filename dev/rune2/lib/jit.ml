@@ -31,12 +31,15 @@ let same_leaf a b =
   && a.shape = b.shape && same_place a.at b.at
 
 (* A key's lanes are those of each map its program names, where they differ
-   from the ones it was first traced at: a [Lanes] result's shape holds
-   them. *)
+   from the ones it was first traced at: a [Lanes] result's shape holds them.
+   Its totals are where the program takes the running values of the totals it
+   threads, where a call found them elsewhere than a trace without them took
+   them: each total's number and placement. *)
 type key = {
   skeleton : Ptree.Skeleton.t;
   leaves : leaf array;
   lanes : int list option;
+  totals : (int * place) array;
 }
 
 let same_key k k' =
@@ -44,6 +47,10 @@ let same_key k k' =
   && Array.length k.leaves = Array.length k'.leaves
   && Array.for_all2 same_leaf k.leaves k'.leaves
   && k.lanes = k'.lanes
+  && Array.length k.totals = Array.length k'.totals
+  && Array.for_all2
+       (fun (a, p) (b, q) -> a = b && same_place p q)
+       k.totals k'.totals
 
 let hash k =
   Array.fold_left
@@ -69,8 +76,35 @@ let difference paths k k' =
   with
   | Some m -> m
   | None ->
+      let place (At p) = Format.asprintf "at %a" Nx.Placement.pp p in
+      (* A running total that lies elsewhere, or one the previous key did not
+         place. *)
+      let total () =
+        let at k id =
+          Array.find_map
+            (fun (j, p) -> if j = id then Some p else None)
+            k.totals
+        in
+        let ids = Array.append k.totals k'.totals in
+        match
+          Array.find_map
+            (fun (id, _) ->
+              let a = at k id and b = at k' id in
+              match (a, b) with
+              | Some p, Some q when same_place p q -> None
+              | _ ->
+                  let name = Option.fold ~none:"not taken" ~some:place in
+                  Some
+                    (Printf.sprintf
+                       "a running total: %s here, %s in the previous key"
+                       (name a) (name b)))
+            ids
+        with
+        | Some m -> m
+        | None -> "an equal key"
+      in
       let rec first i paths =
-        if i >= Array.length k.leaves then "an equal key"
+        if i >= Array.length k.leaves then total ()
         else
           let l = k.leaves.(i) and l' = k'.leaves.(i) in
           let path, rest =
@@ -153,9 +187,18 @@ let compiled name body forms =
         Compile.evaluated_call ();
         Compile.evaluate ~name body args
 
-let find t leaves skeleton ~paths trace =
+let find ?(totals = [||]) t leaves skeleton ~paths trace =
   let key =
-    { skeleton; leaves = Array.of_list (List.map leaf leaves); lanes = None }
+    {
+      skeleton;
+      leaves = Array.of_list (List.map leaf leaves);
+      lanes = None;
+      totals =
+        Array.map
+          (fun (Program.Addition (u, (f : _ Nx.Prim.form), _)) ->
+            (Program.total_id u, At f.placement))
+          totals;
+    }
   in
   let miss () =
     Option.iter
@@ -164,7 +207,7 @@ let find t leaves skeleton ~paths trace =
   in
   let make () =
     let forms = stand_ins leaves in
-    let body, like = trace forms in
+    let body, like = trace forms totals in
     (* A program threads its totals' running values, its last arguments. *)
     let totals =
       Array.map (fun (Program.Addition (_, f, _)) -> Program.F f) body.Program.adds

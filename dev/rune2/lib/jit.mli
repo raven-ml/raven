@@ -42,16 +42,18 @@ val stand_ins : 'd Nx.packed list -> Program.form array
     shapes and placements, in C order. *)
 
 val find :
+  ?totals:Program.addition array ->
   'y t ->
   'd Nx.packed list ->
   Nx.Ptree.Skeleton.t ->
   paths:(unit -> string list) ->
-  (Program.form array -> Program.t * 'y) ->
+  (Program.form array -> Program.addition array -> Program.t * 'y) ->
   'y entry
-(** [find t leaves skeleton ~paths trace] is the program of the call whose
-    arguments' leaves are [leaves], in walk order, and skeleton [skeleton],
-    made by [trace forms] the first time [t] meets its key, [forms] the
+(** [find ~totals t leaves skeleton ~paths trace] is the program of the call
+    whose arguments' leaves are [leaves], in walk order, and skeleton
+    [skeleton], its totals' running values in placed as [totals] places them,
+    made by [trace forms totals] the first time [t] meets its key, [forms] the
     leaves' stand-ins. A key being made makes the other calls with that key
-    wait, but on the domain making it ({!Cache}); a [trace] that raises
-    installs nothing, and the next call with the key traces again. [paths ()]
-    names the leaves in reports. *)
+    wait, but on the domain making it ({!Cache}); a [trace] that raises installs
+    nothing, and the next call with the key traces again. [paths ()] names the
+    leaves in reports. *)

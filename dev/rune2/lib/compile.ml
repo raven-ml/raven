@@ -1509,17 +1509,17 @@ let over (V x) arrays =
     (Nx.Repr.of_shards f.placement
        (Iarray.of_array (Array.map (A.expect f.dtype) arrays)))
 
+(* [p] over [args], its arguments then its totals' running values in. *)
+let eval_all (p : Program.t) args =
+  let n = Array.length args - Array.length p.adds in
+  eval ~totals:(Array.sub args n (Array.length p.adds)) p (Array.sub args 0 n)
+
 (* [p] evaluated over the arrays of a consumer of [args]: the donors it claimed
    are dead, so the arrays of every argument stand for it, a donor beside
    its handle included. Each result is copied, since no value over the arrays
    may outlive the consumer. A value over an argument's memory shares it for
    good, so a later donation of that argument computes into fresh memory: the
    cost of this path. *)
-(* [p] over [args], its arguments then its totals' running values in. *)
-let eval_all (p : Program.t) args =
-  let n = Array.length args - Array.length p.adds in
-  eval ~totals:(Array.sub args n (Array.length p.adds)) p (Array.sub args 0 n)
-
 let evaluated p args arrays =
   let values = Array.mapi (fun k v -> over v (arrays k)) args in
   Array.map (fun (V y) -> V (Nx.copy y)) (eval_all p values)

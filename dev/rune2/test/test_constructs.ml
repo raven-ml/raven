@@ -192,7 +192,7 @@ type chained = {
   mode : mode;
 }
 
-and mode = Eager | Jitted | Forward | Reverse
+and mode = Eager | Jitted | Forward | Reverse | Mapped
 
 let pp_mode ppf m =
   Format.pp_print_string ppf
@@ -200,7 +200,8 @@ let pp_mode ppf m =
     | Eager -> "eagerly"
     | Jitted -> "under jit"
     | Forward -> "under jvp"
-    | Reverse -> "under grad")
+    | Reverse -> "under grad"
+    | Mapped -> "under vmap")
 
 let chained =
   let open Gen in
@@ -213,7 +214,7 @@ let chained =
      of_list [ Plain; Scan_in; Iterate_in; Remat_in; Custom_in; Jit_in ]
    in
    let* adds = array ~size:(constant 4) value
-   and+ mode = of_list [ Eager; Jitted; Forward; Reverse ] in
+   and+ mode = of_list [ Eager; Jitted; Forward; Reverse; Mapped ] in
    constant { zero; pre; rows; inner; trips; adds; mode })
   |> with_pp (fun ppf c ->
       let value ppf (x, placed) =
@@ -229,12 +230,13 @@ let law_chained c =
   cover "an inner construct" (c.inner <> Plain);
   cover "under a transformation" (c.mode <> Eager);
   let t = Total.make () in
-  (* A placed value is computed; one of every set is a formula. *)
+  (* A placed value is computed; one of every set is a formula. An addition
+     scales its value by the carry's sum, one, so that it has a tangent. *)
   let value (x, placed) =
     let s = Nx.scalar f32 x in
     if placed then Nx.place Nx.Host.on s else s
   in
-  let add k = Total.add t (value c.adds.(k)) in
+  let add k x = Total.add t (Nx.mul (Nx.sum x) (value c.adds.(k))) in
   let inner_ops carry =
     match c.inner with
     | Plain -> ()
@@ -242,8 +244,8 @@ let law_chained c =
         ignore
           (Rune.scan' ~init:carry
              ~f:(fun x _ ->
-               add 1;
-               add 2;
+               add 1 x;
+               add 2 x;
                (x, x))
              (Nx.zeros f32 [| c.trips; 1 |]))
     | Iterate_in ->
@@ -254,8 +256,8 @@ let law_chained c =
              ~until:(fun (_, k) ->
                Nx.greater_equal k (Nx.scalar f32 (Float.of_int c.trips)))
              ~f:(fun (x, k) ->
-               add 1;
-               add 2;
+               add 1 x;
+               add 2 x;
                (x, Nx.add k (Nx.scalar f32 1.)))
              (carry, Nx.scalar f32 0.))
     | Remat_in ->
@@ -263,24 +265,24 @@ let law_chained c =
           (Rune.remat
              Nx.Ptree.(tensor @-> returns tensor)
              (fun x ->
-               add 1;
-               add 2;
+               add 1 x;
+               add 2 x;
                x)
              carry)
     | Custom_in ->
         ignore
           (Rune.custom_jvp Nx.Ptree.tensor Nx.Ptree.tensor
              (fun x ->
-               add 1;
-               add 2;
+               add 1 x;
+               add 2 x;
                (x, Fun.id))
              carry)
     | Jit_in ->
         ignore
           (Rune.jit'
              (fun x ->
-               add 1;
-               add 2;
+               add 1 x;
+               add 2 x;
                x)
              carry)
   in
@@ -290,59 +292,99 @@ let law_chained c =
     | Scan_in | Iterate_in -> c.trips
     | Remat_in | Custom_in | Jit_in -> 1
   in
-  let collect f = snd (Total.collect t ~zero:(value c.zero) f) in
-  let expected =
-    collect (fun () ->
-        Total.add t (value c.pre);
-        for _ = 1 to c.rows do
-          add 0;
-          for _ = 1 to inner_trips do
-            add 1;
-            add 2
-          done;
-          add 3
-        done)
-  in
-  let scanned init =
-    fst
-      (Rune.scan' ~init
-         ~f:(fun x _ ->
-           add 0;
-           inner_ops x;
-           add 3;
-           (x, x))
-         (Nx.zeros f32 [| c.rows; 1 |]))
-  in
-  (* The scan's carry and the collect's total, the collect inside the
-     transformation. *)
-  let run x =
+  (* The carry and the collect's total, the collect inside the transformation:
+     the additions written out, or made in constructs. *)
+  let collected f x =
     let y, s =
       Total.collect t ~zero:(value c.zero) (fun () ->
           Total.add t (value c.pre);
-          scanned x)
+          f x)
     in
     (Nx.sum y, s)
   in
-  let init = v [| 1. |] in
-  let traced =
-    match c.mode with
-    | Eager -> snd (run init)
-    | Jitted ->
-        snd
-          (Rune.jit Nx.Ptree.(tensor @-> returns (pair tensor tensor)) run init)
-    | Forward ->
-        snd
-          (fst
-             (Rune.jvp Nx.Ptree.tensor
-                Nx.Ptree.(pair tensor tensor)
-                run init init))
-    | Reverse ->
-        let _, _, s =
-          Rune.value_and_grad_aux Nx.Ptree.tensor Nx.Ptree.tensor run init
-        in
-        s
+  let written =
+    collected (fun x ->
+        for _ = 1 to c.rows do
+          add 0 x;
+          for _ = 1 to inner_trips do
+            add 1 x;
+            add 2 x
+          done;
+          add 3 x
+        done;
+        x)
   in
-  equal bits_t (bits expected) (bits traced)
+  let run =
+    collected (fun init ->
+        fst
+          (Rune.scan' ~init
+             ~f:(fun x _ ->
+               add 0 x;
+               inner_ops x;
+               add 3 x;
+               (x, x))
+             (Nx.zeros f32 [| c.rows; 1 |])))
+  in
+  let init = v [| 1. |] and p = Nx.Ptree.(pair tensor tensor) in
+  let both (y, s) = (bits y, bits s) in
+  let pair = Testable.pair bits_t bits_t in
+  match c.mode with
+  | Eager -> equal pair (both (written init)) (both (run init))
+  | Jitted ->
+      equal pair
+        (both (written init))
+        (both (Rune.jit Nx.Ptree.(tensor @-> returns p) run init))
+  | Forward ->
+      (* The total's tangent too, a collect inside the differentiation receiving
+         the additions' tangents. *)
+      let jvp f = Rune.jvp Nx.Ptree.tensor p f init init in
+      equal pair (both (fst (jvp written))) (both (fst (jvp run)));
+      (* A loop's sums hold a tangent at every step once one has, a zero of
+         either sign where the additions written out give none. A custom rule's
+         additions are its primal's, which forward mode runs on the primals. *)
+      if c.inner <> Custom_in then
+        let l = lenient ~nan:false in
+        equal (Testable.pair l l)
+          (both (snd (jvp written)))
+          (both (snd (jvp run)))
+  | Reverse ->
+      let aux f =
+        let _, g, s =
+          Rune.value_and_grad_aux Nx.Ptree.tensor Nx.Ptree.tensor f init
+        in
+        (bits g, bits s)
+      in
+      equal pair (aux written) (aux run)
+  | Mapped ->
+      (* A collect inside the map: each lane's total. *)
+      let lanes = Nx.reshape [| 2; 1 |] (v [| 1.; 2. |]) in
+      let map f = Rune.vmap Nx.Ptree.(tensor @-> returns p) f lanes in
+      equal pair (both (map written)) (both (map run))
+
+(* A jit called again under a collect whose running value lies elsewhere than at
+   its first call chains its additions as eagerly: the program takes the running
+   value where the call finds it. *)
+let test_jit_running () =
+  let t = Total.make () in
+  let g =
+    Rune.jit' (fun x ->
+        Total.add t (Nx.scalar f32 12.);
+        Total.add t (Nx.place Nx.Host.on (Nx.scalar f32 12.));
+        x)
+  in
+  let x = v [| 1. |] in
+  let total f =
+    snd
+      (Total.collect t ~zero:(Nx.scalar f32 1e8) (fun () ->
+           f ();
+           f ()))
+  in
+  let twelve () = Nx.scalar f32 12. in
+  let eager () =
+    Total.add t (twelve ());
+    Total.add t (Nx.place Nx.Host.on (twelve ()))
+  in
+  equal bits_t (bits (total eager)) (bits (total (fun () -> ignore (g x))))
 
 let () =
   exit
@@ -361,5 +403,6 @@ let () =
              test "an exception passes through collect" test_raises;
              test "a jit adds once per call" test_jit_scope;
              prop "additions chain wherever they are made" chained law_chained;
+             test "a jit takes the running value where it lies" test_jit_running;
            ];
        ])
