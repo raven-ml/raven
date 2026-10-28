@@ -8,7 +8,7 @@
    operation, real and complex. *)
 
 open Windtrap
-open Compose
+open Operand
 module D = Nx.Dtype
 module L = Nx_array.Layout
 module P = Nx_kernel.Prog
@@ -27,10 +27,17 @@ let v xs = Nx.create f64 [| Array.length xs |] xs
 
 (* Operands *)
 
-(* Values a case draws: uniform in a range per row of axis 0, or spaced apart,
-   [lo + (j + 0.3) step] in a random order, so that no step of the differences
-   crosses a kink. *)
-type values = Uniform of (float * float) list | Spaced of float * float
+(* Values a case draws: uniform in a range per row of axis 0; spaced apart, [lo
+   + (j + 0.3) step] in a random order, so that no step of the differences
+   crosses a kink; uniform in a range with one element in three an exact zero of
+   either sign; or kinks: ties and zeros of both signs, drawn from six dyadic
+   values so that operands meet them together and products and sums of them
+   round exactly. *)
+type values =
+  | Uniform of (float * float) list
+  | Spaced of float * float
+  | Zeros of float * float
+  | Kinks
 
 type case = {
   name : string;
@@ -74,6 +81,10 @@ let draw values s =
           Array.of_list
             (List.map (fun j -> lo +. ((Float.of_int j +. 0.3) *. step)) p))
         (permutation (List.init n Fun.id))
+  | Zeros (lo, hi) ->
+      array ~size:(constant n)
+        (frequency [ (1, of_list [ 0.; -0. ]); (2, float_range lo hi) ])
+  | Kinks -> array ~size:(constant n) (of_list [ 0.; -0.; 1.; -1.; 2.; 0.5 ])
   | Uniform ranges ->
       let k = List.length ranges in
       let per = if Array.length s = 0 then n else n / Int.max 1 s.(0) in
@@ -328,6 +339,13 @@ let contract_cases =
           ~batch:[| (0, 1) |]
           ~contracting:[| (2, 0) |]
           ());
+    case ~empty:false ~shape:(Gen.constant [| 24 |])
+      "a contraction of two batch pairs" (fun x ->
+        Nx.reshape [| -1 |]
+          (contract_of x ~a:[| 2; 2; 3 |] ~b:[| 2; 3; 2 |]
+             ~batch:[| (0, 0); (1, 2) |]
+             ~contracting:[| (2, 1) |]
+             ()));
   ]
 
 let real_cases =
@@ -415,6 +433,12 @@ let real_cases =
         Nx.stack [ m; var ]);
     case ~shape:matrix "cumsum" (Nx.cumsum ~axis:1);
     case ~shape:matrix "cumprod" (Nx.cumprod ~axis:1);
+    case ~shape:matrix
+      ~values:(Zeros (-2., 2.))
+      "prod through exact zeros" (Nx.prod ~axes:[ 1 ]);
+    case ~shape:matrix
+      ~values:(Zeros (-2., 2.))
+      "cumprod through exact zeros" (Nx.cumprod ~axis:1);
     case ~shape:matrix ~values:spaced "cummax" (Nx.cummax ~axis:1);
     case ~shape:matrix ~values:spaced "cummin" (Nx.cummin ~axis:0);
     case ~shape:matrix "logcumsumexp" (Nx.logcumsumexp ~axis:1);
@@ -481,6 +505,16 @@ let real_cases =
         Nx.concatenate ~axis:0 [ row 1 x; Nx.sin (row 0 x); row 1 x ]);
     case ~shape:cube "matmul" (fun x ->
         Nx.matmul (Nx.transpose (row 0 x)) (row 1 x));
+    case
+      ~shape:
+        Gen.(
+          map
+            (fun (m, n) -> [| 2; 2; m; n |])
+            (pair (int_range 0 2) (int_range 0 3)))
+      "matmul whose leading axes broadcast"
+      (fun x ->
+        let a = Nx.reshape [| 2; 1; Nx.dim 2 x; Nx.dim 3 x |] (row 0 x) in
+        Nx.matmul a (Nx.matrix_transpose (row 1 x)));
     case ~shape:cube "contract from an init" (fun x ->
         let a = Nx.transpose (row 0 x) and b = row 1 x in
         let n = Nx.dim 1 b in
@@ -640,6 +674,14 @@ let factor_cases =
             Nx.solve_triangular ~triangle:Upper ~unit_diag:true x (rhs x);
             Nx.solve_triangular ~unit_diag:true ~transpose:Transpose x (rhs x);
           ]);
+    m "batched solve_triangular against broadcast columns and a batched vector"
+      batched (fun x ->
+        let a = spaced (Nx.tril x) in
+        flat
+          [
+            Nx.solve_triangular a (Nx.unsqueeze ~axes:[ 0 ] (rhs (row 0 x)));
+            Nx.solve_triangular a (Nx.sin (Nx.sum ~axes:[ 2 ] x));
+          ]);
     m "solve" square (fun x -> Nx.solve (spaced x) (rhs x));
     m "inv" square (fun x -> Nx.inv (spaced x));
     m "det" square (fun x -> Nx.det (spaced x));
@@ -675,6 +717,15 @@ let complex_factor_cases =
   let rhs z = Nx.reshape [| Nx.dim 0 z; 1 |] (Nx.sin (Nx.sum ~axes:[ 1 ] z)) in
   [
     m "complex cholesky" zsq (fun z -> Nx.cholesky (positive z));
+    m "complex cholesky beside an upper triangle and an imaginary diagonal" zsq
+      (fun z ->
+        let n = Nx.dim 0 z in
+        let eye = Nx.cast c128 (Nx.eye f64 n) in
+        let im =
+          Nx.complex c128 ~re:(Nx.zeros f64 [| n; n |]) ~im:(Nx.imag f64 z)
+        in
+        let unread = Nx.add (Nx.triu ~k:1 z) (Nx.mul eye im) in
+        Nx.cholesky (Nx.add (positive z) unread));
     m "complex cholesky of the upper triangle" zsq (fun z ->
         Nx.cholesky ~triangle:Upper (Nx.add (positive z) (Nx.tril ~k:(-1) z)));
     m "complex eig" zsq (fun z ->
@@ -809,6 +860,17 @@ let complex_cases =
       ~shape:Gen.(map (fun n -> [| 2; n + 1 |]) (int_range 0 4))
       "irfft"
       (fun x -> Nx.irfft f64 (complex x));
+    case ~empty:false
+      ~shape:Gen.(map (fun m -> [| 2; m + 1 |]) (int_range 0 2))
+      "irfft at odd and resized lengths"
+      (fun x ->
+        let z = complex x and m = Nx.dim 1 x in
+        flat
+          [
+            Nx.irfft f64 ~s:[ (2 * m) - 1 ] z;
+            Nx.irfft f64 ~s:[ m + 3 ] z;
+            Nx.irfft f64 ~s:[ 1 ] z;
+          ]);
     (let f z =
        Nx.concatenate ~axis:0 [ Nx.sum ~keepdims:true z; Nx.cumprod z ]
      in

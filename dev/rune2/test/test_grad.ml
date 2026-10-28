@@ -11,7 +11,7 @@
 
 open Windtrap
 open Compose
-open Cases
+open Rune2_support.Cases
 module Rune = Rune2
 
 (* A cotangent in [-1, 1] for [n] elements, spread from [seed]. *)

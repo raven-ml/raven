@@ -2,4 +2,12 @@
 
 (library
  (name lowered)
+ (modules lowered)
  (libraries nx nx_array nx_kernel rune2 rig tolk tolk.engine))
+
+; The generators, references and witnesses rune2's suites share.
+
+(library
+ (name rune2_support)
+ (modules operand expr witness cases memory)
+ (libraries nx nx_array nx_kernel nx_support rig rune2 windtrap))

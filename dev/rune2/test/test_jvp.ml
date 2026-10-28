@@ -10,7 +10,7 @@
 
 open Windtrap
 open Compose
-open Cases
+open Rune2_support.Cases
 module Rune = Rune2
 
 let h = 1e-6
