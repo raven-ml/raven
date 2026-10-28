@@ -407,6 +407,11 @@ let rnn_params horizon =
     xs = List.init horizon (fun _ -> draw [| 32; 32 |]);
   }
 
+(* [y] once the work that computes each of its arrays is done. *)
+let synced_all s y =
+  Nx.Ptree.fold s (fun _ x () -> Nx.sync x) y ();
+  y
+
 let compiled_rows () =
   let state k = normal k [| 64 |] in
   let s = { lx = state 13; ly = state 14; lz = state 15 } in
@@ -419,9 +424,15 @@ let compiled_rows () =
     let p = rnn_params horizon in
     warm name (fun () -> f ()) (fun g -> g p)
   in
-  let fwd () = Rune.jit Nx.Ptree.(rnn_t @-> returns tensor) rnn_forward in
+  let fwd () =
+    let g = Rune.jit Nx.Ptree.(rnn_t @-> returns tensor) rnn_forward in
+    fun p -> synced (g p)
+  in
   let grad () =
-    Rune.jit Nx.Ptree.(rnn_t @-> returns rnn_t) (Rune.grad rnn_t rnn_forward)
+    let g =
+      Rune.jit Nx.Ptree.(rnn_t @-> returns rnn_t) (Rune.grad rnn_t rnn_forward)
+    in
+    fun p -> synced_all rnn_t (g p)
   in
   let x = host (Nx.Rng.uniform ~key:(Nx.Rng.key 16) f32 [| 4096 |]) in
   let h = Rune.jit' (fun x -> Nx.mul (Nx.sin x) x) in
@@ -501,7 +512,7 @@ let train_rows () =
         state)
       (fun state ->
         let l, s = step x y (Nx.Ptree.donate adam !state) in
-        state := s;
+        state := synced_all adam s;
         synced l);
   ]
 
