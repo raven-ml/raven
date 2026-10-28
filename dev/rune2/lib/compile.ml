@@ -525,7 +525,7 @@ let identity st form =
    enclosing program's nodes, so each part of the body that reads none of the
    trip's parameters is computed once, before the loop ({!Loop.cut}). On trip
    [i] the body reads row [i] of each stacked input and writes row [i] of each
-   stacked output, rows lying 16 bytes of memory apart, as the body's vector
+   stacked output, row [n - 1 - i] where the scan is reversed, rows lying 16 bytes of memory apart, as the body's vector
    accesses require. Each carry, and each sum of the step's additions, is one
    buffer that each trip updates in place, once every kernel that reads it
    ran, as the schedule orders them: a next carry that reads the carry
@@ -780,7 +780,7 @@ and switch st cs env c (s : Program.switch) =
       (Array.concat [ Array.sub out 0 nr; sums; [| no |] ], [||])
     in
     let carried, _ =
-      repeat st cs ~n:1 ~hoist:false
+      repeat st cs ~n:1 ~reverse:false ~hoist:false
         ~stop:(Some (nr + ns))
         ~bound:(Loops.pick read caps)
         (Array.append carried [| taken |])
@@ -795,11 +795,10 @@ and switch st cs env c (s : Program.switch) =
 
 and loop st cs env c =
   match c with
-  | Scan { trips = Some _; _ } | Scan { reverse = true; _ } ->
-      decline "a scan that runs some of its rows, or reversed"
+  | Scan { trips = Some _; _ } -> decline "a scan that runs some of its rows"
   | Iterate { rows = Some _; _ } | Iterate { stopped = Some _; _ } ->
       decline "an iterate that stacks its steps, or whose lanes stop apart"
-  | Scan { step; length = n; init; xs; captures; seeds; _ } ->
+  | Scan { step; length = n; reverse; init; xs; captures; seeds; _ } ->
       let forms = Program.forms c in
       let nc = Array.length init and na = Array.length step.adds in
       let ny = Array.length step.outputs - nc - na in
@@ -838,7 +837,7 @@ and loop st cs env c =
             (Array.append (Array.sub out 0 nc) sums, Array.sub out nc ny)
           in
           let carried, ys =
-            repeat st cs ~n ~hoist:true ~stop:None ~bound:[||]
+            repeat st cs ~n ~reverse ~hoist:true ~stop:None ~bound:[||]
               (Array.append inits starts)
               (Array.map (fun (V x) -> node st env x) xs)
               trip
@@ -894,7 +893,7 @@ and loop st cs env c =
             (Array.concat [ carry; sums; [| go |] ], [||])
           in
           fst
-            (repeat st cs ~n:max ~hoist:true
+            (repeat st cs ~n:max ~reverse:false ~hoist:true
                ~stop:(Some (nc + ns))
                ~bound:[||]
                (Array.concat [ inits; sums; [| go |] ])
@@ -942,20 +941,21 @@ and outputs st cs ~reach env args =
   program st cs env;
   Array.map (fun (V y) -> node st env y) env.p.outputs
 
-(* [repeat st cs ~n ~hoist ~stop ~bound inits xs trip] is the values [n] trips
-   of [trip] reach from [inits], and the outputs each trip stacks, computed on
-   the program's device: [trip checks carried rows] maps the carried values
-   and a row of each of [xs], stacked inputs of [n] rows, then each of
-   [bound], to the next carried values and a trip's outputs, making its checks
-   in [checks], and is applied once, to parameters of the call that a range of
-   [n] trips runs. Where [hoist] holds, the parts of the trip that read no
-   parameter are computed once before the loop ({!Loop.cut}); otherwise they
-   stay in the call, which a flag may skip. A value of [bound] is a parameter
-   of the call, so that the trip's work on it stays there too. The checks are
-   carried too, and become the loop's in [cs]. Where [stop] is [Some k], the
-   carried value [k] is one boolean, whether to run on, which the engine reads
-   before each trip. *)
-and repeat st cs ~n ~hoist ~stop ~bound inits xs trip =
+(* [repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip] is the values
+   [n] trips of [trip] reach from [inits], and the outputs each trip stacks,
+   computed on the program's device: [trip checks carried rows] maps the
+   carried values and a row of each of [xs], stacked inputs of [n] rows, then
+   each of [bound], to the next carried values and a trip's outputs, making its
+   checks in [checks], and is applied once, to parameters of the call that a
+   range of [n] trips runs. Trip [i] reads and writes row [i], or row
+   [n - 1 - i] where [reverse] holds. Where [hoist] holds, the parts of the
+   trip that read no parameter are computed once before the loop
+   ({!Loop.cut}); otherwise they stay in the call, which a flag may skip. A
+   value of [bound] is a parameter of the call, so that the trip's work on it
+   stays there too. The checks are carried too, and become the loop's in
+   [cs]. Where [stop] is [Some k], the carried value [k] is one boolean,
+   whether to run on, which the engine reads before each trip. *)
+and repeat st cs ~n ~reverse ~hoist ~stop ~bound inits xs trip =
   let device = st.device in
   let count = ref 0 in
   let next () =
@@ -976,6 +976,8 @@ and repeat st cs ~n ~hoist ~stop ~bound inits xs trip =
     p
   in
   let range = Ops.range ~axis_type:Loop (Ops.Int n) [ Ops.unique_num () ] in
+  let last = n - 1 in
+  let row_at = if reverse then Ops.O.(int last - range) else range in
   let on_device u =
     if Option.is_none (Ops.device u) then Ops.copy_to_device u device else u
   in
@@ -1022,7 +1024,7 @@ and repeat st cs ~n ~hoist ~stop ~bound inits xs trip =
                    [ None; Some (Ops.Int 0, Ops.Int (k - m)) ])
                 [ Ops.Int (n * k) ]
           in
-          let w = window (Ops.contiguous flat) Ops.O.(range * int k) m in
+          let w = window (Ops.contiguous flat) Ops.O.(row_at * int k) m in
           let slot = next () in
           let p = hold slot (Tolk.Call.param_like w (unique ())) in
           pass slot w;
@@ -1151,7 +1153,7 @@ and repeat st cs ~n ~hoist ~stop ~bound inits xs trip =
         else
           let k = stride u m in
           let b = Ops.new_buffer device (n * k) (Ops.dtype u) in
-          let w = window b Ops.O.(range * int k) m in
+          let w = window b Ops.O.(row_at * int k) m in
           let slot = next () in
           let p = hold slot (Tolk.Call.param_like w (unique ())) in
           pass slot w;

@@ -929,10 +929,10 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     step raises, once the call returns, the first failure of the first step
     that fails, as the steps written out would, and an {!iterate} stops at the
     first failure. A loop a derivative or a map makes of an {!iterate} is
-    evaluated: one that runs a count of its rows, reversed, stacks its steps or
-    holds lanes apart. A {!switch} compiles as one loop per branch of at most
-    one trip, which runs where the index names its branch, so a branch not
-    taken computes nothing. A {!remat}, a {!custom_jvp}, a {!custom_vjp} and a
+    evaluated: one that runs a count of its rows, stacks its steps or holds
+    lanes apart. A {!switch} compiles as one loop per branch of at most one
+    trip, which runs where the index names its branch, so a branch not taken
+    computes nothing. A {!remat}, a {!custom_jvp}, a {!custom_vjp} and a
     {!custom_transpose} compile as their function's operations, the program's
     own.
 

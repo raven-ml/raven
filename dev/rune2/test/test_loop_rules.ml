@@ -215,14 +215,15 @@ let exactly (Case c) =
   let x e = elementwise (exact e) in
   Case { c with g = x c.g; k = x c.k; h = x c.h; at = Array.make 7 (Dev 0) }
 
-(* [f ()], covering that its compiled calls compiled: their leaves are placed
-   on one device, so that only a program with a result of every set, a
-   constant, is evaluated. *)
-let compiled f =
+(* [f ()], covering that its compiled calls of a loop of [rows] rows compiled
+   where it has some: their leaves are placed on one device, so that only a
+   program with a result of every set, a constant, is evaluated. *)
+let compiled ~rows f =
   let before = Rune.evaluations () in
   let r = f () in
-  cover "the compiled calls compiled"
-    ((match r with Raised _ -> false | _ -> true)
+  cover "the compiled calls of rows compiled"
+    (rows > 0
+    && (match r with Raised _ -> false | _ -> true)
     && Rune.evaluations () = before);
   r
 
@@ -277,7 +278,7 @@ let law_jvp' ~jit (Case c as case) =
     in
     let t0, (tx, tw) = t in
     equal ~msg:"jit of jvp" tt expected
-      (compiled (fun () -> outcome (fun () -> both (staged c0 xs w t0 tx tw))));
+      (compiled ~rows:c.n (fun () -> outcome (fun () -> both (staged c0 xs w t0 tx tw))));
     let jitted =
       Rune.jit
         T.(
@@ -286,7 +287,7 @@ let law_jvp' ~jit (Case c as case) =
         (fun c0 xs w -> scanned (c0, (xs, w)))
     in
     equal ~msg:"jvp of jit" tt expected
-      (compiled (fun () ->
+      (compiled ~rows:c.n (fun () ->
            outcome (fun () ->
                both
                  (Rune.jvp (triple ()) (triple ())
@@ -328,7 +329,7 @@ let law_grad' ~jit (Case c as case) =
         (fun c0 xs w -> Rune.grad (triple ()) (objective scanned) (c0, (xs, w)))
     in
     equal ~msg:"jit of grad" tt expected
-      (compiled (fun () -> outcome (fun () -> bits3 (staged c0 xs w))));
+      (compiled ~rows:c.n (fun () -> outcome (fun () -> bits3 (staged c0 xs w))));
     let jitted =
       Rune.jit
         T.(
@@ -337,7 +338,7 @@ let law_grad' ~jit (Case c as case) =
         (fun c0 xs w -> scanned (c0, (xs, w)))
     in
     equal ~msg:"grad of jit" tt expected
-      (compiled (fun () -> grad (fun (a, (b, c)) -> jitted a b c)))
+      (compiled ~rows:c.n (fun () -> grad (fun (a, (b, c)) -> jitted a b c)))
   end
 
 let law_grad case =
@@ -423,11 +424,11 @@ let law_vmap' ~jit ((Case c as case), (m, lanes)) =
     (outcome (fun () -> bits (Rune.vmap' (at scanned) batch)));
   if jit then begin
     equal ~msg:"jit of vmap" tt expected
-      (compiled (fun () ->
+      (compiled ~rows:c.n (fun () ->
            outcome (fun () ->
                bits (Rune.jit' (Rune.vmap' (at scanned)) batch))));
     equal ~msg:"vmap of jit" tt expected
-      (compiled (fun () ->
+      (compiled ~rows:c.n (fun () ->
            outcome (fun () ->
                bits (Rune.vmap' (Rune.jit' (at scanned)) batch))))
   end
