@@ -48,6 +48,8 @@ let magnitude x =
 
 let is_nan x = Ops.ne x x
 
+(* Sets the [e] exponent bits and the quiet bit, the fraction's top bit. These
+   are [e + 1] ones shifted left past the [m - 1] fraction bits below. *)
 let nan x =
   let e, m = Dtype.finfo (Ops.dtype x) in
   let ones = Bigint.pred (Bigint.shift_left Bigint.one (e + 1)) in
