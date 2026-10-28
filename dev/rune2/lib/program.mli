@@ -377,10 +377,6 @@ val axes : site -> axis list
 (** [axes s] is the maps that [s]'s program or a program it carries names
     through [Lanes] or [Lane_index], in the order first named. *)
 
-val iterates : site -> bool
-(** [iterates s] is [true] iff [s]'s program or a program it carries holds an
-    [Iterate]. *)
-
 val customs : site -> bool
 (** [customs s] is [true] iff [s]'s program or a program it carries holds a
     custom rule or a linear call, the constructs whose derivatives depend on

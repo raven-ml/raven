@@ -251,7 +251,6 @@ and site = {
   compile : t -> form array -> value array -> value array;
   compiled : (value array -> value array) option;
   axes : axis list;
-  iterates : bool;
   customs : bool;
   table : derived Table.t;
 }
@@ -323,7 +322,6 @@ let rec holds pred (p : t) =
       | Do { c; _ } -> pred c || List.exists (holds pred) (carried c))
     p.eqns
 
-let iterate = function Iterate _ -> true | _ -> false
 let custom = function Custom _ | Linear _ -> true | _ -> false
 
 (* A site of [body] with the compiling of [s], no compiled form and no derived
@@ -333,7 +331,6 @@ let bare s body =
     s with
     compiled = None;
     axes = named body;
-    iterates = holds iterate body;
     customs = holds custom body;
     table = Table.create ();
   }
@@ -344,13 +341,11 @@ let site ~name ~compile p forms =
     compile;
     compiled = Some (compile p forms);
     axes = named p;
-    iterates = holds iterate p;
     customs = holds custom p;
     table = Table.create ();
   }
 
 let axes s = s.axes
-let iterates s = s.iterates
 let customs s = s.customs
 let made = Domain.DLS.new_key (fun () -> ref 0)
 let derivations () = !(Domain.DLS.get made)
@@ -922,7 +917,6 @@ and evaluated ~name body =
     compile;
     compiled = None;
     axes = named body;
-    iterates = holds (function Iterate _ -> true | _ -> false) body;
     customs = holds custom body;
     table = Table.create ();
   }
