@@ -2661,13 +2661,27 @@ let on_diagonal ~by dt n m k piece =
   let flat = assemble ~by dt [| n * m |] (D.zero dt) [ ([| along |], piece) ] in
   move ~by (Reshape [| n; m |]) flat
 
-(* One where the column less the row is [k], zero elsewhere: a creation, so
-   each device of [p] computes its window. *)
+(* One where the column less the row is [k], zero elsewhere. Where [p] cuts no
+   axis, the diagonal's ones, made at [p], are written onto zeros there by one
+   assembly. Where [p] cuts an axis, each device computes its window from the
+   coordinates, since the ones' vector cannot lie at a cut of two axes, and
+   the flat's reshape to [n; m] keeps a cut only where the tiles divide both
+   extents. *)
 let eye_by ~by ?m ?(k = 0) p dt n =
   let m = Option.value m ~default:n in
-  let on = E.(coord 1 - coord 0 = i64 k) in
-  let out = E.where on (E.const dt (D.one dt)) (E.const dt (D.zero dt)) in
-  leaf ~by p dt [| n; m |] out
+  if Grid.is_cut (Devices.grid p) then
+    let on = E.(coord 1 - coord 0 = i64 k) in
+    let out = E.where on (E.const dt (D.one dt)) (E.const dt (D.zero dt)) in
+    leaf ~by p dt [| n; m |] out
+  else begin
+    (* The shape is checked first, so that a refused one allocates nothing. *)
+    ignore (contiguous ~by [| n; m |]);
+    let count =
+      Stdlib.max 0
+        (if k >= 0 then Stdlib.min n (m - k) else Stdlib.min (n + k) m)
+    in
+    on_diagonal ~by dt n m k (fill ~by p dt [| count |] (D.one dt))
+  end
 
 let eye ?m ?k dt n = eye_by ~by:"Nx.eye" ?m ?k Host.on dt n
 let eye_at ?m ?k p dt n = eye_by ~by:"Nx.eye_at" ?m ?k p dt n

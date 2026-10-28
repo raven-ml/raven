@@ -438,6 +438,26 @@ let law_eye (D.Any dt, (n, (m, k))) =
          if (j mod m) - (j / m) = k then D.one dt else D.zero dt))
     x
 
+(* Whole on both devices, on one, and split along each axis. *)
+let eye_placements =
+  [ S2.on; Nx.Placement.device S2.v (m 1); S2.split ~axis:0; S2.split ~axis:1 ]
+
+(* [eye_at] at each placement lies there and holds the host value's elements,
+   where a split cuts an odd extent and where the diagonal leaves the matrix
+   too. *)
+let law_eye_at (D.Any dt, (n, (m, k))) =
+  let host = Array.to_list (Nx.to_array (Nx.eye ~m ~k dt n)) in
+  cover "no element" (n * m = 0);
+  cover "off the matrix" (k >= m || -k >= n);
+  cover "an odd extent" (n mod 2 = 1 || m mod 2 = 1);
+  List.iter
+    (fun p ->
+      let y = Nx.eye_at ~m ~k p dt n in
+      let msg = Format.asprintf "%a" Nx.Placement.pp p in
+      equal ~msg (placement ()) p (Nx.placement y);
+      equal ~msg (elements dt) host (Array.to_list (Nx.to_array y)))
+    eye_placements
+
 let eye =
   group "eye"
     [
@@ -446,6 +466,11 @@ let eye =
            (Gen.pair (Gen.int_range 0 4)
               (Gen.pair (Gen.int_range 0 4) (Gen.int_range (-5) 5))))
         law_eye;
+      prop "eye_at holds eye's elements wherever it lies"
+        (Gen.pair dtype
+           (Gen.pair (Gen.int_range 0 5)
+              (Gen.pair (Gen.int_range 0 5) (Gen.int_range (-7) 7))))
+        law_eye_at;
       test "eye defaults to the square main diagonal" (fun () ->
           equal (array int32) [| 1l; 0l; 0l; 1l |]
             (Nx.to_array (Nx.eye Nx.int32 2)));
