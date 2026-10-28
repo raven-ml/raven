@@ -920,36 +920,6 @@ let law_reduced (Reduced_case (k, s, data, w, axes, r)) =
     in
     equal string want (printed (reduce_at w k.rshow r axes x))
 
-(* nx.cpu, counting its loop positions, over three memory devices. *)
-module Count3 = (val Nx.devices ~kernels:(module C) [ m 0; m 1; m 2 ])
-
-(* The loop positions [f] computes over [x] split along [axis] over three
-   devices, after [x] is placed. *)
-let positions axis f x =
-  let x = Nx.place (Count3.split ~axis) (Nx.Repr.of_array Nx.Host.v x) in
-  C.reset ();
-  let y = f x in
-  let n = C.positions () in
-  ignore (elements y);
-  n
-
-let test_partials_move () =
-  (* 240 terms over three devices, 4 outputs: each device reduces its window
-     of the terms, then the three partials per output it receives. Reading
-     the operand whole, each would reduce all 240 terms. *)
-  let ints s = A.of_array D.Int32 s (Array.init 240 Int32.of_int) in
-  let floats s = A.of_array D.Float32 s (Array.init 240 Float.of_int) in
-  let fewer what got = less int ~msg:what ~than:(2 * 240) got in
-  let rows : int iarray = [| 60; 4 |]
-  and columns : int iarray = [| 4; 60 |] in
-  fewer "an integer sum"
-    (positions 0 (fun x -> Nx.sum ~axes:[ 0 ] x) (ints rows));
-  fewer "a maximum" (positions 0 (fun x -> Nx.max ~axes:[ 0 ] x) (floats rows));
-  fewer "positions"
-    (positions 1 (fun x -> Nx.argmax ~axis:1 x) (floats columns));
-  fewer "a reduction of every axis"
-    (positions 1 (fun x -> Nx.min x) (ints columns))
-
 (* The minor words a float32 sum along an axis cut across three devices
    allocates: each device's partial, their stack, its move, the reduction
    of it, and the move of the parts to the result. It counts 12,108 words
@@ -1194,42 +1164,6 @@ let law_lanes c =
   cover "a signalling NaN term" (signals dt data);
   let x = signalling dt c.lshape data in
   float_law show c.lwhere c.lr c.laxes x
-
-(* nx.cpu, counting its loop positions, over four memory devices. *)
-module Count4 = (val Nx.devices ~kernels:(module C) [ m 0; m 1; m 2; m 3 ])
-
-let test_float_partials_move () =
-  (* Read whole, each of four devices would compute every term: [4 n] positions.
-     Cut, each reduces its window once, two passes for a logsumexp or a
-     variance, then the four partials per output it receives. *)
-  let counted (type v s) (x : (v, s) A.t) f =
-    let x = Nx.place (Count4.split ~axis:0) (Nx.Repr.of_array Nx.Host.v x) in
-    C.reset ();
-    let y = f x in
-    let n = C.positions () in
-    ignore (elements y);
-    n
-  in
-  let floats dt n =
-    A.of_array dt [| n |] (Array.init n (fun i -> Float.of_int (i mod 7) /. 7.))
-  in
-  let complexes n =
-    A.of_array D.Complex64 [| n |]
-      (Array.init n (fun i -> { Complex.re = Float.of_int (i mod 5); im = 1. }))
-  in
-  let under what n limit got =
-    less int ~msg:(Printf.sprintf "%s of %d terms" what n) ~than:limit got
-  in
-  List.iter
-    (fun n ->
-      under "a sum" n (2 * n) (counted (floats D.Float32 n) Nx.sum);
-      under "a product" n (2 * n) (counted (floats D.Float64 n) Nx.prod);
-      under "a float16 mean" n (2 * n) (counted (floats D.Float16 n) Nx.mean);
-      (* A complex sum reduces each part as a float. *)
-      under "a complex sum" n (3 * n) (counted (complexes n) Nx.sum);
-      under "a logsumexp" n (4 * n) (counted (floats D.Float32 n) Nx.logsumexp))
-    [ 8192; 6000 ];
-  under "a variance" 8192 (4 * 8192) (counted (floats D.Float32 8192) Nx.var)
 
 (* Contractions over cut axes *)
 
@@ -1971,33 +1905,6 @@ let law_nx_case c =
       bounded f ~complex:(D.is D.Complex k.cdtype) ~rows:c.nrows ~cols ~k:c.k
         (elements a) (elements b) None got
 
-let test_contractions_move () =
-  (* Read whole, each of four devices would contract all of the [k] terms of
-     each output: [4 m n k] products. Cut, each contracts its own window of
-     them, and only sums move. *)
-  let counted m n k =
-    let floats s =
-      A.of_array D.Float32 (Iarray.of_array s)
-        (Array.init (Array.fold_left ( * ) 1 s) (fun i ->
-             Float.of_int (i mod 7) /. 7.))
-    in
-    let place axis x =
-      Nx.place (Count4.split ~axis) (Nx.Repr.of_array Nx.Host.v x)
-    in
-    let a = place 1 (floats [| m; k |]) and b = place 0 (floats [| k; n |]) in
-    C.reset ();
-    let y = Nx.matmul a b in
-    let got = C.products () in
-    ignore (elements y);
-    less int
-      ~msg:(Printf.sprintf "%d x %d by %d" m n k)
-      ~than:(2 * m * n * k) got
-  in
-  counted 8 8 4096;
-  counted 2 2 4096;
-  counted 2 2 6000;
-  counted 8 8 6000
-
 (* A float32 contraction over two pairs, each cut over one axis of a 2 x 2
    mesh, so that each device holds one product. Its four sums, stacked in
    C order of the tiles' first indices, are [1e7; -1e7; 0.1; 0]: nx.cpu
@@ -2253,37 +2160,6 @@ let law_scans c =
       (printed (scan_bits k.rshow c.sr c.saxis x))
       (printed (scan_at c.swhere k.rshow c.sr c.saxis x))
 
-let test_scans_move () =
-  (* Read whole, each of four devices would scan every term: [4 n] positions.
-     Cut, each device scans its window, then each but the first combines its
-     scan with the totals' scan before it, a map of its window. *)
-  let counted (type v s) (x : (v, s) A.t) f =
-    let x = Nx.place (Count4.split ~axis:0) (Nx.Repr.of_array Nx.Host.v x) in
-    C.reset ();
-    let y = f x in
-    let n = C.positions () in
-    ignore (elements y);
-    n
-  in
-  let under what n limit got =
-    less int ~msg:(Printf.sprintf "%s of %d terms" what n) ~than:limit got
-  in
-  List.iter
-    (fun n ->
-      let ints = A.of_array D.Int32 [| n |] (Array.init n Int32.of_int) in
-      let floats dt =
-        A.of_array dt [| n |]
-          (Array.init n (fun i -> Float.of_int (i mod 7) /. 7.))
-      in
-      under "an integer cumsum" n (2 * n) (counted ints (Nx.cumsum ~axis:0));
-      under "a float cummax" n (2 * n)
-        (counted (floats D.Float32) (Nx.cummax ~axis:0));
-      under "a float cumsum" n (3 * n)
-        (counted (floats D.Float32) (Nx.cumsum ~axis:0));
-      under "a float16 cumprod" n (4 * n)
-        (counted (floats D.Float16) (Nx.cumprod ~axis:0)))
-    [ 16384; 9001 ]
-
 (* A float32 cumsum along an axis cut across devices keeps the bound of a
    sum of each result's terms, as on one device: the result of terms [0]
    to [i] within [γ(i) Σ|x|] of their exact sum, then its rounding. The
@@ -2370,6 +2246,151 @@ let law_shifted (c, n, w, seed) =
   let msg = Printf.sprintf "%h against %h" got v in
   at_most ~msg float_exact ~than:(bound +. slack) (Float.abs (got -. v))
 
+(* Traffic *)
+
+(* nx.cpu, counting its loop positions and products, over three and four memory
+   devices. *)
+module Count3 = (val Nx.devices ~kernels:(module C) [ m 0; m 1; m 2 ])
+module Count4 = (val Nx.devices ~kernels:(module C) [ m 0; m 1; m 2; m 3 ])
+
+(* What a case counts. *)
+type traffic = Positions | Products
+
+(* A fold over an axis cut across devices, and the most it may compute, below
+   what reading its operands whole on each device would: [setup ()] places the
+   operands, the thunk it gives computes the fold, and the one that gives reads
+   the result. *)
+type moved = {
+  name : string;
+  traffic : traffic;
+  under : int;
+  setup : unit -> unit -> unit -> unit;
+}
+
+(* [f] over [x] at [p]. *)
+let folded name ~under p x f =
+  let setup () =
+    let x = Nx.place p (Nx.Repr.of_array Nx.Host.v x) in
+    fun () ->
+      let y = f x in
+      fun () -> ignore (elements y)
+  in
+  { name; traffic = Positions; under; setup }
+
+let ramp dt n =
+  A.of_array dt [| n |] (Array.init n (fun i -> Float.of_int (i mod 7) /. 7.))
+
+let moved =
+  let on3 axis = Count3.split ~axis and on4 = Count4.split ~axis:0 in
+  (* 240 terms over three devices, 4 outputs: each device reduces its window of
+     the terms, then the three partials per output it receives. Reading the
+     operand whole, each would reduce all 240 terms. *)
+  let ints s = A.of_array D.Int32 s (Array.init 240 Int32.of_int) in
+  let floats s = A.of_array D.Float32 s (Array.init 240 Float.of_int) in
+  let rows : int iarray = [| 60; 4 |] and columns : int iarray = [| 4; 60 |] in
+  let small =
+    [
+      folded "an integer sum over three devices" ~under:480 (on3 0) (ints rows)
+        (fun x -> Nx.sum ~axes:[ 0 ] x);
+      folded "a maximum over three devices" ~under:480 (on3 0) (floats rows)
+        (fun x -> Nx.max ~axes:[ 0 ] x);
+      folded "positions over three devices" ~under:480 (on3 1) (floats columns)
+        (fun x -> Nx.argmax ~axis:1 x);
+      folded "a reduction of every axis over three devices" ~under:480 (on3 1)
+        (ints columns) (fun x -> Nx.min x);
+    ]
+  in
+  (* Read whole, each of four devices would compute every term: [4 n] positions.
+     Cut, each reduces its window once, two passes for a logsumexp or a
+     variance, then the four partials per output it receives. A complex sum
+     reduces each part as a float. *)
+  let complexes n =
+    A.of_array D.Complex64 [| n |]
+      (Array.init n (fun i -> { Complex.re = Float.of_int (i mod 5); im = 1. }))
+  in
+  let reductions n =
+    let of_n what = Printf.sprintf "%s of %d terms" what n in
+    [
+      folded (of_n "a sum") ~under:(2 * n) on4 (ramp D.Float32 n) Nx.sum;
+      folded (of_n "a product") ~under:(2 * n) on4 (ramp D.Float64 n) Nx.prod;
+      folded (of_n "a float16 mean") ~under:(2 * n) on4 (ramp D.Float16 n)
+        Nx.mean;
+      folded (of_n "a complex sum") ~under:(3 * n) on4 (complexes n) Nx.sum;
+      folded (of_n "a logsumexp") ~under:(4 * n) on4 (ramp D.Float32 n)
+        Nx.logsumexp;
+    ]
+  in
+  let variance =
+    folded "a variance of 8192 terms" ~under:(4 * 8192) on4
+      (ramp D.Float32 8192) Nx.var
+  in
+  (* Read whole, each of four devices would contract all of the [k] terms of
+     each output: [4 m n k] products. Cut, each contracts its own window of
+     them, and only sums move. *)
+  let contraction (m, n, k) =
+    let floats s =
+      A.of_array D.Float32 (Iarray.of_array s)
+        (Array.init (Array.fold_left ( * ) 1 s) (fun i ->
+             Float.of_int (i mod 7) /. 7.))
+    in
+    let setup () =
+      let place axis x =
+        Nx.place (Count4.split ~axis) (Nx.Repr.of_array Nx.Host.v x)
+      in
+      let a = place 1 (floats [| m; k |]) and b = place 0 (floats [| k; n |]) in
+      fun () ->
+        let y = Nx.matmul a b in
+        fun () -> ignore (elements y)
+    in
+    let name = Printf.sprintf "a matrix product of %d x %d by %d" m n k in
+    { name; traffic = Products; under = 2 * m * n * k; setup }
+  in
+  (* Read whole, each of four devices would scan every term: [4 n] positions.
+     Cut, each device scans its window, then each but the first combines its
+     scan with the totals' scan before it, a map of its window. *)
+  let scans n =
+    let of_n what = Printf.sprintf "%s of %d terms" what n in
+    let ints = A.of_array D.Int32 [| n |] (Array.init n Int32.of_int) in
+    [
+      folded (of_n "an integer cumsum") ~under:(2 * n) on4 ints
+        (Nx.cumsum ~axis:0);
+      folded (of_n "a float cummax") ~under:(2 * n) on4 (ramp D.Float32 n)
+        (Nx.cummax ~axis:0);
+      folded (of_n "a float cumsum") ~under:(3 * n) on4 (ramp D.Float32 n)
+        (Nx.cumsum ~axis:0);
+      folded (of_n "a float16 cumprod") ~under:(4 * n) on4 (ramp D.Float16 n)
+        (Nx.cumprod ~axis:0);
+    ]
+  in
+  List.concat
+    [
+      small;
+      reductions 8192;
+      reductions 6000;
+      [ variance ];
+      List.map contraction
+        [ (8, 8, 4096); (2, 2, 4096); (2, 2, 6000); (8, 8, 6000) ];
+      scans 16384;
+      scans 9001;
+    ]
+
+let law_moved c =
+  let compute = c.setup () in
+  C.reset ();
+  let read = compute () in
+  let got =
+    match c.traffic with
+    | Positions -> C.positions ()
+    | Products -> C.products ()
+  in
+  read ();
+  less int ~than:c.under got
+
+let traffic =
+  cases
+    ~name:(fun c -> c.name)
+    "a fold over a cut axis moves partials, not its operands" moved law_moved
+
 let placed =
   group "placements"
     [
@@ -2395,8 +2416,6 @@ let reductions =
         "a reduction over cut axes gives an exact one's bits on one device, \
          a float one the reduction of its tiles' stacked partials"
         reduced_case law_reduced;
-      test "a reduction over a cut axis moves partials, not the operand"
-        test_partials_move;
       test "a position over cut axes is the smallest of a tie across tiles"
         test_arg_ties;
       test "a sum over an axis cut across three devices allocates its closing"
@@ -2407,8 +2426,6 @@ let reductions =
         "a float reduction over cut axes of many terms reduces its tiles' \
          stacked partials"
         lane_case law_lanes;
-      test "a float reduction over a cut axis moves partials, not the operand"
-        test_float_partials_move;
     ]
 
 let contractions =
@@ -2428,9 +2445,6 @@ let contractions =
         "a matrix product over cut operands is within its bound and the \
          same on every run"
         nx_case law_nx_case;
-      test "a contraction over a cut axis contracts each window, not the \
-            operands"
-        test_contractions_move;
       test "a contraction cut along two pairs stacks its tiles in C order"
         test_contract_pair_order;
     ]
@@ -2442,8 +2456,6 @@ let scans =
         "a scan along cut axes gives an exact one's bits on one device, a \
          float sum's or product's each window's scan from its totals' scan"
         scan_case law_scans;
-      test "a scan along a cut axis scans each window, not the operand"
-        test_scans_move;
       prop ~count:200
         "a float32 cumsum along a cut axis is within the bound of a sum of \
          each result's terms"
@@ -2451,4 +2463,4 @@ let scans =
     ]
 
 let () =
-  exit (run "nx partial" [ placed; reductions; contractions; scans ])
+  exit (run "nx partial" [ placed; reductions; contractions; scans; traffic ])
