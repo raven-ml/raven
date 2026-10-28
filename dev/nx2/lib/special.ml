@@ -63,13 +63,16 @@ let gt x v = cmpgt x (lit x v)
 let ge x v = cmpge x (lit x v)
 let is x v = cmpeq x (lit x v)
 
-(* Horner from the leading coefficient. *)
-let horner cs t =
-  let acc = ref (lit t cs.(0)) in
+(* Horner from the leading coefficient, on coefficients that are expressions;
+   [horner] on constants. *)
+let horner_t cs t =
+  let acc = ref cs.(0) in
   for i = 1 to Array.length cs - 1 do
-    acc := add (mul !acc t) (lit t cs.(i))
+    acc := add (mul !acc t) cs.(i)
   done;
   !acc
+
+let horner cs t = horner_t (Array.map (lit t) cs) t
 
 (* [x] where [inside], elsewhere the point [b] of the region. *)
 let clamp inside x b = where inside x (lit x b)
@@ -101,14 +104,54 @@ let log_max_float_of (type w) (x : (float, w) E.t) =
 
 (* Error function *)
 
-(* fdlibm's erfc: [1 - erf] from erf's P/Q below 0.84375, a P/Q about 1 to 1.25,
-   and [exp (-x^2 - 0.5625 + R/S) / x] above, the tails' R/S in [1/x^2], to 28,
-   past which it is 0 or 2 ([Special_tables] holds the boundaries). [x^2] is
-   held exactly as [hi + lo] by [fma], so the exponential of its rounded part is
-   exact in its argument. Its parts also give [erf x] below 1.25, to the
-   relative precision of the rationals, and, from 1.25 up, [2/sqrt pi exp (-x^2)
-   / erfc x = 2/sqrt pi x exp (0.5625 - R/S)], which divides no tiny number by
-   another. *)
+(* fdlibm's rationals for erf and erfc at [x], by region of [a = |x|]: erf's P/Q
+   in [x^2] below 0.84375 ([small]), a P/Q about 1 to 1.25 ([near]), and the
+   tails' R/S in [1/a^2] to 28 ([tail]), each over its argument clamped into its
+   region ([Special_tables] holds the boundaries). Below 1.25 they give [erf]
+   itself, [x + x P/Q] in [small], whose [1 - erf] is written two ways about
+   0.25, and [erx + P/Q] at [a] in [near]. In [tail], [erfc a] is [exp (-a^2 -
+   0.5625 + R/S) / a]. *)
+type 'b erf_rationals = {
+  small : (bool, D.bool_elt) E.t;
+  near : (bool, D.bool_elt) E.t;
+  tail : (bool, D.bool_elt) E.t;
+  below_near : (bool, D.bool_elt) E.t; (* [a < 1.25], [small] or [near] *)
+  erf_small : (float, 'b) E.t; (* [erf x] where [small] *)
+  erfc_small : (float, 'b) E.t; (* [1 - erf x] where [small] *)
+  pq : (float, 'b) E.t; (* [erf a - erx] where [near] *)
+  at : (float, 'b) E.t; (* [a] where [tail], 2 elsewhere *)
+  rs : (float, 'b) E.t; (* the tails' R/S in [1/at^2] *)
+}
+
+let erf_rationals x a =
+  let small = lt a T.erf_small_below and below_near = lt a T.erf_near_below in
+  let near = logical_and (logical_not small) below_near in
+  let tail = logical_and (logical_not below_near) (lt a T.erfc_far_from) in
+  let xs = clamp small x 0.5 in
+  let z = mul xs xs in
+  let xy = mul xs (div (horner T.erf_small_p z) (horner T.erf_small_q z)) in
+  let erf_small = add xs xy in
+  let erfc_small =
+    where (lt xs T.erfc_small_split) (rsub_s 1. erf_small)
+      (rsub_s 0.5 (add xy (sub_s xs 0.5)))
+  in
+  let s = sub_s (clamp near a 1.) 1. in
+  let pq = div (horner T.erf_near_p s) (horner T.erf_near_q s) in
+  let at = clamp tail a 2. in
+  let w = recip (mul at at) in
+  let mid = lt at T.erfc_mid_below in
+  let rs =
+    div
+      (where mid (horner T.erfc_mid_p w) (horner T.erfc_far_p w))
+      (where mid (horner T.erfc_mid_q w) (horner T.erfc_far_q w))
+  in
+  { small; near; tail; below_near; erf_small; erfc_small; pq; at; rs }
+
+(* fdlibm's erfc from the rationals, 0 or 2 from 28. [x^2] is held exactly as
+   [hi + lo] by [fma], so the exponential of its rounded part is exact in its
+   argument. Its parts also give [erf x] below 1.25, to the relative precision
+   of the rationals, and, from 1.25 up, [2/sqrt pi exp (-x^2) / erfc x = 2/sqrt
+   pi x exp (0.5625 - R/S)], which divides no tiny number by another. *)
 type 'b erfc_parts = {
   erfc : (float, 'b) E.t;
   erf : (float, 'b) E.t; (* [erf x] where [|x| < 1.25] *)
@@ -118,47 +161,25 @@ type 'b erfc_parts = {
 
 let erfc_parts x =
   let a = abs x and positive = cmpgt x (zeros_like x) in
-  let small = lt a T.erf_small_below and below_near = lt a T.erf_near_below in
-  let below = lt a T.erfc_far_from in
-  let near = logical_and (logical_not small) below_near in
-  let tail = logical_and (logical_not below_near) below in
-  let xs = clamp small x 0.5 in
-  let z = mul xs xs in
-  let y = div (horner T.erf_small_p z) (horner T.erf_small_q z) in
-  let xy = mul xs y in
-  let r_small =
-    where (lt xs T.erfc_small_split)
-      (rsub_s 1. (add xs xy))
-      (rsub_s 0.5 (add xy (sub_s xs 0.5)))
-  in
-  let s = sub_s (clamp near a 1.) 1. in
-  let pq = div (horner T.erf_near_p s) (horner T.erf_near_q s) in
+  let r = erf_rationals x a in
   let r_near =
-    where positive (rsub_s (1. -. T.erx) pq) (add_s (add_s pq T.erx) 1.)
+    where positive (rsub_s (1. -. T.erx) r.pq) (add_s (add_s r.pq T.erx) 1.)
   in
-  let at = clamp tail a 2. in
-  let w = recip (mul at at) in
-  let mid = lt at T.erfc_mid_below in
-  let rs =
-    div
-      (where mid (horner T.erfc_mid_p w) (horner T.erfc_far_p w))
-      (where mid (horner T.erfc_mid_q w) (horner T.erfc_far_q w))
-  in
-  let hi = mul at at in
-  let lo = fma at at (neg hi) in
-  let e = mul (exp (neg hi)) (exp (sub (sub_s rs 0.5625) lo)) in
-  let q = div e at in
+  let hi = mul r.at r.at in
+  let lo = fma r.at r.at (neg hi) in
+  let e = mul (exp (neg hi)) (exp (sub (sub_s r.rs 0.5625) lo)) in
+  let q = div e r.at in
   let r_tail = where positive q (rsub_s 2. q) in
   let r_far = where positive (zeros_like x) (lit x 2.) in
-  let ratio =
-    mul_s (mul at (exp (rsub_s 0.5625 rs))) (2. /. Float.sqrt Float.pi)
-  in
-  let erf_near = add_s pq T.erx in
+  let erf_near = add_s r.pq T.erx in
   {
-    erfc = where small r_small (where near r_near (where tail r_tail r_far));
-    erf = where small (add xs xy) (where positive erf_near (neg erf_near));
-    upper = logical_and (logical_not below_near) positive;
-    ratio;
+    erfc =
+      where r.small r.erfc_small
+        (where r.near r_near (where r.tail r_tail r_far));
+    erf = where r.small r.erf_small (where positive erf_near (neg erf_near));
+    upper = logical_and (logical_not r.below_near) positive;
+    ratio =
+      mul_s (mul r.at (exp (rsub_s 0.5625 r.rs))) (2. /. Float.sqrt Float.pi);
   }
 
 let erfc_at x = (erfc_parts x).erfc
@@ -188,11 +209,9 @@ let erfinv_at p =
       (lit u t.erfinv_central.(i))
       (where far (lit u t.erfinv_far.(i)) (lit u t.erfinv_near.(i)))
   in
-  let acc = ref (coefficient 0) in
-  for i = 1 to Array.length t.erfinv_central - 1 do
-    acc := add (mul !acc u) (coefficient i)
-  done;
-  let y = mul p !acc in
+  let y =
+    mul p (horner_t (Array.init (Array.length t.erfinv_central) coefficient) u)
+  in
   let inner = lt (abs p) t.erfinv_newton_split in
   let a = abs y in
   let parts = erfc_parts (where inner y a) in
@@ -291,12 +310,9 @@ let ndtri_tail_guess log_q =
       (sub_s (clamp (logical_not near) s 6.) T.ndtri_far_shift)
   in
   let selected near_cs far_cs =
-    let acc = ref (where near (lit u near_cs.(0)) (lit u far_cs.(0))) in
-    for i = 1 to Array.length near_cs - 1 do
-      acc :=
-        add (mul !acc u) (where near (lit u near_cs.(i)) (lit u far_cs.(i)))
-    done;
-    !acc
+    horner_t
+      (Array.map2 (fun n f -> where near (lit u n) (lit u f)) near_cs far_cs)
+      u
   in
   neg
     (div
@@ -728,45 +744,25 @@ let stirling_from_one (t : T.t) a =
     t.igamma_shift_terms;
   !s
 
-(* [erfc w e^(w^2)] for [w >= 0]: erf's rationals below 1.25, fdlibm's tails
-   [exp (R/S - 0.5625) / w] up to [erfcx_far], past which they lose their
-   precision, and the asymptotic series beyond. *)
+(* [erfc w e^(w^2)] for [w >= 0]: fdlibm's erfc with the exponential folded in,
+   [e^(w^2) erfc w] below 1.25 and [exp (R/S - 0.5625) / w] in the tail, and
+   from [erfcx_far], where the tail ends and its rationals lose their precision,
+   the asymptotic series. *)
 let erfcx_at w =
   let t = tables w in
-  let small = lt w 0.84375 and below = lt w 1.25 in
-  let near = logical_and (logical_not small) below in
+  let r = erf_rationals w w in
+  let e_near = rsub_s (1. -. T.erx) r.pq in
+  let wb = clamp r.below_near w 0.5 in
+  let r_below = mul (exp (mul wb wb)) (where r.small r.erfc_small e_near) in
+  let r_tail = div (exp (sub_s r.rs 0.5625)) r.at in
   let far = ge w T.erfcx_far in
-  let tail = logical_and (logical_not below) (logical_not far) in
-  let ws = clamp small w 0.5 in
-  let z = mul ws ws in
-  let y = div (horner T.erf_small_p z) (horner T.erf_small_q z) in
-  let xy = mul ws y in
-  let e_small =
-    where (lt ws 0.25)
-      (rsub_s 1. (add ws xy))
-      (rsub_s 0.5 (add xy (sub_s ws 0.5)))
-  in
-  let s = sub_s (clamp near w 1.) 1. in
-  let pq = div (horner T.erf_near_p s) (horner T.erf_near_q s) in
-  let e_near = rsub_s (1. -. T.erx) pq in
-  let wb = clamp below w 0.5 in
-  let r_below = mul (exp (mul wb wb)) (where small e_small e_near) in
-  let wt = clamp tail w 2. in
-  let v = recip (mul wt wt) in
-  let mid = lt wt (1. /. 0.35) in
-  let rs =
-    div
-      (where mid (horner T.erfc_mid_p v) (horner T.erfc_far_p v))
-      (where mid (horner T.erfc_mid_q v) (horner T.erfc_far_q v))
-  in
-  let r_tail = div (exp (sub_s rs 0.5625)) wt in
   let wf = clamp far w (2. *. T.erfcx_far) in
   let r_far =
     div
       (horner t.erfcx_series (recip (mul_s (mul wf wf) 2.)))
       (mul_s wf (Float.sqrt Float.pi))
   in
-  where below r_below (where tail r_tail r_far)
+  where r.below_near r_below (where r.tail r_tail r_far)
 
 (* Temme's sum [T = sum_k c_k(eta) u^k], [u = 1/a], each [c_k] a polynomial in
    [eta] to the degree the table gives. *)
@@ -1012,10 +1008,6 @@ let lgamma_a1 (t : T.t) a =
     (sub (mul (add_s a 0.5) (log a)) a)
     (add_s (stirling_from_one t a) log_sqrt_2pi)
 
-(* Horner on coefficients that are expressions, the leading one first. *)
-let horner_t cs t =
-  List.fold_left (fun acc c -> add (mul acc t) c) (List.hd cs) (List.tl cs)
-
 (* GAMINV's asymptotic form for a large [x] from [y = -log (q Γ(a))]: [x = y +
    c1 + c2/y + ... + c5/y^4], each [c_k] a polynomial in [c1 = (a - 1) log y]
    whose coefficients are polynomials in [a]. *)
@@ -1024,33 +1016,35 @@ let gaminv_asymptotic a y =
   let c1 = neg (mul s (log y)) in
   let p cs = horner cs a in
   let c2 = neg (mul s (add_s c1 1.)) in
-  let c3 = mul s (horner_t [ lit a 0.5; rsub_s 2. a; p [| -1.5; 2.5 |] ] c1) in
+  let c3 =
+    mul s (horner_t [| lit a 0.5; rsub_s 2. a; p [| -1.5; 2.5 |] |] c1)
+  in
   let c4 =
     neg
       (mul s
          (horner_t
-            [
+            [|
               lit a (1. /. 3.);
               p [| -1.5; 2.5 |];
               p [| 1.; -6.; 7. |];
               p [| 11. /. 6.; -46. /. 6.; 47. /. 6. |];
-            ]
+            |]
             c1))
   in
   let c5 =
     neg
       (mul s
          (horner_t
-            [
+            [|
               lit a (-0.25);
               p [| 11. /. 6.; -17. /. 6. |];
               p [| -3.; 13.; -13. |];
               p [| 1.; -12.5; 36.; -30.5 |];
               p [| 25. /. 12.; -195. /. 12.; 477. /. 12.; -379. /. 12. |];
-            ]
+            |]
             c1))
   in
-  add (horner_t [ c5; c4; c3; c2; c1 ] (recip y)) y
+  add (horner_t [| c5; c4; c3; c2; c1 |] (recip y)) y
 
 (* DiDonato and Morris's initial approximation (GAMINV, TOMS 654) to [log x],
    for finite [a > 0], the smaller tail's logarithm [l] and which tail it is,
