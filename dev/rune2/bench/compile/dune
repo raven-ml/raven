@@ -1,0 +1,15 @@
+; rune2's cold compiles. Not attached to runtest: run it with `dune build
+; @bench`, or run the built exe from its directory under _build/default.
+; Every sample compiles cold, so no warm pass.
+
+(executable
+ (name bench_compile)
+ (libraries nx rune2 thumper unix))
+
+(rule
+ (alias bench)
+ (locks %{workspace_root}/bench)
+ (deps
+  (glob_files *.thumper))
+ (action
+  (run %{exe:bench_compile.exe})))
