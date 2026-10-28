@@ -261,37 +261,55 @@ static view wide_of(const prog *j, const plane *f, int i, int o) {
   return (view){t, 1, f->n0 * width(c)};
 }
 
-/* Fills [v] with each element's index along axis [a] of plane [p]: from
-   the index's position q at the element, (q / inner) % extent. Along a
-   row q steps by s0, a product of the extents past some axis as inner is,
-   so one divides the other: the coordinate steps by s0 / inner each
+static int64_t gcd(int64_t a, int64_t b) { return b == 0 ? a : gcd(b, a % b); }
+
+/* Fills the [n] elements of [row] with the index along an axis of [inner]
+   and [extent], from the position [q] stepping by [s0]: (q / inner) %
+   extent. One of s0 and inner divides the other, both products of the
+   extents past some axis: the coordinate steps by s0 / inner each
    element, wrapping at the extent, or holds for runs of inner / s0. Each
    run, and each stretch between wraps, is a loop of its own, which
    vectorises. */
+static void coord_row(int64_t *row, int64_t n, int64_t q, int64_t s0,
+                      int64_t inner, int64_t extent) {
+  int64_t c = q / inner % extent;
+  if (s0 >= inner) {
+    int64_t m = s0 / inner % extent;
+    for (int64_t e = 0; e < n;) {
+      int64_t span = m == 0 ? n - e : (extent - c + m - 1) / m;
+      if (span > n - e) span = n - e;
+      for (int64_t i = 0; i < span; i++) row[e + i] = c + i * m;
+      e += span;
+      c += span * m - extent;
+    }
+    return;
+  }
+  int64_t run = inner / s0;
+  for (int64_t e = 0, left = run - q % inner / s0; e < n; left = run) {
+    int64_t span = left < n - e ? left : n - e;
+    for (int64_t i = 0; i < span; i++) row[e + i] = c;
+    e += span;
+    if (++c == extent) c = 0;
+  }
+}
+
+/* Fills [v] with each element's index along axis [a] of plane [p], row by
+   row. A row repeats once its position has stepped by a multiple of
+   inner * extent: its first period is computed, then copied in runs that
+   double. A short axis would otherwise take a loop every few elements:
+   the parts of [n; 2] pairs cost 30 times a coordinate-free map on
+   fudge. */
 static void coords(const prog *j, const plane *p, int a, int64_t *v) {
   int k = j->index;
   int64_t inner = j->inner[a], extent = j->extent[a], s0 = p->s0[k];
-  int64_t n0 = p->n0;
+  int64_t n0 = p->n0, span = inner * extent;
+  int64_t period = span / gcd(s0, span), head = period < n0 ? period : n0;
   for (int64_t r = 0; r < p->n1; r++) {
-    int64_t q = p->at[k] + r * p->s1[k], c = q / inner % extent;
     int64_t *row = v + r * n0;
-    if (s0 >= inner) {
-      int64_t m = s0 / inner % extent;
-      for (int64_t e = 0; e < n0;) {
-        int64_t span = m == 0 ? n0 - e : (extent - c + m - 1) / m;
-        if (span > n0 - e) span = n0 - e;
-        for (int64_t i = 0; i < span; i++) row[e + i] = c + i * m;
-        e += span;
-        c += span * m - extent;
-      }
-      continue;
-    }
-    int64_t run = inner / s0;
-    for (int64_t e = 0, left = run - q % inner / s0; e < n0; left = run) {
-      int64_t span = left < n0 - e ? left : n0 - e;
-      for (int64_t i = 0; i < span; i++) row[e + i] = c;
-      e += span;
-      if (++c == extent) c = 0;
+    coord_row(row, head, p->at[k] + r * p->s1[k], s0, inner, extent);
+    for (int64_t e = head; e < n0; e *= 2) {
+      int64_t len = e < n0 - e ? e : n0 - e;
+      memcpy(row + e, row, sizeof(int64_t) * (size_t)len);
     }
   }
 }

@@ -404,6 +404,14 @@ let law_map_full (b : Support.backend) (Case x) =
   let x = on b x in
   let ops = Array.make nins (A.Any x) in
   cover "coordinates" (rank > 0);
+  (* A contiguous loop runs as one row, along which the coordinate of every
+     axis but the first wraps, and repeats once its period has passed. *)
+  cover "a coordinate repeating along a row"
+    (L.is_contiguous (A.layout x)
+    && Iarray.for_all (fun d -> d >= 1) shape
+    && rank >= 2
+    && Iarray.get shape (rank - 1) >= 2
+    && Iarray.get shape (rank - 2) >= 2);
   match split b p types shape ops with
   | exception Skip -> fail "a node declined"
   | values ->
