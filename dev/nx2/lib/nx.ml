@@ -391,19 +391,23 @@ let create dt shape vs = of_values ~by:"Nx.create" dt shape vs
 
 let init dt shape f =
   let by = "Nx.init" in
-  let l = contiguous ~by shape in
-  let r = Array.length shape in
-  (* Each index in C order: the last axis runs fastest. *)
-  let index j =
-    let i = Array.make r 0 and j = ref j in
-    for a = r - 1 downto 0 do
-      i.(a) <- !j mod shape.(a);
-      j := !j / shape.(a)
+  let n = Nx_array.Layout.numel (contiguous ~by shape) in
+  (* [i] moved to the next index in C order: the last axis runs fastest. *)
+  let next i =
+    let a = ref (Array.length shape - 1) in
+    while !a >= 0 && i.(!a) = shape.(!a) - 1 do
+      i.(!a) <- 0;
+      decr a
     done;
-    i
+    if !a >= 0 then i.(!a) <- i.(!a) + 1
   in
-  let vs = Array.init (Nx_array.Layout.numel l) (fun j -> f (index j)) in
-  of_values ~by dt shape vs
+  let i = Array.make (Array.length shape) 0 in
+  let at _ =
+    let v = f (Array.copy i) in
+    next i;
+    v
+  in
+  of_values ~by dt shape (Array.init n at)
 
 let of_bigarray (type v s) (b : (v, s, Bigarray.c_layout) Bigarray.Genarray.t)
     =
@@ -1472,10 +1476,7 @@ let targets ~by x picks =
   let r = Array.length s in
   let sel = selection x picks in
   let rs = Array.length sel in
-  let strides = Array.make r 1 in
-  for a = r - 2 downto 0 do
-    strides.(a) <- strides.(a + 1) * s.(a + 1)
-  done;
+  let strides = Nx_array.Layout.(strides (contiguous (Iarray.of_array s))) in
   (* The positions held in data, broadcast to the selection, in pick order:
      over selection axes [j, j + k) for [k] axes of their own. *)
   let held j p =
@@ -1566,7 +1567,7 @@ let targets ~by x picks =
         read v
     | [] -> assert false (* [inputs] holds one per position held in data. *)
   in
-  let add a index = sum := E.(!sum + (index * i64 strides.(a))) in
+  let add a index = sum := E.(!sum + (index * i64 (Iarray.get strides a))) in
   (* A position held in data, and whether it lies in [0, d). *)
   let checked d =
     let i = next () in
@@ -3784,12 +3785,32 @@ let positions_by ~by ?size c =
 
 let positions ?size c = positions_by ~by:"Nx.positions" ?size c
 
+(* The coordinates in the shape [s], of [r > 0] axes, of the position [q], an
+   int64 expression, in C order: where the coordinate [axis] reads [j], axis
+   [j]'s, [(q / stride) mod extent], or its extent where [q] lies outside
+   [0, numel s). A layout's stride of 0, of an axis of one element or of an
+   empty shape, and an extent of 0 are held at [1], so no division is by
+   zero. *)
+let coordinates s ~axis q =
+  let r = Array.length s and n = Array.fold_left ( * ) 1 s in
+  let strides = Nx_array.Layout.(strides (contiguous (Iarray.of_array s))) in
+  let last = i64 (n - 1) and at_j = E.coord axis in
+  let outside = E.(q < i64 0 || last < q) in
+  let rec pick j =
+    let st = i64 (Stdlib.max 1 (Iarray.get strides j))
+    and d = i64 (Stdlib.max 1 s.(j)) in
+    let at = E.(where outside (i64 s.(j)) (q / st mod d)) in
+    if j = r - 1 then at
+    else
+      let rest = pick (j + 1) in
+      E.(where (at_j = i64 j) at rest)
+  in
+  pick 0
+
 (* The coordinates of [t]'s non-zero elements, a row each: the positions of
    [t] flattened, cut into coordinates by one map over [[k; r]] whose column
-   [j] is axis [j]'s, [(p / stride) mod extent]. A pad position, [numel t],
-   gives [t]'s extents. Strides and extents of an empty [t] are held at [1],
-   so no division is by zero. [t] reaches one operation, so it is
-   consumed. *)
+   [j] is axis [j]'s. A pad position, [numel t], gives [t]'s extents. [t]
+   reaches one operation, so it is consumed. *)
 let argwhere_by ~by ?size t =
   let s = shape t and r = ndim t and n = numel t in
   let held =
@@ -3799,21 +3820,9 @@ let argwhere_by ~by ?size t =
   let k = Prim.dim p 0 in
   if r = 0 then fill ~by (placement p) D.Int64 [| k; 0 |] 0L
   else
-    let stride = Array.make r 1 in
-    for j = r - 2 downto 0 do
-      stride.(j) <- stride.(j + 1) * s.(j + 1)
-    done;
-    let q = E.input 0 D.Int64 and column = E.coord 1 and pad = i64 n in
-    let rec pick j =
-      let st = i64 (Stdlib.max 1 stride.(j)) and d = i64 (Stdlib.max 1 s.(j)) in
-      let at = E.(where (q = pad) (i64 s.(j)) (q / st mod d)) in
-      if j = r - 1 then at
-      else
-        let rest = pick (j + 1) in
-        E.(where (column = i64 j) at rest)
-    in
     let rows = broadcast ~by [| k; r |] (reshaped ~by [| k; 1 |] p) in
-    elementwise ~by D.Int64 [ Any rows ] (pick 0)
+    elementwise ~by D.Int64 [ Any rows ]
+      (coordinates s ~axis:1 (operand 0 rows))
 
 let argwhere ?size t = argwhere_by ~by:"Nx.argwhere" ?size t
 
@@ -3849,38 +3858,24 @@ let extract ?size ?fill c x =
       elementwise ~by (dtype x) [ Any p; Any y ]
         E.(where (operand 0 p < i64 n) (operand 1 y) v)
 
-(* One map over [[r] @ shape i] whose row [j] is axis [j]'s coordinates,
-   [(i / stride) mod extent] for an index in [0, n) and the extent
-   elsewhere: each result a row of it, a view. Strides and extents of an
-   empty shape are held at [1], so no division is by zero. *)
+(* One map over [[r] @ shape i] whose row [j] is axis [j]'s coordinates:
+   each result a row of it, a view. *)
 let unravel_index i s =
   let by = "Nx.unravel_index" in
   Prim.check_shape ~by (Iarray.of_array s);
-  let r = Array.length s and n = Array.fold_left ( * ) 1 s in
+  let r = Array.length s in
   if r = 0 then begin
     Prim.alive ~by i;
     []
   end
   else
-    let stride = Array.make r 1 in
-    for j = r - 2 downto 0 do
-      stride.(j) <- stride.(j + 1) * s.(j + 1)
-    done;
-    let q = E.input 0 D.Int64 and row = E.coord 0 in
-    let last = i64 (n - 1) in
-    let outside = E.(q < i64 0 || last < q) in
-    let rec pick j =
-      let st = i64 (Stdlib.max 1 stride.(j)) and d = i64 (Stdlib.max 1 s.(j)) in
-      let at = E.(where outside (i64 s.(j)) (q / st mod d)) in
-      if j = r - 1 then at
-      else
-        let rest = pick (j + 1) in
-        E.(where (row = i64 j) at rest)
-    in
     let si = shape i in
     let wide = Array.append [| r |] si in
     let rows = broadcast ~by wide (reshaped ~by (Array.append [| 1 |] si) i) in
-    let y = elementwise ~by D.Int64 [ Any rows ] (pick 0) in
+    let y =
+      elementwise ~by D.Int64 [ Any rows ]
+        (coordinates s ~axis:0 (operand 0 rows))
+    in
     List.init r (fun j -> slice_by ~by [ I j ] y)
 
 (* Masks *)
