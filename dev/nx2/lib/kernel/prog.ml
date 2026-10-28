@@ -574,81 +574,130 @@ let leaf : type v s. D.any iarray -> (v, s) E.t -> node option =
   | Const { dt; bits; _ } -> Some (Const (D.Any dt, bits))
   | In _ | Op1 _ | Op2 _ | Op3 _ -> None
 
-(* The walk keeps two tables: [seen] gives an expression walked before, by
-   its id, its node, so that a shared subexpression is walked once;
-   [index] gives a node and its dtype the index of the first node of that
-   structure, so that two expressions of one structure are one node. An id
-   is unique within one process alone: an expression read back through
-   [Marshal] can carry the id of another here, so a hit in [seen] counts
-   only for the expression itself. *)
-let walked ~invalid ~ins outs =
-  let seen = Hashtbl.create 16 and index = Hashtbl.create 16 in
-  let nodes = ref [] and count = ref 0 in
-  let node nd dt =
-    match Hashtbl.find_opt index (nd, dt) with
-    | Some i -> i
-    | None ->
-        Hashtbl.add index (nd, dt) !count;
-        nodes := nd :: !nodes;
-        incr count;
-        !count - 1
-  in
-  let rec walk : type v s. (v, s) E.t -> int =
-   fun e ->
-    let id = E.id e in
-    match Hashtbl.find_opt seen id with
-    | Some (E.Any walked, i) when E.Any walked == E.Any e -> i
-    | Some _ | None ->
-        let nd =
-          match (leaf ins e, e) with
-          | Some nd, _ -> nd
-          | None, In { k; _ } -> invalid (strf "In %d is no operand of ins" k)
-          | None, Op1 { k; dt; x; _ } -> Op1 (k, D.Any dt, walk x)
-          | None, Op2 { k; x; y; _ } ->
-              let a = walk x in
-              Op2 (k, a, walk y)
-          | None, Op3 { k; c; x; y; _ } ->
-              let a = walk c in
-              let b = walk x in
-              Op3 (k, a, b, walk y)
-          | None, (Coord _ | Const _) -> assert false
-        in
-        let i = node nd (D.Any (E.dtype e)) in
-        Hashtbl.replace seen id (E.Any e, i);
-        i
-  in
-  let out o =
-    let (E.Any e) = Iarray.get outs o in
-    walk e
-  in
-  let outs = Iarray.init (Iarray.length outs) out in
-  { ins; nodes = Iarray.of_list (List.rev !nodes); outs }
+(* Nodes as a table's keys, hashed by their operands and compared field by
+   field: the runtime's polymorphic hash and compare of a whole node,
+   called for each node a lowering adds, cost a fifth of a draw from beta.
+   [hash] mixes a node's operands and its leaf's facts; nodes over the same
+   operands differ by their kind, which [equal] compares last, once the
+   operands agree. *)
+module Nodes = Hashtbl.Make (struct
+  type t = node
+
+  let equal (a : node) (b : node) =
+    match (a, b) with
+    | In i, In j | Coord i, Coord j -> i = j
+    | Const (D.Any x, s), Const (D.Any y, t) -> D.equal x y && String.equal s t
+    | Op1 (k, D.Any x, i), Op1 (l, D.Any y, j) -> i = j && D.equal x y && k = l
+    | Op2 (k, i, j), Op2 (l, i', j') -> i = i' && j = j' && k = l
+    | Op3 (k, i, j, m), Op3 (l, i', j', m') ->
+        i = i' && j = j' && m = m' && k = l
+    | (In _ | Coord _ | Const _ | Op1 _ | Op2 _ | Op3 _), _ -> false
+
+  (* An odd multiplier keeps distinct operands apart in the low bits a
+     table indexes by. *)
+  let mix h x = (h * 0x9e3779b1) lxor x
+
+  let hash = function
+    | In k -> k
+    | Coord a -> mix 1 a
+    | Const (D.Any dt, b) -> mix (Hashtbl.hash b) (D.code dt)
+    | Op1 (_, D.Any dt, a) -> mix a (D.code dt)
+    | Op2 (_, a, b) -> mix a b
+    | Op3 (_, a, b, c) -> mix (mix a b) c
+end)
+
+(* A lowering keeps two tables: [seen] gives an expression walked before,
+   by its id, its node, so that a shared subexpression is walked once;
+   [index] gives a node the index of the first node of its structure, so
+   that two expressions of one structure are one node. A node's dtype
+   follows from its structure and the nodes before it, so the node alone is
+   the key. An id is unique within one process alone: an expression read
+   back through [Marshal] can carry the id of another here, so a hit in
+   [seen] counts only for the expression itself. *)
+type lowering = {
+  fn : string;
+  operands : D.any iarray;
+  seen : (int, E.any * int) Hashtbl.t;
+  index : int Nodes.t;
+  mutable rev_nodes : node list;
+  mutable count : int;
+}
+
+(* A lowering over [ins] of about [n] nodes, refusing in the name of [fn]. *)
+let lowering fn ~ins n =
+  {
+    fn;
+    operands = ins;
+    seen = Hashtbl.create 16;
+    index = Nodes.create n;
+    rev_nodes = [];
+    count = 0;
+  }
+
+let refuse_in l k =
+  invalid_arg (strf "%s: In %d is no operand of ins" l.fn k)
+
+(* The index of the node [nd], added unless one of its structure is. *)
+let add l nd =
+  match Nodes.find_opt l.index nd with
+  | Some i -> i
+  | None ->
+      Nodes.add l.index nd l.count;
+      l.rev_nodes <- nd :: l.rev_nodes;
+      l.count <- l.count + 1;
+      l.count - 1
+
+let rec walk : type v s. lowering -> (v, s) E.t -> int =
+ fun l e ->
+  let id = E.id e in
+  match Hashtbl.find_opt l.seen id with
+  | Some (E.Any walked, i) when E.Any walked == E.Any e -> i
+  | Some _ | None ->
+      let nd =
+        match (leaf l.operands e, e) with
+        | Some nd, _ -> nd
+        | None, In { k; _ } -> refuse_in l k
+        | None, Op1 { k; dt; x; _ } -> Op1 (k, D.Any dt, walk l x)
+        | None, Op2 { k; x; y; _ } ->
+            let a = walk l x in
+            Op2 (k, a, walk l y)
+        | None, Op3 { k; c; x; y; _ } ->
+            let a = walk l c in
+            let b = walk l x in
+            Op3 (k, a, b, walk l y)
+        | None, (Coord _ | Const _) -> assert false
+      in
+      let i = add l nd in
+      Hashtbl.replace l.seen id (E.Any e, i);
+      i
+
+let lowered l outs =
+  { ins = l.operands; nodes = Iarray.of_list (List.rev l.rev_nodes); outs }
 
 (* One output that reads no other node, as a fill's constant is, is its one
    node: no table is needed to share it. *)
 let lower fn ~ins outs =
-  let invalid why = invalid_arg (fn ^ ": " ^ why) in
-  if Iarray.length outs = 0 then invalid "no output";
+  if Iarray.length outs = 0 then invalid_arg (fn ^ ": no output");
   let (E.Any first) = Iarray.get outs 0 in
   match if Iarray.length outs = 1 then leaf ins first else None with
   | Some n -> { ins; nodes = [| n |]; outs = [| 0 |] }
-  | None -> walked ~invalid ~ins outs
+  | None ->
+      let l = lowering fn ~ins 16 in
+      let out o =
+        let (E.Any e) = Iarray.get outs o in
+        walk l e
+      in
+      lowered l (Iarray.init (Iarray.length outs) out)
 
 let of_exprs ~ins outs = lower "Nx_kernel.Prog.of_exprs" ~ins outs
 
 (* Substitution *)
 
-(* [y] at [x]'s dtype, which two operands of a node of [p] share: a
-   substitute is of its leaf's dtype, so each rebuilt node is of its
-   node's. *)
-let like (type v s w r) (x : (v, s) E.t) (y : (w, r) E.t) : (v, s) E.t =
-  match D.equal_witness (E.dtype y) (E.dtype x) with
-  | Some Equal -> y
-  | None -> assert false
-
-(* Each node the outputs reach is made once, as an expression over the
-   expressions of its operands, so that of_exprs lowers a shared node
-   once. *)
+(* The nodes the outputs reach are lowered as of_exprs lowers the
+   expressions they stand for, without making those: each is added once by
+   its index in [p], after its operands in depth-first order, and a leaf's
+   substitute is walked into the same tables. A draw binds its position
+   into its sampler's program, of thousands of nodes for beta, this way. *)
 let subst ?outs ~ins f p =
   let fn = "Nx_kernel.Prog.subst" in
   let picked =
@@ -656,54 +705,52 @@ let subst ?outs ~ins f p =
     | None -> p.outs
     | Some outs ->
         let n = Iarray.length p.outs in
+        if Iarray.length outs = 0 then invalid_arg (fn ^ ": no output");
         let pick o =
           if o < 0 || o >= n then invalid_arg (strf "%s: no output %d" fn o);
           Iarray.get p.outs o
         in
         Iarray.map pick outs
   in
-  let made = Array.make (Iarray.length p.nodes) None in
-  (* Leaf [i] replaced by [x]. *)
-  let replaced i (E.Any e as x) =
-    let (D.Any dt) = dtype_of p i in
-    if not (D.equal (E.dtype e) dt) then
-      invalid_arg (strf "%s: node %d's expression is not of its dtype" fn i);
-    x
+  let n = Iarray.length p.nodes in
+  let l = lowering fn ~ins n in
+  (* Node [i]'s index in the result, [-1] until it is added. *)
+  let index = Array.make n (-1) in
+  (* Leaf [i], [nd], of dtype [dt]. *)
+  let leaf i nd (D.Any dt) =
+    match f nd with
+    | Some (E.Any e) ->
+        if not (D.equal (E.dtype e) dt) then
+          invalid_arg
+            (strf "%s: node %d's expression is not of its dtype" fn i);
+        walk l e
+    | None -> (
+        match nd with
+        | In k when not (reads ins k dt) -> refuse_in l k
+        | _ -> add l nd)
   in
-  let rec expr i =
-    match made.(i) with
-    | Some e -> e
-    | None ->
-        let e = make i in
-        made.(i) <- Some e;
-        e
-  and make i =
-    match Iarray.get p.nodes i with
-    | In k as nd -> (
-        match f nd with
-        | Some x -> replaced i x
-        | None ->
-            let (D.Any dt) = Iarray.get p.ins k in
-            E.Any (E.input k dt))
-    | Coord a as nd -> (
-        match f nd with Some x -> replaced i x | None -> E.Any (E.coord a))
-    | Const (D.Any dt, b) as nd -> (
-        match f nd with
-        | Some x -> replaced i x
-        | None -> E.Any (E.of_bits dt b))
-    | Op1 (k, D.Any dt, a) ->
-        let (E.Any x) = expr a in
-        E.Any (E.make1 k dt x)
-    | Op2 (k, a, b) -> (
-        let (E.Any x) = expr a in
-        let (E.Any y) = expr b in
-        match k with
-        | Binary _ -> E.Any (E.make2 k (E.dtype x) x (like x y))
-        | Compare _ -> E.Any (E.make2 k D.Bool x (like x y)))
-    | Op3 (k, a, b, c) ->
-        let (E.Any w) = expr a in
-        let (E.Any x) = expr b in
-        let (E.Any y) = expr c in
-        E.Any (E.make3 k (E.dtype x) w x (like x y))
+  let rec go i =
+    if index.(i) >= 0 then index.(i)
+    else
+      let r =
+        match Iarray.get p.nodes i with
+        | In k as nd -> leaf i nd (Iarray.get p.ins k)
+        | Coord _ as nd -> leaf i nd (D.Any D.Int64)
+        | Const (dt, _) as nd -> leaf i nd dt
+        | Op1 (k, dt, a) ->
+            let a = go a in
+            add l (Op1 (k, dt, a))
+        | Op2 (k, a, b) ->
+            let a = go a in
+            let b = go b in
+            add l (Op2 (k, a, b))
+        | Op3 (k, a, b, c) ->
+            let a = go a in
+            let b = go b in
+            let c = go c in
+            add l (Op3 (k, a, b, c))
+      in
+      index.(i) <- r;
+      r
   in
-  lower fn ~ins (Iarray.map expr picked)
+  lowered l (Iarray.map go picked)
