@@ -791,12 +791,12 @@ let pp_operand ppf (Any x) =
     (D.name (dtype x))
     pp_shape (shape x) Devices.pp_placement (placement x)
 
-let reduction : type d a. (d, a) reduction -> Nx_kernel.reduction * int =
-  function
-  | Monoid (m, k, _) -> (Monoid m, k)
-  | Logsumexp (k, _) -> (Logsumexp, k)
-  | Moments (k, _) -> (Moments, k)
-  | Arg (e, k, _) -> (Arg e, k)
+let reduction : type d a.
+    (d, a) reduction -> Nx_kernel.reduction * int * D.any = function
+  | Monoid (m, k, dt) -> (Monoid m, k, D.Any dt)
+  | Logsumexp (k, dt) -> (Logsumexp, k, D.Any dt)
+  | Moments (k, dt) -> (Moments, k, D.Any dt)
+  | Arg (e, k, dt) -> (Arg e, k, D.Any dt)
 
 let reduction_name : Nx_kernel.reduction -> string = function
   | Monoid Sum -> "Sum"
@@ -809,18 +809,18 @@ let reduction_name : Nx_kernel.reduction -> string = function
   | Arg Min -> "Arg Min"
 
 let rec reductions_list : type d r.
-    (d, r) reductions -> (Nx_kernel.reduction * int) list = function
+    (d, r) reductions -> (Nx_kernel.reduction * int * D.any) list = function
   | [] -> []
   | r :: rest -> reduction r :: reductions_list rest
 
 let reductions rs = Array.of_list (reductions_list rs)
 
-let pp_reduced (prog : P.t) (pr : printer) ppf (r, k) =
+let pp_reduced (prog : P.t) (pr : printer) ppf (r, k, _) =
   Format.fprintf ppf "%s %a" (reduction_name r) pr.expr
     (Iarray.get prog.outs k)
 
 let reduced_roots (prog : P.t) rs =
-  List.map (fun (_, k) -> Iarray.get prog.outs k) rs
+  List.map (fun (_, k, _) -> Iarray.get prog.outs k) rs
 
 let pp : type r. Format.formatter -> r prim -> unit =
  fun ppf op ->
@@ -989,7 +989,7 @@ let check_map (type d r) ~by layout (prog : P.t) (outs : (d, r) outs)
 
 (* A reduction's rule over [prog]'s outputs: its output exists and is of a
    dtype it takes. *)
-let check_reduction ~by (prog : P.t) (r, k) =
+let check_reduction ~by (prog : P.t) (r, k, _) =
   let produced = prog.outs in
   if k < 0 || k >= Iarray.length produced then
     invalid_argf "%s: a reduction of output %d of a program of %d" by k
@@ -1005,7 +1005,7 @@ let reduction_width : type d a. (d, a) reduction -> int = function
 (* The shape of the results of [rs] along [axes] of a loop of [layout]: its
    rule. *)
 let reduced_shape ~by layout axes rs =
-  let kinds = Array.map fst (reductions rs) in
+  let kinds = Array.map (fun (r, _, _) -> r) (reductions rs) in
   shaped ~by (Shape.reduce ~axes kinds (Iarray.to_array (L.shape layout)))
 
 (* A reduction's rule; its results' shape. *)
@@ -1042,7 +1042,8 @@ let check_scan (type d r) ~by layout axis prog (r : (d, r) reduction)
         invalid_argf "%s: a carry of %s where the terms carry in %s" by
           (D.name (dtype c)) (D.name want)
   | Some _, (Logsumexp _ | Moments _ | Arg _) ->
-      invalid_argf "%s: a carry for %s" by (reduction_name (fst (reduction r)))
+      let kind, _, _ = reduction r in
+      invalid_argf "%s: a carry for %s" by (reduction_name kind)
 
 (* [shape] without [axes]. *)
 let reduced shape axes =

@@ -123,6 +123,10 @@ let kernel_load (type d) (l : d Value.load) : Nx_kernel.load =
 let kernel_loads loads =
   Array.init (Iarray.length loads) (fun i -> kernel_load (Iarray.get loads i))
 
+(* A reduction as a kernel takes it, what it computes and the output it folds:
+   the kernel reads the result's dtype from its destination. *)
+let kernel (r, k, _) = (r, k)
+
 (* The arrays at position [j] of [x] and of the results [r] of [op]. *)
 let nth (type v s d) j (x : (v, s, d) Value.t) = Iarray.get (Prim.arrays x) j
 let dsts_at op r j = Array.map (fun per -> per.(j)) (Prim.result_arrays op r)
@@ -140,13 +144,13 @@ let call : type r.
     | Value.Map { prog; loads; _ } ->
         K.map prog ~dsts:(dsts_at op r j) (kernel_loads loads)
     | Value.Reduce { layout; axes; prog; reductions; loads } ->
-        let rs = Prim.reductions reductions
+        let rs = Array.map kernel (Prim.reductions reductions)
         and shape = Iarray.to_array (L.shape layout) in
         K.reduce prog ~shape ~axes rs ~dsts:(dsts_at op r j)
           (kernel_loads loads)
     | Value.Scan { axis; prog; reduction; loads; carry; _ } ->
         let carry = Option.map (fun (Value.Any c) -> A.Any (one c)) carry in
-        K.scan ?carry prog ~axis (Prim.reduction reduction)
+        K.scan ?carry prog ~axis (kernel (Prim.reduction reduction))
           ~dsts:(dsts_at op r j) (kernel_loads loads)
     | Value.Contract
         {
@@ -242,11 +246,11 @@ let refused : type r. by:string -> kernels:string -> Rig.t -> r Value.prim -> 'a
   match op with
   | Value.Linalg l -> refuses ~by ~kernels (Prim.routine_name l) d dts
   | Value.Reduce { reductions; _ } ->
-      let name (r, _) = Prim.reduction_name r in
+      let name (r, _, _) = Prim.reduction_name r in
       let names = Array.to_list (Array.map name (Prim.reductions reductions)) in
       refuses ~by ~kernels ("Reduce " ^ String.concat " and " names) d dts
   | Value.Scan { reduction; _ } ->
-      let r, _ = Prim.reduction reduction in
+      let r, _, _ = Prim.reduction reduction in
       refuses ~by ~kernels ("Scan " ^ Prim.reduction_name r) d dts
   | Value.Map { prog; _ } -> (
       match P.single prog with

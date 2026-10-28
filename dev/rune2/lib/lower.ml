@@ -127,31 +127,16 @@ let body (node : 'v 's 'e. ('v, 's, 'e) Nx.t -> Ops.t) layout prog loads =
 let output prog k =
   Nx_kernel.Prog.dtype prog (Iarray.get prog.Nx_kernel.Prog.outs k)
 
-(* [reduction r] is what [r] computes, the output it reads and its result's
-   dtype. *)
-let reduction (type d a) (r : (d, a) P.reduction) :
-    Nx_kernel.reduction * int * D.any =
-  match r with
-  | Monoid (m, k, dt) -> (Monoid m, k, D.Any dt)
-  | Logsumexp (k, dt) -> (Logsumexp, k, D.Any dt)
-  | Moments (k, dt) -> (Moments, k, D.Any dt)
-  | Arg (e, k, dt) -> (Arg e, k, D.Any dt)
-
-let rec reductions : type d r.
-    (d, r) P.reductions -> (Nx_kernel.reduction * int * D.any) list = function
-  | [] -> []
-  | r :: rest -> reduction r :: reductions rest
-
 let reduce (node : 'v 's 'e. ('v, 's, 'e) Nx.t -> Ops.t) layout axes prog rs
     loads =
   let ys = body node layout prog loads in
   let axes = Iarray.to_list axes in
   let fold (r, k, dt) = Reduce.reduce r axes ~src:(output prog k) dt ys.(k) in
-  Array.of_list (List.concat_map fold (reductions rs))
+  Array.of_list (List.concat_map fold (Array.to_list (P.reductions rs)))
 
 let scan (node : 'v 's 'e. ('v, 's, 'e) Nx.t -> Ops.t) layout axis prog r loads
     carry =
-  let r, k, dt = reduction r in
+  let r, k, dt = P.reduction r in
   let ys = body node layout prog loads in
   let carry = Option.map (fun (P.Any c) -> node c) carry in
   Array.of_list (Reduce.scan r axis ~carry ~src:(output prog k) dt ys.(k))

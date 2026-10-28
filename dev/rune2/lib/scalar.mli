@@ -95,8 +95,8 @@ val prune : P.t -> keep:bool array -> outs:int array -> P.t
     again in the transpose. *)
 
 exception Nonlinear of string
-(** Raised with the name of the kind that applies a nonlinear function to a
-    linear operand, as ["Exp"]. *)
+(** Raised with the kind, as {!Nx.Prim.kind} names it, of the node that applies
+    a nonlinear function to a linear operand, as ["Exp"]. *)
 
 val transpose :
   P.t -> linear:bool array -> cts:(int * D.any) array -> P.t option * bool array

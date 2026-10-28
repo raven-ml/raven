@@ -516,7 +516,8 @@ let reduce (type d r) ~by (route : unit Route.t) rule layout axes prog
   in
   let term o = P.dtype prog (Iarray.get prog.outs o) in
   let one (type a) (r : (d, a) Value.reduction) : a =
-    let (D.Any c) = Nx_kernel.carrier (term (snd (Prim.reduction r))) in
+    let _, o, _ = Prim.reduction r in
+    let (D.Any c) = Nx_kernel.carrier (term o) in
     match r with
     | Monoid (m, o, dt) ->
         let own j = array (fst (local j prog Value.[ Monoid (m, o, c) ])) in

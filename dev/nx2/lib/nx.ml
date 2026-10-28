@@ -6428,7 +6428,10 @@ module Prim = struct
 
   type operands = Prim.operands = Operands : 'd any list -> operands
 
+  let reduction = Prim.reduction
+  let reductions = Prim.reductions
   let name = Prim.name
+  let kind = Prim.kind
   let pp = Prim.pp
   let operands = Prim.operands
   let map = Prim.map

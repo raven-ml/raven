@@ -122,7 +122,9 @@ val pp : Format.formatter -> 'r prim -> unit
     outputs, and as [nK] where it is read. *)
 
 val kind : Nx_kernel.Prog.node -> string
-(** [kind n] names [n]'s kind in messages, as ["Exp"] or ["Less"]. *)
+(** [kind n] names [n] in messages by its innermost constructor, as ["Exp"]
+    for [Op1 (Unary Exp, _, _)], ["Where"] or ["In"]. A [Coord] is named
+    ["Iota"] and a [Const] ["Fill"]. *)
 
 val operands : 'r prim -> operands
 (** [operands op] is [op]'s operands in order: a map's or a reduction's loads;
@@ -252,12 +254,15 @@ val results :
     Raises [Invalid_argument] naming [by], before [m] is called, where [op]'s
     operands break its rule. *)
 
-val reduction : ('d, 'a) reduction -> Nx_kernel.reduction * int
-(** [reduction r] is [r] as {!Nx_kernel.S.scan} takes it: what it computes and
-    the program output it reduces. *)
+val reduction :
+  ('d, 'a) reduction -> Nx_kernel.reduction * int * Nx_array.Dtype.any
+(** [reduction r] is what [r] computes, the program output it reduces and the
+    dtype of its first result, as [Nx.Prim.reduction] states. A kernel takes
+    the first two ({!Nx_kernel.S.reduce}). *)
 
-val reductions : ('d, 'r) reductions -> (Nx_kernel.reduction * int) array
-(** [reductions rs] is [rs] as {!Nx_kernel.S.reduce} takes them. *)
+val reductions :
+  ('d, 'r) reductions -> (Nx_kernel.reduction * int * Nx_array.Dtype.any) array
+(** [reductions rs] is {!val-reduction} of each of [rs], in order. *)
 
 val reduction_name : Nx_kernel.reduction -> string
 (** [reduction_name r] names [r] in messages, as ["Logsumexp"] or

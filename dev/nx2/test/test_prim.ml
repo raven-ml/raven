@@ -1069,6 +1069,23 @@ let one_node_programs =
         "lookups on two domains give the model's programs" cache_commands;
     ]
 
+(* A reduction of any result, and what it computes, the output it reads and
+   its first result's dtype, as its constructor's fields state them. *)
+type reduced = Reduced : ('d, 'a) Value.reduction -> reduced
+
+let reduced =
+  [
+    (Reduced (Monoid (Max, 1, D.Int32)), (Nx_kernel.Monoid Max, 1, "int32"));
+    (Reduced (Logsumexp (0, D.Float32)), (Logsumexp, 0, "float32"));
+    (Reduced (Moments (2, D.Float64)), (Moments, 2, "float64"));
+    (Reduced (Arg (Min, 3, D.Int8)), (Arg Min, 3, "int8"));
+  ]
+
+let kernel_reduction =
+  Testable.make
+    ~pp:(fun ppf r -> Format.pp_print_string ppf (Prim.reduction_name r))
+    ~equal:( = )
+
 let operations =
   group "operations"
     [
@@ -1079,6 +1096,26 @@ let operations =
           equal string n (Prim.name op);
           let (Operands xs) = Prim.operands op in
           equal int count (List.length xs));
+      cases "a reduction is what it computes, its output and its dtype"
+        ~name:(fun (_, (r, _, _)) -> Prim.reduction_name r)
+        reduced
+        (fun (Reduced r, want) ->
+          let k, o, D.Any dt = Prim.reduction r in
+          let got = (k, o, D.name dt) in
+          equal (triple kernel_reduction int string) want got);
+      test "a node is named by its innermost constructor" (fun () ->
+          equal ~msg:"a unary" string "Exp"
+            (Prim.kind (Op1 (Unary Exp, D.Any D.Float32, 0)));
+          equal ~msg:"a comparison" string "Less_equal"
+            (Prim.kind (Op2 (Compare Less_equal, 0, 1)));
+          equal ~msg:"a ternary" string "Where"
+            (Prim.kind (Op3 (Where, 0, 1, 2)));
+          equal ~msg:"an input" string "In" (Prim.kind (In 0)));
+      test "a coordinate is Iota and a constant Fill" (fun () ->
+          equal ~msg:"a coordinate" string "Iota" (Prim.kind (Coord 0));
+          let zero = String.make 4 '\000' in
+          equal ~msg:"a constant" string "Fill"
+            (Prim.kind (Const (D.Any D.Float32, zero))));
       cases "a map over operands visits each and keeps the rule"
         ~name:(fun (n, _, _) -> n)
         (ops ())

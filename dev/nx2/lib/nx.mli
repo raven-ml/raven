@@ -4761,6 +4761,14 @@ module Prim : sig
         -> ('d, 'a * 'r) reductions
         (** A reduction's reductions, its results in order. *)
 
+  val reduction : ('d, 'a) reduction -> Nx_kernel.reduction * int * Dtype.any
+  (** [reduction r] is what [r] computes, the output of the loop's program it
+      reduces, and the dtype of its first result. *)
+
+  val reductions :
+    ('d, 'r) reductions -> (Nx_kernel.reduction * int * Dtype.any) array
+  (** [reductions rs] is {!val-reduction} of each of [rs], in order. *)
+
   type ('d, 'r) outs =
     | [] : ('d, unit) outs
     | ( :: ) : ('v, 's) dtype * ('d, 'r) outs -> ('d, ('v, 's, 'd) nx * 'r) outs
@@ -5027,6 +5035,11 @@ module Prim : sig
 
   val name : 'r t -> string
   (** [name op] is [op]'s constructor, as ["Map"]. *)
+
+  val kind : Nx_kernel.Prog.node -> string
+  (** [kind n] names [n] in messages by its innermost constructor, as ["Exp"]
+      for [Op1 (Unary Exp, _, _)], ["Where"] or ["In"]. A [Coord] is named
+      ["Iota"] and a [Const] ["Fill"]. *)
 
   val pp : Format.formatter -> 'r t -> unit
   (** [pp] formats an operation: its name, its programs as expressions over its

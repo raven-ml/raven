@@ -313,63 +313,6 @@ let prune (p : P.t) ~keep ~outs =
 
 exception Nonlinear of string
 
-let unary_name : P.unary -> string = function
-  | Neg -> "Neg"
-  | Recip -> "Recip"
-  | Abs -> "Abs"
-  | Sign -> "Sign"
-  | Sqrt -> "Sqrt"
-  | Exp -> "Exp"
-  | Exp2 -> "Exp2"
-  | Log -> "Log"
-  | Log2 -> "Log2"
-  | Log1p -> "Log1p"
-  | Expm1 -> "Expm1"
-  | Sin -> "Sin"
-  | Cos -> "Cos"
-  | Tan -> "Tan"
-  | Asin -> "Asin"
-  | Acos -> "Acos"
-  | Atan -> "Atan"
-  | Sinh -> "Sinh"
-  | Cosh -> "Cosh"
-  | Tanh -> "Tanh"
-  | Asinh -> "Asinh"
-  | Acosh -> "Acosh"
-  | Atanh -> "Atanh"
-  | Erf -> "Erf"
-  | Floor -> "Floor"
-  | Ceil -> "Ceil"
-  | Round -> "Round"
-  | Trunc -> "Trunc"
-
-let binary_name : P.binary -> string = function
-  | Add -> "Add"
-  | Sub -> "Sub"
-  | Mul -> "Mul"
-  | Fdiv -> "Fdiv"
-  | Idiv -> "Idiv"
-  | Mod -> "Mod"
-  | Pow -> "Pow"
-  | Atan2 -> "Atan2"
-  | Maximum -> "Maximum"
-  | Minimum -> "Minimum"
-  | And -> "And"
-  | Or -> "Or"
-  | Xor -> "Xor"
-  | Threefry -> "Threefry"
-
-let kind_name : P.node -> string = function
-  | In _ | Coord _ | Const _ -> "a leaf"
-  | Op1 (Copy, _, _) -> "Copy"
-  | Op1 (Cast, _, _) -> "Cast"
-  | Op1 (Bitcast, _, _) -> "Bitcast"
-  | Op1 (Unary u, _, _) -> unary_name u
-  | Op2 (Binary k, _, _) -> binary_name k
-  | Op2 (Compare _, _, _) -> "a comparison"
-  | Op3 (Where, _, _, _) -> "Where"
-  | Op3 (Fma, _, _, _) -> "Fma"
-
 (* [b]'s node [n] in [dt]. *)
 let in_dtype b dt n = if b.dts.(n) = dt then n else cast b dt n
 
@@ -417,7 +360,7 @@ let transpose (p : P.t) ~linear ~cts =
       add o (in_dtype b (P.dtype p o) (operand b (first + i))))
     cts;
   let opct = Array.make m None in
-  let nonlinear k = raise (Nonlinear (kind_name (Iarray.get p.nodes k))) in
+  let nonlinear k = raise (Nonlinear (Nx.Prim.kind (Iarray.get p.nodes k))) in
   for k = n - 1 downto 0 do
     match ct.(k) with
     | Some c when lin.(k) -> (
