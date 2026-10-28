@@ -1522,129 +1522,6 @@ let test_dies_at_the_call () =
   dies "Nx.qr" (fun d -> fst (Nx.qr d));
   dies "Nx.matmul" (fun d -> Nx.matmul d (square ()))
 
-(* A call whose operand reaches one operation, through movements, consumes
-   it, whatever else the call computes from that operation's result. *)
-let test_one_reader_consumes () =
-  let dies : type v s.
-      string ->
-      (unit -> (v, s, Nx.host) Nx.t) ->
-      ((v, s, Nx.host) Nx.t -> unit) ->
-      unit =
-   fun name make f ->
-    let x = make () in
-    let d = Nx.donate x in
-    f d;
-    let sub = dead_in "Nx.copy" x name in
-    raises_match ~msg:(name ^ "'s donor") (Exn.invalid_arg ~substring:sub)
-      (fun () -> Nx.copy x);
-    raises_match ~msg:(name ^ "'s handle") (Exn.invalid_arg ~substring:sub)
-      (fun () -> Nx.copy d)
-  in
-  let square () = fresh_at [| 2; 2 |] [| 2.; 0.; 0.; 2. |] in
-  let complex () = Nx.complex Nx.complex64 ~re:(square ()) ~im:(square ()) in
-  let counts () = Nx.cast Nx.int64 (fresh [| 1.; 2. |]) in
-  dies "Nx.square" square (fun d -> ignore (Nx.square d));
-  dies "Nx.isnan" square (fun d -> ignore (Nx.isnan d));
-  dies "Nx.mean" square (fun d -> ignore (Nx.mean d));
-  dies "Nx.var" square (fun d -> ignore (Nx.var d));
-  dies "Nx.std" square (fun d -> ignore (Nx.std d));
-  dies "Nx.logmeanexp" square (fun d -> ignore (Nx.logmeanexp d));
-  dies "Nx.ewma" square (fun d -> ignore (Nx.ewma ~alpha:0.5 d));
-  dies "Nx.roll" square (fun d -> ignore (Nx.roll 1 d));
-  dies "Nx.cholesky" square (fun d -> ignore (Nx.cholesky d));
-  dies "Nx.lu" square (fun d -> ignore (Nx.lu d));
-  dies "Nx.eigh" square (fun d -> ignore (Nx.eigh f32 d));
-  dies "Nx.svd" square (fun d -> ignore (Nx.svd Nx.float64 d));
-  dies "Nx.eig" square (fun d -> ignore (Nx.eig Nx.complex64 d));
-  dies "Nx.det" square (fun d -> ignore (Nx.det d));
-  dies "Nx.slogdet" square (fun d -> ignore (Nx.slogdet f32 d));
-  dies "Nx.inv" square (fun d -> ignore (Nx.inv d));
-  dies "Nx.pinv" square (fun d -> ignore (Nx.pinv d));
-  dies "Nx.vector_norm" square (fun d -> ignore (Nx.vector_norm f32 d));
-  dies "Nx.vector_norm" square (fun d -> ignore (Nx.vector_norm Nx.float64 d));
-  dies "Nx.vector_norm" complex (fun d -> ignore (Nx.vector_norm f32 d));
-  dies "Nx.matrix_norm" square (fun d -> ignore (Nx.matrix_norm f32 d));
-  dies "Nx.matrix_norm" complex (fun d ->
-      ignore (Nx.matrix_norm Nx.float64 ~ord:`Two d));
-  dies "Nx.matrix_rank" square (fun d -> ignore (Nx.matrix_rank d));
-  dies "Nx.cond" square (fun d -> ignore (Nx.cond f32 d));
-  dies "Nx.cond" complex (fun d -> ignore (Nx.cond f32 d));
-  dies "Nx.cond" square (fun d -> ignore (Nx.cond Nx.float64 ~p:`One d));
-  dies "Nx.argwhere" square (fun d -> ignore (Nx.argwhere d));
-  dies "Nx.fftshift" square (fun d -> ignore (Nx.fftshift ~axes:[ 0; 1 ] d));
-  dies "Nx.cross"
-    (fun () -> fresh [| 1.; 2.; 3. |])
-    (fun d -> ignore (Nx.cross d (fresh [| 4.; 5.; 6. |])));
-  dies "Nx.hfft" complex (fun d -> ignore (Nx.hfft Nx.float32 d));
-  dies "Nx.ihfft" square (fun d -> ignore (Nx.ihfft Nx.complex64 d));
-  dies "Nx.quantile" square (fun d -> ignore (Nx.quantile [| 0.5 |] d));
-  dies "Nx.array_equal" square (fun d ->
-      ignore (Nx.array_equal d (square ())));
-  dies "Nx.positions" counts (fun d -> ignore (Nx.positions d));
-  dies "Nx.combine_patches"
-    (fun () -> fresh_at [| 1; 2 |] [| 1.; 2. |])
-    (fun d ->
-      ignore
-        (Nx.combine_patches ~output_size:[| 2 |] ~kernel_size:[| 1 |]
-           ~stride:[| 1 |] ~dilation:[| 1 |] ~padding:[| (0, 0) |] d));
-  dies "Nx.fft" complex (fun d -> ignore (Nx.fft d));
-  dies "Nx.ifft" complex (fun d -> ignore (Nx.ifft d));
-  dies "Nx.rfft" square (fun d -> ignore (Nx.rfft Nx.complex64 d));
-  dies "Nx.irfft" complex (fun d -> ignore (Nx.irfft Nx.float32 d));
-  let vector () = fresh [| 1.; 2. |] in
-  let ints () = Nx.cast Nx.int64 (fresh [| 0.; 1.; 2. |]) in
-  let pair ~q ~k = { Nx.q; k; len = ints (); tq = 2 } in
-  dies "Nx.vdot" vector (fun d -> ignore (Nx.vdot d (vector ())));
-  dies "Nx.vdot" vector (fun d -> ignore (Nx.vdot (vector ()) d));
-  dies "Nx.solve" square (fun d -> ignore (Nx.solve d (vector ())));
-  dies "Nx.solve" vector (fun d -> ignore (Nx.solve (square ()) d));
-  dies "Nx.solve_triangular" square (fun d ->
-      ignore (Nx.solve_triangular d (Nx.reshape [| 2; 1 |] (vector ()))));
-  dies "Nx.solve_triangular" vector (fun d ->
-      ignore (Nx.solve_triangular (square ()) (Nx.reshape [| 2; 1 |] d)));
-  dies "Nx.searchsorted" vector (fun d ->
-      ignore (Nx.searchsorted ~side:`Left d (vector ())));
-  dies "Nx.searchsorted" vector (fun d ->
-      ignore (Nx.searchsorted ~side:`Left (vector ()) d));
-  dies "Nx.causal" ints (fun d -> ignore (Nx.causal (pair ~q:d ~k:(ints ()))));
-  dies "Nx.causal" ints (fun d -> ignore (Nx.causal (pair ~q:(ints ()) ~k:d)));
-  dies "Nx.complex" vector (fun d ->
-      ignore (Nx.complex Nx.complex128 ~re:d ~im:(vector ())));
-  let signal () = fresh_at [| 8 |] (Array.init 8 Float.of_int) in
-  let taper () = fresh [| 1.; 2.; 2.; 1. |] in
-  dies "Nx.stft" signal (fun d -> ignore (Nx.stft Nx.complex64 ~window:4 d));
-  dies "Nx.stft" taper (fun d ->
-      ignore (Nx.stft Nx.complex64 ~window:4 ~win:d (signal ())));
-  let spectrum () = Nx.stft Nx.complex64 ~window:4 ~step:2 (signal ()) in
-  dies "Nx.istft" spectrum (fun d ->
-      ignore (Nx.istft Nx.float32 ~window:4 ~step:2 d));
-  dies "Nx.tensordot" square (fun d -> ignore (Nx.tensordot d (square ())));
-  dies "Nx.tensordot" square (fun d -> ignore (Nx.tensordot (square ()) d));
-  dies "Nx.inner" square (fun d -> ignore (Nx.inner d (vector ())));
-  dies "Nx.outer" vector (fun d -> ignore (Nx.outer (vector ()) d));
-  dies "Nx.vecdot" square (fun d -> ignore (Nx.vecdot d (vector ())));
-  dies "Nx.vecdot" vector (fun d -> ignore (Nx.vecdot (square ()) d));
-  dies "Nx.vecdot" complex (fun d -> ignore (Nx.vecdot d (complex ())));
-  dies "Nx.kron" square (fun d -> ignore (Nx.kron d (vector ())));
-  dies "Nx.kron" vector (fun d -> ignore (Nx.kron (square ()) d));
-  dies "Nx.multi_dot" square (fun d ->
-      ignore (Nx.multi_dot [ square (); d; square () ]));
-  dies "Nx.multi_dot" vector (fun d -> ignore (Nx.multi_dot [ d; square () ]));
-  dies "Nx.matrix_power" square (fun d -> ignore (Nx.matrix_power d 2));
-  dies "Nx.matrix_power" square (fun d -> ignore (Nx.matrix_power d 1));
-  dies "Nx.matrix_power" square (fun d -> ignore (Nx.matrix_power d (-3)));
-  dies "Nx.nonzero" square (fun d -> ignore (Nx.nonzero d));
-  dies "Nx.extract" square (fun d -> ignore (Nx.extract d (square ())));
-  dies "Nx.extract" square (fun d -> ignore (Nx.extract (square ()) d));
-  dies "Nx.unravel_index" ints (fun d -> ignore (Nx.unravel_index d [| 2; 3 |]));
-  let mask () = Nx.greater_s (square ()) 1. in
-  dies "Nx.slice" mask (fun d -> ignore (Nx.slice [ Nx.M d ] (square ())));
-  dies "Nx.slice" square (fun d -> ignore (Nx.slice [ Nx.M (mask ()) ] d));
-  dies "Nx.set" mask (fun d ->
-      ignore (Nx.set [ Nx.M d ] (Nx.zeros f32 [| 1 |]) (square ())));
-  dies "Nx.set" square (fun d ->
-      ignore (Nx.set [ Nx.M (mask ()) ] (Nx.zeros f32 [| 1 |]) d))
-
 (* A call that keeps none of its operand still raises for a dead one: an
    fft cut to no point, patches of an empty axis padded. *)
 let test_none_kept () =
@@ -1673,7 +1550,10 @@ let test_beside_elsewhere () =
    case makes fresh operands, passes its operand [i] as [d i x], and prints the
    results. Two promises run over the table: on a dead operand the function
    raises naming itself, the one the user called, whatever it computes through;
-   a donated operand gives the undonated result. *)
+   a donated operand gives the undonated result, and where each operand reaches
+   one operation, through movements, whatever else the call computes from its
+   result, the call consumes it: the donor and its handle die naming the
+   call. *)
 
 (* What a function does with a dead operand: raise naming itself, or print
    [death]. *)
@@ -1685,6 +1565,7 @@ type case = {
   dt : string;
   operands : int;
   dead : dead;
+  consumes : bool;  (* Each operand reaches one operation. *)
   run :
     ('v 's. int -> ('v, 's, Nx.host) Nx.t -> ('v, 's, Nx.host) Nx.t) -> string;
 }
@@ -1720,9 +1601,9 @@ let shows l = String.concat "; " l
 let showl l = shows (List.map show l)
 
 (* A case of [Nx.fn], whose refusals name [Nx.by], [Nx.fn] by default. *)
-let c ?by ?(dead = Raises) fn operands run dt =
+let c ?by ?(dead = Raises) ?(consumes = false) fn operands run dt =
   let by = "Nx." ^ Option.value by ~default:fn in
-  { fn = "Nx." ^ fn; by; dt; operands; dead; run }
+  { fn = "Nx." ^ fn; by; dt; operands; dead; consumes; run }
 
 (* The cases of a group, at the dtype named [dt]. *)
 let table dt cases = List.map (fun case -> case dt) cases
@@ -1783,8 +1664,11 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
           show (Nx.stack [ d 0 (x [| 3 |]); d 1 (x [| 3 |]) ]));
       c "pad" 1 (fun d ->
           show (Nx.pad [| (1, 0); (0, 1) |] one (d 0 (x [| 2; 3 |]))));
-      c "roll" 1 (fun d -> show (Nx.roll 1 (d 0 (x [| 5 |]))));
-      c "roll" 1 (fun d -> show (Nx.roll ~axis:1 2 (d 0 (x [| 2; 3 |]))));
+      c ~consumes:true "roll" 1 (fun d -> show (Nx.roll 1 (d 0 (x [| 5 |]))));
+      c ~consumes:true "roll" 1 (fun d ->
+          show (Nx.roll ~axis:1 2 (d 0 (x [| 2; 3 |]))));
+      c ~consumes:true "fftshift" 1 (fun d ->
+          show (Nx.fftshift ~axes:[ 0; 1 ] (d 0 (x [| 2; 3 |]))));
       c "tile" 1 (fun d -> show (Nx.tile [| 2; 1 |] (d 0 (x [| 2; 3 |]))));
       c "tile" 1 (fun d -> show (Nx.tile [| 1; 1 |] (d 0 (x [| 2; 3 |]))));
       c "repeat" 1 (fun d -> show (Nx.repeat ~axis:0 2 (d 0 (x [| 2; 3 |]))));
@@ -1845,7 +1729,8 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
       c "div" 2 (fun d ->
           show (Nx.div (d 0 (x [| 2; 3 |])) (d 1 (nonzero [| 2; 3 |]))));
       c "neg" 1 (fun d -> show (Nx.neg (d 0 (x [| 2; 3 |]))));
-      c "square" 1 (fun d -> show (Nx.square (d 0 (x [| 2; 3 |]))));
+      c ~consumes:true "square" 1 (fun d ->
+          show (Nx.square (d 0 (x [| 2; 3 |]))));
       c "add_s" 1 (fun d -> show (Nx.add_s (d 0 (x [| 3 |])) one));
       c "sub_s" 1 (fun d -> show (Nx.sub_s (d 0 (x [| 3 |])) one));
       c "mul_s" 1 (fun d -> show (Nx.mul_s (d 0 (x [| 3 |])) one));
@@ -1857,7 +1742,7 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
           show (Nx.not_equal (d 0 (x [| 4 |])) (d 1 (Nx.flip (x [| 4 |])))));
       c "equal_s" 1 (fun d -> show (Nx.equal_s (d 0 (x [| 4 |])) one));
       c "not_equal_s" 1 (fun d -> show (Nx.not_equal_s (d 0 (x [| 4 |])) one));
-      c "array_equal" 2 (fun d ->
+      c ~consumes:true "array_equal" 2 (fun d ->
           show (Nx.array_equal (d 0 (x [| 3 |])) (d 1 (x [| 3 |]))));
       c "where" 3 (fun d ->
           let cond = d 0 (Nx.not_equal_s (x [| 2; 3 |]) one) in
@@ -1867,8 +1752,8 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
       c "sum" 1 (fun d ->
           show (Nx.sum ~axes:[ 1 ] ~keepdims:true (d 0 (x [| 2; 3 |]))));
       c "prod" 1 (fun d -> show (Nx.prod ~axes:[ 0 ] (d 0 (x [| 2; 3 |]))));
-      c "mean" 1 (fun d -> show (Nx.mean (d 0 (x [| 2; 3 |]))));
-      c "mean" 1 (fun d ->
+      c ~consumes:true "mean" 1 (fun d -> show (Nx.mean (d 0 (x [| 2; 3 |]))));
+      c ~consumes:true "mean" 1 (fun d ->
           show (Nx.mean ~axes:[ 0 ] ~keepdims:true (d 0 (x [| 2; 3 |]))));
       c "cumsum" 1 (fun d -> show (Nx.cumsum (d 0 (x [| 2; 3 |]))));
       c "cumsum" 1 (fun d -> show (Nx.cumsum ~axis:1 (d 0 (x [| 2; 3 |]))));
@@ -1902,8 +1787,9 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
                (d 0 (x [| 2; 3 |]))
                (d 1 (x [| 3; 2 |]))));
       c "dot" 2 (fun d -> show (Nx.dot (d 0 (x [| 3 |])) (d 1 (x [| 3 |]))));
-      c "vdot" 2 (fun d -> show (Nx.vdot (d 0 (x [| 3 |])) (d 1 (x [| 3 |]))));
-      c "cross" 2 (fun d ->
+      c ~consumes:true "vdot" 2 (fun d ->
+          show (Nx.vdot (d 0 (x [| 3 |])) (d 1 (x [| 3 |]))));
+      c ~consumes:true "cross" 2 (fun d ->
           show (Nx.cross (d 0 (x [| 2; 3 |])) (d 1 (x [| 3 |]))));
       c "matrix_transpose" 1 (fun d ->
           show (Nx.matrix_transpose (d 0 (x [| 2; 3 |]))));
@@ -1916,42 +1802,50 @@ let any_dtype (type v s) (dt : (v, s) Nx.dtype) =
       c "trace" 1 (fun d -> show (Nx.trace (d 0 (x [| 3; 3 |]))));
       c "diag" 1 (fun d -> show (Nx.diag (d 0 (x [| 3 |]))));
       c "diag" 1 (fun d -> show (Nx.diag (d 0 (x [| 3; 3 |]))));
-      c "tensordot" 2 (fun d ->
+      c ~consumes:true "tensordot" 2 (fun d ->
           show
             (Nx.tensordot ~axes:([ 1 ], [ 0 ])
                (d 0 (x [| 2; 3 |]))
                (d 1 (x [| 3; 2 |]))));
-      c "tensordot" 2 (fun d ->
+      c ~consumes:true "tensordot" 2 (fun d ->
           show (Nx.tensordot (d 0 (x [| 2; 3 |])) (d 1 (x [| 2; 3 |]))));
-      c "inner" 2 (fun d -> show (Nx.inner (d 0 (x [| 2; 3 |])) (d 1 (x [| 3 |]))));
-      c "outer" 2 (fun d -> show (Nx.outer (d 0 (x [| 2 |])) (d 1 (x [| 3 |]))));
-      c "vecdot" 2 (fun d ->
+      c ~consumes:true "inner" 2 (fun d ->
+          show (Nx.inner (d 0 (x [| 2; 3 |])) (d 1 (x [| 3 |]))));
+      c ~consumes:true "outer" 2 (fun d ->
+          show (Nx.outer (d 0 (x [| 2 |])) (d 1 (x [| 3 |]))));
+      c ~consumes:true "vecdot" 2 (fun d ->
           show (Nx.vecdot (d 0 (x [| 2; 3 |])) (d 1 (x [| 3 |]))));
-      c "kron" 2 (fun d -> show (Nx.kron (d 0 (x [| 2; 1 |])) (d 1 (x [| 3 |]))));
-      c "multi_dot" 2 (fun d ->
+      c ~consumes:true "kron" 2 (fun d ->
+          show (Nx.kron (d 0 (x [| 2; 1 |])) (d 1 (x [| 3 |]))));
+      c ~consumes:true "multi_dot" 2 (fun d ->
           show (Nx.multi_dot [ d 0 (x [| 3 |]); d 1 (x [| 3; 2 |]) ]));
-      c "multi_dot" 3 (fun d ->
+      c ~consumes:true "multi_dot" 3 (fun d ->
           show
             (Nx.multi_dot
                [ d 0 (x [| 2; 3 |]); d 1 (x [| 3; 1 |]); d 2 (x [| 1; 2 |]) ]));
       c "matrix_power" 1 (fun d -> show (Nx.matrix_power (d 0 (x [| 2; 2 |])) 0));
-      c "matrix_power" 1 (fun d -> show (Nx.matrix_power (d 0 (x [| 2; 2 |])) 1));
-      c "matrix_power" 1 (fun d -> show (Nx.matrix_power (d 0 (x [| 2; 2 |])) 2));
+      c ~consumes:true "matrix_power" 1 (fun d ->
+          show (Nx.matrix_power (d 0 (x [| 2; 2 |])) 1));
+      c ~consumes:true "matrix_power" 1 (fun d ->
+          show (Nx.matrix_power (d 0 (x [| 2; 2 |])) 2));
       c "matrix_power" 1 (fun d ->
           show (Nx.matrix_power (d 0 (x [| 1; 2; 2 |])) 3));
       c "meshgrid" 2 (fun d ->
           showl (Nx.meshgrid ~indexing:`Xy [ d 0 (x [| 2 |]); d 1 (x [| 3 |]) ]));
-      c "slice" 2 (fun d ->
+      c ~consumes:true "slice" 2 (fun d ->
           let mask = d 0 (Nx.not_equal_s (x [| 2; 3 |]) one) in
           show (Nx.slice [ Nx.M mask ] (d 1 (x [| 2; 3 |]))));
-      c "set" 3 (fun d ->
+      c ~consumes:true "set" 3 (fun d ->
           let mask = d 0 (Nx.not_equal_s (x [| 3 |]) one) in
           show (Nx.set [ Nx.A; Nx.M mask ] (d 1 (x [| 2; 1 |])) (d 2 (x [| 2; 3 |]))));
-      c "extract" 2 (fun d ->
+      c ~consumes:true "extract" 2 (fun d ->
           show (Nx.extract (d 0 (x [| 2; 3 |])) (d 1 (x [| 6 |]))));
-      c "extract" 2 (fun d ->
+      c ~consumes:true "extract" 2 (fun d ->
           show (Nx.extract ~size:4 ~fill:one (d 0 (x [| 2; 3 |])) (d 1 (x [| 6 |]))));
-      c "nonzero" 1 (fun d -> showl (Nx.nonzero (d 0 (x [| 2; 3 |]))));
+      c ~consumes:true "nonzero" 1 (fun d ->
+          showl (Nx.nonzero (d 0 (x [| 2; 3 |]))));
+      c ~consumes:true "argwhere" 1 (fun d ->
+          show (Nx.argwhere (d 0 (x [| 2; 3 |]))));
       c "( *@ )" ~by:"matmul" 2 (fun d ->
           show Nx.(d 0 (x [| 2; 3 |]) *@ d 1 (x [| 3; 2 |])));
       c "( .%{} )" ~by:"get" 1 (fun d -> show Nx.((d 0 (x [| 2; 3 |])).%{[ 1 ]}));
@@ -1968,22 +1862,26 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
   let ids () = ints [| 0; 1; 0; 1 |] in
   table (D.name dt)
     [
-      c "vector_norm" 1 (fun d -> show (Nx.vector_norm dt (d 0 (x [| 4 |]))));
-      c "vector_norm" 1 (fun d ->
+      c ~consumes:true "vector_norm" 1 (fun d ->
+          show (Nx.vector_norm dt (d 0 (x [| 4 |]))));
+      c ~consumes:true "vector_norm" 1 (fun d ->
           show (Nx.vector_norm dt ~ord:3. (d 0 (x [| 4 |]))));
-      c "vector_norm" 1 (fun d ->
+      c ~consumes:true "vector_norm" 1 (fun d ->
           show (Nx.vector_norm Nx.float64 (d 0 (x [| 4 |]))));
-      c "matrix_norm" 1 (fun d ->
+      c ~consumes:true "matrix_norm" 1 (fun d ->
           show (Nx.matrix_norm dt (d 0 (x [| 2; 2 |]))));
-      c "matrix_norm" 1 (fun d ->
+      c ~consumes:true "matrix_norm" 1 (fun d ->
           show (Nx.matrix_norm dt ~ord:`One (d 0 (x [| 2; 2 |]))));
-      c "matrix_norm" 1 (fun d ->
+      c ~consumes:true "matrix_norm" 1 (fun d ->
           show (Nx.matrix_norm dt ~ord:`Two (d 0 (x [| 2; 2 |]))));
-      c "matrix_norm" 1 (fun d ->
+      c ~consumes:true "matrix_norm" 1 (fun d ->
           show (Nx.matrix_norm Nx.float16 ~ord:`Nuc (d 0 (x [| 2; 2 |]))));
-      c "cond" 1 (fun d -> show (Nx.cond dt (d 0 (positive [| 2; 2 |]))));
+      c ~consumes:true "cond" 1 (fun d ->
+          show (Nx.cond dt (d 0 (positive [| 2; 2 |]))));
       c "cond" 1 (fun d ->
           show (Nx.cond Nx.float64 ~p:`Inf (d 0 (positive [| 2; 2 |]))));
+      c "cond" 1 (fun d ->
+          show (Nx.cond Nx.float64 ~p:`One (d 0 (positive [| 2; 2 |]))));
       c "mod_" 2 (fun d ->
           show (Nx.mod_ (d 0 (x [| 4 |])) (d 1 (positive [| 4 |]))));
       c "pow" 2 (fun d ->
@@ -2101,7 +1999,8 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
       c "logical_xor" 2 (fun d ->
           show (Nx.logical_xor (d 0 (x [| 4 |])) (d 1 (Nx.flip (x [| 4 |])))));
       c "logical_not" 1 (fun d -> show (Nx.logical_not (d 0 (x [| 4 |]))));
-      c "isnan" 1 (fun d -> show (Nx.isnan (d 0 (Nx.log (x [| 4 |])))));
+      c ~consumes:true "isnan" 1 (fun d ->
+          show (Nx.isnan (d 0 (Nx.log (x [| 4 |])))));
       c "isinf" 1 (fun d -> show (Nx.isinf (d 0 (Nx.log (x [| 4 |])))));
       c "isfinite" 1 (fun d -> show (Nx.isfinite (d 0 (Nx.log (x [| 4 |])))));
       c "clamp" 1 (fun d -> show (Nx.clamp (d 0 (x [| 4 |]))));
@@ -2119,19 +2018,23 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
       c "argmin" 1 (fun d -> show (Nx.argmin ~axis:1 (d 0 (x [| 2; 3 |]))));
       c "argmin" 1 (fun d ->
           show (Nx.argmin ~axis:1 ~keepdims:true (d 0 (x [| 2; 3 |]))));
-      c "var" 1 (fun d -> show (Nx.var (d 0 (x [| 2; 3 |]))));
-      c "std" 1 (fun d -> show (Nx.std ~ddof:1 (d 0 (x [| 5 |]))));
+      c "argmin" 1 (fun d ->
+          show (Nx.argmin ~keepdims:true (d 0 (x [| 2; 3 |]))));
+      c ~consumes:true "var" 1 (fun d -> show (Nx.var (d 0 (x [| 2; 3 |]))));
+      c ~consumes:true "std" 1 (fun d ->
+          show (Nx.std ~ddof:1 (d 0 (x [| 5 |]))));
       c "logsumexp" 1 (fun d -> show (Nx.logsumexp (d 0 (x [| 2; 3 |]))));
       c "logsumexp" 1 (fun d ->
           show (Nx.logsumexp ~axes:[ 1 ] ~keepdims:true (d 0 (x [| 2; 3 |]))));
-      c "logmeanexp" 1 (fun d ->
+      c ~consumes:true "logmeanexp" 1 (fun d ->
           show (Nx.logmeanexp ~axes:[ 1 ] (d 0 (x [| 2; 3 |]))));
-      c "logmeanexp" 1 (fun d ->
+      c ~consumes:true "logmeanexp" 1 (fun d ->
           show (Nx.logmeanexp ~keepdims:true (d 0 (x [| 2; 3 |]))));
       c "cummax" 1 (fun d -> show (Nx.cummax ~axis:0 (d 0 (x [| 2; 3 |]))));
       c "cummin" 1 (fun d -> show (Nx.cummin (d 0 (x [| 2; 3 |]))));
-      c "ewma" 1 (fun d -> show (Nx.ewma ~alpha:0.5 (d 0 (x [| 2; 3 |]))));
-      c "ewma" 1 (fun d ->
+      c ~consumes:true "ewma" 1 (fun d ->
+          show (Nx.ewma ~alpha:0.5 (d 0 (x [| 2; 3 |]))));
+      c ~consumes:true "ewma" 1 (fun d ->
           show (Nx.ewma ~axis:0 ~alpha:0.5 (d 0 (x [| 2; 3 |]))));
       c "sigmoid" 1 (fun d -> show (Nx.sigmoid (d 0 (x [| 4 |]))));
       c "softplus" 1 (fun d -> show (Nx.softplus (d 0 (x [| 4 |]))));
@@ -2167,7 +2070,7 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
                ~dilation:[| 1 |]
                ~padding:[| (0, 0) |]
                (d 0 (x [| 2; 4 |]))));
-      c "combine_patches" 1 (fun d ->
+      c ~consumes:true "combine_patches" 1 (fun d ->
           show
             (Nx.combine_patches ~output_size:[| 4 |] ~kernel_size:[| 2 |]
                ~stride:[| 1 |] ~dilation:[| 1 |]
@@ -2185,10 +2088,10 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
           shows [ show v; show i ]);
       c "order_key" 1 (fun d -> show (Nx.order_key Nx.uint64 (d 0 (x [| 4 |]))));
       c "lexsort" 1 (fun d -> show (Nx.lexsort (d 0 (x [| 5; 2 |]))));
-      c "searchsorted" 2 (fun d ->
+      c ~consumes:true "searchsorted" 2 (fun d ->
           let s = d 0 (Nx.cumsum (Nx.abs (x [| 4 |]))) in
           show (Nx.searchsorted ~side:`Left s (d 1 (x [| 3 |]))));
-      c "searchsorted" 2 (fun d ->
+      c ~consumes:true "searchsorted" 2 (fun d ->
           let s = d 0 (Nx.cumsum (Nx.abs (x [| 4 |]))) in
           show (Nx.searchsorted ~side:`Right s (d 1 (x [| 3 |]))));
       c "unique" 1 (fun d ->
@@ -2197,7 +2100,7 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
       c "unique" 1 (fun d ->
           let g = Nx.unique (d 0 (x [| 4; 2 |])) in
           showl [ g.ids; g.counts ]);
-      c "quantile" 1 (fun d ->
+      c ~consumes:true "quantile" 1 (fun d ->
           show (Nx.quantile [| 0.25; 0.5 |] (d 0 (x [| 5 |]))));
       c "histogram" 2 (fun d ->
           let edges = d 0 (Nx.add (x [| 3 |]) (Nx.arange_f dt 0. 3. 1.)) in
@@ -2208,9 +2111,11 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
             (Nx.histogram
                ~weights:(d 2 (x [| 6 |]))
                [ (edges, d 1 (x [| 6 |])) ]));
-      c "rfft" 1 (fun d -> show (Nx.rfft Nx.complex64 (d 0 (x [| 2; 4 |]))));
-      c "ihfft" 1 (fun d -> show (Nx.ihfft Nx.complex64 (d 0 (x [| 2; 4 |]))));
-      c "rfft" 1 (fun d ->
+      c ~consumes:true "rfft" 1 (fun d ->
+          show (Nx.rfft Nx.complex64 (d 0 (x [| 2; 4 |]))));
+      c ~consumes:true "ihfft" 1 (fun d ->
+          show (Nx.ihfft Nx.complex64 (d 0 (x [| 2; 4 |]))));
+      c ~consumes:true "rfft" 1 (fun d ->
           show (Nx.rfft Nx.complex64 ~norm:Forward (d 0 (x [| 4 |]))));
       c "dct" 1 (fun d -> show (Nx.dct (d 0 (x [| 2; 4 |]))));
       c "dct" 1 (fun d -> show (Nx.dct ~type_:Type_1 (d 0 (x [| 2; 4 |]))));
@@ -2218,9 +2123,9 @@ let floats (type s) (dt : (float, s) Nx.dtype) =
       c "dst" 1 (fun d -> show (Nx.dst ~type_:Type_1 (d 0 (x [| 4 |]))));
       c "idst" 1 (fun d -> show (Nx.idst (d 0 (x [| 4 |]))));
       c "idst" 1 (fun d -> show (Nx.idst ~type_:Type_4 (d 0 (x [| 4 |]))));
-      c "stft" 1 (fun d ->
+      c ~consumes:true "stft" 1 (fun d ->
           show (Nx.stft Nx.complex64 ~window:2 (d 0 (x [| 4 |]))));
-      c "stft" 2 (fun d ->
+      c ~consumes:true "stft" 2 (fun d ->
           show
             (Nx.stft Nx.complex64 ~window:4 ~step:2
                ~win:(d 1 (x [| 4 |]))
@@ -2262,43 +2167,47 @@ let routines (type v s r c) (dt : (v, s) Nx.dtype) (r : (float, r) Nx.dtype)
   in
   table (D.name dt)
     [
-      c "cholesky" 1 (fun d -> show (Nx.cholesky (d 0 (spd ()))));
-      c "cholesky" 1 (fun d ->
+      c ~consumes:true "cholesky" 1 (fun d ->
+          show (Nx.cholesky (d 0 (spd ()))));
+      c ~consumes:true "cholesky" 1 (fun d ->
           show (Nx.cholesky ~triangle:Upper (d 0 (spd ()))));
       c "qr" 1 (fun d ->
           let q, r = Nx.qr (d 0 (spd ())) in
           showl [ q; r ]);
-      c "lu" 1 (fun d ->
+      c ~consumes:true "lu" 1 (fun d ->
           let p, l, u = Nx.lu (d 0 (spd ())) in
           shows [ show p; show l; show u ]);
-      c "svd" 1 (fun d ->
+      c ~consumes:true "svd" 1 (fun d ->
           let u, s, vh = Nx.svd r (d 0 (spd ())) in
           shows [ show u; show s; show vh ]);
-      c "svd" 1 (fun d ->
+      c ~consumes:true "svd" 1 (fun d ->
           let _, s, _ = Nx.svd ~vectors:false Nx.float16 (d 0 (spd ())) in
           show s);
-      c "eigh" 1 (fun d ->
+      c ~consumes:true "eigh" 1 (fun d ->
           let w, v = Nx.eigh r (d 0 (spd ())) in
           shows [ show w; show v ]);
-      c "eigh" 1 (fun d ->
+      c ~consumes:true "eigh" 1 (fun d ->
           show (fst (Nx.eigh ~triangle:Upper r (d 0 (spd ())))));
-      c "eig" 1 (fun d ->
+      c ~consumes:true "eig" 1 (fun d ->
           let w, v = Nx.eig c' (d 0 (spd ())) in
           showl [ w; v ]);
-      c "det" 1 (fun d -> show (Nx.det (d 0 (spd ()))));
-      c "slogdet" 1 (fun d ->
+      c ~consumes:true "det" 1 (fun d -> show (Nx.det (d 0 (spd ()))));
+      c ~consumes:true "slogdet" 1 (fun d ->
           let s, l = Nx.slogdet r (d 0 (spd ())) in
           shows [ show s; show l ]);
-      c "solve" 2 (fun d -> show (Nx.solve (d 0 (spd ())) (d 1 (x [| 3 |]))));
-      c "solve_triangular" 2 (fun d ->
+      c ~consumes:true "solve" 2 (fun d ->
+          show (Nx.solve (d 0 (spd ())) (d 1 (x [| 3 |]))));
+      c ~consumes:true "solve_triangular" 2 (fun d ->
           show
             (Nx.solve_triangular (d 0 (Nx.tril (spd ()))) (d 1 (x [| 3; 1 |]))));
-      c "solve_triangular" 2 (fun d ->
+      c ~consumes:true "solve_triangular" 2 (fun d ->
           show
             (Nx.solve_triangular ~transpose:Transpose
                (d 0 (Nx.tril (spd ())))
                (d 1 (x [| 3; 1 |]))));
-      c "inv" 1 (fun d -> show (Nx.inv (d 0 (spd ()))));
+      c ~consumes:true "inv" 1 (fun d -> show (Nx.inv (d 0 (spd ()))));
+      c ~consumes:true "matrix_power" 1 (fun d ->
+          show (Nx.matrix_power (d 0 (x [| 2; 2 |])) (-3)));
       c "lstsq" 2 (fun d ->
           let x, res, k, s = Nx.lstsq r (d 0 (spd ())) (d 1 (x [| 3 |])) in
           shows [ show x; show res; show k; show s ]);
@@ -2307,9 +2216,11 @@ let routines (type v s r c) (dt : (v, s) Nx.dtype) (r : (float, r) Nx.dtype)
           let a = spd () in
           let x, _, _, _ = Nx.lstsq r (d 0 a) a in
           show x);
-      c "pinv" 1 (fun d -> show (Nx.pinv (d 0 (spd ()))));
-      c "pinv" 1 (fun d -> show (Nx.pinv ~hermitian:true (d 0 (spd ()))));
-      c "matrix_rank" 1 (fun d -> show (Nx.matrix_rank (d 0 (spd ()))));
+      c ~consumes:true "pinv" 1 (fun d -> show (Nx.pinv (d 0 (spd ()))));
+      c ~consumes:true "pinv" 1 (fun d ->
+          show (Nx.pinv ~hermitian:true (d 0 (spd ()))));
+      c ~consumes:true "matrix_rank" 1 (fun d ->
+          show (Nx.matrix_rank (d 0 (spd ()))));
     ]
 
 (* The functions of complex numbers. *)
@@ -2322,41 +2233,45 @@ let complexes =
       c "magnitude" 1 (fun d -> show (Nx.magnitude f32 (d 0 (z [| 4 |]))));
       c "angle" 1 (fun d -> show (Nx.angle f32 (d 0 (z [| 4 |]))));
       c "conjugate" 1 (fun d -> show (Nx.conjugate (d 0 (z [| 4 |]))));
-      c "complex" 2 (fun d ->
+      c ~consumes:true "complex" 2 (fun d ->
           show
             (Nx.complex Nx.complex64
                ~re:(d 0 (data f32 [| 4 |]))
                ~im:(d 1 (data f32 [| 4 |]))));
       c "isinf" 1 (fun d -> show (Nx.isinf (d 0 (z [| 4 |]))));
-      c "fft" 1 (fun d -> show (Nx.fft (d 0 (z [| 2; 4 |]))));
-      c "fft" 1 (fun d -> show (Nx.fft ~norm:Ortho (d 0 (z [| 4 |]))));
-      c "ifft" 1 (fun d -> show (Nx.ifft ~norm:Ortho (d 0 (z [| 4 |]))));
-      c "irfft" 1 (fun d -> show (Nx.irfft f32 (d 0 (z [| 3 |]))));
-      c "hfft" 1 (fun d -> show (Nx.hfft f32 (d 0 (z [| 3 |]))));
-      c "istft" 1 (fun d ->
+      c ~consumes:true "fft" 1 (fun d -> show (Nx.fft (d 0 (z [| 2; 4 |]))));
+      c ~consumes:true "fft" 1 (fun d ->
+          show (Nx.fft ~norm:Ortho (d 0 (z [| 4 |]))));
+      c ~consumes:true "ifft" 1 (fun d ->
+          show (Nx.ifft ~norm:Ortho (d 0 (z [| 4 |]))));
+      c ~consumes:true "irfft" 1 (fun d ->
+          show (Nx.irfft f32 (d 0 (z [| 3 |]))));
+      c ~consumes:true "hfft" 1 (fun d -> show (Nx.hfft f32 (d 0 (z [| 3 |]))));
+      c ~consumes:true "istft" 1 (fun d ->
           show (Nx.istft f32 ~window:2 ~step:1 (d 0 (z [| 2; 2 |]))));
       c "istft" 2 (fun d ->
           show
             (Nx.istft f32 ~window:4 ~step:2
                ~win:(d 1 (Nx.add_s (Nx.abs (data f32 [| 4 |])) 1.))
                (d 0 (z [| 3; 3 |]))));
-      c "eig" 1 (fun d ->
+      c ~consumes:true "eig" 1 (fun d ->
           let w, v =
             Nx.eig Nx.complex64
               (d 0 (Nx.add (Nx.eye Nx.complex64 2) (z [| 2; 2 |])))
           in
           showl [ w; v ]);
-      c "vector_norm" 1 (fun d -> show (Nx.vector_norm f32 (d 0 (z [| 4 |]))));
-      c "vector_norm" 1 (fun d ->
+      c ~consumes:true "vector_norm" 1 (fun d ->
+          show (Nx.vector_norm f32 (d 0 (z [| 4 |]))));
+      c ~consumes:true "vector_norm" 1 (fun d ->
           show (Nx.vector_norm Nx.float64 ~ord:1. (d 0 (z [| 4 |]))));
-      c "matrix_norm" 1 (fun d ->
+      c ~consumes:true "matrix_norm" 1 (fun d ->
           show (Nx.matrix_norm f32 ~ord:`Inf (d 0 (z [| 2; 2 |]))));
-      c "matrix_norm" 1 (fun d ->
+      c ~consumes:true "matrix_norm" 1 (fun d ->
           show (Nx.matrix_norm Nx.bfloat16 ~ord:`Two (d 0 (z [| 2; 2 |]))));
-      c "cond" 1 (fun d ->
+      c ~consumes:true "cond" 1 (fun d ->
           show
             (Nx.cond f32 (d 0 (Nx.add (Nx.eye Nx.complex64 2) (z [| 2; 2 |])))));
-      c "cond" 1 (fun d ->
+      c ~consumes:true "cond" 1 (fun d ->
           show
             (Nx.cond Nx.float64 ~p:`One
                (d 0 (Nx.add (Nx.eye Nx.complex64 2) (z [| 2; 2 |])))));
@@ -2386,8 +2301,9 @@ let integers =
           show (Nx.maximum (d 0 (x [| 4 |])) (d 1 (ids ()))));
       c "less" 2 (fun d -> show (Nx.less (d 0 (x [| 4 |])) (d 1 (ids ()))));
       c "max" 1 (fun d -> show (Nx.max (d 0 (x [| 4 |]))));
-      c "positions" 1 (fun d -> show (Nx.positions (d 0 (Nx.abs (x [| 4 |])))));
-      c "positions" 1 (fun d ->
+      c ~consumes:true "positions" 1 (fun d ->
+          show (Nx.positions (d 0 (Nx.abs (x [| 4 |])))));
+      c ~consumes:true "positions" 1 (fun d ->
           show (Nx.positions ~size:4 (d 0 (Nx.abs (x [| 4 |])))));
       c "one_hot" 1 (fun d -> show (Nx.one_hot ~num_classes:2 (d 0 (ids ()))));
       c "unique" 1 (fun d ->
@@ -2397,7 +2313,7 @@ let integers =
           showl
             (let v, _ = Nx.sort (d 0 (x [| 5 |])) in
              [ v ]));
-      c "unravel_index" 1 (fun d ->
+      c ~consumes:true "unravel_index" 1 (fun d ->
           showl (Nx.unravel_index (d 0 (ints [| 0; 4; 7 |])) [| 2; 3 |]));
       c "( land )" ~by:"bitwise_and" 2 (fun d ->
           show Nx.(d 0 (x [| 4 |]) land d 1 (Nx.flip (x [| 4 |]))));
@@ -2557,7 +2473,7 @@ let attention =
               }
           in
           shown (Nx.attention ~kv q));
-      c "causal" 3 (fun d -> show (Nx.causal (pair d)));
+      c ~consumes:true "causal" 3 (fun d -> show (Nx.causal (pair d)));
     ]
 
 (* An array a score returns or reads is an operand after the call's own, or
@@ -2765,25 +2681,37 @@ let seeds =
 let law_donated (k, mask) =
   let name, c = case_at.(k) in
   let plain = c.run (fun _ x -> x) in
+  let named = "donated to " ^ c.by in
+  (* What a copy of [y] gives that the case does not: a death that names
+     another function, or, from a consuming case, a value alive. *)
+  let wrong ~consumed y =
+    match Nx.copy y with
+    | _ -> if consumed then [ text y ^ " lives" ] else []
+    | exception Invalid_argument m ->
+        if String.ends_with ~suffix:named m then [] else [ m ]
+  in
   let donors = ref [] in
   let donating : 'v 's. int -> ('v, 's, Nx.host) Nx.t -> ('v, 's, Nx.host) Nx.t
       =
    fun i x ->
     if mask land (1 lsl i) = 0 then x
     else begin
-      let dead () =
-        match Nx.copy x with
-        | _ -> []
-        | exception Invalid_argument m ->
-            let by = "donated to " ^ c.by in
-            let n = String.length by and l = String.length m in
-            if l >= n && String.sub m (l - n) n = by then [] else [ m ]
-      in
-      donors := dead :: !donors;
-      Nx.donate x
+      let h = Nx.donate x in
+      let donor ~consumed = wrong ~consumed x in
+      let handle ~consumed = wrong ~consumed h in
+      donors := (donor, handle) :: !donors;
+      h
     end
   in
   equal ~msg:name string plain (c.run donating);
+  (* The donor first: a copy of a live handle would consume it. *)
+  let deaths (donor, handle) =
+    let d = donor ~consumed:true in
+    d @ handle ~consumed:true
+  in
+  if c.consumes then
+    equal ~msg:(name ^ ", deaths") (list string) []
+      (List.concat_map deaths !donors);
   donors := [];
   let received =
     Nx.Prim.interpret ~name:"test.extent" Extent
@@ -2792,12 +2720,13 @@ let law_donated (k, mask) =
   in
   equal ~msg:(name ^ ", received") string plain received;
   equal ~msg:(name ^ ", deaths received") (list string) []
-    (List.concat_map (fun dead -> dead ()) !donors)
+    (List.concat_map (fun (donor, _) -> donor ~consumed:false) !donors)
 
 let test_donated =
   prop ~examples:seeds
-    "a donated operand gives the undonated result, received too" donations
-    law_donated
+    "a donated operand gives the undonated result, received too, and dies \
+     where one operation reads it"
+    donations law_donated
 
 (* Consumers: a function of several operations that consumes as one
    operation does. *)
@@ -3004,8 +2933,6 @@ let () =
                test_lent;
              test "a donor dies naming the function the user called"
                test_dies_at_the_call;
-             test "an operand one operation reads is consumed"
-               test_one_reader_consumes;
              test "a donor beside its handle in another operation raises"
                test_beside_elsewhere;
              test "a call that keeps none of a dead operand raises"

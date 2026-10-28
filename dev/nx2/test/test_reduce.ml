@@ -1527,19 +1527,6 @@ let test_empty_extremes () =
   names "argmax" (fun () -> Nx.argmax ~axis:1 (empty [| 2; 0 |]));
   names "argmin" (fun () -> Nx.argmin (empty [| 0; 0 |]))
 
-(* A donated operand that another operation consumed is dead: a scan and an
-   arg reduction without an axis, which read the elements in C order, name
-   themselves. *)
-let test_dead_named () =
-  let dead () =
-    let x = Nx.create Nx.float64 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-    ignore (Nx.neg (Nx.donate x));
-    x
-  in
-  names "cumsum" (fun () -> Nx.cumsum (dead ()));
-  names "argmax" (fun () -> Nx.argmax (dead ()));
-  names "argmin" (fun () -> Nx.argmin ~keepdims:true (dead ()))
-
 (* A scan with a carry continues each slice from the carry's element. Over a
    value cut along its axis, each window's results take the terms before it,
    so it has the bits of the scan on one device. *)
@@ -1781,7 +1768,6 @@ let reductions_group =
         "bad axes, empty extremes and refused dtypes raise naming the function"
         test_errors;
       test "a refused axis is printed as passed" test_axis_printed;
-      test "a dead operand names the function called" test_dead_named;
       test "an extreme of no term raises only where its result has an element"
         test_empty_extremes;
       test "mean divides the sum by the count" test_mean;
