@@ -1551,6 +1551,9 @@ thread.
 
 ### Tolk (new)
 
+- A compiled integer maximum of products moves a factor out of the maximum only
+  where no product wraps: the uint32 maximum of a running sum over the greatest
+  value twice was one less than that value.
 - A compiled sum over a selection with a conjunct free of its range, as rune's
   `Fold` of a padded float builds, is `+0` where that conjunct is false. The sum
   times the conjunct's cast gave `-0` at a negative sum and NaN at an infinity.

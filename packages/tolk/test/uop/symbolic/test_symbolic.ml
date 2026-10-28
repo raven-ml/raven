@@ -889,6 +889,26 @@ let wrapping =
           keeps_machine_value
             (Ops.cast (Ops.cast Ops.O.(y + int 100) Uint8) Int32)
             (List.map at_y [ 10; 40 ]));
+      (* At u = 255 the products r * u over r < 4 are 0, 255, 254 and 253:
+         their maximum is 255, where 3 * u is 253. *)
+      test "a factor leaves a maximum only where no product wraps" (fun () ->
+          let max_of v =
+            Ops.reduce
+              Ops.O.(Ops.cast reduce_range (Ops.dtype v) * v)
+              Max [ reduce_range ]
+          in
+          keeps_machine_value (max_of u) (List.map at_u [ 0; 5; 255 ]);
+          let w = var ~dtype:Int32 "w" 0 (Int32.to_int Int32.max_int) in
+          keeps_machine_value (max_of w)
+            [ [ ("w", i 1000) ]; [ ("w", i (Int32.to_int Int32.max_int)) ] ]);
+      (* At p = q = 12 the int8 product p * q wraps to -112: the maximum of r *
+         -112 over r < 2 is 0, where 1 * -112 is -112. *)
+      test "a factor leaves a maximum only where it is not negative" (fun () ->
+          let p = var ~dtype:Int8 "p" 0 50 and q = var ~dtype:Int8 "q" 0 50 in
+          let r = Ops.range ~axis_type:Reduce (Int 2) [ 3 ] in
+          let red = Ops.reduce Ops.O.(Ops.cast r Int8 * p * q) Max [ r ] in
+          keeps_machine_value red
+            [ [ ("p", i 2); ("q", i 3) ]; [ ("p", i 12); ("q", i 12) ] ]);
       test "(x // c1) // c2 stays where c1 * c2 wraps" (fun () ->
           let w =
             Ops.variable ~dtype:Int32 "w" (Dtype.min Int32) (Dtype.max Int32)

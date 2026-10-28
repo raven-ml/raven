@@ -159,9 +159,11 @@ let simplify_valid valid =
 (* Phase 3: the complete symbolic *)
 
 (* A float factor moved out of a sum changes its rounding, and out of a maximum
-   its NaN and signed zeros. A maximum over a range whose size may be 0 is its
-   identity when it is, which the factor would scale: it keeps the identity
-   there. *)
+   its NaN and signed zeros. A factor leaves an integer maximum only where no
+   product wraps, its own included: over r < 4, the uint8 maximum of r * 255 is
+   255, where 3 * 255 wraps to 253. A maximum over a range whose size may be 0
+   is its identity when it is, which the factor would scale: it keeps the
+   identity there. *)
 let reduce_mul_chain r =
   match arg r with
   | Reduce { op = (Op.Add | Op.Max) as rop; _ }
@@ -174,13 +176,17 @@ let reduce_mul_chain r =
         && (rop <> Op.Max || V.(vmin m >= zero))
       in
       let prod = List.fold_left mul (int 1) in
+      let body = function [] -> const_v (nth r 0) one | ms -> prod ms in
+      let wraps factor body =
+        let products b = V.[ vmin factor * b; vmax factor * b ] in
+        V.(vmin factor < zero)
+        || not (exact (dtype r) (products (vmin body) @ products (vmax body)))
+      in
       match List.partition outside (split_uop (nth r 0) Op.Mul) with
       | [], _ -> None
+      | out, inside when rop = Op.Max && wraps (prod out) (body inside) -> None
       | out, inside -> (
-          let body =
-            match inside with [] -> const_v (nth r 0) one | _ -> prod inside
-          in
-          let moved = mul (replace r ~src:(body :: ranges)) (prod out) in
+          let moved = mul (replace r ~src:(body inside :: ranges)) (prod out) in
           let runs rg = O.(int 0 < nth rg 0) in
           match List.filter (fun rg -> V.(vmin (nth rg 0) <= zero)) ranges with
           | [] -> Some moved

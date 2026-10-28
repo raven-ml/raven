@@ -691,15 +691,20 @@ stamps nothing (D146).
   - **Wrapping rules.** tinygrad: `uop/symbolic.py:282` (`(x // c1) // c2`),
     `:285` (`c0 + x < c1`), `uop/divandmod.py:101` (`(x // c + a) // d`),
     `codegen/simplify.py:100-103` (`x + y < c`, `x * y < c`) and `:123`
-    (`x + y <> c` under a cast). tolk: `lib/uop/shape.ml:2614,2623`,
-    `lib/uop/shape.ml:1630`, `lib/codegen/simplify.ml:252,268,276,344`.
+    (`x + y <> c` under a cast), `uop/symbolic.py:390-398`
+    (`reduce_mul_chain`, a factor out of a maximum). tolk:
+    `lib/uop/shape.ml:2614,2623`, `lib/uop/shape.ml:1630`,
+    `lib/codegen/simplify.ml:252,268,276,344`, `lib/uop/symbolic.ml:167`.
     Each applies to a committed integer only where every value it computes
     fits the type; the comparisons of `Simplify` apply to integers only, since
     moving a float term rounds, and `x + y <> c` only under a cast that does
     not narrow. tinygrad folds uint8 `u - 1 < 255` for every `u`, int32
     `(w // 2 + 2^30) // 2` at `2^30` to `-268435456` where the machine gives
-    `805306368`, and `(w // 65536) // 65536` to a division by `2^32`, which
-    wraps to `0`.
+    `805306368`, `(w // 65536) // 65536` to a division by `2^32`, which
+    wraps to `0`, the uint8 maximum of `r * u` over `r < 4` to `3 * u`,
+    `253` at `255` where the machine gives `255`, and the int8 maximum of
+    `r * p * q` over `r < 2` to `p * q`, `-112` at `12, 12` where the
+    machine gives `0`.
   - **Float folds.** tinygrad: `uop/symbolic.py:117` (`x + 0`), `:170-176`
     (`x / x`, `(x * y) / y`, `x * 0`), `:247` (`(x / y) / z`). tolk:
     `lib/uop/shape.ml:2100,2273`. A float `x + 0` is `x` only for `-0.`
@@ -790,7 +795,9 @@ stamps nothing (D146).
   or fused, meets its class against eager nx, whose integer arithmetic is
   modular and whose floats follow IEEE. rune's `check_wrapping_comparisons`,
   `check_float_identities`, `check_signed_zeros` and `check_pow` run compiled
-  graphs of each kind against eager nx.
+  graphs of each kind against eager nx; rune2's `jit › an integer maximum of a
+  running sum wraps` checks a compiled maximum of a wrapping sum against the
+  value nx states.
 - **Pinned by:** each facet by value tests, which evaluate a graph with the
   reference interpreter before and after the rewrite at bindings where the
   restricted rewrite changes the value:
@@ -4017,7 +4024,7 @@ submission, and a range a loop of rig's program (D146).
   integer maximum of a product times the factor that ignores its ranges).
 - **tolk:** `lib/codegen/late/linearizer.ml:16` (`runs`),
   `lib/codegen/simplify.ml:242` (`reduce_unparented`) and
-  `lib/uop/symbolic.ml:165` (`reduce_mul_chain`); `gen/tinygrad.patch` makes
+  `lib/uop/symbolic.ml:167` (`reduce_mul_chain`); `gen/tinygrad.patch` makes
   the three changes in tinygrad, so the goldens state tolk's order.
 - **Differs:** the linearizer counts a range as at least two runs, so a
   loop's body always sorts after the nodes around the loop. tinygrad counts a

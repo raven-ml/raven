@@ -2905,7 +2905,7 @@ index 72a08ff..3c9bb15 100644
    (UPat(Ops.CALL, src=(UPat(tuple(OPAQUE_CALL_BODIES)),), allow_any_len=True), lambda: True),
    # after on PARAM or AFTER
 diff --git a/tinygrad/uop/symbolic.py b/tinygrad/uop/symbolic.py
-index 2eb2e96..1a065cf 100644
+index 2eb2e96..2909988 100644
 --- a/tinygrad/uop/symbolic.py
 +++ b/tinygrad/uop/symbolic.py
 @@ -1,8 +1,8 @@
@@ -3153,7 +3153,7 @@ index 2eb2e96..1a065cf 100644
    # try to do math in int instead of long, keep weak const weak
    (UPat(GroupOp.Binary, src=(UPat.var("x", (dtypes.long, dtypes.weakint)), UPat.var("y", (dtypes.long, dtypes.weakint))), name="u"), lambda u,x,y:
      (UOp.const(x.val) if x.op is Ops.CONST else x.cast(dtypes.int)).alu(u.op,
-@@ -387,15 +436,20 @@ def simplify_valid(valid:UOp) -> UOp|None:
+@@ -387,15 +436,23 @@ def simplify_valid(valid:UOp) -> UOp|None:
  
  # ******** phase 3 is the complete symbolic ********
  
@@ -3168,7 +3168,10 @@ index 2eb2e96..1a065cf 100644
      else: inside.append(m)
    if len(outside) == 0: return None
 -  return r.replace(src=(prod(inside) if len(inside) else r.src[0].const_like(1),)+r.src[1:])*prod(outside)
-+  ret = r.replace(src=(prod(inside) if len(inside) else r.src[0].const_like(1),)+r.src[1:])*prod(outside)
++  # a factor leaves an integer maximum only where no product wraps, its own included
++  body, factor = prod(inside) if len(inside) else r.src[0].const_like(1), prod(outside)
++  if r.arg[0] is Ops.MAX and (factor.vmin < 0 or not exact(r.dtype, *[a*b for a in (factor.vmin, factor.vmax) for b in (body.vmin, body.vmax)])): return None
++  ret = r.replace(src=(body,)+r.src[1:])*factor
 +  # a maximum over a range whose size may be 0 is its identity when it is, which the factor would scale
 +  if r.arg[0] is Ops.MAX and (empty:=[x for x in r.src[1:] if x.src[0].vmin <= 0]):
 +    ret = functools.reduce(lambda a,b: a & b, [x.src[0] > 0 for x in empty]).where(ret, r.const_like(identity_element(Ops.MAX, r.dtype.scalar())))
@@ -3176,7 +3179,7 @@ index 2eb2e96..1a065cf 100644
  
  def drop_and_clauses(cond:UOp, x:UOp, i:UOp) -> UOp|None:
    keep, drop = partition(cond.split_uop(Ops.AND), lambda c: any(r in x.ranges for r in c.ranges))
-@@ -418,10 +472,12 @@ def where_on_load(cond:UOp, buf:UOp, idx:UOp, or_cast:UOp) -> UOp|None:
+@@ -418,10 +475,12 @@ def where_on_load(cond:UOp, buf:UOp, idx:UOp, or_cast:UOp) -> UOp|None:
    return UOp.const(True).uprod(*keep).where(ret_idx, ret_idx.const_like(0))
  
  # where after gated load becomes alt value, TODO: this is sort of duplicated with rules in devectorizer
@@ -3192,7 +3195,7 @@ index 2eb2e96..1a065cf 100644
  ])
  
  def gated_given_valid(cond:UOp, x:UOp, i:UOp) -> UOp|None:
-@@ -460,16 +516,10 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
+@@ -460,16 +519,10 @@ sym = symbolic+pm_simplify_valid+PatternMatcher([
    # store of where with invalid -> gated store
    (UPat(Ops.STORE, src=(UPat(Ops.INDEX, name="index"), UPat.var("cond").where(UPat.var("val"), invalid_pat))),
     lambda index, cond, val, i: UOp.store(index.src[0].index(index.src[1].valid(cond)), val)),
