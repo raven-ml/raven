@@ -377,8 +377,10 @@ static _Atomic int first;
 static _Atomic(char *) failed;
 
 /* The reasons no line owns: a fork's, and the one a loss keeps when its own
-   could not be copied. */
+   could not be copied. Windows has no fork. */
+#ifndef _WIN32
 static char forked_why[] = "forked";
+#endif
 static char no_memory_why[] = "out of memory";
 
 #define Lock_val(v) (*(struct rig_lock **)Data_custom_val(v))
