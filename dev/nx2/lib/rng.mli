@@ -3,11 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** [Nx.Rng]: keys, samplers and the scope. Each draw is one map whose elements
-    compute their Threefry blocks from their positions. The scope's keys are
-    host keys, computed when drawn and received by no interpretation; a
-    keyless draw with a parameter makes its key where the parameter lies, from
-    the two words of the scope's next key. *)
+(** [Nx.Rng]: keys, samplers and the scope, as [nx.mli] states them. Each
+    draw is one map whose elements compute their Threefry blocks from their
+    positions. A keyed draw reads its key as the map's first operand. A
+    keyless draw reads the scope's next key on the host, where no
+    interpretation receives it, and binds its two words into the map's
+    program, so the map reads its parameters alone. Without parameters it
+    is a creation at its placement. *)
 
 type +'d key = private (int32, Nx_array.Dtype.int32_elt, 'd) Value.t
 
@@ -28,11 +30,24 @@ val bits :
   int array ->
   (int32, Nx_array.Dtype.int32_elt, Devices.host) Value.t
 
+val bits_at :
+  'd Devices.placement ->
+  ?key:'d key ->
+  int array ->
+  (int32, Nx_array.Dtype.int32_elt, 'd) Value.t
+
 val uniform :
   ?key:Devices.host key ->
   (float, 's) Nx_array.Dtype.t ->
   int array ->
   (float, 's, Devices.host) Value.t
+
+val uniform_at :
+  'd Devices.placement ->
+  ?key:'d key ->
+  (float, 's) Nx_array.Dtype.t ->
+  int array ->
+  (float, 's, 'd) Value.t
 
 val normal :
   ?key:Devices.host key ->
@@ -40,11 +55,25 @@ val normal :
   int array ->
   (float, 's, Devices.host) Value.t
 
+val normal_at :
+  'd Devices.placement ->
+  ?key:'d key ->
+  (float, 's) Nx_array.Dtype.t ->
+  int array ->
+  (float, 's, 'd) Value.t
+
 val exponential :
   ?key:Devices.host key ->
   (float, 's) Nx_array.Dtype.t ->
   int array ->
   (float, 's, Devices.host) Value.t
+
+val exponential_at :
+  'd Devices.placement ->
+  ?key:'d key ->
+  (float, 's) Nx_array.Dtype.t ->
+  int array ->
+  (float, 's, 'd) Value.t
 
 val gumbel :
   ?key:Devices.host key ->
@@ -52,12 +81,27 @@ val gumbel :
   int array ->
   (float, 's, Devices.host) Value.t
 
+val gumbel_at :
+  'd Devices.placement ->
+  ?key:'d key ->
+  (float, 's) Nx_array.Dtype.t ->
+  int array ->
+  (float, 's, 'd) Value.t
+
 val randint :
   ?key:Devices.host key ->
   ?low:int ->
   high:int ->
   int array ->
   (int32, Nx_array.Dtype.int32_elt, Devices.host) Value.t
+
+val randint_at :
+  'd Devices.placement ->
+  ?key:'d key ->
+  ?low:int ->
+  high:int ->
+  int array ->
+  (int32, Nx_array.Dtype.int32_elt, 'd) Value.t
 
 val bernoulli :
   ?key:'d key ->
@@ -105,6 +149,12 @@ val permutation :
   ?key:Devices.host key ->
   int ->
   (int64, Nx_array.Dtype.int64_elt, Devices.host) Value.t
+
+val permutation_at :
+  'd Devices.placement ->
+  ?key:'d key ->
+  int ->
+  (int64, Nx_array.Dtype.int64_elt, 'd) Value.t
 
 val with_key : Devices.host key -> (unit -> 'a) -> 'a
 val refusing : string -> (unit -> 'a) -> 'a

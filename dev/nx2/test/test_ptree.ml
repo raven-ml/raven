@@ -15,6 +15,7 @@ module P = Nx.Ptree
 let m = Nx_support.memory
 
 module S = (val Nx.devices [ m 0 ])
+module S2 = (val Nx.devices [ m 0; m 1 ])
 
 type host = Nx.host
 type f32 = host Nx.float32_t
@@ -521,6 +522,26 @@ let payloads =
           is_on S.on (Nx.Rng.to_tensor y.key);
           is_on S.on y.held;
           equal ~msg:"words" (array int32)
+            (Nx.to_array (Nx.Rng.to_tensor x.key))
+            (Nx.to_array (Nx.Rng.to_tensor y.key)));
+      test
+        "place raises as Rng.walk does at a placement that cuts a key's words"
+        (fun () ->
+          let x = { held = f32 [| 1.; 2. |]; key = Nx.Rng.key 7 } in
+          let p = S2.split ~axis:0 in
+          equal string
+            (Format.asprintf
+               "Nx.Rng.of_tensor: %a cuts a key's words, which lie whole on \
+                one device"
+               Nx.Placement.pp p)
+            (message (fun () -> P.place (module Keyed) p x));
+          let y =
+            {
+              held = Nx.place p x.held;
+              key = Nx.Rng.place (Nx.Placement.uncut p) x.key;
+            }
+          in
+          equal ~msg:"placed apart" (array int32)
             (Nx.to_array (Nx.Rng.to_tensor x.key))
             (Nx.to_array (Nx.Rng.to_tensor y.key)));
       test "place moves every array, fixed ones too, onto another set"

@@ -18,6 +18,9 @@ module Count = (val Nx.devices ~kernels:(module Nx_support.Counting) [ m 3 ])
 let message f =
   match f () with _ -> "no exception" | exception Invalid_argument m -> m
 
+(* Placements over any one set. *)
+let placement () = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
+
 (* [x]'s elements in row-major order, computed on the host. *)
 let read x = A.to_array (Option.get (Nx.Repr.array (Nx.place Nx.Host.on x)))
 
@@ -329,6 +332,51 @@ let keys_group =
           let t = host_of A.Dtype.Int32 [| 3 |] [| 0l; 1l; 2l |] in
           equal string "Nx.Rng.of_tensor: a key has shape [...; 2], not [3]"
             (message (fun () -> Rng.of_tensor t)));
+      test "of_tensor refuses words whose placement cuts their last axis"
+        (fun () ->
+          let p = S2.split ~axis:1 in
+          let words = Rng.to_tensor (Rng.split_batch ~n:2 (Rng.key 1)) in
+          let t = Nx.place p words in
+          equal string
+            (Format.asprintf
+               "Nx.Rng.of_tensor: %a cuts a key's words, which lie whole on \
+                one device"
+               Nx.Placement.pp p)
+            (message (fun () -> Rng.of_tensor t)));
+      test "place refuses a placement that cuts a key's words" (fun () ->
+          let p = S2.split ~axis:0 in
+          equal string
+            (Format.asprintf
+               "Nx.Rng.place: %a cuts a key's words, which lie whole on one \
+                device"
+               Nx.Placement.pp p)
+            (message (fun () -> Rng.place p (Rng.key 1))));
+      test "place and of_tensor keep a batch cut along a batch axis" (fun () ->
+          let batch = Rng.split_batch ~n:3 (Rng.key 1) in
+          let p = S2.split ~axis:0 in
+          let placed = Rng.place p batch in
+          equal ~msg:"where it lies" (placement ()) p
+            (Nx.placement (Rng.to_tensor placed));
+          equal ~msg:"its words" (array int32) (words batch)
+            (words (Rng.of_tensor (Rng.to_tensor placed))));
+      prop
+        "fold_in_tensor of a cut index lies cut as the index, each key whole, \
+         and its words walk back to it"
+        (Gen.pair keys
+           (Gen.array ~size:(Gen.int_range 2 5)
+              (Gen.int32_range Int32.min_int Int32.max_int)))
+        (fun (k, ns) ->
+          let i = host_of A.Dtype.Int32 [| Array.length ns |] ns in
+          let at = S2.split ~axis:0 in
+          let y = Rng.fold_in_tensor (Rng.place S2.on k) (Nx.place at i) in
+          let each = words (Rng.fold_in_tensor k i) in
+          equal ~msg:"where it lies" (placement ()) at
+            (Nx.placement (Rng.to_tensor y));
+          equal ~msg:"its keys" (array int32) each (words y);
+          equal ~msg:"of_tensor of its words" (array int32) each
+            (words (Rng.of_tensor (Rng.to_tensor y)));
+          equal ~msg:"a walk of it" (array int32) each
+            (words (Nx.Ptree.map (Nx.Ptree.v Rng.walk) (fun _ a -> a) y)));
       test "split refuses n below 1" (fun () ->
           equal string "Nx.Rng.split: n is 0, not at least 1"
             (message (fun () -> Rng.split ~n:0 (Rng.key 1))));
@@ -583,6 +631,170 @@ let draws =
       test "a negative extent raises" (fun () ->
           equal string "Nx.Rng.uniform: shape [2; -1] has a negative extent"
             (message (fun () -> Rng.uniform Nx.float32 [| 2; -1 |])));
+    ]
+
+(* Placed draws *)
+
+(* A sampler without a parameter as its host form and its [_at] form, each
+   drawing a shape read as floats; the [_at] form also says whether its draw
+   lies at its placement. *)
+type placed_sampler = {
+  host : ?key:Nx.host Rng.key -> int array -> float array;
+  at :
+    'd. 'd Nx.Placement.t -> ?key:'d Rng.key -> int array -> bool * float array;
+}
+
+let placed_samplers =
+  let of_ints xs = Array.map Int32.to_float xs in
+  let of_int64s xs = Array.map Int64.to_float xs in
+  let lies p x f = (Nx.Placement.equal p (Nx.placement x), f (read x)) in
+  Gen.of_list
+    ~pp:(fun ppf (name, _) -> Format.pp_print_string ppf name)
+    [
+      ( "bits",
+        {
+          host = (fun ?key s -> of_ints (read (Rng.bits ?key s)));
+          at = (fun p ?key s -> lies p (Rng.bits_at p ?key s) of_ints);
+        } );
+      ( "uniform",
+        {
+          host = (fun ?key s -> read (Rng.uniform ?key Nx.float16 s));
+          at =
+            (fun p ?key s ->
+              lies p (Rng.uniform_at p ?key Nx.float16 s) Fun.id);
+        } );
+      ( "normal",
+        {
+          host = (fun ?key s -> read (Rng.normal ?key Nx.float32 s));
+          at =
+            (fun p ?key s -> lies p (Rng.normal_at p ?key Nx.float32 s) Fun.id);
+        } );
+      ( "exponential",
+        {
+          host = (fun ?key s -> read (Rng.exponential ?key Nx.float64 s));
+          at =
+            (fun p ?key s ->
+              lies p (Rng.exponential_at p ?key Nx.float64 s) Fun.id);
+        } );
+      ( "gumbel",
+        {
+          host = (fun ?key s -> read (Rng.gumbel ?key Nx.float32 s));
+          at =
+            (fun p ?key s -> lies p (Rng.gumbel_at p ?key Nx.float32 s) Fun.id);
+        } );
+      ( "randint",
+        {
+          host =
+            (fun ?key s ->
+              of_ints (read (Rng.randint ?key ~low:(-9) ~high:1000 s)));
+          at =
+            (fun p ?key s ->
+              lies p (Rng.randint_at p ?key ~low:(-9) ~high:1000 s) of_ints);
+        } );
+      ( "permutation",
+        {
+          host =
+            (fun ?key s -> of_int64s (read (Rng.permutation ?key (numel s))));
+          at =
+            (fun p ?key s ->
+              lies p (Rng.permutation_at p ?key (numel s)) of_int64s);
+        } );
+    ]
+
+(* Placements over [S2], each with an axis-0 cut or none. *)
+let placements =
+  Gen.of_list
+    ~pp:(fun ppf (name, _) -> Format.pp_print_string ppf name)
+    [
+      ("on", S2.on);
+      ("split ~axis:0", S2.split ~axis:0);
+      ("device 1", Nx.Placement.device S2.v (m 1));
+    ]
+
+(* Shapes of rank 1 to 3, which an axis-0 cut fits, empty ones included. *)
+let cuttable =
+  Gen.array ~size:(Gen.int_range 1 3) (Gen.int_range 0 5)
+  |> Gen.with_pp pp_shape
+
+(* The operations a rule receives while [f] runs under an extent, each as its
+   name, its count of operands and whether it lies at [p]. *)
+let received p f =
+  let seen = ref [] in
+  let observe (type r) _ ~by (op : r Nx.Prim.t) : r =
+    let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
+    let at =
+      match op with
+      | Nx.Prim.Map { at = Some q; _ } -> Nx.Placement.equal q p
+      | _ -> false
+    in
+    seen := (Nx.Prim.name op, List.length xs, at) :: !seen;
+    Nx.Prim.eval ~by op
+  in
+  let x = Nx.Prim.interpret ~name:"test.ops" Extent observe (fun _ -> f ()) in
+  (x, List.rev !seen)
+
+let placed_draws =
+  group "placed draws"
+    [
+      prop "an _at draw from a key on its devices is the host draw at its \
+            placement"
+        (Gen.quad seeds placed_samplers placements cuttable)
+        (fun (seed, (_, s), (name, p), shape) ->
+          cover "cut" (name = "split ~axis:0");
+          let k = Rng.key seed in
+          equal (pair bool (array float_exact))
+            (true, s.host ~key:k shape)
+            (s.at p ~key:(Rng.place S2.on k) shape));
+      prop "a keyless _at draw in a scope is the host draw at its placement"
+        (Gen.quad seeds placed_samplers placements cuttable)
+        (fun (seed, (_, s), (name, p), shape) ->
+          cover "cut" (name = "split ~axis:0");
+          let k = Rng.key seed in
+          equal (pair bool (array float_exact))
+            (true, Rng.with_key k (fun () -> s.host shape))
+            (Rng.with_key k (fun () -> s.at p shape)));
+      test "a keyless normal_at at a split placement in a scope moves no bytes"
+        (fun () ->
+          let p = S2.split ~axis:0 and k = Rng.key 11 and s = [| 4; 3 |] in
+          let x, ops =
+            received p (fun () ->
+                Rng.with_key k (fun () -> Rng.normal_at p Nx.float32 s))
+          in
+          equal ~msg:"operations" (list (triple string int bool))
+            [ ("Map", 0, true) ] ops;
+          let whole =
+            Rng.with_key k (fun () -> read (Rng.normal Nx.float32 s))
+          in
+          let shards = Nx.Repr.shards x in
+          equal ~msg:"device 0" (array float_exact) (Array.sub whole 0 6)
+            (A.to_array (Iarray.get shards 0));
+          equal ~msg:"device 1" (array float_exact) (Array.sub whole 6 6)
+            (A.to_array (Iarray.get shards 1)));
+      test "a keyed _at draw raises where a device of its placement lacks the \
+            key"
+        (fun () ->
+          let d0 = Nx.Placement.device S2.v (m 0) in
+          let key = Rng.place d0 (Rng.key 1) in
+          let refusal p =
+            Format.asprintf
+              "Nx.Rng.uniform_at: the key lies at %a and is read at %a; \
+               Nx.Rng.place (Placement.on s) key"
+              Nx.Placement.pp d0 Nx.Placement.pp p
+          in
+          List.iter
+            (fun p ->
+              equal string (refusal p)
+                (message (fun () -> Rng.uniform_at p ~key Nx.float32 [| 4 |])))
+            [ S2.on; S2.split ~axis:0 ]);
+      test "an _at draw raises where its placement cuts an axis it lacks"
+        (fun () ->
+          let p = S2.split ~axis:1 and key = Rng.place S2.on (Rng.key 1) in
+          raises_match
+            (Exn.invalid_arg ~substring:"Nx.Rng.bits_at: ")
+            (fun () -> Rng.bits_at p [| 4 |]);
+          raises_match
+            (Exn.invalid_arg ~substring:"Nx.Rng.bits_at: ")
+            (fun () -> Rng.bits_at p ~key [| 4 |]));
     ]
 
 (* Distributions. Each moment of [n] draws is checked within 6 standard errors
@@ -1730,6 +1942,12 @@ let scope =
       test "unscoped draws differ" (fun () ->
           let a = read (Rng.bits [| 4 |]) and b = read (Rng.bits [| 4 |]) in
           not_equal (array int32) a b);
+      test "with_key refuses a key traced by an interpretation" (fun () ->
+          Nx.Prim.interpret ~name:"test.trace" Extent tracing (fun _ ->
+              let k = Rng.key 206 in
+              equal string "Nx.Rng.with_key: the key is traced by test.trace"
+                (message (fun () ->
+                     Rng.with_key k (fun () -> ignore (Rng.bits [| 2 |]))))));
       test "a scoped keyless draw under a tracing extent is traced" (fun () ->
           let k = Rng.key 205 in
           Nx.Prim.interpret ~name:"test.trace" Extent tracing (fun i ->
@@ -2042,6 +2260,7 @@ let () =
          known;
          keys_group;
          draws;
+         placed_draws;
          distributions;
          rejection;
          others;

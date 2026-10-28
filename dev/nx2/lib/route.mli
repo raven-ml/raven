@@ -212,3 +212,10 @@ val route :
     Raises [Invalid_argument] naming [by] if an operand's placement cuts an
     axis its shape lacks ({!Grid.window}), and with the preamble's message
     where an operand cannot be read where it lies. *)
+
+val pp_call :
+  by:string -> 'd Devices.t -> Format.formatter -> Grid.t -> unit
+(** [pp_call ~by s ppf q] formats the [Nx.Placement] expression that makes
+    [q] over [s], as the preamble's message writes it, the set named [s].
+    [by] is given to {!Devices.split}, which does not raise for an axis [q]
+    cuts. *)

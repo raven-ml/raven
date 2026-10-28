@@ -3894,7 +3894,11 @@ module Ptree : sig
     (('v, 's, 'd) tensor, 'd) U.t ->
     (('v, 's, 'e) tensor, 'e) U.t
   (** [place (module U) p x] is [x] with each array, fixed ones included, at
-      [p], as {!Nx.place}. *)
+      [p], as {!Nx.place}.
+
+      Raises what a walk of [x] raises: {!Rng.walk} refuses a key at a [p]
+      that cuts its words' axis. Place such keys apart, at
+      [Placement.uncut p] by {!Rng.place}. *)
 
   val cast :
     (module U : S) ->
@@ -4133,9 +4137,11 @@ val associative_scan :
     without [~key] takes the scope's next key. A scope may instead refuse such
     draws ({!refusing}), so that a region draws only from keys it is given.
 
-    A draw lies where its key and its parameters lie. {!key} makes a host
-    key, which {!place} moves to another placement once, and {!split},
-    {!fold_in} and {!fold_in_tensor} compute where their key lies. A scope's
+    A key's two words lie whole on one device: a placement that cuts the
+    words' axis holds no key. {!key} makes a host key, which {!place} moves
+    to a placement that keeps the words whole. {!split} and {!fold_in}
+    compute where their key lies, and {!fold_in_tensor} where its key and
+    index lie together. A scope's
     keys are host keys, computed on the host when a draw takes one; no
     interpretation receives that computation. *)
 module Rng : sig
@@ -4153,15 +4159,18 @@ module Rng : sig
   (** [of_tensor t] is the key, or batch of keys, whose words are [t], for words
       that were saved: the inverse of {!to_tensor}.
 
-      Raises [Invalid_argument] unless [t]'s last axis has extent [2]. *)
+      Raises [Invalid_argument] unless [t]'s last axis has extent [2], and
+      if [t]'s placement cuts the last axis. *)
 
   val to_tensor : 'd key -> 'd int32_t
   (** [to_tensor k] is [k]'s words: the inverse of {!of_tensor}, and what the
       coercion of [k] to an array is. *)
 
   val place : 'e Placement.t -> 'd key -> 'e key
-  (** [place p k] is [k] at [p], as {!Nx.place}; a draw from it computes at [p].
-  *)
+  (** [place p k] is [k] at [p], as {!Nx.place}.
+
+      Raises [Invalid_argument] if [p] cuts the last axis, and as
+      {!Nx.place} does. *)
 
   val walk : ('a, 'b, 'd, 'e) Ptree.Walk.cursor -> 'd key -> 'e key
   (** [walk c k] walks [k], a key or a batch of keys, at [c]'s path as one
@@ -4190,17 +4199,26 @@ module Rng : sig
   val fold_in_tensor : 'd key -> 'd int32_t -> 'd key
   (** [fold_in_tensor k i] is [fold_in k] of the indices held in [i], for an
       index known only as data. Its shape is [k]'s batch broadcast with [i]'s,
-      then [2]; where [i] holds [n] it is [fold_in k n].
+      then [2]; where [i] holds [n] it is [fold_in k n]. It lies at the union
+      of [k]'s and [i]'s placements, each key whole on its device
+      ({!Nx.section-routing}).
 
-      Raises [Invalid_argument] if the shapes do not broadcast. *)
+      Raises [Invalid_argument] if the shapes do not broadcast, and as an
+      operation does where [k] and [i] cannot be read together. *)
 
   (** {1:samplers Samplers}
 
-      A sampler draws from [~key], or without it from the scope's next key. A
-      sampler without an array parameter draws on the host. One with array
-      parameters draws where they lie, and without [~key] makes its key where
-      its first parameter lies, whole on each of its devices, from the next
-      key's two words, so that no bytes move. A key with batch axes [b] draws
+      A sampler draws from [~key], or without it from the scope's next key,
+      whose two words it writes into its program as {!full} writes its
+      value, so that no bytes move. A sampler without an array parameter
+      draws on the host, and its [_at] form at the placement it is given,
+      each device computing its window: [placement (uniform_at p dt s)] is
+      [p]. An [_at] form raises as its host form does, and raises
+      [Invalid_argument] naming itself where [p] cuts an axis the draw's
+      shape lacks, and where a device of [p] does not hold [key], naming the
+      {!place} to write. A sampler with array parameters draws where they
+      lie, reading [key] beside them as an operation reads its operands
+      ({!Nx.section-devices}). A key with batch axes [b] draws
       [b] followed by the draw's shape, one draw per key, each the draw that
       key alone gives. Float draws compute at float64 for float64 and at
       float32 for the other floats, and round once to their dtype.
@@ -4225,6 +4243,9 @@ module Rng : sig
 
       Raises [Invalid_argument] if an extent is negative. *)
 
+  val bits_at : 'd Placement.t -> ?key:'d key -> int array -> 'd int32_t
+  (** [bits_at p shape] is {!bits}[ shape] at [p]. *)
+
   val uniform :
     ?key:host key -> (float, 's) dtype -> int array -> (float, 's, host) t
   (** [uniform dt shape] is draws from [\[0, 1)]: multiples of [2{^-p}], each
@@ -4235,6 +4256,14 @@ module Rng : sig
 
       Raises [Invalid_argument] if an extent is negative. *)
 
+  val uniform_at :
+    'd Placement.t ->
+    ?key:'d key ->
+    (float, 's) dtype ->
+    int array ->
+    (float, 's, 'd) t
+  (** [uniform_at p dt shape] is {!uniform}[ dt shape] at [p]. *)
+
   val normal :
     ?key:host key -> (float, 's) dtype -> int array -> (float, 's, host) t
   (** [normal dt shape] is standard normal draws, by the Box-Muller transform:
@@ -4244,12 +4273,28 @@ module Rng : sig
 
       Raises [Invalid_argument] if an extent is negative. *)
 
+  val normal_at :
+    'd Placement.t ->
+    ?key:'d key ->
+    (float, 's) dtype ->
+    int array ->
+    (float, 's, 'd) t
+  (** [normal_at p dt shape] is {!normal}[ dt shape] at [p]. *)
+
   val exponential :
     ?key:host key -> (float, 's) dtype -> int array -> (float, 's, host) t
   (** [exponential dt shape] is exponential draws of rate 1, by inverting the
       distribution at [1 - u] for a uniform [u]: finite, and never negative.
 
       Raises [Invalid_argument] if an extent is negative. *)
+
+  val exponential_at :
+    'd Placement.t ->
+    ?key:'d key ->
+    (float, 's) dtype ->
+    int array ->
+    (float, 's, 'd) t
+  (** [exponential_at p dt shape] is {!exponential}[ dt shape] at [p]. *)
 
   val gumbel :
     ?key:host key -> (float, 's) dtype -> int array -> (float, 's, host) t
@@ -4264,6 +4309,14 @@ module Rng : sig
 
       Raises [Invalid_argument] if an extent is negative. *)
 
+  val gumbel_at :
+    'd Placement.t ->
+    ?key:'d key ->
+    (float, 's) dtype ->
+    int array ->
+    (float, 's, 'd) t
+  (** [gumbel_at p dt shape] is {!gumbel}[ dt shape] at [p]. *)
+
   val randint :
     ?key:host key ->
     ?low:int ->
@@ -4277,6 +4330,16 @@ module Rng : sig
 
       Raises [Invalid_argument] if [low >= high], a bound is outside int32, or
       an extent is negative. *)
+
+  val randint_at :
+    'd Placement.t ->
+    ?key:'d key ->
+    ?low:int ->
+    high:int ->
+    int array ->
+    'd int32_t
+  (** [randint_at p ~low ~high shape] is {!randint}[ ~low ~high shape] at
+      [p]. *)
 
   val bernoulli :
     ?key:'d key -> (float, 's, 'd) t -> 'd bool_t
@@ -4416,6 +4479,11 @@ module Rng : sig
 
       Raises [Invalid_argument] if [n] is negative. *)
 
+  val permutation_at : 'd Placement.t -> ?key:'d key -> int -> 'd int64_t
+  (** [permutation_at p n] is {!permutation}[ n] at [p]. A sort reads its
+      axis whole, so where [p] cuts it each device of [p] draws and sorts
+      all [n] words and keeps its window. *)
+
   (** {1:scope Scope} *)
 
   val with_key : host key -> (unit -> 'a) -> 'a
@@ -4424,7 +4492,8 @@ module Rng : sig
       [fold_in k 1], …. Scopes nest, the inner replacing the outer. A scope is
       per fiber and per domain.
 
-      Raises [Invalid_argument] if [k] is dead. *)
+      Raises [Invalid_argument] if [k] is dead or traced: a scope's keys are
+      host values computed outside any interpretation. *)
 
   val refusing : string -> (unit -> 'a) -> 'a
   (** [refusing name f] runs [f] in a scope that gives no keys. Scopes nest
