@@ -1858,23 +1858,24 @@ val where : 'd bool_t -> ('v, 's, 'd) t -> ('v, 's, 'd) t -> ('v, 's, 'd) t
     order of association depends on the shape alone. Over axes cut across
     devices, each device reduces the part its window holds, and only
     partial results move instead of [x]'s elements: one per output and
-    window, stacked in C order of the windows' first indices and reduced
-    over the stack by the kernels; for {!argmax} and {!argmin}, each
-    device's extreme and its position. Integer and boolean reductions, extremes
-    and their positions keep the bits they have on one device. A float or
-    complex {!sum}, {!prod}, {!mean}, {!var}, {!std}, {!logsumexp} or
-    {!logmeanexp} over cut axes has the kernels' association over each window's
-    terms and over the stacked partials. It may differ from the result on one
-    device within the bounds below, and is the same on every run for a given
-    placement and set of devices. Barring overflow and underflow, a float sum
-    of [n] terms stays within [γ(n - 1) Σ|x|] of the exact sum and a product
-    within a relative [γ(n - 1)], as on one device
-    ({!Nx_kernel.section-bounds}); a complex product within a normwise relative
-    [γ(2n - 2)]. A {!mean} is such a sum divided by [n]. {!var} and {!std} are
-    within the bound {!var} states. A {!logsumexp} is within [ε + ε{_t}] of the
-    exact one, [ε] the largest bound the kernels' library states for the
-    logsumexp of a window's terms and [ε{_t}] its bound for one of [t] terms,
-    [t] the windows holding terms, and {!logmeanexp} is that less [log n].
+    window holding terms, stacked in C order of the windows' first indices
+    and reduced over the stack by the kernels; for {!argmax} and {!argmin},
+    each device's extreme and its position. Integer and boolean reductions,
+    extremes and their positions keep the bits they have on one device. A
+    float or complex {!sum}, {!prod}, {!mean}, {!var}, {!std}, {!logsumexp}
+    or {!logmeanexp} over cut axes has the kernels' association over each
+    window's terms and over the stacked partials. It may differ from the
+    result on one device within the bounds below, and is the same on every
+    run for a given placement and set of devices. Barring overflow and
+    underflow, a float sum of [n] terms stays within [γ(n - 1) Σ|x|] of the
+    exact sum and a product within a relative [γ(n - 1)], as on one device
+    ({!Nx_kernel.section-bounds}); a complex product within a normwise
+    relative [γ(2n - 2)]. A {!mean} is such a sum divided by [n]. {!var} and
+    {!std} are within the bound {!var} states. A {!logsumexp} is within
+    [ε + ε{_t}] of the exact one, [ε] the largest bound the kernels' library
+    states for the logsumexp of a window's terms and [ε{_t}] its bound for
+    one of [t] terms, [t] the windows holding terms, and {!logmeanexp} is
+    that less [log n].
 
     A scan along an axis cut across devices scans each device's window
     alone. The windows' totals, one row each, move to every device that
