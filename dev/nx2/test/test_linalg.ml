@@ -893,14 +893,30 @@ let test_lstsq_rank () =
   let x, _, rank, _ = lstsq a (Nx.ones Nx.float64 [| 2 |]) in
   equal ~msg:"failed rank" int64 (-1L) (Nx.item [] rank);
   all_nan ~msg:"failed x" x;
-  (* 1e-3 is at or below 6e-4 · max m n · 1: it counts as zero. *)
+  (* 1e-3 is at or below 2e-3 · 1: it counts as zero. *)
   let a = Nx.create Nx.float64 [| 2; 2 |] [| 1.; 0.; 0.; 1e-3 |] in
   let b = Nx.ones Nx.float64 [| 2 |] in
-  let x, _, rank, _ = lstsq ~rtol:6e-4 a b in
+  let x, _, rank, _ = lstsq ~rtol:2e-3 a b in
   equal ~msg:"rtol's rank" int64 1L (Nx.item [] rank);
   equal ~msg:"rtol's x" (array (float 1e-15)) [| 1.; 0. |] (Nx.to_array x);
   equal ~msg:"pinv's rtol" (array (float 1e-15)) [| 1.; 0.; 0.; 0. |]
-    (Nx.to_array (Nx.pinv ~rtol:6e-4 a))
+    (Nx.to_array (Nx.pinv ~rtol:2e-3 a));
+  (* The default of a 2 × 2 float64 is [2 ε ≈ 4.4e-16] times the greatest:
+     3e-16 counts as zero, 6e-16 does not. *)
+  let diag d = Nx.create Nx.float64 [| 2; 2 |] [| 1.; 0.; 0.; d |] in
+  List.iter
+    (fun (d, r) ->
+      let a = diag d in
+      let _, _, rank, _ = lstsq a b in
+      let msg what = Printf.sprintf "%s's default at %g" what d in
+      equal ~msg:(msg "lstsq") int64 r (Nx.item [] rank);
+      equal ~msg:(msg "matrix_rank") int64 r (Nx.item [] (Nx.matrix_rank a));
+      (* The last element times [d], 1 where kept. *)
+      let q = Nx.to_array (Nx.pinv a) in
+      equal ~msg:(msg "pinv") (array (float 1e-12))
+        [| 1.; 0.; 0.; (if r = 2L then 1. else 0.) |]
+        [| q.(0); q.(1); q.(2); q.(3) *. d |])
+    [ (3e-16, 1L); (6e-16, 2L) ]
 
 let test_pinv =
   prop "pinv: the Penrose conditions" (matrices ())
@@ -925,6 +941,47 @@ let test_pinv =
         let h = Nx.matmul (columns_by q w) (adj q) in
         near ~scale:10. ~msg:"hermitian, indefinite" (Nx.pinv ~hermitian:true h) (Nx.pinv h)
       end)
+
+(* The [m × n] matrix whose diagonal is [d]. *)
+let diagonal (type v s) (dt : (v, s) D.t) m n d =
+  let re = Array.init (m * n) (fun k -> if k / n = k mod n then d.(k / n) else 0.) in
+  value dt [| m; n |] re (Array.make (m * n) 0.)
+
+(* A singular value counts as zero at or below [rtol] times the greatest,
+   whatever the shape. Of [c · diag 1, 2{^-k}, …], [c = 2{^e}], under
+   [rtol = 0.75 · 2{^-j}] no singular value lies on the cutoff, and a kept
+   [c · 2{^-j}] is at or below [c · rtol · max m n] once [max m n ≥ 2]. *)
+let law_rtol =
+  prop "a given rtol is relative to the greatest singular value"
+    (Gen.with_pp
+       (fun ppf (Full dt, (((m, n), e), j, ks)) ->
+         Format.fprintf ppf "%a %dx%d, e %d, j %d, k %s" D.pp dt m n e j
+           (String.concat " " (Array.to_list (Array.map string_of_int ks))))
+       Gen.(
+         pair (of_list fulls)
+           (triple
+              (pair (pair (int_range 1 4) (int_range 1 4)) (int_range (-4) 4))
+              (int_range 2 12)
+              (array ~size:(constant 4) (int_range (-1) 2)))))
+    (fun (Full dt, (((m, n), e), j, ks)) ->
+      let r = Stdlib.min m n in
+      let rtol = 0.75 *. Float.ldexp 1. (-j) in
+      let s = Array.init r (fun i -> Float.ldexp 1. (e - if i = 0 then 0 else j + ks.(i))) in
+      let top = Float.ldexp 1. e in
+      let kept x = x > rtol *. top in
+      let wide = rtol *. top *. Float.of_int (Stdlib.max m n) in
+      cover "kept, at or below rtol · max m n" (Array.exists (fun x -> kept x && x <= wide) s);
+      cover "dropped" (Array.exists (fun x -> not (kept x)) s);
+      cover "the greatest is not 1" (e <> 0);
+      let a = diagonal dt m n s in
+      let p = diagonal dt n m (Array.map (fun x -> if kept x then 1. /. x else 0.) s) in
+      near ~msg:"pinv" (Nx.pinv ~rtol a) p;
+      if m = n then near ~msg:"Hermitian pinv" (Nx.pinv ~rtol ~hermitian:true a) p;
+      let count = Array.fold_left (fun c x -> if kept x then Int64.succ c else c) 0L s in
+      equal ~msg:"matrix_rank" int64 count (Nx.item [] (Nx.matrix_rank ~rtol a));
+      let (Real f) = real_of dt in
+      let _, _, rank, _ = Nx.lstsq ~rtol f a (Nx.ones dt [| m |]) in
+      equal ~msg:"lstsq's rank" int64 count (Nx.item [] rank))
 
 (* [a] equal to [b], or within [tol] of it relative to its scale and at
    least 1. *)
@@ -1405,6 +1462,7 @@ let () =
              test_lstsq;
              test "lstsq's rank" test_lstsq_rank;
              test_pinv;
+             law_rtol;
              test "a NaN stays in its matrix" test_nan_alone;
            ];
          group "norms"

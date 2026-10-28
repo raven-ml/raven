@@ -3141,13 +3141,17 @@ let reciprocals ~by ~tol s =
   elementwise ~by dt [ Any s; Any top ]
     E.(where (v <> v) v (where (cut < v) (recip v) (const dt 0.)))
 
-(* The cutoff of a singular value relative to its matrix's greatest, [rtol]
-   (default the dtype's machine epsilon) times [max m n]. *)
+(* The cutoff of a singular value relative to its matrix's greatest: [rtol],
+   by default the dtype's machine epsilon times [max m n]. *)
 let cutoff ~by rtol a =
-  let rtol = Option.value rtol ~default:(epsilon (dtype a)) in
-  if not (rtol >= 0.) then
-    invalid_argf "%s: rtol %g is negative or NaN" by rtol;
-  rtol *. Float.of_int (Stdlib.max (dim (-2) a) (dim (-1) a))
+  match rtol with
+  | Some rtol ->
+      if not (rtol >= 0.) then
+        invalid_argf "%s: rtol %g is negative or NaN" by rtol;
+      rtol
+  | None ->
+      let k = Stdlib.max (dim (-2) a) (dim (-1) a) in
+      epsilon (dtype a) *. Float.of_int k
 
 (* [vh]ᴴ [diag d] [u]ᴴ: the matrices whose singular values are [d]. *)
 let resynthesise ~by u d vh =
@@ -3366,7 +3370,7 @@ let matrix_norm dt ?(ord = `Fro) ?(keepdims = false) x =
 
 (* The singular values above [cutoff rtol] times the greatest counted, or
    [-1] where the greatest is NaN; a narrower float counted at its carrier,
-   whose epsilon [rtol] defaults to. [a] reaches one operation, so it is
+   whose epsilon the default [rtol] scales. [a] reaches one operation, so it is
    consumed; [rtol] is checked before the carrier's cast, which would
    consume it. *)
 let matrix_rank (type v s d) ?rtol (a : (v, s, d) t) : d int64_t =

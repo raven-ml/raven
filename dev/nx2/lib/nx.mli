@@ -2787,8 +2787,8 @@ val lstsq :
 (** [lstsq dt a b] is [(x, residuals, rank, s)]: [x] the least-squares
     solution of [matmul a x ≈ b] of least norm, whatever [a]'s shape and
     rank, from [s], {!svd}'s singular values of [a] in [dt]. A singular value
-    at or below [rtol] times [max m n] times its matrix's greatest counts as
-    zero; [rtol] defaults to [a]'s machine epsilon. [rank] is the
+    at or below [rtol] times its matrix's greatest counts as zero; [rtol]
+    defaults to [max m n] times [a]'s machine epsilon. [rank] is the
     number of the others, [-1] for a matrix on which {!svd} fails, whose [x]
     is NaN. [residuals] is the squared norm of each column of
     [b - matmul a x] in [dt]: [b]'s shape without its rows. [b] is as
@@ -2803,9 +2803,9 @@ val pinv : ?rtol:float -> ?hermitian:bool -> ('v, 's, 'd) t -> ('v, 's, 'd) t
 (** [pinv a] is the [[…; n; m]] Moore-Penrose pseudoinverse of [a], from
     {!svd}, or from {!eigh} of the Hermitian [a] its lower triangle names under
     [~hermitian:true] (default [false]). A singular value, or an eigenvalue's
-    magnitude, at or below [rtol] times [max m n] times its matrix's greatest
-    counts as zero; [rtol] defaults to the dtype's machine epsilon. A matrix on
-    which that factorisation fails is NaN.
+    magnitude, at or below [rtol] times its matrix's greatest counts as zero;
+    [rtol] defaults to [max m n] times the dtype's machine epsilon.
+    A matrix on which that factorisation fails is NaN.
 
     Raises [Invalid_argument] if [a] has fewer than two axes, is not square
     under [~hermitian:true], for its dtype, or if [rtol] is negative or NaN. *)
@@ -2855,8 +2855,8 @@ val matrix_norm :
 
 val matrix_rank : ?rtol:float -> ('v, 's, 'd) t -> 'd int64_t
 (** [matrix_rank a] is the rank of each matrix of [a], of [a]'s batch shape:
-    the number of its singular values above [rtol] times [max m n] times
-    the greatest, as {!lstsq} counts them, [rtol] defaulting to the dtype's
+    the number of its singular values above [rtol] times the greatest, as
+    {!lstsq} counts them, [rtol] defaulting to [max m n] times the dtype's
     machine epsilon, float32's for a narrower float. A matrix of no element
     has rank [0]. A matrix on which {!svd} is NaN, one that holds NaN or an
     infinity or on which the iteration does not converge, has rank [-1]: its
