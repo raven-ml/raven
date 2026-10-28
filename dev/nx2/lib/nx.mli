@@ -140,10 +140,11 @@ val unpack : ('v, 's) dtype -> 'd packed -> ('v, 's, 'd) t
 
 (** {1:devices Device sets and placement}
 
-    A value lies on a device set, a module minted by {!devices} whose brand ['d]
-    keeps its values apart from other sets'. {!Placement} says where a value
-    lies within its set, and {!place} moves a value between sets, and
-    between placements of one. The host is a set like any other, {!Host}. *)
+    A value lies on a device set, a module minted by {!val-devices} whose
+    brand ['d] keeps its values apart from other sets'. {!Placement} says
+    where a value lies within its set, and {!place} moves a value between
+    sets, and between placements of one. The host is a set like any other,
+    {!Host}. *)
 
 type +'d devices
 (** The type for device sets of brand ['d]: distinct devices, and the kernels
@@ -297,8 +298,8 @@ val devices : ?kernels:(module Nx_kernel.S) -> Rig.t list -> (module Devices)
     then [x3], [x4], …:
 
     {v
-Nx.matmul: operand 1 lies at split ~axis:1 [CUDA:0; CUDA:1] and is read
-at split ~axis:0 [CUDA:0; CUDA:1]; Nx.place (Placement.split ~axis:0 s) y
+    Nx.matmul: operand 1 lies at split ~axis:1 [CUDA:0; CUDA:1] and is read
+    at split ~axis:0 [CUDA:0; CUDA:1]; Nx.place (Placement.split ~axis:0 s) y
     v}
 
     A traced operation raises it as eager execution would
@@ -529,7 +530,7 @@ val scalar_like : ('v, 's, 'd) t -> 'v -> ('v, 's, 'd) t
     ({!Prim.Consumer.with_}).
 
     A movement, which rearranges elements without computing them
-    ({!reshape}, {!transpose}, {!flip}, {!broadcast_to}, slicing by ranges,
+    ({!reshape}, {!val-transpose}, {!flip}, {!broadcast_to}, slicing by ranges,
     {!sliding_window}), passes a new handle of the donor to its result,
     whether it makes a view or a copy, and kills nothing; the deaths wait
     for the final consumer. The handle it read stays a handle of the donor:
@@ -2483,11 +2484,11 @@ val attention :
     [score], times [v], in [q]'s dtype; [lse], [[lead…; hq; tq]], is the
     row's log-sum-exp in float32. A pair is visible where [mask] holds, its
     key is before its lead index's entry of [lengths] ([[lead…]], default
-    [tk]), and a paged key's table entry is in [[0, pages)]. A row with no
+    [tk]), and a paged key's table entry is in [\[0, pages)]. A row with no
     visible key, or only [-∞] scores, gives [o = 0] and [lse = -∞].
 
     A hidden pair's score never changes [o] or [lse], and a table entry
-    outside [[0, pages)] reads no page. A finite value at a hidden key never
+    outside [\[0, pages)] reads no page. A finite value at a hidden key never
     changes [o]: its weight is exactly zero. Values past a row's length are
     zeroed, so they never change [o]. A NaN or an infinity at a key hidden
     from a row but within its length makes that row's [o] NaN, since [o]
@@ -3023,12 +3024,12 @@ val idst :
 (** [idst x] is the inverse of {!dst} under the same [type_] and [norm]. *)
 
 val fftfreq : (float, 's) dtype -> ?d:float -> int -> (float, 's, host) t
-(** [fftfreq dt ~d n] is the host value of the frequency of each of {!fft}'s
-    [n] bins for samples [d] apart (default [1.]), in cycles per unit of [d]:
-    [i / (d n)] for [i] in [[0, (n - 1) / 2]], then [(i - n) / (d n)] for the
-    rest, the negative frequencies. Each is computed at float64 from [d n]
-    rounded once, then stored in [dt]: [fftfreq float64 4] is [0], [0.25],
-    [-0.5] and [-0.25].
+(** [fftfreq dt ~d n] is the host value of the frequency of each of
+    {!val-fft}'s [n] bins for samples [d] apart (default [1.]), in cycles per
+    unit of [d]: [i / (d n)] for [i] in [[0, (n - 1) / 2]], then
+    [(i - n) / (d n)] for the rest, the negative frequencies. Each is
+    computed at float64 from [d n] rounded once, then stored in [dt]:
+    [fftfreq float64 4] is [0], [0.25], [-0.5] and [-0.25].
 
     Raises [Invalid_argument] if [n < 1] or [d] is zero or not finite. *)
 
@@ -3577,24 +3578,26 @@ type ('v, 's, 'd) tensor = ('v, 's, 'd) t
 
 (** Structures of arrays.
 
-    A structure is a type [('a, 'd) t] with one function, [walk], that walks the
-    parts of a value with a {!Walk.cursor}: the positions of its parameter ['a],
-    its arrays of a fixed type, its {e fixed arrays}, on the set ['d], and the
-    data a program depends on (a window, a list's length, a variant's case).
-    Every operation here runs that function, so all of them visit the parts in
-    one order: maps and folds, casts, placement, the names under which arrays
-    are saved and the lists of arrays that interpreters trace.
+    A structure is a type [('a, 'd) t] with one function, [walk], that walks
+    the parts of a value with a {!Ptree.Walk.cursor}: the positions of its
+    parameter ['a], its arrays of a fixed type, its {e fixed arrays}, on the
+    set ['d], and the data a program depends on (a window, a list's length, a
+    variant's case). Every operation here runs that function, so all of them
+    visit the parts in one order: maps and folds, casts, placement, the names
+    under which arrays are saved and the lists of arrays that interpreters
+    trace.
 
     A {e description}, [('s, 'd) t], is a structure at one type ['s] whose
     arrays are all on ['d]. A map's function may then close over an array of
     ['d]. Changing the set of a value, as changing a dtype, goes through the
-    structure's module: {!place} and {!cast} take one.
+    structure's module: {!Ptree.place} and {!Ptree.cast} take one.
 
-    A description is made where it is used. Every description but {!tensor} and
-    {!unit} is a function's result, so OCaml fixes its dtype and its set at its
-    first use, and a set minted in a local scope has no description outside it.
-    A library therefore exports a structure's module, or a walk such as
-    {!Rng.walk}, and its users describe the structure at their dtype and set.
+    A description is made where it is used. Every description but
+    {!Ptree.tensor} and {!Ptree.unit} is a function's result, so OCaml fixes
+    its dtype and its set at its first use, and a set minted in a local scope
+    has no description outside it. A library therefore exports a structure's
+    module, or a walk such as {!Rng.walk}, and its users describe the
+    structure at their dtype and set.
 
     {[
     type 'a linear = { w : 'a; b : 'a option }
@@ -3740,8 +3743,8 @@ module Ptree : sig
 
     val structure : ('s, 'd) t -> ('a, 'b, 'd, 'd) cursor -> 's -> 's
     (** [structure s c x] walks [x], a value of the description [s], at [c]'s
-        path: each of its arrays as {!tensor} walks one, each of its reports as
-        [s] makes it, at [s]'s paths after [c]'s. [tensor c x] is
+        path: each of its arrays as {!val-tensor} walks one, each of its
+        reports as [s] makes it, at [s]'s paths after [c]'s. [tensor c x] is
         [structure Nx.Ptree.tensor c x].
 
         A description is at one set, so a walk that calls [structure] is too: it
@@ -4146,21 +4149,21 @@ val associative_scan :
 
 (** Random numbers from one Threefry-2x32 generator.
 
-    A key is the generator's whole state: every draw is a function of its key,
-    dtype and shape, the same at every placement. Fresh draws come from fresh
-    keys, by {!split} or {!fold_in}. A key is spent once it is used: its own
-    draws, its {!split} keys, its {!fold_in} keys and the keys of a scope
-    rooted at it all
-    come from one stream of blocks under it, so using a key two of these ways
-    can repeat bits. A scope lets one key stand for a region: a sampler called
-    without [~key] takes the scope's next key. A scope may instead refuse such
-    draws ({!refusing}), so that a region draws only from keys it is given.
+    A key is the generator's whole state: every draw is a function of its
+    key, dtype and shape, the same at every placement. Fresh draws come from
+    fresh keys, by {!Rng.split} or {!Rng.fold_in}. A key is spent once it is
+    used: its own draws, its {!Rng.split} keys, its {!Rng.fold_in} keys and
+    the keys of a scope rooted at it all come from one stream of blocks under
+    it, so using a key two of these ways can repeat bits. A scope lets one
+    key stand for a region: a sampler called without [~key] takes the scope's
+    next key. A scope may instead refuse such draws ({!Rng.refusing}), so
+    that a region draws only from keys it is given.
 
     A key's two words lie whole on one device: a placement that cuts the
-    words' axis holds no key. {!key} makes a host key, which {!place} moves
-    to a placement that keeps the words whole. {!split} and {!fold_in}
-    compute where their key lies, and {!fold_in_tensor} where its key and
-    index lie together. A scope's
+    words' axis holds no key. {!Rng.val-key} makes a host key, which
+    {!Rng.place} moves to a placement that keeps the words whole.
+    {!Rng.split} and {!Rng.fold_in} compute where their key lies, and
+    {!Rng.fold_in_tensor} where its key and index lie together. A scope's
     keys are host keys, computed on the host when a draw takes one; no
     interpretation receives that computation. *)
 module Rng : sig
