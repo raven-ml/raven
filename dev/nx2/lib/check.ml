@@ -336,7 +336,7 @@ let wait : type v s d. by:string -> (v, s, d) Value.t -> unit =
 (* Issuing *)
 
 (* The reduction [r] of the flags [ok], which have bytes, over all their
-   axes: computed where its route reads [ok], by windows or by partials. *)
+   axes: computed as its route decides, by windows or by partials. *)
 let reduce ~by ok r =
   let shape = Prim.shape ok in
   let op =
@@ -352,8 +352,6 @@ let reduce ~by ok r =
   let { Prim.route; layouts } = Prim.route ~by op in
   (* [ok] has bytes, so the reduction has a route. *)
   let route = Option.get route in
-  let place i x = Exec.placer ~by route.operands.(i) x in
-  let op = Prim.mapi place op in
   match route.compute with
   | Partials -> Partial.run ~by route op
   | Windows -> Exec.windows ~by route layouts op

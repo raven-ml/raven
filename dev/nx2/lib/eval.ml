@@ -140,9 +140,8 @@ and plain : type r. by:string -> r prim -> r =
   | _ -> routed ~by (Prim.route ~by op) op
 
 (* [op], a placement, a check, or another operation, computed as its rule
-   decided [r] ({!Prim.route}): over operands placed where the route reads
-   them, by partials or by windows as it computes, its first result into
-   [into] where it is given. *)
+   decided [r] ({!Prim.route}): by partials or by windows as the route
+   computes, its first result into [into] where it is given. *)
 and routed : type r. by:string -> ?into:A.any -> Prim.routed -> r prim -> r =
  fun ~by ?into r op ->
   match op with
@@ -151,8 +150,6 @@ and routed : type r. by:string -> ?into:A.any -> Prim.routed -> r prim -> r =
   | _ -> (
       (* Every operation but a placement and a check has a route. *)
       let route = Option.get r.Prim.route in
-      let place i x = Exec.placer ~by route.operands.(i) x in
-      let op = Prim.mapi place op in
       match route.compute with
       | Partials -> Partial.run ~by route op
       | Windows -> Exec.windows ~by ?into route r.layouts op)

@@ -7,6 +7,18 @@ module A = Nx_array
 module L = Nx_array.Layout
 module M = Nx_array.Move
 
+(* Whether [w] holds no element. A loop: every view asks it, and
+   [Array.exists] allocates its own loop. *)
+let empty (w : M.range array) =
+  let i = ref 0 in
+  while !i < Array.length w && (w.(!i) : M.range).count > 0 do
+    incr i
+  done;
+  !i < Array.length w
+
+let extents (w : M.range array) =
+  Iarray.init (Array.length w) (fun i -> (w.(i) : M.range).count)
+
 let contains (outer : M.range array) (inner : M.range array) =
   Array.for_all2
     (fun (o : M.range) (i : M.range) ->
@@ -85,10 +97,7 @@ let gather d dt w sources =
   let on =
     if A.Dtype.bits dt mod 8 = 0 || Rig.reaches Rig.host d then d else Rig.host
   in
-  let dst =
-    A.create on dt
-      (Iarray.init (Array.length w) (fun i -> (w.(i) : M.range).count))
-  in
+  let dst = A.create on dt (extents w) in
   let seen = ref [] in
   Array.iter
     (fun (sw, a) ->
@@ -135,33 +144,20 @@ let value (type v s d e) ~by (p : e Devices.placement) (x : (v, s, d) Value.t) :
     let devices = Grid.devices (Devices.grid p) in
     (* An empty window is memory of no bytes of its own: a view of a source
        would hold, and share, all of that source's memory. *)
-    let empty (w : M.range array) =
-      Array.exists (fun (r : M.range) -> r.count = 0) w
-    in
     make
       (Iarray.init (Array.length devices) (fun j ->
            let w = Devices.window ~by p shape j
            and d = Devices.rig set devices.(j) in
-           if empty w then
-             A.create d dt
-               (Iarray.init (Array.length w) (fun i -> (w.(i) : M.range).count))
+           if empty w then A.create d dt (extents w)
            else
              match from_one d w sources with
              | Some a -> a
              | None -> gather d dt w sources))
   end
 
-(* [x]'s window [w] from the array of device [k], which holds it. *)
-let held (type v s d) ~by (x : (v, s, d) Value.t) k w : (v, s) A.t =
-  let at = Prim.placement x and shape = Prim.shape x in
-  let arrays =
-    match x with
-    | Value.Array { a; _ } -> ([| a |] : _ iarray)
-    | Value.Shards { arrays; _ } -> arrays
-    | Value.Traced _ -> invalid_arg "Place.view: a traced value has no arrays"
-    | Value.Handle _ ->
-        invalid_arg "Place.view: a donated value is viewed live"
-  in
+(* The window [w] of a value of [shape] at [at] over [arrays], from the array
+   of device [k], which holds it. *)
+let held ~by at shape arrays k w =
   let devices = Grid.devices (Devices.grid at) in
   match Array.find_index (( = ) k) devices with
   | None -> invalid_arg "Place.view: no array on the device"
@@ -173,10 +169,16 @@ let held (type v s d) ~by (x : (v, s, d) Value.t) k w : (v, s) A.t =
 
 let view (type v s d) ~by (x : (v, s, d) Value.t) k w : (v, s) A.t =
   match x with
+  | Value.Traced _ -> invalid_arg "Place.view: a traced value has no arrays"
+  | Value.Handle _ -> invalid_arg "Place.view: a donated value is viewed live"
+  | (Value.Array _ | Value.Shards _) when empty w ->
+      (* A device may hold no array of a value whose window there is
+         empty. *)
+      A.create (Devices.rig (Devices.set (Prim.placement x)) k) (Prim.dtype x)
+        (extents w)
   | Value.Array { at; a; _ } -> (
       (* On one device the array is the whole. *)
       match Grid.one (Devices.grid at) with
       | Some j when j = k -> slice a w
-      | Some _ | None -> held ~by x k w)
-  | Value.Shards _ | Value.Handle _ | Value.Traced _ ->
-      held ~by x k w
+      | Some _ | None -> held ~by at (Prim.shape x) [| a |] k w)
+  | Value.Shards { at; shape; arrays; _ } -> held ~by at shape arrays k w

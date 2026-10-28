@@ -396,6 +396,13 @@ let on_device : type r.
     let (module K : Nx_kernel.S) = kernels in
     refused ~by ~kernels:K.name (Devices.rig set k) local
 
+(* [x] read whole on [p]'s one device: a view of its array there. *)
+let whole (type v s d) ~by p (x : (v, s, d) Value.t) : (v, s, d) Value.t =
+  let k = Option.get (Devices.device p) in
+  let full d = { M.start = 0; count = d; step = 1 } in
+  let a = Place.view ~by x k (Array.map full (Prim.shape x)) in
+  Value.Array { at = p; a; dead = Value.Live }
+
 (* The one result of [op], a movement or a bitcast of [x], at [route]'s
    result: on each device, [f w a] of [a], the view of [x]'s window there
    that the result's window [w] reads ({!Route.window}). *)
@@ -460,7 +467,11 @@ let windows : type r.
       let kernels = kernels_of ~by ~op:(Prim.name op) set in
       match Grid.one (Devices.grid p) with
       | Some k ->
-          on_device ~by kernels set r 0 k op;
+          (* On one device each operand is read whole: itself where it lies
+             there alone, as it does where the route found every operand at
+             one placement, and otherwise a view of its array there. *)
+          let read _ x = if Prim.placement x == p then x else whole ~by p x in
+          on_device ~by kernels set r 0 k (Prim.mapi read op);
           r
       | None ->
           let rule = Prim.rule op
@@ -491,24 +502,6 @@ let place ~by p x =
       if Iarray.exists (overlaps b) xs then Rig.Claim.share (A.buffer b))
     (Prim.arrays y);
   y
-
-(* [x] read at [p] by views: each device of [p] views its window of [x] in
-   [x]'s array there, or holds an array of no bytes where the window is
-   empty. The route reads an operand so only where its arrays hold every
-   window ({!Route.route}); [Place.view] raises where one does not. *)
-let placer ~by p x =
-  if Devices.equal (Prim.placement x) p then x
-  else
-    let shape = Prim.shape x and set = Devices.set p in
-    let devices = Grid.devices (Devices.grid p) in
-    let view j k =
-      let w = Devices.window ~by p shape j in
-      if Array.exists (fun (r : M.range) -> r.count = 0) w then
-        A.create (Devices.rig set k) (Prim.dtype x)
-          (Iarray.map (fun (r : M.range) -> r.count) (Iarray.of_array w))
-      else Place.view ~by x k w
-    in
-    Prim.of_arrays p ~shape (Iarray.of_array (Array.mapi view devices))
 
 (* The fast path *)
 

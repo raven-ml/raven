@@ -5,21 +5,22 @@
 
 (** Computing operations by their set's kernels, each device its window.
 
-    This module computes an operation whose operands have bytes and lie
-    where its route reads them ({!Prim.val-route}). Its callers choose the
-    route, read the operands there ({!placer}) and give it the memory a
-    donation frees. It settles no check. This module lies above {!Prim},
-    {!Route} and {!Place}; {!Partial}, {!Check} and {!Eval} call it.
+    This module computes an operation whose operands have bytes. Its callers
+    choose the route ({!Prim.val-route}) and give it the memory a donation
+    frees. It settles no check. This module lies above {!Prim}, {!Route} and
+    {!Place}; {!Partial}, {!Check} and {!Eval} call it.
 
     An operation's results lie at its route's result. Each device of that
     placement computes its {e window} of the results ({!Devices.window}) by
     one call of the set's kernels, over each operand's window there
-    ({!Route.window}); a program that reads coordinates adds the window's
-    first index to them. Where a layout expresses a movement or a bitcast,
-    its result is a view of the operand's memory and no kernel runs.
-    Otherwise the operand is copied and the result is a view of the copy. A
-    result shares an operand's memory only as its view, or where a donation
-    gives the operand's memory to it.
+    ({!Route.window}), which it reads by a view of the operand's array on
+    that device ({!Place.view}), or as the operand itself where the operand
+    and the results lie on that device alone. A program that reads
+    coordinates adds the window's first index to them. Where a layout
+    expresses a movement or a bitcast, its result is a view of the
+    operand's memory and no kernel runs. Otherwise the operand is copied and
+    the result is a view of the copy. A result shares an operand's memory
+    only as its view, or where a donation gives the operand's memory to it.
 
     A {e refusal} of the kernels raises through {!Nx_array.refused} naming
     the [by] the caller passes. A {e decline} raises [Invalid_argument]
@@ -50,12 +51,12 @@ val windows :
   Nx_array.Layout.t array ->
   'r Value.prim ->
   'r
-(** [windows ~by ?into route layouts op] is [op] computed by windows, its
-    operands lying where [route] reads them, its results at [route]'s result
-    laid out as [layouts] ({!Prim.val-layouts}), fresh but the first, which is
-    [into] where it is given: memory of a donated operand ({!Donate.reuse})
-    that holds the first result's window on the one device of the route's
-    result.
+(** [windows ~by ?into route layouts op] is [op] computed by windows, each
+    operand's arrays holding the windows [route] reads it at, its results at
+    [route]'s result laid out as [layouts] ({!Prim.val-layouts}), fresh but
+    the first, which is [into] where it is given: memory of a donated
+    operand ({!Donate.reuse}) that holds the first result's window on the
+    one device of the route's result.
 
     Raises [Invalid_argument] as an internal fault for a route that
     computes by partials ({!Route.Partials}), a [Place] or a [Check]. *)
@@ -88,21 +89,6 @@ val place :
     that no donation of either value writes what the other reads.
 
     Raises what {!Place.value} raises. *)
-
-val placer :
-  by:string ->
-  'd Devices.placement ->
-  ('v, 's, 'd) Value.t ->
-  ('v, 's, 'd) Value.t
-(** [placer ~by p x] is [x] read at [p], an operand where its route reads it
-    ({!Route.t}): [x] where its placement equals [p], and otherwise the value
-    at [p] whose array on each device is a view of [x]'s array there at that
-    device's window, or an array of no bytes where the window is empty. It
-    moves no bytes.
-
-    Raises [Invalid_argument] as an internal fault where [x] has no array
-    holding a nonempty window of [p] on its device, as {!Place.view}
-    does. *)
 
 (** {1:fast Fast paths}
 

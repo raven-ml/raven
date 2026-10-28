@@ -8,10 +8,10 @@
     An operation's {e eager meaning} is {!run}'s. Its operands must be alive,
     and none may be traced. Its rule is checked and routed once
     ({!Prim.val-route}) before anything is allocated, claimed or computed. Each
-    operand is read where the route reads it, by views where it lies
-    ({!Exec.placer}), and the operation computes by partials ({!Partial}) or
-    by windows ({!Exec.windows}), as the route says. An operation of no
-    operands computes where {!Prim.val-route} puts it, each device its window.
+    operand is read where the route reads it, by views of its arrays where it
+    lies, and the operation computes by partials ({!Partial}) or by windows
+    ({!Exec.windows}), as the route says. An operation of no operands
+    computes where {!Prim.val-route} puts it, each device its window.
     The operation consumes the donated handles among its operands as {!Donate}
     states: it claims them after the route ({!Donate.val-claim}), its first
     result takes the memory of a handle that may hold it and lies where the

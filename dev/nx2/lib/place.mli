@@ -44,7 +44,8 @@ val view :
   Nx_array.Move.range array ->
   ('v, 's) Nx_array.t
 (** [view ~by x k w] is the window [w] of [x]'s whole, from [x]'s array on its
-    set's device [k], without a copy.
+    set's device [k], without a copy. An empty [w] is an array of no bytes of
+    its own on [k], whether or not [x] has an array there.
 
     Raises [Invalid_argument] if [x] is traced or a handle, or no array of
-    [x] on [k] holds [w]. *)
+    [x] on [k] holds a nonempty [w]. *)

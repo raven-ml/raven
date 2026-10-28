@@ -5,7 +5,8 @@
 
 (* What only the engine's operations reach, through its private modules, copied
    here: maps of several nodes, programs of coordinates on split placements,
-   checks, and operations of no operand. *)
+   checks, operations of no operand, and a device's view of a value's
+   window. *)
 
 open Windtrap
 module A = Nx_array
@@ -739,9 +740,44 @@ let arithmetic =
         law_logsumexp;
     ]
 
+(* A device's view of an empty window is an array of no bytes of its own on
+   that device, whether or not the value has an array there; a nonempty window
+   on a device without one raises. *)
+let test_empty_view () =
+  let x : (float, D.float32_elt, b) Value.t =
+    Value.Array
+      {
+        at = Devices.one s2 0;
+        a = A.to_device (m 0) (A.of_array D.Float32 [| 2 |] [| 1.; 2. |]);
+        dead = Value.Live;
+      }
+  in
+  let rig = Testable.make ~pp:Rig.pp ~equal:Rig.equal in
+  let empty = [| { Nx_array.Move.start = 1; count = 0; step = 1 } |] in
+  List.iter
+    (fun k ->
+      let v = Place.view ~by:"t" x k empty in
+      let b = A.buffer v in
+      let msg what = Printf.sprintf "device %d: %s" k what in
+      equal ~msg:(msg "shape") (array int) [| 0 |]
+        (Iarray.to_array (Nx_array.Layout.shape (A.layout v)));
+      equal ~msg:(msg "device") rig (Devices.rig s2 k) (A.device v);
+      equal ~msg:(msg "bytes") int 0 (Rig.Buffer.length b);
+      equal ~msg:(msg "all of its memory") bool true (Rig.Buffer.spans b))
+    [ 0; 1 ];
+  raises_match
+    (Exn.invalid_arg ~substring:"Place.view: ")
+    (fun () ->
+      Place.view ~by:"t" x 1
+        [| { Nx_array.Move.start = 0; count = 1; step = 1 } |])
+
+let views =
+  group "views"
+    [ test "an empty window is an array of its own" test_empty_view ]
+
 let () =
   exit
     (run "nx maps"
        [
-         maps; checks; eager; unloaded; rules; donation; arithmetic;
+         maps; checks; eager; unloaded; rules; donation; arithmetic; views;
        ])
