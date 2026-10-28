@@ -1274,11 +1274,8 @@ let every_function (type d) name (x : (float, D.float32_elt, d) Nx.t) =
   equal ~msg:(msg "bitcast to bytes") (array int)
     (Array.concat (Array.to_list (ys (fun v -> Array.init 4 (byte v)))))
     (elements bytes);
-  let placement =
-    Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
-  in
-  equal ~msg:(msg "bitcast to bytes: placement") placement (Nx.placement x)
-    (Nx.placement bytes);
+  equal ~msg:(msg "bitcast to bytes: placement") (placement ())
+    (Nx.placement x) (Nx.placement bytes);
   equal ~msg:(msg "reshape") (array bits) xs (elements (Nx.reshape [| 4 |] x));
   equal ~msg:(msg "copy") (array bits) xs (elements (Nx.copy x));
   ignore (Nx.Repr.array x);
@@ -1299,20 +1296,9 @@ let test_every_placement () =
   every_function "a creation at a split"
     (Nx.full_at (Count2.split ~axis:0) D.Float32 [| 2; 2 |] 2.5)
 
-(* An operation keeps nothing of its caller's arrays: overwriting an int-array
-   argument after the call changes neither the value's shape nor its elements
-   (the external review's program, for zeros). *)
-let test_zeros_shape_owned () =
-  let shape = [| 2 |] in
-  let x = Nx.zeros D.Float32 shape in
-  shape.(0) <- 3;
-  equal ~msg:"shape" (array int) [| 2 |] (Nx.shape x);
-  equal ~msg:"placed" (array int) [| 2 |] (Nx.shape (Nx.place Nx.Host.on x));
-  equal ~msg:"read" (array bits) [| 0.; 0. |]
-    (elements (Nx.add x (Nx.place Nx.Host.on (Nx.zeros D.Float32 [| 2 |]))))
-
-(* Every public function taking an int array, over a creation and a value
-   with bytes, the argument overwritten after the call. *)
+(* An operation keeps nothing of its caller's arrays: every public function
+   taking an int array, over a creation and a value with bytes, gives the
+   same shape and elements with the argument overwritten after the call. *)
 let law_arguments_owned (junk, s) =
   let overwrite a =
     Array.iteri (fun i _ -> a.(i) <- junk.(i mod Array.length junk)) a
@@ -1424,7 +1410,6 @@ let sets =
       test "zeros_like reads none of its argument's elements"
         test_zeros_like_reads_nothing;
       test "every function takes a value at any placement" test_every_placement;
-      test "zeros keeps nothing of its shape argument" test_zeros_shape_owned;
       prop "an int-array argument overwritten after the call changes nothing"
         int_arrays law_arguments_owned;
     ]
