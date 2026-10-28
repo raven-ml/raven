@@ -6,7 +6,8 @@
   01-tracing.md
   02-derivatives.md
   03-maps.md
-  04-loops.md)
+  04-loops.md
+  05-totals.md)
  (enabled_if
   (and
    (<> %{profile} sanitize)
