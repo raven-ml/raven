@@ -5,7 +5,11 @@
 
 open Tolk
 
-(* Loop-invariant parts *)
+(* Loop-invariant parts
+
+   A movement of an invariant part stays in the body, and the part below it is
+   computed once: a view costs nothing where it is read, while computing it once
+   would store a transposed or broadcast copy that the loop then reads. *)
 
 let cut ?(hoist = true) ~own next args body =
   let reading = Ops.Tbl.create 64
@@ -197,9 +201,11 @@ let repeat device n init step =
                 view p)
           carries
       in
-      (* A trip takes two steps: the first into storage of its own, the second
-         from it into the carries' storage, which it then no longer reads. The
-         call passes the first step's index, and the second's is one more. *)
+      (* The loop runs [n / 2] trips of one call, whose body is the two steps
+         traced once. A trip takes two steps: the first into storage of its own,
+         the second from it into the carries' storage, which it then no longer
+         reads. The call passes the first step's index, and the second's is one
+         more. *)
       let range =
         Ops.range ~axis_type:Loop (Ops.Int (n / 2)) [ Ops.unique_num () ]
       in
