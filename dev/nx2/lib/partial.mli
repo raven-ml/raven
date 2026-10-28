@@ -98,10 +98,10 @@
     [(Σ d² - Σ d (Σ d / n)) / n], [+0] where that is negative or [Σ d²]
     where that is [+∞]. Both are NaNs where [c] is. On nx.cpu's kernels,
     to first order in [u] and for [n] exact in the carrier, a lane-order
-    sum ({!Nx_cpu}) of [m] terms rounds each at most [L + D] times,
-    [L = ⌈min (m, 1024) / 16⌉ + 3] in its block and
-    [D = ⌈log₂ ⌈m / 1024⌉⌉] across blocks, and the closing, a lane-order
-    sum of [t] terms, adds [L{_t} + D{_t}], those of [t] terms. Let
+    sum of [m] terms rounds each at most [L + D] times, [L] and [D] as
+    {!Nx_cpu.section-states} defines them for [m] terms, and the closing,
+    a lane-order sum of [t] terms, adds [L{_t} + D{_t}], those of [t]
+    terms. Let
     [K = L + D + L{_t} + D{_t}] for the tile of most terms, [M] the mean of
     the terms' magnitudes and [V] their variance. The mean is within
     [A = K u M + u|μ|] of the exact [μ] and the variance within
