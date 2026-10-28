@@ -723,8 +723,9 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
 
     {b Compiled programs.} A program compiles the first time a call runs it,
     then once per {e variant}: each argument's strides and offset from where its
-    16 bytes of memory start, and tolk's settings that shape what it compiles,
-    the search widths [BEAM] and [JITBEAM] among them. A view thus reads in
+    16 bytes of memory start, which arguments the caller donated, and tolk's
+    settings that shape what it compiles, the search widths [BEAM] and
+    [JITBEAM] among them. A view thus reads in
     place, without a copy, from a program compiled for its layout. Each result
     array is fresh: memory of its own in C order, at the placement eager
     computation gives it.
