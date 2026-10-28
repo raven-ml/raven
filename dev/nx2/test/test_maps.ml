@@ -5,8 +5,7 @@
 
 (* What only the engine's operations reach, through its private modules, copied
    here: maps of several nodes, programs of coordinates on split placements,
-   checks, operations of no operand, and a device's view of a value's
-   window. *)
+   operations of no operand, and a device's view of a value's window. *)
 
 open Windtrap
 module A = Nx_array
@@ -165,43 +164,6 @@ let maps =
             (Iarray.to_array (Iarray.map A.to_array (Repr.shards c))));
       test "a map of any number of arrays computes as its pieces do"
         test_wide_maps;
-    ]
-
-exception Failed of int array * float
-
-let checks =
-  group "checks"
-    [
-      test "a check that holds raises nothing" (fun () ->
-          let ok =
-            Value.Array
-              {
-                at = at1;
-                a =
-                  A.to_device (m 0) (A.of_array D.Bool [| 2 |] [| true; true |]);
-                dead = Value.Live;
-              }
-          in
-          Eval.run ~by:"t"
-            (Value.Check { ok; data = []; fail = (fun _ _ -> Exit) });
-          Check.wait ~by:"t" ok);
-      test
-        "a check off the host raises its exception at the next wait, at the \
-         first failing index, with the data there" (fun () ->
-          let ok =
-            Value.Array
-              {
-                at = at1;
-                a =
-                  A.to_device (m 0)
-                    (A.of_array D.Bool [| 3 |] [| true; false; false |]);
-                dead = Value.Live;
-              }
-          in
-          let fail i (x, ()) = Failed (i, x) in
-          Eval.run ~by:"t"
-            (Value.Check { ok; data = [ f32 [| 10.; 20.; 30. |] ]; fail });
-          raises (Failed ([| 1 |], 20.)) (fun () -> Check.wait ~by:"t" ok));
     ]
 
 (* A fill of [1.] on [at1]: a node of its own. *)
@@ -801,5 +763,5 @@ let () =
   exit
     (run "nx maps"
        [
-         maps; checks; eager; unloaded; rules; donation; arithmetic; views;
+         maps; eager; unloaded; rules; donation; arithmetic; views;
        ])

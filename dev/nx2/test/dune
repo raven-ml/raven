@@ -36,7 +36,6 @@
   test_special
   test_patches
   test_segments
-  test_sync
   test_ptree
   test_check
   test_scan)
@@ -73,7 +72,6 @@
   test_special
   test_patches
   test_segments
-  test_sync
   test_ptree
   test_check
   test_scan)

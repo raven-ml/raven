@@ -3,9 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Nx.check: the first false flag in C order raises the caller's exception with
-   its index and the data's elements there, each array broadcast to the flags'
-   shape; at the call on the host, at the next wait on another set. *)
+(* Checks and waits: the first false flag in C order raises the caller's
+   exception with its index and the data's elements there, each array broadcast
+   to the flags' shape; at the call on the host, at the next wait on another
+   set, on the domain that issued it, earliest first and once. A check holds its
+   data's memory until a wait drains it, within a bounded window where none
+   does. *)
 
 open Windtrap
 open Nx_support
@@ -16,68 +19,129 @@ let m = Nx_support.memory
 
 module S = (val Nx.devices [ m 0 ])
 module S2 = (val Nx.devices [ m 0; m 1 ])
+module T = (val Nx.devices [ m 1 ])
+module Two = (val Nx.devices [ m 2; m 3 ])
 module C = Nx_support.Counting
 module Count = (val Nx.devices ~kernels:(module C) [ m 1 ])
 
 exception At of int array * float * int32 * float
 exception Flag of int array
 exception Element of string
+exception Failed of int
+
+type ('v, 's, 'd) Nx.Prim.payload += Mark : ('v, 's, 'd) Nx.Prim.payload
 
 let invalid ~by f = raises_match (Exn.invalid_arg ~substring:(by ^ ": ")) f
 let numel s = Array.fold_left ( * ) 1 s
 let pass _ _ = Failure "the check passed its data"
 
-(* Flags of a shape with some extents of 0 or 1, mostly true. *)
+(* A check of nx's primitive, its data a list of arrays. *)
+let check ok data fail =
+  Nx.Prim.eval ~by:"test" (Nx.Prim.Check { ok; data; fail })
+
+type at = Host | One | Split
+
+let pp_at ppf a =
+  Format.pp_print_string ppf
+    (match a with Host -> "host" | One -> "one device" | Split -> "split")
+
+(* Flags of a shape with some extents of 0 or 1, mostly true, on the host, on
+   one device, or split along their first axis, whose extent doubles to divide
+   evenly. *)
 let flags =
   let open Gen in
-  (let* s =
+  (let* at = of_list ~pp:pp_at [ Host; One; Split ] in
+   let* s =
      array ~size:(int_range 0 3)
        (frequency [ (1, constant 0); (1, constant 1); (4, int_range 2 4) ])
+   in
+   let at = if at = Split && Array.length s = 0 then One else at in
+   let s =
+     if at = Split then Array.mapi (fun a e -> if a = 0 then 2 * e else e) s
+     else s
    in
    let+ ok =
      array
        ~size:(constant (numel s))
        (frequency [ (6, constant true); (1, constant false) ])
    in
-   (s, ok))
-  |> with_pp (fun ppf (s, ok) ->
-      Format.fprintf ppf "%a %s" pp_ints s
+   (s, at, ok))
+  |> with_pp (fun ppf (s, at, ok) ->
+      Format.fprintf ppf "%a %a %s" pp_ints s pp_at at
         (String.concat ""
            (Array.to_list (Array.map (fun b -> if b then "1" else "0") ok))))
 
+(* Where a case's flags and data lie: [cut] for the flags and the data of their
+   shape, [whole] for the others. *)
+type 'd where = {
+  cut : 'v 's. ('v, 's, Nx.host) Nx.t -> ('v, 's, 'd) Nx.t;
+  whole : 'v 's. ('v, 's, Nx.host) Nx.t -> ('v, 's, 'd) Nx.t;
+}
+
 (* Data of three arrays: one of the flags' shape, a 0-d one, and one of the
-   flags' last axis alone, broadcast along the others. *)
-let law (s, ok) =
+   flags' last axis alone, broadcast along the others. The failure raises at the
+   call on the host and at the next wait elsewhere, once. *)
+let law (s, at, ok) =
   let n = numel s and r = Array.length s in
   let first = Array.find_index not ok in
+  let falses = Array.fold_left (fun k b -> if b then k else k + 1) 0 ok in
   cover "passes" (Option.is_none first && n > 0);
   cover "fails" (Option.is_some first);
   cover "no element" (n = 0);
   cover "rank 0" (r = 0);
   cover "fails past the first element" (Option.value ~default:0 first > 0);
+  cover "fails at two flags" (falses > 1);
+  cover "fails on one device" (at = One && Option.is_some first);
+  cover "fails split" (at = Split && Option.is_some first);
   let xs = Array.init n float_of_int in
   let last = if r = 0 then [||] else [| s.(r - 1) |] in
-  let data =
-    ( Nx.create Nx.float32 s xs,
-      ( Nx.create Nx.int32 [||] [| 7l |],
-        Nx.create Nx.float32 last
-          (Array.init (numel last) (fun j -> 100. +. float_of_int j)) ) )
+  let expected =
+    Option.map
+      (fun j ->
+        let i = index s j in
+        let column = if r = 0 then 100. else 100. +. float_of_int i.(r - 1) in
+        At (i, xs.(j), 7l, column))
+      first
   in
-  let desc = P.(pair tensor (pair tensor tensor)) in
-  let fail i (a, (b, c)) = At (i, Nx.item [] a, Nx.item [] b, Nx.item [] c) in
-  let ok = Nx.create Nx.bool s ok in
-  match first with
-  | None -> Nx.check desc ok data fail
-  | Some j ->
-      let i = index s j in
-      let column = if r = 0 then 100. else 100. +. float_of_int i.(r - 1) in
-      raises (At (i, xs.(j), 7l, column)) (fun () -> Nx.check desc ok data fail)
+  let run (type d) (p : d where) =
+    let data =
+      ( p.cut (Nx.create Nx.float32 s xs),
+        ( p.whole (Nx.create Nx.int32 [||] [| 7l |]),
+          p.whole
+            (Nx.create Nx.float32 last
+               (Array.init (numel last) (fun j -> 100. +. float_of_int j))) ) )
+    in
+    let ok = p.cut (Nx.create Nx.bool s ok) in
+    let desc = P.(pair tensor (pair tensor tensor)) in
+    let fail i (a, (b, c)) = At (i, Nx.item [] a, Nx.item [] b, Nx.item [] c) in
+    let issue () = Nx.check desc ok data fail in
+    (match (at, expected) with
+    | Host, Some e -> raises e issue
+    | (One | Split), Some e ->
+        issue ();
+        raises e (fun () -> Nx.sync ok)
+    | _, None -> issue ());
+    Nx.sync ok
+  in
+  match at with
+  | Host -> run { cut = Fun.id; whole = Fun.id }
+  | One ->
+      let on x = Nx.place S.on x in
+      run { cut = on; whole = on }
+  | Split ->
+      run
+        {
+          cut = (fun x -> Nx.place (S2.split ~axis:0) x);
+          whole = (fun x -> Nx.place S2.on x);
+        }
+
+let first_false =
+  prop "the first false flag raises, once, with its index and the data there"
+    flags law
 
 let host =
   group "on the host"
     [
-      prop "the first false flag raises at the call with the data there" flags
-        law;
       cases
         ~name:(fun (D.Any dt) -> D.name dt)
         "the data's elements reach the exception at every dtype" D.all
@@ -148,6 +212,307 @@ let elsewhere =
           equal ~msg:"found at the second issue" int 1 !found;
           raises (At ([| 1 |], 2., 9l, 0.)) (fun () -> Nx.sync (fst data));
           Nx.sync (fst data));
+    ]
+
+(* Waits *)
+
+type wait = Sync | To_array | Item | Print | Place_host
+
+let pp_wait ppf w =
+  Format.pp_print_string ppf
+    (match w with
+    | Sync -> "sync"
+    | To_array -> "to_array"
+    | Item -> "item"
+    | Print -> "to_string"
+    | Place_host -> "place on the host")
+
+let waits = Gen.of_list ~pp:pp_wait [ Sync; To_array; Item; Print; Place_host ]
+
+let wait w x =
+  match w with
+  | Sync -> Nx.sync x
+  | To_array -> ignore (Nx.to_array x)
+  | Item -> ignore (Nx.item [ 0 ] x)
+  | Print -> ignore (Nx.to_string x)
+  | Place_host -> ignore (Nx.place Nx.Host.on x)
+
+(* A set seen through a value on it and two flags, one false at position 1. *)
+type side = { wait : wait -> unit; issue : bool -> int -> unit }
+
+let side (type d) (module D : Nx.Devices with type d = d) =
+  let x = Nx.place D.on (Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |]) in
+  let flags b = Nx.place D.on (Nx.create Nx.bool [| 3 |] [| true; b; true |]) in
+  let pass = flags true and fail = flags false in
+  {
+    wait = (fun w -> wait w x);
+    issue =
+      (fun fails id ->
+        check (if fails then fail else pass) [] (fun _ () -> Failed id));
+  }
+
+let s_side = side (module S)
+let t_side = side (module T)
+
+(* The checks pending on each set, as [(id, fails)] in issue order. *)
+type model = {
+  mutable on_s : (int * bool) list;
+  mutable on_t : (int * bool) list;
+}
+
+type set = On_s | On_t
+
+let sets =
+  Gen.of_list
+    ~pp:(fun ppf s ->
+      Format.pp_print_string ppf (if s = On_s then "S" else "T"))
+    [ On_s; On_t ]
+
+let side_of = function On_s -> s_side | On_t -> t_side
+let pending md = function On_s -> md.on_s | On_t -> md.on_t
+
+let set_pending md s l =
+  match s with On_s -> md.on_s <- l | On_t -> md.on_t <- l
+
+(* A wait drains its set's checks and raises the earliest failure, the later
+   ones dropped. *)
+let settle md s =
+  let rec go = function
+    | [] -> None
+    | (_, false) :: rest ->
+        cover "a wait passes a check before a failing one" (rest <> []);
+        go rest
+    | (id, true) :: rest ->
+        cover "a wait drops a later failure" (List.exists snd rest);
+        Some id
+  in
+  let raised = go (pending md s) in
+  set_pending md s [];
+  raised
+
+(* Drains a set's checks, so that no test sees another's. *)
+let drain side = try side.wait Sync with Failed _ -> ()
+
+(* The checks are the domain's, so every session shares one model, which a start
+   empties. A program's end drains what it left. *)
+let model = { on_s = []; on_t = [] }
+
+let session =
+  abstract "w" ~release:(fun () ->
+      drain s_side;
+      drain t_side)
+
+let pending_checks =
+  stateful ~steps:30
+    "a wait drains its set's checks, raising the earliest failure"
+    [
+      command "start"
+        (Gen.unit @-> makes session)
+        (fun () ->
+          model.on_s <- [];
+          model.on_t <- [];
+          model)
+        (fun () ->
+          drain s_side;
+          drain t_side);
+      command "issue"
+        (session ^-> sets @-> Gen.bool @-> Gen.int_range 0 99 @-> returns unit)
+        (fun md s fails id -> set_pending md s (pending md s @ [ (id, fails) ]))
+        (fun () s fails id -> (side_of s).issue fails id);
+      command "wait"
+        (session ^-> sets @-> waits @-> returns (option int))
+        (fun md s _ ->
+          let raised = settle md s in
+          cover "a wait on a set with a failure on the other"
+            (raised = None
+            && List.exists snd (pending md (if s = On_s then On_t else On_s)));
+          raised)
+        (fun () s w ->
+          match (side_of s).wait w with
+          | () -> None
+          | exception Failed id -> Some id);
+    ]
+
+(* At the call *)
+
+let at_call =
+  let ok = [| true; false; true |] in
+  cases
+    ~name:(fun (name, _) -> name)
+    "a check raises at the call"
+    [
+      ( "on the host",
+        fun () -> check (Nx.create Nx.bool [| 3 |] ok) [] (fun _ () -> Failed 0)
+      );
+      ( "of a host creation",
+        fun () ->
+          check
+            Nx.Infix.(Nx.arange Nx.int32 0 3 1 <>$ 1l)
+            []
+            (fun _ () -> Failed 0) );
+    ]
+    (fun (_, f) -> raises (Failed 0) f)
+
+(* Systhreads *)
+
+(* The systhreads of a domain share its checks. A signal every 20 us of CPU time
+   yields the running systhread at its next poll point, so that two issuers
+   interleave inside nx's own updates. It is the virtual timer's: the real-time
+   one is windtrap's, for its timeouts. Each of [sets] sets gets one failing
+   check a round, and every one must raise. *)
+let systhreads () =
+  let sets =
+    Array.init 6000 (fun _ ->
+        let module D = (val Nx.devices [ m 0 ]) in
+        side (module D))
+  in
+  let tick = { Unix.it_interval = 2e-5; it_value = 2e-5 } in
+  let still = { Unix.it_interval = 0.; it_value = 0. } in
+  let yield = Sys.Signal_handle (fun _ -> Thread.yield ()) in
+  let issue first () =
+    for i = 0 to (Array.length sets / 2) - 1 do
+      sets.((2 * i) + first).issue true i
+    done
+  in
+  let round () =
+    let a = Thread.create (issue 0) () and b = Thread.create (issue 1) () in
+    Thread.join a;
+    Thread.join b;
+    Array.fold_left
+      (fun lost side ->
+        match side.wait Sync with () -> lost + 1 | exception Failed _ -> lost)
+      0 sets
+  in
+  let previous = Sys.signal Sys.sigvtalrm yield in
+  ignore (Unix.setitimer Unix.ITIMER_VIRTUAL tick);
+  let lost =
+    Fun.protect
+      ~finally:(fun () ->
+        ignore (Unix.setitimer Unix.ITIMER_VIRTUAL still);
+        Sys.set_signal Sys.sigvtalrm previous)
+      (fun () -> List.init 5 (fun _ -> round ()))
+  in
+  equal (list int) [ 0; 0; 0; 0; 0 ] lost
+
+(* Domains, donation and sync *)
+
+(* A loop that draws over a fresh parameter at [at] each step and never waits on
+   its set: once warm, device [d] holds as many bytes after 200 more steps as
+   after the first, its collected memory moved and its cache freed alike. *)
+let bounded at d =
+  let n = 1 lsl 16 in
+  let p = Nx.create Nx.float32 [| n |] (Array.make n 0.5) in
+  let step () = ignore (Nx.Rng.bernoulli (Nx.copy (Nx.place at p))) in
+  let settled () =
+    for _ = 1 to 4 do
+      Gc.full_major ();
+      Rig.free_cache d
+    done;
+    Rig.allocated d
+  in
+  step ();
+  let warm = settled () in
+  for _ = 1 to 200 do
+    step ()
+  done;
+  at_most int ~than:warm (settled ())
+
+let others =
+  group "domains, donation and sync"
+    [
+      test "a check raises only on the domain that issued it" (fun () ->
+          let raised =
+            Domain.join
+              (Domain.spawn (fun () ->
+                   s_side.issue true 7;
+                   match s_side.wait Sync with
+                   | () -> None
+                   | exception Failed id -> Some id))
+          in
+          equal (option int) (Some 7) raised;
+          Domain.join (Domain.spawn (fun () -> s_side.issue true 8));
+          s_side.wait Sync);
+      test "a check keeps its data's elements through a donation" (fun () ->
+          let d =
+            Nx.place S.on (Nx.create Nx.float32 [| 3 |] [| 4.; 5.; 6. |])
+          in
+          let ok =
+            Nx.place S.on (Nx.create Nx.bool [| 3 |] [| true; false; true |])
+          in
+          check ok [ d ] (fun idx (v, ()) -> At (idx, v, 0l, 0.));
+          let negated = Nx.neg (Nx.donate d) in
+          raises (At ([| 1 |], 5., 0l, 0.)) (fun () -> Nx.sync negated);
+          equal (array float_exact) [| -4.; -5.; -6. |] (Nx.to_array negated));
+      test "a donation after a sync reuses the checked data's memory" (fun () ->
+          (* A copy owns its memory: a placement onto a memory device borrows
+             the host's, which no donation writes. *)
+          let d = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+          let d = Nx.copy (Nx.place S.on d) in
+          let ok = Nx.create Nx.bool [| 3 |] [| true; true; true |] in
+          let ok = Nx.place S.on ok in
+          check ok [ d ] (fun idx (v, ()) -> At (idx, v, 0l, 0.));
+          Nx.sync d;
+          (* The count includes cached memory, which a refused donation would
+             take unseen. *)
+          Rig.free_cache (m 0);
+          let before = Rig.allocated (m 0) in
+          ignore (Nx.neg (Nx.donate d));
+          equal int before (Rig.allocated (m 0)));
+      test "a check that raises at issue holds none of its data" (fun () ->
+          let d = Nx.place S.on (Nx.create Nx.float32 [| 1 |] [| 1. |]) in
+          let ok = Nx.place S.on (Nx.create Nx.bool [| 1 |] [| false |]) in
+          check ok [ d ] (fun _ _ -> raise Exit);
+          (* The wait that reads the failing check again ends its hold. *)
+          let drain () = try Nx.sync d with Exit -> () in
+          Fun.protect ~finally:drain (fun () ->
+              let d' = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+              let d' = Nx.copy (Nx.place S.on d') in
+              let ok' = Nx.create Nx.bool [| 3 |] [| true; true; true |] in
+              let ok' = Nx.place S.on ok' in
+              raises Exit (fun () -> check ok' [ d' ] (fun _ _ -> Failed 0));
+              Rig.free_cache (m 0);
+              let before = Rig.allocated (m 0) in
+              ignore (Nx.neg (Nx.donate d'));
+              equal int before (Rig.allocated (m 0))));
+      test "checks no wait follows hold bounded memory" (fun () ->
+          bounded S.on (m 0));
+      test "a check on a device then idle leaves later checks bounded"
+        (fun () ->
+          let on k = Nx.Placement.device Two.v (m k) in
+          let p = Nx.create Nx.float32 [| 4 |] (Array.make 4 0.5) in
+          ignore (Nx.Rng.bernoulli (Nx.copy (Nx.place (on 3) p)));
+          bounded (on 2) (m 2));
+      test "a print that raises a failed check prints nothing" (fun () ->
+          let d = Nx.place S.on (Nx.create Nx.float32 [| 2 |] [| 1.; 2. |]) in
+          let ok =
+            Nx.place S.on (Nx.create Nx.bool [| 2 |] [| false; true |])
+          in
+          check ok [ d ] (fun idx (v, ()) -> At (idx, v, 0l, 0.));
+          let b = Buffer.create 16 in
+          let ppf = Format.formatter_of_buffer b in
+          raises (At ([| 0 |], 1., 0l, 0.)) (fun () -> Nx.pp ppf d);
+          Format.pp_print_flush ppf ();
+          equal string "" (Buffer.contents b));
+      test "an empty check passes" (fun () ->
+          let ok = Nx.place S.on (Nx.create Nx.bool [| 0; 2 |] [||]) in
+          check ok [] (fun _ () -> Failed 0);
+          Nx.sync ok);
+      test "sync returns for a host creation" (fun () ->
+          Nx.sync (Nx.arange Nx.int32 0 3 1));
+      test "sync refuses a dead value" (fun () ->
+          let x = Nx.place S.on (Nx.create Nx.float32 [| 2 |] [| 1.; 2. |]) in
+          ignore (Nx.neg (Nx.donate x));
+          raises_match (Exn.invalid_arg ~substring:"Nx.sync: ") (fun () ->
+              Nx.sync x));
+      test "sync refuses a traced value" (fun () ->
+          let traced i ~by op =
+            Nx.Prim.results ~by (fun _ form -> Nx.Prim.traced i form Mark) op
+          in
+          Nx.Prim.interpret ~name:"test.trace" Extent traced (fun _ ->
+              let x = Nx.neg (Nx.create Nx.float32 [| 2 |] [| 1.; 2. |]) in
+              raises
+                (Invalid_argument "Nx.sync: the value is traced by test.trace")
+                (fun () -> Nx.sync x)));
     ]
 
 (* Two systhreads of one domain share its pending checks. The order below is
@@ -278,4 +643,18 @@ let walks =
           Nx.sync ok);
     ]
 
-let () = exit (run "nx check" [ host; elsewhere; threads; tried; walks ])
+let () =
+  exit
+    (run "nx check"
+       [
+         first_false;
+         host;
+         elsewhere;
+         pending_checks;
+         at_call;
+         threads;
+         test "checks issued from two systhreads all raise" systhreads;
+         tried;
+         walks;
+         others;
+       ])
