@@ -61,7 +61,11 @@ let sparkline values =
    Nx.Ptree.S contract). *)
 
 module Q = struct
-  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t; l3 : 'a Linear.t }
+  type ('a, 'd) t = {
+    l1 : ('a, 'd) Linear.t;
+    l2 : ('a, 'd) Linear.t;
+    l3 : ('a, 'd) Linear.t;
+  }
 
   let walk c { l1; l2; l3 } =
     let open Nx.Ptree.Walk in
@@ -111,9 +115,9 @@ let () =
   let params =
     ref
       {
-        Q.l1 = Linear.init ~inputs:4 ~outputs:128;
-        l2 = Linear.init ~inputs:128 ~outputs:128;
-        l3 = Linear.init ~inputs:128 ~outputs:2;
+        Q.l1 = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:4 ~outputs:128;
+        l2 = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:128 ~outputs:128;
+        l3 = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:128 ~outputs:2;
       }
   in
   let target_params = ref !params in
@@ -127,7 +131,7 @@ let () =
   let buffer = Buffer.create ~capacity:buffer_capacity in
 
   let sample_uniform () =
-    let t = Nx.rand Nx.float32 [| 1 |] in
+    let t = Nx.Rng.uniform Nx.float32 [| 1 |] in
     (Nx.to_array t : float array).(0)
   in
 
@@ -190,7 +194,7 @@ let () =
     let loss_fn p =
       let q_values = Q.apply p obs_batch in
       let q_selected =
-        Nx.take_along_axis ~axis:1 ~indices:actions_batch q_values
+        Nx.take_along_axis ~axis:1 actions_batch q_values
       in
       let q_selected = Nx.reshape [| n |] q_selected in
       let diff = Nx.sub q_selected td_target in

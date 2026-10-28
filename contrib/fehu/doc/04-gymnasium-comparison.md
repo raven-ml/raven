@@ -73,7 +73,7 @@ let action = Space.Discrete.of_int 3
 let value  = Space.Discrete.to_int action
 ```
 
-Discrete elements are `(int32, Nx.int32_elt) Nx.t` scalars, not bare OCaml ints.
+Discrete elements are `Nx.host Nx.int32_t` scalars, not bare OCaml ints.
 
 ### 2.2 Box (continuous)
 
@@ -103,7 +103,7 @@ let sample = Space.sample space
 let (low, high) = Space.Box.bounds space
 ```
 
-Box elements are `(float, Nx.float32_elt) Nx.t` tensors. Infinite bounds are allowed; sampling falls back to uniform draws in `[-1e6, 1e6]` clamped to bounds.
+Box elements are `Nx.host Nx.float32_t` tensors. Infinite bounds are allowed; sampling falls back to uniform draws in `[-1e6, 1e6]` clamped to bounds.
 
 ### 2.3 Multi_binary
 
@@ -120,7 +120,7 @@ space = gym.spaces.MultiBinary(4)  # {0,1}^4
 let space = Space.Multi_binary.create 4
 ```
 
-Elements are `(int32, Nx.int32_elt) Nx.t` vectors with values 0 or 1.
+Elements are `Nx.host Nx.int32_t` vectors with values 0 or 1.
 
 ### 2.4 Multi_discrete
 

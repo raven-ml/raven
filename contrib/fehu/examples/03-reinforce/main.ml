@@ -54,7 +54,7 @@ let sparkline values =
    Linear layers with a hand-written [walk] (the Nx.Ptree.S contract). *)
 
 module Policy = struct
-  type 'a t = { l1 : 'a Linear.t; l2 : 'a Linear.t }
+  type ('a, 'd) t = { l1 : ('a, 'd) Linear.t; l2 : ('a, 'd) Linear.t }
 
   let walk c { l1; l2 } =
     let open Nx.Ptree.Walk in
@@ -87,8 +87,8 @@ let () =
   let params =
     ref
       {
-        Policy.l1 = Linear.init ~inputs:4 ~outputs:64;
-        l2 = Linear.init ~inputs:64 ~outputs:2;
+        Policy.l1 = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:4 ~outputs:64;
+        l2 = Linear.init ~key:(Nx.Rng.next_key ()) ~inputs:64 ~outputs:2;
       }
   in
 
@@ -100,11 +100,11 @@ let () =
   let policy obs =
     let obs_batch = Nx.reshape [| 1; 4 |] obs in
     let logits = Policy.apply !params obs_batch in
-    let action_idx = Nx.categorical logits in
+    let action_idx = Nx.Rng.categorical logits in
     let action = Nx.reshape [||] (Nx.cast Nx.int32 action_idx) in
     let log_probs = Nx.log_softmax logits in
     let action_1 = Nx.reshape [| 1; 1 |] action_idx in
-    let log_prob = Nx.take_along_axis ~axis:1 ~indices:action_1 log_probs in
+    let log_prob = Nx.take_along_axis ~axis:1 action_1 log_probs in
     let lp = Nx.item [ 0; 0 ] log_prob in
     (action, Some lp, None)
   in
@@ -153,7 +153,7 @@ let () =
       let logits = Policy.apply p obs_batch in
       let log_probs = Nx.log_softmax logits in
       let action_log_probs =
-        Nx.take_along_axis ~axis:1 ~indices:actions_batch log_probs
+        Nx.take_along_axis ~axis:1 actions_batch log_probs
       in
       let action_log_probs = Nx.reshape [| n |] action_log_probs in
       let weighted = Nx.mul action_log_probs returns_t in

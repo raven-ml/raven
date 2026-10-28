@@ -95,12 +95,12 @@ let () =
 
   Nx.Rng.with_key (Nx.Rng.key 42) @@ fun () ->
   let sample_uniform () =
-    let t = Nx.rand Nx.float32 [| 1 |] in
+    let t = Nx.Rng.uniform Nx.float32 [| 1 |] in
     (Nx.to_array t : float array).(0)
   in
 
   let sample_random_action () =
-    let t = Nx.randint ~high:n_actions [| 1 |] in
+    let t = Nx.Rng.randint ~high:n_actions [| 1 |] in
     Int32.to_int (Nx.to_array t : Int32.t array).(0)
   in
 
