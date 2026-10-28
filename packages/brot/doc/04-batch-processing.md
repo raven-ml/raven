@@ -143,7 +143,7 @@ let second_row_first_id = Int32.to_int (Bigarray.Array1.get ids 3) (* 2 *)
 
 Row `i` starts at the sum of the lengths before it. Under a padding that
 makes the rows equal the buffer is rectangular, so it reaches `Nx`
-without a copy:
+in one copy:
 
 <!-- $MDX skip -->
 ```ocaml

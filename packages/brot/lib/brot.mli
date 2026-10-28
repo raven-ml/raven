@@ -1282,8 +1282,8 @@ val encode_ids :
 
 type ids = (int32, Bigarray.int32_elt, Bigarray.c_layout) Bigarray.Array1.t
 (** The type for flat token id buffers: the rows of a batch, one after the
-    other. Hand one to [Nx] with
-    [Nx.of_bigarray (Bigarray.genarray_of_array1 ids)]. *)
+    other. [Nx.of_bigarray (Bigarray.genarray_of_array1 ids)] copies one into
+    a host value. *)
 
 val encode_batch_ids :
   t ->
