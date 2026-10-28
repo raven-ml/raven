@@ -45,29 +45,24 @@ let placed : type v s d e.
 (* [x] readable at [p]: a constant computed there. *)
 let placer ~by p x = Exec.placer ~by p (Constant.at p x)
 
-(* Whether every operand of [op] with a placement lies at one: a result
-   written into a handle's memory then lies where the handle does. *)
-let together op =
-  let first = ref None in
-  not
-    (Prim.exists
-       (fun x ->
-         match (Prim.at x, !first) with
-         | None, _ -> false
-         | Some p, None ->
-             first := Some p;
-             false
-         | Some p, Some q -> p != q)
-       op)
-
 (* The memory of a handle [c] claimed that [op]'s first result may take
-   ({!Donate.reuse}), where every operand lies at one placement: the handle's
-   buffer, dead from then on, and the array the result takes. *)
-let taken c op =
-  match Prim.own_index op with
-  | Some (own, layout, Nx_array.Dtype.Any dt) when together op ->
+   ({!Donate.reuse}): the handle's buffer, dead from then on, and the array
+   the result takes. A result written there lies where the handle does, so
+   only an operand that lies where [r] puts the results may hold it. *)
+let taken c (r : Prim.routed) op =
+  match (Prim.own_index op, r.route) with
+  | Some (own, layout, Nx_array.Dtype.Any dt), Some route ->
+      let (Prim.Operands xs) = Prim.operands op in
+      let xs = Array.of_list xs in
+      let at_result i =
+        let (Value.Any x) = xs.(i) in
+        match Prim.at x with
+        | Some p -> Devices.equal p route.result
+        | None -> false
+      in
+      let own = List.filter at_result own in
       Option.map (fun (b, a) -> (b, A.Any a)) (Donate.reuse c ~own dt layout)
-  | Some _ | None -> None
+  | Some _, None | None, _ -> None
 
 (* [f ()], the claim [c] ended once it returns or raises. Where it raises, the
    memory [into] took for its result is freed too, since no result holds
@@ -132,7 +127,7 @@ and donated : type r. by:string -> r prim -> r =
       let (Prim.Operands xs) = Prim.operands op in
       let c = Donate.claim ~by xs in
       let op = Donate.called c op in
-      match taken c op with
+      match taken c r op with
       | Some (b, (A.Any a as into)) ->
           (* The handle's memory is the result's, now over [b']: the kernel
              reads each index of it before it writes the result there. *)

@@ -675,6 +675,32 @@ let test_scatter_in_place () =
   in_place ~msg:"scatter" ~bytes:size grew;
   equal (array float_exact) (with_row 5 9.) (elements y)
 
+(* A donated value on one device is written in place beside a value whole
+   on each device of its set, which that device reads by a view of its
+   window, and beside one placed on the same device by a call of its own:
+   the result lies where the donor does, over its memory. *)
+module Pair = (val Nx.devices [ device; Nx_support.memory 0 ])
+
+let test_beside_in_place () =
+  let n = 1 lsl 16 in
+  let host v = Nx.Repr.of_array Nx.Host.v (A.of_array D.Float32 [| n |] v) in
+  let alone () = Nx.Placement.device Pair.v device in
+  let donor () =
+    let a = Nx.place (alone ()) (host (Array.make n 1.)) in
+    Nx.add a (Nx.zeros_like a)
+  in
+  let beside ~msg p =
+    let y, grew =
+      grown
+        (fun () -> (donor (), Nx.place (p ()) (host (Array.make n 2.))))
+        (fun (x, b) -> Nx.add (Nx.donate x) b)
+    in
+    in_place ~msg ~bytes:(4 * n) grew;
+    equal ~msg (array float_exact) (Array.make n 3.) (elements y)
+  in
+  beside ~msg:"whole on each device" (fun () -> Pair.on);
+  beside ~msg:"on its device" alone
+
 (* A read for the extent of a call leaves the memory to the next donation,
    where a crossing ({!Nx.Repr.array}) shares it for good. *)
 let test_read_in_place () =
@@ -2979,6 +3005,8 @@ let () =
              test "contract writes into a donated init" test_init_in_place;
              test "a value read by Repr.read is still written in place"
                test_read_in_place;
+             test "a value on one device is written in place beside others"
+               test_beside_in_place;
              test "a donation during Repr.read computes into fresh memory"
                test_read_donated_inside;
              test
