@@ -5,7 +5,12 @@
 
 (* The exact kinds are bit manipulations and IEEE's correctly rounded
    operations. The transcendental kinds compose tolk's exp2, log2 and sin with
-   them, in the forms whose bounds [lower_real.mli] states. *)
+   them, in forms that cancel nowhere, whose bounds [lower_real.mli] states.
+
+   Those bounds are derived to first order in the unit roundoff u. An error of n
+   ulps is taken as a relative error of 2 n u, and a relative error d as d / u +
+   1/2 ulps after the last rounding. The bounds of erf's polynomials, of float32
+   atan, of log and of the host's exp, sin and cos are measured. *)
 
 open Tolk
 open Lower_bits
@@ -439,7 +444,9 @@ let tanh x =
   copysign (where (ge a (num x hyp_far)) (one x) (t /: (t +: two x))) x
 
 (* pow: 2^(y log2|x|), the product split exactly by an fma, with C99 F.9.4.4's
-   special values. *)
+   special values. log2's 4 ulps are a relative 8u of log2|x|, as if y were
+   perturbed by 8u. Then h = y log2|x| moves by 8u|h|, which 2^h turns into a
+   relative 8 ln2 |h| u, about 5.5|h| ulps, within the bound's 6 |h|. *)
 let pow x y =
   let l = Ops.log2 (magnitude x) in
   let h = y *: l in
