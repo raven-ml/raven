@@ -13,6 +13,7 @@
   hugin.gg.kit
   hugin_test_winding
   nx
+  rig
   windtrap)
  (action
   (progn

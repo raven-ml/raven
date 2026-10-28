@@ -6,6 +6,25 @@
 open Windtrap
 open Hugin_kit
 
+(* A set of one memory device, computed by nx.cpu as the host is. *)
+module Memory = (val Nx.devices [ Result.get_ok (Rig.memory_device "m0") ])
+
+(* A set whose kernels run no loop, as a set with no kernel library, such as
+   a GPU's, computes nothing eagerly: an operation there, a cast included,
+   raises. Its memory device's memory is the host's, so a read works. *)
+module No_loops = struct
+  include Nx_cpu
+
+  let name = "hugin.test"
+  let map _ ~dsts:_ _ = Nx_array.Declined
+end
+
+module Inert =
+  (val Nx.devices ~kernels:(module No_loops)
+         [ Result.get_ok (Rig.memory_device "m1") ])
+
+let placement () = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
+
 let invalid f = raises_match (Exn.invalid_arg ?substring:None) f
 
 (* Floats ordered as IEEE 754 orders them, [-0.] equal to [0.]. *)
@@ -1368,6 +1387,30 @@ let missings =
             Array.map (fun x -> Float.is_nan (Scale.normalize s x)) xs
           in
           equal (array bool) expected (Nx.to_array (Scale.missing s (f64 xs))));
+      prop "lies beside a tensor of another set, as on the host"
+        (Gen.pair
+           (Gen.of_list
+              ~pp:(fun ppf (n, _) -> Format.pp_print_string ppf n)
+              scales)
+           gen_values)
+        (fun ((name, s), xs) ->
+          cover "a custom transform" (name = "custom");
+          let m = Scale.missing s (Nx.place Memory.on (f64 xs)) in
+          equal (placement ()) Memory.on (Nx.placement m);
+          equal (array bool)
+            (Nx.to_array (Scale.missing s (f64 xs)))
+            (Nx.to_array m));
+      (* A custom transform is an OCaml function, so the tensor is read to the
+         host, and no operation runs where it lies. *)
+      test "reads a tensor to the host on a custom scale" (fun () ->
+          let xs = [| 0.5; -1.; 0.; 3.; Float.nan |] in
+          let x = Nx.create Nx.float32 [| 5 |] xs in
+          let s = ln ~domain:(1., 10.) () in
+          let m = Scale.missing s (Nx.place Inert.on x) in
+          equal (placement ()) Inert.on (Nx.placement m);
+          equal (array bool)
+            [| false; true; true; false; true |]
+            (Nx.to_array m));
       test "keeps the shape and reads integers as floats" (fun () ->
           let x = Nx.create Nx.int32 [| 2; 2 |] [| 0l; 1l; -3l; 5l |] in
           let m = Scale.missing (Scale.log ()) x in

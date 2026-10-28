@@ -28,7 +28,7 @@ val compare_id : id -> id -> int
 
 (** {1:tensors Tensors} *)
 
-val equal_tensor : ('a, 'b) Nx.t -> ('c, 'd) Nx.t -> bool
+val equal_tensor : ('a, 'b, Nx.host) Nx.t -> ('c, 'd, Nx.host) Nx.t -> bool
 (** [equal_tensor x y] is [true] iff [x] and [y] are physically equal. *)
 
 val equal_strings : string array -> string array -> bool

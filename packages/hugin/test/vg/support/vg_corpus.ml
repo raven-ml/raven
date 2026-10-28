@@ -174,7 +174,7 @@ let of_base64 s =
     s;
   Buffer.contents b
 
-(* [load_png png] is the RGB pixels of the PNG file [png]. *)
+(* [load_png png] is the pixels of the PNG file [png], with its channels. *)
 let load_png png =
   let path = Filename.temp_file "hugin" ".png" in
   Fun.protect

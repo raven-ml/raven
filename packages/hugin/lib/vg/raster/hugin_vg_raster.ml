@@ -116,7 +116,9 @@ let samples (clip : Surface.clip) m box pixels =
   | None -> (x0, y0, 0, 0, [||])
   | Some inv ->
       let data =
-        Bigarray.reshape_1 (Nx.to_bigarray pixels) (rows * cols * chans)
+        Bigarray.reshape_1
+          (Nx.to_bigarray Bigarray.int8_unsigned pixels)
+          (rows * cols * chans)
       in
       let bw = Box2.w box and bh = Box2.h box in
       let shown_w = Float.hypot (m.xx *. bw) (m.yx *. bw) in

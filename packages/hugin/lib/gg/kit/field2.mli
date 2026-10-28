@@ -71,7 +71,7 @@ type t
 
 (** {1:constructors Constructors} *)
 
-val v : ?xs:float array -> ?ys:float array -> ('a, 'b) Nx.t -> t
+val v : ?xs:float array -> ?ys:float array -> ('a, 'b, 'd) Nx.t -> t
 (** [v ~xs ~ys z] is the field whose sample at row [i] and column [j] is the
     element [(i, j)] of the two-dimensional tensor [z], at [(xs.(j), ys.(i))],
     where:
@@ -79,9 +79,9 @@ val v : ?xs:float array -> ?ys:float array -> ('a, 'b) Nx.t -> t
     - [ys] defaults to the row indices.
 
     Elements are converted to floats, so an integer beyond 2{^ 53} is rounded.
-    The elements of [z] are read to the host once and the field keeps its own
-    copy of them and of the coordinates. A field with fewer than two rows or two
-    columns has no cell and an empty domain.
+    [z] lies on any set: its elements are read to the host once, and the field
+    keeps its own copy of them and of the coordinates. A field with fewer than
+    two rows or two columns has no cell and an empty domain.
 
     Raises [Invalid_argument] if [z] is not two-dimensional or has a complex or
     boolean dtype, if the length of [xs] is not the number of columns of [z] or

@@ -387,17 +387,29 @@ let errors =
     "resolve raises, naming the nodes at fault" cases_
     (fun (_, f, subs) -> fails_naming subs f)
 
-(* A traced tensor outside any trace: reading it raises. *)
-type (_, _) Nx.Repr.node += Outside
+(* A traced tensor whose interpretation has returned: any operation on it
+   raises, naming the interpretation. *)
+type (_, _, _) Nx.Prim.payload += Outside
 
 let traced () =
-  Nx.Repr.Traced.v ~context:Nx.Placement.host Nx.Placement.host Nx.float64
-    [| 2 |] Outside
+  Nx.Prim.interpret ~name:"Test.trace" Values
+    (fun _ ~by:_ _ -> invalid_arg "Test.trace: no operation reaches the rule")
+    (fun i -> Nx.Prim.traced i (Nx.Prim.form (f64 [| 0.; 1. |])) Outside)
+
+(* A tensor whose donation an operation consumed: it is dead. *)
+let dead () =
+  let x = f64 [| 0.; 1. |] in
+  ignore (Nx.neg (Nx.donate x));
+  x
 
 let reads =
-  test "a tensor that cannot be read raises naming its mark" (fun () ->
-      let t = dot ~x:(num (traced ())) ~y:(const 0.5) () |> name "t" in
-      fails_naming [ "resolve: t: "; "traced" ] (fun () ->
+  cases
+    ~name:(fun (n, _, _) -> n)
+    "a tensor that cannot be read raises naming its mark"
+    [ ("traced", traced, "Test.trace"); ("dead", dead, "Nx.neg") ]
+    (fun (_, x, sub) ->
+      let t = dot ~x:(num (x ())) ~y:(const 0.5) () |> name "t" in
+      fails_naming [ "resolve: t: "; sub ] (fun () ->
           resolve (layer [ dot1 [| 1. |] [| 1. |]; t ])))
 
 (* Resolved.scale *)

@@ -29,31 +29,23 @@ let to_string ?(locale = Locale.default) f x =
     Decimal.write locale ~group:f.group ~trim:f.trim f.notation f.precision
       (Decimal.of_float x)
 
-(* The format of the float dtype [dt], read from its limits: [emin] is the
-   exponent of its least normal value. The float8 dtypes store a value past
-   their largest finite one as that value. *)
-let float_format dt ~saturates : Decimal.format option =
-  Some
-    {
-      precision = Nx_dtype.precision dt;
-      emin = snd (Float.frexp (Nx_dtype.min_normal dt)) - 1;
-      max = Nx_dtype.max_finite dt;
-      saturates;
-    }
+(* The format of the float dtype [dt], read from its facts: [emin] is the
+   exponent of its least normal value. A format without infinities stores a
+   value past its largest finite one as that value. *)
+let float_format dt : Decimal.format =
+  let f = Nx.Dtype.float_format dt in
+  {
+    precision = f.fraction_bits + 1;
+    emin = snd (Float.frexp f.min_normal) - 1;
+    max = f.max_finite;
+    saturates = not f.infinities;
+  }
 
 let format (type a b) (dtype : (a, b) Nx.dtype) : Decimal.format option =
-  match dtype with
-  | Float64 -> Some Decimal.binary64
-  | Float32 -> float_format Float32 ~saturates:false
-  | Float16 -> float_format Float16 ~saturates:false
-  | BFloat16 -> float_format BFloat16 ~saturates:false
-  | Float8_e4m3 -> float_format Float8_e4m3 ~saturates:true
-  | Float8_e5m2 -> float_format Float8_e5m2 ~saturates:true
-  | Int4 | UInt4 | Int8 | UInt8 | Int16 | UInt16 | Int32 | UInt32 | Int64
-  | UInt64 ->
-      None
-  | Complex64 | Complex128 | Bool | Bit ->
-      invalid_arg "Number.decimals: not a real dtype"
+  match Nx.Dtype.kind dtype with
+  | Float -> Some (float_format dtype)
+  | Signed | Unsigned -> None
+  | Complex | Boolean -> invalid_arg "Number.decimals: not a real dtype"
 
 let decimals dtype x =
   match format dtype with

@@ -31,7 +31,7 @@ let dx_param = Role.param ~name:"dx" ~equal:Float.equal
 let dy_param = Role.param ~name:"dy" ~equal:Float.equal
 
 let same_tensor (Nx.P a) (Nx.P b) =
-  match Nx_dtype.equal_witness (Nx.dtype a) (Nx.dtype b) with
+  match Nx.Dtype.equal_witness (Nx.dtype a) (Nx.dtype b) with
   | Some Type.Equal -> a == b
   | None -> false
 
@@ -626,23 +626,23 @@ let text ?fill ?opacity ?(dx = 0.) ?(dy = 0.) ?fx ?fy ~x ~y ~text () =
 
 (* Images *)
 
-let is_pixel : type a b. (a, b) Nx.dtype -> bool = function
-  | Nx.UInt8 | Nx.Float16 | Nx.Float32 | Nx.Float64 | Nx.BFloat16
-  | Nx.Float8_e4m3 | Nx.Float8_e5m2 ->
-      true
-  | _ -> false
+let is_pixel : type a b. (a, b) Nx.dtype -> bool =
+ fun dtype ->
+  match (dtype, Nx.Dtype.kind dtype) with
+  | Uint8, _ | _, Float -> true
+  | _, (Signed | Unsigned | Complex | Boolean) -> false
 
 (* [rgba px] is the image [px], of shape [[|h; w|]] or [[|h; w; c|]], as
    [Picture.image] takes it: [uint8] values as they are, and floating-point
    values clamped into [0;1] and scaled to [0;255], a pixel with a NaN component
    transparent. *)
-let rgba : type a b. (a, b) Nx.t -> Nx.uint8_t =
+let rgba : type a b. (a, b, Nx.host) Nx.t -> Nx.host Nx.uint8_t =
  fun px ->
   let px =
     match Nx.shape px with [| h; w |] -> Nx.reshape [| h; w; 1 |] px | _ -> px
   in
   match Nx.dtype px with
-  | Nx.UInt8 -> px
+  | Uint8 -> px
   | _ ->
       let f = Nx.cast Nx.float32 px in
       let c = (Nx.shape f).(2) in
@@ -711,7 +711,7 @@ let image ?fx ?fy px =
   let dtype = Nx.dtype px in
   if not (is_pixel dtype) then
     err "image" "the dtype %s is neither uint8 nor floating point"
-      (Nx_dtype.to_string dtype);
+      (Nx.Dtype.name dtype);
   if rank < 2 then
     err "image" "the shape %a has fewer than two axes" pp_shape shape;
   let lead, h, w =

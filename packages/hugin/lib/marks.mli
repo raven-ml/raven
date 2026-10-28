@@ -109,7 +109,7 @@ val text :
 val image :
   ?fx:(string, string) channel ->
   ?fy:(string, string) channel ->
-  ('a, 'b) Nx.t ->
+  ('a, 'b, Nx.host) Nx.t ->
   t
 
 val contour :

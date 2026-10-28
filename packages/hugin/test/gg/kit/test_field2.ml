@@ -154,6 +154,16 @@ let constructing =
             (Pgon2.area (Field2.isoband ~lo:1. ~hi:infinity (Field2.v i)));
           equal near 0.5
             (Pgon2.area (Field2.isoband ~lo:1. ~hi:infinity (Field2.v h))));
+      test "v reads a tensor of another set, cut over its devices" (fun () ->
+          let memory n = Result.get_ok (Rig.memory_device n) in
+          let module M = (val Nx.devices [ memory "m0" ]) in
+          let module Two = (val Nx.devices [ memory "m1"; memory "m2" ]) in
+          let z = tensor [ [| 0.; 0. |]; [| 2.; 2. |] ] in
+          let area z =
+            Pgon2.area (Field2.isoband ~lo:1. ~hi:infinity (Field2.v z))
+          in
+          equal near 0.5 (area (Nx.place M.on z));
+          equal near 0.5 (area (Nx.place (Two.split ~axis:0) z)));
       test "v defaults coordinates to indices" (fun () ->
           let f = field [ [| 0.; 0.; 0. |]; [| 0.; 0.; 0. |] ] in
           let b = require_some (Pgon2.bounds (domain f)) in

@@ -23,19 +23,23 @@ val of_scale_kind : 'd Scale.kind -> 'd kind option
 
 (** How a channel lifts its data into its scale's domain. *)
 type _ lift =
-  | Num : { x : ('a, 'b) Nx.t; valid : Nx.bool_t option } -> float lift
+  | Num : {
+      x : ('a, 'b, Nx.host) Nx.t;
+      valid : Nx.host Nx.bool_t option;
+    }
+      -> float lift
   | Index : int -> float lift
   | Floats : float array -> float lift
   | Cat : {
-      codes : ('a, 'b) Nx.t;
-      valid : Nx.bool_t option;
+      codes : ('a, 'b, Nx.host) Nx.t;
+      valid : Nx.host Nx.bool_t option;
       labels : string array option;
     }
       -> string lift
   | Strings : string array -> string lift
   | Dim : {
       axis : int;
-      valid : Nx.bool_t option;
+      valid : Nx.host Nx.bool_t option;
       labels : string array option;
     }
       -> string lift
@@ -86,17 +90,17 @@ val varies : int array -> ('d, 'r) t -> int -> bool
 
 val num :
   ?scale:float Scale.t ->
-  ?valid:Nx.bool_t ->
+  ?valid:Nx.host Nx.bool_t ->
   ?title:string ->
-  ('a, 'b) Nx.t ->
+  ('a, 'b, Nx.host) Nx.t ->
   (float, 'r) t
 
 val cat :
   ?scale:string Scale.t ->
-  ?valid:Nx.bool_t ->
+  ?valid:Nx.host Nx.bool_t ->
   ?title:string ->
   ?labels:string array ->
-  ('a, 'b) Nx.t ->
+  ('a, 'b, Nx.host) Nx.t ->
   (string, 'r) t
 
 val strings :
@@ -107,7 +111,7 @@ val floats :
 
 val dim :
   ?scale:string Scale.t ->
-  ?valid:Nx.bool_t ->
+  ?valid:Nx.host Nx.bool_t ->
   ?title:string ->
   ?labels:string array ->
   int ->

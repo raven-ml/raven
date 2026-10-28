@@ -17,20 +17,46 @@ let ints = array int
 let host t = Nx.to_array t
 let f64 shape a = Nx.create Nx.float64 shape a
 
+(* A set of one memory device, computed by nx.cpu as the host is. *)
+module Memory = (val Nx.devices [ Result.get_ok (Rig.memory_device "m0") ])
+
+(* Two memory devices, over which data is cut along its first axis. *)
+module Two =
+  (val Nx.devices
+         [
+           Result.get_ok (Rig.memory_device "m1");
+           Result.get_ok (Rig.memory_device "m2");
+         ])
+
+let placement () = Testable.make ~pp:Nx.Placement.pp ~equal:Nx.Placement.equal
+
 (* Data *)
 
 (* The dtypes the data is drawn in: every float dtype and some integers. *)
-type dtype = F16 | Bf16 | F32 | F64 | F8_e4m3 | F8_e5m2 | I8 | U8 | I32 | I64
+type dtype =
+  | F16
+  | Bf16
+  | F32
+  | F64
+  | F8_e4m3fn
+  | F8_e5m2
+  | F4_e2m1fn
+  | I8
+  | U8
+  | I32
+  | I64
 
-let dtypes = [ F16; Bf16; F32; F64; F8_e4m3; F8_e5m2; I8; U8; I32; I64 ]
+let dtypes =
+  [ F16; Bf16; F32; F64; F8_e4m3fn; F8_e5m2; F4_e2m1fn; I8; U8; I32; I64 ]
 
 let dtype_name = function
   | F16 -> "float16"
   | Bf16 -> "bfloat16"
   | F32 -> "float32"
   | F64 -> "float64"
-  | F8_e4m3 -> "float8_e4m3"
+  | F8_e4m3fn -> "float8_e4m3fn"
   | F8_e5m2 -> "float8_e5m2"
+  | F4_e2m1fn -> "float4_e2m1fn"
   | I8 -> "int8"
   | U8 -> "uint8"
   | I32 -> "int32"
@@ -45,8 +71,9 @@ let histogram ?bins d v =
   | Bf16 -> run (Nx.cast Nx.bfloat16 v)
   | F32 -> run (Nx.cast Nx.float32 v)
   | F64 -> run v
-  | F8_e4m3 -> run (Nx.cast Nx.float8_e4m3 v)
+  | F8_e4m3fn -> run (Nx.cast Nx.float8_e4m3fn v)
   | F8_e5m2 -> run (Nx.cast Nx.float8_e5m2 v)
+  | F4_e2m1fn -> run (Nx.cast Nx.float4_e2m1fn v)
   | I8 -> run (Nx.cast Nx.int8 v)
   | U8 -> run (Nx.cast Nx.uint8 v)
   | I32 -> run (Nx.cast Nx.int32 v)
@@ -299,9 +326,50 @@ let law_batch c =
    billion, where 100 missed it in one run in 5000. *)
 let law_cases = 300
 
+(* A histogram of data on another set lies there and equals the host's. *)
+let law_set c =
+  let shape = Array.append c.lead [| c.len |] in
+  let v = f64 shape c.values in
+  let h = Stats.histogram ?bins:c.bins v in
+  let m = Stats.histogram ?bins:c.bins (Nx.place Memory.on v) in
+  List.iter
+    (fun (msg, a, b) ->
+      equal (placement ()) ~msg Memory.on (Nx.placement b);
+      equal floats ~msg (host a) (host b))
+    [
+      ("x", h.x, m.x);
+      ("x2", h.x2, m.x2);
+      ("count", h.count, m.count);
+      ("density", h.density, m.density);
+    ]
+
+(* A histogram of data cut over two devices equals the host's, its edges whole
+   on each device, as the constants it makes beside the data are. Nx.histogram
+   raises for coordinates cut over devices: its search reads them whole. *)
+let split =
+  xfail ~reason:"Nx.histogram raises for coordinates cut over devices"
+    (test "a histogram of data cut over two devices is the host's" (fun () ->
+         let v =
+           f64 [| 2; 5 |] [| 3.; -1.; 0.5; nan; 2.; 7.; 7.; 1.; -4.; 0. |]
+         in
+         let h = Stats.histogram ~bins:3 v in
+         let m = Stats.histogram ~bins:3 (Nx.place (Two.split ~axis:0) v) in
+         equal (placement ()) ~msg:"x" Two.on (Nx.placement m.x);
+         equal (placement ()) ~msg:"x2" Two.on (Nx.placement m.x2);
+         List.iter
+           (fun (msg, a, b) -> equal floats ~msg (host a) (host b))
+           [
+             ("x", h.x, m.x);
+             ("x2", h.x2, m.x2);
+             ("count", h.count, m.count);
+             ("density", h.density, m.density);
+           ]))
+
 let laws =
   group "laws"
     [
+      prop "a histogram lies on its data's set" gen_case law_set;
+      split;
       prop ~count:law_cases
         "edges span the finite values in bins of equal width" gen_case
         (fun c ->

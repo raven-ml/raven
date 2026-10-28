@@ -274,7 +274,7 @@ let quantities : type d.
     role:string ->
     d lift ->
     fitted ->
-    (Nx.float64_t * Nx.bool_t option * float Scale.t) option =
+    (Nx.host Nx.float64_t * Nx.host Nx.bool_t option * float Scale.t) option =
  fun shape ~role l (F f) ->
   match (kind l, f.kind) with
   | Quantities, Quantities ->
@@ -327,7 +327,7 @@ let runs edges ~inside ~dropped xt yt =
         in
         Nx.where (Nx.less_s before 0L)
           (Nx.full Nx.int64 [| n |] (-2L))
-          (Nx.take ~indices:(Nx.maximum_s before 0L) col)
+          (Nx.take (Nx.maximum_s before 0L) col)
   in
   let starts = only (Nx.not_equal col prev) in
   let run = Nx.sub_s (Nx.cumsum (Nx.cast Nx.int64 starts)) 1L in
@@ -341,18 +341,20 @@ let runs edges ~inside ~dropped xt yt =
   else
     let within = function None -> run | Some m -> Nx.where m run none in
     let any_bin = within inside and valid_bin = within valid in
-    let scatter mode bin values init =
-      Nx.scatter ~mode ~axis:0 ~indices:bin ~values init
+    let scatter combine bin values init =
+      Nx.scatter ~combine ~axis:0 bin values init
     in
     let unset = Nx.full Nx.int64 [| bins |] Int64.max_int in
     let yv = Nx.flatten yt in
-    let extreme mode init =
-      let e = scatter mode valid_bin yv (Nx.full Nx.float64 [| bins |] init) in
-      let hit = Nx.equal yv (Nx.take ~indices:valid_bin e) in
+    let extreme combine init =
+      let e =
+        scatter combine valid_bin yv (Nx.full Nx.float64 [| bins |] init)
+      in
+      let hit = Nx.equal yv (Nx.take valid_bin e) in
       let hit =
         match valid with None -> hit | Some v -> Nx.logical_and v hit
       in
-      scatter `Min valid_bin
+      scatter Min valid_bin
         (Nx.where hit p (Nx.full_like p Int64.max_int))
         unset
     in
@@ -362,15 +364,13 @@ let runs edges ~inside ~dropped xt yt =
     let kept =
       List.fold_left
         (fun marks rows ->
-          Nx.scatter ~axis:0 ~indices:rows
-            ~values:(Nx.full Nx.bool [| bins |] true)
-            marks)
+          Nx.scatter ~axis:0 rows (Nx.full Nx.bool [| bins |] true) marks)
         (Nx.full Nx.bool [| n |] false)
         [
-          scatter `Min any_bin p unset;
-          scatter `Max valid_bin p (Nx.full Nx.int64 [| bins |] (-1L));
-          extreme `Max Float.neg_infinity;
-          extreme `Min Float.infinity;
+          scatter Min any_bin p unset;
+          scatter Max valid_bin p (Nx.full Nx.int64 [| bins |] (-1L));
+          extreme Max Float.neg_infinity;
+          extreme Min Float.infinity;
         ]
     in
     Some (Array.map Int64.to_int (Nx.to_array (Nx.positions kept)))
@@ -491,7 +491,7 @@ let m4 cx m (panel : Layout.panel) reads mask =
               let ids = Nx.positions ks in
               if Nx.numel ids = 0 then Some (Read.Rows [||])
               else
-                let pick t = Nx.take ~axis:0 ~indices:ids (grid t) in
+                let pick t = Nx.take ~axis:0 ids (grid t) in
                 let kept =
                   runs edges ~inside:None ~dropped:(dropped pick) (pick x)
                     (pick y)

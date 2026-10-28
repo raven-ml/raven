@@ -1,7 +1,7 @@
 (library
  (name hugin_vg_raster)
  (public_name hugin.vg.raster)
- (libraries hugin.vg hugin.gg hugin.font nx nx.io)
+ (libraries hugin.vg hugin.gg hugin.font nx nx.array nx.io)
  (private_modules surface cover pen instances float_text)
  (instrumentation
   (backend ppx_windtrap.coverage))

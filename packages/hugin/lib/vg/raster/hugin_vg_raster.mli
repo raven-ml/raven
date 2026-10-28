@@ -63,7 +63,7 @@ val image_samples : int
     [(p + (i + 0.5) / 4)], for device pixel [p] and [i] in \[[0];[3]\], along
     each axis ({!section-accuracy}). *)
 
-val render : density:float -> Hugin_vg.Renderable.t -> Nx.uint8_t
+val render : density:float -> Hugin_vg.Renderable.t -> Nx.host Nx.uint8_t
 (** [render ~density r] is [r] drawn as a [[|h; w; 4|]] tensor of RGBA pixels
     with straight alpha, on the host, where [w] and [h] are the width and height
     of the page of [r] multiplied by [density] and rounded to the nearest

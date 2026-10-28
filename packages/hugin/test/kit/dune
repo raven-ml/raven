@@ -2,13 +2,13 @@
  (names test_locale test_number test_time)
  (modules test_locale test_number test_time)
  (package hugin)
- (libraries hugin.kit nx windtrap))
+ (libraries hugin.kit nx nx.array windtrap))
 
 (test
  (name test_scale)
  (modules test_scale)
  (package hugin)
- (libraries hugin.gg hugin.kit nx windtrap)
+ (libraries hugin.gg hugin.kit nx nx.array nx.cpu rig windtrap)
  (action
   (progn
    (run %{test} --corrected)
@@ -68,4 +68,4 @@
  (names test_stack test_stats)
  (modules test_stack test_stats)
  (package hugin)
- (libraries hugin.kit nx windtrap))
+ (libraries hugin.kit nx rig windtrap))

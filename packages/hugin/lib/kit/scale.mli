@@ -502,13 +502,13 @@ val imply : 'd t -> 'd t -> 'd t
     [i] sets is taken only if it satisfies the constraints the constructor of
     [s] states on domains. *)
 
-val missing : float t -> ('a, 'b) Nx.t -> Nx.bool_t
+val missing : float t -> ('a, 'b, 'd) Nx.t -> 'd Nx.bool_t
 (** [missing s x] is [true] where an element of [x] is
-    {{!section-missing}missing} for [s], and has the shape of [x]. Elements are
-    converted to floats first, so an integer beyond 2{^ 53} is rounded, and only
-    the transform of [s] is read. It is computed where [x] lives, except on a
-    custom scale, whose transform is an OCaml function: [x] is then read to the
-    host.
+    {{!section-missing}missing} for [s], and has the shape and placement of [x].
+    Elements are converted to floats first, so an integer beyond 2{^ 53} is
+    rounded, and only the transform of [s] is read. It is computed where [x]
+    lies, except on a custom scale, whose transform is an OCaml function: [x] is
+    then read to the host, and the mask computed there is placed beside [x].
 
     Raises [Invalid_argument] if [x] has a complex or boolean dtype. *)
 

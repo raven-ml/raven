@@ -38,17 +38,17 @@ type ('d, 'r) channel = ('d, 'r) Channel.t
 
 val num :
   ?scale:float Scale.t ->
-  ?valid:Nx.bool_t ->
+  ?valid:Nx.host Nx.bool_t ->
   ?title:string ->
-  ('a, 'b) Nx.t ->
+  ('a, 'b, Nx.host) Nx.t ->
   (float, 'r) channel
 
 val cat :
   ?scale:string Scale.t ->
-  ?valid:Nx.bool_t ->
+  ?valid:Nx.host Nx.bool_t ->
   ?title:string ->
   ?labels:string array ->
-  ('a, 'b) Nx.t ->
+  ('a, 'b, Nx.host) Nx.t ->
   (string, 'r) channel
 
 val strings :
@@ -62,7 +62,7 @@ val floats :
 
 val dim :
   ?scale:string Scale.t ->
-  ?valid:Nx.bool_t ->
+  ?valid:Nx.host Nx.bool_t ->
   ?title:string ->
   ?labels:string array ->
   int ->

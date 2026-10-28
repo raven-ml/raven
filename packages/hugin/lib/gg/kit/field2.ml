@@ -19,11 +19,9 @@ type t = {
 let err fmt = Printf.ksprintf (fun s -> invalid_arg ("Field2.v: " ^ s)) fmt
 
 let is_real (type a b) (dtype : (a, b) Nx.dtype) =
-  match dtype with
-  | Complex64 | Complex128 | Bool | Bit -> false
-  | Float16 | Float32 | Float64 | BFloat16 | Float8_e4m3 | Float8_e5m2 | Int4
-  | UInt4 | Int8 | UInt8 | Int16 | UInt16 | Int32 | UInt32 | Int64 | UInt64 ->
-      true
+  match Nx.Dtype.kind dtype with
+  | Float | Signed | Unsigned -> true
+  | Complex | Boolean -> false
 
 let coords name n = function
   | None -> Array.init n Float.of_int
@@ -52,7 +50,13 @@ let v ?xs ?ys z =
   let shape = Nx.shape z in
   let ny = shape.(0) and nx = shape.(1) in
   let xs = coords "xs" nx xs and ys = coords "ys" ny ys in
-  { nx; ny; xs; ys; z = Nx.to_array (Nx.cast Nx.float64 z) }
+  {
+    nx;
+    ny;
+    xs;
+    ys;
+    z = Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on z));
+  }
 
 (* Tracing
 

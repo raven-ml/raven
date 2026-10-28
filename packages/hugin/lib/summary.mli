@@ -25,7 +25,7 @@ type t = {
   notes : string list;  (** Problems with the data, for warnings. *)
 }
 
-val summarise : int array -> input list -> Nx.bool_t option -> t
+val summarise : int array -> input list -> Nx.host Nx.bool_t option -> t
 (** [summarise shape inputs filter] is the summary of the [inputs] of a mark of
     shape [shape], keeping only the rows where [filter] holds, if given. A row
     missing in an input that does not keep its row is dropped from every other.

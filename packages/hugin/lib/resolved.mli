@@ -49,7 +49,7 @@ val category_names : string Scale.t -> string list
 type facet =
   | Every  (** It binds no data to the facet: every category. *)
   | One of int option  (** A constant: the index of its category, if any. *)
-  | Each of Nx.int64_t
+  | Each of Nx.host Nx.int64_t
       (** Each row's category index, [-1] for none, where the data lives. *)
 
 type part = { px : facet; py : facet }
@@ -71,7 +71,7 @@ type cell = {
   parts : (Common.id * part) list;  (** Per mark. *)
 }
 
-val mask : part -> panel -> [ `All | `None | `Mask of Nx.bool_t ]
+val mask : part -> panel -> [ `All | `None | `Mask of Nx.host Nx.bool_t ]
 (** [mask part p] is the rows of a mark of [part] in [p]: all, none, or those of
     a mask that broadcasts to the mark's shape. *)
 

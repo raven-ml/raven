@@ -700,22 +700,25 @@ let equal s s' = List.for_all snd (agreements { holds = equal_opt } s s')
 (* Missing values *)
 
 let is_real (type a b) (dtype : (a, b) Nx.dtype) =
-  match dtype with
-  | Complex64 | Complex128 | Bool | Bit -> false
-  | Float16 | Float32 | Float64 | BFloat16 | Float8_e4m3 | Float8_e5m2 | Int4
-  | UInt4 | Int8 | UInt8 | Int16 | UInt16 | Int32 | UInt32 | Int64 | UInt64 ->
-      true
+  match Nx.Dtype.kind dtype with
+  | Float | Signed | Unsigned -> true
+  | Complex | Boolean -> false
 
 let missing s x =
   if not (is_real (Nx.dtype x)) then err "missing" "the tensor is not real";
-  let xf = Nx.cast Nx.float64 x in
   match s.transform with
   | Custom _ ->
-      let xs = Nx.to_array xf in
-      Nx.create Nx.bool (Nx.shape x) (Array.map (missing s.transform) xs)
+      (* The transform is an OCaml function: [x] is converted on the host. *)
+      let xs = Nx.to_array (Nx.cast Nx.float64 (Nx.place Nx.Host.on x)) in
+      let m =
+        Nx.create Nx.bool (Nx.shape x) (Array.map (missing s.transform) xs)
+      in
+      Nx.place (Nx.placement x) m
   | Log _ ->
+      let xf = Nx.cast Nx.float64 x in
       Nx.logical_not (Nx.logical_and (Nx.isfinite xf) (Nx.greater_s xf 0.))
-  | Linear | Symlog _ | Pow _ -> Nx.logical_not (Nx.isfinite xf)
+  | Linear | Symlog _ | Pow _ ->
+      Nx.logical_not (Nx.isfinite (Nx.cast Nx.float64 x))
 
 (* Formatting *)
 

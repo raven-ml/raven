@@ -579,7 +579,7 @@ type stroke = {
 }
 
 type image = {
-  pixels : Nx.uint8_t;
+  pixels : Nx.host Nx.uint8_t;
   window : int * int * int * int;
   x : float;
   y : float;

@@ -2,7 +2,7 @@
  (name hugin_gg_kit)
  (public_name hugin.gg.kit)
  (private_modules float_text)
- (libraries hugin.gg nx)
+ (libraries hugin.gg nx nx.array)
  (instrumentation
   (backend ppx_windtrap.coverage))
  (instrumentation

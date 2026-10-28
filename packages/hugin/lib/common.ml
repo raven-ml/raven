@@ -39,9 +39,10 @@ let compare_id id id' =
     (Nx.Ptree.Path.segments id)
     (Nx.Ptree.Path.segments id')
 
-let equal_tensor : type a b c d. (a, b) Nx.t -> (c, d) Nx.t -> bool =
+let equal_tensor : type a b c d.
+    (a, b, Nx.host) Nx.t -> (c, d, Nx.host) Nx.t -> bool =
  fun x y ->
-  match Nx_dtype.equal_witness (Nx.dtype x) (Nx.dtype y) with
+  match Nx.Dtype.equal_witness (Nx.dtype x) (Nx.dtype y) with
   | Some Type.Equal -> x == y
   | None -> false
 

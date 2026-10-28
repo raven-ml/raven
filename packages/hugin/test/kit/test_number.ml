@@ -291,15 +291,6 @@ let formats =
 
 type float_dtype = D : (float, 'b) Nx.dtype -> float_dtype
 
-let dtype_name : type a b. (a, b) Nx.dtype -> string = function
-  | Float64 -> "float64"
-  | Float32 -> "float32"
-  | Float16 -> "float16"
-  | BFloat16 -> "bfloat16"
-  | Float8_e4m3 -> "float8_e4m3"
-  | Float8_e5m2 -> "float8_e5m2"
-  | _ -> "other"
-
 (* [to_dtype dtype x] is [x] rounded to [dtype] by nx. *)
 let to_dtype (type b) (dtype : (float, b) Nx.dtype) x =
   Nx.item [] (Nx.cast Nx.float64 (Nx.cast dtype (Nx.scalar Nx.float64 x)))
@@ -311,7 +302,7 @@ let to_dtype (type b) (dtype : (float, b) Nx.dtype) x =
 let written (D dtype) d x =
   let w = value d x in
   match dtype with
-  | Nx.Float64 -> Some w
+  | Float64 -> Some w
   | _ ->
       let r = to_dtype dtype in
       if Float.equal (r (Float.pred w)) (r (Float.succ w)) then Some (r w)
@@ -326,8 +317,9 @@ let gen_source =
         D Nx.float32;
         D Nx.float16;
         D Nx.bfloat16;
-        D Nx.float8_e4m3;
+        D Nx.float8_e4m3fn;
         D Nx.float8_e5m2;
+        D Nx.float4_e2m1fn;
       ]
   and+ x = float_range (-1e4) 1e4
   and+ exact = bool in
@@ -336,7 +328,7 @@ let gen_source =
 
 let gen_source =
   Gen.with_pp
-    (fun ppf (D d, x) -> Format.fprintf ppf "%s %h" (dtype_name d) x)
+    (fun ppf (D d, x) -> Format.fprintf ppf "%s %h" (Nx.Dtype.name d) x)
     gen_source
 
 (* Values at the dtypes' ties, subnormals and saturation. *)
@@ -349,10 +341,12 @@ let source_edges =
     (D Nx.float16, 65519.7);
     (D Nx.float16, 100000.5);
     (D Nx.float16, 1e6);
-    (D Nx.float8_e4m3, 470.3);
-    (D Nx.float8_e4m3, 1.18);
+    (D Nx.float8_e4m3fn, 470.3);
+    (D Nx.float8_e4m3fn, 1.18);
     (D Nx.float8_e5m2, 61500.3);
     (D Nx.float8_e5m2, 61439.9);
+    (D Nx.float4_e2m1fn, 6.5);
+    (D Nx.float4_e2m1fn, 0.25);
     (D Nx.float32, 0.1);
   ]
 
@@ -381,7 +375,7 @@ let decimals =
         [ 0.; 3.; -1e300; Float.nan; Float.infinity; Float.neg_infinity ]
         (fun x ->
           equal int 0 (Number.decimals Nx.float64 x);
-          equal int 0 (Number.decimals Nx.float8_e4m3 x));
+          equal int 0 (Number.decimals Nx.float8_e4m3fn x));
       test "is 0 in every integer dtype" (fun () ->
           equal int 0 (Number.decimals Nx.int32 0.5);
           equal int 0 (Number.decimals Nx.uint8 0.25));

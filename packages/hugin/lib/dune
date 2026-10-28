@@ -12,7 +12,7 @@
   hugin.vg.pdf
   hugin.kit
   nx
-  nx.dtype)
+  nx.array)
  (private_modules
   common
   rows

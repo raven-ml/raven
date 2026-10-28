@@ -152,7 +152,7 @@ type stroke = {
 (** The type for strokes as written. *)
 
 type image = {
-  pixels : Nx.uint8_t;  (** All the pixels of the image. *)
+  pixels : Nx.host Nx.uint8_t;  (** All the pixels of the image. *)
   window : int * int * int * int;
       (** The columns [c0] to [c1] and rows [r0] to [r1], exclusive, whose cells
           may meet the cut. *)

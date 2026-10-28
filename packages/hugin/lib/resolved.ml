@@ -463,7 +463,7 @@ let find_path id l =
     (fun (id', v) -> if Nx.Ptree.Path.equal id id' then Some v else None)
     l
 
-type facet = Every | One of int option | Each of Nx.int64_t
+type facet = Every | One of int option | Each of Nx.host Nx.int64_t
 type part = { px : facet; py : facet }
 
 type panel = {

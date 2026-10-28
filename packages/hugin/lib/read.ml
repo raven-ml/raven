@@ -57,16 +57,16 @@ let source_of shape s =
    where missing; or, on no scale, each row's category code and the missing
    rows. *)
 type source =
-  | Values of Nx.float64_t
-  | Positions of Nx.int64_t
-  | Codes of Nx.int64_t * Nx.bool_t option
+  | Values of Nx.host Nx.float64_t
+  | Positions of Nx.host Nx.int64_t
+  | Codes of Nx.host Nx.int64_t * Nx.host Nx.bool_t option
 
 type reader = {
   mark : mark;
   whole : bool;
   sources : ((int * int option) * source) list ref;
-  floats : (Nx.packed * float array) list ref;
-  ints : (Nx.packed * int64 array) list ref;
+  floats : (Nx.host Nx.packed * float array) list ref;
+  ints : (Nx.host Nx.packed * int64 array) list ref;
 }
 
 let reader ~whole mark =
@@ -85,10 +85,10 @@ let cached cache x read =
    it lives when the rows are few. *)
 let gather : type a b c d.
     (c, d) Nx.dtype ->
-    (Nx.packed * c array) list ref ->
+    (Nx.host Nx.packed * c array) list ref ->
     whole:bool ->
     int array ->
-    (a, b) Nx.t ->
+    (a, b, Nx.host) Nx.t ->
     sel ->
     c array =
  fun dtype cache ~whole shape x sel ->
@@ -102,8 +102,7 @@ let gather : type a b c d.
     | All | Rows _ -> Array.init m (fun k -> a.(src (row k)))
   else
     let idx = Array.init m (fun k -> Int64.of_int (src (row k))) in
-    Nx.to_array
-      (Nx.cast dtype (Nx.take ~indices:(Nx.create Nx.int64 [| m |] idx) x))
+    Nx.to_array (Nx.cast dtype (Nx.take (Nx.create Nx.int64 [| m |] idx) x))
 
 let floats rd x sel =
   gather Nx.float64 rd.floats ~whole:rd.whole rd.mark.shape x sel

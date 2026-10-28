@@ -117,7 +117,7 @@ let windowed (side, p) =
   let cut =
     Nx.slice [ R (margin, margin + n); R (margin, margin + n); A ] big
   in
-  same_image ~within:1 (Nx.contiguous cut) (render side side p)
+  same_image ~within:1 cut (render side side p)
 
 (* Pictures whose ink the edges of a page of 20 cut. *)
 let cut_by_the_page =
@@ -1276,12 +1276,8 @@ let png_group =
             (chunk "pHYs" png);
           equal (option string) (Some "\000") (chunk "sRGB" png));
       test "png holds the pixels of render" (fun () ->
-          let rgb =
-            Nx.slice
-              [ A; A; R (0, 3) ]
-              (Hugin_vg_raster.render ~density:2. page)
-          in
-          same_image (Nx.contiguous rgb)
+          same_image
+            (Hugin_vg_raster.render ~density:2. page)
             (Vg_corpus.load_png (Hugin_vg_raster.png ~density:2. page)));
       cases ~name:(Format.asprintf "%g")
         "png raises on a density beyond a PNG's resolution, unrendered"

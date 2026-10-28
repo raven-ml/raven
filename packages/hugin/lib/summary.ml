@@ -28,7 +28,7 @@ let kept_codes keep c =
     Nx.stack ~axis:1 [ Nx.flatten (Nx.cast Nx.int64 keep); Nx.flatten c ]
   in
   let groups = Nx.unique keys in
-  let rows = Nx.to_array (Nx.take ~axis:0 ~indices:groups.first keys) in
+  let rows = Nx.to_array (Nx.take ~axis:0 groups.first keys) in
   let codes = ref [] in
   for i = 0 to (Array.length rows / 2) - 1 do
     if rows.(2 * i) = 1L then codes := Int64.to_int rows.((2 * i) + 1) :: !codes

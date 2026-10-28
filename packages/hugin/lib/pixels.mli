@@ -24,7 +24,7 @@ val plan : density:float -> Box2.t -> rows:int -> cols:int -> plan option
     [cols] cells over [box], if it has more than 4 cells per device pixel along
     an axis, and [None] otherwise. *)
 
-val gather : plan -> Nx.uint8_t -> Nx.uint8_t
+val gather : plan -> Nx.host Nx.uint8_t -> Nx.host Nx.uint8_t
 (** [gather p px] is the gathered image of the [[|h; w; c|]] image [px], on its
     device, as RGBA: the samples outside the source box are transparent. *)
 

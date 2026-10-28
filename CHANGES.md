@@ -97,6 +97,15 @@ All notable changes to this project will be documented in this file.
 
 ### Hugin
 
+- **Breaking:** the tensors a figure keeps are host values: `num`, `cat`, the
+  `?valid` masks, `image` and `Picture.image` take `Nx.host` tensors, which
+  `resolve` and `draw` compute on with nx. A tensor on another set is given
+  as `Nx.place Nx.Host.on x`. `Field2.v` reads a tensor of any set once.
+- **Breaking:** `Stats.histogram` and `Scale.missing` compute where their data
+  lies and give results on its set: `Stats.bins` is `'d Stats.bins`. A custom
+  scale's transform, an OCaml function, reads its tensor on the host.
+- Channels and images take `Nx.float4_e2m1fn` tensors, and `Number.decimals`
+  that dtype, as every other float dtype.
 - PDF streams are compressed by `lz`'s zlib encoder: `Hugin` PDFs have
   other, slightly smaller stream bytes and `/Length` values, and read the
   same.

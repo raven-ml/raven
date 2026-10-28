@@ -12,7 +12,8 @@ module Munin = struct
   module Run = struct
     type t
 
-    let history (_ : t) (_ : string) : Nx.float64_t * Nx.float64_t =
+    let history (_ : t) (_ : string) :
+        Nx.host Nx.float64_t * Nx.host Nx.float64_t =
       assert false
   end
 end
@@ -27,7 +28,9 @@ module Talon = struct
     type t
 
     let type_ (_ : t) : Type.any = assert false
-    let to_tensor (_ : ('a, 'b) Nx.dtype) (_ : t) : ('a, 'b) Nx.t = assert false
+
+    let to_tensor (_ : ('a, 'b) Nx.dtype) (_ : t) : ('a, 'b, Nx.host) Nx.t =
+      assert false
   end
 
   type t
@@ -83,7 +86,7 @@ let dashboard run =
   let step, loss = Munin.Run.history run "train/loss" in
   let vstep, acc = Munin.Run.history run "val/accuracy" in
   let epochs, _ = Munin.Run.history run "epoch" in
-  let at t = Nx.take ~indices:(Nx.argmax acc) t in
+  let at t = Nx.take (Nx.argmax acc) t in
   let losses =
     layer
       [
@@ -108,7 +111,7 @@ let dashboard run =
 
 (* Confusion matrix. *)
 
-let confusion (m : Nx.int32_t) classes =
+let confusion (m : Nx.host Nx.int32_t) classes =
   let counts = Nx.cast Nx.float64 m in
   let recall =
     num ~title:"recall" Nx.(div counts (sum ~axes:[ 1 ] ~keepdims:true counts))
@@ -126,7 +129,7 @@ let confusion (m : Nx.int32_t) classes =
 
 (* Attention grid: a : [12; 12; T; T]. *)
 
-let attention (a : Nx.float32_t) tokens =
+let attention (a : Nx.host Nx.float32_t) tokens =
   rect ~fy:(dim ~title:"layer" 0) ~fx:(dim ~title:"head" 1)
     ~y:(dim ~labels:tokens 2) ~x:(dim ~labels:tokens 3)
     ~fill:(num ~title:"attention" a) ()
@@ -135,14 +138,14 @@ let attention (a : Nx.float32_t) tokens =
    the cells of given edges, so the density computes its edges where the data
    lives. *)
 
-let embedding (e : Nx.float32_t) (labels : Nx.int32_t) digits =
+let embedding (e : Nx.host Nx.float32_t) (labels : Nx.host Nx.int32_t) digits =
   dot
     ~x:(num Nx.(slice [ A; I 0 ] e))
     ~y:(num Nx.(slice [ A; I 1 ] e))
     ~fill:(cat ~labels:digits labels)
     ~opacity:(const 0.3) ()
 
-let density (x : Nx.float32_t) (y : Nx.float32_t) =
+let density (x : Nx.host Nx.float32_t) (y : Nx.host Nx.float32_t) =
   let edges v =
     let lo = Nx.min v in
     Nx.add lo (Nx.mul (Nx.sub (Nx.max v) lo) (Nx.linspace Nx.float32 0. 1. 201))
@@ -159,8 +162,8 @@ let density (x : Nx.float32_t) (y : Nx.float32_t) =
 
 (* Image grid: batch : [64; 32; 32; 3] in [0, 1]. *)
 
-let predictions (batch : Nx.float32_t) ~(truth : Nx.int32_t)
-    ~(pred : Nx.int32_t) classes =
+let predictions (batch : Nx.host Nx.float32_t) ~(truth : Nx.host Nx.int32_t)
+    ~(pred : Nx.host Nx.int32_t) classes =
   let name c = classes.(Int32.to_int c) in
   let caption t p = name t ^ " → " ^ name p in
   let captions = Array.map2 caption (Nx.to_array truth) (Nx.to_array pred) in
@@ -191,8 +194,8 @@ let by_optimizer t =
 (* Loss landscape: loss : [nb; na], alphas : [na], betas : [nb], path : [n; 2].
    betas gets an axis of its own so that it varies along the rows of loss. *)
 
-let landscape ~(alphas : Nx.float64_t) ~(betas : Nx.float64_t)
-    (loss : Nx.float64_t) (path : Nx.float64_t) =
+let landscape ~(alphas : Nx.host Nx.float64_t) ~(betas : Nx.host Nx.float64_t)
+    (loss : Nx.host Nx.float64_t) (path : Nx.host Nx.float64_t) =
   let px = num Nx.(slice [ A; I 0 ] path)
   and py = num Nx.(slice [ A; I 1 ] path) in
   layer
@@ -265,7 +268,7 @@ let with_guides f =
 (* Extending Hugin: Fehu's cart. The page is y-down, so the pole's tip lies
    above its foot at a smaller y. *)
 
-let cart ~(x : Nx.float32_t) ~(angle : Nx.float32_t) =
+let cart ~(x : Nx.host Nx.float32_t) ~(angle : Nx.host Nx.float32_t) =
   let theta = Role.value ~name:"angle" in
   Mark.v ~name:"fehu.cart"
     [
@@ -353,7 +356,7 @@ let my_text ~x ~y ~text () =
 (* Images over a leading datum axis: px : [n; h; w; c]. Channels of shape [n]
    give the mark one row per image. *)
 
-let my_image ?fx (px : Nx.uint8_t) =
+let my_image ?fx (px : Nx.host Nx.uint8_t) =
   let shape = Nx.shape px in
   let per_image v = num (Nx.full Nx.float64 [| shape.(0) |] v) in
   let pixels = Scale.linear ~nice:false () in

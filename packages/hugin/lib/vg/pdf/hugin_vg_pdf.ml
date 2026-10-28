@@ -35,7 +35,7 @@ type doc = {
   mutable states : (string * string) list;
       (** Graphics states: name and dictionary, in reverse order. *)
   state_names : (string, string) Hashtbl.t;  (** Graphics state names by key. *)
-  mutable images : (Nx.uint8_t * (int * int * int * int) * string) list;
+  mutable images : (Nx.host Nx.uint8_t * (int * int * int * int) * string) list;
 }
 
 let add doc body =
@@ -394,7 +394,11 @@ let plane data ~pixels ~chans ~first ~count =
 let image_object doc pixels =
   let shape = Nx.shape pixels in
   let rows = shape.(0) and cols = shape.(1) and chans = shape.(2) in
-  let data = Bigarray.reshape_1 (Nx.to_bigarray pixels) (rows * cols * chans) in
+  let data =
+    Bigarray.reshape_1
+      (Nx.to_bigarray Bigarray.int8_unsigned pixels)
+      (rows * cols * chans)
+  in
   let plane = plane data ~pixels:(rows * cols) ~chans in
   let image space extra samples =
     add doc

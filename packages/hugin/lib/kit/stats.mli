@@ -6,29 +6,30 @@
 (** Statistics.
 
     A statistic summarises data into tensors that a figure draws. It computes
-    when it is called, with nx operations on the device of its data, and reads
-    no value back to the host. *)
+    when it is called, with nx operations where its data lies, and reads no
+    value back to the host: its results lie beside its data, on the data's set.
+*)
 
 (** {1:histograms Histograms} *)
 
-type bins = {
-  x : Nx.float64_t;  (** The left edge of each bin. *)
-  x2 : Nx.float64_t;  (** The right edge of each bin. *)
-  count : Nx.float64_t;  (** The number of values in each bin. *)
-  density : Nx.float64_t;
+type 'd bins = {
+  x : 'd Nx.float64_t;  (** The left edge of each bin. *)
+  x2 : 'd Nx.float64_t;  (** The right edge of each bin. *)
+  count : 'd Nx.float64_t;  (** The number of values in each bin. *)
+  density : 'd Nx.float64_t;
       (** Each count divided by its histogram's total count and by its bin's
           width. *)
 }
-(** The type for histograms. [x] and [x2] have the shape [[|n|]] for [n] bins,
-    and the bin [j] runs from [x.{j}] to [x2.{j}], with [x2.{j} = x.{j+1}].
-    [count] and [density] have the shape of the data with its last axis replaced
-    by [n]: one histogram per index of the data's other axes, over the bins they
-    share.
+(** The type for histograms on the device set ['d]. [x] and [x2] have the shape
+    [[|n|]] for [n] bins, and the bin [j] runs from [x.{j}] to [x2.{j}], with
+    [x2.{j} = x.{j+1}]. [count] and [density] have the shape of the data with
+    its last axis replaced by [n]: one histogram per index of the data's other
+    axes, over the bins they share.
 
     A figure draws the bin [j] as the rectangle from [x] to [x2] along x and
     from [0.] to [count] or [density] along y. *)
 
-val histogram : ?bins:int -> ('a, 'b) Nx.t -> bins
+val histogram : ?bins:int -> ('a, 'b, 'd) Nx.t -> 'd bins
 (** [histogram ~bins v] counts the values along the last axis of [v] into [bins]
     bins of equal width, one histogram per index of [v]'s other axes. Values are
     converted to [float64] first, as {!Nx.cast} does.

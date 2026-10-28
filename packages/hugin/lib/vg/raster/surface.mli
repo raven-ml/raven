@@ -68,7 +68,7 @@ val composite : t -> clip -> t -> int -> int -> float -> unit
 (** [composite dst clip src ox oy alpha] composites [src], its top left
     pixel at [(ox, oy)] of [dst], faded by [alpha], through [clip]. *)
 
-val to_straight : t -> (int, Bigarray.int8_unsigned_elt) Nx.t
+val to_straight : t -> Nx.host Nx.uint8_t
 (** [to_straight s] is the pixels of [s] as a [[|h; w; 4|]] tensor of levels
     with straight alpha, each component the level nearest its exact value.
     A pixel whose alpha rounds to [0] is [(0, 0, 0, 0)]. *)

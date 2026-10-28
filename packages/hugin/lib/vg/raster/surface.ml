@@ -108,4 +108,7 @@ let to_straight s =
       Array1.unsafe_set dst (j + 3) la
     end
   done;
-  Nx.of_bigarray (reshape (genarray_of_array1 dst) [| s.h; s.w; 4 |])
+  let b = reshape (genarray_of_array1 dst) [| s.h; s.w; 4 |] in
+  (* [dst] is fresh and dropped here, so the value owns it: no copy of the
+     page. *)
+  Nx.Repr.unsafe_of_array Nx.Host.v (Nx_array.of_bigarray Nx.uint8 b)

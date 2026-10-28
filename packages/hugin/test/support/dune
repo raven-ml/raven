@@ -19,4 +19,4 @@
 (library
  (name hugin_test_marks)
  (modules api marks)
- (libraries hugin hugin.gg.kit nx nx.dtype))
+ (libraries hugin hugin.gg.kit nx))

@@ -26,19 +26,23 @@ let of_scale_kind : type d. d Scale.kind -> d kind option = function
   | Scale.Temporal -> None
 
 type _ lift =
-  | Num : { x : ('a, 'b) Nx.t; valid : Nx.bool_t option } -> float lift
+  | Num : {
+      x : ('a, 'b, Nx.host) Nx.t;
+      valid : Nx.host Nx.bool_t option;
+    }
+      -> float lift
   | Index : int -> float lift
   | Floats : float array -> float lift
   | Cat : {
-      codes : ('a, 'b) Nx.t;
-      valid : Nx.bool_t option;
+      codes : ('a, 'b, Nx.host) Nx.t;
+      valid : Nx.host Nx.bool_t option;
       labels : string array option;
     }
       -> string lift
   | Strings : string array -> string lift
   | Dim : {
       axis : int;
-      valid : Nx.bool_t option;
+      valid : Nx.host Nx.bool_t option;
       labels : string array option;
     }
       -> string lift
@@ -123,15 +127,15 @@ let scale_kind : type d r. (d, r) t -> d Scale.kind option =
 
 (* Lifts *)
 
-let is_real : type a b. (a, b) Nx.dtype -> bool = function
-  | Nx.Complex64 | Nx.Complex128 | Nx.Bool | Nx.Bit -> false
-  | _ -> true
+let is_real (type a b) (dtype : (a, b) Nx.dtype) =
+  match Nx.Dtype.kind dtype with
+  | Float | Signed | Unsigned -> true
+  | Complex | Boolean -> false
 
-let is_integer : type a b. (a, b) Nx.dtype -> bool = function
-  | Nx.Int4 | Nx.UInt4 | Nx.Int8 | Nx.UInt8 | Nx.Int16 | Nx.UInt16 | Nx.Int32
-  | Nx.UInt32 | Nx.Int64 | Nx.UInt64 ->
-      true
-  | _ -> false
+let is_integer (type a b) (dtype : (a, b) Nx.dtype) =
+  match Nx.Dtype.kind dtype with
+  | Signed | Unsigned -> true
+  | Float | Complex | Boolean -> false
 
 (* [fits s s'] is [true] iff [s] broadcasts to [s'] without growing it. *)
 let fits s s' =
@@ -162,14 +166,14 @@ let check_distinct fn labels =
 
 let num ?scale ?valid ?title x =
   if not (is_real (Nx.dtype x)) then
-    err "num" "the dtype %s is not real" (Nx_dtype.to_string (Nx.dtype x));
+    err "num" "the dtype %s is not real" (Nx.Dtype.name (Nx.dtype x));
   check_valid "num" (Nx.shape x) valid;
   Data { lift = Num { x; valid }; spec = scale; title }
 
 let cat ?scale ?valid ?title ?labels codes =
   if not (is_integer (Nx.dtype codes)) then
     err "cat" "the dtype %s is not an integer dtype"
-      (Nx_dtype.to_string (Nx.dtype codes));
+      (Nx.Dtype.name (Nx.dtype codes));
   check_valid "cat" (Nx.shape codes) valid;
   Option.iter (check_distinct "cat") labels;
   let labels = Option.map Array.copy labels in

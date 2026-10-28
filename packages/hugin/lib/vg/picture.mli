@@ -148,7 +148,7 @@ type t = private
   | Stroke of { stroke : Stroke.t; color : Color.t; path : Path.t }
       (** See {!val-stroke}. *)
   | Glyphs of { color : Color.t; at : P2.t; run : Run.t }  (** See {!glyphs}. *)
-  | Image of { box : Box2.t; pixels : Nx.uint8_t }  (** See {!image}. *)
+  | Image of { box : Box2.t; pixels : Nx.host Nx.uint8_t }  (** See {!image}. *)
   | Group of t list  (** See {!group}. *)
   | Clip of { rule : rule; path : Path.t; picture : t }  (** See {!clip}. *)
   | Transform of { m : Affine.t; picture : t }  (** See {!transform}. *)
@@ -189,7 +189,7 @@ val glyphs : Color.t -> P2.t -> Run.t -> t
     searched and copied. It is {!empty} if [r] has no glyph, if [Run.size r] is
     [0.] or if a coordinate of [at] is not finite. *)
 
-val image : Box2.t -> Nx.uint8_t -> t
+val image : Box2.t -> Nx.host Nx.uint8_t -> t
 (** [image b px] paints the pixels of [px] over the box [b]. [px] has shape
     [[|h; w; c|]]: [h] rows of [w] pixels, from the top row and its left pixel,
     of [c] channels each, with [c] being [1] for grey, [3] for RGB or [4] for
@@ -199,7 +199,7 @@ val image : Box2.t -> Nx.uint8_t -> t
     no interpolation between pixels. A cell holds its top and left edges, and
     the cells of the last row and column their bottom and right edges too.
 
-    The tensor is kept as given, on its device, and read when the picture is
+    The tensor is kept as given, on the host, and read when the picture is
     rendered. It is {!empty} if [px] has no pixel or [b] has width or height
     [0.].
 

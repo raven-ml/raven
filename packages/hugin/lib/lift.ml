@@ -7,15 +7,15 @@ module Scale = Hugin_kit.Scale
 open Channel
 
 type miss = {
-  rows : Nx.bool_t option;
-  counts : (Nx.bool_t Lazy.t * (int -> string)) list;
+  rows : Nx.host Nx.bool_t option;
+  counts : (Nx.host Nx.bool_t Lazy.t * (int -> string)) list;
 }
 
 type _ t =
-  | Quantities : { values : Nx.float64_t; miss : miss } -> float t
+  | Quantities : { values : Nx.host Nx.float64_t; miss : miss } -> float t
   | Categories : {
       lift : string lift;
-      codes : Nx.int64_t;
+      codes : Nx.host Nx.int64_t;
       miss : miss;
     }
       -> string t
@@ -57,12 +57,13 @@ let along shape a t =
        (fun i -> if i = 0 then shape.(a) else 1))
     t
 
-let beyond_int : type a b. (a, b) Nx.dtype -> Nx.int64_t -> Nx.bool_t option =
+let beyond_int : type a b.
+    (a, b) Nx.dtype -> Nx.host Nx.int64_t -> Nx.host Nx.bool_t option =
  fun dtype c ->
   let max = Int64.of_int max_int and min = Int64.of_int min_int in
   match dtype with
-  | Nx.Int64 -> Some (Nx.logical_or (Nx.greater_s c max) (Nx.less_s c min))
-  | Nx.UInt64 -> Some (Nx.logical_or (Nx.less_s c 0L) (Nx.greater_s c max))
+  | Int64 -> Some (Nx.logical_or (Nx.greater_s c max) (Nx.less_s c min))
+  | Uint64 -> Some (Nx.logical_or (Nx.less_s c 0L) (Nx.greater_s c max))
   | _ -> None
 
 (* [index ints c] is the index of the code [c] among the increasing [ints], [-1]
@@ -75,7 +76,7 @@ let index ints c =
     let pos =
       Nx.clamp ~max:(Int64.of_int (k - 1)) (Nx.searchsorted ~side:`Left d c)
     in
-    Nx.where (Nx.equal (Nx.take ~indices:pos d) c) pos (Nx.full_like c (-1L))
+    Nx.where (Nx.equal (Nx.take pos d) c) pos (Nx.full_like c (-1L))
 
 (* [table labels domain] is the index in [domain] of each of [labels], [-1]
    where it is none of them. *)
@@ -127,8 +128,7 @@ let eval : type d. int array -> role:string -> d lift -> d Scale.t -> d t =
       let m =
         match set_domain s with
         | Some (Scale.Labels domain) ->
-            Nx.logical_or out
-              (Nx.less_s (Nx.take ~indices:c (table labels domain)) 0L)
+            Nx.logical_or out (Nx.less_s (Nx.take c (table labels domain)) 0L)
         | Some (Scale.Indices _) | None -> out
       in
       let note k =
@@ -175,13 +175,13 @@ let eval : type d. int array -> role:string -> d lift -> d Scale.t -> d t =
 
 (* Reading *)
 
-let values : float t -> Nx.float64_t =
+let values : float t -> Nx.host Nx.float64_t =
  fun (Quantities q) ->
   match q.miss.rows with
   | None -> q.values
   | Some m -> Nx.where m (Nx.full_like q.values Float.nan) q.values
 
-let positions : string Scale.t -> string t -> Nx.int64_t =
+let positions : string Scale.t -> string t -> Nx.host Nx.int64_t =
  fun s (Categories c) ->
   let pos =
     match (Scale.domain s, labelled c.lift) with
@@ -191,7 +191,7 @@ let positions : string Scale.t -> string t -> Nx.int64_t =
           | Cat { labels = Some l; _ } | Strings l -> l
           | Cat { labels = None; _ } | Dim _ -> [||]
         in
-        Nx.take ~indices:c.codes (table labels domain)
+        Nx.take c.codes (table labels domain)
     | Scale.Categories (Scale.Indices ix), false ->
         index (Array.map fst ix) c.codes
     | Scale.Categories _, _ -> Nx.full_like c.codes (-1L)

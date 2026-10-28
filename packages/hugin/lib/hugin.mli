@@ -73,8 +73,8 @@
       the stage goes on, and each stage output lists its warnings and those of
       the stages before it ({!Drawing.warnings}). {!resolve} and {!draw} also
       raise the [Invalid_argument] that reading a tensor raises, for a traced
-      tensor or one whose storage a compiled call consumed, with its message
-      prefixed by the id of the mark.
+      tensor or a dead one, whose donation an operation consumed ({!Nx.donate}),
+      with its message prefixed by the id of the mark.
 
     {1:data Data and rows}
 
@@ -86,6 +86,14 @@
     all constants has the shape {!Mark.v} gives it, by default [[||]] with one
     row. The facet channels of a mark ({!section-facets}) put each row in one
     panel.
+
+    A figure keeps the tensors its channels and images are made of, and
+    {!resolve} and {!draw} compute on them with nx on the host before reading
+    them, so they are host values, as are the pixels a picture keeps
+    ({!Picture.image}): a value on another device set is given as
+    [Nx.place Nx.Host.on x]. A function that keeps no tensor takes a value of
+    any set: {!Hugin_gg_kit.Field2.v} reads its tensor to the host once, and
+    {!Stats.histogram} and {!Scale.missing} compute where their data lies.
 
     {2:missing Missing values}
 
@@ -255,9 +263,9 @@ type ('d, 'r) channel
 
 val num :
   ?scale:float Scale.t ->
-  ?valid:Nx.bool_t ->
+  ?valid:Nx.host Nx.bool_t ->
   ?title:string ->
-  ('a, 'b) Nx.t ->
+  ('a, 'b, Nx.host) Nx.t ->
   (float, 'r) channel
 (** [num ~scale ~valid ~title x] is the quantities of [x], one datum per
     element, where:
@@ -270,18 +278,18 @@ val num :
       none.
 
     Elements are read as floats, so an integer beyond 2{^ 53} is rounded.
-    Nothing is read when the channel is made: {!resolve} and {!draw} read [x]
-    where it lives.
+    Nothing is read when the channel is made: the channel keeps [x], a host
+    value ({!section-data}), and {!resolve} and {!draw} read it.
 
     Raises [Invalid_argument] if [x] has a complex or boolean dtype, or if
     [valid] does not broadcast to the shape of [x] without growing it. *)
 
 val cat :
   ?scale:string Scale.t ->
-  ?valid:Nx.bool_t ->
+  ?valid:Nx.host Nx.bool_t ->
   ?title:string ->
   ?labels:string array ->
-  ('a, 'b) Nx.t ->
+  ('a, 'b, Nx.host) Nx.t ->
   (string, 'r) channel
 (** [cat ~scale ~valid ~title ~labels codes] is the categories of the integer
     [codes], one datum per element, with [scale], [valid] and [title] as for
@@ -320,7 +328,7 @@ val floats :
 
 val dim :
   ?scale:string Scale.t ->
-  ?valid:Nx.bool_t ->
+  ?valid:Nx.host Nx.bool_t ->
   ?title:string ->
   ?labels:string array ->
   int ->
@@ -608,7 +616,7 @@ val text :
 val image :
   ?fx:(string, string) channel ->
   ?fy:(string, string) channel ->
-  ('a, 'b) Nx.t ->
+  ('a, 'b, Nx.host) Nx.t ->
   t
 (** [image px] draws the images of [px]. A rank-2 [px] is one grey image of
     shape [[|h; w|]]. Otherwise the trailing axes of [px] are [[|h; w; c|]], [c]

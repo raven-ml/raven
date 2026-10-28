@@ -89,12 +89,9 @@ let is_nan = Float.is_nan
 let floats = array float_exact
 let close = float 1e-9
 
-(* [within_one a b] states that two images differ by at most one colour level in
-   each channel they both have. *)
+(* [within_one a b] states that two images have one shape and differ by at most
+   one colour level in each channel, alpha included. *)
 let within_one ~msg a b =
-  let channels t = (Nx.shape t).(2) in
-  let c = Int.min (channels a) (channels b) in
-  let a = Nx.slice [ A; A; R (0, c) ] a and b = Nx.slice [ A; A; R (0, c) ] b in
   equal ~msg (array int) (Nx.shape a) (Nx.shape b);
   let a = Nx.to_array a and b = Nx.to_array b in
   let worst = ref 0 in
@@ -1111,7 +1108,7 @@ let m4_kept ?(size = Size.panels 50. 50.) ?(facets = []) x ys =
   (panel_boxes size m, List.rev !seen)
 
 let xs n = Nx.linspace Nx.float64 0. 1000. n
-let ys n = Nx.Rng.normal (Nx.Rng.key 3) Nx.float64 [| n |]
+let ys n = Nx.Rng.normal ~key:(Nx.Rng.key 3) Nx.float64 [| n |]
 
 (* [with_gaps y] is [y] with dropped runs of 1 to 5 rows, one of them first and
    one last. *)
@@ -1310,7 +1307,7 @@ let m4_lines =
 (* [dots_with ~alpha reduce n] is a mark of [n] dots filled at [alpha], reduced
    by [reduce]. *)
 let dots_with ?(alpha = 0.3) reduce n =
-  let e = Nx.Rng.uniform (Nx.Rng.key 4) Nx.float64 [| n; 2 |] in
+  let e = Nx.Rng.uniform ~key:(Nx.Rng.key 4) Nx.float64 [| n; 2 |] in
   let disc = Picture.fill Color.black (Path.circle (P2.v 0. 0.) 1.5) in
   Mark.v ~name:"dots" ?reduce
     [
@@ -1467,7 +1464,7 @@ let reducers =
       cases ~name:(fun (n, _, _) -> n) "m4 keeps" m4_cases m4_series;
       test "m4 keeps every row when x is in no order" (fun () ->
           let n = 1001 in
-          let x = Nx.Rng.uniform (Nx.Rng.key 7) Nx.float64 [| n |] in
+          let x = Nx.Rng.uniform ~key:(Nx.Rng.key 7) Nx.float64 [| n |] in
           (* A few columns, so that some runs have three rows or more. *)
           let size = Size.panels 5. 50. in
           let _, kept = m4_kept ~size (Nx.mul_s x 1000.) (ys n) in
@@ -1503,10 +1500,12 @@ let reducers =
                   [
                     Mark.bind Role.x
                       (num
-                         (Nx.Rng.uniform (Nx.Rng.key 5) Nx.float64 [| 25_000 |]));
+                         (Nx.Rng.uniform ~key:(Nx.Rng.key 5) Nx.float64
+                            [| 25_000 |]));
                     Mark.bind Role.y
                       (num
-                         (Nx.Rng.uniform (Nx.Rng.key 6) Nx.float64 [| 25_000 |]));
+                         (Nx.Rng.uniform ~key:(Nx.Rng.key 6) Nx.float64
+                            [| 25_000 |]));
                   ]
                   (fun r ->
                     let xs, ys = Mark.points r in

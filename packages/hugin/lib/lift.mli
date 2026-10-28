@@ -9,21 +9,21 @@
 module Scale := Hugin_kit.Scale
 
 type miss = {
-  rows : Nx.bool_t option;
+  rows : Nx.host Nx.bool_t option;
       (** The missing rows, broadcastable to the mark's shape, [None] if none
           is: a NaN or an infinity, a [false] in [valid], a value missing for
           the scale, a code outside the labels, or a category outside a domain
           the scale sets. *)
-  counts : (Nx.bool_t Lazy.t * (int -> string)) list;
+  counts : (Nx.host Nx.bool_t Lazy.t * (int -> string)) list;
       (** Rows to count, each with the warning of its count. *)
 }
 
 (** A lift's rows, indexed by its kind. *)
 type _ t =
-  | Quantities : { values : Nx.float64_t; miss : miss } -> float t
+  | Quantities : { values : Nx.host Nx.float64_t; miss : miss } -> float t
   | Categories : {
       lift : string Channel.lift;
-      codes : Nx.int64_t;
+      codes : Nx.host Nx.int64_t;
           (** The code, the axis index, or the string's index in the array. *)
       miss : miss;
     }
@@ -36,10 +36,10 @@ val eval : int array -> role:string -> 'd Channel.lift -> 'd Scale.t -> 'd t
 val miss : 'd t -> miss
 (** [miss l] is the missing rows of [l]. *)
 
-val values : float t -> Nx.float64_t
+val values : float t -> Nx.host Nx.float64_t
 (** [values q] is each row's quantity, [nan] where it is missing. *)
 
-val positions : string Scale.t -> string t -> Nx.int64_t
+val positions : string Scale.t -> string t -> Nx.host Nx.int64_t
 (** [positions s c] is each row's index in the domain of the fitted band scale
     [s], [-1] where it is missing or [s] has no such category. *)
 

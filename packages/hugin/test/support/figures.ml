@@ -130,7 +130,7 @@ let dashboard () =
   let vstep = f64 [| 50.; 100.; 150.; 200. |] in
   let acc = f64 [| 0.62; 0.78; 0.83; 0.81 |] in
   let epochs = f64 [| 0.; 50.; 100.; 150.; 200. |] in
-  let at t = Nx.take ~indices:(Nx.reshape [| 1 |] (Nx.argmax acc)) t in
+  let at t = Nx.take (Nx.reshape [| 1 |] (Nx.argmax acc)) t in
   let losses =
     layer
       [

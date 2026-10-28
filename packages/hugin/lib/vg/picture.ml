@@ -19,7 +19,7 @@ type t =
   | Fill of { rule : rule; color : Color.t; path : Path.t }
   | Stroke of { stroke : Stroke.t; color : Color.t; path : Path.t }
   | Glyphs of { color : Color.t; at : P2.t; run : Run.t }
-  | Image of { box : Box2.t; pixels : Nx.uint8_t }
+  | Image of { box : Box2.t; pixels : Nx.host Nx.uint8_t }
   | Group of t list
   | Clip of { rule : rule; path : Path.t; picture : t }
   | Transform of { m : Affine.t; picture : t }

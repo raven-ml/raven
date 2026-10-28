@@ -69,8 +69,8 @@ let gather p px =
       (Array.map (fun i -> Int64.of_int (if i < 0 then outside else i)) a)
   in
   padded
-  |> Nx.take ~axis:0 ~indices:(indices h p.rows)
-  |> Nx.take ~axis:1 ~indices:(indices w p.cols)
+  |> Nx.take ~axis:0 (indices h p.rows)
+  |> Nx.take ~axis:1 (indices w p.cols)
 
 (* Images under a transform or a stamp are not on the page's device pixels, and
    are left as they are. A picture holding no image to gather is returned as it
