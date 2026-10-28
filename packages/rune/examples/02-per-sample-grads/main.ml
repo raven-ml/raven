@@ -16,7 +16,7 @@ let shape_to_string s =
     (String.concat "x" (List.map string_of_int (Array.to_list s)))
 
 module Params = struct
-  type 'a t = 'a params
+  type ('a, _) t = 'a params
 
   let walk c { w; b } =
     let open Nx.Ptree.Walk in
@@ -28,13 +28,11 @@ end
 let params_ptree = Nx.Ptree.instantiate (module Params)
 
 let () =
-  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
   let n, d = (8, 3) in
-  let params =
-    { w = Nx.randn Nx.float32 [| d |]; b = Nx.randn Nx.float32 [||] }
-  in
-  let xs = Nx.randn Nx.float32 [| n; d |]
-  and ys = Nx.randn Nx.float32 [| n |] in
+  let keys = Nx.Rng.split ~n:4 (Nx.Rng.key 0) in
+  let normal i shape = Nx.Rng.normal ~key:keys.(i) Nx.float32 shape in
+  let params = { w = normal 0 [| d |]; b = normal 1 [||] } in
+  let xs = normal 2 [| n; d |] and ys = normal 3 [| n |] in
 
   (* Squared error of a linear model on a single example. *)
   let loss x y p =

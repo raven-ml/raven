@@ -10,7 +10,7 @@ type 'a params = { w : 'a; b : 'a }
 
 (* The record's structure: one [field] per field, which names it. *)
 module Params = struct
-  type 'a t = 'a params
+  type ('a, _) t = 'a params
 
   let walk c { w; b } =
     let open Nx.Ptree.Walk in
@@ -22,12 +22,14 @@ end
 let params = Nx.Ptree.instantiate (module Params)
 
 let () =
-  Nx.Rng.with_key (Nx.Rng.key 0) @@ fun () ->
-  (* Synthetic data: y = x @ w_true + b_true + noise. *)
+  (* Synthetic data: y = x @ w_true + b_true + noise, drawn from two keys. *)
+  let keys = Nx.Rng.split (Nx.Rng.key 0) in
   let w_true = Nx.create Nx.float32 [| 3; 1 |] [| 2.0; -1.0; 0.5 |] in
   let b_true = 0.3 in
-  let x = Nx.randn Nx.float32 [| 64; 3 |] in
-  let noise = Nx.mul_s (Nx.randn Nx.float32 [| 64; 1 |]) 0.01 in
+  let x = Nx.Rng.normal ~key:keys.(0) Nx.float32 [| 64; 3 |] in
+  let noise =
+    Nx.mul_s (Nx.Rng.normal ~key:keys.(1) Nx.float32 [| 64; 1 |]) 0.01
+  in
   let y = Nx.add_s (Nx.add (Nx.matmul x w_true) noise) b_true in
 
   (* The objective: an ordinary function of the record. *)
