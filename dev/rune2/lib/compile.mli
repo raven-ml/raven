@@ -3,90 +3,109 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** A jit program compiled through tolk.
+(** Compiled programs, each lowered through tolk and linked once per variant of
+    its arguments.
 
-    A program compiles when it is straight-line, all its values lie on one
-    device and every operation lowers ({!Lower.op}): its parameters bind the
-    storage of the arguments a call passes, its constants are bound once as
-    captures, and each result is stored into memory of its own. The program is
-    lowered and linked once per {e variant}: each argument's layout over the
-    run of storage it reads ({!within}), where that run starts within 16 bytes
-    of memory (its {e phase}), and the settings of tolk that shape what it
-    compiles. *)
+    This module implements the compiled programs of {!Rune2.jit}
+    ({!Rune2.section-compiled}). The rules a caller sees, on donation
+    ({!Rune2.section-donation}), checks ({!Rune2.section-checks}) and evaluated
+    programs ({!Rune2.section-evaluated}), are stated there.
+
+    To {e lower} a program is to translate it into a tolk graph, and to {e link}
+    it is to compile that graph into a schedule tolk's engine runs. Lowering or
+    linking {e declines} a program it cannot compile, and gives a reason.
+    {!make} lists lowering's reasons, and an [Invalid_argument] or [Failure]
+    that lowering or linking raises is a decline too. nx then {e evaluates} the
+    program, in the sense that it applies each operation eagerly ({!evaluate}).
+    The program's {e device} is the one its first argument, or else its first
+    result, lies whole on.
+
+    An argument's {e run} is the storage its layout reads, from the element at
+    or below the lowest position the layout reaches whose bits start a multiple
+    of 16 bytes from its buffer's start, through the highest position. Each
+    parameter binds its argument's run ({!within}), each constant is bound once,
+    and each result is stored into memory of its own or into a donated
+    argument's. A run's {e phase} is the number of bytes by which its first byte
+    lies past an address that is a multiple of 16.
+
+    A {e variant} of a program is, for each argument, its layout over its run,
+    its run's phase and whether it is donated, together with the value of tolk's
+    settings that shape what it compiles ({!Tolk.Setting.shaping}) and whether
+    {!Tolk.Setting.debug} is 2 or more. The life cycle of a compiled program
+    goes like this:
+    + {!make} lowers the program once, over C-contiguous arguments, to find
+      whether lowering declines it, and links nothing.
+    + A call ({!run}) at a variant new to the program lowers and links that
+      variant, or keeps its decline.
+    + Later calls at that variant run its schedule, or evaluate the program
+      where the variant was declined.
+
+    A compiled program may be run from any domain. It links one variant at a
+    time, and a call that needs a new variant while another call links one waits
+    for it. When lowering or linking a variant raises other than to decline, the
+    program keeps nothing for that variant, and the next call at it links again.
+    The counters {!variants} and {!evaluations} count per domain. *)
 
 type t
 (** The type for compiled programs. *)
 
 val within : ('v, 's) Nx.Dtype.t -> Nx_array.Layout.t -> Nx_array.Layout.t
-(** [within dt l] is [l] over the run of storage a parameter of [dt] laid out
-    by [l] binds: [l]'s shape and strides, offset from the run's start, the
-    element at or below [l]'s first position whose bits start on a multiple of
-    16 bytes from its buffer's start. A layout with no element is itself. *)
+(** [within dt l] is [l], a layout of a value of [dt], with its offset counted
+    from the start of its run. It is [l] where [l] has no element. *)
 
 val report : ('a, out_channel, unit) format -> 'a
-(** [report fmt] prints on standard error a line starting [rune.jit: ] where
-    the environment held [RUNE_JIT_DEBUG=1] when the module was initialised,
-    and nothing otherwise. *)
+(** [report fmt] prints [rune.jit: ] then [fmt]'s text as one line on standard
+    error and flushes it, if the variable [RUNE_JIT_DEBUG] held a nonzero
+    integer when the module was initialised. Otherwise it prints nothing. *)
 
 val make : name:string -> Program.t -> Program.form array -> (t, string) result
-(** [make ~name p forms] is [p], traced over arguments of [forms], ready to
-    link once per variant at its first call ({!run}), or [Error why] where the
-    lowering declines it, [why] saying which value, construct or failure: a
-    map's construct ({!Program.Lanes}, {!Program.Lane_index}), a scan that
-    runs a count of its rows, an iterate that stacks its steps or whose lanes
-    stop apart, a root, a solve or an operator, an addition, a linear call
-    with no function to apply, an operation that {!Lower.op} does not lower, a
-    value on another device than the others or over several, or a check off
-    the host. [name] is the entry point messages name.
+(** [make ~name p forms] is [p] ready to run over arguments of [forms], or
+    [Error why] where lowering declines it, where [why] names the value,
+    construct or failure. [name] is the entry point that {!run}'s messages name.
 
-    A construct's programs lower with [p]'s: a call's, a remat's, a custom
-    rule's primal and a linear call's function as their equations over the
-    construct's operands, and a scan or an iterate as one loop of [p], a range
-    of its trips around one call of its step, the parts of the step that read
-    no trip's parameter computed before the loop. A construct's totals run
-    from its seeds, or from the identity without, carried through a loop's
-    trips, and its sums are its results. A loop until a stop tests a
-    flag the engine reads before each trip, and its failure after [max] trips
-    is a check of [p]. Every check a trip makes, a nested loop's included, is
-    carried: the first trip that fails keeps each one's first failure and data,
-    which are checks of [p]. An iterate runs on only while no check of [p] has
-    failed, as the steps written out stop at the first failure. A switch is one
-    loop per branch, of at most one trip, whose flag holds where the index
-    names that branch and no check of [p] has failed, each loop carrying the
-    results the one before left; an index outside the branches is a check of
-    [p] made before them. *)
+    Lowering declines a map's construct ({!Program.Lanes},
+    {!Program.Lane_index}), a scan that runs some of its rows, an iterate that
+    stacks its steps or whose lanes stop apart, a root, a root's linear solve or
+    operator, an addition, a linear call with no function to apply, an operation
+    that {!Lower.op} does not lower, a check on a device other than the host, a
+    program with no value, and a value with an element on a device other than
+    the program's or over several devices. It also declines a program whose
+    device computes nothing. *)
 
 val run : t -> Program.value array -> Program.value array
-(** [run t args] is the outputs of [t]'s program applied to [args], values of
-    the forms [t] was made for that no interpretation traces: each result
-    fresh, C-contiguous, at its output's form's placement. The first call at a
-    new variant links the program for it.
+(** [run t args] is the outputs of [t]'s program applied to [args], which must
+    be untraced values of the forms [t] was made for. Each result is fresh
+    memory in C order at its output's form's placement, or the memory of a
+    donated argument it takes ({!Rune2.section-donation}).
 
-    The call is a consumer of [args] ({!Nx.Prim.Consumer}): it claims the
-    donated handles among them, whose donors die, and reads each argument as
-    it was then. A result takes a donated argument's memory where rune2.mli's
-    lending rules allow it and {!Nx.Prim.Consumer.take} gives it; otherwise
-    it computes over a copy of that argument. Each check, on the host, is
-    computed with the program, and the first that failed raises its
-    exception once the program ran. A variant the lowering or tolk declines is evaluated
-    over the consumer's arrays ({!evaluate}). Raises [Invalid_argument] as
-    {!Nx.Prim.Consumer.with_} does, and what linking a variant raises when it
-    does not decline it. *)
+    The call is a consumer of [args] ({!Nx.Prim.Consumer}). It claims the
+    donated handles among them, and reads each argument as it was at the claim.
+    Where {!Nx.Prim.Consumer.take} does not give the memory of an argument a
+    result takes, the result computes into a copy of it. A declined variant's
+    results are all copies. The first check that fails, in the program's order,
+    raises its exception after the program has run.
+
+    Raises [Invalid_argument] if [args] lie on several device sets
+    ({!Nx.Placement.devices}) or if {!Nx.Prim.Consumer.with_} raises it, and
+    what linking a new variant raises other than to decline, such as an
+    interrupted search. *)
 
 val variants : unit -> int
-(** [variants ()] is the number of variants the calls on the calling domain
-    made, each lowered and linked or declined once. *)
+(** [variants ()] is the number of variants that calls on the calling domain
+    lowered and linked, or whose decline they kept. *)
 
 val evaluations : unit -> int
-(** [evaluations ()] is the number of compiled calls on the calling domain
-    whose program or variant the compiler declined, so that nx evaluated it. *)
+(** [evaluations ()] is the number of calls on the calling domain that evaluated
+    their program: each {!run} of a declined variant, plus each call counted by
+    {!evaluated_call}. *)
 
 val evaluated_call : unit -> unit
-(** [evaluated_call ()] counts a call that {!evaluate} evaluates. *)
+(** [evaluated_call ()] counts one call in {!evaluations}, for a caller that
+    evaluates a program {!make} declined. *)
 
 val evaluate :
   name:string -> Program.t -> Program.value array -> Program.value array
 (** [evaluate ~name p args] is [p]'s outputs evaluated by nx over [args], none
     of them traced, each a copy in memory of its own. Where [args] hold
-    donated handles, it claims every argument first, as {!run} does, and
-    evaluates [p] over the arrays they hold. *)
+    donated handles, it claims every argument first, as {!run} does, with
+    [name] in its messages, and evaluates [p] over their arrays. *)

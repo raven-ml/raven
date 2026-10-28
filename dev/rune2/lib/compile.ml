@@ -377,9 +377,19 @@ let lend ~donated ~computed ~reaches ~scattered ~fits =
    A program lowers equation by equation into an environment of its own: each
    variable's node, its reach, and whether a scatter computes it. A construct
    whose programs compute where it is called, a call, a remat, a custom rule's
-   primal and a linear call's function, lowers its program into an
-   environment whose parameters are its operands' nodes, as JAX lowers a
-   compiled call or a custom rule by inlining its jaxpr. *)
+   primal and a linear call's function, lowers its program into an environment
+   whose parameters are its operands' nodes.
+
+   A scan or an iterate lowers to one loop ([repeat]) over its trips, calling
+   its step once per trip. The parts of the step that read no trip's parameter
+   are computed once, before the loop. A construct's totals start at its seeds,
+   or at the identity where it has none ([starts]), and are carried from trip to
+   trip. Their values after the last trip are its sums, among its results. An
+   iterate's loop continues while its stop is false and no check has failed, a
+   flag the engine reads before each trip. A loop still running after [max]
+   trips fails a check of the program. Each check a trip makes, a nested loop's
+   included, is carried across trips, so the loop keeps each check's first
+   failure and its data, which become the program's checks. *)
 
 type env = {
   p : Program.t;
