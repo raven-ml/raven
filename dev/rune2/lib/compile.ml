@@ -650,6 +650,21 @@ let check_finals cs (made : made list) finals =
 
 let empty u = Shape.max_numel u = 0
 
+(* Whether an equation or an output of [p] names its variable [n]. *)
+let names (p : Program.t) n =
+  let is (type v s d) (x : (v, s, d) Nx.t) =
+    match Nx.Prim.payload p.owner x with Some (Var m) -> m = n | _ -> false
+  in
+  let named (V x) = is x in
+  Array.exists named p.outputs
+  || Array.exists
+       (function
+         | Op { op; _ } ->
+             let (Nx.Prim.Operands xs) = Nx.Prim.operands op in
+             List.exists (fun (Nx.Prim.Any x) -> is x) xs
+         | Do { c; _ } -> List.exists named (operands c))
+       p.eqns
+
 let rec program st cs env =
   Array.iter
     (function
@@ -687,7 +702,96 @@ and construct st cs env c base =
       in
       bind (Array.append out tadds)
   | Scan _ | Iterate _ -> bind (loop st cs env c)
+  | Switch s -> bind (switch st cs env c s)
   | c -> decline "%s" (construct_name c)
+
+(* A switch: one loop per branch, of at most one trip, under a flag that holds
+   where the index names the branch and no check of the program has failed.
+   Each loop carries the results and sums the one before left, so the taken
+   branch's reach the end. A branch reads the captures as its call's
+   parameters, so an untaken one computes nothing. An index
+   outside the branches is a check, made before any branch's. *)
+and switch st cs env c (s : Program.switch) =
+  let forms = Program.forms c in
+  let nb = Array.length s.branches in
+  let _, sum_forms, feeds = Program.sums (Array.to_list s.branches) in
+  let ns = Array.length sum_forms in
+  let nr = Array.length forms - ns in
+  let (V i) = s.index in
+  let index = Shape.reshape (node st env i) (ints [ 1 ]) in
+  let at k = Shape.const_like index (`Int (Tolk.Bigint.of_int k)) in
+  let no = Ops.ne (int64 0) (int64 0) in
+  let inside = Ops.where (Ops.lt index (at 0)) no (Ops.lt index (at nb)) in
+  let read a =
+    Int32.to_int (A.get (A.expect D.Int32 a) (Iarray.of_list [ 0 ]))
+  in
+  let fail _ = function
+    | [ a ] ->
+        Invalid_argument
+          (Printf.sprintf "%s: index %d outside 0 .. %d" s.name (read a) (nb - 1))
+    | _ -> invalid_arg "Rune.jit: a switch's index"
+  in
+  cs.read <- reach env i :: cs.read;
+  note cs
+    {
+      shape = [| 1 |];
+      first = first_failure 1 inside;
+      data = [ (D.Any D.Int32, index) ];
+      fail;
+    };
+  let reach = loop_reach env c in
+  let caps = Array.map (fun (V x) -> node st env x) s.captures in
+  let results =
+    Array.init nr (fun j ->
+        let (F f) = forms.(j) in
+        zeros f.dtype (shape_of f))
+  in
+  let sums = starts st env forms ~at:nr s.seeds in
+  let branch carried k =
+    let b = s.branches.(k) in
+    let fed = List.nth feeds k in
+    let taken =
+      Ops.where (Ops.ne cs.failed (int64 0)) no (Ops.eq index (at k))
+    in
+    (* The captures the branch reads are the call's parameters, so that its
+       work on them runs only in its trip; another stands as a blank. A
+       capture counts as read where any equation names it, a construct whose
+       results go unread included, as its checks still run. *)
+    let read = Array.mapi (fun j _ -> names b b.params.(j)) caps in
+    let trip inner carried bound =
+      let sums = Array.sub carried nr ns in
+      let at = ref 0 in
+      let caps =
+        Array.mapi
+          (fun j u ->
+            if not read.(j) then blank u
+            else begin
+              incr at;
+              bound.(!at - 1)
+            end)
+          caps
+      in
+      let out =
+        outputs st inner ~reach (env_of b)
+          (Array.append caps (Array.map (fun j -> sums.(j)) fed))
+      in
+      let base = Array.length out - Array.length fed in
+      Array.iteri (fun m j -> sums.(j) <- out.(base + m)) fed;
+      (Array.concat [ Array.sub out 0 nr; sums; [| no |] ], [||])
+    in
+    let carried, _ =
+      repeat st cs ~n:1 ~hoist:false
+        ~stop:(Some (nr + ns))
+        ~bound:(Loops.pick read caps)
+        (Array.append carried [| taken |])
+        [||] trip
+    in
+    Array.sub carried 0 (nr + ns)
+  in
+  let finals =
+    List.fold_left branch (Array.append results sums) (List.init nb Fun.id)
+  in
+  Array.map (result env c) finals
 
 and loop st cs env c =
   match c with
@@ -734,7 +838,7 @@ and loop st cs env c =
             (Array.append (Array.sub out 0 nc) sums, Array.sub out nc ny)
           in
           let carried, ys =
-            repeat st cs ~n ~stop:None
+            repeat st cs ~n ~hoist:true ~stop:None ~bound:[||]
               (Array.append inits starts)
               (Array.map (fun (V x) -> node st env x) xs)
               trip
@@ -790,8 +894,9 @@ and loop st cs env c =
             (Array.concat [ carry; sums; [| go |] ], [||])
           in
           fst
-            (repeat st cs ~n:max
+            (repeat st cs ~n:max ~hoist:true
                ~stop:(Some (nc + ns))
+               ~bound:[||]
                (Array.concat [ inits; sums; [| go |] ])
                [||] trip)
       in
@@ -837,16 +942,20 @@ and outputs st cs ~reach env args =
   program st cs env;
   Array.map (fun (V y) -> node st env y) env.p.outputs
 
-(* [repeat st cs ~n ~stop inits xs trip] is the values [n] trips of [trip]
-   reach from [inits], and the outputs each trip stacks, computed on the
-   program's device: [trip checks carried rows] maps the carried values and a
-   row of each of [xs], stacked inputs of [n] rows, to the next carried values
-   and a trip's outputs, making its checks in [checks], and is applied once, to
-   parameters of the call that a range of [n] trips runs. The checks are
+(* [repeat st cs ~n ~hoist ~stop ~bound inits xs trip] is the values [n] trips
+   of [trip] reach from [inits], and the outputs each trip stacks, computed on
+   the program's device: [trip checks carried rows] maps the carried values
+   and a row of each of [xs], stacked inputs of [n] rows, then each of
+   [bound], to the next carried values and a trip's outputs, making its checks
+   in [checks], and is applied once, to parameters of the call that a range of
+   [n] trips runs. Where [hoist] holds, the parts of the trip that read no
+   parameter are computed once before the loop ({!Loop.cut}); otherwise they
+   stay in the call, which a flag may skip. A value of [bound] is a parameter
+   of the call, so that the trip's work on it stays there too. The checks are
    carried too, and become the loop's in [cs]. Where [stop] is [Some k], the
    carried value [k] is one boolean, whether to run on, which the engine reads
    before each trip. *)
-and repeat st cs ~n ~stop inits xs trip =
+and repeat st cs ~n ~hoist ~stop ~bound inits xs trip =
   let device = st.device in
   let count = ref 0 in
   let next () =
@@ -920,6 +1029,22 @@ and repeat st cs ~n ~stop inits xs trip =
           Shape.reshape p row)
       xs
   in
+  let bound =
+    Array.map
+      (fun x ->
+        let u = on_device x in
+        if empty u then blank u
+        else
+          let flat =
+            Ops.contiguous (Shape.reshape u [ Ops.Int (Shape.max_numel u) ])
+          in
+          let slot = next () in
+          let p = hold slot (Tolk.Call.param_like flat (unique ())) in
+          pass slot flat;
+          Shape.reshape p (Shape.shape u))
+      bound
+  in
+  let rows = Array.append rows bound in
   (* Whether a check of the program has failed by a trip's start: the
      enclosing one's at the loop's start, then each trip's at its end. *)
   let ncarried = Array.length inits in
@@ -1050,7 +1175,7 @@ and repeat st cs ~n ~stop inits xs trip =
   in
   let body =
     Ops.substitute ~calls:Skip ~pass:Fixed_point
-      (Loop.cut ~own next args (Ops.sink (List.rev !stores)))
+      (Loop.cut ~hoist ~own next args (Ops.sink (List.rev !stores)))
       renumbered
   in
   let by_slot (a, _) (b, _) = Int.compare a b in

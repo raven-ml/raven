@@ -428,6 +428,186 @@ let test_examples () =
   equal ~msg:"where's idiom at 0" close (scalar 1.)
     (Rune.grad' idiom (scalar 0.))
 
+(* Under jit a switch compiles with its program, a loop per branch, and
+   computes eager's values: a branch's additions, checks and loops included. *)
+let test_compiled () =
+  let t = Total.make () in
+  let counted x =
+    Rune.cond' (Nx.greater_s x 0.)
+      (fun () ->
+        Total.add t (Nx.mul x x);
+        Nx.check T.tensor (Nx.greater_s x 0.) x (fun _ _ -> Exit);
+        Nx.log x)
+      (fun () ->
+        Total.add t (Nx.mul_s x 3.);
+        Nx.neg x)
+  in
+  (* A total only one branch adds to. *)
+  let one_sided x =
+    Rune.cond' (Nx.greater_s x 0.)
+      (fun () ->
+        Total.add t (Nx.mul_s x 5.);
+        x)
+      (fun () -> Nx.neg x)
+  in
+  let collected f x = Total.collect t ~zero:(scalar 0.) (fun () -> f x) in
+  let collatz x =
+    Rune.iterate' ~max:200
+      ~until:(fun x -> Nx.less_equal_s x 1.)
+      ~f:(fun x ->
+        Rune.cond'
+          (Nx.equal_s (Nx.mod_s x 2.) 0.)
+          (fun () -> Nx.div_s x 2.)
+          (fun () -> Nx.add_s (Nx.mul_s x 3.) 1.))
+      x
+  in
+  let halve x =
+    Rune.cond' (Nx.greater_s x 1.)
+      (fun () ->
+        Rune.iterate' ~max:100
+          ~until:(fun y -> Nx.less_equal_s y 1.)
+          ~f:(fun y -> Nx.div_s y 2.)
+          x)
+      (fun () -> x)
+  in
+  let index x = Nx.cast Nx.int32 (Nx.add_s x 1.) in
+  let cases =
+    [
+      ("cond", piecewise, [ -1.; 0.; 2. ]);
+      ("switch", (fun x -> three x (index x)), [ -1.; 0.; 1. ]);
+      ("grad", Rune.grad' piecewise, [ -1.; 2. ]);
+      ("jvp", (fun x -> snd (Rune.jvp' counted x (Nx.ones_like x))), [ -1.; 2. ]);
+      ("in an iterate", collatz, [ 1.; 6.; 27. ]);
+      ("an iterate in a branch", halve, [ 0.5; 40. ]);
+      ( "a scan over constants in a branch",
+        (fun x ->
+          Rune.cond' (Nx.greater_s x 0.)
+            (fun () ->
+              Nx.add x
+                (fst
+                   (Rune.scan' ~init:(Nx.scalar f64 0.5)
+                      ~f:(fun c r -> (Nx.add (Nx.mul_s c 2.) r, c))
+                      (vec [| 1.; 2.; 3. |]))))
+            (fun () -> Nx.neg x)),
+        [ -1.; 2. ] );
+      ( "one branch",
+        (fun x -> Rune.switch T.tensor (index x) [ (fun () -> Nx.sin x) ]),
+        [ -1. ] );
+      ( "an empty result",
+        (fun x ->
+          let y, e =
+            Rune.cond
+              T.(pair tensor tensor)
+              (Nx.greater_s x 0.)
+              (fun () -> (Nx.mul_s x 2., Nx.zeros f64 [| 0 |]))
+              (fun () -> (Nx.neg x, Nx.ones f64 [| 0 |]))
+          in
+          Nx.add y (Nx.sum e)),
+        [ -1.; 2. ] );
+    ]
+  in
+  List.iter
+    (fun (msg, f, points) ->
+      List.iter
+        (fun p ->
+          let x = scalar p in
+          let msg = Printf.sprintf "%s at %g" msg p in
+          let before = Rune.evaluations () in
+          let y = Rune.jit' f x in
+          equal ~msg:(msg ^ ": compiled") int 0 (Rune.evaluations () - before);
+          equal ~msg close (f x) y)
+        points)
+    cases;
+  List.iter
+    (fun p ->
+      let x = scalar p in
+      let msg = Printf.sprintf "additions at %g" p in
+      let before = Rune.evaluations () in
+      List.iter
+        (fun f ->
+          let y, n = collected (Rune.jit' f) x in
+          equal ~msg:(msg ^ ": compiled") int 0 (Rune.evaluations () - before);
+          let y', n' = collected f x in
+          equal ~msg close y' y;
+          equal ~msg close n' n)
+        [ counted; one_sided ])
+    [ -1.; 2. ];
+  (* A check failing in the taken branch raises, and one made before the
+     switch raises before its index's range. *)
+  let checked x =
+    Rune.cond' (Nx.greater_s x 0.)
+      (fun () ->
+        Nx.check T.tensor (Nx.less_s x 5.) x (fun _ _ -> Exit);
+        x)
+      (fun () -> Nx.neg x)
+  in
+  let before = Rune.evaluations () in
+  raises Exit (fun () -> Rune.jit' checked (scalar 10.));
+  equal ~msg:"checked" close (scalar 3.) (Rune.jit' checked (scalar 3.));
+  raises Exit (fun () ->
+      Rune.jit'
+        (fun x ->
+          Nx.check T.tensor (Nx.less_s x 5.) x (fun _ _ -> Exit);
+          three x (index x))
+        (scalar 10.));
+  (* A loop whose results go unread still fails as eagerly. *)
+  let unread x =
+    Rune.cond' (Nx.greater_s x 0.)
+      (fun () ->
+        ignore
+          (Rune.iterate' ~max:3
+             ~until:(fun y -> Nx.less_equal_s y 0.)
+             ~f:(fun y -> Nx.add_s y 1.)
+             x);
+        x)
+      (fun () -> Nx.neg x)
+  in
+  let max3 = "until is still false after max = 3 steps" in
+  invalid ~sub:max3 (fun () -> unread (scalar 5.));
+  invalid ~sub:max3 (fun () -> Rune.jit' unread (scalar 5.));
+  equal ~msg:"checks: compiled" int 0 (Rune.evaluations () - before);
+  let before = Rune.evaluations () in
+  invalid ~sub:"Rune.switch: index 3 outside 0 .. 2" (fun () ->
+      Rune.jit' (fun x -> three x (index x)) (scalar 2.));
+  invalid ~sub:"Rune.switch: index -1 outside 0 .. 2" (fun () ->
+      Rune.jit' (fun x -> three x (index x)) (scalar (-2.)));
+  equal ~msg:"out of range: compiled" int 0 (Rune.evaluations () - before);
+  (* An untaken branch runs none of its work under jit: here a loop of [trips]
+     steps, each over the [4096] elements of a capture, which takes hundreds
+     of milliseconds where it runs. *)
+  let trips = 1_000_000 and w = Nx.linspace f64 0. 1. 4096 in
+  let slow x =
+    Rune.cond' (Nx.greater_s x 0.)
+      (fun () ->
+        fst
+          (Rune.scan' ~init:x
+             ~f:(fun c _ -> (Nx.sum (Nx.mul w c), c))
+             (Nx.zeros f64 [| trips; 0 |])))
+      (fun () -> Nx.neg x)
+  in
+  (* The same loop over constants alone, the function's own arrays. *)
+  let constant x =
+    Rune.cond' (Nx.greater_s x 0.)
+      (fun () ->
+        Nx.add x
+          (fst
+             (Rune.scan' ~init:(Nx.scalar f64 0.)
+                ~f:(fun c _ -> (Nx.sum (Nx.mul w (Nx.add_s c 1.)), c))
+                (Nx.zeros f64 [| trips; 0 |]))))
+      (fun () -> Nx.neg x)
+  in
+  List.iter
+    (fun (msg, f) ->
+      let jitted = Rune.jit' f in
+      equal ~msg close (scalar 1.) (jitted (scalar (-1.)));
+      let start = Sys.time () in
+      equal ~msg close (scalar 2.) (jitted (scalar (-2.)));
+      less
+        ~msg:(msg ^ ": processor seconds")
+        float_exact ~than:0.05
+        (Sys.time () -. start))
+    [ ("a loop over a capture", slow); ("a loop over constants", constant) ]
+
 let () =
   exit
     (run "rune2 switch"
@@ -449,4 +629,5 @@ let () =
          test "lanes in a branch" test_lanes_in_branch;
          test "stated cases" test_stated;
          test "the documented examples" test_examples;
+         test "a switch compiles under jit" test_compiled;
        ])

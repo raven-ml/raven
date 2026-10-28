@@ -744,8 +744,7 @@ val switch : ('b, 'd) Nx.Ptree.t -> 'd Nx.int32_t -> (unit -> 'b) list -> 'b
     runs over every lane, a lane that did not take it held
     ({{!section-maps}held lanes}) on the first lane that did, and each lane
     receives its own branch's results and derivatives. A branch no lane takes
-    runs nothing. Under {!jit} a switch is evaluated at each call, as a custom
-    rule is, and reads [i] there.
+    runs nothing.
 
     Raises [Invalid_argument] if [branches] is empty, if [i] is not 0-d, at the
     call if two branches' results differ in their visits, dtypes, shapes or
@@ -931,7 +930,9 @@ val jit : ('a -> 'b, 'd) Nx.Ptree.fn -> ('a -> 'b) -> 'a -> 'b
     that fails, as the steps written out would, and an {!iterate} stops at the
     first failure. A loop a derivative or a map makes of an {!iterate} is
     evaluated: one that runs a count of its rows, reversed, stacks its steps or
-    holds lanes apart. A {!remat}, a {!custom_jvp}, a {!custom_vjp} and a
+    holds lanes apart. A {!switch} compiles as one loop per branch of at most
+    one trip, which runs where the index names its branch, so a branch not
+    taken computes nothing. A {!remat}, a {!custom_jvp}, a {!custom_vjp} and a
     {!custom_transpose} compile as their function's operations, the program's
     own.
 

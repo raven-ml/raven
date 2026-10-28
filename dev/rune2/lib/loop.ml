@@ -7,7 +7,7 @@ open Tolk
 
 (* Loop-invariant parts *)
 
-let cut ~own next args body =
+let cut ?(hoist = true) ~own next args body =
   let reading = Ops.Tbl.create 64
   and storing = Ops.Tbl.create 64
   and rebuilt = Ops.Tbl.create 64 in
@@ -87,6 +87,15 @@ let cut ~own next args body =
   (* A value of no width, such as an index computed from stored integers, has no
      storage to pass: the body computes it from the stored values it reads. *)
   let weak u = List.exists (Dtype.equal (Ops.dtype u)) Dtype.weaks in
+  (* Without hoisting, only storage itself is passed, a buffer or another
+     call's parameter: what reads it stays, and so does a value after the
+     work that writes it, such as a nested loop's carry. *)
+  let stored u =
+    match Ops.op u with
+    | Op.Buffer -> true
+    | Op.Param -> Ops.addrspace u = Some Tolk.Dtype.Global
+    | _ -> false
+  in
   let rec rebuild u =
     match Ops.Tbl.find_opt rebuilt u with
     | Some v -> v
@@ -95,7 +104,9 @@ let cut ~own next args body =
           if
             varies u
             || reads_storage u
-               && (Op.Set.mem (Ops.op u) Op.Set.movement || weak u)
+               && (Op.Set.mem (Ops.op u) Op.Set.movement
+                  || weak u
+                  || ((not hoist) && not (stored u)))
           then
             let src = List.map rebuild (sources u) in
             Ops.replace u

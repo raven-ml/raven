@@ -13,6 +13,7 @@
 open Tolk
 
 val cut :
+  ?hoist:bool ->
   own:unit Ops.Tbl.t ->
   (unit -> int) ->
   (int * Ops.t) list ref ->
@@ -28,7 +29,9 @@ val cut :
     part is one of the body's own loops, which the part moves with. Another
     call's parameter, such as an enclosing step's carry, is storage the call
     binds like any other; so is storage that a call of the body that runs each
-    trip writes. *)
+    trip writes. With [~hoist:false] only storage itself is replaced, and
+    every part that reads it stays in the body, so that a call a flag skips
+    computes none of it. *)
 
 val repeat :
   Ops.device ->

@@ -46,7 +46,11 @@ val make : name:string -> Program.t -> Program.form array -> (t, string) result
     is a check of [p]. Every check a trip makes, a nested loop's included, is
     carried: the first trip that fails keeps each one's first failure and data,
     which are checks of [p]. An iterate runs on only while no check of [p] has
-    failed, as the steps written out stop at the first failure. *)
+    failed, as the steps written out stop at the first failure. A switch is one
+    loop per branch, of at most one trip, whose flag holds where the index
+    names that branch and no check of [p] has failed, each loop carrying the
+    results the one before left; an index outside the branches is a check of
+    [p] made before them. *)
 
 val run : t -> Program.value array -> Program.value array
 (** [run t args] is the outputs of [t]'s program applied to [args], values of
