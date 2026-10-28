@@ -905,6 +905,13 @@ module Rules = struct
               in
               (Some a, Array.append captures more)
         in
+        let transpose =
+          match transpose with
+          | Traced t -> t
+          | Host _ ->
+              invalid_arg
+                (name ^ ": a pullback run on values is mapped after its call")
+        in
         let transpose, more =
           Trace.trace Body ~name
             (Array.append forms (Array.map form residuals))
@@ -916,7 +923,15 @@ module Rules = struct
              ~keep:(fun _ -> false)
              (perform
                 (Linear
-                   { name; apply; transpose; args; captures; residuals; forms })))
+                   {
+                     name;
+                     apply;
+                     transpose = Traced transpose;
+                     args;
+                     captures;
+                     residuals;
+                     forms;
+                   })))
     | _ -> None
 end
 

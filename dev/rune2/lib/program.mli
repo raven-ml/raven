@@ -281,10 +281,8 @@ and construct =
       apply : t option;
           (** Over the arguments and the captures; to the results and the
               running values out. [None] where only the transpose is known, as
-              for a {!Pullback} rule's tangents. *)
-      transpose : t;
-          (** Over a cotangent per result and the residuals; to a cotangent per
-              argument and the running values out. *)
+              for a {!Pullback} rule's tangents, and always for {!Host}. *)
+      transpose : transpose;
       args : value array;
       captures : value array;
       residuals : value array;
@@ -420,6 +418,17 @@ and derivative =
   | Pullback of t
       (** A pullback: over a cotangent per result and the residuals; to a
           cotangent per argument and the additions. *)
+
+and transpose =
+  | Traced of t
+      (** Over a cotangent per result and the residuals; to a cotangent per
+          argument and the running values out. *)
+  | Host of (value array -> value array)
+      (** A custom rule's pullback run on values ({!Jvp}): from a cotangent per
+          result to a cotangent per argument, its additions made where it runs.
+          Only a tape holds one, and only its backward pass ({!Linear}) runs it;
+          a pass that needs the transpose's program raises
+          [Invalid_argument]. *)
 
 and site
 (** The type for a call's {e site}: its program, compiled where the site is made

@@ -452,9 +452,12 @@ val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
     runs. Under one differentiation tracking an argument, with no
     transformation between it and the call and none around it tracking the
     arguments too, the rule runs on the arguments' values, so it may read them
-    with {!Nx.item}, as an iteration tests its tolerance. Its derivative is
-    then traced at the call, over stand-ins of the tangents or the cotangents,
-    where the differentiation applies it. Elsewhere the rule is traced at the
+    with {!Nx.item}, as an iteration tests its tolerance. Its derivative then
+    runs where the differentiation applies it. A tangent map runs at the call,
+    on the tangents: values under {!jvp}, so it may read them too, and reverse
+    mode's stand-ins under {!grad}, where a read raises. A pullback runs in each
+    backward pass, on that pass's cotangents, which it may read: a {!vjp}
+    pullback applied twice runs it twice. Elsewhere the rule is traced at the
     call with its derivative: inside a construct that stages it; where a map,
     a loop's step, a {!root}'s function or a second differentiation tracks an
     argument; and where any transformation lies between the call and the
@@ -465,7 +468,8 @@ val detach : ('v, 's, 'd) Nx.t -> ('v, 's, 'd) Nx.t
     code runs once whether a differentiation applies it or not, so a tangent
     map reading a map's {!lanes} raises there outside that map. A draw without
     [~key] in the rule raises in every case. An error the derivative raises
-    reaches the call.
+    reaches the code that runs it: the call for a tangent map and a traced
+    pullback, the backward pass for a pullback on values.
 
     {b Arguments.} A differentiation applies the rule where it tracks one of the
     rule's arguments. The rule receives them without their derivatives, and must

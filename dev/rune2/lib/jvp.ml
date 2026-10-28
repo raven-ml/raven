@@ -1035,11 +1035,12 @@ module Rules = struct
     | Some o, Some tape -> o == tape
     | _ -> false
 
+  let added =
+    "Rune.Total.add: a custom_jvp tangent map adds a tangent under reverse \
+     mode; a total takes values"
+
   let no_tangent_added c adds =
-    if Array.exists (taped c) adds then
-      invalid_arg
-        "Rune.Total.add: a custom_jvp tangent map adds a tangent under reverse \
-         mode; a total takes values"
+    if Array.exists (taped c) adds then invalid_arg added
 
   let no_forward c =
     invalid_arg
@@ -1187,7 +1188,7 @@ module Rules = struct
                      {
                        name;
                        apply = None;
-                       transpose = b;
+                       transpose = Traced b;
                        args = ts;
                        captures = [||];
                        residuals = res;
@@ -1297,53 +1298,55 @@ module Rules = struct
       (fun k v -> match along k with Some t -> dual_v c.i v t | None -> v)
       out
 
+  (* The tangent map applied to a tape's variables, refusing an addition of one
+     where it is made. *)
+  let taped_map c d ts =
+    let effc (type a) (e : a Effect.t) :
+        ((a, _) Effect.Deep.continuation -> _) option =
+      match e with
+      | Construct (Add (_, x)) when taped c (V x) ->
+          Some (fun k -> Effect.Deep.discontinue k (Invalid_argument added))
+      | Replace (_, x) when taped c (V x) ->
+          Some (fun k -> Effect.Deep.discontinue k (Invalid_argument added))
+      | _ -> None
+    in
+    Effect.Deep.match_with d ts { retc = Fun.id; exnc = reraise; effc }
+
   (* A custom rule run on the arguments' primals where the call was performed,
      under a differentiation that tracks one of them and is the innermost
      interpretation there, so that no interpretation inside it holds a value
-     the rule captures. The derivative is traced over stand-ins of the tangents
-     or the cotangents, what it reads of the rule's values constants, then
-     applied as [applied_rule] applies a traced one. Neither is traced where no
-     differentiation applies it: under reverse mode where no result has a
-     tangent, and a pullback under forward mode. *)
+     the rule captures. The tangent map runs on the tangents: values under
+     forward mode, the tape's variables under reverse mode. The pullback runs in
+     the backward pass, on its cotangents: the tape holds it as a linear call
+     with the pullback as its transpose. Neither runs where no differentiation
+     applies it: under reverse mode where no result has a tangent, and a
+     pullback under forward mode. *)
   let in_place c ({ name; mode; args; rule } : Program.rule) pargs =
     let ys, d = Nx.Rng.refusing name (fun () -> rule pargs) in
     tracks c ~name ys;
     let reverse = Option.is_some c.tape in
     let tangible = Array.exists tangible_v ys in
-    let derivative over =
-      let p, residuals = Trace.trace Body ~name (Array.map form over) d in
-      tracks c ~name residuals;
-      (p, residuals)
-    in
     match mode with
     | Reverse when not reverse ->
         if tangible then no_forward c;
         ys
     | Forward | Reverse when reverse && not tangible -> ys
     | Forward ->
-        let t, residuals = derivative pargs in
         let ts = tangents c args in
-        let ny = Array.length ys in
-        let dys =
-          threaded t (fun totals ->
-              let out = eval ~totals t (Array.append ts residuals) in
-              if reverse then
-                no_tangent_added c (sub out ny (Array.length out - ny));
-              out)
-        in
+        let dys = if reverse then taped_map c d ts else d ts in
+        tracks c ~name dys;
         with_tangents c ys dys
     | Reverse ->
-        let b, residuals = derivative ys in
         let dys =
           perform
             (Linear
                {
                  name;
                  apply = None;
-                 transpose = b;
+                 transpose = Host d;
                  args = tangents c args;
                  captures = [||];
-                 residuals;
+                 residuals = [||];
                  forms = Array.map form ys;
                })
         in

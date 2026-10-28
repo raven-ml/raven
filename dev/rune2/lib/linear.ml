@@ -1037,8 +1037,8 @@ let lanes_transpose a (x : ('v, 's, 'd) Nx.t) (V w) =
   V (Nx.reshape (Nx.shape x) (Nx.take ~axis:0 row total))
 
 (* A linear call's transpose: its transpose program over the results'
-   cotangents, zeros for one with none, and its residuals, its outputs given to
-   the arguments. Where the call has its function, the transpose is itself a
+   cotangents, zeros for one with none, and its residuals, or a pullback on
+   values over the cotangents alone, its outputs given to the arguments. Where the call has its function, the transpose is itself a
    linear call whose transpose is that function, so that transposing it again
    applies the function. The additions reach the scopes around the backward
    pass. *)
@@ -1052,22 +1052,23 @@ let linear_call env ~name ~apply ~transpose ~args ~captures ~residuals ~forms
   let cts = Array.mapi ct forms in
   let const = Array.map (fun (V r) -> V (env.const r)) in
   let out =
-    match apply with
-    | Some f ->
+    match (apply, transpose) with
+    | Some f, Traced t ->
         Program.run
           (Linear
              {
                name;
-               apply = Some transpose;
-               transpose = f;
+               apply = Some t;
+               transpose = Traced f;
                args = cts;
                captures = const residuals;
                residuals = const captures;
                forms = Array.map form args;
              })
-    | None ->
-        Program.threaded transpose (fun totals ->
-            Program.eval ~totals transpose (Array.append cts (const residuals)))
+    | None, Traced t ->
+        Program.threaded t (fun totals ->
+            Program.eval ~totals t (Array.append cts (const residuals)))
+    | _, Host pb -> pb cts
   in
   Array.iteri (fun k (V a) -> if env.lin a then env.give a (held out.(k))) args
 

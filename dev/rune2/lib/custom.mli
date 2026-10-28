@@ -10,8 +10,9 @@
     interpretation around it how the rule runs ({!Program.Rule}). A
     differentiation that tracks one of the arguments, whose primals no
     interpretation traces, answers: the rule runs on those primals where the
-    call was performed, and its derivative is traced and applied there where
-    that differentiation applies it ({!Jvp}). Where no interpretation answers
+    call was performed, and its derivative runs on values where that
+    differentiation applies it ({!Jvp}): a tangent map at the call, a pullback
+    in each backward pass. Where no interpretation answers
     so and none traces an argument, the call is [fst (rule args)], and the
     derivative never runs. The rule runs under [Nx.Rng.refusing], named by the
     entry point, in both cases.
@@ -34,7 +35,7 @@ val jvp_call :
 (** [jvp_call ~name args rule] is the results of [rule args], whose tangents are
     those [snd (rule args)] maps the arguments' tangents to, one per argument.
     [name] names the entry point. Raises what [rule] raises, and what its
-    tangent map raises where it runs, at the call. *)
+    tangent map raises, where each runs. *)
 
 val vjp_call :
   name:string ->
@@ -42,8 +43,9 @@ val vjp_call :
   (value array -> value array * (value array -> value array)) ->
   value array
 (** [vjp_call ~name args rule] is the results of [rule args], whose cotangents
-    [snd (rule args)] maps to the arguments', one per argument. Raises as
-    {!jvp_call} does. *)
+    [snd (rule args)] maps to the arguments', one per argument. Raises what
+    [rule] raises, and what its pullback raises, where each runs: a pullback on
+    values in the backward pass. *)
 
 val transpose_call :
   name:string ->

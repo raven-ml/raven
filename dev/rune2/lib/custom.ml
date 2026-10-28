@@ -108,7 +108,15 @@ let transpose_call ~name args f =
         no addition");
   let c =
     Linear
-      { name; apply = Some apply; transpose; args; captures; residuals; forms }
+      {
+        name;
+        apply = Some apply;
+        transpose = Traced transpose;
+        args;
+        captures;
+        residuals;
+        forms;
+      }
   in
   sub (run c) 0 !ny
 

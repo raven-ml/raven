@@ -33,11 +33,14 @@
     around it. This one answers with [None] unless it tracks one of the
     arguments and no interpretation traces their primals. Then the rule runs on
     the primals where the call was performed, and no interpretation inside this
-    one holds a value it captures. Its derivative is traced over stand-ins of
-    the tangents, or of the results' cotangents for a pullback, and applied as a
-    traced rule's is below, a tangent map's additions made to the totals around
-    the call. It is not traced under reverse mode where no result has a float or
-    complex array, nor for a pullback where forward mode runs alone.
+    one holds a value it captures. A tangent map then runs there on the
+    arguments' tangents: values under forward mode, the tape's variables under
+    reverse mode, where an addition of one raises at the addition. A pullback
+    under reverse mode is a linear call ({!Program.Linear}) whose transpose is
+    the pullback itself ({!Program.Host}), which the tape records and each
+    backward pass runs on that pass's cotangents. Neither runs under reverse
+    mode where no result has a float or complex array, nor a pullback where
+    forward mode runs alone.
 
     A traced rule ({!Program.Custom}) over an argument this differentiation
     tracks is performed outward on the arguments' primals, so that each

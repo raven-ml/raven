@@ -244,7 +244,16 @@ let jvp_tests =
         runs ~derivatives:1 "under jit"
           (Rune.jit' (fun x -> snd (Rune.jvp' f x (along ()))));
         runs ~derivatives:0 "a custom_vjp eagerly" g;
-        runs ~derivatives:1 "a custom_vjp under grad" (grad g));
+        runs ~derivatives:1 "a custom_vjp under grad" (grad g);
+        (* A tangent map applies once, at the call; a pullback once per
+           backward pass. *)
+        let twice f x =
+          let _, pb = Rune.vjp' f x in
+          ignore (pb (along ()));
+          pb (along ())
+        in
+        runs ~derivatives:1 "a vjp pullback of a custom_jvp, twice" (twice f);
+        runs ~derivatives:2 "a vjp pullback of a custom_vjp, twice" (twice g));
     test "a custom_jvp with no float result runs once under reverse mode"
       (fun () ->
         let runs = ref 0 in
@@ -641,6 +650,28 @@ let newton_vjp =
       let y = newton x in
       (y, fun g -> Nx.div g (Nx.mul_s y 2.)))
 
+(* [z] with [a z = b], for positive [a], by Richardson's iteration, which stops
+   once the residual it reads is small. *)
+let solve a b =
+  let rate = 1. /. Nx.item [] (Nx.max a) in
+  let rec go z n =
+    let r = Nx.sub b (Nx.mul a z) in
+    let size = Nx.item [] (Nx.max (Nx.abs r)) in
+    if size <= 1e-14 || n = 1000 then z
+    else go (Nx.add z (Nx.mul_s r rate)) (n + 1)
+  in
+  go (Nx.zeros_like b) 0
+
+let solving_jvp =
+  Rune.custom_jvp tensor tensor (fun x ->
+      let y = newton x in
+      (y, fun dx -> solve (Nx.mul_s y 2.) dx))
+
+let solving_vjp =
+  Rune.custom_vjp tensor tensor (fun x ->
+      let y = newton x in
+      (y, fun g -> solve (Nx.mul_s y 2.) g))
+
 let read_tests =
   let x = vec [| 4.; 9.; 2. |] in
   let root = Nx.sqrt x in
@@ -738,6 +769,49 @@ let read_tests =
         invalid ~sub:"Nx.item: the value is traced by Rune.custom_vjp"
           (fun () ->
             Rune.grad' (fun x -> Nx.sum (Rune.grad' (sum newton_vjp) x)) x));
+    test "a derivative reads its tangents and cotangents where it applies"
+      (fun () ->
+        (* The tangent map and the pullback solve their linear equation by an
+           iteration that reads its residual, so their steps depend on the
+           tangents' values. *)
+        near ~msg:"jvp"
+          (Nx.mul (along ()) half)
+          (snd (Rune.jvp' solving_jvp x (along ())));
+        near ~msg:"grad" half (Rune.grad' (sum solving_vjp) x);
+        let _, pb = Rune.vjp' solving_vjp x in
+        near ~msg:"a vjp pullback" (Nx.mul (along ()) half) (pb (along ()));
+        near ~msg:"the pullback again" half (pb (Nx.ones f64 [| 3 |]));
+        near ~msg:"a zero cotangent" (Nx.zeros f64 [| 3 |])
+          (pb (Nx.zeros f64 [| 3 |])));
+    test "a read in a derivative raises where it is traced" (fun () ->
+        let traced = "Nx.item: the value is traced" in
+        (* Under reverse mode the tangent map runs on the tape's tangents. *)
+        invalid ~sub:traced (fun () -> Rune.grad' (sum solving_jvp) x);
+        invalid ~sub:traced (fun () -> Rune.jit' (Rune.grad' (sum solving_vjp)) x);
+        invalid ~sub:traced (fun () ->
+            Rune.jit' (fun x -> snd (Rune.jvp' solving_jvp x (along ()))) x);
+        invalid ~sub:traced (fun () ->
+            Rune.grad' (fun x -> Nx.sum (Rune.grad' (sum solving_vjp) x)) x);
+        let _, pb = Rune.vjp' solving_vjp x in
+        invalid ~sub:traced (fun () -> Rune.vmap' pb (Nx.reshape [| 1; 3 |] x)));
+    (* murder's dilqr: a rule whose primal and derivative read a sum. *)
+    test "a rule that reads its arguments' sum" (fun () ->
+        let x = vec [| 1.; 2. |] in
+        let scaled y = Nx.mul_s y (Nx.item [] (Nx.sum x)) in
+        let f =
+          Rune.custom_vjp tensor tensor (fun x ->
+              let s = Nx.item [] (Nx.sum x) in
+              (Nx.mul_s x s, fun g -> Nx.mul_s g s))
+        and g =
+          Rune.custom_jvp tensor tensor (fun x ->
+              let s = Nx.item [] (Nx.sum x) in
+              (Nx.mul_s x s, fun dx -> Nx.mul_s dx s))
+        in
+        exact ~msg:"custom_vjp eagerly" (scaled x) (f x);
+        exact ~msg:"custom_vjp under grad" (scaled (Nx.ones f64 [| 2 |]))
+          (Rune.grad' (sum f) x);
+        exact ~msg:"custom_jvp eagerly" (scaled x) (g x);
+        exact ~msg:"custom_jvp under jvp" (scaled x) (snd (Rune.jvp' g x x)));
   ]
 
 (* Errors *)
@@ -749,22 +823,15 @@ let nonlinear f = Rune.custom_jvp tensor tensor (fun x -> (Nx.sin x, f))
 
 let error_tests =
   [
-    test "a read in the tangent map raises where it applies" (fun () ->
+    test "a pullback's result is checked in the backward pass" (fun () ->
         let f =
-          Rune.custom_jvp tensor tensor (fun x ->
-              (x, fun dx -> if Nx.item [ 0 ] dx > 0. then dx else dx))
+          Rune.custom_vjp tensor tensor (fun x -> (x, fun g -> Nx.sum g))
         in
-        exact ~msg:"no differentiation applies it" (v3 ()) (f (v3 ()));
-        invalid ~sub:"traced by Rune.custom_jvp" (fun () ->
-            Rune.jvp' f (v3 ()) (along ())));
-    test "a read in the pullback raises where it applies" (fun () ->
-        let f =
-          Rune.custom_vjp tensor tensor (fun x ->
-              (x, fun g -> if Nx.item [ 0 ] g > 0. then g else g))
-        in
-        exact ~msg:"no differentiation applies it" (v3 ()) (f (v3 ()));
-        invalid ~sub:"traced by Rune.custom_vjp" (fun () ->
-            Rune.grad' (fun x -> Nx.sum (f x)) (v3 ())));
+        let _, pb = Rune.vjp' f (v3 ()) in
+        invalid
+          ~sub:
+            "Rune.custom_vjp: the root: shape [] in the pullback's result, [3] \
+             in the arguments" (fun () -> pb (along ())));
     test "a draw without a key in the rule raises" (fun () ->
         let f =
           Rune.custom_jvp tensor tensor (fun x ->

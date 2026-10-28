@@ -203,7 +203,7 @@ and construct =
   | Linear : {
       name : string;
       apply : t option;
-      transpose : t;
+      transpose : transpose;
       args : value array;
       captures : value array;
       residuals : value array;
@@ -275,6 +275,7 @@ and system = {
 }
 
 and derivative = Tangent of t | Pullback of t
+and transpose = Traced of t | Host of (value array -> value array)
 and rows = Taken | Max
 
 and site = {
@@ -305,7 +306,8 @@ and carried_by = function
   | Call { body; _ } | Remat { body; _ } -> [ body ]
   | Switch { branches; _ } -> Array.to_list branches
   | Custom { primal; derivative = Tangent d | Pullback d; _ } -> [ primal; d ]
-  | Linear { apply; transpose; _ } -> Option.to_list apply @ [ transpose ]
+  | Linear { apply; transpose = Traced t; _ } -> Option.to_list apply @ [ t ]
+  | Linear { apply; transpose = Host _; _ } -> Option.to_list apply
   | Root { system; _ } | Solve { system; _ } ->
       [ system.residual; system.jacobian; system.transpose; system.solve ]
   | Detach _ | Lanes _ | Lane_index _ | Add _ | Emit _ | Operator _ -> []
@@ -557,7 +559,10 @@ let rec map_programs f = function
       in
       Custom { c with primal = f c.primal; derivative }
   | Linear c ->
-      Linear { c with apply = Option.map f c.apply; transpose = f c.transpose }
+      let transpose =
+        match c.transpose with Traced t -> Traced (f t) | Host _ as h -> h
+      in
+      Linear { c with apply = Option.map f c.apply; transpose }
   | Remat r -> Remat { r with body = f r.body }
   | Root r -> Root { r with system = map_system f r.system }
   | Solve s -> Solve { s with system = map_system f s.system }
@@ -1805,7 +1810,9 @@ and pp_construct names ~indent (p : t) ppf c =
       Option.iter
         (fun a -> Format.fprintf ppf "@\n%s  function%a" pad program a)
         apply;
-      Format.fprintf ppf "@\n%s  transpose%a" pad program transpose
+      match transpose with
+      | Traced t -> Format.fprintf ppf "@\n%s  transpose%a" pad program t
+      | Host _ -> Format.fprintf ppf "@\n%s  transpose on values" pad
 
 let pp ppf p =
   let names = { constants = []; axes = []; next = 0; bases = [] } in
