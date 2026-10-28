@@ -28,8 +28,16 @@ val create_schedule : Ops.t -> Ops.t
     ({!Ops.backedge}) stays a back edge, its condition the storage it reads; the
     end of a call over device ranges is the call, its ranges bound at launch.
 
-    Raises [Invalid_argument] if the kernels' dependencies form a cycle, or if
-    an effect is not a call, a loop of a call, a store or an {!Op.After}. *)
+    A kernel that reads a state of storage on one device and depends on a
+    kernel that overwrites it, whichever elements each touches, as [b + a * 3]
+    does where [b] read [a] before [a] was assigned, reads instead a copy of
+    the whole state into call-local storage ({!Op.Alloc}) at the state's
+    phase, which a kernel of its own makes before the overwrite.
+
+    Raises [Invalid_argument] if the kernels' dependencies form a cycle, if a
+    kernel reads a state on several devices that a kernel it depends on
+    overwrites, or if an effect is not a call, a loop of a call, a store or an
+    {!Op.After}. *)
 
 val pm_flatten_linear : (unit, Ops.t) Ops.Pattern_matcher.t
 (** [pm_flatten_linear] inlines each {!Op.Linear} among the sources of an

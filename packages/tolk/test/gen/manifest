@@ -3739,6 +3739,10 @@ schedule/schedule/precompiled_scalar_kernels_1.golden
 schedule/schedule/precompiled_scalar_linear.golden
 schedule/schedule/precompiled_scalar_schedule.golden
 schedule/schedule/precompiled_scalar_schedule_1.golden
+schedule/schedule/read_overwritten_through.golden
+schedule/schedule/read_overwritten_through_kernels.golden
+schedule/schedule/read_overwritten_through_linear.golden
+schedule/schedule/read_overwritten_through_schedule.golden
 schedule/schedule/read_then_overwrite.golden
 schedule/schedule/read_then_overwrite_kernels.golden
 schedule/schedule/read_then_overwrite_linear.golden

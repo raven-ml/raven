@@ -2105,6 +2105,94 @@ index 1f6134e..24949cf 100644
    return l.replace(src=tuple(srcs))
  
  # *****************
+diff --git a/tinygrad/schedule/__init__.py b/tinygrad/schedule/__init__.py
+index 757360e..ea7c2bf 100644
+--- a/tinygrad/schedule/__init__.py
++++ b/tinygrad/schedule/__init__.py
+@@ -3,7 +3,7 @@ from collections import deque
+ from dataclasses import dataclass, field, replace
+ from tinygrad.dtype import AddrSpace
+ from tinygrad.uop.ops import GroupOp, remove_all_tags
+-from tinygrad.uop.ops import UOp, Ops, UOpMetaClass, rewrite_group, graph_rewrite, gate_kernel_sink, KernelInfo
++from tinygrad.uop.ops import UOp, Ops, UOpMetaClass, rewrite_group, graph_rewrite, gate_kernel_sink, KernelInfo, ParamArg
+ from tinygrad.uop.spec import type_verify, spec_tensor
+ from tinygrad.helpers import DEBUG, cpu_profile, TracingKey, SPEC, pluralize, SCACHE, BASEDIR, partition, dedup, all_int, VIZ
+ from tinygrad.helpers import diskcache_get, diskcache_put, colored
+@@ -29,13 +29,44 @@ def _split_after(after: UOp) -> tuple[tuple[UOp, ...], tuple[UOp, ...]]:
+     raise AssertionError(f"AFTER source should be CALL, END, STORE, or AFTER, not {invalid[0].op}")
+   return tuple(kernels), tuple(deps)
+ 
+-def create_schedule(sched_sink:UOp) -> UOp:
++# a kernel that reads a buffer state and waits, through a value computed after it, for a kernel that overwrites it runs
++# neither before nor after the overwrite: it reads instead a copy of the state into storage of its own, made before it
++def _copy_state(s:UOp, slot:int) -> UOp:
++  buf = s.buf_uop
++  if not isinstance(buf.device, str): raise RuntimeError("a kernel reads a buffer state that a kernel it waits for overwrites, off one device")
++  dst = UOp(Ops.ALLOC, src=(), arg=ParamArg(slot, buf.dtype, buf.max_numel(), device=buf.device))
++  r = UOp.range(buf.max_numel(), 0)
++  body = dst.param_like(0).index(r).store(buf.param_like(1).index(r)).end(r).sink(arg=KernelInfo())
++  return dst.after(body.call(dst, s))
++
++# d, a source of a kernel, reading c where it reads the state s, along the path _states follows
++def _swap(s:UOp, c:UOp, d:UOp) -> UOp:
++  if d is s: return c
++  if d.op in {Ops.AFTER, Ops.BUFFER, Ops.ALLOC, Ops.PARAM} or not len(d.src): return d
++  if d.op in {Ops.MSELECT, Ops.MSTACK}: return d.replace(src=tuple(_swap(s, c, x) for x in d.src))
++  return d.replace(src=(_swap(s, c, d.src[0]),)+d.src[1:])
++
++def _copy_before_overwrites(sched_sink:UOp, hazards:list[tuple[UOp, UOp]]) -> UOp:
++  slot = 1 + max([u.arg.slot for u in sched_sink.toposort(enter_calls=False) if u.op in {Ops.ALLOC, Ops.BUFFER, Ops.PARAM}
++                  and isinstance(u.arg, ParamArg)], default=-1)
++  copies: dict[UOp, UOp] = {}
++  rebuilt: dict[UOp, UOp] = {}
++  for k, s in hazards:
++    if s not in copies: copies[s], slot = _copy_state(s, slot), slot+1
++    kk = rebuilt.get(k, k)
++    call = kk.src[0] if kk.op in {Ops.END, Ops.BACKEDGE} else kk
++    call = call.replace(src=(call.src[0],)+tuple(_swap(s, copies[s], x) for x in call.src[1:]))
++    rebuilt[k] = kk.replace(src=(call,)+kk.src[1:]) if kk.op in {Ops.END, Ops.BACKEDGE} else call
++  return sched_sink.substitute(rebuilt)
++
++def _schedule(sched_sink:UOp, copies:bool) -> UOp:
+   with cpu_profile(TracingKey("toposort sched_sink")):
+     # build kernel dependency graph: edges from producer kernel to consumer kernels
+     children: dict[UOp, list[UOp]] = {}
+     in_degree: dict[UOp, int] = {}
+     writes: dict[UOp, list[tuple[UOp, tuple[UOp, ...]]]] = {}  # superseded state -> (AFTER, new kernels)
+     reads: list[tuple[UOp, UOp, UOp]] = []  # (reader AFTER, reader kernel, buffer state read)
++    hazards: list[tuple[UOp, UOp]] = []  # (reader kernel, buffer state read) whose overwrite it waits for
+     for u in sched_sink.toposort(gate_kernel_sink):
+       if u.op is not Ops.AFTER: continue
+       kernels, after_deps = _split_after(u)
+@@ -60,9 +91,16 @@ def create_schedule(sched_sink:UOp) -> UOp:
+       for a, write_kernels in writes.get(s, []):
+         if a is u: continue
+         for t in write_kernels:
+-          if t is not k and t not in k.backward_slice:
+-            children.setdefault(k, []).append(t)
+-            in_degree[t] += 1
++          if t is k: continue
++          # a kernel that waits for the write reads the state it overwrote: it reads a copy made before the write
++          if t in k.backward_slice:
++            if (k, s) not in hazards: hazards.append((k, s))
++            continue
++          children.setdefault(k, []).append(t)
++          in_degree[t] += 1
++    if hazards:
++      if not copies: raise RuntimeError("a kernel reads a buffer state that a kernel it waits for overwrites")
++      return _schedule(_copy_before_overwrites(sched_sink, hazards), False)
+ 
+   with cpu_profile(TracingKey("linearize schedule")):
+     queue: deque[UOp] = deque(k for k,v in in_degree.items() if v == 0)
+@@ -79,6 +117,8 @@ def create_schedule(sched_sink:UOp) -> UOp:
+     if any(in_degree.values()): raise RuntimeError("cycle detected in assign graph")
+   return UOp(Ops.LINEAR, src=tuple(linearized))
+ 
++def create_schedule(sched_sink:UOp) -> UOp: return _schedule(sched_sink, True)
++
+ from tinygrad.schedule.memory import memory_plan_rewrite
+ from tinygrad.engine.realize import capturing, pm_flatten_linear
+ from tinygrad.schedule.prepare import prepare_rangeify
 diff --git a/tinygrad/schedule/indexing.py b/tinygrad/schedule/indexing.py
 index 228ec4e..1a3fd3e 100644
 --- a/tinygrad/schedule/indexing.py

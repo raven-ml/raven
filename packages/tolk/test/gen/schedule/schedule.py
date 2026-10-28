@@ -110,6 +110,15 @@ def read_then_overwrite():
     return b, a
 
 
+def read_overwritten_through():
+    # a value reads a buffer as it was, and a value computed from the assign
+    # that overwrites it
+    a = empty(8).contiguous()
+    b = a * 2
+    a.assign(a + 1)
+    return b + (a * 3).contiguous()
+
+
 def setitem():
     t = empty(8, 8).contiguous()
     t[2:4] = 1.0
@@ -177,6 +186,7 @@ PROGRAMS = {
     "assign_permuted_self": lambda: (lambda a: a.assign(a.permute(1, 0) + 1))(empty(4, 4).contiguous()),
     "assign_double_diamond": assign_double_diamond,
     "read_then_overwrite": read_then_overwrite,
+    "read_overwritten_through": read_overwritten_through,
     "setitem": setitem,
     "assign_bitcast": lambda: empty(4, dtype=dtypes.uint32).contiguous().bitcast(dtypes.float).assign(empty(4) + 1),
     "clone": lambda: empty(4).clone(),

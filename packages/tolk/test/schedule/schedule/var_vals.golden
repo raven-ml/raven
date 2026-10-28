@@ -23,6 +23,7 @@ assign	-
 assign_permuted_self	-
 assign_double_diamond	-
 read_then_overwrite	-
+read_overwritten_through	-
 setitem	-
 assign_bitcast	-
 clone	-

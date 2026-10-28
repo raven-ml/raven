@@ -58,6 +58,7 @@ let programs =
     "mesh_sum";
     "precompiled_function";
     "precompiled_scalar";
+    "read_overwritten_through";
     "read_then_overwrite";
     "reduce_multiple_paths";
     "setitem";
@@ -114,6 +115,7 @@ let kernel_graphs =
     "precompiled_function_kernels_1";
     "precompiled_scalar_kernels";
     "precompiled_scalar_kernels_1";
+    "read_overwritten_through_kernels";
     "read_then_overwrite_kernels";
     "reduce_multiple_paths_kernels";
     "setitem_kernels";
@@ -725,6 +727,18 @@ let swap () =
   raises_match (Exn.invalid_arg ~substring:"cycle") (fun () ->
       Schedule.create_schedule kg)
 
+(* Running the schedule of [kg] writes what [kg] does. *)
+let keeps kg =
+  let buffers = filled kg in
+  equal (list write)
+    (Kernel_graphs.writes ~buffers kg)
+    (Kernel_graphs.linear_writes ~buffers (Schedule.create_schedule kg))
+
+(* The kernel graph of read_overwritten_through: [b + (a * 3)], where [b] read
+   [a] before [a] was assigned. The last kernel reads [a] as it was and waits,
+   through [a * 3], for the kernel that overwrites it. *)
+let read_overwritten () = keeps (program "read_overwritten_through_kernels")
+
 let chain () =
   (* the second kernel reads what the first wrote, and overwrites what the first
      read *)
@@ -735,13 +749,22 @@ let chain () =
     [ a; copies ~into:y ~from:x ]
     (Ops.src (Schedule.create_schedule kg))
 
+(* [y] in slot [slot], with [f] applied to its argument. *)
+let like_y ?(f = Fun.id) slot =
+  match Ops.arg y with
+  | Param p -> Ops.replace ~arg:(Param (f { p with slot })) y
+  | _ -> failwith "a parameter without its argument"
+
+(* A third and a fourth parameter. *)
+let z = like_y 2
+let w = like_y 3
+
+(* A call of the copy kernel into [into] from [from], passed [rest] too. *)
+let reads ~into ~from rest =
+  Ops.replace ~src:(copy_kernel :: into :: from :: rest) copy_call
+
 let overwrite () =
   (* the second kernel writes the state the first left *)
-  let z =
-    match Ops.arg y with
-    | Param p -> Ops.replace ~arg:(Param { p with slot = 2 }) y
-    | _ -> fail "a parameter without its argument"
-  in
   let a = copies ~into:x ~from:y in
   let b = copies ~into:(Ops.after x [ a ]) ~from:z in
   let kg = Ops.sink [ Ops.after (Ops.after x [ a ]) [ b ] ] in
@@ -749,19 +772,87 @@ let overwrite () =
     [ a; copies ~into:x ~from:z ]
     (Ops.src (Schedule.create_schedule kg))
 
-(* [b] reads x both before and after [a] overwrites it: it runs after [a]. *)
+(* [b] reads x both before and after [a] overwrites it, and reads in its
+   argument 1 the state after. *)
 let read_across () =
   let a = copies ~into:x ~from:y in
-  let z =
-    match Ops.arg y with
-    | Param p -> Ops.replace ~arg:(Param { p with slot = 2 }) y
-    | _ -> fail "a parameter without its argument"
-  in
   let b = Ops.replace ~src:[ copy_kernel; z; Ops.after x [ a ]; x ] copy_call in
-  let kg = Ops.sink [ Ops.after z [ b ] ] in
-  equal (list uop)
-    [ a; Ops.replace ~src:[ copy_kernel; z; x; x ] copy_call ]
-    (Ops.src (Schedule.create_schedule kg))
+  keeps (Ops.sink [ Ops.after x [ a ]; Ops.after z [ b ] ])
+
+(* As [read_across], [b] reading in its argument 1 the state before. *)
+let read_across_before () =
+  let a = copies ~into:x ~from:y in
+  let b = Ops.replace ~src:[ copy_kernel; z; x; Ops.after x [ a ] ] copy_call in
+  keeps (Ops.sink [ Ops.after x [ a ]; Ops.after z [ b ] ])
+
+(* Two kernels read [x] as it was and wait for its overwrite: both read one
+   copy. *)
+let read_by_two () =
+  let a = copies ~into:x ~from:y in
+  let b = reads ~into:z ~from:x [ Ops.after x [ a ] ] in
+  let c = reads ~into:w ~from:x [ Ops.after x [ a ] ] in
+  let kg =
+    Ops.sink [ Ops.after x [ a ]; Ops.after z [ b ]; Ops.after w [ c ] ]
+  in
+  keeps kg;
+  let allocs =
+    List.filter (fun n -> Ops.op n = Alloc)
+      (Ops.toposort ~calls:Skip (Schedule.create_schedule kg))
+  in
+  equal int 1 (List.length allocs)
+
+(* One kernel reads [x] and [y] as they were and waits for the overwrite of
+   each. *)
+let reads_two () =
+  let a = copies ~into:x ~from:w and b = copies ~into:y ~from:w in
+  let c = reads ~into:z ~from:x [ y; Ops.after x [ a ]; Ops.after y [ b ] ] in
+  keeps
+    (Ops.sink [ Ops.after x [ a ]; Ops.after y [ b ]; Ops.after z [ c ] ])
+
+(* [b] reads [x] as it was and waits for its overwrite [a]; [e] reads [y] as
+   it was and waits, through [b], for its overwrite [d], which reads what [b]
+   wrote: the copy for [e] leaves [b] reading its own copy. *)
+let read_through_a_copy () =
+  let a = copies ~into:x ~from:y in
+  let b = reads ~into:z ~from:x [ Ops.after x [ a ] ] in
+  let d = copies ~into:y ~from:(Ops.after z [ b ]) in
+  let e = reads ~into:w ~from:y [ Ops.after y [ d ] ] in
+  keeps
+    (Ops.sink
+       [
+         Ops.after x [ a ];
+         Ops.after z [ b ];
+         Ops.after y [ d ];
+         Ops.after w [ e ];
+       ])
+
+(* The copy of a state lies as its storage does. *)
+let copy_keeps_phase () =
+  let x = like_y ~f:(fun p -> { p with phase = 4 }) 0 in
+  let a = copies ~into:x ~from:y in
+  let b = reads ~into:z ~from:x [ Ops.after x [ a ] ] in
+  let kg = Ops.sink [ Ops.after x [ a ]; Ops.after z [ b ] ] in
+  keeps kg;
+  let phases =
+    List.filter_map
+      (fun n ->
+        match (Ops.op n, Ops.arg n) with
+        | Alloc, Param p -> Some p.phase
+        | _ -> None)
+      (Ops.toposort ~calls:Skip (Schedule.create_schedule kg))
+  in
+  equal (list int) [ 4 ] phases
+
+(* A state on several devices is not copied. *)
+let refuses_several_devices () =
+  let x =
+    like_y ~f:(fun p -> { p with device = Some (Multi [ "CPU"; "CPU:1" ]) }) 0
+  in
+  let a = copies ~into:x ~from:y in
+  let b = reads ~into:z ~from:x [ Ops.after x [ a ] ] in
+  raises_match (Exn.invalid_arg ~substring:"several devices") (fun () ->
+      Schedule.create_schedule
+        (Ops.sink [ Ops.after x [ a ]; Ops.after z [ b ] ]))
 
 let not_an_effect () =
   let kg = Ops.sink [ Ops.after x [ Ops.float 2.0 ] ] in
@@ -838,14 +929,27 @@ let ordering =
         loop_after_writer;
       test "a loop runs before the call that overwrites what it reads"
         loop_before_overwriter;
-      test "a kernel reading storage before and after a write runs after it"
+      test "a kernel reading storage before and after a write reads both"
         read_across;
+      test "a kernel reading storage before and after a write reads it before"
+        read_across_before;
+      test "two kernels that wait for the overwrite of a state read one copy"
+        read_by_two;
+      test "a kernel that waits for the overwrites of two states reads both"
+        reads_two;
+      test "a kernel that waits through a copying kernel reads its state"
+        read_through_a_copy;
+      test "the copy of a state lies at the state's phase" copy_keeps_phase;
+      test "a state on several devices that a waiting kernel reads is refused"
+        refuses_several_devices;
       test "a kernel overwriting a state runs after the kernel that made it"
         overwrite;
       test "an end of something other than a call is refused" ended_store;
       test "a bound variable among a kernel's arguments leaves its call"
         bound_argument;
       test "kernels that overwrite each other's inputs are a cycle" swap;
+      test "a kernel that waits for the overwrite of a state it reads reads it"
+        read_overwritten;
       test "a kernel runs after the one it reads and before its overwriter"
         chain;
       test "an effect that is not a call, end, store or After is refused"

@@ -1551,6 +1551,10 @@ thread.
 
 ### Tolk (new)
 
+- A kernel that reads a buffer state and depends on a kernel that overwrites
+  it reads a copy of the state made before the overwrite
+  (`Schedule.create_schedule`). It ran after the overwrite and read the new
+  values, as `b + (a * 3)` did where `b` read `a` before `a` was assigned.
 - A compiled integer product or quotient by a power of two shifts only by less
   than its type's width, and folded constants wrap to it. On int32,
   `(y * 65536) * (y * 65536)` was a shift by 32, which C leaves undefined: its

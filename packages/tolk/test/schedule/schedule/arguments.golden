@@ -23,6 +23,7 @@ assign_kernels	-
 assign_permuted_self_kernels	-
 assign_double_diamond_kernels	-
 read_then_overwrite_kernels	-
+read_overwritten_through_kernels	-
 setitem_kernels	-
 assign_bitcast_kernels	-
 clone_kernels	-

@@ -4177,6 +4177,45 @@ submission, and a range a loop of rig's program (D146).
   `Tolk.Setting` suite: `shaping › under bindings is shaping in their
   context, and binds nothing`.
 
+## D160. A kernel that waits for the overwrite of a state it reads reads a copy
+
+- **tinygrad:** `schedule/__init__.py:59-65` (`create_schedule`), which adds
+  no write-after-read edge from a kernel to an overwrite of a state it reads
+  when the overwrite is already among the kernel's dependencies. The kernel
+  then runs after the overwrite and reads the new bytes. Repro: `a =
+  Tensor([1., 2., 3.]).contiguous().realize(); b = a * 2; a.assign(a + 1);
+  (b + (a * 3).contiguous()).tolist()` gives `[10, 15, 20]` for `[8, 13,
+  18]`; `test/runtime/test_assign.py::TestAssignOrdering::
+  test_war_reader_already_depends_on_write` accepts the wrong value.
+- **tolk:** `lib/schedule/schedule.ml:81-314` (`copy_state`,
+  `copy_before_overwrites`, `schedule`); `test/gen/tinygrad.patch`, which
+  makes tinygrad copy the same way before the goldens are generated.
+- **Differs:** no order runs such a kernel both before and after the
+  overwrite, so it reads instead a copy of the state it read: a kernel of its
+  own copies the whole state into call-local storage before the overwrite,
+  and the schedule is made again from the graph with the copy. This holds for
+  any overwrite of the storage, whichever elements each kernel touches, so a
+  partial overwrite of elements the kernel does not read copies too, at a
+  kernel and the state's size in storage. A state on several devices is
+  refused with `Invalid_argument`.
+- **Reason:** none of (a) to (c): no raven call site is known to reach it,
+  since rune2 orders its own lent stores (`assign`) and gives up a lending
+  where they have no order. The lead ruled the entry admitted on principle:
+  the skipped edge gives a wrong answer with no error, and a refusal would
+  make rune2's `Rune.jit` (`dev/rune2/lib/compile.ml`, `declined`) evaluate
+  the program, which raises on a set of GPUs, which has no eager kernels;
+  copying, as XLA does for an aliasing hazard, keeps the program compiled.
+- **Pinned by:** the `Tolk.Schedule` suite: `create_schedule › rules › a
+  kernel that waits for the overwrite of a state it reads reads it`, on the
+  kernel graph `read_overwritten_through_kernels.golden`, `› a kernel reading
+  storage before and after a write reads both` and `› reads it before`, and
+  the rules after them, for a copy two kernels share, a kernel with two
+  copies, a copy of a state a rebuilt kernel writes, the copy's phase and a
+  state on several devices; and
+  the program `read_overwritten_through`, whose recorded schedule and linear
+  and whose values (`create_linear_with_vars › values`) are tinygrad's,
+  patched.
+
 ## D161. A folded weak constant wraps, and a power of two is read at its width
 
 - **tinygrad:** `uop/symbolic.py:278-280` (two stage ALU folding), which
