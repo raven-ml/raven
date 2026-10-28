@@ -18,7 +18,7 @@ let size = Size.figure 420. 320.
 let step = Nx.linspace Nx.float64 0. (float (steps - 1)) steps
 
 let loss =
-  let noise = Nx.Rng.normal (Nx.Rng.key 11) Nx.float64 [| steps |] in
+  let noise = Nx.Rng.normal ~key:(Nx.Rng.key 11) Nx.float64 [| steps |] in
   Nx.mul
     (Nx.add_s (Nx.exp (Nx.mul_s step (-0.0015))) 0.05)
     (Nx.exp (Nx.mul_s noise 0.25))
@@ -92,25 +92,29 @@ let nested =
 let png size f =
   Hugin_vg_raster.png ~density:2. (Drawing.renderable (render size f))
 
-let walk = Nx.cumsum (Nx.Rng.normal (Nx.Rng.key 1) Nx.float32 [| 10_000_000 |])
+let walk =
+  Nx.cumsum (Nx.Rng.normal ~key:(Nx.Rng.key 1) Nx.float32 [| 10_000_000 |])
 
 (* A million steps of the walk with one in a thousand missing. A gap costs the
    same at any length, and the 10M-step line holds the length's budget. *)
 let gappy =
   let walk = Nx.slice [ R (0, 1_000_000) ] walk in
   let missing =
-    Nx.less_s (Nx.Rng.uniform (Nx.Rng.key 4) Nx.float32 [| 1_000_000 |]) 0.001
+    Nx.less_s
+      (Nx.Rng.uniform ~key:(Nx.Rng.key 4) Nx.float32 [| 1_000_000 |])
+      0.001
   in
   Nx.where missing (Nx.full_like walk Float.nan) walk
 
 (* A line whose x is in no order changes column at almost every row, so that M4
    keeps almost every row. *)
-let shuffled = Nx.Rng.uniform (Nx.Rng.key 5) Nx.float32 [| 1_000_000 |]
+let shuffled = Nx.Rng.uniform ~key:(Nx.Rng.key 5) Nx.float32 [| 1_000_000 |]
 let shuffled_walk = Nx.slice [ R (0, 1_000_000) ] walk
-let cloud = Nx.Rng.normal (Nx.Rng.key 2) Nx.float32 [| 100_000; 2 |]
+let cloud = Nx.Rng.normal ~key:(Nx.Rng.key 2) Nx.float32 [| 100_000; 2 |]
 
 (* Attention weights of 12 layers by 12 heads over 128 tokens. *)
-let weights = Nx.Rng.uniform (Nx.Rng.key 3) Nx.float32 [| 12; 12; 128; 128 |]
+let weights =
+  Nx.Rng.uniform ~key:(Nx.Rng.key 3) Nx.float32 [| 12; 12; 128; 128 |]
 
 let budgets =
   Thumper.group "budgets"
