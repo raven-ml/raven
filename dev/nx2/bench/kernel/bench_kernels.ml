@@ -1295,7 +1295,12 @@ let backend name kernels floors =
     (List.map (fun r -> r.bench kernels) rows
     @ floors (List.concat_map (fun r -> r.work) rows))
 
+(* Each case warms up for 20 ms, at least three batches after its
+   calibration, in place of thumper's 100 ms: the suite's 440 cases, most of
+   them a few microseconds, spent a third of their time warming up. *)
+let config = Thumper.Config.(default |> warmup 0.02)
+
 let () =
   exit
-  @@ Thumper.run "nx_kernels"
+  @@ Thumper.run "nx_kernels" ~config
        [ backend "cpu" (module Nx_cpu : Nx_kernel.S) F.rows ]
