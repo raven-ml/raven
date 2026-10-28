@@ -4,27 +4,30 @@
   ---------------------------------------------------------------------------*)
 
 (** Reverse mode: a function linearized into a tape, and the tape transposed.
+    This module implements the derivatives of {!Rune2.section-reverse}.
 
     {e Linearizing} a function runs it under forward mode ({!Jvp}) whose
-    tangents are the variables of a tape tracer ({!Trace.Tape}): the primal
+    tangents are the variables of a tape tracer ({!Trace.Tape}). The primal
     computes at the call, and the operations on tangents are recorded as a
-    program linear in them, the {e tape}, whose constants are the primal values
-    those operations read. A loop's tangent is recorded over its loads, so a
-    map's {e residuals}, the values the tape keeps, are its loads: it computes
-    its intermediates again.
+    program linear in them, the {e tape}, whose constants, the primal values
+    those operations read, are its {e residuals}. A [Map]'s tangent is recorded
+    over the arrays the map reads, its loads ([Nx.Prim.load]), so its residuals
+    are those arrays, and its transpose computes the map's intermediates again.
 
     {e Transposing} the tape walks its equations backward, from cotangents of
-    its outputs to cotangents of its tangent parameters, issuing each equation's
-    transpose under whatever interpretations are around the call: eagerly an
-    eager pullback, under another transformation one it transforms. The pairing
-    is [<u, v> = Re Σ u v], unconjugated on complex values, so each transpose is
-    the plain transpose of its operation's real-linear map in that pairing.
+    its outputs to cotangents of its tangent parameters. It issues each
+    equation's transpose under the interpretations around the call, so that a
+    transformation around the call transforms the pullback. Each transpose is
+    the plain transpose of its operation's real-linear map in the pairing of
+    {!Rune2.section-derivatives}, unconjugated on complex values. A variable's
+    cotangent sums its contributions in the order the walk makes them, by the
+    rule of that section's sums.
 
-    A variable's cotangent is the sum of its contributions in the order the walk
-    makes them, with no zero before the first: a single contribution is itself,
-    sign of zero included. The contributions through a map, a reduction, a
-    movement, a pad and a window keep a zero's sign; a gather's transpose adds
-    to [+0], and a broadcast's sums its copies as [Nx.sum] does, from [+0]. *)
+    A tape is made by {!linearize} at values or by {!trace} over stand-ins. Its
+    {e parameters} are the tangents it is over, one per float or complex value
+    of {!linearize}'s [xs], or one per value of {!trace}'s [xs]. A tape is
+    immutable. Where it was made outside every transformation, it can be applied
+    ({!apply}) and transposed ({!transpose}) any number of times. *)
 
 type t
 (** The type for tapes. *)
@@ -45,12 +48,14 @@ val trace :
   (Program.value array -> Program.value array) ->
   t
 (** [trace ~name xs f] is [f] recorded as a tape over stand-ins of [xs]'s forms,
-    in order: their values are not read, and the tape is [f] itself where [f] is
-    linear in them. Raises what [f] raises. *)
+    in order. It reads none of [xs]'s values. Every operation of [f] is
+    recorded, so [f] must be linear in its arguments. {!transpose} raises for an
+    operation that is not linear in them, and drops a term that does not depend
+    on them. Raises what [f] raises. *)
 
 val apply : t -> Program.value array -> Program.value option array
-(** [apply l ts] evaluates [l] at the tangents [ts] of its parameters: the
-    tangent of each output of the linearized function, [None] for zero.
+(** [apply l ts] is the tangent of each output of the linearized function,
+    [None] for zero, at the tangents [ts] of [l]'s parameters.
 
     Raises [Invalid_argument] unless [ts] has one value per parameter. *)
 
@@ -63,17 +68,10 @@ type ct = {
 val transpose : t -> Program.value option array -> ct option array
 (** [transpose l cts] is the cotangent of each tangent parameter of [l], [None]
     where it receives no contribution, given [cts], the cotangent of each output
-    of the linearized function, [None] for zero, each of its output's dtype and
-    shape. A value a transpose makes beside a cotangent, such as the zeros a
-    gather's transpose scatters into, lies at its operand's placement, or whole
-    on each device of the value it meets.
-
-    A [Lanes] over tangents, of the map its axis names, gives the calling lane
-    its row of the sum over the lanes of their cotangents. A scan over tangents
-    transposes as a scan of its step's transpose over the rows in reverse, a
-    remat by linearizing its function again at its constant arguments, and a
-    call as the call of its program's transpose, derived once per derivation at
-    its site ({!Program.derive}).
+    of the linearized function, [None] for zero. Each cotangent must have its
+    output's dtype and shape. A value a transpose makes beside a cotangent, such
+    as the zeros a gather's transpose scatters into, lies at its operand's
+    placement, or whole on each device of the value it meets.
 
     Raises [Invalid_argument] naming the tape's entry point for an equation that
     is not linear in its tangents, and for an iterate over tangents. *)
